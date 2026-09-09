@@ -2,10 +2,11 @@
 // 파일 I/O·1초 워커 타이머만 있어 네트워크·텔레그램 없이 임시 ARGO_ROOT로 단위 테스트 가능한 이음매.
 // 잡 실행 핸들러(makeTgGatewayHandler·makeJobHandler 등)는 네트워크·chat 의존이라 gateway.mjs에 남는다.
 // 옮긴 코드는 gateway.mjs 원문 그대로(행동 불변) — 설계 주석 동반 이동.
-import { readdir, stat, unlink } from 'node:fs/promises';
+import { readdir, rename, stat, unlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths, getDeviceId } from '../workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from '../jsonstore.mjs';
+import { withDirLock } from '../mutex.mjs';
 
 /* ─── 지시 처리 큐 (at-least-once) ───
    문제(감사 D5): 텔레그램 폴러가 offset을 처리 for-루프 '앞'에서 커밋하고, 실제 턴(runWithAtts/run)은
@@ -25,44 +26,85 @@ import { writeJsonAtomic, readJsonLenient } from '../jsonstore.mjs';
    과거 동기화로 흘러든 다른 기기의 잡 사본이 이중 실행되는 것을 막는다. */
 const GW_MAX_INFLIGHT = 2; // 동시 크루 턴 상한 — 큐가 쌓여도 비용 폭주를 막는다
 const LEGACY_JOB_MAX_AGE_MS = 24 * 3_600_000; // dev 태그 없는 구형식 잡의 실행 허용 연령 — 넘으면 좀비 실행 방지 위해 폐기
+export const CLAIM_MAX_AGE_MS = 5 * 60_000; // 선점(.claimed) 최대 연령 — 살아 있는 선점은 60초 심박으로 mtime이 늘 신선하므로 5분이면 충분(35분이던 때는 재기동 뒤 진행 중이던 잡이 35분 침묵 — 검수 5R). 넘으면 죽은 워커의 잔재로 보고 되돌린다(재실행 = at-least-once)
 export function queueDir(wsId, key) { return join(paths(wsId).root, `.gw-queue-${key}`); } // (export: 회귀 테스트용)
 export async function enqueueJob(wsId, key, id, job) { // (export: 회귀 테스트용)
   const dev = await getDeviceId().catch(() => null); // 적재 기기 태그 — 이 기기의 워커만 이 잡을 실행한다
   await writeJsonAtomic(join(queueDir(wsId, key), `${id}.json`), dev ? { ...job, dev } : job); // 원자적 — 부분 쓰기가 워커에 보이지 않는다
 }
 /** 큐 드레인 워커 — 1초 폴. handler(job)이 정상 반환하면 파일 삭제(처리 완료), 던지면 유지(다음 틱 재시도·재기동 복구). (export: 회귀 테스트용) */
+/** 핸들러가 이 값을 반환하면 "아직 차례가 아니다" — 선점을 풀어 다음 틱에 다시 집는다(로그 없음, 슬롯 점유 없음). 순서 대기(msgr after)용. */
+export const DEFER = Symbol('queue.defer');
+export const DEFER_BACKOFF_MS = 3000; // DEFER 잡의 재검사 간격(순서 대기의 DB 조회 = 잡당 3초에 한 번)
 export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT } = {}) {
   let stopped = false;
   let me = null; // 이 기기 id — 해석 전(null)에는 잡을 집지 않는다(남의 사본 오실행 방지). 실패 시 ''(판정 생략, 전부 실행)
   getDeviceId().then((d) => { me = d; }).catch(() => { me = ''; });
   const busy = new Set();
+  const deferUntil = new Map(); // DEFER 반환 잡 → 다음 검사 시각. 백오프 동안은 스캔에서 빠지고, 검사 차례도 일반 잡 뒤로(슬롯 굶김 방지 — 검수 2R M-5)
   const iv = setInterval(async () => {
     if (stopped || me === null) return;
     let names = [];
     try { names = await readdir(queueDir(wsId, key)); } catch { return; } // 큐 디렉터리 없음 — 할 일 없음
+    // 죽은 워커의 선점 잔재 회수 — .claimed가 CLAIM_MAX_AGE_MS를 넘으면 .json으로 되돌려 다음 틱에 재실행
+    for (const n of names.filter((x) => x.endsWith('.json.claimed'))) {
+      if (busy.has(n.replace(/\.claimed$/, ''))) continue; // 이 워커가 지금 돌리는 잡 — 회수 대상 아님(검수 4R C-1)
+      const fp = join(queueDir(wsId, key), n); const fp0 = fp.replace(/\.claimed$/, '');
+      await withDirLock(`${fp0}.lock`, async () => {
+        const mt = (await stat(fp).catch(() => null))?.mtimeMs ?? 0;
+        if (mt && Date.now() - mt > CLAIM_MAX_AGE_MS) {
+          await rename(fp, fp0);
+          console.log(`[argo] 큐 선점 회수(${wsId}/${key}/${n}): ${Math.round(CLAIM_MAX_AGE_MS / 60_000)}분 넘은 선점 — 재실행`);
+        }
+      }).catch(() => {});
+    }
+    const tick = Date.now();
+    const due = new Set(); // 백오프가 끝난 DEFER 잡 — 이번 틱 검사 차례는 일반 잡 뒤
+    for (const [n, t] of deferUntil) if (t <= tick) { due.add(n); deferUntil.delete(n); }
     names = names.filter((n) => n.endsWith('.json') && !n.startsWith('.'))
       .sort((a, b) => ((parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)) || a.localeCompare(b)); // 도착 순서 근사(동값은 사전순 고정)
+    names = [...names.filter((n) => !deferUntil.has(n) && !due.has(n)), ...names.filter((n) => due.has(n))]; // 백오프 중인 잡은 제외, 검사 차례는 맨 뒤
     for (const n of names) {
       if (busy.has(n)) continue;
       if (busy.size >= maxInflight) break; // 상한 도달 — 남은 잡은 다음 틱(큐별로 다르다: 장시간 작업은 1)
       busy.add(n);
       (async () => {
-        const fp = join(queueDir(wsId, key), n);
+        const fp0 = join(queueDir(wsId, key), n);
+        // rename은 POSIX에서 기존 선점을 덮는다. 동일 ID 재적재가 활성 턴을 침범하지 않도록
+        // 존재 판정·이동·첫 심박을 짧은 디렉터리 락으로 묶는다(턴 실행 중에는 락을 잡지 않는다).
+        const fp = `${fp0}.claimed`;
+        let st0;
+        try {
+          st0 = await withDirLock(`${fp0}.lock`, async () => {
+            try { await stat(fp); return null; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+            const queued = await stat(fp0); // 선점 전 나이 보존 — 구형식 잡의 24시간 만료 판정
+            await rename(fp0, fp);
+            const t = new Date(); await utimes(fp, t, t); // 회수도 같은 락을 쓰므로 오래된 적재 mtime을 선점 나이로 오인하지 않는다
+            return queued;
+          });
+        } catch { busy.delete(n); return; }
+        if (!st0) { busy.delete(n); return; } // 다른 워커의 선점은 그대로, 재적재된 .json은 성공 뒤 처리
+
+        let done = false;
+        const hb = setInterval(() => { const t = new Date(); utimes(fp, t, t).catch(() => {}); }, 60_000); hb.unref?.(); // 선점 심박 — 살아 있는 긴 턴(30분 넘는 사고 과정·장시간 잡)이 CLAIM_MAX_AGE_MS 회수에 걸리지 않게
         try {
           const job = await readJsonLenient(fp, null); // 손상 잡은 null → 처리 스킵 후 삭제(무한 재시도 방지)
           if (job?.dev && me && job.dev !== me) {
             // 다른 기기가 적재한 잡의 사본(과거 큐가 동기화되던 시절의 잔재) — 원 기기가 실행하므로 정리만
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): 다른 기기(${String(job.dev).slice(0, 8)})의 잡 사본 — 실행 없이 제거`);
-          } else if (job && !job.dev && Date.now() - (((await stat(fp).catch(() => null))?.mtimeMs) ?? 0) > LEGACY_JOB_MAX_AGE_MS) {
+          } else if (job && !job.dev && Date.now() - (st0?.mtimeMs ?? 0) > LEGACY_JOB_MAX_AGE_MS) {
             // dev 태그 없는 구형식 잡이 너무 오래됨 — 어느 기기 것인지 알 수 없어 좀비 실행 대신 폐기(로그로 관측)
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): ${Math.round(LEGACY_JOB_MAX_AGE_MS / 3_600_000)}시간 넘은 구형식 잡 — 실행 없이 제거`);
           } else if (job) {
-            await handler(job); // handler는 턴 실패를 내부 처리(에러 회신)하고 정상 반환 → 아래서 삭제
+            if (await handler(job, { path: fp }) === DEFER) { deferUntil.set(n, Date.now() + DEFER_BACKOFF_MS); return; } // 차례 아님 — finally가 선점을 풀고 백오프 뒤 다시 집는다. path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
           }
-          await unlink(fp).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 파일이 남아 재기동 시 재처리
+          done = true;
+          await withDirLock(`${fp0}.lock`, () => unlink(fp)).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 .claimed가 남아 CLAIM_MAX_AGE_MS 뒤 회수·재처리
         } catch (e) {
-          console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 파일 유지, 다음 틱 재시도
+          console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 선점을 풀어 다음 틱 재시도
         } finally {
+          clearInterval(hb);
+          if (!done) await withDirLock(`${fp0}.lock`, () => rename(fp, fp0)).catch(() => {}); // 재시도는 동일 ID 재적재분보다 실행 중 저장한 체크포인트를 우선한다
           busy.delete(n);
         }
       })();
@@ -86,11 +128,13 @@ export const JOBS_MAX_INFLIGHT = 1;  // 회사당 동시 1 — 장시간 작업�
 export const JOBS_MAX_PENDING = 10;  // 대기 상한 — 비용 폭주·큐 폭발 방지
 
 /** 크루 도구용 적재 — 대기 상한을 넘으면 거절(에러 메시지가 크루에게 그대로 간다). (export: 도구·테스트 공용) */
-export async function enqueueLongJob(wsId, { slug, title, prompt }) {
+export async function enqueueLongJob(wsId, { slug, title, prompt, msgr = null }) {
+  if (msgr && (!['orgId', 'channelId', 'crewId', 'uid', 'wsId'].every((k) => typeof msgr[k] === 'string' && msgr[k]) || msgr.wsId !== wsId)) throw new Error('메신저 작업의 발신 경로가 없거나 다른 워크스페이스입니다');
+  const origin = msgr ? Object.fromEntries(['orgId', 'channelId', 'crewId', 'threadRoot', 'sourceMsgId', 'uid', 'wsId', 'origin', 'hop'].filter((k) => msgr[k] !== undefined).map((k) => [k, msgr[k]])) : null;
   let pending = 0;
   try { pending = (await readdir(queueDir(wsId, JOBS_QUEUE))).filter((n) => n.endsWith('.json')).length; } catch { /* 큐 없음 = 0 */ }
   if (pending >= JOBS_MAX_PENDING) throw new Error(`대기 중인 장시간 작업이 이미 ${pending}건입니다 — 끝나기를 기다리거나 사장에게 정리를 요청하라`);
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  await enqueueJob(wsId, JOBS_QUEUE, id, { id, slug, title, prompt, createdAt: new Date().toISOString(), tries: 0 });
+  await enqueueJob(wsId, JOBS_QUEUE, id, { id, slug, title, prompt, createdAt: new Date().toISOString(), tries: 0, ...(origin ? { msgr: origin } : {}) });
   return { id, pending: pending + 1 };
 }

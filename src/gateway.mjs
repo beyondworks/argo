@@ -30,7 +30,7 @@ import { routeMessage, crewStatusReply, approvalWho, defaultCrew, resolveTelegra
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
 import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
 const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
-import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
+import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrEventOrigin, runMessengerContinuation } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
 export { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT, JOBS_MAX_PENDING, enqueueLongJob } from './gateway/queue.mjs';
@@ -39,35 +39,38 @@ export { routeMessage } from './gateway/routing.mjs';
 
 /* ─── 장시간 작업(jobs) 실행 핸들러 — 큐 설계·재실행 규칙(tries) 주석은 src/gateway/queue.mjs.
    chat을 턴 밖에서 끝까지 돌리고 결과를 대화·메신저로 배달한다. ─── */
-function makeJobHandler(wsId) {
-  return async (job) => {
+function makeJobHandler(wsId, { runChat = chat, session } = {}) {
+  return async (job, { path = null } = {}) => { // path = 워커가 선점한 실제 파일(.json.claimed) — tries 마커는 여기에 써야 완료 뒤 원래 이름의 잔재가 '중단' 오통지를 만들지 않는다(검수 H-1)
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     const title = String(job.title ?? '').slice(0, 80) || pick('장시간 작업', 'Long task', lang);
     const slug = job.slug;
     if (!slug || !job.prompt) return; // 형식 불량 — 조용히 폐기(워커가 파일 삭제)
     // 핸들러가 던지면 워커가 파일을 남겨 1초마다 무한 재시도한다(E2E에서 실측: import 누락 1건으로
     // 24회/25초 재처리). 잡은 재실행이 위험하므로 통지·기록 실패가 재시도를 유발하지 않게 전부 감싼다.
-    const notify = (payload) => { try { emitNotify(payload); } catch (e) { console.error('[argo] 작업 통지 실패:', e.message); } };
+    const notify = (payload) => { try { emitNotify({ id: job.id, ...(job.msgr ? { msgr: job.msgr } : {}), ...payload }); } catch (e) { console.error('[argo] 작업 통지 실패:', e.message); } };
     // 재실행 차단 — 이미 한 번 시작된 잡(크래시·강제 종료 후 잔재)은 자동으로 다시 돌리지 않는다
     if ((job.tries ?? 0) >= 1) {
       await appendEvent(wsId, { type: 'job', slug, title, status: 'interrupted' }).catch(() => {});
-      notify({ type: 'job', wsId, slug, title, ok: false, reply: pick(
+      notify({ type: 'job', wsId, slug, title, phase: 'interrupted', ok: false, reply: pick(
         `작업 "${title}"이 실행 중 중단됐습니다 — 부작용이 있을 수 있어 자동으로 다시 시작하지 않았습니다. 다시 시킬지 알려주세요.`,
         `Task "${title}" was interrupted mid-run — it was not restarted automatically because it may have side effects. Tell me if you want it rerun.`, lang) });
       return;
     }
     // 시작 마킹 — **실행 전에** 파일에 기록해야 크래시 후 재집힘에서 위 가드가 작동한다
-    const fp = join(queueDir(wsId, JOBS_QUEUE), `${job.id}.json`);
+    const fp = path ?? join(queueDir(wsId, JOBS_QUEUE), `${job.id}.json`);
     await writeJsonAtomic(fp, { ...job, tries: (job.tries ?? 0) + 1, startedAt: new Date().toISOString() }).catch(() => {});
     await appendEvent(wsId, { type: 'job', slug, title, status: 'started' }).catch(() => {});
     try {
-      const t = await chat(wsId, slug, `[장시간 작업: ${title}] ${job.prompt}`, null, { source: 'job' });
+      const prompt = `[장시간 작업: ${title}] ${job.prompt}`;
+      const t = job.msgr
+        ? await runMessengerContinuation(wsId, slug, job.msgr, prompt, null, { runChat, session })
+        : await runChat(wsId, slug, prompt, null, { source: 'job' });
       await appendTurn(wsId, slug, {
         userMsg: pick(`(장시간 작업) ${title}`, `(Long task) ${title}`, lang),
         reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job', artifacts: t.artifacts,
       }).catch(() => {});
       await appendEvent(wsId, { type: 'job', slug, title, status: 'done' }).catch(() => {});
-      notify({ type: 'job', wsId, slug, title, ok: true, reply: t.reply });
+      notify({ type: 'job', wsId, slug, title, ok: true, reply: t.reply, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) });
     } catch (e) {
       const msg = String(e.message || e).slice(0, 300);
       await appendEvent(wsId, { type: 'job', slug, title, status: 'failed', error: msg }).catch(() => {});
@@ -76,6 +79,7 @@ function makeJobHandler(wsId) {
     }
   };
 }
+export const _makeJobHandlerForTest = makeJobHandler;
 
 /** 크루 응답 발신 — 마크다운을 텔레그램 HTML로, 길면 분할, 본문 속 vault 파일은 사진/문서로 동봉. */
 async function sendTgReply(token, chatId, wsId, text) {
@@ -775,11 +779,19 @@ function startSlack(wsId, getCfg) {
 /* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ───
    결재 문구 정돈(tidy)은 protocol, 결재 주체 표기(approvalWho)는 routing에서 온다. */
 const MSGR_PUSH_TYPES = new Set([...channelSendsKinds('msgr'), 'approval_resolved', 'approval_followup']); // 카드 상태 갱신·후속 보고는 결재의 일부(음소거 대상 아님)
-async function pushEvent(event) {
+async function pushEvent(event, { pushMsgr = msgrPush } = {}) {
   // 팀 메신저 채널 — msgr 문맥(턴 중 결재·위임, 카드 메타)이 있는 이벤트만 처리하고 아니면 즉시 false(클라이언트 생성 0).
   // 텔레그램·슬랙 경로와 독립 — 여기서 던져도 아래 발송을 막지 않는다.
+  const msgrOrigin = msgrEventOrigin(event);
+  let msgrDone = false;
   if (MSGR_PUSH_TYPES.has(event.type)) {
-    await msgrPush(event).catch((e) => console.error('[argo] msgr 푸시 실패:', e.message));
+    msgrDone = (await pushMsgr(event).catch((e) => { console.error('[argo] msgr 푸시 실패:', e.message); return false; })) === true;
+  }
+  // 시작 채널이 배달 목적지를 소유한다. 세션 소실·음소거·순단도 Telegram으로 보낼 권한은 아니다.
+  // 신규 쪽지는 채널 넘김으로 처리하고, 배포 전 적재된 쪽지의 회신 미러도 이 경계를 지킨다.
+  if (msgrOrigin) {
+    if (!msgrDone) console.error(`[argo] 메신저 ${event.type} 미배달(${event.wsId}) — 원래 채널 유지; 로컬 대화·배달 기록 확인 필요`);
+    return;
   }
   const all = await loadConnections(event.wsId);
   const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));

@@ -68,7 +68,7 @@ const inFlight = new Set();
     kind: 주 수신자에게 붙일 종류. 기본 'to'(회신 기대). 회의실에서 사장이 "cc @이름"으로 참조만
     돌릴 때는 'cc'를 넘긴다 — 수신자가 하나여도 의미는 참조다(회신 의무 없음).
     fromRole: 'captain'이면 동료가 아니라 사장이 보낸 것으로 문구가 갈린다(room.mjs 경유). */
-export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to' }) {
+export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to', msgr = null }) {
   if (!to || !String(message ?? '').trim()) throw new Error('수신 크루와 내용이 필요합니다');
   // 자기 자신에게는 보낼 수 없다 — 배달 턴이 또 쪽지를 내면 hop 상한(왕복 방어)이 무의미해진다.
   // cc는 이미 `s === from`으로 걸러내는데(아래) 주 수신자만 무방비였다. 호출부(cli-directives)에서도
@@ -84,6 +84,7 @@ export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, 
   const base = {
     id, from, fromName: fromName || from, ...(fromRole ? { fromRole } : {}), message: String(message).trim(),
     hop, chain, ts: new Date().toISOString(), attempts: 0,
+    ...(msgr?.channelId ? { msgr } : {}), // 메신저 채널 문맥(orgId·channelId·crewId(발신)·threadRoot) — 배달 턴과 회신이 그 채널로 간다
   };
   const seen = new Set([String(to)]);
   const rcpts = [{ slug: String(to), kind }];

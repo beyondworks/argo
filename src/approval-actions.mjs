@@ -82,7 +82,7 @@ async function applyPayload(wsId, item) {
   return '';
 }
 
-async function followUp(wsId, item, approve) {
+async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
   let msg;
   if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp' || item.kind === 'connector') && approve) {
     // 서버가 payload를 먼저 적용하고, 결과를 크루가 사용자에게 보고한다(크루 재실행 금지 — 이중 적용 방지)
@@ -111,12 +111,14 @@ async function followUp(wsId, item, approve) {
   try {
     // 메신저발 결재의 후속 턴은 메신저 턴으로 — 파일 규약(messengerNote)을 받아야 '경로를 적으면
     // 첨부된다'가 작동한다(검수 M-1: 이게 없으면 승인 후속이 규약을 못 받는 유일한 턴이었다).
-    const r = await chat(wsId, item.slug, msg, t.sessionId, item.tg?.chatId ? { source: 'messenger' } : {});
+    const r = item.msgr
+      ? await (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, item.slug, item.msgr, msg, t.sessionId, { runChat, session })
+      : await runChat(wsId, item.slug, msg, t.sessionId, item.tg?.chatId ? { source: 'messenger' } : {});
     await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts });
     // 결재가 메신저에서 왔으면(item.tg) 후속 보고도 그 방으로 — 이 방송이 없어서 카드가
     // "이어서 보고합니다"라고 약속하고 영원히 무소식이었다(실사용 제보 2026-07-30). 파일 첨부는
     // sendTgReply의 경로 규약이 그대로 작동하므로 "승인 = 실제 발송"이 여기서 성립한다.
-    emitNotify({ type: 'approval_followup', wsId, item, reply: r.reply });
+    emitNotify({ type: 'approval_followup', wsId, item, reply: r.reply, ...(r.msgr ? { msgr: r.msgr, msgrReply: r.msgrReply } : {}) });
     return r;
   } catch (e) {
     // 크루의 자연어 보고 턴이 실패해도(예산 초과·크루 삭제·모델 장애) 사용자는 결과를 알아야 한다.
@@ -129,3 +131,4 @@ async function followUp(wsId, item, approve) {
     throw e;
   }
 }
+export const _followUpForTest = followUp;

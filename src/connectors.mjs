@@ -409,7 +409,7 @@ async function needsApprovalNow(wsId, serverId, tool) {
  * 커넥터 도구 호출 — 러너 무관 단일 경로. 결과 정규화 { ok, content, isError }(+실패 시 error 코드).
  * 401은 SDK 자동 refresh에 맡기고(스파이크 실증) 최종 실패만 'reauth' 강등. 호출마다 원장 기록.
  */
-export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko', slug = null, approved = false } = {}) {
+export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko', slug = null, approved = false, mirrorCtx = null } = {}) {
   let ok = false;
   try {
     let result;
@@ -426,6 +426,8 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       // 결재 게이트 — **러너 무관 단일 지점**이다. SDK 표면(use_connector)도 CLI 지시 블록도 이 함수로
       // 수렴하므로(설계서 §1), 여기 한 번 걸면 어느 러너로도 우회가 없다. 러너별로 걸면 반드시 갈린다.
       const { addApproval } = await import('./approvals.mjs'); // 동적 — approvals→chat→connectors 순환 방지
+      const { messengerOrigin } = await import('./gateway/msgr-handoff.mjs');
+      const msgr = messengerOrigin(mirrorCtx);
       // 담당 크루 귀속 — 표면(chat use_connector·cli-directives)은 항상 실제 slug를 넘긴다. 없이 불리면
       // (코어 직접 호출) 유령 'crew'로 등록됐었고, 그 slug는 텔레그램 직통 봇 폴백 판정에서 존재하지
       // 않는 크루의 봇을 찾다 null이 됐다(분리 검수 LOW-3) — 기본 크루(defaultCrew 정본·사본 금지)로 귀속한다.
@@ -440,6 +442,7 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       await addApproval(wsId, {
         slug: ownerSlug,
         kind: 'connector',
+        ...(msgr ? { msgr } : {}),
         action: `${serverId} · ${tool}`,
         reason: '외부 서비스에 쓰기',
         // 승인 시 그대로 실행할 재료. 결재함은 회사 금고(게이트 보호) 안이라 args를 담아도 크루가 못 읽는다.
