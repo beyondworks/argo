@@ -69,6 +69,9 @@ export const RUNNERS = {
       { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', gated: true },
     ],
   },
+  // HTTP 텍스트 러너(부록 N, 2026-09-08) — 외부 에이전트(헤르메스·오픈클로·자체 엔드포인트)를 회사 크루의 두뇌로. 숨김: 카드에 `runner: http`와
+  // `endpoint:`를 적어야만 돈다(자동 선택·러너 목록 제외). 텍스트 러너 등급(도구·권한 게이트 없음 — 시트에 정직 표기). 어댑터: runners/http-text.mjs.
+  http: { name: 'HTTP', kind: 'cli', hidden: true, cardOnly: true, models: [{ id: '', label: '기본' }] }, // 이름은 고유명사(언어 중립 — 다국어 규칙) // cardOnly: 숨김이지만 제공 종료가 아니다 — 자격 저장은 받고 목록만 뺀다
   antigravity: {
     name: 'Antigravity', kind: 'cli',
     // BYOA 2호(2026-07-27) — 구글이 개인용 Gemini Code Assist OAuth를 폐기하고 Antigravity로 이전
@@ -300,6 +303,10 @@ export const GROK_DEFAULT_MODEL = 'grok-4.6';
 //   oauthPasteable 토큰 붙여넣기로, gemini는 CLI 설치 후 로그인 안내로 대체한다.
 /** 숨김 러너 — 새로 고르거나 자동으로 잡히지 않는다(기존 지정·자격은 유효). 목록을 만드는 모든 자리가 이 판정을 쓴다. */
 export const isHiddenRunner = (id) => !!RUNNERS[id]?.hidden;
+/** 제공 종료 러너(gemini 구독 CLI) — 숨김 중에서 cardOnly가 아닌 것. 자격 저장 거절·'더 이상 제공되지 않음' 안내는 이것만(분리 검수 HIGH-2·MEDIUM-3: http는 숨김이되 제공 종료가 아니다). */
+export const isRetiredRunner = (id) => !!RUNNERS[id]?.hidden && !RUNNERS[id]?.cardOnly;
+/** 카드 전용 러너(http) — 외부 두뇌: 인증 실패 시 다른 러너로 자가치유 폴백하지 않는다(외부 크루가 Claude로 답하면 의미론적 사고, 2차 검수 HIGH-A). */
+export const isCardOnlyRunner = (id) => !!RUNNERS[id]?.cardOnly;
 export const visibleRunnerIds = () => Object.keys(RUNNERS).filter((id) => !isHiddenRunner(id));
 /** 안내문용 가시 러너 이름 줄 — ko "Claude·Codex·…", en "Claude, Codex, …, or Grok". 하드코딩 4곳(chat/oneshot/persona/trial)이
     숨김 러너를 권하던 것의 단일 원천. **반드시 템플릿 리터럴 안에서** 보간할 것(작은따옴표 안이면 원문이 사용자에게 노출 — 재검수 HIGH 실사고). */
@@ -311,7 +318,7 @@ export const visibleRunnerNamesLine = (lang = 'ko', exclude = []) => {
 /** 연결된 것이 숨김 러너뿐인가(runnerStatus dict) — "연결은 됐는데 제공 종료" 전용 안내 분기(재검수 MEDIUM-5) */
 export const onlyHiddenConnectedStatus = (st) => {
   const on = Object.entries(st ?? {}).filter(([, r]) => r?.company?.connected && !r?.company?.invalid);
-  return on.length > 0 && on.every(([id]) => isHiddenRunner(id));
+  return on.length > 0 && on.every(([id]) => isRetiredRunner(id)); // 제공 종료만 — 카드 전용 숨김(http)은 정상 연결
 };
 
 /** 저장 자격의 연결 방식이 더 이상 제공되지 않는 러너(runnerStatus가 unsupportedMethod를 단 것)만 있고 가용 러너가 없는가 — 그 러너 id 목록(빈 배열=해당 없음).
@@ -364,6 +371,7 @@ export const RUNNER_AUTH = {
   // **정의 순 = pickRunner 자동 선택 순 — 반드시 맨 끝**: 키링이라 로그인 여부를 파일로 판정할 수 없는
   // 유일한 러너로 authed가 낙관값이다. 검증된 자격보다 앞에 두면 미로그인 antigravity가 동작하는
   // 러너를 선점해 러너 미지정 크루의 전 턴이 타임아웃으로 죽는다(분리 검수 H1 실증 2026-07-27).
+  http: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: '' }, // 회사 자격 = 엔드포인트 Bearer 키(헤르메스 API_SERVER_KEY 등). 엔드포인트는 크루 카드 endpoint:
   antigravity: { methods: ['oauth'], apikeyPrefix: '', oauthPasteable: false, hostUsable: true, keyUrl: 'https://antigravity.google/docs/cli/install' },
 };
 
@@ -397,6 +405,7 @@ export function pickRunner(st, want, exclude = null, { defaultRunner = null } = 
   // Google이 막은 구독 CLI 경로로 유도됐다). 명시 지정(want)은 종전대로 자격 종류를 묻지 않는다 — 이미 그 러너로 굳힌 크루는 계속 돈다.
   const credAutoOk = (id) => { const type = st[id]?.company?.type; const m = RUNNER_AUTH[id]; return !type || !m || m.methods.includes(type) || (type === 'host' && !!m.hostUsable); };
   const autoUsable = (id) => usable(id) && !isHiddenRunner(id) && credAutoOk(id);
+  if (want && isCardOnlyRunner(want)) return { runner: want, fellBack: false, available: true }; // 카드 전용(http): 회사 자격은 선택(있으면 Bearer) — 미연결이라고 다른 러너로 대체하지 않는다(유건 2026-09-08 "왜 대체가 되지"). 엔드포인트 문제는 턴에서 정직 실패
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
   // ponytail: 회사 기본 러너 — "자동일 때 이 러너부터"(K1 해소, 유건 제보 2026-08-08: Grok만
   // 연결했는데 하드코딩 순서가 claude를 먼저 잡는다). 가용하면 우선, 아니면 기존 순서 폴백.

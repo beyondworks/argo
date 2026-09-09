@@ -163,7 +163,7 @@ test('배선: chat.mjs 두 실행 경로(CLI·SDK)의 자가치유가 누적 목
   const healConds = [...src.matchAll(/if \(([^\n]*shouldSelfHeal\([^\n]*)\) \{/g)].map((m) => m[1]);
   assert.deepEqual(healConds.map(norm).sort(), [
     "!aborted && !retriedDown && shouldSelfHeal(e, { lockup: false })", // SDK 갈래 — 잠김 교체 없음(종전 계약)
-    "!aborted && shouldSelfHeal(e, { retried: __lockupRetry })", // CLI 갈래(잠김 합류 승인분)
+    "!aborted && !isCardOnlyRunner(runner) && shouldSelfHeal(e, { retried: __lockupRetry })", // CLI 갈래(잠김 합류 승인분) + 카드 전용 러너(http) 폴백 금지 가드(부록 N, 2차 검수 HIGH-A — 외부 두뇌 크루가 다른 두뇌로 답하지 않는다)
   ].sort(), '자가치유 발동 호출부 승인 목록 — 가드 삭제·제3 사이트 차단');
   const healBody = src.split('export function shouldSelfHeal(e, { retried = false, lockup = true } = {}) {')[1]?.split('\n}')[0] ?? '';
   assert.equal(norm(healBody), "if (e?.authExpired) return true; if (AUTH_ERR_RE.test(String(e?.message || e))) return true; return lockup && lockupAction(e, { retried }) === 'switch';", '자가치유 판정 본체 승인 — 무단 OR 확대(일시 실패로 실과금 벤더 전환)·필드 판정 삭제(HIGH-1 회귀) 차단');

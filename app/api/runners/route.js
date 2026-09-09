@@ -1,4 +1,5 @@
 import { RUNNERS, detectRunners, runnerStatus, autoRunnerOf, isHiddenRunner } from '../../../src/runners.mjs';
+import { isRetiredRunner } from '../../../src/runners/catalog.mjs';
 import { effectiveModels, loadRemoteCatalog } from '../../../src/runners/catalog-remote.mjs'; // 원격 카탈로그 오버레이(불변식 D)
 import { guardCompany } from '../../auth.mjs';
 
@@ -22,7 +23,7 @@ export async function GET(req) {
     const c = company?.[id];
     const companyConnected = !!c?.company?.connected && !c?.company?.invalid; // 무효(재연결 필요)는 미연결 취급
     return {
-      id, name: r.name, kind: r.kind, mcp: !!r.mcp, models: effectiveModels(id), hidden: isHiddenRunner(id),
+      id, name: r.name, kind: r.kind, mcp: !!r.mcp, models: effectiveModels(id), hidden: isHiddenRunner(id), retired: isRetiredRunner(id), // retired = 제공 종료(gemini)만 — 카드 전용 숨김(http)은 라벨 '제공 종료' 금지
       installed: status[id]?.installed ?? false,
       authed: companyConnected, // 명시 연결만 — 게이트·실행(pickRunner)과 동일 판정
       companyConnected,
