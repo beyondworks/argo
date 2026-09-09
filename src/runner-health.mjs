@@ -18,6 +18,7 @@ import { appendEvent } from './events.mjs';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { RUNNER_AUTH, loadRunnerCred, verifyRunnerCred, runnerCredEnv, isCliTurn } from './runners.mjs';
+import { isCardOnlyRunner } from './runners/catalog.mjs';
 import { GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL, GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL } from './runners/catalog.mjs';
 import { grokExpired } from './runners/grok.mjs';
 import { credHash, HEALTH_FILE_NAME, maskKeyLike } from './runners/shared.mjs';
@@ -170,6 +171,7 @@ export async function runHealthChecks(wsId, {
   let changed = false;
   const checked = [];
   for (const runner of Object.keys(RUNNER_AUTH)) {
+    if (isCardOnlyRunner(runner)) continue; // 엔드포인트가 크루 카드에 있어 자격만으로는 판정 불가 — 영구 초록(거짓) 대신 검진 제외, 401은 턴에서 각인(분리 검수 HIGH-1)
     const entry = state[runner];
     if (!healthDue(entry, runner, nowMs, { intervalMs, billedIntervalMs, jitterMs: jitterMs ?? jitterFor(wsId, runner) })) continue;
     const cred = await loadCredFn(wsId, runner).catch(() => null);

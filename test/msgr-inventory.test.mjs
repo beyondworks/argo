@@ -23,21 +23,23 @@ function db({ orgs = [O1], rows = [] } = {}) {
     async myOrgIds() { calls.push(['myOrgIds']); return orgs; },
     async myCrewRows() { calls.push(['myCrewRows']); return rows; },
     async upsertAvailable(r) { calls.push(['upsertAvailable', r]); },
+    async orgAllowDefaults(ids) { calls.push(['orgAllowDefaults', ids]); return Object.fromEntries(ids.map((id) => [id, id === O1 ? 'all' : 'owner'])); }, // O1 정책 all, O2 정책 행 없음 → owner
     async updateCrewInfo(id, p) { calls.push(['updateCrewInfo', id, p]); },
     async deleteCrews(ids) { calls.push(['deleteCrews', ids]); },
     async myCrews() { return []; }, async nodeHeartbeat() {}, async pendingCrewRequests() { return []; },
   };
 }
 
-test('새 크루는 내가 속한 모든 조직에 available로 — 키·모델 없이 이름·역할·slug만', async () => {
+test('새 크루는 내가 속한 모든 조직에 기본 파견(active, allow = 조직 정책 기본값) — 키·모델 없이 이름·역할·slug만(유건 지시 2026-09-08)', async () => {
   const d = db({ orgs: [O1, O2] });
   const r = await mirrorInventory('ws1', { db: d, uid: UID, agents });
   assert.deepEqual(r, { orgs: 2, inserted: 4, updated: 0, removed: 0 });
   const up = d.calls.find(([k]) => k === 'upsertAvailable')[1];
   assert.equal(up.length, 4);
   for (const row of up) {
-    assert.deepEqual(Object.keys(row).sort(), ['display_name', 'hosting', 'org_id', 'owner_user_id', 'role_text', 'slug', 'status', 'ws_id']);
-    assert.equal(row.status, 'available'); assert.equal(row.hosting, 'local'); assert.equal(row.owner_user_id, UID);
+    assert.deepEqual(Object.keys(row).sort(), ['allow', 'allow_users', 'display_name', 'hosting', 'org_id', 'owner_user_id', 'role_text', 'slug', 'status', 'ws_id']);
+    assert.equal(row.status, 'active'); assert.equal(row.hosting, 'local'); assert.equal(row.owner_user_id, UID);
+    assert.equal(row.allow, row.org_id === O1 ? 'all' : 'owner', '조직 정책 기본값, 정책 없으면 owner'); assert.deepEqual(row.allow_users, []);
   }
 });
 

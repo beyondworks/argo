@@ -22,11 +22,14 @@ const TOOL_STAGE = [
 
 const base = (p) => String(p ?? '').split('/').pop();
 /** 도구 입력에서 "무엇을" 하는지 한 조각 — 클로드코드의 도구 라벨처럼. */
-export function detailForTool(toolName, input = {}) {
+export function detailForTool(toolName, input = {}, { display = false } = {}) {
   try {
     if (/^(Read|Write|Edit|NotebookEdit)$/.test(toolName)) return base(input.file_path);
     if (toolName === 'Glob' || toolName === 'Grep') return input.pattern ?? '';
-    if (toolName === 'Bash') return String(input.command ?? '').replace(/\s+/g, ' ').slice(0, 48);
+    if (toolName === 'Bash') {
+      const description = display && typeof input.description === 'string' ? input.description.trim() : '';
+      return String(description || input.command || '').replace(/\s+/g, ' ').slice(0, description ? 120 : 48);
+    }
     if (toolName === 'WebFetch') return new URL(input.url).hostname;
     if (toolName === 'WebSearch') return String(input.query ?? '').slice(0, 48);
     if (toolName === 'mcp__crew__delegate') return input.to ?? '';

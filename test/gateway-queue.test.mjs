@@ -20,15 +20,16 @@ test('손상 잡 파일: 실행 없이 제거 — 1초 틱 무한 재시도를 �
   await enqueueJob(WS, 'telegram', '2', { text: '정상 잡' });
   const ran = [];
   const stop = startQueueWorker(WS, 'telegram', async (job) => { ran.push(job.text); });
+  // 선점(rename)은 완료가 아니다. 비동기 읽기·핸들러·삭제까지 claimed 파일을 기다린다.
   const deadline = Date.now() + 8000;
   for (;;) {
-    const left = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.json'));
+    const left = (await readdir(dir).catch(() => [])).filter((n) => /\.json(\.claimed)?$/.test(n));
     if (left.length === 0 || Date.now() > deadline) break;
     await new Promise((r) => setTimeout(r, 100));
   }
   stop();
   assert.deepEqual(ran, ['정상 잡'], '손상 잡은 핸들러에 도달하지 않는다');
-  const left = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.json'));
+  const left = (await readdir(dir).catch(() => [])).filter((n) => /\.json(\.claimed)?$/.test(n));
   assert.equal(left.length, 0, '손상 잡도 큐에서 제거된다(잔류 = 무한 재시도)');
 });
 
@@ -44,7 +45,7 @@ test('픽업 순서: update_id 숫자 오름차순(도착 순서 근사), 비숫
   const stop = startQueueWorker(WS, 'telegram', async (job) => { ran.push(job.text); }, { maxInflight: 1 }); // 동시 1 = 픽업 순서가 곧 실행 순서
   const deadline = Date.now() + 12_000;
   for (;;) {
-    const left = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.json'));
+    const left = (await readdir(dir).catch(() => [])).filter((n) => /\.json(\.claimed)?$/.test(n));
     if ((left.length === 0 && ran.length >= 5) || Date.now() > deadline) break;
     await new Promise((r) => setTimeout(r, 100));
   }

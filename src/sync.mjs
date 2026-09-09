@@ -23,7 +23,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
-import { withLock } from './mutex.mjs';
+import { withLock, withDirLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
@@ -72,8 +72,10 @@ export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && proc
     영입 문의 접두(room-*) 예약을 여기 쓰면 이미 있는 정상 'room-service' 크루의 동기화가 조용히 끊긴다(분리 검수 MEDIUM-1).
     .archive/(해고본)는 살아 있는 slug가 아니라 대상 아님. */
 export const isRoomCardRel = (rel) => /^agents\/[^/]+\.md$/.test(rel) && collidesWithRoom(rel.slice('agents/'.length, -'.md'.length));
+const isLocalImportRel = (rel) => rel.split('/')[0] === '.local-assets';
 
 export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
+  if (isLocalImportRel(rel)) return true;
   // ⚠ 순서 불변식(2026-07-23 검수 CRITICAL): **구조적 제외를 반드시 먼저** 평가한다.
   // 암호화 대상 판정을 앞에 두면 ARGO_ENC_VAULT=1일 때 isEncRel이 모든 rel에 true라 조기 반환하면서
   // 아래 규칙 전부가 우회된다 → .sync-state.json(다른 기기 base가 로컬 base를 덮어써 삭제 오판)·
@@ -413,6 +415,7 @@ async function walk(dir, base = dir, out = {}, failed = null) {
   for (const e of entries) {
     const full = join(dir, e.name);
     const rel = full.slice(base.length + 1).split(sep).join('/');
+    if (isLocalImportRel(rel)) continue; // source paths/consents/staging are private to this device
     if (e.isDirectory()) await walk(full, base, out, failed);
     else if (!EXCLUDE(rel)) {
       try {
@@ -655,6 +658,15 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // DEK 보유가 곧 스위치(디스크 사실에서 파생 원칙). 미보유 기기는 v2/평문 기존 동작 그대로(단계 0 불변).
   const sealFor = (rel, buf) => (dek() ? sealSecretV3(buf) : isEncRel(rel) ? sealSecret(buf) : buf);
   const pushBuf = async (rel) => sealFor(rel, await readFile(relFull(rel)));
+  // A remote download can outlive a local import. Recheck the snapshot under the same
+  // lock used by market/import writers before replacing or deleting the MCP file.
+  const withMcpSnapshot = (rel, fn) => withDirLock(`${relFull(rel)}.lock`, async () => {
+    let current = null;
+    try { current = hashBuf(await readFile(relFull(rel))); }
+    catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (current !== (local[rel]?.h ?? null)) throw new Error('MCP changed during sync');
+    return fn();
+  });
   // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지). 원자쓰기(tmp→fsync→rename)로
   // 크래시 시 파일이 잘려 '손상→삭제 오전파'로 번지는 것을 차단(.tmp-는 EXCLUDE라 원격에 안 샌다).
   const writeLocal = async (rel, buf, mtime) => {
@@ -671,11 +683,13 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
         if (/^vault\/(journal|conversations|notes)\/[^/]+\.md$/.test(rel)) await invalidatePath(full);
       }
     };
-    if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);
+    if (rel === 'mcp.json') await withMcpSnapshot(rel, doWrite);
+    else if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);
     else await doWrite();
   };
   const rmLocal = async (rel) => {
-    if (isThread(rel)) await withLock(threadLockKey(wsId, rel), () => rm(relFull(rel), { force: true }));
+    if (rel === 'mcp.json') await withMcpSnapshot(rel, () => rm(relFull(rel), { force: true }));
+    else if (isThread(rel)) await withLock(threadLockKey(wsId, rel), () => rm(relFull(rel), { force: true }));
     else await rm(relFull(rel), { force: true });
   };
   // 로컬 파일이 사라졌지만 같은 자리에 .corrupt- 백업이 있으면 — 사용자 삭제가 아니라 로컬 손상(readJson이 치워둠).
@@ -707,7 +721,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   }
 
   // 회의록 충돌 카드는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
-  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel)));
+  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel)));
 
   const archMoves = archivalCreateNames(local, state); // .archive→.trash 이동의 목적지 basename
   // 로컬 손상(readJson이 .corrupt-로 치워둠)으로 '부재'가 된 삭제 후보 — 삭제가 아니라 self-heal 대상.

@@ -83,7 +83,9 @@ test('release-messenger.yml: 3타깃·작업 디렉터리·버전 게이트·고
   for (const f of ['argo-messenger-macos-apple-silicon.dmg', 'argo-messenger-macos-intel.dmg', 'argo-messenger-windows-setup.exe']) assert.match(y, new RegExp(f));
   assert.match(y, /repository: beyondworks\/argo-messenger/);
   assert.match(y, /tags: \['messenger-v\*'\]/);
-  assert.match(y, /MANIFEST-INCOMPLETE\.txt/);
+  assert.match(y, /node scripts\/release-assets\.mjs dist argo-messenger/);
+  assert.match(y, /if: success\(\) && startsWith/);
+  assert.doesNotMatch(y, /MANIFEST-INCOMPLETE|if: always\(\)/);
   assert.match(y, /VITE_SUPABASE_URL: \$\{\{ secrets\.NEXT_PUBLIC_SUPABASE_URL \}\}/);
   assert.doesNotMatch(y, /SERVICE_ROLE/, '서버 시크릿은 데스크톱 빌드에 넣지 않는다');
 });

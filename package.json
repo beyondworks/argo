@@ -1,6 +1,6 @@
 {
   "name": "argo",
-  "version": "0.1.65",
+  "version": "0.1.66",
   "description": "Argo — 프롬프트 한 줄로 전문 AI 크루를 영입하고, 회사가 폴더 단위 기억으로 항해하는 개인용 AI 회사 SaaS",
   "scripts": {
     "dev": "next dev",
@@ -9,7 +9,7 @@
     "demo": "node demo.mjs",
     "service": "node scripts/service.mjs",
     "stage:sidecar": "node scripts/stage-sidecar.mjs",
-    "app:build": "node scripts/stage-sidecar.mjs && cd src-tauri && npx @tauri-apps/cli@^2 build",
+    "app:build": "node scripts/stage-sidecar.mjs && cd src-tauri && npx @tauri-apps/cli@2.11.4 build",
     "test": "node --test test/*.test.mjs",
     "smoke:standalone": "node scripts/native-standalone-smoke.mjs --rebuild",
     "test:pg": "bash scripts/billing-pg-drill.sh",
@@ -37,10 +37,13 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "d3-force": "^3.0.0",
+    "json5": "2.2.3",
     "marked": "^18.0.6",
     "next": "^15.5.22",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "smol-toml": "1.8.0",
+    "yaml": "2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

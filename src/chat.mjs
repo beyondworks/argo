@@ -10,7 +10,9 @@ import { loadOrgRules, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
 import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
 import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
-import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs'; // 원격 카탈로그·alias(불변식 D)
+import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs';
+import { isCardOnlyRunner } from './runners/catalog.mjs'; // 카드 전용 러너(http) 폴백 금지
+import { externalAgentFormat } from './runners/external-agent.mjs'; // 카드 agent → 실행 포맷(사용자는 format을 몰라도 된다) // 원격 카탈로그·alias(불변식 D)
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
@@ -32,7 +34,7 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
-import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
+import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -69,33 +71,24 @@ export function mcpRecoveries(initMsg, recent) {
 }
 
 export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allow = null) {
-  const dir = paths(wsId).skills;
-  let names = [];
-  try { names = (await readdir(dir)).filter((f) => f.endsWith('.md')).sort(); } catch { return ''; }
-  if (allow) names = names.filter((n) => allow.includes(n.replace(/\.md$/, '')));
-  const texts = new Map();
-  // 항목별 관용(검수 M3) — 이전 break 구현은 뒤쪽 손상 항목에 도달조차 안 했는데, 전량 선행
-  // 읽기로 바꾸면서 디렉터리(EISDIR)·권한(EACCES) 하나가 턴 전체를 죽이는 창이 열렸다. 건너뛴다.
-  for (const n of names) {
-    const text = await readFile(join(dir, n), 'utf8').catch(() => null);
-    if (text !== null) texts.set(n, text);
-  }
-  names = names.filter((n) => texts.has(n));
-  // 3상태 계획(full/ref/omitted)을 **계획대로만** 주입 — ref 상한(검수 M4: 스킬 수백 개면 참조
-  // 라인만으로 프롬프트 비대, 실측 501개=46KB)이 chat만 아는 값이던 것을 계획으로 이관(검수 R2:
-  // 21번째부터 이름조차 미주입인데 마켓은 'ref' 배지를 달던 갭).
-  const { full, ref, omitted } = planSkillInjection(names.map((n) => ({ id: n, size: texts.get(n).length })), cap);
+  const entries = await readInstalledSkills(wsId, allow);
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const { full, ref, omitted } = planSkillInjection(entries, cap);
+  const baseInstruction = (entry) => entry.format !== 'package' ? '' : lang === 'en'
+    ? `(Base path: skills/${entry.id}/ — resolve relative scripts, references and other files from this directory.)\n`
+    : `(기준 경로: skills/${entry.id}/ — 상대 경로의 스크립트·참조 문서·파일은 이 디렉터리를 기준으로 열어라.)\n`;
   let out = '';
-  for (const n of full) {
-    out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${n.replace(/\.md$/, '')}\n${texts.get(n).trim()}\n`;
+  for (const id of full) {
+    const entry = byId.get(id);
+    out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${id}\n${baseInstruction(entry)}${entry.text.trim()}\n`;
   }
-  // 예산 초과분은 **참조로라도 반드시 알린다** — 존재를 모르면 크루가 "그런 스킬 없다"고 답한다.
-  // skills/는 크루 책상이라 게이트가 열려 있어 Read로 전문을 열 수 있다(그 계약을 여기서 준다).
-  for (const n of ref) {
-    const id = n.replace(/\.md$/, '');
+  for (const id of ref) {
+    const entry = byId.get(id);
+    const path = entry.path ?? `skills/${id}.md`;
     out += lang === 'en'
-      ? `\n### Skill: ${id}\n(Body omitted — injection budget exceeded. Read skills/${n} for the full text and apply it when relevant.)\n`
-      : `\n### 스킬: ${id}\n(본문 생략 — 주입 예산 초과. 해당 작업이면 skills/${n} 을 Read로 열어 전문을 적용하라.)\n`;
+      ? `\n### Skill: ${id}\n(Body omitted — injection budget exceeded. Read ${path} for the full text and apply it when relevant.)\n`
+      : `\n### 스킬: ${id}\n(본문 생략 — 주입 예산 초과. 해당 작업이면 ${path} 을 Read로 열어 전문을 적용하라.)\n`;
+    out += baseInstruction(entry);
   }
   if (omitted.length) {
     out += lang === 'en'
@@ -326,7 +319,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 // (사장이 직접 등록해야 성립하는 자해 경로지만, 이 줄의 명령형이 세므로 주입 지점에서 접는다).
 const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' ');
 
-export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '' } = {}) {
+export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat' } = {}) {
   // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
   // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
   const otherRoots = workRoots.filter((r) => fold(r) !== fold(pinnedFolder)); // 판정(activePin)과 같은 잣대
@@ -353,6 +346,11 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
       ? `\n- External services connected by login (connectors): ${connectorNames(connectors, true)}. The Argo core runs these calls, so they work the same on any runner — reads are free, but anything that leaves the company (send, publish, create, update, delete) needs approval first.`
       : `\n- 로그인으로 연결된 외부 서비스(커넥터): ${connectorNames(connectors, false)}. Argo 코어가 실행하므로 러너와 무관하게 쓸 수 있다 — 조회·읽기는 자유롭게, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 결재를 먼저 올려라.`)
     : '';
+  const responsePacing = ['chat', 'messenger'].includes(source)
+    ? (lang === 'en'
+      ? '\n## Interactive response delays\n- For a normal question or status summary, use the smallest relevant lookup first. If external rate limits require a long wait, do not block the conversation with sleep or repeated polling: answer with verified facts and identify the unverified remainder and the service limitation. Never claim that a failed lookup found nothing.\n- If the captain explicitly asks you to wait or run work in the background, follow that request using the supported execution tools; describe the wait before starting it. This rule does not shorten necessary builds, tests, or other work the captain requested.\n'
+      : '\n## 대화 응답 지연\n- 일반 질문·현황 요약은 관련된 최소 범위부터 조회하라. 외부 서비스 조회 한도 때문에 오래 기다려야 하면 sleep이나 반복 조회로 대화를 붙들지 말고, 확인된 사실을 먼저 답하고 미확인 범위와 서비스 제한을 밝혀라. 조회 실패를 결과 없음으로 말하지 마라.\n- 사장이 명시적으로 기다려 달라거나 백그라운드 작업을 요청했다면 지원되는 실행 도구로 그 지시를 따르고, 대기 전에 이유를 알려라. 이 규칙은 사장이 요청한 빌드·검수 등 필요한 작업 시간을 줄이라는 뜻이 아니다.\n')
+    : '';
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     return `\n## Approval rules — must follow
@@ -361,7 +359,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
 ## Local capabilities — full access
-- File system: ${isCliRunner(runner) && runner !== 'codex' ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
+- File system: ${isCliRunner(runner) && runner !== 'codex' && runner !== 'http' ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
 ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up current information): allowed.
 - Shell commands: allowed.
 - Preparation work (tool installs, setup) runs without approval. Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.
@@ -377,7 +375,7 @@ ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up curren
 - Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through dedicated tools — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
 - If the captain asks you to change Argo's design, settings, or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.
 
-## Your environment (Argo) — guide the captain precisely when blocked
+${responsePacing}## Your environment (Argo) — guide the captain precisely when blocked
 - You work inside an Argo company. External tools (MCP) are connected PER COMPANY — this runtime does NOT inherit the computer's Claude Code config (.claude.json, .mcp.json) by design (tenant isolation). Never hunt for those files.${caps.shell ? `
 - **Long-running commands (browser automation, bulk scraping, builds) must run in the foreground until they finish.** Pass a generous Bash timeout (milliseconds, max 600000 = 10 min). Example: expecting ~5 minutes → timeout: 420000.
 - **Output from anything you background (\`&\`, nohup, run_in_background) is lost unless you collect it within this same turn.** When the turn ends the shell session closes, so the next turn cannot read that output (this differs from native Claude Code, where the session stays alive). Never fire a job into the shell background and end the turn expecting to pick it up later.
@@ -393,7 +391,7 @@ ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up curren
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
 ## 로컬 능력 — 전권
-- 파일 시스템: ${isCliRunner(runner) && runner !== 'codex' ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
+- 파일 시스템: ${isCliRunner(runner) && runner !== 'codex' && runner !== 'http' ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
 ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
 - 셸 명령: 허용.
 - 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다. **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.
@@ -409,7 +407,7 @@ ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 �
 - 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 전용 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
 - 사장이 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
 
-## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
+${responsePacing}## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
 - 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.${caps.shell ? `
 - **오래 걸리는 명령(브라우저 자동화·대량 수집·빌드 등)은 전경에서 끝까지 기다려라.** Bash의 timeout을 넉넉히 지정하면 된다(밀리초, 최대 600000 = 10분). 예: 5분 예상이면 timeout: 420000.
 - **백그라운드(\`&\`·nohup·run_in_background)로 돌린 작업의 출력은 이 턴 안에서 회수하지 못하면 사라진다.** 턴이 끝나면 셸 세션이 닫혀 다음 턴에서 그 출력을 읽을 수 없다(네이티브 Claude Code와 다른 점 — 거기선 세션이 계속 살아 있다). 그러니 결과가 필요한 작업은 절대 셸 백그라운드로 던지고 턴을 끝내지 마라.
@@ -870,7 +868,9 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
     if (!e?.knownInvalid) { // 게이트가 이미 끊은 턴은 재프로브·재각인 불요(이미 vendor 확정)
       const c = cred ?? await loadCredFn(wsId, runner).catch(() => null);
       if (c && c.type !== 'host') {
-        if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
+        if (isCardOnlyRunner(runner) && (e?.httpStatus === 401 || e?.httpStatus === 403)) { origin = 'vendor'; await markFn(wsId, runner, c.value).catch(() => {}); } // 엔드포인트가 카드에 있어 독립 프로브가 없다 — 벤더의 401·403이 곧 판정(불변식 A, 분리 검수 HIGH-1)
+        else if (isCardOnlyRunner(runner)) { origin = 'probe'; } // 그 밖의 실패는 판정 불가 — 우리 배관 탓으로 몰지 않는다
+        else if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
         else {
           const v = await verifyFn(runner, c.type, c.value).catch(() => ({ ok: null }));
           origin = v?.ok === false ? 'vendor' : v?.ok === true ? 'argo' : 'probe';
@@ -1120,7 +1120,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin })}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource })}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -1145,13 +1145,13 @@ ${lang === 'en'
       let usedModel = effModel;
       let reply;
       try {
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, endpoint: meta.endpoint ?? '', format: externalAgentFormat(meta), effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
       } catch (e) {
         const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, endpoint: meta.endpoint ?? '', format: externalAgentFormat(meta), effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -1271,7 +1271,7 @@ ${lang === 'en'
           return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
-      if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1)
+      if (!aborted && !isCardOnlyRunner(runner) && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1). 카드 전용(http)은 폴백 금지 — 외부 두뇌 크루가 다른 두뇌로 답하지 않는다(2차 검수 HIGH-A), 실패는 surfaceRunnerFailure로 내려가 401을 각인한다
         const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
         if (alt?.available && !tried.includes(alt.runner)) {
           console.warn(`[argo] ${runner} ${e?.toolLockup ? '도구 잠김(재조달 후에도)' : '인증 실패'} — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
@@ -1439,7 +1439,7 @@ ${lang === 'en'
   // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
   const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
     + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
-    + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
+    + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder, source: turnSource })
     + messengerNote
     + fallbackDirective;
   const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || openrouterFallbackModel(wantModel)) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
@@ -1525,7 +1525,7 @@ ${lang === 'en'
       const thoughtNow = (msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim();
       if (thoughtNow) thought = thought ? `${thought}\n\n${thoughtNow}` : thoughtNow;
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
-      const detail = tu ? detailForTool(tu.name, tu.input) : '';
+      const detail = tu ? detailForTool(tu.name, tu.input, { display: true }) : '';
       for (const b of tus) step(stageForTool(b.name), detailForTool(b.name, b.input)); // 도구 하나 = 단계 하나
       await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, steps);
     }

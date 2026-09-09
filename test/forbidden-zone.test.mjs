@@ -474,6 +474,7 @@ const DOT_ITEMS = [
   ['root', '.account-secrets-3f2a1b7c-0000-4000-8000-000000000001.json'],
   ['root', '.account-secrets.json'],
   ['root', '.device-id'], ['root', '.guest-mode.json'],
+  ['root', '.local-assets/key'], ['ws', '.local-assets/staging/file'],
   ['root', '.sync-process.lock'], ['root', '.tombstones/my-co.json'],
   ['root', '.scheduler.lock'], ['root', '.gateway.lock'],
 ];
@@ -595,4 +596,3 @@ test('윈도우식 홈 표기도 Bash 리터럴 방어 — Bash 도구가 PowerS
   for (const c of deny) assert.equal((await gate('Bash', { command: c })).behavior, 'deny', c);
   for (const c of ['Get-Content notes.md', 'echo $HOME', 'type %USERPROFILE%\\Desktop\\todo.txt', 'ls ~/projects']) assert.equal((await gate('Bash', { command: c })).behavior, 'allow', c);
 });
-

@@ -84,7 +84,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async updateApproval(id, patch) { rec('updateApproval', id, patch); return approvalRows; },
     async approvalsByIds(ids) { rec('approvalsByIds', ids); return approvals; },
     // H-2: 서버 판정 흉내 — 실제 msgr_can_instruct와 같은 규칙(크루 행 기준). throw 시 브리지는 로컬 판정으로 폴백한다.
-    async instructCheck(crewId, authorId, channelId) { rec('instructCheck', crewId, authorId, channelId); if (canInstructThrows) throw new Error('rpc down'); if (channelPolicy[channelId] && channelPolicy[channelId] !== 'allowed') return 'channel_policy'; const c = crews.find((x) => x.id === crewId); return M.allowedToInstruct(c, authorId, OWNER) ? 'ok' : 'crew_allow'; },
+    async instructCheck(crewId, authorId, channelId) { rec('instructCheck', crewId, authorId, channelId); if (canInstructThrows) throw new Error('rpc down'); if (channelPolicy[channelId] && channelPolicy[channelId] !== 'allowed') return 'channel_policy'; const c = crews.find((x) => x.id === crewId) ?? peers?.find((x) => x.id === crewId); return c && M.allowedToInstruct(c, authorId, OWNER) ? 'ok' : 'crew_allow'; },
     async canDecide(apId) { rec('canDecide', apId); return canDecide; },
     // G-2 조직 문서 미러 — 기본은 문서 0(드레인 테스트가 미러로 오염되지 않게)
     async org(orgId) { rec('org', orgId); return orgInfo; },
@@ -537,7 +537,7 @@ test('UX 3/3 nodeRunnerInfo — 자격 있는 비숨김 러너만, 모델 id·la
 });
 
 const ZED = 'cccccccc-0000-4000-8000-000000000002', PEP = 'cccccccc-0000-4000-8000-000000000003';
-test('drain: 한 메시지에 여러 크루 멘션 → 멘션 순서 잡 이름·after(앞 크루, 내 것만) · hop 0·origin=사람', async () => {
+test('drain: 한 메시지에 여러 크루 멘션 → 멘션 순서 잡 이름·after(허용된 앞 크루) · hop 0·origin=사람', async () => {
   const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' }); const me = crew();
   const db = fakeDb({ crews: [me, zed], messages: [msg(11, { mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: PEP }, { kind: 'crew', id: CREW }] })] });
   const enq = fakeEnqueue();
@@ -545,9 +545,25 @@ test('drain: 한 메시지에 여러 크루 멘션 → 멘션 순서 잡 이름�
   const ids = enq.calls.map((c) => c[2]).sort();
   assert.deepEqual(ids, ['11-00-zed', '11-02-seoyun'], '잡 이름 = <msg>-<멘션 순번>-<slug> — 큐 정렬이 멘션 순서');
   const mine = jobsOf(enq).find((j) => j.slug === 'seoyun');
-  assert.deepEqual(mine.after, [ZED], '앞에 멘션된 내 크루만 기다린다(남의 크루 PEP는 제외)');
+  assert.deepEqual(mine.after, [ZED], '허용된 앞 크루만 기다린다(PEP는 권한 거절)');
   assert.equal(mine.hop, 0); assert.equal(mine.origin, MEMBER); assert.equal(mine.authorId, MEMBER); assert.equal(mine.fromCrewId, null);
   assert.deepEqual(jobsOf(enq).find((j) => j.slug === 'zed').after, []);
+});
+
+test('drain: 다른 PC·외부 봇도 허용되면 선행 순서를 공유하고 권한 철회 시 기다리지 않는다', async () => {
+  const db = fakeDb({ messages: [msg(11, { mentions: [{ kind: 'crew', id: PEP }, { kind: 'crew', id: CREW }] })] });
+  const original = db.instructCheck;
+  db.instructCheck = async (id, ...args) => id === PEP ? 'ok' : original.call(db, id, ...args);
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.deepEqual(jobsOf(enq)[0].after, [PEP], '다른 기기·봇 선행 답변도 문맥으로 읽는다');
+  let ran = 0;
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async () => { ran++; return { reply: 'done', sessionId: null }; } });
+  assert.equal(await h(jobsOf(enq)[0]), (await import('../src/gateway/queue.mjs')).DEFER);
+  assert.equal(ran, 0);
+  db.instructCheck = async (id, ...args) => id === PEP ? 'crew_allow' : original.call(db, id, ...args);
+  await h(jobsOf(enq)[0]);
+  assert.equal(ran, 1, '선행 권한 철회는 10분 대기를 만들지 않는다');
 });
 
 test('drain: 크루 답글의 @멘션 → 상대 크루 턴(origin·hop은 meta가 아니라 뿌리 사람 글·스레드 집계에서 — 위조 불가) · 자기 멘션·표지 없음(쪽지 미러)·뿌리 없음·상한 초과는 안 돈다', async () => {
@@ -628,7 +644,7 @@ test('순수: mentionsIn — 답변 속 @크루 이름만, 자기 자신 제외,
 
 test('handler: 턴 전 핵심 DB 조회 실패는 유료 실행 없이 재시도하고 복구 뒤 정확히 한 번 답한다', async () => {
   for (const method of ['settled-prev', 'settled-self', 'channel', 'orgCrews', 'contextOf', 'message', 'attachmentsOf', 'org']) {
-    const db = fakeDb({ settledFn: (id) => id === ZED });
+    const db = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed' })], settledFn: (id) => id === ZED });
     const key = method.startsWith('settled-') ? 'settled' : method;
     const read = db[key];
     let fail = true;
@@ -645,6 +661,33 @@ test('handler: 턴 전 핵심 DB 조회 실패는 유료 실행 없이 재시도
     await handler(job);
     assert.equal(turns, 1, `${method}: DB 복구 후 한 번 실행`);
     assert.equal(db.calls.filter(([name]) => name === 'insertMessage').length, 1, `${method}: DB 복구 후 답글 한 개`);
+  }
+});
+
+for (const kind of ['public', 'private', 'dm', 'unknown', null, undefined]) test(`handler: ${kind} 채널 답글의 궤적 저장 범위와 넘김·종료 메타 보존`, async () => {
+  const trace = { steps: [{ stage: 'memory', detail: 'notes.md', t: 1200 }], thought: '검토 중', ms: 3400, model: 'test-model', costUsd: 0.25 };
+  for (const disposition of ['handoff', 'done']) {
+    const db = fakeDb({ peers: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드' })] });
+    db.channelOverride = { kind };
+    const job = { msgId: 39, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '검토해줘', authorId: MEMBER, threadRoot: 30, hop: 2, origin: OWNER, createdAt: new Date().toISOString() };
+    await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async () => ({
+      reply: `검토 결과. @제드 다음 단계.\nMSGR: ${disposition}`, trace, sessionId: null, artifacts: [],
+    }) })(job);
+    const replies = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+    assert.equal(replies.length, 1);
+    const row = replies[0];
+    assert.equal(row.body, '검토 결과. @제드 다음 단계.');
+    assert.equal(row.channel_id, CH);
+    assert.equal(row.reply_to, 39);
+    assert.equal(row.thread_root, 30);
+    assert.deepEqual(row.mentions, disposition === 'handoff' ? [{ kind: 'crew', id: ZED }] : []);
+    const expected = { hop: 2, origin: OWNER, ...(disposition === 'done' ? { disposition: 'done' } : {}) };
+    if (kind === 'public') expected.trace = { steps: trace.steps, thought: trace.thought, ms: trace.ms, model: trace.model };
+    assert.deepEqual(row.meta, expected, '비공개·DM·종류 미확인 채널은 trace 없이 일반 답글 메타를 보존');
+    assert.deepEqual(job.msgrExecution.replyRow.meta, expected, '재시도용 체크포인트에도 동일한 공개 범위 적용');
+    assert.equal(Object.hasOwn(row.meta, 'costUsd'), false);
+    assert.equal(Object.hasOwn(row.meta.trace ?? {}, 'costUsd'), false);
+    assert.equal(trace.costUsd, 0.25, '러너 원본 궤적은 변경하지 않는다');
   }
 });
 

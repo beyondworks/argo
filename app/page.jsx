@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Logo, Icon, Avatar, Spinner, Skeleton, ConfirmModal, api, imeGuard, timeAgo } from './ui';
 import { AiConnectionCard, ACCOUNT_WS, anyRunnerUsable, runnerNeedsReconnect } from './runner-connect';
 import { useLang } from './i18n';
+import { LocalAssetOffer } from './components/LocalAssetImport';
 
 export default function Home() {
   const { t, lang } = useLang();
@@ -15,6 +16,7 @@ export default function Home() {
   const [presets, setPresets] = useState([]);
   const [preset, setPreset] = useState('');
   const [creating, setCreating] = useState(false);
+  const [importLocalAssets, setImportLocalAssets] = useState(false);
   const [error, setError] = useState('');
   const [pairCode, setPairCode] = useState('');
   const [pairState, setPairState] = useState(''); // '' | 'waiting' | 'done'
@@ -32,6 +34,8 @@ export default function Home() {
   const isGuest = me?.authOn && me?.user?.id === 'local'; // 게스트(로컬 전용) — 상단바에 로그인 CTA
   const onboarding = companies !== null && companies.length === 0;
   const runnerReady = !!acctRunners && anyRunnerUsable(acctRunners);
+
+  useEffect(() => { setImportLocalAssets(false); }, [me?.user?.id]);
 
   useEffect(() => {
     // lang 의존 — 프리셋 picker 라벨이 UI 언어를 따르고, cmd+/ 전환 시 즉시 갱신된다.
@@ -94,6 +98,10 @@ export default function Home() {
     try {
       const { company, firstCrew } = await api('/api/companies', { name, preset, lang });
       // 아하 모먼트 — 프리셋 회사는 첫 크루 채팅으로 직행: 시운전(첫 인사+샘플 산출물)이 눈앞에서 도착한다
+      if (onboarding && importLocalAssets) {
+        router.replace(`/c/${company.id}/import${firstCrew ? `?firstCrew=${encodeURIComponent(firstCrew)}` : ''}`);
+        return;
+      }
       router.push(firstCrew ? `/c/${company.id}/crew/${firstCrew}` : `/c/${company.id}`);
     } catch (err) {
       setError(String(err.message)); setCreating(false);
@@ -209,6 +217,7 @@ export default function Home() {
             <AiConnectionCard ws={ACCOUNT_WS} accordion />
           </div>
         )}
+        {onboarding && <LocalAssetOffer key={me?.user?.id ?? 'local'} selected={importLocalAssets} onChange={setImportLocalAssets} disabled={creating} />}
         <form onSubmit={create} className="input-bar fade-up" style={{ animationDelay: '0.06s' }}>
           <input suppressHydrationWarning
             placeholder={t('home.namePlaceholder')}

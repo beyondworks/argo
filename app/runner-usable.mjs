@@ -14,9 +14,9 @@ export function anyRunnerUsable(runners) {
 }
 
 /** 연결된 것이 숨김 러너뿐인가 — "Gemini는 더 이상 제공되지 않습니다 — 다른 러너를 연결해 주세요" 분기용 */
-export function onlyHiddenConnected(runners) {
+export function onlyHiddenConnected(runners) { // '제공 종료'(retired) 러너만 — 카드 전용 숨김(http)은 정상 연결(분리 검수 MEDIUM-3)
   const on = Object.values(runners ?? {}).filter((r) => r.company?.connected && !r.company?.invalid);
-  return on.length > 0 && on.every((r) => r.hidden);
+  return on.length > 0 && on.every((r) => r.retired);
 }
 
 /** 무효 자격 칩의 i18n 키(순수) — 제공되지 않는 연결 방식(gemini 구독·host)은 "토큰 형식 불량"이 아니라 "이 방식은 더 이상 제공되지 않음"으로(3R M-2·4R LOW-2 게이트). */

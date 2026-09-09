@@ -40,7 +40,7 @@ test('설정 — 카드 18개가 정확히 한 탭에만, 순서는 작은 카�
   assert.doesNotMatch(src, /scrollIntoView/, '스크롤 딥링크 잔재 없음(탭 활성화로 대체)');
   const p = panes(src, ids);
   const cards = {
-    general: ["onSubmit={saveName}", "t('settings.spec')", '<LanguageCard />', '<CrewLanguageCard', '<ZoomCard />', '<ThemeCard />'],
+    general: ["onSubmit={saveName}", "t('settings.spec')", '<LanguageCard />', '<CrewLanguageCard', '<ZoomCard />', '<ThemeCard />', '<LocalAssetImport'],
     ai: ['<AiConnectionCard'],
     connections: ['kind="telegram"', 'kind="slack"', '<MsgrCard', '<ConnectorsCard'], // MsgrCard = 팀 메신저 조직 파견(브리지 합류 2026-09-06)
     devices: ['<DevicesCard', '<UpdateCard />', '<SystemPermissionsCard />', '<ExportCard', '<TrashCard', '<WorkRootsCard', '<SyncCard', '<E2eeCard />', '<ImportCard'],
@@ -52,7 +52,7 @@ test('설정 — 카드 18개가 정확히 한 탭에만, 순서는 작은 카�
       assert.deepEqual(inPane, [id], `${c} → ${id} 탭에만`);
     }
   }
-  assert.equal(Object.values(cards).flat().length, 21, '카드 목록 점검용 상수(18 카드 + 회사 정보·제원·보관 = 21 항목)');
+  assert.equal(Object.values(cards).flat().length, 22, '카드 목록 점검용 상수(18 카드 + 회사 정보·제원·보관 = 22 항목)');
   // 행 묶음: 변동이 큰 카드(연결·커넥터·외부 폴더·동기화·E2EE·가져오기·테마·AI)는 혼자 한 행 — 이웃을 늘리지 않는다
   const rows = src.split('<div className="cardrow">').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('\n      </div>\n') === -1 ? undefined : chunk.indexOf('\n      </div>\n')));
   const cardCount = (chunk) => (chunk.match(/<[A-Z][A-Za-z0-9]+Card\b|<ConnectionCard\b|className="card"/g) ?? []).length; // form도 className="card"로 센다
@@ -70,7 +70,7 @@ test('설정 — 카드 18개가 정확히 한 탭에만, 순서는 작은 카�
   for (const id of ids) assert.match(src, new RegExp(`\\{tab === '${id}' && \\(\\n\\s*<div className="cardcols" data-tab-pane="${id}">`), `${id} 게이트 = pane`);
   assert.equal((src.match(/\{tab === '/g) ?? []).length, 5, '탭 조건은 정확히 5개(false && 같은 앞세움 없음)');
   assert.equal((src.match(/<div className="cardcols" data-tab-pane="/g) ?? []).length, 5, '탭 본문 5개 전부 행 묶음(.cardcols > .cardrow)');
-  assert.equal((src.match(/<div className="cardrow">/g) ?? []).length, 15, '행 수: 일반 3·AI 1·연결 4(텔레그램·슬랙·메신저·커넥터)·기기 6·위험 1');
+  assert.equal((src.match(/<div className="cardrow">/g) ?? []).length, 16, '행 수: 일반 4·AI 1·연결 4(텔레그램·슬랙·메신저·커넥터)·기기 6·위험 1');
   assert.doesNotMatch(src, /gridColumn: '1 \/ -1'/, '카드 안 전폭 인라인 잔재 없음(행이 폭을 정한다)');
   assert.doesNotMatch(src, /function Section\(/, '옛 Section 래퍼 제거');
 });

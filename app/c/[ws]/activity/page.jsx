@@ -8,7 +8,7 @@ import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
 
 // 러너 표시명 — 서버 RUNNERS.name 준거(runner-connect RUNNER_NAMES와 같은 값)
-const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
+const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok', http: 'HTTP' };
 
 const isError = (e) => e.ok === false;
 const inFilter = (e, f) => {
@@ -118,13 +118,13 @@ export default function Activity({ params }) {
       // 러너 주기 검진(P1-2 후속) — 갈래가 없으면 기본 행으로 떨어져 '? / RUNNER-HEALTH' 원문이
       // 그대로 노출된다(mcp가 이미 한 번 겪은 결함 — 검수 HIGH-2 라이브 실측). 사유별 문구는
       // 설정 카드와 같은 사전 키를 쓴다(두 표면 드리프트 방지).
-      const label = RUNNER_LABELS[e.runner] ?? e.runner ?? '?';
+      const label = e.runner === 'http' ? t('runner.external') : (RUNNER_LABELS[e.runner] ?? e.runner ?? '?');
       const desc = e.ok === false ? t(healthFailMessageKey(e.reason)) : t('activity.runnerHealthOk', { runner: label });
       return { who: label, avatar: label, desc, chip: t('activity.runnerHealth'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }
     if (e.type === 'failure-digest') {
       // 실패 서명 다이제스트(재발 방지 5) — 같은 오류가 24h에 N회 반복. 원문(sample)은 제보에 쓰는 문장이라 그대로 보인다.
-      const label = RUNNER_LABELS[e.runner] ?? e.runner ?? '?';
+      const label = e.runner === 'http' ? t('runner.external') : (RUNNER_LABELS[e.runner] ?? e.runner ?? '?');
       return { who: label, avatar: label, desc: `${t('activity.failureDigest', { count: e.count })} — ${e.sample ?? e.signature ?? ''}`, chip: t('activity.failureDigestChip'), danger: true, href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }
     if (e.type === 'shell-fallback') {

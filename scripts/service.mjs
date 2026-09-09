@@ -15,17 +15,22 @@
 // 주의: node 경로를 설치 시점의 절대 경로로 굽는다(launchd는 셸 PATH가 없다).
 //       nvm 등으로 node를 갈아끼웠다면 install을 다시 실행하면 된다.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { localBindProof } from '../src/local-asset-access.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const PORT = Number(process.env.ARGO_PORT || 3999);
+const installedUnitPath = join(homedir(), '.config', 'systemd', 'user', 'argo.service');
+const installedUnit = process.platform === 'linux' && existsSync(installedUnitPath) ? readFileSync(installedUnitPath, 'utf8') : null;
+const installedArgs = installedUnit?.match(/^ExecStart=(.+) start -H ([^\s]+) -p (\d+)$/m);
+const PORT = Number(process.env.ARGO_PORT || installedArgs?.[3] || 3999);
 // 로컬 상주 서비스는 이 기기 전용 — 루프백에만 바인딩해 같은 와이파이의 타인이
 // (로컬 모드는 무인증) 전 API에 닿는 것을 차단한다. 클라우드/멀티유저는 인증을 켠 뒤
 // ARGO_HOST=0.0.0.0 으로 명시 opt-in(리버스 프록시 뒤 권장).
-const HOST = process.env.ARGO_HOST || '127.0.0.1';
+const HOST = process.env.ARGO_HOST || installedArgs?.[2] || '127.0.0.1';
+const BIND_PROOF = localBindProof(HOST);
 const LABEL = 'com.beyondworks.argo';
 const NODE = process.execPath;
 const NEXT_BIN = join(ROOT, 'node_modules', 'next', 'dist', 'bin', 'next');
@@ -57,9 +62,41 @@ function ensureBuild() {
 
 async function probe() {
   try {
-    const res = await fetch(`http://127.0.0.1:${PORT}/api/companies`, { signal: AbortSignal.timeout(4000) });
-    return res.ok;
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/ping`, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return false;
+    const ping = await res.json();
+    const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+    const buildId = readFileSync(join(ROOT, '.next', 'BUILD_ID'), 'utf8').trim();
+    return Boolean(buildId && ping.argo === true && ping.version === version && ping.buildId === buildId);
   } catch { return false; }
+}
+
+function assertIdle() {
+  let installedRoot;
+  if (installedUnit !== null) {
+    if (!installedArgs || !installedUnit.split('\n').includes(`WorkingDirectory=${ROOT}`) || !installedArgs[1].endsWith(` ${NEXT_BIN}`)) throw new Error('사용자 지정 서비스 실행 경로입니다 — 기존 unit을 보존하고 중단합니다');
+    installedRoot = installedUnit.match(/^Environment=ARGO_ROOT=(.+)$/m)?.[1];
+    for (const [, value] of installedUnit.matchAll(/^EnvironmentFile=(.+)$/gm)) {
+      const optional = value.startsWith('-'), filename = (optional ? value.slice(1) : value).replace(/^"(.*)"$/, '$1');
+      if (!filename.startsWith('/') || /[%*?\\]/.test(filename)) throw new Error('사용자 지정 환경 파일 경로입니다 — 기존 unit을 보존하고 중단합니다');
+      if (optional && !existsSync(filename)) continue;
+      // EnvironmentFile overrides Environment regardless of directive order. Do not
+      // guess its data root or stop a worker whose active data cannot be inspected.
+      if (/\b(?:ARGO_ROOT|CREWBASE_ROOT)\b/.test(readFileSync(filename, 'utf8'))) throw new Error('환경 파일의 데이터 경로는 자동 갱신할 수 없습니다 — 기존 unit을 보존하고 중단합니다');
+    }
+  }
+  const root = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || installedRoot || join(ROOT, 'workspaces');
+  const entries = dir => { try { return readdirSync(dir, { withFileTypes: true }); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } };
+  for (const company of entries(root).filter(e => e.isDirectory() && !e.name.startsWith('.'))) {
+    const base = join(root, company.name);
+    for (const file of entries(join(base, 'chats')).filter(e => e.isFile() && e.name.endsWith('.status.json'))) {
+      const status = JSON.parse(readFileSync(join(base, 'chats', file.name), 'utf8'));
+      if (status.ts && Date.now() - status.ts < 120_000) throw new Error('실행 중인 작업이 있습니다 — 작업 종료 후 다시 설치하세요');
+    }
+    for (const queue of entries(base).filter(e => e.isDirectory() && e.name.startsWith('.gw-queue'))) {
+      if (entries(join(base, queue.name)).some(e => e.isFile())) throw new Error('대기 중인 작업이 있습니다 — 작업 종료 후 다시 설치하세요');
+    }
+  }
 }
 
 /* ─── macOS: launchd LaunchAgent ─── */
@@ -68,7 +105,7 @@ function darwinInstall() {
   const { dir, out, err } = logPaths();
   mkdirSync(dir, { recursive: true });
   mkdirSync(dirname(plistPath()), { recursive: true });
-  const env = { NODE_ENV: 'production', PATH: `${dirname(NODE)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin` };
+  const env = { NODE_ENV: 'production', ARGO_LOCAL_BIND_PROOF: BIND_PROOF, PATH: `${dirname(NODE)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin` };
   if (process.env.ARGO_ROOT) env.ARGO_ROOT = process.env.ARGO_ROOT; // 설치 시점 데이터 루트를 굽는다
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -115,8 +152,26 @@ function linuxInstall() {
   const { dir, out, err } = logPaths();
   mkdirSync(dir, { recursive: true });
   mkdirSync(dirname(unitPath()), { recursive: true });
-  const extraEnv = process.env.ARGO_ROOT ? `Environment=ARGO_ROOT=${process.env.ARGO_ROOT}\n` : '';
-  writeFileSync(unitPath(), `[Unit]
+  const previous = installedUnit;
+  const active = sh('systemctl', ['--user', 'is-active', '--quiet', 'argo']).ok;
+  const enabled = sh('systemctl', ['--user', 'is-enabled', '--quiet', 'argo']).ok;
+  const restore = () => {
+    sh('systemctl', ['--user', 'stop', 'argo']);
+    if (previous === null) rmSync(unitPath(), { force: true }); else writeFileSync(unitPath(), previous);
+    if (!enabled) sh('systemctl', ['--user', 'disable', 'argo']);
+    sh('systemctl', ['--user', 'daemon-reload']);
+    if (active) sh('systemctl', ['--user', 'start', 'argo']);
+  };
+  const dataRoot = process.env.ARGO_ROOT || previous?.match(/^Environment=ARGO_ROOT=(.+)$/m)?.[1];
+  const extraEnv = dataRoot ? `Environment=ARGO_ROOT=${dataRoot}\n` : '';
+  let updated = previous?.replace(/^ExecStart=(.+) start -H [^\s]+ -p \d+$/m, `ExecStart=$1 start -H ${HOST} -p ${PORT}`);
+  if (updated !== undefined) {
+    const proof = `Environment=ARGO_LOCAL_BIND_PROOF=${BIND_PROOF}`;
+    updated = /^Environment=ARGO_LOCAL_BIND_PROOF=.*$/m.test(updated) ? updated.replace(/^Environment=ARGO_LOCAL_BIND_PROOF=.*$/gm, proof) : `${updated}\n[Service]\n${proof}\n`;
+    if (process.env.ARGO_ROOT) updated = /^Environment=ARGO_ROOT=.*$/m.test(updated) ? updated.replace(/^Environment=ARGO_ROOT=.*$/gm, `Environment=ARGO_ROOT=${dataRoot}`) : `${updated}\n[Service]\n${extraEnv}`;
+  }
+  try {
+    writeFileSync(unitPath(), updated ?? `[Unit]
 Description=Argo — AI crew company server
 After=network-online.target
 
@@ -126,17 +181,23 @@ WorkingDirectory=${ROOT}
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
+Environment=ARGO_LOCAL_BIND_PROOF=${BIND_PROOF}
 ${extraEnv}StandardOutput=append:${out}
 StandardError=append:${err}
 
 [Install]
 WantedBy=default.target
 `);
-  sh('systemctl', ['--user', 'daemon-reload']);
-  const r = sh('systemctl', ['--user', 'enable', '--now', 'argo']);
-  if (!r.ok) { console.error('[argo] systemd 등록 실패:', r.out); process.exit(1); }
+    const reload = sh('systemctl', ['--user', 'daemon-reload']);
+    if (!reload.ok) throw new Error('systemd 설정 갱신 실패');
+    const r = sh('systemctl', ['--user', 'enable', 'argo']);
+    if (!r.ok) throw new Error('systemd 등록 실패');
+    const started = sh('systemctl', ['--user', 'restart', 'argo']);
+    if (!started.ok) throw new Error('systemd 기동 실패');
+  } catch (error) { restore(); throw error; }
   const linger = sh('loginctl', ['enable-linger', process.env.USER ?? '']);
   if (!linger.ok) console.log('[argo] 참고: linger 설정 실패 — 로그아웃 중에도 돌리려면 `loginctl enable-linger`를 수동 실행하세요');
+  return restore;
 }
 const linuxUninstall = () => { sh('systemctl', ['--user', 'disable', '--now', 'argo']); rmSync(unitPath(), { force: true }); sh('systemctl', ['--user', 'daemon-reload']); };
 const linuxRegistered = () => sh('systemctl', ['--user', 'is-enabled', 'argo']).ok;
@@ -150,6 +211,7 @@ function winInstall() {
   writeFileSync(winCmdPath(), `@echo off\r
 cd /d "${ROOT}"\r
 set NODE_ENV=production\r
+set ARGO_LOCAL_BIND_PROOF=${BIND_PROOF}\r
 :loop\r
 "${NODE}" "${NEXT_BIN}" start -H ${HOST} -p ${PORT} >> "${out}" 2>&1\r
 timeout /t 10 /nobreak >nul\r
@@ -171,8 +233,10 @@ const impl = {
 if (!impl) { console.error(`[argo] 미지원 플랫폼: ${process.platform}`); process.exit(1); }
 
 if (cmd === 'install') {
+  assertIdle();
   ensureBuild();
-  impl.install();
+  assertIdle();
+  const restore = impl.install();
   process.stdout.write(`[argo] 서비스 등록 완료 — 응답 대기`);
   let up = false;
   for (let i = 0; i < 30 && !up; i++) { // 콜드 스타트 최대 60초 대기
@@ -182,7 +246,8 @@ if (cmd === 'install') {
   }
   console.log(up
     ? `\n[argo] 가동 확인 — http://localhost:${PORT} (재부팅·크래시 자동 복구 활성)`
-    : `\n[argo] 아직 응답이 없습니다 — \`npm run service logs\`로 확인하세요`);
+    : `\n[argo] 설치한 버전·빌드가 응답하지 않습니다 — \`npm run service logs\`로 확인하세요`);
+  if (!up) { restore?.(); process.exit(1); }
 } else if (cmd === 'uninstall') {
   impl.uninstall();
   console.log('[argo] 상주 해제 완료');

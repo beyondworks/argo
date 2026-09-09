@@ -166,6 +166,11 @@ export function makeDb(client) {
       return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name, role_text, status').eq('owner_user_id', uid).eq('ws_id', wsId)) ?? [];
     },
     async upsertAvailable(rows) { if (rows.length) unwrap(await client.from('msgr_crews').upsert(rows, { onConflict: 'org_id,owner_user_id,ws_id,slug' })); },
+    /** 조직별 허용 범위 기본값(msgr_org_policies.allow_default) — 기본 파견 행의 allow. 정책 행이 없으면 'owner'. */
+    async orgAllowDefaults(orgIds) {
+      const rows = unwrap(await client.from('msgr_org_policies').select('org_id, allow_default').in('org_id', orgIds)) ?? [];
+      return Object.fromEntries(rows.map((r) => [r.org_id, r.allow_default]));
+    },
     async updateCrewInfo(id, patch) { unwrap(await client.from('msgr_crews').update(patch).eq('id', id)); },
     async deleteCrews(ids) { if (ids.length) unwrap(await client.from('msgr_crews').delete().in('id', ids)); },
     /** G-2 조직 문서 미러용: 조직 이름·슬러그, 문서 목록(가벼운 열), 본문(바뀐 것만) — RLS가 열람 범위를 정한다(채널 문서는 열람자만). */
@@ -305,15 +310,17 @@ export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now 
 
 async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId)).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); }
 
-/** 크루 인벤토리 미러 — 로그인한 소유자의 회사 크루(이름·역할·slug만)를 내가 속한 모든 조직에 status='available'로 올린다.
-    메신저가 "내 크루" 목록을 보여 주고 "+ 추가"에서 그 자리 파견(available→active)할 수 있게(부록 M). 키·모델·기억은 절대 싣지 않는다.
-    diff 규칙: 카드에 새로 생긴 크루 → available insert / 이름·역할 바뀜 → 갱신(상태 무관) / 카드가 사라진(해고) 크루 →
-    available이면 행 삭제, active·detached면 그대로(파견은 소유자가 설정 카드에서 해제 — 조용히 채널에서 빠지게 하지 않는다).
+/** 크루 인벤토리 미러 — 로그인한 소유자의 회사 크루(이름·역할·slug만)를 내가 속한 모든 조직에 **기본 파견(active)**으로 올린다
+    (유건 지시 2026-09-08: "연결하면 내 크루 전부가 목록에 세팅, 허용 범위·해제는 메신저에서"). allow = 조직 기본 허용 범위(정책), 없으면 'owner'.
+    'available'은 이제 "소유자가 메신저에서 파견 해제한 상태"다 — 미러는 그 행을 다시 올리지 않는다(diff는 새 slug만 insert). 키·모델·기억은 절대 싣지 않는다.
+    diff 규칙: 카드에 새로 생긴 크루 → active insert / 이름·역할 바뀜 → 갱신(상태 무관) / 카드가 사라진(해고) 크루 →
+    available(해제)이면 행 삭제, active·detached면 그대로(조용히 채널에서 빠지게 하지 않는다 — 소유자가 메신저 크루 카드에서 해제).
     회사 노드(서비스 계정)는 미러하지 않는다 — 회사 크루는 조직이 만든다(I-5). */
 export async function mirrorInventory(wsId, { db, uid, agents, log = console.error } = {}) {
   const orgIds = await db.myOrgIds(uid);
   if (!orgIds.length) return { orgs: 0, inserted: 0, updated: 0, removed: 0 };
   const rows = await db.myCrewRows(uid, wsId);
+  const allowDefaults = await db.orgAllowDefaults(orgIds).catch((e) => { log('[argo] msgr 조직 정책 조회 실패 — 허용 범위 owner로 파견:', e.message); return {}; });
   const bySlug = new Map(agents.map((a) => [a.slug, a]));
   const out = { orgs: orgIds.length, inserted: 0, updated: 0, removed: 0 };
   const inserts = [];
@@ -321,7 +328,7 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
     const have = new Map(rows.filter((r) => r.org_id === orgId).map((r) => [r.slug, r]));
     for (const a of agents) {
       const r = have.get(a.slug);
-      if (!r) { inserts.push({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'available' }); out.inserted++; continue; }
+      if (!r) { inserts.push({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'active', allow: allowDefaults[orgId] ?? 'owner', allow_users: [] }); out.inserted++; continue; }
       if (r.display_name !== (a.name || a.slug) || (r.role_text ?? null) !== (a.role || null)) { await db.updateCrewInfo(r.id, { display_name: a.name || a.slug, role_text: a.role || null }).catch((e) => log('[argo] msgr 인벤토리 갱신 실패:', e.message)); out.updated++; }
     }
     const gone = [...have.values()].filter((r) => !bySlug.has(r.slug) && r.status === 'available').map((r) => r.id);
@@ -346,7 +353,6 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
   }
   for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
-  const mine = new Set(crews.map((c) => c.id));
   for (const crew of crews) {
     const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
     const msgs = await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0);
@@ -366,7 +372,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         const initialOrder = (Array.isArray(root.mentions) ? root.mentions : []).filter((x) => x?.kind === 'crew').map((x) => x.id);
         const senderOrder = initialOrder.indexOf(m.crew_id);
         // 뒤 크루가 먼저 끝낸 경우(순서 대기 상한 등)는 늦은 앞 답변을 못 봤다. 그 경우만 새 넘김으로 보존한다.
-        if (m.reply_to === root.id && mine.has(m.crew_id) && senderOrder >= 0 && initialOrder.indexOf(crew.id) > senderOrder && !(await db.settled(crew.id, root.id, m.channel_id, m.id))) return;
+        if (m.reply_to === root.id && senderOrder >= 0 && initialOrder.indexOf(crew.id) > senderOrder && !(await db.settled(crew.id, root.id, m.channel_id, m.id))) return;
         if (targetsCrew(root, crew, dm) && !(await db.settled(crew.id, root.id, m.channel_id))) return; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다
         rootAuthor = root.author_user_id;
         hop = 1 + (await db.autoTurnsIn(root.id, m.channel_id)); // 조회 실패는 step 예외로 커서를 보류해 재시도한다
@@ -406,7 +412,11 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       // 멘션 순서대로 한 크루씩(잡 이름의 순번 + after): 뒤 크루는 앞 크루의 답이 채널에 실린 뒤 돈다 — 문맥이 이어진다(동시 실행이던 때 둘 다 "1"이라 셈).
       const crewMentions = (Array.isArray(m.mentions) ? m.mentions : []).filter((x) => x?.kind === 'crew').map((x) => x.id);
       const order = Math.max(0, crewMentions.indexOf(crew.id));
-      const after = fromCrew ? [] : crewMentions.slice(0, order).filter((id) => mine.has(id)); // ponytail: 내 크루만 기다린다(남의 기기가 꺼져 있으면 영원히 기다리니까). 크루 글은 순서 없음(접힌 크루를 기다리는 일이 없게)
+      const after = [];
+      // 같은 순서를 모든 기기·봇이 공유한다. 꺼진 기기는 ORDER_WAIT_MS 뒤 진행하고, 지시 불가 크루는 기다리지 않는다.
+      if (!fromCrew) for (const id of new Set(crewMentions.slice(0, order))) {
+        if (await db.instructCheck(id, origin, m.channel_id) === 'ok') after.push(id);
+      }
       await enqueue(wsId, MSGR_KEY, `${m.id}-${String(order).padStart(2, '0')}-${crew.slug}`, {
         msgId: m.id, orgId: crew.org_id, channelId: m.channel_id, crewId: crew.id, slug: crew.slug, text: m.body,
         authorId: origin, replyTo: m.reply_to, threadRoot: m.thread_root ?? m.id, createdAt: m.created_at,
@@ -553,6 +563,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     // 턴 전 필수 조회 실패는 큐로 전파한다 — 순서·문맥을 확인하지 못한 채 유료 실행하거나 잡을 폐기하지 않는다.
     for (const prev of job.after ?? []) { // 앞 크루가 끝날 때까지 이 잡은 차례를 미룬다(DEFER = 선점 해제·백오프, 슬롯 점유 없음). 상한(ORDER_WAIT_MS, 적재 시각 기준) 뒤엔 그냥 진행
+      if (await db.instructCheck(prev, job.authorId, job.channelId) !== 'ok') continue;
       if (!(await db.settled(prev, job.msgId, job.channelId)) && now() - Date.parse(job.createdAt) < ORDER_WAIT_MS) return DEFER;
     }
     if (await db.settled(job.crewId, job.msgId, job.channelId)) { console.log(`[argo] msgr 잡 중복(${wsId}/${job.slug}/${job.msgId}) — 이미 답함, 실행 생략`); return; } // 선점 중 재적재된 사본(검수 M-2) — 유료 턴 두 번 방지
@@ -643,7 +654,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       replyMeta = rendered.msgrReply.meta;
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
-      turnTrace = turn.trace ?? null;
+      turnTrace = ch.kind === 'public' ? turn.trace ?? null : null; // 메신저 비공개·DM 답글에는 실행 궤적을 추가 저장하지 않는다
     } catch (e) {
       failed = true;
       reply = pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang);

@@ -30,10 +30,12 @@ export async function withDirLock(lockDir, fn, { staleMs = 30_000, retryMs = 25,
   const t0 = Date.now();
   for (;;) {
     try { await mkdir(lockDir); break; } catch (e) {
-      if (e?.code !== 'EEXIST') throw e;
+      // Windows can report EPERM while another process's removed directory is
+      // delete-pending. Retry within the same budget, without reclaiming that lock.
+      if (e?.code !== 'EEXIST' && !(process.platform === 'win32' && e?.code === 'EPERM')) throw e;
       let reclaimed = false;
       try {
-        if (Date.now() - (await stat(lockDir)).mtimeMs > staleMs) { await rm(lockDir, { recursive: true, force: true }); reclaimed = true; }
+        if (e.code === 'EEXIST' && Date.now() - (await stat(lockDir)).mtimeMs > staleMs) { await rm(lockDir, { recursive: true, force: true }); reclaimed = true; }
       } catch { /* 방금 사라짐 — 다음 루프가 다시 시도 */ }
       if (reclaimed) continue;
       if (Date.now() - t0 > timeoutMs) throw Object.assign(new Error(`lock timeout: ${lockDir}`), { code: 'ELOCKTIMEOUT' });
