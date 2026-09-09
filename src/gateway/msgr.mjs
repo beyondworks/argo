@@ -293,6 +293,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   for (const orgId of new Set(crews.map((c) => c.org_id))) { // G-2: 조직 문서 미러 — 바뀐 것만, 실패는 로그(턴 처리와 무관)
     await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
   }
+  for (const crew of crews) crewIds.set(`${wsId}:${crew.slug}`, crew.id);
   for (const crew of crews) {
     const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
     const msgs = await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0);
@@ -351,6 +352,8 @@ export async function syncApprovals(wsId, { db, uid, resolve = resolveWithFollow
 }
 
 /* ─── 턴 문맥 — 턴 중 request_approval·delegate가 어느 채널에서 왔는지(push가 본다). 전역 맵 대신 wsId:slug 단위. ─── */
+const crewIds = new Map(); // `${wsId}:${slug}` → msgr_crews.id (drain이 채운다) — 쪽지 배달 턴의 문맥 크루 id
+export function msgrCrewIdBySlug(wsId, slug) { return crewIds.get(`${wsId}:${slug}`) ?? null; }
 const activeCtx = new Map(); // `${wsId}:${slug}` → ctx. 정본은 결재 항목에 각인된 item.msgr(chat.mjs addApproval) — 이 맵은 각인 없는 경로(CLI 지시 블록 등)의 폴백
 export const _activeCtxForTest = activeCtx;
 const rtChannels = new Map(); // `${wsId}:${orgId}` → realtime channel(타이핑 방송용, start()가 채움 — 회사별로 분리, 같은 조직에 두 회사가 등록돼도 서로 해제하지 않는다)
@@ -476,7 +479,7 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null) {
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
 export async function msgrPush(event, { session = sessionClient } = {}) {
   const it = event.item;
-  const company = (event.type === 'approval' || event.type === 'delegate' || event.type === 'approval_resolved') ? await loadCompany(event.wsId).catch(() => ({})) : null;
+  const company = (event.type === 'approval' || event.type === 'delegate' || event.type === 'approval_resolved' || event.type === 'crewmail') ? await loadCompany(event.wsId).catch(() => ({})) : null;
   const muted = (type) => company && !channelSends('msgr', { enabled: true, mutedEvents: company.msgr?.mutedEvents }, type); // 끈 목록(company.json.msgr.mutedEvents) — 판정 정본 channelSends
   if (event.type === 'approval') {
     if (muted('approval')) return false;
@@ -537,6 +540,23 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     await c.db.insertMessage({ channel_id: event.ctx.channelId, author_kind: 'crew', crew_id: target.id, kind: 'text', reply_to: event.ctx.threadRoot ?? null,
       client_msg_id: `dl:${target.id}:${event.ctx.threadRoot ?? 0}:${digest}`,
       body: pick(`(${event.fromName}의 요청: ${String(event.task).replace(/\s+/g, ' ').slice(0, 80)})\n\n${event.reply}`, `(${event.fromName}'s request: ${String(event.task).replace(/\s+/g, ' ').slice(0, 80)})\n\n${event.reply}`, lang).slice(0, MSG_MAX) });
+    return true;
+  }
+  // 크루 쪽지 — 메신저 턴에서 보낸 쪽지(event.msgr)는 텔레그램이 아니라 그 채널에: 쪽지 본문은 발신 크루 이름으로(@수신자), 회신은 수신 크루 이름으로.
+  // 실사고 2026-09-09: 채널에서 "@슈리 @카맥 번갈아 세기"를 시키자 둘이 쪽지로 이어 세었는데 그 릴레이가 전부 텔레그램 봇으로 나갔다.
+  if (event.type === 'crewmail' && event.msgr?.channelId) {
+    if (muted('crewmail')) return false;
+    const c = await session(); if (!c) return false;
+    const [sender, receiver] = await Promise.all([c.db.crewBySlug(c.uid, event.wsId, event.from).catch(() => null), c.db.crewBySlug(c.uid, event.wsId, event.slug).catch(() => null)]);
+    if (!receiver || receiver.org_id !== event.msgr.orgId) return false;
+    const root = event.msgr.threadRoot ?? null;
+    if (sender && sender.org_id === event.msgr.orgId && event.message && event.kind !== 'cc') {
+      await c.db.insertMessage({ channel_id: event.msgr.channelId, author_kind: 'crew', crew_id: sender.id, kind: 'text', reply_to: root, client_msg_id: `mail:${event.id}:${sender.id}`,
+        mentions: [{ kind: 'crew', id: receiver.id }], body: `@${receiver.display_name} ${String(event.message).trim()}` });
+    }
+    if (event.reply) {
+      await c.db.insertMessage({ channel_id: event.msgr.channelId, author_kind: 'crew', crew_id: receiver.id, kind: 'text', reply_to: root, client_msg_id: `mailreply:${event.id}:${receiver.id}`, body: String(event.reply).slice(0, MSG_MAX) });
+    }
     return true;
   }
   return false;

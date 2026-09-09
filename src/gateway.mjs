@@ -905,7 +905,7 @@ async function pushEvent(event) {
       // 크루 쪽지 배달 — 다른 세션·다른 시각의 크루 간 소통이라 사장이 화면을 보고 있지 않은 게 기본값.
       // 수신 크루의 답을 브리핑으로 민다(재검 N1에서 보류했던 분기 — 문안과 함께 복원).
       // 쪽지 헤더는 발신→수신 표기가 이미 귀속이라 attributed를 겹치지 않는다(이중 접두 방지).
-      if (event.type === 'crewmail') {
+      if (event.type === 'crewmail' && !event.msgr?.channelId) { // 메신저 채널에서 시작된 쪽지는 msgrPush가 그 채널에 붙인다 — 텔레그램으로 새지 않게
         const cc = event.kind === 'cc';
         await sendTgReply(dest.token, dest.chatId, event.wsId, pick(
           `**[크루 쪽지] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (참조)' : ''}**\n\n${event.reply}`,

@@ -239,6 +239,18 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
   assert.equal(await M.msgrPush({ type: 'delegate', wsId: WS, to: 'nobody', ctx }, { session: async () => ({ db: db2, uid: OWNER }) }), false, '미등록 크루는 생략');
   assert.equal(await M.msgrPush({ type: 'delegate', wsId: WS, to: 'jun', ctx: { chatType: 'group', chatId: 1 } }, { session }), false, '텔레그램 문맥은 무시');
   assert.equal(await M.msgrPush({ type: 'routine', wsId: WS }, { session }), false);
+  // 크루 쪽지(2026-09-09 실사고): 메신저 문맥이 있으면 쪽지 본문(발신 크루, @수신자 멘션) + 회신(수신 크루)을 채널에, 없으면 무시(텔레그램 경로)
+  const db3 = fakeDb({ crews: [crew({ id: 'dddddddd-0000-4000-8000-000000000003', slug: 'shuri', display_name: '슈리' }), crew({ id: 'dddddddd-0000-4000-8000-000000000004', slug: 'carmack', display_name: '카맥' })] });
+  const ev = { type: 'crewmail', wsId: WS, from: 'shuri', fromName: '슈리', slug: 'carmack', kind: 'to', id: 'm1', message: '2. 다음은 네 차례', reply: '3', msgr: { orgId: ORG, channelId: CH, threadRoot: 7 } };
+  assert.equal(await M.msgrPush(ev, { session: async () => ({ db: db3, uid: OWNER }) }), true);
+  const ins = db3.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
+  assert.equal(ins.length, 2);
+  assert.equal(ins[0].crew_id, 'dddddddd-0000-4000-8000-000000000003'); assert.equal(ins[0].body, '@카맥 2. 다음은 네 차례'); assert.deepEqual(ins[0].mentions, [{ kind: 'crew', id: 'dddddddd-0000-4000-8000-000000000004' }]); assert.equal(ins[0].client_msg_id, 'mail:m1:dddddddd-0000-4000-8000-000000000003');
+  assert.equal(ins[1].crew_id, 'dddddddd-0000-4000-8000-000000000004'); assert.equal(ins[1].body, '3'); assert.equal(ins[1].reply_to, 7); assert.equal(ins[1].client_msg_id, 'mailreply:m1:dddddddd-0000-4000-8000-000000000004');
+  assert.equal(await M.msgrPush({ ...ev, msgr: null }, { session: async () => ({ db: db3, uid: OWNER }) }), false, '메신저 문맥 없는 쪽지는 텔레그램 경로');
+  assert.match(readFileSync(new URL('../src/gateway.mjs', import.meta.url), 'utf8'), /if \(event\.type === 'crewmail' && !event\.msgr\?\.channelId\) \{/, '메신저 배달분은 텔레그램 브리핑 생략');
+  assert.match(readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8'), /const msgr = mirrorCtx\?\.kind === 'msgr' \? \{ orgId: mirrorCtx\.orgId, channelId: mirrorCtx\.channelId, crewId: mirrorCtx\.crewId, threadRoot: mirrorCtx\.threadRoot \?\? null \} : null;\n\s*const id = await sendCrewMail\(wsId, \{[^\n]*msgr \}\);/, '쪽지 도구가 메신저 문맥을 싣는다');
+  assert.match(readFileSync(new URL('../src/scheduler.mjs', import.meta.url), 'utf8'), /crewId: msgrCrewIdBySlug\(cid, slug\) \?\? null \} : null;\n\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx \} : \{\}\) \}\);/, '배달 턴이 채널 문맥으로');
 });
 
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
@@ -277,7 +289,7 @@ test('배선 핀: 게이트웨이 매니저·pushEvent·채널 종류 등재(구
   assert.ok(sync.indexOf('startMsgrBridge(c.id)') > sync.indexOf("if (!leader) { // 클라우드 리더가 아니면 폴러만 내린다"), '브리지는 리더 반환 뒤(=리더만)');
   const push = gw.slice(gw.indexOf('async function pushEvent(event)'), gw.indexOf('const all = await loadConnections(event.wsId);'));
   assert.match(push, /await msgrPush\(event\)\.catch\(/, 'pushEvent 머리에서 msgr 먼저(연결 파일 로드 전)');
-  assert.deepEqual([...CHANNEL_EVENTS.msgr], ['approval', 'delegate']);
+  assert.deepEqual([...CHANNEL_EVENTS.msgr], ['approval', 'delegate', 'crewmail']);
   assert.equal(channelSends('msgr', { enabled: true }, 'approval'), true);
   assert.equal(channelSends('msgr', { enabled: true, mutedEvents: ['approval'] }, 'approval'), false, '음소거 존중');
 });
