@@ -326,7 +326,17 @@ const finishBot = (message, body, disposition = 'done', mentions = []) => asAnon
 
 test('bot orchestration migration: owner/list/removed-user/locked-org policy before execution, then authorized positive', { skip }, () => {
   psql(['-f', mig('20260909120000_msgr_execution_claims.sql')]);
+  // Match live Supabase default privilege drift; PUBLIC-only revocation must not be the defense.
+  sql(`grant execute on function public.msgr_bot_auth(text), public.msgr_bot_hash(text) to anon, authenticated, service_role`);
   psql(['-f', mig('20260909230000_msgr_bot_execution.sql')]);
+  for (const fn of ['msgr_bot_auth', 'msgr_bot_hash']) {
+    assert.equal(sql(`select has_function_privilege('anon','public.${fn}(text)','EXECUTE')`),'f');
+    assert.equal(sql(`select has_function_privilege('authenticated','public.${fn}(text)','EXECUTE')`),'f');
+    assert.equal(sql(`select has_function_privilege('service_role','public.${fn}(text)','EXECUTE')`),'t','existing service-role grant preserved');
+    fails(asAnonRaw(`select public.${fn}('invalid')`),/permission denied/,'internal helper anon access');
+    fails(asUserRaw(U.admin,`select public.${fn}('invalid')`),/permission denied/,'internal helper authenticated access');
+  }
+
   RELAY_BOT = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'hermes', 'Relay')`)));
   RELAY_ROOT = relayPost(U.owner);
   sql(`update public.msgr_crews set allow = 'owner' where id = '${RELAY_BOT.crew_id}'`);

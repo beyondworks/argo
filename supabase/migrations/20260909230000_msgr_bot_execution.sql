@@ -1,4 +1,8 @@
 -- External runtimes share the resident execution ledger: no lease takeover and no offset-based execution rights.
+-- Supabase may explicitly grant defaults to API roles; revoking PUBLIC alone leaves internal helpers exposed.
+revoke execute on function public.msgr_bot_auth(text) from anon, authenticated;
+revoke execute on function public.msgr_bot_hash(text) from anon, authenticated;
+
 create or replace function public.msgr_bot_source(bot uuid, source bigint, channel uuid)
 returns public.msgr_messages language plpgsql security definer set search_path = public, pg_temp as $$
 declare c public.msgr_crews; s public.msgr_messages; r public.msgr_messages; sender uuid; ch public.msgr_channels;
