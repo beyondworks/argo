@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { localBindProof } from '../src/local-asset-access.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.ARGO_PORT || 3999);
@@ -26,6 +27,7 @@ const PORT = Number(process.env.ARGO_PORT || 3999);
 // (로컬 모드는 무인증) 전 API에 닿는 것을 차단한다. 클라우드/멀티유저는 인증을 켠 뒤
 // ARGO_HOST=0.0.0.0 으로 명시 opt-in(리버스 프록시 뒤 권장).
 const HOST = process.env.ARGO_HOST || '127.0.0.1';
+const BIND_PROOF = localBindProof(HOST);
 const LABEL = 'com.beyondworks.argo';
 const NODE = process.execPath;
 const NEXT_BIN = join(ROOT, 'node_modules', 'next', 'dist', 'bin', 'next');
@@ -68,7 +70,7 @@ function darwinInstall() {
   const { dir, out, err } = logPaths();
   mkdirSync(dir, { recursive: true });
   mkdirSync(dirname(plistPath()), { recursive: true });
-  const env = { NODE_ENV: 'production', PATH: `${dirname(NODE)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin` };
+  const env = { NODE_ENV: 'production', ARGO_LOCAL_BIND_PROOF: BIND_PROOF, PATH: `${dirname(NODE)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin` };
   if (process.env.ARGO_ROOT) env.ARGO_ROOT = process.env.ARGO_ROOT; // 설치 시점 데이터 루트를 굽는다
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -126,6 +128,7 @@ WorkingDirectory=${ROOT}
 Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
+Environment=ARGO_LOCAL_BIND_PROOF=${BIND_PROOF}
 ${extraEnv}StandardOutput=append:${out}
 StandardError=append:${err}
 
@@ -150,6 +153,7 @@ function winInstall() {
   writeFileSync(winCmdPath(), `@echo off\r
 cd /d "${ROOT}"\r
 set NODE_ENV=production\r
+set ARGO_LOCAL_BIND_PROOF=${BIND_PROOF}\r
 :loop\r
 "${NODE}" "${NEXT_BIN}" start -H ${HOST} -p ${PORT} >> "${out}" 2>&1\r
 timeout /t 10 /nobreak >nul\r
