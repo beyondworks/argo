@@ -20,7 +20,7 @@ const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in 
 
 const AWAY_MS = 90_000;
 /** 크루 등급(부록 I·K) — 서버 함수 msgr_crew_tier와 같은 규칙: 조직 서비스 계정이 소유하고 상주 노드에서 돌면 회사 크루, 그 외는 개인(파견) 크루. 화면 표시용이며 판정 정본은 서버. */
-export const crewTier = (crew, org) => (org?.service_user_id && crew?.owner_user_id === org.service_user_id && crew?.hosting === 'resident') ? 'company' : 'personal';
+export const crewTier = (crew, org) => (crew?.hosting === 'bot' || (org?.service_user_id && crew?.owner_user_id === org.service_user_id && crew?.hosting === 'resident')) ? 'company' : 'personal'; // 봇(외부 에이전트)도 회사 등급 — 서버 msgr_crew_tier와 같은 규칙(부록 N)
 const PAGE = 100;
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
@@ -356,6 +356,7 @@ function Shell({ session }) {
   const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); if (crew) return [crewOf(crew.member_id)?.display_name ?? c.name.replace(/^dm:/, ''), other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · '); return other ? nameOfUser(other.member_id) : c.name.replace(/^dm:/, ''); };
   const dms = channels.filter((c) => c.kind === 'dm');
   const sortedCh = [...channels].filter((c) => c.kind !== 'dm').sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
+  const myCrews = crews.filter((c) => c.owner_user_id === uid && c.hosting !== 'bot'); // 봇(외부 에이전트)은 '내 크루'가 아니라 설정 > 외부 에이전트 카드에 산다
   return (
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
@@ -439,9 +440,9 @@ function Shell({ session }) {
             </div>
           ); })}</div>
         </RailSection>)}
-        {org && (myAvailable.length > 0 || crews.some((c) => c.owner_user_id === uid)) && (<RailSection id="mine" label={t('rail.mine')} right={<span className="msgr-klabel">{crews.filter((c) => c.owner_user_id === uid).length}/{crews.filter((c) => c.owner_user_id === uid).length + myAvailable.length}</span>}>
+        {org && (myAvailable.length > 0 || myCrews.length > 0) && (<RailSection id="mine" label={t('rail.mine')} right={<span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}>
           <div className="msgr-list mine">
-            {crews.filter((c) => c.owner_user_id === uid).map((c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={t('rail.mine.on')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-dot mark" /></button>)}
+            {myCrews.map((c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={t('rail.mine.on')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-dot mark" /></button>)}
             {myAvailable.map((c) => { // 목록에서 그 자리 파견(유건 지시 2026-09-08) — 채널을 보고 있으면 그 채널까지(DM은 조직만), 아니면 조직만
               const target = channel && channel.kind !== 'dm' && (channel.personal_crews ?? 'allowed') !== 'blocked' ? channel : null;
               const go = async () => { if (railBusy) return; setRailBusy(c.id); try { await dispatchCrew(c, target?.id ?? null); setNote(t(target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
@@ -453,7 +454,7 @@ function Shell({ session }) {
               ); })}
           </div>
         </RailSection>)}
-        <div className="msgr-railhint">{myAvailable.length || crews.some((c) => c.owner_user_id === uid) ? t('rail.hint.mine') : t('rail.hint')}</div>
+        <div className="msgr-railhint">{myAvailable.length || myCrews.length > 0 ? t('rail.hint.mine') : t('rail.hint')}</div>
         </div>
         <div className="msgr-foot">
           <Av name={me?.display_name || session.user.email} size="sm" />
@@ -477,7 +478,7 @@ function Shell({ session }) {
         {page === 'activity' && org ? (
           <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
         ) : (
@@ -531,7 +532,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
         <div className="facts">
           <div><span className="msgr-klabel">{t('crew.tier')}</span><span className={`msgr-tier ${tier}`}>{tier === 'company' ? t('crew.tier.company') : t('crew.tier.personal')}</span></div>
           <div><span className="msgr-klabel">{t('crew.owner')}</span><span><Av name={nameOfUser(crew.owner_user_id)} size="sm" /> {tier === 'company' ? t('crew.tier.company.owner', { org: org?.name ?? '' }) : nameOfUser(crew.owner_user_id)}</span></div>
-          <div><span className="msgr-klabel">{t('tab.crew')}</span><span>{t(`crew.hosting.${crew.hosting === 'resident' ? 'resident' : 'local'}`)}</span></div>
+          <div><span className="msgr-klabel">{t('tab.crew')}</span><span>{t(`crew.hosting.${crew.hosting === 'resident' ? 'resident' : crew.hosting === 'bot' ? 'bot' : 'local'}`)}</span></div>
           <div><span className="msgr-klabel">{on ? t('crew.online') : t('crew.away')}</span><span><span className={`msgr-dot${on ? ' mark' : ''}`} /> {crew.last_seen_at ? t('crew.lastSeen', { when: fmtTs(crew.last_seen_at, lang) }) : '—'}</span></div>
         </div>
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
@@ -799,7 +800,7 @@ class PageBoundary extends Component {
   }
 }
 
-function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
+function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onOpenCrew, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
@@ -827,6 +828,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
           : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
         {tab === 'crews' && org && (<>
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
+          {isAdmin && <OrgCard part="agents" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
         {tab === 'me' && (<>
@@ -1187,7 +1189,7 @@ function NotifyRow() {
 
 /* ─── F2-1·2·3·4 조직 카드(관리자): 조직 이름 · 멤버 역할/제거(2단계) · 초대 만들기/취소 · 감사 기록 ─── */
 const ROLES_ASSIGNABLE = ['admin', 'member', 'guest'];
-function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '' }) {
+function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew }) {
   const { t, lang } = useT();
   const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
   const [invites, setInvites] = useState([]);
@@ -1324,6 +1326,78 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
       )}
     </section>
   );
+  // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
+  //    토큰 원문은 생성·회전 직후 이 화면에만 있고(setup 상태) 저장·로그하지 않는다. 가용성은 마지막 getUpdates(last_seen_at)뿐 — 종료/재시작 버튼 없음(해제 = 토큰 회수).
+  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null); // 펼친 봇 상세(실측: 상태 줄이 말줄임으로 잘려 못 읽음)
+  const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
+  useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
+  const botSetup = (token) => `ARGO_MSGR_URL=${SB_URL}/functions/v1/msgr-bot\nARGO_MSGR_BOT_TOKEN=${token}`; // 원클릭: 이 두 줄이 에이전트 쪽 설정의 전부
+  const addBot = async (kind) => {
+    setBusy(true); const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name: t(`org.agents.kind.${kind}`) }); setBusy(false);
+    if (r.error) return onError(r.error.message);
+    setSetup({ id: r.data.bot_id, token: r.data.token }); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.();
+  };
+  const rotateBot = async (b) => {
+    setBusy(true); const r = await supabase.rpc('msgr_bot_rotate', { bot: b.id }); setBusy(false);
+    if (r.error) return onError(r.error.message);
+    setSetup({ id: b.id, token: r.data }); onNote(t('org.agents.rotated')); loadBots().catch(() => {});
+  };
+  const revokeBot = async (b) => {
+    setBusy(true); const r = await supabase.rpc('msgr_bot_revoke', { bot: b.id }); setBusy(false); setConfirmRevoke(null);
+    if (r.error) return onError(r.error.message);
+    if (setup?.id === b.id) setSetup(null); onNote(t('org.agents.revoke.done')); loadBots().catch(() => {}); onChanged?.();
+  };
+  const copySetup = async () => { await navigator.clipboard?.writeText(botSetup(setup.token)).catch(() => {}); onNote(t('org.agents.copied')); };
+  const botStatus = (b) => {
+    const kind = t(`org.agents.kind.${b.kind}`);
+    if (!b.last_seen_at) return t('org.agents.waiting', { kind });
+    return t(Date.now() - Date.parse(b.last_seen_at) < AWAY_MS ? 'org.agents.on' : 'org.agents.off', { kind, when: fmtWhen(b.last_seen_at, lang) });
+  };
+  if (part === 'agents') { const liveBots = bots.filter((b) => !b.revoked_at); return (
+    <section className="msgr-setcard">
+      <h2>{t('org.agents')}</h2><p>{t('org.agents.desc')}</p>
+      <div className="row">
+        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => addBot('hermes')}><I name="plus" size={13} />{t('org.agents.add.hermes')}</button>
+        <button type="button" className="btn sm" disabled={busy} onClick={() => addBot('openclaw')}>{t('org.agents.add.openclaw')}</button>
+        <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
+      </div>
+      {setup && (
+        <div className="msgr-node-cmd">
+          <span className="msgr-klabel">{t('org.agents.setup.h')}</span>
+          <code>{botSetup(setup.token)}</code>
+          <div className="acts"><button type="button" className="btn sm" onClick={copySetup}><I name="copy" size={13} />{t('org.agents.copy')}</button><button type="button" className="btn sm ghost" onClick={() => setSetup(null)}>{t('ui.close')}</button></div>
+          <p className="note">{t('org.agents.setup.hint')}</p>
+        </div>
+      )}
+      {!liveBots.length ? <p className="empty">{t('org.agents.none')}</p> : (
+        <div className="msgr-rows">
+          {liveBots.map((b) => { const on = b.last_seen_at && Date.now() - Date.parse(b.last_seen_at) < AWAY_MS; const opened = openBot === b.id; return (
+            <div key={b.id} className={`msgr-botrow${opened ? ' open' : ''}`}>
+              <div className="row">
+                <button type="button" className="main" onClick={() => setOpenBot(opened ? null : b.id)} aria-expanded={opened} title={t('org.agents.detail.open')}>
+                  <Av name={b.name} crew size="sm" company /><span className="name">{b.name}</span>
+                  <span className="sub"><span className={`msgr-dot${on ? ' mark' : ''}`} /> {botStatus(b)} · {t('org.agents.by', { name: nameOfUser(b.created_by) })}</span>
+                </button>
+                {confirmRevoke !== b.id && <><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => rotateBot(b)}>{t('org.agents.rotate')}</button><button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRevoke(b.id)} title={t('org.agents.revoke')} aria-label={t('org.agents.revoke')}><I name="x" size={13} /></button></>}
+                {confirmRevoke === b.id && <span className="confirm-inline"><span>{t('org.agents.revoke.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => revokeBot(b)}>{t('org.agents.revoke')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRevoke(null)}>{t('ui.cancel')}</button></span>}
+              </div>
+              {opened && (
+                <div className="msgr-node-cmd detail">
+                  <div className="facts">
+                    <div><span className="msgr-klabel">{t('org.agents.detail.status')}</span><span>{botStatus(b)}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.detail.kind')}</span><span>{t(`org.agents.kind.${b.kind}`)}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.by.label')}</span><span>{nameOfUser(b.created_by)}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.detail.created')}</span><span>{fmtWhen(b.created_at, lang)}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.detail.token')}</span><span><code>{b.token_hint}…</code>{b.rotated_at ? ` · ${t('org.agents.detail.rotated', { when: fmtWhen(b.rotated_at, lang) })}` : ''}</span></div>
+                  </div>
+                  <p className="note">{t('org.agents.detail.hint')}</p>
+                  <div className="acts">{onOpenCrew && <button type="button" className="btn sm" onClick={() => onOpenCrew(b.crew_id)}><I name="star" size={13} />{t('org.agents.detail.openCrew')}</button>}<button type="button" className="btn sm ghost text" onClick={() => setOpenBot(null)}>{t('ui.close')}</button></div>
+                </div>
+              )}
+            </div>); })}
+        </div>)}
+    </section>
+  ); }
   if (part === 'node') return (
     <section className="msgr-setcard">
       <h2>{t('org.node')}</h2><p>{t('org.node.desc')}</p>

@@ -1,0 +1,24 @@
+name: argo-msgr-platform
+label: Argo Messenger
+kind: platform
+version: 0.1.0
+description: >
+  Argo Messenger gateway adapter for Hermes Agent. Connects Hermes to an Argo Messenger
+  organization as a bot (the same way Hermes connects to Telegram or Slack): long-polls
+  getUpdates for mentions, DMs and replies, and answers with sendMessage. No extra packages
+  (stdlib urllib only). Paste the two lines from Argo Messenger → Settings → External agents.
+author: Beyondworks
+requires_env:
+  - name: ARGO_MSGR_URL
+    description: "Bot API address shown in Argo Messenger → Settings → External agents (…/functions/v1/msgr-bot)"
+    prompt: "Argo Messenger bot API URL"
+    password: false
+  - name: ARGO_MSGR_BOT_TOKEN
+    description: "Bot token shown once when the bot was created (argo_bot_…)"
+    prompt: "Argo Messenger bot token"
+    password: true
+optional_env:
+  - name: ARGO_MSGR_HOME_CHANNEL
+    description: "Channel id for cron / notification delivery (optional)"
+    prompt: "Home channel id (or empty)"
+    password: false

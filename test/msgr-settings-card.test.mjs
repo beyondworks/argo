@@ -116,7 +116,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 });
 
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
-  assert.match(app, /export const crewTier = \(crew, org\) => \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다');
+  assert.match(app, /export const crewTier = \(crew, org\) => \(crew\?\.hosting === 'bot' \|\| \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\)\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다(봇 포함 — 부록 N)');
   assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
   assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
   assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
@@ -125,7 +125,7 @@ test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크
   assert.match(crewSheet, /<span className=\{`msgr-tier \$\{tier\}`\}>\{tier === 'company' \? t\('crew\.tier\.company'\) : t\('crew\.tier\.personal'\)\}<\/span>/, '등급 배지');
   assert.match(crewSheet, /<p className="note tier">\{tier === 'company' \? t\('crew\.tier\.company\.note', \{ org: org\?\.name \?\? '' \}\) : t\('crew\.tier\.personal\.note', \{ name: nameOfUser\(crew\.owner_user_id\) \}\)\}<\/p>/, '한계 문장이 없다(부록 K ③)');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
-  assert.match(sql, /c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident' then 'company' else 'personal'/, '서버 판정 규칙');
+  assert.match(read('supabase/migrations/20260908120000_msgr_bots.sql'), /c\.hosting = 'bot' or \(o\.service_user_id is not null and c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident'\) then 'company' else 'personal'/, '서버 판정 규칙(봇 마이그레이션이 정본)');
   assert.match(sql, /raise exception 'msgr_service_not_member'/, '서비스 계정 멤버 검사');
   for (const k of ['crew.tier', 'crew.tier.company', 'crew.tier.personal', 'crew.tier.company.owner', 'crew.tier.company.sub', 'crew.tier.personal.sub', 'crew.tier.company.note', 'crew.tier.personal.note']) {
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
