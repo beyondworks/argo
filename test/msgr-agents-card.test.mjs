@@ -20,14 +20,14 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍 · 상태 문구는 "헤르�
 test('봇 = 회사 등급(클라이언트 crewTier) · 내 에이전트 레일에 출처와 함께 포함 · 시트 hosting 표기 · 설정 크루 탭에 카드', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(crew\?\.hosting === 'bot' \|\| /, '봇 회사 등급');
   assert.match(app, /const myCrews = sortCrews\(crews\.filter\(\(c\) => c\.owner_user_id === uid\)\);/, '내 에이전트 = 아르고 + 내가 연결한 봇(세 출처 한 목록) + 정렬(소속별·이름순·추가순)');
-  assert.match(app, /const folders = \[\.\.\.new Set\(myCrews\.map\(\(c\) => c\.folder\)/, '그룹(폴더) 묶음');
+  assert.doesNotMatch(app, /const folders = \[\.\.\.new Set\(myCrews\.map\(\(c\) => c\.folder\)/, '그룹(폴더) 묶음은 뺐다(유건 결정 2026-09-09: 평평한 목록)');
   assert.match(app, /<select className="msgr-sort" value=\{railSort\}/, '정렬 선택');
   assert.match(app, /<button type="button" className="me" onClick=\{\(\) => setMeMenu/, '프로필 클릭 메뉴(로그아웃은 여기)');
   assert.doesNotMatch(app, /className="btn ghost" onClick=\{\(\) => supabase\.auth\.signOut/, '하단 바의 로그아웃 아이콘 버튼 제거');
   assert.match(app, /placeholder=\{t\('org\.members\.search'\)\}/, '멤버 검색'); assert.match(app, /shown\.slice\(0, memberN\)/, '멤버 30명씩');
   assert.match(read('apps/messenger/src/styles.css'), /:root\[data-theme='linen-dark'\] \{ --primary: #cfcac0;/, '다크 순백 완화');
   assert.match(app, /const sourceOf = \(c\) => c\.hosting !== 'bot' \? 'argo' : \(botKinds\.find/, '출처 판정');
-  assert.match(app, /railSort === 'source' \? \['argo', 'hermes', 'openclaw', 'custom'\]\.map/, '소속별은 소제목으로(행 글자 아님)');
+  assert.match(app, /\{railExt\.length > 0 && <div className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">\{t\('rail\.src\.custom'\)\}/, '외부 에이전트가 있을 때만 소제목');
   for (const k of ['rail.src.argo', 'rail.src.hermes', 'rail.src.openclaw', 'rail.src.custom']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-node-cmd code \{[^}]*white-space: pre-wrap;/, '설정 두 줄이 줄바꿈으로 보인다(실측: 한 줄로 붙어 보였다)');
   assert.match(app, /crew\.hosting === 'resident' \? 'resident' : crew\.hosting === 'bot' \? 'bot' : 'local'/, '시트 hosting 표기');

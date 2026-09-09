@@ -344,9 +344,9 @@
 @media (max-width: 720px) { .msgr-top .members .n { display: none; } .msgr-top .members .msgr-av:nth-child(n+5) { display: none; } } /* 폰 폭: 제목 옆 공간이 좁다 — 아바타 4개만 */
 .msgr-rows { display: grid; gap: 4px; }
 .msgr-rows .msgr-klabel { margin-top: 6px; }
-.msgr-rows .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; border-radius: 10px; min-width: 0; overflow: hidden; } /* min-width 0 + overflow — 긴 부제(크루 역할·소유자·파견)가 행을 늘려 시트가 창 밖으로 밀리던 결함(유건 실측 2026-09-07, 1100px 창) */
+.msgr-rows .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; border-radius: 10px; min-width: 0; } /* overflow hidden 금지 — 행의 '…' 메뉴(absolute)가 잘려 안 보이던 결함(유건 제보 2026-09-09). 폭 안전은 .name 상한 + .sub 말줄임 + 시트 overflow-x hidden이 맡는다 */ /* min-width 0 + overflow — 긴 부제(크루 역할·소유자·파견)가 행을 늘려 시트가 창 밖으로 밀리던 결함(유건 실측 2026-09-07, 1100px 창) */
 .msgr-rows .row:hover { background: var(--card-2); }
-.msgr-rows .row .name { font-weight: 600; font-size: 13px; flex: none; white-space: nowrap; }
+.msgr-rows .row .name { font-weight: 600; font-size: 13px; flex: none; white-space: nowrap; max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
 .msgr-rows .row .sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-rows .row .btn.ghost { border: 0; background: none; width: 26px; height: 26px; padding: 0; color: var(--fg-3); }
 .msgr-rows .row .btn.ghost:hover { background: var(--bg); color: var(--fg); }
@@ -482,7 +482,7 @@
 .msgr-setcard .msgr-seg.right { margin-left: auto; }
 
 /* 페이지형 화면(설정·문서)은 대화의 720px 읽기 레인을 쓰지 않는다 — 데스크톱 폭을 쓴다(유건 지적 2026-09-04) */
-.msgr-thread.page { padding: 20px 32px 32px; }
+.msgr-thread.page { padding: 20px 32px 32px; scrollbar-gutter: stable; } /* 왼쪽 거터 없음 — both-edges는 웹뷰가 스크롤 유무에 따라 왼쪽 여백을 바꿔 탭마다 내비 x가 달랐다(유건 실측 2026-09-09) */
 .msgr-thread.page .msgr-settings.tabs { max-width: 1240px; margin: 0; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; }
 .msgr-thread.page .msgr-docs { max-width: none; margin: 0; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 24px; }
 .msgr-thread.page .msgr-setcard { padding: 22px 26px; }
@@ -645,10 +645,3 @@
 .msgr-editbox textarea.msgr-input:focus { box-shadow: 0 0 0 2px var(--ring); }
 .msgr-editbox .acts { display: flex; gap: 6px; justify-content: flex-end; }
 
-/* 그룹 제목 관리(2026-09-09): 호버 시 이름 바꾸기·해제 */
-.msgr-folderhead .right { display: inline-flex; align-items: center; gap: 4px; }
-.msgr-folderhead .fbtn { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-3); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 120ms ease, background 120ms ease; }
-.msgr-folderhead.can:hover .fbtn, .msgr-folderhead .fbtn:focus-visible { opacity: 1; }
-.msgr-folderhead .fbtn:hover { background: var(--card-2); color: var(--fg); }
-.msgr-folderhead .msgr-input.sm { height: 24px; font-size: 12px; width: 100%; }
-.msgr-folderpick { flex-wrap: wrap; }

@@ -13,7 +13,7 @@ test('검색: 레일 검색 칸·⌘K·ilike 이스케이프·결과 페이지(�
 });
 test('레일은 이동만(검색·채널·1:1·내 에이전트): 멤버·친구 절 없음, 행은 아바타·이름·상태점, 소속별은 소제목; 친구는 설정 탭; 프로필 메뉴는 배경 명시', () => {
   assert.doesNotMatch(app, /t\('rail\.members'\)|t\('rail\.friends'\)|msgr-railhint/, '레일에 멤버·친구 절·안내문 없음(유건 지적: 복잡)');
-  assert.match(app, /const railGroups = folders\.length \? /, '그룹 또는 소속별 소제목'); assert.doesNotMatch(app.slice(app.indexOf('const railRow'), app.indexOf('const railGroups')), /msgr-klabel src/, '행에 출처 글자 없음');
+  assert.match(app, /const railArgo = myCrews\.filter\(\(c\) => sourceOf\(c\) === 'argo'\); const railExt = myCrews\.filter\(\(c\) => sourceOf\(c\) !== 'argo'\);/, '평평한 목록 + 외부만 소제목(유건 결정)'); assert.doesNotMatch(app, /folderHead\(|msgr-folderpick|rail\.folder\.none/, '그룹 UI 없음'); assert.doesNotMatch(app.slice(app.indexOf('const railRow'), app.indexOf('const railArgo')), /msgr-klabel src/, '행에 출처 글자 없음');
   assert.match(app, /\['friends', 'set\.tab\.friends'\]/, '설정 친구 탭'); assert.match(app, /\{tab === 'friends' && <FriendsCard/, '친구 카드는 친구 탭');
   assert.match(i18n, /'set\.tab\.friends': \['[^']+', '[^']+'\]/);
   assert.match(css, /\.msgr-rowmenu\.me \{[^}]*background: var\(--card\); border: 1px solid var\(--border\);/, '프로필 메뉴 배경(실측: 배경 없이 글자만)');

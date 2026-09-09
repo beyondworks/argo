@@ -153,7 +153,7 @@ function Shell({ session }) {
   const [chSheetAdd, setChSheetAdd] = useState(null); // 시트를 열 때 바로 펼칠 패널('crew') — 상단 "크루" 버튼(유건 지적 2026-09-08: 크루를 채널에 넣는 UI가 안 보임)
   const [mentionReq, setMentionReq] = useState(null); // 시트 "@로 부르기" → 작성창에 멘션 삽입
   const [inbox, setInbox] = useState([]); const [inboxSeen, setInboxSeen] = useState(() => readInboxSeen()); const [inboxPrev, setInboxPrev] = useState(0); // 알림함 v1
-  const [railSort, setRailSort] = useState(() => { try { return localStorage.getItem('argo-msgr-rail-sort') || 'source'; } catch { return 'source'; } }); // 내 에이전트 정렬: source(소속별) | name(이름순) | added(추가순)
+  const [railSort, setRailSort] = useState(() => { try { const v = localStorage.getItem('argo-msgr-rail-sort'); return v === 'added' ? 'added' : 'name'; } catch { return 'name'; } }); // 내 에이전트 정렬: name(이름순) | added(추가순) — 소속별·그룹은 뺐다(유건 결정 2026-09-09: 평평한 목록)
   const pickSort = (v) => { setRailSort(v); try { localStorage.setItem('argo-msgr-rail-sort', v); } catch {} };
   const [meMenu, setMeMenu] = useState(false);
   const [settingsTab, setSettingsTab] = useState(null); // 알림함·프로필 메뉴에서 설정의 특정 탭으로
@@ -313,11 +313,6 @@ function Shell({ session }) {
   const crewOf = (id) => crews.find((c) => c.id === id) ?? myAvailable.find((c) => c.id === id); // 파견 해제된 내 크루도 시트로 연다(다시 파견·허용 범위)
   const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
-  // 그룹 관리(유건 질문 2026-09-09 "그룹 추가·수정·편집 어디서?") — 만들기·옮기기는 에이전트 시트의 '그룹' 입력, 이름 바꾸기·해제는 레일 그룹 제목에서.
-  const [folderEdit, setFolderEdit] = useState(null); const [folderDraft, setFolderDraft] = useState('');
-  const setFolderAll = async (from, to) => { const r = await supabase.from('msgr_crews').update({ folder: to }).eq('owner_user_id', uid).eq('folder', from).select('id'); if (r.error) return setErr(r.error.message); setFolderEdit(null); setNote(t('crew.folder.saved')); loadOrg(orgId).catch(() => {}); };
-  const folderHead = (label, list) => { const real = folders.includes(label); if (folderEdit === label) return <div className="msgr-folderhead"><input className="msgr-input sm" autoFocus value={folderDraft} maxLength={40} onChange={(e) => setFolderDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setFolderEdit(null); if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); const v = folderDraft.trim(); if (!v || v === label) setFolderEdit(null); else setFolderAll(label, v); } }} onBlur={() => setFolderEdit(null)} aria-label={t('crew.folder.rename')} /></div>;
-    return <div className={`msgr-folderhead${real ? ' can' : ''}`}><span className="lbl">{label}</span><span className="right"><span className="msgr-klabel">{list.length}</span>{real && <><button type="button" className="fbtn" title={t('crew.folder.rename')} aria-label={t('crew.folder.rename')} onClick={() => { setFolderEdit(label); setFolderDraft(label); }}><I name="gear" size={11} /></button><button type="button" className="fbtn" title={t('crew.folder.dissolve')} aria-label={t('crew.folder.dissolve')} onClick={() => setFolderAll(label, null)}><I name="x" size={11} /></button></>}</span></div>; };
   const [railMenu, setRailMenu] = useState(null); const [railConfirm, setRailConfirm] = useState(null); // 레일 행 '…' 메뉴(채널 설정·나가기·보관, 1:1 나가기) — 유건 지적 2026-09-04
   useEffect(() => { if (!railMenu) return; const off = () => { setRailMenu(null); setRailConfirm(null); }; window.addEventListener('click', off); return () => window.removeEventListener('click', off); }, [railMenu]);
   const leaveChannel = async (c) => {
@@ -402,16 +397,12 @@ function Shell({ session }) {
   const sortedCh = [...channels].filter((c) => c.kind !== 'dm').sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
   // '내 에이전트' = 세 출처 한 목록(유건 지시 2026-09-08): 아르고 에이전트 + 내가 연결한 헤르메스·오픈클로(봇). 출처 표시는 msgr_bots.kind.
   const sourceOf = (c) => c.hosting !== 'bot' ? 'argo' : (botKinds.find((b) => b.crew_id === c.id)?.kind ?? 'custom');
-  const SRC_ORDER = { argo: 0, hermes: 1, openclaw: 2, custom: 3 };
-  const sortCrews = (list) => [...list].sort((a, b) => railSort === 'name' ? a.display_name.localeCompare(b.display_name, 'ko')
-    : railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0)
-    : (SRC_ORDER[sourceOf(a)] - SRC_ORDER[sourceOf(b)]) || a.display_name.localeCompare(b.display_name, 'ko'));
+  const sortCrews = (list) => [...list].sort((a, b) => railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0) : a.display_name.localeCompare(b.display_name, 'ko'));
   const myCrews = sortCrews(crews.filter((c) => c.owner_user_id === uid));
-  const folders = [...new Set(myCrews.map((c) => c.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); // 그룹(폴더) — 하나라도 있으면 묶어 보인다
   // 행은 아바타·이름·상태점만(유건 지적 2026-09-09 "레일이 복잡"). 출처는 글자 대신 소속별 정렬일 때 소제목으로.
   const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}`}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} /><span className="name">{c.display_name}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
-  const railGroups = folders.length ? [...folders.map((f) => [f, myCrews.filter((c) => c.folder === f)]), [t('rail.folder.none'), myCrews.filter((c) => !c.folder)]].filter(([, l]) => l.length)
-    : railSort === 'source' ? ['argo', 'hermes', 'openclaw', 'custom'].map((k) => [t(`rail.src.${k}`), myCrews.filter((c) => sourceOf(c) === k)]).filter(([, l]) => l.length) : null;
+  // 평평한 목록(유건 결정 2026-09-09). 외부 에이전트(헤르메스·오픈클로 봇)가 있을 때만 '외부' 소제목 하나로 아래에 구분한다.
+  const railArgo = myCrews.filter((c) => sourceOf(c) === 'argo'); const railExt = myCrews.filter((c) => sourceOf(c) !== 'argo');
   return (
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
@@ -493,9 +484,10 @@ function Shell({ session }) {
           ); })}</div>
         </>)}
         {org && (myAvailable.length > 0 || myCrews.length > 0) && (<>
-          <div className="msgr-group">{t('rail.mine')}<span className="right"><select className="msgr-sort" value={railSort} onChange={(e) => pickSort(e.target.value)} aria-label={t('rail.sort')} title={t('rail.sort')}>{['source', 'name', 'added'].map((v) => <option key={v} value={v}>{t(`rail.sort.${v}`)}</option>)}</select><span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></span></div>
+          <div className="msgr-group">{t('rail.mine')}<span className="right"><select className="msgr-sort" value={railSort} onChange={(e) => pickSort(e.target.value)} aria-label={t('rail.sort')} title={t('rail.sort')}>{['name', 'added'].map((v) => <option key={v} value={v}>{t(`rail.sort.${v}`)}</option>)}</select><span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></span></div>
           <div className="msgr-list mine">
-            {railGroups ? railGroups.map(([label, list]) => <div key={label} className="msgr-folder">{folderHead(label, list)}{list.map(railRow)}</div>) : myCrews.map(railRow)}
+            {railArgo.map(railRow)}
+            {railExt.length > 0 && <div className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">{t('rail.src.custom')}</span><span className="msgr-klabel">{railExt.length}</span></div>{railExt.map(railRow)}</div>}
             {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setSheet(c.id)} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
           </div>
         </>)}
@@ -514,7 +506,7 @@ function Shell({ session }) {
         </div>
       </aside>
       <main className="msgr-main">
-        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} crewsForFolders={crews} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
+        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
         {chSheet && channel && <ChannelSheet myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {(err || note) && (
@@ -544,7 +536,7 @@ function Shell({ session }) {
 }
 
 /* ─── 크루 시트: 소유자·실행 위치·접속 + 누가 시킬 수 있나(소유자만 편집, RLS msgr_crews_update_owner) + 허용 요청 ─── */
-function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser, crewsForFolders = [], onClose, onChanged, onPosted, onNote, onError, onDm }) {
+function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm }) {
   const { t, lang } = useT();
   const owner = crew.owner_user_id === uid;
   const tier = crewTier(crew, org); // H-3: 회사 크루 / 개인(파견) 크루 — 판정 정본은 서버 msgr_crew_tier
@@ -607,11 +599,6 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
         </div>
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
         <section>
-          {owner && (<div className="msgr-folderpick"><span className="msgr-klabel">{t('crew.folder')}</span>
-            <input className="msgr-input sm" list="msgr-folders" defaultValue={crew.folder ?? ''} placeholder={t('crew.folder.ph')} maxLength={40} onBlur={async (e) => { const v = e.target.value.trim() || null; if (v === (crew.folder ?? null)) return; const r = await supabase.from('msgr_crews').update({ folder: v }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.folder.saved')); onChanged(); }} />
-            <span className="note" style={{ flexBasis: '100%' }}>{t('crew.folder.help')}</span>
-            <datalist id="msgr-folders">{[...new Set((crewsForFolders ?? []).map((c) => c.folder).filter(Boolean))].map((f) => <option key={f} value={f} />)}</datalist>
-          </div>)}
           <h3>{t('crew.allow')}</h3>
           <p>{t('crew.allow.desc')}</p>
           <div className="msgr-seg" role="radiogroup" aria-label={t('crew.allow')}>
