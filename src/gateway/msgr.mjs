@@ -195,7 +195,7 @@ export function makeDb(client) {
         .eq('org_id', orgId).gt('id', afterId).is('deleted_at', null).order('id', { ascending: true }).limit(limit)) ?? [];
     },
     async message(id) {
-      return unwrap(await client.from('msgr_messages').select('id, channel_id, author_kind, author_user_id, crew_id, body, created_at').eq('id', id).maybeSingle());
+      return unwrap(await client.from('msgr_messages').select('id, channel_id, author_kind, author_user_id, crew_id, kind, body, mentions, created_at').eq('id', id).maybeSingle());
     },
     /** 크루가 참가한 **DM** 채널만 — 비공개 채널에 멤버로 넣은 것은 멘션으로만 발화한다(검수 HIGH-2: 그 채널의 모든 메시지가 LLM 턴으로 나가고,
         allow='owner'면 매 메시지마다 거절 안내가 채널을 도배). 이름 그대로 dmChannels다. */
@@ -342,6 +342,10 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       max = Math.max(max, m.id);
       if (!targetsCrew(m, crew, dm)) continue;
       const fromCrew = m.author_kind === 'crew';
+      if (fromCrew && m.thread_root) { // 뿌리 메시지가 이 크루도 겨냥했는데 그 턴이 아직 안 끝났으면 넘김을 접는다 — 그 턴이 곧 문맥을 안고 돈다(원래 멘션 턴 + 넘김 턴 겹침 방지)
+        const root = await db.message(m.thread_root).catch(() => null);
+        if (root && targetsCrew(root, crew, dm) && !(await db.settled(crew.id, root.id).catch(() => true))) continue;
+      }
       const hop = fromCrew ? (Number(m.meta?.hop) || 0) + 1 : 0;
       const origin = fromCrew ? m.meta.origin : m.author_user_id; // 정책 판정·답글 게이트의 기준 = 연쇄를 시작한 사람
       if (fromCrew && hop > HOP_MAX) {

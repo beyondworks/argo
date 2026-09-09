@@ -49,7 +49,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async crewDefaults(org) { rec('crewDefaults', org); return crewDefaults; },
     async setCursor(id, n) { rec('setCursor', id, n); },
     async messagesAfter(org, after) { rec('messagesAfter', org, after); return messages.filter((m) => m.id > after); },
-    async message(id) { rec('message', id); return parent; },
+    async message(id) { rec('message', id); return typeof parent === 'function' ? parent(id) : parent; },
     async crewChannels() { return dm; },
     async channel(id) { rec('channel', id); return { id, org_id: ORG, kind: 'public', name: 'general', crew_memory: true, ...(this.channelOverride ?? {}) }; },
     async memberName() { return '민수'; },
@@ -574,4 +574,20 @@ test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대�
   await h3({ ...job2, msgId: 33 });
   const row3 = db3.calls.find((x) => x[0] === 'insertMessage')[1];
   assert.match(row3.body, /@제드/); assert.deepEqual(row3.mentions, []); assert.deepEqual(row3.meta, { hop: 1, origin: MEMBER });
+});
+
+test('drain: 뿌리 메시지에 같이 멘션된 크루의 턴이 아직 안 끝났으면 넘김을 접고(원래 턴이 문맥을 안고 돈다), 끝났으면 넘김이 돈다', async () => {
+  M._autoLogForTest.clear();
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const root = msg(40, { mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: CREW }] }); // 사람: @제드 @서윤
+  const relay = msg(41, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 40, reply_to: 40, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: MEMBER } }); // 제드: "1 @서윤"
+  const db = fakeDb({ crews: [crew()], messages: [relay], parent: (id) => (id === 40 ? root : null), settledAfter: 99 }); // 서윤의 뿌리 턴 미완
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(enq.calls.length, 0, '서윤의 뿌리 턴이 남아 있으니 넘김은 적재하지 않는다');
+  const db2 = fakeDb({ crews: [crew()], messages: [relay], parent: (id) => (id === 40 ? root : null), settledAfter: 0 }); // 서윤의 뿌리 턴 완료
+  const enq2 = fakeEnqueue();
+  await M.drain(WS, { db: db2, uid: OWNER, enqueue: enq2 });
+  assert.deepEqual(jobsOf(enq2).map((j) => [j.msgId, j.hop, j.fromCrewId]), [[41, 1, ZED]]);
+  M._autoLogForTest.clear();
 });
