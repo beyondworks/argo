@@ -319,7 +319,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 // (사장이 직접 등록해야 성립하는 자해 경로지만, 이 줄의 명령형이 세므로 주입 지점에서 접는다).
 const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' ');
 
-export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '' } = {}) {
+export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat' } = {}) {
   // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
   // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
   const otherRoots = workRoots.filter((r) => fold(r) !== fold(pinnedFolder)); // 판정(activePin)과 같은 잣대
@@ -346,6 +346,11 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
       ? `\n- External services connected by login (connectors): ${connectorNames(connectors, true)}. The Argo core runs these calls, so they work the same on any runner — reads are free, but anything that leaves the company (send, publish, create, update, delete) needs approval first.`
       : `\n- 로그인으로 연결된 외부 서비스(커넥터): ${connectorNames(connectors, false)}. Argo 코어가 실행하므로 러너와 무관하게 쓸 수 있다 — 조회·읽기는 자유롭게, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 결재를 먼저 올려라.`)
     : '';
+  const responsePacing = ['chat', 'messenger'].includes(source)
+    ? (lang === 'en'
+      ? '\n## Interactive response delays\n- For a normal question or status summary, use the smallest relevant lookup first. If external rate limits require a long wait, do not block the conversation with sleep or repeated polling: answer with verified facts and identify the unverified remainder and the service limitation. Never claim that a failed lookup found nothing.\n- If the captain explicitly asks you to wait or run work in the background, follow that request using the supported execution tools; describe the wait before starting it. This rule does not shorten necessary builds, tests, or other work the captain requested.\n'
+      : '\n## 대화 응답 지연\n- 일반 질문·현황 요약은 관련된 최소 범위부터 조회하라. 외부 서비스 조회 한도 때문에 오래 기다려야 하면 sleep이나 반복 조회로 대화를 붙들지 말고, 확인된 사실을 먼저 답하고 미확인 범위와 서비스 제한을 밝혀라. 조회 실패를 결과 없음으로 말하지 마라.\n- 사장이 명시적으로 기다려 달라거나 백그라운드 작업을 요청했다면 지원되는 실행 도구로 그 지시를 따르고, 대기 전에 이유를 알려라. 이 규칙은 사장이 요청한 빌드·검수 등 필요한 작업 시간을 줄이라는 뜻이 아니다.\n')
+    : '';
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     return `\n## Approval rules — must follow
@@ -370,7 +375,7 @@ ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up curren
 - Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through dedicated tools — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
 - If the captain asks you to change Argo's design, settings, or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.
 
-## Your environment (Argo) — guide the captain precisely when blocked
+${responsePacing}## Your environment (Argo) — guide the captain precisely when blocked
 - You work inside an Argo company. External tools (MCP) are connected PER COMPANY — this runtime does NOT inherit the computer's Claude Code config (.claude.json, .mcp.json) by design (tenant isolation). Never hunt for those files.${caps.shell ? `
 - **Long-running commands (browser automation, bulk scraping, builds) must run in the foreground until they finish.** Pass a generous Bash timeout (milliseconds, max 600000 = 10 min). Example: expecting ~5 minutes → timeout: 420000.
 - **Output from anything you background (\`&\`, nohup, run_in_background) is lost unless you collect it within this same turn.** When the turn ends the shell session closes, so the next turn cannot read that output (this differs from native Claude Code, where the session stays alive). Never fire a job into the shell background and end the turn expecting to pick it up later.
@@ -402,7 +407,7 @@ ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 �
 - 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 전용 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
 - 사장이 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
 
-## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
+${responsePacing}## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
 - 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.${caps.shell ? `
 - **오래 걸리는 명령(브라우저 자동화·대량 수집·빌드 등)은 전경에서 끝까지 기다려라.** Bash의 timeout을 넉넉히 지정하면 된다(밀리초, 최대 600000 = 10분). 예: 5분 예상이면 timeout: 420000.
 - **백그라운드(\`&\`·nohup·run_in_background)로 돌린 작업의 출력은 이 턴 안에서 회수하지 못하면 사라진다.** 턴이 끝나면 셸 세션이 닫혀 다음 턴에서 그 출력을 읽을 수 없다(네이티브 Claude Code와 다른 점 — 거기선 세션이 계속 살아 있다). 그러니 결과가 필요한 작업은 절대 셸 백그라운드로 던지고 턴을 끝내지 마라.
@@ -1115,7 +1120,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin })}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource })}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -1434,7 +1439,7 @@ ${lang === 'en'
   // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
   const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
     + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
-    + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
+    + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder, source: turnSource })
     + messengerNote
     + fallbackDirective;
   const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || openrouterFallbackModel(wantModel)) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
@@ -1520,7 +1525,7 @@ ${lang === 'en'
       const thoughtNow = (msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim();
       if (thoughtNow) thought = thought ? `${thought}\n\n${thoughtNow}` : thoughtNow;
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
-      const detail = tu ? detailForTool(tu.name, tu.input) : '';
+      const detail = tu ? detailForTool(tu.name, tu.input, { display: true }) : '';
       for (const b of tus) step(stageForTool(b.name), detailForTool(b.name, b.input)); // 도구 하나 = 단계 하나
       await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, steps);
     }

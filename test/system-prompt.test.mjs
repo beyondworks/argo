@@ -91,3 +91,23 @@ test('commonDirectives en — hasTools 분기 영어판', () => {
   assert.ok(t0.includes('"action":"approval"') && t0.includes('approval inbox') && t0.includes('(none)'));
   assert.ok(!t0.includes('no approval tool'), 'old dead-end phrasing must not return');
 });
+
+
+test('interactive rate-limit guidance is shared across runners without limiting background work', () => {
+  for (const hasTools of [true, false]) {
+    for (const source of ['chat', 'messenger']) {
+      const ko = commonDirectives({ source, hasTools, lang: 'ko' });
+      const en = commonDirectives({ source, hasTools, lang: 'en' });
+      assert.match(ko, /조회 한도.*sleep/);
+      assert.match(ko, /확인된 사실.*미확인/);
+      assert.match(ko, /명시적으로 기다려/);
+      assert.match(en, /rate limits.*sleep/);
+      assert.match(en, /verified facts.*unverified/);
+      assert.match(en, /explicitly asks you to wait/);
+    }
+    for (const source of ['job', 'routine', 'delegate', 'room']) {
+      assert.doesNotMatch(commonDirectives({ source, hasTools, lang: 'ko' }), /## 대화 응답 지연/);
+      assert.doesNotMatch(commonDirectives({ source, hasTools, lang: 'en' }), /## Interactive response delays/);
+    }
+  }
+});

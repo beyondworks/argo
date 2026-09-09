@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-tsheartbeat-'));
 const { paths } = await import('../src/workspace.mjs');
-const { setTurnStatus, clearTurnStatus, getTurnStatus, _setHeartbeatMsForTest } = await import('../src/turn-status.mjs');
+const { setTurnStatus, clearTurnStatus, getTurnStatus, detailForTool, _setHeartbeatMsForTest } = await import('../src/turn-status.mjs');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const statusPath = (ws, slug) => join(paths(ws).chats, `${slug}.status.json`);
@@ -164,4 +164,22 @@ test('배선: chat.mjs가 assistant 메시지의 thinking 블록을 누적해 �
   await setTurnStatus(ws, 'kim', 'write', 'a.md', '문장', 'room');
   assert.equal((await getTurnStatus(ws, 'kim')).thought.length, 1500, '미전달이면 이전 생각 유지');
   await clearTurnStatus(ws, 'kim');
+});
+
+
+test('live shell status explains a wait while the execution trace retains the command', async () => {
+  const ws = 'wait-description'; await seed(ws);
+  const input = { command: 'python3 -c "import time; time.sleep(75)"', description: 'Gmail 분당 쿼터 회복 대기' };
+  const display = detailForTool('Bash', input, { display: true });
+  const trace = detailForTool('Bash', input);
+  assert.equal(display, input.description);
+  assert.equal(trace, input.command);
+  assert.equal(detailForTool('Bash', { ...input, description: '  ' }, { display: true }), trace);
+  assert.equal(detailForTool('Bash', { ...input, description: {} }, { display: true }), trace);
+  await setTurnStatus(ws, 'mina', 'shell', display, '', 'chat', '', [{ t: 0, stage: 'shell', detail: trace }]);
+  try {
+    const live = await getTurnStatus(ws, 'mina');
+    assert.equal(live.detail, input.description);
+    assert.equal(live.steps[0].detail, input.command);
+  } finally { await clearTurnStatus(ws, 'mina'); }
 });
