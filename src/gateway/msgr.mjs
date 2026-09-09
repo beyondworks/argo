@@ -654,7 +654,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       replyMeta = rendered.msgrReply.meta;
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
-      turnTrace = turn.trace ?? null;
+      turnTrace = ch.kind === 'public' ? turn.trace ?? null : null; // 메신저 비공개·DM 답글에는 실행 궤적을 추가 저장하지 않는다
     } catch (e) {
       failed = true;
       reply = pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang);

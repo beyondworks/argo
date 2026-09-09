@@ -8,7 +8,7 @@ const read = (p) => readFileSync(fileURLToPath(new URL(`../${p}`, import.meta.ur
 const app = read('apps/messenger/src/App.jsx'); const i18n = read('apps/messenger/src/i18n.js'); const css = read('apps/messenger/src/styles.css');
 const bridge = read('src/gateway/msgr.mjs'); const chat = read('src/chat.mjs'); const ts = read('src/turn-status.mjs');
 
-test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought·ms·model·costUsd)를 반환 · 브리지는 1.5초마다 바뀐 스냅샷만 progress로 방송하고 답글에 meta.trace를 붙인다', () => {
+test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought·ms·model·costUsd)를 반환 · 브리지는 1.5초마다 바뀐 스냅샷만 progress로 방송하고 공개 채널 답글에만 meta.trace를 붙인다', () => {
   assert.match(ts, /steps: Array\.isArray\(steps\) \? steps\.slice\(-40\) : \(prev\.steps \?\? \[\]\)/, '상태 파일 steps(뒤 40)');
   assert.match(chat, /const trace = \{ steps, thought: String\(thought \?\? ''\)\.slice\(-1500\), ms: Date\.now\(\) - t0, model: actualModel \|\| null, costUsd \};/, 'trace 조립');
   assert.match(chat, /return \{ reply, sessionId: sid, handover, costUsd, trace, artifacts/, 'trace 반환');
@@ -17,7 +17,7 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought�
   assert.match(bridge, /if \(key === last\) return;\n\s*last = key;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '바뀐 스냅샷만 방송');
   assert.match(bridge, /if \(stopped \|\| !s \|\| s\.source !== 'messenger'\) return;/, '상태 파일 source 게이트(검수 M-6)');
   assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public' \}\)/, 'slug 전달 + 본문·사고 방송은 공개 채널만(검수 C-1)');
-  assert.match(bridge, /meta: \{ \.\.\.\(turnTrace \? \{ trace \} : \{\}\), \.\.\.metaBase \}/, '답글 meta.trace(실패 턴은 없음, costUsd 제외) + hop/origin');
+  assert.match(bridge, /meta: \{ \.\.\.\(turnTrace \? \{ trace \} : \{\}\), \.\.\.metaBase \}/, '공개 답글 meta.trace(실패 턴은 없음, costUsd 제외) + hop/origin');
   assert.match(read('supabase/migrations/20260909003000_msgr_message_meta.sql'), /add column if not exists meta jsonb not null default '\{\}'::jsonb/, 'meta 열');
 });
 

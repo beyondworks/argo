@@ -664,6 +664,33 @@ test('handler: 턴 전 핵심 DB 조회 실패는 유료 실행 없이 재시도
   }
 });
 
+for (const kind of ['public', 'private', 'dm', 'unknown', null, undefined]) test(`handler: ${kind} 채널 답글의 궤적 저장 범위와 넘김·종료 메타 보존`, async () => {
+  const trace = { steps: [{ stage: 'memory', detail: 'notes.md', t: 1200 }], thought: '검토 중', ms: 3400, model: 'test-model', costUsd: 0.25 };
+  for (const disposition of ['handoff', 'done']) {
+    const db = fakeDb({ peers: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드' })] });
+    db.channelOverride = { kind };
+    const job = { msgId: 39, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '검토해줘', authorId: MEMBER, threadRoot: 30, hop: 2, origin: OWNER, createdAt: new Date().toISOString() };
+    await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async () => ({
+      reply: `검토 결과. @제드 다음 단계.\nMSGR: ${disposition}`, trace, sessionId: null, artifacts: [],
+    }) })(job);
+    const replies = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+    assert.equal(replies.length, 1);
+    const row = replies[0];
+    assert.equal(row.body, '검토 결과. @제드 다음 단계.');
+    assert.equal(row.channel_id, CH);
+    assert.equal(row.reply_to, 39);
+    assert.equal(row.thread_root, 30);
+    assert.deepEqual(row.mentions, disposition === 'handoff' ? [{ kind: 'crew', id: ZED }] : []);
+    const expected = { hop: 2, origin: OWNER, ...(disposition === 'done' ? { disposition: 'done' } : {}) };
+    if (kind === 'public') expected.trace = { steps: trace.steps, thought: trace.thought, ms: trace.ms, model: trace.model };
+    assert.deepEqual(row.meta, expected, '비공개·DM·종류 미확인 채널은 trace 없이 일반 답글 메타를 보존');
+    assert.deepEqual(job.msgrExecution.replyRow.meta, expected, '재시도용 체크포인트에도 동일한 공개 범위 적용');
+    assert.equal(Object.hasOwn(row.meta, 'costUsd'), false);
+    assert.equal(Object.hasOwn(row.meta.trace ?? {}, 'costUsd'), false);
+    assert.equal(trace.costUsd, 0.25, '러너 원본 궤적은 변경하지 않는다');
+  }
+});
+
 test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대화 12건 문맥 · @넘김 힌트 · 답변 속 @크루 → mentions + meta.hop/origin', async () => {
   const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }];
   let zedChecks = 0;
