@@ -3,6 +3,7 @@
 // Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Graph3D } from './graph3d.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase, configured, q } from './supabase.js';
@@ -1996,7 +1997,7 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
   }, [onClose]);
   const hits = searchEmoji(q);
   const grid = (list, key) => <div key={key} className="grid">{list.map((e) => <button key={e} type="button" onClick={() => onPick(e)} title={e}>{e}</button>)}</div>;
-  return (
+  return createPortal( // body 포털 — 상위의 transform이 fixed 기준점을 바꿔 좌표가 502px 밀리던 결함(실측 2026-09-09: style 602 → 실제 1104)
     <div className="msgr-emojipop" ref={ref} role="dialog" aria-label={t('msg.react')} style={{ left, top, width: W, maxHeight: H }} onClick={(e) => e.stopPropagation()}>
       <input className="msgr-input sm" placeholder={t('emoji.search')} value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
       <div className="body">
@@ -2005,7 +2006,8 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
           {EMOJI_GROUPS.map((g) => <div key={g.key} className="sec"><div className="msgr-klabel">{t(`emoji.${g.key}`)}</div>{grid(g.items.map(([e]) => e), g.key)}</div>)}
         </>)}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete }) {
