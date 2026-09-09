@@ -1,4 +1,4 @@
-import { stageMessengerHandoff, messengerOrigin } from './gateway/msgr-handoff.mjs';
+import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition } from './gateway/msgr-handoff.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
@@ -1029,11 +1029,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 메신저 턴 파일 규약 — extractFileRefs(게이트웨이 발신 첨부)의 존재를 크루가 알아야 쓴다
   // (실사용 제보 2026-07-30: 규약이 프롬프트 어디에도 없어 "파일을 안 보내준다"가 됐다).
   // 텔레그램만 자동 첨부(슬랙은 텍스트 전용)라 채널 조건을 정직하게 갈라 말한다. SDK·CLI 공통 주입.
-  const messengerNote = source === 'messenger'
+  const messengerNote = (source === 'messenger'
     ? (lang === 'en'
         ? `\n## Messenger turn — sending files to the captain\n- To hand the captain a file, save it under vault/files/ or vault/projects/ and write its path verbatim in your reply (e.g. files/report.pptx, projects/20260730_x/deck.pptx). On Telegram it is attached automatically (up to 3 per reply); on other channels the captain downloads it from the web/app chat chips. Replying to the captain is NOT an external send — no approval needed.`
         : `\n## 메신저 턴 — 사장에게 파일 보내기\n- 사장에게 파일을 건네려면 vault/files/ 또는 vault/projects/에 저장하고, 답변 본문에 경로를 그대로 적어라(예: files/보고서.pptx, projects/20260730_x/제안서.pptx). 텔레그램이면 자동 첨부되고(답변당 최대 3개), 다른 채널이면 사장이 웹·앱 채팅의 다운로드 칩으로 받는다. **사장에게 답하는 것은 외부 발송이 아니다 — 결재 불필요.**`)
-    : '';
+    : '') + (mirrorCtx?.kind === 'msgr' ? messengerHandoffHint(lang) : '');
   // 대체 실행이 '실패'하면 위 자가 고지가 나올 수 없다 — 에러 메시지 자체에 대체 사실을 붙인다
   // (턴 실패 표시·이벤트 기록·메신저 회신 전 표면 공통).
   const prefixFallbackError = (e) => {
@@ -1159,6 +1159,9 @@ ${lang === 'en'
         }
       }
       if (!reply) throw new Error(`${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
+      // 메신저 제어 줄은 러너 출력에서 먼저 분리한다 — 지시 실행·거부 안내가 뒤에 붙어도 마지막 판정이 유지된다.
+      let msgrDisposition = null;
+      if (mirrorCtx?.kind === 'msgr') ({ text: reply, disposition: msgrDisposition } = parseMessengerDisposition(reply));
       // 러너 패리티 — CLI 턴엔 도구 통로가 없다. 답변 안의 ```argo 지시 블록을 여기서 실행해
       // SDK 러너의 schedule_task·send_to_crew와 같은 결과를 낸다(src/cli-directives.mjs).
       // 실행 결과는 사실로 덧붙고 블록은 화면에서 지운다 — "예약했다"고 말만 하던 자리를 없앤다.
@@ -1177,7 +1180,16 @@ ${lang === 'en'
             results: toolResults, toolHop, lang, userMsg, sessionId,
             chatOpts: { from, source, hop, chain, runnerOverride: runner, modelOverride, mirrorCtx, journal, workFolder },
           });
-          if (follow) reply = [reply, follow.reply || follow.note].filter(Boolean).join('\n\n');
+          if (follow) {
+            let followText = follow.reply || follow.note;
+            if (mirrorCtx?.kind === 'msgr') {
+              // 후속 결과가 최종 판단이다. 판정 누락·후속 실패에 앞선 handoff를 승계하지 않는다.
+              const parsed = parseMessengerDisposition(followText);
+              followText = parsed.text;
+              msgrDisposition = follow.reply ? parsed.disposition : null; // 실패 안내에 포함된 문구는 러너 판정이 아니다
+            }
+            reply = [reply, followText].filter(Boolean).join('\n\n');
+          }
         }
       }
       // 러너 독립성 — 외부 CLI의 샌드박스 거부를 SDK 러너와 같은 능력 안내로 승격한다.
@@ -1216,6 +1228,7 @@ ${lang === 'en'
           reply += denialNote({ ...denial, lang, outsideHome });
         }
       }
+      if (msgrDisposition) reply = [reply, `MSGR: ${msgrDisposition}`].filter(Boolean).join('\n');
       await appendUsage(wsId, {
         kind: source ?? (from ? 'delegate' : 'chat'), slug: agentSlug, from, runner,
         model: `${runner}${usedModel ? `:${usedModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,

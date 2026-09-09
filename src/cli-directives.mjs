@@ -154,7 +154,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // 블록 하나로 hop을 0으로 되돌려 그 상한을 통째로 무력화한다(격리 재현 2026-07-30: hop=2로
         // 배달된 턴이 낸 블록의 메시지가 hop=0·chain=[]). 실효 바운드가 hop 단독이라 여기서 샌다.
         if (stageMessengerHandoff(mirrorCtx, { to: to.slug, cc, message: msg })) {
-          notes.push(en ? `Channel handoff prepared for ${to.name}` : `${to.name}에게 채널 넘김 예약됨`);
+          // 최종 판정이 취소할 수 있다. 실제 넘김 본문은 메신저 브리지가 한 번만 렌더링한다.
           continue;
         }
         await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug] });

@@ -36,7 +36,7 @@ import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mj
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
-import { renderMessengerHandoffs, messengerOrigin } from './msgr-handoff.mjs';
+import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
 import { withLock } from '../mutex.mjs';
 
@@ -452,12 +452,15 @@ export const _rtChannelsForTest = rtChannels;
 const safeName = (n) => String(n ?? 'file').replace(/[\\/]/g, '_').replace(/\.\./g, '_').slice(0, 80) || 'file';
 
 function messengerReply(ctx, text) {
-  const handoff = renderMessengerHandoffs(ctx);
+  const parsed = parseMessengerDisposition(text);
+  const handoffs = parsed.disposition === 'done' ? [] : ctx.handoffs;
+  const handoff = renderMessengerHandoffs({ handoffs });
   if (handoff.length > MSG_MAX) throw new Error('메신저 넘김 내용이 메시지 길이 제한을 넘었습니다');
-  const visible = String(text ?? '').slice(0, handoff ? Math.max(0, MSG_MAX - handoff.length - 2) : MSG_MAX);
-  const mentions = mentionsIn(visible, ctx.peers, ctx.crewId);
-  for (const { to } of ctx.handoffs) if (!mentions.some((m) => m.id === to.id)) mentions.push({ kind: 'crew', id: to.id });
-  return { reply: [visible, handoff].filter(Boolean).join('\n\n'), msgrReply: { mentions, meta: { hop: ctx.hop ?? 0, origin: ctx.origin ?? null } } };
+  const visible = parsed.text.slice(0, handoff ? Math.max(0, MSG_MAX - handoff.length - 2) : MSG_MAX);
+  const mentions = parsed.disposition === 'handoff' ? mentionsIn(visible, ctx.peers, ctx.crewId) : [];
+  for (const { to } of handoffs) if (!mentions.some((m) => m.id === to.id)) mentions.push({ kind: 'crew', id: to.id });
+  return { replyForChecks: parsed.text, reply: [visible, handoff].filter(Boolean).join('\n\n'), msgrReply: { mentions, meta: { hop: ctx.hop ?? 0, origin: ctx.origin ?? null,
+    ...(parsed.disposition === 'done' ? { disposition: 'done' } : {}) } } };
 }
 
 /** 저장된 목적지는 실행 때 다시 검증한다. 채널·파견·계정이 바뀌면 일반 채팅으로 우회하지 않는다. */
@@ -499,7 +502,7 @@ export async function runMessengerContinuation(wsId, slug, origin, message, sess
     activeCtx.set(key, ctx);
     try {
       const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: { off: ch.crew_memory === false, tag: `org-${ctx.orgId}` } });
-      return { ...turn, replyForChecks: turn.reply, ...messengerReply(ctx, turn.reply), msgr: messengerOrigin(ctx) };
+      return { ...turn, ...messengerReply(ctx, turn.reply), msgr: messengerOrigin(ctx) };
     } finally {
       if (activeCtx.get(key) === ctx) activeCtx.delete(key);
       busyCrew.delete(key);
@@ -563,8 +566,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const authorName = job.fromCrewId ? clean(crewName(job.fromCrewId), 40) : humanName;
     const chName = clean(ch.name, 40);
     const others = peers.filter((p) => p.id !== job.crewId).map((p) => `@${clean(p.display_name, 40)}`);
-    const hint = others.length ? pick(` 다른 크루에게 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 그러면 그 크루가 이 채널에서 이어받는다. 답변 없이 넘기기만 해도 된다.`,
-      ` To hand work to or ask another crew, write its @name in your reply (${others.join(' ')}) — that crew then takes over in this channel. Handing off without answering is fine.`, lang) : '';
+    const hint = others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
+      ` To hand remaining work to or ask another crew, write its @name in your reply (${others.join(' ')}) and end with MSGR: handoff. For completion, thanks or acknowledgement alone, end with MSGR: done.`, lang) : '';
     // 제3자 발화 프레이밍(검수 HIGH-4): 채널 텍스트를 사장 지시와 같은 자리에 맨몸으로 넣지 않는다. 채널명·이름은 세척(개행·길이),
     // 본문은 이름 접두 아래 한 덩어리. 프롬프트는 힌트일 뿐이므로 구조적 경계(허용 범위 게이트·결재·RLS)가 따로 있다.
     let text = job.fromCrewId ? pick(
@@ -622,7 +625,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const stopHeartbeat = executionHeartbeat(wsId, db, job);
     activeCtx.set(ctxKey, ctx);
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public' }); // 본문·사고·단계는 공개 채널만(조직 토픽은 조직 전원이 듣는다 — 검수 C-1)
-    let reply; let failed = false; let turnTrace = null; let replyMentions = [];
+    let reply; let failed = false; let turnTrace = null; let replyMentions = []; let replyMeta = {};
     try {
       const t = await loadThread(wsId, job.slug);
       const turn = await runChat(wsId, job.slug, text, t.sessionId, {
@@ -637,6 +640,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       const rendered = messengerReply(ctx, reply);
       reply = rendered.reply;
       replyMentions = rendered.msgrReply.mentions;
+      replyMeta = rendered.msgrReply.meta;
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
       turnTrace = turn.trace ?? null;
@@ -656,7 +660,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
       mentions: failed ? [] : replyMentions, // 보이는 원문 멘션 + slug로 확정한 도구 수신자(동명이인을 다시 찾지 않음)
     };
-    const metaBase = { hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}) }; // hop/origin=연쇄 상한·정책 기준
+    const metaBase = { ...replyMeta, hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}) }; // hop/origin=연쇄 상한·정책 기준
     try {
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: { ...(turnTrace ? { trace } : {}), ...metaBase } }, executionMeta); // trace=궤적 드롭다운(실패 턴은 없음)
     } catch (e) {
@@ -762,10 +766,11 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const { db, ctx } = await restoreMessengerContext(event.wsId, slug, origin, session);
     const key = [event.type, it?.id ?? event.routine?.id ?? event.id, event.routine?.lastRun ?? '', event.phase ?? (event.ok === false ? 'failed' : 'result')].join(':');
     const digest = createHash('sha1').update(key).digest('hex').slice(0, 20);
-    const mentions = event.ok === false ? [] : (event.msgrReply?.mentions ?? []).filter((m) => m.kind === 'crew' && m.id !== ctx.crewId && ctx.peers.some((p) => p.id === m.id));
+    const done = event.msgrReply?.meta?.disposition === 'done';
+    const mentions = event.ok === false || done ? [] : (event.msgrReply?.mentions ?? []).filter((m) => m.kind === 'crew' && m.id !== ctx.crewId && ctx.peers.some((p) => p.id === m.id));
     await db.insertMessage({ channel_id: ctx.channelId, author_kind: 'crew', crew_id: ctx.crewId, kind: 'text',
       reply_to: it?.msgr?.messageId ?? ctx.threadRoot, thread_root: ctx.threadRoot, client_msg_id: `ct:${ctx.crewId}:${digest}`,
-      body: String(event.reply ?? '').slice(0, MSG_MAX), mentions, meta: { hop: ctx.hop, origin: ctx.origin } });
+      body: String(event.reply ?? '').slice(0, MSG_MAX), mentions, meta: { hop: ctx.hop, origin: ctx.origin, ...(done ? { disposition: 'done' } : {}) } });
     return true;
   }
   if (event.type === 'delegate' && event.ctx?.kind === 'msgr') { // 같은 소유자의 다른 크루가 같은 채널에 자기 이름으로(위임 미러)
