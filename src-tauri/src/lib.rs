@@ -21,6 +21,11 @@ fn boot_status(app: &tauri::AppHandle, phase: &str, detail: &str, port: Option<u
 // 포트 후보 — 3001(상주 서비스·기존 관례) 우선, 선점 시 폴백. boot.js의 후보 목록과 일치해야 한다.
 const PORTS: [u16; 3] = [3001, 3011, 3021];
 
+// Recomputed from the actual sidecar bind, never inherited from the parent.
+fn local_bind_proof(host: &str) -> &str {
+    match host { "127.0.0.1" | "::1" | "localhost" => host, _ => "" }
+}
+
 // 앱이 띄운 사이드카 핸들 — 종료 시 함께 죽인다.
 // (실측: Windows에서 앱을 닫아도 node가 고아로 남아 3001을 점유 → 다음 실행이 구버전/죽은 서버에 붙는다)
 struct Sidecar(std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
@@ -212,10 +217,12 @@ pub fn run() {
                                 return;
                             }
                         };
+                        let bind_host = "127.0.0.1";
                         let child = sidecar
                             .current_dir(std::path::PathBuf::from(&server_dir))
                             .env("PORT", port.to_string())
-                            .env("HOSTNAME", "127.0.0.1")
+                            .env("HOSTNAME", bind_host)
+                            .env("ARGO_LOCAL_BIND_PROOF", local_bind_proof(bind_host))
                             .env("ARGO_ROOT", format!("{data_root}/workspaces"))
                             .env("ARGO_STANDALONE", "1")
                             .env("NODE_ENV", "production")
@@ -320,6 +327,13 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_asset_proof_follows_actual_bind() {
+        assert_eq!(local_bind_proof("127.0.0.1"), "127.0.0.1");
+        assert_eq!(local_bind_proof("::1"), "::1");
+        assert_eq!(local_bind_proof("0.0.0.0"), "");
+        assert_eq!(local_bind_proof(""), "");
+    }
     // can_bind — 점유 포트에서 false, 해제 후 true (Hyper-V 예약 대역은 CI/mac에서 재현 불가 —
     // 그 케이스는 Windows 커널이 EACCES를 주므로 같은 is_ok() 판정으로 걸러진다. 신고 2026-07-27)
     #[test]

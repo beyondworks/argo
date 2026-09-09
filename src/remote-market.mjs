@@ -4,7 +4,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
-import { loadMcp, assertArbitraryMcpAllowed } from './market.mjs';
+import { updateMcp, assertArbitraryMcpAllowed } from './market.mjs';
 
 const TTL = 10 * 60 * 1000;
 const cache = new Map(); // key → {at, data}
@@ -111,9 +111,7 @@ export async function installRemoteMcp(wsId, { name, install }) {
   } else {
     throw new Error('설치 가능한 배포 형태(npm/http)가 아닙니다');
   }
-  const cfg = await loadMcp(wsId);
-  cfg.servers[safe] = def;
-  await writeFile(paths(wsId).mcp, JSON.stringify(cfg, null, 2));
+  await updateMcp(wsId, cfg => { cfg.servers[safe] = def; });
   return { name: safe };
 }
 

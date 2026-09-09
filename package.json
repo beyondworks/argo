@@ -37,10 +37,13 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "d3-force": "^3.0.0",
+    "json5": "2.2.3",
     "marked": "^18.0.6",
     "next": "^15.5.22",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "smol-toml": "1.8.0",
+    "yaml": "2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
