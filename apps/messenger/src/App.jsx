@@ -1982,11 +1982,18 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
 /** 슬랙식 반응 피커 — 검색 + 자주 사용 + 분류. 선택·Esc·바깥 클릭으로 닫힘. */
 function EmojiPicker({ t, anchor, onPick, onClose }) {
   const [q, setQ] = useState(''); const ref = useRef(null);
-  // 화면 고정(fixed) — 스레드 안에 붙이면 스크롤을 따라가고 잘린다(유건 제보 2026-09-09). 앵커(버튼) 아래, 자리가 없으면 위로. 스레드가 스크롤되면 닫는다.
-  const W = 296, H = 320;
-  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - W - 8));
-  const top = anchor.bottom + H + 8 <= window.innerHeight ? anchor.bottom + 6 : Math.max(8, anchor.top - H - 6);
-  useEffect(() => { const off = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); }; const key = (e) => { if (e.key === 'Escape') onClose(); }; const scr = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); }; document.addEventListener('mousedown', off); document.addEventListener('keydown', key); document.addEventListener('wheel', scr, { capture: true, passive: true }); document.addEventListener('touchmove', scr, { capture: true, passive: true }); return () => { document.removeEventListener('mousedown', off); document.removeEventListener('keydown', key); document.removeEventListener('wheel', scr, true); document.removeEventListener('touchmove', scr, true); }; }, [onClose]); // 닫기는 사용자 스크롤(휠·터치)만 — 스레드 바닥 추종의 프로그램 scroll 이벤트가 열자마자 닫던 것(실측 2026-09-09)
+  // 화면 고정(fixed) + 열린 동안 스레드 스크롤 잠금(유건 지시 2026-09-09 "드롭박스 열렸을 때는 스크롤 고정, 닫히고 스크롤"). 위치는 창 크기(clientWidth/Height) 기준으로
+  // 버튼 아래(자리 없으면 위), 가로는 버튼 왼쪽에 맞추되 창 밖이면 버튼 오른쪽 끝에 맞춘다 — 오른쪽 정렬된 내 글에서 창 밖으로 나가던 결함.
+  const W = 296, H = 320, COLS = 9; // COLS = 격자 열 수 — 자주 사용 줄은 이 수만큼
+  const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+  const left = Math.max(8, anchor.left + W + 8 <= vw ? anchor.left : Math.min(anchor.right - W, vw - W - 8));
+  const top = anchor.bottom + H + 8 <= vh ? anchor.bottom + 6 : Math.max(8, anchor.top - H - 6);
+  useEffect(() => {
+    document.body.classList.add('msgr-lock'); // .msgr-thread overflow hidden — 열린 동안 스크롤 없음
+    const off = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); }; const key = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', off); document.addEventListener('keydown', key);
+    return () => { document.body.classList.remove('msgr-lock'); document.removeEventListener('mousedown', off); document.removeEventListener('keydown', key); };
+  }, [onClose]);
   const hits = searchEmoji(q);
   const grid = (list, key) => <div key={key} className="grid">{list.map((e) => <button key={e} type="button" onClick={() => onPick(e)} title={e}>{e}</button>)}</div>;
   return (
@@ -1994,7 +2001,7 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
       <input className="msgr-input sm" placeholder={t('emoji.search')} value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
       <div className="body">
         {hits ? (hits.length ? grid(hits, 'hits') : <p className="msgr-sys">{t('emoji.none')}</p>) : (<>
-          <div className="msgr-klabel">{t('emoji.frequent')}</div>{grid(topEmoji(8), 'freq')}
+          <div className="msgr-klabel">{t('emoji.frequent')}</div>{grid(topEmoji(COLS), 'freq')}
           {EMOJI_GROUPS.map((g) => <div key={g.key} className="sec"><div className="msgr-klabel">{t(`emoji.${g.key}`)}</div>{grid(g.items.map(([e]) => e), g.key)}</div>)}
         </>)}
       </div>
@@ -2007,8 +2014,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const groups = Object.entries(reacts.reduce((acc, r) => { (acc[r.emoji] ??= []).push(r.user_id); return acc; }, {}));
   const chips = groups.length > 0 && <div className="msgr-reacts">{groups.map(([e, users]) => <button key={e} type="button" className={users.includes(uid) ? 'on' : ''} onClick={() => onReact?.(m, e)} title={users.map((u) => nameOfUser(u)).join(', ')}>{e}<span>{users.length}</span></button>)}</div>;
   const react = (e) => { bumpEmoji(e); onReact?.(m, e); };
-  const picker = pick && <EmojiPicker t={t} anchor={pick} onPick={(e) => { setPick(false); react(e); }} onClose={() => setPick(false)} />;
-  const quick = topEmoji(3);
+  const picker = pick && <EmojiPicker t={t} anchor={pick} onPick={(e) => { setPick(false); react(e); }} onClose={() => setPick(false)} />; // 자주 쓰는 것은 hover가 아니라 피커 상단 한 줄(유건 지시 2026-09-09)
   const edited = m.edited_at && !m.deleted_at && <span className="msgr-klabel">{t('msg.edited')}</span>;
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
   const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? t('org.crews'));
@@ -2020,8 +2026,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const acts = !ap && !m.deleted_at && !editing && (
     <div className="msgr-acts">
       <button type="button" onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
-      {quick.map((e) => <button key={e} type="button" className="quick" onClick={() => react(e)} title={t('msg.react')}>{e}</button>)}
-      <button type="button" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>
+      <button type="button" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>
       {mine && m.kind === 'text' && <button type="button" onClick={() => { setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
       {mine && (confirmDel ? <button type="button" className="danger" onClick={() => { setConfirmDel(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
       {picker}

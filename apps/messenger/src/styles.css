@@ -644,7 +644,7 @@
 
 
 /* 슬랙식 반응 피커(2026-09-09): hover 즉시 반응 3개 + 검색·분류 드롭다운 */
-.msgr-acts button.quick { font-size: 15px; padding: 2px 6px; line-height: 1; }
+body.msgr-lock .msgr-thread { overflow-y: hidden; } /* 반응 피커가 열린 동안 스레드 스크롤 잠금 */
 .msgr-emojipop { position: fixed; z-index: 60; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; padding: 8px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 12px 32px rgba(0,0,0,0.22); }
 .msgr-emojipop .msgr-input.sm { height: 28px; width: 100%; }
 .msgr-emojipop .body { overflow-y: auto; display: grid; gap: 6px; min-height: 0; }

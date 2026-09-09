@@ -11,7 +11,7 @@ const KEY = 'argo-msgr-emoji-freq';
 const readFreq = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return {}; } };
 export function bumpEmoji(e) { try { const f = readFreq(); f[e] = (f[e] ?? 0) + 1; localStorage.setItem(KEY, JSON.stringify(f)); } catch { /* 저장 못 해도 동작 */ } }
 /** 자주 쓴 순 n개 — 부족하면 기본값으로 채운다. */
-export function topEmoji(n, defaults = ['✅', '👀', '👍']) {
+export function topEmoji(n, defaults = ['✅', '👀', '👍', '🙏', '👏', '🎉', '❤️', '🔥', '💯']) { // 기본 9개 = 피커 한 줄을 채운다
   const f = readFreq(); const used = Object.entries(f).sort((a, b) => b[1] - a[1]).map(([e]) => e);
   return [...new Set([...used, ...defaults])].slice(0, n);
 }
