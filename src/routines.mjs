@@ -229,8 +229,9 @@ export async function resumeLoop(wsId, id) {
     곧 사용자의 시간대다(한국 사용자면 Asia/Seoul). 클라이언트가 tz를 보내면 그쪽이 우선. */
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
-export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null }) {
+export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null }) {
   if (!agentSlug || !title?.trim() || !prompt?.trim()) throw new Error('크루·제목·지시가 필요합니다');
+  if (msgr && msgr.wsId !== wsId) throw new Error('메신저 예약 회사 불일치');
   const sched = normalizeSchedule({ tz: hostTz(), ...schedule });
   const ver = sched.type === 'interval' ? null : normalizeVerify(verify); // 자율 루프는 자체 판정(LOOP:)이 있어 1차 범위 밖
   const routine = {
@@ -245,6 +246,7 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
     // 루프 — interval에만. 다른 타입에 loop가 오면 조용히 버린다(의미 없는 필드를 저장하지 않는다)
     ...(sched.type === 'interval' && loop ? { loop: normalizeLoop(loop) } : {}),
     ...(ver ? { verify: ver } : {}),
+    ...(msgr ? { msgr: (await import('./gateway/msgr-handoff.mjs')).messengerOrigin({ ...msgr, kind: 'msgr' }) } : {}),
   };
   return withLock(lockKey(wsId), async () => {
     const routines = await loadRoutines(wsId);
@@ -315,13 +317,16 @@ export async function removeRoutine(wsId, id) {
 /** 루틴 실행 — 새 세션 1턴. 결과 요약을 루틴에 기록(전체는 vault 핸드오버에).
     chat()은 수 분 걸리므로 락 밖에서 돌리고, 결과 기록만 락 안에서 해당 루틴 필드에 반영한다
     — 실행 도중 사용자가 다른 루틴을 지우거나 이 루틴을 꺼도 낡은 전체 스냅샷으로 되돌리지 않는다. */
-export async function runRoutine(wsId, id, { chatFn = null, startAt = null } = {}) {
+export async function runRoutine(wsId, id, { chatFn = null, startAt = null, session } = {}) {
   // startAt = 테스트 전용(시작 시각 주입) — "시작이 예약 시각을 가로지르는 실행"은 실제 분 경계를
   // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
   const r0 = await patchRoutine(wsId, id, { lastRun: (startAt ?? new Date()).toISOString() });
   if (!r0) throw new Error('루틴을 찾을 수 없습니다');
   try {
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
+    const run = r0.msgr
+      ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session })
+      : (message) => chat(wsId, r0.agentSlug, message, null, { source: 'routine' });
     const loop = isLoopRoutine(r0);
     let lang = 'ko';
     if (loop || r0.verify) { // verify도 lang을 쓴다 — 검수 MEDIUM-1: en 회사의 재시도 지시가 한국어로 나가던 것
@@ -337,7 +342,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null } = {
       }
     }
     const userMsg = `[루틴: ${r0.title}] ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
-    let t = await chat(wsId, r0.agentSlug, userMsg, null, { source: 'routine' });
+    let t = await run(userMsg);
     // 대화 스레드에 남긴다 — 루틴만 이게 빠져 있어서, 실행 중엔 채팅창에 보이다가 끝나면 사라졌다
     // (신고 2026-07-28 "루틴 돌면서 채팅이 올라왔다가 실행되고 나니 유실"). 저장한 적이 없었던 것.
     // 사장 직접 대화·위임·쪽지 배달은 전부 appendTurn을 한다 — 루틴만 비대칭이었다.
@@ -356,7 +361,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null } = {
       while (!res.ok && verifyTried < ver.retries) {
         verifyTried += 1;
         const retryMsg = verifyRetryPrompt(r0, res.failures, verifyTried + 1, lang);
-        t = await chat(wsId, r0.agentSlug, retryMsg, null, { source: 'routine' });
+        t = await run(retryMsg);
         await appendTurn(wsId, r0.agentSlug, { userMsg: retryMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts })
           .catch((e) => console.error(`[argo] 루틴 재시도 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
         res = await checkVerify(wsId, ver, { lang });
@@ -376,7 +381,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null } = {
     const patch = { lastOk: true, lastResult: summary };
     let stop = null; // { reason, detail }
     if (loop) {
-      const v = parseLoopVerdict(t.reply);
+      const v = parseLoopVerdict(t.replyForChecks ?? t.reply);
       const L = { ...normalizeLoop(r0.loop, r0.loop) };
       L.runs += 1;
       L.spentUsd = Math.round((L.spentUsd + (Number(t.costUsd) || 0)) * 10000) / 10000; // 구독(OAuth)·CLI 턴은 costUsd null → 0
@@ -402,11 +407,12 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null } = {
           slug: r0.agentSlug, kind: 'loop',
           action: lang === 'en' ? `Resume loop — ${r0.title}`.slice(0, 300) : `루프 재개 — ${r0.title}`.slice(0, 300),
           reason: stop.detail, payload: { routineId: id },
+          ...(r0.msgr ? { msgr: t.msgr ?? r0.msgr } : {}),
         }).catch((e) => console.error(`[argo] 루프 결재 등록 실패(${wsId}/${id}):`, e.message));
       }
-      emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: true, reply: loopStopMessage(stop.reason, stop.detail, lang, r?.loop ?? r0.loop) });
+      emitNotify({ type: 'routine', wsId, routine: r ?? r0, phase: 'stop', ok: true, reply: loopStopMessage(stop.reason, stop.detail, lang, r?.loop ?? r0.loop) });
     }
-    emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: true, reply: t.reply }); // 메신저 브리핑 푸시
+    emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: true, reply: t.reply, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
     return { ok: true, reply: t.reply, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);

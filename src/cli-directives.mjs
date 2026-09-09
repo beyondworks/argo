@@ -1,3 +1,4 @@
+import { stageMessengerHandoff, messengerOrigin } from './gateway/msgr-handoff.mjs';
 // CLI 러너 능력 패리티 — **러너에 따라 크루가 할 수 있는 일이 갈리면 안 된다**(유건 지시 2026-07-28:
 // "어떤 러너를 쓰던 같은 환경이여야지").
 //
@@ -95,7 +96,7 @@ export function toSchedule(d) {
     실패도 줄로 남긴다: 조용한 실패는 크루의 거짓말이 된다.
     `results`는 호출측이 건네는 수집함이다(커넥터 도구에 실제로 닿은 호출만 담긴다) — 채워지면
     호출측이 runToolFollowUp으로 후속 턴 1회를 돌린다. `toolHop`은 그 후속 턴 카운터. */
-export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [] } = {}) {
+export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null } = {}) {
   const en = lang === 'en';
   const notes = [];
   let budget = TOOL_RESULT_BUDGET_BYTES; // 턴 전체 주입 예산 — 블록이 여럿이면 앞에서부터 소진된다
@@ -120,7 +121,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         const target = d.crew ? find(d.crew) : null;
         const schedule = normalizeSchedule(toSchedule(d));
         const r = await addRoutine(wsId, {
-          agentSlug: target?.slug ?? fromSlug,
+          agentSlug: target?.slug ?? fromSlug, msgr: messengerOrigin(mirrorCtx, target?.slug ?? fromSlug),
           title: String(d.title ?? prompt).replace(/\s+/g, ' ').slice(0, 60),
           prompt,
           schedule,
@@ -134,7 +135,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
       } else if (action === 'mail') {
         // SDK 경로는 hop>=2면 쪽지 도구 자체가 등록되지 않는다(chat.mjs colleagues). 러너 패리티 —
         // 같은 지점에서 같은 상한을 건다. 조용히 무시하지 않고 사유 줄로 남긴다(이 파일의 계약).
-        if (hop >= 2) throw new Error(en ? 'note relay limit reached (2 hops)' : '쪽지 연쇄 상한(2단계)에 도달했다');
+        if (mirrorCtx?.kind !== 'msgr' && hop >= 2) throw new Error(en ? 'note relay limit reached (2 hops)' : '쪽지 연쇄 상한(2단계)에 도달했다');
         // 자기수신 사유는 **find 실패 후**에만 — 앞에 두면 동명이인(표시 이름이 같은 다른 크루)에게
         // 보내는 정상 쪽지가 "자기 자신"으로 오차단된다(재검수 MEDIUM: 이름 유일성은 강제되지 않는다).
         // find는 slug로 자신을 제외하므로, 조회 성공 = 자신이 아닌 실재 크루가 확실하다.
@@ -152,6 +153,10 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // colleagues가 빈 배열이 되어 왕복이 끝난다. 이 경로가 hop을 안 실으면 배달된 크루가 지시
         // 블록 하나로 hop을 0으로 되돌려 그 상한을 통째로 무력화한다(격리 재현 2026-07-30: hop=2로
         // 배달된 턴이 낸 블록의 메시지가 hop=0·chain=[]). 실효 바운드가 hop 단독이라 여기서 샌다.
+        if (stageMessengerHandoff(mirrorCtx, { to: to.slug, cc, message: msg })) {
+          notes.push(en ? `Channel handoff prepared for ${to.name}` : `${to.name}에게 채널 넘김 예약됨`);
+          continue;
+        }
         await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug] });
         notes.push(en ? `✓ Note sent to ${to.name}${cc.length ? ` (cc ${cc.length})` : ''}` : `✓ ${to.name}에게 쪽지 보냄${cc.length ? ` (참조 ${cc.length}명)` : ''}`);
       } else if (action === 'approval') {
@@ -162,7 +167,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         const request = String(d.request ?? d.action_text ?? '').trim();
         if (!request) throw new Error(en ? 'request is required' : 'request(하려는 행동)가 필요합니다');
         const item = await addApproval(wsId, {
-          slug: fromSlug, action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
+          slug: fromSlug, msgr: messengerOrigin(mirrorCtx), action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
           reason: String(d.reason ?? '').replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 300),
         });
         notes.push(en
@@ -184,7 +189,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
             ? `connector follow-up limit reached (${TOOL_FOLLOWUP_MAX} per turn) — answer with the results you already have`
             : `커넥터 후속 턴 상한(턴당 ${TOOL_FOLLOWUP_MAX}회)에 도달했다 — 이미 받은 결과로 답하라`);
         }
-        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug });
+        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug, mirrorCtx });
         const text = connectorContentText(r.content);
         if (r.error) {
           // 미연결·재인증 필요·전송 실패 — 도구에 닿지 못했다. 정직한 줄만 남기고 후속 턴 재료로 삼지

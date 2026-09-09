@@ -21,7 +21,7 @@ test('배선: followUp이 성공·실패 양 경로에서 방송하고, 게이�
   const aa = await readFile(new URL('../src/approval-actions.mjs', import.meta.url), 'utf8');
   // 위치 단언 — 개수 단언은 "실패 경로 삭제 + 성공 경로 중복"이라는 정반대 상태를 초록으로
   // 통과시킨다(검수 M-2 변이 실증 — C3와 같은 함정 계열). 각 경로의 이웃 줄로 잠근다.
-  assert.match(aa, /emitNotify\(\{ type: 'approval_followup', wsId, item, reply: r\.reply \}\);\n    return r;/, '성공 경로 방송(반환 직전)');
+  assert.match(aa, /emitNotify\(\{ type: 'approval_followup', wsId, item, reply: r\.reply,[^\n]*\}\);\n    return r;/, '성공 경로 방송(반환 직전)');
   assert.match(aa, /item\.tg\?\.chatId \? \{ source: 'messenger' \}/, '메신저발 후속 턴은 메신저 턴 — 파일 규약 수신(검수 M-1)');
   assert.match(aa, /emitNotify\(\{ type: 'approval_followup', wsId, item, reply: note \}\); \/\/ 실패도 무소식보다 통보가 낫다\n    throw e;/, '실패 경로 방송(rethrow 직전)');
   const gw = await readFile(new URL('../src/gateway.mjs', import.meta.url), 'utf8');

@@ -1,3 +1,4 @@
+import { stageMessengerHandoff, messengerOrigin } from './gateway/msgr-handoff.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
@@ -485,6 +486,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // 승인 채널 헬스 — 텔레그램이 설정됐는데 죽어 있으면 사장이 버튼을 못 받는다(실측 데드락).
   // 결재·설치·능력 요청 모두 인박스 경유라 세 도구가 동일하게 이 안내를 붙인다.
   const channelHealthNote = async () => {
+    if (mirrorCtx?.kind === 'msgr') return '';
     try {
       const { gatewayStatus, loadConnections } = await import('./connections.mjs');
       const conn = await loadConnections(wsId);
@@ -505,7 +507,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ action, reason }) => {
       // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다 — 같은 크루의 동시 턴에서도 오배달 없음)
       const item = await addApproval(wsId, { slug: fromSlug, ...(delegatedBy ? { from: delegatedBy } : {}), action, reason,
-        ...(mirrorCtx?.kind === 'msgr' ? { msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } } : {}) });
+        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}) });
       return text(`결재 요청이 등록되었다(${item.id}). 승인 전에는 절대 그 행동을 실행하지 마라. 지금은 "결재를 올렸고 승인되면 진행하겠다"고 사용자에게 알리고 턴을 마무리하라.${await channelHealthNote()}`);
     },
   );
@@ -521,7 +523,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       const item = await addApproval(wsId, { slug: fromSlug, kind: 'org_doc', ...(delegatedBy ? { from: delegatedBy } : {}),
         action: `조직 문서 제안 — ${String(title).slice(0, 80)} (${scope === 'org' ? '전사' : '채널'} · ${path})`, reason,
         payload: { scope, channel_id: scope === 'channel' ? mirrorCtx.channelId : null, path, title: String(title).slice(0, 120), body: String(body).slice(0, 65536) },
-        msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } });
+        msgr: messengerOrigin(mirrorCtx) });
       return text(`조직 문서 제안을 결재로 올렸다(${item.id}). 관리자가 승인하면 서버가 문서에 반영한다 — 승인 전에는 반영된 것처럼 말하지 마라.`);
     },
   );
@@ -566,7 +568,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         const delegated = lang === 'en' ? `(Delegated by colleague ${fromName}) ${task}` : `(동료 ${fromName}의 위임) ${task}`;
         // workFolder — 회의실 턴의 위임이면 위임받은 동료도 같은 회의 폴더를 본다(회의 프롬프트가 "동료도 같은 폴더"라
         // 약속하고 위임 결과가 방에 실린다 — 안 넘기면 위임 크루만 개인 고정으로 돈다, 분리 검수 MEDIUM-3).
-        const rulesCtx = mirrorCtx?.orgSlug ? { kind: 'msgr-rules', orgSlug: mirrorCtx.orgSlug, channelName: mirrorCtx.channelName ?? '' } : null; // G-3: 조직 규칙은 위임받은 동료에게도(미러·결재 각인은 kind 'msgr'만)
+        const rulesCtx = (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules' || mirrorCtx?.orgSlug) ? { kind: 'msgr-rules', orgSlug: mirrorCtx.orgSlug, channelName: mirrorCtx.channelName ?? '' } : null; // G-3: 조직 규칙은 위임받은 동료에게도(미러·결재 각인은 kind 'msgr'만)
         const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal, mirrorCtx: rulesCtx }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
         // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
         const { appendTurn } = await import('./thread.mjs');
@@ -600,6 +602,10 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       const ccSlugs = (cc ?? []).map(resolveOne).filter(Boolean).map((a) => a.slug);
       try {
         const { sendCrewMail } = await import('./crewmail.mjs');
+        if (stageMessengerHandoff(mirrorCtx, { to: target.slug, cc: ccSlugs, message })) {
+          mailSent += 1;
+          return text('이 턴의 채널 답글에 넘김을 예약했다. 답글이 게시되면 같은 채널에서 동료가 이어받는다.');
+        }
         const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug] });
         mailSent += 1;
         return text(`쪽지를 보냈다(${id} → ${target.name}${ccSlugs.length ? `, 참조 ${ccSlugs.length}명` : ''}). 상대는 잠시 뒤 자기 턴에서 읽는다 — 결과를 기다리지 말고 지금 할 일을 마무리하라.`);
@@ -693,7 +699,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       ].filter(Boolean).join(', ');
       const item = await addApproval(wsId, {
         slug: fromSlug, kind: 'profile', ...(delegatedBy ? { from: delegatedBy } : {}),
-        ...(mirrorCtx?.kind === 'msgr' ? { msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
+        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
         action: `프로필 변경 — ${who.name}: ${summary}`, reason: why,
         payload: { slug: who.slug, changes, ...(rule ? { rule } : {}), ...(rules ? { rules } : {}), ...(sectionEdit ? sectionEdit : {}) },
       });
@@ -717,7 +723,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       if (bad) return text(bad);
       const item = await addApproval(wsId, {
         slug: fromSlug, kind: 'hire', ...(delegatedBy ? { from: delegatedBy } : {}),
-        ...(mirrorCtx?.kind === 'msgr' ? { msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
+        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
         action: `크루 영입 — ${name ? `${name}: ` : ''}${brief}${runner ? ` (러너 ${runner}${model ? ` · ${model}` : ''})` : ''}`,
         reason: why,
         payload: { brief, ...(name ? { name } : {}), ...(team ? { team } : {}), ...(runner ? { runner } : {}), ...(model ? { model } : {}) },
@@ -747,7 +753,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ title, prompt, type, time, date, dows, everyMinutes, agentSlug, maxRuns, maxUsd }) => {
       try {
         const r = await addRoutine(wsId, {
-          agentSlug: agentSlug || fromSlug, title, prompt,
+          agentSlug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug),
           schedule: { type, ...(time ? { time } : {}), ...(date ? { date } : {}), ...(dows?.length ? { dows } : {}), ...(everyMinutes ? { everyMinutes } : {}) },
           // interval = 자율 루프 — 회차·예산 상한을 기본으로 건다(무한 반복 방지). 다른 타입엔 addRoutine이 무시
           ...(type === 'interval' ? { loop: { maxRuns: maxRuns ?? 20, ...(maxUsd != null ? { maxUsd } : {}) } } : {}),
@@ -776,7 +782,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ title, prompt, agentSlug }) => {
       try {
         const { enqueueLongJob } = await import('./gateway.mjs'); // 동적 — gateway가 chat을 import하므로 순환 회피
-        const r = await enqueueLongJob(wsId, { slug: agentSlug || fromSlug, title, prompt });
+        const r = await enqueueLongJob(wsId, { slug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug) });
         return text(`작업 "${title}"을 걸어뒀다(대기·진행 ${r.pending}건, 담당 ${agentSlug || fromSlug}). 끝나면 결과가 이 대화와 메신저로 온다. 지금은 걸어뒀다고만 알리고 턴을 마쳐라 — 결과를 기다리지 마라.`);
       } catch (e) {
         return text(`작업 적재 실패: ${String(e.message || e)}. 사장에게 알리거나 작업을 쪼개 지금 실행하라.`);
@@ -794,7 +800,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ server, tool: toolName, args }) => {
       // 결과·오류 문구는 코어가 이미 회사 언어로 정규화해 돌려준다(미연결·재연결 필요 포함).
       // 여기서 다시 쓰지 않는다 — 표면마다 문구가 갈리면 안내 품질 패리티가 깨진다.
-      const r = await callConnectorTool(wsId, server, toolName, args ?? {}, { lang, slug: fromSlug });
+      const r = await callConnectorTool(wsId, server, toolName, args ?? {}, { lang, slug: fromSlug, mirrorCtx });
       return { content: r.content ?? [], ...(r.isError ? { isError: true } : {}) };
     },
   );
@@ -910,6 +916,8 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
 export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
   // 세 saveHandover 지점이 모두 이 한 함수를 거친다(한 지점만 빠지면 crew_memory=false 채널의 내용이 기억에 새는 무언 결함).
+  const handoffStart = mirrorCtx?.handoffs?.length ?? 0;
+  const discardHandoffs = () => mirrorCtx?.handoffs?.splice(handoffStart); // 실패한 시도의 미게시 넘김은 재시도에 섞지 않는다
   const journalWrite = (reply, label) => journal?.off ? null : saveHandover(wsId, agentSlug, userMsg, reply, label, { tag: journal?.tag ?? '' });
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
@@ -1159,7 +1167,7 @@ ${lang === 'en'
         const { clean, directives, bad } = parseDirectives(reply);
         if (directives.length || bad.length) {
           const toolResults = [];
-          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain, toolHop, results: toolResults });
+          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain, toolHop, results: toolResults, mirrorCtx });
           reply = [clean, notes.join('\n')].filter(Boolean).join('\n\n');
           // 커넥터 결과 자동 후속 턴 1회 — 크루의 위 답변은 **결과를 보기 전에** 쓰인 것이라 그대로
           // 두면 반쪽이다(설계서 §2-2). 상한·증가는 runToolFollowUp/runDirectives가 toolHop으로 잠근다.
@@ -1167,7 +1175,7 @@ ${lang === 'en'
           // 같은 턴 안에서 능력·문체가 갈린다. 첨부는 넘기지 않는다(이미 이 턴이 소비했다).
           const follow = await runToolFollowUp(chat, wsId, agentSlug, {
             results: toolResults, toolHop, lang, userMsg, sessionId,
-            chatOpts: { from, source, hop, chain, runnerOverride: runner, modelOverride },
+            chatOpts: { from, source, hop, chain, runnerOverride: runner, modelOverride, mirrorCtx, journal, workFolder },
           });
           if (follow) reply = [reply, follow.reply || follow.note].filter(Boolean).join('\n\n');
         }
@@ -1220,6 +1228,7 @@ ${lang === 'en'
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
       return { reply, sessionId: null, handover, artifacts: await artDiff(), ...fellBackInfo, ...modelFallbackInfo };
     } catch (e) {
+      discardHandoffs();
       let aborted = abortReg.wasAborted();
       // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, **죽은 러너를 누적 제외**하고 남은
       // 가용 러너를 차례로 시도한다(재귀는 제외 목록이 매번 1개씩 늘어 러너 수로 자연 종료 — 아래
@@ -1505,7 +1514,7 @@ ${lang === 'en'
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
       const detail = tu ? detailForTool(tu.name, tu.input) : '';
       for (const b of tus) step(stageForTool(b.name), detailForTool(b.name, b.input)); // 도구 하나 = 단계 하나
-      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought);
+      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, steps);
     }
     if (msg.type === 'result') {
       sid = msg.session_id ?? sid;
@@ -1574,6 +1583,7 @@ ${lang === 'en'
     throw new Error(String(reply).trim().slice(0, 600));
   }
   } catch (e) {
+    discardHandoffs();
     let aborted = !!abortReg?.wasAborted();
     let retriedDown = false; // 재시도 실패 낙하 표시 — 낙하한 에러로 다음 자가 치유를 또 발동하지 않는다(중복 실행·이중 과금 방지, 검수 MEDIUM)
     // SDK 삼킴 보정 — 오류 원문을 result(is_error)로 이미 받았는데 **직후 이터레이션이
@@ -1703,5 +1713,7 @@ ${lang === 'en'
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff()) artifacts.add(r);
-  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
+  const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
+  return { reply, sessionId: sid, handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }

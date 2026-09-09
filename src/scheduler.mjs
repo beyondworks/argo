@@ -6,6 +6,7 @@ import { CATCHUP_MS } from './routine-time.mjs';
 import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
 import { chat } from './chat.mjs';
+import { msgrCrewIdBySlug } from './gateway/msgr.mjs'; // 쪽지 수신 크루의 메신저 id — 결재 카드·회신이 수신 크루 이름으로 붙는다
 import { readAgentCard } from './persona.mjs';
 import { resolveRunner, isCliTurn, runnerCredType } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
@@ -227,13 +228,15 @@ export function ensureScheduler() {
                 hasTools = !isCliTurn(resolved.runner, await runnerCredType(cid, resolved.runner)); // gemini API 키(네이티브)는 도구 있음
               } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
               const prompt = mailPrompt(msg, 'ko', { hasTools });
-              const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
+              // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
+              const mirrorCtx = msg.msgr?.channelId ? { kind: 'msgr', orgId: msg.msgr.orgId, channelId: msg.msgr.channelId, threadRoot: msg.msgr.threadRoot ?? null, crewId: msgrCrewIdBySlug(cid, slug, msg.msgr.orgId) ?? null, orgSlug: msg.msgr.orgSlug ?? null, channelName: msg.msgr.channelName ?? '' } : null;
+              const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: { off: msg.msgr.memoryOff === true, tag: `org-${msg.msgr.orgId}` } } : {}) }); // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
               // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
               await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts })
                 .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
               // 배달 알림 — pushEvent의 crewmail 분기(텔레그램 문안)와 짝(재검 N1 보류 해소). 슬랙은
               // 타입 게이트로 좁혀져 이 이벤트에 반응하지 않는다(과거 event.routine TypeError 경로).
-              emitNotify({ type: 'crewmail', wsId: cid, slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, reply: t.reply });
+              emitNotify({ type: 'crewmail', wsId: cid, slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, reply: t.reply, id: msg.id, message: msg.message, msgr: msg.msgr ?? null });
             })
               .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${cid}):`, e.message))
               .finally(() => mailDelivering.delete(cid));

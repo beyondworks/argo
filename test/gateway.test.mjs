@@ -666,6 +666,29 @@ test('pushEvent: 봇 0개 회사의 크루 쪽지도 이름으로 표기된다(C
   assert.match(sends[0].body.text, /페퍼/, '수신 크루가 slug(pepper)가 아니라 이름(페퍼)으로 — agents 가드가 nameOf를 굶기면 red');
 });
 
+test('pushEvent: 메신저 발 쪽지·위임은 미러 성공·실패·예외 모두 Telegram으로 우회하지 않는다', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const ws = 'channel-owned-routing';
+  await createCompany(ws, '채널 검수', 'beta');
+  await updateConnection(ws, 'telegram', { enabled: true, token: 'test-gateway' });
+  await updateConnection(ws, 'telegram', { chatId: '123' });
+  await updateAgentBot(ws, 'beta', { token: 'test-crew' });
+  const calls = []; const original = globalThis.fetch;
+  globalThis.fetch = async (url) => { calls.push(String(url)); return new Response(JSON.stringify({ ok: true, result: {} })); };
+  try {
+    for (const result of [true, false, new Error('mirror offline')]) {
+      const pushMsgr = async () => { if (result instanceof Error) throw result; return result; };
+      await _pushEventForTest({ type: 'crewmail', wsId: ws, from: 'alpha', slug: 'beta', reply: '1', msgr: { channelId: 'ch' } }, { pushMsgr });
+      await _pushEventForTest({ type: 'delegate', wsId: ws, from: 'alpha', to: 'beta', task: '1', reply: '2', ctx: { kind: 'msgr', chatType: 'group', channelId: 'ch' } }, { pushMsgr });
+    }
+    assert.deepEqual(calls, [], '채널 장애도 타 메신저로 보낼 권한은 아니다');
+    await _pushEventForTest({ type: 'crewmail', wsId: ws, from: 'alpha', slug: 'beta', reply: '일반 쪽지' }, { pushMsgr: async () => false });
+    assert.equal(calls.filter((url) => url.includes('/sendMessage')).length, 1, '일반 쪽지는 기존 Telegram 알림 유지');
+  } finally { globalThis.fetch = original; }
+});
+
 /* ── C1 실행 게이트(최종 재검 블로커) — 확정 인가 무력화 변이(approvalConfirmerAllowed→true)가
    전체 스위트 초록으로 생존했다(V1 실증: 그 상태에서 타인 콜백이 approved로 부활). 공용 함수를
    콜백 경로로 실행해 잠근다 — 폴러 텍스트·caption 경로도 같은 함수를 지나므로 함께 게이트된다. ── */
