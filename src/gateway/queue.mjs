@@ -51,11 +51,11 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
       if (mt && Date.now() - mt > CLAIM_MAX_AGE_MS) { await rename(fp, fp.replace(/\.claimed$/, '')).catch(() => {}); console.log(`[argo] 큐 선점 회수(${wsId}/${key}/${n}): ${Math.round(CLAIM_MAX_AGE_MS / 60_000)}분 넘은 선점 — 재실행`); }
     }
     const tick = Date.now();
-    for (const [n, t] of deferUntil) if (t <= tick) deferUntil.delete(n);
+    const due = new Set(); // 백오프가 끝난 DEFER 잡 — 이번 틱 검사 차례는 일반 잡 뒤
+    for (const [n, t] of deferUntil) if (t <= tick) { due.add(n); deferUntil.delete(n); }
     names = names.filter((n) => n.endsWith('.json') && !n.startsWith('.'))
       .sort((a, b) => ((parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)) || a.localeCompare(b)); // 도착 순서 근사(동값은 사전순 고정)
-    const waiting = new Set([...deferUntil.keys()]);
-    names = [...names.filter((n) => !waiting.has(n)), ...names.filter((n) => waiting.has(n) && deferUntil.get(n) <= tick)]; // 백오프 중인 잡은 제외, 검사 차례는 맨 뒤
+    names = [...names.filter((n) => !deferUntil.has(n) && !due.has(n)), ...names.filter((n) => due.has(n))]; // 백오프 중인 잡은 제외, 검사 차례는 맨 뒤
     for (const n of names) {
       if (busy.has(n)) continue;
       if (busy.size >= maxInflight) break; // 상한 도달 — 남은 잡은 다음 틱(큐별로 다르다: 장시간 작업은 1)

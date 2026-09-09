@@ -145,8 +145,10 @@ export function makeDb(client) {
       return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name, allow, allow_users, cursor_msg_id, hosting')
         .eq('owner_user_id', uid).eq('ws_id', wsId).eq('status', 'active')) ?? [];
     },
-    async crewBySlug(uid, wsId, slug) {
-      return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name').eq('owner_user_id', uid).eq('ws_id', wsId).eq('slug', slug).eq('status', 'active').maybeSingle());
+    async crewBySlug(uid, wsId, slug, orgId = null) { // orgId 필수에 가깝다 — 인벤토리 미러가 내가 속한 조직마다 같은 slug 행을 만들어 두 조직이면 maybeSingle이 PGRST116(검수 3R M-2)
+      let q = client.from('msgr_crews').select('id, org_id, slug, display_name').eq('owner_user_id', uid).eq('ws_id', wsId).eq('slug', slug).eq('status', 'active');
+      if (orgId) q = q.eq('org_id', orgId);
+      return unwrap(await q.maybeSingle());
     },
     async heartbeat(ids) {
       if (ids.length) unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids));
@@ -225,7 +227,7 @@ export function makeDb(client) {
       const rows = unwrap(await client.from('msgr_messages').select('id').in('client_msg_id', ['reply', 'deny', 'stale', 'hopcap', 'ratecap'].map((k) => `${k}:${crewId}:${msgId}`)).limit(1)) ?? [];
       return rows.length > 0;
     },
-    /** 이 스레드에서 크루가 크루 넘김으로 돈 턴 수(브리지가 답글 meta.hop≥1로 표시) — 연쇄 상한의 근거. meta는 사용자가 쓸 수 있어도 늘리는 방향으로만 속일 수 있다. */
+    /** 이 스레드에서 크루가 크루 넘김으로 돈 턴 수(브리지가 답글 meta.hop≥1로 표시) — 정상 연쇄(핑퐁·루프)의 상한 근거. meta·thread_root는 멤버가 쓸 수 있으므로 적대적 멤버에 대한 상한은 아니다 — 그쪽은 AUTO_MAX(회사당 10분 20턴)가 막는다. */
     async autoTurnsIn(rootId) { // HEAD 카운트 응답은 { data: null, count } — data 대신 count를 읽는다(검수 2R C-1)
       const { count, error } = await client.from('msgr_messages').select('id', { count: 'exact', head: true }).eq('thread_root', rootId).eq('author_kind', 'crew').eq('kind', 'text').gte('meta->>hop', '1');
       if (error) throw new Error(`msgr db: ${error.message}`);
@@ -342,7 +344,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   for (const orgId of new Set(crews.map((c) => c.org_id))) { // G-2: 조직 문서 미러 — 바뀐 것만, 실패는 로그(턴 처리와 무관)
     await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
   }
-  for (const crew of crews) crewIds.set(`${wsId}:${crew.slug}`, crew.id);
+  for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
   const mine = new Set(crews.map((c) => c.id));
   for (const crew of crews) {
     const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
@@ -356,14 +358,14 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       if (fromCrew) {
         // 권한 주체 = 발신 크루의 소유자(크루는 소유자의 권한으로 말한다). 크루 글 insert는 RLS가 소유자에게만 허용하므로 위조 불가.
         // meta.origin·thread_root·reply_to는 멤버가 쓸 수 있는 값이라 권한 판정에 쓰지 않는다(검수 1R C-2·2R H-3).
-        origin = await db.crewOwner(m.crew_id).catch(() => null);
+        origin = await db.crewOwner(m.crew_id); // 순단이면 던진다 → drain이 커서를 올리지 않고 다음 틱 재시도(조용한 소실 방지 — 검수 3R L-9). null = 크루 삭제
         if (!origin) continue;
-        // 뿌리(사람 글, 같은 채널)는 프레이밍·접기·연쇄 집계에만 쓴다. 다른 채널·크루 글·없음이면 접기 없이 hop만 집계
+        // 넘김은 같은 채널의 사람 글이 뿌리인 스레드 안에서만 — 뿌리는 표시(rootAuthor)·접기·연쇄 집계의 기준이고, 그 사람도 아래서 정책 판정을 함께 받는다(검수 3R M-3·M-4)
         const root = m.thread_root ? await db.message(m.thread_root).catch(() => null) : null;
-        const rootOk = root && root.author_kind === 'user' && root.channel_id === m.channel_id;
-        if (rootOk && targetsCrew(root, crew, dm) && !(await db.settled(crew.id, root.id).catch(() => true))) continue; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다
-        rootAuthor = rootOk ? root.author_user_id : null;
-        hop = 1 + (await db.autoTurnsIn(m.thread_root ?? m.id).catch(() => HOP_MAX)); // 조회 실패 = 상한 취급(fail-closed)
+        if (!root || root.author_kind !== 'user' || !root.author_user_id || root.channel_id !== m.channel_id) continue;
+        if (targetsCrew(root, crew, dm) && !(await db.settled(crew.id, root.id).catch(() => true))) continue; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다
+        rootAuthor = root.author_user_id;
+        hop = 1 + (await db.autoTurnsIn(root.id).catch(() => HOP_MAX)); // 조회 실패 = 상한 취급(fail-closed)
       }
       if (fromCrew && hop > HOP_MAX) {
         await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `hopcap:${crew.id}:${m.id}`,
@@ -375,7 +377,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
           body: pick(`10분 안에 자동 턴이 ${AUTO_MAX}회를 넘어 이 넘김은 실행하지 않았습니다 — 잠시 뒤 사람이 다시 지시해 주세요.`, `Over ${AUTO_MAX} automatic turns in 10 minutes — this handoff was not run; a person can re-instruct shortly.`, lang) }).catch((e) => console.error('[argo] msgr 자동 턴 상한 안내 실패:', e.message));
         continue;
       }
-      const why = await db.instructCheck(crew.id, origin, m.channel_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid) ? 'ok' : 'crew_allow'; }); // H-2: 서버가 정본(채널 정책 포함), 답글도 서버 트리거가 재판정
+      let why = await db.instructCheck(crew.id, origin, m.channel_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid) ? 'ok' : 'crew_allow'; });
+      if (why === 'ok' && fromCrew && rootAuthor && rootAuthor !== origin) why = await db.instructCheck(crew.id, rootAuthor, m.channel_id).catch(() => 'crew_allow'); // 넘김은 발신 크루 소유자와 뿌리 사람 둘 다 이 크루에게 지시할 수 있어야 한다 — 허용 범위 'all'인 크루를 거쳐 allow='owner' 크루를 부리는 우회 차단(검수 3R M-3) // H-2: 서버가 정본(채널 정책 포함), 답글도 서버 트리거가 재판정
       if (why !== 'ok') {
         out.denied++;
         await db.insertMessage({
@@ -432,15 +435,17 @@ export async function syncApprovals(wsId, { db, uid, resolve = resolveWithFollow
 
 /* ─── 턴 문맥 — 턴 중 request_approval·delegate가 어느 채널에서 왔는지(push가 본다). 전역 맵 대신 wsId:slug 단위. ─── */
 const crewIds = new Map(); // `${wsId}:${slug}` → msgr_crews.id (drain이 채운다) — 쪽지 배달 턴의 문맥 크루 id
-export function msgrCrewIdBySlug(wsId, slug) { return crewIds.get(`${wsId}:${slug}`) ?? null; }
+export function msgrCrewIdBySlug(wsId, slug, orgId) { return crewIds.get(`${wsId}:${orgId}:${slug}`) ?? null; }
 const activeCtx = new Map(); // `${wsId}:${slug}` → ctx. 정본은 결재 항목에 각인된 item.msgr(chat.mjs addApproval) — 이 맵은 각인 없는 경로(CLI 지시 블록 등)의 폴백
 export const _activeCtxForTest = activeCtx;
 const rtChannels = new Map(); // `${wsId}:${orgId}` → realtime channel(타이핑 방송용, start()가 채움 — 회사별로 분리, 같은 조직에 두 회사가 등록돼도 서로 해제하지 않는다)
 const safeName = (n) => String(n ?? 'file').replace(/[\\/]/g, '_').replace(/\.\./g, '_').slice(0, 80) || 'file';
 
 /* ─── 잡 핸들러 — 워커가 집는다. 턴 실패는 에러 회신으로 내부 종결(정상 반환 = 잡 완료). ─── */
+const busyCrew = new Set(); // `${wsId}:${slug}` — 같은 크루는 한 번에 한 턴(상태 파일이 크루당 하나 → 동시 턴이면 다른 채널의 사고·본문이 이 채널 방송에 섞인다). await 이전에 동기 예약해야 TOCTOU가 없다(검수 3R H-1)
+export const _busyCrewForTest = busyCrew;
 export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now } = {}) {
-  return async (job) => {
+  const run = async (job) => {
     const c = await session();
     if (!c) { throw new Error('기기 세션 없음 — 다음 틱 재시도'); } // 인프라 예외 = 파일 유지·재시도(queue.mjs 계약)
     const { db, uid } = c;
@@ -449,7 +454,6 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     for (const prev of job.after ?? []) { // 앞 크루가 끝날 때까지 이 잡은 차례를 미룬다(DEFER = 선점 해제·백오프, 슬롯 점유 없음). 상한(ORDER_WAIT_MS, 적재 시각 기준) 뒤엔 그냥 진행
       if (!(await db.settled(prev, job.msgId).catch(() => true)) && now() - Date.parse(job.createdAt) < ORDER_WAIT_MS) return DEFER;
     }
-    if (activeCtx.has(ctxKey) && now() - Date.parse(job.createdAt) < ORDER_WAIT_MS) return DEFER; // 같은 크루는 한 번에 한 턴 — 상태 파일이 크루당 하나라 동시 턴이면 다른 채널(DM)의 사고·본문이 이 채널 방송에 섞인다(검수 2R H-4)
     if (await db.settled(job.crewId, job.msgId).catch(() => false)) { console.log(`[argo] msgr 잡 중복(${wsId}/${job.slug}/${job.msgId}) — 이미 답함, 실행 생략`); return; } // 선점 중 재적재된 사본(검수 M-2) — 유료 턴 두 번 방지
     const ch = await db.channel(job.channelId).catch(() => null);
     if (!ch) return; // 채널 삭제 — 잡 폐기
@@ -529,14 +533,21 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // 여기서부터는 절대 던지지 않는다(검수 HIGH-1): 핸들러가 던지면 큐가 잡을 남겨 **유료 턴 전체**가 초당 1회 재실행된다(실측 4.2초에 4턴).
     // 답글 insert 실패(보관된 채널 42501·해제된 크루·순단)는 로그로 남기고 잡을 끝낸다 — 형제 핸들러(gateway.mjs:407)와 같은 규율.
     let row = null;
+    const { costUsd: _cost, ...trace } = turnTrace ?? {}; // 턴 비용은 채널 열람자 전원에게 보일 값이 아니다(검수 3R L-11) — 소유자 화면은 활동 타임라인이 정본
+    const replyRow = {
+      channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId, // 명시 — 트리거는 null일 때 reply_to(크루 글)로 채워 스레드가 끊긴다(검수 2R C-2)
+      client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
+      mentions: failed ? [] : mentionsIn(String(reply ?? ''), peers, job.crewId), // 답변 속 @크루 → 그 크루가 이어받는다(drain의 targetsCrew)
+    };
+    const metaBase = { hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null }; // hop/origin=연쇄 상한·정책 기준
     try {
-      row = await db.insertMessage({
-        channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId, // 명시 — 트리거는 null일 때 reply_to(크루 글)로 채워 스레드가 끊긴다(검수 2R C-2)
-        client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
-        mentions: failed ? [] : mentionsIn(String(reply ?? ''), peers, job.crewId), // 답변 속 @크루 → 그 크루가 이어받는다(drain의 targetsCrew)
-        meta: { ...(turnTrace ? { trace: turnTrace } : {}), hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null }, // trace=궤적 드롭다운(실패 턴은 없음) · hop/origin=연쇄 상한·정책 기준
-      });
-    } catch (e) { console.error(`[argo] msgr 답글 insert 실패(${wsId}/${job.slug}/${job.msgId}) — 잡 종결:`, e.message); return; }
+      row = await db.insertMessage({ ...replyRow, meta: { ...(turnTrace ? { trace } : {}), ...metaBase } }); // trace=궤적 드롭다운(실패 턴은 없음)
+    } catch (e) {
+      // 궤적(steps detail 무제한)이 meta 64KB 제약을 넘기면 답글째 사라진다 — 궤적 없이 한 번 더(유료 턴 결과 보존, 검수 3R L-7)
+      console.error(`[argo] msgr 답글 insert 실패(${wsId}/${job.slug}/${job.msgId}) — 궤적 없이 재시도:`, e.message);
+      try { row = await db.insertMessage({ ...replyRow, meta: metaBase }); }
+      catch (e2) { console.error(`[argo] msgr 답글 insert 재실패(${wsId}/${job.slug}/${job.msgId}) — 잡 종결:`, e2.message); return; }
+    }
     if (!row || failed) return; // 중복(다른 기기가 먼저 답함) 또는 실패 — 첨부 없음
     // 답변 속 파일 참조 → Storage 업로드 + 첨부 행. 실패는 채널에 알린다(침묵 금지).
     const fails = [];
@@ -552,9 +563,15 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       } catch (e) { fails.push({ name, reason: /ENOENT/.test(e.message) ? pick('파일이 없습니다', 'file not found', lang) : String(e.message).slice(0, 80) }); }
     }
     if (fails.length) {
-      await db.insertMessage({ channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'system', reply_to: row.id,
+      await db.insertMessage({ channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'system', reply_to: row.id, thread_root: job.threadRoot ?? job.msgId,
         client_msg_id: `attfail:${job.crewId}:${job.msgId}`, body: attachFailureNote(fails, lang) }).catch((e) => console.error('[argo] msgr 첨부 실패 안내 실패:', e.message));
     }
+  };
+  return async (job, meta) => {
+    const k = `${wsId}:${job.slug}`;
+    if (busyCrew.has(k)) return DEFER; // 동기 검사·예약 — 이 사이에 await가 없어 같은 틱의 두 잡이 함께 통과할 수 없다. 시간 상한 없음(예약은 finally로 반드시 풀린다)
+    busyCrew.add(k);
+    try { return await run(job, meta); } finally { busyCrew.delete(k); }
   };
 }
 
@@ -643,7 +660,7 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
   if (event.type === 'delegate' && event.ctx?.kind === 'msgr') { // 같은 소유자의 다른 크루가 같은 채널에 자기 이름으로(위임 미러)
     if (muted('delegate')) return false;
     const c = await session(); if (!c) return false;
-    const target = await c.db.crewBySlug(c.uid, event.wsId, event.to).catch(() => null);
+    const target = await c.db.crewBySlug(c.uid, event.wsId, event.to, event.ctx.orgId).catch(() => null);
     if (!target || target.org_id !== event.ctx.orgId) return false; // 조직에 등록되지 않은 크루 — A의 답에 통합돼 있으니 생략
     const { lang = 'ko' } = company;
     const digest = createHash('sha1').update(`${event.task}\n${event.reply}`).digest('hex').slice(0, 12); // 잡 재시도 시 같은 미러 중복 방지(멱등 키)
@@ -655,9 +672,9 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
   // 크루 쪽지 — 메신저 턴에서 보낸 쪽지(event.msgr)는 텔레그램이 아니라 그 채널에: 쪽지 본문은 발신 크루 이름으로(@수신자), 회신은 수신 크루 이름으로.
   // 실사고 2026-09-09: 채널에서 "@슈리 @카맥 번갈아 세기"를 시키자 둘이 쪽지로 이어 세었는데 그 릴레이가 전부 텔레그램 봇으로 나갔다.
   if (event.type === 'crewmail' && event.msgr?.channelId) {
-    if (muted('crewmail')) return true; // 음소거 = 처리됨 — 텔레그램 폴백으로 되살리지 않는다(검수 2R L-7)
+    if (muted('crewmail')) return false; // 음소거 = 메신저에 안 붙임 → 다른 창구(텔레그램)로는 간다(어디에도 안 남는 것보다 낫다 — 검수 3R L-8)
     const c = await session(); if (!c) return false;
-    const [sender, receiver] = await Promise.all([c.db.crewBySlug(c.uid, event.wsId, event.from).catch(() => null), c.db.crewBySlug(c.uid, event.wsId, event.slug).catch(() => null)]);
+    const [sender, receiver] = await Promise.all([c.db.crewBySlug(c.uid, event.wsId, event.from, event.msgr.orgId).catch(() => null), c.db.crewBySlug(c.uid, event.wsId, event.slug, event.msgr.orgId).catch(() => null)]);
     if (!receiver || receiver.org_id !== event.msgr.orgId) return false;
     const root = event.msgr.threadRoot ?? null;
     let ok = 0; // 부분 성공도 처리됨(true) — 둘 다 실패했을 때만 텔레그램 폴백(검수 2R L-7 이중 배달 방지)
