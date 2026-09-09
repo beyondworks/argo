@@ -35,7 +35,7 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍으로 있다', () => {
   const keys = new Set([...src.matchAll(/t\('([A-Za-z0-9._-]+)'\)/g)].map((m) => m[1])); // 대소문자 — noCrews·notSignedIn 같은 키를 놓치던 수집기(검수 LOW-1)
   for (const v of ['all', 'list', 'owner']) keys.add(`settings.msgr.allow.${v}`);
   for (const r of ['owner', 'admin', 'member', 'guest']) keys.add(`role.${r}`);
-  assert.ok(keys.size >= 18, `키 수집이 너무 적다(${keys.size})`);
+  assert.ok(keys.size >= 14, `키 수집이 너무 적다(${keys.size})`);
   for (const k of keys) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} 라벨이 ko·en 둘 다 있어야 한다`);
 });
 
@@ -52,10 +52,10 @@ test('H-0: 라우트가 조직별 policy를 싣고, 카드는 잠금이면 라�
   assert.match(route, /from\('msgr_org_policies'\)\.select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트가 정책을 조회하지 않는다');
   assert.match(route, /o\.policy = /, '조직에 policy가 붙지 않는다');
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
-  assert.match(src, /const locked = !!org\?\.policy\?\.allow_locked;/, '정책 잠금 판정이 없다');
-  assert.match(src, /role="radio" aria-checked=\{allow === v\} disabled=\{busy === a\.slug \|\| locked\}/, '허용 범위 라디오가 정책 잠금에 비활성화되지 않는다');
-  assert.match(src, /register\(a\.slug, locked \? org\.policy\.allow_default : 'owner', \[\]\)/, '등록 버튼이 잠긴 기본값을 쓰지 않는다');
-  assert.match(src, /\{locked && <span className="note">\{t\('settings\.msgr\.allow\.locked'\)\}/, '잠금 안내 문구가 없다');
+  // 2026-09-08 유건 지시: 파견·허용 범위·해제는 메신저에서 — 아르고 카드는 연결 상태 + 읽기 전용 목록만(등록·해제·라디오 없음)
+  assert.doesNotMatch(src, /register\(|unregister\(|role="radio"|method: 'DELETE'/, '아르고 카드에 등록·해제·허용 범위 조작이 남아 있다');
+  assert.match(src, /\{reg \? `\$\{t\('settings\.msgr\.registered'\)\} · \$\{t\(`settings\.msgr\.allow\.\$\{reg\.allow\}`\)\}` : t\('settings\.msgr\.notRegistered'\)\}/, '행은 파견 상태·허용 범위를 읽기 전용으로 보인다');
+  assert.match(src, /t\('settings\.msgr\.manage'\)/, '메신저에서 관리한다는 안내가 없다');
   assert.match(i18n, /'settings\.msgr\.allow\.locked': \['[^']+', '[^']+'\]/, 'settings.msgr.allow.locked ko/en');
 });
 
@@ -118,7 +118,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(crew\?\.hosting === 'bot' \|\| \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\)\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다(봇 포함 — 부록 N)');
   assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
-  assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
+  assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} crewId=\{c\.id\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다(이미지는 crewId로)');
   assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
   const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
   assert.match(crewSheet, /const tier = crewTier\(crew, org\);/, '시트 등급 판정');
@@ -155,7 +155,7 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(comp, /const usable = channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews;/, '멘션 후보 필터');
   assert.match(comp, /const list = \[\.\.\.usable\.map\(/, '후보가 usable을 안 쓴다');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
-  assert.match(bridge, /const why = await db\.instructCheck\(crew\.id, m\.author_user_id, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
+  assert.match(bridge, /let why = await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
   assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
   assert.match(bridge, /body: why === 'channel_policy'\n\s*\? pick\(`이 채널은 회사 크루만 일할 수 있습니다\(채널 정책\)/, '채널 사유 안내');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
@@ -198,7 +198,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
   assert.match(app, /if \(error\) return onError\?\.\(error\.message\);/, '첨부 오류 토스트');
   assert.match(app, /<span className="q">\{parent\.author_kind === 'user'/, '인용 말줄임 span');
   assert.match(app, /crs\.sort\(\(a, b\) => \(crewTier\(b, orgRow\) === 'company'\) - \(crewTier\(a, orgRow\) === 'company'\) \|\| a\.display_name\.localeCompare\(b\.display_name, 'ko'\)\);/, '크루 순서 고정');
-  assert.match(app, /\{import\.meta\.env\.DEV && \(<>/, '개발용 로그인 DEV 게이트');
+  assert.match(app, /\{\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(<>/, '개발용 로그인은 DEV 또는 검수용 번들 플래그(VITE_DEV_LOGIN=1)에서만 — 발행 빌드 env엔 이 플래그가 없다');
   const css = read('apps/messenger/src/styles.css');
   assert.match(css, /^\.msgr-quote \.q \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/m, '인용 말줄임 CSS');
   assert.match(css, /^\.switchrow \{ display: inline-flex; align-items: center; gap: 8px;/m, '체크박스 행 간격');
@@ -226,7 +226,7 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
   const ch = app.slice(app.indexOf('function Channel('), app.indexOf('function Message('));
   assert.match(ch, /const stick = useRef\(true\);/, '바닥 고정 ref');
   assert.match(ch, /useEffect\(\(\) => \{ stick\.current = true; \}, \[chId\]\);/, '채널 전환 시 바닥부터');
-  assert.match(ch, /stick\.current = el\.scrollHeight - el\.scrollTop - el\.clientHeight < 40;/, '바닥 근접 판정 40px');
+  assert.match(ch, /const gap = el\.scrollHeight - el\.scrollTop - el\.clientHeight; if \(gap < 40\) stick\.current = true; else if \(dragging \|\| Date\.now\(\) - userAt < 600\) stick\.current = false;/, '바닥 근접 40px는 고정, 해제는 사용자 의도(휠·터치·키·드래그)가 있을 때만 — 프로그램 스크롤 경합으로 고정이 풀리던 결함(2026-09-09)');
   assert.match(ch, /const ro = new ResizeObserver\(toBottom\);/, '높이 변화 추적');
   assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
   assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
@@ -249,7 +249,7 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(oc, /from\('msgr_invites'\)\.delete\(\)\.eq\('id', inv\.id\)\.select\('id'\)/, '초대 취소');
   assert.match(oc, /from\('msgr_audit_log'\)\.select\([^)]*\)\.eq\('org_id', org\.id\)\.order\('at', \{ ascending: false \}\)\.limit\(50\)/, '감사 50건');
   assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
-  assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널은 알리지 않는다');
+  assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
   assert.match(app, /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히');
   assert.match(app, /\{tab === 'org' && org && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭)');

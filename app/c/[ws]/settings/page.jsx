@@ -761,36 +761,21 @@ function TrashCard({ ws }) {
 /** 팀 메신저 — 이 회사 크루를 조직에 등록(파견)/해제하고 허용 범위를 고른다. 조직·채널·메시지는 메신저 앱이 다룬다.
     데이터는 /api/companies/[ws]/msgr(기기 세션 JWT로 Supabase msgr_crews에 씀). 기본 허용 범위는 '나만'(부록 H — 정책 테이블 전까지 가장 좁게). */
 function MsgrCard({ ws, agents }) {
+  // 2026-09-08 유건 지시: 파견·허용 범위·해제는 팀 메신저에서. 이 카드는 "아르고 ↔ 메신저 연결" 상태만 보여 준다(텔레그램·슬랙 카드와 같은 모양).
+  // 아르고 로그인 = 연결: 브리지가 내 크루 전부를 조직에 기본 파견하고, 여기는 어느 조직에 몇 명이 파견 중인지 읽기 전용으로 보인다.
   const { t } = useLang();
-  const [st, setSt] = useState(null); // { signedIn, orgs:[{id,name,role,members}], crews:[등록 행] }
+  const [st, setSt] = useState(null); // { signedIn, orgs:[{id,name,role}], crews:[등록 행] }
   const [orgId, setOrgId] = useState('');
-  const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
   useEffect(() => { load(); }, [load]);
-  const org = st?.orgs?.find((o) => o.id === orgId);
   const regOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug && r.status === 'active');
   const bridgeOn = !!st?.crews?.some((r) => r.status === 'active');
-  async function register(slug, allow, allowUsers) {
-    if (busy) return; setBusy(slug); setErr('');
-    try { await api(`/api/companies/${ws}/msgr`, { orgId, slug, allow, allowUsers }); await load(); }
-    catch (e) { setErr(String(e.message)); } finally { setBusy(''); }
-  }
-  async function unregister(slug) {
-    if (busy) return; setBusy(slug); setErr('');
-    try {
-      const r = await fetch(`/api/companies/${ws}/msgr`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ orgId, slug }) });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${r.status}`);
-      await load();
-    } catch (e) { setErr(String(e.message)); } finally { setBusy(''); }
-  }
-  // 화면(2026-09-07 유건 지적 "일관성·가독성·가시성"): 다른 연결 카드와 같은 머리(card-title + chip), 크루는 아바타·이름·역할이
-  // 왼쪽 정렬된 같은 높이의 행, 상태는 오른쪽 점 하나, 허용 범위는 파견 중인 크루를 펼쳤을 때만. 설명·정책 문장은 접어 첫 화면은 목록이 보이게.
-  const [open, setOpen] = useState(''); // 펼친 크루 slug
-  const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
   const regCount = agents.filter((a) => regOf(a.slug)).length;
+  const org = st?.orgs?.find((o) => o.id === orgId);
+  const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -818,57 +803,20 @@ function MsgrCard({ ws, agents }) {
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
         {!!agents.length && (
           <ul className="msgr-crews" role="list">
-            {agents.map((a) => {
-              const reg = regOf(a.slug);
-              const allow = reg?.allow ?? 'owner';
-              const picked = reg?.allow_users ?? [];
-              const isOpen = !!reg && open === a.slug;
-              const locked = !!org?.policy?.allow_locked;
-              return (
-                <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}${isOpen ? ' open' : ''}`}>
-                  <div className="row">
-                    <Avatar name={a.name} sm />
-                    <button type="button" className="who" disabled={!reg} onClick={() => setOpen(isOpen ? '' : a.slug)} aria-expanded={isOpen} title={reg ? t('settings.msgr.expand') : undefined}>
-                      <span className="name">{a.name}</span>
-                      <span className="role">{a.role}</span>
-                    </button>
-                    <span className="state" title={reg ? t('settings.msgr.registered') : t('settings.msgr.notRegistered')}>
-                      <span className="dot" aria-hidden="true" />{reg ? t(`settings.msgr.allow.${allow}`) : t('settings.msgr.notRegistered')}
-                    </span>
-                    {reg ? (
-                      <button type="button" className="btn sm" disabled={busy === a.slug} onClick={() => unregister(a.slug)}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.unregister')}</button>
-                    ) : (
-                      <button type="button" className="btn sm btn-primary" disabled={busy === a.slug} onClick={() => register(a.slug, locked ? org.policy.allow_default : 'owner', [])}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.register')}</button>
-                    )}
-                  </div>
-                  {isOpen && (
-                    <div className="more">
-                      <div className="line">
-                        <span className="microlabel">{t('settings.msgr.allow')}</span>
-                        <div role="radiogroup" aria-label={t('settings.msgr.allow')} className="segs">
-                          {['all', 'list', 'owner'].map((v) => (
-                            <button key={v} type="button" role="radio" aria-checked={allow === v} disabled={busy === a.slug || locked} onClick={() => register(a.slug, v, v === 'list' ? picked : [])}>{t(`settings.msgr.allow.${v}`)}</button>
-                          ))}
-                        </div>
-                        {locked && <span className="note">{t('settings.msgr.allow.locked')}</span>}
-                      </div>
-                      {allow === 'list' && (
-                        <div className="line">
-                          <span className="microlabel">{t('settings.msgr.allow.pick')}</span>
-                          {!org?.members?.length && <span className="note">{t('settings.msgr.allow.noMembers')}</span>}
-                          {org?.members?.map((m) => {
-                            const on = picked.includes(m.id);
-                            return <button key={m.id} type="button" className={`chip${on ? ' fill' : ''}`} aria-pressed={on} disabled={busy === a.slug} onClick={() => register(a.slug, 'list', on ? picked.filter((x) => x !== m.id) : [...picked, m.id])} style={{ cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{m.name}</button>;
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
+            {agents.map((a) => { const reg = regOf(a.slug); return (
+              <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
+                <div className="row">
+                  <Avatar name={a.name} sm />
+                  <span className="who" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}><span className="name">{a.name}</span><span className="role">{a.role}</span></span>
+                  <span className="state" title={reg ? t('settings.msgr.registered') : t('settings.msgr.notRegistered')}>
+                    <span className="dot" aria-hidden="true" />{reg ? `${t('settings.msgr.registered')} · ${t(`settings.msgr.allow.${reg.allow}`)}` : t('settings.msgr.notRegistered')}
+                  </span>
+                </div>
+              </li>
+            ); })}
           </ul>
         )}
+        <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.manage')}</p>
         <details className="msgr-fine">
           <summary><span className="microlabel">{t('settings.msgr.policy')}</span><span>{t('settings.msgr.fine.summary')}</span></summary>
           {policyLine && <p>{policyLine}</p>}

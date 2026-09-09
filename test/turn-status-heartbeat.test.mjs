@@ -151,11 +151,16 @@ test('배선: chat.mjs가 assistant 메시지의 thinking 블록을 누적해 �
   assert.ok(src.includes("let thought = '';"), 'thought 누적 변수');
   assert.ok(/filter\(\(b\) => b\.type === 'thinking' && typeof b\.thinking === 'string'\)\.map\(\(b\) => b\.thinking\)/.test(src), 'thinking 블록 수집');
   assert.ok(/if \(thoughtNow\) thought = thought \? `\$\{thought\}\\n\\n\$\{thoughtNow\}` : thoughtNow;/.test(src), '누적(이전 생각 뒤에 덧붙임)');
-  assert.ok(src.includes("await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought);"), '단계 갱신에 thought 전달');
+  assert.ok(src.includes("await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, steps);"), '단계 갱신에 thought·steps 전달(메신저 실행 카드 2026-09-09)');
   // 상태 파일 왕복 — thought는 뒤 1500자만, 미전달 시 유지
   const ws = 'hb-thought'; await seed(ws);
   await setTurnStatus(ws, 'kim', 'think', '', '', 'room', 'x'.repeat(2000));
   assert.equal((await getTurnStatus(ws, 'kim')).thought.length, 1500, '뒤 1500자');
+  // steps — 전달하면 뒤 40개, 미전달이면 유지, 반환에 실림(메신저 실행 카드 원천)
+  await setTurnStatus(ws, 'kim', 'shell', 'ls', undefined, 'room', undefined, Array.from({ length: 45 }, (_, i) => ({ t: i, stage: 'shell', detail: `c${i}` })));
+  assert.equal((await getTurnStatus(ws, 'kim')).steps.length, 40, '뒤 40개');
+  await setTurnStatus(ws, 'kim', 'think', '', undefined, 'room');
+  assert.equal((await getTurnStatus(ws, 'kim')).steps.at(-1).detail, 'c44', '미전달 시 유지');
   await setTurnStatus(ws, 'kim', 'write', 'a.md', '문장', 'room');
   assert.equal((await getTurnStatus(ws, 'kim')).thought.length, 1500, '미전달이면 이전 생각 유지');
   await clearTurnStatus(ws, 'kim');

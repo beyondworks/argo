@@ -62,7 +62,7 @@ async function touch(wsId, slug) {
   await writeJsonAtomic(file(wsId, slug), { ...s, ts: Date.now() });
 }
 
-export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source, thought) {
+export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source, thought, steps) {
   const k = keyOf(wsId, slug);
   let e = live.get(k);
   if (!e) {
@@ -93,6 +93,8 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
         // thought — 모델의 사고(thinking 블록) 뒤 1500자. 회의실 발언 카드·1:1 진행 카드의 접이식 "생각"(유건 요청 2026-09-06 (가)).
         // 미전달이면 이전 값 유지(같은 턴의 후속 갱신).
         thought: String(thought ?? prev.thought ?? '').slice(-1500),
+        // steps — 단계 궤적(도구 하나 = 단계 하나, chat.mjs step). 메신저 실행 카드가 클로드코드식 드롭다운으로 실시간 표시(유건 요청 2026-09-09). 미전달이면 이전 값 유지.
+        steps: Array.isArray(steps) ? steps.slice(-40) : (prev.steps ?? []),
         startedAt: prev.startedAt ?? Date.now(), ts: Date.now(),
       });
     } catch { /* 상태 표시는 베스트에포트 */ }
@@ -113,7 +115,7 @@ export async function getTurnStatus(wsId, slug) {
     const s = await readJsonLenient(file(wsId, slug), null);
     if (!s || !s.ts) return null;
     return Date.now() - s.ts < 120_000
-      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', thought: s.thought ?? '', source: s.source ?? '', startedAt: s.startedAt ?? s.ts }
+      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', thought: s.thought ?? '', source: s.source ?? '', steps: Array.isArray(s.steps) ? s.steps : [], startedAt: s.startedAt ?? s.ts }
       : null;
   } catch {
     return null;

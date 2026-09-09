@@ -40,7 +40,7 @@ export { routeMessage } from './gateway/routing.mjs';
 /* ─── 장시간 작업(jobs) 실행 핸들러 — 큐 설계·재실행 규칙(tries) 주석은 src/gateway/queue.mjs.
    chat을 턴 밖에서 끝까지 돌리고 결과를 대화·메신저로 배달한다. ─── */
 function makeJobHandler(wsId) {
-  return async (job) => {
+  return async (job, { path = null } = {}) => { // path = 워커가 선점한 실제 파일(.json.claimed) — tries 마커는 여기에 써야 완료 뒤 원래 이름의 잔재가 '중단' 오통지를 만들지 않는다(검수 H-1)
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     const title = String(job.title ?? '').slice(0, 80) || pick('장시간 작업', 'Long task', lang);
     const slug = job.slug;
@@ -57,7 +57,7 @@ function makeJobHandler(wsId) {
       return;
     }
     // 시작 마킹 — **실행 전에** 파일에 기록해야 크래시 후 재집힘에서 위 가드가 작동한다
-    const fp = join(queueDir(wsId, JOBS_QUEUE), `${job.id}.json`);
+    const fp = path ?? join(queueDir(wsId, JOBS_QUEUE), `${job.id}.json`);
     await writeJsonAtomic(fp, { ...job, tries: (job.tries ?? 0) + 1, startedAt: new Date().toISOString() }).catch(() => {});
     await appendEvent(wsId, { type: 'job', slug, title, status: 'started' }).catch(() => {});
     try {
@@ -778,8 +778,9 @@ const MSGR_PUSH_TYPES = new Set([...channelSendsKinds('msgr'), 'approval_resolve
 async function pushEvent(event) {
   // 팀 메신저 채널 — msgr 문맥(턴 중 결재·위임, 카드 메타)이 있는 이벤트만 처리하고 아니면 즉시 false(클라이언트 생성 0).
   // 텔레그램·슬랙 경로와 독립 — 여기서 던져도 아래 발송을 막지 않는다.
+  let msgrDone = false; // 메신저 채널에 실제로 붙었나 — 메신저발 쪽지가 못 붙으면(세션 없음·조직 불일치) 텔레그램으로 폴백해 유실을 막는다(검수 M-5)
   if (MSGR_PUSH_TYPES.has(event.type)) {
-    await msgrPush(event).catch((e) => console.error('[argo] msgr 푸시 실패:', e.message));
+    msgrDone = (await msgrPush(event).catch((e) => { console.error('[argo] msgr 푸시 실패:', e.message); return false; })) === true;
   }
   const all = await loadConnections(event.wsId);
   const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
@@ -905,7 +906,7 @@ async function pushEvent(event) {
       // 크루 쪽지 배달 — 다른 세션·다른 시각의 크루 간 소통이라 사장이 화면을 보고 있지 않은 게 기본값.
       // 수신 크루의 답을 브리핑으로 민다(재검 N1에서 보류했던 분기 — 문안과 함께 복원).
       // 쪽지 헤더는 발신→수신 표기가 이미 귀속이라 attributed를 겹치지 않는다(이중 접두 방지).
-      if (event.type === 'crewmail') {
+      if (event.type === 'crewmail' && !(event.msgr?.channelId && msgrDone)) { // 메신저 채널에서 시작된 쪽지는 msgrPush가 그 채널에 붙인다 — 텔레그램으로 새지 않게(붙이지 못했을 때만 폴백)
         const cc = event.kind === 'cc';
         await sendTgReply(dest.token, dest.chatId, event.wsId, pick(
           `**[크루 쪽지] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (참조)' : ''}**\n\n${event.reply}`,
