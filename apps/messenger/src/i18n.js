@@ -33,6 +33,7 @@ export const DICT = {
   'org.members': ['멤버', 'Members'],
   'org.crews': ['에이전트', 'Agents'],
   'inbox.title': ['알림함', 'Inbox'],
+  'inbox.readAll': ['모두 읽음', 'Mark all read'],
   'inbox.empty': ['아직 알림이 없습니다. 누가 나를 부르거나, 내 글에 에이전트가 답하거나, 결재가 기다리면 여기에 모입니다.', 'Nothing yet. Mentions of you, agent replies to your posts and pending approvals collect here.'],
   'inbox.kind.all': ['전체', 'All'],
   'inbox.kind.mention': ['나를 부름', 'Mentions'],

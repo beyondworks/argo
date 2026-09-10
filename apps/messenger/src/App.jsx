@@ -686,7 +686,7 @@ function Shell({ session }) {
         ) : page === 'search' && org ? (
           <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={() => setPage('chat')} onMenu={openNav} />
         ) : page === 'inbox' && org ? (
-          <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={openNav} />
+          <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={openNav} />
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={openNav} />
         ) : chId ? (
@@ -1156,7 +1156,7 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
 }
 
 const INBOX_KINDS = ['all', 'mention', 'reply', 'approval', 'dm'];
-function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, nameOfUser, dmName, onOpen, onBack, onMenu }) {
+function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, nameOfUser, dmName, onOpen, onReadAll, onBack, onMenu }) {
   const { t, lang } = useT();
   const [kind, setKind] = useState(initialKind); // 페이지가 바뀌면 통째로 다시 그려지므로 초기값으로 충분하다
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
@@ -1168,7 +1168,9 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
       <span className="title"><I name="bell" size={18} />{t('inbox.title')}</span>
-      <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
+      {/* 모두 읽음 — 이 기기의 읽음 기준선을 지금으로(새 표시가 걷힌다). 메뉴엔 자리가 없어 머리에(유건 2026-09-11) */}
+      <button type="button" className="btn sm msgr-readall" style={{ marginLeft: 'auto' }} onClick={onReadAll} disabled={!items.some((it) => Date.parse(it.at) > prevSeen)}><I name="check" size={13} />{t('inbox.readAll')}</button>
+      <button type="button" className="btn sm msgr-backchat" onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
     <div className="msgr-thread page" {...swipe}><div className="msgr-inbox">
       <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
@@ -2460,7 +2462,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, locked = fal
       )}
       <form className="msgr-composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
         <input hidden multiple type="file" ref={fileRef} onChange={(e) => { const all = [...e.target.files]; const big = all.filter((f) => f.size > ATTACH_MAX); if (big.length) onError(big.map((f) => t('att.tooBig', { name: f.name })).join(' ')); setFiles(all.filter((f) => f.size <= ATTACH_MAX)); e.target.value = ''; }} />
-        <textarea ref={ta} rows={1} value={text} onChange={onChange} {...imeGuardWith(onKey)} placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} />
+        <textarea ref={ta} rows={1} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)} placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}
         <div className="msgr-tools">
           <button type="button" className="tb" onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>
           <button type="button" className="tb" onClick={insertAt} disabled={busy} title={t('msg.mention')}><I name="at" size={15} /><span>{t('msg.mention')}</span></button>
