@@ -868,6 +868,21 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard .row { gap: 8px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard summary { min-height: 32px; font-size: 13px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-klabel { font-size: 11.5px; }
+  /* ── 시트(에이전트 상세·채널 상세) — 폰 ── */
+  /* ① 홈에서 에이전트를 누르면 시트가 .msgr-main 안에 그려지는데 phone-home은 main을 숨긴다 → 시트가 있을 때만 main을 투명한 전체 화면 층으로 띄운다 */
+  .msgr-phone.phone-home .msgr-main:has(.msgr-sheetwrap) { display: block; position: fixed; inset: 0; z-index: 80; padding: 0; background: none; pointer-events: none; }
+  .msgr-phone.phone-home .msgr-main:has(.msgr-sheetwrap) > :not(.msgr-sheetwrap) { display: none; }
+  .msgr-phone .msgr-sheetwrap { z-index: 75; } /* 아일랜드(70) 위 — 시트가 열렸을 땐 시트가 화면의 주인 */
+  /* ② 스크롤이 끝까지 안 되던 것: 시트 높이가 아일랜드 자리까지 내려가 바닥이 아일랜드에 가려졌다 → 아래를 아일랜드 위에서 끊는다. 좌우는 화면 여백선 */
+  .msgr-phone .msgr-crewsheet { top: calc(env(safe-area-inset-top) + 8px); right: var(--ph-pad); left: var(--ph-pad); width: auto; max-width: none;
+    max-height: calc(100% - env(safe-area-inset-top) - 8px - (var(--ph-tab) + 12px + max(16px, calc(env(safe-area-inset-bottom) - 18px)))); align-content: start; padding: 16px; border-radius: 20px; } /* 높이를 고정하면 grid가 남는 공간을 항목 사이에 벌려 놓는다 → 내용만큼, 상한만 아일랜드 위 */
+  /* ③ 버튼 쏠림: 분절 컨트롤이 시트보다 넓어 오른쪽이 잘렸다 → 시트 폭 안에서 가로 스크롤, 칸은 폰 규격 */
+  .msgr-phone .msgr-crewsheet .msgr-seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; padding: 2px; }
+  .msgr-phone .msgr-crewsheet .msgr-seg::-webkit-scrollbar { display: none; }
+  .msgr-phone .msgr-crewsheet .msgr-seg button { flex: 0 0 auto; min-height: 28px; height: 28px; padding: 0 10px; font-size: 12.5px; white-space: nowrap; }
+  .msgr-phone .msgr-crewsheet .btn { min-height: 32px; height: 32px; padding: 0 12px; font-size: 13px; }
+  .msgr-phone .msgr-crewsheet .btn.sm { min-height: 28px; height: 28px; padding: 0 10px; font-size: 12.5px; }
+  .msgr-phone .msgr-crewsheet .me { row-gap: 8px; }
   .msgr-phone .msgr-setcard .msgr-input.inline, .msgr-phone .msgr-setcard select.msgr-input.inline { height: 34px; font-size: 16px; } /* 16 미만이면 iOS가 초점에서 확대한다 */
   .msgr-phone .msgr-setcard .msgr-rows .row .name { font-size: 12.5px; }
   .msgr-phone .msgr-setcard .picks .pick { padding: 2px 9px 2px 5px; font-size: 11.5px; }
