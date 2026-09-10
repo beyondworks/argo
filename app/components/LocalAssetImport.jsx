@@ -7,7 +7,7 @@ import { useLang } from '../i18n';
 
 const row = { display: 'flex', gap: 10, alignItems: 'flex-start' };
 // 긴 목록(스킬 수백 개·승인 폴더 수십 개)은 상자 안에서 스크롤 — 페이지가 화면 몇 장으로 늘어나던 것(사용성 제보 2026-09-10)
-const scrollBox = { maxHeight: '17.5rem', overflowY: 'auto', padding: '2px 4px 2px 3px' }; // rem — 배율·글자 확대에 따라감. 좌측 여백은 스크롤 상자가 자르는 체크박스 포커스 링 몫(.deck-grid 사고와 동형)
+const scrollBox = { maxHeight: '17.5rem', overflowY: 'auto', padding: '2px 4px 2px 3px' }; // rem — 브라우저 기본 글자 크기(접근성 설정)에 따라감(앱 배율은 CSS zoom이라 px도 같이 커진다). 좌측 여백은 스크롤 상자가 자르는 체크박스 포커스 링 몫(.deck-grid 사고와 동형)
 const field = { padding: '8px 10px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--fg)', minWidth: 0, maxWidth: '100%' };
 const emptyConsent = () => ({ tools: false, memory: false, secrets: false });
 function restoredNames(items = []) {

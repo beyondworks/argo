@@ -428,3 +428,27 @@ test('~/.claude.json has its own budget — an exhausted agents tree does not hi
   assert.ok(!issues.some(i => i.source === 'claude' && i.reason === 'scan-limit'), 'agents 예산이 .claude.json에 상속됐다');
   assert.ok(items.some(i => i.source === 'claude' && i.kind === 'mcp' && i.name === 'tools'));
 });
+
+// ── 분리 검수 2R(2026-09-10) ──
+
+test('a walk that aborts inside a cross-linked tree does not mark it done — the owning source rescans with its own budget (review 2R MEDIUM)', async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 20; i++) { await f.write(`.claude/skills/c${i}/SKILL.md`, '# C'); await f.write(`.codex/skills/x${i}/SKILL.md`, '# X'); }
+  await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex')); // claude가 먼저 codex 트리에 들어가 예산을 태운다
+  const { items, issues } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 30 } });
+  assert.ok(issues.some(i => i.source === 'claude' && i.reason === 'scan-limit'), '픽스처 전제: claude가 예산에 걸려야 한다');
+  assert.ok(items.some(i => i.source === 'codex' && i.kind === 'skill'), 'codex 트리가 "완료"로 오염돼 주인 소스가 통째로 건너뛰었다');
+  assert.ok(issues.some(i => i.source === 'codex'), 'codex 쪽 사정(예산)이 엉뚱한 도구 이름으로만 보고된다');
+});
+
+test('folding scope: tool sources fold a shared SKILL.md once, crew sources keep it per crew (review 2R decision)', async t => {
+  const f = await fixture(t);
+  await f.write('.hermes/skills/shared/SKILL.md', '# Shared');
+  for (const p of ['p1', 'p2']) { await fs.mkdir(path.join(f.home, `.hermes/profiles/${p}/skills`), { recursive: true }); await fs.symlink(path.join(f.home, '.hermes/skills/shared'), path.join(f.home, `.hermes/profiles/${p}/skills/shared`)); }
+  await f.write('.codex/skills/tool/SKILL.md', '# Tool');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true }); await fs.symlink(path.join(f.home, '.codex/skills/tool'), path.join(f.home, '.claude/skills/tool'));
+  const { items } = await f.scan();
+  const shared = items.filter(i => i.kind === 'skill' && i.name === 'shared');
+  assert.deepEqual(shared.map(i => i.groupLabel).sort(), ['Hermes', 'p1', 'p2'], '크루별 공유 스킬은 크루마다 남아야 한다');
+  assert.equal(items.filter(i => i.kind === 'skill' && i.name === 'tool').length, 1, '도구 간 공유 스킬은 한 번만');
+});

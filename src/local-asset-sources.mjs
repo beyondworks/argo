@@ -149,8 +149,9 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
   // 체크박스 수백 줄 + 스킬 전부 needs-setup. skills/ 아래로만 좁힌다(홈 전체를 신뢰하면 세션 기록 등에 링크로 닿을 수 있다).
   // 트리 자체가 심볼릭 링크면 신뢰하지 않는다(검수 HIGH-1: stow·chezmoi 배치에서 링크 대상이 홈 밖이면 무승인 루트가 된다) — realpath가 요청 경로와 같은 실디렉터리만.
   const trustedSkillTrees = (await Promise.all(['.claude', '.codex', '.agents', '.hermes', '.openclaw'].map(async name => { const tree = path.join(home, name, 'skills'); const real = await fs.realpath(tree).catch(() => null); return real === tree && inside(home, real) && real !== home ? real : null; }))).filter(Boolean);
-  const scannedDirs = new Set(); // 소스를 넘어 한 번 순회한 실디렉터리 — 교차 링크 순환(claude↔codex)·같은 트리 재순회 차단(검수 MEDIUM-4)
-  const seenSkillPaths = new Set(); // 같은 SKILL.md 실경로는 먼저 본 소스 아래 한 번만(키는 종전 형식 유지 — 영수증 호환)
+  const scannedDirs = new Set(); // 소스를 넘어 **완료한** 실디렉터리 — 같은 트리 재순회 차단(검수 MEDIUM-4). 중간 실패한 트리는 넣지 않는다(2R MEDIUM: 주인 소스가 자기 예산으로 다시 스캔해야 한다)
+  const walkingDirs = new Set(); // 순회 중인 실디렉터리 — 교차 링크 순환(claude↔codex) 차단
+  const seenSkillPaths = new Set(); // 같은 SKILL.md 실경로 접기(키는 종전 형식 유지 — 영수증 호환). 범위는 add()의 foldScope 참조
   const issue = (source, reason) => { if (!issues.some(i => i.source === source && i.reason === reason)) issues.push({ source, reason }); };
   const expand = value => value.startsWith('~/') ? path.join(home, value.slice(2)) : path.resolve(value);
   async function rootFor(input, source, trusted = false) {
@@ -189,7 +190,9 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
     const key = `${source}:${group}:${kind}:${identity}`;
     if (seen.has(key)) return;
     // 같은 SKILL.md를 여러 도구가 링크로 공유하면 먼저 본 소스 아래 한 번만 — 실경로가 없는(읽기 전 실패) 항목은 이름이 같아도 접지 않는다(검수 MEDIUM-3)
-    if (canonicalSkill) { if (seenSkillPaths.has(canonicalSkill)) return; seenSkillPaths.add(canonicalSkill); }
+    // 접기 범위(2R 결정): 도구 소스(claude·codex·agents)는 같은 SKILL.md를 한 번만 — 도구 수만큼 곱해지던 것. 크루 소스(hermes 프로필·openclaw 에이전트)는
+    // 크루(group)마다 보존 — 크루 첨부 스킬이 첫 크루에만 붙어 나머지 크루가 스킬 없이 들어오면 안 된다.
+    if (canonicalSkill) { const foldKey = `${foldScope(source, group)}:${canonicalSkill}`; if (seenSkillPaths.has(foldKey)) return; seenSkillPaths.add(foldKey); }
     seen.add(key);
     const hasSecret = Boolean(extra.hasSecret || files.some(file => file.containsSecret));
     const reason = extra.reason || (hasSecret && kind !== 'mcp' ? 'secret-material' : null);
@@ -202,13 +205,20 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
       add(source, group, label, kind, kind === 'profile' ? label : relative, [file], { ...(kind === 'profile' ? { profileText: data.toString('utf8') } : {}), ...(kind === 'rule' ? { reason: 'reference-only' } : {}) });
     } catch (error) { if (await fs.lstat(from).catch(() => null)) issue(source, error.reason === 'file-limit' ? 'text-limit' : error.reason); }
   }
+  // 접기·완료 표시의 범위(2R 결정): 도구 소스(claude·codex·agents)는 서로 공유('tools'), 크루 소스(hermes 프로필·openclaw 에이전트)는 크루(group)마다.
+  const foldScope = (source, group) => (['hermes', 'openclaw'].includes(source) ? group : 'tools');
   async function skills(source, group, label, input, trusted = true) {
     const root = await rootFor(input, source, trusted); if (!root) return;
+    const scope = foldScope(source, group);
     async function visit(dir, depth, ancestors) {
       const real = await fs.realpath(dir);
       if (ancestors.has(real) || !inside(root, real)) throw fail('unsafe-path');
-      if (scannedDirs.has(real)) return; // 다른 소스(또는 교차 링크)가 이미 순회한 실디렉터리 — 순환·재순회 차단
-      scannedDirs.add(real);
+      if (scannedDirs.has(`${scope}:${real}`) || walkingDirs.has(real)) return; // 같은 범위에서 완료된 트리 재순회·교차 링크 순환 차단
+      walkingDirs.add(real);
+      try { await walk(dir, depth, ancestors, real); scannedDirs.add(`${scope}:${real}`); } // 완료했을 때만 표시 — 예산·권한으로 중단된 트리를 "끝난 것"으로 남기면 주인 소스가 통째로 건너뛴다
+      finally { walkingDirs.delete(real); }
+    }
+    async function walk(dir, depth, ancestors, real) {
       const next = new Set([...ancestors, real]);
       const list = await entries(dir, root, depth);
       if (list.some(entry => entry.name === 'SKILL.md')) {
