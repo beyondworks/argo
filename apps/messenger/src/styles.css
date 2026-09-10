@@ -982,6 +982,18 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone [data-acts='open'] .msgr-acts { position: absolute; right: 0; top: calc(100% - 6px); z-index: 6; margin: 0; padding: 4px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow-float); flex-wrap: nowrap; white-space: nowrap; }
   .msgr-phone .msgr-mine [data-acts='open'] .msgr-acts, .msgr-phone .msgr-mine[data-acts='open'] .msgr-acts { right: 0; left: auto; }
   .msgr-phone .msgr-row[data-acts='open'] .msgr-acts { left: 0; right: auto; }
+  /* 글 동작 시트(폰, 슬랙 참고): 덮개 + 아래 시트. 빠른 반응 6칸 → 타일 → 목록 */
+  .msgr-actsheetwrap { position: fixed; inset: 0; z-index: 78; background: rgba(0, 0, 0, .42); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .msgr-actsheet { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 16px calc(16px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--card); border-top: 1px solid var(--border-soft); display: grid; gap: 14px; animation: msgrSheetIn 220ms cubic-bezier(.2, .8, .2, 1) both; }
+  .msgr-actsheet .grab { width: 36px; height: 4px; margin: 0 auto 2px; border-radius: 2px; background: var(--border); }
+  .msgr-actsheet .quick { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .msgr-actsheet .quick button { height: 48px; border: 0; border-radius: 50%; background: var(--card-2); font-size: 24px; line-height: 1; display: grid; place-items: center; }
+  .msgr-actsheet .quick .more { color: var(--fg-2); }
+  .msgr-actsheet .tiles { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; }
+  .msgr-actsheet .tiles button { height: 84px; border: 0; border-radius: 14px; background: var(--card-2); color: var(--fg); display: grid; place-items: center; align-content: center; gap: 8px; font-size: 13px; font-weight: 600; }
+  .msgr-actsheet .row { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 4px; border: 0; background: none; color: var(--fg); font-size: 15px; text-align: left; }
+  .msgr-actsheet .row.danger { color: var(--danger); }
+  .msgr-actsheet .quick button:active, .msgr-actsheet .tiles button:active { transform: scale(.95); }
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab { display: none; }
@@ -1053,7 +1065,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-inbox { padding: 12px var(--ph-pad) 24px; gap: 8px; }
   .msgr-phone .msgr-inbox .msgr-seg { order: 0; margin: 0 0 2px; } /* 폰 폭 전역 규칙의 order:9(맨 아래)를 되돌린다 */
   .msgr-phone .msgr-inbox .msgr-inboxcounts { order: 0; margin: -2px 2px 4px; font-size: 12px; color: var(--fg-3); line-height: 1.5; }
-  .msgr-phone .msgr-inbox .empty { order: 1; border: 0; background: none; padding: 32px 4px; text-align: center; font-size: 13px; line-height: 1.6; }
+  .msgr-phone .msgr-inbox .empty { order: 1; margin: 4px 0 0; padding: 36px 16px; border: 1px dashed var(--border); border-radius: 14px; background: var(--card-2); text-align: center; font-size: 13px; line-height: 1.6; } /* 빈 상태도 경계가 보이게(점선 카드, 유건 2026-09-11) */
   .msgr-phone .msgr-inbox .note { order: 8; margin-top: 4px; }
   .msgr-phone .msgr-inboxrow { border-radius: 10px; padding: 12px; }
 

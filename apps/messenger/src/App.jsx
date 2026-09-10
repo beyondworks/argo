@@ -1175,7 +1175,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
     </div>
     <div className="msgr-thread page" {...swipe}><div className="msgr-inbox">
       <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
-      {phone && items.length > 0 && <p className="msgr-inboxcounts">{INBOX_KINDS.filter((k) => k !== 'all').map((k) => ({ k, n: items.filter((it) => it.kind === k).length })).filter((x) => x.n > 0).map((x) => `${t(`inbox.kind.${x.k}`)} ${x.n}`).join(' · ')}</p>} {/* 폰: 탭 속 숫자 대신 탭 아래 한 줄(유건 2026-09-11) */}
+      {phone && <p className="msgr-inboxcounts">{t('inbox.count', { kind: t(`inbox.kind.${kind}`), n: shown.length })}</p>} {/* 폰: 탭 속 숫자 대신 탭 아래 한 줄 — 고른 탭의 개수(유건 2026-09-11) */}
       {!shown.length && <p className="empty">{t('inbox.empty')}</p>}
       {shown.map((it) => (
         <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id)}>
@@ -2200,7 +2200,8 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
   const top = Math.max(vtop + 8, Math.min(anchor.bottom + H + 8 <= vtop + vh ? anchor.bottom + 6 : anchor.top - H - 6, vtop + vh - H - 8));
   useEffect(() => {
     document.body.classList.add('msgr-lock'); // .msgr-thread overflow hidden — 열린 동안 스크롤 없음
-    const off = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); }; const key = (e) => { if (e.key === 'Escape') onClose(); };
+    const armed = performance.now();
+    const off = (e) => { if (performance.now() - armed < 400) return; if (ref.current && !ref.current.contains(e.target)) onClose(); }; const key = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('mousedown', off); document.addEventListener('keydown', key);
     return () => { document.body.classList.remove('msgr-lock'); document.removeEventListener('mousedown', off); document.removeEventListener('keydown', key); };
   }, [onClose]);
@@ -2224,6 +2225,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
   const [actsOpen, setActsOpen] = useState(false); // 터치는 길게 눌러야 액션이 열린다(마우스는 hover) — 상시 노출은 화면당 대화를 두세 건으로 줄였다
   const hold = useLongPress(() => setActsOpen(true));
+  const phone = useIsPhone(); // 폰: 길게 누르면 슬랙식 아래 시트(빠른 반응 줄 + 동작 목록)
   useEffect(() => {
     if (!actsOpen) return undefined;
     const off = (e) => { if (!e.target.closest?.('.msgr-acts, .msgr-emojipop')) setActsOpen(false); };
@@ -2243,6 +2245,25 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
   const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} />)}</div>;
   const acts = !ap && !m.deleted_at && !editing && (
+    phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)
+      <div className="msgr-actsheetwrap" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) setActsOpen(false); }}>{/* 슬랙 참고(유건 2026-09-11): 빠른 반응 줄 → 타일 → 목록. 있는 기능만 싣는다 */}
+        <div className="msgr-actsheet" role="dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="grab" />
+          <div className="quick">
+            {topEmoji(5).map((e) => <button key={e} type="button" onClick={() => { react(e); setActsOpen(false); }}>{e}</button>)}
+            <button type="button" className="more" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick({ left: r.left, right: r.right, top: r.top, bottom: r.bottom }); }} aria-label={t('msg.react')}><I name="plus" size={18} /></button>
+          </div>
+          <div className="tiles">
+            <button type="button" onClick={() => { copy(); setActsOpen(false); }}><I name="copy" size={20} /><span>{copied ? t('ui.copied') : t('ui.copy')}</span></button>
+            {mine && m.kind === 'text' && <button type="button" onClick={() => { setDraft(m.body); setEditing(true); setActsOpen(false); }}><I name="gear" size={20} /><span>{t('ui.edit')}</span></button>}
+          </div>
+          {mine && (confirmDel
+            ? <button type="button" className="row danger" onClick={() => { setConfirmDel(false); setActsOpen(false); onDelete?.(m); }}><I name="x" size={16} />{t('msg.delete.confirm')}</button>
+            : <button type="button" className="row danger" onClick={() => setConfirmDel(true)}><I name="x" size={16} />{t('ui.delete')}</button>)}
+          {picker}
+        </div>
+      </div>, document.body,
+    ) : (
     <div className="msgr-acts">
       <button type="button" onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
       <button type="button" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>
@@ -2250,6 +2271,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
       {mine && (confirmDel ? <button type="button" className="danger" onClick={() => { setConfirmDel(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
       {picker}
     </div>
+    )
   );
   const editor = editing && (
     <form className="msgr-editbox" onSubmit={(e) => { e.preventDefault(); if (draft.trim()) onEdit?.(m, draft.trim()); setEditing(false); }}>

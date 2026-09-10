@@ -20,15 +20,24 @@ export function useIsPhone() {
 // 탭 페이지(알림함 거르개·설정 탭)의 좌우 스와이프 — 본문을 쓸면 옆 탭으로(유건 2026-09-10). 하단 아일랜드와는 무관하다.
 // 세로 스크롤과 겹치지 않게: 가로 60px 이상 + 가로가 세로보다 확실히 클 때만. 가로 스크롤 상자(분절 컨트롤 등) 안에서 시작한 터치는 제외.
 export function useSwipeTabs(order, current, pick, enabled = true) {
-  const ref = useRef({ x: 0, y: 0, skip: false }); const start = ref.current; // 터치 도중 리렌더돼도 시작점을 잃지 않게
+  const ref = useRef({ x: 0, y: 0, skip: false, dir: null, el: null }); const start = ref.current; // 터치 도중 리렌더돼도 시작점을 잃지 않게
   if (!enabled) return {};
+  const unlock = () => { if (start.el && start.dir === 'x') start.el.style.overflowY = ''; start.dir = null; };
   return {
     onTouchStart: (e) => {
-      const t = e.touches[0]; start.x = t.clientX; start.y = t.clientY;
+      const t = e.touches[0]; start.x = t.clientX; start.y = t.clientY; start.dir = null; start.el = e.currentTarget;
       start.skip = !!e.target.closest?.('input, textarea, select, [contenteditable], .msgr-seg, .msgr-setnav');
     },
+    onTouchMove: (e) => { // 방향 잠금: 처음 10px에서 가로로 정해지면 놓을 때까지 세로 스크롤을 멈춘다(스와이프 중 위아래로 튀던 것)
+      if (start.skip || start.dir) return;
+      const t = e.touches[0]; const dx = Math.abs(t.clientX - start.x); const dy = Math.abs(t.clientY - start.y);
+      if (dx < 10 && dy < 10) return;
+      start.dir = dx > dy * 1.2 ? 'x' : 'y'; if (start.dir === 'x') start.el.style.overflowY = 'hidden';
+    },
+    onTouchCancel: unlock,
     onTouchEnd: (e) => {
-      if (start.skip) return;
+      const wasX = start.dir === 'x'; unlock();
+      if (start.skip || !wasX) return;
       const t = e.changedTouches[0]; const dx = t.clientX - start.x; const dy = t.clientY - start.y;
       if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
       const i = order.indexOf(current); if (i < 0) return;
@@ -43,7 +52,7 @@ export function useSwipeTabs(order, current, pick, enabled = true) {
 export function useEdgeSwipeBack(onBack, enabled = true) {
   const ref = useRef({ x: 0, y: 0, t: 0, edge: false, dx: 0, el: null }); const st = ref.current;
   if (!enabled) return {};
-  const settle = (el, to, then) => { el.style.transition = 'transform 200ms cubic-bezier(.2,.8,.2,1)'; el.style.transform = to; const done = () => { el.style.transition = ''; el.style.transform = ''; el.removeEventListener('transitionend', done); then?.(); }; el.addEventListener('transitionend', done); };
+  const settle = (el, to, then) => { el.style.transition = 'transform 200ms cubic-bezier(.2,.8,.2,1)'; el.style.transform = to; const done = () => { el.removeEventListener('transitionend', done); then?.(); requestAnimationFrame(() => { el.style.transition = ''; el.style.transform = ''; }); }; el.addEventListener('transitionend', done); }; // 페이지가 먼저 바뀐 뒤 스타일을 지운다(잔상 방지)
   return {
     onTouchStart: (e) => { const t = e.touches[0]; st.x = t.clientX; st.y = t.clientY; st.t = e.timeStamp; st.dx = 0; st.edge = t.clientX <= 24; st.el = e.currentTarget; },
     onTouchMove: (e) => {
