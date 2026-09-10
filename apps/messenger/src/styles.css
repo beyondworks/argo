@@ -994,6 +994,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-actsheet .row { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 4px; border: 0; background: none; color: var(--fg); font-size: 15px; text-align: left; }
   .msgr-actsheet .row.danger { color: var(--danger); }
   .msgr-actsheet .quick button:active, .msgr-actsheet .tiles button:active { transform: scale(.95); }
+  /* 뒤로 스와이프 중: 홈이 밑에 깔리고 현재 화면이 그 위에서 밀린다(iOS 내비게이션). 놓으면 홈이 이미 보이므로 튀어 들어오지 않는다 */
+  .msgr-phone.swiping-back .msgr-side { display: flex; position: absolute; inset: 0; z-index: 0; width: 100%; animation: none; }
+  .msgr-phone.swiping-back .msgr-main { position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); }
+  .msgr-phone.swiping-back .msgr-tabbar, .msgr-phone.swiping-back .msgr-fab { display: none; }
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab { display: none; }
@@ -1090,6 +1094,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-actpane .vault-tab { min-width: 0; max-width: 46vw; padding: 0 6px 0 14px; font-size: 13px; }
   .msgr-phone .msgr-actpane .vault-tab-x { min-width: 32px; min-height: 32px; }
   .msgr-phone .msgr-actlist { padding: 16px var(--ph-pad) 32px; gap: 12px; }
+  /* 룩 통일(유건 2026-09-11): 기억 빈 상태 = 알림함 빈 상태와 같은 점선 카드, 탭줄은 밑줄 탭 대신 제목 줄 */
+  .msgr-phone .msgr-actlist .empty { margin: 4px 0 0; padding: 36px 16px; border: 1px dashed var(--border); border-radius: 14px; background: var(--card-2); color: var(--fg-3); text-align: center; font-size: 13px; line-height: 1.6; }
+  .msgr-phone .msgr-actpane .vault-tabs { background: none; border-bottom: 1px solid var(--border-soft); }
+  .msgr-phone .msgr-actpane .vault-tab, .msgr-phone .msgr-actpane .vault-tab.active { border: 0; background: none; box-shadow: none; color: var(--fg); font-size: 15px; font-weight: 600; }
   .msgr-phone .msgr-actlist .head { gap: 6px; }
   .msgr-phone .msgr-actlist .head .btn { min-height: 30px; height: 30px; margin-left: 0; padding: 0 10px; font-size: 12.5px; }
   .msgr-phone .msgr-actlist .head .btn:first-of-type { margin-left: auto; }

@@ -52,13 +52,15 @@ export function useSwipeTabs(order, current, pick, enabled = true) {
 export function useEdgeSwipeBack(onBack, enabled = true) {
   const ref = useRef({ x: 0, y: 0, t: 0, edge: false, dx: 0, el: null }); const st = ref.current;
   if (!enabled) return {};
-  const settle = (el, to, then) => { el.style.transition = 'transform 200ms cubic-bezier(.2,.8,.2,1)'; el.style.transform = to; const done = () => { el.removeEventListener('transitionend', done); then?.(); requestAnimationFrame(() => { el.style.transition = ''; el.style.transform = ''; }); }; el.addEventListener('transitionend', done); }; // 페이지가 먼저 바뀐 뒤 스타일을 지운다(잔상 방지)
+  const shell = () => document.querySelector('.msgr-shell');
+  const settle = (el, to, then) => { el.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)'; el.style.transform = to; const done = () => { el.removeEventListener('transitionend', done); then?.(); requestAnimationFrame(() => { el.style.transition = ''; el.style.transform = ''; shell()?.classList.remove('swiping-back'); }); }; el.addEventListener('transitionend', done); }; // 페이지가 먼저 바뀐 뒤 스타일·표지를 지운다(잔상 방지)
   return {
     onTouchStart: (e) => { const t = e.touches[0]; st.x = t.clientX; st.y = t.clientY; st.t = e.timeStamp; st.dx = 0; st.edge = t.clientX <= 24; st.el = e.currentTarget; },
     onTouchMove: (e) => {
       if (!st.edge) return;
       const t = e.touches[0]; const dx = t.clientX - st.x; const dy = t.clientY - st.y;
       if (dx < 8 || Math.abs(dy) > Math.abs(dx)) { if (st.dx) { st.el.style.transform = ''; st.dx = 0; } return; }
+      if (!st.dx) shell()?.classList.add('swiping-back'); // 첫 움직임에 홈을 밑에 깐다
       st.dx = dx; st.el.style.transition = ''; st.el.style.transform = `translateX(${Math.min(dx, st.el.clientWidth) * 0.9}px)`; // 손가락보다 살짝 덜 따라와 무게감
     },
     onTouchEnd: (e) => {
