@@ -275,10 +275,9 @@ test('total source byte budget accepts 100 MiB exactly and rejects the next byte
 test('scan entry budget accepts 10,000 entries exactly and reports a limit at 10,001', async t => {
   const f = await fixture(t), directory = path.join(f.home, '.agents/skills');
   await fs.mkdir(directory, { recursive: true });
-  // The known-source skills inventory plus the immediate home profile-discovery
-  // inventory are both counted; home contributes its one .agents directory.
-  for (let start = 0; start < LOCAL_ASSET_LIMITS.files - 2; start += 100) {
-    const end = Math.min(start + 100, LOCAL_ASSET_LIMITS.files - 2);
+  // 예산은 **소스별**(2026-09-10) — agents 소스의 skills 목록 항목만 센다. 홈의 프로필 탐색 목록은 openclaw 소스의 예산이다.
+  for (let start = 0; start < LOCAL_ASSET_LIMITS.files - 1; start += 100) {
+    const end = Math.min(start + 100, LOCAL_ASSET_LIMITS.files - 1);
     await Promise.all(Array.from({ length: end - start }, (_, index) => fs.writeFile(path.join(directory, `file-${start + index}`), '')));
   }
   let result = await f.scan();
@@ -289,4 +288,74 @@ test('scan entry budget accepts 10,000 entries exactly and reports a limit at 10
   await fs.writeFile(path.join(directory, 'over-boundary'), '');
   result = await f.scan();
   assert.ok(result.issues.some(issue => issue.reason === 'scan-limit'));
+});
+
+// ── 2026-09-10 실사용 제보 "Hermes·OpenClaw 가져오기 실패" — 실제 홈 스캔으로 잡은 결함 4종 ──
+
+test('a dangling symlink skips only itself (broken-link) — siblings and the rest of the walk still scan', async t => {
+  const f = await fixture(t);
+  await f.write('.claude/skills/good/SKILL.md', '# Good');
+  await fs.symlink(path.join(f.root, 'missing-target'), path.join(f.home, '.claude/skills/a-broken')); // 정렬상 good보다 먼저 만난다
+  await f.write('.claude/skills/pkg/SKILL.md', '# Pkg');
+  await fs.symlink(path.join(f.root, 'missing-file.md'), path.join(f.home, '.claude/skills/pkg/ref.md'));
+  const { items, issues } = await f.scan();
+  assert.ok(items.some(i => i.source === 'claude' && i.name === 'good' && i.reason === null), '깨진 링크 뒤의 형제 스킬이 사라졌다 — 순회가 중단됐다');
+  assert.equal(items.find(i => i.source === 'claude' && i.name === 'pkg')?.reason, 'broken-link', '패키지 안 깨진 링크는 그 스킬만 broken-link');
+  assert.ok(issues.some(i => i.source === 'claude' && i.reason === 'broken-link'));
+  assert.ok(!issues.some(i => i.reason === 'source-unreadable'), '깨진 링크가 "원본을 읽을 수 없습니다"로 뭉개졌다');
+});
+
+test('cross-tool symlinks into another known skills tree are trusted without approval; links elsewhere still need it', async t => {
+  const f = await fixture(t);
+  await f.write('.agents/skills/shared/SKILL.md', '# Shared');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true });
+  await fs.symlink(path.join(f.home, '.agents/skills/shared'), path.join(f.home, '.claude/skills/shared'));
+  let result = await f.scan();
+  assert.equal(result.roots.length, 0, '다른 도구의 skills/ 트리를 가리키는 링크가 승인 폴더로 잡혔다');
+  assert.equal(result.items.find(i => i.source === 'claude' && i.name === 'shared')?.reason, null);
+  assert.ok(!result.issues.some(i => i.reason === 'external-root'));
+  const external = path.join(f.root, 'elsewhere'); await fs.mkdir(external); await fs.writeFile(path.join(external, 'SKILL.md'), '# Ext');
+  await fs.symlink(external, path.join(f.home, '.claude/skills/ext'));
+  result = await f.scan();
+  assert.equal(result.roots.length, 1, 'skills/ 트리 밖 링크는 여전히 승인 대상');
+  assert.ok(result.issues.some(i => i.source === 'claude' && i.reason === 'external-root'));
+  // 같은 SKILL.md를 두 도구가 공유하면 항목은 하나(먼저 찾은 소스 아래) — 목록이 도구 수만큼 곱해지지 않는다
+  assert.equal(result.items.filter(i => i.kind === 'skill' && i.name === 'shared').length, 1);
+});
+
+test('scan limits are per source — a bulky tool cannot starve the next one', async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 60; i++) await f.write(`.claude/skills/s${i}/SKILL.md`, '# S');
+  await f.write('.hermes/skills/h/SKILL.md', '# H');
+  const { items, issues } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 50 } });
+  assert.ok(issues.some(i => i.source === 'claude' && i.reason === 'scan-limit'), 'claude는 한도에 걸려야 한다(픽스처 전제)');
+  assert.equal(items.find(i => i.source === 'hermes' && i.name === 'h')?.reason, null, '앞 도구의 한도가 뒤 도구를 굶겼다');
+});
+
+test('codex [[skills.config]] path may point at SKILL.md (as Codex writes it) — folder is used, disabled flag applies', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/demo/SKILL.md', '# Demo');
+  await f.write('.codex/config.toml', '[[skills.config]]\npath = "~/.codex/skills/demo/SKILL.md"\nenabled = false\n');
+  const { items, issues } = await f.scan();
+  const demo = items.find(i => i.source === 'codex' && i.kind === 'skill' && i.name === 'demo');
+  assert.equal(demo?.reason, 'disabled');
+  assert.ok(!issues.some(i => i.source === 'codex' && i.reason === 'unsafe-path'), 'SKILL.md 파일 경로가 unsafe-path로 떨어졌다');
+});
+
+test('openclaw without openclaw.json still imports the default workspace (profile, memory, rules)', async t => {
+  const f = await fixture(t);
+  await f.write('.openclaw/workspace/IDENTITY.md', 'Main identity');
+  await f.write('.openclaw/workspace/SOUL.md', 'Main soul');
+  await f.write('.openclaw/workspace/USER.md', 'Main user memory');
+  await f.write('.openclaw/workspace/AGENTS.md', 'Rules');
+  const { items, issues } = await f.scan();
+  assert.equal(items.filter(i => i.source === 'openclaw' && i.kind === 'profile').length, 1);
+  assert.ok(items.some(i => i.source === 'openclaw' && i.kind === 'memory'));
+  assert.ok(items.some(i => i.source === 'openclaw' && i.kind === 'rule'));
+  assert.ok(!issues.some(i => i.source === 'openclaw'), `설정 없는 OpenClaw에 issue가 났다: ${JSON.stringify(issues)}`);
+  // 설정 파일이 있는데 깨진 경우는 종전대로 invalid-format으로 멈춘다(부재와 구분)
+  await f.write('.openclaw/openclaw.json', '{ broken');
+  const again = await f.scan();
+  assert.ok(again.issues.some(i => i.source === 'openclaw' && i.reason === 'invalid-format'));
+  assert.equal(again.items.filter(i => i.source === 'openclaw').length, 0);
 });

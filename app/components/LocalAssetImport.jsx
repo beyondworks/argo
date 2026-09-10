@@ -6,6 +6,8 @@ import { api, Spinner } from '../ui';
 import { useLang } from '../i18n';
 
 const row = { display: 'flex', gap: 10, alignItems: 'flex-start' };
+// 긴 목록(스킬 수백 개·승인 폴더 수십 개)은 상자 안에서 스크롤 — 페이지가 화면 몇 장으로 늘어나던 것(사용성 제보 2026-09-10)
+const scrollBox = { maxHeight: 280, overflowY: 'auto', paddingRight: 4 };
 const field = { padding: '8px 10px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--fg)', minWidth: 0, maxWidth: '100%' };
 const emptyConsent = () => ({ tools: false, memory: false, secrets: false });
 function restoredNames(items = []) {
@@ -83,7 +85,7 @@ function ImportReview({ ws, continuation }) {
   useEffect(() => {
     const request = ++generation.current;
     Promise.all([api(endpoint), api(`/api/companies/${encodeURIComponent(ws)}`)])
-      .then(([status, details]) => { if (request === generation.current) { setData(status); setCompany(status.company ?? details.company); setRenames(restoredNames(status.items)); } })
+      .then(([status, details]) => { if (request === generation.current) { setData(status); setCompany(status.company ?? details.company); setRenames(restoredNames(status.items)); setRoots(status.approvedRootIds ?? []); } })
       .catch((e) => { if (request === generation.current) setError(errorKey(e)); })
       .finally(() => { if (request === generation.current) setBusy(false); });
     return () => { generation.current++; };
@@ -96,6 +98,7 @@ function ImportReview({ ws, continuation }) {
       const result = await api(endpoint, { action, ...options });
       if (current !== generation.current) return;
       setData(result); if (result.company) setCompany(result.company); setSelected([]); setConsents(emptyConsent());
+      if (result.approvedRootIds) setRoots(result.approvedRootIds); // 서버가 확인한 승인 상태 — 새로고침 뒤에도 체크가 남는다
       setRenames(action === 'preview' ? {} : restoredNames(result.items));
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) {
@@ -145,15 +148,16 @@ function ImportReview({ ws, continuation }) {
       <p role="status" style={{ fontSize: 13 }}>{translated(t, `localImport.phase.${data.phase}`, 'localImport.phase.idle')}</p>
       {(data.issues ?? []).map((issue, i) => <p key={i} style={{ color: 'var(--warn)', fontSize: 13 }}>{translated(t, `localImport.source.${issue.source}`)}: {translated(t, `localImport.reason.${issue.reason}`)}</p>)}
       {(data.roots ?? []).length > 0 && <fieldset style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12 }} disabled={busy}>
-        <legend>{t('localImport.roots')}</legend>
+        <legend>{t('localImport.roots')} · {t('localImport.count', { n: data.roots.length })}</legend>
         <p style={{ color: 'var(--fg-2)', fontSize: 12 }}>{t('localImport.rootsHelp')}</p>
-        {data.roots.map((root) => <label key={root.id} style={{ ...row, marginTop: 8, overflowWrap: 'anywhere' }}><input type="checkbox" checked={roots.includes(root.id)} onChange={(e) => toggle(root.id, e.target.checked, setRoots)} /><span>{root.label}</span></label>)}
+        <label style={{ ...row, marginTop: 8 }}><input type="checkbox" checked={data.roots.every((root) => roots.includes(root.id))} onChange={(e) => setRoots(e.target.checked ? data.roots.map((root) => root.id) : [])} /><span>{t('localImport.rootsSelectAll')}</span></label>
+        <div style={scrollBox}>{data.roots.map((root) => <label key={root.id} style={{ ...row, marginTop: 8, overflowWrap: 'anywhere' }}><input type="checkbox" checked={roots.includes(root.id)} onChange={(e) => toggle(root.id, e.target.checked, setRoots)} /><span>{root.label}</span></label>)}</div>
       </fieldset>}
       {!items.length && data.scanId && <p>{t('localImport.empty')}</p>}
       {bulkIds.length > 0 && <label style={row}><input type="checkbox" disabled={busy} checked={allBulkSelected} onChange={(e) => setSelected((old) => e.target.checked ? [...new Set([...old, ...bulkIds])] : old.filter((id) => !bulkIds.includes(id)))} /><span>{t('localImport.selectAll')}</span></label>}
       {Array.from(groups, ([key, grouped]) => <fieldset key={key} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, minWidth: 0 }}>
-        <legend style={{ maxWidth: '100%', overflowWrap: 'anywhere' }}>{translated(t, `localImport.source.${grouped[0].source}`)} · {grouped[0].groupLabel}</legend>
-        {grouped.map((item) => {
+        <legend style={{ maxWidth: '100%', overflowWrap: 'anywhere' }}>{translated(t, `localImport.source.${grouped[0].source}`)} · {grouped[0].groupLabel} · {t('localImport.count', { n: grouped.length })}</legend>
+        <div style={scrollBox}>{grouped.map((item) => {
           const finished = item.status && !['failed', 'planned', 'staged'].includes(item.status);
           return <div key={item.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border-soft)', overflowWrap: 'anywhere' }}>
             <label style={row}><input type="checkbox" checked={selected.includes(item.id)} disabled={!!finished || (item.conflict && renames[item.id] === undefined)} onChange={(e) => toggle(item.id, e.target.checked, setSelected)} />
@@ -171,7 +175,7 @@ function ImportReview({ ws, continuation }) {
               {renames[item.id] !== undefined && <label style={{ display: 'grid', gap: 5 }}><span>{t('localImport.newName')}</span><input style={field} maxLength={80} value={renames[item.id]} onChange={(e) => setRenames((old) => ({ ...old, [item.id]: e.target.value }))} /></label>}
             </div>}
           </div>;
-        })}
+        })}</div>
       </fieldset>)}
       {chosen.length > 0 && <fieldset disabled={busy} style={{ display: 'grid', gap: 10, border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
         <legend>{t('localImport.consent')}</legend>

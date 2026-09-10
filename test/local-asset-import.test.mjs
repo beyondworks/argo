@@ -280,3 +280,18 @@ test('OpenClaw nested memory imports portable relative paths with original conte
   assert.equal(files['memory/nested/today.md'], 'Portable nested memory.');
   assert.deepEqual(await tree(f.home), before);
 });
+
+// 2026-09-10 사용성 제보 — 승인한 폴더가 새로고침 뒤 풀리던 것: 서버가 승인된 루트 id를 응답·상태에 돌려준다
+test('preview and status echo approved root ids so the screen can restore the checks', async () => {
+  const f = await fixture();
+  const external = join(temp, `ext-${randomUUID()}`); await mkdir(external, { recursive: true }); await writeFile(join(external, 'SKILL.md'), '# Ext');
+  await mkdir(join(f.home, '.claude/skills'), { recursive: true }); await symlink(external, join(f.home, '.claude/skills/ext'));
+  const base = await api.previewLocalAssets(f.wsId, context, {}, f.options);
+  assert.equal(base.roots.length, 1); assert.deepEqual(base.approvedRootIds, []);
+  const approved = await api.previewLocalAssets(f.wsId, context, { approvedRootIds: [base.roots[0].id] }, f.options);
+  assert.deepEqual(approved.approvedRootIds, [base.roots[0].id]);
+  assert.ok(approved.items.some(i => i.source === 'claude' && i.kind === 'skill' && i.reason === null), '승인 뒤 외부 스킬이 가져오기 가능해야 한다'); // 이름은 링크명이 아니라 실폴더명
+  const status = await api.localAssetStatus(f.wsId, context);
+  assert.deepEqual(status.approvedRootIds, [base.roots[0].id]);
+  assert.ok(!JSON.stringify(approved).includes(external), '응답에 실경로가 새면 안 된다');
+});
