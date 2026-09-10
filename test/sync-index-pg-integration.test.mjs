@@ -6,6 +6,7 @@ import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — npm run test:pg로 실행';
@@ -34,7 +35,8 @@ before(() => {
     -- storage.objects 스텁 — 실 Supabase와 같은 열 이름. RLS를 켜고 정책은 두지 않는다: 직접 select는 0행,
     -- definer 함수만 행을 본다(우회 경로가 함수뿐임을 함께 증명).
     create schema if not exists storage;
-    create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text);
+    create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, archived_at timestamptz, is_delete_marker boolean default false);
+    create index if not exists idx_objects_bucket_id_name on storage.objects (bucket_id, name collate "C");
     alter table storage.objects enable row level security;
     grant usage on schema storage to authenticated; grant select on storage.objects to authenticated;
   `]);
@@ -48,18 +50,29 @@ before(() => {
     [A, '.tombstones/readme.txt'],             // .json이 아니다 — 제외
     [B, 'co-3/company.json'], [B, '.tombstones/co-6.json'],
   ];
+  // 버전 관리 열 — 옛 버전(archived_at)·삭제 마커는 색인에서 제외(검수 MEDIUM-4)
+  sql(`insert into storage.objects (bucket_id, name, archived_at) values ('companies', '${A}/co-old/company.json', now())`);
+  sql(`insert into storage.objects (bucket_id, name, is_delete_marker) values ('companies', '${A}/co-gone/company.json', true), ('companies', '${A}/.tombstones/co-5.json', true)`);
   sql(`insert into storage.objects (bucket_id, name) values ${rows.map(([u, p]) => `('companies', '${u}/${p}')`).join(',')}, ('other-bucket', '${A}/co-x/company.json')`);
 });
 
 test('오너 A는 자기 회사·직계 tombstone만 받는다(다른 버킷·최상위 파일·점 접두·중첩·비json 제외)', { skip }, () => {
   const r = parse(asUser(A, 'select public.argo_sync_index()'));
+  assert.equal(r.owner, A, '색인은 호출자 uid를 실어야 클라이언트가 세션과 대조한다');
   assert.deepEqual(r.companies.sort(), ['co-1', 'co-2']);
   assert.deepEqual(r.tombstones.sort(), ['co-8', 'co-9']);
 });
 
+test('인덱스 범위 조회의 핵심 장치 collate "C"가 SQL에 남아 있다(검수 MEDIUM-2: 지워도 판정 테스트는 초록이었다)', () => {
+  const text = readFileSync(mig('20260910120000_sync_index_rpc.sql'), 'utf8');
+  const mine = text.slice(text.indexOf('mine as ('), text.indexOf('select case when'));
+  assert.equal((mine.match(/collate "C"/g) || []).length, 2, '범위 상·하한 둘 다 collate "C"여야 (bucket_id, name COLLATE "C") 인덱스를 타고, glibc 로케일 정렬에서도 [uid/, uid0) 범위가 성립한다');
+  assert.match(text, /rolbypassrls or rolsuper/, '적용 역할 게이트가 빠졌다 — RLS를 못 우회하는 역할로 적용되면 색인이 조용히 빈다(HIGH-1)');
+});
+
 test('오너 B는 A의 것을 한 줄도 못 본다(definer지만 경계는 auth.uid())', { skip }, () => {
   const r = parse(asUser(B, 'select public.argo_sync_index()'));
-  assert.deepEqual(r, { companies: ['co-3'], tombstones: ['co-6'] });
+  assert.deepEqual(r, { owner: B, companies: ['co-3'], tombstones: ['co-6'] });
   // 직접 select는 RLS(정책 없음)로 0행 — 행을 보는 경로는 함수뿐
   assert.equal(last(asUser(B, `select count(*) from storage.objects`)), '0');
 });
@@ -72,5 +85,5 @@ test('uid 없음(미로그인 authenticated)·anon은 색인을 받지 못한다
 
 test('회사 0개 오너는 빈 배열(null 아님) — 클라이언트 형태 검증을 통과해야 폴백 list를 안 탄다', { skip }, () => {
   const C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-  assert.deepEqual(parse(asUser(C, 'select public.argo_sync_index()')), { companies: [], tombstones: [] });
+  assert.deepEqual(parse(asUser(C, 'select public.argo_sync_index()')), { owner: C, companies: [], tombstones: [] });
 });

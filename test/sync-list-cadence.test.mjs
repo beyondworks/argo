@@ -23,8 +23,12 @@ test('cycle의 원격 tombstone 호출이 게이트를 탄다', () => {
 // 2026-09-10 새 기기 회사 발견 실패 사후 — 색인 RPC(argo_sync_index)가 list를 대체한다. RPC도 같은 게이트를 탄다
 // (밀리초지만 8초마다 부를 이유가 없다) — 그리고 두 소비자(tombstone·discover)는 **같은 색인 한 번**을 나눠 쓴다.
 test('색인 RPC는 discover 게이트를 타고, 두 소비자가 같은 색인을 받는다', () => {
-  assert.match(SRC, /const syncIndex = discoverDue \? await loadSyncIndex\(\) : null;/,
+  assert.match(SRC, /const fetchedIndex = discoverDue \? await loadSyncIndex\(\) : null;/,
     '색인 로더가 discoverDue 게이트 밖에 있다 — 매 사이클 RPC가 돈다');
+  assert.match(SRC, /const syncIndex = fetchedIndex && fetchedIndex\.companies\.length === 0 && targets\.size === 0 \? null : fetchedIndex;/,
+    '빈 색인 페일세이프가 빠졌다 — 함수가 행을 못 보는 무음 실패가 사고와 같은 증상으로 재발한다(검수 HIGH-1)');
+  const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'));
+  assert.ok(cycleBody.indexOf('syncEntitled(') < cycleBody.indexOf('loadSyncIndex('), '색인 RPC(DB 호출)가 요금제 게이트보다 앞이다 — 2026-07-27 교훈');
   assert.match(SRC, /discoverRemote\(localOwners,\s*syncIndex\)/,
     'discoverRemote가 색인을 안 받는다 — 새 기기가 다시 storage.search(30초 타임아웃)로 회사를 찾는다');
 });

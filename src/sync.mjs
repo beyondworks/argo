@@ -21,7 +21,7 @@ import { collidesWithRoom } from './slug.mjs';
 import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
+import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock, withDirLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
@@ -968,18 +968,23 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     타임아웃에 걸리고, discoverRemote의 catch가 빈 목록으로 삼켜 **새 기기가 자기 회사를 영영 못 찾던** 실사고
     (2026-09-10 제보 "깃허브 계정으로 기기 동기화가 안 된다"). RPC는 오너 접두사 인덱스 범위 조회라 밀리초.
     null = 색인 없음(서비스 모드·RPC 미배포 셀프호스트·일시 실패) → 호출부는 기존 list 경로로 폴백한다(동작 ≥ 종전).
-    서비스 모드는 auth.uid()가 없어 RPC가 null을 주므로 처음부터 안 부른다. 반환 형태는 검증한다 — 서버가 준 값을
-    그대로 wsId로 쓰지 않는다(문자열 배열만, 아니면 null). (export: 테스트용 _syncIndexForTest) */
+    서비스 모드는 auth.uid()가 없어 RPC가 null을 주므로 처음부터 안 부른다. 색인은 **세션 uid의 것**이라 owner를 실어
+    돌려주고(RPC의 owner ≠ 세션 uid면 null — 다른 사용자 문맥으로 실행된 색인은 쓰지 않는다), 소비자는 이 owner로만
+    라벨·비교한다 — ARGO_SYNC_OWNER·잔존 .sync-credentials.json의 다른 오너가 색인에 붙어 남의 prefix로 복원을 시도하던
+    회귀 차단(분리 검수 MEDIUM-1). 형태는 문자열 배열만 통과시키고, wsId 규칙(WS_ID_RE)은 소비자가 거른다.
+    비용은 그 오너의 객체 수에 선형(인덱스 범위 조회) — 사고의 버킷 전수 스캔과 달리 자기 몫만 본다. (export: 테스트용 _syncIndexForTest) */
 let indexWarned = false;
 async function loadSyncIndex() {
   if (!hostedCredsOff()) return null;
+  const owner = loadDeviceSession()?.user?.id ?? null;
+  if (!owner) return null;
   try {
     const { data, error } = await client().rpc('argo_sync_index');
     if (error) throw new Error(error.message);
     const strs = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string');
-    if (!data || !strs(data.companies) || !strs(data.tombstones)) return null;
+    if (!data || data.owner !== owner || !strs(data.companies) || !strs(data.tombstones)) return null;
     indexWarned = false;
-    return { companies: data.companies, tombstones: data.tombstones };
+    return { owner, companies: data.companies, tombstones: data.tombstones };
   } catch (e) {
     if (!indexWarned) { indexWarned = true; console.warn('[argo] 동기화 색인 RPC 불가 — 목록 조회로 폴백:', String(e?.message ?? e).slice(0, 80)); }
     return null;
@@ -991,8 +996,8 @@ async function discoverRemote(localOwners, index = null) {
   const fixed = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
   const allow = fixed ? new Set([fixed]) : new Set(localOwners);
   if (allow.size === 0) return []; // 지정 오너도, 로컬 회사도 없으면 발견 안 함(무차별 복제 차단)
-  // 색인이 있으면 list(storage.search)를 아예 부르지 않는다 — 색인은 세션 오너 자신의 것이다(loadSyncIndex 게이트).
-  if (index && fixed) return index.companies.filter((c) => !c.startsWith('.')).map((wsId) => ({ owner: fixed, wsId }));
+  // 색인이 있고 그 오너가 이 사이클의 오너와 같을 때만 list(storage.search)를 건너뛴다 — 다르면(ARGO_SYNC_OWNER 오설정 등) 종전 경로.
+  if (index && fixed === index.owner) return index.companies.filter((c) => !c.startsWith('.') && WS_ID_RE.test(c)).map((wsId) => ({ owner: fixed, wsId }));
   const out = []; // [{ owner, wsId }]
   for (const owner of allow) {
     const { data: companies } = await client().storage.from(BUCKET).list(owner, { limit: 200 }).catch(() => ({ data: [] }));
@@ -1064,7 +1069,7 @@ async function syncTombstones(fixedOwner, { remote: doRemote = true, index = nul
   const remote = new Map(); // wsId → owner
   for (const owner of owners) {
     // 색인(argo_sync_index)이 있고 그 오너가 세션 오너면 list를 건너뛴다 — 색인의 tombstones는 uid/.tombstones/<wsId>.json 직계뿐.
-    if (index && owner === fixedOwner) { for (const wsId of index.tombstones) remote.set(wsId, owner); continue; }
+    if (index && owner === index.owner) { for (const wsId of index.tombstones) if (WS_ID_RE.test(wsId)) remote.set(wsId, owner); continue; }
     const { data } = await client().storage.from(BUCKET).list(skey(owner, '.tombstones'), { limit: 500 }).catch(() => ({ data: [] }));
     for (const e of data ?? []) {
       if (e.id && String(e.name).endsWith('.json')) remote.set(String(e.name).slice(0, -5), owner);
@@ -1276,7 +1281,10 @@ async function cycle() {
   const discoverDue = !freeListSkip && isDiscoverDue(Date.now(), globalThis.__argoLastDiscover, DISCOVER_MS);
   if (discoverDue) globalThis.__argoLastDiscover = Date.now();
   // 색인 RPC 한 번으로 tombstone·발견 두 소비자를 먹인다(두 호출이 같은 게이트를 타는 불변식은 그대로) — 색인이 없으면 둘 다 종전 list 경로.
-  const syncIndex = discoverDue ? await loadSyncIndex() : null;
+  const fetchedIndex = discoverDue ? await loadSyncIndex() : null;
+  // 페일세이프(분리 검수 HIGH-1): 색인이 "회사 0개"인데 로컬도 0개면 종전 list도 한 번 탄다 — "진짜 빈 계정"과 "함수가 행을 못 봄"을
+  // 클라이언트가 구분할 수 없어서다. 비용은 비어 보이는 계정(= 새 기기 복원 구간)으로 상한.
+  const syncIndex = fetchedIndex && fetchedIndex.companies.length === 0 && targets.size === 0 ? null : fetchedIndex;
   const tombs = await syncTombstones(keyOwner, { remote: discoverDue, index: syncIndex }).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
   // 로컬 스캔이 tombstone 처리보다 먼저가 됐으므로(게이트 이동), 이번 사이클에 보관(재적용 포함)된
   // 회사를 push/pull 대상에서 명시적으로 뺀다 — 이전에는 "tombstone 먼저" 순서가 은닉하던 불변식이다.
