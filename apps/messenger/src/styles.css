@@ -774,6 +774,14 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-setcard .row { flex-wrap: wrap; }
   .msgr-crewsheet { top: max(8px, env(safe-area-inset-top)); right: 8px; width: calc(100% - 16px); max-width: calc(100% - 16px); max-height: calc(100% - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))); padding: 14px; }
   .msgr-emojipop { max-width: calc(100vw - 16px); }
+  /* 폰 이모지 선택기 = 아래 시트(body 포털이라 .msgr-phone 밖 → 자체 .phone 표지). 아일랜드 위에서 끝나고, 격자는 촘촘하게 */
+  .msgr-emojipop.phone { left: 10px; right: 10px; top: auto; bottom: max(16px, calc(env(safe-area-inset-bottom) - 18px)); width: auto; max-height: min(52vh, 420px); padding: 10px 10px 12px; border-radius: 20px; z-index: 76; animation: msgrSheetIn 220ms cubic-bezier(.2, .8, .2, 1) both; }
+  .msgr-emojipop.phone .msgr-input.sm { height: 34px; font-size: 16px; }
+  .msgr-emojipop.phone .body { gap: 4px; }
+  .msgr-emojipop.phone .sec { gap: 0; }
+  .msgr-emojipop.phone .grid { grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 0; }
+  .msgr-emojipop.phone .grid button { width: 100%; height: 40px; font-size: 24px; border-radius: 9px; }
+  .msgr-emojipop.phone .msgr-klabel { margin: 4px 2px 0; }
   .msgr-emojipop .grid { grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); }
   .msgr-toast { top: max(12px, env(safe-area-inset-top)); }
   .msgr-auth { min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
@@ -836,7 +844,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node.on { color: var(--ok); }   /* 연결됨 */
   .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node:active { background: var(--border-soft); }
   /* 조직 창: 머리 아래 화면 폭 전체로 붙이고(좌우 여백 0, 아래 모서리만 둥글게) 뒤는 어둡게 덮는다 — 뒤 목록이 비치던 것(유건 2026-09-11) */
-  .msgr-phone.phone-home .msgr-side .msgr-menu-pop { left: 0; right: 0; top: 100%; border-radius: 0 0 20px 20px; border-width: 0 0 1px; padding: 6px 8px 10px; }
+  .msgr-phone.phone-home .msgr-side .msgr-menu-pop { left: 10px; right: 10px; top: calc(100% + 6px); border-radius: 18px; padding: 6px 8px 10px; } /* 여백 20→10(줄이되 없애지 않는다 — 유건 2026-09-11) */
   .msgr-phone.phone-home .msgr-side .msgr-scrim.clear { background: rgba(0, 0, 0, .38); z-index: 72; } /* 아일랜드(70)·+(69)까지 덮는다 */
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop { z-index: 73; }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop button { padding: 8px 6px; font-size: 13px; }
@@ -969,6 +977,11 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
     .msgr-phone.phone-home .msgr-side .item, .msgr-phone.phone-home .msgr-sec > summary { transition: background-color 120ms ease-out; }
     .msgr-phone .msgr-acttree .row { transition: background-color 120ms ease-out; }
   }
+  /* 길게 눌러 뜨는 동작 줄이 글 아래 자리를 차지해 화면이 밀렸다 → 폰은 글 위에 겹치는 층으로(유건 2026-09-11) */
+  .msgr-phone .msgr-row, .msgr-phone .msgr-mine { position: relative; }
+  .msgr-phone [data-acts='open'] .msgr-acts { position: absolute; right: 0; top: calc(100% - 6px); z-index: 6; margin: 0; padding: 4px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow-float); flex-wrap: nowrap; white-space: nowrap; }
+  .msgr-phone .msgr-mine [data-acts='open'] .msgr-acts, .msgr-phone .msgr-mine[data-acts='open'] .msgr-acts { right: 0; left: auto; }
+  .msgr-phone .msgr-row[data-acts='open'] .msgr-acts { left: 0; right: auto; }
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab { display: none; }
@@ -1039,6 +1052,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* ── 내 활동(알림함): 슬랙처럼 거르개가 맨 위, 빈 상태는 테두리 없이 ── */
   .msgr-phone .msgr-inbox { padding: 12px var(--ph-pad) 24px; gap: 8px; }
   .msgr-phone .msgr-inbox .msgr-seg { order: 0; margin: 0 0 2px; } /* 폰 폭 전역 규칙의 order:9(맨 아래)를 되돌린다 */
+  .msgr-phone .msgr-inbox .msgr-inboxcounts { order: 0; margin: -2px 2px 4px; font-size: 12px; color: var(--fg-3); line-height: 1.5; }
   .msgr-phone .msgr-inbox .empty { order: 1; border: 0; background: none; padding: 32px 4px; text-align: center; font-size: 13px; line-height: 1.6; }
   .msgr-phone .msgr-inbox .note { order: 8; margin-top: 4px; }
   .msgr-phone .msgr-inboxrow { border-radius: 10px; padding: 12px; }

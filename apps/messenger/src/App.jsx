@@ -1174,7 +1174,8 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
       <button type="button" className="btn sm msgr-backchat" onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
     <div className="msgr-thread page" {...swipe}><div className="msgr-inbox">
-      <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
+      <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
+      {phone && items.length > 0 && <p className="msgr-inboxcounts">{INBOX_KINDS.filter((k) => k !== 'all').map((k) => ({ k, n: items.filter((it) => it.kind === k).length })).filter((x) => x.n > 0).map((x) => `${t(`inbox.kind.${x.k}`)} ${x.n}`).join(' · ')}</p>} {/* 폰: 탭 속 숫자 대신 탭 아래 한 줄(유건 2026-09-11) */}
       {!shown.length && <p className="empty">{t('inbox.empty')}</p>}
       {shown.map((it) => (
         <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id)}>
@@ -2188,6 +2189,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
 /** 슬랙식 반응 피커 — 검색 + 자주 사용 + 분류. 선택·Esc·바깥 클릭으로 닫힘. */
 function EmojiPicker({ t, anchor, onPick, onClose }) {
   const [q, setQ] = useState(''); const ref = useRef(null);
+  const phone = useIsPhone(); // 폰: 앵커 좌표 대신 아래 시트(CSS) — 앵커 계산이 화면 밖·키보드 밑으로 밀었다(유건 2026-09-11). 검색칸 자동 초점도 끈다(키보드가 시트를 가린다)
   // 화면 고정(fixed) + 열린 동안 스레드 스크롤 잠금(유건 지시 2026-09-09 "드롭박스 열렸을 때는 스크롤 고정, 닫히고 스크롤"). 위치는 창 크기(clientWidth/Height) 기준으로
   // 버튼 아래(자리 없으면 위), 가로는 버튼 왼쪽에 맞추되 창 밖이면 버튼 오른쪽 끝에 맞춘다 — 오른쪽 정렬된 내 글에서 창 밖으로 나가던 결함.
   const W = 322, H = 320, COLS = 9; // 322 = 격자 9×30 + 틈 8 + 안쪽 여백 16 + 세로 스크롤바 자리 ≤ 18 — 가로 스크롤 없음 // COLS = 격자 열 수 — 자주 사용 줄은 이 수만큼
@@ -2205,8 +2207,8 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
   const hits = searchEmoji(q);
   const grid = (list, key) => <div key={key} className="grid">{list.map((e) => <button key={e} type="button" onClick={() => onPick(e)} title={e}>{e}</button>)}</div>;
   return createPortal( // body 포털 — 상위의 transform이 fixed 기준점을 바꿔 좌표가 502px 밀리던 결함(실측 2026-09-09: style 602 → 실제 1104)
-    <div className="msgr-emojipop" ref={ref} role="dialog" aria-label={t('msg.react')} style={{ left, top, width: W, maxHeight: H }} onClick={(e) => e.stopPropagation()}>
-      <input className="msgr-input sm" placeholder={t('emoji.search')} value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+    <div className={`msgr-emojipop${phone ? ' phone' : ''}`} ref={ref} role="dialog" aria-label={t('msg.react')} style={phone ? undefined : { left, top, width: W, maxHeight: H }} onClick={(e) => e.stopPropagation()}>
+      <input className="msgr-input sm" placeholder={t('emoji.search')} value={q} onChange={(e) => setQ(e.target.value)} autoFocus={!phone} />
       <div className="body">
         {hits ? (hits.length ? grid(hits, 'hits') : <p className="msgr-sys">{t('emoji.none')}</p>) : (<>
           <div className="msgr-klabel">{t('emoji.frequent')}</div>{grid(topEmoji(COLS), 'freq')}
