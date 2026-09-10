@@ -923,12 +923,17 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-tabsearch { width: var(--ph-tab); height: var(--ph-tab); border-radius: 50%; border: 1px solid var(--border-soft); background: var(--card); color: var(--fg);
     box-shadow: var(--shadow-float); display: grid; place-items: center; pointer-events: auto; flex: 0 0 auto; cursor: pointer; }
   .msgr-tabsearch svg { width: 26px; height: 26px; }
-  /* 아이콘 굵기(슬랙 획 ≈3px@24): 16단위 뷰박스 기준 stroke-width 2 → 24px에서 3px. 면으로 그린 심볼(홈·돋보기·뒤로·점)은 fill로 채운다 */
+  /* 아이콘 굵기: 16단위 뷰박스 기준 stroke-width 1.7 → 24px에서 2.5px(유건: 2는 두껍다). 면으로 그린 심볼(홈·돋보기·뒤로·점)은 fill로 채운다 */
   .msgr-phone .msgr-island svg, .msgr-phone .msgr-tabsearch svg, .msgr-phone .msgr-main .msgr-top svg, .msgr-phone .msgr-main .msgr-composer svg,
-  .msgr-phone .msgr-fab svg, .msgr-phone .msgr-card svg { stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .msgr-phone .msgr-fab svg, .msgr-phone .msgr-card svg { stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .msgr-phone .msgr-tabsearch svg, .msgr-phone .msgr-main .msgr-top .msgr-menu svg, .msgr-phone .msgr-main .msgr-top .ph-dots, .msgr-phone .msgr-island button.on svg { fill: currentColor; stroke-width: 0.6; }
-  .msgr-phone .msgr-main .msgr-composer .send svg { width: 18px; height: 18px; stroke-width: 3; }
-  .msgr-phone.phone-home .sec-ic { stroke-width: 1.7; } /* 목록 행 아이콘(#)은 슬랙도 가는 획 — 기본 1.5 유지 */
+  .msgr-phone .msgr-main .msgr-composer .send svg { width: 18px; height: 18px; stroke-width: 2.6; }
+  .msgr-phone.phone-home .sec-ic { stroke-width: 1.6; }
+  .msgr-phone .msgr-card svg { width: 22px; height: 22px; transform-origin: 50% 50%; }
+  .msgr-phone .msgr-card:nth-child(1) svg { transform: scale(.9); stroke-width: 1.9; }   /* 별: 뷰박스 꽉 참 */
+  .msgr-phone .msgr-card:nth-child(2) svg { transform: scale(1.3); stroke-width: 1.3; }  /* 결재 도장: 10×7.5 */
+  .msgr-phone .msgr-card:nth-child(3) svg { transform: scale(1.2); stroke-width: 1.4; }  /* 기억 별: 12 */
+  .msgr-phone .msgr-card:nth-child(4) svg { transform: scale(1.14); stroke-width: 1.5; } /* 톱니: 12.6 */ /* 목록 행 아이콘(#)은 슬랙도 가는 획 — 기본 1.5 유지 */
   .msgr-tabsearch:active { background: var(--card-2); }
   /* 검색 페이지: 아일랜드 자리에 입력창 + 닫기(슬랙) */
   .msgr-island-search { display: flex; grid-auto-flow: unset; gap: 8px; padding: 0 8px 0 16px; color: var(--fg-3); }
