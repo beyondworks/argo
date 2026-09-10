@@ -3,7 +3,8 @@
     "createUpdaterArtifacts": false,
     "resources": null,
     "iOS": {
-      "minimumSystemVersion": "16.4"
+      "minimumSystemVersion": "16.4",
+      "developmentTeam": "22YU7H899Y"
     }
   },
   "plugins": {

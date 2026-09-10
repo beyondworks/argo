@@ -21,12 +21,12 @@
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
-			<key>CFBundleURLName</key>
-			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>argo-messenger</string>
 			</array>
+			<key>CFBundleURLName</key>
+			<string>argo-messenger</string>
 		</dict>
 	</array>
 	<key>LSRequiresIPhoneOS</key>
