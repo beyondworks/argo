@@ -659,7 +659,7 @@ function Shell({ session }) {
 
         </div>
         <div className="msgr-foot">
-          {isPhone && org && <button type="button" className={`ph-node${nodeAlive ? ' on' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name="node" size={18} /><span className="dot" /></button>}
+          {isPhone && org && <button type="button" className={`ph-node${nodeAlive ? ' on' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name={nodeAlive ? 'node' : 'nodeoff'} size={18} /></button>}
           <button type="button" className="me" onClick={() => { if (isPhone) { setSettingsTab('me'); setPage('settings'); setRail(false); } else setMeMenu((v) => !v); }} aria-haspopup={isPhone ? undefined : 'menu'} aria-expanded={isPhone ? undefined : meMenu} title={t(isPhone ? 'ui.settings' : 'ui.me.menu')}>
             <Av name={me?.display_name || session.user.email} size="sm" userId={uid} /><span className="name">{me?.display_name || session.user.email}</span>
           </button>
@@ -1316,7 +1316,7 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
   const { openIds, toggle, sel, active, openTab } = c; const has = !!kids; const open = openIds.has(id);
   return (
     <div>
-      <button type="button" className={`row${sel === id && active !== 'graph' ? ' active' : ''}`} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { if (['channels', 'people', 'crews', 'docs'].includes(id)) { toggle(id); return; } openTab(id); if (has && !open) toggle(id); }} onDoubleClick={() => has && toggle(id)}>
+      <button type="button" className={`row${sel === id && active !== 'graph' ? ' active' : ''}`} style={{ paddingLeft: `calc(var(--tree-pad, 6px) + ${depth * 12}px)` }} onClick={() => { if (['channels', 'people', 'crews', 'docs'].includes(id)) { toggle(id); return; } openTab(id); if (has && !open) toggle(id); }} onDoubleClick={() => has && toggle(id)}>
         {has ? <span className="caret" style={{ transform: open ? 'rotate(90deg)' : 'none' }} onClick={(e) => { e.stopPropagation(); toggle(id); }}>▸</span> : <span className="caret" />}
         {icon && <I name={icon} size={12} />}
         <span className="lbl">{label}</span>{sub != null && <span className="cnt">{sub}</span>}
@@ -1336,12 +1336,16 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   const [limits, setLimits] = useState({}); const limitOf = (rel) => limits[rel] ?? 60;
   const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
   const [tabMenu, setTabMenu] = useState(null); // { paneId, id, x, y } — 탭 우클릭 메뉴
+  const [treeOpen, setTreeOpen] = useState(false); // 폰 전용 — 왼쪽 트리 서랍
   useEffect(() => { for (const el of document.querySelectorAll('.msgr-actpane .vault-tab.active')) el.scrollIntoView({ inline: 'nearest', block: 'nearest' }); }, [panes]);
   const focusP = panes.find((p) => p.id === focusPane) ?? panes[0];
   const focusTab = focusP.tabs.find((x) => x.id === focusP.active) ?? focusP.tabs[0];
   const sel = focusTab?.kind === 'entity' ? focusTab.rel : 'org';
   const openTab = (tab, opts) => setSt((s) => Panes.openTab(s.panes, s.focus, tab, opts));
-  const openEntity = (rel, opts) => openTab({ id: rel, kind: 'entity', rel }, opts);
+  // 폰은 서랍으로 오가므로 창 한 장만 둔다 — 고를 때마다 탭이 쌓이면 좁은 화면에서 길을 잃는다
+  const openEntity = (rel, opts) => phone
+    ? setSt((s) => ({ panes: [{ id: s.panes[0].id, tabs: [{ id: rel, kind: 'entity', rel }], active: rel }], focus: s.panes[0].id }))
+    : openTab({ id: rel, kind: 'entity', rel }, opts);
   const relOfDoc = (docRel) => { const id = docRel.replace(/\.md$/, ''); return id.startsWith('org/') ? 'org' : id; };
   const closeTab = (paneId, tabId) => setSt((s) => Panes.closeTab(s.panes, s.focus, paneId, tabId));
   const closeOthers = (paneId, id) => setSt((s) => Panes.closeOthers(s.panes, s.focus, paneId, id));
@@ -1425,7 +1429,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
     return { list, shown, days };
   };
   const toggle = (id) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const rc = { openIds, toggle, sel, active: focusTab?.id ?? 'graph', openTab: (rel) => openEntity(rel) }; // 트리 행 컨텍스트(ActRow는 모듈 수준 — 리마운트 없음)
+  const rc = { openIds, toggle, sel, active: focusTab?.id ?? 'graph', openTab: (rel) => { openEntity(rel); setTreeOpen(false); } }; // 트리 행 컨텍스트(ActRow는 모듈 수준 — 리마운트 없음)
   const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && chOf(r) === rel.slice(9))).length;
   const visibleCh = channels.filter((c) => c.kind !== 'dm');
   const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${channels.find((x) => x.id === rel.slice(9))?.name ?? t('act.deletedChannel')}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
@@ -1435,7 +1439,8 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
       <span className="title"><I name="memory" size={18} />{t('act.title')}</span>
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-actsplit">
+    <div className={`msgr-actsplit${treeOpen ? ' tree-open' : ''}`}>
+      {phone && treeOpen && <div className="msgr-treescrim" onClick={() => setTreeOpen(false)} />}
       <aside className="msgr-acttree vault-tree">
         <div className="vault-toolbar">
           <button type="button" className={`tb${focusTab?.id === 'graph' ? ' on' : ''}`} onClick={() => openTab(GRAPH_TAB)} title={t('act.tab.graph')} aria-label={t('act.tab.graph')}><I name="memory" size={14} /></button>
@@ -1465,6 +1470,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
           return (
             <section key={pane.id} className={`msgr-actpane vault-pane${isFocus ? ' focus' : ''}`} style={{ borderLeft: pi > 0 ? '1px solid var(--border)' : 0 }} onMouseDown={() => setFocusPane(pane.id)}>
               <div className="vault-tabs" role="tablist">
+                {phone && <button type="button" className="msgr-treebtn" onClick={() => setTreeOpen((v) => !v)} title={t('act.tree.channels')} aria-expanded={treeOpen}><I name="menu" size={17} /></button>}
                 <div className="msgr-tabscroll">{/* 탭만 가로 스크롤 — 창이 많아져도 오른쪽 동작 버튼은 줄바꿈·잘림 없이 제자리(유건 제보 2026-09-04) */}
                 {pane.tabs.map((tb) => { const title = tb.kind === 'graph' ? t('act.tab.graph') : entityTitle(tb.rel); return (
                   <div key={tb.id} className={`vault-tab${tb.id === pane.active ? ' active' : ''}`} onClick={() => activateTab(pane.id, tb.id)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(pane.id, tb.id); } }} onContextMenu={(e) => { e.preventDefault(); const r = e.currentTarget.closest('.msgr-actpane').getBoundingClientRect(); setTabMenu({ paneId: pane.id, id: tb.id, x: e.clientX - r.left, y: e.clientY - r.top }); }} title={title} role="tab" aria-selected={tb.id === pane.active}>

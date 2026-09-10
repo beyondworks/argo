@@ -28,6 +28,7 @@ const PATHS = {
   star: '<path d="M8 0l1.9 5.6L16 8l-6.1 2.4L8 16l-1.9-5.6L0 8l6.1-2.4z"/>',
   memoff: '<path d="M8 2l1.4 4.3L14 8l-4.6 1.7L8 14l-1.4-4.3L2 8l4.6-1.7z"/><path d="M2.5 2.5l11 11" stroke="var(--bg)" stroke-width="4"/><path d="M2.5 2.5l11 11"/>', // 켜짐 아이콘(별) 그대로 + 취소선 — 다른 그림이라 뭉개져 보이던 것
   node: '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.4"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.4"/><path d="M5 4.75h.01M5 11.25h.01"/>',
+  nodeoff: '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.4"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.4"/><path d="M2.5 2.5l11 11" stroke="var(--bg)" stroke-width="4"/><path d="M2.5 2.5l11 11"/>',
   out: '<path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v7A1.5 1.5 0 0 0 3.5 13H6M9.5 11 13 8l-3.5-3M13 8H6"/>',
 };
 export function Sprite() {
