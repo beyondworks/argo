@@ -836,8 +836,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 구역(슬랙): [아이콘] 라벨 ›  ……  [접기 셰브론], 구역마다 구분선 */
   .msgr-cards { display: flex; gap: 8px; margin: 16px 0 0; padding: 0 var(--ph-pad); overflow-x: auto; scrollbar-width: none; }
   .msgr-cards::-webkit-scrollbar { display: none; }
-  .msgr-card { flex: 0 0 auto; min-width: 100px; height: 85px; padding: 20px 18px 12px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--card); color: var(--fg); text-align: left; display: flex; flex-direction: column; gap: 0; }
-  .msgr-card svg { width: 20px; height: 20px; margin-bottom: 9px; }
+  .msgr-cards .msgr-card { flex: 0 0 auto; min-width: 100px; height: 85px; /* .msgr-cards 한정 — 로그인 카드도 .msgr-card라 잘렸었다 */ padding: 20px 18px 12px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--card); color: var(--fg); text-align: left; display: flex; flex-direction: column; gap: 0; }
+  .msgr-cards .msgr-card svg { width: 20px; height: 20px; margin-bottom: 9px; }
   .msgr-phone .msgr-card .t { font-size: 13px; font-weight: 500; line-height: 16px; }
   .msgr-phone .msgr-card .s { font-size: 12px; font-weight: 400; line-height: 15px; color: var(--fg-3); }
   .msgr-phone.phone-home .msgr-sec { border-bottom: 1px solid rgba(0, 0, 0, 0.06); padding-bottom: 8px; }
@@ -855,7 +855,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 목록 행 */
   .msgr-phone.phone-home .msgr-side .item { min-height: 44px; padding: 0 var(--ph-pad); gap: 16px; font-size: var(--ph-txt); border-radius: 0; background: none; }
   .msgr-phone.phone-home .msgr-side .item.active { background: none; font-weight: 400; }   /* 슬랙: 활성 행 띠 없음 */
-  .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active, .msgr-card:active { background: var(--card-2); }
+  .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active, .msgr-cards .msgr-card:active { background: var(--card-2); }
   .msgr-phone.phone-home .msgr-side .item > svg { width: 20px; height: 20px; flex: 0 0 20px; }
   .msgr-phone.phone-home .msgr-side .more { display: none; }                               /* 행 끝 ··· 없음(슬랙) — 채널 작업은 채팅 머리의 시트에서 */
   .msgr-phone.phone-home .msgr-side .item.msgr-addrow { display: flex; align-items: center; justify-content: flex-start; width: 100%; text-align: left; color: var(--fg-2); } /* .msgr-list 밖이라 버튼 기본(inline-block·center)이 붙는다 → 슬랙 '+ 채널 추가' x52 */
