@@ -261,7 +261,7 @@ function Shell({ session }) {
   const [tick, setTick] = useState(0);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
-  const [page, setPage] = useState('chat'); // 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
+  const [page, setPage] = useState(() => (isPhone ? 'home' : 'chat')); // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   const openNav = () => { if (isPhone) setPage('home'); else setRail(true); }; // 폰: 홈 페이지 / 데스크톱: 레일 서랍
   const [orgMenu, setOrgMenu] = useState(false);
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
