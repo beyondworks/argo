@@ -452,3 +452,34 @@ test('folding scope: tool sources fold a shared SKILL.md once, crew sources keep
   assert.deepEqual(shared.map(i => i.groupLabel).sort(), ['Hermes', 'p1', 'p2'], '크루별 공유 스킬은 크루마다 남아야 한다');
   assert.equal(items.filter(i => i.kind === 'skill' && i.name === 'tool').length, 1, '도구 간 공유 스킬은 한 번만');
 });
+
+// ── 분리 검수 3R(2026-09-10) ──
+
+test('per-crew budgets: many profiles sharing a big skills tree keep their SOUL/MEMORY (review 3R HIGH-1)', async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 30; i++) await f.write(`.hermes/skills/s${i}/SKILL.md`, '# S');
+  for (let p = 0; p < 6; p++) {
+    await f.write(`.hermes/profiles/p${p}/SOUL.md`, `Soul ${p}`); await f.write(`.hermes/profiles/p${p}/memories/MEMORY.md`, `Memory ${p}`);
+    await fs.mkdir(path.join(f.home, `.hermes/profiles/p${p}/skills`), { recursive: true });
+    await fs.symlink(path.join(f.home, '.hermes/skills'), path.join(f.home, `.hermes/profiles/p${p}/skills/shared`));
+  }
+  const { items, issues } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 200 } }); // 공유 예산이면 두 번째 프로필부터 굶는다(트리 한 번 ≈ 91)
+  assert.ok(!issues.some(i => i.source === 'hermes' && i.reason === 'scan-limit'), JSON.stringify(issues));
+  assert.equal(items.filter(i => i.source === 'hermes' && i.kind === 'profile').length, 6, '뒤 프로필의 SOUL이 사라졌다'); // 기본 Hermes 루트에는 SOUL.md를 두지 않았다
+  assert.equal(items.filter(i => i.source === 'hermes' && i.kind === 'memory').length, 6);
+  assert.equal(items.filter(i => i.source === 'hermes' && i.kind === 'skill').length, 30 * 7, '크루별 스킬 첨부가 빠졌다');
+});
+
+test('a skill package truncated by someone else\'s budget is not marked done — the owner re-reads it fully (review 3R MEDIUM-2)', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/x0/SKILL.md', '# X0'); for (let i = 1; i <= 8; i++) await f.write(`.codex/skills/x0/f${i}.md`, `f${i}`);
+  await f.write('.codex/skills/x1/SKILL.md', '# X1');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true });
+  await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex')); // claude가 먼저 들어가 x0 수집 도중 예산이 끝난다
+  const { items } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 20 } });
+  const stub = items.find(i => i.source === 'claude' && i.name === 'x0');
+  assert.equal(stub?.reason, 'scan-limit', '픽스처 전제: claude 아래 x0은 잘린 껍데기여야 한다');
+  const full = items.find(i => i.source === 'codex' && i.name === 'x0');
+  assert.equal(full?.reason, null, '잘린 껍데기가 완료로 남아 주인(codex)이 x0을 다시 읽지 못했다');
+  assert.equal(full?.files.length, 9);
+});

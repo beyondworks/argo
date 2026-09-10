@@ -151,7 +151,10 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
   const trustedSkillTrees = (await Promise.all(['.claude', '.codex', '.agents', '.hermes', '.openclaw'].map(async name => { const tree = path.join(home, name, 'skills'); const real = await fs.realpath(tree).catch(() => null); return real === tree && inside(home, real) && real !== home ? real : null; }))).filter(Boolean);
   const scannedDirs = new Set(); // 소스를 넘어 **완료한** 실디렉터리 — 같은 트리 재순회 차단(검수 MEDIUM-4). 중간 실패한 트리는 넣지 않는다(2R MEDIUM: 주인 소스가 자기 예산으로 다시 스캔해야 한다)
   const walkingDirs = new Set(); // 순회 중인 실디렉터리 — 교차 링크 순환(claude↔codex) 차단
-  const seenSkillPaths = new Set(); // 같은 SKILL.md 실경로 접기(키는 종전 형식 유지 — 영수증 호환). 범위는 add()의 foldScope 참조
+  const seenSkillPaths = new Set(); // `${scope}:${SKILL.md 실경로}` — 같은 스킬 접기. 항목 key 자체는 종전 형식 그대로다(영수증 호환은 그쪽)
+  // 접기·완료 표시의 범위(2R 결정): 도구 소스(claude·codex·agents)는 서로 공유('tools'), 크루 소스(hermes 프로필·openclaw 에이전트)는 크루(group)마다.
+  const foldScope = (source, group) => (['hermes', 'openclaw'].includes(source) ? group : 'tools');
+  // walkingDirs·scannedDirs는 순회가 완전 직렬(모든 skills()/visit()이 await)이라는 전제 위에 있다 — 소스를 병렬화하면 한 소스가 이슈도 항목도 없이 0건이 된다(3R LOW-3).
   const issue = (source, reason) => { if (!issues.some(i => i.source === source && i.reason === reason)) issues.push({ source, reason }); };
   const expand = value => value.startsWith('~/') ? path.join(home, value.slice(2)) : path.resolve(value);
   async function rootFor(input, source, trusted = false) {
@@ -205,8 +208,6 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
       add(source, group, label, kind, kind === 'profile' ? label : relative, [file], { ...(kind === 'profile' ? { profileText: data.toString('utf8') } : {}), ...(kind === 'rule' ? { reason: 'reference-only' } : {}) });
     } catch (error) { if (await fs.lstat(from).catch(() => null)) issue(source, error.reason === 'file-limit' ? 'text-limit' : error.reason); }
   }
-  // 접기·완료 표시의 범위(2R 결정): 도구 소스(claude·codex·agents)는 서로 공유('tools'), 크루 소스(hermes 프로필·openclaw 에이전트)는 크루(group)마다.
-  const foldScope = (source, group) => (['hermes', 'openclaw'].includes(source) ? group : 'tools');
   async function skills(source, group, label, input, trusted = true) {
     const root = await rootFor(input, source, trusted); if (!root) return;
     const scope = foldScope(source, group);
@@ -215,7 +216,7 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
       if (ancestors.has(real) || !inside(root, real)) throw fail('unsafe-path');
       if (scannedDirs.has(`${scope}:${real}`) || walkingDirs.has(real)) return; // 같은 범위에서 완료된 트리 재순회·교차 링크 순환 차단
       walkingDirs.add(real);
-      try { await walk(dir, depth, ancestors, real); scannedDirs.add(`${scope}:${real}`); } // 완료했을 때만 표시 — 예산·권한으로 중단된 트리를 "끝난 것"으로 남기면 주인 소스가 통째로 건너뛴다
+      try { if (await walk(dir, depth, ancestors, real) !== false) scannedDirs.add(`${scope}:${real}`); } // 완료했을 때만 표시 — 예산·권한으로 중단된 트리를 "끝난 것"으로 남기면 주인 소스가 통째로 건너뛴다(패키지 수집이 잘린 경우 포함, 3R MEDIUM-2)
       finally { walkingDirs.delete(real); }
     }
     async function walk(dir, depth, ancestors, real) {
@@ -249,7 +250,8 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
         try { await collect(dir, '', depth, new Set()); if (excludedCount) reason = 'excluded-files'; }
         catch (error) { reason = error.reason === 'file-limit' ? 'package-limit' : error.reason || (error.code === 'ENOENT' ? 'broken-link' : 'source-unreadable'); }
         add(source, group, label, 'skill', path.relative(root, dir) || path.basename(dir), files, { reason, excludedCount });
-        return;
+        // 남의 예산·권한으로 잘린 껍데기(scan-limit·source-unreadable·broken-link)는 주인 소스가 다시 읽어야 한다 → 완료로 표시하지 않는다. package-limit·excluded-files는 누가 읽어도 같다.
+        return !['scan-limit', 'source-unreadable', 'broken-link'].includes(reason);
       }
       for (const entry of list) {
         if (excluded(entry.name)) continue;
@@ -307,6 +309,7 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
     const profiles = [{ root: hermes, label: 'Hermes' }];
     try { for (const entry of await entries(path.join(hermes, 'profiles'), hermes)) if (entry.isDirectory() || entry.isSymbolicLink()) { const root = await rootFor(path.join(hermes, 'profiles', entry.name), 'hermes', true); if (root) profiles.push({ root, label: entry.name }); } } catch (error) { if (error.code !== 'ENOENT') issue('hermes', error.reason || 'source-unreadable'); }
     for (const { root, label } of profiles) {
+      fresh(); // 프로필(크루)마다 예산 — 크루별 재순회가 소스 예산 하나를 나눠 쓰면 뒤 프로필의 SOUL·MEMORY까지 조용히 사라진다(3R HIGH-1)
       await config('hermes', root, label, root, 'config.yaml', 'yaml', value => value.mcp_servers);
       await textAsset('hermes', root, label, root, 'SOUL.md', 'profile');
       await textAsset('hermes', root, label, root, 'AGENTS.md', 'rule');
@@ -338,6 +341,7 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
     const defaults = agents.filter(([, agent]) => agent?.default === true);
     const inheritedId = parsed.agents?.ownership !== 'explicit' && defaults.length === 1 ? defaults[0][0] : agents.length === 1 ? agents[0][0] : null;
     for (const [id, agent] of agents) {
+      fresh(); // 에이전트(크루)마다 예산(3R HIGH-1)
       if (!plain(agent)) { issue('openclaw', 'invalid-format'); continue; }
       if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id)) { issue('openclaw', 'invalid-format'); continue; }
       const fallback = parsed.agents?.defaults?.workspace;
