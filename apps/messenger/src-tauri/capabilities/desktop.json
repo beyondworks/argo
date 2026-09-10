@@ -1,0 +1,16 @@
+{
+  "identifier": "desktop",
+  "description": "Desktop updater and restart",
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "updater:default",
+    "process:default"
+  ]
+}

@@ -23,7 +23,7 @@ test('봇 = 회사 등급(클라이언트 crewTier) · 내 에이전트 레일�
   assert.match(app, /const myCrews = sortCrews\(crews\.filter\(\(c\) => c\.owner_user_id === uid\)\);/, '내 에이전트 = 아르고 + 내가 연결한 봇(세 출처 한 목록) + 정렬(소속별·이름순·추가순)');
   assert.doesNotMatch(app, /const folders = \[\.\.\.new Set\(myCrews\.map\(\(c\) => c\.folder\)/, '그룹(폴더) 묶음은 뺐다(유건 결정 2026-09-09: 평평한 목록)');
   assert.match(app, /<button type="button" className=\{`msgr-sortbtn\$\{sortMenu \? ' on' : ''\}`\}/, '정렬 아이콘 버튼 → 메뉴(유건 지시)');
-  assert.match(app, /<button type="button" className="me" onClick=\{\(\) => setMeMenu/, '프로필 클릭 메뉴(로그아웃은 여기)');
+  assert.match(app, /<button type="button" className="me" onClick=\{\(\) => \{ if \(isPhone\) \{ setSettingsTab\('me'\); setPage\('settings'\)[\s\S]*?\} else setMeMenu\(\(v\) => !v\); \}\}/, '프로필 클릭: 데스크톱은 메뉴(로그아웃은 여기), 폰은 바로 설정(유건 2026-09-10)');
   assert.doesNotMatch(app, /className="btn ghost" onClick=\{\(\) => supabase\.auth\.signOut/, '하단 바의 로그아웃 아이콘 버튼 제거');
   assert.match(app, /placeholder=\{t\('org\.members\.search'\)\}/, '멤버 검색'); assert.match(app, /shown\.slice\(0, memberN\)/, '멤버 30명씩');
   assert.match(read('apps/messenger/src/styles.css'), /:root\[data-theme='linen-dark'\] \{ --primary: #cfcac0;/, '다크 순백 완화');
@@ -58,7 +58,7 @@ test('원클릭 연결(유건 지시 "이렇게 어려우면 안 돼"): 앱 안�
   const card = app.slice(app.indexOf('// ── 부록 N: 외부 에이전트'), app.indexOf("if (part === 'node') return ("));
   assert.match(card, /invoke\('agent_connect', \{ kind, url: botUrl, agents: made\.map/, '앱 커맨드 호출(에이전트 전원)');
   assert.match(card, /autoConnect\(b\.kind, r\.data, b\);/, '회전 직후 자동 연결');
-  assert.match(card, /if \(!inTauri\(\) \|\| !\['hermes', 'openclaw'\]\.includes\(kind\) \|\| !bot\?\.external_id\) \{ setAuto\(null\); return; \}/, '앱 밖·기타 종류·다른 컴퓨터 봇은 수동');
+  assert.match(card, /if \(!isDesktopTauri\(\) \|\| !\['hermes', 'openclaw'\]\.includes\(kind\) \|\| !bot\?\.external_id\) \{ setAuto\(null\); return; \}/, '앱 밖·기타 종류·다른 컴퓨터 봇은 수동');
   assert.match(card, /r\?\.reason === 'cli_missing' \? 'missing' : 'failed'/, 'CLI 없음 분기');
   const rs = read('apps/messenger/src-tauri/src/agents.rs');
   assert.match(rs, /pub fn agent_connect\(app: tauri::AppHandle, kind: String, url: String, agents: Vec<AgentSetup>\)/, 'Rust 커맨드(에이전트 배열)');

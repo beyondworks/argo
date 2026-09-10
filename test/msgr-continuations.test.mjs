@@ -332,6 +332,23 @@ for (const runner of ['SDK', 'CLI']) {
       await assertDelivered(f, 'job');
     } finally { f.stop(); }
   });
+  test(`${runner}: list_routines·cancel_routine — 예약을 보고 끄고 지운다(SDK 전용)`, async () => {
+    if (runner !== 'SDK') return; // CLI 러너 지시문 패리티는 아직 없다
+    const f = await setup();
+    try {
+      await sdk(f.ws, 'alpha', f.ctx, 'schedule_task')({ title: '아침 보고', prompt: '진행', type: 'daily', time: '09:00' });
+      const [made] = await loadRoutines(f.ws);
+      const listed = await sdk(f.ws, 'alpha', f.ctx, 'list_routines')({});
+      assert.match(JSON.stringify(listed), /아침 보고/, '목록에 제목이 나온다');
+      assert.match(JSON.stringify(listed), /매일 09:00/, '일정을 사람이 읽는 말로 보여준다');
+      await sdk(f.ws, 'alpha', f.ctx, 'cancel_routine')({ id: made.id, action: 'off' });
+      assert.equal((await loadRoutines(f.ws))[0].enabled, false, '끄면 남아 있되 비활성');
+      await sdk(f.ws, 'alpha', f.ctx, 'cancel_routine')({ id: made.id, action: 'delete' });
+      assert.equal((await loadRoutines(f.ws)).length, 0, '지우면 사라진다');
+      const gone = await sdk(f.ws, 'alpha', f.ctx, 'cancel_routine')({ id: made.id, action: 'off' });
+      assert.match(JSON.stringify(gone), /그런 예약이 없다/, '없는 id는 조용히 성공하지 않는다');
+    } finally { f.stop(); }
+  });
   test(`${runner}: schedule tools persist the selected crew identity and CLI approvals retain origin`, async () => {
     const f = await setup();
     try {

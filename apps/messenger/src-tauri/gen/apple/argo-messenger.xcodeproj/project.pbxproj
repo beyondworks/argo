@@ -1,0 +1,493 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		02722EA412E96195D87B341E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 06E1D6AC8C4A224FC39553B3 /* Assets.xcassets */; };
+		0F82648483E9B7532E8B7AE5 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DECF0311C393CE44C484963B /* Metal.framework */; };
+		215D9F343855D4FF57618C46 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9A87CAB87D484716F0224B49 /* CoreGraphics.framework */; };
+		4EC9A429E6FE820024F7FB1A /* assets in Resources */ = {isa = PBXBuildFile; fileRef = F80E0F3EFCBD92C4EEDDAF7F /* assets */; };
+		5A550DCE5D206918878C0470 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563CA5857529A35021D45BC6 /* UIKit.framework */; };
+		65C88D7A7CBDA08AE2F19274 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C308FA15B434993101E8E198 /* Security.framework */; };
+		7ADF22BB53E0539F61B20550 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 1EBF44497BD149968C7F0B3C /* LaunchScreen.storyboard */; };
+		86A8D62B8121845E5EB48652 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 27C6B25662FFE3B4E9A4A29D /* WebKit.framework */; };
+		8CC84CB5BD03BB77560E5A27 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = F067B7FEEDF7CFE97D7DC222 /* main.mm */; };
+		B28697D05351C4BE649EE50D /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 5CE4457C5DE184455694B7BB /* libapp.a */; };
+		E19F0DBF0752C095E3AFD65D /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 590FB8832FB52BFFC92D79AA /* MetalKit.framework */; };
+		EF325A9002BB7BD6C6517B64 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C1CF96969D44D76DE8FD7278 /* QuartzCore.framework */; };
+		F3E139CE2818A7C3E4A1C791 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 31EF3AD4829EE889AC11DD5C /* libapp.a */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0454C4AA5627F732D4449EF0 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		06E1D6AC8C4A224FC39553B3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1618536311EF5530405A62E9 /* agents.rs */ = {isa = PBXFileReference; path = agents.rs; sourceTree = "<group>"; };
+		1EBF44497BD149968C7F0B3C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		27C6B25662FFE3B4E9A4A29D /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		31EF3AD4829EE889AC11DD5C /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		4E0419251D4324B5AB7420E3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		563CA5857529A35021D45BC6 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		590FB8832FB52BFFC92D79AA /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		5CE4457C5DE184455694B7BB /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		5F1CB4EA377800DD469AA546 /* argo-messenger_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "argo-messenger_iOS.entitlements"; sourceTree = "<group>"; };
+		9A87CAB87D484716F0224B49 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		C1CF96969D44D76DE8FD7278 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		C308FA15B434993101E8E198 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		DB73A2ADDC0E4AE87B91C6DF /* argo-messenger_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "argo-messenger_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		DECF0311C393CE44C484963B /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		E2DEA40C8B82AE0ED0A237F0 /* pair.rs */ = {isa = PBXFileReference; path = pair.rs; sourceTree = "<group>"; };
+		F067B7FEEDF7CFE97D7DC222 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		F80E0F3EFCBD92C4EEDDAF7F /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		FA60A60ABCD73A632723F4CE /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		FF0DF980AEAEC66D40886E79 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		ED2591A7099AB68BB2844C37 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F3E139CE2818A7C3E4A1C791 /* libapp.a in Frameworks */,
+				215D9F343855D4FF57618C46 /* CoreGraphics.framework in Frameworks */,
+				0F82648483E9B7532E8B7AE5 /* Metal.framework in Frameworks */,
+				E19F0DBF0752C095E3AFD65D /* MetalKit.framework in Frameworks */,
+				EF325A9002BB7BD6C6517B64 /* QuartzCore.framework in Frameworks */,
+				65C88D7A7CBDA08AE2F19274 /* Security.framework in Frameworks */,
+				5A550DCE5D206918878C0470 /* UIKit.framework in Frameworks */,
+				86A8D62B8121845E5EB48652 /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		08D5AEF7E6A34A9DCCE737D2 /* debug */ = {
+			isa = PBXGroup;
+			children = (
+				5CE4457C5DE184455694B7BB /* libapp.a */,
+			);
+			path = debug;
+			sourceTree = "<group>";
+		};
+		118FB542134742C5D5F1A746 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				7FEF735B889AE4854984AB76 /* argo-messenger */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		1F9475D7A3BE0BD73C8D4BF6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				DB73A2ADDC0E4AE87B91C6DF /* argo-messenger_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		30195BF560DCFF9F6AFB961C /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+				CC5A7477D83DF05737AC2666 /* arm64 */,
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+		7FEF735B889AE4854984AB76 /* argo-messenger */ = {
+			isa = PBXGroup;
+			children = (
+				F067B7FEEDF7CFE97D7DC222 /* main.mm */,
+				9C137E6EDF496D0EDD8973FE /* bindings */,
+			);
+			path = "argo-messenger";
+			sourceTree = "<group>";
+		};
+		8893AF06DCC0942C7F10A9A4 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				9A87CAB87D484716F0224B49 /* CoreGraphics.framework */,
+				31EF3AD4829EE889AC11DD5C /* libapp.a */,
+				DECF0311C393CE44C484963B /* Metal.framework */,
+				590FB8832FB52BFFC92D79AA /* MetalKit.framework */,
+				C1CF96969D44D76DE8FD7278 /* QuartzCore.framework */,
+				C308FA15B434993101E8E198 /* Security.framework */,
+				563CA5857529A35021D45BC6 /* UIKit.framework */,
+				27C6B25662FFE3B4E9A4A29D /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		922B52D1B5221FD6EE4283B6 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				1618536311EF5530405A62E9 /* agents.rs */,
+				FA60A60ABCD73A632723F4CE /* lib.rs */,
+				FF0DF980AEAEC66D40886E79 /* main.rs */,
+				E2DEA40C8B82AE0ED0A237F0 /* pair.rs */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+		9C137E6EDF496D0EDD8973FE /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				0454C4AA5627F732D4449EF0 /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		CC5A7477D83DF05737AC2666 /* arm64 */ = {
+			isa = PBXGroup;
+			children = (
+				08D5AEF7E6A34A9DCCE737D2 /* debug */,
+			);
+			path = arm64;
+			sourceTree = "<group>";
+		};
+		CF3C3835BE98D310F0C16D0F = {
+			isa = PBXGroup;
+			children = (
+				F80E0F3EFCBD92C4EEDDAF7F /* assets */,
+				06E1D6AC8C4A224FC39553B3 /* Assets.xcassets */,
+				1EBF44497BD149968C7F0B3C /* LaunchScreen.storyboard */,
+				D94FDC0DC330532E42DDB2B7 /* argo-messenger_iOS */,
+				30195BF560DCFF9F6AFB961C /* Externals */,
+				118FB542134742C5D5F1A746 /* Sources */,
+				922B52D1B5221FD6EE4283B6 /* src */,
+				8893AF06DCC0942C7F10A9A4 /* Frameworks */,
+				1F9475D7A3BE0BD73C8D4BF6 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D94FDC0DC330532E42DDB2B7 /* argo-messenger_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				5F1CB4EA377800DD469AA546 /* argo-messenger_iOS.entitlements */,
+				4E0419251D4324B5AB7420E3 /* Info.plist */,
+			);
+			path = "argo-messenger_iOS";
+			sourceTree = "<group>";
+		};
+		"TEMP_7F1C687E-D6AC-43EB-A49B-F3C0FCE1A69A" /* x86_64 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = x86_64;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3E4D7F25E2BDEB8F716DCA24 /* argo-messenger_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6AE2DFAD0B82AD9387DF54B1 /* Build configuration list for PBXNativeTarget "argo-messenger_iOS" */;
+			buildPhases = (
+				E131D7DE38C5331643F63778 /* Build Rust Code */,
+				7F86AE7B7C6F7796D66871B6 /* Sources */,
+				9CE77D33BA5BCB572F07A56A /* Resources */,
+				ED2591A7099AB68BB2844C37 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "argo-messenger_iOS";
+			packageProductDependencies = (
+			);
+			productName = "argo-messenger_iOS";
+			productReference = DB73A2ADDC0E4AE87B91C6DF /* argo-messenger_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		EE3EE43FDC62E0AC8F136EFC /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 2265D29FE2793D6678A3AFD5 /* Build configuration list for PBXProject "argo-messenger" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = CF3C3835BE98D310F0C16D0F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1F9475D7A3BE0BD73C8D4BF6 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3E4D7F25E2BDEB8F716DCA24 /* argo-messenger_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		9CE77D33BA5BCB572F07A56A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				02722EA412E96195D87B341E /* Assets.xcassets in Resources */,
+				7ADF22BB53E0539F61B20550 /* LaunchScreen.storyboard in Resources */,
+				4EC9A429E6FE820024F7FB1A /* assets in Resources */,
+				B28697D05351C4BE649EE50D /* libapp.a in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		E131D7DE38C5331643F63778 /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "npm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		7F86AE7B7C6F7796D66871B6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8CC84CB5BD03BB77560E5A27 /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		09132D9A85A54EB99A2057D2 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+		4F1AAED25CCB8A67111ACB78 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		C6981C40A28F50FF7FA1C1C9 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "argo-messenger_iOS/argo-messenger_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "argo-messenger_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.beyondworks.argo.messenger;
+				PRODUCT_NAME = "Argo Messenger";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+				DEVELOPMENT_TEAM = "22YU7H899Y";
+			};
+			name = release;
+		};
+		FF53E0E4ADF1C715AE11B7ED /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "argo-messenger_iOS/argo-messenger_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "argo-messenger_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.beyondworks.argo.messenger;
+				PRODUCT_NAME = "Argo Messenger";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+				DEVELOPMENT_TEAM = "22YU7H899Y";
+			};
+			name = debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2265D29FE2793D6678A3AFD5 /* Build configuration list for PBXProject "argo-messenger" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4F1AAED25CCB8A67111ACB78 /* debug */,
+				09132D9A85A54EB99A2057D2 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		6AE2DFAD0B82AD9387DF54B1 /* Build configuration list for PBXNativeTarget "argo-messenger_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FF53E0E4ADF1C715AE11B7ED /* debug */,
+				C6981C40A28F50FF7FA1C1C9 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = EE3EE43FDC62E0AC8F136EFC /* Project object */;
+}

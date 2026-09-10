@@ -1,0 +1,18 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "resources": null
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [
+        {
+          "scheme": [
+            "argo-messenger"
+          ],
+          "appLink": false
+        }
+      ]
+    }
+  }
+}

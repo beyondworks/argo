@@ -1,0 +1,13 @@
+{
+  "identifier": "ios-web-auth",
+  "description": "iOS 로그인 창(ASWebAuthenticationSession)으로 OAuth 콜백을 앱이 직접 받는다",
+  "platforms": [
+    "iOS"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "web-auth:default"
+  ]
+}

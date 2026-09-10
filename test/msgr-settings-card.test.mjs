@@ -438,7 +438,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /import \{ Graph3D \} from '\.\/graph3d\.jsx';/, '활동 그래프는 3D 컴포넌트(구성은 아르고 코어 재사용)');
   assert.match(app, /\{page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기');
-  assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\('act\.graph\.hint'\)\} labels=\{\{ zoomIn: t\('act\.graph\.zoomIn'\)/, '그래프 탭: 3D 기억 그래프 + 줌 버튼 라벨');
+  assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\(phone \? 'act\.graph\.hint\.phone' : 'act\.graph\.hint'\)\} labels=\{\{ zoomIn: t\('act\.graph\.zoomIn'\)/, '그래프 탭: 3D 기억 그래프 + 줌 버튼 라벨(폰은 휠·더블클릭 없는 안내문)');
   assert.doesNotMatch(app, /msgr-actlocal|<Graph3D key=\{sel\}/, '대상 탭엔 작은 그래프를 넣지 않는다 — 그래프는 그래프 탭 전담(유건 지시 2026-09-04)');
   assert.doesNotMatch(app, /Graph2D/, '메신저 활동 페이지는 2D 그래프를 쓰지 않는다');
   const g3 = read('apps/messenger/src/graph3d.jsx');

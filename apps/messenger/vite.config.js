@@ -17,7 +17,7 @@ export default defineConfig({
     '@argo/i18n': shared('app/i18n.jsx'),            // LangProvider(ui.jsx가 요구) + 테마 라벨
     '@argo/graph2d-core': shared('app/c/[ws]/graph2d-core.mjs'), // 그래프 구성(순수) — 3D 기억 그래프(graph3d.jsx)가 같은 구성을 쓴다(본체 2D 렌더러는 쓰지 않는다)
   } },
-  server: { fs: { allow: [shared('.')] } },
+  server: { host: process.env.TAURI_DEV_HOST || false, strictPort: true, fs: { allow: [shared('.')] } },
   clearScreen: false,
   envPrefix: ['VITE_', 'TAURI_ENV_'],
 });

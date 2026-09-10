@@ -9,11 +9,18 @@
     "build": "vite build",
     "preview": "vite preview --port 5183",
     "tauri": "tauri",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "mobile:ios:init": "tauri ios init",
+    "mobile:ios:dev": "tauri ios dev",
+    "mobile:ios:build": "node scripts/mobile-assets.mjs ios && tauri ios build",
+    "mobile:android:init": "tauri android init",
+    "mobile:android:dev": "tauri android dev",
+    "mobile:android:build": "node scripts/mobile-assets.mjs android && tauri android build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.2",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-deep-link": "^2.4.10",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.11.0",

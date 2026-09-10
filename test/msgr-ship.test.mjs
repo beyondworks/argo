@@ -66,8 +66,38 @@ test('tauri.conf·Rust·capabilities: 업데이터 배선과 회사 서버를 �
   const rs = read('apps/messenger/src-tauri/src/lib.rs');
   assert.match(rs, /tauri_plugin_updater::Builder::new\(\)\.build\(\)/);
   assert.match(rs, /tauri_plugin_process::init\(\)/);
-  const cap = JSON.parse(read('apps/messenger/src-tauri/capabilities/default.json'));
+  const cap = JSON.parse(read('apps/messenger/src-tauri/capabilities/desktop.json'));
   assert.ok(cap.permissions.includes('updater:default') && cap.permissions.includes('process:default'));
+  assert.deepEqual(cap.platforms, ['macOS', 'windows', 'linux']);
+  const common = JSON.parse(read('apps/messenger/src-tauri/capabilities/default.json'));
+  assert.ok(!common.permissions.includes('updater:default') && !common.permissions.includes('process:default'));
+  const mobile = JSON.parse(read('apps/messenger/src-tauri/capabilities/mobile.json'));
+  assert.deepEqual(mobile.platforms, ['iOS', 'android']);
+  assert.ok(mobile.permissions.includes('deep-link:default'));
+  // 로그인 복귀 스킴은 네이티브 매니페스트에 실제로 등록돼야 브라우저에서 앱으로 돌아온다(플러그인 설정만으로는 iOS에 안 실린다 — 2026-09-10 실측: 시뮬레이터 openurl 115).
+  assert.deepEqual(JSON.parse(read('apps/messenger/src-tauri/tauri.android.conf.json')).plugins['deep-link'].mobile[0].scheme, ['argo-messenger'], 'Android conf 스킴');
+  // iOS는 로그인 시트(ASWebAuthenticationSession)가 콜백을 받으므로 argo-messenger:// 를 앱 URL 스킴으로 등록하지 않는다.
+  // 등록하면 시트와 스킴이 충돌해 콜백이 앱에 도달하지 않는다(2026-09-10 실기: 로그인 성공하나 코드 미교환).
+  assert.doesNotMatch(read('apps/messenger/src-tauri/gen/apple/argo-messenger_iOS/Info.plist'), /argo-messenger/, 'iOS Info.plist에 argo-messenger 스킴 없음');
+  assert.deepEqual(JSON.parse(read('apps/messenger/src-tauri/tauri.ios.conf.json')).plugins['deep-link'].mobile, [], 'iOS deep-link 스킴 비움');
+  // Android는 인텐트(딥링크)로 콜백을 받는다 — 스킴 유지.
+  assert.match(read('apps/messenger/src-tauri/gen/android/app/src/main/AndroidManifest.xml'), /<data android:scheme="argo-messenger" \/>/, 'Android 매니페스트 intent-filter에 argo-messenger 스킴');
+  // iOS 로그인은 외부 브라우저가 아니라 애플 표준 로그인 창(ASWebAuthenticationSession)으로 — Chrome 등 서드파티 기본 브라우저는
+  // 서버 리디렉션의 커스텀 스킴을 앱에 넘기지 않아 '대기'에서 멈춘다(2026-09-10 실기: Safari만 동작).
+  const iosCap = JSON.parse(read('apps/messenger/src-tauri/capabilities/ios.json'));
+  assert.deepEqual(iosCap.platforms, ['iOS']); assert.ok(iosCap.permissions.includes('web-auth:default'));
+  assert.match(read('apps/messenger/src-tauri/Cargo.toml'), /\[target\.'cfg\(target_os = "ios"\)'\.dependencies\]\s*\ntauri-plugin-web-auth = \{ path = "plugins\/web-auth" \}/, 'iOS에만 web-auth 플러그인');
+  assert.match(rs, /#\[cfg\(target_os = "ios"\)\]\s*let builder = builder\.plugin\(tauri_plugin_web_auth::init\(\)\)/, 'lib.rs iOS 플러그인 등록');
+  const swift = read('apps/messenger/src-tauri/plugins/web-auth/ios/Sources/WebAuthPlugin.swift');
+  assert.match(swift, /ASWebAuthenticationSession\(url: url, callbackURLScheme: args\.callbackScheme\)/);
+  assert.match(swift, /prefersEphemeralWebBrowserSession = false/, '기존 Safari 로그인 세션 공유(구글 재로그인 불필요)');
+  assert.match(swift, /url\.scheme == "https"/, '로그인 창은 https만 연다');
+  const rt = read('apps/messenger/src/mobile-auth-runtime.js');
+  assert.match(rt, /invoke\('plugin:web-auth\|start', \{ url, callbackScheme: MOBILE_AUTH_CALLBACK\.split\(':'\)\[0\] \}\)/, 'iOS start → web-auth');
+  assert.match(rt, /if \(!isIos\) return openerOpenUrl\(url\);/, 'Android는 외부 브라우저+딥링크 그대로');
+  assert.match(rt, /if \(isIos\) return \(\) => receivers\.delete\(handler\);/, 'iOS는 딥링크 스킴 등록 안 함(시트가 콜백 전달)');
+  assert.match(rt, /for \(const handler of receivers\) handler\(\[result\.url\]\)/, '콜백 URL을 딥링크와 같은 receive 경로로');
+  assert.match(rt, /else runtime\.cancel\(\)/, '취소·오류는 대기 해제');
   const toml = read('apps/messenger/src-tauri/Cargo.toml');
   assert.match(toml, /tauri-plugin-updater = "2"/); assert.match(toml, /tauri-plugin-process = "2"/);
   const pkg = JSON.parse(read('apps/messenger/package.json'));

@@ -1,0 +1,5 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = "iOS 로그인 창을 열고 콜백 URL을 돌려받는 start 명령"
+permissions = ["allow-start"]

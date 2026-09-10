@@ -22,8 +22,13 @@ const PATHS = {
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/>',
   doc: '<path d="M4 2.5h5l3.5 3.5v7.5A1.5 1.5 0 0 1 11 15H4a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 4 2.5z"/><path d="M9 2.5V6h3.5M5.5 9h5M5.5 11.5h5"/>',
   menu: '<path d="M3 5h10M3 8h10M3 11h10"/>',
+  home: '<path d="M8 1.2L1 7v7.2c0 .4.3.8.8.8H6V10h4v5h4.2c.5 0 .8-.4.8-.8V7L8 1.2z"/>',
+  search: '<path d="M7 1a6 6 0 104.2 10.2l3.3 3.3 1.1-1.1-3.3-3.3A6 6 0 007 1zm0 1.6a4.4 4.4 0 110 8.8 4.4 4.4 0 010-8.8z"/>',
+  back: '<path d="M10.5 1.8L9.3.6 2 8l7.3 7.4 1.2-1.2L4.4 8z"/>',
   star: '<path d="M8 0l1.9 5.6L16 8l-6.1 2.4L8 16l-1.9-5.6L0 8l6.1-2.4z"/>',
   memoff: '<path d="M8 2l1.4 4.3L14 8l-4.6 1.7L8 14l-1.4-4.3L2 8l4.6-1.7z"/><path d="M2.5 2.5l11 11" stroke="var(--bg)" stroke-width="4"/><path d="M2.5 2.5l11 11"/>', // 켜짐 아이콘(별) 그대로 + 취소선 — 다른 그림이라 뭉개져 보이던 것
+  node: '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.4"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.4"/><path d="M5 4.75h.01M5 11.25h.01"/>',
+  nodeoff: '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.4"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.4"/><path d="M2.5 2.5l11 11" stroke="var(--bg)" stroke-width="4"/><path d="M2.5 2.5l11 11"/>',
   out: '<path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v7A1.5 1.5 0 0 0 3.5 13H6M9.5 11 13 8l-3.5-3M13 8H6"/>',
 };
 export function Sprite() {
