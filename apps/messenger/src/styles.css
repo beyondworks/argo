@@ -810,44 +810,41 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
     --ph-bg: var(--bg); --ph-card: var(--card); --ph-card2: var(--card-2);
     --ph-fg: var(--fg); --ph-fg2: var(--fg-2); --ph-fg3: var(--fg-3);
     --ph-border: var(--border); --ph-border-soft: var(--border-soft); }
-  .msgr-phone .msgr-main { padding-bottom: calc(var(--ph-tab) + 18px + max(8px, calc(env(safe-area-inset-bottom) - 26px))); } /* 컴포저 바닥 y788(슬랙 행 중심 760) */ /* 컴포저 바닥 ↔ 아일랜드 위 8px(슬랙) */
+  .msgr-phone .msgr-main { padding-bottom: calc(var(--ph-tab) + 12px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); } /* 컴포저 알약 바닥 y786(중심 760), 아일랜드 위 12 */ /* 컴포저 바닥 ↔ 아일랜드 위 8px(슬랙) */
   .msgr-phone .msgr-main .msgr-dock { padding: 0; margin: 0; border: 0; background: transparent; box-shadow: none; }
   .msgr-phone .msgr-main .msgr-dock { position: relative; }
-  .msgr-phone .msgr-main .msgr-dock .msgr-sub { position: absolute; left: var(--ph-pad); right: var(--ph-pad); bottom: 100%; min-height: 0; margin: 0; padding: 0 0 2px; pointer-events: none; } /* 컴포저 아래 상태줄(작성 중 등)은 슬랙처럼 입력줄 '위'에 띄운다 — 세로 자리 0 */
+  .msgr-phone .msgr-main .msgr-dock .msgr-sub { position: absolute; left: 24px; right: 24px; bottom: 100%; min-height: 0; margin: 0; padding: 0 0 2px; pointer-events: none; } /* 컴포저 아래 상태줄(작성 중 등)은 슬랙처럼 입력줄 '위'에 띄운다 — 세로 자리 0 */
 
   /* ── 홈: 서랍(.msgr-side)을 전체 화면 페이지로. 머리는 테마의 어두운 사이드바 색(슬랙의 검은 띠), 본문은 흰 카드 ── */
   .msgr-phone.phone-home .msgr-side, .msgr-phone.phone-home.rail-open .msgr-side { display: flex; position: relative; inset: auto; z-index: auto; width: 100%; height: auto; min-height: 100%;
     border-right: 0; padding: 0; gap: 0; }
   .msgr-phone.phone-home .msgr-main, .msgr-phone.phone-home .msgr-rail-close, .msgr-phone.phone-home .msgr-scrim { display: none; }
   .msgr-phone.phone-home .msgr-side .msgr-brand, .msgr-phone.phone-home .msgr-side .msgr-search { display: none; }
-  .msgr-phone.phone-home .msgr-side .msgr-orgwrap { height: calc(env(safe-area-inset-top) + 54px); padding: env(safe-area-inset-top) calc(var(--ph-pad) + 104px) 0 var(--ph-pad); display: flex; align-items: center; }
+  .msgr-phone.phone-home .msgr-side .msgr-orgwrap { height: calc(env(safe-area-inset-top) + 54px); padding: env(safe-area-inset-top) calc(var(--ph-pad) + 104px) 10px var(--ph-pad); display: flex; align-items: center; } /* 이름 중심 y84(슬랙) */
   .msgr-phone.phone-home .msgr-side .msgr-org { width: auto; min-height: 44px; font-size: 18px; font-weight: 700; gap: 12px; padding: 0; border: 0; background: none; }
   .msgr-phone.phone-home .msgr-side .msgr-org .msgr-av { width: 44px; height: 44px; border-radius: 50%; }
   .msgr-phone.phone-home .msgr-side .msgr-org .caret { margin-left: -2px; }
   /* 우상단 프로필 — 풋터의 아바타 하나만. 벨·별·기어는 탭·아바타 메뉴와 중복이라 숨김 */
-  .msgr-phone.phone-home .msgr-side .msgr-foot { position: absolute; top: calc(env(safe-area-inset-top) + 7px); right: var(--ph-pad); width: 96px; height: 40px; margin: 0; padding: 0 4px; border: 0; gap: 0; border-radius: 20px; background: var(--card-2); display: flex; justify-content: flex-end; align-items: center; z-index: 2; } /* 슬랙 우측 알약 96×40 */
+  .msgr-phone.phone-home .msgr-side .msgr-foot { position: absolute; top: env(safe-area-inset-top); right: var(--ph-pad); width: 96px; height: 44px; margin: 0; padding: 0 4px; border: 0; gap: 0; border-radius: 20px; background: var(--card-2); display: flex; justify-content: flex-end; align-items: center; z-index: 2; } /* 슬랙 우측 알약 96×40 */
   .msgr-phone.phone-home .msgr-side .msgr-foot .me { min-width: 40px; min-height: 40px; padding: 0; justify-content: center; }
   .msgr-phone.phone-home .msgr-side .msgr-foot .me .name, .msgr-phone.phone-home .msgr-side .msgr-foot > .btn { display: none; }
-  .msgr-phone.phone-home .msgr-side .msgr-foot .me .msgr-av { width: 32px; height: 32px; }
+  .msgr-phone.phone-home .msgr-side .msgr-foot .me .msgr-av { width: 36px; height: 36px; }
   /* 본문 — 흰 카드 + 루트 팔레트 복원 */
-  .msgr-phone.phone-home .msgr-railbody { flex: 1; margin: 0; padding: 0 0 calc(var(--ph-tab) + 24px + max(12px, calc(env(safe-area-inset-bottom) - 18px))); gap: 0;
+  .msgr-phone.phone-home .msgr-railbody { flex: 1; margin: 0; padding: 0 0 calc(var(--ph-tab) + 24px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); gap: 0;
     --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2); --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3); --border: var(--ph-border); --border-soft: var(--ph-border-soft);
     background: var(--card); color: var(--fg); }
   /* 구역(슬랙): [아이콘] 라벨 ›  ……  [접기 셰브론], 구역마다 구분선 */
   .msgr-cards { display: flex; gap: 8px; margin: 16px 0 0; padding: 0 var(--ph-pad); overflow-x: auto; scrollbar-width: none; }
   .msgr-cards::-webkit-scrollbar { display: none; }
-  .msgr-card { flex: 0 0 auto; min-width: 100px; height: 85px; padding: 12px 12px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--fg); text-align: left; display: flex; flex-direction: column; gap: 4px; }
-  .msgr-card svg { width: 20px; height: 20px; margin-bottom: 2px; }
-  .msgr-phone .msgr-card .t { font-size: 13px; font-weight: 600; line-height: 16px; }
+  .msgr-card { flex: 0 0 auto; min-width: 100px; height: 85px; padding: 20px 18px 12px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--card); color: var(--fg); text-align: left; display: flex; flex-direction: column; gap: 0; }
+  .msgr-card svg { width: 20px; height: 20px; margin-bottom: 9px; }
+  .msgr-phone .msgr-card .t { font-size: 13px; font-weight: 500; line-height: 16px; }
   .msgr-phone .msgr-card .s { font-size: 12px; font-weight: 400; line-height: 15px; color: var(--fg-3); }
   .msgr-phone.phone-home .msgr-sec { border-bottom: 1px solid rgba(0, 0, 0, 0.06); padding-bottom: 8px; }
   .msgr-cards + .msgr-sec { margin-top: 24px; }
-  .msgr-phone.phone-home .msgr-sec > summary.msgr-group { display: flex; justify-content: flex-start; align-items: center; gap: 16px; min-height: 48px; margin: 0; padding: 0 20px 0 var(--ph-pad); font-size: var(--ph-txt); font-weight: 600; color: var(--fg); list-style: none; } /* 데스크톱의 space-between이 라벨을 가운데로 밀었다 */
+  .msgr-phone.phone-home .msgr-sec > summary.msgr-group { display: flex; justify-content: flex-start; align-items: center; gap: 16px; min-height: 48px; margin: 0; padding: 0 20px 0 var(--ph-pad); font-size: var(--ph-txt); font-weight: 700; color: var(--fg); list-style: none; } /* 데스크톱의 space-between이 라벨을 가운데로 밀었다 */
   .msgr-phone.phone-home .msgr-sec > summary::-webkit-details-marker { display: none; }
-  .msgr-phone.phone-home .msgr-sec > summary.msgr-group::before { content: '#'; width: 20px; text-align: center; font-size: 17px; font-weight: 700; color: var(--fg-2); }
-  .msgr-phone.phone-home .msgr-sec[data-sec='dms'] > summary.msgr-group::before { content: '@'; }
-  .msgr-phone.phone-home .msgr-sec[data-sec='mine'] > summary.msgr-group::before { content: '✦'; font-size: 15px; }
-  .msgr-phone.phone-home .msgr-sec > summary.msgr-group::before { flex: 0 0 20px; }
+  .msgr-phone.phone-home .msgr-sec > summary.msgr-group .sec-ic { width: 20px; height: 20px; flex: 0 0 20px; color: var(--fg-2); }
   .msgr-phone.phone-home .msgr-sec > summary.msgr-group .lbl { flex: 0 0 auto; margin: 0; padding: 0; text-align: left; } /* 데스크톱 레일의 flex/margin이 라벨을 밀었다 → x52 고정 */
   .msgr-phone.phone-home .msgr-sec > summary.msgr-group .lbl::before { display: none; } /* 데스크톱 레일의 라벨 앞 셰브론(5px) — 폰은 글리프+오른쪽 셰브론으로 대체 */
   .msgr-phone.phone-home .msgr-sec > summary.msgr-group .lbl::after { content: ' ›'; color: var(--fg-3); font-weight: 600; }
@@ -858,6 +855,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 목록 행 */
   .msgr-phone.phone-home .msgr-side .item { min-height: 44px; padding: 0 var(--ph-pad); gap: 16px; font-size: var(--ph-txt); border-radius: 0; background: none; }
   .msgr-phone.phone-home .msgr-side .item.active { background: none; font-weight: 400; }   /* 슬랙: 활성 행 띠 없음 */
+  .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active, .msgr-card:active { background: var(--card-2); }
   .msgr-phone.phone-home .msgr-side .item > svg { width: 20px; height: 20px; flex: 0 0 20px; }
   .msgr-phone.phone-home .msgr-side .more { display: none; }                               /* 행 끝 ··· 없음(슬랙) — 채널 작업은 채팅 머리의 시트에서 */
   .msgr-phone.phone-home .msgr-side .item.msgr-addrow { display: flex; align-items: center; justify-content: flex-start; width: 100%; text-align: left; color: var(--fg-2); } /* .msgr-list 밖이라 버튼 기본(inline-block·center)이 붙는다 → 슬랙 '+ 채널 추가' x52 */
@@ -866,37 +864,40 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-klabel { font-size: var(--ph-sub); }
   .msgr-phone.phone-home .msgr-side .msgr-list { padding-bottom: 6px; }
   /* FAB(슬랙 +) — 아일랜드 위 오른쪽 */
-  .msgr-fab { position: fixed; right: 24px; bottom: max(78px, calc(env(safe-area-inset-bottom) + 66px)); z-index: 69; width: 56px; height: 56px; border-radius: 50%; /* 슬랙 실측: 바닥 100(인셋 34+66) */
+  .msgr-fab { position: fixed; right: 24px; bottom: max(84px, calc(env(safe-area-inset-bottom) + 66px)); z-index: 69; width: 56px; height: 56px; border-radius: 50%; /* 슬랙 실측: 바닥 100(인셋 34+66) */
     border: 0; background: var(--fg); color: var(--bg); display: grid; place-items: center; box-shadow: var(--shadow-float); cursor: pointer; }
 
   /* ── 채팅 머리(슬랙 겹침 기준): [뒤로 36원] [제목 16/700 위 · 부제 12 아래] [36원 2개]. 탭 줄은 슬랙에 없다 → 숨김(부제가 탭 수를 말한다) ── */
-  .msgr-phone .msgr-main .msgr-top { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto auto; grid-template-rows: auto auto; column-gap: 10px; row-gap: 0; /* 슬랙 실측: 뒤로 40@16, '#' x87, 우측 원 44·간격 10 */
-    align-items: center; padding: calc(env(safe-area-inset-top) + 8px) var(--ph-pad) 8px; }
-  .msgr-phone .msgr-main .msgr-top .msgr-menu { grid-column: 1; grid-row: 1 / 3; width: 40px; height: 40px; min-width: 40px; min-height: 40px; border-radius: 50%; border: 0; background: var(--card-2); }
-  .msgr-phone .msgr-main .msgr-top .title { grid-column: 2; grid-row: 1; min-height: 0; padding: 0 0 0 21px; font-size: 16px; font-weight: 700; line-height: 20px; gap: 6px; } /* 16+40+10+21 = '#' x87 */
+  .msgr-phone .msgr-main .msgr-top { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto auto; grid-template-rows: 44px auto; column-gap: 10px; row-gap: 0; /* 슬랙 확대 대조: 뒤로·원 44는 제목 줄(y84) 기준 상단 정렬, '#' 20@x82, 제목 17/24, 부제 13/20 */
+    align-items: start; padding: env(safe-area-inset-top) var(--ph-pad) 8px; }
+  .msgr-phone .msgr-main .msgr-top .msgr-menu { grid-column: 1; grid-row: 1; width: 44px; height: 44px; min-width: 44px; min-height: 44px; border-radius: 50%; border: 0; background: var(--card-2); }
+  .msgr-phone .msgr-main .msgr-top .msgr-menu svg { width: 20px; height: 20px; }
+  .msgr-phone .msgr-main .msgr-top .title { grid-column: 2; grid-row: 1; align-self: start; min-height: 0; padding: 6px 0 0 12px; font-size: 17px; font-weight: 700; line-height: 24px; gap: 12px; } /* 16+44+10+12 = '#' x82 */
+  .msgr-phone .msgr-main .msgr-top .title svg { width: 18px; height: 18px; }
   .msgr-phone .msgr-main .msgr-top .title .caret { display: none; }
-  .msgr-phone .msgr-main .msgr-top .msgr-sub { grid-column: 2; grid-row: 2; margin: 0; padding-left: 21px; font-size: 12px; line-height: 16px; color: var(--fg-3); }
+  .msgr-phone .msgr-main .msgr-top .msgr-sub { grid-column: 2; grid-row: 2; margin: -14px 0 0; padding-left: 12px; font-size: 13px; line-height: 20px; color: var(--fg-3); }
   .msgr-phone .msgr-main .msgr-top .topic { display: none; }
-  .msgr-phone .msgr-main .msgr-top .msgr-hchips { grid-column: 3; grid-row: 1 / 3; display: flex; gap: 10px; margin: 0; }
+  .msgr-phone .msgr-main .msgr-top .msgr-hchips { grid-column: 3; grid-row: 1; display: flex; gap: 10px; margin: 0; }
+  .msgr-phone .msgr-main .msgr-top .msgr-hchip svg, .msgr-phone .msgr-main .msgr-top .members svg { width: 20px; height: 20px; }
   .msgr-phone .msgr-main .msgr-top .msgr-hchip { width: 44px; height: 44px; min-width: 44px; min-height: 44px; border-radius: 50%; border: 0; background: var(--card-2); }
   .msgr-phone .msgr-main .msgr-top .msgr-hchips .msgr-hchip:nth-child(2) { display: none; } /* 기억 토글은 채널 시트로(슬랙 머리엔 원 2개) */
-  .msgr-phone .msgr-main .msgr-top .members { grid-column: 4; grid-row: 1 / 3; display: grid; place-items: center; width: 44px; height: 44px; min-width: 44px; padding: 0; border-radius: 50%; border: 0; background: var(--card-2); }
+  .msgr-phone .msgr-main .msgr-top .members { grid-column: 4; grid-row: 1; display: grid; place-items: center; width: 44px; height: 44px; min-width: 44px; padding: 0; border-radius: 50%; border: 0; background: var(--card-2); }
   .msgr-phone .msgr-main .msgr-top .members .msgr-av { display: none; }
-  .msgr-phone .msgr-main .msgr-top .members::before { content: '···'; font-weight: 700; letter-spacing: 1px; color: var(--fg); }
   .msgr-phone .msgr-main .msgr-top .msgr-seg { display: none; }
 
   /* ── 컴포저(슬랙 겹침 기준): 상자 없이 한 줄 56 — [클립→'+' 36원] [@] [입력, 투명] [보내기 36원, 골드]. 특이도 0,3,0 ── */
-  .msgr-phone .msgr-main .msgr-composer { display: flex; align-items: center; gap: 8px; height: 56px; margin: 0; padding: 0 24px; border: 0; border-radius: 0; box-shadow: none; /* 슬랙 실측: 좌우 24, '+' 36, '@' x69, 보내기 40, 행 중심 y760 */
+  .msgr-phone .msgr-main .msgr-composer { display: flex; align-items: center; gap: 12px; height: 52px; margin: 0 24px; padding: 0 1px; border: 0; border-radius: 26px; box-shadow: none; /* 슬랙 확대 대조: 회색 알약 x16–386·52·r26, 안에 + 원 36·@·보내기 36 */
     --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2); --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3); --border: var(--ph-border); --border-soft: var(--ph-border-soft);
-    background: transparent; color: var(--fg); }
+    background: var(--card-2); color: var(--fg); }
   .msgr-phone .msgr-main .msgr-composer textarea { order: 2; flex: 1; min-width: 0; min-height: 36px; max-height: 120px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; color: var(--fg); font-size: 16px; line-height: 20px; resize: none; overflow: hidden; } /* 한 줄 시작, 입력하면 자라남(슬랙) */
-  .msgr-phone .msgr-main .msgr-composer { align-items: flex-end; }
+  .msgr-phone .msgr-main .msgr-composer { align-items: center; }
+  .msgr-phone .msgr-main .msgr-composer textarea::placeholder { color: transparent; } /* 슬랙: 안내문 없음 */
   .msgr-phone .msgr-main .msgr-composer .msgr-tools { display: contents; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb { display: grid; place-items: center; padding: 0; margin: 0; border: 0; background: none; color: var(--fg-2); min-width: 0; min-height: 0; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb span { display: none; }
-  .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(1) { order: 0; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-radius: 50%; background: var(--card-2); }
+  .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(1) { order: 0; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-radius: 50%; background: var(--card); }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(2) { order: 1; width: 24px; height: 36px; min-width: 24px; min-height: 36px; }
-  .msgr-phone .msgr-main .msgr-composer .send { order: 3; width: 40px; height: 40px; min-width: 40px; min-height: 40px; max-height: 40px; padding: 0; border-radius: 50%; }
+  .msgr-phone .msgr-main .msgr-composer .send { order: 3; width: 36px; height: 36px; min-width: 36px; min-height: 36px; max-height: 36px; padding: 0; border-radius: 50%; }
 
   /* ── 탭 페이지 머리(쪽지·내 활동·검색·설정): 슬랙은 제목만 — 뒤로가기·"대화로 돌아가기"는 아일랜드와 중복이라 숨김 ── */
   /* 탭 페이지 판정 = '대화로 돌아가기' 알약이 있는 머리(쪽지·기억·검색·설정 전부 해당). 뒤로가기·알약은 아일랜드와 중복이라 숨김 */
@@ -908,18 +909,21 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group::after { display: none; }
 
   /* ── 하단: 떠 있는 아일랜드 + 분리된 원형 검색. 슬랙 실측: 인디케이터 폰에서 아래 16pt ── */
-  .msgr-tabbar { position: fixed; left: 12px; right: 12px; bottom: max(8px, calc(env(safe-area-inset-bottom) - 26px)); z-index: 70; /* 슬랙 실측: 아일랜드 y807–866, 바닥 8 */
-    display: flex; align-items: center; justify-content: space-between; gap: 10px; pointer-events: none; }
-  .msgr-island { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: center; height: var(--ph-tab); padding: 0 6px;
+  .msgr-tabbar { position: fixed; left: 20px; right: 16px; bottom: max(16px, calc(env(safe-area-inset-bottom) - 18px)); z-index: 70; /* 슬랙 확대 대조: 아일랜드 x20–310·y798–858, 검색 원 60 우16, 사이 16 */
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; pointer-events: none; }
+  .msgr-island { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: center; height: var(--ph-tab); padding: 0 4px;
     border-radius: 28px; background: var(--card); border: 1px solid var(--border-soft); box-shadow: var(--shadow-float); pointer-events: auto; flex: 1 1 auto; }
-  .msgr-island button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 64px; min-height: 44px; padding: 4px 6px;
-    border: 0; background: none; color: var(--fg-3); font-size: 10px; line-height: 1; cursor: pointer; }
-  .msgr-island button .ic { position: relative; display: flex; align-items: center; justify-content: center; width: 40px; height: 26px; border-radius: 8px; }
-  .msgr-island button.on { color: var(--fg); font-weight: 600; }
-  .msgr-island button.on .ic { background: var(--card-2); }
-  .msgr-island button .ic .n { position: absolute; top: 2px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
+  .msgr-island button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 64px; height: 52px; padding: 0 6px; border-radius: 26px;
+    border: 0; background: none; color: var(--fg); font-size: 11px; font-weight: 600; line-height: 1; cursor: pointer; }
+  .msgr-island button .ic { position: relative; display: flex; align-items: center; justify-content: center; width: 28px; height: 26px; }
+  .msgr-island button .ic svg { width: 24px; height: 24px; }
+  .msgr-island button.on { color: var(--fg); background: var(--card-2); }   /* 슬랙: 탭 전체 알약(아이콘+라벨) */
+  .msgr-island button:active { background: var(--card-2); }
+  .msgr-island button .ic .n { position: absolute; top: 0; right: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
   .msgr-tabsearch { width: var(--ph-tab); height: var(--ph-tab); border-radius: 50%; border: 1px solid var(--border-soft); background: var(--card); color: var(--fg);
     box-shadow: var(--shadow-float); display: grid; place-items: center; pointer-events: auto; flex: 0 0 auto; cursor: pointer; }
+  .msgr-tabsearch svg { width: 26px; height: 26px; }
+  .msgr-tabsearch:active { background: var(--card-2); }
   /* 검색 페이지: 아일랜드 자리에 입력창 + 닫기(슬랙) */
   .msgr-island-search { display: flex; grid-auto-flow: unset; gap: 8px; padding: 0 8px 0 16px; color: var(--fg-3); }
   .msgr-island-search input { flex: 1; min-width: 0; height: 40px; border: 0; background: none; color: var(--fg); font-size: 16px; outline: none; }
