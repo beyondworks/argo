@@ -13,6 +13,8 @@ pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_deep_link::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(tauri_plugin_web_auth::init());
     #[cfg(desktop)]
     let builder = builder
         .invoke_handler(tauri::generate_handler![pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list]);
