@@ -2366,6 +2366,7 @@ function Attachment({ a, onError }) {
 /* ─── 2단 다크 독: 입력 줄 + 도구 줄(첨부·멘션 │ 기억 상태) + 옐로 원형 전송. @멘션 팝업(사람·크루), Enter 전송(IME 조합 제외) ─── */
 function Composer({ chId, orgId, org, uid, members, crews, channel, locked = false, sbw = 0, typingCrews, mentionReq, onMentionDone, onSent, onError }) {
   const { t } = useT();
+  const phone = useIsPhone(); // 폰은 짧은 안내문(슬랙)
   const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [files, setFiles] = useState([]);
   const [pop, setPop] = useState(null); const [sel, setSel] = useState(0);
   const [uploading, setUploading] = useState(''); // 올리는 중인 파일 이름
@@ -2438,7 +2439,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, locked = fal
       )}
       <form className="msgr-composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
         <input hidden multiple type="file" ref={fileRef} onChange={(e) => { const all = [...e.target.files]; const big = all.filter((f) => f.size > ATTACH_MAX); if (big.length) onError(big.map((f) => t('att.tooBig', { name: f.name })).join(' ')); setFiles(all.filter((f) => f.size <= ATTACH_MAX)); e.target.value = ''; }} />
-        <textarea ref={ta} rows={1} value={text} onChange={onChange} {...imeGuardWith(onKey)} placeholder={t('msg.placeholder2')} />
+        <textarea ref={ta} rows={1} value={text} onChange={onChange} {...imeGuardWith(onKey)} placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} />
         <div className="msgr-tools">
           <button type="button" className="tb" onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>
           <button type="button" className="tb" onClick={insertAt} disabled={busy} title={t('msg.mention')}><I name="at" size={15} /><span>{t('msg.mention')}</span></button>
