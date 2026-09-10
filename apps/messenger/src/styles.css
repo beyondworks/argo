@@ -1003,7 +1003,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.swiping-back .msgr-tabbar, .msgr-phone.swiping-back .msgr-fab { display: none; }
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
-  .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab { display: none; }
+  .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab,
+  .msgr-phone:has(.msgr-side .msgr-inline input:focus) .msgr-tabbar, .msgr-phone:has(.msgr-side .msgr-inline input:focus) .msgr-fab { display: none; } /* 새 채널 이름 칸도 키보드 모드 */
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-main { padding-bottom: 8px; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(2) { position: absolute; left: 44px; top: 50%; transform: translateY(-50%); width: 24px; height: 36px; min-width: 24px; min-height: 36px; } /* 흐름 밖 — 입력 시작점 위에 겹친다. 단추가 사라져도 글자 자리가 안 움직인다(유건 2026-09-11) */
   .msgr-phone .msgr-main .msgr-composer:has(textarea:not(:placeholder-shown)) .msgr-tools .tb:nth-child(2) { display: none; } /* @ 단추는 빈 입력창의 안내 역할 — 글자(또는 @)가 들어오면 사라진다. 눌러 넣은 @ 옆에 단추 @가 남아 두 개로 보였다(유건 2026-09-10) */
