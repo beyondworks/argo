@@ -835,7 +835,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node { color: var(--danger); }  /* 연결 전 — 붉은 취소선 아이콘 */
   .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node.on { color: var(--ok); }   /* 연결됨 */
   .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node:active { background: var(--border-soft); }
-  .msgr-phone.phone-home .msgr-side .msgr-menu-pop { left: var(--ph-pad); right: var(--ph-pad); padding: 4px; }
+  /* 조직 창: 머리 아래 화면 폭 전체로 붙이고(좌우 여백 0, 아래 모서리만 둥글게) 뒤는 어둡게 덮는다 — 뒤 목록이 비치던 것(유건 2026-09-11) */
+  .msgr-phone.phone-home .msgr-side .msgr-menu-pop { left: 0; right: 0; top: 100%; border-radius: 0 0 20px 20px; border-width: 0 0 1px; padding: 6px 8px 10px; }
+  .msgr-phone.phone-home .msgr-side .msgr-scrim.clear { background: rgba(0, 0, 0, .38); }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop button { padding: 8px 6px; font-size: 13px; }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop .seatline { padding: 4px 6px 2px; }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop .sep { margin: 4px 2px; }
