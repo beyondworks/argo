@@ -73,10 +73,11 @@ test('① 색인이 있으면 discover는 list를 부르지 않고 색인의 회
 });
 
 test('① 색인이 있으면 원격 tombstone도 list 없이 색인으로 적용한다', async () => {
-  const sb = fake({ store: { 'o/.tombstones/co-9.json': Buffer.from(JSON.stringify({ wsId: 'co-9', at: 1000 })) } });
+  const sb = fake({ store: { 'o/.tombstones/co-9.json': Buffer.from(JSON.stringify({ wsId: 'co-9', at: 1000 })), 'o/.tombstones/BAD.json': Buffer.from(JSON.stringify({ wsId: 'BAD', at: 1000 })) } });
   _setSyncClientForTest(sb);
-  const tombs = await syncTombstones('o', { index: { owner: 'o', companies: [], tombstones: ['co-9'] } });
+  const tombs = await syncTombstones('o', { index: { owner: 'o', companies: [], tombstones: ['co-9', 'BAD'] } }); // 'BAD' = 스토리지 키 인코딩은 그대로 두되(ASCII) wsId 규칙(소문자)에는 어긋나는 값
   assert.ok(tombs.has('co-9'), '색인의 tombstone이 적용되지 않았다');
+  assert.ok(!tombs.has('BAD'), 'wsId 규칙(WS_ID_RE)에 안 맞는 tombstone이 적용됐다');
   assert.equal(sb._bucket._listCalls, 0, '색인이 있는데 .tombstones list를 불렀다');
   // 대조군: 색인 없이 같은 상황 → 종전대로 list 1회
   const sb2 = fake({ store: { 'o/.tombstones/co-9.json': Buffer.from(JSON.stringify({ wsId: 'co-9', at: 1000 })) } });

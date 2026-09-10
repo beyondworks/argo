@@ -15,7 +15,8 @@
 -- 사고와 같은 무음 실패가 된다. 우회 못 하는 역할로 적용되면 여기서 큰 소리로 멈춘다(실 Supabase: postgres=bypassrls, 실측 2026-09-10).
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = current_user and (rolbypassrls or rolsuper))
-     and (select pg_get_userbyid(relowner) from pg_class where oid = 'storage.objects'::regclass) <> current_user then
+     -- 소유자 판정은 이름 비교가 아니라 멤버십(pg_has_role) — RLS 소유자 우회는 has_privs_of_role 기준이라 INHERIT 멤버도 우회한다(검수 2R MEDIUM: 이름 비교는 그 멤버로 적용하는 셀프호스트를 오탐 차단)
+     and not (select pg_has_role(current_user, relowner, 'USAGE') from pg_class where oid = 'storage.objects'::regclass) then
     raise exception 'argo_sync_index: 적용 역할 %는 storage.objects의 RLS를 우회하지 못한다 — 색인이 조용히 비게 되므로 중단', current_user;
   end if;
 end $$;
