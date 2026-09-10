@@ -915,7 +915,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-sec > summary.msgr-group .right:empty { display: none; }
   /* 목록 행 */
   .msgr-phone.phone-home .msgr-side .item { min-height: 44px; padding: 0 var(--ph-pad); gap: 16px; font-size: var(--ph-txt); color: var(--fg-2); border-radius: 0; background: none; }
-  .msgr-phone.phone-home .msgr-side .item.active { background: none; color: var(--fg); font-weight: 600; }   /* 띠 대신 잉크 — 아르고 목록의 활성 표시 */
+  .msgr-phone.phone-home .msgr-side .item.active { background: none; color: var(--fg); font-weight: 500; }   /* 띠 대신 잉크 — 굵기는 그대로(행마다 굵기가 바뀌면 흔들려 보인다) */
+  .msgr-phone.phone-home .msgr-side .item { font-weight: 500; }
+  .msgr-phone.phone-home .msgr-side .item > .mi, .msgr-phone.phone-home .msgr-side .item > svg { color: var(--fg-2); opacity: 1; } /* #·자물쇠가 어두운 테마에서 안 보이던 것 */
   .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active { background: var(--card-2); }
   .msgr-phone.phone-home .msgr-side .item > svg { width: 20px; height: 20px; flex: 0 0 20px; }
   .msgr-phone.phone-home .msgr-side .more { display: none; }                               /* 행 끝 ··· 없음(슬랙) — 채널 작업은 채팅 머리의 시트에서 */
@@ -1057,7 +1059,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-fab { right: calc(var(--ph-pad) + (var(--ph-tab) - 56px) / 2); } /* 돋보기(지름 60)와 같은 세로선 */
   /* 새 채널 폼은 목록 사이에 끼우지 않고 아일랜드 위 시트로(슬랙 + 시트). 키보드가 올라오면 그 위로 — 실제 보이는 뷰포트 기준 */
   .msgr-phone .msgr-side .msgr-inline { position: fixed; left: var(--ph-pad); right: var(--ph-pad); z-index: 71; margin: 0; padding: 16px; gap: 12px;
-    bottom: max(calc(var(--ph-tab) + 12px + max(16px, calc(env(safe-area-inset-bottom) - 18px))), calc(100vh - var(--msgr-viewport-top, 0px) - var(--msgr-viewport-height, 100vh) + 12px));
+    top: calc(env(safe-area-inset-top) + 62px); bottom: auto; /* 머리 아래 위 시트 — 키보드 높이 계산이 홈에서 화면 밖으로 밀었다(유건 2026-09-11) */
     display: grid; border: 1px solid var(--border-soft); border-radius: 22px; background: var(--card); box-shadow: var(--shadow-float); }
   .msgr-phone .msgr-side .msgr-inline .msgr-input { min-height: 48px; font-size: 16px; }
   .msgr-phone .msgr-side .msgr-inline .msgr-seg { justify-self: start; }

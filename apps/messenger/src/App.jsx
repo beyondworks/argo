@@ -2251,7 +2251,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
           <div className="grab" />
           <div className="quick">
             {topEmoji(5).map((e) => <button key={e} type="button" onClick={() => { react(e); setActsOpen(false); }}>{e}</button>)}
-            <button type="button" className="more" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick({ left: r.left, right: r.right, top: r.top, bottom: r.bottom }); }} aria-label={t('msg.react')}><I name="plus" size={18} /></button>
+            <button type="button" className="more" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick({ left: r.left, right: r.right, top: r.top, bottom: r.bottom }); setActsOpen(false); }} aria-label={t('msg.react')}><I name="plus" size={18} /></button>
           </div>
           <div className="tiles">
             <button type="button" onClick={() => { copy(); setActsOpen(false); }}><I name="copy" size={20} /><span>{copied ? t('ui.copied') : t('ui.copy')}</span></button>
