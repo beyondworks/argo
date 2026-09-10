@@ -38,7 +38,11 @@ export function parseMobileAuthCallback(value) {
     }
     return { nonce, denied: true };
   }
-  if (value.includes('#')) return null;
+  // 조각(fragment)은 '비어 있을 때만' 허용한다. 조각을 통째로 막던 규칙이 Supabase가 붙이는 빈 '#'까지 거부해
+  // 정상 콜백이 조용히 버려졌다(2026-09-10 실기: 로그인 성공·창은 콜백 전달·앱은 대기 유지). 막아야 할 것은
+  // 데이터를 실은 조각(#access_token=… 같은 암묵 토큰)이지 빈 조각이 아니다.
+  const hash = value.indexOf('#');
+  if (hash !== -1 && value.slice(hash + 1) !== '') return null;
   if (url.searchParams.has('error_code') || url.searchParams.has('error_description')) return null;
   if (!code || !/^[A-Za-z0-9._~-]{1,2048}$/.test(code)) return null;
   return { nonce, code, denied: false };

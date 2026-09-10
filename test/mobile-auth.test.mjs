@@ -34,11 +34,14 @@ const callback = (state = nonce) => `${MOBILE_AUTH_CALLBACK}?argo_state=${state}
 
 test('strict callback rejects foreign destinations, token URLs, fragments, duplicates and normalized-path tricks', () => {
   assert.equal(parseMobileAuthCallback(callback()).code, 'one-time-code');
+  // 빈 조각은 실제로 온다 — Supabase 리디렉션이 '#'을 붙인다(2026-09-10 실기). 데이터 없는 조각은 막을 이유가 없고,
+  // 막았을 때 정상 로그인이 조용히 버려졌다. 데이터를 실은 조각은 아래 목록에서 계속 거부한다.
+  assert.equal(parseMobileAuthCallback(`${callback()}#`).code, 'one-time-code', '빈 조각 허용');
   for (const url of [
     'https://auth/callback?code=x', callback().replace('auth/', 'foreign/'), callback().replace('/callback', '/callback/'),
     callback().replace('/callback', '/x/../callback'), callback().replace('/callback', '/%63allback'),
     callback().replace('auth/', 'user@auth/'), callback().replace('auth/', 'auth:80/'),
-    `${callback()}#access_token=fixture`, `${callback()}#`, `${callback()}&access_token=fixture`, `${callback()}&refresh_token=fixture`,
+    `${callback()}#access_token=fixture`, `${callback()}#x`, `${callback()}#=`, `${callback()}&access_token=fixture`, `${callback()}&refresh_token=fixture`,
     `${callback()}&code=duplicate`, `${callback()}&argo_state=${nonce}`, `${callback()}&next=https://foreign.example`,
     callback().replace('one-time-code', '%0aevil'), callback().replace(nonce, 'guessable'), `${callback()}&error=denied`,
   ]) assert.equal(parseMobileAuthCallback(url), null, url);
