@@ -583,11 +583,6 @@ function Shell({ session }) {
           </>)}
         </div>
         <div className="msgr-railbody">
-        {isPhone && org && (<div className="msgr-cards" role="list">{/* 슬랙 홈의 퀵카드 줄(y132–216) — 자리는 슬랙, 목적지는 우리 것 */}
-          {[['crews', 'star', () => document.querySelector('.msgr-sec[data-sec="mine"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' })], ['approve', 'stamp', () => setPage('inbox')], ['memory', 'memory', () => setPage('activity')], ['settings', 'gear', () => setPage('settings')]].map(([k, ic, go]) => (
-            <button key={k} type="button" className="msgr-card" role="listitem" onClick={go}><I name={ic} size={20} /><span className="t">{t(`phone.card.${k}`)}</span><span className="s">{t(`phone.card.${k}.sub`)}</span></button>
-          ))}
-        </div>)}
         <RailSection id="channels" label={t('ch.list')} right={<button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>}>
         {newCh && (
           <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
@@ -660,7 +655,7 @@ function Shell({ session }) {
 
         </div>
         <div className="msgr-foot">
-          <button type="button" className="me" onClick={() => setMeMenu((v) => !v)} aria-haspopup="menu" aria-expanded={meMenu} title={t('ui.me.menu')}>
+          <button type="button" className="me" onClick={() => { if (isPhone) { setSettingsTab('me'); setPage('settings'); setRail(false); } else setMeMenu((v) => !v); }} aria-haspopup={isPhone ? undefined : 'menu'} aria-expanded={isPhone ? undefined : meMenu} title={t(isPhone ? 'ui.settings' : 'ui.me.menu')}>
             <Av name={me?.display_name || session.user.email} size="sm" userId={uid} /><span className="name">{me?.display_name || session.user.email}</span>
           </button>
           {meMenu && (<div className="msgr-rowmenu me" role="menu" onMouseLeave={() => setMeMenu(false)}>

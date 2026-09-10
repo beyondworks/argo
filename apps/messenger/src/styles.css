@@ -805,7 +805,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* ═══ 폰 셸 — 슬랙 모바일을 베이스로(유건 지시 2026-09-10 "거의 동일하게, 포인트만 우리 것"). 말풍선은 우리 UI.
      전부 이 블록 안에서만 — 데스크톱(>720px)은 한 줄도 적용되지 않는다(scripts/mobile-only-guard.mjs가 강제).
      치수(iOS/슬랙): 좌우 16 · 구역 행 48 · 목록 행 46 · 본문 15 · 보조 13 · 제목 17/700 · 페이지 제목 22 · 탭 아이콘 20/라벨 10 · 터치 44. ═══ */
-  .msgr-phone { --ph-pad: 16px; --ph-row: 44px; --ph-tab: 60px; --ph-txt: 15px; --ph-sub: 13px;
+  .msgr-phone { --ph-pad: 20px; --ph-row: 44px; --ph-tab: 60px; --ph-txt: 15px; --ph-sub: 13px;
     /* 셸은 사이드바의 어두운 토큰 스코프 '밖' — 여기서 읽은 값이 루트(본문) 팔레트. 홈 본문에서 다시 선언해 흰 본문으로(테마 하드코딩 없음) */
     --ph-bg: var(--bg); --ph-card: var(--card); --ph-card2: var(--card-2);
     --ph-fg: var(--fg); --ph-fg2: var(--fg-2); --ph-fg3: var(--fg-3);
@@ -813,7 +813,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main { padding-bottom: calc(var(--ph-tab) + 12px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); } /* 컴포저 알약 바닥 y786(중심 760), 아일랜드 위 12 */ /* 컴포저 바닥 ↔ 아일랜드 위 8px(슬랙) */
   .msgr-phone .msgr-main .msgr-dock { padding: 0; margin: 0; border: 0; background: transparent; box-shadow: none; }
   .msgr-phone .msgr-main .msgr-dock { position: relative; }
-  .msgr-phone .msgr-main .msgr-dock .msgr-sub { position: absolute; left: 24px; right: 24px; bottom: 100%; min-height: 0; margin: 0; padding: 0 0 2px; pointer-events: none; } /* 컴포저 아래 상태줄(작성 중 등)은 슬랙처럼 입력줄 '위'에 띄운다 — 세로 자리 0 */
+  .msgr-phone .msgr-main .msgr-dock .msgr-sub { position: absolute; left: var(--ph-pad); right: var(--ph-pad); bottom: 100%; min-height: 0; margin: 0; padding: 0 0 2px; pointer-events: none; } /* 컴포저 아래 상태줄(작성 중 등)은 슬랙처럼 입력줄 '위'에 띄운다 — 세로 자리 0 */
 
   /* ── 홈: 서랍(.msgr-side)을 전체 화면 페이지로. 머리는 테마의 어두운 사이드바 색(슬랙의 검은 띠), 본문은 흰 카드 ── */
   .msgr-phone.phone-home .msgr-side, .msgr-phone.phone-home.rail-open .msgr-side { display: flex; position: relative; inset: auto; z-index: auto; width: 100%; height: auto; min-height: 100%;
@@ -834,14 +834,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
     --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2); --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3); --border: var(--ph-border); --border-soft: var(--ph-border-soft);
     background: var(--bg); color: var(--fg); }
   /* 구역(슬랙): [아이콘] 라벨 ›  ……  [접기 셰브론], 구역마다 구분선 */
-  .msgr-cards { display: flex; gap: 8px; margin: 16px 0 0; padding: 0 var(--ph-pad); overflow-x: auto; scrollbar-width: none; }
-  .msgr-cards::-webkit-scrollbar { display: none; }
-  .msgr-cards .msgr-card { flex: 0 0 auto; min-width: 100px; height: 85px; /* .msgr-cards 한정 — 로그인 카드도 .msgr-card라 잘렸었다 */ padding: 20px 18px 12px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--card); color: var(--fg); text-align: left; display: flex; flex-direction: column; gap: 0; }
-  .msgr-cards .msgr-card svg { width: 20px; height: 20px; margin-bottom: 9px; }
-  .msgr-phone .msgr-card .t { font-size: 13px; font-weight: 500; line-height: 16px; }
-  .msgr-phone .msgr-card .s { font-size: 12px; font-weight: 400; line-height: 15px; color: var(--fg-3); }
   .msgr-phone.phone-home .msgr-sec { border-bottom: 1px solid var(--border-soft); padding-bottom: 8px; }
-  .msgr-cards + .msgr-sec { margin-top: 24px; }
   .msgr-phone.phone-home .msgr-sec > summary.msgr-group { display: flex; justify-content: flex-start; align-items: center; gap: 16px; min-height: 48px; margin: 0; padding: 0 20px 0 var(--ph-pad); font-size: var(--ph-txt); font-weight: 600; color: var(--fg-2); list-style: none; } /* 데스크톱의 space-between이 라벨을 가운데로 밀었다 */
   .msgr-phone.phone-home .msgr-sec > summary::-webkit-details-marker { display: none; }
   .msgr-phone.phone-home .msgr-sec > summary.msgr-group .sec-ic { width: 20px; height: 20px; flex: 0 0 20px; color: var(--fg-2); }
@@ -855,7 +848,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 목록 행 */
   .msgr-phone.phone-home .msgr-side .item { min-height: 44px; padding: 0 var(--ph-pad); gap: 16px; font-size: var(--ph-txt); color: var(--fg-2); border-radius: 0; background: none; }
   .msgr-phone.phone-home .msgr-side .item.active { background: none; color: var(--fg); font-weight: 600; }   /* 띠 대신 잉크 — 아르고 목록의 활성 표시 */
-  .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active, .msgr-cards .msgr-card:active { background: var(--card-2); }
+  .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active { background: var(--card-2); }
   .msgr-phone.phone-home .msgr-side .item > svg { width: 20px; height: 20px; flex: 0 0 20px; }
   .msgr-phone.phone-home .msgr-side .more { display: none; }                               /* 행 끝 ··· 없음(슬랙) — 채널 작업은 채팅 머리의 시트에서 */
   .msgr-phone.phone-home .msgr-side .item.msgr-addrow { display: flex; align-items: center; justify-content: flex-start; width: 100%; text-align: left; color: var(--fg-2); } /* .msgr-list 밖이라 버튼 기본(inline-block·center)이 붙는다 → 슬랙 '+ 채널 추가' x52 */
@@ -864,7 +857,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-klabel { font-size: var(--ph-sub); }
   .msgr-phone.phone-home .msgr-side .msgr-list { padding-bottom: 6px; }
   /* FAB(슬랙 +) — 아일랜드 위 오른쪽 */
-  .msgr-fab { position: fixed; right: 24px; bottom: max(84px, calc(env(safe-area-inset-bottom) + 66px)); z-index: 69; width: 56px; height: 56px; border-radius: 50%; /* 슬랙 실측: 바닥 100(인셋 34+66) */
+  .msgr-fab { position: fixed; right: 24px; bottom: max(72px, calc(env(safe-area-inset-bottom) + 54px)); z-index: 69; width: 56px; height: 56px; border-radius: 50%; /* 슬랙 실측: 바닥 100(인셋 34+66) */
     border: 0; background: var(--mark); color: var(--mark-fg); display: grid; place-items: center; box-shadow: var(--shadow-float); cursor: pointer; } /* 보내기 단추와 같은 골드 — 아르고의 주 동작색 */
 
   /* ── 채팅 머리(슬랙 겹침 기준): [뒤로 36원] [제목 16/700 위 · 부제 12 아래] [36원 2개]. 탭 줄은 슬랙에 없다 → 숨김(부제가 탭 수를 말한다) ── */
@@ -886,7 +879,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-top .msgr-seg { display: none; }
 
   /* ── 컴포저(슬랙 겹침 기준): 상자 없이 한 줄 56 — [클립→'+' 36원] [@] [입력, 투명] [보내기 36원, 골드]. 특이도 0,3,0 ── */
-  .msgr-phone .msgr-main .msgr-composer { display: flex; align-items: center; gap: 0; height: 52px; margin: 0 24px; padding: 0 8px; border: 0; border-radius: 26px; box-shadow: none; /* 안쪽 여백 3·글자 간격 0(유건: 좌우가 더 떨어져야 한다 — 슬랙보다 넓게): 슬랙 실측(원 25–61·글자 69·보내기 342–376, 알약 24–378) */ /* 슬랙 확대 대조: 회색 알약 x16–386·52·r26, 안에 + 원 36·@·보내기 36 */
+  .msgr-phone .msgr-main .msgr-composer { display: flex; align-items: center; gap: 0; height: 52px; margin: 0 var(--ph-pad); padding: 0 8px; border: 0; border-radius: 26px; box-shadow: none; /* 안쪽 여백 3·글자 간격 0(유건: 좌우가 더 떨어져야 한다 — 슬랙보다 넓게): 슬랙 실측(원 25–61·글자 69·보내기 342–376, 알약 24–378) */ /* 슬랙 확대 대조: 회색 알약 x16–386·52·r26, 안에 + 원 36·@·보내기 36 */
     --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2); --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3); --border: var(--ph-border); --border-soft: var(--ph-border-soft);
     background: var(--card-2); color: var(--fg); }
   .msgr-phone .msgr-main .msgr-composer textarea { order: 2; flex: 1; min-width: 0; min-height: 36px; max-height: 120px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; color: var(--fg); font-size: 16px; line-height: 20px; resize: none; overflow: hidden; } /* 한 줄 시작, 입력하면 자라남(슬랙) */
@@ -902,18 +895,22 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* ── 탭 페이지 머리(쪽지·내 활동·검색·설정): 슬랙은 제목만 — 뒤로가기·"대화로 돌아가기"는 아일랜드와 중복이라 숨김 ── */
   /* 탭 페이지 판정 = '대화로 돌아가기' 알약이 있는 머리(쪽지·기억·검색·설정 전부 해당). 뒤로가기·알약은 아일랜드와 중복이라 숨김 */
   .msgr-phone .msgr-top:has(.msgr-backchat) .msgr-menu, .msgr-phone .msgr-backchat { display: none; }
-  .msgr-phone .msgr-top:has(.msgr-backchat) .title { font-size: 22px; font-weight: 700; }
   .msgr-phone .msgr-top:has(.msgr-backchat) { padding-left: var(--ph-pad); }
   /* 탭 페이지 제목은 슬랙처럼 왼쪽 끝에서 시작 — 숨긴 뒤로가기 자리(44px 열)를 없앤다 */
   .msgr-phone .msgr-top:has(.msgr-backchat) { grid-template-columns: 0 minmax(0, 1fr) auto auto; column-gap: 0; }
-  .msgr-phone .msgr-top:has(.msgr-backchat) .title { padding-left: 0; gap: 8px; }
+  .msgr-phone .msgr-top:has(.msgr-backchat) .title { padding-left: 0; gap: 12px; font-size: 18px; font-weight: 700; }
+  /* 홈·DM의 어두운 머리띠와 같은 룩(높이·글자·색). 색은 globals의 :root[data-theme='linen'] .side 와 같은 값 — 그 스코프가 레일에만 걸려 여기서 되풀이한다 */
+  .msgr-phone .msgr-top:has(.msgr-backchat) { min-height: calc(env(safe-area-inset-top) + 54px); align-items: center; padding: env(safe-area-inset-top) var(--ph-pad) 10px; }
+  :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) { background: #1f1e1b; color: #e6e2d8; border-bottom-color: rgba(230, 226, 216, 0.12); }
+  :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) .title { color: #e6e2d8; }
+  :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) .title .mi { color: #a8a297; }
   /* DM 탭 = 홈 레일에서 1:1 구역만(슬랙 DM 페이지 대응) */
   .msgr-phone.phone-dm .msgr-sec:not([data-sec='dms']) { display: none; }
   .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group::after { display: none; }
 
   /* ── 하단: 떠 있는 아일랜드 + 분리된 원형 검색. 슬랙 실측: 인디케이터 폰에서 아래 16pt ── */
-  .msgr-tabbar { position: fixed; left: 24px; right: 24px; bottom: max(16px, calc(env(safe-area-inset-bottom) - 18px)); z-index: 70; /* 슬랙 확대 대조: 아일랜드 x20–310·y798–858, 검색 원 60 우16, 사이 16 */
-    display: flex; align-items: center; justify-content: space-between; gap: 16px; pointer-events: none; }
+  .msgr-tabbar { position: fixed; left: var(--ph-pad); right: var(--ph-pad); bottom: max(16px, calc(env(safe-area-inset-bottom) - 18px)); z-index: 70; /* 슬랙 확대 대조: 아일랜드 x20–310·y798–858, 검색 원 60 우16, 사이 16 */
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; pointer-events: none; }
   .msgr-island { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: center; height: var(--ph-tab); padding: 0 4px;
     border-radius: 28px; background: var(--card-2); border: 1px solid var(--border-soft); box-shadow: var(--shadow-float); pointer-events: auto; flex: 1 1 auto; }
   .msgr-island button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 64px; height: 52px; padding: 0 6px; border-radius: 26px;
@@ -930,47 +927,47 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-top svg, .msgr-phone .msgr-main .msgr-composer svg, .msgr-phone .msgr-fab svg { stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; } /* 아일랜드·카드는 아르고 기본 획(1.5) 그대로 */
   .msgr-phone .msgr-main .msgr-top .msgr-menu svg, .msgr-phone .msgr-main .msgr-top .ph-dots { fill: currentColor; stroke-width: 0.6; } /* 뒤로·점은 면으로 그린 심볼 */
   .msgr-phone .msgr-main .msgr-composer .send svg { width: 18px; height: 18px; stroke-width: 2.6; }
-  .msgr-phone.phone-home .sec-ic { stroke-width: 1.6; }
-  .msgr-phone .msgr-card svg { width: 22px; height: 22px; transform-origin: 50% 50%; }
-  .msgr-phone .msgr-card:nth-child(1) svg { transform: scale(.9); stroke-width: 1.9; }   /* 별: 뷰박스 꽉 참 */
-  .msgr-phone .msgr-card:nth-child(2) svg { transform: scale(1.3); stroke-width: 1.3; }  /* 결재 도장: 10×7.5 */
-  .msgr-phone .msgr-card:nth-child(3) svg { transform: scale(1.2); stroke-width: 1.4; }  /* 기억 별: 12 */
-  .msgr-phone .msgr-card:nth-child(4) svg { transform: scale(1.14); stroke-width: 1.5; } /* 톱니: 12.6 */ /* 목록 행 아이콘(#)은 슬랙도 가는 획 — 기본 1.5 유지 */
+  .msgr-phone.phone-home .sec-ic { stroke-width: 1.6; }   /* 별: 뷰박스 꽉 참 */  /* 결재 도장: 10×7.5 */  /* 기억 별: 12 */ /* 톱니: 12.6 */ /* 목록 행 아이콘(#)은 슬랙도 가는 획 — 기본 1.5 유지 */
   .msgr-tabsearch:active { background: var(--border-soft); }
   /* 검색 페이지: 아일랜드 자리에 입력창 + 닫기(슬랙) */
-  .msgr-island-search { display: flex; grid-auto-flow: unset; gap: 8px; padding: 0 8px 0 16px; color: var(--fg-3); }
+  .msgr-island-search { display: flex; grid-auto-flow: unset; gap: 8px; padding: 0 8px 0 var(--ph-pad); color: var(--fg-3); }
   .msgr-island-search input { flex: 1; min-width: 0; height: 40px; border: 0; background: none; color: var(--fg); font-size: 16px; outline: none; }
   .msgr-island-search .msgr-tabclose { min-width: 40px; min-height: 40px; flex-direction: row; color: var(--fg); }
 
   /* ── 홈 퀵카드: 아이콘+제목 한 줄 알약(유건 2026-09-10) ── */
-  .msgr-phone .msgr-cards { margin: 12px 0 0; gap: 7px; }
-  .msgr-phone .msgr-cards .msgr-card { display: inline-flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 7px; height: 34px; min-width: 0; padding: 0 14px 0 11px; border-radius: 999px; }
-  .msgr-phone .msgr-cards .msgr-card svg { width: 17px; height: 17px; margin: 0; }
-  .msgr-phone .msgr-cards .msgr-card .t { font-size: 13px; line-height: 1; white-space: nowrap; }
-  .msgr-phone .msgr-cards .msgr-card .s { display: none; }
-  .msgr-phone .msgr-cards + .msgr-sec { margin-top: 16px; }
-  .msgr-phone.phone-dm .msgr-cards { display: none; } /* 퀵카드는 홈의 것 */
 
   /* + 버튼 중심을 검색 원과 같은 세로선에 — 검색은 오른쪽 16 + 지름 60이라 중심 356, +는 지름 56이라 오른쪽 18 */
-  .msgr-phone .msgr-fab { right: 26px; } /* 돋보기 중심 348과 같은 세로선(지름 56) */
+  .msgr-phone .msgr-fab { right: calc(var(--ph-pad) + (var(--ph-tab) - 56px) / 2); } /* 돋보기(지름 60)와 같은 세로선 */
+  /* 새 채널 폼은 목록 사이에 끼우지 않고 아일랜드 위 시트로(슬랙 + 시트). 키보드가 올라오면 그 위로 — 실제 보이는 뷰포트 기준 */
+  .msgr-phone .msgr-side .msgr-inline { position: fixed; left: var(--ph-pad); right: var(--ph-pad); z-index: 71; margin: 0; padding: 16px; gap: 12px;
+    bottom: max(calc(var(--ph-tab) + 12px + max(16px, calc(env(safe-area-inset-bottom) - 18px))), calc(100vh - var(--msgr-viewport-top, 0px) - var(--msgr-viewport-height, 100vh) + 12px));
+    display: grid; border: 1px solid var(--border-soft); border-radius: 22px; background: var(--card); box-shadow: var(--shadow-float); }
+  .msgr-phone .msgr-side .msgr-inline .msgr-input { min-height: 48px; font-size: 16px; }
+  .msgr-phone .msgr-side .msgr-inline .msgr-seg { justify-self: start; }
+  .msgr-phone .msgr-side .msgr-inline .msgr-seg button { height: 36px; padding: 0 14px; font-size: 13px; }
+  .msgr-phone .msgr-side .msgr-inline .acts { display: flex; gap: 8px; }
+  .msgr-phone .msgr-side .msgr-inline .acts .btn { flex: 1; min-height: 44px; justify-content: center; font-size: 14px; }
 
   /* ── 내 활동(알림함): 슬랙처럼 거르개가 맨 위, 빈 상태는 테두리 없이 ── */
   .msgr-phone .msgr-inbox { padding: 12px var(--ph-pad) 24px; gap: 8px; }
   .msgr-phone .msgr-inbox .msgr-seg { order: 0; margin: 0 0 2px; } /* 폰 폭 전역 규칙의 order:9(맨 아래)를 되돌린다 */
-  .msgr-phone .msgr-inbox .empty { order: 1; border: 0; background: none; padding: 32px 12px; text-align: center; font-size: 13px; line-height: 1.6; }
+  .msgr-phone .msgr-inbox .empty { order: 1; border: 0; background: none; padding: 32px 4px; text-align: center; font-size: 13px; line-height: 1.6; }
   .msgr-phone .msgr-inbox .note { order: 8; margin-top: 4px; }
   .msgr-phone .msgr-inboxrow { border-radius: 10px; padding: 12px; }
 
   /* ── 기억: 아르고의 트리+그래프는 그대로 두고 손가락 규격으로 ── */
   .msgr-phone .msgr-acttree { flex: 0 0 auto; max-height: 36vh; }
-  .msgr-phone .msgr-acttree .row { min-height: 44px; width: 100%; margin: 0; padding: 0 16px 0 12px; gap: 10px; border-radius: 0; font-size: 15px; }
+  .msgr-phone .msgr-acttree .row { min-height: 44px; width: 100%; margin: 0; padding: 0 var(--ph-pad); border-radius: 0; font-size: 15px; }
   .msgr-phone .msgr-acttree .row .cnt { font-size: 12px; }
   .msgr-phone .msgr-acttree .row .caret { width: 14px; font-size: 11px; }
   .msgr-phone .msgr-acttree .tree-kids { margin-left: 24px; }
-  .msgr-phone .msgr-actpane .vault-tabs { height: 44px; padding: 0 8px 0 0; }
+  .msgr-phone .msgr-actpane .vault-tabs { height: 44px; padding: 0 var(--ph-pad) 0 calc(var(--ph-pad) - 14px); }
   .msgr-phone .msgr-actpane .vault-tab { min-width: 0; max-width: 46vw; padding: 0 6px 0 14px; font-size: 13px; }
   .msgr-phone .msgr-actpane .vault-tab-x { min-width: 32px; min-height: 32px; }
   .msgr-phone .msgr-tabact { min-height: 32px; padding: 0 12px; font-size: 12px; }
   .msgr-phone .msgr-actlist { padding: 16px var(--ph-pad) 32px; gap: 12px; }
+  /* 페이지(설정·검색 등)도 같은 좌우 여백 — 알림함·기억은 위에서 이미 var(--ph-pad) */
+  .msgr-phone .msgr-main .msgr-thread.page { padding: 12px var(--ph-pad) 24px; }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-inbox, .msgr-phone .msgr-main .msgr-thread.page .msgr-settings { padding-left: 0; padding-right: 0; }
   .msgr-phone .msgr-actlist .item { font-size: 14px; }
 }
