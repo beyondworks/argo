@@ -7,7 +7,7 @@ import { useLang } from '../i18n';
 
 const row = { display: 'flex', gap: 10, alignItems: 'flex-start' };
 // 긴 목록(스킬 수백 개·승인 폴더 수십 개)은 상자 안에서 스크롤 — 페이지가 화면 몇 장으로 늘어나던 것(사용성 제보 2026-09-10)
-const scrollBox = { maxHeight: 280, overflowY: 'auto', paddingRight: 4 };
+const scrollBox = { maxHeight: '17.5rem', overflowY: 'auto', padding: '2px 4px 2px 3px' }; // rem — 배율·글자 확대에 따라감. 좌측 여백은 스크롤 상자가 자르는 체크박스 포커스 링 몫(.deck-grid 사고와 동형)
 const field = { padding: '8px 10px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--fg)', minWidth: 0, maxWidth: '100%' };
 const emptyConsent = () => ({ tools: false, memory: false, secrets: false });
 function restoredNames(items = []) {
@@ -104,6 +104,7 @@ function ImportReview({ ws, continuation }) {
     } catch (e) {
       if (current === generation.current) {
         setError(errorKey(e));
+        if (errorKey(e) === 'localImport.error.invalid-roots') setRoots([]); // 반향된 승인이 낡았다(링크 삭제 등) — 체크를 비워 다시 찾기가 막히지 않게
         if (['localImport.error.auth', 'localImport.error.forbidden', 'localImport.error.unavailable'].includes(errorKey(e))) {
           setData(null); setCompany(null); setSelected([]); setConsents(emptyConsent());
         }
@@ -150,7 +151,7 @@ function ImportReview({ ws, continuation }) {
       {(data.roots ?? []).length > 0 && <fieldset style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12 }} disabled={busy}>
         <legend>{t('localImport.roots')} · {t('localImport.count', { n: data.roots.length })}</legend>
         <p style={{ color: 'var(--fg-2)', fontSize: 12 }}>{t('localImport.rootsHelp')}</p>
-        <label style={{ ...row, marginTop: 8 }}><input type="checkbox" checked={data.roots.every((root) => roots.includes(root.id))} onChange={(e) => setRoots(e.target.checked ? data.roots.map((root) => root.id) : [])} /><span>{t('localImport.rootsSelectAll')}</span></label>
+        <label style={{ ...row, marginTop: 8 }}><input type="checkbox" checked={data.roots.every((root) => roots.includes(root.id))} ref={(el) => { if (el) el.indeterminate = !data.roots.every((root) => roots.includes(root.id)) && data.roots.some((root) => roots.includes(root.id)); }} onChange={(e) => setRoots(e.target.checked ? data.roots.map((root) => root.id) : [])} /><span>{t('localImport.rootsSelectAll')}</span></label>
         <div style={scrollBox}>{data.roots.map((root) => <label key={root.id} style={{ ...row, marginTop: 8, overflowWrap: 'anywhere' }}><input type="checkbox" checked={roots.includes(root.id)} onChange={(e) => toggle(root.id, e.target.checked, setRoots)} /><span>{root.label}</span></label>)}</div>
       </fieldset>}
       {!items.length && data.scanId && <p>{t('localImport.empty')}</p>}

@@ -147,7 +147,10 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
   // 교차 도구 심볼릭 링크(예: ~/.claude/skills/x → ~/.codex/skills/x, npx skills 표준 배치)의 대상이 알려진 도구의 skills/ 트리
   // 안이면 승인 없이 신뢰한다 — 그 트리는 어차피 신뢰 소스로 스캔한다. 실사고 2026-09-10: 링크 수백 개가 각각 승인 폴더로 잡혀
   // 체크박스 수백 줄 + 스킬 전부 needs-setup. skills/ 아래로만 좁힌다(홈 전체를 신뢰하면 세션 기록 등에 링크로 닿을 수 있다).
-  const trustedSkillTrees = (await Promise.all(['.claude', '.codex', '.agents', '.hermes', '.openclaw'].map(name => fs.realpath(path.join(home, name, 'skills')).catch(() => null)))).filter(Boolean);
+  // 트리 자체가 심볼릭 링크면 신뢰하지 않는다(검수 HIGH-1: stow·chezmoi 배치에서 링크 대상이 홈 밖이면 무승인 루트가 된다) — realpath가 요청 경로와 같은 실디렉터리만.
+  const trustedSkillTrees = (await Promise.all(['.claude', '.codex', '.agents', '.hermes', '.openclaw'].map(async name => { const tree = path.join(home, name, 'skills'); const real = await fs.realpath(tree).catch(() => null); return real === tree && inside(home, real) && real !== home ? real : null; }))).filter(Boolean);
+  const scannedDirs = new Set(); // 소스를 넘어 한 번 순회한 실디렉터리 — 교차 링크 순환(claude↔codex)·같은 트리 재순회 차단(검수 MEDIUM-4)
+  const seenSkillPaths = new Set(); // 같은 SKILL.md 실경로는 먼저 본 소스 아래 한 번만(키는 종전 형식 유지 — 영수증 호환)
   const issue = (source, reason) => { if (!issues.some(i => i.source === source && i.reason === reason)) issues.push({ source, reason }); };
   const expand = value => value.startsWith('~/') ? path.join(home, value.slice(2)) : path.resolve(value);
   async function rootFor(input, source, trusted = false) {
@@ -181,9 +184,12 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
     return { ...result, file: { ...result.file, rel, containsSecret: containsSecret(result.data.toString('utf8')) } };
   }
   function add(source, group, groupLabel, kind, name, files, extra = {}) {
-    const identity = kind === 'skill' ? files.find(file => file.rel === 'SKILL.md')?.canonical || name : name;
-    const key = kind === 'skill' ? `skill:${identity}` : `${source}:${group}:${kind}:${identity}`; // 스킬은 SKILL.md 실경로로 도구 간 중복 제거(교차 링크 공유가 표준 배치)
+    const canonicalSkill = kind === 'skill' ? files.find(file => file.rel === 'SKILL.md')?.canonical : null;
+    const identity = canonicalSkill || name;
+    const key = `${source}:${group}:${kind}:${identity}`;
     if (seen.has(key)) return;
+    // 같은 SKILL.md를 여러 도구가 링크로 공유하면 먼저 본 소스 아래 한 번만 — 실경로가 없는(읽기 전 실패) 항목은 이름이 같아도 접지 않는다(검수 MEDIUM-3)
+    if (canonicalSkill) { if (seenSkillPaths.has(canonicalSkill)) return; seenSkillPaths.add(canonicalSkill); }
     seen.add(key);
     const hasSecret = Boolean(extra.hasSecret || files.some(file => file.containsSecret));
     const reason = extra.reason || (hasSecret && kind !== 'mcp' ? 'secret-material' : null);
@@ -201,6 +207,8 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
     async function visit(dir, depth, ancestors) {
       const real = await fs.realpath(dir);
       if (ancestors.has(real) || !inside(root, real)) throw fail('unsafe-path');
+      if (scannedDirs.has(real)) return; // 다른 소스(또는 교차 링크)가 이미 순회한 실디렉터리 — 순환·재순회 차단
+      scannedDirs.add(real);
       const next = new Set([...ancestors, real]);
       const list = await entries(dir, root, depth);
       if (list.some(entry => entry.name === 'SKILL.md')) {
@@ -274,12 +282,13 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
           const configured = expand(entry.path);
           const folder = path.basename(configured) === 'SKILL.md' ? path.dirname(configured) : configured; // Codex는 SKILL.md 파일 경로를 기록한다(실측 276건이 unsafe-path로 떨어졌다)
           await skills(source, root, source, folder, inside(root, folder));
-          if (entry.enabled === false) { const canonical = await fs.realpath(folder).catch(() => null); for (const item of items) if (item.source === source && item.kind === 'skill' && item.files.some(file => file.rel === 'SKILL.md' && path.dirname(file.canonical) === canonical)) { item.reason = 'disabled'; item.compatibility = 'needs-setup'; item.fingerprint = digest(`${item.fingerprint}:disabled`); } }
+          if (entry.enabled === false) { const canonical = await fs.realpath(folder).catch(() => null); for (const item of items) if (item.kind === 'skill' && item.files.some(file => file.rel === 'SKILL.md' && path.dirname(file.canonical) === canonical)) { item.reason = 'disabled'; item.compatibility = 'needs-setup'; item.fingerprint = digest(`${item.fingerprint}:disabled`); } }
         }
       }
     }
   }
   // Only this exact known config may use home as its read boundary.
+  fresh();
   await config('claude', path.join(home, '.claude.json'), 'claude', home, '.claude.json', 'json', value => value.mcpServers);
   fresh();
   const hermesInput = env.HERMES_HOME ? expand(env.HERMES_HOME) : path.join(home, '.hermes');
@@ -307,10 +316,11 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
     if (input === openclawInputs[0] && env.OPENCLAW_CONFIG_PATH) { const configured = expand(env.OPENCLAW_CONFIG_PATH); configRoot = await rootFor(path.dirname(configured), 'openclaw', inside(root, configured)); configName = path.basename(configured); }
     if (!configRoot) continue;
     let parsed = await config('openclaw', root, 'OpenClaw', configRoot, configName, 'json5', value => value.mcp?.servers);
-    // 설정 파일 부재(있는데 깨진 것은 config()가 issue를 냈고 여기서 continue) → 기본 main 에이전트·기본 workspace로 진행(실측: 설정 없이 workspace/IDENTITY.md·SOUL.md만 있는 배치)
-    if (!parsed) { if (await fs.lstat(path.join(configRoot, configName)).catch(() => null)) continue; parsed = {}; }
     await skills('openclaw', root, 'OpenClaw', path.join(root, 'skills'));
     if (await fs.lstat(path.join(root, 'config', 'mcporter.json')).catch(() => null)) issue('openclaw', 'unsupported-option');
+    // 설정 파일 부재 → 기본 main 에이전트·기본 workspace로 진행(실측: 설정 없이 workspace/IDENTITY.md·SOUL.md만 있는 배치).
+    // 있는데 깨진 것은 config()가 issue를 냈고 여기서 멈춘다 — 스킬·mcporter 검사는 설정과 무관하라 위에서 이미 끝냈다(검수 MEDIUM-1).
+    if (!parsed) { if (await fs.lstat(path.join(configRoot, configName)).catch(() => null)) continue; parsed = {}; }
     let agents;
     if (parsed.agents?.entries !== undefined) { if (!plain(parsed.agents.entries) || parsed.agents.list !== undefined) { issue('openclaw', 'invalid-format'); continue; } agents = Object.entries(parsed.agents.entries); }
     else if (parsed.agents?.list !== undefined) { if (!Array.isArray(parsed.agents.list) || parsed.agents.list.some(a => !plain(a) || typeof a.id !== 'string') || new Set(parsed.agents.list.map(a => a.id)).size !== parsed.agents.list.length) { issue('openclaw', 'invalid-format'); continue; } agents = parsed.agents.list.map(agent => [agent.id, agent]); }
