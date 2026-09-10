@@ -24,6 +24,6 @@ export function longPressHandlers(state, onLongPress, ms = 450) {
 export function useLongPress(onLongPress, ms) {
   const st = useRef({ timer: null, x: 0, y: 0 });
   const { clear, ...props } = longPressHandlers(st.current, onLongPress, ms);
-  useEffect(() => clear, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => clear, []); // 언마운트 시 타이머 정리(react-hooks 플러그인 미사용 — 규칙 주석 금지)
   return props;
 }
