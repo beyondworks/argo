@@ -1,0 +1,14 @@
+{
+  "identifier": "mobile",
+  "description": "Mobile login callback",
+  "platforms": [
+    "iOS",
+    "android"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "deep-link:default"
+  ]
+}

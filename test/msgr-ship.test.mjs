@@ -66,8 +66,14 @@ test('tauri.conf·Rust·capabilities: 업데이터 배선과 회사 서버를 �
   const rs = read('apps/messenger/src-tauri/src/lib.rs');
   assert.match(rs, /tauri_plugin_updater::Builder::new\(\)\.build\(\)/);
   assert.match(rs, /tauri_plugin_process::init\(\)/);
-  const cap = JSON.parse(read('apps/messenger/src-tauri/capabilities/default.json'));
+  const cap = JSON.parse(read('apps/messenger/src-tauri/capabilities/desktop.json'));
   assert.ok(cap.permissions.includes('updater:default') && cap.permissions.includes('process:default'));
+  assert.deepEqual(cap.platforms, ['macOS', 'windows', 'linux']);
+  const common = JSON.parse(read('apps/messenger/src-tauri/capabilities/default.json'));
+  assert.ok(!common.permissions.includes('updater:default') && !common.permissions.includes('process:default'));
+  const mobile = JSON.parse(read('apps/messenger/src-tauri/capabilities/mobile.json'));
+  assert.deepEqual(mobile.platforms, ['iOS', 'android']);
+  assert.ok(mobile.permissions.includes('deep-link:default'));
   const toml = read('apps/messenger/src-tauri/Cargo.toml');
   assert.match(toml, /tauri-plugin-updater = "2"/); assert.match(toml, /tauri-plugin-process = "2"/);
   const pkg = JSON.parse(read('apps/messenger/package.json'));

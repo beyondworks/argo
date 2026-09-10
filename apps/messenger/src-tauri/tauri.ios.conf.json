@@ -1,0 +1,21 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "resources": null,
+    "iOS": {
+      "minimumSystemVersion": "16.4"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [
+        {
+          "scheme": [
+            "argo-messenger"
+          ],
+          "appLink": false
+        }
+      ]
+    }
+  }
+}
