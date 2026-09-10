@@ -22,7 +22,7 @@ import { Sprite, I, STAR_D } from './icons.jsx';
 import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri } from './platform.js';
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
-import { useIsPhone, useSwipeTabs } from './use-phone.js';
+import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -263,6 +263,7 @@ function Shell({ session }) {
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState(() => (isPhone ? 'home' : 'chat')); // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   const openNav = () => { if (isPhone) setPage('home'); else setRail(true); }; // 폰: 홈 페이지 / 데스크톱: 레일 서랍
+  const edgeBack = useEdgeSwipeBack(() => setPage('home'), isPhone && page !== 'home' && page !== 'dm'); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(홈)
   const [orgMenu, setOrgMenu] = useState(false);
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
@@ -672,7 +673,7 @@ function Shell({ session }) {
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
         </div>
       </aside>
-      <main className="msgr-main">
+      <main className="msgr-main" {...edgeBack}>
         {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
         {chSheet && channel && <ChannelSheet myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}

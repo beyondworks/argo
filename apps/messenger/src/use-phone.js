@@ -37,3 +37,17 @@ export function useSwipeTabs(order, current, pick, enabled = true) {
     },
   };
 }
+
+// 왼쪽 가장자리에서 오른쪽으로 쓸면 뒤로(홈) — iOS 내비게이션 관례(유건 2026-09-11). 가장자리 24px 안에서 시작해 70px 이상, 세로보다 가로가 확실히 클 때만.
+export function useEdgeSwipeBack(onBack, enabled = true) {
+  const ref = useRef({ x: 0, y: 0, edge: false }); const start = ref.current;
+  if (!enabled) return {};
+  return {
+    onTouchStart: (e) => { const t = e.touches[0]; start.x = t.clientX; start.y = t.clientY; start.edge = t.clientX <= 24; },
+    onTouchEnd: (e) => {
+      if (!start.edge) return;
+      const t = e.changedTouches[0]; const dx = t.clientX - start.x; const dy = t.clientY - start.y;
+      if (dx >= 70 && Math.abs(dx) > Math.abs(dy) * 1.5) onBack();
+    },
+  };
+}
