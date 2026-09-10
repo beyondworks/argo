@@ -886,7 +886,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-top .msgr-seg { display: none; }
 
   /* ── 컴포저(슬랙 겹침 기준): 상자 없이 한 줄 56 — [클립→'+' 36원] [@] [입력, 투명] [보내기 36원, 골드]. 특이도 0,3,0 ── */
-  .msgr-phone .msgr-main .msgr-composer { display: flex; align-items: center; gap: 12px; height: 52px; margin: 0 24px; padding: 0 1px; border: 0; border-radius: 26px; box-shadow: none; /* 슬랙 확대 대조: 회색 알약 x16–386·52·r26, 안에 + 원 36·@·보내기 36 */
+  .msgr-phone .msgr-main .msgr-composer { display: flex; align-items: center; gap: 0; height: 52px; margin: 0 24px; padding: 0 3px; border: 0; border-radius: 26px; box-shadow: none; /* 안쪽 여백 3·글자 간격 0: 슬랙 실측(원 25–61·글자 69·보내기 342–376, 알약 24–378) */ /* 슬랙 확대 대조: 회색 알약 x16–386·52·r26, 안에 + 원 36·@·보내기 36 */
     --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2); --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3); --border: var(--ph-border); --border-soft: var(--ph-border-soft);
     background: var(--card-2); color: var(--fg); }
   .msgr-phone .msgr-main .msgr-composer textarea { order: 2; flex: 1; min-width: 0; min-height: 36px; max-height: 120px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; color: var(--fg); font-size: 16px; line-height: 20px; resize: none; overflow: hidden; } /* 한 줄 시작, 입력하면 자라남(슬랙) */
@@ -895,7 +895,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-composer .msgr-tools { display: contents; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb { display: grid; place-items: center; padding: 0; margin: 0; border: 0; background: none; color: var(--fg-2); min-width: 0; min-height: 0; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb span { display: none; }
-  .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(1) { order: 0; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-radius: 50%; background: var(--card); }
+  .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(1) { order: 0; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-radius: 50%; background: var(--card); border: 1px solid var(--border-soft); }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(2) { order: 1; width: 24px; height: 36px; min-width: 24px; min-height: 36px; }
   .msgr-phone .msgr-main .msgr-composer .send { order: 3; width: 36px; height: 36px; min-width: 36px; min-height: 36px; max-height: 36px; padding: 0; border-radius: 50%; }
 
@@ -923,6 +923,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-tabsearch { width: var(--ph-tab); height: var(--ph-tab); border-radius: 50%; border: 1px solid var(--border-soft); background: var(--card); color: var(--fg);
     box-shadow: var(--shadow-float); display: grid; place-items: center; pointer-events: auto; flex: 0 0 auto; cursor: pointer; }
   .msgr-tabsearch svg { width: 26px; height: 26px; }
+  /* 아이콘 굵기(슬랙 획 ≈3px@24): 16단위 뷰박스 기준 stroke-width 2 → 24px에서 3px. 면으로 그린 심볼(홈·돋보기·뒤로·점)은 fill로 채운다 */
+  .msgr-phone .msgr-island svg, .msgr-phone .msgr-tabsearch svg, .msgr-phone .msgr-main .msgr-top svg, .msgr-phone .msgr-main .msgr-composer svg,
+  .msgr-phone .msgr-fab svg, .msgr-phone .msgr-card svg { stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .msgr-phone .msgr-tabsearch svg, .msgr-phone .msgr-main .msgr-top .msgr-menu svg, .msgr-phone .msgr-main .msgr-top .ph-dots, .msgr-phone .msgr-island button.on svg { fill: currentColor; stroke-width: 0.6; }
+  .msgr-phone .msgr-main .msgr-composer .send svg { width: 18px; height: 18px; stroke-width: 3; }
+  .msgr-phone.phone-home .sec-ic { stroke-width: 1.7; } /* 목록 행 아이콘(#)은 슬랙도 가는 획 — 기본 1.5 유지 */
   .msgr-tabsearch:active { background: var(--card-2); }
   /* 검색 페이지: 아일랜드 자리에 입력창 + 닫기(슬랙) */
   .msgr-island-search { display: flex; grid-auto-flow: unset; gap: 8px; padding: 0 8px 0 16px; color: var(--fg-3); }
