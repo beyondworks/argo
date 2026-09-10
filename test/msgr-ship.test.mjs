@@ -74,6 +74,10 @@ test('tauri.conf·Rust·capabilities: 업데이터 배선과 회사 서버를 �
   const mobile = JSON.parse(read('apps/messenger/src-tauri/capabilities/mobile.json'));
   assert.deepEqual(mobile.platforms, ['iOS', 'android']);
   assert.ok(mobile.permissions.includes('deep-link:default'));
+  // 로그인 복귀 스킴은 네이티브 매니페스트에 실제로 등록돼야 브라우저에서 앱으로 돌아온다(플러그인 설정만으로는 iOS에 안 실린다 — 2026-09-10 실측: 시뮬레이터 openurl 115).
+  for (const c of ['tauri.ios.conf.json', 'tauri.android.conf.json']) assert.deepEqual(JSON.parse(read(`apps/messenger/src-tauri/${c}`)).plugins['deep-link'].mobile[0].scheme, ['argo-messenger'], c);
+  assert.match(read('apps/messenger/src-tauri/gen/apple/argo-messenger_iOS/Info.plist'), /<key>CFBundleURLSchemes<\/key>\s*<array>\s*<string>argo-messenger<\/string>/, 'iOS Info.plist CFBundleURLTypes에 argo-messenger 스킴');
+  assert.match(read('apps/messenger/src-tauri/gen/android/app/src/main/AndroidManifest.xml'), /<data android:scheme="argo-messenger" \/>/, 'Android 매니페스트 intent-filter에 argo-messenger 스킴');
   const toml = read('apps/messenger/src-tauri/Cargo.toml');
   assert.match(toml, /tauri-plugin-updater = "2"/); assert.match(toml, /tauri-plugin-process = "2"/);
   const pkg = JSON.parse(read('apps/messenger/package.json'));
