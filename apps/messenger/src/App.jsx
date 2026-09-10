@@ -245,7 +245,7 @@ function Auth() {
 
 /* ─── 셸: 레일(조직·채널 칩·크루 카드·멤버 스택) + 본문 ─── */
 function Shell({ session }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
@@ -419,6 +419,9 @@ function Shell({ session }) {
     })();
     return () => { dead = true; };
   }, [org?.id, uid, tick, channels, friends]); // eslint-disable-line react-hooks/exhaustive-deps
+  const nodeSeenAt = org?.node_seen_at ? Date.parse(org.node_seen_at) : 0; // 상주 노드 하트비트 — 설정 화면과 같은 판정(AWAY_MS)
+  const nodeAlive = !!org?.service_user_id && nodeSeenAt > 0 && Date.now() - nodeSeenAt < AWAY_MS;
+  const nodeLabel = !org?.service_user_id ? t('org.node.none') : !nodeSeenAt ? t('org.node.never') : t(nodeAlive ? 'org.node.on' : 'org.node.off', { when: fmtWhen(org.node_seen_at, lang) });
   const inboxUnread = org ? inbox.filter((it) => Date.parse(it.at) > (inboxSeen[org.id] ?? 0)).length : 0;
   const openInbox = () => { if (!org) return; setInboxPrev(inboxSeen[org.id] ?? 0); const next = { ...inboxSeen, [org.id]: Date.now() }; setInboxSeen(next); writeInboxSeen(next); setPage('inbox'); setRail(false); };
   const me = members.find((m) => m.user_id === uid);
@@ -656,7 +659,7 @@ function Shell({ session }) {
 
         </div>
         <div className="msgr-foot">
-          {isPhone && org && <button type="button" className="ph-appr" onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={t('set.tab.crews')} aria-label={t('set.tab.crews')}><I name="star" size={19} /></button>}
+          {isPhone && org && <button type="button" className={`ph-node${nodeAlive ? ' on' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name="node" size={18} /><span className="dot" /></button>}
           <button type="button" className="me" onClick={() => { if (isPhone) { setSettingsTab('me'); setPage('settings'); setRail(false); } else setMeMenu((v) => !v); }} aria-haspopup={isPhone ? undefined : 'menu'} aria-expanded={isPhone ? undefined : meMenu} title={t(isPhone ? 'ui.settings' : 'ui.me.menu')}>
             <Av name={me?.display_name || session.user.email} size="sm" userId={uid} /><span className="name">{me?.display_name || session.user.email}</span>
           </button>
@@ -1328,7 +1331,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   const phone = useIsPhone(); // 폰에서는 창 나누기(옆에 열기)가 반폭 두 장이 되어 못 쓴다
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
   // 창(pane)·탭 — 아르고 기억 페이지와 같은 모양: 그래프 노드를 누르면 옆 창(새 창)에 열리고, 트리는 포커스 창에 연다(유건 지시 2026-09-04). 전이는 panes.mjs(순수)
-  const [st, setSt] = useState(() => ({ panes: [{ id: 1, tabs: [GRAPH_TAB, { id: 'org', kind: 'entity', rel: 'org' }], active: 'graph' }], focus: 1 }));
+  const [st, setSt] = useState(() => ({ panes: [{ id: 1, tabs: phone ? [{ id: 'org', kind: 'entity', rel: 'org' }] : [GRAPH_TAB, { id: 'org', kind: 'entity', rel: 'org' }], active: phone ? 'org' : 'graph' }], focus: 1 })); // 폰은 그래프 대신 뷰어 한 장(유건 2026-09-10)
   const { panes, focus: focusPane } = st;
   const [limits, setLimits] = useState({}); const limitOf = (rel) => limits[rel] ?? 60;
   const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));

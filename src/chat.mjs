@@ -13,7 +13,7 @@ import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs';
 import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs';
 import { isCardOnlyRunner } from './runners/catalog.mjs'; // 카드 전용 러너(http) 폴백 금지
 import { externalAgentFormat } from './runners/external-agent.mjs'; // 카드 agent → 실행 포맷(사용자는 format을 몰라도 된다) // 원격 카탈로그·alias(불변식 D)
-import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
+import { addRoutine, loadRoutines, updateRoutine, removeRoutine } from './routines.mjs'; // schedule_task·list_routines·cancel_routine — 크루가 '나중에 하기'를 걸고, 되돌리는 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
 import { materializeMcpServers } from './runners/npx.mjs'; // node/npx를 실행형으로 — 시스템 npm 없는 기기 지원
@@ -730,6 +730,11 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
+  const scheduleText = (sc, loop) => sc.type === 'once' ? `${sc.date} ${sc.time}`
+    : sc.type === 'weekly' ? `매주 ${(sc.dows ?? []).join(',')} ${sc.time}`
+    : sc.type === 'interval' ? `${sc.everyMinutes}분마다, 최대 ${loop?.maxRuns ?? 20}회`
+    : `매일 ${sc.time}`;
+
   // 예약 — 크루에게 "나중에 하기"를 주는 유일한 수단. 이게 없어서 "예약 발송"을 요청받으면
   // 크루가 시각조차 확인 못 한다며 거절했다(실사용 신고 2026-07-26). 루틴 화면에 그대로 나타나
   // 사장이 언제든 끄거나 고칠 수 있으므로(가시성) 결재 없이 실행한다 — hire_crew와 달리 되돌리기 쉽다.
@@ -756,13 +761,45 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
           // interval = 자율 루프 — 회차·예산 상한을 기본으로 건다(무한 반복 방지). 다른 타입엔 addRoutine이 무시
           ...(type === 'interval' ? { loop: { maxRuns: maxRuns ?? 20, ...(maxUsd != null ? { maxUsd } : {}) } } : {}),
         });
-        const when = type === 'once' ? `${r.schedule.date} ${r.schedule.time}`
-          : type === 'weekly' ? `매주 ${(r.schedule.dows ?? []).join(',')} ${r.schedule.time}`
-          : type === 'interval' ? `${r.schedule.everyMinutes}분마다, 최대 ${r.loop?.maxRuns ?? 20}회`
-          : `매일 ${r.schedule.time}`;
+        const when = scheduleText(r.schedule, r.loop);
         return text(`예약 완료 — "${title}" (${when}, 담당 ${agentSlug || fromSlug}). 루틴 화면에서 사장이 끄거나 고칠 수 있다. 사장에게 언제 무엇을 하도록 걸어뒀는지 한 줄로 알려라.`);
       } catch (e) {
         return text(`예약 실패: ${String(e.message || e)}. 형식을 고쳐 다시 시도하거나 사장에게 알려라.`);
+      }
+    },
+  );
+
+  const listRoutines = tool(
+    'list_routines',
+    '이 회사에 걸린 예약(루틴) 목록을 본다. "뭐 걸려 있어?", "예약 목록", "자동화 현황" 같은 물음에 쓴다.',
+    {},
+    async () => {
+      try {
+        const rs = await loadRoutines(wsId);
+        if (!rs.length) return text('걸린 예약이 없다.');
+        return text(rs.map((r) => `- ${r.title} (id ${r.id}) — ${scheduleText(r.schedule ?? {}, r.loop)} · 담당 ${r.agentSlug} · ${r.enabled === false ? '꺼짐' : '켜짐'}${r.lastRunAt ? ` · 마지막 실행 ${r.lastRunAt}` : ' · 아직 실행 전'}`).join('\n'));
+      } catch (e) {
+        return text(`예약 목록을 읽지 못했다: ${String(e.message || e)}. 사장에게 알려라.`);
+      }
+    },
+  );
+
+  const cancelRoutine = tool(
+    'cancel_routine',
+    '걸린 예약을 끄거나 켜거나 지운다. id는 list_routines로 먼저 확인한다.',
+    {
+      id: z.string().describe('예약 id — list_routines가 알려준다'),
+      action: z.enum(['off', 'on', 'delete']).describe('off=끄기(남겨둠), on=다시 켜기, delete=삭제'),
+    },
+    async ({ id, action }) => {
+      try {
+        const before = (await loadRoutines(wsId)).find((x) => x.id === id);
+        if (!before) return text(`그런 예약이 없다: ${id}. list_routines로 id를 다시 확인하라.`);
+        if (action === 'delete') { await removeRoutine(wsId, id); return text(`예약 "${before.title}"을(를) 지웠다.`); }
+        const r = await updateRoutine(wsId, id, { enabled: action === 'on' });
+        return text(`예약 "${(r ?? before).title}"을(를) ${action === 'on' ? '켰다' : '껐다'}.`);
+      } catch (e) {
+        return text(`예약 변경 실패: ${String(e.message || e)}. 사장에게 알려라.`);
       }
     },
   );
@@ -804,7 +841,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   );
 
   const tools = [
-    requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask,
+    requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, listRoutines, cancelRoutine, startLongTask,
     ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
     ...(colleagues.length ? [delegate, sendToCrew] : []),
     // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).

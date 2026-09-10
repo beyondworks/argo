@@ -92,7 +92,7 @@ test('C1. Grep glob 우회 봉쇄 — 금고·타사 워크스페이스·홈 자
 test('H1. 크루 도구 노출 집합 = SDK 최종 등재 배열 — 동료 0·커넥터 0이면 delegate·send_to_crew·use_connector 부재, 동료 있으면 등재', async () => {
   await company('rv-h1');
   const sink0 = []; makeCrewServer('rv-h1', 'seoyun', '서윤', [], 0, [], null, 'ko', [], '', sink0);
-  assert.deepEqual(sink0.map((d) => d.name).sort(), ['hire_crew', 'request_approval', 'request_tool_install', 'schedule_task', 'start_long_task', 'update_profile'], '기본 6종만');
+  assert.deepEqual(sink0.map((d) => d.name).sort(), ['cancel_routine', 'hire_crew', 'list_routines', 'request_approval', 'request_tool_install', 'schedule_task', 'start_long_task', 'update_profile'], '기본 8종만(예약 조회·취소 포함)');
   const sink1 = []; makeCrewServer('rv-h1', 'seoyun', '서윤', [{ slug: 'jun', name: '준', role: 'dev' }], 0, [], null, 'ko', [], '', sink1);
   assert.ok(sink1.some((d) => d.name === 'delegate') && sink1.some((d) => d.name === 'send_to_crew'), '동료가 있으면 위임·쪽지 등재');
   assert.ok(!sink1.some((d) => d.name === 'use_connector'), '커넥터 0이면 use_connector 부재');
@@ -243,7 +243,7 @@ test('LOW·R15·R18·R19·R14. WebSearch 파서·경로 정규화·인증 원문
   assert.ok(AUTH_TEXT_RE.test('401') && !AUTH_TEXT_RE.test('4011'));
   const src = await readFile(join(ROOT, 'src', 'chat.mjs'), 'utf8');
   assert.equal((src.match(/abortReg = registerTurn\(/g) ?? []).length, 2, 'CLI·SDK 두 갈래 각 1회'); assert.doesNotMatch(src, /\n\s*abortReg = (?!registerTurn\()/, '중단 핸들을 뒤에서 덮어쓰지 않는다(R14)');
-  assert.match(src, /const tools = \[\n\s*requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask,/, '크루 도구 최종 배열 한 원천');
+  assert.match(src, /const tools = \[\n\s*requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, listRoutines, cancelRoutine, startLongTask,/, '크루 도구 최종 배열 한 원천');
   assert.match(src, /if \(sink\) sink\.push\(\.\.\.tools\.map\(\(t\) => defs\.get\(t\)\)\.filter\(Boolean\)\);/, 'sink = 최종 배열');
 });
 
