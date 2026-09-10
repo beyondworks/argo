@@ -764,7 +764,11 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-rail-close { display: grid; place-items: center; margin-left: auto; border-radius: 10px; }
   .msgr-side .msgr-railrow .item { padding-right: 48px; }
   .msgr-side .msgr-railrow .more { opacity: 1; }
-  .msgr-acts { opacity: 1; }
+  /* 터치: 길게 눌러야 액션이 열린다(App.jsx useLongPress) — 상시 노출은 메시지 한 건이 화면 1/3을 먹어 대화가 두세 건만 보였다 */
+  .msgr-acts { display: none; }
+  [data-acts='open'] .msgr-acts { display: flex; opacity: 1; }
+  /* 길게 누르기가 iOS 선택 콜아웃(Copy·Look Up)에 가로채이지 않게 — 부분 선택 대신 액션의 '복사'를 쓴다 */
+  .msgr-mine .bubble, .msgr-row .text, .msgr-row .msgr-sheet { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   .msgr-thread.page .msgr-settings.tabs { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .msgr-thread.page .msgr-setcard, .msgr-thread.page .msgr-docs .doc { padding: 14px; }
   .msgr-setcard .row { flex-wrap: wrap; }

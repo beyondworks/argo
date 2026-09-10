@@ -12,6 +12,7 @@ import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from '.
 import { handoff } from './oauth-handoff.mjs';
 import { parseInviteCode, inviteShareText } from './invite.mjs';
 import { UpdateBar } from './update.jsx';
+import { useLongPress } from './long-press.js';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -2148,6 +2149,14 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
 function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete }) {
   const [copied, setCopied] = useState(false);
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
+  const [actsOpen, setActsOpen] = useState(false); // 터치는 길게 눌러야 액션이 열린다(마우스는 hover) — 상시 노출은 화면당 대화를 두세 건으로 줄였다
+  const hold = useLongPress(() => setActsOpen(true));
+  useEffect(() => {
+    if (!actsOpen) return undefined;
+    const off = (e) => { if (!e.target.closest?.('.msgr-acts, .msgr-emojipop')) setActsOpen(false); };
+    document.addEventListener('pointerdown', off, true);
+    return () => document.removeEventListener('pointerdown', off, true);
+  }, [actsOpen]);
   const groups = Object.entries(reacts.reduce((acc, r) => { (acc[r.emoji] ??= []).push(r.user_id); return acc; }, {}));
   const chips = groups.length > 0 && <div className="msgr-reacts">{groups.map(([e, users]) => <button key={e} type="button" className={users.includes(uid) ? 'on' : ''} onClick={() => onReact?.(m, e)} title={users.map((u) => nameOfUser(u)).join(', ')}>{e}<span>{users.length}</span></button>)}</div>;
   const react = (e) => { bumpEmoji(e); onReact?.(m, e); };
@@ -2176,7 +2185,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
     </form>
   );
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
-    <div className="msgr-mine">
+    <div className="msgr-mine" data-acts={actsOpen ? 'open' : undefined} {...hold}>
       {editing ? editor : <div className="bubble">{quote}{m.deleted_at ? <i>{t('msg.deleted')}</i> : <Body text={body} />}</div>}
       {attRow}
       {chips}
@@ -2186,7 +2195,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   const isCrew = m.author_kind === 'crew';
   return ( // 동료·크루 글 — 척추 위 아바타(사람 원 / 크루 타일), 크루 답은 척추에 붙는 시트
-    <div className="msgr-row">
+    <div className="msgr-row" data-acts={actsOpen ? 'open' : undefined} {...hold}>
       {isCrew && crew ? <button type="button" className="msgr-avbtn" onClick={() => onCrew?.(crew.id)} title={t('crew.sheet')}><Av name={name} crew crewId={crew.id} /></button> : <Av name={name} crew={isCrew} userId={m.author_user_id} />}
       <div style={{ minWidth: 0 }}>
         <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
