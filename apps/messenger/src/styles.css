@@ -829,6 +829,25 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-foot .me { min-width: 40px; min-height: 40px; padding: 0; justify-content: center; }
   .msgr-phone.phone-home .msgr-side .msgr-foot .me .name, .msgr-phone.phone-home .msgr-side .msgr-foot > .btn { display: none; }
   .msgr-phone.phone-home .msgr-side .msgr-foot .me .msgr-av { width: 36px; height: 36px; }
+  /* 알약 왼쪽 자리 = 에이전트 목록(설정의 에이전트 탭으로) */
+  .msgr-phone.phone-home .msgr-side .msgr-foot .ph-appr { position: relative; display: grid; place-items: center; min-width: 40px; min-height: 40px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--fg-2); cursor: pointer; }
+  .msgr-phone.phone-home .msgr-side .msgr-foot .ph-appr:active { background: var(--card-2); }
+  .msgr-phone.phone-home .msgr-side .msgr-foot .ph-appr .n { position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--mark); color: var(--mark-fg); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+  /* 안내 줄도 목록과 같은 좌우 여백 */
+  .msgr-phone.phone-home .msgr-side .msgr-hint { padding: 6px var(--ph-pad) 14px; font-size: 13px; }
+  /* 설정 페이지 폰 규격 — 터치 최소 44는 홑동작 버튼에만 두고, 줄지어 놓인 칩·행은 촘촘하게(유건: 버튼이 크고 간격이 안 맞는다) */
+  .msgr-phone .msgr-settings.tabs { gap: 14px; }
+  .msgr-phone .msgr-setnav { display: flex; position: static; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .msgr-phone .msgr-setnav::-webkit-scrollbar { display: none; }
+  .msgr-phone .msgr-setnav button { flex: 0 0 auto; min-height: 34px; height: 34px; padding: 0 14px; border-radius: 999px; font-size: 13.5px; }
+  .msgr-phone .msgr-setnav button.on { background: var(--primary); color: var(--primary-fg); box-shadow: none; }
+  .msgr-phone .msgr-thread.page .msgr-setcard { padding: 16px; border-radius: 16px; gap: 10px; }
+  .msgr-phone .msgr-setcard .btn { min-height: 36px; height: 36px; padding: 0 14px; font-size: 13.5px; }
+  .msgr-phone .msgr-setcard .msgr-rows .row { min-height: 40px; padding: 4px 8px; }
+  .msgr-phone .msgr-setcard .msgr-rows .row .btn.ghost { width: 32px; height: 32px; min-width: 32px; min-height: 32px; }
+  .msgr-phone .msgr-setcard .msgr-rows .row .btn.ghost.text { width: auto; padding: 0 10px; }
+  .msgr-phone .msgr-setcard .msgr-seg button { min-height: 30px; height: 30px; }
+  .msgr-phone .msgr-setcard .msgr-input.inline, .msgr-phone .msgr-setcard select.msgr-input.inline { height: 38px; font-size: 16px; }
   /* 본문 — 흰 카드 + 루트 팔레트 복원 */
   .msgr-phone.phone-home .msgr-railbody { flex: 1; margin: 0; padding: 0 0 calc(var(--ph-tab) + 24px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); gap: 0;
     --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2); --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3); --border: var(--ph-border); --border-soft: var(--ph-border-soft);
