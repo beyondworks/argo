@@ -582,6 +582,11 @@ function Shell({ session }) {
           </>)}
         </div>
         <div className="msgr-railbody">
+        {isPhone && org && (<div className="msgr-cards" role="list">{/* 슬랙 홈의 퀵카드 줄(y132–216) — 자리는 슬랙, 목적지는 우리 것 */}
+          {[['crews', 'star', () => document.querySelector('.msgr-sec[data-sec="mine"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' })], ['approve', 'stamp', () => setPage('inbox')], ['memory', 'memory', () => setPage('activity')], ['settings', 'gear', () => setPage('settings')]].map(([k, ic, go]) => (
+            <button key={k} type="button" className="msgr-card" role="listitem" onClick={go}><I name={ic} size={20} /><span className="t">{t(`phone.card.${k}`)}</span><span className="s">{t(`phone.card.${k}.sub`)}</span></button>
+          ))}
+        </div>)}
         <RailSection id="channels" label={t('ch.list')} right={<button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>}>
         {newCh && (
           <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
@@ -616,7 +621,8 @@ function Shell({ session }) {
             ); })}
           </div>
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
-        </RailSection>
+                  {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: 'public' })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
+</RailSection>
         {dms.length > 0 && (<RailSection id="dms" label={t('ch.dms')}>
           <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const withCrew = !!dmCrew; return (
 
