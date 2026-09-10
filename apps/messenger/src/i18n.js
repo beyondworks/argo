@@ -638,6 +638,12 @@ export const DICT = {
   'rail.members.guest': ['게스트', 'Guests'],
   'rail.members.dm': ['1:1 대화 열기', 'Open a direct message'],
   'search.title': ['검색', 'Search'],
+  // 폰 셸 하단 탭(슬랙 레이아웃 참고, 2026-09-10)
+  'phone.tabs': ['하단 탭', 'Bottom tabs'],
+  'phone.tab.home': ['홈', 'Home'],
+  'phone.tab.inbox': ['쪽지', 'DM'],
+  'phone.tab.activity': ['내 활동', 'Activity'],
+  'phone.back': ['홈으로', 'Home'],
   'search.ph': ['검색 (⌘K)', 'Search (⌘K)'],
   'search.hint': ['메시지 본문, 사람, 에이전트, 채널을 한 번에 찾습니다. 위 검색 칸에 입력하고 Enter.', 'Searches message text, people, agents and channels. Type in the box above and press Enter.'],
   'search.none': ['결과가 없습니다.', 'No results.'],

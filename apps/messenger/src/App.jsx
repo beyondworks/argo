@@ -22,6 +22,7 @@ import { Sprite, I, STAR_D } from './icons.jsx';
 import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri } from './platform.js';
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
+import { useIsPhone } from './use-phone.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -152,6 +153,35 @@ function RailSection({ id, label, right = null, children }) {
   );
 }
 
+/* ─── 상단 내비 버튼 — 데스크톱은 햄버거(레일 열기), 폰은 뒤로가기(홈 페이지로). 마크업은 데스크톱 쪽이 기존과 동일하다. ─── */
+function NavButton({ onMenu }) {
+  const { t } = useT();
+  const phone = useIsPhone();
+  return <button type="button" className="msgr-menu" onClick={onMenu} aria-controls={phone ? undefined : 'msgr-navigation'} aria-label={t(phone ? 'phone.back' : 'ui.menu')}><I name={phone ? 'back' : 'menu'} /></button>;
+}
+
+/* ─── 폰 하단 탭 바(슬랙 레이아웃 참고, 유건 지시 2026-09-10) — 폰 폭에서만 렌더한다.
+   데스크톱은 이 컴포넌트를 아예 그리지 않으므로 기존 트리가 그대로다. 검색은 슬랙처럼 오른쪽 원형 버튼. ─── */
+function PhoneTabs({ page, onPick, activity }) {
+  const { t } = useT();
+  // 채널을 열어도 '홈' 탭이 활성 — 슬랙과 같다(채팅은 홈에서 들어간 화면이지 별 탭이 아니다).
+  const active = page === 'chat' ? 'home' : page;
+  const items = [['home', 'home'], ['inbox', 'at'], ['activity', 'bell']]; // 에이전트 탭은 홈과 중복이라 뺐다(유건 2026-09-10) — 에이전트는 홈의 구역
+  return (
+    <nav className="msgr-tabbar" aria-label={t('phone.tabs')}>
+      <div className="msgr-island" role="tablist">
+        {items.map(([k, ic]) => (
+          <button key={k} type="button" role="tab" aria-selected={active === k} className={active === k ? 'on' : ''} onClick={() => onPick(k)}>
+            <span className="ic"><I name={ic} size={20} />{k === 'activity' && activity > 0 && <span className="n" />}</span>
+            <span className="lb">{t(`phone.tab.${k}`)}</span>
+          </button>
+        ))}
+      </div>
+      <button type="button" className="msgr-tabsearch" onClick={() => onPick('search')} aria-label={t('search.title')}><I name="search" size={18} /></button>
+    </nav>
+  );
+}
+
 /* ─── 로그인: 머리띠 카드 + 브라우저 핸드오프(Google·GitHub — Argo 앱과 같은 계정·같은 방식). 개발 빌드에서는 비밀번호 로그인도(로컬 스택엔 OAuth가 없다). ─── */
 function Auth() {
   const { t, lang, setLang } = useT();
@@ -207,6 +237,7 @@ function Auth() {
 /* ─── 셸: 레일(조직·채널 칩·크루 카드·멤버 스택) + 본문 ─── */
 function Shell({ session }) {
   const { t } = useT();
+  const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
@@ -222,6 +253,7 @@ function Shell({ session }) {
   const [resumeEpoch, setResumeEpoch] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState('chat'); // 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
+  const openNav = () => { if (isPhone) setPage('home'); else setRail(true); }; // 폰: 홈 페이지 / 데스크톱: 레일 서랍
   const [orgMenu, setOrgMenu] = useState(false);
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
@@ -507,7 +539,7 @@ function Shell({ session }) {
   const railArgo = myCrews.filter((c) => sourceOf(c) === 'argo'); const railExt = myCrews.filter((c) => sourceOf(c) !== 'argo');
   return (
     <AvatarCtx.Provider value={avatarCtx}>
-    <div className={`shell msgr-shell${rail ? ' rail-open' : ''}`}>
+    <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && page === 'home' ? ' phone-home' : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       <aside id="msgr-navigation" className="side msgr-side">
         <button type="button" className="msgr-rail-close" onClick={() => setRail(false)} aria-label={t('ui.close')}><I name="x" /></button>
@@ -634,20 +666,24 @@ function Shell({ session }) {
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
         {page === 'activity' && org ? (
-          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
+          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
-          <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={() => setPage('chat')} onMenu={openNav} />
         ) : page === 'inbox' && org ? (
-          <Inbox items={inbox} prevSeen={inboxPrev} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Inbox items={inbox} prevSeen={inboxPrev} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={openNav} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={openNav} />
         ) : chId ? (
-          <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => rt.current?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} />
+          <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => rt.current?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} />
         ) : (
-          <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} />
+          <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} />
         )}
         </PageBoundary>
       </main>
+      {isPhone && <PhoneTabs page={page} activity={inbox?.length ?? 0} onPick={(k) => {
+        if (k === 'search') { setPage('search'); setTimeout(() => searchRef.current?.focus(), 0); return; }
+        setPage(k);
+      }} />}
     </div>
     </AvatarCtx.Provider>
   );
@@ -1080,7 +1116,7 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
   const total = res ? res.msgs.length + res.people.length + res.agents.length + res.channels.length : 0;
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
+      <NavButton onMenu={onMenu} />
       <span className="title"><I name="at" size={18} />{t('search.title')}{res && <span className="msgr-klabel">“{res.q}” · {t('search.count', { n: total })}</span>}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
@@ -1109,7 +1145,7 @@ function Inbox({ items, prevSeen = 0, channels, crews, nameOfUser, dmName, onOpe
   const shown = items.filter((it) => kind === 'all' || it.kind === kind);
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
+      <NavButton onMenu={onMenu} />
       <span className="title"><I name="bell" size={18} />{t('inbox.title')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
@@ -1139,7 +1175,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
   useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
+      <NavButton onMenu={onMenu} />
       <span className="title"><I name="gear" size={18} />{t('ui.settings')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
@@ -1376,7 +1412,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${channels.find((x) => x.id === rel.slice(9))?.name ?? t('act.deletedChannel')}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
+      <NavButton onMenu={onMenu} />
       <span className="title"><I name="memory" size={18} />{t('act.title')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
@@ -1985,7 +2021,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = []
     ['', t('org.step.invite'), t('org.step.invite.sub'), null],
   ];
   return (<>
-    <div className="msgr-top"><button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
+    <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
     <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
       <span className="msgr-klabel">{org ? t('ch.list') : t('org.pick')}</span>
       <h1>{org ? t('ch.noChannelTitle') : t('org.noneTitle')}</h1>
@@ -2092,7 +2128,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
+      <NavButton onMenu={onMenu} />
       <button type="button" className="title msgr-titlebtn" onClick={onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{channel.kind === 'dm' ? dmName(channel) : channel.name}<I name="caret" size={13} className="caret" /></button>
       {channel.topic && <span className="topic">{channel.topic}</span>}
       {/* 켜고 끄는 자리가 안 보인다(유건 2026-09-09) → 표지 자체가 토글. 아이콘만, 꺼짐 = 취소선·붉은색 */}

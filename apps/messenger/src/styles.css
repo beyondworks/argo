@@ -800,3 +800,73 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .argo-messenger.msgr-short-viewport .msgr-composer textarea { max-height: 44px; }
 .argo-messenger.msgr-short-viewport .msgr-sub { display: none; }
 .argo-messenger.msgr-short-viewport .msgr-thread { padding-top: 0; padding-bottom: 0; }
+
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) {
+  /* ═══ 폰 셸 — 슬랙 모바일 레이아웃 참고(유건 지시 2026-09-10). 말풍선은 우리 것 유지.
+     전부 이 블록 안에서만 — 데스크톱(>720px)은 한 줄도 적용되지 않는다(scripts/mobile-only-guard.mjs가 강제).
+     치수는 iOS/슬랙 표준: 좌우 여백 16 · 행 높이 44~48 · 본문 15 · 보조 13 · 탭 아이콘 22/라벨 10 · 터치 최소 44. ═══ */
+  /* 셸은 사이드바의 어두운 토큰 스코프 '밖'이라 여기서 읽은 값이 곧 루트(본문) 팔레트다.
+     이 사본을 홈 레일 안에서 다시 선언해 밝은 본문으로 돌린다 — 테마 하드코딩 없이 어느 테마에서도 따라온다.
+     (데스크톱 레일은 이 블록 밖이라 그대로 어둡다 — 테마의 시그니처를 유지한다.) */
+  .msgr-phone { --ph-pad: 16px; --ph-row: 46px; --ph-tab: 56px; --ph-txt: 15px; --ph-sub: 13px;
+    --ph-bg: var(--bg); --ph-card: var(--card); --ph-card2: var(--card-2);
+    --ph-fg: var(--fg); --ph-fg2: var(--fg-2); --ph-fg3: var(--fg-3);
+    --ph-border: var(--border); --ph-border-soft: var(--border-soft); }
+
+  /* 홈 = 전체 화면(서랍 아님). 레일 마크업을 그대로 쓰되 컨테이너만 바꾼다 — 마크업 복제 없음.
+     슬랙처럼 머리만 진하고 본문은 앱 표면 — 아래 탭 바와 색이 맞는다(서랍 색을 전면에 깔면 탭 바와 충돌). */
+  .msgr-phone.phone-home .msgr-side { display: flex; position: static; inset: auto; z-index: auto; width: 100%;
+    border-right: 0; padding: 0 0 calc(var(--ph-tab) + env(safe-area-inset-bottom));
+    --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2);
+    --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3);
+    --border: var(--ph-border); --border-soft: var(--ph-border-soft);
+    background: var(--bg); color: var(--fg); }
+  .msgr-phone.phone-home .msgr-main { display: none; }
+  .msgr-phone.phone-home .msgr-rail-close, .msgr-phone.phone-home .msgr-scrim { display: none; }
+
+  /* 워크스페이스 머리 — 슬랙: 아바타 + 이름 + 캐럿. 상태바 안전영역 보상(겹침 방지) */
+  .msgr-phone.phone-home .msgr-side .msgr-brand { display: none; }
+  .msgr-phone.phone-home .msgr-side .msgr-orgwrap { padding: calc(env(safe-area-inset-top) + 6px) var(--ph-pad) 6px; background: var(--card); border-bottom: 1px solid var(--border-soft); }
+  .msgr-phone.phone-home .msgr-side .msgr-org { width: auto; min-height: 52px; font-size: 18px; font-weight: 700; gap: 8px; padding: 0; border: 0; background: none; }
+  .msgr-phone.phone-home .msgr-side .msgr-org .caret { margin-left: -2px; }
+  .msgr-phone.phone-home .msgr-side .msgr-org .msgr-av { width: 30px; height: 30px; border-radius: 8px; }
+  .msgr-phone.phone-home .msgr-side .msgr-search { display: none; }   /* 검색은 하단 탭의 원형 버튼 */
+
+  /* 우상단 프로필(슬랙) — 풋터의 아바타 하나만 남기고 머리 오른쪽에 띄운다. 벨·별·기어는 탭·아바타 메뉴와 중복이라 숨김(유건 2026-09-10) */
+  .msgr-phone.phone-home .msgr-side { position: relative; }
+  .msgr-phone.phone-home .msgr-side .msgr-foot { position: absolute; top: calc(env(safe-area-inset-top) + 6px); right: var(--ph-pad); height: 52px; margin: 0; padding: 0; border: 0; gap: 0; background: none; z-index: 2; }
+  .msgr-phone.phone-home .msgr-side .msgr-foot .me .name { display: none; }
+  .msgr-phone.phone-home .msgr-side .msgr-foot .me { min-width: 40px; min-height: 40px; padding: 0; justify-content: center; }
+  .msgr-phone.phone-home .msgr-side .msgr-foot .me .msgr-av { width: 32px; height: 32px; }
+  .msgr-phone.phone-home .msgr-side .msgr-foot > .btn { display: none; }   /* 벨·별·기어 */
+  .msgr-phone.phone-home .msgr-side .msgr-orgwrap { padding-right: calc(var(--ph-pad) + 48px); } /* 아바타 자리 비워 둠 */
+
+  /* 구역 헤더 — 라벨 15/600, 행 44 */
+  .msgr-phone.phone-home .msgr-side .msgr-group { min-height: 44px; margin: 4px 0 0; padding: 0 var(--ph-pad); font-size: var(--ph-txt); font-weight: 600; }
+
+  /* 목록 행 — 높이 46, 본문 15, 좌우 16 */
+  .msgr-phone.phone-home .msgr-side .item { min-height: var(--ph-row); padding: 0 var(--ph-pad); gap: 12px; font-size: var(--ph-txt); border-radius: 0; }
+  .msgr-phone.phone-home .msgr-side .item .name { font-size: var(--ph-txt); }
+  .msgr-phone.phone-home .msgr-side .item .msgr-av { width: 24px; height: 24px; }
+  .msgr-phone.phone-home .msgr-side .msgr-klabel { font-size: var(--ph-sub); }
+
+  /* 하단 여백 — 떠 있는 아일랜드(높이 56 + 아래 6) 만큼 본문·홈을 띄운다 */
+  .msgr-phone { --ph-tab: 56px; --ph-tabgap: 6px; }
+  .msgr-phone .msgr-main { padding-bottom: calc(var(--ph-tab) + 12px + max(12px, calc(env(safe-area-inset-bottom) - 18px))); }
+  .msgr-phone.phone-home .msgr-side { padding-bottom: calc(var(--ph-tab) + 12px + max(12px, calc(env(safe-area-inset-bottom) - 18px))); }
+
+  /* 하단 탭 — 슬랙: 떠 있는 알약 아일랜드 + 오른쪽에 분리된 원형 검색. 홈 인디케이터 위 6px */
+  .msgr-tabbar { position: fixed; left: 12px; right: 12px; bottom: max(12px, calc(env(safe-area-inset-bottom) - 18px)); z-index: 70; /* 슬랙 실측: 인디케이터 폰 34pt 인셋에서 아래 16pt */
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; pointer-events: none; }
+  .msgr-island { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: center; height: var(--ph-tab); padding: 0 6px;
+    border-radius: 28px; background: var(--card); border: 1px solid var(--border-soft); box-shadow: var(--shadow-float); pointer-events: auto; flex: 1 1 auto; }
+  .msgr-island button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 64px; min-height: 44px; padding: 4px 6px;
+    border: 0; background: none; color: var(--fg-3); font-size: 10px; line-height: 1; cursor: pointer; }
+  .msgr-island button .ic { position: relative; display: flex; align-items: center; justify-content: center; width: 40px; height: 26px; border-radius: 8px; }
+  .msgr-island button.on { color: var(--fg); font-weight: 600; }
+  .msgr-island button.on .ic { background: var(--card-2); }
+  .msgr-island button .ic .n { position: absolute; top: 2px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); }
+  .msgr-tabsearch { width: var(--ph-tab); height: var(--ph-tab); border-radius: 50%; border: 1px solid var(--border-soft); background: var(--card); color: var(--fg);
+    box-shadow: var(--shadow-float); display: grid; place-items: center; pointer-events: auto; flex: 0 0 auto; cursor: pointer; }
+
+}
