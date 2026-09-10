@@ -1,5 +1,6 @@
 // nodejs 런타임 전용 부팅 코드 — instrumentation.js의 NEXT_RUNTIME 분기 안에서만 로드된다.
 // (별도 파일인 이유: 엣지 번들(미들웨어 존재 시)이 node: 빌트인을 끌고 가지 않도록 정적 분리)
+import { setupNoDock } from './src/no-dock.mjs';
 import { ensureScheduler } from './src/scheduler.mjs';
 import { ensureGateway } from './src/gateway.mjs';
 import { ensureSync } from './src/sync.mjs';
@@ -14,6 +15,10 @@ if (parentPid > 0) {
     catch { process.exit(0); }          // 부모 없음 → 스스로 종료
   }, 2000).unref();
 }
+
+// macOS Dock 아이콘 억제 — 크루 턴이 띄우는 자식(CLI 러너·stdio MCP 서버)이 상속할 NODE_OPTIONS에
+// 프리로드를 건다. **스케줄러보다 먼저**여야 첫 쪽지 배달 턴의 자식부터 덮인다(no-dock.mjs 참조).
+await setupNoDock();
 
 ensureScheduler();
 ensureGateway();
