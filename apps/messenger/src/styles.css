@@ -961,11 +961,11 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
   /* ── 폰 전환·눌림 효과(유건 2026-09-11) — transform·opacity만, 300ms 이하, 움직임 줄이기 설정이면 전부 끈다 ── */
   @media (prefers-reduced-motion: no-preference) {
-    @keyframes msgrPageIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }   /* 앞으로: 오른쪽에서 */
-    @keyframes msgrPageBack { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } } /* 뒤로(홈): 왼쪽에서 */
+    @keyframes msgrPageIn { from { transform: translateX(22px); } to { transform: none; } }   /* 앞으로: 오른쪽에서. 페이드 없음(어두운 테마에서 깜빡임으로 보인다) */
+    @keyframes msgrPageBack { from { transform: translateX(-16px); } to { transform: none; } } /* 뒤로(홈): 왼쪽에서, 페이드 없음 */
     @keyframes msgrSheetIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
     .msgr-phone .msgr-main > .msgr-top, .msgr-phone .msgr-main > .msgr-thread, .msgr-phone .msgr-main > .msgr-actsplit { animation: msgrPageIn 200ms cubic-bezier(.2, .8, .2, 1) both; }
-    .msgr-phone.phone-home .msgr-side { animation: msgrPageBack 200ms cubic-bezier(.2, .8, .2, 1) both; } /* display none→flex로 돌아올 때 다시 재생된다 */
+    .msgr-phone.phone-home .msgr-side { animation: msgrPageBack 160ms cubic-bezier(.2, .8, .2, 1) both; } /* display none→flex로 돌아올 때 다시 재생된다 */
     .msgr-phone .msgr-crewsheet, .msgr-phone .msgr-side .msgr-inline { animation: msgrSheetIn 220ms cubic-bezier(.2, .8, .2, 1) both; }
     /* 눌림: 살짝 줄었다 돌아온다(120ms). 목록 행은 배경만(이미 있음) */
     .msgr-phone .msgr-island button, .msgr-phone .msgr-tabsearch, .msgr-phone .msgr-fab, .msgr-phone .msgr-seg button, .msgr-phone .msgr-setnav button,
