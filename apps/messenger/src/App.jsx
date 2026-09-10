@@ -624,7 +624,7 @@ function Shell({ session }) {
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: 'public' })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
 </RailSection>
-        {dms.length > 0 && (<RailSection id="dms" label={t('ch.dms')}>
+        {(dms.length > 0 || (isPhone && page === 'dm')) && (<RailSection id="dms" label={t('ch.dms')}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const withCrew = !!dmCrew; return (
 
             <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
@@ -640,6 +640,7 @@ function Shell({ session }) {
               )}
             </div>
           ); })}</div>
+          {!dms.length && <div className="msgr-hint">{t('phone.dm.empty')}</div>}
         </RailSection>)}
         {org && (myAvailable.length > 0 || myCrews.length > 0) && (<RailSection id="mine" label={t('rail.mine')} right={<span className="right"><span className="msgr-sortwrap"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span><span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></span>}>
           <div className="msgr-list mine">
@@ -1326,6 +1327,7 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
 
 function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onNote, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
+  const phone = useIsPhone(); // 폰에서는 창 나누기(옆에 열기)가 반폭 두 장이 되어 못 쓴다
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
   // 창(pane)·탭 — 아르고 기억 페이지와 같은 모양: 그래프 노드를 누르면 옆 창(새 창)에 열리고, 트리는 포커스 창에 연다(유건 지시 2026-09-04). 전이는 panes.mjs(순수)
   const [st, setSt] = useState(() => ({ panes: [{ id: 1, tabs: [GRAPH_TAB, { id: 'org', kind: 'entity', rel: 'org' }], active: 'graph' }], focus: 1 }));
@@ -1470,7 +1472,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
                   </div>
                 ); })}
                 </div>
-                {cur.kind === 'entity' && panes.length < MAX_PANES && <button type="button" className="msgr-tabact" onClick={() => openEntity(cur.rel, { split: true })}>{t('act.tab.openSide')}</button>}
+                {!phone && cur.kind === 'entity' && panes.length < MAX_PANES && <button type="button" className="msgr-tabact" onClick={() => openEntity(cur.rel, { split: true })}>{t('act.tab.openSide')}</button>}
                 {(pane.tabs.length > 1 || panes.length > 1) && <button type="button" className="msgr-tabact" onClick={() => closeAll(pane.id)}>{t('act.tab.closeAll')}</button>}
               </div>
               {tabMenu && tabMenu.paneId === pane.id && <>
@@ -1484,7 +1486,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
               </>}
               <div className="msgr-actbody">
                 {cur.kind === 'graph' ? (
-                  <Graph3D key="all" docs={gdocs} hint={t('act.graph.hint')} labels={{ zoomIn: t('act.graph.zoomIn'), zoomOut: t('act.graph.zoomOut'), fit: t('act.graph.fit') }} onSelectDoc={(rel) => openEntity(relOfDoc(rel), { split: true })} />
+                  <Graph3D key="all" docs={gdocs} hint={t(phone ? 'act.graph.hint.phone' : 'act.graph.hint')} labels={{ zoomIn: t('act.graph.zoomIn'), zoomOut: t('act.graph.zoomOut'), fit: t('act.graph.fit') }} onSelectDoc={(rel) => openEntity(relOfDoc(rel), { split: true })} />
                 ) : (
                   <div className="msgr-actlist">
                     {(() => {
