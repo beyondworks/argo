@@ -22,7 +22,7 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought�
 });
 
 test('클라이언트: progress 방송 → ExecCard(단계·경과·도구 수·사고 과정·도구 단계·부분 텍스트 드롭다운), 완료 답글은 Trace(접힘) · 점 세 개는 progress 없는 크루만', () => {
-  assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, \(\{ payload \}\) => setProgress/, 'progress 수신');
+  assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, active\(\(\{ payload \}\) => setProgress/, 'progress 수신 — 해제 뒤 콜백을 막는 active() 안에서');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
   assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} p=\{p\} t=\{t\} \/>\)\}\n\s*\{typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\)/, '점 세 개는 카드 없는 크루만');
   assert.match(app, /function ExecCard\(\{ crew, p, t \}\)[\s\S]*?<details className="msgr-exec"[\s\S]*?\{t\('exec\.thought'\)\}[\s\S]*?<StepList steps=\{p\.steps\}[\s\S]*?\{t\('exec\.partial'\)\}/, 'ExecCard 구성');

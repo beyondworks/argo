@@ -18,7 +18,13 @@ import { useTheme, THEMES } from '@argo/theme';
 import { Markdown, imeGuardWith } from '@argo/ui';
 import { EMOJI_GROUPS, bumpEmoji, topEmoji, searchEmoji } from './emoji.js';
 import { Sprite, I, STAR_D } from './icons.jsx';
-const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri } from './platform.js';
+import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
+import { useMobileViewport } from './mobile-viewport.js';
+import { observeMobileResume } from './mobile-lifecycle.mjs';
+import { reconcileSession } from './resume-session.mjs';
+import { createRealtimeScope } from './realtime-scope.mjs';
+const realtimeScope = createRealtimeScope();
 
 // Installation + signed-in owner scope prevents another PC's identically named agent being rotated.
 export const externalAgentId = (installation, owner, kind, id) => {
@@ -94,11 +100,14 @@ function Body({ text }) {
 export default function App() {
   const { t } = useT();
   const [session, setSession] = useState(undefined);
+  useMobileViewport();
+  useEffect(() => mountMobileAuth(), []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
+    const stopResume = isMobilePlatform ? observeMobileResume(() => reconcileSession(supabase.auth, setSession)) : () => {};
+    return () => { stopResume(); sub.subscription.unsubscribe(); };
   }, []);
   let body;
   if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
@@ -147,10 +156,15 @@ function Auth() {
   const { t, lang, setLang } = useT();
   const [email, setEmail] = useState(''); const [pw, setPw] = useState('');
   const [waiting, setWaiting] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const [mobileAuth, setMobileAuth] = useState(getMobileAuthSnapshot);
+  useEffect(() => subscribeMobileAuth(setMobileAuth), []);
+  const authWaiting = isMobileNative ? mobileAuth.waiting : waiting;
+  const mobileError = mobileAuth.error ? t(({ expired: 'auth.err.expired', open_failed: 'auth.err.open', provider_denied: 'auth.err.denied', exchange_failed: 'auth.err.exchange' })[mobileAuth.error] || 'auth.err.start') : '';
   const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
   // 앱 웹뷰는 provider 창을 못 띄운다 → 셸이 루프백 브리지를 열고 진짜 브라우저에서 로그인, pairing code로 세션 회수(oauth-handoff.mjs·src-tauri/src/pair.rs).
   // 브라우저(dev·vite preview)에서는 셸이 없어 버튼이 정직하게 안내한다(auth.err.notApp) — 로컬 스택 실측은 dev 비밀번호 로그인으로.
   const viaBrowser = (provider) => run(async () => {
+    if (isMobileNative) { await startMobileSignIn(provider); return; }
     setWaiting(provider);
     try {
       const deps = { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: Date.now };
@@ -169,8 +183,8 @@ function Auth() {
       <div className="body">
         <h1>{t('auth.title')}</h1>
         <p>{t('auth.desc')}</p>
-        {waiting ? (
-          <p className="msgr-wait"><span className="msgr-klabel">{t('auth.waiting')}</span><button type="button" className="btn sm ghost" onClick={() => location.reload()}>{t('auth.cancel')}</button></p>
+        {authWaiting ? (
+          <p className="msgr-wait"><span className="msgr-klabel">{t('auth.waiting')}</span><button type="button" className="btn sm ghost" disabled={mobileAuth.exchanging} onClick={() => isMobileNative ? cancelMobileSignIn() : location.reload()}>{t('auth.cancel')}</button></p>
         ) : (<>
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => viaBrowser('google')}>{t('auth.google')}</button>
           <button type="button" className="btn" disabled={busy} onClick={() => viaBrowser('github')}>{t('auth.github')}</button>
@@ -181,7 +195,7 @@ function Auth() {
           <label className="msgr-field"><I name="lock" /><input type="password" placeholder={t('auth.password')} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
           <button className="btn" disabled={busy || !email || !pw} onClick={() => run(async () => { await q(supabase.auth.signInWithPassword({ email, password: pw })); })}>{t('auth.verify')} (dev)</button>
         </>)}
-        {err && <p style={{ color: 'var(--danger)' }}>{err}</p>}
+        {(mobileError || err) && <p role="alert" style={{ color: 'var(--danger)' }}>{mobileError || err}</p>}
         <ServerRow t={t} />
         <div className="foot"><I name="lock" size={13} /><span style={{ flex: 1 }}>{t('auth.foot')}</span><button type="button" className="btn sm" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}>{t('ui.lang')}</button></div>
       </div>
@@ -204,6 +218,7 @@ function Shell({ session }) {
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
   const [tick, setTick] = useState(0);
+  const [resumeEpoch, setResumeEpoch] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState('chat'); // 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   const [orgMenu, setOrgMenu] = useState(false);
@@ -274,6 +289,10 @@ function Shell({ session }) {
     if (dmIds.length) { try { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); setDmMembers(map); } catch { setDmMembers({}); } } else setDmMembers({});
   }, [orgs]);
   useEffect(() => { loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, loadOrg]);
+  useEffect(() => {
+    if (!isMobilePlatform) return;
+    return observeMobileResume(() => { setResumeEpoch((x) => x + 1); setTick((x) => x + 1); loadOrg(orgId).catch((e) => setErr(e.message)); });
+  }, [orgId, loadOrg]);
   // 부록 M: 그 자리 파견 — available → active(허용 범위는 조직 정책 기본값, 잠금이면 서버 게이트가 맞춘다) → 채널 멤버(+소유자 동반). 채널 없이 부르면 조직에만 파견.
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
     const allow = policy?.allow_default ?? 'all';
@@ -302,21 +321,32 @@ function Shell({ session }) {
   useEffect(() => { // Realtime — 조직 topic 하나. 방송은 id·채널만 싣는다(본문은 RLS를 지난 조회로).
     if (!orgId) return;
     let ch;
-    (async () => {
+    const remove = async () => {
+      if (!ch) return;
+      // This client has one org subscription. A timed-out unsubscribe must still release its cache.
+      if (await supabase.removeChannel(ch) !== 'ok') await supabase.removeAllChannels();
+      if (rt.current === ch) rt.current = null;
+    };
+    const cleanup = realtimeScope.run(async (isDisposed, registerDispose) => {
       await supabase.realtime.setAuth(session.access_token);
-      ch = supabase.channel(`org:${orgId}`, { config: { private: true } })
-        .on('broadcast', { event: 'message' }, ({ payload }) => { setEvent({ kind: 'message', ...payload, at: Date.now() }); notifyMention(payload); })
-        .on('broadcast', { event: 'approval' }, ({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); })
-        .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
-        .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() }))
-        .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent({ kind: 'edit', ...payload, at: Date.now() }))
-        .on('broadcast', { event: 'progress' }, ({ payload }) => setProgress((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: { ...payload, at: Date.now() } })))
+      if (isDisposed()) return;
+      const active = (handle) => (event) => { if (!isDisposed()) handle(event); };
+      ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
+      registerDispose(remove);
+      ch
+        .on('broadcast', { event: 'message' }, active(({ payload }) => { setEvent({ kind: 'message', ...payload, at: Date.now() }); notifyMention(payload); }))
+        .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); }))
+        .on('broadcast', { event: 'typing' }, active(({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() }))))
+        .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() })))
+        .on('broadcast', { event: 'edit' }, active(({ payload }) => setEvent({ kind: 'edit', ...payload, at: Date.now() })))
+        .on('broadcast', { event: 'progress' }, active(({ payload }) => setProgress((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: { ...payload, at: Date.now() } }))))
         .subscribe((status, e) => { if (import.meta.env.DEV) console.log('[rt]', status, e?.message ?? ''); });
       rt.current = ch;
       if (import.meta.env.DEV) window.__argoRt = ch;
-    })();
-    return () => { ch?.unsubscribe(); rt.current = null; };
-  }, [orgId, session.access_token]);
+      return remove;
+    });
+    return () => { if (rt.current === ch) rt.current = null; cleanup(); }; // React cleanup is synchronous; scope serializes the async removal.
+  }, [orgId, session.access_token, resumeEpoch]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!rail && !orgMenu) return; const on = (e) => { if (e.key === 'Escape') { setRail(false); setOrgMenu(false); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail, orgMenu]);
@@ -353,7 +383,7 @@ function Shell({ session }) {
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
   const notifyRef = useRef({ channels, members, chId, uid, isAdmin, page, muted, quiet });
   notifyRef.current = { channels, members, chId, uid, isAdmin, page, muted, quiet };
-  const osNotify = (title, body, tag) => { try { if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return; const n = new Notification(title, { body, tag }); n.onclick = () => { window.focus(); n.close(); }; } catch { /* 알림 불가 환경 */ } };
+  const osNotify = (title, body, tag) => { try { if (isMobilePlatform || typeof Notification === 'undefined' || Notification.permission !== 'granted') return; const n = new Notification(title, { body, tag }); n.onclick = () => { window.focus(); n.close(); }; } catch { /* 알림 불가 환경 */ } };
   const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return document.visibilityState === 'hidden' || r.page !== 'chat' || r.chId !== channelId; }; // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
     const r = notifyRef.current;
@@ -471,14 +501,15 @@ function Shell({ session }) {
   const sortCrews = (list) => [...list].sort((a, b) => railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0) : a.display_name.localeCompare(b.display_name, 'ko'));
   const myCrews = sortCrews(crews.filter((c) => c.owner_user_id === uid));
   // 행은 아바타·이름·상태점만(유건 지적 2026-09-09 "레일이 복잡"). 출처는 글자 대신 소속별 정렬일 때 소제목으로.
-  const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}`}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} crewId={c.id} /><span className="name">{c.display_name}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
+  const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => { setSheet(c.id); setRail(false); }} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}`}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} crewId={c.id} /><span className="name">{c.display_name}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
   // 평평한 목록(유건 결정 2026-09-09). 외부 에이전트(헤르메스·오픈클로 봇)가 있을 때만 '외부' 소제목 하나로 아래에 구분한다.
   const railArgo = myCrews.filter((c) => sourceOf(c) === 'argo'); const railExt = myCrews.filter((c) => sourceOf(c) !== 'argo');
   return (
     <AvatarCtx.Provider value={avatarCtx}>
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
-      <aside className="side msgr-side">
+      <aside id="msgr-navigation" className="side msgr-side">
+        <button type="button" className="msgr-rail-close" onClick={() => setRail(false)} aria-label={t('ui.close')}><I name="x" /></button>
         <div className="msgr-brand"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO</div>
         <div className="msgr-orgwrap">
           <button type="button" className={`msgr-org${orgMenu ? ' open' : ''}`} onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}>
@@ -1048,7 +1079,7 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
   const total = res ? res.msgs.length + res.people.length + res.agents.length + res.channels.length : 0;
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
       <span className="title"><I name="at" size={18} />{t('search.title')}{res && <span className="msgr-klabel">“{res.q}” · {t('search.count', { n: total })}</span>}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
@@ -1077,7 +1108,7 @@ function Inbox({ items, prevSeen = 0, channels, crews, nameOfUser, dmName, onOpe
   const shown = items.filter((it) => kind === 'all' || it.kind === kind);
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
       <span className="title"><I name="bell" size={18} />{t('inbox.title')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
@@ -1107,7 +1138,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
   useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
       <span className="title"><I name="gear" size={18} />{t('ui.settings')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
@@ -1344,7 +1375,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${channels.find((x) => x.id === rel.slice(9))?.name ?? t('act.deletedChannel')}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
       <span className="title"><I name="memory" size={18} />{t('act.title')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
@@ -1477,8 +1508,9 @@ function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
 /* ─── F2-5 로컬 알림(앱이 열려 있을 때 나를 부르거나 내가 확정할 결재가 오면 OS 알림) — 권한은 여기서만 요청 ─── */
 function NotifyRow() {
   const { t } = useT();
-  const supported = typeof Notification !== 'undefined';
+  const supported = !isMobilePlatform && typeof Notification !== 'undefined';
   const [perm, setPerm] = useState(supported ? Notification.permission : 'unsupported');
+  if (isMobilePlatform) return <span className="note">{t('set.notify.mobile')}</span>;
   if (!supported) return <span className="note">{t('set.notify.unsupported')}</span>;
   if (perm === 'granted') return <span className="note"><I name="check" size={12} /> {t('set.notify.on')}</span>;
   if (perm === 'denied') return <span className="note">{t('set.notify.denied')}</span>;
@@ -1649,10 +1681,11 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   // [헤르메스 연결하기] = 이 컴퓨터의 헤르메스 프로필(오픈클로는 등록 에이전트) **전원**을 읽어 각각 봇을 만들고(이름 = 그 에이전트 이름) 한 번에 연결(유건 지시 2026-09-08).
   // 앱 밖(브라우저)이거나 CLI가 없으면 봇 하나만 만들고 수동 안내를 보인다.
   const connectAll = async (kind) => {
+    if (isMobilePlatform && kind !== 'custom') { onNote(t('org.agents.mobile')); return; }
     setBusy(true); setAuto(null); setSetups([]);
     try {
       let agents = null; let installation = null;
-      if (inTauri() && ['hermes', 'openclaw'].includes(kind)) {
+      if (isDesktopTauri() && ['hermes', 'openclaw'].includes(kind)) {
         const { invoke } = await import('@tauri-apps/api/core');
         const l = await invoke('agent_list', { kind });
         if (l?.ok && l.agents?.length) { agents = l.agents; installation = l.installationId; } else if (l?.reason === 'cli_missing') setAuto({ status: 'missing', results: [] }); else if (!l?.ok) throw new Error(t('org.agents.discovery.failed'));
@@ -1675,7 +1708,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     finally { setBusy(false); }
   };
   const autoConnect = async (kind, token, bot) => { // 회전 뒤 다시 연결(봇 하나) — external_id가 있는 봇만 이 컴퓨터에 자동 설정
-    if (!inTauri() || !['hermes', 'openclaw'].includes(kind) || !bot?.external_id) { setAuto(null); return; }
+    if (!isDesktopTauri() || !['hermes', 'openclaw'].includes(kind) || !bot?.external_id) { setAuto(null); return; }
     setAuto({ status: 'running', results: [] });
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -1712,10 +1745,10 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   };
   if (part === 'agents') { const liveBots = bots.filter((b) => !b.revoked_at); return (
     <section className="msgr-setcard">
-      <h2>{t('org.agents')}</h2><p>{t('org.agents.desc')}</p>
+      <h2>{t('org.agents')}</h2><p>{t(isMobilePlatform ? 'org.agents.mobile' : 'org.agents.desc')}</p>
       <div className="row">
-        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => addBot('hermes')} title={mineOf('hermes') ? t('org.agents.reconnect.title') : undefined}><I name={mineOf('hermes') ? 'at' : 'plus'} size={13} />{mineOf('hermes') ? t('org.agents.reconnect', { kind: t('org.agents.kind.hermes') }) : t('org.agents.add.hermes')}</button>
-        <button type="button" className="btn sm" disabled={busy} onClick={() => addBot('openclaw')} title={mineOf('openclaw') ? t('org.agents.reconnect.title') : undefined}>{mineOf('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
+        <button type="button" className="btn btn-primary sm" disabled={busy || isMobilePlatform} onClick={() => addBot('hermes')} title={mineOf('hermes') ? t('org.agents.reconnect.title') : undefined}><I name={mineOf('hermes') ? 'at' : 'plus'} size={13} />{mineOf('hermes') ? t('org.agents.reconnect', { kind: t('org.agents.kind.hermes') }) : t('org.agents.add.hermes')}</button>
+        <button type="button" className="btn sm" disabled={busy || isMobilePlatform} onClick={() => addBot('openclaw')} title={mineOf('openclaw') ? t('org.agents.reconnect.title') : undefined}>{mineOf('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
         {(mineOf('hermes') || mineOf('openclaw')) && <span className="msgr-klabel">{t('org.agents.another')} {mineOf('hermes') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('hermes')}>{t('org.agents.kind.hermes')}</button>}{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('openclaw')}>{t('org.agents.kind.openclaw')}</button>}</span>}
       </div>
@@ -1951,7 +1984,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = []
     ['', t('org.step.invite'), t('org.step.invite.sub'), null],
   ];
   return (<>
-    <div className="msgr-top"><button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
+    <div className="msgr-top"><button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
     <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
       <span className="msgr-klabel">{org ? t('ch.list') : t('org.pick')}</span>
       <h1>{org ? t('ch.noChannelTitle') : t('org.noneTitle')}</h1>
@@ -1982,7 +2015,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
     const ids = list.map((m) => m.id);
     if (ids.length) {
       const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
-      setAtts((cur) => { const n = { ...cur }; for (const r of a) (n[r.message_id] ??= []).push(r); return n; });
+      setAtts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of a) n[r.message_id].push(r); return n; });
       const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids));
       setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
     }
@@ -1991,6 +2024,10 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
     setAps(Object.fromEntries(apRows.map((r) => [r.id, r])));
   }, [chId]);
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!isMobilePlatform) return;
+    return observeMobileResume(() => load().catch((e) => onError(e.message)));
+  }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reacts, setReacts] = useState({}); const [divider, setDivider] = useState(0); // 반응(메시지별)·새 메시지 구분선(열 때의 읽음 커서)
   const reloadReacts = useCallback(async (id) => { const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').eq('message_id', id)); setReacts((cur) => ({ ...cur, [id]: rx })); }, []);
   const reloadMsg = useCallback(async (id) => { const row = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta').eq('id', id).maybeSingle()); if (row) setMsgs((cur) => (cur ?? []).map((m) => (m.id === id ? row : m))); }, []);
@@ -2054,7 +2091,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
     <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-controls="msgr-navigation" aria-label={t('ui.menu')}><I name="menu" /></button>
       <button type="button" className="title msgr-titlebtn" onClick={onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{channel.kind === 'dm' ? dmName(channel) : channel.name}<I name="caret" size={13} className="caret" /></button>
       {channel.topic && <span className="topic">{channel.topic}</span>}
       {/* 켜고 끄는 자리가 안 보인다(유건 2026-09-09) → 표지 자체가 토글. 아이콘만, 꺼짐 = 취소선·붉은색 */}
@@ -2082,9 +2119,11 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
   // 화면 고정(fixed) + 열린 동안 스레드 스크롤 잠금(유건 지시 2026-09-09 "드롭박스 열렸을 때는 스크롤 고정, 닫히고 스크롤"). 위치는 창 크기(clientWidth/Height) 기준으로
   // 버튼 아래(자리 없으면 위), 가로는 버튼 왼쪽에 맞추되 창 밖이면 버튼 오른쪽 끝에 맞춘다 — 오른쪽 정렬된 내 글에서 창 밖으로 나가던 결함.
   const W = 322, H = 320, COLS = 9; // 322 = 격자 9×30 + 틈 8 + 안쪽 여백 16 + 세로 스크롤바 자리 ≤ 18 — 가로 스크롤 없음 // COLS = 격자 열 수 — 자주 사용 줄은 이 수만큼
-  const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+  const viewport = window.visualViewport;
+  const vw = viewport?.width ?? document.documentElement.clientWidth, vh = viewport?.height ?? document.documentElement.clientHeight;
+  const vtop = viewport?.offsetTop ?? 0;
   const left = Math.max(8, anchor.left + W + 8 <= vw ? anchor.left : Math.min(anchor.right - W, vw - W - 8));
-  const top = anchor.bottom + H + 8 <= vh ? anchor.bottom + 6 : Math.max(8, anchor.top - H - 6);
+  const top = Math.max(vtop + 8, Math.min(anchor.bottom + H + 8 <= vtop + vh ? anchor.bottom + 6 : anchor.top - H - 6, vtop + vh - H - 8));
   useEffect(() => {
     document.body.classList.add('msgr-lock'); // .msgr-thread overflow hidden — 열린 동안 스크롤 없음
     const off = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); }; const key = (e) => { if (e.key === 'Escape') onClose(); };
@@ -2256,10 +2295,14 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
   );
 }
 function Attachment({ a, onError }) {
+  const { t } = useT();
   const open = async () => {
-    const { data, error } = await supabase.storage.from('msgr').createSignedUrl(a.storage_path, 600); // 서명 URL(단수명) — 버킷 정책은 채널 단위
-    if (error) return onError?.(error.message);
-    window.open(data.signedUrl, '_blank', 'noopener');
+    try {
+      const { data, error } = await supabase.storage.from('msgr').createSignedUrl(a.storage_path, 600); // 서명 URL(단수명) — 버킷 정책은 채널 단위
+      if (error) return onError?.(error.message);
+      if (isMobileNative) await (await import('@tauri-apps/plugin-opener')).openUrl(data.signedUrl);
+      else window.open(data.signedUrl, '_blank', 'noopener');
+    } catch { onError?.(t('msg.attachOpenFail')); }
   };
   return <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.round(a.bytes / 1024)}KB</span> : null}</button>;
 }
@@ -2326,7 +2369,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, locked = fal
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(candidates[sel]); return; }
       if (e.key === 'Escape') { setPop(null); return; }
     }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && !e.shiftKey && !isMobilePlatform) { e.preventDefault(); send(); }
   };
   return (
     <div className="msgr-dock" style={{ '--sbw': `${sbw}px` }}><div>

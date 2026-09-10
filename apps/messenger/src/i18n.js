@@ -5,6 +5,10 @@ export const DICT = {
   'auth.github': ['GitHub로 계속하기', 'Continue with GitHub'],
   'auth.waiting': ['브라우저에서 로그인을 마치면 자동으로 이어집니다…', 'Finish signing in on your browser — this will continue automatically…'],
   'auth.cancel': ['취소', 'Cancel'],
+  'auth.err.denied': ['로그인이 취소됐습니다. 다시 시도할 수 있습니다.', 'Sign-in was cancelled. You can try again.'],
+  'auth.err.exchange': ['로그인을 완료하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.', 'Could not finish signing in. Check your connection and try again.'],
+  'org.agents.mobile': ['컴퓨터의 Argo 메신저에서 헤르메스·오픈클로를 연결하세요. 연결한 에이전트는 이 휴대폰에서도 같은 채널에서 대화할 수 있습니다.', 'Connect Hermes or OpenClaw from Argo Messenger on your computer. Connected agents are available in the same channels on this phone.'],
+  'set.notify.mobile': ['현재 모바일 검수 버전은 앱을 닫았을 때의 푸시 알림을 지원하지 않습니다. 새 메시지는 앱을 열면 불러옵니다.', 'This mobile preview does not yet support push notifications while the app is closed. New messages load when you open the app.'],
   'auth.err.notApp': ['브라우저 로그인은 Argo Messenger 앱에서만 됩니다. 앱을 설치해 열어 주세요.', 'Browser sign-in works only in the Argo Messenger app. Please install and open the app.'],
   'auth.err.start': ['로그인 준비에 실패했습니다. 앱을 다시 시작한 뒤 시도해 주세요.', 'Could not prepare sign-in. Restart the app and try again.'],
   'auth.err.open': ['브라우저를 열지 못했습니다. 앱을 다시 시작한 뒤 시도해 주세요.', 'Could not open the browser. Restart the app and try again.'],
@@ -53,6 +57,7 @@ export const DICT = {
   'ch.empty': ['첫 메시지를 남겨 보세요. @로 에이전트를 부를 수 있습니다.', 'Say something. Mention a agent with @.'],
   'msg.send': ['보내기', 'Send'],
   'msg.attach': ['첨부', 'Attach'],
+  'msg.attachOpenFail': ['첨부 파일을 열지 못했습니다. 연결을 확인하고 다시 시도해 주세요.', 'Could not open the attachment. Check your connection and try again.'],
   'msg.typing': ['{name} 입력 중…', '{name} is typing…'],
   // P0(2026-09-09): 안 읽음·편집·삭제·반응·음소거·조용한 시간
   'msg.new': ['새 메시지', 'New messages'],

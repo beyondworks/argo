@@ -2,12 +2,12 @@
 // 켜질 때 한 번 latest.json(릴리스 repo)과 대조 → 있으면 얇은 막대 → 설치 → 재시작. 실패는 막대에 문구로(침묵 금지).
 import { useEffect, useState } from 'react';
 
-const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+import { isDesktopTauri } from './platform.js';
 
 export function useUpdate() {
   const [st, setSt] = useState({ phase: 'idle', version: '', error: '' }); // idle | available | installing | ready | error
   useEffect(() => {
-    if (!inTauri()) return;
+    if (!isDesktopTauri()) return;
     let alive = true;
     (async () => {
       try {

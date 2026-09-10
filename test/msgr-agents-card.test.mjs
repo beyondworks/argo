@@ -58,7 +58,7 @@ test('원클릭 연결(유건 지시 "이렇게 어려우면 안 돼"): 앱 안�
   const card = app.slice(app.indexOf('// ── 부록 N: 외부 에이전트'), app.indexOf("if (part === 'node') return ("));
   assert.match(card, /invoke\('agent_connect', \{ kind, url: botUrl, agents: made\.map/, '앱 커맨드 호출(에이전트 전원)');
   assert.match(card, /autoConnect\(b\.kind, r\.data, b\);/, '회전 직후 자동 연결');
-  assert.match(card, /if \(!inTauri\(\) \|\| !\['hermes', 'openclaw'\]\.includes\(kind\) \|\| !bot\?\.external_id\) \{ setAuto\(null\); return; \}/, '앱 밖·기타 종류·다른 컴퓨터 봇은 수동');
+  assert.match(card, /if \(!isDesktopTauri\(\) \|\| !\['hermes', 'openclaw'\]\.includes\(kind\) \|\| !bot\?\.external_id\) \{ setAuto\(null\); return; \}/, '앱 밖·기타 종류·다른 컴퓨터 봇은 수동');
   assert.match(card, /r\?\.reason === 'cli_missing' \? 'missing' : 'failed'/, 'CLI 없음 분기');
   const rs = read('apps/messenger/src-tauri/src/agents.rs');
   assert.match(rs, /pub fn agent_connect\(app: tauri::AppHandle, kind: String, url: String, agents: Vec<AgentSetup>\)/, 'Rust 커맨드(에이전트 배열)');

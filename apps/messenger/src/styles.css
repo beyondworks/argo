@@ -279,7 +279,7 @@
 .msgr-auth .foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 12px; color: var(--fg-3); }
 
 .msgr-menu { display: none; }
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) {
   .shell.msgr-shell { grid-template-columns: 1fr; } .msgr-side { display: none; }
   .msgr-menu { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: none; color: var(--fg); }
   .msgr-top { flex-wrap: wrap; padding: 10px 14px; row-gap: 8px; } .msgr-top .topic, .msgr-top .members { display: none; }
@@ -289,7 +289,7 @@
   .msgr-empty { margin: 0 auto; align-self: flex-start; padding: 8px 0 24px; } .msgr-step .card { grid-template-columns: 1fr; }
 }
 /* 폰 폭 레일 — 메뉴 버튼으로 오버레이(안 될 버튼은 노출 금지: 메뉴 버튼이 실제로 연다) */
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) {
   .msgr-shell.rail-open .msgr-side { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 60; width: min(300px, 88vw); }
   .msgr-scrim { display: block; position: fixed; inset: 0; z-index: 55; background: var(--overlay); }
 }
@@ -312,7 +312,7 @@
 .msgr-docs .doc .new { display: grid; gap: 10px; }
 .msgr-docs .msgr-input { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--fg); padding: 8px 10px; font: inherit; font-size: 13px; }
 .msgr-docs .msgr-input.body { min-height: 260px; resize: vertical; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
-@media (max-width: 720px) { .msgr-docs { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) { .msgr-docs { grid-template-columns: minmax(0, 1fr); } }
 .msgr-auth .devsep { display: block; margin: 6px 0 -4px; padding-top: 10px; border-top: 1px dashed var(--border); }
 .msgr-auth .msgr-wait { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .msgr-auth .msgr-wait .msgr-klabel { flex: 1; }
@@ -324,7 +324,7 @@
 .msgr-inline .msgr-seg { width: max-content; max-width: 100%; }
 .msgr-inline .msgr-seg button { height: 26px; padding: 0 10px; font-size: 12px; }
 .msgr-inline .acts { display: flex; gap: 6px; }
-@media (max-width: 720px) { .msgr-inline .msgr-seg { order: 0; width: max-content; overflow: visible; } } /* 폰 폭의 전역 .msgr-seg order:9(탭 줄바꿈용)가 폼 안 종류 선택을 버튼 뒤로 보냈다(QA) */
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) { .msgr-inline .msgr-seg { order: 0; width: max-content; overflow: visible; } } /* 폰 폭의 전역 .msgr-seg order:9(탭 줄바꿈용)가 폼 안 종류 선택을 버튼 뒤로 보냈다(QA) */
 .msgr-menu-pop .msgr-inline { padding: 4px 4px 6px; }
 .msgr-crewsheet .confirm { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); }
 .msgr-crewsheet .confirm p { margin: 0; font-size: 12.5px; color: var(--fg-2); line-height: 1.5; }
@@ -341,7 +341,7 @@
 .msgr-top .members { display: inline-flex; align-items: center; gap: 0; padding: 3px 10px 3px 4px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer; font: inherit; }
 .msgr-top .members:hover { background: var(--card-2); border-color: var(--border); }
 .msgr-top .members .n { margin-left: 8px; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; }
-@media (max-width: 720px) { .msgr-top .members .n { display: none; } .msgr-top .members .msgr-av:nth-child(n+5) { display: none; } } /* 폰 폭: 제목 옆 공간이 좁다 — 아바타 4개만 */
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) { .msgr-top .members .n { display: none; } .msgr-top .members .msgr-av:nth-child(n+5) { display: none; } } /* 폰 폭: 제목 옆 공간이 좁다 — 아바타 4개만 */
 .msgr-rows { display: grid; gap: 4px; }
 .msgr-rows .msgr-klabel { margin-top: 6px; }
 .msgr-rows .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; border-radius: 10px; min-width: 0; } /* overflow hidden 금지 — 행의 '…' 메뉴(absolute)가 잘려 안 보이던 결함(유건 제보 2026-09-09). 폭 안전은 .name 상한 + .sub 말줄임 + 시트 overflow-x hidden이 맡는다 */ /* min-width 0 + overflow — 긴 부제(크루 역할·소유자·파견)가 행을 늘려 시트가 창 밖으로 밀리던 결함(유건 실측 2026-09-07, 1100px 창) */
@@ -383,7 +383,7 @@
 .msgr-audit .act { font-family: var(--mono); font-size: 11.5px; }
 .msgr-audit .tgt { color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-audit .empty { margin: 0; color: var(--fg-3); font-size: 12px; }
-@media (max-width: 720px) { .msgr-audit .row { grid-template-columns: 80px minmax(0, 1fr); } .msgr-audit .who, .msgr-audit .tgt { display: none; } }
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) { .msgr-audit .row { grid-template-columns: 80px minmax(0, 1fr); } .msgr-audit .who, .msgr-audit .tgt { display: none; } }
 .msgr-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); font-size: 10.5px; color: var(--fg-3); }
 .msgr-rows .row .btn.ghost.on { color: var(--fg); background: var(--card); border: 1px solid var(--mark); }
 .msgr-setcard .picks { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -456,7 +456,7 @@
 .msgr-setnav button:hover { background: var(--card-2); color: var(--fg); }
 .msgr-setnav button.on { background: var(--card); color: var(--fg); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border); }
 .msgr-setbody { display: grid; gap: 14px; min-width: 0; }
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) {
   .msgr-settings.tabs { grid-template-columns: 1fr; gap: 10px; }
   .msgr-setnav { display: flex; gap: 4px; position: static; overflow-x: auto; scrollbar-width: none; }
   .msgr-setnav button { flex: 0 0 auto; }
@@ -488,7 +488,7 @@
 .msgr-thread.page .msgr-setcard { padding: 22px 26px; }
 .msgr-thread.page .msgr-docs .doc { padding: 22px 26px; min-height: 420px; }
 .msgr-thread.page .msgr-docs .msgr-input.body { min-height: 420px; }
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) {
   .msgr-thread.page { padding: 12px 14px 24px; }
   .msgr-thread.page .msgr-docs { grid-template-columns: 1fr; }
 }
@@ -717,3 +717,82 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-toast { position: fixed; z-index: 80; top: 14px; left: 50%; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px)); padding: 9px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; box-shadow: 0 10px 28px rgba(0,0,0,0.22); cursor: pointer; text-align: left; animation: msgrToastIn 160ms ease; }
 .msgr-toast.err { color: var(--danger, #d05a5a); border-color: color-mix(in srgb, var(--danger, #d05a5a) 40%, var(--border)); }
 @keyframes msgrToastIn { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+
+/* Narrow screens and short touch viewports (phone landscape/keyboard) keep one conversation pane. */
+.msgr-rail-close { display: none; }
+@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) {
+  body.argo-messenger { min-width: 0; min-height: 100dvh; }
+  .shell.msgr-shell {
+    position: fixed; top: var(--msgr-viewport-top, 0px); left: 0; right: 0;
+    height: var(--msgr-viewport-height, 100dvh); min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .msgr-main { height: 100%; overflow: hidden; }
+  .msgr-top, .msgr-dock { flex: none; }
+  .msgr-top {
+    gap: 6px; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+  }
+  .msgr-top .title { min-width: 0; flex: 1; font-size: 16px; white-space: normal; overflow-wrap: anywhere; }
+  .msgr-top .title .mi { flex: none; }
+  .msgr-top .msgr-seg { flex: 0 0 100%; min-width: 0; }
+  .msgr-top .msgr-seg button { flex: 1 0 auto; justify-content: center; padding: 0 10px; }
+  .msgr-thread { min-width: 0; padding: 12px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left)); scrollbar-gutter: auto; }
+  .msgr-row { gap: 8px; }
+  .msgr-row > div { min-width: 0; }
+  .msgr-row .who { flex-wrap: wrap; gap: 4px 8px; }
+  .msgr-row .who .role { flex-basis: 100%; }
+  .msgr-sheet, .msgr-slip .body { padding: 10px 12px; overflow-wrap: anywhere; }
+  .msgr-mine { margin-left: 28px; min-width: 0; }
+  .msgr-mine .bubble { max-width: 100%; }
+  .msgr-file { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
+  .msgr-slip .band { flex-wrap: wrap; gap: 6px; }
+  .msgr-editbox { min-width: 0; width: 100%; }
+  .msgr-dock { padding: 8px max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .msgr-composer { padding: 8px 10px; border-radius: 18px; gap: 4px; }
+  .msgr-composer textarea { max-height: min(160px, 25dvh); }
+  /* 16px inputs prevent iOS focus zoom without disabling the user's pinch zoom. */
+  .argo-messenger :is(input, textarea, select) { font-size: 16px !important; }
+  .msgr-sub { padding: 4px 6px 0; flex-wrap: wrap; }
+  .msgr-pop { min-width: 0; max-width: 100%; width: 100%; max-height: min(280px, 40dvh); }
+  .msgr-pop button { overflow-wrap: anywhere; }
+  .msgr-shell.rail-open .msgr-side {
+    height: var(--msgr-viewport-height, 100dvh); top: var(--msgr-viewport-top, 0px); bottom: auto;
+    padding: max(12px, env(safe-area-inset-top)) 14px max(12px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .msgr-brand { min-height: 44px; padding-bottom: 4px; }
+  .msgr-rail-close { display: grid; place-items: center; margin-left: auto; border-radius: 10px; }
+  .msgr-side .msgr-railrow .item { padding-right: 48px; }
+  .msgr-side .msgr-railrow .more { opacity: 1; }
+  .msgr-acts { opacity: 1; }
+  .msgr-thread.page .msgr-settings.tabs { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .msgr-thread.page .msgr-setcard, .msgr-thread.page .msgr-docs .doc { padding: 14px; }
+  .msgr-setcard .row { flex-wrap: wrap; }
+  .msgr-crewsheet { top: max(8px, env(safe-area-inset-top)); right: 8px; width: calc(100% - 16px); max-width: calc(100% - 16px); max-height: calc(100% - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))); padding: 14px; }
+  .msgr-emojipop { max-width: calc(100vw - 16px); }
+  .msgr-emojipop .grid { grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); }
+  .msgr-toast { top: max(12px, env(safe-area-inset-top)); }
+  .msgr-auth { min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  /* Implicit auto grid tracks inherited native input widths and clipped the card's right edge. */
+  .msgr-auth, .msgr-auth .msgr-card, .msgr-auth .body, .msgr-auth .msgr-server { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+  .msgr-auth .body { padding: 18px; }
+  .msgr-auth .body > *, .msgr-auth .band, .msgr-auth .foot > span { min-width: 0; }
+  .msgr-auth .msgr-field { width: 100%; min-width: 0; }
+  .msgr-auth .msgr-field input { width: 0; max-width: 100%; }
+  .msgr-auth .msgr-wait, .msgr-auth .msgr-server .row { flex-wrap: wrap; }
+  .argo-messenger :is(.btn, .msgr-titlebtn, .msgr-menu, .msgr-rail-close, .msgr-hchip, .msgr-sortbtn, .msgr-tools .tb, .msgr-tools .send, .msgr-side .msgr-list .item, .msgr-side .msgr-railrow .more, .msgr-side .msgr-foot .me, .msgr-seg button, .msgr-setnav button, .msgr-acts button, .msgr-reacts button, .msgr-pop button, .msgr-emojipop .grid button, .msgr-rowmenu button, .msgr-menu-pop button, .msgr-file) { min-width: 44px; min-height: 44px; height: auto; }
+  .msgr-tools .filechip { max-width: 100%; overflow-wrap: anywhere; }
+  .msgr-tools .filechip button { min-width: 44px; min-height: 44px; }
+}
+/* A landscape keyboard can leave only ~240px: keep the header in one row so the composer still fits. */
+@media (min-width: 721px) and (pointer: coarse) and (max-height: 320px) {
+  .msgr-top { flex-wrap: nowrap; }
+  .msgr-top .msgr-seg { flex: 0 1 auto; width: auto; order: 0; }
+}
+/* iOS may keep the layout viewport tall while the visual viewport shrinks behind its keyboard. */
+.argo-messenger.msgr-short-viewport .msgr-top { flex-wrap: nowrap; }
+.argo-messenger.msgr-short-viewport .msgr-top .msgr-seg { flex: 0 1 auto; width: auto; order: 0; }
+.argo-messenger.msgr-short-viewport .msgr-composer { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+.argo-messenger.msgr-short-viewport .msgr-composer textarea { max-height: 44px; }
+.argo-messenger.msgr-short-viewport .msgr-sub { display: none; }
+.argo-messenger.msgr-short-viewport .msgr-thread { padding-top: 0; padding-bottom: 0; }
