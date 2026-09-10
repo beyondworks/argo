@@ -55,7 +55,7 @@ test('ensureNoDockShim — 프리로드 파일을 원자적으로 만들고(0600
     assert.equal(await ensureNoDockShim(p), p, '없던 디렉터리도 만든다');
     const st = await stat(p);
     assert.ok(st.isFile());
-    assert.equal(st.mode & 0o777, 0o600, '~/.argo 산출물 관례(검수 MEDIUM-4)');
+    if (process.platform !== 'win32') assert.equal(st.mode & 0o777, 0o600, '~/.argo 산출물 관례(검수 MEDIUM-4) — 윈도우는 유닉스 권한 비트가 없다');
     const src = await readFile(p, 'utf8');
     assert.match(src, /platform === 'darwin'/, 'darwin 밖에서는 no-op');
     assert.match(src, /defineProperty\(process, 'title'/);
@@ -135,7 +135,7 @@ test('행동 — 프리로드가 걸려도 자식이 정상 실행된다(NODE_OP
 });
 
 test('기본 경로는 ~/.argo/tools/no-dock.cjs — codex 조달과 같은 도구 디렉터리(회사 데이터와 분리)', () => {
-  assert.match(noDockShimPath(), /\.argo\/tools\/no-dock\.cjs$/);
+  assert.match(noDockShimPath(), /[\\/]\.argo[\\/]tools[\\/]no-dock\.cjs$/, '경로 구분자는 OS마다 다르다');
 });
 
 test('배선 — 서버 부팅 훅이 스케줄러보다 먼저 setupNoDock을 부른다(첫 배달 턴의 자식부터 덮이게)', async () => {
