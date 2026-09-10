@@ -997,8 +997,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-actsheet .row.danger { color: var(--danger); }
   .msgr-actsheet .quick button:active, .msgr-actsheet .tiles button:active { transform: scale(.95); }
   /* 뒤로 스와이프 중: 홈이 밑에 깔리고 현재 화면이 그 위에서 밀린다(iOS 내비게이션). 놓으면 홈이 이미 보이므로 튀어 들어오지 않는다 */
-  .msgr-phone.swiping-back .msgr-side { display: flex; position: absolute; inset: 0; z-index: 0; width: 100%; animation: none; }
-  .msgr-phone.swiping-back .msgr-main { position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); }
+  .msgr-phone.phone-home.swiping-back .msgr-side { position: absolute; inset: 0; z-index: 0; width: 100%; min-height: 0; animation: none; }
+  .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); padding-bottom: 0; }
+  .msgr-phone.phone-home.swiping-back .msgr-main > :not(.msgr-sheetwrap) { display: revert; }
   .msgr-phone.swiping-back .msgr-tabbar, .msgr-phone.swiping-back .msgr-fab { display: none; }
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
