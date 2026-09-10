@@ -151,7 +151,9 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
   const trustedSkillTrees = (await Promise.all(['.claude', '.codex', '.agents', '.hermes', '.openclaw'].map(async name => { const tree = path.join(home, name, 'skills'); const real = await fs.realpath(tree).catch(() => null); return real === tree && inside(home, real) && real !== home ? real : null; }))).filter(Boolean);
   const scannedDirs = new Set(); // 소스를 넘어 **완료한** 실디렉터리 — 같은 트리 재순회 차단(검수 MEDIUM-4). 중간 실패한 트리는 넣지 않는다(2R MEDIUM: 주인 소스가 자기 예산으로 다시 스캔해야 한다)
   const walkingDirs = new Set(); // 순회 중인 실디렉터리 — 교차 링크 순환(claude↔codex) 차단
-  const seenSkillPaths = new Set(); // `${scope}:${SKILL.md 실경로}` — 같은 스킬 접기. 항목 key 자체는 종전 형식 그대로다(영수증 호환은 그쪽)
+  const seenSkillPaths = new Set(); // `${scope}:${SKILL.md 실경로}` — **온전히 수집한** 스킬만 등록해 접는다. 항목 key 자체는 종전 형식 그대로다(영수증 호환은 그쪽)
+  const truncatedSkills = new Map(); // foldKey → 잘린 껍데기 항목 key — 주인이 온전본을 가져오면 껍데기를 걷어낸다(4R MEDIUM-2·LOW-1)
+  const TRUNCATED = ['scan-limit', 'source-unreadable', 'broken-link']; // 남의 예산·권한 탓 — 주인 소스가 다시 읽으면 달라질 수 있는 사유
   // 접기·완료 표시의 범위(2R 결정): 도구 소스(claude·codex·agents)는 서로 공유('tools'), 크루 소스(hermes 프로필·openclaw 에이전트)는 크루(group)마다.
   const foldScope = (source, group) => (['hermes', 'openclaw'].includes(source) ? group : 'tools');
   // walkingDirs·scannedDirs는 순회가 완전 직렬(모든 skills()/visit()이 await)이라는 전제 위에 있다 — 소스를 병렬화하면 한 소스가 이슈도 항목도 없이 0건이 된다(3R LOW-3).
@@ -187,18 +189,27 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
     if (total > limits.bytes) throw fail('scan-limit');
     return { ...result, file: { ...result.file, rel, containsSecret: containsSecret(result.data.toString('utf8')) } };
   }
-  function add(source, group, groupLabel, kind, name, files, extra = {}) {
-    const canonicalSkill = kind === 'skill' ? files.find(file => file.rel === 'SKILL.md')?.canonical : null;
-    const identity = canonicalSkill || name;
+  function add(source, group, groupLabel, kind, name, files, { skillDir, ...extra } = {}) { // skillDir(스킬 폴더 실경로)은 접기 정체용 — 항목에 싣지 않는다(경로 노출 금지)
+    const canonicalSkill = kind === 'skill' ? files.find(file => file.rel === 'SKILL.md')?.canonical || (skillDir ? path.join(skillDir, 'SKILL.md') : null) : null;
+    const identity = files.find(file => file.rel === 'SKILL.md')?.canonical || name; // 항목 key는 종전 형식 그대로(읽은 SKILL.md 실경로, 없으면 이름)
     const key = `${source}:${group}:${kind}:${identity}`;
     if (seen.has(key)) return;
     // 같은 SKILL.md를 여러 도구가 링크로 공유하면 먼저 본 소스 아래 한 번만 — 실경로가 없는(읽기 전 실패) 항목은 이름이 같아도 접지 않는다(검수 MEDIUM-3)
     // 접기 범위(2R 결정): 도구 소스(claude·codex·agents)는 같은 SKILL.md를 한 번만 — 도구 수만큼 곱해지던 것. 크루 소스(hermes 프로필·openclaw 에이전트)는
     // 크루(group)마다 보존 — 크루 첨부 스킬이 첫 크루에만 붙어 나머지 크루가 스킬 없이 들어오면 안 된다.
-    if (canonicalSkill) { const foldKey = `${foldScope(source, group)}:${canonicalSkill}`; if (seenSkillPaths.has(foldKey)) return; seenSkillPaths.add(foldKey); }
-    seen.add(key);
     const hasSecret = Boolean(extra.hasSecret || files.some(file => file.containsSecret));
     const reason = extra.reason || (hasSecret && kind !== 'mcp' ? 'secret-material' : null);
+    if (canonicalSkill) {
+      const foldKey = `${foldScope(source, group)}:${canonicalSkill}`;
+      if (seenSkillPaths.has(foldKey)) return; // 온전본이 이미 있다
+      if (TRUNCATED.includes(reason)) truncatedSkills.set(foldKey, key); // 껍데기는 접기 키를 선점하지 않는다 — 주인의 온전한 재수집이 버려지던 것(4R MEDIUM-2)
+      else {
+        seenSkillPaths.add(foldKey);
+        const stub = truncatedSkills.get(foldKey); // 먼저 들어온 껍데기는 걷어낸다 — 같은 스킬이 두 줄로 보이던 것(4R LOW-1)
+        if (stub) { const at = items.findIndex(item => item.key === stub); if (at >= 0) items.splice(at, 1); seen.delete(stub); truncatedSkills.delete(foldKey); }
+      }
+    }
+    seen.add(key);
     items.push({ key, source, group, groupLabel: safeLabel(groupLabel), kind, name: slug(path.basename(name)), label: safeLabel(path.basename(name)), files, fingerprint: digest(JSON.stringify([files.map(f => [f.canonical, f.rel, f.hash, f.mode]), extra.definition, reason])), compatibility: reason ? 'needs-setup' : 'available', ...extra, reason, hasSecret });
   }
   async function textAsset(source, group, label, root, relative, kind) {
@@ -214,9 +225,9 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
     async function visit(dir, depth, ancestors) {
       const real = await fs.realpath(dir);
       if (ancestors.has(real) || !inside(root, real)) throw fail('unsafe-path');
-      if (scannedDirs.has(`${scope}:${real}`) || walkingDirs.has(real)) return; // 같은 범위에서 완료된 트리 재순회·교차 링크 순환 차단
+      if (scannedDirs.has(`${scope}:${real}`) || walkingDirs.has(real)) return true; // 같은 범위에서 완료된 트리 재순회·교차 링크 순환 차단
       walkingDirs.add(real);
-      try { if (await walk(dir, depth, ancestors, real) !== false) scannedDirs.add(`${scope}:${real}`); } // 완료했을 때만 표시 — 예산·권한으로 중단된 트리를 "끝난 것"으로 남기면 주인 소스가 통째로 건너뛴다(패키지 수집이 잘린 경우 포함, 3R MEDIUM-2)
+      try { const complete = (await walk(dir, depth, ancestors, real)) !== false; if (complete) scannedDirs.add(`${scope}:${real}`); return complete; } // 완료했을 때만 표시 — 예산·권한으로 중단된 트리를 "끝난 것"으로 남기면 주인 소스가 통째로 건너뛴다(잘린 패키지·잘린 자식 포함)
       finally { walkingDirs.delete(real); }
     }
     async function walk(dir, depth, ancestors, real) {
@@ -249,10 +260,11 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
         }
         try { await collect(dir, '', depth, new Set()); if (excludedCount) reason = 'excluded-files'; }
         catch (error) { reason = error.reason === 'file-limit' ? 'package-limit' : error.reason || (error.code === 'ENOENT' ? 'broken-link' : 'source-unreadable'); }
-        add(source, group, label, 'skill', path.relative(root, dir) || path.basename(dir), files, { reason, excludedCount });
+        add(source, group, label, 'skill', path.relative(root, dir) || path.basename(dir), files, { reason, excludedCount, skillDir: real });
         // 남의 예산·권한으로 잘린 껍데기(scan-limit·source-unreadable·broken-link)는 주인 소스가 다시 읽어야 한다 → 완료로 표시하지 않는다. package-limit·excluded-files는 누가 읽어도 같다.
-        return !['scan-limit', 'source-unreadable', 'broken-link'].includes(reason);
+        return !TRUNCATED.includes(reason);
       }
+      let complete = true; // 자식 하나라도 잘렸으면 이 폴더도 미완 — 절단이 마지막 자식이면 예외가 안 올라와 부모가 완료로 남던 것(4R MEDIUM-1)
       for (const entry of list) {
         if (excluded(entry.name)) continue;
         const from = path.join(dir, entry.name);
@@ -260,9 +272,10 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
           let target;
           try { target = await fs.realpath(from); } catch (error) { if (error.code === 'ENOENT') { issue(source, 'broken-link'); continue; } throw error; } // 대상이 사라진 링크 — 이 항목만 건너뛴다
           if (!inside(root, target)) { if ((await fs.stat(target)).isDirectory()) await skills(source, group, label, from, false); else issue(source, 'unsafe-path'); continue; }
-          if ((await fs.stat(target)).isDirectory()) await visit(from, depth + 1, next);
+          if ((await fs.stat(target)).isDirectory() && (await visit(from, depth + 1, next)) === false) complete = false;
         }
       }
+      return complete;
     }
     try { await visit(root, 0, new Set()); } catch (error) { issue(source, error.reason || (error.code === 'ENOENT' ? 'broken-link' : 'source-unreadable')); }
   }

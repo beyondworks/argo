@@ -477,9 +477,28 @@ test('a skill package truncated by someone else\'s budget is not marked done —
   await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true });
   await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex')); // claude가 먼저 들어가 x0 수집 도중 예산이 끝난다
   const { items } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 20 } });
-  const stub = items.find(i => i.source === 'claude' && i.name === 'x0');
-  assert.equal(stub?.reason, 'scan-limit', '픽스처 전제: claude 아래 x0은 잘린 껍데기여야 한다');
   const full = items.find(i => i.source === 'codex' && i.name === 'x0');
   assert.equal(full?.reason, null, '잘린 껍데기가 완료로 남아 주인(codex)이 x0을 다시 읽지 못했다');
   assert.equal(full?.files.length, 9);
+  assert.ok(!items.some(i => i.source === 'claude' && i.name === 'x0'), '주인 온전본이 오면 claude 아래 껍데기는 걷혀야 한다(4R LOW-1)');
+});
+
+// ── 분리 검수 4R(2026-09-10) ──
+
+test('a truncated LAST child does not mark its parent done, and the owner\'s full copy replaces the stub (review 4R MEDIUM-1·LOW-1)', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/x0/SKILL.md', '# X0'); await f.write('.codex/skills/x1/SKILL.md', '# X1'); for (let i = 1; i <= 8; i++) await f.write(`.codex/skills/x1/t${i}.md`, 'x');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true }); await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex'));
+  const { items } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 20 } }); // claude가 x1(마지막 자식) 수집 도중 예산이 끝난다 — 형제 예외가 없어 부모가 완료로 남던 갈래
+  const x1 = items.filter(i => i.kind === 'skill' && i.name === 'x1');
+  assert.deepEqual(x1.map(i => [i.source, i.reason, i.files.length]), [['codex', null, 9]], '주인(codex)이 x1을 온전히 다시 읽고 껍데기는 걷어내야 한다');
+});
+
+test('a stub that already read SKILL.md before truncation does not claim the fold key (review 4R MEDIUM-2)', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/x0/SKILL.md', '# X0'); for (let i = 1; i <= 8; i++) await f.write(`.codex/skills/x0/t${i}.md`, 'x'); // SKILL.md가 t*보다 먼저 읽힌다
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true }); await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex'));
+  const { items } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 19 } });
+  const x0 = items.filter(i => i.kind === 'skill' && i.name === 'x0');
+  assert.deepEqual(x0.map(i => [i.source, i.reason, i.files.length]), [['codex', null, 9]], '껍데기가 접기 키를 선점해 주인의 온전한 재수집이 버려졌다');
 });
