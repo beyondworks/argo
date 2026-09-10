@@ -22,7 +22,7 @@ import { Sprite, I, STAR_D } from './icons.jsx';
 import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri } from './platform.js';
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
-import { useIsPhone } from './use-phone.js';
+import { useIsPhone, useSwipeTabs } from './use-phone.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -1155,20 +1155,23 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
   </>);
 }
 
+const INBOX_KINDS = ['all', 'mention', 'reply', 'approval', 'dm'];
 function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, nameOfUser, dmName, onOpen, onBack, onMenu }) {
   const { t, lang } = useT();
   const [kind, setKind] = useState(initialKind); // 페이지가 바뀌면 통째로 다시 그려지므로 초기값으로 충분하다
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
   const who = (it) => it.whoKind === 'crew' ? (crews.find((c) => c.id === it.who)?.display_name ?? t('org.crews')) : nameOfUser(it.who);
   const shown = items.filter((it) => kind === 'all' || it.kind === kind);
+  const phone = useIsPhone();
+  const swipe = useSwipeTabs(INBOX_KINDS, kind, setKind, phone);
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
       <span className="title"><I name="bell" size={18} />{t('inbox.title')}</span>
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-thread page"><div className="msgr-inbox">
-      <div className="msgr-seg" role="tablist">{['all', 'mention', 'reply', 'approval', 'dm'].map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
+    <div className="msgr-thread page" {...swipe}><div className="msgr-inbox">
+      <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
       {!shown.length && <p className="empty">{t('inbox.empty')}</p>}
       {shown.map((it) => (
         <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id)}>
@@ -1191,13 +1194,15 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
   const [tab, setTab] = useState(org ? 'members' : 'me');
   useEffect(() => { if (initialTab) { setTab(initialTab); onTabUsed?.(); } }, [initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  const phone = useIsPhone();
+  const swipe = useSwipeTabs(tabs.map(([k]) => k), tab, setTab, phone);
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
       <span className="title"><I name="gear" size={18} />{t('ui.settings')}</span>
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-thread page"><div className="msgr-settings tabs">
+    <div className="msgr-thread page" {...swipe}><div className="msgr-settings tabs">
       <nav className="msgr-setnav" aria-label={t('ui.settings')}>
         {tabs.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
       </nav>
