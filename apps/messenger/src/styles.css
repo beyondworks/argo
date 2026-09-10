@@ -846,7 +846,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 설정 탭 줄 = 알림함 거르개(.msgr-seg)와 같은 분절 컨트롤 — 앱 안에서 한 가지 모양만 쓴다(유건 2026-09-10) */
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav { display: flex; position: static; gap: 2px; padding: 2px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border-soft); overflow-x: auto; scrollbar-width: none; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav::-webkit-scrollbar { display: none; }
-  .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav button { flex: 0 0 auto; min-height: 28px; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--fg-2); }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav button { flex: 1 0 auto; text-align: center; /* 데스크톱 레일용 text-align:left가 남아 알약 안에서 글자가 왼쪽에 붙었다(블록 버튼이라 justify-content는 안 먹는다) */ min-height: 28px; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--fg-2); }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav button.on { background: var(--primary); color: var(--primary-fg); font-weight: 600; box-shadow: none; }
   .msgr-phone .msgr-thread.page .msgr-setcard { padding: 14px; border-radius: 14px; gap: 8px; }
   .msgr-phone .msgr-thread.page .msgr-setcard h2 { font-size: 14px; }
@@ -857,7 +857,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-setcard .msgr-rows .row .btn.ghost { width: 32px; height: 32px; min-width: 32px; min-height: 32px; }
   .msgr-phone .msgr-setcard .msgr-rows .row .btn.ghost.text { width: auto; padding: 0 10px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-seg { padding: 2px; }
-  .msgr-phone .msgr-main .msgr-thread.page .msgr-seg button { min-height: 28px; height: 28px; padding: 0 10px; font-size: 12.5px; }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-seg button { flex: 1 0 auto; justify-content: center; min-height: 28px; height: 28px; padding: 0 10px; font-size: 12.5px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-chan { height: 26px; font-size: 12px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-input { min-height: 34px; font-size: 16px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-input.sm { min-height: 30px; padding: 4px 8px; }
