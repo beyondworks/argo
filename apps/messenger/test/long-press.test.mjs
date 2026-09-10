@@ -52,6 +52,6 @@ test('모바일 액션은 기본 숨김이고 길게 누른 메시지에서만 �
   for (const cls of ['msgr-mine', 'msgr-row']) {
     assert.match(app, new RegExp(`<div className="${cls}" data-acts=\\{actsOpen \\? 'open' : undefined\\} \\{\\.\\.\\.hold\\}>`), `${cls} 래퍼 배선`);
   }
-  assert.match(app, /closest\?\.\('\.msgr-acts, \.msgr-emojipop'\)/, '바깥을 누르면 닫되 액션·이모지 피커는 예외');
+  assert.match(app, /closest\?\.\('\.msgr-acts, \.msgr-actsheet, \.msgr-emojipop'\)/, '바깥을 누르면 닫되 액션·폰 시트(body 포털)·이모지 피커는 예외');
   assert.match(phone, /\.msgr-mine \.bubble[^\n]*user-select: none;/, '본문 선택을 막아야 길게 누르기가 시스템 선택 메뉴에 가로채이지 않는다');
 });
