@@ -844,10 +844,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 설정 페이지 폰 규격 — 터치 최소 44는 홑동작 버튼에만 두고, 줄지어 놓인 칩·행은 촘촘하게(유건: 버튼이 크고 간격이 안 맞는다) */
   .msgr-phone .msgr-settings.tabs { gap: 14px; }
   /* 설정 탭 줄 = 알림함 거르개(.msgr-seg)와 같은 분절 컨트롤 — 앱 안에서 한 가지 모양만 쓴다(유건 2026-09-10) */
-  .msgr-phone .msgr-setnav { display: flex; position: static; gap: 2px; padding: 2px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border-soft); overflow-x: auto; scrollbar-width: none; }
-  .msgr-phone .msgr-setnav::-webkit-scrollbar { display: none; }
-  .msgr-phone .msgr-setnav button { flex: 0 0 auto; min-height: 28px; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--fg-2); }
-  .msgr-phone .msgr-setnav button.on { background: var(--primary); color: var(--primary-fg); font-weight: 600; box-shadow: none; }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav { display: flex; position: static; gap: 2px; padding: 2px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border-soft); overflow-x: auto; scrollbar-width: none; }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav::-webkit-scrollbar { display: none; }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav button { flex: 0 0 auto; min-height: 28px; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; font-weight: 500; color: var(--fg-2); }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav button.on { background: var(--primary); color: var(--primary-fg); font-weight: 600; box-shadow: none; }
   .msgr-phone .msgr-thread.page .msgr-setcard { padding: 14px; border-radius: 14px; gap: 8px; }
   .msgr-phone .msgr-thread.page .msgr-setcard h2 { font-size: 14px; }
   .msgr-phone .msgr-thread.page .msgr-setcard p { font-size: 12px; }
@@ -1024,5 +1024,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 페이지(설정·검색 등)도 같은 좌우 여백 — 알림함·기억은 위에서 이미 var(--ph-pad) */
   .msgr-phone .msgr-main .msgr-thread.page { padding: 12px var(--ph-pad) 24px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-inbox, .msgr-phone .msgr-main .msgr-thread.page .msgr-settings { padding-left: 0; padding-right: 0; }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-settings { padding-top: 12px; } /* 알림함과 같은 머리 아래 간격(12+12) */
   .msgr-phone .msgr-actlist .item { font-size: 14px; }
 }
