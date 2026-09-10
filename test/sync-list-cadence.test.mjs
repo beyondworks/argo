@@ -16,8 +16,17 @@ import { fileURLToPath } from 'node:url';
 const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sync.mjs'), 'utf8');
 
 test('cycle의 원격 tombstone 호출이 게이트를 탄다', () => {
-  assert.match(SRC, /syncTombstones\(keyOwner,\s*\{\s*remote:\s*discoverDue\s*\}\)/,
-    'syncTombstones가 { remote: discoverDue } 없이 불린다 — 매 사이클 .tombstones list가 돌아 절감이 사라진다');
+  assert.match(SRC, /syncTombstones\(keyOwner,\s*\{\s*remote:\s*discoverDue,\s*index:\s*syncIndex\s*\}\)/,
+    'syncTombstones가 { remote: discoverDue, index: syncIndex } 없이 불린다 — 매 사이클 .tombstones list가 돌거나 색인을 못 받는다');
+});
+
+// 2026-09-10 새 기기 회사 발견 실패 사후 — 색인 RPC(argo_sync_index)가 list를 대체한다. RPC도 같은 게이트를 탄다
+// (밀리초지만 8초마다 부를 이유가 없다) — 그리고 두 소비자(tombstone·discover)는 **같은 색인 한 번**을 나눠 쓴다.
+test('색인 RPC는 discover 게이트를 타고, 두 소비자가 같은 색인을 받는다', () => {
+  assert.match(SRC, /const syncIndex = discoverDue \? await loadSyncIndex\(\) : null;/,
+    '색인 로더가 discoverDue 게이트 밖에 있다 — 매 사이클 RPC가 돈다');
+  assert.match(SRC, /discoverRemote\(localOwners,\s*syncIndex\)/,
+    'discoverRemote가 색인을 안 받는다 — 새 기기가 다시 storage.search(30초 타임아웃)로 회사를 찾는다');
 });
 
 test('cycle의 discoverRemote 호출이 같은 게이트를 탄다', () => {
@@ -57,7 +66,7 @@ test('요금제 게이트가 원격 목록 조회(tombstone·discover)보다 앞
   const gate = cycleBody.indexOf('syncEntitled(');
   assert.ok(gate > 0, 'cycle 안에 요금제 게이트(syncEntitled)가 없다');
   const tombstones = cycleBody.indexOf('syncTombstones(keyOwner');
-  const discover = cycleBody.indexOf('discoverRemote(localOwners)');
+  const discover = cycleBody.indexOf('discoverRemote(localOwners');
   assert.ok(tombstones > 0 && gate < tombstones, '게이트가 tombstone 목록 조회 뒤에 있다 — 차단될 계정도 storage.search를 먼저 태운다(2026-07-27 사고 재발)');
   assert.ok(discover > 0 && gate < discover, '게이트가 discover 뒤에 있다 — 동일 사고 재발');
 });

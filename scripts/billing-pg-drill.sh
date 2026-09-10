@@ -4,6 +4,7 @@
 # 대상 파일(순차·파일마다 별도 DB — node --test는 파일을 병렬 프로세스로 돌리므로 한 DB를 공유하면 경합한다):
 #   test/billing-pg-integration.test.mjs  (apply_ls_event·is_pro 만료·대사 쿨다운·동시성)
 #   test/msgr-pg-integration.test.mjs     (팀 메신저 RLS·역할 경계표·좌석·결재 미러·Realtime 방송)
+#   test/sync-index-pg-integration.test.mjs (동기화 색인 RPC — 오너 경계·판정 동일성)
 # 요구: psql·initdb·pg_ctl (예: brew install postgresql@14). 포트 충돌 시 ARGO_PG_DRILL_PORT 지정.
 # 대안: supabase start 후 ARGO_PG_TEST_URL을 직접 지정해 node --test test/<파일>
 set -euo pipefail
@@ -24,7 +25,7 @@ initdb -D "$DIR/data" -A trust -U postgres >/dev/null
 pg_ctl -D "$DIR/data" -o "-p $PORT -k $DIR -c listen_addresses=127.0.0.1" -l "$DIR/pg.log" start >/dev/null
 
 FILES=("${@:-}")
-if [ -z "${FILES[0]}" ]; then FILES=(test/billing-pg-integration.test.mjs test/msgr-pg-integration.test.mjs); fi
+if [ -z "${FILES[0]}" ]; then FILES=(test/billing-pg-integration.test.mjs test/msgr-pg-integration.test.mjs test/sync-index-pg-integration.test.mjs); fi
 i=0
 for f in "${FILES[@]}"; do
   i=$((i + 1)); db="argo_drill_$i"
