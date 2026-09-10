@@ -947,6 +947,25 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb span { display: none; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(1) { order: 0; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-radius: 50%; background: var(--card); border: 1px solid var(--border-soft); }
   .msgr-phone .msgr-main:has(.msgr-dock .msgr-sub:not(:empty)) .msgr-thread { padding-bottom: 32px; } /* '입력 중…' 상태 줄은 흐름 밖(absolute)이라 마지막 말풍선과 겹쳤다 → 그만큼 스레드 바닥을 비운다(유건 2026-09-11) */
+
+  /* ── 폰 전환·눌림 효과(유건 2026-09-11) — transform·opacity만, 300ms 이하, 움직임 줄이기 설정이면 전부 끈다 ── */
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes msgrPageIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }   /* 앞으로: 오른쪽에서 */
+    @keyframes msgrPageBack { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } } /* 뒤로(홈): 왼쪽에서 */
+    @keyframes msgrSheetIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    .msgr-phone .msgr-main > .msgr-top, .msgr-phone .msgr-main > .msgr-thread, .msgr-phone .msgr-main > .msgr-actsplit { animation: msgrPageIn 200ms cubic-bezier(.2, .8, .2, 1) both; }
+    .msgr-phone.phone-home .msgr-side { animation: msgrPageBack 200ms cubic-bezier(.2, .8, .2, 1) both; } /* display none→flex로 돌아올 때 다시 재생된다 */
+    .msgr-phone .msgr-crewsheet, .msgr-phone .msgr-side .msgr-inline { animation: msgrSheetIn 220ms cubic-bezier(.2, .8, .2, 1) both; }
+    /* 눌림: 살짝 줄었다 돌아온다(120ms). 목록 행은 배경만(이미 있음) */
+    .msgr-phone .msgr-island button, .msgr-phone .msgr-tabsearch, .msgr-phone .msgr-fab, .msgr-phone .msgr-seg button, .msgr-phone .msgr-setnav button,
+    .msgr-phone .btn, .msgr-phone .msgr-foot .ph-node, .msgr-phone .msgr-foot .me, .msgr-phone .msgr-main .msgr-top .msgr-menu, .msgr-phone .msgr-main .msgr-top .msgr-hchip, .msgr-phone .msgr-main .msgr-top .members,
+    .msgr-phone .msgr-composer .send, .msgr-phone .msgr-composer .tb { transition: transform 120ms ease-out, background-color 120ms ease-out, opacity 120ms ease-out; }
+    .msgr-phone .msgr-island button:active, .msgr-phone .msgr-tabsearch:active, .msgr-phone .msgr-fab:active, .msgr-phone .msgr-seg button:active, .msgr-phone .msgr-setnav button:active,
+    .msgr-phone .btn:active:not(:disabled), .msgr-phone .msgr-foot .ph-node:active, .msgr-phone .msgr-foot .me:active, .msgr-phone .msgr-main .msgr-top .msgr-menu:active, .msgr-phone .msgr-main .msgr-top .msgr-hchip:active, .msgr-phone .msgr-main .msgr-top .members:active,
+    .msgr-phone .msgr-composer .send:active:not(:disabled), .msgr-phone .msgr-composer .tb:active { transform: scale(.95); }
+    .msgr-phone.phone-home .msgr-side .item, .msgr-phone.phone-home .msgr-sec > summary { transition: background-color 120ms ease-out; }
+    .msgr-phone .msgr-acttree .row { transition: background-color 120ms ease-out; }
+  }
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab { display: none; }
