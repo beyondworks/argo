@@ -879,7 +879,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* ③ 버튼 쏠림: 분절 컨트롤이 시트보다 넓어 오른쪽이 잘렸다 → 시트 폭 안에서 가로 스크롤, 칸은 폰 규격 */
   .msgr-phone .msgr-crewsheet .msgr-seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; padding: 2px; }
   .msgr-phone .msgr-crewsheet .msgr-seg::-webkit-scrollbar { display: none; }
-  .msgr-phone .msgr-crewsheet .msgr-seg button { flex: 0 0 auto; min-height: 28px; height: 28px; padding: 0 10px; font-size: 12.5px; white-space: nowrap; }
+  .msgr-phone .msgr-crewsheet .msgr-seg { justify-self: stretch; width: 100%; }
+  .msgr-phone .msgr-crewsheet .msgr-seg button { flex: 1 0 auto; justify-content: center; min-height: 28px; height: 28px; padding: 0 10px; font-size: 12.5px; white-space: nowrap; } /* 칸이 줄 폭을 나눠 갖는다 — 왼쪽으로 몰리지 않게(설정 탭과 같은 규칙) */
   .msgr-phone .msgr-crewsheet .btn { min-height: 32px; height: 32px; padding: 0 12px; font-size: 13px; }
   .msgr-phone .msgr-crewsheet .btn.sm { min-height: 28px; height: 28px; padding: 0 10px; font-size: 12.5px; }
   .msgr-phone .msgr-crewsheet .me { row-gap: 8px; }
