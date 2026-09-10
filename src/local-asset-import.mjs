@@ -99,7 +99,7 @@ async function targetExists(wsId, target) {
   if (await exists(join(paths(wsId).root, target))) return true;
   return target.startsWith('skills/') && await exists(join(paths(wsId).root, `${target}.md`));
 }
-const output = state => ({ phase: state.phase, ...(state.scanId ? { scanId: state.scanId } : {}), items: state.items || [], ...(state.company ? { company: state.company } : {}), ...(state.roots ? { roots: state.roots } : {}), ...(state.issues ? { issues: state.issues } : {}) });
+const output = state => ({ phase: state.phase, ...(state.scanId ? { scanId: state.scanId } : {}), items: state.items || [], ...(state.company ? { company: state.company } : {}), ...(state.roots ? { roots: state.roots } : {}), ...(state.issues ? { issues: state.issues } : {}), ...(state.approvedRootIds ? { approvedRootIds: state.approvedRootIds } : {}) });
 
 export async function discoverLocalAssets(context, { sourceOptions = {} } = {}) {
   const ident = await identity(context);
@@ -130,7 +130,7 @@ export async function previewLocalAssets(wsId, context, { approvedRootIds = [] }
       records.push({ id, identity: digest(ident.key, item.key), receiptKey: digest(ident.key, [item.key, item.fingerprint]), fingerprint: digest(ident.key, item.fingerprint), ...(item.sharedGroup ? { sharedGroupId: digest(ident.key, item.sharedGroup).slice(0, 24) } : {}), meta });
     }
     const state = { phase: 'reviewing', scanId, expires: Date.now() + TTL, binding: ident.id, wsId,
-      company: { id: wsId, name: co.name }, items: records.map(r => r.meta), roots: scan.roots.map(({ id, label }) => ({ id, label })), issues: scan.issues };
+      company: { id: wsId, name: co.name }, items: records.map(r => r.meta), roots: scan.roots.map(({ id, label }) => ({ id, label })), issues: scan.issues, approvedRootIds: scan.roots.filter(r => approvedRoots.includes(r.path)).map(r => r.id) };
     await writeJsonAtomic(join(ident.dir, `${wsId}-scan.json`), { ...state, records, approvedRoots });
     await writeJsonAtomic(join(ident.dir, `${wsId}-status.json`), state);
     return output(state);

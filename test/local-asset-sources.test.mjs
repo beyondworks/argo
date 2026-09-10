@@ -275,10 +275,9 @@ test('total source byte budget accepts 100 MiB exactly and rejects the next byte
 test('scan entry budget accepts 10,000 entries exactly and reports a limit at 10,001', async t => {
   const f = await fixture(t), directory = path.join(f.home, '.agents/skills');
   await fs.mkdir(directory, { recursive: true });
-  // The known-source skills inventory plus the immediate home profile-discovery
-  // inventory are both counted; home contributes its one .agents directory.
-  for (let start = 0; start < LOCAL_ASSET_LIMITS.files - 2; start += 100) {
-    const end = Math.min(start + 100, LOCAL_ASSET_LIMITS.files - 2);
+  // 예산은 **소스별**(2026-09-10) — agents 소스의 skills 목록 항목만 센다. 홈의 프로필 탐색 목록은 openclaw 소스의 예산이다.
+  for (let start = 0; start < LOCAL_ASSET_LIMITS.files - 1; start += 100) {
+    const end = Math.min(start + 100, LOCAL_ASSET_LIMITS.files - 1);
     await Promise.all(Array.from({ length: end - start }, (_, index) => fs.writeFile(path.join(directory, `file-${start + index}`), '')));
   }
   let result = await f.scan();
@@ -289,4 +288,217 @@ test('scan entry budget accepts 10,000 entries exactly and reports a limit at 10
   await fs.writeFile(path.join(directory, 'over-boundary'), '');
   result = await f.scan();
   assert.ok(result.issues.some(issue => issue.reason === 'scan-limit'));
+});
+
+// ── 2026-09-10 실사용 제보 "Hermes·OpenClaw 가져오기 실패" — 실제 홈 스캔으로 잡은 결함 4종 ──
+
+test('a dangling symlink skips only itself (broken-link) — siblings and the rest of the walk still scan', async t => {
+  const f = await fixture(t);
+  await f.write('.claude/skills/good/SKILL.md', '# Good');
+  await fs.symlink(path.join(f.root, 'missing-target'), path.join(f.home, '.claude/skills/a-broken')); // 정렬상 good보다 먼저 만난다
+  await f.write('.claude/skills/pkg/SKILL.md', '# Pkg');
+  await fs.symlink(path.join(f.root, 'missing-file.md'), path.join(f.home, '.claude/skills/pkg/ref.md'));
+  const { items, issues } = await f.scan();
+  assert.ok(items.some(i => i.source === 'claude' && i.name === 'good' && i.reason === null), '깨진 링크 뒤의 형제 스킬이 사라졌다 — 순회가 중단됐다');
+  assert.equal(items.find(i => i.source === 'claude' && i.name === 'pkg')?.reason, 'broken-link', '패키지 안 깨진 링크는 그 스킬만 broken-link');
+  assert.ok(issues.some(i => i.source === 'claude' && i.reason === 'broken-link'));
+  assert.ok(!issues.some(i => i.reason === 'source-unreadable'), '깨진 링크가 "원본을 읽을 수 없습니다"로 뭉개졌다');
+});
+
+test('cross-tool symlinks into another known skills tree are trusted without approval; links elsewhere still need it', async t => {
+  const f = await fixture(t);
+  await f.write('.agents/skills/shared/SKILL.md', '# Shared');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true });
+  await fs.symlink(path.join(f.home, '.agents/skills/shared'), path.join(f.home, '.claude/skills/shared'));
+  let result = await f.scan();
+  assert.equal(result.roots.length, 0, '다른 도구의 skills/ 트리를 가리키는 링크가 승인 폴더로 잡혔다');
+  assert.equal(result.items.find(i => i.source === 'claude' && i.name === 'shared')?.reason, null);
+  assert.ok(!result.issues.some(i => i.reason === 'external-root'));
+  const external = path.join(f.root, 'elsewhere'); await fs.mkdir(external); await fs.writeFile(path.join(external, 'SKILL.md'), '# Ext');
+  await fs.symlink(external, path.join(f.home, '.claude/skills/ext'));
+  result = await f.scan();
+  assert.equal(result.roots.length, 1, 'skills/ 트리 밖 링크는 여전히 승인 대상');
+  assert.ok(result.issues.some(i => i.source === 'claude' && i.reason === 'external-root'));
+  // 같은 SKILL.md를 두 도구가 공유하면 항목은 하나(먼저 찾은 소스 아래) — 목록이 도구 수만큼 곱해지지 않는다
+  assert.equal(result.items.filter(i => i.kind === 'skill' && i.name === 'shared').length, 1);
+});
+
+test('scan limits are per source — a bulky tool cannot starve the next one', async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 60; i++) await f.write(`.claude/skills/s${i}/SKILL.md`, '# S');
+  await f.write('.hermes/skills/h/SKILL.md', '# H');
+  const { items, issues } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 50 } });
+  assert.ok(issues.some(i => i.source === 'claude' && i.reason === 'scan-limit'), 'claude는 한도에 걸려야 한다(픽스처 전제)');
+  assert.equal(items.find(i => i.source === 'hermes' && i.name === 'h')?.reason, null, '앞 도구의 한도가 뒤 도구를 굶겼다');
+});
+
+test('codex [[skills.config]] path may point at SKILL.md (as Codex writes it) — folder is used, disabled flag applies', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/demo/SKILL.md', '# Demo');
+  await f.write('.codex/config.toml', '[[skills.config]]\npath = "~/.codex/skills/demo/SKILL.md"\nenabled = false\n');
+  const { items, issues } = await f.scan();
+  const demo = items.find(i => i.source === 'codex' && i.kind === 'skill' && i.name === 'demo');
+  assert.equal(demo?.reason, 'disabled');
+  assert.ok(!issues.some(i => i.source === 'codex' && i.reason === 'unsafe-path'), 'SKILL.md 파일 경로가 unsafe-path로 떨어졌다');
+});
+
+test('openclaw without openclaw.json still imports the default workspace (profile, memory, rules)', async t => {
+  const f = await fixture(t);
+  await f.write('.openclaw/workspace/IDENTITY.md', 'Main identity');
+  await f.write('.openclaw/workspace/SOUL.md', 'Main soul');
+  await f.write('.openclaw/workspace/USER.md', 'Main user memory');
+  await f.write('.openclaw/workspace/AGENTS.md', 'Rules');
+  const { items, issues } = await f.scan();
+  assert.equal(items.filter(i => i.source === 'openclaw' && i.kind === 'profile').length, 1);
+  assert.ok(items.some(i => i.source === 'openclaw' && i.kind === 'memory'));
+  assert.ok(items.some(i => i.source === 'openclaw' && i.kind === 'rule'));
+  assert.ok(!issues.some(i => i.source === 'openclaw'), `설정 없는 OpenClaw에 issue가 났다: ${JSON.stringify(issues)}`);
+  // 설정 파일이 있는데 깨진 경우는 종전대로 invalid-format — 단 설정과 무관한 skills·mcporter 검사는 계속 돈다(검수 MEDIUM-1: 회귀 금지)
+  await f.write('.openclaw/openclaw.json', '{ broken');
+  await f.write('.openclaw/skills/mine/SKILL.md', '# Mine');
+  await f.write('.openclaw/config/mcporter.json', '{}');
+  const again = await f.scan();
+  assert.ok(again.issues.some(i => i.source === 'openclaw' && i.reason === 'invalid-format'));
+  assert.ok(again.issues.some(i => i.source === 'openclaw' && i.reason === 'unsupported-option'), 'mcporter 검사가 설정 파손에 가려졌다');
+  assert.equal(again.items.filter(i => i.source === 'openclaw' && i.kind === 'profile').length, 0, '깨진 설정으로 workspace를 읽으면 안 된다');
+  assert.ok(again.items.some(i => i.source === 'openclaw' && i.kind === 'skill' && i.name === 'mine'), '깨진 설정이 스킬까지 감췄다');
+});
+
+// ── 분리 검수(2026-09-10) BLOCKED 조건 — 신뢰 확대의 정확한 경계 ──
+
+test('a known skills tree that is itself a symlink is NOT trusted — its target still needs approval (review HIGH-1)', async t => {
+  const f = await fixture(t), outside = path.join(f.root, 'outside-tree');
+  await fs.mkdir(path.join(outside, 'stolen'), { recursive: true }); await fs.writeFile(path.join(outside, 'stolen/SKILL.md'), '# Stolen');
+  await fs.mkdir(path.join(f.home, '.claude')); await fs.symlink(outside, path.join(f.home, '.claude/skills'));
+  const { items, roots, issues } = await f.scan();
+  assert.equal(items.filter(i => i.source === 'claude').length, 0, '링크된 트리의 파일을 무승인으로 읽었다');
+  assert.equal(roots.length, 1); assert.ok(issues.some(i => i.source === 'claude' && i.reason === 'external-root'));
+  // 홈 자체를 가리키는 최악형 — 홈 전체가 신뢰 트리가 되면 안 된다
+  const g = await fixture(t);
+  await fs.mkdir(path.join(g.home, '.openclaw')); await fs.symlink(g.home, path.join(g.home, '.openclaw/skills'));
+  await g.write('Documents/diary/SKILL.md', '# Diary');
+  await g.write('.openclaw/openclaw.json', JSON.stringify({ skills: { load: { extraDirs: ['~/Documents'] } } }));
+  const r2 = await g.scan();
+  assert.equal(r2.items.filter(i => i.name === 'diary').length, 0, '홈 밖/승인 밖 폴더가 무승인으로 읽혔다');
+});
+
+test('codex disabled flag reaches a skill that was folded under another source via a cross-tool link (review MEDIUM-2)', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/demo/SKILL.md', '# Demo');
+  await f.write('.codex/config.toml', '[[skills.config]]\npath = "~/.codex/skills/demo/SKILL.md"\nenabled = false\n');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true });
+  await fs.symlink(path.join(f.home, '.codex/skills/demo'), path.join(f.home, '.claude/skills/demo'));
+  const { items } = await f.scan();
+  const demo = items.filter(i => i.kind === 'skill' && i.name === 'demo');
+  assert.equal(demo.length, 1, '공유 스킬이 두 번 나왔다');
+  assert.equal(demo[0].reason, 'disabled', `사용자가 끈 스킬이 활성으로 올라왔다(source=${demo[0].source})`);
+});
+
+test('different skills that merely share a name are not folded together when SKILL.md could not be read (review MEDIUM-3)', async t => {
+  const f = await fixture(t);
+  for (const source of ['claude', 'hermes']) {
+    await f.write(`.${source}/skills/build/SKILL.md`, `# ${source} build`);
+    await fs.symlink(path.join(f.root, `missing-${source}`), path.join(f.home, `.${source}/skills/build/a-broken.md`)); // 정렬상 SKILL.md보다 먼저 읽혀 패키지 읽기가 실패한다
+  }
+  const { items } = await f.scan();
+  const builds = items.filter(i => i.kind === 'skill' && i.name === 'build');
+  assert.equal(builds.length, 2, '이름만 같은 다른 스킬이 접혀 하나가 조용히 사라졌다');
+  assert.ok(builds.every(i => i.reason === 'broken-link'));
+});
+
+test('bidirectional cross-tool links do not loop or burn the budget (review MEDIUM-4)', async t => {
+  const f = await fixture(t);
+  await f.write('.claude/skills/one/SKILL.md', '# One'); await f.write('.codex/skills/two/SKILL.md', '# Two');
+  await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/to-codex'));
+  await fs.symlink(path.join(f.home, '.claude/skills'), path.join(f.home, '.codex/skills/to-claude'));
+  const started = Date.now();
+  const { items, issues } = await f.scan();
+  assert.ok(Date.now() - started < 2000, '순환 링크에서 순회가 예산을 태울 때까지 돌았다');
+  assert.ok(!issues.some(i => i.reason === 'scan-limit'), JSON.stringify(issues));
+  assert.ok(items.some(i => i.name === 'one') && items.some(i => i.name === 'two'));
+  assert.equal(items.filter(i => i.kind === 'skill').length, 2, '같은 트리를 여러 번 순회해 중복이 났다');
+});
+
+test('~/.claude.json has its own budget — an exhausted agents tree does not hide its MCP servers (review LOW-1)', async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 60; i++) await f.write(`.agents/skills/s${i}/SKILL.md`, '# S');
+  await f.write('.claude.json', JSON.stringify({ mcpServers: { tools: { command: 'node', args: ['--version'] } } }));
+  const { items, issues } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 50 } });
+  assert.ok(issues.some(i => i.source === 'agents' && i.reason === 'scan-limit'));
+  assert.ok(!issues.some(i => i.source === 'claude' && i.reason === 'scan-limit'), 'agents 예산이 .claude.json에 상속됐다');
+  assert.ok(items.some(i => i.source === 'claude' && i.kind === 'mcp' && i.name === 'tools'));
+});
+
+// ── 분리 검수 2R(2026-09-10) ──
+
+test('a walk that aborts inside a cross-linked tree does not mark it done — the owning source rescans with its own budget (review 2R MEDIUM)', async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 20; i++) { await f.write(`.claude/skills/c${i}/SKILL.md`, '# C'); await f.write(`.codex/skills/x${i}/SKILL.md`, '# X'); }
+  await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex')); // claude가 먼저 codex 트리에 들어가 예산을 태운다
+  const { items, issues } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 30 } });
+  assert.ok(issues.some(i => i.source === 'claude' && i.reason === 'scan-limit'), '픽스처 전제: claude가 예산에 걸려야 한다');
+  assert.ok(items.some(i => i.source === 'codex' && i.kind === 'skill'), 'codex 트리가 "완료"로 오염돼 주인 소스가 통째로 건너뛰었다');
+  assert.ok(issues.some(i => i.source === 'codex'), 'codex 쪽 사정(예산)이 엉뚱한 도구 이름으로만 보고된다');
+});
+
+test('folding scope: tool sources fold a shared SKILL.md once, crew sources keep it per crew (review 2R decision)', async t => {
+  const f = await fixture(t);
+  await f.write('.hermes/skills/shared/SKILL.md', '# Shared');
+  for (const p of ['p1', 'p2']) { await fs.mkdir(path.join(f.home, `.hermes/profiles/${p}/skills`), { recursive: true }); await fs.symlink(path.join(f.home, '.hermes/skills/shared'), path.join(f.home, `.hermes/profiles/${p}/skills/shared`)); }
+  await f.write('.codex/skills/tool/SKILL.md', '# Tool');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true }); await fs.symlink(path.join(f.home, '.codex/skills/tool'), path.join(f.home, '.claude/skills/tool'));
+  const { items } = await f.scan();
+  const shared = items.filter(i => i.kind === 'skill' && i.name === 'shared');
+  assert.deepEqual(shared.map(i => i.groupLabel).sort(), ['Hermes', 'p1', 'p2'], '크루별 공유 스킬은 크루마다 남아야 한다');
+  assert.equal(items.filter(i => i.kind === 'skill' && i.name === 'tool').length, 1, '도구 간 공유 스킬은 한 번만');
+});
+
+// ── 분리 검수 3R(2026-09-10) ──
+
+test('per-crew budgets: many profiles sharing a big skills tree keep their SOUL/MEMORY (review 3R HIGH-1)', async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 30; i++) await f.write(`.hermes/skills/s${i}/SKILL.md`, '# S');
+  for (let p = 0; p < 6; p++) {
+    await f.write(`.hermes/profiles/p${p}/SOUL.md`, `Soul ${p}`); await f.write(`.hermes/profiles/p${p}/memories/MEMORY.md`, `Memory ${p}`);
+    await fs.mkdir(path.join(f.home, `.hermes/profiles/p${p}/skills`), { recursive: true });
+    await fs.symlink(path.join(f.home, '.hermes/skills'), path.join(f.home, `.hermes/profiles/p${p}/skills/shared`));
+  }
+  const { items, issues } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 200 } }); // 공유 예산이면 두 번째 프로필부터 굶는다(트리 한 번 ≈ 91)
+  assert.ok(!issues.some(i => i.source === 'hermes' && i.reason === 'scan-limit'), JSON.stringify(issues));
+  assert.equal(items.filter(i => i.source === 'hermes' && i.kind === 'profile').length, 6, '뒤 프로필의 SOUL이 사라졌다'); // 기본 Hermes 루트에는 SOUL.md를 두지 않았다
+  assert.equal(items.filter(i => i.source === 'hermes' && i.kind === 'memory').length, 6);
+  assert.equal(items.filter(i => i.source === 'hermes' && i.kind === 'skill').length, 30 * 7, '크루별 스킬 첨부가 빠졌다');
+});
+
+test('a skill package truncated by someone else\'s budget is not marked done — the owner re-reads it fully (review 3R MEDIUM-2)', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/x0/SKILL.md', '# X0'); for (let i = 1; i <= 8; i++) await f.write(`.codex/skills/x0/f${i}.md`, `f${i}`);
+  await f.write('.codex/skills/x1/SKILL.md', '# X1');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true });
+  await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex')); // claude가 먼저 들어가 x0 수집 도중 예산이 끝난다
+  const { items } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 20 } });
+  const full = items.find(i => i.source === 'codex' && i.name === 'x0');
+  assert.equal(full?.reason, null, '잘린 껍데기가 완료로 남아 주인(codex)이 x0을 다시 읽지 못했다');
+  assert.equal(full?.files.length, 9);
+  assert.ok(!items.some(i => i.source === 'claude' && i.name === 'x0'), '주인 온전본이 오면 claude 아래 껍데기는 걷혀야 한다(4R LOW-1)');
+});
+
+// ── 분리 검수 4R(2026-09-10) ──
+
+test('a truncated LAST child does not mark its parent done, and the owner\'s full copy replaces the stub (review 4R MEDIUM-1·LOW-1)', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/x0/SKILL.md', '# X0'); await f.write('.codex/skills/x1/SKILL.md', '# X1'); for (let i = 1; i <= 8; i++) await f.write(`.codex/skills/x1/t${i}.md`, 'x');
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true }); await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex'));
+  const { items } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 20 } }); // claude가 x1(마지막 자식) 수집 도중 예산이 끝난다 — 형제 예외가 없어 부모가 완료로 남던 갈래
+  const x1 = items.filter(i => i.kind === 'skill' && i.name === 'x1');
+  assert.deepEqual(x1.map(i => [i.source, i.reason, i.files.length]), [['codex', null, 9]], '주인(codex)이 x1을 온전히 다시 읽고 껍데기는 걷어내야 한다');
+});
+
+test('a stub that already read SKILL.md before truncation does not claim the fold key (review 4R MEDIUM-2)', async t => {
+  const f = await fixture(t);
+  await f.write('.codex/skills/x0/SKILL.md', '# X0'); for (let i = 1; i <= 8; i++) await f.write(`.codex/skills/x0/t${i}.md`, 'x'); // SKILL.md가 t*보다 먼저 읽힌다
+  await fs.mkdir(path.join(f.home, '.claude/skills'), { recursive: true }); await fs.symlink(path.join(f.home, '.codex/skills'), path.join(f.home, '.claude/skills/a-to-codex'));
+  const { items } = await f.scan({ limits: { ...LOCAL_ASSET_LIMITS, files: 19 } });
+  const x0 = items.filter(i => i.kind === 'skill' && i.name === 'x0');
+  assert.deepEqual(x0.map(i => [i.source, i.reason, i.files.length]), [['codex', null, 9]], '껍데기가 접기 키를 선점해 주인의 온전한 재수집이 버려졌다');
 });
