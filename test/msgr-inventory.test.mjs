@@ -95,3 +95,15 @@ test('마이그레이션 핀: available 상태·채널 멤버는 active만·오�
   const i18n = readFileSync(new URL('../apps/messenger/src/i18n.js', import.meta.url), 'utf8');
   for (const k of ['rail.mine', 'rail.mine.on', 'rail.mine.off', 'rail.mine.offShort', 'rail.hint.mine', 'ch.add.mine', 'ch.add.mine.note', 'ch.add.mine.done', 'ch.add.crew.none']) assert.ok(i18n.includes(`'${k}': ['`), `${k} ko/en`);
 });
+
+test('소유자 게이트: 회사 ownerId가 기기 세션 uid와 다르면 DB에 손대지 않고 건너뛴다(실사고 2026-09-11 — 같은 PC 다른 계정이 남의 크루를 자기 조직에 미러); 같으면·없으면 평소대로', async () => {
+  const OTHER = '22222222-2222-4222-8222-222222222222';
+  const inv = async () => agents;
+  const d1 = db(); const r1 = await drain('ws1', { db: d1, uid: UID, ownerId: OTHER, enqueue: async () => {}, inventory: inv });
+  assert.deepEqual(r1, { crews: 0, queued: 0, denied: 0, stale: 0, list: [], skipped: 'owner' });
+  assert.deepEqual(d1.calls, [], '남의 회사: 조회·미러·하트비트 어느 것도 없다');
+  const d2 = db(); const r2 = await drain('ws1', { db: d2, uid: UID, ownerId: UID, enqueue: async () => {}, inventory: inv });
+  assert.equal(r2.skipped, undefined); assert.ok(d2.calls.some(([k]) => k === 'upsertAvailable'), '내 회사: 미러');
+  const d3 = db(); const r3 = await drain('ws1', { db: d3, uid: UID, ownerId: null, enqueue: async () => {}, inventory: inv });
+  assert.equal(r3.skipped, undefined); assert.ok(d3.calls.some(([k]) => k === 'upsertAvailable'), '무주(레거시) 회사: 기존 동작 유지');
+});

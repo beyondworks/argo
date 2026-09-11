@@ -338,7 +338,10 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
   return out;
 }
 
-export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory } = {}) {
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory } = {}) {
+  // 회사 소유자 게이트(실사고 2026-09-11): 같은 PC에서 다른 계정으로 로그인하면 기기 세션(uid)이 바뀌는데, 로컬 회사 폴더는 그대로라
+  // 브리지가 남의 회사 크루를 그 계정의 조직에 미러·실행했다(lean-win에 Lean-AX 13명). 회사 목록 API(ownerId === user.id)와 같은 규칙으로 DB에 손대기 전에 끊는다.
+  if (ownerId && ownerId !== uid) return { crews: 0, queued: 0, denied: 0, stale: 0, list: [], skipped: 'owner' };
   const crews = await db.myCrews(uid, wsId);
   const out = { crews: crews.length, queued: 0, denied: 0, stale: 0, list: crews };
   if (nodeOrgId) { // 정보(러너·모델)는 CLI 감지를 스폰하므로 3초까지만 기다린다 — 감지가 멈춰도 생존 신호는 나간다(검수 M-5: 90초 넘기면 '연결 끊김'으로 뒤집히던 결합). I-4: 크루 0명이어도 노드는 살아 있다고 알린다
@@ -845,8 +848,9 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     try {
       const c = await session();
       if (!c) { await beatGateway(wsId, MSGR_KEY, false, '기기 세션 없음 — 로그인 필요').catch(() => {}); return; }
-      const { lang = 'ko', msgr } = await loadCompany(wsId).catch(() => ({}));
-      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
+      const { lang = 'ko', msgr, ownerId = null } = await loadCompany(wsId).catch(() => ({}));
+      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
+      if (r.skipped === 'owner') { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }
       await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
       subscribe(c, r.list ?? [], msgr?.nodeOrgId ?? null); // I-5: 조직 회사는 크루 0명이어도 조직 토픽을 구독(크루 요청 신호)
       return r;
