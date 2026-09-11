@@ -9,6 +9,7 @@
     "main"
   ],
   "permissions": [
-    "deep-link:default"
+    "deep-link:default",
+    "notification:default"
   ]
 }

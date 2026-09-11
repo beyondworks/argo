@@ -251,7 +251,8 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
   assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
-  assert.match(app, /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히');
+  assert.match(read('apps/messenger/src/notify.js'), /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히(브라우저 경로 — notify.js)');
+  assert.match(app, /const osNotify = \(title, body, tag\) => \{ sendNotify\(title, body, tag\); \};/, 'OS 알림은 notify.js 한 곳(Tauri 플러그인·브라우저 분기)');
   assert.match(app, /\{tab === 'org' && org && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭)');
   assert.match(app, /\{tab === 'members' && org && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');

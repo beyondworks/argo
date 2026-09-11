@@ -145,3 +145,15 @@ test('빌드 결함 핀(v0.1.0 실사고): React 사본 dedupe, 설치파일은 
   assert.doesNotMatch(y, /path: apps\/messenger\/dist\/\*/, 'dist/는 Vite 산출물 — index.html·assets가 릴리스에 섞인다');
   assert.match(y, /sed 's\/Argo Messenger\/argo-messenger\/'/, '공백 파일명은 GitHub 자산명에서 점으로 바뀌어 latest.json과 어긋난다');
 });
+
+test('데스크톱 첨부 드롭·OS 알림 배선(유건 제보 2026-09-11 밤): 웹뷰 드롭 가로채기 해제 · 알림 플러그인(Rust·capability·npm) · notify.js 한 곳', () => {
+  assert.equal(JSON.parse(read('apps/messenger/src-tauri/tauri.conf.json')).app.windows[0].dragDropEnabled, false, 'Tauri가 파일 드롭을 가로채면 HTML5 drop이 안 온다');
+  assert.match(read('apps/messenger/src-tauri/Cargo.toml'), /tauri-plugin-notification = "2"/);
+  assert.match(read('apps/messenger/src-tauri/src/lib.rs'), /\.plugin\(tauri_plugin_notification::init\(\)\)/);
+  for (const cap of ['desktop.json', 'mobile.json']) assert.ok(JSON.parse(read(`apps/messenger/src-tauri/capabilities/${cap}`)).permissions.includes('notification:default'), cap);
+  assert.match(read('apps/messenger/package.json'), /"@tauri-apps\/plugin-notification"/);
+  const app = read('apps/messenger/src/App.jsx');
+  assert.doesNotMatch(app, /new Notification\(/, '웹 Notification 직접 호출 금지 — notify.js가 Tauri·브라우저를 가른다');
+  assert.match(app, /notifyMention\(payload\); notifyReply\(payload\);/, '크루 답변·DM도 알린다');
+  assert.match(app, /setBadge\(Object\.values\(unread\)/, '독 아이콘 숫자 = 안 읽은 합계');
+});
