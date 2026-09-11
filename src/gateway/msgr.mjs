@@ -121,16 +121,25 @@ export function targetsCrew(m, crew, dmChannels) {
   if (m.author_kind !== 'user') return false;
   return mentioned || dmChannels.has(m.channel_id);
 }
-/** 답변 본문에서 조직 크루 @이름을 찾아 멘션 배열로 — 크루→크루 넘김의 유일한 통로. 자기 자신은 제외. */
+/** 답변 본문에서 조직 크루 @이름을 찾아 멘션 배열로 — 크루→크루 넘김의 유일한 통로. 자기 자신은 제외.
+    긴 이름부터 대조하고 맞은 구간은 소진한다 — "@페퍼 (VPS)"가 "페퍼"로도 새던 결함(실사고 2026-09-11, 앱 mentionsFromBody와 같은 규칙). */
 export function mentionsIn(text, peers, selfId) {
-  const out = [];
-  for (const p of peers) {
-    if (p.id === selfId || !p.display_name) continue;
-    if (peers.filter((other) => other.display_name === p.display_name).length !== 1) continue; // 동명이인은 도구의 정확한 수신자 ID로만 넘긴다
-    const name = p.display_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp(`(^|[^\\w@])@${name}(?![\\w가-힣])`, 'u').test(text)) out.push({ kind: 'crew', id: p.id });
+  const out = []; let rest = text;
+  const named = peers.filter((p) => p.id !== selfId && p.display_name && peers.filter((other) => other.display_name === p.display_name).length === 1) // 동명이인은 도구의 정확한 수신자 ID로만 넘긴다
+    .sort((a, b) => b.display_name.length - a.display_name.length);
+  for (const p of named) {
+    const re = new RegExp(`(^|[^\\w@])@${p.display_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w가-힣])`, 'giu'); // 대소문자 무시 — "@edna"도 Edna(끝말잇기 실사고 2026-09-11 밤: 넘김 끊김)
+    if (!re.test(rest)) continue;
+    out.push({ kind: 'crew', id: p.id });
+    rest = rest.replace(re, (m, lead) => lead + ' '.repeat(m.length - lead.length)); // 구간 소진 — 길이 유지
   }
   return out;
+}
+/** 채널이 이 크루의 발화를 허용하나 — 공개는 제외 목록 밖, 비공개·DM은 구성원 행. 서버 트리거 msgr_messages_crew_scope와 같은 규칙
+    (유건 원칙 2026-09-11: 채널에 초대된 에이전트만 답하고 내보낸 에이전트는 못 답한다). 채널 없음 = 거부. */
+export function crewInScope(ch, crewId, isMember) {
+  if (!ch) return false;
+  return ch.kind === 'public' ? !(ch.excluded_crew_ids ?? []).includes(crewId) : isMember === true;
 }
 const autoLog = new Map(); // wsId → 자동(크루 발) 턴 적재 시각들 — ponytail: 기기 메모리, 재시작하면 0부터(기기가 여럿이면 기기별 상한)
 function autoOk(wsId, now) {
@@ -210,7 +219,17 @@ export function makeDb(client) {
       return rows.filter((r) => r.msgr_channels?.kind === 'dm').map((r) => r.channel_id);
     },
     async channel(id) {
-      return unwrap(await client.from('msgr_channels').select('id, org_id, kind, name, crew_memory, archived_at').eq('id', id).maybeSingle());
+      return unwrap(await client.from('msgr_channels').select('id, org_id, kind, name, crew_memory, archived_at, excluded_crew_ids').eq('id', id).maybeSingle());
+    },
+    /** 이 크루가 구성원인 채널 전부(DM·비공개) — crewChannels(DM만)의 상위 집합. 채널 범위 판정(crewInScope)의 재료. */
+    async crewScope(crewId) {
+      const rows = unwrap(await client.from('msgr_channel_members').select('channel_id').eq('member_kind', 'crew').eq('member_id', crewId)) ?? [];
+      return new Set(rows.map((r) => r.channel_id));
+    },
+    /** 채널의 크루 구성원 id 집합 — 넘김 후보를 채널 범위로 좁힐 때. RLS가 가린 행은 빠진다(후보가 줄 뿐, 최후 방어는 서버 트리거). */
+    async channelCrewMembers(channelId) {
+      const rows = unwrap(await client.from('msgr_channel_members').select('member_id').eq('channel_id', channelId).eq('member_kind', 'crew')) ?? [];
+      return new Set(rows.map((r) => r.member_id));
     },
     async memberName(orgId, uid) {
       const r = unwrap(await client.from('msgr_org_members').select('display_name').eq('org_id', orgId).eq('user_id', uid).maybeSingle());
@@ -356,12 +375,17 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
   }
   for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
+  const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다
+  const channelOf = async (id) => { if (!chCache.has(id)) chCache.set(id, await db.channel(id)); return chCache.get(id); };
   for (const crew of crews) {
     const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
+    const member = await db.crewScope(crew.id).catch((e) => { console.error('[argo] msgr 채널 범위 조회 실패 — 이 크루는 이 틱에 답하지 않음(범위를 모르면 답하지 않는다):', e?.message ?? e); return null; });
+    if (!member) continue; // 커서 유지 → 다음 틱 재시도
     const msgs = await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0);
     let max = crew.cursor_msg_id ?? 0;
     const step = async (m) => { // 한 메시지 처리 — 예외(순단)는 이 크루의 커서만 보류하고 다른 크루·결재 동기화는 계속(검수 4R M-3)
       if (!targetsCrew(m, crew, dm)) return;
+      const ch = await channelOf(m.channel_id); if (!crewInScope(ch, crew.id, member.has(ch?.id))) return; // 초대되지 않았거나 내보낸 채널 — 턴을 돌리지 않는다(서버 트리거 msgr_messages_crew_scope가 최후 방어, 여기서 막아야 유료 실행·insert 실패 로그가 없다)
       const fromCrew = m.author_kind === 'crew';
       let hop = 0; let origin = m.author_user_id; let rootAuthor = null;
       if (fromCrew) {
@@ -482,7 +506,7 @@ async function restoreMessengerContext(wsId, slug, origin, session) {
   if (!c) throw new Error('메신저 기기 세션 없음');
   if (!origin?.orgId || !origin.channelId || !origin.crewId || (origin.uid && origin.uid !== c.uid) || (origin.wsId && origin.wsId !== wsId)) throw new Error('메신저 실행 소유자·회사 불일치');
   const { db, uid } = c;
-  const [crew, ch, org, peers, root, source] = await Promise.all([
+  const [crew, ch, org, orgPeers, root, source] = await Promise.all([
     db.crewBySlug(uid, wsId, slug, origin.orgId), db.channel(origin.channelId), db.org(origin.orgId),
     db.orgCrews(origin.orgId), origin.threadRoot ? db.message(origin.threadRoot) : null,
     (origin.sourceMsgId ?? origin.threadRoot) ? db.message(origin.sourceMsgId ?? origin.threadRoot) : null,
@@ -496,6 +520,8 @@ async function restoreMessengerContext(wsId, slug, origin, session) {
   for (const author of actors) if (!author || await db.instructCheck(crew.id, author, ch.id) !== 'ok') throw new Error('메신저 지시 권한이 없어 후속 실행을 멈춥니다');
   const hop = origin.hop ?? 0;
   if (!Number.isInteger(hop) || hop < 0 || hop > HOP_MAX) throw new Error('메신저 넘김 단계가 올바르지 않습니다');
+  const chMembers = ch.kind === 'public' ? new Set() : await db.channelCrewMembers(ch.id);
+  const peers = orgPeers.filter((p) => crewInScope(ch, p.id, chMembers.has(p.id))); // 후속 실행의 넘김·멘션도 채널 범위 안에서만
   const ctx = { kind: 'msgr', chatType: 'group', orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org.slug, channelName: ch.name ?? '', peers, handoffs: [] };
   return { db, ctx, ch, source };
@@ -572,16 +598,19 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     if (await db.settled(job.crewId, job.msgId, job.channelId)) { console.log(`[argo] msgr 잡 중복(${wsId}/${job.slug}/${job.msgId}) — 이미 답함, 실행 생략`); return; } // 선점 중 재적재된 사본(검수 M-2) — 유료 턴 두 번 방지
     const ch = await db.channel(job.channelId);
     if (!ch || ch.archived_at) return; // 채널 삭제·보관 — 잡 폐기
+    const chMembers = ch.kind === 'public' ? new Set() : await db.channelCrewMembers(job.channelId);
     const started = now();
     const waited = started - Date.parse(job.createdAt); // 큐 대기(부재중) — 턴 소요 시간은 포함하지 않는다(검수 MEDIUM-3)
-    const peers = await db.orgCrews(job.orgId);
-    const crewName = (id) => peers.find((p) => p.id === id)?.display_name ?? pick('크루', 'crew', lang);
+    const orgPeers = await db.orgCrews(job.orgId);
+    const peers = orgPeers.filter((p) => crewInScope(ch, p.id, chMembers.has(p.id))); // 넘김 후보·멘션은 이 채널의 참여 구성만(채널 밖 크루가 답하던 실사고 2026-09-11)
+    const crewName = (id) => orgPeers.find((p) => p.id === id)?.display_name ?? pick('크루', 'crew', lang); // 표시 이름은 조직 전체에서(내보낸 크루의 지난 발화도 이름으로)
     const humanName = clean((await db.memberName(job.orgId, job.fromCrewId ? (job.rootAuthor ?? job.authorId) : job.authorId).catch(() => null)) ?? pick('멤버', 'member', lang), 40); // 넘긴 턴의 '지시를 이어'는 뿌리 사람(표시용) — 권한 주체(authorId)는 발신 크루 소유자
     const authorName = job.fromCrewId ? clean(crewName(job.fromCrewId), 40) : humanName;
     const chName = clean(ch.name, 40);
     const others = peers.filter((p) => p.id !== job.crewId).map((p) => `@${clean(p.display_name, 40)}`);
-    const hint = others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
-      ` To hand remaining work to or ask another crew, write its @name in your reply (${others.join(' ')}) and end with MSGR: handoff. For completion, thanks or acknowledgement alone, end with MSGR: done.`, lang) : '';
+    const brief = pick(' 요청한 것만 군더더기 없이 답하라 — 지시를 되풀이하거나 진행 계획·상황을 설명하지 마라. 차례를 주고받는 일(게임·릴레이)은 자기 차례 내용만 적고 다음 사람을 @로 넘겨라.', ' Answer only what was asked — do not restate the instruction or narrate your plan or situation. For turn-taking work (games, relays) post only your move and hand off with @name.', lang);
+    const hint = brief + (others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
+      ` To hand remaining work to or ask another crew, write its @name in your reply (${others.join(' ')}) and end with MSGR: handoff. For completion, thanks or acknowledgement alone, end with MSGR: done.`, lang) : '');
     // 제3자 발화 프레이밍(검수 HIGH-4): 채널 텍스트를 사장 지시와 같은 자리에 맨몸으로 넣지 않는다. 채널명·이름은 세척(개행·길이),
     // 본문은 이름 접두 아래 한 덩어리. 프롬프트는 힌트일 뿐이므로 구조적 경계(허용 범위 게이트·결재·RLS)가 따로 있다.
     let text = job.fromCrewId ? pick(

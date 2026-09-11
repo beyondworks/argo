@@ -9,7 +9,13 @@
   },
   "plugins": {
     "deep-link": {
-      "mobile": []
+      "mobile": [
+        {
+          "scheme": [
+            "argo-messenger"
+          ]
+        }
+      ]
     }
   }
 }

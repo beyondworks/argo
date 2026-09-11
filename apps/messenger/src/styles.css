@@ -128,6 +128,8 @@
 .msgr-acts button:hover { background: var(--card); border-color: var(--border); color: var(--fg); }
 .msgr-file { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 7px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--border-soft); font-family: var(--mono); font-size: 11px; color: var(--fg-2); vertical-align: middle; cursor: pointer; margin: 6px 6px 0 0; }
 .msgr-file .mi { color: var(--fg-3); }
+.msgr-attach { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.msgr-imgprev { max-width: min(420px, 100%); max-height: 320px; border-radius: 12px; border: 1px solid var(--border); display: block; cursor: zoom-in; object-fit: contain; background: var(--card-2); }
 .msgr-mine { display: grid; justify-items: end; gap: 4px; margin-left: 42px; animation: msgrRise 250ms cubic-bezier(.23,1,.32,1) both; }
 .msgr-mine .bubble { max-width: min(88%, 620px); background: var(--primary); color: var(--primary-fg); border-radius: 20px 6px 20px 20px; padding: 10px 15px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msgr-mine .meta { font-size: 11px; color: var(--fg-3); display: flex; gap: 8px; align-items: center; }
@@ -189,6 +191,8 @@
 .msgr-tools .send:active { transform: scale(.94); }
 .msgr-tools .send:disabled { opacity: .4; cursor: default; transform: none; }
 .msgr-tools .filechip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); }
+.msgr-tools .filechip .x { border: 0; background: none; color: var(--fg-3); cursor: pointer; font: inherit; font-size: 14px; line-height: 1; padding: 0 0 0 2px; } .msgr-tools .filechip .x:hover { color: var(--fg); }
+.msgr-composer.drop { box-shadow: var(--shadow-float), 0 0 0 2px var(--mark); } /* 파일을 끌어다 놓는 중 */
 .msgr-tools .filechip.busy { border-color: var(--mark); } .msgr-tools .filechip.busy .msgr-klabel { color: var(--mark); animation: msgrPulse 1.2s ease-in-out infinite; }
 .msgr-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 14px 0; font-size: 11px; color: var(--fg-3); }
 .msgr-sub .typing-line { display: flex; align-items: center; gap: 6px; min-height: 16px; }
@@ -644,9 +648,11 @@
 
 /* P0 (2026-09-09): 안 읽음 배지·새 메시지 구분선·반응·편집 */
 .msgr-badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 999px; background: var(--card-2); color: var(--fg-2); font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; font-variant-numeric: tabular-nums; }
-.msgr-badge.mark { background: var(--mark); color: #1a1a1a; }
+.msgr-list .item .msgr-badge { background: var(--fg); color: var(--bg); } /* 라이트·다크 모두 또렷하게(유건 제보 2026-09-11 밤) */
+.msgr-badge.mark, .msgr-list .item .msgr-badge.mark { background: var(--mark); color: #1a1a1a; }
 .msgr-badge.dim { opacity: 0.55; }
 .msgr-list .item.unread .name { color: var(--fg); font-weight: 600; }
+.msgr-list .item.active.unread .name { color: var(--primary-fg); } /* 열린 채널이 안 읽음 상태(알림함 보는 중 새 글)면 이름이 활성 배경과 같은 색이 되어 안 보이던 결함(유건 제보 2026-09-11 밤) */
 .msgr-list .item.active .msgr-badge { background: var(--primary-fg); color: var(--primary); }
 .msgr-newline { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
 .msgr-newline span { padding: 2px 9px; border-radius: 999px; background: var(--mark); color: #1a1a1a; } /* 라이트 바탕에서 노란 글자가 안 읽히던 것(유건 2026-09-09) — 알약으로 */
@@ -717,6 +723,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
 /* 토스트(2026-09-09): 상단 안내 바 대체 — 레이아웃 불변, 자동 소멸, 클릭 시 즉시 */
 .msgr-toast { position: fixed; z-index: 80; top: 14px; left: 50%; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px)); padding: 9px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; box-shadow: 0 10px 28px rgba(0,0,0,0.22); cursor: pointer; text-align: left; animation: msgrToastIn 160ms ease; }
+.msgr-inboxtoggle { margin: 4px auto 8px; display: inline-flex; }
+.msgr-toast { overflow-wrap: anywhere; word-break: break-word; text-align: left; } /* 긴 파일명·경로가 상자 밖으로 흐르던 결함(2026-09-11 밤) */
 .msgr-toast.err { color: var(--danger, #d05a5a); border-color: color-mix(in srgb, var(--danger, #d05a5a) 40%, var(--border)); }
 @keyframes msgrToastIn { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 

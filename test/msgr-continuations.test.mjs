@@ -36,6 +36,7 @@ async function setup() {
     channel: async (id) => id === 'channel' ? { id, org_id: 'org', name: 'Crew', kind: 'private', crew_memory: false } : null,
     org: async () => ({ id: 'org', slug: 'team' }),
     orgCrews: async () => peers,
+    channelCrewMembers: async () => new Set(peers.map((p) => p.id)), // 비공개 채널 — 동료 전원이 구성원(채널 범위 게이트, 2026-09-11)
     message: async (id) => id === 10 ? { id, channel_id: 'channel', author_kind: 'user', author_user_id: 'person', body: '같은 방에서 계속' } : null,
     contextOf: async () => [{ id: 11, author_kind: 'crew', crew_id: 'b', body: '이전 결과' }],
     instructCheck: async () => 'ok',

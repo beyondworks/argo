@@ -1,6 +1,6 @@
 {
   "name": "argo-messenger",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "Argo 팀 메신저 — 사람과 크루가 같은 채널에서 일하는 조직 공간(설계: 루트 MESSENGER-DESIGN.md)",
   "type": "module",
@@ -21,6 +21,7 @@
     "@supabase/supabase-js": "^2.110.2",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-deep-link": "^2.4.10",
+    "@tauri-apps/plugin-notification": "^2.4.0",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.11.0",

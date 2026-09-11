@@ -94,6 +94,14 @@ GLM·Kimi·Grok을 빠뜨렸다. xAI는 도구 스키마에 `required`가 없으
 4. **벤더로 나가는 데이터(도구 스키마·메시지 블록·헤더)는 단일 관문에서 정규화하고, 내장 도구 정의 감사 테스트로 잠근다.**
    제보로 알게 된 벤더 규칙은 그때마다 `test/helpers` 엄격 가짜 서버의 규칙 한 줄로 누적한다(같은 모양은 두 번 새지 않는다).
 
+### 모바일 발행 게이트 (2026-09-11 실사고 — 스킴 없는 iOS 빌드 세 버전 발행)
+
+iOS 0.1.4~0.1.6이 로그인 복귀 URL 스킴(`argo-messenger://`) 없이 나가 브라우저 로그인 뒤 앱으로 못 돌아왔다. 원인은 `tauri.ios.conf.json`의 deep-link `mobile: []`이었고, 플러그인은 그 목록이 비면 Info.plist의 스킴 등록을 **지운다**. 개발 서명 설치의 남은 세션으로 동작해 보여 세 번을 놓쳤다.
+
+1. **iOS 업로드는 `apps/messenger/scripts/ios-store.mjs`로만** 한다. build·upload가 내보낸 ipa의 Info.plist를 직접 검사(스킴·버전·암호화 면제)하고 하나라도 빠지면 올리지 않는다. 손으로 `xcodebuild -exportArchive`를 돌리지 않는다.
+2. **로그인은 세션이 없는 상태에서 검증한다.** 새 빌드 뒤 "잘 열린다"는 로그인 검증이 아니다 — 로그아웃 후 브라우저 왕복까지 한 번 돌린다(시뮬레이터면 `simctl openurl argo-messenger://…`로 스킴 등록 확인).
+3. 설정 핀 테스트(`apps/messenger/test/ios-store.test.mjs`)가 iOS·Android deep-link 스킴을 잠근다 — 비우는 변경은 CI에서 red.
+
 ### 보안·데이터 판정 겉핥기 금지 (2026-08-19 유건 지시 — 위반 금지)
 
 > "겉핡기 식으로 대충 쓱 훑어보고 자격증명은 안 나갔다느니 보안이 좋다느니 지껄이는거같은데,

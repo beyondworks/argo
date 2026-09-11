@@ -10,7 +10,7 @@ mod agents; // 외부 에이전트 원클릭 연결(헤르메스·오픈클로 �
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_notification::init());
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_deep_link::init());
     #[cfg(target_os = "ios")]

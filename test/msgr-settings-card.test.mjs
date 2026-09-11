@@ -153,7 +153,7 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'allowed'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)\);/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼)');
   const comp = app.slice(app.indexOf('function Composer('));
   assert.match(comp, /const usable = \(channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews\)\.filter\(\(c\) => !\(channel\?\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\)/, '멘션 후보 필터');
-  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: usable, members, uid \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외는 mention-candidates.mjs)');
+  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: scopeCrews \?\? usable, members: scopePeople \?\? members, uid \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외는 mention-candidates.mjs)');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /let why = await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
   assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
@@ -251,7 +251,8 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
   assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
-  assert.match(app, /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히');
+  assert.match(read('apps/messenger/src/notify.js'), /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히(브라우저 경로 — notify.js)');
+  assert.match(app, /const osNotify = \(title, body, tag\) => \{ sendNotify\(title, body, tag\); \};/, 'OS 알림은 notify.js 한 곳(Tauri 플러그인·브라우저 분기)');
   assert.match(app, /\{tab === 'org' && org && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭)');
   assert.match(app, /\{tab === 'members' && org && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
@@ -496,4 +497,45 @@ test('i18n 전수 스윕 — App.jsx·graph3d.jsx의 정적 t(\'키\')는 전부
   const missing = [...used].filter((k) => !dict.has(k));
   assert.deepEqual(missing, [], `사전에 없는 키: ${missing.join(', ')}`);
   assert.ok(used.size > 150, `스윕이 실제로 키를 모았다(${used.size})`);
+});
+
+test('컴포저 첨부: 드래그앤드롭 수용·칩마다 취소 단추·선택창과 같은 수용 규칙(유건 제보 2026-09-11 밤)', () => {
+  const comp = read('apps/messenger/src/App.jsx');
+  assert.match(comp, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragging\(false\); if \(!busy\) addFiles\(e\.dataTransfer\?\.files\); \}\}/, '드롭 → addFiles');
+  assert.match(comp, /onDragOver=\{\(e\) => \{ if \(e\.dataTransfer\?\.types\?\.includes\('Files'\)\) \{ e\.preventDefault\(\); setDragging\(true\); \}/, '파일 드래그만 강조(텍스트 드래그는 무시)');
+  assert.match(comp, /onChange=\{\(e\) => \{ addFiles\(e\.target\.files\); e\.target\.value = ''; \}\}/, '선택창도 같은 addFiles');
+  assert.match(comp, /setFiles\(\(cur\) => acceptFiles\(cur, incoming, ATTACH_MAX\)\.files\)/, '누적·중복 제거·상한은 acceptFiles 한 곳');
+  assert.match(comp, /uploading !== f\.name && <button type="button" className="x"[\s\S]{0,140}?onClick=\{\(\) => setFiles\(\(cur\) => withoutFile\(cur, f\)\)\}/, '칩 취소 단추(업로드 중엔 없음)');
+  assert.match(read('apps/messenger/src/styles.css'), /\.msgr-composer\.drop \{/, '드롭 강조 CSS');
+});
+
+test('알림함: 기본은 읽지 않은 것만(지난 알림 토글) · 에이전트 답글은 내 글의 최종 답글만(중간 넘김·시스템 제외) — 유건 2026-09-11 밤', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /const \[unreadOnly, setUnreadOnly\] = useState\(true\);/, '기본 읽지 않은 것만');
+  assert.match(app, /const shown = items\.filter\(\(it\) => \(kind === 'all' \|\| it\.kind === kind\) && \(!unreadOnly \|\| isNew\(it\)\)\);/, '토글이 목록을 거른다');
+  assert.match(app, /\.eq\('author_kind', 'crew'\)\.eq\('kind', 'text'\)\.in\('reply_to', myIds\)/, '시스템 안내 제외');
+  assert.match(app, /\.filter\(\(m\) => !\(Array\.isArray\(m\.mentions\) && m\.mentions\.some\(\(x\) => x\?\.kind === 'crew'\)\)\)/, '다른 크루로 넘기는 중간 답글 제외');
+  const i18n = read('apps/messenger/src/i18n.js');
+  for (const k of ['inbox.unreadOnly', 'inbox.showRead', 'inbox.allRead']) assert.match(i18n, new RegExp(`'${k.replace('.', '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
+
+test('사이드바: 열린 채널이 안 읽음이어도 이름이 보인다(활성 배경 위 글자색 규칙이 unread 규칙에 덮이지 않게) — 유건 제보 2026-09-11 밤', () => {
+  const css = read('apps/messenger/src/styles.css');
+  const unread = css.indexOf('.msgr-list .item.unread .name { color: var(--fg);'); const fix = css.indexOf('.msgr-list .item.active.unread .name { color: var(--primary-fg); }');
+  assert.ok(unread > 0 && fix > unread, 'active.unread 규칙이 unread 규칙 뒤에(같은 특이도면 뒤가 이긴다)');
+});
+
+test('컴포저: 클립보드 이미지 붙여넣기 → 같은 addFiles 수용 규칙, 이름 없는 캡처는 paste-시각(유건 2026-09-11 밤)', () => {
+  const comp = read('apps/messenger/src/App.jsx');
+  assert.match(comp, /onPaste=\{\(e\) => \{ const pasted = \[\.\.\.\(e\.clipboardData\?\.files \?\? \[\]\)\]; if \(!pasted\.length \|\| busy\) return; e\.preventDefault\(\); addFiles\(/, '붙여넣기 → addFiles');
+  assert.match(comp, /new File\(\[f\], `paste-\$\{new Date\(\)\.toISOString\(\)/, '이름 없는 캡처 이름');
+});
+
+test('점검 2026-09-12 소형 결함 4건: 읽음은 초점 있을 때만 · 사람 DM·답글도 알림 · 독 배지 음소거 제외 · 이미지 첨부 인라인', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /if \(document\.visibilityState !== 'hidden' && document\.hasFocus\(\)\) onRead\?\.\(chId, lastId\);/, '초점 판정');
+  assert.match(app, /window\.addEventListener\('focus', mark\);/, '초점 복귀 시 읽음');
+  assert.match(app, /if \(!payload \|\| payload\.kind !== 'text' \|\| \(payload\.author_user_id && payload\.author_user_id === r\.uid\)\) return;/, '사람 발신도 알림(내 글 제외)');
+  assert.match(app, /setBadge\(Object\.entries\(unread\)\.reduce\(\(s, \[id, u\]\) => s \+ \(muted\.has\(id\) \? 0 : \(u\?\.n \|\| 0\)\), 0\)\)/, '독 배지 음소거 제외');
+  assert.match(app, /<img className="msgr-imgprev" src=\{src\} alt=\{a\.name\} loading="lazy" onClick=\{open\} \/>/, '이미지 인라인');
 });
