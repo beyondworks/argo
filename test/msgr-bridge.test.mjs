@@ -34,7 +34,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0 } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0 } = {}) {
   const calls = [];
   const executions = new Map();
   const rec = (k, ...a) => { calls.push([k, ...a]); };
@@ -53,6 +53,8 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async messagesAfter(org, after) { rec('messagesAfter', org, after); return messages.filter((m) => m.id > after); },
     async message(id) { rec('message', id); return typeof parent === 'function' ? parent(id) : parent; },
     async crewChannels() { return dm; },
+    async crewScope() { rec('crewScope'); return new Set(member ?? dm); }, // 구성원 채널(기본 = DM과 같음)
+    async channelCrewMembers(ch) { rec('channelCrewMembers', ch); return new Set(chCrews ?? (peers ?? crews).map((c) => c.id)); }, // 기본 = 조직 크루 전원이 구성원(범위 테스트만 chCrews로 좁힌다)
     async channel(id) { rec('channel', id); return { id, org_id: ORG, kind: 'public', name: 'general', crew_memory: true, ...(this.channelOverride ?? {}) }; },
     async memberName() { return '민수'; },
     async contextOf(ch, before, n, after = []) { rec('contextOf', ch, before, n, after); return context.filter((r) => r.id < before || (r.reply_to === before && after.includes(r.crew_id))).sort((a, b) => a.id - b.id).slice(-n); },
@@ -888,4 +890,70 @@ test('handler: 오래된 실행권은 같은 채널에 확인 안내만 남기�
   assert.equal(stored[0].kind, 'system'); assert.equal(stored[0].channel_id, CH);
   assert.equal(stored[0].client_msg_id, `execution-unknown:${CREW}:501`);
   assert.equal(await db.settled(CREW, 501, CH), false, '확인 안내를 앞 크루 완료로 오인하지 않는다');
+});
+
+// ── 채널 범위(유건 원칙 2026-09-11): 채널에 초대된 에이전트만 답하고, 내보낸 에이전트는 못 답한다 — 노드는 턴 자체를 돌리지 않는다(서버 트리거 msgr_messages_crew_scope가 최후 방어) ──
+test('순수: crewInScope — 공개는 제외 목록 밖(구성원 여부 무관), 비공개·DM은 구성원일 때만, 채널 없음·판정 불명은 거부', () => {
+  assert.equal(M.crewInScope({ id: CH, kind: 'public', excluded_crew_ids: [] }, CREW, false), true);
+  assert.equal(M.crewInScope({ id: CH, kind: 'public', excluded_crew_ids: [CREW] }, CREW, true), false, '공개 채널에서 내보낸 크루');
+  assert.equal(M.crewInScope({ id: CH, kind: 'public' }, CREW, false), true, '제외 목록 열 없음 = 제외 없음');
+  assert.equal(M.crewInScope({ id: CH, kind: 'private' }, CREW, true), true);
+  assert.equal(M.crewInScope({ id: CH, kind: 'private' }, CREW, false), false, '초대되지 않은 비공개 채널');
+  assert.equal(M.crewInScope({ id: CH, kind: 'dm' }, CREW, undefined), false, '판정 불명은 거부(fail-closed)');
+  assert.equal(M.crewInScope(null, CREW, true), false);
+});
+
+test('drain: 초대되지 않은 비공개 채널·내보낸 공개 채널의 멘션은 턴을 돌리지 않고 커서만 전진, 초대·복귀하면 돈다', async () => {
+  const cases = [
+    ['비공개 비구성원', { member: [] }, { kind: 'private' }, 0],
+    ['비공개 구성원', { member: [CH] }, { kind: 'private' }, 1],
+    ['공개 내보냄', {}, { excluded_crew_ids: [CREW] }, 0],
+    ['공개 다른 크루만 내보냄', {}, { excluded_crew_ids: [ZED] }, 1],
+  ];
+  for (const [label, opts, override, queued] of cases) {
+    const db = fakeDb({ messages: [msg(11)], ...opts }); db.channelOverride = override;
+    const enq = fakeEnqueue(); const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+    assert.equal(r.queued, queued, label); assert.equal(jobsOf(enq).length, queued, label);
+    assert.deepEqual(db.calls.filter(([n]) => n === 'setCursor'), [['setCursor', CREW, 11]], `${label}: 답하지 않은 글도 커서는 지나간다(재시도 대상이 아니다)`);
+    assert.equal(db.calls.filter(([n]) => n === 'insertMessage').length, 0, `${label}: 거절 안내도 남기지 않는다(채널 밖 크루는 조용)`);
+  }
+  // DM은 구성원 행이 곧 dm 집합 — 기존 DM 동작 보존
+  const dmDb = fakeDb({ messages: [msg(11, { mentions: [] })], dm: [CH] }); dmDb.channelOverride = { kind: 'dm' };
+  const enq = fakeEnqueue(); assert.equal((await M.drain(WS, { db: dmDb, uid: OWNER, enqueue: enq })).queued, 1, 'DM 구성원');
+});
+
+test('drain: 채널 범위 조회 실패는 그 크루만 이 틱을 건너뛰고(커서 유지·로그) 다른 크루와 결재 동기화는 계속', async () => {
+  const db = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드' })], messages: [msg(11, { mentions: [{ kind: 'crew', id: CREW }, { kind: 'crew', id: ZED }] })] });
+  db.crewScope = async () => { throw new Error('boom'); };
+  db.crewScope = (() => { let n = 0; return async () => { if (n++ === 0) throw new Error('boom'); return new Set(); }; })(); // 첫 크루만 실패
+  const errs = []; const orig = console.error; console.error = (...a) => errs.push(a.join(' '));
+  try {
+    const enq = fakeEnqueue(); const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+    assert.equal(r.queued, 1, '둘째 크루는 정상 실행');
+    assert.deepEqual(db.calls.filter(([n]) => n === 'setCursor'), [['setCursor', ZED, 11]], '실패한 크루의 커서는 그대로');
+    assert.ok(errs.some((e) => e.includes('채널 범위 조회 실패')), '로그를 남긴다');
+  } finally { console.error = orig; }
+});
+
+test('handler: 넘김 후보(@이름 안내)와 답변 멘션은 이 채널의 참여 구성만 — 내보낸 크루는 안내에서 빠지고 @이름을 적어도 넘기지 않는다', async () => {
+  const peers = [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드' })];
+  const run = async (override) => {
+    const db = fakeDb({ peers }); db.channelOverride = override; const texts = [];
+    const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (ws, slug, text) => { texts.push(text); return { reply: '@제드 이어서\nMSGR: handoff', handover: null, sessionId: 's1', artifacts: [] }; } });
+    await h({ msgId: 31, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '@서윤 시작', authorId: MEMBER, replyTo: null, threadRoot: 31, createdAt: new Date().toISOString(), hop: 0, origin: MEMBER, fromCrewId: null, after: [] });
+    return { text: texts[0], mentions: db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]).find((r) => r.kind === 'text')?.mentions };
+  };
+  const inScope = await run({ excluded_crew_ids: [] });
+  assert.match(inScope.text, /@로 적어라\(@제드\)/); assert.deepEqual(inScope.mentions, [{ kind: 'crew', id: ZED }]);
+  const outScope = await run({ excluded_crew_ids: [ZED] });
+  assert.doesNotMatch(outScope.text, /@제드/, '내보낸 크루는 넘김 안내에 없다'); assert.deepEqual(outScope.mentions, [], '@이름을 적어도 채널 밖 크루는 멘션되지 않는다');
+});
+
+test('순수: mentionsIn — 긴 이름 먼저·구간 소진: "@페퍼 (VPS)"는 "페퍼"를 부르지 않는다(실사고 2026-09-11)', () => {
+  const VPS = 'cccccccc-0000-4000-8000-0000000000a1';
+  const peers = [{ id: PEP, display_name: '페퍼' }, { id: VPS, display_name: '페퍼 (VPS)' }, { id: CREW, display_name: '서윤' }];
+  assert.deepEqual(M.mentionsIn('@페퍼 (VPS) 이어서 봐줘', peers, CREW), [{ kind: 'crew', id: VPS }]);
+  assert.deepEqual(M.mentionsIn('@페퍼 이어서 봐줘', peers, CREW), [{ kind: 'crew', id: PEP }]);
+  assert.deepEqual(M.mentionsIn('@페퍼 (VPS) 그리고 @페퍼 둘 다', peers, CREW), [{ kind: 'crew', id: VPS }, { kind: 'crew', id: PEP }], '둘 다 부르면 둘 다, 각 한 번');
+  assert.deepEqual(M.mentionsIn('@페퍼 (VPS) @페퍼 (VPS)', peers, CREW), [{ kind: 'crew', id: VPS }], '같은 이름 두 번은 한 번');
 });
