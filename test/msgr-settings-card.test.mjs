@@ -524,3 +524,9 @@ test('사이드바: 열린 채널이 안 읽음이어도 이름이 보인다(활
   const unread = css.indexOf('.msgr-list .item.unread .name { color: var(--fg);'); const fix = css.indexOf('.msgr-list .item.active.unread .name { color: var(--primary-fg); }');
   assert.ok(unread > 0 && fix > unread, 'active.unread 규칙이 unread 규칙 뒤에(같은 특이도면 뒤가 이긴다)');
 });
+
+test('컴포저: 클립보드 이미지 붙여넣기 → 같은 addFiles 수용 규칙, 이름 없는 캡처는 paste-시각(유건 2026-09-11 밤)', () => {
+  const comp = read('apps/messenger/src/App.jsx');
+  assert.match(comp, /onPaste=\{\(e\) => \{ const pasted = \[\.\.\.\(e\.clipboardData\?\.files \?\? \[\]\)\]; if \(!pasted\.length \|\| busy\) return; e\.preventDefault\(\); addFiles\(/, '붙여넣기 → addFiles');
+  assert.match(comp, /new File\(\[f\], `paste-\$\{new Date\(\)\.toISOString\(\)/, '이름 없는 캡처 이름');
+});

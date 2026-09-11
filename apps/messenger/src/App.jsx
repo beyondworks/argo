@@ -2568,7 +2568,8 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
         onDrop={(e) => { e.preventDefault(); setDragging(false); if (!busy) addFiles(e.dataTransfer?.files); }}>
         <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-        <textarea ref={ta} rows={1} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)} placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}
+        <textarea ref={ta} rows={1} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)}
+          onPaste={(e) => { const pasted = [...(e.clipboardData?.files ?? [])]; if (!pasted.length || busy) return; e.preventDefault(); addFiles(pasted.map((f) => (f.name && f.name !== 'image.png') ? f : new File([f], `paste-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }))); }} /* 클립보드 이미지 붙여넣기(유건 2026-09-11 밤) — 이름 없는 캡처는 paste-시각.png */ placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}
         <div className="msgr-tools">
           <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>
           <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={insertAt} disabled={busy} title={t('msg.mention')}><I name="at" size={15} /><span>{t('msg.mention')}</span></button>
