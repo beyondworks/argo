@@ -5,12 +5,13 @@ import { mentionCandidates, mentionsFromBody } from '../src/mention-candidates.m
 const crews = Array.from({ length: 13 }, (_, i) => ({ id: `c${i}`, display_name: `크루${i}`, role_text: '역할' }));
 const members = [{ user_id: 'me', display_name: '나', role: 'owner' }, { user_id: 'u2', display_name: 'lean8kim', role: 'member' }];
 
-test('크루가 상한(8)보다 많아도 채널의 사람이 먼저 뜬다; 나 자신은 빠진다', () => {
+test('상한 없음: 채널 참여 구성 전원이 뜬다(크루 13명 전부), 사람이 먼저; 나 자신은 빠진다 — 유건 제보 2026-09-11 밤(Walter가 목록에 없음)', () => {
   const list = mentionCandidates({ q: '', crews, members, uid: 'me' });
-  assert.equal(list.length, 8);
+  assert.equal(list.length, 14, '사람 1 + 크루 13 — 상한에 잘리지 않는다');
   assert.deepEqual(list[0], { kind: 'user', id: 'u2', name: 'lean8kim', sub: 'member' });
   assert.ok(!list.some((x) => x.id === 'me'));
-  assert.equal(list.filter((x) => x.kind === 'crew').length, 7);
+  assert.deepEqual(list.filter((x) => x.kind === 'crew').map((x) => x.id), crews.map((c) => c.id), '크루 순서 보존');
+  assert.equal(mentionCandidates({ q: '', crews, members, uid: 'me', max: 3 }).length, 3, 'max를 주면 그때만 자른다');
 });
 
 test('검색어는 사람·크루 이름에 대소문자 없이 부분 일치한다', () => {
