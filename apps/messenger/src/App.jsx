@@ -413,7 +413,8 @@ function Shell({ session }) {
       const replies = myIds.length ? await q(supabase.from('msgr_messages').select(cols).eq('org_id', org.id).eq('author_kind', 'crew').in('reply_to', myIds).is('deleted_at', null).order('id', { ascending: false }).limit(40)).catch(() => []) : [];
       if (dead) return;
       const item = (kind, m) => ({ kind, key: `${kind}:${m.id}`, channel_id: m.channel_id, at: m.created_at, who: m.author_kind === 'crew' ? m.crew_id : m.author_user_id, whoKind: m.author_kind === 'crew' ? 'crew' : 'user', text: m.body ?? '' });
-      const list = [...ments.map((m) => item('mention', m)), ...replies.map((m) => item('reply', m)), ...dms.map((m) => item('dm', m)),
+      const dmSet = new Set(dmIds); // DM 안의 크루 답글은 '1:1 대화'에만(같은 글이 '에이전트 답글'에도 실리던 중복 — 유건 제보 2026-09-11)
+      const list = [...ments.map((m) => item('mention', m)), ...replies.filter((m) => !dmSet.has(m.channel_id)).map((m) => item('reply', m)), ...dms.map((m) => item('dm', m)),
         ...friends.filter((f) => f.status === 'pending' && f.requested_by !== uid).map((f) => ({ kind: 'friend', key: `friend:${f.user_id}`, channel_id: null, at: f.created_at, who: f.user_id, whoKind: 'user', text: t('inbox.friend.text', { name: f.display_name || f.handle || '' }), friendName: f.display_name || f.handle })),
         ...aps.map((a) => ({ kind: 'approval', key: `approval:${a.id}`, channel_id: a.channel_id, at: a.created_at, who: a.crew_id, whoKind: 'crew', text: a.reason ? `${a.action} — ${a.reason}` : a.action }))];
       const seenKeys = new Set();
