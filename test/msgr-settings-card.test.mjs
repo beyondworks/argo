@@ -153,7 +153,7 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'allowed'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)\);/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼)');
   const comp = app.slice(app.indexOf('function Composer('));
   assert.match(comp, /const usable = channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews;/, '멘션 후보 필터');
-  assert.match(comp, /const list = \[\.\.\.usable\.map\(/, '후보가 usable을 안 쓴다');
+  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: usable, members, uid \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외는 mention-candidates.mjs)');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /let why = await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
   assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');

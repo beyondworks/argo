@@ -23,6 +23,7 @@ import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri } from './pla
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
+import { mentionCandidates } from './mention-candidates.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -2424,9 +2425,8 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, locked = fal
     if (!pop) return [];
     const needle = pop.q.toLowerCase();
     const usable = channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews; // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
-    const list = [...usable.map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, sub: c.role_text })), ...members.map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8), sub: m.role }))];
-    return list.filter((x) => !needle || x.name.toLowerCase().includes(needle)).slice(0, 8);
-  }, [pop, crews, members, channel?.personal_crews, org]);
+    return mentionCandidates({ q: needle, crews: usable, members, uid }); // 사람 먼저·나 제외·상한 8(유건 제보 2026-09-11: 크루 13명이 상한을 다 먹어 사람이 안 떴다)
+  }, [pop, crews, members, uid, channel?.personal_crews, org]);
   const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };
   const detect = (v, caret) => { const upto = v.slice(0, caret); const m = upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); };
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
