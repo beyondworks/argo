@@ -518,3 +518,9 @@ test('알림함: 기본은 읽지 않은 것만(지난 알림 토글) · 에이�
   const i18n = read('apps/messenger/src/i18n.js');
   for (const k of ['inbox.unreadOnly', 'inbox.showRead', 'inbox.allRead']) assert.match(i18n, new RegExp(`'${k.replace('.', '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
+
+test('사이드바: 열린 채널이 안 읽음이어도 이름이 보인다(활성 배경 위 글자색 규칙이 unread 규칙에 덮이지 않게) — 유건 제보 2026-09-11 밤', () => {
+  const css = read('apps/messenger/src/styles.css');
+  const unread = css.indexOf('.msgr-list .item.unread .name { color: var(--fg);'); const fix = css.indexOf('.msgr-list .item.active.unread .name { color: var(--primary-fg); }');
+  assert.ok(unread > 0 && fix > unread, 'active.unread 규칙이 unread 규칙 뒤에(같은 특이도면 뒤가 이긴다)');
+});

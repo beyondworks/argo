@@ -650,6 +650,7 @@
 .msgr-badge.mark, .msgr-list .item .msgr-badge.mark { background: var(--mark); color: #1a1a1a; }
 .msgr-badge.dim { opacity: 0.55; }
 .msgr-list .item.unread .name { color: var(--fg); font-weight: 600; }
+.msgr-list .item.active.unread .name { color: var(--primary-fg); } /* 열린 채널이 안 읽음 상태(알림함 보는 중 새 글)면 이름이 활성 배경과 같은 색이 되어 안 보이던 결함(유건 제보 2026-09-11 밤) */
 .msgr-list .item.active .msgr-badge { background: var(--primary-fg); color: var(--primary); }
 .msgr-newline { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
 .msgr-newline span { padding: 2px 9px; border-radius: 999px; background: var(--mark); color: #1a1a1a; } /* 라이트 바탕에서 노란 글자가 안 읽히던 것(유건 2026-09-09) — 알약으로 */
