@@ -437,7 +437,7 @@ function Shell({ session }) {
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
   const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet });
   notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet };
-  useEffect(() => { setBadge(Object.values(unread).reduce((s, u) => s + (u?.n || 0), 0)); }, [unread]); // 독 아이콘 숫자 = 안 읽은 합계
+  useEffect(() => { setBadge(Object.entries(unread).reduce((s, [id, u]) => s + (muted.has(id) ? 0 : (u?.n || 0)), 0)); }, [unread, muted]); // 독 아이콘 숫자 = 안 읽은 합계(음소거 채널 제외 — 레일 배지와 같은 규칙)
   const osNotify = (title, body, tag) => { sendNotify(title, body, tag); }; // Tauri 플러그인·웹 Notification 분기는 notify.js
   const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return document.visibilityState === 'hidden' || r.page !== 'chat' || r.chId !== channelId; }; // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
@@ -450,12 +450,12 @@ function Shell({ session }) {
   };
   const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
     const r = notifyRef.current;
-    if (!payload || payload.author_kind !== 'crew' || payload.kind !== 'text') return;
+    if (!payload || payload.kind !== 'text' || (payload.author_user_id && payload.author_user_id === r.uid)) return; // 크루든 사람이든(사람 DM·답글에 알림이 없던 갭, 2026-09-12 점검) — 내 글은 제외
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     const toMe = ch?.kind === 'dm' || (payload.reply_to != null && mineRef.current.has(payload.reply_to)) || (Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid));
     if (!toMe || !shouldNotify(payload.channel_id)) return;
-    const who = r.crews.find((c) => c.id === payload.crew_id);
-    osNotify(t('notify.reply', { name: who?.display_name || '?', channel: ch?.name ?? '' }), '', `r:${payload.id}`);
+    const who = payload.author_kind === 'crew' ? r.crews.find((c) => c.id === payload.crew_id)?.display_name : r.members.find((m) => m.user_id === payload.author_user_id)?.display_name;
+    osNotify(t('notify.reply', { name: who || '?', channel: ch?.name ?? '' }), '', `r:${payload.id}`);
   };
   const notifyApproval = (payload) => {
     const r = notifyRef.current;
@@ -2206,7 +2206,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
     return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('wheel', mark); el.removeEventListener('touchmove', mark); el.removeEventListener('keydown', mark); el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); ro.disconnect(); };
   }, [chId]);
   useEffect(() => { const el = feed.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [msgs?.length]);
-  useEffect(() => { if (!lastId) return; const mark = () => { if (document.visibilityState !== 'hidden') onRead?.(chId, lastId); }; mark(); document.addEventListener('visibilitychange', mark); return () => document.removeEventListener('visibilitychange', mark); }, [chId, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!lastId) return; const mark = () => { if (document.visibilityState !== 'hidden' && document.hasFocus()) onRead?.(chId, lastId); }; mark(); document.addEventListener('visibilitychange', mark); window.addEventListener('focus', mark); return () => { document.removeEventListener('visibilitychange', mark); window.removeEventListener('focus', mark); }; }, [chId, lastId]); // eslint-disable-line react-hooks/exhaustive-deps -- 창이 보여도 초점이 다른 앱에 있으면 읽음으로 치지 않는다(자리 비운 사이 온 글이 조용히 읽음이 되던 결함, 2026-09-12 점검)
   // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
   useEffect(() => { const iv = setInterval(() => load(lastId).catch(() => {}), 10_000); return () => clearInterval(iv); }, [load, lastId]);
   const decide = async (ap, status) => {
@@ -2481,7 +2481,13 @@ function Attachment({ a, onError }) {
       else window.open(data.signedUrl, '_blank', 'noopener');
     } catch { onError?.(t('msg.attachOpenFail')); }
   };
-  return <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.round(a.bytes / 1024)}KB</span> : null}</button>;
+  const isImg = /^image\//.test(a.mime || '');
+  const [src, setSrc] = useState(null); // 이미지는 서명 URL로 인라인(스크린샷 공유가 '파일 버튼'이던 갭, 2026-09-12 점검)
+  useEffect(() => { let on = true; if (!isImg) return undefined; supabase.storage.from('msgr').createSignedUrl(a.storage_path, 3600).then(({ data }) => { if (on && data?.signedUrl) setSrc(data.signedUrl); }).catch(() => {}); return () => { on = false; }; }, [a.storage_path, isImg]);
+  return (<span className="msgr-attach">
+    {src && <img className="msgr-imgprev" src={src} alt={a.name} loading="lazy" onClick={open} />}
+    <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.round(a.bytes / 1024)}KB</span> : null}</button>
+  </span>);
 }
 
 /* ─── 2단 다크 독: 입력 줄 + 도구 줄(첨부·멘션 │ 기억 상태) + 옐로 원형 전송. @멘션 팝업(사람·크루), Enter 전송(IME 조합 제외) ─── */

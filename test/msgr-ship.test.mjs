@@ -155,5 +155,5 @@ test('데스크톱 첨부 드롭·OS 알림 배선(유건 제보 2026-09-11 밤)
   const app = read('apps/messenger/src/App.jsx');
   assert.doesNotMatch(app, /new Notification\(/, '웹 Notification 직접 호출 금지 — notify.js가 Tauri·브라우저를 가른다');
   assert.match(app, /notifyMention\(payload\); notifyReply\(payload\);/, '크루 답변·DM도 알린다');
-  assert.match(app, /setBadge\(Object\.values\(unread\)/, '독 아이콘 숫자 = 안 읽은 합계');
+  assert.match(app, /setBadge\(Object\.entries\(unread\)/, '독 아이콘 숫자 = 안 읽은 합계');
 });

@@ -530,3 +530,12 @@ test('컴포저: 클립보드 이미지 붙여넣기 → 같은 addFiles 수용 
   assert.match(comp, /onPaste=\{\(e\) => \{ const pasted = \[\.\.\.\(e\.clipboardData\?\.files \?\? \[\]\)\]; if \(!pasted\.length \|\| busy\) return; e\.preventDefault\(\); addFiles\(/, '붙여넣기 → addFiles');
   assert.match(comp, /new File\(\[f\], `paste-\$\{new Date\(\)\.toISOString\(\)/, '이름 없는 캡처 이름');
 });
+
+test('점검 2026-09-12 소형 결함 4건: 읽음은 초점 있을 때만 · 사람 DM·답글도 알림 · 독 배지 음소거 제외 · 이미지 첨부 인라인', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /if \(document\.visibilityState !== 'hidden' && document\.hasFocus\(\)\) onRead\?\.\(chId, lastId\);/, '초점 판정');
+  assert.match(app, /window\.addEventListener\('focus', mark\);/, '초점 복귀 시 읽음');
+  assert.match(app, /if \(!payload \|\| payload\.kind !== 'text' \|\| \(payload\.author_user_id && payload\.author_user_id === r\.uid\)\) return;/, '사람 발신도 알림(내 글 제외)');
+  assert.match(app, /setBadge\(Object\.entries\(unread\)\.reduce\(\(s, \[id, u\]\) => s \+ \(muted\.has\(id\) \? 0 : \(u\?\.n \|\| 0\)\), 0\)\)/, '독 배지 음소거 제외');
+  assert.match(app, /<img className="msgr-imgprev" src=\{src\} alt=\{a\.name\} loading="lazy" onClick=\{open\} \/>/, '이미지 인라인');
+});
