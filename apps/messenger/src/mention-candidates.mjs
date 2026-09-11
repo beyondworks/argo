@@ -12,7 +12,7 @@ export function mentionCandidates({ q = '', crews = [], members = [], uid = null
 // (실사고 2026-09-11: 사설 채널 밖 페퍼가 답함). picked = 팝업에서 고른 것(같은 규칙으로 본문에 아직 있는지 확인).
 // candidates = 이 채널에서 부를 수 있는 사람·크루만.
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const mentionRe = (name, flags = '') => new RegExp(`(^|\\s)@${esc(name)}(?=$|[\\s,.!?:;])`, flags);
+const mentionRe = (name, flags = '') => new RegExp(`(^|\\s)@${esc(name)}(?=$|[\\s,.!?:;])`, `i${flags}`); // 대소문자 무시(@edna = Edna)
 export function mentionsFromBody(body, candidates, picked = []) {
   let text = body; const out = []; const seen = new Set();
   const all = [...picked, ...candidates].filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length);

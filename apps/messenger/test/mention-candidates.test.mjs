@@ -28,3 +28,8 @@ test('본문 멘션: "@페퍼 (VPS)"는 페퍼 (VPS)만 — 앞부분이 같은 
   assert.deepEqual(mentionsFromBody('@페퍼 (VPS)', cands, [{ kind: 'crew', id: 'v', name: '페퍼 (VPS)' }]), [{ kind: 'crew', id: 'v' }], '팝업 선택도 본문에 남아 있어야 멘션');
   assert.deepEqual(mentionsFromBody('안녕', cands, [{ kind: 'crew', id: 'v', name: '페퍼 (VPS)' }]), [], '팝업에서 골랐어도 본문에서 지웠으면 멘션 아님');
 });
+
+test('본문 멘션 대소문자 무시: "@edna"도 Edna(끝말잇기 실사고 2026-09-11 밤)', () => {
+  const cands = [{ kind: 'crew', id: 'e', name: 'Edna' }, { kind: 'crew', id: 'o', name: 'Ogilvy' }];
+  assert.deepEqual(mentionsFromBody('@edna 디자인 @OGILVY', cands).map((m) => m.id).sort(), ['e', 'o']);
+});

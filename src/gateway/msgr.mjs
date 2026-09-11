@@ -128,7 +128,7 @@ export function mentionsIn(text, peers, selfId) {
   const named = peers.filter((p) => p.id !== selfId && p.display_name && peers.filter((other) => other.display_name === p.display_name).length === 1) // 동명이인은 도구의 정확한 수신자 ID로만 넘긴다
     .sort((a, b) => b.display_name.length - a.display_name.length);
   for (const p of named) {
-    const re = new RegExp(`(^|[^\\w@])@${p.display_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w가-힣])`, 'gu');
+    const re = new RegExp(`(^|[^\\w@])@${p.display_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w가-힣])`, 'giu'); // 대소문자 무시 — "@edna"도 Edna(끝말잇기 실사고 2026-09-11 밤: 넘김 끊김)
     if (!re.test(rest)) continue;
     out.push({ kind: 'crew', id: p.id });
     rest = rest.replace(re, (m, lead) => lead + ' '.repeat(m.length - lead.length)); // 구간 소진 — 길이 유지
@@ -608,8 +608,9 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const authorName = job.fromCrewId ? clean(crewName(job.fromCrewId), 40) : humanName;
     const chName = clean(ch.name, 40);
     const others = peers.filter((p) => p.id !== job.crewId).map((p) => `@${clean(p.display_name, 40)}`);
-    const hint = others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
-      ` To hand remaining work to or ask another crew, write its @name in your reply (${others.join(' ')}) and end with MSGR: handoff. For completion, thanks or acknowledgement alone, end with MSGR: done.`, lang) : '';
+    const brief = pick(' 요청한 것만 군더더기 없이 답하라 — 지시를 되풀이하거나 진행 계획·상황을 설명하지 마라. 차례를 주고받는 일(게임·릴레이)은 자기 차례 내용만 적고 다음 사람을 @로 넘겨라.', ' Answer only what was asked — do not restate the instruction or narrate your plan or situation. For turn-taking work (games, relays) post only your move and hand off with @name.', lang);
+    const hint = brief + (others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
+      ` To hand remaining work to or ask another crew, write its @name in your reply (${others.join(' ')}) and end with MSGR: handoff. For completion, thanks or acknowledgement alone, end with MSGR: done.`, lang) : '');
     // 제3자 발화 프레이밍(검수 HIGH-4): 채널 텍스트를 사장 지시와 같은 자리에 맨몸으로 넣지 않는다. 채널명·이름은 세척(개행·길이),
     // 본문은 이름 접두 아래 한 덩어리. 프롬프트는 힌트일 뿐이므로 구조적 경계(허용 범위 게이트·결재·RLS)가 따로 있다.
     let text = job.fromCrewId ? pick(

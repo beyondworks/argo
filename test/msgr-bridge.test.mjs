@@ -957,3 +957,14 @@ test('순수: mentionsIn — 긴 이름 먼저·구간 소진: "@페퍼 (VPS)"�
   assert.deepEqual(M.mentionsIn('@페퍼 (VPS) 그리고 @페퍼 둘 다', peers, CREW), [{ kind: 'crew', id: VPS }, { kind: 'crew', id: PEP }], '둘 다 부르면 둘 다, 각 한 번');
   assert.deepEqual(M.mentionsIn('@페퍼 (VPS) @페퍼 (VPS)', peers, CREW), [{ kind: 'crew', id: VPS }], '같은 이름 두 번은 한 번');
 });
+
+test('순수: mentionsIn — 대소문자 무시("@edna" = Edna, 끝말잇기 실사고 2026-09-11 밤), 대소문자만 다른 동명이인은 넘기지 않는다', () => {
+  const EDNA = 'cccccccc-0000-4000-8000-0000000000e1';
+  assert.deepEqual(M.mentionsIn('@edna 디자인', [{ id: EDNA, display_name: 'Edna' }, { id: CREW, display_name: '서윤' }], CREW), [{ kind: 'crew', id: EDNA }]);
+  assert.deepEqual(M.mentionsIn('@EDNA 디자인', [{ id: EDNA, display_name: 'Edna' }], CREW), [{ kind: 'crew', id: EDNA }]);
+});
+test('handler 프롬프트: 간결 규칙(요청한 것만·차례 작업은 자기 차례만) — 넘김 안내가 없어도 붙는다', () => {
+  const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const brief = pick\(' 요청한 것만 군더더기 없이 답하라/);
+  assert.match(src, /const hint = brief \+ \(others\.length \? pick\(/);
+});
