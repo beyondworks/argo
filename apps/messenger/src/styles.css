@@ -863,6 +863,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-thread.page .msgr-setcard h2 { font-size: 14px; }
   .msgr-phone .msgr-thread.page .msgr-setcard p { font-size: 12px; }
   .msgr-phone .msgr-main .msgr-thread.page .btn { min-height: 32px; height: 32px; padding: 0 12px; font-size: 13px; }
+  .msgr-phone .msgr-main .msgr-slip .row2 .btn { min-height: 32px; height: 32px; padding: 0 12px; font-size: 13px; } /* 결재 슬립 승인·거절 — 전역 터치 규칙(44px)이 sm을 덮어 너무 컸다(유건 제보 2026-09-11) */
   .msgr-phone .msgr-main .msgr-thread.page .btn.sm { min-height: 28px; height: 28px; padding: 0 10px; font-size: 12.5px; }
   .msgr-phone .msgr-setcard .msgr-rows .row { min-height: 36px; padding: 3px 6px; }
   .msgr-phone .msgr-setcard .msgr-rows .row .btn.ghost { width: 32px; height: 32px; min-width: 32px; min-height: 32px; }
