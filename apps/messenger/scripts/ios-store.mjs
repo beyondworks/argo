@@ -1,5 +1,5 @@
 // App Store Connect(TestFlight)용 iOS 빌드·업로드. API 키 없이 Xcode에 로그인된 계정 세션을 쓴다(-allowProvisioningUpdates).
-//   node scripts/ios-store.mjs build    # release 아카이브 + app-store-connect 내보내기 → src-tauri/gen/apple/build/arm64/*.ipa
+//   node scripts/ios-store.mjs build [빌드번호]   # release 아카이브 + app-store-connect 내보내기 → src-tauri/gen/apple/build/arm64/*.ipa
 //   node scripts/ios-store.mjs upload   # 위 아카이브를 App Store Connect로 업로드
 // 클라우드 설정 파일(VITE_*)은 자식 프로세스 env로만 넘기고 값은 어디에도 출력하지 않는다.
 // 러스트 툴체인은 RUSTUP_HOME/CARGO_HOME이 있으면 그대로, 없으면 레포 루트의 artifacts/mobile-native 를 쓴다.
@@ -77,7 +77,8 @@ if (mode === 'build') {
   const configFile = join(app, '.env.local');
   const env = buildEnv(process.env, existsSync(configFile) ? parseEnv(readFileSync(configFile, 'utf8')) : {});
   if (!existsSync(join(env.CARGO_HOME, 'bin/rustup'))) throw new Error(`rustup 없음: ${env.CARGO_HOME}/bin — RUSTUP_HOME/CARGO_HOME을 지정하세요`);
-  run('npm', ['run', 'mobile:ios:build', '--', '--export-method', 'app-store-connect', '--target', 'aarch64', '--ci'], env);
+  const buildNumber = process.argv[3]; // 같은 버전을 다시 올릴 때(예: 2) — TestFlight는 빌드 번호가 달라야 받는다
+  run('npm', ['run', 'mobile:ios:build', '--', '--export-method', 'app-store-connect', '--target', 'aarch64', '--ci', ...(buildNumber ? ['--build-number', String(buildNumber)] : [])], env);
   gateOrDie('build');
 } else if (mode === 'upload') {
   gateOrDie('upload');

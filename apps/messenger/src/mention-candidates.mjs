@@ -7,3 +7,20 @@ export function mentionCandidates({ q = '', crews = [], members = [], uid = null
   const agents = crews.map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, sub: c.role_text }));
   return [...people, ...agents].filter((x) => !needle || x.name.toLowerCase().includes(needle)).slice(0, max);
 }
+
+// 본문의 @이름 → 멘션 배열. 긴 이름부터 맞추고 맞춘 구간은 지워, "@페퍼 (VPS)" 안의 "@페퍼"가 다른 크루로 새지 않게 한다
+// (실사고 2026-09-11: 사설 채널 밖 페퍼가 답함). picked = 팝업에서 고른 것(같은 규칙으로 본문에 아직 있는지 확인).
+// candidates = 이 채널에서 부를 수 있는 사람·크루만.
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const mentionRe = (name, flags = '') => new RegExp(`(^|\\s)@${esc(name)}(?=$|[\\s,.!?:;])`, flags);
+export function mentionsFromBody(body, candidates, picked = []) {
+  let text = body; const out = []; const seen = new Set();
+  const all = [...picked, ...candidates].filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length);
+  for (const x of all) {
+    const key = `${x.kind}:${x.id}`; if (seen.has(key)) continue;
+    if (!mentionRe(x.name).test(text)) continue;
+    seen.add(key); out.push({ kind: x.kind, id: x.id });
+    text = text.replace(mentionRe(x.name, 'g'), (m, lead) => lead + ' '.repeat(m.length - lead.length)); // 구간 소진 — 길이 유지
+  }
+  return out;
+}
