@@ -40,6 +40,7 @@ targets:
       path: argo-messenger_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
