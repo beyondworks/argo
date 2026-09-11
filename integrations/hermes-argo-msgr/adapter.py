@@ -6,6 +6,7 @@ Argo Messenger is the platform; Hermes connects as a *bot*, the way it connects 
 Wire (Telegram Bot API discipline, JSON): GET  {url}/bot{token}/getMe
                                           GET  {url}/bot{token}/getUpdates?offset=&timeout=   (long poll, offset = ack)
                                           POST {url}/bot{token}/sendMessage {chat_id, text, reply_to_message_id}
+                                          POST {url}/bot{token}/sendChatAction {chat_id, action: typing}   (2초마다 — '답변 중' 표시)
 Who may instruct the bot, which channels it reads, and channel policies are all decided by the Argo server
 (getUpdates only returns mentions / DMs / replies addressed to this bot; sendMessage re-checks the policy on
 every reply). So inbound events are marked role_authorized — no per-user allow-list is needed here.
@@ -294,7 +295,12 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         return SendResult(success=True, message_id=str(res.get("message_id") or ""))
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
-        return None   # Argo Messenger shows "connected · last seen" from getUpdates instead of a typing bubble
+        # 게이트웨이 _keep_typing이 2초마다 부른다(호출당 ~1.5초 상한). 서버가 org 토픽으로 typing을 방송해 앱이 '답변 중'을 그린다
+        # (앱은 6초 안에 갱신이 없으면 지운다). 실패는 삼킨다 — 타이핑은 답변을 막을 이유가 못 된다. 구버전 서버(sendChatAction 404)도 무해.
+        try:
+            await self._api("sendChatAction", {"chat_id": str(chat_id), "action": "typing"}, post=True, timeout=1.5)
+        except Exception:
+            return None
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         c = self._chats.get(str(chat_id)) or {}

@@ -2,7 +2,7 @@
 // 텔레그램 Bot API 규율을 차용한다: 주소 /bot<token>/<method>, 봉투 {ok, result} | {ok:false, error_code, description},
 // getUpdates 롱폴 + offset(= 마지막 update_id + 1 = ack). 정책·권한 판정은 전부 DB RPC(msgr_bot_*)에 있고 이 층은 번역만 한다.
 // ponytail: 레이트 리밋 없음 — 토큰당 RPC 1초 폴이 상한. 남용이 보이면 엣지에서 토큰별 카운터.
-export const METHODS = ['getMe', 'getUpdates', 'sendMessage'];
+export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction'];
 const MAX_WAIT_MS = 25_000; // 텔레그램은 ~50초, 엣지 펑션 벽시계 안에서 여유 있게
 const POLL_MS = 1_000;
 
@@ -53,10 +53,15 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
         await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
       }
     }
-    // sendMessage
     const chat = String(params.chat_id ?? '');
-    const text = String(params.text ?? '');
     if (!/^[0-9a-f-]{36}$/i.test(chat)) return fail(400, 'Bad Request: chat_id must be a channel id');
+    if (method === 'sendChatAction') { // 텔레그램 모양(action=typing) — 봇이 답을 만드는 동안 2초마다 부른다 → 서버가 org 토픽으로 typing 방송(2026-09-11 유건 제보: VPS 크루 '답변 중' 표시 없음)
+      if (params.action != null && params.action !== 'typing') return fail(400, 'Bad Request: action must be typing');
+      await rpc('msgr_bot_typing', { token, channel: chat });
+      return reply(200, true);
+    }
+    // sendMessage
+    const text = String(params.text ?? '');
     if (!text.trim()) return fail(400, 'Bad Request: text is empty');
     const src = params.reply_to_message_id != null ? Number(params.reply_to_message_id) : null;
     if (src != null && !Number.isInteger(src)) return fail(400, 'Bad Request: reply_to_message_id must be an integer');

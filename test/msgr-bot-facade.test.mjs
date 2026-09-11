@@ -14,8 +14,8 @@ test('parseRequest: /bot<token>/<method> 경로 · Bearer 헤더 폴백 · 쿼�
   assert.equal(parseRequest('https://x/msgr-bot/getMe', {}, null).token, null);
 });
 
-test('토큰 없음 401 · 모르는 메서드 404 · 지원 메서드 3종', async () => {
-  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage']);
+test('토큰 없음 401 · 모르는 메서드 404 · 지원 메서드 4종', async () => {
+  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction']);
   assert.equal((await handle({ token: null, method: 'getMe' }, fakeRpc({}))).status, 401);
   const r = await handle({ token: T, method: 'setWebhook' }, fakeRpc({}));
   assert.equal(r.status, 404); assert.equal(r.body.ok, false); assert.match(r.body.description, /setWebhook/);
@@ -76,4 +76,15 @@ test('claim-bound responses forward attempt/disposition/mentions without accepti
   assert.equal(result.status,200);
   assert.deepEqual(rpc.calls,[['msgr_bot_finish',{token:T,channel:CH,body:'next',src_id:7,attempt,disposition:'handoff',mentions}]]);
   assert.equal((await handle({token:T,method:'sendMessage',params:{chat_id:CH,text:'x',execution_attempt:attempt}},rpc)).status,400);
+});
+
+test('sendChatAction: chat_id 검증 → msgr_bot_typing RPC → true(텔레그램 모양); action은 typing만; 범위 밖은 403', async () => {
+  const calls = []; const rpc = async (fn, args) => { calls.push([fn, args]); if (args.channel === '00000000-0000-4000-8000-00000000dead') throw new Error('msgr_bot_not_member'); return null; };
+  const ok = await handle({ token: T, method: 'sendChatAction', params: { chat_id: '11111111-1111-4111-8111-111111111111', action: 'typing' } }, rpc);
+  assert.equal(ok.status, 200); assert.deepEqual(ok.body, { ok: true, result: true });
+  assert.deepEqual(calls, [['msgr_bot_typing', { token: T, channel: '11111111-1111-4111-8111-111111111111' }]]);
+  assert.equal((await handle({ token: T, method: 'sendChatAction', params: { chat_id: 'nope' } }, rpc)).status, 400, 'chat_id 형식');
+  assert.equal((await handle({ token: T, method: 'sendChatAction', params: { chat_id: '11111111-1111-4111-8111-111111111111', action: 'upload_photo' } }, rpc)).status, 400, 'typing 외 action');
+  const out = await handle({ token: T, method: 'sendChatAction', params: { chat_id: '00000000-0000-4000-8000-00000000dead' } }, rpc);
+  assert.equal(out.status, 403); assert.match(out.body.description, /add the bot to this channel/);
 });

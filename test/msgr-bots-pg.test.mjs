@@ -453,3 +453,20 @@ test('waiting older ordered root cannot be skipped by acknowledging a newer inde
   const after=JSON.parse(asAnon(`select coalesce(jsonb_agg(x),'[]') from public.msgr_bot_updates('${b.token}',${afterId}) x`));
   assert.deepEqual(after.map(x=>x.update_id),[Number(older),Number(newer)]);
 });
+
+test('sendChatAction: msgr_bot_typing은 org 토픽으로 typing을 방송(private) · 토큰 불량 401 · 채널 밖(비공개 비구성원·공개 제외 목록) 거부 · 사람 글 없이도 동작', { skip }, () => {
+  // 채널 범위 판정 함수(msgr_crew_in_channel)는 20260911230000이 만들고 제외 목록 열은 20260911150000이 만든다 — 라이브와 같은 순서로 적용
+  for (const f of ['20260911150000_msgr_channel_manage.sql', '20260911230000_msgr_channel_scope_enforce.sql', '20260912000000_msgr_bot_typing.sql']) psql(['-f', mig(f)]);
+  sql(`delete from realtime.sent`);
+  assert.equal(asAnonRaw(`select public.msgr_bot_typing('${RELAY_BOT.token}', '${PUB}')`).status, 0, '공개 채널 — 허용(void 반환)');
+  const rows = sql(`select payload::text || '|' || event || '|' || topic || '|' || private::text from realtime.sent`).split('\n').filter(Boolean);
+  assert.equal(rows.length, 1, '방송 1건');
+  assert.match(rows[0], new RegExp(`"channel_id": ?"${PUB}"`)); assert.match(rows[0], new RegExp(`"crew_id": ?"${RELAY_BOT.crew_id}"`));
+  assert.match(rows[0], new RegExp(`\\|typing\\|org:${ORG}\\|(t|true)$`), 'event=typing · org 토픽 · private');
+  fails(asAnonRaw(`select public.msgr_bot_typing('bad-token', '${PUB}')`), /msgr_bot_unauthorized/, '토큰 불량');
+  fails(asAnonRaw(`select public.msgr_bot_typing('${RELAY_BOT.token}', '${PRIV}')`), /msgr_bot_not_member/, '비공개 비구성원');
+  sql(`update public.msgr_channels set excluded_crew_ids = array['${RELAY_BOT.crew_id}'::uuid] where id = '${PUB}'`);
+  fails(asAnonRaw(`select public.msgr_bot_typing('${RELAY_BOT.token}', '${PUB}')`), /msgr_bot_not_member/, '공개 채널에서 내보낸 봇');
+  sql(`update public.msgr_channels set excluded_crew_ids = '{}' where id = '${PUB}'`);
+  assert.equal(sql(`select has_function_privilege('anon', 'public.msgr_bot_typing(text, uuid)', 'EXECUTE')`), 't', '봇 쪽은 anon으로 부른다');
+});
