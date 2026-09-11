@@ -497,3 +497,13 @@ test('i18n 전수 스윕 — App.jsx·graph3d.jsx의 정적 t(\'키\')는 전부
   assert.deepEqual(missing, [], `사전에 없는 키: ${missing.join(', ')}`);
   assert.ok(used.size > 150, `스윕이 실제로 키를 모았다(${used.size})`);
 });
+
+test('컴포저 첨부: 드래그앤드롭 수용·칩마다 취소 단추·선택창과 같은 수용 규칙(유건 제보 2026-09-11 밤)', () => {
+  const comp = read('apps/messenger/src/App.jsx');
+  assert.match(comp, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragging\(false\); if \(!busy\) addFiles\(e\.dataTransfer\?\.files\); \}\}/, '드롭 → addFiles');
+  assert.match(comp, /onDragOver=\{\(e\) => \{ if \(e\.dataTransfer\?\.types\?\.includes\('Files'\)\) \{ e\.preventDefault\(\); setDragging\(true\); \}/, '파일 드래그만 강조(텍스트 드래그는 무시)');
+  assert.match(comp, /onChange=\{\(e\) => \{ addFiles\(e\.target\.files\); e\.target\.value = ''; \}\}/, '선택창도 같은 addFiles');
+  assert.match(comp, /setFiles\(\(cur\) => acceptFiles\(cur, incoming, ATTACH_MAX\)\.files\)/, '누적·중복 제거·상한은 acceptFiles 한 곳');
+  assert.match(comp, /uploading !== f\.name && <button type="button" className="x"[\s\S]{0,140}?onClick=\{\(\) => setFiles\(\(cur\) => withoutFile\(cur, f\)\)\}/, '칩 취소 단추(업로드 중엔 없음)');
+  assert.match(read('apps/messenger/src/styles.css'), /\.msgr-composer\.drop \{/, '드롭 강조 CSS');
+});

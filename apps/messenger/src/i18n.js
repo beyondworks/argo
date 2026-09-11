@@ -520,6 +520,7 @@ export const DICT = {
   'ui.close': ['닫기', 'Close'],
   'att.tooBig': ['{name}: 25MB를 넘어 보낼 수 없습니다.', '{name}: over 25MB, cannot be sent.'],
   'att.uploading': ['올리는 중…', 'Uploading…'],
+  'att.remove': ['{name} 첨부 취소', 'Remove {name}'],
   'seat.limit': ['좌석이 다 찼습니다. 무료 조직은 3좌석까지이고, 팀 플랜에서 좌석을 늘릴 수 있습니다.', 'All seats are taken. Free organizations have 3 seats; the Team plan adds more.'],
   'seat.status': ['좌석 {used}/{seats} · {plan}', 'Seats {used}/{seats} · {plan}'],
   'plan.free': ['무료', 'Free'],

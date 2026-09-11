@@ -24,6 +24,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody } from './mention-candidates.mjs';
+import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -2469,6 +2470,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   const { t } = useT();
   const phone = useIsPhone(); // 폰은 짧은 안내문(슬랙)
   const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [files, setFiles] = useState([]);
+  const [dragging, setDragging] = useState(false); // 파일을 끌어다 놓는 중 — 컴포저 테두리 강조
   const [pop, setPop] = useState(null); const [sel, setSel] = useState(0);
   const [uploading, setUploading] = useState(''); // 올리는 중인 파일 이름
   const [mentions, setMentions] = useState([]);
@@ -2500,6 +2502,12 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     requestAnimationFrame(() => { ta.current?.focus(); ta.current?.setSelectionRange(next.length, next.length); autosize(ta.current); });
   };
   useEffect(() => { if (!mentionReq) return; mentionCrew(mentionReq); onMentionDone?.(); }, [mentionReq]); // eslint-disable-line react-hooks/exhaustive-deps
+  const addFiles = (list) => { // 선택창·드래그앤드롭 공용 — 상한 초과는 이유를 알리고, 같은 파일은 한 번만, 기존 첨부에 누적(유건 제보 2026-09-11 밤)
+    const incoming = [...(list ?? [])];
+    const { rejected } = acceptFiles([], incoming, ATTACH_MAX);
+    if (rejected.length) onError(rejected.map((f) => t('att.tooBig', { name: f.name })).join(' '));
+    setFiles((cur) => acceptFiles(cur, incoming, ATTACH_MAX).files);
+  };
   const send = async () => {
     const body = text.trim(); if (!body || busy) return;
     setBusy(true);
@@ -2536,14 +2544,18 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
           </button>)}
         </div>
       )}
-      <form className="msgr-composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
-        <input hidden multiple type="file" ref={fileRef} onChange={(e) => { const all = [...e.target.files]; const big = all.filter((f) => f.size > ATTACH_MAX); if (big.length) onError(big.map((f) => t('att.tooBig', { name: f.name })).join(' ')); setFiles(all.filter((f) => f.size <= ATTACH_MAX)); e.target.value = ''; }} />
+      <form className={`msgr-composer${dragging ? ' drop' : ''}`} onSubmit={(e) => { e.preventDefault(); send(); }}
+        onDragOver={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); setDragging(true); } }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); if (!busy) addFiles(e.dataTransfer?.files); }}>
+        <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
         <textarea ref={ta} rows={1} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)} placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}
         <div className="msgr-tools">
           <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>
           <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={insertAt} disabled={busy} title={t('msg.mention')}><I name="at" size={15} /><span>{t('msg.mention')}</span></button>
           {(files.length > 0 || channel.crew_memory === false) && <span className="sep" />}
-          {files.map((f) => <span key={f.name} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} />{f.name}<span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span></span>)}
+          {files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} />{f.name}<span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span>
+            {uploading !== f.name && <button type="button" className="x" onMouseDown={(e) => e.preventDefault()} onClick={() => setFiles((cur) => withoutFile(cur, f))} disabled={busy} aria-label={t('att.remove', { name: f.name })} title={t('att.remove', { name: f.name })}>×</button>}</span>)}
           {channel.crew_memory === false && <span className="tb on" title={t('ch.crewMemory')}><I name="memoff" size={15} /><span>{t('ch.memoryOff')}</span></span>}
           <button className="send" onMouseDown={(e) => e.preventDefault()} disabled={busy || locked || !text.trim()} aria-label={t('msg.send')} title={locked ? t('org.locked.short') : t('msg.send')}><I name="up" size={16} /></button>
         </div>

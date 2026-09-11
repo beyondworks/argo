@@ -189,6 +189,8 @@
 .msgr-tools .send:active { transform: scale(.94); }
 .msgr-tools .send:disabled { opacity: .4; cursor: default; transform: none; }
 .msgr-tools .filechip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); }
+.msgr-tools .filechip .x { border: 0; background: none; color: var(--fg-3); cursor: pointer; font: inherit; font-size: 14px; line-height: 1; padding: 0 0 0 2px; } .msgr-tools .filechip .x:hover { color: var(--fg); }
+.msgr-composer.drop { box-shadow: var(--shadow-float), 0 0 0 2px var(--mark); } /* 파일을 끌어다 놓는 중 */
 .msgr-tools .filechip.busy { border-color: var(--mark); } .msgr-tools .filechip.busy .msgr-klabel { color: var(--mark); animation: msgrPulse 1.2s ease-in-out infinite; }
 .msgr-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 14px 0; font-size: 11px; color: var(--fg-3); }
 .msgr-sub .typing-line { display: flex; align-items: center; gap: 6px; min-height: 16px; }
