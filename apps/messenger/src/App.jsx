@@ -413,7 +413,8 @@ function Shell({ session }) {
       ]);
       const myIds = mine.map((m) => m.id);
       for (const id of myIds) mineRef.current.add(id);
-      const replies = myIds.length ? await q(supabase.from('msgr_messages').select(cols).eq('org_id', org.id).eq('author_kind', 'crew').in('reply_to', myIds).is('deleted_at', null).order('id', { ascending: false }).limit(40)).catch(() => []) : [];
+      const replies = myIds.length ? (await q(supabase.from('msgr_messages').select(`${cols}, kind, mentions`).eq('org_id', org.id).eq('author_kind', 'crew').eq('kind', 'text').in('reply_to', myIds).is('deleted_at', null).order('id', { ascending: false }).limit(40)).catch(() => []))
+        .filter((m) => !(Array.isArray(m.mentions) && m.mentions.some((x) => x?.kind === 'crew'))) : []; // 최종 답글만 — 다른 크루로 넘기는 중간 답글·시스템 안내는 알림함 밖(조직 규모에서 비대해지던 문제, 유건 2026-09-11 밤)
       if (dead) return;
       const item = (kind, m) => ({ kind, key: `${kind}:${m.id}`, channel_id: m.channel_id, at: m.created_at, who: m.author_kind === 'crew' ? m.crew_id : m.author_user_id, whoKind: m.author_kind === 'crew' ? 'crew' : 'user', text: m.body ?? '' });
       const dmSet = new Set(dmIds); // DM 안의 크루 답글은 '1:1 대화'에만(같은 글이 '에이전트 답글'에도 실리던 중복 — 유건 제보 2026-09-11)
@@ -1227,9 +1228,12 @@ const INBOX_KINDS = ['all', 'mention', 'reply', 'approval', 'dm'];
 function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, nameOfUser, dmName, onOpen, onReadAll, onBack, onMenu }) {
   const { t, lang } = useT();
   const [kind, setKind] = useState(initialKind); // 페이지가 바뀌면 통째로 다시 그려지므로 초기값으로 충분하다
+  const [unreadOnly, setUnreadOnly] = useState(true); // 기본은 읽지 않은 것만 — 읽은 항목은 '지난 알림 보기'로(유건 2026-09-11 밤)
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
   const who = (it) => it.whoKind === 'crew' ? (crews.find((c) => c.id === it.who)?.display_name ?? t('org.crews')) : nameOfUser(it.who);
-  const shown = items.filter((it) => kind === 'all' || it.kind === kind);
+  const isNew = (it) => Date.parse(it.at) > prevSeen;
+  const shown = items.filter((it) => (kind === 'all' || it.kind === kind) && (!unreadOnly || isNew(it)));
+  const readCount = items.filter((it) => (kind === 'all' || it.kind === kind) && !isNew(it)).length;
   const phone = useIsPhone();
   const swipe = useSwipeTabs(INBOX_KINDS, kind, setKind, phone);
   return (<>
@@ -1243,7 +1247,8 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
     <div className="msgr-thread page" {...swipe}><div className="msgr-inbox">
       <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
       {phone && <p className="msgr-inboxcounts">{t('inbox.count', { kind: t(`inbox.kind.${kind}`), n: shown.length })}</p>} {/* 폰: 탭 속 숫자 대신 탭 아래 한 줄 — 고른 탭의 개수(유건 2026-09-11) */}
-      {!shown.length && <p className="empty">{t('inbox.empty')}</p>}
+      {!shown.length && <p className="empty">{unreadOnly && readCount ? t('inbox.allRead') : t('inbox.empty')}</p>}
+      {readCount > 0 && <button type="button" className="btn sm msgr-inboxtoggle" onClick={() => setUnreadOnly((v) => !v)}>{unreadOnly ? t('inbox.showRead', { n: readCount }) : t('inbox.unreadOnly')}</button>}
       {shown.map((it) => (
         <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id)}>
           <Av name={who(it)} crew={it.whoKind === 'crew'} size="sm" crewId={it.whoKind === 'crew' ? it.who : null} userId={it.whoKind === 'crew' ? null : it.who} />

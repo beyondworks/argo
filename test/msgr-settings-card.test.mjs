@@ -508,3 +508,13 @@ test('컴포저 첨부: 드래그앤드롭 수용·칩마다 취소 단추·선�
   assert.match(comp, /uploading !== f\.name && <button type="button" className="x"[\s\S]{0,140}?onClick=\{\(\) => setFiles\(\(cur\) => withoutFile\(cur, f\)\)\}/, '칩 취소 단추(업로드 중엔 없음)');
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-composer\.drop \{/, '드롭 강조 CSS');
 });
+
+test('알림함: 기본은 읽지 않은 것만(지난 알림 토글) · 에이전트 답글은 내 글의 최종 답글만(중간 넘김·시스템 제외) — 유건 2026-09-11 밤', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /const \[unreadOnly, setUnreadOnly\] = useState\(true\);/, '기본 읽지 않은 것만');
+  assert.match(app, /const shown = items\.filter\(\(it\) => \(kind === 'all' \|\| it\.kind === kind\) && \(!unreadOnly \|\| isNew\(it\)\)\);/, '토글이 목록을 거른다');
+  assert.match(app, /\.eq\('author_kind', 'crew'\)\.eq\('kind', 'text'\)\.in\('reply_to', myIds\)/, '시스템 안내 제외');
+  assert.match(app, /\.filter\(\(m\) => !\(Array\.isArray\(m\.mentions\) && m\.mentions\.some\(\(x\) => x\?\.kind === 'crew'\)\)\)/, '다른 크루로 넘기는 중간 답글 제외');
+  const i18n = read('apps/messenger/src/i18n.js');
+  for (const k of ['inbox.unreadOnly', 'inbox.showRead', 'inbox.allRead']) assert.match(i18n, new RegExp(`'${k.replace('.', '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
