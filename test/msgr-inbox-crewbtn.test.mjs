@@ -15,7 +15,7 @@ test('알림함 v1: 레일 하단 종(안 읽은 수) · 페이지 분기 · 집
   assert.match(app, /\{inboxUnread > 0 && <span className="n">/, '안 읽은 수 배지');
   assert.match(app, /\) : page === 'inbox' && org \? \(\n\s*<Inbox items=\{inbox\}/, '페이지 분기');
   assert.match(app, /\.contains\('mentions', JSON\.stringify\(\[\{ kind: 'user', id: uid \}\]\)\)/, '나를 멘션한 글 — jsonb cs는 JSON 문자열로(배열이면 PG 배열 문법으로 직렬화돼 400, 실측)');
-  assert.match(app, /\.eq\('author_kind', 'crew'\)\.in\('reply_to', myIds\)/, '내 글의 크루 답글');
+  assert.match(app, /\.eq\('author_kind', 'crew'\)\.eq\('kind', 'text'\)\.in\('reply_to', myIds\)/, '내 글의 크루 답글(시스템 안내 제외 — 2026-09-12 알림함 최종 답글만)');
   assert.match(app, /from\('msgr_crew_approvals'\)\.select\('id, channel_id, crew_id, action, reason, created_at'\)\.eq\('org_id', org\.id\)\.eq\('status', 'pending'\)/, '대기 결재');
   assert.match(app, /\.or\(`author_user_id\.neq\.\$\{uid\},author_user_id\.is\.null`\)/, 'DM 새 글 — 크루 글(author null)도 포함');
   assert.match(app, /const INBOX_SEEN_KEY = 'argo-msgr-inbox-seen';/, '읽음 키');
