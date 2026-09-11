@@ -24,7 +24,8 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody } from './mention-candidates.mjs';
-import { acceptFiles, withoutFile } from './attach-files.mjs';
+import { acceptFiles, withoutFile, storageKey } from './attach-files.mjs';
+import { notifyPermission, requestNotifyPermission, sendNotify, setBadge } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -380,7 +381,7 @@ function Shell({ session }) {
       ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
       registerDispose(remove);
       ch
-        .on('broadcast', { event: 'message' }, active(({ payload }) => { setEvent({ kind: 'message', ...payload, at: Date.now() }); notifyMention(payload); }))
+        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); notifyMention(payload); notifyReply(payload); }))
         .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); }))
         .on('broadcast', { event: 'typing' }, active(({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() }))))
         .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() })))
@@ -411,6 +412,7 @@ function Shell({ session }) {
         dmIds.length ? q(supabase.from('msgr_messages').select(cols).in('channel_id', dmIds).is('deleted_at', null).or(`author_user_id.neq.${uid},author_user_id.is.null`).order('id', { ascending: false }).limit(40)).catch(() => []) : [],
       ]);
       const myIds = mine.map((m) => m.id);
+      for (const id of myIds) mineRef.current.add(id);
       const replies = myIds.length ? await q(supabase.from('msgr_messages').select(cols).eq('org_id', org.id).eq('author_kind', 'crew').in('reply_to', myIds).is('deleted_at', null).order('id', { ascending: false }).limit(40)).catch(() => []) : [];
       if (dead) return;
       const item = (kind, m) => ({ kind, key: `${kind}:${m.id}`, channel_id: m.channel_id, at: m.created_at, who: m.author_kind === 'crew' ? m.crew_id : m.author_user_id, whoKind: m.author_kind === 'crew' ? 'crew' : 'user', text: m.body ?? '' });
@@ -431,9 +433,11 @@ function Shell({ session }) {
   const me = members.find((m) => m.user_id === uid);
   const isAdmin = org && ['owner', 'admin'].includes(org.role);
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
-  const notifyRef = useRef({ channels, members, chId, uid, isAdmin, page, muted, quiet });
-  notifyRef.current = { channels, members, chId, uid, isAdmin, page, muted, quiet };
-  const osNotify = (title, body, tag) => { try { if (isMobilePlatform || typeof Notification === 'undefined' || Notification.permission !== 'granted') return; const n = new Notification(title, { body, tag }); n.onclick = () => { window.focus(); n.close(); }; } catch { /* 알림 불가 환경 */ } };
+  const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
+  const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet });
+  notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet };
+  useEffect(() => { setBadge(Object.values(unread).reduce((s, u) => s + (u?.n || 0), 0)); }, [unread]); // 독 아이콘 숫자 = 안 읽은 합계
+  const osNotify = (title, body, tag) => { sendNotify(title, body, tag); }; // Tauri 플러그인·웹 Notification 분기는 notify.js
   const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return document.visibilityState === 'hidden' || r.page !== 'chat' || r.chId !== channelId; }; // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
     const r = notifyRef.current;
@@ -442,6 +446,15 @@ function Shell({ session }) {
     if (!mentioned || !shouldNotify(payload.channel_id)) return;
     const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
     osNotify(t('notify.mention', { name: who?.display_name || '?', channel: ch?.name ?? '' }), '', `m:${payload.id}`);
+  };
+  const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
+    const r = notifyRef.current;
+    if (!payload || payload.author_kind !== 'crew' || payload.kind !== 'text') return;
+    const ch = r.channels.find((c) => c.id === payload.channel_id);
+    const toMe = ch?.kind === 'dm' || (payload.reply_to != null && mineRef.current.has(payload.reply_to)) || (Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid));
+    if (!toMe || !shouldNotify(payload.channel_id)) return;
+    const who = r.crews.find((c) => c.id === payload.crew_id);
+    osNotify(t('notify.reply', { name: who?.display_name || '?', channel: ch?.name ?? '' }), '', `r:${payload.id}`);
   };
   const notifyApproval = (payload) => {
     const r = notifyRef.current;
@@ -1633,13 +1646,14 @@ function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
 /* ─── F2-5 로컬 알림(앱이 열려 있을 때 나를 부르거나 내가 확정할 결재가 오면 OS 알림) — 권한은 여기서만 요청 ─── */
 function NotifyRow() {
   const { t } = useT();
-  const supported = !isMobilePlatform && typeof Notification !== 'undefined';
-  const [perm, setPerm] = useState(supported ? Notification.permission : 'unsupported');
+  const [perm, setPerm] = useState('loading');
+  useEffect(() => { let on = true; notifyPermission().then((p) => { if (on) setPerm(p); }); return () => { on = false; }; }, []);
   if (isMobilePlatform) return <span className="note">{t('set.notify.mobile')}</span>;
-  if (!supported) return <span className="note">{t('set.notify.unsupported')}</span>;
+  if (perm === 'loading') return null;
+  if (perm === 'unsupported') return <span className="note">{t('set.notify.unsupported')}</span>;
   if (perm === 'granted') return <span className="note"><I name="check" size={12} /> {t('set.notify.on')}</span>;
   if (perm === 'denied') return <span className="note">{t('set.notify.denied')}</span>;
-  return <button type="button" className="btn sm" onClick={async () => setPerm(await Notification.requestPermission())}><I name="at" size={13} />{t('set.notify.ask')}</button>;
+  return <button type="button" className="btn sm" onClick={async () => setPerm(await requestNotifyPermission())}><I name="at" size={13} />{t('set.notify.ask')}</button>;
 }
 
 /* ─── F2-1·2·3·4 조직 카드(관리자): 조직 이름 · 멤버 역할/제거(2단계) · 초대 만들기/취소 · 감사 기록 ─── */
@@ -2516,9 +2530,9 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
       const byName = [...(scopeCrews ?? crews).map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...(scopePeople ?? members).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))]; // 이 채널의 참여 구성만
       const ment = mentionsFromBody(body, byName, mentions); // 긴 이름 우선·구간 소진 — "@페퍼 (VPS)"가 "@페퍼"로 새지 않게(실사고 2026-09-11)
       const row = await q(supabase.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid, body, mentions: ment, client_msg_id: crypto.randomUUID() }).select('id').single());
-      for (const f of files) {
+      for (const [i, f] of files.entries()) {
         setUploading(f.name);
-        const path = `${orgId}/${chId}/${row.id}/${f.name.replace(/[\\/]/g, '_')}`;
+        const path = `${orgId}/${chId}/${row.id}/${storageKey(f.name, i)}`; // 키는 ASCII 안전(한글·대괄호는 Storage가 거절) — 표시 이름은 아래 name 열에 원문
         const up = await supabase.storage.from('msgr').upload(path, f, { contentType: f.type || 'application/octet-stream' });
         if (up.error) { onError(`${t('msg.attachFail')}: ${f.name} — ${up.error.message}`); continue; }
         await q(supabase.from('msgr_attachments').insert({ message_id: row.id, org_id: orgId, storage_path: path, name: f.name, mime: f.type, bytes: f.size }));

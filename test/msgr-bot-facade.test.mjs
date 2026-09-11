@@ -14,8 +14,8 @@ test('parseRequest: /bot<token>/<method> 경로 · Bearer 헤더 폴백 · 쿼�
   assert.equal(parseRequest('https://x/msgr-bot/getMe', {}, null).token, null);
 });
 
-test('토큰 없음 401 · 모르는 메서드 404 · 지원 메서드 4종', async () => {
-  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction']);
+test('토큰 없음 401 · 모르는 메서드 404 · 지원 메서드 5종', async () => {
+  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile']);
   assert.equal((await handle({ token: null, method: 'getMe' }, fakeRpc({}))).status, 401);
   const r = await handle({ token: T, method: 'setWebhook' }, fakeRpc({}));
   assert.equal(r.status, 404); assert.equal(r.body.ok, false); assert.match(r.body.description, /setWebhook/);
@@ -87,4 +87,18 @@ test('sendChatAction: chat_id 검증 → msgr_bot_typing RPC → true(텔레그�
   assert.equal((await handle({ token: T, method: 'sendChatAction', params: { chat_id: '11111111-1111-4111-8111-111111111111', action: 'upload_photo' } }, rpc)).status, 400, 'typing 외 action');
   const out = await handle({ token: T, method: 'sendChatAction', params: { chat_id: '00000000-0000-4000-8000-00000000dead' } }, rpc);
   assert.equal(out.status, 403); assert.match(out.body.description, /add the bot to this channel/);
+});
+
+test('getFile: file_id 검증 → msgr_bot_file → 서명 URL을 file_path로(텔레그램 모양); 서명 불가 500; 채널 밖 403; 없는 파일 400', async () => {
+  const FID = '22222222-2222-4222-8222-222222222222';
+  const rpc = async (fn, args) => { if (args.attachment === '00000000-0000-4000-8000-00000000dead') throw new Error('msgr_bot_not_member'); if (args.attachment === '00000000-0000-4000-8000-000000000000') throw new Error('msgr_bot_no_file');
+    return { file_id: args.attachment, file_name: '커리큘럼.csv', mime_type: 'text/csv', file_size: 21000, storage_path: 'org/ch/1/0-265263.csv' }; };
+  const signed = []; const sign = async (path, ttl) => { signed.push([path, ttl]); return `https://x.supabase.co/storage/v1/object/sign/msgr/${path}?token=abc`; };
+  const r = await handle({ token: T, method: 'getFile', params: { file_id: FID } }, rpc, { sign });
+  assert.equal(r.status, 200); assert.deepEqual(r.body.result, { file_id: FID, file_name: '커리큘럼.csv', mime_type: 'text/csv', file_size: 21000, file_path: 'https://x.supabase.co/storage/v1/object/sign/msgr/org/ch/1/0-265263.csv?token=abc' });
+  assert.deepEqual(signed, [['org/ch/1/0-265263.csv', 600]], '서명 URL 수명 600초');
+  assert.equal((await handle({ token: T, method: 'getFile', params: { file_id: 'nope' } }, rpc, { sign })).status, 400);
+  assert.equal((await handle({ token: T, method: 'getFile', params: { file_id: FID } }, rpc)).status, 500, 'sign 없음 → 500(경로를 노출하지 않는다)');
+  assert.equal((await handle({ token: T, method: 'getFile', params: { file_id: '00000000-0000-4000-8000-00000000dead' } }, rpc, { sign })).status, 403);
+  assert.equal((await handle({ token: T, method: 'getFile', params: { file_id: '00000000-0000-4000-8000-000000000000' } }, rpc, { sign })).status, 400);
 });

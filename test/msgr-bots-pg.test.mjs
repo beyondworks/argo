@@ -470,3 +470,20 @@ test('sendChatAction: msgr_bot_typing은 org 토픽으로 typing을 방송(priva
   sql(`update public.msgr_channels set excluded_crew_ids = '{}' where id = '${PUB}'`);
   assert.equal(sql(`select has_function_privilege('anon', 'public.msgr_bot_typing(text, uuid)', 'EXECUTE')`), 't', '봇 쪽은 anon으로 부른다');
 });
+
+test('첨부: getUpdates 메시지에 attachments(file_id·file_name·mime_type·file_size) · msgr_bot_file은 봇이 있는 채널의 파일만(없는 파일 400·채널 밖 403)', { skip }, () => {
+  psql(['-f', mig('20260912001000_msgr_bot_files.sql')]);
+  const mid = relayPost(U.member, '이 파일 봐줘');
+  const att = last(sql(`insert into public.msgr_attachments (message_id, org_id, storage_path, name, mime, bytes) values (${mid}, '${ORG}', '${ORG}/${PUB}/${mid}/0-265263.csv', '[패스트캠퍼스] 상세 커리큘럼.csv', 'text/csv', 21000) returning id`));
+  const ups = JSON.parse(relayUpdates());
+  const mine = ups.find((u) => u.message?.message_id === Number(mid));
+  assert.ok(mine, '내 글이 업데이트에 있다');
+  assert.deepEqual(mine.message.attachments, [{ file_id: att, file_name: '[패스트캠퍼스] 상세 커리큘럼.csv', mime_type: 'text/csv', file_size: 21000 }], '첨부 목록(텔레그램 모양)');
+  const f = JSON.parse(last(asAnon(`select public.msgr_bot_file('${RELAY_BOT.token}', '${att}')`)));
+  assert.equal(f.storage_path, `${ORG}/${PUB}/${mid}/0-265263.csv`); assert.equal(f.file_name, '[패스트캠퍼스] 상세 커리큘럼.csv');
+  fails(asAnonRaw(`select public.msgr_bot_file('${RELAY_BOT.token}', '00000000-0000-4000-8000-000000000000')`), /msgr_bot_no_file/, '없는 파일');
+  fails(asAnonRaw(`select public.msgr_bot_file('bad', '${att}')`), /msgr_bot_unauthorized/, '토큰 불량');
+  sql(`update public.msgr_channels set excluded_crew_ids = array['${RELAY_BOT.crew_id}'::uuid] where id = '${PUB}'`);
+  fails(asAnonRaw(`select public.msgr_bot_file('${RELAY_BOT.token}', '${att}')`), /msgr_bot_not_member/, '내보낸 채널의 파일은 못 받는다');
+  sql(`update public.msgr_channels set excluded_crew_ids = '{}' where id = '${PUB}'`);
+});

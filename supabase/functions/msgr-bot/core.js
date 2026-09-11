@@ -2,7 +2,8 @@
 // 텔레그램 Bot API 규율을 차용한다: 주소 /bot<token>/<method>, 봉투 {ok, result} | {ok:false, error_code, description},
 // getUpdates 롱폴 + offset(= 마지막 update_id + 1 = ack). 정책·권한 판정은 전부 DB RPC(msgr_bot_*)에 있고 이 층은 번역만 한다.
 // ponytail: 레이트 리밋 없음 — 토큰당 RPC 1초 폴이 상한. 남용이 보이면 엣지에서 토큰별 카운터.
-export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction'];
+export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile'];
+const FILE_URL_TTL_S = 600; // getFile 서명 URL 수명 — 봇은 즉시 내려받는다
 const MAX_WAIT_MS = 25_000; // 텔레그램은 ~50초, 엣지 펑션 벽시계 안에서 여유 있게
 const POLL_MS = 1_000;
 
@@ -16,6 +17,7 @@ const ERR = {
   msgr_not_allowed: [403, 'Forbidden: crew allow policy or channel policy rejects this author'],
   msgr_bot_not_member: [403, 'Forbidden: add the bot to this channel first'],
   msgr_bot_no_channel: [400, 'Bad Request: chat not found in this org'],
+  msgr_bot_no_file: [400, 'Bad Request: file not found in this org'],
   msgr_bot_bad_reply: [400, 'Bad Request: reply target not in chat'],
   msgr_reply_cross_channel: [400, 'Bad Request: reply target not in chat'],
 };
@@ -34,7 +36,7 @@ const reply = (status, result) => ({ status, body: { ok: true, result } });
 const fail = (status, description) => ({ status, body: { ok: false, error_code: status, description } });
 
 // rpc(fn, args) → JSON. PostgREST 오류는 {message, code, details}를 throw.
-export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, pollMs = POLL_MS } = {}) {
+export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, pollMs = POLL_MS, sign = null } = {}) {
   if (!token) return fail(401, 'Unauthorized: token missing (use /bot<token>/<method> or Authorization: Bearer)');
   if (!METHODS.includes(method)) return fail(404, `Not Found: method ${method || '(none)'} — supported: ${METHODS.join(', ')}`);
   try {
@@ -52,6 +54,14 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
         if (ups.length || now() >= deadline) return reply(200, ups);
         await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
       }
+    }
+    if (method === 'getFile') { // 텔레그램 모양: file_id → file_path(단수명 서명 URL). 봇이 그 채널에 있을 때만(RPC msgr_bot_file이 판정) — 첨부가 봇에 안 가던 결함(2026-09-11 밤)
+      const fid = String(params.file_id ?? '');
+      if (!/^[0-9a-f-]{36}$/i.test(fid)) return fail(400, 'Bad Request: file_id must be an attachment id');
+      const f = await rpc('msgr_bot_file', { token, attachment: fid });
+      const url = sign ? await sign(f.storage_path, FILE_URL_TTL_S) : null;
+      if (!url) return fail(500, 'Internal: file signing unavailable');
+      return reply(200, { file_id: f.file_id, file_name: f.file_name, mime_type: f.mime_type, file_size: f.file_size, file_path: url });
     }
     const chat = String(params.chat_id ?? '');
     if (!/^[0-9a-f-]{36}$/i.test(chat)) return fail(400, 'Bad Request: chat_id must be a channel id');
