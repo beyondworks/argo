@@ -320,7 +320,7 @@ function Shell({ session }) {
   const loadOrg = useCallback(async (id) => {
     if (!id) return;
     const [chs, mems, crs, e, pol] = await Promise.all([
-      q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
+      q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio').eq('org_id', id).in('status', ['active', 'available'])).then((rows) => { setMyAvailable(rows.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko'))); return rows.filter((r) => r.status === 'active'); }),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
@@ -479,6 +479,29 @@ function Shell({ session }) {
     if (chId === c.id) setChId(null);
     await loadOrg(orgId).catch(() => {});
   };
+  const deleteChannel = async (c) => { // 영구 삭제 — 메시지·구성원·첨부 행은 FK cascade, 저장소 객체는 서버 트리거(msgr_channel_purge_storage)
+    setRailMenu(null); setRailConfirm(null);
+    try { // 첨부 객체는 Storage API로 먼저(조직 관리자 권한 — 아니면 남되 채널이 사라져 열람 불가). 실패해도 채널 삭제는 진행.
+      const ids = (await q(supabase.from('msgr_messages').select('id').eq('channel_id', c.id))).map((m) => m.id);
+      const paths = ids.length ? (await q(supabase.from('msgr_attachments').select('storage_path').in('message_id', ids))).map((a) => a.storage_path) : [];
+      if (paths.length) await supabase.storage.from('msgr').remove(paths);
+    } catch { /* 객체 정리 실패는 무해 */ }
+    const res = await supabase.from('msgr_channels').delete().eq('id', c.id).select('id');
+    if (res.error) return setErr(friendlyErr(res.error.message, t));
+    if (!res.data?.length) return setErr(t('ch.noEdit'));
+    setNote(t(c.kind === 'dm' ? 'dm.delete.done' : 'ch.delete.done', { name: c.kind === 'dm' ? dmName(c) : c.name }));
+    if (chId === c.id) setChId(null);
+    await loadOrg(orgId).catch(() => {});
+  };
+  const endDm = async (c) => { // 1:1 대화 종료 = 보관(양쪽 목록에서 사라지고 대화는 남는다) — DM은 두 참가자 누구나(RLS msgr_can_manage_channel)
+    setRailMenu(null); setRailConfirm(null);
+    const res = await supabase.from('msgr_channels').update({ archived_at: new Date().toISOString() }).eq('id', c.id).select('id');
+    if (res.error) return setErr(friendlyErr(res.error.message, t));
+    if (!res.data?.length) return setErr(t('ch.noEdit'));
+    setNote(t('dm.end.done', { name: dmName(c) }));
+    if (chId === c.id) setChId(null);
+    await loadOrg(orgId).catch(() => {});
+  };
   const archiveChannel = async (c) => {
     setRailMenu(null); setRailConfirm(null);
     const res = await supabase.from('msgr_channels').update({ archived_at: new Date().toISOString() }).eq('id', c.id).select('id');
@@ -536,8 +559,8 @@ function Shell({ session }) {
   const channel = channels.find((c) => c.id === chId);
   // 채널 중심 구조(유건 지시 2026-09-04): 레일은 채널·1:1만, 크루·멤버는 "이 채널의 구성"으로 본다. 공개 채널 = 조직 멤버 전원 + 이 채널에서 일할 수 있는 크루(채널 정책), 비공개·DM = 채널 멤버.
   const usableCrews = channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews;
-  const chPeople = !channel ? [] : channel.kind === 'public' ? members : members.filter((m) => chMembers.some((x) => x.member_kind === 'user' && x.member_id === m.user_id));
-  const chCrews = !channel ? [] : channel.kind === 'public' ? usableCrews : crews.filter((c) => chMembers.some((x) => x.member_kind === 'crew' && x.member_id === c.id));
+  const chPeople = !channel ? [] : channel.kind === 'public' ? members.filter((m) => !(channel.excluded_user_ids ?? []).includes(m.user_id)) : members.filter((m) => chMembers.some((x) => x.member_kind === 'user' && x.member_id === m.user_id)); // 공개 채널 '내보내기' = 제외 목록(유건 요청 2026-09-11)
+  const chCrews = !channel ? [] : channel.kind === 'public' ? usableCrews.filter((c) => !(channel.excluded_crew_ids ?? []).includes(c.id)) : crews.filter((c) => chMembers.some((x) => x.member_kind === 'crew' && x.member_id === c.id));
   // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
   // DM 라벨 = 나 아닌 참가자(검수 MEDIUM-2: 저장된 이름은 생성자 시점). 크루 DM에 다른 사람도 있으면(소유자 동반) '서윤 · 민수'처럼 병기
   const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
@@ -617,6 +640,9 @@ function Shell({ session }) {
                     {canManage && (railConfirm === `archive:${c.id}`
                       ? <button type="button" role="menuitem" className="danger confirm" onClick={() => archiveChannel(c)}><I name="x" size={13} /><span className="cf">{t('ch.archive.confirm.short')}<span className="note">{t('ch.archive.confirm.note')}</span></span></button>
                       : <button type="button" role="menuitem" onClick={() => setRailConfirm(`archive:${c.id}`)}><I name="x" size={13} />{t('ch.archive')}</button>)}
+                    {canManage && (railConfirm === `delete:${c.id}`
+                      ? <button type="button" role="menuitem" className="danger confirm" onClick={() => deleteChannel(c)}><I name="trash" size={13} /><span className="cf">{t('ch.delete.confirm.short')}<span className="note">{t('ch.delete.confirm.note')}</span></span></button>
+                      : <button type="button" role="menuitem" className="danger" onClick={() => setRailConfirm(`delete:${c.id}`)}><I name="trash" size={13} />{t('ch.delete')}</button>)}
                   </div>
                 )}
               </div>
@@ -637,6 +663,12 @@ function Shell({ session }) {
                   {railConfirm === `leave:${c.id}`
                     ? <button type="button" role="menuitem" className="danger confirm" onClick={() => leaveChannel(c)}><I name="out" size={13} /><span className="cf">{t('dm.leave.confirm')}<span className="note">{t('dm.leave.confirm.note')}</span></span></button>
                     : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('dm.leave')}</button>}
+                  {railConfirm === `end:${c.id}`
+                    ? <button type="button" role="menuitem" className="danger confirm" onClick={() => endDm(c)}><I name="x" size={13} /><span className="cf">{t('dm.end.confirm')}<span className="note">{t('dm.end.confirm.note')}</span></span></button>
+                    : <button type="button" role="menuitem" onClick={() => setRailConfirm(`end:${c.id}`)}><I name="x" size={13} />{t('dm.end')}</button>}
+                  {railConfirm === `delete:${c.id}`
+                    ? <button type="button" role="menuitem" className="danger confirm" onClick={() => deleteChannel(c)}><I name="trash" size={13} /><span className="cf">{t('dm.delete.confirm')}<span className="note">{t('dm.delete.confirm.note')}</span></span></button>
+                    : <button type="button" role="menuitem" className="danger" onClick={() => setRailConfirm(`delete:${c.id}`)}><I name="trash" size={13} />{t('dm.delete')}</button>}
                 </div>
               )}
             </div>
@@ -842,6 +874,16 @@ function ChannelSheet({ channel, dmName = null, org, uid, isAdmin, policy, membe
     if (!res.data?.length) return onError(t('ch.noEdit'));
     await onChanged();
   };
+  // 공개 채널 '내보내기' = 채널 제외 목록(행 삭제가 아님 — 공개 채널 구성원은 암묵). 되돌리기는 목록에서 뺀다. 최종은 RLS(msgr_can_manage_channel·msgr_can_read_channel).
+  const excludedUsers = channel.excluded_user_ids ?? []; const excludedCrews = channel.excluded_crew_ids ?? [];
+  const excludeMember = async (kind, id) => {
+    if (kind === 'user' && crews.some((c) => c.owner_user_id === id && chCrews.some((x) => x.id === c.id))) return onError(t('ch.remove.ownerBlocked'));
+    const key = kind === 'user' ? 'excluded_user_ids' : 'excluded_crew_ids'; const cur = kind === 'user' ? excludedUsers : excludedCrews;
+    if (!cur.includes(id)) await upd({ [key]: [...cur, id] }, t('ch.exclude.done'));
+  };
+  const restoreMember = async (kind, id) => { const key = kind === 'user' ? 'excluded_user_ids' : 'excluded_crew_ids'; const cur = kind === 'user' ? excludedUsers : excludedCrews; await upd({ [key]: cur.filter((x) => x !== id) }, t('ch.restore.done')); };
+  const kick = (kind, id) => (channel.kind === 'public' ? excludeMember(kind, id) : removeMember(kind, id));
+  const canKick = canEdit && channel.kind !== 'dm'; // 공개·비공개 모두 채널 관리자면 내보낼 수 있다(유건 요청 2026-09-11)
   const [confirmArchive, setConfirmArchive] = useState(false); // 네이티브 confirm 대신 2단계 버튼(QA)
   const archive = async () => { await upd({ archived_at: new Date().toISOString() }); onArchived(); };
   const userIds = new Set(chMembers.filter((m) => m.member_kind === 'user').map((m) => m.member_id));
@@ -904,14 +946,14 @@ function ChannelSheet({ channel, dmName = null, org, uid, isAdmin, policy, membe
             {people.map((m) => { const isMe = m.user_id === uid; const isCreator = channel.created_by === m.user_id; const isChAdmin = chAdmins.includes(m.user_id); const key = `u:${m.user_id}`; return (
               <div key={key} className="row">
                 <Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}{(isChAdmin || isCreator) && <span className="msgr-tag">{isCreator ? t('ch.admin.creator') : t('ch.admin')}</span>}</span>
-                {!isMe && (canAssignAdmins || scoped) && (
+                {!isMe && (canAssignAdmins || canKick) && (
                   <span className="msgr-rowmenu-wrap" onClick={(e) => e.stopPropagation()}>
                     <button type="button" className="btn sm ghost" onClick={() => setRowMenu(rowMenu === key ? null : key)} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={rowMenu === key}><I name="dots" size={13} /></button>
                     {rowMenu === key && (
                       <div className="msgr-rowmenu" role="menu">
                         <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onDm?.(m.user_id); }}><I name="at" size={13} />{t('ui.dm')}</button>
                         {canAssignAdmins && !isCreator && <button type="button" role="menuitem" disabled={busy} onClick={() => { setRowMenu(null); toggleChAdmin(m.user_id); }}><I name="gear" size={13} />{isChAdmin ? t('ch.admin.unset') : t('ch.admin.set')}</button>}
-                        {scoped && canEdit && channel.kind !== 'dm' && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); removeMember('user', m.user_id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
+                        {canKick && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); kick('user', m.user_id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
                       </div>
                     )}
                   </span>
@@ -929,13 +971,22 @@ function ChannelSheet({ channel, dmName = null, org, uid, isAdmin, policy, membe
                     <div className="msgr-rowmenu" role="menu">
                       <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onCrew?.(c.id); }}><I name="star" size={13} />{t('ch.open.crew')}</button>
                       {channel.kind !== 'dm' && <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onMention?.(c); }}><I name="at" size={13} />{t('ch.add.crew.call')}</button>}
-                      {scoped && canEdit && channel.kind !== 'dm' && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); removeMember('crew', c.id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
+                      {canKick && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); kick('crew', c.id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
                     </div>
                   )}
                 </span>
               </div>
             ); })}
             {!chCrews.length && <p className="empty">{scoped ? t('ch.crews.none.scoped') : t('ch.crews.none')}</p>}
+            {channel.kind === 'public' && canEdit && (excludedUsers.length > 0 || excludedCrews.length > 0) && (<>
+              <div className="msgr-klabel">{t('ch.excluded')}</div>
+              {excludedUsers.map((id) => { const m = members.find((x) => x.user_id === id); return (
+                <div key={`xu:${id}`} className="row"><Av name={m?.display_name || id} size="sm" userId={id} /><span className="name">{m?.display_name || id.slice(0, 8)}</span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => restoreMember('user', id)}>{t('ch.restore')}</button></div>
+              ); })}
+              {excludedCrews.map((id) => { const c = crews.find((x) => x.id === id); return (
+                <div key={`xc:${id}`} className="row"><Av name={c?.display_name || id} crew size="sm" crewId={id} /><span className="name">{c?.display_name || id.slice(0, 8)}</span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => restoreMember('crew', id)}>{t('ch.restore')}</button></div>
+              ); })}
+            </>)}
           </div>
           {pendingReqs.map((r) => (
             <div key={r.id} className="row req"><span className="name">{r.name}</span><span className={`sub ${r.status}`}>{r.status === 'pending' ? (nodeOn ? t('ch.crew.new.pending') : t('ch.crew.new.pendingOff')) : r.status === 'failed' ? t('ch.crew.new.failed', { why: r.error ?? '' }) : t('ch.crew.new.done')}</span></div>
@@ -2180,7 +2231,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
         {msgs !== null && !all.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}
         {rows}
         {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} p={p} t={t} />)}
-        {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /></div></div></div>)}
+        {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
       </div>
     </div>
     <Composer chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} onSent={() => load(lastId).catch(() => {})} onError={onError} />
@@ -2424,7 +2475,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, locked = fal
   const candidates = useMemo(() => {
     if (!pop) return [];
     const needle = pop.q.toLowerCase();
-    const usable = channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews; // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
+    const usable = (channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // 내보낸 크루는 후보에서 뺀다 // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
     return mentionCandidates({ q: needle, crews: usable, members, uid }); // 사람 먼저·나 제외·상한 8(유건 제보 2026-09-11: 크루 13명이 상한을 다 먹어 사람이 안 떴다)
   }, [pop, crews, members, uid, channel?.personal_crews, org]);
   const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };

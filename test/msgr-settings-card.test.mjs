@@ -145,14 +145,14 @@ test('I-2: 아르고 설정 카드가 조직 정책 요약(허용 범위·고위
 });
 
 test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외)·차단 안내·멤버 추가 거절 문구·멘션 후보 필터, 브리지는 사유 RPC(채널 포함)로 묻고 채널 사유를 안내, 서버 게이트 3종', () => {
-  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids'\)/, '채널 조회에 personal_crews가 없다');
+  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids'\)/, '채널 조회에 personal_crews가 없다');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /\{channel\.kind !== 'dm' && \(<>\s*<div className="row wrap">\s*<span className="msgr-klabel">\{t\('ch\.personal'\)\}/, '개인 크루 정책은 채널 설정 안(dm 제외)');
   assert.match(ch, /\['allowed', 'read_only', 'blocked'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(channel\.personal_crews \?\? 'allowed'\) === v\}[^\n]*disabled=\{!canEdit \|\| busy\} onClick=\{\(\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\}/, '세그먼트');
   assert.match(ch, /\/msgr_channel_personal_blocked\/\.test\(res\.error\.message\) \? t\('err\.channelPersonalBlocked'\)/, '멤버 추가 거절 문구');
   assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'allowed'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)\);/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼)');
   const comp = app.slice(app.indexOf('function Composer('));
-  assert.match(comp, /const usable = channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews;/, '멘션 후보 필터');
+  assert.match(comp, /const usable = \(channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews\)\.filter\(\(c\) => !\(channel\?\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\)/, '멘션 후보 필터');
   assert.match(comp, /mentionCandidates\(\{ q: needle, crews: usable, members, uid \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외는 mention-candidates.mjs)');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /let why = await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
@@ -210,15 +210,15 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
 test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 공개=조직 전원+정책 허용 크루 / 비공개=채널 멤버, 초대는 조직 메뉴', () => {
   assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
   assert.match(app, /<div className="msgr-list">\n\s*\{sortedCh\.map\(\(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함)');
-  assert.match(app, /const chPeople = !channel \? \[\] : channel\.kind === 'public' \? members : members\.filter\(\(m\) => chMembers\.some\(/, '사람 구성 계산');
-  assert.match(app, /const chCrews = !channel \? \[\] : channel\.kind === 'public' \? usableCrews : crews\.filter\(\(c\) => chMembers\.some\(/, '크루 구성 계산(공개=정책 허용 크루)');
+  assert.match(app, /const chPeople = !channel \? \[\] : channel\.kind === 'public' \? members\.filter\(\(m\) => !\(channel\.excluded_user_ids \?\? \[\]\)\.includes\(m\.user_id\)\) : members\.filter\(\(m\) => chMembers\.some\(/, '사람 구성 계산');
+  assert.match(app, /const chCrews = !channel \? \[\] : channel\.kind === 'public' \? usableCrews\.filter\(\(c\) => !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\) : crews\.filter\(\(c\) => chMembers\.some\(/, '크루 구성 계산(공개=정책 허용 크루)');
   assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
   assert.match(app, /onCrew=\{\(id\) => \{ setChSheet\(false\); setSheet\(id\); \}\} onDm=\{\(id\) => openDm\('user', id\)\}/, '구성에서 크루 시트·1:1 연결');
   assert.match(app, /\{isAdmin && <button type="button" role="menuitem" onClick=\{\(\) => \{ setOrgMenu\(false\); invite\(\); \}\}>/, '초대가 조직 메뉴에 없다');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /<div className="sec-head"><h3>\{t\('ch\.who'\)\}<\/h3>/, '구성 섹션이 첫 절');
   assert.ok(ch.indexOf("t('ch.who')") < ch.indexOf("t('ch.settings')"), '구성이 채널 설정보다 앞');
-  assert.match(ch, /\{scoped && canEdit && channel\.kind !== 'dm' && <button type="button" role="menuitem" className="danger"[^\n]*removeMember\('user', m\.user_id\)/, '비공개 채널 사람 내보내기(행 … 메뉴)');
+  assert.match(ch, /\{canKick && <button type="button" role="menuitem" className="danger"[^\n]*kick\('user', m\.user_id\)/, '비공개 채널 사람 내보내기(행 … 메뉴)');
   for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.public', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
 
@@ -265,7 +265,7 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
 });
 
 test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·태그, 지정은 관리자·생성자만)와 지정 결재권자(approvers 정책·피커·슬립 확정권), 서버 함수·가드', () => {
-  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids'\)/, '채널 조회에 admin_user_ids');
+  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids'\)/, '채널 조회에 admin_user_ids');
   assert.match(app, /select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)/, '정책 조회에 approver_user_ids');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /const canEdit = isAdmin \|\| channel\.created_by === uid \|\| chAdmins\.includes\(uid\);/, '채널 관리자 편집권');
