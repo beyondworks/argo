@@ -11,17 +11,24 @@ import { createMobileAuth, createMobileAuthRuntime, MOBILE_AUTH_CALLBACK } from 
 // 딥링크와 같은 receive 경로로 흘려보낸다. Android는 딥링크(인텐트) 경로 그대로.
 const isIos = import.meta.env.TAURI_ENV_PLATFORM === 'ios';
 const receivers = new Set();
+const delivered = new Set(); // 같은 콜백이 시트와 딥링크 양쪽으로 오면 한 번만 소비 — ponytail: 상한 없음(로그인 콜백은 세션당 몇 개)
+function deliver(urls) {
+  const fresh = (Array.isArray(urls) ? urls : []).filter((u) => typeof u === 'string' && !delivered.has(u));
+  for (const u of fresh) delivered.add(u);
+  if (fresh.length) for (const handler of receivers) handler(fresh);
+}
 async function onOpenUrl(handler) {
   receivers.add(handler);
-  // iOS는 로그인 시트(web-auth)가 콜백을 receivers로 직접 넘긴다 — argo-messenger:// 스킴을 앱에 등록하지 않는다(시트와 충돌).
-  if (isIos) return () => receivers.delete(handler);
-  const stop = await deepLinkOnOpenUrl(handler);
+  // 딥링크는 두 플랫폼 모두 받는다. iOS는 로그인 시트가 콜백을 직접 돌려주지만, argo-messenger:// 스킴이 앱에 등록된 뒤로는(0.1.7 복구 —
+  // 스킴이 없던 0.1.4~0.1.6은 '애플리케이션을 열 수 없습니다'로 복귀 불가, 2026-09-11 실사고) 시트 밖(Safari·구글 앱)으로 샌 리디렉션이 앱 openURL로
+  // 올 수 있다. 어느 경로로 오든 deliver가 한 번만 넘긴다(스킴 등록 시 시트 콜백이 앱으로 가 코드가 미교환되던 2026-09-10 관찰에도 대응).
+  const stop = await deepLinkOnOpenUrl(deliver);
   return () => { stop(); receivers.delete(handler); };
 }
 function openUrl(url) {
   if (!isIos) return openerOpenUrl(url);
   invoke('plugin:web-auth|start', { url, callbackScheme: MOBILE_AUTH_CALLBACK.split(':')[0] })
-    .then((result) => { if (result?.url) { for (const handler of receivers) handler([result.url]); } else runtime.cancel(); })
+    .then((result) => { if (result?.url) deliver([result.url]); else runtime.cancel(); })
     .catch(() => runtime.cancel());
   return Promise.resolve();
 }

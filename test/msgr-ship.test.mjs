@@ -76,10 +76,11 @@ test('tauri.conf·Rust·capabilities: 업데이터 배선과 회사 서버를 �
   assert.ok(mobile.permissions.includes('deep-link:default'));
   // 로그인 복귀 스킴은 네이티브 매니페스트에 실제로 등록돼야 브라우저에서 앱으로 돌아온다(플러그인 설정만으로는 iOS에 안 실린다 — 2026-09-10 실측: 시뮬레이터 openurl 115).
   assert.deepEqual(JSON.parse(read('apps/messenger/src-tauri/tauri.android.conf.json')).plugins['deep-link'].mobile[0].scheme, ['argo-messenger'], 'Android conf 스킴');
-  // iOS는 로그인 시트(ASWebAuthenticationSession)가 콜백을 받으므로 argo-messenger:// 를 앱 URL 스킴으로 등록하지 않는다.
-  // 등록하면 시트와 스킴이 충돌해 콜백이 앱에 도달하지 않는다(2026-09-10 실기: 로그인 성공하나 코드 미교환).
-  assert.doesNotMatch(read('apps/messenger/src-tauri/gen/apple/argo-messenger_iOS/Info.plist'), /argo-messenger/, 'iOS Info.plist에 argo-messenger 스킴 없음');
-  assert.deepEqual(JSON.parse(read('apps/messenger/src-tauri/tauri.ios.conf.json')).plugins['deep-link'].mobile, [], 'iOS deep-link 스킴 비움');
+  // iOS도 argo-messenger:// 를 앱 URL 스킴으로 등록한다(0.1.7 복구). 2026-09-10에는 "시트와 충돌해 코드 미교환"으로 비웠으나(#475), 스킴이 없으면
+  // 시트 밖으로 샌 리디렉션(Safari·구글 앱)이 '애플리케이션을 열 수 없습니다'로 끝나 0.1.4~0.1.6 전부 복귀 불가였다(2026-09-11 실사고).
+  // 두 관찰을 함께 덮는 처방: 스킴 등록 + mobile-auth-runtime.js가 시트 콜백과 딥링크를 같은 경로로 한 번만 소비(아래 핀). 실기 검증은 0.1.7 빌드 2 TestFlight에서.
+  assert.match(read('apps/messenger/src-tauri/gen/apple/argo-messenger_iOS/Info.plist'), /<key>CFBundleURLSchemes<\/key>\s*<array>\s*<string>argo-messenger<\/string>/, 'iOS Info.plist에 argo-messenger 스킴');
+  assert.deepEqual(JSON.parse(read('apps/messenger/src-tauri/tauri.ios.conf.json')).plugins['deep-link'].mobile[0].scheme, ['argo-messenger'], 'iOS deep-link 스킴(비우면 플러그인 build.rs가 Info.plist 스킴을 지운다)');
   // Android는 인텐트(딥링크)로 콜백을 받는다 — 스킴 유지.
   assert.match(read('apps/messenger/src-tauri/gen/android/app/src/main/AndroidManifest.xml'), /<data android:scheme="argo-messenger" \/>/, 'Android 매니페스트 intent-filter에 argo-messenger 스킴');
   // iOS 로그인은 외부 브라우저가 아니라 애플 표준 로그인 창(ASWebAuthenticationSession)으로 — Chrome 등 서드파티 기본 브라우저는
@@ -95,8 +96,10 @@ test('tauri.conf·Rust·capabilities: 업데이터 배선과 회사 서버를 �
   const rt = read('apps/messenger/src/mobile-auth-runtime.js');
   assert.match(rt, /invoke\('plugin:web-auth\|start', \{ url, callbackScheme: MOBILE_AUTH_CALLBACK\.split\(':'\)\[0\] \}\)/, 'iOS start → web-auth');
   assert.match(rt, /if \(!isIos\) return openerOpenUrl\(url\);/, 'Android는 외부 브라우저+딥링크 그대로');
-  assert.match(rt, /if \(isIos\) return \(\) => receivers\.delete\(handler\);/, 'iOS는 딥링크 스킴 등록 안 함(시트가 콜백 전달)');
-  assert.match(rt, /for \(const handler of receivers\) handler\(\[result\.url\]\)/, '콜백 URL을 딥링크와 같은 receive 경로로');
+  assert.match(rt, /const stop = await deepLinkOnOpenUrl\(deliver\);/, '두 플랫폼 모두 딥링크 수신(iOS는 시트 밖으로 샌 콜백 대비)');
+  assert.doesNotMatch(rt, /if \(isIos\) return \(\) => receivers\.delete\(handler\);/, 'iOS 딥링크 수신 차단 금지(2026-09-11 실사고)');
+  assert.match(rt, /then\(\(result\) => \{ if \(result\?\.url\) deliver\(\[result\.url\]\); else runtime\.cancel\(\); \}\)/, '시트 콜백 URL을 딥링크와 같은 deliver 경로로');
+  assert.match(rt, /!delivered\.has\(u\)\)[\s\S]{0,120}for \(const u of fresh\) delivered\.add\(u\);\s*if \(fresh\.length\) for \(const handler of receivers\) handler\(fresh\);/, '같은 콜백 URL은 한 번만(시트+딥링크 중복 교환 방지)');
   assert.match(rt, /else runtime\.cancel\(\)/, '취소·오류는 대기 해제');
   const toml = read('apps/messenger/src-tauri/Cargo.toml');
   assert.match(toml, /tauri-plugin-updater = "2"/); assert.match(toml, /tauri-plugin-process = "2"/);
