@@ -16,7 +16,6 @@
 		7ADF22BB53E0539F61B20550 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 1EBF44497BD149968C7F0B3C /* LaunchScreen.storyboard */; };
 		86A8D62B8121845E5EB48652 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 27C6B25662FFE3B4E9A4A29D /* WebKit.framework */; };
 		8CC84CB5BD03BB77560E5A27 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = F067B7FEEDF7CFE97D7DC222 /* main.mm */; };
-		B28697D05351C4BE649EE50D /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 5CE4457C5DE184455694B7BB /* libapp.a */; };
 		E19F0DBF0752C095E3AFD65D /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 590FB8832FB52BFFC92D79AA /* MetalKit.framework */; };
 		EF325A9002BB7BD6C6517B64 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C1CF96969D44D76DE8FD7278 /* QuartzCore.framework */; };
 		F3E139CE2818A7C3E4A1C791 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 31EF3AD4829EE889AC11DD5C /* libapp.a */; };
@@ -32,7 +31,6 @@
 		4E0419251D4324B5AB7420E3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		563CA5857529A35021D45BC6 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		590FB8832FB52BFFC92D79AA /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
-		5CE4457C5DE184455694B7BB /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		5F1CB4EA377800DD469AA546 /* argo-messenger_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "argo-messenger_iOS.entitlements"; sourceTree = "<group>"; };
 		9A87CAB87D484716F0224B49 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		C1CF96969D44D76DE8FD7278 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
@@ -68,7 +66,6 @@
 		08D5AEF7E6A34A9DCCE737D2 /* debug */ = {
 			isa = PBXGroup;
 			children = (
-				5CE4457C5DE184455694B7BB /* libapp.a */,
 			);
 			path = debug;
 			sourceTree = "<group>";
@@ -241,7 +238,6 @@
 				02722EA412E96195D87B341E /* Assets.xcassets in Resources */,
 				7ADF22BB53E0539F61B20550 /* LaunchScreen.storyboard in Resources */,
 				4EC9A429E6FE820024F7FB1A /* assets in Resources */,
-				B28697D05351C4BE649EE50D /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
