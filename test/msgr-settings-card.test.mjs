@@ -209,7 +209,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
 
 test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 공개=조직 전원+정책 허용 크루 / 비공개=채널 멤버, 초대는 조직 메뉴', () => {
   assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
-  assert.match(app, /<div className="msgr-list">\n\s*\{sortedCh\.map\(\(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함)');
+  assert.match(app, /const chRow = \(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{ungrouped\.map\(chRow\)\}/, '그룹 없는 채널은 목록 끝에');
   assert.match(app, /const chPeople = !channel \? \[\] : channel\.kind === 'public' \? members\.filter\(\(m\) => !\(channel\.excluded_user_ids \?\? \[\]\)\.includes\(m\.user_id\)\) : members\.filter\(\(m\) => chMembers\.some\(/, '사람 구성 계산');
   assert.match(app, /const chCrews = !channel \? \[\] : channel\.kind === 'public' \? usableCrews\.filter\(\(c\) => !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\) : crews\.filter\(\(c\) => chMembers\.some\(/, '크루 구성 계산(공개=정책 허용 크루)');
   assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
@@ -230,7 +230,7 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
   assert.match(ch, /const ro = new ResizeObserver\(toBottom\);/, '높이 변화 추적');
   assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
   assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
-  assert.match(app, /<div className="msgr-railbody">\n\s*<RailSection id="channels" label=\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역(2026-09-08부터 섹션은 details — RailSection)');
+  assert.match(app, /<div className="msgr-railbody">\n[\s\S]{0,700}?<RailSection id="channels" label=\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역(2026-09-08부터 섹션은 details — RailSection; 2026-09-12부터 즐겨찾기 절이 앞에 올 수 있다)');
   const css = read('apps/messenger/src/styles.css');
   assert.match(css, /^\.msgr-side \{[^\n]*overflow: hidden; \}/m, '레일 자체 스크롤 금지(풋터 고정)');
   assert.match(css, /^\.msgr-railbody \{ flex: 1; min-height: 0; overflow-y: auto;/m, '레일 본문만 스크롤');

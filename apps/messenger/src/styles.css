@@ -511,6 +511,12 @@
 .msgr-tabact:hover { color: var(--fg); background: var(--card-2); }
 .msgr-menubg { position: fixed; inset: 0; z-index: 6; }
 .msgr-tabmenu { position: absolute; right: auto; top: auto; z-index: 7; }
+.msgr-ctxmenu { position: fixed; right: auto; top: auto; z-index: 7; } /* 우클릭 메뉴 — 커서 자리 */
+.msgr-railrow.dragging { opacity: .45; }
+.msgr-railrow[draggable] { cursor: default; }
+.msgr-acts.ctx { position: fixed; z-index: 7; opacity: 1; flex-direction: column; align-items: stretch; gap: 2px; margin: 0; padding: 6px; min-width: 160px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.msgr-acts.ctx button { justify-content: flex-start; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 13px; color: var(--fg); }
+.msgr-acts.ctx button:hover { background: var(--card-2); border-color: transparent; }
 /* 활동 페이지 — 아르고 기억 페이지처럼 화면 전체를 쓰는 분할(트리 | 탭 + 본문). 카드 섹션 없음(유건 지시 2026-09-04) */
 .msgr-actsplit { flex: 1; min-height: 0; display: flex; align-items: stretch; background: var(--bg); } /* 트리·탭줄·본문·그래프 캔버스가 상단 바와 같은 베이지 한 판 — 유건 지시 2026-09-04 */
 .msgr-acttree { width: 280px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--bg); }
