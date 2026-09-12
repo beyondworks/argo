@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"></head>
+<body><div id="root"></div>
+<script>
+// Native WKWebView QA entry point: deterministic long home list, isolated backend only.
+localStorage.setItem('argo-lang',new URLSearchParams(location.search).get('lang')||'ko');
+let fixture;
+Object.defineProperty(window,'__dmFixture',{configurable:true,get:()=>fixture,set:value=>{
+ fixture=value;
+ const seed=value.tables.msgr_crews[0];
+ for(let n=1;n<=38;n++)value.tables.msgr_crews.push({...seed,id:`extra-${n}`,slug:`extra-${n}`,display_name:`ZZ Agent ${String(n).padStart(2,'0')}`});
+}});
+</script>
+<script type="module" src="/src/main.jsx"></script></body></html>
