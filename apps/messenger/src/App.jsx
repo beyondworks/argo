@@ -28,6 +28,7 @@ import { acceptFiles, withoutFile, storageKey } from './attach-files.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, listenPush } from './push.js';
+import { pushDiag } from './diag.jsx';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 const realtimeScope = createRealtimeScope();
@@ -262,6 +263,20 @@ function Shell({ session }) {
   const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   const [pushCard, setPushCard] = useState(null); // 전경 푸시 카드(폰) — 다른 채널 메시지만, 탭하면 그 채널로(유건 2026-09-12)
+  const [navTo, setNavTo] = useState(null); // 알림 탭·카드에서 온 "이 채널 열기" 요청 — 목록에 있으면 열고, 다른 조직이면 조직을 바꾼 뒤 연다. 콜드 스타트 때 chId만 세우면 channel이 없어 Channel이 죽었다(시뮬 재현 2026-09-12: 'undefined is not an object (evaluating channel.id)')
+  useEffect(() => {
+    if (!navTo) return;
+    if (channels.some((c) => c.id === navTo)) { setChId(navTo); setPage('chat'); setRail(false); setSheet(null); setNavTo(null); return; }
+    if (!orgs || !orgId) return; // 조직·목록 로드 전 — 기다린다
+    let on = true;
+    q(supabase.from('msgr_channels').select('org_id').eq('id', navTo).maybeSingle()).then((row) => {
+      if (!on) return;
+      if (row?.org_id && row.org_id !== orgId && orgs.some((o) => o.id === row.org_id)) setOrgId(row.org_id); // 다른 조직 → 전환(목록이 바뀌면 위 분기가 연다)
+      else if (!row || channels.length) setNavTo(null); // 없는 채널이거나 이 조직 목록에 없다 — 요청을 버린다
+    }).catch(() => { if (on) setNavTo(null); });
+    return () => { on = false; };
+  }, [navTo, channels, orgs, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId)) setChId(null); }, [channels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
   const [tick, setTick] = useState(0);
@@ -270,12 +285,13 @@ function Shell({ session }) {
     let off = () => {};
     const reg = () => registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
     reg(); const stopResume = observeMobileResume(reg); // 토큰은 회전한다 — 앱 재개마다 다시 등록
-    listenPush({ onTap: ({ channel_id }) => { if (channel_id) setChId(channel_id); }, onForeground: ({ title, body, data }) => { if (!title && !body) return; /* 배지 전용 푸시(aps.badge만)도 전경 이벤트로 온다 — 빈 카드가 흰 막대로 그려졌다(유건 스크린샷 2026-09-12 16:57) */ if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } }).then((f) => { off = f; }); // 보고 있는 채널은 조용히
+    listenPush({ onTap: ({ channel_id }) => { pushDiag('tap', `channel ${channel_id ?? '-'}`, `page=${notifyRef.current.page} org=${notifyRef.current.orgId ?? '-'}`); if (channel_id) setNavTo(channel_id); }, onForeground: ({ title, body, data }) => { if (!title && !body) return; /* 배지 전용 푸시(aps.badge만)도 전경 이벤트로 온다 — 빈 카드가 흰 막대로 그려졌다(유건 스크린샷 2026-09-12 16:57) */ if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } }).then((f) => { off = f; }); // 보고 있는 채널은 조용히
     return () => { off(); stopResume(); };
   }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
-  const [page, setPage] = useState(() => (isPhone ? 'home' : 'chat')); // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
+  const [page, setPage] = useState(() => (isPhone ? 'home' : 'chat'));
+  useEffect(() => { pushDiag('shell', `page=${page} chId=${chId ?? '-'} org=${orgId ?? '-'} channels=${channels.length}`); }, [page, chId, orgId, channels.length]); // 진단(설정 → 진단) // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   const openNav = () => { if (isPhone) setPage('home'); else setRail(true); }; // 폰: 홈 페이지 / 데스크톱: 레일 서랍
   const edgeBack = useEdgeSwipeBack(() => setPage('home'), isPhone && page !== 'home' && page !== 'dm'); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(홈)
   const [orgMenu, setOrgMenu] = useState(false);
@@ -737,7 +753,7 @@ function Shell({ session }) {
         {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
         {chSheet && channel && <ChannelSheet myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
-        {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) setChId(pushCard.channel_id); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
+        {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) setNavTo(pushCard.channel_id); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
           <button type="button" className={`msgr-toast${err ? ' err' : ''}`} onClick={() => { setErr(''); setNote(''); }} role="status" aria-live="polite">{err ? `${t('ui.error')}: ${err}` : note}</button>,
           document.body,
@@ -751,7 +767,7 @@ function Shell({ session }) {
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={openNav} />
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={openNav} />
-        ) : chId ? (
+        ) : channel ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => rt.current?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} />
         ) : (
           <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} />

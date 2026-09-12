@@ -7,7 +7,9 @@ import './styles.css';
 import { LanguageProvider } from '@argo/i18n';
 import { ThemeProvider } from '@argo/theme';
 import App from './App.jsx';
+import { RootBoundary, pushDiag } from './diag.jsx'; // 빈 화면 대신 오류 문구 + 다시 열기(유건 제보 2026-09-12 알림 탭 → 빈 화면)
 
+pushDiag('boot', `start ${location.href.slice(0, 80)}`, navigator.userAgent.slice(0, 80));
 createRoot(document.getElementById('root')).render(
-  <LanguageProvider><ThemeProvider defaultTheme="linen"><App /></ThemeProvider></LanguageProvider>,
+  <RootBoundary><LanguageProvider><ThemeProvider defaultTheme="linen"><App /></ThemeProvider></LanguageProvider></RootBoundary>,
 );
