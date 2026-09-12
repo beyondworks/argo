@@ -249,6 +249,7 @@ jobs:
           repository: beyondworks/argo-messenger
           token: ${{ secrets.RELEASE_TOKEN }}
           tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: main
           name: Argo Messenger ${{ steps.tag.outputs.tag }}
           files: dist/**/*
           draft: true
