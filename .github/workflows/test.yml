@@ -73,6 +73,7 @@ jobs:
         run: |
           node scripts/bump-version.mjs --root apps/messenger --check
           npm ci --prefix apps/messenger --no-audit --no-fund
+          npm test --prefix apps/messenger
           npm run build --prefix apps/messenger
           node scripts/messenger-dist-smoke.mjs
 
