@@ -25,7 +25,7 @@ import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
 import { acceptFiles, withoutFile, storageKey } from './attach-files.mjs';
-import { notifyPermission, requestNotifyPermission, sendNotify, setBadge } from './notify.js';
+import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, listenPush } from './push.js';
 import { reconcileSession } from './resume-session.mjs';
@@ -1309,7 +1309,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
             <div className="row"><Av name={me?.display_name || session.user.email} userId={uid} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
             {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
-            <div className="row"><NotifyRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+            <div className="row"><NotifyRow /><SoundRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
           </section>
           <ProfileCard uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} />
           <section className="msgr-setcard">
@@ -1657,7 +1657,23 @@ function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
   );
 }
 
-/* ─── F2-5 로컬 알림(앱이 열려 있을 때 나를 부르거나 내가 확정할 결재가 오면 OS 알림) — 권한은 여기서만 요청 ─── */
+/* ─── 알림 소리 선택(유건 2026-09-12) — 합성 음원 5종, 이 기기에만 저장. 폰은 바꾸면 토큰을 다시 등록해 푸시 소리도 바뀐다 ─── */
+function SoundRow() {
+  const { t } = useT();
+  const [sound, setSnd] = useState(getSound());
+  const pick = (v) => { setSound(v); setSnd(v); playChime(v); if (isMobilePlatform) registerPush(supabase); };
+  return (
+    <label className="msgr-field" style={{ gap: 6 }} title={t('set.sound')}>
+      <I name="at" size={13} /><span className="msgr-klabel">{t('set.sound')}</span>
+      <select value={sound} onChange={(e) => pick(e.target.value)} aria-label={t('set.sound')}>
+        {SOUNDS.map((v) => <option key={v} value={v}>{t(`sound.${v}`)}</option>)}
+      </select>
+      <button type="button" className="btn sm ghost" onClick={() => playChime(sound)}>{t('set.sound.preview')}</button>
+    </label>
+  );
+}
+
+/* ─── F2-5 로컬 알림(새 메시지가 오면 OS 알림) — 권한은 여기서만 요청 ─── */
 function NotifyRow() {
   const { t } = useT();
   const [perm, setPerm] = useState('loading');

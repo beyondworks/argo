@@ -35,12 +35,12 @@ async function fcmAuth() {
   return fcmTok;
 }
 
-async function sendOne(t: { token: string; platform: string }, text: { title: string; body: string }, channelId: string, messageId: number) {
+async function sendOne(t: { token: string; platform: string; sound?: string }, text: { title: string; body: string }, channelId: string, messageId: number) {
   if (t.platform === 'ios') {
     const jwt = await apnsAuth(); if (!jwt) return 'skip';
     const host = Deno.env.get('APNS_SANDBOX') === '1' ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
     const r = await fetch(`${host}/3/device/${t.token}`, { method: 'POST', headers: { authorization: `bearer ${jwt}`, 'apns-topic': Deno.env.get('APNS_TOPIC') ?? 'com.beyondworks.argo.messenger', 'apns-push-type': 'alert', 'apns-priority': '10', 'apns-collapse-id': `ch-${channelId}`.slice(0, 64) },
-      body: JSON.stringify(apnsPayload({ ...text, channelId, messageId })) });
+      body: JSON.stringify(apnsPayload({ ...text, channelId, messageId, sound: t.sound })) });
     const txt = r.ok ? '' : await r.text();
     if (!r.ok && shouldDropToken('ios', r.status, txt)) await rest(`msgr_push_tokens?token=eq.${encodeURIComponent(t.token)}`, { method: 'DELETE' });
     return r.ok ? 'ok' : `apns ${r.status} ${txt.slice(0, 120)}`;
@@ -66,7 +66,7 @@ Deno.serve(async (req: Request) => {
   if (!m || m.kind !== 'text' || m.deleted_at) return Response.json({ ok: true, sent: 0 });
   const rcpt: string[] = (await rest(`rpc/msgr_push_recipients_of`, { method: 'POST', body: JSON.stringify({ mid: id }) })) ?? [];
   if (!rcpt.length) return Response.json({ ok: true, sent: 0 });
-  const toks: { token: string; platform: string; user_id: string }[] = await rest(`msgr_push_tokens?user_id=in.(${rcpt.join(',')})&select=token,platform,user_id`);
+  const toks: { token: string; platform: string; user_id: string; sound?: string }[] = await rest(`msgr_push_tokens?user_id=in.(${rcpt.join(',')})&select=token,platform,user_id,sound`);
   if (!toks.length) return Response.json({ ok: true, sent: 0 });
   const [ch] = await rest(`msgr_channels?id=eq.${m.channel_id}&select=name,kind,org_id`);
   const authorName = m.author_kind === 'crew'

@@ -22,7 +22,7 @@ if (platform === 'ios') {
     copyFileSync(join(root, 'icons/ios', file), join(target, file));
   }
   // 푸시 알림 소리(기내 안전띠 차임) — argo-messenger_iOS 폴더의 파일은 번들 루트에 평탄하게 실린다(assets/ 는 폴더째 복사돼 iOS가 소리를 못 찾았다, 실측 2026-09-12 빌드 5)
-  copyFileSync(join(root, 'sounds/chime.caf'), join(root, 'gen/apple/argo-messenger_iOS/chime.caf'));
+  for (const file of readdirSync(join(root, 'sounds')).filter((f) => f.endsWith('.caf'))) copyFileSync(join(root, 'sounds', file), join(root, 'gen/apple/argo-messenger_iOS', file));
 } else {
   cpSync(join(root, 'icons/android'), target, { recursive: true });
 }
