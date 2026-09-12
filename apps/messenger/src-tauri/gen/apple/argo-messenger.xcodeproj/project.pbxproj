@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		02722EA412E96195D87B341E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 06E1D6AC8C4A224FC39553B3 /* Assets.xcassets */; };
 		0F82648483E9B7532E8B7AE5 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DECF0311C393CE44C484963B /* Metal.framework */; };
+		17D05D3B2E6273321A90FDA2 /* chime.caf in Resources */ = {isa = PBXBuildFile; fileRef = A975B97370A550F727BA4242 /* chime.caf */; };
 		215D9F343855D4FF57618C46 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9A87CAB87D484716F0224B49 /* CoreGraphics.framework */; };
 		4EC9A429E6FE820024F7FB1A /* assets in Resources */ = {isa = PBXBuildFile; fileRef = F80E0F3EFCBD92C4EEDDAF7F /* assets */; };
 		5A550DCE5D206918878C0470 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563CA5857529A35021D45BC6 /* UIKit.framework */; };
@@ -33,6 +34,7 @@
 		590FB8832FB52BFFC92D79AA /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		5F1CB4EA377800DD469AA546 /* argo-messenger_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "argo-messenger_iOS.entitlements"; sourceTree = "<group>"; };
 		9A87CAB87D484716F0224B49 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		A975B97370A550F727BA4242 /* chime.caf */ = {isa = PBXFileReference; path = chime.caf; sourceTree = "<group>"; };
 		C1CF96969D44D76DE8FD7278 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		C308FA15B434993101E8E198 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		DB73A2ADDC0E4AE87B91C6DF /* argo-messenger_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "argo-messenger_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -63,13 +65,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		08D5AEF7E6A34A9DCCE737D2 /* debug */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = debug;
-			sourceTree = "<group>";
-		};
 		118FB542134742C5D5F1A746 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -84,6 +79,13 @@
 				DB73A2ADDC0E4AE87B91C6DF /* argo-messenger_iOS.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		265802C873664A8BAF15130F /* release */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = release;
 			sourceTree = "<group>";
 		};
 		30195BF560DCFF9F6AFB961C /* Externals */ = {
@@ -141,7 +143,7 @@
 		CC5A7477D83DF05737AC2666 /* arm64 */ = {
 			isa = PBXGroup;
 			children = (
-				08D5AEF7E6A34A9DCCE737D2 /* debug */,
+				265802C873664A8BAF15130F /* release */,
 			);
 			path = arm64;
 			sourceTree = "<group>";
@@ -165,12 +167,13 @@
 			isa = PBXGroup;
 			children = (
 				5F1CB4EA377800DD469AA546 /* argo-messenger_iOS.entitlements */,
+				A975B97370A550F727BA4242 /* chime.caf */,
 				4E0419251D4324B5AB7420E3 /* Info.plist */,
 			);
 			path = "argo-messenger_iOS";
 			sourceTree = "<group>";
 		};
-		"TEMP_7F1C687E-D6AC-43EB-A49B-F3C0FCE1A69A" /* x86_64 */ = {
+		"TEMP_02979B3C-580F-44E8-B79E-8C6120327315" /* x86_64 */ = {
 			isa = PBXGroup;
 			children = (
 			);
@@ -238,6 +241,7 @@
 				02722EA412E96195D87B341E /* Assets.xcassets in Resources */,
 				7ADF22BB53E0539F61B20550 /* LaunchScreen.storyboard in Resources */,
 				4EC9A429E6FE820024F7FB1A /* assets in Resources */,
+				17D05D3B2E6273321A90FDA2 /* chime.caf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -426,7 +430,6 @@
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
-				DEVELOPMENT_TEAM = "22YU7H899Y";
 			};
 			name = release;
 		};
@@ -458,7 +461,6 @@
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
-				DEVELOPMENT_TEAM = "22YU7H899Y";
 			};
 			name = debug;
 		};
