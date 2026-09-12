@@ -25,7 +25,7 @@ import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
 import { acceptFiles, withoutFile, storageKey } from './attach-files.mjs';
-import { notifyPermission, requestNotifyPermission, sendNotify, setBadge } from './notify.js';
+import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, listenPush } from './push.js';
 import { reconcileSession } from './resume-session.mjs';
@@ -261,6 +261,8 @@ function Shell({ session }) {
   const orgLocked = ent?.ls_status === 'past_due' || ent?.ls_status === 'unpaid'; // J-2: 결제 문제 = 읽기 전용(서버 msgr_org_locked가 최종) // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
   const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
+  const [pushCard, setPushCard] = useState(null); // 전경 푸시 카드(폰) — 다른 채널 메시지만, 탭하면 그 채널로(유건 2026-09-12)
+  useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
   const [tick, setTick] = useState(0);
   useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록, 알림 탭 → 채널 이동, 전경 수신 → 토스트(시스템은 전경 알림을 안 띄운다)
@@ -268,7 +270,7 @@ function Shell({ session }) {
     let off = () => {};
     const reg = () => registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
     reg(); const stopResume = observeMobileResume(reg); // 토큰은 회전한다 — 앱 재개마다 다시 등록
-    listenPush({ onTap: ({ channel_id }) => { if (channel_id) setChId(channel_id); }, onForeground: ({ title, body }) => setNote([title, body].filter(Boolean).join(': ').slice(0, 160)) }).then((f) => { off = f; });
+    listenPush({ onTap: ({ channel_id }) => { if (channel_id) setChId(channel_id); }, onForeground: ({ title, body, data }) => { if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } }).then((f) => { off = f; }); // 보고 있는 채널은 조용히
     return () => { off(); stopResume(); };
   }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
@@ -735,6 +737,7 @@ function Shell({ session }) {
         {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
         {chSheet && channel && <ChannelSheet myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
+        {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) setChId(pushCard.channel_id); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
           <button type="button" className={`msgr-toast${err ? ' err' : ''}`} onClick={() => { setErr(''); setNote(''); }} role="status" aria-live="polite">{err ? `${t('ui.error')}: ${err}` : note}</button>,
           document.body,
@@ -1309,7 +1312,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
             <div className="row"><Av name={me?.display_name || session.user.email} userId={uid} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
             {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
-            <div className="row"><NotifyRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+            <div className="row"><NotifyRow /><SoundRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
           </section>
           <ProfileCard uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} />
           <section className="msgr-setcard">
@@ -1657,7 +1660,23 @@ function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
   );
 }
 
-/* ─── F2-5 로컬 알림(앱이 열려 있을 때 나를 부르거나 내가 확정할 결재가 오면 OS 알림) — 권한은 여기서만 요청 ─── */
+/* ─── 알림 소리 선택(유건 2026-09-12) — 합성 음원 5종, 이 기기에만 저장. 폰은 바꾸면 토큰을 다시 등록해 푸시 소리도 바뀐다 ─── */
+function SoundRow() {
+  const { t } = useT();
+  const [sound, setSnd] = useState(getSound());
+  const pick = (v) => { setSound(v); setSnd(v); playChime(v); if (isMobilePlatform) registerPush(supabase); };
+  return (
+    <label className="msgr-field" style={{ gap: 6 }} title={t('set.sound')}>
+      <I name="at" size={13} /><span className="msgr-klabel">{t('set.sound')}</span>
+      <select value={sound} onChange={(e) => pick(e.target.value)} aria-label={t('set.sound')}>
+        {SOUNDS.map((v) => <option key={v} value={v}>{t(`sound.${v}`)}</option>)}
+      </select>
+      <button type="button" className="btn sm ghost" onClick={() => playChime(sound)}>{t('set.sound.preview')}</button>
+    </label>
+  );
+}
+
+/* ─── F2-5 로컬 알림(새 메시지가 오면 OS 알림) — 권한은 여기서만 요청 ─── */
 function NotifyRow() {
   const { t } = useT();
   const [perm, setPerm] = useState('loading');

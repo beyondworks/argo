@@ -17,7 +17,11 @@ test('pushText — 데스크톱 알림과 같은 모양(이름 · #채널, 140�
 
 test('페이로드 — APNs 스레드/충돌 키·FCM 데이터에 채널·메시지 id가 문자열로 실린다', () => {
   const a = apnsPayload({ title: 't', body: 'b', channelId: 'c1', messageId: 7 });
-  assert.equal(a.aps.alert.title, 't'); assert.equal(a.aps['thread-id'], 'c1'); assert.equal(a.message_id, '7');
+  assert.equal(a.aps.alert.title, 't'); assert.equal(a.aps['thread-id'], 'c1'); assert.equal(a.message_id, '7'); assert.equal(a.aps.sound, 'seatbelt-single.caf', '기본 소리');
+  assert.equal(apnsPayload({ title: 't', body: 'b', channelId: 'c', messageId: 1, sound: 'wood-knock' }).aps.sound, 'wood-knock.caf');
+  assert.equal(apnsPayload({ title: 't', body: 'b', channelId: 'c', messageId: 1, sound: '../x.caf' }).aps.sound, 'xcaf.caf', '경로 문자는 걷어낸다');
+  assert.equal(apnsPayload({ title: 't', body: 'b', channelId: 'c', messageId: 1, badge: 7 }).aps.badge, 7, '아이콘 배지');
+  assert.equal('badge' in apnsPayload({ title: 't', body: 'b', channelId: 'c', messageId: 1 }).aps, false, '배지 모르면 안 싣는다(기존 숫자 유지)');
   const f = fcmMessage({ token: 'tok', title: 't', body: 'b', channelId: 'c1', messageId: 7 });
   assert.equal(f.message.token, 'tok'); assert.deepEqual(f.message.data, { channel_id: 'c1', message_id: '7' }); assert.equal(f.message.android.priority, 'high');
 });

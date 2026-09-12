@@ -15,9 +15,12 @@ export function pushText({ body, authorName, channelName, channelKind }) {
   return { title: `${authorName || '?'}${where}`, body: String(body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140) };
 }
 
-export function apnsPayload({ title, body, channelId, messageId }) {
-  // sound = 앱 번들의 chime.caf(기내 안전띠 차임, 유건 2026-09-12). 번들에 없으면 iOS가 기본음으로 대체한다
-  return { aps: { alert: { title, body }, sound: 'chime.caf', 'thread-id': String(channelId), 'mutable-content': 0 }, channel_id: String(channelId), message_id: String(messageId) };
+export function apnsPayload({ title, body, channelId, messageId, sound = 'seatbelt-single', badge = null }) {
+  // sound = 기기가 고른 소리(msgr_push_tokens.sound) → 앱 번들의 <이름>.caf. 번들에 없으면 iOS가 기본음으로 대체한다. badge = 수신자의 안읽음 총계(아이콘 숫자)
+  const file = `${String(sound || 'seatbelt-single').replace(/[^a-z0-9-]/g, '') || 'seatbelt-single'}.caf`;
+  const aps = { alert: { title, body }, sound: file, 'thread-id': String(channelId), 'mutable-content': 0 };
+  if (Number.isInteger(badge) && badge >= 0) aps.badge = badge;
+  return { aps, channel_id: String(channelId), message_id: String(messageId) };
 }
 export function fcmMessage({ token, title, body, channelId, messageId }) {
   return { message: { token, notification: { title, body }, data: { channel_id: String(channelId), message_id: String(messageId) },

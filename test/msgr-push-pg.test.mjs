@@ -43,8 +43,10 @@ before(() => {
 test('msgr_push_register — 매개변수 이름이 열 이름과 같아도 등록·갱신된다(42702 회귀)', { skip }, () => {
   const tok = 'ab'.repeat(32);
   assert.equal(last(asUser(U.owner, `select public.msgr_push_register('ios', '${tok}', 'iPhone 18_7');`)), '');
-  assert.equal(last(asUser(U.owner, `select public.msgr_push_register('ios', '${tok}', 'again');`)), '', '같은 토큰 재등록 = 갱신');
-  assert.equal(sql(`select platform || '|' || device || '|' || user_id from public.msgr_push_tokens where token = '${tok}'`), `ios|again|${U.owner}`);
+  assert.equal(last(asUser(U.owner, `select public.msgr_push_register('ios', '${tok}', 'again', 'wood-knock');`)), '', '같은 토큰 재등록 = 갱신(소리 포함)');
+  assert.equal(sql(`select platform || '|' || device || '|' || user_id || '|' || sound from public.msgr_push_tokens where token = '${tok}'`), `ios|again|${U.owner}|wood-knock`);
+  assert.equal(last(asUser(U.owner, `select public.msgr_push_register('ios', '${tok}', 'x', '../evil; drop');`)), '');
+  assert.equal(sql(`select sound from public.msgr_push_tokens where token = '${tok}'`), 'evildrop', '소리 이름은 [a-z0-9-]만 남긴다');
   const bad = asUserRaw(U.owner, `select public.msgr_push_register('web', '${tok}', '');`);
   assert.match(bad.stderr, /msgr_bad_push_token/, '지원 안 하는 플랫폼 거절');
   const anon = psqlRaw(['-A', '-t', '-c', `set role authenticated; select public.msgr_push_register('ios', '${tok}', '');`]);

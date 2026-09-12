@@ -19,15 +19,19 @@ export async function requestNotifyPermission() {
   if (p) { try { return await p.requestPermission(); } catch { return 'denied'; } }
   return typeof Notification === 'undefined' ? 'unsupported' : Notification.requestPermission();
 }
-// 메시지 소리 = 기내 안전띠 사인 차임(두 음, 합성 — public/sounds/chime.wav, 유건 지시 2026-09-12). OS 알림은 무음으로 두고 앱이 직접 울린다 —
-// 맥·윈도우·웹 어디서나 같은 소리, 알림 플러그인의 플랫폼별 소리 규격에 의존하지 않는다.
-let chimeBuf = null; let ctx = null;
-export async function playChime() {
+// 메시지 소리 — 설정에서 고른다(유건 2026-09-12: 안전띠 사인·나무 타격음 후보). 합성 음원 public/sounds/<이름>.wav, iOS 푸시는 같은 이름의 .caf(번들 루트).
+// OS 알림은 무음으로 두고 앱이 직접 울린다 — 맥·윈도우·웹 어디서나 같은 소리, 알림 플러그인의 플랫폼별 소리 규격에 의존하지 않는다.
+export const SOUNDS = ['seatbelt-single', 'seatbelt-hilo', 'wood-knock', 'wood-knock-double', 'wood-marimba'];
+export const DEFAULT_SOUND = 'seatbelt-single';
+export function getSound() { try { const v = localStorage.getItem('msgr-sound'); return SOUNDS.includes(v) ? v : DEFAULT_SOUND; } catch { return DEFAULT_SOUND; } }
+export function setSound(name) { try { if (SOUNDS.includes(name)) localStorage.setItem('msgr-sound', name); } catch { /* 저장 불가 환경 */ } }
+const bufs = new Map(); let ctx = null;
+export async function playChime(name = getSound()) {
   try {
     ctx ??= new (window.AudioContext || window.webkitAudioContext)();
     if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
-    chimeBuf ??= await fetch('/sounds/chime.wav').then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b));
-    const src = ctx.createBufferSource(); src.buffer = chimeBuf; src.connect(ctx.destination); src.start();
+    if (!bufs.has(name)) bufs.set(name, await fetch(`/sounds/${name}.wav`).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)));
+    const src = ctx.createBufferSource(); src.buffer = bufs.get(name); src.connect(ctx.destination); src.start();
   } catch { /* 오디오 불가 환경(자동재생 차단 등) — 알림 자체는 그대로 */ }
 }
 export async function sendNotify(title, body = '', tag = '') {
@@ -40,7 +44,7 @@ export async function sendNotify(title, body = '', tag = '') {
     playChime();
   } catch { /* 알림 불가 환경 */ }
 }
-export async function setBadge(n) { // 독 아이콘 숫자(맥) — 안 읽은 합계. 미지원 버전·플랫폼은 조용히 지나간다
-  if (!inTauri() || isMobilePlatform) return;
+export async function setBadge(n) { // 앱 아이콘 숫자(맥 독·iOS 홈 화면) — 안 읽은 합계. Tauri 런타임은 macOS·iOS·리눅스만 지원(Android·Windows는 조용히 지나간다)
+  if (!inTauri()) return;
   try { const { getCurrentWindow } = await import('@tauri-apps/api/window'); await getCurrentWindow().setBadgeCount(n > 0 ? n : undefined); } catch { /* 무해 */ }
 }
