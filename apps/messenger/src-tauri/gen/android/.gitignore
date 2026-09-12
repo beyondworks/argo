@@ -20,3 +20,4 @@ keystore.properties
 /tauri.settings.gradle
 # Kotlin 빌드 캐시
 .kotlin
+app/google-services.json

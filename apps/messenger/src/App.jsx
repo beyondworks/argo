@@ -27,6 +27,7 @@ import { mentionCandidates, mentionsFromBody } from './mention-candidates.mjs';
 import { acceptFiles, withoutFile, storageKey } from './attach-files.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
+import { registerPush, listenPush } from './push.js';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 const realtimeScope = createRealtimeScope();
@@ -262,6 +263,13 @@ function Shell({ session }) {
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
   const [tick, setTick] = useState(0);
+  useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록, 알림 탭 → 채널 이동, 전경 수신 → 토스트(시스템은 전경 알림을 안 띄운다)
+    if (!isMobilePlatform) return;
+    let off = () => {};
+    registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
+    listenPush({ onTap: ({ channel_id }) => { if (channel_id) setChId(channel_id); }, onForeground: ({ title, body }) => setNote([title, body].filter(Boolean).join(': ').slice(0, 160)) }).then((f) => { off = f; });
+    return () => off();
+  }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState(() => (isPhone ? 'home' : 'chat')); // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)

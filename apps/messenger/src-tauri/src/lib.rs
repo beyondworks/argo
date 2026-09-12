@@ -13,6 +13,8 @@ pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_notification::init());
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_deep_link::init());
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_push_notifications::init()); // APNs·FCM 기기 토큰 + 알림 탭 — 발송은 서버(msgr-push)
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_web_auth::init());
     #[cfg(desktop)]
