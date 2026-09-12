@@ -33,3 +33,10 @@ test('본문 멘션 대소문자 무시: "@edna"도 Edna(끝말잇기 실사고 
   const cands = [{ kind: 'crew', id: 'e', name: 'Edna' }, { kind: 'crew', id: 'o', name: 'Ogilvy' }];
   assert.deepEqual(mentionsFromBody('@edna 디자인 @OGILVY', cands).map((m) => m.id).sort(), ['e', 'o']);
 });
+
+test('mentionsFromBody — 본문 등장 순서로 돌려준다(서버가 이 순서로 차례를 정한다, 실측 2026-09-12)', () => {
+  const cands = [{ kind: 'crew', id: 'o', name: 'Ogilvy' }, { kind: 'crew', id: 'e', name: 'Edna' }];
+  assert.deepEqual(mentionsFromBody('@Edna @Ogilvy 번갈아 세어봐', cands).map((x) => x.id), ['e', 'o']);
+  assert.deepEqual(mentionsFromBody('@Ogilvy 먼저, 그 다음 @Edna', cands).map((x) => x.id), ['o', 'e']);
+  assert.deepEqual(mentionsFromBody('@edna 1부터', cands), [{ kind: 'crew', id: 'e' }], '반환 모양은 그대로(at 없음)');
+});

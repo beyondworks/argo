@@ -130,7 +130,7 @@
 .msgr-file .mi { color: var(--fg-3); }
 .msgr-attach { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .msgr-imgprev { max-width: min(420px, 100%); max-height: 320px; border-radius: 12px; border: 1px solid var(--border); display: block; cursor: zoom-in; object-fit: contain; background: var(--card-2); }
-.msgr-mine { display: grid; justify-items: end; gap: 4px; margin-left: 42px; animation: msgrRise 250ms cubic-bezier(.23,1,.32,1) both; }
+.msgr-mine { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: end; gap: 4px; margin-left: 42px; animation: msgrRise 250ms cubic-bezier(.23,1,.32,1) both; } /* 열을 minmax(0,1fr)로 — 암묵 auto 열은 인용 줄(nowrap)의 최대 콘텐츠 폭까지 자라 긴 원문에 단 내 답글이 스레드를 1만 px 넘게 넓혔다(로컬 실물 재현 2026-09-12: scrollWidth 12,863/1,592) */
 .msgr-mine .bubble { max-width: min(88%, 620px); background: var(--primary); color: var(--primary-fg); border-radius: 20px 6px 20px 20px; padding: 10px 15px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msgr-mine .meta { font-size: 11px; color: var(--fg-3); display: flex; gap: 8px; align-items: center; }
 .msgr-mine .meta .mi { color: var(--ok); }

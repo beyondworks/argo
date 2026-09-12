@@ -18,9 +18,11 @@ export function mentionsFromBody(body, candidates, picked = []) {
   const all = [...picked, ...candidates].filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length);
   for (const x of all) {
     const key = `${x.kind}:${x.id}`; if (seen.has(key)) continue;
-    if (!mentionRe(x.name).test(text)) continue;
-    seen.add(key); out.push({ kind: x.kind, id: x.id });
+    const hit = mentionRe(x.name).exec(text); if (!hit) continue;
+    seen.add(key); out.push({ kind: x.kind, id: x.id, at: hit.index });
     text = text.replace(mentionRe(x.name, 'g'), (m, lead) => lead + ' '.repeat(m.length - lead.length)); // 구간 소진 — 길이 유지
   }
-  return out;
+  // 본문 등장 순서 — 서버(msgr_bot_updates)가 이 배열 순서로 크루 차례를 정한다. 이름 길이 순으로 내보내면 "@Edna @Ogilvy"가
+  // [Ogilvy, Edna]로 저장돼 뒷사람이 먼저 답한다(라이브 실측 2026-09-12 #175).
+  return out.sort((a, b) => a.at - b.at).map(({ kind, id }) => ({ kind, id }));
 }
