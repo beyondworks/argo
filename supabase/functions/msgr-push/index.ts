@@ -61,7 +61,7 @@ async function badgeOnly(uid: string) {
   const badge = Number(await rest(`rpc/msgr_push_unread_total`, { method: 'POST', body: JSON.stringify({ uid }) })) || 0;
   const host = Deno.env.get('APNS_SANDBOX') === '1' ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
   const results = await Promise.all(toks.map(async (t) => {
-    const r = await fetch(`${host}/3/device/${t.token}`, { method: 'POST', headers: { authorization: `bearer ${jwt}`, 'apns-topic': Deno.env.get('APNS_TOPIC') ?? 'com.beyondworks.argo.messenger', 'apns-push-type': 'alert', 'apns-priority': '5', 'apns-collapse-id': 'badge' },
+    const r = await fetch(`${host}/3/device/${t.token}`, { method: 'POST', headers: { authorization: `bearer ${jwt}`, 'apns-topic': Deno.env.get('APNS_TOPIC') ?? 'com.beyondworks.argo.messenger', 'apns-push-type': 'alert', 'apns-priority': '10', 'apns-collapse-id': 'badge' }, // 우선순위 5는 iOS가 늦추거나 묶는다(배지 0이 안 내려가던 관찰 2026-09-12 16:58)
       body: JSON.stringify({ aps: { badge } }) });
     const txt = r.ok ? '' : await r.text();
     if (!r.ok && shouldDropToken('ios', r.status, txt)) await rest(`msgr_push_tokens?token=eq.${encodeURIComponent(t.token)}`, { method: 'DELETE' });
