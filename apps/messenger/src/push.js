@@ -3,6 +3,8 @@
 // 토큰은 회전하므로 로그인·앱 재개마다 다시 등록한다(플러그인 README).
 import { inTauri, isMobilePlatform } from './platform.js';
 import { getSound } from './notify.js';
+import { SB_URL, SB_ANON } from './supabase.js';
+import { createPushSession, mountPushListeners } from './push-lifecycle.mjs';
 
 let mod = null;
 async function plugin() {
@@ -10,18 +12,41 @@ async function plugin() {
   return mod || null;
 }
 
-/** 권한 요청 → 토큰 → 서버 등록. 반환: 'registered' | 'denied' | 'unsupported' | 'error:<msg>' */
-export async function registerPush(supabase, { device = '' } = {}) {
-  const p = await plugin(); if (!p || !supabase) return 'unsupported';
-  try {
-    if (!(await p.requestPermission())) return 'denied';
-    const token = await p.registerForPush();
-    if (!token) return 'error:no-token';
-    const platform = /iP(hone|ad|od)/i.test(navigator.userAgent) ? 'ios' : 'android';
-    const { error } = await supabase.rpc('msgr_push_register', { platform, token, device: device || navigator.userAgent.slice(0, 80), sound: getSound() }); // 소리 이름 = 서버가 APNs sound(<이름>.caf)에 그대로 쓴다
-    return error ? `error:${error.message}` : 'registered';
-  } catch (e) { return `error:${e?.message ?? e}`; }
+const clients = new WeakMap();
+function coordinator(client) {
+  if (!clients.has(client)) {
+    // Pin authorization to the initiating account. A later login must not rebind an earlier request.
+    const rpc = async (name, body, session, signal) => {
+      const res = await fetch(`${SB_URL.replace(/\/$/, '')}/rest/v1/rpc/${name}`, {
+        method: 'POST', signal,
+        headers: { apikey: SB_ANON, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('push-request-failed');
+    };
+    clients.set(client, createPushSession({
+      getSession: async () => { const { data, error } = await client.auth.getSession(); if (error) throw error; return data.session; },
+      getToken: async (prompt) => {
+        const p = await plugin(); if (!p) return { status: 'unsupported' };
+        if (!(await (prompt ? p.requestPermission() : p.isPermissionGranted()))) return { status: 'denied' };
+        const token = await p.registerForPush();
+        return token ? { token } : { status: 'error:no-token' };
+      },
+      registerToken: (token, session, { device = '' }, signal) => rpc('msgr_push_register', {
+        platform: import.meta.env.TAURI_ENV_PLATFORM === 'ios' ? 'ios' : 'android',
+        token, device: device || navigator.userAgent.slice(0, 80), sound: getSound(),
+      }, session, signal),
+      unregisterToken: (token, session, signal) => rpc('msgr_push_unregister', { token }, session, signal),
+    }));
+  }
+  return clients.get(client);
 }
+
+export function activatePush(client, uid) { if (isMobilePlatform && client) coordinator(client).activate(uid); }
+export function deactivatePush(client, uid) { if (isMobilePlatform && client) coordinator(client).deactivate(uid); }
+export async function registerPush(client, options) { return isMobilePlatform && client ? coordinator(client).register(options) : 'unsupported'; }
+export async function detachPush(client, uid) { return isMobilePlatform && client ? coordinator(client).detach(uid) : { warning: false }; }
+export function mountPush(callbacks) { return mountPushListeners(listenPush, callbacks); }
 
 /** 탭(콜드 스타트 포함)·전경 수신 리스너. onTap({ channel_id, message_id }), onForeground({ title, body, data }). 해제 함수를 돌려준다. */
 export async function listenPush({ onTap, onForeground } = {}) {

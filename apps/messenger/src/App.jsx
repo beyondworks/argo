@@ -2,7 +2,7 @@
 // 룩 = linen v2(apps/messenger/design): 타임라인 척추 · 사람 원/크루 타일 · 2단 다크 독 · 결재 슬립 · 자체 아이콘(icons.jsx).
 // Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
-import { Component, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Component, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Graph3D } from './graph3d.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
@@ -24,14 +24,16 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
-import { acceptFiles, withoutFile, storageKey } from './attach-files.mjs';
+import { acceptFiles, withoutFile } from './attach-files.mjs';
+import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
-import { registerPush, listenPush } from './push.js';
+import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 const realtimeScope = createRealtimeScope();
+const SignOutContext = createContext({ signOut: () => {}, signingOut: false });
 
 // Installation + signed-in owner scope prevents another PC's identically named agent being rotated.
 export const externalAgentId = (installation, owner, kind, id) => {
@@ -107,21 +109,55 @@ function Body({ text }) {
 export default function App() {
   const { t } = useT();
   const [session, setSession] = useState(undefined);
+  const [logoutNotice, setLogoutNotice] = useState('');
+  const [signingOut, setSigningOut] = useState(false);
+  const logoutPending = useRef(false); const sessionOwner = useRef(null);
+  const applySession = useCallback((next) => {
+    const uid = next?.user?.id ?? null;
+    if (sessionOwner.current !== uid) {
+      clearComposerSessions();
+      if (sessionOwner.current) deactivatePush(supabase, sessionOwner.current);
+      sessionOwner.current = uid;
+    }
+    setSession(next);
+  }, []);
+  const signOut = async () => {
+    if (logoutPending.current || !session?.user?.id) return;
+    logoutPending.current = true; setSigningOut(true); setLogoutNotice('');
+    const restorePush = async () => {
+      setLogoutNotice('push.logout.failed');
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (data.session?.user?.id !== session.user.id) return;
+        activatePush(supabase, session.user.id);
+        const result = await registerPush(supabase);
+        if (result !== 'registered' && result !== 'unsupported' && result !== 'cancelled') setLogoutNotice('push.logout.restoreFailed');
+      } catch { setLogoutNotice('push.logout.restoreFailed'); }
+    };
+    try {
+      const { warning } = await detachPush(supabase, session.user.id);
+      if (warning) setLogoutNotice('push.logout.detachFailed');
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) await restorePush();
+    } catch { await restorePush(); }
+    finally { logoutPending.current = false; setSigningOut(false); }
+  };
   useMobileViewport();
   useEffect(() => mountMobileAuth(), []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
-    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    const stopResume = isMobilePlatform ? observeMobileResume(() => reconcileSession(supabase.auth, setSession)) : () => {};
+    supabase.auth.getSession().then(({ data }) => applySession(data.session ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => applySession(s));
+    const stopResume = isMobilePlatform ? observeMobileResume(() => reconcileSession(supabase.auth, applySession)) : () => {};
     return () => { stopResume(); sub.subscription.unsubscribe(); };
   }, []);
   let body;
   if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
-  else if (!session) body = <Auth />;
-  else body = <Shell session={session} />;
-  return <><Sprite /><UpdateBar t={t} />{body}</>;
+  else if (!session) body = <Auth logoutNotice={logoutNotice} />;
+  else body = <Shell key={session.user.id} session={session} />;
+  return <SignOutContext.Provider value={{ signOut, signingOut }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
 /* ─── 서버 선택(부록 L): 기본 Argo 클라우드 / 회사 서버(셀프호스트 Supabase) — 프로필은 이 기기에만, 저장 뒤 새로고침 ─── */
@@ -197,7 +233,7 @@ function PhoneTabs({ page, onPick, activity, search }) {
 }
 
 /* ─── 로그인: 머리띠 카드 + 브라우저 핸드오프(Google·GitHub — Argo 앱과 같은 계정·같은 방식). 개발 빌드에서는 비밀번호 로그인도(로컬 스택엔 OAuth가 없다). ─── */
-function Auth() {
+function Auth({ logoutNotice = '' }) {
   const { t, lang, setLang } = useT();
   const [email, setEmail] = useState(''); const [pw, setPw] = useState('');
   const [waiting, setWaiting] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
@@ -228,6 +264,7 @@ function Auth() {
       <div className="body">
         <h1>{t('auth.title')}</h1>
         <p>{t('auth.desc')}</p>
+        {logoutNotice && <p role="alert" style={{ color: 'var(--danger)' }}>{t(logoutNotice)}</p>}
         {authWaiting ? (
           <p className="msgr-wait"><span className="msgr-klabel">{t('auth.waiting')}</span><button type="button" className="btn sm ghost" disabled={mobileAuth.exchanging} onClick={() => isMobileNative ? cancelMobileSignIn() : location.reload()}>{t('auth.cancel')}</button></p>
         ) : (<>
@@ -259,6 +296,7 @@ function CtxMenu({ at, items, onClose }) {
     <div ref={ref} className="msgr-rowmenu msgr-ctxmenu" role="menu" style={pos}>{list.map((it, i) => <button key={i} type="button" role="menuitem" className={it.danger ? 'danger' : ''} disabled={it.disabled} onClick={() => { onClose(); it.run(); }}><I name={it.icon} size={13} />{it.label}</button>)}</div></>, document.body);
 }
 function Shell({ session }) {
+  const { signOut, signingOut } = useContext(SignOutContext);
   const { t, lang } = useT();
   const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
   const uid = session.user.id;
@@ -291,11 +329,11 @@ function Shell({ session }) {
   const [tick, setTick] = useState(0);
   useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록, 알림 탭 → 채널 이동, 전경 수신 → 토스트(시스템은 전경 알림을 안 띄운다)
     if (!isMobilePlatform) return;
-    let off = () => {};
+    activatePush(supabase, uid);
     const reg = () => registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
     reg(); const stopResume = observeMobileResume(reg); // 토큰은 회전한다 — 앱 재개마다 다시 등록
-    listenPush({ onTap: ({ channel_id }) => { pushDiag('tap', `channel ${channel_id ?? '-'}`, `page=${notifyRef.current.page} org=${notifyRef.current.orgId ?? '-'}`); if (channel_id) setNavTo(channel_id); }, onForeground: ({ title, body, data }) => { if (!title && !body) return; /* 배지 전용 푸시(aps.badge만)도 전경 이벤트로 온다 — 빈 카드가 흰 막대로 그려졌다(유건 스크린샷 2026-09-12 16:57) */ if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } }).then((f) => { off = f; }); // 보고 있는 채널은 조용히
-    return () => { off(); stopResume(); };
+    const off = mountPush({ onTap: ({ channel_id }) => { pushDiag('tap', `channel ${channel_id ?? '-'}`, `page=${notifyRef.current.page} org=${notifyRef.current.orgId ?? '-'}`); if (channel_id) setNavTo(channel_id); }, onForeground: ({ title, body, data }) => { if (!title && !body) return; if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } });
+    return () => { deactivatePush(supabase, uid); off(); stopResume(); };
   }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
@@ -806,7 +844,7 @@ function Shell({ session }) {
           </button>
           {meMenu && (<div className="msgr-rowmenu me" role="menu" onMouseLeave={() => setMeMenu(false)}>
             <button type="button" role="menuitem" onClick={() => { setMeMenu(false); setSettingsTab('me'); setPage('settings'); setRail(false); }}><I name="gear" size={13} />{t('set.tab.me')}</button>
-            <button type="button" role="menuitem" className="danger" onClick={() => { setMeMenu(false); supabase.auth.signOut({ scope: 'local' }); }}><I name="out" size={13} />{t('auth.signOut')}</button>
+            <button type="button" role="menuitem" className="danger" disabled={signingOut} onClick={() => { setMeMenu(false); signOut(); }}><I name="out" size={13} />{t('auth.signOut')}</button>
           </div>)}
           {org && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
           {org && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
@@ -1354,6 +1392,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
 }
 
 function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onOpenCrew, onAvatar, friends = [], onFriendsChanged, onDm, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
+  const { signOut, signingOut } = useContext(SignOutContext);
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
@@ -1393,7 +1432,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
             <div className="row"><Av name={me?.display_name || session.user.email} userId={uid} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
             {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
-            <div className="row"><NotifyRow /><SoundRow /><DiagRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+            <div className="row"><NotifyRow /><SoundRow /><DiagRow /><button type="button" className="btn sm" disabled={signingOut} onClick={signOut}><I name="out" size={13} />{t('auth.signOut')}</button></div>
           </section>
           <ProfileCard uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} />
           <section className="msgr-setcard">
@@ -2380,7 +2419,14 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
         {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
       </div>
     </div>
-    <Composer chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} onSent={() => load(lastId).catch(() => {})} onError={onError} />
+    <Composer chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} onSent={async (id) => {
+      try {
+        await load(lastId);
+        // Realtime may already have loaded the body before an attachment finished (or was retried).
+        const attached = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').eq('message_id', id));
+        setAtts((current) => ({ ...current, [id]: attached }));
+      } catch (error) { onError(error.message); }
+    }} onError={onError} />
   </>);
 }
 
@@ -2612,7 +2658,7 @@ function Attachment({ a, onError }) {
   useEffect(() => { let on = true; if (!isImg) return undefined; supabase.storage.from('msgr').createSignedUrl(a.storage_path, 3600).then(({ data }) => { if (on && data?.signedUrl) setSrc(data.signedUrl); }).catch(() => {}); return () => { on = false; }; }, [a.storage_path, isImg]);
   return (<span className="msgr-attach">
     {src && <img className="msgr-imgprev" src={src} alt={a.name} loading="lazy" onClick={open} />}
-    <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.round(a.bytes / 1024)}KB</span> : null}</button>
+    <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.max(1, Math.round(a.bytes / 1024))}KB</span> : null}</button>
   </span>);
 }
 
@@ -2620,11 +2666,11 @@ function Attachment({ a, onError }) {
 function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople = null, scopeCrews = null, locked = false, sbw = 0, typingCrews, mentionReq, onMentionDone, onSent, onError }) {
   const { t } = useT();
   const phone = useIsPhone(); // 폰은 짧은 안내문(슬랙)
-  const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [files, setFiles] = useState([]);
+  const delivery = useMemo(() => getComposerSession(JSON.stringify([SB_URL, uid, orgId, chId]), composerTransport(supabase, { orgId, chId, uid })), [uid, orgId, chId]);
+  const { text, busy, files, mentions, uploading, job } = useSyncExternalStore(delivery.subscribe, delivery.snapshot);
+  const { setText, setFiles, setMentions } = delivery;
   const [dragging, setDragging] = useState(false); // 파일을 끌어다 놓는 중 — 컴포저 테두리 강조
   const [pop, setPop] = useState(null); const [sel, setSel] = useState(0);
-  const [uploading, setUploading] = useState(''); // 올리는 중인 파일 이름
-  const [mentions, setMentions] = useState([]);
   const ta = useRef(null); const fileRef = useRef(null);
   const byName = useMemo(() => [...(scopeCrews ?? crews).map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...(scopePeople ?? members).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))], [scopeCrews, crews, scopePeople, members]); // 이 채널에서 부를 수 있는 사람·크루(팝업 제외 목록·전송 대조 공용)
   const candidates = useMemo(() => {
@@ -2662,21 +2708,10 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     setFiles((cur) => acceptFiles(cur, incoming, ATTACH_MAX).files);
   };
   const send = async () => {
-    const body = text.trim(); if (!body || busy) return;
-    setBusy(true);
-    try {
-      // 멘션 = 팝업에서 고른 것 + 본문의 @이름을 크루·멤버 이름과 대조한 것(직접 타이핑한 @준도 멘션으로 — 실검수 2026-09-03: 팝업 없이 쓰면 mentions가 비어 크루가 응답하지 않았다)
-      const ment = mentionsFromBody(body, byName, mentions); // 긴 이름 우선·구간 소진 — "@페퍼 (VPS)"가 "@페퍼"로 새지 않게(실사고 2026-09-11)
-      const row = await q(supabase.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid, body, mentions: ment, client_msg_id: crypto.randomUUID() }).select('id').single());
-      for (const [i, f] of files.entries()) {
-        setUploading(f.name);
-        const path = `${orgId}/${chId}/${row.id}/${storageKey(f.name, i)}`; // 키는 ASCII 안전(한글·대괄호는 Storage가 거절) — 표시 이름은 아래 name 열에 원문
-        const up = await supabase.storage.from('msgr').upload(path, f, { contentType: f.type || 'application/octet-stream' });
-        if (up.error) { onError(`${t('msg.attachFail')}: ${f.name} — ${up.error.message}`); continue; }
-        await q(supabase.from('msgr_attachments').insert({ message_id: row.id, org_id: orgId, storage_path: path, name: f.name, mime: f.type, bytes: f.size }));
-      }
-      setText(''); setMentions([]); setFiles([]); if (ta.current) ta.current.style.height = 'auto'; onSent();
-    } catch (e) { onError(e.message); } finally { setBusy(false); setUploading(''); }
+    if (locked || busy || job) return;
+    const result = delivery.send(mentionsFromBody(text.trim(), byName, mentions));
+    setPop(null); if (ta.current) ta.current.style.height = 'auto';
+    if (await result) onSent(delivery.snapshot().lastDeliveredId);
   };
   const onKey = (e) => {
     if (pop && candidates.length) {
@@ -2696,12 +2731,20 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
           </button>)}
         </div>
       )}
+      {job && <div className="msgr-delivery" role="status" aria-live="polite">
+        <strong>{t(busy ? 'msg.delivery.sending' : job.messageId ? 'msg.delivery.attachFailed' : 'msg.delivery.failed')}</strong>
+        <p className="delivery-preview">{job.body || job.files.map((item) => item.file.name).join(', ')}</p>
+        {uploading && <p>{t('att.uploading')} · {uploading}</p>}
+        {job.error && <p className="delivery-error">{job.error}</p>}
+        {!busy && <div className="delivery-actions"><button type="button" className="btn" disabled={locked} onClick={async () => { if (!locked && await delivery.retry()) onSent(delivery.snapshot().lastDeliveredId); }}>{t('msg.delivery.retry')}</button>
+          <button type="button" className="btn" onClick={() => delivery.dismiss()}>{t('msg.delivery.dismiss')}</button></div>}
+      </div>}
       <form className={`msgr-composer${dragging ? ' drop' : ''}`} onSubmit={(e) => { e.preventDefault(); send(); }}
         onDragOver={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); setDragging(true); } }}
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
         onDrop={(e) => { e.preventDefault(); setDragging(false); if (!busy) addFiles(e.dataTransfer?.files); }}>
         <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-        <textarea ref={ta} rows={1} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)}
+        <textarea ref={ta} rows={1} maxLength={20000} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)}
           onPaste={(e) => { const pasted = [...(e.clipboardData?.files ?? [])]; if (!pasted.length || busy) return; e.preventDefault(); addFiles(pasted.map((f) => (f.name && f.name !== 'image.png') ? f : new File([f], `paste-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }))); }} /* 클립보드 이미지 붙여넣기(유건 2026-09-11 밤) — 이름 없는 캡처는 paste-시각.png */ placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}
         <div className="msgr-tools">
           <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>
@@ -2710,7 +2753,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
           {files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} />{f.name}<span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span>
             {uploading !== f.name && <button type="button" className="x" onMouseDown={(e) => e.preventDefault()} onClick={() => setFiles((cur) => withoutFile(cur, f))} disabled={busy} aria-label={t('att.remove', { name: f.name })} title={t('att.remove', { name: f.name })}>×</button>}</span>)}
           {channel.crew_memory === false && <span className="tb on" title={t('ch.crewMemory')}><I name="memoff" size={15} /><span>{t('ch.memoryOff')}</span></span>}
-          <button className="send" onMouseDown={(e) => e.preventDefault()} disabled={busy || locked || !text.trim()} aria-label={t('msg.send')} title={locked ? t('org.locked.short') : t('msg.send')}><I name="up" size={16} /></button>
+          <button className="send" onMouseDown={(e) => e.preventDefault()} disabled={busy || !!job || locked || (!text.trim() && !files.length)} aria-label={t('msg.send')} title={locked ? t('org.locked.short') : t('msg.send')}><I name="up" size={16} /></button>
         </div>
       </form>
       <div className="msgr-sub">
