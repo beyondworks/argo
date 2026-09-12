@@ -602,7 +602,7 @@
 .msgr-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .msgr-setcard form.row .msgr-input.sm { flex: 1; }
 .msgr-searchres mark { background: var(--mark); color: #1a1a1a; border-radius: 3px; padding: 0 2px; }
-.msgr-folderhead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px 2px; font-size: 10.5px; color: var(--fg-3); letter-spacing: 0.02em; }
+.msgr-folderhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px 2px; font-size: 10.5px; color: var(--fg-3); letter-spacing: 0.02em; }
 .msgr-foot .me { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; padding: 2px 4px; border-radius: 9px; color: inherit; font: inherit; cursor: pointer; grid-column: 1 / span 2; }
 .msgr-foot .me:hover { background: var(--card-2); }
 .msgr-foot .me .name { flex: 0 1 auto; text-align: left; } /* 아바타·이름 사이 여백(유건 지적 2026-09-09) — 상속된 가운데 정렬로 이름이 오른쪽으로 밀리던 것 */
