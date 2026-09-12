@@ -1,12 +1,18 @@
 // @멘션 후보 — 사람을 먼저, 크루를 뒤에(유건 제보 2026-09-11: 크루가 8명을 넘으면 상한에 잘려 채널에 들어온 사람이 아예 안 떴다).
 // 나 자신은 뺀다(슬랙과 같다). 검색어가 있으면 이름 부분 일치. 상한 없음 — 후보가 이 채널의 참여 구성뿐이라 구성원은 전원 보여야 한다
 // (유건 제보 2026-09-11 밤: 상한 8에 잘려 비공개 채널의 Walter·Wolff·Yoda가 '@'만 쳐서는 안 떴다). 팝업은 max-height + 스크롤.
-export function mentionCandidates({ q = '', crews = [], members = [], uid = null, max = Infinity } = {}) {
+// exclude = 본문에 이미 있는 멘션(kind:id) — 고른 것은 목록에서 빠진다(유건 2026-09-12). all = 맨 위 "@all"(이 채널의 모든 사람·크루).
+export const ALL = Object.freeze({ kind: 'all', id: 'all', name: 'all' });
+export function mentionCandidates({ q = '', crews = [], members = [], uid = null, max = Infinity, exclude = new Set(), all = true } = {}) {
   const needle = q.toLowerCase();
   const people = members.filter((m) => m.user_id !== uid).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8), sub: m.role }));
   const agents = crews.map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, sub: c.role_text }));
-  return [...people, ...agents].filter((x) => !needle || x.name.toLowerCase().includes(needle)).slice(0, max);
+  const pool = [...people, ...agents].filter((x) => !exclude.has(`${x.kind}:${x.id}`));
+  const rest = pool.filter((x) => !needle || x.name.toLowerCase().includes(needle));
+  const head = all && pool.length > 0 && !exclude.has('all:all') && 'all'.startsWith(needle) ? [{ ...ALL }] : []; // 부를 사람이 남아 있을 때만; "@al"까지 쳐도 뜬다
+  return [...head, ...rest].slice(0, max);
 }
+export const ALL_RE = /(^|\s)@all(?=$|[\s,.!?:;])/i;
 
 // 본문의 @이름 → 멘션 배열. 긴 이름부터 맞추고 맞춘 구간은 지워, "@페퍼 (VPS)" 안의 "@페퍼"가 다른 크루로 새지 않게 한다
 // (실사고 2026-09-11: 사설 채널 밖 페퍼가 답함). picked = 팝업에서 고른 것(같은 규칙으로 본문에 아직 있는지 확인).
@@ -14,6 +20,10 @@ export function mentionCandidates({ q = '', crews = [], members = [], uid = null
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentionRe = (name, flags = '') => new RegExp(`(^|\\s)@${esc(name)}(?=$|[\\s,.!?:;])`, `i${flags}`); // 대소문자 무시(@edna = Edna)
 export function mentionsFromBody(body, candidates, picked = []) {
+  if (ALL_RE.test(body)) { // @all = 이 채널의 모든 사람·크루(후보 순서 = 사람 먼저·크루 순 — 서버가 이 순서로 크루 차례를 정한다)
+    const seenAll = new Set();
+    return candidates.filter((x) => x?.id && (x.kind === 'user' || x.kind === 'crew') && !seenAll.has(`${x.kind}:${x.id}`) && seenAll.add(`${x.kind}:${x.id}`)).map(({ kind, id }) => ({ kind, id }));
+  }
   let text = body; const out = []; const seen = new Set();
   const all = [...picked, ...candidates].filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length);
   for (const x of all) {

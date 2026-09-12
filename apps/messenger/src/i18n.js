@@ -482,6 +482,8 @@ export const DICT = {
   'org.audit.system': ['시스템', 'System'],
   'notify.mention': ['{name}이(가) #{channel}에서 나를 불렀습니다', '{name} mentioned you in #{channel}'],
   'notify.reply': ['{name}의 답변 — #{channel}', '{name} replied in #{channel}'],
+  'notify.message': ['{name} · #{channel}', '{name} · #{channel}'],
+  'mention.all': ['이 채널의 모든 사람·크루', 'Everyone in this channel'],
   'notify.approval': ['#{channel}에 확정할 결재가 왔습니다', 'An approval awaits your decision in #{channel}'],
   'set.account.desc': ['이 조직에서 보이는 이름과 로그인한 이메일입니다.', 'Your display name in this organization and the signed-in email.'],
   'org.switch': ['조직 전환', 'Switch organization'],

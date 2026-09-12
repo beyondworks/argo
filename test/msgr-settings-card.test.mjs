@@ -153,7 +153,7 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'allowed'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)\);/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼)');
   const comp = app.slice(app.indexOf('function Composer('));
   assert.match(comp, /const usable = \(channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews\)\.filter\(\(c\) => !\(channel\?\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\)/, '멘션 후보 필터');
-  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: scopeCrews \?\? usable, members: scopePeople \?\? members, uid \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외는 mention-candidates.mjs)');
+  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: scopeCrews \?\? usable, members: scopePeople \?\? members, uid, exclude \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외·본문 중복 제외·@all은 mention-candidates.mjs, 2026-09-12)');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /let why = await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
   assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
@@ -249,7 +249,7 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(oc, /from\('msgr_invites'\)\.delete\(\)\.eq\('id', inv\.id\)\.select\('id'\)/, '초대 취소');
   assert.match(oc, /from\('msgr_audit_log'\)\.select\([^)]*\)\.eq\('org_id', org\.id\)\.order\('at', \{ ascending: false \}\)\.limit\(50\)/, '감사 50건');
   assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
-  assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
+  assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return !document\.hasFocus\(\) \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
   assert.match(read('apps/messenger/src/notify.js'), /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히(브라우저 경로 — notify.js)');
   assert.match(app, /const osNotify = \(title, body, tag\) => \{ sendNotify\(title, body, tag\); \};/, 'OS 알림은 notify.js 한 곳(Tauri 플러그인·브라우저 분기)');

@@ -12,6 +12,7 @@
   "permissions": [
     "updater:default",
     "process:default",
-    "notification:default"
+    "notification:default",
+    "core:window:allow-set-badge-count"
   ]
 }
