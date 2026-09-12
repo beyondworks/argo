@@ -77,7 +77,7 @@ jobs:
 
       - name: Messenger regression tests
         shell: bash
-        run: cd ../.. && node --test test/msgr-*.test.mjs
+        run: cd ../.. && node --test test/msgr-*.test.mjs apps/messenger/test/*.test.mjs
 
       - name: Native external-agent tests (host OS)
         shell: bash

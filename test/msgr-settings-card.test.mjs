@@ -88,7 +88,8 @@ test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 
 
 test('메신저 로그아웃은 이 기기(scope local)만 — 전역이면 같은 계정의 아르고 기기 세션 리프레시 토큰까지 폐기된다(2026-09-03 실측: 격리 아르고가 revoked로 죽음)', () => {
   assert.doesNotMatch(app, /auth\.signOut\(\)/, '범위 없는 signOut()이 남아 있다');
-  assert.equal((app.match(/auth\.signOut\(\{ scope: 'local' \}\)/g) ?? []).length, 2, '로그아웃 두 곳(레일 풋터·설정 계정 카드) 모두 local 범위여야 한다');
+  assert.equal((app.match(/auth\.signOut\(\{ scope: 'local' \}\)/g) ?? []).length, 1, '공용 로그아웃은 local 범위여야 한다');
+  assert.equal((app.match(/useContext\(SignOutContext\)/g) ?? []).length, 2, '레일·설정 모두 토큰 해제 포함 공용 로그아웃을 사용');
 });
 
 test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(고위험=관리자 기본), 정책 카드에 고위험 결재권 행, 브리지가 risk를 싣는다', () => {
@@ -327,7 +328,8 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
   assert.ok(!/successor_user_id/.test(oc), '승계 관리자 지정 UI는 자동 승계가 생기기 전까지 숨김(유건 UX 지시 2026-09-04)');
   assert.match(app, /const orgLocked = ent\?\.ls_status === 'past_due' \|\| ent\?\.ls_status === 'unpaid';/, '잠금 판정(서버 msgr_org_locked와 같은 규칙)');
   assert.match(app, /\{orgLocked && <div className="msgr-notice locked">/, '잠금 배너');
-  assert.match(app, /disabled=\{busy \|\| locked \|\| !text\.trim\(\)\}/, '잠금이면 보내기 비활성');
+  assert.match(app, /disabled=\{busy \|\| !!job \|\| locked \|\| \(!text\.trim\(\) && !files\.length\)\}/, '잠금·전송 대기 중에는 보내기 비활성');
+  assert.match(app, /if \(locked \|\| busy \|\| job\) return;/, '키보드·폼 전송도 잠금 상태를 확인');
   assert.match(app, /select\('plan, seats, ls_status'\)/, '자격 조회에 ls_status');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /coalesce\(old\.pending_owner_user_id = me, false\)\) then/, '수락 판정 NULL 방어');

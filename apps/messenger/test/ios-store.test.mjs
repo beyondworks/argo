@@ -7,7 +7,7 @@ test('store build env drops the dev password login and puts the mobile toolchain
   assert.equal(env.VITE_DEV_LOGIN, undefined);
   assert.equal(env.VITE_API, 'https://a');
   assert.ok(env.PATH.startsWith('/tc/rustup/toolchains/stable-aarch64-apple-darwin/bin:/tc/cargo/bin:/usr/bin'));
-  assert.match(buildEnv({ PATH: '' }).CARGO_HOME, /artifacts\/mobile-native\/cargo$/);
+  assert.match(buildEnv({ PATH: '' }).CARGO_HOME, /artifacts[\\/]mobile-native[\\/]cargo$/);
 });
 
 test('upload export options target App Store Connect upload for the configured team', () => {

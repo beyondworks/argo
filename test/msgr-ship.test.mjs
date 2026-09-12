@@ -53,7 +53,7 @@ test('supabase.js: 프로필이 env보다 우선하고, 없으면 env', () => {
   assert.match(app, /function ServerRow\(\{ t, open = false \}\)/, '서버 행 컴포넌트(모듈 수준)');
   assert.match(app, /<ServerRow t=\{t\} \/>\n\s*<div className="foot">/, '로그인 카드 foot 앞에 서버 행');
   assert.match(app, /notConfigured'\)\}<\/p><ServerRow t=\{t\} open \/>/, 'env 없는 빌드도 서버를 넣을 수 있어야 한다');
-  assert.match(app, /<Sprite \/><UpdateBar t=\{t\} \/>\{body\}/, '업데이트 막대는 모든 화면 위');
+  assert.match(app, /<Sprite \/><UpdateBar t=\{t\} \/>[^\n]*\{body\}/, '업데이트 막대는 모든 화면 위');
 });
 
 test('tauri.conf·Rust·capabilities: 업데이터 배선과 회사 서버를 막지 않는 CSP', () => {
