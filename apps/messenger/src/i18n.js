@@ -342,7 +342,7 @@ export const DICT = {
   'rail.people': ['멤버', 'Members'],
   'rail.agents': ['에이전트', 'Agents'],
   'rail.agents.company': ['회사 크루', 'Company crews'],
-  'rail.agents.personal': ['개인 크루', 'Personal crews'],
+  'rail.agents.others': ['다른 멤버의 크루', "Other members' crews"],
   'rail.agents.bot': ['외부 에이전트', 'External agents'],
   'rail.me': ['나', 'me'],
   'ch.pin': ['즐겨찾기에 추가', 'Add to favorites'],
