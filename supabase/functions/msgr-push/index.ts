@@ -53,10 +53,30 @@ async function sendOne(t: { token: string; platform: string; sound?: string; bad
   return r.ok ? 'ok' : `fcm ${r.status} ${txt.slice(0, 120)}`;
 }
 
+// 배지 전용 푸시(읽음 갱신 트리거 msgr_push_badge_sync) — 알림·소리 없이 aps.badge 만. 어느 기기에서 읽든 폰 숫자를 맞춘다
+async function badgeOnly(uid: string) {
+  const toks: { token: string }[] = await rest(`msgr_push_tokens?user_id=eq.${uid}&platform=eq.ios&select=token`);
+  if (!toks.length) return Response.json({ ok: true, sent: 0 });
+  const jwt = await apnsAuth(); if (!jwt) return Response.json({ ok: true, sent: 0, skip: 'apns' });
+  const badge = Number(await rest(`rpc/msgr_push_unread_total`, { method: 'POST', body: JSON.stringify({ uid }) })) || 0;
+  const host = Deno.env.get('APNS_SANDBOX') === '1' ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
+  const results = await Promise.all(toks.map(async (t) => {
+    const r = await fetch(`${host}/3/device/${t.token}`, { method: 'POST', headers: { authorization: `bearer ${jwt}`, 'apns-topic': Deno.env.get('APNS_TOPIC') ?? 'com.beyondworks.argo.messenger', 'apns-push-type': 'alert', 'apns-priority': '5', 'apns-collapse-id': 'badge' },
+      body: JSON.stringify({ aps: { badge } }) });
+    const txt = r.ok ? '' : await r.text();
+    if (!r.ok && shouldDropToken('ios', r.status, txt)) await rest(`msgr_push_tokens?token=eq.${encodeURIComponent(t.token)}`, { method: 'DELETE' });
+    return r.ok ? 'ok' : `apns ${r.status} ${txt.slice(0, 120)}`;
+  }));
+  console.log(`[msgr-push] badge ${uid.slice(0, 8)} = ${badge} → ${toks.length} tokens`, results.filter((x) => x !== 'ok'));
+  return Response.json({ ok: true, badge, results });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return new Response('method', { status: 405 });
-  let id: number;
-  try { id = Number((await req.json())?.message_id); } catch { return new Response('bad json', { status: 400 }); }
+  let id: number; let body: { message_id?: unknown; badge_user?: unknown };
+  try { body = await req.json(); } catch { return new Response('bad json', { status: 400 }); }
+  if (typeof body?.badge_user === 'string' && /^[0-9a-f-]{36}$/i.test(body.badge_user)) return badgeOnly(body.badge_user);
+  id = Number(body?.message_id);
   if (!Number.isInteger(id) || id <= 0) return new Response('bad message_id', { status: 400 });
   // 메시지당 한 번 — 먼저 표를 잡는다(경합·재생 방지)
   const claim = await fetch(`${SUPABASE_URL}/rest/v1/msgr_push_sent`, { method: 'POST', headers: { ...H, Prefer: 'return=minimal' }, body: JSON.stringify({ message_id: id }) });
