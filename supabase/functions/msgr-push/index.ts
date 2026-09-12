@@ -35,12 +35,12 @@ async function fcmAuth() {
   return fcmTok;
 }
 
-async function sendOne(t: { token: string; platform: string; sound?: string }, text: { title: string; body: string }, channelId: string, messageId: number) {
+async function sendOne(t: { token: string; platform: string; sound?: string; badge?: number | null }, text: { title: string; body: string }, channelId: string, messageId: number) {
   if (t.platform === 'ios') {
     const jwt = await apnsAuth(); if (!jwt) return 'skip';
     const host = Deno.env.get('APNS_SANDBOX') === '1' ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
     const r = await fetch(`${host}/3/device/${t.token}`, { method: 'POST', headers: { authorization: `bearer ${jwt}`, 'apns-topic': Deno.env.get('APNS_TOPIC') ?? 'com.beyondworks.argo.messenger', 'apns-push-type': 'alert', 'apns-priority': '10', 'apns-collapse-id': `ch-${channelId}`.slice(0, 64) },
-      body: JSON.stringify(apnsPayload({ ...text, channelId, messageId, sound: t.sound })) });
+      body: JSON.stringify(apnsPayload({ ...text, channelId, messageId, sound: t.sound, badge: t.badge ?? null })) });
     const txt = r.ok ? '' : await r.text();
     if (!r.ok && shouldDropToken('ios', r.status, txt)) await rest(`msgr_push_tokens?token=eq.${encodeURIComponent(t.token)}`, { method: 'DELETE' });
     return r.ok ? 'ok' : `apns ${r.status} ${txt.slice(0, 120)}`;
@@ -73,7 +73,10 @@ Deno.serve(async (req: Request) => {
     ? (await rest(`msgr_crews?id=eq.${m.crew_id}&select=display_name`))?.[0]?.display_name
     : (await rest(`msgr_org_members?org_id=eq.${ch?.org_id}&user_id=eq.${m.author_user_id}&select=display_name`))?.[0]?.display_name;
   const text = pushText({ body: m.body, authorName, channelName: ch?.name, channelKind: ch?.kind });
-  const results = await Promise.all(toks.map((t) => sendOne(t, text, m.channel_id, id).catch((e) => `err ${String(e?.message ?? e).slice(0, 120)}`)));
+  // 아이콘 배지 = 수신자별 안읽음 총계(iOS aps.badge) — 앱이 닫혀 있어도 숫자가 쌓인다(유건 제보 2026-09-12)
+  const badges = new Map<string, number>();
+  await Promise.all([...new Set(toks.map((t) => t.user_id))].map(async (u) => { try { badges.set(u, Number(await rest(`rpc/msgr_push_unread_total`, { method: 'POST', body: JSON.stringify({ uid: u }) })) || 0); } catch { /* 배지 없이 보낸다 */ } }));
+  const results = await Promise.all(toks.map((t) => sendOne({ ...t, badge: badges.get(t.user_id) ?? null }, text, m.channel_id, id).catch((e) => `err ${String(e?.message ?? e).slice(0, 120)}`)));
   const sent = results.filter((x) => x === 'ok').length;
   await rest(`msgr_push_sent?message_id=eq.${id}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ sent }) }).catch(() => null);
   console.log(`[msgr-push] message ${id} → ${toks.length} tokens, sent ${sent}`, results.filter((x) => x !== 'ok'));

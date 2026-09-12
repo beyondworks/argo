@@ -1121,3 +1121,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-thread.page .msgr-settings { padding-top: 12px; } /* 알림함과 같은 머리 아래 간격(12+12) */
   .msgr-phone .msgr-actlist .item { font-size: 14px; }
 }
+
+/* 전경 푸시 카드(폰, 유건 2026-09-12) — 시스템 배너 모양: 굵은 제목(이름 · #채널) + 본문 2줄, 위에서 내려오고 탭하면 그 채널로 */
+.msgr-pushcard { position: fixed; z-index: 85; top: max(10px, env(safe-area-inset-top)); left: 10px; right: 10px; display: grid; gap: 2px; padding: 11px 14px; border-radius: 14px; background: var(--card); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--shadow-float); text-align: left; font: inherit; cursor: pointer; animation: msgrDrop 220ms cubic-bezier(.23,1,.32,1); }
+.msgr-pushcard .t { font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-pushcard .b { font-size: 13px; line-height: 1.4; color: var(--fg-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+@keyframes msgrDrop { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (min-width: 721px) { .msgr-pushcard { left: auto; right: 16px; width: min(360px, calc(100vw - 32px)); } }

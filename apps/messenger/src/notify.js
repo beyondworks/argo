@@ -44,7 +44,7 @@ export async function sendNotify(title, body = '', tag = '') {
     playChime();
   } catch { /* 알림 불가 환경 */ }
 }
-export async function setBadge(n) { // 독 아이콘 숫자(맥) — 안 읽은 합계. 미지원 버전·플랫폼은 조용히 지나간다
-  if (!inTauri() || isMobilePlatform) return;
+export async function setBadge(n) { // 앱 아이콘 숫자(맥 독·iOS 홈 화면) — 안 읽은 합계. Tauri 런타임은 macOS·iOS·리눅스만 지원(Android·Windows는 조용히 지나간다)
+  if (!inTauri()) return;
   try { const { getCurrentWindow } = await import('@tauri-apps/api/window'); await getCurrentWindow().setBadgeCount(n > 0 ? n : undefined); } catch { /* 무해 */ }
 }
