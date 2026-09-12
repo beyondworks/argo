@@ -1155,3 +1155,11 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-delivery .delivery-preview { white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .msgr-delivery .delivery-error { color: var(--danger); white-space: pre-wrap; }
 .msgr-delivery .delivery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
+/* Conversation confirmations stay above the rail and usable with a phone keyboard. */
+.msgr-action-dialog .card { max-height: calc(var(--msgr-viewport-height, 100dvh) - 48px); overflow-y: auto; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .msgr-action-dialog > div { top: var(--msgr-viewport-top, 0px) !important; height: var(--msgr-viewport-height, 100dvh); bottom: auto !important; }
+  .msgr-action-dialog button, .msgr-action-dialog input { min-height: 44px; }
+  .msgr-action-dialog input { font-size: 16px !important; }
+}

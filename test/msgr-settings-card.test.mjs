@@ -428,9 +428,9 @@ test('UX 3/3 회사 크루 AI 드롭다운 — 서버 목록(node_info)이 있�
 
 test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(내 크루 있으면 차단)·보관(관리 권한만), 1:1 나가기, 게스트 행 세그먼트 오른쪽, 게스트 링크 라벨', () => {
   const app = read('apps/messenger/src/App.jsx');
-  assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?if \(stuck\.length\) return setErr\(t\('ch\.leave\.blocked'\)\);[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 멤버 행 삭제, 내 크루가 있으면 차단');
-  assert.match(app, /\{canManage && \(railConfirm === `archive:\$\{c\.id\}`/, '보관은 관리 권한만, 2단계');
-  assert.match(app, /\{c\.kind === 'private' && \(railConfirm === `leave:\$\{c\.id\}`/, '나가기는 비공개 채널만(공개는 전원 자동)');
+  assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?if \(stuck\.length\) throw new Error\(t\('ch\.leave\.blocked'\)\);[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 멤버 행 삭제, 내 크루가 있으면 차단');
+  assert.match(app, /canManage && \{ icon: 'x', label: t\('ch\.archive'\), run: \(\) => confirmVia\('archive'\)/, '보관은 관리 권한만, 2단계');
+  assert.match(app, /c\.kind === 'private' && \{ icon: 'out', label: t\('ch\.leave'\), run: \(\) => confirmVia\('leave'\)/, '나가기는 비공개 채널만(공개는 전원 자동)');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
   assert.ok(oc.indexOf("t('org.guest.until'") < oc.indexOf('<div className="msgr-seg right"'), '게스트 만료 문구는 세그먼트보다 앞(세그먼트 오른쪽 고정)');
   const dict = read('apps/messenger/src/i18n.js');
@@ -452,7 +452,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(app, /supabase\.rpc\('msgr_create_channel', \{ org: orgId, kind: priv \? 'private' : 'public', name: name\.trim\(\) \}\)/, '채널 생성은 RPC(생성+첫 멤버 한 번 — 생성 직후 열람 예외 폐지)');
   assert.match(app, /supabase\.rpc\('msgr_create_channel', \{ org: orgId, kind: 'dm', name: `dm:\$\{name\}`, others \}\)/, '1:1도 RPC');
   assert.doesNotMatch(app, /from\('msgr_channels'\)\.insert\(/, '채널 직접 insert 없음');
-  assert.match(app, /if \(!stuck\) return setErr\(t\('ch\.leave\.checkFailed'\)\);/, '나가기 크루 가드는 조회 실패 시 중단(fail-closed)');
+  assert.match(app, /if \(!stuck\) throw new Error\(t\('ch\.leave\.checkFailed'\)\);/, '나가기 크루 가드는 조회 실패 시 중단(fail-closed)');
   assert.match(app, /const chRel = \(c\) => `channels\/\$\{c\.id\}`;/, '채널 키는 id(이름은 유일하지 않다)');
   assert.match(g3, /prefers-reduced-motion: reduce/, '자동 회전은 동작 축소 설정을 존중');
   assert.match(g3, /rgbOf\(st, '--graph-rgb', null\)/, '3D 그래프도 --graph-rgb 우선(getComputedStyle은 한 번)');
