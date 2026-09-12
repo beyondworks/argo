@@ -512,6 +512,12 @@
 .msgr-menubg { position: fixed; inset: 0; z-index: 6; }
 .msgr-tabmenu { position: absolute; right: auto; top: auto; z-index: 7; }
 .msgr-ctxmenu { position: fixed; right: auto; top: auto; z-index: 7; } /* 우클릭 메뉴 — 커서 자리 */
+.msgr-ctxmenu { overflow-y: auto; overscroll-behavior: contain; min-width: min(180px, calc(100vw - 16px)); }
+.msgr-ctxmenu button { white-space: normal; overflow-wrap: anywhere; min-height: 32px; height: auto; padding-block: 8px; }
+.msgr-ctxmenu button:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
+.msgr-ctxmenu button:disabled, .msgr-rowmenu button:disabled { opacity: .45; cursor: default; }
+.msgr-folderhead > .btn { margin-left: auto; padding: 4px; min-width: 28px; min-height: 28px; }
+@media (pointer: coarse) { .msgr-ctxmenu button, .msgr-folderhead > .btn { min-height: 44px; min-width: 44px; } }
 .msgr-railrow.dragging { opacity: .45; }
 .msgr-railrow[draggable] { cursor: default; }
 .msgr-acts.ctx { position: fixed; z-index: 7; opacity: 1; flex-direction: column; align-items: stretch; gap: 2px; margin: 0; padding: 6px; min-width: 160px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
@@ -937,7 +943,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .item > .mi, .msgr-phone.phone-home .msgr-side .item > svg { color: var(--fg-2); opacity: 1; } /* #·자물쇠가 어두운 테마에서 안 보이던 것 */
   .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active { background: var(--card-2); }
   .msgr-phone.phone-home .msgr-side .item > svg { width: 20px; height: 20px; flex: 0 0 20px; }
-  .msgr-phone.phone-home .msgr-side .more { display: none; }                               /* 행 끝 ··· 없음(슬랙) — 채널 작업은 채팅 머리의 시트에서 */
+  .msgr-phone.phone-home .msgr-side .more { display: grid; opacity: 1; width: 44px; height: 44px; right: 8px; }
+  .msgr-phone.phone-home .msgr-railrow > .item { padding-right: 56px; } /* 터치에서도 그룹·즐겨찾기 순서에 접근 */
   .msgr-phone.phone-home .msgr-side .item.msgr-addrow { display: flex; align-items: center; justify-content: flex-start; width: 100%; text-align: left; color: var(--fg-2); } /* .msgr-list 밖이라 버튼 기본(inline-block·center)이 붙는다 → 슬랙 '+ 채널 추가' x52 */
   .msgr-phone.phone-home .msgr-side .item .name { font-size: var(--ph-txt); }
   .msgr-phone.phone-home .msgr-side .item .msgr-av { width: 24px; height: 24px; }
