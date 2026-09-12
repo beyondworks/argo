@@ -270,7 +270,7 @@ function Shell({ session }) {
     let off = () => {};
     const reg = () => registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
     reg(); const stopResume = observeMobileResume(reg); // 토큰은 회전한다 — 앱 재개마다 다시 등록
-    listenPush({ onTap: ({ channel_id }) => { if (channel_id) setChId(channel_id); }, onForeground: ({ title, body, data }) => { if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } }).then((f) => { off = f; }); // 보고 있는 채널은 조용히
+    listenPush({ onTap: ({ channel_id }) => { if (channel_id) setChId(channel_id); }, onForeground: ({ title, body, data }) => { if (!title && !body) return; /* 배지 전용 푸시(aps.badge만)도 전경 이벤트로 온다 — 빈 카드가 흰 막대로 그려졌다(유건 스크린샷 2026-09-12 16:57) */ if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } }).then((f) => { off = f; }); // 보고 있는 채널은 조용히
     return () => { off(); stopResume(); };
   }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);

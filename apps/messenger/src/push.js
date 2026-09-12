@@ -31,5 +31,5 @@ export async function listenPush({ onTap, onForeground } = {}) {
     if (onTap) offs.push(await p.onNotificationTapped((n) => onTap({ channel_id: n?.data?.channel_id, message_id: n?.data?.message_id })));
     if (onForeground) offs.push(await p.onNotificationReceived((n) => onForeground({ title: n?.title, body: n?.body, data: n?.data ?? {} })));
   } catch { /* 플러그인 없음·권한 거부 — 조용히 */ }
-  return () => { for (const off of offs) { try { typeof off === 'function' && off(); } catch { /* 무해 */ } } };
+  return () => { for (const off of offs) { try { typeof off === 'function' ? off() : off?.unregister?.(); } catch { /* 무해 */ } } }; // addPluginListener 는 unregister() 객체
 }
