@@ -54,6 +54,11 @@ const CYCLE_MS = Number(process.env.ARGO_SYNC_CYCLE_MS) || 8_000;
 // 줄인다. [규모 질문] 오너당 list 2회/300s × 기기 수 — 100명·기기 150대면 분당 60회 × 회당 수 초
 // = 여전히 위험. **근본 해법은 list() 폐지(매니페스트 인덱스 1파일)**이며 이 상수는 지연 전술이다.
 const DISCOVER_MS = Number(process.env.ARGO_SYNC_DISCOVER_MS) || 300_000;
+// 소유자 접두사가 비면 list('') = 버킷 루트 나열이 되고, RLS가 23만 행을 하나씩 걸러 10~25초를 태운다(라이브 실측 2026-09-12: 느린
+// storage.search의 접두사가 전부 ''). 자기 폴더 나열은 17ms. 빈 값·'undefined'·'null'·슬래시 포함만 거부한다(테스트의 가짜 오너는 통과).
+const ownerPrefixOk = (o) => typeof o === 'string' && /^[^\s/]+$/.test(o) && o !== 'undefined' && o !== 'null';
+const UPLOAD_BACKOFF_MS = 10 * 60_000; // 업로드가 전부 거절된 회사(플랜 미확인·무자격)는 이만큼 쉰다 — 8초마다 재시도하던 폭풍(30분 1만 건 RLS 거절) 차단
+const uploadBackoff = new Map(); // wsId → until(ms)
 // 크로스 프로세스 락 스테일 판정 — CYCLE_MS와 분리한다. 주기 단축(45→8s)이 이중 동기화 방어막을
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
@@ -619,6 +624,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     for (const k of Object.keys(state)) delete state[k];
   }
   let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0, withdrawn = 0;
+  let uploadDenied = 0; // 쓰기 시도에서 난 실패 수(플랜 무관) — cycle이 전부 거절이면 회사 단위 백오프
   let held = 0; // 계정 키 미확보로 이번 사이클 불가시 보류된 암호화 대상 파일 수
   const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
   // blob 실존 검사 — 매니페스트 항목 부재가 "삭제"인지 "동시 쓰기로 항목만 유실"인지 가르는 판별자.
@@ -880,6 +886,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
       // free의 간헐 5xx 하나가 다시 state 미기록 고착을 만들어 위 증식 결함이 그 창으로 되돌아온다.
       // 실패 가시성은 게이트가 지킨다: opts.freePlan이 없으면(pro·미확인) 쓰기 실패도 전부 failed이고,
       // pull(download) 실패는 uploadFailed 태그를 못 받으므로 어느 플랜에서도 관용되지 않는다.
+      if (e?.uploadFailed) uploadDenied++;
       if (e?.uploadFailed && opts.freePlan) denied++; else failed++; // 파일 하나 실패는 다음 사이클이 재시도
     }
   }
@@ -956,7 +963,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     else if (state[rel]) nextFiles[rel] = state[rel];
   }
   await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
@@ -1000,6 +1007,7 @@ async function discoverRemote(localOwners, index = null) {
   if (index && fixed === index.owner) return index.companies.filter((c) => !c.startsWith('.') && WS_ID_RE.test(c)).map((wsId) => ({ owner: fixed, wsId }));
   const out = []; // [{ owner, wsId }]
   for (const owner of allow) {
+    if (!ownerPrefixOk(owner)) { console.warn(`[argo] 동기화 발견: 소유자 접두사가 비어 목록 조회를 건너뜀(${String(owner).slice(0, 20)})`); continue; } // 루트 나열 차단
     const { data: companies } = await client().storage.from(BUCKET).list(owner, { limit: 200 }).catch(() => ({ data: [] }));
     for (const c of companies ?? []) {
       // 점 접두 폴더(.tombstones 등)는 회사가 아니다 — wsId 규칙(WS_ID_RE)도 점 접두를 거부한다
@@ -1070,7 +1078,7 @@ async function syncTombstones(fixedOwner, { remote: doRemote = true, index = nul
   for (const owner of owners) {
     // 색인(argo_sync_index)이 있고 그 오너가 세션 오너면 list를 건너뛴다 — 색인의 tombstones는 uid/.tombstones/<wsId>.json 직계뿐.
     if (index && owner === index.owner) { for (const wsId of index.tombstones) if (WS_ID_RE.test(wsId)) remote.set(wsId, owner); continue; }
-    const { data } = await client().storage.from(BUCKET).list(skey(owner, '.tombstones'), { limit: 500 }).catch(() => ({ data: [] }));
+    const { data } = ownerPrefixOk(owner) ? await client().storage.from(BUCKET).list(skey(owner, '.tombstones'), { limit: 500 }).catch(() => ({ data: [] })) : { data: [] }; // 루트 나열 차단
     for (const e of data ?? []) {
       if (e.id && String(e.name).endsWith('.json')) remote.set(String(e.name).slice(0, -5), owner);
     }
@@ -1322,9 +1330,14 @@ async function cycle() {
       status.companies[wsId] = { ts: Date.now(), skipped: 'free-plan' };
       continue;
     }
+    if ((uploadBackoff.get(wsId) ?? 0) > Date.now()) { status.companies[wsId] = { ts: Date.now(), skipped: 'upload-denied' }; continue; } // 전부 거절된 회사는 쉰다
     try {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal });
+      if (!freePlan && (r.uploadDenied ?? 0) > 0 && (r.pushed ?? 0) === 0) { // 확정 free는 이미 스킵 경로 — 여기는 미확인·무자격이 거절당하는 경우
+        uploadBackoff.set(wsId, Date.now() + UPLOAD_BACKOFF_MS);
+        console.warn(`[argo] 동기화(${wsId}): 업로드 ${r.uploadDenied}건 전부 거절 — ${UPLOAD_BACKOFF_MS / 60_000}분 보류(플랜 미확인·무자격 재시도 폭풍 차단)`);
+      }
       // 재봉인 완결은 **파일 실패 0**일 때만 — throw만 안 하면 지우던 이전 배선은 개별 push 실패
       // (r.failed>0) 파일을 영구 구세대로 남겼다(분리 검수 MEDIUM). 실패가 있으면 마커를 남겨
       // 다음 사이클이 회사째 재시도한다(무변경 재푸시 비용 < 영구 평문 잔존).
