@@ -1128,3 +1128,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-pushcard .b { font-size: 13px; line-height: 1.4; color: var(--fg-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 @keyframes msgrDrop { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (min-width: 721px) { .msgr-pushcard { left: auto; right: 16px; width: min(360px, calc(100vw - 32px)); } }
+
+/* 즐겨찾기 별(레일 행)·멤버/에이전트 디렉터리·진단 목록(2026-09-12) */
+.msgr-list .item .mi.pin { color: var(--mark); }
+.msgr-list.dir .item .msgr-dot { margin-left: auto; flex: none; }
+.msgr-list.dir .item.me { opacity: .85; cursor: default; }
+.msgr-list.dir .item .msgr-klabel.tag { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-diag summary { cursor: pointer; }
+.msgr-diaglist { margin: 6px 0 8px; padding: 0 0 0 16px; font-size: 12px; line-height: 1.5; max-height: 240px; overflow: auto; overflow-wrap: anywhere; }
+.msgr-diaglist .mono { font-family: var(--mono); color: var(--fg-3); }

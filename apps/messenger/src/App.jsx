@@ -28,7 +28,7 @@ import { acceptFiles, withoutFile, storageKey } from './attach-files.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, listenPush } from './push.js';
-import { pushDiag } from './diag.jsx';
+import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 const realtimeScope = createRealtimeScope();
@@ -153,7 +153,7 @@ function RailSection({ id, label, right = null, children }) {
   const onToggle = (e) => { const next = e.currentTarget.open; setOpen(next); try { localStorage.setItem(FOLD_KEY, JSON.stringify({ ...readFold(), [id]: !next })); } catch { /* 저장 못 해도 동작 */ } };
   return (
     <details className="msgr-sec" data-sec={id} open={open} onToggle={onToggle}>
-      <summary className="msgr-group">{phone && <I name={{ channels: 'hash', dms: 'at', mine: 'star' }[id] ?? 'hash'} size={18} className="sec-ic" />}<span className="lbl">{label}</span>{right && <span className="right" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{right}</span>}</summary>
+      <summary className="msgr-group">{phone && <I name={{ channels: 'hash', dms: 'at', mine: 'star', people: 'at', agents: 'node' }[id] ?? 'hash'} size={18} className="sec-ic" />}<span className="lbl">{label}</span>{right && <span className="right" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{right}</span>}</summary>
       {children}
     </details>
   );
@@ -291,7 +291,7 @@ function Shell({ session }) {
   const [resumeEpoch, setResumeEpoch] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState(() => (isPhone ? 'home' : 'chat'));
-  useEffect(() => { pushDiag('shell', `page=${page} chId=${chId ?? '-'} org=${orgId ?? '-'} channels=${channels.length}`); }, [page, chId, orgId, channels.length]); // 진단(설정 → 진단) // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
+  useEffect(() => { pushDiag('shell', `page=${page} chId=${chId ?? '-'} org=${orgId ?? '-'}`); }, [page, chId, orgId]); // 진단(설정 → 진단) — 화면 이동만 기록 // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   const openNav = () => { if (isPhone) setPage('home'); else setRail(true); }; // 폰: 홈 페이지 / 데스크톱: 레일 서랍
   const edgeBack = useEdgeSwipeBack(() => setPage('home'), isPhone && page !== 'home' && page !== 'dm'); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(홈)
   const [orgMenu, setOrgMenu] = useState(false);
@@ -384,11 +384,12 @@ function Shell({ session }) {
   const loadChMembers = useCallback(async (id) => { if (!id) { setChMembers([]); return; } const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); setChMembers(rows); }, []);
   useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setChSheet(false); }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
-  const [unread, setUnread] = useState({}); const [muted, setMuted] = useState(() => new Set()); const [quiet, setQuiet] = useState(null); // P0(2026-09-09): 채널별 안 읽음·음소거·조용한 시간
+  const [unread, setUnread] = useState({}); const [muted, setMuted] = useState(() => new Set()); const [pinned, setPinned] = useState(() => new Set()); /* 즐겨찾기(고정) — msgr_channel_prefs.pinned(유건 2026-09-12) */ const [quiet, setQuiet] = useState(null); // P0(2026-09-09): 채널별 안 읽음·음소거·조용한 시간
   const loadUnread = useCallback(async () => { if (!orgId) return; const rows = await q(supabase.rpc('msgr_unread', { org: orgId })).catch(() => null); if (rows) setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); }, [orgId]);
   useEffect(() => { loadUnread(); }, [loadUnread, tick]);
-  useEffect(() => { if (!uid) return; q(supabase.from('msgr_channel_prefs').select('channel_id, muted').eq('user_id', uid)).then((rows) => setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id)))).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null)).catch(() => {}); }, [uid, tick]);
+  useEffect(() => { if (!uid) return; q(supabase.from('msgr_channel_prefs').select('channel_id, muted, pinned').eq('user_id', uid)).then((rows) => { setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id))); setPinned(new Set(rows.filter((r) => r.pinned).map((r) => r.channel_id))); }).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null)).catch(() => {}); }, [uid, tick]);
   const toggleMute = async (c) => { const on = !muted.has(c.id); try { await q(supabase.from('msgr_channel_prefs').upsert({ channel_id: c.id, user_id: uid, muted: on, updated_at: new Date().toISOString() })); setMuted((s) => { const n = new Set(s); if (on) n.add(c.id); else n.delete(c.id); return n; }); } catch (e) { setErr(e.message); } };
+  const togglePin = async (c) => { const on = !pinned.has(c.id); try { await q(supabase.from('msgr_channel_prefs').upsert({ channel_id: c.id, user_id: uid, pinned: on, updated_at: new Date().toISOString() })); setPinned((st) => { const n = new Set(st); if (on) n.add(c.id); else n.delete(c.id); return n; }); } catch (e) { setErr(e.message); } };
   const toggleMemory = async (c) => { const r = await supabase.from('msgr_channels').update({ crew_memory: c.crew_memory === false }).eq('id', c.id).select('id'); if (r.error) return setErr(friendlyErr(r.error.message, t)); if (!r.data?.length) return setErr(t('err.denied')); setNote(t(c.crew_memory === false ? 'ch.memory.nowOn' : 'ch.memory.nowOff')); loadOrg(orgId).catch(() => {}); }; // 권한 최종 판정은 RLS(msgr_can_manage_channel)·정책 트리거
   const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { /* 커서 저장 실패는 다음 조회에서 다시 */ } }, [uid]);
   const [event, setEvent] = useState(null); const [typing, setTyping] = useState({}); const [progress, setProgress] = useState({}); // progress = 실행 카드(단계·도구·사고 과정) 스냅샷, 키 channel:crew
@@ -608,8 +609,8 @@ function Shell({ session }) {
   // DM 라벨 = 나 아닌 참가자(검수 MEDIUM-2: 저장된 이름은 생성자 시점). 크루 DM에 다른 사람도 있으면(소유자 동반) '서윤 · 민수'처럼 병기
   const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
     return [crewName, other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · ') || base; };
-  const dms = channels.filter((c) => c.kind === 'dm');
-  const sortedCh = [...channels].filter((c) => c.kind !== 'dm').sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
+  const dms = channels.filter((c) => c.kind === 'dm').sort((a, b) => pinned.has(b.id) - pinned.has(a.id)); // 즐겨찾기 먼저(나머지 순서 유지)
+  const sortedCh = [...channels].filter((c) => c.kind !== 'dm').sort((a, b) => (pinned.has(b.id) - pinned.has(a.id)) || (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 즐겨찾기 먼저, 그 안에서 // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
   // '내 에이전트' = 세 출처 한 목록(유건 지시 2026-09-08): 아르고 에이전트 + 내가 연결한 헤르메스·오픈클로(봇). 출처 표시는 msgr_bots.kind.
   const sourceOf = (c) => c.hosting !== 'bot' ? 'argo' : (botKinds.find((b) => b.crew_id === c.id)?.kind ?? 'custom');
   const sortCrews = (list) => [...list].sort((a, b) => railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0) : a.display_name.localeCompare(b.display_name, 'ko'));
@@ -670,13 +671,13 @@ function Shell({ session }) {
             {sortedCh.map((c) => { const canManage = isAdmin || c.created_by === uid || (c.admin_user_ids ?? []).includes(uid); const open = railMenu === c.id; return (
               <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
                 <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}>
-                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
+                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{pinned.has(c.id) && <I name="star" size={12} className="mi pin" />}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
                 </button>
                 <button type="button" className="more" onClick={(e) => { e.stopPropagation(); setRailMenu(open ? null : c.id); setRailConfirm(null); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={open}><I name="dots" size={13} /></button>
                 {open && (
                   <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
                     <button type="button" role="menuitem" onClick={() => { setRailMenu(null); setChId(c.id); setPage('chat'); setRail(false); setChSheet(true); }}><I name="gear" size={13} />{t('ch.menu.settings')}</button>
-                    <button type="button" role="menuitem" onClick={() => { setRailMenu(null); toggleMute(c); }}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={13} />{t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}</button>
+                    <button type="button" role="menuitem" onClick={() => { setRailMenu(null); togglePin(c); }}><I name="star" size={13} />{t(pinned.has(c.id) ? 'ch.unpin' : 'ch.pin')}</button><button type="button" role="menuitem" onClick={() => { setRailMenu(null); toggleMute(c); }}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={13} />{t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}</button>
                     {c.kind === 'private' && (railConfirm === `leave:${c.id}`
                       ? <button type="button" role="menuitem" className="danger confirm" onClick={() => leaveChannel(c)}><I name="out" size={13} /><span className="cf">{t('ch.leave.confirm')}<span className="note">{t('ch.leave.confirm.note')}</span></span></button>
                       : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('ch.leave')}</button>)}
@@ -698,11 +699,11 @@ function Shell({ session }) {
           <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const withCrew = !!dmCrew; return (
 
             <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} /><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} /><span className="name">{dmName(c)}</span>{pinned.has(c.id) && <I name="star" size={12} className="mi pin" />}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               <button type="button" className="more" onClick={(e) => { e.stopPropagation(); setRailMenu(open ? null : c.id); setRailConfirm(null); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={open}><I name="dots" size={13} /></button>
               {open && (
                 <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" role="menuitem" onClick={() => { setRailMenu(null); toggleMute(c); }}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={13} />{t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}</button>
+                  <button type="button" role="menuitem" onClick={() => { setRailMenu(null); togglePin(c); }}><I name="star" size={13} />{t(pinned.has(c.id) ? 'ch.unpin' : 'ch.pin')}</button><button type="button" role="menuitem" onClick={() => { setRailMenu(null); toggleMute(c); }}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={13} />{t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}</button>
                   {railConfirm === `leave:${c.id}`
                     ? <button type="button" role="menuitem" className="danger confirm" onClick={() => leaveChannel(c)}><I name="out" size={13} /><span className="cf">{t('dm.leave.confirm')}<span className="note">{t('dm.leave.confirm.note')}</span></span></button>
                     : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('dm.leave')}</button>}
@@ -717,6 +718,23 @@ function Shell({ session }) {
             </div>
           ); })}</div>
           {!dms.length && <div className="msgr-hint">{t('phone.dm.empty')}</div>}
+        </RailSection>)}
+        {org && members.length > 0 && (<RailSection id="people" label={`${t('rail.people')} · ${members.length}`}>{/* 멤버 디렉터리(유건 2026-09-12) — 나 먼저, 이름순. 누르면 DM */}
+          <div className="msgr-list dir">
+            {[...members].sort((a, b) => (a.user_id === uid ? -1 : b.user_id === uid ? 1 : 0) || String(a.display_name || '').localeCompare(String(b.display_name || ''))).map((m) => (
+              <button key={m.user_id} type="button" className={`item${m.user_id === uid ? ' me' : ''}`} onClick={() => { if (m.user_id !== uid) { openDm('user', m.user_id); setRail(false); } }} title={m.user_id === uid ? t('rail.me') : t('ui.dm')}>
+                <Av name={m.display_name || '?'} size="xs" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}{m.user_id === uid && <span className="msgr-klabel"> · {t('rail.me')}</span>}</span><span className="msgr-klabel tag">{t(`role.${m.role}`)}</span>
+              </button>))}
+          </div>
+        </RailSection>)}
+        {org && crews.length > 0 && (<RailSection id="agents" label={`${t('rail.agents')} · ${crews.length}`}>{/* 에이전트 디렉터리 — 폴더(없으면 회사/개인/외부)로 묶고 이름순, 접속 점. 누르면 크루 시트 */}
+          <div className="msgr-list dir">
+            {Object.entries(crews.reduce((g, c) => { const k = c.folder || (c.hosting === 'bot' ? t('rail.agents.bot') : crewTier(c, org) === 'company' ? t('rail.agents.company') : t('rail.agents.personal')); (g[k] ??= []).push(c); return g; }, {})).map(([k, list]) => (
+              <div key={k} className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">{k}</span><span className="msgr-klabel">{list.length}</span></div>
+                {[...list].sort((a, b) => a.display_name.localeCompare(b.display_name)).map((c) => { const on = c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS; return (
+                  <button key={c.id} type="button" className="item" onClick={() => { setSheet(c.id); setRail(false); }} title={c.role_text || ''}><Av name={c.display_name} crew size="xs" crewId={c.id} /><span className="name">{c.display_name}</span>{c.role_text && <span className="msgr-klabel tag">{c.role_text}</span>}<span className={`msgr-dot${on ? ' mark' : ''}`} /></button>); })}
+              </div>))}
+          </div>
         </RailSection>)}
         {org && (myAvailable.length > 0 || myCrews.length > 0) && (<RailSection id="mine" label={t('rail.mine')} right={<span className="right"><span className="msgr-sortwrap"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span><span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></span>}>
           <div className="msgr-list mine">
@@ -1328,7 +1346,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
             <div className="row"><Av name={me?.display_name || session.user.email} userId={uid} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
             {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
-            <div className="row"><NotifyRow /><SoundRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+            <div className="row"><NotifyRow /><SoundRow /><DiagRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
           </section>
           <ProfileCard uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} />
           <section className="msgr-setcard">
@@ -1689,6 +1707,22 @@ function SoundRow() {
       </select>
       <button type="button" className="btn sm ghost" onClick={() => playChime(sound)}>{t('set.sound.preview')}</button>
     </label>
+  );
+}
+
+/* ─── 진단(유건 2026-09-12 "빈 화면"): 이 기기의 최근 오류·이동 기록 — 재현 없이도 무슨 일이 있었는지 본다 ─── */
+function DiagRow() {
+  const { t } = useT();
+  const [list, setList] = useState(() => readDiag());
+  const [open, setOpen] = useState(false);
+  const errs = list.filter((e) => e.kind === 'error' || e.kind === 'rejection' || e.kind === 'render').length;
+  return (
+    <details className="msgr-diag" open={open} onToggle={(e) => { setOpen(e.currentTarget.open); if (e.currentTarget.open) setList(readDiag()); }} style={{ flexBasis: '100%' }}>
+      <summary className="msgr-klabel">{t('set.diag')} · {list.length}{errs > 0 && <span className="msgr-badge" style={{ marginLeft: 6 }}>{errs}</span>}</summary>
+      <p className="note">{t('set.diag.desc')}</p>
+      {!list.length ? <p className="note">{t('set.diag.none')}</p> : <ul className="msgr-diaglist">{list.map((e, i) => <li key={i}><span className="mono">{e.at.slice(11, 19)}</span> <b>{e.kind}</b> {e.message}{e.extra && <span className="note"> — {e.extra.slice(0, 160)}</span>}</li>)}</ul>}
+      <button type="button" className="btn sm ghost" onClick={() => { clearDiag(); setList([]); }}>{t('set.diag.clear')}</button>
+    </details>
   );
 }
 
