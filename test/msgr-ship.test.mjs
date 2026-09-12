@@ -115,6 +115,7 @@ test('release-messenger.yml: 3타깃·작업 디렉터리·버전 게이트·고
   assert.match(y, /bump-version\.mjs --root apps\/messenger --check "v\$\{GITHUB_REF_NAME#messenger-v\}"/);
   for (const f of ['argo-messenger-macos-apple-silicon.dmg', 'argo-messenger-macos-intel.dmg', 'argo-messenger-windows-setup.exe']) assert.match(y, new RegExp(f));
   assert.match(y, /repository: beyondworks\/argo-messenger/);
+  assert.match(y, /target_commitish: main/, '별도 릴리스 repo는 생성할 태그의 기준 브랜치를 명시해야 한다(404 방지)');
   assert.match(y, /tags: \['messenger-v\*'\]/);
   assert.match(y, /node scripts\/release-assets\.mjs dist argo-messenger/);
   assert.match(y, /if: success\(\) && startsWith/);
