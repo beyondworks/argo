@@ -446,7 +446,7 @@ function Shell({ session }) {
     const mentioned = Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid);
     if (!mentioned || !shouldNotify(payload.channel_id)) return;
     const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
-    osNotify(t('notify.mention', { name: who?.display_name || '?', channel: ch?.name ?? '' }), '', `m:${payload.id}`);
+    osNotify(t('notify.mention', { name: who?.display_name || '?', channel: ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), `m:${payload.id}`); // 멘션도 본문 발췌
   };
   const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
     const r = notifyRef.current;
@@ -455,7 +455,8 @@ function Shell({ session }) {
     const toMe = ch?.kind === 'dm' || (payload.reply_to != null && mineRef.current.has(payload.reply_to)) || (Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid));
     if (!toMe || !shouldNotify(payload.channel_id)) return;
     const who = payload.author_kind === 'crew' ? r.crews.find((c) => c.id === payload.crew_id)?.display_name : r.members.find((m) => m.user_id === payload.author_user_id)?.display_name;
-    osNotify(t('notify.reply', { name: who || '?', channel: ch?.name ?? '' }), '', `r:${payload.id}`);
+    const preview = String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140); // 답변 발췌를 본문에 — 제목만 오면 무엇을 답했는지 알림에서 안 보인다(유건 2026-09-12). 맥 "미리보기 표시"는 이 본문의 노출 여부만 정한다
+    osNotify(t('notify.reply', { name: who || '?', channel: ch?.name ?? '' }), preview, `r:${payload.id}`);
   };
   const notifyApproval = (payload) => {
     const r = notifyRef.current;
