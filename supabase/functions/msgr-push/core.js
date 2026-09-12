@@ -16,7 +16,8 @@ export function pushText({ body, authorName, channelName, channelKind }) {
 }
 
 export function apnsPayload({ title, body, channelId, messageId }) {
-  return { aps: { alert: { title, body }, sound: 'default', 'thread-id': String(channelId), 'mutable-content': 0 }, channel_id: String(channelId), message_id: String(messageId) };
+  // sound = 앱 번들의 chime.caf(기내 안전띠 차임, 유건 2026-09-12). 번들에 없으면 iOS가 기본음으로 대체한다
+  return { aps: { alert: { title, body }, sound: 'chime.caf', 'thread-id': String(channelId), 'mutable-content': 0 }, channel_id: String(channelId), message_id: String(messageId) };
 }
 export function fcmMessage({ token, title, body, channelId, messageId }) {
   return { message: { token, notification: { title, body }, data: { channel_id: String(channelId), message_id: String(messageId) },

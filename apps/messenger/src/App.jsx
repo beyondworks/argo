@@ -23,7 +23,7 @@ import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri } from './pla
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
-import { mentionCandidates, mentionsFromBody } from './mention-candidates.mjs';
+import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
 import { acceptFiles, withoutFile, storageKey } from './attach-files.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -266,9 +266,10 @@ function Shell({ session }) {
   useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록, 알림 탭 → 채널 이동, 전경 수신 → 토스트(시스템은 전경 알림을 안 띄운다)
     if (!isMobilePlatform) return;
     let off = () => {};
-    registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
+    const reg = () => registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
+    reg(); const stopResume = observeMobileResume(reg); // 토큰은 회전한다 — 앱 재개마다 다시 등록
     listenPush({ onTap: ({ channel_id }) => { if (channel_id) setChId(channel_id); }, onForeground: ({ title, body }) => setNote([title, body].filter(Boolean).join(': ').slice(0, 160)) }).then((f) => { off = f; });
-    return () => off();
+    return () => { off(); stopResume(); };
   }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
@@ -389,7 +390,7 @@ function Shell({ session }) {
       ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
       registerDispose(remove);
       ch
-        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); notifyMention(payload); notifyReply(payload); }))
+        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
         .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); }))
         .on('broadcast', { event: 'typing' }, active(({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() }))))
         .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() })))
@@ -447,24 +448,23 @@ function Shell({ session }) {
   notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet };
   useEffect(() => { setBadge(Object.entries(unread).reduce((s, [id, u]) => s + (muted.has(id) ? 0 : (u?.n || 0)), 0)); }, [unread, muted]); // 독 아이콘 숫자 = 안 읽은 합계(음소거 채널 제외 — 레일 배지와 같은 규칙)
   const osNotify = (title, body, tag) => { sendNotify(title, body, tag); }; // Tauri 플러그인·웹 Notification 분기는 notify.js
-  const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return document.visibilityState === 'hidden' || r.page !== 'chat' || r.chId !== channelId; }; // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
+  const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return !document.hasFocus() || r.page !== 'chat' || r.chId !== channelId; }; // 초점 기준 — 다른 창 뒤에 있어도 visibilityState는 'visible'이라 같은 채널을 띄워 두면 알림이 전부 억제됐다(유건 제보 2026-09-12) // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
     const r = notifyRef.current;
     if (!payload || payload.author_user_id === r.uid) return;
     const mentioned = Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid);
     if (!mentioned || !shouldNotify(payload.channel_id)) return;
     const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
-    osNotify(t('notify.mention', { name: who?.display_name || '?', channel: ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), `m:${payload.id}`); // 멘션도 본문 발췌
+    osNotify(t('notify.mention', { name: who?.display_name || '?', channel: ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), `m:${payload.id}`); return true; // 멘션도 본문 발췌
   };
   const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
     const r = notifyRef.current;
     if (!payload || payload.kind !== 'text' || (payload.author_user_id && payload.author_user_id === r.uid)) return; // 크루든 사람이든(사람 DM·답글에 알림이 없던 갭, 2026-09-12 점검) — 내 글은 제외
     const ch = r.channels.find((c) => c.id === payload.channel_id);
-    const toMe = ch?.kind === 'dm' || (payload.reply_to != null && mineRef.current.has(payload.reply_to)) || (Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid));
-    if (!toMe || !shouldNotify(payload.channel_id)) return;
+    if (!shouldNotify(payload.channel_id)) return; // 모든 메시지에 알림(다른 메신저처럼 — 유건 2026-09-12). 채널 음소거·방해 금지는 shouldNotify
     const who = payload.author_kind === 'crew' ? r.crews.find((c) => c.id === payload.crew_id)?.display_name : r.members.find((m) => m.user_id === payload.author_user_id)?.display_name;
     const preview = String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140); // 답변 발췌를 본문에 — 제목만 오면 무엇을 답했는지 알림에서 안 보인다(유건 2026-09-12). 맥 "미리보기 표시"는 이 본문의 노출 여부만 정한다
-    osNotify(t('notify.reply', { name: who || '?', channel: ch?.name ?? '' }), preview, `r:${payload.id}`);
+    osNotify(ch?.kind === 'dm' ? (who || '?') : t('notify.message', { name: who || '?', channel: ch?.name ?? '' }), preview, `r:${payload.id}`);
   };
   const notifyApproval = (payload) => {
     const r = notifyRef.current;
@@ -2509,12 +2509,14 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   const [uploading, setUploading] = useState(''); // 올리는 중인 파일 이름
   const [mentions, setMentions] = useState([]);
   const ta = useRef(null); const fileRef = useRef(null);
+  const byName = useMemo(() => [...(scopeCrews ?? crews).map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...(scopePeople ?? members).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))], [scopeCrews, crews, scopePeople, members]); // 이 채널에서 부를 수 있는 사람·크루(팝업 제외 목록·전송 대조 공용)
   const candidates = useMemo(() => {
     if (!pop) return [];
     const needle = pop.q.toLowerCase();
+    const exclude = new Set(mentionsFromBody(text, byName).map((x) => `${x.kind}:${x.id}`)); if (ALL_RE.test(text)) exclude.add('all:all'); // 이미 본문에 있는 멘션은 목록에서 뺀다(유건 2026-09-12)
     const usable = (channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // 내보낸 크루는 후보에서 뺀다 // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
-    return mentionCandidates({ q: needle, crews: scopeCrews ?? usable, members: scopePeople ?? members, uid }); // 사람 먼저·나 제외·상한 없음(팝업 스크롤). 후보는 이 채널의 참여 구성만(사설 채널 밖 크루가 걸리던 실사고 2026-09-11)
-  }, [pop, crews, members, uid, channel?.personal_crews, org, scopeCrews, scopePeople]);
+    return mentionCandidates({ q: needle, crews: scopeCrews ?? usable, members: scopePeople ?? members, uid, exclude }).map((c) => (c.kind === 'all' ? { ...c, sub: t('mention.all') } : c)); // 사람 먼저·나 제외·상한 없음(팝업 스크롤). 맨 위 @all. 후보는 이 채널의 참여 구성만(사설 채널 밖 크루가 걸리던 실사고 2026-09-11)
+  }, [pop, crews, members, uid, channel?.personal_crews, org, scopeCrews, scopePeople, text, byName, t]);
   const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };
   const detect = (v, caret) => { const upto = v.slice(0, caret); const m = upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); };
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
@@ -2547,7 +2549,6 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     setBusy(true);
     try {
       // 멘션 = 팝업에서 고른 것 + 본문의 @이름을 크루·멤버 이름과 대조한 것(직접 타이핑한 @준도 멘션으로 — 실검수 2026-09-03: 팝업 없이 쓰면 mentions가 비어 크루가 응답하지 않았다)
-      const byName = [...(scopeCrews ?? crews).map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...(scopePeople ?? members).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))]; // 이 채널의 참여 구성만
       const ment = mentionsFromBody(body, byName, mentions); // 긴 이름 우선·구간 소진 — "@페퍼 (VPS)"가 "@페퍼"로 새지 않게(실사고 2026-09-11)
       const row = await q(supabase.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid, body, mentions: ment, client_msg_id: crypto.randomUUID() }).select('id').single());
       for (const [i, f] of files.entries()) {
@@ -2574,7 +2575,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
       {pop && candidates.length > 0 && (
         <div className="msgr-pop" role="listbox">
           {candidates.map((c, i) => <button key={`${c.kind}:${c.id}`} type="button" role="option" aria-selected={i === sel} className={i === sel ? 'on' : ''} ref={i === sel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pick(c); }}>
-            <Av name={c.name} crew={c.kind === 'crew'} size="sm" crewId={c.kind === 'crew' ? c.id : null} userId={c.kind === 'crew' ? null : c.id} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.kind === 'crew' ? t('org.crews') : t(`role.${c.sub}`)}</span>
+            <Av name={c.kind === 'all' ? '@' : c.name} crew={c.kind === 'crew'} size="sm" crewId={c.kind === 'crew' ? c.id : null} userId={c.kind === 'user' ? c.id : null} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.kind === 'all' ? c.sub : c.kind === 'crew' ? t('org.crews') : t(`role.${c.sub}`)}</span>
           </button>)}
         </div>
       )}

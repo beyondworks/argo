@@ -21,6 +21,8 @@ if (platform === 'ios') {
   for (const file of readdirSync(join(root, 'icons/ios')).filter(file => file.endsWith('.png'))) {
     copyFileSync(join(root, 'icons/ios', file), join(target, file));
   }
+  // 푸시 알림 소리(기내 안전띠 차임) — gen/apple/assets 는 project.yml 에서 resources 빌드 단계라 번들 루트에 실린다(APNs sound: 'chime.caf')
+  copyFileSync(join(root, 'sounds/chime.caf'), join(root, 'gen/apple/assets/chime.caf'));
 } else {
   cpSync(join(root, 'icons/android'), target, { recursive: true });
 }
