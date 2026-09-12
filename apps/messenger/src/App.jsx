@@ -1204,12 +1204,13 @@ function ProfileCard({ uid, onNote, onError, onAvatar }) {
 function FriendsCard({ uid, friends, members, onChanged, onDm, onNote, onError }) {
   const { t, lang } = useT();
   const [qs, setQs] = useState(''); const [res, setRes] = useState(null); const [busy, setBusy] = useState(false);
-  const find = async () => { const v = qs.trim(); if (v.length < 3) return setRes([]); setBusy(true); try { setRes(await q(supabase.rpc('msgr_find_user', { q: v }))); } catch (e) { onError(e.message); } finally { setBusy(false); } };
+  const find = async () => { const v = qs.trim().replace(/^@/, ''); if (v.length < 3) return setRes([]); setBusy(true); try { setRes(await q(supabase.rpc('msgr_find_user', { q: v }))); } catch (e) { onError(e.message); } finally { setBusy(false); } };
   const call = async (fn, args, ok) => { setBusy(true); try { await q(supabase.rpc(fn, args)); onNote(ok); await onChanged?.(); if (res) await find(); } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); } finally { setBusy(false); } };
   const received = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const sent = friends.filter((f) => f.status === 'pending' && f.requested_by === uid);
   const accepted = friends.filter((f) => f.status === 'accepted');
   const nameOf = (f) => members.find((m) => m.user_id === f.user_id)?.display_name || f.display_name || f.handle || f.user_id.slice(0, 8); // 같은 조직이면 조직 이름 우선(프로필 미설정 시 이메일 앞부분 대신)
+  const relOf = (r) => { const f = friends.find((x) => x.user_id === r.user_id); return !f ? (r.relation === 'blocked' ? 'blocked' : 'none') : f.status === 'accepted' ? 'friend' : f.status === 'pending' ? (f.requested_by === uid ? 'sent' : 'received') : r.relation; }; // 검색 결과의 관계는 살아 있는 friends 로 — 상대가 수락해도 '요청 보냄'이 남던 결함(2026-09-12 실측)
   return (
     <section className="msgr-setcard">
       <h2>{t('friends.title')} · {accepted.length}</h2><p>{t('friends.desc')}</p>
@@ -1217,10 +1218,10 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onNote, onError }
       {res && (<div className="msgr-rows">
         {!res.length && <p className="empty">{t('friends.find.none')}</p>}
         {res.map((r) => <div key={r.user_id} className="row"><Av name={r.display_name || r.handle || '?'} size="sm" userId={r.user_id} /><span className="name">{r.display_name || r.handle}</span><span className="sub">{r.handle ? `@${r.handle}` : ''}</span>
-          {r.relation === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, t('friends.sent'))}>{t('friends.request')}</button>}
-          {r.relation === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
-          {r.relation === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
-          {r.relation === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
+          {relOf(r) === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, t('friends.sent'))}>{t('friends.request')}</button>}
+          {relOf(r) === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
+          {relOf(r) === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
+          {relOf(r) === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
         </div>)}
       </div>)}
       {received.length > 0 && (<><h3>{t('friends.received')} · {received.length}</h3><div className="msgr-rows">{received.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" userId={f.user_id} /><span className="name">{nameOf(f)}</span><span className="sub">{fmtWhen(f.created_at, lang)}</span>
