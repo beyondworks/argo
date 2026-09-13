@@ -1,5 +1,5 @@
 // Native init emits Tauri placeholder icons; keep phone icons aligned with the shipped desktop artwork.
-import { copyFileSync, cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 const root = fileURLToPath(new URL('../src-tauri/', import.meta.url));
@@ -25,4 +25,10 @@ if (platform === 'ios') {
   for (const file of readdirSync(join(root, 'sounds')).filter((f) => f.endsWith('.caf'))) copyFileSync(join(root, 'sounds', file), join(root, 'gen/apple/argo-messenger_iOS', file));
 } else {
   cpSync(join(root, 'icons/android'), target, { recursive: true });
+  // Android resource names cannot contain hyphens. Keep the same audio as the in-app preview.
+  const raw = join(target, 'raw');
+  mkdirSync(raw, { recursive: true });
+  for (const file of readdirSync(join(root, '../public/sounds')).filter((f) => f.endsWith('.wav'))) {
+    copyFileSync(join(root, '../public/sounds', file), join(raw, file.replaceAll('-', '_')));
+  }
 }

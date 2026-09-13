@@ -47,7 +47,7 @@ async function sendOne(t: { token: string; platform: string; sound?: string; bad
   }
   const f = await fcmAuth(); if (!f) return 'skip';
   const r = await fetch(`https://fcm.googleapis.com/v1/projects/${f.project}/messages:send`, { method: 'POST', headers: { Authorization: `Bearer ${f.token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(fcmMessage({ token: t.token, ...text, channelId, messageId })) });
+    body: JSON.stringify(fcmMessage({ token: t.token, ...text, channelId, messageId, sound: t.sound })) });
   const txt = r.ok ? '' : await r.text();
   if (!r.ok && shouldDropToken('android', r.status, txt)) await rest(`msgr_push_tokens?token=eq.${encodeURIComponent(t.token)}`, { method: 'DELETE' });
   return r.ok ? 'ok' : `fcm ${r.status} ${txt.slice(0, 120)}`;

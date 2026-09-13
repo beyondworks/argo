@@ -69,4 +69,12 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
 }
 
+// Direct Android dev/build also needs these, not only the mobile-assets script.
+val notificationSounds by tasks.registering(Copy::class) {
+    from(file("../../../../public/sounds")) { include("*.wav") }
+    into(file("src/main/res/raw"))
+    rename { it.replace('-', '_') }
+}
+tasks.named("preBuild").configure { dependsOn(notificationSounds) }
+
 apply(from = "tauri.build.gradle.kts")
