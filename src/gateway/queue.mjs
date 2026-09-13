@@ -101,7 +101,10 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
           done = true;
           await withDirLock(`${fp0}.lock`, () => unlink(fp)).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 .claimed가 남아 CLAIM_MAX_AGE_MS 뒤 회수·재처리
         } catch (e) {
-          console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 선점을 풀어 다음 틱 재시도
+          if (e?.aborted) {
+            done = true;
+            await withDirLock(`${fp0}.lock`, () => unlink(fp)).catch(() => {});
+          } else console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 선점을 풀어 다음 틱 재시도
         } finally {
           clearInterval(hb);
           if (!done) await withDirLock(`${fp0}.lock`, () => rename(fp, fp0)).catch(() => {}); // 재시도는 동일 ID 재적재분보다 실행 중 저장한 체크포인트를 우선한다

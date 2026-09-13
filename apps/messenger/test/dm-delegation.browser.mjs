@@ -11,7 +11,7 @@ for(const engine of (process.env.DM_ENGINE ? [process.env.DM_ENGINE] : ['chromiu
   await page.addInitScript(lang=>localStorage.setItem('argo-lang',lang),lang);
   const title=lang==='ko'?'수신 · 참조':'To · CC';const to=lang==='ko'?'수신 에이전트 추가':'Add To agent';const cc=lang==='ko'?'참조 에이전트 추가':'Add CC agent';
   try{
-   await page.goto('http://127.0.0.1:5201/test/dm-lifecycle.fixture.html?recipientFailure');
+   await page.goto(`http://127.0.0.1:${process.env.DM_TEST_PORT || 5201}/test/dm-lifecycle.fixture.html?recipientFailure`);
    await page.locator('[data-sec="dms"] .item').filter({hasText:'Fixture Existing Agent'}).click();
    await page.getByRole('button',{name:title,exact:true}).click();
    await page.getByRole('button',{name:lang==='ko'?'다시 불러오기':'Reload recipients'}).waitFor();

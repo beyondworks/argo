@@ -1,6 +1,8 @@
+import { isStopCommand } from '../../../../../src/stop-command.mjs';
+import { interruptTurn } from '../../../../../src/turn-abort.mjs';
 import { relative } from 'node:path';
 import { chat } from '../../../../../src/chat.mjs';
-import { paths } from '../../../../../src/workspace.mjs';
+import { paths, loadCompany } from '../../../../../src/workspace.mjs';
 import { threadMtime, loadThread, appendTurn, beginTurn, resetThread } from '../../../../../src/thread.mjs';
 import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 import { nudgeSync } from '../../../../../src/sync.mjs';
@@ -46,7 +48,13 @@ export async function POST(req, { params }) {
     if (turnId) nudgeSync(); // 다른 기기에도 곧바로 보이게
     let t;
     try {
-      t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+      if (!attachments.length && isStopCommand(message)) {
+        const interrupted = await interruptTurn(ws, slug, { source: 'chat' });
+        const lang = (await loadCompany(ws)).lang;
+        t = { reply: lang === 'en'
+          ? (interrupted ? 'Stopping the current execution.' : 'There is no active execution to stop.')
+          : (interrupted ? '현재 실행을 중단하고 있습니다.' : '중단할 실행 중인 작업이 없습니다.'), sessionId: sessionId || null };
+      } else t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
     } catch (e) {
       // 실패·중단 턴도 스레드에 남긴다 — 성공 뒤에만 저장하면 지시문이 새로고침에 증발하고 비용만
       // 남는다(전수리뷰 2026-07-30 #1). UI는 m.failed로 사유+재전송을 그린다(기존 낙관 사본 패턴).
@@ -55,16 +63,17 @@ export async function POST(req, { params }) {
       // 중단했습니다"로 원인을 오도한다(재검수 MEDIUM). 사유는 원문 그대로, 표시 문구는 UI가 t()로.
       const failed = String(e?.message || e);
       const aborted = !!e?.aborted;
+      const cancellationIncomplete = !!e?.cancellationIncomplete;
       const failedCode = e?.failCode ?? null; // 실패 코드 표(src/runners/error-class.mjs) — UI 행동 안내·통계
       const failedOrigin = e?.failOrigin ?? null; // vendor/argo/probe
       // 저장 성공 여부(saved)를 응답에 싣는다 — 클라 낙관 사본은 saved=false일 때만 폴링 병합에서
       // 캐리오버한다. 안 실으면 서버 보존분과 사본이 라운드마다 복제 누적된다(분리 검수 HIGH 시뮬레이션).
       // 기록 실패는 무증상으로 삼키지 않는다(scheduler·routines와 같은 규칙 — 검수 LOW).
-      const saved = await appendTurn(ws, slug, { turnId, userMsg: message.trim(), failed, failedCode, failedOrigin, aborted, attachments })
+      const saved = await appendTurn(ws, slug, { turnId, userMsg: message.trim(), failed, failedCode, failedOrigin, aborted, cancellationIncomplete, attachments })
         .then(() => true)
         .catch((err) => { console.error(`[argo] 실패 턴 기록 실패(${ws}/${slug}):`, err?.message ?? err); return false; });
       if (saved) nudgeSync();
-      return Response.json({ error: failed, code: failedCode, origin: failedOrigin, aborted, saved }, { status: 500 });
+      return Response.json({ error: failed, code: failedCode, origin: failedOrigin, aborted, cancellationIncomplete, saved }, { status: 500 });
     }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
@@ -74,9 +83,8 @@ export async function POST(req, { params }) {
     // 미경유라 "직접 턴" 판정이 구조로 보장된다). 교정 감지는 fire-and-forget: 응답을 막지 않고,
     // 실패는 로그만(교정은 반복이 전제라 다음 기회에 잡힌다). 프리필터(corrections)가 교정 신호
     // 어휘 없는 턴을 LLM 호출 없이 걸러 비용을 막는다.
-    import('../../../../../src/corrections.mjs')
+    if (!isStopCommand(message)) import('../../../../../src/corrections.mjs')
       .then(async ({ detectAndTrack }) => {
-        const { loadCompany } = await import('../../../../../src/workspace.mjs');
         const lang = (await loadCompany(ws).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
         return detectAndTrack(ws, { userMsg: message.trim(), lang });
       })

@@ -97,6 +97,7 @@ export {
 export const CLI_CHAT_TURN_TIMEOUT_MS = 30 * 60_000;
 
 export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec', kind = 'chat' } = {}) {
+  if (e?.aborted || e?.cancellationIncomplete) return e;
   // 시간 초과 판정은 이중 조건 — 경과>=상한 **그리고** (우리 kill 흔적(killed) 또는 read 단계).
   // 경과만 보면 상한 직후 도착한 진짜 벤더 오류(예: 401)까지 '시간 초과'로 치환돼 AUTH_ERR_RE
   // 자가치유가 죽는다(분리 검수 M3 실측: 401@301s가 문구째 소실). killed는 exec 타이머 kill의
@@ -184,7 +185,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
-      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
+      ], { cwd, killTree: true, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
         .catch((e) => {
           const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'exec', kind });
           if (CODEX_LOCKUP_RE.test(String(e?.stderr ?? ''))) t.toolLockup = true; // 실패 턴에도 잠김 신호가 실리면 L2로
@@ -219,7 +220,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       // 승인)에선 셸이 비대화에서 실행 불가라 codex 크루는 되는 지시가 gemini 크루만 막혔다(러너
       // 중립성 위반). 벤더 choices 실측: default|auto_edit|yolo — yolo가 전권과 같은 방향이다.
       '--approval-mode', 'yolo',
-    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
+    ], { cwd, killTree: true, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
       .catch((e) => { throw cliTurnFailure(e, 'gemini', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
     return stdout
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')
@@ -255,7 +256,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       '--mode', 'accept-edits',
       ...(effCaps?.shell ? [] : ['--sandbox']), // fail-closed(분리 검수 H2) — caps 미전달(oneshot 등)·readOnly면 제한 켬. codex 상시 샌드박스와 같은 방향
       ...(agySec >= 25 ? ['--print-timeout', `${agySec}s`] : []),
-    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'antigravity'), ...(cred?.env ?? {}) } })
+    ], { cwd, killTree: true, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'antigravity'), ...(cred?.env ?? {}) } })
       .catch((e) => { if (process.env.ARGO_DEBUG_AGY) console.error('[debug agy]', JSON.stringify({ code: e.code, killed: e.killed, signal: e.signal, so: String(e.stdout ?? '').slice(-60), se: String(e.stderr ?? '').slice(-120) })); throw cliTurnFailure(e, 'antigravity', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
     return stdout.replace(/^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+.*$/gm, '').trim(); // glog 제거 — 시각 필드까지 요구(분리 검수 M2: 'E1234 …'로 시작하는 정상 응답 오삭제 방지)
   }

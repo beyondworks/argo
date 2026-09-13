@@ -503,7 +503,7 @@ export default function Routines({ params }) {
                 <tr key={r.id} role="row" style={{ cursor: 'default' }}>
                   <td role="cell" className={styles.summary}>
                     <span style={{ fontWeight: 650, display: 'block' }}>{r.title}</span>
-                    <span style={{ fontSize: 11.5, color: 'var(--fg-3)', display: 'block', maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{r.prompt}</span>
+                    <span style={{ fontSize: 11.5, color: 'var(--fg-3)', display: 'block', maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }} title={r.prompt}>{r.prompt}</span>
                     <span style={{ fontSize: 11, color: 'var(--fg-3)', display: 'block', marginTop: 4 }}>{t('routines.notifications.label')}: {r.notifications ? (r.notifications.channels.length ? r.notifications.channels.map((kind) => t(`routines.notifications.${kind}`)).join(' · ') : t('routines.notifications.none')) : t('routines.notifications.legacy')}</span>
                   </td>
                   <td role="cell">

@@ -96,7 +96,7 @@ export function toSchedule(d) {
     실패도 줄로 남긴다: 조용한 실패는 크루의 거짓말이 된다.
     `results`는 호출측이 건네는 수집함이다(커넥터 도구에 실제로 닿은 호출만 담긴다) — 채워지면
     호출측이 runToolFollowUp으로 후속 턴 1회를 돌린다. `toolHop`은 그 후속 턴 카운터. */
-export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null } = {}) {
+export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null } = {}) {
   const en = lang === 'en';
   const notes = [];
   let budget = TOOL_RESULT_BUDGET_BYTES; // 턴 전체 주입 예산 — 블록이 여럿이면 앞에서부터 소진된다
@@ -113,6 +113,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
     notes.push(en ? `⚠ Directive block ignored (${b})` : `⚠ 지시 블록을 읽지 못했습니다 (${b})`);
   }
   for (const d of directives) {
+    turnControl?.check(); // Stop before the next side effect, not only after the whole batch.
     const action = String(d.action ?? '').toLowerCase();
     try {
       if (action === 'schedule') {
@@ -212,6 +213,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         notes.push(en ? `⚠ Unknown directive "${action}"` : `⚠ 알 수 없는 지시 "${action}"`);
       }
     } catch (e) {
+      if (e?.aborted) throw e;
       const m = String(e.message || e).slice(0, 160);
       notes.push(en ? `⚠ Directive failed (${action}): ${m}` : `⚠ 지시 실행 실패 (${action}): ${m}`);
     }

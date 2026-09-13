@@ -2,7 +2,7 @@
 // 룩 = linen v2(apps/messenger/design): 타임라인 척추 · 사람 원/크루 타일 · 2단 다크 독 · 결재 슬립 · 자체 아이콘(icons.jsx).
 // Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
-import { Component, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Graph3D } from './graph3d.jsx';
 import { WorkPanel } from './work-panel.jsx';
@@ -1916,15 +1916,20 @@ function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
 function SoundRow() {
   const { t } = useT();
   const [sound, setSnd] = useState(getSound());
+  const soundId = useId();
   const pick = (v) => { setSound(v); setSnd(v); playChime(v); if (isMobilePlatform) registerPush(supabase); };
   return (
-    <label className="msgr-field" style={{ gap: 6 }} title={t('set.sound')}>
-      <I name="at" size={13} /><span className="msgr-klabel">{t('set.sound')}</span>
-      <select value={sound} onChange={(e) => pick(e.target.value)} aria-label={t('set.sound')}>
-        {SOUNDS.map((v) => <option key={v} value={v}>{t(`sound.${v}`)}</option>)}
-      </select>
-      <button type="button" className="btn sm ghost" onClick={() => playChime(sound)}>{t('set.sound.preview')}</button>
-    </label>
+    <div className="msgr-sound">
+      <label className="msgr-klabel" htmlFor={soundId}>{t('set.sound')}</label>
+      <div className="msgr-sound-controls">
+        <div className="msgr-sound-select">
+          <select className="msgr-select" id={soundId} value={sound} onChange={(e) => pick(e.target.value)}>
+            {SOUNDS.map((v) => <option key={v} value={v}>{t(`sound.${v}`)}</option>)}
+          </select>
+        </div>
+        <button type="button" className="btn sm ghost" onClick={() => playChime(sound)}>{t('set.sound.preview')}</button>
+      </div>
+    </div>
   );
 }
 
@@ -2897,7 +2902,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
         <p>{t('dm.delivery.help')}</p>
         {recipients.length > 0 && <ul>{recipients.map((r) => <li key={r.id}>
           <span className="recipient-name">{r.name}{dmCandidates.find((c) => c.id === r.id)?.delivery_ready !== true && <small>{t('dm.delivery.update')}</small>}</span>
-          <select aria-label={t('dm.delivery.role', { name: r.name })} value={r.role} disabled={busy || locked} onChange={(e) => setRecipients((rows) => setDmRecipient(rows, r, e.target.value))}>
+          <select className="msgr-select" aria-label={t('dm.delivery.role', { name: r.name })} value={r.role} disabled={busy || locked} onChange={(e) => setRecipients((rows) => setDmRecipient(rows, r, e.target.value))}>
             <option value="to">{t('dm.delivery.to')}</option><option value="cc">{t('dm.delivery.cc')}</option>
           </select>
           <button type="button" className="btn" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}>×</button>
@@ -2906,7 +2911,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
         {recipientLoad === 'error' && <div role="alert"><p>{t('dm.delivery.loadError')}</p><button type="button" className="btn" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></div>}
         {recipientLoad === 'ready' && <div className="recipient-pickers">{['to', 'cc'].map((role) => <label key={role}>
           <span>{t(`dm.delivery.${role}`)}</span>
-          <select aria-label={t(`dm.delivery.add.${role}`)} value="" disabled={busy || locked || !dmCandidates.length} onChange={(e) => { const crew = dmCandidates.find((c) => c.id === e.target.value); if (crew?.delivery_ready === true) setRecipients((rows) => setDmRecipient(rows, crew, role)); }}>
+          <select className="msgr-select" aria-label={t(`dm.delivery.add.${role}`)} value="" disabled={busy || locked || !dmCandidates.length} onChange={(e) => { const crew = dmCandidates.find((c) => c.id === e.target.value); if (crew?.delivery_ready === true) setRecipients((rows) => setDmRecipient(rows, crew, role)); }}>
             <option value="">{t('dm.delivery.choose')}</option>
             {dmCandidates.filter((c) => !recipients.some((r) => r.id === c.id)).map((c) => <option key={c.id} value={c.id} disabled={c.delivery_ready !== true}>{c.display_name}{c.delivery_ready !== true ? ` · ${t('dm.delivery.update')}` : ''}</option>)}
           </select>

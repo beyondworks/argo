@@ -232,7 +232,7 @@ test('D3. 배선 핀 — chat.mjs가 modelFallback을 두 반환 경로에 싣�
   const thread = await readFile(join(ROOT, 'src', 'thread.mjs'), 'utf8');
   assert.equal((thread.match(/\.\.\.\(modelFallback \? \{ modelFallback \} : \{\}\)/g) ?? []).length, 2, '크루 메시지 두 push 지점');
   const route = await readFile(join(ROOT, 'app', 'api', 'companies', '[ws]', 'chat', 'route.js'), 'utf8');
-  assert.match(route, /failedCode, failedOrigin, aborted, attachments \}/, '실패 코드가 스레드에 기록');
+  assert.match(route, /failedCode, failedOrigin, aborted, cancellationIncomplete, attachments \}/, '실패 코드와 중단 확인 상태가 스레드에 기록');
   assert.match(route, /modelFallback: t\.modelFallback/, '강등 고지가 스레드에 기록');
 });
 
@@ -351,7 +351,7 @@ test('R2·R3·R9·MEDIUM-3 배선 핀 — 이벤트·라우트 응답·UI 렌더
   const chat = await readFile(join(ROOT, 'src', 'chat.mjs'), 'utf8');
   assert.equal((chat.match(/\.\.\.\(e\?\.failCode \? \{ failCode: e\.failCode, failOrigin: e\.failOrigin \} : \{\}\)/g) ?? []).length, 2, 'R2: CLI·SDK 실패 이벤트 둘 다 코드·출처를 싣는다');
   const route = await readFile(join(ROOT, 'app', 'api', 'companies', '[ws]', 'chat', 'route.js'), 'utf8');
-  assert.match(route, /Response\.json\(\{ error: failed, code: failedCode, origin: failedOrigin, aborted, saved \}/, 'R3: 500 응답 code/origin');
+  assert.match(route, /Response\.json\(\{ error: failed, code: failedCode, origin: failedOrigin, aborted, cancellationIncomplete, saved \}/, 'R3: 500 응답 code/origin 및 중단 확인 상태');
   const page = await readFile(join(ROOT, 'app', 'c', '[ws]', 'crew', '[slug]', 'page.jsx'), 'utf8');
   assert.match(page, /\{m\.modelFallback && \(/, 'R9: 강등 고지 렌더 블록');
   assert.match(page, /t\('chat\.modelFallback', \{ wanted: m\.modelFallback\.wanted/, 'R9: 사전 키 배선');

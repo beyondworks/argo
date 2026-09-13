@@ -1,6 +1,7 @@
 // 러너 공용 조각 — exec 래퍼·서버 시크릿 세척·키 마스킹·자격 파일 시드·격리 홈 env.
 // (runners.mjs 관심사 분리 2026-07-28 — 순환 방지 최하층: 형제 모듈을 임포트하지 않는다)
 
+import { execTurnFile } from './process-tree.mjs';
 import { access, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -53,6 +54,7 @@ const exists = (p) => access(p).then(() => true, () => false);
     떴다(사용자 제보 2026-08-21 "앱 실행 직후부터" — 부팅 예열 detectRunners가 CLI 4종을 스폰한다).
     자식도 CREATE_NO_WINDOW로 떠야 그 손자(codex가 스폰하는 MCP node)까지 창 없이 이어진다. */
 function exec(cmd, args, opts) {
+  if (opts?.killTree) { const { killTree, ...turnOptions } = opts; return execTurnFile(cmd, args, turnOptions); }
   const p = execP(cmd, args, { windowsHide: true, ...opts });
   p.child.stdin?.end();
   return p;

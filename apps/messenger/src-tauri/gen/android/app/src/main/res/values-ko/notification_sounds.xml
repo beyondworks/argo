@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sound_seatbelt_single">메시지 · 차임 한 번</string>
+    <string name="sound_seatbelt_hilo">메시지 · 두 음 차임</string>
+    <string name="sound_wood_knock">메시지 · 나무 톡</string>
+    <string name="sound_wood_knock_double">메시지 · 나무 톡톡</string>
+    <string name="sound_wood_marimba">메시지 · 나무 마림바</string>
+</resources>

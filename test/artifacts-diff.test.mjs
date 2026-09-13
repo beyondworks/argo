@@ -58,7 +58,7 @@ test('배선: 반환부·호출부 전파(행동 검증은 artifacts-behavior.te
   // CLI 미수정)에서만 초록인 안티 게이트였다. 위치는 유니크 앵커로, 유효성은 행동 파일이 잠근다.
   assert.match(chat, /\.\.\.\(handover \? \{ journalRel: relative\(p\.vault, handover\.file\) \} : \{\}\),\n      \}\);\n      \/\/ 모델을 부르지 않은 턴/, '예산 분기는 diff 미참조(TDZ 회귀 금지) — journalRel은 journal.off(팀 메신저 crew_memory=false)면 부재');
   const ast = parse(chat, { ecmaVersion: 'latest', sourceType: 'module' });
-  const turn = ast.body.find((n) => n.type === 'ExportNamedDeclaration' && n.declaration?.id?.name === 'chat').declaration;
+  const turn = ast.body.find((n) => n.type === 'FunctionDeclaration' && n.id?.name === 'runChat');
   const cli = turn.body.body.find((n) => n.type === 'IfStatement' && n.test.name === 'cliTurn');
   const attempt = cli.consequent.body.find((n) => n.type === 'TryStatement');
   const result = attempt.block.body.find((n) => n.type === 'ReturnStatement').argument;

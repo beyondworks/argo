@@ -1,5 +1,6 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
+import { isStopCommand } from '../../../../../src/stop-command.mjs';
 import { splitEnvelope } from './envelope.mjs';
 import { externalAgentLabel } from '../../../../../src/runners/external-agent.mjs'; // 외부 에이전트 표기(유건 2026-09-08)
 import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -548,7 +549,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       // 우연히 'aborted'여도 오판 없음. 라벨은 렌더 시점에 t()로).
       // 서버 저장이 실패했을 때(unsaved)만 폴링 병합이 이 사본을 캐리오버한다(복제 방지 — 검수 HIGH).
       const failed = err?.data?.failed ?? String(err.message);
-      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true } : {};
+      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true, cancellationIncomplete: !!err?.data?.cancellationIncomplete } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
       // 실패 코드·출처(route.js가 code/origin으로 응답) — 서버 보존분(failedCode)과 같은 필드명으로 로컬 사본에도(렌더 일치)
       const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
@@ -573,6 +574,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     const attachments = att;
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     setInput(''); setAtt([]);
+    if (!attachments.length && isStopCommand(message)) {
+      setQueueHeld(true);
+      if (working) { await abortTurn(); return; }
+    }
     // 답변 중이면 스레드가 아니라 대기열로 간다 — 첨부 칩과 같은 물건이라 ✕로 뗄 수 있다.
     // (uploading은 대기열로 보내지 않는다: 업로드가 안 끝난 첨부가 실려 나간다)
     if (busy) { setQueue((q) => [...q, { qid: `q${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: message, attachments }]); return; }
@@ -596,8 +601,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const [aborting, setAborting] = useState(false);
   async function abortTurn() {
     if (aborting) return;
+    setQueueHeld(true); // Hold immediately, even when the provider finishes successfully during cancellation.
     setAborting(true);
-    try { await api(`/api/companies/${ws}/chat/abort`, { slug }); } catch { /* 이미 끝난 턴 */ }
+    try { await api(`/api/companies/${ws}/chat/abort`, { slug, source: busy ? 'chat' : liveStage?.source }); } catch (e) { setError(String(e.message)); }
     finally { setAborting(false); }
   }
 
@@ -896,7 +902,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
                   {/* failedCode(error-class.mjs 표) — 원문 대신 "할 일"을 먼저(불변식 C). 코드 없음/미상은 종전 원문 표시 */}
                   {/* 코드 안내는 행동 지시가 뒤에 오므로 줄바꿈 허용(검수 LOW: EN 한 줄 말줄임이 "switch to an API key in S…"에서 잘림) */}
-                  <span style={{ minWidth: 0, overflow: 'hidden', ...(m.failedCode && m.failedCode !== 'unknown' ? { whiteSpace: 'normal' } : { textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }} title={m.failed}>{m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
+                  <span style={{ minWidth: 0, overflow: 'hidden', ...(m.cancellationIncomplete || (m.failedCode && m.failedCode !== 'unknown') ? { whiteSpace: 'normal' } : { textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }} title={m.failed}>{m.cancellationIncomplete ? t('chat.cancelIncomplete') : m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
                   <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>

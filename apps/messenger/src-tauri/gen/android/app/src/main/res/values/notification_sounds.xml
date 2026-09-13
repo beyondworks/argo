@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sound_seatbelt_single">Messages · Single chime</string>
+    <string name="sound_seatbelt_hilo">Messages · Two-tone chime</string>
+    <string name="sound_wood_knock">Messages · Wood knock</string>
+    <string name="sound_wood_knock_double">Messages · Double wood knock</string>
+    <string name="sound_wood_marimba">Messages · Wood marimba</string>
+</resources>

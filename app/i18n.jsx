@@ -1123,6 +1123,7 @@ const DICT = {
   'chat.queue.held': ['자동 전송이 멈춰 있습니다 — 확인 후 보내세요', 'Automatic sending is paused — review, then send'],
   'chat.queue.sendNow': ['지금 보내기', 'Send now'],
   'chat.stop': ['중단', 'Stop'],
+  'chat.cancelIncomplete': ['자동 재개는 막았지만, 러너가 실행한 일부 작업의 종료를 확인하지 못했습니다. 실행 중인 작업을 확인해 주세요.', 'Automatic resume is blocked, but some tasks started by the runner could not be confirmed stopped. Please check running tasks.'],
   'chat.aborted': ['지시대로 중단했습니다 — 입력을 복원했어요.', 'Stopped as instructed — your input was restored.'],
   'chat.copy': ['복사', 'Copy'],
   'chat.annotate': ['빨간펜', 'Annotate'],
