@@ -3,6 +3,7 @@
 // 템플릿 원클릭 생성 → 폼 프리필. 실행 결과는 vault 기억으로 남는다.
 import { use, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import styles from './routines.module.css';
 import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, api, imeGuard, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
 import { detectDevicePaths } from '../../../../src/device-paths.mjs'; // 기기 종속 경로 안내 — 노드 의존 0 순수 모듈
@@ -266,7 +267,7 @@ export default function Routines({ params }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div className={styles.page}>
       {delTarget && (
         <ConfirmModal
           title={t('routines.deleteTitle')}
@@ -277,7 +278,8 @@ export default function Routines({ params }) {
           onClose={() => setDelTarget(null)}
         />
       )}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className={styles.content}>
+      <div className={styles.toolbar}>
         <span className="microlabel">{t('routines.header')}</span>
         <button className="btn sm" onClick={() => openForm()}>
           <Icon name="plus" size={13} /> {t('routines.createDirect')}
@@ -285,10 +287,10 @@ export default function Routines({ params }) {
       </div>
 
       {/* 템플릿 — 원클릭 생성 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
+      <div className={styles.templates}>
         {TEMPLATES.map((tpl) => (
           <button key={tpl.title} className="card card-i" style={{ padding: 16, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 6 }} onClick={() => openForm(tpl)}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className={styles.templateHead}>
               <span style={{ fontWeight: 700, fontSize: 13 }}>{tpl.title}</span>
               <span className="chip">{scheduleLabel(tpl.schedule, t, DOW)}</span>
             </div>
@@ -300,19 +302,19 @@ export default function Routines({ params }) {
 
       {/* 생성 폼 */}
       {form && (
-        <form onSubmit={submitForm} className="card fade-up" style={{ padding: 18, display: 'grid', gap: 10 }}>
+        <form onSubmit={submitForm} className={`card fade-up ${styles.editor}`} style={{ padding: 18, display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span className="card-title">{form.id ? t('routines.editTitle') : t('routines.createTitle')}</span>
             <button type="button" className="btn sm" onClick={() => setForm(null)}>{t('routines.close')}</button>
           </div>
           {/* 자연어 → 자동 설정 — 말로 쓰면 러너가 주기·시각·지시로 해석해 아래 폼을 채운다(저장 전 수정 가능) */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', background: 'var(--card-2)', border: '1px dashed var(--border)', borderRadius: 12, padding: '10px 12px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'flex-start', background: 'var(--card-2)', border: '1px dashed var(--border)', borderRadius: 12, padding: '10px 12px' }}>
             <textarea
               value={nlText}
               onChange={(e) => setNlText(e.target.value)}
               placeholder={t('routines.nlPlaceholder')}
               rows={2}
-              style={{ flex: 1, resize: 'vertical', background: 'transparent', border: 0, outline: 'none', fontSize: 12.5, lineHeight: 1.6, minHeight: 38, color: 'var(--fg)' }}
+              style={{ flex: '1 1 200px', minWidth: 0, resize: 'vertical', background: 'transparent', border: 0, outline: 'none', fontSize: 12.5, lineHeight: 1.6, minHeight: 38, color: 'var(--fg)' }}
             />
             <button type="button" className="btn sm" disabled={nlBusy || !nlText.trim()} onClick={applyNl} style={{ flex: 'none' }}>
               {nlBusy ? <><Spinner size={11} /> {t('routines.nlParsing')}</> : <><Icon name="bolt" size={12} /> {t('routines.nlApply')}</>}
@@ -342,7 +344,7 @@ export default function Routines({ params }) {
               <div style={{ display: 'grid', gap: 4 }}>
                 <span className="microlabel">{t('routines.day')}</span>
                 {/* 요일 복수 선택 — 토글 칩. 최소 1개는 남긴다(저장 버튼 가드와 이중 방어) */}
-                <div style={{ display: 'flex', gap: 4 }} role="group" aria-label={t('routines.day')}>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} role="group" aria-label={t('routines.day')}>
                   {DOW.map((d, i) => {
                     const on = form.dows.map(Number).includes(i);
                     return (
@@ -418,7 +420,7 @@ export default function Routines({ params }) {
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <input suppressHydrationWarning value={form.verifyFiles}
                     onChange={(e) => setForm({ ...form, verifyFiles: e.target.value })}
-                    placeholder={t('routines.verify.filesPlaceholder')} style={{ ...selStyle, minWidth: 260, flex: 1 }} {...imeGuard} />
+                    placeholder={t('routines.verify.filesPlaceholder')} style={{ ...selStyle, minWidth: 'min(260px, 100%)', flex: 1 }} {...imeGuard} />
                   <input suppressHydrationWarning value={form.verifyContains}
                     onChange={(e) => setForm({ ...form, verifyContains: e.target.value })}
                     placeholder={t('routines.verify.containsPlaceholder')} style={{ ...selStyle, width: 180 }} {...imeGuard} />
@@ -471,7 +473,7 @@ export default function Routines({ params }) {
       )}
 
       {/* 루틴 표 */}
-      <div className="card" style={{ overflow: 'hidden' }}>
+      <div className={`card ${styles.list}`}>
         <div className="card-head">
           <span className="card-title"><Icon name="clock" size={14} />{t('routines.registered')}</span>
           <span className="rule" />
@@ -487,28 +489,31 @@ export default function Routines({ params }) {
             {t('routines.empty')}
           </p>
         ) : (
-          <table className="table">
-            <thead>
-              <tr><th>{t('routines.colTitle')}</th><th style={{ width: 130 }}>{t('routines.colCrew')}</th><th style={{ width: 190 }}>{t('routines.colSchedule')}</th><th style={{ width: 170 }}>{t('routines.colLastRun')}</th><th style={{ width: 84 }}>{t('routines.colState')}</th><th style={{ width: 164 }} /></tr>
+          <table className={`table ${styles.table}`} role="table">
+            <colgroup><col /><col style={{ width: 120 }} /><col style={{ width: 175 }} /><col style={{ width: 160 }} /><col style={{ width: 105 }} /><col style={{ width: 170 }} /></colgroup>
+            <thead role="rowgroup">
+              <tr role="row"><th scope="col">{t('routines.colTitle')}</th><th scope="col">{t('routines.colCrew')}</th><th scope="col">{t('routines.colSchedule')}</th><th scope="col">{t('routines.colLastRun')}</th><th scope="col">{t('routines.colState')}</th><th /></tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {routines.map((r) => {
                 // 행당 1회 판정 — 셀 3곳 재호출 비용(tz 각인 once당 ~155µs×4)과 호출 간 시계가
                 // 경계를 걸쳐 라벨·클래스가 어긋나는 이론적 사각을 함께 제거(#364 검수 LOW).
                 const expired = onceExpired(r);
                 return (
-                <tr key={r.id} style={{ cursor: 'default' }}>
-                  <td>
+                <tr key={r.id} role="row" style={{ cursor: 'default' }}>
+                  <td role="cell" className={styles.summary}>
                     <span style={{ fontWeight: 650, display: 'block' }}>{r.title}</span>
-                    <span style={{ fontSize: 11.5, color: 'var(--fg-3)', display: 'block', maxWidth: 320, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{r.prompt}</span>
+                    <span style={{ fontSize: 11.5, color: 'var(--fg-3)', display: 'block', maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{r.prompt}</span>
                     <span style={{ fontSize: 11, color: 'var(--fg-3)', display: 'block', marginTop: 4 }}>{t('routines.notifications.label')}: {r.notifications ? (r.notifications.channels.length ? r.notifications.channels.map((kind) => t(`routines.notifications.${kind}`)).join(' · ') : t('routines.notifications.none')) : t('routines.notifications.legacy')}</span>
                   </td>
-                  <td>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5 }}>
+                  <td role="cell">
+                    <span className={styles.mobileLabel} aria-hidden="true">{t('routines.colCrew')}</span>
+                    <span className={styles.crew} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5 }}>
                       <Avatar name={nameOf(r.agentSlug)} sm />{nameOf(r.agentSlug)}
                     </span>
                   </td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>
+                  <td role="cell" className="mono" style={{ fontSize: 11.5 }}>
+                    <span className={styles.mobileLabel} aria-hidden="true">{t('routines.colSchedule')}</span>
                     {scheduleLabel(r.schedule, t, DOW)}
                     {r.schedule?.type === 'interval' && r.loop && <LoopStatus ws={ws} loop={r.loop} t={t} fmtMoney={fmtMoney} />}
                     {/* 완료 조건 표식 — 이 루틴은 산출물 검사를 통과해야 완료고, 1회 실행이 최대
@@ -517,13 +522,14 @@ export default function Routines({ params }) {
                     {r.verify?.files?.length > 0 && (
                       <div style={{ marginTop: 4, fontFamily: 'var(--font)' }}>
                         {/* textTransform none — .chip 기본 대문자가 영어 문구를 +50%대로 키워 190px 컬럼을 밀어냈다(검수 MEDIUM-3 실측) */}
-                        <span className="chip" title={t('routines.verify.hint')} style={{ fontSize: 10, height: 18, padding: '0 6px', gap: 4, textTransform: 'none' }}>
+                        <span className="chip" title={t('routines.verify.hint')} style={{ fontSize: 10, minHeight: 18, padding: '0 6px', gap: 4, textTransform: 'none' }}>
                           <Icon name="check" size={10} /> {t('routines.verify.badge', { n: r.verify.files.length, r: r.verify.retries ?? 2 })}
                         </span>
                       </div>
                     )}
                   </td>
-                  <td style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                  <td role="cell" style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                    <span className={styles.mobileLabel} aria-hidden="true">{t('routines.colLastRun')}</span>
                     {r.lastRun ? (
                       <span title={r.lastResult}>
                         {timeAgo(r.lastRun, lang)} {r.lastOk === false ? <span style={{ color: 'var(--danger)' }}>{t('routines.fail')}</span> : t('routines.success')}
@@ -539,7 +545,8 @@ export default function Routines({ params }) {
                       </div>
                     )}
                   </td>
-                  <td>
+                  <td role="cell">
+                    <span className={styles.mobileLabel} aria-hidden="true">{t('routines.colState')}</span>
                     {/* 만료 — 예약 시각이 catch-up 창(4h)까지 지나도록 발화하지 못한 once. '가동'으로
                         두면 영영 안 도는 루틴이 도는 척한다(#354 검수 3R 잔존 집합). 표시 전용 파생
                         판정이라 저장 상태는 건드리지 않는다 — 클릭(끄기)·편집(날짜 수정)·삭제는 그대로. */}
@@ -548,8 +555,8 @@ export default function Routines({ params }) {
                       <span className="dot" />{r.enabled ? (expired ? t('routines.expired') : t('routines.on')) : (r.loop?.stoppedReason ? t('routines.loop.resume') : t('routines.off'))}
                     </button>
                   </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <span style={{ display: 'inline-flex', gap: 6 }}>
+                  <td role="cell" className={styles.actions}>
+                    <span>
                       <button className="btn sm" onClick={() => setRunTarget(r)}><Icon name="play" size={12} /> {t('routines.run')}</button>
                       <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => openEdit(r)} aria-label={t('routines.editAria')}><Icon name="edit" size={13} /></button>
                       <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => remove(r)} aria-label={t('routines.deleteAria')}><Icon name="trash" size={13} /></button>
@@ -561,6 +568,8 @@ export default function Routines({ params }) {
             </tbody>
           </table>
         )}
+      </div>
+
       </div>
 
       {runTarget && (
@@ -577,9 +586,9 @@ function LoopStatus({ ws, loop, t, fmtMoney }) {
   const color = key === 'running' ? 'var(--primary-strong)' : key === 'done' ? 'var(--ok, var(--fg-2))' : key === 'blocked' ? 'var(--danger)' : 'var(--fg-3)';
   return (
     <div style={{ display: 'grid', gap: 3, marginTop: 4, fontFamily: 'var(--font)' }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, fontSize: 11, color: 'var(--fg-2)' }}>
         {t('routines.loop.progress', { runs: loop.runs ?? 0, max: loop.maxRuns, cost: fmtMoney(loop.spentUsd ?? 0) })}
-        <span className="chip" style={{ color, borderColor: color, fontSize: 10, padding: '0 6px', height: 18 }}>{t(`routines.loop.${key}`)}</span>
+        <span className="chip" style={{ color, borderColor: color, fontSize: 10, padding: '0 6px', minHeight: 18 }}>{t(`routines.loop.${key}`)}</span>
       </span>
       {key === 'blocked' && (
         <span style={{ fontSize: 11, color: 'var(--fg-2)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>

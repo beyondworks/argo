@@ -1,0 +1,15 @@
+.page { container: vault / inline-size; min-width: 0; }
+:global(main.content):has(> .page) { padding: 0; max-width: none; }
+.workspace > .tree { width: min(var(--tree-width, 300px), 45%); }
+/* Keep the existing viewport stack consistent with the content-width stack. */
+@media (max-width: 900px) {
+  .workspace > .tree { width: 100%; }
+  .workspace > :global(.vault-handle) { display: none; }
+}
+@container vault (max-width: 44rem) {
+  .workspace { flex-direction: column; min-height: 0; }
+  .workspace > .tree { width: 100%; border-right: 0; border-bottom: 1px solid var(--border-soft); }
+  .workspace > :global(.vault-handle) { display: none; }
+  .documents { flex-direction: column; }
+  .documents > .pane { min-height: 420px; }
+}

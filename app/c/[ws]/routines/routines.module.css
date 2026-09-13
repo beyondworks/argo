@@ -1,0 +1,111 @@
+.page,
+.content {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* Use the available page width, including zoom and an open side panel. */
+.content {
+  container: routines / inline-size;
+}
+
+.toolbar,
+.templateHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.toolbar > button { flex: none; }
+.templates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  gap: 12px;
+}
+.templates > button,
+.editor,
+.editor > div,
+.editor input,
+.editor textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+.editor > div > div { max-width: 100%; }
+.list { min-width: 0; }
+.page .table {
+  table-layout: fixed;
+  width: 100%;
+}
+.page .table th,
+.page .table td {
+  padding: 12px;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+.page .table th { overflow-wrap: normal; }
+.crew { max-width: 100%; }
+.crew > :first-child { flex: none; }
+.mobileLabel { display: none; }
+.page .actions { text-align: right; }
+.actions > span {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.actions button { flex: none; }
+.page .table td :global(.chip) {
+  max-width: 100%;
+  height: auto;
+  min-height: 18px;
+  white-space: normal;
+}
+
+@container routines (max-width: 1059px) {
+  .page .table,
+  .page .table tbody { display: block; }
+  .page .table colgroup { display: none; }
+  /* Retain column semantics for assistive technology with the same row DOM. */
+  .page .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .page .table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 20px;
+    padding: 18px 20px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .page .table td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+  .page .summary,
+  .page .actions { grid-column: 1 / -1; }
+  .mobileLabel {
+    display: block;
+    margin-bottom: 5px;
+    font-family: var(--font);
+    font-size: 11px;
+    color: var(--fg-3);
+  }
+  .page .actions { padding-top: 2px; }
+  .page .actions button { min-width: 36px; min-height: 36px; }
+}
+
+@container routines (max-width: 420px) {
+  .page .table tbody tr { gap: 14px; padding: 16px; }
+  .page .table td:not(.summary):not(.actions) { grid-column: 1 / -1; }
+  .actions > span { display: flex; justify-content: flex-start; }
+  .page .actions button { min-width: 44px; min-height: 44px; }
+}

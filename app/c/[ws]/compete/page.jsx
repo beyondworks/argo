@@ -217,7 +217,7 @@ export default function Compete({ params }) {
           고유폭·nowrap 상태 칩 등)만큼 부풀어, 표시 배율 2의 좁은 유효 폭에서 문서 가로 넘침을
           만든다(실측 scrollWidth 1428 > 1408 — 회의실 동종). 아이템 minWidth:0은 바깥 트랙만
           지키고 자기 내부 트랙은 못 지킨다. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
+      <div className="chat-body" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, minWidth: 0, minHeight: 0 }}>
         {/* 좁은 유효 폭 축소 규칙 — 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지), 상태 칩(nowrap)은
             안 들어가면 wrap으로 아랫줄에(회의실 헤더와 동일 문법). */}
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>

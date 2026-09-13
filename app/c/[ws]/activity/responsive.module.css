@@ -1,0 +1,13 @@
+.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; container: activity / inline-size; }
+.columns { display: grid; grid-template-columns: minmax(0, 1fr) 316px; gap: 14px; align-items: start; }
+.columns > * { min-width: 0; }
+.cardHead { flex-wrap: wrap; }
+.description { flex: 1; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+@container activity (max-width: 52rem) {
+  .columns { grid-template-columns: minmax(0, 1fr); }
+}
+@container activity (max-width: 30rem) {
+  .eventRow { flex-wrap: wrap; }
+  .description { flex-basis: calc(100% - 90px); }
+}

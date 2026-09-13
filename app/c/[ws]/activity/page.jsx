@@ -4,6 +4,7 @@
 import { use, useEffect, useMemo, useState } from 'react';
 import { healthFailMessageKey } from '../../../runner-usable.mjs';
 import Link from 'next/link';
+import styles from './responsive.module.css';
 import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
 
@@ -159,18 +160,18 @@ export default function Activity({ params }) {
   const maxCount = Math.max(1, ...byCrew.map((c) => c.count));
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div className={styles.page}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('activity.header')}</span>
         <span className="microlabel">{new Date().toLocaleDateString('sv-SE')}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 316px', gap: 14, alignItems: 'start' }}>
+      <div className={styles.columns}>
         <div className="card" style={{ padding: '16px 18px' }}>
-          <div className="card-head">
+          <div className={`card-head ${styles.cardHead}`}>
             <span className="microlabel">{t('activity.timeline')}</span>
             <span className="rule" />
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div className={styles.filters}>
               {FILTERS.map(([k, label]) => (
                 <button key={k} className="chip" onClick={() => setFilter(k)}
                   style={filter === k ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)', cursor: 'pointer' } : { cursor: 'pointer' }}>
@@ -190,12 +191,12 @@ export default function Activity({ params }) {
                 const expandable = e.type === 'turn' && (e.msg || e.steps?.length); // 실행 이력 드릴다운 대상
                 return (
                 <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>
-                <div className="row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px', cursor: expandable ? 'pointer' : 'default' }}
+                <div className={`row ${styles.eventRow}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px', cursor: expandable ? 'pointer' : 'default' }}
                   onClick={() => expandable && setOpen((o) => (o === i ? -1 : i))}>
                   <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', width: 62, flex: 'none' }}>{timeAgo(new Date(e.ts).getTime(), lang)}</span>
                   <Avatar name={r.avatar} size={24} />
                   {/* 클리핑은 블록 컨테이너에 — 인라인 span은 overflow를 자르지 못해 긴 오류문이 레이아웃을 뚫는다 */}
-                  <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.desc}>
+                  <div className={styles.description} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.desc}>
                     <span style={{ fontSize: 12.5, fontWeight: 600 }}>{r.who}</span>
                     <span style={{ fontSize: 11.5, color: r.danger ? 'var(--danger)' : 'var(--fg-2)', marginLeft: 8 }}>
                       {r.desc}
@@ -258,7 +259,7 @@ export default function Activity({ params }) {
 
         <div style={{ display: 'grid', gap: 14 }}>
           <div className="card" style={{ padding: '16px 18px' }}>
-            <div className="card-head">
+            <div className={`card-head ${styles.cardHead}`}>
               <span className="microlabel">{t('activity.today')}</span>
               <span className="rule" />
             </div>
@@ -278,7 +279,7 @@ export default function Activity({ params }) {
           </div>
 
           <div className="card" style={{ padding: '16px 18px' }}>
-            <div className="card-head">
+            <div className={`card-head ${styles.cardHead}`}>
               <span className="microlabel">{t('activity.todayByCrew')}</span>
               <span className="rule" />
             </div>

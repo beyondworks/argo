@@ -2179,6 +2179,19 @@ body.split-resizing { cursor: col-resize; user-select: none; }
    overflow-clip-margin 4px는 트랙 0 구간에서 활성 항목 배경이 4px 세로 띠로 남아(실측) 쓰지 않는다. */
 .chat-cols > .side-rail { position: sticky; top: 72px; overflow: clip; }
 .chat-cols > .side-rail :focus-visible { outline-offset: -2px; }
+/* The main shell measures content width without containment, so fixed dialogs retain
+   their viewport anchor. A narrow split or zoomed view must not hide the session rail. */
+.chat-body { height: 100%; }
+.content[data-narrow-content] > .chat-cols {
+  height: auto;
+  grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+}
+.content[data-narrow-content] > .chat-cols > .chat-body {
+  height: calc(100vh / var(--z, 1) - 100px);
+}
+.content[data-narrow-content] > .chat-cols > .side-rail {
+  position: static; width: auto; max-height: calc(26vh / var(--z, 1)); overflow-y: auto;
+}
 /* 크루 컨트롤 인라인 밴드 — 기본은 없음(넓은 폭은 topbar 슬롯이 수용처), ≤900px 블록에서 등장 */
 .crew-phone-band { display: none; }
 /* overflow-anchor 차단 — 크롬 scroll anchoring이 턴 종료(작업 카드 unmount) 같은 DOM 변화에
@@ -2292,7 +2305,7 @@ button.memo-chip.ap-toggle { background: transparent; cursor: pointer; padding: 
    이 페이지에서만 회수한다(:has() = 점진적 향상 — 미지원이면 종전 여백 레이아웃으로 남는다). */
 .vault-split { display: flex; gap: 0; height: calc(100vh / var(--z, 1) - 170px); min-height: 420px; align-items: stretch; }
 main.content:has(> .vault-split) { padding: 0; max-width: none; }
-main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1) - 56px); min-height: 0; }
+main.content:has(.vault-split) .vault-split { height: calc(100vh / var(--z, 1) - 56px); min-height: 0; }
 .vault-split > .vault-tree {
   width: 288px; flex: none;
   border-right: 1px solid var(--border-soft);
@@ -2362,7 +2375,7 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1)
   /* 기억 2패널 → 세로 스택. 좁은 폭에 고정폭 트리를 두면 본문이 38px로 붕괴한다(검수 실측).
      트리는 자체 스크롤로 45vh까지만, 본문은 그래프가 살 최소 높이를 보장한다. */
   .vault-split { flex-direction: column; height: auto; min-height: 0; }
-  main.content:has(> .vault-split) .vault-split { height: auto; }
+  main.content:has(.vault-split) .vault-split { height: auto; }
   .vault-split > .vault-tree { width: auto; max-height: calc(45vh / var(--z, 1)); border-right: 0; border-bottom: 1px solid var(--border-soft); }
   .vault-split > .vault-content { min-height: 420px; }
 }
@@ -2492,3 +2505,9 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 /* 크루 카드 규칙 행 — 편집 도구(순서·삭제)는 행에 올렸을 때만(2026-09-07) */
 .rulerow .ruletools { opacity: 0; transition: opacity 0.12s; }
 .rulerow:hover .ruletools, .rulerow:focus-within .ruletools { opacity: 1; }
+
+/* Remembered explorer width yields to the actual content area, including display zoom and side panels. */
+@container vault (max-width: 44rem) {
+  main.content:has(.vault-split) .vault-split { height: auto; }
+  .vault-split > .vault-tree { max-height: calc(45vh / var(--z, 1)); }
+}

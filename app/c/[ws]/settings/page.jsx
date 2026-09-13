@@ -125,13 +125,13 @@ function Settings({ params }) {
       <div className="cardrow">
       <form onSubmit={saveName} className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span className="card-title">{t('settings.companyInfo')}</span>
-        <label style={{ display: 'grid', gap: 5 }}>
+        <label style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', minWidth: 0, gap: 5 }}>
           <span className="microlabel">{t('settings.companyName')}</span>
           <input suppressHydrationWarning
             value={name}
             onChange={(e) => setName(e.target.value)}
             {...imeGuard}
-            style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
+            style={{ minWidth: 0, width: '100%', height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
           />
         </label>
         {/* 회사 기본 러너(K1, 유건 지시 2026-08-08) — 크루에 러너 미지정 시 이 러너부터 시도.
@@ -221,7 +221,7 @@ function Settings({ params }) {
       <div className="cardcols" data-tab-pane="danger">
       <div className="cardrow">
       <div className="card" style={{ padding: 18, borderColor: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
+        <div style={{ flex: '1 1 260px', minWidth: 0, overflowWrap: 'anywhere' }}>
           <span className="card-title" style={{ color: 'var(--danger)' }}>{t('settings.archive.title')}</span>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: '6px 0 0' }}>
             {t('settings.archive.pathPrefix')}
@@ -312,13 +312,13 @@ function ZoomCard() {
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.zoom')}</span>
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.zoom.desc')}</p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <button className="chip" style={btn} aria-label={t('settings.zoom.out')} onClick={() => adjustZoom(-0.1)}>−</button>
         <span className="mono" style={{ fontSize: 13, minWidth: 44, textAlign: 'center' }} aria-live="polite">{Math.round(zoom * 100)}%</span>
         <button className="chip" style={btn} aria-label={t('settings.zoom.in')} onClick={() => adjustZoom(0.1)}>+</button>
         <button className="chip" style={{ cursor: 'pointer', padding: '6px 14px', fontSize: 12.5 }} onClick={() => adjustZoom(null)}>{t('settings.zoom.auto')}</button>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 10, flexWrap: 'wrap' }}>
         <span className="microlabel">{t('settings.zoom.shortcut')}</span>
         {[`${mod} +`, `${mod} −`, `${mod} 0`].map((k) => (
           <span key={k} className="kbd mono" style={{ fontSize: 11, border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px' }}>{k}</span>
@@ -429,13 +429,13 @@ function ThemeCard() {
         <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.mode.desc')}</p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <div role="group" aria-label={t('settings.family')}
-            style={{ display: 'inline-flex', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
+            style={{ display: 'inline-flex', flexWrap: 'wrap', maxWidth: '100%', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 20, padding: 3 }}>
             {FAMILIES.map(([f, label]) => (
               <button key={f} onClick={() => setTheme(`${f}${mode ?? ''}`)} aria-pressed={family === f} style={segBtn(family === f)}>{t(label)}</button>
             ))}
           </div>
           <div role="group" aria-label={t('settings.mode')}
-            style={{ display: 'inline-flex', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
+            style={{ display: 'inline-flex', flexWrap: 'wrap', maxWidth: '100%', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 20, padding: 3 }}>
             {MODE_SUFFIX.map(([sfx, label]) => (
               <button key={sfx} onClick={() => setTheme(`${family ?? 'graphite'}${sfx}`)} aria-pressed={family != null && mode === sfx} style={segBtn(family != null && mode === sfx)}>{t(label)}</button>
             ))}
@@ -457,6 +457,7 @@ function ThemeCard() {
                 aria-pressed={theme === code}
                 style={{
                   cursor: 'pointer', padding: '6px 16px', fontSize: 12.5, textTransform: 'none', letterSpacing: 0,
+                  maxWidth: '100%', height: 'auto', minHeight: 28, whiteSpace: 'normal', textAlign: 'left', overflowWrap: 'anywhere',
                   ...(theme === code ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}),
                 }}
               >
@@ -465,7 +466,7 @@ function ThemeCard() {
                     <span key={i} style={{ width: 8, height: 8, borderRadius: 999, background: c, border: '1px solid var(--border-soft)' }} />
                   ))}
                 </span>
-                {t(`settings.theme.${code}`)}
+                <span style={{ minWidth: 0 }}>{t(`settings.theme.${code}`)}</span>
               </button>
             );
           })}

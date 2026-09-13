@@ -9,6 +9,7 @@ import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 
 import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected } from '../../runner-connect';
 import { useLang } from '../../i18n';
+import styles from './deck.module.css';
 
 export default function Deck({ params }) {
   const { ws } = use(params);
@@ -175,8 +176,8 @@ export default function Deck({ params }) {
             )}
           </div>
 
-          <form ref={hireRef} onSubmit={hire} className="input-bar">
-            <span style={{ color: 'var(--fg-3)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
+          <form ref={hireRef} onSubmit={hire} className={`input-bar ${styles.hireForm}`}>
+            <span className={styles.hireIcon} style={{ color: 'var(--fg-3)' }}><Icon name="bolt" size={15} /></span>
             <input suppressHydrationWarning
               placeholder={t('deck.hirePlaceholder')}
               value={prompt}
@@ -196,7 +197,7 @@ export default function Deck({ params }) {
           {/* 페르소나 예시 — "뭐라고 써야 하지?"의 빈 화면을 없앤다(사용자 피드백 2026-07-25: 유튜브
               설명처럼 예제가 있으면 초보자가 쓰기 편하다). 클릭하면 입력창에 채워지고 바로 수정 가능. */}
           {!hiring && !prompt.trim() && (
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '0 4px' }}>
+            <div className={styles.hireExamples} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '0 4px' }}>
               <span className="microlabel" style={{ flex: 'none' }}>{t('deck.hireExamples')}</span>
               {[t('deck.hireEx1'), t('deck.hireEx2'), t('deck.hireEx3')].map((ex) => (
                 <button key={ex} type="button" className="chip" style={{ cursor: 'pointer' }}
@@ -214,7 +215,7 @@ export default function Deck({ params }) {
                 value={hireName}
                 onChange={(e) => setHireName(e.target.value)}
                 {...imeGuard}
-                style={{ flex: 1, minWidth: 150, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 }}
+                style={{ flex: 1, minWidth: 'min(150px, 100%)', height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 }}
               />
               <input suppressHydrationWarning
                 placeholder={t('deck.teamPlaceholder')}
@@ -222,7 +223,7 @@ export default function Deck({ params }) {
                 onChange={(e) => setHireTeam(e.target.value)}
                 list="argo-teams"
                 {...imeGuard}
-                style={{ flex: 1, minWidth: 130, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 }}
+                style={{ flex: 1, minWidth: 'min(130px, 100%)', height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 }}
               />
               <datalist id="argo-teams">
                 {[...new Set((data?.agents ?? []).map((a) => a.team).filter(Boolean))].map((tm) => <option key={tm} value={tm} />)}
@@ -240,7 +241,7 @@ export default function Deck({ params }) {
           <MorningBrief ws={ws} agents={data?.agents ?? []} />
           <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
 
-          <div className="card" style={{ overflow: 'hidden' }}>
+          <div className={`card ${styles.memoryCard}`} style={{ overflow: 'hidden' }}>
             <div className="card-head">
               <span className="card-title"><Icon name="doc" size={14} />{t('deck.recentMemory')}</span>
               <span className="rule" />
@@ -253,17 +254,17 @@ export default function Deck({ params }) {
                 {q ? t('deck.noMemoryMatch') : t('deck.noMemoryYet')}
               </p>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr><th>{t('deck.colTitle')}</th><th style={{ width: 100 }}>{t('deck.colType')}</th><th style={{ width: 76 }}>{t('deck.colLinks')}</th><th style={{ width: 92 }}>{t('deck.colTime')}</th></tr>
+              <table role="table" className={`table ${styles.memoryTable}`}>
+                <thead role="rowgroup">
+                  <tr role="row"><th role="columnheader">{t('deck.colTitle')}</th><th role="columnheader" style={{ width: 100 }}>{t('deck.colType')}</th><th role="columnheader" style={{ width: 76 }}>{t('deck.colLinks')}</th><th role="columnheader" style={{ width: 92 }}>{t('deck.colTime')}</th></tr>
                 </thead>
-                <tbody>
+                <tbody role="rowgroup">
                   {memories.map((m) => (
-                    <tr key={m.rel} onClick={() => router.push(keepSide(`/c/${ws}/vault?doc=${encodeURIComponent(m.rel)}`, window.location.search))}>
-                      <td style={{ fontWeight: 600, maxWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{m.title}</td>
-                      <td><span className="pill"><span className="dot" />{m.dir === 'notes' ? t('deck.typeNote') : t('deck.typeConversation')}</span></td>
-                      <td className="mono" style={{ fontSize: 12 }}>{m.deg > 0 ? m.deg : '—'}</td>{/* 해석 후 차수 — 다이얼·그래프와 같은 셈법(깨진·자기 링크는 0) */}
-                      <td className="mono" style={{ color: 'var(--fg-3)', fontSize: 11.5 }}>{timeAgo(tsFromRel(m.rel) ?? m.mtime, lang)}</td>
+                    <tr role="row" key={m.rel} onClick={() => router.push(keepSide(`/c/${ws}/vault?doc=${encodeURIComponent(m.rel)}`, window.location.search))}>
+                      <td role="cell" className={styles.memoryTitle} style={{ fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{m.title}</td>
+                      <td role="cell" data-label={t('deck.colType')}><span className="pill"><span className="dot" />{m.dir === 'notes' ? t('deck.typeNote') : t('deck.typeConversation')}</span></td>
+                      <td role="cell" data-label={t('deck.colLinks')} className="mono" style={{ fontSize: 12 }}>{m.deg > 0 ? m.deg : '—'}</td>{/* 해석 후 차수 — 다이얼·그래프와 같은 셈법(깨진·자기 링크는 0) */}
+                      <td role="cell" data-label={t('deck.colTime')} className="mono" style={{ color: 'var(--fg-3)', fontSize: 11.5 }}>{timeAgo(tsFromRel(m.rel) ?? m.mtime, lang)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -352,7 +353,7 @@ function AiKeyBanner({ ws, agents = [] }) {
   return (
     <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--accent)' }}>
       <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
-      <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{state === 'missing' && externalAgents ? t('deck.runner.external', { agents: externalAgents }) : t(state === 'retired' ? 'deck.runner.retired' : state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
+      <span style={{ fontSize: 13, flex: '1 1 200px', minWidth: 0 }}>{state === 'missing' && externalAgents ? t('deck.runner.external', { agents: externalAgents }) : t(state === 'retired' ? 'deck.runner.retired' : state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
       <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(keepSide(`/c/${ws}/settings?ai=1`, window.location.search))}>
         {t('deck.aiKey.cta')}
       </button>

@@ -9,6 +9,7 @@ const row = { display: 'flex', gap: 10, alignItems: 'flex-start' };
 // 긴 목록(스킬 수백 개·승인 폴더 수십 개)은 상자 안에서 스크롤 — 페이지가 화면 몇 장으로 늘어나던 것(사용성 제보 2026-09-10)
 const scrollBox = { maxHeight: '17.5rem', overflowY: 'auto', padding: '2px 4px 2px 3px' }; // rem — 브라우저 기본 글자 크기(접근성 설정)에 따라감(앱 배율은 CSS zoom이라 px도 같이 커진다). 좌측 여백은 스크롤 상자가 자르는 체크박스 포커스 링 몫(.deck-grid 사고와 동형)
 const field = { padding: '8px 10px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--fg)', minWidth: 0, maxWidth: '100%' };
+const actionStyle = { maxWidth: '100%', height: 'auto', minHeight: 36, whiteSpace: 'normal', textAlign: 'center', overflowWrap: 'anywhere' };
 const emptyConsent = () => ({ tools: false, memory: false, secrets: false });
 function restoredNames(items = []) {
   return Object.fromEntries(items.filter((item) => ['failed', 'planned', 'staged'].includes(item.status)).map((item) => [item.id, item.name]));
@@ -138,7 +139,7 @@ function ImportReview({ ws, continuation }) {
   const denied = ['localImport.error.auth', 'localImport.error.forbidden', 'localImport.error.unavailable', 'localImport.error.origin'].includes(error);
   const toggle = (id, checked, setter) => setter((old) => checked ? [...old, id] : old.filter((value) => value !== id));
 
-  return <section className="card" style={{ padding: 18, width: '100%', minWidth: 0, display: 'grid', gap: 14 }} aria-busy={busy}>
+  return <section className="card" style={{ padding: 18, width: '100%', minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }} aria-busy={busy}>
     <div><h2 className="card-title">{t('localImport.title')}</h2>
       <p style={{ color: 'var(--fg-2)', marginTop: 6, fontSize: 13 }}>{t('localImport.description')}</p>
     </div>
@@ -185,9 +186,9 @@ function ImportReview({ ws, continuation }) {
       {hasResults && <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}><p style={{ fontSize: 13 }}>{t('localImport.resultsHelp')}</p><Link className="btn sm" href={`/c/${encodeURIComponent(ws)}/market`}>{t('localImport.openTools')}</Link></div>}
     </>}
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-      {!denied && <button className="btn" disabled={busy} onClick={() => request('preview', { approvedRootIds: roots })}>{t(data?.scanId ? 'localImport.rescan' : 'localImport.scan')}</button>}
-      {data?.scanId && <button className="btn btn-primary" disabled={busy || !canImport} onClick={() => request('import', { scanId: data.scanId, selectedIds: selected, consents, renames })}>{t(hasResults ? 'localImport.retry' : 'localImport.import', { n: chosen.length })}</button>}
-      {continuation && (hasResults || denied ? <Link className="btn" href={continuation}>{t('localImport.continue')}</Link> : <button className="btn" disabled={busy} onClick={defer}>{t('localImport.later')}</button>)}
+      {!denied && <button className="btn" style={actionStyle} disabled={busy} onClick={() => request('preview', { approvedRootIds: roots })}>{t(data?.scanId ? 'localImport.rescan' : 'localImport.scan')}</button>}
+      {data?.scanId && <button className="btn btn-primary" style={actionStyle} disabled={busy || !canImport} onClick={() => request('import', { scanId: data.scanId, selectedIds: selected, consents, renames })}>{t(hasResults ? 'localImport.retry' : 'localImport.import', { n: chosen.length })}</button>}
+      {continuation && (hasResults || denied ? <Link className="btn" style={actionStyle} href={continuation}>{t('localImport.continue')}</Link> : <button className="btn" style={actionStyle} disabled={busy} onClick={defer}>{t('localImport.later')}</button>)}
     </div>
   </section>;
 }

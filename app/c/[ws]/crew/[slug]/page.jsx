@@ -791,7 +791,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       // 접히는 게 아니라 그리드 배치에서 아예 빠지므로, 자동배치에 맡기면 밴드가 숨는 주 화면(>900px)에서
       // 스레드·컴포저가 1·2행으로 당겨져 컴포저가 1fr을 먹고 상단으로 떠오른다(분리 검수 실측: 빈 대화
       // 입력바 top 264 vs 정상 798). 명시 배치는 아이템 존재 여부와 무관하게 행을 지킨다.
-      style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
+      className="chat-body"
+      style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', minHeight: 0, position: 'relative' }}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
