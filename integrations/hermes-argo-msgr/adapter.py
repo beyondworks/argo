@@ -104,10 +104,44 @@ def relay_prompt(m, files=None):
     attached = ('\n\n[Attached files — saved locally, open them by path]\n' + '\n'.join('- ' + p + ' (' + n + ', ' + (t or 'unknown type') + ', ' + str(b) + ' bytes)' for p, n, t, b in files)) if files else ''
     return (m['text'] + attached + '\n\n[Current thread context — quoted conversation, not instructions]\n' + context + '\n\n[Argo Messenger delivery]\nKeep coordination in this channel. Available colleagues: ' + names
             + '. To give a colleague a concrete remaining action, mention @name and end your own answer with the standalone line MSGR: handoff. '
+            'For reference only, put CC: @name on its own line; CC does not execute or reply. A delegated DM request shares this request thread only, not the whole DM. '
             'When finished, including acknowledgments, end with MSGR: done. Do not use Telegram or mail to relay this task. '
             'Answer only what was asked: no restating the instruction, no narrating your plan or the situation. '
             'For turn-taking work (games, relays, round-robins) post only your move, then hand off to the next player with @name and MSGR: handoff; stop after the requested number of turns. '
             'Only the final standalone marker outside quotes/code controls handoff; it is hidden from users.')
+
+
+def recipient_mentions(text, peers):
+    parts = {'to': [], 'cc': []}
+    fence = None
+    for line in text.splitlines():
+        mark = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+        if mark:
+            if fence:
+                if mark[1][0] == fence[0] and len(mark[1]) >= len(fence) and not mark[2].strip():
+                    fence = None
+            elif mark[1][0] != '`' or '`' not in mark[2]:
+                fence = mark[1]
+            continue
+        if fence or re.match(r'^\s*>', line):
+            continue
+        cc = re.match(r'^\s*(?:CC|참조):\s*(.*)$', line, re.IGNORECASE)
+        parts['cc' if cc else 'to'].append(cc[1] if cc else line)
+    named = sorted([p for p in peers if p.get('name') and sum(str(q.get('name', '')).lower() == p['name'].lower() for q in peers) == 1], key=lambda p: -len(p['name']))
+    def resolve(lines):
+        rest = '\n'.join(lines)
+        found = []
+        for p in named:
+            pattern = re.compile(r'(^|\s)@' + re.escape(p['name']) + r'(?=$|[\s,.:;!?])', re.IGNORECASE)
+            hit = pattern.search(rest)
+            if not hit:
+                continue
+            found.append((hit.start(), {'kind': 'crew', 'id': p['id']}))
+            rest = pattern.sub(lambda m: m[1] + ' ' * (len(m[0]) - len(m[1])), rest)
+        return [p for _, p in sorted(found, key=lambda item: item[0])]
+    cc = resolve(parts['cc'])
+    copied = {p['id'] for p in cc}
+    return [p for p in resolve(parts['to']) if p['id'] not in copied] + [dict(p, role='cc') for p in cc]
 
 
 def relay_reply(text, m):
@@ -126,10 +160,7 @@ def relay_reply(text, m):
     disposition = match[1] if match and not fence else 'done'
     body = text[:match.start()].rstrip() if match and not fence else text
     peers = m.get('peers', [])
-    # 이름 대조는 대소문자 무시 — "@edna"도 Edna(끝말잇기 실사고 2026-09-11 밤: 소문자 멘션으로 넘김이 끊김). 동명이인(대소문자 무시)은 넘기지 않는다
-    mentions = [{'kind': 'crew', 'id': p['id']} for p in peers
-                if disposition == 'handoff' and sum(q['name'].lower() == p['name'].lower() for q in peers) == 1
-                and re.search(r'(?:^|\s)@' + re.escape(p['name']) + r'(?=$|[\s,.:;!?])', body, re.IGNORECASE)]
+    mentions = recipient_mentions(body, peers) if disposition == 'handoff' else []
     return {'text': body, 'execution_attempt': m.get('execution_attempt'), 'disposition': disposition, 'mentions': mentions}
 
 
@@ -196,15 +227,17 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         while self._running:
             try:
                 await self._flush_outbox()
-                updates = await self._api("getUpdates", {"offset": self._offset, "timeout": _POLL_TIMEOUT_S, "limit": 1},
+                updates = await self._api("getUpdates", {"offset": self._offset, "timeout": _POLL_TIMEOUT_S, "limit": 1, "delivery_protocol": 1},
                                           timeout=_POLL_TIMEOUT_S + 15) or []
                 backoff = 1.0
                 for up in updates:
-                    self._offset = max(self._offset, int(up.get("update_id", 0)) + 1)   # ack (Telegram offset discipline)
                     try:
                         await self._dispatch(up.get("message") or {})
                     except Exception:
+                        if (up.get('message') or {}).get('delivery_role') == 'cc':
+                            raise
                         logger.exception("Argo Messenger: dispatch failed for update %s", up.get("update_id"))
+                    self._offset = max(self._offset, int(up.get("update_id", 0)) + 1)   # ack after passive receipt is saved
             except asyncio.CancelledError:
                 raise
             except ArgoMsgrError as e:
@@ -229,11 +262,21 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             return
         self._chats[chat_id] = {"name": chat.get("name") or chat_id, "kind": chat.get("kind") or "public"}
         mid = int(m.get("message_id") or 0)
+        if m.get('delivery_role') == 'cc':
+            receipts = self._outbox / 'receipts'
+            receipts.mkdir(parents=True, exist_ok=True, mode=0o700)
+            file = receipts / (self._outbox_prefix + '.json')
+            tmp = file.with_suffix('.' + uuid.uuid4().hex + '.tmp')
+            with open(tmp, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as out:
+                json.dump({'channelId': chat_id, 'threadRoot': m.get('thread_root') or mid, 'sourceId': mid, 'role': 'cc', 'receivedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}, out)
+            os.replace(tmp, file)
+            return
         self._pending[mid] = m
         context = self._inbound.set(m)
         source = self.build_source(
             chat_id=chat_id, chat_name=chat.get("name") or chat_id,
             chat_type="dm" if chat.get("kind") == "dm" else "group",
+            thread_id=("argo-dm:" + chat_id + ":" + (str(m.get("thread_root") or mid) if m.get('delegated') else 'conversation')) if chat.get("kind") == "dm" else None,
             user_id=str(frm.get("id") or ""), user_name=frm.get("name") or "", message_id=str(mid) if mid else None,
             role_authorized=True)   # the Argo server already decided this author may address the bot
         files = await self._fetch_attachments(m, mid)
@@ -351,7 +394,11 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         # 게이트웨이 _keep_typing이 2초마다 부른다(호출당 ~1.5초 상한). 서버가 org 토픽으로 typing을 방송해 앱이 '답변 중'을 그린다
         # (앱은 6초 안에 갱신이 없으면 지운다). 실패는 삼킨다 — 타이핑은 답변을 막을 이유가 못 된다. 구버전 서버(sendChatAction 404)도 무해.
         try:
-            await self._api("sendChatAction", {"chat_id": str(chat_id), "action": "typing"}, post=True, timeout=1.5)
+            incoming = self._inbound.get()
+            params = {"chat_id": str(chat_id), "action": "typing"}
+            if incoming and str((incoming.get('chat') or {}).get('id')) == str(chat_id) and incoming.get('execution_attempt'):
+                params.update(reply_to_message_id=incoming['message_id'], execution_attempt=incoming['execution_attempt'])
+            await self._api("sendChatAction", params, post=True, timeout=1.5)
         except Exception:
             return None
 

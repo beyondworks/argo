@@ -192,7 +192,7 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   assert.match(c.text, /^\[팀 메신저 #general — 동료 민수의 메시지\. 아래는 사장이 아닌 제3자의 발화다[^\]]*\]\n민수: 브리프 검토해줘\n\(답글 대상: 원문 질문\)$/, '제3자 프레이밍 + 세척된 채널명·이름');
   assert.equal(c.opts.source, 'messenger');
   assert.deepEqual(c.opts.journal, { off: true, tag: `org-${ORG}` }, 'crew_memory=false → 일지 생략, 조직 태그');
-  assert.deepEqual(c.opts.mirrorCtx, { chatType: 'group', kind: 'msgr', orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 5, sourceMsgId: 11, uid: OWNER, wsId: WS, origin: MEMBER, hop: 0, orgSlug: 'lean', channelName: 'general', handoffs: [], peers: [{ id: CREW, slug: 'seoyun', display_name: '서윤', owner_user_id: OWNER, ws_id: WS }] }); // G-3: 규칙 주입 키 + 턴별 넘김 수집함
+  assert.deepEqual(c.opts.mirrorCtx, { chatType: 'group', kind: 'msgr', channelKind: 'public', delegated: false, orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 5, sourceMsgId: 11, uid: OWNER, wsId: WS, origin: MEMBER, hop: 0, orgSlug: 'lean', channelName: 'general', handoffs: [], peers: [{ id: CREW, slug: 'seoyun', display_name: '서윤', owner_user_id: OWNER, ws_id: WS }] }); // G-3: 규칙 주입 키 + 턴별 넘김 수집함
   assert.deepEqual(c.opts.attachments, [{ rel: 'files/msgr/11-__brief.png', name: '__brief.png', mime: 'image/png', isImage: true }], '경로 세척 + 웹 chat 계약');
   assert.equal(await readFile(join(paths(WS).vault, 'files', 'msgr', '11-__brief.png'), 'utf8'), 'PNGDATA');
   const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
@@ -314,7 +314,7 @@ test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 
   const direct = src.match(/saveHandover\(/g) ?? [];
   assert.equal(direct.length, 1, 'saveHandover 직접 호출은 journalWrite 정의 1곳뿐 — 한 지점이라도 우회하면 crew_memory=false 채널 내용이 기억에 샌다');
   assert.equal((src.match(/await journalWrite\(reply, meta\.name \|\| agentSlug\)/g) ?? []).length, 3, '세 저장 지점 전부 journalWrite');
-  assert.match(src, /const journalWrite = \(reply, label\) => journal\?\.off \? null : saveHandover\(wsId, agentSlug, userMsg, reply, label, \{ tag: journal\?\.tag \?\? '' \}\);/);
+  assert.match(src, /const journalWrite = \(reply, label\) => dmTurn \|\| journal\?\.off \? null : saveHandover\(wsId, agentSlug, userMsg, reply, label, \{ tag: journal\?\.tag \?\? '' \}\);/);
 });
 
 test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewServer가 journal을 넘긴다(검수 HIGH-2 — 한 곳이 빠지면 crew_memory=false 내용이 일지에 샌다)', async () => {
@@ -473,7 +473,7 @@ test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK
   const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(chatSrc, /const orgRules = mirrorCtx\?\.orgSlug \? await loadOrgRules\(wsId, mirrorCtx\.orgSlug, \{ channelName: mirrorCtx\.channelName \?\? ''/, '규칙 로드');
   assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false, connectors: cliConnectors \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입');
-  assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(colleagues\.length \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값');
+  assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(mirrorCtx\?\.kind === 'msgr' \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값');
   assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');
   assert.match(chatSrc, /const rulesCtx = \(mirrorCtx\?\.kind === 'msgr' \|\| mirrorCtx\?\.kind === 'msgr-rules' \|\| mirrorCtx\?\.orgSlug\) \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? '' \} : null;[^\n]*\n\s*const r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: rulesCtx \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만)');
 });
@@ -839,7 +839,7 @@ test('handler: 도구 넘김은 긴 답변에서도 보존하고, 저장된 본�
   const db = fakeDb({ peers });
   const job = { msgId: 201, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '자료 전달', authorId: MEMBER, threadRoot: 201, createdAt: new Date(Date.now() - 120_000).toISOString() };
   const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _text, _sid, opts) => {
-    stageMessengerHandoff(opts.mirrorCtx, { to: 'zed', cc: ['pepper'], message: '자료를 검토해줘' });
+    stageMessengerHandoff(opts.mirrorCtx, { to: ZED, cc: ['pepper'], message: '자료를 검토해줘' });
     return { reply: `${'x'.repeat(20_000)} @페퍼`, sessionId: null, artifacts: [] };
   } });
   await h(job);
@@ -847,7 +847,7 @@ test('handler: 도구 넘김은 긴 답변에서도 보존하고, 저장된 본�
   assert.equal(row.body.length, 20_000);
   assert.match(row.body, /^\(부재중 대기분/);
   assert.match(row.body, /@제드\n자료를 검토해줘\n\(CC: 페퍼\)$/);
-  assert.deepEqual(row.mentions, [{ kind: 'crew', id: ZED }], '잘린 본문·참조·이름만 같은 다른 크루에는 자동 넘김 없음');
+  assert.deepEqual(row.mentions, [{ kind: 'crew', id: ZED }, { kind: 'crew', id: PEP, role: 'cc' }], '참조는 메타데이터로 보존하되 자동 실행하지 않고 동명이인에게 새지 않는다');
   const thread = await loadThread(WS, 'seoyun');
   assert.equal(thread.messages.filter((m) => m.who === 'crew').at(-1)?.text, row.body, '스레드와 채널에 동일한 최종 답변');
   const failed = fakeDb({ peers });
@@ -1032,4 +1032,205 @@ test('team work: eight-hop cap blocks; authorized resume resets only that work r
   const resumed=fakeEnqueue(); await M.drain(WS,{db,uid:OWNER,inventory:null,enqueue:resumed});
   assert.equal(jobsOf(resumed).length,1); assert.equal(jobsOf(resumed)[0].hop,1); assert.equal(jobsOf(resumed)[0].threadRoot,5);
   assert.deepEqual(counts,[null,25]);
+});
+
+test('To/CC: 명시 To는 DM 자동 수신자를 대체하고 CC는 실행하지 않는다', () => {
+  const direct = new Set([CH]);
+  assert.equal(M.targetsCrew(msg(11, { mentions: [{ kind: 'crew', id: 'other', role: 'to' }] }), crew(), direct), false);
+  assert.equal(M.targetsCrew(msg(11, { mentions: [{ kind: 'crew', id: 'other', role: 'cc' }] }), crew(), direct), true);
+  assert.equal(M.targetsCrew(msg(11, { mentions: [{ kind: 'crew', id: CREW, role: 'cc' }] }), crew(), direct), false);
+  assert.equal(M.targetsCrew(msg(11, { author_kind: 'crew', crew_id: 'other', meta: { origin: MEMBER }, mentions: [{ kind: 'crew', id: CREW, role: 'cc' }] }), crew(), direct), false);
+  assert.equal(M.targetsCrew(msg(11, { mentions: [{ kind: 'crew', id: CREW }] }), crew(), new Set()), true);
+  assert.equal(M.targetsCrew(msg(11, { mentions: [] }), crew(), direct), true);
+});
+
+function scopedFixture() {
+  const local = crew();
+  const remote = crew({ id: 'remote-feynman', slug: 'feynman', display_name: 'Feynman', owner_user_id: 'remote-owner', ws_id: 'remote-workspace' });
+  const copy = crew({ id: 'copy-wolff', slug: 'wolff', display_name: 'Wolff', owner_user_id: 'third-owner', ws_id: 'third-workspace' });
+  const root = msg(100, { body: '현재 요청만 공유', mentions: [{ kind: 'crew', id: CREW }] });
+  const source = msg(101, { author_kind: 'crew', author_user_id: null, crew_id: CREW, body: '자기 역할을 말해줘', thread_root: 100, reply_to: 100,
+    mentions: [{ kind: 'crew', id: remote.id, role: 'to' }, { kind: 'crew', id: copy.id, role: 'cc' }], meta: { origin: MEMBER } });
+  const peers = [local, remote, copy].map((p) => ({ owner_user_id: OWNER, ws_id: WS, ...p }));
+  const envelope = { source, root, channel: { id: CH, org_id: ORG, kind: 'dm', name: 'Pepper', crew_memory: false }, org: { id: ORG, slug: 'team' },
+    peers, context: [root], attachments: [], delegated: true, settled_source: false, settled_root: false, settled_root_before_source: false, auto_turns: 0, settled_predecessors: [] };
+  const db = fakeDb({ crews: [remote], peers, messages: [] });
+  db.crewInbox = async () => [source];
+  db.crewContext = async () => envelope;
+  // A delegated owner cannot select the DM or its unrelated history using ordinary RLS.
+  for (const method of ['channel', 'contextOf', 'message', 'attachmentsOf', 'channelCrewMembers']) db[method] = async () => { throw new Error(`unscoped ${method}`); };
+  return { db, envelope, local, remote, copy, root, source };
+}
+
+test('DM 위임: 비구성원 원격 크루가 허가된 요청만 실행하고 같은 DM에 To/CC 회신한다', async () => {
+  const f = scopedFixture(); const enq = fakeEnqueue();
+  M._autoLogForTest.clear();
+  const result = await M.drain(WS, { db: f.db, uid: 'remote-owner', inventory: null, enqueue: enq });
+  assert.equal(result.queued, 1);
+  const job = jobsOf(enq)[0]; const seen = [];
+  // Queue text is not an authority. The execution must refetch the envelope.
+  job.text = '오래된 큐 내용'; job.replyTo = 3;
+  await M.makeMsgrHandler(WS, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async (_ws, _slug, text, sid, opts) => {
+    seen.push({ text, sid, opts });
+    stageMessengerHandoff(opts.mirrorCtx, { to: f.local.id, cc: [f.copy.id], message: '현재 요청에 대한 결과' });
+    return { reply: '조사 결과', sessionId: 'isolated-session', artifacts: [] };
+  } })(job);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].sid, null);
+  assert.equal(seen[0].opts.mirrorCtx.channelKind, 'dm');
+  assert.match(seen[0].text, /현재 요청만 공유/);
+  assert.match(seen[0].text, /자기 역할을 말해줘/);
+  assert.doesNotMatch(seen[0].text, /오래된 큐 내용/);
+  const reply = f.db.calls.find((c) => c[0] === 'insertMessage')[1];
+  assert.equal(reply.channel_id, CH);
+  assert.equal(reply.thread_root, 100);
+  assert.deepEqual(reply.mentions, [{ kind: 'crew', id: CREW }, { kind: 'crew', id: f.copy.id, role: 'cc' }]);
+  assert.equal(M.targetsCrew(reply, f.copy, new Set()), false);
+  assert.equal(M.targetsCrew(reply, f.local, new Set([CH])), true);
+});
+
+test('DM 위임: 적재 후 권한 회수는 실행하지 않고 RPC 장애는 재시도 대상으로 남긴다', async () => {
+  const f = scopedFixture(); const job = { msgId: 101, orgId: ORG, channelId: CH, crewId: f.remote.id, slug: 'feynman', text: 'stale', authorId: OWNER, threadRoot: 100, createdAt: new Date().toISOString() };
+  let turns = 0;
+  const handler = M.makeMsgrHandler(WS, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async () => { turns++; return { reply: 'bad' }; } });
+  f.db.crewContext = async () => null;
+  await handler(job); assert.equal(turns, 0);
+  f.db.crewContext = async () => { throw new Error('network down'); };
+  await assert.rejects(handler(job), /network down/);
+  assert.equal(turns, 0);
+});
+
+test('DM 위임 후속 실행: 현재 root 문맥만 재조회하고 외부 과거 대화를 읽지 않는다', async () => {
+  const f = scopedFixture();
+  const origin = { orgId: ORG, channelId: CH, crewId: f.remote.id, threadRoot: 100, sourceMsgId: 101, uid: 'remote-owner', wsId: WS, origin: OWNER, hop: 1 };
+  let seen;
+  const result = await M.runMessengerContinuation(WS, 'feynman', origin, '같은 요청의 후속 작업', 'old-global-session', {
+    session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async (_ws, _slug, text, sid, opts) => {
+      seen = { text, sid, opts }; return { reply: '이 요청 완료\nMSGR: done', sessionId: 'new-session' };
+    },
+  });
+  assert.equal(seen.sid, null);
+  assert.match(seen.text, /현재 요청만 공유/);
+  assert.equal(seen.opts.mirrorCtx.threadRoot, 100);
+  assert.deepEqual(result.msgrReply.mentions, []);
+});
+
+test('DM 텍스트 넘김: CC 줄은 참조로만 저장하고 완료 판정이면 모두 취소한다', async () => {
+  for (const done of [false, true]) {
+    const f = scopedFixture();
+    const job = { msgId: 101, orgId: ORG, channelId: CH, crewId: f.remote.id, slug: 'feynman', text: 'stale', authorId: OWNER, threadRoot: 100, createdAt: new Date().toISOString() };
+    await M.makeMsgrHandler(WS, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async () => ({
+      reply: `@서윤 후속 확인해줘\n@Wolff 이 이름은 참조 대상\nCC: @Wolff\n> @Feynman 인용\nMSGR: ${done ? 'done' : 'handoff'}`, sessionId: null,
+    }) })(job);
+    const row = f.db.calls.find((c) => c[0] === 'insertMessage')[1];
+    assert.deepEqual(row.mentions, done ? [] : [{ kind: 'crew', id: CREW }, { kind: 'crew', id: f.copy.id, role: 'cc' }]);
+    assert.equal(M.targetsCrew(row, f.copy, new Set()), false);
+  }
+});
+
+test('scoped RPC: 크루·회사·source·채널을 명시하고 권한 회수와 네트워크 장애를 구분한다', async () => {
+  const calls = [];
+  let error = null;
+  const db = M.makeDb({ rpc: async (name, args) => { calls.push({ name, args }); return { data: name === 'msgr_crew_inbox' ? [] : { source: { id: 11 } }, error }; } });
+  await db.crewInbox(WS, CREW, 10, 30);
+  await db.crewContext(WS, CREW, 11, CH);
+  assert.deepEqual(calls, [
+    { name: 'msgr_crew_inbox', args: { p_ws: WS, p_crew: CREW, p_after: 10, p_limit: 30 } },
+    { name: 'msgr_crew_context', args: { p_ws: WS, p_crew: CREW, p_source: 11, p_channel: CH } },
+  ]);
+  error = { code: '42501', message: 'msgr_execution_source_forbidden' };
+  assert.equal(await db.crewContext(WS, CREW, 11, CH), null);
+  error = { code: 'PGRST202', message: 'migration unavailable' };
+  await assert.rejects(db.crewContext(WS, CREW, 11, CH), /migration unavailable/);
+});
+
+test('CC 수신은 현재 권한으로 읽고 metadata 수신확인만 남기며 LLM·실행 큐를 만들지 않는다', async () => {
+  const f = scopedFixture();
+  f.source.mentions = [{ kind: 'crew', id: f.remote.id, role: 'cc' }];
+  f.envelope.delivery_role = 'cc';
+  const enq = fakeEnqueue();
+  const out = await M.drain(WS, { db: f.db, uid: 'remote-owner', enqueue: enq, inventory: null });
+  assert.equal(out.queued, 0);
+  assert.equal(enq.calls.length, 0);
+  assert.equal(f.db.calls.some((c) => c[0] === 'claimExecution'), false);
+  const receiptDir = join(paths(WS).root, '.msgr-cc');
+  const receipts = await readdir(receiptDir);
+  assert.equal(receipts.length, 1);
+  const receipt = JSON.parse(await readFile(join(receiptDir, receipts[0]), 'utf8'));
+  assert.equal(receipt.role, 'cc');
+  assert.equal(receipt.sourceMsgId, f.source.id);
+  assert.equal(receipt.threadRoot, f.root.id);
+  assert.equal(Object.hasOwn(receipt, 'body'), false);
+  let turns = 0;
+  await M.makeMsgrHandler(WS, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async () => { turns++; return { reply: 'bad' }; } })({ msgId: 101, orgId: ORG, channelId: CH, crewId: f.remote.id, slug: 'feynman' });
+  assert.equal(turns, 0, 'a forged/stale executable queue cannot execute a CC-only source');
+});
+
+test('DM 위임 결재는 현재 source에 원자적으로 카드와 원장을 만들고 일반 채널 write로 우회하지 않는다', async () => {
+  const f = scopedFixture();
+  const msgr = { orgId: ORG, channelId: CH, channelKind: 'dm', delegated: true, crewId: f.remote.id, threadRoot: 100, sourceMsgId: 101, uid: 'remote-owner', wsId: WS, origin: OWNER, hop: 1 };
+  const it = await addApproval(WS, { slug: 'feynman', action: '문서 검토 요청', kind: 'tool', msgr });
+  const calls = [];
+  f.db.createThreadApproval = async (...args) => { calls.push(args); return { approval: { id: 'scoped-ap' }, message: { id: 456 } }; };
+  f.db.insertApproval = async () => { throw new Error('broad approval insertion'); };
+  f.db.insertMessage = async () => { throw new Error('broad card insertion'); };
+  f.db.canDecide = async () => { throw new Error('permission check temporarily unavailable'); };
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session: async () => ({ db: f.db, uid: 'remote-owner' }) }), true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 4), [WS, f.remote.id, 101, CH]);
+  assert.equal(calls[0][4].approval_id, it.id);
+  assert.match(calls[0][5], /문서 검토 요청/);
+  const saved = (await loadApprovals(WS)).find((a) => a.id === it.id);
+  assert.equal(saved.msgr.messageId, 456);
+  assert.equal(saved.msgr.sourceMsgId, 101);
+  assert.equal(saved.msgr.delegated, true);
+  assert.equal(saved.msgr.ownerMayDecide, false, 'a new delegated approval never defaults to permission on RPC failure');
+});
+
+test('위임 후속 결과도 fresh source에 게시하고 To/CC를 보존한다 — 결재·루틴·장시간 작업', async () => {
+  for (const type of ['approval_followup', 'routine', 'job']) {
+    const f = scopedFixture();
+    const origin = { orgId: ORG, channelId: CH, channelKind: 'dm', delegated: true, crewId: f.remote.id, threadRoot: 100, sourceMsgId: 101, uid: 'remote-owner', wsId: WS, origin: OWNER, hop: 1 };
+    const session = async () => ({ db: f.db, uid: 'remote-owner' });
+    const turn = await M.runMessengerContinuation(WS, 'feynman', origin, '현재 지시 후속 작업', 'not-resumed', { session, runChat: async (_ws, _slug, _text, sid, opts) => {
+      assert.equal(sid, null);
+      stageMessengerHandoff(opts.mirrorCtx, { to: CREW, cc: [f.copy.id], message: '이 결과를 확인해줘' });
+      return { reply: '후속 작업 결과', sessionId: null };
+    } });
+    const posted = [];
+    f.db.postThreadFollowup = async (...args) => { posted.push(args); return { id: 777 }; };
+    f.db.insertMessage = async () => { throw new Error('unscoped continuation insert'); };
+    const event = { type, wsId: WS, slug: 'feynman', id: 'job-1', ok: true, reply: turn.reply, msgr: turn.msgr, msgrReply: turn.msgrReply,
+      ...(type === 'approval_followup' ? { item: { id: 'approval-1', slug: 'feynman', msgr: { ...origin, rowId: 'approval-row', messageId: 555 } } } : {}),
+      ...(type === 'routine' ? { routine: { id: 'routine-1', agentSlug: 'feynman', msgr: origin, lastRun: '2026-09-13T00:00:00Z' } } : {}) };
+    assert.equal(await M.msgrPush(event, { session }), true);
+    const [ws, crewId, sourceId, channelId, row, approvalId] = posted[0];
+    assert.deepEqual([ws, crewId, sourceId, channelId], [WS, f.remote.id, 101, CH]);
+    assert.equal(row.meta.disposition, 'handoff');
+    assert.equal(row.reply_to, 101, 'delegated results belong to the authorized source, not the approval card or root');
+    assert.equal(row.thread_root, 100);
+    assert.deepEqual(row.mentions, [{ kind: 'crew', id: CREW }, { kind: 'crew', id: f.copy.id, role: 'cc' }]);
+    assert.equal(approvalId, type === 'approval_followup' ? 'approval-row' : null);
+    assert.match(row.body, /이 결과를 확인해줘/);
+    assert.equal(M.targetsCrew(row, f.copy, new Set()), false);
+    await M.msgrPush({ ...event, msgrReply: { mentions: turn.msgrReply.mentions, meta: { disposition: 'done' } } }, { session });
+    assert.deepEqual(posted[1][4].mentions, []);
+    assert.equal(posted[1][4].meta.disposition, 'done');
+    assert.equal(posted[0][4].client_msg_id, posted[1][4].client_msg_id, 'retry keeps a stable idempotency key');
+    f.db.crewContext = async () => null;
+    await assert.rejects(M.msgrPush(event, { session }), /실행 권한/);
+    assert.equal(posted.length, 2, 'revocation stops before followup publication');
+  }
+});
+
+test('원래 DM 구성원의 결재 후속도 결재 카드가 아닌 원래 text source에 답한다', async () => {
+  const f = scopedFixture(); f.envelope.delegated = false;
+  const origin = { orgId: ORG, channelId: CH, channelKind: 'dm', crewId: f.remote.id, threadRoot: 100, sourceMsgId: 101, uid: 'remote-owner', wsId: WS, origin: OWNER, hop: 1 };
+  const event = { type: 'approval_followup', wsId: WS, item: { id: 'native-dm-approval', slug: 'feynman', msgr: { ...origin, rowId: 'approval-row', messageId: 555 } },
+    msgr: origin, reply: '승인된 작업 결과', msgrReply: { mentions: [], meta: { disposition: 'done' } } };
+  await M.msgrPush(event, { session: async () => ({ db: f.db, uid: 'remote-owner' }) });
+  const row = f.db.calls.find((c) => c[0] === 'insertMessage')[1];
+  assert.equal(row.reply_to, 101);
+  assert.equal(row.thread_root, 100);
+  assert.equal(row.meta.disposition, 'done');
 });

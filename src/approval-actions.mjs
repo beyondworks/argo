@@ -114,7 +114,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
     const r = item.msgr
       ? await (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, item.slug, item.msgr, msg, t.sessionId, { runChat, session })
       : await runChat(wsId, item.slug, msg, t.sessionId, item.tg?.chatId ? { source: 'messenger' } : {});
-    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts });
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts, contextScope: r.contextScope });
     // 결재가 메신저에서 왔으면(item.tg) 후속 보고도 그 방으로 — 이 방송이 없어서 카드가
     // "이어서 보고합니다"라고 약속하고 영원히 무소식이었다(실사용 제보 2026-07-30). 파일 첨부는
     // sendTgReply의 경로 규약이 그대로 작동하므로 "승인 = 실제 발송"이 여기서 성립한다.
@@ -126,7 +126,8 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
     const note = (item.kind === 'profile' || item.kind === 'hire') && approve
       ? `${msg}\n\n(자동 보고 실패 — 하지만 위 처리는 완료되었습니다: ${String(e.message || e).slice(0, 120)})`
       : `${msg}\n\n(후속 실행 실패: ${String(e.message || e).slice(0, 160)})`;
-    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: t.sessionId }).catch(() => {});
+    // A failed reauthorization may not return channel kind. Keep any Messenger failure audit scoped.
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: t.sessionId, ...(item.msgr ? { contextScope: { kind: 'msgr', channelId: item.msgr.channelId, threadRoot: item.msgr.threadRoot } } : {}) }).catch(() => {});
     emitNotify({ type: 'approval_followup', wsId, item, reply: note }); // 실패도 무소식보다 통보가 낫다
     throw e;
   }

@@ -13,7 +13,7 @@ export function clearComposerSessions() {
 }
 
 export function createComposerDelivery(transport, uuid = () => crypto.randomUUID()) {
-  let state = { text: '', mentions: [], files: [], job: null, busy: false, uploading: '' };
+  let state = { text: '', mentions: [], recipients: [], files: [], job: null, busy: false, uploading: '' };
   let disposed = false;
   const listeners = new Set();
   const patch = (delta) => {
@@ -60,18 +60,19 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     setText: (value) => update('text', value),
     setMentions: (value) => update('mentions', value),
+    setRecipients: (value) => update('recipients', value),
     setFiles: (value) => update('files', value),
     send(mentions) {
       if (disposed || state.busy || state.job || (!state.text.trim() && !state.files.length)) return Promise.resolve(false);
       const job = { clientId: uuid(), body: state.text.trim(), mentions, messageId: null,
         files: state.files.map((file, index) => ({ id: uuid(), file, key: storageKey(file.name, index), uploaded: false, done: false })) };
       // The submitted snapshot is owned by the delivery card; the next draft is independent.
-      patch({ text: '', mentions: [], files: [], job });
+      patch({ text: '', mentions: [], recipients: [], files: [], job });
       return deliver(job);
     },
     retry() { return state.job ? deliver(state.job) : Promise.resolve(false); },
     dismiss() { if (!state.busy) patch({ job: null }); },
-    dispose() { disposed = true; listeners.clear(); state = { text: '', mentions: [], files: [], job: null, busy: false, uploading: '' }; },
+    dispose() { disposed = true; listeners.clear(); state = { text: '', mentions: [], recipients: [], files: [], job: null, busy: false, uploading: '' }; },
   };
 }
 

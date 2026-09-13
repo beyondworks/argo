@@ -383,7 +383,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 기록은 chat **직후**(완료 조건 검사 전) — 재시도·최종 실패(throw)와 무관하게 모든 턴이
     // 자기 지시와 짝지어 스레드에 남는다(재시도 턴은 아래 루프가 각자 기록).
     const { appendTurn } = await import('./thread.mjs');
-    await appendTurn(wsId, r0.agentSlug, { userMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts })
+    await appendTurn(wsId, r0.agentSlug, { userMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts, contextScope: t.contextScope })
       .catch((e) => console.error(`[argo] 루틴 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
     // 완료 조건(verify) — 산출물이 실제로 없으면 "다 됐어요"를 인정하지 않는다. 미충족이면 실패
     // 목록을 그대로 들려 재시도(retries회), 그래도 미충족이면 throw로 기존 실패 표면
@@ -395,7 +395,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
         verifyTried += 1;
         const retryMsg = verifyRetryPrompt(r0, res.failures, verifyTried + 1, lang);
         t = await run(retryMsg);
-        await appendTurn(wsId, r0.agentSlug, { userMsg: retryMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts })
+        await appendTurn(wsId, r0.agentSlug, { userMsg: retryMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts, contextScope: t.contextScope })
           .catch((e) => console.error(`[argo] 루틴 재시도 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
         res = await checkVerify(wsId, ver, { lang });
       }

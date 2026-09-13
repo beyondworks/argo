@@ -388,3 +388,25 @@ test('team work continuation from an older authorized round cannot restart after
     assert.equal(ran,false);
   } finally {f.stop();}
 });
+
+test('scoped continuation audit survives approval, routine and job persistence without changing the normal session', async () => {
+  const f = await setup();
+  const { appendTurn, loadThread } = await import('../src/thread.mjs');
+  const contextScope = { kind: 'msgr-dm', channelId: f.origin.channelId, threadRoot: f.origin.threadRoot };
+  await appendTurn(f.ws, 'alpha', {userMsg:'normal',reply:'normal reply',sessionId:'normal-session'});
+  const runChat = async () => ({reply:'private continuation',sessionId:'private-session',handover:null,contextScope});
+  try {
+    await approvals._followUpForTest(f.ws, {id:'scoped-ap',slug:'alpha',action:'action',msgr:f.origin},true,{runChat,session:f.session});
+    const routine=await addRoutine(f.ws,{agentSlug:'alpha',title:'scoped',prompt:'continue',schedule:{type:'daily',time:'09:00'},msgr:f.origin});
+    await runRoutine(f.ws,routine.id,{chatFn:runChat,session:f.session});
+    await gateway._makeJobHandlerForTest(f.ws,{runChat,session:f.session})({id:'scoped-job',slug:'alpha',title:'scoped',prompt:'continue',msgr:f.origin});
+    const t=await loadThread(f.ws,'alpha');
+    assert.equal(t.sessionId,'normal-session');
+    assert.equal(t.messages.length,8);
+    assert.ok(t.messages.slice(2).every(m=>JSON.stringify(m.contextScope)===JSON.stringify(contextScope)),'all three continuation consumers preserve both sides of the audit scope');
+    await assert.rejects(approvals._followUpForTest(f.ws,{id:'failed-scoped-ap',slug:'alpha',action:'private action',msgr:f.origin},true,{runChat:async()=>{throw new Error('fixture failure');},session:f.session}),/fixture failure/);
+    const failed=await loadThread(f.ws,'alpha');
+    assert.equal(failed.sessionId,'normal-session');
+    assert.ok(failed.messages.slice(-2).every(m=>m.contextScope?.channelId===f.origin.channelId),'a failed continuation cannot leak unscoped audit text');
+  } finally { f.stop(); }
+});

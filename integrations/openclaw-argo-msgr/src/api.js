@@ -9,6 +9,15 @@ export class ArgoMsgrError extends Error {
 export const MAX_LEN = 20000;                 // 서버 본문 상한(msgr_messages.body)
 export const POLL_TIMEOUT_S = 20;             // 서버 상한 25초
 
+export async function recordCcReceipt({ url, token }, message, outboxDir = process.env.ARGO_MSGR_OUTBOX_DIR || join(homedir(), '.argo-msgr', 'outbox')) {
+  const dir = join(outboxDir, 'receipts');
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const name = createHash('sha256').update(String(url).replace(/\/+$/, '') + '\0' + token).digest('hex');
+  const file = join(dir, `${name}.json`), tmp = `${file}.${randomUUID()}.tmp`;
+  await writeFile(tmp, JSON.stringify({ channelId: message.chat?.id, threadRoot: message.thread_root || message.message_id, sourceId: message.message_id, role: 'cc', receivedAt: Date.now() }), { mode: 0o600, flag: 'wx' });
+  await rename(tmp, file);
+}
+
 export function makeApi({ url, token, fetchImpl = globalThis.fetch, outboxDir = process.env.ARGO_MSGR_OUTBOX_DIR || join(homedir(), '.argo-msgr', 'outbox') }) {
   const base = String(url ?? '').replace(/\/+$/, '');
   const call = async (method, params, { post = false, timeoutMs = 30_000 } = {}) => {
@@ -60,7 +69,7 @@ export function makeApi({ url, token, fetchImpl = globalThis.fetch, outboxDir = 
   };
   return {
     getMe: () => call('getMe'),
-    getUpdates: async (offset, limit = 1) => { await flush(); return call('getUpdates', { offset, limit, timeout: POLL_TIMEOUT_S }, { timeoutMs: (POLL_TIMEOUT_S + 15) * 1000 }); },
+    getUpdates: async (offset, limit = 1) => { await flush(); return call('getUpdates', { offset, limit, timeout: POLL_TIMEOUT_S, delivery_protocol: 1 }, { timeoutMs: (POLL_TIMEOUT_S + 15) * 1000 }); },
     sendMessage: (chatId, text, replyTo, execution = {}) => send({ ...execution, chat_id: chatId, text: String(text).slice(0, MAX_LEN), ...(replyTo != null ? { reply_to_message_id: replyTo } : {}) }),
   };
 }
@@ -73,8 +82,11 @@ export async function pollLoop(api, { onMessage, log = () => {}, signal, sleep =
       const ups = (await api.getUpdates(offset)) ?? [];
       backoff = 1000;
       for (const up of ups) {
+        try { await onMessage(up.message ?? {}, up.update_id); } catch (e) {
+          if (up.message?.delivery_role === 'cc') throw e;
+          log(`argo-msgr: dispatch failed for update ${up.update_id}: ${String(e)}`);
+        }
         offset = Math.max(offset, Number(up.update_id ?? 0) + 1);
-        try { await onMessage(up.message ?? {}, up.update_id); } catch (e) { log(`argo-msgr: dispatch failed for update ${up.update_id}: ${String(e)}`); }
       }
     } catch (e) {
       if (signal?.aborted) return;
@@ -110,16 +122,44 @@ export function relayPrompt(message) {
 ${context}
 
 [Argo Messenger delivery]
-Keep all coordination in this channel. Available colleagues: ${peers || '(none)'}. To give a colleague a concrete remaining action, mention @name and end your own answer with the standalone line MSGR: handoff. When finished, including acknowledgments, end with MSGR: done. Do not use Telegram or mail to relay this task. Only the final standalone marker outside quotes/code controls handoff; it is hidden from users.`;
+Keep all coordination in this channel. Available colleagues: ${peers || '(none)'}. To give a colleague a concrete remaining action, mention @name and end your own answer with the standalone line MSGR: handoff. For reference only, put CC: @name on its own line; CC does not execute or reply. A delegated DM request shares this request thread only, not the whole DM. When finished, including acknowledgments, end with MSGR: done. Do not use Telegram or mail to relay this task. Only the final standalone marker outside quotes/code controls handoff; it is hidden from users.`;
+}
+
+// Kept standalone for plugin distribution; adapter parity tests cover the Python implementation.
+export function recipientMentions(text, peers) {
+  let fence = null;
+  const parts = { to: [], cc: [] };
+  for (const line of text.split(/\r?\n/)) {
+    const mark = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (mark) {
+      if (fence) { if (mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = null; }
+      else if (mark[1][0] !== '`' || !mark[2].includes('`')) fence = mark[1];
+      continue;
+    }
+    if (fence || /^\s*>/.test(line)) continue;
+    const cc = /^\s*(?:CC|참조):\s*(.*)$/i.exec(line);
+    parts[cc ? 'cc' : 'to'].push(cc ? cc[1] : line);
+  }
+  const named = peers.filter((p) => p.name && peers.filter((q) => String(q.name).toLowerCase() === p.name.toLowerCase()).length === 1)
+    .sort((a, b) => b.name.length - a.name.length);
+  const resolve = (lines) => {
+    let rest = lines.join('\n'); const found = [];
+    for (const p of named) {
+      const escaped = p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(^|\\s)@${escaped}(?=$|[\\s,.:;!?])`, 'giu');
+      const hit = re.exec(rest); if (!hit) continue;
+      found.push({ kind: 'crew', id: p.id, at: hit.index });
+      rest = rest.replace(re, (match, lead) => lead + ' '.repeat(match.length - lead.length));
+    }
+    return found.sort((a, b) => a.at - b.at).map(({ kind, id }) => ({ kind, id }));
+  };
+  const cc = resolve(parts.cc); const copied = new Set(cc.map((p) => p.id));
+  return [...resolve(parts.to).filter((p) => !copied.has(p.id)), ...cc.map((p) => ({ ...p, role: 'cc' }))];
 }
 export function relayReply(text, message) {
   const parsed = parseMessengerDisposition(text);
   const disposition = parsed.disposition ?? 'done';
   const peers = message.peers ?? [];
-  const mentions = disposition === 'handoff' ? peers.filter((p) => {
-    if (peers.filter((q) => q.name === p.name).length !== 1) return false;
-    const escaped = String(p.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?:^|\\s)@${escaped}(?=$|[\\s,.:;!?])`, 'u').test(parsed.text);
-  }).map((p) => ({ kind: 'crew', id: p.id })) : [];
+  const mentions = disposition === 'handoff' ? recipientMentions(parsed.text, peers) : [];
   return { text: parsed.text, execution: { execution_attempt: message.execution_attempt, disposition, mentions } };
 }

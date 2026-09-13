@@ -1,7 +1,7 @@
 name: argo-msgr-platform
 label: Argo Messenger
 kind: platform
-version: 0.1.1
+version: 0.1.2
 description: >
   Argo Messenger gateway adapter for Hermes Agent. Connects Hermes to an Argo Messenger
   organization as a bot (the same way Hermes connects to Telegram or Slack): long-polls

@@ -4,6 +4,7 @@
 //    순수 함수가 맞아도 호출부가 빠지면 칩은 안 뜬다. 선례: runner-neutrality 배선 단언).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { parse } from 'espree';
 import { mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
@@ -56,7 +57,19 @@ test('배선: 반환부·호출부 전파(행동 검증은 artifacts-behavior.te
   // 검수 CRITICAL-3 교훈: "diff 호출 개수" 단언은 위치를 못 보고, buggy 조합(예산 분기 오염 +
   // CLI 미수정)에서만 초록인 안티 게이트였다. 위치는 유니크 앵커로, 유효성은 행동 파일이 잠근다.
   assert.match(chat, /\.\.\.\(handover \? \{ journalRel: relative\(p\.vault, handover\.file\) \} : \{\}\),\n      \}\);\n      \/\/ 모델을 부르지 않은 턴/, '예산 분기는 diff 미참조(TDZ 회귀 금지) — journalRel은 journal.off(팀 메신저 crew_memory=false)면 부재');
-  assert.match(chat, /downgradedFrom: effModel \} : \{\}\) \}\);[\s\S]{0,400}?return \{ reply, sessionId: null, handover, artifacts: await artDiff\(\), \.\.\.fellBackInfo, \.\.\.modelFallbackInfo \};/, 'CLI 반환부가 diff를 싣는다(주석 줄수 무관 — 검수 LOW-5, fellBackInfo는 폴백 투명화 P2, modelFallbackInfo는 모델 강등 고지 D)');
+  const ast = parse(chat, { ecmaVersion: 'latest', sourceType: 'module' });
+  const turn = ast.body.find((n) => n.type === 'ExportNamedDeclaration' && n.declaration?.id?.name === 'chat').declaration;
+  const cli = turn.body.body.find((n) => n.type === 'IfStatement' && n.test.name === 'cliTurn');
+  const attempt = cli.consequent.body.find((n) => n.type === 'TryStatement');
+  const result = attempt.block.body.find((n) => n.type === 'ReturnStatement').argument;
+  assert.equal(result.type, 'ObjectExpression', 'CLI success must return a concrete turn result');
+  const artifacts = result.properties.find((p) => p.type === 'Property' && p.key.name === 'artifacts')?.value;
+  assert.equal(artifacts?.type, 'AwaitExpression', 'CLI artifact collection must finish before returning');
+  assert.equal(artifacts.argument.type, 'CallExpression');
+  assert.equal(artifacts.argument.callee.name, 'artDiff', 'CLI return must carry the actual artifact diff');
+  assert.deepEqual(artifacts.argument.arguments, []);
+  const spreads = result.properties.filter((p) => p.type === 'SpreadElement').map((p) => p.argument.name).filter(Boolean);
+  assert.deepEqual(spreads, ['fellBackInfo', 'modelFallbackInfo'], 'CLI return preserves runner and model fallback disclosures');
   assert.match(chat, /source === 'compete' \? null/, '경쟁 턴은 diff 제외(합집합 오귀속 방지 — 검수 HIGH)');
   assert.match(chat, /via: 'delegate', artifacts: r\.artifacts/, '위임 미러 전파');
   assert.match(await readFile(new URL('../src/trial.mjs', import.meta.url), 'utf8'), /artifacts: r\.artifacts/, '시운전 전파(검수 HIGH)');

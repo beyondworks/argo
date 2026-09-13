@@ -15,7 +15,7 @@ test('주소는 /bot<token>/<method>, GET 쿼리·POST JSON, {ok,result} 풀기,
   const api = makeApi({ url: 'https://x.supabase.co/functions/v1/msgr-bot/', token: T, fetchImpl: f });
   assert.deepEqual(await api.getMe(), { id: 'b1' });
   assert.equal(f.calls[0][0], `https://x.supabase.co/functions/v1/msgr-bot/bot${T}/getMe`);
-  await api.getUpdates(5); assert.match(f.calls[1][0], /getUpdates\?offset=5&limit=1&timeout=20$/);
+  await api.getUpdates(5); assert.match(f.calls[1][0], /getUpdates\?offset=5&limit=1&timeout=20&delivery_protocol=1$/);
   assert.equal((await api.sendMessage('c1', '네', 3)).message_id, 7);
   assert.deepEqual(JSON.parse(f.calls[2][1].body), { chat_id: 'c1', text: '네', reply_to_message_id: 3 }); assert.equal(f.calls[2][1].method, 'POST');
   await api.sendMessage('c1', '평문'); assert.equal('reply_to_message_id' in JSON.parse(f.calls[3][1].body), false);
@@ -50,6 +50,18 @@ test('relay parses explicit final disposition, suppresses completion mentions, a
   const answer=relayReply('@서윤 next\nMSGR: handoff',m);
   await makeApi({url:'https://x',token:T,fetchImpl:f,outboxDir}).sendMessage('channel',answer.text,7,answer.execution);
   assert.deepEqual(JSON.parse(f.calls[0][1].body),{chat_id:'channel',text:'@서윤 next',reply_to_message_id:7,...answer.execution});
+});
+
+test('CC receipt storage failure is retried before advancing the poll acknowledgement', async () => {
+  const offsets=[];let deliveries=0;
+  const api={getUpdates:async offset=>{
+    offsets.push(offset);
+    if(offset===8)throw new ArgoMsgrError(401,'stop fixture');
+    return [{update_id:7,message:{message_id:7,delivery_role:'cc'}}];
+  }};
+  await pollLoop(api,{onMessage:async()=>{if(++deliveries===1)throw new Error('disk unavailable');},sleep:async()=>{}});
+  assert.deepEqual(offsets,[0,0,8]);
+  assert.equal(deliveries,2);
 });
 
 
@@ -93,7 +105,8 @@ test('actual OpenClaw inbound handler excludes tool/draft/reasoning and finishes
     const channel=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
     const calls=[];
     globalThis.fetch=async(url,init)=>{calls.push(JSON.parse(init.body));return {status:200,json:async()=>({ok:true,result:{message_id:99}})};};
-    channel.setArgoRuntime({channel:{activity:{record(){}},routing:{resolveAgentRoute:()=>({agentId:'a',sessionKey:'s',accountId:'default'})},session:{resolveStorePath:()=>dir,readSessionUpdatedAt:()=>null,recordInboundSession:async()=>{}},reply:{formatAgentEnvelope:o=>o.body,resolveEnvelopeFormatOptions:()=>({}),finalizeInboundContext:o=>o,dispatchReplyWithBufferedBlockDispatcher:async({dispatcherOptions:d,replyOptions:r})=>{
+    const sessions=[];
+    channel.setArgoRuntime({channel:{activity:{record(){}},routing:{resolveAgentRoute:()=>({agentId:'a',sessionKey:'s',accountId:'default'})},session:{resolveStorePath:()=>dir,readSessionUpdatedAt:()=>null,recordInboundSession:async({sessionKey})=>{sessions.push(sessionKey);}},reply:{formatAgentEnvelope:o=>o.body,resolveEnvelopeFormatOptions:()=>({}),finalizeInboundContext:o=>o,dispatchReplyWithBufferedBlockDispatcher:async({dispatcherOptions:d,replyOptions:r})=>{
       assert.equal(r.disableBlockStreaming,true);
       await d.deliver({text:'private tool output'},{kind:'tool'});
       await d.deliver({text:'partial'},{kind:'block'});
@@ -104,6 +117,18 @@ test('actual OpenClaw inbound handler excludes tool/draft/reasoning and finishes
     assert.equal(calls.length,1); assert.equal(calls[0].text,'@Peer next');
     assert.equal(calls[0].execution_attempt,'claim');assert.equal(calls[0].reply_to_message_id,5);
     assert.deepEqual(calls[0].mentions,[{kind:'crew',id:'peer'}]);
+    for (const id of [6,7]) await channel.handleInbound({m:{message_id:id,thread_root:id,delegated:true,text:'DM request',chat:{id:'chat',kind:'dm'},from:{id:'user'},execution_attempt:'claim',peers:[]},account:{url:'https://channel.test',token:T,accountId:'default'},cfg:{},log:()=>{}});
+    assert.deepEqual(sessions,['s','s:argo-dm:chat:6','s:argo-dm:chat:7']);
+    assert.deepEqual(calls.slice(1).map(p=>p.chat_id),['chat','chat']);
+    for (const id of [8,9]) await channel.handleInbound({m:{message_id:id,text:'native DM',chat:{id:'chat',kind:'dm'},from:{id:'user'}},account:{url:'https://channel.test',token:T,accountId:'default'},cfg:{},log:()=>{}});
+    assert.deepEqual(sessions.slice(-2),['s:argo-dm:chat:conversation','s:argo-dm:chat:conversation']);
+    await channel.handleInbound({m:{message_id:10,text:'private CC body',delivery_role:'cc',chat:{id:'chat',kind:'dm'}},account:{url:'https://channel.test',token:T,accountId:'default'},cfg:{},log:()=>{}});
+    assert.equal(calls.length,5,'CC never executes or sends a reply');
+    assert.equal(sessions.length,5,'CC never enters provider session history');
+    const receipts=await readdir(join(dir,'receipts'));
+    const receipt=await readFile(join(dir,'receipts',receipts[0]),'utf8');
+    assert.equal(JSON.parse(receipt).sourceId,10);
+    assert.equal(receipt.includes('private CC body'),false);
   } finally {
     globalThis.fetch=previousFetch; delete globalThis.__argoSdkFixture;
     if(previousOutbox===undefined)delete process.env.ARGO_MSGR_OUTBOX_DIR;else process.env.ARGO_MSGR_OUTBOX_DIR=previousOutbox;

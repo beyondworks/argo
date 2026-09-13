@@ -17,6 +17,8 @@ class Base:
     def __init__(self, **kwargs): self._message_handler = True
     def build_source(self, **kwargs): return Box(**kwargs)
     async def handle_message(self, event):
+        if event.source.chat_type == 'dm':
+            assert event.source.thread_id in ['argo-dm:a:77', 'argo-dm:a:conversation']
         await asyncio.sleep(0.001)
         await self.send(event.source.chat_id, '@Peer continue\nMSGR: handoff', metadata={'notify':True})
 b = sys.modules['gateway.platforms.base']
@@ -43,6 +45,28 @@ async def check():
         assert p['mentions'] == [{'kind':'crew','id':'peer-id'}]
         assert p['text'] == '@Peer continue'
     assert len(a._pending) == 0
+    dm=source(9,'a');dm['chat']['kind']='dm';dm['thread_root']=77;dm['delegated']=True
+    await a._dispatch(dm)
+    assert calls.pop()[1]['chat_id'] == 'a'
+    native=source(10,'a');native['chat']['kind']='dm'
+    await a._dispatch(native)
+    assert calls.pop()[1]['chat_id'] == 'a'
+    cc=source(11,'a');cc['chat']['kind']='dm';cc['delivery_role']='cc'
+    await a._dispatch(cc)
+    assert len(calls) == 2
+    receipt=list((a._outbox / 'receipts').glob('*.json'))
+    assert len(receipt) == 1 and 'start' not in receipt[0].read_text()
+    assert m.json.loads(receipt[0].read_text())['sourceId'] == 11
+    original_handler=a.handle_message
+    async def typing(event):
+        await a.send_typing(event.source.chat_id)
+    a.handle_message=typing
+    scoped=source(12,'a');scoped['execution_attempt']='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    await a._dispatch(scoped)
+    method,params=calls.pop()
+    assert method=='sendChatAction' and params['reply_to_message_id']==12 and params['execution_attempt']==scoped['execution_attempt']
+    a.handle_message=original_handler
+    a._pending.pop(12)
     assert not (await a.send('a','duplicate',reply_to='1',metadata={'notify':True})).success
     a._pending[3] = source(3,'a')
     assert (await a.send('a','partial',reply_to='3',metadata={'notify':False})).success

@@ -4,6 +4,7 @@
 //  · 카드가 쓰는 i18n 키가 ko/en 둘 다 있다(다국어 상시 규칙)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { parse } from 'espree';
 import { readFileSync } from 'node:fs';
 import { stripComments } from './helpers/strip-comments.mjs';
 
@@ -107,7 +108,9 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
-  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \{\}\) \}\);/, '미러 행에 risk·(org_doc이면 kind·payload)가 없다');
+  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \{\}\) \};/, '미러 행에 risk·(org_doc이면 kind·payload)가 없다');
+  assert.match(bridge, /ap = await c\.db\.insertApproval\(approval\)/, '일반 결재가 위험 판정 payload를 사용해야 한다');
+  assert.match(bridge, /createThreadApproval\(event\.wsId, ctx\.crewId, ctx\.sourceMsgId \?\? ctx\.threadRoot, ctx\.channelId, approval, body\)/, '위임 결재도 같은 위험 판정 payload를 사용해야 한다');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /'approval_id', 'action', 'created_at', 'risk'\);/, 'risk가 잠긴 컬럼이 아니다(등급 하향 가능)');
   assert.match(sql, /and decided_by = \(select auth\.uid\(\)\) and public\.msgr_can_decide\(id\)\)\);/, '확정 with check가 msgr_can_decide를 안 본다');
@@ -154,9 +157,9 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'allowed'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)\);/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼)');
   const comp = app.slice(app.indexOf('function Composer('));
   assert.match(comp, /const usable = \(channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews\)\.filter\(\(c\) => !\(channel\?\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\)/, '멘션 후보 필터');
-  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: scopeCrews \?\? usable, members: scopePeople \?\? members, uid, exclude \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외·본문 중복 제외·@all은 mention-candidates.mjs, 2026-09-12)');
+  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: isDm \? mentionCrews : scopeCrews \?\? usable, members: scopePeople \?\? members, uid, exclude, all: !isDm \|\| allByName\.some\(\(c\) => c\.kind === 'crew' \|\| c\.id !== uid\) \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외·본문 중복 제외·@all은 mention-candidates.mjs, 2026-09-12)');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
-  assert.match(bridge, /let why = await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
+  assert.match(bridge, /let why = envelope \? 'ok' : await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
   assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
   assert.match(bridge, /body: why === 'channel_policy'\n\s*\? pick\(`이 채널은 회사 크루만 일할 수 있습니다\(채널 정책\)/, '채널 사유 안내');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
@@ -328,8 +331,38 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
   assert.ok(!/successor_user_id/.test(oc), '승계 관리자 지정 UI는 자동 승계가 생기기 전까지 숨김(유건 UX 지시 2026-09-04)');
   assert.match(app, /const orgLocked = ent\?\.ls_status === 'past_due' \|\| ent\?\.ls_status === 'unpaid';/, '잠금 판정(서버 msgr_org_locked와 같은 규칙)');
   assert.match(app, /\{orgLocked && <div className="msgr-notice locked">/, '잠금 배너');
-  assert.match(app, /disabled=\{busy \|\| !!job \|\| locked \|\| \(!text\.trim\(\) && !files\.length\)\}/, '잠금·전송 대기 중에는 보내기 비활성');
-  assert.match(app, /if \(locked \|\| busy \|\| job\) return;/, '키보드·폼 전송도 잠금 상태를 확인');
+  const ast = parse(app, { ecmaVersion: 'latest', sourceType: 'module', ecmaFeatures: { jsx: true } });
+  const composer = ast.body.find((node) => node.type === 'FunctionDeclaration' && node.id.name === 'Composer');
+  const nodes = [];
+  const walk = (node) => { if (!node || typeof node !== 'object') return; if (node.type) nodes.push(node); for (const value of Object.values(node)) { if (Array.isArray(value)) value.forEach(walk); else if (value && typeof value === 'object') walk(value); } };
+  walk(composer);
+  const button = nodes.find((node) => node.type === 'JSXOpeningElement' && node.name.name === 'button' && node.attributes.some((attr) => attr.name?.name === 'className' && attr.value?.value === 'send'));
+  const disabled = button.attributes.find((attr) => attr.name?.name === 'disabled').value.expression;
+  const send = nodes.find((node) => node.type === 'VariableDeclarator' && node.id.name === 'send');
+  const guard = send.init.body.body[0];
+  assert.equal(guard.type, 'IfStatement');
+  assert.equal(guard.consequent.type, 'ReturnStatement', '키보드·폼 전송의 첫 행동은 잠금 시 즉시 반환');
+  const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', `return (${expr});`);
+  const disabledSource = app.slice(disabled.start, disabled.end);
+  const guardSource = app.slice(guard.test.start, guard.test.end);
+  const check = (buttonSource, handlerSource) => {
+    const buttonDisabled = evaluate(buttonSource), handlerBlocked = evaluate(handlerSource);
+    for (let bits = 0; bits < 16; bits++) {
+      const [busy, pending, locked, deliveryBlocked] = [0, 1, 2, 3].map((bit) => !!(bits & (1 << bit)));
+      const job = pending ? { clientId: 'pending' } : null;
+      for (const [text, files] of [['', []], ['  ', []], ['hello', []], ['', [{ name: 'file.txt' }]]]) {
+        const args = [busy, job, locked, deliveryBlocked, text, files];
+        assert.equal(!!buttonDisabled(...args), bits !== 0 || (!text.trim() && !files.length), `send button flags=${bits}`);
+        assert.equal(!!handlerBlocked(...args), bits !== 0, `keyboard/form guard flags=${bits}`);
+      }
+    }
+  };
+  check(disabledSource, guardSource);
+  for (const flag of ['busy', 'job', 'locked', 'deliveryBlocked']) {
+    const identifier = new RegExp(`\\b${flag}\\b`, 'g');
+    assert.throws(() => check(disabledSource.replace(identifier, 'false'), guardSource), /send button/, `removing button ${flag} must fail`);
+    assert.throws(() => check(disabledSource, guardSource.replace(identifier, 'false')), /keyboard\/form guard/, `removing handler ${flag} must fail`);
+  }
   assert.match(app, /select\('plan, seats, ls_status'\)/, '자격 조회에 ls_status');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /coalesce\(old\.pending_owner_user_id = me, false\)\) then/, '수락 판정 NULL 방어');

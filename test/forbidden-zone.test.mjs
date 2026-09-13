@@ -466,6 +466,7 @@ const DOT_ITEMS = [
   ['ws', '.secrets.json'], ['ws', '.connector-secrets.json'], ['ws', '.workroots.json'],
   ['ws', '.scaffold.json'], ['ws', '.sync-state.json'], ['ws', '.index.sqlite'],
   ['ws', '.import.status.json'], ['ws', '.gw-queue-slack/job1.json'], ['ws', '.gw-offset-slack'],
+  ['ws', '.msgr-cc/crew-receipt.json'],
   ['ws', '.gateway-telegram.json'], // 게이트웨이 상태(persist.mjs) — 어떤 단언도 안 지키던 사각
   ['root', '.device-session.json'], ['root', '.tmp-devsess-123-abc'],
   ['root', '.sync-credentials.json'],
