@@ -85,6 +85,18 @@ test('cancel during setup prevents provider invocation', async () => {
   await started.promise; assert.equal(await interruptTurn(ws,'alpha'),true); end.resolve(); await rejected;
   assert.equal(calls,0); prepare=async()=>{};
 });
+test('actual chat preserves uncertain process cleanup in error and event journal',async()=>{
+ runner='codex';const ws=await setup();
+ execute=async()=>{
+  await interruptTurn(ws,'alpha');
+  throw Object.assign(new Error('cleanup uncertain'),{aborted:true,cancellationIncomplete:true});
+ };
+ await assert.rejects(chat(ws,'alpha','fixture work',null,{journal:{off:true}}),e=>e.aborted===true&&e.cancellationIncomplete===true);
+ const {readEvents}=await import('../src/events.mjs');
+ assert.ok((await readEvents(ws)).some(e=>e.aborted&&e.cancellationIncomplete));
+ await appendTurn(ws,'alpha',{userMsg:'fixture work',failed:'중단됨',aborted:true,cancellationIncomplete:true});
+ assert.ok((await loadThread(ws,'alpha')).messages.some(m=>m.aborted&&m.cancellationIncomplete));
+});
 test('controlled real child process is terminated and does not restart after cancel', async () => {
   runner='codex'; const ws=await setup(); const started=deferred(); let calls=0,beats=0;
   execute=({signal})=>new Promise(resolve=>{

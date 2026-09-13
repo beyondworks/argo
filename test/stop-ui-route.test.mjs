@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { parse } from 'espree';
+import { interruptTurn, withTurnControl } from '../src/turn-abort.mjs';
 import { isStopCommand } from '../src/stop-command.mjs';
 
 const ui=await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx',import.meta.url),'utf8');
@@ -40,4 +41,28 @@ test('actual authenticated chat route executes standalone stop without invoking 
  vm.runInContext(findFunction(route,'POST'),ctx);
  const response=await ctx.POST({json:async()=>({slug:'alpha',message:'멈춰',sessionId:'session'})},{params:Promise.resolve({ws:'w'})});
  assert.equal(response.status,200);assert.equal(cancelled,1);assert.equal(models,0);assert.match((await response.json()).reply,/중단/);assert.equal(saved.length,1);
+});
+test('actual route retains incomplete cancellation in response and stored conversation',async()=>{
+ const saved=[];
+ const ctx=vm.createContext({Response,console,isStopCommand,guardCompany:async()=>null,
+  beginTurn:async()=> 'turn-id',nudgeSync:()=>{},loadCompany:async()=>({lang:'ko'}),
+  chat:async()=>{throw Object.assign(new Error('중단됨'),{aborted:true,cancellationIncomplete:true});},
+  appendTurn:async(...args)=>saved.push(args)});
+ vm.runInContext(findFunction(route,'POST'),ctx);
+ const response=await ctx.POST({json:async()=>({slug:'alpha',message:'fixture work'})},{params:Promise.resolve({ws:'w'})});
+ const result=await response.json();assert.equal(result.cancellationIncomplete,true);assert.equal(result.aborted,true);
+ assert.equal(saved[0][2].cancellationIncomplete,true);
+});
+
+
+test('actual directive batch stops before its second side effect',async()=>{
+ const source=await readFile(new URL('../src/cli-directives.mjs',import.meta.url),'utf8');
+ const executed=[];
+ const ctx=vm.createContext({TOOL_RESULT_BUDGET_BYTES:24000,listAgents:async()=>[],normalizeSchedule:x=>x,toSchedule:()=>({type:'daily',time:'09:00'}),messengerOrigin:()=>null,
+  addRoutine:async(_ws,data)=>{executed.push(data.title);await interruptTurn('batch','alpha',{source:'chat'});return {id:'one',schedule:{type:'daily',time:'09:00'}};}});
+ vm.runInContext(findFunction(source,'runDirectives'),ctx);
+ await assert.rejects(withTurnControl('batch','alpha',null,control=>ctx.runDirectives('batch','alpha',[
+  {action:'schedule',title:'first',prompt:'first'},{action:'schedule',title:'second',prompt:'second'}
+ ],{turnControl:control})),e=>e.aborted===true);
+ assert.deepEqual(executed,['first']);
 });

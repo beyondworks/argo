@@ -549,7 +549,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       // 우연히 'aborted'여도 오판 없음. 라벨은 렌더 시점에 t()로).
       // 서버 저장이 실패했을 때(unsaved)만 폴링 병합이 이 사본을 캐리오버한다(복제 방지 — 검수 HIGH).
       const failed = err?.data?.failed ?? String(err.message);
-      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true } : {};
+      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true, cancellationIncomplete: !!err?.data?.cancellationIncomplete } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
       // 실패 코드·출처(route.js가 code/origin으로 응답) — 서버 보존분(failedCode)과 같은 필드명으로 로컬 사본에도(렌더 일치)
       const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
@@ -902,7 +902,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
                   {/* failedCode(error-class.mjs 표) — 원문 대신 "할 일"을 먼저(불변식 C). 코드 없음/미상은 종전 원문 표시 */}
                   {/* 코드 안내는 행동 지시가 뒤에 오므로 줄바꿈 허용(검수 LOW: EN 한 줄 말줄임이 "switch to an API key in S…"에서 잘림) */}
-                  <span style={{ minWidth: 0, overflow: 'hidden', ...(m.failedCode && m.failedCode !== 'unknown' ? { whiteSpace: 'normal' } : { textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }} title={m.failed}>{m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
+                  <span style={{ minWidth: 0, overflow: 'hidden', ...(m.cancellationIncomplete || (m.failedCode && m.failedCode !== 'unknown') ? { whiteSpace: 'normal' } : { textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }} title={m.failed}>{m.cancellationIncomplete ? t('chat.cancelIncomplete') : m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
                   <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>

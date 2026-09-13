@@ -4,8 +4,8 @@ import { registerTurn, interruptTurn, withTurnControl } from '../src/turn-abort.
 import { isStopCommand } from '../src/stop-command.mjs';
 
 test('standalone stop commands and negative/content examples', () => {
-  for (const text of ['멈춰', '멈춰줘!', '중지해', '중단해주세요', '그만', 'stop', 'Please stop.']) assert.equal(isStopCommand(text),true,text);
-  for (const text of ['멈추지마', '중지하는 방법 알려줘', '루틴에서 중지해 라고 답하면', '`stop`', '> stop', '"멈춰"', 'stop the server tomorrow', '이것을 멈춰', '']) assert.equal(isStopCommand(text),false,text);
+  for (const text of ['멈춰', '멈춰줘!', '중지해', '중단해주세요', '그만', 'stop', 'Please stop.', '지금 하던 작업 멈춰줘', '작업 중지해줘', '현재 진행 중인 작업을 중단해주세요', '지금 멈춰']) assert.equal(isStopCommand(text),true,text);
+  for (const text of ['멈추지마', '중지하는 방법 알려줘', '루틴에서 중지해 라고 답하면', '`stop`', '> stop', '"멈춰"', 'stop the server tomorrow', '이것을 멈춰', '지금 하던 작업 멈추지 마', '작업 중지하는 방법 알려줘', '작업 중지해줘 그리고 메일 보내', '지금 다른 작업 멈춰', '작업 중지해줘?', '']) assert.equal(isStopCommand(text),false,text);
 });
 test('all current handles are interrupted without touching a different crew or future instruction', async()=>{
   const calls=[];
@@ -45,4 +45,10 @@ test('a preparation error after cancellation stays terminal instead of retryable
  await assert.rejects(withTurnControl('ws','preparing',null,async()=>{
   await interruptTurn('ws','preparing');throw new Error('transport failure');
  }),e=>e.aborted===true);
+});
+test('incomplete process cleanup survives cancellation lifetime wrapping',async()=>{
+ await assert.rejects(withTurnControl('ws','incomplete',null,async()=>{
+  await interruptTurn('ws','incomplete');
+  throw Object.assign(new Error('child cleanup uncertain'),{aborted:true,cancellationIncomplete:true});
+ }),e=>e.aborted===true&&e.cancellationIncomplete===true);
 });

@@ -2,7 +2,7 @@
 // Keep every handle: replacing the latest entry orphaned the preceding execution.
 // Process-local, as before: a different server process must route cancellation to its owner.
 const active = new Map();
-export const turnAbortedError = () => Object.assign(new Error('중단됨'), { aborted: true });
+export const turnAbortedError = (cause) => Object.assign(new Error('중단됨'), { aborted: true, ...(cause?.cancellationIncomplete ? { cancellationIncomplete: true, cause } : {}) });
 
 export function registerTurn(wsId, slug, interrupt, { group = Symbol('turn'), source = 'chat' } = {}) {
   const key = `${wsId}:${slug}`;
@@ -41,7 +41,7 @@ export async function withTurnControl(wsId, slug, inherited, run, { source = 'ch
     control.check(); // interrupt may return a normal final result instead of throwing
     return result;
   } catch (error) {
-    control.check(); // A setup or transport failure after stop must not become retryable.
+    if (registration.wasAborted()) throw turnAbortedError(error); // Preserve incomplete cleanup while keeping cancellation terminal.
     throw error;
   } finally { registration.release(); }
 }

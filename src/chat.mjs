@@ -32,7 +32,7 @@ import { makePermissionGate } from './permission-gate.mjs';
 import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커넥터 = 러너 무관 단일 실행 경로(설계서 §2-2)
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
-import { registerTurn, withTurnControl } from './turn-abort.mjs';
+import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
@@ -1252,7 +1252,7 @@ ${lang === 'en'
         if (directives.length || bad.length) {
           const toolResults = [];
           __turnControl.check();
-          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain, toolHop, results: toolResults, mirrorCtx });
+          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain, toolHop, results: toolResults, mirrorCtx, turnControl: __turnControl });
           reply = [clean, notes.join('\n')].filter(Boolean).join('\n\n');
           // 커넥터 결과 자동 후속 턴 1회 — 크루의 위 답변은 **결과를 보기 전에** 쓰인 것이라 그대로
           // 두면 반쪽이다(설계서 §2-2). 상한·증가는 runToolFollowUp/runDirectives가 toolHop으로 잠근다.
@@ -1376,12 +1376,12 @@ ${lang === 'en'
       if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
       if (!aborted) { e = await surfaceRunnerFailure(e, { wsId, runner, lang }); prefixFallbackError(e); } // 구조화·출처·다음 턴 차단(불변식 A·C) → 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
-      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}), ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
+      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
       await clearTurnStatus(wsId, agentSlug);
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
       if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
-      throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
+      throw aborted ? turnAbortedError(e) : e;
     } finally {
       abortReg.release();
       await browserBridge?.close();
@@ -1770,8 +1770,8 @@ ${lang === 'en'
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
     await appendEvent(wsId, {
       ...evBase, ok: false, ms: Date.now() - t0, steps,
-      error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
-      ...(aborted ? { aborted: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
+      error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
+      ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
       ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}), // 실패 코드 표·출처(vendor/argo/probe)
     });
     await clearTurnStatus(wsId, agentSlug);
@@ -1804,7 +1804,7 @@ ${lang === 'en'
           : e;
     // failCode/failOrigin은 위(이벤트 전)에서 e에 붙었다 — surfaced가 e를 감싼 새 객체면 옮겨 싣는다(재분류·재프로브 없음)
     if (surfaced !== e && e?.failCode) Object.assign(surfaced, { failCode: e.failCode, failOrigin: e.failOrigin });
-    throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
+    throw aborted ? turnAbortedError(e) : surfaced;
   } finally {
     abortReg?.release();
     await browserBridge?.close();

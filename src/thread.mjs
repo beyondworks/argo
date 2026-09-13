@@ -51,7 +51,7 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, fellBack, failedCode, failedOrigin, modelFallback, contextScope }) {
+export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope }) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -72,6 +72,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       if (failedCode) m.failedCode = failedCode; // 실패 코드 표(error-class.mjs) — UI가 chat.fail.<code>로 행동 안내를 그린다
       if (failedOrigin) m.failedOrigin = failedOrigin; // vendor/argo/probe — 출처 판정(유건 기준)
       if (aborted) m.aborted = true;
+      if (cancellationIncomplete) m.cancellationIncomplete = true;
       if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
       if (sessionId && !scope) { t.sessionId = sessionId; t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null); }
       await writeJsonAtomic(file(wsId, slug), t);
@@ -81,7 +82,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       // via = 사장이 직접 쓴 글이 아닌 배달 지시(crewmail·delegate·routine). who:'user'는 러너 프롬프트
       // 관점의 역할일 뿐인데 UI가 사장 말풍선으로 그려 "내가 쓴 게 아니거든"이 됐다(신고 2026-07-28).
       // aborted = 사장 지시 중단(사유 문자열과 별도 — 원문이 우연히 'aborted'여도 오판 없음, 재검수 MEDIUM).
-      { who: 'user', text: userMsg, ts, ...scoped, ...(attachments?.length ? { attachments } : {}), ...(via ? { via } : {}), ...(actor ? { actor } : {}), ...(failed ? { failed } : {}), ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) },
+      { who: 'user', text: userMsg, ts, ...scoped, ...(attachments?.length ? { attachments } : {}), ...(via ? { via } : {}), ...(actor ? { actor } : {}), ...(failed ? { failed } : {}), ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}), ...(cancellationIncomplete ? { cancellationIncomplete: true } : {}) },
     );
     // 실패·중단 턴은 크루 답변이 없다 — 지시문만 사유(failed)와 함께 보존한다. 성공 뒤에만 저장하면
     // 실패 턴의 지시문이 새로고침에 증발하고 비용만 남는다(전수리뷰 2026-07-30 #1).

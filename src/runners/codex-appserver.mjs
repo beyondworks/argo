@@ -18,6 +18,7 @@
 //    fileChange 아이템(changes[].path)을 추적해 판정한다. 추적 실패 = 판정 불가 = decline(fail-closed)
 //  · 한도 소진은 error 알림의 codexErrorInfo === 'usageLimitExceeded'(+ 재개 시각 문구) — 인증 오류와
 //    구분되는 1급 분류(OpenRouter 402/429와 대칭). AUTH_ERR_RE 자가치유를 오발동시키지 않는다.
+import { terminateOwnedProcessTree, watchOwnedProcessTree } from './process-tree.mjs';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -189,6 +190,8 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   });
+  const ownership = watchOwnedProcessTree(child);
+  let ownershipUnverified = false;
   let stderrTail = '';
   child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
   // child 실패를 세션과 경쟁시킨다(분리 검수 HIGH-1·MEDIUM-2). spawn 'error'(ENOENT 등)는 리스너가
@@ -215,6 +218,10 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     settled = true;
     return reply;
   } catch (e) {
+    if (e.aborted || e.timedOut) {
+      try { await terminateOwnedProcessTree(child, ownership); }
+      catch (cleanupError) { e.cause = cleanupError; e.cancellationIncomplete = true; ownershipUnverified = !!cleanupError.ownershipUnverified; }
+    }
     settled = true;
     // 스트림 조기 종료 등 원인 불명은 stderr 꼬리를 붙여 정직하게(키류는 상위 apiError 계열이 마스킹)
     if (!e.timedOut && !e.limitReached && e.stage === 'read' && stderrTail && !e.stderr) {
@@ -222,7 +229,8 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     }
     throw e;
   } finally {
-    try { child.kill(); } catch { /* 이미 종료 */ }
+    await ownership.stop();
+    if (!ownershipUnverified) try { child.kill(); } catch { /* 이미 종료 */ }
     await recoverCodexAuth(auth).catch(() => {});
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
