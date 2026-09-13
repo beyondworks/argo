@@ -250,6 +250,15 @@
 .msgr-setcard p { margin: -6px 0 2px; color: var(--fg-2); font-size: 12.5px; line-height: 1.55; }
 .msgr-setcard .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .msgr-setcard .row > .msgr-klabel { min-width: 64px; }
+.msgr-friend-search .msgr-input { flex: 1; min-width: 0; }
+.msgr-friend-person { display: grid; gap: 4px; flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; }
+.msgr-friend-person strong { font-size: 14px; }
+.msgr-friend-person .sub, .msgr-friend-person .msgr-klabel { white-space: normal; }
+.msgr-friend-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; max-width: 100%; margin-left: auto; }
+.msgr-phone .msgr-main .msgr-thread.page .msgr-friend-search .btn.sm,
+.msgr-phone .msgr-main .msgr-thread.page .msgr-friend-actions .btn.sm { min-height: 44px; height: auto; }
+.msgr-setcard .note.danger { color: var(--danger); }
+
 .msgr-setcard .msgr-seg { justify-self: start; width: max-content; max-width: 100%; }
 .msgr-setcard .msgr-chips .msgr-chan { height: 28px; font-size: 12px; }
 

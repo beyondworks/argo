@@ -1399,25 +1399,45 @@ function ProfileCard({ uid, onNote, onError, onAvatar }) {
 function FriendsCard({ uid, friends, members, onChanged, onDm, onNote, onError }) {
   const { t, lang } = useT();
   const [qs, setQs] = useState(''); const [res, setRes] = useState(null); const [busy, setBusy] = useState(false);
-  const find = async () => { const v = qs.trim().replace(/^@/, ''); if (v.length < 3) return setRes([]); setBusy(true); try { setRes(await q(supabase.rpc('msgr_find_user', { q: v }))); } catch (e) { onError(e.message); } finally { setBusy(false); } };
+  const [searching, setSearching] = useState(false); const [searchError, setSearchError] = useState('');
+  const searchRequest = useRef(0);
+  useEffect(() => () => { searchRequest.current += 1; }, []);
+  const find = async () => {
+    const v = qs.trim().replace(/^@/, ''); const request = ++searchRequest.current;
+    setSearchError(''); setRes(null);
+    if (v.length < 3) { setSearching(false); return setRes([]); }
+    setSearching(true);
+    try { const rows = await q(supabase.rpc('msgr_find_user', { q: v })); if (request === searchRequest.current) setRes(rows); }
+    catch (e) { if (request === searchRequest.current) setSearchError(e.message); }
+    finally { if (request === searchRequest.current) setSearching(false); }
+  };
   const call = async (fn, args, ok) => { setBusy(true); try { await q(supabase.rpc(fn, args)); onNote(ok); await onChanged?.(); if (res) await find(); } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); } finally { setBusy(false); } };
   const received = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const sent = friends.filter((f) => f.status === 'pending' && f.requested_by === uid);
   const accepted = friends.filter((f) => f.status === 'accepted');
   const nameOf = (f) => members.find((m) => m.user_id === f.user_id)?.display_name || f.display_name || f.handle || f.user_id.slice(0, 8); // 같은 조직이면 조직 이름 우선(프로필 미설정 시 이메일 앞부분 대신)
-  const relOf = (r) => { const f = friends.find((x) => x.user_id === r.user_id); return !f ? (r.relation === 'blocked' ? 'blocked' : 'none') : f.status === 'accepted' ? 'friend' : f.status === 'pending' ? (f.requested_by === uid ? 'sent' : 'received') : r.relation; }; // 검색 결과의 관계는 살아 있는 friends 로 — 상대가 수락해도 '요청 보냄'이 남던 결함(2026-09-12 실측)
+  const relOf = (r) => { const f = friends.find((x) => x.user_id === r.user_id); return !f ? (r.relation === 'blocked' ? 'blocked' : 'none') : f.status === 'accepted' ? 'friend' : f.status === 'pending' ? (f.requested_by === uid ? 'sent' : 'received') : r.relation; }; // 친구 목록이 갱신되면 요청 거절·친구 해제도 검색 결과에 반영한다.
   return (
     <section className="msgr-setcard">
       <h2>{t('friends.title')} · {accepted.length}</h2><p>{t('friends.desc')}</p>
-      <form className="row" onSubmit={(e) => { e.preventDefault(); find(); }}><input className="msgr-input sm" value={qs} onChange={(e) => setQs(e.target.value)} placeholder={t('friends.find.ph')} /><button type="submit" className="btn sm" disabled={busy || qs.trim().length < 3}>{t('friends.find')}</button></form>
-      {res && (<div className="msgr-rows">
+      <form className="row msgr-friend-search" onSubmit={(e) => { e.preventDefault(); if (!busy && !searching) find(); }}><input className="msgr-input sm" value={qs} disabled={busy} onChange={(e) => { searchRequest.current += 1; setQs(e.target.value); setRes(null); setSearchError(''); setSearching(false); }} placeholder={t('friends.find.ph')} aria-label={t('friends.find.ph')} autoCapitalize="none" autoCorrect="off" spellCheck={false} /><button type="submit" className="btn sm" disabled={busy || searching || qs.trim().replace(/^@/, '').length < 3}>{t('friends.find')}</button></form>
+      {searching && <p className="note" role="status">{t('ui.loading')}</p>}
+      {searchError && <p className="note danger" role="alert">{friendlyErr(searchError, t)}</p>}
+      {res && (<div className="msgr-rows msgr-friend-results" aria-live="polite">
         {!res.length && <p className="empty">{t('friends.find.none')}</p>}
-        {res.map((r) => <div key={r.user_id} className="row"><Av name={r.display_name || r.handle || '?'} size="sm" userId={r.user_id} /><span className="name">{r.display_name || r.handle}</span><span className="sub">{r.handle ? `@${r.handle}` : ''}</span>
-          {relOf(r) === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, t('friends.sent'))}>{t('friends.request')}</button>}
-          {relOf(r) === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
-          {relOf(r) === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
-          {relOf(r) === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
-        </div>)}
+        {res.map((r) => { const inOrg = members.some((m) => m.user_id === r.user_id && (!m.expires_at || Date.parse(m.expires_at) > Date.now())); const relation = relOf(r); return (
+          <div key={r.user_id} className="row msgr-friend-result">
+            <Av name={nameOf(r)} size="sm" userId={r.user_id} />
+            <div className="msgr-friend-person"><strong>{nameOf(r)}</strong>{r.handle && <span className="sub">@{r.handle}</span>}{inOrg && <span className="msgr-klabel">{t('friends.state.member')}</span>}</div>
+            <div className="msgr-friend-actions">
+              {relation === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, t('friends.sent'))}>{t('friends.request')}</button>}
+              {relation === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
+              {relation === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
+              {relation === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
+              {inOrg && relation !== 'blocked' && <button type="button" className="btn sm" disabled={busy} onClick={() => onDm?.(r.user_id)}><I name="at" size={13} />{t('ui.dm')}</button>}
+            </div>
+          </div>
+        ); })}
       </div>)}
       {received.length > 0 && (<><h3>{t('friends.received')} · {received.length}</h3><div className="msgr-rows">{received.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" userId={f.user_id} /><span className="name">{nameOf(f)}</span><span className="sub">{fmtWhen(f.created_at, lang)}</span>
         <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>
