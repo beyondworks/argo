@@ -70,3 +70,14 @@
 @media (max-width: 360px) {
   .msgr-phone .msgr-main .msgr-top { column-gap: 6px; }
 }
+
+.work-notification-routes { min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 0; }
+.work-notification-routes legend { font-size: 12px; font-weight: 650; padding-inline: 5px; }
+.work-notification-route { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 0; font-size: 13px; cursor: pointer; }
+.work-notification-route input { flex: none; width: 18px; height: 18px; accent-color: var(--fg); }
+.work-notification-route span { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.work-notification-route strong { font-weight: 600; }
+.work-notification-route small { display: block; color: var(--fg-3); font-size: 12px; }
+
+.work-delivery-status { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); overflow-wrap: anywhere; line-height: 1.5; }
+.work-history-row > div { min-width: 0; }

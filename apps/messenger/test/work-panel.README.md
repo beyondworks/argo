@@ -31,3 +31,5 @@ Covered behavior:
 The short viewport checks available layout and scrolling, not an actual on-device keyboard or native safe-area inset. Desktop Tauri, iOS/Android installations, scheduling, crew execution, cloud permissions, and real external integrations require their separate integration gates.
 
 Independent QA found a zero-size deletion-dialog wrapper inside the panel's flex overlay. The implementation now gives the dialog a viewport-sized container and traps focus; this harness detects both regressions.
+
+Notification regression coverage includes original-channel-only defaults, Telegram/Slack multi-selection (including offline routes), saved selection editing, failed-save draft/request-ID preservation, older-server missing-column compatibility and blocked notification saves, and owner-only external delivery history. `WORK_FILTER=notification` runs the notification scenarios. The fixture uses no real notification provider or credentials; these scenarios verify UI/RPC state, not actual external delivery.

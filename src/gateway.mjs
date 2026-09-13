@@ -31,6 +31,7 @@ import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스
 import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
 const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
 import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrEventOrigin, runMessengerContinuation } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
+import { deliverMessengerNotifications } from './gateway/msgr-notifications.mjs';
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
 export { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT, JOBS_MAX_PENDING, enqueueLongJob } from './gateway/queue.mjs';
@@ -778,8 +779,72 @@ function startSlack(wsId, getCfg) {
 
 /* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ───
    결재 문구 정돈(tidy)은 protocol, 결재 주체 표기(approvalWho)는 routing에서 온다. */
+/** One selected result destination. Outbox callers can retry known failures; uncertain sends need review. */
+export async function sendRoutineNotification(event, kind, { pushMsgr = msgrPush, session } = {}) {
+  const { normalizeRoutineNotifications } = await import('./routine-notifications.mjs');
+  let selection;
+  try { selection = normalizeRoutineNotifications(event.routine?.notifications); }
+  catch { return { status: 'failed', reason: 'invalid_destinations' }; }
+  if (event.type !== 'routine' || !selection?.channels.includes(kind)) return { status: 'not_selected' };
+  try {
+    const company = await loadCompany(event.wsId);
+    const lang = company.lang ?? 'ko';
+    if (kind === 'msgr') {
+      if (company.msgr?.mutedEvents?.includes('routine')) return { status: 'muted' };
+      if (!company.msgr?.enabled) return { status: 'unavailable', reason: 'not_connected' };
+      const sent = await pushMsgr(event, { session });
+      return sent ? { status: 'sent' } : { status: 'unavailable', reason: 'destination_unavailable' };
+    }
+    const all = await loadConnections(event.wsId);
+    if (all[kind]?.mutedEvents?.includes('routine')) return { status: 'muted' };
+    let body = pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${event.reply ?? ''}`,
+      `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${event.reply ?? ''}`, lang);
+    if (kind === 'telegram') {
+      const agents = await listAgents(event.wsId);
+      const slug = event.routine.agentSlug;
+      const dest = resolveTelegramDest(all.telegram, 'routine', slug, agents, { widen: false });
+      if (!dest) return { status: 'unavailable', reason: 'not_connected' };
+      if (dest.botSlug && dest.botSlug !== slug) {
+        const name = agents.find((a) => a.slug === slug)?.name ?? slug;
+        body = pick(`(${name}의 결과)\n${body}`, `(Result from ${name})\n${body}`, lang);
+      }
+      // A result notification is one bounded text message, not an implicit file export.
+      // A single request also avoids a retry duplicating earlier chunks of a long report.
+      await tg(dest.token, 'sendMessage', { chat_id: dest.chatId, text: body.slice(0, 4000), link_preview_options: { is_disabled: true } });
+      return { status: 'sent' };
+    }
+    const slack = all.slack;
+    if (!slack.token || !slack.channel || !channelSends('slack', slack, 'routine')) return { status: 'unavailable', reason: 'not_connected' };
+    await slackApi(slack.token, 'chat.postMessage', { channel: slack.channel, text: clip(body) });
+    return { status: 'sent' };
+  } catch (e) {
+    const uncertain = ['AbortError', 'TimeoutError', 'TypeError'].includes(e?.name) || /fetch failed|network|socket|timed? ?out/i.test(e?.message ?? '');
+    // Never return upstream exception text: it may include credentials or private URLs.
+    return { status: uncertain ? 'uncertain' : 'failed', reason: uncertain ? 'delivery_uncertain' : 'delivery_failed' };
+  }
+}
+
 const MSGR_PUSH_TYPES = new Set([...channelSendsKinds('msgr'), 'approval_resolved', 'approval_followup']); // 카드 상태 갱신·후속 보고는 결재의 일부(음소거 대상 아님)
 async function pushEvent(event, { pushMsgr = msgrPush } = {}) {
+  if (event.type === 'routine' && event.routine?.notifications !== undefined) {
+    const { normalizeRoutineNotifications } = await import('./routine-notifications.mjs');
+    const selection = normalizeRoutineNotifications(event.routine.notifications);
+    // The original conversation remains the result record even when additional alerts are off.
+    const origin = msgrEventOrigin(event);
+    let originSent = false;
+    if (origin) {
+      const routine = { ...event.routine }; delete routine.notifications;
+      originSent = await pushMsgr({ ...event, routine }).catch((e) => { console.error('[argo] routine origin delivery failed:', e?.name ?? 'Error'); return false; });
+    }
+    const results = await Promise.all(selection.channels.map(async (kind) => ({ kind,
+      ...(kind === 'msgr' && originSent && selection.msgr.orgId === origin.orgId && selection.msgr.channelId === origin.channelId
+        ? { status: 'sent' } : await sendRoutineNotification(event, kind, { pushMsgr })),
+    })));
+    for (const result of results) if (!['sent', 'muted', 'not_selected'].includes(result.status)) console.error(`[argo] routine notification ${result.kind}: ${result.status} (${event.wsId}/${event.routine.id})`);
+    const { recordRoutineNotificationDelivery } = await import('./routines.mjs');
+    await recordRoutineNotificationDelivery(event.wsId, event.routine.id, event.runAt ?? event.routine.lastRun, results, event.phase ?? (event.ok === false ? 'failed' : 'result'));
+    return results;
+  }
   // 팀 메신저 채널 — msgr 문맥(턴 중 결재·위임, 카드 메타)이 있는 이벤트만 처리하고 아니면 즉시 false(클라이언트 생성 0).
   // 텔레그램·슬랙 경로와 독립 — 여기서 던져도 아래 발송을 막지 않는다.
   const msgrOrigin = msgrEventOrigin(event);
@@ -963,6 +1028,7 @@ export function ensureGateway() {
 
   const running = new Map();  // 폴러(클라우드 리더 전용) — `${wsId}:${kind}` → { stop, key }
   const drainers = new Map(); // 큐 드레인 워커(리더 무관·프로세스 리스만) — `${wsId}:${queueKey}` → stop
+  const notificationTicks = new Map();
   // 푸시는 이벤트가 난 워커가 직접 보낸다(1회 발생 = 1회 발송, 충돌 없음). 리더 단일화는 폴러에만.
   onNotify(pushEvent);
   let wasLeader = false;
@@ -994,6 +1060,19 @@ export function ensureGateway() {
       for (const [id, stop] of drainers) { stop(); drainers.delete(id); }
       return;
     }
+    // Result notifications belong to their creator's connections. Keep this
+    // separate from the executing crew's Messenger bridge (which may be off or
+    // hosted by someone else). SQL claims prevent two devices sending one row.
+    for (const [c] of loaded) {
+      const previous = notificationTicks.get(c.id);
+      if (previous?.busy || Date.now() - (previous?.at ?? 0) < 30_000) continue;
+      const tick = { busy: true, at: Date.now() };
+      notificationTicks.set(c.id, tick);
+      deliverMessengerNotifications(c.id, { send: sendRoutineNotification })
+        .catch(() => console.error(`[argo] 자동화 알림 처리 실패(${c.id}) — 다음 연결 확인 때 재확인`))
+        .finally(() => { tick.busy = false; });
+    }
+    for (const id of notificationTicks.keys()) if (!loaded.some(([c]) => c.id === id)) notificationTicks.delete(id);
     // ── 큐 드레인 워커 — 클라우드 리더가 아니어도 돈다(백로그: 리더 전환 시 큐잉 지시 멈춤).
     //    잡은 적재한 기기에만 있으므로(큐 동기화 제외 + dev 태그) 기기 간 이중 실행이 없고, 턴 실행·회신은
     //    getUpdates와 달리 겹쳐도 충돌하지 않는다. 리더를 양보한 기기의 잔여 잡, 죽었다 살아난 기기의

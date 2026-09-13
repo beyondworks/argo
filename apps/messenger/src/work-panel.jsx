@@ -11,9 +11,10 @@ const POLL_MS = 15_000;
 const TERMINAL = new Set(['completed', 'cancelled']);
 const stamp = (value, lang) => value ? new Date(value).toLocaleString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const checked = async (request) => { const { data, error } = await request; if (error) throw error; return data; };
+const missingSchema = (error) => /PGRST20[245]|42P01|42703|42883/.test(error?.code ?? '') || /schema cache|does not exist|Could not find the (table|function)/i.test(error?.message ?? '');
 const errorText = (error, t) => {
   const message = error?.message ?? '';
-  if (/PGRST20[25]|42P01|42883/.test(error?.code ?? '') || /schema cache|does not exist|Could not find the (table|function)/i.test(message)) return t('work.error.upgrade');
+  if (missingSchema(error)) return t('work.error.upgrade');
   if (/no_available_lead/i.test(message)) return t('work.error.offline');
   if (/no_eligible|invalid_crew|crew_not|lead_not/i.test(message)) return t('work.error.crew');
   if (/permission_revoked/i.test(message)) return t('automation.error.revoked');
@@ -34,17 +35,27 @@ function useRows(table, channelId, enabled, capabilityIds = '') {
     const request = ++revision.current;
     try {
       const fields = table === 'msgr_automations'
-        ? 'id,channel_id,crew_id,created_by,title,prompt,schedule,enabled,next_run_at,last_run_at,last_status'
+        ? 'id,channel_id,crew_id,created_by,title,prompt,schedule,enabled,next_run_at,last_run_at,last_status,notification_route_ids'
         : 'id,channel_id,created_by,goal,completion_criteria,lead_crew_id,root_message_id,status,result,created_at';
-      let query = supabase.from(table).select(fields).eq('channel_id', channelId);
-      if (table === 'msgr_automations') query = query.is('deleted_at', null);
+      const readPage = async (columns) => {
+        let query = supabase.from(table).select(columns).eq('channel_id', channelId);
+        if (table === 'msgr_automations') query = query.is('deleted_at', null);
+        return checked(query.order('created_at', { ascending: false }).order('id', { ascending: false }).range(page * 25, page * 25 + 25));
+      };
+      const read = async () => {
+        try { return await readPage(fields); } catch (error) {
+          // Keep existing schedules readable on older servers; notification edits still require the new RPC.
+          if (table !== 'msgr_automations' || !missingSchema(error)) throw error;
+          return readPage(fields.replace(',notification_route_ids', ''));
+        }
+      };
       const [rows, capabilities] = await Promise.all([
-        checked(query.order('created_at', { ascending: false }).order('id', { ascending: false }).range(page * 25, page * 25 + 25)),
+        read(),
         table === 'msgr_work_runs' && capabilityIds ? checked(supabase.from('msgr_crews').select('id,work_protocol').in('id', capabilityIds.split(','))) : [],
       ]);
       if (request === revision.current) { failures.current = 0; missing.current = false; setState({ rows: (rows ?? []).slice(0, 25), error: null, hasMore: (rows ?? []).length > 25, capabilities }); }
     } catch (error) { if (request === revision.current) {
-      failures.current++; missing.current = /PGRST20[25]|42P01|42883/.test(error?.code ?? '') || /schema cache|does not exist|Could not find the (table|function)/i.test(error?.message ?? '');
+      failures.current++; missing.current = missingSchema(error);
       setState((old) => ({ ...old, error }));
     } }
   }, [table, channelId, enabled, page, capabilityIds]);
@@ -193,7 +204,7 @@ function Automations({ source, channel, crews, uid, disabled, busy, act, t, lang
       <div className="work-actions"><button className="btn sm" onClick={() => setHistory(history === automation.id ? null : automation.id)} aria-expanded={history === automation.id}>{t('automation.history')}</button>
         {automation.created_by === uid && <><button className="btn sm" disabled={disabled} onClick={() => setEditing(automation)}>{t('automation.edit')}</button><button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_automation_set_enabled', { automation: automation.id, enabled: !automation.enabled })))}>{t(automation.enabled ? 'automation.pause' : 'automation.resume')}</button><button className="btn sm" disabled={disabled} onClick={() => { if (!runRequests.current.has(automation.id)) runRequests.current.set(automation.id, crypto.randomUUID()); act(() => checked(supabase.rpc('msgr_automation_run_now', { automation: automation.id, request_id: runRequests.current.get(automation.id) })), () => { runRequests.current.delete(automation.id); setHistory(automation.id); setNotice(t('automation.run.requested')); }); }}>{t('automation.run')}</button><button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting(automation)}>{t('automation.delete')}</button></>}
       </div>
-      {history === automation.id && <RunHistory automationId={automation.id} channelId={channel.id} crews={crews} t={t} lang={lang} />}
+      {history === automation.id && <RunHistory automationId={automation.id} own={automation.created_by === uid} channelId={channel.id} crews={crews} t={t} lang={lang} />}
     </article>)}
     <Pages source={source} disabled={busy} t={t} />
   </>;
@@ -213,18 +224,29 @@ function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSa
   const [minutes, setMinutes] = useState(value.schedule?.minutes ?? 60);
   const [weekdays, setWeekdays] = useState(value.schedule?.weekdays ?? [1, 2, 3, 4, 5]);
   const [invalid, setInvalid] = useState(false);
+  const [routeIds, setRouteIds] = useState(value.notification_route_ids ?? []);
+  const [routes, setRoutes] = useState(null);
+  const [routesError, setRoutesError] = useState(null);
+  const [routeRevision, setRouteRevision] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setRoutes(null); setRoutesError(null);
+    checked(supabase.rpc('msgr_notification_routes_list')).then((rows) => { if (active) setRoutes(rows ?? []); }, (error) => { if (active) setRoutesError(error); });
+    return () => { active = false; };
+  }, [routeRevision]);
   const form = useRef(null);
   const createRequest = useRef(null);
   useEffect(() => { form.current?.scrollIntoView({ block: 'nearest' }); }, []);
   const save = (event) => {
     event.preventDefault();
+    if (disabled || routes === null || routesError) return;
     let validZone = true; try { new Intl.DateTimeFormat('en', { timeZone: timezone.trim() }).format(); } catch { validZone = false; }
     if (!validZone || (kind === 'weekly' && !weekdays.length) || (kind === 'interval' && (!Number.isInteger(Number(minutes)) || Number(minutes) < 5 || Number(minutes) > 10080))) { setInvalid(true); return; }
     setInvalid(false);
     const schedule = { kind, timezone: timezone.trim(), ...(kind === 'interval' ? { minutes: Number(minutes) } : { time }), ...(kind === 'weekly' ? { weekdays } : {}) };
-    const fingerprint = JSON.stringify([channel.id, crew, title.trim(), prompt.trim(), schedule]);
+    const fingerprint = JSON.stringify([channel.id, crew, title.trim(), prompt.trim(), schedule, [...routeIds].sort()]);
     if (!createRequest.current || createRequest.current.fingerprint !== fingerprint) createRequest.current = { fingerprint, id: crypto.randomUUID() };
-    act(() => checked(supabase.rpc('msgr_automation_save', { automation: value.id ?? null, channel: channel.id, crew, title: title.trim(), prompt: prompt.trim(), schedule, request_id: value.id ? null : createRequest.current.id })), onSaved);
+    act(() => checked(supabase.rpc('msgr_automation_save_with_notifications', { automation: value.id ?? null, channel: channel.id, crew, title: title.trim(), prompt: prompt.trim(), schedule, request_id: value.id ? null : createRequest.current.id, notification_route_ids: [...routeIds].sort() })), onSaved);
   };
   return <form className="work-form work-editor" onSubmit={save} ref={form}>
     <h3>{t(value.id ? 'automation.edit' : 'automation.new')}</h3>
@@ -236,24 +258,61 @@ function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSa
     {kind === 'weekly' && <fieldset className="work-days"><legend>{t('automation.days')}</legend>{[1, 2, 3, 4, 5, 6, 7].map((day) => <label key={day}><input type="checkbox" checked={weekdays.includes(day)} disabled={disabled} onChange={(event) => setWeekdays((current) => event.target.checked ? [...current, day].sort() : current.filter((value) => value !== day))} />{t(`automation.day.${day}`)}</label>)}</fieldset>}
     <label className="work-field"><span>{t('automation.timezone')}</span><input list="work-timezones" value={timezone} onChange={(event) => setTimezone(event.target.value)} required spellCheck={false} disabled={disabled} /><datalist id="work-timezones">{['Asia/Seoul', 'Asia/Tokyo', 'America/New_York', 'America/Los_Angeles', 'Europe/London', 'UTC'].map((zone) => <option key={zone}>{zone}</option>)}</datalist></label>
     <p className="work-note">{t('automation.timezone.note')}</p>
+    <fieldset className="work-notification-routes"><legend>{t('automation.notifications.title')}</legend>
+      <p className="work-note">{t('automation.notifications.note')}</p>
+      <label className="work-notification-route"><input type="checkbox" checked disabled /><span><strong>{t('automation.notifications.messenger')}</strong><small>{channel.name}</small></span></label>
+      {routesError ? <div className="work-notice error" role="alert"><p>{missingSchema(routesError) ? t('automation.notifications.upgrade') : errorText(routesError, t)}</p><button type="button" className="btn sm" disabled={disabled} onClick={() => setRouteRevision((old) => old + 1)}>{t('work.retry')}</button></div>
+        : routes === null ? <p className="work-note" role="status">{t('ui.loading')}</p>
+        : <>{routes.map((route) => <label className="work-notification-route" key={route.id}><input type="checkbox" checked={routeIds.includes(route.id)} disabled={disabled} onChange={(event) => setRouteIds((old) => event.target.checked ? [...old, route.id] : old.filter((id) => id !== route.id))} /><span><strong>{t(`automation.notifications.${route.kind}`)} · {route.label}</strong><small>{route.ws_id}{!route.ready ? ` · ${t('automation.notifications.offline')}` : ''}</small></span></label>)}
+          {!routes.length && <p className="work-note">{t('automation.notifications.empty')}</p>}
+          {routeIds.filter((id) => !routes.some((route) => route.id === id)).map((id) => <label className="work-notification-route" key={id}><input type="checkbox" checked disabled={disabled} onChange={() => setRouteIds((old) => old.filter((value) => value !== id))} /><span>{t('automation.notifications.unavailable')}</span></label>)}
+        </>}
+      <p className="work-note">{t('automation.notifications.device')}</p>
+    </fieldset>
     {invalid && <p className="work-notice error" role="alert">{t('work.error.schedule')}</p>}
-    <div className="work-actions"><button className="btn btn-primary" disabled={disabled || !title.trim() || !prompt.trim() || !crew}>{t('ui.save')}</button><button type="button" className="btn" disabled={disabled} onClick={onClose}>{t('ui.cancel')}</button></div>
+    <div className="work-actions"><button className="btn btn-primary" disabled={disabled || routes === null || !!routesError || !title.trim() || !prompt.trim() || !crew}>{t('ui.save')}</button><button type="button" className="btn" disabled={disabled} onClick={onClose}>{t('ui.cancel')}</button></div>
   </form>;
 }
 
-function RunHistory({ automationId, channelId, crews, t, lang }) {
+function RunHistory({ automationId, own, channelId, crews, t, lang }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
+  const [deliveries, setDeliveries] = useState([]);
+  const [deliveryError, setDeliveryError] = useState(null);
+  const [routes, setRoutes] = useState([]);
   const [thread, setThread] = useState(null);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     let active = true; let sequence = 0;
-    const load = async () => { const request = ++sequence; try { const runs = await checked(supabase.from('msgr_automation_runs').select('*').eq('automation_id', automationId).order('created_at', { ascending: false }).limit(20)); if (active && sequence === request) { setRows(runs ?? []); setError(null); } } catch (failure) { if (active && sequence === request) setError(failure); } };
+    const load = async () => {
+      const request = ++sequence;
+      try {
+        const runs = await checked(supabase.from('msgr_automation_runs').select('*').eq('automation_id', automationId).order('created_at', { ascending: false }).limit(20));
+        if (!active || sequence !== request) return;
+        setRows(runs ?? []); setError(null);
+        if (own && runs?.some((run) => run.notification_route_ids?.length)) {
+          try {
+            const [result, destinations] = await Promise.all([
+              checked(supabase.from('msgr_notification_deliveries').select('id,run_id,route_id,status,finished_at').in('run_id', runs.map((run) => run.id))),
+              checked(supabase.rpc('msgr_notification_routes_list')),
+            ]);
+            if (active && sequence === request) { setDeliveries(result ?? []); setRoutes(destinations ?? []); setDeliveryError(null); }
+          } catch (failure) { if (active && sequence === request) setDeliveryError(failure); }
+        } else { setDeliveries([]); setDeliveryError(null); }
+      } catch (failure) { if (active && sequence === request) setError(failure); }
+    };
     load(); const timer = setInterval(() => { if (document.visibilityState !== 'hidden') load(); }, POLL_MS);
     return () => { active = false; clearInterval(timer); };
-  }, [automationId, revision]);
-  return <div className="work-history"><StateNotice rows={rows} error={error} empty={t('automation.history.empty')} refresh={() => setRevision((value) => value + 1)} t={t} />
-    {(rows ?? []).map((run) => <div className="work-history-row" key={run.id}><div><span>{stamp(run.created_at, lang)} · {t(`automation.trigger.${run.trigger}`)}</span><p>{t(`automation.run.${run.status}`)}</p>{run.error && <p className="work-notice error">{errorText({ message: run.error }, t)}</p>}</div>{run.message_id && <button className="btn sm" onClick={() => setThread({ root: run.message_id, label: t('automation.history') })}>{t('work.discussion')}</button>}</div>)}
+  }, [automationId, own, revision]);
+  return <div className="work-history"><div className="work-section-heading"><h3>{t('automation.history')}</h3><button type="button" className="btn sm" onClick={() => setRevision((value) => value + 1)}>{t('work.refresh')}</button></div><StateNotice rows={rows} error={error} empty={t('automation.history.empty')} refresh={() => setRevision((value) => value + 1)} t={t} />
+    {(rows ?? []).map((run) => <div className="work-history-row" key={run.id}><div><span>{stamp(run.created_at, lang)} · {t(`automation.trigger.${run.trigger}`)}</span><p>{t(`automation.run.${run.status}`)}</p>{run.error && <p className="work-notice error">{errorText({ message: run.error }, t)}</p>}{own && run.notification_route_ids?.length > 0 && <div className="work-delivery-status">
+        <strong>{t('automation.notifications.delivery')}</strong>
+        {deliveryError ? <p role="status">{t('automation.notifications.deliveryError')}</p> : run.notification_route_ids.map((id) => {
+          const delivery = deliveries.find((row) => row.run_id === run.id && row.route_id === id);
+          const route = routes.find((row) => row.id === id);
+          return <p key={id}>{route ? `${t(`automation.notifications.${route.kind}`)} · ${route.label} (${route.ws_id})` : t('automation.notifications.external')} — {t(`automation.delivery.${delivery?.status ?? 'pending'}`)}</p>;
+        })}
+      </div>}</div>{run.message_id && <button className="btn sm" onClick={() => setThread({ root: run.message_id, label: t('automation.history') })}>{t('work.discussion')}</button>}</div>)}
     {thread && <Discussion channelId={channelId} thread={thread} crews={crews} t={t} lang={lang} onClose={() => setThread(null)} />}
   </div>;
 }

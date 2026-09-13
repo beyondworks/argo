@@ -776,6 +776,28 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
   const it = event.item;
   const company = (event.type === 'approval' || event.type === 'delegate' || event.type === 'approval_resolved' || event.type === 'crewmail' || event.type === 'routine' || event.type === 'job') ? await loadCompany(event.wsId).catch(() => ({})) : null;
   const muted = (type) => company && !channelSends('msgr', { enabled: true, mutedEvents: company.msgr?.mutedEvents }, type); // 끈 목록(company.json.msgr.mutedEvents) — 판정 정본 channelSends
+  // Explicit routine notifications never inherit execution context or generate crew handoffs.
+  if (event.type === 'routine' && event.routine?.notifications !== undefined) {
+    const { normalizeRoutineNotifications, messengerNotificationChannels } = await import('../routine-notifications.mjs');
+    const destinations = normalizeRoutineNotifications(event.routine.notifications);
+    if (!destinations.channels.includes('msgr') || !company.msgr?.enabled || muted('routine')) return false;
+    const target = destinations.msgr;
+    const c = await session();
+    if (!c) throw new Error('Messenger notification session unavailable');
+    if (company.ownerId && company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
+    const available = await messengerNotificationChannels(event.wsId, event.routine.agentSlug, { session: async () => c });
+    if (!available.some((r) => r.orgId === target.orgId && r.channelId === target.channelId)) throw new Error('Messenger notification channel unavailable');
+    const crew = await c.db.crewBySlug(c.uid, event.wsId, event.routine.agentSlug, target.orgId);
+    if (!crew) throw new Error('Messenger notification crew unavailable');
+    const key = [event.wsId, event.routine.id, event.runAt ?? event.routine.lastRun, target.channelId, event.phase ?? (event.ok === false ? 'failed' : 'result')].join(':');
+    const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
+    await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
+      reply_to: null, thread_root: null, client_msg_id: `rn:${crew.id}:${digest}`,
+      body: pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${event.reply ?? ''}`,
+        `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${event.reply ?? ''}`, company.lang).slice(0, MSG_MAX),
+      mentions: [], meta: { disposition: 'done', notification: 'routine', routine_id: event.routine.id } });
+    return true;
+  }
   if (event.type === 'approval') {
     if (muted('approval')) return false;
     // 목적지 = 결재 항목에 각인된 msgr(chat.mjs addApproval — 같은 크루의 동시 턴에서도 정확). 각인 없는 경로만 활성 문맥 폴백.
