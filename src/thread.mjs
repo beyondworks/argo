@@ -35,7 +35,7 @@ export async function loadThread(wsId, slug) {
     브라우저 메모리에만 있었고, 페이지를 벗어나거나 새로고침하면 **내가 쓴 글이 사라졌다가 답변이
     끝나야 다시 나타났다**(실사용 신고 2026-08-02). 오래 걸리는 턴일수록 오래 사라져 있는 셈이다.
     반환한 turnId로 나중에 같은 줄을 찾아 답변을 붙인다 — 새 줄을 밀어 넣지 않으므로 중복이 없다. */
-export async function beginTurn(wsId, slug, { userMsg, attachments, via } = {}) {
+export async function beginTurn(wsId, slug, { userMsg, attachments, via, contextScope } = {}) {
   const turnId = `t${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug);
@@ -44,13 +44,14 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via } = {}) 
       awaiting: true, // 답변 대기 중 — 프롬프트 맥락에서는 뺀다(지금 보내는 그 글이라 두 번 들어간다)
       ...(attachments?.length ? { attachments } : {}),
       ...(via ? { via } : {}),
+      ...(contextScope ? { contextScope } : {}),
     });
     await writeJsonAtomic(file(wsId, slug), t);
   });
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, fellBack, failedCode, failedOrigin, modelFallback }) {
+export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, fellBack, failedCode, failedOrigin, modelFallback, contextScope }) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -58,17 +59,21 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
     // 답변은 스레드 끝이 아니라 **그 지시 바로 뒤**에 넣는다 — 턴 도중 도착한 공유 노트가 사이에 끼면
     // 질문과 답이 떨어져 보인다.
     const at = turnId ? t.messages.findIndex((m) => m.turnId === turnId) : -1;
+    // Scoped audit records stay visible, but cannot seed another channel or replace its provider session.
+    const scope = contextScope ?? (at >= 0 ? t.messages[at].contextScope : null);
+    const scoped = scope ? { contextScope: scope } : {};
     if (at >= 0) {
       const m = t.messages[at];
       delete m.awaiting;
+      if (scope) m.contextScope = scope;
       if (attachments?.length) m.attachments = attachments;
       if (actor) m.actor = actor; // 팀 메신저: 사람 발화자 {uid,name} — who:'user'만으로는 누가 말했는지 구분 불가(MESSENGER-DESIGN.md)
       if (failed) m.failed = failed;
       if (failedCode) m.failedCode = failedCode; // 실패 코드 표(error-class.mjs) — UI가 chat.fail.<code>로 행동 안내를 그린다
       if (failedOrigin) m.failedOrigin = failedOrigin; // vendor/argo/probe — 출처 판정(유건 기준)
       if (aborted) m.aborted = true;
-      if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
-      if (sessionId) { t.sessionId = sessionId; t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null); }
+      if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
+      if (sessionId && !scope) { t.sessionId = sessionId; t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null); }
       await writeJsonAtomic(file(wsId, slug), t);
       return t;
     }
@@ -76,7 +81,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       // via = 사장이 직접 쓴 글이 아닌 배달 지시(crewmail·delegate·routine). who:'user'는 러너 프롬프트
       // 관점의 역할일 뿐인데 UI가 사장 말풍선으로 그려 "내가 쓴 게 아니거든"이 됐다(신고 2026-07-28).
       // aborted = 사장 지시 중단(사유 문자열과 별도 — 원문이 우연히 'aborted'여도 오판 없음, 재검수 MEDIUM).
-      { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}), ...(via ? { via } : {}), ...(actor ? { actor } : {}), ...(failed ? { failed } : {}), ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) },
+      { who: 'user', text: userMsg, ts, ...scoped, ...(attachments?.length ? { attachments } : {}), ...(via ? { via } : {}), ...(actor ? { actor } : {}), ...(failed ? { failed } : {}), ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) },
     );
     // 실패·중단 턴은 크루 답변이 없다 — 지시문만 사유(failed)와 함께 보존한다. 성공 뒤에만 저장하면
     // 실패 턴의 지시문이 새로고침에 증발하고 비용만 남는다(전수리뷰 2026-07-30 #1).
@@ -84,9 +89,9 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
     // approval-actions의 실패 사유를 담은 crew 메시지(부작용은 이미 적용돼 보고만 실패). 의도적 구분.
     if (!failed) t.messages.push(
       // artifacts = 이 턴에 크루가 만든/고친 vault 문서(rel) — 답변 칩으로 바로 연다
-      { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }, // 검수 L1 — turnId 없는 갈래(선저장 실패·턴 중 리셋)도 폴백 표식 보존
+      { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }, // 검수 L1 — turnId 없는 갈래(선저장 실패·턴 중 리셋)도 폴백 표식 보존
     );
-    if (sessionId) {
+    if (sessionId && !scope) {
       // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를
       // resume하면 CLI가 'No conversation found'로 죽는다(실측: 기기 전환 실패). chat이 사전 분기.
       t.sessionId = sessionId;
@@ -110,7 +115,7 @@ export async function appendSharedNote(wsId, slug, text) {
 export async function takeSharedNotes(wsId, slug) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug);
-    const notes = t.messages.filter((m) => m.shared && m.pending);
+    const notes = t.messages.filter((m) => !m.contextScope && m.shared && m.pending);
     if (!notes.length) return [];
     for (const m of notes) delete m.pending;
     await writeJsonAtomic(file(wsId, slug), t);

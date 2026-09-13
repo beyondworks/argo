@@ -25,6 +25,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
+import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
@@ -2619,6 +2620,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
   const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? t('org.crews'));
   const body = m.deleted_at ? '' : m.body;
+  const deliveryRecipients = !m.deleted_at && (m.mentions ?? []).filter((r) => r.kind === 'crew' && ['to', 'cc'].includes(r.role));
+  const deliveryLabels = deliveryRecipients?.length > 0 && <div className="msgr-message-recipients">{deliveryRecipients.map((r) => <span key={r.id}>{t(`dm.delivery.${r.role}`)} · {crewOf(r.id)?.display_name || t('org.crews')}</span>)}</div>;
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
@@ -2660,7 +2663,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className="msgr-mine" data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
-      {editing ? editor : <div className="bubble">{quote}{m.deleted_at ? <i>{t('msg.deleted')}</i> : <Body text={body} />}</div>}
+      {editing ? editor : <div className="bubble">{quote}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : <Body text={body} />}</div>}
       {attRow}
       {chips}
       <div className="meta">{edited}<I name="check" size={12} /><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
@@ -2676,8 +2679,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
         {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
           : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} />
           : m.kind === 'system' ? <div className="msgr-sys">{body}</div>
-          : isCrew ? <div className="msgr-sheet">{quote}{m.meta?.trace && <Trace trace={m.meta.trace} t={t} />}<Markdown text={body} /></div>
-          : <div className="text">{quote}<Body text={body} /></div>}
+          : isCrew ? <div className="msgr-sheet">{quote}{deliveryLabels}{m.meta?.trace && <Trace trace={m.meta.trace} t={t} />}<Markdown text={body} /></div>
+          : <div className="text">{quote}{deliveryLabels}<Body text={body} /></div>}
         {attRow}
         {chips}
         {acts}
@@ -2801,19 +2804,40 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   const { t } = useT();
   const phone = useIsPhone(); // 폰은 짧은 안내문(슬랙)
   const delivery = useMemo(() => getComposerSession(JSON.stringify([SB_URL, uid, orgId, chId]), composerTransport(supabase, { orgId, chId, uid })), [uid, orgId, chId]);
-  const { text, busy, files, mentions, uploading, job } = useSyncExternalStore(delivery.subscribe, delivery.snapshot);
-  const { setText, setFiles, setMentions } = delivery;
+  const { text, busy, files, mentions, recipients, uploading, job } = useSyncExternalStore(delivery.subscribe, delivery.snapshot);
+  const { setText, setFiles, setMentions, setRecipients } = delivery;
+  const isDm = channel?.kind === 'dm';
+  const [recipientOpen, setRecipientOpen] = useState(false);
+  const [dmCandidates, setDmCandidates] = useState([]);
+  const [recipientLoad, setRecipientLoad] = useState('loading');
+  const [recipientRetry, setRecipientRetry] = useState(0);
+  useEffect(() => {
+    let active = true;
+    if (!isDm) return undefined;
+    setRecipientLoad('loading');
+    q(supabase.rpc('msgr_dm_candidates', { p_channel: chId })).then((rows) => {
+      if (!Array.isArray(rows)) throw new Error('Invalid DM recipient response');
+      if (active) { setDmCandidates(rows); setRecipientLoad('ready'); }
+    }).catch(() => { if (active) setRecipientLoad('error'); });
+    return () => { active = false; };
+  }, [isDm, chId, recipientRetry]);
+  const mentionCrews = useMemo(() => isDm ? dmMentionCrews(scopeCrews ?? [], dmCandidates) : scopeCrews ?? crews, [isDm, scopeCrews, crews, dmCandidates]);
+  const allByName = useMemo(() => [...(scopeCrews ?? crews).map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...(scopePeople ?? members).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))], [scopeCrews, crews, scopePeople, members]);
   const [dragging, setDragging] = useState(false); // 파일을 끌어다 놓는 중 — 컴포저 테두리 강조
   const [pop, setPop] = useState(null); const [sel, setSel] = useState(0);
   const ta = useRef(null); const fileRef = useRef(null);
-  const byName = useMemo(() => [...(scopeCrews ?? crews).map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...(scopePeople ?? members).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))], [scopeCrews, crews, scopePeople, members]); // 이 채널에서 부를 수 있는 사람·크루(팝업 제외 목록·전송 대조 공용)
+  const byName = useMemo(() => [...mentionCrews.map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...(scopePeople ?? members).map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))], [mentionCrews, scopePeople, members]); // 이 채널에서 부를 수 있는 사람·크루(팝업 제외 목록·전송 대조 공용)
+  const currentDeliveryMentions = dmDeliveryMentions(mentionsFromBody(text.trim(), byName, mentions, allByName), recipients);
+  const unavailableRecipients = isDm ? dmUnavailableRecipients(currentDeliveryMentions, recipientLoad === 'ready' ? dmCandidates : [], (scopeCrews ?? []).map((c) => c.id)) : [];
+  const deliveryBlocked = unavailableRecipients.length > 0;
+  const retryBlocked = isDm && job && !job.messageId && dmUnavailableRecipients(job.mentions, recipientLoad === 'ready' ? dmCandidates : [], (scopeCrews ?? []).map((c) => c.id)).length > 0;
   const candidates = useMemo(() => {
     if (!pop) return [];
     const needle = pop.q.toLowerCase();
-    const exclude = new Set(mentionsFromBody(text, byName).map((x) => `${x.kind}:${x.id}`)); if (ALL_RE.test(text)) exclude.add('all:all'); // 이미 본문에 있는 멘션은 목록에서 뺀다(유건 2026-09-12)
+    const exclude = new Set(mentionsFromBody(text, byName, [], allByName).map((x) => `${x.kind}:${x.id}`)); if (ALL_RE.test(text)) exclude.add('all:all'); // 이미 본문에 있는 멘션은 목록에서 뺀다(유건 2026-09-12)
     const usable = (channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // 내보낸 크루는 후보에서 뺀다 // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
-    return mentionCandidates({ q: needle, crews: scopeCrews ?? usable, members: scopePeople ?? members, uid, exclude }).map((c) => (c.kind === 'all' ? { ...c, sub: t('mention.all') } : c)); // 사람 먼저·나 제외·상한 없음(팝업 스크롤). 맨 위 @all. 후보는 이 채널의 참여 구성만(사설 채널 밖 크루가 걸리던 실사고 2026-09-11)
-  }, [pop, crews, members, uid, channel?.personal_crews, org, scopeCrews, scopePeople, text, byName, t]);
+    return mentionCandidates({ q: needle, crews: isDm ? mentionCrews : scopeCrews ?? usable, members: scopePeople ?? members, uid, exclude, all: !isDm || allByName.some((c) => c.kind === 'crew' || c.id !== uid) }).map((c) => (c.kind === 'all' ? { ...c, sub: t('mention.all') } : { ...c, disabled: isDm && c.kind === 'crew' && !(scopeCrews ?? []).some((p) => p.id === c.id) && dmCandidates.find((p) => p.id === c.id)?.delivery_ready !== true })); // 사람 먼저·나 제외·상한 없음(팝업 스크롤). 맨 위 @all. 후보는 이 채널의 참여 구성만(사설 채널 밖 크루가 걸리던 실사고 2026-09-11)
+  }, [pop, crews, members, uid, channel?.personal_crews, org, scopeCrews, scopePeople, text, byName, allByName, isDm, mentionCrews, dmCandidates, t]);
   const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };
   const detect = (v, caret) => { const upto = v.slice(0, caret); const m = upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); };
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
@@ -2824,6 +2848,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     requestAnimationFrame(() => { el?.focus(); const p = before.length + sp.length + 1; el?.setSelectionRange(p, p); autosize(el); detect(next, p); });
   };
   const pick = (c) => {
+    if (c.disabled) return;
     const before = text.slice(0, pop.start); const after = text.slice(ta.current.selectionStart);
     const next = `${before}@${c.name} ${after}`;
     setText(next); setMentions((ms) => ms.some((x) => x.id === c.id) ? ms : [...ms, c]); setPop(null);
@@ -2842,8 +2867,9 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     setFiles((cur) => acceptFiles(cur, incoming, ATTACH_MAX).files);
   };
   const send = async () => {
-    if (locked || busy || job) return;
-    const result = delivery.send(mentionsFromBody(text.trim(), byName, mentions));
+    if (locked || busy || job || deliveryBlocked) return;
+    const inline = mentionsFromBody(text.trim(), byName, mentions, allByName);
+    const result = delivery.send(isDm ? dmDeliveryMentions(inline, recipients) : inline);
     setPop(null); if (ta.current) ta.current.style.height = 'auto';
     if (await result) onSent(delivery.snapshot().lastDeliveredId);
   };
@@ -2860,17 +2886,40 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     <div className="msgr-dock" style={{ '--sbw': `${sbw}px` }}><div>
       {pop && candidates.length > 0 && (
         <div className="msgr-pop" role="listbox">
-          {candidates.map((c, i) => <button key={`${c.kind}:${c.id}`} type="button" role="option" aria-selected={i === sel} className={i === sel ? 'on' : ''} ref={i === sel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pick(c); }}>
-            <Av name={c.kind === 'all' ? '@' : c.name} crew={c.kind === 'crew'} size="sm" crewId={c.kind === 'crew' ? c.id : null} userId={c.kind === 'user' ? c.id : null} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.kind === 'all' ? c.sub : c.kind === 'crew' ? t('org.crews') : t(`role.${c.sub}`)}</span>
+          {candidates.map((c, i) => <button key={`${c.kind}:${c.id}`} type="button" role="option" aria-selected={i === sel} disabled={c.disabled} className={i === sel ? 'on' : ''} ref={i === sel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pick(c); }}>
+            <Av name={c.kind === 'all' ? '@' : c.name} crew={c.kind === 'crew'} size="sm" crewId={c.kind === 'crew' ? c.id : null} userId={c.kind === 'user' ? c.id : null} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.disabled ? t('dm.delivery.update') : c.kind === 'all' ? c.sub : c.kind === 'crew' ? t('org.crews') : t(`role.${c.sub}`)}</span>
           </button>)}
         </div>
       )}
+      {isDm && <div className="msgr-dm-recipient-bar"><button type="button" className="btn" aria-expanded={recipientOpen} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientOpen((open) => !open)}>{t('dm.delivery.title')}{recipients.length > 0 ? ` · ${recipients.length}` : ''}</button></div>}
+      {isDm && (deliveryBlocked || retryBlocked) && <p className="msgr-dm-delivery-warning" role="alert">{t('dm.delivery.blocked')}</p>}
+      {isDm && recipientOpen && <section className="msgr-dm-recipients" aria-label={t('dm.delivery.title')}>
+        <p>{t('dm.delivery.help')}</p>
+        {recipients.length > 0 && <ul>{recipients.map((r) => <li key={r.id}>
+          <span className="recipient-name">{r.name}{dmCandidates.find((c) => c.id === r.id)?.delivery_ready !== true && <small>{t('dm.delivery.update')}</small>}</span>
+          <select aria-label={t('dm.delivery.role', { name: r.name })} value={r.role} disabled={busy || locked} onChange={(e) => setRecipients((rows) => setDmRecipient(rows, r, e.target.value))}>
+            <option value="to">{t('dm.delivery.to')}</option><option value="cc">{t('dm.delivery.cc')}</option>
+          </select>
+          <button type="button" className="btn" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}>×</button>
+        </li>)}</ul>}
+        {recipientLoad === 'loading' && <p role="status">{t('ui.loading')}</p>}
+        {recipientLoad === 'error' && <div role="alert"><p>{t('dm.delivery.loadError')}</p><button type="button" className="btn" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></div>}
+        {recipientLoad === 'ready' && <div className="recipient-pickers">{['to', 'cc'].map((role) => <label key={role}>
+          <span>{t(`dm.delivery.${role}`)}</span>
+          <select aria-label={t(`dm.delivery.add.${role}`)} value="" disabled={busy || locked || !dmCandidates.length} onChange={(e) => { const crew = dmCandidates.find((c) => c.id === e.target.value); if (crew?.delivery_ready === true) setRecipients((rows) => setDmRecipient(rows, crew, role)); }}>
+            <option value="">{t('dm.delivery.choose')}</option>
+            {dmCandidates.filter((c) => !recipients.some((r) => r.id === c.id)).map((c) => <option key={c.id} value={c.id} disabled={c.delivery_ready !== true}>{c.display_name}{c.delivery_ready !== true ? ` · ${t('dm.delivery.update')}` : ''}</option>)}
+          </select>
+        </label>)}</div>}
+        {recipientLoad === 'ready' && <button type="button" className="btn" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button>}
+        {recipientLoad === 'ready' && !dmCandidates.length && <p>{t('dm.delivery.empty')}</p>}
+      </section>}
       {job && <div className="msgr-delivery" role="status" aria-live="polite">
         <strong>{t(busy ? 'msg.delivery.sending' : job.messageId ? 'msg.delivery.attachFailed' : 'msg.delivery.failed')}</strong>
         <p className="delivery-preview">{job.body || job.files.map((item) => item.file.name).join(', ')}</p>
         {uploading && <p>{t('att.uploading')} · {uploading}</p>}
-        {job.error && <p className="delivery-error">{job.error}</p>}
-        {!busy && <div className="delivery-actions"><button type="button" className="btn" disabled={locked} onClick={async () => { if (!locked && await delivery.retry()) onSent(delivery.snapshot().lastDeliveredId); }}>{t('msg.delivery.retry')}</button>
+        {job.error && <p className="delivery-error">{/msgr_runtime_update_required/.test(job.error) ? t('dm.delivery.blocked') : job.error}</p>}
+        {!busy && <div className="delivery-actions"><button type="button" className="btn" disabled={locked || retryBlocked} onClick={async () => { if (!locked && !retryBlocked && await delivery.retry()) onSent(delivery.snapshot().lastDeliveredId); }}>{t('msg.delivery.retry')}</button>
           <button type="button" className="btn" onClick={() => delivery.dismiss()}>{t('msg.delivery.dismiss')}</button></div>}
       </div>}
       <form className={`msgr-composer${dragging ? ' drop' : ''}`} onSubmit={(e) => { e.preventDefault(); send(); }}
@@ -2887,7 +2936,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
           {files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} />{f.name}<span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span>
             {uploading !== f.name && <button type="button" className="x" onMouseDown={(e) => e.preventDefault()} onClick={() => setFiles((cur) => withoutFile(cur, f))} disabled={busy} aria-label={t('att.remove', { name: f.name })} title={t('att.remove', { name: f.name })}>×</button>}</span>)}
           {channel.crew_memory === false && <span className="tb on" title={t('ch.crewMemory')}><I name="memoff" size={15} /><span>{t('ch.memoryOff')}</span></span>}
-          <button className="send" onMouseDown={(e) => e.preventDefault()} disabled={busy || !!job || locked || (!text.trim() && !files.length)} aria-label={t('msg.send')} title={locked ? t('org.locked.short') : t('msg.send')}><I name="up" size={16} /></button>
+          <button className="send" onMouseDown={(e) => e.preventDefault()} disabled={busy || !!job || locked || deliveryBlocked || (!text.trim() && !files.length)} aria-label={t('msg.send')} title={locked ? t('org.locked.short') : t('msg.send')}><I name="up" size={16} /></button>
         </div>
       </form>
       <div className="msgr-sub">

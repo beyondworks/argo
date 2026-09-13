@@ -106,9 +106,15 @@ export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allo
 export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__crew']); // 동결 — 모듈 공유 배열이라 런타임 push 오염이 전 회사·전 턴에 번진다(재검수, CAPABILITIES와 같은 계약)
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
+function messengerColleagues(ctx, hop) {
+  if (ctx?.kind !== 'msgr' || hop >= 2) return [];
+  return (ctx.peers ?? []).filter((p) => p.id !== ctx.crewId)
+    .map((p) => ({ id: p.id, slug: p.slug, name: p.display_name || p.slug, role: p.role }));
+}
+
 function rosterPrompt(colleagues, lang = 'ko', messenger = false) {
   if (messenger) {
-    const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}`);
+    const lines = colleagues.map((a) => `- ${a.name} (id: ${a.id}, slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}`);
     return lang === 'en'
       ? `\n## Channel colleagues\n${lines.join('\n')}\n- delegate and send_to_crew prepare a handoff in this channel, not a synchronous result. End with MSGR: handoff and let the colleague respond. Use the channel roster's @name for colleagues on other devices. Do not claim another agent's result before it is posted.\n`
       : `\n## 채널 동료\n${lines.join('\n')}\n- delegate와 send_to_crew는 이 채널에 넘김을 준비한다. 즉시 결과가 돌아오는 도구가 아니다. MSGR: handoff로 답변을 마치고 동료의 답글을 기다려라. 다른 기기의 동료는 채널 명단의 @이름으로 넘겨라. 아직 게시되지 않은 동료의 결과를 수행한 것처럼 말하지 마라.\n`;
@@ -483,6 +489,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // (SDK 서버 객체는 도구를 내보내지 않는다). sink가 없으면 종전과 동일.
   // sink는 **최종 등재 배열**(아래 createSdkMcpServer tools)과 같은 원천에서 채운다 — tool() 호출 시점에 모으면 동료 0·커넥터 0에서도
   // delegate·send_to_crew·use_connector가 광고된다(분리 검수 HIGH-1: 유령 도구 3종, 설계서 §2-2 위반).
+  const handoffColleagues = mirrorCtx?.kind === 'msgr' ? messengerColleagues(mirrorCtx, hop) : colleagues;
   const defs = new WeakMap();
   const tool = (name, description, shape, handler) => { const t = sdkTool(name, description, shape, handler); if (sink) defs.set(t, { name, description, shape, handler }); return t; };
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
@@ -559,23 +566,25 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   let used = 0;
   const delegate = tool(
     'delegate',
-    '동료 크루에게 하위 작업을 위임하고 결과를 받는다. to는 동료의 slug, task는 그 동료가 단독으로 수행할 수 있는 구체적 지시.',
+    '동료 크루에게 하위 작업을 위임하고 결과를 받는다. to는 동료의 slug(메신저에서는 정확한 id 권장), task는 그 동료가 단독으로 수행할 수 있는 구체적 지시.',
     { to: z.string(), task: z.string() },
     async ({ to, task }) => {
       if (used >= 2) return text('위임 한도 초과 — 이번 턴은 남은 작업을 직접 마무리하라.');
+      if (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules') {
+        try {
+          stageMessengerHandoff(mirrorCtx, { to, message: task });
+          used += 1;
+          return text(lang === 'en'
+            ? 'A handoff is prepared for this channel. The colleague will run after your reply is posted; no result is available yet. End your reply with MSGR: handoff.'
+            : '이 채널의 넘김을 준비했다. 답글이 게시된 뒤 동료가 실행하므로 아직 결과는 없다. 답변 마지막 줄에 MSGR: handoff를 적어라.');
+        } catch (e) { return text(`위임 실패: ${String(e.message || e)}`); }
+      }
       const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase(); // 한글 NFC/NFD 불일치 방어
       const key = norm(to.trim());
       const target = colleagues.find((a) => norm(a.slug) === key || norm(a.name) === key);
       if (!target) return text(`"${to}"는 동료 명단에 없다. 가능한 slug: ${colleagues.map((a) => a.slug).join(', ')}`);
       used += 1;
       try {
-        // Messenger delegation is a visible channel handoff. Direct local chat()
-        // would bypass the receiver's channel permission and device execution claim.
-        if (stageMessengerHandoff(mirrorCtx, { to: target.slug, message: task })) {
-          return text(lang === 'en'
-            ? 'A handoff is prepared for this channel. The colleague will run after your reply is posted; no result is available yet. End your reply with MSGR: handoff.'
-            : '이 채널의 넘김을 준비했다. 답글이 게시된 뒤 동료가 실행하므로 아직 결과는 없다. 답변 마지막 줄에 MSGR: handoff를 적어라.');
-        }
         // 위임 프리픽스는 상대 크루 스레드에 사용자 메시지로 저장돼 UI에 그대로 보인다 — 회사 언어를 따른다
         const delegated = lang === 'en' ? `(Delegated by colleague ${fromName}) ${task}` : `(동료 ${fromName}의 위임) ${task}`;
         // workFolder — 회의실 턴의 위임이면 위임받은 동료도 같은 회의 폴더를 본다(회의 프롬프트가 "동료도 같은 폴더"라
@@ -603,10 +612,17 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   let mailSent = 0; // 한 턴 쪽지 상한(팬아웃 방어 — delegate used와 동일 패턴)
   const sendToCrew = tool(
     'send_to_crew',
-    '동료 크루에게 비동기 쪽지를 보낸다(결과를 기다리지 않음 — 지금 턴은 바로 끝난다). 상대는 잠시 뒤 자기 턴에서 읽고 처리하며, 필요하면 나에게 답장을 보낸다. to는 수신 동료 slug, cc는 참조로 사본을 받을 동료 slug 목록(선택), message는 상대가 단독으로 이해할 수 있는 내용. 즉시 결과가 필요한 하위 작업은 이 도구가 아니라 delegate를 써라.',
+    '동료 크루에게 비동기 쪽지를 보낸다(결과를 기다리지 않음 — 지금 턴은 바로 끝난다). 상대는 잠시 뒤 자기 턴에서 읽고 처리하며, 필요하면 나에게 답장을 보낸다. to는 수신 동료 slug(메신저에서는 정확한 id 권장), cc는 참조로 사본을 받을 동료 slug 목록(선택), message는 상대가 단독으로 이해할 수 있는 내용. 즉시 결과가 필요한 하위 작업은 이 도구가 아니라 delegate를 써라.',
     { to: z.string(), cc: z.array(z.string()).optional(), message: z.string() },
     async ({ to, cc, message }) => {
       if (mailSent >= 2) return text('쪽지 한도 초과 — 이번 턴은 이미 보낸 쪽지로 충분하다. 남은 작업을 직접 마무리하라.');
+      if (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules') {
+        try {
+          stageMessengerHandoff(mirrorCtx, { to, cc: cc ?? [], message });
+          mailSent += 1;
+          return text('이 턴의 채널 답글에 넘김을 예약했다. 답글이 게시되면 같은 채널에서 동료가 이어받는다.');
+        } catch (e) { return text(`쪽지 전송 실패: ${String(e.message || e)}`); }
+      }
       const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase().trim();
       const resolveOne = (v) => colleagues.find((a) => norm(a.slug) === norm(v) || norm(a.name) === norm(v));
       const target = resolveOne(to);
@@ -614,10 +630,6 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       const ccSlugs = (cc ?? []).map(resolveOne).filter(Boolean).map((a) => a.slug);
       try {
         const { sendCrewMail } = await import('./crewmail.mjs');
-        if (stageMessengerHandoff(mirrorCtx, { to: target.slug, cc: ccSlugs, message })) {
-          mailSent += 1;
-          return text('이 턴의 채널 답글에 넘김을 예약했다. 답글이 게시되면 같은 채널에서 동료가 이어받는다.');
-        }
         const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug] });
         mailSent += 1;
         return text(`쪽지를 보냈다(${id} → ${target.name}${ccSlugs.length ? `, 참조 ${ccSlugs.length}명` : ''}). 상대는 잠시 뒤 자기 턴에서 읽는다 — 결과를 기다리지 말고 지금 할 일을 마무리하라.`);
@@ -857,7 +869,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const tools = [
     requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, listRoutines, cancelRoutine, startLongTask,
     ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
-    ...(colleagues.length ? [delegate, sendToCrew] : []),
+    ...(handoffColleagues.length ? [delegate, sendToCrew] : []),
     // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
     ...(connectors.length ? [useConnector] : []),
   ];
@@ -967,9 +979,14 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
 export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
   // 세 saveHandover 지점이 모두 이 한 함수를 거친다(한 지점만 빠지면 crew_memory=false 채널의 내용이 기억에 새는 무언 결함).
+  const dmTurn = mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm';
+  const contextScope = dmTurn ? { kind: 'msgr-dm', channelId: mirrorCtx.channelId, ...(mirrorCtx.threadRoot ? { threadRoot: mirrorCtx.threadRoot } : {}) } : null;
+  // DM history is supplied by the fresh, authorized thread envelope. Global crew state is not a DM history source.
+  if (dmTurn) sessionId = null;
   const handoffStart = mirrorCtx?.handoffs?.length ?? 0;
   const discardHandoffs = () => mirrorCtx?.handoffs?.splice(handoffStart); // 실패한 시도의 미게시 넘김은 재시도에 섞지 않는다
-  const journalWrite = (reply, label) => journal?.off ? null : saveHandover(wsId, agentSlug, userMsg, reply, label, { tag: journal?.tag ?? '' });
+  // Scoped DM audit stays in the thread; auto-journaling would promote private text into shared memory.
+  const journalWrite = (reply, label) => dmTurn || journal?.off ? null : saveHandover(wsId, agentSlug, userMsg, reply, label, { tag: journal?.tag ?? '' });
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
   const p = paths(wsId);
@@ -999,7 +1016,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       });
       // 모델을 부르지 않은 턴 — 산출물 diff 없음(여기서 artBefore를 참조하면 TDZ로 예산 턴 전체가
       // 죽는다. 분리 검수 CRITICAL-1 실측: 변이 복원 오타겟이 심은 회귀).
-      return { reply, sessionId: null, handover }; // 예산 차단 턴 — 러너 해석 전이라 fellBack 무관(TDZ 회귀 금지 구역)
+      return { reply, sessionId: null, handover, ...(contextScope ? { contextScope } : {}) }; // 예산 차단 턴 — 러너 해석 전이라 fellBack 무관(TDZ 회귀 금지 구역)
     }
   }
   const { md, meta } = await readAgentCard(wsId, agentSlug);
@@ -1093,7 +1110,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   };
   // 참조(cc)로 공유된 맥락 — 이번 턴 프롬프트에 1회 주입(맥락 공유는 기본, 실행은 지시받은 크루만)
   // 재시도(__seedNotes)면 아우터 시도가 이미 소비한 공유 노트를 이어받는다 — 재시도에서 cc 맥락 소실 방지
-  const sharedNotes = __seedNotes ?? (from ? [] : await takeSharedNotes(wsId, agentSlug).catch(() => []));
+  const sharedNotes = dmTurn ? [] : (__seedNotes ?? (from ? [] : await takeSharedNotes(wsId, agentSlug).catch(() => [])));
   const sharedBlock = sharedNotes.length
     ? (lang === 'en'
         ? `## Context shared via cc — what the captain instructed a colleague and the results (shared for your awareness)\n${sharedNotes.join('\n\n---\n\n')}\n\n## Captain's new instruction\n`
@@ -1126,11 +1143,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
     let browserBridge = null;
     try {
-      const { messages } = await loadThread(wsId, agentSlug);
+      const { messages } = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
       // 발화가 아니므로 화자를 '자동 배달'로 정직 표기(room.mjs 어휘에서 '시스템'=크루가 답하지 않는 줄이라 반전 — 재검수 지적)(배달 프리픽스가 실제 발신자를 이미 담는다).
-      const ctx = (messages ?? []).filter((m) => !m.shared && !m.failed && !m.awaiting).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지
+      const ctx = (messages ?? []).filter((m) => !m.contextScope && !m.shared && !m.failed && !m.awaiting).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지
         .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       const attNote = attachments.length
@@ -1295,7 +1312,7 @@ ${lang === 'en'
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
-      return { reply, sessionId: null, handover, artifacts: await artDiff(), ...fellBackInfo, ...modelFallbackInfo };
+      return { reply, sessionId: null, handover, artifacts: await artDiff(), ...(contextScope ? { contextScope } : {}), ...fellBackInfo, ...modelFallbackInfo };
     } catch (e) {
       discardHandoffs();
       let aborted = abortReg.wasAborted();
@@ -1423,13 +1440,13 @@ ${lang === 'en'
   // resume을 시도하되 실패하면 catch에서 새 세션으로 1회 재시도한다(__freshRetry).
   let resumeId = __freshRetry ? null : sessionId;
   let crossCtx = '';
-  if (sessionId || __freshRetry) {
+  if (!dmTurn && (sessionId || __freshRetry)) {
     const t = await loadThread(wsId, agentSlug).catch(() => ({ messages: [] }));
     const me = await getDeviceId().catch(() => null);
     const foreign = !!t.sessionDevice && !!me && t.sessionDevice !== me;
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
-      const ctx = t.messages.filter((m) => !m.shared && !m.failed && !m.awaiting).slice(-6) // 실패 턴·화자 규칙은 CLI 경로와 동일(위 주석)
+      const ctx = t.messages.filter((m) => !m.contextScope && !m.shared && !m.failed && !m.awaiting).slice(-6) // 실패 턴·화자 규칙은 CLI 경로와 동일(위 주석)
         .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       if (ctx) crossCtx = lang === 'en'
@@ -1507,7 +1524,7 @@ ${lang === 'en'
   await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
   const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
-    + (colleagues.length ? rosterPrompt(colleagues, lang, mirrorCtx?.kind === 'msgr') : '')
+    + (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : colleagues.length ? rosterPrompt(colleagues, lang) : '')
     + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder, source: turnSource })
     + (browserBridge ? browserMcpDirective(lang) : '')
     + messengerNote
@@ -1799,5 +1816,5 @@ ${lang === 'en'
   for (const r of await artDiff()) artifacts.add(r);
   // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
   const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
-  return { reply, sessionId: sid, handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  return { reply, sessionId: dmTurn ? null : sid, ...(contextScope ? { contextScope } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }

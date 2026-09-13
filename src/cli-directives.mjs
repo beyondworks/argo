@@ -136,6 +136,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // SDK 경로는 hop>=2면 쪽지 도구 자체가 등록되지 않는다(chat.mjs colleagues). 러너 패리티 —
         // 같은 지점에서 같은 상한을 건다. 조용히 무시하지 않고 사유 줄로 남긴다(이 파일의 계약).
         if (mirrorCtx?.kind !== 'msgr' && hop >= 2) throw new Error(en ? 'note relay limit reached (2 hops)' : '쪽지 연쇄 상한(2단계)에 도달했다');
+        if (stageMessengerHandoff(mirrorCtx, { to: d.to, cc: Array.isArray(d.cc) ? d.cc : [], message: d.message })) continue; // authorized remote peers may not exist in this local workspace
         // 자기수신 사유는 **find 실패 후**에만 — 앞에 두면 동명이인(표시 이름이 같은 다른 크루)에게
         // 보내는 정상 쪽지가 "자기 자신"으로 오차단된다(재검수 MEDIUM: 이름 유일성은 강제되지 않는다).
         // find는 slug로 자신을 제외하므로, 조회 성공 = 자신이 아닌 실재 크루가 확실하다.
@@ -153,10 +154,6 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // colleagues가 빈 배열이 되어 왕복이 끝난다. 이 경로가 hop을 안 실으면 배달된 크루가 지시
         // 블록 하나로 hop을 0으로 되돌려 그 상한을 통째로 무력화한다(격리 재현 2026-07-30: hop=2로
         // 배달된 턴이 낸 블록의 메시지가 hop=0·chain=[]). 실효 바운드가 hop 단독이라 여기서 샌다.
-        if (stageMessengerHandoff(mirrorCtx, { to: to.slug, cc, message: msg })) {
-          // 최종 판정이 취소할 수 있다. 실제 넘김 본문은 메신저 브리지가 한 번만 렌더링한다.
-          continue;
-        }
         await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug] });
         notes.push(en ? `✓ Note sent to ${to.name}${cc.length ? ` (cc ${cc.length})` : ''}` : `✓ ${to.name}에게 쪽지 보냄${cc.length ? ` (참조 ${cc.length}명)` : ''}`);
       } else if (action === 'approval') {

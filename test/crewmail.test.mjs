@@ -198,10 +198,23 @@ test('배선 — 스케줄러가 수신 크루 러너를 판정해 mailPrompt에
   assert.match(s, /mailPrompt\(msg, 'ko', \{ hasTools \}\)/, 'mailPrompt에 hasTools 미전달');
 });
 
-test('배선 — send_to_crew 도구가 delegate와 같은 게이트(colleagues)로 등록된다', () => {
-  const s = read('src/chat.mjs');
-  assert.match(s, /\.\.\.\(colleagues\.length \? \[delegate, sendToCrew\] : \[\]\)/,
-    'send_to_crew가 무게이트 등록됐거나 누락 — hop≥2에서도 노출되면 연쇄 상한이 뚫린다');
+test('send_to_crew and delegate share the eligible colleague gate for local and Messenger turns', async () => {
+  const { makeCrewServer } = await import('../src/chat.mjs');
+  const local = [{ slug: 'beta', name: 'Beta' }];
+  const peer = { id: 'remote-beta', slug: 'beta', display_name: 'Beta' };
+  for (const [label, colleagues, hop, mirrorCtx, exposed] of [
+    ['local colleague', local, 0, null, true],
+    ['no local colleague', [], 0, null, false],
+    ['local hop limit already filtered by chat', [], 2, null, false],
+    ['authorized remote colleague', [], 0, {kind:'msgr',crewId:'self',peers:[peer]}, true],
+    ['no authorized Messenger colleague despite local match', local, 0, {kind:'msgr',crewId:'self',peers:[]}, false],
+    ['Messenger hop limit', [], 2, {kind:'msgr',crewId:'self',peers:[peer]}, false],
+  ]) {
+    const defs=[];
+    makeCrewServer(WS,'alpha','Alpha',colleagues,hop,[],mirrorCtx,'ko',[],'',defs);
+    const handoffTools=defs.filter((d)=>['delegate','send_to_crew'].includes(d.name)).map((d)=>d.name);
+    assert.deepEqual(handoffTools,exposed?['delegate','send_to_crew']:[],label);
+  }
 });
 
 test('interval 루틴 — normalizeSchedule·isDue', async () => {

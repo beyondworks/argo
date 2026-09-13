@@ -19,13 +19,14 @@ export const ALL_RE = /(^|\s)@all(?=$|[\s,.!?:;])/i;
 // candidates = 이 채널에서 부를 수 있는 사람·크루만.
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentionRe = (name, flags = '') => new RegExp(`(^|\\s)@${esc(name)}(?=$|[\\s,.!?:;])`, `i${flags}`); // 대소문자 무시(@edna = Edna)
-export function mentionsFromBody(body, candidates, picked = []) {
+export function mentionsFromBody(body, candidates, picked = [], allCandidates = candidates) {
   if (ALL_RE.test(body)) { // @all = 이 채널의 모든 사람·크루(후보 순서 = 사람 먼저·크루 순 — 서버가 이 순서로 크루 차례를 정한다)
     const seenAll = new Set();
-    return candidates.filter((x) => x?.id && (x.kind === 'user' || x.kind === 'crew') && !seenAll.has(`${x.kind}:${x.id}`) && seenAll.add(`${x.kind}:${x.id}`)).map(({ kind, id }) => ({ kind, id }));
+    return allCandidates.filter((x) => x?.id && (x.kind === 'user' || x.kind === 'crew') && !seenAll.has(`${x.kind}:${x.id}`) && seenAll.add(`${x.kind}:${x.id}`)).map(({ kind, id }) => ({ kind, id }));
   }
   let text = body; const out = []; const seen = new Set();
-  const all = [...picked, ...candidates].filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length);
+  const allowed = new Set(candidates.map((x) => `${x.kind}:${x.id}`));
+  const all = [...picked.filter((x) => allowed.has(`${x.kind}:${x.id}`)), ...candidates].filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length);
   for (const x of all) {
     const key = `${x.kind}:${x.id}`; if (seen.has(key)) continue;
     const hit = mentionRe(x.name).exec(text); if (!hit) continue;

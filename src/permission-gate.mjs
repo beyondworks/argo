@@ -251,6 +251,7 @@ const WS_DOT_FILES = new Set([
   '.workroots.json', '.scaffold.json', '.sync-state.json', '.index.sqlite', '.import.status.json',
   '.failure-digest.json', // 실패 서명 다이제스트 상태(보고 시각) — 크루가 고치면 반복 실패 경보를 영구 침묵시킬 수 있다(#446 검수 D1)
   '.runner-health.json', // 주기 검진 상태(P1-2 후속) — 크루가 고치면 죽은 자격이 초록으로 위장되거나 과금 스로틀이 풀린다
+  '.msgr-cc', // scoped messenger CC receipts are runtime metadata, not crew-editable shared memory
   '.gw-queue-', '.gw-offset', // 게이트웨이 큐·오프셋(접두 — 채널 접미를 함께 덮는다)
   // 게이트웨이 상태·락은 **실제 파일 형태로만** 좁힌다(.gateway-{kind}.json / .gateway.lock).
   // 무경계 `.gateway`는 이 파일이 chats/에서 이미 고친 오차단을 재도입한다 — 분리 검수 실측:

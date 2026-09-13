@@ -2,6 +2,7 @@
 // 클라이언트(ExecCard·Trace·안 읽음 배지·구분선·편집/삭제·반응·음소거·조용한 시간)의 배선을 소스 구간으로 잠근다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { parse } from 'espree';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const read = (p) => readFileSync(fileURLToPath(new URL(`../${p}`, import.meta.url)), 'utf8');
@@ -11,7 +12,13 @@ const bridge = read('src/gateway/msgr.mjs'); const chat = read('src/chat.mjs'); 
 test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought·ms·model·costUsd)를 반환 · 브리지는 1.5초마다 바뀐 스냅샷만 progress로 방송하고 공개 채널 답글에만 meta.trace를 붙인다', () => {
   assert.match(ts, /steps: Array\.isArray\(steps\) \? steps\.slice\(-40\) : \(prev\.steps \?\? \[\]\)/, '상태 파일 steps(뒤 40)');
   assert.match(chat, /const trace = \{ steps, thought: String\(thought \?\? ''\)\.slice\(-1500\), ms: Date\.now\(\) - t0, model: actualModel \|\| null, costUsd \};/, 'trace 조립');
-  assert.match(chat, /return \{ reply, sessionId: sid, handover, costUsd, trace, artifacts/, 'trace 반환');
+  const ast=parse(chat,{ecmaVersion:'latest',sourceType:'module'});
+  const turn=ast.body.find(n=>n.type==='ExportNamedDeclaration' && n.declaration?.id?.name==='chat').declaration;
+  const result=turn.body.body.findLast(n=>n.type==='ReturnStatement').argument;
+  assert.equal(result.type,'ObjectExpression');
+  const trace=result.properties.find(p=>p.type==='Property' && p.key.name==='trace');
+  assert.equal(trace?.value.type,'Identifier','SDK success must return the assembled trace');
+  assert.equal(trace.value.name,'trace');
   assert.match(bridge, /import \{ getTurnStatus \} from '\.\.\/turn-status\.mjs';/, '브리지가 상태 파일을 읽는다');
   assert.match(bridge, /const PROGRESS_MS = 1_500;/, '방송 주기');
   assert.match(bridge, /if \(key === last\) return;\n\s*last = key;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '바뀐 스냅샷만 방송');

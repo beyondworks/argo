@@ -14,6 +14,7 @@
 //  ⑤ 대기 중인 줄은 프롬프트 맥락에서 뺀다 — 지금 보내는 그 글이라, 안 빼면 같은 말이 두 번 들어간다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { parse } from 'espree';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -72,10 +73,27 @@ test('turnId 없이 부르던 기존 경로(루틴·위임)는 그대로 동작�
 
 test('⑤ 대기 중인 줄은 프롬프트 맥락에서 제외된다 — 같은 말이 두 번 들어가면 안 된다', () => {
   const src = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  const filters = src.match(/\(m\) => !m\.shared && !m\.failed[^)]*\)\.slice\(-6\)/g) ?? [];
-  assert.equal(filters.length, 2, '맥락을 만드는 곳은 CLI·SDK 두 갈래다');
-  for (const f of filters) {
-    assert.match(f, /!m\.awaiting/,
-      '대기 줄을 안 빼면 지금 보내는 지시가 "최근 대화"에도 실려 크루가 같은 말을 두 번 받는다');
+  const ast=parse(src,{ecmaVersion:'latest',sourceType:'module',range:true});
+  const filters=[];
+  const visit=(node)=>{
+    if (!node || typeof node!=='object') return;
+    if (node.type==='CallExpression' && node.callee.type==='MemberExpression' && node.callee.property.name==='slice'
+      && node.arguments.length===1 && src.slice(...node.arguments[0].range)==='-6') {
+      const filtered=node.callee.object;
+      if (filtered.type==='CallExpression' && filtered.callee.type==='MemberExpression' && filtered.callee.property.name==='filter') filters.push(filtered.arguments[0]);
+    }
+    for (const child of Object.values(node)) {
+      if (Array.isArray(child)) child.forEach(visit); else if (child?.type) visit(child);
+    }
+  };
+  visit(ast);
+  assert.equal(filters.length,2,'CLI and SDK each reconstruct the recent conversation');
+  for (const fn of filters) {
+    assert.equal(fn.type,'ArrowFunctionExpression');
+    const accepts=Function(`return (${src.slice(...fn.range)});`)();
+    assert.equal(accepts({who:'user',text:'finished'}),true);
+    for (const excluded of [{awaiting:true},{shared:true},{failed:'error'},{contextScope:{kind:'msgr-dm'}}]) {
+      assert.equal(accepts({who:'user',text:'exclude',...excluded}),false,'the actual predicate must exclude pending, shared, failed and scoped audit messages');
+    }
   }
 });

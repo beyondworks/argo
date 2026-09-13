@@ -7,7 +7,7 @@ import {
   DEFAULT_ACCOUNT_ID, deleteAccountFromConfigSection, formatTextWithAttachmentLinks, resolveOutboundMediaUrls,
   setAccountEnabledInConfigSection, type ChannelPlugin, type PluginRuntime,
 } from "openclaw/plugin-sdk";
-import { makeApi, MAX_LEN, pollLoop, relayPrompt, relayReply } from "./api.js";
+import { makeApi, MAX_LEN, pollLoop, relayPrompt, relayReply, recordCcReceipt } from "./api.js";
 
 export const CHANNEL_ID = "argo-msgr" as const;
 let runtime: PluginRuntime | null = null;
@@ -58,7 +58,15 @@ async function handleInbound(params: { m: any; account: ResolvedAccount; cfg: an
   params.statusSink?.({ lastInboundAt: timestamp });
   c.channel.activity.record({ channel: CHANNEL_ID, accountId: account.accountId, direction: "inbound", at: timestamp });
 
-  const route = c.channel.routing.resolveAgentRoute({ cfg, channel: CHANNEL_ID, accountId: account.accountId, peer: { kind: isGroup ? "group" : "direct", id: chatId } });
+  if (m.delivery_role === 'cc') {
+    await recordCcReceipt(account, m);
+    return;
+  }
+
+  const resolvedRoute = c.channel.routing.resolveAgentRoute({ cfg, channel: CHANNEL_ID, accountId: account.accountId, peer: { kind: isGroup ? "group" : "direct", id: chatId } });
+  const route = { ...resolvedRoute };
+  // A server-authorized DM thread must not resume a provider's shared direct-message session.
+  if (!isGroup) route.sessionKey = `${route.sessionKey}:argo-dm:${encodeURIComponent(chatId)}:${m.delegated ? m.thread_root || messageId : 'conversation'}`;
   const storePath = c.channel.session.resolveStorePath(cfg.session?.store, { agentId: route.agentId });
   const previousTimestamp = c.channel.session.readSessionUpdatedAt({ storePath, sessionKey: route.sessionKey });
   const body = c.channel.reply.formatAgentEnvelope({

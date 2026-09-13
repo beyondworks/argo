@@ -20,11 +20,12 @@ async function setup() {
   return ws;
 }
 
-test('도구 넘김 대상은 이름·slug가 겹쳐도 같은 소유자·회사 ID로 확정한다', () => {
+test('도구 넘김 대상은 이름·slug가 겹치면 정확한 ID로 확정한다', () => {
   const ctx = context();
   ctx.peers.unshift({ id: 'foreign', slug: 'beta', display_name: '베타', owner_user_id: 'other', ws_id: 'local' });
   ctx.peers.unshift({ id: 'other-company', slug: 'beta', display_name: '베타', owner_user_id: 'owner', ws_id: 'other' });
-  stageMessengerHandoff(ctx, { to: 'beta', message: '다음 2' });
+  assert.throws(() => stageMessengerHandoff(ctx, { to: 'beta', message: '모호한 대상' }));
+  stageMessengerHandoff(ctx, { to: 'b', message: '다음 2' });
   assert.equal(ctx.handoffs[0].to.id, 'b');
   assert.throws(() => stageMessengerHandoff(ctx, { to: 'alpha', message: '나에게' }));
 });
@@ -60,13 +61,13 @@ function context() { return { kind: 'msgr', orgId: 'org', channelId: 'channel', 
 function sdkMail(ws, ctx) {
   const sink = [];
   makeCrewServer(ws, 'alpha', '알파', [{ slug: 'beta', name: '베타' }], 0, [], ctx, 'ko', [], '', sink);
-  return sink.find((t) => t.name === 'send_to_crew').handler;
+  return sink.find((t) => t.name === 'send_to_crew')?.handler;
 }
 
 function sdkDelegate(ws, ctx) {
   const sink = [];
   makeCrewServer(ws, 'alpha', '알파', [{ slug: 'beta', name: '베타' }], 0, [], ctx, 'ko', [], '', sink);
-  return sink.find((t) => t.name === 'delegate').handler;
+  return sink.find((t) => t.name === 'delegate')?.handler;
 }
 
 test('메신저 delegate는 로컬 자식 턴 대신 정확한 채널 넘김을 준비한다', async () => {
@@ -82,8 +83,9 @@ test('메신저 delegate는 로컬 자식 턴 대신 정확한 채널 넘김을 
 test('메신저 delegate는 채널 밖 크루와 불완전 문맥을 로컬 실행으로 우회하지 않는다', async () => {
   const ws = await setup();
   for (const ctx of [{ ...context(), peers: [] }, { kind: 'msgr' }, { kind: 'msgr-rules' }]) {
-    const result = await sdkDelegate(ws, ctx)({ to: 'beta', task: '채널 밖에 넘기지 말 것' });
-    assert.match(JSON.stringify(result), /위임 실패/);
+    const handler = sdkDelegate(ws, ctx);
+    if (handler) assert.match(JSON.stringify(await handler({ to: 'beta', task: '채널 밖에 넘기지 말 것' })), /위임 실패/);
+    else assert.equal(ctx.peers?.length ?? 0, 0, '허가된 후보가 없으면 도구 자체가 노출되지 않는다');
     assert.equal(ctx.handoffs?.length ?? 0, 0);
   }
 });
@@ -99,10 +101,12 @@ for (const runner of ['SDK', 'CLI']) {
   });
   test(`${runner}: 메신저 문맥이 불완전해도 일반 쪽지로 우회하지 않는다`, async () => {
     const ws = await setup(); const ctx = { kind: 'msgr', channelId: 'channel' };
-    const result = runner === 'SDK'
-      ? await sdkMail(ws, ctx)({ to: 'beta', message: '채널 요청' })
-      : await runDirectives(ws, 'alpha', [{ action: 'mail', to: 'beta', message: '채널 요청' }], { mirrorCtx: ctx });
-    assert.match(JSON.stringify(result), /실패/);
+    if (runner === 'SDK') {
+      assert.equal(sdkMail(ws, ctx), undefined, '허가된 후보가 없으면 메신저 도구가 노출되지 않는다');
+    } else {
+      const result = await runDirectives(ws, 'alpha', [{ action: 'mail', to: 'beta', message: '채널 요청' }], { mirrorCtx: ctx });
+      assert.match(JSON.stringify(result), /실패/);
+    }
     assert.deepEqual(await readdir(join(paths(ws).root, 'mail', 'beta')).catch(() => []), []);
   });
 }
@@ -113,4 +117,41 @@ test('자연문 동명이인 멘션은 팬아웃하지 않고 도구의 정확�
   const candidates = [...peers, { id: 'other-beta', slug: 'other', display_name: '베타' }];
   assert.deepEqual(mentionsIn('@베타 다음', candidates, 'a'), []);
   assert.deepEqual(mentionsIn('@베타 다음', peers, 'a'), [{ kind: 'crew', id: 'b' }]);
+});
+
+test('메신저 도구 넘김은 허가된 조직의 원격 동료 UUID 또는 유일한 slug를 받는다', () => {
+  const ctx = context();
+  ctx.peers.push({ id: 'remote-id', slug: 'remote', display_name: '원격', owner_user_id: 'remote-owner', ws_id: 'remote-ws' });
+  stageMessengerHandoff(ctx, { to: 'remote', cc: ['beta'], message: '같은 DM에서 답해줘' });
+  assert.equal(ctx.handoffs[0].to.id, 'remote-id');
+  assert.equal(ctx.handoffs[0].cc[0].id, 'b');
+  stageMessengerHandoff(ctx, { to: 'remote-id', message: 'ID로 지정' });
+  assert.equal(ctx.handoffs[1].to.id, 'remote-id');
+});
+
+test('소유자가 다른 동명 slug는 명시적인 UUID 없이는 넘기지 않는다', () => {
+  const ctx = context();
+  ctx.peers.push({ id: 'remote-beta', slug: 'beta', display_name: '다른 베타', owner_user_id: 'remote-owner', ws_id: 'remote' });
+  assert.throws(() => stageMessengerHandoff(ctx, { to: 'beta', message: '모호함' }));
+  stageMessengerHandoff(ctx, { to: 'remote-beta', message: '정확한 대상' });
+  assert.equal(ctx.handoffs[0].to.id, 'remote-beta');
+});
+
+test('CLI 메신저 쪽지는 로컬 파일에 없는 원격 동료 UUID를 허가된 문맥으로 넘긴다', async () => {
+  const ws = await setup(); const ctx = context();
+  ctx.peers.push({ id: 'remote-only', slug: 'remote-only', display_name: '원격 전담', owner_user_id: 'other', ws_id: 'other-machine' });
+  const result = await runDirectives(ws, 'alpha', [{ action: 'mail', to: 'remote-only', cc: ['b'], message: '이 DM에서 알려줘' }], { mirrorCtx: ctx });
+  assert.doesNotMatch(JSON.stringify(result), /실패/);
+  assert.equal(ctx.handoffs[0].to.id, 'remote-only');
+  assert.equal(ctx.handoffs[0].cc[0].id, 'b');
+  assert.deepEqual(await readdir(join(paths(ws).root, 'mail', 'remote-only')).catch(() => []), []);
+});
+
+test('CC 줄 분류는 독립 줄만 인정하고 인용·코드의 CC는 지시로 승격하지 않는다', async () => {
+  const { messengerRecipientText } = await import('../src/gateway/msgr-handoff.mjs');
+  const body = '@알파 실행\nCC: @베타\n> CC: @인용\n```text\nCC: @코드\n```\n설명 CC: @본문\n참조: @감사';
+  const result = messengerRecipientText(body);
+  assert.equal(result.cc, '@베타\n@감사');
+  assert.doesNotMatch(result.to, /@인용/);
+  assert.doesNotMatch(result.to, /@코드/);
 });

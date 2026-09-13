@@ -9,6 +9,12 @@ const POLL_MS = 1_000;
 
 // PostgREST 오류 메시지(P0001 raise 이름) → HTTP 상태
 const ERR = {
+  msgr_bad_delivery_role: [400, 'Bad Request: recipient role must be to or cc'],
+  msgr_runtime_update_required: [409, 'Conflict: update the recipient agent to use DM delegation'],
+  msgr_execution_forbidden: [403, 'Forbidden: request access is no longer available'],
+  msgr_execution_source_forbidden: [403, 'Forbidden: request access is no longer available'],
+  msgr_forbidden: [403, 'Forbidden: request access is not available'],
+  msgr_crew_not_in_channel: [403, 'Forbidden: channel or request access is required'],
   msgr_execution_not_owner: [409, 'Conflict: response has no matching execution claim'],
   msgr_bot_bad_disposition: [400, 'Bad Request: disposition must be handoff or done'],
   msgr_bot_bad_body: [400, 'Bad Request: body must contain 1 to 20000 characters'],
@@ -50,7 +56,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const waitMs = Math.min(maxWaitMs, Math.max(0, Number(params.timeout) || 0) * 1000);
       const deadline = now() + waitMs;
       for (;;) {
-        const ups = await rpc('msgr_bot_updates', { token, after_id: Math.max(0, offset - 1), lim });
+        const ups = await rpc(Number(params.delivery_protocol) === 1 ? 'msgr_bot_updates_with_delivery' : 'msgr_bot_updates', { token, after_id: Math.max(0, offset - 1), lim });
         if (ups.length || now() >= deadline) return reply(200, ups);
         await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
       }
@@ -67,7 +73,10 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
     if (!/^[0-9a-f-]{36}$/i.test(chat)) return fail(400, 'Bad Request: chat_id must be a channel id');
     if (method === 'sendChatAction') { // 텔레그램 모양(action=typing) — 봇이 답을 만드는 동안 2초마다 부른다 → 서버가 org 토픽으로 typing 방송(2026-09-11 유건 제보: VPS 크루 '답변 중' 표시 없음)
       if (params.action != null && params.action !== 'typing') return fail(400, 'Bad Request: action must be typing');
-      await rpc('msgr_bot_typing', { token, channel: chat });
+      const scoped = params.reply_to_message_id != null || params.execution_attempt != null;
+      const src = Number(params.reply_to_message_id);
+      if (scoped && (!Number.isSafeInteger(src) || src < 1 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(params.execution_attempt ?? '')))) return fail(400, 'Bad Request: typing requires a valid reply and execution claim');
+      await rpc('msgr_bot_typing', { token, channel: chat, ...(scoped ? { src_id: src, attempt: params.execution_attempt } : {}) });
       return reply(200, true);
     }
     // sendMessage

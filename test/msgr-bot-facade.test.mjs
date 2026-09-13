@@ -8,6 +8,31 @@ const CH = '11111111-1111-4111-8111-111111111111';
 const fakeRpc = (table) => { const calls = []; const rpc = async (fn, args) => { calls.push([fn, args]); const r = table[fn]; if (r instanceof Error) throw r; return typeof r === 'function' ? r(args, calls.length) : r; }; rpc.calls = calls; return rpc; };
 const pgErr = (name) => Object.assign(new Error(`${name}`), { code: 'P0001' });
 
+test('only capable adapters receive the delegated DM and passive CC protocol', async () => {
+  const rpc=fakeRpc({msgr_bot_updates:[],msgr_bot_updates_with_delivery:[]});
+  for(const protocol of [undefined,0,1,'1',2])await handle({token:T,method:'getUpdates',params:{delivery_protocol:protocol}},rpc);
+  assert.deepEqual(rpc.calls.map(([name])=>name),['msgr_bot_updates','msgr_bot_updates','msgr_bot_updates_with_delivery','msgr_bot_updates_with_delivery','msgr_bot_updates']);
+});
+
+test('delegated typing requires a complete claim and does not fall back to channel typing', async () => {
+  const attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const rpc = fakeRpc({ msgr_bot_typing: null });
+  for (const extra of [{ reply_to_message_id: 7 }, { execution_attempt: attempt }, { reply_to_message_id: 0, execution_attempt: attempt }, { reply_to_message_id: 7, execution_attempt: 'invalid' }]) {
+    assert.equal((await handle({ token: T, method: 'sendChatAction', params: { chat_id: CH, ...extra } }, rpc)).status, 400);
+  }
+  assert.equal(rpc.calls.length, 0);
+  assert.equal((await handle({ token: T, method: 'sendChatAction', params: { chat_id: CH, reply_to_message_id: '7', execution_attempt: attempt } }, rpc)).status, 200);
+  assert.deepEqual(rpc.calls, [['msgr_bot_typing', { token: T, channel: CH, src_id: 7, attempt }]]);
+});
+
+test('DM permission failures are permanent errors, not retryable server failures', async () => {
+  for (const name of ['msgr_execution_forbidden', 'msgr_execution_source_forbidden', 'msgr_forbidden', 'msgr_crew_not_in_channel']) {
+    const result = await handle({ token: T, method: 'getMe' }, fakeRpc({ msgr_bot_me: pgErr(name) }));
+    assert.equal(result.status, 403, name);
+  }
+  assert.equal((await handle({ token: T, method: 'getMe' }, fakeRpc({ msgr_bot_me: pgErr('msgr_bad_delivery_role') }))).status, 400);
+});
+
 test('parseRequest: /bot<token>/<method> 경로 · Bearer 헤더 폴백 · 쿼리+본문 병합', () => {
   assert.deepEqual(parseRequest(`https://x.supabase.co/functions/v1/msgr-bot/bot${T}/getUpdates?offset=5`, {}, { timeout: 20 }), { token: T, method: 'getUpdates', params: { offset: '5', timeout: 20 } });
   assert.deepEqual(parseRequest('https://x/msgr-bot/getMe', { authorization: `Bearer ${T}` }, null), { token: T, method: 'getMe', params: {} });
