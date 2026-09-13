@@ -112,7 +112,7 @@ test('chat.mjs 배선: sdkEnvFor(자격 게이트)가 catch 관할 try 안에 �
   const between = chatSrc.slice(decl, call);
   assert.ok(/\btry \{/.test(between), '선언과 호출 사이에 try 시작이 존재(호출이 try 안)');
   // catch·finally는 옵셔널 참조 — 등록 전 실패 시 ReferenceError/TypeError 재발 방지
-  assert.match(chatSrc, /let aborted = !!abortReg\?\.wasAborted\(\);/);
+  assert.match(chatSrc, /let aborted = !!abortReg\?\.wasAborted\(\) \|\| !!e\?\.aborted;/);
   assert.match(chatSrc, /abortReg\?\.release\(\);/);
 });
 
