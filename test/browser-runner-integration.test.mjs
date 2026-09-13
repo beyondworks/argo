@@ -15,6 +15,10 @@ const fixtureHome = join(root, 'home');
 await mkdir(fixtureHome, {recursive:true});
 process.env.HOME = fixtureHome;
 process.env.USERPROFILE = fixtureHome;
+// Chromium needs a valid Windows home layout even when its agent profile is elsewhere.
+// Without AppData/Local it rejects remote debugging instead of booting the isolated profile.
+await mkdir(join(fixtureHome, 'AppData', 'Local'), {recursive:true});
+await mkdir(join(fixtureHome, 'AppData', 'Roaming'), {recursive:true});
 process.env.ARGO_ROOT = join(root, 'workspaces');
 process.env.ARGO_CACHE_DIR = join(root, 'cache');
 process.env.ARGO_MODEL_CATALOG = 'off';
