@@ -6,9 +6,9 @@ export async function POST(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { slug } = await req.json();
+    const { slug, source } = await req.json();
     if (!slug) return Response.json({ error: 'slug가 필요합니다' }, { status: 400 });
-    const interrupted = await interruptTurn(ws, slug);
+    const interrupted = await interruptTurn(ws, slug, { source: typeof source === 'string' ? source : undefined });
     return Response.json({ interrupted });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });

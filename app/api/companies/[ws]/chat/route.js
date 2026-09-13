@@ -1,6 +1,8 @@
+import { isStopCommand } from '../../../../../src/stop-command.mjs';
+import { interruptTurn } from '../../../../../src/turn-abort.mjs';
 import { relative } from 'node:path';
 import { chat } from '../../../../../src/chat.mjs';
-import { paths } from '../../../../../src/workspace.mjs';
+import { paths, loadCompany } from '../../../../../src/workspace.mjs';
 import { threadMtime, loadThread, appendTurn, beginTurn, resetThread } from '../../../../../src/thread.mjs';
 import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 import { nudgeSync } from '../../../../../src/sync.mjs';
@@ -46,7 +48,13 @@ export async function POST(req, { params }) {
     if (turnId) nudgeSync(); // 다른 기기에도 곧바로 보이게
     let t;
     try {
-      t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+      if (!attachments.length && isStopCommand(message)) {
+        const interrupted = await interruptTurn(ws, slug, { source: 'chat' });
+        const lang = (await loadCompany(ws)).lang;
+        t = { reply: lang === 'en'
+          ? (interrupted ? 'The current execution was stopped.' : 'There is no active execution to stop.')
+          : (interrupted ? '현재 실행을 중단했습니다.' : '중단할 실행 중인 작업이 없습니다.'), sessionId: sessionId || null };
+      } else t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
     } catch (e) {
       // 실패·중단 턴도 스레드에 남긴다 — 성공 뒤에만 저장하면 지시문이 새로고침에 증발하고 비용만
       // 남는다(전수리뷰 2026-07-30 #1). UI는 m.failed로 사유+재전송을 그린다(기존 낙관 사본 패턴).
@@ -74,9 +82,8 @@ export async function POST(req, { params }) {
     // 미경유라 "직접 턴" 판정이 구조로 보장된다). 교정 감지는 fire-and-forget: 응답을 막지 않고,
     // 실패는 로그만(교정은 반복이 전제라 다음 기회에 잡힌다). 프리필터(corrections)가 교정 신호
     // 어휘 없는 턴을 LLM 호출 없이 걸러 비용을 막는다.
-    import('../../../../../src/corrections.mjs')
+    if (!isStopCommand(message)) import('../../../../../src/corrections.mjs')
       .then(async ({ detectAndTrack }) => {
-        const { loadCompany } = await import('../../../../../src/workspace.mjs');
         const lang = (await loadCompany(ws).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
         return detectAndTrack(ws, { userMsg: message.trim(), lang });
       })

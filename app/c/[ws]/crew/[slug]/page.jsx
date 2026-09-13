@@ -1,5 +1,6 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
+import { isStopCommand } from '../../../../../src/stop-command.mjs';
 import { splitEnvelope } from './envelope.mjs';
 import { externalAgentLabel } from '../../../../../src/runners/external-agent.mjs'; // 외부 에이전트 표기(유건 2026-09-08)
 import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -573,6 +574,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     const attachments = att;
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     setInput(''); setAtt([]);
+    if (!attachments.length && isStopCommand(message)) {
+      setQueueHeld(true);
+      if (working) { await abortTurn(); return; }
+    }
     // 답변 중이면 스레드가 아니라 대기열로 간다 — 첨부 칩과 같은 물건이라 ✕로 뗄 수 있다.
     // (uploading은 대기열로 보내지 않는다: 업로드가 안 끝난 첨부가 실려 나간다)
     if (busy) { setQueue((q) => [...q, { qid: `q${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: message, attachments }]); return; }
@@ -596,8 +601,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const [aborting, setAborting] = useState(false);
   async function abortTurn() {
     if (aborting) return;
+    setQueueHeld(true); // Hold immediately, even when the provider finishes successfully during cancellation.
     setAborting(true);
-    try { await api(`/api/companies/${ws}/chat/abort`, { slug }); } catch { /* 이미 끝난 턴 */ }
+    try { await api(`/api/companies/${ws}/chat/abort`, { slug, source: busy ? 'chat' : liveStage?.source }); } catch (e) { setError(String(e.message)); }
     finally { setAborting(false); }
   }
 

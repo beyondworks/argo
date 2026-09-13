@@ -1,23 +1,47 @@
-// 턴 중단 레지스트리 — 진행 중인 SDK 턴의 interrupt 핸들을 프로세스 안에 등록해 둔다.
-// 사장이 "중단"을 누르면 해당 크루의 최신 턴을 멈춘다. (next start 단일 프로세스 전제 —
-// dev HMR 다중 런타임에서는 같은 런타임의 턴만 잡힌다: 베스트에포트)
-const active = new Map(); // `${wsId}:${slug}` → { interrupt, aborted }
+// A crew can have more than one active entry (provider, preparation, retry).
+// Keep every handle: replacing the latest entry orphaned the preceding execution.
+// Process-local, as before: a different server process must route cancellation to its owner.
+const active = new Map();
+export const turnAbortedError = () => Object.assign(new Error('중단됨'), { aborted: true });
 
-export function registerTurn(wsId, slug, interrupt) {
+export function registerTurn(wsId, slug, interrupt, { group = Symbol('turn'), source = 'chat' } = {}) {
   const key = `${wsId}:${slug}`;
-  const entry = { interrupt, aborted: false };
-  active.set(key, entry);
+  const entries = active.get(key) ?? new Set();
+  const entry = { interrupt, aborted: false, group, source };
+  entries.add(entry); active.set(key, entries);
   return {
+    group, source,
     wasAborted: () => entry.aborted,
-    release: () => { if (active.get(key) === entry) active.delete(key); },
+    release: () => {
+      entries.delete(entry);
+      if (!entries.size && active.get(key) === entries) active.delete(key);
+    },
   };
 }
 
-/** 반환: 중단 요청이 전달됐는지. 진행 중 턴이 없으면 false. */
-export async function interruptTurn(wsId, slug) {
-  const entry = active.get(`${wsId}:${slug}`);
-  if (!entry) return false;
-  entry.aborted = true;
-  try { await entry.interrupt(); } catch { /* 이미 끝난 턴 — 무시 */ }
-  return true;
+export async function interruptTurn(wsId, slug, { source } = {}) {
+  const candidates = [...(active.get(`${wsId}:${slug}`) ?? [])].filter(e => !source || e.source === source);
+  const latest = candidates.at(-1);
+  const entries = candidates.filter(e => e.group === latest?.group);
+  // One logical execution only: its setup/provider/retry handles share this group.
+  // Concurrent routines or other private conversations on the same crew remain active.
+  // Mark all entries before awaiting any interrupt: a provider can finish synchronously.
+  for (const entry of entries) entry.aborted = true;
+  await Promise.all(entries.map(async (entry) => { try { await entry.interrupt(); } catch { /* already ended */ } }));
+  return entries.length > 0;
+}
+
+/** The same cancellation lifetime covers setup, retries and tool-result continuations. */
+export async function withTurnControl(wsId, slug, inherited, run, { source = 'chat' } = {}) {
+  if (inherited) { inherited.check(); return run(inherited); }
+  const registration = registerTurn(wsId, slug, () => {}, { source });
+  const control = { group: registration.group, source, check() { if (registration.wasAborted()) throw turnAbortedError(); } };
+  try {
+    const result = await run(control);
+    control.check(); // interrupt may return a normal final result instead of throwing
+    return result;
+  } catch (error) {
+    control.check(); // A setup or transport failure after stop must not become retryable.
+    throw error;
+  } finally { registration.release(); }
 }

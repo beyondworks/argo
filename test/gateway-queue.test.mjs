@@ -207,3 +207,19 @@ test('장시간 작업 적재: 메신저 발신 경로는 허용 필드만 저�
   }
   assert.equal((await readdir(queueDir(WS, JOBS_QUEUE))).filter((n) => n.endsWith('.json')).length, 2, '불완전한 메신저 경로를 일반 작업으로 적재하지 않는다');
 });
+
+
+test('intentional abort is terminal while infrastructure failures still retry', async () => {
+  const ws='stop-queue'; let stoppedCalls=0, retryCalls=0;
+  await enqueueJob(ws,'stop','1',{kind:'abort'});
+  await enqueueJob(ws,'stop','2',{kind:'retry'});
+  const stop=startQueueWorker(ws,'stop',async(job)=>{
+    if(job.kind==='abort'){stoppedCalls++;throw Object.assign(new Error('intentional stop'),{aborted:true});}
+    if(++retryCalls===1)throw new Error('temporary infrastructure failure');
+  });
+  try {
+    await new Promise(r=>setTimeout(r,4300));
+    assert.equal(stoppedCalls,1);assert.equal(retryCalls,2);
+    assert.equal((await readdir(queueDir(ws,'stop'))).filter(n=>n.includes('.json')).length,0);
+  } finally {stop();}
+});

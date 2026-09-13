@@ -13,7 +13,7 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought�
   assert.match(ts, /steps: Array\.isArray\(steps\) \? steps\.slice\(-40\) : \(prev\.steps \?\? \[\]\)/, '상태 파일 steps(뒤 40)');
   assert.match(chat, /const trace = \{ steps, thought: String\(thought \?\? ''\)\.slice\(-1500\), ms: Date\.now\(\) - t0, model: actualModel \|\| null, costUsd \};/, 'trace 조립');
   const ast=parse(chat,{ecmaVersion:'latest',sourceType:'module'});
-  const turn=ast.body.find(n=>n.type==='ExportNamedDeclaration' && n.declaration?.id?.name==='chat').declaration;
+  const turn=ast.body.find(n=>n.type==='FunctionDeclaration' && n.id?.name==='runChat');
   const result=turn.body.body.findLast(n=>n.type==='ReturnStatement').argument;
   assert.equal(result.type,'ObjectExpression');
   const trace=result.properties.find(p=>p.type==='Property' && p.key.name==='trace');
