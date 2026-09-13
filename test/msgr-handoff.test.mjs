@@ -62,6 +62,31 @@ function sdkMail(ws, ctx) {
   makeCrewServer(ws, 'alpha', '알파', [{ slug: 'beta', name: '베타' }], 0, [], ctx, 'ko', [], '', sink);
   return sink.find((t) => t.name === 'send_to_crew').handler;
 }
+
+function sdkDelegate(ws, ctx) {
+  const sink = [];
+  makeCrewServer(ws, 'alpha', '알파', [{ slug: 'beta', name: '베타' }], 0, [], ctx, 'ko', [], '', sink);
+  return sink.find((t) => t.name === 'delegate').handler;
+}
+
+test('메신저 delegate는 로컬 자식 턴 대신 정확한 채널 넘김을 준비한다', async () => {
+  const ws = await setup(); const ctx = context();
+  const result = await sdkDelegate(ws, ctx)({ to: 'beta', task: '근거를 조사하고 이 채널에 보고' });
+  assert.match(JSON.stringify(result), /아직 결과는 없다/);
+  assert.equal(ctx.handoffs.length, 1);
+  assert.equal(ctx.handoffs[0].to.id, 'b');
+  assert.equal(ctx.handoffs[0].message, '근거를 조사하고 이 채널에 보고');
+  assert.deepEqual(await readdir(join(paths(ws).root, 'mail', 'beta')).catch(() => []), []);
+});
+
+test('메신저 delegate는 채널 밖 크루와 불완전 문맥을 로컬 실행으로 우회하지 않는다', async () => {
+  const ws = await setup();
+  for (const ctx of [{ ...context(), peers: [] }, { kind: 'msgr' }, { kind: 'msgr-rules' }]) {
+    const result = await sdkDelegate(ws, ctx)({ to: 'beta', task: '채널 밖에 넘기지 말 것' });
+    assert.match(JSON.stringify(result), /위임 실패/);
+    assert.equal(ctx.handoffs?.length ?? 0, 0);
+  }
+});
 for (const runner of ['SDK', 'CLI']) {
   test(`${runner}: 메신저 쪽지는 채널 넘김으로 수집하고 일반 우편 큐를 만들지 않는다`, async () => {
     const ws = await setup(); const ctx = context();

@@ -79,7 +79,7 @@ test('B2. 순수 빌더 — 키 조합·크롬 탐색·JXA/PowerShell 스크립�
   assert.equal(visionCapable('anthropic/claude-haiku-4.5'), true); assert.equal(visionCapable('minimax/minimax-m3:free'), true); assert.equal(visionCapable('deepseek/deepseek-v4-pro'), false, '모르는 모델 = 텍스트만(400 방지)');
   assert.equal(visionCapable('deepseek/x', { ARGO_VISION_MODELS: '*' }), true); assert.equal(visionCapable('claude-x', { ARGO_VISION_MODELS: 'none' }), false); assert.equal(visionCapable('foo/bar', { ARGO_VISION_MODELS: 'bar,baz' }), true);
   assert.match(nativeToolsDirective('ko'), /browser_navigate/); assert.match(nativeToolsDirective('en'), /computer_screenshot/);
-  assert.deepEqual(BROWSER_SPECS.map((s) => s.name), ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_back', 'browser_screenshot', 'browser_eval']);
+  assert.deepEqual(BROWSER_SPECS.map((s) => s.name), ['browser_status', 'browser_request_login', 'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_back', 'browser_screenshot', 'browser_eval']);
   assert.deepEqual(COMPUTER_SPECS.map((s) => s.name), ['computer_screenshot', 'computer_move', 'computer_click', 'computer_drag', 'computer_type', 'computer_key', 'computer_scroll']);
   const names = builtinTools({ cwd: ROOT, env: {} }).map((t) => t.name);
   assert.ok(names.includes('browser_navigate') && names.includes('computer_screenshot') && names.includes('Read'), '네이티브 도구 집합에 포함');

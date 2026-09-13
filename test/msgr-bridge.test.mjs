@@ -968,3 +968,67 @@ test('handler 프롬프트: 간결 규칙(요청한 것만·차례 작업은 자
   assert.match(src, /const brief = pick\(' 요청한 것만 군더더기 없이 답하라/);
   assert.match(src, /const hint = brief \+ \(others\.length \? pick\(/);
 });
+
+test('team work: real drain/handler chain keeps objective across remote ownership and only lead ends work', async () => {
+  M._autoLogForTest.clear();
+  const REMOTE='dddddddd-0000-4000-8000-000000000099', REMOTE_WS='work-remote-device';
+  const { createCompany } = await import('../src/workspace.mjs');
+  await createCompany(REMOTE_WS,'Remote','zed');
+  await mkdir(paths(REMOTE_WS).agents,{recursive:true});
+  await writeFile(join(paths(REMOTE_WS).agents,'zed.md'),'---\nname: 원격전문가\nrole: 조사\n---\n');
+  const local=crew({cursor_msg_id:9999,owner_user_id:OWNER,ws_id:WS,work_protocol:1,role_text:'총괄'});
+  const remote=crew({id:REMOTE,slug:'zed',display_name:'원격전문가',cursor_msg_id:9999,owner_user_id:MEMBER,ws_id:REMOTE_WS,work_protocol:1,role_text:'원격 조사'});
+  const work={id:'work-1',root_message_id:10000,channel_id:CH,created_by:MEMBER,goal:'세 공급처를 비교해줘',completion_criteria:'출처 3개와 가격표',lead_crew_id:CREW,status:'running'};
+  const messages=[msg(10000,{thread_root:10000,body:work.goal,meta:{work_run_id:work.id}})];
+  const db=fakeDb({crews:[local,remote],messages,peers:[local,remote],parent:(id)=>messages.find((r)=>r.id===id),settledFn:(id,source)=>messages.some((m)=>m.client_msg_id===`reply:${id}:${source}`)});
+  db.myCrews=async(uid,ws)=>[local,remote].filter((c)=>c.owner_user_id===uid&&c.ws_id===ws);
+  db.orgCrews=async()=>[local,remote];
+  db.workRun=async(root,ch)=>root===work.root_message_id&&ch===CH?work:null;
+  db.setCursor=async(id,cursor)=>{ [local,remote].find((c)=>c.id===id).cursor_msg_id=cursor; };
+  db.insertMessage=async(row)=>{ const m={...row,id:10000+messages.length,created_at:new Date().toISOString(),meta:{...row.meta,work_run_id:work.id}}; messages.push(m);
+    if(row.crew_id===CREW&&row.meta?.work_status==='completed')work.status='completed'; return {id:m.id}; };
+  const turns=[];
+  const runChat=async(ws,slug,text,_sid,opts)=>{
+    turns.push({ws,slug,text,ctx:opts.mirrorCtx});
+    assert.equal(opts.mirrorCtx.work.id,work.id); assert.equal(opts.mirrorCtx.threadRoot,10000);
+    assert.ok(text.includes(work.goal)); assert.ok(text.includes(work.completion_criteria)); assert.ok(text.includes('원격 조사'));
+    if(slug==='zed')return {reply:'조사 결과를 확인했습니다. @서윤 취합해 주세요.\nMSGR: handoff'};
+    return {reply:turns.filter((x)=>x.slug==='seoyun').length===1?'@원격전문가 공급처 조사 후 제게 결과를 돌려 주세요.\nMSGR: handoff':'출처 3개와 가격표를 취합했습니다.\nWORK: completed\nMSGR: done'};
+  };
+  const runtimes=[{ws:WS,uid:OWNER},{ws:REMOTE_WS,uid:MEMBER}].map((r)=>({...r,handler:M.makeMsgrHandler(r.ws,{session:async()=>({db,uid:r.uid}),runChat})}));
+  for(let i=0;i<4;i++)for(const runtime of runtimes){
+    const jobs=[];
+    await M.drain(runtime.ws,{db,uid:runtime.uid,inventory:null,enqueue:async(_ws,_kind,_key,job)=>jobs.push(job)});
+    for(const job of jobs)await runtime.handler(job);
+  }
+  assert.deepEqual(turns.map((x)=>x.slug),['seoyun','zed','seoyun']);
+  assert.deepEqual(turns.map((x)=>x.ws),[WS,REMOTE_WS,WS]);
+  assert.equal(work.status,'completed');
+  assert.ok(messages.every((m)=>m.channel_id===CH&&m.thread_root===10000));
+  const end=messages.at(-1); assert.equal(end.meta.work_status,'completed'); assert.deepEqual(end.mentions,[]); assert.ok(!end.body.includes('WORK:'));
+});
+
+test('team work: cancellation between queue and execution prevents paid turn and claim', async()=>{
+  const db=fakeDb(); const work={id:'cancelled-work',status:'cancelled'}; db.workRun=async()=>work;
+  let ran=0;
+  const handler=M.makeMsgrHandler(WS,{session:async()=>({db,uid:OWNER}),runChat:async()=>{ran++;return{reply:'must not run'};}});
+  await handler({msgId:100,orgId:ORG,channelId:CH,crewId:CREW,slug:'seoyun',text:'queued request',authorId:MEMBER,threadRoot:100,createdAt:new Date().toISOString(),workRunId:work.id});
+  assert.equal(ran,0); assert.ok(!db.calls.some((x)=>x[0]==='claimExecution'));
+});
+
+test('team work: eight-hop cap blocks; authorized resume resets only that work round before the next handoff', async()=>{
+  M._autoLogForTest.clear();
+  const ZED='dddddddd-0000-4000-8000-000000000098';
+  const root=msg(5,{thread_root:5});
+  const source=msg(30,{author_kind:'crew',crew_id:ZED,thread_root:5,reply_to:25,meta:{work_run_id:'bounded',origin:MEMBER}});
+  const db=fakeDb({messages:[source],parent:(id)=>id===5?root:null,settledFn:()=>true,autoTurns:8});
+  const work={id:'bounded',status:'running',last_resume_message_id:null}; db.workRun=async()=>work;
+  const counts=[]; db.autoTurnsIn=async(_root,_ch,after)=>{ counts.push(after); return after===25?0:8; };
+  const first=fakeEnqueue(); await M.drain(WS,{db,uid:OWNER,inventory:null,enqueue:first});
+  assert.equal(jobsOf(first).length,0); assert.ok(db.calls.some((c)=>c[0]==='insertMessage'&&c[1].client_msg_id.startsWith('hopcap:')));
+  const blocked=fakeEnqueue(); work.status='blocked'; await M.drain(WS,{db,uid:OWNER,inventory:null,enqueue:blocked}); assert.equal(jobsOf(blocked).length,0);
+  work.status='running'; work.last_resume_message_id=25;
+  const resumed=fakeEnqueue(); await M.drain(WS,{db,uid:OWNER,inventory:null,enqueue:resumed});
+  assert.equal(jobsOf(resumed).length,1); assert.equal(jobsOf(resumed)[0].hop,1); assert.equal(jobsOf(resumed)[0].threadRoot,5);
+  assert.deepEqual(counts,[null,25]);
+});

@@ -1,6 +1,6 @@
 // 브라우저 유즈(네이티브 엔진 내장) — Argo 전용 크롬 프로필을 띄우고 CDP(Chrome DevTools Protocol)로 제어한다.
 // Hermes(browser_* 도구 13종, CDP 백엔드)·OpenClaw(browser 확장, CDP·확장 릴레이)와 같은 구조: 러너·모델과 무관하게 같은 도구·같은 게이트.
-// 설계 원칙 — 사용자의 일상 크롬 프로필을 건드리지 않는다(전용 프로필 디렉터리, 워크스페이스별). 프로필은 회사 폴더 밖(동기화 대상 아님).
+// 회사·크루별 전용 프로필, 실행별 탭. 개인/기존 회사 프로필을 복사하지 않는다. 프로필은 동기화 대상 밖이다.
 // 의존성 0: Node 22의 전역 WebSocket + 시스템 크롬(Chrome/Chromium/Edge/Brave). 없으면 도구가 정직한 오류를 돌려준다(마켓의 브라우저 MCP가 대안).
 import { spawn } from 'node:child_process';
 import { IMAGE_MAX_B64 } from './session.mjs';
@@ -8,26 +8,11 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
+import { detectEgoBrowser, selectIsolatedBrowserProvider } from './ego-browser-provider.mjs';
 
-export const BROWSER_SPECS = Object.freeze([
-  { name: 'browser_navigate', description: 'Open a URL in the Argo browser (dedicated Chrome profile) and wait for load. Returns title, url and a short text snapshot.',
-    input_schema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
-  { name: 'browser_snapshot', description: 'Text snapshot of the current page: interactive elements get refs like [e3] for browser_click / browser_type, plus visible text. Use after navigation or actions.',
-    input_schema: { type: 'object', properties: { max_chars: { type: 'number' } } } },
-  { name: 'browser_click', description: 'Click an element by ref from browser_snapshot (e.g. "e3") or a CSS selector.',
-    input_schema: { type: 'object', properties: { ref: { type: 'string' } }, required: ['ref'] } },
-  { name: 'browser_type', description: 'Type text into an element by ref or CSS selector (focuses it first). Set submit=true to press Enter afterwards.',
-    input_schema: { type: 'object', properties: { ref: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' } }, required: ['ref', 'text'] } },
-  { name: 'browser_press', description: 'Press a keyboard key in the page: Enter, Tab, Escape, Backspace, ArrowDown, … Optional modifiers: "cmd+a", "ctrl+f".',
-    input_schema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] } },
-  { name: 'browser_scroll', description: 'Scroll the page: direction up | down | top | bottom, amount in pixels (default 600).',
-    input_schema: { type: 'object', properties: { direction: { type: 'string', enum: ['up', 'down', 'top', 'bottom'] }, amount: { type: 'number' } }, required: ['direction'] } },
-  { name: 'browser_back', description: 'Go back in history.', input_schema: { type: 'object', properties: {} } },
-  { name: 'browser_screenshot', description: 'Screenshot of the current viewport (PNG). Returned as an image when the model supports vision; the file is also saved under vault/screenshots/.',
-    input_schema: { type: 'object', properties: {} } },
-  { name: 'browser_eval', description: 'Run JavaScript in the page and return the result (JSON). Use for reading data the snapshot does not show.',
-    input_schema: { type: 'object', properties: { js: { type: 'string' } }, required: ['js'] } },
-]);
+import { BROWSER_SPECS } from './browser-specs.mjs';
+export { BROWSER_SPECS } from './browser-specs.mjs';
 
 /** 시스템 크롬 계열 실행 파일(순수 탐색) — env ARGO_CHROME_PATH가 우선. */
 export function findChrome(env = process.env, platform = process.platform) {
@@ -59,13 +44,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 class Cdp {
   constructor(ws) { this.ws = ws; this.id = 0; this.pending = new Map(); this.listeners = new Map();
     ws.onmessage = (ev) => { let m; try { m = JSON.parse(String(ev.data)); } catch { return; }
+      if (m.method === 'Target.detachedFromTarget') for (const [id, pending] of this.pending) {
+        if (pending.sessionId === m.params?.sessionId) { this.pending.delete(id); pending.rej(new Error('Browser task tab closed')); }
+      }
       if (m.id && this.pending.has(m.id)) { const { res, rej } = this.pending.get(m.id); this.pending.delete(m.id); m.error ? rej(new Error(`CDP ${m.error.message}`)) : res(m.result ?? {}); }
       else if (m.method) for (const fn of this.listeners.get(`${m.sessionId ?? ''}:${m.method}`) ?? []) fn(m.params); };
     ws.onclose = () => { for (const { rej } of this.pending.values()) rej(new Error('CDP connection closed')); this.pending.clear(); };
   }
   send(method, params = {}, sessionId) {
     const id = ++this.id;
-    return new Promise((res, rej) => { this.pending.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); });
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Browser command timed out')); }, 30_000); timer.unref?.();
+      const res = (value) => { clearTimeout(timer); resolve(value); }; const rej = (error) => { clearTimeout(timer); reject(error); };
+      this.pending.set(id, { res, rej, sessionId });
+      try { this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); } catch (e) { this.pending.delete(id); rej(e); }
+    });
   }
   on(sessionId, method, fn) { const k = `${sessionId ?? ''}:${method}`; if (!this.listeners.has(k)) this.listeners.set(k, new Set()); this.listeners.get(k).add(fn); return () => this.listeners.get(k)?.delete(fn); }
   close() { try { this.ws.close(); } catch { /* 이미 닫힘 */ } }
@@ -105,33 +98,43 @@ export function parseKeyCombo(combo) {
   return { key: name, code: name, keyCode: 0, modifiers };
 }
 
-/** 워크스페이스별 브라우저 세션(프로세스 싱글턴 맵) — 첫 사용 시 크롬을 띄우고 idle 뒤 정리한다. */
+/** 크루별 브라우저 프로세스 — 모든 러너의 MCP도 호스트의 이 맵을 공유한다. */
 const sessions = new Map();
 const launching = new Map(); // wsId → 기동 중 Promise
 const children = new Set(); // 살아 있는 크롬 자식 전수 — 프로세스 종료 시 동기 스위퍼(4R MEDIUM: 재배포마다 고아가 쌓이면 SingletonLock으로 그 회사 브라우저가 막힌다)
 process.on('exit', () => { for (const c of children) { try { c.kill('SIGKILL'); } catch { /* */ } } });
 /** 테스트 전용 — 세션 map(축출 가드 핀). */
 export const _sessionsForTest = () => sessions;
+export const BROWSER_LOGIN_ERRORS = Object.freeze({
+  BROWSER_LOGIN_PAUSED: 'Browser login handed off to the user. Further automation in this run is disabled; continue in a new work run after sign-in.',
+  BROWSER_LOGIN_PENDING: 'This agent already has a login tab waiting for the user. Complete sign-in and close that tab first.',
+  BROWSER_LOGIN_PAGE_REQUIRED: 'Open the required service login page in this work tab first.',
+  BROWSER_LOGIN_HEADLESS: 'Login handoff is unavailable in a headless browser. Use a visible browser on the execution device; mobile remote control is not available.',
+});
+const loginError = (code) => Object.assign(new Error(BROWSER_LOGIN_ERRORS[code]), { code });
 export class BrowserSession {
-  static profileDir(wsId, env = process.env) { const root = env.ARGO_ROOT ? dirname(env.ARGO_ROOT) : join(homedir(), '.argo'); return join(root, 'browser', wsId); }
-  static async get(wsId, { env = process.env, headless = env.ARGO_BROWSER_HEADLESS === '1' } = {}) {
-    const s = sessions.get(wsId);
+  static profileDir(wsId, env = process.env, slug = '') { const root = env.ARGO_ROOT ? dirname(env.ARGO_ROOT) : join(homedir(), '.argo'); return slug ? join(root, 'browser', 'agents', scopeHash([wsId, slug])) : join(root, 'browser', wsId); }
+  static peek(wsId, { env = process.env, slug = '' } = {}) { return sessions.get(slug ? BrowserSession.profileDir(wsId, env, slug) : wsId); }
+  static async get(wsId, { env = process.env, headless = env.ARGO_BROWSER_HEADLESS === '1', slug = '' } = {}) {
+    const key = slug ? BrowserSession.profileDir(wsId, env, slug) : wsId;
+    const s = sessions.get(key);
+    if (s?.closing) { await s.closing; return BrowserSession.get(wsId, { env, headless, slug }); }
     if (s && s.alive) { s.touch(); return s; }
     // 기동 중 뮤텍스 — 같은 회사 두 크루가 동시에 부르면 프로필 SingletonLock 경합으로 둘 다 실패하고, 실패한 기동이 map에서 산 세션을
     // 밀어내 그 회사 브라우저가 계속 실패했다(분리 검수 MEDIUM-1 실측). 진행 중인 기동 약속을 공유한다.
-    if (launching.has(wsId)) return launching.get(wsId);
+    if (launching.has(key)) return launching.get(key);
     const p = (async () => {
-      const n = new BrowserSession(wsId, { env, headless });
-      try { await n.launch(); sessions.set(wsId, n); return n; } finally { launching.delete(wsId); }
+      const n = new BrowserSession(wsId, { env, headless, slug });
+      try { await n.launch(); sessions.set(key, n); return n; } catch (e) { await n.close(); throw e; } finally { launching.delete(key); }
     })();
-    launching.set(wsId, p); return p;
+    launching.set(key, p); return p;
   }
-  constructor(wsId, { env, headless }) { this.wsId = wsId; this.env = env; this.headless = headless; this.alive = false; this.idleMs = 5 * 60_000; }
-  touch() { clearTimeout(this.timer); this.timer = setTimeout(() => this.close().catch(() => {}), this.idleMs); this.timer.unref?.(); }
+  constructor(wsId, { env, headless, slug = '' }) { this.wsId = wsId; this.slug = slug; this.env = env; this.headless = headless; this.key = slug ? BrowserSession.profileDir(wsId, env, slug) : wsId; this.pages = new Map(); this.pageStarts = new Map(); this.humanLoginPages = new Map(); this.handedOffRuns = new Set(); this.alive = false; this.idleMs = 5 * 60_000; }
+  touch() { clearTimeout(this.timer); if (this.humanLoginPages.size) return; this.timer = setTimeout(() => this.close().catch(() => {}), this.idleMs); this.timer.unref?.(); }
   async launch() {
     const bin = findChrome(this.env);
     if (!bin) throw new Error('Chrome/Chromium/Edge/Brave를 찾지 못했습니다 — 설치하거나 ARGO_CHROME_PATH로 경로를 지정하세요(대안: 스킬·도구의 브라우저 MCP)');
-    const profile = BrowserSession.profileDir(this.wsId, this.env); await mkdir(profile, { recursive: true });
+    const profile = BrowserSession.profileDir(this.wsId, this.env, this.slug); await mkdir(profile, { recursive: true, mode: 0o700 });
     // 잔재 DevToolsActivePort(비정상 종료가 남김)를 스폰 전에 지운다 — 남아 있으면 죽은 포트를 채택해 127ms 만에 'CDP 연결 실패'로 죽고(4R 검수 HIGH),
     // 고아 크롬이 그 파일을 덮어 그 회사 브라우저가 계속 고장난다. Playwright도 같은 이유로 스폰 전에 지운다.
     await rm(join(profile, 'DevToolsActivePort'), { force: true }).catch(() => {});
@@ -150,7 +153,7 @@ export class BrowserSession {
     let spawnErr = null; let exited = null;
     this.child.on('error', (e) => { spawnErr = e; });
     children.add(this.child);
-    this.child.on('exit', (code, sig) => { exited = { code, sig }; children.delete(this.child); this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); this.cdp?.close(); }); // map 가드 — 남의 산 세션을 밀어내지 않는다
+    this.child.on('exit', (code, sig) => { exited = { code, sig }; children.delete(this.child); this.alive = false; if (sessions.get(this.key) === this) sessions.delete(this.key); this.cdp?.close(); }); // map 가드 — 남의 산 세션을 밀어내지 않는다
     // 준비 판정은 시간 기준(LAUNCH_TIMEOUT_MS). 실행 오류·조기 종료는 상한을 기다리지 않고 즉시 실패로 돌린다(원인이 문구에 실린다).
     const diag = () => { const t = tail.join('').trim().split(/\r?\n/).slice(-3).join(' | ').slice(0, 400); return t ? ` — stderr: ${t}` : ''; };
     const t0 = Date.now();
@@ -166,6 +169,10 @@ export class BrowserSession {
     try { await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error(`CDP 연결 실패(${wsUrl})${diag()}`)); }); }
     catch (e) { this.kill(); throw e; } // 연결 실패도 자식을 남기지 않는다(4R: 고아 크롬이 SingletonLock을 쥐면 다음 기동도 실패)
     this.cdp = new Cdp(ws);
+    this.cdp.on('', 'Target.targetDestroyed', ({ targetId }) => {
+      if (this.humanLoginPages.delete(targetId)) this.touch();
+    });
+    await this.cdp.send('Target.setDiscoverTargets', { discover: true });
     const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
     this.sid = sessionId; this.targetId = targetId;
@@ -179,7 +186,59 @@ export class BrowserSession {
     let t; await Promise.race([new Promise((r) => c.once('exit', r)), new Promise((r) => { t = setTimeout(r, 1500); t.unref?.(); })]); clearTimeout(t); // 타이머가 프로세스 종료를 붙잡지 않게(5R LOW)
     if (c.exitCode === null && c.signalCode === null) { try { c.kill('SIGKILL'); } catch { /* */ } }
   }
-  async close() { clearTimeout(this.timer); this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); try { this.cdp?.close(); } catch { /* */ } await this.kill(); }
+  async close() {
+    if (this.closing) return this.closing;
+    this.closing = (async () => {
+      clearTimeout(this.timer); this.alive = false;
+      this.pages.clear(); this.humanLoginPages.clear(); this.handedOffRuns.clear();
+      // Windows child.kill() terminates Chrome without flushing newly connected accounts.
+      // Request normal browser shutdown first; only an unresponsive process is killed.
+      const child = this.child;
+      if (this.cdp && child && child.exitCode === null && child.signalCode === null) {
+        let commandTimer;
+        await Promise.race([this.cdp.send('Browser.close').catch(() => {}), new Promise((resolve) => { commandTimer = setTimeout(resolve, 1500); })]);
+        clearTimeout(commandTimer);
+        if (child.exitCode === null && child.signalCode === null) await new Promise((resolve) => {
+          let timer;
+          const finish = () => { clearTimeout(timer); child.off('exit', finish); resolve(); };
+          child.once('exit', finish); timer = setTimeout(finish, 3500);
+        });
+      }
+      try { this.cdp?.close(); } catch { /* Already disconnected. */ }
+      await this.kill();
+      if (sessions.get(this.key) === this) sessions.delete(this.key);
+    })();
+    return this.closing;
+  }
+  async page(runId) {
+    if (this.handedOffRuns.has(runId)) throw loginError('BROWSER_LOGIN_PAUSED');
+    if (this.pages.has(runId)) return this.pages.get(runId);
+    if (this.pageStarts.has(runId)) return this.pageStarts.get(runId);
+    const promise = (async () => {
+      const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
+      try {
+        const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
+        await this.cdp.send('Page.enable', {}, sessionId); await this.cdp.send('Runtime.enable', {}, sessionId);
+        const page = Object.create(this);
+        page.sid = sessionId; page.targetId = targetId; page.touch = () => this.touch();
+        this.pages.set(runId, page); return page;
+      } catch (e) { await this.cdp.send('Target.closeTarget', { targetId }).catch(() => {}); throw e; }
+    })().finally(() => this.pageStarts.delete(runId));
+    this.pageStarts.set(runId, promise); return promise;
+  }
+  async closePage(runId) {
+    await this.pageStarts.get(runId)?.catch(() => {});
+    const page = this.pages.get(runId); if (!page) return;
+    this.pages.delete(runId);
+    await this.cdp.send('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+  }
+  handOffLogin(runId) {
+    if (this.humanLoginPages.size) throw loginError('BROWSER_LOGIN_PENDING');
+    const page = this.pages.get(runId);
+    if (!page) throw loginError('BROWSER_LOGIN_PAGE_REQUIRED');
+    this.pages.delete(runId); this.humanLoginPages.set(page.targetId, page); this.handedOffRuns.add(runId);
+    this.touch();
+  }
   send(method, params) { return this.cdp.send(method, params, this.sid); }
   /** 페이지 안 JS 실행 — Node eval이 아니라 CDP Runtime.evaluate(브라우저 컨텍스트). browser_eval 도구의 실체이며 Hermes browser_exec·OpenClaw와 같은 능력.
       결과는 값으로만 돌아오고 Argo 프로세스에는 닿지 않는다. */
@@ -191,9 +250,11 @@ export class BrowserSession {
   async navigate(url) {
     const u = /^[a-z]+:\/\//i.test(url) ? url : `https://${url}`;
     if (!/^https?:\/\//i.test(u)) throw new Error('http(s) URL만 열 수 있습니다');
-    const loaded = new Promise((res) => { const off = this.cdp.on(this.sid, 'Page.loadEventFired', () => { off(); res(); }); setTimeout(() => { off(); res(); }, 20_000); });
-    const r = await this.send('Page.navigate', { url: u }); if (r.errorText) throw new Error(`navigate failed: ${r.errorText}`);
-    await loaded; await sleep(300);
+    let off; let timer;
+    const loaded = new Promise((res) => { const finish = () => { off?.(); clearTimeout(timer); res(); }; off = this.cdp.on(this.sid, 'Page.loadEventFired', finish); timer = setTimeout(finish, 20_000); timer.unref?.(); });
+    try { const r = await this.send('Page.navigate', { url: u }); if (r.errorText) throw new Error(`navigate failed: ${r.errorText}`); await loaded; }
+    finally { off?.(); clearTimeout(timer); }
+    await sleep(300);
     return this.snapshot(4000);
   }
   snapshot(maxChars = 20_000) { this.touch(); return this.evaluate(SNAPSHOT_JS(Math.max(500, Number(maxChars) || 20_000))); }
@@ -250,9 +311,56 @@ export class BrowserSession {
 }
 
 /** 실행기 — 이미지 반환은 호출부(native-query)가 모델의 비전 지원 여부로 이미지 블록/파일 경로를 결정한다. */
-export function browserRunners({ wsId, env = process.env, headless }) {
-  const get = () => BrowserSession.get(wsId, { env, headless });
-  return {
+const scopeHash = (parts) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+const workQueues = new Map();
+export function createBrowserStatusReader({ probe = detectEgoBrowser, now = Date.now, ttlMs = 60_000 } = {}) {
+  const probes = new Map();
+  return async ({ wsId, slug, env = process.env, connected = false }) => {
+    const requested = env.ARGO_BROWSER_PROVIDER === 'ego' ? 'ego' : 'chromium';
+    const selection = await selectIsolatedBrowserProvider({ requested, wsId, slug, probe: async () => {
+      // The capability check needs the executable environment, not agent/provider credentials.
+      const probeEnv = Object.fromEntries(['PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'SYSTEMROOT', 'SystemRoot', 'TEMP', 'TMP', 'TMPDIR', 'LANG'].filter((key) => env[key] !== undefined).map((key) => [key, env[key]]));
+      const key = JSON.stringify(probeEnv); const cached = probes.get(key);
+      if (cached && cached.expires > now()) return cached.promise;
+      if (probes.size >= 8) probes.delete(probes.keys().next().value);
+      const promise = Promise.resolve().then(() => probe({ env: probeEnv, timeoutMs: 5000 })).catch(() => ({ available: false, reason: 'ego_probe_failed' }));
+      probes.set(key, { promise, expires: now() + ttlMs }); return promise;
+    } });
+    return {
+      provider: selection.provider, requestedProvider: requested, supportedBrowserAvailable: !!findChrome(env), connected,
+      agentProfileIsolated: !!slug, workTabIsolated: !!slug, fallbackReason: selection.reason ?? null,
+      accountConnection: 'Connect only needed accounts in this agent browser on the execution device. Personal and other agent logins are not copied.',
+    };
+  };
+}
+const readBrowserStatus = createBrowserStatusReader();
+export function browserRunners({ wsId, slug = '', runId = randomUUID(), env = process.env, headless, statusReader = readBrowserStatus }) {
+  let owner; let closed = false; let handedOff = false; let queue = Promise.resolve();
+  const workKey = scopeHash([BrowserSession.profileDir(wsId, env, slug), runId]);
+  const get = async () => {
+    if (closed) throw new Error('Browser task closed');
+    owner = await BrowserSession.get(wsId, { env, headless, slug });
+    if (closed) throw new Error('Browser task closed');
+    const page = slug ? await owner.page(runId) : owner;
+    if (closed) { if (slug) await owner.closePage(runId); throw new Error('Browser task closed'); }
+    return page;
+  };
+  const actions = {
+    browser_status: async () => {
+      const session = owner ?? BrowserSession.peek(wsId, { env, slug });
+      return JSON.stringify({ ...await statusReader({ wsId, slug, env, connected: owner?.alive === true }),
+        humanLoginPending: session?.alive === true && session.humanLoginPages.size > 0,
+        humanLoginAvailable: !(session?.headless ?? headless ?? (env.ARGO_BROWSER_HEADLESS === '1')),
+        automationPausedForLogin: handedOff || session?.handedOffRuns.has(runId) === true,
+      });
+    },
+    browser_request_login: async () => {
+      if (!slug || !owner?.pages.has(runId)) throw loginError('BROWSER_LOGIN_PAGE_REQUIRED');
+      if (owner.headless) throw loginError('BROWSER_LOGIN_HEADLESS');
+      if (!['http:', 'https:'].includes(await owner.pages.get(runId).evaluate('location.protocol'))) throw loginError('BROWSER_LOGIN_PAGE_REQUIRED');
+      owner.handOffLogin(runId); handedOff = true;
+      return 'The login tab is reserved for you and will remain open after this turn. Sign in only to the needed account in the agent browser on the execution device, then close that login tab and send a new message to continue. Browser automation in this run has stopped. Mobile cannot remotely control that browser.';
+    },
     browser_navigate: async ({ url }) => (await get()).navigate(String(url)),
     browser_snapshot: async ({ max_chars }) => (await get()).snapshot(max_chars),
     browser_click: async ({ ref }) => (await get()).click(String(ref)),
@@ -263,7 +371,27 @@ export function browserRunners({ wsId, env = process.env, headless }) {
     browser_screenshot: async () => ({ image: await (await get()).screenshotJpeg(), mime: 'image/jpeg' }),
     browser_eval: async ({ js }) => { const v = await (await get()).evaluate(String(js)); return typeof v === 'string' ? v : JSON.stringify(v ?? null, null, 0).slice(0, 30_000); },
   };
+  const runners = Object.fromEntries(Object.entries(actions).map(([name, action]) => [name, (input = {}, { signal } = {}) => {
+    const execute = async () => {
+      signal?.throwIfAborted();
+      if (closed) throw new Error('Browser task closed');
+      if ((handedOff || BrowserSession.peek(wsId, { env, slug })?.handedOffRuns.has(runId)) && name !== 'browser_status') throw loginError('BROWSER_LOGIN_PAUSED');
+      let rejectAborted;
+      const aborted = new Promise((_, reject) => { rejectAborted = reject; });
+      const abort = () => { closed = true; if (slug) owner?.closePage(runId).catch(() => {}); rejectAborted(signal.reason ?? new Error('Browser task cancelled')); };
+      signal?.addEventListener('abort', abort, { once: true });
+      try { const result = await Promise.race([action(input), aborted]); signal?.throwIfAborted(); return result; }
+      catch (e) { if (/timed out/.test(String(e?.message))) { closed = true; if (slug) await owner?.closePage(runId); } throw e; }
+      finally { signal?.removeEventListener('abort', abort); }
+    };
+    const result = (slug ? workQueues.get(workKey) ?? Promise.resolve() : queue).then(execute);
+    queue = result.catch(() => {});
+    if (slug) { const pending = queue; workQueues.set(workKey, pending); pending.then(() => { if (workQueues.get(workKey) === pending) workQueues.delete(workKey); }); }
+    return result;
+  }]));
+  Object.defineProperty(runners, 'close', { value: async () => { closed = true; if (slug && owner) await owner.closePage(runId); } });
+  return runners;
 }
 
-export async function closeBrowser(wsId) { const s = sessions.get(wsId); if (s) await s.close(); }
-export async function closeAllBrowsers() { for (const s of [...sessions.values()]) await s.close().catch(() => {}); }
+export async function closeBrowser(wsId) { for (const s of [...sessions.values()]) if (s.wsId === wsId) await s.close(); }
+export async function closeAllBrowsers() { await Promise.allSettled([...launching.values()]); for (const s of [...sessions.values()]) await s.close().catch(() => {}); }
