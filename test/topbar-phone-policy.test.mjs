@@ -259,8 +259,11 @@ test('본문 그리드 배선 — 크루(조건)·경쟁·회의실(고정)에 c
 });
 
 test('본문 내부 열 잠금 — 크루·경쟁 채팅 컬럼의 무템플릿 암묵 열 봉인(minmax + auto 1fr auto)', () => {
-  assert.match(crew, /gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto', height: '100%'/,
+  assert.match(crew, /className="chat-body"\s+style=\{\{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto'/,
     '크루 채팅 컬럼 열 잠금이 없다 — 컴포저 min-content(실측 212px)가 암묵 열을 부풀려 360px에서 문서 가로 넘침 100px이 재발한다');
+  assert.equal(effective('.chat-body', 'height', 901), '100%', '넓은 화면의 본문 높이는 CSS로 이관한 100%를 유지한다');
+  assert.equal(effective('.content[data-narrow-content] > .chat-cols > .chat-body', 'height', 901),
+    'calc(100vh / var(--z, 1) - 100px)', '좁은 유효폭에서도 본문 높이는 표시 배율로 보정한다');
   assert.match(compete, /gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto', gap: 12/,
     '경쟁 본문 컬럼 열 잠금이 없다 — 같은 계열 넘침(실측 100px)이 재발한다');
 });
