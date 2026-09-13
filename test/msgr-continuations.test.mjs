@@ -375,3 +375,16 @@ for (const runner of ['SDK', 'CLI']) {
     } finally { f.stop(); }
   });
 }
+
+test('team work continuation from an older authorized round cannot restart after resume', async()=>{
+  const f=await setup();
+  try {
+    const read=f.db.message;
+    f.db.message=async(id)=>{const m=await read(id); return m?{...m,meta:{work_run_id:'work'}}:m;};
+    f.db.workRun=async()=>({id:'work',status:'running',last_resume_message_id:15});
+    const {runMessengerContinuation}=await import('../src/gateway/msgr.mjs');
+    let ran=false;
+    await assert.rejects(runMessengerContinuation(f.ws,'alpha',f.origin,'old follow-up',null,{session:f.session,runChat:async()=>{ran=true;return{reply:'must not run'};}}),/후속 실행을 멈춥니다/);
+    assert.equal(ran,false);
+  } finally {f.stop();}
+});

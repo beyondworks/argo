@@ -15,13 +15,13 @@ export function executionDb(client) {
     p_ws: wsId, p_crew: crewId, p_source: msgId, p_channel: channelId, p_attempt: attempt,
   });
   return {
-    claimExecution: (key) => rpc('msgr_execution_claim', args(key)),
+    claimExecution: (key) => rpc(key.workRunId ? 'msgr_work_execution_claim' : 'msgr_execution_claim', args(key)),
     heartbeatExecution: (key) => rpc('msgr_execution_heartbeat', args(key)),
     finishExecution: (key, reply) => rpc('msgr_execution_finish', { ...args(key), p_reply: reply }),
   };
 }
 
-const keyOf = (wsId, job) => ({ wsId, crewId: job.crewId, msgId: job.msgId, channelId: job.channelId, attempt: job.msgrExecution.attempt });
+const keyOf = (wsId, job) => ({ wsId, crewId: job.crewId, msgId: job.msgId, channelId: job.channelId, attempt: job.msgrExecution.attempt, ...(job.workRunId ? { workRunId: job.workRunId } : {}) });
 async function checkpoint(job, execution, meta) {
   // 메모리도 먼저 바꾼다: 결과 저장이 실패한 동일 프로세스에서 다시 실행하는 일을 막는다.
   job.msgrExecution = execution;

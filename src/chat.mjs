@@ -1,4 +1,5 @@
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition } from './gateway/msgr-handoff.mjs';
+import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
@@ -105,7 +106,13 @@ export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allo
 export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__crew']); // 동결 — 모듈 공유 배열이라 런타임 push 오염이 전 회사·전 턴에 번진다(재검수, CAPABILITIES와 같은 계약)
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
-function rosterPrompt(colleagues, lang = 'ko') {
+function rosterPrompt(colleagues, lang = 'ko', messenger = false) {
+  if (messenger) {
+    const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}`);
+    return lang === 'en'
+      ? `\n## Channel colleagues\n${lines.join('\n')}\n- delegate and send_to_crew prepare a handoff in this channel, not a synchronous result. End with MSGR: handoff and let the colleague respond. Use the channel roster's @name for colleagues on other devices. Do not claim another agent's result before it is posted.\n`
+      : `\n## 채널 동료\n${lines.join('\n')}\n- delegate와 send_to_crew는 이 채널에 넘김을 준비한다. 즉시 결과가 돌아오는 도구가 아니다. MSGR: handoff로 답변을 마치고 동료의 답글을 기다려라. 다른 기기의 동료는 채널 명단의 @이름으로 넘겨라. 아직 게시되지 않은 동료의 결과를 수행한 것처럼 말하지 마라.\n`;
+  }
   if (lang === 'en') {
     const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team} team` : ''}`);
     return `
@@ -562,6 +569,13 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       if (!target) return text(`"${to}"는 동료 명단에 없다. 가능한 slug: ${colleagues.map((a) => a.slug).join(', ')}`);
       used += 1;
       try {
+        // Messenger delegation is a visible channel handoff. Direct local chat()
+        // would bypass the receiver's channel permission and device execution claim.
+        if (stageMessengerHandoff(mirrorCtx, { to: target.slug, message: task })) {
+          return text(lang === 'en'
+            ? 'A handoff is prepared for this channel. The colleague will run after your reply is posted; no result is available yet. End your reply with MSGR: handoff.'
+            : '이 채널의 넘김을 준비했다. 답글이 게시된 뒤 동료가 실행하므로 아직 결과는 없다. 답변 마지막 줄에 MSGR: handoff를 적어라.');
+        }
         // 위임 프리픽스는 상대 크루 스레드에 사용자 메시지로 저장돼 UI에 그대로 보인다 — 회사 언어를 따른다
         const delegated = lang === 'en' ? `(Delegated by colleague ${fromName}) ${task}` : `(동료 ${fromName}의 위임) ${task}`;
         // workFolder — 회의실 턴의 위임이면 위임받은 동료도 같은 회의 폴더를 본다(회의 프롬프트가 "동료도 같은 폴더"라
@@ -1110,6 +1124,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
+    let browserBridge = null;
     try {
       const { messages } = await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
@@ -1146,8 +1161,12 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // MCP를 실제로 받는 CLI = codex(config.toml)·gemini(settings.json, 2026-08-21). antigravity는 설정이
       // 호스트 HOME 전용(~/.gemini/config/mcp_config.json, 격리 홈 없음)이라 회사별 주입이 사용자 본인
       // 설정을 덮어쓴다 — 주입하지 않고 프롬프트에도 목록을 알리지 않는다(없는 도구 안내 금지).
-      const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? scoped : null;
-      const cliMcp = cliMcpServers ? Object.keys(scoped) : [];
+      if (MCP_CLI_RUNNERS.has(runner)) browserBridge = await createBrowserMcpBridge({
+        wsId, slug: agentSlug,
+        canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, cliWorkRoots),
+      });
+      const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server } : null;
+      const cliMcp = cliMcpServers ? Object.keys(cliMcpServers) : [];
       // 커넥터 요약 — **SDK 턴과 같은 원천**(connectorBriefing: connected + reauth)을 쓴다. 여기서
       // connected만 거르면 전부 reauth인 회사에서 CLI 크루만 커넥터의 존재조차 몰라 "못 한다"고 답하고,
       // 사장은 재연결이 필요하다는 사실을 영영 듣지 못한다 — SDK는 "[재연결 필요]"로 안내하는데
@@ -1157,7 +1176,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource })}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource })}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -1338,6 +1357,7 @@ ${lang === 'en'
       throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
     } finally {
       abortReg.release();
+      await browserBridge?.close();
       // 심박(turn-status 레지스트리)이 생긴 뒤로 clear는 **프로세스 수명 자원(타이머) 해제**다 — 위 두 clear가 도달하지
       // 못하는 경로가 생기면 그 크루가 상주에서 영구 "작성 중"이 된다(검수 MEDIUM-2). 멱등이라 finally에 한 번 더.
       await clearTurnStatus(wsId, agentSlug);
@@ -1362,7 +1382,13 @@ ${lang === 'en'
   // chain 제외가 회신 경로를 끊고, 2명 회사에선 도구 자체가 미등록이었다). 왕복 폭주는 hop 상한이
   // 가둔다: A(h0)→B(h1 배달 턴)→회신(h2 배달 턴)은 colleagues가 빈 배열이라 더 못 보낸다.
   const lastSender = chain.length ? chain[chain.length - 1] : null;
-  const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender));
+  const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => {
+    if (!(a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender))) return false;
+    if (mirrorCtx?.kind === 'msgr-rules') return false;
+    if (mirrorCtx?.kind !== 'msgr') return true;
+    return mirrorCtx.peers?.some((peer) => peer.slug === a.slug
+      && peer.owner_user_id === mirrorCtx.uid && peer.ws_id === wsId) ?? false;
+  });
   // 커넥터 요약 — 턴 시작 1회(설계서 §2-2). 연결 0이면 빈 배열이라 도구가 등재되지 않는다.
   // 조회 실패가 턴을 죽이지 않게 낙하: 커넥터가 없는 것처럼 진행한다(기능 없음 > 턴 사망).
   const connectors = await connectorBriefing(wsId).catch(() => []);
@@ -1461,6 +1487,7 @@ ${lang === 'en'
   // abortReg는 q(try 안에서 생성)에 의존하지만 catch·finally가 참조한다 — 늦은 대입 + 옵셔널 호출.
   // 자격 게이트(sdkEnvFor)가 등록 전에 던지면 null 그대로다(등록 전 실패 = 중단 불가 턴이 맞다).
   let abortReg = null;
+  let browserBridge = null;
   let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
   let thought = ''; // 모델의 사고(thinking 블록) 누적 — 상태 파일 thought(뒤 1500자)
   try {
@@ -1469,14 +1496,20 @@ ${lang === 'en'
   // 원문('grok token expired…')이 그대로 표면화된다(격리 서버 실측 2026-08-31).
   // SDK 러너(claude/glm) env — 회사 자격(API키/OAuth) 우선, 없으면 기존 폴백(claude=CLI/env, glm=호스트 GLM_API_KEY).
   const sdkEnv = await sdkEnvFor(wsId, runner);
+  if (!nativeOn) {
+    browserBridge = await createBrowserMcpBridge({ wsId, slug: agentSlug,
+      canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, workRoots) });
+    connectedMcp.push('argo_browser');
+  }
   // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
   // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
   const billed = await isBilledRunner(wsId, runner);
   await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
   const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
-    + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
+    + (colleagues.length ? rosterPrompt(colleagues, lang, mirrorCtx?.kind === 'msgr') : '')
     + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder, source: turnSource })
+    + (browserBridge ? browserMcpDirective(lang) : '')
     + messengerNote
     + fallbackDirective;
   const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || openrouterFallbackModel(wantModel)) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
@@ -1494,7 +1527,7 @@ ${lang === 'en'
       // 지정 작업 폴더 — SDK가 cwd 밖 접근을 스스로 인지·탐색하게(집행은 canUseTool 게이트가 한다)
       ...(workRoots.length ? { additionalDirectories: workRoots } : {}),
       systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail,
-      mcpServers: { ...(servers ?? {}), crew: crewServer },
+      mcpServers: { ...(servers ?? {}), crew: crewServer, argo_browser: browserBridge.server },
       // CLI stderr 꼬리 보관 — 실패 시 errors[]가 비면 이걸 진단으로 쓴다(아래 결과 처리).
       stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
       // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
@@ -1743,6 +1776,7 @@ ${lang === 'en'
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
     abortReg?.release();
+    await browserBridge?.close();
     await clearTurnStatus(wsId, agentSlug); // 타이머 해제의 마지막 방어선(검수 MEDIUM-2) — 멱등
   }
   await clearTurnStatus(wsId, agentSlug);

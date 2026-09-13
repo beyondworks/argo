@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { connectMcpServers } from './mcp-client.mjs';
 import { loadNativeSession, saveNativeSession, IMAGE_MAX_B64 } from './session.mjs';
 import { appendEvent } from '../events.mjs';
+import { randomUUID } from 'node:crypto';
 
 export const NATIVE_DEFAULT_MAX_TOKENS = 8192; // SDK 기본 32000이 OpenRouter 선불 잔액 402를 부르던 것 완화(실측 2026-09-05)
 export const NATIVE_MAX_STEPS = 60;
@@ -77,8 +78,8 @@ export function visionCapable(model, env = process.env) {
 /** 네이티브 턴 전용 안내(시스템 프롬프트 꼬리) — 브라우저·컴퓨터 도구가 있음을 크루가 알게. */
 export function nativeToolsDirective(lang = 'ko') {
   return lang === 'en'
-    ? `\n- Browser use: browser_navigate → browser_snapshot (refs like [e3]) → browser_click / browser_type / browser_press / browser_scroll; browser_screenshot for a visual check; browser_eval for page data. It runs in Argo's own Chrome profile (not the captain's daily browser) — logins persist across turns there. Computer use: computer_screenshot first, then computer_click / computer_type / computer_key / computer_scroll / computer_drag with screenshot coordinates. Ask before actions that leave the company (purchases, sending, posting) — file an approval.\n`
-    : `\n- 브라우저 유즈: browser_navigate → browser_snapshot([e3] 같은 ref) → browser_click / browser_type / browser_press / browser_scroll, 눈으로 확인은 browser_screenshot, 페이지 데이터는 browser_eval. Argo 전용 크롬 프로필에서 돈다(사장의 일상 브라우저가 아니다 — 거기서 한 로그인은 턴을 넘어 유지된다). 컴퓨터 유즈: computer_screenshot을 먼저 찍고 그 좌표로 computer_click / computer_type / computer_key / computer_scroll / computer_drag. 회사 밖으로 나가는 행동(구매·발송·게시)은 실행 전에 결재를 올려라.\n`;
+    ? `\n- Browser use: browser_status checks the provider and isolation without opening tabs; browser_navigate → browser_snapshot (refs like [e3]) → browser_click / browser_type / browser_press / browser_scroll; browser_screenshot for a visual check; browser_eval for page data. It runs in this agent's separate Chrome profile — cookies and logins are not shared with other agents or the captain. Each work run has its own tab; the agent's logins persist across turns. For sign-in, navigate to the service then call browser_request_login, stop this run, and tell the user to sign in on the execution device and continue in a new run. Mobile remote control is unavailable. Computer use: computer_screenshot first, then computer_click / computer_type / computer_key / computer_scroll / computer_drag with screenshot coordinates. Ask before actions that leave the company (purchases, sending, posting) — file an approval.\n`
+    : `\n- 브라우저 유즈: browser_status로 탭을 열지 않고 제공자·격리 상태를 확인한다. browser_navigate → browser_snapshot([e3] 같은 ref) → browser_click / browser_type / browser_press / browser_scroll, 눈으로 확인은 browser_screenshot, 페이지 데이터는 browser_eval. 크루별 전용 크롬 프로필에서 돈다(다른 크루·사장의 쿠키와 로그인은 공유하지 않으며, 작업별 탭도 분리된다 — 이 크루의 로그인은 턴을 넘어 유지된다). 로그인이 필요하면 서비스 페이지를 연 뒤 browser_request_login으로 사용자에게 탭을 넘기고 이번 실행을 멈춘다. 실행 기기에서 로그인한 뒤 새 실행으로 이어간다(모바일 원격 제어 미지원). 컴퓨터 유즈: computer_screenshot을 먼저 찍고 그 좌표로 computer_click / computer_type / computer_key / computer_scroll / computer_drag. 회사 밖으로 나가는 행동(구매·발송·게시)은 실행 전에 결재를 올려라.\n`;
 }
 
 /** 내장 도구 사양 + 실행기 묶음 — 파일·셸·웹 + 브라우저 유즈 + 컴퓨터 유즈(하네스 통일: 러너 무관 같은 도구·같은 게이트) */
@@ -91,10 +92,10 @@ export function makeShellFallbackNoter(appendFn = appendEvent, noted = new Set()
   };
 }
 const noteShellFallback = makeShellFallbackNoter();
-export function builtinTools({ cwd, env, fetchImpl, wsId = 'ws', browser = true, computer = true }) {
+export function builtinTools({ cwd, env, fetchImpl, wsId = 'ws', slug = '', runId, browser = true, computer = true, browserTools }) {
   const runners = builtinRunners({ cwd, env, fetchImpl, onShellFallback: noteShellFallback(wsId) });
   const list = BUILTIN_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => runners[s.name](input, extra) }));
-  if (browser) { const br = browserRunners({ wsId, env }); list.push(...BROWSER_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => br[s.name](input, extra) }))); }
+  if (browser) { const br = browserTools ?? browserRunners({ wsId, slug, runId, env }); list.push(...BROWSER_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => br[s.name](input, extra) }))); }
   if (computer) { const cr = computerRunners(); list.push(...COMPUTER_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => cr[s.name](input, extra) }))); }
   return list;
 }
@@ -128,7 +129,8 @@ async function* run(opts, ac, isInterrupted) {
   const sess = await loadNativeSession(wsId, slug, resume);
   const mcp = await connectMcpServers(mcpServers, { env: shellEnv(env), cwd });
   // 컴퓨터 유즈는 명시 옵트인만(회사 설정 computerUse — 분리 검수 CRITICAL-2: 화면 채널은 권한 게이트 하드라인을 우회한다)
-  const tools = [...builtinTools({ cwd, env, fetchImpl, wsId, browser: opts.browser !== false, computer: opts.computer === true }), ...crewToolSpecs(crewTools), ...mcp.tools];
+  const browserTools = browserRunners({ wsId, slug, runId: opts.browserRunId ?? randomUUID(), env });
+  const tools = [...builtinTools({ cwd, env, fetchImpl, wsId, slug, browserTools, browser: opts.browser !== false, computer: opts.computer === true }), ...crewToolSpecs(crewTools), ...mcp.tools];
   const byName = new Map(tools.map((t) => [t.name, t]));
   const specs = tools.map((t) => ({ name: t.name, description: t.description, input_schema: ensureRequired(t.input_schema) })); // 벤더로 나가는 스키마의 단일 관문
   const usage = {};
@@ -195,6 +197,7 @@ async function* run(opts, ac, isInterrupted) {
       if (saveSession) await saveNativeSession(wsId, slug, sess); // 단계마다 영속 — 중단·크래시에도 문맥 보존
     }
   } finally {
+    await browserTools.close().catch(() => {});
     await mcp.close();
   }
 }
