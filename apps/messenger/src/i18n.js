@@ -791,7 +791,7 @@ export const DICT = {
   'phone.dm.empty': ['아직 1:1 대화가 없습니다. 설정의 멤버·친구 목록에서 대화를 시작할 수 있습니다.', 'No direct messages yet. Start one from the members or friends list in settings.'],
   'phone.back': ['홈으로', 'Home'],
   'phone.composer.ph': ['메시지', 'Message'],
-  'phone.meta': ['{n}명의 멤버 • 에이전트 {c}', '{n} members • {c} agents'],
+  'phone.meta': ['{n}명 · 에이전트 {c}', '{n} members · {c} agents'],
   'search.ph': ['검색 (⌘K)', 'Search (⌘K)'],
   'search.hint': ['메시지 본문, 사람, 에이전트, 채널을 한 번에 찾습니다. 위 검색 칸에 입력하고 Enter.', 'Searches message text, people, agents and channels. Type in the box above and press Enter.'],
   'search.none': ['결과가 없습니다.', 'No results.'],

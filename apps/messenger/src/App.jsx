@@ -961,7 +961,7 @@ function Shell({ session }) {
       </aside>
       <main className="msgr-main" {...edgeBack}>
         {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
-        {chSheet && channel && <ChannelSheet myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {chSheet && channel && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) setNavTo(pushCard.channel_id); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
@@ -1089,7 +1089,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
 }
 
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
-function ChannelSheet({ channel, dmName = null, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, myAvailable = [], onDispatch, onInvite, onCrew, onDm, onMention, initialAdd = null, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
+function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, myAvailable = [], onDispatch, onInvite, onCrew, onDm, onMention, initialAdd = null, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
   const { t } = useT();
   const chAdmins = channel.admin_user_ids ?? [];
   const canEdit = isAdmin || channel.created_by === uid || chAdmins.includes(uid); // J-1: 채널 관리자도 설정·멤버 관리(최종은 RLS msgr_can_manage_channel)
@@ -1192,6 +1192,9 @@ function ChannelSheet({ channel, dmName = null, org, uid, isAdmin, policy, membe
           <div style={{ minWidth: 0 }}><div className="name">{channel.kind === 'dm' ? (dmName ? dmName(channel) : t('ch.kind.dm')) : `${channel.kind === 'private' ? '' : '#'}${channel.name}`}</div>{/* 1:1은 상대 이름, 공개 채널은 #이름(유건 2026-09-11) */}<div className="msgr-klabel">{channel.kind === 'dm' ? t('ch.kind.dm') : channel.topic || t(`ch.kind.${channel.kind}`)}</div></div>
           <button type="button" className="btn ghost" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={15} /></button>
         </div>
+        <section className="msgr-channel-notifications">
+          <button type="button" className="btn" onClick={onToggleMute} aria-pressed={muted} title={t(muted ? 'ch.mute.off.tip' : 'ch.mute.on.tip')}><I name={muted ? 'belloff' : 'bell'} size={16} />{t(muted ? 'ch.unmute' : 'ch.mute')}</button>
+        </section>
         {/* 1. 누가 있나 — 패널을 여는 이유가 먼저 */}
         <section>
           <div className="sec-head"><h3>{t('ch.who')}</h3><span className="sub">{t('ch.who.count', { p: people.length, c: chCrews.length })}</span></div>
@@ -2510,7 +2513,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
-      <button type="button" className="title msgr-titlebtn" onClick={onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{channel.kind === 'dm' ? dmName(channel) : channel.name}<I name="caret" size={13} className="caret" /></button>
+      <button type="button" className="title msgr-titlebtn" onClick={onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{phone ? <span className="msgr-channel-name">{channel.kind === 'dm' ? dmName(channel) : channel.name}</span> : (channel.kind === 'dm' ? dmName(channel) : channel.name)}<I name="caret" size={13} className="caret" /></button>
       {channel.topic && <span className="topic">{channel.topic}</span>}
       {phone && <span className="msgr-sub">{t('phone.meta', { n: people.length, c: chCrews.length })}</span>}
       {/* 켜고 끄는 자리가 안 보인다(유건 2026-09-09) → 표지 자체가 토글. 아이콘만, 꺼짐 = 취소선·붉은색 */}
