@@ -22,7 +22,7 @@ export async function requestNotifyPermission() {
 // 메시지 소리 — 설정에서 고른다(유건 2026-09-12: 안전띠 사인·나무 타격음 후보). 합성 음원 public/sounds/<이름>.wav, iOS 푸시는 같은 이름의 .caf(번들 루트).
 // OS 알림은 무음으로 두고 앱이 직접 울린다 — 맥·윈도우·웹 어디서나 같은 소리, 알림 플러그인의 플랫폼별 소리 규격에 의존하지 않는다.
 export const SOUNDS = ['seatbelt-single', 'seatbelt-hilo', 'wood-knock', 'wood-knock-double', 'wood-marimba'];
-export const DEFAULT_SOUND = 'seatbelt-single';
+export const DEFAULT_SOUND = 'wood-knock';
 export function getSound() { try { const v = localStorage.getItem('msgr-sound'); return SOUNDS.includes(v) ? v : DEFAULT_SOUND; } catch { return DEFAULT_SOUND; } }
 export function setSound(name) { try { if (SOUNDS.includes(name)) localStorage.setItem('msgr-sound', name); } catch { /* 저장 불가 환경 */ } }
 const bufs = new Map(); let ctx = null;

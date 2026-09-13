@@ -487,6 +487,16 @@
 
 .msgr-setcard select.msgr-input.inline { height: 34px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; }
 
+/* Keep the system picker and keyboard behavior, with the same surface as nearby controls. */
+.msgr-sound { display: grid; gap: 8px; flex: 1 0 100%; min-width: 0; }
+.msgr-sound-controls { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 440px; min-width: 0; }
+.msgr-sound-select { position: relative; flex: 1; min-width: 0; }
+.argo-messenger .msgr-select { appearance: none; -webkit-appearance: none; display: block; min-width: 0; min-height: 44px; padding: 10px 36px 10px 14px; border: 1px solid var(--border); border-radius: 14px; background-color: var(--card-2); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%238e8d83' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; color: var(--fg); font: inherit; font-size: 16px; line-height: 1.3; text-overflow: ellipsis; cursor: pointer; }
+.argo-messenger .msgr-select:disabled { opacity: .55; cursor: default; }
+.argo-messenger .msgr-select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.msgr-sound-select select { width: 100%; }
+.msgr-setcard .msgr-sound-controls > .btn { flex: 0 0 auto; min-width: 44px; min-height: 44px; padding: 0 14px; white-space: nowrap; }
+
 /* 레일 행 '…' 메뉴 — 호버·열림에만 보인다 */
 .msgr-railrow { position: relative; display: flex; align-items: center; min-width: 0; }
 .msgr-railrow .item { flex: 1; min-width: 0; padding-right: 30px; }
@@ -1190,7 +1200,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-dm-recipients ul { list-style: none; padding: 0; margin: 0 0 8px; }
 .msgr-dm-recipients li { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .msgr-dm-recipients .recipient-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.msgr-dm-recipients select { min-width: 0; max-width: 100%; min-height: 36px; }
+.msgr-dm-recipients select { min-width: 0; max-width: 100%; }
 .msgr-dm-recipients .recipient-pickers { display: flex; flex-wrap: wrap; gap: 8px; }
 .msgr-dm-recipients .recipient-pickers label { flex: 1 1 120px; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .msgr-dm-recipient-bar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
@@ -1200,3 +1210,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
 .msgr-dm-delivery-warning { margin: 4px 0 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; font-size: 12px; line-height: 1.5; }
 .msgr-dm-recipients .recipient-name small { display: block; font-size: 11px; opacity: .75; }
+
+@media (max-width: 720px) {
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-sound-controls > .btn.sm { min-height: 44px; height: 44px; }
+}
