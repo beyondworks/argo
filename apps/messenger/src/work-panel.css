@@ -56,6 +56,17 @@
   .work-header .btn { min-width: 44px; }
   .work-item { padding: 12px; }
   .work-section-heading { flex-wrap: wrap; }
-  .msgr-phone .msgr-main .msgr-top .msgr-work-button { grid-column: 3 / 5; grid-row: 2; align-self: start; min-height: 44px; padding: 0 12px; border-radius: 12px; font-size: 12px; }
+  /* Keep channel actions on the title row; notification preferences remain in channel details. */
+  .msgr-phone .msgr-main .msgr-top { column-gap: 8px; }
+  .msgr-phone .msgr-main .msgr-top .msgr-hchips { display: none; }
+  .msgr-phone .msgr-main .msgr-top .msgr-work-button { grid-column: 3; grid-row: 1; align-self: start; height: 44px; min-height: 44px; min-width: 56px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--card-2); font-size: 14px; font-weight: 650; }
+  .msgr-phone .msgr-main .msgr-top .title { padding-left: 0; gap: 6px; overflow: hidden; }
+  .msgr-phone .msgr-main .msgr-top .msgr-channel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .msgr-main .msgr-top .msgr-sub { padding-left: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .msgr-phone .msgr-channel-notifications .btn { min-height: 44px; }
 }
 .msgr-work-overlay > .msgr-action-dialog { position: fixed; inset: 0; top: var(--msgr-viewport-top, 0px); height: var(--msgr-viewport-height, 100dvh); z-index: 120; }
+
+@media (max-width: 360px) {
+  .msgr-phone .msgr-main .msgr-top { column-gap: 6px; }
+}
