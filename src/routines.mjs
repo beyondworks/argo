@@ -1,6 +1,7 @@
 // 자동화 루틴 — 크루에게 반복 지시를 예약(매일/매주)하거나 즉시 실행한다.
 // 실행 = 일반 채팅 턴과 동일 경로(chat) → 결과가 vault 기억으로 남고 자동 링크된다.
 import { paths } from './workspace.mjs';
+import { normalizeRoutineNotifications, validateRoutineNotifications } from './routine-notifications.mjs';
 // chat은 **동적 임포트**(runRoutine 안) — chat.mjs가 이 파일을 정적으로 임포트하므로(예약 도구),
 // 여기서도 정적이면 유일한 정적-정적 순환이 된다. 지금은 함수 참조뿐이라 동작하지만, 어느 쪽이든
 // 톱레벨 부작용이 추가되는 순간 TDZ ReferenceError로 Next 라우트가 500이 된다(전수리뷰 2026-07-30 #3).
@@ -35,6 +36,23 @@ export async function loadRoutines(wsId) {
 
 async function saveRoutines(wsId, routines) {
   await writeJsonAtomic(paths(wsId).routines, routines);
+}
+
+/** Delivery status is separate from execution success, and never overwrites a newer run. */
+export async function recordRoutineNotificationDelivery(wsId, id, runAt, results, phase = 'result') {
+  const statuses = ['sent', 'muted', 'unavailable', 'not_selected', 'failed', 'uncertain'];
+  const reasons = ['invalid_destinations', 'not_connected', 'destination_unavailable', 'delivery_uncertain', 'delivery_failed'];
+  const safe = results.filter((r) => ['telegram', 'slack', 'msgr'].includes(r.kind) && statuses.includes(r.status))
+    .map((r) => ({ kind: r.kind, status: r.status, ...(reasons.includes(r.reason) ? { reason: r.reason } : {}) }));
+  return withLock(lockKey(wsId), async () => {
+    const routines = await loadRoutines(wsId);
+    const routine = routines.find((r) => r.id === id);
+    if (!routine || !runAt || routine.lastRun !== runAt) return false;
+    if (phase === 'stop' && routine.lastNotificationDelivery?.runAt === runAt && routine.lastNotificationDelivery.phase !== 'stop') return false;
+    routine.lastNotificationDelivery = { runAt, phase, results: safe };
+    await saveRoutines(wsId, routines);
+    return true;
+  });
 }
 
 /** schedule: { type: 'daily'|'weekly', time: 'HH:MM', dow?: 0-6, times?: ['HH:MM'...], dows?: [0-6...] }
@@ -229,9 +247,10 @@ export async function resumeLoop(wsId, id) {
     곧 사용자의 시간대다(한국 사용자면 Asia/Seoul). 클라이언트가 tz를 보내면 그쪽이 우선. */
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
-export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null }) {
+export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null, notifications }) {
   if (!agentSlug || !title?.trim() || !prompt?.trim()) throw new Error('크루·제목·지시가 필요합니다');
   if (msgr && msgr.wsId !== wsId) throw new Error('메신저 예약 회사 불일치');
+  const destinations = await validateRoutineNotifications(wsId, agentSlug, notifications);
   const sched = normalizeSchedule({ tz: hostTz(), ...schedule });
   const ver = sched.type === 'interval' ? null : normalizeVerify(verify); // 자율 루프는 자체 판정(LOOP:)이 있어 1차 범위 밖
   const routine = {
@@ -243,6 +262,7 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
     enabled,
     created: new Date().toISOString(),
     lastRun: null, lastOk: null, lastResult: '',
+    ...(destinations !== undefined ? { notifications: destinations } : {}),
     // 루프 — interval에만. 다른 타입에 loop가 오면 조용히 버린다(의미 없는 필드를 저장하지 않는다)
     ...(sched.type === 'interval' && loop ? { loop: normalizeLoop(loop) } : {}),
     ...(ver ? { verify: ver } : {}),
@@ -275,6 +295,7 @@ export function sanitizeRoutinePatch(patch = {}) {
   }
   if ('schedule' in patch) out.schedule = normalizeSchedule(patch.schedule);
   if ('enabled' in patch) out.enabled = !!patch.enabled;
+  if ('notifications' in patch) out.notifications = normalizeRoutineNotifications(patch.notifications);
   if ('verify' in patch) out.verify = patch.verify && typeof patch.verify === 'object' ? { files: patch.verify.files, contains: patch.verify.contains, retries: patch.verify.retries } : null;
   // loop 설정(maxRuns/maxUsd)만 통과 — 카운터 병합·interval 여부 판정은 updateRoutine이 현재 루틴을 보고 한다
   if ('loop' in patch) out.loop = patch.loop && typeof patch.loop === 'object' ? { maxRuns: patch.loop.maxRuns, maxUsd: patch.loop.maxUsd } : null;
@@ -283,6 +304,15 @@ export function sanitizeRoutinePatch(patch = {}) {
 
 export async function updateRoutine(wsId, id, patch) {
   const clean = sanitizeRoutinePatch(patch);
+  if ('notifications' in clean || 'agentSlug' in clean) {
+    const before = (await loadRoutines(wsId)).find((r) => r.id === id);
+    if (!before) throw new Error('루틴을 찾을 수 없습니다');
+    if ('notifications' in clean && clean.notifications === undefined) throw new Error('Invalid routine notification channels');
+    const next = 'notifications' in clean ? clean.notifications : before.notifications;
+    const changed = JSON.stringify(next) !== JSON.stringify(before.notifications)
+      || ('agentSlug' in clean && clean.agentSlug !== before.agentSlug);
+    if (changed) await validateRoutineNotifications(wsId, clean.agentSlug ?? before.agentSlug, next);
+  }
   const r = await patchRoutine(wsId, id, (cur) => {
     const out = { ...clean };
     const nextSched = out.schedule ?? cur.schedule;
@@ -322,6 +352,9 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
   // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
   const r0 = await patchRoutine(wsId, id, { lastRun: (startAt ?? new Date()).toISOString() });
   if (!r0) throw new Error('루틴을 찾을 수 없습니다');
+  // Edits apply to the next execution: never send an in-flight result to a newly chosen recipient.
+  const resultRoutine = (current) => ({ ...(current ?? r0), title: r0.title, agentSlug: r0.agentSlug,
+    lastRun: r0.lastRun, notifications: r0.notifications, msgr: r0.msgr });
   try {
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
     const run = r0.msgr
@@ -410,9 +443,9 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
           ...(r0.msgr ? { msgr: t.msgr ?? r0.msgr } : {}),
         }).catch((e) => console.error(`[argo] 루프 결재 등록 실패(${wsId}/${id}):`, e.message));
       }
-      emitNotify({ type: 'routine', wsId, routine: r ?? r0, phase: 'stop', ok: true, reply: loopStopMessage(stop.reason, stop.detail, lang, r?.loop ?? r0.loop) });
+      emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), phase: 'stop', ok: true, reply: loopStopMessage(stop.reason, stop.detail, lang, r?.loop ?? r0.loop) });
     }
-    emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: true, reply: t.reply, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
+    emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: true, reply: t.reply, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
     return { ok: true, reply: t.reply, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);
@@ -424,7 +457,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 예약)이 꺼진다(2R LOW-A). 실패는 lastOk:false + 알림으로 드러나고, 재실행은 '실행'으로.
     // 스케줄은 디스크 현재값(cur)으로 판정 — 실행 중 편집을 스냅샷 기준으로 잘못 끄지 않는다.
     const r = await patchRoutine(wsId, id, (cur) => ({ lastOk: false, lastResult: msg, ...(onceSpent(cur.schedule, new Date(r0.lastRun)) ? { enabled: false } : {}) }));
-    emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: false, reply: msg });
+    emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: false, reply: msg });
     throw e;
   }
 }

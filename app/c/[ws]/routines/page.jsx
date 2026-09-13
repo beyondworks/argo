@@ -1,7 +1,7 @@
 'use client';
 // 루틴 — 크루에게 반복 지시를 예약하고, 원클릭으로 즉시 실행한다.
 // 템플릿 원클릭 생성 → 폼 프리필. 실행 결과는 vault 기억으로 남는다.
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, api, imeGuard, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
@@ -25,6 +25,95 @@ function scheduleLabel(s, t, DOW) {
   return t('routines.scheduleWeekly', { dow, time }) + zone;
 }
 
+function RoutineNotifications({ ws, form, setForm, t }) {
+  const [options, setOptions] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const requestKey = `${ws}:${form.agentSlug}`;
+  const loaded = options?.key === requestKey;
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    setOptions(null);
+    api(`/api/companies/${encodeURIComponent(ws)}/routines/notifications?agentSlug=${encodeURIComponent(form.agentSlug)}`)
+      .then((data) => {
+        if (cancelled) return;
+        if (!Array.isArray(data.channels) || !Array.isArray(data.messengerChannels)) throw new Error('invalid_options');
+        setOptions({ ...data, key: requestKey });
+        // Only a new, untouched form adopts defaults. Refreshes never replace a saved choice.
+        setForm((current) => current?.notificationKey === form.notificationKey && current.agentSlug === form.agentSlug && current.notifications === null
+          ? { ...current, notifications: { channels: data.channels.filter((c) => c.ready && ['telegram', 'slack'].includes(c.kind)).map((c) => c.kind) } }
+          : current);
+      })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [ws, form.agentSlug, form.notificationKey, retry]);
+
+  const selected = form.notifications?.channels ?? [];
+  const rooms = loaded ? options.messengerChannels : [];
+  const selectedRoom = form.notifications?.msgr;
+  const roomKey = (room) => `${room.orgId}:${room.channelId}`;
+  const knownRoom = selectedRoom && rooms.some((room) => roomKey(room) === roomKey(selectedRoom));
+  const change = (update) => setForm((current) => current ? { ...current, notificationsChanged: true, notifications: update(current.notifications) } : current);
+  const unavailable = (reason) => t(`routines.notifications.${['muted', 'not_owned', 'no_channels'].includes(reason) ? reason : 'unavailable'}`);
+
+  return (
+    <fieldset style={{ margin: '4px 0', padding: 14, minWidth: 0, border: '1px solid var(--border)', borderRadius: 12, display: 'grid', gap: 10 }}>
+      <legend style={{ padding: '0 6px', fontSize: 13, fontWeight: 650 }}>{t('routines.notifications.label')}</legend>
+      <p style={{ margin: 0, fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 }}>{t('routines.notifications.hint')}</p>
+      {form.notifications === undefined ? (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12 }}>{t('routines.notifications.legacy')}</span>
+          <button type="button" className="btn sm" disabled={!loaded} onClick={() => change(() => ({
+            channels: form.notificationOrigin ? ['msgr'] : options.channels.filter((c) => c.ready && ['telegram', 'slack'].includes(c.kind)).map((c) => c.kind),
+            ...(form.notificationOrigin ? { msgr: form.notificationOrigin } : {}),
+          }))}>{t('routines.notifications.choose')}</button>
+        </div>
+      ) : loaded && form.notifications !== null ? (
+        <>
+          <div style={{ display: 'flex', gap: '8px 18px', flexWrap: 'wrap' }}>
+            {['telegram', 'slack', 'msgr'].map((kind) => {
+              const channel = options.channels.find((c) => c.kind === kind);
+              const checked = selected.includes(kind);
+              return <label key={kind} style={{ display: 'flex', gap: 8, alignItems: 'center', minHeight: 44, fontSize: 13 }}>
+                <input type="checkbox" checked={checked} disabled={!checked && !channel?.ready}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    change((current) => ({ ...current, channels: on ? [...current.channels, kind] : current.channels.filter((c) => c !== kind) }));
+                  }} />
+                <span>{t(`routines.notifications.${kind}`)}{!channel?.ready && <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)' }}>{unavailable(channel?.reason)}</span>}</span>
+              </label>;
+            })}
+          </div>
+          {selected.includes('msgr') && <label style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+            {t('routines.notifications.room')}
+            <select aria-label={t('routines.notifications.room')} value={selectedRoom ? roomKey(selectedRoom) : ''}
+              style={{ ...selStyle, width: '100%', minWidth: 0, minHeight: 44 }}
+              onChange={(e) => {
+                const room = rooms.find((r) => roomKey(r) === e.target.value);
+                change((current) => ({ ...current, msgr: room ? { orgId: room.orgId, channelId: room.channelId } : undefined }));
+              }}>
+              <option value="">{t('routines.notifications.roomPlaceholder')}</option>
+              {selectedRoom && !knownRoom && <option value={roomKey(selectedRoom)}>{t('routines.notifications.roomUnavailable')}</option>}
+              {rooms.map((room) => <option key={roomKey(room)} value={roomKey(room)}>{room.orgName} · {room.name}</option>)}
+            </select>
+            {selectedRoom && !knownRoom && <span role="status" style={{ color: 'var(--warn)' }}>{t('routines.notifications.roomUnavailableHint')}</span>}
+          </label>}
+          {selected.length === 0 && <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('routines.notifications.none')}</span>}
+        </>
+      ) : null}
+      {!loaded && (failed ? <div role="alert" style={{ display: 'grid', gap: 8, fontSize: 12 }}>
+        <span style={{ color: 'var(--danger)' }}>{t('routines.notifications.loadFail')}</span>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn sm" onClick={() => setRetry((n) => n + 1)}>{t('routines.notifications.retry')}</button>
+          {form.notifications === null && <button type="button" className="btn sm" onClick={() => change(() => ({ channels: [] }))}>{t('routines.notifications.without')}</button>}
+        </div>
+      </div> : <span role="status" style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('routines.notifications.loading')}</span>)}
+      <p style={{ margin: 0, fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.6 }}>{t('routines.notifications.history')}</p>
+    </fieldset>
+  );
+}
+
 export default function Routines({ params }) {
   const { ws } = use(params);
   const { t, lang, fmtMoney } = useLang();
@@ -44,6 +133,7 @@ export default function Routines({ params }) {
   const [delTarget, setDelTarget] = useState(null); // 삭제 확인 모달 대상 루틴
   const [nlText, setNlText] = useState(''); // 자연어 한 줄 → 자동 설정 입력
   const [nlBusy, setNlBusy] = useState(false);
+  const formSequence = useRef(0);
   const [newTime, setNewTime] = useState('09:00'); // 시각 추가 입력
 
   // 자연어 → 초안 — 러너가 해석해 폼을 채운다. 결과는 프리필일 뿐, 저장 전 사용자가 검토·수정한다.
@@ -81,6 +171,7 @@ export default function Routines({ params }) {
   function openForm(tpl) {
     setForm({
       id: null, // null = 생성, 값 있으면 수정 모드
+      notificationKey: ++formSequence.current, notifications: null, notificationsChanged: true,
       agentSlug: agents[0]?.slug ?? '',
       title: tpl?.title ?? '',
       prompt: tpl?.prompt ?? '',
@@ -97,6 +188,10 @@ export default function Routines({ params }) {
   function openEdit(r) {
     setForm({
       id: r.id,
+      notificationKey: ++formSequence.current,
+      notificationsChanged: false,
+      notifications: r.notifications ? { ...r.notifications, channels: [...r.notifications.channels] } : undefined,
+      notificationOrigin: r.msgr?.orgId && r.msgr?.channelId ? { orgId: r.msgr.orgId, channelId: r.msgr.channelId } : null,
       agentSlug: r.agentSlug,
       title: r.title,
       prompt: r.prompt,
@@ -111,11 +206,12 @@ export default function Routines({ params }) {
 
   async function submitForm(e) {
     e.preventDefault();
-    if (saving || !form) return;
+    if (saving || !form || form.notifications === null || (form.notifications?.channels.includes('msgr') && !form.notifications.msgr?.channelId)) return;
     setSaving(true); setError('');
     try {
       const body = {
         agentSlug: form.agentSlug, title: form.title, prompt: form.prompt,
+        ...(form.notificationsChanged && form.notifications !== undefined ? { notifications: form.notifications } : {}),
         schedule: form.type === 'interval'
           ? { type: 'interval', everyMinutes: Number(form.everyMinutes) } // 시각·요일 미전송 — 편집이 interval을 daily로 조용히 바꾸던 결함(검수 MEDIUM)의 교정
           // 예약 시각은 **보는 사람의 시간대**로 못박아 보낸다(유건 지시 2026-07-28: "한국 사용자는
@@ -143,7 +239,8 @@ export default function Routines({ params }) {
       setForm(null);
       load();
     } catch (err) {
-      setError(String(err.message));
+      const message = String(err.message);
+      setError(/notification/i.test(message) ? t('routines.notifications.saveFail') : message);
     } finally {
       setSaving(false);
     }
@@ -340,6 +437,7 @@ export default function Routines({ params }) {
             placeholder={t('routines.promptPlaceholder')}
             style={{ width: '100%', minHeight: 90, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '10px 14px', outline: 'none', fontSize: 13, lineHeight: 1.65 }}
           />
+          <RoutineNotifications key={form.notificationKey} ws={ws} form={form} setForm={setForm} t={t} />
           {/* 기기 종속 경로 안내(비차단) — 루틴은 클라우드 리더 기기에서 돌고 리더는 옮겨 다닌다.
               특정 컴퓨터의 절대경로가 지시에 박혀 있으면 다른 기기에서 조용히 실행 불가가 된다
               (윈도 실기기 관찰 2026-08-30). 저장은 막지 않는다 — 정직 안내만. */}
@@ -349,7 +447,7 @@ export default function Routines({ params }) {
             </p>
           ) : null; })()}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary sm" disabled={saving || !form.title.trim() || !form.prompt.trim() || !form.agentSlug || form.times.length === 0 || (form.type === 'weekly' && form.dows.length === 0)}>
+            <button className="btn btn-primary sm" disabled={saving || form.notifications === null || (form.notifications?.channels.includes('msgr') && !form.notifications.msgr?.channelId) || !form.title.trim() || !form.prompt.trim() || !form.agentSlug || form.times.length === 0 || (form.type === 'weekly' && form.dows.length === 0)}>
               {saving ? <Spinner size={12} /> : form.id ? t('routines.saveBtn') : t('routines.createBtn')}
             </button>
             {/* 설계 확장 — 한 줄 지시를 목적·단계·산출물·기준이 담긴 설계로(유건 지시 2026-08-05).
@@ -403,6 +501,7 @@ export default function Routines({ params }) {
                   <td>
                     <span style={{ fontWeight: 650, display: 'block' }}>{r.title}</span>
                     <span style={{ fontSize: 11.5, color: 'var(--fg-3)', display: 'block', maxWidth: 320, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{r.prompt}</span>
+                    <span style={{ fontSize: 11, color: 'var(--fg-3)', display: 'block', marginTop: 4 }}>{t('routines.notifications.label')}: {r.notifications ? (r.notifications.channels.length ? r.notifications.channels.map((kind) => t(`routines.notifications.${kind}`)).join(' · ') : t('routines.notifications.none')) : t('routines.notifications.legacy')}</span>
                   </td>
                   <td>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5 }}>
@@ -430,6 +529,15 @@ export default function Routines({ params }) {
                         {timeAgo(r.lastRun, lang)} {r.lastOk === false ? <span style={{ color: 'var(--danger)' }}>{t('routines.fail')}</span> : t('routines.success')}
                       </span>
                     ) : <span style={{ color: 'var(--fg-3)' }}>—</span>}
+                    {r.lastNotificationDelivery?.results?.some((d) => d.status !== 'not_selected') && (
+                      <div aria-label={t('routines.notifications.delivery')} style={{ display: 'grid', gap: 3, marginTop: 6, fontSize: 11 }}>
+                        {r.lastNotificationDelivery.results.filter((d) => d.status !== 'not_selected').map((d) => (
+                          <span key={d.kind} style={{ color: ['failed', 'uncertain', 'unavailable'].includes(d.status) ? 'var(--warn)' : 'var(--fg-3)' }}>
+                            {t(`routines.notifications.${d.kind}`)} · {t(`routines.notifications.status.${['sent', 'muted', 'unavailable', 'failed', 'uncertain'].includes(d.status) ? d.status : 'uncertain'}`)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td>
                     {/* 만료 — 예약 시각이 catch-up 창(4h)까지 지나도록 발화하지 못한 once. '가동'으로

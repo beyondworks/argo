@@ -83,9 +83,9 @@ try {
     await scenario(lang,width,theme,'automation-lifecycle',async(p,l)=>{
       const d=await open(p,l); await tab(d,l); await p.locator('.work-empty').waitFor();
       await createAutomation(d,l); let row=p.locator('.work-item').filter({hasText:'Fixture automation'});
-      assert.equal((await calls(p,'msgr_automation_save'))[0].args.schedule.timezone,'Asia/Seoul');
+      assert.equal((await calls(p,'msgr_automation_save_with_notifications'))[0].args.schedule.timezone,'Asia/Seoul');assert.deepEqual((await calls(p,'msgr_automation_save_with_notifications'))[0].args.notification_route_ids,[]);
       await button(row,l,'automation.edit').click(); await field(d,l,'automation.name').fill('Edited fixture automation');
-      await p.evaluate(()=>window.__workFixture.fail='msgr_automation_save'); await button(d,l,'ui.save').click(); await d.getByRole('alert').waitFor();
+      await p.evaluate(()=>window.__workFixture.fail='msgr_automation_save_with_notifications'); await button(d,l,'ui.save').click(); await d.getByRole('alert').waitFor();
       assert.equal(await field(d,l,'automation.name').inputValue(),'Edited fixture automation');
       await button(d,l,'ui.save').click(); row=p.locator('.work-item').filter({hasText:'Edited fixture automation'}); await row.waitFor();
       await button(row,l,'automation.pause').click(); await button(row,l,'automation.resume').waitFor();
@@ -106,10 +106,38 @@ try {
       assert.equal(await confirm.locator('input').nth(0).inputValue(),'Edited fixture automation');
       await button(confirm,l,'automation.delete').click(); await confirm.waitFor({state:'detached'}); await row.waitFor({state:'detached'});
     });
+    await scenario(lang,width,theme,'notification-selection-and-history',async(p,l)=>{
+      const d=await open(p,l);await tab(d,l);await button(d,l,'automation.new').click();
+      await field(d,l,'automation.name').fill('Notification fixture');await field(d,l,'automation.prompt').fill('Summarize today');await field(d,l,'automation.crew').selectOption('crew-new');
+      const telegram=d.getByRole('checkbox',{name:/Fixture Telegram/});const slack=d.getByRole('checkbox',{name:/Fixture Slack/});
+      await telegram.waitFor();assert.equal(await telegram.isChecked(),false);assert.equal(await slack.isChecked(),false);
+      await telegram.check();await slack.check();
+      await d.locator('.work-notification-routes').scrollIntoViewIfNeeded();await p.screenshot({path:new URL(`notification-picker-${lang}-${width}-${theme}.png`,artifacts).pathname});
+      await p.evaluate(()=>window.__workFixture.fail='msgr_automation_save_with_notifications');await button(d,l,'ui.save').click();await d.getByRole('alert').waitFor();
+      assert.equal(await telegram.isChecked(),true);await button(d,l,'ui.save').click();
+      const row=d.locator('.work-item').filter({hasText:'Notification fixture'});await row.waitFor();
+      const attempts=await calls(p,'msgr_automation_save_with_notifications');assert.deepEqual(attempts[0].args.notification_route_ids,['route-slack','route-telegram']);assert.equal(attempts[0].args.request_id,attempts[1].args.request_id);
+      await button(row,l,'automation.edit').click();assert.equal(await telegram.isChecked(),true);assert.equal(await slack.isChecked(),true);await telegram.uncheck();await button(d,l,'ui.save').click();
+      assert.deepEqual((await calls(p,'msgr_automation_save_with_notifications')).at(-1).args.notification_route_ids,['route-slack']);
+      await button(row,l,'automation.run').click();await p.locator('.work-history-row').waitFor();
+      await p.evaluate(()=>{const run=window.__workFixture.tables.msgr_automation_runs[0];run.status='completed';window.__workFixture.tables.msgr_notification_deliveries=[{id:'delivery1',run_id:run.id,route_id:'route-slack',status:'uncertain'}];});
+      await button(row,l,'automation.history').click();await button(row,l,'automation.history').click();
+      await p.waitForFunction(()=>document.querySelector('.work-delivery-status')?.textContent.includes(window.__workTranslate('automation.delivery.uncertain')));
+      await d.locator('.work-delivery-status').scrollIntoViewIfNeeded();assert.equal(await d.evaluate(el=>el.scrollWidth<=el.clientWidth),true);await p.screenshot({path:new URL(`notifications-${lang}-${width}-${theme}.png`,artifacts).pathname});
+    });
+    await scenario(lang,width,theme,'notification-upgrade-and-retry',async(p,l)=>{
+      await p.evaluate(()=>window.__workFixture.missingNotifications=true);const d=await open(p,l);await tab(d,l);await button(d,l,'automation.new').click();
+      await field(d,l,'automation.name').fill('Preserved notification draft');await field(d,l,'automation.prompt').fill('Summarize');await field(d,l,'automation.crew').selectOption('crew-new');
+      await d.getByRole('alert').waitFor();assert.equal(await button(d,l,'ui.save').isDisabled(),true);
+      await p.evaluate(()=>window.__workFixture.missingNotifications=false);await button(d,l,'work.retry').click();await d.getByRole('checkbox',{name:/Fixture Telegram/}).waitFor();
+      assert.equal(await field(d,l,'automation.name').inputValue(),'Preserved notification draft');assert.equal(await button(d,l,'ui.save').isEnabled(),true);
+      assert.equal((await calls(p,'msgr_automation_save_with_notifications')).length,0);
+    });
     await scenario(lang,width,theme,'pagination-and-foreign-owner',async(p,l)=>{
       await p.evaluate(()=>{window.__workFixture.tables.msgr_automations=Array.from({length:27},(_,i)=>({id:`automation-${String(i).padStart(3,'0')}`,channel_id:'general',title:`Fixture scheduled ${String(i).padStart(3,'0')}`,prompt:'Fixture page navigation',crew_id:'crew-new',created_by:'user-other',created_at:new Date(1700000000000+i*1000).toISOString(),enabled:true,deleted_at:null,schedule:{kind:'daily',time:'09:00',timezone:'Asia/Seoul'}}));});
       const d=await open(p,l);await tab(d,l);await p.locator('.work-item').first().waitFor();assert.equal(await p.locator('.work-item').count(),25);
       assert.equal(await button(d,l,'automation.edit').count(),0);assert.equal(await button(d,l,'automation.delete').count(),0);
+      await p.evaluate(()=>{window.__workFixture.tables.msgr_automation_runs=[{id:'foreign-run',automation_id:'automation-026',notification_route_ids:['route-slack'],status:'queued',trigger:'manual',created_at:new Date().toISOString()}];});await button(p.locator('.work-item').first(),l,'automation.history').click();await p.locator('.work-history-row').waitFor();assert.equal((await calls(p,'msgr_notification_deliveries')).length,0);assert.equal((await calls(p,'msgr_notification_routes_list')).length,0);
       await button(d,l,'work.next').click();await p.waitForFunction(()=>document.querySelectorAll('.work-item').length===2);
       assert.equal(await button(d,l,'work.next').isDisabled(),true);await button(d,l,'work.previous').click();await p.waitForFunction(()=>document.querySelectorAll('.work-item').length===25);
     });
