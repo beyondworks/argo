@@ -1,0 +1,24 @@
+.hireIcon { display: inline-flex; }
+.memoryCard { container: deck-memory / inline-size; }
+.memoryCard > :global(.card-head) { flex-wrap: wrap; }
+.memoryTable { table-layout: fixed; }
+.memoryTitle { max-width: 0; }
+.hireExamples > button { max-width: 100%; white-space: normal; text-align: left; }
+
+/* Follow available content width, including zoom and the adjacent conversation pane. */
+@container deck (max-width: 32rem) {
+  .hireForm { flex-wrap: wrap; border-radius: 18px; padding: 12px; }
+  .hireForm > input { flex-basis: 100%; }
+  .hireForm > span { display: none; }
+  .hireForm > button { max-width: 100%; white-space: normal; }
+}
+
+@container deck-memory (max-width: 32rem) {
+  .memoryTable, .memoryTable tbody { display: block; }
+  .memoryTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .memoryTable tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding: 14px 16px; border-top: 1px solid var(--border-soft); }
+  .memoryTable tbody td { display: block; min-width: 0; padding: 0; border: 0; overflow-wrap: anywhere; }
+  .memoryTable .memoryTitle { grid-column: 1 / -1; max-width: 100%; }
+  .memoryTable td:nth-child(2) { grid-column: 1 / -1; }
+  .memoryTable td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 3px; font-size: 10px; color: var(--fg-3); }
+}

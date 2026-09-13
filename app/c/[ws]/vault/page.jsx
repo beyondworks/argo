@@ -6,11 +6,13 @@
 // 페이지는 뷰포트 높이에 고정되고 스크롤은 각 패널 안에서만 일어난다.
 import { Suspense, use, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { createPortal } from 'react-dom';
 import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel, resolveWikiRel, artifactDownload } from '../../../ui';
 import { Graph2D } from '../graph2d'; // 2D 옵시디언식 — 3D 별자리(graphview)는 데크 위젯 전용
 import { useLang } from '../../../i18n';
 import { sideParam, withSide } from '../split.mjs';
 import { useSplitAlive } from '../split-alive';
+import styles from './responsive.module.css';
 import { dispZoom } from '../zoom-math.mjs'; // 표시 배율 — 커서(뷰포트 px)→CSS px 환산(#334)
 
 const GRAPH_TAB = { id: 'graph', kind: 'graph', root: null };
@@ -173,9 +175,10 @@ function Vault({ params }) {
   const graphActive = activeTab?.kind === 'graph';
 
   return (
-    <div className="vault-split">
+    <div className={styles.page}>
+    <div className={`vault-split ${styles.workspace}`}>
       {/* ── 좌: 탐색기 — 옵시디언/VS Code 표준 템플릿: 아이콘 툴바 → 루트 폴더(회사) → 폴더/파일 트리 ── */}
-      <div className="vault-tree" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', width: treeW }}>
+      <div className={`vault-tree ${styles.tree}`} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', '--tree-width': `${treeW}px` }}>
         <div className="vault-toolbar">
           <button className="tb" onClick={openCompose} title={t('vault.writeNote')} aria-label={t('vault.writeNote')}><Icon name="plus" size={14} /></button>
           <button className="tb" onClick={() => setSort((s) => (s === 'mtime' ? 'name' : 'mtime'))} title={sort === 'mtime' ? t('vault.sortTime') : t('vault.sortName')} aria-label={t('vault.sortTime')}><Icon name="sort" size={14} /></button>
@@ -246,12 +249,12 @@ function Vault({ params }) {
       <div className={`vault-handle${resizing ? ' on' : ''}`} onMouseDown={(e) => { e.preventDefault(); setResizing(true); }} aria-hidden="true" />
 
       {/* ── 우: 창(pane)들 — 가로 나란히, 각자 탭 스트립 + 본문 ── */}
-      <div className="vault-content" style={{ flex: 1, minWidth: 0, display: 'flex', minHeight: 0 }}>
+      <div className={`vault-content ${styles.documents}`} style={{ flex: 1, minWidth: 0, display: 'flex', minHeight: 0 }}>
         {panes.map((pane, pi) => {
           const cur = pane.tabs.find((tb) => tb.id === pane.active) ?? pane.tabs[0];
           const isFocus = pane.id === focusPane;
           return (
-            <div key={pane.id} className={`vault-pane${isFocus ? ' focus' : ''}`} onMouseDown={() => setFocusPane(pane.id)}
+            <div key={pane.id} className={`${styles.pane} vault-pane${isFocus ? ' focus' : ''}`} onMouseDown={() => setFocusPane(pane.id)}
               style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', borderLeft: pi > 0 ? '1px solid var(--border-soft)' : 0 }}>
               {/* 탭 스트립 */}
               <div className="vault-tabs">
@@ -294,6 +297,7 @@ function Vault({ params }) {
           );
         })}
       </div>
+    </div>
     </div>
   );
 }
@@ -378,10 +382,10 @@ function DocView({ ws, rel, docs, projects, t, onOpen, onGraph, onChanged, onDel
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: '24px 36px 48px' }}>
       <div className="vault-reader" style={{ maxWidth: 760, margin: '0 auto' }}>
-        <div className="vault-reader-bar" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+        <div className="vault-reader-bar" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', letterSpacing: '0.03em', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rel}</span>
           {!editing && (
-            <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
+            <span style={{ display: 'flex', gap: 6, flex: '0 1 auto', minWidth: 0, flexWrap: 'wrap' }}>
               <button className="btn sm" onClick={onGraph} title={t('vault.localGraph')}><Icon name="memory" size={12} /></button>
               <a className="btn sm" download={dlName}
                 href={`/api/companies/${ws}/vault?rel=${encodeURIComponent(rel)}&download=1`}
@@ -431,9 +435,9 @@ function DocView({ ws, rel, docs, projects, t, onOpen, onGraph, onChanged, onDel
           </>
         )}
       </div>
-      {deleteOpen && (
+      {deleteOpen && createPortal(
         <DangerModal title={t('vault.deleteTitle')} description={t('vault.deleteDesc')} requireText={doc?.title ?? ''}
-          phraseKey="danger.phrase.delete" confirmLabel={t('vault.deleteConfirm')} busy={mutating} onConfirm={removeNote} onClose={() => setDeleteOpen(false)} />
+          phraseKey="danger.phrase.delete" confirmLabel={t('vault.deleteConfirm')} busy={mutating} onConfirm={removeNote} onClose={() => setDeleteOpen(false)} />, document.body
       )}
     </div>
   );

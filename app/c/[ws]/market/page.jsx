@@ -4,6 +4,7 @@
 import { use, useEffect, useState } from 'react';
 import { Icon, Spinner, Skeleton, useScrollLock, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
+import styles from './responsive.module.css';
 
 const fmtN = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const errorText = (t, error) => String(error).startsWith('market.') ? t(error) : error;
@@ -62,16 +63,16 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail, customMcpAllow
             return (
               <div
                 key={key}
-                className="row"
+                className={`row ${styles.recommendation}`}
                 style={{ cursor: 'pointer', padding: '9px 14px', borderTop: i === 0 ? 'none' : undefined }}
                 onClick={() => onDetail({ ...item, kind: kind === 'skills' ? 'skill' : 'mcp' })}
                 title={t('market.detailHint')}
               >
                 <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', width: 26, flex: 'none' }}>#{i + 1}</span>
-                <span style={{ fontWeight: 650, fontSize: 12.5, flex: 'none', maxWidth: 220, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                <span className={styles.recommendationName} style={{ fontWeight: 650, fontSize: 12.5, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                   {item.title ?? item.name}
                 </span>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--fg-3)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                <span className={styles.recommendationDescription} style={{ minWidth: 0, fontSize: 12, color: 'var(--fg-3)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                   {item.desc}
                 </span>
                 {item.needsKey && <span className="chip" style={{ flex: 'none' }}>{t('market.needsKey')}</span>}
@@ -146,8 +147,8 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose, customMcpAl
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card fade-up" style={{ width: 'min(600px, 100%)', maxHeight: 'calc(84vh / var(--z, 1))', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
-        <div className="card-head">
+      <div className="card fade-up" style={{ width: 'min(600px, 100%)', maxHeight: 'calc(84vh / var(--z, 1))', overflowY: 'auto', overflowWrap: 'anywhere' }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-head" style={{ flexWrap: 'wrap' }}>
           <span className="card-title">{item.title ?? item.name}</span>
           <span className="rule" />
           <button className="btn sm" onClick={onClose}>{t('market.close')}</button>
@@ -274,15 +275,15 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
   const safeId = (item) => String(item.name ?? '').toLowerCase().replace(/[^a-z0-9가-힣-]/g, '-').replace(/^-+|-+$/g, '');
 
   return (
-    <div style={{ padding: '0 18px 16px', display: 'grid', gap: 10 }}>
-      <form onSubmit={search} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10 }}>
+      <form onSubmit={search} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span className="microlabel" style={{ flex: 'none' }}>{sourceLabel}</span>
         <input suppressHydrationWarning
           placeholder={placeholder}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           {...imeGuard}
-          style={{ flex: 1, minWidth: 160, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, outline: 'none', fontSize: 12.5 }}
+          style={{ flex: '1 1 160px', minWidth: 0, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, outline: 'none', fontSize: 12.5 }}
         />
         <button className="btn sm" disabled={searching || !q.trim()}>
           {searching ? <Spinner size={11} /> : <Icon name="search" size={13} />} {t('market.remoteSearchBtn')}
@@ -293,7 +294,7 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
         results.length === 0 ? (
           <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('market.noResults')}</span>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 10 }}>
             {results.map((item) => {
               const key = item.id ?? item.name;
               const on = installedIds.has(safeId(item));
@@ -406,7 +407,8 @@ export default function Market({ params }) {
   const customMcpAllowed = data?.customMcpAllowed !== false;
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <>
+    <div className={styles.page}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('market.header')}</span>
         {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{errorText(t, error)}</span>}
@@ -422,7 +424,7 @@ export default function Market({ params }) {
         {data === null ? (
           <div style={{ padding: '0 18px 18px' }}><Skeleton h={90} /></div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10, padding: '2px 18px 18px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 10, padding: '2px 18px 18px' }}>
             {data.skillCatalog.map((s) => {
               const on = installedSkillIds.has(s.id);
               return (
@@ -481,14 +483,14 @@ export default function Market({ params }) {
           </div>
         )}
         {/* 공방 — 사장이 직접 쓰는 스킬(업무 매뉴얼 한 장). 만능 작업대의 아르고식 흡수 */}
-        <form onSubmit={addSkill} style={{ display: 'grid', gap: 8, padding: '10px 18px 18px' }}>
+        <form onSubmit={addSkill} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, padding: '10px 18px 18px' }}>
           <span className="microlabel">{t('market.workshopLabel')}</span>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <div className="input-bar" style={{ background: 'var(--card-2)', flex: '0 0 220px' }}>
+            <div className="input-bar" style={{ background: 'var(--card-2)', flex: '1 1 220px', minWidth: 0 }}>
               <input placeholder={t('market.workshopNamePlaceholder')} value={workshop.name}
                 onChange={(e) => setWorkshop({ ...workshop, name: e.target.value })} {...imeGuard} />
             </div>
-            <div className="input-bar" style={{ background: 'var(--card-2)', flex: 1, minWidth: 240 }}>
+            <div className="input-bar" style={{ background: 'var(--card-2)', flex: '1 1 240px', minWidth: 0 }}>
               <input placeholder={t('market.workshopMdPlaceholder')} value={workshop.md}
                 onChange={(e) => setWorkshop({ ...workshop, md: e.target.value })} {...imeGuard} />
             </div>
@@ -516,7 +518,7 @@ export default function Market({ params }) {
           <div style={{ padding: '0 18px 18px' }}><Skeleton h={90} /></div>
         ) : (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10, padding: '2px 18px 14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 10, padding: '2px 18px 14px' }}>
               {data.mcpCatalog.map((m) => {
                 const on = !!installedMcp[m.id];
                 return (
@@ -618,14 +620,14 @@ export default function Market({ params }) {
                 value={custom.name}
                 disabled={!customMcpAllowed}
                 onChange={(e) => setCustom({ ...custom, name: e.target.value })}
-                style={{ width: 170, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
+                style={{ width: 170, maxWidth: '100%', minWidth: 0, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
               />
               <input suppressHydrationWarning
                 placeholder={t('market.customCmdPlaceholder')}
                 value={custom.command}
                 disabled={!customMcpAllowed}
                 onChange={(e) => setCustom({ ...custom, command: e.target.value })}
-                style={{ flex: 1, minWidth: 200, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
+                style={{ flex: '1 1 200px', minWidth: 0, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
               />
               <button className="btn sm" disabled={!customMcpAllowed || !custom.name || !custom.command || busy === 'mcp-custom'}>
                 {busy === 'mcp-custom' ? <Spinner size={11} /> : t('market.addBtn')}
@@ -636,6 +638,7 @@ export default function Market({ params }) {
         )}
       </div>
 
+    </div>
       {detail && (
         <DetailModal
           ws={ws}
@@ -646,6 +649,6 @@ export default function Market({ params }) {
           customMcpAllowed={customMcpAllowed}
         />
       )}
-    </div>
+    </>
   );
 }

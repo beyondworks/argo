@@ -3,6 +3,7 @@
 // 처방 = split.mjs의 keepSide(href, window.location.search): 현재 side를 그대로 싣는 순수 함수(행동 테스트) + 두 페이지의
 // 이동 명령이 그것을 타는지 소스 구간 핀(생 push 부활은 red).
 import { test } from 'node:test';
+import { parse } from 'espree';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { readdirSync } from 'node:fs';
@@ -88,7 +89,21 @@ test('keepSideExcept: 현재 side가 spec(해고한 크루)이면 떨구고, 다
 test('데크: 기억 문서 클릭·크게 보기·그래프 선택·설정 CTA 이동이 keepSide를 탄다', async () => {
   const src = await load('../app/c/[ws]/page.jsx');
   assert.match(src, /import \{ keepSide \} from '\.\/split\.mjs';/, '데크: keepSide 임포트');
-  assert.match(src, /<tr key=\{m\.rel\} onClick=\{\(\) => router\.push\(keepSide\(`\/c\/\$\{ws\}\/vault\?doc=\$\{encodeURIComponent\(m\.rel\)\}`, window\.location\.search\)\)\}>/, '기억 문서 행 클릭');
+  // Read the actual opening element, so role/class attribute order does not weaken the navigation contract.
+  const nodes = [parse(src, { ecmaVersion: 'latest', sourceType: 'module', ecmaFeatures: { jsx: true }, range: true })];
+  const rows = [];
+  while (nodes.length) {
+    const node = nodes.pop();
+    if (!node || typeof node !== 'object') continue;
+    if (node.type === 'JSXOpeningElement' && node.name?.name === 'tr' && node.attributes.some((a) =>
+      a.name?.name === 'key' && a.value?.expression?.type === 'MemberExpression' &&
+      a.value.expression.object.name === 'm' && a.value.expression.property.name === 'rel')) rows.push(node);
+    for (const value of Object.values(node)) if (Array.isArray(value)) nodes.push(...value); else if (value && typeof value === 'object') nodes.push(value);
+  }
+  assert.equal(rows.length, 1, '기억 문서 행 key=m.rel');
+  const click = rows[0].attributes.find((a) => a.name?.name === 'onClick')?.value?.expression;
+  assert.ok(click?.range, '기억 문서 행 onClick');
+  assert.match(src.slice(...click.range), /^\(\) => router\.push\(keepSide\(`\/c\/\$\{ws\}\/vault\?doc=\$\{encodeURIComponent\(m\.rel\)\}`, window\.location\.search\)\)$/, '기억 문서 행 클릭');
   assert.match(src, /onClick=\{\(\) => router\.push\(keepSide\(`\/c\/\$\{ws\}\/vault`, window\.location\.search\)\)\} style=\{\{ cursor: 'pointer' \}\}>\{t\('deck\.viewLarge'\)\}<\/button>/, '크게 보기');
   assert.match(src, /onSelectDoc=\{\(rel\) => router\.push\(keepSide\(`\/c\/\$\{ws\}\/vault\?doc=\$\{encodeURIComponent\(rel\)\}`, window\.location\.search\)\)\}/, '그래프 문서 선택');
   assert.match(src, /onClick=\{\(\) => router\.push\(keepSide\(`\/c\/\$\{ws\}\/settings\?ai=1`, window\.location\.search\)\)\}>/, '설정 CTA(?ai=1 딥링크 보존)');

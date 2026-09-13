@@ -464,7 +464,7 @@ export default function Room({ params }) {
       {/* 열 잠금 minmax(0,1fr) — 무템플릿 grid의 암묵 auto 열은 자식 min-content(컴포저 textarea 고유폭
           ~260px)만큼 부풀어, 표시 배율 2의 좁은 유효 폭(1열 ~178px)에서 문서 가로 넘침을 만든다(실측
           scrollWidth 1507 > 1408). 아이템 minWidth:0은 바깥 트랙만 지키고 자기 내부 트랙은 못 지킨다. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
+      <div className="chat-body" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, minWidth: 0, minHeight: 0 }}>
         {/* 헤더 = 라벨 + 구분선만. 새 회의·마치기 버튼은 입력창 아래 줄 오른쪽(알약 .btn sm)으로 옮겨졌다(2026-09-02 룩 통일) —
             좁은 폭 넘침 처방(wrap·라벨 줄바꿈)도 그 줄이 이어받는다. 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지). */}
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>

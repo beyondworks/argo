@@ -72,7 +72,13 @@ test('데크 산식 핀 — linked/(linked+isolated)가 그대로 Dial에 닿는
 
 test('데크 표 "연결" 열 핀 — 원시 links.length가 아니라 해석 후 차수 deg', () => {
   const page = load('../app/c/[ws]/page.jsx');
-  assert.match(page, /\{memories\.map\(\(m\) => \([\s\S]*?<td className="mono" style=\{\{ fontSize: 12 \}\}>\{m\.deg > 0 \? m\.deg : '—'\}<\/td>/);
+  const rows = page.match(/\{memories\.map\(\(m\) => \([\s\S]*?<\/table>/)?.[0];
+  assert.ok(rows, '기억 표 행 구간');
+  const cell = [...rows.matchAll(/<td\b[\s\S]*?<\/td>/g)].map((m) => m[0])
+    .find((td) => /\{m\.deg > 0 \? m\.deg : '—'\}<\/td>$/.test(td));
+  assert.ok(cell, '해석 후 차수 deg를 표시하는 셀');
+  assert.match(cell, /\bclassName="mono"/);
+  assert.match(cell, /\bstyle=\{\{ fontSize: 12 \}\}/);
   assert.doesNotMatch(page, /m\.links\.length/);
 });
 

@@ -146,8 +146,17 @@ function Shell({ children, params }) {
   // 배율 인지: scrollWidth/clientWidth는 배율이 적용된 레이아웃 픽셀이라 유효 폭 환산이 필요 없다.
   // @media(max-width:900px)의 슬롯→밴드 전환은 실 뷰포트 축으로 그대로 둔다(둘은 상보).
   const barRef = useRef(null);
+  const contentRef = useRef(null);
   const fitBar = useCallback(() => {
     const root = document.documentElement;
+    const content = contentRef.current;
+    if (content) {
+      const style = getComputedStyle(content);
+      const available = content.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      // Below two readable columns, keep the session list reachable above the chat.
+      // Measuring the main area also covers app zoom and an open adjacent pane.
+      content.toggleAttribute('data-narrow-content', available < 460);
+    }
     const bar = barRef.current;
     if (!bar) return;
     root.removeAttribute('data-narrow-bar');
@@ -164,6 +173,7 @@ function Shell({ children, params }) {
     // 수렴하므로(최종 크기가 직전 보고값과 같아 재통지 없음) 진동하지 않는다.
     const ro = new ResizeObserver(fitBar);
     if (barRef.current) ro.observe(barRef.current);
+    if (contentRef.current) ro.observe(contentRef.current);
     const slot = document.getElementById('argo-topbar-slot');
     if (slot) ro.observe(slot);
     window.addEventListener('resize', fitBar);
@@ -510,7 +520,7 @@ function Shell({ children, params }) {
 
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header className="topbar" ref={barRef}>
-          <span className="topbar-title">{title}</span>
+          <span className="topbar-title" title={title}>{title}</span>
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체).
               display 포함 전부 CSS(globals #argo-topbar-slot) — 인라인 display가 있으면 좁은 셸(≤900px)의
               숨김 규칙(슬롯→밴드 전환)이 죽는다. 접기 판정은 fitBar(측정형)가 루트 속성으로 내린다. */}
@@ -547,7 +557,7 @@ function Shell({ children, params }) {
         </header>
 
         <div className="content-row">
-        <main className="content" style={{ width: '100%' }}>
+        <main ref={contentRef} className="content" style={{ width: '100%' }}>
           {data?.missing ? (
             <div className="empty" style={{ marginTop: 40 }}>
               {t('shell.notFound')} <Link href="/" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>{t('shell.backHome')}</Link>

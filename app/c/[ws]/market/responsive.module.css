@@ -1,0 +1,10 @@
+.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; container: market / inline-size; overflow-wrap: anywhere; }
+.page :global(.card-head) { flex-wrap: wrap; }
+.page :global(.card) { min-width: 0; }
+.recommendationName { flex: 0 1 auto; min-width: 0; max-width: 220px; }
+.recommendationDescription { flex: 1; }
+@container market (max-width: 42rem) {
+  .recommendation { flex-wrap: wrap; }
+  .recommendationName { flex: 1 1 calc(100% - 50px); max-width: none; }
+  .recommendationDescription { flex-basis: 100%; }
+}
