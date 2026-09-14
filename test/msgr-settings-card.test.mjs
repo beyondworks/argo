@@ -234,10 +234,13 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
   assert.match(ch, /const ro = new ResizeObserver\(toBottom\);/, '높이 변화 추적');
   assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
   assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
-  assert.match(app, /<div className="msgr-railbody">\n[\s\S]{0,700}?<RailSection id="channels" label=\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역(2026-09-08부터 섹션은 details — RailSection; 2026-09-12부터 즐겨찾기 절이 앞에 올 수 있다)');
+  assert.match(app, /<div className="msgr-railbody"><div className="msgr-railinner">[\s\S]{0,900}?<RailSection id="channels" label=\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역 안의 내용 래퍼(2026-09-14 railinner: 폰에서 min-height 100%+1px로 짧은 목록도 iOS 바운스) → 채널 절');
   const css = read('apps/messenger/src/styles.css');
   assert.match(css, /^\.msgr-side \{[^\n]*overflow: hidden; \}/m, '레일 자체 스크롤 금지(풋터 고정)');
   assert.match(css, /^\.msgr-railbody \{ flex: 1; min-height: 0; overflow-y: auto;/m, '레일 본문만 스크롤');
+  assert.match(css, /^\.msgr-railinner \{ display: flex; flex-direction: column; gap: 4px; \}/m, '레일 내용 래퍼가 세로 flex(스크롤러는 railbody)');
+  assert.match(css, /^  \.msgr-phone\.phone-home \.msgr-railinner \{ gap: 0; min-height: calc\(100% \+ 1px\); \}/m, '폰: 래퍼가 늘 1px 넘쳐 가장자리 바운스(유건 제보 2026-09-14)');
+  assert.doesNotMatch(css, /-webkit-overflow-scrolling: touch;/, '구형 iOS 스크롤 속성 금지 — 동적 목록 스크롤 정지의 원인(2026-09-14)');
   assert.match(css, /^\.msgr-sheetwrap \.msgr-crewsheet \{ z-index: 66; \}/m, '시트가 투명 스크림(z 65) 아래면 시트 위 휠이 스레드를 굴린다');
 });
 
