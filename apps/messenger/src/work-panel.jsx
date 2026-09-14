@@ -73,7 +73,7 @@ function useRows(table, channelId, enabled, capabilityIds = '') {
 
 function CrewSelect({ crews, value, onChange, automatic, t, disabled }) {
   return <label className="work-field"><span>{t(automatic ? 'work.lead' : 'automation.crew')}</span>
-    <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} required={!automatic}>
+    <select className="msgr-select" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} required={!automatic}>
       <option value="">{t(automatic ? 'work.lead.auto' : 'automation.crew.pick')}</option>
       {crews.map((crew) => <option key={crew.id} value={crew.id}>{crew.display_name}{Date.now() - Date.parse(crew.last_seen_at ?? 0) > 90_000 ? ` · ${t('work.crew.offline')}` : ''}</option>)}
     </select>

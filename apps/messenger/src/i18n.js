@@ -703,6 +703,7 @@ export const DICT = {
   'docs.folder.rules': ['규칙집', 'Rules'],
   'docs.folder.glossary': ['용어집', 'Glossary'],
   'docs.folder.projects': ['프로젝트', 'Projects'],
+  'docs.folder.journal': ['일지', 'Journal'],
   'docs.new': ['새 문서', 'New'],
   'docs.new.title': ['새 문서', 'New document'],
   'docs.new.placeholder': ['문서 제목', 'Document title'],

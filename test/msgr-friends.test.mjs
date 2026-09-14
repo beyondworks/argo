@@ -13,7 +13,7 @@ test('화면: 프로필 카드는 본인 upsert만 · 친구 찾기·요청·수
   assert.match(app, /\/\^\[a-z0-9\]\[a-z0-9_\.\]\{2,23\}\$\/\.test\(draft\.handle\)/, '아이디 형식은 서버 check와 같다');
   assert.match(app, /supabase\.rpc\('msgr_find_user', \{ q: v \}\)/, '찾기 RPC'); assert.match(app, /supabase\.rpc\('msgr_my_friends'\)/, '목록 RPC');
   for (const fn of ['msgr_friend_request', 'msgr_friend_decide', 'msgr_friend_remove']) assert.match(app, new RegExp(`call\\('${fn}'`), `${fn} 호출(call → supabase.rpc)`);
-  assert.match(app, /const call = async \(fn, args, ok\) => \{ setBusy\(true\); try \{ await q\(supabase\.rpc\(fn, args\)\);/, 'call 래퍼');
+  assert.match(app, /const call = async \(fn, args, ok\) => \{ setBusy\(true\); try \{ const result = await q\(supabase\.rpc\(fn, args\)\); onNote\(typeof ok === 'function' \? ok\(result\) : ok\);/, 'call 래퍼 — RPC 반환값(friend|sent)으로 문구를 고른다');
   assert.doesNotMatch(app, /from\('msgr_friends'\)/, '친구 표 직접 읽기·쓰기 없음(RPC만)');
   assert.match(app, /inOrg \? <button type="button" className="btn sm" onClick=\{\(\) => onDm\?\.\(f\.user_id\)\}/, '같은 조직이면 DM(설정 친구 탭)');
   assert.match(app, /kind: 'friend', key: `friend:\$\{f\.user_id\}`/, '알림함 친구 요청');

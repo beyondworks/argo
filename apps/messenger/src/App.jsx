@@ -697,6 +697,7 @@ function Shell({ session }) {
   };
   // 1:1 대화 — 사람(user) 또는 크루(crew)와. 이미 있으면 열고, 없으면 dm 채널 + 멤버(나·상대·크루면 소유자까지) 생성
   const openDm = async (kind, id) => {
+    if (kind === 'user') supabase.rpc('msgr_friend_request', { target: id }).then(({ error }) => { if (!error) loadFriends(); }).catch(() => {}); // 사람 1:1을 열면 친구 목록과 동기화(같은 조직이면 서버가 바로 accepted) — DM 열기를 막지 않는다, 실패는 무시
     try {
       const mine = await q(supabase.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', uid));
       if (activeOrg.current !== orgId) return null;
@@ -819,7 +820,7 @@ function Shell({ session }) {
               ]; return (
               <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} draggable onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => openCtx(e, items, c.id)}>
                 <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}>
-                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{pinned.has(c.id) && <I name="star" size={12} className="mi pin" />}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
+                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
                 </button>
                 <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>
 
@@ -834,7 +835,7 @@ function Shell({ session }) {
                 { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
               ]; return (
             <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} draggable onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => openCtx(e, items, c.id)}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} /><span className="name">{dmName(c)}</span>{pinned.has(c.id) && <I name="star" size={12} className="mi pin" />}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} /><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>
 
             </div>
@@ -842,7 +843,7 @@ function Shell({ session }) {
   const targetRow = (c) => {
     const items = [{ icon: 'at', label: t('ui.dm'), run: () => openDm(c.targetKind, c.targetId) }, { icon: 'star', label: t('ch.unpin'), disabled: favoriteBusy, run: () => toggleTargetPin(c.targetKind, c.targetId) }, ...orderItems(c)];
     return <div key={c.id} className="msgr-railrow" draggable onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => openCtx(e, items, c.id)}>
-      <button type="button" className="item" onClick={() => openDm(c.targetKind, c.targetId)}><Av name={c.name} size="xs" crew={c.targetKind === 'crew'} crewId={c.targetKind === 'crew' ? c.targetId : null} userId={c.targetKind === 'user' ? c.targetId : null} /><span className="name">{c.name}</span><I name="star" size={12} className="mi pin" /></button>
+      <button type="button" className="item" onClick={() => openDm(c.targetKind, c.targetId)}><Av name={c.name} size="xs" crew={c.targetKind === 'crew'} crewId={c.targetKind === 'crew' ? c.targetId : null} userId={c.targetKind === 'user' ? c.targetId : null} /><span className="name">{c.name}</span></button>
       <button type="button" className="more" aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id} onClick={(e) => openCtx(e, items, c.id)}><I name="dots" size={13} /></button>
     </div>;
   };
@@ -1428,11 +1429,12 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onNote, onError }
     catch (e) { if (request === searchRequest.current) setSearchError(e.message); }
     finally { if (request === searchRequest.current) setSearching(false); }
   };
-  const call = async (fn, args, ok) => { setBusy(true); try { await q(supabase.rpc(fn, args)); onNote(ok); await onChanged?.(); if (res) await find(); } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); } finally { setBusy(false); } };
+  // ok는 고정 문구이거나, 서버 반환값(예: 같은 조직이라 바로 'friend'가 된 경우와 'sent'로 대기한 경우)에 따라 문구를 고르는 함수.
+  const call = async (fn, args, ok) => { setBusy(true); try { const result = await q(supabase.rpc(fn, args)); onNote(typeof ok === 'function' ? ok(result) : ok); await onChanged?.(); if (res) await find(); } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); } finally { setBusy(false); } };
+  const nameOf = (f) => members.find((m) => m.user_id === f.user_id)?.display_name || f.display_name || f.handle || f.user_id.slice(0, 8); // 같은 조직이면 조직 이름 우선(프로필 미설정 시 이메일 앞부분 대신)
   const received = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const sent = friends.filter((f) => f.status === 'pending' && f.requested_by === uid);
-  const accepted = friends.filter((f) => f.status === 'accepted');
-  const nameOf = (f) => members.find((m) => m.user_id === f.user_id)?.display_name || f.display_name || f.handle || f.user_id.slice(0, 8); // 같은 조직이면 조직 이름 우선(프로필 미설정 시 이메일 앞부분 대신)
+  const accepted = friends.filter((f) => f.status === 'accepted').sort((a, b) => nameOf(a).localeCompare(nameOf(b), 'ko'));
   const relOf = (r) => { const f = friends.find((x) => x.user_id === r.user_id); return !f ? (r.relation === 'blocked' ? 'blocked' : 'none') : f.status === 'accepted' ? 'friend' : f.status === 'pending' ? (f.requested_by === uid ? 'sent' : 'received') : r.relation; }; // 친구 목록이 갱신되면 요청 거절·친구 해제도 검색 결과에 반영한다.
   return (
     <section className="msgr-setcard">
@@ -1447,7 +1449,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onNote, onError }
             <Av name={nameOf(r)} size="sm" userId={r.user_id} />
             <div className="msgr-friend-person"><strong>{nameOf(r)}</strong>{r.handle && <span className="sub">@{r.handle}</span>}{inOrg && <span className="msgr-klabel">{t('friends.state.member')}</span>}</div>
             <div className="msgr-friend-actions">
-              {relation === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, t('friends.sent'))}>{t('friends.request')}</button>}
+              {relation === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, (result) => result === 'friend' ? t('friends.accepted') : t('friends.sent'))}>{t('friends.request')}</button>}
               {relation === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
               {relation === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
               {relation === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
@@ -1665,7 +1667,7 @@ function MemNew({ org, channelId, uid, onCreated, onNote, onError, onCancel }) {
   return (
     <div className="msgr-memnew">
       <div className="row"><span className="msgr-klabel">{t('docs.folder')}</span>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('docs.folder')}>{DOC_FOLDERS.map((f) => <button key={f} type="button" role="radio" aria-checked={creating.folder === f} className={creating.folder === f ? 'active' : ''} onClick={() => setCreating((c) => ({ ...c, folder: f }))}>{t(`docs.folder.${f}`)}</button>)}</div></div>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('docs.folder')}>{DOC_FOLDERS.filter((f) => f !== 'journal').map((f) => <button key={f} type="button" role="radio" aria-checked={creating.folder === f} className={creating.folder === f ? 'active' : ''} onClick={() => setCreating((c) => ({ ...c, folder: f }))}>{t(`docs.folder.${f}`)}</button>)}</div></div>
       <input className="msgr-input" placeholder={t('docs.new.placeholder')} value={creating.title} onChange={(e) => setCreating((c) => ({ ...c, title: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} autoFocus />
       <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !creating.title.trim()} onClick={create}><I name="check" size={13} />{t('docs.create')}</button><button type="button" className="btn sm" onClick={onCancel}>{t('ui.cancel')}</button></div>
     </div>
@@ -1871,7 +1873,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
                         {doc ? <MemDoc doc={doc} isAdmin={isAdmin} nameOfUser={nameOfUser} chName={chName} onSaved={load} onNote={onNote} onError={onError} /> : (
                           <div className="msgr-memlist">
                             {!scopeDocs.length && creating !== sel && <p className="empty">{sel.startsWith('people/') || sel.startsWith('crews/') ? t('mem.none.person') : t('mem.none')}</p>}
-                            {DOC_FOLDERS.map((f) => { const fs = scopeDocs.filter((d) => d.path.startsWith(`${f}/`)); return fs.length ? (
+                            {DOC_FOLDERS.map((f) => { const found = scopeDocs.filter((d) => d.path.startsWith(`${f}/`)); const fs = f === 'journal' ? [...found].sort((a, b) => b.path.localeCompare(a.path)) : found; /* 일지는 파일명이 날짜(YYYY-MM-DD)라 경로 내림차순 = 최신이 위 */ return fs.length ? (
                               <div key={f} className="folder"><div className="msgr-klabel">{t(`docs.folder.${f}`)}</div>
                                 {fs.map((d) => <button key={d.id} type="button" className="memitem" onClick={(e) => openEntity(docRelOf(d), { split: !!(e.metaKey || e.altKey) })}><I name="doc" size={13} /><span className="name">{d.title}</span><span className="meta">{d.channel_id ? `#${chName(d.channel_id)} · ` : ''}v{d.version} · {nameOfUser(d.updated_by)}</span></button>)}
                               </div>) : null; })}
@@ -1904,7 +1906,8 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
 }
 
 /* ─── 조직 문서(G-1): 전사(rules/·glossary/·projects/) + 채널 범위. 정본은 서버, 편집권은 RLS(msgr_can_edit_doc) — 화면은 힌트만 ─── */
-const DOC_FOLDERS = ['rules', 'glossary', 'projects'];
+/* journal/은 크루 답글마다 서버 트리거가 채널별 일지(journal/YYYY-MM-DD.md)를 자동 갱신하는 폴더 — 사람이 새로 만드는 자리(MemNew)에서는 뺀다. */
+const DOC_FOLDERS = ['rules', 'glossary', 'projects', 'journal'];
 export const docSlug = (title) => { const s = String(title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); return s || `doc-${Date.now().toString(36)}`; }; // 한글 제목은 시간 기반 슬러그(경로 규칙은 영문·숫자만)
 /* ─── F2-3 본인 표시명 편집(RLS msgr_members_update_self — 역할·제거 표시는 트리거가 막는다) ─── */
 function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
