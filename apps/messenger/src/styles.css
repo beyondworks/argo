@@ -292,6 +292,9 @@
 /* 로그인 — 머리띠 카드 */
 .btn.btn-apple { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-weight: 600; background: #000; color: #fff; border-color: #000; } /* Apple HIG: 검정 배경·흰 글자·로고 왼쪽, 다른 로그인 버튼과 같은 크기 */
 .btn.btn-apple:hover { background: #111; }
+.msgr-legal { margin: 8px 0 0; font-size: 11px; color: var(--fg-3); text-align: center; } /* 개인정보처리방침 · 이용약관 — 로그인 화면·설정 */
+.msgr-legal.in-card { text-align: left; margin-top: 10px; }
+.msgr-legal .linkbtn { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; min-height: 0; }
 :root[data-theme='linen-dark'] .btn.btn-apple, :root[data-theme='dark'] .btn.btn-apple { background: #fff; color: #000; border-color: #fff; }
 .msgr-auth { min-height: calc(100vh / var(--z, 1)); display: grid; place-items: center; padding: 24px; }
 .msgr-auth .msgr-card { width: min(420px, 100%); background: var(--card); border: 1px solid var(--border); border-radius: 22px; overflow: hidden; display: grid; }

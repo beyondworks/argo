@@ -134,6 +134,8 @@ export const DICT = {
 
   'app.title': ['Argo 메신저', 'Argo Messenger'],
   'auth.apple': ['Apple로 계속하기', 'Continue with Apple'],
+  'legal.privacy': ['개인정보처리방침', 'Privacy policy'],
+  'legal.terms': ['이용약관', 'Terms of service'],
   'auth.google': ['Google로 계속하기', 'Continue with Google'],
   'auth.github': ['GitHub로 계속하기', 'Continue with GitHub'],
   'auth.waiting': ['브라우저에서 로그인을 마치면 자동으로 이어집니다…', 'Finish signing in on your browser — this will continue automatically…'],
