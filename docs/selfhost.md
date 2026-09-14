@@ -79,9 +79,10 @@ curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/in
    20260909005000_msgr_avatars.sql
    20260909120000_msgr_execution_claims.sql
    20260909230000_msgr_bot_execution.sql
+   20260914200000_msgr_delete_me.sql
    ```
 
-   마지막 두 항목은 여러 기기가 같은 크루·봇을 실행할 때 중복 실행과 중복 응답을 막는 DB 계약이다. 모든 Argo 크루 호스트와 외부 봇 실행기도 같은 릴리스의 계약으로 갱신한 뒤 검수한다. 과거 SQL만 적용한 서버로 새 클라이언트를 연결하지 않는다.
+   `20260909120000_msgr_execution_claims`·`20260909230000_msgr_bot_execution` 두 항목은 여러 기기가 같은 크루·봇을 실행할 때 중복 실행과 중복 응답을 막는 DB 계약이다. 모든 Argo 크루 호스트와 외부 봇 실행기도 같은 릴리스의 계약으로 갱신한 뒤 검수한다. 과거 SQL만 적용한 서버로 새 클라이언트를 연결하지 않는다.
    Messenger 0.1.18의 사람·에이전트 즐겨찾기와 1:1 나가기는 `20260912135036_msgr_target_favorites_dm_leave.sql`이 필요합니다. 앱을 업데이트하기 전에 적용하세요. 기존 대화·즐겨찾기 행을 삭제하거나 변환하지 않는 추가 마이그레이션입니다.
 
 2. **첨부 버킷** — 기본 메신저 SQL은 첨부 버킷을 만들지 않는다. 없는 경우에만 생성한다:
