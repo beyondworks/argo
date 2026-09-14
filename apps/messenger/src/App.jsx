@@ -46,7 +46,7 @@ const LegalLinks = ({ t, className = '' }) => (
     <button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.terms)}>{t('legal.terms')}</button>
   </p>
 );
-const SignOutContext = createContext({ signOut: () => {}, signingOut: false });
+const SignOutContext = createContext({ signOut: () => {}, signingOut: false, accountDeleted: () => {} });
 
 // Installation + signed-in owner scope prevents another PC's identically named agent being rotated.
 export const externalAgentId = (installation, owner, kind, id) => {
@@ -170,7 +170,8 @@ export default function App() {
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
-  return <SignOutContext.Provider value={{ signOut, signingOut }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
+  const accountDeleted = async () => { try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); };
+  return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
 /* ─── 서버 선택(부록 L): 기본 Argo 클라우드 / 회사 서버(셀프호스트 Supabase) — 프로필은 이 기기에만, 저장 뒤 새로고침 ─── */
@@ -277,7 +278,7 @@ function Auth({ logoutNotice = '' }) {
       <div className="body">
         <h1>{t('auth.title')}</h1>
         <p>{t('auth.desc')}</p>
-        {logoutNotice && <p role="alert" style={{ color: 'var(--danger)' }}>{t(logoutNotice)}</p>}
+        {logoutNotice && <p role={logoutNotice === 'auth.deleted' ? 'status' : 'alert'} style={{ color: logoutNotice === 'auth.deleted' ? 'var(--fg-2)' : 'var(--danger)' }}>{t(logoutNotice)}</p>}
         {authWaiting ? (
           <p className="msgr-wait"><span className="msgr-klabel">{t('auth.waiting')}</span><button type="button" className="btn sm ghost" disabled={mobileAuth.exchanging} onClick={() => isMobileNative ? cancelMobileSignIn() : location.reload()}>{t('auth.cancel')}</button></p>
         ) : (<>
@@ -610,7 +611,7 @@ function Shell({ session }) {
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', `a:${payload.id}`);
   };
-  const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || id?.slice(0, 8) || '?';
+  const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || (id ? id.slice(0, 8) : t('user.deleted')); // 작성자 id null = 계정 삭제(FK set null) — 글은 남고 이름만 사라진다
   const loadAvatars = useCallback(async () => { const ids = [...new Set([uid, ...members.map((m) => m.user_id)].filter(Boolean))]; if (!ids.length) return; const rows = await q(supabase.rpc('msgr_avatars', { ids })).catch(() => []); setAvatars(Object.fromEntries(rows.map((r) => [r.user_id, r.avatar_url]))); }, [uid, members]);
   useEffect(() => { loadAvatars(); }, [loadAvatars, tick]);
   const avatarCtx = useMemo(() => ({ users: avatars, crews: Object.fromEntries(crews.filter((c) => c.avatar_url).map((c) => [c.id, c.avatar_url])) }), [avatars, crews]);
@@ -1391,6 +1392,36 @@ const INBOX_SEEN_KEY = 'argo-msgr-inbox-seen';
 function readInboxSeen() { try { return JSON.parse(localStorage.getItem(INBOX_SEEN_KEY) || '{}') || {}; } catch { return {}; } }
 function writeInboxSeen(v) { try { localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify(v)); } catch {} }
 /* ─── 프로필(계정 단위): 아이디·표시 이름·찾기 허용 스위치 — msgr_profiles(본인만 쓰기). 친구 찾기의 기준. ─── */
+// 앱 안 계정 삭제(App Store 5.1.1(v)) — 깃헙식 확인(단어 입력) 뒤 서버 함수 msgr_delete_me 한 번. 소유 조직에 다른 멤버가 있으면
+// 서버가 조직명을 돌려주며 거부 → 소유권 이전 안내. 성공하면 세션은 이미 서버에서 무효라 로컬 로그아웃만 한다.
+function AccountDeleteCard({ session, onDeleted }) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false); const [blocked, setBlocked] = useState('');
+  const confirmWord = t('acct.delete.word');
+  const run = async () => {
+    setBusy(true); setBlocked('');
+    const { error } = await supabase.rpc('msgr_delete_me');
+    setBusy(false);
+    if (error) {
+      const m = /msgr_owner_transfer_required: (.*)$/m.exec(error.message || '');
+      if (m) { setBlocked(t('acct.delete.transferFirst', { orgs: m[1].trim() })); return; }
+      pushDiag('error', 'account delete failed', error.message); // 설정 › 진단 목록에 남긴다(console.error는 수집되지 않는다 — 3R M2R-4). 화면엔 내부 이름을 내보내지 않는다(2R M-3)
+      setBlocked(t('acct.delete.failed')); return;
+    }
+    setOpen(false); onDeleted?.();
+  };
+  const email = session.user.email;
+  return (
+    <section className="msgr-setcard danger-zone">
+      <h2>{t('acct.delete')}</h2>
+      <p>{t('acct.delete.desc')}</p>
+      <div className="row"><button type="button" className="btn sm" onClick={() => { setBlocked(''); setOpen(true); }}><I name="x" size={13} />{t('acct.delete.start')}</button></div>
+      <p className="note">{email ? t('acct.delete.note', { email }) : t('acct.delete.note.noEmail')}</p>
+      {open && <DangerModal title={t('acct.delete')} description={<>{t('acct.delete.desc')}{blocked && <span role="alert" className="acct-error">{blocked}</span>}</>} requireText={email || confirmWord} confirmLabel={t('acct.delete.confirm')} busy={busy} onConfirm={run} onClose={() => { if (!busy) { setOpen(false); setBlocked(''); } }} />}
+    </section>
+  );
+}
+
 function ProfileCard({ uid, onNote, onError, onAvatar }) {
   const { t } = useT();
   const [p, setP] = useState(null); const [busy, setBusy] = useState(false); const [draft, setDraft] = useState({ handle: '', display_name: '', email_search: false, handle_search: true, accept_requests: true, quiet_from: null, quiet_to: null });
@@ -1554,7 +1585,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
 }
 
 function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onOpenCrew, onAvatar, friends = [], onFriendsChanged, onDm, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
-  const { signOut, signingOut } = useContext(SignOutContext);
+  const { signOut, signingOut, accountDeleted } = useContext(SignOutContext);
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
@@ -1627,6 +1658,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <h2>{t('set.diag')}</h2><p>{t('set.diag.desc')}</p>
             <DiagRow />
           </section>
+          <AccountDeleteCard session={session} onDeleted={accountDeleted} />
         </>)}
       </div>
     </div></div>
@@ -1798,7 +1830,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
       from: m.from ? (a === 'member.role' || a === 'channel.personal_crews' ? (a === 'member.role' ? roleName(m.from) : t(`ch.personal.${m.from}`)) : nameOfUser(m.from)) : '', to: m.to ? (a === 'member.role' ? roleName(m.to) : a === 'channel.personal_crews' ? t(`ch.personal.${m.to}`) : nameOfUser(m.to)) : '',
       role: roleName(m.role), channel: m.channel || m.channel_id ? `#${chName(m.channel ?? m.channel_id)}` : '', name: m.name ?? '', domain: m.domain ?? '', path: m.path ?? '', n: m.crews_detached ?? 0, days: m.guest_days ?? '', admins: Array.isArray(m.admins) ? m.admins.map(nameOfUser).join(', ') : '' };
     p.detail = (p.role || p.channel) ? ` (${p.role}${p.channel})` : ''; // 초대 수락: 역할·채널이 둘 다 없으면 빈 괄호를 남기지 않는다
-    const key = a === 'channel.admins' && !p.admins ? 'act.channel.admins.none' : `act.${a}`;
+    const key = a === 'channel.admins' && !p.admins ? 'act.channel.admins.none' : m.cascade === 'account_delete' && (a === 'org.service_account' || a === 'org.successor') ? `act.${a}.cleared` : `act.${a}`; // 계정 삭제 캐스케이드 해제는 전용 문구(빈 {to}·탈퇴자 uuid 대신, 검수 #529 3R)
     const txt = t(key, p);
     const out = txt === key ? t('act.fallback', { who: p.who, action: a }) : txt;
     return lang === 'en' ? out : koJosa(out);
