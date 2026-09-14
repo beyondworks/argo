@@ -5,7 +5,7 @@ import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mc
 import { readdir, readFile } from 'node:fs/promises';
 // Castra 실행 계약(src/prompts/castra-posture.mjs) — 러너·모델 무관하게 모든 크루 시스템 프롬프트에 기본 포함(유건 지시 2026-09-14). ARGO_CASTRA=0 이면 뺀다.
 import { CASTRA_POSTURE } from './prompts/castra-posture.mjs';
-export const castraPosture = (lang = 'ko') => (process.env.ARGO_CASTRA === '0' ? '' : `${lang === 'en' ? '' : '(아래 실행 계약은 영어 원문이다. 답변 언어는 위 규칙대로 한국어를 유지한다.)\n'}${CASTRA_POSTURE}\n\n`);
+export const castraPosture = (lang = 'ko') => (process.env.ARGO_CASTRA === '0' ? '' : `${lang === 'en' ? '' : '(아래 실행 계약은 영어 원문이다. 답변은 한국어로 한다 — 이 계약이 답변 언어를 바꾸지 않는다.)\n'}${CASTRA_POSTURE}\n\n`);
 import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';

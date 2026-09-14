@@ -71,6 +71,7 @@ test('시스템 프롬프트 — Castra 실행 계약이 ko/en 골격 모두에 
     assert.ok(at > 0 && safety > at, `${lang}: Castra 절이 안전 한계 앞에`);
     assert.doesNotMatch(p, /castra_runtime\.py|castra_notes\.py|Stop guard|circuit breaker|worktrees|complete safety/, 'Argo 크루에 없는 Castra 도구·훅·워크트리를 지시하지 않고, 대본 답변(클라우드 안전)과 충돌하는 문장이 없다');
     for (const h of ['### Start from the user\'s result', '### Make checks capable of catching the defect', '### Stop on an evidenced outcome', '### Precedence']) assert.ok(p.includes(h), `${lang}: ${h}`);
+    if (lang === 'ko') assert.match(p, /영어 원문이다\. 답변은 한국어로/, 'ko 골격이 castraPosture(\'ko\')를 넘긴다(배선 핀)'); else assert.doesNotMatch(p, /영어 원문/);
   }
   assert.ok(castraPosture('ko').length > 3000, '계약 본문'); assert.match(castraPosture('ko'), /^\(아래 실행 계약은 영어 원문이다/, 'ko 골격엔 언어 안내 한 줄'); assert.doesNotMatch(castraPosture('en'), /영어 원문/);
   process.env.ARGO_CASTRA = '0';
@@ -90,17 +91,20 @@ test('msgrNotifyPush(배달층) — 정상 삽입 행 모양, 크루 부재 fals
   const session = async () => ({ uid: 'owner-1', db });
   const target = { orgId: ORG, channelId: CH, events: ['job'] };
   const ev = { type: 'job', wsId: ws, slug: 'beta', title: '긴 작업', ok: true, reply: '끝' };
-  assert.equal(await msgrNotifyPush(ev, target, { session }), false, '브리지 꺼짐(msgr.enabled 아님)이면 세션도 열지 않는다');
+  const at = Date.parse('2026-09-14T14:00:00Z');
+  assert.equal(await msgrNotifyPush(ev, target, { session, now: at }), false, '브리지 꺼짐(msgr.enabled 아님)이면 세션도 열지 않는다');
   await updateCompany(ws, { msgr: { ...((await loadCompany(ws)).msgr ?? {}), enabled: true } });
-  assert.equal(await msgrNotifyPush(ev, target, { session }), true);
+  assert.equal(await msgrNotifyPush(ev, target, { session, now: at }), true);
   assert.equal(rows.length, 1);
   assert.deepEqual({ channel_id: rows[0].channel_id, author_kind: rows[0].author_kind, crew_id: rows[0].crew_id, kind: rows[0].kind, mentions: rows[0].mentions, meta: rows[0].meta },
     { channel_id: CH, author_kind: 'crew', crew_id: 'crew-beta', kind: 'text', mentions: [], meta: { disposition: 'done', notification: 'job' } });
   assert.match(rows[0].body, /^\[장시간 작업 완료\] 긴 작업\n\n끝$/); assert.match(rows[0].client_msg_id, /^nt:crew-beta:[0-9a-f]{32}$/);
-  assert.equal(await msgrNotifyPush(ev, target, { session }), false, '같은 이벤트 재배달 = 같은 client_msg_id → 중복 삽입 없음');
+  assert.equal(await msgrNotifyPush(ev, target, { session, now: at + 5_000 }), false, '같은 이벤트 재배달(5초 뒤) = 같은 client_msg_id → 중복 삽입 없음');
   assert.equal(rows[1].client_msg_id, rows[0].client_msg_id);
-  assert.equal(await msgrNotifyPush({ ...ev, reply: '끝!' }, target, { session }), true, '본문이 다르면 다른 알림');
+  assert.equal(await msgrNotifyPush({ ...ev, reply: '끗' }, target, { session, now: at }), true, '같은 길이·다른 본문은 다른 알림(옛 길이 키의 유실 재발 방지)');
   assert.notEqual(rows[2].client_msg_id, rows[0].client_msg_id);
-  assert.equal(await msgrNotifyPush({ ...ev, slug: 'nobody' }, target, { session }), false, '조직에 없는 크루 → false(다른 방·다른 이름으로 가지 않음)');
-  assert.equal(rows.length, 3);
+  assert.equal(await msgrNotifyPush(ev, target, { session, now: at + 3_600_000 }), true, '같은 문장이라도 다음 시간 버킷이면 새 알림(반복 루틴 영구 유실 방지)');
+  assert.notEqual(rows[3].client_msg_id, rows[0].client_msg_id);
+  assert.equal(await msgrNotifyPush({ ...ev, slug: 'nobody' }, target, { session, now: at }), false, '조직에 없는 크루 → false(다른 방·다른 이름으로 가지 않음)');
+  assert.equal(rows.length, 4);
 });
