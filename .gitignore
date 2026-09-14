@@ -41,6 +41,10 @@ browser/
 # 서버 일괄 재봉인 진행 파일(scripts/cloud-reseal-all.mjs)
 .reseal-all-progress.json
 /bin/
+
+# 스크롤백 변이 주입기 백업·로컬 검사 설정(apps/messenger/test/scrollback.*)
+*.mutbak
+apps/messenger/test/scrollback.local.json
 # Apple 키(Sign in with Apple·APNs) — 절대 커밋 금지
 *.p8
 AuthKey_*

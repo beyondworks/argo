@@ -2518,26 +2518,52 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   const [sbw, setSbw] = useState(0); // 스레드 스크롤바 폭의 절반 — 독 좌우를 대화 열과 맞춘다(오버레이 스크롤바면 0)
   useEffect(() => { const el = feed.current; if (!el) return; const m = () => setSbw((el.offsetWidth - el.clientWidth) / 2); m(); window.addEventListener('resize', m); return () => window.removeEventListener('resize', m); }, []);
   const chId = channel.id;
+  const hydrate = useCallback(async (ids) => { // 메시지 묶음의 첨부·반응 — 첫 로드·새 메시지·이전 기록 공용
+    if (!ids.length) return;
+    const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
+    setAtts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of a) n[r.message_id].push(r); return n; });
+    const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids));
+    setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
+  }, []);
+  // 이전 기록(스크롤백) — 가장 오래된 id 앞을 한 페이지씩. 위로 스크롤(120px 안)하거나 맨 위 버튼으로.
+  // 위치 보존은 높이 스냅샷이 아니라 앵커(붙이기 직전 맨 위 메시지의 DOM 노드 — React가 key로 보존)의 위치 델타로: 본문 prepend 커밋(레이아웃 효과)과
+  // 그 뒤 늦게 오는 첨부·반응·이미지 로드(척추 ResizeObserver)에서 같은 앵커로 계속 되맞춘다(검수 #531 HIGH-1: 첨부 착지에 3,759px 튐). 델타 가산이라 사용자 스크롤과 충돌하지 않는다.
+  const [hasMore, setHasMore] = useState(true); const [older, setOlder] = useState(false); const olderRef = useRef(false); const anchor = useRef(null);
+  const live = useRef({}); live.current = { msgs, atts }; // 폴·재개가 최신 목록을 보되 effect 재구독은 피한다
+  const yOf = (el, node) => node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+  const keepAnchor = useCallback(() => { const a = anchor.current; const el = feed.current; if (!a || !el || !el.contains(a.node)) return; const y = yOf(el, a.node); if (y !== a.y) { el.scrollTop += y - a.y; a.y = y; } }, []);
+  const loadOlder = useCallback(async () => {
+    const first = msgs?.[0]?.id; const el = feed.current;
+    if (!first || olderRef.current || !hasMore) return;
+    const node = el?.querySelector('[data-mid]'); anchor.current = node ? { node, y: yOf(el, node) } : null; // 컨트롤이 '불러오는 중'으로 바뀌는 높이 변화까지 보정 범위에(검수 #531 L-6)
+    olderRef.current = true; setOlder(true); // ref 가드 — 한 태스크의 scroll 여러 건이 같은 질의를 겹쳐 내지 않게(검수 #531 L-1)
+    stick.current = false; // 이전 기록을 부르는 건 위를 보는 것 — 바닥 추종(toBottom)이 keepAnchor를 덮지 않게 끈다(검수 #531 L-4: 두 주인)
+    try {
+      const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
+        .eq('channel_id', chId).lt('id', first).order('id', { ascending: false }).limit(PAGE));
+      const list = rows.reverse();
+      setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return [...list.filter((m) => !seen.has(m.id)), ...base]; });
+      setHasMore(rows.length >= PAGE);
+      await hydrate(list.map((m) => m.id));
+    } catch (e) { onError(e.message); } finally { olderRef.current = false; setOlder(false); }
+  }, [msgs, hasMore, chId, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(keepAnchor, [msgs, atts, older, keepAnchor]); // 커밋 직후 동기 보정(깜빡임 없음) — 본문·첨부·컨트롤 상태. 채널 전환은 key 리마운트라 별도 초기화 없음
+  useEffect(() => { const el = feed.current; if (!el) return; const f = () => { if (el.scrollTop < 120) loadOlder(); }; el.addEventListener('scroll', f, { passive: true }); return () => el.removeEventListener('scroll', f); }, [loadOlder]);
   const load = useCallback(async (afterId = 0) => {
     const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
       .eq('channel_id', chId).gt('id', afterId).order('id', { ascending: afterId ? true : false }).limit(PAGE));
     const list = afterId ? rows : rows.reverse();
     setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
-    const ids = list.map((m) => m.id);
-    if (ids.length) {
-      const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
-      setAtts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of a) n[r.message_id].push(r); return n; });
-      const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids));
-      setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
-    }
+    if (!afterId) setHasMore(rows.length >= PAGE); // 첫 페이지가 꽉 찼으면 위로 더 있을 수 있다(출시 검사 C-1: 100건 상한·스크롤백 부재)
+    await hydrate(list.map((m) => m.id));
     if (!afterId) { const rd = await q(supabase.from('msgr_reads').select('last_read_id').eq('channel_id', chId).eq('user_id', uid).maybeSingle()).catch(() => null); setDivider(rd?.last_read_id ?? 0); } // 새 메시지 구분선 기준 — 열 때 한 번 고정
     const apRows = await q(supabase.from('msgr_crew_approvals').select('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload').eq('channel_id', chId));
     setAps(Object.fromEntries(apRows.map((r) => [r.id, r])));
-  }, [chId]);
+  }, [chId, hydrate]);
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isMobilePlatform) return;
-    return observeMobileResume(() => load().catch((e) => onError(e.message)));
+    return observeMobileResume(() => load(live.current.msgs?.at(-1)?.id ?? 0).catch((e) => onError(e.message))); // 증분 — 첫 페이지로 통째 교체하면 스크롤백 기록이 사라진다(검수 #531 HIGH-2)
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reacts, setReacts] = useState({}); const [divider, setDivider] = useState(0); // 반응(메시지별)·새 메시지 구분선(열 때의 읽음 커서)
   const reloadReacts = useCallback(async (id) => { const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').eq('message_id', id)); setReacts((cur) => ({ ...cur, [id]: rx })); }, []);
@@ -2566,15 +2592,15 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
     const down = () => { dragging = true; }; const up = () => { dragging = false; };
     el.addEventListener('pointerdown', down); window.addEventListener('pointerup', up);
     const toBottom = () => { if (stick.current) el.scrollTop = el.scrollHeight; };
-    const ro = new ResizeObserver(toBottom); // 렌더 뒤 높이 변화(Markdown·첨부·타이핑 표시)에도 바닥을 따라간다
+    const ro = new ResizeObserver(() => { keepAnchor(); toBottom(); }); // 렌더 뒤 높이 변화(Markdown·첨부·타이핑 표시)에도 바닥을 따라간다. 앵커 되맞춤이 먼저(바닥 고정이면 toBottom이 이긴다)
     const spine = el.firstElementChild; if (spine) ro.observe(spine);
     toBottom();
     return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('wheel', mark); el.removeEventListener('touchmove', mark); el.removeEventListener('keydown', mark); el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); ro.disconnect(); };
-  }, [chId]);
+  }, [chId, keepAnchor]);
   useEffect(() => { const el = feed.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [msgs?.length]);
   useEffect(() => { if (!lastId) return; const mark = () => { if (document.visibilityState !== 'hidden' && document.hasFocus()) onRead?.(chId, lastId); }; mark(); document.addEventListener('visibilitychange', mark); window.addEventListener('focus', mark); return () => { document.removeEventListener('visibilitychange', mark); window.removeEventListener('focus', mark); }; }, [chId, lastId]); // eslint-disable-line react-hooks/exhaustive-deps -- 창이 보여도 초점이 다른 앱에 있으면 읽음으로 치지 않는다(자리 비운 사이 온 글이 조용히 읽음이 되던 결함, 2026-09-12 점검)
   // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
-  useEffect(() => { const iv = setInterval(() => load(lastId).catch(() => {}), 10_000); return () => clearInterval(iv); }, [load, lastId]);
+  useEffect(() => { const iv = setInterval(() => { load(lastId).catch(() => {}); const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [load, lastId, hydrate]); // hydrate가 실패한 묶음(첨부·반응 미채움)은 다음 폴에서 다시(검수 #531 M-1)
   const decide = async (ap, status) => {
     const res = await supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id');
     if (res.error) return onError(res.error.message);
@@ -2587,7 +2613,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   const workingIds = new Set(working.map(([c]) => c.id));
   const apOf = (m) => m.kind === 'approval_card' ? aps[(m.mentions ?? []).find((x) => x.kind === 'approval')?.id] : null;
   const isMention = (m) => (m.mentions ?? []).some((x) => x.kind === 'user' && x.id === uid);
-  const all = msgs ?? [];
+  const all = msgs ?? []; const byId = new Map(all.map((m) => [m.id, m])); // 답글 부모 조회 — 기록이 쌓여도 선형(검수 #531 M-2)
   // 배지 수와 탭 모수는 같은 술어(검수 M2): 결재 탭 = 대기 중인 결재만
   const isPending = (m) => apOf(m)?.status === 'pending';
   const counts = { mention: all.filter(isMention).length, approval: all.filter(isPending).length, crew: all.filter((m) => m.author_kind === 'crew').length };
@@ -2597,7 +2623,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
     if (divider > 0 && !newLine && m.id > divider && !(m.author_kind === 'user' && m.author_user_id === uid)) { newLine = true; rows.push(<div key="newline" className="msgr-newline"><span>{t('msg.new')}</span></div>); }
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} />);
+    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -2617,6 +2643,9 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
       <div className="msgr-spine">
         {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
         {msgs !== null && !all.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}
+        {tab === 'all' && all.length > 0 && (hasMore
+          ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder} disabled={older} aria-busy={older || undefined}>{t(older ? 'thread.loading' : 'thread.older')}</button></div>
+          : <div className="msgr-older start"><span className="msgr-klabel">{t('thread.start')}</span></div>)}
         {rows}
         {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} p={p} t={t} />)}
         {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
@@ -2754,7 +2783,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
     </form>
   );
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
-    <div className="msgr-mine" data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
+    <div className="msgr-mine" data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {editing ? editor : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : <Body text={body} />}</div>}
       {attRow}
       {chips}
@@ -2764,7 +2793,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   const isCrew = m.author_kind === 'crew';
   return ( // 동료·크루 글 — 척추 위 아바타(사람 원 / 크루 타일), 크루 답은 척추에 붙는 시트
-    <div className="msgr-row" data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
+    <div className="msgr-row" data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {isCrew && crew ? <button type="button" className="msgr-avbtn" onClick={() => onCrew?.(crew.id)} title={t('crew.sheet')}><Av name={name} crew crewId={crew.id} /></button> : <Av name={name} crew={isCrew} userId={m.author_user_id} />}
       <div style={{ minWidth: 0 }}>
         <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>

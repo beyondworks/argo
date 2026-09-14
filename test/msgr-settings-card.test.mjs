@@ -231,7 +231,7 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
   assert.match(ch, /const stick = useRef\(true\);/, '바닥 고정 ref');
   assert.match(ch, /useEffect\(\(\) => \{ stick\.current = true; \}, \[chId\]\);/, '채널 전환 시 바닥부터');
   assert.match(ch, /const gap = el\.scrollHeight - el\.scrollTop - el\.clientHeight; if \(gap < 40\) stick\.current = true; else if \(dragging \|\| Date\.now\(\) - userAt < 600\) stick\.current = false;/, '바닥 근접 40px는 고정, 해제는 사용자 의도(휠·터치·키·드래그)가 있을 때만 — 프로그램 스크롤 경합으로 고정이 풀리던 결함(2026-09-09)');
-  assert.match(ch, /const ro = new ResizeObserver\(toBottom\);/, '높이 변화 추적');
+  assert.match(ch, /const ro = new ResizeObserver\(\(\) => \{ keepAnchor\(\); toBottom\(\); \}\);/, '높이 변화 추적 — 스크롤백 앵커 되맞춤이 먼저, 바닥 고정이면 toBottom이 이긴다(#531)');
   assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
   assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
   assert.match(app, /<div className="msgr-railbody"><div className="msgr-railinner">[\s\S]{0,900}?<RailSection id="channels" label=\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역 안의 내용 래퍼(2026-09-14 railinner: 폰에서 min-height 100%+1px로 짧은 목록도 iOS 바운스) → 채널 절');
