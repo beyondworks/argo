@@ -81,16 +81,7 @@ test('전송 계층 — 화면이 보낸 알림 선택이 서버 허용 필드�
   assert.match(src, /for \(const k of CONNECTION_PATCH_FIELDS\)/, '라우트가 정본 목록을 안 쓴다 — 인라인 목록은 조용히 낡는다');
 });
 
-test('알림 종류 라벨이 ko·en 둘 다 있다 — 종류가 늘어도 키 문자열이 출고되지 않게', () => {
-  // 이 라벨들은 t(`settings.conn.ev.${ev}`)로 조립돼 i18n 트립와이어(정적 키 스캔) 밖에 있다.
-  // 종류를 목록에만 추가하면 화면에 'settings.conn.ev.inbox'가 그대로 뜬다(2026-07-28 실사고 계열).
-  const dict = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
-  for (const kind of Object.keys(CHANNEL_EVENTS)) {
-    for (const ev of CHANNEL_EVENTS[kind]) {
-      assert.match(dict, new RegExp(`'settings\\.conn\\.ev\\.${ev}': \\['[^']+', '[^']+'\\]`), `${ev} 라벨이 ko·en 둘 다 없다`);
-    }
-  }
-});
+// 종류별 라벨 핀(settings.conn.ev.*)은 2026-09-15 종류별 칩 UI 제거(유건 결정, PR #537)와 함께 삭제 — 소비자가 없다.
 
 test('배선 — 슬랙은 블록 머리 판정, 텔레그램(결재 포함 전 종류)은 telegramBriefingDest 단일 판정을 지난다', () => {
   // 판정 함수가 옳아도 게이트웨이가 안 부르면 아무 소용이 없다(변이 실측: 호출을 지워도 전 스위트 초록).
