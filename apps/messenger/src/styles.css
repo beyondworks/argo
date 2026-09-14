@@ -107,6 +107,8 @@
 .msgr-seg button .n { font-family: var(--mono); font-size: 10.5px; opacity: .8; }
 .msgr-notice { display: flex; align-items: center; gap: 8px; padding: 8px 24px 0; font-size: 12.5px; }
 .msgr-thread { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; padding: 20px max(24px, calc((100% - 720px) / 2)) 8px; overscroll-behavior: contain; }
+.msgr-older { display: flex; justify-content: center; padding: 2px 0 14px; } /* 스크롤백 컨트롤(이전 메시지 보기 / 불러오는 중 / 대화의 시작) — 스파인 맨 위 */
+.msgr-older.start .msgr-klabel { opacity: .7; }
 .msgr-spine { position: relative; display: flex; flex-direction: column; gap: 20px; }
 .msgr-spine::before { content: ''; position: absolute; left: 13px; top: 8px; bottom: 8px; width: 2px; background: var(--border); border-radius: 2px; }
 .msgr-tnode { display: flex; align-items: center; gap: 12px; position: relative; }

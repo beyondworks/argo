@@ -2478,22 +2478,43 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   const [sbw, setSbw] = useState(0); // 스레드 스크롤바 폭의 절반 — 독 좌우를 대화 열과 맞춘다(오버레이 스크롤바면 0)
   useEffect(() => { const el = feed.current; if (!el) return; const m = () => setSbw((el.offsetWidth - el.clientWidth) / 2); m(); window.addEventListener('resize', m); return () => window.removeEventListener('resize', m); }, []);
   const chId = channel.id;
+  const hydrate = useCallback(async (ids) => { // 메시지 묶음의 첨부·반응 — 첫 로드·새 메시지·이전 기록 공용
+    if (!ids.length) return;
+    const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
+    setAtts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of a) n[r.message_id].push(r); return n; });
+    const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids));
+    setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
+  }, []);
+  // 이전 기록(스크롤백) — 가장 오래된 id 앞을 한 페이지씩. 위로 스크롤(120px 안)하거나 맨 위 버튼으로. 붙인 만큼 scrollTop을 보정해 화면이 튀지 않는다.
+  const [hasMore, setHasMore] = useState(true); const [older, setOlder] = useState(false); const prepend = useRef(null);
+  const loadOlder = useCallback(async () => {
+    const first = msgs?.[0]?.id; const el = feed.current;
+    if (!first || older || !hasMore) return;
+    setOlder(true);
+    try {
+      const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
+        .eq('channel_id', chId).lt('id', first).order('id', { ascending: false }).limit(PAGE));
+      const list = rows.reverse();
+      prepend.current = el ? { h: el.scrollHeight, top: el.scrollTop } : null;
+      setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return [...list.filter((m) => !seen.has(m.id)), ...base]; });
+      setHasMore(rows.length >= PAGE);
+      await hydrate(list.map((m) => m.id));
+    } catch (e) { onError(e.message); } finally { setOlder(false); }
+  }, [msgs, older, hasMore, chId, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => { const p = prepend.current; const el = feed.current; if (p && el) { el.scrollTop = el.scrollHeight - p.h + p.top; prepend.current = null; } }, [msgs]);
+  useEffect(() => { setHasMore(true); prepend.current = null; }, [chId]);
+  useEffect(() => { const el = feed.current; if (!el) return; const f = () => { if (el.scrollTop < 120) loadOlder(); }; el.addEventListener('scroll', f, { passive: true }); return () => el.removeEventListener('scroll', f); }, [loadOlder]);
   const load = useCallback(async (afterId = 0) => {
     const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
       .eq('channel_id', chId).gt('id', afterId).order('id', { ascending: afterId ? true : false }).limit(PAGE));
     const list = afterId ? rows : rows.reverse();
     setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
-    const ids = list.map((m) => m.id);
-    if (ids.length) {
-      const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
-      setAtts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of a) n[r.message_id].push(r); return n; });
-      const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids));
-      setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
-    }
+    if (!afterId) setHasMore(rows.length >= PAGE); // 첫 페이지가 꽉 찼으면 위로 더 있을 수 있다(출시 검사 C-1: 100건 상한·스크롤백 부재)
+    await hydrate(list.map((m) => m.id));
     if (!afterId) { const rd = await q(supabase.from('msgr_reads').select('last_read_id').eq('channel_id', chId).eq('user_id', uid).maybeSingle()).catch(() => null); setDivider(rd?.last_read_id ?? 0); } // 새 메시지 구분선 기준 — 열 때 한 번 고정
     const apRows = await q(supabase.from('msgr_crew_approvals').select('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload').eq('channel_id', chId));
     setAps(Object.fromEntries(apRows.map((r) => [r.id, r])));
-  }, [chId]);
+  }, [chId, hydrate]);
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isMobilePlatform) return;
@@ -2577,6 +2598,10 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
       <div className="msgr-spine">
         {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
         {msgs !== null && !all.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}
+        {tab === 'all' && all.length > 0 && (older
+          ? <div className="msgr-older" role="status"><span className="msgr-klabel">{t('thread.loading')}</span></div>
+          : hasMore ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder}>{t('thread.older')}</button></div>
+          : <div className="msgr-older start"><span className="msgr-klabel">{t('thread.start')}</span></div>)}
         {rows}
         {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} p={p} t={t} />)}
         {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
