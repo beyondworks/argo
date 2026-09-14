@@ -61,7 +61,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
+    '20260903120000_msgr.sql', '20260914203000_msgr_public_domains_relay.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -835,6 +835,7 @@ test('검수 반영 — 크루 요청 컬럼 잠금·완료 크루 검증(CRITIC
   assert.notEqual(last(asUser(U.member, `select count(*) from public.msgr_org_docs where org_id = '${ORG}' and channel_id is null`)), '0', '멤버는 전사 문서를 본다');
   assert.equal(last(asUser(G2, `select count(*) from public.msgr_org_docs where org_id = '${ORG}' and channel_id is null`)), '0', '채널 한정 게스트는 전사 문서를 못 본다');
   assert.equal(last(asUser(U.owner, `select public.msgr_public_email_domain('QQ.com')`)), 't', '확장된 공개 도메인 목록');
+  for (const d of ['privaterelay.appleid.com', 'users.noreply.github.com']) assert.equal(last(asUser(U.owner, `select public.msgr_public_email_domain('${d}')`)), 't', `${d} = 로그인 제공자의 비공개 릴레이(소유자 증명 불가, #530)`);
   sql(`update public.msgr_org_policies set crew_create = 'channel_admin' where org_id = '${ORG}'`);
 });
 

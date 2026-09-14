@@ -41,3 +41,6 @@ browser/
 # 서버 일괄 재봉인 진행 파일(scripts/cloud-reseal-all.mjs)
 .reseal-all-progress.json
 /bin/
+# Apple 키(Sign in with Apple·APNs) — 절대 커밋 금지
+*.p8
+AuthKey_*
