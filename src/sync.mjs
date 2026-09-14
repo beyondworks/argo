@@ -79,6 +79,20 @@ export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && proc
 export const isRoomCardRel = (rel) => /^agents\/[^/]+\.md$/.test(rel) && collidesWithRoom(rel.slice('agents/'.length, -'.md'.length));
 const isLocalImportRel = (rel) => rel.split('/')[0] === '.local-assets';
 
+/** 개발 산출물 디렉터리(node_modules·.git·가상환경·크롬 프로필 등) — 라이브 실측(2026-09-14): companies 버킷
+    25GB 중 이런 디렉터리가 약 7GB를 차지하고 매 사이클(8s) walk가 전부 읽고 해시했다. isRoomCardRel과 같은
+    계약으로 **diff 불가시**(push·pull·삭제 전파·브레이크 집계 전부 스킵)로만 다룬다 — EXCLUDE(walk 전용)로
+    하면 원격에만 있는 항목을 한 번 받아온 뒤(base 없음=신규) 다음 사이클에 '로컬 삭제'로 읽어 원격을 지우는
+    파괴적 경로가 생긴다. walk에서는 별도로 이 디렉터리로 **내려가지 않게** 해 CPU·IO를 줄인다 — 원격 전용
+    항목의 pull·삭제 전파는 diff 쪽 isDevArtifactRel 가드가 막으므로 walk 스킵이 안전하다(가드가 이미 있는
+    상태에서의 순수 성능 최적화). build·dist는 사용자 폴더 이름과 겹칠 수 있어 후보로만 남기고 넣지 않는다. */
+const DEV_ARTIFACT_SEGS = new Set([
+  'node_modules', '.git', '.venv', 'venv', '__pycache__', '.next', '.nuxt', '.turbo',
+  '.cache', '.parcel-cache', '.pytest_cache', '.mypy_cache', '.playwright-mcp', 'DerivedData',
+]);
+export const isDevArtifactSeg = (name) => DEV_ARTIFACT_SEGS.has(name) || name.startsWith('chrome_profile');
+export const isDevArtifactRel = (rel) => rel.split('/').some(isDevArtifactSeg);
+
 export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (isLocalImportRel(rel)) return true;
   // ⚠ 순서 불변식(2026-07-23 검수 CRITICAL): **구조적 제외를 반드시 먼저** 평가한다.
@@ -421,7 +435,12 @@ async function walk(dir, base = dir, out = {}, failed = null) {
     const full = join(dir, e.name);
     const rel = full.slice(base.length + 1).split(sep).join('/');
     if (isLocalImportRel(rel)) continue; // source paths/consents/staging are private to this device
-    if (e.isDirectory()) await walk(full, base, out, failed);
+    if (e.isDirectory()) {
+      // 개발 산출물 디렉터리는 내려가지 않는다(isDevArtifactRel 주석) — diff 쪽 불가시 가드가 원격 전용
+      // 항목의 pull·삭제 전파를 이미 막아주므로, 여기서 스킵해도 안전하고 CPU·IO만 줄어든다.
+      if (isDevArtifactSeg(e.name)) continue;
+      await walk(full, base, out, failed);
+    }
     else if (!EXCLUDE(rel)) {
       try {
         const buf = await readFile(full);
@@ -743,6 +762,8 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // side 'L'=로컬 삭제 예정, 'R'=원격 삭제 예정. walk 실패 subtree·로컬 손상·아카이브 '이동'(짝 있음)은 삭제가 아니다.
   const isRealDelete = (rel, l, r, base, side) => {
     if (isEncRel(rel) && !cryptoOn()) return false;
+    if (isDevArtifactRel(rel)) return false; // 개발 산출물 — diff 불가시(isDevArtifactRel 주석), 브레이크 집계 제외
+
     // credSync off — 자격은 diff 루프가 스킵하므로 삭제가 실행되지 않는다. 집계도 같은 규칙(단일 출처):
     // 마커 upsert 실패로 항목이 남은 사이클에 브레이크가 "삭제 예정"으로 오집계해 보류되는 것 방지.
     // (심층 방어 — 테스트 미커버(분리 검수 LOW-1): 브레이크 발화엔 base가 3 이하여야 해 실회사에서
@@ -780,6 +801,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     // 여기서 real-delete로 흐르면 blob remove가 나가 미반영 기기의 로컬 자격 오삭제로 이어진다(가드 필수).
     // held 집계보다 앞에 둔다 — 어차피 안 올라가는 자격이 키 미확보 사이클에 "보류 1개"로 거짓 표시되던 것(#436 2차 검수 LOW-B).
     if (noSecrets && isSecretRel(rel)) continue;
+    if (isDevArtifactRel(rel)) continue; // 개발 산출물 — diff 불가시(isDevArtifactRel 주석): push·pull·삭제 전파 전부 스킵, held 미집계(키 미확보와 다른 성격)
     if (isEncRel(rel) && !cryptoOn()) { held++; continue; } // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단). held로 표면화(#436 HIGH-2)
     const l = local[rel], r = remote.files[rel], base = state[rel];
     if (!l && !r) continue; // state에만 남은 항목(EXCLUDE 전환·타기기 선정리) — 사이클 말미 state 갱신이 정리한다
