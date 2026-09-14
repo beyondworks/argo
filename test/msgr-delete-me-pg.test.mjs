@@ -224,3 +224,19 @@ test('3R M2R-2: 30일 지난 보관 조직 purge가 첨부 파일 행과 함께 
   assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org}'`), '0');
   assert.equal(sql(`select count(*) from storage.objects where name like '${org}/%'`), '0', '첨부 행 정리 — 가드가 있으면 이전 정의는 42501로 실패했다');
 });
+
+test('3R 가드 좁히기: 플래그 켠 세션도 비공개 채널 공개 전환·재부모화는 막히고, 문서 본문을 바꾸면 버전이 오르며 수정자가 귀속된다(작성자 이관만 통과)', { skip }, () => {
+  const own = 'f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1', adm = 'f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2'; mkUser(own, 'gowner2'); mkUser(adm, 'gadmin2');
+  const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('GuardOrg', 'guardorg', '${own}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${org}'`);
+  const code = last(asUser(own, `insert into public.msgr_invites (org_id, role, created_by) values ('${org}', 'admin', '${own}') returning code`));
+  assert.equal(last(asUser(adm, `select public.msgr_accept_invite('${code}')`)), org);
+  const priv = last(asUser(own, `select public.msgr_create_channel('${org}','private','Secret')`));
+  const flagged = (u, q) => asUserRaw(u, `select set_config('argo.msgr_account_delete', '1', false); ${q}`);
+  let r = flagged(own, `update public.msgr_channels set kind = 'public' where id = '${priv}'`); assert.notEqual(r.status, 0, 'A-1 비공개→공개'); assert.match(r.stderr, /msgr_immutable_kind/);
+  r = flagged(own, `update public.msgr_channels set org_id = '${ORG}' where id = '${priv}'`); assert.notEqual(r.status, 0, 'A-2 재부모화'); assert.match(r.stderr, /msgr_immutable_org_id/);
+  const doc = last(sql(`insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${org}', 'rules/g.md', 'G', '원문', '${own}', '${own}') returning id`));
+  assert.equal(last(flagged(adm, `update public.msgr_org_docs set body = '변조' where id = '${doc}' returning version||'|'||updated_by`).stdout.trim()), `2|${adm}`, '본문 변경은 정상 경로: 버전 +1·수정자 귀속(위조 불가)');
+  // 이관만 하는 경로(created_by/updated_by만)는 여전히 통과 — C-1과 같은 성질
+  assert.equal(last(flagged(own, `update public.msgr_org_docs set created_by = '${own}', updated_by = '${own}' where id = '${doc}' returning version`).stdout.trim()), '2', '작성자·수정자만 바꾸면 버전 불변');
+});

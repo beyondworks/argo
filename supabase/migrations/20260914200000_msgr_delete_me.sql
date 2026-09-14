@@ -35,9 +35,11 @@ declare col text; n jsonb := to_jsonb(new); o jsonb := to_jsonb(old);
 begin
   if auth.uid() is null then return new; end if;
   if pg_trigger_depth() > 1 then return new; end if; -- FK 캐스케이드(on delete set null)·다른 트리거의 내부 UPDATE는 통과(실측: 크루 삭제가 막혔다)
-  if current_setting('argo.msgr_account_delete', true) = '1' then return new; end if; -- msgr_delete_me 전용: 내가 만든 채널·문서·작업을 조직 소유자에게 이관
   foreach col in array tg_argv loop
-    if n->col is distinct from o->col then raise exception 'msgr_immutable_%', col; end if;
+    if n->col is distinct from o->col then
+      if col = 'created_by' and current_setting('argo.msgr_account_delete', true) = '1' then continue; end if; -- msgr_delete_me 전용: 작성자 이관만. 전면 통과는 플래그 켠 세션이 비공개 채널 공개 전환·재부모화까지 열었다(검수 #529 3R A-1·A-2 실증)
+      raise exception 'msgr_immutable_%', col;
+    end if;
   end loop;
   return new;
 end $$;
@@ -45,7 +47,8 @@ end $$;
 create or replace function public.msgr_doc_before_write() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
-  if tg_op = 'UPDATE' and current_setting('argo.msgr_account_delete', true) = '1' then return new; end if; -- msgr_delete_me 전용: 작성자·수정자 이관만(버전·수정 시각 불변)
+  if tg_op = 'UPDATE' and current_setting('argo.msgr_account_delete', true) = '1'
+     and new.body is not distinct from old.body and new.title is not distinct from old.title and new.channel_id is not distinct from old.channel_id then return new; end if; -- msgr_delete_me 전용: 작성자·수정자 이관만(버전·수정 시각 불변). 본문·제목·채널이 바뀌면 정상 경로(버전 +1·수정자 귀속) — 위조 방지(검수 #529 3R)
   if new.channel_id is not null then
     select org_id into new.org_id from public.msgr_channels where id = new.channel_id; -- 채널 문서의 org는 채널의 org(위조 무력화)
     if new.org_id is null then raise exception 'msgr_doc_channel_missing'; end if;
@@ -191,6 +194,7 @@ begin
   if to_regclass('storage.objects') is not null then
     perform set_config('storage.allow_delete_query', 'true', true); -- storage-api 직접 삭제 가드 통과(트랜잭션 지역). 백엔드 바이트는 남는다(알려진 한계)
     execute 'delete from storage.objects where bucket_id = ''msgr'' and (storage.foldername(name))[1] = any ($1)' using (select array_agg(x::text) from unnest(ids) x);
+    perform set_config('storage.allow_delete_query', '', true); -- msgr_delete_me와 같은 위생(3R LOW)
   end if;
   delete from public.msgr_orgs where id = any (ids);
   get diagnostics n = row_count;

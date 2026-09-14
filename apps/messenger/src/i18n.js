@@ -422,6 +422,8 @@ export const DICT = {
   'act.org.transfer.decline': ['{target}이(가) 소유권 이전을 거절함', '{target} declined ownership'],
   'act.org.successor': ['{who}이(가) 승계 관리자를 바꿈', '{who} changed the successor'],
   'act.org.service_account': ['회사 에이전트 서버 계정이 {to}(으)로 바뀜', 'Company agent server account changed to {to}'],
+  'act.org.service_account.cleared': ['탈퇴한 계정이어서 회사 에이전트 서버 계정 연결이 해제됨', 'Company agent server account was unlinked because that account was deleted'],
+  'act.org.successor.cleared': ['탈퇴한 계정이어서 승계 관리자 지정이 해제됨', 'Successor was cleared because that account was deleted'],
   'act.org.domain': ['{who}이(가) 회사 이메일 가입을 바꿈 ({domain})', '{who} changed company-email joining ({domain})'],
   'act.org.delete': ['{who}이(가) 조직을 삭제 예정으로 표시함', '{who} scheduled the organization for deletion'],
   'act.org.restore': ['{who}이(가) 조직을 복구함', '{who} restored the organization'],

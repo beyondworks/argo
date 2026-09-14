@@ -1819,7 +1819,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
       from: m.from ? (a === 'member.role' || a === 'channel.personal_crews' ? (a === 'member.role' ? roleName(m.from) : t(`ch.personal.${m.from}`)) : nameOfUser(m.from)) : '', to: m.to ? (a === 'member.role' ? roleName(m.to) : a === 'channel.personal_crews' ? t(`ch.personal.${m.to}`) : nameOfUser(m.to)) : '',
       role: roleName(m.role), channel: m.channel || m.channel_id ? `#${chName(m.channel ?? m.channel_id)}` : '', name: m.name ?? '', domain: m.domain ?? '', path: m.path ?? '', n: m.crews_detached ?? 0, days: m.guest_days ?? '', admins: Array.isArray(m.admins) ? m.admins.map(nameOfUser).join(', ') : '' };
     p.detail = (p.role || p.channel) ? ` (${p.role}${p.channel})` : ''; // 초대 수락: 역할·채널이 둘 다 없으면 빈 괄호를 남기지 않는다
-    const key = a === 'channel.admins' && !p.admins ? 'act.channel.admins.none' : `act.${a}`;
+    const key = a === 'channel.admins' && !p.admins ? 'act.channel.admins.none' : m.cascade === 'account_delete' && (a === 'org.service_account' || a === 'org.successor') ? `act.${a}.cleared` : `act.${a}`; // 계정 삭제 캐스케이드 해제는 전용 문구(빈 {to}·탈퇴자 uuid 대신, 검수 #529 3R)
     const txt = t(key, p);
     const out = txt === key ? t('act.fallback', { who: p.who, action: a }) : txt;
     return lang === 'en' ? out : koJosa(out);
