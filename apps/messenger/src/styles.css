@@ -880,6 +880,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-dock { position: relative; }
   .msgr-phone .msgr-main .msgr-dock .msgr-sub { position: absolute; left: var(--ph-pad); right: var(--ph-pad); bottom: 100%; min-height: 0; margin: 0; padding: 0 0 2px; pointer-events: none; } /* 컴포저 아래 상태줄(작성 중 등)은 슬랙처럼 입력줄 '위'에 띄운다 — 세로 자리 0 */
   .msgr-phone .msgr-main .msgr-dock .msgr-cc-chips { margin: 0 var(--ph-pad) 4px; padding-left: 4px; }
+  .msgr-phone .msgr-main .msgr-dock .msgr-slashpop, .msgr-phone .msgr-main .msgr-dock .msgr-rolepop { left: var(--ph-pad); right: var(--ph-pad); width: auto; } /* 입력창 알약과 같은 좌우 여백(검수 #527 L-1) */
 
   /* ── 홈: 서랍(.msgr-side)을 전체 화면 페이지로. 머리는 테마의 어두운 사이드바 색(슬랙의 검은 띠), 본문은 흰 카드 ── */
   /* Constrain the list to the viewport rather than relying on auto grid sizing. */
