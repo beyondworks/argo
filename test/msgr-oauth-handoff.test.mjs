@@ -81,7 +81,8 @@ test('화면·셸·i18n 핀: OTP 제거, Apple·Google·GitHub 버튼(서버 설
   assert.match(auth, /fetchProviderSettings\(SB_URL, globalThis\.fetch, SB_ANON\)/, '서버가 켠 제공자만 보인다(검수 #528 HIGH-2) — apikey 동봉(#530 L-4)');
   assert.match(auth, /const show = \(p\) => providerShown\(enabled, p\);/, '표시 판정은 순수 함수(행동 핀은 아래)');
   for (const p of ['apple', 'google', 'github']) assert.match(auth, new RegExp(`\\{show\\('${p}'\\) && <button[^>]*disabled=\\{busy \\|\\| pending\\}`), `${p} 버튼은 show()로 가리고 조회 전엔 비활성(#530 M-1)`);
-  assert.match(auth, /noProviders\(enabled\) && <p role="alert"/, '제공자 0개면 안내(#530 H-1)');
+  assert.match(auth, /noProviders\(enabled\) \? <p role="alert"/, '제공자 0개면 안내(#530 H-1) — 그때는 "이전 방법" 문구 대신(N-1)');
+  assert.match(auth, /const pending = enabled === null;/, '조회 전 판정 정의(#530 N-2)');
   assert.match(auth, /supabase\.auth\.setSession\(tokens\)/, '회수한 토큰을 이 앱의 세션으로');
   assert.match(auth, /\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(/, '비밀번호 로그인은 dev 빌드 또는 검수용 번들 플래그에서만');
   const lib = read('apps/messenger/src-tauri/src/lib.rs');
@@ -110,8 +111,8 @@ test('fetchProviderSettings — 꺼진 제공자만 false, 키 없음은 true, �
   let url; await fetchProviderSettings('https://x.supabase.co', async (u) => { url = u; return { ok: false }; }); assert.equal(url, 'https://x.supabase.co/auth/v1/settings');
 });
 
-test('providerShown·noProviders — null은 전부 표시, 명시적 false만 숨김, 전부 false면 안내', () => {
+test('providerShown·noProviders — null은 전부 표시, 명시적 false만 숨김, 전부 false면 안내', async () => {
   assert.equal(providerShown(null, 'apple'), true); assert.equal(providerShown({ apple: false }, 'apple'), false); assert.equal(providerShown({ apple: true }, 'github'), true);
   assert.equal(noProviders(null), false); assert.equal(noProviders({ apple: false, google: true, github: false }), false); assert.equal(noProviders({ apple: false, google: false, github: false }), true);
-  let hdr; fetchProviderSettings('https://x.supabase.co', async (u, o) => { hdr = o.headers; return { ok: false }; }, 'anon-key'); assert.equal(hdr.apikey, 'anon-key', 'apikey 동봉');
+  let hdr; await fetchProviderSettings('https://x.supabase.co', async (u, o) => { hdr = o.headers; return { ok: false }; }, 'anon-key'); assert.equal(hdr.apikey, 'anon-key', 'apikey 동봉');
 });
