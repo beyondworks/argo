@@ -901,7 +901,7 @@ test('나가기(레일 메뉴) — 생성은 RPC 한 번(생성+첫 멤버), 만
   assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${pub}'`), '0', '공개 채널은 멤버 행을 만들지 않는다');
 });
 
-test('푸시 엣지 공유 비밀(#532) — push_secret 행이 없으면 예전 헤더, 있으면 Bearer, 일반 역할은 함수 실행 불가', () => {
+test('푸시 엣지 공유 비밀(#532) — push_secret 행이 없으면 예전 헤더, 있으면 Bearer, 일반 역할은 함수 실행 불가', { skip }, () => {
   // 푸시 마이그레이션 3건은 고정 목록 밖 — 이 테스트에서 가짜 pg_net 위에 배포될 파일 그대로 적용한다
   sql(`create schema if not exists net; create or replace function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ select 1::bigint $$;`);
   for (const f of ['20260912150000_msgr_push.sql', '20260914210000_msgr_push_secret.sql']) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
