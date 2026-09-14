@@ -27,7 +27,7 @@ import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
 import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
-import { slashCandidates, slashInsert } from './slash-commands.mjs';
+import { slashCandidates, slashInsert, rolePickCandidates } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -2858,7 +2858,6 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   const { text, busy, files, mentions, recipients, uploading, job } = useSyncExternalStore(delivery.subscribe, delivery.snapshot);
   const { setText, setFiles, setMentions, setRecipients } = delivery;
   const isDm = channel?.kind === 'dm';
-  const [recipientOpen, setRecipientOpen] = useState(false);
   const [dmCandidates, setDmCandidates] = useState([]);
   const [recipientLoad, setRecipientLoad] = useState('loading');
   const [recipientRetry, setRecipientRetry] = useState(0);
@@ -2902,13 +2901,26 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     supabase.from('msgr_crews').select('id, commands').in('id', ids).then(({ data }) => { if (alive && data) setFreshCmds(Object.fromEntries(data.map((r) => [r.id, r.commands]))); }).catch(() => {});
     return () => { alive = false; };
   }, [slashOpen, chId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const slashCands = useMemo(() => slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }) }), [text, slashCrews, freshCmds, t]);
+  // 1:1 방 수신·참조 = 입력창 명령(유건 결정 2026-09-14: 별도 패널 대신 "/to·/cc 치면 목록"). 서버는 역할 없는 @멘션을 to로 보므로 /to는 @ 삽입,
+  // /cc만 참조 칩(recipients)에 남긴다. 후보 = 서버가 준 msgr_dm_candidates(지원 여부 포함). 이미 고른 크루는 빼고, 이 방 상대는 /to에서만 뺀다(/cc는 "참고만"이 가능).
+  const rolePick = useMemo(() => {
+    if (!isDm) return null;
+    const exclude = new Set([...mentionsFromBody(text, byName, [], allByName).map((x) => x.id), ...recipients.map((r) => r.id)]);
+    return rolePickCandidates(text, recipientLoad === 'ready' ? dmCandidates : [], { exclude, participants: new Set((scopeCrews ?? []).map((c) => c.id)) });
+  }, [isDm, text, scopeCrews, byName, allByName, recipients, dmCandidates, recipientLoad]);
+  const slashCands = useMemo(() => rolePick ? null : slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: isDm ? [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] : [] }), [rolePick, text, slashCrews, freshCmds, isDm, t]);
   const [slashSel, setSlashSel] = useState(0);
   useEffect(() => { setSlashSel(0); }, [text]);
   const pickSlash = (cand) => {
     const { text: next, mention } = slashInsert(cand, { isDm });
     setText(next); if (mention) setMentions((ms) => ms.some((x) => x.id === mention.id) ? ms : [...ms, mention]);
     requestAnimationFrame(() => { ta.current?.focus(); ta.current?.setSelectionRange(next.length, next.length); autosize(ta.current); });
+  };
+  const pickRole = (c) => { // /to → @이름 삽입(= 수신), /cc → 참조 칩. 둘 다 전송이 아니다
+    if (c.disabled) return;
+    if (rolePick.role === 'cc') { setRecipients((rows) => setDmRecipient(rows, { id: c.id, display_name: c.name }, 'cc')); setText(''); }
+    else { setText(`@${c.name} `); setMentions((ms) => ms.some((x) => x.id === c.id) ? ms : [...ms, { kind: 'crew', id: c.id, name: c.name }]); }
+    requestAnimationFrame(() => { const el = ta.current; if (!el) return; el.focus(); el.setSelectionRange(el.value.length, el.value.length); autosize(el); });
   };
   const detect = (v, caret) => { const upto = v.slice(0, caret); const m = upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); };
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
@@ -2945,6 +2957,14 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     if (await result) onSent(delivery.snapshot().lastDeliveredId);
   };
   const onKey = (e) => {
+    if (rolePick) { // /to·/cc 목록 — @멘션 팝업과 같은 키. Escape는 명령을 지운다
+      const list = rolePick.list;
+      if (list.length && e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % list.length); return; }
+      if (list.length && e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + list.length) % list.length); return; }
+      if (list.length && (e.key === 'Enter' || e.key === 'Tab')) { e.preventDefault(); pickRole(list[Math.min(sel, list.length - 1)]); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setText(''); return; }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); return; } // 명령만 있는 글은 보내지 않는다
+    }
     if (slashCands?.length) { // '/' 커맨더 — @멘션 팝업과 같은 키(↑↓ 이동, Enter·Tab 선택). 선택은 삽입일 뿐 전송이 아니다
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel((i) => (i + 1) % slashCands.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSel((i) => (i - 1 + slashCands.length) % slashCands.length); return; }
@@ -2960,11 +2980,23 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   };
   return (
     <div className="msgr-dock" style={{ '--sbw': `${sbw}px` }}><div>
+      {rolePick && (
+        <div className="msgr-pop msgr-rolepop" role="listbox" aria-label={t(rolePick.role === 'cc' ? 'cmd.cc' : 'cmd.to')}>
+          <p className="head">{t(rolePick.role === 'cc' ? 'cmd.cc' : 'cmd.to')}</p>
+          {recipientLoad === 'loading' && <p className="empty" role="status">{t('ui.loading')}</p>}
+          {recipientLoad === 'error' && <div className="empty" role="alert"><p>{t('dm.delivery.loadError')}</p><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></div>}
+          {recipientLoad === 'ready' && rolePick.list.length === 0 && <p className="empty">{t('dm.delivery.empty')}</p>}
+          {rolePick.list.map((c, i) => <button key={c.id} type="button" role="option" aria-selected={i === sel} disabled={c.disabled} className={i === sel ? 'on' : ''} ref={i === sel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pickRole(c); }}>
+            <Av name={c.name} crew size="sm" crewId={c.id} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.disabled ? t('dm.delivery.update') : c.sub || t('org.crews')}</span>
+          </button>)}
+          {recipientLoad === 'ready' && <p className="foot"><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></p>}
+        </div>
+      )}
       {slashCands && (
         <div className="msgr-pop msgr-slashpop" role="listbox" aria-label={t('cmd.title')}>
           {slashCands.length === 0 && <p className="empty">{t('cmd.empty')}</p>}
           {slashCands.map((c, i) => <button key={c.key} type="button" role="option" aria-selected={i === slashSel} className={i === slashSel ? 'on' : ''} ref={i === slashSel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
-            <span className="cmd">/{c.cmd}</span><span className="desc">{c.desc}</span><span className="tag msgr-klabel">{t(c.kind === 'skill' ? 'cmd.skill' : 'cmd.alias')}{c.crews.length ? ` · ${c.crews.map((x) => x.name).join(', ')}` : ''}</span>
+            <span className="cmd">/{c.cmd}</span><span className="desc">{c.desc}</span><span className="tag msgr-klabel">{t(c.kind === 'builtin' ? 'cmd.builtin' : c.kind === 'skill' ? 'cmd.skill' : 'cmd.alias')}{c.crews.length ? ` · ${c.crews.map((x) => x.name).join(', ')}` : ''}</span>
           </button>)}
         </div>
       )}
@@ -2975,29 +3007,8 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
           </button>)}
         </div>
       )}
-      {isDm && <div className="msgr-dm-recipient-bar"><button type="button" className="btn" aria-expanded={recipientOpen} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientOpen((open) => !open)}>{t('dm.delivery.title')}{recipients.length > 0 ? ` · ${recipients.length}` : ''}</button></div>}
       {isDm && (deliveryBlocked || retryBlocked) && <p className="msgr-dm-delivery-warning" role="alert">{t('dm.delivery.blocked')}</p>}
-      {isDm && recipientOpen && <section className="msgr-dm-recipients" aria-label={t('dm.delivery.title')}>
-        <p>{t('dm.delivery.help')}</p>
-        {recipients.length > 0 && <ul>{recipients.map((r) => <li key={r.id}>
-          <span className="recipient-name">{r.name}{dmCandidates.find((c) => c.id === r.id)?.delivery_ready !== true && <small>{t('dm.delivery.update')}</small>}</span>
-          <select className="msgr-select" aria-label={t('dm.delivery.role', { name: r.name })} value={r.role} disabled={busy || locked} onChange={(e) => setRecipients((rows) => setDmRecipient(rows, r, e.target.value))}>
-            <option value="to">{t('dm.delivery.to')}</option><option value="cc">{t('dm.delivery.cc')}</option>
-          </select>
-          <button type="button" className="btn" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}>×</button>
-        </li>)}</ul>}
-        {recipientLoad === 'loading' && <p role="status">{t('ui.loading')}</p>}
-        {recipientLoad === 'error' && <div role="alert"><p>{t('dm.delivery.loadError')}</p><button type="button" className="btn" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></div>}
-        {recipientLoad === 'ready' && <div className="recipient-pickers">{['to', 'cc'].map((role) => <label key={role}>
-          <span>{t(`dm.delivery.${role}`)}</span>
-          <select className="msgr-select" aria-label={t(`dm.delivery.add.${role}`)} value="" disabled={busy || locked || !dmCandidates.length} onChange={(e) => { const crew = dmCandidates.find((c) => c.id === e.target.value); if (crew?.delivery_ready === true) setRecipients((rows) => setDmRecipient(rows, crew, role)); }}>
-            <option value="">{t('dm.delivery.choose')}</option>
-            {dmCandidates.filter((c) => !recipients.some((r) => r.id === c.id)).map((c) => <option key={c.id} value={c.id} disabled={c.delivery_ready !== true}>{c.display_name}{c.delivery_ready !== true ? ` · ${t('dm.delivery.update')}` : ''}</option>)}
-          </select>
-        </label>)}</div>}
-        {recipientLoad === 'ready' && <button type="button" className="btn" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button>}
-        {recipientLoad === 'ready' && !dmCandidates.length && <p>{t('dm.delivery.empty')}</p>}
-      </section>}
+      {isDm && recipients.length > 0 && <div className="msgr-chips msgr-cc-chips" aria-label={t('dm.delivery.cc')}>{recipients.map((r) => <button key={r.id} type="button" className="msgr-chan" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}><span>{t(`dm.delivery.${r.role}`)} · {r.name}</span><I name="x" size={12} className="mi" /></button>)}</div>}
       {job && <div className="msgr-delivery" role="status" aria-live="polite">
         <strong>{t(busy ? 'msg.delivery.sending' : job.messageId ? 'msg.delivery.attachFailed' : 'msg.delivery.failed')}</strong>
         <p className="delivery-preview">{job.body || job.files.map((item) => item.file.name).join(', ')}</p>
