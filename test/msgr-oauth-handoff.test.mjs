@@ -72,11 +72,13 @@ test('handoff: expired는 즉시 중단, 5분 넘기면 timeout', async () => {
   assert.ok(b.deps.now() >= PAIR_TIMEOUT_MS);
 });
 
-test('화면·셸·i18n 핀: OTP 제거, 두 provider 버튼, 셸 커맨드 등록, 루프백 서버 원칙', () => {
+test('화면·셸·i18n 핀: OTP 제거, Apple·Google·GitHub 버튼(서버 설정 게이팅), 셸 커맨드 등록, 루프백 서버 원칙', () => {
   const app = read('apps/messenger/src/App.jsx');
   const auth = app.slice(app.indexOf('function Auth('), app.indexOf('function Shell('));
   assert.doesNotMatch(auth, /signInWithOtp|verifyOtp/, '이메일 OTP 경로는 화면에서 제거(코드 없는 메일·SMTP 상한)');
-  assert.match(auth, /viaBrowser\('google'\)/); assert.match(auth, /viaBrowser\('github'\)/);
+  assert.match(auth, /viaBrowser\('apple'\)/, 'App Store 4.8: Apple 버튼'); assert.match(auth, /viaBrowser\('google'\)/); assert.match(auth, /viaBrowser\('github'\)/);
+  assert.ok(auth.indexOf("viaBrowser('apple')") < auth.indexOf("viaBrowser('google')"), 'Apple 버튼이 맨 위(HIG: 다른 로그인보다 작거나 뒤에 두지 않는다)');
+  assert.match(auth, /fetchProviderSettings\(SB_URL\)/, '서버가 켠 제공자만 보인다(검수 #528 HIGH-2)');
   assert.match(auth, /supabase\.auth\.setSession\(tokens\)/, '회수한 토큰을 이 앱의 세션으로');
   assert.match(auth, /\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(/, '비밀번호 로그인은 dev 빌드 또는 검수용 번들 플래그에서만');
   const lib = read('apps/messenger/src-tauri/src/lib.rs');
@@ -89,6 +91,18 @@ test('화면·셸·i18n 핀: OTP 제거, 두 provider 버튼, 셸 커맨드 등�
   assert.match(pair, /getElementById\('ok'\)\.onclick/, '착지 페이지는 사용자 승인 뒤에만 봉인(drive-by 차단)');
   const m = read('apps/messenger/src/i18n.js');
   const has = (k) => m.includes(`'${k}': ['`) && /\['[^']+', '[^']+'\]/.test(m.slice(m.indexOf(`'${k}': `), m.indexOf('\n', m.indexOf(`'${k}': `))));
-  for (const k of ['auth.google', 'auth.github', 'auth.waiting', 'auth.cancel', 'auth.err.notApp', 'auth.err.start', 'auth.err.open', 'auth.err.timeout', 'auth.err.expired']) assert.ok(has(k), `${k} ko·en`);
+  for (const k of ['auth.apple', 'auth.sameMethod', 'auth.google', 'auth.github', 'auth.waiting', 'auth.cancel', 'auth.err.notApp', 'auth.err.start', 'auth.err.open', 'auth.err.timeout', 'auth.err.expired']) assert.ok(has(k), `${k} ko·en`);
   for (const k of ['auth.sendCode', 'auth.code', 'auth.sent']) assert.ok(!m.includes(`'${k}'`), `${k} 죽은 키 제거`);
+});
+
+// 제공자 게이팅(검수 #528 HIGH-2): GoTrue /auth/v1/settings external.<p> 가 명시적으로 false 인 버튼만 숨긴다. 실패·비정상 응답은 null(게이팅 안 함).
+import { fetchProviderSettings } from '../apps/messenger/src/oauth-handoff.mjs';
+test('fetchProviderSettings — 꺼진 제공자만 false, 키 없음은 true, 실패·비정상 응답은 null', async () => {
+  const ok = (body) => async () => ({ ok: true, json: async () => body });
+  assert.deepEqual(await fetchProviderSettings('https://x.supabase.co', ok({ external: { apple: false, google: true, github: true, email: true } })), { apple: false, google: true, github: true });
+  assert.deepEqual(await fetchProviderSettings('https://x.supabase.co', ok({ external: { apple: true } })), { apple: true, google: true, github: true }, '키가 없는 제공자는 숨기지 않는다(구버전 응답)');
+  assert.equal(await fetchProviderSettings('https://x.supabase.co', ok({})), null, 'external 없음');
+  assert.equal(await fetchProviderSettings('https://x.supabase.co', async () => ({ ok: false })), null, '4xx/5xx');
+  assert.equal(await fetchProviderSettings('https://x.supabase.co', async () => { throw new Error('net'); }), null, '네트워크 오류');
+  let url; await fetchProviderSettings('https://x.supabase.co', async (u) => { url = u; return { ok: false }; }); assert.equal(url, 'https://x.supabase.co/auth/v1/settings');
 });

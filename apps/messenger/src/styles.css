@@ -290,9 +290,11 @@
 .msgr-center { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--fg-3); font-size: 13px; padding: 24px; }
 
 /* 로그인 — 머리띠 카드 */
-.btn.btn-apple { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-weight: 600; background: #000; color: #fff; border-color: #000; } /* Apple HIG: 검정 배경·흰 글자·로고 왼쪽, 다른 로그인 버튼과 같은 크기 */
-.btn.btn-apple:hover { background: #111; }
-:root[data-theme='linen-dark'] .btn.btn-apple, :root[data-theme='dark'] .btn.btn-apple { background: #fff; color: #000; border-color: #fff; }
+.btn.btn-apple { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-weight: 600; background: #000; color: #fff; border-color: #000; } /* Apple HIG: 검정/흰, 다크 테마에서 반전, 로고 왼쪽, 다른 로그인 버튼보다 작지 않게(44px) */
+.btn.btn-apple:hover { filter: brightness(1.15); }
+:root[data-theme$='-dark'] .btn.btn-apple { background: #fff; color: #000; border-color: #fff; } /* light-dark() 미지원 웹뷰 폴백 — 이름 접미로 모든 다크 테마 */
+@supports (color: light-dark(#000, #fff)) { .btn.btn-apple, :root[data-theme$='-dark'] .btn.btn-apple { background: light-dark(#000, #fff); color: light-dark(#fff, #000); border-color: light-dark(#000, #fff); } } /* 모든 다크 테마는 color-scheme: dark 를 선언한다(검수 #528 M-2: 이름 나열은 테마가 늘면 샌다) */
+.msgr-auth .same-method { margin: 4px 0 0; font-size: 11px; line-height: 1.5; text-align: center; white-space: normal; }
 .msgr-auth { min-height: calc(100vh / var(--z, 1)); display: grid; place-items: center; padding: 24px; }
 .msgr-auth .msgr-card { width: min(420px, 100%); background: var(--card); border: 1px solid var(--border); border-radius: 22px; overflow: hidden; display: grid; }
 .msgr-auth .band { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: var(--primary); color: var(--primary-fg); font-family: var(--mono); font-weight: 600; letter-spacing: 0.16em; font-size: 12px; }

@@ -134,6 +134,7 @@ export const DICT = {
 
   'app.title': ['Argo 메신저', 'Argo Messenger'],
   'auth.apple': ['Apple로 계속하기', 'Continue with Apple'],
+  'auth.sameMethod': ['이전에 쓰던 로그인 방법으로 들어오세요. 다른 방법을 고르면 새 계정이 됩니다.', 'Use the sign-in method you used before. A different method creates a new account.'],
   'auth.google': ['Google로 계속하기', 'Continue with Google'],
   'auth.github': ['GitHub로 계속하기', 'Continue with GitHub'],
   'auth.waiting': ['브라우저에서 로그인을 마치면 자동으로 이어집니다…', 'Finish signing in on your browser — this will continue automatically…'],

@@ -38,3 +38,16 @@ export async function handoff({ supabaseUrl, provider }, deps) {
   }
   throw new Error('timeout');
 }
+
+/** GoTrue 공개 설정에서 켜진 제공자를 읽는다 → { apple, google, github } (boolean). 실패·모양 이상이면 null(= 게이팅 안 함).
+    검수 #528 HIGH-2: 서버에 Apple이 꺼져 있으면 버튼이 죽은 채 보이고 5분 타임아웃까지 기다렸다. */
+export async function fetchProviderSettings(supabaseUrl, fetchFn = globalThis.fetch) {
+  try {
+    const r = await fetchFn(`${supabaseUrl}/auth/v1/settings`, { headers: { accept: 'application/json' } });
+    if (!r?.ok) return null;
+    const j = await r.json();
+    const ext = j?.external;
+    if (!ext || typeof ext !== 'object') return null;
+    return Object.fromEntries(PROVIDERS.map((p) => [p, ext[p] !== false])); // 명시적으로 꺼진 것만 숨긴다 — 키가 없는(구버전) 응답은 보여 준다
+  } catch { return null; }
+}
