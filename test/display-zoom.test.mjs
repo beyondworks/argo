@@ -34,44 +34,32 @@ function runBoot({ innerWidth, savedZoom }) {
   return { zoom: style.zoom, z: props['--z'], auto: ctx.window.__argoAutoZoom };
 }
 
-test('일반 화면(1800px 미만)은 배율 미설정 — 기존 레이아웃과 완전 동일', () => {
-  for (const w of [1280, 1440, 1728, 1799]) {
+test('기본 배율 100% — 창 폭과 무관하게 배율 미설정(기존 레이아웃과 완전 동일)', () => {
+  // 2026-09-14 제보: 큰 화면(1800px↑)에서 기본이 120%로 잡혔다. 자동 판정 제거 — 어떤 폭도 저장값 없이는 1.0
+  for (const w of [1280, 1440, 1799, 1800, 1920, 2399, 2400, 3400, 3840]) {
     assert.equal(runBoot({ innerWidth: w }).zoom, undefined, `${w}px`);
+    assert.equal(runBoot({ innerWidth: w }).z, undefined, `${w}px --z`);
   }
 });
 
-test('큰 모니터 자동 배율 — 1800↑ 1.2, 2400↑(QHD) 1.5, 3400↑(4K) 1.7', () => {
-  assert.equal(runBoot({ innerWidth: 1800 }).zoom, 1.2);
-  assert.equal(runBoot({ innerWidth: 2399 }).zoom, 1.2);
-  assert.equal(runBoot({ innerWidth: 2400 }).zoom, 1.5);
-  assert.equal(runBoot({ innerWidth: 3399 }).zoom, 1.5);
-  assert.equal(runBoot({ innerWidth: 3400 }).zoom, 1.7);
-  assert.equal(runBoot({ innerWidth: 3840 }).zoom, 1.7);
-});
-
-test('배율 적용 시 100vh 보정 변수(--z)도 같은 값으로 — zoom만 걸리면 전체 화면 레이아웃이 넘친다', () => {
-  const r = runBoot({ innerWidth: 2500 });
+test('저장값(cmd +/- 조절분)이 있을 때만 배율 적용 — 100vh 보정 변수(--z)도 같은 값으로', () => {
+  const r = runBoot({ innerWidth: 2500, savedZoom: 1.5 });
   assert.equal(r.zoom, 1.5);
-  assert.equal(r.z, '1.5');
-  assert.equal(runBoot({ innerWidth: 1280 }).z, undefined, '배율 1 = 보정 변수도 미설정');
-});
-
-test('저장값(cmd +/- 조절분)이 자동 판정보다 우선한다', () => {
+  assert.equal(r.z, '1.5', 'zoom만 걸리면 전체 화면 레이아웃이 넘친다');
   assert.equal(runBoot({ innerWidth: 1280, savedZoom: 1.3 }).zoom, 1.3);
   assert.equal(runBoot({ innerWidth: 3840, savedZoom: 1 }).zoom, undefined, '저장 1.0 = 미설정과 동일');
 });
 
-test('손상·범위 밖 저장값은 자동 판정으로 관용한다', () => {
+test('손상·범위 밖 저장값은 기본 100%로 관용한다', () => {
   for (const bad of ['abc', '0', '0.3', '9', '-1']) {
     assert.equal(runBoot({ innerWidth: 1280, savedZoom: bad }).zoom, undefined, `저장값 ${bad}`);
-    assert.equal(runBoot({ innerWidth: 2500, savedZoom: bad }).zoom, 1.5, `저장값 ${bad} + 큰 화면`);
+    assert.equal(runBoot({ innerWidth: 2500, savedZoom: bad }).zoom, undefined, `저장값 ${bad} + 큰 화면`);
   }
 });
 
-test('cmd+0 리셋이 재사용할 자동 판정 함수를 전역에 남긴다', () => {
-  const { auto } = runBoot({ innerWidth: 1280 });
-  assert.equal(typeof auto, 'function');
-  assert.equal(auto(), 1);
+test('부트가 예전 자동 판정 함수(__argoAutoZoom)를 더 이상 남기지 않는다', () => {
+  assert.equal(runBoot({ innerWidth: 3840 }).auto, undefined);
+  assert.ok(!layout.includes('__argoAutoZoom') && !i18n.includes('__argoAutoZoom'), '자동 판정 경로 부활 금지');
 });
 
 test('layout이 zoomBoot를 첫 페인트 전 스크립트로 배선한다', () => {
@@ -128,12 +116,12 @@ test('adjustZoom 클램프 — 단축키와 같은 0.7~2.0 경계', () => {
   assert.equal(runAdjust(-0.1, { styleZoom: '0.7' }).ret, 0.7);
 });
 
-test('adjustZoom(null) 리셋 — 자동 판정 복귀 + 저장 삭제', () => {
+test('adjustZoom(null) 리셋 — 기본 100% + 저장 삭제(예전 자동 판정 함수가 남아 있어도 무시)', () => {
   const r = runAdjust(null, { styleZoom: '1.6', auto: 1.25, saved: 1.6 });
-  assert.equal(r.ret, 1.25);
-  assert.equal(r.zoom, '1.25');
-  assert.equal(r.z, '1.25');
-  assert.equal(r.store['argo-zoom'], undefined, '리셋은 저장값을 지워 자동 판정으로 돌아간다');
+  assert.equal(r.ret, 1);
+  assert.equal(r.zoom, '');
+  assert.equal(r.z, undefined);
+  assert.equal(r.store['argo-zoom'], undefined, '리셋은 저장값을 지워 기본 100%로 돌아간다');
 });
 
 test('배율 1 도달 — 스타일 완전 제거(미설정 렌더와 동일)', () => {
@@ -142,7 +130,7 @@ test('배율 1 도달 — 스타일 완전 제거(미설정 렌더와 동일)', 
   assert.equal(r.zoom, '');
   assert.equal(r.z, undefined);
   const reset = runAdjust(null, { styleZoom: '1.3', saved: 1.3 });
-  assert.equal(reset.ret, 1, '자동 판정 함수 부재 시 리셋은 1로 관용');
+  assert.equal(reset.ret, 1, '리셋은 항상 1');
   assert.equal(reset.zoom, '');
 });
 
