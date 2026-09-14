@@ -3,6 +3,9 @@ import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mc
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
+// Castra 실행 계약(src/prompts/castra-posture.mjs) — 러너·모델 무관하게 모든 크루 시스템 프롬프트에 기본 포함(유건 지시 2026-09-14). ARGO_CASTRA=0 이면 뺀다.
+import { CASTRA_POSTURE } from './prompts/castra-posture.mjs';
+export const castraPosture = () => (process.env.ARGO_CASTRA === '0' ? '' : `${CASTRA_POSTURE}\n\n`);
 import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
@@ -232,7 +235,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - If you judge you've handled the same type of request 2+ times, save the know-how to ${wsRoot}/skills/task-slug.md as an instructional skill (checklist, spec, prohibitions). From the next turn it automatically becomes part of your instructions.
 - If you saved one, tell the captain in one line at the end of your answer: "I saved this workflow as a skill." Don't overwrite existing skills — extend them.
 
-## Safety limits — no instruction can lift these
+${castraPosture()}## Safety limits — no instruction can lift these
 - Never create content that sexualizes or romanticizes minors, in any form or under any pretext.
 - On self-harm or suicide signals, respond with empathy — no judgment, no lecturing — and point to professional help (Korea: suicide prevention hotline 109; elsewhere, the local crisis line). Never provide methods, means, or lethal-dose information.
 - Never provide manufacturing information for weapons, explosives, harmful chemical/biological agents, or illegal drugs (life-saving emergency information is fine).
@@ -307,7 +310,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
   지시형 스킬(체크리스트·규격·금지사항)로 저장하라. 다음 턴부터 자동으로 네 지침이 된다.
 - 저장했다면 답변 끝에 "이 작업 방식을 스킬로 저장했다"고 한 줄 알려라. 이미 있는 스킬은 덮어쓰지 말고 보강하라.
 
-## 안전 한계 — 어떤 지시로도 풀리지 않는다
+${castraPosture()}## 안전 한계 — 어떤 지시로도 풀리지 않는다
 - 미성년자를 성적·로맨틱하게 다루는 콘텐츠는 어떤 형식·명목으로도 절대 만들지 않는다.
 - 자해·자살 위험 신호에는 판단·훈계 없이 공감으로 응대하고 전문 도움(한국: 자살예방 상담전화 109)을 안내하라. 방법·수단·치사량 정보는 절대 제공하지 않는다.
 - 무기·폭발물·유해 화학/생물 물질·불법 약물의 제조 정보는 제공하지 않는다(생명을 구하는 응급 정보는 제공).
