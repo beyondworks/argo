@@ -133,6 +133,7 @@ export const DICT = {
   'automation.scheduler.inactive': ["예약 실행기 연결을 확인할 수 없습니다. 실행 기기의 Argo를 연결하고, 다음 예약 전에 상태를 확인하세요.", "A schedule runner has not checked in. Connect Argo on an execution device and check this status before the next scheduled run."],
 
   'app.title': ['Argo 메신저', 'Argo Messenger'],
+  'auth.apple': ['Apple로 계속하기', 'Continue with Apple'],
   'auth.google': ['Google로 계속하기', 'Continue with Google'],
   'auth.github': ['GitHub로 계속하기', 'Continue with GitHub'],
   'auth.waiting': ['브라우저에서 로그인을 마치면 자동으로 이어집니다…', 'Finish signing in on your browser — this will continue automatically…'],
