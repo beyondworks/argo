@@ -32,9 +32,11 @@ for(const engine of (process.env.DM_ENGINE ? [process.env.DM_ENGINE] : ['chromiu
    await ta.fill('/cc fixture new');await option('Fixture New Agent').waitFor();assert.equal(await option('Fixture Outdated Agent').count(),0,'multi-word query keeps filtering');
    await ta.fill('/cc');await option('Fixture New Agent').waitFor();
    assert.ok(Number(await option('Fixture Outdated Agent').evaluate(el=>getComputedStyle(el).opacity))<1,'unsupported rows are visibly dimmed');
-   await ta.press('ArrowDown');await ta.press('ArrowDown');await ta.press('Enter');
+   await ta.press('ArrowDown');assert.match(await page.locator('.msgr-rolepop [role=option][aria-selected="true"]').textContent(),/Fixture Existing Agent/,'ArrowDown moves the highlight to the next enabled row');
+   await ta.press('ArrowDown');await ta.press('Enter');
    await page.locator('.msgr-cc-chips .msgr-chan').filter({hasText:'Fixture New Agent'}).waitFor({timeout:5000}).catch(()=>{throw new Error('ArrowDown must skip unsupported rows (New → Existing → New)');});
    await page.getByRole('button',{name:lang==='ko'?'Fixture New Agent 수신자 해제':'Remove recipient Fixture New Agent'}).click();
+   await ta.fill('/cc outdated');await option('Fixture Outdated Agent').waitFor();assert.equal(await page.locator('.msgr-rolepop [role=option][aria-selected="true"]').count(),0,'a list of only unsupported rows has no highlighted row');
    await ta.fill('/cc nobody');await page.locator('.msgr-rolepop .empty').waitFor();assert.equal(await option('Fixture').count(),0,'unmatched query shows the no-match hint');
    await ta.fill('/');await page.locator('.msgr-slashpop').waitFor();
    assert.deepEqual((await page.locator('.msgr-slashpop .cmd').allTextContents()).slice(0,2),['/to','/cc'],'DM commander offers /to·/cc first');

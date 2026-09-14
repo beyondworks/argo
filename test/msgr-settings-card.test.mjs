@@ -345,7 +345,7 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
   const guard = send.init.body.body[0];
   assert.equal(guard.type, 'IfStatement');
   assert.equal(guard.consequent.type, 'ReturnStatement', '키보드·폼 전송의 첫 행동은 잠금 시 즉시 반환');
-  const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', `return (${expr});`);
+  const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', 'rolePick', `return (${expr});`); // rolePick = 1:1 /to·/cc 명령 모드(명령만 있는 글은 전송 금지 — PR #526)
   const disabledSource = app.slice(disabled.start, disabled.end);
   const guardSource = app.slice(guard.test.start, guard.test.end);
   const check = (buttonSource, handlerSource) => {
@@ -354,14 +354,17 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
       const [busy, pending, locked, deliveryBlocked] = [0, 1, 2, 3].map((bit) => !!(bits & (1 << bit)));
       const job = pending ? { clientId: 'pending' } : null;
       for (const [text, files] of [['', []], ['  ', []], ['hello', []], ['', [{ name: 'file.txt' }]]]) {
-        const args = [busy, job, locked, deliveryBlocked, text, files];
+        const args = [busy, job, locked, deliveryBlocked, text, files, null];
         assert.equal(!!buttonDisabled(...args), bits !== 0 || (!text.trim() && !files.length), `send button flags=${bits}`);
         assert.equal(!!handlerBlocked(...args), bits !== 0, `keyboard/form guard flags=${bits}`);
+        const cmd = [busy, job, locked, deliveryBlocked, '/cc', [], { role: 'cc', q: '', list: [] }]; // 명령 모드는 나머지 플래그와 무관하게 차단
+        assert.equal(!!buttonDisabled(...cmd), true, `send button rolePick flags=${bits}`);
+        assert.equal(!!handlerBlocked(...cmd), true, `keyboard/form guard rolePick flags=${bits}`);
       }
     }
   };
   check(disabledSource, guardSource);
-  for (const flag of ['busy', 'job', 'locked', 'deliveryBlocked']) {
+  for (const flag of ['busy', 'job', 'locked', 'deliveryBlocked', 'rolePick']) {
     const identifier = new RegExp(`\\b${flag}\\b`, 'g');
     assert.throws(() => check(disabledSource.replace(identifier, 'false'), guardSource), /send button/, `removing button ${flag} must fail`);
     assert.throws(() => check(disabledSource, guardSource.replace(identifier, 'false')), /keyboard\/form guard/, `removing handler ${flag} must fail`);
