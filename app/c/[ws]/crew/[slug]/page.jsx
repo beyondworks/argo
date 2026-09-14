@@ -1957,7 +1957,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
           </div>
           </div>)}
 
-          {tab === 'link' && (<div data-tab-pane="link" style={{ display: 'grid', gap: 14 }}>
+          {tab === 'link' && (<div data-tab-pane="link" style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1, minHeight: 0 }}>{/* 원문 편집창이 남는 높이를 채운다(모달 86vh 고정 뒤 아래 여백, 유건 2026-09-14) */}
           {/* 텔레그램 직통 봇 — 이 크루의 개인 연락처. 연결되면 그린 도트 */}
           <div style={{ display: 'grid', gap: 7, padding: '12px 14px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2006,7 +2006,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
               onChange={(e) => setMd(e.target.value)}
               spellCheck={false}
               style={{
-                width: '100%', minHeight: 320, resize: 'vertical',
+                width: '100%', minHeight: 320, flex: 1, resize: 'vertical',
                 background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12,
                 padding: '12px 14px', outline: 'none',
                 fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 1.65,

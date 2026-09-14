@@ -771,6 +771,69 @@ function TrashCard({ ws }) {
     응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
 /** 팀 메신저 — 이 회사 크루를 조직에 등록(파견)/해제하고 허용 범위를 고른다. 조직·채널·메시지는 메신저 앱이 다룬다.
     데이터는 /api/companies/[ws]/msgr(기기 세션 JWT로 Supabase msgr_crews에 씀). 기본 허용 범위는 '나만'(부록 H — 정책 테이블 전까지 가장 좁게). */
+/** 알림 받을 방 — 메신저에서 시작하지 않은 크루 알림(결재·장시간 작업·쪽지·루틴·위임)을 한 방으로. 저장은 company.json.msgr.notify(src/msgr-notify.mjs). */
+function MsgrNotifyRoom({ ws, signedIn }) {
+  const { t } = useLang();
+  const [opt, setOpt] = useState(null); // { rooms:[{orgId,channelId,name,orgName}], events:[...], notify:{orgId,channelId,events}|null }
+  const [room, setRoom] = useState(''); // channelId ('' = 끔)
+  const [events, setEvents] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const load = useCallback(() => api(`/api/companies/${ws}/msgr/notify`)
+    .then((d) => { setOpt(d); setRoom(d.notify?.channelId ?? ''); setEvents(d.notify?.events ?? []); })
+    .catch(() => setOpt({ rooms: [], events: [], notify: null })), [ws]);
+  useEffect(() => { if (signedIn) load(); }, [signedIn, load]);
+  if (!signedIn || opt === null) return null;
+  const chosen = opt.rooms.find((r) => r.channelId === room);
+  const toggle = (ev) => setEvents((cur) => (cur.includes(ev) ? cur.filter((x) => x !== ev) : [...cur, ev]));
+  const save = async () => {
+    setBusy(true); setMsg('');
+    try {
+      await api(`/api/companies/${ws}/msgr/notify`, chosen ? { orgId: chosen.orgId, channelId: chosen.channelId, events } : { off: true });
+      setMsg(t(chosen ? 'settings.msgr.notify.saved' : 'settings.msgr.notify.off.done')); await load();
+    } catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
+  };
+  const off = async () => {
+    setBusy(true); setMsg('');
+    try { await api(`/api/companies/${ws}/msgr/notify`, { off: true }); setRoom(''); setEvents([]); setMsg(t('settings.msgr.notify.off.done')); await load(); }
+    catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ display: 'grid', gap: 8, padding: '12px 14px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
+      <span className="microlabel">{t('settings.msgr.notify.title')}</span>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.notify.help')}</p>
+      {!opt.rooms.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notify.noRooms')}</p>}
+      {!!opt.rooms.length && (<>
+        <label style={{ display: 'grid', gap: 5 }}>
+          <span className="microlabel">{t('settings.msgr.notify.room')}</span>
+          <select className="input" value={room} onChange={(e) => { const v = e.target.value; setRoom(v); if (v && !events.length) setEvents([...opt.events]); }}>{/* 방을 고르면 기본 전체 선택 — 이벤트 0개 저장은 '켠 것처럼 보이는 끔'(검수 #535 ②) */}
+            <option value="">{t('settings.msgr.notify.off')}</option>
+            {opt.rooms.map((r) => <option key={r.channelId} value={r.channelId}>{r.orgName} · #{r.name}</option>)}
+          </select>
+        </label>
+        {chosen && (
+          <div style={{ display: 'grid', gap: 6 }}>
+            <span className="microlabel">{t('settings.msgr.notify.events')}</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {opt.events.map((ev) => { const on = events.includes(ev); return (
+                <button key={ev} type="button" className="chip" onClick={() => toggle(ev)} aria-pressed={on}
+                  style={{ cursor: 'pointer', padding: '5px 12px', fontSize: 12, textTransform: 'none', letterSpacing: 0, ...(on ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : { opacity: 0.6 }) }}>
+                  {t(`settings.conn.ev.${ev}`)}
+                </button>
+              ); })}
+            </div>
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button type="button" className="btn btn-primary sm" disabled={busy || (!!chosen && !events.length)} onClick={save}>{busy ? <Spinner size={12} /> : t('settings.msgr.notify.save')}</button>
+          {opt.notify && <button type="button" className="btn sm" disabled={busy} onClick={off}>{t('settings.msgr.notify.clear')}</button>}{/* 끄기는 서버에 바로(로컬 폼만 비우면 화면과 서버가 어긋난다 — 검수 #535 ③) */}
+          {msg && <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{msg}</span>}
+        </div>
+      </>)}
+    </div>
+  );
+}
+
 function MsgrCard({ ws, agents }) {
   // 2026-09-08 유건 지시: 파견·허용 범위·해제는 팀 메신저에서. 이 카드는 "아르고 ↔ 메신저 연결" 상태만 보여 준다(텔레그램·슬랙 카드와 같은 모양).
   // 아르고 로그인 = 연결: 브리지가 내 크루 전부를 조직에 기본 파견하고, 여기는 어느 조직에 몇 명이 파견 중인지 읽기 전용으로 보인다.
@@ -818,22 +881,33 @@ function MsgrCard({ ws, agents }) {
           </label>
           <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('settings.msgr.count', { n: regCount, total: agents.length })}</span>
         </div>
+        {/* 2026-09-14 유건 결정: 크루 전원이 자동 파견되므로 13줄 "파견 중 · 나만"은 정보가 없다 — 조직별 요약 한 줄 + 예외(미파견·기본 범위 아님)만 펼친다 */}
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
-        {!!agents.length && (
-          <ul className="msgr-crews" role="list">
-            {agents.map((a) => { const reg = regOf(a.slug); return (
-              <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
-                <div className="row">
-                  <Avatar name={a.name} sm />
-                  <span className="who" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}><span className="name">{a.name}</span><span className="role">{a.role}</span></span>
-                  <span className="state" title={reg ? t('settings.msgr.registered') : t('settings.msgr.notRegistered')}>
-                    <span className="dot" aria-hidden="true" />{reg ? `${t('settings.msgr.registered')} · ${t(`settings.msgr.allow.${reg.allow}`)}` : t('settings.msgr.notRegistered')}
-                  </span>
-                </div>
-              </li>
-            ); })}
-          </ul>
-        )}
+        {!!agents.length && (() => {
+          const exceptions = agents.filter((a) => { const reg = regOf(a.slug); return !reg || reg.allow !== 'owner'; });
+          return (
+            <details className="msgr-fine" open={exceptions.length > 0}>
+              <summary><span className="microlabel">{t('settings.msgr.exceptions', { n: exceptions.length })}</span><span>{t('settings.msgr.exceptions.help')}</span></summary>
+              {!exceptions.length && <p>{t('settings.msgr.exceptions.none')}</p>}
+              {!!exceptions.length && (
+                <ul className="msgr-crews" role="list">
+                  {exceptions.map((a) => { const reg = regOf(a.slug); return (
+                    <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
+                      <div className="row">
+                        <Avatar name={a.name} sm />
+                        <span className="who" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}><span className="name">{a.name}</span><span className="role">{a.role}</span></span>
+                        <span className="state" title={reg ? t('settings.msgr.registered') : t('settings.msgr.notRegistered')}>
+                          <span className="dot" aria-hidden="true" />{reg ? `${t('settings.msgr.registered')} · ${t(`settings.msgr.allow.${reg.allow}`)}` : t('settings.msgr.notRegistered')}
+                        </span>
+                      </div>
+                    </li>
+                  ); })}
+                </ul>
+              )}
+            </details>
+          );
+        })()}
+        <MsgrNotifyRoom ws={ws} signedIn={!!st?.signedIn} />
         <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.manage')}</p>
         <details className="msgr-fine">
           <summary><span className="microlabel">{t('settings.msgr.policy')}</span><span>{t('settings.msgr.fine.summary')}</span></summary>
