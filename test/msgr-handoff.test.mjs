@@ -147,6 +147,17 @@ test('CLI 메신저 쪽지는 로컬 파일에 없는 원격 동료 UUID를 허�
   assert.deepEqual(await readdir(join(paths(ws).root, 'mail', 'remote-only')).catch(() => []), []);
 });
 
+test('DM 넘김 힌트는 1:1 전달 계약을 안내하고 옛 "같은 DM에 남긴다" 문구를 남기지 않는다', async () => {
+  const { messengerHandoffHint } = await import('../src/gateway/msgr-handoff.mjs');
+  const ko = messengerHandoffHint('ko');
+  const en = messengerHandoffHint('en');
+  assert.match(ko, /사용자와 그 동료의 1:1 대화로 전달되고 동료는 거기서 답한다/);
+  assert.match(ko, /동료의 답을 기다리거나 대신 답하지 마라/);
+  assert.doesNotMatch(ko, /동료의 답변도 이 DM에 남겨라/);
+  assert.match(en, /forwards that request to your user's 1:1 DM with that colleague, who replies there/);
+  assert.doesNotMatch(en, /keep their reply in this DM/);
+});
+
 test('CC 줄 분류는 독립 줄만 인정하고 인용·코드의 CC는 지시로 승격하지 않는다', async () => {
   const { messengerRecipientText } = await import('../src/gateway/msgr-handoff.mjs');
   const body = '@알파 실행\nCC: @베타\n> CC: @인용\n```text\nCC: @코드\n```\n설명 CC: @본문\n참조: @감사';
