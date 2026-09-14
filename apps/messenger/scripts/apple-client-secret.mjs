@@ -17,7 +17,8 @@ if (!/^[A-Z0-9]{10}$/.test(teamId)) fail('APPLE_TEAM_ID 는 10자 영숫자');
 if (!/^[A-Z0-9]{10}$/.test(keyId)) fail('APPLE_KEY_ID 는 10자 영숫자');
 if (!/^[a-z0-9.-]+$/i.test(clientId)) fail('APPLE_SERVICES_ID 형식(예: com.company.app.signin)');
 const home = process.env.HOME; if (p8.startsWith('~') && !home) fail('HOME 미설정 — .p8 경로를 절대경로로');
-const key = createPrivateKey(readFileSync(p8.replace(/^~/, home), 'utf8'));
+let pem; try { pem = readFileSync(p8.replace(/^~/, home), 'utf8'); } catch (e) { fail(`.p8 파일을 읽지 못했습니다: ${p8} (${e.code ?? e.message})`); }
+let key; try { key = createPrivateKey(pem); } catch { fail('.p8 내용이 PEM 개인키가 아닙니다'); }
 if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') fail('.p8 은 P-256(ES256) EC 키여야 한다 — Apple이 준 AuthKey_*.p8 인지 확인');
 const b64 = (o) => Buffer.from(typeof o === 'string' ? o : JSON.stringify(o)).toString('base64url');
 const now = Math.floor(Date.now() / 1000);

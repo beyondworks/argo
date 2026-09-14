@@ -78,7 +78,10 @@ test('화면·셸·i18n 핀: OTP 제거, Apple·Google·GitHub 버튼(서버 설
   assert.doesNotMatch(auth, /signInWithOtp|verifyOtp/, '이메일 OTP 경로는 화면에서 제거(코드 없는 메일·SMTP 상한)');
   assert.match(auth, /viaBrowser\('apple'\)/, 'App Store 4.8: Apple 버튼'); assert.match(auth, /viaBrowser\('google'\)/); assert.match(auth, /viaBrowser\('github'\)/);
   assert.ok(auth.indexOf("viaBrowser('apple')") < auth.indexOf("viaBrowser('google')"), 'Apple 버튼이 맨 위(HIG: 다른 로그인보다 작거나 뒤에 두지 않는다)');
-  assert.match(auth, /fetchProviderSettings\(SB_URL\)/, '서버가 켠 제공자만 보인다(검수 #528 HIGH-2)');
+  assert.match(auth, /fetchProviderSettings\(SB_URL, globalThis\.fetch, SB_ANON\)/, '서버가 켠 제공자만 보인다(검수 #528 HIGH-2) — apikey 동봉(#530 L-4)');
+  assert.match(auth, /const show = \(p\) => providerShown\(enabled, p\);/, '표시 판정은 순수 함수(행동 핀은 아래)');
+  for (const p of ['apple', 'google', 'github']) assert.match(auth, new RegExp(`\\{show\\('${p}'\\) && <button[^>]*disabled=\\{busy \\|\\| pending\\}`), `${p} 버튼은 show()로 가리고 조회 전엔 비활성(#530 M-1)`);
+  assert.match(auth, /noProviders\(enabled\) && <p role="alert"/, '제공자 0개면 안내(#530 H-1)');
   assert.match(auth, /supabase\.auth\.setSession\(tokens\)/, '회수한 토큰을 이 앱의 세션으로');
   assert.match(auth, /\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(/, '비밀번호 로그인은 dev 빌드 또는 검수용 번들 플래그에서만');
   const lib = read('apps/messenger/src-tauri/src/lib.rs');
@@ -96,7 +99,7 @@ test('화면·셸·i18n 핀: OTP 제거, Apple·Google·GitHub 버튼(서버 설
 });
 
 // 제공자 게이팅(검수 #528 HIGH-2): GoTrue /auth/v1/settings external.<p> 가 명시적으로 false 인 버튼만 숨긴다. 실패·비정상 응답은 null(게이팅 안 함).
-import { fetchProviderSettings } from '../apps/messenger/src/oauth-handoff.mjs';
+import { fetchProviderSettings, providerShown, noProviders } from '../apps/messenger/src/oauth-handoff.mjs';
 test('fetchProviderSettings — 꺼진 제공자만 false, 키 없음은 true, 실패·비정상 응답은 null', async () => {
   const ok = (body) => async () => ({ ok: true, json: async () => body });
   assert.deepEqual(await fetchProviderSettings('https://x.supabase.co', ok({ external: { apple: false, google: true, github: true, email: true } })), { apple: false, google: true, github: true });
@@ -105,4 +108,10 @@ test('fetchProviderSettings — 꺼진 제공자만 false, 키 없음은 true, �
   assert.equal(await fetchProviderSettings('https://x.supabase.co', async () => ({ ok: false })), null, '4xx/5xx');
   assert.equal(await fetchProviderSettings('https://x.supabase.co', async () => { throw new Error('net'); }), null, '네트워크 오류');
   let url; await fetchProviderSettings('https://x.supabase.co', async (u) => { url = u; return { ok: false }; }); assert.equal(url, 'https://x.supabase.co/auth/v1/settings');
+});
+
+test('providerShown·noProviders — null은 전부 표시, 명시적 false만 숨김, 전부 false면 안내', () => {
+  assert.equal(providerShown(null, 'apple'), true); assert.equal(providerShown({ apple: false }, 'apple'), false); assert.equal(providerShown({ apple: true }, 'github'), true);
+  assert.equal(noProviders(null), false); assert.equal(noProviders({ apple: false, google: true, github: false }), false); assert.equal(noProviders({ apple: false, google: false, github: false }), true);
+  let hdr; fetchProviderSettings('https://x.supabase.co', async (u, o) => { hdr = o.headers; return { ok: false }; }, 'anon-key'); assert.equal(hdr.apikey, 'anon-key', 'apikey 동봉');
 });

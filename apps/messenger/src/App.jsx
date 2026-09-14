@@ -8,9 +8,9 @@ import { Graph3D } from './graph3d.jsx';
 import { WorkPanel } from './work-panel.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase, configured, q } from './supabase.js';
-import { customServer, SB_URL } from './supabase.js';
+import { customServer, SB_URL, SB_ANON } from './supabase.js';
 import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
-import { handoff, fetchProviderSettings } from './oauth-handoff.mjs';
+import { handoff, fetchProviderSettings, providerShown, noProviders } from './oauth-handoff.mjs';
 import { parseInviteCode, inviteShareText } from './invite.mjs';
 import { UpdateBar } from './update.jsx';
 import { useLongPress } from './long-press.js';
@@ -246,8 +246,9 @@ function Auth({ logoutNotice = '' }) {
   // 서버가 켠 제공자만 보인다(검수 #528 HIGH-2: 제공자 설정 전·셀프호스트 서버에서 Apple 버튼이 죽은 채 보였다).
   // GoTrue 공개 엔드포인트 /auth/v1/settings의 external.<provider>. 조회 실패면 전부 보여 준다(로그인 자체를 막지 않는다).
   const [enabled, setEnabled] = useState(null);
-  useEffect(() => { let alive = true; fetchProviderSettings(SB_URL).then((v) => { if (alive) setEnabled(v); }); return () => { alive = false; }; }, []);
-  const show = (p) => !enabled || enabled[p] !== false;
+  useEffect(() => { let alive = true; fetchProviderSettings(SB_URL, globalThis.fetch, SB_ANON).then((v) => { if (alive) setEnabled(v); }); return () => { alive = false; }; }, []);
+  const show = (p) => providerShown(enabled, p);
+  const pending = enabled === null; // 조회 전엔 눌러도 꺼진 제공자로 갈 수 있다 → 비활성(검수 #530 M-1: 느린 망에서 1.5초 창)
   const authWaiting = isMobileNative ? mobileAuth.waiting : waiting;
   const mobileError = mobileAuth.error ? t(({ expired: 'auth.err.expired', open_failed: 'auth.err.open', provider_denied: 'auth.err.denied', exchange_failed: 'auth.err.exchange' })[mobileAuth.error] || 'auth.err.start') : '';
   const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
@@ -277,9 +278,10 @@ function Auth({ logoutNotice = '' }) {
         {authWaiting ? (
           <p className="msgr-wait"><span className="msgr-klabel">{t('auth.waiting')}</span><button type="button" className="btn sm ghost" disabled={mobileAuth.exchanging} onClick={() => isMobileNative ? cancelMobileSignIn() : location.reload()}>{t('auth.cancel')}</button></p>
         ) : (<>
-          {show('apple') && <button type="button" className="btn btn-apple" disabled={busy} onClick={() => viaBrowser('apple')}><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.37 12.7c.02 2.5 2.2 3.33 2.22 3.34-.02.06-.35 1.2-1.15 2.37-.69 1.01-1.41 2.02-2.54 2.04-1.11.02-1.47-.66-2.74-.66s-1.67.64-2.72.68c-1.09.04-1.92-1.1-2.62-2.1C5.4 16.3 4.3 12.55 5.77 10.02c.73-1.25 2.03-2.05 3.44-2.07 1.07-.02 2.08.72 2.74.72.65 0 1.88-.89 3.17-.76.54.02 2.06.22 3.03 1.65-.08.05-1.81 1.06-1.78 3.14M14.3 6.5c.58-.7.97-1.68.86-2.65-.83.03-1.84.55-2.44 1.25-.54.62-1.01 1.61-.88 2.56.93.07 1.88-.47 2.46-1.16"/></svg>{t('auth.apple')}</button>}
-          {show('google') && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => viaBrowser('google')}>{t('auth.google')}</button>}
-          {show('github') && <button type="button" className="btn" disabled={busy} onClick={() => viaBrowser('github')}>{t('auth.github')}</button>}
+          {show('apple') && <button type="button" className="btn btn-apple" disabled={busy || pending} onClick={() => viaBrowser('apple')}><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.37 12.7c.02 2.5 2.2 3.33 2.22 3.34-.02.06-.35 1.2-1.15 2.37-.69 1.01-1.41 2.02-2.54 2.04-1.11.02-1.47-.66-2.74-.66s-1.67.64-2.72.68c-1.09.04-1.92-1.1-2.62-2.1C5.4 16.3 4.3 12.55 5.77 10.02c.73-1.25 2.03-2.05 3.44-2.07 1.07-.02 2.08.72 2.74.72.65 0 1.88-.89 3.17-.76.54.02 2.06.22 3.03 1.65-.08.05-1.81 1.06-1.78 3.14M14.3 6.5c.58-.7.97-1.68.86-2.65-.83.03-1.84.55-2.44 1.25-.54.62-1.01 1.61-.88 2.56.93.07 1.88-.47 2.46-1.16"/></svg>{t('auth.apple')}</button>}
+          {show('google') && <button type="button" className="btn btn-primary" disabled={busy || pending} onClick={() => viaBrowser('google')}>{t('auth.google')}</button>}
+          {show('github') && <button type="button" className="btn" disabled={busy || pending} onClick={() => viaBrowser('github')}>{t('auth.github')}</button>}
+          {noProviders(enabled) && <p role="alert" className="msgr-klabel same-method">{t('auth.noProviders')}</p>}
           <p className="msgr-klabel same-method">{t('auth.sameMethod')}</p>
         </>)}
         {(import.meta.env.DEV || import.meta.env.VITE_DEV_LOGIN === '1') && (<> {/* VITE_DEV_LOGIN=1: 로컬 스택을 보는 검수용 번들에서만(OAuth가 없다) — 발행 빌드엔 넣지 않는다 */}

@@ -41,9 +41,9 @@ export async function handoff({ supabaseUrl, provider }, deps) {
 
 /** GoTrue 공개 설정에서 켜진 제공자를 읽는다 → { apple, google, github } (boolean). 실패·모양 이상이면 null(= 게이팅 안 함).
     검수 #528 HIGH-2: 서버에 Apple이 꺼져 있으면 버튼이 죽은 채 보이고 5분 타임아웃까지 기다렸다. */
-export async function fetchProviderSettings(supabaseUrl, fetchFn = globalThis.fetch) {
+export async function fetchProviderSettings(supabaseUrl, fetchFn = globalThis.fetch, anonKey = '') {
   try {
-    const r = await fetchFn(`${supabaseUrl}/auth/v1/settings`, { headers: { accept: 'application/json' } });
+    const r = await fetchFn(`${supabaseUrl}/auth/v1/settings`, { headers: { accept: 'application/json', ...(anonKey ? { apikey: anonKey } : {}) } }); // 호스티드 게이트웨이가 apikey를 요구해도 조용히 fail-open 되지 않게(검수 #530 L-4)
     if (!r?.ok) return null;
     const j = await r.json();
     const ext = j?.external;
@@ -51,3 +51,8 @@ export async function fetchProviderSettings(supabaseUrl, fetchFn = globalThis.fe
     return Object.fromEntries(PROVIDERS.map((p) => [p, ext[p] !== false])); // 명시적으로 꺼진 것만 숨긴다 — 키가 없는(구버전) 응답은 보여 준다
   } catch { return null; }
 }
+
+/** 버튼 표시 판정(검수 #530 M-2: 행동으로 잠근다). enabled=null(미조회·실패) → 표시, 명시적 false만 숨김. */
+export const providerShown = (enabled, p) => !enabled || enabled[p] !== false;
+/** 서버가 제공자를 하나도 켜지 않았다(검수 #530 H-1: 버튼 0개면 안내와 서버 바꾸기 유도). */
+export const noProviders = (enabled) => !!enabled && PROVIDERS.every((p) => enabled[p] === false);
