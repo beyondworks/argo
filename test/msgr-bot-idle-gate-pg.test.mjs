@@ -120,6 +120,17 @@ test('30초가 지나면 전체 스캔이 한 번 돈다(시간 의존 규칙의
   assert.notEqual(seen().split('|')[0], before.split('|')[0], 'last_seen_at 갱신 = 전체 스캔');
 });
 
+test('지문 밖 상태(크루 status)로 막힌 글은 풀어도 30초 게이트를 타고, 31초 뒤 전체 스캔이 배달한다', { skip }, () => {
+  sql(`update public.msgr_crews set status = 'detached' where id = '${BOT_CREW}'`);
+  const held = post(PUB, '@헤르메스 멈춘 동안', mention());
+  assert.deepEqual(updates(m1), [], '비활성 크루엔 배달 없음(새 글이라 전체 스캔은 돌았다)');
+  sql(`update public.msgr_crews set status = 'active' where id = '${BOT_CREW}'`);
+  assert.deepEqual(updates(m1), [], 'status는 지문 밖 → 게이트 유지(게이트 없으면 여기서 도착해 red)');
+  sql(`update public.msgr_bots set scan_at = now() - interval '31 seconds' where id = '${BOT}'`);
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [held], '30초 상한이 실제로 풀어준다');
+  assert.deepEqual(updates(held), []); m1 = held;
+});
+
 test('ack가 커서보다 앞서면 게이트를 우회해 커서를 올린다', { skip }, () => {
   const plain = post(PUB, '봇에게 안 온 글'); // 지문 변화 → 한 번 스캔
   assert.deepEqual(updates(m1), []); assert.deepEqual(updates(m1), []);

@@ -1,10 +1,12 @@
 -- 봇 getUpdates 유휴 게이트 — 엣지 함수 롱폴은 봇마다 1초에 한 번 이 함수를 부른다(supabase/functions/msgr-bot/core.js POLL_MS).
 -- 라이브 실측(2026-09-14, pg_stat_statements 60초 델타): 이 RPC가 분당 297회·회당 평균 1.2초로 전체 SQL 시간의 96%.
 -- 원인: 봇에게 오지 않은 글은 update가 안 돼 커서가 안 넘어가고, 매초 커서 뒤 글 전부를 권한 함수로 재평가(84건 = 294ms+).
--- 처방: 배달 판정 입력의 지문(조직 최대 글 id·DM 위임·실행 클레임·채널 멤버십·프로토콜)을 msgr_bots에 기록하고,
+-- 처방: 배달 판정 입력의 지문(커서 뒤 글의 최대 id·수, 실행 클레임 수, 채널 멤버십 수, 프로토콜)을 msgr_bots에 기록하고,
 --       지문이 같고 30초 이내면 전체 스캔을 건너뛴다. 새 글·멤버십·클레임 변화는 지문이 바뀌어 즉시 스캔한다.
 -- 본문은 20260913122421_msgr_dm_thread_delegation.sql의 msgr_bot_updates_before_work를 그대로 두고 첫머리 게이트만 더한 것.
 alter table public.msgr_bots add column if not exists scan_key text, add column if not exists scan_at timestamptz;
+-- 지문의 멤버십 count가 PK(channel_id,…)를 못 타 전표 스캔이 된다(검수 MEDIUM-2, 봇 수×초당 1회) → 크루 멤버십 부분 인덱스.
+create index if not exists msgr_channel_members_crew_member on public.msgr_channel_members (member_id) where member_kind='crew';
 
 create or replace function public.msgr_bot_updates_before_work(token text,after_id bigint default 0,lim int default 50) returns setof jsonb
 language plpgsql security definer set search_path=public,pg_temp as $function$
@@ -15,7 +17,8 @@ begin
  -- 배달 판정에 들어오는 상태의 지문이 지난 전체 스캔과 같고 30초가 안 지났고 ack(after_id)도 새것이 아니면 빈 결과로 즉시 끝낸다.
  -- 지문 밖의 변화(멤버 만료·잠금·심박 10분 경과 등)는 최대 30초 늦게 반영된다 — 그 안에 반드시 전체 스캔이 한 번 돈다.
  select cursor_msg_id into cur from msgr_crews where id=b.crew_id;
- key:=(select coalesce(max(id),0) from msgr_messages where org_id=b.org_id)||':'||(select count(*) from msgr_dm_grants where crew_id=b.crew_id)
+ -- max(id)만으로는 id가 작은 글이 늦게 커밋되는 순서 역전 때 지문이 안 바뀐다(검수 MEDIUM-1) → 커서 뒤 글 수를 함께 넣는다(둘 다 (org_id,id) 인덱스 전용 스캔).
+ key:=(select coalesce(max(id),0)||':'||count(*) from msgr_messages where org_id=b.org_id and id>coalesce(cur,0))
    ||':'||(select count(*) from msgr_executions where crew_id=b.crew_id)||':'||(select count(*) from msgr_channel_members where member_kind='crew' and member_id=b.crew_id)
    ||':'||coalesce(current_setting('argo.msgr_delivery_protocol',true),'');
  if b.scan_key=key and b.scan_at>now()-interval '30 seconds' and coalesce(after_id,0)<=coalesce(cur,0) then return; end if;
@@ -83,3 +86,5 @@ begin
  return query select * from msgr_bot_updates(token,after_id,lim);
  perform set_config('argo.msgr_delivery_protocol',coalesce(old_protocol,''),true);
 end $function$;
+
+notify pgrst, 'reload schema';
