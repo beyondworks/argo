@@ -208,7 +208,7 @@
 .msgr-pop .tag { margin-left: auto; }
 .msgr-slashpop .cmd { flex: none; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .msgr-slashpop .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); }
-.msgr-slashpop .tag { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-slashpop, .msgr-rolepop { right: 0; max-width: 100%; box-sizing: border-box; } /* 입력창 폭 안에서만(유건 2026-09-14: 목록이 창을 넘쳤다 — 오른쪽 크루 나열 열도 제거) */
 .msgr-slashpop .empty { margin: 0; padding: 8px 10px; font-size: 12.5px; color: var(--fg-3); }
 .msgr-rolepop .head { margin: 0; padding: 6px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--fg-3); } /* /to·/cc 목록 머리글(수신 에이전트 / 참조 에이전트) */
 .msgr-rolepop .empty { margin: 0; padding: 8px 10px; font-size: 12.5px; color: var(--fg-3); display: grid; gap: 8px; justify-items: start; }

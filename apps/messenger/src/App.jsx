@@ -2903,12 +2903,18 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   }, [slashOpen, chId]); // eslint-disable-line react-hooks/exhaustive-deps
   // 1:1 방 수신·참조 = 입력창 명령(유건 결정 2026-09-14: 별도 패널 대신 "/to·/cc 치면 목록"). 서버는 역할 없는 @멘션을 to로 보므로 /to는 @ 삽입,
   // /cc만 참조 칩(recipients)에 남긴다. 후보 = 서버가 준 msgr_dm_candidates(지원 여부 포함). 이미 고른 크루는 빼고, 이 방 상대는 /to에서만 뺀다(/cc는 "참고만"이 가능).
+  // 채널에서도 연다(유건 2026-09-14: "메신저 기능인데 왜 1:1에서만") — /to = @멘션, /cc = 답하지 않는 멘션(브리지 targetsCrew·서버 클레임이 cc를 실행에서 뺀다).
+  // 후보: 1:1 = 서버 전달 후보(지원 여부 게이트), 채널 = 이 채널에서 부를 수 있는 크루(@ 후보와 같은 규칙, 내보낸 크루 제외).
+  const roleCands = useMemo(() => {
+    if (isDm) return recipientLoad === 'ready' ? dmCandidates : [];
+    const usable = (channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // @ 후보(candidates)와 같은 규칙
+    return (scopeCrews ?? usable).map((c) => ({ ...c, delivery_ready: true }));
+  }, [isDm, recipientLoad, dmCandidates, scopeCrews, crews, channel?.excluded_crew_ids, channel?.personal_crews, org]);
   const rolePick = useMemo(() => {
-    if (!isDm) return null;
     const exclude = new Set([...mentionsFromBody(text, byName, [], allByName).map((x) => x.id), ...recipients.map((r) => r.id)]);
-    return rolePickCandidates(text, recipientLoad === 'ready' ? dmCandidates : [], { exclude, participants: new Set((scopeCrews ?? []).map((c) => c.id)) });
-  }, [isDm, text, scopeCrews, byName, allByName, recipients, dmCandidates, recipientLoad]);
-  const slashCands = useMemo(() => rolePick ? null : slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: isDm ? [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] : [] }), [rolePick, text, slashCrews, freshCmds, isDm, t]);
+    return rolePickCandidates(text, roleCands, { exclude, participants: new Set(isDm ? (scopeCrews ?? []).map((c) => c.id) : []) });
+  }, [isDm, text, scopeCrews, byName, allByName, recipients, roleCands]);
+  const slashCands = useMemo(() => rolePick ? null : slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashCrews, freshCmds, t]);
   const [slashSel, setSlashSel] = useState(0);
   useEffect(() => { setSlashSel(0); }, [text]);
   const pickSlash = (cand) => {
@@ -2923,7 +2929,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     else { setText(`@${c.name} `); setMentions((ms) => ms.some((x) => x.id === c.id) ? ms : [...ms, { kind: 'crew', id: c.id, name: c.name }]); }
     requestAnimationFrame(() => { const el = ta.current; if (!el) return; el.focus(); el.setSelectionRange(el.value.length, el.value.length); autosize(el); });
   };
-  const detect = (v, caret) => { const upto = v.slice(0, caret); const m = isDm && ROLE_PICK_RE.test(v) ? null : upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); }; // 1:1의 /to·/cc 중에는 @팝업을 열지 않는다(둘이 겹쳐 Enter가 죽던 것 — 검수 L-1). isDm 없이는 채널 @멘션이 죽는다(검수 2R 신규-1)
+  const detect = (v, caret) => { const upto = v.slice(0, caret); const m = ROLE_PICK_RE.test(v) ? null : upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); }; // /to·/cc 중에는 @팝업을 열지 않는다(둘이 겹쳐 Enter가 죽던 것 — 검수 L-1). 역할 명령은 모든 방에서 열리므로 방 조건 없음(있으면 그 방의 @멘션이 죽는다 — 2R 실사고)
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
   const insertAt = () => { // 도구 줄 '멘션' — 커서 자리에 @를 넣고 팝업을 연다
     const el = ta.current; const pos = el?.selectionStart ?? text.length;
@@ -2953,7 +2959,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   const send = async () => {
     if (locked || busy || job || deliveryBlocked || rolePick) return; // 명령(/to·/cc)만 있는 글은 보내지 않는다 — 폰은 전송 버튼이 유일한 경로(검수 M-1)
     const inline = mentionsFromBody(text.trim(), byName, mentions, allByName);
-    const result = delivery.send(isDm ? dmDeliveryMentions(inline, recipients) : inline);
+    const result = delivery.send(dmDeliveryMentions(inline, recipients)); // 참조 칩은 방 종류와 무관하게 role cc로 합쳐진다
     setPop(null); if (ta.current) ta.current.style.height = 'auto';
     if (await result) onSent(delivery.snapshot().lastDeliveredId);
   };
@@ -2985,20 +2991,20 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
       {rolePick && (
         <div className="msgr-pop msgr-rolepop">
           <p className="head" id="msgr-rolepop-head">{t(rolePick.role === 'cc' ? 'cmd.cc' : 'cmd.to')}</p>
-          {recipientLoad === 'loading' && <p className="empty" role="status">{t('ui.loading')}</p>}
-          {recipientLoad === 'error' && <div className="empty" role="alert"><p>{t('dm.delivery.loadError')}</p><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></div>}
-          {recipientLoad === 'ready' && rolePick.list.length === 0 && <p className="empty">{t(rolePick.q ? 'cmd.noMatch' : 'dm.delivery.empty')}</p>}
+          {isDm && recipientLoad === 'loading' && <p className="empty" role="status">{t('ui.loading')}</p>}
+          {isDm && recipientLoad === 'error' && <div className="empty" role="alert"><p>{t('dm.delivery.loadError')}</p><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></div>}
+          {(!isDm || recipientLoad === 'ready') && rolePick.list.length === 0 && <p className="empty">{t(rolePick.q ? 'cmd.noMatch' : 'dm.delivery.empty')}</p>}
           <div role="listbox" aria-labelledby="msgr-rolepop-head">{rolePick.list.map((c, i) => <button key={c.id} type="button" role="option" aria-selected={i === rsel} disabled={c.disabled} className={i === rsel ? 'on' : ''} ref={i === rsel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pickRole(c); }}>
             <Av name={c.name} crew size="sm" crewId={c.id} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.disabled ? t('dm.delivery.update') : c.sub || t('org.crews')}</span>
           </button>)}</div>
-          {recipientLoad === 'ready' && <p className="foot"><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></p>}
+          {isDm && recipientLoad === 'ready' && <p className="foot"><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></p>}
         </div>
       )}
       {slashCands && (
         <div className="msgr-pop msgr-slashpop" role="listbox" aria-label={t('cmd.title')}>
           {slashCands.length === 0 && <p className="empty">{t('cmd.empty')}</p>}
           {slashCands.map((c, i) => <button key={c.key} type="button" role="option" aria-selected={i === slashSel} className={i === slashSel ? 'on' : ''} ref={i === slashSel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
-            <span className="cmd">/{c.cmd}</span><span className="desc">{c.desc}</span><span className="tag msgr-klabel">{t(c.kind === 'builtin' ? 'cmd.builtin' : c.kind === 'skill' ? 'cmd.skill' : 'cmd.alias')}{c.crews.length ? ` · ${c.crews.map((x) => x.name).join(', ')}` : ''}</span>
+            <span className="cmd">/{c.cmd}</span><span className="desc">{c.desc}</span>
           </button>)}
         </div>
       )}
@@ -3010,7 +3016,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
         </div>
       )}
       {isDm && (deliveryBlocked || retryBlocked) && <p className="msgr-dm-delivery-warning" role="alert">{t('dm.delivery.blocked')}</p>}
-      {isDm && recipients.length > 0 && <div className="msgr-chips msgr-cc-chips" role="group" aria-label={t('dm.delivery.cc')}>{recipients.map((r) => <button key={r.id} type="button" className="msgr-chan" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}><span>{t(`dm.delivery.${r.role}`)} · {r.name}</span><I name="x" size={12} className="mi" /></button>)}</div>}
+      {recipients.length > 0 && <div className="msgr-chips msgr-cc-chips" role="group" aria-label={t('dm.delivery.cc')}>{recipients.map((r) => <button key={r.id} type="button" className="msgr-chan" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}><span>{t(`dm.delivery.${r.role}`)} · {r.name}</span><I name="x" size={12} className="mi" /></button>)}</div>}
       {job && <div className="msgr-delivery" role="status" aria-live="polite">
         <strong>{t(busy ? 'msg.delivery.sending' : job.messageId ? 'msg.delivery.attachFailed' : 'msg.delivery.failed')}</strong>
         <p className="delivery-preview">{job.body || job.files.map((item) => item.file.name).join(', ')}</p>
