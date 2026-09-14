@@ -393,10 +393,10 @@ const DICT = {
   'settings.language.desc': ['화면 표시 언어를 선택합니다. 어디서든 단축키로도 전환됩니다.', 'Choose the display language. You can also toggle it anywhere with the shortcut.'],
   'settings.language.shortcut': ['단축키', 'Shortcut'],
   'settings.zoom': ['표시 배율', 'Display zoom'],
-  'settings.zoom.desc': ['화면 전체를 비례 확대·축소합니다. 큰 모니터에서는 처음에 자동으로 확대되며, 어디서든 단축키로도 조절됩니다.', 'Scales the whole screen proportionally. Starts auto-enlarged on big monitors; you can also adjust it anywhere with the shortcuts.'],
+  'settings.zoom.desc': ['화면 전체를 비례 확대·축소합니다. 기본은 100%이며, 어디서든 단축키로도 조절됩니다.', 'Scales the whole screen proportionally. Defaults to 100%; you can also adjust it anywhere with the shortcuts.'],
   'settings.zoom.out': ['축소', 'Zoom out'],
   'settings.zoom.in': ['확대', 'Zoom in'],
-  'settings.zoom.auto': ['자동', 'Auto'],
+  'settings.zoom.auto': ['기본값', 'Reset'],
   'settings.zoom.shortcut': ['단축키', 'Shortcuts'],
   'settings.head': ['설정 · 회사 설정', 'Settings · Company'],
   'settings.tab.general': ['일반', 'General'],
@@ -1619,13 +1619,13 @@ const mirrorLangCookie = (l) => {
 };
 
 /** 표시 배율 적용 + 저장 — 전역 단축키(cmd +·−·0)와 설정 화면 버튼이 공유하는 단일 로직.
-    delta: ±0.1 = 10% 단계(0.7~2.0 클램프), null = 리셋(자동 판정 복귀 + 저장 삭제).
+    delta: ±0.1 = 10% 단계(0.7~2.0 클램프), null = 리셋(기본 100% + 저장 삭제).
     적용 배율을 반환하고 argo:zoom 이벤트로 알린다(설정 카드의 현재값 표시가 따라온다). */
 export function adjustZoom(delta) {
   const el = document.documentElement;
   let next;
   if (delta == null) {
-    next = typeof window.__argoAutoZoom === 'function' ? window.__argoAutoZoom() : 1;
+    next = 1;
     try { localStorage.removeItem('argo-zoom'); } catch { /* 무시 */ }
   } else {
     const cur = parseFloat(el.style.zoom) || 1;
@@ -1658,7 +1658,7 @@ export function LanguageProvider({ children }) {
 
   // 전역 단축키(윈도우는 ctrl) — cmd+/ 언어 전환, cmd +·−·0 표시 배율(10%씩·리셋).
   // 배율은 페이지 전체 zoom이라 레이아웃·여백 관계가 그대로 유지된다(2026-08-29 유건 제약).
-  // 초기 적용·자동 판정(__argoAutoZoom)은 layout.jsx의 zoomBoot가 첫 페인트 전에 한다.
+  // 저장값의 초기 적용은 layout.jsx의 zoomBoot가 첫 페인트 전에 한다(기본 100%).
   useEffect(() => {
     const h = (e) => {
       if (!(e.metaKey || e.ctrlKey)) return;
