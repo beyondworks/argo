@@ -771,7 +771,8 @@ function TrashCard({ ws }) {
     응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
 /** 팀 메신저 — 이 회사 크루를 조직에 등록(파견)/해제하고 허용 범위를 고른다. 조직·채널·메시지는 메신저 앱이 다룬다.
     데이터는 /api/companies/[ws]/msgr(기기 세션 JWT로 Supabase msgr_crews에 씀). 기본 허용 범위는 '나만'(부록 H — 정책 테이블 전까지 가장 좁게). */
-/** 알림 받을 방 — 메신저에서 시작하지 않은 크루 알림(결재·장시간 작업·쪽지·루틴·위임)을 한 방으로. 저장은 company.json.msgr.notify(src/msgr-notify.mjs). */
+/** 크루 알림을 메신저로 받기 — 메신저에서 시작하지 않은 크루 알림(결재·장시간 작업·쪽지·루틴·위임)을 한 방으로.
+    모양은 텔레그램 카드의 "이 채널로 보낼 알림"과 같은 문법(작은 라벨 → 선택 → 칩 → 힌트) — 이 페이지에서 이 구역만 다르게 보이던 문제(유건 2026-09-15). 저장은 company.json.msgr.notify. */
 function MsgrNotifyRoom({ ws, signedIn }) {
   const { t } = useLang();
   const [opt, setOpt] = useState(null); // { rooms:[{orgId,channelId,name,orgName}], events:[...], notify:{orgId,channelId,events}|null }
@@ -785,7 +786,11 @@ function MsgrNotifyRoom({ ws, signedIn }) {
   useEffect(() => { if (signedIn) load(); }, [signedIn, load]);
   if (!signedIn || opt === null) return null;
   const chosen = opt.rooms.find((r) => r.channelId === room);
+  const multiOrg = new Set(opt.rooms.map((r) => r.orgId)).size > 1;
+  // 방 이름: 1:1 방은 "페퍼와의 1:1", 채널은 "#Crew". 조직이 여럿일 때만 조직명을 앞에 붙인다(dm:슈리 같은 내부 이름 노출 금지)
+  const roomLabel = (r) => `${multiOrg ? `${r.orgName} · ` : ''}${r.name.startsWith('dm:') ? t('settings.msgr.notify.dm', { name: r.name.slice(3) }) : `#${r.name}`}`;
   const toggle = (ev) => setEvents((cur) => (cur.includes(ev) ? cur.filter((x) => x !== ev) : [...cur, ev]));
+  const dirty = (chosen?.channelId ?? '') !== (opt.notify?.channelId ?? '') || JSON.stringify([...events].sort()) !== JSON.stringify([...(opt.notify?.events ?? [])].sort());
   const save = async () => {
     setBusy(true); setMsg('');
     try {
@@ -798,35 +803,35 @@ function MsgrNotifyRoom({ ws, signedIn }) {
     try { await api(`/api/companies/${ws}/msgr/notify`, { off: true }); setRoom(''); setEvents([]); setMsg(t('settings.msgr.notify.off.done')); await load(); }
     catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
   };
+  const chip = (on) => ({ cursor: 'pointer', padding: '5px 12px', fontSize: 12, textTransform: 'none', letterSpacing: 0, ...(on ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : { opacity: 0.6 }) });
   return (
-    <div style={{ display: 'grid', gap: 8, padding: '12px 14px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
+    <div style={{ display: 'grid', gap: 8 }}>
       <span className="microlabel">{t('settings.msgr.notify.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.notify.help')}</p>
       {!opt.rooms.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notify.noRooms')}</p>}
       {!!opt.rooms.length && (<>
-        <label style={{ display: 'grid', gap: 5 }}>
-          <span className="microlabel">{t('settings.msgr.notify.room')}</span>
-          <select className="input" value={room} onChange={(e) => { const v = e.target.value; setRoom(v); if (v && !events.length) setEvents([...opt.events]); }}>{/* 방을 고르면 기본 전체 선택 — 이벤트 0개 저장은 '켠 것처럼 보이는 끔'(검수 #535 ②) */}
-            <option value="">{t('settings.msgr.notify.off')}</option>
-            {opt.rooms.map((r) => <option key={r.channelId} value={r.channelId}>{r.orgName} · #{r.name}</option>)}
-          </select>
-        </label>
-        {chosen && (
-          <div style={{ display: 'grid', gap: 6 }}>
-            <span className="microlabel">{t('settings.msgr.notify.events')}</span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {opt.events.map((ev) => { const on = events.includes(ev); return (
-                <button key={ev} type="button" className="chip" onClick={() => toggle(ev)} aria-pressed={on}
-                  style={{ cursor: 'pointer', padding: '5px 12px', fontSize: 12, textTransform: 'none', letterSpacing: 0, ...(on ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : { opacity: 0.6 }) }}>
-                  {t(`settings.conn.ev.${ev}`)}
-                </button>
-              ); })}
-            </div>
+        <div className="msgr-orgbar">
+          <label>
+            <span className="microlabel">{t('settings.msgr.notify.room')}</span>
+            <select className="input" value={room} onChange={(e) => { const v = e.target.value; setRoom(v); if (v && !events.length) setEvents([...opt.events]); }}>
+              <option value="">{t('settings.msgr.notify.off')}</option>
+              {opt.rooms.map((r) => <option key={r.channelId} value={r.channelId}>{roomLabel(r)}</option>)}
+            </select>
+          </label>
+          {opt.notify && chosen && !dirty && <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('settings.msgr.notify.active', { n: opt.notify.events.length })}</span>}
+        </div>
+        {chosen && (<>
+          <span className="microlabel">{t('settings.msgr.notify.events')}</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {opt.events.map((ev) => { const on = events.includes(ev); return (
+              <button key={ev} type="button" className="chip" onClick={() => toggle(ev)} aria-pressed={on} style={chip(on)}>{t(`settings.conn.ev.${ev}`)}</button>
+            ); })}
           </div>
-        )}
+          <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.msgr.notify.eventsHint')}</span>
+        </>)}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="btn btn-primary sm" disabled={busy || (!!chosen && !events.length)} onClick={save}>{busy ? <Spinner size={12} /> : t('settings.msgr.notify.save')}</button>
-          {opt.notify && <button type="button" className="btn sm" disabled={busy} onClick={off}>{t('settings.msgr.notify.clear')}</button>}{/* 끄기는 서버에 바로(로컬 폼만 비우면 화면과 서버가 어긋난다 — 검수 #535 ③) */}
+          <button type="button" className="btn btn-primary sm" disabled={busy || !dirty || (!!chosen && !events.length)} onClick={save}>{busy ? <Spinner size={12} /> : t('settings.msgr.notify.save')}</button>
+          {opt.notify && <button type="button" className="btn sm" disabled={busy} onClick={off}>{t('settings.msgr.notify.clear')}</button>}
           {msg && <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{msg}</span>}
         </div>
       </>)}
