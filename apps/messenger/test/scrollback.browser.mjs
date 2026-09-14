@@ -5,7 +5,7 @@
 // 검사는 두 종류다.
 //   [게이트]  현재 코드에서 초록이어야 한다. M2·M3·M4·M5·M6 변이에서 빨강이 나오는지로 잠금을 실증한다.
 //   [결함재현] 검수 시점(f932c62)에서 빨강이던 항목(HIGH-1·HIGH-2). 수정이 들어오면 초록이 된다.
-// 종료코드: 게이트가 하나라도 실패하면 1. 결함재현 실패는 0(단 SB_STRICT=1 이면 같이 1).
+// 종료코드: 게이트가 하나라도 실패하면 1. 결함재현 실패도 기본(strict)에서 1 — local.json에 strict:false면 0.
 //
 // 설계 메모(실측으로 얻은 것 — 고치기 전에 읽을 것)
 //  · 한 페이지만 불러오려면 버튼 클릭을 쓴다. 휠로 맨 위까지 올리면 보정 뒤에도 상단에 남아 여러 페이지가 연달아 실려 측정이 섞인다.
@@ -14,9 +14,11 @@
 //  · CDP 입력(page.mouse.wheel)은 스레드가 무거우면 타임아웃으로 죽는다 — 측정 경로에서 뺐다.
 //  · 페이지 안 requestAnimationFrame 로거는 탭이 뒤로 가면 스로틀돼 표본이 통째로 빈다 — 표본은 Node 쪽에서 뽑는다.
 
-const PORT = process.env.SB_TEST_PORT || '5371';
-const IOS_PORT = process.env.SB_IOS_PORT || '5372';
-const STRICT = process.env.SB_STRICT === '1';
+// 설정은 파일로 — ego-browser nodejs는 호출자의 환경 변수를 상속하지 않는다(실측: SB_STRICT·SB_TEST_PORT 전부 null, 검수 #531 3R LOW-2).
+// 기본값을 바꾸려면 옆에 scrollback.local.json({ "port": 5371, "iosPort": 5372, "strict": true })을 둔다(gitignore).
+const fs = await import('node:fs');
+const CFG = { port: 5371, iosPort: 5372, strict: true, ...(() => { try { return JSON.parse(fs.readFileSync('/Users/yoogeon/lean-projects/saas/argo/apps/messenger/test/scrollback.local.json', 'utf8')); } catch { return {}; } })() };
+const PORT = String(CFG.port), IOS_PORT = String(CFG.iosPort), STRICT = CFG.strict !== false;
 const PAGE = 100;
 const url = (port, qs) => `http://127.0.0.1:${port}/test/scrollback.fixture.html?${qs}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -47,10 +49,19 @@ const clickOlder = () => page.evaluate('(() => { const b = document.querySelecto
 // 바닥 고정(stick) 해제 — 실제 휠 입력이어야 한다.
 // 합성 WheelEvent 는 앱의 제스처 표시에 닿지 않는다(실증: 합성 휠 + scrollTop 대입 뒤 내용을 키우면 그대로 바닥으로 끌려갔다).
 // 휠은 첫 페이지(가벼운 상태)에서만 쓰고, 실제 로드는 버튼으로 한다 — 무거워진 뒤 CDP 입력은 타임아웃으로 죽는다.
-const releaseStick = async () => {
-  try { await page.mouse.move(640, 400); } catch { /* 렌더 부하 */ }
-  for (let i = 0; i < 3; i++) { try { await page.mouse.wheel(0, -1000); } catch { /* CDP 타임아웃 */ } await sleep(120); }
-  return page.evaluate('(() => { const f = document.querySelector(".msgr-thread"); return Math.round(f.scrollHeight - f.scrollTop - f.clientHeight); })()');
+// 바닥에서 떨어뜨리는 건 프로그램 scrollTop으로 — L-4(loadOlder가 stick=false) 뒤로는 제스처 표시가 필요 없다.
+// CDP 휠(page.mouse.wheel)은 6회 중 2회 타임아웃으로 이동 0·부분 이동이 나 게이트 2가 5회 중 2회 빨갰다(검수 #531 3R MEDIUM-1).
+// 뒷탭에선 ResizeObserver 알림이 렌더 기회까지 밀려 있다가 배치 직후 한꺼번에 와, 아직 참인 초기 바닥 고정(제스처 없음)이 바닥으로 되돌린다(7회 중 1회 실측, 실사용의 휠 제스처엔 없는 경로).
+// → 위치가 두 번 연속 유지될 때까지 다시 놓는다(최대 8회).
+const placeAbove = async (gap = 1200) => {
+  const readGap = () => page.evaluate('(() => { const f = document.querySelector(".msgr-thread"); return Math.round(f.scrollHeight - f.scrollTop - f.clientHeight); })()');
+  let g = -1;
+  for (let i = 0; i < 8; i++) {
+    await page.evaluate(`(() => { const f = document.querySelector(".msgr-thread"); f.scrollTop = Math.max(0, f.scrollHeight - f.clientHeight - ${gap}); return 1; })()`);
+    await sleep(350); const a = Number(await readGap()); await sleep(350); const b = Number(await readGap());
+    g = b; if (Math.abs(a - gap) <= 5 && Math.abs(b - gap) <= 5) break;
+  }
+  return g;
 };
 
 // 한 메시지를 앵커로 삼아 화면상의 위치를 잰다.
@@ -100,7 +111,7 @@ for (const [kind, name, qs, lag] of [
   await ready(url(PORT, qs));
   if (lag) await page.evaluate(`Object.assign(window.__sbLag, { msgr_attachments: ${lag}, msgr_reactions: ${lag} }), 1`); // 메시지 질의 지연은 보존
   const anchor = (await ids())[0]; // 첫 페이지의 가장 오래된 메시지 — 붙는 지점 바로 아래
-  const gapAfterRelease = await releaseStick();
+  const gapAfterRelease = await placeAbove(1200);
   await sleep(400);
   const pre = await snap(anchor);
   const clicked = await clickOlder();
@@ -154,5 +165,5 @@ const gates = results.filter((r) => r.kind === '게이트');
 const gateFail = gates.filter((r) => !r.ok);
 const defectFail = results.filter((r) => r.kind === '결함재현' && !r.ok);
 console.log(`\n게이트 ${gates.length - gateFail.length}/${gates.length} 통과 · 결함재현 ${defectFail.length}건 미해소`);
-if (defectFail.length && !STRICT) console.log('(결함재현 실패는 수정 전 기준에서 정상. SB_STRICT=1 이면 종료코드에 포함)');
+if (defectFail.length && !STRICT) console.log('(strict:false — 결함재현 실패가 종료코드에 빠짐)');
 process.exit(gateFail.length || (STRICT && defectFail.length) ? 1 : 0);
