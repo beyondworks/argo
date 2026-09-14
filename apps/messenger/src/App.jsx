@@ -27,7 +27,7 @@ import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
 import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
-import { slashCandidates, slashInsert, rolePickCandidates } from './slash-commands.mjs';
+import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -2922,7 +2922,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     else { setText(`@${c.name} `); setMentions((ms) => ms.some((x) => x.id === c.id) ? ms : [...ms, { kind: 'crew', id: c.id, name: c.name }]); }
     requestAnimationFrame(() => { const el = ta.current; if (!el) return; el.focus(); el.setSelectionRange(el.value.length, el.value.length); autosize(el); });
   };
-  const detect = (v, caret) => { const upto = v.slice(0, caret); const m = upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); };
+  const detect = (v, caret) => { const upto = v.slice(0, caret); const m = ROLE_PICK_RE.test(v) ? null : upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); }; // /to·/cc 중에는 @팝업을 열지 않는다(둘이 겹쳐 Enter가 죽던 것 — 검수 L-1)
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
   const insertAt = () => { // 도구 줄 '멘션' — 커서 자리에 @를 넣고 팝업을 연다
     const el = ta.current; const pos = el?.selectionStart ?? text.length;
@@ -2950,7 +2950,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     setFiles((cur) => acceptFiles(cur, incoming, ATTACH_MAX).files);
   };
   const send = async () => {
-    if (locked || busy || job || deliveryBlocked) return;
+    if (locked || busy || job || deliveryBlocked || rolePick) return; // 명령(/to·/cc)만 있는 글은 보내지 않는다 — 폰은 전송 버튼이 유일한 경로(검수 M-1)
     const inline = mentionsFromBody(text.trim(), byName, mentions, allByName);
     const result = delivery.send(isDm ? dmDeliveryMentions(inline, recipients) : inline);
     setPop(null); if (ta.current) ta.current.style.height = 'auto';
@@ -2959,8 +2959,9 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   const onKey = (e) => {
     if (rolePick) { // /to·/cc 목록 — @멘션 팝업과 같은 키. Escape는 명령을 지운다
       const list = rolePick.list;
-      if (list.length && e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % list.length); return; }
-      if (list.length && e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + list.length) % list.length); return; }
+      const step = (from, dir) => { for (let k = 1; k <= list.length; k++) { const i = (from + dir * k + list.length * k) % list.length; if (!list[i].disabled) return i; } return from; }; // 미지원(disabled) 행은 건너뛴다(검수 M-3)
+      if (list.length && e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => step(s, 1)); return; }
+      if (list.length && e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => step(s, -1)); return; }
       if (list.length && (e.key === 'Enter' || e.key === 'Tab')) { e.preventDefault(); pickRole(list[Math.min(sel, list.length - 1)]); return; }
       if (e.key === 'Escape') { e.preventDefault(); setText(''); return; }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); return; } // 명령만 있는 글은 보내지 않는다
@@ -2981,14 +2982,14 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   return (
     <div className="msgr-dock" style={{ '--sbw': `${sbw}px` }}><div>
       {rolePick && (
-        <div className="msgr-pop msgr-rolepop" role="listbox" aria-label={t(rolePick.role === 'cc' ? 'cmd.cc' : 'cmd.to')}>
-          <p className="head">{t(rolePick.role === 'cc' ? 'cmd.cc' : 'cmd.to')}</p>
+        <div className="msgr-pop msgr-rolepop">
+          <p className="head" id="msgr-rolepop-head">{t(rolePick.role === 'cc' ? 'cmd.cc' : 'cmd.to')}</p>
           {recipientLoad === 'loading' && <p className="empty" role="status">{t('ui.loading')}</p>}
           {recipientLoad === 'error' && <div className="empty" role="alert"><p>{t('dm.delivery.loadError')}</p><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></div>}
           {recipientLoad === 'ready' && rolePick.list.length === 0 && <p className="empty">{t('dm.delivery.empty')}</p>}
-          {rolePick.list.map((c, i) => <button key={c.id} type="button" role="option" aria-selected={i === sel} disabled={c.disabled} className={i === sel ? 'on' : ''} ref={i === sel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pickRole(c); }}>
+          <div role="listbox" aria-labelledby="msgr-rolepop-head">{rolePick.list.map((c, i) => <button key={c.id} type="button" role="option" aria-selected={i === sel} disabled={c.disabled} className={i === sel ? 'on' : ''} ref={i === sel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pickRole(c); }}>
             <Av name={c.name} crew size="sm" crewId={c.id} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.disabled ? t('dm.delivery.update') : c.sub || t('org.crews')}</span>
-          </button>)}
+          </button>)}</div>
           {recipientLoad === 'ready' && <p className="foot"><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></p>}
         </div>
       )}
@@ -3008,7 +3009,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
         </div>
       )}
       {isDm && (deliveryBlocked || retryBlocked) && <p className="msgr-dm-delivery-warning" role="alert">{t('dm.delivery.blocked')}</p>}
-      {isDm && recipients.length > 0 && <div className="msgr-chips msgr-cc-chips" aria-label={t('dm.delivery.cc')}>{recipients.map((r) => <button key={r.id} type="button" className="msgr-chan" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}><span>{t(`dm.delivery.${r.role}`)} · {r.name}</span><I name="x" size={12} className="mi" /></button>)}</div>}
+      {isDm && recipients.length > 0 && <div className="msgr-chips msgr-cc-chips" role="group" aria-label={t('dm.delivery.cc')}>{recipients.map((r) => <button key={r.id} type="button" className="msgr-chan" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}><span>{t(`dm.delivery.${r.role}`)} · {r.name}</span><I name="x" size={12} className="mi" /></button>)}</div>}
       {job && <div className="msgr-delivery" role="status" aria-live="polite">
         <strong>{t(busy ? 'msg.delivery.sending' : job.messageId ? 'msg.delivery.attachFailed' : 'msg.delivery.failed')}</strong>
         <p className="delivery-preview">{job.body || job.files.map((item) => item.file.name).join(', ')}</p>
@@ -3031,7 +3032,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
           {files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} />{f.name}<span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span>
             {uploading !== f.name && <button type="button" className="x" onMouseDown={(e) => e.preventDefault()} onClick={() => setFiles((cur) => withoutFile(cur, f))} disabled={busy} aria-label={t('att.remove', { name: f.name })} title={t('att.remove', { name: f.name })}>×</button>}</span>)}
           {channel.crew_memory === false && <span className="tb on" title={t('ch.crewMemory')}><I name="memoff" size={15} /><span>{t('ch.memoryOff')}</span></span>}
-          <button className="send" onMouseDown={(e) => e.preventDefault()} disabled={busy || !!job || locked || deliveryBlocked || (!text.trim() && !files.length)} aria-label={t('msg.send')} title={locked ? t('org.locked.short') : t('msg.send')}><I name="up" size={16} /></button>
+          <button className="send" onMouseDown={(e) => e.preventDefault()} disabled={busy || !!job || locked || deliveryBlocked || !!rolePick || (!text.trim() && !files.length)} aria-label={t('msg.send')} title={locked ? t('org.locked.short') : t('msg.send')}><I name="up" size={16} /></button>
         </div>
       </form>
       <div className="msgr-sub">

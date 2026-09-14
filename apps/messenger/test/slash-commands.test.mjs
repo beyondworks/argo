@@ -52,7 +52,8 @@ test('내장 /to·/cc는 1:1에서만 넘기며 크루 명령보다 앞에, 접�
 test('/to·/cc 목록 — 명령이 아니면 null, 질의는 이름 부분 일치(대소문자 무시), 제외 집합은 빠지고 미지원 크루는 disabled', () => {
   assert.equal(rolePickCandidates('안녕', cands), null);
   assert.equal(rolePickCandidates('/todo', cands), null, '/to 뒤에 글자가 붙으면 다른 명령');
-  assert.equal(rolePickCandidates('/cc 페 퍼', cands), null, '질의는 한 토큰');
+  assert.deepEqual(rolePickCandidates('/cc 알프 레드', cands).list, [], '질의는 나머지 전체 — 이름과 다르면 빈 목록');
+  assert.deepEqual(rolePickCandidates('/to fixture new ', [{ id: 'n', display_name: 'Fixture New Agent', delivery_ready: true }]).list.map((c) => c.id), ['n'], '공백 있는 이름도 이어서 칠 수 있다(검수 M-2)');
   assert.match('/CC', ROLE_PICK_RE);
   const all = rolePickCandidates('/to', cands);
   assert.equal(all.role, 'to'); assert.deepEqual(all.list.map((c) => [c.name, c.disabled]), [['페퍼', false], ['Wolff', true], ['알프레드', false]]);

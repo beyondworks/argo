@@ -204,6 +204,7 @@
 @keyframes msgrPopIn { from { opacity: 0; transform: scale(0.97) translateY(4px); } to { opacity: 1; transform: none; } }
 .msgr-pop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 6px 8px; font-size: 12.5px; color: var(--fg); background: none; cursor: pointer; }
 .msgr-pop button.on, .msgr-pop button:hover { background: var(--card-2); }
+.msgr-pop button:disabled { opacity: .45; cursor: default; } /* 미지원 크루(업데이트 필요) — 이전 <select>의 회색 option 과 같은 어포던스(검수 M-3) */
 .msgr-pop .tag { margin-left: auto; }
 .msgr-slashpop .cmd { flex: none; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .msgr-slashpop .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); }

@@ -34,14 +34,14 @@ export function slashInsert(cand, { isDm }) {
 
 // 1:1 방의 수신·참조 고르기(유건 결정 2026-09-14 — "멘션이 사실상 to"): 서버는 역할 없는 @멘션을 to로 본다(coalesce(role,'to')).
 // 그래서 별도 수신·참조 패널 대신 입력창 명령 하나로 — `/to 질의`는 @ 목록과 같은 목록(고르면 `@이름 ` 삽입), `/cc 질의`는 같은 목록(고르면 참조 칩).
-export const ROLE_PICK_RE = /^\/(to|cc)(?:\s+(\S*))?$/i;
+export const ROLE_PICK_RE = /^\/(to|cc)(?:\s+(.*))?$/i; // 질의 = 나머지 전체(크루 이름엔 공백이 흔하다 — 검수 M-2). 명령이 글 전체를 차지할 때만 발동
 
 /** @returns null(명령 아님) | { role:'to'|'cc', q, list:[{ kind:'crew', id, name, sub, disabled }] }
     exclude = 이미 본문에 있거나 참조로 고른 crew id. participants = 이 1:1 방의 상대 — /to에서만 뺀다(@상대는 중복), /cc에는 남긴다("답하지 말고 참고만") */
 export function rolePickCandidates(text, candidates, { exclude = new Set(), participants = new Set() } = {}) {
   const m = String(text ?? '').match(ROLE_PICK_RE);
   if (!m) return null;
-  const role = m[1].toLowerCase(); const q = (m[2] ?? '').toLowerCase();
+  const role = m[1].toLowerCase(); const q = (m[2] ?? '').trim().toLowerCase();
   const list = (Array.isArray(candidates) ? candidates : []).filter((c) => c?.id && !exclude.has(c.id) && !(role === 'to' && participants.has(c.id)) && String(c.display_name ?? '').toLowerCase().includes(q))
     .map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, sub: c.role_text, disabled: c.delivery_ready !== true }));
   return { role, q, list };

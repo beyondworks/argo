@@ -26,6 +26,13 @@ for(const engine of (process.env.DM_ENGINE ? [process.env.DM_ENGINE] : ['chromiu
    await option('Fixture New Agent').waitFor();
    assert.equal(await option('Fixture Outdated Agent').isDisabled(),true);
    assert.equal(await option('Fixture Unknown Agent').isDisabled(),true);
+   assert.equal(await page.getByRole('button',{name:send,exact:true}).isDisabled(),true,'a bare /cc command cannot be sent (send button is the only path on phones)');
+   await ta.fill('/cc outdated');await option('Fixture Outdated Agent').waitFor();await ta.press('Enter');
+   assert.equal(await page.locator('.msgr-cc-chips').count(),0,'Enter on an unsupported agent adds nothing');assert.equal(await ta.inputValue(),'/cc outdated','…and keeps the command');
+   await ta.fill('/cc fixture new');await option('Fixture New Agent').waitFor();assert.equal(await option('Fixture Outdated Agent').count(),0,'multi-word query keeps filtering');
+   await ta.fill('/');await page.locator('.msgr-slashpop').waitFor();
+   assert.deepEqual((await page.locator('.msgr-slashpop .cmd').allTextContents()).slice(0,2),['/to','/cc'],'DM commander offers /to·/cc first');
+   await ta.fill('/cc');
    assert.equal(await option('Fixture Existing Agent').count(),1,'/cc keeps the DM partner (context only)');
    await ta.fill('/to');
    assert.equal(await option('Fixture Existing Agent').count(),0,'/to drops the DM partner (already the addressee)');
@@ -88,4 +95,4 @@ for(const engine of (process.env.DM_ENGINE ? [process.env.DM_ENGINE] : ['chromiu
  await browser.close();
 }
 await writeFile(new URL('results.json',artifacts),JSON.stringify(results,null,2));
-if(results.some(r=>!r.pass))process.exit(1);
+if(results.some(r=>!r.pass))process.exitCode=1;
