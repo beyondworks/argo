@@ -902,7 +902,7 @@ function Shell({ session }) {
             </div>
           </>)}
         </div>
-        <div className="msgr-railbody">
+        <div className="msgr-railbody"><div className="msgr-railinner">{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
         {favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
         </RailSection>)}
@@ -957,7 +957,7 @@ function Shell({ session }) {
           </div>
         </RailSection>)}
 
-        </div>
+        </div></div>
         {ctx && <CtxMenu at={ctx} items={ctx.items} onClose={() => setCtx(null)} />}
         {railAction && createPortal(<div ref={actionDialog} onKeyDown={trapActionFocus} className="shell msgr-action-dialog" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(railActionKey)}>
           {railAction.kind === 'delete'
@@ -1583,7 +1583,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
             <div className="row"><Av name={me?.display_name || session.user.email} userId={uid} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
             {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
-            <div className="row"><NotifyRow /><SoundRow /><DiagRow /><button type="button" className="btn sm" disabled={signingOut} onClick={signOut}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+            <div className="row"><NotifyRow /><SoundRow /><button type="button" className="btn sm" disabled={signingOut} onClick={signOut}><I name="out" size={13} />{t('auth.signOut')}</button></div>
           </section>
           <ProfileCard uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} />
           <section className="msgr-setcard">
@@ -1610,6 +1610,10 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
               <span className="msgr-klabel">{t('set.skins')}</span>
               <div className="msgr-chips">{skins.map((c) => <button key={c} type="button" className={`msgr-chan${theme === c ? ' active' : ''}`} onClick={() => setTheme(c)} title={ta(`settings.theme.${c}`)}><span>{ta(`settings.theme.${c}`).split(' — ')[0]}</span></button>)}</div>
             </div>
+          </section>
+          <section className="msgr-setcard msgr-diagcard">{/* 진단은 문제 신고용 — 계정·알림 설정과 섞이지 않게 맨 아래 별도 카드(유건 2026-09-14) */}
+            <h2>{t('set.diag')}</h2><p>{t('set.diag.desc')}</p>
+            <DiagRow />
           </section>
         </>)}
       </div>
@@ -1962,7 +1966,6 @@ function DiagRow() {
   return (
     <details className="msgr-diag" open={open} onToggle={(e) => { setOpen(e.currentTarget.open); if (e.currentTarget.open) setList(readDiag()); }} style={{ flexBasis: '100%' }}>
       <summary className="msgr-klabel">{t('set.diag')} · {list.length}{errs > 0 && <span className="msgr-badge" style={{ marginLeft: 6 }}>{errs}</span>}</summary>
-      <p className="note">{t('set.diag.desc')}</p>
       {!list.length ? <p className="note">{t('set.diag.none')}</p> : <ul className="msgr-diaglist">{list.map((e, i) => <li key={i}><span className="mono">{e.at.slice(11, 19)}</span> <b>{e.kind}</b> {e.message}{e.extra && <span className="note"> — {e.extra.slice(0, 160)}</span>}</li>)}</ul>}
       <button type="button" className="btn sm ghost" onClick={() => { clearDiag(); setList([]); }}>{t('set.diag.clear')}</button>
     </details>
