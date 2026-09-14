@@ -857,32 +857,50 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
 }
 
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
-/** 회사 단위 알림 목적지 — 원점 없는 이벤트를 설정한 방에 그 이벤트의 크루 이름으로 올린다(src/msgr-notify.mjs). 같은 이벤트는 client_msg_id로 한 번만. */
-export async function msgrNotifyPush(event, target, { session = sessionClient, now = Date.now() } = {}) {
+/** 크루 알림을 아르고 메신저로 — 원점 없는 이벤트를 **그 크루와 나의 1:1 방**에 그 크루 이름으로 올린다(src/msgr-notify.mjs, 유건 결정 2026-09-15: 방 선택 없음).
+    크루가 파견된 조직마다 1:1 방을 찾고(크루의 DM 채널 ∩ 내가 구성원인 채널), 없으면 msgr_create_channel(kind dm)로 만든다(메신저 앱과 같은 경로).
+    같은 이벤트는 client_msg_id(자연 id·시각 축·본문 해시)로 한 번만. */
+export async function msgrNotifyPush(event, _target = null, { session = sessionClient, now = Date.now() } = {}) {
   const { formatMsgrNotify, msgrNotifyCrewSlug } = await import('../msgr-notify.mjs');
   const [{ loadCompany }, { listAgents }] = await Promise.all([import('../workspace.mjs'), import('../hub.mjs')]);
   const company = await loadCompany(event.wsId);
-  if (!company.msgr?.enabled) return false; // 파견 크루 0 = 브리지 꺼짐 — 세션을 열 이유가 없다(검수 #535 c)
+  if (!company.msgr?.enabled) return false; // 파견 크루 0 = 브리지 꺼짐 — 세션을 열 이유가 없다
   const c = await session();
   if (!c) throw new Error('Messenger notification session unavailable');
   if (company.ownerId && company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
   const slug = msgrNotifyCrewSlug(event);
-  const crew = slug ? await c.db.crewBySlug(c.uid, event.wsId, slug, target.orgId).catch(() => null) : null;
-  if (!crew) { console.error(`[argo] 메신저 알림 목적지: 크루 ${slug ?? '?'}가 조직에 없음(${event.wsId})`); return false; }
+  const crews = slug ? (await c.db.myCrews(c.uid, event.wsId)).filter((r) => r.slug === slug) : [];
+  if (!crews.length) { console.error(`[argo] 메신저 알림: 크루 ${slug ?? '?'}가 파견된 조직이 없음(${event.wsId})`); return false; }
   const agents = await listAgents(event.wsId).catch(() => []);
   const names = Object.fromEntries(agents.map((a) => [a.slug, a.name || a.slug]));
   const body = formatMsgrNotify(event, company.lang, names).slice(0, MSG_MAX);
   if (!body) return false;
-  // 멱등 키 = 자연 id·시각 축 + 본문 전체 해시. id 없는 job·delegate는 본문만으론 같은 문장의 반복 알림(매일 '이상 없음')이 영구 유실되므로
-  // 시간 버킷(10분)을 더한다 — 재시도(수 초)는 접히고 다음 알림은 살아남는다(검수 #535 2R ③). 중복은 23505 → insertMessage null → false(오류 로그 없음)
   const natural = event.id ?? event.item?.id ?? event.routine?.id ?? '';
   const when = event.runAt ?? event.phase ?? new Date(Math.floor(now / 600_000) * 600_000).toISOString();
-  const key = [event.wsId, event.type, slug, target.channelId, natural, when, body].join('\u0000');
-  const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
-  const row = await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
-    reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
-    body, mentions: [], meta: { disposition: 'done', notification: event.type } });
-  return !!row;
+  let posted = 0;
+  for (const crew of crews) {
+    const channelId = await dmWithOwner(c, crew).catch((e) => { console.error(`[argo] 메신저 알림: 1:1 방 확보 실패(${crew.display_name}): ${e.message}`); return null; });
+    if (!channelId) continue;
+    const key = [event.wsId, event.type, slug, channelId, natural, when, body].join('\u0000');
+    const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
+    const row = await c.db.insertMessage({ channel_id: channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
+      reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
+      body, mentions: [], meta: { disposition: 'done', notification: event.type } });
+    if (row) posted++;
+  }
+  return posted > 0;
+}
+/** 크루와 나의 1:1 방 id — 크루가 든 DM 채널 중 내가 구성원인 것. 없으면 메신저 앱과 같은 RPC로 만든다(이름 dm:<크루 이름>, 나는 서버가 첫 멤버로). */
+async function dmWithOwner(c, crew) {
+  const dms = await c.db.crewChannels(crew.id);
+  if (dms.length) {
+    const mine = unwrap(await c.client.from('msgr_channel_members').select('channel_id, msgr_channels!inner(archived_at)').in('channel_id', dms).eq('member_kind', 'user').eq('member_id', c.uid)) ?? [];
+    const open = mine.find((r) => !r.msgr_channels?.archived_at); // 보관한 1:1 방에는 올리지 않는다(사용자가 닫은 방을 되살리지 않음)
+    if (open) return open.channel_id;
+  }
+  const { data, error } = await c.client.rpc('msgr_create_channel', { org: crew.org_id, kind: 'dm', name: `dm:${crew.display_name}`, others: [{ kind: 'crew', id: crew.id }] });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export async function msgrPush(event, { session = sessionClient } = {}) {

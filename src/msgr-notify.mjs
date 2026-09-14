@@ -1,24 +1,21 @@
-// 회사 단위 메신저 알림 목적지 — 메신저에서 시작하지 않은 크루 알림(결재 요청·장시간 작업 완료·동료 쪽지·루틴 결과·위임 결과)을
-// 팀 메신저의 한 방으로 보낸다. 저장: company.json.msgr.notify = { orgId, channelId, events }. 루틴은 자기 목적지(#513)가 있으면 그것이 우선.
-// 원점 귀속 규칙(메신저에서 시작한 실행은 그 방으로만)은 그대로다 — 이 목적지는 원점이 없는 이벤트에만 쓴다(gateway.mjs pushEvent).
+// 크루 알림을 아르고 메신저로 — 설정 › 연결 "알림 받을 메신저"의 아르고 메신저 체크(유건 결정 2026-09-15: 방 선택 없음).
+// 켜면 메신저에서 시작하지 않은 크루 알림(결재 요청·장시간 작업 완료·동료 쪽지·루틴 결과·위임 결과)이 **그 크루와 나의 1:1 방**으로 간다
+// (텔레그램의 크루 봇 DM과 같은 감각). 저장: company.json.msgr.notify = { mode: 'dm' }. 종류별 세부는 company.msgr.mutedEvents(기존 채널 공통 규칙).
+// 원점 귀속 규칙(메신저에서 시작한 실행은 그 방으로만)은 그대로 — 원점이 없는 이벤트에만 쓴다(gateway.mjs pushEvent).
 import { CHANNEL_EVENTS } from './channel-events.mjs';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** 고를 수 있는 이벤트 = 메신저 채널이 받는 종류(channel-events.mjs 정본). */
+/** 보낼 수 있는 종류 = 메신저 채널이 받는 종류(channel-events.mjs 정본). */
 export const MSGR_NOTIFY_EVENTS = CHANNEL_EVENTS.msgr;
 
-/** 저장 정규화 — null/빈 값은 "끔". 잘못된 id는 던진다(조용히 다른 방으로 가지 않게). 이벤트는 목록 밖 값·중복 제거 후 정렬. */
+/** 저장 정규화 — { mode:'dm' } 만 켜짐. 그 외(null·옛 방 지정 형식 포함)는 끔으로 본다(옛 형식은 조용히 다른 방으로 가지 않게 버린다). */
 export function normalizeMsgrNotify(value) {
-  if (!value || typeof value !== 'object') return null;
-  const { orgId, channelId } = value;
-  if (!UUID.test(String(orgId ?? '')) || !UUID.test(String(channelId ?? ''))) throw new Error('msgr_notify_bad_target');
-  const events = [...new Set((Array.isArray(value.events) ? value.events : []).filter((e) => MSGR_NOTIFY_EVENTS.includes(e)))].sort();
-  return { orgId, channelId, events };
+  return value && typeof value === 'object' && value.mode === 'dm' ? { mode: 'dm' } : null;
 }
 
-/** 이 이벤트가 목적지로 갈 대상인가 — 켜진 종류이고, 원점(메신저 문맥)이 없고, 루틴이면 자기 목적지가 없을 때. */
-export function msgrNotifyWants(notify, event) {
-  if (!notify || !notify.events.includes(event.type)) return false;
+/** 이 이벤트가 1:1 방으로 갈 대상인가 — 켜져 있고, 메신저가 받는 종류이고, 음소거가 아니고, 루틴이면 자기 목적지(#513)가 없을 때. */
+export function msgrNotifyWants(notify, event, mutedEvents = []) {
+  if (!notify || notify.mode !== 'dm') return false;
+  if (!MSGR_NOTIFY_EVENTS.includes(event.type) || (mutedEvents ?? []).includes(event.type)) return false;
   if (event.type === 'routine' && event.routine?.notifications !== undefined) return false;
   return true;
 }
@@ -52,22 +49,10 @@ export function formatMsgrNotify(event, lang = 'ko', names = {}) {
   }
 }
 
-/** 이벤트의 "발화 크루" — 방에 이 크루 이름으로 올린다. */
+/** 이벤트의 "발화 크루" — 그 크루와 나의 1:1 방에, 그 크루 이름으로 올린다. */
 export function msgrNotifyCrewSlug(event) {
   return event.type === 'approval' ? event.item?.slug
     : event.type === 'routine' ? event.routine?.agentSlug
     : event.type === 'delegate' ? event.to
     : event.slug;
-}
-
-/** 설정 화면용 후보 방 — 이 회사의 크루 중 하나라도 들어갈 수 있는 채널(조직별). 크루별 목록(routine-notifications)의 합집합. */
-export async function msgrNotifyOptions(wsId, { session } = {}) {
-  const [{ listAgents }, { messengerNotificationChannels }] = await Promise.all([import('./hub.mjs'), import('./routine-notifications.mjs')]);
-  const agents = await listAgents(wsId).catch(() => []);
-  const seen = new Map();
-  for (const a of agents) {
-    const rooms = await messengerNotificationChannels(wsId, a.slug, { session }).catch(() => []);
-    for (const r of rooms) if (!seen.has(r.channelId)) seen.set(r.channelId, r);
-  }
-  return [...seen.values()].sort((x, y) => `${x.orgName} ${x.name}`.localeCompare(`${y.orgName} ${y.name}`));
 }

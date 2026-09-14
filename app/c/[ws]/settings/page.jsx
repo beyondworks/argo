@@ -184,6 +184,7 @@ function Settings({ params }) {
 
       {tab === 'connections' && (
       <div className="cardcols" data-tab-pane="connections">
+      <div className="cardrow"><NotifyChannelsCard ws={ws} /></div>
       <div className="cardrow"><MsgrCard ws={ws} agents={data?.agents ?? []} /></div>
       <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
@@ -771,71 +772,47 @@ function TrashCard({ ws }) {
     응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
 /** 팀 메신저 — 이 회사 크루를 조직에 등록(파견)/해제하고 허용 범위를 고른다. 조직·채널·메시지는 메신저 앱이 다룬다.
     데이터는 /api/companies/[ws]/msgr(기기 세션 JWT로 Supabase msgr_crews에 씀). 기본 허용 범위는 '나만'(부록 H — 정책 테이블 전까지 가장 좁게). */
-/** 크루 알림을 메신저로 받기 — 메신저에서 시작하지 않은 크루 알림(결재·장시간 작업·쪽지·루틴·위임)을 한 방으로.
-    모양은 텔레그램 카드의 "이 채널로 보낼 알림"과 같은 문법(작은 라벨 → 선택 → 칩 → 힌트) — 이 페이지에서 이 구역만 다르게 보이던 문제(유건 2026-09-15). 저장은 company.json.msgr.notify. */
-function MsgrNotifyRoom({ ws, signedIn }) {
+/** 알림 받을 메신저 — 아르고 메신저·텔레그램·슬랙 체크박스(연결된 것만 활성). 전부 켜면 전부, 일부만 켜면 그 메신저에만(유건 결정 2026-09-15).
+    아르고 메신저 = 크루와 나의 1:1 방(company.msgr.notify.mode 'dm'), 텔레그램·슬랙 = 그 채널의 알림 전체(mutedEvents 비움/전부). 종류별 세부는 각 카드의 칩. */
+function NotifyChannelsCard({ ws }) {
   const { t } = useLang();
-  const [opt, setOpt] = useState(null); // { rooms:[{orgId,channelId,name,orgName}], events:[...], notify:{orgId,channelId,events}|null }
-  const [room, setRoom] = useState(''); // channelId ('' = 끔)
-  const [events, setEvents] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-  const load = useCallback(() => api(`/api/companies/${ws}/msgr/notify`)
-    .then((d) => { setOpt(d); setRoom(d.notify?.channelId ?? ''); setEvents(d.notify?.events ?? []); })
-    .catch(() => setOpt({ rooms: [], events: [], notify: null })), [ws]);
-  useEffect(() => { if (signedIn) load(); }, [signedIn, load]);
-  if (!signedIn || opt === null) return null;
-  const chosen = opt.rooms.find((r) => r.channelId === room);
-  const multiOrg = new Set(opt.rooms.map((r) => r.orgId)).size > 1;
-  // 방 이름: 1:1 방은 "페퍼와의 1:1", 채널은 "#Crew". 조직이 여럿일 때만 조직명을 앞에 붙인다(dm:슈리 같은 내부 이름 노출 금지)
-  const roomLabel = (r) => `${multiOrg ? `${r.orgName} · ` : ''}${r.name.startsWith('dm:') ? t('settings.msgr.notify.dm', { name: r.name.slice(3) }) : `#${r.name}`}`;
-  const toggle = (ev) => setEvents((cur) => (cur.includes(ev) ? cur.filter((x) => x !== ev) : [...cur, ev]));
-  const dirty = (chosen?.channelId ?? '') !== (opt.notify?.channelId ?? '') || JSON.stringify([...events].sort()) !== JSON.stringify([...(opt.notify?.events ?? [])].sort());
-  const save = async () => {
-    setBusy(true); setMsg('');
+  const [st, setSt] = useState(null); // { msgr:{signedIn,bridgeOn,on}, telegram:{hasToken,mutedEvents}, slack:{...} }
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  const load = useCallback(() => Promise.all([api(`/api/companies/${ws}/msgr/notify`).catch(() => ({ signedIn: false, bridgeOn: false, on: false })), api(`/api/companies/${ws}/connections`).catch(() => ({ connections: {} }))])
+    .then(([m, c]) => setSt({ msgr: m, telegram: c.connections?.telegram ?? {}, slack: c.connections?.slack ?? {} })), [ws]);
+  useEffect(() => { load(); }, [load]);
+  if (st === null) return <div className="card" style={{ padding: 18 }}><Skeleton h={32} /></div>;
+  const fullMute = (kind) => CHANNEL_EVENTS[kind].every((ev) => (st[kind].mutedEvents ?? []).includes(ev));
+  const rows = [
+    { kind: 'msgr', label: t('settings.notify.ch.msgr'), can: !!st.msgr.signedIn && !!st.msgr.bridgeOn, on: !!st.msgr.on, why: !st.msgr.signedIn ? t('settings.notify.why.msgrLogin') : !st.msgr.bridgeOn ? t('settings.notify.why.msgrBridge') : '' },
+    { kind: 'telegram', label: t('settings.notify.ch.telegram'), can: !!st.telegram.hasToken, on: !!st.telegram.hasToken && !fullMute('telegram'), why: st.telegram.hasToken ? '' : t('settings.notify.why.notConnected') },
+    { kind: 'slack', label: t('settings.notify.ch.slack'), can: !!st.slack.hasToken, on: !!st.slack.hasToken && !fullMute('slack'), why: st.slack.hasToken ? '' : t('settings.notify.why.notConnected') },
+  ];
+  const toggle = async (r) => {
+    setBusy(r.kind); setErr('');
     try {
-      await api(`/api/companies/${ws}/msgr/notify`, chosen ? { orgId: chosen.orgId, channelId: chosen.channelId, events } : { off: true });
-      setMsg(t(chosen ? 'settings.msgr.notify.saved' : 'settings.msgr.notify.off.done')); await load();
-    } catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
+      if (r.kind === 'msgr') await api(`/api/companies/${ws}/msgr/notify`, { on: !r.on });
+      else await api(`/api/companies/${ws}/connections`, { kind: r.kind, mutedEvents: r.on ? [...CHANNEL_EVENTS[r.kind]] : [] });
+      await load();
+    } catch { setErr(t('settings.notify.err.save')); } finally { setBusy(''); }
   };
-  const off = async () => {
-    setBusy(true); setMsg('');
-    try { await api(`/api/companies/${ws}/msgr/notify`, { off: true }); setRoom(''); setEvents([]); setMsg(t('settings.msgr.notify.off.done')); await load(); }
-    catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
-  };
-  const chip = (on) => ({ cursor: 'pointer', padding: '5px 12px', fontSize: 12, textTransform: 'none', letterSpacing: 0, ...(on ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : { opacity: 0.6 }) });
   return (
-    <div style={{ display: 'grid', gap: 8 }}>
-      <span className="microlabel">{t('settings.msgr.notify.title')}</span>
-      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.notify.help')}</p>
-      {!opt.rooms.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notify.noRooms')}</p>}
-      {!!opt.rooms.length && (<>
-        <div className="msgr-orgbar">
-          <label>
-            <span className="microlabel">{t('settings.msgr.notify.room')}</span>
-            <select className="input" value={room} onChange={(e) => { const v = e.target.value; setRoom(v); if (v && !events.length) setEvents([...opt.events]); }}>
-              <option value="">{t('settings.msgr.notify.off')}</option>
-              {opt.rooms.map((r) => <option key={r.channelId} value={r.channelId}>{roomLabel(r)}</option>)}
-            </select>
-          </label>
-          {opt.notify && chosen && !dirty && <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('settings.msgr.notify.active', { n: opt.notify.events.length })}</span>}
+      <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <span className="card-title">{t('settings.notify.title')}</span>
+        <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.notify.help')}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18 }}>
+          {rows.map((r) => (
+            <label key={r.kind} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: r.can ? 1 : 0.5, cursor: r.can ? 'pointer' : 'not-allowed' }} title={r.why || undefined}>
+              <input type="checkbox" checked={r.on} disabled={!r.can || busy === r.kind} onChange={() => toggle(r)} />
+              <span>{r.label}</span>
+              {!r.can && <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>· {r.why}</span>}
+            </label>
+          ))}
         </div>
-        {chosen && (<>
-          <span className="microlabel">{t('settings.msgr.notify.events')}</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-            {opt.events.map((ev) => { const on = events.includes(ev); return (
-              <button key={ev} type="button" className="chip" onClick={() => toggle(ev)} aria-pressed={on} style={chip(on)}>{t(`settings.conn.ev.${ev}`)}</button>
-            ); })}
-          </div>
-          <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.msgr.notify.eventsHint')}</span>
-        </>)}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="btn btn-primary sm" disabled={busy || !dirty || (!!chosen && !events.length)} onClick={save}>{busy ? <Spinner size={12} /> : t('settings.msgr.notify.save')}</button>
-          {opt.notify && <button type="button" className="btn sm" disabled={busy} onClick={off}>{t('settings.msgr.notify.clear')}</button>}
-          {msg && <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{msg}</span>}
-        </div>
-      </>)}
-    </div>
+        <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.notify.hint')}</span>
+        {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+      </div>
   );
 }
 
@@ -912,7 +889,6 @@ function MsgrCard({ ws, agents }) {
             </details>
           );
         })()}
-        <MsgrNotifyRoom ws={ws} signedIn={!!st?.signedIn} />
         <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.manage')}</p>
         <details className="msgr-fine">
           <summary><span className="microlabel">{t('settings.msgr.policy')}</span><span>{t('settings.msgr.fine.summary')}</span></summary>
