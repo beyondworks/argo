@@ -2916,13 +2916,14 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     setText(next); if (mention) setMentions((ms) => ms.some((x) => x.id === mention.id) ? ms : [...ms, mention]);
     requestAnimationFrame(() => { ta.current?.focus(); ta.current?.setSelectionRange(next.length, next.length); autosize(ta.current); });
   };
+  const rsel = (() => { const l = rolePick?.list ?? []; if (!l.length) return -1; const i = Math.min(sel, l.length - 1); return l[i].disabled ? l.findIndex((x) => !x.disabled) : i; })(); // 첫 행이 미지원이면 하이라이트를 첫 가능 행으로(검수 2R 신규-3)
   const pickRole = (c) => { // /to → @이름 삽입(= 수신), /cc → 참조 칩. 둘 다 전송이 아니다
     if (c.disabled) return;
     if (rolePick.role === 'cc') { setRecipients((rows) => setDmRecipient(rows, { id: c.id, display_name: c.name }, 'cc')); setText(''); }
     else { setText(`@${c.name} `); setMentions((ms) => ms.some((x) => x.id === c.id) ? ms : [...ms, { kind: 'crew', id: c.id, name: c.name }]); }
     requestAnimationFrame(() => { const el = ta.current; if (!el) return; el.focus(); el.setSelectionRange(el.value.length, el.value.length); autosize(el); });
   };
-  const detect = (v, caret) => { const upto = v.slice(0, caret); const m = ROLE_PICK_RE.test(v) ? null : upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); }; // /to·/cc 중에는 @팝업을 열지 않는다(둘이 겹쳐 Enter가 죽던 것 — 검수 L-1)
+  const detect = (v, caret) => { const upto = v.slice(0, caret); const m = isDm && ROLE_PICK_RE.test(v) ? null : upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); }; // 1:1의 /to·/cc 중에는 @팝업을 열지 않는다(둘이 겹쳐 Enter가 죽던 것 — 검수 L-1). isDm 없이는 채널 @멘션이 죽는다(검수 2R 신규-1)
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
   const insertAt = () => { // 도구 줄 '멘션' — 커서 자리에 @를 넣고 팝업을 연다
     const el = ta.current; const pos = el?.selectionStart ?? text.length;
@@ -2960,9 +2961,9 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     if (rolePick) { // /to·/cc 목록 — @멘션 팝업과 같은 키. Escape는 명령을 지운다
       const list = rolePick.list;
       const step = (from, dir) => { for (let k = 1; k <= list.length; k++) { const i = (from + dir * k + list.length * k) % list.length; if (!list[i].disabled) return i; } return from; }; // 미지원(disabled) 행은 건너뛴다(검수 M-3)
-      if (list.length && e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => step(s, 1)); return; }
-      if (list.length && e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => step(s, -1)); return; }
-      if (list.length && (e.key === 'Enter' || e.key === 'Tab')) { e.preventDefault(); pickRole(list[Math.min(sel, list.length - 1)]); return; }
+      if (list.length && e.key === 'ArrowDown') { e.preventDefault(); setSel(step(rsel < 0 ? 0 : rsel, 1)); return; }
+      if (list.length && e.key === 'ArrowUp') { e.preventDefault(); setSel(step(rsel < 0 ? 0 : rsel, -1)); return; }
+      if (list.length && (e.key === 'Enter' || e.key === 'Tab')) { e.preventDefault(); if (rsel >= 0) pickRole(list[rsel]); return; }
       if (e.key === 'Escape') { e.preventDefault(); setText(''); return; }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); return; } // 명령만 있는 글은 보내지 않는다
     }
@@ -2986,8 +2987,8 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
           <p className="head" id="msgr-rolepop-head">{t(rolePick.role === 'cc' ? 'cmd.cc' : 'cmd.to')}</p>
           {recipientLoad === 'loading' && <p className="empty" role="status">{t('ui.loading')}</p>}
           {recipientLoad === 'error' && <div className="empty" role="alert"><p>{t('dm.delivery.loadError')}</p><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></div>}
-          {recipientLoad === 'ready' && rolePick.list.length === 0 && <p className="empty">{t('dm.delivery.empty')}</p>}
-          <div role="listbox" aria-labelledby="msgr-rolepop-head">{rolePick.list.map((c, i) => <button key={c.id} type="button" role="option" aria-selected={i === sel} disabled={c.disabled} className={i === sel ? 'on' : ''} ref={i === sel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pickRole(c); }}>
+          {recipientLoad === 'ready' && rolePick.list.length === 0 && <p className="empty">{t(rolePick.q ? 'cmd.noMatch' : 'dm.delivery.empty')}</p>}
+          <div role="listbox" aria-labelledby="msgr-rolepop-head">{rolePick.list.map((c, i) => <button key={c.id} type="button" role="option" aria-selected={i === rsel} disabled={c.disabled} className={i === rsel ? 'on' : ''} ref={i === rsel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pickRole(c); }}>
             <Av name={c.name} crew size="sm" crewId={c.id} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.disabled ? t('dm.delivery.update') : c.sub || t('org.crews')}</span>
           </button>)}</div>
           {recipientLoad === 'ready' && <p className="foot"><button type="button" className="btn sm" onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipientRetry((n) => n + 1)}>{t('dm.delivery.retry')}</button></p>}

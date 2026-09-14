@@ -30,6 +30,12 @@ for(const engine of (process.env.DM_ENGINE ? [process.env.DM_ENGINE] : ['chromiu
    await ta.fill('/cc outdated');await option('Fixture Outdated Agent').waitFor();await ta.press('Enter');
    assert.equal(await page.locator('.msgr-cc-chips').count(),0,'Enter on an unsupported agent adds nothing');assert.equal(await ta.inputValue(),'/cc outdated','…and keeps the command');
    await ta.fill('/cc fixture new');await option('Fixture New Agent').waitFor();assert.equal(await option('Fixture Outdated Agent').count(),0,'multi-word query keeps filtering');
+   await ta.fill('/cc');await option('Fixture New Agent').waitFor();
+   assert.ok(Number(await option('Fixture Outdated Agent').evaluate(el=>getComputedStyle(el).opacity))<1,'unsupported rows are visibly dimmed');
+   await ta.press('ArrowDown');await ta.press('ArrowDown');await ta.press('Enter');
+   await page.locator('.msgr-cc-chips .msgr-chan').filter({hasText:'Fixture New Agent'}).waitFor({timeout:5000}).catch(()=>{throw new Error('ArrowDown must skip unsupported rows (New → Existing → New)');});
+   await page.getByRole('button',{name:lang==='ko'?'Fixture New Agent 수신자 해제':'Remove recipient Fixture New Agent'}).click();
+   await ta.fill('/cc nobody');await page.locator('.msgr-rolepop .empty').waitFor();assert.equal(await option('Fixture').count(),0,'unmatched query shows the no-match hint');
    await ta.fill('/');await page.locator('.msgr-slashpop').waitFor();
    assert.deepEqual((await page.locator('.msgr-slashpop .cmd').allTextContents()).slice(0,2),['/to','/cc'],'DM commander offers /to·/cc first');
    await ta.fill('/cc');
@@ -84,6 +90,7 @@ for(const engine of (process.env.DM_ENGINE ? [process.env.DM_ENGINE] : ['chromiu
    await ta.fill('/');
    assert.deepEqual((await page.locator('.msgr-slashpop .cmd').allTextContents()).filter(c=>c==='/to'||c==='/cc'),[],'channels do not offer /to·/cc');
    await ta.fill('/cc');assert.equal(await page.locator('.msgr-rolepop').count(),0,'channels have no CC picker');
+   await ta.fill('/cc @Fix');assert.ok(await page.locator('.msgr-pop [role=option]').count()>=1,'channel @mention popup survives a leading /cc (2R regression)');
    await ta.fill('@Fixture New Agent');
    await page.getByRole('button',{name:send,exact:true}).click();
    await page.waitForFunction(()=>window.__dmFixture.tables.msgr_messages.some(m=>m.body==='@Fixture New Agent'&&m.channel_id==='private'));

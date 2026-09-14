@@ -8,6 +8,7 @@ export const DICT = {
   'cmd.to': ['수신 에이전트 고르기 — @이름과 같습니다', 'Pick a To agent — same as @name'],
   'cmd.cc': ['참조 에이전트 고르기 — 답하지 않고 참고만 받습니다', 'Pick a CC agent — reads along, does not answer'],
   'cmd.builtin': ['메신저', 'Messenger'],
+  'cmd.noMatch': ['일치하는 에이전트가 없습니다. 명령이 아닌 글이면 Esc로 지우고 다시 쓰세요.', 'No agent matches. If this is not a command, press Esc to clear it and type again.'],
   'cmd.skill': ['스킬', 'Skill'],
   'cmd.alias': ['별칭', 'Alias'],
   'cmd.skillPrefix': ['"{name}" 스킬을 사용해서 ', 'Use the "{name}" skill to '],
