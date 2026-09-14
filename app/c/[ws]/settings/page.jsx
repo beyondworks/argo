@@ -772,8 +772,8 @@ function TrashCard({ ws }) {
     응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
 /** 팀 메신저 — 이 회사 크루를 조직에 등록(파견)/해제하고 허용 범위를 고른다. 조직·채널·메시지는 메신저 앱이 다룬다.
     데이터는 /api/companies/[ws]/msgr(기기 세션 JWT로 Supabase msgr_crews에 씀). 기본 허용 범위는 '나만'(부록 H — 정책 테이블 전까지 가장 좁게). */
-/** 알림 받을 메신저 — 아르고 메신저·텔레그램·슬랙 체크박스(연결된 것만 활성). 전부 켜면 전부, 일부만 켜면 그 메신저에만(유건 결정 2026-09-15).
-    아르고 메신저 = 크루와 나의 1:1 방(company.msgr.notify.mode 'dm'), 텔레그램·슬랙 = 그 채널의 알림 전체(mutedEvents 비움/전부). 종류별 세부는 각 카드의 칩. */
+/** 알림 받을 메신저 — 아르고 메신저·텔레그램·슬랙 체크박스(연결된 것만 활성). 체크한 메신저로 크루 알림 전부가 간다(유건 결정 2026-09-15: 종류별 선택 없음).
+    아르고 메신저 = 크루와 나의 1:1 방(company.msgr.notify.mode 'dm'), 텔레그램·슬랙 = mutedEvents 비움(켬)/전부(끔). 텔레그램은 크루 직통 봇만 짝지은 회사도 브리핑을 받으므로 그때도 활성. */
 function NotifyChannelsCard({ ws }) {
   const { t } = useLang();
   const [st, setSt] = useState(null); // { msgr:{signedIn,bridgeOn,on}, telegram:{hasToken,mutedEvents}, slack:{...} }
@@ -783,10 +783,11 @@ function NotifyChannelsCard({ ws }) {
     .then(([m, c]) => setSt({ msgr: m, telegram: c.connections?.telegram ?? {}, slack: c.connections?.slack ?? {} })), [ws]);
   useEffect(() => { load(); }, [load]);
   if (st === null) return <div className="card" style={{ padding: 18 }}><Skeleton h={32} /></div>;
+  const tgLinked = !!st.telegram.hasToken || Object.keys(st.telegram.agents ?? {}).length > 0;
   const fullMute = (kind) => CHANNEL_EVENTS[kind].every((ev) => (st[kind].mutedEvents ?? []).includes(ev));
   const rows = [
     { kind: 'msgr', label: t('settings.notify.ch.msgr'), can: !!st.msgr.signedIn && !!st.msgr.bridgeOn, on: !!st.msgr.on, why: !st.msgr.signedIn ? t('settings.notify.why.msgrLogin') : !st.msgr.bridgeOn ? t('settings.notify.why.msgrBridge') : '' },
-    { kind: 'telegram', label: t('settings.notify.ch.telegram'), can: !!st.telegram.hasToken, on: !!st.telegram.hasToken && !fullMute('telegram'), why: st.telegram.hasToken ? '' : t('settings.notify.why.notConnected') },
+    { kind: 'telegram', label: t('settings.notify.ch.telegram'), can: tgLinked, on: tgLinked && !fullMute('telegram'), why: tgLinked ? '' : t('settings.notify.why.notConnected') },
     { kind: 'slack', label: t('settings.notify.ch.slack'), can: !!st.slack.hasToken, on: !!st.slack.hasToken && !fullMute('slack'), why: st.slack.hasToken ? '' : t('settings.notify.why.notConnected') },
   ];
   const toggle = async (r) => {
@@ -810,7 +811,6 @@ function NotifyChannelsCard({ ws }) {
             </label>
           ))}
         </div>
-        <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.notify.hint')}</span>
         {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
       </div>
   );
@@ -1157,9 +1157,7 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
       const d = await api(`/api/companies/${ws}/connections`, {
         kind, token, enabled, defaultCrew: crew, ...(kind === 'slack' ? { channel } : {}),
       });
-      // mutedEvents만은 화면 값을 지킨다 — 디바운스 저장이 아직 안 나갔으면 서버 응답엔 토글 이전 값이
-      // 들어 있어, 방금 끈 알림이 다시 켜진 것처럼 보인다(분리 검수 실측). 디스크는 뒤이은 POST가 맞춘다.
-      setConn((c) => ({ ...d.connections[kind], ...(c?.mutedEvents ? { mutedEvents: c.mutedEvents } : {}) }));
+      setConn(d.connections[kind]);
       setToken('');
       setMsg(enabled ? t('settings.conn.enabling') : t('settings.conn.stopped'));
     } catch (e) {
@@ -1167,30 +1165,6 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
     } finally {
       setSaving(false);
     }
-  }
-
-  const muted = conn?.mutedEvents ?? [];
-  /** 알림 종류 토글 — 화면은 즉시 움직이고 저장은 마지막 클릭 기준 1회만 보낸다.
-      클릭마다 POST하면 왕복·fsync·동기화 업로드가 클릭 수만큼 쌓인다(정리 검수 실측). enabled를
-      안 보내므로 토큰 재검증(네트워크)도 없다. 응답으로 상태를 덮지 않는다 — 쓰는 주체가 둘이면
-      연속 클릭 때 이전 응답이 나중 선택을 되돌린다. */
-  const muteSave = useRef(null);
-  const mutePending = useRef(null);
-  // 화면을 뜨면 대기 중인 저장을 흘려보낸다 — 500ms 안에 이동하면 끈 알림이 조용히 되살아난다.
-  useEffect(() => () => {
-    if (!muteSave.current) return;
-    clearTimeout(muteSave.current);
-    api(`/api/companies/${ws}/connections`, { kind, mutedEvents: mutePending.current }).catch(() => {});
-  }, [ws, kind]);
-  function toggleEvent(ev) {
-    const next = muted.includes(ev) ? muted.filter((x) => x !== ev) : [...muted, ev];
-    setConn((c) => ({ ...c, mutedEvents: next })); // 함수형 — 연속 클릭의 stale 스냅샷 덮어쓰기 방지
-    clearTimeout(muteSave.current);
-    mutePending.current = next;
-    muteSave.current = setTimeout(() => {
-      muteSave.current = null;
-      api(`/api/companies/${ws}/connections`, { kind, mutedEvents: next }).catch((e) => setMsg(String(e.message)));
-    }, 500);
   }
 
   const on = conn?.enabled;
@@ -1244,30 +1218,6 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
               onClick={() => navigator.clipboard?.writeText(conn.pairCode).catch(() => {})}>{t('common.copy')}</button>
           </div>
           <span style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}>{t('settings.conn.pairCodeHelp')}</span>
-        </div>
-      )}
-      {/* 이 채널로 보낼 알림 — 연결을 끊지 않고 종류별로 끈다(끈 것은 앱에 그대로 남는다).
-          텔레그램은 크루 직통 봇만 연결한 회사도 브리핑을 받으므로(브리핑 직통 봇 폴백, 분리 검수
-          MEDIUM-1 2026-08-27) 게이트웨이 토큰이 없어도 칩을 보여야 끌 수단이 있다 — "끌 수단이
-          연결 해제뿐"이던 2026-07-31 신고의 재발 방지. */}
-      {(conn?.hasToken || Object.keys(conn?.agents ?? {}).length > 0) && (
-        <div style={{ display: 'grid', gap: 6 }}>
-          <span className="microlabel">{t('settings.conn.notify')}</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-            {CHANNEL_EVENTS[kind].map((ev) => {
-              const onEv = !muted.includes(ev);
-              return (
-                <button key={ev} type="button" className="chip" onClick={() => toggleEvent(ev)} aria-pressed={onEv}
-                  style={{
-                    cursor: 'pointer', padding: '5px 12px', fontSize: 12, textTransform: 'none', letterSpacing: 0,
-                    ...(onEv ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : { opacity: 0.6 }),
-                  }}>
-                  {t(`settings.conn.ev.${ev}`)}
-                </button>
-              );
-            })}
-          </div>
-          <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.conn.notifyHint')}</span>
         </div>
       )}
       {/* 게이트웨이는 선택 사항 안내 — #307·#312 이후 결재 요청(버튼 콜백 포함)·브리핑이 페어링된
