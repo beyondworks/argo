@@ -761,7 +761,7 @@ const DICT = {
   'settings.msgr.exceptions.none': ['예외 없음 — 크루 전원이 기본 범위("나만")로 파견돼 있습니다.', 'No exceptions — every crew is dispatched with the default scope ("Only me").'],
   'settings.msgr.exceptions.help': ['파견이 안 됐거나 허용 범위가 기본값과 다른 크루만 보입니다.', 'Only crews that are not dispatched or whose scope differs from the default are listed.'],
   'settings.msgr.notify.title': ['알림 받을 방', 'Notification room'],
-  'settings.msgr.notify.help': ['메신저에서 시작하지 않은 크루 알림을 이 방에 그 크루 이름으로 올립니다. 메신저에서 시작한 실행은 원래 방으로 갑니다.', 'Crew notifications that did not start in Messenger are posted to this room under that crew\'s name. Runs that started in Messenger stay in their own room.'],
+  'settings.msgr.notify.help': ['메신저에서 시작하지 않은 크루 알림을 이 방에 그 크루 이름으로 올립니다. 이 방의 구성원 모두가 결재 사유·쪽지 본문 같은 알림 내용을 봅니다. 메신저에서 시작한 실행은 원래 방으로 갑니다.', 'Crew notifications that did not start in Messenger are posted to this room under that crew\'s name. Everyone in this room will see the contents, including approval reasons and crew mail. Runs that started in Messenger stay in their own room.'],
   'settings.msgr.notify.room': ['방', 'Room'],
   'settings.msgr.notify.off': ['보내지 않음', 'Do not send'],
   'settings.msgr.notify.events': ['보낼 알림', 'Send'],
