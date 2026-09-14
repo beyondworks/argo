@@ -23,7 +23,8 @@
 
 /* ── 레일(.side 토큰 스코프 안: linen에선 차콜) ── */
 .msgr-side { width: 268px; padding: 16px 14px 14px; gap: 4px; border-right: 1px solid var(--border-soft); overflow: hidden; } /* 스크롤은 railbody만 — 풋터는 항상 보인다(QA: 채널 30개면 풋터가 밀려 사라졌다) */
-.msgr-railbody { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
+.msgr-railbody { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
+.msgr-railinner { display: flex; flex-direction: column; gap: 4px; }
 .shell.msgr-shell { grid-template-columns: 268px minmax(0, 1fr); height: calc(100vh / var(--z, 1)); min-height: 0; }
 .msgr-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; font-family: var(--mono); font-weight: 600; letter-spacing: 0.16em; font-size: 12px; }
 .msgr-brand svg { fill: var(--mark); }
@@ -589,6 +590,7 @@
 .msgr-memnew { display: grid; gap: 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 12px; }
 .msgr-memnew .row { display: flex; align-items: center; gap: 10px; }
 .msgr-memdoc header { display: grid; gap: 6px; margin-bottom: 12px; }
+.msgr-memdoc .msgr-sheet { max-width: none; } /* 문서 본문은 말풍선(640px)이 아니라 창 폭을 쓴다 — 기억 페이지가 좁게 보이던 제보(유건 2026-09-14) */
 .msgr-memdoc header h2 { margin: 0; font-size: 20px; }
 .msgr-memdoc header .meta { display: flex; align-items: center; gap: 10px; color: var(--fg-3); font-size: 12px; }
 .msgr-memdoc header .note { color: var(--fg-3); font-size: 12px; }
@@ -801,6 +803,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-composer textarea { max-height: min(160px, 25dvh); }
   /* 16px inputs prevent iOS focus zoom without disabling the user's pinch zoom. */
   .argo-messenger :is(input, textarea, select) { font-size: 16px !important; }
+  body.argo-messenger { touch-action: pan-x pan-y; } /* 두 손가락 확대·축소 차단(유건 2026-09-14) — 뷰포트 user-scalable=no와 짝 */
   .msgr-sub { padding: 4px 6px 0; flex-wrap: wrap; }
   .msgr-pop { min-width: 0; max-width: 100%; width: 100%; max-height: min(280px, 40dvh); }
   .msgr-pop button { overflow-wrap: anywhere; }
@@ -955,11 +958,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 본문 — 흰 카드 + 루트 팔레트 복원 */
   .msgr-phone.phone-home .msgr-railbody { flex: 1; margin: 0; padding: 12px 0 calc(var(--ph-tab) + 24px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); gap: 0;
     /* Allow native boundary elasticity without chaining scroll to the fixed shell. */
-    overflow-y: scroll; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch;
+    overflow-y: scroll; overscroll-behavior-y: contain; /* -webkit-overflow-scrolling: touch 제거 — iOS 13+엔 불필요하고, 동적으로 채워진 목록이 WKWebView에서 스크롤을 멈추던 원인(유건 제보 2026-09-14) */
     scroll-padding-block: 12px calc(var(--ph-tab) + 24px + max(16px, calc(env(safe-area-inset-bottom) - 18px)));
     --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2); --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3); --border: var(--ph-border); --border-soft: var(--ph-border-soft);
     background: var(--bg); color: var(--fg); }
-  .msgr-phone.phone-home .msgr-railbody > * { flex-shrink: 0; }
+  .msgr-phone.phone-home .msgr-railinner { gap: 0; min-height: calc(100% + 1px); } /* 짧은 목록도 1px 넘치게 → iOS 가장자리 바운스(DM 탭·홈 접힘 상태 제보 2026-09-14) */
+  .msgr-phone.phone-home .msgr-railinner > * { flex-shrink: 0; }
   @media (prefers-reduced-motion: reduce) {
     .msgr-phone.phone-home .msgr-railbody { overscroll-behavior-y: none; }
   }
