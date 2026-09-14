@@ -218,7 +218,7 @@ pub fn run() {
                             }
                         };
                         let bind_host = "127.0.0.1";
-                        let child = sidecar
+                        let mut cmd = sidecar
                             .current_dir(std::path::PathBuf::from(&server_dir))
                             .env("PORT", port.to_string())
                             .env("HOSTNAME", bind_host)
@@ -227,7 +227,24 @@ pub fn run() {
                             .env("ARGO_STANDALONE", "1")
                             .env("NODE_ENV", "production")
                             // 부모 감시 — 서버가 이 PID(셸)를 지켜보다 사라지면 스스로 종료(고아 방지)
-                            .env("ARGO_PARENT_PID", std::process::id().to_string())
+                            .env("ARGO_PARENT_PID", std::process::id().to_string());
+                        // macOS Dock 아이콘 억제 — 번들 node는 process.title을 설정하는 순간 Foreground 앱으로 등록돼 Dock에 뜬다
+                        // (실측 2026-09-15: 같은 코드도 시스템 node는 BackgroundOnly, 앱 번들 안 node만 Foreground). 서버 자신은 server.js
+                        // 부트스트랩이 막지만, 서버가 띄우는 node 자식(npm exec·MCP 서버·CLI 러너)은 상속 env로만 막을 수 있다.
+                        // 런타임 setupNoDock(프로브 뒤 대입)의 실패·타임아웃에 걸리지 않게 **초기 env**에 프리로드를 넣는다(유건 지시
+                        // "언제가 됐든 뜨면 안 돼"). 파일이 없으면 넣지 않는다 — 없는 --require는 node 부팅 자체를 죽인다.
+                        #[cfg(target_os = "macos")]
+                        {
+                            let shim = std::path::Path::new(&server_dir).join("no-dock.cjs");
+                            if shim.is_file() {
+                                let p = shim.to_string_lossy().to_string();
+                                let arg = if p.chars().any(char::is_whitespace) { format!("\"{p}\"") } else { p };
+                                cmd = cmd.env("NODE_OPTIONS", format!("--require {arg}"));
+                            } else {
+                                log::warn!("[argo] Dock 아이콘 억제 심 없음 — 자식 node가 Dock에 뜰 수 있다: {}", shim.display());
+                            }
+                        }
+                        let child = cmd
                             // 상대경로 — current_dir(server_dir) 기준. 절대경로 조합은 Windows UNC에서 깨진다.
                             .args(["server.js"])
                             .spawn();

@@ -29,7 +29,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 /** 프리로드 본문 — CJS여야 한다(--require는 ESM을 못 읽는다). darwin 밖에서는 아무것도 하지 않는다. */
-const SHIM_SRC = `'use strict';
+export const SHIM_SRC = `'use strict';
 // Argo 자동 생성 — macOS Dock 아이콘 억제(src/no-dock.mjs). 직접 수정하지 마세요.
 if (process.platform === 'darwin') {
   try {
@@ -89,7 +89,7 @@ export function probeNodeOptions(env, composed, { spawnFn = spawn, execPath = pr
 
 /** 부팅 시 1회 — 이후 spawn되는 node 자식이 상속한다. 반환: 건 경로 | null(비적용). */
 export async function setupNoDock({
-  env = process.env, platform = process.platform, path = noDockShimPath(), timeoutMs = 2000, probe = probeNodeOptions,
+  env = process.env, platform = process.platform, path = noDockShimPath(), timeoutMs = 10_000, probe = probeNodeOptions, // 2초→10초: 부팅 직후 바쁜 기기에서 프로브가 늦어 조용히 미적용되면 그 세션 내내 아이콘이 뜬다(유건 지시 2026-09-15 "언제가 됐든 뜨면 안 돼")
 } = {}) {
   if (platform !== 'darwin') return null; // Dock이 없는 OS — 건드릴 이유가 없다
   try {
