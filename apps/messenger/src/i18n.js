@@ -136,6 +136,8 @@ export const DICT = {
   'auth.apple': ['Apple로 계속하기', 'Continue with Apple'],
   'legal.privacy': ['개인정보처리방침', 'Privacy policy'],
   'legal.terms': ['이용약관', 'Terms of service'],
+  'auth.sameMethod': ['이전에 쓰던 로그인 방법으로 들어오세요. 다른 방법을 고르면 새 계정이 됩니다.', 'Use the sign-in method you used before. A different method creates a new account.'],
+  'auth.noProviders': ['이 서버에는 켜진 로그인 방법이 없습니다. 서버 관리자에게 Apple·Google·GitHub 중 하나를 켜 달라고 하거나, 아래에서 다른 서버로 바꾸세요.', 'This server has no sign-in method enabled. Ask the server admin to enable Apple, Google or GitHub, or switch to another server below.'],
   'auth.deleted': ['계정이 삭제됐습니다. 이용해 주셔서 감사합니다.', 'Your account has been deleted. Thank you for using Argo.'],
   'acct.delete': ['계정 삭제', 'Delete account'],
   'user.deleted': ['탈퇴한 사용자', 'Deleted user'],
