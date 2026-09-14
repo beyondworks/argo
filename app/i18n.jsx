@@ -694,13 +694,7 @@ const DICT = {
   'settings.conn.enabling': ['가동 중 — 게이트웨이가 곧 연결됩니다', 'Enabled — gateway connecting shortly'],
   'settings.conn.stopped': ['중지됨', 'Stopped'],
   // 채널별 알림 선택 — 연결을 끊지 않고 종류별로 끈다(경위는 src/channel-events.mjs).
-  'settings.conn.notify': ['이 채널로 보낼 알림', 'Send to this channel'],
-  'settings.conn.notifyHint': ['끄면 이 채널로만 안 갑니다 — 앱에는 그대로 남습니다.', 'Unchecking only stops this channel — everything stays in the app.'],
-  'settings.conn.ev.approval': ['결재 요청', 'Approval requests'],
-  'settings.conn.ev.routine': ['루틴 실행 결과', 'Routine results'],
-  'settings.conn.ev.job': ['장시간 작업 완료', 'Long task done'],
   // 어휘는 chat.via.*와 맞춘다 — 채팅에서 '동료 쪽지'로 본 것을 설정에서 다른 이름으로 끄면 헷갈린다.
-  'settings.conn.ev.crewmail': ['동료 쪽지', 'Crew mail'],
   // 게이트웨이 선택 사항 안내 — 결재·브리핑은 직통 봇 폴백(#305·#307·#312 + H2 통일)으로도 배달되므로
   // 게이트웨이를 필수로 읽히게 하지 않는다(이전 경고 문구가 그렇게 읽혀 실사용 혼란 2026-08-28).
   // 문구는 실제 배달 규칙과 1:1이어야 한다(분리 검수 L2: "브리핑이 배달됩니다" 단정이 담당·기본 크루 봇
@@ -783,8 +777,6 @@ const DICT = {
   'settings.connectors.status.connecting': ['연결 중', 'Connecting'],
   'settings.connectors.status.reauth': ['재연결 필요', 'Reconnect needed'],
   'settings.connectors.status.error': ['오류', 'Error'],
-  'settings.conn.ev.inbox': ['받은 서류함 처리 결과', 'Inbox file results'],
-  'settings.conn.ev.delegate': ['위임 결과 미러(크루 간)', 'Delegation results (crew to crew)'], // 팀 메신저(msgr) 채널 종류 — channel-events.mjs와 짝
   'settings.saved': ['저장됨', 'Saved'],
   'settings.save': ['저장', 'Save'],
   'settings.nameplate.runtime': ['가동 환경', 'Runtime'],

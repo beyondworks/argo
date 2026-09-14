@@ -50,17 +50,20 @@ export function formatMsgrNotify(event, lang = 'ko', names = {}) {
 }
 
 /** "알림 받을 메신저" 체크박스 상태 정본 — 설정 카드와 라우트가 같은 판정을 쓴다(검수 #537 HIGH-3: hasToken만 보면 '중지'인 채널이 켜짐으로 보인다).
-    connected = 실제 배달 조건(텔레그램: 게이트웨이 가동+토큰+chatId 또는 크루 직통 봇 짝지음, 슬랙: 가동+토큰+채널, 아르고 메신저: 로그인+파견 크루).
-    on = 체크 표시(텔레그램·슬랙: 연결됨이고 전부 음소거가 아님, 아르고 메신저: notify mode dm). on인데 connected가 아니면 해제만 가능하게 두는 것은 카드의 몫. */
+    connected = 실제 배달 조건(텔레그램: 게이트웨이 가동+토큰+chatId 또는 페어링된 크루 직통 봇, 슬랙: 가동+토큰+채널, 아르고 메신저: 로그인+파견 크루).
+    on = 체크 표시(텔레그램·슬랙: 연결됨이고 음소거 0개, 아르고 메신저: notify mode dm). on인데 connected가 아니면 해제만 가능하게 두는 것은 카드의 몫. */
 export function notifyChannelState({ connections = {}, company = {}, signedIn = false } = {}) {
   const t = connections.telegram ?? {}, s = connections.slack ?? {};
-  const allMuted = (kind, muted) => CHANNEL_EVENTS[kind].every((ev) => (muted ?? []).includes(ev));
-  const tgConnected = !!((t.enabled && t.token && t.chatId) || Object.keys(t.agents ?? {}).length);
+  // 체크박스는 전부/없음만 쓴다 — 옛 칩으로 일부만 음소거해 둔 회사는 '끔'으로 보여 체크 한 번으로 전부 켜게 한다(화면=실제, 검수 2R MEDIUM-2)
+  const unmuted = (muted) => !(muted ?? []).length;
+  // 직통 봇은 토큰을 붙인 순간 항목이 생기고 페어링(ownerChat) 뒤에야 배달된다 — 배달 정본 telegramBriefingDest의 봇 분기와 같은 조건(검수 2R MEDIUM-1)
+  const botOk = (a) => !!(a?.token && a?.ownerChat && (t.ownerId == null || String(a.ownerId) === String(t.ownerId)));
+  const tgConnected = !!((t.enabled && t.token && t.chatId) || Object.values(t.agents ?? {}).some(botOk));
   const slackConnected = !!(s.enabled && s.token && s.channel);
   return {
     msgr: { connected: !!signedIn && !!company.msgr?.enabled, on: !!normalizeMsgrNotify(company.msgr?.notify), signedIn: !!signedIn },
-    telegram: { connected: tgConnected, on: tgConnected && !allMuted('telegram', t.mutedEvents) },
-    slack: { connected: slackConnected, on: slackConnected && !allMuted('slack', s.mutedEvents) },
+    telegram: { connected: tgConnected, on: tgConnected && unmuted(t.mutedEvents) },
+    slack: { connected: slackConnected, on: slackConnected && unmuted(s.mutedEvents) },
   };
 }
 

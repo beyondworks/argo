@@ -10,7 +10,6 @@ import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner
 import { useAppUpdate } from '../../../use-app-update';
 import LocalAssetImport from '../../../components/LocalAssetImport';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
-import { CHANNEL_EVENTS } from '../../../../src/channel-events.mjs'; // 순수 상수 — connections.mjs는 fs를 끌어 클라 번들이 깨진다
 
 // Argo Messenger(팀 메신저) 설치파일 — 릴리스 repo의 고정 파일명(release-messenger.yml Collect 스텝이 매 릴리스 갱신).
 const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
