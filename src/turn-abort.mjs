@@ -1,7 +1,11 @@
 // A crew can have more than one active entry (provider, preparation, retry).
 // Keep every handle: replacing the latest entry orphaned the preceding execution.
 // Process-local, as before: a different server process must route cancellation to its owner.
-const active = new Map();
+// The registry lives on globalThis: Next bundles this module once per server entry (instrumentation
+// = messenger/telegram/routine gateway, and each API route). A module-local Map gave the abort route an
+// empty registry for gateway-started turns, so the UI stop button never reached a messenger turn
+// (live repro 2026-09-14: /chat/abort → interrupted:false while the crew's ping child kept running).
+const active = (globalThis.__argoTurnAbort ??= new Map());
 export const turnAbortedError = (cause) => Object.assign(new Error('중단됨'), { aborted: true, ...(cause?.cancellationIncomplete ? { cancellationIncomplete: true, cause } : {}) });
 
 export function registerTurn(wsId, slug, interrupt, { group = Symbol('turn'), source = 'chat' } = {}) {

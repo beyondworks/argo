@@ -52,3 +52,17 @@ test('incomplete process cleanup survives cancellation lifetime wrapping',async(
   throw Object.assign(new Error('child cleanup uncertain'),{aborted:true,cancellationIncomplete:true});
  }),e=>e.aborted===true&&e.cancellationIncomplete===true);
 });
+
+test('registry is shared across bundled module copies (gateway turn vs abort route) — stop reaches messenger turns', async () => {
+  // Next builds src/turn-abort.mjs into instrumentation.js and into each route bundle separately;
+  // a query string forces a second module instance here the same way.
+  const copyA = await import('../src/turn-abort.mjs?bundle=gateway');
+  const copyB = await import('../src/turn-abort.mjs?bundle=abort-route');
+  const calls = [];
+  const reg = copyA.registerTurn('ws-x', 'pepper', () => calls.push('stopped'), { source: 'messenger' });
+  assert.equal(await copyB.interruptTurn('ws-x', 'pepper', { source: 'messenger' }), true, 'abort route copy must see the gateway copy registration');
+  assert.deepEqual(calls, ['stopped']);
+  assert.equal(reg.wasAborted(), true);
+  reg.release();
+  assert.equal(await copyB.interruptTurn('ws-x', 'pepper'), false, 'released registration is gone from the shared registry');
+});
