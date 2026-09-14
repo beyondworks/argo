@@ -580,6 +580,54 @@ test('통합 RS1: 원격 room-main·별칭 카드는 안 내려오고 원격도 
   assert.ok(!existsSync(join(wsRoot, 'agents', 'Zroom-main.md')));
 });
 
+/* ── [DA] 개발 산출물 디렉터리(node_modules·.git류·크롬 프로필)는 walk가 안 내려가고, diff도 불가시(pull·삭제 전파 스킵) ──
+   라이브 실측(2026-09-14): companies 버킷 25GB 중 약 7GB가 이런 디렉터리였고 8초 사이클마다 전부 읽고 해시했다. */
+test('통합 DA1: 로컬 개발 산출물(node_modules·크롬 프로필·venv)은 walk에서 제외돼 원격에 밀리지 않는다', async () => {
+  const wsId = 'devart-push';
+  const { fake } = await setup(wsId, {
+    localFiles: {
+      'node_modules/x.js': Buffer.from('module.exports = 1;'),
+      'chrome_profile_1/Cookies': Buffer.from('sqlite-binary-stub'),
+      '.venv/lib/a.py': Buffer.from('# venv file'),
+      'notes/keep.md': Buffer.from('# 대조군 — 일반 파일은 종전대로 밀린다'),
+    },
+  });
+  const r = await syncCompany(wsId, OWNER);
+
+  assert.equal(r.pushed, 1, '개발 산출물 3종은 밀지 않고, 대조군 1개만 밀린다');
+  assert.ok(!fake._store.has(`${OWNER}/${wsId}/node_modules/x.js`), 'node_modules는 원격에 올라가지 않는다');
+  assert.ok(!fake._store.has(`${OWNER}/${wsId}/chrome_profile_1/Cookies`), '크롬 프로필은 원격에 올라가지 않는다');
+  assert.ok(!fake._store.has(`${OWNER}/${wsId}/.venv/lib/a.py`), '가상환경은 원격에 올라가지 않는다');
+  assert.ok(fake._store.has(`${OWNER}/${wsId}/notes/keep.md`), '대조군 일반 파일은 종전대로 동기화된다');
+});
+
+test('통합 DA2: 원격에만 있는 개발 산출물은 받지도 않고 삭제 전파도 하지 않는다', async () => {
+  const wsId = 'devart-pull';
+  const buf = Buffer.from('module.exports = 2;');
+  const { wsRoot, fake } = await setup(wsId, {
+    // base 없음 = 통상 판정이면 '원격 신규 → 받기'가 되어야 할 상황(가드가 없으면 반드시 pull됨을 증명).
+    remoteFiles: { 'node_modules/y.js': meta(buf) },
+    remoteBlobs: { 'node_modules/y.js': buf },
+  });
+  const r = await syncCompany(wsId, OWNER);
+
+  assert.equal(r.pulled, 0, '개발 산출물은 diff 자체에서 불가시라 받지 않는다');
+  assert.equal(r.deletedR, 0, '원격 삭제 전파도 없다');
+  assert.ok(!existsSync(join(wsRoot, 'node_modules', 'y.js')), '로컬에 새로 생기지 않는다');
+  assert.ok(fake._store.has(`${OWNER}/${wsId}/node_modules/y.js`), '원격 blob은 그대로 보존된다');
+});
+
+test('통합 DA3: build 디렉터리는 개발 산출물 제외 대상이 아니라 종전대로 동기화된다(사용자 폴더 이름과 겹칠 수 있어 후보에서 제외)', async () => {
+  const wsId = 'devart-build-control';
+  const { fake } = await setup(wsId, {
+    localFiles: { 'docs/build/notes.md': Buffer.from('# build는 제외 목록에 없다') },
+  });
+  const r = await syncCompany(wsId, OWNER);
+
+  assert.equal(r.pushed, 1, 'build 세그먼트를 포함한 파일도 정상적으로 밀린다');
+  assert.ok(fake._store.has(`${OWNER}/${wsId}/docs/build/notes.md`), '원격에 정상 업로드된다');
+});
+
 /* ─── 목록 조회 비용 계약 (프로덕션 실측 2026-07-26: Supabase CPU 80% 경보) ───
    Storage list()는 서버에서 storage.search()로 실행되고, 그 하나가 DB CPU의 98.3%를 먹고 있었다
    (107만 회 · 평균 177ms). 기기마다 8초 사이클에 목록 2회(발견 + tombstone)를 부르니 부하가
