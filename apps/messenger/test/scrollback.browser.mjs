@@ -9,15 +9,16 @@
 //
 // 설계 메모(실측으로 얻은 것 — 고치기 전에 읽을 것)
 //  · 한 페이지만 불러오려면 버튼 클릭을 쓴다. 휠로 맨 위까지 올리면 보정 뒤에도 상단에 남아 여러 페이지가 연달아 실려 측정이 섞인다.
-//  · 버튼을 누르기 전에 바닥 고정(stick)을 먼저 푼다. 바닥에 붙은 채로는 위치 보정과 바닥 추종이 같은 값을 만들어 구분할 수 없다.
-//    합성 wheel 이벤트로 '사용자 제스처' 표시를 세우고(앱은 isTrusted 를 보지 않는다) scrollTop 대입으로 진짜 scroll 이벤트를 낸다.
+//  · 버튼을 누르기 전에 바닥에서 떨어뜨린다(프로그램 scrollTop, placeAbove). L-4(loadOlder가 stick=false) 뒤로는 제스처 표시가 필요 없다.
 //  · CDP 입력(page.mouse.wheel)은 스레드가 무거우면 타임아웃으로 죽는다 — 측정 경로에서 뺐다.
 //  · 페이지 안 requestAnimationFrame 로거는 탭이 뒤로 가면 스로틀돼 표본이 통째로 빈다 — 표본은 Node 쪽에서 뽑는다.
 
 // 설정은 파일로 — ego-browser nodejs는 호출자의 환경 변수를 상속하지 않는다(실측: SB_STRICT·SB_TEST_PORT 전부 null, 검수 #531 3R LOW-2).
 // 기본값을 바꾸려면 옆에 scrollback.local.json({ "port": 5371, "iosPort": 5372, "strict": true })을 둔다(gitignore).
 const fs = await import('node:fs');
-const CFG = { port: 5371, iosPort: 5372, strict: true, ...(() => { try { return JSON.parse(fs.readFileSync('/Users/yoogeon/lean-projects/saas/argo/apps/messenger/test/scrollback.local.json', 'utf8')); } catch { return {}; } })() };
+// ego 작업 디렉터리는 '/'라 상대경로를 못 쓴다 — 후보를 순회한다(SB_ROOT 환경 변수는 전달되지 않으므로 없음). 다른 클론·워크트리는 그 트리의 파일을 첫 후보로.
+const CFG_CANDIDATES = [`${process.cwd()}/apps/messenger/test/scrollback.local.json`, '/Users/yoogeon/lean-projects/saas/argo/apps/messenger/test/scrollback.local.json'];
+const CFG = { port: 5371, iosPort: 5372, strict: true, ...(() => { for (const f of CFG_CANDIDATES) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* 다음 후보 */ } } return {}; })() };
 const PORT = String(CFG.port), IOS_PORT = String(CFG.iosPort), STRICT = CFG.strict !== false;
 const PAGE = 100;
 const url = (port, qs) => `http://127.0.0.1:${port}/test/scrollback.fixture.html?${qs}`;
@@ -46,9 +47,6 @@ const ids = async () => JSON.parse(await page.evaluate('JSON.stringify(((documen
 const ctrl = () => page.evaluate('String((document.querySelector(".msgr-older") || {}).innerText || "")');
 const clickOlder = () => page.evaluate('(() => { const b = document.querySelector(".msgr-older button"); if (!b || b.disabled) return 0; b.click(); return 1; })()');
 
-// 바닥 고정(stick) 해제 — 실제 휠 입력이어야 한다.
-// 합성 WheelEvent 는 앱의 제스처 표시에 닿지 않는다(실증: 합성 휠 + scrollTop 대입 뒤 내용을 키우면 그대로 바닥으로 끌려갔다).
-// 휠은 첫 페이지(가벼운 상태)에서만 쓰고, 실제 로드는 버튼으로 한다 — 무거워진 뒤 CDP 입력은 타임아웃으로 죽는다.
 // 바닥에서 떨어뜨리는 건 프로그램 scrollTop으로 — L-4(loadOlder가 stick=false) 뒤로는 제스처 표시가 필요 없다.
 // CDP 휠(page.mouse.wheel)은 6회 중 2회 타임아웃으로 이동 0·부분 이동이 나 게이트 2가 5회 중 2회 빨갰다(검수 #531 3R MEDIUM-1).
 // 뒷탭에선 ResizeObserver 알림이 렌더 기회까지 밀려 있다가 배치 직후 한꺼번에 와, 아직 참인 초기 바닥 고정(제스처 없음)이 바닥으로 되돌린다(7회 중 1회 실측, 실사용의 휠 제스처엔 없는 경로).

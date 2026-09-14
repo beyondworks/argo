@@ -16,7 +16,7 @@
 | `scrollback.config.mjs` | `apps/messenger/test/` | 격리 Vite 설정(`./supabase.js` 치환 + `FAKE_PLATFORM` 으로 모바일 경로 개방) |
 | `scrollback.browser.mjs` | `apps/messenger/test/` | ego-browser 행동 검사 6종(게이트 4 + 결함재현 2) |
 | `scrollback.mutations.mjs` | `apps/messenger/test/` | 변이 주입기 M1~M10(핀이 행동을 잠그는지 실증) — **임시 워크트리에서만 실행**(App.jsx를 고쳤다 되돌린다, 백업 `.mutbak`은 gitignore) |
-| `scrollback.local.json` | `apps/messenger/test/`(선택, gitignore) | `{ "port", "iosPort", "strict" }` — 환경 변수는 `ego-browser nodejs`에 전달되지 않는다(실측) |
+| `scrollback.local.json` | `apps/messenger/test/`(선택, gitignore) | `{ "port", "iosPort", "strict" }` — 환경 변수는 `ego-browser nodejs`에 전달되지 않는다(실측). ego의 작업 디렉터리가 `/`라 `<cwd>/apps/messenger/test/` → 이 클론의 절대경로 순으로 찾는다(다른 워크트리에서는 파일을 못 읽고 기본값으로 돈다) |
 
 ## 실행
 
