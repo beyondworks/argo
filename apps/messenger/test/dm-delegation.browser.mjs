@@ -12,7 +12,7 @@ for(const engine of (process.env.DM_ENGINE ? [process.env.DM_ENGINE] : ['chromiu
   await page.addInitScript(lang=>localStorage.setItem('argo-lang',lang),lang);
   const reload=lang==='ko'?'다시 불러오기':'Reload recipients';const send=lang==='ko'?'보내기':'Send';
   const ta=page.locator('.msgr-composer textarea');const option=name=>page.locator('.msgr-rolepop [role=option]').filter({hasText:name});
-  const pick=async(cmd,name)=>{await ta.fill(cmd);await option(name).click();};
+  const pick=async(cmd,name)=>{await ta.fill(cmd);await option(name).click();await ta.evaluate(el=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));}; // 선택 뒤 앱이 다음 프레임에 커서를 끝으로 옮긴다 — 곧바로 fill 하면 전체 선택이 풀려 덧붙여진다(간헐 실패 원인)
   try{
    await page.goto(`http://127.0.0.1:${process.env.DM_TEST_PORT || 5201}/test/dm-lifecycle.fixture.html?recipientFailure`);
    await page.locator('[data-sec="dms"] .item').filter({hasText:'Fixture Existing Agent'}).click();
@@ -89,10 +89,18 @@ for(const engine of (process.env.DM_ENGINE ? [process.env.DM_ENGINE] : ['chromiu
    await ta.fill('/cc');await ta.press('Escape');assert.equal(await ta.inputValue(),'','Escape drops the command');
    if(width<720)await page.getByRole('button',{name:lang==='ko'?'홈으로':'Home',exact:true}).click();
    await page.locator('[data-sec="channels"] .item').filter({hasText:'Fixture Private'}).click();
-   await ta.fill('/');
-   assert.deepEqual((await page.locator('.msgr-slashpop .cmd').allTextContents()).filter(c=>c==='/to'||c==='/cc'),[],'channels do not offer /to·/cc');
-   await ta.fill('/cc');assert.equal(await page.locator('.msgr-rolepop').count(),0,'channels have no CC picker');
-   await ta.fill('/cc @Fix');assert.ok(await page.locator('.msgr-pop [role=option]').count()>=1,'channel @mention popup survives a leading /cc (2R regression)');
+   await ta.fill('/');await page.locator('.msgr-slashpop').waitFor();
+   assert.deepEqual((await page.locator('.msgr-slashpop .cmd').allTextContents()).slice(0,2),['/to','/cc'],'channels offer /to·/cc too (messenger feature, not DM-only — 유건 2026-09-14)');
+   assert.equal(await page.locator('.msgr-slashpop .tag').count(),0,'no crew-list column in the commander (it overflowed the window)');
+   const popBox=await page.locator('.msgr-slashpop').boundingBox();const compBox=await page.locator('.msgr-composer').boundingBox();
+   assert.ok(popBox.x+popBox.width<=width&&(width<720||popBox.x+popBox.width<=compBox.x+compBox.width+1),'commander never leaves the viewport; on desktop it stays within the composer width');
+   await ta.fill('/cc');await option('Fixture Existing Agent').waitFor();
+   assert.equal(await option('Fixture New Agent').count(),0,'channel /cc lists only crews of that channel');
+   await option('Fixture Existing Agent').click();await page.locator('.msgr-cc-chips .msgr-chan').filter({hasText:'Fixture Existing Agent'}).waitFor();
+   await ta.fill('Channel CC only');await page.getByRole('button',{name:send,exact:true}).click();
+   await page.waitForFunction(()=>window.__dmFixture.tables.msgr_messages.some(m=>m.body==='Channel CC only'&&m.channel_id==='private'));
+   assert.deepEqual(await page.evaluate(()=>window.__dmFixture.tables.msgr_messages.find(m=>m.body==='Channel CC only'&&m.channel_id==='private').mentions),[{kind:'crew',id:'crew-existing',role:'cc'}],'channel CC = mention with role cc (bridge/server skip cc for execution)');
+   await ta.fill('@F');assert.ok(await page.locator('.msgr-pop [role=option]').count()>=1,'channel @mention popup still works');
    await ta.fill('@Fixture New Agent');
    await page.getByRole('button',{name:send,exact:true}).click();
    await page.waitForFunction(()=>window.__dmFixture.tables.msgr_messages.some(m=>m.body==='@Fixture New Agent'&&m.channel_id==='private'));
