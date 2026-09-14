@@ -187,6 +187,8 @@ export function makeDb(client) {
       return Object.fromEntries(rows.map((r) => [r.org_id, r.allow_default]));
     },
     async updateCrewInfo(id, patch) { unwrap(await client.from('msgr_crews').update(patch).eq('id', id)); },
+    /** '/' 커맨더 목록 — 이 회사(ws)의 내 크루 행 전부에 같은 목록(회사 단위 별칭·스킬). */
+    async setCommands(uid, wsId, commands) { unwrap(await client.from('msgr_crews').update({ commands }).eq('owner_user_id', uid).eq('ws_id', wsId)); },
     async deleteCrews(ids) { if (ids.length) unwrap(await client.from('msgr_crews').delete().in('id', ids)); },
     /** G-2 조직 문서 미러용: 조직 이름·슬러그, 문서 목록(가벼운 열), 본문(바뀐 것만) — RLS가 열람 범위를 정한다(채널 문서는 열람자만). */
     async org(orgId) { return unwrap(await client.from('msgr_orgs').select('id, slug, name').eq('id', orgId).maybeSingle()); },
@@ -381,7 +383,31 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
   return out;
 }
 
-export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory } = {}) {
+/** '/' 커맨더 후보(유건 지시 2026-09-14) — 본체 크루 채팅의 커맨더와 같은 재료: 회사 별칭(company.json.aliases) + 설치 스킬(skills/).
+    이름·제목·별칭 본문만. 본체 내장 명령(새 대화·카드·이동)은 본체 화면 조작이라 싣지 않는다. */
+export function crewCommands({ aliases = [], skills = [] } = {}) {
+  const str = (v, n) => String(v ?? '').trim().slice(0, n);
+  return [
+    ...(Array.isArray(aliases) ? aliases : []).filter((a) => str(a?.cmd, 40) && str(a?.text, 2000)).map((a) => ({ kind: 'alias', cmd: str(a.cmd, 40), text: str(a.text, 2000) })),
+    ...(Array.isArray(skills) ? skills : []).filter((s) => str(s?.id, 80)).map((s) => ({ kind: 'skill', id: str(s.id, 80), title: str(s.title, 80) || str(s.id, 80) })),
+  ];
+}
+async function listCommandsForWs(wsId) {
+  const [{ aliases = [] }, { listInstalledSkills }] = await Promise.all([loadCompany(wsId).catch(() => ({})), import('../market.mjs')]);
+  return crewCommands({ aliases, skills: await listInstalledSkills(wsId).catch(() => []) });
+}
+const commandsPushed = new Map(); // wsId → 마지막으로 올린 JSON. 같은 내용이면 폴마다 update를 치지 않는다(재기동 뒤 첫 폴은 한 번 쓴다)
+/** 크루 행의 commands를 회사 목록과 맞춘다 — 바뀐 폴에만 update. 본체에서 스킬·별칭이 바뀌면 다음 폴(15초)에 메신저에 반영된다. */
+export async function mirrorCommands(wsId, { db, uid, commands }) {
+  const json = JSON.stringify(commands);
+  if (commandsPushed.get(wsId) === json) return false;
+  await db.setCommands(uid, wsId, commands);
+  commandsPushed.set(wsId, json);
+  return true;
+}
+export const _resetCommandsForTest = () => commandsPushed.clear();
+
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs } = {}) {
   // 회사 소유자 게이트(실사고 2026-09-11): 같은 PC에서 다른 계정으로 로그인하면 기기 세션(uid)이 바뀌는데, 로컬 회사 폴더는 그대로라
   // 브리지가 남의 회사 크루를 그 계정의 조직에 미러·실행했다(lean-win에 Lean-AX 13명). 회사 목록 API(ownerId === user.id)와 같은 규칙으로 DB에 손대기 전에 끊는다.
   if (ownerId && ownerId !== uid) return { crews: 0, queued: 0, denied: 0, stale: 0, list: [], skipped: 'owner' };
@@ -392,7 +418,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     await db.nodeHeartbeat(nodeOrgId, info).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message));
   }
   if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
-  if (!nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => console.error('[argo] msgr 크루 인벤토리 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
+  if (!nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => console.error('[argo] msgr 크루 인벤토리 미러 실패:', e.message));
+  if (commandsFor) await mirrorCommands(wsId, { db, uid, commands: await commandsFor(wsId) }).catch((e) => console.error('[argo] msgr 커맨더 목록 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
   await db.workHeartbeat?.(crews.map((c) => c.id)).catch((e) => console.warn('[argo] msgr work capability:', e.message));

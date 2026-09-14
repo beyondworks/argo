@@ -27,6 +27,7 @@ import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
 import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
+import { slashCandidates, slashInsert } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -418,7 +419,7 @@ function Shell({ session }) {
     const [chs, mems, allCrews, e, pol] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
-      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio').eq('org_id', id).in('status', ['active', 'available'])),
+      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio, commands').eq('org_id', id).in('status', ['active', 'available'])),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
       supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
@@ -2886,6 +2887,26 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     return mentionCandidates({ q: needle, crews: isDm ? mentionCrews : scopeCrews ?? usable, members: scopePeople ?? members, uid, exclude, all: !isDm || allByName.some((c) => c.kind === 'crew' || c.id !== uid) }).map((c) => (c.kind === 'all' ? { ...c, sub: t('mention.all') } : { ...c, disabled: isDm && c.kind === 'crew' && !(scopeCrews ?? []).some((p) => p.id === c.id) && dmCandidates.find((p) => p.id === c.id)?.delivery_ready !== true })); // 사람 먼저·나 제외·상한 없음(팝업 스크롤). 맨 위 @all. 후보는 이 채널의 참여 구성만(사설 채널 밖 크루가 걸리던 실사고 2026-09-11)
   }, [pop, crews, members, uid, channel?.personal_crews, org, scopeCrews, scopePeople, text, byName, allByName, isDm, mentionCrews, dmCandidates, t]);
   const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };
+  // '/' 커맨더(유건 지시 2026-09-14) — 채널 크루가 미러한 본체 명령(별칭·스킬, msgr_crews.commands). 팝업이 열리는 순간 최신 목록을
+  // 한 번 다시 읽는다(본체에서 스킬·별칭이 바뀜 → 게이트웨이 폴이 행 갱신 → 여기). 실행은 본체 몫이고 여기서는 지시문을 입력창에 넣는다.
+  const slashCrews = scopeCrews ?? crews;
+  const [freshCmds, setFreshCmds] = useState(null); // crewId → commands(팝업 열 때 재조회분)
+  const slashOpen = /^\/(\S*)$/.test(text);
+  useEffect(() => {
+    if (!slashOpen) { setFreshCmds(null); return; }
+    const ids = slashCrews.map((c) => c.id); if (!ids.length) return;
+    let alive = true;
+    supabase.from('msgr_crews').select('id, commands').in('id', ids).then(({ data }) => { if (alive && data) setFreshCmds(Object.fromEntries(data.map((r) => [r.id, r.commands]))); }).catch(() => {});
+    return () => { alive = false; };
+  }, [slashOpen, chId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const slashCands = useMemo(() => slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }) }), [text, slashCrews, freshCmds, t]);
+  const [slashSel, setSlashSel] = useState(0);
+  useEffect(() => { setSlashSel(0); }, [text]);
+  const pickSlash = (cand) => {
+    const { text: next, mention } = slashInsert(cand, { isDm });
+    setText(next); if (mention) setMentions((ms) => ms.some((x) => x.id === mention.id) ? ms : [...ms, mention]);
+    requestAnimationFrame(() => { ta.current?.focus(); ta.current?.setSelectionRange(next.length, next.length); autosize(ta.current); });
+  };
   const detect = (v, caret) => { const upto = v.slice(0, caret); const m = upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); };
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
   const insertAt = () => { // 도구 줄 '멘션' — 커서 자리에 @를 넣고 팝업을 연다
@@ -2921,6 +2942,11 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     if (await result) onSent(delivery.snapshot().lastDeliveredId);
   };
   const onKey = (e) => {
+    if (slashCands?.length) { // '/' 커맨더 — @멘션 팝업과 같은 키(↑↓ 이동, Enter·Tab 선택). 선택은 삽입일 뿐 전송이 아니다
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel((i) => (i + 1) % slashCands.length); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSel((i) => (i - 1 + slashCands.length) % slashCands.length); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSlash(slashCands[Math.min(slashSel, slashCands.length - 1)]); return; }
+    }
     if (pop && candidates.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % candidates.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + candidates.length) % candidates.length); return; }
@@ -2931,6 +2957,14 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   };
   return (
     <div className="msgr-dock" style={{ '--sbw': `${sbw}px` }}><div>
+      {slashCands && (
+        <div className="msgr-pop msgr-slashpop" role="listbox" aria-label={t('cmd.title')}>
+          {slashCands.length === 0 && <p className="empty">{t('cmd.empty')}</p>}
+          {slashCands.map((c, i) => <button key={c.key} type="button" role="option" aria-selected={i === slashSel} className={i === slashSel ? 'on' : ''} ref={i === slashSel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
+            <span className="cmd">/{c.cmd}</span><span className="desc">{c.desc}</span><span className="tag msgr-klabel">{t(c.kind === 'skill' ? 'cmd.skill' : 'cmd.alias')}{c.crews.length ? ` · ${c.crews.map((x) => x.name).join(', ')}` : ''}</span>
+          </button>)}
+        </div>
+      )}
       {pop && candidates.length > 0 && (
         <div className="msgr-pop" role="listbox">
           {candidates.map((c, i) => <button key={`${c.kind}:${c.id}`} type="button" role="option" aria-selected={i === sel} disabled={c.disabled} className={i === sel ? 'on' : ''} ref={i === sel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => { e.preventDefault(); pick(c); }}>

@@ -204,6 +204,10 @@
 .msgr-pop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 6px 8px; font-size: 12.5px; color: var(--fg); background: none; cursor: pointer; }
 .msgr-pop button.on, .msgr-pop button:hover { background: var(--card-2); }
 .msgr-pop .tag { margin-left: auto; }
+.msgr-slashpop .cmd { flex: none; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.msgr-slashpop .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); }
+.msgr-slashpop .tag { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-slashpop .empty { margin: 0; padding: 8px 10px; font-size: 12.5px; color: var(--fg-3); }
 
 /* 크루 시트 — 본문 우측에 떠오르는 카드(척추 모티프와 같은 6/20 반경). 소유자만 허용 범위 편집 */
 .msgr-avbtn, .msgr-namebtn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
