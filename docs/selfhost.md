@@ -79,6 +79,9 @@ curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/in
    20260909005000_msgr_avatars.sql
    20260909120000_msgr_execution_claims.sql
    20260909230000_msgr_bot_execution.sql
+   20260914200000_msgr_delete_me.sql
+   20260914203000_msgr_public_domains_relay.sql
+   20260914210000_msgr_push_secret.sql
    ```
 
    마지막 두 항목은 여러 기기가 같은 크루·봇을 실행할 때 중복 실행과 중복 응답을 막는 DB 계약이다. 모든 Argo 크루 호스트와 외부 봇 실행기도 같은 릴리스의 계약으로 갱신한 뒤 검수한다. 과거 SQL만 적용한 서버로 새 클라이언트를 연결하지 않는다.

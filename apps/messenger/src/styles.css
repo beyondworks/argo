@@ -215,6 +215,8 @@
 .msgr-rolepop .empty p { margin: 0; }
 .msgr-rolepop .foot { margin: 2px 0 0; padding: 4px 10px 2px; border-top: 1px solid var(--border-soft); } /* 준비 상태에서도 다시 불러오기(에이전트 업데이트 뒤 지원 여부 갱신) */
 .msgr-cc-chips { margin-bottom: 6px; } /* 1:1 방 참조 칩(/cc로 고른 크루) — 누르면 해제 */
+.msgr-setcard.danger-zone { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); } /* 계정 삭제 카드 — 위험 구역 표시 */
+.acct-error { display: block; margin-top: 8px; color: var(--danger); }
 
 /* 크루 시트 — 본문 우측에 떠오르는 카드(척추 모티프와 같은 6/20 반경). 소유자만 허용 범위 편집 */
 .msgr-avbtn, .msgr-namebtn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }

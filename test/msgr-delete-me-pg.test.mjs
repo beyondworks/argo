@@ -35,6 +35,8 @@ before(() => {
     create table if not exists storage.buckets (id text primary key, name text, public boolean not null default false);
     create or replace function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
     alter table storage.objects enable row level security;
+    create or replace function storage.protect_delete() returns trigger language plpgsql as $$ begin if coalesce(current_setting('storage.allow_delete_query', true), 'false') <> 'true' then raise exception 'Direct deletion from storage tables is not allowed. Use the Storage API instead.' using errcode = '42501'; end if; return null; end $$; -- 실제 storage-api 가드 복제(로컬 스택 E2E에서 적발)
+    drop trigger if exists protect_objects_delete on storage.objects; create trigger protect_objects_delete before delete on storage.objects for each statement execute function storage.protect_delete();
     grant usage on schema storage to authenticated; grant select, insert, delete on storage.objects to authenticated;
     create schema if not exists realtime;
     create table if not exists realtime.messages (id bigint generated always as identity primary key, topic text, extension text, payload jsonb);
@@ -101,4 +103,82 @@ test('서비스 계정만 남은 조직도 "혼자"로 본다 — 소유자 삭�
   const org = last(asUser(other, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('SvcOnly', 'svconly', '${other}') returning id`));
   sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${org}', '${U.svc}', 'member', 'svc') on conflict do nothing; update public.msgr_orgs set service_user_id='${U.svc}' where id='${org}'`);
   assert.deepEqual(JSON.parse(last(asUser(other, `select public.msgr_delete_me()`))), { deleted_orgs: 1 });
+});
+
+const NEW = (n) => `${n}${n}${n}${n}${n}${n}${n}${n}-${n}${n}${n}${n}-4${n}${n}${n}-8${n}${n}${n}-${n}${n}${n}${n}${n}${n}${n}${n}${n}${n}${n}${n}`;
+const mkUser = (id, tag) => sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${tag}@example.test') on conflict do nothing`);
+
+test('2R C-1: 조직 문서를 만들거나 고친 사용자도 삭제된다(작성자·수정자는 조직 소유자에게, 버전·수정 시각 불변)', { skip }, () => {
+  const ed = NEW('a'); mkUser(ed, 'editor');
+  const code = last(asUser(U.owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.owner}') returning code`));
+  assert.equal(last(asUser(ed, `select public.msgr_accept_invite('${code}')`)), ORG);
+  const doc = last(sql(`insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${ORG}', 'rules/x.md', 'X', 'v1', '${ed}', '${ed}') returning id`));
+  const before = sql(`select version||'|'||updated_at from public.msgr_org_docs where id='${doc}'`);
+  assert.deepEqual(JSON.parse(last(asUser(ed, `select public.msgr_delete_me()`))), { deleted_orgs: 0 });
+  assert.equal(sql(`select count(*) from auth.users where id='${ed}'`), '0');
+  assert.equal(sql(`select created_by||'|'||updated_by||'|'||version||'|'||updated_at from public.msgr_org_docs where id='${doc}'`), `${U.owner}|${U.owner}|${before}`, '이관되고 버전·시각은 그대로');
+});
+
+test('2R C-2: 회사 노드 서비스 계정도 자기 계정을 지울 수 있다(service_user_id 해제)', { skip }, () => {
+  const own = NEW('b'), svc = NEW('c'); mkUser(own, 'svcowner'); mkUser(svc, 'svcacct');
+  const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('SvcOrg', 'svcorg', '${own}') returning id`));
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${org}', '${svc}', 'member', 'svc') on conflict do nothing; update public.msgr_orgs set service_user_id='${svc}' where id='${org}'`);
+  assert.deepEqual(JSON.parse(last(asUser(svc, `select public.msgr_delete_me()`))), { deleted_orgs: 0 });
+  assert.equal(sql(`select coalesce(service_user_id::text,'(null)') from public.msgr_orgs where id='${org}'`), '(null)');
+  assert.equal(sql(`select count(*) from auth.users where id='${svc}'`), '0');
+});
+
+test('2R C-3: 조직의 지정 후계자(관리자)도 삭제된다(successor 해제)', { skip }, () => {
+  const own = NEW('d'), heir = NEW('e'); mkUser(own, 'heirowner'); mkUser(heir, 'heir');
+  const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('HeirOrg', 'heirorg', '${own}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${org}'`);
+  const code = last(asUser(own, `insert into public.msgr_invites (org_id, role, created_by) values ('${org}', 'admin', '${own}') returning code`));
+  assert.equal(last(asUser(heir, `select public.msgr_accept_invite('${code}')`)), org);
+  asUser(own, `update public.msgr_orgs set successor_user_id='${heir}' where id='${org}'`);
+  assert.equal(sql(`select successor_user_id from public.msgr_orgs where id='${org}'`), heir);
+  assert.deepEqual(JSON.parse(last(asUser(heir, `select public.msgr_delete_me()`))), { deleted_orgs: 0 });
+  assert.equal(sql(`select coalesce(successor_user_id::text,'(null)') from public.msgr_orgs where id='${org}'`), '(null)');
+});
+
+test('2R H-1: 보관(소프트 삭제) 조직에 다른 멤버가 있으면 차단, 혼자면 첨부 파일과 함께 하드 삭제', { skip }, () => {
+  const own = NEW('f'), mem = NEW('9'); mkUser(own, 'archowner'); mkUser(mem, 'archmember');
+  const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('ArchOrg', 'archorg', '${own}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${org}'`);
+  const code = last(asUser(own, `insert into public.msgr_invites (org_id, role, created_by) values ('${org}', 'member', '${own}') returning code`));
+  assert.equal(last(asUser(mem, `select public.msgr_accept_invite('${code}')`)), org);
+  asUser(own, `update public.msgr_orgs set deleted_at = now() where id='${org}'`);
+  const r = asUserRaw(own, `select public.msgr_delete_me()`);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /msgr_owner_transfer_required: ArchOrg/, '보관 조직도 남의 기록 — 이전이 먼저');
+  assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org}'`), '1', '아무것도 지우지 않는다');
+  // 혼자인 보관 조직 + 첨부 파일
+  const solo = NEW('0'); mkUser(solo, 'archsolo');
+  const org2 = last(asUser(solo, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('ArchSolo', 'archsolo', '${solo}') returning id`));
+  asUser(solo, `update public.msgr_orgs set deleted_at = now() where id='${org2}'`);
+  sql(`insert into storage.objects (bucket_id, name) values ('msgr', '${org2}/some-channel/1/file.txt'), ('msgr-avatars', 'avatars/${solo}/me.png'), ('msgr-avatars', 'avatars/${own}/other.png')`);
+  assert.deepEqual(JSON.parse(last(asUser(solo, `select public.msgr_delete_me()`))), { deleted_orgs: 1 });
+  assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org2}'`), '0');
+  assert.equal(sql(`select count(*) from storage.objects where bucket_id='msgr' and name like '${org2}/%'`), '0', '조직 첨부 파일 정리');
+  assert.equal(sql(`select count(*) from storage.objects where name='avatars/${solo}/me.png'`), '0', '내 아바타 정리');
+  assert.equal(sql(`select count(*) from storage.objects where name='avatars/${own}/other.png'`), '1', '남의 아바타는 그대로');
+});
+
+test('2R M-1: 만료된 게스트만 남은 조직의 소유자는 삭제된다(만료 게스트는 활성 멤버가 아니다)', { skip }, () => {
+  const own = NEW('6'), guest = NEW('3'); mkUser(own, 'gowner'); mkUser(guest, 'guest');
+  const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('GuestOrg', 'guestorg', '${own}') returning id`));
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name, expires_at) values ('${org}', '${guest}', 'guest', 'g', now() - interval '1 day') on conflict do nothing`);
+  assert.deepEqual(JSON.parse(last(asUser(own, `select public.msgr_delete_me()`))), { deleted_orgs: 1 });
+});
+
+test('2R H-2: 가드 통과 플래그는 함수 끝과 예외 경로 모두에서 되돌린다(자기 역할 상승 방어선 유지)', { skip }, () => {
+  const src = sql(`select prosrc from pg_proc where proname='msgr_delete_me'`);
+  assert.equal((src.match(/set_config\('argo\.msgr_account_delete', '', true\)/g) ?? []).length, 2, '정상·예외 두 경로');
+  assert.match(src, /exception when others then/);
+  // 플래그 없이 본인 역할 상승은 여전히 막힌다
+  const own = NEW('4'), mem = NEW('8'); mkUser(own, 'rowner'); mkUser(mem, 'rmember');
+  const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('RoleOrg', 'roleorg', '${own}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${org}'`);
+  const code = last(asUser(own, `insert into public.msgr_invites (org_id, role, created_by) values ('${org}', 'member', '${own}') returning code`));
+  assert.equal(last(asUser(mem, `select public.msgr_accept_invite('${code}')`)), org);
+  const r = asUserRaw(mem, `update public.msgr_org_members set role='owner' where org_id='${org}' and user_id='${mem}'`);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /msgr_member_self_only_name/);
 });

@@ -161,7 +161,7 @@ export default function App() {
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
-  const accountDeleted = async () => { try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); };
+  const accountDeleted = async () => { try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); };
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
@@ -269,7 +269,7 @@ function Auth({ logoutNotice = '' }) {
       <div className="body">
         <h1>{t('auth.title')}</h1>
         <p>{t('auth.desc')}</p>
-        {logoutNotice && <p role="alert" style={{ color: 'var(--danger)' }}>{t(logoutNotice)}</p>}
+        {logoutNotice && <p role={logoutNotice === 'auth.deleted' ? 'status' : 'alert'} style={{ color: logoutNotice === 'auth.deleted' ? 'var(--fg-2)' : 'var(--danger)' }}>{t(logoutNotice)}</p>}
         {authWaiting ? (
           <p className="msgr-wait"><span className="msgr-klabel">{t('auth.waiting')}</span><button type="button" className="btn sm ghost" disabled={mobileAuth.exchanging} onClick={() => isMobileNative ? cancelMobileSignIn() : location.reload()}>{t('auth.cancel')}</button></p>
         ) : (<>
@@ -1384,35 +1384,30 @@ function writeInboxSeen(v) { try { localStorage.setItem(INBOX_SEEN_KEY, JSON.str
 /* ─── 프로필(계정 단위): 아이디·표시 이름·찾기 허용 스위치 — msgr_profiles(본인만 쓰기). 친구 찾기의 기준. ─── */
 // 앱 안 계정 삭제(App Store 5.1.1(v)) — 깃헙식 확인(단어 입력) 뒤 서버 함수 msgr_delete_me 한 번. 소유 조직에 다른 멤버가 있으면
 // 서버가 조직명을 돌려주며 거부 → 소유권 이전 안내. 성공하면 세션은 이미 서버에서 무효라 로컬 로그아웃만 한다.
-function AccountDeleteCard({ session, onDeleted, onError }) {
+function AccountDeleteCard({ session, onDeleted }) {
   const { t } = useT();
-  const [word, setWord] = useState(null); const [busy, setBusy] = useState(false); const [blocked, setBlocked] = useState('');
+  const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false); const [blocked, setBlocked] = useState('');
   const confirmWord = t('acct.delete.word');
   const run = async () => {
-    if (word?.trim() !== confirmWord) return;
     setBusy(true); setBlocked('');
     const { error } = await supabase.rpc('msgr_delete_me');
     setBusy(false);
     if (error) {
       const m = /msgr_owner_transfer_required: (.*)$/m.exec(error.message || '');
       if (m) { setBlocked(t('acct.delete.transferFirst', { orgs: m[1].trim() })); return; }
-      return onError(friendlyErr(error.message ?? String(error), t));
+      console.error('[argo] account delete failed', error.message); // 진단(설정 › 진단)에는 남기고 화면엔 내부 이름을 내보내지 않는다(검수 #529 M-3)
+      setBlocked(t('acct.delete.failed')); return;
     }
-    onDeleted?.();
+    setOpen(false); onDeleted?.();
   };
+  const email = session.user.email;
   return (
     <section className="msgr-setcard danger-zone">
       <h2>{t('acct.delete')}</h2>
       <p>{t('acct.delete.desc')}</p>
-      {blocked && <p role="alert" className="delivery-error">{blocked}</p>}
-      {word === null
-        ? <div className="row"><button type="button" className="btn sm" onClick={() => setWord('')}><I name="x" size={13} />{t('acct.delete.start')}</button></div>
-        : <div className="row">
-            <input className="msgr-input inline" placeholder={t('acct.delete.typeWord', { word: confirmWord })} value={word} onChange={(e) => setWord(e.target.value)} autoFocus />
-            <button type="button" className="btn btn-primary sm danger" disabled={busy || word.trim() !== confirmWord} onClick={run}>{t('acct.delete.confirm')}</button>
-            <button type="button" className="btn sm" disabled={busy} onClick={() => { setWord(null); setBlocked(''); }}>{t('ui.cancel')}</button>
-          </div>}
-      <p className="note">{t('acct.delete.note', { email: session.user.email })}</p>
+      <div className="row"><button type="button" className="btn sm" onClick={() => { setBlocked(''); setOpen(true); }}><I name="x" size={13} />{t('acct.delete.start')}</button></div>
+      <p className="note">{email ? t('acct.delete.note', { email }) : t('acct.delete.note.noEmail')}</p>
+      {open && <DangerModal title={t('acct.delete')} description={<>{t('acct.delete.desc')}{blocked && <span role="alert" className="acct-error">{blocked}</span>}</>} requireText={email || confirmWord} confirmLabel={t('acct.delete.confirm')} busy={busy} onConfirm={run} onClose={() => { if (!busy) { setOpen(false); setBlocked(''); } }} />}
     </section>
   );
 }
@@ -1652,7 +1647,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <h2>{t('set.diag')}</h2><p>{t('set.diag.desc')}</p>
             <DiagRow />
           </section>
-          <AccountDeleteCard session={session} onDeleted={accountDeleted} onError={onError} />
+          <AccountDeleteCard session={session} onDeleted={accountDeleted} />
         </>)}
       </div>
     </div></div>
