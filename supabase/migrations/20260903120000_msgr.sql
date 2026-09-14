@@ -1,4 +1,6 @@
 -- 아르고 팀 메신저(msgr) 스키마 — 조직·멤버·초대·채널·메시지·크루 신원·결재 미러·감사. 설계 정본: 루트 MESSENGER-DESIGN.md.
+-- 재적용 주의(2026-09-14): 이 파일은 가드 트리거 함수(msgr_member_self_guard·msgr_lock_cols·msgr_doc_before_write·msgr_org_before_update)와 msgr_messages CHECK를
+--   재정의한다. 이 파일만 다시 적용하면 뒤의 20260914200000_msgr_delete_me(앱 안 계정 삭제)가 조용히 되돌아간다 — 재적용 뒤에는 그 이후 마이그레이션도 반드시 순서대로 다시 적용한다.
 -- 원칙: 기존 개인 스키마(entitlements·account_keys·device_keys…)는 손대지 않고 `msgr_` 접두로 얹는다.
 --   크루는 소유자 회사 소속으로 남는다(조직은 크루를 소유하지 않는다) — msgr_crews는 (owner_user_id, ws_id, slug)
 --   문자열 참조일 뿐 회사 데이터는 로컬이 정본. 서버는 메시지·첨부를 평문 보관한다(docs/privacy-sync.md 고지 대상).
