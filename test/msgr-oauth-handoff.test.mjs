@@ -24,7 +24,8 @@ test('authorizeUrl: 루프백 착지 + provider 화이트리스트', () => {
   assert.equal(u.origin + u.pathname, SB + '/auth/v1/authorize');
   assert.equal(u.searchParams.get('provider'), 'github');
   assert.equal(u.searchParams.get('redirect_to'), 'http://127.0.0.1:53127/auth/paired?pair=ab%20c');
-  assert.deepEqual(PROVIDERS, ['google', 'github']);
+  assert.deepEqual(PROVIDERS, ['apple', 'google', 'github']); // apple = App Store 4.8 필수(제3자 로그인 제공 시). 순서 = 로그인 화면 버튼 순서
+  assert.match(authorizeUrl({ supabaseUrl: 'https://x.supabase.co', port: 4242, provider: 'apple', code: 'c' }), /provider=apple&redirect_to=http%3A%2F%2F127\.0\.0\.1%3A4242/);
   assert.throws(() => authorizeUrl({ supabaseUrl: SB, port: 1, provider: 'email', code: 'x' }), /unknown provider/);
 });
 

@@ -7,7 +7,7 @@
 // 상한이 있다 — Argo 앱이 같은 이유로 이메일 로그인을 뺐다(login/page.jsx 주석).
 // Tauri·fetch·타이머는 전부 주입받는 순수 모듈(test/msgr-oauth-handoff.test.mjs가 행동으로 잠근다).
 
-export const PROVIDERS = ['google', 'github'];
+export const PROVIDERS = ['apple', 'google', 'github']; // apple = App Store 4.8(제3자 로그인 제공 시 Sign in with Apple 필수). 웹 플로우(Services ID)라 브라우저 왕복은 google·github와 같다
 export const PAIR_TIMEOUT_MS = 5 * 60_000;
 export const PAIR_POLL_MS = 1500;
 
