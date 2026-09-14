@@ -45,3 +45,6 @@ browser/
 # 스크롤백 변이 주입기 백업·로컬 검사 설정(apps/messenger/test/scrollback.*)
 *.mutbak
 apps/messenger/test/scrollback.local.json
+# Apple 키(Sign in with Apple·APNs) — 절대 커밋 금지
+*.p8
+AuthKey_*
