@@ -140,7 +140,6 @@ export const DICT = {
   'acct.delete.desc': ['이 계정과 개인 정보(프로필·프로필 사진·친구·알림 설정·기기 등록)를 지우고 모든 조직에서 나갑니다. 내 에이전트(개인 크루)와 그 설정, 아직 안 쓴 초대 코드도 지워지며, 나만 있는 소유 조직은 첨부 파일과 함께 삭제됩니다. 채널과 1:1 대화에 남긴 글은 팀의 기록이라 남지만 이름 없이 표시되고, 감사 기록에는 식별자만 남습니다. 되돌릴 수 없습니다.', 'Deletes this account and your personal data (profile, avatar, friends, notification settings, device registrations) and leaves every organization. Your personal agents and their settings and unused invite codes are deleted too; organizations where you are the only member are removed with their attachments. Messages you posted in channels and DMs stay as team records without your name; audit logs keep only an identifier. This cannot be undone.'],
   'acct.delete.start': ['계정 삭제…', 'Delete account…'],
   'acct.delete.word': ['삭제', 'DELETE'],
-  'acct.delete.typeWord': ['확인하려면 "{word}" 입력', 'Type "{word}" to confirm'],
   'acct.delete.confirm': ['영구 삭제', 'Delete permanently'],
   'acct.delete.note': ['삭제 뒤에는 {email}로 다시 가입할 수 있지만 이전 데이터는 복구되지 않습니다.', 'You can sign up again with {email} afterwards, but previous data will not be restored.'],
   'acct.delete.transferFirst': ['먼저 소유권을 넘겨야 하는 조직이 있습니다: {orgs}. 설정 › 조직에서 관리자에게 소유권을 이전하거나, 설정 › 멤버에서 남은 멤버를 내보낸 뒤 다시 시도하세요.', 'Transfer ownership first for: {orgs}. Go to Settings › Organization to transfer ownership to an admin, or remove the remaining members in Settings › Members, then try again.'],

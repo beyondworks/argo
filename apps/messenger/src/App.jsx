@@ -1395,7 +1395,7 @@ function AccountDeleteCard({ session, onDeleted }) {
     if (error) {
       const m = /msgr_owner_transfer_required: (.*)$/m.exec(error.message || '');
       if (m) { setBlocked(t('acct.delete.transferFirst', { orgs: m[1].trim() })); return; }
-      console.error('[argo] account delete failed', error.message); // 진단(설정 › 진단)에는 남기고 화면엔 내부 이름을 내보내지 않는다(검수 #529 M-3)
+      pushDiag('error', 'account delete failed', error.message); // 설정 › 진단 목록에 남긴다(console.error는 수집되지 않는다 — 3R M2R-4). 화면엔 내부 이름을 내보내지 않는다(2R M-3)
       setBlocked(t('acct.delete.failed')); return;
     }
     setOpen(false); onDeleted?.();

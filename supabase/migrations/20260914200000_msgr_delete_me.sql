@@ -1,5 +1,5 @@
 -- 앱 안에서 계정 삭제(App Store 5.1.1(v): 계정을 만들 수 있는 앱은 앱 안에서 삭제도 가능해야 한다 — 이메일 요청 방식은 불충분).
--- 정식 출시 전수 검사(2026-09-14) 차단 항목 2. 분리 검수 2R(반려) 반영본.
+-- 정식 출시 전수 검사(2026-09-14) 차단 항목 2. 분리 검수 2R(반려)·3R(조건부) 반영본.
 --
 -- 규칙:
 --  · 내가 소유한 조직(보관 중 포함)에 다른 활성 멤버(서비스 계정·만료 게스트 제외)가 있으면 먼저 소유권을 넘겨야 한다
@@ -20,7 +20,7 @@ alter table public.msgr_messages add constraint msgr_messages_check
 create or replace function public.msgr_member_self_guard() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
-  if current_setting('argo.msgr_account_delete', true) = '1' then return new; end if; -- msgr_delete_me 전용(트랜잭션 지역)
+  if current_setting('argo.msgr_account_delete', true) = '1' and new.removed_at is not null and old.removed_at is null and old.user_id = auth.uid() then return new; end if; -- msgr_delete_me 전용(트랜잭션 지역): 본인 멤버십 종료 전이만 — 역할 상승은 플래그가 있어도 막힌다(검수 #529 H2R-1)
   -- 본인 갱신(관리자 아님)은 표시명만 — 역할·제거 표시·소속은 관리자 정책으로만. NULL 주의: is_admin은 서비스 문맥에서 NULL.
   if auth.uid() = old.user_id and not coalesce(public.msgr_is_admin(old.org_id), false)
      and (new.role <> old.role or new.removed_at is distinct from old.removed_at or new.expires_at is distinct from old.expires_at) then
@@ -60,7 +60,12 @@ create or replace function public.msgr_org_before_update() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare me uuid := auth.uid(); my_role text;
 begin
-  if current_setting('argo.msgr_account_delete', true) = '1' then return new; end if; -- msgr_delete_me 전용(트랜잭션 지역): 후계자·이전 제안·서비스 계정 정리
+  if pg_trigger_depth() > 1 then -- FK 캐스케이드(auth.users on delete set null: 서비스 계정·후계자·이전 제안)만 통과 — msgr_lock_cols와 같은 관례. 플래그 통과는 관리자의 소유권 탈취·서비스 계정 자기 지정·남의 조직 보관까지 열었다(검수 #529 H2R-1 실증)
+    -- 아래 역할 검사를 건너뛰므로 감사만 여기서 직접 남긴다(3R M2R-5: 회사 크루가 개인 등급으로 떨어진 원인을 소유자가 추적할 근거)
+    if new.service_user_id is distinct from old.service_user_id then perform public.msgr_audit(old.id, 'org.service_account', 'org', old.id::text, jsonb_build_object('from', old.service_user_id, 'to', new.service_user_id, 'cascade', 'account_delete')); end if;
+    if new.successor_user_id is distinct from old.successor_user_id then perform public.msgr_audit(old.id, 'org.successor', 'user', coalesce(new.successor_user_id, old.successor_user_id)::text, jsonb_build_object('set', new.successor_user_id is not null, 'cascade', 'account_delete')); end if;
+    return new;
+  end if;
   my_role := case when me is null then null else public.msgr_role(old.id) end;
   -- 삭제 표시·복구는 소유자 계정 기준(삭제된 조직은 msgr_role이 null이라 역할로는 판정 불가)
   if me is not null and new.deleted_at is distinct from old.deleted_at and old.owner_user_id <> me then raise exception 'msgr_owner_only'; end if;
@@ -125,6 +130,7 @@ begin
   select string_agg(o.name, ', ' order by o.name) into blocked
     from public.msgr_orgs o
    where o.owner_user_id = me
+     and (o.deleted_at is null or o.deleted_at > now() - interval '30 days') -- 유예가 끝난 보관 조직은 어차피 purge 대상 — 이전을 요구하면 복구도 목록도 없는 막다른 길(3R M2R-3)
      and exists (select 1 from public.msgr_org_members m
                   where m.org_id = o.id and m.user_id <> me and m.removed_at is null
                     and (m.expires_at is null or m.expires_at > now())
@@ -142,10 +148,7 @@ begin
   update public.msgr_work_runs w set created_by = o.owner_user_id from public.msgr_orgs o where o.id = w.org_id and w.created_by = me and o.owner_user_id <> me;
   update public.msgr_channel_members set added_by = null where added_by = me;
   update public.msgr_crew_approvals set decided_by = null where decided_by = me;
-  -- 회사 노드 서비스 계정·후계자·이전 제안(2R C-2·C-3)
-  update public.msgr_orgs set service_user_id = null where service_user_id = me;
-  update public.msgr_orgs set pending_owner_user_id = null where pending_owner_user_id = me;
-  update public.msgr_orgs set successor_user_id = null where successor_user_id = me;
+  -- 회사 노드 서비스 계정·후계자·이전 제안은 auth.users FK(on delete set null)가 비운다 — 캐스케이드 UPDATE는 msgr_org_before_update의 캐스케이드 분기가 감사(org.service_account·org.successor)를 직접 남긴다(2R C-2·C-3, 3R H2R-1·M2R-5). 명시 해제 3줄은 변이로 죽은 코드임이 실증돼 지웠다.
 
   -- 내 채널 멤버십(폴리모픽 — FK 없음)과 조직 멤버십 종료(오프보딩 사슬: 크루 분리·채널 회수)
   delete from public.msgr_channel_members where member_kind = 'user' and member_id = me;
@@ -153,7 +156,7 @@ begin
 
   -- 나만 남은 소유 조직: 첨부 파일 → 조직(자식 cascade) 순으로 하드 삭제. 위 검사로 다른 활성 멤버가 있는 조직은 여기 없다
   select coalesce(array_agg(id), '{}'::uuid[]) into owned from public.msgr_orgs where owner_user_id = me;
-  perform set_config('storage.allow_delete_query', 'true', true); -- storage-api의 직접 삭제 가드(protect_objects_delete) 통과 — 트랜잭션 지역. 행이 사라지면 공개 URL·서명 URL 모두 404. 백엔드 바이트는 msgr_purge_orgs와 같이 남는다(알려진 한계, 로컬 스택 E2E 실측)
+  perform set_config('storage.allow_delete_query', 'true', true); -- storage-api의 직접 삭제 가드(protect_objects_delete) 통과 — 트랜잭션 지역. 행이 사라지면 공개 URL은 400(본문 not_found), 서명 URL도 만들 수 없다(로컬 스택 실측). 백엔드 바이트는 msgr_purge_orgs와 같이 남는다(알려진 한계, 로컬 스택 E2E 실측)
   if array_length(owned, 1) > 0 then
     delete from storage.objects where bucket_id = 'msgr' and (storage.foldername(name))[1] = any (owned::text[]);
     delete from public.msgr_orgs where id = any (owned);
@@ -167,11 +170,29 @@ begin
 
   -- 프로필·친구·푸시 토큰·읽음·반응·핀·알림 경로·멤버십·크루·초대는 auth.users FK cascade
   delete from auth.users where id = me;
-  perform set_config('argo.msgr_account_delete', '', true);
+  perform set_config('argo.msgr_account_delete', '', true); perform set_config('storage.allow_delete_query', '', true); -- 두 GUC 모두 복원(3R L2R-1)
   return jsonb_build_object('deleted_orgs', n_orgs);
 exception when others then
-  perform set_config('argo.msgr_account_delete', '', true);
+  perform set_config('argo.msgr_account_delete', '', true); perform set_config('storage.allow_delete_query', '', true); -- 두 GUC 모두 복원(3R L2R-1)
   raise;
 end $$;
 revoke all on function public.msgr_delete_me() from public, anon;
 grant execute on function public.msgr_delete_me() to authenticated;
+
+-- 보관 조직 영구 삭제(30일 유예 뒤 서비스 잡)도 같은 가드에 걸려 첨부가 있는 조직은 purge가 42501로 통째 실패했다(로컬 스택 실측, 검수 #529 M2R-2).
+-- 본문은 20260903120000의 마지막 정의 그대로 + GUC 한 줄.
+create or replace function public.msgr_purge_orgs() returns int
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare n int; ids uuid[];
+begin
+  if auth.uid() is not null then raise exception 'msgr_service_only'; end if;
+  select array_agg(id) into ids from public.msgr_orgs where deleted_at is not null and deleted_at < now() - interval '30 days';
+  if ids is null then return 0; end if;
+  if to_regclass('storage.objects') is not null then
+    perform set_config('storage.allow_delete_query', 'true', true); -- storage-api 직접 삭제 가드 통과(트랜잭션 지역). 백엔드 바이트는 남는다(알려진 한계)
+    execute 'delete from storage.objects where bucket_id = ''msgr'' and (storage.foldername(name))[1] = any ($1)' using (select array_agg(x::text) from unnest(ids) x);
+  end if;
+  delete from public.msgr_orgs where id = any (ids);
+  get diagnostics n = row_count;
+  return n;
+end $$;

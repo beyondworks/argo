@@ -172,6 +172,7 @@ test('2R M-1: 만료된 게스트만 남은 조직의 소유자는 삭제된다(
 test('2R H-2: 가드 통과 플래그는 함수 끝과 예외 경로 모두에서 되돌린다(자기 역할 상승 방어선 유지)', { skip }, () => {
   const src = sql(`select prosrc from pg_proc where proname='msgr_delete_me'`);
   assert.equal((src.match(/set_config\('argo\.msgr_account_delete', '', true\)/g) ?? []).length, 2, '정상·예외 두 경로');
+  assert.equal((src.match(/set_config\('storage\.allow_delete_query', '', true\)/g) ?? []).length, 2, 'storage GUC도 두 경로에서 복원(3R L2R-1)');
   assert.match(src, /exception when others then/);
   // 플래그 없이 본인 역할 상승은 여전히 막힌다
   const own = NEW('4'), mem = NEW('8'); mkUser(own, 'rowner'); mkUser(mem, 'rmember');
@@ -181,4 +182,45 @@ test('2R H-2: 가드 통과 플래그는 함수 끝과 예외 경로 모두에�
   assert.equal(last(asUser(mem, `select public.msgr_accept_invite('${code}')`)), org);
   const r = asUserRaw(mem, `update public.msgr_org_members set role='owner' where org_id='${org}' and user_id='${mem}'`);
   assert.notEqual(r.status, 0); assert.match(r.stderr, /msgr_member_self_only_name/);
+});
+
+test('3R H2R-1: 세션에 플래그를 켜도 관리자는 소유권·서비스 계정을 못 가져가고 남의 조직을 못 보관하며, 멤버는 역할을 못 올린다(트리거는 FK 캐스케이드만 통과)', { skip }, () => {
+  const own = NEW('a').replace(/a/g, 'c').replace(/4c/, '4c'), adm = '21212121-2121-4212-8212-212121212121', mem = '31313131-3131-4313-8313-313131313131';
+  const owner = 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1'; mkUser(owner, 'atkowner'); mkUser(adm, 'atkadmin'); mkUser(mem, 'atkmember');
+  const org = last(asUser(owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('AtkOrg', 'atkorg', '${owner}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${org}'`);
+  for (const [u, role] of [[adm, 'admin'], [mem, 'member']]) { const code = last(asUser(owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${org}', '${role}', '${owner}') returning code`)); assert.equal(last(asUser(u, `select public.msgr_accept_invite('${code}')`)), org); }
+  const flagged = (u, q) => asUserRaw(u, `select set_config('argo.msgr_account_delete', '1', false); ${q}`);
+  let r = flagged(adm, `update public.msgr_orgs set owner_user_id = '${adm}' where id = '${org}'`); assert.notEqual(r.status, 0, 'E-2 소유권 탈취'); assert.match(r.stderr, /msgr_owner_only/);
+  r = flagged(adm, `update public.msgr_orgs set service_user_id = '${adm}' where id = '${org}'`); assert.notEqual(r.status, 0, 'E-3 서비스 계정 자기 지정(H-6)');
+  r = flagged(adm, `update public.msgr_orgs set deleted_at = now() where id = '${org}'`); assert.notEqual(r.status, 0, 'E-4 남의 조직 보관'); assert.match(r.stderr, /msgr_owner_only/);
+  r = flagged(mem, `update public.msgr_org_members set role = 'owner' where org_id = '${org}' and user_id = '${mem}'`); assert.notEqual(r.status, 0, 'E-1 역할 상승'); assert.match(r.stderr, /msgr_member_self_only_name/);
+  assert.equal(sql(`select owner_user_id||'|'||coalesce(service_user_id::text,'-')||'|'||coalesce(deleted_at::text,'-') from public.msgr_orgs where id='${org}'`), `${owner}|-|-`, '아무것도 바뀌지 않았다');
+  // 캐스케이드 경로는 여전히 통한다: 서비스 계정·후계자 삭제 → null + 감사 기록
+  sql(`update public.msgr_orgs set service_user_id = '${adm}' where id = '${org}'`);
+  const before = sql(`select count(*) from public.msgr_audit_log where org_id = '${org}' and action = 'org.service_account'`);
+  assert.deepEqual(JSON.parse(last(asUser(adm, `select public.msgr_delete_me()`))), { deleted_orgs: 0 });
+  assert.equal(sql(`select coalesce(service_user_id::text,'(null)') from public.msgr_orgs where id='${org}'`), '(null)');
+  assert.ok(Number(sql(`select count(*) from public.msgr_audit_log where org_id = '${org}' and action = 'org.service_account'`)) > Number(before), '해제가 감사에 남는다(3R M2R-5)');
+});
+
+test('3R M2R-3: 30일 유예가 끝난 보관 조직에 멤버가 남아 있어도 소유자는 삭제된다(그 조직은 하드 삭제 — purge 대상과 같다)', { skip }, () => {
+  const own = 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1', mem = 'd2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2'; mkUser(own, 'staleowner'); mkUser(mem, 'stalemember');
+  const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Stale', 'stale', '${own}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${org}'`);
+  const code = last(asUser(own, `insert into public.msgr_invites (org_id, role, created_by) values ('${org}', 'member', '${own}') returning code`));
+  assert.equal(last(asUser(mem, `select public.msgr_accept_invite('${code}')`)), org);
+  sql(`update public.msgr_orgs set deleted_at = now() - interval '31 days' where id = '${org}'`);
+  assert.deepEqual(JSON.parse(last(asUser(own, `select public.msgr_delete_me()`))), { deleted_orgs: 1 });
+  assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org}'`), '0');
+});
+
+test('3R M2R-2: 30일 지난 보관 조직 purge가 첨부 파일 행과 함께 성공한다(storage 직접 삭제 가드 통과)', { skip }, () => {
+  const own = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1'; mkUser(own, 'purgeowner');
+  const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('PurgeMe', 'purgeme', '${own}') returning id`));
+  sql(`update public.msgr_orgs set deleted_at = now() - interval '31 days' where id = '${org}'`);
+  sql(`insert into storage.objects (bucket_id, name) values ('msgr', '${org}/chan/1/doc.pdf')`);
+  assert.equal(sql(`select public.msgr_purge_orgs()`), '1', '서비스 문맥(auth.uid() null)에서 1건');
+  assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org}'`), '0');
+  assert.equal(sql(`select count(*) from storage.objects where name like '${org}/%'`), '0', '첨부 행 정리 — 가드가 있으면 이전 정의는 42501로 실패했다');
 });
