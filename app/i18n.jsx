@@ -457,7 +457,7 @@ const DICT = {
   'settings.import.report': ['리포트', 'Report'],
   'settings.import.err': ['가져오기에 실패했습니다 — 경로를 확인해 주세요', 'Import failed — please check the path'],
   'settings.import.filesPreview': ['첨부로 들어올 파일 {n}건 —', '{n} files coming in as attachments —'],
-  'settings.import.err.too-many': ['볼트에 파일이 너무 많습니다(2,000개 초과) — 하위 폴더를 나눠 가져와 주세요', 'Too many files in the vault (over 2,000) — try importing subfolders separately'],
+  'settings.import.err.too-many': ['볼트에 파일이 너무 많습니다(10,000개 초과) — 하위 폴더를 나눠 가져와 주세요', 'Too many files in the vault (over 10,000) — try importing subfolders separately'],
   'settings.import.err.too-big': ['볼트가 너무 큽니다(2GB 초과) — 하위 폴더를 나눠 가져와 주세요', 'Vault is too large (over 2GB) — try importing subfolders separately'],
   'settings.import.err.copy-failed': ['복사 중 오류가 났습니다 — 이미 가져온 항목은 남아 있고, 다시 실행하면 이어서 가져옵니다', 'Copy failed midway — items already imported are kept, and running again resumes where it left off'],
   'settings.import.err.contains-workspace': ['선택한 폴더 안에 Argo 회사 데이터(company.json)가 있습니다 — 옵시디언 볼트 폴더를 직접 선택해 주세요', 'The selected folder contains Argo company data (company.json) — please pick your Obsidian vault folder directly'],

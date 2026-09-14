@@ -121,6 +121,13 @@ export async function listAgents(wsId) {
 }
 
 /** vault 문서 목록 — 최신순. 제목/링크/발췌까지 화면용으로 가공. */
+// listDocs 캐시 — 회사별 { 파일 → { key: mtime:size, doc } }. 매 호출 readdir+stat만 하고, mtime·size가 같은 파일은
+// 다시 읽지 않는다(본문은 mtime이 바뀌어야 바뀐다). 근거: 무캐시 전수 읽기가 옵시디언 가져오기 2,000건 상한의
+// 유일한 이유였다(obsidian-import.mjs 모듈 주석). 실측 Lean-AX 1,061건: 무캐시 148ms → 캐시 뒤 stat만.
+// 프로세스 안 캐시라 Next 번들 사본마다 따로 채워지고(첫 호출만 전수 읽기), 실데이터는 디스크가 정본이다.
+// ponytail: 상한 없음 — 문서 메타(제목·발췌 140자·링크)만 들고 있어 1만 건에 수 MB. 필요하면 LRU.
+const docCache = new Map();
+export const listDocsStats = { reads: 0 }; // 테스트용 — 실제 readFile 횟수
 export async function listDocs(wsId) {
   const p = paths(wsId);
   const dirName = new Map([[p.journal, 'journal'], [p.conversations, 'conversations'], [p.notes, 'notes']]);
@@ -132,11 +139,19 @@ export async function listDocs(wsId) {
     try { names = await readdir(dir); } catch { continue; }
     for (const n of names) if (n.endsWith('.md')) files.push({ dir, n, file: join(dir, n) });
   }
+  const cache = docCache.get(wsId) ?? new Map();
+  const seen = new Set();
   const readOne = async ({ dir, n, file }) => {
-    const [text, st] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
+    const st = await stat(file);
+    seen.add(file);
+    const key = `${st.mtimeMs}:${st.size}`;
+    const hit = cache.get(file);
+    if (hit && hit.key === key) return hit.doc;
+    listDocsStats.reads++;
+    const text = await readFile(file, 'utf8');
     const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, '');
     const rel = relSlash(p.vault, file);
-    return {
+    const doc = {
       rel,
       dir: dirName.get(dir),
       title: body.match(/^#\s*(.+)$/m)?.[1] ?? n.replace(/\.md$/, ''),
@@ -152,9 +167,13 @@ export async function listDocs(wsId) {
         return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : st.mtimeMs;
       })(),
     };
+    cache.set(file, { key, doc });
+    return doc;
   };
   const docs = [];
   for (let i = 0; i < files.length; i += 64) docs.push(...await Promise.all(files.slice(i, i + 64).map(readOne)));
+  for (const file of cache.keys()) if (!seen.has(file)) cache.delete(file); // 지워진 파일은 캐시에서도
+  docCache.set(wsId, cache);
   return docs.sort((a, b) => b.ts - a.ts); // 최근 활동순 — 오늘 갱신된 일지가 최상단
 }
 
