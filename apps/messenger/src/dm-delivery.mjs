@@ -30,3 +30,26 @@ export function dmUnavailableRecipients(mentions, candidates, participantIds = [
   return mentions.filter((m) => m.kind === 'crew' && !(m.role === undefined && participants.has(m.id))
     && candidates.find((c) => c.id === m.id)?.delivery_ready !== true);
 }
+
+// A message forwarded by the server (msgr_dm_relay) carries meta.relay pointing at the DM it came from.
+// via_name wins when a crew forwarded it. Otherwise fall back to the origin DM's own display name
+// (sourceName) when the caller resolved it — the human is always a member of that DM. Name-free only
+// when neither is known (origin DM not in the caller's loaded channel list).
+export function relayCaptionKey(relay, sourceName) {
+  const name = relay?.via_name || sourceName;
+  return name ? { key: 'dm.relay.from', vars: { name } } : { key: 'dm.relay.fromOther' };
+}
+
+// Display name for one relay_to entry — CC gets a role suffix, To does not.
+// Server-shaped data only: a malformed/nameless entry renders as '' rather than throwing or printing "undefined".
+export function relayToLabel(entry, ccLabel) {
+  const name = entry?.name;
+  if (!name) return '';
+  return entry.role === 'cc' ? `${name} (${ccLabel})` : name;
+}
+
+// Joined names for the relay notice sentence, in the order the server sent them. Non-array input (a
+// malformed meta.relay_to) yields '' instead of throwing; empty labels are dropped, not left as blanks.
+export function relayToNames(sent, ccLabel) {
+  return (Array.isArray(sent) ? sent : []).map((e) => relayToLabel(e, ccLabel)).filter(Boolean).join(', ');
+}

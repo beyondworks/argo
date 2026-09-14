@@ -143,6 +143,8 @@
 .msgr-sub .typing-line { font-size: 12.5px; color: var(--fg-2); }
 @keyframes msgrPulse { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
 .msgr-sys { font-size: 12.5px; color: var(--fg-3); font-style: italic; display: flex; align-items: center; gap: 8px; }
+.msgr-sys.msgr-relay { flex-direction: column; align-items: flex-start; gap: 6px; } /* 전달 안내 — 문장 + 대화 열기 칩(.msgr-chan) 줄 */
+.msgr-relay .msgr-chan { font-style: normal; }
 .msgr-skel { display: grid; gap: 8px; max-width: 640px; padding-top: 4px; }
 .msgr-skel i { display: block; height: 10px; border-radius: 999px; background: var(--secondary); }
 .msgr-skel i:nth-child(2) { width: 72%; } .msgr-skel i:nth-child(3) { width: 40%; }

@@ -25,7 +25,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
 import { mentionCandidates, mentionsFromBody, ALL_RE } from './mention-candidates.mjs';
-import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients } from './dm-delivery.mjs';
+import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
@@ -432,6 +432,7 @@ function Shell({ session }) {
     setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null)); // 라벨용 보조 조회보다 먼저(검수 2R LOW-1: 보조 조회가 던지면 채널 선택이 안 됐다)
     const dmIds = chs.filter((c) => c.kind === 'dm').map((c) => c.id);
     if (dmIds.length) { try { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); if (current()) setDmMembers(map); } catch { if (current()) setDmMembers({}); } } else setDmMembers({});
+    return chs; // 호출한 쪽이 방금 새로 생긴 채널을 즉시 찾을 수 있게(state 반영을 기다리지 않는다)
     } catch (error) { if (current()) throw error; }
   }, [orgs, uid]);
   useEffect(() => { loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, loadOrg]);
@@ -705,7 +706,11 @@ function Shell({ session }) {
         if (activeOrg.current !== orgId) return null;
         const wantUsers = new Set(kind === 'crew' ? [uid, crewOf(id)?.owner_user_id].filter(Boolean) : [uid, id]); // 자기 크루면 {나}, 남의 크루면 {나, 소유자}
         const hit = dmIds.find((cid) => { const ms = others.filter((m) => m.channel_id === cid); const users = new Set(ms.filter((m) => m.member_kind === 'user').map((m) => m.member_id)); const crewsIn = ms.filter((m) => m.member_kind === 'crew').map((m) => m.member_id); const sameUsers = users.size === wantUsers.size && [...wantUsers].every((u) => users.has(u)); return sameUsers && (kind === 'crew' ? crewsIn.length === 1 && crewsIn[0] === id : crewsIn.length === 0); });
-        if (hit) { setChId(hit); setPage('chat'); setRail(false); setSheet(null); return hit; }
+        if (hit) {
+          if (!channels.some((c) => c.id === hit)) await loadOrg(orgId); // 방금 서버가 만든 방일 수 있다 — 목록에 없으면 chId만 앞서가 빈 화면(검수 MEDIUM)
+          if (activeOrg.current !== orgId) return null;
+          setChId(hit); setPage('chat'); setRail(false); setSheet(null); return hit;
+        }
       }
       const other = kind === 'crew' ? crewOf(id) : members.find((m) => m.user_id === id);
       const name = kind === 'crew' ? other?.display_name : (other?.display_name || id.slice(0, 8));
@@ -714,6 +719,17 @@ function Shell({ session }) {
       const cid = await q(supabase.rpc('msgr_create_channel', { org: orgId, kind: 'dm', name: `dm:${name}`, others })); // 나는 서버가 첫 멤버로 넣는다
       await loadOrg(orgId); if (activeOrg.current !== orgId) return null; setChId(cid); setPage('chat'); setRail(false); setSheet(null); return cid;
     } catch (e) { setErr(e.message); return null; }
+  };
+  // 전달(relay) 알림에서 대상 1:1로 이동 — 목록에 있으면 바로 연다. 없으면 방금 트리거가 만든 방일 수 있어 다시 불러온 뒤 찾고,
+  // 그래도 없으면(다른 조직 전환 등) openDm이 그 사람·크루의 방을 찾거나 만든다(msgr_dm_for_crew와 같은 멤버 판정). 빈 화면 방지(검수 MEDIUM).
+  const openRelay = async (crewId, channelId) => {
+    try {
+      if (channels.some((c) => c.id === channelId)) { setChId(channelId); setPage('chat'); setRail(false); return; }
+      const fresh = await loadOrg(orgId);
+      if (activeOrg.current !== orgId) return;
+      if (fresh?.some((c) => c.id === channelId)) { setChId(channelId); setPage('chat'); setRail(false); return; }
+      if (crewId) await openDm('crew', crewId);
+    } catch (e) { setErr(e.message); }
   };
   const createChannel = async ({ name, kind } = newCh ?? {}) => {
     if (!name?.trim()) return;
@@ -979,7 +995,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => rt.current?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} />
+          <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => rt.current?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} />
         ) : (
           <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} />
         )}
@@ -2444,7 +2460,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = []
 }
 
 /* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */
-function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName }) {
+function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
@@ -2533,7 +2549,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
     if (divider > 0 && !newLine && m.id > divider && !(m.author_kind === 'user' && m.author_user_id === uid)) { newLine = true; rows.push(<div key="newline" className="msgr-newline"><span>{t('msg.new')}</span></div>); }
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} />);
+    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -2604,7 +2620,7 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
     document.body,
   );
 }
-function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete }) {
+function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete, channels = [], onOpenRelay, dmName }) {
   const [copied, setCopied] = useState(false);
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
   const [ctxAt, setCtxAt] = useState(null); // 데스크톱 우클릭: 동작 줄을 커서 자리에 고정(유건 지시 2026-09-12)
@@ -2627,6 +2643,29 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const body = m.deleted_at ? '' : m.body;
   const deliveryRecipients = !m.deleted_at && (m.mentions ?? []).filter((r) => r.kind === 'crew' && ['to', 'cc'].includes(r.role));
   const deliveryLabels = deliveryRecipients?.length > 0 && <div className="msgr-message-recipients">{deliveryRecipients.map((r) => <span key={r.id}>{t(`dm.delivery.${r.role}`)} · {crewOf(r.id)?.display_name || t('org.crews')}</span>)}</div>;
+  // 전달(relay) — 이 글이 다른 1:1에서 넘어온 지시면 출처 캡션(원래 방이 내 목록에 있을 때만 클릭 가능). role(수신/참조) 라벨은 위 deliveryLabels가 이미 mentions에서 그린다.
+  const relay = !m.deleted_at && m.meta?.relay;
+  const relayChannel = relay && channels.find((c) => c.id === relay.channel_id); // 원래 방 — 내가 항상 그 방 멤버라 목록에 있으면 표시 이름을 안다
+  const relayCapKey = relay && relayCaptionKey(relay, relayChannel && dmName?.(relayChannel));
+  const relayCapText = relay && t(relayCapKey.key, relayCapKey.vars);
+  const relayCap = relay && (
+    <div className="msgr-quote"><I name="reply" size={13} />
+      {relayChannel
+        ? <button type="button" className="q msgr-namebtn" onClick={() => onOpenRelay?.(null, relay.channel_id)}>{relayCapText}</button>
+        : <span className="q">{relayCapText}</span>}
+    </div>
+  );
+  // 전달 안내(system) — 원래 방에 남는 "누구에게 전달했다" 알림. 각 대상은 그 1:1로 바로 이동하는 버튼.
+  // meta.relay_to는 같은 방 멤버가 임의로 넣을 수 있는 값이라 배열이 아닐 수 있다 — .map 크래시 방지(검수 MEDIUM).
+  const relayTo = m.kind === 'system' && Array.isArray(m.meta?.relay_to) && m.meta.relay_to.length > 0 ? m.meta.relay_to : null;
+  const relayCapped = m.kind === 'system' && !relayTo && m.meta?.relay_capped; // 위임 릴레이 깊이 상한(서버 body는 한국어 고정 — 여기서 언어별로 다시 그린다)
+  const sysBody = m.kind === 'system' && (relayTo ? (
+    <div className="msgr-sys msgr-relay">
+      <span>{t('dm.relay.to', { names: relayToNames(relayTo, t('dm.delivery.cc')) })}</span>
+      <div className="msgr-chips">{relayTo.map((e) => <button key={`${e.crew_id}:${e.role}`} type="button" className="msgr-chan" onClick={() => onOpenRelay?.(e.crew_id, e.channel_id)}><span>{t('dm.relay.open', { name: relayToLabel(e, t('dm.delivery.cc')) })}</span></button>)}</div>
+    </div>
+  ) : relayCapped ? <div className="msgr-sys">{t('dm.relay.capped')}</div>
+  : <div className="msgr-sys">{body}</div>);
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
@@ -2668,7 +2707,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className="msgr-mine" data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
-      {editing ? editor : <div className="bubble">{quote}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : <Body text={body} />}</div>}
+      {editing ? editor : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : <Body text={body} />}</div>}
       {attRow}
       {chips}
       <div className="meta">{edited}<I name="check" size={12} /><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
@@ -2683,9 +2722,9 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
         <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
         {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
           : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} />
-          : m.kind === 'system' ? <div className="msgr-sys">{body}</div>
-          : isCrew ? <div className="msgr-sheet">{quote}{deliveryLabels}{m.meta?.trace && <Trace trace={m.meta.trace} t={t} />}<Markdown text={body} /></div>
-          : <div className="text">{quote}{deliveryLabels}<Body text={body} /></div>}
+          : m.kind === 'system' ? sysBody
+          : isCrew ? <div className="msgr-sheet">{quote}{relayCap}{deliveryLabels}{m.meta?.trace && <Trace trace={m.meta.trace} t={t} />}<Markdown text={body} /></div>
+          : <div className="text">{quote}{relayCap}{deliveryLabels}<Body text={body} /></div>}
         {attRow}
         {chips}
         {acts}

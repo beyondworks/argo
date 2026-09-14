@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients } from '../src/dm-delivery.mjs';
+import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from '../src/dm-delivery.mjs';
 import { mentionsFromBody } from '../src/mention-candidates.mjs';
 import { createComposerDelivery } from '../src/composer-delivery.mjs';
 
@@ -54,4 +54,26 @@ test('recipient support fails closed except ordinary messages to existing DM par
   }
   assert.deepEqual(dmUnavailableRecipients([{kind:'crew',id:'partner'}], [], ['partner']), []);
   assert.deepEqual(dmUnavailableRecipients([{kind:'crew',id:'partner',role:'cc'}], [], ['partner']), [{kind:'crew',id:'partner',role:'cc'}]);
+});
+
+test('relay caption prefers the forwarding crew, then the known origin DM name, else a generic key', () => {
+  assert.deepEqual(relayCaptionKey({ via_name: 'Pepper' }, 'Feynman'), { key: 'dm.relay.from', vars: { name: 'Pepper' } }, 'via_name wins even if the origin DM name is also known');
+  assert.deepEqual(relayCaptionKey({ via_name: null }, 'Feynman'), { key: 'dm.relay.from', vars: { name: 'Feynman' } }, 'falls back to the origin DM name when no crew forwarded it');
+  assert.deepEqual(relayCaptionKey({ via_name: null }, null), { key: 'dm.relay.fromOther' }, 'name-free only when neither is known');
+});
+
+test('relay_to labels mark CC with the given role label, To stays plain', () => {
+  const to = { crew_id: 'f', channel_id: 'ch1', role: 'to', name: 'Feynman' };
+  const cc = { crew_id: 'w', channel_id: 'ch2', role: 'cc', name: 'Wolff' };
+  assert.equal(relayToLabel(to, 'CC'), 'Feynman');
+  assert.equal(relayToLabel(cc, 'CC'), 'Wolff (CC)');
+  assert.equal(relayToNames([to, cc], 'CC'), 'Feynman, Wolff (CC)');
+});
+
+test('relay_to helpers fail closed on malformed data instead of throwing', () => {
+  assert.equal(relayToLabel(null, 'CC'), '', 'null entry');
+  assert.equal(relayToLabel({ role: 'cc' }, 'CC'), '', 'missing name');
+  assert.equal(relayToNames(undefined, 'CC'), '', 'undefined list');
+  assert.equal(relayToNames({}, 'CC'), '', 'non-array list (e.g. a stray object in meta.relay_to)');
+  assert.equal(relayToNames([{ role: 'to' }, { role: 'cc', name: 'Wolff' }], 'CC'), 'Wolff (CC)', 'blank labels are dropped, not left as empty items');
 });
