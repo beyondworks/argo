@@ -25,6 +25,7 @@ export const API_MSG = {
   // 화면은 errorCode로 사전(room.busyGate)을 다시 그리고, 이 문구는 API 소비자·로그용 표시 언어 본문(#393 DELETE 문구 계승).
   room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'A crew is still speaking — try again after it finishes.' },
   // 팀 메신저 크루 등록(app/api/companies/[ws]/msgr)
+  msgr_notify_bad_request: { status: 400, ko: '알림 받을 방을 확인해 주세요 — 크루가 들어갈 수 있는 방만 고를 수 있습니다', en: 'Check the notification room — only rooms your crews can post in are allowed' },
   msgr_bad_request: { status: 400, ko: '조직 id·크루·허용 범위(all|list|owner)를 확인해 주세요', en: 'Check the organization id, crew, and allow scope (all|list|owner)' },
   msgr_crew_not_found: { status: 404, ko: '크루가 없습니다', en: 'Crew not found' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },

@@ -862,6 +862,7 @@ export async function msgrNotifyPush(event, target, { session = sessionClient } 
   const { formatMsgrNotify, msgrNotifyCrewSlug } = await import('../msgr-notify.mjs');
   const [{ loadCompany }, { listAgents }] = await Promise.all([import('../workspace.mjs'), import('../hub.mjs')]);
   const company = await loadCompany(event.wsId);
+  if (!company.msgr?.enabled) return false; // 파견 크루 0 = 브리지 꺼짐 — 세션을 열 이유가 없다(검수 #535 c)
   const c = await session();
   if (!c) throw new Error('Messenger notification session unavailable');
   if (company.ownerId && company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
@@ -872,12 +873,13 @@ export async function msgrNotifyPush(event, target, { session = sessionClient } 
   const names = Object.fromEntries(agents.map((a) => [a.slug, a.name || a.slug]));
   const body = formatMsgrNotify(event, company.lang, names).slice(0, MSG_MAX);
   if (!body) return false;
-  const key = [event.wsId, event.type, event.id ?? event.item?.id ?? event.routine?.id ?? '', event.runAt ?? event.phase ?? '', target.channelId, body.length].join(':');
+  // 멱등 키 = 본문 전체 해시(job·delegate 이벤트엔 id가 없어 id 기반 키는 붕괴 — 검수 #535 b). 같은 본문 재배달은 23505 → insertMessage가 null → false(오류 로그 없음)
+  const key = [event.wsId, event.type, slug, target.channelId, body].join('\u0000');
   const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
-  await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
+  const row = await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
     reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
     body, mentions: [], meta: { disposition: 'done', notification: event.type } });
-  return true;
+  return !!row;
 }
 
 export async function msgrPush(event, { session = sessionClient } = {}) {

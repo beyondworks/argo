@@ -33,12 +33,12 @@ export async function POST(req, { params }) {
     return Response.json({ ok: true, notify: null });
   }
   let notify;
-  try { notify = normalizeMsgrNotify(body); } catch { return apiError('msgr_bad_request', lang); }
-  if (!notify) return apiError('msgr_bad_request', lang);
+  try { notify = normalizeMsgrNotify(body); } catch { return apiError('msgr_notify_bad_request', lang); }
+  if (!notify) return apiError('msgr_notify_bad_request', lang);
   const c = await sessionClient().catch(() => null);
   if (!c) return authError('auth_required', lang);
   const rooms = await msgrNotifyOptions(ws, { session: async () => c }).catch(() => []);
-  if (!rooms.some((r) => r.orgId === notify.orgId && r.channelId === notify.channelId)) return apiError('msgr_bad_request', lang);
+  if (!rooms.some((r) => r.orgId === notify.orgId && r.channelId === notify.channelId)) return apiError('msgr_notify_bad_request', lang);
   const company = await loadCompany(ws);
   await updateCompany(ws, { msgr: { ...(company.msgr ?? {}), notify } });
   return Response.json({ ok: true, notify });

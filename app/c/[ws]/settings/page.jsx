@@ -790,8 +790,13 @@ function MsgrNotifyRoom({ ws, signedIn }) {
     setBusy(true); setMsg('');
     try {
       await api(`/api/companies/${ws}/msgr/notify`, chosen ? { orgId: chosen.orgId, channelId: chosen.channelId, events } : { off: true });
-      setMsg(t('settings.msgr.notify.saved')); await load();
+      setMsg(t(chosen ? 'settings.msgr.notify.saved' : 'settings.msgr.notify.off.done')); await load();
     } catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
+  };
+  const off = async () => {
+    setBusy(true); setMsg('');
+    try { await api(`/api/companies/${ws}/msgr/notify`, { off: true }); setRoom(''); setEvents([]); setMsg(t('settings.msgr.notify.off.done')); await load(); }
+    catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
   };
   return (
     <div style={{ display: 'grid', gap: 8, padding: '12px 14px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
@@ -801,7 +806,7 @@ function MsgrNotifyRoom({ ws, signedIn }) {
       {!!opt.rooms.length && (<>
         <label style={{ display: 'grid', gap: 5 }}>
           <span className="microlabel">{t('settings.msgr.notify.room')}</span>
-          <select className="input" value={room} onChange={(e) => setRoom(e.target.value)}>
+          <select className="input" value={room} onChange={(e) => { const v = e.target.value; setRoom(v); if (v && !events.length) setEvents([...opt.events]); }}>{/* 방을 고르면 기본 전체 선택 — 이벤트 0개 저장은 '켠 것처럼 보이는 끔'(검수 #535 ②) */}
             <option value="">{t('settings.msgr.notify.off')}</option>
             {opt.rooms.map((r) => <option key={r.channelId} value={r.channelId}>{r.orgName} · #{r.name}</option>)}
           </select>
@@ -820,8 +825,8 @@ function MsgrNotifyRoom({ ws, signedIn }) {
           </div>
         )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="btn btn-primary sm" disabled={busy} onClick={save}>{busy ? <Spinner size={12} /> : t('settings.msgr.notify.save')}</button>
-          {opt.notify && <button type="button" className="btn sm" disabled={busy} onClick={() => { setRoom(''); setEvents([]); }}>{t('settings.msgr.notify.clear')}</button>}
+          <button type="button" className="btn btn-primary sm" disabled={busy || (!!chosen && !events.length)} onClick={save}>{busy ? <Spinner size={12} /> : t('settings.msgr.notify.save')}</button>
+          {opt.notify && <button type="button" className="btn sm" disabled={busy} onClick={off}>{t('settings.msgr.notify.clear')}</button>}{/* 끄기는 서버에 바로(로컬 폼만 비우면 화면과 서버가 어긋난다 — 검수 #535 ③) */}
           {msg && <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{msg}</span>}
         </div>
       </>)}

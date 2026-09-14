@@ -1,7 +1,7 @@
 // 회사 단위 메신저 알림 목적지(설정 › Argo 메신저 연결 › 알림 받을 방) + Castra 실행 계약의 시스템 프롬프트 포함.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs'; // 종료 시 일괄 삭제(잔여물 실사고 규칙)
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-msgr-notify-')); // 격리 루트 — 실데이터·저장소 workspaces/ 미접촉(gateway.test.mjs 관례)
@@ -69,10 +69,38 @@ test('시스템 프롬프트 — Castra 실행 계약이 ko/en 골격 모두에 
     const p = systemPromptFor('# 카드', '/tmp/ws', '', { name: '알파' }, lang);
     const at = p.indexOf('## Castra execution contract'); const safety = p.indexOf(lang === 'en' ? '## Safety limits' : '## 안전 한계');
     assert.ok(at > 0 && safety > at, `${lang}: Castra 절이 안전 한계 앞에`);
-    assert.doesNotMatch(p, /castra_runtime\.py|castra_notes\.py|Stop guard|circuit breaker/, 'Argo 크루에 없는 Castra 도구·훅을 지시하지 않는다');
+    assert.doesNotMatch(p, /castra_runtime\.py|castra_notes\.py|Stop guard|circuit breaker|worktrees|complete safety/, 'Argo 크루에 없는 Castra 도구·훅·워크트리를 지시하지 않고, 대본 답변(클라우드 안전)과 충돌하는 문장이 없다');
     for (const h of ['### Start from the user\'s result', '### Make checks capable of catching the defect', '### Stop on an evidenced outcome', '### Precedence']) assert.ok(p.includes(h), `${lang}: ${h}`);
   }
-  assert.ok(castraPosture().length > 3000, '계약 본문');
+  assert.ok(castraPosture('ko').length > 3000, '계약 본문'); assert.match(castraPosture('ko'), /^\(아래 실행 계약은 영어 원문이다/, 'ko 골격엔 언어 안내 한 줄'); assert.doesNotMatch(castraPosture('en'), /영어 원문/);
   process.env.ARGO_CASTRA = '0';
-  try { assert.equal(castraPosture(), '', 'ARGO_CASTRA=0 옵트아웃'); } finally { delete process.env.ARGO_CASTRA; }
+  try { assert.equal(castraPosture('ko'), '', 'ARGO_CASTRA=0 옵트아웃'); } finally { delete process.env.ARGO_CASTRA; }
+});
+
+test('msgrNotifyPush(배달층) — 정상 삽입 행 모양, 크루 부재 false, 브리지 꺼짐 false, 같은 본문 두 번은 같은 client_msg_id(중복은 false)', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const { createCompany, loadCompany, updateCompany } = await import('../src/workspace.mjs');
+  const ws = 'msgr-notify-deliver';
+  await createCompany(ws, '배달 검수', 'beta');
+  const rows = []; const seen = new Set();
+  const db = {
+    crewBySlug: async (uid, w, slug, orgId) => (slug === 'beta' && orgId === ORG ? { id: 'crew-beta' } : null),
+    insertMessage: async (row) => { rows.push(row); if (seen.has(row.client_msg_id)) return null; seen.add(row.client_msg_id); return { id: `m${rows.length}` }; },
+  };
+  const session = async () => ({ uid: 'owner-1', db });
+  const target = { orgId: ORG, channelId: CH, events: ['job'] };
+  const ev = { type: 'job', wsId: ws, slug: 'beta', title: '긴 작업', ok: true, reply: '끝' };
+  assert.equal(await msgrNotifyPush(ev, target, { session }), false, '브리지 꺼짐(msgr.enabled 아님)이면 세션도 열지 않는다');
+  await updateCompany(ws, { msgr: { ...((await loadCompany(ws)).msgr ?? {}), enabled: true } });
+  assert.equal(await msgrNotifyPush(ev, target, { session }), true);
+  assert.equal(rows.length, 1);
+  assert.deepEqual({ channel_id: rows[0].channel_id, author_kind: rows[0].author_kind, crew_id: rows[0].crew_id, kind: rows[0].kind, mentions: rows[0].mentions, meta: rows[0].meta },
+    { channel_id: CH, author_kind: 'crew', crew_id: 'crew-beta', kind: 'text', mentions: [], meta: { disposition: 'done', notification: 'job' } });
+  assert.match(rows[0].body, /^\[장시간 작업 완료\] 긴 작업\n\n끝$/); assert.match(rows[0].client_msg_id, /^nt:crew-beta:[0-9a-f]{32}$/);
+  assert.equal(await msgrNotifyPush(ev, target, { session }), false, '같은 이벤트 재배달 = 같은 client_msg_id → 중복 삽입 없음');
+  assert.equal(rows[1].client_msg_id, rows[0].client_msg_id);
+  assert.equal(await msgrNotifyPush({ ...ev, reply: '끝!' }, target, { session }), true, '본문이 다르면 다른 알림');
+  assert.notEqual(rows[2].client_msg_id, rows[0].client_msg_id);
+  assert.equal(await msgrNotifyPush({ ...ev, slug: 'nobody' }, target, { session }), false, '조직에 없는 크루 → false(다른 방·다른 이름으로 가지 않음)');
+  assert.equal(rows.length, 3);
 });
