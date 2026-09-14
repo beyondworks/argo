@@ -857,6 +857,29 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
 }
 
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
+/** 회사 단위 알림 목적지 — 원점 없는 이벤트를 설정한 방에 그 이벤트의 크루 이름으로 올린다(src/msgr-notify.mjs). 같은 이벤트는 client_msg_id로 한 번만. */
+export async function msgrNotifyPush(event, target, { session = sessionClient } = {}) {
+  const { formatMsgrNotify, msgrNotifyCrewSlug } = await import('../msgr-notify.mjs');
+  const [{ loadCompany }, { listAgents }] = await Promise.all([import('../workspace.mjs'), import('../hub.mjs')]);
+  const company = await loadCompany(event.wsId);
+  const c = await session();
+  if (!c) throw new Error('Messenger notification session unavailable');
+  if (company.ownerId && company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
+  const slug = msgrNotifyCrewSlug(event);
+  const crew = slug ? await c.db.crewBySlug(c.uid, event.wsId, slug, target.orgId).catch(() => null) : null;
+  if (!crew) { console.error(`[argo] 메신저 알림 목적지: 크루 ${slug ?? '?'}가 조직에 없음(${event.wsId})`); return false; }
+  const agents = await listAgents(event.wsId).catch(() => []);
+  const names = Object.fromEntries(agents.map((a) => [a.slug, a.name || a.slug]));
+  const body = formatMsgrNotify(event, company.lang, names).slice(0, MSG_MAX);
+  if (!body) return false;
+  const key = [event.wsId, event.type, event.id ?? event.item?.id ?? event.routine?.id ?? '', event.runAt ?? event.phase ?? '', target.channelId, body.length].join(':');
+  const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
+  await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
+    reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
+    body, mentions: [], meta: { disposition: 'done', notification: event.type } });
+  return true;
+}
+
 export async function msgrPush(event, { session = sessionClient } = {}) {
   const it = event.item;
   const company = (event.type === 'approval' || event.type === 'delegate' || event.type === 'approval_resolved' || event.type === 'crewmail' || event.type === 'routine' || event.type === 'job') ? await loadCompany(event.wsId).catch(() => ({})) : null;

@@ -30,7 +30,8 @@ import { routeMessage, crewStatusReply, approvalWho, defaultCrew, resolveTelegra
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
 import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
 const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
-import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrEventOrigin, runMessengerContinuation } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
+import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrNotifyPush, msgrEventOrigin, runMessengerContinuation } from './gateway/msgr.mjs';
+import { normalizeMsgrNotify, msgrNotifyWants } from './msgr-notify.mjs'; // 회사 단위 알림 목적지(원점 없는 이벤트) // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
 import { deliverMessengerNotifications } from './gateway/msgr-notifications.mjs';
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
@@ -825,7 +826,7 @@ export async function sendRoutineNotification(event, kind, { pushMsgr = msgrPush
 }
 
 const MSGR_PUSH_TYPES = new Set([...channelSendsKinds('msgr'), 'approval_resolved', 'approval_followup']); // 카드 상태 갱신·후속 보고는 결재의 일부(음소거 대상 아님)
-async function pushEvent(event, { pushMsgr = msgrPush } = {}) {
+async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPush } = {}) {
   if (event.type === 'routine' && event.routine?.notifications !== undefined) {
     const { normalizeRoutineNotifications } = await import('./routine-notifications.mjs');
     const selection = normalizeRoutineNotifications(event.routine.notifications);
@@ -859,7 +860,13 @@ async function pushEvent(event, { pushMsgr = msgrPush } = {}) {
     return;
   }
   const all = await loadConnections(event.wsId);
-  const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
+  const companyForLang = await loadCompany(event.wsId).catch(() => ({}));
+  const { lang = 'ko' } = companyForLang;
+  // 회사 단위 메신저 알림 목적지(설정 › Argo 메신저 연결 › 알림 받을 방) — 원점 없는 이벤트만. 텔레그램·슬랙과 독립(여기서 던져도 아래를 막지 않는다).
+  {
+    let notify = null; try { notify = normalizeMsgrNotify(companyForLang.msgr?.notify); } catch { notify = null; }
+    if (msgrNotifyWants(notify, event)) await notifyMsgr(event, notify).catch((e) => console.error('[argo] 메신저 알림 목적지 배달 실패:', e.message));
+  }
   const who = event.type === 'approval' ? await approvalWho(event.wsId, event.item, lang) : '';
   // 결재 처리 완료 — 어느 창구(웹·대화창·텔레그램·슬랙)에서 확정됐든 텔레그램 카드의 버튼을 걷어낸다.
   // 푸시 때 저장해 둔 tg:{chatId,messageId}가 있어야 어느 메시지를 편집할지 안다(웹 승인 시 버튼 잔존 갭 해소).
