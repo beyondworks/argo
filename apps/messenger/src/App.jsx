@@ -2495,18 +2495,19 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   const loadOlder = useCallback(async () => {
     const first = msgs?.[0]?.id; const el = feed.current;
     if (!first || olderRef.current || !hasMore) return;
+    const node = el?.querySelector('[data-mid]'); anchor.current = node ? { node, y: yOf(el, node) } : null; // 컨트롤이 '불러오는 중'으로 바뀌는 높이 변화까지 보정 범위에(검수 #531 L-6)
     olderRef.current = true; setOlder(true); // ref 가드 — 한 태스크의 scroll 여러 건이 같은 질의를 겹쳐 내지 않게(검수 #531 L-1)
+    stick.current = false; // 이전 기록을 부르는 건 위를 보는 것 — 바닥 추종(toBottom)이 keepAnchor를 덮지 않게 끈다(검수 #531 L-4: 두 주인)
     try {
       const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
         .eq('channel_id', chId).lt('id', first).order('id', { ascending: false }).limit(PAGE));
       const list = rows.reverse();
-      const node = el?.querySelector('[data-mid]'); anchor.current = node ? { node, y: yOf(el, node) } : null;
       setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return [...list.filter((m) => !seen.has(m.id)), ...base]; });
       setHasMore(rows.length >= PAGE);
       await hydrate(list.map((m) => m.id));
     } catch (e) { onError(e.message); } finally { olderRef.current = false; setOlder(false); }
   }, [msgs, hasMore, chId, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
-  useLayoutEffect(keepAnchor, [msgs, atts, keepAnchor]); // 커밋 직후 동기 보정(깜빡임 없음). 채널 전환은 key 리마운트라 별도 초기화 없음
+  useLayoutEffect(keepAnchor, [msgs, atts, older, keepAnchor]); // 커밋 직후 동기 보정(깜빡임 없음) — 본문·첨부·컨트롤 상태. 채널 전환은 key 리마운트라 별도 초기화 없음
   useEffect(() => { const el = feed.current; if (!el) return; const f = () => { if (el.scrollTop < 120) loadOlder(); }; el.addEventListener('scroll', f, { passive: true }); return () => el.removeEventListener('scroll', f); }, [loadOlder]);
   const load = useCallback(async (afterId = 0) => {
     const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
