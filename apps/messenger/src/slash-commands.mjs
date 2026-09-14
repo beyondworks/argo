@@ -5,12 +5,13 @@ import { SLASH_TOKEN_RE } from '../../../app/c/[ws]/slash-match.mjs';
 
 /** 후보 계산. crews: [{ id, display_name, commands }]. 같은 명령이 여러 크루(같은 회사)에 있으면 하나로 묶고 크루를 나열한다.
     @returns null(토큰 아님 → 팝업 닫힘) | [{ key, kind, cmd, desc, insert, crews:[{id,name}] }] */
-export function slashCandidates(text, crews, { skillPrefix = (title) => `${title} ` } = {}) {
+export function slashCandidates(text, crews, { skillPrefix = (title) => `${title} ` , builtins = [] } = {}) {
   const tok = String(text ?? '').match(SLASH_TOKEN_RE);
   if (!tok) return null;
   const q = tok[1].toLowerCase();
   const hit = (s) => String(s ?? '').toLowerCase().startsWith(q);
   const byKey = new Map();
+  for (const b of builtins) if (b?.cmd) byKey.set(`b:${b.cmd}`, { kind: 'builtin', key: `b:${b.cmd}`, cmd: b.cmd, desc: b.desc ?? '', insert: `/${b.cmd} `, crews: [], match: [b.cmd] }); // 메신저 내장(/to·/cc) — 크루 명령보다 앞
   for (const c of Array.isArray(crews) ? crews : []) {
     for (const cmd of Array.isArray(c?.commands) ? c.commands : []) {
       const row = cmd?.kind === 'alias' && cmd.cmd && cmd.text ? { kind: 'alias', key: `a:${cmd.cmd}:${cmd.text}`, cmd: cmd.cmd, desc: cmd.text, insert: cmd.text, match: [cmd.cmd] }
@@ -29,4 +30,19 @@ export function slashCandidates(text, crews, { skillPrefix = (title) => `${title
 export function slashInsert(cand, { isDm }) {
   const one = !isDm && cand.crews.length === 1 ? cand.crews[0] : null;
   return { text: one ? `@${one.name} ${cand.insert}` : cand.insert, mention: one ? { kind: 'crew', id: one.id, name: one.name } : null };
+}
+
+// 1:1 방의 수신·참조 고르기(유건 결정 2026-09-14 — "멘션이 사실상 to"): 서버는 역할 없는 @멘션을 to로 본다(coalesce(role,'to')).
+// 그래서 별도 수신·참조 패널 대신 입력창 명령 하나로 — `/to 질의`는 @ 목록과 같은 목록(고르면 `@이름 ` 삽입), `/cc 질의`는 같은 목록(고르면 참조 칩).
+export const ROLE_PICK_RE = /^\/(to|cc)(?:\s+(.*))?$/i; // 질의 = 나머지 전체(크루 이름엔 공백이 흔하다 — 검수 M-2). 명령이 글 전체를 차지할 때만 발동
+
+/** @returns null(명령 아님) | { role:'to'|'cc', q, list:[{ kind:'crew', id, name, sub, disabled }] }
+    exclude = 이미 본문에 있거나 참조로 고른 crew id. participants = 이 1:1 방의 상대 — /to에서만 뺀다(@상대는 중복), /cc에는 남긴다("답하지 말고 참고만") */
+export function rolePickCandidates(text, candidates, { exclude = new Set(), participants = new Set() } = {}) {
+  const m = String(text ?? '').match(ROLE_PICK_RE);
+  if (!m) return null;
+  const role = m[1].toLowerCase(); const q = (m[2] ?? '').trim().toLowerCase();
+  const list = (Array.isArray(candidates) ? candidates : []).filter((c) => c?.id && !exclude.has(c.id) && !(role === 'to' && participants.has(c.id)) && String(c.display_name ?? '').toLowerCase().includes(q))
+    .map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, sub: c.role_text, disabled: c.delivery_ready !== true }));
+  return { role, q, list };
 }
