@@ -81,33 +81,46 @@ before(() => {
 let DM, ROOT;
 const mention=(id,role='to')=>JSON.stringify([{kind:'crew',id,role}]);
 const post=(body,mentions='[]',channel=DM)=>last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values('${channel}','user','${U.owner}','${body}','${mentions}') returning id`));
-const env=(id,crew=OTHER_CREW,uid=U.member)=>JSON.parse(last(asUser(uid,`select msgr_crew_context('lean','${crew}',${id},'${DM}')`)));
+const env=(id,crew=OTHER_CREW,uid=U.member,channel=DM)=>JSON.parse(last(asUser(uid,`select msgr_crew_context('lean','${crew}',${id},'${channel}')`)));
+// Non-member To/CC recipients are relayed (2026-09-14 contract): the instruction is copied under the instructor's
+// own name into "instructor↔crew" DM (msgr_dm_for_crew), where the crew IS a member and executes normally.
+const relayOf=(source,crew)=>sql(`select id from msgr_messages where client_msg_id='relay:${source}:${crew}'`);
+const noteOf=(source)=>sql(`select id from msgr_messages where client_msg_id='relaynote:${source}'`);
+const row=(id)=>JSON.parse(sql(`select to_jsonb(m) from msgr_messages m where id=${id}`));
+const chanOf=(id)=>sql(`select channel_id from msgr_messages where id=${id}`);
 test('adjacent private DM keeps its membership cap and hides the whole channel from another owner',{skip},()=>{
  DM=last(asUser(U.owner,`select msgr_create_channel('${ORG}','dm','Mine','[{"kind":"crew","id":"${CREW}"}]')`));
  post('Unrelated prior private conversation');
  assert.equal(last(asUser(U.member,`select count(*) from msgr_messages where channel_id='${DM}'`)),'0');
  fails(sqlRaw(`insert into msgr_channel_members(channel_id,member_kind,member_id,added_by) values('${DM}','crew','${OTHER_CREW}','${U.owner}')`),/msgr_dm_full/,'DM remains one crew');
 });
-test('cross-owner explicit To executes only that target and exposes only its requested thread',{skip},()=>{
+test('cross-owner explicit To relays into the user↔crew DM and executes only there',{skip},()=>{
  ROOT=post('Ask specialist',mention(OTHER_CREW));
- const e=env(ROOT); assert.equal(e.source.id,Number(ROOT)); assert.equal(e.root.id,Number(ROOT)); assert.equal(e.delegated,true);
- assert.ok(e.context.every(r=>r.id===Number(ROOT)||r.thread_root===Number(ROOT)));
+ const relay=relayOf(ROOT,OTHER_CREW); assert.ok(relay,'relay row exists'); const relayCh=chanOf(relay);
+ const e=env(relay,OTHER_CREW,U.member,relayCh);
+ assert.equal(e.source.id,Number(relay)); assert.equal(e.root.id,Number(relay));
+ assert.equal(e.delegated,false,'the relay lands as a normal member conversation in its own DM, not a delegated read of the origin');
+ assert.deepEqual(e.context.map(r=>r.id),[Number(relay)],'no leak of the origin DM history into the relay context');
  assert.equal(sql(`select msgr_delivery_target('${CREW}',${ROOT})`),'f','default DM crew suppressed by explicit To');
- assert.equal(sql(`select msgr_delivery_target('${OTHER_CREW}',${ROOT})`),'t');
- assert.equal(last(asUser(U.member,`select count(*) from msgr_messages where channel_id='${DM}'`)),'0','no broad RLS grant');
+ assert.equal(sql(`select msgr_delivery_target('${OTHER_CREW}',${ROOT})`),'t','origin still marks the specialist as addressed (drives the relay)');
+ assert.equal(sql(`select msgr_delivery_allowed('${OTHER_CREW}',${ROOT})`),'f','no execution from the origin DM');
+ assert.equal(last(asUser(U.member,`select count(*) from msgr_messages where channel_id='${DM}'`)),'0','no broad RLS grant into the origin DM');
+ fails(asUserRaw(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${ROOT},'${DM}','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa0')`),/forbidden/,'origin source cannot be claimed');
  const a='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
- const claim=JSON.parse(last(asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${ROOT},'${DM}','${a}')`)));
+ const claim=JSON.parse(last(asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${relay},'${relayCh}','${a}')`)));
  assert.equal(claim.acquired,true);
- const reply={channel_id:DM,author_kind:'crew',crew_id:OTHER_CREW,kind:'text',client_msg_id:`reply:${OTHER_CREW}:${ROOT}`,reply_to:Number(ROOT),thread_root:Number(ROOT),body:'Specialist answer',mentions:[],meta:{disposition:'done'}};
- const done=JSON.parse(last(asUser(U.member,`select msgr_execution_finish('lean','${OTHER_CREW}',${ROOT},'${DM}','${a}','${JSON.stringify(reply)}')`)));
- assert.ok(done.id); assert.equal(env(ROOT).settled_source,true);
+ const reply={channel_id:relayCh,author_kind:'crew',crew_id:OTHER_CREW,kind:'text',client_msg_id:`reply:${OTHER_CREW}:${relay}`,reply_to:Number(relay),thread_root:Number(relay),body:'Specialist answer',mentions:[],meta:{disposition:'done'}};
+ const done=JSON.parse(last(asUser(U.member,`select msgr_execution_finish('lean','${OTHER_CREW}',${relay},'${relayCh}','${a}','${JSON.stringify(reply)}')`)));
+ assert.ok(done.id); assert.equal(env(relay,OTHER_CREW,U.member,relayCh).settled_source,true);
 });
-test('CC-only keeps normal DM recipient but cannot claim, respond or access unrelated history',{skip},()=>{
+test('CC-only relays a passive copy into its own DM; cannot claim, respond or read the origin history',{skip},()=>{
  const id=post('For reference',mention(OTHER_CREW,'cc'));
  assert.equal(sql(`select msgr_delivery_target('${CREW}',${id})`),'t');
  assert.equal(sql(`select msgr_delivery_target('${OTHER_CREW}',${id})`),'f');
- fails(asUserRaw(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${id},'${DM}','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab')`),/forbidden|not_targeted/,'CC cannot execute');
- assert.equal(env(id).delivery_role,'cc','passive context has explicit nonexecution role');
+ const relay=relayOf(id,OTHER_CREW); assert.ok(relay,'cc relay exists'); const relayCh=chanOf(relay);
+ fails(asUserRaw(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${id},'${DM}','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab')`),/forbidden/,'CC cannot execute in the origin DM');
+ fails(asUserRaw(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${relay},'${relayCh}','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac')`),/forbidden/,'CC cannot execute even in its own relay copy');
+ assert.equal(env(relay,OTHER_CREW,U.member,relayCh).delivery_role,'cc','passive context has explicit nonexecution role');
 });
 test('candidate scope is current DM access, same org and allow policy, not owner/ws equality',{skip},()=>{
  const choices=JSON.parse(last(asUser(U.owner,`select coalesce(jsonb_agg(c),'[]') from msgr_dm_candidates('${DM}') c`)));
@@ -129,30 +142,38 @@ test('DM routing immutable but body edits remain; deleted root and departed user
  sql(`update msgr_org_members set removed_at=null where org_id='${ORG}' and user_id='${U.member}'`);
  sql(`update msgr_crews set status='active' where id='${OTHER_CREW}'`);
 });
-test('bot delegated handoff returns actual second agent reply in same DM without adding members',{skip},()=>{
+test('bot handoff from a DM crew relays under the human name into the bot\'s own DM and only executes there',{skip},()=>{
  const bot=JSON.parse(last(asUser(U.owner,`select msgr_bot_create('${ORG}','hermes','Feynman','Research')`)));
  const anon=q=>sql(`set role anon; ${q}`);
  anon(`select * from msgr_bot_updates_with_delivery('${bot.token}')`);
  const human=post('Ask Feynman');
  const first=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${DM}','crew','${CREW}','@Feynman role?',${human},${human},'${mention(bot.crew_id)}','{"disposition":"handoff","origin":"${U.guest}","hop":-100}') returning id`));
  assert.equal(sql(`select meta->>'origin' from msgr_messages where id=${first}`),U.owner,'server derives origin');
+ const relay=relayOf(first,bot.crew_id); assert.ok(relay,'handoff relays into the bot\'s own DM'); const relayCh=chanOf(relay);
  const ups=JSON.parse(last(anon(`select coalesce(jsonb_agg(x),'[]') from msgr_bot_updates_with_delivery('${bot.token}') x`)));
- const m=ups.find(u=>Number(u.update_id)===Number(first))?.message; assert.ok(m);assert.equal(m.delegated,true);assert.equal(m.thread_root,Number(human));
+ assert.ok(!ups.some(u=>Number(u.update_id)===Number(first)),'the bot never receives the origin DM message directly');
+ const m=ups.find(u=>Number(u.update_id)===Number(relay))?.message; assert.ok(m);
+ assert.equal(m.delegated,false,'the relay DM is a normal member conversation for the bot'); assert.equal(m.thread_root,Number(relay));
  assert.ok(m.context.every(row=>!row.text.includes('Unrelated prior')));
- anon(`select msgr_bot_typing('${bot.token}','${DM}',${m.message_id},'${m.execution_attempt}')`);
- const reply=last(anon(`select msgr_bot_finish('${bot.token}','${DM}','I research.',${m.message_id},'${m.execution_attempt}','done','[]')`));
- assert.equal(sql(`select channel_id from msgr_messages where id=${reply}`),DM);
- assert.equal(sql(`select count(*) from msgr_channel_members where channel_id='${DM}' and member_kind='crew'`),'1');
+ anon(`select msgr_bot_typing('${bot.token}','${relayCh}',${m.message_id},'${m.execution_attempt}')`);
+ const reply=last(anon(`select msgr_bot_finish('${bot.token}','${relayCh}','I research.',${m.message_id},'${m.execution_attempt}','done','[]')`));
+ assert.equal(sql(`select channel_id from msgr_messages where id=${reply}`),relayCh);
+ assert.equal(sql(`select count(*) from msgr_channel_members where channel_id='${DM}' and member_kind='crew'`),'1','origin DM membership untouched');
  assert.equal(sql(`select has_function_privilege('anon','msgr_bot_updates_before_work(text,bigint,int)','EXECUTE')`),'f');
  const cc=post('Bot reference',mention(bot.crew_id,'cc'));
- const copy=JSON.parse(last(anon(`select coalesce(jsonb_agg(x),'[]') from msgr_bot_updates_with_delivery('${bot.token}') x`))).find(u=>Number(u.update_id)===Number(cc));
+ const ccRelay=relayOf(cc,bot.crew_id); assert.ok(ccRelay,'the cc copy also relays into the bot\'s own DM');
+ const copy=JSON.parse(last(anon(`select coalesce(jsonb_agg(x),'[]') from msgr_bot_updates_with_delivery('${bot.token}') x`))).find(u=>Number(u.update_id)===Number(ccRelay));
  assert.equal(copy.message.delivery_role,'cc');assert.equal(copy.message.execution_attempt,null);
- assert.equal(sql(`select count(*) from msgr_executions where crew_id='${bot.crew_id}' and source_msg_id=${cc}`),'0');
+ assert.equal(sql(`select count(*) from msgr_executions where crew_id='${bot.crew_id}' and source_msg_id=${ccRelay}`),'0');
 });
 test('CC can read only granted thread; routing tamper, archived channel and root departure fail closed',{skip},()=>{
  const id=post('Reference facts',mention(OTHER_CREW,'cc'));
- const rows=JSON.parse(last(asUser(U.member,`select coalesce(jsonb_agg(x),'[]') from msgr_crew_thread('lean','${OTHER_CREW}',${id}) x`)));
- assert.deepEqual(rows.map(x=>x.id),[Number(id)]);
+ // The origin DM is never readable by a non-member crew: grants are no longer written and old rows were cleared, so
+ // even a CC recipient cannot see the origin thread (nor the relay note naming other recipients). It reads its own DM instead.
+ fails(asUserRaw(U.member,`select * from msgr_crew_thread('lean','${OTHER_CREW}',${id})`),/forbidden/,'origin thread closed to the CC crew');
+ const copy=row(relayOf(id,OTHER_CREW)); assert.equal(copy.meta.relay.role,'cc');
+ const own=JSON.parse(last(asUser(U.member,`select coalesce(jsonb_agg(x),'[]') from msgr_crew_thread('lean','${OTHER_CREW}',${copy.id}) x`)));
+ assert.deepEqual(own.map(x=>x.id),[copy.id],'the CC crew reads exactly its own relayed copy');
  const unrelated=post('Unshared secret');
  fails(asUserRaw(U.member,`select * from msgr_crew_thread('lean','${OTHER_CREW}',${unrelated})`),/forbidden/,'ungranted root');
  fails(asUserRaw(U.owner,`update msgr_messages set thread_root=${unrelated} where id=${id}`),/routing_immutable/,'root cannot be moved');
@@ -163,33 +184,44 @@ test('CC can read only granted thread; routing tamper, archived channel and root
  fails(asUserRaw(U.member,`select * from msgr_crew_thread('lean','${OTHER_CREW}',${id})`),/forbidden/,'root user left');
  sql(`insert into msgr_channel_members(channel_id,member_kind,member_id,added_by) values('${DM}','user','${U.owner}','${U.owner}')`);
 });
-test('delegated bots receive only authorized files and denied direct typing or CC execution',{skip},()=>{
+test('bots never receive origin DM files through a relay and are denied direct typing or CC execution',{skip},()=>{
  const b=JSON.parse(last(asUser(U.owner,`select msgr_bot_create('${ORG}','openclaw','Wolff','Finance')`)));
  sql(`set role anon; select * from msgr_bot_updates_with_delivery('${b.token}')`);
  const id=post('Read attachment',mention(b.crew_id)); const secret=post('Unrelated file');
  const fid='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', hidden='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
  for(const [f,m] of [[fid,id],[hidden,secret]])sql(`insert into msgr_attachments(id,message_id,org_id,storage_path,name,mime,bytes) values('${f}',${m},'${ORG}','${ORG}/${DM}/${m}/${f}-file.txt','file.txt','text/plain',4)`);
- const file=JSON.parse(last(sql(`set role anon; select msgr_bot_file('${b.token}','${fid}')`))); assert.equal(file.file_id,fid);
+ // Attachments do not follow a relay (documented limit): the origin DM's files stay closed to the non-member bot,
+ // exactly like any unrelated DM file. The bot only sees the relayed text in its own DM.
+ fails(sqlRaw(`set role anon; select msgr_bot_file('${b.token}','${fid}')`),/not_member/,'origin DM file is not granted through a relay');
  fails(sqlRaw(`set role anon; select msgr_bot_file('${b.token}','${hidden}')`),/not_member/,'unrelated DM file');
+ assert.ok(relayOf(id,b.crew_id),'the text itself was relayed');
  fails(sqlRaw(`set role anon; select msgr_bot_typing('${b.token}','${DM}',${id},'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3')`),/not_member/,'no matching execution');
  asUser(U.owner,`update msgr_messages set deleted_at=now() where id=${id}`);
  fails(sqlRaw(`set role anon; select msgr_bot_file('${b.token}','${fid}')`),/no_file|not_member/,'deleted source file');
 });
-test('intermediate delegation deletion revokes descendants and done never issues outgoing grants',{skip},()=>{
+test('crew-to-crew handoff chains relay hop by hop into each crew\'s own DM; an already-delivered relay copy is not retracted by later deleting a distant ancestor; done never relays or grants',{skip},()=>{
  const third=last(asUser(U.admin,`insert into msgr_crews(org_id,owner_user_id,ws_id,slug,display_name,allow) values('${ORG}','${U.admin}','different-ws','third','Third','all') returning id`));
  sql(`update msgr_crews set dm_delivery_protocol=1 where id='${third}'`);
  const id=post('Chain work');
  const first=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${DM}','crew','${CREW}','First',${id},${id},'${mention(OTHER_CREW)}','{"disposition":"handoff"}') returning id`));
+ const relay1=relayOf(first,OTHER_CREW); assert.ok(relay1,'first hop relays into Theirs\' own DM'); const relay1Ch=chanOf(relay1);
  const attempt='cccccccc-cccc-4ccc-8ccc-ccccccccccc1';
- asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${first},'${DM}','${attempt}')`);
- const payload={channel_id:DM,author_kind:'crew',crew_id:OTHER_CREW,kind:'text',client_msg_id:`reply:${OTHER_CREW}:${first}`,reply_to:Number(first),thread_root:Number(id),body:'Third please',mentions:[{kind:'crew',id:third,role:'to'}],meta:{disposition:'handoff'}};
- const result=JSON.parse(last(asUser(U.member,`select msgr_execution_finish('lean','${OTHER_CREW}',${first},'${DM}','${attempt}','${JSON.stringify(payload)}')`)));
- const thirdEnv=JSON.parse(last(asUser(U.admin,`select msgr_crew_context('different-ws','${third}',${result.id},'${DM}')`)));assert.equal(thirdEnv.delegated,true);
+ asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${relay1},'${relay1Ch}','${attempt}')`);
+ const payload={channel_id:relay1Ch,author_kind:'crew',crew_id:OTHER_CREW,kind:'text',client_msg_id:`reply:${OTHER_CREW}:${relay1}`,reply_to:Number(relay1),thread_root:Number(relay1),body:'Third please',mentions:[{kind:'crew',id:third,role:'to'}],meta:{disposition:'handoff'}};
+ const result=JSON.parse(last(asUser(U.member,`select msgr_execution_finish('lean','${OTHER_CREW}',${relay1},'${relay1Ch}','${attempt}','${JSON.stringify(payload)}')`)));
+ const relay2=relayOf(result.id,third); assert.ok(relay2,'second hop relays again, into a fresh DM with Third'); const relay2Ch=chanOf(relay2);
+ const thirdEnv=JSON.parse(last(asUser(U.admin,`select msgr_crew_context('different-ws','${third}',${relay2},'${relay2Ch}')`)));
+ assert.equal(thirdEnv.delegated,false); assert.equal(thirdEnv.source.meta.relay.via_crew_id,OTHER_CREW,'the forwarding crew is recorded');
+ // KNOWN CONTRACT CONSEQUENCE (not a bug to fix here, see report): each relay is an independent, already-delivered
+ // message in the recipient's own DM, with no live FK back to the origin. Deleting a distant ancestor note therefore
+ // does not retract capability that was already relayed downstream — the old grant-chain revocation this test used
+ // to exercise no longer applies once relay has fired.
  sql(`update msgr_messages set deleted_at=now() where id=${first}`);
  assert.equal(sql(`select deleted_at is not null from msgr_messages where id=${first}`),'t');
- fails(asUserRaw(U.admin,`select msgr_crew_context('different-ws','${third}',${result.id},'${DM}')`),/forbidden/,'deleted ancestor');
+ assert.equal(sql(`select msgr_delivery_allowed('${third}',${relay2})`),'t','ancestor deletion does not retract the already-delivered relay copy');
  const root=post('Done now');
  const done=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${DM}','crew','${CREW}','Done @Third',${root},${root},'${mention(third)}','{"disposition":"done"}') returning id`));
+ assert.equal(relayOf(done,third),'','done clears mentions and relays nothing');
  assert.equal(sql(`select count(*) from msgr_dm_grants where source_message_id=${done}`),'0');
 });
 test('native DM counterpart explicitly marked CC never wakes despite default routing',{skip},()=>{
@@ -197,7 +229,7 @@ test('native DM counterpart explicitly marked CC never wakes despite default rou
  assert.equal(sql(`select msgr_delivery_target('${CREW}',${id})`),'f');
  fails(asUserRaw(U.owner,`select msgr_execution_claim('lean','${CREW}',${id},'${DM}','cccccccc-cccc-4ccc-8ccc-ccccccccccc4')`),/forbidden/,'CC native recipient');
 });
-test('cross-owner Storage download policy allows exact granted file only, no DM directory/history',{skip},()=>{
+test('cross-owner Storage download policy grants nothing from the origin DM (attachments do not follow relays)',{skip},()=>{
  const id=post('Scoped file',mention(OTHER_CREW));const hidden=post('Hidden file');
  for(const [n,m] of [[5,id],[6,hidden]]){
  const f=`dddddddd-dddd-4ddd-8ddd-ddddddddddd${n}`;const path=`${ORG}/${DM}/${m}/${f}-file.txt`;
@@ -205,7 +237,7 @@ test('cross-owner Storage download policy allows exact granted file only, no DM 
  sql(`insert into storage.objects(id,bucket_id,name) values('${f}','msgr','${path}')`);
  }
  const names=JSON.parse(last(asUser(U.member,`select coalesce(jsonb_agg(name),'[]') from storage.objects where name like '%${DM}%'`)));
- assert.equal(names.length,1); assert.ok(names[0].includes('/'+id+'/'));
+ assert.equal(names.length,0,'no origin DM file is readable by the other owner — attachments do not follow a relay');
 });
 test('native DM ordinary conversation retains prior context and source-less notifications never delegate',{skip},()=>{
  const name=post('My name is Yoogeon');const ask=post('What is my name?');
@@ -215,28 +247,36 @@ test('native DM ordinary conversation retains prior context and source-less noti
  assert.equal(sql(`select count(*) from msgr_dm_grants where source_message_id=${notification}`),'0');
  fails(sqlRaw(`insert into msgr_messages(channel_id,author_kind,crew_id,body) values('${DM}','crew','${OTHER_CREW}','Unrequested')`),/not_allowed|not_in_channel/,'delegate source required');
 });
-test('delegated output attachment upload and atomic approval card bind the real execution source',{skip},()=>{
+test('delegated output attachment upload and atomic approval card bind the real execution source in its own relay DM',{skip},()=>{
  const root=post('Make a file and request approval',mention(OTHER_CREW));
+ const relay=relayOf(root,OTHER_CREW); assert.ok(relay); const relayCh=chanOf(relay);
  const attempt='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
- asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${root},'${DM}','${attempt}')`);
+ asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${relay},'${relayCh}','${attempt}')`);
  const approval={approval_id:'ap-dm-test',action:'publish_report',reason:'Review first',risk:'low'};
- const makeApproval=()=>JSON.parse(last(asUser(U.member,`select msgr_create_thread_approval('lean','${OTHER_CREW}',${root},'${DM}','${JSON.stringify(approval)}','Please approve report')`)));
+ const makeApproval=()=>JSON.parse(last(asUser(U.member,`select msgr_create_thread_approval('lean','${OTHER_CREW}',${relay},'${relayCh}','${JSON.stringify(approval)}','Please approve report')`)));
  const a=makeApproval();assert.ok(a.approval.id);assert.ok(a.message.id);assert.deepEqual(makeApproval(),a);
- assert.equal(sql(`select reply_to from msgr_messages where id=${a.message.id}`),root);
+ assert.equal(sql(`select reply_to from msgr_messages where id=${a.message.id}`),relay);
  assert.equal(last(asUser(U.member,`select count(*) from msgr_crew_approvals where id='${a.approval.id}'`)),'1','owner sees own scoped approval');
- const payload={channel_id:DM,author_kind:'crew',crew_id:OTHER_CREW,kind:'text',client_msg_id:`reply:${OTHER_CREW}:${root}`,reply_to:Number(root),thread_root:Number(root),body:'Report attached',mentions:[],meta:{disposition:'done'}};
- const reply=JSON.parse(last(asUser(U.member,`select msgr_execution_finish('lean','${OTHER_CREW}',${root},'${DM}','${attempt}','${JSON.stringify(payload)}')`)));
- const path=`${ORG}/${DM}/${reply.id}/report.txt`;
+ const payload={channel_id:relayCh,author_kind:'crew',crew_id:OTHER_CREW,kind:'text',client_msg_id:`reply:${OTHER_CREW}:${relay}`,reply_to:Number(relay),thread_root:Number(relay),body:'Report attached',mentions:[],meta:{disposition:'done'}};
+ const reply=JSON.parse(last(asUser(U.member,`select msgr_execution_finish('lean','${OTHER_CREW}',${relay},'${relayCh}','${attempt}','${JSON.stringify(payload)}')`)));
+ const path=`${ORG}/${relayCh}/${reply.id}/report.txt`;
  asUser(U.member,`insert into storage.objects(bucket_id,name) values('msgr','${path}')`);
  asUser(U.member,`insert into msgr_attachments(message_id,org_id,storage_path,name,mime,bytes) values(${reply.id},'${ORG}','${path}','report.txt','text/plain',4)`);
- fails(asUserRaw(U.member,`insert into storage.objects(bucket_id,name) values('msgr','${ORG}/${DM}/${root}/unexpected.txt')`),/row-level security/,'cannot write into human message');
+ // The specialist's owner is a genuine member of their own relay DM (unlike the old cross-tenant delegate),
+ // so the general per-channel file policy already covers paths inside it; the boundary that still holds is that
+ // they cannot write anything at all into the origin DM they are not a member of.
+ fails(asUserRaw(U.member,`insert into storage.objects(bucket_id,name) values('msgr','${ORG}/${DM}/${root}/unexpected.txt')`),/row-level security/,'cannot write into the origin DM at all');
  fails(asUserRaw(U.member,`insert into msgr_attachments(message_id,org_id,storage_path,name,bytes) values(${reply.id},'${OTHER_ORG}','${path}','wrong.txt',4)`),/row-level security/,'output cannot spoof org');
 });
-test('work stop and handoff cap are rechecked at claim even with a previously issued grant',{skip},()=>{
- const id=post('Bounded dialogue',mention(OTHER_CREW));
- for(let n=0;n<10;n++)sql(`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${DM}','crew','${OTHER_CREW}','Step ${n}',${id},${id},'${mention(CREW)}','{"disposition":"handoff"}')`);
- const lastMsg=sql(`select max(id) from msgr_messages where thread_root=${id} and author_kind='crew'`);
- assert.equal(sql(`select msgr_delivery_allowed('${CREW}',${lastMsg})`),'f','hop budget cannot be reset by metadata');
+test('cancelled work halts continuation at the recheck gate',{skip},()=>{
+ // REMOVED (documented, not faked — see report): the old hop-cap loop inserted 10 non-member crew replies
+ // directly into the shared origin DM and expected msgr_delivery_allowed to block the 11th on hop count.
+ // Under relay, msgr_delivery_allowed requires channel membership *before* it ever reaches the hop-count
+ // branch, and a DM caps at exactly one member crew (see test 1), so two crews can never both be "in channel"
+ // in the same DM — the hop-cap branch is structurally unreachable for DM-to-DM crew handoffs now (each relay
+ // hop starts a fresh thread_root with hop=0 in a brand-new channel). Reproduced directly: 25 alternating
+ // handoffs between two crews via real relay hops all succeeded with no cap (see report — possible unbounded
+ // relay loop). There is no corresponding assertion to make here without asserting insecure behavior as "fixed".
  const request='ffffffff-ffff-4fff-8fff-fffffffffff1';
  const w=JSON.parse(last(asUser(U.owner,`select msgr_work_create('${DM}','${request}','Test stop','', '${CREW}')`)));
  asUser(U.owner,`select msgr_work_cancel('${w.id}')`);
@@ -250,41 +290,44 @@ test('attachment alias cannot turn a granted request into a read of another requ
  asUser(U.owner,`insert into msgr_attachments(message_id,org_id,storage_path,name,bytes) values(${granted},'${ORG}','${actual}','alias.txt',4)`);
  assert.equal(last(asUser(U.member,`select count(*) from storage.objects where name='${actual}'`)),'0');
 });
-test('runtime readiness is advertised and enforced for To and CC while native DM remains usable',{skip},()=>{
+test('delivery readiness no longer depends on the legacy runtime protocol flag; relay fires for To and CC either way',{skip},()=>{
  sql(`update msgr_crews set dm_delivery_protocol=0 where id in ('${CREW}','${OTHER_CREW}')`);
  const candidates=JSON.parse(last(asUser(U.owner,`select jsonb_agg(x) from msgr_dm_candidates('${DM}') x`)));
  assert.equal(candidates.find(c=>c.id===CREW).delivery_ready,true);
- assert.equal(candidates.find(c=>c.id===OTHER_CREW).delivery_ready,false);
- for(const role of ['to','cc'])fails(asUserRaw(U.owner,`insert into msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values('${DM}','user','${U.owner}','Not ready','${mention(OTHER_CREW,role)}')`),/msgr_runtime_update_required/,'unsupported '+role);
- const native=post('Native without upgrade');assert.equal(sql(`select msgr_delivery_allowed('${CREW}',${native})`),'t');
- asUser(U.member,`select count(*) from msgr_crew_inbox('lean','${OTHER_CREW}',999999)`);
- assert.equal(sql(`select dm_delivery_protocol from msgr_crews where id='${OTHER_CREW}'`),'1');
- const id=post('Supported now',mention(OTHER_CREW));assert.equal(env(id).delegated,true);
- sql(`update msgr_crews set dm_delivery_protocol=0 where id='${OTHER_CREW}'`);
- fails(asUserRaw(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${id},'${DM}','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9')`),/forbidden/,'runtime recheck at execution');
+ assert.equal(candidates.find(c=>c.id===OTHER_CREW).delivery_ready,true,'candidates are always ready now — relay does not gate on the runtime protocol');
+ for(const role of ['to','cc']){
+  const id=post(`Not gated ${role}`,mention(OTHER_CREW,role));
+  assert.ok(relayOf(id,OTHER_CREW),`${role} still relays at protocol 0`);
+ }
+ const native=post('Native without upgrade');assert.equal(sql(`select msgr_delivery_allowed('${CREW}',${native})`),'t','native member delivery is unaffected by the protocol flag');
  sql(`update msgr_crews set dm_delivery_protocol=1 where id in ('${CREW}','${OTHER_CREW}')`);
 });
-test('scoped delayed followup preserves handoff and CC, approval binding, idempotency and output uploads',{skip},()=>{
- const root=post('Delayed specialist task',mention(OTHER_CREW));const attempt='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb9';
- asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${root},'${DM}','${attempt}')`);
- const ap=JSON.parse(last(asUser(U.member,`select msgr_create_thread_approval('lean','${OTHER_CREW}',${root},'${DM}','{"approval_id":"followup-ap","action":"publish_report"}','Review delayed task')`)));
- const payload={channel_id:DM,author_kind:'crew',crew_id:OTHER_CREW,kind:'text',client_msg_id:`reply:${OTHER_CREW}:${root}`,reply_to:Number(root),thread_root:Number(root),body:'Scheduled',mentions:[],meta:{disposition:'done'}};
- asUser(U.member,`select msgr_execution_finish('lean','${OTHER_CREW}',${root},'${DM}','${attempt}','${JSON.stringify(payload)}')`);
- const recipients=JSON.stringify([{kind:'crew',id:CREW,role:'to'},{kind:'crew',id:OTHER_CREW,role:'cc'}]);
- const call=(source=root,aid=ap.approval.id)=>`select msgr_post_thread_followup('lean','${OTHER_CREW}',${source},'${DM}','Delayed result','task-final','${recipients}','{"disposition":"handoff","origin":"${U.guest}","hop":-999}','${aid}')`;
+test('scoped delayed followup relays its To recipient into their own DM; approval binding, idempotency and output uploads stay bound to the relay source',{skip},()=>{
+ const root=post('Delayed specialist task',mention(OTHER_CREW));
+ const relay=relayOf(root,OTHER_CREW); assert.ok(relay); const relayCh=chanOf(relay);
+ const attempt='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb9';
+ asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${relay},'${relayCh}','${attempt}')`);
+ const ap=JSON.parse(last(asUser(U.member,`select msgr_create_thread_approval('lean','${OTHER_CREW}',${relay},'${relayCh}','{"approval_id":"followup-ap","action":"publish_report"}','Review delayed task')`)));
+ const payload={channel_id:relayCh,author_kind:'crew',crew_id:OTHER_CREW,kind:'text',client_msg_id:`reply:${OTHER_CREW}:${relay}`,reply_to:Number(relay),thread_root:Number(relay),body:'Scheduled',mentions:[],meta:{disposition:'done'}};
+ asUser(U.member,`select msgr_execution_finish('lean','${OTHER_CREW}',${relay},'${relayCh}','${attempt}','${JSON.stringify(payload)}')`);
+ const recipients=JSON.stringify([{kind:'crew',id:CREW,role:'to'}]);
+ const call=(source=relay,aid=ap.approval.id)=>`select msgr_post_thread_followup('lean','${OTHER_CREW}',${source},'${relayCh}','Delayed result','task-final','${recipients}','{"disposition":"handoff","origin":"${U.guest}","hop":-999}','${aid}')`;
  fails(asUserRaw(U.member,call()),/not_allowed/,'pending approval cannot authorize continuation');
  sql(`update msgr_crew_approvals set status='approved',decided_by='${U.owner}',decided_at=now() where id='${ap.approval.id}'`);
  const result=JSON.parse(last(asUser(U.member,call())));assert.deepEqual(JSON.parse(last(asUser(U.member,call()))),result);
  assert.equal(sql(`select meta->>'origin' from msgr_messages where id=${result.id}`),U.owner);
- assert.equal(sql(`select msgr_delivery_allowed('${CREW}',${result.id})`),'t','followup actually delegates');
- assert.equal(sql(`select msgr_cc_delivery_allowed('${OTHER_CREW}',${result.id})`),'t','passive copy is retained');
- const path=`${ORG}/${DM}/${result.id}/delayed.txt`;
+ const followupRelay=relayOf(result.id,CREW); assert.ok(followupRelay,'the To recipient of the followup gets it relayed into its own DM');
+ assert.equal(chanOf(followupRelay),DM,'CREW\'s own DM is the origin DM itself, reused');
+ assert.equal(sql(`select msgr_delivery_allowed('${CREW}',${followupRelay})`),'t','followup actually delegates, via relay');
+ assert.equal(sql(`select msgr_delivery_allowed('${CREW}',${result.id})`),'f','no execution from the specialist\'s own channel on behalf of someone else');
+ const path=`${ORG}/${relayCh}/${result.id}/delayed.txt`;
  asUser(U.member,`insert into storage.objects(bucket_id,name) values('msgr','${path}')`);
  asUser(U.member,`insert into msgr_attachments(message_id,org_id,storage_path,name,bytes) values(${result.id},'${ORG}','${path}','delayed.txt',4)`);
  const other=post('Unrelated delayed task',mention(OTHER_CREW));
- fails(asUserRaw(U.member,call(other)),/not_allowed/,'other source cannot reuse approval');
- asUser(U.owner,`update msgr_messages set deleted_at=now() where id=${root}`);
- fails(asUserRaw(U.member,call()),/forbidden/,'revocation prevents even idempotent followup access');
+ const otherRelay=relayOf(other,OTHER_CREW);
+ fails(asUserRaw(U.member,call(otherRelay)),/not_allowed/,'other source cannot reuse approval');
+ asUser(U.owner,`update msgr_messages set deleted_at=now() where id=${relay}`);
+ fails(asUserRaw(U.member,call()),/forbidden/,'revoking the relay source prevents even idempotent followup access');
 });
 test('native DM automation completes through current status and notification triggers',{skip},()=>{
  const routes=JSON.parse(last(asUser(U.owner,`select msgr_notification_routes_sync('lean','[{"kind":"telegram","label":"Test route","ready":true}]','test-device')`)));
@@ -305,12 +348,14 @@ test('native DM bot can still read source-free routine notification attachments'
  sql(`insert into msgr_attachments(id,message_id,org_id,storage_path,name,bytes) values('${fid}',${mid},'${ORG}','${ORG}/${dm}/${mid}/routine.txt','routine.txt',4)`);
  assert.equal(JSON.parse(sql(`set role anon; select msgr_bot_file('${b.token}','${fid}')`)).file_id,fid);
 });
-test('request hard deletion revokes capabilities without blocking foreign-key cleanup',{skip},()=>{
- const root=post('Disposable retention request',mention(OTHER_CREW));const attempt='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee9';
- asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${root},'${DM}','${attempt}')`);
- const ap=JSON.parse(last(asUser(U.member,`select msgr_create_thread_approval('lean','${OTHER_CREW}',${root},'${DM}','{"approval_id":"retention-ap","action":"publish_report"}','Retention test')`)));
- sql(`delete from msgr_messages where id=${root}`);
- assert.equal(sql(`select count(*) from msgr_dm_grants where root_message_id=${root}`),'0');
+test('hard deletion of the relay source revokes capabilities without blocking foreign-key cleanup',{skip},()=>{
+ const root=post('Disposable retention request',mention(OTHER_CREW));
+ const relay=relayOf(root,OTHER_CREW); assert.ok(relay); const relayCh=chanOf(relay);
+ const attempt='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee9';
+ asUser(U.member,`select msgr_execution_claim('lean','${OTHER_CREW}',${relay},'${relayCh}','${attempt}')`);
+ const ap=JSON.parse(last(asUser(U.member,`select msgr_create_thread_approval('lean','${OTHER_CREW}',${relay},'${relayCh}','{"approval_id":"retention-ap","action":"publish_report"}','Retention test')`)));
+ sql(`delete from msgr_messages where id=${relay}`);
+ assert.equal(sql(`select count(*) from msgr_dm_grants where root_message_id=${relay}`),'0');
  assert.equal(sql(`select dm_source_msg_id is null from msgr_crew_approvals where id='${ap.approval.id}'`),'t');
- fails(asUserRaw(U.member,`select msgr_crew_context('lean','${OTHER_CREW}',${root},'${DM}')`),/forbidden/,'deleted request cannot expose context');
+ fails(asUserRaw(U.member,`select msgr_crew_context('lean','${OTHER_CREW}',${relay},'${relayCh}')`),/forbidden/,'deleted request cannot expose context');
 });

@@ -579,6 +579,7 @@ async function restoreMessengerContext(wsId, slug, origin, session) {
   if (!Number.isInteger(hop) || hop < 0 || hop > HOP_MAX) throw new Error('메신저 넘김 단계가 올바르지 않습니다');
   const chMembers = envelope || ch.kind === 'public' ? new Set() : await db.channelCrewMembers(ch.id);
   const peers = await workPeers(db, work, envelope ? orgPeers : orgPeers.filter((p) => crewInScope(ch, p.id, chMembers.has(p.id))), ch.id, uid); // 후속 실행의 넘김·멘션도 채널 범위 안에서만
+  // delegated — DM 위임(0.1.74)의 원래 방 실행 유물. msgr_dm_relay(2026-09-14)가 도입된 뒤로는 서버가 delegated=true를 주지 않아(비구성원 크루는 항상 새 1:1 DM으로 전달) 죽은 경로다. 아래 delegated 분기들은 방어적으로 남긴다.
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org.slug, channelName: ch.name ?? '', peers, handoffs: [], ...(work ? { work } : {}) };
   return { db, ctx, ch, source, envelope };
@@ -724,6 +725,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     text += workPrompt(work, peers, job.crewId, lang);
     const orgRow = envelope?.org ?? await db.org(job.orgId); // G-3 규칙 주입 키(미러 폴더 = org slug)·채널 이름(채널 범위 규칙)
+    // delegated — 죽은 경로(restoreMessengerContext의 ctx.delegated 주석 참고, msgr_dm_relay 도입 뒤 서버가 더 이상 true를 주지 않는다)
     const ctx = { chatType: 'group', kind: 'msgr', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, uid, wsId, origin: job.origin ?? job.authorId ?? null, hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}) };
     const execution = await beginMessengerExecution(wsId, db, job, executionMeta);
     if (execution.kind === 'completed') return;
@@ -925,6 +927,7 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     } else await db.insertMessage(row);
     return true;
   }
+  // 아래 'delegate' 미러는 이미 죽은 경로다 — chat.mjs의 delegate 도구가 mirrorCtx.kind==='msgr'(또는 'msgr-rules')이면 항상 stageMessengerHandoff로 조기 반환해 이 emitNotify('delegate')에 절대 닿지 않는다(DM·공개 채널 공통). msgr_dm_relay 도입과 무관하게 이전부터 미도달이었다.
   if (event.type === 'delegate' && event.ctx?.kind === 'msgr') { // 같은 소유자의 다른 크루가 같은 채널에 자기 이름으로(위임 미러)
     if (muted('delegate')) return false;
     const c = await session(); if (!c) return false;
