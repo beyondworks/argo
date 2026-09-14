@@ -6,6 +6,7 @@ import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { ROLES, ROLE_MATRIX, FREE_SEATS, FREE_PUBLIC_CHANNELS } from './helpers/msgr-cases.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
@@ -898,4 +899,17 @@ test('나가기(레일 메뉴) — 생성은 RPC 한 번(생성+첫 멤버), 만
   const pub = last(asUser(U.member, `select public.msgr_create_channel('${ORG}', 'public', 'made-public')`));
   assert.equal(last(asUser(U.member, `select public.msgr_can_manage_channel('${pub}')`)), 't', '공개 채널 생성자는 멤버 행 없이 관리한다');
   assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${pub}'`), '0', '공개 채널은 멤버 행을 만들지 않는다');
+});
+
+test('푸시 엣지 공유 비밀(#532) — push_secret 행이 없으면 예전 헤더, 있으면 Bearer, 일반 역할은 함수 실행 불가', () => {
+  // 푸시 마이그레이션 3건은 고정 목록 밖 — 이 테스트에서 가짜 pg_net 위에 배포될 파일 그대로 적용한다
+  sql(`create schema if not exists net; create or replace function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ select 1::bigint $$;`);
+  for (const f of ['20260912150000_msgr_push.sql', '20260914210000_msgr_push_secret.sql']) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  sql(`delete from public.msgr_settings where key = 'push_secret'`);
+  assert.equal(sql(`select public.msgr_push_headers()::text`), '{"Content-Type": "application/json"}', '시크릿 행 없음 = 점진 도입 전 상태 그대로');
+  sql(`insert into public.msgr_settings (key, value) values ('push_secret', 'drill-secret') on conflict (key) do update set value = excluded.value`);
+  assert.equal(sql(`select public.msgr_push_headers()->>'Authorization'`), 'Bearer drill-secret');
+  const r = asUserRaw(U.owner, `select public.msgr_push_headers()`);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /permission denied/, '트리거(security definer)만 부른다');
+  sql(`delete from public.msgr_settings where key = 'push_secret'`);
 });
