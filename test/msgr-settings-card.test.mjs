@@ -89,7 +89,7 @@ test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 
 
 test('메신저 로그아웃은 이 기기(scope local)만 — 전역이면 같은 계정의 아르고 기기 세션 리프레시 토큰까지 폐기된다(2026-09-03 실측: 격리 아르고가 revoked로 죽음)', () => {
   assert.doesNotMatch(app, /auth\.signOut\(\)/, '범위 없는 signOut()이 남아 있다');
-  assert.equal((app.match(/auth\.signOut\(\{ scope: 'local' \}\)/g) ?? []).length, 1, '공용 로그아웃은 local 범위여야 한다');
+  assert.equal((app.match(/auth\.signOut\(\{ scope: 'local' \}\)/g) ?? []).length, 2, '공용 로그아웃과 계정 삭제 뒤 로컬 정리, 둘 다 local 범위여야 한다'); // 계정 삭제(msgr_delete_me) 뒤에는 서버 세션이 이미 없어 로컬만 비운다
   assert.equal((app.match(/useContext\(SignOutContext\)/g) ?? []).length, 2, '레일·설정 모두 토큰 해제 포함 공용 로그아웃을 사용');
 });
 
