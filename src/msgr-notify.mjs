@@ -49,6 +49,21 @@ export function formatMsgrNotify(event, lang = 'ko', names = {}) {
   }
 }
 
+/** "알림 받을 메신저" 체크박스 상태 정본 — 설정 카드와 라우트가 같은 판정을 쓴다(검수 #537 HIGH-3: hasToken만 보면 '중지'인 채널이 켜짐으로 보인다).
+    connected = 실제 배달 조건(텔레그램: 게이트웨이 가동+토큰+chatId 또는 크루 직통 봇 짝지음, 슬랙: 가동+토큰+채널, 아르고 메신저: 로그인+파견 크루).
+    on = 체크 표시(텔레그램·슬랙: 연결됨이고 전부 음소거가 아님, 아르고 메신저: notify mode dm). on인데 connected가 아니면 해제만 가능하게 두는 것은 카드의 몫. */
+export function notifyChannelState({ connections = {}, company = {}, signedIn = false } = {}) {
+  const t = connections.telegram ?? {}, s = connections.slack ?? {};
+  const allMuted = (kind, muted) => CHANNEL_EVENTS[kind].every((ev) => (muted ?? []).includes(ev));
+  const tgConnected = !!((t.enabled && t.token && t.chatId) || Object.keys(t.agents ?? {}).length);
+  const slackConnected = !!(s.enabled && s.token && s.channel);
+  return {
+    msgr: { connected: !!signedIn && !!company.msgr?.enabled, on: !!normalizeMsgrNotify(company.msgr?.notify), signedIn: !!signedIn },
+    telegram: { connected: tgConnected, on: tgConnected && !allMuted('telegram', t.mutedEvents) },
+    slack: { connected: slackConnected, on: slackConnected && !allMuted('slack', s.mutedEvents) },
+  };
+}
+
 /** 이벤트의 "발화 크루" — 그 크루와 나의 1:1 방에, 그 크루 이름으로 올린다. */
 export function msgrNotifyCrewSlug(event) {
   return event.type === 'approval' ? event.item?.slug

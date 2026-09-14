@@ -890,13 +890,21 @@ export async function msgrNotifyPush(event, _target = null, { session = sessionC
   }
   return posted > 0;
 }
-/** 크루와 나의 1:1 방 id — 크루가 든 DM 채널 중 내가 구성원인 것. 없으면 메신저 앱과 같은 RPC로 만든다(이름 dm:<크루 이름>, 나는 서버가 첫 멤버로). */
+/** 크루와 나의 1:1 방 id — 크루가 든 DM 중 **사람 멤버가 정확히 나 한 명, 크루 멤버가 정확히 그 크루**인 방(메신저 앱 App.jsx의 DM 매처와 같은 규칙).
+    DM 모양(msgr_dm_shape)은 사람 2명+크루 1명까지 허용하고, 다른 구성원이 내 크루와 연 DM에는 소유자인 내가 동반 멤버로 들어가므로
+    "내가 든 DM"만 보면 그 방(제3자가 읽음)에 결재 사유·쪽지 본문이 올라간다(검수 #537 HIGH-1). 보관된 방은 건너뛰고 새로 만든다 —
+    RPC들이 보관 채널을 msgr_not_allowed로 거절하므로 거기엔 올릴 수 없다. 없으면 앱과 같은 RPC로 만든다(이름 dm:<크루 이름>, 나는 서버가 첫 멤버로). */
 async function dmWithOwner(c, crew) {
   const dms = await c.db.crewChannels(crew.id);
   if (dms.length) {
-    const mine = unwrap(await c.client.from('msgr_channel_members').select('channel_id, msgr_channels!inner(archived_at)').in('channel_id', dms).eq('member_kind', 'user').eq('member_id', c.uid)) ?? [];
-    const open = mine.find((r) => !r.msgr_channels?.archived_at); // 보관한 1:1 방에는 올리지 않는다(사용자가 닫은 방을 되살리지 않음)
-    if (open) return open.channel_id;
+    const rows = unwrap(await c.client.from('msgr_channel_members').select('channel_id, member_kind, member_id, msgr_channels!inner(archived_at)').in('channel_id', dms)) ?? [];
+    for (const id of dms) {
+      const ms = rows.filter((r) => r.channel_id === id);
+      if (!ms.length || ms[0].msgr_channels?.archived_at) continue;
+      const users = ms.filter((m) => m.member_kind === 'user').map((m) => m.member_id);
+      const crews = ms.filter((m) => m.member_kind === 'crew').map((m) => m.member_id);
+      if (users.length === 1 && users[0] === c.uid && crews.length === 1 && crews[0] === crew.id) return id;
+    }
   }
   const { data, error } = await c.client.rpc('msgr_create_channel', { org: crew.org_id, kind: 'dm', name: `dm:${crew.display_name}`, others: [{ kind: 'crew', id: crew.id }] });
   if (error) throw new Error(error.message);

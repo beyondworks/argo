@@ -82,7 +82,7 @@ test('시스템 프롬프트 — Castra 실행 계약이 ko/en 골격 모두에 
 });
 
 /** 가짜 메신저 클라이언트 — 멤버십 조회·DM 생성 RPC만 흉내. 크루 beta는 두 조직에 파견(ORG는 1:1 방 있음, ORG2는 없음 → 생성). */
-function fakeMsgr({ archived = false } = {}) {
+function fakeMsgr({ archived = false, thirdParty = false } = {}) {
   const ORG2 = '33333333-3333-4333-8333-333333333333';
   const crews = [
     { id: 'crew-beta', org_id: ORG, slug: 'beta', display_name: '베타' },
@@ -92,6 +92,8 @@ function fakeMsgr({ archived = false } = {}) {
   const rows = []; const seen = new Set(); const rpc = [];
   const members = { [CH]: [{ member_kind: 'crew', member_id: 'crew-beta' }, { member_kind: 'user', member_id: 'owner-1' }] };
   const channels = { [CH]: { kind: 'dm', archived_at: archived ? '2026-09-01T00:00:00Z' : null } };
+  const SHARED = '44444444-4444-4444-8444-444444444444'; // 같은 조직의 다른 구성원 B가 내 크루와 연 DM = {크루, B, 나(소유자 동반)} — 정상 모양이지만 제3자가 읽는다
+  if (thirdParty) { members[SHARED] = [{ member_kind: 'crew', member_id: 'crew-beta' }, { member_kind: 'user', member_id: 'user-B' }, { member_kind: 'user', member_id: 'owner-1' }]; channels[SHARED] = { kind: 'dm', archived_at: null }; }
   const db = {
     myCrews: async (uid, w) => (uid === 'owner-1' ? crews : []),
     crewChannels: async (crewId) => Object.keys(members).filter((id) => channels[id].kind === 'dm' && members[id].some((m) => m.member_kind === 'crew' && m.member_id === crewId)),
@@ -104,13 +106,13 @@ function fakeMsgr({ archived = false } = {}) {
       const chain = {
         select: () => chain, in: (_col, ids) => { q.ids = ids; return chain; },
         eq: (col, v) => { if (col === 'member_kind') q.kind = v; else if (col === 'member_id') q.member = v; return chain; },
-        then: (res) => res({ data: (q.ids ?? []).filter((id) => members[id]?.some((m) => m.member_kind === q.kind && m.member_id === q.member)).map((id) => ({ channel_id: id, msgr_channels: { archived_at: channels[id].archived_at } })), error: null }),
+        then: (res) => res({ data: (q.ids ?? []).flatMap((id) => (members[id] ?? []).filter((m) => (!q.kind || m.member_kind === q.kind) && (!q.member || m.member_id === q.member)).map((m) => ({ channel_id: id, member_kind: m.member_kind, member_id: m.member_id, msgr_channels: { archived_at: channels[id].archived_at } }))), error: null }),
       };
       return chain;
     },
     rpc: async (fn, args) => { rpc.push({ fn, args }); const id = `new-${rpc.length}`; channels[id] = { kind: 'dm', archived_at: null }; members[id] = [{ member_kind: 'crew', member_id: args.others[0].id }, { member_kind: 'user', member_id: 'owner-1' }]; return { data: id, error: null }; },
   };
-  return { session: async () => ({ uid: 'owner-1', db, client }), rows, rpc, ORG2 };
+  return { session: async () => ({ uid: 'owner-1', db, client }), rows, rpc, ORG2, SHARED };
 }
 
 test('msgrNotifyPush(배달층) — 크루와 나의 1:1 방으로(있으면 재사용, 없는 조직은 dm 생성), 브리지 꺼짐 false, 크루 부재 false, 같은 이벤트 1회', async () => {
@@ -152,4 +154,44 @@ test('msgrNotifyPush — 보관한 1:1 방은 되살리지 않고 새 방을 만
   const { session, rows, rpc } = fakeMsgr({ archived: true });
   assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session, now: 0 }), true);
   assert.equal(rpc.length, 2); assert.ok(rows.every((r) => r.channel_id !== CH), '보관된 방(CH)에는 올리지 않음');
+});
+
+test('msgrNotifyPush — 제3자가 든 DM({크루, B, 나})은 1:1이 아니다: 그 방에 올리지 않고 내 전용 방을 쓴다/만든다(검수 #537 HIGH-1)', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const { createCompany, loadCompany, updateCompany } = await import('../src/workspace.mjs');
+  const ws = 'msgr-notify-third-party';
+  await createCompany(ws, '제3자 검수', 'beta');
+  await updateCompany(ws, { msgr: { ...((await loadCompany(ws)).msgr ?? {}), enabled: true } });
+  const ev = { type: 'crewmail', wsId: ws, from: 'alpha', slug: 'beta', reply: '고객 단가 협상안 초안' };
+  { // 내 전용 방(CH)과 제3자 방(SHARED)이 둘 다 있으면 행 순서와 무관하게 CH
+    const { session, rows, rpc, SHARED } = fakeMsgr({ thirdParty: true });
+    assert.equal(await msgrNotifyPush(ev, { mode: 'dm' }, { session, now: 0 }), true);
+    assert.ok(rows.every((r) => r.channel_id !== SHARED), '제3자 방에 본문이 올라가지 않는다');
+    assert.equal(rows.find((r) => r.crew_id === 'crew-beta').channel_id, CH);
+    assert.equal(rpc.length, 1, 'ORG2만 생성(ORG는 기존 전용 방)');
+  }
+  { // 제3자 방만 있고(내 전용 방은 보관됨) → 새 전용 방 생성, 제3자 방은 절대 아님
+    const { session, rows, rpc, SHARED } = fakeMsgr({ thirdParty: true, archived: true });
+    assert.equal(await msgrNotifyPush(ev, { mode: 'dm' }, { session, now: 0 }), true);
+    assert.ok(rows.every((r) => r.channel_id !== SHARED && r.channel_id !== CH));
+    assert.equal(rpc.length, 2);
+  }
+});
+
+test('notifyChannelState — 체크박스 정본: 연결됨은 실제 배달 조건, 켜짐은 연결됨+전부 음소거 아님(아르고 메신저는 notify mode dm)', async () => {
+  const { notifyChannelState } = await import('../src/msgr-notify.mjs');
+  const { CHANNEL_EVENTS } = await import('../src/channel-events.mjs');
+  const base = { telegram: { enabled: false, token: 'x', chatId: null, agents: {}, mutedEvents: [] }, slack: { enabled: true, token: 'x', channel: '', mutedEvents: [] } };
+  let st = notifyChannelState({ connections: base, company: { msgr: { enabled: true } }, signedIn: true });
+  assert.deepEqual(st.telegram, { connected: false, on: false }, '토큰만 저장·중지(enabled false)면 배달이 없으니 연결 안 됨(검수 HIGH-3 거짓 양성)');
+  assert.deepEqual(st.slack, { connected: false, on: false }, '채널 미설정이면 배달 불가');
+  assert.deepEqual(st.msgr, { connected: true, on: false, signedIn: true });
+  st = notifyChannelState({ connections: { ...base, telegram: { ...base.telegram, agents: { beta: { token: 'y' } } } }, company: {}, signedIn: false });
+  assert.deepEqual(st.telegram, { connected: true, on: true }, '게이트웨이 없이 크루 직통 봇만 짝지어도 브리핑을 받는다(거짓 음성 방지)');
+  assert.deepEqual(st.msgr, { connected: false, on: false, signedIn: false });
+  st = notifyChannelState({ connections: { telegram: { enabled: true, token: 'x', chatId: 1, mutedEvents: [...CHANNEL_EVENTS.telegram] }, slack: { enabled: true, token: 'x', channel: 'C1', mutedEvents: ['approval'] } }, company: { msgr: { enabled: false, notify: { mode: 'dm' } } }, signedIn: true });
+  assert.deepEqual(st.telegram, { connected: true, on: false }, '전부 음소거 = 끔');
+  assert.deepEqual(st.slack, { connected: true, on: true }, '일부만 음소거는 켬으로 보인다(체크박스는 전부/없음만 쓴다)');
+  assert.deepEqual(st.msgr, { connected: false, on: true, signedIn: true }, '파견 0인데 켜져 있음 → 카드가 해제만 허용(MEDIUM-3)');
+  assert.deepEqual(notifyChannelState(), { msgr: { connected: false, on: false, signedIn: false }, telegram: { connected: false, on: false }, slack: { connected: false, on: false } });
 });

@@ -772,44 +772,44 @@ function TrashCard({ ws }) {
     응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
 /** 팀 메신저 — 이 회사 크루를 조직에 등록(파견)/해제하고 허용 범위를 고른다. 조직·채널·메시지는 메신저 앱이 다룬다.
     데이터는 /api/companies/[ws]/msgr(기기 세션 JWT로 Supabase msgr_crews에 씀). 기본 허용 범위는 '나만'(부록 H — 정책 테이블 전까지 가장 좁게). */
-/** 알림 받을 메신저 — 아르고 메신저·텔레그램·슬랙 체크박스(연결된 것만 활성). 체크한 메신저로 크루 알림 전부가 간다(유건 결정 2026-09-15: 종류별 선택 없음).
-    아르고 메신저 = 크루와 나의 1:1 방(company.msgr.notify.mode 'dm'), 텔레그램·슬랙 = mutedEvents 비움(켬)/전부(끔). 텔레그램은 크루 직통 봇만 짝지은 회사도 브리핑을 받으므로 그때도 활성. */
+/** 알림 받을 메신저 — 아르고 메신저·텔레그램·슬랙 체크박스(연결된 것만 활성). 체크한 메신저로 크루 알림 전부가 간다(유건 결정 2026-09-15: 방·종류 선택 없음).
+    연결됨/켜짐 판정은 라우트가 notifyChannelState(src/msgr-notify.mjs)로 내려준다 — 카드는 계산하지 않는다(검수 #537 HIGH-3).
+    켜진 채 연결이 끊긴 경우(로그아웃·파견 0)는 해제만 가능하게 남긴다(검수 MEDIUM-3). 저장 중엔 세 줄 모두 잠가 연타 경쟁을 막는다(LOW-1). */
 function NotifyChannelsCard({ ws }) {
   const { t } = useLang();
-  const [st, setSt] = useState(null); // { msgr:{signedIn,bridgeOn,on}, telegram:{hasToken,mutedEvents}, slack:{...} }
-  const [busy, setBusy] = useState('');
+  const [st, setSt] = useState(null); // { signedIn, channels: { msgr|telegram|slack: { connected, on } } }
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const load = useCallback(() => Promise.all([api(`/api/companies/${ws}/msgr/notify`).catch(() => ({ signedIn: false, bridgeOn: false, on: false })), api(`/api/companies/${ws}/connections`).catch(() => ({ connections: {} }))])
-    .then(([m, c]) => setSt({ msgr: m, telegram: c.connections?.telegram ?? {}, slack: c.connections?.slack ?? {} })), [ws]);
+  const load = useCallback(() => api(`/api/companies/${ws}/msgr/notify`).then(setSt).catch(() => setSt({ signedIn: false, channels: {} })), [ws]);
   useEffect(() => { load(); }, [load]);
   if (st === null) return <div className="card" style={{ padding: 18 }}><Skeleton h={32} /></div>;
-  const tgLinked = !!st.telegram.hasToken || Object.keys(st.telegram.agents ?? {}).length > 0;
-  const fullMute = (kind) => CHANNEL_EVENTS[kind].every((ev) => (st[kind].mutedEvents ?? []).includes(ev));
+  const ch = (k) => st.channels?.[k] ?? { connected: false, on: false };
   const rows = [
-    { kind: 'msgr', label: t('settings.notify.ch.msgr'), can: !!st.msgr.signedIn && !!st.msgr.bridgeOn, on: !!st.msgr.on, why: !st.msgr.signedIn ? t('settings.notify.why.msgrLogin') : !st.msgr.bridgeOn ? t('settings.notify.why.msgrBridge') : '' },
-    { kind: 'telegram', label: t('settings.notify.ch.telegram'), can: tgLinked, on: tgLinked && !fullMute('telegram'), why: tgLinked ? '' : t('settings.notify.why.notConnected') },
-    { kind: 'slack', label: t('settings.notify.ch.slack'), can: !!st.slack.hasToken, on: !!st.slack.hasToken && !fullMute('slack'), why: st.slack.hasToken ? '' : t('settings.notify.why.notConnected') },
+    { kind: 'msgr', label: t('settings.notify.ch.msgr'), ...ch('msgr'), why: !st.signedIn ? t('settings.notify.why.msgrLogin') : t('settings.notify.why.msgrBridge') },
+    { kind: 'telegram', label: t('settings.notify.ch.telegram'), ...ch('telegram'), why: t('settings.notify.why.notConnected') },
+    { kind: 'slack', label: t('settings.notify.ch.slack'), ...ch('slack'), why: t('settings.notify.why.notConnected') },
   ];
   const toggle = async (r) => {
-    setBusy(r.kind); setErr('');
-    try {
-      if (r.kind === 'msgr') await api(`/api/companies/${ws}/msgr/notify`, { on: !r.on });
-      else await api(`/api/companies/${ws}/connections`, { kind: r.kind, mutedEvents: r.on ? [...CHANNEL_EVENTS[r.kind]] : [] });
-      await load();
-    } catch { setErr(t('settings.notify.err.save')); } finally { setBusy(''); }
+    setBusy(true); setErr('');
+    try { setSt(await api(`/api/companies/${ws}/msgr/notify`, { kind: r.kind, on: !r.on })); }
+    catch { setErr(t('settings.notify.err.save')); }
+    finally { setBusy(false); }
   };
   return (
       <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span className="card-title">{t('settings.notify.title')}</span>
         <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.notify.help')}</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18 }}>
-          {rows.map((r) => (
-            <label key={r.kind} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: r.can ? 1 : 0.5, cursor: r.can ? 'pointer' : 'not-allowed' }} title={r.why || undefined}>
-              <input type="checkbox" checked={r.on} disabled={!r.can || busy === r.kind} onChange={() => toggle(r)} />
-              <span>{r.label}</span>
-              {!r.can && <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>· {r.why}</span>}
-            </label>
-          ))}
+          {rows.map((r) => {
+            const can = r.connected || r.on; // 연결이 끊겼어도 켜져 있으면 끌 수는 있어야 한다
+            return (
+              <label key={r.kind} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: can ? 1 : 0.5, cursor: can ? 'pointer' : 'not-allowed' }} title={r.connected ? undefined : r.why}>
+                <input type="checkbox" checked={r.on} disabled={!can || busy} onChange={() => toggle(r)} />
+                <span>{r.label}</span>
+                {!r.connected && <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>· {r.why}</span>}
+              </label>
+            );
+          })}
         </div>
         {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
       </div>
