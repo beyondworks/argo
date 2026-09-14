@@ -444,7 +444,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.beyondworks.argo.messenger;
 				PRODUCT_NAME = "Argo Messenger";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1";
 				VALID_ARCHS = arm64;
 			};
 			name = release;
@@ -475,7 +475,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.beyondworks.argo.messenger;
 				PRODUCT_NAME = "Argo Messenger";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1";
 				VALID_ARCHS = arm64;
 			};
 			name = debug;

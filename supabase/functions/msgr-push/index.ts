@@ -68,11 +68,20 @@ async function badgeOnly(uid: string) {
     return r.ok ? 'ok' : `apns ${r.status} ${txt.slice(0, 120)}`;
   }));
   console.log(`[msgr-push] badge ${uid.slice(0, 8)} = ${badge} → ${toks.length} tokens`, results.filter((x) => x !== 'ok'));
-  return Response.json({ ok: true, badge, results });
+  return Response.json({ ok: true, sent: results.filter((x) => x === 'ok').length }); // 보안 감사 HIGH-1: 임의 uuid의 안읽음 수를 응답으로 돌려주지 않는다
 }
 
+// 보안 감사 HIGH-1(2026-09-14): 이 함수는 verify_jwt=false 공개 엔드포인트였다 → 트리거(pg_net)가 msgr_settings.push_secret 을
+// Authorization: Bearer 로 싣고, 여기서 PUSH_FN_SECRET 과 상수시간 비교한다. 시크릿이 아직 없으면(점진 도입) 예전처럼 통과.
+const enc = new TextEncoder();
+async function sameSecret(a: string, b: string) {
+  const [x, y] = await Promise.all([crypto.subtle.digest('SHA-256', enc.encode(a)), crypto.subtle.digest('SHA-256', enc.encode(b))]);
+  const u = new Uint8Array(x), v = new Uint8Array(y); let d = 0; for (let i = 0; i < u.length; i++) d |= u[i] ^ v[i]; return d === 0;
+}
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return new Response('method', { status: 405 });
+  const secret = Deno.env.get('PUSH_FN_SECRET');
+  if (secret && !(await sameSecret(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) return new Response('unauthorized', { status: 401 });
   let id: number; let body: { message_id?: unknown; badge_user?: unknown };
   try { body = await req.json(); } catch { return new Response('bad json', { status: 400 }); }
   if (typeof body?.badge_user === 'string' && /^[0-9a-f-]{36}$/i.test(body.badge_user)) return badgeOnly(body.badge_user);

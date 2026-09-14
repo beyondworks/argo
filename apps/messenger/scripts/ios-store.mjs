@@ -41,7 +41,8 @@ export const uploadPlist = (teamID) => `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 // 발행 게이트(실사고 2026-09-11: 스킴 없는 ipa가 0.1.4~0.1.6에 나가 브라우저 로그인 복귀가 죽었다) — 내보낸 ipa의 Info.plist를 직접 검사한다.
-//  ① CFBundleURLSchemes에 로그인 복귀 스킴 ② 버전 = tauri.conf.json ③ 수출 규정 면제 키. 하나라도 빠지면 업로드하지 않는다.
+//  ① CFBundleURLSchemes에 로그인 복귀 스킴 ② 버전 = tauri.conf.json ③ 수출 규정 면제 키 ④ UIDeviceFamily=[1](iPhone 전용 — TARGETED_DEVICE_FAMILY는 Tauri가
+//  관리하지 않는 Xcode 설정이라 `tauri ios init` 재생성에 되돌아갈 수 있다, 검수 #532 M-3). 하나라도 빠지면 업로드하지 않는다.
 export const LOGIN_SCHEME = 'argo-messenger';
 export function ipaGate(info, { version, scheme = LOGIN_SCHEME } = {}) {
   const problems = [];
@@ -49,6 +50,7 @@ export function ipaGate(info, { version, scheme = LOGIN_SCHEME } = {}) {
   if (!schemes.includes(scheme)) problems.push(`CFBundleURLTypes에 ${scheme} 스킴 없음(브라우저 로그인 복귀 불가)`);
   if (version && info.CFBundleShortVersionString !== version) problems.push(`버전 불일치: ipa ${info.CFBundleShortVersionString} ≠ conf ${version}`);
   if (info.ITSAppUsesNonExemptEncryption !== false) problems.push('ITSAppUsesNonExemptEncryption=false 없음(수출 규정 질문이 뜬다)');
+  if (JSON.stringify(info.UIDeviceFamily ?? null) !== '[1]') problems.push(`UIDeviceFamily가 [1]이 아님(${JSON.stringify(info.UIDeviceFamily ?? null)}) — iPhone 전용 선언(TARGETED_DEVICE_FAMILY=1)이 빠졌거나 되돌아갔다`);
   return problems;
 }
 const ipaInfo = (ipa) => {

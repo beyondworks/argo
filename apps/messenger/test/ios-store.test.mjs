@@ -19,8 +19,9 @@ import { ipaGate, LOGIN_SCHEME } from '../scripts/ios-store.mjs';
 import { readFileSync as rf } from 'node:fs';
 
 test('ipa 게이트: 로그인 복귀 스킴·버전·암호화 면제 셋 다 있어야 통과(실사고 2026-09-11 — 스킴 없는 ipa가 세 버전 나갔다)', () => {
-  const ok = { CFBundleURLTypes: [{ CFBundleURLSchemes: [LOGIN_SCHEME] }], CFBundleShortVersionString: '0.1.7', ITSAppUsesNonExemptEncryption: false };
+  const ok = { CFBundleURLTypes: [{ CFBundleURLSchemes: [LOGIN_SCHEME] }], CFBundleShortVersionString: '0.1.7', ITSAppUsesNonExemptEncryption: false, UIDeviceFamily: [1] };
   assert.deepEqual(ipaGate(ok, { version: '0.1.7' }), []);
+  for (const fam of [undefined, [1, 2], [2]]) assert.match(ipaGate({ ...ok, UIDeviceFamily: fam }, { version: '0.1.7' })[0], /UIDeviceFamily/, `iPhone 전용 선언 되돌림 적발(${JSON.stringify(fam ?? null)}, 검수 #532 M-3)`);
   assert.match(ipaGate({ ...ok, CFBundleURLTypes: [] }, { version: '0.1.7' })[0], /스킴 없음/);
   assert.match(ipaGate({ ...ok, CFBundleShortVersionString: '0.1.6' }, { version: '0.1.7' })[0], /버전 불일치/);
   assert.match(ipaGate({ ...ok, ITSAppUsesNonExemptEncryption: undefined }, { version: '0.1.7' })[0], /ITSAppUsesNonExemptEncryption/);
