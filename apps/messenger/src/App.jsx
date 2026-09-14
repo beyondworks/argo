@@ -37,7 +37,7 @@ import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, folderChannelIds, reorderFavorites } from './rail-state.mjs';
 const realtimeScope = createRealtimeScope();
-const SignOutContext = createContext({ signOut: () => {}, signingOut: false });
+const SignOutContext = createContext({ signOut: () => {}, signingOut: false, accountDeleted: () => {} });
 
 // Installation + signed-in owner scope prevents another PC's identically named agent being rotated.
 export const externalAgentId = (installation, owner, kind, id) => {
@@ -161,7 +161,8 @@ export default function App() {
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
-  return <SignOutContext.Provider value={{ signOut, signingOut }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
+  const accountDeleted = async () => { try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); };
+  return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
 /* ─── 서버 선택(부록 L): 기본 Argo 클라우드 / 회사 서버(셀프호스트 Supabase) — 프로필은 이 기기에만, 저장 뒤 새로고침 ─── */
@@ -600,7 +601,7 @@ function Shell({ session }) {
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', `a:${payload.id}`);
   };
-  const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || id?.slice(0, 8) || '?';
+  const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || (id ? id.slice(0, 8) : t('user.deleted')); // 작성자 id null = 계정 삭제(FK set null) — 글은 남고 이름만 사라진다
   const loadAvatars = useCallback(async () => { const ids = [...new Set([uid, ...members.map((m) => m.user_id)].filter(Boolean))]; if (!ids.length) return; const rows = await q(supabase.rpc('msgr_avatars', { ids })).catch(() => []); setAvatars(Object.fromEntries(rows.map((r) => [r.user_id, r.avatar_url]))); }, [uid, members]);
   useEffect(() => { loadAvatars(); }, [loadAvatars, tick]);
   const avatarCtx = useMemo(() => ({ users: avatars, crews: Object.fromEntries(crews.filter((c) => c.avatar_url).map((c) => [c.id, c.avatar_url])) }), [avatars, crews]);
@@ -1381,6 +1382,41 @@ const INBOX_SEEN_KEY = 'argo-msgr-inbox-seen';
 function readInboxSeen() { try { return JSON.parse(localStorage.getItem(INBOX_SEEN_KEY) || '{}') || {}; } catch { return {}; } }
 function writeInboxSeen(v) { try { localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify(v)); } catch {} }
 /* ─── 프로필(계정 단위): 아이디·표시 이름·찾기 허용 스위치 — msgr_profiles(본인만 쓰기). 친구 찾기의 기준. ─── */
+// 앱 안 계정 삭제(App Store 5.1.1(v)) — 깃헙식 확인(단어 입력) 뒤 서버 함수 msgr_delete_me 한 번. 소유 조직에 다른 멤버가 있으면
+// 서버가 조직명을 돌려주며 거부 → 소유권 이전 안내. 성공하면 세션은 이미 서버에서 무효라 로컬 로그아웃만 한다.
+function AccountDeleteCard({ session, onDeleted, onError }) {
+  const { t } = useT();
+  const [word, setWord] = useState(null); const [busy, setBusy] = useState(false); const [blocked, setBlocked] = useState('');
+  const confirmWord = t('acct.delete.word');
+  const run = async () => {
+    if (word?.trim() !== confirmWord) return;
+    setBusy(true); setBlocked('');
+    const { error } = await supabase.rpc('msgr_delete_me');
+    setBusy(false);
+    if (error) {
+      const m = /msgr_owner_transfer_required: (.*)$/m.exec(error.message || '');
+      if (m) { setBlocked(t('acct.delete.transferFirst', { orgs: m[1].trim() })); return; }
+      return onError(friendlyErr(error.message ?? String(error), t));
+    }
+    onDeleted?.();
+  };
+  return (
+    <section className="msgr-setcard danger-zone">
+      <h2>{t('acct.delete')}</h2>
+      <p>{t('acct.delete.desc')}</p>
+      {blocked && <p role="alert" className="delivery-error">{blocked}</p>}
+      {word === null
+        ? <div className="row"><button type="button" className="btn sm" onClick={() => setWord('')}><I name="x" size={13} />{t('acct.delete.start')}</button></div>
+        : <div className="row">
+            <input className="msgr-input inline" placeholder={t('acct.delete.typeWord', { word: confirmWord })} value={word} onChange={(e) => setWord(e.target.value)} autoFocus />
+            <button type="button" className="btn btn-primary sm danger" disabled={busy || word.trim() !== confirmWord} onClick={run}>{t('acct.delete.confirm')}</button>
+            <button type="button" className="btn sm" disabled={busy} onClick={() => { setWord(null); setBlocked(''); }}>{t('ui.cancel')}</button>
+          </div>}
+      <p className="note">{t('acct.delete.note', { email: session.user.email })}</p>
+    </section>
+  );
+}
+
 function ProfileCard({ uid, onNote, onError, onAvatar }) {
   const { t } = useT();
   const [p, setP] = useState(null); const [busy, setBusy] = useState(false); const [draft, setDraft] = useState({ handle: '', display_name: '', email_search: false, handle_search: true, accept_requests: true, quiet_from: null, quiet_to: null });
@@ -1544,7 +1580,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
 }
 
 function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onOpenCrew, onAvatar, friends = [], onFriendsChanged, onDm, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
-  const { signOut, signingOut } = useContext(SignOutContext);
+  const { signOut, signingOut, accountDeleted } = useContext(SignOutContext);
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
@@ -1616,6 +1652,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <h2>{t('set.diag')}</h2><p>{t('set.diag.desc')}</p>
             <DiagRow />
           </section>
+          <AccountDeleteCard session={session} onDeleted={accountDeleted} onError={onError} />
         </>)}
       </div>
     </div></div>
