@@ -8,6 +8,7 @@ import { join, relative, resolve, sep } from 'node:path';
 const relSlash = (from, to) => relative(from, to).split(sep).join('/');
 import { WS_ROOT, paths } from './workspace.mjs';
 import { GUIDE_NOTE } from './provision.mjs'; // 스캐폴드 안내 노트 파일명(단일 진실)
+import { docCache, docCacheInflight } from './doc-cache.mjs';
 
 function parseFrontmatter(md) {
   const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -40,13 +41,13 @@ export async function listCompanies() {
     try {
       const company = JSON.parse(await readFile(join(WS_ROOT, e.name, 'company.json'), 'utf8'));
       const agents = await listAgents(e.name);
-      const docs = await listDocs(e.name);
+      const docCount = await countVaultDocs(e.name);
       // 기억 칩 = 기억 화면 트리 칩과 같은 셈법(docs+projects 합) — 두 화면 숫자 불일치 방지(PR #204 LOW).
       // 수는 경량 카운트로: listProjectDocs는 전 파일 stat + md 본문 readFile이라, listCompanies를
       // 타는 gateway 10초 폴에 산출물 수천 개면 수백 ms가 실린다(분리 검수 2026-07-31 M-1 실측).
       // 산출물 카운트 실패가 회사 카드까지 무너뜨리지 않게 격벽(vault route의 M-2와 동일).
       const projectCount = await countProjectFiles(e.name).catch(() => 0);
-      out.push({ ...company, crew: agents.length, memories: docs.length + projectCount });
+      out.push({ ...company, crew: agents.length, memories: docCount + projectCount });
     } catch { /* company.json 없는 폴더는 워크스페이스가 아님 */ }
   }
   return out.sort((a, b) => String(b.created).localeCompare(String(a.created)));
@@ -121,14 +122,31 @@ export async function listAgents(wsId) {
 }
 
 /** vault 문서 목록 — 최신순. 제목/링크/발췌까지 화면용으로 가공. */
-// listDocs 캐시 — 회사별 { 파일 → { key: mtime:size, doc } }. 매 호출 readdir+stat만 하고, mtime·size가 같은 파일은
-// 다시 읽지 않는다(본문은 mtime이 바뀌어야 바뀐다). 근거: 무캐시 전수 읽기가 옵시디언 가져오기 2,000건 상한의
-// 유일한 이유였다(obsidian-import.mjs 모듈 주석). 실측 Lean-AX 1,061건: 무캐시 148ms → 캐시 뒤 stat만.
-// 프로세스 안 캐시라 Next 번들 사본마다 따로 채워지고(첫 호출만 전수 읽기), 실데이터는 디스크가 정본이다.
-// ponytail: 상한 없음 — 문서 메타(제목·발췌 140자·링크)만 들고 있어 1만 건에 수 MB. 필요하면 LRU.
-const docCache = new Map();
-export const listDocsStats = { reads: 0 }; // 테스트용 — 실제 readFile 횟수
-export async function listDocs(wsId) {
+// listDocs 캐시(doc-cache.mjs) — 회사별 { 파일 → { key, doc } }. 매 호출 readdir+stat만 하고 키가 같은 파일은 다시 읽지 않는다.
+// 키 = mtime:size:ctime:ino — mtime·size만 쓰면 "내용은 바뀌었는데 mtime을 보존한 쓰기"(memory.mjs writeKeepingMtime, sync.mjs 수신이
+// 정수 ms mtime을 심음)가 크기까지 상쇄될 때 영구 stale(검수 #538 HIGH-1 재현). ctime은 utimes로도 되돌릴 수 없어 그 경우를 잡고,
+// 우리 쓰기 경로는 memindex.invalidatePath → dropDocCache로 명시 무효화까지 한다(외부 rsync -a 등은 ctime이 막는다).
+// 근거: 무캐시 전수 읽기가 옵시디언 가져오기 2,000건 상한의 유일한 이유였다(obsidian-import.mjs). 실측 Lean-AX 1,061건 148ms → 8~12ms.
+// 메모리(검수 실측): 문서 1만 건 ≈ 24MB/회사, Next 번들 사본·회사 수만큼 배수. 회사 보관 시 archiveCompany가 폐기한다.
+// 반환 doc 객체는 캐시와 같은 참조다 — 소비자는 읽기만 해야 한다(변경하려면 복사).
+export const listDocsStats = { reads: 0, get entries() { let n = 0; for (const m of docCache.values()) n += m.size; return n; } }; // 테스트용
+export function listDocs(wsId) {
+  const inflight = docCacheInflight.get(wsId);
+  if (inflight) return inflight;
+  const p = listDocsUncached(wsId).finally(() => docCacheInflight.delete(wsId));
+  docCacheInflight.set(wsId, p);
+  return p;
+}
+/** 회사 카드 기억 칩용 경량 카운트 — listCompanies(게이트웨이 10초 폴)는 수만 쓰므로 stat 1만 회 대신 readdir만(countProjectFiles와 같은 이유). */
+export async function countVaultDocs(wsId) {
+  const p = paths(wsId);
+  let n = 0;
+  for (const dir of [p.journal, p.conversations, p.notes]) {
+    try { for (const name of await readdir(dir)) if (name.endsWith('.md')) n++; } catch { /* 폴더 없음 */ }
+  }
+  return n;
+}
+async function listDocsUncached(wsId) {
   const p = paths(wsId);
   const dirName = new Map([[p.journal, 'journal'], [p.conversations, 'conversations'], [p.notes, 'notes']]);
   // 파일 목록부터 모은 뒤 읽기는 묶음 병렬로 — 한 파일씩 await하면 2,000건에 0.6초(실측 Lean-AX),
@@ -144,7 +162,7 @@ export async function listDocs(wsId) {
   const readOne = async ({ dir, n, file }) => {
     const st = await stat(file);
     seen.add(file);
-    const key = `${st.mtimeMs}:${st.size}`;
+    const key = `${st.mtimeMs}:${st.size}:${st.ctimeMs}:${st.ino}`;
     const hit = cache.get(file);
     if (hit && hit.key === key) return hit.doc;
     listDocsStats.reads++;

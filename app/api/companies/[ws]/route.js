@@ -35,7 +35,7 @@ export async function GET(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    // ?light=1 — 회사·크루만(사이드바 30초 폴·크루 대화창 진입용). 기억 2,000건 listDocs(0.2s)·집계는 데크만 쓴다.
+    // ?light=1 — 회사·크루만(사이드바 30초 폴·크루 대화창 진입용). 기억 1만 건 listDocs(첫 로드 ≈0.5~1초, 이후 캐시 수십 ms)·집계는 데크만 쓴다.
     const light = new URL(req.url).searchParams.get('light') === '1';
     const [company, agents, docs, usage, delegations, payroll] = await Promise.all([
       loadCompany(ws), listAgents(ws),

@@ -1,13 +1,15 @@
 // listDocs mtime 캐시 — 같은 파일은 다시 읽지 않고, 바뀐·새·지운 파일만 반영한다(옵시디언 가져오기 상한 10,000의 근거).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile, rm, utimes } from 'node:fs/promises';
+import { writeFile, rm, utimes, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-listdocs-cache-'));
 const { createCompany, paths } = await import('../src/workspace.mjs');
-const { listDocs, listDocsStats } = await import('../src/hub.mjs');
+const { listDocs, listDocsStats, countVaultDocs, listCompanies } = await import('../src/hub.mjs');
+const { invalidatePath } = await import('../src/memindex.mjs');
+const { dropDocCache, docCache } = await import('../src/doc-cache.mjs');
 const { MAX_COUNT } = await import('../src/obsidian-import.mjs');
 
 test('listDocs — 두 번째 호출은 파일을 읽지 않고, 수정·추가·삭제만 다시 읽는다', async () => {
@@ -34,4 +36,39 @@ test('listDocs — 두 번째 호출은 파일을 읽지 않고, 수정·추가�
   assert.equal(listDocsStats.reads - base, readsFirst + 2, '새 파일 하나만');
   assert.deepEqual(fourth.filter((d) => d.dir === 'notes' && !d.guide).map((d) => d.title).sort(), ['감마', '알파2'].sort(), '지운 파일은 사라진다');
   assert.equal(MAX_COUNT, 10_000, '가져오기 상한(캐시 근거로 상향)');
+  // 삭제 정리: 캐시 항목 수가 파일 수와 같다(검수 MEDIUM-1: 출력은 readdir로 만들어져 잔재가 안 보인다 — 항목 수로 잠근다)
+  const notes = fourth.filter((d) => d.dir === 'notes').length; const others = fourth.length - notes;
+  assert.equal(listDocsStats.entries, notes + others, '지운 파일의 캐시 항목이 사라진다');
+  // mtime을 보존한 채 크기만 바뀐 파일도 다시 읽는다(키의 size 성분)
+  const before = await stat(f('c.md'));
+  await writeFile(f('c.md'), '# 감마 길어진 제목\nCCCC'); await utimes(f('c.md'), before.atime, before.mtime);
+  const r5 = listDocsStats.reads; const fifth = await listDocs(ws);
+  assert.equal(listDocsStats.reads - r5, 1, 'mtime 같고 크기만 달라도 다시 읽는다');
+  assert.ok(fifth.some((d) => d.title === '감마 길어진 제목'));
+  // mtime·size 둘 다 같은 재작성(동기화 수신이 정수 ms mtime을 심는 경우) — ctime이 잡는다(검수 HIGH-1 재현 → 처방 A)
+  const same = await stat(f('c.md'));
+  await writeFile(f('c.md'), '# 감마 길어진 제묵\nCCCC'); await utimes(f('c.md'), same.atime, same.mtime);
+  const after = await stat(f('c.md')); assert.equal(after.mtimeMs, same.mtimeMs); assert.equal(after.size, same.size);
+  const r6 = listDocsStats.reads; const sixth = await listDocs(ws);
+  assert.equal(listDocsStats.reads - r6, 1, 'mtime·size가 같아도 ctime이 달라 다시 읽는다');
+  assert.ok(sixth.some((d) => d.title === '감마 길어진 제묵'));
+});
+
+test('listDocs — 무효화 프로토콜(invalidatePath)·회사 폐기(dropDocCache)·동시 첫 로드 합류·경량 카운트', async () => {
+  const ws = 'cache-co-2';
+  await createCompany(ws, '캐시 회사 2', 'alpha');
+  const p = paths(ws); const f = (n) => join(p.notes, n);
+  await writeFile(f('a.md'), '# 하나\nA'); await writeFile(f('b.md'), '# 둘\nB');
+  // 동시 첫 로드 3회 = 전수 읽기 1회
+  const r0 = listDocsStats.reads; const [x, y, z] = await Promise.all([listDocs(ws), listDocs(ws), listDocs(ws)]);
+  const n = x.length; assert.equal(listDocsStats.reads - r0, n, `동시 호출은 한 번만 읽는다(${n}건)`); assert.equal(y.length, n); assert.equal(z.length, n);
+  // invalidatePath: 키가 같아도(우연) 그 파일은 다시 읽는다
+  const r1 = listDocsStats.reads; await invalidatePath(f('a.md')); await listDocs(ws);
+  assert.equal(listDocsStats.reads - r1, 1, 'invalidatePath로 뺀 파일만 다시 읽는다');
+  // 회사 폐기
+  dropDocCache(ws); assert.equal(docCache.has(ws), false);
+  const r2 = listDocsStats.reads; await listDocs(ws); assert.equal(listDocsStats.reads - r2, n, '폐기 뒤 첫 로드는 전수');
+  // 경량 카운트 = listDocs 길이, listCompanies 기억 칩과 동일 셈법
+  assert.equal(await countVaultDocs(ws), n);
+  const co = (await listCompanies()).find((c) => c.id === ws); assert.equal(co.memories, n, 'projects 0이면 memories = 문서 수');
 });
