@@ -10,7 +10,6 @@ import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner
 import { useAppUpdate } from '../../../use-app-update';
 import LocalAssetImport from '../../../components/LocalAssetImport';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
-import { CHANNEL_EVENTS } from '../../../../src/channel-events.mjs'; // 순수 상수 — connections.mjs는 fs를 끌어 클라 번들이 깨진다
 
 // Argo Messenger(팀 메신저) 설치파일 — 릴리스 repo의 고정 파일명(release-messenger.yml Collect 스텝이 매 릴리스 갱신).
 const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
@@ -184,6 +183,7 @@ function Settings({ params }) {
 
       {tab === 'connections' && (
       <div className="cardcols" data-tab-pane="connections">
+      <div className="cardrow"><NotifyChannelsCard ws={ws} /></div>
       <div className="cardrow"><MsgrCard ws={ws} agents={data?.agents ?? []} /></div>
       <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
@@ -771,66 +771,47 @@ function TrashCard({ ws }) {
     응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
 /** 팀 메신저 — 이 회사 크루를 조직에 등록(파견)/해제하고 허용 범위를 고른다. 조직·채널·메시지는 메신저 앱이 다룬다.
     데이터는 /api/companies/[ws]/msgr(기기 세션 JWT로 Supabase msgr_crews에 씀). 기본 허용 범위는 '나만'(부록 H — 정책 테이블 전까지 가장 좁게). */
-/** 알림 받을 방 — 메신저에서 시작하지 않은 크루 알림(결재·장시간 작업·쪽지·루틴·위임)을 한 방으로. 저장은 company.json.msgr.notify(src/msgr-notify.mjs). */
-function MsgrNotifyRoom({ ws, signedIn }) {
+/** 알림 받을 메신저 — 아르고 메신저·텔레그램·슬랙 체크박스(연결된 것만 활성). 체크한 메신저로 크루 알림 전부가 간다(유건 결정 2026-09-15: 방·종류 선택 없음).
+    연결됨/켜짐 판정은 라우트가 notifyChannelState(src/msgr-notify.mjs)로 내려준다 — 카드는 계산하지 않는다(검수 #537 HIGH-3).
+    켜진 채 연결이 끊긴 경우(로그아웃·파견 0)는 해제만 가능하게 남긴다(검수 MEDIUM-3). 저장 중엔 세 줄 모두 잠가 연타 경쟁을 막는다(LOW-1). */
+function NotifyChannelsCard({ ws }) {
   const { t } = useLang();
-  const [opt, setOpt] = useState(null); // { rooms:[{orgId,channelId,name,orgName}], events:[...], notify:{orgId,channelId,events}|null }
-  const [room, setRoom] = useState(''); // channelId ('' = 끔)
-  const [events, setEvents] = useState([]);
+  const [st, setSt] = useState(null); // { signedIn, channels: { msgr|telegram|slack: { connected, on } } }
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-  const load = useCallback(() => api(`/api/companies/${ws}/msgr/notify`)
-    .then((d) => { setOpt(d); setRoom(d.notify?.channelId ?? ''); setEvents(d.notify?.events ?? []); })
-    .catch(() => setOpt({ rooms: [], events: [], notify: null })), [ws]);
-  useEffect(() => { if (signedIn) load(); }, [signedIn, load]);
-  if (!signedIn || opt === null) return null;
-  const chosen = opt.rooms.find((r) => r.channelId === room);
-  const toggle = (ev) => setEvents((cur) => (cur.includes(ev) ? cur.filter((x) => x !== ev) : [...cur, ev]));
-  const save = async () => {
-    setBusy(true); setMsg('');
-    try {
-      await api(`/api/companies/${ws}/msgr/notify`, chosen ? { orgId: chosen.orgId, channelId: chosen.channelId, events } : { off: true });
-      setMsg(t(chosen ? 'settings.msgr.notify.saved' : 'settings.msgr.notify.off.done')); await load();
-    } catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
-  };
-  const off = async () => {
-    setBusy(true); setMsg('');
-    try { await api(`/api/companies/${ws}/msgr/notify`, { off: true }); setRoom(''); setEvents([]); setMsg(t('settings.msgr.notify.off.done')); await load(); }
-    catch { setMsg(t('settings.msgr.notify.err.save')); } finally { setBusy(false); }
+  const [err, setErr] = useState('');
+  const load = useCallback(() => api(`/api/companies/${ws}/msgr/notify`).then(setSt).catch(() => setSt({ signedIn: false, channels: {} })), [ws]);
+  useEffect(() => { load(); }, [load]);
+  if (st === null) return <div className="card" style={{ padding: 18 }}><Skeleton h={32} /></div>;
+  const ch = (k) => st.channels?.[k] ?? { connected: false, on: false };
+  const rows = [
+    { kind: 'msgr', label: t('settings.notify.ch.msgr'), ...ch('msgr'), why: !st.signedIn ? t('settings.notify.why.msgrLogin') : t('settings.notify.why.msgrBridge') },
+    { kind: 'telegram', label: t('settings.notify.ch.telegram'), ...ch('telegram'), why: t('settings.notify.why.notConnected') },
+    { kind: 'slack', label: t('settings.notify.ch.slack'), ...ch('slack'), why: t('settings.notify.why.notConnected') },
+  ];
+  const toggle = async (r) => {
+    setBusy(true); setErr('');
+    try { setSt(await api(`/api/companies/${ws}/msgr/notify`, { kind: r.kind, on: !r.on })); }
+    catch { setErr(t('settings.notify.err.save')); }
+    finally { setBusy(false); }
   };
   return (
-    <div style={{ display: 'grid', gap: 8, padding: '12px 14px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
-      <span className="microlabel">{t('settings.msgr.notify.title')}</span>
-      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.notify.help')}</p>
-      {!opt.rooms.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notify.noRooms')}</p>}
-      {!!opt.rooms.length && (<>
-        <label style={{ display: 'grid', gap: 5 }}>
-          <span className="microlabel">{t('settings.msgr.notify.room')}</span>
-          <select className="input" value={room} onChange={(e) => { const v = e.target.value; setRoom(v); if (v && !events.length) setEvents([...opt.events]); }}>{/* 방을 고르면 기본 전체 선택 — 이벤트 0개 저장은 '켠 것처럼 보이는 끔'(검수 #535 ②) */}
-            <option value="">{t('settings.msgr.notify.off')}</option>
-            {opt.rooms.map((r) => <option key={r.channelId} value={r.channelId}>{r.orgName} · #{r.name}</option>)}
-          </select>
-        </label>
-        {chosen && (
-          <div style={{ display: 'grid', gap: 6 }}>
-            <span className="microlabel">{t('settings.msgr.notify.events')}</span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {opt.events.map((ev) => { const on = events.includes(ev); return (
-                <button key={ev} type="button" className="chip" onClick={() => toggle(ev)} aria-pressed={on}
-                  style={{ cursor: 'pointer', padding: '5px 12px', fontSize: 12, textTransform: 'none', letterSpacing: 0, ...(on ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : { opacity: 0.6 }) }}>
-                  {t(`settings.conn.ev.${ev}`)}
-                </button>
-              ); })}
-            </div>
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="btn btn-primary sm" disabled={busy || (!!chosen && !events.length)} onClick={save}>{busy ? <Spinner size={12} /> : t('settings.msgr.notify.save')}</button>
-          {opt.notify && <button type="button" className="btn sm" disabled={busy} onClick={off}>{t('settings.msgr.notify.clear')}</button>}{/* 끄기는 서버에 바로(로컬 폼만 비우면 화면과 서버가 어긋난다 — 검수 #535 ③) */}
-          {msg && <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{msg}</span>}
+      <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <span className="card-title">{t('settings.notify.title')}</span>
+        <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.notify.help')}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18 }}>
+          {rows.map((r) => {
+            const can = r.connected || r.on; // 연결이 끊겼어도 켜져 있으면 끌 수는 있어야 한다
+            return (
+              <label key={r.kind} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: can ? 1 : 0.5, cursor: can ? 'pointer' : 'not-allowed' }} title={r.connected ? undefined : r.why}>
+                <input type="checkbox" checked={r.on} disabled={!can || busy} onChange={() => toggle(r)} />
+                <span>{r.label}</span>
+                {!r.connected && <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>· {r.why}</span>}
+              </label>
+            );
+          })}
         </div>
-      </>)}
-    </div>
+        {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+      </div>
   );
 }
 
@@ -907,7 +888,6 @@ function MsgrCard({ ws, agents }) {
             </details>
           );
         })()}
-        <MsgrNotifyRoom ws={ws} signedIn={!!st?.signedIn} />
         <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.manage')}</p>
         <details className="msgr-fine">
           <summary><span className="microlabel">{t('settings.msgr.policy')}</span><span>{t('settings.msgr.fine.summary')}</span></summary>
@@ -1176,9 +1156,7 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
       const d = await api(`/api/companies/${ws}/connections`, {
         kind, token, enabled, defaultCrew: crew, ...(kind === 'slack' ? { channel } : {}),
       });
-      // mutedEvents만은 화면 값을 지킨다 — 디바운스 저장이 아직 안 나갔으면 서버 응답엔 토글 이전 값이
-      // 들어 있어, 방금 끈 알림이 다시 켜진 것처럼 보인다(분리 검수 실측). 디스크는 뒤이은 POST가 맞춘다.
-      setConn((c) => ({ ...d.connections[kind], ...(c?.mutedEvents ? { mutedEvents: c.mutedEvents } : {}) }));
+      setConn(d.connections[kind]);
       setToken('');
       setMsg(enabled ? t('settings.conn.enabling') : t('settings.conn.stopped'));
     } catch (e) {
@@ -1186,30 +1164,6 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
     } finally {
       setSaving(false);
     }
-  }
-
-  const muted = conn?.mutedEvents ?? [];
-  /** 알림 종류 토글 — 화면은 즉시 움직이고 저장은 마지막 클릭 기준 1회만 보낸다.
-      클릭마다 POST하면 왕복·fsync·동기화 업로드가 클릭 수만큼 쌓인다(정리 검수 실측). enabled를
-      안 보내므로 토큰 재검증(네트워크)도 없다. 응답으로 상태를 덮지 않는다 — 쓰는 주체가 둘이면
-      연속 클릭 때 이전 응답이 나중 선택을 되돌린다. */
-  const muteSave = useRef(null);
-  const mutePending = useRef(null);
-  // 화면을 뜨면 대기 중인 저장을 흘려보낸다 — 500ms 안에 이동하면 끈 알림이 조용히 되살아난다.
-  useEffect(() => () => {
-    if (!muteSave.current) return;
-    clearTimeout(muteSave.current);
-    api(`/api/companies/${ws}/connections`, { kind, mutedEvents: mutePending.current }).catch(() => {});
-  }, [ws, kind]);
-  function toggleEvent(ev) {
-    const next = muted.includes(ev) ? muted.filter((x) => x !== ev) : [...muted, ev];
-    setConn((c) => ({ ...c, mutedEvents: next })); // 함수형 — 연속 클릭의 stale 스냅샷 덮어쓰기 방지
-    clearTimeout(muteSave.current);
-    mutePending.current = next;
-    muteSave.current = setTimeout(() => {
-      muteSave.current = null;
-      api(`/api/companies/${ws}/connections`, { kind, mutedEvents: next }).catch((e) => setMsg(String(e.message)));
-    }, 500);
   }
 
   const on = conn?.enabled;
@@ -1263,30 +1217,6 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
               onClick={() => navigator.clipboard?.writeText(conn.pairCode).catch(() => {})}>{t('common.copy')}</button>
           </div>
           <span style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}>{t('settings.conn.pairCodeHelp')}</span>
-        </div>
-      )}
-      {/* 이 채널로 보낼 알림 — 연결을 끊지 않고 종류별로 끈다(끈 것은 앱에 그대로 남는다).
-          텔레그램은 크루 직통 봇만 연결한 회사도 브리핑을 받으므로(브리핑 직통 봇 폴백, 분리 검수
-          MEDIUM-1 2026-08-27) 게이트웨이 토큰이 없어도 칩을 보여야 끌 수단이 있다 — "끌 수단이
-          연결 해제뿐"이던 2026-07-31 신고의 재발 방지. */}
-      {(conn?.hasToken || Object.keys(conn?.agents ?? {}).length > 0) && (
-        <div style={{ display: 'grid', gap: 6 }}>
-          <span className="microlabel">{t('settings.conn.notify')}</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-            {CHANNEL_EVENTS[kind].map((ev) => {
-              const onEv = !muted.includes(ev);
-              return (
-                <button key={ev} type="button" className="chip" onClick={() => toggleEvent(ev)} aria-pressed={onEv}
-                  style={{
-                    cursor: 'pointer', padding: '5px 12px', fontSize: 12, textTransform: 'none', letterSpacing: 0,
-                    ...(onEv ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : { opacity: 0.6 }),
-                  }}>
-                  {t(`settings.conn.ev.${ev}`)}
-                </button>
-              );
-            })}
-          </div>
-          <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.conn.notifyHint')}</span>
         </div>
       )}
       {/* 게이트웨이는 선택 사항 안내 — #307·#312 이후 결재 요청(버튼 콜백 포함)·브리핑이 페어링된

@@ -862,10 +862,10 @@ async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPu
   const all = await loadConnections(event.wsId);
   const companyForLang = await loadCompany(event.wsId).catch(() => ({}));
   const { lang = 'ko' } = companyForLang;
-  // 회사 단위 메신저 알림 목적지(설정 › Argo 메신저 연결 › 알림 받을 방) — 원점 없는 이벤트만. 텔레그램·슬랙과 독립(여기서 던져도 아래를 막지 않는다).
+  // 알림 받을 메신저 › 아르고 메신저(설정 › 연결) — 원점 없는 이벤트를 그 크루와 나의 1:1 방으로. 텔레그램·슬랙과 독립(여기서 던져도 아래를 막지 않는다).
   {
-    let notify = null; try { notify = normalizeMsgrNotify(companyForLang.msgr?.notify); } catch { notify = null; }
-    if (msgrNotifyWants(notify, event)) await notifyMsgr(event, notify).catch((e) => console.error('[argo] 메신저 알림 목적지 배달 실패:', e.message));
+    const notify = normalizeMsgrNotify(companyForLang.msgr?.notify);
+    if (msgrNotifyWants(notify, event, companyForLang.msgr?.mutedEvents)) await notifyMsgr(event, notify).catch((e) => console.error('[argo] 메신저 알림 배달 실패:', e.message));
   }
   const who = event.type === 'approval' ? await approvalWho(event.wsId, event.item, lang) : '';
   // 결재 처리 완료 — 어느 창구(웹·대화창·텔레그램·슬랙)에서 확정됐든 텔레그램 카드의 버튼을 걷어낸다.
