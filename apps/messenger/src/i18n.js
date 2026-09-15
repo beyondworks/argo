@@ -850,7 +850,7 @@ export const DICT = {
   'phone.tab.inbox': ['알림함', 'Inbox'],
   'phone.tab.activity': ['기억', 'Memory'],
   'phone.dm.empty': ['아직 1:1 대화가 없습니다. 설정의 멤버·친구 목록에서 대화를 시작할 수 있습니다.', 'No direct messages yet. Start one from the members or friends list in settings.'],
-  'phone.back': ['홈으로', 'Home'],
+  'phone.back': ['뒤로', 'Back'],
   'phone.composer.ph': ['메시지', 'Message'],
   'phone.meta': ['{n}명 · 에이전트 {c}', '{n} members · {c} agents'],
   'search.ph': ['검색 (⌘K)', 'Search (⌘K)'],
