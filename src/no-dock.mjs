@@ -23,13 +23,16 @@
 // 때만 대입한다(파일 부재·따옴표 파손·권한·node 버전 거절을 한 검사로 덮는다 — 분리 검수 MEDIUM-2:
 // 존재 확인만으로는 `"`·`\`가 든 홈 경로에서 나는 파손을 못 잡는다). 실패는 조용히 넘어간다 —
 // 아이콘 억제가 크루 턴을 막는 것이 훨씬 나쁘다.
+// 데스크톱 앱(2026-09-15, PR #539)은 Rust가 기동 때 같은 심을 같은 경로에 쓰고 **초기 env**로 넣는다(번들 안 node는
+// 제목 설정 시 Foreground 등록 — 프로브 실패 한 번으로 세션 내내 아이콘이 뜨던 구멍). 그 경우 아래는 "이미 걸림"으로
+// 조기 반환해 프로브·이중 --require가 없다. Rust 쪽도 같은 fail-open 원칙(문자 게이트·실패 시 미적용)이다.
 import { access, chmod, mkdir, rename, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 /** 프리로드 본문 — CJS여야 한다(--require는 ESM을 못 읽는다). darwin 밖에서는 아무것도 하지 않는다. */
-const SHIM_SRC = `'use strict';
+export const SHIM_SRC = `'use strict';
 // Argo 자동 생성 — macOS Dock 아이콘 억제(src/no-dock.mjs). 직접 수정하지 마세요.
 if (process.platform === 'darwin') {
   try {
@@ -89,7 +92,7 @@ export function probeNodeOptions(env, composed, { spawnFn = spawn, execPath = pr
 
 /** 부팅 시 1회 — 이후 spawn되는 node 자식이 상속한다. 반환: 건 경로 | null(비적용). */
 export async function setupNoDock({
-  env = process.env, platform = process.platform, path = noDockShimPath(), timeoutMs = 2000, probe = probeNodeOptions,
+  env = process.env, platform = process.platform, path = noDockShimPath(), timeoutMs = 10_000, probe = probeNodeOptions, // 2초→10초: 부팅 직후 바쁜 기기에서 프로브가 늦어 조용히 미적용되면 그 세션 내내 아이콘이 뜬다(유건 지시 2026-09-15 "언제가 됐든 뜨면 안 돼")
 } = {}) {
   if (platform !== 'darwin') return null; // Dock이 없는 OS — 건드릴 이유가 없다
   try {

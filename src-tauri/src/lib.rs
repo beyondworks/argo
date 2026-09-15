@@ -84,6 +84,30 @@ fn is_same_version_argo(port: u16) -> bool {
     is_argo && same_ver
 }
 
+/// macOS Dock 아이콘 억제 — 사이드카 초기 env에 넣을 NODE_OPTIONS 값. 번들 리소스의 심(server/no-dock.cjs)을 **번들 밖 안정 경로**
+/// `~/.argo/tools/no-dock.cjs`(src/no-dock.mjs noDockShimPath와 같은 경로)에 복사해 가리킨다: 앱 이동·업데이트로 번들이 바뀌어도
+/// 실행 중인 node 자식이 죽지 않고, JS setupNoDock이 같은 경로를 보고 프로브·이중 --require 없이 조기 반환한다(검수 #539 MEDIUM-1·2).
+/// 어느 단계든 실패하면 Err — 호출자는 경고만 남기고 env를 넣지 않는다(fail-open: 없는·깨진 --require는 모든 node 자식을 죽인다, HIGH-1).
+#[cfg(target_os = "macos")]
+fn no_dock_node_options(server_dir: &str, home: Option<std::path::PathBuf>) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let src = std::path::Path::new(server_dir).join("no-dock.cjs");
+    let body = std::fs::read(&src).map_err(|e| format!("심 원본 없음 {}: {e}", src.display()))?;
+    let dir = home.ok_or_else(|| "홈 디렉터리를 알 수 없음".to_string())?.join(".argo").join("tools");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let dest = dir.join("no-dock.cjs");
+    let p = dest.to_string_lossy().to_string();
+    // NODE_OPTIONS 문법을 깨는 문자(실측: `"`는 unterminated string으로 node 즉사, 따옴표 안 `\`는 이스케이프로 먹혀 MODULE_NOT_FOUND)
+    if p.contains('"') || p.contains('\\') { return Err(format!("경로에 NODE_OPTIONS를 깨는 문자가 있어 넣지 않음: {p}")); }
+    let tmp = dir.join(format!("no-dock.cjs.tmp-{}", std::process::id()));
+    std::fs::write(&tmp, &body).and_then(|_| std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)))
+        .and_then(|_| std::fs::rename(&tmp, &dest)).map_err(|e| format!("{}: {e}", dest.display()))?;
+    let arg = if p.chars().any(char::is_whitespace) { format!("\"{p}\"") } else { p };
+    // 사용자의 기존 NODE_OPTIONS는 뒤에 보존(JS withNoDock과 대칭, LOW-1)
+    let prev = std::env::var("NODE_OPTIONS").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    Ok(match prev { Some(v) => format!("--require {arg} {v}"), None => format!("--require {arg}") })
+}
+
 // Windows 리소스 경로의 \\?\ (UNC) 프리픽스 제거 — node가 스크립트 경로 인자로 받지 못해
 // 사이드카가 침묵 사망한다 (실측: 같은 서버를 수동 실행하면 578ms에 정상 기동).
 fn de_unc(p: String) -> String {
@@ -218,7 +242,8 @@ pub fn run() {
                             }
                         };
                         let bind_host = "127.0.0.1";
-                        let child = sidecar
+                        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+                        let mut cmd = sidecar
                             .current_dir(std::path::PathBuf::from(&server_dir))
                             .env("PORT", port.to_string())
                             .env("HOSTNAME", bind_host)
@@ -227,7 +252,18 @@ pub fn run() {
                             .env("ARGO_STANDALONE", "1")
                             .env("NODE_ENV", "production")
                             // 부모 감시 — 서버가 이 PID(셸)를 지켜보다 사라지면 스스로 종료(고아 방지)
-                            .env("ARGO_PARENT_PID", std::process::id().to_string())
+                            .env("ARGO_PARENT_PID", std::process::id().to_string());
+                        // macOS Dock 아이콘 억제 — 번들 node는 process.title을 설정하는 순간 Foreground 앱으로 등록돼 Dock에 뜬다
+                        // (실측 2026-09-15: 같은 코드도 시스템 node는 BackgroundOnly, 앱 번들 안 node만 Foreground). 서버 자신은 server.js
+                        // 부트스트랩이 막지만, 서버가 띄우는 node 자식(npm exec·MCP 서버·CLI 러너)은 상속 env로만 막을 수 있다.
+                        // 런타임 setupNoDock(프로브 뒤 대입)의 실패·타임아웃에 걸리지 않게 **초기 env**에 프리로드를 넣는다(유건 지시
+                        // "언제가 됐든 뜨면 안 돼"). 심은 ~/.argo/tools에 복사해 가리킨다(no_dock_node_options). 실패는 경고만 — 그때는 런타임 경로가 프로브를 거쳐 재시도한다.
+                        #[cfg(target_os = "macos")]
+                        match no_dock_node_options(&server_dir, handle.path().home_dir().ok()) {
+                            Ok(v) => cmd = cmd.env("NODE_OPTIONS", v),
+                            Err(e) => log::warn!("[argo] Dock 아이콘 억제 프리로드 미적용(자식 node가 Dock에 뜰 수 있다): {e}"),
+                        }
+                        let child = cmd
                             // 상대경로 — current_dir(server_dir) 기준. 절대경로 조합은 Windows UNC에서 깨진다.
                             .args(["server.js"])
                             .spawn();
