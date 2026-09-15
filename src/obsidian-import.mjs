@@ -15,10 +15,11 @@
 //    ② Argo 제어파일 basename(connections.json 등)은 어느 볼트에서든 복사하지 않는다.
 //
 // 규모(관문 0.5): 사용자 1회성 액션 — 상시 타이머 없음. 비용은 볼트 크기에 선형(복사 1회 +
-// 이후 동기화 1회 업로드). 상한: 파일 2,000·합계 2GB — 수치 근거는 임포트 자체가 아니라
-// **임포트 이후의 상시 비용**이다: listDocs(hub.mjs)가 무캐시로 notes·journal 전 파일을 매 화면
-// 로드마다 읽으므로, 노트 수가 곧 대시보드 로드 비용이 된다(분리 검수 HIGH-2). listDocs의
-// memindex 캐시 전환이 후속 백로그(설계 문서 참조)이고, 그때 상한을 올린다.
+// 이후 동기화 1회 업로드). 상한: 파일 10,000·합계 2GB — 수치 근거는 임포트 자체가 아니라
+// **임포트 이후의 상시 비용**이다: listDocs(hub.mjs)가 notes·journal 전 파일을 매 화면 로드마다
+// 훑는다(분리 검수 HIGH-2). 2026-09-15 listDocs에 mtime 캐시가 들어가 반복 로드는 stat만 하므로
+// 2,000(유건 볼트 2,343건에 막힘)에서 10,000으로 올렸다. 남은 비용은 첫 로드 전수 읽기(1만 건 ≈ 1.5초)와
+// 데크에 내려가는 문서 메타 JSON(1만 건 ≈ 수 MB) — 그 위로는 데크 쪽 페이지네이션이 먼저다.
 import { readdir, readFile, copyFile, mkdir, stat, utimes, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
@@ -33,7 +34,7 @@ import { insideFold, fold } from './pathcase.mjs';
 const err = (code, msg) => Object.assign(new Error(msg), { code });
 
 export const MAX_FILE_BYTES = 200 * 1024 * 1024;      // 단일 파일 상한 — 초과는 복사 없이 리포트(원본은 볼트에 그대로)
-export const MAX_COUNT = 2_000;                        // 총 파일 수 상한 — listDocs 상시 비용 근거(모듈 주석)
+export const MAX_COUNT = 10_000;                       // 총 파일 수 상한 — listDocs 상시 비용 근거(모듈 주석)
 export const MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // 총 용량 상한 — 동기화 1회 업로드 비용
 
 // Argo files/ 서빙(files/route.js MIME)과 옵시디언 통용 첨부의 교집합 위주 — 여기 없으면 미분류로

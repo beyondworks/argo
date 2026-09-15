@@ -6,6 +6,7 @@ import { join, resolve, sep } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { writeJsonAtomic } from './jsonstore.mjs';
+import { dropDocCache } from './doc-cache.mjs';
 
 export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
 
@@ -97,6 +98,7 @@ export async function updateCompany(wsId, patch) {
 
 /** 회사 보관 — 삭제 대신 .archive/로 폴더째 이동(복구 가능). */
 export async function archiveCompany(wsId) {
+  dropDocCache(wsId); // 보관한 회사의 제목·발췌가 프로세스 메모리에 남지 않게(검수 #538 MEDIUM-3)
   const archive = join(WS_ROOT, '.archive');
   await mkdir(archive, { recursive: true });
   // tombstone 먼저 — 클라우드 사본이 있는 회사는 보관 사실을 동기화로 전파해야 한다.

@@ -20,6 +20,7 @@ import { createRequire } from 'node:module';
 import { paths, WS_ROOT } from './workspace.mjs';
 import { docMeta } from './vaultdoc.mjs';
 import { withLock } from './mutex.mjs';
+import { dropDocCache } from './doc-cache.mjs';
 
 const SCHEMA_VERSION = '1';
 const require = createRequire(import.meta.url); // 동적 import는 동기 기능 탐지에 못 쓴다
@@ -279,10 +280,11 @@ async function loadDocsMetaLocked(wsId) {
     있고, 늘어난 만큼과 상쇄되면 정확히 같아진다(검수 HIGH — 실제로 재현됨). 해당 행을 지워 다음
     스캔이 반드시 다시 읽게 한다. 실패해도 치명적이지 않다(다음 내용 변경에서 회복). */
 export async function invalidatePath(absFile) {
-  if (!sqliteAvailable()) return;
   const rel = relative(WS_ROOT, absFile).split(sep).join('/');
   const wsId = rel.split('/')[0];
   if (!wsId || rel.startsWith('..')) return; // 워크스페이스 밖 — 캐시와 무관
+  dropDocCache(wsId, absFile); // listDocs 캐시도 같은 프로토콜(검수 #538 HIGH-1) — sqlite 유무와 무관
+  if (!sqliteAvailable()) return;
   // loadDocsMeta와 같은 락 — 같은 프로세스에서 인덱스 갱신과 겹쳐 BUSY로 조용히 무산되는 것을 막는다
   await withLock(`memindex:${wsId}`, () => {
     let handle;
