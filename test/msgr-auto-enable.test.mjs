@@ -5,11 +5,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { autoEnableMsgr, MSGR_AUTO_ENABLE_PROBE_MS, MSGR_AUTO_ENABLE_NO_SESSION_MS } from '../src/gateway/msgr.mjs';
 
-const mk = ({ orgs = ['org-1'], uid = 'u1', session = true, fail = false, hang = false, fresh = null } = {}) => {
+const mk = ({ orgs = ['org-1'], uid = 'u1', session = true, fail = false, hang = false, fresh = null, hasCrew = false } = {}) => {
   const calls = { probes: 0, updates: [], loads: 0 };
   const deps = {
     probes: new Map(), orgCache: new Map(), now: () => 1_000_000, timeoutMs: 20,
-    session: async () => session ? { uid, db: { myOrgIds: async () => { calls.probes += 1; if (fail) throw new Error('db down'); if (hang) return new Promise(() => {}); return orgs; } } } : null,
+    session: async () => session ? { uid, db: { myOrgIds: async () => { calls.probes += 1; if (fail) throw new Error('db down'); if (hang) return new Promise(() => {}); return orgs; }, hasAnyCrew: async () => hasCrew } } : null,
     load: async (ws) => { calls.loads += 1; return fresh ?? { id: ws, msgr: {} }; },
     update: async (ws, patch) => { calls.updates.push([ws, patch]); },
     log: () => {},
@@ -42,8 +42,13 @@ test('세션 없음(로그아웃·만료) → false, 60초만 쉰다 — 10초�
   for (let i = 0; i < 5; i++) { t += 10_000; await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }); }
   assert.equal(sessionCalls, 1, '60초 안에는 세션을 다시 묻지 않는다');
   t += MSGR_AUTO_ENABLE_NO_SESSION_MS;
-  deps.session = async () => ({ uid: 'u1', db: { myOrgIds: async () => { calls.probes += 1; return ['org-1']; } } });
+  deps.session = async () => ({ uid: 'u1', db: { myOrgIds: async () => { calls.probes += 1; return ['org-1']; }, hasAnyCrew: async () => false } });
   assert.equal(await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }), true, '60초 뒤 세션이 생기면 켜진다');
+});
+test('이미 어느 회사·조직에든 크루 행이 있는 계정 → 손대지 않는다(유건 결정: 회사 10개 중 2개만 파견한 계정에 나머지 8개가 갑자기 나타나지 않게)', async () => {
+  const { deps, calls } = mk({ hasCrew: true });
+  for (const ws of ['ws-a', 'ws-b']) assert.equal(await autoEnableMsgr(ws, { company: { id: ws, msgr: {} }, ...deps }), false);
+  assert.equal(calls.probes, 1, '조회는 uid 캐시로 1건'); assert.deepEqual(calls.updates, []);
 });
 test('회사 N개 = 멤버십 질의 1건(uid 캐시 10분 — 검수 L1)', async () => {
   const { deps, calls } = mk();

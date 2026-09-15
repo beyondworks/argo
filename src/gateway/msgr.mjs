@@ -176,6 +176,10 @@ export function makeDb(client) {
     async myOrgIds(uid) {
       return (unwrap(await client.from('msgr_org_members').select('org_id').eq('user_id', uid).is('removed_at', null)) ?? []).map((r) => r.org_id);
     },
+    /** 이 계정이 어느 회사·조직에든 크루 행을 가진 적이 있나(상태 무관) — 자동 켜기의 "이미 파견 중인 계정은 손대지 않는다" 게이트. */
+    async hasAnyCrew(uid) {
+      return ((unwrap(await client.from('msgr_crews').select('id').eq('owner_user_id', uid).limit(1))) ?? []).length > 0;
+    },
     /** 이 회사(ws)의 내 크루 행 전부(상태 무관) — 미러 diff의 기준. */
     async myCrewRows(uid, wsId) {
       return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name, role_text, status').eq('owner_user_id', uid).eq('ws_id', wsId)) ?? [];
@@ -343,7 +347,9 @@ export async function sessionClient() {
     조직 멤버 5명 전원 크루 0(데스크톱을 켠 흔적이 있어도). 꺼진 회사는 10분에 한 번 "이 계정이 조직 멤버인가"(user_id 색인 한 건)를 묻고
     멤버면 켠다 → 같은 sync에서 브리지가 시작되고 mirrorInventory가 크루 전부를 파견한다. 조직 회사(nodeOrgId)·소유자 불일치 회사는 대상 밖.
     검수 반영: 세션이 없으면 60초만 쉰다(죽은 세션 기기에서 10초마다 refresh를 보내던 2026-09-04 경로를 곱하지 않는다 — MEDIUM-1),
-    멤버십 조회는 uid 단위로 10분 캐시(회사 N개 = 질의 1건 — L1), 3초 상한(L3), 쓰기 직전 company.json을 다시 읽어 병합(MEDIUM-3). */
+    멤버십 조회는 uid 단위로 10분 캐시(회사 N개 = 질의 1건 — L1), 3초 상한(L3), 쓰기 직전 company.json을 다시 읽어 병합(MEDIUM-3).
+    범위(유건 결정 2026-09-15, 검수 MEDIUM-4): **어느 회사·조직에든 크루 행이 있는 계정은 손대지 않는다** — 회사 10개 중 2개만 파견한 계정에
+    나머지 8개 회사 크루가 갑자기 나타나지 않게. 교착에 걸린 계정(파견 크루 0)만 회사 전부를 켠다(9/8 규칙 "연결하면 내 크루 전부"는 그대로). */
 export const MSGR_AUTO_ENABLE_PROBE_MS = 10 * 60_000;
 export const MSGR_AUTO_ENABLE_NO_SESSION_MS = 60_000;
 const autoEnableProbes = new Map(); // wsId → 다음 조회 가능 시각
@@ -355,18 +361,17 @@ export async function autoEnableMsgr(wsId, { company, session = sessionClient, l
   if (!c) { probes.set(wsId, now() + MSGR_AUTO_ENABLE_NO_SESSION_MS); return false; }
   probes.set(wsId, now() + MSGR_AUTO_ENABLE_PROBE_MS);
   if (company.ownerId && company.ownerId !== c.uid) return false; // 회사 소유자 게이트(2026-09-11 실사고와 같은 규칙) — 남의 회사 크루를 내 조직에 올리지 않는다
-  let orgs;
-  const hit = orgCache.get(c.uid);
-  if (hit && now() - hit.at < MSGR_AUTO_ENABLE_PROBE_MS) orgs = hit.orgs;
-  else {
+  let probe = orgCache.get(c.uid);
+  if (!probe || now() - probe.at >= MSGR_AUTO_ENABLE_PROBE_MS) {
     let timer;
     try {
-      orgs = await Promise.race([c.db.myOrgIds(c.uid), new Promise((_, rej) => { timer = setTimeout(rej, timeoutMs, new Error(`timeout ${timeoutMs}ms`)); })]);
+      const [orgs, hasCrew] = await Promise.race([Promise.all([c.db.myOrgIds(c.uid), c.db.hasAnyCrew(c.uid)]), new Promise((_, rej) => { timer = setTimeout(rej, timeoutMs, new Error(`timeout ${timeoutMs}ms`)); })]);
+      probe = { at: now(), orgs, hasCrew };
     } catch (e) { log('[argo] msgr 자동 켜기 — 조직 멤버십 조회 실패:', e.message); return false; }
     finally { clearTimeout(timer); }
-    orgCache.set(c.uid, { at: now(), orgs });
+    orgCache.set(c.uid, probe);
   }
-  if (!orgs.length) return false;
+  if (!probe.orgs.length || probe.hasCrew) return false;
   const fresh = await load(wsId).catch(() => company); // 쓰기 직전 재읽기 — sync 머리 스냅샷 뒤 저장된 notify·mutedEvents를 덮지 않는다
   if (fresh.msgr?.enabled) return true;
   await update(wsId, { msgr: { ...(fresh.msgr ?? {}), enabled: true } });
