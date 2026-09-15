@@ -12,7 +12,7 @@ test('폰 뒤로 = history.back(): 루트 탭은 replaceState, 하위 화면은 
   assert.match(src, /history\.replaceState\(\{ page, chId, depth: 0 \}, ''\);\s*\} else if \(same\) history\.replaceState\(\{ page, chId, depth \}, ''\);/, '루트는 depth 0, 같은 화면 전환은 replace');
   assert.match(src, /else history\.pushState\(\{ page, chId, depth: depth \+ 1 \}, ''\);/, '하위 화면은 push(depth+1)');
   assert.match(src, /const goBack = useCallback\(\(\) => \{ if \(isPhone && \(history\.state\?\.depth \?\? 0\) > 0\) history\.back\(\); else setPage\('home'\); \}/, '루트(깊이 0)에서는 history.back을 부르지 않는다 — 앱 밖 이전 문서로 나가지 않게');
-  assert.match(src, /if \(depth > 0 && !same\) \{ navCollapse\.current = page; navPopping\.current = true; history\.go\(-depth\); return; \}/, '루트 탭은 스택을 접는다(검수 M-3)');
+  assert.match(src, /if \(depth > 0 && !same\) \{ navCollapse\.current = page; navPopping\.current = true; history\.go\(-depth\);/, '루트 탭은 스택을 접는다(검수 M-3)');
   assert.match(src, /if \(!history\.state\?\.page\) history\.replaceState\(\{ page, chId, depth: 0 \}, ''\);/, '시딩은 state가 없을 때만(폭 전환에 깊이 보존, 검수 M-4)');
   assert.match(src, /history\.replaceState\(history\.state, '', location\.pathname\)/, '초대 링크 정리가 state를 지우지 않는다(L-2)');
   assert.doesNotMatch(src, /history\.length > 1/, 'history.length 판단 잔재 없음');
@@ -28,9 +28,11 @@ test('배지 재동기화 — 앱 전면 복귀·알림함 열기·다 읽음에
   assert.match(src, /document\.visibilityState === 'visible'\) resyncBadge\(\)/, '전면 복귀');
   assert.match(src, /loadOrg\(orgId\)\.catch\(\(e\) => setErr\(e\.message\)\); resyncBadge\(\); \}\);/, '모바일 resume 관찰자');
   assert.match(src, /setPage\('inbox'\); setRail\(false\); resyncBadge\(\); \};/, '알림함 열기');
-  assert.match(src, /if \(k === 'inbox'\) \{ setInboxKind\('all'\); openInbox\(\); return; \}/, '폰 탭으로 알림함 진입도 같은 경로(검수 M-1)');
+  assert.match(src, /if \(k === 'inbox'\) \{ setInboxKind\('all'\); if \(org\) \{ openInbox\(\); return; \} \}/, '폰 탭으로 알림함 진입도 같은 경로(검수 M-1), 조직 없으면 빈 알림함(N-4)');
   assert.match(src, /if \(!uid\) return; resyncBadge\(\); const onVis/, '콜드 스타트 1회(검수 M-2)');
   assert.match(src, /for \(const \[cid, mid\] of top\) markRead\(cid, mid\); resyncBadge\(\);/, '모두 읽음이 알림 채널의 읽음 커서를 올린다(검수 M-6)');
+  assert.match(src, /dmIds\.has\(it\.channel_id\) && it\.kind !== 'approval'/, '커서 승격은 DM 채널만(공개 채널의 앞선 글을 읽음 처리하지 않는다, N-1)');
+  assert.match(src, /history\.go\(-depth\); setTimeout\(\(\) => \{ if \(navCollapse\.current\) \{ navCollapse\.current = null; navPopping\.current = false; \} \}, 500\);/, '접기 가드 만료(N-5)');
   assert.match(src, /markRead\(cid, mid\); resyncBadge\(\); \}\}/, '다 읽음');
   const def = src.indexOf('const resyncBadge = useCallback'); const use = src.indexOf('resyncBadge(); });');
   assert.ok(def > 0 && def < use, '정의가 첫 사용(resume 효과)보다 앞');

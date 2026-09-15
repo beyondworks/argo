@@ -30,6 +30,9 @@ await openDm(); await p.locator('.msgr-tabsearch').click(); await settle(); s = 
 await hwBack(); s = await st(); ok('검색→뒤로=대화 depth1', s.page === 'chat' && s.depth === 1, s);
 await hwBack(); s = await st(); ok('대화→뒤로=DM', s.page === 'dm' && s.dm && s.depth === 0, s);
 await openDm(); await tab('홈|home'); await p.waitForTimeout(700); s = await st(); ok('루트 탭이 스택을 접음(depth0)', s.page === 'home' && s.depth === 0, s);
+await p.evaluate(() => history.back()); await p.waitForTimeout(700); // 접힌 뒤 하드웨어 뒤로 = 앱 밖(이전 문서)으로 나가야지 옛 대화로 내려가면 안 된다(검수 N-2)
+const left = await p.evaluate(() => !document.querySelector('.msgr-shell') || (history.state?.page !== 'chat')); ok('접기 뒤 하드웨어 뒤로는 옛 대화로 내려가지 않는다', left, await p.evaluate(() => ({ url: location.href.slice(-40), state: history.state })));
+await p.goto(`http://127.0.0.1:${port}/test/work-panel.fixture.html`); await p.locator('.msgr-shell.msgr-phone').waitFor(); await p.waitForFunction(() => history.state && history.state.depth !== undefined);
 await tab('DM|1:1'); await settle(); await openDm(); await p.setViewportSize({ width: 1280, height: 800 }); await p.waitForTimeout(700);
 ok('데스크톱 전환에도 depth 유지', (await st()).depth === 1, await st());
 await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(700); await back(); s = await st(); ok('폰 복귀 뒤 뒤로=DM', s.page === 'dm' && s.dm, s);

@@ -13,7 +13,7 @@ function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Err
 const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
 const asUser = (uid, q) => sql(`set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`);
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';
-let ORG, PUB, DM;
+let ORG, PUB, DM, CREW;
 before(() => {
   if (!DB) return;
   psql(['-c', `
@@ -48,6 +48,7 @@ before(() => {
   const code = last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.a}') returning code`));
   assert.equal(last(asUser(U.b, `select public.msgr_accept_invite('${code}')`)), ORG);
   PUB = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','Work')`));
+  CREW = last(asUser(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'lean', 'bot', 'Bot') returning id`)); sql(`update public.msgr_crews set status='active', last_seen_at=now() where id='${CREW}'`);
   DM = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','dm','dm:b','[{"kind":"user","id":"${U.b}"}]'::jsonb)`));
   sql(`insert into public.msgr_settings (key, value) values ('push_url', 'https://edge.test/msgr-push') on conflict (key) do update set value = excluded.value`);
 });
@@ -73,6 +74,11 @@ test('배지 셈법 — 공개 채널 잡담은 세지 않고, DM 안읽음과 �
   assert.equal(total(U.b), 1, '내 글에 달린 답글');
   const theirs = post(U.a, PUB, '남 글'); post(U.a, PUB, '남 글에 답글', '[]', theirs);
   assert.equal(total(U.b), 1, '남의 글에 달린 답글은 배지가 아니다');
+  // 내 스레드에서 크루가 자기 답에 이어 답할 때(reply_to=크루 글, thread_root=내 글)도 센다(N-3 — 푸시 수신자 규칙과 일치)
+  const crewReply = last(sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id, reply_to, thread_root) values ('${PUB}', 'crew', '${CREW}', 'text', '크루 답 1', gen_random_uuid()::text, ${mine}, ${mine}) returning id`));
+  assert.equal(total(U.b), 2, '크루 첫 답(reply_to=내 글)');
+  sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id, reply_to, thread_root) values ('${PUB}', 'crew', '${CREW}', 'text', '크루 답 2', gen_random_uuid()::text, ${crewReply}, ${mine})`);
+  assert.equal(total(U.b), 3, '크루 후속 답(reply_to=크루 글, thread_root=내 글)');
   // 읽음 커서는 뒤로 가지 않는다(클라이언트 "모두 읽음"이 오래된 id를 보내도)
   asUser(U.b, `update public.msgr_reads set last_read_id = 1 where channel_id = '${DM}' and user_id = '${U.b}'`);
   assert.equal(sql(`select last_read_id from public.msgr_reads where channel_id = '${DM}' and user_id = '${U.b}'`), String(Number(d1) + 1), '커서 후퇴 무시');

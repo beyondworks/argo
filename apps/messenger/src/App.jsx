@@ -406,7 +406,7 @@ function Shell({ session }) {
     const depth = history.state?.depth ?? 0;
     try {
       if (ROOT_PAGES.has(page)) {
-        if (depth > 0 && !same) { navCollapse.current = page; navPopping.current = true; history.go(-depth); return; } // 루트 탭 = 스택 접기(안드로이드 하드웨어 뒤로가 옛 대화로 내려가지 않게 — 검수 M-3)
+        if (depth > 0 && !same) { navCollapse.current = page; navPopping.current = true; history.go(-depth); setTimeout(() => { if (navCollapse.current) { navCollapse.current = null; navPopping.current = false; } }, 500); return; } // 루트 탭 = 스택 접기(안드로이드 하드웨어 뒤로가 옛 대화로 내려가지 않게 — 검수 M-3). go가 no-op이면 가드를 500ms 뒤 푼다(N-5)
         history.replaceState({ page, chId, depth: 0 }, '');
       } else if (same) history.replaceState({ page, chId, depth }, ''); // 같은 화면 안의 전환(대화에서 다른 채널) — 스택을 쌓지 않는다: 뒤로는 루트로(슬랙과 같은 얕은 스택, 의도)
       else history.pushState({ page, chId, depth: depth + 1 }, '');
@@ -1050,7 +1050,7 @@ function Shell({ session }) {
         ) : page === 'search' && org ? (
           <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'inbox' && org ? (
-          <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
+          <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
@@ -1063,7 +1063,7 @@ function Shell({ session }) {
       {isPhone && (page === 'home' || page === 'dm') && org && <button type="button" className="msgr-fab" onClick={() => setNewCh({ name: '', kind: 'public' })} aria-label={t('ch.new')}><I name="plus" size={22} /></button>}
       {isPhone && <PhoneTabs page={page} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={(k) => {
         if (k === 'search') { setPage('search'); return; }
-        if (k === 'inbox') { setInboxKind('all'); openInbox(); return; } // 벨 버튼과 같은 경로(읽음 시각 + 배지 재동기화 — 검수 M-1)
+        if (k === 'inbox') { setInboxKind('all'); if (org) { openInbox(); return; } } // 벨 버튼과 같은 경로(읽음 시각 + 배지 재동기화 — 검수 M-1); 조직이 없으면 빈 알림함 화면만(N-4)
         setPage(k);
       }} />}
     </div>
