@@ -410,7 +410,7 @@ function Shell({ session }) {
     const prev = navPrev.current; const same = prev === page; navPrev.current = page; if (ROOT_PAGES.has(page)) lastRoot.current = page;
     if (!same) { // 전환 애니메이션: 루트↔루트 = tab(페이드), 루트→하위 = push(오른쪽에서), 하위→루트 = pop(페이드; 스와이프로 온 경우는 스와이프가 이미 움직였으므로 없음)
       const kind = ROOT_PAGES.has(prev) && ROOT_PAGES.has(page) ? (ROOT_ORDER.indexOf(page) > ROOT_ORDER.indexOf(prev) ? 'tab-left' : 'tab-right') : ROOT_PAGES.has(page) ? (swipeTo ? null : 'pop') : ROOT_PAGES.has(prev) ? 'push' : 'tab-left'; // tab-left = 오른쪽 탭으로 가니 새 화면이 오른쪽에서 들어온다
-      if (kind) { const n = ++animSeq.current; setPageAnim(`${kind}-${n % 2 ? 'a' : 'b'}`); clearTimeout(animTimer.current); animTimer.current = setTimeout(() => setPageAnim(null), 300); }
+      if (kind) { const n = ++animSeq.current; setPageAnim(`${kind}-${n % 2 ? 'a' : 'b'}`); clearTimeout(animTimer.current); animTimer.current = setTimeout(() => setPageAnim(null), 340); } // push 300ms보다 뒤에 해제
     }
     if (navPopping.current) { navPopping.current = false; return; }
     // depth = 우리 스택 깊이(루트 0). history.length로 판단하면 앱 밖 이전 문서(빈 탭·로그인 왕복)로 나가 버린다(실측 2026-09-15).
