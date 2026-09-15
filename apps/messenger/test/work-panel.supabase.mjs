@@ -34,6 +34,7 @@ base.from = (table) => {
   return api;
 };
 base.rpc = (name, args = {}) => {
+  if (name === 'msgr_unread' && state.unreadRows) return Promise.resolve({ data: structuredClone(state.unreadRows), error: null }); // 하네스 시드(state.unreadRows)가 있을 때만 — 안읽음 필터 양성 검사용
   if (name === 'msgr_dm_latest') { // 폰 DM 탭 최근순 재료 — 채널당 마지막 글(실서버 RPC와 같은 모양: channel_id·last_id·last_at)
     const dmIds = new Set((state.tables.msgr_channels ?? []).filter((c) => c.kind === 'dm' && c.org_id === args.org && !c.archived_at).map((c) => c.id));
     const latest = new Map(); for (const m of state.tables.msgr_messages) if (dmIds.has(m.channel_id) && !m.deleted_at && (!latest.has(m.channel_id) || latest.get(m.channel_id).id < m.id)) latest.set(m.channel_id, m);

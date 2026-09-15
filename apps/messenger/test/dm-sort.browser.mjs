@@ -34,7 +34,10 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
   await p2.addInitScript(() => { localStorage.setItem('argo-lang', 'ko'); localStorage.setItem('argo-msgr-dm-sort', 'recent');
     let v; Object.defineProperty(window, '__dmFixture', { configurable: true, get: () => v, set: (x) => { v = x; try { const t = x.tables; const uid = t.msgr_channel_members.find((m) => m.member_kind === 'user').member_id; const dm = t.msgr_channels.find((c) => c.kind === 'dm'); const base = t.msgr_messages.find((m) => m.channel_id === dm.id) ?? t.msgr_messages[0];
       t.msgr_channels.push({ ...dm, id: 'fixture-dm-2', name: 'dm:Fixture Second' }); t.msgr_channel_members.push({ channel_id: 'fixture-dm-2', member_kind: 'user', member_id: uid }, { channel_id: 'fixture-dm-2', member_kind: 'crew', member_id: 'crew-new' });
-      t.msgr_messages.push({ ...base, id: 9999, channel_id: 'fixture-dm-2', body: '더 최근 글', created_at: new Date(Date.now() + 60_000).toISOString(), deleted_at: null }); } catch (e) { console.error('seed failed', e); } } }); });
+      t.msgr_messages.push({ ...base, id: 9999, channel_id: 'fixture-dm-2', body: '더 최근 글', created_at: new Date(Date.now() + 60_000).toISOString(), deleted_at: null });
+      t.msgr_channel_members.push({ channel_id: 'fixture-dm-2', member_kind: 'user', member_id: 'user-third' }, { channel_id: 'fixture-dm-2', member_kind: 'user', member_id: 'user-fourth' }); // 사람 3명 → 그룹 DM(필터 양성 검사)
+      x.unreadRows = [{ channel_id: 'fixture-dm-2', n: 2, mention: 0 }]; // 안읽음 필터 양성 검사 — msgr_unread 흉내가 이 값을 돌려준다
+    } catch (e) { console.error('seed failed', e); } } }); });
   await p2.goto(`http://127.0.0.1:${port}/test/work-panel.fixture.html`); await p2.locator('.msgr-shell.msgr-phone').waitFor();
   await p2.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /DM/i.test(x.textContent))?.click(); });
   await p2.waitForFunction(() => document.querySelectorAll('[data-sec="dms"] .item').length >= 2, null, { timeout: 8000 }).catch(() => {});
@@ -48,8 +51,11 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
   const filt = p2.locator('.msgr-dmfilter [role=radio]'); ok('필터 4개', (await filt.count()) === 4);
   ok('DM 탭 행에는 점 세 개 버튼이 없다(길게 누르기가 대신)', (await p2.locator('[data-sec="dms"] .msgr-railrow .more').count()) === 0);
   const fBox = await p2.locator('.msgr-dmfilter').boundingBox(); const lBox = await p2.locator('[data-sec="dms"]').boundingBox(); ok('필터가 목록 위에·화면 안', fBox && lBox && fBox.y < lBox.y && fBox.x + fBox.width <= 390, { fBox, lBox });
-  await filt.nth(2).click(); await p2.waitForTimeout(200); ok('안읽음 필터: 안읽은 DM만(픽스처는 0 또는 unread 행)', await p2.evaluate(() => [...document.querySelectorAll('[data-sec="dms"] .item')].every((el) => el.classList.contains('unread'))));
-  await filt.nth(0).click(); await p2.waitForTimeout(200);
+  const namesIn = () => p2.evaluate(() => [...document.querySelectorAll('[data-sec="dms"] .item .name')].map((el) => el.textContent.trim()));
+  await filt.nth(2).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('안읽음 필터: 안읽은 DM(New, n=2)만 남는다 — 양성 단언', n.length === 1 && /New/.test(n[0]), n); }
+  await filt.nth(3).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('그룹 필터: 사람 3명 DM(New)만 남는다 — 양성 단언', n.length === 1 && /New/.test(n[0]), n); }
+  await filt.nth(1).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('즐겨찾기 필터: 고정 없는 페이지에선 빈 목록', n.length === 0, n); }
+  await filt.nth(0).click(); await p2.waitForTimeout(200); { const n = await namesIn(); ok('전체로 돌아오면 둘 다', n.length === 2, n); }
   // 길게 누르기 → 메뉴(미리보기 포함), 손을 떼도 메뉴 유지 → 미리보기 시트에 글이 보인다
   { const row = p2.locator('[data-sec="dms"] .msgr-railrow').first(); const bx = await row.boundingBox(); const cdp = await p2.context().newCDPSession(p2);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bx.x + 60, y: bx.y + 20 }] }); await p2.waitForTimeout(600);

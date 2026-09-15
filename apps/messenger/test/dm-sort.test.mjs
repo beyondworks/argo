@@ -31,7 +31,7 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /const dmTab = isPhone && page === 'dm';/);
   assert.match(src, /const dmSorted = \(list\) => sortDms\(list, \{ sort: dmSort, lastAt, unread, nameOf: dmName \}\);/);
   assert.match(src, /const dmPinnedTop = dmTab \? channels\.filter\(\(c\) => c\.kind === 'dm' && pinned\.has\(c\.id\)\)\.sort\(\(a, b\) => \(pinPos\.get\(a\.id\) \?\? 1e9\) - \(pinPos\.get\(b\.id\) \?\? 1e9\)\)/, '고정 = 즐겨찾기한 DM, pin_pos 순');
-  assert.match(src, /const dmList = dmTab \? dmSorted\(dmPool\.filter\(dmVisible\)\) : dms;/, 'DM 탭 목록은 필터를 거친다(전체 탭의 고정은 별도 단락 — 유건 2026-09-15)');
+  assert.match(src, /const dmList = !dmTab \? dms : dmFilter === 'fav' \? dmPinnedTop : dmSorted\(dmPool\.filter\(dmVisible\)\);/, 'DM 탭 목록은 필터를 거친다, 즐겨찾기 탭은 고정 순서 그대로(검수 L-6)');
   assert.match(src, /const dmPinnedShown = dmTab && dmFilter === 'all' \? dmPinnedTop : \[\];/, '고정 단락은 전체 탭에서만');
   assert.match(src, /<RailSection id="dmpin" label=\{t\('dm\.pinned'\)\} forceOpen><div className="msgr-list">\{dmPinnedShown\.map\(dmRow\)\}<\/div><\/RailSection>/, '고정 단락');
   assert.match(src, /<RailSection id="dms" label=\{t\('ch\.dms'\)\} forceOpen=\{dmTab\}/, 'DM 탭에서는 홈의 접힘 상태를 따르지 않는다');
@@ -40,8 +40,13 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /DM_SORTS\.map\(\(v\) => <button key=\{v\} type="button" role="menuitemradio" aria-checked=\{dmSort === v\}/, '정렬 메뉴');
   assert.doesNotMatch(src, /msgr-dmpin/, '고정 별 아이콘 없음(유건 2026-09-15: 즐겨찾기 별 아이콘 쓰지 마)');
   assert.match(src, /const dmVisible = \(c\) => dmFilter === 'all' \|\| \(dmFilter === 'fav' && pinned\.has\(c\.id\)\) \|\| \(dmFilter === 'unread' && unread\[c\.id\]\?\.n > 0 && !muted\.has\(c\.id\)\) \|\| \(dmFilter === 'group' && dmIsGroup\(c\)\);/, '필터 4종');
-  assert.match(src, /select\('id, channel_id, body, author_user_id, created_at'\)\.in\('id', ids\)/, '한 줄 미리보기는 마지막 글 id로 한 번에');
-  assert.match(src, /document\.addEventListener\('click', swallow, \{ capture: true, once: true \}\)/, '길게 누른 뒤 손 뗄 때의 click을 삼킨다(메뉴가 닫히거나 대화가 열리던 것)');
+  assert.match(src, /return u >= 3 \|\| \(u >= 2 && cr >= 1\);/, '그룹 = 사람 3명 이상 또는 사람 2명+크루(1:1+크루는 그룹 아님)');
+  assert.match(src, /\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/span>\{lastMsg/, 'DM 탭 행 음소거 벨(검수 HIGH-1 회귀 방지)');
+  assert.match(src, /<><span className="name">\{dmName\(c\)\}<\/span>\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/>/, '데스크톱·홈 행 음소거 벨(회귀 방지)');
+  assert.match(src, /onPointerUp: \(e\) => \{ lp\.onPointerUp\(e\); swallowNext\(\); \}/, 'click 삼킴은 손 뗀 직후에만 등록(검수 HIGH-3)');
+  assert.match(src, /draggable=\{!dmTab\}/, 'DM 탭 행은 드래그 끔(iOS 드래그 리프트가 click을 삼키는 것 방지)');
+  assert.match(src, /select\('id, channel_id, body, author_user_id, crew_id, created_at'\)\.in\('id', ids\)\.is\('deleted_at', null\)/, '한 줄 미리보기는 마지막 글 id로 한 번에, 삭제 글 제외');
+  assert.match(src, /document\.addEventListener\('click', swallow, \{ capture: true, once: true \}\); setTimeout\(\(\) => document\.removeEventListener\('click', swallow, \{ capture: true \}\), 300\);/, '길게 누른 뒤 손 뗄 때의 click을 300ms 안에서만 삼킨다');
   assert.match(src, /function DmPeekSheet\(/, '미리보기 시트');
   assert.match(src, /\{!dmTab && <button type="button" className="more"/, 'DM 탭에는 점 세 개 없음(길게 누르기 메뉴로 대체)');
   assert.match(src, /if \(payload\?\.channel_id && dmIdsRef\.current\.has\(payload\.channel_id\)\) setLastAt\(\(m\) => \(\{ \.\.\.m, \[payload\.channel_id\]: Date\.now\(\) \}\)\);/, '방송으로 최근 시각 갱신(DM만)');
