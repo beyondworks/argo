@@ -84,7 +84,7 @@ export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {})
   const statePath = join(dir, ORG_DOCS_STATE);
   let state = { docs: {} };
   try { state = JSON.parse(await readFile(statePath, 'utf8')); if (!state || typeof state.docs !== 'object') state = { docs: {} }; } catch { /* 첫 미러 */ }
-  const index = await db.docsIndex(orgId);
+  const index = (await db.docsIndex(orgId)).filter((d) => !String(d.path ?? '').startsWith('journal/')); // journal/은 메신저 안에서만 본다 — PC 볼트로 내리면 memory.mjs가 '조직 문서'로 모든 크루 프롬프트에 넣어 DM·채널 대화가 다른 크루에게 샌다(2026-09-16). 이미 내려간 일지 파일은 gone으로 회수된다
   const want = new Map(index.map((d) => [d.id, d]));
   const changed = index.filter((d) => !state.docs[d.id] || state.docs[d.id].version !== d.version || state.docs[d.id].path !== d.path).map((d) => d.id);
   const gone = Object.keys(state.docs).filter((id) => !want.has(id));

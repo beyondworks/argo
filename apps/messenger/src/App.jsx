@@ -1151,7 +1151,7 @@ function Shell({ session }) {
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
         {page === 'activity' && org ? (
-          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
+          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
           <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'inbox' && org ? (
@@ -1934,7 +1934,7 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
   );
 }
 
-function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onNote, onError, onBack, onMenu, onOpenChannel }) {
+function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, dmName = null, onNote, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰에서는 창 나누기(옆에 열기)가 반폭 두 장이 되어 못 쓴다
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
@@ -1972,7 +1972,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   }, [org.id, chKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState(null); // 새 기억 폼이 열린 대상(rel)
-  const chName = (id) => channels.find((c) => c.id === id)?.name ?? t('act.deletedChannel');
+  const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? t('act.deletedChannel') : c.kind === 'dm' ? (dmName?.(c) || t('ui.dm')) : c.name; }; // DM 일지(2026-09-16)는 상대 이름으로
   const crewName = (id) => crews.find((c) => c.id === id)?.display_name ?? t('act.deletedCrew');
   const docTitle = (id) => docs.find((d) => d.id === id)?.title ?? null;
   const roleName = (r) => (r ? t(`role.${r}`) : '');
@@ -2117,7 +2117,11 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
                         {creating === sel && <MemNew org={org} channelId={ch?.id ?? null} uid={uid} onNote={onNote} onError={onError} onCancel={() => setCreating(null)} onCreated={async (d) => { setCreating(null); await load(); openEntity(`docs/${d.path.replace(/\.md$/, '')}`); }} />}
                         {doc ? <MemDoc doc={doc} isAdmin={isAdmin} nameOfUser={nameOfUser} chName={chName} onSaved={load} onNote={onNote} onError={onError} /> : (
                           <div className="msgr-memlist">
-                            {!scopeDocs.length && creating !== sel && <p className="empty">{sel.startsWith('people/') || sel.startsWith('crews/') ? t('mem.none.person') : t('mem.none')}</p>}
+                            {sel === 'org' && (() => { const js = docs.filter((d) => d.channel_id && d.path.startsWith('journal/')).sort((a, b) => b.path.localeCompare(a.path) || b.updated_at.localeCompare(a.updated_at)).slice(0, 30); return js.length ? ( /* 최근 일지 — 채널·DM의 크루 답글이 서버 트리거로 쌓인다(2026-09-16). 전사 문서가 0이어도 첫 화면이 비지 않게 */
+                              <div className="folder"><div className="msgr-klabel">{t('mem.journal.recent')}</div>
+                                {js.map((d) => <button key={d.id} type="button" className="memitem" onClick={(e) => openEntity(docRelOf(d), { split: !!(e.metaKey || e.altKey) })}><I name="doc" size={13} /><span className="name">{d.title}</span><span className="meta">{chName(d.channel_id)}</span></button>)}
+                              </div>) : null; })()}
+                            {!scopeDocs.length && creating !== sel && !(sel === 'org' && docs.some((d) => d.channel_id && d.path.startsWith('journal/'))) && <p className="empty">{sel.startsWith('people/') || sel.startsWith('crews/') ? t('mem.none.person') : t('mem.none')}</p>}
                             {DOC_FOLDERS.map((f) => { const found = scopeDocs.filter((d) => d.path.startsWith(`${f}/`)); const fs = f === 'journal' ? [...found].sort((a, b) => b.path.localeCompare(a.path)) : found; /* 일지는 파일명이 날짜(YYYY-MM-DD)라 경로 내림차순 = 최신이 위 */ return fs.length ? (
                               <div key={f} className="folder"><div className="msgr-klabel">{t(`docs.folder.${f}`)}</div>
                                 {fs.map((d) => <button key={d.id} type="button" className="memitem" onClick={(e) => openEntity(docRelOf(d), { split: !!(e.metaKey || e.altKey) })}><I name="doc" size={13} /><span className="name">{d.title}</span><span className="meta">{d.channel_id ? `#${chName(d.channel_id)} · ` : ''}v{d.version} · {nameOfUser(d.updated_by)}</span></button>)}

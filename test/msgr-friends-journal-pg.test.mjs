@@ -105,7 +105,7 @@ test('backfill: an existing person-to-person DM inside the org already produced 
  assert.equal(sql(`select status||':'||requested_by from msgr_friends where a=least('${U.owner}','${U.admin}')::uuid and b=greatest('${U.owner}','${U.admin}')::uuid`),`accepted:${U.owner}`);
 });
 
-test('crew replies in a memory-enabled channel append to that channel journal; DM and memory-off channels never do; no audit noise',{skip},()=>{
+test('crew replies in a memory-enabled channel append to that channel journal; DMs journal for their members only; memory-off channels never do; no audit noise',{skip},()=>{
  const before=sql(`select count(*) from msgr_audit_log where org_id='${ORG}' and action like 'doc.%'`);
  const ask=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values('${PUB}','user','${U.owner}','오늘 할 일 정리해줘','[{"kind":"crew","id":"${CREW}"}]') returning id`));
  const reply=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,meta) values('${PUB}','crew','${CREW}','1. 브리프 2. 회의록',${ask},${ask},'reply:${CREW}:${ask}','{"disposition":"done"}') returning id`));
@@ -119,7 +119,9 @@ test('crew replies in a memory-enabled channel append to that channel journal; D
  const dm=last(asUser(U.owner,`select msgr_create_channel('${ORG}','dm','Mine','[{"kind":"crew","id":"${CREW}"}]')`));
  const dask=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,author_user_id,body) values('${dm}','user','${U.owner}','DM 질문') returning id`));
  asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,meta) values('${dm}','crew','${CREW}','DM 답',${dask},${dask},'reply:${CREW}:${dask}','{"disposition":"done"}')`);
- assert.equal(journal(dm),null,'DMs are never journaled');
+ const dj=journal(dm); assert.ok(dj,'DM crew replies journal too (2026-09-16 — 문서는 채널 범위 RLS)'); assert.equal(dj.channel_id,dm); assert.match(dj.body,/DM 질문 → DM 답/);
+ assert.equal(last(asUser(U.owner,`select count(*) from msgr_org_docs where channel_id='${dm}'`)),'1','DM 참여자(소유자)는 DM 일지를 읽는다');
+ assert.equal(last(asUser(U.member,`select count(*) from msgr_org_docs where channel_id='${dm}'`)),'0','DM 밖 조직 멤버에게는 DM 일지가 보이지 않는다(RLS)');
  sql(`update msgr_channels set crew_memory=false where id='${PUB}'`);
  const off=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,author_user_id,body) values('${PUB}','user','${U.owner}','기억 끔') returning id`));
  asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,meta) values('${PUB}','crew','${CREW}','기억 끔 답',${off},${off},'reply:${CREW}:${off}','{"disposition":"done"}')`);
