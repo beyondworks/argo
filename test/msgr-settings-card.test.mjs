@@ -234,7 +234,7 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
   assert.match(ch, /const ro = new ResizeObserver\(\(\) => \{ keepAnchor\(\); toBottom\(\); \}\);/, '높이 변화 추적 — 스크롤백 앵커 되맞춤이 먼저, 바닥 고정이면 toBottom이 이긴다(#531)');
   assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
   assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
-  assert.match(app, /<div className="msgr-railbody"(?: \{\.\.\.rootSwipe\})?><div className="msgr-railinner">[\s\S]{0,900}?<RailSection id="channels" label=\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역 안의 내용 래퍼(2026-09-14 railinner: 폰에서 min-height 100%+1px로 짧은 목록도 iOS 바운스) → 채널 절');
+  assert.match(app, /<div className=(?:"msgr-railbody"|\{`msgr-railbody[^\n]*?`\})(?: \{\.\.\.\w+Swipe\})?><div className="msgr-railinner">[\s\S]{0,900}?<RailSection id="channels" label=\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역 안의 내용 래퍼(2026-09-14 railinner: 폰에서 min-height 100%+1px로 짧은 목록도 iOS 바운스) → 채널 절');
   const css = read('apps/messenger/src/styles.css');
   assert.match(css, /^\.msgr-side \{[^\n]*overflow: hidden; \}/m, '레일 자체 스크롤 금지(풋터 고정)');
   assert.match(css, /^\.msgr-railbody \{ flex: 1; min-height: 0; overflow-y: auto;/m, '레일 본문만 스크롤');

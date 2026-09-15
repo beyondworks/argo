@@ -1006,6 +1006,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .item { font-weight: 500; }
   .msgr-phone.phone-home .msgr-side .item > .mi, .msgr-phone.phone-home .msgr-side .item > svg { color: var(--fg-2); opacity: 1; } /* #·자물쇠가 어두운 테마에서 안 보이던 것 */
   .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active { background: var(--card-2); }
+  .msgr-phone.phone-home .msgr-side .msgr-railrow.open .item:active { background: none; } /* 길게 눌러 메뉴가 뜬 뒤 iOS가 뒤늦게 붙이는 눌림 표시를 막는다(유건 2026-09-15) */
   .msgr-phone.phone-home .msgr-side .item > svg { width: 20px; height: 20px; flex: 0 0 20px; }
   .msgr-phone.phone-home .msgr-side .more { display: grid; opacity: 1; width: 44px; height: 44px; right: 8px; }
   .msgr-phone.phone-home .msgr-railrow > .item { padding-right: 56px; } /* 터치에서도 그룹·즐겨찾기 순서에 접근 */
@@ -1050,11 +1051,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
   /* ── 폰 전환·눌림 효과(유건 2026-09-11) — transform·opacity만, 300ms 이하, 움직임 줄이기 설정이면 전부 끈다 ── */
   @media (prefers-reduced-motion: no-preference) {
-    @keyframes msgrPageIn { from { transform: translateX(22px); } to { transform: none; } }   /* 앞으로: 오른쪽에서. 페이드 없음(어두운 테마에서 깜빡임으로 보인다) */
-    @keyframes msgrPageBack { from { transform: translateX(-16px); } to { transform: none; } } /* 뒤로(홈): 왼쪽에서, 페이드 없음 */
+    /* 2026-09-15 유건 "전환이 떨린다": 옛 상시 규칙(본문 자식 msgrPageIn·레일 msgrPageBack)이 새 anim-* 전환과 겹쳐 두 박자로 움직였다(검수 #549 M-E·F) → 전환은 anim-push/tab/pop 하나로 일원화, 옛 두 규칙 삭제 */
     @keyframes msgrSheetIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-    .msgr-phone .msgr-main > .msgr-top, .msgr-phone .msgr-main > .msgr-thread, .msgr-phone .msgr-main > .msgr-actsplit { animation: msgrPageIn 200ms cubic-bezier(.2, .8, .2, 1) both; }
-    .msgr-phone.phone-home .msgr-side { animation: msgrPageBack 160ms cubic-bezier(.2, .8, .2, 1) both; } /* display none→flex로 돌아올 때 다시 재생된다 */
     .msgr-phone .msgr-crewsheet, .msgr-phone .msgr-side .msgr-inline { animation: msgrSheetIn 220ms cubic-bezier(.2, .8, .2, 1) both; }
     /* 눌림: 살짝 줄었다 돌아온다(120ms). 목록 행은 배경만(이미 있음) */
     .msgr-phone .msgr-island button, .msgr-phone .msgr-tabsearch, .msgr-phone .msgr-fab, .msgr-phone .msgr-seg button, .msgr-phone .msgr-setnav button,
@@ -1088,29 +1086,40 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home.swiping-back.settling .msgr-side { transition: transform var(--swipe-ms, 200ms) cubic-bezier(.2,.8,.2,1); }
   .msgr-phone.phone-home.swiping-back .msgr-side, .msgr-phone.phone-home.swiping-back .msgr-main { will-change: transform; } /* 두 층 모두 합성 레이어 — 드래그 중 재래스터 없이 이동 */
   .msgr-phone.phone-home.swiping-back .msgr-side::after { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, calc((1 - var(--swipe-p, 0)) * .18)); pointer-events: none; } /* 밑 화면 어둡기 — 당겨 올수록 밝아진다 */
-  .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); padding-bottom: 0; }
+  .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); }
   .msgr-phone.phone-home.swiping-back .msgr-main > :not(.msgr-sheetwrap) { display: revert; }
-  .msgr-phone.swiping-back .msgr-tabbar, .msgr-phone.swiping-back .msgr-fab { display: none; }
+  .msgr-phone.swiping-back .msgr-fab { display: none; } /* 하단 탭 바는 두 화면이 공유하는 고정 요소라 그대로 둔다 — 사라졌다 돌아오면 부자연스럽다(유건 2026-09-15) */
   .msgr-phone.swiping-back .msgr-main .msgr-thread { overflow: hidden; }
   /* 화면 전환(유건 2026-09-15 "슬랙·카톡처럼 부드럽게"): 대화 열기 = 오른쪽에서 밀려 들어옴, 탭 전환·뒤로 = 페이드. 전부 transform·opacity(합성 레이어) */
-  @keyframes msgrPushIn { from { transform: translateX(100%); } to { transform: none; } }
-  @keyframes msgrFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes msgrPushIn { from { transform: translate3d(100%, 0, 0); } to { transform: translate3d(0, 0, 0); } }
+  @keyframes msgrFadeIn { from { opacity: 0; } to { opacity: 1; } }
   /* a/b 변형 = 같은 움직임의 키프레임 두 벌 — 연속 전환에서 클래스만 바꿔도 애니메이션이 다시 시작된다(검수 M-2) */
-  @keyframes msgrPushInB { from { transform: translateX(100%); } to { transform: none; } }
-  @keyframes msgrFadeInB { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-  @keyframes msgrTabLeftB { from { opacity: .4; transform: translateX(28px); } to { opacity: 1; transform: none; } }
-  @keyframes msgrTabRightB { from { opacity: .4; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
-  .msgr-phone.anim-push-a .msgr-main { animation: msgrPushIn 260ms cubic-bezier(.2,.8,.2,1) both; will-change: transform; }
-  .msgr-phone.anim-push-b .msgr-main { animation: msgrPushInB 260ms cubic-bezier(.2,.8,.2,1) both; will-change: transform; }
-  @keyframes msgrTabLeft { from { opacity: .4; transform: translateX(28px); } to { opacity: 1; transform: none; } }
-  @keyframes msgrTabRight { from { opacity: .4; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
-  .msgr-phone.anim-tab-left-a .msgr-side, .msgr-phone.anim-tab-left-a .msgr-main { animation: msgrTabLeft 200ms cubic-bezier(.2,.8,.2,1) both; }
-  .msgr-phone.anim-tab-left-b .msgr-side, .msgr-phone.anim-tab-left-b .msgr-main { animation: msgrTabLeftB 200ms cubic-bezier(.2,.8,.2,1) both; }
-  .msgr-phone.anim-tab-right-a .msgr-side, .msgr-phone.anim-tab-right-a .msgr-main { animation: msgrTabRight 200ms cubic-bezier(.2,.8,.2,1) both; }
-  .msgr-phone.anim-tab-right-b .msgr-side, .msgr-phone.anim-tab-right-b .msgr-main { animation: msgrTabRightB 200ms cubic-bezier(.2,.8,.2,1) both; }
-  .msgr-phone.anim-pop-a .msgr-side { animation: msgrFadeIn 180ms cubic-bezier(.2,.8,.2,1) both; }
-  .msgr-phone.anim-pop-b .msgr-side { animation: msgrFadeInB 180ms cubic-bezier(.2,.8,.2,1) both; }
-  @media (prefers-reduced-motion: reduce) { .msgr-phone[class*='anim-'] .msgr-side, .msgr-phone[class*='anim-'] .msgr-main { animation: none; } } /* 가로로 잠긴 동안 실제 스크롤러(스레드)의 세로 스크롤을 멈춘다(검수 M-2 — main은 이미 overflow hidden) */
+  @keyframes msgrPushInB { from { transform: translate3d(100%, 0, 0); } to { transform: translate3d(0, 0, 0); } }
+  @keyframes msgrFadeInB { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes msgrTabLeftB { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes msgrTabRightB { from { opacity: 0; } to { opacity: 1; } }
+  .msgr-phone.anim-push-a .msgr-main { animation: msgrPushIn 300ms cubic-bezier(.32,.72,0,1) both; }
+  .msgr-phone.anim-push-b .msgr-main { animation: msgrPushInB 300ms cubic-bezier(.32,.72,0,1) both; }
+  .msgr-phone[class*='anim-'] .msgr-side, .msgr-phone[class*='anim-'] .msgr-main, .msgr-phone .msgr-railbody[class*='anim-list-'] .msgr-railinner { will-change: transform, opacity; backface-visibility: hidden; } /* 전환 중 합성 레이어 — iOS가 프레임마다 재래스터하며 떨리던 것(유건 2026-09-15) */
+  @keyframes msgrTabLeft { from { opacity: 0; } to { opacity: 1; } } /* 탭·뒤로 전환은 옆으로 밀지 않는다(iOS 탭 관례 = 교차 페이드) */
+  @keyframes msgrTabRight { from { opacity: 0; } to { opacity: 1; } }
+  .msgr-phone.anim-tab-left-a .msgr-side, .msgr-phone.anim-tab-left-a .msgr-main { animation: msgrTabLeft 160ms ease-out both; }
+  .msgr-phone.anim-tab-left-b .msgr-side, .msgr-phone.anim-tab-left-b .msgr-main { animation: msgrTabLeftB 160ms ease-out both; }
+  .msgr-phone.anim-tab-right-a .msgr-side, .msgr-phone.anim-tab-right-a .msgr-main { animation: msgrTabRight 160ms ease-out both; }
+  .msgr-phone.anim-tab-right-b .msgr-side, .msgr-phone.anim-tab-right-b .msgr-main { animation: msgrTabRightB 160ms ease-out both; }
+  /* 가로 탄성(유건 실기기 2026-09-16 "세로가 아니라 가로"): 대화 층이 오른쪽에서 100% 들어오는 동안 변환된 요소가 문서의 스크롤 폭을 넓혔다가 도착 순간 사라져 iOS가 가로로 고무줄 되돌림.
+     셸·문서를 가로로 잘라내고(clip은 스크롤 컨테이너를 만들지 않는다) 목록·스레드의 가로 튕김을 끈다. 세로 튕김(목록 바운스)은 그대로 */
+  .shell.msgr-shell.msgr-phone { overflow-x: hidden; overflow-x: clip; }
+  body:has(.msgr-shell.msgr-phone) { overflow-x: hidden; overscroll-behavior-x: none; }
+  .msgr-phone.phone-home .msgr-railbody { overflow-x: hidden; overscroll-behavior-x: none; }
+  .msgr-phone .msgr-main .msgr-thread { overscroll-behavior-x: none; }
+  .msgr-phone.phone-dm .msgr-railbody.anim-list-left-a .msgr-railinner { animation: msgrTabLeft 160ms ease-out both; }
+  .msgr-phone.phone-dm .msgr-railbody.anim-list-left-b .msgr-railinner { animation: msgrTabLeftB 160ms ease-out both; }
+  .msgr-phone.phone-dm .msgr-railbody.anim-list-right-a .msgr-railinner { animation: msgrTabRight 160ms ease-out both; }
+  .msgr-phone.phone-dm .msgr-railbody.anim-list-right-b .msgr-railinner { animation: msgrTabRightB 160ms ease-out both; }
+  .msgr-phone.anim-pop-a .msgr-side { animation: msgrFadeIn 160ms ease-out both; }
+  .msgr-phone.anim-pop-b .msgr-side { animation: msgrFadeInB 160ms ease-out both; }
+  @media (prefers-reduced-motion: reduce) { .msgr-phone[class*='anim-'] .msgr-side, .msgr-phone[class*='anim-'] .msgr-main, .msgr-phone.phone-dm .msgr-railbody[class*='anim-list-'] .msgr-railinner { animation: none; } } /* 명시도 (0,5,0) 동률 — 재검수 L-1 */ /* 가로로 잠긴 동안 실제 스크롤러(스레드)의 세로 스크롤을 멈춘다(검수 M-2 — main은 이미 overflow hidden) */
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab,
@@ -1155,7 +1164,17 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-dm .item .snip { font-size: 12.5px; line-height: 1.3; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .msgr-phone.phone-dm .item.unread .snip { color: var(--fg-2); }
   .msgr-phone.phone-dm .item.unread .dmline .when { color: var(--fg); font-weight: 600; } /* --mark(형광)는 종이 배경에서 대비 1.09:1 — 글자색으로 쓰지 않는다(검수 M-1) */
-  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .msgr-railrow, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .msgr-railrow { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } /* 길게 누르기 메뉴 — iOS 선택 콜아웃 차단(검수 HIGH-3) */
+  /* 폰에서는 글자 선택·iOS 복사 막대(Copy·Look Up)를 끈다 — 길게 누르기가 앱 메뉴를 여는 제스처이므로. 메뉴는 body 포털이라 셸 밖 → body:has로 건다.
+     유건 캡처 2026-09-15: 손가락 밑에 뜬 메뉴 항목("알림 끄기")이 선택되며 iOS 막대가 겹쳐 떴다. 입력칸만 예외. 메시지 본문은 위(842)에서 이미 끔 */
+  body:has(.msgr-shell.msgr-phone) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  .msgr-phone, .msgr-ctxmenu, .msgr-menubg { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } /* :has 없는 옛 Android WebView 대비(검수 L-9) */
+  body:has(.msgr-shell.msgr-phone) :is(input, textarea, [contenteditable]), .msgr-phone :is(input, textarea, [contenteditable]) { -webkit-user-select: text; user-select: text; }
+  body:has(.msgr-shell.msgr-phone) :is(.msgr-work-panel, .msgr-hint), .msgr-phone :is(.msgr-work-panel, .msgr-hint) { -webkit-user-select: text; user-select: text; } /* 문서 본문·안내/오류 문구는 복사 버튼이 없어 선택으로 복사(검수 M-5) */
+  body:has(.msgr-shell.msgr-phone) img, .msgr-phone img { -webkit-touch-callout: default; } /* 첨부 이미지 길게 눌러 저장은 살린다(검수 M-3). 링크는 제외 — 본문 링크 콜아웃이 앱 액션 시트를 가로챈다(재검수 LOW-A) */
+  /* iOS는 탭한 자리에 hover를 붙여 둔다 — 메뉴를 닫은 뒤에도 행·점 세 개에 hover 배경이 남아 '활성 표시'처럼 보였다(유건 캡처 2026-09-15). 폰에서는 hover 배경을 끄고 :active만 쓴다 */
+  .msgr-phone .msgr-list .item:hover:not(.active) { background: none; color: var(--fg-2); } /* 현재 폰에선 이미 hover 배경이 없어 no-op — 데스크톱 규칙이 바뀌어도 새지 않게 방어(재검수 LOW-D) */
+  .msgr-phone .msgr-railrow .more:hover { background: transparent; color: var(--fg-3); } /* 캡처의 '점 세 개 배경'은 이 줄이 잡는다 */
+  .msgr-ctxmenu button:focus-visible { outline: none; } /* 폰 블록 안 — 터치에선 포커스를 안 옮기지만 옛 WebView 대비 링도 끈다 */
   .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek, .msgr-dmpeek { top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: auto; max-width: none; max-height: 60vh; border-radius: 20px 20px 0 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; } /* 아래에서 올라오는 시트 — 폰 크루 시트(위 고정·전체 높이) 규칙보다 우선 */
   .msgr-dmpeek .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
   .msgr-dmpeek .head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

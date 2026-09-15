@@ -224,10 +224,10 @@ function NavButton({ onMenu }) {
 
 /* ─── 폰 하단 탭 바(슬랙 레이아웃 참고, 유건 지시 2026-09-10) — 폰 폭에서만 렌더한다.
    데스크톱은 이 컴포넌트를 아예 그리지 않으므로 기존 트리가 그대로다. 검색은 슬랙처럼 오른쪽 원형 버튼. ─── */
-function PhoneTabs({ page, onPick, activity, search }) {
+function PhoneTabs({ page, onPick, activity, search, goingTo = null }) {
   const { t } = useT();
   // 채널을 열어도 '홈' 탭이 활성 — 슬랙과 같다(채팅은 홈에서 들어간 화면이지 별 탭이 아니다).
-  const active = page === 'chat' ? 'home' : page;
+  const active = goingTo ?? (page === 'chat' ? 'home' : page); // 뒤로 스와이프 중엔 목적지(DM/홈)를 미리 활성으로 — 도착 순간 튀지 않게(검수 #549 M-4)
   // 슬랙 4탭 대응(유건 2026-09-10): 홈 / DM(홈의 1:1 구역만) / 내 활동(= inbox 알림함) / 기억(= activity 페이지, 제목이 '기억')
   const items = [['home', 'home'], ['dm', 'at'], ['inbox', 'bell'], ['activity', 'memory']];
   return (
@@ -322,7 +322,7 @@ function CtxMenu({ at, items, onClose }) {
   useLayoutEffect(() => {
     const el = ref.current; if (!el) return;
     const place = () => { const viewport = window.visualViewport; const left = viewport?.offsetLeft ?? 0; const top = viewport?.offsetTop ?? 0; const width = viewport?.width ?? window.innerWidth; const height = viewport?.height ?? window.innerHeight; el.style.maxHeight = `${Math.max(44, height - 16)}px`; el.style.maxWidth = `${Math.max(44, width - 16)}px`; const r = el.getBoundingClientRect(); setPos({ left: Math.max(left + 8, Math.min(at.x, left + width - r.width - 8)), top: Math.max(top + 8, Math.min(at.y, top + height - r.height - 8)) }); };
-    place(); const previous = at.returnFocus ?? document.activeElement; el.querySelector('button:not(:disabled)')?.focus();
+    place(); const touch = window.matchMedia?.('(pointer: coarse)').matches; const previous = touch ? null : (at.returnFocus ?? document.activeElement); if (!touch) el.querySelector('button:not(:disabled)')?.focus(); // 터치 기기에선 포커스를 옮기지 않는다 — iOS가 프로그램 포커스에 링을 그려 첫 항목 테두리·닫힌 뒤 행에 선이 남았다(유건 캡처 2026-09-15)
     window.addEventListener('resize', place); window.visualViewport?.addEventListener('resize', place); window.visualViewport?.addEventListener('scroll', place);
     return () => { window.removeEventListener('resize', place); window.visualViewport?.removeEventListener('resize', place); window.visualViewport?.removeEventListener('scroll', place); if (previous?.isConnected) previous.focus(); };
   }, [at]);
@@ -405,12 +405,16 @@ function Shell({ session }) {
     try { if (!history.state?.page) history.replaceState({ page, chId, depth: 0 }, ''); } catch { /* 일부 웹뷰는 replaceState를 막는다 — 스택 없이 홈으로 */ }
     return () => window.removeEventListener('popstate', onPop);
   }, [isPhone]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => { // 탭 전환 도착 순간 레일 스크롤을 맨 위로(그리기 전에). 이전 탭의 스크롤 위치가 새 목록 범위를 넘으면 iOS가 고무줄처럼 튕겨 되돌린다 — "도착하면 탄성이 떨린다"(유건 2026-09-15). 뒤로(pop)는 위치를 지킨다
+    if (!isPhone) return; const prev = navPrev.current; if (prev === page || !ROOT_PAGES.has(prev) || !ROOT_PAGES.has(page)) return;
+    const el = document.querySelector('.msgr-side .msgr-railbody'); if (el) el.scrollTop = 0;
+  }, [page, isPhone, ROOT_PAGES]);
   useEffect(() => {
     if (!isPhone) return;
     const prev = navPrev.current; const same = prev === page; navPrev.current = page; if (ROOT_PAGES.has(page)) lastRoot.current = page;
     if (!same) { // 전환 애니메이션: 루트↔루트 = tab(페이드), 루트→하위 = push(오른쪽에서), 하위→루트 = pop(페이드; 스와이프로 온 경우는 스와이프가 이미 움직였으므로 없음)
       const kind = ROOT_PAGES.has(prev) && ROOT_PAGES.has(page) ? (ROOT_ORDER.indexOf(page) > ROOT_ORDER.indexOf(prev) ? 'tab-left' : 'tab-right') : ROOT_PAGES.has(page) ? (swipeTo ? null : 'pop') : ROOT_PAGES.has(prev) ? 'push' : 'tab-left'; // tab-left = 오른쪽 탭으로 가니 새 화면이 오른쪽에서 들어온다
-      if (kind) { const n = ++animSeq.current; setPageAnim(`${kind}-${n % 2 ? 'a' : 'b'}`); clearTimeout(animTimer.current); animTimer.current = setTimeout(() => setPageAnim(null), 300); }
+      if (kind) { const n = ++animSeq.current; setPageAnim(`${kind}-${n % 2 ? 'a' : 'b'}`); clearTimeout(animTimer.current); animTimer.current = setTimeout(() => setPageAnim(null), 340); } // push 300ms보다 뒤에 해제
     }
     if (navPopping.current) { navPopping.current = false; return; }
     // depth = 우리 스택 깊이(루트 0). history.length로 판단하면 앱 밖 이전 문서(빈 탭·로그인 왕복)로 나가 버린다(실측 2026-09-15).
@@ -426,13 +430,12 @@ function Shell({ session }) {
   const goBack = useCallback(() => { if (isPhone && (history.state?.depth ?? 0) > 0) history.back(); else setPage('home'); }, [isPhone]);
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
-  const ROOT_ORDER = ['home', 'dm', 'inbox', 'activity']; // 하단 탭 순서 — 좌우 스와이프·전환 방향의 기준
+  const ROOT_ORDER = ['home', 'dm', 'inbox', 'activity']; // 하단 탭 순서 — 전환 애니메이션 방향의 기준(좌우 스와이프는 DM 상단 탭에만 있다)
   const pickRoot = (k) => { // 하단 탭 선택 — 탭 누름·좌우 스와이프가 같은 경로(검수 M-1: 스와이프로 알림함에 들어가면 읽음·배지가 안 갱신되던 것)
     if (k === 'search') { setPage('search'); return; }
     if (k === 'inbox') { setInboxKind('all'); if (org) { openInbox(); return; } } // 벨 버튼과 같은 경로(읽음 시각 + 배지 재동기화 — 검수 M-1); 조직이 없으면 빈 알림함 화면만(N-4)
     setPage(k);
   };
-  const rootSwipe = useSwipeTabs(ROOT_ORDER, page, pickRoot, isPhone && (page === 'home' || page === 'dm')); // 카톡처럼 홈·DM에서 좌우로 쓸면 옆 탭(유건 2026-09-15). 알림함·기억은 자기 안의 거르개 스와이프가 있어 제외
   const [pageAnim, setPageAnim] = useState(null); const animSeq = useRef(0); const animTimer = useRef(null); // 연속 전환마다 새 값·a/b 변형으로 CSS 애니메이션이 재시작(검수 M-2) // 폰 화면 전환 애니메이션 종류(push·pop·tab, 260ms 뒤 해제 — 유건 2026-09-15 "탭 이동도 부드럽게")
   const [swipeTo, setSwipeTo] = useState(null); // 스와이프 뒤로가기 중 밑에 깔 루트 — DM이면 레일을 미리 DM 탭 모양으로 그린다(깜빡임 제보 2026-09-15)
   const edgeEnabled = isPhone && page !== 'home' && page !== 'dm';
@@ -723,11 +726,17 @@ function Shell({ session }) {
   const [dmSort, setDmSort] = useState(() => { try { const v = localStorage.getItem('argo-msgr-dm-sort'); return DM_SORTS.includes(v) ? v : 'recent'; } catch { return 'recent'; } });
   const [dmSortMenu, setDmSortMenu] = useState(false);
   const [dmFilter, setDmFilter] = useState('all');
+  const DM_FILTERS = ['all', 'fav', 'unread', 'group'];
+  const [dmAnim, setDmAnim] = useState(null); const dmAnimSeq = useRef(0); const dmAnimTimer = useRef(null);
+  const pickDmFilter = (k) => { // 폰 DM 상단 탭 — 탭 누름·좌우 스와이프가 같은 경로, 목록이 방향대로 들어온다(유건 2026-09-15: "스와이프로 탭 이동"은 하단 탭이 아니라 DM 안의 상단 탭)
+    if (k === dmFilter) return; const dir = DM_FILTERS.indexOf(k) > DM_FILTERS.indexOf(dmFilter) ? 'left' : 'right'; setDmFilter(k); const body = document.querySelector('.msgr-side .msgr-railbody'); if (body) body.scrollTop = 0; // 거르개 바뀌면 맨 위부터(카톡) — 범위 밖 스크롤의 iOS 튕김 방지
+    const n = ++dmAnimSeq.current; setDmAnim(`${dir}-${n % 2 ? 'a' : 'b'}`); clearTimeout(dmAnimTimer.current); dmAnimTimer.current = setTimeout(() => setDmAnim(null), 260); };
+  const dmSwipe = useSwipeTabs(DM_FILTERS, dmFilter, pickDmFilter, isPhone && (page === 'dm' || swipeTo === 'dm')); // 훅 — 조건부 반환(orgs === null) 앞에 둔다
   const [lastMsg, setLastMsg] = useState({}); // channel_id → { body, mine, at } — DM 목록 한 줄 미리보기
   const [dmPeek, setDmPeek] = useState(null); // 길게 눌러 '대화 미리보기' 시트
   const [dmGroup, setDmGroup] = useState(false); // 폰 DM 탭 + → 새 그룹 대화 시트(유건 2026-09-15: 그룹 탭은 있는데 맺는 기능이 없다)
-  const lpStates = useRef({}); // DM 행 길게 누르기 상태(행별)
-  useEffect(() => () => { for (const st of Object.values(lpStates.current)) if (st.timer) clearTimeout(st.timer); clearTimeout(animTimer.current); }, []); // 언마운트 시 타이머 해제(검수 L-5)
+  const lpStates = useRef({}); // 폰 레일 행 길게 누르기 상태(행별 — 채널·DM·즐겨찾기 대상)
+  useEffect(() => () => { for (const st of Object.values(lpStates.current)) if (st.timer) clearTimeout(st.timer); clearTimeout(animTimer.current); clearTimeout(dmAnimTimer.current); }, []); // 언마운트 시 타이머 해제(검수 L-5)
   const pickDmSort = (v) => { setDmSort(v); try { localStorage.setItem('argo-msgr-dm-sort', v); } catch { /* 저장 못 해도 이번 세션은 적용 */ } };
   useEffect(() => { // 폰 전용 컨트롤 — onMouseLeave만으로는 터치로 못 닫는다(검수 #541 MEDIUM-4): 바깥 누름·Escape
     if (!dmSortMenu) return;
@@ -960,7 +969,7 @@ function Shell({ session }) {
                 ...orderItems(c),
                 canManage && { icon: 'trash', label: t('ch.delete'), danger: true, run: () => confirmVia('delete') },
               ]; return (
-              <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} draggable onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => openCtx(e, items, c.id)}>
+              <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items) : {})}>
                 <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}>
                   <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
                 </button>
@@ -968,8 +977,8 @@ function Shell({ session }) {
 
               </div>
             ); };
-  // 폰 DM 탭 길게 누르기 → 행 메뉴(미리보기·즐겨찾기·음소거…). iOS 웹뷰는 길게 눌러도 contextmenu를 안 내고, 안드로이드는 낸다 → 800ms 안 중복은 onContextMenu가 삼킨다
-  const dmLongPress = (c, items) => { const st = (lpStates.current[c.id] ??= { timer: null, x: 0, y: 0, el: null, firedAt: 0, opened: false });
+  // 폰 레일 행 길게 누르기 → 행 메뉴(점 세 개와 같은 항목; DM 탭은 미리보기 포함). 홈에도 적용(유건 2026-09-15). iOS 웹뷰는 길게 눌러도 contextmenu를 안 내고, 안드로이드는 낸다 → 800ms 안 중복은 onContextMenu가 삼킨다
+  const rowLongPress = (c, items) => { const st = (lpStates.current[c.id] ??= { timer: null, x: 0, y: 0, el: null, firedAt: 0, opened: false });
     const { clear, ...lp } = longPressHandlers(st, () => { st.firedAt = Date.now(); st.opened = true; if (!st.el) return;
       openCtx({ preventDefault() {}, stopPropagation() {}, currentTarget: st.el, clientX: st.x, clientY: st.y }, items, c.id); });
     void clear;
@@ -986,14 +995,14 @@ function Shell({ session }) {
                 { icon: 'x', label: t('dm.end'), run: () => confirmVia('end') },
                 { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
               ]; return (
-            <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!dmTab} {...(dmTab ? dmLongPress(c, items) : {})}>
+            <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items) : {})}>
               <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} />{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
             </div>
           ); };
   const targetRow = (c) => {
     const items = [{ icon: 'at', label: t('ui.dm'), run: () => openDm(c.targetKind, c.targetId) }, { icon: 'star', label: t('ch.unpin'), disabled: favoriteBusy, run: () => toggleTargetPin(c.targetKind, c.targetId) }, ...orderItems(c)];
-    return <div key={c.id} className="msgr-railrow" draggable onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => openCtx(e, items, c.id)}>
+    return <div key={c.id} className="msgr-railrow" draggable={!isPhone} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} {...(isPhone ? rowLongPress(c, items) : {})}>
       <button type="button" className="item" onClick={() => openDm(c.targetKind, c.targetId)}><Av name={c.name} size="xs" crew={c.targetKind === 'crew'} crewId={c.targetKind === 'crew' ? c.targetId : null} userId={c.targetKind === 'user' ? c.targetId : null} /><span className="name">{c.name}</span></button>
       <button type="button" className="more" aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id} onClick={(e) => openCtx(e, items, c.id)}><I name="dots" size={13} /></button>
     </div>;
@@ -1053,7 +1062,7 @@ function Shell({ session }) {
             </div>
           </>)}
         </div>
-        <div className="msgr-railbody" {...rootSwipe}><div className="msgr-railinner">{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
+        <div className={`msgr-railbody${dmTab && dmAnim ? ` anim-list-${dmAnim}` : ''}`} {...dmSwipe}><div className="msgr-railinner">{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
         {favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
         </RailSection>)}
@@ -1079,7 +1088,7 @@ function Shell({ session }) {
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: 'public' })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
 </RailSection>
-        {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{['all', 'fav', 'unread', 'group'].map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => setDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
+        {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{DM_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
         {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
         {(dms.length > 0 || dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={dmTab ? <span className="right"><span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span></span> : undefined}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
@@ -1158,7 +1167,7 @@ function Shell({ session }) {
       </main>
       {isPhone && (page === 'home' || page === 'dm') && org && <button type="button" className="msgr-fab" onClick={() => page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: 'public' })} aria-label={t(page === 'dm' ? 'dm.group.new' : 'ch.new')}><I name="plus" size={22} /></button>}
       {dmGroup && <DmGroupSheet members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={crews} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
-      {isPhone && <PhoneTabs page={page} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
+      {isPhone && <PhoneTabs page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
     </div>
     </AvatarCtx.Provider>
   );

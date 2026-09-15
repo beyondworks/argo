@@ -63,9 +63,15 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   await tab('DM'); await settle();
   await p.locator('[data-sec="dms"] .item').first().click(); await p.waitForTimeout(60);
   ok('대화 열기 → anim-push', await p.evaluate(() => /(^| )anim-push-(a|b)( |$)/.test(document.querySelector('.msgr-shell').className)));
+  ok('push 중 문서에 가로 스크롤 폭이 생기지 않는다(셸 overflow-x clip — iOS 가로 고무줄, 유건 2026-09-16)', await p.evaluate(() => { const d = document.scrollingElement; const sh = document.querySelector('.msgr-shell'); return d.scrollWidth <= window.innerWidth && ['clip', 'hidden'].includes(getComputedStyle(sh).overflowX) && getComputedStyle(document.body).overscrollBehaviorX === 'none'; }));
+  ok('push 중 본문 자식(상단·스레드)은 따로 움직이지 않는다 — 부모 한 층만(검수 M-F: 이중 이동이 떨림)', await p.evaluate(() => [...document.querySelectorAll('.msgr-main > .msgr-top, .msgr-main > .msgr-thread')].every((el) => getComputedStyle(el).animationName === 'none')));
   await p.waitForTimeout(400); ok('300ms 뒤 해제', await p.evaluate(() => ![...document.querySelector('.msgr-shell').classList].some((c) => c.startsWith('anim-'))));
   await back(); await p.waitForTimeout(0); // back()은 400ms 대기 → 이미 해제됐을 수 있어 즉시 다시 확인 대신 결과 화면만 본다
+  await p.evaluate(() => { const el = document.querySelector('.msgr-side .msgr-railbody'); el.scrollTop = 400; }); await p.waitForTimeout(50);
   await tab('홈|home'); await p.waitForTimeout(60); ok('탭 전환(DM→홈) → anim-tab-right', await p.evaluate(() => /anim-tab-right-(a|b)/.test(document.querySelector('.msgr-shell').className)));
+  ok('탭 전환 도착 순간 레일 스크롤은 맨 위(이전 탭 위치가 남아 iOS 고무줄 튕김이 나던 것)', (await p.evaluate(() => document.querySelector('.msgr-side .msgr-railbody').scrollTop)) === 0);
+  ok('탭 전환은 옆으로 밀지 않는다(교차 페이드)', await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-side')).transform === 'none'));
+  await p.waitForTimeout(400); ok('해제 뒤 레일에 다른 애니메이션이 이어지지 않는다(검수 M-E: 옛 msgrPageBack 재생)', await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-side')).animationName === 'none'));
   // 연속 전환(검수 M-2): 곧바로 DM → 알림함으로 두 번 옮기면 두 번째도 새 변형(a/b)으로 재시작
   await tab('DM'); await p.waitForTimeout(40); const c1 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]); await tab('알림|inbox'); await p.waitForTimeout(40); const c2 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]);
   ok('연속 전환은 a/b가 번갈아 재시작', c1 && c2 && c1 !== c2, { c1, c2 }); await p.waitForTimeout(400);
@@ -78,6 +84,39 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   ok('스와이프 중 밑 화면에 DM 필터 줄이 미리 그려진다', (await p.locator('.msgr-dmfilter').count()) === 1);
   await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
   ok('취소 뒤 대화 유지·필터 줄 없음', await p.evaluate(() => history.state?.page === 'chat' && !document.querySelector('.msgr-dmfilter')));
+  // 하단 탭 바는 스와이프 뒤로 중에도 남는다(유건 2026-09-15: 사라졌다 돌아와 부자연스럽다) — 두 화면이 공유하는 고정 요소
+  await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);
+  const barMid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const bar = document.querySelector('.msgr-tabbar'); const r = bar?.getBoundingClientRect(); return { swiping: sh.classList.contains('swiping-back'), w: r?.width ?? 0, display: bar ? getComputedStyle(bar).display : null }; });
+  ok('스와이프 뒤로 중 하단 탭 바가 보인다', barMid.swiping && barMid.w > 0 && barMid.display !== 'none', barMid);
+  const activeMid = await p.evaluate(() => document.querySelector('.msgr-tabbar [role=tab][aria-selected="true"]')?.textContent.trim()); ok('스와이프 중 활성 탭 = 목적지(DM) — 도착 순간 튀지 않게(검수 M-4)', /DM/i.test(activeMid || ''), activeMid);
+  await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
+  // 대화 층은 스와이프 중에도 탭 바 위 여백을 유지한다(입력창이 아일랜드 밑으로 안 들어간다)
+  await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);
+  const pad = await p.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.msgr-main')).paddingBottom)); ok('스와이프 중 대화 층 바닥 여백 유지', pad > 40, pad);
+  await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
+}
+// 홈에서도 길게 누르기 = 점 세 개 메뉴(유건 2026-09-15). 레일 글자는 길게 눌러도 선택되지 않는다(user-select: none)
+{
+  await tab('홈|home'); await settle();
+  const sel = await p.evaluate(() => ['.msgr-railbody', '.msgr-tabbar', '.msgr-top'].map((q) => document.querySelector(q)).filter(Boolean).map((el) => getComputedStyle(el).userSelect)); ok('폰 화면 글자 선택 차단(레일·탭 바·상단)', sel.length >= 2 && sel.every((v) => v === 'none'), sel);
+  const selIn = await p.evaluate(() => { const el = document.querySelector('input, textarea'); return el ? getComputedStyle(el).userSelect : 'text'; }); ok('입력칸은 선택 가능', selIn === 'text' || selIn === 'auto', selIn);
+  const row = p.locator('[data-sec="channels"] .msgr-railrow').first(); const bx = await row.boundingBox(); const cdp = await p.context().newCDPSession(p);
+  const nameBox = await row.locator('.name').boundingBox();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: nameBox.x + 8, y: nameBox.y + nameBox.height / 2 }] }); await p.waitForTimeout(600);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(300);
+  const menu = await p.locator('.msgr-ctxmenu [role=menuitem]').allInnerTexts(); ok('홈 채널 행을 글자 위에서 길게 누르면 메뉴(손 떼도 유지)', menu.length > 0 && menu.some((m) => /즐겨찾기/.test(m)), menu);
+  const menuSel = await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-ctxmenu')).userSelect); ok('손가락 밑에 뜬 메뉴(body 포털)도 글자 선택 차단 — 유건 캡처(알림 끄기 선택됨)', menuSel === 'none', menuSel);
+  const focusIn = await p.evaluate(() => ({ inMenu: !!document.activeElement?.closest('.msgr-ctxmenu'), tag: document.activeElement?.tagName })); ok('터치 기기에선 메뉴 항목에 포커스를 옮기지 않는다(iOS 포커스 링 — 유건 캡처)', !focusIn.inMenu, focusIn);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(150);
+  const focusBack = await p.evaluate(() => ({ onItem: !!document.activeElement?.closest('.msgr-railrow'), tag: document.activeElement?.tagName })); ok('닫힌 뒤 행 버튼으로 포커스를 되돌리지 않는다(행에 선이 남던 것)', !focusBack.onItem, focusBack);
+  { const more = p.locator('[data-sec="channels"] .msgr-railrow:has(.item:not(.active)) .more').first(); await more.hover(); await p.waitForTimeout(50); const bg = await more.evaluate((el) => getComputedStyle(el).backgroundColor); ok('폰에서 점 세 개 hover 배경 없음(iOS 고착 hover — 캡처의 잔상, 재검수 LOW-C: 비활성 행의 .more를 잰다)', bg === 'rgba(0, 0, 0, 0)', bg); await p.mouse.move(5, 5); }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: nameBox.x + 8, y: nameBox.y + nameBox.height / 2 }] }); await p.waitForTimeout(600);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(300);
+  const selected = await p.evaluate(() => String(getSelection()).length); ok('길게 누른 뒤 글자가 선택되지 않았다', selected === 0, selected);
+  const dots = await row.locator('.more').evaluate((el) => { el.click(); return true; }).catch(() => false);
+  await p.waitForTimeout(200); const menu2 = await p.locator('.msgr-ctxmenu [role=menuitem]').allInnerTexts(); ok('점 세 개 메뉴와 같은 항목', dots && JSON.stringify(menu2) === JSON.stringify(menu), { menu, menu2 });
+  await p.keyboard.press('Escape'); await p.waitForTimeout(150);
+  ok('홈에서 좌우 스와이프는 탭을 옮기지 않는다', await (async () => { const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] }); await touch('touchStart', 300, 420); await touch('touchMove', 250, 422); await touch('touchMove', 150, 424); await touch('touchEnd'); await p.waitForTimeout(350); return p.evaluate(() => history.state?.page === 'home'); })());
 }
 await b.close();
 console.log(`${checks.length} phone navigation checks passed`);

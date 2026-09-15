@@ -3,7 +3,7 @@
 //   node scripts/ios-store.mjs upload   # 위 아카이브를 App Store Connect로 업로드
 // 클라우드 설정 파일(VITE_*)은 자식 프로세스 env로만 넘기고 값은 어디에도 출력하지 않는다.
 // 러스트 툴체인은 RUSTUP_HOME/CARGO_HOME이 있으면 그대로, 없으면 레포 루트의 artifacts/mobile-native 를 쓴다.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -12,12 +12,24 @@ import { join, resolve } from 'node:path';
 const app = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(app, '../..');
 const apple = join(app, 'src-tauri/gen/apple');
+const ARCHIVE = join(apple, 'build/argo-messenger_iOS.xcarchive'); const STAMP = join(apple, 'build/.upload-stamp.json');
 const mode = process.argv[2];
 
 export const parseEnv = (text) => Object.fromEntries(
   text.split('\n').filter((l) => l.includes('=') && !l.trim().startsWith('#'))
     .map((l) => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^"|"$/g, '')]; }),
 );
+
+// 서명 팀 ID는 커밋된 pbxproj에 없다(개인 값) — 빌드 전에 tauri.ios.conf.json의 developmentTeam을 두 구성(debug·release)에 넣는다.
+// 실사고 2026-09-15: 빌드 뒤 pbxproj를 원복하면서 손으로 넣어 둔 팀 줄이 사라져 "requires a development team"으로 실패.
+export const ensureTeam = (pbxproj, team) => { // 결정적: 기존 팀 줄(따옴표 유무·들여쓰기 무관)을 전부 걷어내고 VALID_ARCHS마다 하나씩 넣는다(검수 M-1·M-2: 한쪽만 있거나 따옴표 없는 줄이 남던 것)
+  if (!team) return pbxproj;
+  const stripped = pbxproj.replace(/^[\t ]*DEVELOPMENT_TEAM = .*;\n/gm, '');
+  return stripped.replace(/^([\t ]*)VALID_ARCHS = arm64;\n/gm, (m, indent) => `${m}${indent}DEVELOPMENT_TEAM = "${team}";\n`);
+};
+// 업로드 도장: build가 성공한 아카이브에만 찍고, upload는 도장이 그 아카이브를 가리킬 때만 올린 뒤 도장을 지운다.
+// 실사고 2026-09-15: 빌드가 실패했는데 upload가 그대로 돌아 폴더에 남아 있던 옛 아카이브가 TestFlight "0.1.26 (1)"로 올라갔다.
+export const stampMatches = (stamp, archiveMtimeMs) => !!stamp && Number.isFinite(stamp.archiveMtimeMs) && stamp.archiveMtimeMs === archiveMtimeMs;
 
 export const buildEnv = (base, config = {}) => {
   const env = { ...base, ...config };
@@ -80,16 +92,23 @@ if (mode === 'build') {
   const env = buildEnv(process.env, existsSync(configFile) ? parseEnv(readFileSync(configFile, 'utf8')) : {});
   if (!existsSync(join(env.CARGO_HOME, 'bin/rustup'))) throw new Error(`rustup 없음: ${env.CARGO_HOME}/bin — RUSTUP_HOME/CARGO_HOME을 지정하세요`);
   const buildNumber = process.argv[3]; // 같은 버전을 다시 올릴 때(예: 2) — TestFlight는 빌드 번호가 달라야 받는다
+  const pbx = join(apple, 'argo-messenger.xcodeproj/project.pbxproj'); const team = JSON.parse(readFileSync(join(app, 'src-tauri/tauri.ios.conf.json'), 'utf8')).bundle.iOS.developmentTeam;
+  const before = readFileSync(pbx, 'utf8'); const after = ensureTeam(before, team); if (after !== before) writeFileSync(pbx, after);
+  try { unlinkSync(STAMP); } catch { /* 없으면 그만 */ }
   run('npm', ['run', 'mobile:ios:build', '--', '--export-method', 'app-store-connect', '--target', 'aarch64', '--ci', ...(buildNumber ? ['--build-number', String(buildNumber)] : [])], env);
   gateOrDie('build');
+  writeFileSync(STAMP, JSON.stringify({ archiveMtimeMs: statSync(ARCHIVE).mtimeMs, buildNumber: buildNumber ?? null, at: new Date().toISOString() }));
 } else if (mode === 'upload') {
   gateOrDie('upload');
-  const archive = join(apple, 'build/argo-messenger_iOS.xcarchive');
+  const archive = ARCHIVE; const stampPath = STAMP;
   if (!existsSync(archive)) throw new Error(`아카이브 없음: ${archive} — 먼저 build`);
+  let stamp = null; try { stamp = JSON.parse(readFileSync(stampPath, 'utf8')); } catch { /* 도장 없음 */ }
+  if (!stampMatches(stamp, statSync(archive).mtimeMs)) { console.error('[ios-store] 이 아카이브는 방금 성공한 build의 것이 아닙니다(도장 없음·불일치) — 옛 아카이브가 올라가는 것을 막습니다. 먼저 build.'); process.exit(4); }
   const team = JSON.parse(readFileSync(join(app, 'src-tauri/tauri.ios.conf.json'), 'utf8')).bundle.iOS.developmentTeam;
   const plist = join(mkdtempSync(join(tmpdir(), 'ios-store-')), 'upload.plist');
   writeFileSync(plist, uploadPlist(team));
   run('xcodebuild', ['-exportArchive', '-archivePath', archive, '-exportOptionsPlist', plist, '-exportPath', join(apple, 'build/upload'), '-allowProvisioningUpdates'], process.env);
+  try { unlinkSync(stampPath); } catch { /* 이미 없음 */ } // 같은 아카이브를 두 번 올리지 않는다
 } else if (mode === 'check') {
   gateOrDie('check');
 } else if (mode !== undefined) {
