@@ -91,12 +91,14 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
 // 홈에서도 길게 누르기 = 점 세 개 메뉴(유건 2026-09-15). 레일 글자는 길게 눌러도 선택되지 않는다(user-select: none)
 {
   await tab('홈|home'); await settle();
-  const sel = await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-railbody')).userSelect || getComputedStyle(document.querySelector('.msgr-railbody')).webkitUserSelect); ok('레일 본문 글자 선택 차단', sel === 'none', sel);
+  const sel = await p.evaluate(() => ['.msgr-railbody', '.msgr-tabbar', '.msgr-top'].map((q) => document.querySelector(q)).filter(Boolean).map((el) => getComputedStyle(el).userSelect)); ok('폰 화면 글자 선택 차단(레일·탭 바·상단)', sel.length >= 2 && sel.every((v) => v === 'none'), sel);
+  const selIn = await p.evaluate(() => { const el = document.querySelector('input, textarea'); return el ? getComputedStyle(el).userSelect : 'text'; }); ok('입력칸은 선택 가능', selIn === 'text' || selIn === 'auto', selIn);
   const row = p.locator('[data-sec="channels"] .msgr-railrow').first(); const bx = await row.boundingBox(); const cdp = await p.context().newCDPSession(p);
   const nameBox = await row.locator('.name').boundingBox();
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: nameBox.x + 8, y: nameBox.y + nameBox.height / 2 }] }); await p.waitForTimeout(600);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(300);
   const menu = await p.locator('.msgr-ctxmenu [role=menuitem]').allInnerTexts(); ok('홈 채널 행을 글자 위에서 길게 누르면 메뉴(손 떼도 유지)', menu.length > 0 && menu.some((m) => /즐겨찾기/.test(m)), menu);
+  const menuSel = await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-ctxmenu')).userSelect); ok('손가락 밑에 뜬 메뉴(body 포털)도 글자 선택 차단 — 유건 캡처(알림 끄기 선택됨)', menuSel === 'none', menuSel);
   const selected = await p.evaluate(() => String(getSelection()).length); ok('길게 누른 뒤 글자가 선택되지 않았다', selected === 0, selected);
   const dots = await row.locator('.more').evaluate((el) => { el.click(); return true; }).catch(() => false);
   await p.waitForTimeout(200); const menu2 = await p.locator('.msgr-ctxmenu [role=menuitem]').allInnerTexts(); ok('점 세 개 메뉴와 같은 항목', dots && JSON.stringify(menu2) === JSON.stringify(menu), { menu, menu2 });

@@ -1159,7 +1159,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-dm .item .snip { font-size: 12.5px; line-height: 1.3; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .msgr-phone.phone-dm .item.unread .snip { color: var(--fg-2); }
   .msgr-phone.phone-dm .item.unread .dmline .when { color: var(--fg); font-weight: 600; } /* --mark(형광)는 종이 배경에서 대비 1.09:1 — 글자색으로 쓰지 않는다(검수 M-1) */
-  .msgr-phone .msgr-railbody { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } /* 길게 누르기 메뉴 — 글자 위에서 눌러도 선택·콜아웃이 안 뜬다(홈 포함, 유건 2026-09-15) */
+  /* 폰에서는 글자 선택·iOS 복사 막대(Copy·Look Up)를 끈다 — 길게 누르기가 앱 메뉴를 여는 제스처이므로. 메뉴는 body 포털이라 셸 밖 → body:has로 건다.
+     유건 캡처 2026-09-15: 손가락 밑에 뜬 메뉴 항목("알림 끄기")이 선택되며 iOS 막대가 겹쳐 떴다. 입력칸만 예외. 메시지 본문은 위(842)에서 이미 끔 */
+  body:has(.msgr-shell.msgr-phone) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  body:has(.msgr-shell.msgr-phone) :is(input, textarea, [contenteditable]) { -webkit-user-select: text; user-select: text; }
   .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek, .msgr-dmpeek { top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: auto; max-width: none; max-height: 60vh; border-radius: 20px 20px 0 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; } /* 아래에서 올라오는 시트 — 폰 크루 시트(위 고정·전체 높이) 규칙보다 우선 */
   .msgr-dmpeek .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
   .msgr-dmpeek .head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
