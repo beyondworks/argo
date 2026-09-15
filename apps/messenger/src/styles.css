@@ -1125,6 +1125,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-dm .msgr-dmfilter button { flex: 1 1 0; min-width: 0; justify-content: center; height: 32px; padding: 0 6px; font-size: 12.5px; white-space: nowrap; }
   .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .item { height: auto; min-height: 58px; padding: 8px 10px; }
   .msgr-phone.phone-dm .item .msgr-av { width: 40px; height: 40px; }
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .msgr-railrow .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .msgr-railrow .item { padding-right: 10px; } /* 점 세 개 자리 회수 */
   .msgr-phone.phone-dm .item .dmtext { display: grid; gap: 2px; flex: 1; min-width: 0; text-align: left; }
   .msgr-phone.phone-dm .item .dmline { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .msgr-phone.phone-dm .item .dmline .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }

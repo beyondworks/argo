@@ -46,6 +46,7 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
   ok('행마다 마지막 글 한 줄과 시각', rows.length >= 2 && rows.every((r) => r.snip.length > 0 && /\d/.test(r.when)), rows);
   ok('내 글은 "나: " 접두', rows.some((r) => r.snip.startsWith('나: ')), rows);
   const filt = p2.locator('.msgr-dmfilter [role=radio]'); ok('필터 4개', (await filt.count()) === 4);
+  ok('DM 탭 행에는 점 세 개 버튼이 없다(길게 누르기가 대신)', (await p2.locator('[data-sec="dms"] .msgr-railrow .more').count()) === 0);
   const fBox = await p2.locator('.msgr-dmfilter').boundingBox(); const lBox = await p2.locator('[data-sec="dms"]').boundingBox(); ok('필터가 목록 위에·화면 안', fBox && lBox && fBox.y < lBox.y && fBox.x + fBox.width <= 390, { fBox, lBox });
   await filt.nth(2).click(); await p2.waitForTimeout(200); ok('안읽음 필터: 안읽은 DM만(픽스처는 0 또는 unread 행)', await p2.evaluate(() => [...document.querySelectorAll('[data-sec="dms"] .item')].every((el) => el.classList.contains('unread'))));
   await filt.nth(0).click(); await p2.waitForTimeout(200);

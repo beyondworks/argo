@@ -43,6 +43,7 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /select\('id, channel_id, body, author_user_id, created_at'\)\.in\('id', ids\)/, '한 줄 미리보기는 마지막 글 id로 한 번에');
   assert.match(src, /document\.addEventListener\('click', swallow, \{ capture: true, once: true \}\)/, '길게 누른 뒤 손 뗄 때의 click을 삼킨다(메뉴가 닫히거나 대화가 열리던 것)');
   assert.match(src, /function DmPeekSheet\(/, '미리보기 시트');
+  assert.match(src, /\{!dmTab && <button type="button" className="more"/, 'DM 탭에는 점 세 개 없음(길게 누르기 메뉴로 대체)');
   assert.match(src, /if \(payload\?\.channel_id && dmIdsRef\.current\.has\(payload\.channel_id\)\) setLastAt\(\(m\) => \(\{ \.\.\.m, \[payload\.channel_id\]: Date\.now\(\) \}\)\);/, '방송으로 최근 시각 갱신(DM만)');
   assert.match(src, /supabase\.rpc\('msgr_dm_latest', \{ org: orgId \}\)/, '채널당 1행 RPC(500건 상한·created_at 정렬 없음)');
   assert.match(src, /\}, \[orgId, dmIdsKey, isPhone, resumeEpoch\]\);/, '재연결·조직 전환·DM 집합 변화 때 재조회');
