@@ -30,7 +30,7 @@ import { routeMessage, crewStatusReply, approvalWho, defaultCrew, resolveTelegra
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
 import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
 const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
-import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrNotifyPush, msgrEventOrigin, runMessengerContinuation } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
+import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrNotifyPush, msgrEventOrigin, runMessengerContinuation, autoEnableMsgr } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
 import { normalizeMsgrNotify, msgrNotifyWants } from './msgr-notify.mjs'; // 회사 단위 알림 목적지(원점 없는 이벤트)
 import { deliverMessengerNotifications } from './gateway/msgr-notifications.mjs';
 
@@ -1098,6 +1098,8 @@ export function ensureGateway() {
       cfgMap[gwCfgKey(c.id, 'slack')] = all.slack;
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) cfgMap[gwCfgKey(c.id, tgAgentQkey(slug))] = bot;
       const qkeys = new Set(['telegram', 'slack', ...Object.keys(all.telegram.agents ?? {}).map(tgAgentQkey)]);
+      // 팀 메신저 자동 켜기 — 조직 멤버인데 꺼져 있으면 켠다(10분 스로틀, 세션 있을 때만). 같은 sync에서 아래 큐·브리지가 바로 시작되게 c.msgr을 갱신
+      if (!c.msgr?.enabled && await autoEnableMsgr(c.id, { company: c }).catch((e) => { console.error('[argo] msgr 자동 켜기 실패:', e.message); return false; })) c.msgr = { ...(c.msgr ?? {}), enabled: true };
       if (c.msgr?.enabled) qkeys.add(MSGR_KEY); // 팀 메신저 — company.json.msgr.enabled(조직에 크루 등록 시 켜짐)
       // 설정이 사라진 잔여 큐 디렉터리도 대상 — 핸들러가 cfg 부재 잡을 폐기해 스스로 청소된다
       try {

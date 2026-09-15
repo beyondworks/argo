@@ -597,7 +597,7 @@ export const DICT = {
   'org.agents.discovery.failed': ['이 컴퓨터의 에이전트 목록을 가져오지 못했습니다.', 'Could not discover agents on this computer.'],
   'org.agents': ['외부 에이전트', 'External agents'],
   'org.agents.desc': ['헤르메스·오픈클로 같은 외부 에이전트를 텔레그램·슬랙에 붙이듯 이 메신저에 봇으로 연결합니다. 봇은 회사 에이전트 등급이고 멘션·DM·자기 글의 답글에만 반응합니다.', 'Connect external agents such as Hermes or OpenClaw as bots, the way you would connect them to Telegram or Slack. Bots count as company agents and only react to mentions, DMs and replies to their own posts.'],
-  'org.agents.none': ['연결된 에이전트 없음', 'No agents connected'],
+  'org.agents.none': ['연결된 에이전트 없음. 같은 계정으로 로그인한 Argo 앱을 켜 두면 그 컴퓨터의 크루가 자동으로 파견됩니다.', 'No agents connected. Keep the Argo app running, signed in with the same account, and its crews are dispatched here automatically.'],
   'org.agents.add.hermes': ['헤르메스 연결하기', 'Connect Hermes'],
   'org.agents.add.openclaw': ['오픈클로 연결하기', 'Connect OpenClaw'],
   'org.agents.add.custom': ['다른 에이전트', 'Other agent'],

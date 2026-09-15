@@ -23,7 +23,7 @@ import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
-import { paths, loadCompany } from '../workspace.mjs';
+import { paths, loadCompany, updateCompany } from '../workspace.mjs';
 import { enqueueJob, DEFER } from './queue.mjs';
 import { pick } from './protocol.mjs';
 import { beatGateway } from './persist.mjs';
@@ -336,6 +336,28 @@ export async function sessionClient() {
     cached = { key, client, db: makeDb(client), uid: sess.user.id };
   }
   return cached;
+}
+
+/** 메신저 자동 켜기(실사고 2026-09-15): 브리지는 company.json.msgr.enabled가 켜져야 돌고, 그 값은 등록이 하나라도 있어야 켜졌다(syncEnabled).
+    9/8에 아르고 설정의 수동 "등록" 버튼을 없애자 새 계정은 첫 등록을 만들 길이 없어져 크루가 영영 안 올라갔다 — 라이브: 9/11 이후 가입한
+    조직 멤버 5명 전원 크루 0(데스크톱을 켠 흔적이 있어도). 꺼진 회사는 10분에 한 번 "이 계정이 조직 멤버인가"(user_id 색인 한 건)를 묻고
+    멤버면 켠다 → 같은 sync에서 브리지가 시작되고 mirrorInventory가 크루 전부를 파견한다. 조직 회사(nodeOrgId)·소유자 불일치 회사는 대상 밖.
+    조회 시각은 세션이 있을 때만 찍는다(로그아웃 상태에서 10분 잠그지 않는다). */
+export const MSGR_AUTO_ENABLE_PROBE_MS = 10 * 60_000;
+const autoEnableProbes = new Map(); // wsId → 마지막 멤버십 조회 시각
+export const _resetAutoEnableForTest = () => autoEnableProbes.clear();
+export async function autoEnableMsgr(wsId, { company, session = sessionClient, update = updateCompany, now = Date.now, probes = autoEnableProbes, log = console.error } = {}) {
+  if (!company || company.msgr?.enabled || company.msgr?.nodeOrgId) return false;
+  if (now() - (probes.get(wsId) ?? 0) < MSGR_AUTO_ENABLE_PROBE_MS) return false;
+  const c = await session().catch(() => null);
+  if (!c) return false;
+  probes.set(wsId, now());
+  if (company.ownerId && company.ownerId !== c.uid) return false; // 회사 소유자 게이트(2026-09-11 실사고와 같은 규칙) — 남의 회사 크루를 내 조직에 올리지 않는다
+  let orgs;
+  try { orgs = await c.db.myOrgIds(c.uid); } catch (e) { log('[argo] msgr 자동 켜기 — 조직 멤버십 조회 실패:', e.message); return false; }
+  if (!orgs.length) return false;
+  await update(wsId, { msgr: { ...(company.msgr ?? {}), enabled: true } });
+  return true;
 }
 
 /* ─── drain — 멘션·DM을 큐에 적재하고 커서 전진 + 결재 결정 반영. 순수 의존은 db·uid·enqueue(테스트 주입). ─── */
