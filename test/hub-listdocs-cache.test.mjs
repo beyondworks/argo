@@ -78,9 +78,11 @@ test('listDocs — 무효화 프로토콜(invalidatePath)·회사 폐기(dropDoc
   dropDocCache(ws);
   const loading = listDocs(ws); dropDocCache(ws); await loading;
   assert.equal(docCache.has(ws), false, '진행 중이던 로드가 폐기된 캐시를 되살리지 않는다');
-  const orig = await listDocs(ws); assert.ok(orig.length >= 2);
+  // 순회 중 삭제: 파일 300개를 깔아 스캔 창을 넓히고 첫 묶음(64) 뒤쪽 파일을 지운다 — stat 가드를 빼면 대개 ENOENT(실측 3회 중 2회 red — 삭제가 readdir보다 먼저 떨어지면 green; 2개짜리 회사였을 땐 12회 중 8회 green).
+  // readFile 가드(stat↔readFile 사이 더 좁은 창)는 스텁 없이 결정적으로 못 잠근다 — 가드는 두되 테스트로는 안 잠근다.
+  await Promise.all(Array.from({ length: 300 }, (_, i) => writeFile(f(`bulk-${String(i).padStart(3, '0')}.md`), `# 벌크 ${i}\n본문`)));
   dropDocCache(ws);
-  const p2 = listDocs(ws); await rmFile(f('b.md')); const survived = await p2; // 삭제가 순회와 겹쳐도 예외 없이 나머지 반환(경합이라 삭제분 포함 여부는 비결정)
-  assert.ok(survived.length >= orig.length - 1 && survived.every((d) => d.title !== undefined));
-  assert.deepEqual((await listDocs(ws)).filter((d) => !d.guide && d.dir === 'notes').map((d) => d.title), ['하나']);
+  const p2 = listDocs(ws); await rmFile(f('bulk-200.md')); await rmFile(f('b.md')); const survived = await p2;
+  assert.ok(survived.length >= 300 && survived.every((d) => d.title !== undefined), '순회 중 삭제가 겹쳐도 예외 없이 나머지 반환');
+  assert.deepEqual((await listDocs(ws)).filter((d) => !d.guide && d.dir === 'notes' && !d.title.startsWith('벌크')).map((d) => d.title), ['하나']);
 });
