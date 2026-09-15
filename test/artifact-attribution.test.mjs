@@ -36,17 +36,27 @@ test('장부: 겹침 판정은 시간 구간 교집합 — 먼저 끝난 턴도 
   assert.deepEqual([...book.get('ws')].map((e) => e.slug).sort(), ['c', 'd'], '30분 지난 끝난 턴은 청소, 진행 중(C)은 유지');
   closeTurnLedger(C, { now }); closeTurnLedger(C, { now }); assert.equal(C.endedAt, t, 'close는 멱등(첫 시각 유지)');
 });
-test('장부: 같은 크루의 프레임(재시도)은 겹침이 아니고, 6시간 넘게 열린 항목은 죽은 턴으로 제외·청소된다(검수 HIGH-1·2)', () => {
-  const book = new Map(); let t = 0; const now = () => t;
-  const outer = openTurnLedger('ws', 'a', { now, book }); outer.observed.add('projects/x.md');
-  t = 1; const inner = openTurnLedger('ws', 'a', { now, book });
-  assert.deepEqual(overlappingTurns('ws', inner, { now, book }), [], '같은 크루 바깥 프레임은 겹침 아님 → 바깥 관측이 foreign이 되지 않는다');
+test('장부: 같은 논리 턴의 프레임(재시도 — 같은 control 객체)은 겹침이 아니지만, 같은 크루의 동시 턴(다른 control)은 겹침이다(검수 HIGH-1·재검수 MED-1)', () => {
+  const book = new Map(); let t = 0; const now = () => t; const control = {};
+  const outer = openTurnLedger('ws', 'a', { now, book, frame: control }); outer.observed.add('projects/x.md');
+  t = 1; const inner = openTurnLedger('ws', 'a', { now, book, frame: control });
+  assert.deepEqual(overlappingTurns('ws', inner, { now, book }), [], '같은 control = 재시도 프레임 → 겹침 아님, 바깥 관측이 foreign이 되지 않는다');
+  const routine = openTurnLedger('ws', 'a', { now, book }); // 같은 크루의 루틴·쪽지·DM 동시 턴 — 새 control
+  assert.deepEqual(overlappingTurns('ws', inner, { now, book }), [routine], '같은 크루라도 다른 프레임은 겹침');
   const other = openTurnLedger('ws', 'b', { now, book });
-  assert.deepEqual(overlappingTurns('ws', inner, { now, book }).map((e) => e.slug), ['b']);
-  t = 7 * 3_600_000; const late = openTurnLedger('ws', 'c', { now, book });
-  assert.deepEqual(overlappingTurns('ws', late, { now, book }), [], '닫히지 않은 채 6시간 넘은 항목은 죽은 턴');
-  assert.deepEqual([...book.get('ws')].map((e) => e.slug), ['c'], '열 때 죽은 항목 청소');
+  assert.deepEqual(overlappingTurns('ws', inner, { now, book }).map((e) => e.slug).sort(), ['a', 'b']);
+  assert.deepEqual(overlappingTurns('ws', null, { now, book }), [], 'entry 없음 = 겹침 없음(턴을 죽이지 않는다 — 재검수 L-2)');
   void other;
+});
+test('장부: 6시간 넘게 열린 항목은 죽은 턴 — 열 때 청소되고, 청소 없이 남아 있어도 겹침에서 제외된다(검수 HIGH-2·재검수 L-1)', () => {
+  const book = new Map(); let t = 0; const now = () => t;
+  openTurnLedger('ws', 'stale', { now, book });
+  t = 7 * 3_600_000;
+  const probe = { slug: 'p', startedAt: t, endedAt: null, observed: new Set() }; probe.frame = probe; book.get('ws').add(probe); // 청소를 거치지 않은 직접 주입
+  assert.deepEqual(overlappingTurns('ws', probe, { now, book }), [], '필터 단독으로 죽은 항목 제외');
+  const late = openTurnLedger('ws', 'c', { now, book });
+  assert.deepEqual([...book.get('ws')].map((e) => e.slug).sort(), ['c', 'p'], '열 때 죽은 항목 청소, 살아 있는 항목 유지');
+  assert.deepEqual(overlappingTurns('ws', late, { now, book }).map((e) => e.slug), ['p']);
 });
 test('행동: 임시 vault에서 두 턴이 겹쳐 돌면 각자 파일만 — SDK 턴(도구 관측)과 CLI 턴(답변 경로 언급) 둘 다', async () => {
   const vault = await mkdtemp(join(tmpdir(), 'argo-attrib-'));
@@ -72,7 +82,7 @@ test('행동: 임시 vault에서 두 턴이 겹쳐 돌면 각자 파일만 — S
 test('배선 핀: chat.mjs — 장부는 스냅샷과 함께 열리고, artDiff는 두 반환부에서 답변을 받으며, 두 finally가 장부를 닫고, SDK Write 관측이 장부에 실린다 + 프롬프트 규칙 ko/en', async () => {
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(src, /let ledgerEntry = null; const ledgerStartedAt = Date\.now\(\);/, '항목 변수는 함수 스코프, 시작 시각은 스냅샷 시각');
-  assert.equal((src.match(/ledgerEntry = openTurnLedger\(wsId, agentSlug, \{ startedAt: ledgerStartedAt \}\);/g) ?? []).length, 2, 'CLI·SDK 두 try 안에서 연다(준비 단계가 던지면 항목이 안 생긴다 — HIGH-2)');
+  assert.equal((src.match(/ledgerEntry = openTurnLedger\(wsId, agentSlug, \{ startedAt: ledgerStartedAt, frame: __turnControl \?\? null \}\);/g) ?? []).length, 2, 'CLI·SDK 두 try 안에서 연다(준비 단계가 던지면 항목이 안 생긴다 — HIGH-2)');
   for (const m of src.matchAll(/ledgerEntry = openTurnLedger\(/g)) assert.match(src.slice(Math.max(0, m.index - 80), m.index), /try \{\n\s*$/, '열기 직전 줄이 try {');
   assert.equal((src.match(/await artDiff\(reply\)/g) ?? []).length, 2, 'CLI·SDK 두 반환부 모두 답변을 넘긴다');
   assert.equal((src.match(/closeTurnLedger\(ledgerEntry\)/g) ?? []).length, 3, 'artDiff 안 1 + finally 2');

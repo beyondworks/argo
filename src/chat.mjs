@@ -1159,7 +1159,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort(), __turnControl);
     let browserBridge = null;
     try {
-      ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt });
+      ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt, frame: __turnControl ?? null }); // frame — 재시도 재귀만 같은 control(turn-abort)
       const { messages } = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
@@ -1531,7 +1531,7 @@ ${lang === 'en'
   let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
   let thought = ''; // 모델의 사고(thinking 블록) 누적 — 상태 파일 thought(뒤 1500자)
   try {
-  ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt });
+  ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt, frame: __turnControl ?? null }); // frame — 재시도 재귀만 같은 control(turn-abort)
   // sdkEnvFor(자격 게이트 포함)·query 구성은 try **안**이어야 한다 — 게이트의 authExpired가
   // try 밖에서 터지면 아래 catch의 자가치유(AUTH_ERR_RE)·사용자 언어 번역이 전부 미발동하고
   // 원문('grok token expired…')이 그대로 표면화된다(격리 서버 실측 2026-08-31).

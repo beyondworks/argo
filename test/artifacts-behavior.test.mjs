@@ -28,6 +28,7 @@ for a in "$@"; do
 done
 mkdir -p "$PWD/vault/projects/20260730_보고"
 printf 'XLSXDATA' > "$PWD/vault/projects/20260730_보고/분기표.xlsx"
+if [ -f "$PWD/.no-path" ]; then [ -n "$OUT" ] && printf '분기 실적표를 만들었습니다.' > "$OUT"; exit 0; fi
 [ -n "$OUT" ] && printf '표를 vault/projects/20260730_보고/분기표.xlsx 로 만들었습니다.' > "$OUT"
 exit 0
 `);
@@ -74,8 +75,9 @@ test('크래시 재시도 턴(같은 러너 1회 재시도)도 산출물 칩을 
   await writeFile(join(ROOT, WS, 'agents', 'crew-a.md'), '---\nname: 크루A\nrunner: codex\n---\n\n전문가.\n');
   await writeFile(join(ROOT, WS, '.secrets.json'), JSON.stringify({ runners: { codex: { type: 'apikey', value: 'sk-fake-not-a-real-key' } } }));
   await writeFile(join(ROOT, WS, '.crash-once'), '1'); // 1회차 SIGSEGV → chat.mjs가 catch 안에서 chat()을 다시 부른다(바깥 장부 항목이 열린 채)
+  await writeFile(join(ROOT, WS, '.no-path'), '1');    // 답변에 경로를 적지 않는다 — 경로 언급 귀속이 판정을 가리지 않게(재검수 MED-2)
   const r = await chat(WS, 'crew-a', '분기 실적표를 엑셀로 만들어줘');
-  assert.match(String(r.reply), /분기표\.xlsx/);
+  assert.doesNotMatch(String(r.reply), /projects\//, '하네스 전제: 답변에 경로 없음');
   assert.deepEqual(r.artifacts, ['projects/20260730_보고/분기표.xlsx'], '재시도 턴이 자기 바깥 프레임을 "다른 턴"으로 보면 여기가 []이 된다');
 });
 test('닫히지 못한 장부 항목(6시간 넘게 진행 중)과 같은 크루의 열린 항목은 다음 턴의 칩을 지우지 않는다(검수 HIGH-2)',
@@ -85,12 +87,13 @@ test('닫히지 못한 장부 항목(6시간 넘게 진행 중)과 같은 크루
   await mkws(WS, {});
   await writeFile(join(ROOT, WS, 'agents', 'crew-a.md'), '---\nname: 크루A\nrunner: codex\n---\n\n전문가.\n');
   await writeFile(join(ROOT, WS, '.secrets.json'), JSON.stringify({ runners: { codex: { type: 'apikey', value: 'sk-fake-not-a-real-key' } } }));
+  await writeFile(join(ROOT, WS, '.no-path'), '1'); // 답변에 경로 없음 — 경로 언급 귀속이 판정을 가리지 않게(재검수 MED-2)
   openTurnLedger(WS, 'ghost', { startedAt: Date.now() - 7 * 3_600_000 }); // 죽은 턴(닫히지 않음)
-  openTurnLedger(WS, 'crew-a');                                            // 같은 크루의 열린 프레임(재시도 상황)
   const r = await chat(WS, 'crew-a', '분기 실적표를 엑셀로 만들어줘');
-  assert.deepEqual(r.artifacts, ['projects/20260730_보고/분기표.xlsx']);
-  // 대조: 다른 크루의 살아 있는 열린 항목은 설계대로 겹침 → 답변에 경로를 적은 이 파일은 그래도 남는다(경로 언급 귀속)
+  assert.doesNotMatch(String(r.reply), /projects\//);
+  assert.deepEqual(r.artifacts, ['projects/20260730_보고/분기표.xlsx'], '죽은 항목이 겹침으로 잡히면 여기가 []');
+  // 대조: 다른 크루의 살아 있는 열린 항목은 설계대로 겹침 → 경로를 안 적은 CLI 산출물은 빠진다(오귀속보다 누락 — 알려진 한계 M-3)
   openTurnLedger(WS, 'other-live');
   const r2 = await chat(WS, 'crew-a', '분기 실적표를 엑셀로 만들어줘');
-  assert.deepEqual(r2.artifacts, ['projects/20260730_보고/분기표.xlsx'], '가짜 codex 답변이 경로를 적으므로 겹침 중에도 귀속된다');
+  assert.deepEqual(r2.artifacts, [], '겹침 중 관측·언급 없는 파일은 귀속되지 않는다');
 });
