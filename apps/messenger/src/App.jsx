@@ -336,6 +336,7 @@ function Shell({ session }) {
   const { signOut, signingOut } = useContext(SignOutContext);
   const { t, lang } = useT();
   const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
+  const isPhoneRef = useRef(isPhone); isPhoneRef.current = isPhone; // 구독 핸들러(deps에 isPhone 없음)가 최신 값을 보게(재검수 L-2)
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
@@ -580,7 +581,7 @@ function Shell({ session }) {
       ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
       registerDispose(remove);
       ch
-        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (payload?.channel_id && payload.id && isPhone && dmIdsRef.current.has(payload.channel_id)) supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').eq('id', payload.id).is('deleted_at', null).maybeSingle().then(({ data: r }) => { if (r) setLastMsg((m) => ({ ...m, [r.channel_id]: { body: String(r.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) } })); }).catch(() => {}); /* 방송엔 본문이 없다(서버 트리거는 id·채널·멘션만) → 그 글 1건을 조회해 미리보기 갱신(재검수 M-A) */ if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
+        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (payload?.channel_id && payload.id && isPhoneRef.current && dmIdsRef.current.has(payload.channel_id)) supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').eq('id', payload.id).is('deleted_at', null).maybeSingle().then(({ data: r }) => { if (r) setLastMsg((m) => (m[r.channel_id]?.at > Date.parse(r.created_at) ? m : { ...m, [r.channel_id]: { body: String(r.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) } })); }).catch(() => {}); /* 옛 글 응답이 늦게 오면 덮지 않는다(재검수 L-1) */ /* 방송엔 본문이 없다(서버 트리거는 id·채널·멘션만) → 그 글 1건을 조회해 미리보기 갱신(재검수 M-A) */ if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
         .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); }))
         .on('broadcast', { event: 'typing' }, active(({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() }))))
         .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() })))
