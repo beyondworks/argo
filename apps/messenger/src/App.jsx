@@ -375,11 +375,48 @@ function Shell({ session }) {
     return () => { deactivatePush(supabase, uid); off(); stopResume(); };
   }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
+  // 아이콘 배지 재동기화(유건 제보 2026-09-15: 다 읽어도 폰 배지가 남음) — 배지는 서버가 읽음 커서 변경 때만 푸시로 내려보내는데, 토큰이 바뀌거나(앱 재설치)
+  // 푸시를 놓치면 폰 숫자가 굳는다. 앱이 앞으로 올 때·알림함을 열거나 다 읽을 때 서버에 재계산·재전송을 요청한다(iOS 토큰 없는 사용자는 서버가 no-op). 3초 한 번.
+  const badgeSyncAt = useRef(0);
+  const resyncBadge = useCallback(() => { const now = Date.now(); if (now - badgeSyncAt.current < 3000) return; badgeSyncAt.current = now; supabase.rpc('msgr_push_badge_resync').then(() => {}, () => {}); }, []);
+  useEffect(() => { if (!uid) return; resyncBadge(); const onVis = () => { if (document.visibilityState === 'visible') resyncBadge(); }; document.addEventListener('visibilitychange', onVis); return () => document.removeEventListener('visibilitychange', onVis); }, [uid, resyncBadge]); // 콜드 스타트(푸시 탭 포함)에도 1회 — 검수 M-2
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState(() => (isPhone ? 'home' : 'chat'));
   useEffect(() => { pushDiag('shell', `page=${page} chId=${chId ?? '-'} org=${orgId ?? '-'}`); }, [page, chId, orgId]); // 진단(설정 → 진단) — 화면 이동만 기록 // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
-  const openNav = () => { if (isPhone) setPage('home'); else setRail(true); }; // 폰: 홈 페이지 / 데스크톱: 레일 서랍
-  const edgeBack = useEdgeSwipeBack(() => setPage('home'), isPhone && page !== 'home' && page !== 'dm'); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(홈)
+  // ── 폰 화면 스택 = 브라우저 history(유건 제보 2026-09-15: DM 탭에서 대화를 열고 뒤로 가면 홈으로 갔다) ──
+  // 루트(홈·DM·알림함·기억 탭)는 replaceState, 그 위에 여는 화면(대화·설정·검색)은 pushState. 상단 뒤로 버튼·iOS 가장자리 스와이프·
+  // Android 하드웨어 뒤로(WryActivity가 webView.goBack → popstate)가 전부 같은 스택을 타서 "그 전 화면"으로 돌아간다. 데스크톱은 무관.
+  const ROOT_PAGES = useMemo(() => new Set(['home', 'dm', 'inbox', 'activity']), []);
+  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
+  useEffect(() => { // popstate 구독은 폰일 때 한 번. 루트 항목 시딩은 state가 없을 때만(폭 전환으로 다시 돌아도 깊이를 지우지 않는다 — 검수 M-4)
+    if (!isPhone) return;
+    const onPop = (e) => {
+      const to = navCollapse.current;
+      if (to) { navCollapse.current = null; navPopping.current = false; try { history.replaceState({ page: to, chId: null, depth: 0 }, ''); } catch { /* */ } return; } // 접기 완료 — page는 이미 루트
+      const st = e.state; if (!st?.page) return; navPopping.current = true; if (st.chId) setChId(st.chId); setPage(st.page);
+    };
+    window.addEventListener('popstate', onPop);
+    try { if (!history.state?.page) history.replaceState({ page, chId, depth: 0 }, ''); } catch { /* 일부 웹뷰는 replaceState를 막는다 — 스택 없이 홈으로 */ }
+    return () => window.removeEventListener('popstate', onPop);
+  }, [isPhone]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!isPhone) return;
+    const same = navPrev.current === page; navPrev.current = page;
+    if (navPopping.current) { navPopping.current = false; return; }
+    // depth = 우리 스택 깊이(루트 0). history.length로 판단하면 앱 밖 이전 문서(빈 탭·로그인 왕복)로 나가 버린다(실측 2026-09-15).
+    const depth = history.state?.depth ?? 0;
+    try {
+      if (ROOT_PAGES.has(page)) {
+        if (depth > 0 && !same) { navCollapse.current = page; navPopping.current = true; history.go(-depth); setTimeout(() => { if (navCollapse.current) { navCollapse.current = null; navPopping.current = false; } }, 500); return; } // 루트 탭 = 스택 접기(안드로이드 하드웨어 뒤로가 옛 대화로 내려가지 않게 — 검수 M-3). go가 no-op이면 가드를 500ms 뒤 푼다(N-5)
+        history.replaceState({ page, chId, depth: 0 }, '');
+      } else if (same) history.replaceState({ page, chId, depth }, ''); // 같은 화면 안의 전환(대화에서 다른 채널) — 스택을 쌓지 않는다: 뒤로는 루트로(슬랙과 같은 얕은 스택, 의도)
+      else history.pushState({ page, chId, depth: depth + 1 }, '');
+    } catch { /* 위와 같음 */ }
+  }, [page, chId, isPhone, ROOT_PAGES]);
+  const goBack = useCallback(() => { if (isPhone && (history.state?.depth ?? 0) > 0) history.back(); else setPage('home'); }, [isPhone]);
+  const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
+  const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
+  const edgeBack = useEdgeSwipeBack(goBack, isPhone && page !== 'home' && page !== 'dm'); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(그 전 화면)
   const [orgMenu, setOrgMenu] = useState(false);
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
@@ -428,7 +465,7 @@ function Shell({ session }) {
     const code = new URLSearchParams(location.search).get('invite');
     (async () => {
       try {
-        if (code) { await q(supabase.rpc('msgr_accept_invite', { code })); history.replaceState(null, '', location.pathname); setNote(t('org.joined')); }
+        if (code) { await q(supabase.rpc('msgr_accept_invite', { code })); history.replaceState(history.state, '', location.pathname); setNote(t('org.joined')); }
         await loadOrgs();
       } catch (e) { setErr(/msgr_seat_limit/.test(e.message) ? t('seat.limit') : e.message); await loadOrgs().catch(() => {}); }
     })();
@@ -460,7 +497,7 @@ function Shell({ session }) {
   useEffect(() => { loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, loadOrg]);
   useEffect(() => {
     if (!isMobilePlatform) return;
-    return observeMobileResume(() => { setResumeEpoch((x) => x + 1); setTick((x) => x + 1); loadOrg(orgId).catch((e) => setErr(e.message)); });
+    return observeMobileResume(() => { setResumeEpoch((x) => x + 1); setTick((x) => x + 1); loadOrg(orgId).catch((e) => setErr(e.message)); resyncBadge(); });
   }, [orgId, loadOrg]);
   // 부록 M: 그 자리 파견 — available → active(허용 범위는 조직 정책 기본값, 잠금이면 서버 게이트가 맞춘다) → 채널 멤버(+소유자 동반). 채널 없이 부르면 조직에만 파견.
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
@@ -594,7 +631,7 @@ function Shell({ session }) {
   const nodeAlive = !!org?.service_user_id && nodeSeenAt > 0 && Date.now() - nodeSeenAt < AWAY_MS;
   const nodeLabel = !org?.service_user_id ? t('org.node.none') : !nodeSeenAt ? t('org.node.never') : t(nodeAlive ? 'org.node.on' : 'org.node.off', { when: fmtWhen(org.node_seen_at, lang) });
   const inboxUnread = org ? inbox.filter((it) => Date.parse(it.at) > (inboxSeen[org.id] ?? 0)).length : 0;
-  const openInbox = () => { if (!org) return; setInboxPrev(inboxSeen[org.id] ?? 0); const next = { ...inboxSeen, [org.id]: Date.now() }; setInboxSeen(next); writeInboxSeen(next); setPage('inbox'); setRail(false); };
+  const openInbox = () => { if (!org) return; setInboxPrev(inboxSeen[org.id] ?? 0); const next = { ...inboxSeen, [org.id]: Date.now() }; setInboxSeen(next); writeInboxSeen(next); setPage('inbox'); setRail(false); resyncBadge(); };
   const me = members.find((m) => m.user_id === uid);
   const isAdmin = org && ['owner', 'admin'].includes(org.role);
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
@@ -1033,13 +1070,13 @@ function Shell({ session }) {
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
         {page === 'activity' && org ? (
-          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
+          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
-          <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={() => setPage('chat')} onMenu={openNav} />
+          <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'inbox' && org ? (
-          <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={openNav} />
+          <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={openNav} />
+          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => rt.current?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} />
         ) : (
@@ -1050,7 +1087,7 @@ function Shell({ session }) {
       {isPhone && (page === 'home' || page === 'dm') && org && <button type="button" className="msgr-fab" onClick={() => setNewCh({ name: '', kind: 'public' })} aria-label={t('ch.new')}><I name="plus" size={22} /></button>}
       {isPhone && <PhoneTabs page={page} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={(k) => {
         if (k === 'search') { setPage('search'); return; }
-        if (k === 'inbox') setInboxKind('all');
+        if (k === 'inbox') { setInboxKind('all'); if (org) { openInbox(); return; } } // 벨 버튼과 같은 경로(읽음 시각 + 배지 재동기화 — 검수 M-1); 조직이 없으면 빈 알림함 화면만(N-4)
         setPage(k);
       }} />}
     </div>
