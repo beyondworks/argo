@@ -32,3 +32,20 @@ test('설정 핀: iOS·Android deep-link에 로그인 복귀 스킴이 비어 �
   const android = JSON.parse(rf(new URL('../src-tauri/tauri.android.conf.json', import.meta.url), 'utf8'));
   for (const conf of [ios, android]) assert.ok(conf.plugins['deep-link'].mobile.some((m) => (m.scheme ?? []).includes(LOGIN_SCHEME)), 'deep-link mobile scheme');
 });
+
+import { ensureTeam, stampMatches } from '../scripts/ios-store.mjs';
+test('빌드 전 팀 ID 주입: 없으면 두 구성에 넣고, 있으면 그대로, 다른 값이면 교체(실사고 2026-09-15 원복으로 팀 줄 소실)', () => {
+  const base = 'A\n\t\t\t\tVALID_ARCHS = arm64;\n\t\t\t};\nB\n\t\t\t\tVALID_ARCHS = arm64;\n\t\t\t};\n';
+  const once = ensureTeam(base, 'TEAM1');
+  assert.equal((once.match(/DEVELOPMENT_TEAM = "TEAM1";/g) || []).length, 2);
+  assert.equal(ensureTeam(once, 'TEAM1'), once, '멱등');
+  const swapped = ensureTeam(once, 'TEAM2');
+  assert.equal((swapped.match(/DEVELOPMENT_TEAM = "TEAM2";/g) || []).length, 2); assert.ok(!swapped.includes('TEAM1'));
+  assert.equal(ensureTeam(base, ''), base, '팀이 비면 손대지 않는다');
+});
+test('업로드 도장: 방금 build한 아카이브(mtime 일치)만 올린다(실사고 2026-09-15 옛 아카이브가 "0.1.26 (1)"로 업로드)', () => {
+  assert.equal(stampMatches(null, 10), false, '도장 없음');
+  assert.equal(stampMatches({ archiveMtimeMs: 9 }, 10), false, '다른 아카이브');
+  assert.equal(stampMatches({ archiveMtimeMs: 10 }, 10), true);
+  assert.equal(stampMatches({}, 10), false);
+});
