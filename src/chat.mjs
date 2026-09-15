@@ -202,7 +202,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - Read readable files for real before answering. If you read only part, say how far. If reading fails (corrupt, unsupported), report the cause and an alternative.
 - When asked for a deliverable (report, document, table…), create the actual file and give its path. Don't paste content into chat and call it "done".
 - When asked to modify an existing file, read the original and edit on top of it. Don't rewrite from scratch.
-- In your report, list as deliverables only the files you created or changed for this instruction. You may read and cite other crews' files as evidence, but never edit them unless the captain or that crew asked; hand such work over by delegation instead of touching their files.
+- In your report, list as deliverables only the files you created or changed for this instruction. You may read and cite other crews' files as evidence, but never edit them unless the captain or that crew asked; hand such work over by delegation instead of touching their files. (Shared company memory — vault/_index.md, notes/captain profile — stays a shared duty as described below.)
 
 ## Operating discipline — the fundamentals of a first-rate agent (every turn)
 - Lead with the result. The first sentence of your answer is the conclusion; reasons and process come after.
@@ -276,7 +276,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 - 읽을 수 있는 파일은 반드시 실제로 읽은 뒤 답하라. 일부만 읽었으면 어디까지 읽었는지 밝혀라. 읽기 실패(손상·미지원 형식)는 원인과 대안을 알려라.
 - 산출물(보고서·문서·표 등) 요청에는 실제 파일을 만들고 경로를 알려라. 채팅에 내용만 붙여 놓고 "만들었다"고 하지 마라.
 - 기존 파일 수정 요청은 원본을 읽고 그 위에 고쳐라. 처음부터 다시 쓰지 마라.
-- 보고의 산출물에는 이번 지시로 네가 만들거나 고친 파일만 적어라. 다른 크루의 파일은 읽고 근거로 인용할 수 있지만, 사장이나 그 크루의 요청 없이 고치지 마라. 그 크루가 할 일은 파일을 건드리지 말고 위임으로 넘겨라.
+- 보고의 산출물에는 이번 지시로 네가 만들거나 고친 파일만 적어라. 다른 크루의 파일은 읽고 근거로 인용할 수 있지만, 사장이나 그 크루의 요청 없이 고치지 마라. 그 크루가 할 일은 파일을 건드리지 말고 위임으로 넘겨라. (회사 공용 기억 — vault/_index.md·notes의 사장 프로필 — 갱신은 아래 설명대로 모두의 의무다.)
 
 ## 운영 규율 — 일류 에이전트의 기본기 (모든 턴에 적용)
 - 결과부터 보고하라. 답의 첫 문장이 결론·결과다. 근거와 과정은 그 뒤에 붙인다.
@@ -1132,8 +1132,10 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // compete는 diff 수집 제외 — 시안 N명이 같은 vault에 병렬로 쓰므로 diff가 전원 파일의 합집합이
   // 되어 오귀속된다(검수 HIGH 실측). 경쟁 턴은 tool_use 관측만(격리 불변식 유지 — compete.mjs 헤더).
   const artBefore = source === 'compete' ? null : await snapshotArtifacts(p.vault).catch(() => new Map());
-  // 턴 귀속 장부(제보 2026-09-15): 같은 회사에서 겹쳐 도는 다른 크루 턴의 파일이 이 턴 칩에 붙지 않게 — artifacts.mjs 귀속 절
-  const ledgerEntry = artBefore ? openTurnLedger(wsId, agentSlug) : null;
+  // 턴 귀속 장부(제보 2026-09-15): 같은 회사에서 겹쳐 도는 다른 크루 턴의 파일이 이 턴 칩에 붙지 않게 — artifacts.mjs 귀속 절.
+  // 항목은 모델 호출을 감싸는 두 try 안에서 연다(그 앞의 준비 단계가 던지면 항목이 안 생긴다 — 검수 HIGH-2). 시작 시각은 스냅샷 시각.
+  // compete도 등록한다(diff는 제외지만 다른 턴이 시안 파일을 흡수하지 않게 — 검수 M-1).
+  let ledgerEntry = null; const ledgerStartedAt = Date.now();
   // 턴 종료 시 diff — 상한+최신 우선(복원·임포트와 겹친 420칩 폭발 방어, 검수 HIGH).
   let artAfter = new Map(); // SDK 합집합 cap도 같은 mtime 기준을 쓰기 위한 공유(검수 LOW-2)
   const artDiff = async (reply = '') => {
@@ -1157,6 +1159,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort(), __turnControl);
     let browserBridge = null;
     try {
+      ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt });
       const { messages } = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
@@ -1528,6 +1531,7 @@ ${lang === 'en'
   let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
   let thought = ''; // 모델의 사고(thinking 블록) 누적 — 상태 파일 thought(뒤 1500자)
   try {
+  ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt });
   // sdkEnvFor(자격 게이트 포함)·query 구성은 try **안**이어야 한다 — 게이트의 authExpired가
   // try 밖에서 터지면 아래 catch의 자가치유(AUTH_ERR_RE)·사용자 언어 번역이 전부 미발동하고
   // 원문('grok token expired…')이 그대로 표면화된다(격리 서버 실측 2026-08-31).

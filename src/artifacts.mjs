@@ -57,25 +57,29 @@ export function capLatest(after, rels, cap = 12) {
    번들 사본이 둘이어도 하나(turn-abort와 같은 이유). 누구 것인지 모르는 파일(동시 CLI 턴이 만들고 경로도 안 적음)은 칩에서
    빠지지만 기억 화면에는 그대로 있다 — 오귀속보다 누락이 낫다. */
 const LEDGER_RETAIN_MS = 30 * 60_000; // 끝난 턴도 뒤에 끝나는 턴이 겹침을 판정할 수 있게 잠시 남긴다
+const LEDGER_STALE_MS = 6 * 3_600_000; // 이보다 오래 "진행 중"인 항목은 닫히지 못한 죽은 턴으로 본다(검수 HIGH-2: 열린 항목이 영구 오염하지 않게)
 const ledger = () => (globalThis.__argoTurnLedger ??= new Map()); // wsId → Set<entry>
-export function openTurnLedger(wsId, slug, { now = Date.now, book = ledger() } = {}) {
+const dead = (e, t) => (e.endedAt != null ? t - e.endedAt > LEDGER_RETAIN_MS : t - e.startedAt > LEDGER_STALE_MS);
+/** 장부 항목 열기 — startedAt은 스냅샷 시각(호출은 모델 호출을 감싸는 try 안에서: 그 앞에서 던지면 항목이 아예 안 생긴다 — 검수 HIGH-2). */
+export function openTurnLedger(wsId, slug, { now = Date.now, book = ledger(), startedAt = null } = {}) {
   const set = book.get(wsId) ?? new Set(); book.set(wsId, set);
   const t = now();
-  for (const e of set) if (e.endedAt != null && t - e.endedAt > LEDGER_RETAIN_MS) set.delete(e);
-  const entry = { slug, startedAt: t, endedAt: null, observed: new Set() };
+  for (const e of set) if (dead(e, t)) set.delete(e);
+  const entry = { slug, startedAt: startedAt ?? t, endedAt: null, observed: new Set() };
   set.add(entry);
   return entry;
 }
 export function closeTurnLedger(entry, { now = Date.now } = {}) { if (entry && entry.endedAt == null) entry.endedAt = now(); }
-/** 이 턴과 시간이 겹친 다른 턴들(같은 회사). 끝난 턴은 endedAt, 진행 중은 now 기준. */
+/** 이 턴과 시간이 겹친 **다른 크루**의 턴들(같은 회사). 같은 크루의 프레임(크래시·자가치유 재시도가 catch 안에서 chat()을 다시 부른다 —
+    바깥 프레임이 아직 열려 있다)은 겹침이 아니다(검수 HIGH-1). 죽은 항목은 제외. 끝난 턴은 endedAt, 진행 중은 now 기준. */
 export function overlappingTurns(wsId, entry, { now = Date.now, book = ledger() } = {}) {
   const t = now(); const end = entry.endedAt ?? t;
-  return [...(book.get(wsId) ?? [])].filter((e) => e !== entry && e.startedAt <= end && (e.endedAt ?? t) >= entry.startedAt);
+  return [...(book.get(wsId) ?? [])].filter((e) => e !== entry && e.slug !== entry.slug && !dead(e, t) && e.startedAt <= end && (e.endedAt ?? t) >= entry.startedAt);
 }
 /** 순수 귀속: 겹침 없음 → changed 그대로. 겹침 있음 → (내 도구 관측 ∪ 답변에 경로로 언급) − 다른 턴 도구 관측. */
 export function attributeArtifacts(changed, { entry, others = [], reply = '' } = {}) {
   if (!others.length) return changed;
   const foreign = new Set(others.flatMap((o) => [...o.observed]));
   const text = String(reply ?? '');
-  return changed.filter((rel) => !foreign.has(rel) && (entry?.observed.has(rel) || (rel.length >= 4 && text.includes(rel))));
+  return changed.filter((rel) => !foreign.has(rel) && (entry?.observed.has(rel) || text.includes(rel)));
 }

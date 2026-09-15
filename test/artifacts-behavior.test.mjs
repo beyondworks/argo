@@ -20,6 +20,7 @@ const BIN = join(ROOT, 'bin');
 await mkdir(BIN, { recursive: true });
 await writeFile(join(BIN, 'codex'), `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "codex-cli 0.0.0-fake"; exit 0; fi
+if [ -f "$PWD/.crash-once" ]; then rm -f "$PWD/.crash-once"; echo "Segmentation fault (SIGSEGV)" >&2; exit 139; fi
 OUT=""; prev=""
 for a in "$@"; do
   if [ "$prev" = "--output-last-message" ]; then OUT="$a"; fi
@@ -63,4 +64,33 @@ test('예산 초과 턴은 안내로 정상 반환(검수 CRITICAL-1 — TDZ Ref
   assert.match(String(r.reply), /한도|예산/);
   assert.equal(r.sessionId, null);
   assert.equal('artifacts' in r, false); // 모델을 안 부른 턴 — diff 없음(있으면 TDZ 오염의 재발 신호)
+});
+
+// ── 턴 귀속(2026-09-15 제보) 검수 HIGH-1·HIGH-2 행동 게이트 — 재시도 프레임·죽은 장부 항목이 칩을 지우지 않는다 ──
+test('크래시 재시도 턴(같은 러너 1회 재시도)도 산출물 칩을 유지한다 — 바깥 프레임(같은 크루)은 겹침이 아니다(검수 HIGH-1)',
+  { skip: process.platform === 'win32' ? 'POSIX 셸 하네스' : false }, async () => {
+  const WS = 'beh-retry';
+  await mkws(WS, {});
+  await writeFile(join(ROOT, WS, 'agents', 'crew-a.md'), '---\nname: 크루A\nrunner: codex\n---\n\n전문가.\n');
+  await writeFile(join(ROOT, WS, '.secrets.json'), JSON.stringify({ runners: { codex: { type: 'apikey', value: 'sk-fake-not-a-real-key' } } }));
+  await writeFile(join(ROOT, WS, '.crash-once'), '1'); // 1회차 SIGSEGV → chat.mjs가 catch 안에서 chat()을 다시 부른다(바깥 장부 항목이 열린 채)
+  const r = await chat(WS, 'crew-a', '분기 실적표를 엑셀로 만들어줘');
+  assert.match(String(r.reply), /분기표\.xlsx/);
+  assert.deepEqual(r.artifacts, ['projects/20260730_보고/분기표.xlsx'], '재시도 턴이 자기 바깥 프레임을 "다른 턴"으로 보면 여기가 []이 된다');
+});
+test('닫히지 못한 장부 항목(6시간 넘게 진행 중)과 같은 크루의 열린 항목은 다음 턴의 칩을 지우지 않는다(검수 HIGH-2)',
+  { skip: process.platform === 'win32' ? 'POSIX 셸 하네스' : false }, async () => {
+  const { openTurnLedger } = await import('../src/artifacts.mjs');
+  const WS = 'beh-leak';
+  await mkws(WS, {});
+  await writeFile(join(ROOT, WS, 'agents', 'crew-a.md'), '---\nname: 크루A\nrunner: codex\n---\n\n전문가.\n');
+  await writeFile(join(ROOT, WS, '.secrets.json'), JSON.stringify({ runners: { codex: { type: 'apikey', value: 'sk-fake-not-a-real-key' } } }));
+  openTurnLedger(WS, 'ghost', { startedAt: Date.now() - 7 * 3_600_000 }); // 죽은 턴(닫히지 않음)
+  openTurnLedger(WS, 'crew-a');                                            // 같은 크루의 열린 프레임(재시도 상황)
+  const r = await chat(WS, 'crew-a', '분기 실적표를 엑셀로 만들어줘');
+  assert.deepEqual(r.artifacts, ['projects/20260730_보고/분기표.xlsx']);
+  // 대조: 다른 크루의 살아 있는 열린 항목은 설계대로 겹침 → 답변에 경로를 적은 이 파일은 그래도 남는다(경로 언급 귀속)
+  openTurnLedger(WS, 'other-live');
+  const r2 = await chat(WS, 'crew-a', '분기 실적표를 엑셀로 만들어줘');
+  assert.deepEqual(r2.artifacts, ['projects/20260730_보고/분기표.xlsx'], '가짜 codex 답변이 경로를 적으므로 겹침 중에도 귀속된다');
 });
