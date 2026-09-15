@@ -78,6 +78,30 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   ok('스와이프 중 밑 화면에 DM 필터 줄이 미리 그려진다', (await p.locator('.msgr-dmfilter').count()) === 1);
   await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
   ok('취소 뒤 대화 유지·필터 줄 없음', await p.evaluate(() => history.state?.page === 'chat' && !document.querySelector('.msgr-dmfilter')));
+  // 하단 탭 바는 스와이프 뒤로 중에도 남는다(유건 2026-09-15: 사라졌다 돌아와 부자연스럽다) — 두 화면이 공유하는 고정 요소
+  await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);
+  const barMid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const bar = document.querySelector('.msgr-tabbar'); const r = bar?.getBoundingClientRect(); return { swiping: sh.classList.contains('swiping-back'), w: r?.width ?? 0, display: bar ? getComputedStyle(bar).display : null }; });
+  ok('스와이프 뒤로 중 하단 탭 바가 보인다', barMid.swiping && barMid.w > 0 && barMid.display !== 'none', barMid);
+  await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
+  // 대화 층은 스와이프 중에도 탭 바 위 여백을 유지한다(입력창이 아일랜드 밑으로 안 들어간다)
+  await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);
+  const pad = await p.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.msgr-main')).paddingBottom)); ok('스와이프 중 대화 층 바닥 여백 유지', pad > 40, pad);
+  await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
+}
+// 홈에서도 길게 누르기 = 점 세 개 메뉴(유건 2026-09-15). 레일 글자는 길게 눌러도 선택되지 않는다(user-select: none)
+{
+  await tab('홈|home'); await settle();
+  const sel = await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-railbody')).userSelect || getComputedStyle(document.querySelector('.msgr-railbody')).webkitUserSelect); ok('레일 본문 글자 선택 차단', sel === 'none', sel);
+  const row = p.locator('[data-sec="channels"] .msgr-railrow').first(); const bx = await row.boundingBox(); const cdp = await p.context().newCDPSession(p);
+  const nameBox = await row.locator('.name').boundingBox();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: nameBox.x + 8, y: nameBox.y + nameBox.height / 2 }] }); await p.waitForTimeout(600);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(300);
+  const menu = await p.locator('.msgr-ctxmenu [role=menuitem]').allInnerTexts(); ok('홈 채널 행을 글자 위에서 길게 누르면 메뉴(손 떼도 유지)', menu.length > 0 && menu.some((m) => /즐겨찾기/.test(m)), menu);
+  const selected = await p.evaluate(() => String(getSelection()).length); ok('길게 누른 뒤 글자가 선택되지 않았다', selected === 0, selected);
+  const dots = await row.locator('.more').evaluate((el) => { el.click(); return true; }).catch(() => false);
+  await p.waitForTimeout(200); const menu2 = await p.locator('.msgr-ctxmenu [role=menuitem]').allInnerTexts(); ok('점 세 개 메뉴와 같은 항목', dots && JSON.stringify(menu2) === JSON.stringify(menu), { menu, menu2 });
+  await p.keyboard.press('Escape'); await p.waitForTimeout(150);
+  ok('홈에서 좌우 스와이프는 탭을 옮기지 않는다', await (async () => { const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] }); await touch('touchStart', 300, 420); await touch('touchMove', 250, 422); await touch('touchMove', 150, 424); await touch('touchEnd'); await p.waitForTimeout(350); return p.evaluate(() => history.state?.page === 'home'); })());
 }
 await b.close();
 console.log(`${checks.length} phone navigation checks passed`);

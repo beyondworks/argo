@@ -56,17 +56,19 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
   await filt.nth(3).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('그룹 필터: 사람 3명 DM(New)만 남는다 — 양성 단언', n.length === 1 && /New/.test(n[0]), n); }
   await filt.nth(1).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('즐겨찾기 필터: 고정 없는 페이지에선 빈 목록', n.length === 0, n); }
   await filt.nth(0).click(); await p2.waitForTimeout(200); { const n = await namesIn(); ok('전체로 돌아오면 둘 다', n.length === 2, n); }
-  // 카톡처럼 좌우 스와이프로 하단 탭 이동(유건 2026-09-15): DM에서 왼쪽으로 쓸면 알림함, DM에서 오른쪽으로 쓸면 홈
+  // DM 안에서 좌우 스와이프 = 상단 거르개 탭 이동(유건 2026-09-15 교정: 하단 탭 이동이 아니다). 왼쪽으로 쓸면 다음 탭(전체→즐겨찾기), 오른쪽으로 쓸면 이전. 목록이 방향대로 들어온다
   { const cdp = await p2.context().newCDPSession(p2); const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
     let bb = await p2.locator('.msgr-railbody').boundingBox();
-    await touch('touchStart', bb.x + 300, bb.y + 200); await touch('touchMove', bb.x + 250, bb.y + 202); await touch('touchMove', bb.x + 150, bb.y + 204); await touch('touchEnd'); await p2.waitForTimeout(350);
-    ok('DM에서 왼쪽으로 쓸면 알림함 탭', await p2.evaluate(() => history.state?.page === 'inbox'));
-    ok('스와이프 진입도 알림함 읽음 시각을 기록한다(탭 누름과 같은 경로 — 검수 M-1)', await p2.evaluate(() => { try { return Object.keys(JSON.parse(localStorage.getItem('argo-msgr-inbox-seen') || '{}')).length > 0; } catch { return false; } }));
-    await p2.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /DM/i.test(x.textContent))?.click(); }); await p2.waitForTimeout(400);
+    await touch('touchStart', bb.x + 300, bb.y + 200); await touch('touchMove', bb.x + 250, bb.y + 202); await touch('touchMove', bb.x + 150, bb.y + 204); await touch('touchEnd'); await p2.waitForTimeout(40);
+    ok('DM에서 왼쪽으로 쓸면 다음 상단 탭(즐겨찾기)·하단 탭은 그대로 DM', await p2.evaluate(() => history.state?.page === 'dm' && document.querySelector('.msgr-dmfilter [aria-checked="true"]')?.textContent === '즐겨찾기'));
+    ok('목록이 오른쪽에서 들어오는 애니메이션 클래스', await p2.evaluate(() => /anim-list-left-(a|b)/.test(document.querySelector('.msgr-railbody').className)));
+    await p2.waitForTimeout(350); ok('260ms 뒤 해제', await p2.evaluate(() => !/anim-list-/.test(document.querySelector('.msgr-railbody').className)));
     bb = await p2.locator('.msgr-railbody').boundingBox();
-    await touch('touchStart', bb.x + 100, bb.y + 200); await touch('touchMove', bb.x + 160, bb.y + 202); await touch('touchMove', bb.x + 260, bb.y + 204); await touch('touchEnd'); await p2.waitForTimeout(350);
-    ok('DM에서 오른쪽으로 쓸면 홈 탭', await p2.evaluate(() => history.state?.page === 'home'));
-    await p2.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /DM/i.test(x.textContent))?.click(); }); await p2.waitForTimeout(400); }
+    await touch('touchStart', bb.x + 100, bb.y + 200); await touch('touchMove', bb.x + 150, bb.y + 202); await touch('touchMove', bb.x + 260, bb.y + 204); await touch('touchEnd'); await p2.waitForTimeout(350);
+    ok('오른쪽으로 쓸면 이전 탭(전체)', await p2.evaluate(() => document.querySelector('.msgr-dmfilter [aria-checked="true"]')?.textContent === '전체'));
+    await touch('touchStart', bb.x + 100, bb.y + 200); await touch('touchMove', bb.x + 150, bb.y + 202); await touch('touchMove', bb.x + 260, bb.y + 204); await touch('touchEnd'); await p2.waitForTimeout(350);
+    ok('첫 탭에서 오른쪽으로 쓸어도 하단 탭(홈)으로 새지 않는다', await p2.evaluate(() => history.state?.page === 'dm' && document.querySelector('.msgr-dmfilter [aria-checked="true"]')?.textContent === '전체'));
+  }
   // 새 그룹 대화(유건 2026-09-15): + → 시트 → 둘 고르면 "그룹 대화 만들기" → 대화 열림
   { await p2.locator('.msgr-fab').click(); await p2.waitForTimeout(300); const rows = p2.locator('.msgr-dmgroup .pickrow');
     ok('그룹 시트에 멤버·크루 목록', (await rows.count()) >= 2); ok('선택 전 버튼 비활성', await p2.locator('.msgr-dmgroup .foot .btn').isDisabled());

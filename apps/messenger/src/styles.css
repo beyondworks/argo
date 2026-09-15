@@ -1088,9 +1088,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home.swiping-back.settling .msgr-side { transition: transform var(--swipe-ms, 200ms) cubic-bezier(.2,.8,.2,1); }
   .msgr-phone.phone-home.swiping-back .msgr-side, .msgr-phone.phone-home.swiping-back .msgr-main { will-change: transform; } /* 두 층 모두 합성 레이어 — 드래그 중 재래스터 없이 이동 */
   .msgr-phone.phone-home.swiping-back .msgr-side::after { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, calc((1 - var(--swipe-p, 0)) * .18)); pointer-events: none; } /* 밑 화면 어둡기 — 당겨 올수록 밝아진다 */
-  .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); padding-bottom: 0; }
+  .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); }
   .msgr-phone.phone-home.swiping-back .msgr-main > :not(.msgr-sheetwrap) { display: revert; }
-  .msgr-phone.swiping-back .msgr-tabbar, .msgr-phone.swiping-back .msgr-fab { display: none; }
+  .msgr-phone.swiping-back .msgr-fab { display: none; } /* 하단 탭 바는 두 화면이 공유하는 고정 요소라 그대로 둔다 — 사라졌다 돌아오면 부자연스럽다(유건 2026-09-15) */
   .msgr-phone.swiping-back .msgr-main .msgr-thread { overflow: hidden; }
   /* 화면 전환(유건 2026-09-15 "슬랙·카톡처럼 부드럽게"): 대화 열기 = 오른쪽에서 밀려 들어옴, 탭 전환·뒤로 = 페이드. 전부 transform·opacity(합성 레이어) */
   @keyframes msgrPushIn { from { transform: translateX(100%); } to { transform: none; } }
@@ -1108,6 +1108,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.anim-tab-left-b .msgr-side, .msgr-phone.anim-tab-left-b .msgr-main { animation: msgrTabLeftB 200ms cubic-bezier(.2,.8,.2,1) both; }
   .msgr-phone.anim-tab-right-a .msgr-side, .msgr-phone.anim-tab-right-a .msgr-main { animation: msgrTabRight 200ms cubic-bezier(.2,.8,.2,1) both; }
   .msgr-phone.anim-tab-right-b .msgr-side, .msgr-phone.anim-tab-right-b .msgr-main { animation: msgrTabRightB 200ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.phone-dm .msgr-railbody.anim-list-left-a .msgr-railinner { animation: msgrTabLeft 200ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.phone-dm .msgr-railbody.anim-list-left-b .msgr-railinner { animation: msgrTabLeftB 200ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.phone-dm .msgr-railbody.anim-list-right-a .msgr-railinner { animation: msgrTabRight 200ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.phone-dm .msgr-railbody.anim-list-right-b .msgr-railinner { animation: msgrTabRightB 200ms cubic-bezier(.2,.8,.2,1) both; }
   .msgr-phone.anim-pop-a .msgr-side { animation: msgrFadeIn 180ms cubic-bezier(.2,.8,.2,1) both; }
   .msgr-phone.anim-pop-b .msgr-side { animation: msgrFadeInB 180ms cubic-bezier(.2,.8,.2,1) both; }
   @media (prefers-reduced-motion: reduce) { .msgr-phone[class*='anim-'] .msgr-side, .msgr-phone[class*='anim-'] .msgr-main { animation: none; } } /* 가로로 잠긴 동안 실제 스크롤러(스레드)의 세로 스크롤을 멈춘다(검수 M-2 — main은 이미 overflow hidden) */
@@ -1155,7 +1159,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-dm .item .snip { font-size: 12.5px; line-height: 1.3; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .msgr-phone.phone-dm .item.unread .snip { color: var(--fg-2); }
   .msgr-phone.phone-dm .item.unread .dmline .when { color: var(--fg); font-weight: 600; } /* --mark(형광)는 종이 배경에서 대비 1.09:1 — 글자색으로 쓰지 않는다(검수 M-1) */
-  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .msgr-railrow, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .msgr-railrow { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } /* 길게 누르기 메뉴 — iOS 선택 콜아웃 차단(검수 HIGH-3) */
+  .msgr-phone .msgr-railbody { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } /* 길게 누르기 메뉴 — 글자 위에서 눌러도 선택·콜아웃이 안 뜬다(홈 포함, 유건 2026-09-15) */
   .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek, .msgr-dmpeek { top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: auto; max-width: none; max-height: 60vh; border-radius: 20px 20px 0 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; } /* 아래에서 올라오는 시트 — 폰 크루 시트(위 고정·전체 높이) 규칙보다 우선 */
   .msgr-dmpeek .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
   .msgr-dmpeek .head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
