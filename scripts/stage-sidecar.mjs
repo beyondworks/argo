@@ -52,7 +52,7 @@ cpSync(standalone, serverDest, { recursive: true });
   }
 }
 renameSync(join(serverDest, 'server.js'), join(serverDest, 'server-next.mjs'));
-// 3.4) 자식용 프리로드 심을 리소스에 동봉 — Rust(lib.rs)가 사이드카 스폰 때 NODE_OPTIONS=--require <이 파일>을 **초기 env**로 넣는다.
+// 3.35) 자식용 프리로드 심을 리소스에 동봉 — Rust(lib.rs no_dock_node_options)가 기동 때 ~/.argo/tools/no-dock.cjs로 복사해 NODE_OPTIONS=--require <그 경로>를 **초기 env**로 넣는다.
 //      런타임 setupNoDock(~/.argo/tools/no-dock.cjs, 프로브 뒤 대입)만 믿으면 프로브 실패·타임아웃 한 번에 그 세션의 모든 node 자식
 //      (npm exec·MCP 서버·CLI 러너 — 번들 node라 제목을 설정하면 Foreground 앱으로 등록돼 Dock에 뜬다, 실측 2026-09-15)이 아이콘을 만든다.
 //      초기 env는 스냅샷·세척·상속 어디서도 빠지지 않는다. 정본은 src/no-dock.mjs SHIM_SRC 하나.

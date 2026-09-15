@@ -23,6 +23,9 @@
 // 때만 대입한다(파일 부재·따옴표 파손·권한·node 버전 거절을 한 검사로 덮는다 — 분리 검수 MEDIUM-2:
 // 존재 확인만으로는 `"`·`\`가 든 홈 경로에서 나는 파손을 못 잡는다). 실패는 조용히 넘어간다 —
 // 아이콘 억제가 크루 턴을 막는 것이 훨씬 나쁘다.
+// 데스크톱 앱(2026-09-15, PR #539)은 Rust가 기동 때 같은 심을 같은 경로에 쓰고 **초기 env**로 넣는다(번들 안 node는
+// 제목 설정 시 Foreground 등록 — 프로브 실패 한 번으로 세션 내내 아이콘이 뜨던 구멍). 그 경우 아래는 "이미 걸림"으로
+// 조기 반환해 프로브·이중 --require가 없다. Rust 쪽도 같은 fail-open 원칙(문자 게이트·실패 시 미적용)이다.
 import { access, chmod, mkdir, rename, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';

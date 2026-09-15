@@ -153,13 +153,24 @@ test('배선 — stage-sidecar가 리소스에 no-dock.cjs를 쓰고, lib.rs가 
   assert.match(stage, /import \{ SHIM_SRC \} from '\.\.\/src\/no-dock\.mjs'/, '정본 하나(SHIM_SRC)에서 동봉');
   assert.match(stage, /writeFileSync\(join\(serverDest, 'no-dock\.cjs'\), SHIM_SRC\)/, '리소스 server/no-dock.cjs');
   const rs = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
-  assert.match(rs, /#\[cfg\(target_os = "macos"\)\]\s*\{\s*let shim = std::path::Path::new\(&server_dir\)\.join\("no-dock\.cjs"\);\s*if shim\.is_file\(\)/, 'macOS·파일 존재 게이트(없는 --require는 부팅을 죽인다)');
-  assert.match(rs, /cmd = cmd\.env\("NODE_OPTIONS", format!\("--require \{arg\}"\)\)/, '초기 env NODE_OPTIONS');
+  assert.match(rs, /#\[cfg\(target_os = "macos"\)\]\s*fn no_dock_node_options\(server_dir: &str, home: Option<std::path::PathBuf>\) -> Result<String, String>/, 'macOS 전용 헬퍼');
+  assert.match(rs, /\.join\("\.argo"\)\.join\("tools"\)/, '번들 밖 안정 경로 = JS noDockShimPath와 동일(~/.argo/tools/no-dock.cjs)');
+  assert.match(rs, /if p\.contains\('"'\) \|\| p\.contains\('\\\\'\) \{ return Err/, 'NODE_OPTIONS를 깨는 문자 게이트(fail-open)');
   assert.match(rs, /any\(char::is_whitespace\)/, '공백 경로는 따옴표');
+  assert.match(rs, /std::env::var\("NODE_OPTIONS"\)/, '기존 NODE_OPTIONS 보존');
+  assert.match(rs, /Ok\(v\) => cmd = cmd\.env\("NODE_OPTIONS", v\),\s*Err\(e\) => log::warn!/, '실패는 경고만');
   assert.ok(rs.indexOf('cmd = cmd.env("NODE_OPTIONS"') < rs.indexOf('.args(["server.js"])'), '스폰 전에 env');
 });
 
 test('setupNoDock — 프로브 상한 기본 10초(2초는 부팅 직후 바쁜 기기에서 조용히 미적용)', async () => {
   const src = await (await import('node:fs/promises')).readFile(new URL('../src/no-dock.mjs', import.meta.url), 'utf8');
   assert.match(src, /timeoutMs = 10_000/);
+});
+
+test('setupNoDock — 초기 env에 같은 경로의 --require가 이미 있으면 프로브 없이 조기 반환(Rust 초기 env와 만나는 지점)', async () => {
+  const path = await tmpShim();
+  let probes = 0;
+  const env = { NODE_OPTIONS: `--require ${path}` };
+  const r = await setupNoDock({ env, platform: 'darwin', path, probe: async () => { probes++; return true; } });
+  assert.equal(r, path); assert.equal(probes, 0, '프로브 0회'); assert.equal(env.NODE_OPTIONS, `--require ${path}`, '이중 --require 없음');
 });
