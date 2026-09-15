@@ -322,7 +322,7 @@ function CtxMenu({ at, items, onClose }) {
   useLayoutEffect(() => {
     const el = ref.current; if (!el) return;
     const place = () => { const viewport = window.visualViewport; const left = viewport?.offsetLeft ?? 0; const top = viewport?.offsetTop ?? 0; const width = viewport?.width ?? window.innerWidth; const height = viewport?.height ?? window.innerHeight; el.style.maxHeight = `${Math.max(44, height - 16)}px`; el.style.maxWidth = `${Math.max(44, width - 16)}px`; const r = el.getBoundingClientRect(); setPos({ left: Math.max(left + 8, Math.min(at.x, left + width - r.width - 8)), top: Math.max(top + 8, Math.min(at.y, top + height - r.height - 8)) }); };
-    place(); const previous = at.returnFocus ?? document.activeElement; el.querySelector('button:not(:disabled)')?.focus();
+    place(); const touch = window.matchMedia?.('(pointer: coarse)').matches; const previous = touch ? null : (at.returnFocus ?? document.activeElement); if (!touch) el.querySelector('button:not(:disabled)')?.focus(); // 터치 기기에선 포커스를 옮기지 않는다 — iOS가 프로그램 포커스에 링을 그려 첫 항목 테두리·닫힌 뒤 행에 선이 남았다(유건 캡처 2026-09-15)
     window.addEventListener('resize', place); window.visualViewport?.addEventListener('resize', place); window.visualViewport?.addEventListener('scroll', place);
     return () => { window.removeEventListener('resize', place); window.visualViewport?.removeEventListener('resize', place); window.visualViewport?.removeEventListener('scroll', place); if (previous?.isConnected) previous.focus(); };
   }, [at]);

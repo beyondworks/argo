@@ -100,6 +100,12 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(300);
   const menu = await p.locator('.msgr-ctxmenu [role=menuitem]').allInnerTexts(); ok('홈 채널 행을 글자 위에서 길게 누르면 메뉴(손 떼도 유지)', menu.length > 0 && menu.some((m) => /즐겨찾기/.test(m)), menu);
   const menuSel = await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-ctxmenu')).userSelect); ok('손가락 밑에 뜬 메뉴(body 포털)도 글자 선택 차단 — 유건 캡처(알림 끄기 선택됨)', menuSel === 'none', menuSel);
+  const focusIn = await p.evaluate(() => ({ inMenu: !!document.activeElement?.closest('.msgr-ctxmenu'), tag: document.activeElement?.tagName })); ok('터치 기기에선 메뉴 항목에 포커스를 옮기지 않는다(iOS 포커스 링 — 유건 캡처)', !focusIn.inMenu, focusIn);
+  await p.keyboard.press('Escape'); await p.waitForTimeout(150);
+  const focusBack = await p.evaluate(() => ({ onItem: !!document.activeElement?.closest('.msgr-railrow'), tag: document.activeElement?.tagName })); ok('닫힌 뒤 행 버튼으로 포커스를 되돌리지 않는다(행에 선이 남던 것)', !focusBack.onItem, focusBack);
+  { const item = p.locator('[data-sec="channels"] .msgr-railrow .item').first(); await item.hover(); await p.waitForTimeout(50); const bg = await item.evaluate((el) => getComputedStyle(el).backgroundColor); ok('폰에서 행 hover 배경 없음(iOS 고착 hover)', bg === 'rgba(0, 0, 0, 0)', bg); await p.mouse.move(5, 5); }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: nameBox.x + 8, y: nameBox.y + nameBox.height / 2 }] }); await p.waitForTimeout(600);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(300);
   const selected = await p.evaluate(() => String(getSelection()).length); ok('길게 누른 뒤 글자가 선택되지 않았다', selected === 0, selected);
   const dots = await row.locator('.more').evaluate((el) => { el.click(); return true; }).catch(() => false);
   await p.waitForTimeout(200); const menu2 = await p.locator('.msgr-ctxmenu [role=menuitem]').allInnerTexts(); ok('점 세 개 메뉴와 같은 항목', dots && JSON.stringify(menu2) === JSON.stringify(menu), { menu, menu2 });

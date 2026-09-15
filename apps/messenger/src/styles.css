@@ -1115,7 +1115,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-dm .msgr-railbody.anim-list-right-b .msgr-railinner { animation: msgrTabRightB 200ms cubic-bezier(.2,.8,.2,1) both; }
   .msgr-phone.anim-pop-a .msgr-side { animation: msgrFadeIn 180ms cubic-bezier(.2,.8,.2,1) both; }
   .msgr-phone.anim-pop-b .msgr-side { animation: msgrFadeInB 180ms cubic-bezier(.2,.8,.2,1) both; }
-  @media (prefers-reduced-motion: reduce) { .msgr-phone[class*='anim-'] .msgr-side, .msgr-phone[class*='anim-'] .msgr-main, .msgr-phone .msgr-railbody[class*='anim-list-'] .msgr-railinner { animation: none; } } /* 가로로 잠긴 동안 실제 스크롤러(스레드)의 세로 스크롤을 멈춘다(검수 M-2 — main은 이미 overflow hidden) */
+  @media (prefers-reduced-motion: reduce) { .msgr-phone[class*='anim-'] .msgr-side, .msgr-phone[class*='anim-'] .msgr-main, .msgr-phone.phone-dm .msgr-railbody[class*='anim-list-'] .msgr-railinner { animation: none; } } /* 명시도 (0,5,0) 동률 — 재검수 L-1 */ /* 가로로 잠긴 동안 실제 스크롤러(스레드)의 세로 스크롤을 멈춘다(검수 M-2 — main은 이미 overflow hidden) */
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab,
@@ -1166,7 +1166,11 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone, .msgr-ctxmenu, .msgr-menubg { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } /* :has 없는 옛 Android WebView 대비(검수 L-9) */
   body:has(.msgr-shell.msgr-phone) :is(input, textarea, [contenteditable]), .msgr-phone :is(input, textarea, [contenteditable]) { -webkit-user-select: text; user-select: text; }
   body:has(.msgr-shell.msgr-phone) :is(.msgr-work-panel, .msgr-hint), .msgr-phone :is(.msgr-work-panel, .msgr-hint) { -webkit-user-select: text; user-select: text; } /* 문서 본문·안내/오류 문구는 복사 버튼이 없어 선택으로 복사(검수 M-5) */
-  body:has(.msgr-shell.msgr-phone) :is(img, a), .msgr-phone :is(img, a) { -webkit-touch-callout: default; } /* 첨부 이미지 길게 눌러 저장·링크 미리보기는 살린다(검수 M-3) */
+  body:has(.msgr-shell.msgr-phone) img, .msgr-phone img { -webkit-touch-callout: default; } /* 첨부 이미지 길게 눌러 저장은 살린다(검수 M-3). 링크는 제외 — 본문 링크 콜아웃이 앱 액션 시트를 가로챈다(재검수 LOW-A) */
+  /* iOS는 탭한 자리에 hover를 붙여 둔다 — 메뉴를 닫은 뒤에도 행·점 세 개에 hover 배경이 남아 '활성 표시'처럼 보였다(유건 캡처 2026-09-15). 폰에서는 hover 배경을 끄고 :active만 쓴다 */
+  .msgr-phone .msgr-list .item:hover:not(.active) { background: none; color: var(--fg-2); }
+  .msgr-phone .msgr-railrow .more:hover { background: transparent; color: inherit; }
+  .msgr-ctxmenu button:focus-visible { outline: none; } /* 폰 블록 안 — 터치에선 포커스를 안 옮기지만 옛 WebView 대비 링도 끈다 */
   .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek, .msgr-dmpeek { top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: auto; max-width: none; max-height: 60vh; border-radius: 20px 20px 0 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; } /* 아래에서 올라오는 시트 — 폰 크루 시트(위 고정·전체 높이) 규칙보다 우선 */
   .msgr-dmpeek .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
   .msgr-dmpeek .head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
