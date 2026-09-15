@@ -8,7 +8,7 @@ import { join, relative, resolve, sep } from 'node:path';
 const relSlash = (from, to) => relative(from, to).split(sep).join('/');
 import { WS_ROOT, paths } from './workspace.mjs';
 import { GUIDE_NOTE } from './provision.mjs'; // 스캐폴드 안내 노트 파일명(단일 진실)
-import { docCache, docCacheInflight } from './doc-cache.mjs';
+import { docCache, docCacheInflight, docCacheGen } from './doc-cache.mjs';
 
 function parseFrontmatter(md) {
   const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -128,8 +128,8 @@ export async function listAgents(wsId) {
 // 우리 쓰기 경로는 memindex.invalidatePath → dropDocCache로 명시 무효화까지 한다(외부 rsync -a 등은 ctime이 막는다).
 // 근거: 무캐시 전수 읽기가 옵시디언 가져오기 2,000건 상한의 유일한 이유였다(obsidian-import.mjs). 실측 Lean-AX 1,061건 148ms → 8~12ms.
 // 메모리(검수 실측): 문서 1만 건 ≈ 24MB/회사, Next 번들 사본·회사 수만큼 배수. 회사 보관 시 archiveCompany가 폐기한다.
-// 반환 doc 객체는 캐시와 같은 참조다 — 소비자는 읽기만 해야 한다(변경하려면 복사).
-export const listDocsStats = { reads: 0, get entries() { let n = 0; for (const m of docCache.values()) n += m.size; return n; } }; // 테스트용
+// 반환 doc 객체는 캐시와 같은 참조이고, 동시 호출은 배열 인스턴스까지 공유한다 — 소비자는 읽기만 해야 한다(변경하려면 복사).
+export const listDocsStats = { reads: 0, entries: (wsId) => docCache.get(wsId)?.size ?? 0 }; // 테스트용
 export function listDocs(wsId) {
   const inflight = docCacheInflight.get(wsId);
   if (inflight) return inflight;
@@ -147,6 +147,7 @@ export async function countVaultDocs(wsId) {
   return n;
 }
 async function listDocsUncached(wsId) {
+  const gen = docCacheGen.get(wsId) ?? 0; // 첫 await 전에 잡는다 — 그 뒤 들어온 폐기는 끝에서 감지된다
   const p = paths(wsId);
   const dirName = new Map([[p.journal, 'journal'], [p.conversations, 'conversations'], [p.notes, 'notes']]);
   // 파일 목록부터 모은 뒤 읽기는 묶음 병렬로 — 한 파일씩 await하면 2,000건에 0.6초(실측 Lean-AX),
@@ -160,13 +161,14 @@ async function listDocsUncached(wsId) {
   const cache = docCache.get(wsId) ?? new Map();
   const seen = new Set();
   const readOne = async ({ dir, n, file }) => {
-    const st = await stat(file);
+    // 순회 중 사라진 파일(보관·동기화 이동·삭제)은 건너뛴다 — 하나 때문에 기억 화면 전체가 죽지 않게(listProjectDocs와 같은 가드, 검수 #538 2R MEDIUM-C)
+    let st; try { st = await stat(file); } catch { return null; }
     seen.add(file);
     const key = `${st.mtimeMs}:${st.size}:${st.ctimeMs}:${st.ino}`;
     const hit = cache.get(file);
     if (hit && hit.key === key) return hit.doc;
     listDocsStats.reads++;
-    const text = await readFile(file, 'utf8');
+    let text; try { text = await readFile(file, 'utf8'); } catch { return null; }
     const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, '');
     const rel = relSlash(p.vault, file);
     const doc = {
@@ -189,9 +191,9 @@ async function listDocsUncached(wsId) {
     return doc;
   };
   const docs = [];
-  for (let i = 0; i < files.length; i += 64) docs.push(...await Promise.all(files.slice(i, i + 64).map(readOne)));
+  for (let i = 0; i < files.length; i += 64) docs.push(...(await Promise.all(files.slice(i, i + 64).map(readOne))).filter(Boolean));
   for (const file of cache.keys()) if (!seen.has(file)) cache.delete(file); // 지워진 파일은 캐시에서도
-  docCache.set(wsId, cache);
+  if ((docCacheGen.get(wsId) ?? 0) === gen) docCache.set(wsId, cache); // 도중에 폐기됐으면 되살리지 않는다
   return docs.sort((a, b) => b.ts - a.ts); // 최근 활동순 — 오늘 갱신된 일지가 최상단
 }
 

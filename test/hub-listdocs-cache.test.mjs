@@ -10,6 +10,7 @@ const { createCompany, paths } = await import('../src/workspace.mjs');
 const { listDocs, listDocsStats, countVaultDocs, listCompanies } = await import('../src/hub.mjs');
 const { invalidatePath } = await import('../src/memindex.mjs');
 const { dropDocCache, docCache } = await import('../src/doc-cache.mjs');
+const { rm: rmFile } = await import('node:fs/promises');
 const { MAX_COUNT } = await import('../src/obsidian-import.mjs');
 
 test('listDocs — 두 번째 호출은 파일을 읽지 않고, 수정·추가·삭제만 다시 읽는다', async () => {
@@ -38,8 +39,8 @@ test('listDocs — 두 번째 호출은 파일을 읽지 않고, 수정·추가�
   assert.equal(MAX_COUNT, 10_000, '가져오기 상한(캐시 근거로 상향)');
   // 삭제 정리: 캐시 항목 수가 파일 수와 같다(검수 MEDIUM-1: 출력은 readdir로 만들어져 잔재가 안 보인다 — 항목 수로 잠근다)
   const notes = fourth.filter((d) => d.dir === 'notes').length; const others = fourth.length - notes;
-  assert.equal(listDocsStats.entries, notes + others, '지운 파일의 캐시 항목이 사라진다');
-  // mtime을 보존한 채 크기만 바뀐 파일도 다시 읽는다(키의 size 성분)
+  assert.equal(listDocsStats.entries(ws), notes + others, '지운 파일의 캐시 항목이 사라진다');
+  // mtime을 보존한 채 크기만 바뀐 파일도 다시 읽는다(size 또는 ctime 성분 — 검수 2R: 실제 판별은 ctime이 먼저 한다)
   const before = await stat(f('c.md'));
   await writeFile(f('c.md'), '# 감마 길어진 제목\nCCCC'); await utimes(f('c.md'), before.atime, before.mtime);
   const r5 = listDocsStats.reads; const fifth = await listDocs(ws);
@@ -47,8 +48,10 @@ test('listDocs — 두 번째 호출은 파일을 읽지 않고, 수정·추가�
   assert.ok(fifth.some((d) => d.title === '감마 길어진 제목'));
   // mtime·size 둘 다 같은 재작성(동기화 수신이 정수 ms mtime을 심는 경우) — ctime이 잡는다(검수 HIGH-1 재현 → 처방 A)
   const same = await stat(f('c.md'));
+  await new Promise((r) => setTimeout(r, 25)); // ctime 해상도가 거친 플랫폼(NTFS 15.6ms 틱)에서도 틱이 갈리게(검수 2R MEDIUM-A 시뮬 13/15 red → 10/10 green)
   await writeFile(f('c.md'), '# 감마 길어진 제묵\nCCCC'); await utimes(f('c.md'), same.atime, same.mtime);
   const after = await stat(f('c.md')); assert.equal(after.mtimeMs, same.mtimeMs); assert.equal(after.size, same.size);
+  assert.notEqual(after.ctimeMs, same.ctimeMs, '전제: 이 플랫폼에서 utimes는 ctime을 되돌리지 못한다');
   const r6 = listDocsStats.reads; const sixth = await listDocs(ws);
   assert.equal(listDocsStats.reads - r6, 1, 'mtime·size가 같아도 ctime이 달라 다시 읽는다');
   assert.ok(sixth.some((d) => d.title === '감마 길어진 제묵'));
@@ -71,4 +74,13 @@ test('listDocs — 무효화 프로토콜(invalidatePath)·회사 폐기(dropDoc
   // 경량 카운트 = listDocs 길이, listCompanies 기억 칩과 동일 셈법
   assert.equal(await countVaultDocs(ws), n);
   const co = (await listCompanies()).find((c) => c.id === ws); assert.equal(co.memories, n, 'projects 0이면 memories = 문서 수');
+  // 진행 중 첫 로드와 폐기가 겹치면 폐기가 이긴다(MEDIUM-B) — 순회 중 파일이 사라져도 나머지는 살아남는다(MEDIUM-C)
+  dropDocCache(ws);
+  const loading = listDocs(ws); dropDocCache(ws); await loading;
+  assert.equal(docCache.has(ws), false, '진행 중이던 로드가 폐기된 캐시를 되살리지 않는다');
+  const orig = await listDocs(ws); assert.ok(orig.length >= 2);
+  dropDocCache(ws);
+  const p2 = listDocs(ws); await rmFile(f('b.md')); const survived = await p2; // 삭제가 순회와 겹쳐도 예외 없이 나머지 반환(경합이라 삭제분 포함 여부는 비결정)
+  assert.ok(survived.length >= orig.length - 1 && survived.every((d) => d.title !== undefined));
+  assert.deepEqual((await listDocs(ws)).filter((d) => !d.guide && d.dir === 'notes').map((d) => d.title), ['하나']);
 });
