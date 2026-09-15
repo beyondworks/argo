@@ -63,6 +63,7 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   await tab('DM'); await settle();
   await p.locator('[data-sec="dms"] .item').first().click(); await p.waitForTimeout(60);
   ok('대화 열기 → anim-push', await p.evaluate(() => /(^| )anim-push-(a|b)( |$)/.test(document.querySelector('.msgr-shell').className)));
+  ok('push 중 문서에 가로 스크롤 폭이 생기지 않는다(셸 overflow-x clip — iOS 가로 고무줄, 유건 2026-09-16)', await p.evaluate(() => { const d = document.scrollingElement; const sh = document.querySelector('.msgr-shell'); return d.scrollWidth <= window.innerWidth && ['clip', 'hidden'].includes(getComputedStyle(sh).overflowX) && getComputedStyle(document.body).overscrollBehaviorX === 'none'; }));
   ok('push 중 본문 자식(상단·스레드)은 따로 움직이지 않는다 — 부모 한 층만(검수 M-F: 이중 이동이 떨림)', await p.evaluate(() => [...document.querySelectorAll('.msgr-main > .msgr-top, .msgr-main > .msgr-thread')].every((el) => getComputedStyle(el).animationName === 'none')));
   await p.waitForTimeout(400); ok('300ms 뒤 해제', await p.evaluate(() => ![...document.querySelector('.msgr-shell').classList].some((c) => c.startsWith('anim-'))));
   await back(); await p.waitForTimeout(0); // back()은 400ms 대기 → 이미 해제됐을 수 있어 즉시 다시 확인 대신 결과 화면만 본다

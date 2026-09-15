@@ -1107,7 +1107,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.anim-tab-left-b .msgr-side, .msgr-phone.anim-tab-left-b .msgr-main { animation: msgrTabLeftB 160ms ease-out both; }
   .msgr-phone.anim-tab-right-a .msgr-side, .msgr-phone.anim-tab-right-a .msgr-main { animation: msgrTabRight 160ms ease-out both; }
   .msgr-phone.anim-tab-right-b .msgr-side, .msgr-phone.anim-tab-right-b .msgr-main { animation: msgrTabRightB 160ms ease-out both; }
-  .msgr-phone .msgr-railbody[class*='anim-list-'] { overflow-x: hidden; } /* 전환 200ms 동안 4px 가로 넘침 차단(검수 L-2) */
+  /* 가로 탄성(유건 실기기 2026-09-16 "세로가 아니라 가로"): 대화 층이 오른쪽에서 100% 들어오는 동안 변환된 요소가 문서의 스크롤 폭을 넓혔다가 도착 순간 사라져 iOS가 가로로 고무줄 되돌림.
+     셸·문서를 가로로 잘라내고(clip은 스크롤 컨테이너를 만들지 않는다) 목록·스레드의 가로 튕김을 끈다. 세로 튕김(목록 바운스)은 그대로 */
+  .shell.msgr-shell.msgr-phone { overflow-x: hidden; overflow-x: clip; }
+  body:has(.msgr-shell.msgr-phone) { overflow-x: hidden; overscroll-behavior-x: none; }
+  .msgr-phone.phone-home .msgr-railbody { overflow-x: hidden; overscroll-behavior-x: none; }
+  .msgr-phone .msgr-main .msgr-thread { overscroll-behavior-x: none; }
   .msgr-phone.phone-dm .msgr-railbody.anim-list-left-a .msgr-railinner { animation: msgrTabLeft 160ms ease-out both; }
   .msgr-phone.phone-dm .msgr-railbody.anim-list-left-b .msgr-railinner { animation: msgrTabLeftB 160ms ease-out both; }
   .msgr-phone.phone-dm .msgr-railbody.anim-list-right-a .msgr-railinner { animation: msgrTabRight 160ms ease-out both; }

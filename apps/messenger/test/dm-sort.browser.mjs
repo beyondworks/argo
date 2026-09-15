@@ -58,8 +58,9 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
   await filt.nth(0).click(); await p2.waitForTimeout(200); { const n = await namesIn(); ok('전체로 돌아오면 둘 다', n.length === 2, n); }
   // DM 안에서 좌우 스와이프 = 상단 거르개 탭 이동(유건 2026-09-15 교정: 하단 탭 이동이 아니다). 왼쪽으로 쓸면 다음 탭(전체→즐겨찾기), 오른쪽으로 쓸면 이전. 목록이 방향대로 들어온다
   { const cdp = await p2.context().newCDPSession(p2); const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
-    let bb = await p2.locator('.msgr-railbody').boundingBox();
+    let bb = await p2.locator('.msgr-railbody').boundingBox(); await p2.evaluate(() => { document.querySelector('.msgr-side .msgr-railbody').scrollTop = 1; });
     await touch('touchStart', bb.x + 300, bb.y + 200); await touch('touchMove', bb.x + 250, bb.y + 202); await touch('touchMove', bb.x + 150, bb.y + 204); await touch('touchEnd'); await p2.waitForTimeout(40);
+    ok('거르개 전환 뒤 레일 스크롤은 맨 위(재검수 LOW: pickDmFilter 리셋 잠금)', (await p2.evaluate(() => document.querySelector('.msgr-side .msgr-railbody').scrollTop)) === 0);
     ok('DM에서 왼쪽으로 쓸면 다음 상단 탭(즐겨찾기)·하단 탭은 그대로 DM', await p2.evaluate(() => history.state?.page === 'dm' && document.querySelector('.msgr-dmfilter [aria-checked="true"]')?.textContent === '즐겨찾기'));
     ok('목록이 오른쪽에서 들어오는 애니메이션 클래스', await p2.evaluate(() => /anim-list-left-(a|b)/.test(document.querySelector('.msgr-railbody').className)));
     await p2.waitForTimeout(350); ok('260ms 뒤 해제', await p2.evaluate(() => !/anim-list-/.test(document.querySelector('.msgr-railbody').className)));
