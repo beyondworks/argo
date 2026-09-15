@@ -14,7 +14,7 @@ import { handoff, fetchProviderSettings, providerShown, noProviders } from './oa
 import { parseInviteCode, inviteShareText } from './invite.mjs';
 import { sortDms, DM_SORTS } from './dm-sort.mjs';
 import { UpdateBar } from './update.jsx';
-import { useLongPress } from './long-press.js';
+import { useLongPress, longPressHandlers } from './long-press.js';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -67,6 +67,11 @@ const friendlyErr = (msg, t) => /row-level security/.test(msg) ? t('err.denied')
 /** 오늘이면 시각만, 아니면 날짜+시각 — 초대 만료(7일 뒤)·노드 마지막 응답·기록처럼 며칠 전후일 수 있는 시각용(시간만 보이면 "오늘 02:31"로 읽힌다 — I-4 실측) */
 const fmtWhen = (iso, lang) => { const d = new Date(iso); const time = fmtTs(iso, lang); if (d.toDateString() === new Date().toDateString()) return time;
   return `${d.toLocaleDateString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric' })} ${time}`; };
+/** 슬랙식 DM 목록 시각 — 오늘은 시각, 6일 안이면 요일, 그 밖은 월·일(유건 2026-09-15). */
+const fmtDmWhen = (ms, lang) => { const d = new Date(ms); const now = new Date(); const loc = lang === 'en' ? 'en-US' : 'ko-KR';
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (now - d < 6 * 86_400_000) return d.toLocaleDateString(loc, { weekday: 'short' });
+  return d.toLocaleDateString(loc, { month: 'short', day: 'numeric' }); };
 const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
   ? [d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), d.toLocaleDateString('en-US', { weekday: 'long' })]
   : [d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }), d.toLocaleDateString('ko-KR', { weekday: 'long' })]; };
@@ -198,13 +203,13 @@ function ServerRow({ t, open = false }) {
    summary 안의 버튼(새 채널 +)은 클릭 기본 동작을 막아 접힘을 건드리지 않는다. ─── */
 const FOLD_KEY = 'argo-msgr-rail-fold';
 const readFold = () => { try { const v = JSON.parse(localStorage.getItem(FOLD_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
-function RailSection({ id, label, right = null, children }) {
+function RailSection({ id, label, right = null, forceOpen = false, children }) { // forceOpen: 폰 DM 탭 — 홈에서 접어 둔 상태를 따르지 않는다(유건 제보 2026-09-15: 홈에서 접으면 DM 화면이 비었다)
   const phone = useIsPhone(); // 폰 구역 헤더 아이콘(슬랙 18px) — 데스크톱은 그리지 않는다
   const [open, setOpen] = useState(() => readFold()[id] !== true ? true : false); // 기본 펼침 — 저장된 값이 '접힘'일 때만 접는다
-  const onToggle = (e) => { const next = e.currentTarget.open; setOpen(next); try { localStorage.setItem(FOLD_KEY, JSON.stringify({ ...readFold(), [id]: !next })); } catch { /* 저장 못 해도 동작 */ } };
+  const onToggle = (e) => { if (forceOpen) { if (!e.currentTarget.open) e.currentTarget.open = true; return; } const next = e.currentTarget.open; setOpen(next); try { localStorage.setItem(FOLD_KEY, JSON.stringify({ ...readFold(), [id]: !next })); } catch { /* 저장 못 해도 동작 */ } };
   return (
-    <details className="msgr-sec" data-sec={id} open={open} onToggle={onToggle}>
-      <summary className="msgr-group">{phone && <I name={{ fav: 'star', channels: 'hash', dms: 'at', mine: 'star', people: 'at', agents: 'node' }[id] ?? 'hash'} size={18} className="sec-ic" />}<span className="lbl">{label}</span>{right && <span className="right" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{right}</span>}</summary>
+    <details className="msgr-sec" data-sec={id} open={forceOpen || open} onToggle={onToggle}>
+      <summary className="msgr-group">{phone && <I name={{ fav: 'star', channels: 'hash', dms: 'at', dmpin: 'at', mine: 'star', people: 'at', agents: 'node' }[id] ?? 'hash'} size={18} className="sec-ic" />}<span className="lbl">{label}</span>{right && <span className="right" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{right}</span>}</summary>
       {children}
     </details>
   );
@@ -331,6 +336,7 @@ function Shell({ session }) {
   const { signOut, signingOut } = useContext(SignOutContext);
   const { t, lang } = useT();
   const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
+  const isPhoneRef = useRef(isPhone); isPhoneRef.current = isPhone; // 구독 핸들러(deps에 isPhone 없음)가 최신 값을 보게(재검수 L-2)
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
@@ -387,7 +393,7 @@ function Shell({ session }) {
   // 루트(홈·DM·알림함·기억 탭)는 replaceState, 그 위에 여는 화면(대화·설정·검색)은 pushState. 상단 뒤로 버튼·iOS 가장자리 스와이프·
   // Android 하드웨어 뒤로(WryActivity가 webView.goBack → popstate)가 전부 같은 스택을 타서 "그 전 화면"으로 돌아간다. 데스크톱은 무관.
   const ROOT_PAGES = useMemo(() => new Set(['home', 'dm', 'inbox', 'activity']), []);
-  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
+  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); const lastRoot = useRef('home'); // lastRoot = 스와이프 뒤로가기 밑에 깔 실제 이전 루트 탭 // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
   useEffect(() => { // popstate 구독은 폰일 때 한 번. 루트 항목 시딩은 state가 없을 때만(폭 전환으로 다시 돌아도 깊이를 지우지 않는다 — 검수 M-4)
     if (!isPhone) return;
     const onPop = (e) => {
@@ -401,7 +407,7 @@ function Shell({ session }) {
   }, [isPhone]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isPhone) return;
-    const same = navPrev.current === page; navPrev.current = page;
+    const same = navPrev.current === page; navPrev.current = page; if (ROOT_PAGES.has(page)) lastRoot.current = page;
     if (navPopping.current) { navPopping.current = false; return; }
     // depth = 우리 스택 깊이(루트 0). history.length로 판단하면 앱 밖 이전 문서(빈 탭·로그인 왕복)로 나가 버린다(실측 2026-09-15).
     const depth = history.state?.depth ?? 0;
@@ -416,7 +422,7 @@ function Shell({ session }) {
   const goBack = useCallback(() => { if (isPhone && (history.state?.depth ?? 0) > 0) history.back(); else setPage('home'); }, [isPhone]);
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
-  const edgeBack = useEdgeSwipeBack(goBack, isPhone && page !== 'home' && page !== 'dm'); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(그 전 화면)
+  const edgeBack = useEdgeSwipeBack(goBack, isPhone && page !== 'home' && page !== 'dm', { underlay: () => lastRoot.current }); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(그 전 화면)
   const [orgMenu, setOrgMenu] = useState(false);
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
@@ -575,7 +581,7 @@ function Shell({ session }) {
       ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
       registerDispose(remove);
       ch
-        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
+        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (payload?.channel_id && payload.id && isPhoneRef.current && dmIdsRef.current.has(payload.channel_id)) supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').eq('id', payload.id).is('deleted_at', null).maybeSingle().then(({ data: r }) => { if (r) setLastMsg((m) => (m[r.channel_id]?.at > Date.parse(r.created_at) ? m : { ...m, [r.channel_id]: { body: String(r.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) } })); }).catch(() => {}); /* 옛 글 응답이 늦게 오면 덮지 않는다(재검수 L-1) */ /* 방송엔 본문이 없다(서버 트리거는 id·채널·멘션만) → 그 글 1건을 조회해 미리보기 갱신(재검수 M-A) */ if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
         .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); }))
         .on('broadcast', { event: 'typing' }, active(({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() }))))
         .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() })))
@@ -594,7 +600,10 @@ function Shell({ session }) {
   useEffect(() => { dmIdsRef.current = new Set(dmIdsKey ? dmIdsKey.split(',') : []); }, [dmIdsKey]); // 방송 필터용(렌더 중 ref 대입 대신 효과에서)
   useEffect(() => { // DM 최근순 재료 — 채널당 마지막 메시지 시각(RPC msgr_dm_latest, 채널당 1행·id 인덱스). 폰 DM 탭 정렬에만. 재연결·조직 전환 때도 다시.
     if (!orgId || !isPhone || !dmIdsKey) return; let live = true;
-    supabase.rpc('msgr_dm_latest', { org: orgId }).then(({ data }) => { if (!live || !data) return; const m = {}; for (const r of data) m[r.channel_id] = Date.parse(r.last_at); setLastAt((cur) => ({ ...cur, ...m })); }, () => {});
+    supabase.rpc('msgr_dm_latest', { org: orgId }).then(async ({ data }) => { if (!live || !data) return; const m = {}; for (const r of data) m[r.channel_id] = Date.parse(r.last_at); setLastAt((cur) => ({ ...cur, ...m }));
+      const ids = data.map((r) => r.last_id).filter(Boolean); if (!ids.length) return; // 한 줄 미리보기 본문 — 마지막 글 id로 한 번에(RLS: 내 DM만 읽힌다)
+      const { data: rows } = await supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').in('id', ids).is('deleted_at', null); if (!live || !rows) return;
+      const lm = {}; for (const r of rows) lm[r.channel_id] = { body: String(r.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) }; setLastMsg((cur) => ({ ...cur, ...lm })); }, () => {});
     return () => { live = false; };
   }, [orgId, dmIdsKey, isPhone, resumeEpoch]);
   useEffect(() => { if (!rail && !orgMenu) return; const on = (e) => { if (e.key === 'Escape') { setRail(false); setOrgMenu(false); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail, orgMenu]);
@@ -698,6 +707,11 @@ function Shell({ session }) {
   // 폰 DM 탭 정렬(유건 요청 2026-09-15: 최근 메시지·안읽은 메시지·고정) — 기기에 기억. 고정 = 즐겨찾기한 DM을 DM 탭 맨 위에도 둔다(홈 즐겨찾기와 동시에).
   const [dmSort, setDmSort] = useState(() => { try { const v = localStorage.getItem('argo-msgr-dm-sort'); return DM_SORTS.includes(v) ? v : 'recent'; } catch { return 'recent'; } });
   const [dmSortMenu, setDmSortMenu] = useState(false);
+  const [dmFilter, setDmFilter] = useState('all'); // 폰 DM 탭 상단 필터: 전체·즐겨찾기·안읽음·그룹(유건 2026-09-15, 슬랙 DM 페이지 대응)
+  const [lastMsg, setLastMsg] = useState({}); // channel_id → { body, mine, at } — DM 목록 한 줄 미리보기
+  const [dmPeek, setDmPeek] = useState(null); // 길게 눌러 '대화 미리보기' 시트
+  const lpStates = useRef({}); // DM 행 길게 누르기 상태(행별)
+  useEffect(() => () => { for (const st of Object.values(lpStates.current)) if (st.timer) clearTimeout(st.timer); }, []); // 언마운트 시 타이머 해제(검수 L-5)
   const pickDmSort = (v) => { setDmSort(v); try { localStorage.setItem('argo-msgr-dm-sort', v); } catch { /* 저장 못 해도 이번 세션은 적용 */ } };
   useEffect(() => { // 폰 전용 컨트롤 — onMouseLeave만으로는 터치로 못 닫는다(검수 #541 MEDIUM-4): 바깥 누름·Escape
     if (!dmSortMenu) return;
@@ -824,7 +838,7 @@ function Shell({ session }) {
   const [drag, setDrag] = useState(null); const [groupForm, setGroupForm] = useState(null); // 끌어서 정렬·그룹 이동 중인 채널 id · 그룹 이름 입력 {mode:'new', chId} | {mode:'rename', from}
   useLayoutEffect(() => {
     loadedOrg.current = null;
-    setChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
+    setChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setLastMsg({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
     setCtx(null); setGroupForm(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null);
   }, [orgId]);
   const openCtx = (e, items, trigger = null) => { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const returnFocus = e.currentTarget.closest('.msgr-railrow')?.querySelector('button.item') ?? e.currentTarget; setCtx({ x: e.clientX || r.left, y: e.clientY || r.bottom, items, trigger, returnFocus }); };
@@ -849,7 +863,14 @@ function Shell({ session }) {
   const dmTab = isPhone && page === 'dm'; // 폰 DM 탭에서만: 고정(즐겨찾기) DM을 맨 위에 + 선택한 정렬
   const dmSorted = (list) => sortDms(list, { sort: dmSort, lastAt, unread, nameOf: dmName }); // 순수 함수(src/dm-sort.mjs) — 단위 테스트 대상
   const dmPinnedTop = dmTab ? channels.filter((c) => c.kind === 'dm' && pinned.has(c.id)).sort((a, b) => (pinPos.get(a.id) ?? 1e9) - (pinPos.get(b.id) ?? 1e9)) : [];
-  const dmList = dmTab ? [...dmPinnedTop, ...dmSorted(dms)] : dms;
+  // DM 탭 필터(슬랙식): 전체 = 고정 단락 + 나머지, 즐겨찾기 = 고정만, 안읽음·그룹 = 고정 포함 전체에서 거른다. 그룹 = 멤버(사람+크루) 3 이상
+  const dmIsGroup = (c) => { const ms = dmMembers[c.id] ?? []; const u = ms.filter((m) => m.member_kind === 'user').length; const cr = ms.length - u; return u >= 3 || (u >= 2 && cr >= 1); }; // 그룹 = 사람 3명 이상, 또는 사람 2명+크루(1:1+크루는 그룹 아님 — 검수 L-7)
+  const dmWho = (c, m) => m.mine ? t('dm.snip.me').trim() : m.crewId ? (crews.find((x) => x.id === m.crewId)?.display_name ?? dmName(c)) : nameOfUser(m.userId); // 스니펫·미리보기 발신자(검수 M-5)
+  const dmSnipWho = (c, m) => m.mine ? t('dm.snip.me') : (dmIsGroup(c) ? `${dmWho(c, m)}: ` : '');
+  const dmVisible = (c) => dmFilter === 'all' || (dmFilter === 'fav' && pinned.has(c.id)) || (dmFilter === 'unread' && unread[c.id]?.n > 0 && !muted.has(c.id)) || (dmFilter === 'group' && dmIsGroup(c));
+  const dmPool = dmFilter === 'all' ? dms : [...dmPinnedTop, ...dms];
+  const dmList = !dmTab ? dms : dmFilter === 'fav' ? dmPinnedTop : dmSorted(dmPool.filter(dmVisible)); // dms는 이미 고정 제외 — 전체 탭의 고정은 아래 별도 단락, 즐겨찾기 탭은 고정 순서 그대로(검수 L-6)
+  const dmPinnedShown = dmTab && dmFilter === 'all' ? dmPinnedTop : [];
   const sortedCh = [...channels].filter((c) => c.kind !== 'dm' && !pinned.has(c.id)).sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
   const folders = [...new Set(channels.filter((c) => c.kind !== 'dm').map((c) => folderOf.get(c.id)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); // 채널 그룹(사용자별)
   const byFolder = folders.map((f) => [f, sortedCh.filter((c) => folderOf.get(c.id) === f)]); const ungrouped = sortedCh.filter((c) => !folderOf.get(c.id));
@@ -908,7 +929,17 @@ function Shell({ session }) {
 
               </div>
             ); };
+  // 폰 DM 탭 길게 누르기 → 행 메뉴(미리보기·즐겨찾기·음소거…). iOS 웹뷰는 길게 눌러도 contextmenu를 안 내고, 안드로이드는 낸다 → 800ms 안 중복은 onContextMenu가 삼킨다
+  const dmLongPress = (c, items) => { const st = (lpStates.current[c.id] ??= { timer: null, x: 0, y: 0, el: null, firedAt: 0, opened: false });
+    const { clear, ...lp } = longPressHandlers(st, () => { st.firedAt = Date.now(); st.opened = true; if (!st.el) return;
+      openCtx({ preventDefault() {}, stopPropagation() {}, currentTarget: st.el, clientX: st.x, clientY: st.y }, items, c.id); });
+    void clear;
+    // 손을 뗄 때 오는 click(메뉴 뒤 배경에 떨어져 메뉴를 닫고, 행에 떨어지면 대화를 연다)은 **이 누름으로 메뉴가 열렸을 때만, pointerup 직후 300ms 안에서** 한 번 삼킨다 —
+    // 상태 플래그라 오래 누르고 있다가 떼도 보호되고(재검수 M-B), iOS가 click을 안 내는 경우(드래그 리프트·콜아웃)엔 300ms 뒤 풀려 다음 탭(메뉴 항목)을 먹지 않는다(검수 HIGH-3)
+    const swallowNext = () => { if (!st.opened) return; st.opened = false; const swallow = (e) => { e.preventDefault(); e.stopPropagation(); }; document.addEventListener('click', swallow, { capture: true, once: true }); setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 300); };
+    return { ...lp, onPointerDown: (e) => { st.el = e.currentTarget; lp.onPointerDown(e); }, onPointerUp: (e) => { lp.onPointerUp(e); swallowNext(); } }; };
   const dmRow = (c) => { const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const withCrew = !!dmCrew; const confirmVia = (kind) => { setActionError(''); setRailAction({ channel: c, kind }); }; const items = [
+                ...(dmTab ? [{ icon: 'doc', label: t('dm.preview'), run: () => setDmPeek(c) }] : []),
                 { icon: 'star', label: t(pinned.has(c.id) ? 'ch.unpin' : 'ch.pin'), run: () => togglePin(c) },
                 { icon: muted.has(c.id) ? 'bell' : 'belloff', label: t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute'), run: () => toggleMute(c) },
                 ...orderItems(c),
@@ -916,10 +947,9 @@ function Shell({ session }) {
                 { icon: 'x', label: t('dm.end'), run: () => confirmVia('end') },
                 { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
               ]; return (
-            <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} draggable onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => openCtx(e, items, c.id)}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} /><span className="name">{dmName(c)}</span>{dmTab && pinned.has(c.id) && <span className="mi msgr-dmpin" title={t('dm.pinned')} aria-label={t('dm.pinned')}><I name="star" size={12} /></span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
-              <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>
-
+            <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!dmTab} {...(dmTab ? dmLongPress(c, items) : {})}>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} />{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
             </div>
           ); };
   const targetRow = (c) => {
@@ -951,6 +981,7 @@ function Shell({ session }) {
     <AvatarCtx.Provider value={avatarCtx}>
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
+      {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
       <aside id="msgr-navigation" className="side msgr-side">
         <button type="button" className="msgr-rail-close" onClick={() => setRail(false)} aria-label={t('ui.close')}><I name="x" /></button>
         <div className="msgr-brand"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO</div>
@@ -1009,7 +1040,9 @@ function Shell({ session }) {
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: 'public' })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
 </RailSection>
-        {(dms.length > 0 || dmTab) && (<RailSection id="dms" label={t('ch.dms')} right={dmTab ? <span className="right"><span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span></span> : undefined}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
+        {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{['all', 'fav', 'unread', 'group'].map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => setDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
+        {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
+        {(dms.length > 0 || dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={dmTab ? <span className="right"><span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span></span> : undefined}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
           {!dmList.length && <div className="msgr-hint">{t('phone.dm.empty')}</div>}
         </RailSection>)}
@@ -1096,6 +1129,27 @@ function Shell({ session }) {
 }
 
 /* ─── 크루 시트: 소유자·실행 위치·접속 + 누가 시킬 수 있나(소유자만 편집, RLS msgr_crews_update_owner) + 허용 요청 ─── */
+/* ─── DM 미리보기 시트(유건 2026-09-15): 길게 눌러 마지막 12개 글을 읽기 전용으로. 열기 = 대화로. ─── */
+function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
+  const { t, lang } = useT();
+  const [rows, setRows] = useState(null);
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  useEffect(() => { let live = true; supabase.from('msgr_messages').select('id, body, author_kind, author_user_id, crew_id, created_at').eq('channel_id', channel.id).is('deleted_at', null).order('id', { ascending: false }).limit(12)
+    .then(({ data }) => { if (live) setRows((data ?? []).reverse()); }); return () => { live = false; }; }, [channel.id]);
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <section className="msgr-crewsheet msgr-dmpeek" role="dialog" aria-label={t('dm.preview')}>
+        <header className="head"><strong>{name}</strong><button type="button" className="btn sm" onClick={onOpen}>{t('dm.preview.open')}</button><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+        <div className="peek">
+          {rows === null ? <p className="note">{t('ui.loading')}</p> : !rows.length ? <p className="note">{t('dm.preview.empty')}</p> : rows.map((m) => (
+            <div key={m.id} className={`pk${m.author_user_id === uid ? ' me' : ''}`}><span className="who">{whoOf(m)}</span><span className="body">{m.body}</span><span className="when">{fmtDmWhen(Date.parse(m.created_at), lang)}</span></div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
 function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm }) {
   const { t, lang } = useT();
   const owner = crew.owner_user_id === uid;
