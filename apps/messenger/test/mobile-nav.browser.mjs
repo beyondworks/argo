@@ -103,7 +103,7 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   const focusIn = await p.evaluate(() => ({ inMenu: !!document.activeElement?.closest('.msgr-ctxmenu'), tag: document.activeElement?.tagName })); ok('터치 기기에선 메뉴 항목에 포커스를 옮기지 않는다(iOS 포커스 링 — 유건 캡처)', !focusIn.inMenu, focusIn);
   await p.keyboard.press('Escape'); await p.waitForTimeout(150);
   const focusBack = await p.evaluate(() => ({ onItem: !!document.activeElement?.closest('.msgr-railrow'), tag: document.activeElement?.tagName })); ok('닫힌 뒤 행 버튼으로 포커스를 되돌리지 않는다(행에 선이 남던 것)', !focusBack.onItem, focusBack);
-  { const item = p.locator('[data-sec="channels"] .msgr-railrow .item').first(); await item.hover(); await p.waitForTimeout(50); const bg = await item.evaluate((el) => getComputedStyle(el).backgroundColor); ok('폰에서 행 hover 배경 없음(iOS 고착 hover)', bg === 'rgba(0, 0, 0, 0)', bg); await p.mouse.move(5, 5); }
+  { const more = p.locator('[data-sec="channels"] .msgr-railrow:has(.item:not(.active)) .more').first(); await more.hover(); await p.waitForTimeout(50); const bg = await more.evaluate((el) => getComputedStyle(el).backgroundColor); ok('폰에서 점 세 개 hover 배경 없음(iOS 고착 hover — 캡처의 잔상, 재검수 LOW-C: 비활성 행의 .more를 잰다)', bg === 'rgba(0, 0, 0, 0)', bg); await p.mouse.move(5, 5); }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: nameBox.x + 8, y: nameBox.y + nameBox.height / 2 }] }); await p.waitForTimeout(600);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(300);
   const selected = await p.evaluate(() => String(getSelection()).length); ok('길게 누른 뒤 글자가 선택되지 않았다', selected === 0, selected);

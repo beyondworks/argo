@@ -1168,8 +1168,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   body:has(.msgr-shell.msgr-phone) :is(.msgr-work-panel, .msgr-hint), .msgr-phone :is(.msgr-work-panel, .msgr-hint) { -webkit-user-select: text; user-select: text; } /* 문서 본문·안내/오류 문구는 복사 버튼이 없어 선택으로 복사(검수 M-5) */
   body:has(.msgr-shell.msgr-phone) img, .msgr-phone img { -webkit-touch-callout: default; } /* 첨부 이미지 길게 눌러 저장은 살린다(검수 M-3). 링크는 제외 — 본문 링크 콜아웃이 앱 액션 시트를 가로챈다(재검수 LOW-A) */
   /* iOS는 탭한 자리에 hover를 붙여 둔다 — 메뉴를 닫은 뒤에도 행·점 세 개에 hover 배경이 남아 '활성 표시'처럼 보였다(유건 캡처 2026-09-15). 폰에서는 hover 배경을 끄고 :active만 쓴다 */
-  .msgr-phone .msgr-list .item:hover:not(.active) { background: none; color: var(--fg-2); }
-  .msgr-phone .msgr-railrow .more:hover { background: transparent; color: inherit; }
+  .msgr-phone .msgr-list .item:hover:not(.active) { background: none; color: var(--fg-2); } /* 현재 폰에선 이미 hover 배경이 없어 no-op — 데스크톱 규칙이 바뀌어도 새지 않게 방어(재검수 LOW-D) */
+  .msgr-phone .msgr-railrow .more:hover { background: transparent; color: var(--fg-3); } /* 캡처의 '점 세 개 배경'은 이 줄이 잡는다 */
   .msgr-ctxmenu button:focus-visible { outline: none; } /* 폰 블록 안 — 터치에선 포커스를 안 옮기지만 옛 WebView 대비 링도 끈다 */
   .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek, .msgr-dmpeek { top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: auto; max-width: none; max-height: 60vh; border-radius: 20px 20px 0 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; } /* 아래에서 올라오는 시트 — 폰 크루 시트(위 고정·전체 높이) 규칙보다 우선 */
   .msgr-dmpeek .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
