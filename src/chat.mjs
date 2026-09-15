@@ -39,7 +39,7 @@ import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mj
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
-import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
+import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
     allow = 크루별 사용 범위(parseScopeList 결과): null=전체(기본), []=없음, [이름]=지정만.
@@ -202,6 +202,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - Read readable files for real before answering. If you read only part, say how far. If reading fails (corrupt, unsupported), report the cause and an alternative.
 - When asked for a deliverable (report, document, table…), create the actual file and give its path. Don't paste content into chat and call it "done".
 - When asked to modify an existing file, read the original and edit on top of it. Don't rewrite from scratch.
+- In your report, list as deliverables only the files you created or changed for this instruction. You may read and cite other crews' files as evidence, but never edit them unless the captain or that crew asked; hand such work over by delegation instead of touching their files. (Shared company memory — vault/_index.md, notes/captain profile — stays a shared duty as described below.)
 
 ## Operating discipline — the fundamentals of a first-rate agent (every turn)
 - Lead with the result. The first sentence of your answer is the conclusion; reasons and process come after.
@@ -275,6 +276,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 - 읽을 수 있는 파일은 반드시 실제로 읽은 뒤 답하라. 일부만 읽었으면 어디까지 읽었는지 밝혀라. 읽기 실패(손상·미지원 형식)는 원인과 대안을 알려라.
 - 산출물(보고서·문서·표 등) 요청에는 실제 파일을 만들고 경로를 알려라. 채팅에 내용만 붙여 놓고 "만들었다"고 하지 마라.
 - 기존 파일 수정 요청은 원본을 읽고 그 위에 고쳐라. 처음부터 다시 쓰지 마라.
+- 보고의 산출물에는 이번 지시로 네가 만들거나 고친 파일만 적어라. 다른 크루의 파일은 읽고 근거로 인용할 수 있지만, 사장이나 그 크루의 요청 없이 고치지 마라. 그 크루가 할 일은 파일을 건드리지 말고 위임으로 넘겨라. (회사 공용 기억 — vault/_index.md·notes의 사장 프로필 — 갱신은 아래 설명대로 모두의 의무다.)
 
 ## 운영 규율 — 일류 에이전트의 기본기 (모든 턴에 적용)
 - 결과부터 보고하라. 답의 첫 문장이 결론·결과다. 근거와 과정은 그 뒤에 붙인다.
@@ -1130,12 +1132,18 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // compete는 diff 수집 제외 — 시안 N명이 같은 vault에 병렬로 쓰므로 diff가 전원 파일의 합집합이
   // 되어 오귀속된다(검수 HIGH 실측). 경쟁 턴은 tool_use 관측만(격리 불변식 유지 — compete.mjs 헤더).
   const artBefore = source === 'compete' ? null : await snapshotArtifacts(p.vault).catch(() => new Map());
+  // 턴 귀속 장부(제보 2026-09-15): 같은 회사에서 겹쳐 도는 다른 크루 턴의 파일이 이 턴 칩에 붙지 않게 — artifacts.mjs 귀속 절.
+  // 항목은 모델 호출을 감싸는 두 try 안에서 연다(그 앞의 준비 단계가 던지면 항목이 안 생긴다 — 검수 HIGH-2). 시작 시각은 스냅샷 시각.
+  // compete도 등록한다(diff는 제외지만 다른 턴이 시안 파일을 흡수하지 않게 — 검수 M-1).
+  let ledgerEntry = null; const ledgerStartedAt = Date.now();
   // 턴 종료 시 diff — 상한+최신 우선(복원·임포트와 겹친 420칩 폭발 방어, 검수 HIGH).
   let artAfter = new Map(); // SDK 합집합 cap도 같은 mtime 기준을 쓰기 위한 공유(검수 LOW-2)
-  const artDiff = async () => {
+  const artDiff = async (reply = '') => {
     if (!artBefore) return [];
     artAfter = await snapshotArtifacts(p.vault).catch(() => new Map());
-    return capLatest(artAfter, diffArtifacts(artBefore, artAfter).filter(servableArtifact));
+    closeTurnLedger(ledgerEntry);
+    const changed = diffArtifacts(artBefore, artAfter).filter(servableArtifact);
+    return capLatest(artAfter, attributeArtifacts(changed, { entry: ledgerEntry, others: overlappingTurns(wsId, ledgerEntry), reply }));
   };
 
   // 외부 CLI 러너(Codex/Gemini/Antigravity) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
@@ -1151,6 +1159,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort(), __turnControl);
     let browserBridge = null;
     try {
+      ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt, frame: __turnControl ?? null }); // frame — 재시도 재귀만 같은 control(turn-abort)
       const { messages } = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
@@ -1325,7 +1334,7 @@ ${lang === 'en'
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
-      return { reply, sessionId: null, handover, artifacts: await artDiff(), ...(contextScope ? { contextScope } : {}), ...fellBackInfo, ...modelFallbackInfo };
+      return { reply, sessionId: null, handover, artifacts: await artDiff(reply), ...(contextScope ? { contextScope } : {}), ...fellBackInfo, ...modelFallbackInfo };
     } catch (e) {
       discardHandoffs();
       let aborted = abortReg.wasAborted() || !!e?.aborted;
@@ -1386,6 +1395,7 @@ ${lang === 'en'
       if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
       throw aborted ? turnAbortedError(e) : e;
     } finally {
+      closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등) — 열린 채 남으면 뒤 턴이 영원히 "겹침"으로 본다
       abortReg.release();
       await browserBridge?.close();
       // 심박(turn-status 레지스트리)이 생긴 뒤로 clear는 **프로세스 수명 자원(타이머) 해제**다 — 위 두 clear가 도달하지
@@ -1521,6 +1531,7 @@ ${lang === 'en'
   let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
   let thought = ''; // 모델의 사고(thinking 블록) 누적 — 상태 파일 thought(뒤 1500자)
   try {
+  ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt, frame: __turnControl ?? null }); // frame — 재시도 재귀만 같은 control(turn-abort)
   // sdkEnvFor(자격 게이트 포함)·query 구성은 try **안**이어야 한다 — 게이트의 authExpired가
   // try 밖에서 터지면 아래 catch의 자가치유(AUTH_ERR_RE)·사용자 언어 번역이 전부 미발동하고
   // 원문('grok token expired…')이 그대로 표면화된다(격리 서버 실측 2026-08-31).
@@ -1617,7 +1628,7 @@ ${lang === 'en'
         const fp = String(b.input?.file_path ?? '');
         if (!fp) continue;
         const abs = resolve(p.root, fp); // 절대 경로는 resolve가 그대로 통과
-        if (abs.startsWith(resolve(p.vault) + sep)) artifacts.add(relative(p.vault, abs).split(sep).join('/'));
+        if (abs.startsWith(resolve(p.vault) + sep)) { const rel = relative(p.vault, abs).split(sep).join('/'); artifacts.add(rel); ledgerEntry?.observed.add(rel); }
       }
       const tu = tus[0];
       // 크루가 이미 말한 텍스트를 상태 파일로 흘린다 — UI 폴이 완료 전에도 부분 표시(스트리밍 체감)
@@ -1809,6 +1820,7 @@ ${lang === 'en'
     if (surfaced !== e && e?.failCode) Object.assign(surfaced, { failCode: e.failCode, failOrigin: e.failOrigin });
     throw aborted ? turnAbortedError(e) : surfaced;
   } finally {
+    closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등)
     abortReg?.release();
     await browserBridge?.close();
     await clearTurnStatus(wsId, agentSlug); // 타이머 해제의 마지막 방어선(검수 MEDIUM-2) — 멱등
@@ -1830,7 +1842,7 @@ ${lang === 'en'
   });
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
-  for (const r of await artDiff()) artifacts.add(r);
+  for (const r of await artDiff(reply)) artifacts.add(r);
   // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
   const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
   return { reply, sessionId: dmTurn ? null : sid, ...(contextScope ? { contextScope } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
