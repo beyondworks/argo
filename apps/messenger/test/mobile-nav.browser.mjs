@@ -38,5 +38,20 @@ ok('데스크톱 전환에도 depth 유지', (await st()).depth === 1, await st(
 await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(700); await back(); s = await st(); ok('폰 복귀 뒤 뒤로=DM', s.page === 'dm' && s.dm, s);
 await tab('알림|inbox'); await settle(); s = await st(); ok('알림함 탭 = 루트 depth0', s.page === 'inbox' && s.depth === 0, s);
 const rootBack = await p.evaluate(() => [...document.querySelectorAll('.msgr-menu')].filter((b) => b.getBoundingClientRect().width > 0).length); ok('루트 탭에는 상단 뒤로 버튼이 없다(하드웨어 뒤로만 = 앱 종료)', rootBack === 0, rootBack);
+// 가장자리 스와이프 뒤로(유건 2026-09-15 "어색하다" 손질): DM에서 연 대화를 왼쪽 가장자리에서 끌면 밑에 DM 탭(홈 아님)이 깔리고 화면이 손가락을 따라오며, 놓으면 DM으로 돌아간다
+await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이프 전: 대화 depth1', s.page === 'chat' && s.depth === 1, s);
+{
+  const cdp = await p.context().newCDPSession(p);
+  const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+  await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(50);
+  const mid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const m = document.querySelector('.msgr-main'); return { swiping: sh.classList.contains('swiping-back'), dm: sh.classList.contains('phone-dm'), home: sh.classList.contains('phone-home'), tx: m.style.transform, p: sh.style.getPropertyValue('--swipe-p') }; });
+  ok('끄는 중: 밑에 DM 탭이 깔리고 화면이 손가락을 따라온다', mid.swiping && mid.dm && mid.home && /translateX\(1\d\dpx\)/.test(mid.tx) && Number(mid.p) > 0.2, mid);
+  await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
+  s = await st(); const after = await p.evaluate(() => ({ swiping: document.querySelector('.msgr-shell').classList.contains('swiping-back'), tx: document.querySelector('.msgr-main').style.transform }));
+  ok('짧게 끌다 놓으면 제자리(대화 유지)·정리됨', s.page === 'chat' && !after.swiping && !after.tx, { s, after });
+  await touch('touchStart', 10, 420); await touch('touchMove', 100, 422); await touch('touchMove', 260, 424); await p.waitForTimeout(30); await touch('touchEnd'); await p.waitForTimeout(700);
+  s = await st(); ok('화면 폭 35% 넘게 끌고 놓으면 DM 탭으로', s.page === 'dm' && s.dm && s.depth === 0, s);
+  ok('스와이프 뒤 클래스·transform 정리', await p.evaluate(() => !document.querySelector('.msgr-shell').classList.contains('swiping-back') && !document.querySelector('.msgr-main').style.transform));
+}
 await b.close();
 console.log(`${checks.length} phone navigation checks passed`);

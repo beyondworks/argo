@@ -756,7 +756,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-sortwrap { position: relative; display: inline-flex; }
 .msgr-sortbtn { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--fg-3); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .msgr-sortbtn:hover, .msgr-sortbtn.on { background: var(--card-2); color: var(--fg); }
-.msgr-sortwrap .msgr-rowmenu { left: auto; right: 0; top: calc(100% + 4px); min-width: 130px; }
+.msgr-sortwrap .msgr-rowmenu { left: auto; right: 0; top: calc(100% + 4px); min-width: 160px; width: max-content; max-width: calc(100vw - 32px); } /* width: max-content — 절대 배치 메뉴의 shrink-to-fit은 26px 래퍼(containing block) 폭에 갇혀 글자가 잘렸다(iOS 실측 2026-09-15) */
 /* 접힌 절 캐럿 정렬(#463 RailSection의 .lbl::before) — 접힘 상태의 translate(-1px, 1px)가 글자보다 1~2px 아래로 내려앉던 것 */
 .msgr-sec > summary .lbl::before { transform: rotate(45deg) translate(-1px, -1px); }
 .msgr-sec:not([open]) > summary .lbl::before { transform: rotate(-45deg) translate(-1px, -1px); }
@@ -1084,7 +1084,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-actsheet .row.danger { color: var(--danger); }
   .msgr-actsheet .quick button:active, .msgr-actsheet .tiles button:active { transform: scale(.95); }
   /* 뒤로 스와이프 중: 홈이 밑에 깔리고 현재 화면이 그 위에서 밀린다(iOS 내비게이션). 놓으면 홈이 이미 보이므로 튀어 들어오지 않는다 */
-  .msgr-phone.phone-home.swiping-back .msgr-side { position: absolute; inset: 0; z-index: 0; width: 100%; min-height: 0; animation: none; }
+  .msgr-phone.phone-home.swiping-back .msgr-side { position: absolute; inset: 0; z-index: 0; width: 100%; min-height: 0; animation: none; transform: translateX(calc((var(--swipe-p, 0) - 1) * 28%)); } /* 밑 화면은 iOS처럼 뒤에서 따라 들어온다(-28% → 0) */
+  .msgr-phone.phone-home.swiping-back.settling .msgr-side { transition: transform var(--swipe-ms, 200ms) cubic-bezier(.2,.8,.2,1); }
+  .msgr-phone.phone-home.swiping-back .msgr-side::after { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, calc((1 - var(--swipe-p, 0)) * .18)); pointer-events: none; } /* 밑 화면 어둡기 — 당겨 올수록 밝아진다 */
   .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); padding-bottom: 0; }
   .msgr-phone.phone-home.swiping-back .msgr-main > :not(.msgr-sheetwrap) { display: revert; }
   .msgr-phone.swiping-back .msgr-tabbar, .msgr-phone.swiping-back .msgr-fab { display: none; }
@@ -1113,9 +1115,32 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) .title { color: #e6e2d8; }
   :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) .title .mi { color: #a8a297; }
   /* DM 탭 = 홈 레일에서 1:1 구역만(슬랙 DM 페이지 대응) */
-  .msgr-phone.phone-dm .msgr-sec:not([data-sec='dms']) { display: none; }
+  .msgr-phone.phone-dm .msgr-sec:not([data-sec='dms']):not([data-sec='dmpin']) { display: none; }
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] > summary.msgr-group::after { display: none; }
   .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group::after { display: none; }
   .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group .right { display: inline-flex; margin-left: auto; } /* DM 탭 정렬 메뉴(유건 요청 2026-09-15) — 홈 탭의 '.right 숨김'(위 999행)이 DM 탭에도 걸려 메뉴가 안 보였다(검수 #541 CRITICAL-1) */
+
+  /* DM 탭(슬랙식, 유건 2026-09-15): 상단 필터 분절 + 두 줄 행(이름·시각 / 마지막 글 한 줄) */
+  .msgr-phone.phone-dm .msgr-dmfilter { order: -1; width: auto; margin: 6px var(--ph-pad) 2px; overflow: visible; } /* 폰 전역 .msgr-seg order:9(맨 아래) 되돌림 — 필터는 목록 위 */
+  .msgr-phone.phone-dm .msgr-dmfilter button { flex: 1 1 0; min-width: 0; justify-content: center; height: 32px; padding: 0 6px; font-size: 12.5px; white-space: nowrap; }
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .item { height: auto; min-height: 58px; padding: 8px 10px; }
+  .msgr-phone.phone-dm .item .msgr-av { width: 40px; height: 40px; }
+  .msgr-phone.phone-dm .item .dmtext { display: grid; gap: 2px; flex: 1; min-width: 0; text-align: left; }
+  .msgr-phone.phone-dm .item .dmline { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .msgr-phone.phone-dm .item .dmline .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+  .msgr-phone.phone-dm .item .dmline .when { flex: none; font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+  .msgr-phone.phone-dm .item .snip { font-size: 12.5px; line-height: 1.3; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone.phone-dm .item.unread .snip { color: var(--fg-2); }
+  .msgr-phone.phone-dm .item.unread .dmline .when { color: var(--mark); }
+  .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek, .msgr-dmpeek { top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: auto; max-width: none; max-height: 60vh; border-radius: 20px 20px 0 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; } /* 아래에서 올라오는 시트 — 폰 크루 시트(위 고정·전체 높이) 규칙보다 우선 */
+  .msgr-dmpeek .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
+  .msgr-dmpeek .head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-dmpeek .peek { overflow-y: auto; padding: 8px 16px calc(env(safe-area-inset-bottom) + 12px); display: grid; gap: 8px; align-content: start; }
+  .msgr-dmpeek .pk { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; font-size: 13px; line-height: 1.4; }
+  .msgr-dmpeek .pk .who { color: var(--fg-3); font-size: 12px; white-space: nowrap; }
+  .msgr-dmpeek .pk.me .who { color: var(--mark); }
+  .msgr-dmpeek .pk .body { overflow-wrap: anywhere; white-space: pre-wrap; }
+  .msgr-dmpeek .pk .when { color: var(--fg-3); font-size: 11px; white-space: nowrap; }
 
   /* ── 하단: 떠 있는 아일랜드 + 분리된 원형 검색. 슬랙 실측: 인디케이터 폰에서 아래 16pt ── */
   .msgr-tabbar { position: fixed; left: var(--ph-pad); right: var(--ph-pad); bottom: max(16px, calc(env(safe-area-inset-bottom) - 18px)); z-index: 70; /* 슬랙 확대 대조: 아일랜드 x20–310·y798–858, 검색 원 60 우16, 사이 16 */
