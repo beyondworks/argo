@@ -19,9 +19,18 @@ test('화면: 프로필 카드는 본인 upsert만 · 친구 찾기·요청·수
   assert.match(app, /kind: 'friend', key: `friend:\$\{f\.user_id\}`/, '알림함 친구 요청');
 });
 test('서버: 이메일은 정확 일치+허용, 아이디 앞부분+허용, 결과에 이메일 없음, 쓰기는 RPC만(insert 정책 없음)', () => {
-  assert.match(sql, /lower\(u\.email\) = needle and coalesce\(p\.email_search, false\)/, '이메일 정확 일치 + 허용');
+  assert.match(sql, /lower\(u\.email\) = needle and coalesce\(p\.email_search, false\)/, '이메일 정확 일치 + 허용(20260909002000 원본 — 기본값은 20260915150000에서 허용으로 뒤집힘, 아래 핀)');
   assert.match(sql, /p\.handle like needle \|\| '%' and coalesce\(p\.handle_search, true\)/, '아이디 앞부분 + 허용');
   assert.match(sql, /returns table \(user_id uuid, handle text, display_name text, relation text\)/, '결과 열에 이메일 없음');
   assert.doesNotMatch(sql, /create policy msgr_friends_(insert|write|all)/, '친구 표 쓰기 정책 없음');
   assert.match(sql, /if cur\.requested_by = me then return 'sent'; end if;\n\s*update public\.msgr_friends set status = 'accepted'/, '맞요청 = 수락');
+});
+
+// 이메일 검색 기본 허용(유건 지시 2026-09-15) — 서버 기본값·RPC 판정·앱 기본 체크 상태가 같은 방향인지 정적으로 잠근다. 행동은 test/msgr-friend-search-pg.test.mjs.
+test('서버·화면: 이메일 검색 기본 허용 — 컬럼 기본 true, 프로필 없으면 허용, 기존 false 승격, 앱 초기 체크 켜짐', () => {
+  const m = read('supabase/migrations/20260915150000_msgr_email_search_default.sql');
+  assert.match(m, /alter column email_search set default true/, '컬럼 기본값');
+  assert.match(m, /update public\.msgr_profiles set email_search = true where email_search = false/, '기존 false 승격');
+  assert.match(m, /lower\(u\.email\) = needle and \(coalesce\(p\.email_search, true\) or coalesce\(shared\.is_member, false\)\)/, '프로필 없음 = 허용, 같은 조직은 그대로');
+  assert.match(app, /email_search: true, handle_search: true, accept_requests: true/, '프로필 카드 초기 상태(프로필 없는 사용자)가 서버 기본과 같다');
 });

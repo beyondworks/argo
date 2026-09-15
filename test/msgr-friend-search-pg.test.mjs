@@ -65,6 +65,7 @@ before(() => {
     ('${U.admin}', 'admin_person', '프로필 관리자', false, false),
     ('${U.guest}', 'guest_person', '외부 사람', false, false),
     ('${U.svc}', 'public_person', '공개 프로필', true, true)`);
+  sql(`update public.msgr_profiles set updated_at = '2026-09-14T00:00:00Z'`); // 기본 허용 마이그레이션의 백필 경계(2026-09-15 05:30Z) 이전에 저장된 행
   // Pin the reported failure before installing the migration in this same real database.
   assert.deepEqual(find(U.owner, 'member@example.test'), [], 'old RPC hides an existing member without a profile');
   assert.deepEqual(find(U.owner, 'admin@example.test'), [], 'old RPC hides an existing opted-out member');
@@ -72,6 +73,19 @@ before(() => {
   sql('grant execute on function public.msgr_find_user(text) to anon');
   assert.equal(sql("select has_function_privilege('anon', 'public.msgr_find_user(text)', 'EXECUTE')"), 't');
   psql(['-f', mig('20260913084237_msgr_friend_member_search.sql')]);
+  // 기본 허용(20260915150000): 기존 false 행을 전부 허용으로 올리고 컬럼 기본값도 허용. 명시적으로 끈 사람(admin·guest)은 시드 뒤 다시 끈다.
+  assert.equal(sql('select count(*) from public.msgr_profiles where email_search = false'), '2', 'seed has two opted-out rows before the default flip');
+  assert.deepEqual(find(U.guest, 'owner@example.test'), [], 'old RPC hides a stranger who never touched the profile (the reported failure)');
+  psql(['-f', mig('20260915150000_msgr_email_search_default.sql')]);
+  assert.equal(sql('select count(*) from public.msgr_profiles where email_search = false'), '0', 'migration lifts every opted-out row');
+  // 재적용해도 그 뒤에 스스로 끈 사람은 되살아나지 않는다(LOW-1): 경계 이후 updated_at으로 끄고 같은 파일을 다시 적용
+  sql(`update public.msgr_profiles set email_search = false, updated_at = now() where user_id = '${U.guest}'`);
+  psql(['-f', mig('20260915150000_msgr_email_search_default.sql')]);
+  assert.equal(sql(`select email_search from public.msgr_profiles where user_id = '${U.guest}'`), 'f', 'replay keeps a later explicit opt-out');
+  assert.equal(sql("select column_default from information_schema.columns where table_name = 'msgr_profiles' and column_name = 'email_search'"), 'true');
+  sql(`update public.msgr_profiles set email_search = false where user_id in ('${U.admin}', '${U.guest}')`);
+  // member는 아이디·이름 없는 프로필로 이메일 검색만 끈 사람: 조직 멤버십 게이트(탈퇴·만료·삭제 조직) 검사는 "끈 사람"에게만 뜻이 있다.
+  sql(`insert into public.msgr_profiles (user_id, email_search) values ('${U.member}', false)`);
 });
 function escaped(s) { return s.replace(/'/g, "''"); }
 function find(uid, text) { return JSON.parse(last(asUser(uid, `select coalesce(json_agg(r), '[]'::json) from public.msgr_find_user('${escaped(text)}') r`))); }
@@ -85,13 +99,24 @@ test('email normalization permits case and surrounding whitespace, never partial
   assert.equal(find(U.owner, '  MEMBER@EXAMPLE.TEST  ')[0]?.user_id, U.member);
   for (const q of ['member@example', 'member@', '%@example.test', 'm_mber@example.test', '', 'me']) assert.deepEqual(find(U.owner, q), [], q);
 });
-test('external search still requires email or handle opt-in; internal membership does not bypass handle privacy', { skip }, () => {
-  assert.deepEqual(find(U.owner, 'guest@example.test'), []);
+test('external search: exact email finds anyone who has not turned lookup off; explicit opt-out and handle privacy still hold', { skip }, () => {
+  assert.deepEqual(find(U.owner, 'guest@example.test'), [], 'explicit opt-out stays hidden');
   assert.deepEqual(find(U.owner, 'gue'), []);
   assert.deepEqual(find(U.owner, 'admin'), []);
   assert.equal(find(U.owner, 'svc@example.test')[0]?.user_id, U.svc);
   assert.equal(find(U.owner, 'pub')[0]?.handle, 'public_person');
-  assert.deepEqual(find(U.guest, 'member@example.test'), [], 'no shared organization');
+  assert.equal(find(U.guest, 'owner@example.test')[0]?.user_id, U.owner, 'no profile + no shared organization = still found (default allowed)');
+  assert.deepEqual(find(U.guest, 'member@example.test'), [], 'opted out + no shared organization = hidden');
+  assert.equal(find(U.owner, 'member@example.test')[0]?.user_id, U.member, 'same organization still finds an opted-out member');
+  try {
+    sql(`update public.msgr_profiles set email_search = true where user_id = '${U.member}'`);
+    assert.equal(find(U.guest, 'member@example.test')[0]?.user_id, U.member, 'turning it back on shows to strangers');
+    sql(`insert into public.msgr_profiles (user_id, handle) values ('${U.owner}', 'owner_person')`);
+    assert.equal(sql(`select email_search from public.msgr_profiles where user_id = '${U.owner}'`), 't', 'new profile row defaults to allowed');
+    assert.equal(find(U.guest, 'owner@example.test')[0]?.handle, 'owner_person');
+  } finally {
+    sql(`update public.msgr_profiles set email_search = false where user_id = '${U.member}'; delete from public.msgr_profiles where user_id = '${U.owner}'`);
+  }
 });
 test('removed and expired target memberships never grant email discovery', { skip }, () => {
   for (const column of ['removed_at', 'expires_at']) {
