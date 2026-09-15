@@ -166,3 +166,26 @@ test('CC 줄 분류는 독립 줄만 인정하고 인용·코드의 CC는 지시
   assert.doesNotMatch(result.to, /@인용/);
   assert.doesNotMatch(result.to, /@코드/);
 });
+
+// ── 부재중 안내(유건 요구 2026-09-15: 위임했으면 상대가 깨어나 일해야 한다) — 상대 소유자 PC가 꺼져 있으면 넘김이 조용히 기다리던 자리 ──
+test('넘김 줄: 상대 심박이 90초를 넘거나 없으면 "(부재중 — 온라인이 되면 실행)", 온라인·조회 불가는 표시 없음, en 문구', async () => {
+  const { renderMessengerHandoffs, HANDOFF_AWAY_MS } = await import('../src/gateway/msgr-handoff.mjs');
+  const now = () => 1_000_000_000_000;
+  const iso = (agoMs) => new Date(now() - agoMs).toISOString();
+  const ctx = { handoffs: [{ to: { id: 'b', display_name: '베타' }, cc: [], message: '다음' }, { to: { id: 'c', display_name: '감마' }, cc: [{ display_name: '델타' }], message: '검토' }] };
+  assert.equal(renderMessengerHandoffs(ctx), '@베타\n다음\n\n@감마\n검토\n(CC: 델타)', '기본(심박 미조회)은 종전 그대로');
+  assert.equal(renderMessengerHandoffs(ctx, { seenAt: { b: iso(HANDOFF_AWAY_MS + 1), c: iso(10_000) }, now }), '@베타 (부재중 — 온라인이 되면 실행)\n다음\n\n@감마\n검토\n(CC: 델타)');
+  assert.equal(renderMessengerHandoffs(ctx, { seenAt: { b: null }, now }).split('\n')[0], '@베타 (부재중 — 온라인이 되면 실행)', '심박 없음 = 부재중');
+  assert.equal(renderMessengerHandoffs(ctx, { seenAt: { b: iso(HANDOFF_AWAY_MS) }, now }).split('\n')[0], '@베타', '정확히 90초는 온라인');
+  assert.equal(renderMessengerHandoffs(ctx, { seenAt: {}, now }).split('\n')[0], '@베타', '키 없음(조회 못 함) = 표시 없음');
+  assert.equal(renderMessengerHandoffs(ctx, { seenAt: { b: null }, now, lang: 'en' }).split('\n')[0], '@베타 (away — runs when back online)');
+});
+test('배선: messengerReply가 넘김 대상 심박을 한 번 조회해 렌더에 넘기고, 두 호출부가 db·lang을 전달한다', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
+  assert.match(src, /async function messengerReply\(ctx, text, \{ db = null, lang = 'ko' \} = \{\}\)/);
+  assert.match(src, /db\?\.crewSeen \? await db\.crewSeen\(handoffs\.map\(\(h\) => h\.to\.id\)\)\.catch\(\(\) => null\) : null/, '조회 실패는 표시 생략');
+  assert.match(src, /renderMessengerHandoffs\(\{ handoffs \}, \{ seenAt, lang \}\)/);
+  assert.equal((src.match(/await messengerReply\(ctx, [a-z.]+, \{ db, lang \}\)/g) ?? []).length, 2, '후속 실행·드레인 두 호출부');
+  assert.match(src, /async crewSeen\(ids\)/);
+});
