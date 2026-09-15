@@ -334,10 +334,12 @@ test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewSer
 test('배선 핀: 게이트웨이 매니저·pushEvent·채널 종류 등재(구간 불변식)', async () => {
   const gw = await readFile(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
   const sync = gw.slice(gw.indexOf('export function ensureGateway()'));
-  assert.match(sync, /const qkeys = new Set\(\['telegram', 'slack', [^\n]*\]\);\n\s*if \(c\.msgr\?\.enabled\) qkeys\.add\(MSGR_KEY\);/, '드레인 큐 키');
+  // 자동 켜기(2026-09-15)가 큐 조립과 enabled 판정 사이에 선다 — 조직 멤버인데 꺼진 회사를 같은 sync에서 켠다(test/msgr-auto-enable.test.mjs)
+  assert.match(sync, /const qkeys = new Set\(\['telegram', 'slack', [^\n]*\]\);\n\s*\/\/[^\n]*\n\s*if \(!c\.msgr\?\.enabled && await autoEnableMsgr\(c\.id, \{ company: c \}\)[^\n]*\n\s*if \(c\.msgr\?\.enabled\) qkeys\.add\(MSGR_KEY\);/, '드레인 큐 키(자동 켜기 → enabled 판정)');
   assert.match(sync, /: qkey === JOBS_QUEUE \? makeJobHandler\(c\.id\)[^\n]*\n\s*: qkey === MSGR_KEY \? makeMsgrHandler\(c\.id\)\n\s*: qkey\.startsWith\(TG_AGENT_Q\)/, '핸들러 삼항');
   assert.match(sync, /if \(c\.msgr\?\.enabled\) \{\n\s*const id = `\$\{c\.id\}:\$\{MSGR_KEY\}`;\n\s*alive\.add\(id\);\n\s*if \(!running\.has\(id\)\) running\.set\(id, \{ key: 'v1', stop: startMsgrBridge\(c\.id\) \}\);\n\s*\}/, '폴러(리더 전용 블록 안)');
-  assert.ok(sync.indexOf('startMsgrBridge(c.id)') > sync.indexOf("if (!leader) { // 클라우드 리더가 아니면 폴러만 내린다"), '브리지는 리더 반환 뒤(=리더만)');
+  // 검수 L5(2026-09-15): 옛 단언은 존재하지 않는 문자열(indexOf -1)과 비교해 항상 참이었다 — 실제 게이트는 procLeader(기기당 한 프로세스)
+  assert.ok(sync.indexOf('if (!procLeader) {') > 0 && sync.indexOf('startMsgrBridge(c.id)') > sync.indexOf('if (!procLeader) {'), '브리지는 프로세스 리더 게이트 뒤(=리더만)');
   const pushStart = gw.indexOf('async function pushEvent(');
   const push = gw.slice(pushStart, gw.indexOf('const all = await loadConnections(event.wsId);', pushStart));
   assert.match(push, /await pushMsgr\(event\)\.catch\(/, 'pushEvent 머리에서 msgr 먼저(연결 파일 로드 전)');

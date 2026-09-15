@@ -23,7 +23,7 @@ import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
-import { paths, loadCompany } from '../workspace.mjs';
+import { paths, loadCompany, updateCompany } from '../workspace.mjs';
 import { enqueueJob, DEFER } from './queue.mjs';
 import { pick } from './protocol.mjs';
 import { beatGateway } from './persist.mjs';
@@ -175,6 +175,10 @@ export function makeDb(client) {
     /** 크루 인벤토리(2026-09-07 유건 지시 "슬랙처럼 내 에이전트 목록"): 내가 활성 멤버인 조직 목록. */
     async myOrgIds(uid) {
       return (unwrap(await client.from('msgr_org_members').select('org_id').eq('user_id', uid).is('removed_at', null)) ?? []).map((r) => r.org_id);
+    },
+    /** 이 계정이 어느 회사·조직에든 크루 행을 가진 적이 있나(상태 무관) — 자동 켜기의 "이미 파견 중인 계정은 손대지 않는다" 게이트. */
+    async hasAnyCrew(uid) {
+      return ((unwrap(await client.from('msgr_crews').select('id').eq('owner_user_id', uid).limit(1))) ?? []).length > 0;
     },
     /** 이 회사(ws)의 내 크루 행 전부(상태 무관) — 미러 diff의 기준. */
     async myCrewRows(uid, wsId) {
@@ -336,6 +340,42 @@ export async function sessionClient() {
     cached = { key, client, db: makeDb(client), uid: sess.user.id };
   }
   return cached;
+}
+
+/** 메신저 자동 켜기(실사고 2026-09-15): 브리지는 company.json.msgr.enabled가 켜져야 돌고, 그 값은 등록이 하나라도 있어야 켜졌다(syncEnabled).
+    9/8에 아르고 설정의 수동 "등록" 버튼을 없애자 새 계정은 첫 등록을 만들 길이 없어져 크루가 영영 안 올라갔다 — 라이브: 9/11 이후 가입한
+    조직 멤버 5명 전원 크루 0(데스크톱을 켠 흔적이 있어도). 꺼진 회사는 10분에 한 번 "이 계정이 조직 멤버인가"(user_id 색인 한 건)를 묻고
+    멤버면 켠다 → 같은 sync에서 브리지가 시작되고 mirrorInventory가 크루 전부를 파견한다. 조직 회사(nodeOrgId)·소유자 불일치 회사는 대상 밖.
+    검수 반영: 세션이 없으면 60초만 쉰다(죽은 세션 기기에서 10초마다 refresh를 보내던 2026-09-04 경로를 곱하지 않는다 — MEDIUM-1),
+    멤버십 조회는 uid 단위로 10분 캐시(회사 N개 = 질의 1건 — L1), 3초 상한(L3), 쓰기 직전 company.json을 다시 읽어 병합(MEDIUM-3).
+    범위(유건 결정 2026-09-15, 검수 MEDIUM-4): **어느 회사·조직에든 크루 행이 있는 계정은 손대지 않는다** — 회사 10개 중 2개만 파견한 계정에
+    나머지 8개 회사 크루가 갑자기 나타나지 않게. 교착에 걸린 계정(파견 크루 0)만 회사 전부를 켠다(9/8 규칙 "연결하면 내 크루 전부"는 그대로). */
+export const MSGR_AUTO_ENABLE_PROBE_MS = 10 * 60_000;
+export const MSGR_AUTO_ENABLE_NO_SESSION_MS = 60_000;
+const autoEnableProbes = new Map(); // wsId → 다음 조회 가능 시각
+const autoEnableOrgs = new Map();   // uid → { at, orgs } 멤버십 조회 캐시(10분)
+export async function autoEnableMsgr(wsId, { company, session = sessionClient, load = loadCompany, update = updateCompany, now = Date.now, probes = autoEnableProbes, orgCache = autoEnableOrgs, timeoutMs = 3000, log = console.error } = {}) {
+  if (!company || company.msgr?.enabled || company.msgr?.nodeOrgId) return false;
+  if (now() < (probes.get(wsId) ?? 0)) return false;
+  const c = await session().catch(() => null);
+  if (!c) { probes.set(wsId, now() + MSGR_AUTO_ENABLE_NO_SESSION_MS); return false; }
+  probes.set(wsId, now() + MSGR_AUTO_ENABLE_PROBE_MS);
+  if (company.ownerId && company.ownerId !== c.uid) return false; // 회사 소유자 게이트(2026-09-11 실사고와 같은 규칙) — 남의 회사 크루를 내 조직에 올리지 않는다
+  let probe = orgCache.get(c.uid);
+  if (!probe || now() - probe.at >= MSGR_AUTO_ENABLE_PROBE_MS) {
+    let timer;
+    try {
+      const [orgs, hasCrew] = await Promise.race([Promise.all([c.db.myOrgIds(c.uid), c.db.hasAnyCrew(c.uid)]), new Promise((_, rej) => { timer = setTimeout(rej, timeoutMs, new Error(`timeout ${timeoutMs}ms`)); })]);
+      probe = { at: now(), orgs, hasCrew };
+    } catch (e) { log('[argo] msgr 자동 켜기 — 조직 멤버십 조회 실패:', e.message); return false; }
+    finally { clearTimeout(timer); }
+    orgCache.set(c.uid, probe);
+  }
+  if (!probe.orgs.length || probe.hasCrew) return false;
+  const fresh = await load(wsId).catch(() => company); // 쓰기 직전 재읽기 — sync 머리 스냅샷 뒤 저장된 notify·mutedEvents를 덮지 않는다
+  if (fresh.msgr?.enabled) return true;
+  await update(wsId, { msgr: { ...(fresh.msgr ?? {}), enabled: true } });
+  return true;
 }
 
 /* ─── drain — 멘션·DM을 큐에 적재하고 커서 전진 + 결재 결정 반영. 순수 의존은 db·uid·enqueue(테스트 주입). ─── */
