@@ -21,6 +21,19 @@ pub fn run() {
     let builder = builder
         .invoke_handler(tauri::generate_handler![pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list]);
     builder
+        // macOS: 창 닫기(빨간 버튼·cmd+W) = 앱 가리기 — Argo 본체·Claude Desktop과 같은 관례(유건 요청 2026-09-15).
+        // NSApp hide라 독 아이콘이 남고, 독 클릭이 OS 표준 unhide로 창을 복원한다(별도 Reopen 코드 불요).
+        // cmd+Q·메뉴 Quit은 CloseRequested가 아니라 ExitRequested 경로라 그대로 종료. 가려진 동안에도 알림·푸시 토큰·업데이트 확인은 계속 돈다.
+        // Windows/Linux는 기본 동작 유지(트레이가 없어 숨기면 복귀 수단이 없다 — 트레이 도입 시 재검토). 모바일은 창 닫기 개념이 없다.
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = tauri::Manager::app_handle(window).hide();
+                api.prevent_close();
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event);
+        })
         .setup(|_app| {
             // 인앱 업데이터 + 설치 뒤 재시작 — 데스크톱만(모바일 타깃에는 크레이트 자체가 없다)
             #[cfg(desktop)]
