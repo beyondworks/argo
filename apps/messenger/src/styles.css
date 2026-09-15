@@ -1095,12 +1095,21 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 화면 전환(유건 2026-09-15 "슬랙·카톡처럼 부드럽게"): 대화 열기 = 오른쪽에서 밀려 들어옴, 탭 전환·뒤로 = 페이드. 전부 transform·opacity(합성 레이어) */
   @keyframes msgrPushIn { from { transform: translateX(100%); } to { transform: none; } }
   @keyframes msgrFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-  .msgr-phone.anim-push .msgr-main { animation: msgrPushIn 260ms cubic-bezier(.2,.8,.2,1) both; will-change: transform; }
+  /* a/b 변형 = 같은 움직임의 키프레임 두 벌 — 연속 전환에서 클래스만 바꿔도 애니메이션이 다시 시작된다(검수 M-2) */
+  @keyframes msgrPushInB { from { transform: translateX(100%); } to { transform: none; } }
+  @keyframes msgrFadeInB { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes msgrTabLeftB { from { opacity: .4; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+  @keyframes msgrTabRightB { from { opacity: .4; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+  .msgr-phone.anim-push-a .msgr-main { animation: msgrPushIn 260ms cubic-bezier(.2,.8,.2,1) both; will-change: transform; }
+  .msgr-phone.anim-push-b .msgr-main { animation: msgrPushInB 260ms cubic-bezier(.2,.8,.2,1) both; will-change: transform; }
   @keyframes msgrTabLeft { from { opacity: .4; transform: translateX(28px); } to { opacity: 1; transform: none; } }
   @keyframes msgrTabRight { from { opacity: .4; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
-  .msgr-phone.anim-tab-left .msgr-side, .msgr-phone.anim-tab-left .msgr-main { animation: msgrTabLeft 200ms cubic-bezier(.2,.8,.2,1) both; }
-  .msgr-phone.anim-tab-right .msgr-side, .msgr-phone.anim-tab-right .msgr-main { animation: msgrTabRight 200ms cubic-bezier(.2,.8,.2,1) both; }
-  .msgr-phone.anim-pop .msgr-side { animation: msgrFadeIn 180ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.anim-tab-left-a .msgr-side, .msgr-phone.anim-tab-left-a .msgr-main { animation: msgrTabLeft 200ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.anim-tab-left-b .msgr-side, .msgr-phone.anim-tab-left-b .msgr-main { animation: msgrTabLeftB 200ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.anim-tab-right-a .msgr-side, .msgr-phone.anim-tab-right-a .msgr-main { animation: msgrTabRight 200ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.anim-tab-right-b .msgr-side, .msgr-phone.anim-tab-right-b .msgr-main { animation: msgrTabRightB 200ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.anim-pop-a .msgr-side { animation: msgrFadeIn 180ms cubic-bezier(.2,.8,.2,1) both; }
+  .msgr-phone.anim-pop-b .msgr-side { animation: msgrFadeInB 180ms cubic-bezier(.2,.8,.2,1) both; }
   @media (prefers-reduced-motion: reduce) { .msgr-phone[class*='anim-'] .msgr-side, .msgr-phone[class*='anim-'] .msgr-main { animation: none; } } /* 가로로 잠긴 동안 실제 스크롤러(스레드)의 세로 스크롤을 멈춘다(검수 M-2 — main은 이미 overflow hidden) */
   .msgr-phone .msgr-main .msgr-composer { position: relative; }
   /* 키보드가 올라오면(입력창에 초점) 채팅 모드 — 아일랜드·+ 버튼을 치우고 입력창이 키보드 바로 위에 붙는다(슬랙과 같게, 유건 2026-09-11) */
@@ -1156,7 +1165,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-dmpeek .pk.me .who { color: var(--fg); font-weight: 600; }
   .msgr-dmpeek .pk .body { overflow-wrap: anywhere; white-space: pre-wrap; }
   .msgr-dmpeek .pk .when { color: var(--fg-3); font-size: 11px; white-space: nowrap; }
-  .msgr-dmgroup { grid-template-rows: auto minmax(0, 1fr) auto; max-height: 76vh; }
+  .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmgroup { grid-template-rows: auto minmax(0, 1fr) auto; max-height: 76vh; } /* 미리보기 시트 규칙(4클래스)보다 우선(검수 L-1) */
+  .msgr-dmgroup .foot .note { margin: 0 0 8px; font-size: 12px; color: var(--fg-3); }
   .msgr-dmgroup .peek { gap: 2px; }
   .msgr-dmgroup .pickrow { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 6px; border-radius: 10px; }
   .msgr-dmgroup .pickrow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

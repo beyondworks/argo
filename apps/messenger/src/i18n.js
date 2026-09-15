@@ -875,6 +875,7 @@ export const DICT = {
   'dm.group.crew': ['크루', 'Crew'],
   'dm.group.myCrew': ['내 크루', 'My crew'],
   'dm.group.none': ['고를 수 있는 멤버·크루가 없습니다.', 'No members or crews to pick.'],
+  'dm.group.joiners': ['함께 들어오는 사람(크루 소유자): {names}', 'Also joining (crew owners): {names}'],
   'dm.filter': ['1:1 대화 필터', 'Direct message filter'],
   'dm.filter.all': ['전체', 'All'],
   'dm.filter.fav': ['즐겨찾기', 'Favorites'],

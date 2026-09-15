@@ -40,7 +40,8 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /DM_SORTS\.map\(\(v\) => <button key=\{v\} type="button" role="menuitemradio" aria-checked=\{dmSort === v\}/, '정렬 메뉴');
   assert.doesNotMatch(src, /msgr-dmpin/, '고정 별 아이콘 없음(유건 2026-09-15: 즐겨찾기 별 아이콘 쓰지 마)');
   assert.match(src, /const dmVisible = \(c\) => dmFilter === 'all' \|\| \(dmFilter === 'fav' && pinned\.has\(c\.id\)\) \|\| \(dmFilter === 'unread' && unread\[c\.id\]\?\.n > 0 && !muted\.has\(c\.id\)\) \|\| \(dmFilter === 'group' && dmIsGroup\(c\)\);/, '필터 4종');
-  assert.match(src, /return u >= 3 \|\| \(u >= 2 && cr >= 1\);/, '그룹 = 사람 3명 이상 또는 사람 2명+크루(1:1+크루는 그룹 아님)');
+  assert.match(src, /if \(people\.length === 1 && crewsIn\.length === 1 && crewOf\(crewsIn\[0\]\.member_id\)\?\.owner_user_id === people\[0\]\.member_id\) return false;/, '그룹 판정 정본: 나 뺀 참가자 2 이상, 남의 크루 1:1(소유자 동반)은 예외');
+  assert.match(src, /if \(dmIsGroup\(c\)\) return \[\.\.\.crewsIn\.map/, 'dmName은 같은 판정을 쓴다(검수 HIGH-2)');
   assert.match(src, /\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/span>\{lastMsg/, 'DM 탭 행 음소거 벨(검수 HIGH-1 회귀 방지)');
   assert.match(src, /<><span className="name">\{dmName\(c\)\}<\/span>\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/>/, '데스크톱·홈 행 음소거 벨(회귀 방지)');
   assert.match(src, /onPointerUp: \(e\) => \{ lp\.onPointerUp\(e\); swallowNext\(\); \}/, 'click 삼킴은 손 뗀 직후에만 등록(검수 HIGH-3)');
@@ -53,7 +54,8 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /dragging' : ''\}`\} onDragStart=\{dragStart\(c\)\}[^\n]*draggable=\{!dmTab\}/, 'DM 행은 draggable={!dmTab} 하나만(맨 draggable 중복 없음 — 빌드 경고)');
   assert.match(src, /function DmPeekSheet\(/, '미리보기 시트');
   assert.match(src, /function DmGroupSheet\(/, '새 그룹 대화 시트'); assert.match(src, /const createGroupDm = async \(picks\) =>/, '그룹 생성'); assert.match(src, /page === 'dm' \? setDmGroup\(true\) : setNewCh/, 'DM 탭의 +는 그룹 대화');
-  assert.match(src, /const rootSwipe = useSwipeTabs\(ROOT_ORDER, page, setPage, isPhone && \(page === 'home' \|\| page === 'dm'\)\)/, '홈·DM에서 좌우 스와이프 = 하단 탭 이동(카톡식)');
+  assert.match(src, /const rootSwipe = useSwipeTabs\(ROOT_ORDER, page, pickRoot, isPhone && \(page === 'home' \|\| page === 'dm'\)\)/, '홈·DM에서 좌우 스와이프 = 하단 탭 이동(카톡식), 탭 누름과 같은 pickRoot');
+  assert.match(src, /setDmGroup\(false\); \/\/ 시트는 어느 경로든 닫는다/, '한 명 경로에서도 시트 닫힘(검수 HIGH-1)');
   assert.match(src, /const dmTab = isPhone && \(page === 'dm' \|\| swipeTo === 'dm'\);/, '스와이프 중 밑 화면 DM 탭 미리 그리기');
   assert.match(src, /\{!dmTab && <button type="button" className="more"/, 'DM 탭에는 점 세 개 없음(길게 누르기 메뉴로 대체)');
   assert.match(src, /if \(payload\?\.channel_id && dmIdsRef\.current\.has\(payload\.channel_id\)\) setLastAt\(\(m\) => \(\{ \.\.\.m, \[payload\.channel_id\]: Date\.now\(\) \}\)\);/, '방송으로 최근 시각 갱신(DM만)');

@@ -49,18 +49,26 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
   s = await st(); const after = await p.evaluate(() => ({ swiping: document.querySelector('.msgr-shell').classList.contains('swiping-back'), tx: document.querySelector('.msgr-main').style.transform }));
   ok('짧게 끌다 놓으면 제자리(대화 유지)·정리됨', s.page === 'chat' && !after.swiping && !after.tx, { s, after });
+  await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const main = document.querySelector('.msgr-main'); window.__tl = []; const snap = () => window.__tl.push({ page: history.state?.page, cls: sh.className, tx: main.style.transform }); new MutationObserver(snap).observe(sh, { attributes: true, attributeFilter: ['class'] }); new MutationObserver(snap).observe(main, { attributes: true, attributeFilter: ['style'] }); window.addEventListener('popstate', () => setTimeout(snap, 0)); });
   await touch('touchStart', 10, 420); await touch('touchMove', 100, 422); await touch('touchMove', 260, 424); await p.waitForTimeout(30); await touch('touchEnd'); await p.waitForTimeout(700);
   s = await st(); ok('화면 폭 35% 넘게 끌고 놓으면 DM 탭으로', s.page === 'dm' && s.dm && s.depth === 0, s);
+  // 깜빡임 제보(유건 2026-09-15)의 잠금: settling 뒤로는 화면이 바뀌기(popstate) 전에 transform을 지우는 순간이 없어야 하고, 스와이프 복귀엔 anim-pop이 붙지 않는다
+  { const tl = await p.evaluate(() => window.__tl); const from = tl.findIndex((x) => /settling/.test(x.cls)); const after = from >= 0 ? tl.slice(from) : tl;
+    const early = after.filter((x) => x.page === 'chat' && x.tx === '' && !/swiping-back/.test(x.cls)); ok('전환 전에 대화 화면이 제자리로 튀는 프레임이 없다(popstate 뒤 정리)', from >= 0 && early.length === 0, { from, early: early.slice(0, 3) });
+    ok('스와이프 복귀에는 pop 애니메이션이 겹치지 않는다', !after.some((x) => /anim-pop/.test(x.cls)), after.filter((x) => /anim-/.test(x.cls)).slice(0, 3)); }
   ok('스와이프 뒤 클래스·transform 정리', await p.evaluate(() => !document.querySelector('.msgr-shell').classList.contains('swiping-back') && !document.querySelector('.msgr-main').style.transform));
 }
 // 화면 전환 애니메이션(유건 2026-09-15): 대화 열기 = push, 하단 탭 전환 = tab, 뒤로 버튼 = pop. 300ms 뒤 클래스 해제
 {
   await tab('DM'); await settle();
   await p.locator('[data-sec="dms"] .item').first().click(); await p.waitForTimeout(60);
-  ok('대화 열기 → anim-push', await p.evaluate(() => document.querySelector('.msgr-shell').classList.contains('anim-push')));
+  ok('대화 열기 → anim-push', await p.evaluate(() => /(^| )anim-push-(a|b)( |$)/.test(document.querySelector('.msgr-shell').className)));
   await p.waitForTimeout(400); ok('300ms 뒤 해제', await p.evaluate(() => ![...document.querySelector('.msgr-shell').classList].some((c) => c.startsWith('anim-'))));
   await back(); await p.waitForTimeout(0); // back()은 400ms 대기 → 이미 해제됐을 수 있어 즉시 다시 확인 대신 결과 화면만 본다
-  await tab('홈|home'); await p.waitForTimeout(60); ok('탭 전환(DM→홈) → anim-tab-right', await p.evaluate(() => document.querySelector('.msgr-shell').classList.contains('anim-tab-right')));
+  await tab('홈|home'); await p.waitForTimeout(60); ok('탭 전환(DM→홈) → anim-tab-right', await p.evaluate(() => /anim-tab-right-(a|b)/.test(document.querySelector('.msgr-shell').className)));
+  // 연속 전환(검수 M-2): 곧바로 DM → 알림함으로 두 번 옮기면 두 번째도 새 변형(a/b)으로 재시작
+  await tab('DM'); await p.waitForTimeout(40); const c1 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]); await tab('알림|inbox'); await p.waitForTimeout(40); const c2 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]);
+  ok('연속 전환은 a/b가 번갈아 재시작', c1 && c2 && c1 !== c2, { c1, c2 }); await p.waitForTimeout(400);
   await p.waitForTimeout(400);
   // 스와이프 뒤로 중 밑 화면은 DM 탭 모양(필터 줄) — 전환 순간 다시 그려지지 않게
   await tab('DM'); await settle(); await openDm();
