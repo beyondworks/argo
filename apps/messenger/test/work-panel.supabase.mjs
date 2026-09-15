@@ -34,6 +34,11 @@ base.from = (table) => {
   return api;
 };
 base.rpc = (name, args = {}) => {
+  if (name === 'msgr_dm_latest') { // 폰 DM 탭 최근순 재료 — 채널당 마지막 글(실서버 RPC와 같은 모양: channel_id·last_id·last_at)
+    const dmIds = new Set((state.tables.msgr_channels ?? []).filter((c) => c.kind === 'dm' && c.org_id === args.org && !c.archived_at).map((c) => c.id));
+    const latest = new Map(); for (const m of state.tables.msgr_messages) if (dmIds.has(m.channel_id) && !m.deleted_at && (!latest.has(m.channel_id) || latest.get(m.channel_id).id < m.id)) latest.set(m.channel_id, m);
+    return Promise.resolve({ data: [...latest.entries()].map(([channel_id, m]) => ({ channel_id, last_id: m.id, last_at: m.created_at })), error: null });
+  }
   if (!name.startsWith('msgr_work_') && !name.startsWith('msgr_automation_') && !name.startsWith('msgr_notification_')) return originalRpc(name, args);
   if (state.missingNotifications && /msgr_notification_|save_with_notifications/.test(name)) return Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } });
   return response(name, args, () => {

@@ -12,6 +12,7 @@ import { customServer, SB_URL, SB_ANON } from './supabase.js';
 import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
 import { handoff, fetchProviderSettings, providerShown, noProviders } from './oauth-handoff.mjs';
 import { parseInviteCode, inviteShareText } from './invite.mjs';
+import { sortDms, DM_SORTS } from './dm-sort.mjs';
 import { UpdateBar } from './update.jsx';
 import { useLongPress } from './long-press.js';
 import { t as tm } from './i18n.js';
@@ -574,7 +575,7 @@ function Shell({ session }) {
       ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
       registerDispose(remove);
       ch
-        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
+        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
         .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); }))
         .on('broadcast', { event: 'typing' }, active(({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() }))))
         .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() })))
@@ -589,6 +590,13 @@ function Shell({ session }) {
   }, [orgId, session.access_token, resumeEpoch]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)
+  useEffect(() => { dmIdsRef.current = new Set(dmIdsKey ? dmIdsKey.split(',') : []); }, [dmIdsKey]); // 방송 필터용(렌더 중 ref 대입 대신 효과에서)
+  useEffect(() => { // DM 최근순 재료 — 채널당 마지막 메시지 시각(RPC msgr_dm_latest, 채널당 1행·id 인덱스). 폰 DM 탭 정렬에만. 재연결·조직 전환 때도 다시.
+    if (!orgId || !isPhone || !dmIdsKey) return; let live = true;
+    supabase.rpc('msgr_dm_latest', { org: orgId }).then(({ data }) => { if (!live || !data) return; const m = {}; for (const r of data) m[r.channel_id] = Date.parse(r.last_at); setLastAt((cur) => ({ ...cur, ...m })); }, () => {});
+    return () => { live = false; };
+  }, [orgId, dmIdsKey, isPhone, resumeEpoch]);
   useEffect(() => { if (!rail && !orgMenu) return; const on = (e) => { if (e.key === 'Escape') { setRail(false); setOrgMenu(false); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail, orgMenu]);
   useEffect(() => { if (tick % 2 === 0 && orgId) loadOrg(orgId).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const org = orgs?.find((o) => o.id === orgId);
@@ -687,6 +695,18 @@ function Shell({ session }) {
   };
   const [railBusy, setRailBusy] = useState(null); // 레일 목록 파견 진행 중 크루 id // 레일 행 '…' 메뉴(채널 설정·나가기·보관, 1:1 나가기) — 유건 지적 2026-09-04
   const [sortMenu, setSortMenu] = useState(false);
+  // 폰 DM 탭 정렬(유건 요청 2026-09-15: 최근 메시지·안읽은 메시지·고정) — 기기에 기억. 고정 = 즐겨찾기한 DM을 DM 탭 맨 위에도 둔다(홈 즐겨찾기와 동시에).
+  const [dmSort, setDmSort] = useState(() => { try { const v = localStorage.getItem('argo-msgr-dm-sort'); return DM_SORTS.includes(v) ? v : 'recent'; } catch { return 'recent'; } });
+  const [dmSortMenu, setDmSortMenu] = useState(false);
+  const pickDmSort = (v) => { setDmSort(v); try { localStorage.setItem('argo-msgr-dm-sort', v); } catch { /* 저장 못 해도 이번 세션은 적용 */ } };
+  useEffect(() => { // 폰 전용 컨트롤 — onMouseLeave만으로는 터치로 못 닫는다(검수 #541 MEDIUM-4): 바깥 누름·Escape
+    if (!dmSortMenu) return;
+    const down = (e) => { if (!e.target.closest?.('.msgr-dmsort')) setDmSortMenu(false); }; const key = (e) => { if (e.key === 'Escape') setDmSortMenu(false); };
+    document.addEventListener('pointerdown', down, true); document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key); };
+  }, [dmSortMenu]);
+  const [lastAt, setLastAt] = useState({}); // 채널 → 마지막 메시지 시각(ms). 최근순 정렬 재료 — 조직 로드 때 한 번 조회, 이후 방송으로 갱신
+  const dmIdsRef = useRef(new Set()); // 방송 핸들러가 DM 채널만 담게(조직 토픽엔 모든 채널이 실린다)
 
   const finishChannelAction = async (c, message) => {
     if (activeOrg.current !== orgId) return;
@@ -804,7 +824,7 @@ function Shell({ session }) {
   const [drag, setDrag] = useState(null); const [groupForm, setGroupForm] = useState(null); // 끌어서 정렬·그룹 이동 중인 채널 id · 그룹 이름 입력 {mode:'new', chId} | {mode:'rename', from}
   useLayoutEffect(() => {
     loadedOrg.current = null;
-    setChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
+    setChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
     setCtx(null); setGroupForm(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null);
   }, [orgId]);
   const openCtx = (e, items, trigger = null) => { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const returnFocus = e.currentTarget.closest('.msgr-railrow')?.querySelector('button.item') ?? e.currentTarget; setCtx({ x: e.clientX || r.left, y: e.clientY || r.bottom, items, trigger, returnFocus }); };
@@ -826,6 +846,10 @@ function Shell({ session }) {
   });
   const favs = [...channels.filter((c) => pinned.has(c.id)), ...targetFavs].sort((a, b) => ((a.kind === 'target' ? a.pin_pos : pinPos.get(a.id)) ?? 1e9) - ((b.kind === 'target' ? b.pin_pos : pinPos.get(b.id)) ?? 1e9) || a.name.localeCompare(b.name));
   const dms = channels.filter((c) => c.kind === 'dm' && !pinned.has(c.id));
+  const dmTab = isPhone && page === 'dm'; // 폰 DM 탭에서만: 고정(즐겨찾기) DM을 맨 위에 + 선택한 정렬
+  const dmSorted = (list) => sortDms(list, { sort: dmSort, lastAt, unread, nameOf: dmName }); // 순수 함수(src/dm-sort.mjs) — 단위 테스트 대상
+  const dmPinnedTop = dmTab ? channels.filter((c) => c.kind === 'dm' && pinned.has(c.id)).sort((a, b) => (pinPos.get(a.id) ?? 1e9) - (pinPos.get(b.id) ?? 1e9)) : [];
+  const dmList = dmTab ? [...dmPinnedTop, ...dmSorted(dms)] : dms;
   const sortedCh = [...channels].filter((c) => c.kind !== 'dm' && !pinned.has(c.id)).sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
   const folders = [...new Set(channels.filter((c) => c.kind !== 'dm').map((c) => folderOf.get(c.id)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); // 채널 그룹(사용자별)
   const byFolder = folders.map((f) => [f, sortedCh.filter((c) => folderOf.get(c.id) === f)]); const ungrouped = sortedCh.filter((c) => !folderOf.get(c.id));
@@ -893,7 +917,7 @@ function Shell({ session }) {
                 { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
               ]; return (
             <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} draggable onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => openCtx(e, items, c.id)}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} /><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} /><span className="name">{dmName(c)}</span>{dmTab && pinned.has(c.id) && <span className="mi msgr-dmpin" title={t('dm.pinned')} aria-label={t('dm.pinned')}><I name="star" size={12} /></span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>
 
             </div>
@@ -985,9 +1009,9 @@ function Shell({ session }) {
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: 'public' })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
 </RailSection>
-        {(dms.length > 0 || (isPhone && page === 'dm')) && (<RailSection id="dms" label={t('ch.dms')}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
-          <div className="msgr-list">{dms.map(dmRow)}</div>
-          {!dms.length && <div className="msgr-hint">{t('phone.dm.empty')}</div>}
+        {(dms.length > 0 || dmTab) && (<RailSection id="dms" label={t('ch.dms')} right={dmTab ? <span className="right"><span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span></span> : undefined}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
+          <div className="msgr-list">{dmList.map(dmRow)}</div>
+          {!dmList.length && <div className="msgr-hint">{t('phone.dm.empty')}</div>}
         </RailSection>)}
         {org && members.length > 0 && (<RailSection id="people" label={`${t('rail.people')} · ${members.length}`}>{/* 멤버 디렉터리(유건 2026-09-12) — 나 먼저, 이름순. 누르면 DM */}
           <div className="msgr-list dir">
