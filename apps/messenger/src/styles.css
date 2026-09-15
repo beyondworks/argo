@@ -1115,6 +1115,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* DM 탭 = 홈 레일에서 1:1 구역만(슬랙 DM 페이지 대응) */
   .msgr-phone.phone-dm .msgr-sec:not([data-sec='dms']) { display: none; }
   .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group::after { display: none; }
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group .right { display: inline-flex; margin-left: auto; } /* DM 탭 정렬 메뉴(유건 요청 2026-09-15) — 홈 탭의 '.right 숨김'(위 999행)이 DM 탭에도 걸려 메뉴가 안 보였다(검수 #541 CRITICAL-1) */
 
   /* ── 하단: 떠 있는 아일랜드 + 분리된 원형 검색. 슬랙 실측: 인디케이터 폰에서 아래 16pt ── */
   .msgr-tabbar { position: fixed; left: var(--ph-pad); right: var(--ph-pad); bottom: max(16px, calc(env(safe-area-inset-bottom) - 18px)); z-index: 70; /* 슬랙 확대 대조: 아일랜드 x20–310·y798–858, 검색 원 60 우16, 사이 16 */
