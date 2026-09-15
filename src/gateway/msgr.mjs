@@ -342,21 +342,34 @@ export async function sessionClient() {
     9/8에 아르고 설정의 수동 "등록" 버튼을 없애자 새 계정은 첫 등록을 만들 길이 없어져 크루가 영영 안 올라갔다 — 라이브: 9/11 이후 가입한
     조직 멤버 5명 전원 크루 0(데스크톱을 켠 흔적이 있어도). 꺼진 회사는 10분에 한 번 "이 계정이 조직 멤버인가"(user_id 색인 한 건)를 묻고
     멤버면 켠다 → 같은 sync에서 브리지가 시작되고 mirrorInventory가 크루 전부를 파견한다. 조직 회사(nodeOrgId)·소유자 불일치 회사는 대상 밖.
-    조회 시각은 세션이 있을 때만 찍는다(로그아웃 상태에서 10분 잠그지 않는다). */
+    검수 반영: 세션이 없으면 60초만 쉰다(죽은 세션 기기에서 10초마다 refresh를 보내던 2026-09-04 경로를 곱하지 않는다 — MEDIUM-1),
+    멤버십 조회는 uid 단위로 10분 캐시(회사 N개 = 질의 1건 — L1), 3초 상한(L3), 쓰기 직전 company.json을 다시 읽어 병합(MEDIUM-3). */
 export const MSGR_AUTO_ENABLE_PROBE_MS = 10 * 60_000;
-const autoEnableProbes = new Map(); // wsId → 마지막 멤버십 조회 시각
-export const _resetAutoEnableForTest = () => autoEnableProbes.clear();
-export async function autoEnableMsgr(wsId, { company, session = sessionClient, update = updateCompany, now = Date.now, probes = autoEnableProbes, log = console.error } = {}) {
+export const MSGR_AUTO_ENABLE_NO_SESSION_MS = 60_000;
+const autoEnableProbes = new Map(); // wsId → 다음 조회 가능 시각
+const autoEnableOrgs = new Map();   // uid → { at, orgs } 멤버십 조회 캐시(10분)
+export async function autoEnableMsgr(wsId, { company, session = sessionClient, load = loadCompany, update = updateCompany, now = Date.now, probes = autoEnableProbes, orgCache = autoEnableOrgs, timeoutMs = 3000, log = console.error } = {}) {
   if (!company || company.msgr?.enabled || company.msgr?.nodeOrgId) return false;
-  if (now() - (probes.get(wsId) ?? 0) < MSGR_AUTO_ENABLE_PROBE_MS) return false;
+  if (now() < (probes.get(wsId) ?? 0)) return false;
   const c = await session().catch(() => null);
-  if (!c) return false;
-  probes.set(wsId, now());
+  if (!c) { probes.set(wsId, now() + MSGR_AUTO_ENABLE_NO_SESSION_MS); return false; }
+  probes.set(wsId, now() + MSGR_AUTO_ENABLE_PROBE_MS);
   if (company.ownerId && company.ownerId !== c.uid) return false; // 회사 소유자 게이트(2026-09-11 실사고와 같은 규칙) — 남의 회사 크루를 내 조직에 올리지 않는다
   let orgs;
-  try { orgs = await c.db.myOrgIds(c.uid); } catch (e) { log('[argo] msgr 자동 켜기 — 조직 멤버십 조회 실패:', e.message); return false; }
+  const hit = orgCache.get(c.uid);
+  if (hit && now() - hit.at < MSGR_AUTO_ENABLE_PROBE_MS) orgs = hit.orgs;
+  else {
+    let timer;
+    try {
+      orgs = await Promise.race([c.db.myOrgIds(c.uid), new Promise((_, rej) => { timer = setTimeout(rej, timeoutMs, new Error(`timeout ${timeoutMs}ms`)); })]);
+    } catch (e) { log('[argo] msgr 자동 켜기 — 조직 멤버십 조회 실패:', e.message); return false; }
+    finally { clearTimeout(timer); }
+    orgCache.set(c.uid, { at: now(), orgs });
+  }
   if (!orgs.length) return false;
-  await update(wsId, { msgr: { ...(company.msgr ?? {}), enabled: true } });
+  const fresh = await load(wsId).catch(() => company); // 쓰기 직전 재읽기 — sync 머리 스냅샷 뒤 저장된 notify·mutedEvents를 덮지 않는다
+  if (fresh.msgr?.enabled) return true;
+  await update(wsId, { msgr: { ...(fresh.msgr ?? {}), enabled: true } });
   return true;
 }
 
