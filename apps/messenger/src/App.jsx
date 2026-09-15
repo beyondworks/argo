@@ -844,7 +844,7 @@ function Shell({ session }) {
       const names = picks.map((p) => p.kind === 'crew' ? crewOf(p.id)?.display_name : nameOfUser(p.id)).filter(Boolean);
       const cid = await q(supabase.rpc('msgr_create_channel', { org: orgId, kind: 'dm', name: `dm:${names.join(', ')}`.slice(0, 80), others }));
       await loadOrg(orgId); if (activeOrg.current !== orgId) return null; setChId(cid); setPage('chat'); setRail(false); return cid;
-    } catch (e) { setErr(e.message); return null; }
+    } catch (e) { setErr(e.message); setDmGroup(true); return null; } // 생성이 실패하면 시트를 되살려 고른 사람이 사라지지 않게(재검수 LOW-A)
   };
   // 전달(relay) 알림에서 대상 1:1로 이동 — 목록에 있으면 바로 연다. 없으면 방금 트리거가 만든 방일 수 있어 다시 불러온 뒤 찾고,
   // 그래도 없으면(다른 조직 전환 등) openDm이 그 사람·크루의 방을 찾거나 만든다(msgr_dm_for_crew와 같은 멤버 판정). 빈 화면 방지(검수 MEDIUM).
@@ -903,8 +903,7 @@ function Shell({ session }) {
   const dmTab = isPhone && (page === 'dm' || swipeTo === 'dm'); // 스와이프로 DM에 돌아가는 중에도 DM 탭 모양(밑 화면이 전환 순간 다시 그려지지 않게) // 폰 DM 탭에서만: 고정(즐겨찾기) DM을 맨 위에 + 선택한 정렬
   const dmSorted = (list) => sortDms(list, { sort: dmSort, lastAt, unread, nameOf: dmName }); // 순수 함수(src/dm-sort.mjs) — 단위 테스트 대상
   const dmPinnedTop = dmTab ? channels.filter((c) => c.kind === 'dm' && pinned.has(c.id)).sort((a, b) => (pinPos.get(a.id) ?? 1e9) - (pinPos.get(b.id) ?? 1e9)) : [];
-  // DM 탭 필터(슬랙식): 전체 = 고정 단락 + 나머지, 즐겨찾기 = 고정만, 안읽음·그룹 = 고정 포함 전체에서 거른다. 그룹 = 멤버(사람+크루) 3 이상
-
+  // DM 탭 필터(슬랙식): 전체 = 고정 단락 + 나머지, 즐겨찾기 = 고정만, 안읽음·그룹 = 고정 포함 전체에서 거른다. 그룹 판정은 위 dmIsGroup(정본)
   const dmWho = (c, m) => m.mine ? t('dm.snip.me').trim() : m.crewId ? (crews.find((x) => x.id === m.crewId)?.display_name ?? dmName(c)) : nameOfUser(m.userId); // 스니펫·미리보기 발신자(검수 M-5)
   const dmSnipWho = (c, m) => m.mine ? t('dm.snip.me') : (dmIsGroup(c) ? `${dmWho(c, m)}: ` : '');
   const dmVisible = (c) => dmFilter === 'all' || (dmFilter === 'fav' && pinned.has(c.id)) || (dmFilter === 'unread' && unread[c.id]?.n > 0 && !muted.has(c.id)) || (dmFilter === 'group' && dmIsGroup(c));
