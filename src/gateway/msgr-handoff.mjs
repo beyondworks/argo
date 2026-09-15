@@ -35,8 +35,14 @@ export function stageMessengerHandoff(ctx, { to, cc = [], message }) {
   return true;
 }
 
-export function renderMessengerHandoffs(ctx) {
-  return (ctx.handoffs ?? []).map((h) => `@${h.to.display_name}\n${h.message}${h.cc.length ? `\n(CC: ${h.cc.map((p) => p.display_name).join(', ')})` : ''}`).join('\n\n');
+/** 상대 크루가 부재중이면(마지막 심박 90초 초과 — 앱 AWAY_MS와 같은 기준, 심박 없음 포함) 넘김 줄에 알린다(유건 요구 2026-09-15:
+    "위임했으면 상대가 깨어나 일해야 한다 — 멈추면 의미가 없다"). 크루는 소유자 PC에서만 돌므로 대신 실행할 수는 없고, 기다리는 중임을
+    채널에 보이게 한다. seenAt은 { crewId: last_seen_at|null } — 키가 없으면(조회 못 함) 아무 표시도 안 한다. */
+export const HANDOFF_AWAY_MS = 90_000;
+export function renderMessengerHandoffs(ctx, { seenAt = null, now = Date.now, lang = 'ko' } = {}) {
+  const note = lang === 'en' ? ' (away — runs when back online)' : ' (부재중 — 온라인이 되면 실행)';
+  const away = (id) => { if (!seenAt || !(id in seenAt)) return false; const t = seenAt[id]; return !t || !(now() - Date.parse(t) <= HANDOFF_AWAY_MS); };
+  return (ctx.handoffs ?? []).map((h) => `@${h.to.display_name}${away(h.to.id) ? note : ''}\n${h.message}${h.cc.length ? `\n(CC: ${h.cc.map((p) => p.display_name).join(', ')})` : ''}`).join('\n\n');
 }
 
 /** 현재 답변의 마지막 독립 줄만 판정한다. 숫자·완료 문구·인용에서 종료를 추론하지 않는다. */

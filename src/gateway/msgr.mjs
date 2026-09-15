@@ -260,6 +260,12 @@ export function makeDb(client) {
         .eq('channel_id', channelId).eq('reply_to', beforeId).in('crew_id', after).eq('author_kind', 'crew').eq('kind', 'text').is('deleted_at', null).order('id', { ascending: false }).limit(n)) ?? []));
       return [...new Map(rows.map((r) => [r.id, r])).values()].sort((a, b) => a.id - b.id).slice(-n);
     },
+    /** 넘김 대상의 마지막 심박 — { id: last_seen_at|null }. 부재중 표시용(msgr-handoff.mjs renderMessengerHandoffs). */
+    async crewSeen(ids) {
+      if (!ids.length) return {};
+      const rows = unwrap(await client.from('msgr_crews').select('id, last_seen_at').in('id', ids)) ?? [];
+      return Object.fromEntries(rows.map((r) => [r.id, r.last_seen_at ?? null]));
+    },
     /** 조직의 활성 크루 전부(남의 것 포함) — @넘김 후보·이름 표시. RLS: 조직 멤버면 읽힌다. */
     async orgCrews(orgId) {
       return unwrap(await client.from('msgr_crews').select('id, slug, display_name, role_text, hosting, last_seen_at, owner_user_id, ws_id').eq('org_id', orgId).eq('status', 'active')) ?? [];
@@ -557,11 +563,13 @@ const rtChannels = new Map(); // `${wsId}:${orgId}` → realtime channel(타이�
 export const _rtChannelsForTest = rtChannels;
 const safeName = (n) => String(n ?? 'file').replace(/[\\/]/g, '_').replace(/\.\./g, '_').slice(0, 80) || 'file';
 
-function messengerReply(ctx, text) {
+async function messengerReply(ctx, text, { db = null, lang = 'ko' } = {}) {
   const workReply = parseWorkReply(ctx.work, ctx.crewId, text);
   const parsed = parseMessengerDisposition(workReply.text);
   const handoffs = parsed.disposition === 'done' ? [] : ctx.handoffs;
-  const handoff = renderMessengerHandoffs({ handoffs });
+  // 넘김 대상 심박 — 부재중이면 넘김 줄에 알린다. 조회 실패는 표시 생략(넘김 자체는 그대로).
+  const seenAt = handoffs.length && db?.crewSeen ? await db.crewSeen(handoffs.map((h) => h.to.id)).catch(() => null) : null;
+  const handoff = renderMessengerHandoffs({ handoffs }, { seenAt, lang });
   if (handoff.length > MSG_MAX) throw new Error('메신저 넘김 내용이 메시지 길이 제한을 넘었습니다');
   const visible = parsed.text.slice(0, handoff ? Math.max(0, MSG_MAX - handoff.length - 2) : MSG_MAX);
   const recipientText = messengerRecipientText(visible);
@@ -627,7 +635,7 @@ export async function runMessengerContinuation(wsId, slug, origin, message, sess
     activeCtx.set(key, ctx);
     try {
       const turn = await runChat(wsId, slug, text, ch.kind === 'dm' ? null : sessionId, { source: 'messenger', mirrorCtx: ctx, journal: { off: ch.crew_memory === false, tag: `org-${ctx.orgId}` } });
-      return { ...turn, ...messengerReply(ctx, turn.reply), msgr: messengerOrigin(ctx) };
+      return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang })), msgr: messengerOrigin(ctx) };
     } finally {
       if (activeCtx.get(key) === ctx) activeCtx.delete(key);
       busyCrew.delete(key);
@@ -783,7 +791,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         const min = Math.max(1, Math.round(waited / 60_000));
         reply = `${pick(`(부재중 대기분 · ${min}분 전 지시)`, `(Handled after being away · asked ${min} min ago)`, lang)}\n${reply}`;
       }
-      const rendered = messengerReply(ctx, reply);
+      const rendered = await messengerReply(ctx, reply, { db, lang });
       reply = rendered.reply;
       replyMentions = rendered.msgrReply.mentions;
       replyMeta = rendered.msgrReply.meta;
