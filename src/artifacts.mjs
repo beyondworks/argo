@@ -49,3 +49,33 @@ export function capLatest(after, rels, cap = 12) {
   const m = (r) => Number(String(after.get(r) ?? '0:0').split(':')[0]);
   return [...rels].sort((a, b) => m(b) - m(a) || (a < b ? -1 : 1)).slice(0, cap);
 }
+
+/* ─── 턴 귀속(제보 2026-09-15 "보고에 다른 크루가 만든 파일명이 보인다") ───
+   diff는 vault 전체라 같은 시간에 다른 크루 턴(회의실 동시 발언·메신저 병렬·루틴·위임)이 돌면 그 크루의 파일이 이 턴 칩에 붙는다
+   (compete만 예외였다). 회사 단위 "진행 중 턴 장부"를 두고, 겹치는 턴이 있으면 이 턴이 도구로 쓴 파일 + 이 턴의 답변이 경로로
+   언급한 파일만 남기고, 다른 턴이 도구로 쓴 파일은 뺀다. 겹치는 턴이 없으면 종전 그대로(전체 diff). 장부는 globalThis — Next
+   번들 사본이 둘이어도 하나(turn-abort와 같은 이유). 누구 것인지 모르는 파일(동시 CLI 턴이 만들고 경로도 안 적음)은 칩에서
+   빠지지만 기억 화면에는 그대로 있다 — 오귀속보다 누락이 낫다. */
+const LEDGER_RETAIN_MS = 30 * 60_000; // 끝난 턴도 뒤에 끝나는 턴이 겹침을 판정할 수 있게 잠시 남긴다
+const ledger = () => (globalThis.__argoTurnLedger ??= new Map()); // wsId → Set<entry>
+export function openTurnLedger(wsId, slug, { now = Date.now, book = ledger() } = {}) {
+  const set = book.get(wsId) ?? new Set(); book.set(wsId, set);
+  const t = now();
+  for (const e of set) if (e.endedAt != null && t - e.endedAt > LEDGER_RETAIN_MS) set.delete(e);
+  const entry = { slug, startedAt: t, endedAt: null, observed: new Set() };
+  set.add(entry);
+  return entry;
+}
+export function closeTurnLedger(entry, { now = Date.now } = {}) { if (entry && entry.endedAt == null) entry.endedAt = now(); }
+/** 이 턴과 시간이 겹친 다른 턴들(같은 회사). 끝난 턴은 endedAt, 진행 중은 now 기준. */
+export function overlappingTurns(wsId, entry, { now = Date.now, book = ledger() } = {}) {
+  const t = now(); const end = entry.endedAt ?? t;
+  return [...(book.get(wsId) ?? [])].filter((e) => e !== entry && e.startedAt <= end && (e.endedAt ?? t) >= entry.startedAt);
+}
+/** 순수 귀속: 겹침 없음 → changed 그대로. 겹침 있음 → (내 도구 관측 ∪ 답변에 경로로 언급) − 다른 턴 도구 관측. */
+export function attributeArtifacts(changed, { entry, others = [], reply = '' } = {}) {
+  if (!others.length) return changed;
+  const foreign = new Set(others.flatMap((o) => [...o.observed]));
+  const text = String(reply ?? '');
+  return changed.filter((rel) => !foreign.has(rel) && (entry?.observed.has(rel) || (rel.length >= 4 && text.includes(rel))));
+}

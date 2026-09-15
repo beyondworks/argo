@@ -67,7 +67,7 @@ test('배선: 반환부·호출부 전파(행동 검증은 artifacts-behavior.te
   assert.equal(artifacts?.type, 'AwaitExpression', 'CLI artifact collection must finish before returning');
   assert.equal(artifacts.argument.type, 'CallExpression');
   assert.equal(artifacts.argument.callee.name, 'artDiff', 'CLI return must carry the actual artifact diff');
-  assert.deepEqual(artifacts.argument.arguments, []);
+  assert.deepEqual(artifacts.argument.arguments.map((x) => x.name), ['reply'], 'CLI return passes the reply text — turn attribution reads the paths the crew reported (2026-09-15)');
   const spreads = result.properties.filter((p) => p.type === 'SpreadElement').map((p) => p.argument.name).filter(Boolean);
   assert.deepEqual(spreads, ['fellBackInfo', 'modelFallbackInfo'], 'CLI return preserves runner and model fallback disclosures');
   assert.match(chat, /source === 'compete' \? null/, '경쟁 턴은 diff 제외(합집합 오귀속 방지 — 검수 HIGH)');
