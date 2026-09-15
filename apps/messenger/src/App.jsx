@@ -553,12 +553,13 @@ function Shell({ session }) {
   }, [orgId, session.access_token, resumeEpoch]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
-  const dmCount = channels.filter((c) => c.kind === 'dm').length;
+  const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)
+  useEffect(() => { dmIdsRef.current = new Set(dmIdsKey ? dmIdsKey.split(',') : []); }, [dmIdsKey]); // 방송 필터용(렌더 중 ref 대입 대신 효과에서)
   useEffect(() => { // DM 최근순 재료 — 채널당 마지막 메시지 시각(RPC msgr_dm_latest, 채널당 1행·id 인덱스). 폰 DM 탭 정렬에만. 재연결·조직 전환 때도 다시.
-    if (!orgId || !isPhone || !dmCount) return; let live = true;
+    if (!orgId || !isPhone || !dmIdsKey) return; let live = true;
     supabase.rpc('msgr_dm_latest', { org: orgId }).then(({ data }) => { if (!live || !data) return; const m = {}; for (const r of data) m[r.channel_id] = Date.parse(r.last_at); setLastAt((cur) => ({ ...cur, ...m })); }, () => {});
     return () => { live = false; };
-  }, [orgId, dmCount, isPhone, resumeEpoch]);
+  }, [orgId, dmIdsKey, isPhone, resumeEpoch]);
   useEffect(() => { if (!rail && !orgMenu) return; const on = (e) => { if (e.key === 'Escape') { setRail(false); setOrgMenu(false); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail, orgMenu]);
   useEffect(() => { if (tick % 2 === 0 && orgId) loadOrg(orgId).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const org = orgs?.find((o) => o.id === orgId);
@@ -808,7 +809,6 @@ function Shell({ session }) {
   });
   const favs = [...channels.filter((c) => pinned.has(c.id)), ...targetFavs].sort((a, b) => ((a.kind === 'target' ? a.pin_pos : pinPos.get(a.id)) ?? 1e9) - ((b.kind === 'target' ? b.pin_pos : pinPos.get(b.id)) ?? 1e9) || a.name.localeCompare(b.name));
   const dms = channels.filter((c) => c.kind === 'dm' && !pinned.has(c.id));
-  dmIdsRef.current = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id));
   const dmTab = isPhone && page === 'dm'; // 폰 DM 탭에서만: 고정(즐겨찾기) DM을 맨 위에 + 선택한 정렬
   const dmSorted = (list) => sortDms(list, { sort: dmSort, lastAt, unread, nameOf: dmName }); // 순수 함수(src/dm-sort.mjs) — 단위 테스트 대상
   const dmPinnedTop = dmTab ? channels.filter((c) => c.kind === 'dm' && pinned.has(c.id)).sort((a, b) => (pinPos.get(a.id) ?? 1e9) - (pinPos.get(b.id) ?? 1e9)) : [];

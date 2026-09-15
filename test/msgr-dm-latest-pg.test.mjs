@@ -60,6 +60,8 @@ test('DM 채널당 마지막 글 1행 — 공개 채널 제외, 삭제 글 건�
   assert.deepEqual(rows(U.b), [`${DM_AB}|${m2}`], 'b는 자기 DM만(RLS)');
   asUser(U.b, `update public.msgr_messages set deleted_at = now() where id = ${m2}`);
   assert.deepEqual(rows(U.a), [`${DM_AB}|${m1}`, `${DM_AC}|${m3}`], '삭제 글은 건너뛰고 그 전 글');
+  sql(`update public.msgr_channels set archived_at = now() where id = '${DM_AC}'`);
+  assert.deepEqual(rows(U.a), [`${DM_AB}|${m1}`], '보관한 DM은 빠진다');
   const anon = psqlRaw(['-A', '-t', '-c', `set role anon; select * from public.msgr_dm_latest('${ORG}')`]);
   assert.notEqual(anon.status, 0, 'anon 실행 불가');
 });

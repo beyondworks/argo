@@ -38,7 +38,8 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /dmTab && pinned\.has\(c\.id\) && <span className="mi msgr-dmpin"/, '고정 표시');
   assert.match(src, /if \(payload\?\.channel_id && dmIdsRef\.current\.has\(payload\.channel_id\)\) setLastAt\(\(m\) => \(\{ \.\.\.m, \[payload\.channel_id\]: Date\.now\(\) \}\)\);/, '방송으로 최근 시각 갱신(DM만)');
   assert.match(src, /supabase\.rpc\('msgr_dm_latest', \{ org: orgId \}\)/, '채널당 1행 RPC(500건 상한·created_at 정렬 없음)');
-  assert.match(src, /\}, \[orgId, dmCount, isPhone, resumeEpoch\]\);/, '재연결·조직 전환 때 재조회');
+  assert.match(src, /\}, \[orgId, dmIdsKey, isPhone, resumeEpoch\]\);/, '재연결·조직 전환·DM 집합 변화 때 재조회');
+  assert.match(src, /useEffect\(\(\) => \{ dmIdsRef\.current = new Set\(dmIdsKey \? dmIdsKey\.split\(','\) : \[\]\); \}, \[dmIdsKey\]\);/, 'ref 갱신은 효과에서');
   assert.match(src, /setMyAvailable\(\[\]\); setLastAt\(\{\}\);/, '조직 전환 때 비움');
   assert.match(src, /document\.addEventListener\('pointerdown', down, true\)/, '바깥 누름으로 메뉴 닫기(터치)');
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');

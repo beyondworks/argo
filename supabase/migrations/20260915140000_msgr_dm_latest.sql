@@ -11,3 +11,4 @@ language sql stable security invoker set search_path = public as $$
 $$;
 revoke all on function public.msgr_dm_latest(uuid) from public, anon;
 grant execute on function public.msgr_dm_latest(uuid) to authenticated;
+notify pgrst, 'reload schema';
