@@ -42,3 +42,12 @@ test('i18n — 폰 상단 뒤로 라벨은 "뒤로"(홈이 아니다, L-1)', () 
   const dict = readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8');
   assert.match(dict, /'phone\.back': \['뒤로', 'Back'\]/);
 });
+
+// 화면 전환 애니메이션·스와이프 정리 시점(유건 제보 2026-09-15 "깜빡이고 잔상") — 배선 핀. 행동은 mobile-nav.browser.mjs
+import { readFileSync as _rf } from 'node:fs';
+test('전환 애니메이션 종류 판정과 popstate 뒤 정리', () => {
+  const app = _rf(new URL('../src/App.jsx', import.meta.url), 'utf8'); const hook = _rf(new URL('../src/use-phone.js', import.meta.url), 'utf8'); const css = _rf(new URL('../src/styles.css', import.meta.url), 'utf8');
+  assert.match(app, /const kind = ROOT_PAGES\.has\(prev\) && ROOT_PAGES\.has\(page\) \? \(ROOT_ORDER\.indexOf\(page\) > ROOT_ORDER\.indexOf\(prev\) \? 'tab-left' : 'tab-right'\) : ROOT_PAGES\.has\(page\) \? \(swipeTo \? null : 'pop'\) : ROOT_PAGES\.has\(prev\) \? 'push' : 'tab-left';/, '루트↔루트는 방향 있는 tab, 루트→하위 push, 하위→루트 pop(스와이프면 없음)');
+  assert.match(hook, /window\.addEventListener\('popstate', onPop\); setTimeout\(onPop, 400\); then\(\);/, '뒤로가기는 popstate(또는 400ms) 뒤에 정리 — 그 전에 transform을 지우면 대화 화면이 튄다');
+  assert.match(css, /\.msgr-phone\.anim-push \.msgr-main \{ animation: msgrPushIn/, 'push 애니메이션'); assert.match(css, /prefers-reduced-motion: reduce/, '모션 줄이기 존중');
+});

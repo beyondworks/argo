@@ -407,7 +407,11 @@ function Shell({ session }) {
   }, [isPhone]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isPhone) return;
-    const same = navPrev.current === page; navPrev.current = page; if (ROOT_PAGES.has(page)) lastRoot.current = page;
+    const prev = navPrev.current; const same = prev === page; navPrev.current = page; if (ROOT_PAGES.has(page)) lastRoot.current = page;
+    if (!same) { // 전환 애니메이션: 루트↔루트 = tab(페이드), 루트→하위 = push(오른쪽에서), 하위→루트 = pop(페이드; 스와이프로 온 경우는 스와이프가 이미 움직였으므로 없음)
+      const kind = ROOT_PAGES.has(prev) && ROOT_PAGES.has(page) ? (ROOT_ORDER.indexOf(page) > ROOT_ORDER.indexOf(prev) ? 'tab-left' : 'tab-right') : ROOT_PAGES.has(page) ? (swipeTo ? null : 'pop') : ROOT_PAGES.has(prev) ? 'push' : 'tab-left'; // tab-left = 오른쪽 탭으로 가니 새 화면이 오른쪽에서 들어온다
+      if (kind) { setPageAnim(kind); setTimeout(() => setPageAnim(null), 300); }
+    }
     if (navPopping.current) { navPopping.current = false; return; }
     // depth = 우리 스택 깊이(루트 0). history.length로 판단하면 앱 밖 이전 문서(빈 탭·로그인 왕복)로 나가 버린다(실측 2026-09-15).
     const depth = history.state?.depth ?? 0;
@@ -418,11 +422,15 @@ function Shell({ session }) {
       } else if (same) history.replaceState({ page, chId, depth }, ''); // 같은 화면 안의 전환(대화에서 다른 채널) — 스택을 쌓지 않는다: 뒤로는 루트로(슬랙과 같은 얕은 스택, 의도)
       else history.pushState({ page, chId, depth: depth + 1 }, '');
     } catch { /* 위와 같음 */ }
-  }, [page, chId, isPhone, ROOT_PAGES]);
+  }, [page, chId, isPhone, ROOT_PAGES]); // eslint-disable-line react-hooks/exhaustive-deps
   const goBack = useCallback(() => { if (isPhone && (history.state?.depth ?? 0) > 0) history.back(); else setPage('home'); }, [isPhone]);
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
-  const edgeBack = useEdgeSwipeBack(goBack, isPhone && page !== 'home' && page !== 'dm', { underlay: () => lastRoot.current }); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(그 전 화면)
+  const ROOT_ORDER = ['home', 'dm', 'inbox', 'activity']; // 하단 탭 순서 — 좌우 스와이프·전환 방향의 기준
+  const rootSwipe = useSwipeTabs(ROOT_ORDER, page, setPage, isPhone && (page === 'home' || page === 'dm')); // 카톡처럼 홈·DM에서 좌우로 쓸면 옆 탭(유건 2026-09-15). 알림함·기억은 자기 안의 거르개 스와이프가 있어 제외
+  const [pageAnim, setPageAnim] = useState(null); // 폰 화면 전환 애니메이션 종류(push·pop·tab, 260ms 뒤 해제 — 유건 2026-09-15 "탭 이동도 부드럽게")
+  const [swipeTo, setSwipeTo] = useState(null); // 스와이프 뒤로가기 중 밑에 깔 루트 — DM이면 레일을 미리 DM 탭 모양으로 그린다(깜빡임 제보 2026-09-15)
+  const edgeBack = useEdgeSwipeBack(goBack, isPhone && page !== 'home' && page !== 'dm', { underlay: () => lastRoot.current, onStart: (to) => setSwipeTo(to), onEnd: () => setSwipeTo(null) }); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(그 전 화면)
   const [orgMenu, setOrgMenu] = useState(false);
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
@@ -707,9 +715,10 @@ function Shell({ session }) {
   // 폰 DM 탭 정렬(유건 요청 2026-09-15: 최근 메시지·안읽은 메시지·고정) — 기기에 기억. 고정 = 즐겨찾기한 DM을 DM 탭 맨 위에도 둔다(홈 즐겨찾기와 동시에).
   const [dmSort, setDmSort] = useState(() => { try { const v = localStorage.getItem('argo-msgr-dm-sort'); return DM_SORTS.includes(v) ? v : 'recent'; } catch { return 'recent'; } });
   const [dmSortMenu, setDmSortMenu] = useState(false);
-  const [dmFilter, setDmFilter] = useState('all'); // 폰 DM 탭 상단 필터: 전체·즐겨찾기·안읽음·그룹(유건 2026-09-15, 슬랙 DM 페이지 대응)
+  const [dmFilter, setDmFilter] = useState('all');
   const [lastMsg, setLastMsg] = useState({}); // channel_id → { body, mine, at } — DM 목록 한 줄 미리보기
   const [dmPeek, setDmPeek] = useState(null); // 길게 눌러 '대화 미리보기' 시트
+  const [dmGroup, setDmGroup] = useState(false); // 폰 DM 탭 + → 새 그룹 대화 시트(유건 2026-09-15: 그룹 탭은 있는데 맺는 기능이 없다)
   const lpStates = useRef({}); // DM 행 길게 누르기 상태(행별)
   useEffect(() => () => { for (const st of Object.values(lpStates.current)) if (st.timer) clearTimeout(st.timer); }, []); // 언마운트 시 타이머 해제(검수 L-5)
   const pickDmSort = (v) => { setDmSort(v); try { localStorage.setItem('argo-msgr-dm-sort', v); } catch { /* 저장 못 해도 이번 세션은 적용 */ } };
@@ -813,6 +822,18 @@ function Shell({ session }) {
       await loadOrg(orgId); if (activeOrg.current !== orgId) return null; setChId(cid); setPage('chat'); setRail(false); setSheet(null); return cid;
     } catch (e) { setErr(e.message); return null; }
   };
+  // 그룹 대화 만들기(유건 2026-09-15): 사람·크루를 여럿 골라 dm 채널 하나로. 서버 msgr_create_channel은 others 여러 명을 받는다(크루는 소유자 동반 규칙 그대로).
+  const createGroupDm = async (picks) => { // picks: [{ kind: 'user'|'crew', id }]
+    if (picks.length === 1) return openDm(picks[0].kind, picks[0].id); // 한 명이면 1:1(있으면 재사용)
+    try {
+      const others = []; const seen = new Set();
+      const add = (kind, id) => { const k = `${kind}:${id}`; if (!seen.has(k)) { seen.add(k); others.push({ kind, id }); } };
+      for (const p of picks) { add(p.kind, p.id); if (p.kind === 'crew') { const o = crewOf(p.id)?.owner_user_id; if (o && o !== uid) add('user', o); } }
+      const names = picks.map((p) => p.kind === 'crew' ? crewOf(p.id)?.display_name : nameOfUser(p.id)).filter(Boolean);
+      const cid = await q(supabase.rpc('msgr_create_channel', { org: orgId, kind: 'dm', name: `dm:${names.join(', ')}`.slice(0, 80), others }));
+      setDmGroup(false); await loadOrg(orgId); if (activeOrg.current !== orgId) return null; setChId(cid); setPage('chat'); setRail(false); return cid;
+    } catch (e) { setErr(e.message); return null; }
+  };
   // 전달(relay) 알림에서 대상 1:1로 이동 — 목록에 있으면 바로 연다. 없으면 방금 트리거가 만든 방일 수 있어 다시 불러온 뒤 찾고,
   // 그래도 없으면(다른 조직 전환 등) openDm이 그 사람·크루의 방을 찾거나 만든다(msgr_dm_for_crew와 같은 멤버 판정). 빈 화면 방지(검수 MEDIUM).
   const openRelay = async (crewId, channelId) => {
@@ -853,6 +874,8 @@ function Shell({ session }) {
   // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
   // DM 라벨 = 나 아닌 참가자(검수 MEDIUM-2: 저장된 이름은 생성자 시점). 크루 DM에 다른 사람도 있으면(소유자 동반) '서윤 · 민수'처럼 병기
   const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
+    const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
+    if (people.length + crewsIn.length >= 3 || people.length >= 2) return [...crewsIn.map((m) => crewOf(m.member_id)?.display_name), ...people.map((m) => nameOfUser(m.member_id))].filter(Boolean).join(', ') || base; // 그룹 대화 = 멤버 이름 나열
     return [crewName, other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · ') || base; };
   const targetFavs = targetPrefs.filter((p) => p.pinned).flatMap((p) => {
     const target = p.target_kind === 'crew' ? crews.find((c) => c.id === p.target_id) : members.find((m) => m.user_id === p.target_id);
@@ -860,7 +883,7 @@ function Shell({ session }) {
   });
   const favs = [...channels.filter((c) => pinned.has(c.id)), ...targetFavs].sort((a, b) => ((a.kind === 'target' ? a.pin_pos : pinPos.get(a.id)) ?? 1e9) - ((b.kind === 'target' ? b.pin_pos : pinPos.get(b.id)) ?? 1e9) || a.name.localeCompare(b.name));
   const dms = channels.filter((c) => c.kind === 'dm' && !pinned.has(c.id));
-  const dmTab = isPhone && page === 'dm'; // 폰 DM 탭에서만: 고정(즐겨찾기) DM을 맨 위에 + 선택한 정렬
+  const dmTab = isPhone && (page === 'dm' || swipeTo === 'dm'); // 스와이프로 DM에 돌아가는 중에도 DM 탭 모양(밑 화면이 전환 순간 다시 그려지지 않게) // 폰 DM 탭에서만: 고정(즐겨찾기) DM을 맨 위에 + 선택한 정렬
   const dmSorted = (list) => sortDms(list, { sort: dmSort, lastAt, unread, nameOf: dmName }); // 순수 함수(src/dm-sort.mjs) — 단위 테스트 대상
   const dmPinnedTop = dmTab ? channels.filter((c) => c.kind === 'dm' && pinned.has(c.id)).sort((a, b) => (pinPos.get(a.id) ?? 1e9) - (pinPos.get(b.id) ?? 1e9)) : [];
   // DM 탭 필터(슬랙식): 전체 = 고정 단락 + 나머지, 즐겨찾기 = 고정만, 안읽음·그룹 = 고정 포함 전체에서 거른다. 그룹 = 멤버(사람+크루) 3 이상
@@ -979,7 +1002,7 @@ function Shell({ session }) {
   const railBots = sortCrews(crews.filter((c) => c.hosting === 'bot' && c.owner_user_id !== uid)); const railCompany = sortCrews(crews.filter((c) => c.hosting !== 'bot' && c.owner_user_id !== uid && crewTier(c, org) === 'company')); const railOthers = sortCrews(crews.filter((c) => c.hosting !== 'bot' && c.owner_user_id !== uid && crewTier(c, org) !== 'company')); // 내 것이 아닌 조직 크루 — 회사/다른 멤버/외부
   return (
     <AvatarCtx.Provider value={avatarCtx}>
-    <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}`}>
+    <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
       <aside id="msgr-navigation" className="side msgr-side">
@@ -1014,7 +1037,7 @@ function Shell({ session }) {
             </div>
           </>)}
         </div>
-        <div className="msgr-railbody"><div className="msgr-railinner">{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
+        <div className="msgr-railbody" {...rootSwipe}><div className="msgr-railinner">{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
         {favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
         </RailSection>)}
@@ -1117,7 +1140,8 @@ function Shell({ session }) {
         )}
         </PageBoundary>
       </main>
-      {isPhone && (page === 'home' || page === 'dm') && org && <button type="button" className="msgr-fab" onClick={() => setNewCh({ name: '', kind: 'public' })} aria-label={t('ch.new')}><I name="plus" size={22} /></button>}
+      {isPhone && (page === 'home' || page === 'dm') && org && <button type="button" className="msgr-fab" onClick={() => page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: 'public' })} aria-label={t(page === 'dm' ? 'dm.group.new' : 'ch.new')}><I name="plus" size={22} /></button>}
+      {dmGroup && <DmGroupSheet members={members.filter((m) => m.user_id !== uid)} crews={crews} uid={uid} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {isPhone && <PhoneTabs page={page} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={(k) => {
         if (k === 'search') { setPage('search'); return; }
         if (k === 'inbox') { setInboxKind('all'); if (org) { openInbox(); return; } } // 벨 버튼과 같은 경로(읽음 시각 + 배지 재동기화 — 검수 M-1); 조직이 없으면 빈 알림함 화면만(N-4)
@@ -1146,6 +1170,32 @@ function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
             <div key={m.id} className={`pk${m.author_user_id === uid ? ' me' : ''}`}><span className="who">{whoOf(m)}</span><span className="body">{m.body}</span><span className="when">{fmtDmWhen(Date.parse(m.created_at), lang)}</span></div>
           ))}
         </div>
+      </section>
+    </div>
+  );
+}
+/* ─── 새 그룹 대화 시트(유건 2026-09-15): 조직 멤버·파견 크루를 여럿 골라 그룹 DM. 한 명이면 1:1. ─── */
+function DmGroupSheet({ members, crews, uid, onCreate, onClose }) {
+  const { t } = useT();
+  const [picks, setPicks] = useState(() => new Map()); const [busy, setBusy] = useState(false); const [qs, setQs] = useState('');
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  const key = (kind, id) => `${kind}:${id}`;
+  const toggle = (kind, id) => setPicks((m) => { const n = new Map(m); const k = key(kind, id); if (n.has(k)) n.delete(k); else n.set(k, { kind, id }); return n; });
+  const needle = qs.trim().toLowerCase();
+  const rows = [...members.map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) })), ...crews.filter((c) => c.status === 'active').map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, crew: true, own: c.owner_user_id === uid }))]
+    .filter((r) => !needle || r.name.toLowerCase().includes(needle));
+  const submit = async () => { setBusy(true); try { await onCreate([...picks.values()]); } finally { setBusy(false); } };
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup" role="dialog" aria-label={t('dm.group.new')}>
+        <header className="head"><strong>{t('dm.group.new')}</strong><span className="msgr-klabel">{picks.size ? t('dm.group.count', { n: picks.size }) : t('dm.group.pick')}</span><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+        <div className="peek">
+          <input className="msgr-input sm" placeholder={t('dm.group.search')} value={qs} onChange={(e) => setQs(e.target.value)} />
+          {rows.map((r) => (<label key={key(r.kind, r.id)} className="msgr-check pickrow"><input type="checkbox" checked={picks.has(key(r.kind, r.id))} onChange={() => toggle(r.kind, r.id)} /><Av name={r.name} size="xs" crew={r.crew} crewId={r.crew ? r.id : null} userId={r.crew ? null : r.id} /><span className="name">{r.name}</span>{r.crew && <span className="msgr-klabel">{r.own ? t('dm.group.myCrew') : t('dm.group.crew')}</span>}</label>))}
+          {!rows.length && <p className="note">{t('dm.group.none')}</p>}
+        </div>
+        <footer className="foot"><button type="button" className="btn btn-primary" disabled={busy || picks.size === 0} onClick={submit}>{picks.size >= 2 ? t('dm.group.create') : t('ui.dm')}</button></footer>
       </section>
     </div>
   );

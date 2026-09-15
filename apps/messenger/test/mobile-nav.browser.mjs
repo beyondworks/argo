@@ -53,5 +53,23 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   s = await st(); ok('화면 폭 35% 넘게 끌고 놓으면 DM 탭으로', s.page === 'dm' && s.dm && s.depth === 0, s);
   ok('스와이프 뒤 클래스·transform 정리', await p.evaluate(() => !document.querySelector('.msgr-shell').classList.contains('swiping-back') && !document.querySelector('.msgr-main').style.transform));
 }
+// 화면 전환 애니메이션(유건 2026-09-15): 대화 열기 = push, 하단 탭 전환 = tab, 뒤로 버튼 = pop. 300ms 뒤 클래스 해제
+{
+  await tab('DM'); await settle();
+  await p.locator('[data-sec="dms"] .item').first().click(); await p.waitForTimeout(60);
+  ok('대화 열기 → anim-push', await p.evaluate(() => document.querySelector('.msgr-shell').classList.contains('anim-push')));
+  await p.waitForTimeout(400); ok('300ms 뒤 해제', await p.evaluate(() => ![...document.querySelector('.msgr-shell').classList].some((c) => c.startsWith('anim-'))));
+  await back(); await p.waitForTimeout(0); // back()은 400ms 대기 → 이미 해제됐을 수 있어 즉시 다시 확인 대신 결과 화면만 본다
+  await tab('홈|home'); await p.waitForTimeout(60); ok('탭 전환(DM→홈) → anim-tab-right', await p.evaluate(() => document.querySelector('.msgr-shell').classList.contains('anim-tab-right')));
+  await p.waitForTimeout(400);
+  // 스와이프 뒤로 중 밑 화면은 DM 탭 모양(필터 줄) — 전환 순간 다시 그려지지 않게
+  await tab('DM'); await settle(); await openDm();
+  const cdp = await p.context().newCDPSession(p);
+  const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+  await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);
+  ok('스와이프 중 밑 화면에 DM 필터 줄이 미리 그려진다', (await p.locator('.msgr-dmfilter').count()) === 1);
+  await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
+  ok('취소 뒤 대화 유지·필터 줄 없음', await p.evaluate(() => history.state?.page === 'chat' && !document.querySelector('.msgr-dmfilter')));
+}
 await b.close();
 console.log(`${checks.length} phone navigation checks passed`);

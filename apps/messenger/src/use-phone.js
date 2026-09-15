@@ -52,17 +52,27 @@ export function useSwipeTabs(order, current, pick, enabled = true) {
 //  · 손가락을 1:1로 따라간다(전엔 0.9배). 밑 화면은 -28%에서 따라 들어오고 어둡기가 걷힌다(styles.css .swiping-back).
 //  · 처음 8px에서 방향을 잠근다: 세로면 제스처 포기, 가로면 세로 스크롤을 멈춘다(위아래로 튀던 것).
 //  · 놓을 때 남은 거리·속도로 길이를 정한다(140~280ms). 화면 폭 35% 이상 또는 빠른 튕김이면 넘어가고, 아니면 제자리.
-export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'home' } = {}) {
+// 2026-09-15 유건 제보 2("깜빡이고 잔상이 남고 렉 걸린 것처럼"): ① 끝까지 밀린 뒤 history.back()을 부르고 바로 transform을 지워 화면 전환(popstate)이
+// 오기 전 몇 프레임 동안 대화 화면이 제자리로 튀어 보였다 → popstate(또는 400ms)까지 밀린 상태를 유지한 뒤 정리. ② 밑 화면이 '대화 중의 레일'이라
+// DM 탭 모양(필터·두 줄 행)이 아니어서 전환 순간 다시 그려졌다 → onStart(underlay)로 App이 미리 DM 탭 모양으로 그린다.
+export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'home', onStart = null, onEnd = null } = {}) {
   const ref = useRef({ x: 0, y: 0, t: 0, edge: false, dir: null, dx: 0, el: null, classes: [] }); const st = ref.current;
   if (!enabled) return {};
   const shell = () => document.querySelector('.msgr-shell');
   const setP = (p) => shell()?.style.setProperty('--swipe-p', String(Math.max(0, Math.min(1, p))));
-  const cleanup = () => { const sh = shell(); if (sh) { sh.classList.remove('swiping-back', 'settling', ...st.classes); sh.style.removeProperty('--swipe-p'); sh.style.removeProperty('--swipe-ms'); } st.classes = []; if (st.el) { st.el.style.overflowY = ''; st.el.style.willChange = ''; } };
+  // 정리 — 언더레이 클래스(phone-home·phone-dm)는 React className과 이름이 같다. 뒤로가기가 끝난 뒤(popstate 뒤)엔 React가 그 클래스를 정당하게
+  // 붙여 둔 상태라, 실제 도착한 루트가 쓰는 것은 남기고 나머지만 뗀다(안 그러면 DOM에서 지운 클래스를 React가 다음 렌더까지 되살리지 않는다)
+  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay() : null; const keep = new Set(to === 'dm' ? ['phone-home', 'phone-dm'] : to === 'home' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); sh.style.removeProperty('--swipe-p'); sh.style.removeProperty('--swipe-ms'); } st.classes = []; if (st.el) { st.el.style.overflowY = ''; st.el.style.willChange = ''; } onEnd?.(); };
   const settle = (el, to, ms, then) => {
     const sh = shell(); sh?.classList.add('settling'); sh?.style.setProperty('--swipe-ms', `${ms}ms`);
     el.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`; el.style.transform = to;
     let fired = false;
-    const done = () => { if (fired) return; fired = true; el.removeEventListener('transitionend', done); then?.(); requestAnimationFrame(() => { el.style.transition = ''; el.style.transform = ''; cleanup(); }); };
+    const done = () => { if (fired) return; fired = true; el.removeEventListener('transitionend', done);
+      const finish = (arrived) => requestAnimationFrame(() => { el.style.transition = ''; el.style.transform = ''; cleanup(arrived); });
+      if (!then) { finish(false); return; }
+      // 뒤로: 밀린 상태를 유지한 채 history.back() → 화면이 실제로 바뀐 뒤(popstate) 정리. 400ms 안에 안 오면 그냥 정리(안전망)
+      let ended = false; const onPop = () => { if (ended) return; ended = true; window.removeEventListener('popstate', onPop); finish(true); };
+      window.addEventListener('popstate', onPop); setTimeout(onPop, 400); then(); };
     el.addEventListener('transitionend', done); setTimeout(done, ms + 80); // transitionend가 안 오는 경우(탭 전환·리렌더)의 안전망
   };
   return {
@@ -74,8 +84,8 @@ export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'hom
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
         st.dir = dx > 0 && dx > Math.abs(dy) * 1.2 ? 'x' : 'y';
         if (st.dir === 'y') { st.edge = false; return; }
-        st.classes = underlay() === 'dm' ? ['phone-home', 'phone-dm'] : ['phone-home'];
-        shell()?.classList.add('swiping-back', ...st.classes);
+        const to = underlay(); st.classes = to === 'dm' ? ['phone-home', 'phone-dm'] : ['phone-home'];
+        shell()?.classList.add('swiping-back', ...st.classes); onStart?.(to);
         st.el.style.willChange = 'transform'; st.el.style.transition = ''; st.el.style.overflowY = 'hidden';
       }
       const w = st.el.clientWidth || 1; st.dx = Math.max(0, Math.min(dx, w));
