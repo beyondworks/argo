@@ -84,8 +84,6 @@ fn is_same_version_argo(port: u16) -> bool {
     is_argo && same_ver
 }
 
-// Windows 리소스 경로의 \\?\ (UNC) 프리픽스 제거 — node가 스크립트 경로 인자로 받지 못해
-// 사이드카가 침묵 사망한다 (실측: 같은 서버를 수동 실행하면 578ms에 정상 기동).
 /// macOS Dock 아이콘 억제 — 사이드카 초기 env에 넣을 NODE_OPTIONS 값. 번들 리소스의 심(server/no-dock.cjs)을 **번들 밖 안정 경로**
 /// `~/.argo/tools/no-dock.cjs`(src/no-dock.mjs noDockShimPath와 같은 경로)에 복사해 가리킨다: 앱 이동·업데이트로 번들이 바뀌어도
 /// 실행 중인 node 자식이 죽지 않고, JS setupNoDock이 같은 경로를 보고 프로브·이중 --require 없이 조기 반환한다(검수 #539 MEDIUM-1·2).
@@ -110,6 +108,8 @@ fn no_dock_node_options(server_dir: &str, home: Option<std::path::PathBuf>) -> R
     Ok(match prev { Some(v) => format!("--require {arg} {v}"), None => format!("--require {arg}") })
 }
 
+// Windows 리소스 경로의 \\?\ (UNC) 프리픽스 제거 — node가 스크립트 경로 인자로 받지 못해
+// 사이드카가 침묵 사망한다 (실측: 같은 서버를 수동 실행하면 578ms에 정상 기동).
 fn de_unc(p: String) -> String {
     p.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(p)
 }

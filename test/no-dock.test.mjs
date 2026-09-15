@@ -145,7 +145,7 @@ test('배선 — 서버 부팅 훅이 스케줄러보다 먼저 setupNoDock을 �
 });
 
 // ── 사이드카 초기 env 경로(2026-09-15, 유건 "언제가 됐든 뜨면 안 돼") — 런타임 프로브 의존을 없애는 두 번째 방어선 ──
-test('배선 — stage-sidecar가 리소스에 no-dock.cjs를 쓰고, lib.rs가 macOS에서 파일 존재 시 NODE_OPTIONS 초기 env로 넣는다', async () => {
+test('배선 — stage-sidecar가 리소스에 no-dock.cjs를 쓰고, lib.rs(macOS)가 그것을 ~/.argo/tools로 복사해 NODE_OPTIONS 초기 env로 넣는다(문자 게이트·기존 값 보존·fail-open)', async () => {
   const { readFile } = await import('node:fs/promises');
   const { SHIM_SRC } = await import('../src/no-dock.mjs');
   assert.match(SHIM_SRC, /Object\.defineProperty\(process, 'title'/, '심 본문은 세터 무력화');
