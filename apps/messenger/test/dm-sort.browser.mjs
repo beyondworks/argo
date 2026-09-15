@@ -56,6 +56,13 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
   await filt.nth(3).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('그룹 필터: 사람 3명 DM(New)만 남는다 — 양성 단언', n.length === 1 && /New/.test(n[0]), n); }
   await filt.nth(1).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('즐겨찾기 필터: 고정 없는 페이지에선 빈 목록', n.length === 0, n); }
   await filt.nth(0).click(); await p2.waitForTimeout(200); { const n = await namesIn(); ok('전체로 돌아오면 둘 다', n.length === 2, n); }
+  // 음소거 벨(검수 HIGH-1·재검수 L-2 — 마크업이 아니라 보이는지): 길게 눌러 '알림 끄기' → 벨이 폭을 가진다. 오래 눌렀다 떼도 메뉴가 유지된다(재검수 M-B)
+  { const row = p2.locator('[data-sec="dms"] .msgr-railrow').first(); const bx = await row.boundingBox(); const cdp = await p2.context().newCDPSession(p2);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bx.x + 60, y: bx.y + 20 }] }); await p2.waitForTimeout(2600);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p2.waitForTimeout(300);
+    ok('2.6초 눌렀다 떼도 메뉴 유지', (await p2.locator('.msgr-ctxmenu [role=menuitem]').count()) > 0);
+    await p2.locator('.msgr-ctxmenu [role=menuitem]', { hasText: '알림 끄기' }).click(); await p2.waitForTimeout(500);
+    const bell = await p2.locator('[data-sec="dms"] .msgr-railrow').first().locator('.item .mi').boundingBox(); ok('음소거 벨이 보인다(폰 DM 탭)', bell && bell.width > 0, bell); }
   // 길게 누르기 → 메뉴(미리보기 포함), 손을 떼도 메뉴 유지 → 미리보기 시트에 글이 보인다
   { const row = p2.locator('[data-sec="dms"] .msgr-railrow').first(); const bx = await row.boundingBox(); const cdp = await p2.context().newCDPSession(p2);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bx.x + 60, y: bx.y + 20 }] }); await p2.waitForTimeout(600);

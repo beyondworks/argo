@@ -46,7 +46,9 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /onPointerUp: \(e\) => \{ lp\.onPointerUp\(e\); swallowNext\(\); \}/, 'click 삼킴은 손 뗀 직후에만 등록(검수 HIGH-3)');
   assert.match(src, /draggable=\{!dmTab\}/, 'DM 탭 행은 드래그 끔(iOS 드래그 리프트가 click을 삼키는 것 방지)');
   assert.match(src, /select\('id, channel_id, body, author_user_id, crew_id, created_at'\)\.in\('id', ids\)\.is\('deleted_at', null\)/, '한 줄 미리보기는 마지막 글 id로 한 번에, 삭제 글 제외');
-  assert.match(src, /document\.addEventListener\('click', swallow, \{ capture: true, once: true \}\); setTimeout\(\(\) => document\.removeEventListener\('click', swallow, \{ capture: true \}\), 300\);/, '길게 누른 뒤 손 뗄 때의 click을 300ms 안에서만 삼킨다');
+  assert.match(src, /const swallowNext = \(\) => \{ if \(!st\.opened\) return; st\.opened = false; const swallow = \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}; document\.addEventListener\('click', swallow, \{ capture: true, once: true \}\); setTimeout\(\(\) => document\.removeEventListener\('click', swallow, \{ capture: true \}\), 300\);/, '길게 눌러 메뉴가 열린 누름의 손 뗄 때 click만 300ms 안에서 삼킨다(상태 플래그 — 재검수 M-B)');
+  assert.match(src, /\.eq\('id', payload\.id\)\.is\('deleted_at', null\)\.maybeSingle\(\)/, '방송엔 본문이 없어 그 글 1건을 조회해 미리보기를 갱신한다(재검수 M-A)');
+  assert.match(src, /dragging' : ''\}`\} onDragStart=\{dragStart\(c\)\}[^\n]*draggable=\{!dmTab\}/, 'DM 행은 draggable={!dmTab} 하나만(맨 draggable 중복 없음 — 빌드 경고)');
   assert.match(src, /function DmPeekSheet\(/, '미리보기 시트');
   assert.match(src, /\{!dmTab && <button type="button" className="more"/, 'DM 탭에는 점 세 개 없음(길게 누르기 메뉴로 대체)');
   assert.match(src, /if \(payload\?\.channel_id && dmIdsRef\.current\.has\(payload\.channel_id\)\) setLastAt\(\(m\) => \(\{ \.\.\.m, \[payload\.channel_id\]: Date\.now\(\) \}\)\);/, '방송으로 최근 시각 갱신(DM만)');
