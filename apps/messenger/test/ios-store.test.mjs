@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEnv, parseEnv, uploadPlist } from '../scripts/ios-store.mjs';
+import { buildEnv, parseEnv, uploadPlist, ensureTeam, stampMatches } from '../scripts/ios-store.mjs';
 
 test('store build env drops the dev password login and puts the mobile toolchain first on PATH', () => {
   const env = buildEnv({ PATH: '/usr/bin', RUSTUP_HOME: '/tc/rustup', CARGO_HOME: '/tc/cargo' }, parseEnv('VITE_DEV_LOGIN=x\nVITE_API="https://a"\n# c=1\n'));
@@ -33,7 +33,6 @@ test('설정 핀: iOS·Android deep-link에 로그인 복귀 스킴이 비어 �
   for (const conf of [ios, android]) assert.ok(conf.plugins['deep-link'].mobile.some((m) => (m.scheme ?? []).includes(LOGIN_SCHEME)), 'deep-link mobile scheme');
 });
 
-import { ensureTeam, stampMatches } from '../scripts/ios-store.mjs';
 test('빌드 전 팀 ID 주입: 없으면 두 구성에 넣고, 있으면 그대로, 다른 값이면 교체(실사고 2026-09-15 원복으로 팀 줄 소실)', () => {
   const base = 'A\n\t\t\t\tVALID_ARCHS = arm64;\n\t\t\t};\nB\n\t\t\t\tVALID_ARCHS = arm64;\n\t\t\t};\n';
   const once = ensureTeam(base, 'TEAM1');
@@ -42,6 +41,12 @@ test('빌드 전 팀 ID 주입: 없으면 두 구성에 넣고, 있으면 그대
   const swapped = ensureTeam(once, 'TEAM2');
   assert.equal((swapped.match(/DEVELOPMENT_TEAM = "TEAM2";/g) || []).length, 2); assert.ok(!swapped.includes('TEAM1'));
   assert.equal(ensureTeam(base, ''), base, '팀이 비면 손대지 않는다');
+  // 검수 M-1·M-2: Xcode가 쓴 따옴표 없는 줄·공백 들여쓰기·한쪽 구성에만 있는 줄도 걷어내고 두 구성 모두 정확히 하나
+  const messy = 'A\n\t\t\t\tDEVELOPMENT_TEAM = OLD99;\n\t\t\t\tVALID_ARCHS = arm64;\n\t\t\t};\nB\n        VALID_ARCHS = arm64;\n        DEVELOPMENT_TEAM = "TEAM1";\n\t\t\t};\n';
+  const fixed = ensureTeam(messy, 'TEAM1');
+  assert.equal((fixed.match(/DEVELOPMENT_TEAM = /g) || []).length, 2, '중복 키 없음'); assert.ok(!fixed.includes('OLD99'));
+  assert.equal((fixed.match(/VALID_ARCHS = arm64;\n[\t ]*DEVELOPMENT_TEAM = "TEAM1";/g) || []).length, 2, '각 VALID_ARCHS 바로 아래 하나씩, 들여쓰기 그대로');
+  assert.equal(ensureTeam('X\n\t\t\t\tVALID_ARCHS = arm64;\n\t\t\t\tDEVELOPMENT_TEAM = "TEAM1";\n', 'TEAM1').match(/DEVELOPMENT_TEAM/g).length, 1, '한 구성뿐이면 하나');
 });
 test('업로드 도장: 방금 build한 아카이브(mtime 일치)만 올린다(실사고 2026-09-15 옛 아카이브가 "0.1.26 (1)"로 업로드)', () => {
   assert.equal(stampMatches(null, 10), false, '도장 없음');

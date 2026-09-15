@@ -82,6 +82,7 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);
   const barMid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const bar = document.querySelector('.msgr-tabbar'); const r = bar?.getBoundingClientRect(); return { swiping: sh.classList.contains('swiping-back'), w: r?.width ?? 0, display: bar ? getComputedStyle(bar).display : null }; });
   ok('스와이프 뒤로 중 하단 탭 바가 보인다', barMid.swiping && barMid.w > 0 && barMid.display !== 'none', barMid);
+  const activeMid = await p.evaluate(() => document.querySelector('.msgr-tabbar [role=tab][aria-selected="true"]')?.textContent.trim()); ok('스와이프 중 활성 탭 = 목적지(DM) — 도착 순간 튀지 않게(검수 M-4)', /DM/i.test(activeMid || ''), activeMid);
   await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
   // 대화 층은 스와이프 중에도 탭 바 위 여백을 유지한다(입력창이 아일랜드 밑으로 안 들어간다)
   await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);

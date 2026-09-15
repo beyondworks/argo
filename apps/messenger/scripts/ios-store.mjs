@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 const app = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(app, '../..');
 const apple = join(app, 'src-tauri/gen/apple');
+const ARCHIVE = join(apple, 'build/argo-messenger_iOS.xcarchive'); const STAMP = join(apple, 'build/.upload-stamp.json');
 const mode = process.argv[2];
 
 export const parseEnv = (text) => Object.fromEntries(
@@ -21,12 +22,10 @@ export const parseEnv = (text) => Object.fromEntries(
 
 // 서명 팀 ID는 커밋된 pbxproj에 없다(개인 값) — 빌드 전에 tauri.ios.conf.json의 developmentTeam을 두 구성(debug·release)에 넣는다.
 // 실사고 2026-09-15: 빌드 뒤 pbxproj를 원복하면서 손으로 넣어 둔 팀 줄이 사라져 "requires a development team"으로 실패.
-export const ensureTeam = (pbxproj, team) => {
+export const ensureTeam = (pbxproj, team) => { // 결정적: 기존 팀 줄(따옴표 유무·들여쓰기 무관)을 전부 걷어내고 VALID_ARCHS마다 하나씩 넣는다(검수 M-1·M-2: 한쪽만 있거나 따옴표 없는 줄이 남던 것)
   if (!team) return pbxproj;
-  const line = `DEVELOPMENT_TEAM = "${team}";`;
-  if (pbxproj.includes(line)) return pbxproj;
-  const stripped = pbxproj.replace(/\n\t*DEVELOPMENT_TEAM = "[^"]*";/g, ''); // 다른 팀 값이 있으면 교체
-  return stripped.replace(/VALID_ARCHS = arm64;/g, (m) => `${m}\n\t\t\t\t${line}`);
+  const stripped = pbxproj.replace(/^[\t ]*DEVELOPMENT_TEAM = .*;\n/gm, '');
+  return stripped.replace(/^([\t ]*)VALID_ARCHS = arm64;\n/gm, (m, indent) => `${m}${indent}DEVELOPMENT_TEAM = "${team}";\n`);
 };
 // 업로드 도장: build가 성공한 아카이브에만 찍고, upload는 도장이 그 아카이브를 가리킬 때만 올린 뒤 도장을 지운다.
 // 실사고 2026-09-15: 빌드가 실패했는데 upload가 그대로 돌아 폴더에 남아 있던 옛 아카이브가 TestFlight "0.1.26 (1)"로 올라갔다.
@@ -95,16 +94,15 @@ if (mode === 'build') {
   const buildNumber = process.argv[3]; // 같은 버전을 다시 올릴 때(예: 2) — TestFlight는 빌드 번호가 달라야 받는다
   const pbx = join(apple, 'argo-messenger.xcodeproj/project.pbxproj'); const team = JSON.parse(readFileSync(join(app, 'src-tauri/tauri.ios.conf.json'), 'utf8')).bundle.iOS.developmentTeam;
   const before = readFileSync(pbx, 'utf8'); const after = ensureTeam(before, team); if (after !== before) writeFileSync(pbx, after);
-  try { unlinkSync(join(apple, 'build/.upload-stamp.json')); } catch { /* 없으면 그만 */ }
+  try { unlinkSync(STAMP); } catch { /* 없으면 그만 */ }
   run('npm', ['run', 'mobile:ios:build', '--', '--export-method', 'app-store-connect', '--target', 'aarch64', '--ci', ...(buildNumber ? ['--build-number', String(buildNumber)] : [])], env);
   gateOrDie('build');
-  const archive = join(apple, 'build/argo-messenger_iOS.xcarchive');
-  writeFileSync(join(apple, 'build/.upload-stamp.json'), JSON.stringify({ archiveMtimeMs: statSync(archive).mtimeMs, buildNumber: buildNumber ?? null, at: new Date().toISOString() }));
+  writeFileSync(STAMP, JSON.stringify({ archiveMtimeMs: statSync(ARCHIVE).mtimeMs, buildNumber: buildNumber ?? null, at: new Date().toISOString() }));
 } else if (mode === 'upload') {
   gateOrDie('upload');
-  const archive = join(apple, 'build/argo-messenger_iOS.xcarchive');
+  const archive = ARCHIVE; const stampPath = STAMP;
   if (!existsSync(archive)) throw new Error(`아카이브 없음: ${archive} — 먼저 build`);
-  const stampPath = join(apple, 'build/.upload-stamp.json'); let stamp = null; try { stamp = JSON.parse(readFileSync(stampPath, 'utf8')); } catch { /* 도장 없음 */ }
+  let stamp = null; try { stamp = JSON.parse(readFileSync(stampPath, 'utf8')); } catch { /* 도장 없음 */ }
   if (!stampMatches(stamp, statSync(archive).mtimeMs)) { console.error('[ios-store] 이 아카이브는 방금 성공한 build의 것이 아닙니다(도장 없음·불일치) — 옛 아카이브가 올라가는 것을 막습니다. 먼저 build.'); process.exit(4); }
   const team = JSON.parse(readFileSync(join(app, 'src-tauri/tauri.ios.conf.json'), 'utf8')).bundle.iOS.developmentTeam;
   const plist = join(mkdtempSync(join(tmpdir(), 'ios-store-')), 'upload.plist');
