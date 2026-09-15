@@ -56,6 +56,37 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
   await filt.nth(3).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('그룹 필터: 사람 3명 DM(New)만 남는다 — 양성 단언', n.length === 1 && /New/.test(n[0]), n); }
   await filt.nth(1).click(); await p2.waitForTimeout(250); { const n = await namesIn(); ok('즐겨찾기 필터: 고정 없는 페이지에선 빈 목록', n.length === 0, n); }
   await filt.nth(0).click(); await p2.waitForTimeout(200); { const n = await namesIn(); ok('전체로 돌아오면 둘 다', n.length === 2, n); }
+  // 카톡처럼 좌우 스와이프로 하단 탭 이동(유건 2026-09-15): DM에서 왼쪽으로 쓸면 알림함, DM에서 오른쪽으로 쓸면 홈
+  { const cdp = await p2.context().newCDPSession(p2); const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+    let bb = await p2.locator('.msgr-railbody').boundingBox();
+    await touch('touchStart', bb.x + 300, bb.y + 200); await touch('touchMove', bb.x + 250, bb.y + 202); await touch('touchMove', bb.x + 150, bb.y + 204); await touch('touchEnd'); await p2.waitForTimeout(350);
+    ok('DM에서 왼쪽으로 쓸면 알림함 탭', await p2.evaluate(() => history.state?.page === 'inbox'));
+    ok('스와이프 진입도 알림함 읽음 시각을 기록한다(탭 누름과 같은 경로 — 검수 M-1)', await p2.evaluate(() => { try { return Object.keys(JSON.parse(localStorage.getItem('argo-msgr-inbox-seen') || '{}')).length > 0; } catch { return false; } }));
+    await p2.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /DM/i.test(x.textContent))?.click(); }); await p2.waitForTimeout(400);
+    bb = await p2.locator('.msgr-railbody').boundingBox();
+    await touch('touchStart', bb.x + 100, bb.y + 200); await touch('touchMove', bb.x + 160, bb.y + 202); await touch('touchMove', bb.x + 260, bb.y + 204); await touch('touchEnd'); await p2.waitForTimeout(350);
+    ok('DM에서 오른쪽으로 쓸면 홈 탭', await p2.evaluate(() => history.state?.page === 'home'));
+    await p2.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /DM/i.test(x.textContent))?.click(); }); await p2.waitForTimeout(400); }
+  // 새 그룹 대화(유건 2026-09-15): + → 시트 → 둘 고르면 "그룹 대화 만들기" → 대화 열림
+  { await p2.locator('.msgr-fab').click(); await p2.waitForTimeout(300); const rows = p2.locator('.msgr-dmgroup .pickrow');
+    ok('그룹 시트에 멤버·크루 목록', (await rows.count()) >= 2); ok('선택 전 버튼 비활성', await p2.locator('.msgr-dmgroup .foot .btn').isDisabled());
+    await rows.nth(0).click(); await rows.nth(1).click(); await p2.waitForTimeout(150);
+    ok('둘 고르면 "그룹 대화 만들기"', /그룹 대화 만들기/.test(await p2.locator('.msgr-dmgroup .foot .btn').innerText()));
+    await p2.locator('.msgr-dmgroup .foot .btn').click(); await p2.waitForTimeout(1000);
+    ok('만들면 대화 화면·시트 닫힘', await p2.evaluate(() => history.state?.page === 'chat' && !document.querySelector('.msgr-dmgroup')));
+    await p2.evaluate(() => history.back()); await p2.waitForTimeout(500);
+    // 한 명만 고르면 1:1로 가고 시트는 닫힌다(검수 HIGH-1)
+    await p2.locator('.msgr-fab').click(); await p2.waitForTimeout(300); await p2.locator('.msgr-dmgroup .pickrow').nth(0).click(); await p2.waitForTimeout(100);
+    ok('한 명이면 버튼이 1:1', !/그룹 대화 만들기/.test(await p2.locator('.msgr-dmgroup .foot .btn').innerText()));
+    await p2.locator('.msgr-dmgroup .foot .btn').click(); await p2.waitForTimeout(1000);
+    ok('한 명 경로도 대화 열림·시트 닫힘', await p2.evaluate(() => history.state?.page === 'chat' && !document.querySelector('.msgr-dmgroup')));
+    await p2.evaluate(() => history.back()); await p2.waitForTimeout(500);
+    // 크루만 둘 고른 그룹(검수 HIGH-2): 이름은 두 크루를 나열하고 '그룹' 필터에 잡힌다
+    await p2.locator('.msgr-fab').click(); await p2.waitForTimeout(300); const crewRows = p2.locator('.msgr-dmgroup .pickrow', { hasText: '내 크루' }); ok('내 크루 행 2개', (await crewRows.count()) >= 2);
+    await crewRows.nth(0).click(); await crewRows.nth(1).click(); await p2.waitForTimeout(100); await p2.locator('.msgr-dmgroup .foot .btn').click(); await p2.waitForTimeout(1200);
+    const gTitle = (await p2.locator('.msgr-top .title').innerText()).trim(); ok('크루 둘 그룹의 이름은 두 이름 나열', /Existing/.test(gTitle) && /New/.test(gTitle) && /,/.test(gTitle), gTitle);
+    await p2.evaluate(() => history.back()); await p2.waitForTimeout(500); await filt.nth(3).click(); await p2.waitForTimeout(250);
+    ok("크루만 둘인 방도 '그룹' 필터에", (await p2.locator('[data-sec="dms"] .item .name', { hasText: 'Existing' }).filter({ hasText: 'New' }).count()) === 1); await filt.nth(0).click(); await p2.waitForTimeout(200); }
   // 음소거 벨(검수 HIGH-1·재검수 L-2 — 마크업이 아니라 보이는지): 길게 눌러 '알림 끄기' → 벨이 폭을 가진다. 오래 눌렀다 떼도 메뉴가 유지된다(재검수 M-B)
   { const row = p2.locator('[data-sec="dms"] .msgr-railrow').first(); const bx = await row.boundingBox(); const cdp = await p2.context().newCDPSession(p2);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bx.x + 60, y: bx.y + 20 }] }); await p2.waitForTimeout(2600);

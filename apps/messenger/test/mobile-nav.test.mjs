@@ -17,7 +17,7 @@ test('폰 뒤로 = history.back(): 루트 탭은 replaceState, 하위 화면은 
   assert.match(src, /history\.replaceState\(history\.state, '', location\.pathname\)/, '초대 링크 정리가 state를 지우지 않는다(L-2)');
   assert.doesNotMatch(src, /history\.length > 1/, 'history.length 판단 잔재 없음');
   assert.match(src, /const openNav = \(\) => \{ if \(isPhone\) goBack\(\); else setRail\(true\); \}/, '상단 뒤로 버튼(NavButton onMenu)이 스택을 탄다');
-  assert.match(src, /useEdgeSwipeBack\(goBack, isPhone/, 'iOS 가장자리 스와이프도 같은 스택');
+  assert.match(src, /const edgeEnabled = isPhone && page !== 'home' && page !== 'dm';[\s\S]{0,400}?useEdgeSwipeBack\(goBack, edgeEnabled/, 'iOS 가장자리 스와이프도 같은 스택(enabled는 edgeEnabled — 꺼질 때 swipeTo 해제, 검수 L-5)');
   assert.equal((src.match(/onBack=\{backFromPage\}/g) ?? []).length, 4, '설정·검색·알림함·기억 화면의 뒤로 4곳');
   assert.doesNotMatch(src, /onBack=\{\(\) => setPage\('chat'\)\}/, '옛 "무조건 대화로" 뒤로 잔재 없음');
 });
@@ -41,4 +41,13 @@ test('배지 재동기화 — 앱 전면 복귀·알림함 열기·다 읽음에
 test('i18n — 폰 상단 뒤로 라벨은 "뒤로"(홈이 아니다, L-1)', () => {
   const dict = readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8');
   assert.match(dict, /'phone\.back': \['뒤로', 'Back'\]/);
+});
+
+// 화면 전환 애니메이션·스와이프 정리 시점(유건 제보 2026-09-15 "깜빡이고 잔상") — 배선 핀. 행동은 mobile-nav.browser.mjs
+import { readFileSync as _rf } from 'node:fs';
+test('전환 애니메이션 종류 판정과 popstate 뒤 정리', () => {
+  const app = _rf(new URL('../src/App.jsx', import.meta.url), 'utf8'); const hook = _rf(new URL('../src/use-phone.js', import.meta.url), 'utf8'); const css = _rf(new URL('../src/styles.css', import.meta.url), 'utf8');
+  assert.match(app, /const kind = ROOT_PAGES\.has\(prev\) && ROOT_PAGES\.has\(page\) \? \(ROOT_ORDER\.indexOf\(page\) > ROOT_ORDER\.indexOf\(prev\) \? 'tab-left' : 'tab-right'\) : ROOT_PAGES\.has\(page\) \? \(swipeTo \? null : 'pop'\) : ROOT_PAGES\.has\(prev\) \? 'push' : 'tab-left';/, '루트↔루트는 방향 있는 tab, 루트→하위 push, 하위→루트 pop(스와이프면 없음)');
+  assert.match(hook, /window\.addEventListener\('popstate', onPop\); setTimeout\(onPop, 400\); then\(\);/, '뒤로가기는 popstate(또는 400ms) 뒤에 정리 — 그 전에 transform을 지우면 대화 화면이 튄다');
+  assert.match(css, /\.msgr-phone\.anim-push-a \.msgr-main \{ animation: msgrPushIn/, 'push 애니메이션(a/b 변형 — 연속 전환 재시작)'); assert.match(app, /setPageAnim\(`\$\{kind\}-\$\{n % 2 \? 'a' : 'b'\}`\); clearTimeout\(animTimer\.current\)/, '매 전환 새 값 + 타이머 정리'); assert.match(css, /prefers-reduced-motion: reduce/, '모션 줄이기 존중');
 });
