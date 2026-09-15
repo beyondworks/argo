@@ -66,7 +66,9 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   ok('push 중 본문 자식(상단·스레드)은 따로 움직이지 않는다 — 부모 한 층만(검수 M-F: 이중 이동이 떨림)', await p.evaluate(() => [...document.querySelectorAll('.msgr-main > .msgr-top, .msgr-main > .msgr-thread')].every((el) => getComputedStyle(el).animationName === 'none')));
   await p.waitForTimeout(400); ok('300ms 뒤 해제', await p.evaluate(() => ![...document.querySelector('.msgr-shell').classList].some((c) => c.startsWith('anim-'))));
   await back(); await p.waitForTimeout(0); // back()은 400ms 대기 → 이미 해제됐을 수 있어 즉시 다시 확인 대신 결과 화면만 본다
+  await p.evaluate(() => { const el = document.querySelector('.msgr-side .msgr-railbody'); el.scrollTop = 400; }); await p.waitForTimeout(50);
   await tab('홈|home'); await p.waitForTimeout(60); ok('탭 전환(DM→홈) → anim-tab-right', await p.evaluate(() => /anim-tab-right-(a|b)/.test(document.querySelector('.msgr-shell').className)));
+  ok('탭 전환 도착 순간 레일 스크롤은 맨 위(이전 탭 위치가 남아 iOS 고무줄 튕김이 나던 것)', (await p.evaluate(() => document.querySelector('.msgr-side .msgr-railbody').scrollTop)) === 0);
   ok('탭 전환은 옆으로 밀지 않는다(교차 페이드)', await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-side')).transform === 'none'));
   await p.waitForTimeout(400); ok('해제 뒤 레일에 다른 애니메이션이 이어지지 않는다(검수 M-E: 옛 msgrPageBack 재생)', await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-side')).animationName === 'none'));
   // 연속 전환(검수 M-2): 곧바로 DM → 알림함으로 두 번 옮기면 두 번째도 새 변형(a/b)으로 재시작

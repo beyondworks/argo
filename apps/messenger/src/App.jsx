@@ -405,6 +405,10 @@ function Shell({ session }) {
     try { if (!history.state?.page) history.replaceState({ page, chId, depth: 0 }, ''); } catch { /* 일부 웹뷰는 replaceState를 막는다 — 스택 없이 홈으로 */ }
     return () => window.removeEventListener('popstate', onPop);
   }, [isPhone]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => { // 탭 전환 도착 순간 레일 스크롤을 맨 위로(그리기 전에). 이전 탭의 스크롤 위치가 새 목록 범위를 넘으면 iOS가 고무줄처럼 튕겨 되돌린다 — "도착하면 탄성이 떨린다"(유건 2026-09-15). 뒤로(pop)는 위치를 지킨다
+    if (!isPhone) return; const prev = navPrev.current; if (prev === page || !ROOT_PAGES.has(prev) || !ROOT_PAGES.has(page)) return;
+    const el = document.querySelector('.msgr-side .msgr-railbody'); if (el) el.scrollTop = 0;
+  }, [page, isPhone, ROOT_PAGES]);
   useEffect(() => {
     if (!isPhone) return;
     const prev = navPrev.current; const same = prev === page; navPrev.current = page; if (ROOT_PAGES.has(page)) lastRoot.current = page;
@@ -725,7 +729,7 @@ function Shell({ session }) {
   const DM_FILTERS = ['all', 'fav', 'unread', 'group'];
   const [dmAnim, setDmAnim] = useState(null); const dmAnimSeq = useRef(0); const dmAnimTimer = useRef(null);
   const pickDmFilter = (k) => { // 폰 DM 상단 탭 — 탭 누름·좌우 스와이프가 같은 경로, 목록이 방향대로 들어온다(유건 2026-09-15: "스와이프로 탭 이동"은 하단 탭이 아니라 DM 안의 상단 탭)
-    if (k === dmFilter) return; const dir = DM_FILTERS.indexOf(k) > DM_FILTERS.indexOf(dmFilter) ? 'left' : 'right'; setDmFilter(k);
+    if (k === dmFilter) return; const dir = DM_FILTERS.indexOf(k) > DM_FILTERS.indexOf(dmFilter) ? 'left' : 'right'; setDmFilter(k); const body = document.querySelector('.msgr-side .msgr-railbody'); if (body) body.scrollTop = 0; // 거르개 바뀌면 맨 위부터(카톡) — 범위 밖 스크롤의 iOS 튕김 방지
     const n = ++dmAnimSeq.current; setDmAnim(`${dir}-${n % 2 ? 'a' : 'b'}`); clearTimeout(dmAnimTimer.current); dmAnimTimer.current = setTimeout(() => setDmAnim(null), 260); };
   const dmSwipe = useSwipeTabs(DM_FILTERS, dmFilter, pickDmFilter, isPhone && (page === 'dm' || swipeTo === 'dm')); // 훅 — 조건부 반환(orgs === null) 앞에 둔다
   const [lastMsg, setLastMsg] = useState({}); // channel_id → { body, mine, at } — DM 목록 한 줄 미리보기
