@@ -808,7 +808,7 @@ export const DICT = {
   'profile.handle.taken': ['이미 쓰는 아이디입니다.', 'That handle is taken.'],
   'profile.name': ['이름', 'Name'],
   'profile.name.ph': ['친구에게 보일 이름', 'Name shown to friends'],
-  'profile.emailSearch': ['이메일로 나를 찾을 수 있게(정확히 일치할 때만)', 'Let people find me by exact email'],
+  'profile.emailSearch': ['이메일로 나를 찾을 수 있게(정확히 일치할 때만, 같은 조직 멤버는 꺼도 찾을 수 있음)', 'Let people find me by exact email (members of my organizations always can)'],
   'profile.handleSearch': ['아이디로 나를 찾을 수 있게', 'Let people find me by handle'],
   'profile.acceptRequests': ['친구 요청 받기', 'Accept friend requests'],
   'profile.saved': ['프로필을 저장했습니다.', 'Profile saved.'],

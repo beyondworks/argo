@@ -4,7 +4,8 @@
 -- 기존 행의 false는 사용자가 고른 값이 아니라 체크박스 기본 미체크 상태였으므로(라이브 1행) 허용으로 올린다.
 -- RPC 계약(4열)·같은 조직·아이디·차단·자기 자신 규칙은 20260913084237 그대로.
 alter table public.msgr_profiles alter column email_search set default true;
-update public.msgr_profiles set email_search = true where email_search = false;
+-- 백필은 이 파일이 쓰인 시각 이전에 저장된 행만: 새 UI가 나간 뒤 스스로 끈 사람은 재적용·복원 뒤에도 되살아나지 않는다(검수 LOW-1).
+update public.msgr_profiles set email_search = true where email_search = false and updated_at < '2026-09-15T05:30:00Z';
 create or replace function public.msgr_find_user(q text) returns table (user_id uuid, handle text, display_name text, relation text)
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare me uuid := auth.uid(); needle text := lower(btrim(coalesce(q, '')));

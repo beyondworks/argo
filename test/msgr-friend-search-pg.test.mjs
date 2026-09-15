@@ -65,6 +65,7 @@ before(() => {
     ('${U.admin}', 'admin_person', '프로필 관리자', false, false),
     ('${U.guest}', 'guest_person', '외부 사람', false, false),
     ('${U.svc}', 'public_person', '공개 프로필', true, true)`);
+  sql(`update public.msgr_profiles set updated_at = '2026-09-14T00:00:00Z'`); // 기본 허용 마이그레이션의 백필 경계(2026-09-15 05:30Z) 이전에 저장된 행
   // Pin the reported failure before installing the migration in this same real database.
   assert.deepEqual(find(U.owner, 'member@example.test'), [], 'old RPC hides an existing member without a profile');
   assert.deepEqual(find(U.owner, 'admin@example.test'), [], 'old RPC hides an existing opted-out member');
@@ -77,6 +78,10 @@ before(() => {
   assert.deepEqual(find(U.guest, 'owner@example.test'), [], 'old RPC hides a stranger who never touched the profile (the reported failure)');
   psql(['-f', mig('20260915150000_msgr_email_search_default.sql')]);
   assert.equal(sql('select count(*) from public.msgr_profiles where email_search = false'), '0', 'migration lifts every opted-out row');
+  // 재적용해도 그 뒤에 스스로 끈 사람은 되살아나지 않는다(LOW-1): 경계 이후 updated_at으로 끄고 같은 파일을 다시 적용
+  sql(`update public.msgr_profiles set email_search = false, updated_at = now() where user_id = '${U.guest}'`);
+  psql(['-f', mig('20260915150000_msgr_email_search_default.sql')]);
+  assert.equal(sql(`select email_search from public.msgr_profiles where user_id = '${U.guest}'`), 'f', 'replay keeps a later explicit opt-out');
   assert.equal(sql("select column_default from information_schema.columns where table_name = 'msgr_profiles' and column_name = 'email_search'"), 'true');
   sql(`update public.msgr_profiles set email_search = false where user_id in ('${U.admin}', '${U.guest}')`);
   // member는 아이디·이름 없는 프로필로 이메일 검색만 끈 사람: 조직 멤버십 게이트(탈퇴·만료·삭제 조직) 검사는 "끈 사람"에게만 뜻이 있다.
