@@ -63,9 +63,12 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   await tab('DM'); await settle();
   await p.locator('[data-sec="dms"] .item').first().click(); await p.waitForTimeout(60);
   ok('대화 열기 → anim-push', await p.evaluate(() => /(^| )anim-push-(a|b)( |$)/.test(document.querySelector('.msgr-shell').className)));
+  ok('push 중 본문 자식(상단·스레드)은 따로 움직이지 않는다 — 부모 한 층만(검수 M-F: 이중 이동이 떨림)', await p.evaluate(() => [...document.querySelectorAll('.msgr-main > .msgr-top, .msgr-main > .msgr-thread')].every((el) => getComputedStyle(el).animationName === 'none')));
   await p.waitForTimeout(400); ok('300ms 뒤 해제', await p.evaluate(() => ![...document.querySelector('.msgr-shell').classList].some((c) => c.startsWith('anim-'))));
   await back(); await p.waitForTimeout(0); // back()은 400ms 대기 → 이미 해제됐을 수 있어 즉시 다시 확인 대신 결과 화면만 본다
   await tab('홈|home'); await p.waitForTimeout(60); ok('탭 전환(DM→홈) → anim-tab-right', await p.evaluate(() => /anim-tab-right-(a|b)/.test(document.querySelector('.msgr-shell').className)));
+  ok('탭 전환은 옆으로 밀지 않는다(교차 페이드)', await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-side')).transform === 'none'));
+  await p.waitForTimeout(400); ok('해제 뒤 레일에 다른 애니메이션이 이어지지 않는다(검수 M-E: 옛 msgrPageBack 재생)', await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-side')).animationName === 'none'));
   // 연속 전환(검수 M-2): 곧바로 DM → 알림함으로 두 번 옮기면 두 번째도 새 변형(a/b)으로 재시작
   await tab('DM'); await p.waitForTimeout(40); const c1 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]); await tab('알림|inbox'); await p.waitForTimeout(40); const c2 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]);
   ok('연속 전환은 a/b가 번갈아 재시작', c1 && c2 && c1 !== c2, { c1, c2 }); await p.waitForTimeout(400);
