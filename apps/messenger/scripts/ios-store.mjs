@@ -40,7 +40,7 @@ export const buildEnv = (base, config = {}) => {
   return env;
 };
 
-// App Store Connect API 키(팀 키, 앱 관리) — Xcode 계정 세션이 풀려도(실사고 2026-09-11·09-17 "No Accounts") 서명·업로드가 된다.
+// App Store Connect API 키(팀 키, **관리자** — '앱 관리' 키는 클라우드 배포 인증서 권한이 없어 export가 "Cloud signing permission error"로 실패, 실측 2026-09-17) — Xcode 계정 세션이 풀려도(실사고 2026-09-11·09-17 "No Accounts") 서명·업로드가 된다.
 // 설정 파일(기본 ~/.appstoreconnect/argo-messenger.json, ASC_API_CONFIG로 바꿈) = { keyId, issuerId, keyPath }. 레포 밖 비공개 파일이고 값은 출력하지 않는다.
 // 없으면 종전처럼 Xcode 계정 세션을 쓴다. tauri ios build는 APPLE_API_KEY·APPLE_API_ISSUER·APPLE_API_KEY_PATH로 같은 키를 쓴다.
 export const readAscKey = (text) => {
