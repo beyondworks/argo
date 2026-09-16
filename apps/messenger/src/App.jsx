@@ -1021,7 +1021,7 @@ function Shell({ session }) {
   useLayoutEffect(() => {
     loadedOrg.current = null;
     setChannels([]); setPreviewChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setLastMsg({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
-    setCtx(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null);
+    setCtx(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null); setDmGroup(false); // 그룹 대화 시트는 공간을 넘기지 않는다(개인 공간에서 여러 명 생성이 __personal__로 가던 길)
   }, [orgId]);
   const openCtx = (e, items, trigger = null) => { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const returnFocus = e.currentTarget.closest('.msgr-railrow')?.querySelector('button.item') ?? e.currentTarget; setCtx({ x: e.clientX || r.left, y: e.clientY || r.bottom, items, trigger, returnFocus }); };
   useEffect(() => { const h = (e) => { if (!e.target.closest?.('input, textarea, [contenteditable="true"], a[href]')) e.preventDefault(); }; document.addEventListener('contextmenu', h); return () => document.removeEventListener('contextmenu', h); }, []); // 웹뷰 기본 메뉴(다시 로드 등)는 입력창 밖에서는 띄우지 않는다
@@ -3561,9 +3561,9 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
           <button type="button" className="btn" onClick={() => delivery.dismiss()}>{t('msg.delivery.dismiss')}</button></div>}
       </div>}
       <form className={`msgr-composer${dragging ? ' drop' : ''}`} onSubmit={(e) => { e.preventDefault(); send(); }}
-        onDragOver={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); setDragging(true); } }}
+        onDragOver={(e) => { if (!isPersonal && e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); setDragging(true); } }}
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); if (!busy) addFiles(e.dataTransfer?.files); }}>
+        onDrop={(e) => { e.preventDefault(); setDragging(false); if (!busy && !isPersonal) addFiles(e.dataTransfer?.files); }}>{/* 개인 공간은 첨부 저장 경로가 없다 — 붙여넣기·버튼만 막고 드롭이 빠져 msgr/__personal__/로 올리다 RLS 거부(2R 검수, 실스택 재현 2026-09-16) */}
         <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
         <textarea ref={ta} rows={1} maxLength={20000} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)}
           onPaste={(e) => { const pasted = [...(e.clipboardData?.files ?? [])]; if (!pasted.length || busy || isPersonal) return; /* 개인 공간은 첨부 저장 경로가 없다(검수 L-4) */ e.preventDefault(); addFiles(pasted.map((f) => (f.name && f.name !== 'image.png') ? f : new File([f], `paste-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }))); }} /* 클립보드 이미지 붙여넣기(유건 2026-09-11 밤) — 이름 없는 캡처는 paste-시각.png */ placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}

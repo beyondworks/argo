@@ -155,6 +155,18 @@ try {
         // Work button should NOT be visible
         const workBtn = p.locator('.msgr-work-button');
         assert.equal(await workBtn.count(), 0, 'work button hidden in personal space');
+
+        // 파일 드롭도 받지 않는다 — 버튼·붙여넣기만 막고 드롭이 빠져 msgr/__personal__/ 업로드가 RLS에 거부되던 것(2R 검수)
+        await p.locator('.msgr-composer').evaluate((form) => {
+          const dt = new DataTransfer(); dt.items.add(new File(['x'], 'dropped-in-personal.txt', { type: 'text/plain' }));
+          for (const type of ['dragenter', 'dragover', 'drop']) form.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+        });
+        await p.waitForTimeout(300);
+        assert.equal(await p.getByText('dropped-in-personal.txt').count(), 0, 'drop ignored in personal space');
+      } else assert.fail('personal DM row not visible');
+      if (width < 768) { // 폰 홈 탭의 + (새 채널)는 개인 공간에서 숨는다
+        await p.locator('.msgr-tabbar [role=tab]').first().click();
+        assert.equal(await p.locator('.msgr-fab').count(), 0, 'no home FAB in personal space');
       }
       await p.screenshot({ path: new URL(`hidden-buttons-${lang}-${width}.png`, artifacts).pathname });
     });
