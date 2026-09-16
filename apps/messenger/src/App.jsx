@@ -574,7 +574,8 @@ function Shell({ session }) {
   useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setChSheet(false); }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
   const [unread, setUnread] = useState({}); const [muted, setMuted] = useState(() => new Set()); const [pinned, setPinned] = useState(() => new Set()); /* 즐겨찾기(고정) — msgr_channel_prefs.pinned(유건 2026-09-12) */ const [pinPos, setPinPos] = useState(() => new Map()); const [folderOf, setFolderOf] = useState(() => new Map()); /* 즐겨찾기 순서·채널 그룹(pin_pos·folder, 2026-09-12) */ const [quiet, setQuiet] = useState(null); // P0(2026-09-09): 채널별 안 읽음·음소거·조용한 시간
-  const loadUnread = useCallback(async () => { if (!orgId || orgId === PERSONAL || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const rows = await q(supabase.rpc('msgr_unread', { org: orgId })).catch(() => null); if (rows && current()) setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); }, [orgId]);
+  // 안 읽음 — org=null이면 개인 공간(조직 밖 1:1)을 센다(검수 L-1)
+  const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); }, [orgId]);
   useEffect(() => { loadUnread(); }, [loadUnread, tick]);
   useEffect(() => { if (!uid) return; let live = true; const revision = prefQueue.current.revision; q(supabase.from('msgr_channel_prefs').select('channel_id, muted, pinned, pin_pos, folder').eq('user_id', uid)).then((rows) => { if (!live || prefQueue.current.busy || revision !== prefQueue.current.revision) return; setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id))); setPinned(new Set(rows.filter((r) => r.pinned).map((r) => r.channel_id))); setPinPos(new Map(rows.filter((r) => r.pin_pos != null).map((r) => [r.channel_id, r.pin_pos]))); setFolderOf(new Map(rows.filter((r) => r.folder).map((r) => [r.channel_id, r.folder]))); }).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => { if (live) setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null); }).catch(() => {}); return () => { live = false; }; }, [uid, tick]);
   const savePrefs = async (patches) => {
@@ -678,7 +679,7 @@ function Shell({ session }) {
   const personalOrg = useMemo(() => ({ id: PERSONAL, name: t('personal'), slug: 'personal', role: 'owner' }), [t]); // 개인 공간용 가상 조직 객체
   const org = isPersonal ? personalOrg : orgs?.find((o) => o.id === orgId);
   useEffect(() => { // 알림함 v1(클라이언트 집계): 나를 멘션한 글 · 내 글에 달린 크루 답글 · 대기 결재 · DM 새 글. 읽음 기준은 이 기기(localStorage) — 서버 표(msgr_notifications)는 친구 요청과 함께 v2.
-    if (!org || !uid) { setInbox([]); return; }
+    if (!org || !uid || isPersonal) { setInbox([]); return; } // 개인 공간: 조직 질의는 가상 org id로 매번 실패한다(검수 M-2)
     let dead = false;
     (async () => {
       const dmIds = channels.filter((c) => c.kind === 'dm').map((c) => c.id);
@@ -3371,7 +3372,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
         onDrop={(e) => { e.preventDefault(); setDragging(false); if (!busy) addFiles(e.dataTransfer?.files); }}>
         <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
         <textarea ref={ta} rows={1} maxLength={20000} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)}
-          onPaste={(e) => { const pasted = [...(e.clipboardData?.files ?? [])]; if (!pasted.length || busy) return; e.preventDefault(); addFiles(pasted.map((f) => (f.name && f.name !== 'image.png') ? f : new File([f], `paste-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }))); }} /* 클립보드 이미지 붙여넣기(유건 2026-09-11 밤) — 이름 없는 캡처는 paste-시각.png */ placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}
+          onPaste={(e) => { const pasted = [...(e.clipboardData?.files ?? [])]; if (!pasted.length || busy || isPersonal) return; /* 개인 공간은 첨부 저장 경로가 없다(검수 L-4) */ e.preventDefault(); addFiles(pasted.map((f) => (f.name && f.name !== 'image.png') ? f : new File([f], `paste-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }))); }} /* 클립보드 이미지 붙여넣기(유건 2026-09-11 밤) — 이름 없는 캡처는 paste-시각.png */ placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}
         <div className="msgr-tools">
           {!isPersonal && <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>}
           <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={insertAt} disabled={busy} title={t('msg.mention')}><I name="at" size={15} /><span>{t('msg.mention')}</span></button>

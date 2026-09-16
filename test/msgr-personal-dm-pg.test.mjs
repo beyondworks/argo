@@ -147,3 +147,30 @@ test('계정 삭제 — 개인 1:1을 만든 사람도 삭제된다(FK가 막지
   assert.equal(sql(`select count(*) from auth.users where id = '${U.d}'`), '0', '계정이 지워졌다');
   assert.equal(sql(`select coalesce((select created_by::text from public.msgr_channels where id = '${ch}'), 'GONE')`), U.a, '남은 상대가 방의 작성자가 된다');
 });
+
+test('한 쌍 한 방은 유니크 인덱스로 잠근다 — 순차 테스트로는 동시성을 못 본다(검수 L-3)', { skip }, () => {
+  assert.equal(sql("select count(*) from pg_indexes where indexname = 'msgr_channels_personal_pair'"), '1', '짝 유니크 인덱스가 있다');
+  const ch = last(asUser(U.a, `select public.msgr_dm_personal('${U.c}')`));
+  const pair = sql(`select personal_pair from public.msgr_channels where id = '${ch}'`);
+  const dup = psqlRaw(['-A', '-t', '-c', `insert into public.msgr_channels (org_id, kind, name, created_by, personal_pair) values (null, 'dm', 'dm', '${U.a}', '${pair}')`]);
+  fails(dup, /duplicate key|unique/, '같은 짝으로 방을 하나 더 만들 수 없다');
+});
+
+test('차단하면 개인 1:1에 더 못 쓴다 — 지난 대화는 읽기로 남는다(검수 M-1)', { skip }, () => {
+  const ch = last(asUser(U.a, `select public.msgr_dm_personal('${U.c}')`));
+  post(U.c, ch, '차단 전 인사');
+  asUser(U.a, `select public.msgr_friend_remove('${U.c}', true)`); // a가 c를 차단
+  fails(postRaw(U.c, ch, '차단 뒤'), /row-level security|msgr_/, '차단당한 쪽은 못 쓴다');
+  fails(postRaw(U.a, ch, '차단한 쪽도'), /row-level security|msgr_/, '차단한 쪽도 못 쓴다(방이 잠긴다)');
+  assert.ok(Number(asUser(U.c, `select count(*) from public.msgr_messages where channel_id = '${ch}'`)) > 0, '지난 대화는 읽힌다');
+  sql(`update public.msgr_friends set status = 'accepted' where status = 'blocked'`); // 뒷 테스트를 위해 친구로 되돌린다(행을 지우면 관계가 사라진다)
+});
+
+test('보관한 방을 다시 열면 되살아난다 — 보관된 id만 돌려주면 빈 화면이 된다(검수 L-2)', { skip }, () => {
+  const ch = last(asUser(U.a, `select public.msgr_dm_personal('${U.c}')`));
+  sql(`update public.msgr_channels set archived_at = now() where id = '${ch}'`);
+  assert.equal(last(asUser(U.a, `select public.msgr_dm_personal('${U.c}')`)), ch, '같은 방을 돌려준다');
+  assert.equal(sql(`select coalesce(archived_at::text, 'NULL') from public.msgr_channels where id = '${ch}'`), 'NULL', '보관이 풀린다');
+  assert.equal(asUser(U.a, `select count(*) from public.msgr_dm_personal_list() where channel_id = '${ch}'`), '1', '목록에도 돌아온다');
+});
+

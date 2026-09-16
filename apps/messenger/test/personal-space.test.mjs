@@ -37,8 +37,17 @@ test('개인 공간에서 봇 조회를 건너뛴다', () => {
   assert.match(src, /orgId === PERSONAL\) \{ setBotKinds\(\[\]\)/);
 });
 
-test('개인 공간에서 읽지 않음 조회를 건너뛴다', () => {
-  assert.match(src, /orgId === PERSONAL \|\| orgId !== activeOrg\.current/);
+test('개인 공간의 안 읽음은 org=null로 센다(건너뛰지 않는다 — 검수 L-1)', () => {
+  assert.match(src, /rpc\('msgr_unread', \{ org: orgId === PERSONAL \? null : orgId \}\)/, '개인 공간은 org를 null로 물어본다');
+  assert.doesNotMatch(src, /loadUnread = useCallback\(async \(\) => \{ if \(!orgId \|\| orgId === PERSONAL/, '개인 공간을 조기 반환으로 건너뛰지 않는다');
+});
+
+test('개인 공간에서는 알림함 조직 질의를 쏘지 않는다(가상 org id는 uuid가 아니다 — 검수 M-2)', () => {
+  assert.match(src, /if \(!org \|\| !uid \|\| isPersonal\) \{ setInbox\(\[\]\); return; \}/);
+});
+
+test('개인 공간에서는 붙여넣기 첨부도 막는다(검수 L-4)', () => {
+  assert.match(src, /if \(!pasted\.length \|\| busy \|\| isPersonal\) return;/);
 });
 
 test('개인 공간에서 실시간은 dm:<채널> 토픽을 구독한다', () => {

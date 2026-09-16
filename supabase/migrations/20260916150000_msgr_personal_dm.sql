@@ -33,6 +33,12 @@ create or replace function public.msgr_can_write_channel(ch uuid) returns boolea
        and exists (select 1 from public.msgr_channels c
                     where c.id = ch and c.archived_at is null
                       and (c.org_id is null or not public.msgr_org_locked(c.org_id)))
+       -- 차단하면 개인 1:1에 더 쓰지 못한다(지난 대화는 읽기로 남는다 — 기록을 지우지 않는 쪽, 검수 M-1).
+       and not exists (
+         select 1 from public.msgr_channels c
+           join public.msgr_channel_members m on m.channel_id = c.id and m.member_kind = 'user' and m.member_id <> auth.uid()
+           join public.msgr_friends f on f.a = least(auth.uid(), m.member_id) and f.b = greatest(auth.uid(), m.member_id)
+          where c.id = ch and c.org_id is null and f.status = 'blocked')
 $$;
 
 -- ── 3. 메시지 채움 — "org 없는 채널"과 "없는 채널"을 가른다 ───────────────────
@@ -95,9 +101,16 @@ begin
   select c.id into ch from public.msgr_channels c
    where c.personal_pair = public.msgr_pair_key(me, target) for update;
   if ch is null then
+    -- 두 기기가 같은 순간에 처음 열면 `for update`는 아직 없는 행을 잠그지 못한다 — 유니크 충돌을 흡수하고 그 방을 집는다(검수 H-1).
     insert into public.msgr_channels (org_id, kind, name, created_by, personal_pair)
-      values (null, 'dm', 'dm', me, public.msgr_pair_key(me, target)) returning id into ch;
+      values (null, 'dm', 'dm', me, public.msgr_pair_key(me, target))
+      on conflict (personal_pair) where personal_pair is not null do nothing returning id into ch; -- 부분 유니크 인덱스는 조건까지 적어야 맞는다
+    if ch is null then
+      select c.id into ch from public.msgr_channels c where c.personal_pair = public.msgr_pair_key(me, target) for update;
+    end if;
   end if;
+  -- 보관해 둔 방을 다시 열면 되살린다 — 보관된 id를 그대로 돌려주면 목록에 없어 빈 화면이 된다(검수 L-2).
+  update public.msgr_channels set archived_at = null where id = ch and archived_at is not null;
   -- 나갔던 사람만 다시 넣는다(친구인 동안에는 같은 방으로 돌아온다).
   -- on conflict로 뭉뚱그리면 안 된다: DM 정원 트리거(msgr_dm_shape)는 충돌 처리 **전에** 돌아 이미 있는 멤버도 "정원 초과"로 센다.
   insert into public.msgr_channel_members (channel_id, member_kind, member_id)
