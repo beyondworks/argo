@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createRequestGate, createPreferenceQueue, folderChannelIds, reorderFavorites } from '../src/rail-state.mjs';
+import { createRequestGate, createPreferenceQueue, reorderFavorites } from '../src/rail-state.mjs';
 
 test('old organization response and old same-org refresh cannot apply', () => {
   let org = 'a'; const gate = createRequestGate(() => org);
@@ -11,10 +11,6 @@ test('old organization response and old same-org refresh cannot apply', () => {
   assert.equal(second(), false); assert.equal(third(), true);
 });
 
-test('group rename includes only current organization channels, excluding DMs', () => {
-  const prefs = new Map([['a', 'dev'], ['b', 'dev'], ['dm', 'dev']]);
-  assert.deepEqual(folderChannelIds([{ id: 'a', kind: 'public' }, { id: 'dm', kind: 'dm' }], prefs, 'dev'), ['a']);
-});
 
 test('favorite order can move to first and last without admitting foreign IDs', () => {
   assert.deepEqual(reorderFavorites(['a', 'b', 'c'], 'c', 'a'), ['c', 'a', 'b']);

@@ -214,7 +214,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
 
 test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 공개=조직 전원+정책 허용 크루 / 비공개=채널 멤버, 초대는 조직 메뉴', () => {
   assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
-  assert.match(app, /const chRow = \(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{ungrouped\.map\(chRow\)\}/, '그룹 없는 채널은 목록 끝에');
+  assert.match(app, /const chRow = \(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{sortedCh\.map\(chRow\)\}/, '채널은 한 목록 — 채널 그룹은 뺐다(유건 2026-09-16, 라이브 사용 0명)');
   assert.match(app, /const chPeople = !channel \? \[\] : channel\.kind === 'public' \? members\.filter\(\(m\) => !\(channel\.excluded_user_ids \?\? \[\]\)\.includes\(m\.user_id\)\) : members\.filter\(\(m\) => chMembers\.some\(/, '사람 구성 계산');
   assert.match(app, /const chCrews = !channel \? \[\] : channel\.kind === 'public' \? usableCrews\.filter\(\(c\) => !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\) : crews\.filter\(\(c\) => chMembers\.some\(/, '크루 구성 계산(공개=정책 허용 크루)');
   assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');

@@ -39,7 +39,7 @@ await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(700
 await tab('알림|inbox'); await settle(); s = await st(); ok('알림함 탭 = 루트 depth0', s.page === 'inbox' && s.depth === 0, s);
 const rootBack = await p.evaluate(() => [...document.querySelectorAll('.msgr-menu')].filter((b) => b.getBoundingClientRect().width > 0).length); ok('루트 탭에는 상단 뒤로 버튼이 없다(하드웨어 뒤로만 = 앱 종료)', rootBack === 0, rootBack);
 // 가장자리 스와이프 뒤로(유건 2026-09-15 "어색하다" 손질): DM에서 연 대화를 왼쪽 가장자리에서 끌면 밑에 DM 탭(홈 아님)이 깔리고 화면이 손가락을 따라오며, 놓으면 DM으로 돌아간다
-await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이프 전: 대화 depth1', s.page === 'chat' && s.depth === 1, s);
+await tab('채팅|Chats'); await settle(); await openDm(); s = await st(); ok('스와이프 전: 대화 depth1', s.page === 'chat' && s.depth === 1, s);
 {
   const cdp = await p.context().newCDPSession(p);
   const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
@@ -60,7 +60,7 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
 }
 // 화면 전환 애니메이션(유건 2026-09-15): 대화 열기 = push, 하단 탭 전환 = tab, 뒤로 버튼 = pop. 300ms 뒤 클래스 해제
 {
-  await tab('DM'); await settle();
+  await tab('채팅|Chats'); await settle();
   await p.locator('[data-sec="dms"] .item').first().click(); await p.waitForTimeout(60);
   ok('대화 열기 → anim-push', await p.evaluate(() => /(^| )anim-push-(a|b)( |$)/.test(document.querySelector('.msgr-shell').className)));
   ok('push 중 문서에 가로 스크롤 폭이 생기지 않는다(셸 overflow-x clip — iOS 가로 고무줄, 유건 2026-09-16)', await p.evaluate(() => { const d = document.scrollingElement; const sh = document.querySelector('.msgr-shell'); return d.scrollWidth <= window.innerWidth && ['clip', 'hidden'].includes(getComputedStyle(sh).overflowX) && getComputedStyle(document.body).overscrollBehaviorX === 'none'; }));
@@ -73,11 +73,11 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   ok('탭 전환은 옆으로 밀지 않는다(교차 페이드)', await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-side')).transform === 'none'));
   await p.waitForTimeout(400); ok('해제 뒤 레일에 다른 애니메이션이 이어지지 않는다(검수 M-E: 옛 msgrPageBack 재생)', await p.evaluate(() => getComputedStyle(document.querySelector('.msgr-side')).animationName === 'none'));
   // 연속 전환(검수 M-2): 곧바로 DM → 알림함으로 두 번 옮기면 두 번째도 새 변형(a/b)으로 재시작
-  await tab('DM'); await p.waitForTimeout(40); const c1 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]); await tab('알림|inbox'); await p.waitForTimeout(40); const c2 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]);
+  await tab('채팅|Chats'); await p.waitForTimeout(40); const c1 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]); await tab('알림|inbox'); await p.waitForTimeout(40); const c2 = await p.evaluate(() => (document.querySelector('.msgr-shell').className.match(/anim-tab-left-(a|b)/) || [])[0]);
   ok('연속 전환은 a/b가 번갈아 재시작', c1 && c2 && c1 !== c2, { c1, c2 }); await p.waitForTimeout(400);
   await p.waitForTimeout(400);
   // 스와이프 뒤로 중 밑 화면은 DM 탭 모양(필터 줄) — 전환 순간 다시 그려지지 않게
-  await tab('DM'); await settle(); await openDm();
+  await tab('채팅|Chats'); await settle(); await openDm();
   const cdp = await p.context().newCDPSession(p);
   const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
   await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);
@@ -88,7 +88,7 @@ await tab('DM'); await settle(); await openDm(); s = await st(); ok('스와이�
   await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);
   const barMid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const bar = document.querySelector('.msgr-tabbar'); const r = bar?.getBoundingClientRect(); return { swiping: sh.classList.contains('swiping-back'), w: r?.width ?? 0, display: bar ? getComputedStyle(bar).display : null }; });
   ok('스와이프 뒤로 중 하단 탭 바가 보인다', barMid.swiping && barMid.w > 0 && barMid.display !== 'none', barMid);
-  const activeMid = await p.evaluate(() => document.querySelector('.msgr-tabbar [role=tab][aria-selected="true"]')?.textContent.trim()); ok('스와이프 중 활성 탭 = 목적지(DM) — 도착 순간 튀지 않게(검수 M-4)', /DM/i.test(activeMid || ''), activeMid);
+  const activeMid = await p.evaluate(() => document.querySelector('.msgr-tabbar [role=tab][aria-selected="true"]')?.textContent.trim()); ok('스와이프 중 활성 탭 = 목적지(DM) — 도착 순간 튀지 않게(검수 M-4)', /채팅|Chats/i.test(activeMid || ''), activeMid);
   await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
   // 대화 층은 스와이프 중에도 탭 바 위 여백을 유지한다(입력창이 아일랜드 밑으로 안 들어간다)
   await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(80);

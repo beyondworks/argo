@@ -575,12 +575,8 @@
 .msgr-ctxmenu { overflow-y: auto; overscroll-behavior: contain; min-width: min(180px, calc(100vw - 16px)); }
 .msgr-ctxmenu button { white-space: normal; overflow-wrap: anywhere; min-height: 32px; height: auto; padding-block: 8px; }
 .msgr-ctxmenu button:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
-/* 하위 목록 — 머리(뒤로)는 구분선으로, 펼칠 항목은 오른쪽에 쐐기 */
-.msgr-ctxmenu button.back { color: var(--fg-3); border-bottom: 1px solid var(--border-soft); border-radius: 0; }
-.msgr-ctxmenu button.hassub::after { content: '›'; margin-left: auto; padding-left: 12px; color: var(--fg-3); }
 .msgr-ctxmenu button:disabled, .msgr-rowmenu button:disabled { opacity: .45; cursor: default; }
-.msgr-folderhead > .btn { margin-left: auto; padding: 4px; min-width: 28px; min-height: 28px; }
-@media (pointer: coarse) { .msgr-ctxmenu button, .msgr-folderhead > .btn { min-height: 44px; min-width: 44px; } }
+@media (pointer: coarse) { .msgr-ctxmenu button { min-height: 44px; min-width: 44px; } }
 .msgr-railrow.dragging { opacity: .45; }
 .msgr-railrow[draggable] { cursor: default; }
 .msgr-acts.ctx { position: fixed; z-index: 7; opacity: 1; flex-direction: column; align-items: stretch; gap: 2px; margin: 0; padding: 6px; min-width: 160px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.12); }

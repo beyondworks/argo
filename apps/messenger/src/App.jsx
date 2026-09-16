@@ -37,7 +37,7 @@ import { registerPush, activatePush, deactivatePush, detachPush, mountPush } fro
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
-import { createRequestGate, createPreferenceQueue, folderChannelIds, reorderFavorites } from './rail-state.mjs';
+import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 const realtimeScope = createRealtimeScope();
 const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
@@ -334,22 +334,18 @@ function Auth({ logoutNotice = '' }) {
 /* ─── 우클릭 메뉴(유건 지시 2026-09-12 "우클릭으로 할 수 있는 기능이 한 개도 없다"): 커서 자리에, 화면 밖으로 안 나가게. 항목은 이미 있는 동작만 잇는다. ─── */
 function CtxMenu({ at, items, onClose }) {
   const ref = useRef(null); const [pos, setPos] = useState({ left: at.x, top: at.y });
-  // 하위 목록 — 긴 선택지(그룹 이동 등)는 한 항목으로 접었다가 누르면 그 자리에서 펼친다(유건 제보 2026-09-16: 그룹 18개가 화면 높이만큼 늘어섰다)
-  const [sub, setSub] = useState(null); const placeRef = useRef(null); const subSeen = useRef(false);
   useLayoutEffect(() => {
     const el = ref.current; if (!el) return;
-    const place = () => { const viewport = window.visualViewport; const left = viewport?.offsetLeft ?? 0; const top = viewport?.offsetTop ?? 0; const width = viewport?.width ?? window.innerWidth; const height = viewport?.height ?? window.innerHeight; el.style.maxHeight = `${Math.max(44, Math.min(440, height - 16))}px`; el.style.maxWidth = `${Math.max(44, width - 16)}px`; const r = el.getBoundingClientRect(); setPos({ left: Math.max(left + 8, Math.min(at.x, left + width - r.width - 8)), top: Math.max(top + 8, Math.min(at.y, top + height - r.height - 8)) }); };
-    placeRef.current = place; place(); const touch = window.matchMedia?.('(pointer: coarse)').matches; const previous = touch ? null : (at.returnFocus ?? document.activeElement); if (!touch) el.querySelector('button:not(:disabled)')?.focus(); // 터치 기기에선 포커스를 옮기지 않는다 — iOS가 프로그램 포커스에 링을 그려 첫 항목 테두리·닫힌 뒤 행에 선이 남았다(유건 캡처 2026-09-15)
+    const place = () => { const viewport = window.visualViewport; const left = viewport?.offsetLeft ?? 0; const top = viewport?.offsetTop ?? 0; const width = viewport?.width ?? window.innerWidth; const height = viewport?.height ?? window.innerHeight; el.style.maxHeight = `${Math.max(44, Math.min(440, height - 16))}px`; /* 긴 메뉴도 440px에서 멈추고 스크롤(유건 제보 2026-09-16) */ el.style.maxWidth = `${Math.max(44, width - 16)}px`; const r = el.getBoundingClientRect(); setPos({ left: Math.max(left + 8, Math.min(at.x, left + width - r.width - 8)), top: Math.max(top + 8, Math.min(at.y, top + height - r.height - 8)) }); };
+    place(); const touch = window.matchMedia?.('(pointer: coarse)').matches; const previous = touch ? null : (at.returnFocus ?? document.activeElement); if (!touch) el.querySelector('button:not(:disabled)')?.focus(); // 터치 기기에선 포커스를 옮기지 않는다 — iOS가 프로그램 포커스에 링을 그려 첫 항목 테두리·닫힌 뒤 행에 선이 남았다(유건 캡처 2026-09-15)
     window.addEventListener('resize', place); window.visualViewport?.addEventListener('resize', place); window.visualViewport?.addEventListener('scroll', place);
     return () => { window.removeEventListener('resize', place); window.visualViewport?.removeEventListener('resize', place); window.visualViewport?.removeEventListener('scroll', place); if (previous?.isConnected) previous.focus(); };
   }, [at]);
-  // 펼치고 접을 때마다 자리를 다시 잡는다(목록 높이가 바뀐다). 터치 기기에선 포커스를 옮기지 않는다(iOS 포커스 링).
-  useLayoutEffect(() => { if (!subSeen.current) { subSeen.current = true; return; } placeRef.current?.(); if (!window.matchMedia?.('(pointer: coarse)').matches) ref.current?.querySelector('button:not(:disabled)')?.focus(); }, [sub]);
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   const navigate = (e) => { const buttons = [...ref.current.querySelectorAll('button:not(:disabled)')]; const i = buttons.indexOf(document.activeElement); let next; if (e.key === 'ArrowDown') next = (i + 1) % buttons.length; else if (e.key === 'ArrowUp') next = (i - 1 + buttons.length) % buttons.length; else if (e.key === 'Home') next = 0; else if (e.key === 'End') next = buttons.length - 1; else if (e.key === 'Tab') { e.preventDefault(); onClose(); return; } if (next !== undefined && buttons.length) { e.preventDefault(); buttons[next].focus(); } };
-  const list = (sub ? [{ icon: 'back', label: sub.label.replace(/…$/, ''), back: true }, ...sub.items] : items).filter(Boolean); if (!list.length) return null;
+  const list = items.filter(Boolean); if (!list.length) return null;
   return createPortal(<><div className="msgr-menubg" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
-    <div ref={ref} className="msgr-rowmenu msgr-ctxmenu" role="menu" onKeyDown={navigate} style={pos}>{list.map((it, i) => <button key={i} type="button" role="menuitem" tabIndex={-1} className={it.danger ? 'danger' : it.back ? 'back' : it.sub ? 'hassub' : ''} disabled={it.disabled} aria-haspopup={it.sub ? 'menu' : undefined} onClick={(e) => { e.stopPropagation(); if (it.back) return setSub(null); if (it.sub) return setSub({ label: it.label, items: it.sub }); onClose(); it.run(); }}><I name={it.icon} size={13} />{it.label}</button>)}</div></>, document.body);
+    <div ref={ref} className="msgr-rowmenu msgr-ctxmenu" role="menu" onKeyDown={navigate} style={pos}>{list.map((it, i) => <button key={i} type="button" role="menuitem" tabIndex={-1} className={it.danger ? 'danger' : ''} disabled={it.disabled} onClick={(e) => { e.stopPropagation(); onClose(); it.run(); }}><I name={it.icon} size={13} />{it.label}</button>)}</div></>, document.body);
 }
 function Shell({ session }) {
   const { signOut, signingOut } = useContext(SignOutContext);
@@ -609,11 +605,11 @@ function Shell({ session }) {
   const loadChMembers = useCallback(async (id) => { if (id !== activeChannel.current) return; const current = memberRequests.current.begin(`${activeOrg.current}:${id}`); if (!id) { setChMembers([]); return; } try { const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); if (current()) setChMembers(rows); } catch { if (current()) setChMembers([]); } }, []);
   useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setChSheet(false); }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
-  const [unread, setUnread] = useState({}); const [muted, setMuted] = useState(() => new Set()); const [pinned, setPinned] = useState(() => new Set()); /* 즐겨찾기(고정) — msgr_channel_prefs.pinned(유건 2026-09-12) */ const [pinPos, setPinPos] = useState(() => new Map()); const [folderOf, setFolderOf] = useState(() => new Map()); /* 즐겨찾기 순서·채널 그룹(pin_pos·folder, 2026-09-12) */ const [quiet, setQuiet] = useState(null); // P0(2026-09-09): 채널별 안 읽음·음소거·조용한 시간
+  const [unread, setUnread] = useState({}); const [muted, setMuted] = useState(() => new Set()); const [pinned, setPinned] = useState(() => new Set()); /* 즐겨찾기(고정) — msgr_channel_prefs.pinned(유건 2026-09-12) */ const [pinPos, setPinPos] = useState(() => new Map()); /* 즐겨찾기 순서(pin_pos, 2026-09-12). 채널 그룹(folder)은 뺐다 — 유건 2026-09-16, 라이브 사용 0명 */ const [quiet, setQuiet] = useState(null); // P0(2026-09-09): 채널별 안 읽음·음소거·조용한 시간
   // 안 읽음 — org=null이면 개인 공간(조직 밖 1:1)을 센다(검수 L-1)
   const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); }, [orgId]);
   useEffect(() => { loadUnread(); }, [loadUnread, tick]);
-  useEffect(() => { if (!uid) return; let live = true; const revision = prefQueue.current.revision; q(supabase.from('msgr_channel_prefs').select('channel_id, muted, pinned, pin_pos, folder').eq('user_id', uid)).then((rows) => { if (!live || prefQueue.current.busy || revision !== prefQueue.current.revision) return; setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id))); setPinned(new Set(rows.filter((r) => r.pinned).map((r) => r.channel_id))); setPinPos(new Map(rows.filter((r) => r.pin_pos != null).map((r) => [r.channel_id, r.pin_pos]))); setFolderOf(new Map(rows.filter((r) => r.folder).map((r) => [r.channel_id, r.folder]))); }).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => { if (live) setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null); }).catch(() => {}); return () => { live = false; }; }, [uid, tick]);
+  useEffect(() => { if (!uid) return; let live = true; const revision = prefQueue.current.revision; q(supabase.from('msgr_channel_prefs').select('channel_id, muted, pinned, pin_pos').eq('user_id', uid)).then((rows) => { if (!live || prefQueue.current.busy || revision !== prefQueue.current.revision) return; setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id))); setPinned(new Set(rows.filter((r) => r.pinned).map((r) => r.channel_id))); setPinPos(new Map(rows.filter((r) => r.pin_pos != null).map((r) => [r.channel_id, r.pin_pos]))); }).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => { if (live) setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null); }).catch(() => {}); return () => { live = false; }; }, [uid, tick]);
   const savePrefs = async (patches) => {
     if (!patches.length) return;
     try { await prefQueue.current.enqueue(() => q(supabase.from('msgr_channel_prefs').upsert(patches.map((patch) => ({ ...patch, user_id: uid, updated_at: new Date().toISOString() }))))); }
@@ -1007,11 +1003,11 @@ function Shell({ session }) {
   };
  // 기본 비공개(유건 2026-09-16) — 공개는 고를 때만
   const [ctx, setCtx] = useState(null); // 우클릭 메뉴 {x, y, items}
-  const [drag, setDrag] = useState(null); const [groupForm, setGroupForm] = useState(null); // 끌어서 정렬·그룹 이동 중인 채널 id · 그룹 이름 입력 {mode:'new', chId} | {mode:'rename', from}
+  const [drag, setDrag] = useState(null); // 즐겨찾기 안에서 끌어 정렬 중인 id
   useLayoutEffect(() => {
     loadedOrg.current = null;
     setChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setLastMsg({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
-    setCtx(null); setGroupForm(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null);
+    setCtx(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null);
   }, [orgId]);
   const openCtx = (e, items, trigger = null) => { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const returnFocus = e.currentTarget.closest('.msgr-railrow')?.querySelector('button.item') ?? e.currentTarget; setCtx({ x: e.clientX || r.left, y: e.clientY || r.bottom, items, trigger, returnFocus }); };
   useEffect(() => { const h = (e) => { if (!e.target.closest?.('input, textarea, [contenteditable="true"], a[href]')) e.preventDefault(); }; document.addEventListener('contextmenu', h); return () => document.removeEventListener('contextmenu', h); }, []); // 웹뷰 기본 메뉴(다시 로드 등)는 입력창 밖에서는 띄우지 않는다
@@ -1050,8 +1046,6 @@ function Shell({ session }) {
   const dmList = !dmTab ? dms : dmFilter === 'fav' ? dmPinnedTop : dmSorted(dmPool.filter(dmVisible)); // dms는 이미 고정 제외 — 전체 탭의 고정은 아래 별도 단락, 즐겨찾기 탭은 고정 순서 그대로(검수 L-6)
   const dmPinnedShown = dmTab && dmFilter === 'all' ? dmPinnedTop : [];
   const sortedCh = [...channels].filter((c) => c.kind !== 'dm' && !pinned.has(c.id)).sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
-  const folders = [...new Set(channels.filter((c) => c.kind !== 'dm').map((c) => folderOf.get(c.id)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); // 채널 그룹(사용자별)
-  const byFolder = folders.map((f) => [f, sortedCh.filter((c) => folderOf.get(c.id) === f)]); const ungrouped = sortedCh.filter((c) => !folderOf.get(c.id));
   const reorderFav = async (dragId, beforeId = null) => {
     if (favoriteLock.current) return;
     favoriteLock.current = true; setFavoriteBusy(true);
@@ -1070,25 +1064,14 @@ function Shell({ session }) {
     } catch (e) { setErr(friendlyErr(e.message, t)); }
     finally { favoriteLock.current = false; setFavoriteBusy(false); setTick((x) => x + 1); }
   };
-  const moveToFolder = async (id, name) => { if (!channels.some((c) => c.id === id && c.kind !== 'dm')) return; setFolderOf((m) => { const n = new Map(m); if (name) n.set(id, name); else n.delete(id); return n; }); try { await savePrefs([{ channel_id: id, folder: name || null }]); } catch (e) { setErr(e.message); } };
-  const renameFolder = async (from, to) => { const ids = folderChannelIds(channels, folderOf, from); setFolderOf((m) => { const n = new Map(m); ids.forEach((k) => { if (to) n.set(k, to); else n.delete(k); }); return n; }); try { await savePrefs(ids.map((id) => ({ channel_id: id, folder: to || null }))); } catch (e) { setErr(e.message); } };
 
   const dragStart = (c) => (e) => { setDrag(c.id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', c.id); } catch { /* 웹뷰 차이 */ } };
   const dragOver = (e) => { if (drag) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } };
-  const dropOnRow = (e, c) => { e.preventDefault(); e.stopPropagation(); const id = drag; setDrag(null); if (!id || id === c.id) return; if (favs.some((f) => f.id === id) && favs.some((f) => f.id === c.id)) return reorderFav(id, c.id); // 즐겨찾기 안에서는 순서
-    const src = channels.find((x) => x.id === id); if (src && src.kind !== 'dm' && c.kind !== 'dm' && !pinned.has(id) && !pinned.has(c.id)) moveToFolder(id, folderOf.get(c.id) ?? null); }; // 채널을 다른 채널 위에 놓으면 그 채널의 그룹으로(그룹 없는 행이면 그룹에서 뺀다)
-  const groupItems = (c) => {
-    const cur = folderOf.get(c.id);
-    const newGroup = { icon: 'plus', label: t('ch.group.new'), run: () => setGroupForm({ mode: 'new', chId: c.id, name: '' }) };
-    const targets = folders.filter((f) => f !== cur).map((f) => ({ icon: 'hash', label: f, run: () => moveToFolder(c.id, f) }));
-    // 그룹이 몇 개든 메뉴에는 한 줄 — 누르면 그 자리에서 목록이 열린다(유건 제보 2026-09-16: 18개가 화면 높이만큼 늘어섰다)
-    return [targets.length ? { icon: 'hash', label: t('ch.group.moveTo'), sub: [...targets, newGroup] } : newGroup, cur && { icon: 'x', label: t('ch.group.none'), run: () => moveToFolder(c.id, null) }];
-  };
+  const dropOnRow = (e, c) => { e.preventDefault(); e.stopPropagation(); const id = drag; setDrag(null); if (!id || id === c.id) return; if (favs.some((f) => f.id === id) && favs.some((f) => f.id === c.id)) reorderFav(id, c.id); }; // 끌어서 옮기는 것은 즐겨찾기 안의 순서뿐
   const orderItems = (c) => { const at = favs.findIndex((f) => f.id === c.id); return at < 0 ? [] : [
     { icon: 'star', label: t('rail.order.up'), disabled: favoriteBusy || at === 0, run: () => reorderFav(c.id, favs[at - 1]?.id) },
     { icon: 'star', label: t('rail.order.down'), disabled: favoriteBusy || at === favs.length - 1, run: () => reorderFav(c.id, favs[at + 2]?.id ?? null) },
   ]; };
-  const folderItems = (f) => [{ icon: 'gear', label: t('ch.group.rename'), run: () => setGroupForm({ mode: 'rename', from: f, name: f }) }, { icon: 'x', label: t('ch.group.ungroup'), run: () => renameFolder(f, null) }];
   // '내 에이전트' = 세 출처 한 목록(유건 지시 2026-09-08): 아르고 에이전트 + 내가 연결한 헤르메스·오픈클로(봇). 출처 표시는 msgr_bots.kind.
   const sourceOf = (c) => c.hosting !== 'bot' ? 'argo' : (botKinds.find((b) => b.crew_id === c.id)?.kind ?? 'custom');
   const sortCrews = (list) => [...list].sort((a, b) => railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0) : a.display_name.localeCompare(b.display_name, 'ko'));
@@ -1101,11 +1084,10 @@ function Shell({ session }) {
                 { icon: muted.has(c.id) ? 'bell' : 'belloff', label: t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute'), run: () => toggleMute(c) },
                 c.kind === 'private' && { icon: 'out', label: t('ch.leave'), run: () => confirmVia('leave') },
                 canManage && { icon: 'x', label: t('ch.archive'), run: () => confirmVia('archive') },
-                ...groupItems(c),
                 ...orderItems(c),
                 canManage && { icon: 'trash', label: t('ch.delete'), danger: true, run: () => confirmVia('delete') },
               ]; return (
-              <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items) : {})}>
+              <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && pinned.has(c.id)} {...(isPhone ? rowLongPress(c, items) : {})}>
                 <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}>
                   <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
                 </button>
@@ -1230,12 +1212,7 @@ function Shell({ session }) {
         )}
         {channels.length ? (
           <div className="msgr-list">
-            {groupForm && (<form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); const name = groupForm.name.trim(); if (!name) return; if (groupForm.mode === 'new') moveToFolder(groupForm.chId, name); else renameFolder(groupForm.from, name); setGroupForm(null); }}><input className="msgr-input" placeholder={t('ch.group.name')} value={groupForm.name} onChange={(e) => setGroupForm((g) => ({ ...g, name: e.target.value }))} autoFocus maxLength={40} /><div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!groupForm.name.trim()}><I name="check" size={13} />{t('ui.save')}</button><button type="button" className="btn sm" onClick={() => setGroupForm(null)}>{t('ui.cancel')}</button></div></form>)}
-            {byFolder.map(([f, list]) => (<div key={f} className="msgr-folder" onDragOver={dragOver} onDrop={(e) => { e.preventDefault(); const id = drag; setDrag(null); if (id && channels.find((x) => x.id === id)?.kind !== 'dm') moveToFolder(id, f); }}>{/* 채널 그룹 — 헤더 우클릭: 이름 바꾸기·해제, 행을 끌어다 놓으면 이동 */}
-              <div className="msgr-folderhead" onContextMenu={(e) => openCtx(e, folderItems(f))}><span className="lbl">{f}</span><span className="msgr-klabel">{list.length}</span><button type="button" className="btn sm" aria-label={t('rail.group.actions', { name: f })} aria-haspopup="menu" onClick={(e) => openCtx(e, folderItems(f))}><I name="dots" size={14} /></button></div>
-              {list.map(chRow)}
-            </div>))}
-            {ungrouped.map(chRow)}
+            {sortedCh.map(chRow)}
           </div>
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: 'public' })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
