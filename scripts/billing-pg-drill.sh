@@ -8,6 +8,7 @@
 #   test/msgr-channel-scope-pg.test.mjs   (채널 범위 강제 트리거 — 초대된 크루만 글 삽입)
 #   test/msgr-dm-relay-pg.test.mjs        (DM 수신·참조 전달 — 비멤버 크루는 자기 1:1 방에서만 실행)
 #   test/msgr-bot-idle-gate-pg.test.mjs   (봇 getUpdates 유휴 게이트 — 새 글·멤버십·ack 즉시, 유휴엔 쓰기 없음, 30초 상한)
+#   test/msgr-crews-toast-churn-pg.test.mjs (크루 하트비트가 큰 commands 열을 TOAST에 다시 쓰지 않는다 — 잠금 트리거 WHEN)
 # 요구: psql·initdb·pg_ctl (예: brew install postgresql@14). 포트 충돌 시 ARGO_PG_DRILL_PORT 지정.
 # 대안: supabase start 후 ARGO_PG_TEST_URL을 직접 지정해 node --test test/<파일>
 set -euo pipefail
@@ -28,7 +29,7 @@ initdb -D "$DIR/data" -A trust -U postgres >/dev/null
 pg_ctl -D "$DIR/data" -o "-p $PORT -k $DIR -c listen_addresses=127.0.0.1" -l "$DIR/pg.log" start >/dev/null
 
 FILES=("${@:-}")
-if [ -z "${FILES[0]}" ]; then FILES=(test/billing-pg-integration.test.mjs test/msgr-pg-integration.test.mjs test/sync-index-pg-integration.test.mjs test/msgr-channel-scope-pg.test.mjs test/msgr-dm-relay-pg.test.mjs test/msgr-bot-idle-gate-pg.test.mjs test/msgr-friend-search-pg.test.mjs test/msgr-push-badge-pg.test.mjs test/msgr-dm-latest-pg.test.mjs); fi
+if [ -z "${FILES[0]}" ]; then FILES=(test/billing-pg-integration.test.mjs test/msgr-pg-integration.test.mjs test/sync-index-pg-integration.test.mjs test/msgr-channel-scope-pg.test.mjs test/msgr-dm-relay-pg.test.mjs test/msgr-bot-idle-gate-pg.test.mjs test/msgr-friend-search-pg.test.mjs test/msgr-push-badge-pg.test.mjs test/msgr-dm-latest-pg.test.mjs test/msgr-crews-toast-churn-pg.test.mjs); fi
 i=0
 for f in "${FILES[@]}"; do
   i=$((i + 1)); db="argo_drill_$i"
