@@ -5,7 +5,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { IMAGE_MAX_B64 } from './session.mjs';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readlink, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readlink, rm, stat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir, hostname } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
@@ -128,14 +128,34 @@ export function lockHolderPid(link, host = hostname()) {
   return Number.isInteger(pid) && pid > 1 ? pid : 0;
 }
 
-/** pid 한 건의 { ppid, command } — 없는 pid는 null. */
+/** pid 한 건의 { ppid, startMs, command } — 없는 pid·해석 불가는 null.
+    `-ww`(폭 제한 해제): 리눅스 procps는 tty가 아니면 argv를 잘라 긴 프로필 경로가 사라진다(검수 M-5).
+    `LC_ALL=C`: lstart 형식을 고정해 Date 해석이 로캘에 흔들리지 않게 한다. 옵션은 process-tree.mjs와 같은 관행. */
 async function psInfo(pid) {
   return new Promise((resolve) => {
-    execFile('ps', ['-o', 'ppid=,command=', '-p', String(pid)], (err, out) => {
-      const m = /^\s*(\d+)\s+([\s\S]*)$/.exec(String(out ?? ''));
-      resolve(err || !m ? null : { ppid: Number(m[1]), command: m[2].trim() });
-    });
+    execFile('ps', ['-ww', '-o', 'ppid=,lstart=,command=', '-p', String(pid)],
+      { timeout: 2000, maxBuffer: 2e6, windowsHide: true, env: { ...process.env, LC_ALL: 'C' } },
+      (err, out) => {
+        const m = /^\s*(\d+)\s+(\S+\s+\S+\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+([\s\S]*)$/.exec(String(out ?? ''));
+        if (err || !m) return resolve(null);
+        const startMs = Date.parse(m[2]);
+        resolve({ ppid: Number(m[1]), startMs: Number.isFinite(startMs) ? startMs : null, command: m[3].trim() });
+      });
   });
+}
+/** argv가 **이 프로필**을 쓰는가 — 인자 끝 경계까지 본다(순수). 단순 포함 판정은 형제 프로필(…/acme 과 …/acme2,
+    회사 wsId 'agents' 와 크루 …/agents/<해시>)을 같은 것으로 읽어 엉뚱한 브라우저를 죽인다(검수 M-1 실증). */
+export function argvUsesProfile(command, profile) {
+  const arg = `--user-data-dir=${profile}`;
+  for (let i = String(command ?? '').indexOf(arg); i >= 0; i = command.indexOf(arg, i + 1)) {
+    const after = command[i + arg.length];
+    if (after === undefined || /\s/.test(after)) return true; // 인자가 여기서 끝난다 = 같은 프로필
+  }
+  return false;
+}
+/** 잠금을 만든 시각(심볼릭 링크 자신의 mtime) — 없으면 null. pid 재사용 판정에 쓴다. */
+async function lockCreatedMs(profile) {
+  return lstat(join(profile, 'SingletonLock')).then((s) => s.mtimeMs).catch(() => null);
 }
 
 /** 고아 크롬 회수 — 기동이 프로필 잠금으로 실패했을 때, 잠금을 쥔 크롬이 **부모를 잃은 고아**면 종료하고 true.
@@ -143,17 +163,28 @@ async function psInfo(pid) {
     계속 쥐어 그 회사·크루의 브라우저가 영구히 막혔다(고객 제보 2026-09-15: 같은 오류가 12시간 뒤에도 재현).
     살아 있는 다른 Argo 인스턴스의 크롬(부모가 살아 있음)은 건드리지 않는다 — 남의 작업을 끊는 편이 더 나쁘다.
     잠금 파일은 지우지 않는다: 보유자가 사라지면 크롬이 스스로 가져간다(실측 654ms). */
-export async function reclaimOrphanChrome(profile, err, { inspect = psInfo, kill = (pid) => process.kill(pid, 'SIGKILL'), host = hostname(), platform = process.platform } = {}) {
+export async function reclaimOrphanChrome(profile, err, { inspect = psInfo, kill = killTree, lockMs = lockCreatedMs, host = hostname(), platform = process.platform } = {}) {
   if (platform === 'win32') return false; // 윈도우 크롬은 이 심볼릭 링크를 쓰지 않는다
-  if (!/Singleton|ProcessSingleton|뜨자마자 종료/.test(String(err?.message ?? ''))) return false;
+  if (err?.code !== 'CHROME_EXIT' && !/Singleton|ProcessSingleton|뜨자마자 종료/.test(String(err?.message ?? ''))) return false;
   const pid = lockHolderPid(await readlink(join(profile, 'SingletonLock')).catch(() => ''), host);
   if (!pid) return false;
   const info = await inspect(pid);
-  if (!info || info.ppid !== 1 || !info.command.includes(profile)) return false; // 죽은 잠금이거나 남의 산 인스턴스
-  try { kill(pid); } catch { return false; }
+  if (!info || info.ppid !== 1) return false; // 죽은 잠금(크롬이 스스로 가져간다)이거나 남의 산 인스턴스의 자식
+  if (!argvUsesProfile(info.command, profile)) return false;
+  // pid 재사용 방어 — 잠금보다 **뒤에** 태어난 프로세스는 그 잠금의 주인이 아니다(process-tree.mjs의 birth 대조와 같은 축).
+  const created = await lockMs(profile);
+  if (info.startMs == null || created == null || info.startMs > created + 5_000) return false;
+  try { await kill(pid); } catch { return false; }
   console.log(`[argo] 브라우저 프로필 잠금 회수 — 고아 크롬 ${pid} 종료: ${profile}`);
   await sleep(300); // 크롬이 잠금을 정리할 틈
   return true;
+}
+/** 종료 사다리 — SIGTERM으로 정상 종료를 먼저 청한다(막 연결한 계정 쿠키 플러시). 안 죽으면 SIGKILL(close()와 같은 정책). */
+async function killTree(pid, { wait = 1500 } = {}) {
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  process.kill(pid, 'SIGTERM');
+  for (let t = 0; t < wait && alive(); t += 100) await sleep(100);
+  if (alive()) process.kill(pid, 'SIGKILL');
 }
 export class BrowserSession {
   static profileDir(wsId, env = process.env, slug = '') { const root = env.ARGO_ROOT ? dirname(env.ARGO_ROOT) : join(homedir(), '.argo'); return slug ? join(root, 'browser', 'agents', scopeHash([wsId, slug])) : join(root, 'browser', wsId); }
@@ -208,10 +239,12 @@ export class BrowserSession {
     this.child.on('exit', (code, sig) => { exited = { code, sig }; children.delete(this.child); this.alive = false; if (sessions.get(this.key) === this) sessions.delete(this.key); this.cdp?.close(); }); // map 가드 — 남의 산 세션을 밀어내지 않는다
     // 준비 판정은 시간 기준(LAUNCH_TIMEOUT_MS). 실행 오류·조기 종료는 상한을 기다리지 않고 즉시 실패로 돌린다(원인이 문구에 실린다).
     const diag = () => { const t = tail.join('').trim().split(/\r?\n/).slice(-3).join(' | ').slice(0, 400); return t ? ` — stderr: ${t}` : ''; };
+    // 종료 사유는 code 표지까지 달아 던진다 — 프로필 잠금 회수가 문구(정규식) 대신 이 표지로 판정한다(검수 L-1).
+    const exitError = () => Object.assign(new Error(`브라우저가 뜨자마자 종료됐습니다(code ${exited?.code ?? exited?.sig})${diag()}`), { code: 'CHROME_EXIT' });
     const t0 = Date.now();
     while (!wsUrl && Date.now() - t0 < LAUNCH_TIMEOUT_MS) {
       if (spawnErr) throw new Error(`브라우저 실행 실패: ${spawnErr.message}`);
-      if (exited) throw new Error(`브라우저가 뜨자마자 종료됐습니다(code ${exited.code ?? exited.sig})${diag()}`);
+      if (exited) throw exitError();
       // 폴백: 크롬이 프로필에 쓰는 DevToolsActivePort(1행 포트·2행 브라우저 경로) — stderr 버퍼링과 무관(Playwright 방식)
       // 우리 자식이 이미 죽었으면 읽지 않는다: 그 파일은 같은 프로필을 쥔 **남의(고아) 크롬** 것이고,
       // 주워서 붙으면 우리 자식의 exit 처리가 그 연결을 닫아 'CDP connection closed'로 끝난다(실측 2026-09-16).
@@ -220,8 +253,6 @@ export class BrowserSession {
     }
     // 종료 사유가 다른 오류에 덮이지 않게 한다 — 프로필 잠금에 막힌 크롬은 주소를 찍고 **곧바로** 죽어서,
     // 붙은 뒤에 소켓이 닫히면 'CDP connection closed'만 남는다. 그러면 호출자가 잠금 실패인 줄 모른다(실측 2026-09-16).
-    const exitError = () => new Error(`브라우저가 뜨자마자 종료됐습니다(code ${exited.code ?? exited.sig})${diag()}`);
-    if (exited) throw exitError();
     if (!wsUrl) { await this.kill(); throw new Error(`브라우저가 ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}초 안에 뜨지 않았습니다${diag()}`); }
     const ws = new WebSocket(wsUrl);
     try {

@@ -4,11 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, readlink } from 'node:fs/promises';
+import { mkdtemp, rm, readlink, utimes, writeFile } from 'node:fs/promises';
 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BrowserSession, closeAllBrowsers, findChrome, lockHolderPid, reclaimOrphanChrome } from '../src/engine/browser-tools.mjs';
+import { BrowserSession, closeAllBrowsers, devToolsUrlFromFile, findChrome, lockHolderPid, reclaimOrphanChrome } from '../src/engine/browser-tools.mjs';
 
 const lockErr = new Error('브라우저가 뜨자마자 종료됐습니다(code 21) — stderr: Failed to create /p/SingletonLock: File exists (17)');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -20,46 +20,69 @@ test('lockHolderPid: 이 호스트의 잠금만 판정한다', () => {
   assert.equal(lockHolderPid('', 'mac.local'), 0);
 });
 
-test('reclaimOrphanChrome: 고아(부모 없음)만 종료하고, 산 인스턴스·다른 오류는 건드리지 않는다', async () => {
+test('reclaimOrphanChrome: 고아(부모 없음)만 종료하고, 산 인스턴스·형제 프로필·재사용 pid는 건드리지 않는다', async () => {
   const profile = await mkdtemp(join(tmpdir(), 'argo-lockunit-'));
-  const link = join(profile, 'SingletonLock');
-  await spawnLink('host-777', link);
+  await spawnLink('host-777', join(profile, 'SingletonLock'));
+  const LOCK_AT = 1_700_000_000_000; // 잠금이 만들어진 시각
   const killed = [];
-  const opts = (info) => ({ inspect: async () => info, kill: (pid) => killed.push(pid), host: 'host', platform: 'darwin' });
+  const orphan = { ppid: 1, startMs: LOCK_AT - 1_000, command: `chrome --user-data-dir=${profile} --headless=new` };
+  const opts = (info, extra = {}) => ({ inspect: async () => info, kill: (pid) => killed.push(pid), lockMs: async () => LOCK_AT, host: 'host', platform: 'darwin', ...extra });
 
-  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts({ ppid: 1, command: `chrome --user-data-dir=${profile}` })), true, '고아 크롬은 회수한다');
+  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts(orphan)), true, '고아 크롬은 회수한다');
+  assert.deepEqual(killed, [777]);
+  killed.length = 0;
+  assert.equal(await reclaimOrphanChrome(profile, Object.assign(new Error('CDP connection closed'), { code: 'CHROME_EXIT' }), opts(orphan)), true, '문구가 달라도 종료 표지로 판정한다');
   assert.deepEqual(killed, [777]);
 
   killed.length = 0;
-  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts({ ppid: 900, command: `chrome --user-data-dir=${profile}` })), false, '부모가 살아 있는 크롬 = 다른 Argo 인스턴스의 것');
-  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts({ ppid: 1, command: 'chrome --user-data-dir=/남의/프로필' })), false, '이 프로필의 크롬이 아니다');
+  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts({ ...orphan, ppid: 900 })), false, '부모가 살아 있는 크롬 = 다른 Argo 인스턴스의 것');
+  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts({ ...orphan, command: 'chrome --user-data-dir=/남의/프로필' })), false, '이 프로필의 크롬이 아니다');
+  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts({ ...orphan, command: `chrome --user-data-dir=${profile}2 --headless=new` })), false, '경로 접두만 같은 형제 프로필은 남이다');
+  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts({ ...orphan, startMs: LOCK_AT + 60_000 })), false, '잠금보다 뒤에 태어난 프로세스 = 재사용된 pid');
+  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts({ ...orphan, startMs: null })), false, '시작 시각을 못 읽으면 죽이지 않는다');
+  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts(orphan, { lockMs: async () => null })), false, '잠금 시각을 못 읽으면 죽이지 않는다');
   assert.equal(await reclaimOrphanChrome(profile, lockErr, opts(null)), false, '이미 죽은 잠금 — 크롬이 스스로 가져간다');
-  assert.equal(await reclaimOrphanChrome(profile, new Error('CDP 연결 실패'), opts({ ppid: 1, command: `chrome --user-data-dir=${profile}` })), false, '잠금과 무관한 오류');
-  assert.equal(await reclaimOrphanChrome(profile, lockErr, { ...opts({ ppid: 1, command: `chrome --user-data-dir=${profile}` }), platform: 'win32' }), false, '윈도우는 이 심볼릭 링크를 쓰지 않는다');
+  assert.equal(await reclaimOrphanChrome(profile, new Error('CDP 연결 실패'), opts(orphan)), false, '잠금과 무관한 오류');
+  assert.equal(await reclaimOrphanChrome(profile, lockErr, opts(orphan, { platform: 'win32' })), false, '윈도우는 이 심볼릭 링크를 쓰지 않는다');
   assert.deepEqual(killed, [], '위 경우들에서는 아무도 종료하지 않는다');
   await rm(profile, { recursive: true, force: true });
 });
 
-test('실크롬: 고아 크롬이 프로필 잠금을 쥔 상태에서도 다음 기동이 살아난다', { skip: !findChrome() && 'No Chromium installed' }, async () => {
+test('devToolsUrlFromFile: 스폰 이전에 쓰인 포트 파일은 채택하지 않는다(남의 크롬 것)', async () => {
+  const profile = await mkdtemp(join(tmpdir(), 'argo-portfile-'));
+  const file = join(profile, 'DevToolsActivePort');
+  await writeFile(file, '9222\n/devtools/browser/abc\n');
+  const spawnAt = Date.now();
+  const old = new Date(spawnAt - 60_000);
+  await utimes(file, old, old); // 고아가 우리보다 먼저 써 둔 파일
+  assert.equal(await devToolsUrlFromFile(profile, spawnAt), null, '스폰 이전 파일은 우리 크롬 것이 아니다');
+  assert.equal(await devToolsUrlFromFile(profile), 'ws://127.0.0.1:9222/devtools/browser/abc', '시각 조건이 없으면 종전대로 읽는다');
+  const fresh = new Date(spawnAt + 1_000);
+  await utimes(file, fresh, fresh);
+  assert.equal(await devToolsUrlFromFile(profile, spawnAt), 'ws://127.0.0.1:9222/devtools/browser/abc', '스폰 이후 파일은 우리 것으로 본다');
+  await rm(profile, { recursive: true, force: true });
+});
+
+// POSIX 전용 — 윈도우 크롬은 SingletonLock 심볼릭 링크를 쓰지 않고, 이 하네스는 /bin/sh로 고아를 만든다.
+test('실크롬: 고아 크롬이 프로필 잠금을 쥔 상태에서도 다음 기동이 살아난다', { skip: (process.platform === 'win32' && 'POSIX 전용 하네스') || (!findChrome() && 'No Chromium installed') }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'argo-lockrepro-'));
-  const env = { ...process.env, ARGO_ROOT: join(root, 'workspaces'), ARGO_BROWSER_HEADLESS: '1' };
-  const profile = BrowserSession.profileDir('co-lock', env);
-  const bin = findChrome();
-  // 부모가 즉시 끝나는 크롬 = ppid 1 고아(Argo가 SIGTERM으로 죽은 뒤 남는 것과 같은 상태)
-  spawn('/bin/sh', ['-c', `"$0" --user-data-dir="$1" --headless=new --no-first-run --no-default-browser-check --remote-debugging-port=0 about:blank >/dev/null 2>&1 & exit 0`, bin, profile], { detached: true, stdio: 'ignore' }).unref();
-  // SingletonLock은 "<호스트>-<pid>"를 가리키는 **끊어진** 심볼릭 링크다 — existsSync는 false를 준다(readlink로 본다).
-  const link = join(profile, 'SingletonLock');
-  let target = '';
-  for (let i = 0; i < 100 && !target; i++) { target = await readlink(link).catch(() => ''); if (!target) await sleep(100); }
-  assert.ok(target, '고아 크롬이 프로필 잠금을 잡았다');
-  const orphanPid = lockHolderPid(target);
-  assert.ok(orphanPid > 1, `잠금 보유자 pid를 읽는다: ${orphanPid}`);
+  let orphanPid = 0;
   try {
+    const env = { ...process.env, ARGO_ROOT: join(root, 'workspaces'), ARGO_BROWSER_HEADLESS: '1' };
+    const profile = BrowserSession.profileDir('co-lock', env);
+    // 부모가 즉시 끝나는 크롬 = ppid 1 고아(Argo가 SIGTERM으로 죽은 뒤 남는 것과 같은 상태)
+    spawn('/bin/sh', ['-c', `"$0" --user-data-dir="$1" --headless=new --no-first-run --no-default-browser-check --remote-debugging-port=0 about:blank >/dev/null 2>&1 & exit 0`, findChrome(), profile], { detached: true, stdio: 'ignore' }).unref();
+    // SingletonLock은 "<호스트>-<pid>"를 가리키는 **끊어진** 심볼릭 링크다 — existsSync는 false를 준다(readlink로 본다).
+    let target = '';
+    for (let i = 0; i < 100 && !target; i++) { target = await readlink(join(profile, 'SingletonLock')).catch(() => ''); if (!target) await sleep(100); }
+    assert.ok(target, '고아 크롬이 프로필 잠금을 잡았다');
+    orphanPid = lockHolderPid(target);
+    assert.ok(orphanPid > 1, `잠금 보유자 pid를 읽는다: ${orphanPid}`);
     const s = await BrowserSession.get('co-lock', { env, headless: true });
     assert.equal(s.alive, true, '고아를 회수하고 정상 기동한다');
     assert.notEqual(s.child.pid, orphanPid);
   } finally {
-    try { process.kill(orphanPid, 'SIGKILL'); } catch { /* 회수가 이미 종료함 */ }
+    try { if (orphanPid) process.kill(orphanPid, 'SIGKILL'); } catch { /* 회수가 이미 종료함 */ }
     await closeAllBrowsers().catch(() => {});
     await rm(root, { recursive: true, force: true });
   }
