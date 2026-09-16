@@ -2,12 +2,12 @@
 // Hermes(browser_* 도구 13종, CDP 백엔드)·OpenClaw(browser 확장, CDP·확장 릴레이)와 같은 구조: 러너·모델과 무관하게 같은 도구·같은 게이트.
 // 회사·크루별 전용 프로필, 실행별 탭. 개인/기존 회사 프로필을 복사하지 않는다. 프로필은 동기화 대상 밖이다.
 // 의존성 0: Node 22의 전역 WebSocket + 시스템 크롬(Chrome/Chromium/Edge/Brave). 없으면 도구가 정직한 오류를 돌려준다(마켓의 브라우저 MCP가 대안).
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { IMAGE_MAX_B64 } from './session.mjs';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, readlink, rm, stat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { detectEgoBrowser, selectIsolatedBrowserProvider } from './ego-browser-provider.mjs';
 
@@ -35,8 +35,15 @@ const SHOT_LADDER = [[70, 1], [50, 0.75], [35, 0.5]];
 /** stderr 누적 버퍼에서 완결된 'DevTools listening on ws://…' 줄만 채택(순수) — 줄 종료가 없으면 아직 조각이다. */
 export const devToolsUrlFrom = (acc) => acc.match(/DevTools listening on (ws:\/\/\S+)\r?\n/)?.[1] ?? null;
 /** 프로필의 DevToolsActivePort 파일(1행 포트, 2행 /devtools/browser/<id>) — 두 행이 다 있어야 채택(쓰는 중 조각 방지). */
-export async function devToolsUrlFromFile(profile) {
-  try { const [port, path] = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split(/\r?\n/); return /^\d+$/.test(port ?? '') && path?.startsWith('/') ? `ws://127.0.0.1:${port}${path}` : null; } catch { return null; }
+export async function devToolsUrlFromFile(profile, minMtimeMs = 0) {
+  try {
+    const file = join(profile, 'DevToolsActivePort');
+    // 우리 스폰 이후에 쓰인 파일만 채택한다 — 같은 프로필을 쥔 **남의(고아) 크롬**이 늦게 부팅하며 쓴 파일을 주우면
+    // 그 브라우저에 붙어 버리고, 우리 자식의 exit 처리가 그 연결을 닫아 'CDP connection closed'로 끝난다(실측 2026-09-16).
+    if (minMtimeMs && (await stat(file)).mtimeMs < minMtimeMs) return null;
+    const [port, path] = (await readFile(file, 'utf8')).split(/\r?\n/);
+    return /^\d+$/.test(port ?? '') && path?.startsWith('/') ? `ws://127.0.0.1:${port}${path}` : null;
+  } catch { return null; }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -112,6 +119,42 @@ export const BROWSER_LOGIN_ERRORS = Object.freeze({
   BROWSER_LOGIN_HEADLESS: 'Login handoff is unavailable in a headless browser. Use a visible browser on the execution device; mobile remote control is not available.',
 });
 const loginError = (code) => Object.assign(new Error(BROWSER_LOGIN_ERRORS[code]), { code });
+
+/** 프로필 잠금을 쥔 크롬의 pid — POSIX 크롬의 SingletonLock은 "<호스트>-<pid>" 심볼릭 링크다. 다른 호스트 것이면 0. */
+export function lockHolderPid(link, host = hostname()) {
+  const m = /^(.*)-(\d+)$/.exec(String(link ?? ''));
+  if (!m || m[1] !== host) return 0; // 공유 폴더에 놓인 프로필 — 그 호스트의 생사를 우리가 판정할 수 없다
+  const pid = Number(m[2]);
+  return Number.isInteger(pid) && pid > 1 ? pid : 0;
+}
+
+/** pid 한 건의 { ppid, command } — 없는 pid는 null. */
+async function psInfo(pid) {
+  return new Promise((resolve) => {
+    execFile('ps', ['-o', 'ppid=,command=', '-p', String(pid)], (err, out) => {
+      const m = /^\s*(\d+)\s+([\s\S]*)$/.exec(String(out ?? ''));
+      resolve(err || !m ? null : { ppid: Number(m[1]), command: m[2].trim() });
+    });
+  });
+}
+
+/** 고아 크롬 회수 — 기동이 프로필 잠금으로 실패했을 때, 잠금을 쥔 크롬이 **부모를 잃은 고아**면 종료하고 true.
+    Argo가 SIGTERM·SIGKILL로 끝나면 크롬 자식이 살아남는다(위 스위퍼는 정상 종료에만 돈다). 그 고아가 잠금을
+    계속 쥐어 그 회사·크루의 브라우저가 영구히 막혔다(고객 제보 2026-09-15: 같은 오류가 12시간 뒤에도 재현).
+    살아 있는 다른 Argo 인스턴스의 크롬(부모가 살아 있음)은 건드리지 않는다 — 남의 작업을 끊는 편이 더 나쁘다.
+    잠금 파일은 지우지 않는다: 보유자가 사라지면 크롬이 스스로 가져간다(실측 654ms). */
+export async function reclaimOrphanChrome(profile, err, { inspect = psInfo, kill = (pid) => process.kill(pid, 'SIGKILL'), host = hostname(), platform = process.platform } = {}) {
+  if (platform === 'win32') return false; // 윈도우 크롬은 이 심볼릭 링크를 쓰지 않는다
+  if (!/Singleton|ProcessSingleton|뜨자마자 종료/.test(String(err?.message ?? ''))) return false;
+  const pid = lockHolderPid(await readlink(join(profile, 'SingletonLock')).catch(() => ''), host);
+  if (!pid) return false;
+  const info = await inspect(pid);
+  if (!info || info.ppid !== 1 || !info.command.includes(profile)) return false; // 죽은 잠금이거나 남의 산 인스턴스
+  try { kill(pid); } catch { return false; }
+  console.log(`[argo] 브라우저 프로필 잠금 회수 — 고아 크롬 ${pid} 종료: ${profile}`);
+  await sleep(300); // 크롬이 잠금을 정리할 틈
+  return true;
+}
 export class BrowserSession {
   static profileDir(wsId, env = process.env, slug = '') { const root = env.ARGO_ROOT ? dirname(env.ARGO_ROOT) : join(homedir(), '.argo'); return slug ? join(root, 'browser', 'agents', scopeHash([wsId, slug])) : join(root, 'browser', wsId); }
   static peek(wsId, { env = process.env, slug = '' } = {}) { return sessions.get(slug ? BrowserSession.profileDir(wsId, env, slug) : wsId); }
@@ -123,9 +166,17 @@ export class BrowserSession {
     // 기동 중 뮤텍스 — 같은 회사 두 크루가 동시에 부르면 프로필 SingletonLock 경합으로 둘 다 실패하고, 실패한 기동이 map에서 산 세션을
     // 밀어내 그 회사 브라우저가 계속 실패했다(분리 검수 MEDIUM-1 실측). 진행 중인 기동 약속을 공유한다.
     if (launching.has(key)) return launching.get(key);
-    const p = (async () => {
+    const start = async () => {
       const n = new BrowserSession(wsId, { env, headless, slug });
-      try { await n.launch(); sessions.set(key, n); return n; } catch (e) { await n.close(); throw e; } finally { launching.delete(key); }
+      try { await n.launch(); sessions.set(key, n); return n; } catch (e) { await n.close(); throw e; }
+    };
+    const p = (async () => {
+      try { return await start(); }
+      catch (e) {
+        // 프로필 잠금 실패 — 고아 크롬이면 치우고 한 번만 다시 띄운다(reclaimOrphanChrome 주석 참조)
+        if (!(await reclaimOrphanChrome(BrowserSession.profileDir(wsId, env, slug), e))) throw e;
+        return start();
+      } finally { launching.delete(key); }
     })();
     launching.set(key, p); return p;
   }
@@ -142,6 +193,7 @@ export class BrowserSession {
     // 띄운다(실사고 2026-09-05: 테스트·배터리가 반복 실행하며 유건 화면에 계속 뜸). Playwright·Puppeteer의 기본 인자와 같다. 쿠키·로그인은 프로필 안에 유지된다.
     // stderr는 진단용 꼬리만 보관(값 없음 — 크롬은 'DevTools listening' 정도만 쓴다). 파이프는 반드시 소비한다(안 읽으면 크롬이 막힌다).
     const tail = [];
+    const spawnAt = Date.now(); // 이 시각 이후에 쓰인 DevToolsActivePort만 우리 것으로 본다
     this.child = spawn(bin, ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-background-networking', '--window-size=1280,900',
       '--use-mock-keychain', '--password-store=basic', '--disable-features=PasswordManagerOnboarding,AutofillServerCommunication', '--disable-component-update',
       ...(this.headless ? ['--headless=new', '--hide-scrollbars'] : []), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], detached: false, windowsHide: true });
@@ -161,22 +213,30 @@ export class BrowserSession {
       if (spawnErr) throw new Error(`브라우저 실행 실패: ${spawnErr.message}`);
       if (exited) throw new Error(`브라우저가 뜨자마자 종료됐습니다(code ${exited.code ?? exited.sig})${diag()}`);
       // 폴백: 크롬이 프로필에 쓰는 DevToolsActivePort(1행 포트·2행 브라우저 경로) — stderr 버퍼링과 무관(Playwright 방식)
-      if (!wsUrl) wsUrl = await devToolsUrlFromFile(profile);
+      // 우리 자식이 이미 죽었으면 읽지 않는다: 그 파일은 같은 프로필을 쥔 **남의(고아) 크롬** 것이고,
+      // 주워서 붙으면 우리 자식의 exit 처리가 그 연결을 닫아 'CDP connection closed'로 끝난다(실측 2026-09-16).
+      if (!wsUrl && !exited) wsUrl = await devToolsUrlFromFile(profile, spawnAt);
       await sleep(100);
     }
+    // 종료 사유가 다른 오류에 덮이지 않게 한다 — 프로필 잠금에 막힌 크롬은 주소를 찍고 **곧바로** 죽어서,
+    // 붙은 뒤에 소켓이 닫히면 'CDP connection closed'만 남는다. 그러면 호출자가 잠금 실패인 줄 모른다(실측 2026-09-16).
+    const exitError = () => new Error(`브라우저가 뜨자마자 종료됐습니다(code ${exited.code ?? exited.sig})${diag()}`);
+    if (exited) throw exitError();
     if (!wsUrl) { await this.kill(); throw new Error(`브라우저가 ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}초 안에 뜨지 않았습니다${diag()}`); }
     const ws = new WebSocket(wsUrl);
-    try { await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error(`CDP 연결 실패(${wsUrl})${diag()}`)); }); }
-    catch (e) { this.kill(); throw e; } // 연결 실패도 자식을 남기지 않는다(4R: 고아 크롬이 SingletonLock을 쥐면 다음 기동도 실패)
-    this.cdp = new Cdp(ws);
-    this.cdp.on('', 'Target.targetDestroyed', ({ targetId }) => {
-      if (this.humanLoginPages.delete(targetId)) this.touch();
-    });
-    await this.cdp.send('Target.setDiscoverTargets', { discover: true });
-    const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
-    const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
-    this.sid = sessionId; this.targetId = targetId;
-    await this.cdp.send('Page.enable', {}, sessionId); await this.cdp.send('Runtime.enable', {}, sessionId);
+    try {
+      try { await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error(`CDP 연결 실패(${wsUrl})${diag()}`)); }); }
+      catch (e) { this.kill(); throw e; } // 연결 실패도 자식을 남기지 않는다(4R: 고아 크롬이 SingletonLock을 쥐면 다음 기동도 실패)
+      this.cdp = new Cdp(ws);
+      this.cdp.on('', 'Target.targetDestroyed', ({ targetId }) => {
+        if (this.humanLoginPages.delete(targetId)) this.touch();
+      });
+      await this.cdp.send('Target.setDiscoverTargets', { discover: true });
+      const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
+      const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
+      this.sid = sessionId; this.targetId = targetId;
+      await this.cdp.send('Page.enable', {}, sessionId); await this.cdp.send('Runtime.enable', {}, sessionId);
+    } catch (e) { throw exited ? exitError() : e; }
     this.alive = true; this.touch();
   }
   /** 자식 종료 — SIGTERM 뒤 최대 1.5초 기다렸다가 살아 있으면 SIGKILL(await — unref 타이머는 프로세스가 먼저 끝나면 안 발화해 고아를 남겼다, 4R MEDIUM). */
