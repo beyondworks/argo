@@ -710,6 +710,8 @@ export const DICT = {
   'ch.browse.none': ['들어갈 수 있는 공개 채널이 없습니다', 'No public channels to join'],
   'ch.browse.members': ['{n}명', '{n} members'],
   'ch.browse.join': ['참여', 'Join'],
+  'ch.preview.title': ['채널 미리보기', 'Channel preview'],
+  'ch.preview.note': ['#{name} 채널에 아직 참여하지 않았습니다. 참여하면 목록에 들어오고 알림을 받습니다.', "You haven't joined #{name} yet. Join to add it to your list and get notifications."],
   'ch.browse.joined': ['{name} 채널에 참여했습니다', 'Joined {name}'],
   'friends.link.label': ['내 친구 링크', 'My friend link'],
   'friends.link.make': ['링크 만들기', 'Create link'],

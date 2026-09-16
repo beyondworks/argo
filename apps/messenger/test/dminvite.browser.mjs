@@ -152,6 +152,25 @@ await scenario(1280, 'public-channel-people', async (p) => {
   assert.ok(cs.some((c) => c.table === 'msgr_channel_members' && c.op === 'delete'), '참여 행도 지운다(목록에 남아 안 열리는 채널이 되지 않게)');
 });
 
+// 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
+await scenario(1280, 'unjoined-preview', async (p) => {
+  const rail = () => p.locator('[data-sec="channels"]').innerText();
+  assert.ok(!(await rail()).includes('Open Lounge'), '처음에는 목록에 없다');
+  await p.locator('.msgr-search input').fill('Lounge'); await p.keyboard.press('Enter'); await p.waitForTimeout(700);
+  await p.locator('.msgr-inboxrow', { hasText: 'Lounge note' }).first().click(); await p.waitForTimeout(700);
+  assert.match(await p.locator('.msgr-top .title').first().innerText(), /Open Lounge/, '그 채널이 열린다(안내 화면이 아니다)');
+  assert.ok((await p.locator('main, .msgr-main').first().innerText()).includes('Lounge note'), '글이 보인다');
+  const bar = p.locator('.msgr-joinbar'); await bar.waitFor({ timeout: 3000 });
+  assert.equal(await p.locator('.msgr-composer textarea, .msgr-compose textarea').count(), 0, '참여 전에는 입력창이 없다');
+  await p.waitForTimeout(16000); // 주기 재조회(15초)가 지나도 첫 채널로 튕기지 않는다
+  assert.match(await p.locator('.msgr-top .title').first().innerText(), /Open Lounge/, '재조회 뒤에도 그 채널에 머문다');
+  await bar.locator('button').click(); await p.waitForTimeout(900);
+  const calls = await p.evaluate(() => window.__dmInviteFixture.calls);
+  assert.ok(calls.some((c) => c.rpc === 'msgr_join_channel' && c.args?.ch === 'open-2'), '참여를 요청한다');
+  assert.equal(await p.locator('.msgr-joinbar').count(), 0, '참여하면 참여 바가 사라진다');
+  assert.ok((await rail()).includes('Open Lounge'), '목록에 들어온다');
+});
+
 await browser.close();
 console.log(results.join('\n'));
 if (failures.length) { console.log(`${results.length} passed, ${failures.length} failed`); console.log('Failures:', failures); process.exit(1); }

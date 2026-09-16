@@ -1337,3 +1337,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-friendlink .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .msgr-friendlink .msgr-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--fg-2); }
 .msgr-friendlink input { flex: 1 1 200px; min-width: 0; }
+
+/* 참여 전 미리보기 — 입력창 자리에 참여 버튼(유건 검수 2026-09-16: 알림함에서 참여 안 한 채널을 열면 안내 화면이 떴다) */
+.msgr-joinbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 auto 16px; width: min(100% - 32px, 720px); box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); color: var(--fg-2); font-size: 13px; }
+.msgr-joinbar span { min-width: 0; }
+.msgr-joinbar .btn { flex: none; }

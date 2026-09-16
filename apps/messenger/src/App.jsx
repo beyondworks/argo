@@ -355,6 +355,8 @@ function Shell({ session }) {
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
+  // 참여하지 않은 공개 채널 — 목록에는 없지만 알림·검색·링크로 열면 읽기 미리보기로 보여 준다(슬랙식, 유건 검수 2026-09-16)
+  const [previewChannels, setPreviewChannels] = useState([]);
   const isPersonal = orgId === PERSONAL;
   const activeOrg = useRef(orgId); activeOrg.current = orgId;
   const loadedOrg = useRef(null);
@@ -385,7 +387,7 @@ function Shell({ session }) {
     }).catch(() => { if (on) setNavTo(null); });
     return () => { on = false; };
   }, [navTo, channels, orgs, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId)) setChId(null); }, [channels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로
+  useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
   const [tick, setTick] = useState(0);
@@ -549,8 +551,10 @@ function Shell({ session }) {
     // 공개 채널은 서버가 열람은 허용하지만(찾아보기·미리보기), 들어가기 전에는 목록에도 알림에도 없다.
     // 참여 목록은 이 함수 밖에서 미리 읽는다 — 여기서 await를 더하면 조직 전환 경쟁(늦게 온 A 데이터 무시)이 흐트러진다.
     const chs = allChs.filter((c) => c.kind !== 'public' || joinedRef.current.has(c.id));
-    setChannels(chs); setMembers(mems); setCrews(crs); setEnt(e); setPolicy(pol);
-    setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null)); // 라벨용 보조 조회보다 먼저(검수 2R LOW-1: 보조 조회가 던지면 채널 선택이 안 됐다)
+    const preview = allChs.filter((c) => c.kind === 'public' && !joinedRef.current.has(c.id));
+    setChannels(chs); setPreviewChannels(preview); setMembers(mems); setCrews(crs); setEnt(e); setPolicy(pol);
+    // 미리보기로 연 채널도 유지한다 — 15초마다 다시 읽을 때 첫 채널로 튕기지 않게
+    setChId((cur) => cur && (chs.some((c) => c.id === cur) || preview.some((c) => c.id === cur)) ? cur : (chs[0]?.id ?? null)); // 라벨용 보조 조회보다 먼저(검수 2R LOW-1: 보조 조회가 던지면 채널 선택이 안 됐다)
     const dmIds = chs.filter((c) => c.kind === 'dm').map((c) => c.id);
     if (dmIds.length) { try { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); if (current()) setDmMembers(map); } catch { if (current()) setDmMembers({}); } } else setDmMembers({});
     return chs; // 호출한 쪽이 방금 새로 생긴 채널을 즉시 찾을 수 있게(state 반영을 기다리지 않는다)
@@ -575,7 +579,7 @@ function Shell({ session }) {
       const dmMem = {};
       for (const ch of chs) { dmMem[ch.id] = [{ channel_id: ch.id, member_kind: 'user', member_id: uid }, { channel_id: ch.id, member_kind: 'user', member_id: ch._personal_other }]; }
       loadedOrg.current = PERSONAL;
-      setChannels(chs); setMembers(mems); setCrews([]); setEnt(null); setPolicy(null);
+      setChannels(chs); setPreviewChannels([]); setMembers(mems); setCrews([]); setEnt(null); setPolicy(null);
       setMyAvailable([]); setDmMembers(dmMem);
       setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null));
       setFriends(friendsList);
@@ -1006,14 +1010,16 @@ function Shell({ session }) {
   const [drag, setDrag] = useState(null); // 즐겨찾기 안에서 끌어 정렬 중인 id
   useLayoutEffect(() => {
     loadedOrg.current = null;
-    setChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setLastMsg({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
+    setChannels([]); setPreviewChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setLastMsg({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
     setCtx(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null);
   }, [orgId]);
   const openCtx = (e, items, trigger = null) => { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const returnFocus = e.currentTarget.closest('.msgr-railrow')?.querySelector('button.item') ?? e.currentTarget; setCtx({ x: e.clientX || r.left, y: e.clientY || r.bottom, items, trigger, returnFocus }); };
   useEffect(() => { const h = (e) => { if (!e.target.closest?.('input, textarea, [contenteditable="true"], a[href]')) e.preventDefault(); }; document.addEventListener('contextmenu', h); return () => document.removeEventListener('contextmenu', h); }, []); // 웹뷰 기본 메뉴(다시 로드 등)는 입력창 밖에서는 띄우지 않는다
   // 훅은 전부 위 조기 return 앞에(실측 2026-09-12: 뒤에 두면 'Rendered more hooks')
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
-  const channel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
+  const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
+  const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
+  const channel = joinedChannel ?? previewing;
   // 채널 중심 구조(유건 지시 2026-09-04): 레일은 채널·1:1만, 크루·멤버는 "이 채널의 구성"으로 본다. 공개 채널 = 조직 멤버 전원 + 이 채널에서 일할 수 있는 크루(채널 정책), 비공개·DM = 채널 멤버.
   const usableCrews = channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews;
   // 이 채널의 사람 = 참여한 사람(공개 채널도 — #555 이후 참여 기준). 공개 채널에서 내보낸 사람은 제외 목록으로도 걸러 낸다(유건 요청 2026-09-11).
@@ -1298,7 +1304,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (isPersonal ? personalRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (isPersonal ? personalRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => { setPage('settings'); setSettingsTab('friends'); }}><I name="at" size={13} />{t('friends.title')}</button></div></div></>
         ) : (
@@ -2899,7 +2905,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = []
 }
 
 /* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */
-function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
+function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
@@ -3045,14 +3051,16 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
       </div>
     </div>
     {workOpen && <WorkPanel key={chId} channel={channel} uid={uid} isAdmin={isAdmin} locked={locked} crews={chCrews} t={t} lang={lang} onClose={() => setWorkOpen(false)} />}
-    <Composer isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} onSent={async (id) => {
+    {preview
+      ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
+      : <Composer isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} onSent={async (id) => {
       try {
         await load(lastId);
         // Realtime may already have loaded the body before an attachment finished (or was retried).
         const attached = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').eq('message_id', id));
         setAtts((current) => ({ ...current, [id]: attached }));
       } catch (error) { onError(error.message); }
-    }} onError={onError} />
+    }} onError={onError} />}
   </>);
 }
 

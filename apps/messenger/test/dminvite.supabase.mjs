@@ -27,6 +27,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     ...Array.from({ length: 12 }, (_, i) => ({ channel_id: `fold-${i + 1}`, member_kind: 'user', member_id: uid })),
   ],
   msgr_messages: [
+    { id: 21, channel_id: 'open-2', org_id: org, author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', body: 'Lounge note for everyone', created_at: now, deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm21' }, // 참여하지 않은 공개 채널의 글
     { id: 11, channel_id: 'general', org_id: org, author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', body: '스크린샷 붙입니다', created_at: now, deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm11' },
   ],
   msgr_attachments: [
