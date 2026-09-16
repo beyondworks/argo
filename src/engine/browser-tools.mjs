@@ -147,8 +147,9 @@ async function psInfo(pid) {
     회사 wsId 'agents' 와 크루 …/agents/<해시>)을 같은 것으로 읽어 엉뚱한 브라우저를 죽인다(검수 M-1 실증). */
 export function argvUsesProfile(command, profile) {
   const arg = `--user-data-dir=${profile}`;
-  for (let i = String(command ?? '').indexOf(arg); i >= 0; i = command.indexOf(arg, i + 1)) {
-    const after = command[i + arg.length];
+  const line = String(command ?? ''); // 갱신식도 같은 값을 본다(검수 L-C: 첫 회만 방어하면 문자열 아닌 입력에서 2회차 TypeError)
+  for (let i = line.indexOf(arg); i >= 0; i = line.indexOf(arg, i + 1)) {
+    const after = line[i + arg.length];
     if (after === undefined || /\s/.test(after)) return true; // 인자가 여기서 끝난다 = 같은 프로필
   }
   return false;
@@ -163,7 +164,7 @@ async function lockCreatedMs(profile) {
     계속 쥐어 그 회사·크루의 브라우저가 영구히 막혔다(고객 제보 2026-09-15: 같은 오류가 12시간 뒤에도 재현).
     살아 있는 다른 Argo 인스턴스의 크롬(부모가 살아 있음)은 건드리지 않는다 — 남의 작업을 끊는 편이 더 나쁘다.
     잠금 파일은 지우지 않는다: 보유자가 사라지면 크롬이 스스로 가져간다(실측 654ms). */
-export async function reclaimOrphanChrome(profile, err, { inspect = psInfo, kill = killTree, lockMs = lockCreatedMs, host = hostname(), platform = process.platform } = {}) {
+export async function reclaimOrphanChrome(profile, err, { inspect = psInfo, kill = killWithLadder, lockMs = lockCreatedMs, host = hostname(), platform = process.platform } = {}) {
   if (platform === 'win32') return false; // 윈도우 크롬은 이 심볼릭 링크를 쓰지 않는다
   if (err?.code !== 'CHROME_EXIT' && !/Singleton|ProcessSingleton|뜨자마자 종료/.test(String(err?.message ?? ''))) return false;
   const pid = lockHolderPid(await readlink(join(profile, 'SingletonLock')).catch(() => ''), host);
@@ -179,12 +180,13 @@ export async function reclaimOrphanChrome(profile, err, { inspect = psInfo, kill
   await sleep(300); // 크롬이 잠금을 정리할 틈
   return true;
 }
-/** 종료 사다리 — SIGTERM으로 정상 종료를 먼저 청한다(막 연결한 계정 쿠키 플러시). 안 죽으면 SIGKILL(close()와 같은 정책). */
-async function killTree(pid, { wait = 1500 } = {}) {
-  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
-  process.kill(pid, 'SIGTERM');
-  for (let t = 0; t < wait && alive(); t += 100) await sleep(100);
-  if (alive()) process.kill(pid, 'SIGKILL');
+/** 종료 사다리 — SIGTERM으로 정상 종료를 먼저 청한다(막 연결한 계정 쿠키 플러시). 안 죽으면 SIGKILL(close()와 같은 정책).
+    이름이 트리 종료를 뜻하지 않게 한다(검수 L-B: process-tree.mjs의 자손 트리 종료와 혼동 금지 — 여기는 pid 1건). */
+export async function killWithLadder(pid, { wait = 1500, send = (p, sig) => process.kill(p, sig), step = 100 } = {}) {
+  const alive = () => { try { send(pid, 0); return true; } catch { return false; } };
+  send(pid, 'SIGTERM');
+  for (let t = 0; t < wait && alive(); t += step) await sleep(step);
+  if (alive()) send(pid, 'SIGKILL');
 }
 export class BrowserSession {
   static profileDir(wsId, env = process.env, slug = '') { const root = env.ARGO_ROOT ? dirname(env.ARGO_ROOT) : join(homedir(), '.argo'); return slug ? join(root, 'browser', 'agents', scopeHash([wsId, slug])) : join(root, 'browser', wsId); }

@@ -8,7 +8,7 @@ import { mkdtemp, rm, readlink, utimes, writeFile } from 'node:fs/promises';
 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BrowserSession, closeAllBrowsers, devToolsUrlFromFile, findChrome, lockHolderPid, reclaimOrphanChrome } from '../src/engine/browser-tools.mjs';
+import { BrowserSession, closeAllBrowsers, devToolsUrlFromFile, findChrome, killWithLadder, lockHolderPid, reclaimOrphanChrome } from '../src/engine/browser-tools.mjs';
 
 const lockErr = new Error('브라우저가 뜨자마자 종료됐습니다(code 21) — stderr: Failed to create /p/SingletonLock: File exists (17)');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -46,6 +46,19 @@ test('reclaimOrphanChrome: 고아(부모 없음)만 종료하고, 산 인스턴�
   assert.equal(await reclaimOrphanChrome(profile, lockErr, opts(orphan, { platform: 'win32' })), false, '윈도우는 이 심볼릭 링크를 쓰지 않는다');
   assert.deepEqual(killed, [], '위 경우들에서는 아무도 종료하지 않는다');
   await rm(profile, { recursive: true, force: true });
+});
+
+test('killWithLadder: SIGTERM을 먼저 보내고, 안 죽을 때만 SIGKILL', async () => {
+  const sent = [];
+  // 살아 있는 프로세스 흉내 — SIGTERM을 받고도 계속 산다
+  await killWithLadder(4242, { wait: 300, step: 50, send: (pid, sig) => { sent.push(`${pid}:${sig}`); } });
+  assert.equal(sent[0], '4242:SIGTERM', '정상 종료를 먼저 청한다(로그인 직후 계정 쿠키 플러시)');
+  assert.equal(sent.at(-1), '4242:SIGKILL', '끝까지 안 죽으면 강제 종료');
+
+  const gone = [];
+  let dead = false;
+  await killWithLadder(7, { wait: 300, step: 50, send: (pid, sig) => { gone.push(`${pid}:${sig}`); if (sig === 'SIGTERM') dead = true; if (sig === 0 && dead) throw new Error('ESRCH'); } });
+  assert.deepEqual(gone.filter((s) => !s.endsWith(':0')), ['7:SIGTERM'], 'SIGTERM으로 죽으면 SIGKILL을 보내지 않는다');
 });
 
 test('devToolsUrlFromFile: 스폰 이전에 쓰인 포트 파일은 채택하지 않는다(남의 크롬 것)', async () => {
