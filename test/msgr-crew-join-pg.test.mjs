@@ -21,7 +21,7 @@ const inCh = (ch, crew) => sql(`select public.msgr_crew_in_channel('${ch}', '${c
 const crewRow = (ch, crew) => sql(`select count(*) from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'crew' and member_id = '${crew}'`);
 const JOIN = '20260917090000_msgr_crew_join_approval.sql';
 
-let ORG, PUB, OLD_PUB, PRIV, SPOKE, SILENT, MINE, MATE_CREW, COMPANY, SCHEDULED;
+let ORG, PUB, OLD_PUB, PRIV, SPOKE, SILENT, MINE, MATE_CREW, COMPANY, SCHEDULED, BLOCKED_PUB;
 before(() => {
   if (!DB) return;
   psql(['-c', `
@@ -67,11 +67,21 @@ before(() => {
   OLD_PUB = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','public','Crew')`));
   sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id) values ('${OLD_PUB}', 'crew', '${SPOKE}', 'text', '옛 채널에서 한 말', 'old-spoke')`);
   sql(`insert into public.msgr_automations (org_id, channel_id, crew_id, created_by, title, prompt, schedule, next_run_at) values ('${ORG}', '${OLD_PUB}', '${SCHEDULED}', '${U.host}', '아침 요약', '요약해 줘', '{"kind":"daily","time":"09:00"}', now() + interval '1 day')`); // 아직 한 번도 안 돈 자동화
+  // 라이브 실사고(2026-09-17 적용 실패): '못 데려옴' 공개 채널에서 말한 개인 에이전트가 있으면 이관이 게이트 트리거에 막혀 파일 전체가 롤백됐다.
+  BLOCKED_PUB = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','public','Blocked')`));
+  sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id) values ('${BLOCKED_PUB}', 'crew', '${SPOKE}', 'text', '막히기 전에 한 말', 'blocked-spoke'), ('${BLOCKED_PUB}', 'crew', '${COMPANY}', 'text', '회사 에이전트의 말', 'blocked-company')`);
+  sql(`update public.msgr_channels set personal_crews = 'blocked' where id = '${BLOCKED_PUB}'`);
   psql(['-c', readFileSync(mig(JOIN), 'utf8')]); // ← 이관이 여기서 돈다
   PUB = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','public','New')`));
   PRIV = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','private','Secret')`));
   for (const ch of [PUB, PRIV]) sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${ch}', 'user', '${U.mate}') on conflict do nothing`);
   asUser(U.mate, `select public.msgr_join_channel('${OLD_PUB}')`);
+});
+
+test("이관 — '못 데려옴' 채널: 개인 에이전트는 옮기지 않고(지금도 지시 불가 — 옮기면 일하게 된다) 회사 에이전트는 남는다", { skip }, () => {
+  assert.equal(inCh(BLOCKED_PUB, SPOKE), 'f', '막힌 채널의 개인 에이전트');
+  assert.equal(inCh(BLOCKED_PUB, COMPANY), 't', '막힌 채널의 회사 에이전트');
+  assert.equal(inCh(OLD_PUB, SPOKE), 't', '다른 채널 이관은 그대로');
 });
 
 test('이관 — 공개 채널에서 말하던 에이전트는 남고, 파견만 된 에이전트는 빠진다', { skip }, () => {

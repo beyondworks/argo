@@ -23,6 +23,9 @@ select distinct x.channel_id, 'crew', x.crew_id
   join public.msgr_crews cr on cr.id = x.crew_id
  where c.kind = 'public' and c.archived_at is null
    and cr.status = 'active' and cr.org_id = c.org_id and not (x.crew_id = any (c.excluded_crew_ids))
+   -- '못 데려옴' 채널의 개인 에이전트는 옮기지 않는다: 종전에도 지시를 못 받았고(instruct_check), 옮기면 게이트 트리거가 막아 이 파일 전체가 롤백된다
+   -- (라이브 적용 실패 2026-09-17 — 막힌 공개 채널 1개에서 말한 개인 에이전트 30개). 회사 에이전트는 그대로 옮긴다.
+   and (c.personal_crews is distinct from 'blocked' or public.msgr_crew_tier(x.crew_id) = 'company')
 on conflict do nothing;
 
 -- ── 2. 채널에 있는가 — 공개 채널도 참여 행 ───────────────────────────────────
