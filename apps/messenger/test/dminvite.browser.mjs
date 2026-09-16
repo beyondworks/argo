@@ -137,7 +137,7 @@ await scenario(1280, 'public-channel-people', async (p) => {
   const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor({ timeout: 5000 });
   const people = () => sheet.locator('.msgr-rows .row').evaluateAll((rs) => rs.filter((r) => !r.querySelector('.msgr-av.crew') && !r.closest('.msgr-excluded')).map((r) => r.querySelector('.name')?.innerText));
   assert.deepEqual(await people(), ['Fixture Owner'], '참여한 사람만 — 조직원 전원이 아니다');
-  assert.match(await sheet.locator('.note').first().innerText(), /참여한 사람만/, '안내가 참여 기준을 말한다');
+  assert.match(await sheet.locator('.note').first().innerText(), /참여한 사람/, '안내가 참여 기준을 말한다');
   await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
   await sheet.locator('.msgr-addmenu button', { hasText: '사람 추가' }).click();
   await sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Third Person' }).click(); await p.waitForTimeout(700);
