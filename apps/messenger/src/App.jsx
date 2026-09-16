@@ -218,6 +218,18 @@ function RailSection({ id, label, right = null, forceOpen = false, children }) {
   );
 }
 
+/* 구역 안의 작은 묶음 — 에이전트를 '내 에이전트 / 외부 / 회사'로 접었다 편다(유건 2026-09-16). 접힘은 구역과 같은 저장소에 남는다. */
+function RailFold({ id, label, count, children }) {
+  const [open, setOpen] = useState(() => readFold()[id] !== true);
+  const onToggle = (e) => { const next = e.currentTarget.open; setOpen(next); try { localStorage.setItem(FOLD_KEY, JSON.stringify({ ...readFold(), [id]: !next })); } catch { /* 저장 못 해도 동작 */ } };
+  return (
+    <details className="msgr-fold" open={open} onToggle={onToggle}>
+      <summary className="msgr-folderhead"><span className="lbl">{label}</span><span className="msgr-klabel">{count}</span></summary>
+      <div className="msgr-folder">{children}</div>
+    </details>
+  );
+}
+
 /* ─── 상단 내비 버튼 — 데스크톱은 햄버거(레일 열기), 폰은 뒤로가기(홈 페이지로). 마크업은 데스크톱 쪽이 기존과 동일하다. ─── */
 function NavButton({ onMenu }) {
   const { t } = useT();
@@ -942,6 +954,14 @@ function Shell({ session }) {
       await loadOrg(orgId); if (activeOrg.current !== orgId) return null; setChId(cid); setPage('chat'); setRail(false); return cid;
     } catch (e) { setErr(e.message); setDmGroup(true); return null; } // 생성이 실패하면 시트를 되살려 고른 사람이 사라지지 않게(재검수 LOW-A)
   };
+  // 대화방에 사람을 더 부르기(유건 2026-09-16) — 지금 방의 구성원에 그 사람을 더해 **새 방**을 연다.
+  // 지금 방에 밀어 넣지 않는 이유: 둘이 나눈 사적인 대화가 불려 온 사람에게 통째로 넘어간다(슬랙도 새 방을 연다). 서버도 그 길을 막아 둔다.
+  const widenDm = async (userId) => {
+    const ms = dmMembers[chId] ?? [];
+    const picks = [...ms.filter((m) => !(m.member_kind === 'user' && m.member_id === uid)).map((m) => ({ kind: m.member_kind, id: m.member_id })), { kind: 'user', id: userId }];
+    setChSheet(false);
+    return createGroupDm(picks);
+  };
   // 전달(relay) 알림에서 대상 1:1로 이동 — 목록에 있으면 바로 연다. 없으면 방금 트리거가 만든 방일 수 있어 다시 불러온 뒤 찾고,
   // 그래도 없으면(다른 조직 전환 등) openDm이 그 사람·크루의 방을 찾거나 만든다(msgr_dm_for_crew와 같은 멤버 판정). 빈 화면 방지(검수 MEDIUM).
   const openRelay = async (crewId, channelId) => {
@@ -1211,7 +1231,9 @@ function Shell({ session }) {
 </RailSection>}
         {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{DM_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
         {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
-        {(dms.length > 0 || dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={dmTab ? <span className="right"><span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span></span> : undefined}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
+        {(dms.length > 0 || dmTab || !!orgId) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
+          <button type="button" className="btn" onClick={() => { if (isPersonal) { setPage('settings'); setSettingsTab('friends'); setRail(false); } else setDmGroup(true); }} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
+        </span>}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
           {!dmList.length && <div className="msgr-hint">{t('phone.dm.empty')}</div>}
         </RailSection>)}
@@ -1225,11 +1247,11 @@ function Shell({ session }) {
         </RailSection>)}
         {!isPersonal && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
-            {railArgo.map(railRow)}
-            {railExt.length > 0 && <div className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">{t('rail.src.custom')}</span><span className="msgr-klabel">{railExt.length}</span></div>{railExt.map(railRow)}</div>}
-            {[['rail.agents.company', railCompany], ['rail.agents.bot', railBots]].map(([k, list]) => list.length > 0 && <div key={k} className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">{t(k)}</span><span className="msgr-klabel">{list.length}</span></div>{list.map(railRow)}</div>)}{/* 조직의 다른 에이전트 — 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
+            {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
+            {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany], ['mine.bot', 'rail.agents.bot', railBots]]
+              .map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(railRow)}</RailFold>)}
             {myAvailable.map((c) => { // 목록에서 그 자리 파견(유건 지시 2026-09-08) — 채널을 보고 있으면 그 채널까지(DM은 조직만), 아니면 조직만
-              const target = channel && channel.kind !== 'dm' && (channel.personal_crews ?? 'allowed') !== 'blocked' ? channel : null;
+              const target = channel && (channel.personal_crews ?? 'allowed') !== 'blocked' ? channel : null; // 대화방도 그 자리 파견 대상이다(유건 2026-09-16)
               const go = async () => { if (railBusy) return; setRailBusy(c.id); try { await dispatchCrew(c, target?.id ?? null); setNote(t(target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
               return (
                 <div key={c.id} className="msgr-railrow dim">
@@ -1263,7 +1285,7 @@ function Shell({ session }) {
       </aside>
       <main className="msgr-main" {...edgeBack}>
         {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
-        {chSheet && channel && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {chSheet && channel && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) setNavTo(pushCard.channel_id); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
@@ -1443,7 +1465,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
 }
 
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
-function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, myAvailable = [], onDispatch, onInvite, onCrew, onDm, onMention, initialAdd = null, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
+function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, myAvailable = [], onDispatch, onInvite, onCrew, onDm, onMention, onWiden, initialAdd = null, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
   const { t } = useT();
   const chAdmins = channel.admin_user_ids ?? [];
   const canEdit = isAdmin || channel.created_by === uid || chAdmins.includes(uid); // J-1: 채널 관리자도 설정·멤버 관리(최종은 RLS msgr_can_manage_channel)
@@ -1491,7 +1513,11 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   };
   const restoreMember = async (kind, id) => { const key = kind === 'user' ? 'excluded_user_ids' : 'excluded_crew_ids'; const cur = kind === 'user' ? excludedUsers : excludedCrews; await upd({ [key]: cur.filter((x) => x !== id) }, t('ch.restore.done')); };
   const kick = (kind, id) => (channel.kind === 'public' ? excludeMember(kind, id) : removeMember(kind, id));
-  const canKick = canEdit && channel.kind !== 'dm'; // 공개·비공개 모두 채널 관리자면 내보낼 수 있다(유건 요청 2026-09-11)
+  const isDmRoom = channel.kind === 'dm';
+  const inRoom = people.some((m) => m.user_id === uid);
+  const canManage = canEdit || (channel.kind === 'dm' && inRoom); // 대화방은 그 방에 있으면 관리한다(서버 msgr_can_manage_channel과 같은 규칙)
+  const canKick = canEdit && channel.kind !== 'dm'; // 사람 내보내기 — 대화방에서는 그대로 막는다(나가는 것은 각자)
+  const canKickCrew = canManage && (channel.kind !== 'public' || canEdit); // 부른 에이전트는 다시 내보낼 수 있다
   const [confirmArchive, setConfirmArchive] = useState(false); // 네이티브 confirm 대신 2단계 버튼(QA)
   const archive = async () => { await upd({ archived_at: new Date().toISOString() }); onArchived(); };
   const userIds = new Set(chMembers.filter((m) => m.member_kind === 'user').map((m) => m.member_id));
@@ -1529,9 +1555,10 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     if (res.error) return onError(friendlyErr(res.error.message, t));
     setNewCrew(null); setAdd(null); onNote(t('ch.crew.new.sent')); loadRequests().catch(() => {});
   };
-  const canAddPeople = scoped && canEdit && channel.kind !== 'dm' && addableUsers.length > 0;
-  const canDispatch = channel.kind !== 'dm' && myAvailable.length > 0 && (channel.personal_crews ?? 'allowed') !== 'blocked'; // 부록 M: 내 파견 전 크루 — 공개 채널은 파견만 하면 자동 참여, 비공개는 파견+멤버
-  const canAddCrew = (scoped && canEdit && channel.kind !== 'dm' && addableCrews.length > 0) || canDispatch || (channel.kind === 'public' && chCrews.length > 0); // 공개 채널: 파견 크루 전원이 이미 참여 — '추가'는 @로 부르기
+  // 대화방에서 사람을 고르면 그 사람까지 들어간 **새 방**이 열린다(유건 2026-09-16) — 사적인 지난 대화가 불려 온 사람에게 넘어가지 않게. 에이전트는 지금 방에 바로 들어온다.
+  const canAddPeople = scoped && canManage && addableUsers.length > 0;
+  const canDispatch = myAvailable.length > 0 && (channel.personal_crews ?? 'allowed') !== 'blocked'; // 부록 M: 내 파견 전 크루 — 공개 채널은 파견만 하면 자동 참여, 비공개·대화방은 파견+멤버
+  const canAddCrew = (scoped && canManage && addableCrews.length > 0) || canDispatch || (channel.kind === 'public' && chCrews.length > 0); // 공개 채널: 파견 크루 전원이 이미 참여 — '추가'는 @로 부르기
   const canGuest = channel.kind === 'private' && canEdit;
   const showNewCrewItem = channel.kind !== 'dm' && (canCreateCrew || (isAdmin && !nodeOn)); // 관리자에겐 서버가 없거나 죽어도 항목은 보이되 비활성+이유(안 될 버튼 노출 금지의 예외: 왜 안 되는지 알려줘야 하는 자리)
   const canAddAny = canAddPeople || canAddCrew || canGuest || showNewCrewItem;
@@ -1551,7 +1578,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
         </section>
         {/* 1. 누가 있나 — 패널을 여는 이유가 먼저 */}
         <section>
-          <div className="sec-head"><h3>{t('ch.who')}</h3><span className="sub">{t('ch.who.count', { p: people.length, c: chCrews.length })}</span></div>
+          <div className="sec-head"><h3>{t(isDmRoom ? 'dm.who' : 'ch.who')}</h3><span className="sub">{t('ch.who.count', { p: people.length, c: chCrews.length })}</span></div>
           {!scoped && <p className="note">{t('ch.who.public')}</p>}
           <div className="msgr-rows">
             {people.map((m) => { const isMe = m.user_id === uid; const isCreator = channel.created_by === m.user_id; const isChAdmin = chAdmins.includes(m.user_id); const key = `u:${m.user_id}`; return (
@@ -1582,7 +1609,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                     <div className="msgr-rowmenu" role="menu">
                       <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onCrew?.(c.id); }}><I name="star" size={13} />{t('ch.open.crew')}</button>
                       {channel.kind !== 'dm' && <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onMention?.(c); }}><I name="at" size={13} />{t('ch.add.crew.call')}</button>}
-                      {canKick && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); kick('crew', c.id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
+                      {canKickCrew && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); kick('crew', c.id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
                     </div>
                   )}
                 </span>
@@ -1607,16 +1634,17 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
               {add === null && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => setAdd('menu')}><I name="plus" size={13} />{t('ch.add')}</button>}
               {add === 'menu' && (
                 <div className="msgr-addmenu" role="menu">
-                  {canAddPeople && <button type="button" role="menuitem" onClick={() => setAdd('user')}><I name="plus" size={14} /><span><b>{t('ch.add.user')}</b><small>{t('ch.add.user.desc')}</small></span></button>}
-                  {canAddCrew && <button type="button" role="menuitem" onClick={() => setAdd('crew')}><I name="star" size={14} /><span><b>{t('ch.add.crew')}</b><small>{t('ch.add.crew.desc')}</small></span></button>}
+                  {canAddPeople && <button type="button" role="menuitem" onClick={() => setAdd('user')}><I name="plus" size={14} /><span><b>{t(isDmRoom ? 'dm.widen' : 'ch.add.user')}</b><small>{t(isDmRoom ? 'dm.widen.desc' : 'ch.add.user.desc')}</small></span></button>}
+                  {canAddCrew && <button type="button" role="menuitem" onClick={() => setAdd('crew')}><I name="star" size={14} /><span><b>{t('ch.add.crew')}</b><small>{t(isDmRoom ? 'dm.add.crew.desc' : 'ch.add.crew.desc')}</small></span></button>}
                   {canGuest && <button type="button" role="menuitem" onClick={() => setAdd('guest')}><I name="copy" size={14} /><span><b>{t('ch.add.guest')}</b><small>{t('ch.add.guest.desc')}</small></span></button>}
                   {showNewCrewItem && <button type="button" role="menuitem" disabled={!canCreateCrew} onClick={() => { setAdd('newcrew'); setNewCrew({ name: '', role: '', prompt: '', orgWide: false }); }}><I name="hash" size={14} /><span><b>{t('ch.add.newcrew')}</b><small>{canCreateCrew ? t('ch.add.newcrew.desc') : t(nodeSet ? 'ch.crew.new.nodeOff' : 'ch.crew.new.noNode')}</small></span></button>}
                   <button type="button" role="menuitem" className="cancel" onClick={() => setAdd(null)}>{t('ui.cancel')}</button>
                 </div>
               )}
               {add === 'user' && (<>
-                <div className="msgr-klabel">{t('ch.add.user')}</div>
-                <div className="msgr-chips">{addableUsers.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => addMember('user', m.user_id)}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div>
+                <div className="msgr-klabel">{t(isDmRoom ? 'dm.widen' : 'ch.add.user')}</div>
+                {isDmRoom && <p className="note">{t('dm.widen.note')}</p>}
+                <div className="msgr-chips">{addableUsers.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => (isDmRoom ? (setAdd(null), onWiden?.(m.user_id)) : addMember('user', m.user_id))}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div>
                 <p className="note">{t('ch.add.user.pool', { n: members.length, seats: ent?.seats ?? '?', plan: t(`plan.${ent?.plan ?? 'free'}`) })}{onInvite && <> <button type="button" className="btn sm" onClick={onInvite}><I name="copy" size={12} />{t('org.invite')}</button></>}</p>
                 <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
               </>)}

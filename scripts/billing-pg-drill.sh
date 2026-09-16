@@ -30,7 +30,7 @@ initdb -D "$DIR/data" -A trust -U postgres >/dev/null
 pg_ctl -D "$DIR/data" -o "-p $PORT -k $DIR -c listen_addresses=127.0.0.1" -l "$DIR/pg.log" start >/dev/null
 
 FILES=("${@:-}")
-if [ -z "${FILES[0]}" ]; then FILES=(test/billing-pg-integration.test.mjs test/msgr-pg-integration.test.mjs test/sync-index-pg-integration.test.mjs test/msgr-channel-scope-pg.test.mjs test/msgr-dm-relay-pg.test.mjs test/msgr-bot-idle-gate-pg.test.mjs test/msgr-friend-search-pg.test.mjs test/msgr-push-badge-pg.test.mjs test/msgr-dm-latest-pg.test.mjs test/msgr-personal-dm-pg.test.mjs test/msgr-presence-pg.test.mjs test/msgr-channel-join-pg.test.mjs test/msgr-friend-link-pg.test.mjs); fi
+if [ -z "${FILES[0]}" ]; then FILES=(test/billing-pg-integration.test.mjs test/msgr-pg-integration.test.mjs test/sync-index-pg-integration.test.mjs test/msgr-channel-scope-pg.test.mjs test/msgr-dm-relay-pg.test.mjs test/msgr-bot-idle-gate-pg.test.mjs test/msgr-friend-search-pg.test.mjs test/msgr-push-badge-pg.test.mjs test/msgr-dm-latest-pg.test.mjs test/msgr-personal-dm-pg.test.mjs test/msgr-presence-pg.test.mjs test/msgr-channel-join-pg.test.mjs test/msgr-friend-link-pg.test.mjs test/msgr-dm-invite-pg.test.mjs); fi
 i=0
 FAILED=()
 for f in "${FILES[@]}"; do
