@@ -994,6 +994,19 @@ export const DICT = {
   'role.member': ['멤버', 'Member'],
   'role.guest': ['게스트', 'Guest'],
   'ui.members': ['멤버', 'Members'],
+  // ── 개인 공간 ──
+  'personal': ['개인', 'Personal'],
+  'personal.space': ['개인 공간', 'Personal space'],
+  'personal.desc': ['친구와의 1:1 대화입니다. 채널·에이전트·멤버는 조직에서 이용하세요.', 'Direct messages with friends. Channels, agents, and members are available in organizations.'],
+  'personal.empty': ['아직 친구와의 대화가 없습니다. 설정 > 친구에서 친구를 추가하고 대화를 시작하세요.', 'No conversations yet. Add friends in Settings > Friends, then start a chat.'],
+  'personal.noChannels': ['개인 공간에서는 채널을 만들 수 없습니다. 조직으로 이동하세요.', 'Channels are not available here. Switch to an organization.'],
+  'personal.noAgents': ['개인 공간에서는 에이전트를 사용할 수 없습니다. 조직으로 이동하세요.', 'Agents are not available here. Switch to an organization.'],
+  'personal.noInbox': ['개인 공간에는 알림함이 없습니다. 조직 알림함을 확인하세요.', 'No inbox in personal space. Check your organization inbox.'],
+  'personal.noActivity': ['개인 공간에는 기억 탭이 없습니다. 조직에서 확인하세요.', 'No memory tab in personal space. Check your organization.'],
+  'personal.dm.open': ['대화하기', 'Chat'],
+  'personal.badge': ['개인', 'Personal'],
+  'org.badge': ['{name}', '{name}'],
+  'friends.dm': ['대화하기', 'Chat'],
 };
 export const LANGS = ['ko', 'en'];
 export function readLang() { try { const v = localStorage.getItem('argo-lang'); return LANGS.includes(v) ? v : 'ko'; } catch { return 'ko'; } }
