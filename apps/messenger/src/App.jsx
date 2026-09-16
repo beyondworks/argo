@@ -733,8 +733,15 @@ function Shell({ session }) {
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     if (!shouldNotify(payload.channel_id)) return; // 모든 메시지에 알림(다른 메신저처럼 — 유건 2026-09-12). 채널 음소거·방해 금지는 shouldNotify
     const who = payload.author_kind === 'crew' ? r.crews.find((c) => c.id === payload.crew_id)?.display_name : r.members.find((m) => m.user_id === payload.author_user_id)?.display_name;
-    const preview = String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140); // 답변 발췌를 본문에 — 제목만 오면 무엇을 답했는지 알림에서 안 보인다(유건 2026-09-12). 맥 "미리보기 표시"는 이 본문의 노출 여부만 정한다
-    osNotify(ch?.kind === 'dm' ? (who || '?') : t('notify.message', { name: who || '?', channel: ch?.name ?? '' }), preview, `r:${payload.id}`);
+    // 본문은 방송에 실리지 않는다(실시간 payload는 id·채널·멘션만 — 조직 토픽 구독자 전원에게 사적 대화가 새지 않게).
+    // 그래서 알림 본문이 늘 비어 제목만 떴다(유건 제보 2026-09-16 배너). 내 권한으로 그 글만 읽어 채운다(RLS가 경계).
+    const title = ch?.kind === 'dm' ? (who || '?') : t('notify.message', { name: who || '?', channel: ch?.name ?? '' });
+    const clip = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
+    const inline = clip(payload.body);
+    if (inline) { osNotify(title, inline, `r:${payload.id}`); return; }
+    supabase.from('msgr_messages').select('body').eq('id', payload.id).maybeSingle()
+      .then(({ data }) => osNotify(title, clip(data?.body) || t('notify.attachment'), `r:${payload.id}`))
+      .catch(() => osNotify(title, '', `r:${payload.id}`)); // 못 읽으면 종전처럼 제목만
   };
   const notifyApproval = (payload) => {
     const r = notifyRef.current;
@@ -1085,7 +1092,9 @@ function Shell({ session }) {
   const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => { setSheet(c.id); setRail(false); }} onContextMenu={(e) => openCtx(e, crewCtx(c))} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}`}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} crewId={c.id} /><span className="name">{c.display_name}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
   // 평평한 목록(유건 결정 2026-09-09). 외부 에이전트(헤르메스·오픈클로 봇)가 있을 때만 '외부' 소제목 하나로 아래에 구분한다.
   const railArgo = myCrews.filter((c) => sourceOf(c) === 'argo'); const railExt = myCrews.filter((c) => sourceOf(c) !== 'argo');
-  const railBots = sortCrews(crews.filter((c) => c.hosting === 'bot' && c.owner_user_id !== uid)); const railCompany = sortCrews(crews.filter((c) => c.hosting !== 'bot' && c.owner_user_id !== uid && crewTier(c, org) === 'company')); const railOthers = sortCrews(crews.filter((c) => c.hosting !== 'bot' && c.owner_user_id !== uid && crewTier(c, org) !== 'company')); // 내 것이 아닌 조직 크루 — 회사/다른 멤버/외부
+  const railBots = sortCrews(crews.filter((c) => c.hosting === 'bot' && c.owner_user_id !== uid)); const railCompany = sortCrews(crews.filter((c) => c.hosting !== 'bot' && c.owner_user_id !== uid && crewTier(c, org) === 'company')); // 다른 멤버의 개인 크루는 레일에 두지 않는다(유건 2026-09-16: "다른 멤버의 에이전트는 안 보이게").
+  // 조직 명부에는 그대로 있고 서버 권한도 그대로다 — 목록에서 빼는 것은 화면 규칙이다. 회사 크루·외부 에이전트는 남는다.
+  const railVisible = crews.filter((c) => c.hosting === 'bot' || c.owner_user_id === uid || crewTier(c, org) === 'company');
   return (
     <AvatarCtx.Provider value={avatarCtx}>
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
@@ -1165,11 +1174,11 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
-        {!isPersonal && org && (myAvailable.length > 0 || crews.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${crews.length}`} right={<span className="right"><span className="msgr-sortwrap"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
+        {!isPersonal && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {railArgo.map(railRow)}
             {railExt.length > 0 && <div className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">{t('rail.src.custom')}</span><span className="msgr-klabel">{railExt.length}</span></div>{railExt.map(railRow)}</div>}
-            {[['rail.agents.company', railCompany], ['rail.agents.others', railOthers], ['rail.agents.bot', railBots]].map(([k, list]) => list.length > 0 && <div key={k} className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">{t(k)}</span><span className="msgr-klabel">{list.length}</span></div>{list.map(railRow)}</div>)}{/* 조직의 다른 에이전트 — 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
+            {[['rail.agents.company', railCompany], ['rail.agents.bot', railBots]].map(([k, list]) => list.length > 0 && <div key={k} className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">{t(k)}</span><span className="msgr-klabel">{list.length}</span></div>{list.map(railRow)}</div>)}{/* 조직의 다른 에이전트 — 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
             {myAvailable.map((c) => { // 목록에서 그 자리 파견(유건 지시 2026-09-08) — 채널을 보고 있으면 그 채널까지(DM은 조직만), 아니면 조직만
               const target = channel && channel.kind !== 'dm' && (channel.personal_crews ?? 'allowed') !== 'blocked' ? channel : null;
               const go = async () => { if (railBusy) return; setRailBusy(c.id); try { await dispatchCrew(c, target?.id ?? null); setNote(t(target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
@@ -3185,8 +3194,24 @@ function Attachment({ a, onError }) {
   const isImg = /^image\//.test(a.mime || '');
   const [src, setSrc] = useState(null); // 이미지는 서명 URL로 인라인(스크린샷 공유가 '파일 버튼'이던 갭, 2026-09-12 점검)
   useEffect(() => { let on = true; if (!isImg) return undefined; supabase.storage.from('msgr').createSignedUrl(a.storage_path, 3600).then(({ data }) => { if (on && data?.signedUrl) setSrc(data.signedUrl); }).catch(() => {}); return () => { on = false; }; }, [a.storage_path, isImg]);
+  // 이미지 클릭 = 그 자리에서 확대(유건 2026-09-16). 브라우저 새 창으로 던지면 대화 맥락에서 떨어진다 — 파일 버튼은 종전대로 밖에서 연다.
+  const [zoom, setZoom] = useState(false);
+  useEffect(() => {
+    if (!zoom) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setZoom(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [zoom]);
   return (<span className="msgr-attach">
-    {src && <img className="msgr-imgprev" src={src} alt={a.name} loading="lazy" onClick={open} />}
+    {src && <img className="msgr-imgprev" src={src} alt={a.name} loading="lazy" onClick={() => setZoom(true)} />}
+    {zoom && src && createPortal(
+      <div className="msgr-lightbox" role="dialog" aria-modal="true" aria-label={a.name} onClick={() => setZoom(false)}>
+        <img src={src} alt={a.name} onClick={(e) => e.stopPropagation()} />
+        <div className="acts" onClick={(e) => e.stopPropagation()}>
+          <button type="button" className="btn sm" onClick={open}><I name="doc" size={13} />{t('msg.attachOpen')}</button>
+          <button type="button" className="btn sm ghost" onClick={() => setZoom(false)} aria-label={t('ui.close')}><I name="x" size={13} /></button>
+        </div>
+      </div>, document.body)}
     <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.max(1, Math.round(a.bytes / 1024))}KB</span> : null}</button>
   </span>);
 }

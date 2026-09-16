@@ -1311,3 +1311,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 @media (max-width: 720px) {
   .msgr-phone .msgr-main .msgr-thread.page .msgr-sound-controls > .btn.sm { min-height: 44px; height: 44px; }
 }
+
+/* 이미지 확대(유건 2026-09-16) — 클릭하면 그 자리에서 크게 본다. 스크림을 눌러도, Esc로도 닫힌다. */
+.msgr-lightbox { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--bg) 82%, black); cursor: zoom-out; }
+.msgr-lightbox img { max-width: min(96vw, 1600px); max-height: 88vh; object-fit: contain; border-radius: 12px; border: 1px solid var(--border); background: var(--card-2); cursor: default; }
+.msgr-lightbox .acts { position: absolute; right: 16px; top: 16px; display: flex; gap: 8px; cursor: default; }

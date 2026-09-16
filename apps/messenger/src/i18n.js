@@ -704,6 +704,8 @@ export const DICT = {
   'crew.request.body': ['@{owner} {me}가 {agent}에게 일을 시킬 수 있게 허용을 요청합니다.', '@{owner} {me} is requesting access to task {agent}.'],
   'crew.request.sent': ['소유자에게 허용 요청을 보냈습니다.', 'Access request sent to the owner.'],
   'ui.close': ['닫기', 'Close'],
+  'msg.attachOpen': ['원본 열기', 'Open original'],
+  'notify.attachment': ['사진·파일을 보냈습니다', 'Sent a photo or file'],
   'att.tooBig': ['{name}: 25MB를 넘어 보낼 수 없습니다.', '{name}: over 25MB, cannot be sent.'],
   'att.uploading': ['올리는 중…', 'Uploading…'],
   'att.remove': ['{name} 첨부 취소', 'Remove {name}'],
