@@ -30,7 +30,9 @@ initdb -D "$DIR/data" -A trust -U postgres >/dev/null
 pg_ctl -D "$DIR/data" -o "-p $PORT -k $DIR -c listen_addresses=127.0.0.1" -l "$DIR/pg.log" start >/dev/null
 
 FILES=("${@:-}")
-if [ -z "${FILES[0]}" ]; then FILES=(test/billing-pg-integration.test.mjs test/msgr-pg-integration.test.mjs test/sync-index-pg-integration.test.mjs test/msgr-channel-scope-pg.test.mjs test/msgr-dm-relay-pg.test.mjs test/msgr-bot-idle-gate-pg.test.mjs test/msgr-friend-search-pg.test.mjs test/msgr-push-badge-pg.test.mjs test/msgr-dm-latest-pg.test.mjs test/msgr-personal-dm-pg.test.mjs test/msgr-presence-pg.test.mjs test/msgr-channel-join-pg.test.mjs test/msgr-friend-link-pg.test.mjs test/msgr-dm-invite-pg.test.mjs); fi
+# 인자가 없으면 test/ 의 pg 테스트를 **전부** 돌린다. 손으로 유지하던 목록에 11개가 빠져 있었고(실측 2026-09-16),
+# 빠진 파일은 회귀를 못 잡는다 — "전부 통과"가 절반만 통과였다. 목록을 손으로 늘리지 않게 여기서 훑는다.
+if [ -z "${FILES[0]}" ]; then FILES=(); for f in test/*pg*.test.mjs; do [ -e "$f" ] && FILES+=("$f"); done; fi
 i=0
 FAILED=()
 for f in "${FILES[@]}"; do

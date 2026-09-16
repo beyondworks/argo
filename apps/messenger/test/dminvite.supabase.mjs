@@ -8,7 +8,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     { user_id: 'user-colleague', org_id: org, role: 'member', display_name: 'Org Colleague', removed_at: null },
     { user_id: 'user-third', org_id: org, role: 'member', display_name: 'Third Person', removed_at: null },
   ],
-  msgr_channels: [channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague')],
+  msgr_channels: [channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿')],
   msgr_crews: [
     { id: 'crew-1', org_id: org, owner_user_id: uid, slug: 'fixture-crew', display_name: 'Fixture Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' },
     { id: 'crew-2', org_id: org, owner_user_id: 'user-colleague', slug: 'colleague-crew', display_name: 'Colleague Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 다른 멤버의 크루 — 레일에 나오면 안 된다
@@ -18,6 +18,12 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     { channel_id: 'general', member_kind: 'user', member_id: uid },
     { channel_id: 'org-dm', member_kind: 'user', member_id: uid },
     { channel_id: 'org-dm', member_kind: 'user', member_id: 'user-colleague' },
+    // 여럿이 있는 방 — 에이전트 둘, 사람 둘. 아바타가 누구 한 사람 것으로 굳으면 안 된다.
+    { channel_id: 'group-dm', member_kind: 'user', member_id: uid },
+    { channel_id: 'group-dm', member_kind: 'user', member_id: 'user-colleague' },
+    { channel_id: 'group-dm', member_kind: 'user', member_id: 'user-third' },
+    { channel_id: 'group-dm', member_kind: 'crew', member_id: 'crew-1' },
+    { channel_id: 'group-dm', member_kind: 'crew', member_id: 'crew-bot' },
   ],
   msgr_messages: [
     { id: 11, channel_id: 'general', org_id: org, author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', body: '스크린샷 붙입니다', created_at: now, deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm11' },

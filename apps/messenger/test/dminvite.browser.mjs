@@ -89,6 +89,16 @@ await scenario(390, 'phone-dm-actions', async (p) => {
   assert.ok(await p.locator('.msgr-sheetwrap, .msgr-crewsheet').first().isVisible(), '눌러서 상대 고르는 화면이 열린다');
 });
 
+// 6. 여럿이 있는 방은 누구 한 사람의 얼굴로 굳지 않는다 — 이름은 함께 있는 모두를 보여 준다
+await scenario(1280, 'group-room-avatar', async (p) => {
+  const row = p.locator('.msgr-list .item').filter({ hasText: 'Fixture Agent' }).first();
+  await row.waitFor({ timeout: 5000 });
+  const label = await row.innerText();
+  for (const who of ['Fixture Agent', 'External Bot', 'Org Colleague', 'Third Person']) assert.ok(label.includes(who), `${who}가 이름에 있다 (실제: ${label})`);
+  const cls = await row.locator('.msgr-av').first().getAttribute('class');
+  assert.ok(!/\bcrew\b/.test(cls ?? ''), `한 에이전트의 얼굴로 굳지 않는다 (실제 class: ${cls})`);
+});
+
 await browser.close();
 console.log(results.join('\n'));
 if (failures.length) { console.log(`${results.length} passed, ${failures.length} failed`); console.log('Failures:', failures); process.exit(1); }

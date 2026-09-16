@@ -106,3 +106,11 @@ test('개인 1:1은 두 사람 그대로 — 한 쌍 한 방이 깨지지 않는
   fails(asUserRaw(U.owner, `insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${ch}', 'user', '${U.third}')`), /msgr_dm_pair_only|row-level security/, '개인 1:1에 제3자');
   assert.equal(last(asUser(U.owner, `select public.msgr_dm_personal('${U.mate}')`)), ch, '한 쌍 한 방 그대로');
 });
+
+test('이미 방에 있는 내 자리를 다시 넣으려 하면 정책이 막는다 — 앱이 크루만 넣어야 하는 이유', { skip }, () => {
+  const ch = dm(U.owner, [{ kind: 'user', id: U.mate }]);
+  // 앱의 파견·추가 경로는 종전에 "크루 + 소유자(나)" 두 행을 한 번에 upsert했다. 대화방에서는 그 user 행이 정책에 걸려 **전체가 실패**한다.
+  fails(asUserRaw(U.owner, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'user', '${U.owner}', '${U.owner}') on conflict (channel_id, member_kind, member_id) do update set added_by = excluded.added_by`), /row-level security|permission denied/, '이미 있는 내 행을 다시 넣기');
+  asUser(U.owner, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${CREW}', '${U.owner}')`);
+  assert.ok(seats(ch, 'crew').includes(CREW.slice(0, 8)), '크루 행만 넣으면 들어간다');
+});

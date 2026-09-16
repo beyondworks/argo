@@ -88,11 +88,12 @@ const relayOf=(source,crew)=>sql(`select id from msgr_messages where client_msg_
 const noteOf=(source)=>sql(`select id from msgr_messages where client_msg_id='relaynote:${source}'`);
 const row=(id)=>JSON.parse(sql(`select to_jsonb(m) from msgr_messages m where id=${id}`));
 const chanOf=(id)=>sql(`select channel_id from msgr_messages where id=${id}`);
-test('adjacent private DM keeps its membership cap and hides the whole channel from another owner',{skip},()=>{
+test('adjacent private DM hides the whole channel from another owner, and only its participants may bring an agent',{skip},()=>{
  DM=last(asUser(U.owner,`select msgr_create_channel('${ORG}','dm','Mine','[{"kind":"crew","id":"${CREW}"}]')`));
  post('Unrelated prior private conversation');
  assert.equal(last(asUser(U.member,`select count(*) from msgr_messages where channel_id='${DM}'`)),'0');
- fails(sqlRaw(`insert into msgr_channel_members(channel_id,member_kind,member_id,added_by) values('${DM}','crew','${OTHER_CREW}','${U.owner}')`),/msgr_dm_full/,'DM remains one crew');
+ // 2026-09-16부터 조직 대화방에는 에이전트 정원이 없다(유건 지시: 대화방에 에이전트 초대). 지키는 선은 "방 밖의 사람은 넣지 못한다"로 옮겼다.
+ fails(asUserRaw(U.member,`insert into msgr_channel_members(channel_id,member_kind,member_id,added_by) values('${DM}','crew','${OTHER_CREW}','${U.member}')`),/row-level security|permission denied/,'a nonparticipant cannot push an agent in');
 });
 test('cross-owner explicit To relays into the user↔crew DM and executes only there',{skip},()=>{
  ROOT=post('Ask specialist',mention(OTHER_CREW));
