@@ -1316,3 +1316,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-lightbox { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--bg) 82%, black); cursor: zoom-out; }
 .msgr-lightbox img { max-width: min(96vw, 1600px); max-height: 88vh; object-fit: contain; border-radius: 12px; border: 1px solid var(--border); background: var(--card-2); cursor: default; }
 .msgr-lightbox .acts { position: absolute; right: 16px; top: 16px; display: flex; gap: 8px; cursor: default; }
+
+/* 친구 링크(유건 2026-09-16) — 조직 초대와 다른 자리, 다른 말. 조용한 두 줄로 둔다. */
+.msgr-friendlink { display: grid; gap: 8px; margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-2); }
+.msgr-friendlink .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.msgr-friendlink .msgr-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--fg-2); }
+.msgr-friendlink input { flex: 1 1 200px; min-width: 0; }

@@ -11,7 +11,7 @@ import { supabase, configured, q } from './supabase.js';
 import { customServer, SB_URL, SB_ANON } from './supabase.js';
 import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
 import { handoff, fetchProviderSettings, providerShown, noProviders } from './oauth-handoff.mjs';
-import { parseInviteCode, inviteShareText } from './invite.mjs';
+import { parseInviteCode, inviteShareText, friendShareText } from './invite.mjs';
 import { sortDms, DM_SORTS } from './dm-sort.mjs';
 import { UpdateBar } from './update.jsx';
 import { useLongPress, longPressHandlers } from './long-press.js';
@@ -1801,10 +1801,45 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
   const received = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const sent = friends.filter((f) => f.status === 'pending' && f.requested_by === uid);
   const accepted = friends.filter((f) => f.status === 'accepted').sort((a, b) => nameOf(a).localeCompare(nameOf(b), 'ko'));
+  // 친구 링크(유건 2026-09-16) — 링크 하나 공유하면 받은 쪽이 열어서 친구가 된다. 조직 초대와 다른 문이다.
+  const [link, setLink] = useState(null);      // { code, expires_at }
+  const [joinLink, setJoinLink] = useState(''); // 받은 링크·코드 붙여넣기
+  const showLink = async () => {
+    setBusy(true);
+    try { const [row] = await q(supabase.rpc('msgr_friend_link_mine')); setLink(row ?? null); } catch (e) { onError(e.message); } finally { setBusy(false); }
+  };
+  const copyLink = async () => {
+    if (!link) return;
+    try { await navigator.clipboard.writeText(friendShareText(link.code, { t })); onNote(t('friends.link.copied')); } catch { onError(t('friends.link.copyFail')); }
+  };
+  const acceptLink = async () => {
+    const code = parseInviteCode(joinLink);
+    if (!code) return onError(t('friends.link.bad'));
+    setBusy(true);
+    try {
+      const r = await q(supabase.rpc('msgr_friend_link_accept', { code }));
+      onNote(t(r === 'already' ? 'friends.link.already' : r === 'self' ? 'friends.link.self' : 'friends.link.done'));
+      setJoinLink(''); await onChanged?.();
+    } catch (e) { onError(/msgr_link_invalid/.test(e.message) ? t('friends.link.invalid') : /blocked/.test(e.message) ? t('friends.link.blocked') : e.message); }
+    finally { setBusy(false); }
+  };
   const relOf = (r) => { const f = friends.find((x) => x.user_id === r.user_id); return !f ? (r.relation === 'blocked' ? 'blocked' : 'none') : f.status === 'accepted' ? 'friend' : f.status === 'pending' ? (f.requested_by === uid ? 'sent' : 'received') : r.relation; }; // 친구 목록이 갱신되면 요청 거절·친구 해제도 검색 결과에 반영한다.
   return (
     <section className="msgr-setcard">
       <h2>{t('friends.title')} · {accepted.length}</h2><p>{t('friends.desc')}</p>
+      <div className="msgr-friendlink">
+        <div className="row">
+          <span className="msgr-klabel">{t('friends.link.label')}</span>
+          {link
+            ? <><code className="msgr-code">{link.code.slice(0, 8)}…</code><button type="button" className="btn btn-primary sm" disabled={busy} onClick={copyLink}><I name="copy" size={13} />{t('friends.link.copy')}</button>
+                <button type="button" className="btn sm ghost" disabled={busy} onClick={() => call('msgr_friend_link_revoke', {}, t('friends.link.revoked'))}>{t('friends.link.revoke')}</button></>
+            : <button type="button" className="btn sm" disabled={busy} onClick={showLink}><I name="at" size={13} />{t('friends.link.make')}</button>}
+        </div>
+        <form className="row" onSubmit={(e) => { e.preventDefault(); if (!busy) acceptLink(); }}>
+          <input className="msgr-input sm" value={joinLink} disabled={busy} onChange={(e) => setJoinLink(e.target.value)} placeholder={t('friends.link.ph')} aria-label={t('friends.link.ph')} />
+          <button type="submit" className="btn sm" disabled={busy || !joinLink.trim()}>{t('friends.link.add')}</button>
+        </form>
+      </div>
       <form className="row msgr-friend-search" onSubmit={(e) => { e.preventDefault(); if (!busy && !searching) find(); }}><input className="msgr-input sm" value={qs} disabled={busy} onChange={(e) => { searchRequest.current += 1; setQs(e.target.value); setRes(null); setSearchError(''); setSearching(false); }} placeholder={t('friends.find.ph')} aria-label={t('friends.find.ph')} autoCapitalize="none" autoCorrect="off" spellCheck={false} /><button type="submit" className="btn sm" disabled={busy || searching || qs.trim().replace(/^@/, '').length < 3}>{t('friends.find')}</button></form>
       {searching && <p className="note" role="status">{t('ui.loading')}</p>}
       {searchError && <p className="note danger" role="alert">{friendlyErr(searchError, t)}</p>}
