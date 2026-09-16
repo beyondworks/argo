@@ -482,6 +482,14 @@ function Shell({ session }) {
   useEffect(() => { if (uid) loadFriends(); }, [uid, tick, loadFriends]);
   const [botKinds, setBotKinds] = useState([]); // 내 에이전트 출처(헤르메스·오픈클로) — 훅은 조기 return보다 앞에(실측: 순서 오류로 빈 화면)
   useEffect(() => { if (!orgId || orgId === PERSONAL) { setBotKinds([]); return; } let live = true; q(supabase.from('msgr_bots').select('crew_id, kind').eq('org_id', orgId).is('revoked_at', null)).then((rows) => { if (live && activeOrg.current === orgId) setBotKinds(rows); }).catch(() => { if (live && activeOrg.current === orgId) setBotKinds([]); }); return () => { live = false; }; }, [orgId, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 내가 참여한 채널(공개 포함) — 목록 필터의 근거. 조직 전환과 무관하게 계정 단위라 한 번만 읽는다.
+  const joinedRef = useRef(new Set());
+  const loadJoined = useCallback(async () => {
+    if (!uid) return;
+    const rows = await q(supabase.from('msgr_channel_members').select('channel_id').eq('member_kind', 'user').eq('member_id', uid)).catch(() => null);
+    if (rows) joinedRef.current = new Set(rows.map((r) => r.channel_id));
+  }, [uid]);
+  useEffect(() => { if (uid) loadJoined().then(() => setTick((x) => x + 1)); }, [uid, loadJoined]); // 읽고 나서 목록을 한 번 다시 만든다
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
     const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info)').eq('user_id', uid).is('removed_at', null));
@@ -512,7 +520,7 @@ function Shell({ session }) {
     if (!id || id !== activeOrg.current) return;
     const current = orgRequests.current.begin(id);
     try {
-    const [chs, mems, allCrews, e, pol] = await Promise.all([
+    const [allChs, mems, allCrews, e, pol] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio, commands').eq('org_id', id).in('status', ['active', 'available'])),
@@ -525,6 +533,10 @@ function Shell({ session }) {
     const crs = allCrews.filter((r) => r.status === 'active');
     const orgRow = orgs.find((o) => o.id === id);
     crs.sort((a, b) => (crewTier(b, orgRow) === 'company') - (crewTier(a, orgRow) === 'company') || a.display_name.localeCompare(b.display_name, 'ko')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다)
+    // 조직에 들어왔다고 모든 채널이 열리지 않는다(유건 2026-09-16, 슬랙식) — 사이드바는 **참여한 채널**만.
+    // 공개 채널은 서버가 열람은 허용하지만(찾아보기·미리보기), 들어가기 전에는 목록에도 알림에도 없다.
+    // 참여 목록은 이 함수 밖에서 미리 읽는다 — 여기서 await를 더하면 조직 전환 경쟁(늦게 온 A 데이터 무시)이 흐트러진다.
+    const chs = allChs.filter((c) => c.kind !== 'public' || joinedRef.current.has(c.id));
     setChannels(chs); setMembers(mems); setCrews(crs); setEnt(e); setPolicy(pol);
     setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null)); // 라벨용 보조 조회보다 먼저(검수 2R LOW-1: 보조 조회가 던지면 채널 선택이 안 됐다)
     const dmIds = chs.filter((c) => c.kind === 'dm').map((c) => c.id);
@@ -950,7 +962,25 @@ function Shell({ session }) {
       if (activeOrg.current !== orgId) return; setNewCh(null); await loadOrg(orgId); if (activeOrg.current !== orgId) return; setChId(id); setPage('chat');
     } catch (e) { setErr(/msgr_channel_limit/.test(e.message) ? t('ch.freeLimit') : friendlyErr(e.message, t)); }
   };
-  const openNewCh = () => { setNewCh({ name: '', kind: 'public' }); setRail(true); };
+  const openNewCh = () => { setNewCh({ name: '', kind: 'private' }); setRail(true); };
+  // 채널 찾아보기(유건 2026-09-16) — 조직의 공개 채널 중 아직 안 들어간 것. 들어가야 목록·알림에 뜬다.
+  const [browse, setBrowse] = useState(null); // null = 닫힘, [] = 없음, [..] = 목록
+  const openBrowse = async () => {
+    if (!orgId || isPersonal) return;
+    setRail(true);
+    try { setBrowse(await q(supabase.rpc('msgr_browse_channels', { org: orgId })) ?? []); } catch (e) { setErr(e.message); }
+  };
+  const joinChannel = async (c) => {
+    try {
+      await q(supabase.rpc('msgr_join_channel', { ch: c.id }));
+      setBrowse((list) => (list ?? []).filter((x) => x.id !== c.id));
+      joinedRef.current = new Set([...joinedRef.current, c.id]);
+      const chs = await loadOrg(orgId);
+      if (chs?.some((x) => x.id === c.id)) setChId(c.id);
+      setNote(t('ch.browse.joined', { name: c.name }));
+    } catch (e) { setErr(e.message); }
+  };
+ // 기본 비공개(유건 2026-09-16) — 공개는 고를 때만
   const [ctx, setCtx] = useState(null); // 우클릭 메뉴 {x, y, items}
   const [drag, setDrag] = useState(null); const [groupForm, setGroupForm] = useState(null); // 끌어서 정렬·그룹 이동 중인 채널 id · 그룹 이름 입력 {mode:'new', chId} | {mode:'rename', from}
   useLayoutEffect(() => {
@@ -1145,7 +1175,19 @@ function Shell({ session }) {
         {!isPersonal && favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
         </RailSection>)}
-        {!isPersonal && <RailSection id="channels" label={t('ch.list')} right={<button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>}>
+        {!isPersonal && <RailSection id="channels" label={t('ch.list')} right={<span className="right">
+          <button type="button" className="btn" onClick={() => browse ? setBrowse(null) : openBrowse()} disabled={!orgId} title={t('ch.browse')} aria-label={t('ch.browse')} aria-expanded={!!browse}><I name="at" size={14} /></button>
+          <button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>
+        </span>}>
+          {browse && (<div className="msgr-browse">
+            {browse.length === 0
+              ? <p className="empty">{t('ch.browse.none')}</p>
+              : browse.map((c) => (<div key={c.id} className="row">
+                  <span className="name"><I name="hash" size={13} />{c.name}</span>
+                  <span className="msgr-klabel">{t('ch.browse.members', { n: c.members })}</span>
+                  <button type="button" className="btn btn-primary sm" onClick={() => joinChannel(c)}>{t('ch.browse.join')}</button>
+                </div>))}
+          </div>)}
         {newCh && (
           <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
             <input className="msgr-input" placeholder={t('ch.name')} value={newCh.name} onChange={(e) => setNewCh((c) => ({ ...c, name: e.target.value }))} autoFocus maxLength={80} />
