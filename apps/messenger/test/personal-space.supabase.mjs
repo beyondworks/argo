@@ -3,7 +3,8 @@ export const configured = true, customServer = false, SB_URL = 'http://fixture.i
 const uid = 'user-me', org = 'org-fixture', now = new Date().toISOString();
 const channel = (id, kind, name, orgId = org) => ({ id, org_id: orgId, kind, name, created_by: uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: orgId ? 'allowed' : 'blocked' });
 const state = window.__psFixture = { calls: [], failNext: null, tables: {
-  msgr_org_members: [{ user_id: uid, org_id: org, role: 'owner', display_name: 'Fixture Owner', removed_at: null, msgr_orgs: { id: org, name: 'Fixture Organization', slug: 'fixture', owner_user_id: uid } }],
+  msgr_org_members: [{ user_id: uid, org_id: org, role: 'owner', display_name: 'Fixture Owner', removed_at: null, msgr_orgs: { id: org, name: 'Fixture Organization', slug: 'fixture', owner_user_id: uid } },
+    { user_id: 'user-colleague', org_id: org, role: 'member', display_name: 'Org Colleague', removed_at: null }], // 조직원이면서 친구 — 개인 공간에서는 조직 DM이 아니라 개인 1:1로 가야 한다
   msgr_channels: [channel('general', 'public', 'Fixture General'), channel('org-dm', 'dm', 'dm:Org Colleague')],
   msgr_crews: [{ id: 'crew-1', org_id: org, owner_user_id: uid, slug: 'fixture-crew', display_name: 'Fixture Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }],
   msgr_channel_members: [
@@ -16,6 +17,7 @@ const state = window.__psFixture = { calls: [], failNext: null, tables: {
   // Friends fixture
   msgr_friends: [
     { user_id: 'user-alice', status: 'accepted', requested_by: uid, display_name: 'Alice Friend', handle: 'alice', created_at: now },
+    { user_id: 'user-colleague', status: 'accepted', requested_by: uid, display_name: 'Org Colleague', handle: 'colleague', created_at: now },
     { user_id: 'user-bob', status: 'pending', requested_by: 'user-bob', display_name: 'Bob Pending', handle: 'bob', created_at: now },
   ],
   // Personal DMs fixture
@@ -37,14 +39,14 @@ function result(call, action) {
 
 function query(table) {
   let op = 'select', values, cols = '*', one = false;
-  const filters = [];
+  const filters = [], eqs = []; // eqs: 호출 기록에 남기는 등호 조건(가상 조직 id가 서버로 새는지 검사)
   const api = {
-    select(c = '*') { cols = c; return api; }, eq(k, v) { filters.push(r => r[k] === v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
+    select(c = '*') { cols = c; return api; }, eq(k, v) { eqs.push([k, v]); filters.push(r => r[k] === v); return api; }, neq(k, v) { filters.push(r => r[k] !== v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
     in(k, vs) { filters.push(r => vs.includes(r[k])); return api; }, gt(k, v) { filters.push(r => r[k] > v); return api; }, lt(k, v) { filters.push(r => r[k] < v); return api; },
     order() { return api; }, limit() { return api; }, contains() { return api; }, or() { return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; },
     upsert(v) { op = 'upsert'; values = v; return api; }, update(v) { op = 'update'; values = v; return api; }, delete() { op = 'delete'; return api; }, insert(v) { op = 'insert'; values = v; return api; },
     then(resolve, reject) {
-      return Promise.resolve(result({ table, op, values }, () => {
+      return Promise.resolve(result({ table, op, values, eqs }, () => {
         const all = state.tables[table] ?? [];
         let rows = all.filter(r => filters.every(f => f(r)));
         if (op === 'upsert' || op === 'insert') {
