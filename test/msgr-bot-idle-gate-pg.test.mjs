@@ -69,6 +69,7 @@ before(() => {
   PUB = last(asUser(U.owner, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'public', 'general', '${U.owner}') returning id`));
   const out = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'hermes', '헤르메스', '외부 에이전트')`)));
   BOT = out.bot_id; BOT_CREW = out.crew_id; TOKEN = out.token;
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PUB}', 'crew', '${BOT_CREW}')`); // 공개 채널도 초대된 에이전트만 받는다(2026-09-16)
 });
 
 const mention = () => JSON.stringify([{ kind: 'crew', id: BOT_CREW }]);

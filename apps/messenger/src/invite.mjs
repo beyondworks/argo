@@ -14,3 +14,8 @@ export function inviteShareText(code, { origin = '', pathname = '/', t = (k, v) 
   const link = /^https?:\/\//.test(origin) ? `${origin}${pathname}?invite=${code}` : '';
   return t('org.invite.text', { code }) + (link ? `\n${link}` : '');
 }
+
+/** 친구 링크 공유 문구 — 조직 초대와 섞이지 않게 말부터 다르다("조직에 초대"가 아니라 "친구 추가"다). */
+export function friendShareText(code, { t = (k, v) => `${k} ${JSON.stringify(v)}` } = {}) {
+  return t('friends.link.text', { code });
+}

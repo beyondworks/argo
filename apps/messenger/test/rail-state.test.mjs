@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createRequestGate, createPreferenceQueue, folderChannelIds, reorderFavorites } from '../src/rail-state.mjs';
+import { createRequestGate, createPreferenceQueue, reorderFavorites } from '../src/rail-state.mjs';
 
 test('old organization response and old same-org refresh cannot apply', () => {
   let org = 'a'; const gate = createRequestGate(() => org);
@@ -11,10 +11,6 @@ test('old organization response and old same-org refresh cannot apply', () => {
   assert.equal(second(), false); assert.equal(third(), true);
 });
 
-test('group rename includes only current organization channels, excluding DMs', () => {
-  const prefs = new Map([['a', 'dev'], ['b', 'dev'], ['dm', 'dev']]);
-  assert.deepEqual(folderChannelIds([{ id: 'a', kind: 'public' }, { id: 'dm', kind: 'dm' }], prefs, 'dev'), ['a']);
-});
 
 test('favorite order can move to first and last without admitting foreign IDs', () => {
   assert.deepEqual(reorderFavorites(['a', 'b', 'c'], 'c', 'a'), ['c', 'a', 'b']);
@@ -48,8 +44,8 @@ test('Shell loadOrg ignores late A data, available crews, and errors after switc
     return { select() { return this; }, eq(key, value) { if (key === 'org_id') id = value; return this; }, is() { return this; }, order() { return this; }, in() { return this; }, maybeSingle() { return this; },
       then(resolve, reject) { return new Promise((done, fail) => pending.push({ id, table, done, fail })).then(resolve, reject); } };
   } };
-  const setters = Object.fromEntries(['Channels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((key) => [`set${key}`, (value) => { state[key] = value; }]));
-  const deps = { supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', ...setters, setChId: (f) => { state.chId = f(state.chId); } };
+  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((key) => [`set${key}`, (value) => { state[key] = value; }]));
+  const deps = { joinedRef: { current: new Set(['A-channel', 'B-channel']) }, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', ...setters, setChId: (f) => { state.chId = f(state.chId); } };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   const settle = (id) => { for (const p of pending.filter((p) => p.id === id)) p.done(p.table === 'msgr_channels' ? [{ id: `${id}-channel`, kind: 'public' }] : p.table === 'msgr_crews' ? [{ id: `${id}-crew`, owner_user_id: 'me', display_name: id, status: 'available' }] : p.table === 'msgr_org_members' ? [{ user_id: `${id}-person` }] : { data: null }); };
   const a = loadOrg('A'); activeOrg.current = 'B'; const b = loadOrg('B');

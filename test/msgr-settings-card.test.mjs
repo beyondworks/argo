@@ -43,7 +43,7 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍으로 있다', () => {
 // ── 메신저 앱 구간 불변식(검수 2R MEDIUM-1: 수정이 핀 없이 들어갔다) ──
 test('채널 시트 닫기 효과의 의존성은 [chId]뿐 — tick이 섞이면 15초마다 시트가 닫힌다(HIGH-1 재발 방지)', () => {
   const app = stripComments(read('apps/messenger/src/App.jsx'));
-  assert.match(app, /useEffect\(\(\) => \{ setChSheet\(false\); \}, \[chId\]\);/, '닫기 효과가 [chId] 단독 의존이 아니다');
+  assert.match(app, /useEffect\(\(\) => \{ setChSheet\(sheetAfterNav\.current\); sheetAfterNav\.current = false; \}, \[chId\]\);/, '닫기 효과가 [chId] 단독 의존이 아니다(알림함의 참여 요청은 이동 뒤 한 번만 연다 — 2026-09-16)');
   const reload = /useEffect\(\(\) => \{ loadChMembers\(chId\)[^\n]*\}, \[chId, loadChMembers, tick\]\);/.exec(app);
   assert.ok(reload && !/setChSheet/.test(reload[0]), '멤버 재조회 효과 안에 setChSheet가 있다 — tick마다 시트가 닫힌다');
 });
@@ -152,11 +152,12 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids'\)/, '채널 조회에 personal_crews가 없다');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /\{channel\.kind !== 'dm' && \(<>\s*<div className="row wrap">\s*<span className="msgr-klabel">\{t\('ch\.personal'\)\}/, '개인 크루 정책은 채널 설정 안(dm 제외)');
-  assert.match(ch, /\['allowed', 'read_only', 'blocked'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(channel\.personal_crews \?\? 'allowed'\) === v\}[^\n]*disabled=\{!canEdit \|\| busy\} onClick=\{\(\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\}/, '세그먼트');
+  assert.match(ch, /\['allowed', 'approval', 'blocked', \.\.\.\(channel\.personal_crews === 'read_only' \? \['read_only'\] : \[\]\)\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(channel\.personal_crews \?\? 'approval'\) === v\}[^\n]*disabled=\{!canEdit \|\| busy\} onClick=\{\(\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\}/, '세그먼트');
   assert.match(ch, /\/msgr_channel_personal_blocked\/\.test\(res\.error\.message\) \? t\('err\.channelPersonalBlocked'\)/, '멤버 추가 거절 문구');
-  assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'allowed'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)\);/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼)');
+  assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && !pendingCrews\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'approval'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼) · 승인 대기 중인 에이전트는 후보에서 뺀다');
+  assert.match(ch, /&& \(isDmRoom \? \(c\.owner_user_id === uid \|\| userIds\.has\(c\.owner_user_id\)\) : \(isHost \|\| c\.owner_user_id === uid \|\| crewTier\(c, org\) === 'company'\)\)\);/, '후보: 채팅=주인이 그 방에 있는 에이전트, 방장=조직 에이전트, 참여자=자기 에이전트와 회사 에이전트(서버 msgr_crew_join과 같은 규칙, 2026-09-16)');
   const comp = app.slice(app.indexOf('function Composer('));
-  assert.match(comp, /const usable = \(channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews\)\.filter\(\(c\) => !\(channel\?\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\)/, '멘션 후보 필터');
+  assert.match(comp, /const usable = \(limitsPersonal\(channel\) \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews\)\.filter\(\(c\) => !\(channel\?\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\)/, '멘션 후보 필터'); assert.match(app, /export const limitsPersonal = \(channel\) => channel\?\.personal_crews === 'read_only';/, '개인 에이전트 지시를 막는 정책 = 보기만뿐 — 못 데려옴은 새로 들어오는 것만 막고 이미 있는 에이전트는 일한다(유건 2026-09-16, 서버 msgr_instruct_check와 같다)');
   assert.match(comp, /mentionCandidates\(\{ q: needle, crews: isDm \? mentionCrews : scopeCrews \?\? usable, members: scopePeople \?\? members, uid, exclude, all: !isDm \|\| allByName\.some\(\(c\) => c\.kind === 'crew' \|\| c\.id !== uid\) \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외·본문 중복 제외·@all은 mention-candidates.mjs, 2026-09-12)');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /let why = envelope \? 'ok' : await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
@@ -166,7 +167,7 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(sql, /when channel is not null and ch\.personal_crews <> 'allowed'\n\s*and not \(o\.service_user_id is not null and c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident'\) then 'channel_policy'/, '서버 채널 정책 판정');
   assert.match(sql, /if not public\.msgr_can_instruct\(new\.crew_id, src\.author_user_id, new\.channel_id\) then/, '답글 게이트가 채널을 안 본다');
   assert.match(sql, /raise exception 'msgr_channel_personal_blocked'/, '멤버 게이트');
-  assert.match(sql, /if new\.personal_crews = 'blocked' and old\.personal_crews <> 'blocked' then\n\s*delete from public\.msgr_channel_members cm/, 'blocked 전환 sweep');
+  assert.match(read('supabase/migrations/20260917090000_msgr_crew_join_approval.sql'), /create or replace function public\.msgr_channel_policy_sweep\(\)[\s\S]*?begin\n\s*if new\.personal_crews is distinct from old\.personal_crews then\n\s*perform public\.msgr_audit/, 'blocked 전환은 감사만 — 행을 지우지 않는다(2026-09-16, 되돌리면 돌아온다)');
   for (const k of ['ch.personal', 'ch.personal.desc', 'ch.personal.allowed', 'ch.personal.read_only', 'ch.personal.blocked', 'ch.personal.saved', 'ch.personal.blocked.note', 'err.channelPersonalBlocked']) {
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
@@ -211,19 +212,19 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
   for (const k of ['ch.new.kind', 'ch.new.public', 'ch.new.private', 'ui.create', 'auth.devOnly']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
 
-test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 공개=조직 전원+정책 허용 크루 / 비공개=채널 멤버, 초대는 조직 메뉴', () => {
+test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 사람=참여한 사람(공개 포함) · 크루=초대된 에이전트(공개 포함), 조직 초대는 조직 메뉴', () => {
   assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
-  assert.match(app, /const chRow = \(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{ungrouped\.map\(chRow\)\}/, '그룹 없는 채널은 목록 끝에');
-  assert.match(app, /const chPeople = !channel \? \[\] : channel\.kind === 'public' \? members\.filter\(\(m\) => !\(channel\.excluded_user_ids \?\? \[\]\)\.includes\(m\.user_id\)\) : members\.filter\(\(m\) => chMembers\.some\(/, '사람 구성 계산');
-  assert.match(app, /const chCrews = !channel \? \[\] : channel\.kind === 'public' \? usableCrews\.filter\(\(c\) => !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\) : crews\.filter\(\(c\) => chMembers\.some\(/, '크루 구성 계산(공개=정책 허용 크루)');
+  assert.match(app, /const chRow = \(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{sortedCh\.map\(chRow\)\}/, '채널은 한 목록 — 채널 그룹은 뺐다(유건 2026-09-16, 라이브 사용 0명)');
+  assert.match(app, /const chPeople = !channel \? \[\] : members\.filter\(\(m\) => chMembers\.some\(\(x\) => x\.member_kind === 'user' && x\.member_id === m\.user_id\) && !\(channel\.kind === 'public' && \(channel\.excluded_user_ids \?\? \[\]\)\.includes\(m\.user_id\)\)\);/, '사람 구성 = 참여한 사람(공개 채널도 — #555 이후, 유건 제보 2026-09-16)'); assert.match(app, /const mentionPeople = channel\?\.kind === 'public' \? members\.filter/, '멘션 후보는 공개 채널이면 조직원 전원(멘션하면 채널 밖 사람에게도 알림)');
+  assert.match(app, /const chCrews = !channel \? \[\] : usableCrews\.filter\(\(c\) => chMembers\.some\(\(x\) => x\.member_kind === 'crew' && x\.member_id === c\.id\) && !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\);/, '크루 구성 = 초대된 에이전트(공개 채널도 — 2026-09-16, 종전에는 파견된 에이전트 전원)');
   assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
   assert.match(app, /onCrew=\{\(id\) => \{ setChSheet\(false\); setSheet\(id\); \}\} onDm=\{\(id\) => openDm\('user', id\)\}/, '구성에서 크루 시트·1:1 연결');
   assert.match(app, /\{isAdmin && <button type="button" role="menuitem" onClick=\{\(\) => \{ setOrgMenu\(false\); invite\(\); \}\}>/, '초대가 조직 메뉴에 없다');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
-  assert.match(ch, /<div className="sec-head"><h3>\{t\('ch\.who'\)\}<\/h3>/, '구성 섹션이 첫 절');
+  assert.match(ch, /<div className="sec-head"><h3>\{t\(isDmRoom \? 'dm\.who' : 'ch\.who'\)\}<\/h3>/, '구성 섹션이 첫 절 — 1:1·그룹 대화에서는 "이 대화방"으로 부른다(2026-09-16)');
   assert.ok(ch.indexOf("t('ch.who')") < ch.indexOf("t('ch.settings')"), '구성이 채널 설정보다 앞');
-  assert.match(ch, /\{canKick && <button type="button" role="menuitem" className="danger"[^\n]*kick\('user', m\.user_id\)/, '비공개 채널 사람 내보내기(행 … 메뉴)');
-  for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.public', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  assert.match(ch, /canKick && \{ icon: 'x', label: t\('ch\.remove'\), danger: true, disabled: busy, run: \(\) => kick\('user', m\.user_id\) \}/, '비공개 채널 사람 내보내기(행 … 메뉴)'); assert.match(ch, /\{rowMenu && <CtxMenu at=\{rowMenu\.at\} items=\{rowMenu\.items\} onClose=\{\(\) => setRowMenu\(null\)\} \/>\}/, '행 메뉴는 시트 밖(화면 기준)에 띄운다 — 시트 스크롤 영역 안에서 잘렸다(유건 제보 2026-09-16)');
+  for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
 
 test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(렌더 뒤 높이 변화 추적)·위로 올려두면 유지, 채널 전환 시 바닥부터; 레일은 railbody만 스크롤(풋터 고정)', () => {
@@ -579,5 +580,7 @@ test('점검 2026-09-12 소형 결함 4건: 읽음은 초점 있을 때만 · �
   assert.match(app, /window\.addEventListener\('focus', mark\);/, '초점 복귀 시 읽음');
   assert.match(app, /if \(!payload \|\| payload\.kind !== 'text' \|\| \(payload\.author_user_id && payload\.author_user_id === r\.uid\)\) return;/, '사람 발신도 알림(내 글 제외)');
   assert.match(app, /setBadge\(Object\.entries\(unread\)\.reduce\(\(s, \[id, u\]\) => s \+ \(muted\.has\(id\) \? 0 : \(u\?\.n \|\| 0\)\), 0\)\)/, '독 배지 음소거 제외');
-  assert.match(app, /<img className="msgr-imgprev" src=\{src\} alt=\{a\.name\} loading="lazy" onClick=\{open\} \/>/, '이미지 인라인');
+  assert.match(app, /<img className="msgr-imgprev" src=\{src\} alt=\{a\.name\} loading="lazy" onClick=\{\(\) => setZoom\(true\)\} \/>/, '이미지 인라인 — 누르면 그 자리에서 확대(유건 2026-09-16)');
+  assert.match(app, /className="msgr-lightbox"[\s\S]{0,400}onClick=\{\(\) => setZoom\(false\)\}/, '덮개를 누르면 닫힌다');
+  assert.match(app, /if \(e\.key === 'Escape'\) setZoom\(false\);/, 'Esc로도 닫힌다');
 });

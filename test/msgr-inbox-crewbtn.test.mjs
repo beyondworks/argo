@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs';
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const app = read('apps/messenger/src/App.jsx'); const i18n = read('apps/messenger/src/i18n.js'); const css = read('apps/messenger/src/styles.css');
 
-test('i18n: 알림함·크루 버튼·공개 채널 부르기 키 ko/en', () => {
-  for (const k of ['inbox.title', 'inbox.empty', 'inbox.kind.all', 'inbox.kind.mention', 'inbox.kind.reply', 'inbox.kind.approval', 'inbox.kind.dm', 'inbox.note', 'ch.crews.btn', 'ch.crews.btn.title', 'ch.add.crew.public', 'ch.add.crew.public.note', 'ch.add.crew.call'])
+test('i18n: 알림함·크루 버튼·에이전트 참여 요청 키 ko/en', () => {
+  for (const k of ['inbox.title', 'inbox.empty', 'inbox.kind.all', 'inbox.kind.mention', 'inbox.kind.reply', 'inbox.kind.approval', 'inbox.kind.dm', 'inbox.note', 'ch.crews.btn', 'ch.crews.btn.title', 'ch.add.crew.call', 'ch.crew.join.ask', 'ch.crew.join.requested', 'ch.crew.join.approve', 'ch.crew.join.reject', 'inbox.crewjoin.text'])
     assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
 
@@ -22,15 +22,14 @@ test('알림함 v1: 레일 하단 종(안 읽은 수) · 페이지 분기 · 집
   assert.match(css, /\.msgr-foot \{ margin-top: auto; display: grid; grid-template-columns: auto minmax\(0, 1fr\) auto auto auto;/, '하단 바 = 프로필(2열 span) + 종·기억·설정');
 });
 
-test('채널 상단 "크루" 버튼 → 시트를 크루 패널로 열고, 공개 채널은 파견 크루 전원을 "@로 부르기"로 보인다', () => {
-  assert.doesNotMatch(app, /className="btn sm crewbtn"/, '헤더 에이전트 버튼은 참여 패널로 통합(유건 2026-09-09)'); assert.match(app, /onClick=\{\(\) => \{ setRowMenu\(null\); onMention\?\.\(c\); \}\}><I name="at" size=\{13\} \/>\{t\('ch\.add\.crew\.call'\)\}/, '시트 행 메뉴에 @로 부르기'); assert.match(app, /className=\{`msgr-hchip\$\{muted \? ' off' : ''\}`\} onClick=\{onToggleMute\}/, '알림 표지가 토글'); assert.match(app, /onClick=\{onToggleMemory\}/, '기억 표지가 토글'); void ('상단 크루 버튼');
+test('채널 상단 "크루" 버튼 → 시트를 크루 패널로 열고, 공개 채널도 초대할 에이전트를 고른다(2026-09-16 — 종전에는 파견 크루 전원을 "@로 부르기")', () => {
+  assert.doesNotMatch(app, /className="btn sm crewbtn"/, '헤더 에이전트 버튼은 참여 패널로 통합(유건 2026-09-09)'); assert.match(app, /channel\.kind !== 'dm' && \{ icon: 'at', label: t\('ch\.add\.crew\.call'\), run: \(\) => onMention\?\.\(c\) \}/, '시트 행 메뉴에 @로 부르기(화면 기준 메뉴 — 시트 안에서 잘리던 것, 2026-09-16)'); assert.match(app, /className=\{`msgr-hchip\$\{muted \? ' off' : ''\}`\} onClick=\{onToggleMute\}/, '알림 표지가 토글'); assert.match(app, /onClick=\{onToggleMemory\}/, '기억 표지가 토글'); void ('상단 크루 버튼');
   assert.match(app, /onCrewAdd=\{\(\) => \{ setChSheetAdd\('crew'\); setChSheet\(true\); \}\}/, '버튼 → 시트 크루 패널');
   assert.match(app, /const \[add, setAdd\] = useState\(initialAdd\);/, '시트 초기 패널');
-  assert.match(app, /\|\| \(channel\.kind === 'public' && chCrews\.length > 0\);/, '공개 채널에도 추가 메뉴');
-  assert.match(app, /\{channel\.kind === 'public' && chCrews\.length > 0 && \(<>\n\s*<div className="msgr-klabel">\{t\('ch\.add\.crew\.public'\)\}<\/div>/, '공개 채널 부르기 패널');
-  assert.match(app, /onClick=\{\(\) => onMention\?\.\(c\)\} title=\{t\('ch\.add\.crew\.call'\)\}/, '@로 부르기');
+  assert.match(app, /const canAddCrew = \(\(isHost \|\| inRoom\) && addableCrews\.length > 0\) \|\| canDispatch;/, '공개·비공개 모두 방장·참여자에게 추가 메뉴');
+  assert.doesNotMatch(app, /ch\.add\.crew\.public/, '공개 채널 "파견 전원 @로 부르기" 패널은 없어졌다');
   assert.match(app, /const mentionCrew = \(c\) => \{/, '작성창 멘션 삽입');
-  assert.match(app, /\{channel\.kind !== 'public' && addableCrews\.length > 0 && <>/, '공개 채널에는 멤버 추가 칩을 안 보인다(실측: 부르기와 중복)');
+  assert.match(app, /\{addableCrews\.length > 0 && <><div className="msgr-klabel">\{t\('ch\.add\.crew'\)\}<\/div>/, '모든 채널에서 초대 칩'); assert.match(app, /onClick=\{\(\) => joinCrew\(c\.id\)\}/, '초대는 서버 규칙(msgr_crew_join)으로');
   assert.match(app, /useEffect\(\(\) => \{ if \(!mentionReq\) return; mentionCrew\(mentionReq\); onMentionDone\?\.\(\); \}, \[mentionReq\]\);/, '멘션 요청 효과');
-  assert.match(app, /useEffect\(\(\) => \{ setChSheet\(false\); \}, \[chId\]\);/, '시트 닫기 효과 불변(HIGH-1)');
+  assert.match(app, /useEffect\(\(\) => \{ setChSheet\(sheetAfterNav\.current\); sheetAfterNav\.current = false; \}, \[chId\]\);/, '시트 닫기 효과 불변(HIGH-1) — [chId] 단독, 알림함의 참여 요청만 이동 뒤 한 번 연다');
 });
