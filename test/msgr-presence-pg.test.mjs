@@ -56,11 +56,13 @@ before(() => {
     assert.equal(last(asUser(u, `select public.msgr_accept_invite('${code}')`)), ORG);
   }
   PUB = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','Work')`));
+  // 공개 채널 알림은 이제 **참여자**에게만 간다(20260916190000_msgr_channel_join) — 심박 판정을 보려면 둘을 들여보낸다.
+  for (const u of [U.b, U.c]) assert.equal(last(asUser(u, `select public.msgr_join_channel('${PUB}')`)), 't');
 });
 
-test('심박이 없으면 종전대로 — 작성자를 뺀 조직원 전원이 푸시 대상', { skip }, () => {
+test('심박이 없으면 종전대로 — 작성자를 뺀 채널 참여자 전원이 푸시 대상', { skip }, () => {
   const m = post(U.a, PUB, '안녕');
-  assert.equal(recipients(m), [U.b, U.c].map((x) => x.slice(0, 8)).sort().join(','), 'b·c가 받는다');
+  assert.equal(recipients(m), [U.b, U.c].map((x) => x.slice(0, 8)).sort().join(','), '참여한 b·c가 받는다');
 });
 
 test('PC를 보고 있는 사람은 폰 푸시에서 빠진다(같은 알림이 양쪽으로 오지 않게)', { skip }, () => {
