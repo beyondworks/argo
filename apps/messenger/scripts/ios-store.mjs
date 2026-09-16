@@ -1,4 +1,4 @@
-// App Store Connect(TestFlight)용 iOS 빌드·업로드. API 키 없이 Xcode에 로그인된 계정 세션을 쓴다(-allowProvisioningUpdates).
+// App Store Connect(TestFlight)용 iOS 빌드·업로드. 인증은 App Store Connect API 키(아래 readAscKey), 없으면 Xcode 계정 세션(-allowProvisioningUpdates).
 //   node scripts/ios-store.mjs build [빌드번호]   # release 아카이브 + app-store-connect 내보내기 → src-tauri/gen/apple/build/arm64/*.ipa
 //   node scripts/ios-store.mjs upload   # 위 아카이브를 App Store Connect로 업로드
 // 클라우드 설정 파일(VITE_*)은 자식 프로세스 env로만 넘기고 값은 어디에도 출력하지 않는다.
@@ -40,7 +40,24 @@ export const buildEnv = (base, config = {}) => {
   return env;
 };
 
-// 업로드용 ExportOptions: destination=upload 가 Xcode 계정 세션으로 App Store Connect에 올린다.
+// App Store Connect API 키(팀 키, 앱 관리) — Xcode 계정 세션이 풀려도(실사고 2026-09-11·09-17 "No Accounts") 서명·업로드가 된다.
+// 설정 파일(기본 ~/.appstoreconnect/argo-messenger.json, ASC_API_CONFIG로 바꿈) = { keyId, issuerId, keyPath }. 레포 밖 비공개 파일이고 값은 출력하지 않는다.
+// 없으면 종전처럼 Xcode 계정 세션을 쓴다. tauri ios build는 APPLE_API_KEY·APPLE_API_ISSUER·APPLE_API_KEY_PATH로 같은 키를 쓴다.
+export const readAscKey = (text) => {
+  let c; try { c = JSON.parse(text); } catch { return null; }
+  return c && /^[A-Z0-9]{10}$/.test(c.keyId ?? '') && /^[0-9a-f-]{36}$/.test(c.issuerId ?? '') && typeof c.keyPath === 'string' && c.keyPath ? c : null;
+};
+export const ascBuildEnv = (key) => key ? { APPLE_API_KEY: key.keyId, APPLE_API_ISSUER: key.issuerId, APPLE_API_KEY_PATH: key.keyPath } : {};
+export const ascExportArgs = (key) => key ? ['-authenticationKeyPath', key.keyPath, '-authenticationKeyID', key.keyId, '-authenticationKeyIssuerID', key.issuerId] : [];
+const ascKey = () => {
+  const p = process.env.ASC_API_CONFIG || join(process.env.HOME ?? '', '.appstoreconnect/argo-messenger.json');
+  if (!existsSync(p)) return null;
+  const key = readAscKey(readFileSync(p, 'utf8'));
+  if (!key || !existsSync(key.keyPath)) throw new Error(`App Store Connect API 설정이 잘못됐다: ${p} (keyId·issuerId·keyPath 확인)`);
+  return key;
+};
+
+// 업로드용 ExportOptions: destination=upload 가 App Store Connect에 올린다(인증 = API 키 또는 Xcode 계정 세션).
 export const uploadPlist = (teamID) => `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -89,7 +106,7 @@ const run = (cmd, args, env) => {
 
 if (mode === 'build') {
   const configFile = join(app, '.env.local');
-  const env = buildEnv(process.env, existsSync(configFile) ? parseEnv(readFileSync(configFile, 'utf8')) : {});
+  const env = { ...buildEnv(process.env, existsSync(configFile) ? parseEnv(readFileSync(configFile, 'utf8')) : {}), ...ascBuildEnv(ascKey()) };
   if (!existsSync(join(env.CARGO_HOME, 'bin/rustup'))) throw new Error(`rustup 없음: ${env.CARGO_HOME}/bin — RUSTUP_HOME/CARGO_HOME을 지정하세요`);
   const buildNumber = process.argv[3]; // 같은 버전을 다시 올릴 때(예: 2) — TestFlight는 빌드 번호가 달라야 받는다
   const pbx = join(apple, 'argo-messenger.xcodeproj/project.pbxproj'); const team = JSON.parse(readFileSync(join(app, 'src-tauri/tauri.ios.conf.json'), 'utf8')).bundle.iOS.developmentTeam;
@@ -107,7 +124,7 @@ if (mode === 'build') {
   const team = JSON.parse(readFileSync(join(app, 'src-tauri/tauri.ios.conf.json'), 'utf8')).bundle.iOS.developmentTeam;
   const plist = join(mkdtempSync(join(tmpdir(), 'ios-store-')), 'upload.plist');
   writeFileSync(plist, uploadPlist(team));
-  run('xcodebuild', ['-exportArchive', '-archivePath', archive, '-exportOptionsPlist', plist, '-exportPath', join(apple, 'build/upload'), '-allowProvisioningUpdates'], process.env);
+  run('xcodebuild', ['-exportArchive', '-archivePath', archive, '-exportOptionsPlist', plist, '-exportPath', join(apple, 'build/upload'), '-allowProvisioningUpdates', ...ascExportArgs(ascKey())], process.env);
   try { unlinkSync(stampPath); } catch { /* 이미 없음 */ } // 같은 아카이브를 두 번 올리지 않는다
 } else if (mode === 'check') {
   gateOrDie('check');
