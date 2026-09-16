@@ -756,7 +756,7 @@ function Shell({ session }) {
   const inboxUnread = org ? inbox.filter((it) => Date.parse(it.at) > (inboxSeen[org.id] ?? 0)).length : 0;
   const openInbox = () => { if (!org) return; setInboxPrev(inboxSeen[org.id] ?? 0); const next = { ...inboxSeen, [org.id]: Date.now() }; setInboxSeen(next); writeInboxSeen(next); setPage('inbox'); setRail(false); resyncBadge(); };
   const me = members.find((m) => m.user_id === uid);
-  const isAdmin = org && ['owner', 'admin'].includes(org.role);
+  const isAdmin = !isPersonal && org && ['owner', 'admin'].includes(org.role); // 개인 공간의 가상 조직(role owner)은 관리자가 아니다 — 초대 링크 등이 __personal__로 서버에 가던 것(2026-09-16)
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
   const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet });
@@ -917,6 +917,7 @@ function Shell({ session }) {
   };
   // 1:1 대화 — 사람(user) 또는 크루(crew)와. 이미 있으면 열고, 없으면 dm 채널 + 멤버(나·상대·크루면 소유자까지) 생성
   const openDm = async (kind, id) => {
+    if (isPersonal && kind === 'user') return openPersonalDm(id); // 개인 공간에서 사람을 누르면(검색·새 채팅 시트) 개인 1:1 — 조직 DM 생성은 가상 org id로 400이었다
     if (kind === 'user') supabase.rpc('msgr_friend_request', { target: id }).then(({ error }) => { if (!error) loadFriends(); }).catch(() => {}); // 사람 1:1을 열면 친구 목록과 동기화(같은 조직이면 서버가 바로 accepted) — DM 열기를 막지 않는다, 실패는 무시
     try {
       const mine = await q(supabase.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', uid));
@@ -1304,7 +1305,7 @@ function Shell({ session }) {
         {page === 'activity' && isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.noActivity')}</p></div></div></>
         ) : page === 'activity' && org ? (
-          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
+          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} previewChannels={previewChannels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
           <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'inbox' && isPersonal ? (
@@ -1312,7 +1313,7 @@ function Shell({ session }) {
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} isAdmin={!isPersonal && !!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
           <Channel key={chId} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (isPersonal ? personalRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
@@ -1322,7 +1323,7 @@ function Shell({ session }) {
         )}
         </PageBoundary>
       </main>
-      {isPhone && (page === 'home' || page === 'dm') && org && <button type="button" className="msgr-fab" onClick={() => page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: 'public' })} aria-label={t(page === 'dm' ? 'dm.group.new' : 'ch.new')}><I name="plus" size={22} /></button>}
+      {isPhone && (page === 'dm' || (page === 'home' && !isPersonal)) && org && <button type="button" className="msgr-fab" onClick={() => page !== 'dm' ? setNewCh({ name: '', kind: 'public' }) : isPersonal ? (setPage('settings'), setSettingsTab('friends')) : setDmGroup(true)} aria-label={t(page === 'dm' ? 'dm.group.new' : 'ch.new')}><I name="plus" size={22} /></button>}
       {dmGroup && <DmGroupSheet members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={crews} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {isPhone && <PhoneTabs page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
     </div>
@@ -2168,7 +2169,7 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
   );
 }
 
-function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, dmName = null, onNote, onError, onBack, onMenu, onOpenChannel }) {
+function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, crews, nameOfUser, dmName = null, onNote, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰에서는 창 나누기(옆에 열기)가 반폭 두 장이 되어 못 쓴다
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
@@ -2209,8 +2210,10 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, dmN
   }, [org.id, chKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState(null); // 새 기억 폼이 열린 대상(rel)
-  const chName = (id) => channels.find((c) => c.id === id)?.name ?? t('act.deletedChannel');
-  const chLabel = (id) => { const c = channels.find((x) => x.id === id); return !c ? t('act.deletedChannel') : c.kind === 'dm' ? (dmName?.(c) || t('ui.dm')) : `#${c.name}`; }; // 문서 범위 표기 — 채널은 #이름, DM은 상대 이름(2026-09-16)
+  // 문서 라벨은 참여 안 한 공개 채널까지 찾는다 — 공개 채널 일지는 조직원 누구나 읽어(RLS) 목록에 오는데, 참여 기준(#555) 뒤 channels에는 없어 '삭제된 채널'로 보였다
+  const findCh = (id) => channels.find((c) => c.id === id) ?? previewChannels.find((c) => c.id === id);
+  const chName = (id) => findCh(id)?.name ?? t('act.deletedChannel');
+  const chLabel = (id) => { const c = findCh(id); return !c ? t('act.deletedChannel') : c.kind === 'dm' ? (dmName?.(c) || t('ui.dm')) : `#${c.name}`; }; // 문서 범위 표기 — 채널은 #이름, DM은 상대 이름(2026-09-16)
   const journals = useMemo(() => docs.filter((d) => d.channel_id && d.path.startsWith('journal/')).sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.path.localeCompare(a.path)), [docs]); // 최근 일지(채널·DM) — 목록과 빈 안내가 같은 술어를 쓴다(검수 M-3)
   const crewName = (id) => crews.find((c) => c.id === id)?.display_name ?? t('act.deletedCrew');
   const docTitle = (id) => docs.find((d) => d.id === id)?.title ?? null;

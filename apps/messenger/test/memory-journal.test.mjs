@@ -22,7 +22,8 @@ test('조직 전체 기억 화면에 최근 일지(채널·DM) 목록 — 전사
 
 test('DM 일지는 상대 이름으로 표기(dmName 전달)', () => {
   assert.match(app, /<Activity [^\n]*dmName=\{dmName\}/, 'App → Activity에 dmName');
-  assert.match(app, /const chLabel = \(id\) => \{ const c = channels\.find\(\(x\) => x\.id === id\); return !c \? t\('act\.deletedChannel'\) : c\.kind === 'dm' \? \(dmName\?\.\(c\) \|\| t\('ui\.dm'\)\) : `#\$\{c\.name\}`; \};/, 'Activity.chLabel: 채널은 #이름, DM은 상대 이름');
+  assert.match(app, /const findCh = \(id\) => channels\.find\(\(c\) => c\.id === id\) \?\? previewChannels\.find\(\(c\) => c\.id === id\);/, '참여 안 한 공개 채널 일지도 #이름(참여 기준 #555 뒤 channels에 없음) — 행동은 memory-journal.browser.mjs');
+  assert.match(app, /const chLabel = \(id\) => \{ const c = findCh\(id\); return !c \? t\('act\.deletedChannel'\) : c\.kind === 'dm' \? \(dmName\?\.\(c\) \|\| t\('ui\.dm'\)\) : `#\$\{c\.name\}`; \};/, 'Activity.chLabel: 채널은 #이름, DM은 상대 이름');
   assert.match(app, /<MemDoc doc=\{doc\} isAdmin=\{isAdmin\} nameOfUser=\{nameOfUser\} chName=\{chLabel\}/, 'MemDoc 헤더도 chLabel(# 중복 없음 — 검수 LOW-2)');
 });
 
