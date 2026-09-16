@@ -13,7 +13,8 @@ FILES=(20260908120000_msgr_bots 20260908140000_msgr_crew_autodispatch 2026090900
 for f in "${FILES[@]}"; do
   V=${f%%_*}
   if [ "$(psql "$C" -At -c "select count(*) from supabase_migrations.schema_migrations where version = '$V'")" = "1" ]; then echo "skip  $f (이미 기록됨)"; continue; fi
-  psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "supabase/migrations/$f.sql" 2>&1 | grep -v NOTICE || true
+  # 실패하면 여기서 멈춘다 — 종전 `| grep -v NOTICE || true`는 SQL 실패를 삼키고 아래에서 적용됨으로 기록했다(2026-09-17 발견). NOTICE는 PGOPTIONS로 끈다.
+  PGOPTIONS='-c client_min_messages=warning' psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "supabase/migrations/$f.sql"
   psql "$C" -q -c "insert into supabase_migrations.schema_migrations (version, name, statements) values ('$V', '${f#*_}', array[]::text[]) on conflict (version) do nothing"
   echo "OK    $f"
 done
