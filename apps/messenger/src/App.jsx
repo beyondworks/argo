@@ -31,6 +31,7 @@ import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
+import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
@@ -389,6 +390,12 @@ function Shell({ session }) {
   // 푸시를 놓치면 폰 숫자가 굳는다. 앱이 앞으로 올 때·알림함을 열거나 다 읽을 때 서버에 재계산·재전송을 요청한다(iOS 토큰 없는 사용자는 서버가 no-op). 3초 한 번.
   const badgeSyncAt = useRef(0);
   const resyncBadge = useCallback(() => { const now = Date.now(); if (now - badgeSyncAt.current < 3000) return; badgeSyncAt.current = now; supabase.rpc('msgr_push_badge_resync').then(() => {}, () => {}); }, []);
+  // 지금 이 화면을 보고 있는 기기를 서버에 알린다 — PC를 보는 동안에는 폰 푸시를 건너뛴다(유건 2026-09-16).
+  // 판정은 서버의 msgr_push_recipients가 한다. 창을 떠나면 심박이 멎어 2분 안에 폰 알림이 되살아난다.
+  useEffect(() => {
+    if (!uid) return undefined;
+    return startPresence({ supabase, source: isMobileNative ? 'mobile' : (isDesktopTauri() ? 'desktop' : 'web') });
+  }, [uid]);
   useEffect(() => { if (!uid) return; resyncBadge(); const onVis = () => { if (document.visibilityState === 'visible') resyncBadge(); }; document.addEventListener('visibilitychange', onVis); return () => document.removeEventListener('visibilitychange', onVis); }, [uid, resyncBadge]); // 콜드 스타트(푸시 탭 포함)에도 1회 — 검수 M-2
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState(() => (isPhone ? 'home' : 'chat'));

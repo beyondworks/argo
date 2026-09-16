@@ -9,7 +9,7 @@ set -a; . ./.env.local; set +a
 REF=$(echo "$NEXT_PUBLIC_SUPABASE_URL" | sed -E 's#https?://([a-z0-9]+)\.supabase\.co.*#\1#')
 export PGPASSWORD="$SUPABASE_DB_PASSWORD"
 C="host=aws-1-ap-northeast-2.pooler.supabase.com port=5432 user=postgres.$REF dbname=postgres sslmode=require"
-FILES=(20260908120000_msgr_bots 20260908140000_msgr_crew_autodispatch 20260909000000_msgr_bot_external_id 20260909001000_msgr_crew_folder 20260909002000_msgr_profiles_friends 20260909003000_msgr_message_meta 20260909004000_msgr_p0_reads_reactions_prefs 20260909005000_msgr_avatars 20260913084237_msgr_friend_member_search 20260914200000_msgr_delete_me 20260914203000_msgr_public_domains_relay 20260914210000_msgr_push_secret 20260915120000_msgr_push_badge_resync 20260915130000_msgr_push_badge_resync2 20260915140000_msgr_dm_latest 20260915150000_msgr_email_search_default 20260916150000_msgr_personal_dm)
+FILES=(20260908120000_msgr_bots 20260908140000_msgr_crew_autodispatch 20260909000000_msgr_bot_external_id 20260909001000_msgr_crew_folder 20260909002000_msgr_profiles_friends 20260909003000_msgr_message_meta 20260909004000_msgr_p0_reads_reactions_prefs 20260909005000_msgr_avatars 20260913084237_msgr_friend_member_search 20260914200000_msgr_delete_me 20260914203000_msgr_public_domains_relay 20260914210000_msgr_push_secret 20260915120000_msgr_push_badge_resync 20260915130000_msgr_push_badge_resync2 20260915140000_msgr_dm_latest 20260915150000_msgr_email_search_default 20260916150000_msgr_personal_dm 20260916170000_msgr_presence)
 for f in "${FILES[@]}"; do
   V=${f%%_*}
   if [ "$(psql "$C" -At -c "select count(*) from supabase_migrations.schema_migrations where version = '$V'")" = "1" ]; then echo "skip  $f (이미 기록됨)"; continue; fi
