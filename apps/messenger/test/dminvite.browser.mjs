@@ -8,12 +8,12 @@ const browser = await chromium.launch({ headless: true, channel: process.env.PLA
 const URL_BASE = `http://127.0.0.1:${process.env.DMINVITE_TEST_PORT || 5202}/test/dminvite.fixture.html`;
 const results = []; const failures = [];
 
-async function scenario(width, name, run) {
+async function scenario(width, name, run, query = '') {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e.message).slice(0, 160)));
   try {
-    await page.goto(URL_BASE, { waitUntil: 'load' });
+    await page.goto(URL_BASE + query, { waitUntil: 'load' });
     await page.waitForSelector('.msgr-rail, .msgr-shell', { timeout: 10_000 });
     await page.waitForTimeout(900);
     await run(page);
@@ -137,7 +137,7 @@ await scenario(1280, 'public-channel-people', async (p) => {
   const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor({ timeout: 5000 });
   const people = () => sheet.locator('.msgr-rows .row').evaluateAll((rs) => rs.filter((r) => !r.querySelector('.msgr-av.crew') && !r.closest('.msgr-excluded')).map((r) => r.querySelector('.name')?.innerText));
   assert.deepEqual(await people(), ['Fixture Owner'], '참여한 사람만 — 조직원 전원이 아니다');
-  assert.match(await sheet.locator('.note').first().innerText(), /참여한 사람만/, '안내가 참여 기준을 말한다');
+  assert.match(await sheet.locator('.note').first().innerText(), /참여한 사람/, '안내가 참여 기준을 말한다');
   await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
   await sheet.locator('.msgr-addmenu button', { hasText: '사람 추가' }).click();
   await sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Third Person' }).click(); await p.waitForTimeout(700);
@@ -146,7 +146,7 @@ await scenario(1280, 'public-channel-people', async (p) => {
   assert.ok((await people()).includes('Third Person'), '초대한 사람이 목록에 들어온다');
   const row = sheet.locator('.msgr-rows .row', { hasText: 'Third Person' }).first();
   await row.locator('button[aria-label]').first().click();
-  await sheet.locator('.msgr-rowmenu button.danger').first().click(); await p.waitForTimeout(700);
+  await p.locator('.msgr-ctxmenu button.danger').first().click(); await p.waitForTimeout(700);
   const cs = await calls();
   assert.ok(cs.some((c) => c.table === 'msgr_channels' && c.op === 'update' && (c.values?.excluded_user_ids ?? []).includes('user-third')), '내보내면 제외 목록에 든다');
   assert.ok(cs.some((c) => c.table === 'msgr_channel_members' && c.op === 'delete'), '참여 행도 지운다(목록에 남아 안 열리는 채널이 되지 않게)');
@@ -169,6 +169,83 @@ await scenario(1280, 'unjoined-preview', async (p) => {
   assert.ok(calls.some((c) => c.rpc === 'msgr_join_channel' && c.args?.ch === 'open-2'), '참여를 요청한다');
   assert.equal(await p.locator('.msgr-joinbar').count(), 0, '참여하면 참여 바가 사라진다');
   assert.ok((await rail()).includes('Open Lounge'), '목록에 들어온다');
+});
+
+// ── 에이전트 참여 = 초대된 것만, 참여자는 방장 승인(유건 2026-09-16) ──
+const openGeneralSheet = async (p) => {
+  await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click(); await p.waitForTimeout(500);
+  await p.locator('.msgr-top button.members').click();
+  const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor({ timeout: 5000 }); return sheet;
+};
+const crewRows = (sheet) => sheet.locator('.msgr-rows .row:not(.req)').evaluateAll((rs) => rs.filter((r) => r.querySelector('.msgr-av.crew')).map((r) => r.querySelector('.name')?.innerText));
+
+// 12. 공개 채널에 파견된 에이전트가 저절로 들어와 있지 않다(종전: 조직 에이전트 전원)
+await scenario(1280, 'public-no-auto-crews', async (p) => {
+  const sheet = await openGeneralSheet(p);
+  assert.deepEqual(await crewRows(sheet), [], `초대된 에이전트만 — 아무도 초대하지 않았다 (실제: ${await crewRows(sheet)})`);
+  assert.equal(await p.locator('.msgr-top button.members .msgr-av.crew').count(), 0, '채널 머리에도 에이전트 얼굴이 없다');
+  await sheet.locator('button', { hasText: '채널 설정' }).first().click(); await p.waitForTimeout(300); // 정책 칸은 접힌 설정 안에 있다
+  const seg = await sheet.locator('[role="radio"]').allInnerTexts();
+  for (const w of ['바로 추가', '방장 승인', '못 데려옴']) assert.ok(seg.some((x) => x.includes(w)), `정책 칸 '${w}' (실제: ${seg})`);
+  assert.equal(await sheet.locator('[role="radio"][aria-checked="true"]').innerText(), '방장 승인', '기본은 방장 승인');
+});
+
+// 13. 방장 — 에이전트를 바로 넣고, 멤버의 요청을 허락한다
+await scenario(1280, 'host-adds-and-approves', async (p) => {
+  const sheet = await openGeneralSheet(p);
+  const req = sheet.locator('.row.req', { hasText: 'Colleague Agent' });
+  assert.match(await req.innerText(), /Org Colleague님이 데려오려 합니다/, '들어오려는 에이전트와 요청한 사람');
+  await req.locator('button', { hasText: '허락' }).click(); await p.waitForTimeout(700);
+  const calls = () => p.evaluate(() => window.__dmInviteFixture.calls);
+  assert.ok((await calls()).some((c) => c.rpc === 'msgr_crew_join_decide' && c.args.req === 'req-1' && c.args.approve === true), '허락을 서버에 보낸다');
+  assert.ok((await crewRows(sheet)).includes('Colleague Agent'), '허락하면 구성에 들어온다');
+  assert.equal(await sheet.locator('.row.req').count(), 0, '요청 행이 사라진다');
+  await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
+  await sheet.locator('.msgr-addmenu button', { hasText: '에이전트 추가' }).click();
+  const chip = sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Fixture Agent' });
+  assert.equal(await chip.locator('.msgr-klabel').count(), 0, '방장에게는 승인 필요 표시가 없다');
+  await chip.click(); await p.waitForTimeout(700);
+  assert.ok((await calls()).some((c) => c.rpc === 'msgr_crew_join' && c.args.crew === 'crew-1'), '서버 규칙(msgr_crew_join)으로 넣는다');
+  assert.ok((await crewRows(sheet)).includes('Fixture Agent'), '바로 들어온다');
+});
+
+// 14. 방장 — 알림함의 결재 칸에 요청이 오고, 누르면 그 채널의 설정이 열린다
+await scenario(1280, 'host-inbox-request', async (p) => {
+  await p.locator('button[aria-label*="알림"]').first().click(); await p.waitForTimeout(900);
+  const item = p.locator('.msgr-inboxrow', { hasText: '데려오려 합니다' }).first();
+  await item.waitFor({ timeout: 5000 });
+  assert.match(await item.innerText(), /결재/, '결재 칸의 항목');
+  await item.click(); await p.waitForTimeout(900);
+  const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor({ timeout: 5000 });
+  assert.ok(await sheet.locator('.row.req', { hasText: 'Colleague Agent' }).isVisible(), '그 채널 설정에서 바로 허락할 수 있다');
+});
+
+// 15. 참여자 — 자기 에이전트는 '승인 필요', 누르면 요청이 가고 대기로 보인다. 남의 개인 에이전트는 후보가 아니다
+await scenario(1280, 'member-requests-approval', async (p) => {
+  const sheet = await openGeneralSheet(p);
+  await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
+  await sheet.locator('.msgr-addmenu button', { hasText: '에이전트 추가' }).click();
+  const chips = await sheet.locator('.msgr-chips .msgr-chan').allInnerTexts();
+  assert.ok(!chips.some((x) => x.includes('Colleague Agent')), `남의 개인 에이전트는 후보가 아니다 (${chips})`);
+  const mine = sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Fixture Agent' });
+  assert.match(await mine.innerText(), /승인 필요/, '내 에이전트에 승인 필요 표시');
+  await mine.click(); await p.waitForTimeout(700);
+  assert.ok((await p.evaluate(() => window.__dmInviteFixture.calls)).some((c) => c.rpc === 'msgr_crew_join' && c.args.crew === 'crew-1'), '요청을 보낸다');
+  assert.ok(!(await crewRows(sheet)).includes('Fixture Agent'), '허락 전에는 구성에 없다');
+  assert.match(await sheet.locator('.row.req', { hasText: 'Fixture Agent' }).innerText(), /방장 승인 대기/, '대기로 보인다');
+  assert.equal(await sheet.locator('.row.req button', { hasText: '허락' }).count(), 0, '참여자에게는 허락 버튼이 없다');
+}, '?role=member');
+
+// 16. 설정창을 열어 둔 사이 요청이 바뀌면 주기 재조회(15초)로 보인다 — 방장이 창을 닫았다 열 필요가 없다(검수 M-3)
+await scenario(1280, 'open-sheet-refreshes-requests', async (p) => {
+  const sheet = await openGeneralSheet(p);
+  assert.ok(await sheet.locator('.row.req', { hasText: 'Colleague Agent' }).isVisible(), '처음 요청');
+  await p.evaluate(() => { const t = window.__dmInviteFixture.tables.msgr_channel_crew_requests; t[0].status = 'approved'; t.push({ id: 'req-2', channel_id: 'general', crew_id: 'crew-bot', requested_by: 'user-third', status: 'pending', created_at: new Date().toISOString() }); });
+  await p.waitForTimeout(16500);
+  const rows = await sheet.locator('.row.req').allInnerTexts();
+  assert.ok(rows.some((x) => x.includes('External Bot')), `새 요청이 보인다 (${rows})`);
+  assert.ok(!rows.some((x) => x.includes('Colleague Agent')), '처리된 요청은 사라진다');
+  assert.ok(await sheet.isVisible(), '설정창은 열린 채로');
 });
 
 await browser.close();

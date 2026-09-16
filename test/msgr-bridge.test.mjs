@@ -53,7 +53,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCre
     async messagesAfter(org, after) { rec('messagesAfter', org, after); return messages.filter((m) => m.id > after); },
     async message(id) { rec('message', id); return typeof parent === 'function' ? parent(id) : parent; },
     async crewChannels() { return dm; },
-    async crewScope() { rec('crewScope'); return new Set(member ?? dm); }, // 구성원 채널(기본 = DM과 같음)
+    async crewScope() { rec('crewScope'); return new Set(member ?? [...(dm ?? []), CH]); }, // 구성원 채널(기본 = DM + 기본 채널에 초대됨 — 2026-09-16부터 공개 채널도 초대된 에이전트만 답한다)
     async channelCrewMembers(ch) { rec('channelCrewMembers', ch); return new Set(chCrews ?? (peers ?? crews).map((c) => c.id)); }, // 기본 = 조직 크루 전원이 구성원(범위 테스트만 chCrews로 좁힌다)
     async channel(id) { rec('channel', id); return { id, org_id: ORG, kind: 'public', name: 'general', crew_memory: true, ...(this.channelOverride ?? {}) }; },
     async memberName() { return '민수'; },
@@ -896,10 +896,11 @@ test('handler: 오래된 실행권은 같은 채널에 확인 안내만 남기�
 });
 
 // ── 채널 범위(유건 원칙 2026-09-11): 채널에 초대된 에이전트만 답하고, 내보낸 에이전트는 못 답한다 — 노드는 턴 자체를 돌리지 않는다(서버 트리거 msgr_messages_crew_scope가 최후 방어) ──
-test('순수: crewInScope — 공개는 제외 목록 밖(구성원 여부 무관), 비공개·DM은 구성원일 때만, 채널 없음·판정 불명은 거부', () => {
-  assert.equal(M.crewInScope({ id: CH, kind: 'public', excluded_crew_ids: [] }, CREW, false), true);
+test('순수: crewInScope — 모든 채널에서 구성원일 때만(공개도, 2026-09-16), 공개 채널에서 내보낸 크루는 거부, 채널 없음·판정 불명은 거부', () => {
+  assert.equal(M.crewInScope({ id: CH, kind: 'public', excluded_crew_ids: [] }, CREW, false), false, '초대되지 않은 공개 채널(종전에는 파견된 크루 전원이었다)');
+  assert.equal(M.crewInScope({ id: CH, kind: 'public', excluded_crew_ids: [] }, CREW, true), true, '초대된 공개 채널');
   assert.equal(M.crewInScope({ id: CH, kind: 'public', excluded_crew_ids: [CREW] }, CREW, true), false, '공개 채널에서 내보낸 크루');
-  assert.equal(M.crewInScope({ id: CH, kind: 'public' }, CREW, false), true, '제외 목록 열 없음 = 제외 없음');
+  assert.equal(M.crewInScope({ id: CH, kind: 'public' }, CREW, true), true, '제외 목록 열 없음 = 제외 없음');
   assert.equal(M.crewInScope({ id: CH, kind: 'private' }, CREW, true), true);
   assert.equal(M.crewInScope({ id: CH, kind: 'private' }, CREW, false), false, '초대되지 않은 비공개 채널');
   assert.equal(M.crewInScope({ id: CH, kind: 'dm' }, CREW, undefined), false, '판정 불명은 거부(fail-closed)');
@@ -910,6 +911,7 @@ test('drain: 초대되지 않은 비공개 채널·내보낸 공개 채널의 �
   const cases = [
     ['비공개 비구성원', { member: [] }, { kind: 'private' }, 0],
     ['비공개 구성원', { member: [CH] }, { kind: 'private' }, 1],
+    ['공개 비구성원', { member: [] }, {}, 0], // 초대되지 않은 공개 채널은 조용(2026-09-16 — 종전에는 답했다)
     ['공개 내보냄', {}, { excluded_crew_ids: [CREW] }, 0],
     ['공개 다른 크루만 내보냄', {}, { excluded_crew_ids: [ZED] }, 1],
   ];
@@ -928,7 +930,7 @@ test('drain: 초대되지 않은 비공개 채널·내보낸 공개 채널의 �
 test('drain: 채널 범위 조회 실패는 그 크루만 이 틱을 건너뛰고(커서 유지·로그) 다른 크루와 결재 동기화는 계속', async () => {
   const db = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드' })], messages: [msg(11, { mentions: [{ kind: 'crew', id: CREW }, { kind: 'crew', id: ZED }] })] });
   db.crewScope = async () => { throw new Error('boom'); };
-  db.crewScope = (() => { let n = 0; return async () => { if (n++ === 0) throw new Error('boom'); return new Set(); }; })(); // 첫 크루만 실패
+  db.crewScope = (() => { let n = 0; return async () => { if (n++ === 0) throw new Error('boom'); return new Set([CH]); }; })(); // 첫 크루만 실패 — 둘째는 이 채널에 초대되어 있다
   const errs = []; const orig = console.error; console.error = (...a) => errs.push(a.join(' '));
   try {
     const enq = fakeEnqueue(); const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });

@@ -74,6 +74,7 @@ before(() => {
   CREW = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.owner}', 'lean', 'mine', 'Mine') returning id`));
   OTHER_CREW = last(asUser(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.member}', 'lean', 'theirs', 'Theirs') returning id`));
   PUB = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}','public','Work')`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) select '${PUB}', 'crew', id from public.msgr_crews where org_id = '${ORG}' on conflict do nothing`); // 공개 채널도 초대된 에이전트만 쓴다(2026-09-16)
   sql(`update public.msgr_crews set dm_delivery_protocol=1,work_protocol=1,last_seen_at=now(),allow='all',role_text=case when id='${CREW}' then '총괄 moderator' else 'Research' end where org_id='${ORG}'`);
 
 });
