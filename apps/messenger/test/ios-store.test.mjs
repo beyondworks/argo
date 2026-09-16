@@ -10,6 +10,15 @@ test('store build env drops the dev password login and puts the mobile toolchain
   assert.match(buildEnv({ PATH: '' }).CARGO_HOME, /artifacts[\\/]mobile-native[\\/]cargo$/);
 });
 
+import { readAscKey, ascBuildEnv, ascExportArgs } from '../scripts/ios-store.mjs';
+test('App Store Connect API 키: 올바른 설정만 받고, 빌드 env·업로드 인자를 만든다. 없으면 Xcode 계정 세션(빈 값)', () => {
+  const key = readAscKey(JSON.stringify({ keyId: 'ABCDE12345', issuerId: '11111111-2222-3333-4444-555555555555', keyPath: '/k/AuthKey.p8' }));
+  assert.deepEqual(ascBuildEnv(key), { APPLE_API_KEY: 'ABCDE12345', APPLE_API_ISSUER: '11111111-2222-3333-4444-555555555555', APPLE_API_KEY_PATH: '/k/AuthKey.p8' });
+  assert.deepEqual(ascExportArgs(key), ['-authenticationKeyPath', '/k/AuthKey.p8', '-authenticationKeyID', 'ABCDE12345', '-authenticationKeyIssuerID', '11111111-2222-3333-4444-555555555555']);
+  for (const bad of ['{', '{}', JSON.stringify({ keyId: 'short', issuerId: '11111111-2222-3333-4444-555555555555', keyPath: '/k' }), JSON.stringify({ keyId: 'ABCDE12345', issuerId: 'x', keyPath: '/k' })]) assert.equal(readAscKey(bad), null, bad);
+  assert.deepEqual(ascBuildEnv(null), {}); assert.deepEqual(ascExportArgs(null), []);
+});
+
 test('upload export options target App Store Connect upload for the configured team', () => {
   const plist = uploadPlist('TEAM123');
   for (const needle of ['<string>app-store-connect</string>', '<string>upload</string>', '<string>TEAM123</string>']) assert.ok(plist.includes(needle), needle);
