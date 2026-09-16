@@ -32,10 +32,13 @@ pg_ctl -D "$DIR/data" -o "-p $PORT -k $DIR -c listen_addresses=127.0.0.1" -l "$D
 FILES=("${@:-}")
 if [ -z "${FILES[0]}" ]; then FILES=(test/billing-pg-integration.test.mjs test/msgr-pg-integration.test.mjs test/sync-index-pg-integration.test.mjs test/msgr-channel-scope-pg.test.mjs test/msgr-dm-relay-pg.test.mjs test/msgr-bot-idle-gate-pg.test.mjs test/msgr-friend-search-pg.test.mjs test/msgr-push-badge-pg.test.mjs test/msgr-dm-latest-pg.test.mjs test/msgr-personal-dm-pg.test.mjs test/msgr-presence-pg.test.mjs test/msgr-channel-join-pg.test.mjs test/msgr-friend-link-pg.test.mjs); fi
 i=0
+FAILED=()
 for f in "${FILES[@]}"; do
   i=$((i + 1)); db="argo_drill_$i"
   psql "postgresql://postgres@127.0.0.1:$PORT/postgres" -X -q -c "create database $db"
   echo "[drill] $f → $db"
-  ARGO_PG_TEST_URL="postgresql://postgres@127.0.0.1:$PORT/$db" node --test "$f"
+  # 실패해도 멈추지 않고 끝까지 돈다 — 첫 실패에서 서면 뒤 파일이 안 보여 "전부 통과"로 오독한다(실측 2026-09-16).
+  if ARGO_PG_TEST_URL="postgresql://postgres@127.0.0.1:$PORT/$db" node --test "$f"; then :; else FAILED+=("$f"); fi
 done
-echo "[drill] 통과 — 임시 인스턴스 정리"
+if [ ${#FAILED[@]} -gt 0 ]; then echo "[drill] 실패 ${#FAILED[@]}건: ${FAILED[*]}" >&2; exit 1; fi
+echo "[drill] 통과 ${#FILES[@]}개 파일 — 임시 인스턴스 정리"
