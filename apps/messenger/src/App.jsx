@@ -1151,7 +1151,7 @@ function Shell({ session }) {
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
         {page === 'activity' && org ? (
-          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
+          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
           <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'inbox' && org ? (
@@ -1864,7 +1864,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
 
 /* ─── 활동 페이지(유건 지시 2026-09-04): 아르고 "기억"처럼 — 왼쪽은 조직 → 채널 → 사람·크루·문서 트리, 오른쪽은 같은 룩의 관계 그래프,
    고른 대상의 활동은 문장으로("유건이 민수를 관리자로 바꿈"). 정본은 서버 감사 로그(msgr_audit_log) — 화면은 이름으로 치환만 한다. ─── */
-const docRelOf = (d) => `docs/${d.path.replace(/\.md$/, '')}`; // 문서 → 그래프·탭 id(한 곳)
+const docRelOf = (d) => `docs/${d.channel_id ?? 'org'}/${d.path.replace(/\.md$/, '')}`; // 문서 → 그래프·탭 id(한 곳). 채널을 넣는다 — 일지는 채널마다 같은 경로(journal/날짜)라 경로만으론 충돌(검수 #551 HIGH-1)
 
 /* 기억 문서 보기·편집(대상 탭) — 조직 문서 = 조직의 기억(부록 G). 편집권 최종 판정은 RLS(전사=관리자·채널=쓰기 가능 멤버) */
 function MemDoc({ doc, isAdmin, nameOfUser, chName, onSaved, onNote, onError }) {
@@ -1883,7 +1883,7 @@ function MemDoc({ doc, isAdmin, nameOfUser, chName, onSaved, onNote, onError }) 
   return (
     <article className="msgr-memdoc">
       <header>
-        <span className="msgr-klabel">{doc.channel_id ? `#${chName(doc.channel_id)} · ${doc.path}` : doc.path}</span>
+        <span className="msgr-klabel">{doc.channel_id ? `${chName(doc.channel_id)} · ${doc.path}` : doc.path}</span>
         {edit ? <input className="msgr-input" value={edit.title} onChange={(e) => setEdit((x) => ({ ...x, title: e.target.value }))} /> : <h2>{doc.title}</h2>}
         <div className="meta">{t('docs.meta', { v: doc.version, name: nameOfUser(doc.updated_by), when: fmtTs(doc.updated_at, lang) })}
           {!edit && canEdit(doc) && <button type="button" className="btn sm" onClick={() => setEdit({ title: doc.title, body: doc.body ?? '' })}>{t('docs.edit')}</button>}
@@ -1934,7 +1934,7 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
   );
 }
 
-function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onNote, onError, onBack, onMenu, onOpenChannel }) {
+function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, dmName = null, onNote, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰에서는 창 나누기(옆에 열기)가 반폭 두 장이 되어 못 쓴다
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
@@ -1965,7 +1965,10 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   const load = useCallback(async () => {
     const [a, d, m] = await Promise.all([
       q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(400)).catch(() => []), // 감사 열람은 관리자(RLS) — 멤버는 빈 목록
-      q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).order('path').limit(400)).catch(() => []), // 본문까지 — 문서 탭·[[링크]] 그래프
+      Promise.all([ /* 일지(journal/)는 따로 최신 30건 — 한 창(400)에 섞으면 오래된 일지가 규칙집·프로젝트를 밀어낸다(검수 #551 HIGH-2) */
+        q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).not('path', 'like', 'journal/%').order('path').limit(400)).catch(() => []),
+        q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).like('path', 'journal/%').order('updated_at', { ascending: false }).limit(30)).catch(() => []),
+      ]).then(([a, b]) => [...a, ...b]), // 본문까지 — 문서 탭·[[링크]] 그래프
       channels.length ? q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', channels.map((c) => c.id))).catch(() => []) : [],
     ]);
     setRows(a); setDocs(d); setCm(m);
@@ -1973,6 +1976,8 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState(null); // 새 기억 폼이 열린 대상(rel)
   const chName = (id) => channels.find((c) => c.id === id)?.name ?? t('act.deletedChannel');
+  const chLabel = (id) => { const c = channels.find((x) => x.id === id); return !c ? t('act.deletedChannel') : c.kind === 'dm' ? (dmName?.(c) || t('ui.dm')) : `#${c.name}`; }; // 문서 범위 표기 — 채널은 #이름, DM은 상대 이름(2026-09-16)
+  const journals = useMemo(() => docs.filter((d) => d.channel_id && d.path.startsWith('journal/')).sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.path.localeCompare(a.path)), [docs]); // 최근 일지(채널·DM) — 목록과 빈 안내가 같은 술어를 쓴다(검수 M-3)
   const crewName = (id) => crews.find((c) => c.id === id)?.display_name ?? t('act.deletedCrew');
   const docTitle = (id) => docs.find((d) => d.id === id)?.title ?? null;
   const roleName = (r) => (r ? t(`role.${r}`) : '');
@@ -2002,7 +2007,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
     if (r.target_kind === 'user') return `people/${r.target_id}`;
     if (r.target_kind === 'channel') return channels.some((x) => x.id === r.target_id) ? `channels/${r.target_id}` : null;
     if (r.target_kind === 'crew') return `crews/${r.target_id}`;
-    if (r.target_kind === 'doc') { const d = docs.find((x) => x.id === r.target_id); return d ? `docs/${d.path.replace(/\.md$/, '')}` : null; }
+    if (r.target_kind === 'doc') { const d = docs.find((x) => x.id === r.target_id); return d ? docRelOf(d) : null; }
     return null;
   };
   const chOf = (r) => r.meta?.channel ?? r.meta?.channel_id ?? (r.target_kind === 'channel' ? r.target_id : null);
@@ -2040,7 +2045,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   const rc = { openIds, toggle, sel, active: focusTab?.id ?? 'graph', openTab: (rel) => { openEntity(rel); setTreeOpen(false); } }; // 트리 행 컨텍스트(ActRow는 모듈 수준 — 리마운트 없음)
   const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && chOf(r) === rel.slice(9))).length;
   const visibleCh = channels.filter((c) => c.kind !== 'dm');
-  const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${channels.find((x) => x.id === rel.slice(9))?.name ?? t('act.deletedChannel')}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
+  const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${channels.find((x) => x.id === rel.slice(9))?.name ?? t('act.deletedChannel')}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => docRelOf(d) === rel)?.title ?? rel) : rel;
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
@@ -2061,13 +2066,13 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
               const rel = `channels/${c.id}`;
               return <ActRow c={rc} key={c.id} id={rel} label={c.name} sub={countFor(rel)} depth={2} icon={c.kind === 'private' ? 'lock' : 'hash'} kids={<>
                 {cs.map((x) => <ActRow c={rc} key={x.member_id} id={`crews/${x.member_id}`} label={crewName(x.member_id)} sub={countFor(`crews/${x.member_id}`)} depth={3} icon="star" />)}
-                {ds.map((d) => <ActRow c={rc} key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={3} icon="doc" />)}
+                {ds.map((d) => <ActRow c={rc} key={d.id} id={docRelOf(d)} label={d.title} depth={3} icon="doc" />)}
                 {!cs.length && !ds.length && <div className="tree-empty">{t('act.tree.empty')}</div>}
               </>} />;
             })} />
             <ActRow c={rc} id="people" label={t('act.tree.people')} sub={members.length} depth={1} kids={members.map((m) => <ActRow c={rc} key={m.user_id} id={`people/${m.user_id}`} label={m.display_name || m.user_id.slice(0, 8)} sub={countFor(`people/${m.user_id}`)} depth={2} icon="at" />)} />
             <ActRow c={rc} id="crews" label={t('act.tree.crews')} sub={crews.length} depth={1} kids={crews.map((c) => <ActRow c={rc} key={c.id} id={`crews/${c.id}`} label={c.display_name} sub={countFor(`crews/${c.id}`)} depth={2} icon="star" />)} />
-            <ActRow c={rc} id="docs" label={t('act.tree.docs')} sub={docs.filter((d) => !d.channel_id).length} depth={1} kids={docs.filter((d) => !d.channel_id).map((d) => <ActRow c={rc} key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={2} icon="doc" />)} />
+            <ActRow c={rc} id="docs" label={t('act.tree.docs')} sub={docs.filter((d) => !d.channel_id).length} depth={1} kids={docs.filter((d) => !d.channel_id).map((d) => <ActRow c={rc} key={d.id} id={docRelOf(d)} label={d.title} depth={2} icon="doc" />)} />
           </>} />
         </div>
       </aside>
@@ -2110,17 +2115,21 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
                       const scopeDocs = doc ? [] : sel === 'org' ? docs.filter((d) => !d.channel_id) : ch ? docs.filter((d) => d.channel_id === ch.id) : sel.startsWith('people/') ? docs.filter((d) => d.updated_by === sel.slice(7)) : [];
                       const canNew = sel === 'org' ? isAdmin : !!ch;
                       return (<>
-                        {!doc && <div className="head"><h3>{sel === 'org' ? t('mem.all') : t('mem.of', { name: entityTitle(sel) })}</h3><span className="sub">{scopeDocs.length}</span>
+                        {!doc && <div className="head"><h3>{sel === 'org' ? t('mem.all') : t('mem.of', { name: entityTitle(sel) })}</h3><span className="sub">{scopeDocs.length + (sel === 'org' ? journals.length : 0)}</span>
                           {ch && <button type="button" className="btn sm" onClick={() => onOpenChannel(ch.id)}><I name="hash" size={12} />{t('act.openChannel')}</button>}
                           {canNew && creating !== sel && <button type="button" className="btn sm" onClick={() => setCreating(sel)}><I name="plus" size={12} />{t('mem.new')}</button>}
                         </div>}
-                        {creating === sel && <MemNew org={org} channelId={ch?.id ?? null} uid={uid} onNote={onNote} onError={onError} onCancel={() => setCreating(null)} onCreated={async (d) => { setCreating(null); await load(); openEntity(`docs/${d.path.replace(/\.md$/, '')}`); }} />}
-                        {doc ? <MemDoc doc={doc} isAdmin={isAdmin} nameOfUser={nameOfUser} chName={chName} onSaved={load} onNote={onNote} onError={onError} /> : (
+                        {creating === sel && <MemNew org={org} channelId={ch?.id ?? null} uid={uid} onNote={onNote} onError={onError} onCancel={() => setCreating(null)} onCreated={async (d) => { setCreating(null); await load(); openEntity(docRelOf({ ...d, channel_id: d.channel_id ?? ch?.id ?? null })); }} />}
+                        {doc ? <MemDoc doc={doc} isAdmin={isAdmin} nameOfUser={nameOfUser} chName={chLabel} onSaved={load} onNote={onNote} onError={onError} /> : (
                           <div className="msgr-memlist">
-                            {!scopeDocs.length && creating !== sel && <p className="empty">{sel.startsWith('people/') || sel.startsWith('crews/') ? t('mem.none.person') : t('mem.none')}</p>}
+                            {sel === 'org' && journals.length > 0 && ( /* 최근 일지 — 채널·DM의 크루 답글이 서버 트리거로 쌓인다(2026-09-16). 전사 문서가 0이어도 첫 화면이 비지 않게 */
+                              <div className="folder"><div className="msgr-klabel">{t('mem.journal.recent')}</div>
+                                {journals.map((d) => <button key={d.id} type="button" className="memitem" onClick={(e) => openEntity(docRelOf(d), { split: !!(e.metaKey || e.altKey) })}><I name="doc" size={13} /><span className="name">{d.title}</span><span className="meta">{chLabel(d.channel_id)}</span></button>)}
+                              </div>)}
+                            {!scopeDocs.length && creating !== sel && !(sel === 'org' && journals.length > 0) && <p className="empty">{sel.startsWith('people/') || sel.startsWith('crews/') ? t('mem.none.person') : t('mem.none')}</p>}
                             {DOC_FOLDERS.map((f) => { const found = scopeDocs.filter((d) => d.path.startsWith(`${f}/`)); const fs = f === 'journal' ? [...found].sort((a, b) => b.path.localeCompare(a.path)) : found; /* 일지는 파일명이 날짜(YYYY-MM-DD)라 경로 내림차순 = 최신이 위 */ return fs.length ? (
                               <div key={f} className="folder"><div className="msgr-klabel">{t(`docs.folder.${f}`)}</div>
-                                {fs.map((d) => <button key={d.id} type="button" className="memitem" onClick={(e) => openEntity(docRelOf(d), { split: !!(e.metaKey || e.altKey) })}><I name="doc" size={13} /><span className="name">{d.title}</span><span className="meta">{d.channel_id ? `#${chName(d.channel_id)} · ` : ''}v{d.version} · {nameOfUser(d.updated_by)}</span></button>)}
+                                {fs.map((d) => <button key={d.id} type="button" className="memitem" onClick={(e) => openEntity(docRelOf(d), { split: !!(e.metaKey || e.altKey) })}><I name="doc" size={13} /><span className="name">{d.title}</span><span className="meta">{d.channel_id ? `${chLabel(d.channel_id)} · ` : ''}v{d.version} · {nameOfUser(d.updated_by)}</span></button>)}
                               </div>) : null; })}
                           </div>
                         )}
@@ -2833,7 +2842,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
       {phone && <span className="msgr-sub">{t('phone.meta', { n: people.length, c: chCrews.length })}</span>}
       {/* 켜고 끄는 자리가 안 보인다(유건 2026-09-09) → 표지 자체가 토글. 아이콘만, 꺼짐 = 취소선·붉은색 */}
       <span className="msgr-hchips"><button type="button" className={`msgr-hchip${muted ? ' off' : ''}`} onClick={onToggleMute} title={t(muted ? 'ch.mute.off.tip' : 'ch.mute.on.tip')} aria-pressed={muted} aria-label={t('ch.muted')}><I name={muted ? 'belloff' : 'bell'} size={14} /></button>
-      {channel.kind !== 'dm' && <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false} aria-label={t('ch.memoryOff')}><I name={channel.crew_memory === false ? 'memoff' : 'memory'} size={14} /></button>}</span>
+      <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false} aria-label={t('ch.memoryOff')}><I name={channel.crew_memory === false ? 'memoff' : 'memory'} size={14} /></button></span>
       <button type="button" className="members" onClick={onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{phone && <I name="dots" size={20} className="ph-dots" />}{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" userId={m.user_id} />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} crewId={c.id} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
       <button type="button" className="btn sm msgr-work-button" onClick={() => setWorkOpen(true)} aria-label={t('work.title')}>{t('work.button')}</button>
       <div className="msgr-seg" role="tablist">{tabs.map(([k, ic, n]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{ic && <I name={ic} size={13} />}{t(`tab.${k}`)}{n > 0 && <span className="n">{n}</span>}</button>)}</div>

@@ -176,7 +176,9 @@ test('G-1: 조직 문서 — 풋터 버튼·페이지 분기, 목록은 org 단�
   assert.doesNotMatch(app, /page === 'docs'|function Docs\(/, '별도 문서 페이지 없음 — 조직 문서(=조직의 기억)는 기억 페이지 한 곳(유건 지적 2026-09-04: 보이는 건 활동이 아니라 기억이어야)');
   const docs = app.slice(app.indexOf('function MemDoc('), app.indexOf('function Activity('));
   const actv = app.slice(app.indexOf('function Activity('), app.indexOf('/* ─── 조직 문서(G-1)'));
-  assert.match(actv, /from\('msgr_org_docs'\)\.select\('id, channel_id, path, title, body, version, updated_by, updated_at'\)\.eq\('org_id', org\.id\)\.order\('path'\)/, '목록 조회(본문 포함 — 문서 탭·[[링크]] 그래프)');
+  // 2026-09-16: 일지(journal/)는 별도 조회 — 한 창(400)에 섞으면 오래된 일지가 규칙집·프로젝트를 밀어낸다(검수 #551 HIGH-2)
+  assert.match(actv, /from\('msgr_org_docs'\)\.select\('id, channel_id, path, title, body, version, updated_by, updated_at'\)\.eq\('org_id', org\.id\)\.not\('path', 'like', 'journal\/%'\)\.order\('path'\)\.limit\(400\)/, '비일지 목록 조회(본문 포함 — 문서 탭·[[링크]] 그래프)');
+  assert.match(actv, /from\('msgr_org_docs'\)[^\n]*\.like\('path', 'journal\/%'\)\.order\('updated_at', \{ ascending: false \}\)\.limit\(30\)/, '일지는 최신 30건 별도 조회');
   assert.match(actv, /const canNew = sel === 'org' \? isAdmin : !!ch;/, '새 기억은 전사=관리자·채널=멤버, 사람·크루 탭엔 없음');
   assert.match(actv, /<details className="msgr-actfold">/, '활동 기록은 접힌 보조 정보(주 내용은 기억)');
   assert.match(docs, /const canEdit = \(d\) => d\.channel_id \? true : isAdmin;/, '편집권 힌트');
