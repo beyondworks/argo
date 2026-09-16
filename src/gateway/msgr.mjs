@@ -19,7 +19,7 @@
 // DB 접근은 makeDb(client) 한 층에 모은다 — 단위 테스트는 가짜 db를 주입하고(test/msgr-bridge.test.mjs), 실제
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
-import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
@@ -90,11 +90,13 @@ export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {})
   const gone = Object.keys(state.docs).filter((id) => !want.has(id));
   let wrote = 0, removed = 0;
   await mkdir(dir, { recursive: true });
-  for (const id of gone) { // 서버에서 사라짐(삭제·열람권 상실) → 미러도 회수
+  for (const id of gone) { // 서버에서 사라짐(삭제·열람권 상실) → 미러도 회수. 미러는 0444라 chmod 뒤 unlink(윈도우 EPERM), 실패하면 state를 남겨 다음에 다시 시도(검수 #551 M-2)
     const rel = state.docs[id]?.path;
-    if (rel) await unlink(join(dir, rel)).catch(() => {});
+    const file = rel ? join(dir, rel) : null;
+    if (file) { await chmod(file, 0o644).catch(() => {}); const ok = await unlink(file).then(() => true, (e) => e?.code === 'ENOENT'); if (!ok) continue; }
     delete state.docs[id]; removed++;
   }
+  await rm(join(dir, 'journal'), { recursive: true, force: true }).catch(() => {}); // journal/은 미러하지 않는다 — state가 없어도(첫 미러로 오인) 옛 일지 파일이 색인에 남지 않게 통째로 스윕
   const bodies = changed.length ? await db.docsByIds(changed) : [];
   for (const doc of bodies) {
     const prev = state.docs[doc.id];

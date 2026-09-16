@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -461,6 +461,9 @@ test('G-2 조직 문서 미러: 서버 문서 → vault/org/<slug>/<path> 읽기
   assert.deepEqual(r4, { wrote: 0, removed: 1, total: 1 }, 'journal/은 미러 대상이 아니고 옛 미러 파일은 회수');
   await assert.rejects(() => readFile(join(dir, 'journal', '2026-09-14.md'), 'utf8'), /ENOENT/, '내려가 있던 일지 미러를 지운다');
   assert.ok(!dbJ.calls.some((c) => c[0] === 'docsByIds' && c[1].includes('d-j')), '일지 본문은 내려받지 않는다');
+  await mkdir(join(dir, 'journal'), { recursive: true }); await writeFile(join(dir, 'journal', '2026-09-15.md'), 'stale', 'utf8'); await chmod(join(dir, 'journal', '2026-09-15.md'), 0o444);
+  await M.syncOrgDocs(WS, ORG, { db: dbJ, log: null });
+  await assert.rejects(() => readFile(join(dir, 'journal', '2026-09-15.md'), 'utf8'), /ENOENT/, 'state에 없는(손으로·옛 미러) journal/ 파일도 스윕(재검수 M-2: state 손상 시 잔존)');
   assert.match(await readFile(join(dir, 'rules', 'handbook.md'), 'utf8'), /version: 2\n[\s\S]*숫자는 표로/);
   await assert.rejects(() => readFile(join(dir, 'glossary', 'terms.md'), 'utf8'), /ENOENT/, '사라진 문서의 미러는 지운다');
   const state = JSON.parse(await readFile(join(dir, M.ORG_DOCS_STATE), 'utf8'));

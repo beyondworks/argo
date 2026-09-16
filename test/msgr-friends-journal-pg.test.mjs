@@ -122,6 +122,7 @@ test('crew replies in a memory-enabled channel append to that channel journal; D
  const dj=journal(dm); assert.ok(dj,'DM crew replies journal too (2026-09-16 — 문서는 채널 범위 RLS)'); assert.equal(dj.channel_id,dm); assert.match(dj.body,/DM 질문 → DM 답/);
  assert.equal(last(asUser(U.owner,`select count(*) from msgr_org_docs where channel_id='${dm}'`)),'1','DM 참여자(소유자)는 DM 일지를 읽는다');
  assert.equal(last(asUser(U.member,`select count(*) from msgr_org_docs where channel_id='${dm}'`)),'0','DM 밖 조직 멤버에게는 DM 일지가 보이지 않는다(RLS)');
+ assert.equal(sql(`select count(*) from msgr_audit_log where org_id='${ORG}' and action like 'doc.%'`),before,'DM journal writes leave no doc audit rows either');
  sql(`update msgr_channels set crew_memory=false where id='${PUB}'`);
  const off=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,author_user_id,body) values('${PUB}','user','${U.owner}','기억 끔') returning id`));
  asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,meta) values('${PUB}','crew','${CREW}','기억 끔 답',${off},${off},'reply:${CREW}:${off}','{"disposition":"done"}')`);
