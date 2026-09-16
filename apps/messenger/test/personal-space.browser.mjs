@@ -98,6 +98,24 @@ try {
       await p.screenshot({ path: new URL(`friend-dm-${lang}-${width}.png`, artifacts).pathname });
     });
 
+    // 2b. 개인 공간의 '새 채팅'이 여는 설정 — 조직 탭 없음, 가상 조직 id로 조회하지 않음, 조직원 친구도 개인 1:1(실사고 2026-09-16:
+    // 가상 조직 객체가 설정에 넘어가 초대·봇 목록을 org_id=__personal__로 조회해 400, 친구 버튼은 조직 DM으로 갔다)
+    if (width >= 768) await scenario(lang, width, 'personal-settings-no-org', async (p) => {
+      await p.locator('.msgr-org').click();
+      await p.locator('.msgr-menu-pop button').first().click();
+      await p.locator('[data-sec="dms"]').waitFor();
+      await p.locator(`[aria-label="${lang === 'ko' ? '새 채팅' : 'New chat'}"]`).click();
+      await p.locator('.msgr-setnav').waitFor();
+      assert.deepEqual(await p.locator('.msgr-setnav button').allTextContents(), lang === 'ko' ? ['친구', '내 계정'] : ['Friends', 'My account']);
+      const row = p.locator('.msgr-setbody .row').filter({ hasText: 'Org Colleague' }).first();
+      await row.getByRole('button', { name: lang === 'ko' ? '대화하기' : 'Chat' }).click();
+      await p.waitForFunction(() => window.__psFixture.calls.some(c => c.rpc === 'msgr_dm_personal'));
+      const dm = await rpcCalls(p, 'msgr_dm_personal');
+      assert.equal(dm.at(-1).args.target, 'user-colleague');
+      const leaked = (await calls(p)).filter(c => (c.eqs ?? []).some(([, v]) => v === '__personal__'));
+      assert.deepEqual(leaked.map(c => `${c.table}:${c.eqs.map(e => e.join('=')).join('&')}`), []);
+    });
+
     // 3. Personal space hides attach, crew, work buttons
     await scenario(lang, width, 'hidden-org-buttons', async (p) => {
       // Switch to personal space
