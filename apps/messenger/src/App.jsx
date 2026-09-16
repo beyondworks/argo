@@ -967,7 +967,7 @@ function Shell({ session }) {
       const names = picks.map((p) => p.kind === 'crew' ? crewOf(p.id)?.display_name : nameOfUser(p.id)).filter(Boolean);
       const cid = await q(supabase.rpc('msgr_create_channel', { org: orgId, kind: 'dm', name: `dm:${names.join(', ')}`.slice(0, 80), others }));
       await loadOrg(orgId); if (activeOrg.current !== orgId) return null; setChId(cid); setPage('chat'); setRail(false); return cid;
-    } catch (e) { setErr(e.message); setDmGroup(true); return null; } // 생성이 실패하면 시트를 되살려 고른 사람이 사라지지 않게(재검수 LOW-A)
+    } catch (e) { setErr(e.message); if (activeOrg.current === orgId) setDmGroup(true); return null; } // 공간이 바뀌었으면 되살리지 않는다(3R) // 생성이 실패하면 시트를 되살려 고른 사람이 사라지지 않게(재검수 LOW-A)
   };
   // 대화방에 사람을 더 부르기(유건 2026-09-16) — 지금 방의 구성원에 그 사람을 더해 **새 방**을 연다.
   // 지금 방에 밀어 넣지 않는 이유: 둘이 나눈 사적인 대화가 불려 온 사람에게 통째로 넘어간다(슬랙도 새 방을 연다). 서버도 그 길을 막아 둔다.
