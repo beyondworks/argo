@@ -19,9 +19,6 @@ export function createPreferenceQueue() {
   };
 }
 
-export function folderChannelIds(channels, folderOf, folder) {
-  return channels.filter((c) => c.kind !== 'dm' && folderOf.get(c.id) === folder).map((c) => c.id);
-}
 
 export function reorderFavorites(ids, dragged, before = null) {
   if (!ids.includes(dragged) || before === dragged || (before !== null && !ids.includes(before))) return ids;

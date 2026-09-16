@@ -140,11 +140,11 @@ export function mentionsIn(text, peers, selfId) {
   }
   return out;
 }
-/** 채널이 이 크루의 발화를 허용하나 — 공개는 제외 목록 밖, 비공개·DM은 구성원 행. 서버 트리거 msgr_messages_crew_scope와 같은 규칙
-    (유건 원칙 2026-09-11: 채널에 초대된 에이전트만 답하고 내보낸 에이전트는 못 답한다). 채널 없음 = 거부. */
+/** 채널이 이 크루의 발화를 허용하나 — 모든 채널에서 구성원 행이 있고 내보낸 목록 밖. 서버 msgr_crew_in_channel과 같은 규칙
+    (유건 원칙 2026-09-11: 채널에 초대된 에이전트만 답한다. 2026-09-16부터 공개 채널도 같다 — 종전에는 파견된 에이전트 전원이었다). 채널 없음 = 거부. */
 export function crewInScope(ch, crewId, isMember) {
   if (!ch) return false;
-  return ch.kind === 'public' ? !(ch.excluded_crew_ids ?? []).includes(crewId) : isMember === true;
+  return isMember === true && !(ch.excluded_crew_ids ?? []).includes(crewId);
 }
 const autoLog = new Map(); // wsId → 자동(크루 발) 턴 적재 시각들 — ponytail: 기기 메모리, 재시작하면 0부터(기기가 여럿이면 기기별 상한)
 function autoOk(wsId, now) {
@@ -242,7 +242,7 @@ export function makeDb(client) {
     async channel(id) {
       return unwrap(await client.from('msgr_channels').select('id, org_id, kind, name, crew_memory, archived_at, excluded_crew_ids').eq('id', id).maybeSingle());
     },
-    /** 이 크루가 구성원인 채널 전부(DM·비공개) — crewChannels(DM만)의 상위 집합. 채널 범위 판정(crewInScope)의 재료. */
+    /** 이 크루가 구성원인 채널 전부(공개·비공개·DM) — crewChannels(DM만)의 상위 집합. 채널 범위 판정(crewInScope)의 재료. */
     async crewScope(crewId) {
       const rows = unwrap(await client.from('msgr_channel_members').select('channel_id').eq('member_kind', 'crew').eq('member_id', crewId)) ?? [];
       return new Set(rows.map((r) => r.channel_id));
@@ -652,7 +652,7 @@ async function restoreMessengerContext(wsId, slug, origin, session) {
   for (const author of actors) if (!author || (!envelope && await db.instructCheck(crew.id, author, ch.id) !== 'ok')) throw new Error('메신저 지시 권한이 없어 후속 실행을 멈춥니다');
   const hop = origin.hop ?? 0;
   if (!Number.isInteger(hop) || hop < 0 || hop > HOP_MAX) throw new Error('메신저 넘김 단계가 올바르지 않습니다');
-  const chMembers = envelope || ch.kind === 'public' ? new Set() : await db.channelCrewMembers(ch.id);
+  const chMembers = envelope ? new Set() : await db.channelCrewMembers(ch.id);
   const peers = await workPeers(db, work, envelope ? orgPeers : orgPeers.filter((p) => crewInScope(ch, p.id, chMembers.has(p.id))), ch.id, uid); // 후속 실행의 넘김·멘션도 채널 범위 안에서만
   // delegated — DM 위임(0.1.74)의 원래 방 실행 유물. msgr_dm_relay(2026-09-14)가 도입된 뒤로는 서버가 delegated=true를 주지 않아(비구성원 크루는 항상 새 1:1 DM으로 전달) 죽은 경로다. 아래 delegated 분기들은 방어적으로 남긴다.
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
@@ -747,7 +747,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     if (!envelope && !job.workRunId) job.workRunId = (await db.message(job.msgId))?.meta?.work_run_id ?? null;
     const work = job.workRunId ? await db.workRun(job.threadRoot ?? job.msgId, job.channelId) : null;
     if (job.workRunId && (!work || !workCanContinue(work, job.msgId))) return;
-    const chMembers = envelope || ch.kind === 'public' ? new Set() : await db.channelCrewMembers(job.channelId);
+    const chMembers = envelope ? new Set() : await db.channelCrewMembers(job.channelId);
     const started = now();
     const waited = started - Date.parse(job.createdAt); // 큐 대기(부재중) — 턴 소요 시간은 포함하지 않는다(검수 MEDIUM-3)
     const orgPeers = envelope?.peers ?? await db.orgCrews(job.orgId);
