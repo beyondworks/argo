@@ -13,17 +13,20 @@
 -- 데스크톱 앱은 2026-09-13 이후 서버 배달 봉투(msgr_delivery_allowed → msgr_crew_in_channel)를 따르므로 이 판정만 바꾸면 바로 적용된다.
 
 -- ── 1. 기존 공개 채널 이관 — 말하던 에이전트는 남긴다 ─────────────────────────
--- 그 채널에 글을 쓴 적 있는 활성 에이전트(같은 조직, 내보낸 목록 밖). 파견만 되고 말한 적 없는 에이전트는 빠진다.
+-- 그 채널에 글을 쓴 적 있는 활성 에이전트와, 그 채널에 자동화가 걸린 에이전트(아직 한 번도 안 돌았어도 — 검수 M-1).
+-- 같은 조직, 내보낸 목록 밖. 파견만 되고 말한 적도 맡은 일도 없는 에이전트는 빠진다.
 insert into public.msgr_channel_members (channel_id, member_kind, member_id)
-select distinct m.channel_id, 'crew', m.crew_id
-  from public.msgr_messages m
-  join public.msgr_channels c on c.id = m.channel_id
-  join public.msgr_crews cr on cr.id = m.crew_id
- where c.kind = 'public' and c.archived_at is null and m.crew_id is not null
-   and cr.status = 'active' and cr.org_id = c.org_id and not (m.crew_id = any (c.excluded_crew_ids))
+select distinct x.channel_id, 'crew', x.crew_id
+  from (select m.channel_id, m.crew_id from public.msgr_messages m where m.crew_id is not null
+        union select a.channel_id, a.crew_id from public.msgr_automations a where a.deleted_at is null) x
+  join public.msgr_channels c on c.id = x.channel_id
+  join public.msgr_crews cr on cr.id = x.crew_id
+ where c.kind = 'public' and c.archived_at is null
+   and cr.status = 'active' and cr.org_id = c.org_id and not (x.crew_id = any (c.excluded_crew_ids))
 on conflict do nothing;
 
 -- ── 2. 채널에 있는가 — 공개 채널도 참여 행 ───────────────────────────────────
+-- 채널 정책은 구성원 여부를 바꾸지 않는다 — 못 데려옴은 '지금부터 새로 못 들어온다'이다(유건 2026-09-16). 아래 3 참고.
 create or replace function public.msgr_crew_in_channel(ch uuid, crew uuid) returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
     select exists (
@@ -92,12 +95,25 @@ update public.msgr_channels set personal_crews = 'approval' where personal_crews
 alter table public.msgr_channels add constraint msgr_channels_personal_crews_check check (personal_crews in ('allowed', 'approval', 'read_only', 'blocked'));
 alter table public.msgr_channels alter column personal_crews set default 'approval';
 
--- 지시 판정: 들어온 에이전트는 일한다. 개인 에이전트 지시를 막는 것은 못 데려옴·보기만뿐(종전에는 allowed가 아니면 막았다 — 방장 승인이 기본이 되면 전부 막힌다).
+-- 못 데려옴 = 설정한 때부터 **새로** 못 들어온다. 이미 방에 있는 에이전트는 퇴장시키지 않고 그대로 일한다(유건 2026-09-16).
+-- 종전에는 전환하는 순간 개인 에이전트 행을 지웠다 — 칸을 한 번 눌렀다 되돌리는 것만으로 초대한 에이전트가 영구히 빠졌다(실측: 검수 중 서윤이 사라짐).
+-- 새로 못 들어오게 하는 일은 게이트 트리거(msgr_channel_personal_gate)와 msgr_crew_join이 한다. 이 트리거는 감사만 남긴다.
+create or replace function public.msgr_channel_policy_sweep() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.personal_crews is distinct from old.personal_crews then
+    perform public.msgr_audit(new.org_id, 'channel.personal_crews', 'channel', new.id::text, jsonb_build_object('from', old.personal_crews, 'to', new.personal_crews));
+  end if;
+  return new;
+end $$;
+
+-- 지시 판정: 들어온 에이전트는 일한다. 개인 에이전트 지시를 막는 것은 보기만(read_only)뿐이다 — 방장 승인은 들어오는 방식이고,
+-- 못 데려옴은 새로 들어오는 것만 막는다(이미 있는 에이전트는 그대로 일한다, 유건 2026-09-16). 종전에는 allowed가 아니면 막았다.
 create or replace function public.msgr_instruct_check(crew uuid, author uuid, channel uuid default null) returns text
   language sql stable security definer set search_path = public, pg_temp as $$
     select case
       when c.id is null or c.status <> 'active' or author is null then 'inactive'
-      when channel is not null and ch.personal_crews in ('blocked', 'read_only')
+      when channel is not null and ch.personal_crews = 'read_only'
            and not (c.hosting = 'bot' or (o.service_user_id is not null and c.owner_user_id = o.service_user_id and c.hosting = 'resident')) then 'channel_policy'
       when c.owner_user_id = author then 'ok'
       when c.allow = 'owner' then 'crew_allow'
@@ -184,7 +200,10 @@ begin
   if not in_room then raise exception 'msgr_forbidden' using errcode = '42501'; end if; -- 채널에 참여한 사람만 데려온다
   if tier is distinct from 'company' and cr.owner_user_id <> me then raise exception 'msgr_forbidden' using errcode = '42501'; end if; -- 남의 개인 에이전트는 못 데려온다
   if tier is distinct from 'company' and c.personal_crews = 'allowed' then perform public.msgr_crew_join_apply(ch, crew, me); return 'joined'; end if;
-  -- 방장 승인(개인 에이전트의 기본, 회사 에이전트는 항상)
+  -- 방장 승인(개인 에이전트의 기본, 회사 에이전트는 항상). 방금 거절된 요청은 한 시간 동안 다시 보내지 않는다(방장 알림함이 같은 요청으로 차지 않게 — 검수 M-4)
+  if exists (select 1 from public.msgr_channel_crew_requests q where q.channel_id = ch and q.crew_id = crew and q.status = 'rejected' and q.decided_at > now() - interval '1 hour') then
+    raise exception 'msgr_request_recently_rejected' using errcode = '22023';
+  end if;
   insert into public.msgr_channel_crew_requests (channel_id, crew_id, requested_by) values (ch, crew, me)
     on conflict (channel_id, crew_id) where status = 'pending' do nothing;
   return 'requested';

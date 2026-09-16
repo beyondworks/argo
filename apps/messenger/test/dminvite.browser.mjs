@@ -236,6 +236,18 @@ await scenario(1280, 'member-requests-approval', async (p) => {
   assert.equal(await sheet.locator('.row.req button', { hasText: '허락' }).count(), 0, '참여자에게는 허락 버튼이 없다');
 }, '?role=member');
 
+// 16. 설정창을 열어 둔 사이 요청이 바뀌면 주기 재조회(15초)로 보인다 — 방장이 창을 닫았다 열 필요가 없다(검수 M-3)
+await scenario(1280, 'open-sheet-refreshes-requests', async (p) => {
+  const sheet = await openGeneralSheet(p);
+  assert.ok(await sheet.locator('.row.req', { hasText: 'Colleague Agent' }).isVisible(), '처음 요청');
+  await p.evaluate(() => { const t = window.__dmInviteFixture.tables.msgr_channel_crew_requests; t[0].status = 'approved'; t.push({ id: 'req-2', channel_id: 'general', crew_id: 'crew-bot', requested_by: 'user-third', status: 'pending', created_at: new Date().toISOString() }); });
+  await p.waitForTimeout(16500);
+  const rows = await sheet.locator('.row.req').allInnerTexts();
+  assert.ok(rows.some((x) => x.includes('External Bot')), `새 요청이 보인다 (${rows})`);
+  assert.ok(!rows.some((x) => x.includes('Colleague Agent')), '처리된 요청은 사라진다');
+  assert.ok(await sheet.isVisible(), '설정창은 열린 채로');
+});
+
 await browser.close();
 console.log(results.join('\n'));
 if (failures.length) { console.log(`${results.length} passed, ${failures.length} failed`); console.log('Failures:', failures); process.exit(1); }

@@ -21,7 +21,7 @@ const inCh = (ch, crew) => sql(`select public.msgr_crew_in_channel('${ch}', '${c
 const crewRow = (ch, crew) => sql(`select count(*) from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'crew' and member_id = '${crew}'`);
 const JOIN = '20260917090000_msgr_crew_join_approval.sql';
 
-let ORG, PUB, OLD_PUB, PRIV, SPOKE, SILENT, MINE, MATE_CREW, COMPANY;
+let ORG, PUB, OLD_PUB, PRIV, SPOKE, SILENT, MINE, MATE_CREW, COMPANY, SCHEDULED;
 before(() => {
   if (!DB) return;
   psql(['-c', `
@@ -62,10 +62,11 @@ before(() => {
   // 회사 에이전트 = 조직 서비스 계정이 소유한 상주 에이전트(msgr_crew_tier). 봇 행은 전용 RPC로만 만들 수 있어 이 방식으로 둔다.
   sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${U.svc}', 'member')`);
   sql(`update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}'`);
-  SPOKE = crew(U.host, 'spoke'); SILENT = crew(U.host, 'silent'); MINE = crew(U.mate, 'mine'); MATE_CREW = crew(U.other, 'others'); COMPANY = crew(U.svc, 'company', 'resident');
+  SCHEDULED = crew(U.host, 'scheduled'); SPOKE = crew(U.host, 'spoke'); SILENT = crew(U.host, 'silent'); MINE = crew(U.mate, 'mine'); MATE_CREW = crew(U.other, 'others'); COMPANY = crew(U.svc, 'company', 'resident');
   assert.equal(sql(`select public.msgr_crew_tier('${COMPANY}')`), 'company');
   OLD_PUB = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','public','Crew')`));
   sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id) values ('${OLD_PUB}', 'crew', '${SPOKE}', 'text', '옛 채널에서 한 말', 'old-spoke')`);
+  sql(`insert into public.msgr_automations (org_id, channel_id, crew_id, created_by, title, prompt, schedule, next_run_at) values ('${ORG}', '${OLD_PUB}', '${SCHEDULED}', '${U.host}', '아침 요약', '요약해 줘', '{"kind":"daily","time":"09:00"}', now() + interval '1 day')`); // 아직 한 번도 안 돈 자동화
   psql(['-c', readFileSync(mig(JOIN), 'utf8')]); // ← 이관이 여기서 돈다
   PUB = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','public','New')`));
   PRIV = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','private','Secret')`));
@@ -77,6 +78,7 @@ test('이관 — 공개 채널에서 말하던 에이전트는 남고, 파견만
   assert.equal(inCh(OLD_PUB, SPOKE), 't', '말하던 에이전트');
   assert.equal(inCh(OLD_PUB, SILENT), 'f', '말한 적 없는 에이전트는 더 이상 저절로 들어와 있지 않다');
   assert.equal(inCh(PUB, SPOKE), 'f', '새 공개 채널에도 저절로 들어오지 않는다');
+  assert.equal(inCh(OLD_PUB, SCHEDULED), 't', '그 채널에 자동화가 걸린 에이전트는 남는다(아직 안 돌았어도 — 검수 M-1)');
 });
 
 test('채널에 없는 에이전트는 받지도 쓰지도 못한다 — 서버가 막는다', { skip }, () => {
@@ -110,6 +112,9 @@ test('거절하면 들어오지 않는다', { skip }, () => {
   const req = last(asUser(U.host, `select id from public.msgr_channel_crew_requests where channel_id = '${PRIV}' and crew_id = '${MINE}' and status = 'pending'`));
   assert.equal(last(asUser(U.host, `select public.msgr_crew_join_decide('${req}', false)`)), 'rejected');
   assert.equal(crewRow(PRIV, MINE), '0');
+  fails(asUserRaw(U.mate, `select public.msgr_crew_join('${PRIV}', '${MINE}')`), /msgr_request_recently_rejected/, '거절 직후 같은 요청을 다시 보내기(검수 M-4)');
+  sql(`update public.msgr_channel_crew_requests set decided_at = now() - interval '2 hours' where id = '${req}'`);
+  assert.equal(last(asUser(U.mate, `select public.msgr_crew_join('${PRIV}', '${MINE}')`)), 'requested', '한 시간이 지나면 다시 요청할 수 있다');
 });
 
 test('남의 개인 에이전트는 못 데려오고, 회사 에이전트는 방장에게 요청한다', { skip }, () => {
@@ -136,8 +141,24 @@ test('정책 — 바로 추가면 바로, 못 데려옴이면 거절(회사 에�
   assert.equal(last(asUser(U.host, `select public.msgr_crew_join('${shut}', '${COMPANY}')`)), 'joined', '회사 에이전트는 막히지 않는다');
   sql(`update public.msgr_channels set personal_crews = 'read_only' where id = '${open}'`);
   assert.equal(sql(`select public.msgr_instruct_check('${MINE}', '${U.mate}', '${open}')`), 'channel_policy', '보기만(종전 값)은 여전히 개인 에이전트 지시를 막는다');
+  assert.equal(sql(`select public.msgr_instruct_check('${MINE}', '${U.mate}', '${shut}')`), 'ok', '못 데려옴은 지시를 막지 않는다(새로 들어오는 것만 막는다)');
   const bad = psqlRaw(['-A', '-t', '-c', `update public.msgr_channels set personal_crews = 'nope' where id = '${shut}'`]);
   assert.notEqual(bad.status, 0, '정해진 값만 받는다');
+});
+
+test('못 데려옴은 설정한 때부터 새로 못 들어오게만 한다 — 이미 있는 에이전트는 퇴장하지 않고 일한다(유건 2026-09-16)', { skip }, () => {
+  const ch = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','public','Toggle')`));
+  assert.equal(last(asUser(U.host, `select public.msgr_crew_join('${ch}', '${SPOKE}')`)), 'joined');
+  assert.equal(last(asUser(U.host, `select public.msgr_crew_join('${ch}', '${COMPANY}')`)), 'joined');
+  sql(`update public.msgr_channels set personal_crews = 'blocked' where id = '${ch}'`);
+  assert.equal(crewRow(ch, SPOKE), '1', '행이 지워지지 않는다(종전에는 전환하는 순간 지웠다)');
+  assert.equal(inCh(ch, SPOKE), 't', '이미 있는 개인 에이전트는 그대로 구성원');
+  assert.equal(sql(`select public.msgr_instruct_check('${SPOKE}', '${U.host}', '${ch}')`), 'ok', '그대로 일한다');
+  sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id) values ('${ch}', 'crew', '${SPOKE}', 'text', '계속 일함', 'blocked-write')`);
+  fails(asUserRaw(U.host, `select public.msgr_crew_join('${ch}', '${SILENT}')`), /msgr_channel_personal_blocked/, '새 개인 에이전트는 방장도 못 넣는다');
+  fails(asUserRaw(U.host, `insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${ch}', 'crew', '${SILENT}')`), /msgr_channel_personal_blocked/, '직접 넣기도 막힌다');
+  sql(`update public.msgr_channels set personal_crews = 'approval' where id = '${ch}'`);
+  assert.equal(inCh(ch, SPOKE), 't', '되돌려도 그대로');
 });
 
 test('방장 승인 채널에서도 들어온 에이전트는 일한다 — 지시를 막는 것은 못 데려옴뿐', { skip }, () => {
