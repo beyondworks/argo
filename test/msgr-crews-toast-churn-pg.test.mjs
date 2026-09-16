@@ -10,7 +10,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr-crews-toast-churn-pg.test.mjs';
 const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url));
-const HOTFIX = '20260916204000_msgr_crews_lock_when.sql';
+// 같은 처방이 두 PR(#560·#559)에서 각각 들어왔다 — 둘 다 빼고 올려야 '전' 상태가 재현된다
+const HOTFIXES = ['20260916204000_msgr_crews_lock_when.sql', '20260916210000_msgr_crews_lock_when.sql'];
 const U = { owner: '11111111-1111-4111-8111-111111111111' };
 function psqlRaw(args) { return spawnSync('psql', [DB, '-X', '-v', 'ON_ERROR_STOP=1', '-q', ...args], { encoding: 'utf8' }); }
 function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr || r.stdout}`); return r.stdout; }
@@ -49,7 +50,7 @@ before(() => {
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql']) psql(['-c', readFileSync(mig(f), 'utf8')]);
   const dir = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
   // 핫픽스는 빼고 먼저 올린다 — 테스트 안에서 전후를 재기 위해
-  for (const f of readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x) && x !== HOTFIX).sort()) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  for (const f of readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x) && !HOTFIXES.includes(x)).sort()) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
   sql(`insert into auth.users (id, created_at, email) values ('${U.owner}', now() - interval '30 days', 'owner@example.test') on conflict do nothing`);
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
   CREW = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.owner}', 'lean', 'mine', 'Mine') returning id`));
@@ -63,7 +64,7 @@ test('하트비트가 큰 열을 다시 쓰지 않는다 — 핫픽스 전에는
   const t0 = toastBytes(); heartbeat(20, U.owner); const t1 = toastBytes();
   assert.ok(t1 - t0 > 60_000, `핫픽스 전: 앱 하트비트 20번에 TOAST가 자란다(재현) — ${t0} → ${t1}`);
 
-  psql(['-c', readFileSync(mig(HOTFIX), 'utf8')]);
+  for (const f of HOTFIXES) psql(['-c', readFileSync(mig(f), 'utf8')]);
   const t2 = toastBytes(); heartbeat(20, U.owner); heartbeat(20, null); const t3 = toastBytes();
   assert.equal(t3, t2, `핫픽스 후: 사용자·서비스 하트비트 40번에도 TOAST가 그대로 — ${t2} → ${t3}`);
 

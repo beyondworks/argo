@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -453,6 +453,17 @@ test('G-2 조직 문서 미러: 서버 문서 → vault/org/<slug>/<path> 읽기
   const db2 = fakeDb({ docs: [{ ...d1, body: '- 답은 존댓말로. 숫자는 표로.', version: 2 }] });
   const r3 = await M.syncOrgDocs(WS, ORG, { db: db2, log: null });
   assert.deepEqual(r3, { wrote: 1, removed: 1, total: 1 });
+  // 일지(journal/)는 미러하지 않는다(2026-09-16: DM 일지가 PC 볼트 → 모든 크루 프롬프트로 새는 길 차단) — 인덱스에 있어도 want에서 빠지고, 이미 내려간 파일은 gone으로 회수
+  await mkdir(join(dir, 'journal'), { recursive: true }); await writeFile(join(dir, 'journal', '2026-09-14.md'), 'old mirror', 'utf8');
+  const stJ = JSON.parse(await readFile(join(dir, M.ORG_DOCS_STATE), 'utf8')); stJ.docs['d-j'] = { path: 'journal/2026-09-14.md', version: 3 }; await writeFile(join(dir, M.ORG_DOCS_STATE), JSON.stringify(stJ));
+  const dbJ = fakeDb({ docs: [{ ...d1, body: '- 답은 존댓말로. 숫자는 표로.', version: 2 }, { id: 'd-j', org_id: ORG, channel_id: 'ch-dm', path: 'journal/2026-09-14.md', title: '2026-09-14', body: '- 10:00 · **크루** ← 유건: 비밀 → 답', version: 3, updated_at: '2026-09-14T00:00:00Z' }] });
+  const r4 = await M.syncOrgDocs(WS, ORG, { db: dbJ, log: null });
+  assert.deepEqual(r4, { wrote: 0, removed: 1, total: 1 }, 'journal/은 미러 대상이 아니고 옛 미러 파일은 회수');
+  await assert.rejects(() => readFile(join(dir, 'journal', '2026-09-14.md'), 'utf8'), /ENOENT/, '내려가 있던 일지 미러를 지운다');
+  assert.ok(!dbJ.calls.some((c) => c[0] === 'docsByIds' && c[1].includes('d-j')), '일지 본문은 내려받지 않는다');
+  await mkdir(join(dir, 'journal'), { recursive: true }); await writeFile(join(dir, 'journal', '2026-09-15.md'), 'stale', 'utf8'); await chmod(join(dir, 'journal', '2026-09-15.md'), 0o444);
+  await M.syncOrgDocs(WS, ORG, { db: dbJ, log: null });
+  await assert.rejects(() => readFile(join(dir, 'journal', '2026-09-15.md'), 'utf8'), /ENOENT/, 'state에 없는(손으로·옛 미러) journal/ 파일도 스윕(재검수 M-2: state 손상 시 잔존)');
   assert.match(await readFile(join(dir, 'rules', 'handbook.md'), 'utf8'), /version: 2\n[\s\S]*숫자는 표로/);
   await assert.rejects(() => readFile(join(dir, 'glossary', 'terms.md'), 'utf8'), /ENOENT/, '사라진 문서의 미러는 지운다');
   const state = JSON.parse(await readFile(join(dir, M.ORG_DOCS_STATE), 'utf8'));

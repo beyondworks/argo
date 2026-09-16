@@ -404,6 +404,7 @@ export const DICT = {
   'mem.none': ['아직 기억이 없습니다. 규칙·용어·프로젝트 맥락을 남기면 이 조직의 에이전트가 같은 것을 읽습니다.', 'No memory yet. Leave rules, terms and project context here and every agent in this org reads the same thing.'],
   'mem.none.person': ['남긴 기억이 없습니다.', 'No memory left by them yet.'],
   'mem.activity': ['활동 기록', 'Activity log'],
+  'mem.journal.recent': ['최근 일지 — 채널·1:1 대화에서 에이전트가 답할 때마다 쌓입니다', 'Recent journals — added whenever an agent replies in a channel or 1:1'],
   'act.graph.zoomIn': ['확대', 'Zoom in'],
   'act.graph.zoomOut': ['축소', 'Zoom out'],
   'act.graph.fit': ['전체 보기', 'Fit to view'],
