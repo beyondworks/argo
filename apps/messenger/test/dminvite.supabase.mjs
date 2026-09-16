@@ -76,6 +76,8 @@ function query(table) {
         } else if (op === 'update') rows.forEach(r => Object.assign(r, values));
         else if (op === 'delete') state.tables[table] = all.filter(r => !rows.includes(r));
         if (table === 'msgr_channel_members' && cols.includes('msgr_channels')) rows = rows.map(r => ({ ...r, msgr_channels: [...(state.tables.msgr_channels || []), ...(state.tables.msgr_personal_channels || [])].find(c => c.id === r.channel_id) }));
+        // 실제 PostgREST처럼 요청한 열만 돌려준다 — 가져오지 않은 열(org_id 등)에 기대는 코드가 픽스처에서만 통과하지 않게(2026-09-16 실사고)
+        if (op === 'select' && cols !== '*' && !cols.includes('(')) { const keep = cols.split(',').map((c) => c.trim()); rows = rows.map((r) => Object.fromEntries(keep.filter((k) => k in r).map((k) => [k, r[k]]))); }
         return structuredClone(one ? rows[0] ?? null : rows);
       })).then(resolve, reject);
     },

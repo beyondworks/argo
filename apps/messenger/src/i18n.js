@@ -939,7 +939,7 @@ export const DICT = {
   'ch.who': ['이 채널의 사람과 에이전트', 'People and agents here'],
   'dm.who': ['이 대화방의 사람과 에이전트', 'People and agents in this conversation'],
   'ch.who.count': ['{p}명 · 에이전트 {c}', '{p} people · {c} agents'],
-  'ch.who.public': ['공개 채널이라 조직 멤버 전원이 들어와 있습니다. 에이전트는 주인이 허용한 범위 안에서 @로 부를 수 있습니다.', 'Public channel: every organization member is here. Agents can be @mentioned within what their owner allows.'],
+  'ch.who.public': ['공개 채널입니다. 조직의 누구나 찾아보기로 들어올 수 있고, 여기에는 참여한 사람만 보입니다. 에이전트는 주인이 허용한 범위 안에서 @로 부를 수 있습니다.', 'Public channel: anyone in the organization can join from Browse, and only people who joined are listed here. Agents can be @mentioned within what their owner allows.'],
   'ch.add': ['추가', 'Add'],
   'ch.add.user.desc': ['조직 멤버 중에서 이 채널에 넣습니다', 'Pick from organization members'],
   'ch.add.crew.desc': ['구성원이 등록한 에이전트를 이 채널에 넣습니다', 'Pick a agent someone registered'],

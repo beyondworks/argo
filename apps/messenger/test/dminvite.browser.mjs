@@ -130,6 +130,28 @@ await scenario(1280, 'chats-label', async (p) => {
   assert.equal((await p.locator('[data-sec="dms"] > summary .lbl').innerText()).trim(), '채팅');
 });
 
+// 10. 공개 채널 설정 — 참여한 사람만 보이고, 초대하고, 내보내면 참여도 끝난다(유건 제보 2026-09-16: 참여 안 한 사람까지 떴고 초대가 없었다)
+await scenario(1280, 'public-channel-people', async (p) => {
+  await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click(); await p.waitForTimeout(500);
+  await p.locator('.msgr-top button.members').click();
+  const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor({ timeout: 5000 });
+  const people = () => sheet.locator('.msgr-rows .row').evaluateAll((rs) => rs.filter((r) => !r.querySelector('.msgr-av.crew') && !r.closest('.msgr-excluded')).map((r) => r.querySelector('.name')?.innerText));
+  assert.deepEqual(await people(), ['Fixture Owner'], '참여한 사람만 — 조직원 전원이 아니다');
+  assert.match(await sheet.locator('.note').first().innerText(), /참여한 사람만/, '안내가 참여 기준을 말한다');
+  await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
+  await sheet.locator('.msgr-addmenu button', { hasText: '사람 추가' }).click();
+  await sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Third Person' }).click(); await p.waitForTimeout(700);
+  const calls = () => p.evaluate(() => window.__dmInviteFixture.calls);
+  assert.ok((await calls()).some((c) => c.table === 'msgr_channel_members' && c.op === 'upsert' && [].concat(c.values).some((v) => v.channel_id === 'general' && v.member_kind === 'user' && v.member_id === 'user-third')), '공개 채널에 초대한다');
+  assert.ok((await people()).includes('Third Person'), '초대한 사람이 목록에 들어온다');
+  const row = sheet.locator('.msgr-rows .row', { hasText: 'Third Person' }).first();
+  await row.locator('button[aria-label]').first().click();
+  await sheet.locator('.msgr-rowmenu button.danger').first().click(); await p.waitForTimeout(700);
+  const cs = await calls();
+  assert.ok(cs.some((c) => c.table === 'msgr_channels' && c.op === 'update' && (c.values?.excluded_user_ids ?? []).includes('user-third')), '내보내면 제외 목록에 든다');
+  assert.ok(cs.some((c) => c.table === 'msgr_channel_members' && c.op === 'delete'), '참여 행도 지운다(목록에 남아 안 열리는 채널이 되지 않게)');
+});
+
 await browser.close();
 console.log(results.join('\n'));
 if (failures.length) { console.log(`${results.length} passed, ${failures.length} failed`); console.log('Failures:', failures); process.exit(1); }
