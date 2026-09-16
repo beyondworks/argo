@@ -1479,7 +1479,8 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const toggleChAdmin = async (userId) => { const next = chAdmins.includes(userId) ? chAdmins.filter((x) => x !== userId) : [...chAdmins, userId]; await upd({ admin_user_ids: next }, t('ch.admin.saved')); };
   const memLocked = !!policy?.crew_memory_locked; // H-0: 서버 트리거 msgr_channel_policy_gate가 최종
   const [name, setName] = useState(channel.name); const [topic, setTopic] = useState(channel.topic ?? ''); const [busy, setBusy] = useState(false); const [add, setAdd] = useState(initialAdd); // null | 'menu' | 'user' | 'crew' | 'guest' | 'newcrew' — '+ 추가' 하나로 모은다(UX 재구성)
-  const [rowMenu, setRowMenu] = useState(null); const [more, setMore] = useState(false); // 행 '…' 메뉴 · '채널 설정' 접힘
+  const [rowMenu, setRowMenu] = useState(null); const [more, setMore] = useState(false);
+  const openRowMenu = (e, key, items) => { e.stopPropagation(); if (rowMenu?.key === key) return setRowMenu(null); const r = e.currentTarget.getBoundingClientRect(); setRowMenu({ key, items, at: { x: r.right - 180, y: r.bottom + 4, returnFocus: e.currentTarget } }); }; // 시트 밖(화면 기준)에 띄운다 — 시트의 스크롤 영역 안에서는 아래가 잘렸다(유건 제보 2026-09-16) // 행 '…' 메뉴 · '채널 설정' 접힘
   useEffect(() => { setName(channel.name); setTopic(channel.topic ?? ''); }, [channel.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const on = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [onClose]);
   const upd = async (patch, okMsg) => {
@@ -1609,7 +1610,8 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   return (
     <div className="msgr-sheetwrap">
       <div className="msgr-scrim clear" onClick={onClose} />
-      <aside className="msgr-crewsheet" role="dialog" aria-label={t('ch.sheet')} onClick={() => rowMenu && setRowMenu(null)}>
+      {rowMenu && <CtxMenu at={rowMenu.at} items={rowMenu.items} onClose={() => setRowMenu(null)} />}
+      <aside className="msgr-crewsheet" role="dialog" aria-label={t('ch.sheet')}>
         <div className="head">
           <span className="msgr-av lg" style={{ borderRadius: 12 }}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} /></span>
           <div style={{ minWidth: 0 }}><div className="name">{channel.kind === 'dm' ? (dmName ? dmName(channel) : t('ch.kind.dm')) : `${channel.kind === 'private' ? '' : '#'}${channel.name}`}</div>{/* 1:1은 상대 이름, 공개 채널은 #이름(유건 2026-09-11) */}<div className="msgr-klabel">{channel.kind === 'dm' ? t('ch.kind.dm') : channel.topic || t(`ch.kind.${channel.kind}`)}</div></div>
@@ -1628,14 +1630,11 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 <Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}{(isChAdmin || isCreator) && <span className="msgr-tag">{isCreator ? t('ch.admin.creator') : t('ch.admin')}</span>}</span>
                 {!isMe && (canAssignAdmins || canKick) && (
                   <span className="msgr-rowmenu-wrap" onClick={(e) => e.stopPropagation()}>
-                    <button type="button" className="btn sm ghost" onClick={() => setRowMenu(rowMenu === key ? null : key)} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={rowMenu === key}><I name="dots" size={13} /></button>
-                    {rowMenu === key && (
-                      <div className="msgr-rowmenu" role="menu">
-                        <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onDm?.(m.user_id); }}><I name="at" size={13} />{t('ui.dm')}</button>
-                        {canAssignAdmins && !isCreator && <button type="button" role="menuitem" disabled={busy} onClick={() => { setRowMenu(null); toggleChAdmin(m.user_id); }}><I name="gear" size={13} />{isChAdmin ? t('ch.admin.unset') : t('ch.admin.set')}</button>}
-                        {canKick && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); kick('user', m.user_id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
-                      </div>
-                    )}
+                    <button type="button" className="btn sm ghost" onClick={(e) => openRowMenu(e, key, [
+                      { icon: 'at', label: t('ui.dm'), run: () => onDm?.(m.user_id) },
+                      canAssignAdmins && !isCreator && { icon: 'gear', label: isChAdmin ? t('ch.admin.unset') : t('ch.admin.set'), disabled: busy, run: () => toggleChAdmin(m.user_id) },
+                      canKick && { icon: 'x', label: t('ch.remove'), danger: true, disabled: busy, run: () => kick('user', m.user_id) },
+                    ])} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={rowMenu?.key === key}><I name="dots" size={13} /></button>
                   </span>
                 )}
               </div>
@@ -1646,14 +1645,11 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 <span className="sub">{company ? t('crew.tier.company.sub', { org: org?.name ?? '', role: c.role_text ?? '' }) : t('crew.tier.personal.sub', { name: nameOfUser(c.owner_user_id), role: c.role_text ?? '' })}</span>
                 <span className={`msgr-dot${on ? ' mark' : ''}`} title={on ? t('crew.online') : t('crew.away')} />
                 <span className="msgr-rowmenu-wrap" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" className="btn sm ghost" onClick={() => setRowMenu(rowMenu === key ? null : key)} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={rowMenu === key}><I name="dots" size={13} /></button>
-                  {rowMenu === key && (
-                    <div className="msgr-rowmenu" role="menu">
-                      <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onCrew?.(c.id); }}><I name="star" size={13} />{t('ch.open.crew')}</button>
-                      {channel.kind !== 'dm' && <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onMention?.(c); }}><I name="at" size={13} />{t('ch.add.crew.call')}</button>}
-                      {canKickCrew && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); kick('crew', c.id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
-                    </div>
-                  )}
+                  <button type="button" className="btn sm ghost" onClick={(e) => openRowMenu(e, key, [
+                    { icon: 'star', label: t('ch.open.crew'), run: () => onCrew?.(c.id) },
+                    channel.kind !== 'dm' && { icon: 'at', label: t('ch.add.crew.call'), run: () => onMention?.(c) },
+                    canKickCrew && { icon: 'x', label: t('ch.remove'), danger: true, disabled: busy, run: () => kick('crew', c.id) },
+                  ])} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={rowMenu?.key === key}><I name="dots" size={13} /></button>
                 </span>
               </div>
             ); })}
@@ -3060,7 +3056,7 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
     rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} />);
   }
-  const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
+  const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'check', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />

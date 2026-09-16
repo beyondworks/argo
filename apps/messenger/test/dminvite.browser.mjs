@@ -146,7 +146,7 @@ await scenario(1280, 'public-channel-people', async (p) => {
   assert.ok((await people()).includes('Third Person'), '초대한 사람이 목록에 들어온다');
   const row = sheet.locator('.msgr-rows .row', { hasText: 'Third Person' }).first();
   await row.locator('button[aria-label]').first().click();
-  await sheet.locator('.msgr-rowmenu button.danger').first().click(); await p.waitForTimeout(700);
+  await p.locator('.msgr-ctxmenu button.danger').first().click(); await p.waitForTimeout(700);
   const cs = await calls();
   assert.ok(cs.some((c) => c.table === 'msgr_channels' && c.op === 'update' && (c.values?.excluded_user_ids ?? []).includes('user-third')), '내보내면 제외 목록에 든다');
   assert.ok(cs.some((c) => c.table === 'msgr_channel_members' && c.op === 'delete'), '참여 행도 지운다(목록에 남아 안 열리는 채널이 되지 않게)');

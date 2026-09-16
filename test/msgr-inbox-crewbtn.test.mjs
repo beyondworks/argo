@@ -23,7 +23,7 @@ test('알림함 v1: 레일 하단 종(안 읽은 수) · 페이지 분기 · 집
 });
 
 test('채널 상단 "크루" 버튼 → 시트를 크루 패널로 열고, 공개 채널도 초대할 에이전트를 고른다(2026-09-16 — 종전에는 파견 크루 전원을 "@로 부르기")', () => {
-  assert.doesNotMatch(app, /className="btn sm crewbtn"/, '헤더 에이전트 버튼은 참여 패널로 통합(유건 2026-09-09)'); assert.match(app, /onClick=\{\(\) => \{ setRowMenu\(null\); onMention\?\.\(c\); \}\}><I name="at" size=\{13\} \/>\{t\('ch\.add\.crew\.call'\)\}/, '시트 행 메뉴에 @로 부르기'); assert.match(app, /className=\{`msgr-hchip\$\{muted \? ' off' : ''\}`\} onClick=\{onToggleMute\}/, '알림 표지가 토글'); assert.match(app, /onClick=\{onToggleMemory\}/, '기억 표지가 토글'); void ('상단 크루 버튼');
+  assert.doesNotMatch(app, /className="btn sm crewbtn"/, '헤더 에이전트 버튼은 참여 패널로 통합(유건 2026-09-09)'); assert.match(app, /channel\.kind !== 'dm' && \{ icon: 'at', label: t\('ch\.add\.crew\.call'\), run: \(\) => onMention\?\.\(c\) \}/, '시트 행 메뉴에 @로 부르기(화면 기준 메뉴 — 시트 안에서 잘리던 것, 2026-09-16)'); assert.match(app, /className=\{`msgr-hchip\$\{muted \? ' off' : ''\}`\} onClick=\{onToggleMute\}/, '알림 표지가 토글'); assert.match(app, /onClick=\{onToggleMemory\}/, '기억 표지가 토글'); void ('상단 크루 버튼');
   assert.match(app, /onCrewAdd=\{\(\) => \{ setChSheetAdd\('crew'\); setChSheet\(true\); \}\}/, '버튼 → 시트 크루 패널');
   assert.match(app, /const \[add, setAdd\] = useState\(initialAdd\);/, '시트 초기 패널');
   assert.match(app, /const canAddCrew = \(\(isHost \|\| inRoom\) && addableCrews\.length > 0\) \|\| canDispatch;/, '공개·비공개 모두 방장·참여자에게 추가 메뉴');
