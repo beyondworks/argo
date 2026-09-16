@@ -48,7 +48,7 @@ function query(table) {
   let op = 'select', values, cols = '*', one = false;
   const filters = [];
   const api = {
-    select(c = '*') { cols = c; return api; }, eq(k, v) { filters.push(r => r[k] === v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
+    select(c = '*') { cols = c; return api; }, eq(k, v) { filters.push(r => r[k] === v); return api; }, neq(k, v) { filters.push(r => r[k] !== v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
     in(k, vs) { filters.push(r => vs.includes(r[k])); return api; }, gt(k, v) { filters.push(r => r[k] > v); return api; }, lt(k, v) { filters.push(r => r[k] < v); return api; },
     order() { return api; }, limit() { return api; }, contains() { return api; }, or() { return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; },
     upsert(v) { op = 'upsert'; values = v; return api; }, update(v) { op = 'update'; values = v; return api; }, delete() { op = 'delete'; return api; }, insert(v) { op = 'insert'; values = v; return api; },
