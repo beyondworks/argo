@@ -228,6 +228,20 @@
 .msgr-sheetwrap .msgr-crewsheet { z-index: 66; } /* 투명 스크림(.msgr-scrim.clear, z 65)보다 위 — 아니면 시트 위의 휠이 스크림에 먹혀 뒤의 스레드가 스크롤된다(유건 실측 2026-09-04) */
 .msgr-crewsheet { position: absolute; top: 72px; right: 24px; width: min(380px, calc(100% - 48px)); max-width: calc(100% - 48px); overflow-x: hidden; box-sizing: border-box; max-height: calc(100% - 96px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; }
 .msgr-crewsheet .head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+/* 새 그룹 대화 — PC 모양(유건 제보 2026-09-16). 이 시트의 행·머리 규칙은 폰 미디어쿼리 안에만 있어서,
+   PC에서는 머리가 크루 시트의 40px 아바타 칸에 끼어 제목이 두 줄로 갈렸고 고르는 행이 검색칸 옆으로 흘렀다.    폰 시트는 건드리지 않는다(데스크톱·폰 상호 간섭 0 — 폰 모양은 폰 규칙이 정한다). */
+.msgr-shell:not(.msgr-phone) .msgr-crewsheet.msgr-dmgroup { grid-template-rows: auto minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: hidden; }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .head { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--border-soft); }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .head strong { white-space: nowrap; }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .head .msgr-klabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .peek { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .peek > .msgr-input { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .pickrow { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 6px; border-radius: 10px; cursor: pointer; }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .pickrow:hover { background: var(--card-2); }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .pickrow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .foot { padding: 10px 16px 14px; border-top: 1px solid var(--border-soft); }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .foot .btn { width: 100%; justify-content: center; }
+.msgr-shell:not(.msgr-phone) .msgr-dmgroup .foot .note { margin: 0 0 8px; font-size: 12px; color: var(--fg-3); }
 .msgr-crewsheet .head .name { font-size: 15px; font-weight: 600; }
 .msgr-crewsheet .head .btn.ghost { border: 0; background: none; width: 30px; height: 30px; padding: 0; border-radius: 9px; color: var(--fg-3); }
 .msgr-crewsheet .facts { display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
@@ -561,6 +575,9 @@
 .msgr-ctxmenu { overflow-y: auto; overscroll-behavior: contain; min-width: min(180px, calc(100vw - 16px)); }
 .msgr-ctxmenu button { white-space: normal; overflow-wrap: anywhere; min-height: 32px; height: auto; padding-block: 8px; }
 .msgr-ctxmenu button:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
+/* 하위 목록 — 머리(뒤로)는 구분선으로, 펼칠 항목은 오른쪽에 쐐기 */
+.msgr-ctxmenu button.back { color: var(--fg-3); border-bottom: 1px solid var(--border-soft); border-radius: 0; }
+.msgr-ctxmenu button.hassub::after { content: '›'; margin-left: auto; padding-left: 12px; color: var(--fg-3); }
 .msgr-ctxmenu button:disabled, .msgr-rowmenu button:disabled { opacity: .45; cursor: default; }
 .msgr-folderhead > .btn { margin-left: auto; padding: 4px; min-width: 28px; min-height: 28px; }
 @media (pointer: coarse) { .msgr-ctxmenu button, .msgr-folderhead > .btn { min-height: 44px; min-width: 44px; } }

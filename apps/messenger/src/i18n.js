@@ -770,7 +770,7 @@ export const DICT = {
   'ctx.crew.card': ['에이전트 카드', 'Agent card'],
   'ctx.fav': ['즐겨찾기에 추가', 'Add to favorites'],
   'rail.fav': ['즐겨찾기', 'Favorites'],
-  'ch.group.move': ['그룹 {name}(으)로 이동', 'Move to group {name}'],
+  'ch.group.moveTo': ['그룹으로 이동…', 'Move to group…'],
   'ch.group.new': ['새 그룹…', 'New group…'],
   'ch.group.none': ['그룹에서 빼기', 'Remove from group'],
   'ch.group.rename': ['그룹 이름 바꾸기', 'Rename group'],

@@ -334,18 +334,22 @@ function Auth({ logoutNotice = '' }) {
 /* ─── 우클릭 메뉴(유건 지시 2026-09-12 "우클릭으로 할 수 있는 기능이 한 개도 없다"): 커서 자리에, 화면 밖으로 안 나가게. 항목은 이미 있는 동작만 잇는다. ─── */
 function CtxMenu({ at, items, onClose }) {
   const ref = useRef(null); const [pos, setPos] = useState({ left: at.x, top: at.y });
+  // 하위 목록 — 긴 선택지(그룹 이동 등)는 한 항목으로 접었다가 누르면 그 자리에서 펼친다(유건 제보 2026-09-16: 그룹 18개가 화면 높이만큼 늘어섰다)
+  const [sub, setSub] = useState(null); const placeRef = useRef(null); const subSeen = useRef(false);
   useLayoutEffect(() => {
     const el = ref.current; if (!el) return;
-    const place = () => { const viewport = window.visualViewport; const left = viewport?.offsetLeft ?? 0; const top = viewport?.offsetTop ?? 0; const width = viewport?.width ?? window.innerWidth; const height = viewport?.height ?? window.innerHeight; el.style.maxHeight = `${Math.max(44, height - 16)}px`; el.style.maxWidth = `${Math.max(44, width - 16)}px`; const r = el.getBoundingClientRect(); setPos({ left: Math.max(left + 8, Math.min(at.x, left + width - r.width - 8)), top: Math.max(top + 8, Math.min(at.y, top + height - r.height - 8)) }); };
-    place(); const touch = window.matchMedia?.('(pointer: coarse)').matches; const previous = touch ? null : (at.returnFocus ?? document.activeElement); if (!touch) el.querySelector('button:not(:disabled)')?.focus(); // 터치 기기에선 포커스를 옮기지 않는다 — iOS가 프로그램 포커스에 링을 그려 첫 항목 테두리·닫힌 뒤 행에 선이 남았다(유건 캡처 2026-09-15)
+    const place = () => { const viewport = window.visualViewport; const left = viewport?.offsetLeft ?? 0; const top = viewport?.offsetTop ?? 0; const width = viewport?.width ?? window.innerWidth; const height = viewport?.height ?? window.innerHeight; el.style.maxHeight = `${Math.max(44, Math.min(440, height - 16))}px`; el.style.maxWidth = `${Math.max(44, width - 16)}px`; const r = el.getBoundingClientRect(); setPos({ left: Math.max(left + 8, Math.min(at.x, left + width - r.width - 8)), top: Math.max(top + 8, Math.min(at.y, top + height - r.height - 8)) }); };
+    placeRef.current = place; place(); const touch = window.matchMedia?.('(pointer: coarse)').matches; const previous = touch ? null : (at.returnFocus ?? document.activeElement); if (!touch) el.querySelector('button:not(:disabled)')?.focus(); // 터치 기기에선 포커스를 옮기지 않는다 — iOS가 프로그램 포커스에 링을 그려 첫 항목 테두리·닫힌 뒤 행에 선이 남았다(유건 캡처 2026-09-15)
     window.addEventListener('resize', place); window.visualViewport?.addEventListener('resize', place); window.visualViewport?.addEventListener('scroll', place);
     return () => { window.removeEventListener('resize', place); window.visualViewport?.removeEventListener('resize', place); window.visualViewport?.removeEventListener('scroll', place); if (previous?.isConnected) previous.focus(); };
   }, [at]);
+  // 펼치고 접을 때마다 자리를 다시 잡는다(목록 높이가 바뀐다). 터치 기기에선 포커스를 옮기지 않는다(iOS 포커스 링).
+  useLayoutEffect(() => { if (!subSeen.current) { subSeen.current = true; return; } placeRef.current?.(); if (!window.matchMedia?.('(pointer: coarse)').matches) ref.current?.querySelector('button:not(:disabled)')?.focus(); }, [sub]);
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   const navigate = (e) => { const buttons = [...ref.current.querySelectorAll('button:not(:disabled)')]; const i = buttons.indexOf(document.activeElement); let next; if (e.key === 'ArrowDown') next = (i + 1) % buttons.length; else if (e.key === 'ArrowUp') next = (i - 1 + buttons.length) % buttons.length; else if (e.key === 'Home') next = 0; else if (e.key === 'End') next = buttons.length - 1; else if (e.key === 'Tab') { e.preventDefault(); onClose(); return; } if (next !== undefined && buttons.length) { e.preventDefault(); buttons[next].focus(); } };
-  const list = items.filter(Boolean); if (!list.length) return null;
+  const list = (sub ? [{ icon: 'back', label: sub.label.replace(/…$/, ''), back: true }, ...sub.items] : items).filter(Boolean); if (!list.length) return null;
   return createPortal(<><div className="msgr-menubg" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
-    <div ref={ref} className="msgr-rowmenu msgr-ctxmenu" role="menu" onKeyDown={navigate} style={pos}>{list.map((it, i) => <button key={i} type="button" role="menuitem" tabIndex={-1} className={it.danger ? 'danger' : ''} disabled={it.disabled} onClick={(e) => { e.stopPropagation(); onClose(); it.run(); }}><I name={it.icon} size={13} />{it.label}</button>)}</div></>, document.body);
+    <div ref={ref} className="msgr-rowmenu msgr-ctxmenu" role="menu" onKeyDown={navigate} style={pos}>{list.map((it, i) => <button key={i} type="button" role="menuitem" tabIndex={-1} className={it.danger ? 'danger' : it.back ? 'back' : it.sub ? 'hassub' : ''} disabled={it.disabled} aria-haspopup={it.sub ? 'menu' : undefined} onClick={(e) => { e.stopPropagation(); if (it.back) return setSub(null); if (it.sub) return setSub({ label: it.label, items: it.sub }); onClose(); it.run(); }}><I name={it.icon} size={13} />{it.label}</button>)}</div></>, document.body);
 }
 function Shell({ session }) {
   const { signOut, signingOut } = useContext(SignOutContext);
@@ -1073,7 +1077,13 @@ function Shell({ session }) {
   const dragOver = (e) => { if (drag) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } };
   const dropOnRow = (e, c) => { e.preventDefault(); e.stopPropagation(); const id = drag; setDrag(null); if (!id || id === c.id) return; if (favs.some((f) => f.id === id) && favs.some((f) => f.id === c.id)) return reorderFav(id, c.id); // 즐겨찾기 안에서는 순서
     const src = channels.find((x) => x.id === id); if (src && src.kind !== 'dm' && c.kind !== 'dm' && !pinned.has(id) && !pinned.has(c.id)) moveToFolder(id, folderOf.get(c.id) ?? null); }; // 채널을 다른 채널 위에 놓으면 그 채널의 그룹으로(그룹 없는 행이면 그룹에서 뺀다)
-  const groupItems = (c) => [...folders.filter((f) => f !== folderOf.get(c.id)).map((f) => ({ icon: 'hash', label: t('ch.group.move', { name: f }), run: () => moveToFolder(c.id, f) })), { icon: 'plus', label: t('ch.group.new'), run: () => setGroupForm({ mode: 'new', chId: c.id, name: '' }) }, folderOf.get(c.id) && { icon: 'x', label: t('ch.group.none'), run: () => moveToFolder(c.id, null) }];
+  const groupItems = (c) => {
+    const cur = folderOf.get(c.id);
+    const newGroup = { icon: 'plus', label: t('ch.group.new'), run: () => setGroupForm({ mode: 'new', chId: c.id, name: '' }) };
+    const targets = folders.filter((f) => f !== cur).map((f) => ({ icon: 'hash', label: f, run: () => moveToFolder(c.id, f) }));
+    // 그룹이 몇 개든 메뉴에는 한 줄 — 누르면 그 자리에서 목록이 열린다(유건 제보 2026-09-16: 18개가 화면 높이만큼 늘어섰다)
+    return [targets.length ? { icon: 'hash', label: t('ch.group.moveTo'), sub: [...targets, newGroup] } : newGroup, cur && { icon: 'x', label: t('ch.group.none'), run: () => moveToFolder(c.id, null) }];
+  };
   const orderItems = (c) => { const at = favs.findIndex((f) => f.id === c.id); return at < 0 ? [] : [
     { icon: 'star', label: t('rail.order.up'), disabled: favoriteBusy || at === 0, run: () => reorderFav(c.id, favs[at - 1]?.id) },
     { icon: 'star', label: t('rail.order.down'), disabled: favoriteBusy || at === favs.length - 1, run: () => reorderFav(c.id, favs[at + 2]?.id ?? null) },

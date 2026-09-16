@@ -99,6 +99,39 @@ await scenario(1280, 'group-room-avatar', async (p) => {
   assert.ok(!/\bcrew\b/.test(cls ?? ''), `한 에이전트의 얼굴로 굳지 않는다 (실제 class: ${cls})`);
 });
 
+// 7. 새 그룹 창(PC) — 제목은 한 줄, 고르는 행은 검색칸 아래로 한 줄씩(유건 제보 2026-09-16: 행이 검색칸 옆으로 흘렀다)
+await scenario(1280, 'group-sheet-layout', async (p) => {
+  await p.locator('[aria-label="새 대화"]').first().click();
+  const sheet = p.locator('.msgr-dmgroup'); await sheet.waitFor({ timeout: 5000 });
+  const m = await sheet.evaluate((el) => { const h = el.querySelector('.head strong'); const inp = el.querySelector('input.msgr-input'); const rows = [...el.querySelectorAll('.pickrow')].map((r) => r.getBoundingClientRect()); return { titleH: h.getBoundingClientRect().height, lineH: parseFloat(getComputedStyle(h).lineHeight) || 20, inputBottom: inp.getBoundingClientRect().bottom, inputW: inp.getBoundingClientRect().width, sheetW: el.getBoundingClientRect().width, tops: rows.map((r) => r.top) }; });
+  assert.ok(m.titleH < m.lineH * 1.5, `제목이 한 줄이다 (높이 ${m.titleH}, 줄 ${m.lineH})`);
+  assert.ok(m.tops.length >= 3, `고를 행이 셋 이상 (실제 ${m.tops.length})`);
+  assert.ok(m.tops.every((t) => t >= m.inputBottom - 1), `모든 행이 검색칸 아래에 있다 (검색칸 아래 ${m.inputBottom}, 행 ${m.tops})`);
+  assert.equal(new Set(m.tops.map(Math.round)).size, m.tops.length, `행마다 줄이 다르다 (${m.tops})`);
+  assert.ok(m.inputW > m.sheetW * 0.8, `검색칸이 창 폭을 쓴다 (${m.inputW} / ${m.sheetW})`);
+});
+
+// 8. 그룹이 많아도 채널 메뉴는 짧다 — '그룹으로 이동…' 한 줄, 누르면 그 자리에서 목록(유건 제보 2026-09-16: 18개가 화면 높이만큼)
+await scenario(1280, 'group-move-menu', async (p) => {
+  await p.locator('.msgr-list button.item', { hasText: 'Folder Room 1' }).first().click({ button: 'right' });
+  const menu = p.locator('.msgr-ctxmenu'); await menu.waitFor({ timeout: 5000 });
+  const top = await menu.locator('[role=menuitem]').allInnerTexts();
+  assert.equal(top.filter((x) => /^Group \d+/.test(x)).length, 0, `그룹 이름이 첫 메뉴에 늘어서지 않는다 (${top})`);
+  assert.ok(top.some((x) => x.includes('그룹으로 이동')), `이동 항목 한 줄 (${top})`);
+  await menu.locator('[role=menuitem]', { hasText: '그룹으로 이동' }).click();
+  await p.waitForTimeout(300);
+  const sub = await menu.evaluate((el) => ({ texts: [...el.querySelectorAll('[role=menuitem]')].map((b) => b.innerText), h: el.getBoundingClientRect().height, bottom: el.getBoundingClientRect().bottom, vh: innerHeight }));
+  assert.ok(sub.texts.filter((x) => /^Group \d+$/.test(x)).length >= 11, `펼치면 다른 그룹이 나온다 (${sub.texts.length}개)`);
+  assert.ok(sub.h <= 441, `목록이 길어도 440px에서 멈춘다 (${sub.h})`);
+  assert.ok(sub.bottom <= sub.vh, `화면 밖으로 나가지 않는다 (${sub.bottom} / ${sub.vh})`);
+  await menu.locator('button.back').click(); await p.waitForTimeout(200);
+  assert.ok((await menu.locator('[role=menuitem]').allInnerTexts()).some((x) => x.includes('그룹으로 이동')), '뒤로 누르면 처음 메뉴');
+  await menu.locator('[role=menuitem]', { hasText: '그룹으로 이동' }).click(); await p.waitForTimeout(200);
+  await menu.locator('[role=menuitem]', { hasText: /^Group 07$/ }).click(); await p.waitForTimeout(500);
+  const calls = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.table === 'msgr_channel_prefs' && c.op === 'upsert'));
+  assert.ok(calls.some((c) => [].concat(c.values).some((v) => v.channel_id === 'fold-1' && v.folder === 'Group 07')), '고른 그룹으로 실제로 옮긴다');
+});
+
 await browser.close();
 console.log(results.join('\n'));
 if (failures.length) { console.log(`${results.length} passed, ${failures.length} failed`); console.log('Failures:', failures); process.exit(1); }

@@ -8,7 +8,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     { user_id: 'user-colleague', org_id: org, role: 'member', display_name: 'Org Colleague', removed_at: null },
     { user_id: 'user-third', org_id: org, role: 'member', display_name: 'Third Person', removed_at: null },
   ],
-  msgr_channels: [channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿')],
+  msgr_channels: [channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿'), ...Array.from({ length: 12 }, (_, i) => channel(`fold-${i + 1}`, 'private', `Folder Room ${i + 1}`))],
   msgr_crews: [
     { id: 'crew-1', org_id: org, owner_user_id: uid, slug: 'fixture-crew', display_name: 'Fixture Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' },
     { id: 'crew-2', org_id: org, owner_user_id: 'user-colleague', slug: 'colleague-crew', display_name: 'Colleague Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 다른 멤버의 크루 — 레일에 나오면 안 된다
@@ -24,6 +24,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     { channel_id: 'group-dm', member_kind: 'user', member_id: 'user-third' },
     { channel_id: 'group-dm', member_kind: 'crew', member_id: 'crew-1' },
     { channel_id: 'group-dm', member_kind: 'crew', member_id: 'crew-bot' },
+    ...Array.from({ length: 12 }, (_, i) => ({ channel_id: `fold-${i + 1}`, member_kind: 'user', member_id: uid })),
   ],
   msgr_messages: [
     { id: 11, channel_id: 'general', org_id: org, author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', body: '스크린샷 붙입니다', created_at: now, deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm11' },
@@ -31,7 +32,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
   msgr_attachments: [
     { id: 'att-1', message_id: 11, channel_id: 'general', org_id: org, name: 'shot.png', mime: 'image/png', bytes: 1024, storage_path: `${org}/general/11/shot.png` },
   ],
-  msgr_target_prefs: [], msgr_channel_prefs: [],
+  msgr_target_prefs: [], msgr_channel_prefs: Array.from({ length: 12 }, (_, i) => ({ user_id: uid, channel_id: `fold-${i + 1}`, muted: false, pinned: false, pin_pos: null, folder: `Group ${String(i + 1).padStart(2, '0')}` })),
   // Friends fixture
   msgr_friends: [
     { user_id: 'user-alice', status: 'accepted', requested_by: uid, display_name: 'Alice Friend', handle: 'alice', created_at: now },
