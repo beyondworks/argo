@@ -48,7 +48,7 @@ before(() => {
   const code = last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.a}') returning code`));
   assert.equal(last(asUser(U.b, `select public.msgr_accept_invite('${code}')`)), ORG);
   PUB = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','Work')`));
-  CREW = last(asUser(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'lean', 'bot', 'Bot') returning id`)); sql(`update public.msgr_crews set status='active', last_seen_at=now() where id='${CREW}'`);
+  CREW = last(asUser(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'lean', 'bot', 'Bot') returning id`)); sql(`update public.msgr_crews set status='active', last_seen_at=now() where id='${CREW}'`); sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PUB}', 'crew', '${CREW}')`); // 공개 채널도 초대된 에이전트만(2026-09-16)
   DM = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','dm','dm:b','[{"kind":"user","id":"${U.b}"}]'::jsonb)`));
   sql(`insert into public.msgr_settings (key, value) values ('push_url', 'https://edge.test/msgr-push') on conflict (key) do update set value = excluded.value`);
 });

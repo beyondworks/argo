@@ -1,10 +1,11 @@
 // Browser-only fixture: no credentials or production client imported.
 export const configured = true, customServer = false, SB_URL = 'http://fixture.invalid', SB_ANON = 'fixture';
 const uid = 'user-me', org = 'org-fixture', now = new Date().toISOString();
-const channel = (id, kind, name, orgId = org) => ({ id, org_id: orgId, kind, name, created_by: uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: orgId ? 'allowed' : 'blocked' });
+const asMember = new URLSearchParams(location.search).get('role') === 'member'; // 방장이 아닌 참여자 시점(2026-09-16 에이전트 참여 승인)
+const channel = (id, kind, name, orgId = org) => ({ id, org_id: orgId, kind, name, created_by: asMember ? 'user-colleague' : uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: orgId ? 'approval' : 'blocked' });
 const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts: {}, channelNames: [], tables: {
   msgr_org_members: [
-    { user_id: uid, org_id: org, role: 'owner', display_name: 'Fixture Owner', removed_at: null, msgr_orgs: { id: org, name: 'Fixture Organization', slug: 'fixture', owner_user_id: uid } },
+    { user_id: uid, org_id: org, role: asMember ? 'member' : 'owner', display_name: 'Fixture Owner', removed_at: null, msgr_orgs: { id: org, name: 'Fixture Organization', slug: 'fixture', owner_user_id: uid } },
     { user_id: 'user-colleague', org_id: org, role: 'member', display_name: 'Org Colleague', removed_at: null },
     { user_id: 'user-third', org_id: org, role: 'member', display_name: 'Third Person', removed_at: null },
   ],
@@ -33,6 +34,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
   msgr_attachments: [
     { id: 'att-1', message_id: 11, channel_id: 'general', org_id: org, name: 'shot.png', mime: 'image/png', bytes: 1024, storage_path: `${org}/general/11/shot.png` },
   ],
+  msgr_channel_crew_requests: asMember ? [] : [{ id: 'req-1', channel_id: 'general', crew_id: 'crew-2', requested_by: 'user-colleague', status: 'pending', created_at: now }],
   msgr_target_prefs: [], msgr_channel_prefs: Array.from({ length: 12 }, (_, i) => ({ user_id: uid, channel_id: `fold-${i + 1}`, muted: false, pinned: false, pin_pos: null, folder: `Group ${String(i + 1).padStart(2, '0')}` })),
   // Friends fixture
   msgr_friends: [
@@ -60,7 +62,7 @@ function query(table) {
   let op = 'select', values, cols = '*', one = false;
   const filters = [];
   const api = {
-    select(c = '*') { cols = c; return api; }, eq(k, v) { filters.push(r => r[k] === v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
+    select(c = '*') { cols = c; return api; }, eq(k, v) { filters.push(r => r[k] === v); return api; }, neq(k, v) { filters.push(r => r[k] !== v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
     in(k, vs) { filters.push(r => vs.includes(r[k])); return api; }, gt(k, v) { filters.push(r => r[k] > v); return api; }, lt(k, v) { filters.push(r => r[k] < v); return api; },
     order() { return api; }, limit() { return api; }, contains() { return api; }, or() { return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; },
     upsert(v) { op = 'upsert'; values = v; return api; }, update(v) { op = 'update'; values = v; return api; }, delete() { op = 'delete'; return api; }, insert(v) { op = 'insert'; values = v; return api; },
@@ -120,6 +122,21 @@ export const supabase = {
       return state.tables.msgr_channels.filter((c) => c.kind === 'public' && !joined.has(c.id)).map((c) => ({ id: c.id, name: c.name, topic: null, members: 1, created_at: now }));
     }
     if (name === 'msgr_join_channel') { state.tables.msgr_channel_members.push({ channel_id: args.ch, member_kind: 'user', member_id: uid }); return true; }
+    if (name === 'msgr_crew_join') {
+      const members = state.tables.msgr_channel_members;
+      if (members.some((m) => m.channel_id === args.ch && m.member_kind === 'crew' && m.member_id === args.crew)) return 'already';
+      const ch = state.tables.msgr_channels.find((c) => c.id === args.ch);
+      if (!asMember || ch?.kind === 'dm') { members.push({ channel_id: args.ch, member_kind: 'crew', member_id: args.crew }); return 'joined'; }
+      state.tables.msgr_channel_crew_requests.push({ id: `req-${Date.now()}`, channel_id: args.ch, crew_id: args.crew, requested_by: uid, status: 'pending', created_at: new Date().toISOString() });
+      return 'requested';
+    }
+    if (name === 'msgr_crew_join_decide') {
+      const r = state.tables.msgr_channel_crew_requests.find((x) => x.id === args.req);
+      if (!r || r.status !== 'pending') throw new Error('msgr_request_closed');
+      r.status = args.approve ? 'approved' : 'rejected';
+      if (args.approve) state.tables.msgr_channel_members.push({ channel_id: r.channel_id, member_kind: 'crew', member_id: r.crew_id });
+      return r.status;
+    }
     if (name === 'msgr_push_badge_resync') return null;
     return [];
   }),

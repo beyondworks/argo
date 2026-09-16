@@ -60,6 +60,8 @@ const AWAY_MS = 90_000;
 /** 개인 공간을 뜻하는 orgId 상수. null은 "조직 없음(EmptyOrg)"이므로 센티넬로 구분한다. */
 export const PERSONAL = '__personal__';
 /** 크루 등급(부록 I·K) — 서버 함수 msgr_crew_tier와 같은 규칙: 조직 서비스 계정이 소유하고 상주 노드에서 돌면 회사 크루, 그 외는 개인(파견) 크루. 화면 표시용이며 판정 정본은 서버. */
+// 이 채널이 개인 에이전트의 지시를 막는가 — 못 데려옴·보기만(서버 msgr_instruct_check와 같다). 방장 승인은 막지 않는다(들어온 에이전트는 일한다, 2026-09-16).
+export const limitsPersonal = (channel) => channel?.personal_crews === 'blocked' || channel?.personal_crews === 'read_only';
 export const crewTier = (crew, org) => (crew?.hosting === 'bot' || (org?.service_user_id && crew?.owner_user_id === org.service_user_id && crew?.hosting === 'resident')) ? 'company' : 'personal'; // 봇(외부 에이전트)도 회사 등급 — 서버 msgr_crew_tier와 같은 규칙(부록 N)
 const PAGE = 100;
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
@@ -596,19 +598,20 @@ function Shell({ session }) {
     const allow = policy?.allow_default ?? 'all';
     const up = await supabase.from('msgr_crews').update({ status: 'active', allow, allow_users: [] }).eq('id', crew.id).select('id');
     if (up.error) throw new Error(up.error.message);
-    const ch = channels.find((c) => c.id === channelId);
-    if (channelId && ch && ch.kind !== 'public') { // 공개 채널은 파견만으로 참여(멤버 행 없음) — 비공개·DM만 멤버 행
-      // 대화방에는 크루 행만 넣는다 — 나는 이미 그 방에 있고, 대화방에 user 행을 넣는 길은 서버가 막는다(사람이 들어오는 자리는 방을 만들 때뿐).
-      const rows = [{ channel_id: channelId, member_kind: 'crew', member_id: crew.id, added_by: uid }, ...(ch.kind === 'dm' ? [] : [{ channel_id: channelId, member_kind: 'user', member_id: uid, added_by: uid }])];
-      const res = await supabase.from('msgr_channel_members').upsert(rows, { onConflict: 'channel_id,member_kind,member_id' });
-      if (res.error && !/msgr_channel_personal_blocked/.test(res.error.message)) throw new Error(res.error.message);
-      if (res.error) throw new Error(t('err.channelPersonalBlocked'));
+    // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 참여자면 바로.
+    let joined = null;
+    if (channelId) {
+      const res = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: crew.id });
+      if (res.error) throw new Error(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : friendlyErr(res.error.message, t));
+      joined = res.data;
     }
     await loadOrg(orgId);
-  }, [policy, uid, orgId, loadOrg, t, channels]);
+    return joined; // 'joined' | 'requested' | 'already' | null(조직에만 파견)
+  }, [policy, uid, orgId, loadOrg, t]);
   const loadChMembers = useCallback(async (id) => { if (id !== activeChannel.current) return; const current = memberRequests.current.begin(`${activeOrg.current}:${id}`); if (!id) { setChMembers([]); return; } try { const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); if (current()) setChMembers(rows); } catch { if (current()) setChMembers([]); } }, []);
   useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setChSheet(false); }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
+  const sheetAfterNav = useRef(false); // 알림함의 에이전트 참여 요청 → 그 채널로 가서 설정을 연다
+  useEffect(() => { setChSheet(sheetAfterNav.current); sheetAfterNav.current = false; }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
   const [unread, setUnread] = useState({}); const [muted, setMuted] = useState(() => new Set()); const [pinned, setPinned] = useState(() => new Set()); /* 즐겨찾기(고정) — msgr_channel_prefs.pinned(유건 2026-09-12) */ const [pinPos, setPinPos] = useState(() => new Map()); /* 즐겨찾기 순서(pin_pos, 2026-09-12). 채널 그룹(folder)은 뺐다 — 유건 2026-09-16, 라이브 사용 0명 */ const [quiet, setQuiet] = useState(null); // P0(2026-09-09): 채널별 안 읽음·음소거·조용한 시간
   // 안 읽음 — org=null이면 개인 공간(조직 밖 1:1)을 센다(검수 L-1)
   const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); }, [orgId]);
@@ -720,11 +723,14 @@ function Shell({ session }) {
     (async () => {
       const dmIds = channels.filter((c) => c.kind === 'dm').map((c) => c.id);
       const cols = 'id, channel_id, author_kind, author_user_id, crew_id, body, created_at, reply_to';
-      const [ments, mine, aps, dms] = await Promise.all([
+      const orgChIds = [...channels, ...previewChannels].filter((c) => c.kind !== 'dm').map((c) => c.id);
+      const [ments, mine, aps, dms, joins] = await Promise.all([
         q(supabase.from('msgr_messages').select(cols).eq('org_id', org.id).is('deleted_at', null).contains('mentions', JSON.stringify([{ kind: 'user', id: uid }])).order('id', { ascending: false }).limit(40)).catch(() => []),
         q(supabase.from('msgr_messages').select('id').eq('org_id', org.id).eq('author_user_id', uid).order('id', { ascending: false }).limit(200)).catch(() => []),
         q(supabase.from('msgr_crew_approvals').select('id, channel_id, crew_id, action, reason, created_at').eq('org_id', org.id).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => []),
         dmIds.length ? q(supabase.from('msgr_messages').select(cols).in('channel_id', dmIds).is('deleted_at', null).or(`author_user_id.neq.${uid},author_user_id.is.null`).order('id', { ascending: false }).limit(40)).catch(() => []) : [],
+        // 에이전트 참여 요청 — 서버가 방장과 요청자에게만 보여 준다. 요청자 자신의 것은 뺀다(유건 2026-09-16: 방장에게 허용 여부를 묻는다)
+        orgChIds.length ? q(supabase.from('msgr_channel_crew_requests').select('id, channel_id, crew_id, requested_by, created_at').in('channel_id', orgChIds).eq('status', 'pending').neq('requested_by', uid).order('created_at', { ascending: false }).limit(40)).catch(() => []) : [],
       ]);
       const myIds = mine.map((m) => m.id);
       for (const id of myIds) mineRef.current.add(id);
@@ -735,12 +741,13 @@ function Shell({ session }) {
       const dmSet = new Set(dmIds); // DM 안의 크루 답글은 '1:1 대화'에만(같은 글이 '에이전트 답글'에도 실리던 중복 — 유건 제보 2026-09-11)
       const list = [...ments.map((m) => item('mention', m)), ...replies.filter((m) => !dmSet.has(m.channel_id)).map((m) => item('reply', m)), ...dms.map((m) => item('dm', m)),
         ...friends.filter((f) => f.status === 'pending' && f.requested_by !== uid).map((f) => ({ kind: 'friend', key: `friend:${f.user_id}`, channel_id: null, at: f.created_at, who: f.user_id, whoKind: 'user', text: t('inbox.friend.text', { name: f.display_name || f.handle || '' }), friendName: f.display_name || f.handle })),
+        ...joins.map((r) => ({ kind: 'approval', key: `crewjoin:${r.id}`, joinReq: r.id, channel_id: r.channel_id, at: r.created_at, who: r.crew_id, whoKind: 'crew', text: t('inbox.crewjoin.text', { name: nameOfUser(r.requested_by) }) })),
         ...aps.map((a) => ({ kind: 'approval', key: `approval:${a.id}`, channel_id: a.channel_id, at: a.created_at, who: a.crew_id, whoKind: 'crew', text: a.reason ? `${a.action} — ${a.reason}` : a.action }))];
       const seenKeys = new Set();
       setInbox(list.filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80));
     })();
     return () => { dead = true; };
-  }, [org?.id, uid, tick, channels, friends]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [org?.id, uid, tick, channels, previewChannels, friends]); // eslint-disable-line react-hooks/exhaustive-deps
   const nodeSeenAt = org?.node_seen_at ? Date.parse(org.node_seen_at) : 0; // 상주 노드 하트비트 — 설정 화면과 같은 판정(AWAY_MS)
   const nodeAlive = !!org?.service_user_id && nodeSeenAt > 0 && Date.now() - nodeSeenAt < AWAY_MS;
   const nodeLabel = !org?.service_user_id ? t('org.node.none') : !nodeSeenAt ? t('org.node.never') : t(nodeAlive ? 'org.node.on' : 'org.node.off', { when: fmtWhen(org.node_seen_at, lang) });
@@ -1021,13 +1028,14 @@ function Shell({ session }) {
   const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
   const channel = joinedChannel ?? previewing;
   // 채널 중심 구조(유건 지시 2026-09-04): 레일은 채널·1:1만, 크루·멤버는 "이 채널의 구성"으로 본다. 공개 채널 = 조직 멤버 전원 + 이 채널에서 일할 수 있는 크루(채널 정책), 비공개·DM = 채널 멤버.
-  const usableCrews = channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews;
+  const usableCrews = limitsPersonal(channel) ? crews.filter((c) => crewTier(c, org) === 'company') : crews;
   // 이 채널의 사람 = 참여한 사람(공개 채널도 — #555 이후 참여 기준). 공개 채널에서 내보낸 사람은 제외 목록으로도 걸러 낸다(유건 요청 2026-09-11).
   // 종전에는 공개 채널이면 조직원 전원을 보여 줘, 참여하지 않은 사람까지 "이 채널의 사람"에 떴다(유건 제보 2026-09-16).
   const chPeople = !channel ? [] : members.filter((m) => chMembers.some((x) => x.member_kind === 'user' && x.member_id === m.user_id) && !(channel.kind === 'public' && (channel.excluded_user_ids ?? []).includes(m.user_id)));
   // @멘션 후보는 따로 둔다 — 공개 채널은 누구나 읽을 수 있고, 멘션하면 참여하지 않은 사람에게도 알림이 간다(msgr_push_recipients의 멘션 분기, 슬랙과 같다).
   const mentionPeople = channel?.kind === 'public' ? members.filter((m) => !(channel.excluded_user_ids ?? []).includes(m.user_id)) : chPeople;
-  const chCrews = !channel ? [] : channel.kind === 'public' ? usableCrews.filter((c) => !(channel.excluded_crew_ids ?? []).includes(c.id)) : crews.filter((c) => chMembers.some((x) => x.member_kind === 'crew' && x.member_id === c.id));
+  // 이 채널의 에이전트 = 초대된(참여 행이 있는) 에이전트. 공개 채널도 같다 — 종전에는 파견된 에이전트 전원이 저절로 들어와 있었다(유건 2026-09-16).
+  const chCrews = !channel ? [] : usableCrews.filter((c) => chMembers.some((x) => x.member_kind === 'crew' && x.member_id === c.id) && !(channel.excluded_crew_ids ?? []).includes(c.id));
   // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
   // DM 라벨 = 나 아닌 참가자(검수 MEDIUM-2: 저장된 이름은 생성자 시점). 크루 DM에 다른 사람도 있으면(소유자 동반) '서윤 · 민수'처럼 병기
   // 그룹 판정 정본(검수 HIGH-2): 나를 뺀 참가자(사람+크루)가 2 이상이면 그룹. 단 "사람 1 + 크루 1이고 그 사람이 그 크루의 소유자"는 남의 크루 1:1(소유자 동반 규칙)
@@ -1249,8 +1257,8 @@ function Shell({ session }) {
             {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany], ['mine.bot', 'rail.agents.bot', railBots]]
               .map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(railRow)}</RailFold>)}
             {myAvailable.map((c) => { // 목록에서 그 자리 파견(유건 지시 2026-09-08) — 채널을 보고 있으면 그 채널까지(DM은 조직만), 아니면 조직만
-              const target = channel && (channel.personal_crews ?? 'allowed') !== 'blocked' ? channel : null; // 대화방도 그 자리 파견 대상이다(유건 2026-09-16)
-              const go = async () => { if (railBusy) return; setRailBusy(c.id); try { await dispatchCrew(c, target?.id ?? null); setNote(t(target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
+              const target = channel && (channel.personal_crews ?? 'approval') !== 'blocked' ? channel : null; // 대화방도 그 자리 파견 대상이다(유건 2026-09-16)
+              const go = async () => { if (railBusy) return; setRailBusy(c.id); try { const r = await dispatchCrew(c, target?.id ?? null); setNote(t(r === 'requested' ? 'ch.crew.join.requested' : target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
               return (
                 <div key={c.id} className="msgr-railrow dim">
                   <button type="button" className="item dim" onClick={() => setSheet(c.id)} onContextMenu={(e) => openCtx(e, [{ icon: 'gear', label: t('ctx.crew.card'), run: () => setSheet(c.id) }, { icon: 'plus', label: t('rail.mine.dispatch'), run: go }])} disabled={railBusy === c.id} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" crewId={c.id} /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>
@@ -1300,7 +1308,7 @@ function Shell({ session }) {
         ) : page === 'inbox' && isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.noInbox')}</p></div></div></>
         ) : page === 'inbox' && org ? (
-          <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
+          <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) setChSheet(true); else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
@@ -1485,14 +1493,36 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const saveText = () => upd({ name: name.trim() || channel.name, topic: topic.trim() || null }, t('ch.saved'));
   const addMember = async (kind, id) => {
     setBusy(true);
-    const rows = [{ channel_id: channel.id, member_kind: kind, member_id: id, added_by: uid }];
-    const crew = kind === 'crew' ? crews.find((c) => c.id === id) : null;
-    // 크루 = 소유자 동반. 다만 대화방에는 사람을 넣는 길이 없으므로(새 방으로 부른다) 소유자가 이미 있는 에이전트만 후보다.
-    if (crew && !isDmRoom && !chMembers.some((m) => m.member_kind === 'user' && m.member_id === crew.owner_user_id)) rows.push({ channel_id: channel.id, member_kind: 'user', member_id: crew.owner_user_id, added_by: uid });
+    const rows = [{ channel_id: channel.id, member_kind: kind, member_id: id, added_by: uid }]; // 사람만 — 에이전트는 joinCrew(서버 규칙)
     const res = await supabase.from('msgr_channel_members').upsert(rows, { onConflict: 'channel_id,member_kind,member_id' });
     setBusy(false); setAdd(null);
     if (res.error) return onError(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : res.error.message); // I-3: 서버 게이트의 거절을 정직한 문구로
     await onChanged();
+  };
+  // 에이전트 데려오기 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 참여자면 바로. 주인 동반까지 서버가 한다(msgr_crew_join).
+  const [joinReqs, setJoinReqs] = useState([]);
+  const loadJoinReqs = useCallback(async () => {
+    if (channel.kind === 'dm') { setJoinReqs([]); return; }
+    const rows = await q(supabase.from('msgr_channel_crew_requests').select('id, crew_id, requested_by, created_at').eq('channel_id', channel.id).eq('status', 'pending').order('created_at')).catch(() => []);
+    setJoinReqs(rows ?? []);
+  }, [channel.id, channel.kind]);
+  useEffect(() => { loadJoinReqs(); }, [loadJoinReqs]);
+  const joinCrew = async (id) => {
+    const name = crews.find((c) => c.id === id)?.display_name ?? '';
+    setBusy(true);
+    const res = await supabase.rpc('msgr_crew_join', { ch: channel.id, crew: id });
+    setBusy(false); setAdd(null);
+    if (res.error) return onError(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : friendlyErr(res.error.message, t));
+    if (res.data === 'requested') { onNote(t('ch.crew.join.requested', { name })); return loadJoinReqs(); }
+    await onChanged();
+  };
+  const decideJoin = async (r, ok) => {
+    setBusy(true);
+    const res = await supabase.rpc('msgr_crew_join_decide', { req: r.id, approve: ok });
+    setBusy(false);
+    if (res.error) return onError(friendlyErr(res.error.message, t));
+    onNote(t(ok ? 'ch.crew.join.approved' : 'ch.crew.join.rejected', { name: crews.find((c) => c.id === r.crew_id)?.display_name ?? '' }));
+    await loadJoinReqs(); await onChanged();
   };
   const removeMember = async (kind, id) => {
     if (kind === 'user' && crews.some((c) => c.owner_user_id === id && chMembers.some((m) => m.member_kind === 'crew' && m.member_id === c.id))) return onError(t('ch.remove.ownerBlocked')); // 검수 HIGH-3: 소유자가 빠지면 크루가 조용히 죽는다
@@ -1527,8 +1557,13 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const userIds = new Set(chMembers.filter((m) => m.member_kind === 'user').map((m) => m.member_id));
   const crewIds = new Set(chMembers.filter((m) => m.member_kind === 'crew').map((m) => m.member_id));
   const addableUsers = members.filter((m) => !userIds.has(m.user_id) && m.user_id !== org?.service_user_id && !(channel.kind === 'public' && excludedUsers.includes(m.user_id))); // 내보낸 사람은 후보가 아니다(넣어도 읽기가 막힌다) // 회사 크루 서버(기계 계정)는 사람 후보가 아니다(실측: 첫 칩이 '회사 노드')
-  const addableCrews = crews.filter((c) => !crewIds.has(c.id) && ((channel.personal_crews ?? 'allowed') !== 'blocked' || crewTier(c, org) === 'company')
-    && (channel.kind !== 'dm' || c.owner_user_id === uid || userIds.has(c.owner_user_id))); // 대화방: 소유자가 이 방에 있는 에이전트만(남의 에이전트를 부르려면 그 사람과 함께 새 방을 연다) // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
+  // 누가 무엇을 데려오나(서버 msgr_crew_join과 같은 규칙) — 방장: 조직의 에이전트 / 참여자: 자기 에이전트와 회사 에이전트(요청) /
+  // 채팅: 주인이 이 방에 있는 에이전트(남의 에이전트를 부르려면 그 사람과 함께 새 방을 연다). 못 데려옴 채널은 회사 에이전트만.
+  const isHost = canEdit && !isDmRoom;
+  const pendingCrews = new Set(joinReqs.map((r) => r.crew_id));
+  const addableCrews = crews.filter((c) => !crewIds.has(c.id) && !pendingCrews.has(c.id) && ((channel.personal_crews ?? 'approval') !== 'blocked' || crewTier(c, org) === 'company')
+    && (isDmRoom ? (c.owner_user_id === uid || userIds.has(c.owner_user_id)) : (isHost || c.owner_user_id === uid || crewTier(c, org) === 'company')));
+  const needsApproval = (c) => !isDmRoom && !isHost && (crewTier(c, org) === 'company' || (channel.personal_crews ?? 'approval') === 'approval'); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
   const nodeSet = !!org?.service_user_id; const nodeOn = nodeSet && !!org?.node_seen_at && Date.now() - Date.parse(org.node_seen_at) < AWAY_MS; // I-5·검수 M-4: 노드가 살아 있어야 만들 수 있다(죽은 노드면 영원한 '만드는 중')
   const crewCreate = policy?.crew_create ?? 'channel_admin';
@@ -1564,8 +1599,8 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   // 공개 채널도 참여 기준이라 초대할 수 있다(유건 제보 2026-09-16). 개인 공간 1:1은 '한 쌍 한 방'이라 사람을 더 부르지 않는다.
   // 판정은 isPersonal로 한다 — 조직 채널 조회는 org_id 열을 가져오지 않아, org_id로 가르면 조직 대화방까지 막혔다(실사고 2026-09-16).
   const canAddPeople = canManage && !isPersonal && addableUsers.length > 0; // 개인 공간 1:1은 '한 쌍 한 방'이라 사람을 더 부르지 않는다
-  const canDispatch = myAvailable.length > 0 && (channel.personal_crews ?? 'allowed') !== 'blocked'; // 부록 M: 내 파견 전 크루 — 공개 채널은 파견만 하면 자동 참여, 비공개·대화방은 파견+멤버
-  const canAddCrew = (scoped && canManage && addableCrews.length > 0) || canDispatch || (channel.kind === 'public' && chCrews.length > 0); // 공개 채널: 파견 크루 전원이 이미 참여 — '추가'는 @로 부르기
+  const canDispatch = (isHost || inRoom) && myAvailable.length > 0 && (channel.personal_crews ?? 'approval') !== 'blocked'; // 부록 M: 내 파견 전 크루 — 공개 채널은 파견만 하면 자동 참여, 비공개·대화방은 파견+멤버
+  const canAddCrew = ((isHost || inRoom) && addableCrews.length > 0) || canDispatch; // 공개 채널도 초대된 에이전트만(2026-09-16) — 종전의 '파견 전원 참여, @로 부르기'는 없어졌다
   const canGuest = channel.kind === 'private' && canEdit;
   const showNewCrewItem = channel.kind !== 'dm' && (canCreateCrew || (isAdmin && !nodeOn)); // 관리자에겐 서버가 없거나 죽어도 항목은 보이되 비활성+이유(안 될 버튼 노출 금지의 예외: 왜 안 되는지 알려줘야 하는 자리)
   const canAddAny = canAddPeople || canAddCrew || canGuest || showNewCrewItem;
@@ -1622,6 +1657,13 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 </span>
               </div>
             ); })}
+            {joinReqs.map((r) => { const c = crews.find((x) => x.id === r.crew_id); const mine = r.requested_by === uid; return (
+              <div key={`req:${r.id}`} className="row req">
+                <Av name={c?.display_name ?? '?'} crew size="sm" crewId={r.crew_id} /><span className="name">{c?.display_name ?? r.crew_id.slice(0, 8)}</span>
+                <span className="sub">{mine ? t('ch.crew.join.waiting') : t('ch.crew.join.by', { name: nameOfUser(r.requested_by) })}</span>
+                {isHost && !mine && <span className="acts"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => decideJoin(r, true)}>{t('ch.crew.join.approve')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => decideJoin(r, false)}>{t('ch.crew.join.reject')}</button></span>}
+              </div>
+            ); })}
             {!chCrews.length && <p className="empty">{scoped ? t('ch.crews.none.scoped') : t('ch.crews.none')}</p>}
             {channel.kind === 'public' && canEdit && (excludedUsers.length > 0 || excludedCrews.length > 0) && (<>
               <div className="msgr-klabel">{t('ch.excluded')}</div>
@@ -1656,17 +1698,13 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
               </>)}
               {add === 'crew' && (<>
-                {channel.kind === 'public' && chCrews.length > 0 && (<>
-                  <div className="msgr-klabel">{t('ch.add.crew.public')}</div>
-                  <div className="msgr-chips">{chCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => onMention?.(c)} title={t('ch.add.crew.call')}><I name="at" size={13} /><span>{c.display_name}</span></button>)}</div>
-                  <p className="note">{t('ch.add.crew.public.note')}</p>
-                </>)}
-                {channel.kind !== 'public' && addableCrews.length > 0 && <><div className="msgr-klabel">{t('ch.add.crew')}</div>
-                <div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => addMember('crew', c.id)}><I name="star" size={13} /><span>{c.display_name}</span></button>)}</div></>}
-                {channel.kind !== 'public' && !addableCrews.length && !myAvailable.length && <p className="note">{t('ch.add.crew.none')}</p>}
-                {myAvailable.length > 0 && (channel.personal_crews ?? 'allowed') !== 'blocked' && (<>
+                {addableCrews.length > 0 && <><div className="msgr-klabel">{t('ch.add.crew')}</div>
+                <div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" disabled={busy} onClick={() => joinCrew(c.id)} title={needsApproval(c) ? t('ch.crew.join.needs') : undefined}><I name="star" size={13} /><span>{c.display_name}</span>{needsApproval(c) && <span className="msgr-klabel">{t('ch.crew.join.ask')}</span>}</button>)}</div>
+                {addableCrews.some(needsApproval) && <p className="note">{t('ch.crew.join.note')}</p>}</>}
+                {!addableCrews.length && !myAvailable.length && <p className="note">{t('ch.add.crew.none')}</p>}
+                {canDispatch && (<>
                   <div className="msgr-klabel">{t('ch.add.mine')}</div>
-                  <div className="msgr-chips">{myAvailable.map((c) => <button key={c.id} type="button" className="msgr-chan more" disabled={busy} onClick={async () => { setBusy(true); try { await onDispatch(c, channel.id); setAdd(null); onNote?.(t('ch.add.mine.done', { name: c.display_name })); } catch (e) { onError(e.message); } finally { setBusy(false); } }}><I name="plus" size={13} /><span>{c.display_name}</span></button>)}</div>
+                  <div className="msgr-chips">{myAvailable.map((c) => <button key={c.id} type="button" className="msgr-chan more" disabled={busy} onClick={async () => { setBusy(true); try { const r = await onDispatch(c, channel.id); setAdd(null); onNote?.(t(r === 'requested' ? 'ch.crew.join.requested' : 'ch.add.mine.done', { name: c.display_name })); if (r === 'requested') loadJoinReqs(); } catch (e) { onError(e.message); } finally { setBusy(false); } }}><I name="plus" size={13} /><span>{c.display_name}</span></button>)}</div>
                   <p className="note">{t('ch.add.mine.note')}</p>
                 </>)}
                 <p className="note">{t('ch.add.crew.note')}</p>
@@ -1709,10 +1747,10 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
               <div className="row wrap">
                 <span className="msgr-klabel">{t('ch.personal')}</span>
                 <div className="msgr-seg" role="radiogroup" aria-label={t('ch.personal')}>
-                  {['allowed', 'read_only', 'blocked'].map((v) => <button key={v} type="button" role="radio" aria-checked={(channel.personal_crews ?? 'allowed') === v} className={(channel.personal_crews ?? 'allowed') === v ? 'active' : ''} disabled={!canEdit || busy} onClick={() => upd({ personal_crews: v }, t('ch.personal.saved'))}>{personalLabel(v)}</button>)}
+                  {['allowed', 'approval', 'blocked'].map((v) => <button key={v} type="button" role="radio" aria-checked={(channel.personal_crews ?? 'approval') === v} className={(channel.personal_crews ?? 'approval') === v ? 'active' : ''} disabled={!canEdit || busy} onClick={() => upd({ personal_crews: v }, t('ch.personal.saved'))}>{personalLabel(v)}</button>)}
                 </div>
               </div>
-              {(channel.personal_crews ?? 'allowed') === 'blocked' && <p className="note">{t('ch.personal.blocked.note')}</p>}
+              {(channel.personal_crews ?? 'approval') === 'blocked' && <p className="note">{t('ch.personal.blocked.note')}</p>}
               {canEdit && (!confirmArchive
                 ? <div className="row"><button type="button" className="btn sm" disabled={busy} onClick={() => setConfirmArchive(true)}><I name="x" size={13} />{t('ch.archive')}</button></div>
                 : <div className="confirm"><p>{t('ch.archive.confirm')}</p><div className="row"><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={archive}><I name="x" size={13} />{t('ch.archive')}</button><button type="button" className="btn sm" onClick={() => setConfirmArchive(false)}>{t('ui.cancel')}</button></div></div>)}
@@ -1968,7 +2006,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
       {!shown.length && <p className="empty">{unreadOnly && readCount ? t('inbox.allRead') : t('inbox.empty')}</p>}
       {readCount > 0 && <button type="button" className="btn sm msgr-inboxtoggle" onClick={() => setUnreadOnly((v) => !v)}>{unreadOnly ? t('inbox.showRead', { n: readCount }) : t('inbox.unreadOnly')}</button>}
       {shown.map((it) => (
-        <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id)}>
+        <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id, it)}>
           <Av name={who(it)} crew={it.whoKind === 'crew'} size="sm" crewId={it.whoKind === 'crew' ? it.who : null} userId={it.whoKind === 'crew' ? null : it.who} />
           <span className="body"><span className="line1"><b>{who(it)}</b><span className="msgr-klabel">{t(`inbox.kind.${it.kind}`)} · {chName(it.channel_id)} · {fmtWhen(it.at, lang)}</span></span><span className="text">{it.text.slice(0, 160)}</span></span>
         </button>
@@ -3372,7 +3410,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     if (!pop) return [];
     const needle = pop.q.toLowerCase();
     const exclude = new Set(mentionsFromBody(text, byName, [], allByName).map((x) => `${x.kind}:${x.id}`)); if (ALL_RE.test(text)) exclude.add('all:all'); // 이미 본문에 있는 멘션은 목록에서 뺀다(유건 2026-09-12)
-    const usable = (channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // 내보낸 크루는 후보에서 뺀다 // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
+    const usable = (limitsPersonal(channel) ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // 내보낸 크루는 후보에서 뺀다 // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
     return mentionCandidates({ q: needle, crews: isDm ? mentionCrews : scopeCrews ?? usable, members: scopePeople ?? members, uid, exclude, all: !isDm || allByName.some((c) => c.kind === 'crew' || c.id !== uid) }).map((c) => (c.kind === 'all' ? { ...c, sub: t('mention.all') } : { ...c, disabled: isDm && c.kind === 'crew' && !(scopeCrews ?? []).some((p) => p.id === c.id) && dmCandidates.find((p) => p.id === c.id)?.delivery_ready !== true })); // 사람 먼저·나 제외·상한 없음(팝업 스크롤). 맨 위 @all. 후보는 이 채널의 참여 구성만(사설 채널 밖 크루가 걸리던 실사고 2026-09-11)
   }, [pop, crews, members, uid, channel?.personal_crews, org, scopeCrews, scopePeople, text, byName, allByName, isDm, mentionCrews, dmCandidates, t]);
   const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };
@@ -3394,7 +3432,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   // 후보: 1:1 = 서버 전달 후보(지원 여부 게이트), 채널 = 이 채널에서 부를 수 있는 크루(@ 후보와 같은 규칙, 내보낸 크루 제외).
   const roleCands = useMemo(() => {
     if (isDm) return recipientLoad === 'ready' ? dmCandidates : [];
-    const usable = (channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // @ 후보(candidates)와 같은 규칙
+    const usable = (limitsPersonal(channel) ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // @ 후보(candidates)와 같은 규칙
     return (scopeCrews ?? usable).map((c) => ({ ...c, delivery_ready: true }));
   }, [isDm, recipientLoad, dmCandidates, scopeCrews, crews, channel?.excluded_crew_ids, channel?.personal_crews, org]);
   const rolePick = useMemo(() => {
