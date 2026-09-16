@@ -100,7 +100,11 @@ Deno.serve(async (req: Request) => {
   const [ch] = await rest(`msgr_channels?id=eq.${m.channel_id}&select=name,kind,org_id`);
   const authorName = m.author_kind === 'crew'
     ? (await rest(`msgr_crews?id=eq.${m.crew_id}&select=display_name`))?.[0]?.display_name
-    : (await rest(`msgr_org_members?org_id=eq.${ch?.org_id}&user_id=eq.${m.author_user_id}&select=display_name`))?.[0]?.display_name;
+    // 개인 공간(조직 밖) 1:1은 org가 없다 — 조직 멤버 조회를 그대로 쏘면 `eq.null`로 나가 이 핸들러가 통째로 실패하고,
+    // 선점(msgr_push_sent)이 이미 끝난 뒤라 그 메시지 알림은 재시도로도 안 간다. 이름은 계정 프로필에서 읽는다.
+    : ch?.org_id
+      ? (await rest(`msgr_org_members?org_id=eq.${ch.org_id}&user_id=eq.${m.author_user_id}&select=display_name`))?.[0]?.display_name
+      : (await rest(`msgr_profiles?user_id=eq.${m.author_user_id}&select=display_name`))?.[0]?.display_name;
   const text = pushText({ body: m.body, authorName, channelName: ch?.name, channelKind: ch?.kind });
   // 아이콘 배지 = 수신자별 안읽음 총계(iOS aps.badge) — 앱이 닫혀 있어도 숫자가 쌓인다(유건 제보 2026-09-12)
   const badges = new Map<string, number>();

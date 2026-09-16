@@ -26,7 +26,7 @@ test('배지 재동기화 — 앱 전면 복귀·알림함 열기·다 읽음에
   assert.match(src, /supabase\.rpc\('msgr_push_badge_resync'\)/);
   assert.match(src, /if \(now - badgeSyncAt\.current < 3000\) return;/, '3초 스로틀');
   assert.match(src, /document\.visibilityState === 'visible'\) resyncBadge\(\)/, '전면 복귀');
-  assert.match(src, /loadOrg\(orgId\)\.catch\(\(e\) => setErr\(e\.message\)\); resyncBadge\(\); \}\);/, '모바일 resume 관찰자');
+  assert.match(src, /\(isPersonal \? loadPersonal\(\) : loadOrg\(orgId\)\)\.catch\(\(e\) => setErr\(e\.message\)\); resyncBadge\(\); \}\);/, '모바일 resume 관찰자(개인 공간 분기)');
   assert.match(src, /setPage\('inbox'\); setRail\(false\); resyncBadge\(\); \};/, '알림함 열기');
   assert.match(src, /if \(k === 'inbox'\) \{ setInboxKind\('all'\); if \(org\) \{ openInbox\(\); return; \} \}/, '폰 탭으로 알림함 진입도 같은 경로(검수 M-1), 조직 없으면 빈 알림함(N-4)');
   assert.match(src, /if \(!uid\) return; resyncBadge\(\); const onVis/, '콜드 스타트 1회(검수 M-2)');

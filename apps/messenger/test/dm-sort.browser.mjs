@@ -14,7 +14,7 @@ await p.locator('.msgr-shell.msgr-phone').waitFor();
 const checks = [];
 const ok = (name, cond, got) => { checks.push([name, !!cond]); assert.ok(cond, `${name}: ${JSON.stringify(got)}`); };
 try {
-await p.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /DM/i.test(x.textContent))?.click(); }); await p.waitForTimeout(400);
+await p.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /채팅|Chats/i.test(x.textContent))?.click(); }); await p.waitForTimeout(400);
 const btn = p.locator('[data-sec="dms"] .msgr-sortbtn');
 const box = await btn.boundingBox(); ok('정렬 버튼이 보인다(0×0 아님)', box && box.width >= 24 && box.height >= 24, box);
 await btn.click(); await p.waitForTimeout(300);
@@ -39,7 +39,7 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
       x.unreadRows = [{ channel_id: 'fixture-dm-2', n: 2, mention: 0 }]; // 안읽음 필터 양성 검사 — msgr_unread 흉내가 이 값을 돌려준다
     } catch (e) { console.error('seed failed', e); } } }); });
   await p2.goto(`http://127.0.0.1:${port}/test/work-panel.fixture.html`); await p2.locator('.msgr-shell.msgr-phone').waitFor();
-  await p2.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /DM/i.test(x.textContent))?.click(); });
+  await p2.evaluate(() => { [...document.querySelectorAll('.msgr-tabbar [role=tab]')].find((x) => /채팅|Chats/i.test(x.textContent))?.click(); });
   await p2.waitForFunction(() => document.querySelectorAll('[data-sec="dms"] .item').length >= 2, null, { timeout: 8000 }).catch(() => {});
   await p2.waitForTimeout(600);
   const names = (await p2.locator('[data-sec="dms"] .item .name').allInnerTexts()).map((x) => x.trim());

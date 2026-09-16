@@ -40,7 +40,7 @@ test('클라이언트: progress 방송 → ExecCard(단계·경과·도구 수·
 });
 
 test('P0: 안 읽음 RPC → 레일 배지(멘션은 mark·음소거는 dim)·굵은 이름·새 메시지 구분선(열 때 커서 고정)·보는 채널은 커서 갱신 · 편집/삭제는 본인 hover 액션 · 반응 칩·피커 · 음소거 메뉴·헤더 표시 · 조용한 시간은 알림 게이트', () => {
-  assert.match(app, /supabase\.rpc\('msgr_unread', \{ org: orgId \}\)/, '안 읽음 RPC');
+  assert.match(app, /supabase\.rpc\('msgr_unread', \{ org: orgId === PERSONAL \? null : orgId \}\)/, '안 읽음 RPC(개인 공간은 org=null)');
   assert.match(app, /useEffect\(\(\) => \{ if \(event\?\.kind === 'message'\) loadUnread\(\); \}, \[event\]\);/, '새 메시지 방송이면 재집계');
   assert.match(app, /<span className=\{`msgr-badge\$\{unread\[c\.id\]\.mention \? ' mark' : ''\}\$\{muted\.has\(c\.id\) \? ' dim' : ''\}`\}>\{unread\[c\.id\]\.n\}<\/span>/, '채널 배지');
   assert.match(app, /if \(divider > 0 && !newLine && m\.id > divider && !\(m\.author_kind === 'user' && m\.author_user_id === uid\)\)/, '구분선은 남의 첫 새 글 앞');

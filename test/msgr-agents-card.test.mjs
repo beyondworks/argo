@@ -28,10 +28,12 @@ test('봇 = 회사 등급(클라이언트 crewTier) · 내 에이전트 레일�
   assert.match(app, /placeholder=\{t\('org\.members\.search'\)\}/, '멤버 검색'); assert.match(app, /shown\.slice\(0, memberN\)/, '멤버 30명씩');
   assert.match(read('apps/messenger/src/styles.css'), /:root\[data-theme='linen-dark'\] \{ --primary: #cfcac0;/, '다크 순백 완화');
   assert.match(app, /const sourceOf = \(c\) => c\.hosting !== 'bot' \? 'argo' : \(botKinds\.find/, '출처 판정');
-  assert.match(app, /\{railExt\.length > 0 && <div className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">\{t\('rail\.src\.custom'\)\}/, '외부 에이전트가 있을 때만 소제목');
+  assert.match(app, /\['mine\.ext', 'rail\.src\.custom', railExt\][\s\S]*?list\.length > 0 && <RailFold/, '묶음은 비어 있지 않을 때만 — 외부 에이전트 소제목 포함(2026-09-16부터 접기 묶음)');
   assert.doesNotMatch(app, /<RailSection id="agents"/, '에이전트 절은 하나(유건 제보 2026-09-12: 디렉터리 절과 내 에이전트 절이 같은 크루를 두 번 보였다)');
-  assert.match(app, /<RailSection id="mine" label=\{`\$\{t\('rail\.agents'\)\} · \$\{crews\.length\}`\}/, '절 제목 = 에이전트 · 조직 크루 수');
-  assert.match(app, /\[\['rail\.agents\.company', railCompany\], \['rail\.agents\.others', railOthers\], \['rail\.agents\.bot', railBots\]\]\.map/, '내 것이 아닌 조직 크루는 회사/다른 멤버/외부 소제목으로, 있을 때만');
+  assert.match(app, /<RailSection id="mine" label=\{`\$\{t\('rail\.agents'\)\} · \$\{railVisible\.length\}`\}/, '절 제목 = 에이전트 · **보이는** 수(다른 멤버의 크루는 빼고 센다 — 유건 2026-09-16)');
+  assert.match(app, /\['mine\.company', 'rail\.agents\.company', railCompany\], \['mine\.bot', 'rail\.agents\.bot', railBots\]\]/, '묶음은 내 에이전트·외부·회사 크루·외부 에이전트 — 다른 멤버의 개인 크루 묶음은 없다');
+  assert.match(app, /function RailFold\(\{ id, label, count, children \}\)/, '묶음마다 접었다 편다(유건 2026-09-16) — 접힘은 구역과 같은 저장소');
+  assert.match(app, /const railVisible = crews\.filter\(\(c\) => c\.hosting === 'bot' \|\| c\.owner_user_id === uid \|\| crewTier\(c, org\) === 'company'\);/, '다른 멤버의 개인 크루는 레일에서 제외');
   for (const k of ['rail.src.argo', 'rail.src.hermes', 'rail.src.openclaw', 'rail.src.custom']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-node-cmd code \{[^}]*white-space: pre-wrap;/, '설정 두 줄이 줄바꿈으로 보인다(실측: 한 줄로 붙어 보였다)');
   assert.match(app, /crew\.hosting === 'resident' \? 'resident' : crew\.hosting === 'bot' \? 'bot' : 'local'/, '시트 hosting 표기');
