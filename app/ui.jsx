@@ -722,26 +722,47 @@ export function openBillingPortal(e) {
     .catch(() => { window.location.href = '/api/me/billing/portal'; });
 }
 
+// 저장 실패 안내 — 페이지 곳곳(칩·기억·설정)에서 부르는 헬퍼라 훅 없이 DOM 한 줄로 띄운다. 닫기 버튼·ESC·10초 자동 닫힘.
+function downloadNotice(name, why) {
+  if (typeof document === 'undefined') return;
+  const ko = (document.documentElement.lang || 'ko').startsWith('ko');
+  document.getElementById('argo-download-notice')?.remove();
+  const box = document.createElement('div');
+  box.id = 'argo-download-notice'; box.setAttribute('role', 'alert');
+  box.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;max-width:min(520px,calc(100vw - 32px));display:flex;gap:12px;align-items:center;padding:10px 12px 10px 16px;border-radius:12px;background:var(--card,#fff);color:var(--fg,#111);border:1px solid var(--border,#ddd);box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px';
+  const msg = document.createElement('span');
+  msg.textContent = why === 'too-large'
+    ? (ko ? `${name} — 파일이 커서 앱에서 바로 저장하지 못했습니다. 크루에게 저장 위치를 물어 주세요.` : `${name} is too large to save from the app. Ask the crew where it was saved.`)
+    : (ko ? `${name} — 저장하지 못했습니다.${why ? ` (${why.slice(0, 80)})` : ''}` : `Could not save ${name}.${why ? ` (${why.slice(0, 80)})` : ''}`);
+  const close = document.createElement('button');
+  close.type = 'button'; close.textContent = ko ? '닫기' : 'Close'; close.className = 'btn sm';
+  const done = () => { box.remove(); window.removeEventListener('keydown', onKey); clearTimeout(timer); };
+  const onKey = (e) => { if (e.key === 'Escape') done(); };
+  close.onclick = done; window.addEventListener('keydown', onKey);
+  const timer = setTimeout(done, 10_000);
+  box.append(msg, close); document.body.append(box);
+}
+
 export function artifactDownload(url, name) {
   return async (e) => {
     if (!isTauriApp()) return; // 브라우저 — <a download> 기본 동작 유지
     e.preventDefault();
-    // 실패·초과 시 공통 폴백 — 서버가 attachment로 응답하는 URL로 항해한다. 조용한 무동작으로
-    // 끝내면 이 기능이 고치려던 증상(클릭해도 아무 일 없음)과 화면이 같아진다(검수 MEDIUM).
-    const fallback = () => { window.location.href = url.includes('?') ? `${url}&download=1` : `${url}?download=1`; };
+    // 실패·초과 시 폴백 — **창을 파일 주소로 항해시키지 않는다**(실사고 2026-09-17: 앱 창 전체가 이미지로 바뀌고
+    // 닫기·ESC·뒤로가기가 없어 앱을 종료해야만 돌아왔다). 조용한 무동작도 안 된다(검수 MEDIUM) — 닫을 수 있는 안내를 띄운다.
+    const fallback = (why = '') => downloadNotice(name, why);
     try {
       const r = await fetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const blob = await r.blob();
-      if (blob.size > DOWNLOAD_IPC_CAP) { fallback(); return; }
+      if (blob.size > DOWNLOAD_IPC_CAP) { fallback('too-large'); return; }
       const buf = new Uint8Array(await blob.arrayBuffer());
       const { invoke } = await import('@tauri-apps/api/core');
       const path = await invoke('save_download', { name, data: Array.from(buf) });
       // 저장 위치 공개 — 실패해도 저장 자체는 됐으므로 조용히 무시(구버전 바이너리 등)
       await import('@tauri-apps/plugin-opener').then((m) => m.revealItemInDir(path)).catch(() => {});
     } catch (err) {
-      console.error('[argo] 산출물 저장 실패 — 서버 다운로드로 폴백:', err?.message ?? err);
-      fallback();
+      console.error('[argo] 산출물 저장 실패:', err?.message ?? err);
+      fallback(String(err?.message ?? err));
     }
   };
 }

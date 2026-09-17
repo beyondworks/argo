@@ -4,7 +4,7 @@
 // 눈 토글(메시지 안에서 펼침). 한 벌만 두는 이유: 열람 계약(뷰어·files API·미리보기 형식)이 화면마다 갈리면
 // 같은 파일이 크루 채팅에선 열리고 회의실에선 안 열리는 비대칭이 생긴다.
 import { useEffect, useState } from 'react';
-import { Icon, Markdown, Spinner, api, artifactDownload } from '../../ui';
+import { Icon, Markdown, Spinner, api, artifactDownload, useScrollLock } from '../../ui';
 import { useLang } from '../../i18n';
 
 /* ─── 산출물 인라인 미리보기 ───
@@ -29,7 +29,7 @@ function previewKind(rel) {
 }
 
 /** 미리보기 본문 — 형식별 렌더. 접힘이 기본이라 이 컴포넌트는 펼친 rel에만 마운트된다(불필요 fetch 없음). */
-function ArtifactPreview({ ws, rel }) {
+function ArtifactPreview({ ws, rel, large = false }) {
   const { t } = useLang();
   const kind = previewKind(rel);
   const name = rel.split('/').pop();
@@ -82,11 +82,11 @@ function ArtifactPreview({ ws, rel }) {
       <a className="btn sm" style={{ flex: 'none' }} href={`${fileUrl}&download=1`} download={name} onClick={artifactDownload(fileUrl, name)}>{t('vault.download')}</a>
     </div>
   );
-  if (st.status === 'loading') return <div className="artifact-preview fade-up"><div className="ap-note" style={{ justifyContent: 'flex-start' }}><Spinner size={13} />{t('chat.preview')}…</div></div>;
-  if (st.status === 'error') return <div className="artifact-preview fade-up">{note(t('chat.preview.error'))}</div>;
-  if (kind === 'none' || st.status === 'unsupported') return <div className="artifact-preview fade-up">{note(t('chat.preview.unsupported'))}</div>;
+  if (st.status === 'loading') return <div className={`artifact-preview fade-up${large ? ' large' : ''}`}><div className="ap-note" style={{ justifyContent: 'flex-start' }}><Spinner size={13} />{t('chat.preview')}…</div></div>;
+  if (st.status === 'error') return <div className={`artifact-preview fade-up${large ? ' large' : ''}`}>{note(t('chat.preview.error'))}</div>;
+  if (kind === 'none' || st.status === 'unsupported') return <div className={`artifact-preview fade-up${large ? ' large' : ''}`}>{note(t('chat.preview.unsupported'))}</div>;
   return (
-    <div className="artifact-preview fade-up">
+    <div className={`artifact-preview fade-up${large ? ' large' : ''}`}>
       {/* 로드 실패는 조용한 빈 상자가 아니라 텍스트 경로와 같은 계약(오류 안내+다운로드)으로 —
           img는 onError가 신뢰되고, iframe은 브라우저가 404를 프레임 안에 그려 best-effort다. */}
       {kind === 'img' && <div className="ap-body"><img src={fileUrl} alt={name} onError={() => setSt({ status: 'error' })} /></div>}
@@ -102,10 +102,34 @@ function ArtifactPreview({ ws, rel }) {
   );
 }
 
-/** 산출물 칩 줄 — 기존 칩(클릭=뷰어/다운로드)에 눈 토글을 붙인다. 메시지당 하나만 펼침(채팅 흐름 보호). */
+/** 파일 보기 창 — 칩을 누르면 미리볼 수 있는 파일은 앱 안에서 연다(유건 2026-09-17: "다운로드만 되고 열리지 않는다").
+    닫기 버튼·ESC·바깥 클릭으로 닫고, 저장은 창 안 버튼으로. 창 전체를 파일로 항해시키지 않는다(같은 날 앱이 이미지에 갇힌 실사고). */
+function ArtifactViewer({ ws, rel, onClose }) {
+  const { t } = useLang();
+  useScrollLock();
+  useEffect(() => { const onKey = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, [onClose]);
+  const name = rel.split('/').pop();
+  const fileUrl = `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`;
+  return (
+    <div className="artifact-viewer" role="dialog" aria-modal="true" aria-label={name} onClick={onClose}>
+      <div className="card card-float fade-up" onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <span className="card-title" title={rel}>{name}</span>
+          <span className="rule" />
+          <a className="btn sm" href={`${fileUrl}&download=1`} download={name} onClick={artifactDownload(fileUrl, name)}>{t('vault.download')}</a>
+          <button type="button" className="btn sm" onClick={onClose} autoFocus>{t('common.close')} ESC</button>
+        </div>
+        <ArtifactPreview ws={ws} rel={rel} large />
+      </div>
+    </div>
+  );
+}
+
+/** 산출물 칩 줄 — 칩 클릭 = 열기(md=뷰어 페이지, 미리볼 수 있는 형식=보기 창, 그 외=저장), 옆 눈 토글 = 메시지 안에서 펼침. 메시지당 하나만 펼침(채팅 흐름 보호). */
 export function ArtifactChips({ ws, rels }) {
   const { t } = useLang();
   const [open, setOpen] = useState(null); // 펼친 rel
+  const [viewing, setViewing] = useState(null); // 보기 창에 연 rel
   // 세션 전환·스레드 갱신으로 rels가 바뀌어도 컴포넌트 인스턴스는 목록 key={i}로 재사용된다 —
   // 목록 밖 open을 그대로 그리면 다른 대화의 산출물 패널이 남는다(검수 MEDIUM-1 재현). 렌더는 항상 클램프.
   const shown = rels.includes(open) ? open : null;
@@ -120,7 +144,7 @@ export function ArtifactChips({ ws, rels }) {
             <span key={rel} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <a className="memo-chip" download={md ? undefined : name}
                 href={md ? `/c/${ws}/vault?doc=${encodeURIComponent(rel)}` : `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}&download=1`}
-                onClick={md ? undefined : artifactDownload(`/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`, name)}
+                onClick={md ? undefined : previewKind(rel) !== 'none' ? (e) => { e.preventDefault(); setViewing(rel); } : artifactDownload(`/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`, name)}
                 title={`${t('chat.createdDocs')} — ${rel}`}>
                 <Icon name="doc" size={12} />{name}
               </a>
@@ -136,6 +160,7 @@ export function ArtifactChips({ ws, rels }) {
         })}
       </span>
       {shown && <ArtifactPreview key={shown} ws={ws} rel={shown} />}
+      {viewing && <ArtifactViewer ws={ws} rel={viewing} onClose={() => setViewing(null)} />}
     </>
   );
 }
