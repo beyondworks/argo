@@ -715,25 +715,31 @@ export function openBillingPortal(e) {
   fetch('/api/me/billing/portal?json=1')
     .then((r) => (r.ok ? r.json() : null))
     .then(async (j) => {
-      if (!j?.url) { window.location.href = '/api/me/billing/portal'; return; } // 원인 문구를 보여준다
+      if (!j?.url) return portalFallback(); // 원인 문구를 보여준다
       if (isTauriApp()) await import('@tauri-apps/plugin-opener').then((m) => m.openUrl(j.url));
       else window.open(j.url, '_blank', 'noopener');
     })
-    .catch(() => { window.location.href = '/api/me/billing/portal'; });
+    .catch(portalFallback);
+}
+// 앱에서는 창을 라우트로 항해시키지 않는다 — 돌아갈 길이 없는 트랩(2026-09-17 산출물 칩과 같은 모양, 2차 검수 MEDIUM-2). 원인 문구를 받아 안내로.
+async function portalFallback() {
+  if (!isTauriApp()) { window.location.href = '/api/me/billing/portal'; return; } // 브라우저는 뒤로가기가 있다
+  const text = await fetch('/api/me/billing/portal').then((r) => r.text()).catch(() => '');
+  appNotice(text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || (noticeKo() ? '결제 관리 페이지를 열지 못했습니다.' : 'Could not open the billing page.'));
 }
 
-// 저장 실패 안내 — 페이지 곳곳(칩·기억·설정)에서 부르는 헬퍼라 훅 없이 DOM 한 줄로 띄운다. 닫기 버튼·ESC·10초 자동 닫힘.
-function downloadNotice(name, why) {
+// 앱 안내 한 줄 — 페이지 곳곳(칩·기억·설정·결제)에서 부르는 헬퍼라 훅 없이 DOM으로 띄운다. 닫기 버튼·ESC·10초 자동 닫힘.
+// 언어는 사전 Provider와 같은 저장값(argo-lang) — <html lang>은 ko 고정이라 영어 사용자에게도 한국어가 떴다(2차 검수 LOW).
+const noticeKo = () => { try { return (localStorage.getItem('argo-lang') || 'ko') !== 'en'; } catch { return true; } };
+function appNotice(text) {
   if (typeof document === 'undefined') return;
-  const ko = (document.documentElement.lang || 'ko').startsWith('ko');
+  const ko = noticeKo();
   document.getElementById('argo-download-notice')?.remove();
   const box = document.createElement('div');
   box.id = 'argo-download-notice'; box.setAttribute('role', 'alert');
   box.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;max-width:min(520px,calc(100vw - 32px));display:flex;gap:12px;align-items:center;padding:10px 12px 10px 16px;border-radius:12px;background:var(--card,#fff);color:var(--fg,#111);border:1px solid var(--border,#ddd);box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px';
   const msg = document.createElement('span');
-  msg.textContent = why === 'too-large'
-    ? (ko ? `${name} — 파일이 커서 앱에서 바로 저장하지 못했습니다. 크루에게 저장 위치를 물어 주세요.` : `${name} is too large to save from the app. Ask the crew where it was saved.`)
-    : (ko ? `${name} — 저장하지 못했습니다.${why ? ` (${why.slice(0, 80)})` : ''}` : `Could not save ${name}.${why ? ` (${why.slice(0, 80)})` : ''}`);
+  msg.textContent = text;
   const close = document.createElement('button');
   close.type = 'button'; close.textContent = ko ? '닫기' : 'Close'; close.className = 'btn sm';
   const done = () => { box.remove(); window.removeEventListener('keydown', onKey); clearTimeout(timer); };
@@ -741,6 +747,12 @@ function downloadNotice(name, why) {
   close.onclick = done; window.addEventListener('keydown', onKey);
   const timer = setTimeout(done, 10_000);
   box.append(msg, close); document.body.append(box);
+}
+function downloadNotice(name, why) {
+  const ko = noticeKo();
+  appNotice(why === 'too-large'
+    ? (ko ? `${name} — 파일이 커서 앱에서 바로 저장하지 못했습니다. 크루에게 저장 위치를 물어 주세요.` : `${name} is too large to save from the app. Ask the crew where it was saved.`)
+    : (ko ? `${name} — 저장하지 못했습니다.${why ? ` (${why.slice(0, 80)})` : ''}` : `Could not save ${name}.${why ? ` (${why.slice(0, 80)})` : ''}`));
 }
 
 export function artifactDownload(url, name) {

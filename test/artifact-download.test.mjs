@@ -31,7 +31,13 @@ test('artifactDownload 헬퍼: 데스크톱만 가로채고 IPC save_download로
   // 창을 파일 주소로 항해시키면 안 된다(실사고 2026-09-17: 앱 창이 이미지로 바뀌고 돌아갈 길이 없었다)
   assert.ok(fn.includes('fallback('), '실패 시 안내');
   assert.doesNotMatch(fn, /location\.(href|assign|replace)/, '폴백이 창을 항해시키지 않는다');
-  assert.match(ui, /function downloadNotice\(name, why\)[\s\S]*?'Escape'[\s\S]*?setTimeout\(done/, '안내는 닫기·ESC·자동 닫힘');
+  assert.match(ui, /function appNotice\(text\)[\s\S]*?'Escape'[\s\S]*?setTimeout\(done/, '안내는 닫기·ESC·자동 닫힘');
+  const portal = ui.split('export function openBillingPortal')[1]?.split('\nexport ')[0] ?? '';
+  assert.match(portal, /if \(!isTauriApp\(\)\) \{ window\.location\.href = '\/api\/me\/billing\/portal'; return; \}/, '결제 포털 폴백도 앱에서는 항해하지 않는다(브라우저만)');
+  const chips = await at('app/c/[ws]/artifact-chips.jsx');
+  assert.match(chips, /return createPortal\(\s*<div className="artifact-viewer"/, '보기 창은 body 포털(유리 테마 fixed 기준 박스 회피)');
+  const css = await at('app/globals.css');
+  assert.match(css, /\.artifact-viewer > \.card \{[^}]*min-width: 0;[^}]*max-height: calc\(100vh \/ var\(--z, 1\) - 48px\)/, '보기 창 높이는 배율 보정·긴 이름에 안 밀림');
   assert.ok(fn.includes('DOWNLOAD_IPC_CAP'), '대용량 IPC 상한 — 웹뷰 정지 방지');
 });
 

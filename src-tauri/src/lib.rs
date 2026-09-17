@@ -152,7 +152,9 @@ fn save_download(app: tauri::AppHandle, name: String, data: Vec<u8>) -> Result<S
 fn is_file_route_nav(url: &tauri::Url) -> bool {
     let local = matches!(url.host_str(), Some("localhost") | Some("127.0.0.1"));
     let segs: Vec<&str> = url.path().trim_start_matches('/').split('/').collect();
-    local && segs.len() == 4 && segs[0] == "api" && segs[1] == "companies" && matches!(segs[3], "files" | "vault")
+    // inline=1 = 미리보기 iframe(PDF). WKWebView의 항해 핸들러는 메인 프레임과 iframe을 가르지 않아, 막으면 PDF 미리보기가 빈 칸이 된다(2차 검수 HIGH-3).
+    let inline = url.query_pairs().any(|(k, v)| k == "inline" && v == "1");
+    local && !inline && segs.len() == 4 && segs[0] == "api" && segs[1] == "companies" && matches!(segs[3], "files" | "vault")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -383,6 +385,7 @@ mod tests {
         assert!(!is_file_route_nav(&u("http://localhost:3001/c/lean-ax-wqou/crew/pepper")));
         assert!(!is_file_route_nav(&u("http://localhost:3001/api/me/billing/portal")));
         assert!(!is_file_route_nav(&u("https://example.com/api/companies/w/files")));
+        assert!(!is_file_route_nav(&u("http://localhost:3001/api/companies/w/files?rel=a.pdf&inline=1")), "PDF 미리보기 iframe은 통과");
     }
 
     use super::*;

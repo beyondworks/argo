@@ -4,6 +4,7 @@
 // 눈 토글(메시지 안에서 펼침). 한 벌만 두는 이유: 열람 계약(뷰어·files API·미리보기 형식)이 화면마다 갈리면
 // 같은 파일이 크루 채팅에선 열리고 회의실에선 안 열리는 비대칭이 생긴다.
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon, Markdown, Spinner, api, artifactDownload, useScrollLock } from '../../ui';
 import { useLang } from '../../i18n';
 
@@ -107,10 +108,12 @@ function ArtifactPreview({ ws, rel, large = false }) {
 function ArtifactViewer({ ws, rel, onClose }) {
   const { t } = useLang();
   useScrollLock();
-  useEffect(() => { const onKey = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, [onClose]);
+  // 캡처 단계에서 받아 여기서 끝낸다 — 같은 ESC로 뒤의 패널·메뉴까지 닫히지 않게(2차 검수 LOW)
+  useEffect(() => { const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); onClose(); } }; window.addEventListener('keydown', onKey, true); return () => window.removeEventListener('keydown', onKey, true); }, [onClose]);
   const name = rel.split('/').pop();
   const fileUrl = `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`;
-  return (
+  // body로 포털 — 유리 테마의 .card backdrop-filter가 fixed 기준 박스가 돼 창이 말풍선 안에 갇혔다(2차 검수 HIGH-1)
+  return createPortal(
     <div className="artifact-viewer" role="dialog" aria-modal="true" aria-label={name} onClick={onClose}>
       <div className="card card-float fade-up" onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
@@ -121,7 +124,8 @@ function ArtifactViewer({ ws, rel, onClose }) {
         </div>
         <ArtifactPreview ws={ws} rel={rel} large />
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
