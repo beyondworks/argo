@@ -55,14 +55,39 @@ export function useSwipeTabs(order, current, pick, enabled = true) {
 // 2026-09-15 유건 제보 2("깜빡이고 잔상이 남고 렉 걸린 것처럼"): ① 끝까지 밀린 뒤 history.back()을 부르고 바로 transform을 지워 화면 전환(popstate)이
 // 오기 전 몇 프레임 동안 대화 화면이 제자리로 튀어 보였다 → popstate(또는 400ms)까지 밀린 상태를 유지한 뒤 정리. ② 밑 화면이 '대화 중의 레일'이라
 // DM 탭 모양(필터·두 줄 행)이 아니어서 전환 순간 다시 그려졌다 → onStart(underlay)로 App이 미리 DM 탭 모양으로 그린다.
+// 2026-09-17 유건 제보 3("왼쪽 끄트머리에서만 된다 / 천천히 밀면 화면이 튀거나 깜빡이고, 놓으면 어중간하게 멈추고, 뒤 화면이 비거나 겹친다"):
+//  · 시작 영역 = 화면 왼쪽 절반(유건 결정). 입력창·가로 스크롤 중인 내용(코드·넓은 표) 위에서 시작하면 그 동작이 우선이다.
+//  · 방향이 잠긴 지점을 기준점으로 삼아 따라간다 — 전에는 잠금 전 8px가 잠기는 순간 한꺼번에 반영돼 화면이 튀었다.
+//  · 놓을 때는 전체 평균이 아니라 최근 100ms 속도로 판정한다 — 천천히 밀다 튕기면 넘어가고, 되돌리며 놓으면 제자리(평균은 방향을 몰랐다).
+//  · 세로 스크롤은 네이티브 touchmove(passive:false)의 preventDefault로 막는다 — 스와이프 도중 대화 영역 overflow를 켰다 끄면 WebKit이 스크롤 층을 다시 그린다.
+export const SWIPE_LOCK_PX = 10;
+/** 시작 가능 여부 — 왼쪽 절반, 입력창 아님, 가로로 스크롤 가능한 조상 위가 아님 */
+export function canStartSwipeBack(target, x, width) {
+  if (x > width / 2) return false;
+  for (let el = target; el && el.nodeType === 1; el = el.parentElement) {
+    if (el.matches?.('input, textarea, select, [contenteditable="true"], .msgr-composer')) return false; // 입력줄(첨부·멘션 버튼 포함) 위에서는 뒤로가기 아님
+    const ox = typeof getComputedStyle === 'function' ? getComputedStyle(el).overflowX : '';
+    if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 1) return false; // 가로로 스크롤되는 내용(코드·넓은 표) 위에서는 그 스크롤이 먼저(유건 결정)
+  }
+  return true;
+}
+/** 놓을 때 판정 — dx: 밀린 거리, w: 화면 폭, v: 최근 속도(px/ms, +는 뒤로 가는 방향). 반환 { go, ms } */
+export function swipeRelease(dx, w, v) {
+  const p = dx / Math.max(1, w);
+  const go = v > 0.3 ? true : v < -0.3 ? false : p >= 0.35; // 멈춘 채 놓으면 35%(종전 기준 유지)
+  const remain = go ? w - dx : dx;
+  const ms = Math.round(Math.min(320, Math.max(160, remain / Math.max(Math.abs(v), 0.8))));
+  return { go, ms };
+}
 export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'home', onStart = null, onEnd = null } = {}) {
-  const ref = useRef({ x: 0, y: 0, t: 0, edge: false, dir: null, dx: 0, el: null, classes: [] }); const st = ref.current;
-  if (!enabled) return {};
+  const ref = useRef({ x: 0, y: 0, base: 0, armed: false, dir: null, dx: 0, el: null, classes: [], samples: [] }); const st = ref.current;
+  const cb = useRef({}); cb.current = { onBack, underlay, onStart, onEnd };
+  const [node, setNode] = useState(null);
   const shell = () => document.querySelector('.msgr-shell');
   const setP = (p) => shell()?.style.setProperty('--swipe-p', String(Math.max(0, Math.min(1, p))));
-  // 정리 — 언더레이 클래스(phone-home·phone-dm)는 React className과 이름이 같다. 뒤로가기가 끝난 뒤(popstate 뒤)엔 React가 그 클래스를 정당하게
-  // 붙여 둔 상태라, 실제 도착한 루트가 쓰는 것은 남기고 나머지만 뗀다(안 그러면 DOM에서 지운 클래스를 React가 다음 렌더까지 되살리지 않는다)
-  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay() : null; const keep = new Set(to === 'dm' ? ['phone-home', 'phone-dm'] : to === 'home' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); sh.style.removeProperty('--swipe-p'); sh.style.removeProperty('--swipe-ms'); } st.classes = []; if (st.el) { st.el.style.overflowY = ''; st.el.style.willChange = ''; } onEnd?.(); };
+  const underlay_ = () => cb.current.underlay();
+  const onEnd_ = () => cb.current.onEnd?.();
+  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay_() : null; const keep = new Set(to === 'dm' ? ['phone-home', 'phone-dm'] : to === 'home' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); sh.style.removeProperty('--swipe-p'); sh.style.removeProperty('--swipe-ms'); } st.classes = []; if (st.el) st.el.style.willChange = ''; onEnd_(); };
   const settle = (el, to, ms, then) => {
     const sh = shell(); sh?.classList.add('settling'); sh?.style.setProperty('--swipe-ms', `${ms}ms`);
     el.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`; el.style.transform = to;
@@ -75,31 +100,45 @@ export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'hom
       window.addEventListener('popstate', onPop); setTimeout(onPop, 400); then(); };
     el.addEventListener('transitionend', done); setTimeout(done, ms + 80); // transitionend가 안 오는 경우(탭 전환·리렌더)의 안전망
   };
-  return {
-    onTouchStart: (e) => { const t = e.touches[0]; st.x = t.clientX; st.y = t.clientY; st.t = e.timeStamp; st.dx = 0; st.dir = null; st.edge = t.clientX <= 28; st.el = e.currentTarget; },
-    onTouchMove: (e) => {
-      if (!st.edge) return;
+  useEffect(() => {
+    if (!enabled || !node) return undefined;
+    const start = (e) => {
+      const t = e.touches[0]; st.armed = e.touches.length === 1 && canStartSwipeBack(e.target, t.clientX, window.innerWidth);
+      st.x = t.clientX; st.y = t.clientY; st.dx = 0; st.dir = null; st.el = node; st.samples = [];
+    };
+    const move = (e) => {
+      if (!st.armed) return;
       const t = e.touches[0]; const dx = t.clientX - st.x; const dy = t.clientY - st.y;
       if (!st.dir) {
-        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        if (Math.abs(dx) < SWIPE_LOCK_PX && Math.abs(dy) < SWIPE_LOCK_PX) return;
         st.dir = dx > 0 && dx > Math.abs(dy) * 1.2 ? 'x' : 'y';
-        if (st.dir === 'y') { st.edge = false; return; }
-        const to = underlay(); st.classes = to === 'dm' ? ['phone-home', 'phone-dm'] : ['phone-home'];
-        shell()?.classList.add('swiping-back', ...st.classes); onStart?.(to);
-        st.el.style.willChange = 'transform'; st.el.style.transition = ''; st.el.style.overflowY = 'hidden';
+        if (st.dir === 'y') { st.armed = false; return; }
+        st.base = t.clientX; // 잠긴 지점부터 따라간다(튐 방지)
+        const to = underlay_(); st.classes = to === 'dm' ? ['phone-home', 'phone-dm'] : ['phone-home'];
+        shell()?.classList.add('swiping-back', ...st.classes); cb.current.onStart?.(to);
+        st.el.style.willChange = 'transform'; st.el.style.transition = '';
       }
-      const w = st.el.clientWidth || 1; st.dx = Math.max(0, Math.min(dx, w));
+      e.preventDefault(); // 가로로 잠긴 뒤에는 세로 스크롤·바운스를 멈춘다
+      const w = st.el.clientWidth || 1; st.dx = Math.max(0, Math.min(t.clientX - st.base, w));
+      st.samples.push([e.timeStamp, t.clientX]); while (st.samples.length > 2 && e.timeStamp - st.samples[0][0] > 100) st.samples.shift();
       st.el.style.transform = `translateX(${st.dx}px)`; setP(st.dx / w);
-    },
-    onTouchEnd: (e) => {
-      if (!st.edge || !st.el || st.dir !== 'x') { st.edge = false; return; }
-      const el = st.el; const w = el.clientWidth || 1; const dx = st.dx; const v = dx / Math.max(1, e.timeStamp - st.t); // px/ms
-      const go = dx >= w * 0.35 || (dx >= 40 && v > 0.5);
-      const remain = go ? w - dx : dx; const ms = Math.round(Math.min(280, Math.max(140, remain / Math.max(v, 0.9))));
+    };
+    const end = (e) => {
+      if (!st.armed || !st.el || st.dir !== 'x') { st.armed = false; return; }
+      const el = st.el; const w = el.clientWidth || 1;
+      const [t0, x0] = st.samples[0] ?? [e.timeStamp, st.base]; const [t1, x1] = st.samples[st.samples.length - 1] ?? [e.timeStamp, st.base];
+      const v = t1 > t0 ? (x1 - x0) / (t1 - t0) : 0;
+      const { go, ms } = swipeRelease(st.dx, w, e.timeStamp - t1 > 120 ? 0 : v); // 멈춘 채 놓으면 속도 0
       setP(go ? 1 : 0);
-      if (go) settle(el, `translateX(${w}px)`, ms, onBack); else settle(el, 'translateX(0)', ms);
-      st.edge = false;
-    },
-    onTouchCancel: () => { if (st.el && st.dx) { setP(0); settle(st.el, 'translateX(0)', 180); } else cleanup(); st.edge = false; },
-  };
+      if (go) settle(el, `translateX(${w}px)`, ms, cb.current.onBack); else settle(el, 'translateX(0)', ms);
+      st.armed = false;
+    };
+    const cancel = () => { if (st.el && st.dx) { setP(0); settle(st.el, 'translateX(0)', 180); } else if (st.dir === 'x') cleanup(); st.armed = false; };
+    node.addEventListener('touchstart', start, { passive: true });
+    node.addEventListener('touchmove', move, { passive: false });
+    node.addEventListener('touchend', end, { passive: true });
+    node.addEventListener('touchcancel', cancel, { passive: true });
+    return () => { node.removeEventListener('touchstart', start); node.removeEventListener('touchmove', move); node.removeEventListener('touchend', end); node.removeEventListener('touchcancel', cancel); };
+  }, [enabled, node]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { ref: setNode };
 }

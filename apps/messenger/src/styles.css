@@ -913,6 +913,15 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main { padding-bottom: calc(var(--ph-tab) + 12px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); } /* 컴포저 알약 바닥 y786(중심 760), 아일랜드 위 12 */ /* 컴포저 바닥 ↔ 아일랜드 위 8px(슬랙) */
   .msgr-phone .msgr-main .msgr-dock { padding: 0; margin: 0; border: 0; background: transparent; box-shadow: none; }
   .msgr-phone .msgr-main .msgr-dock { position: relative; }
+  /* 표 → 카드(유건 2026-09-17: 열 4개가 폰 폭에 욱여넣어져 '상대 요구' 칸이 한 글자씩 세로로 늘어났다). 한 행 = 카드 한 장, 첫 칸 = 제목, 나머지 = 머리글 라벨 + 값(data-label은 @argo/ui Markdown이 단다) */
+  .msgr-phone .md table { display: block; border: 0; overflow: visible; font-size: var(--ph-sub); }
+  .msgr-phone .md thead { display: none; }
+  .msgr-phone .md tbody, .msgr-phone .md tr { display: block; }
+  .msgr-phone .md tr { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--card-2); }
+  .msgr-phone .md td { display: block; border: 0; padding: 3px 0; white-space: normal; overflow-wrap: anywhere; }
+  .msgr-phone .md td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 1px; font-size: 11.5px; color: var(--fg-3); }
+  .msgr-phone .md td:first-child { padding: 0 0 6px; font-weight: 600; color: var(--fg); }
+  .msgr-phone .md td:first-child::before { display: none; }
   .msgr-phone .msgr-main .msgr-dock .msgr-sub { position: absolute; left: var(--ph-pad); right: var(--ph-pad); bottom: 100%; min-height: 0; margin: 0; padding: 0 0 2px; pointer-events: none; } /* 컴포저 아래 상태줄(작성 중 등)은 슬랙처럼 입력줄 '위'에 띄운다 — 세로 자리 0 */
   .msgr-phone .msgr-main .msgr-dock .msgr-cc-chips { margin: 0 var(--ph-pad) 4px; padding-left: 4px; }
   .msgr-phone .msgr-main .msgr-dock .msgr-slashpop, .msgr-phone .msgr-main .msgr-dock .msgr-rolepop { left: var(--ph-pad); right: var(--ph-pad); width: auto; } /* 입력창 알약과 같은 좌우 여백(검수 #527 L-1) */
@@ -1111,7 +1120,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); }
   .msgr-phone.phone-home.swiping-back .msgr-main > :not(.msgr-sheetwrap) { display: revert; }
   .msgr-phone.swiping-back .msgr-fab { display: none; } /* 하단 탭 바는 두 화면이 공유하는 고정 요소라 그대로 둔다 — 사라졌다 돌아오면 부자연스럽다(유건 2026-09-15) */
-  .msgr-phone.swiping-back .msgr-main .msgr-thread { overflow: hidden; }
+  /* 스와이프 중 세로 스크롤은 use-phone.js의 네이티브 touchmove preventDefault가 막는다 — 대화 영역 overflow를 켰다 끄면 WebKit이 스크롤 층을 다시 그려 깜빡였다(유건 2026-09-17) */
   /* 화면 전환(유건 2026-09-15 "슬랙·카톡처럼 부드럽게"): 대화 열기 = 오른쪽에서 밀려 들어옴, 탭 전환·뒤로 = 페이드. 전부 transform·opacity(합성 레이어) */
   @keyframes msgrPushIn { from { transform: translate3d(100%, 0, 0); } to { transform: translate3d(0, 0, 0); } }
   @keyframes msgrFadeIn { from { opacity: 0; } to { opacity: 1; } }
