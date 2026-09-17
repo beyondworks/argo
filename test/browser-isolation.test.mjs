@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+// Windows: Chrome 본 프로세스가 끝나도 하위 프로세스가 프로필 파일(lockfile·first_party_sets.db)을 잠시 더 잡는다 — 임시 폴더 정리는 재시도한다
+// (실측 2026-09-17 release run 35213161674 윈도우 EBUSY 2회, 단언과 무관한 정리 단계). 최대 5초.
 import { BrowserSession, browserRunners, closeAllBrowsers, findChrome, createBrowserStatusReader } from '../src/engine/browser-tools.mjs';
 import { createBrowserMcpBridge } from '../src/engine/browser-mcp.mjs';
 
@@ -57,7 +59,7 @@ test('real Chromium: agent cookies/storage isolated; concurrent work tabs indepe
     const resumed = make('company', 'shuri', 'new-work');
     try { await resumed.browser_navigate({ url: origin }); assert.equal(await evalJs(resumed, 'localStorage.getItem("account")'), 'shuri'); assert.equal(await evalJs(resumed, 'document.cookie'), 'account=shuri'); }
     finally { await resumed.close(); }
-  } finally { await closeAllBrowsers(); await new Promise((resolve) => http.close(resolve)); await rm(root, { recursive: true, force: true }); }
+  } finally { await closeAllBrowsers(); await new Promise((resolve) => http.close(resolve)); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); }
 });
 
 test('stdio relay cannot change scope, requires secret and gate, and closes its capability', async () => {
@@ -76,7 +78,7 @@ test('stdio relay cannot change scope, requires secret and gate, and closes its 
     assert.equal(result.isError, true); assert.equal(result.content[0].text, 'Test approval required'); assert.equal(calls, 1);
     await bridge.close();
     await assert.rejects(fetch(bridge.server.env.ARGO_BROWSER_RELAY_URL));
-  } finally { await client.close(); await transport.close(); await bridge.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { await client.close(); await transport.close(); await bridge.close(); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); }
 });
 
 test('browser status opens no browser/profile and probes Ego only on explicit preference with bounded cache', async () => {
@@ -100,7 +102,7 @@ test('browser status opens no browser/profile and probes Ego only on explicit pr
     clock = 101; await ego.browser_status(); assert.equal(probes, 2);
     assert.deepEqual(await readdir(root), [], 'status does not create a browser/profile directory');
     assert.ok(!replies.join('').includes(root)); assert.ok(!replies.join('').includes('test-only'));
-  } finally { await regular.close(); await ego.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { await regular.close(); await ego.close(); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); }
 });
 
 test('two stdio children use one agent profile without profile lock contention or tab collision', { skip: !findChrome() && 'No Chromium installed' }, async () => {
@@ -128,7 +130,7 @@ test('two stdio children use one agent profile without profile lock contention o
     assert.equal((await call(1, 'browser_eval', { js: 'document.title' })).content[0].text, '/two');
   } finally {
     for (const client of clients) await client.close(); for (const bridge of bridges) await bridge.close();
-    await closeAllBrowsers(); await new Promise((resolve) => http.close(resolve)); await rm(root, { recursive: true, force: true });
+    await closeAllBrowsers(); await new Promise((resolve) => http.close(resolve)); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 });
 
@@ -172,5 +174,5 @@ test('login handoff retains only its owned tab through turn cleanup and shares c
     const removed = new Promise((resolve) => { const off = owner.cdp.on('', 'Target.targetDestroyed', ({ targetId: closedId }) => { if (closedId === targetId) { off(); resolve(); } }); });
     await owner.cdp.send('Target.closeTarget', { targetId }); await removed;
     assert.equal(JSON.parse(await next.browser_status()).humanLoginPending, false, 'human closing the tab releases the keepalive pin');
-  } finally { await Promise.all([a.close(), other.close(), next.close()]); await closeAllBrowsers(); await new Promise((resolve) => http.close(resolve)); await rm(root, { recursive: true, force: true }); }
+  } finally { await Promise.all([a.close(), other.close(), next.close()]); await closeAllBrowsers(); await new Promise((resolve) => http.close(resolve)); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); }
 });
