@@ -39,6 +39,7 @@
     },
     "core:window:allow-set-focus",
     "dialog:allow-open",
-    "opener:allow-reveal-item-in-dir"
+    "opener:allow-reveal-item-in-dir",
+    "allow-save-download"
   ]
 }

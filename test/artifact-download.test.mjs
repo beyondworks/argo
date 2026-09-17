@@ -27,8 +27,17 @@ test('artifactDownload 헬퍼: 데스크톱만 가로채고 IPC save_download로
   assert.ok(fn.includes('preventDefault'), '앱에서 기본 앵커 차단');
   assert.ok(fn.includes("invoke('save_download'"), 'Rust 저장 커맨드 호출');
   assert.ok(fn.includes('revealItemInDir'), '저장 완료 피드백(파인더/탐색기 하이라이트)');
-  // 실패·초과가 조용한 무동작이면 고치려던 증상과 화면이 같다(검수 MEDIUM) — 폴백 항해가 있어야 한다
-  assert.ok(fn.includes('fallback()'), '실패 시 서버 다운로드 폴백');
+  // 실패·초과가 조용한 무동작이면 고치려던 증상과 화면이 같다(검수 MEDIUM) — 닫을 수 있는 안내로 알린다.
+  // 창을 파일 주소로 항해시키면 안 된다(실사고 2026-09-17: 앱 창이 이미지로 바뀌고 돌아갈 길이 없었다)
+  assert.ok(fn.includes('fallback('), '실패 시 안내');
+  assert.doesNotMatch(fn, /location\.(href|assign|replace)/, '폴백이 창을 항해시키지 않는다');
+  assert.match(ui, /function appNotice\(text\)[\s\S]*?'Escape'[\s\S]*?setTimeout\(done/, '안내는 닫기·ESC·자동 닫힘');
+  const portal = ui.split('export function openBillingPortal')[1]?.split('\nexport ')[0] ?? '';
+  assert.match(portal, /if \(!isTauriApp\(\)\) \{ window\.location\.href = '\/api\/me\/billing\/portal'; return; \}/, '결제 포털 폴백도 앱에서는 항해하지 않는다(브라우저만)');
+  const chips = await at('app/c/[ws]/artifact-chips.jsx');
+  assert.match(chips, /return createPortal\(\s*<div className="artifact-viewer"/, '보기 창은 body 포털(유리 테마 fixed 기준 박스 회피)');
+  const css = await at('app/globals.css');
+  assert.match(css, /\.artifact-viewer > \.card \{[^}]*min-width: 0;[^}]*max-height: calc\(100vh \/ var\(--z, 1\) - 48px\)/, '보기 창 높이는 배율 보정·긴 이름에 안 밀림');
   assert.ok(fn.includes('DOWNLOAD_IPC_CAP'), '대용량 IPC 상한 — 웹뷰 정지 방지');
 });
 
@@ -39,7 +48,10 @@ test('배선: 채팅 칩·프리뷰(공용 모듈)·기억 페이지·설정 리
   const room = await at('app/c/[ws]/room/page.jsx');
   const vault = await at('app/c/[ws]/vault/page.jsx');
   const settings = await at('app/c/[ws]/settings/page.jsx');
-  assert.equal((chips.match(/artifactDownload\(/g) ?? []).length, 2, '공용 칩: 칩 + 프리뷰 노트');
+  assert.equal((chips.match(/artifactDownload\(/g) ?? []).length, 3, '공용 칩: 칩(미리볼 수 없는 형식) + 프리뷰 노트 + 보기 창 저장 버튼');
+  // 칩 클릭 = 열기(유건 2026-09-17: 다운로드만 되고 열리지 않았다) — 미리볼 수 있는 형식은 앱 안 보기 창, 닫기·ESC·바깥 클릭
+  assert.match(chips, /previewKind\(rel\) !== 'none' \? \(e\) => \{ e\.preventDefault\(\); setViewing\(rel\); \}/, '미리볼 수 있는 칩은 보기 창');
+  assert.match(chips, /function ArtifactViewer[\s\S]*?'Escape'[\s\S]*?onClick=\{onClose\}[\s\S]*?common\.close/, '보기 창은 ESC·바깥 클릭·닫기 버튼');
   for (const [name, src] of [['crew', crew], ['room', room]]) {
     assert.match(src, /import \{ ArtifactChips \} from '(\.\.\/)+artifact-chips';/, `${name}: 공용 칩을 임포트해야 헬퍼를 지난다(사본 금지)`);
     assert.equal((src.match(/artifactDownload\(/g) ?? []).length, 0, `${name}: 페이지 안 직접 호출 0 — 있으면 공용 모듈과 열람 계약이 갈린다`);

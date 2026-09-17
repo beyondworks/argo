@@ -147,10 +147,25 @@ fn save_download(app: tauri::AppHandle, name: String, data: Vec<u8>) -> Result<S
     Ok(target.to_string_lossy().into_owned())
 }
 
+/// 앱 창이 파일 응답 주소로 항해하면 막는다(실사고 2026-09-17: 산출물 칩의 다운로드 폴백이 창 전체를 이미지로 바꿨고,
+/// 닫기·ESC·뒤로가기가 없어 앱을 종료해야만 돌아왔다). 파일을 내려주는 라우트만 대상 — 결제 포털 등 다른 /api 항해는 그대로.
+fn is_file_route_nav(url: &tauri::Url) -> bool {
+    let local = matches!(url.host_str(), Some("localhost") | Some("127.0.0.1"));
+    let segs: Vec<&str> = url.path().trim_start_matches('/').split('/').collect();
+    // inline=1 = 미리보기 iframe(PDF). WKWebView의 항해 핸들러는 메인 프레임과 iframe을 가르지 않아, 막으면 PDF 미리보기가 빈 칸이 된다(2차 검수 HIGH-3).
+    let inline = url.query_pairs().any(|(k, v)| k == "inline" && v == "1");
+    local && !inline && segs.len() == 4 && segs[0] == "api" && segs[1] == "companies" && matches!(segs[3], "files" | "vault")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![save_download])
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("file-nav-guard")
+                .on_navigation(|_webview, url| !is_file_route_nav(url))
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init()) // 앱에서 외부 브라우저 열기(로그인 핸드오프)
         .plugin(tauri_plugin_dialog::init()) // 폴더 픽커(내보내기 목적지 — 평문 경로 입력 대체)
@@ -362,6 +377,17 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_route_navigation_is_blocked_but_other_pages_are_not() {
+        let u = |s: &str| tauri::Url::parse(s).unwrap();
+        assert!(is_file_route_nav(&u("http://localhost:3001/api/companies/lean-ax-wqou/files?rel=a.png&download=1")));
+        assert!(is_file_route_nav(&u("http://127.0.0.1:3011/api/companies/w/vault?rel=x.md&format=docx")));
+        assert!(!is_file_route_nav(&u("http://localhost:3001/c/lean-ax-wqou/crew/pepper")));
+        assert!(!is_file_route_nav(&u("http://localhost:3001/api/me/billing/portal")));
+        assert!(!is_file_route_nav(&u("https://example.com/api/companies/w/files")));
+        assert!(!is_file_route_nav(&u("http://localhost:3001/api/companies/w/files?rel=a.pdf&inline=1")), "PDF 미리보기 iframe은 통과");
+    }
+
     use super::*;
     #[test]
     fn local_asset_proof_follows_actual_bind() {

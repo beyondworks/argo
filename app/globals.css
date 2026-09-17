@@ -2243,6 +2243,13 @@ button.memo-chip.ap-toggle { background: transparent; cursor: pointer; padding: 
   background: var(--card-2); overflow: hidden; min-width: 0;
 }
 .artifact-preview .ap-body { max-height: 380px; overflow: auto; }
+.artifact-viewer { position: fixed; inset: 0; z-index: 120; background: var(--overlay); display: grid; place-items: center; padding: 24px; }
+.artifact-viewer > .card { width: min(1100px, 100%); min-width: 0; max-height: calc(100vh / var(--z, 1) - 48px); display: flex; flex-direction: column; min-height: 0; } /* --z = 표시 배율 보정(2차 검수 HIGH-2), min-width 0 = 긴 파일명이 버튼을 밀어내지 않게 */
+.artifact-viewer .card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-viewer .artifact-preview.large { margin: 0 20px 20px; min-height: 0; }
+.artifact-preview.large .ap-body { max-height: calc(100vh / var(--z, 1) - 170px); }
+.artifact-preview.large img { max-height: calc(100vh / var(--z, 1) - 190px); }
+.artifact-preview.large iframe { height: calc(100vh / var(--z, 1) - 190px); }
 .artifact-preview img { display: block; max-width: 100%; max-height: 360px; margin: 0 auto; }
 .artifact-preview iframe { display: block; width: 100%; height: 380px; border: 0; background: var(--card); }
 .artifact-preview .ap-text {
