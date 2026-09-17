@@ -575,7 +575,7 @@ function Shell({ session }) {
       const accepted = friendsList.filter((f) => f.status === 'accepted');
       const chs = rows.map((r) => ({ // 그룹 방(친구 여럿, 유건 2026-09-17)은 members가 셋 이상 — 이름은 dmName이 구성원으로 짓는다
         id: r.channel_id, kind: 'dm', name: r.is_group && r.name ? r.name : `dm:${accepted.find((f) => f.user_id === r.other_user_id)?.display_name || r.other_user_id?.slice(0, 8) || '?'}`,
-        org_id: null, created_by: r.is_group ? (r.created_by ?? uid) : uid, _personal_group: !!r.is_group, // 1:1은 두 사람 모두 관리(서버와 같게) — 종전 표현 유지 archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: 'blocked',
+        org_id: null, created_by: r.is_group ? (r.created_by ?? uid) : uid, _personal_group: !!r.is_group, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: 'blocked', // 1:1 created_by는 종전대로 나(두 사람 모두 관리 — 서버와 같게)
         _personal_other: r.other_user_id, _personal_last_at: r.last_at, _personal_last_body: r.last_body,
       }));
       const mems = accepted.map((f) => ({ user_id: f.user_id, role: 'friend', display_name: f.display_name || f.handle || f.user_id.slice(0, 8) }));
