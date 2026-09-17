@@ -119,7 +119,7 @@ test('msgrNotifyPush(배달층) — 크루와 나의 1:1 방으로(있으면 재
   const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
   const { createCompany, loadCompany, updateCompany } = await import('../src/workspace.mjs');
   const ws = 'msgr-notify-deliver';
-  await createCompany(ws, '배달 검수', 'beta');
+  await createCompany(ws, '배달 검수', 'beta', 'owner-1'); // 소유자 = 세션 계정(소유자 불일치·미기록은 배달하지 않는다)
   const { session, rows, rpc, ORG2 } = fakeMsgr();
   const ev = { type: 'job', wsId: ws, slug: 'beta', title: '긴 작업', ok: true, reply: '끝' };
   const at = Date.parse('2026-09-14T14:00:00Z');
@@ -149,7 +149,7 @@ test('msgrNotifyPush — 보관한 1:1 방은 되살리지 않고 새 방을 만
   const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
   const { createCompany, loadCompany, updateCompany } = await import('../src/workspace.mjs');
   const ws = 'msgr-notify-archived';
-  await createCompany(ws, '보관 검수', 'beta');
+  await createCompany(ws, '보관 검수', 'beta', 'owner-1'); // 소유자 = 세션 계정(소유자 불일치·미기록은 배달하지 않는다)
   await updateCompany(ws, { msgr: { ...((await loadCompany(ws)).msgr ?? {}), enabled: true } });
   const { session, rows, rpc } = fakeMsgr({ archived: true });
   assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session, now: 0 }), true);
@@ -160,7 +160,7 @@ test('msgrNotifyPush — 제3자가 든 DM({크루, B, 나})은 1:1이 아니다
   const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
   const { createCompany, loadCompany, updateCompany } = await import('../src/workspace.mjs');
   const ws = 'msgr-notify-third-party';
-  await createCompany(ws, '제3자 검수', 'beta');
+  await createCompany(ws, '제3자 검수', 'beta', 'owner-1'); // 소유자 = 세션 계정(소유자 불일치·미기록은 배달하지 않는다)
   await updateCompany(ws, { msgr: { ...((await loadCompany(ws)).msgr ?? {}), enabled: true } });
   const ev = { type: 'crewmail', wsId: ws, from: 'alpha', slug: 'beta', reply: '고객 단가 협상안 초안' };
   { // 내 전용 방(CH)과 제3자 방(SHARED)이 둘 다 있으면 행 순서와 무관하게 CH

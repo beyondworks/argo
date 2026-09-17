@@ -55,7 +55,8 @@ test('H-0: 라우트가 조직별 policy를 싣고, 카드는 잠금이면 라�
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
   // 2026-09-08 유건 지시: 파견·허용 범위·해제는 메신저에서 — 아르고 카드는 연결 상태 + 읽기 전용 목록만(등록·해제·라디오 없음)
   assert.doesNotMatch(src, /register\(|unregister\(|role="radio"|method: 'DELETE'/, '아르고 카드에 등록·해제·허용 범위 조작이 남아 있다');
-  assert.match(src, /\{reg \? `\$\{t\('settings\.msgr\.registered'\)\} · \$\{t\(`settings\.msgr\.allow\.\$\{reg\.allow\}`\)\}` : t\('settings\.msgr\.notRegistered'\)\}/, '행은 파견 상태·허용 범위를 읽기 전용으로 보인다');
+  assert.match(src, /\{reg \? `\$\{t\('settings\.msgr\.registered'\)\} · \$\{t\(`settings\.msgr\.allow\.\$\{reg\.allow\}`\)\}` : off\}/, '행은 파견 상태·허용 범위를 읽기 전용으로 보인다');
+  assert.match(src, /const off = t\(rowOf\(a\.slug\) \? 'settings\.msgr\.notRegistered' : 'settings\.msgr\.notInMessenger'\)/, "행이 없으면 '파견 해제됨'이 아니라 '메신저에 아직 없음'(유건 제보 2026-09-17)");
   assert.match(src, /t\('settings\.msgr\.manage'\)/, '메신저에서 관리한다는 안내가 없다');
   assert.match(i18n, /'settings\.msgr\.allow\.locked': \['[^']+', '[^']+'\]/, 'settings.msgr.allow.locked ko/en');
 });

@@ -19,13 +19,13 @@ const mk = ({ orgs = ['org-1'], uid = 'u1', session = true, fail = false, hang =
 
 test('조직 멤버 + 꺼진 회사 → 쓰기 직전 다시 읽은 company.json의 msgr 위에 enabled:true (sync 머리 스냅샷 뒤 저장된 notify를 덮지 않는다 — 검수 MEDIUM-3)', async () => {
   const { deps, calls } = mk({ fresh: { msgr: { notify: { mode: 'dm' }, mutedEvents: ['job'] } } });
-  assert.equal(await autoEnableMsgr('ws-a', { company: { id: 'ws-a', msgr: {} }, ...deps }), true);
+  assert.equal(await autoEnableMsgr('ws-a', { company: { id: 'ws-a', ownerId: 'u1', msgr: {} }, ...deps }), true);
   assert.deepEqual(calls.updates, [['ws-a', { msgr: { notify: { mode: 'dm' }, mutedEvents: ['job'], enabled: true } }]]);
   assert.equal(calls.probes, 1); assert.equal(calls.loads, 1);
 });
 test('다시 읽었더니 이미 켜져 있으면(다른 경로가 먼저 켬) 쓰지 않고 true', async () => {
   const { deps, calls } = mk({ fresh: { msgr: { enabled: true } } });
-  assert.equal(await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }), true);
+  assert.equal(await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }), true);
   assert.deepEqual(calls.updates, []);
 });
 test('이미 켜짐·조직 회사(nodeOrgId)·회사 없음 → 세션도 DB도 건드리지 않는다', async () => {
@@ -38,35 +38,35 @@ test('이미 켜짐·조직 회사(nodeOrgId)·회사 없음 → 세션도 DB도
 test('세션 없음(로그아웃·만료) → false, 60초만 쉰다 — 10초마다 세션 파일·refresh를 두드리지 않고(검수 MEDIUM-1), 로그인 뒤 최대 1분 안에 켜진다', async () => {
   let t = 1_000_000; const { deps, calls } = mk({ session: false }); deps.now = () => t;
   let sessionCalls = 0; const noSession = deps.session; deps.session = async () => { sessionCalls += 1; return noSession(); };
-  assert.equal(await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }), false);
-  for (let i = 0; i < 5; i++) { t += 10_000; await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }); }
+  assert.equal(await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }), false);
+  for (let i = 0; i < 5; i++) { t += 10_000; await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }); }
   assert.equal(sessionCalls, 1, '60초 안에는 세션을 다시 묻지 않는다');
   t += MSGR_AUTO_ENABLE_NO_SESSION_MS;
   deps.session = async () => ({ uid: 'u1', db: { myOrgIds: async () => { calls.probes += 1; return ['org-1']; }, hasAnyCrew: async () => false } });
-  assert.equal(await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }), true, '60초 뒤 세션이 생기면 켜진다');
+  assert.equal(await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }), true, '60초 뒤 세션이 생기면 켜진다');
 });
 test('이미 어느 회사·조직에든 크루 행이 있는 계정 → 손대지 않는다(유건 결정: 회사 10개 중 2개만 파견한 계정에 나머지 8개가 갑자기 나타나지 않게)', async () => {
   const { deps, calls } = mk({ hasCrew: true });
-  for (const ws of ['ws-a', 'ws-b']) assert.equal(await autoEnableMsgr(ws, { company: { id: ws, msgr: {} }, ...deps }), false);
+  for (const ws of ['ws-a', 'ws-b']) assert.equal(await autoEnableMsgr(ws, { company: { id: ws, ownerId: 'u1', msgr: {} }, ...deps }), false);
   assert.equal(calls.probes, 1, '조회는 uid 캐시로 1건'); assert.deepEqual(calls.updates, []);
 });
 test('회사 N개 = 멤버십 질의 1건(uid 캐시 10분 — 검수 L1)', async () => {
   const { deps, calls } = mk();
-  for (const ws of ['ws-a', 'ws-b', 'ws-c']) assert.equal(await autoEnableMsgr(ws, { company: { id: ws, msgr: {} }, ...deps }), true);
+  for (const ws of ['ws-a', 'ws-b', 'ws-c']) assert.equal(await autoEnableMsgr(ws, { company: { id: ws, ownerId: 'u1', msgr: {} }, ...deps }), true);
   assert.equal(calls.probes, 1); assert.equal(calls.updates.length, 3);
 });
 test('멤버십 조회가 멈추면 3초(여기선 20ms) 상한으로 끊고 false — 뒤 회사들의 큐·브리지 기동을 막지 않는다(검수 L3)', async () => {
   const { deps, calls } = mk({ hang: true }); const logs = []; deps.log = (...a) => logs.push(a.join(' '));
-  assert.equal(await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }), false);
+  assert.equal(await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }), false);
   assert.match(logs[0], /timeout 20ms/); assert.deepEqual(calls.updates, []);
 });
 test('멤버 아님 → false. 10분 안에는 DB를 다시 묻지 않고, 10분 뒤에는 다시 묻는다 (10초 sync에 얹혀도 조회는 회사당 10분에 1건)', async () => {
   const { deps, calls } = mk({ orgs: [] });
   let t = 1_000_000; deps.now = () => t;
-  for (let i = 0; i < 5; i++) assert.equal(await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }), false);
+  for (let i = 0; i < 5; i++) assert.equal(await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }), false);
   assert.equal(calls.probes, 1, '연속 호출에 조회 1건');
-  t += MSGR_AUTO_ENABLE_PROBE_MS - 1; await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }); assert.equal(calls.probes, 1);
-  t += 1; await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }); assert.equal(calls.probes, 2, '10분 지나면 다시 묻는다(회사 스로틀·uid 캐시 둘 다 만료)');
+  t += MSGR_AUTO_ENABLE_PROBE_MS - 1; await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }); assert.equal(calls.probes, 1);
+  t += 1; await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }); assert.equal(calls.probes, 2, '10분 지나면 다시 묻는다(회사 스로틀·uid 캐시 둘 다 만료)');
   assert.deepEqual(calls.updates, []);
 });
 test('회사 소유자 게이트 — company.ownerId가 세션 uid와 다르면 묻지도 켜지도 않는다(남의 회사 크루를 내 조직에 올리지 않는다)', async () => {
@@ -75,9 +75,15 @@ test('회사 소유자 게이트 — company.ownerId가 세션 uid와 다르면 
   assert.equal(calls.probes, 0); assert.deepEqual(calls.updates, []);
   assert.equal(await autoEnableMsgr('ws-b', { company: { ownerId: 'u2', msgr: {} }, ...deps }), true, '소유자 일치면 켜진다');
 });
+test('소유자가 기록되지 않은 회사 → 묻지도 켜지도 않는다(실사고 2026-09-17 — "있을 때만 비교"라 소유자 없는 회사·읽기 실패가 통과했다)', async () => {
+  const { deps, calls } = mk();
+  assert.equal(await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }), false);
+  assert.equal(await autoEnableMsgr('ws-b', { company: { ownerId: null, msgr: {} }, ...deps }), false);
+  assert.equal(calls.probes, 0); assert.deepEqual(calls.updates, []);
+});
 test('멤버십 조회 실패 → false·로그, 던지지 않는다(게이트웨이 sync를 죽이지 않는다)', async () => {
   const { deps, calls } = mk({ fail: true }); const logs = []; deps.log = (...a) => logs.push(a.join(' '));
-  assert.equal(await autoEnableMsgr('ws-a', { company: { msgr: {} }, ...deps }), false);
+  assert.equal(await autoEnableMsgr('ws-a', { company: { ownerId: 'u1', msgr: {} }, ...deps }), false);
   assert.deepEqual(calls.updates, []); assert.match(logs[0], /조직 멤버십 조회 실패/);
 });
 test('배선 — 게이트웨이 sync가 큐 조립 전에 autoEnableMsgr를 부르고 결과로 c.msgr을 갱신한다(같은 sync에서 브리지 시작)', () => {
