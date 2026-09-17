@@ -30,6 +30,8 @@ async function scenario(lang, width, name, fn) {
 }
 
 async function calls(p) { return p.evaluate(() => window.__psFixture.calls); }
+// 폰 개인 공간은 홈=친구, 채팅 탭=채팅 목록(카톡식, 2026-09-17) — 채팅 목록을 볼 때는 폰이면 채팅 탭으로 간다
+async function dmsReady(p, opts = {}) { if ((p.viewportSize()?.width ?? 1280) < 768) await p.locator('.msgr-tabbar [role=tab]').nth(1).click(); await p.locator('[data-sec="dms"]').waitFor(opts); }
 async function rpcCalls(p, name) { return (await calls(p)).filter(c => c.rpc === name); }
 
 try {
@@ -48,7 +50,7 @@ try {
       await personalBtn.click();
 
       // Should see personal DM list (Alice Friend)
-      await p.locator('[data-sec="dms"]').waitFor({ timeout: 5000 });
+      await dmsReady(p, { timeout: 5000 });
       const dmItems = p.locator('[data-sec="dms"] .item');
       await dmItems.first().waitFor({ timeout: 5000 });
 
@@ -104,16 +106,20 @@ try {
     await scenario(lang, width, 'personal-new-chat-no-org', async (p) => {
       await p.locator('.msgr-org').click();
       await p.locator('.msgr-menu-pop button').first().click();
-      await p.locator('[data-sec="dms"]').waitFor({ state: 'attached' });
+      await p.locator(width >= 768 ? '[data-sec="dms"]' : '[data-sec="friends"]').waitFor({ state: 'attached' });
       await p.locator('.msgr-org').click(); // 개인 공간 메뉴에 조직 초대 링크가 없다(가상 조직은 관리자가 아니다)
       assert.equal(await p.locator('.msgr-menu-pop button').filter({ hasText: lang === 'ko' ? '조직 초대 링크' : 'invite link' }).count(), 0, 'no org invite in personal');
       await p.keyboard.press('Escape'); await p.locator('.msgr-menu-pop').waitFor({ state: 'detached' }).catch(() => p.locator('.msgr-scrim').first().click());
-      if (width >= 768) await p.locator(`[aria-label="${lang === 'ko' ? '새 채팅' : 'New chat'}"]`).click();
-      else { await p.locator('.msgr-tabbar [role=tab]').filter({ hasText: lang === 'ko' ? '채팅' : 'Chats' }).click(); await p.locator('.msgr-fab').click(); }
-      await p.locator('.msgr-setnav').waitFor();
-      assert.deepEqual(await p.locator('.msgr-setnav button').allTextContents(), lang === 'ko' ? ['친구', '내 계정'] : ['Friends', 'My account']);
-      const row = p.locator('.msgr-setbody .row').filter({ hasText: 'Org Colleague' }).first();
-      await row.getByRole('button', { name: lang === 'ko' ? '대화하기' : 'Chat' }).click();
+      if (width >= 768) {
+        await p.locator(`[aria-label="${lang === 'ko' ? '새 채팅' : 'New chat'}"]`).click();
+        await p.locator('.msgr-setnav').waitFor();
+        assert.deepEqual(await p.locator('.msgr-setnav button').allTextContents(), lang === 'ko' ? ['친구', '내 계정'] : ['Friends', 'My account']);
+        const row = p.locator('.msgr-setbody .row').filter({ hasText: 'Org Colleague' }).first();
+        await row.getByRole('button', { name: lang === 'ko' ? '대화하기' : 'Chat' }).click();
+      } else { // 폰: 채팅 탭 + → 친구 목록 → 친구를 누르면 개인 1:1
+        await p.locator('.msgr-tabbar [role=tab]').filter({ hasText: lang === 'ko' ? '채팅' : 'Chats' }).click(); await p.locator('.msgr-fab').click();
+        await p.locator('[data-sec="friends"] .item', { hasText: 'Org Colleague' }).click();
+      }
       await p.waitForFunction(() => window.__psFixture.calls.some(c => c.rpc === 'msgr_dm_personal'));
       const dm = await rpcCalls(p, 'msgr_dm_personal');
       assert.equal(dm.at(-1).args.target, 'user-colleague');
@@ -124,7 +130,7 @@ try {
     if (width >= 768) await scenario(lang, width, 'personal-search-person', async (p) => {
       await p.locator('.msgr-org').click();
       await p.locator('.msgr-menu-pop button').first().click();
-      await p.locator('[data-sec="dms"]').waitFor();
+      await dmsReady(p);
       const box = p.locator('input[placeholder*="⌘K"]'); await box.fill('Colleague'); await box.press('Enter');
       await p.locator('main button').filter({ hasText: 'Org Colleague' }).first().click();
       await p.waitForFunction(() => window.__psFixture.calls.some(c => c.rpc === 'msgr_dm_personal'));
@@ -141,7 +147,7 @@ try {
       await p.locator('.msgr-menu-pop button').first().click();
 
       // Wait for personal space to load and select a DM
-      await p.locator('[data-sec="dms"]').waitFor({ timeout: 5000 });
+      await dmsReady(p, { timeout: 5000 });
       const dmItem = p.locator('[data-sec="dms"] .item').first();
       if (await dmItem.isVisible()) {
         await dmItem.click();
@@ -164,9 +170,22 @@ try {
         await p.waitForTimeout(300);
         assert.equal(await p.getByText('dropped-in-personal.txt').count(), 0, 'drop ignored in personal space');
       } else assert.fail('personal DM row not visible');
-      if (width < 768) { // 폰 홈 탭의 + (새 채널)는 개인 공간에서 숨는다
+      if (width < 768) { // 카톡식(유건 2026-09-17): 개인 공간 홈 = 친구 목록(+ = 친구 추가), 채팅 탭 = 채팅 목록(+ = 친구 목록으로)
         await p.locator('.msgr-tabbar [role=tab]').first().click();
-        assert.equal(await p.locator('.msgr-fab').count(), 0, 'no home FAB in personal space');
+        await p.locator('[data-sec="friends"]').waitFor();
+        assert.equal(await p.locator('[data-sec="dms"]').count(), 0, 'home tab: no chat list in personal space');
+        assert.ok((await p.locator('[data-sec="friends"] .item').allTextContents()).some((x) => x.includes('Alice Friend')), 'home tab lists friends');
+        await p.locator('.msgr-fab').click();
+        await p.locator('.msgr-setnav').waitFor();
+        assert.equal(await p.locator('.msgr-setnav button[aria-current="page"]').innerText(), lang === 'ko' ? '친구' : 'Friends', 'home + opens add friend');
+        await p.locator('.msgr-tabbar [role=tab]').nth(1).click();
+        await p.locator('[data-sec="dms"]').waitFor();
+        assert.equal(await p.locator('[data-sec="friends"]').isVisible(), false, 'chat tab: friends hidden');
+        await p.locator('.msgr-fab').click();
+        await p.locator('[data-sec="friends"]').waitFor();
+        await p.locator('[data-sec="friends"] .item', { hasText: 'Alice Friend' }).click();
+        await p.waitForFunction(() => window.__psFixture.calls.some((c) => c.rpc === 'msgr_dm_personal'));
+        assert.equal((await rpcCalls(p, 'msgr_dm_personal')).at(-1).args.target, 'user-alice', 'tap friend opens personal 1:1');
       }
       await p.screenshot({ path: new URL(`hidden-buttons-${lang}-${width}.png`, artifacts).pathname });
     });
@@ -177,7 +196,7 @@ try {
       await p.locator('.msgr-org').click();
       await p.locator('.msgr-menu-pop').waitFor();
       await p.locator('.msgr-menu-pop button').first().click();
-      await p.locator('[data-sec="dms"]').waitFor({ timeout: 5000 });
+      await p.locator(width >= 768 ? '[data-sec="dms"]' : '[data-sec="friends"]').waitFor({ timeout: 5000 }); // 폰은 홈 탭(친구)에 머문다 — 채팅 탭은 채널 절을 숨긴다
 
       // Now switch back to org
       await p.locator('.msgr-org').click();

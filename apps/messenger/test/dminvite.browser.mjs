@@ -203,6 +203,9 @@ await scenario(1280, 'host-adds-and-approves', async (p) => {
   await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
   await sheet.locator('.msgr-addmenu button', { hasText: '에이전트 추가' }).click();
   const chip = sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Fixture Agent' });
+  await chip.waitFor();
+  // 방장이어도 후보는 내 에이전트와 회사 에이전트만 — 동료의 에이전트(External Bot)는 주인이 데려온다(유건 2026-09-17: 친구 에이전트까지 전부 떠 목록이 두 배)
+  assert.equal(await sheet.locator('.msgr-chips .msgr-chan', { hasText: 'External Bot' }).count(), 0, '남의 에이전트는 추가 후보가 아니다');
   assert.equal(await chip.locator('.msgr-klabel').count(), 0, '방장에게는 승인 필요 표시가 없다');
   await chip.click(); await p.waitForTimeout(700);
   assert.ok((await calls()).some((c) => c.rpc === 'msgr_crew_join' && c.args.crew === 'crew-1'), '서버 규칙(msgr_crew_join)으로 넣는다');
