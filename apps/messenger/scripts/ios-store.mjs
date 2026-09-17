@@ -80,6 +80,8 @@ export function ipaGate(info, { version, scheme = LOGIN_SCHEME } = {}) {
   if (version && info.CFBundleShortVersionString !== version) problems.push(`버전 불일치: ipa ${info.CFBundleShortVersionString} ≠ conf ${version}`);
   if (info.ITSAppUsesNonExemptEncryption !== false) problems.push('ITSAppUsesNonExemptEncryption=false 없음(수출 규정 질문이 뜬다)');
   if (JSON.stringify(info.UIDeviceFamily ?? null) !== '[1]') problems.push(`UIDeviceFamily가 [1]이 아님(${JSON.stringify(info.UIDeviceFamily ?? null)}) — iPhone 전용 선언(TARGETED_DEVICE_FAMILY=1)이 빠졌거나 되돌아갔다`);
+  // ⑤ 씬 생명주기(실사고 2026-09-17: Xcode 27·iOS 27 SDK로 빌드한 0.1.27이 씬 설정 없이 나가 iOS 27에서 실행 즉시 죽었다). tao는 이 값이 true여야 씬 모드로 붙는다
+  if (info.UIApplicationSceneManifest?.UIApplicationSupportsMultipleScenes !== true) problems.push('UIApplicationSceneManifest.UIApplicationSupportsMultipleScenes=true 없음(iOS 27에서 실행 즉시 종료)');
   return problems;
 }
 const ipaInfo = (ipa) => {
