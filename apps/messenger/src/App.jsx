@@ -575,7 +575,7 @@ function Shell({ session }) {
       const accepted = friendsList.filter((f) => f.status === 'accepted');
       const chs = rows.map((r) => ({ // 그룹 방(친구 여럿, 유건 2026-09-17)은 members가 셋 이상 — 이름은 dmName이 구성원으로 짓는다
         id: r.channel_id, kind: 'dm', name: r.is_group && r.name ? r.name : `dm:${accepted.find((f) => f.user_id === r.other_user_id)?.display_name || r.other_user_id?.slice(0, 8) || '?'}`,
-        org_id: null, created_by: r.created_by ?? uid, _personal_group: !!r.is_group, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: 'blocked',
+        org_id: null, created_by: r.is_group ? (r.created_by ?? uid) : uid, _personal_group: !!r.is_group, // 1:1은 두 사람 모두 관리(서버와 같게) — 종전 표현 유지 archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: 'blocked',
         _personal_other: r.other_user_id, _personal_last_at: r.last_at, _personal_last_body: r.last_body,
       }));
       const mems = accepted.map((f) => ({ user_id: f.user_id, role: 'friend', display_name: f.display_name || f.handle || f.user_id.slice(0, 8) }));
@@ -1062,7 +1062,7 @@ function Shell({ session }) {
   const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
     const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
     if (dmIsGroup(c)) { const names = [...crewsIn.map((m) => crewOf(m.member_id)?.display_name), ...people.map((m) => nameOfUser(m.member_id))].filter(Boolean).join(', ');
-      return c._personal_group && people.length <= 1 ? `${names || base} · ${t('dm.filter.group')}` : (names || base); } // 한 명만 남은 개인 그룹이 같은 이름의 1:1과 구별되게(검수 MEDIUM-1) // 그룹 대화 = 멤버 이름 나열(판정 정본 dmIsGroup — 검수 HIGH-2)
+      return c._personal_group && people.length <= 1 ? `${names || base} · ${t('dm.group.tag')}` : (names || base); } // 한 명만 남은 개인 그룹이 같은 이름의 1:1과 구별되게(검수 MEDIUM-1) // 그룹 대화 = 멤버 이름 나열(판정 정본 dmIsGroup — 검수 HIGH-2)
     return [crewName, other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · ') || base; };
   const targetFavs = targetPrefs.filter((p) => p.pinned).flatMap((p) => {
     const target = p.target_kind === 'crew' ? crews.find((c) => c.id === p.target_id) : members.find((m) => m.user_id === p.target_id);

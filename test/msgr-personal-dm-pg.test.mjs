@@ -209,3 +209,25 @@ test('개인 그룹 대화 — 친구 여럿과 조직 밖 방 하나, 같은 �
   sql(`insert into public.msgr_friends (a, b, status, requested_by) values (least('${U.a}'::uuid, '${U.c}'::uuid), greatest('${U.a}'::uuid, '${U.c}'::uuid), 'accepted', '${U.a}') on conflict (a, b) do update set status = 'accepted'`);
   fails(asUserRaw(U.a, `select public.msgr_dm_personal_group(array['${U.b}','${E}','${U.c}']::uuid[], null)`), /msgr_group_blocked_pair/, '구성원끼리 차단이면 msgr_group_blocked_pair');
 });
+
+test('개인 그룹 나가기 — 구성원도 나갈 수 있고, 만든 사람이 나가면 관리가 남은 사람에게 넘어간다 / 차단이 생겨도 같은 구성은 다시 열린다(2차 검수)', { skip }, () => {
+  const [G, H] = ['77777777-7777-4777-8777-777777777777', '88888888-8888-4888-8888-888888888888'];
+  for (const id of [G, H]) {
+    sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${id.slice(0, 4)}@example.test') on conflict do nothing`);
+    sql(`insert into public.msgr_friends (a, b, status, requested_by) values (least('${U.a}'::uuid, '${id}'::uuid), greatest('${U.a}'::uuid, '${id}'::uuid), 'accepted', '${U.a}') on conflict (a, b) do update set status = 'accepted'`);
+  }
+  const g = last(asUser(U.a, `select public.msgr_dm_personal_group(array['${G}','${H}']::uuid[], 'g, h')`));
+  // 차단이 생긴 뒤 같은 구성으로 다시 열면 그 방
+  sql(`insert into public.msgr_friends (a, b, status, requested_by) values (least('${G}'::uuid, '${H}'::uuid), greatest('${G}'::uuid, '${H}'::uuid), 'blocked', '${G}') on conflict (a, b) do update set status = 'blocked'`);
+  assert.equal(last(asUser(U.a, `select public.msgr_dm_personal_group(array['${G}','${H}']::uuid[], null)`)), g, '차단이 생겨도 기존 그룹은 다시 열린다');
+  // 구성원 G가 나간다
+  assert.equal(last(asUser(G, `select public.msgr_leave_dm('${g}')`)), 't', '구성원도 나간다(관리 권한 없이)');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${g}' and member_id = '${G}'`), '0');
+  // 만든 사람 a가 나가면 H가 관리
+  assert.equal(last(asUser(U.a, `select public.msgr_leave_dm('${g}')`)), 't');
+  assert.equal(sql(`select created_by::text from public.msgr_channels where id = '${g}'`), H, '관리가 남은 사람에게');
+  assert.equal(asUser(H, `select public.msgr_can_manage_channel('${g}')`), 't', '남은 사람이 정리할 수 있다');
+  assert.equal(asUser(U.a, `select public.msgr_can_manage_channel('${g}')`), 'f', '나간 사람은 관리 못 함');
+  asUserRaw(H, `update public.msgr_channels set created_by = '${G}' where id = '${g}'`); // 관리자 H라도 created_by는 함수 밖에서 못 바꾼다(잠금)
+  assert.equal(sql(`select created_by::text from public.msgr_channels where id = '${g}'`), H, '이관 스위치는 함수 밖에서 안 열린다');
+});
