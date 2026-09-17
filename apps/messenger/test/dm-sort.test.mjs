@@ -41,7 +41,7 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.doesNotMatch(src, /msgr-dmpin/, '고정 별 아이콘 없음(유건 2026-09-15: 즐겨찾기 별 아이콘 쓰지 마)');
   assert.match(src, /const dmVisible = \(c\) => dmFilter === 'all' \|\| \(dmFilter === 'fav' && pinned\.has\(c\.id\)\) \|\| \(dmFilter === 'unread' && unread\[c\.id\]\?\.n > 0 && !muted\.has\(c\.id\)\) \|\| \(dmFilter === 'group' && dmIsGroup\(c\)\);/, '필터 4종');
   assert.match(src, /if \(people\.length === 1 && crewsIn\.length === 1 && crewOf\(crewsIn\[0\]\.member_id\)\?\.owner_user_id === people\[0\]\.member_id\) return false;/, '그룹 판정 정본: 나 뺀 참가자 2 이상, 남의 크루 1:1(소유자 동반)은 예외');
-  assert.match(src, /if \(dmIsGroup\(c\)\) return \[\.\.\.crewsIn\.map/, 'dmName은 같은 판정을 쓴다(검수 HIGH-2)');
+  assert.match(src, /if \(dmIsGroup\(c\)\) \{ const names = \[\.\.\.crewsIn\.map/, 'dmName은 같은 판정을 쓴다(검수 HIGH-2)');
   assert.match(src, /\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/span>\{lastMsg/, 'DM 탭 행 음소거 벨(검수 HIGH-1 회귀 방지)');
   assert.match(src, /<><span className="name">\{dmName\(c\)\}<\/span>\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/>/, '데스크톱·홈 행 음소거 벨(회귀 방지)');
   assert.match(src, /onPointerUp: \(e\) => \{ lp\.onPointerUp\(e\); swallowNext\(\); \}/, 'click 삼킴은 손 뗀 직후에만 등록(검수 HIGH-3)');

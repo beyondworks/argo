@@ -121,6 +121,15 @@ try {
       await p.waitForFunction(() => window.__psFixture.calls.some(c => c.rpc === 'msgr_dm_personal'));
       const dm = await rpcCalls(p, 'msgr_dm_personal');
       assert.equal(dm.at(-1).args.target, 'user-colleague');
+      assert.ok((await rpcCalls(p, 'msgr_dm_personal_list')).every((c) => c.args?.include_groups === true), 'new app asks for groups');
+      if (width >= 768) { // 검수 HIGH-2: 개인 방 설정에 나·상대가 보이고 '사람 더 부르기'(새 그룹)가 나온다 — 종전엔 친구 목록만 봐 인원 1·추가 버튼 없음
+        await p.locator('.msgr-top button.members').first().click();
+        const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor();
+        assert.equal(await sheet.locator('.msgr-rows .row').count(), 2, 'me + the other person');
+        assert.ok(await sheet.locator('.msgr-addwrap button').first().isVisible(), 'add button visible in personal 1:1');
+        await sheet.locator('.msgr-addwrap button').first().click();
+        assert.equal(await sheet.locator('.msgr-addmenu button', { hasText: lang === 'ko' ? '사람 더 부르기' : 'Add people' }).count(), 1, 'widen into a group');
+      }
       await leakCheck(p);
     });
 

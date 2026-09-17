@@ -190,7 +190,22 @@ test('개인 그룹 대화 — 친구 여럿과 조직 밖 방 하나, 같은 �
   assert.equal(asUser(E, `select count(*) from public.msgr_messages where channel_id = '${g}'`), '2', '구성원은 읽는다(친구의 친구 사이라도)');
   assert.equal(asUser(U.c, `select count(*) from public.msgr_messages where channel_id = '${g}'`), '0', '구성원 밖은 못 읽는다');
   fails(postRaw(F, g, '끼어들기'), /row-level security|msgr_/, '구성원 밖은 못 쓴다');
-  const row = asUser(E, `select jsonb_array_length(members)||'|'||name from public.msgr_dm_personal_list() where channel_id = '${g}'`);
-  assert.equal(row, '3|dm:b, e', '목록이 구성원 셋과 이름을 싣는다');
-  assert.equal(asUser(U.a, `select count(*) from public.msgr_dm_personal_list() where channel_id = '${g}'`), '1', '만든 사람 목록에도');
+  const row = asUser(E, `select jsonb_array_length(members)||'|'||name||'|'||is_group from public.msgr_dm_personal_list(true) where channel_id = '${g}'`);
+  assert.equal(row, '3|dm:b, e|true', '목록이 구성원 셋·이름·그룹 표시를 싣는다');
+  assert.equal(asUser(U.a, `select count(*) from public.msgr_dm_personal_list(true) where channel_id = '${g}'`), '1', '만든 사람 목록에도');
+  assert.equal(asUser(U.a, `select count(*) from public.msgr_dm_personal_list() where channel_id = '${g}'`), '0', '인자 없는 옛 앱에는 그룹이 오지 않는다(가짜 1:1 방지, 검수 MEDIUM-4)');
+
+  // 검수 MEDIUM-5 — 개인 그룹은 만든 사람만 끝내거나 지운다(친구의 친구가 모두의 기록을 지우지 못하게)
+  assert.equal(asUser(E, `select public.msgr_can_manage_channel('${g}')`), 'f', '구성원(E)은 관리 불가');
+  assert.equal(asUser(U.a, `select public.msgr_can_manage_channel('${g}')`), 't', '만든 사람(a)은 관리');
+  assert.equal(last(asUser(E, `with d as (delete from public.msgr_channels where id = '${g}' returning 1) select count(*) from d`)), '0', 'E의 삭제는 지워지지 않는다(RLS)');
+  const pair = last(asUser(U.a, `select public.msgr_dm_personal('${U.b}')`));
+  assert.equal(asUser(U.b, `select public.msgr_can_manage_channel('${pair}')`), 't', '1:1은 종전대로 두 사람 모두 관리');
+
+  // 검수 HIGH-1 — 차단은 1:1에만: 그룹 안의 차단 관계가 그룹 전체 쓰기를 잠그지 않는다 / 차단한 사람들로는 그룹을 새로 만들지 않는다
+  sql(`insert into public.msgr_friends (a, b, status, requested_by) values (least('${U.b}'::uuid, '${E}'::uuid), greatest('${U.b}'::uuid, '${E}'::uuid), 'blocked', '${U.b}') on conflict (a, b) do update set status = 'blocked'`);
+  post(U.b, g, '차단 뒤에도 그룹에는 쓴다'); post(E, g, '나도');
+  fails(asUserRaw(U.a, `select public.msgr_dm_personal_group(array['${U.b}','${E}','${U.c}']::uuid[], null)`), /msgr_group_blocked_pair|msgr_not_friend/, '차단 관계가 있는 구성으로는 새 그룹 불가');
+  sql(`insert into public.msgr_friends (a, b, status, requested_by) values (least('${U.a}'::uuid, '${U.c}'::uuid), greatest('${U.a}'::uuid, '${U.c}'::uuid), 'accepted', '${U.a}') on conflict (a, b) do update set status = 'accepted'`);
+  fails(asUserRaw(U.a, `select public.msgr_dm_personal_group(array['${U.b}','${E}','${U.c}']::uuid[], null)`), /msgr_group_blocked_pair/, '구성원끼리 차단이면 msgr_group_blocked_pair');
 });
