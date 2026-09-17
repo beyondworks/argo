@@ -70,7 +70,7 @@ export const supabase = {
   auth: { getSession: async () => ({ data: { session: { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } } }), onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
   rpc: async (name, args) => result({ rpc: name, args }, () => {
     if (name === 'msgr_my_friends') return structuredClone(state.tables.msgr_friends);
-    if (name === 'msgr_dm_personal_list') return structuredClone(state.tables.msgr_personal_list);
+    if (name === 'msgr_dm_personal_list') return structuredClone(state.tables.msgr_personal_list.filter((r) => args?.include_groups || !r.is_group)); // 서버와 같게 — 인자 없는 옛 앱은 1:1만
     if (name === 'msgr_dm_personal') {
       // Return existing personal DM or create one
       const existing = state.tables.msgr_personal_list.find(r => r.other_user_id === args.target);
@@ -81,6 +81,14 @@ export const supabase = {
       state.tables.msgr_personal_list.push({ channel_id: id, other_user_id: args.target, last_at: new Date().toISOString(), last_body: '' });
       state.tables.msgr_personal_channels.push(channel(id, 'dm', `dm:${friend.display_name}`, null));
       state.tables.msgr_personal_members.push({ channel_id: id, member_kind: 'user', member_id: uid }, { channel_id: id, member_kind: 'user', member_id: args.target });
+      return id;
+    }
+    if (name === 'msgr_dm_personal_group') { // 친구 여럿과 조직 밖 그룹 방(유건 2026-09-17) — 서버 판정(친구만·두 명 이상)을 흉내
+      const friends = args.targets.map((id) => state.tables.msgr_friends.find((f) => f.user_id === id && f.status === 'accepted'));
+      if (args.targets.length < 2) throw new Error('msgr_bad_target');
+      if (friends.some((f) => !f)) throw new Error('msgr_not_friend');
+      const id = `pgrp-${Date.now()}`;
+      state.tables.msgr_personal_list.unshift({ channel_id: id, other_user_id: args.targets[0], last_at: new Date().toISOString(), last_body: '', name: `dm:${args.title}`, is_group: true, created_by: uid, members: [{ id: uid, name: 'Me' }, ...friends.map((f) => ({ id: f.user_id, name: f.display_name }))] });
       return id;
     }
     if (name === 'msgr_create_channel') {

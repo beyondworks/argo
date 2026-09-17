@@ -660,6 +660,12 @@
 .msgr-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--fg); font: inherit; font-size: 12.5px; outline: none; }
 .msgr-search .clear { border: 0; background: none; color: var(--fg-3); padding: 2px; cursor: pointer; display: inline-flex; }
 .msgr-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+/* 에이전트 일괄 추가 목록(유건 2026-09-17: 칩 대신 목록 + 여러 명 선택) — 새 채팅 시트의 체크 행과 같은 결 */
+.msgr-picklist { display: grid; gap: 2px; margin: 6px 0 8px; padding: 4px; max-height: 320px; overflow-y: auto; border: 1px solid var(--border-soft); border-radius: 12px; }
+.msgr-picklist .pickrow { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 8px; border-radius: 10px; cursor: pointer; }
+.msgr-picklist .pickrow:hover { background: var(--card-2); }
+.msgr-picklist .pickrow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.msgr-picklist .pickrow .msgr-klabel { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-setcard form.row .msgr-input.sm { flex: 1; }
 .msgr-searchres mark { background: var(--mark); color: #1a1a1a; border-radius: 3px; padding: 0 2px; }
 .msgr-folderhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px 2px; font-size: 10.5px; color: var(--fg-3); letter-spacing: 0.02em; }
@@ -1030,6 +1036,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .item .msgr-av { width: 24px; height: 24px; }
   .msgr-phone.phone-home .msgr-side .msgr-klabel { font-size: var(--ph-sub); }
   .msgr-phone.phone-home .msgr-side .msgr-list { padding-bottom: 6px; }
+  .msgr-phone.phone-home .msgr-side .msgr-folderhead { padding: 10px 20px 4px calc(var(--ph-pad) - 3px); font-size: var(--ph-sub); } /* 묶음 머리(내 에이전트 등)의 셰브론을 절 제목 아이콘 왼쪽 선(x=--ph-pad)에 맞춘다 — 목록 패딩 2px·셰브론 여백 1px을 뺀다(유건 2026-09-17) */
   /* FAB(슬랙 +) — 아일랜드 위 오른쪽 */
   .msgr-fab { position: fixed; right: 24px; bottom: max(72px, calc(env(safe-area-inset-bottom) + 54px)); z-index: 69; width: 56px; height: 56px; border-radius: 50%; /* 슬랙 실측: 바닥 100(인셋 34+66) */
     border: 0; background: var(--mark); color: var(--mark-fg); display: grid; place-items: center; box-shadow: var(--shadow-float); cursor: pointer; } /* 보내기 단추와 같은 골드 — 아르고의 주 동작색 */

@@ -12,6 +12,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
   msgr_channels: [channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿'), ...Array.from({ length: 12 }, (_, i) => channel(`fold-${i + 1}`, 'private', `Folder Room ${i + 1}`))],
   msgr_crews: [
     { id: 'crew-1', org_id: org, owner_user_id: uid, slug: 'fixture-crew', display_name: 'Fixture Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' },
+    { id: 'crew-3', org_id: org, owner_user_id: uid, slug: 'second-crew', display_name: 'Second Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 일괄 추가 대상 둘째(유건 2026-09-17)
     { id: 'crew-2', org_id: org, owner_user_id: 'user-colleague', slug: 'colleague-crew', display_name: 'Colleague Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 다른 멤버의 크루 — 레일에 나오면 안 된다
     { id: 'crew-bot', org_id: org, owner_user_id: 'user-colleague', slug: 'bot-crew', display_name: 'External Bot', hosting: 'bot', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 외부 에이전트 — 남는다
   ],

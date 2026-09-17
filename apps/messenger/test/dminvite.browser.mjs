@@ -202,13 +202,24 @@ await scenario(1280, 'host-adds-and-approves', async (p) => {
   assert.equal(await sheet.locator('.row.req').count(), 0, '요청 행이 사라진다');
   await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
   await sheet.locator('.msgr-addmenu button', { hasText: '에이전트 추가' }).click();
-  const chip = sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Fixture Agent' });
-  await chip.waitFor();
+  // 칩이 아니라 목록 + 여러 명 선택(유건 2026-09-17)
+  const list = sheet.locator('.msgr-picklist'); await list.waitFor();
+  assert.equal(await sheet.locator('.msgr-chips .msgr-chan').count(), 0, '에이전트 칩은 없다(사람 추가는 별개)');
+  const chip = list.locator('.pickrow', { hasText: 'Fixture Agent' });
   // 방장이어도 후보는 내 에이전트와 회사 에이전트만 — 동료의 에이전트(External Bot)는 주인이 데려온다(유건 2026-09-17: 친구 에이전트까지 전부 떠 목록이 두 배)
-  assert.equal(await sheet.locator('.msgr-chips .msgr-chan', { hasText: 'External Bot' }).count(), 0, '남의 에이전트는 추가 후보가 아니다');
-  assert.equal(await chip.locator('.msgr-klabel').count(), 0, '방장에게는 승인 필요 표시가 없다');
-  await chip.click(); await p.waitForTimeout(700);
-  assert.ok((await calls()).some((c) => c.rpc === 'msgr_crew_join' && c.args.crew === 'crew-1'), '서버 규칙(msgr_crew_join)으로 넣는다');
+  assert.equal(await list.locator('.pickrow', { hasText: 'External Bot' }).count(), 0, '남의 에이전트는 추가 후보가 아니다');
+  assert.doesNotMatch(await chip.innerText(), /승인 필요/, '방장에게는 승인 필요 표시가 없다');
+  const submit = sheet.locator('.msgr-addwrap .acts .btn-primary');
+  assert.ok(await submit.isDisabled(), '고르기 전에는 추가 버튼이 꺼져 있다');
+  const rowsAll = list.locator('.pickrow'); const n = await rowsAll.count();
+  assert.ok(n >= 2, `일괄 선택을 보려면 후보가 둘 이상이어야 한다 (${n})`);
+  for (let i = 0; i < n; i++) await rowsAll.nth(i).locator('input').check(); // 보이는 후보를 전부 한 번에
+  assert.match(await submit.innerText(), new RegExp(`${n}명 추가`), '고른 수가 버튼에 보인다');
+  const before = (await calls()).filter((c) => c.rpc === 'msgr_crew_join').length;
+  await submit.click(); await p.waitForTimeout(900);
+  const joins = (await calls()).filter((c) => c.rpc === 'msgr_crew_join').slice(before);
+  assert.equal(joins.length, n, `고른 수만큼 서버 규칙(msgr_crew_join)을 한 명씩 부른다 (${joins.length}/${n})`);
+  assert.ok(joins.some((c) => c.args.crew === 'crew-1'), '내 에이전트가 들어간다');
   assert.ok((await crewRows(sheet)).includes('Fixture Agent'), '바로 들어온다');
 });
 
@@ -228,11 +239,12 @@ await scenario(1280, 'member-requests-approval', async (p) => {
   const sheet = await openGeneralSheet(p);
   await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
   await sheet.locator('.msgr-addmenu button', { hasText: '에이전트 추가' }).click();
-  const chips = await sheet.locator('.msgr-chips .msgr-chan').allInnerTexts();
+  await sheet.locator('.msgr-picklist').waitFor();
+  const chips = await sheet.locator('.msgr-picklist .pickrow').allInnerTexts();
   assert.ok(!chips.some((x) => x.includes('Colleague Agent')), `남의 개인 에이전트는 후보가 아니다 (${chips})`);
-  const mine = sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Fixture Agent' });
+  const mine = sheet.locator('.msgr-picklist .pickrow', { hasText: 'Fixture Agent' });
   assert.match(await mine.innerText(), /승인 필요/, '내 에이전트에 승인 필요 표시');
-  await mine.click(); await p.waitForTimeout(700);
+  await mine.locator('input').check(); await sheet.locator('.msgr-addwrap .acts .btn-primary').click(); await p.waitForTimeout(700);
   assert.ok((await p.evaluate(() => window.__dmInviteFixture.calls)).some((c) => c.rpc === 'msgr_crew_join' && c.args.crew === 'crew-1'), '요청을 보낸다');
   assert.ok(!(await crewRows(sheet)).includes('Fixture Agent'), '허락 전에는 구성에 없다');
   assert.match(await sheet.locator('.row.req', { hasText: 'Fixture Agent' }).innerText(), /방장 승인 대기/, '대기로 보인다');

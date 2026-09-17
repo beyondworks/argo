@@ -15,7 +15,7 @@ test('isPersonal 파생 변수가 orgId === PERSONAL로 정의된다', () => {
 });
 
 test('loadPersonal 함수가 msgr_dm_personal_list RPC를 호출한다', () => {
-  assert.match(src, /supabase\.rpc\('msgr_dm_personal_list'\)/);
+  assert.match(src, /supabase\.rpc\('msgr_dm_personal_list', \{ include_groups: true \}\)/); // 인자 없으면 서버가 그룹을 빼고 준다(옛 앱 호환)
 });
 
 test('loadOrgs가 개인 공간(PERSONAL)을 유지한다', () => {

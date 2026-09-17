@@ -112,17 +112,24 @@ try {
       await p.keyboard.press('Escape'); await p.locator('.msgr-menu-pop').waitFor({ state: 'detached' }).catch(() => p.locator('.msgr-scrim').first().click());
       if (width >= 768) {
         await p.locator(`[aria-label="${lang === 'ko' ? '새 채팅' : 'New chat'}"]`).click();
-        await p.locator('.msgr-setnav').waitFor();
-        assert.deepEqual(await p.locator('.msgr-setnav button').allTextContents(), lang === 'ko' ? ['친구', '내 계정'] : ['Friends', 'My account']);
-        const row = p.locator('.msgr-setbody .row').filter({ hasText: 'Org Colleague' }).first();
-        await row.getByRole('button', { name: lang === 'ko' ? '대화하기' : 'Chat' }).click();
-      } else { // 폰: 채팅 탭 + → 친구 목록 → 친구를 누르면 개인 1:1
+      } else { // 폰: 채팅 탭 + → 새 채팅 시트(조직과 같은 문법, 유건 2026-09-17)
         await p.locator('.msgr-tabbar [role=tab]').filter({ hasText: lang === 'ko' ? '채팅' : 'Chats' }).click(); await p.locator('.msgr-fab').click();
-        await p.locator('[data-sec="friends"] .item', { hasText: 'Org Colleague' }).click();
       }
+      const sheet = p.locator('.msgr-dmgroup'); await sheet.waitFor(); // 친구 한 명 고르면 개인 1:1
+      await sheet.locator('.pickrow', { hasText: 'Org Colleague' }).locator('input').check();
+      await sheet.locator('.foot .btn-primary').click();
       await p.waitForFunction(() => window.__psFixture.calls.some(c => c.rpc === 'msgr_dm_personal'));
       const dm = await rpcCalls(p, 'msgr_dm_personal');
       assert.equal(dm.at(-1).args.target, 'user-colleague');
+      assert.ok((await rpcCalls(p, 'msgr_dm_personal_list')).every((c) => c.args?.include_groups === true), 'new app asks for groups');
+      if (width >= 768) { // 검수 HIGH-2: 개인 방 설정에 나·상대가 보이고 '사람 더 부르기'(새 그룹)가 나온다 — 종전엔 친구 목록만 봐 인원 1·추가 버튼 없음
+        await p.locator('.msgr-top button.members').first().click();
+        const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor();
+        assert.equal(await sheet.locator('.msgr-rows .row').count(), 2, 'me + the other person');
+        assert.ok(await sheet.locator('.msgr-addwrap button').first().isVisible(), 'add button visible in personal 1:1');
+        await sheet.locator('.msgr-addwrap button').first().click();
+        assert.equal(await sheet.locator('.msgr-addmenu button', { hasText: lang === 'ko' ? '사람 더 부르기' : 'Add people' }).count(), 1, 'widen into a group');
+      }
       await leakCheck(p);
     });
 
@@ -181,11 +188,18 @@ try {
         await p.locator('.msgr-tabbar [role=tab]').nth(1).click();
         await p.locator('[data-sec="dms"]').waitFor();
         assert.equal(await p.locator('[data-sec="friends"]').isVisible(), false, 'chat tab: friends hidden');
-        await p.locator('.msgr-fab').click();
-        await p.locator('[data-sec="friends"]').waitFor();
-        await p.locator('[data-sec="friends"] .item', { hasText: 'Alice Friend' }).click();
-        await p.waitForFunction(() => window.__psFixture.calls.some((c) => c.rpc === 'msgr_dm_personal'));
-        assert.equal((await rpcCalls(p, 'msgr_dm_personal')).at(-1).args.target, 'user-alice', 'tap friend opens personal 1:1');
+        await p.locator('.msgr-fab').click(); // 채팅 탭 + = 새 채팅 시트 — 친구 둘을 고르면 개인 그룹(유건 2026-09-17: 개인 쪽에 그룹을 맺는 기능이 없다)
+        const sheet = p.locator('.msgr-dmgroup'); await sheet.waitFor();
+        for (const who of ['Alice Friend', 'Org Colleague']) await sheet.locator('.pickrow', { hasText: who }).locator('input').check();
+        await sheet.locator('.foot .btn-primary').click();
+        await p.waitForFunction(() => window.__psFixture.calls.some((c) => c.rpc === 'msgr_dm_personal_group'));
+        const g = (await rpcCalls(p, 'msgr_dm_personal_group')).at(-1).args;
+        assert.deepEqual([...g.targets].sort(), ['user-alice', 'user-colleague'], 'group of two friends');
+        assert.equal((await rpcCalls(p, 'msgr_create_channel')).length, 0, 'not an org channel');
+        await p.locator('.msgr-composer').waitFor(); // 새 방이 열린다
+        await p.locator('.msgr-tabbar [role=tab]').nth(1).click();
+        const groupRow = p.locator('[data-sec="dms"] .item', { hasText: 'Alice Friend' }).filter({ hasText: 'Org Colleague' });
+        await groupRow.first().waitFor(); // 목록에 구성원 이름으로 보인다
       }
       await p.screenshot({ path: new URL(`hidden-buttons-${lang}-${width}.png`, artifacts).pathname });
     });
