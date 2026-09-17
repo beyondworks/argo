@@ -41,6 +41,9 @@ targets:
       properties:
         LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
+        # iOS 27 SDK부터 씬 생명주기 필수 — 없으면 실행 즉시 EXC_BREAKPOINT(실사고 0.1.27 TestFlight 2026-09-17). tao는 이 키가 true일 때 TaoSceneDelegate로 붙는다
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
