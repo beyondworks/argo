@@ -215,7 +215,7 @@ function RailSection({ id, label, right = null, forceOpen = false, children }) {
   const onToggle = (e) => { if (forceOpen) { if (!e.currentTarget.open) e.currentTarget.open = true; return; } const next = e.currentTarget.open; setOpen(next); try { localStorage.setItem(FOLD_KEY, JSON.stringify({ ...readFold(), [id]: !next })); } catch { /* 저장 못 해도 동작 */ } };
   return (
     <details className="msgr-sec" data-sec={id} open={forceOpen || open} onToggle={onToggle}>
-      <summary className="msgr-group">{phone && <I name={{ fav: 'star', channels: 'hash', dms: 'at', dmpin: 'at', mine: 'star', people: 'at', agents: 'node' }[id] ?? 'hash'} size={18} className="sec-ic" />}<span className="lbl">{label}</span>{right && <span className="right" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{right}</span>}</summary>
+      <summary className="msgr-group">{phone && <I name={{ fav: 'star', channels: 'hash', dms: 'at', dmpin: 'at', mine: 'star', people: 'at', agents: 'node', friends: 'person' }[id] ?? 'hash'} size={18} className="sec-ic" />}<span className="lbl">{label}</span>{right && <span className="right" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{right}</span>}</summary>
       {children}
     </details>
   );
@@ -1238,9 +1238,18 @@ function Shell({ session }) {
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: 'public' })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
 </RailSection>}
+        {isPersonal && !dmTab && (<RailSection id="friends" label={`${t('rail.friends')} · ${members.length}`} forceOpen>{/* 개인 공간 홈 = 친구 목록, 채팅 탭 = 채팅 목록(카톡식, 유건 2026-09-17). 개인 공간의 members는 수락된 친구다(loadPersonal) */}
+          <div className="msgr-list dir">
+            {[...members].sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''))).map((m) => (
+              <button key={m.user_id} type="button" className="item" onClick={() => { openPersonalDm(m.user_id); setRail(false); }} title={t('friends.dm')}>
+                <Av name={m.display_name || '?'} size="xs" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
+              </button>))}
+          </div>
+          {!members.length && <div className="msgr-hint">{t('friends.none')} {t('phone.friends.add.hint')}</div>}
+        </RailSection>)}
         {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{DM_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
         {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
-        {(dms.length > 0 || dmTab || !!orgId) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
+        {(dms.length > 0 || dmTab || !!orgId) && !(isPhone && isPersonal && !dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
           <button type="button" className="btn" onClick={() => { if (isPersonal) { setPage('settings'); setSettingsTab('friends'); setRail(false); } else setDmGroup(true); }} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
         </span>}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
@@ -1323,7 +1332,7 @@ function Shell({ session }) {
         )}
         </PageBoundary>
       </main>
-      {isPhone && (page === 'dm' || (page === 'home' && !isPersonal)) && org && <button type="button" className="msgr-fab" onClick={() => page !== 'dm' ? setNewCh({ name: '', kind: 'public' }) : isPersonal ? (setPage('settings'), setSettingsTab('friends')) : setDmGroup(true)} aria-label={t(page === 'dm' ? 'dm.group.new' : 'ch.new')}><I name="plus" size={22} /></button>}
+      {isPhone && (page === 'dm' || page === 'home') && org && <button type="button" className="msgr-fab" onClick={() => isPersonal ? (page === 'dm' ? setPage('home') : (setPage('settings'), setSettingsTab('friends'))) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: 'public' })} aria-label={t(isPersonal ? (page === 'dm' ? 'dm.new' : 'friends.add') : page === 'dm' ? 'dm.group.new' : 'ch.new')}><I name="plus" size={22} /></button>}
       {dmGroup && <DmGroupSheet members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={crews} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {isPhone && <PhoneTabs page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
     </div>
@@ -1561,12 +1570,13 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const userIds = new Set(chMembers.filter((m) => m.member_kind === 'user').map((m) => m.member_id));
   const crewIds = new Set(chMembers.filter((m) => m.member_kind === 'crew').map((m) => m.member_id));
   const addableUsers = members.filter((m) => !userIds.has(m.user_id) && m.user_id !== org?.service_user_id && !(channel.kind === 'public' && excludedUsers.includes(m.user_id))); // 내보낸 사람은 후보가 아니다(넣어도 읽기가 막힌다) // 회사 크루 서버(기계 계정)는 사람 후보가 아니다(실측: 첫 칩이 '회사 노드')
-  // 누가 무엇을 데려오나(서버 msgr_crew_join과 같은 규칙) — 방장: 조직의 에이전트 / 참여자: 자기 에이전트와 회사 에이전트(요청) /
+  // 누가 무엇을 데려오나 — 추가 후보는 방장이어도 **내 에이전트와 회사 에이전트만**(유건 2026-09-17: 친구·동료 에이전트까지 전부 보여 목록이 두 배로 늘었다).
+  // 남의 에이전트는 그 주인이 데려오고(참여자면 방장 승인), 방장은 요청을 허락한다. 서버 msgr_crew_join은 방장의 직접 추가도 받지만 화면에서는 내지 않는다. /
   // 채팅: 주인이 이 방에 있는 에이전트(남의 에이전트를 부르려면 그 사람과 함께 새 방을 연다). 못 데려옴 채널은 회사 에이전트만.
   const isHost = canEdit && !isDmRoom;
   const pendingCrews = new Set(joinReqs.map((r) => r.crew_id));
   const addableCrews = crews.filter((c) => !crewIds.has(c.id) && !pendingCrews.has(c.id) && ((channel.personal_crews ?? 'approval') !== 'blocked' || crewTier(c, org) === 'company')
-    && (isDmRoom ? (c.owner_user_id === uid || userIds.has(c.owner_user_id)) : (isHost || c.owner_user_id === uid || crewTier(c, org) === 'company')));
+    && (isDmRoom ? (c.owner_user_id === uid || userIds.has(c.owner_user_id)) : (c.owner_user_id === uid || (!!org?.service_user_id && c.owner_user_id === org.service_user_id)))); // 봇은 등급이 회사여도 주인은 연결한 멤버다 — 남이 연결한 봇도 빠진다
   const needsApproval = (c) => !isDmRoom && !isHost && (crewTier(c, org) === 'company' || (channel.personal_crews ?? 'approval') === 'approval'); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
   const nodeSet = !!org?.service_user_id; const nodeOn = nodeSet && !!org?.node_seen_at && Date.now() - Date.parse(org.node_seen_at) < AWAY_MS; // I-5·검수 M-4: 노드가 살아 있어야 만들 수 있다(죽은 노드면 영원한 '만드는 중')
