@@ -573,17 +573,21 @@ function Shell({ session }) {
       const friendsList = await q(supabase.rpc('msgr_my_friends')).catch(() => []);
       if (!current()) return;
       const accepted = friendsList.filter((f) => f.status === 'accepted');
-      const chs = rows.map((r) => ({
-        id: r.channel_id, kind: 'dm', name: `dm:${accepted.find((f) => f.user_id === r.other_user_id)?.display_name || r.other_user_id?.slice(0, 8) || '?'}`,
+      const chs = rows.map((r) => ({ // 그룹 방(친구 여럿, 유건 2026-09-17)은 members가 셋 이상 — 이름은 dmName이 구성원으로 짓는다
+        id: r.channel_id, kind: 'dm', name: (r.members?.length ?? 2) > 2 && r.name ? r.name : `dm:${accepted.find((f) => f.user_id === r.other_user_id)?.display_name || r.other_user_id?.slice(0, 8) || '?'}`,
         org_id: null, created_by: uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: 'blocked',
         _personal_other: r.other_user_id, _personal_last_at: r.last_at, _personal_last_body: r.last_body,
       }));
       const mems = accepted.map((f) => ({ user_id: f.user_id, role: 'friend', display_name: f.display_name || f.handle || f.user_id.slice(0, 8) }));
       const dmMem = {};
-      for (const ch of chs) { dmMem[ch.id] = [{ channel_id: ch.id, member_kind: 'user', member_id: uid }, { channel_id: ch.id, member_kind: 'user', member_id: ch._personal_other }]; }
+      const names = {};
+      for (const [i, ch] of chs.entries()) {
+        const ms = rows[i].members; // 옛 서버(구성원 열 없음)는 나와 상대 한 명으로 본다
+        dmMem[ch.id] = (ms ?? [{ id: uid }, { id: ch._personal_other }]).map((m) => { if (m.name) names[m.id] = m.name; return { channel_id: ch.id, member_kind: 'user', member_id: m.id }; });
+      }
       loadedOrg.current = PERSONAL;
       setChannels(chs); setPreviewChannels([]); setMembers(mems); setCrews([]); setEnt(null); setPolicy(null);
-      setMyAvailable([]); setDmMembers(dmMem);
+      setMyAvailable([]); setDmMembers(dmMem); setOtherNames(names);
       setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null));
       setFriends(friendsList);
       return chs;
@@ -794,7 +798,8 @@ function Shell({ session }) {
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', `a:${payload.id}`);
   };
-  const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || (id ? id.slice(0, 8) : t('user.deleted')); // 작성자 id null = 계정 삭제(FK set null) — 글은 남고 이름만 사라진다
+  const [otherNames, setOtherNames] = useState({}); // 개인 그룹 방의 친구 아닌 구성원(친구의 친구) 이름 — 친구 목록(members)에 섞으면 친구로 보인다
+  const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || otherNames[id] || (id ? id.slice(0, 8) : t('user.deleted')); // 작성자 id null = 계정 삭제(FK set null) — 글은 남고 이름만 사라진다
   const loadAvatars = useCallback(async () => { const ids = [...new Set([uid, ...members.map((m) => m.user_id)].filter(Boolean))]; if (!ids.length) return; const rows = await q(supabase.rpc('msgr_avatars', { ids })).catch(() => []); setAvatars(Object.fromEntries(rows.map((r) => [r.user_id, r.avatar_url]))); }, [uid, members]);
   useEffect(() => { loadAvatars(); }, [loadAvatars, tick]);
   const avatarCtx = useMemo(() => ({ users: avatars, crews: Object.fromEntries(crews.filter((c) => c.avatar_url).map((c) => [c.id, c.avatar_url])) }), [avatars, crews]);
@@ -956,6 +961,13 @@ function Shell({ session }) {
   const createGroupDm = async (picks) => { // picks: [{ kind: 'user'|'crew', id }]
     setDmGroup(false); // 시트는 어느 경로든 닫는다(검수 HIGH-1: 한 명 경로에서 대화 위를 덮었다)
     if (picks.length === 1) return openDm(picks[0].kind, picks[0].id); // 한 명이면 1:1(있으면 재사용)
+    if (isPersonal) { // 개인 공간 그룹 = 친구 여럿과 조직 밖 방(서버가 친구 여부·같은 구성 재사용을 판정한다)
+      try {
+        const people = picks.filter((p) => p.kind === 'user').map((p) => p.id);
+        const cid = await q(supabase.rpc('msgr_dm_personal_group', { targets: people, title: people.map(nameOfUser).join(', ').slice(0, 76) }));
+        await loadPersonal(); if (activeOrg.current !== PERSONAL) return null; setChId(cid); setPage('chat'); setRail(false); return cid;
+      } catch (e) { setErr(/msgr_not_friend/.test(e.message) ? t('friends.err.closed') : e.message); if (activeOrg.current === PERSONAL) setDmGroup(true); return null; }
+    }
     try {
       const others = []; const seen = new Set();
       const add = (kind, id) => { const k = `${kind}:${id}`; if (!seen.has(k)) { seen.add(k); others.push({ kind, id }); } };
@@ -1250,7 +1262,7 @@ function Shell({ session }) {
         {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{DM_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
         {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
         {(dms.length > 0 || dmTab || !!orgId) && !(isPhone && isPersonal && !dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
-          <button type="button" className="btn" onClick={() => { if (isPersonal) { setPage('settings'); setSettingsTab('friends'); setRail(false); } else setDmGroup(true); }} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
+          <button type="button" className="btn" onClick={() => setDmGroup(true)} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
         </span>}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
           {!dmList.length && <div className="msgr-hint">{t('phone.dm.empty')}</div>}
@@ -1332,7 +1344,7 @@ function Shell({ session }) {
         )}
         </PageBoundary>
       </main>
-      {isPhone && (page === 'dm' || page === 'home') && org && <button type="button" className="msgr-fab" onClick={() => isPersonal ? (page === 'dm' ? setPage('home') : (setPage('settings'), setSettingsTab('friends'))) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: 'public' })} aria-label={t(isPersonal ? (page === 'dm' ? 'dm.new' : 'friends.add') : page === 'dm' ? 'dm.group.new' : 'ch.new')}><I name="plus" size={22} /></button>}
+      {isPhone && (page === 'dm' || page === 'home') && org && <button type="button" className="msgr-fab" onClick={() => isPersonal && page === 'home' ? (setPage('settings'), setSettingsTab('friends')) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: 'public' })} aria-label={t(page === 'dm' ? 'dm.group.new' : isPersonal ? 'friends.add' : 'ch.new')}><I name="plus" size={22} /></button>}
       {dmGroup && <DmGroupSheet members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={crews} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {isPhone && <PhoneTabs page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
     </div>
@@ -1520,14 +1532,26 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     setJoinReqs(rows ?? []);
   }, [channel.id, channel.kind]);
   useEffect(() => { loadJoinReqs(); }, [loadJoinReqs, refreshKey]); // 열려 있는 동안에도 — 알림함에서 같은 채널을 누르거나 주기 재조회 때(검수 M-3)
-  const joinCrew = async (id) => {
-    const name = crews.find((c) => c.id === id)?.display_name ?? '';
-    setBusy(true);
+  const joinCrew = async (id) => { // 반환 'joined' | 'requested' | 'already' — 여러 명을 한 번에 넣을 때 한 명씩 부른다(서버 판정은 에이전트마다 다르다)
     const res = await supabase.rpc('msgr_crew_join', { ch: channel.id, crew: id });
-    setBusy(false); setAdd(null);
-    if (res.error) return onError(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : /msgr_request_recently_rejected/.test(res.error.message) ? t('ch.crew.join.cooldown') : friendlyErr(res.error.message, t));
-    if (res.data === 'requested') { onNote(t('ch.crew.join.requested', { name })); return loadJoinReqs(); }
-    await onChanged();
+    if (res.error) throw new Error(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : /msgr_request_recently_rejected/.test(res.error.message) ? t('ch.crew.join.cooldown') : friendlyErr(res.error.message, t));
+    return res.data;
+  };
+  // 에이전트 일괄 추가(유건 2026-09-17: 칩을 하나씩 누르지 않고 목록에서 여러 명을 골라 한 번에). 파견 전인 내 에이전트는 파견까지 한다.
+  const [crewPicks, setCrewPicks] = useState(() => new Set());
+  const addCrews = async (rows) => {
+    const picked = rows.filter((r) => crewPicks.has(r.c.id)); if (!picked.length) return;
+    setBusy(true); let joined = 0; const asked = []; const fails = [];
+    for (const r of picked) { // 순서대로 — 파견은 브리지 미러를 기다리고, 한 명이 실패해도 나머지는 들어간다
+      try { const res = r.dispatch ? await onDispatch(r.c, channel.id) : await joinCrew(r.c.id); if (res === 'requested') asked.push(r.c.display_name); else joined++; }
+      catch (e) { fails.push(`${r.c.display_name}: ${e.message}`); }
+    }
+    setBusy(false); setAdd(null); setCrewPicks(new Set());
+    if (joined) await onChanged();
+    if (asked.length) loadJoinReqs();
+    const notes = [joined && t('ch.add.crew.added', { n: joined }), asked.length && t('ch.crew.join.requested', { name: asked.join(', ') })].filter(Boolean);
+    if (notes.length) onNote(notes.join(' '));
+    if (fails.length) onError(fails.join('\n'));
   };
   const decideJoin = async (r, ok) => {
     setBusy(true);
@@ -1612,7 +1636,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   // 대화방에서 사람을 고르면 그 사람까지 들어간 **새 방**이 열린다(유건 2026-09-16) — 사적인 지난 대화가 불려 온 사람에게 넘어가지 않게. 에이전트는 지금 방에 바로 들어온다.
   // 공개 채널도 참여 기준이라 초대할 수 있다(유건 제보 2026-09-16). 개인 공간 1:1은 '한 쌍 한 방'이라 사람을 더 부르지 않는다.
   // 판정은 isPersonal로 한다 — 조직 채널 조회는 org_id 열을 가져오지 않아, org_id로 가르면 조직 대화방까지 막혔다(실사고 2026-09-16).
-  const canAddPeople = canManage && !isPersonal && addableUsers.length > 0; // 개인 공간 1:1은 '한 쌍 한 방'이라 사람을 더 부르지 않는다
+  const canAddPeople = canManage && addableUsers.length > 0; // 개인 공간도 친구를 더 부르면 새 그룹 방이 열린다(유건 2026-09-17) — 1:1 방 자체는 한 쌍 그대로
   const canDispatch = (isHost || inRoom) && myAvailable.length > 0 && (channel.personal_crews ?? 'approval') !== 'blocked'; // 부록 M: 내 파견 전 크루 — 공개 채널은 파견만 하면 자동 참여, 비공개·대화방은 파견+멤버
   const canAddCrew = ((isHost || inRoom) && addableCrews.length > 0) || canDispatch; // 공개 채널도 초대된 에이전트만(2026-09-16) — 종전의 '파견 전원 참여, @로 부르기'는 없어졌다
   const canGuest = channel.kind === 'private' && canEdit;
@@ -1703,22 +1727,22 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 <div className="msgr-klabel">{t(isDmRoom ? 'dm.widen' : 'ch.add.user')}</div>
                 {isDmRoom && <p className="note">{t('dm.widen.note')}</p>}
                 <div className="msgr-chips">{addableUsers.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => (isDmRoom ? (setAdd(null), onWiden?.(m.user_id)) : addMember('user', m.user_id))}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div>
-                <p className="note">{t('ch.add.user.pool', { n: members.length, seats: ent?.seats ?? '?', plan: t(`plan.${ent?.plan ?? 'free'}`) })}{onInvite && <> <button type="button" className="btn sm" onClick={onInvite}><I name="copy" size={12} />{t('org.invite')}</button></>}</p>
+                {!isPersonal && <p className="note">{t('ch.add.user.pool', { n: members.length, seats: ent?.seats ?? '?', plan: t(`plan.${ent?.plan ?? 'free'}`) })}{onInvite && <> <button type="button" className="btn sm" onClick={onInvite}><I name="copy" size={12} />{t('org.invite')}</button></>}</p>}{/* 개인 공간은 좌석·요금제가 없다 */}
                 <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
               </>)}
-              {add === 'crew' && (<>
-                {addableCrews.length > 0 && <><div className="msgr-klabel">{t('ch.add.crew')}</div>
-                <div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" disabled={busy} onClick={() => joinCrew(c.id)} title={needsApproval(c) ? t('ch.crew.join.needs') : undefined}><I name="star" size={13} /><span>{c.display_name}</span>{needsApproval(c) && <span className="msgr-klabel">{t('ch.crew.join.ask')}</span>}</button>)}</div>
-                {addableCrews.some(needsApproval) && <p className="note">{t('ch.crew.join.note')}</p>}</>}
-                {!addableCrews.length && !myAvailable.length && <p className="note">{t('ch.add.crew.none')}</p>}
-                {canDispatch && (<>
-                  <div className="msgr-klabel">{t('ch.add.mine')}</div>
-                  <div className="msgr-chips">{myAvailable.map((c) => <button key={c.id} type="button" className="msgr-chan more" disabled={busy} onClick={async () => { setBusy(true); try { const r = await onDispatch(c, channel.id); setAdd(null); onNote?.(t(r === 'requested' ? 'ch.crew.join.requested' : 'ch.add.mine.done', { name: c.display_name })); if (r === 'requested') loadJoinReqs(); } catch (e) { onError(e.message); } finally { setBusy(false); } }}><I name="plus" size={13} /><span>{c.display_name}</span></button>)}</div>
-                  <p className="note">{t('ch.add.mine.note')}</p>
-                </>)}
-                <p className="note">{t('ch.add.crew.note')}</p>
-                <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
-              </>)}
+              {add === 'crew' && (() => { const rows = [...addableCrews.map((c) => ({ c })), ...(canDispatch ? myAvailable.map((c) => ({ c, dispatch: true })) : [])]; return (<>
+                <div className="msgr-klabel">{t('ch.add.crew')}{crewPicks.size > 0 && ` · ${t('dm.group.count', { n: crewPicks.size })}`}</div>
+                {rows.length > 0 && <div className="msgr-picklist">{rows.map(({ c, dispatch }) => (
+                  <label key={c.id} className="msgr-check pickrow"><input type="checkbox" checked={crewPicks.has(c.id)} disabled={busy} onChange={() => setCrewPicks((cur) => { const n = new Set(cur); if (n.has(c.id)) n.delete(c.id); else n.add(c.id); return n; })} />
+                    <Av name={c.display_name} crew size="xs" crewId={c.id} company={crewTier(c, org) === 'company'} /><span className="name">{c.display_name}</span>
+                    <span className="msgr-klabel">{dispatch ? t('ch.add.mine.short') : needsApproval(c) ? t('ch.crew.join.ask') : c.role_text ?? ''}</span></label>
+                ))}</div>}
+                {addableCrews.some(needsApproval) && <p className="note">{t('ch.crew.join.note')}</p>}
+                {!rows.length && <p className="note">{t('ch.add.crew.none')}</p>}
+                {rows.some((r) => r.dispatch) && <p className="note">{t('ch.add.mine.note')}</p>}
+                {!isDmRoom && <p className="note">{t('ch.add.crew.note')}</p>}
+                <div className="acts"><button type="button" className="btn btn-primary sm" disabled={busy || crewPicks.size === 0} onClick={() => addCrews(rows)}><I name="plus" size={13} />{crewPicks.size ? t('ch.add.crew.submit', { n: crewPicks.size }) : t('ch.add.crew')}</button><button type="button" className="btn sm" onClick={() => { setAdd(null); setCrewPicks(new Set()); }}>{t('ui.cancel')}</button></div>
+              </>); })()}
               {add === 'guest' && (
                 <div className="msgr-inline">
                   <div className="msgr-klabel">{t('ch.add.guest')}</div>

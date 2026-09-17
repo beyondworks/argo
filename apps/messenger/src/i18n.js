@@ -950,6 +950,9 @@ export const DICT = {
   'ch.add.user.pool': ['채널에 넣을 수 있는 사람은 조직에 이미 들어온 사람뿐입니다(지금 {n}명 · {plan} 좌석 {seats}). 새 사람은 초대 링크로 조직에 먼저 들이세요.', 'You can only add people who are already in the organization ({n} now · {plan} plan, {seats} seats). Invite new people to the organization first.'],
   'ch.add.crew.note': ['비공개 채널에 남의 에이전트를 넣으면 주인도 함께 들어옵니다.', "Adding someone else's agent to a private channel also adds its owner."],
   'ch.add.crew': ['에이전트 추가', 'Add agent'],
+  'ch.add.crew.submit': ['{n}명 추가', 'Add {n}'],
+  'ch.add.crew.added': ['에이전트 {n}명을 넣었습니다.', 'Added {n} agents.'],
+  'ch.add.mine.short': ['파견 전', 'Not dispatched'],
   'ch.who': ['이 채널의 사람과 에이전트', 'People and agents here'],
   'dm.who': ['이 대화방의 사람과 에이전트', 'People and agents in this conversation'],
   'ch.who.count': ['{p}명 · 에이전트 {c}', '{p} people · {c} agents'],
@@ -1030,6 +1033,7 @@ export const DICT = {
   'role.admin': ['관리자', 'Admin'],
   'role.member': ['멤버', 'Member'],
   'role.guest': ['게스트', 'Guest'],
+  'role.friend': ['친구', 'Friend'],
   'ui.members': ['멤버', 'Members'],
   // ── 개인 공간 ──
   'personal': ['개인', 'Personal'],

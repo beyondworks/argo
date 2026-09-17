@@ -83,6 +83,14 @@ export const supabase = {
       state.tables.msgr_personal_members.push({ channel_id: id, member_kind: 'user', member_id: uid }, { channel_id: id, member_kind: 'user', member_id: args.target });
       return id;
     }
+    if (name === 'msgr_dm_personal_group') { // 친구 여럿과 조직 밖 그룹 방(유건 2026-09-17) — 서버 판정(친구만·두 명 이상)을 흉내
+      const friends = args.targets.map((id) => state.tables.msgr_friends.find((f) => f.user_id === id && f.status === 'accepted'));
+      if (args.targets.length < 2) throw new Error('msgr_bad_target');
+      if (friends.some((f) => !f)) throw new Error('msgr_not_friend');
+      const id = `pgrp-${Date.now()}`;
+      state.tables.msgr_personal_list.unshift({ channel_id: id, other_user_id: args.targets[0], last_at: new Date().toISOString(), last_body: '', name: `dm:${args.title}`, members: [{ id: uid, name: 'Me' }, ...friends.map((f) => ({ id: f.user_id, name: f.display_name }))] });
+      return id;
+    }
     if (name === 'msgr_create_channel') {
       const id = `created-${state.tables.msgr_channels.length}`;
       state.tables.msgr_channels.push(channel(id, args.kind, args.name));

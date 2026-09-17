@@ -29,7 +29,7 @@ test('채널 상단 "크루" 버튼 → 시트를 크루 패널로 열고, 공�
   assert.match(app, /const canAddCrew = \(\(isHost \|\| inRoom\) && addableCrews\.length > 0\) \|\| canDispatch;/, '공개·비공개 모두 방장·참여자에게 추가 메뉴');
   assert.doesNotMatch(app, /ch\.add\.crew\.public/, '공개 채널 "파견 전원 @로 부르기" 패널은 없어졌다');
   assert.match(app, /const mentionCrew = \(c\) => \{/, '작성창 멘션 삽입');
-  assert.match(app, /\{addableCrews\.length > 0 && <><div className="msgr-klabel">\{t\('ch\.add\.crew'\)\}<\/div>/, '모든 채널에서 초대 칩'); assert.match(app, /onClick=\{\(\) => joinCrew\(c\.id\)\}/, '초대는 서버 규칙(msgr_crew_join)으로');
+  assert.match(app, /const rows = \[\.\.\.addableCrews\.map\(\(c\) => \(\{ c \}\)\), \.\.\.\(canDispatch \? myAvailable\.map/, '모든 채널에서 초대 목록(유건 2026-09-17: 칩 대신 목록·여러 명 선택)'); assert.match(app, /r\.dispatch \? await onDispatch\(r\.c, channel\.id\) : await joinCrew\(r\.c\.id\)/, '초대는 서버 규칙(msgr_crew_join)으로 한 명씩');
   assert.match(app, /useEffect\(\(\) => \{ if \(!mentionReq\) return; mentionCrew\(mentionReq\); onMentionDone\?\.\(\); \}, \[mentionReq\]\);/, '멘션 요청 효과');
   assert.match(app, /useEffect\(\(\) => \{ setChSheet\(sheetAfterNav\.current\); sheetAfterNav\.current = false; \}, \[chId\]\);/, '시트 닫기 효과 불변(HIGH-1) — [chId] 단독, 알림함의 참여 요청만 이동 뒤 한 번 연다');
 });
