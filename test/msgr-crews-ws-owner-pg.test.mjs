@@ -58,18 +58,29 @@ before(() => {
 
 
 const crew = (uid, ws, slug, hosting = 'local') => `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting) values ('${ORG}', '${uid}', '${ws}', '${slug}', '${slug}', '${hosting}') returning id`;
+const synced = (uid, ws) => sql(`insert into storage.objects (bucket_id, name) values ('companies', '${uid}/${ws}/company.json')`); // 동기화 저장소 = 회사 폴더의 주인
 
-test('주인이 이미 올린 회사 폴더를 다른 계정이 자기 소유로 올리면 거부한다', { skip }, () => {
+test('주인이 동기화한 회사 폴더를 다른 계정이 자기 소유로 올리면 거부한다(윈도우 PC 실사고)', { skip }, () => {
+  synced(U.a, 'lean-ax-wqou');
   assert.match(last(asUser(U.a, crew(U.a, 'lean-ax-wqou', 'davinci'))), /^[0-9a-f-]{36}$/, '주인(a)은 올린다');
-  fails(asUserRaw(U.b, crew(U.b, 'lean-ax-wqou', 'davinci')), /msgr_ws_owned_by_other/, '다른 계정(b)이 같은 폴더 크루를 자기 소유로');
+  fails(asUserRaw(U.b, crew(U.b, 'lean-ax-wqou', 'davinci')), /msgr_ws_owned_by_other/, '저장소 없는 다른 계정(b)이 같은 폴더 크루를 자기 소유로');
   fails(asUserRaw(U.b, crew(U.b, 'lean-ax-wqou', 'beast')), /msgr_ws_owned_by_other/, '다른 slug여도 같은 폴더면 거부');
   assert.equal(sql(`select count(*) from public.msgr_crews where ws_id = 'lean-ax-wqou' and owner_user_id = '${U.b}'`), '0', '한 행도 남지 않는다');
 });
 
-test('주인의 추가·재등록(upsert)과 다른 계정의 자기 회사는 그대로다(회귀 대조군)', { skip }, () => {
+test('정당한 경우는 막지 않는다 — 주인의 추가·upsert, 폴더 이름 우연 충돌, 계정 이전, 옛 빌드가 먼저 올린 뒤의 주인(검수 MEDIUM-A)', { skip }, () => {
   assert.match(last(asUser(U.a, crew(U.a, 'lean-ax-wqou', 'beast'))), /^[0-9a-f-]{36}$/, '주인은 새 크루를 더 올린다');
   const up = asUserRaw(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'lean-ax-wqou', 'beast', 'Beast 2') on conflict (org_id, owner_user_id, ws_id, slug) do update set display_name = excluded.display_name returning display_name`);
   assert.equal(up.status, 0, `주인의 upsert는 통과 — ${up.stderr}`);
-  assert.match(last(asUser(U.b, crew(U.b, 'lean-win-9ayt', 'hyori'))), /^[0-9a-f-]{36}$/, 'b는 자기 회사 폴더를 올린다');
+  // 우연 충돌: 두 계정이 각자 동기화한 같은 이름의 회사
+  synced(U.a, 'co-ab12'); synced(U.b, 'co-ab12');
+  asUser(U.a, crew(U.a, 'co-ab12', 'x'));
+  assert.match(last(asUser(U.b, crew(U.b, 'co-ab12', 'y'))), /^[0-9a-f-]{36}$/, '둘 다 자기 저장소가 있으면 통과');
+  // 동기화 안 한 로컬 회사끼리 충돌: 서버는 주인을 모른다 → 막지 않는다(앱 게이트 몫)
+  asUser(U.a, crew(U.a, 'co-zz99', 'x'));
+  assert.match(last(asUser(U.b, crew(U.b, 'co-zz99', 'y'))), /^[0-9a-f-]{36}$/, '둘 다 저장소 없으면 통과');
+  // 옛 빌드의 남의 계정이 먼저 올렸어도(주인 저장소 없음 → 막을 근거 없음) 원래 주인은 자기 저장소가 있어 통과
+  asUser(U.b, crew(U.b, 'lean-home-objz', 'pepper'));
+  synced(U.a, 'lean-home-objz');
+  assert.match(last(asUser(U.a, crew(U.a, 'lean-home-objz', 'pepper'))), /^[0-9a-f-]{36}$/, '원래 주인은 잠기지 않는다');
 });
-

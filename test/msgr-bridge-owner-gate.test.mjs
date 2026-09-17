@@ -46,3 +46,17 @@ test('소유자 = 로그인 계정이면 그대로 돈다(대조군)', async () 
   const { touched, session } = spySession('user-lean8'); await runOnce(ws, session);
   assert.ok(touched.includes('myCrews'), `드레인이 돈다 (${touched})`);
 });
+
+test('서버가 크루 등록을 거부(msgr_ws_owned_by_other)하면 "연결됨"이 아니라 이유를 상태로 남긴다(검수 MEDIUM-A)', async () => {
+  const ws = 'owner-rejected'; await createCompany(ws, 'lean-win', 'x', 'user-lean8');
+  await mkdir(join(paths(ws).root, 'agents'), { recursive: true }); await writeFile(join(paths(ws).root, 'agents', 'hyori.md'), '---\nname: 효리\n---\n');
+  const db = new Proxy({}, { get: (_, k) => async () => {
+    if (k === 'myOrgIds') return ['org-1'];
+    if (k === 'upsertAvailable') throw new Error('msgr_ws_owned_by_other');
+    return k === 'orgAllowDefaults' ? {} : [];
+  } });
+  const client = { channel: () => ({ on() { return this; }, subscribe() {}, unsubscribe() {} }), rpc: async () => ({ data: [], error: null }), from: () => { throw new Error('no db in test'); } };
+  await runOnce(ws, async () => ({ uid: 'user-lean8', db, client }));
+  const b = await beat(ws);
+  assert.equal(b.ok, false); assert.match(b.error, /다른 계정 소유/);
+});

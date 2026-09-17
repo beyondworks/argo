@@ -466,7 +466,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     await db.nodeHeartbeat(nodeOrgId, info).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message));
   }
   if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
-  if (!nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => console.error('[argo] msgr 크루 인벤토리 미러 실패:', e.message));
+  if (!nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => { out.mirrorError = String(e?.message ?? e); console.error('[argo] msgr 크루 인벤토리 미러 실패:', out.mirrorError); }); // 브리지가 상태로 드러낸다(검수 MEDIUM-A: 로그만 남기고 '연결됨'이던 것)
   if (commandsFor) await mirrorCommands(wsId, { db, uid, commands: await commandsFor(wsId) }).catch((e) => console.error('[argo] msgr 커맨더 목록 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
@@ -1128,7 +1128,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message));
       const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
       if (r.skipped === 'owner') { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }
-      await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
+      if (/msgr_ws_owned_by_other/.test(r.mirrorError ?? '')) await beatGateway(wsId, MSGR_KEY, false, '이 회사 크루는 다른 계정 소유로 이미 등록돼 있어 올리지 못함 — 그 계정으로 로그인하거나 회사를 이 계정으로 동기화').catch(() => {});
+      else await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
       subscribe(c, r.list ?? [], msgr?.nodeOrgId ?? null); // I-5: 조직 회사는 크루 0명이어도 조직 토픽을 구독(크루 요청 신호)
       return r;
     } catch (e) {

@@ -21,7 +21,7 @@ export async function messengerNotificationChannels(wsId, agentSlug, { session }
   if (!c) return [];
   const { loadCompany } = await import('./workspace.mjs');
   const company = await loadCompany(wsId);
-  if (company.ownerId && company.ownerId !== c.uid) return [];
+  if (company.ownerId !== c.uid) return []; // 소유자 = 로그인 계정일 때만(배달 쪽 게이트와 같은 규칙 — 선택지만 보이고 배달은 거부되던 어긋남, 검수 LOW)
   const now = new Date().toISOString();
   const memberships = unwrap(await c.client.from('msgr_org_members').select('org_id, expires_at, msgr_orgs(id, name, deleted_at)')
     .eq('user_id', c.uid).is('removed_at', null));
