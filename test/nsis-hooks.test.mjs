@@ -58,7 +58,7 @@ test('hooks.nsh — Tauri 후속 이름 기반 종료도 제거하고 파일 잠
 
 // Windows CI에서도 실제 격리 프로세스로 확인한다. 현재 Node나 사용자 앱은 종료 대상에 넣지 않는다.
 test('hooks.nsh — Windows에서 특수문자 경로만 종료하고 다른 app.exe·node.exe를 보존한다', {
-  skip: process.platform !== 'win32', timeout: 60000,
+  skip: process.platform !== 'win32', timeout: 180000,
 }, async (t) => {
   const started = performance.now();
   const phase = (name) => t.diagnostic(`${name}: ${Math.round(performance.now() - started)}ms`);
@@ -66,7 +66,7 @@ test('hooks.nsh — Windows에서 특수문자 경로만 종료하고 다른 app
   const target = join(root, "Argo O'Brien [review]");
   const foreign = join(root, "Argo O'Brien r");
   const children = [];
-  let cleanup;
+  let cleanup; let warm;
   try {
     for (const dir of [target, foreign]) {
       await mkdir(dir);
@@ -81,20 +81,27 @@ test('hooks.nsh — Windows에서 특수문자 경로만 종료하고 다른 app
     }
     phase('isolated-processes-ready');
     const payload = s.match(/-Command "([^\n]+)"'/)[1].replaceAll('$$', '$');
+    // 설치기(32비트)가 부르는 powershell은 WOW64 사본이다 — 실제와 같게 32비트로 돌린다.
     const powershell = join(process.env.WINDIR, 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    // 예열: 새 CI 러너에서 32비트 PowerShell의 첫 기동은 .NET 이미지 로딩으로 수십 초까지 걸린다(실측 2026-09-17: 30s 제한에 걸려
+    // spawn이 죽이고 exit code null). 검증 대상(CIM 조회·정확한 경로 종료)과 무관한 기동 비용을 먼저 치러 둔다 — 8코어 PC 실측은 기동 1.4~1.7s·전체 2.3~3.3s.
+    warm = spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { stdio: 'ignore', timeout: 90000 });
+    const [warmCode, warmSignal] = await once(warm, 'exit', { signal: t.signal });
+    phase('powershell-warm');
+    assert.equal(warmCode, 0, `예열 실패(signal=${warmSignal}) — 러너가 PowerShell을 90초 안에 못 띄움`);
     cleanup = spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', payload], {
-      stdio: 'ignore', timeout: 30000,
+      stdio: 'ignore', timeout: 60000,
       env: { ...process.env, ARGO_NSIS_MAIN_EXE: join(target, 'app.exe'), ARGO_NSIS_NODE_EXE: join(target, 'node.exe') },
     });
-    const [code] = await once(cleanup, 'exit', { signal: t.signal });
+    const [code, signal] = await once(cleanup, 'exit', { signal: t.signal });
     phase('powershell-cim-complete');
-    assert.equal(code, 0);
+    assert.equal(code, 0, `정리 명령 실패(signal=${signal}) — null이면 spawn 제한(60s)에 걸려 죽은 것`);
     for (let i = 0; i < 50 && children.slice(0, 2).some((c) => c.exitCode === null); i++) await delay(100);
     assert.ok(children.slice(0, 2).every((c) => c.exitCode !== null), '설치 경로의 두 프로세스는 종료되어야 한다');
     assert.ok(children.slice(2).every((c) => c.exitCode === null), '다른 경로의 동명 프로세스는 살아 있어야 한다');
   } finally {
     phase('cleanup-start');
-    for (const child of [cleanup, ...children].filter(Boolean)) {
+    for (const child of [warm, cleanup, ...children].filter(Boolean)) {
       if (child.exitCode === null && child.signalCode === null) {
         const exited = once(child, 'exit', { signal: AbortSignal.timeout(5000) });
         child.kill();
