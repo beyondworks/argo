@@ -368,7 +368,7 @@ export async function autoEnableMsgr(wsId, { company, session = sessionClient, l
   const c = await session().catch(() => null);
   if (!c) { probes.set(wsId, now() + MSGR_AUTO_ENABLE_NO_SESSION_MS); return false; }
   probes.set(wsId, now() + MSGR_AUTO_ENABLE_PROBE_MS);
-  if (company.ownerId && company.ownerId !== c.uid) return false; // 회사 소유자 게이트(2026-09-11 실사고와 같은 규칙) — 남의 회사 크루를 내 조직에 올리지 않는다
+  if (company.ownerId !== c.uid) return false; // 회사 소유자 게이트(2026-09-11 실사고와 같은 규칙) — 남의 회사 크루를 내 조직에 올리지 않는다. 소유자 없는 회사도 막는다(회사 목록 API가 아무에게도 귀속하지 않는 회사 — 2026-09-17)
   let probe = orgCache.get(c.uid);
   if (!probe || now() - probe.at >= MSGR_AUTO_ENABLE_PROBE_MS) {
     let timer;
@@ -466,7 +466,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     await db.nodeHeartbeat(nodeOrgId, info).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message));
   }
   if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
-  if (!nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => console.error('[argo] msgr 크루 인벤토리 미러 실패:', e.message));
+  if (!nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => { out.mirrorError = String(e?.message ?? e); console.error('[argo] msgr 크루 인벤토리 미러 실패:', out.mirrorError); }); // 브리지가 상태로 드러낸다(검수 MEDIUM-A: 로그만 남기고 '연결됨'이던 것)
   if (commandsFor) await mirrorCommands(wsId, { db, uid, commands: await commandsFor(wsId) }).catch((e) => console.error('[argo] msgr 커맨더 목록 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
@@ -917,7 +917,7 @@ export async function msgrNotifyPush(event, _target = null, { session = sessionC
   if (!company.msgr?.enabled) return false; // 파견 크루 0 = 브리지 꺼짐 — 세션을 열 이유가 없다
   const c = await session();
   if (!c) throw new Error('Messenger notification session unavailable');
-  if (company.ownerId && company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
+  if (company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
   const slug = msgrNotifyCrewSlug(event);
   const crews = slug ? (await c.db.myCrews(c.uid, event.wsId)).filter((r) => r.slug === slug) : [];
   if (!crews.length) { console.error(`[argo] 메신저 알림: 크루 ${slug ?? '?'}가 파견된 조직이 없음(${event.wsId})`); return false; }
@@ -973,7 +973,7 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const target = destinations.msgr;
     const c = await session();
     if (!c) throw new Error('Messenger notification session unavailable');
-    if (company.ownerId && company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
+    if (company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
     const available = await messengerNotificationChannels(event.wsId, event.routine.agentSlug, { session: async () => c });
     if (!available.some((r) => r.orgId === target.orgId && r.channelId === target.channelId)) throw new Error('Messenger notification channel unavailable');
     const crew = await c.db.crewBySlug(c.uid, event.wsId, event.routine.agentSlug, target.orgId);
@@ -1120,11 +1120,16 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     try {
       const c = await session();
       if (!c) { await beatGateway(wsId, MSGR_KEY, false, '기기 세션 없음 — 로그인 필요').catch(() => {}); return; }
-      const { lang = 'ko', msgr, ownerId = null } = await loadCompany(wsId).catch(() => ({}));
-      if (!ownerId || ownerId === c.uid) await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message));
+      // 소유자가 이 계정일 때만 연다(실사고 2026-09-17 윈도우: 설정 읽기 실패·소유자 미기록이 '있을 때만 비교'하던 게이트를 통과해 다른 계정 회사의 크루 12명이 lean-win에 미러).
+      // 설정을 못 읽으면 소유자를 모르는 것 — 이번 폴은 건너뛴다. drain 안의 게이트는 두 번째 방어선이다.
+      let company; try { company = await loadCompany(wsId); } catch (e) { await beatGateway(wsId, MSGR_KEY, false, `회사 설정을 읽지 못함 — ${String(e?.message ?? e).slice(0, 120)}`).catch(() => {}); return; }
+      const { lang = 'ko', msgr, ownerId = null } = company;
+      if (ownerId !== c.uid) { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return { skipped: 'owner' }; }
+      await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message));
       const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
       if (r.skipped === 'owner') { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }
-      await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
+      if (/msgr_ws_owned_by_other/.test(r.mirrorError ?? '')) await beatGateway(wsId, MSGR_KEY, false, '이 회사 크루는 다른 계정 소유로 이미 등록돼 있어 올리지 못함 — 이 회사를 만든 계정으로 로그인하세요').catch(() => {});
+      else await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
       subscribe(c, r.list ?? [], msgr?.nodeOrgId ?? null); // I-5: 조직 회사는 크루 0명이어도 조직 토픽을 구독(크루 요청 신호)
       return r;
     } catch (e) {

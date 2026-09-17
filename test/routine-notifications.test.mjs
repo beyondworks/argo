@@ -18,7 +18,7 @@ const selected = (channels = ['telegram', 'slack', 'msgr']) => ({ channels, msgr
 let index = 0;
 async function workspace() {
   const ws = `notification-test-${++index}`;
-  await createCompany(ws, 'Notification test', 'pepper');
+  await createCompany(ws, 'Notification test', 'pepper', 'fixture-owner'); // 소유자 = 세션 계정(소유자 미기록 회사는 배달하지 않는다 — 2026-09-17)
   await mkdir(join(paths(ws).root, 'agents'), { recursive: true });
   await writeFile(join(paths(ws).root, 'agents', 'pepper.md'), '---\nname: Pepper\n---\n');
   await updateCompany(ws, { msgr: { enabled: true } });

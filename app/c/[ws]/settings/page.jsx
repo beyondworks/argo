@@ -827,6 +827,7 @@ function MsgrCard({ ws, agents }) {
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
   useEffect(() => { load(); }, [load]);
   const regOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug && r.status === 'active');
+  const rowOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug); // 행이 없으면 해제가 아니라 메신저에 올라간 적 없음(유건 제보 2026-09-17: 한 번도 안 올라간 크루가 '파견 해제됨'으로 보였다)
   const bridgeOn = !!st?.crews?.some((r) => r.status === 'active');
   const regCount = agents.filter((a) => regOf(a.slug)).length;
   const org = st?.orgs?.find((o) => o.id === orgId);
@@ -872,13 +873,13 @@ function MsgrCard({ ws, agents }) {
               {!exceptions.length && <p>{t('settings.msgr.exceptions.none')}</p>}
               {!!exceptions.length && (
                 <ul className="msgr-crews" role="list">
-                  {exceptions.map((a) => { const reg = regOf(a.slug); return (
+                  {exceptions.map((a) => { const reg = regOf(a.slug); const off = t(rowOf(a.slug) ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); return (
                     <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
                       <div className="row">
                         <Avatar name={a.name} sm />
                         <span className="who" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}><span className="name">{a.name}</span><span className="role">{a.role}</span></span>
-                        <span className="state" title={reg ? t('settings.msgr.registered') : t('settings.msgr.notRegistered')}>
-                          <span className="dot" aria-hidden="true" />{reg ? `${t('settings.msgr.registered')} · ${t(`settings.msgr.allow.${reg.allow}`)}` : t('settings.msgr.notRegistered')}
+                        <span className="state" title={reg ? t('settings.msgr.registered') : off}>
+                          <span className="dot" aria-hidden="true" />{reg ? `${t('settings.msgr.registered')} · ${t(`settings.msgr.allow.${reg.allow}`)}` : off}
                         </span>
                       </div>
                     </li>

@@ -722,6 +722,7 @@ const DICT = {
   'settings.msgr.org': ['조직', 'Organization'],
   'settings.msgr.registered': ['파견 중', 'Dispatched'],
   'settings.msgr.notRegistered': ['파견 해제됨', 'Recalled'],
+  'settings.msgr.notInMessenger': ['메신저에 아직 없음', 'Not in Messenger yet'],
   'settings.msgr.manage': ['허용 범위(누가 시킬 수 있나)·파견 해제·다시 파견은 팀 메신저 앱의 크루 카드에서 합니다.', 'Access scope (who can task it), recall and re-dispatch are done on the crew card in the team messenger app.'],
   'settings.msgr.register': ['등록', 'Register'],
   'settings.msgr.unregister': ['해제', 'Unregister'],
