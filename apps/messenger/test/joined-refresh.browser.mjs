@@ -32,10 +32,11 @@ async function waitSidebar(page, name) {
   const page = await open();
   results.beforeCode = await inSidebar(page, 'Lounge');
   await page.locator('button.msgr-org').click();
-  await page.getByRole('menuitem', { name: /초대 코드로 가입/ }).click();
+  await page.getByRole('menuitem', { name: /초대 링크·코드로 참여/ }).click();
   await page.locator('.msgr-menu-pop input, .msgr-inline input').first().fill(JOIN_CODE);
   const t0 = Date.now();
-  await page.getByRole('button', { name: /^가입$/ }).click();
+  await page.getByRole('button', { name: /^확인$/ }).click();
+  await page.getByRole('button', { name: '참여하기' }).click(); // 0.1.30: 미리보기 카드에서 참여(옛 서버면 카드 없이 바로 수락 — invite-flow.browser.mjs)
   const ms = await waitSidebar(page, 'Lounge');
   results.code = { ms, sinceSubmit: Date.now() - t0 };
   await page.close();
