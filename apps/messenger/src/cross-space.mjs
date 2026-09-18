@@ -60,3 +60,23 @@ export async function readableForNotify(sb, payload, orgId) {
   }
   return { ...payload, body: m.body ?? '', channel_name: m.msgr_channels?.name ?? '', channel_kind: m.msgr_channels?.kind ?? null, author_name: author };
 }
+
+/** 거절될 수 있는 구독(서버 적용 전의 u:<나>) — 오류로 끝나면 그 채널을 걷고 min부터 두 배씩(최대 max) 기다렸다 다시 붙는다.
+    붙으면 간격을 처음으로 되돌린다. realtime-js의 자체 재시도(수 초 간격)가 거절을 끝없이 되풀이해 Realtime 로그를 채우던 것을 막는다.
+    돌려준 함수로 멈춘다(예약된 재시도와 채널을 모두 걷는다). */
+export function joinWithBackoff(sb, make, { min = 60_000, max = 600_000, timer = setTimeout, clear = clearTimeout } = {}) {
+  let stopped = false; let ch = null; let t = null; let delay = min;
+  const drop = (c) => { Promise.resolve(sb.removeChannel(c)).catch(() => {}); };
+  const join = () => {
+    if (stopped) return;
+    const c = ch = make();
+    c.subscribe((status) => {
+      if (status === 'SUBSCRIBED') { delay = min; return; }
+      if (status !== 'CHANNEL_ERROR' || stopped || ch !== c) return;
+      ch = null; drop(c);
+      t = timer(join, delay); delay = Math.min(delay * 2, max);
+    });
+  };
+  join();
+  return () => { stopped = true; clear(t); if (ch) drop(ch); ch = null; };
+}

@@ -49,10 +49,15 @@ test('App.jsx 배선: 열린 방이 개인 방이거나 조직의 비공개 방(
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /const roomTopic = !!chId && \(isPersonal \|\| \(openKind !== null && openKind !== 'public'\)\);/, '조직 비공개 방도 대상(공개 채널만 제외)');
-  const eff = app.slice(app.indexOf('const roomTopic ='), app.indexOf('const roomTopic =') + 1600);
+  const eff = app.slice(app.indexOf('const roomTopic ='), app.indexOf('const roomTopic =') + 2600);
   assert.match(eff, /if \(!roomTopic\) return;/);
   assert.match(eff, /supabase\.channel\(`dm:\$\{chId\}`, \{ config: \{ private: true \} \}\)/);
   assert.match(eff, /event: 'typing' \}, \(\{ payload \}\) => setTyping\(/);
   assert.match(eff, /event: 'progress' \}, \(\{ payload \}\) => setProgress\(/);
   assert.match(eff, /\}, \[roomTopic, isPersonal, chId, session\.access_token\]\);/, '방을 옮기면 다시 구독');
+  assert.match(eff, /await supabase\.realtime\.setAuth\(session\.access_token\);\s*if \(!live\) return;\s*ch = supabase\.channel\(`dm:/, '정리가 먼저 끝났으면 채널을 만들지 않는다(고아 dm: 누적 — 검수 #607)');
+  assert.match(eff, /return \(\) => \{ live = false;/, '정리에서 live를 끈다');
+  assert.match(eff, /event: 'reaction' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('reaction'/, 'dm:로 반응을 받는다');
+  assert.match(eff, /event: 'edit' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('edit'/, 'dm:로 수정을 받는다');
+  assert.match(app, /broadcast=\{\(ev, payload\) => \(roomTopic \? roomRt\.current : rt\.current\)\?\.send\(/, '비공개 방의 반응·수정 송신은 dm:로만(org: 폴백 없음)');
 });
