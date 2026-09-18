@@ -534,7 +534,7 @@ function Shell({ session }) {
     const code = new URLSearchParams(location.search).get('invite');
     (async () => {
       try {
-        if (code) { await q(supabase.rpc('msgr_accept_invite', { code })); history.replaceState(history.state, '', location.pathname); setNote(t('org.joined')); }
+        if (code) { await q(supabase.rpc('msgr_accept_invite', { code })); history.replaceState(history.state, '', location.pathname); setNote(t('org.joined')); await loadJoined(); } // 초대로 들어간 공개 채널이 첫 목록에 바로 보이게
         await loadOrgs();
       } catch (e) { setErr(/msgr_seat_limit/.test(e.message) ? t('seat.limit') : e.message); await loadOrgs().catch(() => {}); }
     })();
@@ -543,14 +543,17 @@ function Shell({ session }) {
     if (!id || id !== activeOrg.current) return;
     const current = orgRequests.current.begin(id);
     try {
-    const [allChs, mems, allCrews, e, pol] = await Promise.all([
+    const [allChs, mems, allCrews, e, pol, joined] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio, commands').eq('org_id', id).in('status', ['active', 'available'])),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
-      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
+      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음),
+      // 내가 참여한 채널 — 15초 재조회·조직 전환·코드 가입 때마다 새로 읽는다(한 번만 읽어 남이 나를 공개 채널에 넣거나 초대로 들어와도 새로고침 전까지 사이드바에 안 뜨던 것, 검수 재현 2026-09-18). 같은 Promise.all이라 조직 전환 경쟁에 await를 더하지 않는다
+      uid ? q(supabase.from('msgr_channel_members').select('channel_id').eq('member_kind', 'user').eq('member_id', uid)).catch(() => null) : null
     ]);
     if (!current()) return;
+    if (joined) joinedRef.current = new Set(joined.map((r) => r.channel_id)); // 늦게 온 옛 요청은 위 current()가 이미 버렸다 — 참여 버튼의 낙관적 추가를 덮지 않는다
     loadedOrg.current = id;
     setMyAvailable(allCrews.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko')));
     const crs = allCrews.filter((r) => r.status === 'active');
@@ -558,7 +561,7 @@ function Shell({ session }) {
     crs.sort((a, b) => (crewTier(b, orgRow) === 'company') - (crewTier(a, orgRow) === 'company') || a.display_name.localeCompare(b.display_name, 'ko')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다)
     // 조직에 들어왔다고 모든 채널이 열리지 않는다(유건 2026-09-16, 슬랙식) — 사이드바는 **참여한 채널**만.
     // 공개 채널은 서버가 열람은 허용하지만(찾아보기·미리보기), 들어가기 전에는 목록에도 알림에도 없다.
-    // 참여 목록은 이 함수 밖에서 미리 읽는다 — 여기서 await를 더하면 조직 전환 경쟁(늦게 온 A 데이터 무시)이 흐트러진다.
+    // 참여 목록은 위 Promise.all에서 같이 읽는다 — 따로 await를 더하면 조직 전환 경쟁(늦게 온 A 데이터 무시)이 흐트러진다.
     const chs = allChs.filter((c) => c.kind !== 'public' || joinedRef.current.has(c.id));
     const preview = allChs.filter((c) => c.kind === 'public' && !joinedRef.current.has(c.id));
     setChannels(chs); setPreviewChannels(preview); setMembers(mems); setCrews(crs); setEnt(e); setPolicy(pol);
@@ -875,7 +878,7 @@ function Shell({ session }) {
   const [joinCode, setJoinCode] = useState(null); // 초대 코드로 가입 — 앱에는 링크가 열릴 오리진이 없어 코드를 직접 붙여 넣는다(invite.mjs)
   const joinByCode = async (raw) => {
     const code = parseInviteCode(raw); if (!code) return setErr(t('org.join.code.bad'));
-    try { const id = await q(supabase.rpc('msgr_accept_invite', { code })); setJoinCode(null); setOrgMenu(false); setNote(t('org.joined')); await loadOrgs(); if (id) setOrgId(id); }
+    try { const id = await q(supabase.rpc('msgr_accept_invite', { code })); setJoinCode(null); setOrgMenu(false); setNote(t('org.joined')); await loadJoined(); await loadOrgs(); if (id) setOrgId(id); }
     catch (e) { setErr(friendlyErr(e.message, t)); }
   }; // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보

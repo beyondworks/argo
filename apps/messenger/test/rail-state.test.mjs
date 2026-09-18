@@ -38,18 +38,20 @@ test('Shell loadOrg ignores late A data, available crews, and errors after switc
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   const start = app.indexOf('const loadOrg = useCallback(') + 'const loadOrg = useCallback('.length;
   const end = app.indexOf('\n  }, [orgs, uid]);', start) + 4;
-  const pending = []; const state = {}; const activeOrg = { current: 'A' }; const loadedOrg = { current: null };
+  const pending = []; const state = {}; const joinedRows = [{ channel_id: 'A-channel' }, { channel_id: 'B-channel' }, { channel_id: 'C-new' }]; const activeOrg = { current: 'A' }; const loadedOrg = { current: null };
   const supabase = { from(table) {
     let id;
     return { select() { return this; }, eq(key, value) { if (key === 'org_id') id = value; return this; }, is() { return this; }, order() { return this; }, in() { return this; }, maybeSingle() { return this; },
-      then(resolve, reject) { return new Promise((done, fail) => pending.push({ id, table, done, fail })).then(resolve, reject); } };
+      then(resolve, reject) { if (table === 'msgr_channel_members') return Promise.resolve(joinedRows).then(resolve, reject); return new Promise((done, fail) => pending.push({ id, table, done, fail })).then(resolve, reject); } }; // 내 참여 채널은 조직 무관 조회 — 바로 답한다
   } };
   const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((key) => [`set${key}`, (value) => { state[key] = value; }]));
-  const deps = { joinedRef: { current: new Set(['A-channel', 'B-channel']) }, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', ...setters, setChId: (f) => { state.chId = f(state.chId); } };
+  const joinedRef = { current: new Set(['A-channel', 'B-channel']) };
+  const deps = { joinedRef, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', ...setters, setChId: (f) => { state.chId = f(state.chId); } };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   const settle = (id) => { for (const p of pending.filter((p) => p.id === id)) p.done(p.table === 'msgr_channels' ? [{ id: `${id}-channel`, kind: 'public' }] : p.table === 'msgr_crews' ? [{ id: `${id}-crew`, owner_user_id: 'me', display_name: id, status: 'available' }] : p.table === 'msgr_org_members' ? [{ user_id: `${id}-person` }] : { data: null }); };
   const a = loadOrg('A'); activeOrg.current = 'B'; const b = loadOrg('B');
   await new Promise((r) => setImmediate(r)); settle('B'); await b; settle('A'); await a;
+  assert.ok(joinedRef.current.has('C-new'), 'loadOrg가 내 참여 채널을 다시 읽어 joinedRef를 갱신한다(남이 나를 공개 채널에 넣은 경우)');
   assert.equal(state.chId, 'B-channel'); assert.equal(state.Members[0].user_id, 'B-person'); assert.equal(state.MyAvailable[0].id, 'B-crew'); assert.equal(loadedOrg.current, 'B');
   activeOrg.current = 'A'; const old = loadOrg('A'); await new Promise((r) => setImmediate(r)); activeOrg.current = 'B';
   pending.filter((p) => p.id === 'A').forEach((p) => p.fail(new Error('stale network error')));
