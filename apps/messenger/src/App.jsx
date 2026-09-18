@@ -1638,12 +1638,12 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const crewIds = new Set(chMembers.filter((m) => m.member_kind === 'crew').map((m) => m.member_id));
   const addableUsers = members.filter((m) => !userIds.has(m.user_id) && m.user_id !== org?.service_user_id && !(channel.kind === 'public' && excludedUsers.includes(m.user_id))); // 내보낸 사람은 후보가 아니다(넣어도 읽기가 막힌다) // 회사 크루 서버(기계 계정)는 사람 후보가 아니다(실측: 첫 칩이 '회사 노드')
   // 누가 무엇을 데려오나 — 추가 후보는 방장이어도 **내 에이전트와 회사 에이전트만**(유건 2026-09-17: 친구·동료 에이전트까지 전부 보여 목록이 두 배로 늘었다).
-  // 남의 에이전트는 그 주인이 데려오고(참여자면 방장 승인), 방장은 요청을 허락한다. 서버 msgr_crew_join은 방장의 직접 추가도 받지만 화면에서는 내지 않는다. /
-  // 채팅: 주인이 이 방에 있는 에이전트(남의 에이전트를 부르려면 그 사람과 함께 새 방을 연다). 못 데려옴 채널은 회사 에이전트만.
+  // 남의 에이전트는 그 주인이 데려오고(참여자면 방장 승인), 방장은 요청을 허락한다. 방장도 남의 개인 에이전트를 바로 넣지 못한다(서버 msgr_crew_join·msgr_channel_member_ok가 막는다, 2026-09-18). /
+  // 채팅: 내 에이전트만 — 들어온 에이전트는 참여자 누구나 부르므로, 넣는 것은 주인만 한다(2026-09-18). 못 데려옴 채널은 회사 에이전트만.
   const isHost = canEdit && !isDmRoom;
   const pendingCrews = new Set(joinReqs.map((r) => r.crew_id));
   const addableCrews = crews.filter((c) => !crewIds.has(c.id) && !pendingCrews.has(c.id) && ((channel.personal_crews ?? 'approval') !== 'blocked' || crewTier(c, org) === 'company')
-    && (isDmRoom ? (c.owner_user_id === uid || userIds.has(c.owner_user_id)) : (c.owner_user_id === uid || (!!org?.service_user_id && c.owner_user_id === org.service_user_id)))); // 봇은 등급이 회사여도 주인은 연결한 멤버다 — 남이 연결한 봇도 빠진다
+    && (isDmRoom ? c.owner_user_id === uid : (c.owner_user_id === uid || (!!org?.service_user_id && c.owner_user_id === org.service_user_id)))); // 봇은 등급이 회사여도 주인은 연결한 멤버다 — 남이 연결한 봇도 빠진다
   const needsApproval = (c) => !isDmRoom && !isHost && (crewTier(c, org) === 'company' || (channel.personal_crews ?? 'approval') === 'approval'); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
   const nodeSet = !!org?.service_user_id; const nodeOn = nodeSet && !!org?.node_seen_at && Date.now() - Date.parse(org.node_seen_at) < AWAY_MS; // I-5·검수 M-4: 노드가 살아 있어야 만들 수 있다(죽은 노드면 영원한 '만드는 중')
@@ -1782,6 +1782,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                     <Av name={c.display_name} crew size="xs" crewId={c.id} company={crewTier(c, org) === 'company'} /><span className="name">{c.display_name}</span>
                     <span className="msgr-klabel">{dispatch ? t('ch.add.mine.short') : needsApproval(c) ? t('ch.crew.join.ask') : c.role_text ?? ''}</span></label>
                 ))}</div>}
+                {rows.length > 0 && <p className="note">{t('ch.add.crew.shared')}</p>}
                 {addableCrews.some(needsApproval) && <p className="note">{t('ch.crew.join.note')}</p>}
                 {!rows.length && <p className="note">{t('ch.add.crew.none')}</p>}
                 {rows.some((r) => r.dispatch) && <p className="note">{t('ch.add.mine.note')}</p>}

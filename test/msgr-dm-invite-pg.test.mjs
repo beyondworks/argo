@@ -69,7 +69,9 @@ test('셋이서 시작하는 대화 — 만들 때부터 여럿이 들어간다'
 });
 
 test('에이전트는 여럿 들어갈 수 있다 — 한 방에 한 명 제한이 없다', { skip }, () => {
-  const ch = dm(U.owner, [{ kind: 'user', id: U.mate }, { kind: 'crew', id: CREW }, { kind: 'crew', id: CREW2 }]);
+  // 둘 다 만드는 사람의 에이전트 — 남의 에이전트(CREW2)를 만들며 끼워 넣는 길은 2026-09-18부터 막혔다(test/msgr-crew-room-members-pg 구멍 ③).
+  const mine2 = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, status) values ('${ORG}', '${U.owner}', 'lean', 'ally2', 'Ally2', 'active') returning id`));
+  const ch = dm(U.owner, [{ kind: 'user', id: U.mate }, { kind: 'crew', id: CREW }, { kind: 'crew', id: mine2 }]);
   assert.equal(seats(ch, 'crew').split(',').length, 2, `에이전트 둘 (실제: ${seats(ch, 'crew')})`);
 });
 

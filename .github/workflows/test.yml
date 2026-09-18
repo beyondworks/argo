@@ -86,8 +86,7 @@ jobs:
   # 실 Postgres 드릴 — test/*pg*.test.mjs는 ARGO_PG_TEST_URL이 없으면 skip이라 위 npm test에서는 전부 건너뛴다(2026-09-18 실측:
   # #585가 msgr-dm-delegation-pg 6건을 깨뜨렸는데 CI 초록). 드릴 스크립트를 그대로 돌린다 — 파일마다 별도 DB, 실패해도 끝까지.
   # 버전은 라이브 Supabase와 같은 17(supabase/config.toml major_version). 스텁 스키마(auth·storage·realtime·net)는 테스트가 세우므로
-  # 순정 Postgres + contrib(pgcrypto)면 된다. 맥 러너 — 개발자가 드릴을 돌리는 환경과 같다. 리눅스는 인자 하나가 128KB(MAX_ARG_STRLEN)를
-  # 넘으면 spawn이 E2BIG으로 실패해, 마이그레이션 파일을 `psql -c` 한 인자로 넘기는 테스트 20개 파일이 전부 넘어진다(2026-09-18 CI 실측).
+  # 순정 Postgres + contrib(pgcrypto)면 된다.
   pg-drill:
     # 리눅스 러너(빠르고 싸다). 예전엔 153KB 마이그레이션을 psql -c 한 인자로 넘겨 E2BIG(인자 하나 128KB 상한)이었다 —
     # test/helpers/pg.mjs가 큰 본문을 표준 입력(-1 -f -)으로 보내 해소. 라이브 Supabase와 같은 주 버전 17을 PGDG에서 받는다.

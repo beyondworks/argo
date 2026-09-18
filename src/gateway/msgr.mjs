@@ -12,10 +12,10 @@
 //      status를 바꾸고(RLS: 크루 소유자만), drain의 syncApprovals가 그것을 보고 **큐를 우회해** resolveWithFollowUp
 //      (텔레그램 handleApprovalCallback과 같은 데드락 이유 — gateway.mjs:249 주석).
 // 계약(분리 검수 2026-09-03 MEDIUM-7·8): 브리지는 **소유자 JWT의 RLS**를 지나므로 크루가 참가한 DM·비공개 채널이라도 소유자가 그 채널
-//   멤버가 아니면 트리거도 답글도 없다 — 앱은 크루를 채널에 넣을 때 소유자를 함께 넣는다. crew_memory=false는 "일지(장기 기억) 생략"이지
+//   멤버가 아니면 트리거도 답글도 없다 — 앱은 크루를 채널에 넣을 때 소유자를 함께 넣는다. crew_memory=false는 "일지(장기 기억) 생략 + 채널 세션 미보존"이지
 //   chats/<slug>.json 대화 기록·이벤트 gist까지 지우는 것은 아니다(앱 문구가 그렇게 말한다).
-// 범위 밖(정직 표기): 채널별 세션 분리 없음(크루 1명 = chats/<slug>.json 1개),
-//   Presence 미사용(하트비트 last_seen_at가 부재중 판정 정본).
+// 세션: 크루 1명 = chats/<slug>.json 1개 안에 채널별 세션(scopedSessions)을 따로 둔다 — 전역 세션(주인 대화)은 채널 턴이 잇지 않는다.
+// 범위 밖(정직 표기): Presence 미사용(하트비트 last_seen_at가 부재중 판정 정본).
 // DB 접근은 makeDb(client) 한 층에 모은다 — 단위 테스트는 가짜 db를 주입하고(test/msgr-bridge.test.mjs), 실제
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
@@ -28,7 +28,7 @@ import { enqueueJob, DEFER } from './queue.mjs';
 import { pick } from './protocol.mjs';
 import { beatGateway } from './persist.mjs';
 import { chat } from '../chat.mjs';
-import { loadThread, appendTurn } from '../thread.mjs';
+import { loadThread, appendTurn, scopedSession } from '../thread.mjs';
 import { loadApprovals, setApprovalMeta } from '../approvals.mjs';
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
@@ -36,7 +36,7 @@ import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mj
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
-import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx } from './msgr-handoff.mjs';
+import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, msgrJournal } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
@@ -463,8 +463,10 @@ const permanentWrite = (e) => e?.code === '42501' || String(e?.code ?? '').start
 function denyBody(why, crew, lang) {
   if (why === 'channel_policy') return pick(`이 채널은 회사 크루만 일할 수 있습니다(채널 정책). ${crew.display_name}은(는) 개인 크루라 여기서는 지시를 받지 않습니다.`,
     `Only company crews can work in this channel (channel policy). ${crew.display_name} is a personal crew and does not take instructions here.`, lang);
-  if (why === 'crew_allow') return pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 소유자에게 허용을 요청하세요.`,
-    `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — ask the owner for access.`, lang);
+  // 방에 들어온 에이전트는 방 멤버 누구나 부른다(2026-09-18). 이 거절은 대개 "이 방에 없는 에이전트"지만, 에이전트가 방에 있는데
+  // 요청자가 그 방을 못 읽는 경우(제외 명단·만료된 멤버 등)에도 같은 코드가 온다 — 한쪽으로 단정하지 않고 두 경우 모두 맞는 문장으로 쓴다.
+  if (why === 'crew_allow') return pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 방에 들어와 있는 에이전트는 그 방 멤버 누구나 부를 수 있습니다. 이 방에 없는 에이전트라면 주인에게 데려와 달라고 요청하세요.`,
+    `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — an agent that is in a room can be called by anyone in that room. If it isn't in this room, ask its owner to add it.`, lang);
   if (why === 'inactive') return pick(`${crew.display_name}은(는) 지금 이 대화에 파견돼 있지 않습니다 — 메신저에서 다시 파견해 주세요.`,
     `${crew.display_name} is not dispatched to this conversation — dispatch the crew again in the messenger.`, lang);
   return pick(`지금은 ${crew.display_name}이(가) 이 지시를 받을 수 없습니다 — 크루 상태와 허용 범위를 확인해 주세요.`,
@@ -689,7 +691,7 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
 }
 
 /** 결재·예약·장시간 실행은 매번 새 수집함으로 같은 채널의 최신 문맥과 기억 설정을 복원한다. */
-export async function runMessengerContinuation(wsId, slug, origin, message, sessionId, { runChat = chat, session = sessionClient, ownerApproved = false } = {}) {
+export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false } = {}) {
   return withLock(`msgr-turn:${wsId}:${slug}`, async () => {
     const { db, ctx, ch, source, envelope } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
     const rows = envelope?.context ?? await db.contextOf(ctx.channelId, Number.MAX_SAFE_INTEGER, CONTEXT_N);
@@ -702,7 +704,9 @@ export async function runMessengerContinuation(wsId, slug, origin, message, sess
     busyCrew.add(key);
     activeCtx.set(key, ctx);
     try {
-      const turn = await runChat(wsId, slug, text, ch.kind === 'dm' ? null : sessionId, { source: 'messenger', mirrorCtx: ctx, journal: { off: ch.crew_memory === false, tag: `org-${ctx.orgId}` } });
+      // 호출자가 넘기는 전역 세션(_globalSessionId — 주인의 데스크톱 대화)은 쓰지 않는다: 후속 실행도 그 채널 세션만 잇는다
+      const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, slug), ctx.channelId).sessionId;
+      const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false) });
       return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang })), msgr: messengerOrigin(ctx) };
     } finally {
       if (activeCtx.get(key) === ctx) activeCtx.delete(key);
@@ -864,10 +868,11 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public' }); // 본문·사고·단계는 공개 채널만(조직 토픽은 조직 전원이 듣는다 — 검수 C-1)
     let reply; let failed = false; let turnTrace = null; let replyMentions = []; let replyMeta = {};
     try {
-      const t = ch.kind === 'dm' ? { sessionId: null } : await loadThread(wsId, job.slug); // DM context is freshly authorized per root, never resumed from the whole crew session
-      const turn = await runChat(wsId, job.slug, text, t.sessionId, {
+      // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
+      const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
+      const turn = await runChat(wsId, job.slug, text, sessionId, {
         source: 'messenger', attachments, mirrorCtx: ctx,
-        journal: { off: ch.crew_memory === false, tag: `org-${job.orgId}` }, // 채널 설정: 기억 안 남김 / 조직 태그 파일(회수 단위)
+        journal: msgrJournal(job.orgId, job.channelId, ch.crew_memory === false), // 채널 설정: 기억 안 남김 / 채널 태그 파일(회수 단위)
       });
       reply = String(turn.reply ?? '');
       if (waited > AWAY_NOTE_MS) {
@@ -879,7 +884,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       replyMentions = rendered.msgrReply.mentions;
       replyMeta = rendered.msgrReply.meta;
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
-        contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot } : undefined,
+        contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot },
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
       turnTrace = ch.kind === 'public' ? turn.trace ?? null : null; // 메신저 비공개·DM 답글에는 실행 궤적을 추가 저장하지 않는다
     } catch (e) {

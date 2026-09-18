@@ -41,7 +41,12 @@ for f in "${FILES[@]}"; do
   psql "postgresql://postgres@127.0.0.1:$PORT/postgres" -X -q -c "create database $db"
   echo "[drill] $f → $db"
   # 실패해도 멈추지 않고 끝까지 돈다 — 첫 실패에서 서면 뒤 파일이 안 보여 "전부 통과"로 오독한다(실측 2026-09-16).
-  if ARGO_PG_TEST_URL="postgresql://postgres@127.0.0.1:$PORT/$db" node --test "$f"; then :; else FAILED+=("$f"); fi
+  out="$DIR/out_$i.tap"
+  if ARGO_PG_TEST_URL="postgresql://postgres@127.0.0.1:$PORT/$db" node --test --test-reporter=tap "$f" | tee "$out"; then :; else FAILED+=("$f"); continue; fi
+  # 드릴에서 skip은 실패다 — CI npm test가 pg 테스트 267건을 조용히 skip한 채 초록이던 사고(2026-09-18)와 같은 모양을 막는다.
+  # 요약 줄이 없어도 실패로 본다(판정 불가 = 통과 아님).
+  skipped="$(sed -n 's/^# skipped \([0-9][0-9]*\)$/\1/p' "$out" | tail -1)"
+  if [ "${skipped:-none}" != 0 ]; then echo "[drill] $f: skipped ${skipped:-요약 없음} — 드릴에서는 skip을 실패로 본다" >&2; FAILED+=("$f"); fi
 done
 if [ ${#FAILED[@]} -gt 0 ]; then echo "[drill] 실패 ${#FAILED[@]}건: ${FAILED[*]}" >&2; exit 1; fi
 echo "[drill] 통과 ${#FILES[@]}개 파일 — 임시 인스턴스 정리"
