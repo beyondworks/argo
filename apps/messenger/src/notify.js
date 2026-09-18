@@ -43,6 +43,7 @@ export async function requestNotifyPermission() {
 // 첫 실행·로그인 뒤 한 번만 OS 권한을 묻는다(아직 정하지 않은 상태일 때만). 거부·허용 뒤에는 다시 묻지 않는다 — 설정의 알림 줄이 상태와 안내를 보여 준다.
 export async function askNotifyOnce(store = globalThis.localStorage) {
   if (isMobilePlatform) return 'unsupported';
+  if (!inTauri()) return notifyPermission(); // 브라우저(개발 서버)는 자동으로 묻지 않는다 — 권한 창이 자동화 브라우저의 제어권을 사람에게 넘겨 검증을 막는다. 설정의 버튼으로만
   let asked = false; try { asked = store?.getItem('msgr-notify-asked') === '1'; } catch { /* 저장 불가 */ }
   const now = await notifyPermission();
   if (asked || now !== 'default') return now;
