@@ -454,6 +454,7 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
         slug: ownerSlug,
         kind: 'connector',
         ...(msgr ? { msgr } : {}),
+        ...(await import('./thread.mjs')).approvalScope(mirrorCtx), // 동적 — 위 순환 방지와 같은 이유
         action: `${serverId} · ${tool}`,
         reason: '외부 서비스에 쓰기',
         // 승인 시 그대로 실행할 재료. 결재함은 회사 금고(게이트 보호) 안이라 args를 담아도 크루가 못 읽는다.

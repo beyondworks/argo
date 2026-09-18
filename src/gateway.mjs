@@ -66,7 +66,7 @@ function makeJobHandler(wsId, { runChat = chat, session } = {}) {
       const prompt = `[장시간 작업: ${title}] ${job.prompt}`;
       const t = job.msgr
         ? await runMessengerContinuation(wsId, slug, job.msgr, prompt, null, { runChat, session })
-        : await runChat(wsId, slug, prompt, null, { source: 'job' });
+        : await runChat(wsId, slug, prompt, null, { source: 'job', ...await briefingCtx(wsId, 'job', slug).then((c) => (c ? { mirrorCtx: c } : {})) }); // 결과가 공유 목적지로 나가면 그 범위 맥락만
       await appendTurn(wsId, slug, {
         userMsg: pick(`(장시간 작업) ${title}`, `(Long task) ${title}`, lang),
         reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job', artifacts: t.artifacts, contextScope: t.contextScope,
@@ -188,7 +188,7 @@ async function slackRead(token, method, params) {
 /** 텔레그램·슬랙 턴의 세션 — 1:1은 전역 세션(웹과 같은 스레드, 주인 본인 대화), 텔레그램 그룹·슬랙 공유 채널은 그 방 범위 세션.
     여러 사람이 보는 답이므로 주인의 데스크톱·1:1 대화를 잇지 않는다(업그레이드 전 스레드의 옛 전역 세션 포함). */
 async function tgTurnSession(wsId, slug, ctx) {
-  const mirrorCtx = /group/.test(ctx?.chatType ?? '') || ctx?.kind === 'slack' ? ctx : null; // 슬랙 공유 채널도 그 채널 범위
+  const mirrorCtx = /group/.test(ctx?.chatType ?? '') || ctx?.kind === 'slack' || ctx?.kind === 'scope' ? ctx : null; // 슬랙 공유 채널·자동 턴 목적지(briefingCtx)도 그 범위
   const contextScope = turnScope(mirrorCtx) ?? undefined;
   const t = await loadThread(wsId, slug);
   return { mirrorCtx, contextScope, sessionId: contextScope ? scopedSession(t, scopeKey(contextScope)).sessionId : t.sessionId };
@@ -508,6 +508,43 @@ async function slackIsIm(token, channel, { now = Date.now, api = slackRead } = {
   slackKinds.set(channel, { im, until });
   return im;
 }
+/** 자동 턴(루틴·장시간 작업·쪽지·받은 서류함)의 목적지 범위 — 붙일 맥락은 턴 종류가 아니라 **답이 나가는 곳**으로 정한다.
+    주인만 보는 곳(앱·주인 1:1)뿐이면 null(전역 맥락 그대로). 여러 사람이 보는 곳(텔레그램 그룹·슬랙 공유 채널·메신저 채널)이면
+    그 범위를 {kind:'scope'} 맥락으로 — 그 범위 기록만 붙이고 주인 대화는 붙이지 않는다. 공유 목적지가 여럿이면 가장 넓은 쪽으로 보고
+    {kind:'shared'}(범위 키 없음 = 아무것도 붙이지 않고 세션도 남기지 않는다 — 한 방의 기록을 다른 방 답에 옮기지 않게).
+    판정은 실제 배달과 같은 정본을 쓴다: 텔레그램 resolveTelegramDest(음소거 포함)·슬랙 channelSends·루틴 알림 선택(sendRoutineNotification). */
+export async function briefingCtx(wsId, type, slug, opts = {}) {
+  try { return await briefingScopeCtx(wsId, type, slug, opts); } catch { return { kind: 'scope', scope: { kind: 'shared' } }; } // 판정 실패 = 공유(fail-closed) — 주인 대화를 붙이지 않는다
+}
+async function briefingScopeCtx(wsId, type, slug, { notifications } = {}) {
+  const all = await loadConnections(wsId).catch(() => null);
+  if (!all) return null; // 연결 설정을 못 읽으면 텔레그램·슬랙 배달도 없다(주인 앱에만 남는다)
+  const shared = [];
+  const telegram = async (kind) => {
+    const d = resolveTelegramDest(all.telegram, kind, slug, await listAgents(wsId).catch(() => []), { widen: false });
+    if (d && Number(d.chatId) < 0) shared.push({ kind: 'tg-group', chatId: String(d.chatId) }); // ponytail: 그룹·슈퍼그룹 id는 음수, 1:1은 양수(Bot API) — approval-actions와 같은 판정
+  };
+  const slack = async () => {
+    const s = all.slack;
+    if (s?.token && s.channel && !(await slackIsIm(s.token, s.channel))) shared.push({ kind: 'slack', channelId: String(s.channel) });
+  };
+  if (type === 'routine' && notifications !== undefined) { // 알림 대상을 고른 루틴 — sendRoutineNotification과 같은 갈래
+    const { normalizeRoutineNotifications } = await import('./routine-notifications.mjs');
+    let sel; try { sel = normalizeRoutineNotifications(notifications); } catch { return null; } // 잘못된 선택은 배달도 안 된다
+    for (const kind of sel.channels) {
+      if (kind === 'msgr') shared.push({ kind: 'msgr', channelId: sel.msgr.channelId });
+      else if (all[kind]?.mutedEvents?.includes('routine')) continue;
+      else if (kind === 'telegram') await telegram('routine');
+      else if (kind === 'slack' && all.slack?.token && all.slack.channel && channelSends('slack', all.slack, 'routine')) await slack();
+    }
+  } else {
+    if (['routine', 'job', 'crewmail', 'inbox'].includes(type)) await telegram(type);
+    if (all.slack?.token && all.slack.channel && channelSends('slack', all.slack, type)) await slack(); // 슬랙은 루틴만(CHANNEL_EVENTS.slack)
+  }
+  if (!shared.length) return null;
+  return { kind: 'scope', scope: shared.length === 1 ? shared[0] : { kind: 'shared' } };
+}
+
 export const _slackForTest = { slackIsIm, slackKinds, makeSlackHandler: (...a) => makeSlackHandler(...a), startSlack: (...a) => startSlack(...a) };
 
 function makeSlackHandler(wsId, getCfg) {
@@ -645,6 +682,7 @@ export const _tgHandlersForTest = { makeTgGatewayHandler, makeTgAgentHandler }; 
 
 /* ─── 받은 서류함(inbox) — 폴더에 파일을 넣는 것이 곧 지시. 기본 크루가 읽고 처리해 보고한다. ─── */
 const INBOX_MAX_INFLIGHT = 2; // 파일 여러 개를 한꺼번에 떨궈도 동시 크루 턴을 제한(비용 폭주 방지)
+export const _inboxForTest = (...a) => startInboxWatcher(...a); // 받은 서류함 감시기(목적지 기준 붙여넣기 테스트)
 function startInboxWatcher(wsId) {
   let stopped = false;
   const busy = new Set();
@@ -675,7 +713,7 @@ function startInboxWatcher(wsId) {
             const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
             console.log(`[argo] 받은 서류함 처리 시작: ${wsId}/${safe}`);
             // runTurn 반환 = chat 핸드오버 + appendTurn(스레드) 영속 완료. 여기까지 와야 처리를 종결(원본 제거)한다.
-            const reply = await runTurn(wsId, cfg, pick(`(받은 서류함) 사장이 inbox 폴더에 "${safe}" 파일을 넣었다. 내용을 확인하고 필요한 처리를 한 뒤 5줄 이내로 보고하라.`, `(Inbox) The owner dropped the file "${safe}" into the inbox folder. Review it, handle what's needed, then report back in 5 lines or fewer.`, lang), [att]);
+            const reply = await runTurn(wsId, cfg, pick(`(받은 서류함) 사장이 inbox 폴더에 "${safe}" 파일을 넣었다. 내용을 확인하고 필요한 처리를 한 뒤 5줄 이내로 보고하라.`, `(Inbox) The owner dropped the file "${safe}" into the inbox folder. Review it, handle what's needed, then report back in 5 lines or fewer.`, lang), [att], await briefingCtx(wsId, 'inbox', defaultCrew(await listAgents(wsId).catch(() => []), cfg)?.slug)); // 보고가 공유 목적지로 나가면 그 범위 맥락만
             // 영속 성공 후에만 원본을 .done/으로 이동(재처리 종결). 실패 시 원본이 inbox에 남아 다음 틱에 재시도(at-least-once).
             const done = join(dir, '.done');
             await mkdir(done, { recursive: true });

@@ -14,6 +14,7 @@ import { stageMessengerHandoff, messengerOrigin } from './gateway/msgr-handoff.m
 import { addRoutine, normalizeSchedule } from './routines.mjs';
 import { sendCrewMail } from './crewmail.mjs';
 import { addApproval } from './approvals.mjs'; // CLI 결재 경로 — SDK request_approval과 같은 원장
+import { approvalScope } from './thread.mjs'; // 범위 턴의 결재 — 후속이 그 범위로(SDK 결재와 같은 각인)
 import { listAgents } from './hub.mjs';
 import { callConnectorTool } from './connectors.mjs'; // 커넥터 단일 실행 경로 — SDK 표면과 같은 함수
 
@@ -165,7 +166,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         const request = String(d.request ?? d.action_text ?? '').trim();
         if (!request) throw new Error(en ? 'request is required' : 'request(하려는 행동)가 필요합니다');
         const item = await addApproval(wsId, {
-          slug: fromSlug, msgr: messengerOrigin(mirrorCtx), action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
+          slug: fromSlug, msgr: messengerOrigin(mirrorCtx), ...approvalScope(mirrorCtx), action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
           reason: String(d.reason ?? '').replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 300),
         });
         notes.push(en

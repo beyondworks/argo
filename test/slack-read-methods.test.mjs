@@ -27,9 +27,10 @@ test('슬랙 폴러: auth.test·conversations.history는 쿼리 문자열 GET + 
     if (method === 'conversations.history') {
       // 실제 슬랙처럼 쿼리의 channel이 없으면 거절한다(JSON 본문으로 보내면 여기서 실패 — 판정이 아니라 동작을 본다)
       if (!u.searchParams.get('channel')) return json({ ok: false, error: 'channel_not_found' });
+      if (u.searchParams.get('cursor') === 'CUR2') return json({ ok: true, messages: [{ ts: '9999999999.000200', user: 'U1', text: '둘째 페이지 지시' }], has_more: false });
       if (served) return json({ ok: true, messages: [] });
-      served = true;
-      return json({ ok: true, messages: [{ ts: '9999999999.000100', user: 'U1', text: '오늘 일정 정리해 줘' }] });
+      served = true; // 첫 페이지 — 다음 페이지가 있다(검수 LOW: 페이지네이션 cursor가 둘째 요청 쿼리로 가는지 잠근다)
+      return json({ ok: true, messages: [{ ts: '9999999999.000100', user: 'U1', text: '오늘 일정 정리해 줘' }], has_more: true, response_metadata: { next_cursor: 'CUR2' } });
     }
     return json({ ok: true });
   };
@@ -38,7 +39,7 @@ test('슬랙 폴러: auth.test·conversations.history는 쿼리 문자열 GET + 
   try {
     const deadline = Date.now() + 8000; // 고정 대기 대신 조건 대기 — 적재 파일이 생기면 곧바로 통과
     while (Date.now() < deadline) {
-      if ((await readdir(queueDir(ws, 'slack')).catch(() => [])).some((n) => n.endsWith('.json'))) break;
+      if ((await readdir(queueDir(ws, 'slack')).catch(() => [])).filter((n) => n.endsWith('.json')).length >= 2) break; // 두 페이지의 메시지가 모두 적재될 때까지
       await new Promise((r) => setTimeout(r, 50));
     }
   } finally { stop(); globalThis.fetch = origFetch; }
@@ -47,5 +48,9 @@ test('슬랙 폴러: auth.test·conversations.history는 쿼리 문자열 GET + 
   const hist = reqs.find((r) => r.method === 'conversations.history');
   assert.equal(hist.http, 'GET'); assert.equal(hist.body, undefined, 'JSON 본문이 아니다'); assert.equal(hist.auth, 'Bearer xoxb-fake');
   assert.equal(hist.query.channel, 'C1'); assert.equal(hist.query.limit, '100'); assert.ok(Number(hist.query.oldest) > 0, 'oldest 커서가 쿼리로 간다');
-  assert.ok((await readdir(queueDir(ws, 'slack'))).some((n) => n.endsWith('.json')), '받은 주인 메시지가 큐에 적재됐다(수신 전체가 동작)');
+  assert.equal((await readdir(queueDir(ws, 'slack'))).filter((n) => n.endsWith('.json')).length, 2, '두 페이지의 주인 메시지가 모두 큐에 적재됐다(수신 전체가 동작)');
+  const pages = reqs.filter((r) => r.method === 'conversations.history');
+  assert.equal(pages[0].query.cursor, undefined, '첫 요청은 cursor 없이');
+  assert.equal(pages[1].query.cursor, 'CUR2', 'has_more면 둘째 요청 쿼리에 next_cursor가 실린다');
+  assert.equal(pages[1].query.channel, 'C1');
 });
