@@ -44,12 +44,16 @@ const srv = http.createServer((req, res) => { let b = ''; req.on('data', (c) => 
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 process.env.ARGO_CLAUDE_BASE_URL = `http://127.0.0.1:${srv.address().port}`;
 const kinds = { C0SHARED: { ok: true, channel: { id: 'C0SHARED', is_channel: true, is_im: false } }, D0OWNER: { ok: true, channel: { id: 'D0OWNER', is_im: true } } };
-const origFetch = globalThis.fetch;
+const origFetch = globalThis.fetch; const slackPosts = [];
 globalThis.fetch = async (url, o) => {
   const u = new URL(String(url));
   const json = (x) => new Response(JSON.stringify(x), { headers: { 'content-type': 'application/json' } });
   if (u.hostname === 'api.telegram.org') return json({ ok: true, result: {} });
-  if (u.hostname === 'slack.com') return u.pathname === '/api/conversations.info' ? json(kinds[u.searchParams.get('channel')] ?? { ok: false, error: 'missing_scope' }) : json({ ok: true });
+  if (u.hostname === 'slack.com') {
+    if (u.pathname === '/api/conversations.info') return json(kinds[u.searchParams.get('channel')] ?? { ok: false, error: 'missing_scope' });
+    if (u.pathname === '/api/chat.postMessage') slackPosts.push(JSON.parse(o?.body ?? '{}').text ?? ''); // 핸들러가 채널에 게시한 본문 — 실패하면 "처리 실패: …"가 여기 남는다(진단용)
+    return json({ ok: true });
+  }
   return origFetch(url, o);
 };
 after(() => { srv.close(); globalThis.fetch = origFetch; });
@@ -67,6 +71,8 @@ await writeFile(join(p.agents, 'y.md'), '---\nname: 와이\nrole: 검증\nrunner
 await saveRunnerCred(ws, 'claude', 'apikey', `sk-ant-api03-${'x'.repeat(80)}`); // 형식만 맞춘 가짜 — 요청은 로컬 가짜 엔드포인트로만 간다
 await saveRunnerCred(ws, 'codex', 'apikey', 'sk-fake-not-a-real-key');
 
+// 가짜 codex는 POSIX 셸 스크립트 — Windows에서는 실행되지 않는다(test/artifacts-behavior.test.mjs 선례). 검증 대상(범위 판정·배선)은 플랫폼 무관 JS이고 macOS CI가 덮는다.
+const posixOnly = { skip: process.platform === 'win32' ? 'POSIX 셸 하네스(가짜 codex) — macOS CI가 담당' : false };
 const PRIVATE_X = 'OWNER-PRIVATE-X-1111'; const PRIVATE_Y = 'OWNER-PRIVATE-Y-3333';
 const cliLog = () => readFile(join(p.root, '.cli-prompts.log'), 'utf8').catch(() => '');
 const connections = async ({ slack = false, telegramChat = null } = {}) => {
@@ -89,7 +95,7 @@ async function reset() {
 const DELEGATE = { name: 'mcp__crew__delegate', input: { to: 'y', task: '그룹 일정표를 정리해 줘' } };
 const crewBotGroup = (text) => G._tgHandlersForTest.makeTgAgentHandler(ws, 'x', () => ({ token: 'bot-x', ownerId: 1, ownerChat: '200' }))({ text, atts: [], ctx: { chatId: -100111, chatType: 'supergroup' } });
 
-test('위임: 텔레그램 그룹 턴에서 위임받은 동료(CLI) 턴은 주인 대화를 붙이지 않는다 — 위임 기록도 그룹 범위', async () => {
+test('위임: 텔레그램 그룹 턴에서 위임받은 동료(CLI) 턴은 주인 대화를 붙이지 않는다 — 위임 기록도 그룹 범위', posixOnly, async () => {
   await connections();
   await reset(); call = DELEGATE;
   await crewBotGroup('와이한테 일정 정리 맡겨 줘');
@@ -100,7 +106,7 @@ test('위임: 텔레그램 그룹 턴에서 위임받은 동료(CLI) 턴은 주�
   assert.deepEqual(trace?.contextScope, { kind: 'tg-group', chatId: '-100111' }, '위임 기록은 그룹 범위(데스크톱 대화 맥락에 붙지 않는다)');
 });
 
-test('위임: 그룹에 실린 결재의 후속 턴에서 위임받은 동료(CLI) 턴도 주인 대화를 붙이지 않는다', async () => {
+test('위임: 그룹에 실린 결재의 후속 턴에서 위임받은 동료(CLI) 턴도 주인 대화를 붙이지 않는다', posixOnly, async () => {
   await connections();
   await reset(); call = DELEGATE;
   const { addApproval, setApprovalMeta, loadApprovals } = await import('../src/approvals.mjs');
@@ -127,10 +133,11 @@ test('슬랙 채널에서 올린 결재의 후속 턴은 주인의 전역 세션
   await connections({ slack: true });
   const deskSid = await reset();
   call = { name: 'mcp__crew__request_approval', input: { action: '고객 메일 발송', reason: '채널에서 요청받음' } };
+  slackPosts.length = 0;
   await G._slackForTest.makeSlackHandler(ws, () => ({ token: 'xoxb-fake', channel: 'C0SHARED', ownerId: 'U1' }))({ text: '고객에게 메일 보내 줘' });
   const { loadApprovals } = await import('../src/approvals.mjs');
   const item = (await loadApprovals(ws)).find((a) => a.action === '고객 메일 발송');
-  assert.ok(item, '전제: 슬랙 채널 턴에서 결재가 올라갔다');
+  assert.ok(item, `전제: 슬랙 채널 턴에서 결재가 올라갔다 — 채널 게시: ${JSON.stringify(slackPosts.slice(-2)).slice(0, 400)}`);
   const { _followUpForTest } = await import('../src/approval-actions.mjs');
   bodies = [];
   await _followUpForTest(ws, item, true);
@@ -140,7 +147,7 @@ test('슬랙 채널에서 올린 결재의 후속 턴은 주인의 전역 세션
   assert.deepEqual(item.scope, { kind: 'slack', channelId: 'C0SHARED' }, '결재에 슬랙 채널 범위가 실렸다(후속이 그 범위로 도는 재료)');
 });
 
-test('루틴: 결과가 슬랙 공유 채널로 나가면(알림 대상 미지정 = 기존 브리핑) CLI 루틴 턴이 주인 대화를 붙이지 않는다 — 슬랙이 없으면 지금처럼 붙인다', async () => {
+test('루틴: 결과가 슬랙 공유 채널로 나가면(알림 대상 미지정 = 기존 브리핑) CLI 루틴 턴이 주인 대화를 붙이지 않는다 — 슬랙이 없으면 지금처럼 붙인다', posixOnly, async () => {
   const { addRoutine, runRoutine } = await import('../src/routines.mjs');
   await connections({ slack: true });
   await reset();
@@ -156,7 +163,7 @@ test('루틴: 결과가 슬랙 공유 채널로 나가면(알림 대상 미지�
   assert.ok(l.includes(PRIVATE_Y), '주인만 보는 루틴은 지금처럼 전역 맥락(맥락 손실 없음)');
 });
 
-test('루틴: 알림 대상으로 텔레그램을 고르고 그 목적지가 그룹이면 주인 대화를 붙이지 않는다', async () => {
+test('루틴: 알림 대상으로 텔레그램을 고르고 그 목적지가 그룹이면 주인 대화를 붙이지 않는다', posixOnly, async () => {
   const { addRoutine, runRoutine } = await import('../src/routines.mjs');
   await connections({ telegramChat: -100555 });
   await reset();
@@ -167,7 +174,7 @@ test('루틴: 알림 대상으로 텔레그램을 고르고 그 목적지가 그
   assert.ok(!l.includes(PRIVATE_Y), '텔레그램 그룹으로 알리는 루틴이 주인 대화를 붙였다');
 });
 
-test('장시간 작업: 완료 브리핑이 텔레그램 그룹으로 나가면 CLI 작업 턴이 주인 대화를 붙이지 않는다 — 실제 잡 핸들러', async () => {
+test('장시간 작업: 완료 브리핑이 텔레그램 그룹으로 나가면 CLI 작업 턴이 주인 대화를 붙이지 않는다 — 실제 잡 핸들러', posixOnly, async () => {
   await connections({ telegramChat: -100555 });
   await reset();
   await G._makeJobHandlerForTest(ws)({ id: 'job-grp', slug: 'y', title: '정리', prompt: '자료 정리' });
@@ -176,7 +183,7 @@ test('장시간 작업: 완료 브리핑이 텔레그램 그룹으로 나가면 
   assert.ok(!l.includes(PRIVATE_Y), '그룹으로 보고하는 장시간 작업이 주인 대화를 붙였다');
 });
 
-test('루틴: 공유 목적지가 여럿이면(텔레그램 그룹 + 슬랙 채널) 어느 방의 기록도, 주인 대화도 붙이지 않는다', async () => {
+test('루틴: 공유 목적지가 여럿이면(텔레그램 그룹 + 슬랙 채널) 어느 방의 기록도, 주인 대화도 붙이지 않는다', posixOnly, async () => {
   const { addRoutine, runRoutine } = await import('../src/routines.mjs');
   await connections({ slack: true, telegramChat: -100555 });
   await reset();
@@ -191,7 +198,7 @@ test('루틴: 공유 목적지가 여럿이면(텔레그램 그룹 + 슬랙 채�
   for (const marker of [PRIVATE_Y, 'GROUP-ROOM-4444', 'SLACK-ROOM-5555']) assert.ok(!l.includes(marker), `공유 목적지가 여럿인 루틴이 ${marker}를 붙였다(한 방의 기록을 다른 방 답에 옮기면 안 된다)`);
 });
 
-test('루틴: 외부 알림을 모두 끈 루틴(channels: [])은 결과가 주인 앱에만 남으므로 지금처럼 전역 맥락 — 연결된 그룹이 있어도', async () => {
+test('루틴: 외부 알림을 모두 끈 루틴(channels: [])은 결과가 주인 앱에만 남으므로 지금처럼 전역 맥락 — 연결된 그룹이 있어도', posixOnly, async () => {
   const { addRoutine, runRoutine } = await import('../src/routines.mjs');
   await connections({ telegramChat: -100555 });
   await reset();
@@ -200,7 +207,7 @@ test('루틴: 외부 알림을 모두 끈 루틴(channels: [])은 결과가 주�
   assert.ok((await cliLog()).includes(PRIVATE_Y), '알림을 끈 루틴이 주인 맥락을 잃었다(기존 브리핑 갈래로 잘못 판정)');
 });
 
-test('받은 서류함: 보고가 텔레그램 그룹으로 나가면 서류함 턴(CLI)이 주인 대화를 붙이지 않는다 — 실제 감시기', { timeout: 60_000 }, async () => {
+test('받은 서류함: 보고가 텔레그램 그룹으로 나가면 서류함 턴(CLI)이 주인 대화를 붙이지 않는다 — 실제 감시기', { ...posixOnly, timeout: 60_000 }, async () => {
   const { utimes } = await import('node:fs/promises');
   await connections({ telegramChat: -100555 });
   await updateConnection(ws, 'telegram', { defaultCrew: 'y' }); // 서류함 담당 = 기본 크루(CLI 크루 y)
