@@ -136,6 +136,35 @@ test('approval: 비공개 방 결재는 멤버 + 크루 소유자 + 확정권자
   assert.equal(topicsOf('approval', pubAp), `org:${ORG}`, '공개 채널 결재는 지금처럼 조직 토픽');
 });
 
+test('approval: 확정권자도 지금 유효한 조직 멤버만 — (a) approvers 목록의 조직 밖 사용자에게 가지 않는다(검수 #605)', { skip }, () => {
+  sql('delete from realtime.sent');
+  sql(`insert into public.msgr_org_policies (org_id, approval_high_by, approver_user_ids) values ('${ORG}', 'approvers', array['${U.outsider}', '${U.extra}']::uuid[])
+       on conflict (org_id) do update set approval_high_by = 'approvers', approver_user_ids = excluded.approver_user_ids`);
+  const hi = sql(`insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk) values ('${ORG}', '${BCREW_DM}', '${BCREW}', 'ap-a', '메일 발송', 'high') returning id`);
+  assert.equal(sql(`select count(*) from realtime.sent where event = 'approval' and topic = 'u:${U.outsider}'`), '0', '(a) 조직 밖 사용자의 u:로 결재가 나가지 않는다');
+  assert.ok(topicsOf('approval', hi).split(',').includes(`u:${U.extra}`), '목록의 조직 멤버는 받는다');
+  sql(`delete from public.msgr_org_policies where org_id = '${ORG}'`);
+});
+
+test('approval: (b) 조직 멤버 자격이 끝난 크루 소유자에게는 결재가 가지 않는다(검수 #605)', { skip }, () => {
+  sql('delete from realtime.sent');
+  // 조직에서 빠진 상태 = 만료 시각이 지난 멤버(시간이 흐르는 것만으로는 offboard 트리거가 돌지 않아 크루가 방에 남는다). 트리거를 끈 채 만료를 과거로 옮겨 그 상태를 만든다.
+  const expire = (v) => psql(['-c', `set session_replication_role = replica; update public.msgr_org_members set expires_at = ${v} where org_id = '${ORG}' and user_id = '${U.member}'; set session_replication_role = origin;`]);
+  expire("now() - interval '1 minute'");
+  try {
+    const lo = sql(`insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk) values ('${ORG}', '${BCREW_DM}', '${BCREW}', 'ap-b', '초안 저장', 'low') returning id`);
+    assert.equal(topicsOf('approval', lo), u(U.extra), '(b) 조직 멤버 자격이 끝난 크루 소유자(B)에게는 저위험 결재도 가지 않는다');
+  } finally { expire('null'); }
+});
+
+test('message: 방 멤버가 아닌 크루 소유자는 깨우기 필드만 받는다({id, channel_id, crew_id, org_id}) — 작성자·멘션은 방 멤버에게만', { skip }, () => {
+  sql('delete from realtime.sent');
+  const id = msg(U.extra, BCREW_DM, `[{"kind":"user","id":"${U.extra}"}]`);
+  const keys = (who) => sql(`select string_agg(k, ',' order by k) from realtime.sent, jsonb_object_keys(payload) k where event = 'message' and topic = 'u:${who}' and payload->>'id' = '${id}'`);
+  assert.equal(keys(U.member), 'channel_id,crew_id,id,org_id', '방 밖 소유자(B)');
+  assert.equal(keys(U.extra), 'author_kind,author_user_id,channel_id,crew_id,id,kind,mentions,org_id,reply_to', '방 멤버(C)는 전체');
+});
+
 test('crew_request: 비공개 방이면 방 사람들의 u:, 채널 없는(조직 범위) 요청과 공개 채널은 org:', { skip }, () => {
   sql('delete from realtime.sent');
   const priv = sql(`insert into public.msgr_crew_requests (org_id, channel_id, name, prompt, created_by) values ('${ORG}', '${BC}', '리서처', '조사', '${U.member}') returning id`);

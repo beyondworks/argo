@@ -3,26 +3,19 @@
 -- (id·kind·crew_id·mentions·reply_to·channel_id·author_kind·author_user_id — 본문은 없음)이 그대로 닿았고,
 -- 0.1.28 앱은 그걸로 "사진·파일을 보냈습니다" OS 알림까지 띄웠다. 비공개 방의 존재·작성자·시각·멘션 대상이 조직 전원에게 샌다.
 -- 규칙: 공개 채널 글만 org:<조직>. 조직 DM·비공개 채널·개인 공간은 그 방의 사람 멤버 + 그 방에 있는 크루의 소유자
---   (크루 브리지·상주 노드가 방송을 깨우기 신호로 쓴다 — 위임 DM처럼 소유자가 방 멤버가 아니어도 깨어나게) 각각의 u:<uid>.
+--   (크루 브리지·상주 노드가 방송을 깨우기 신호로 쓴다 — 위임 DM처럼 소유자가 방 멤버가 아니어도 깨어나게. 방 밖 소유자에게는 깨우기 필드만) 각각의 u:<uid>.
 --   결재는 여기에 "그 결재를 확정할 수 있는 사람"(msgr_can_decide와 같은 규칙)을 더한다.
 -- u: payload에는 org_id를 싣는다 — 앱이 어느 공간의 글인지 안다(org: 토픽은 토픽 이름이 곧 조직).
 -- 개인 공간은 옛 dm:<채널> 방송도 유지한다(0.1.28 앱이 열린 개인 방에서 그 토픽을 듣는다).
 -- 호환: 새 앱은 org:·u:를 모두 구독 — 이 마이그레이션 전후 모두 동작. 옛 앱(0.1.28)은 적용 뒤 조직 DM·비공개 글 방송을 못 받아 10초 재조회로만 뜬다.
 
--- 방 방송을 받을 사람 — 사람 멤버(조직 방이면 지금 유효한 조직 멤버만) + 방에 있는 크루의 소유자(같은 조건)
-create or replace function public.msgr_room_recipients(ch uuid) returns setof uuid
+-- 방 방송을 받을 사람 — 사람 멤버(in_room) + 방에 있는 크루의 소유자(in_room=false — 깨우기 신호만 받는다). 조직 멤버 조건은 msgr_room_send가 건다.
+create or replace function public.msgr_room_recipients(ch uuid) returns table (uid uuid, in_room boolean)
   language sql stable security definer set search_path = public, pg_temp as $$
-    with c as (select id, org_id from public.msgr_channels where id = ch),
-    people as (
-      select m.member_id as uid from public.msgr_channel_members m, c where m.channel_id = c.id and m.member_kind = 'user'
-      union
-      select k.owner_user_id from public.msgr_channel_members m join public.msgr_crews k on k.id = m.member_id, c
-       where m.channel_id = c.id and m.member_kind = 'crew' and k.owner_user_id is not null
-    )
-    select p.uid from people p, c
-     where c.org_id is null
-        or exists (select 1 from public.msgr_org_members om join public.msgr_orgs o on o.id = om.org_id and o.deleted_at is null
-                    where om.org_id = c.org_id and om.user_id = p.uid and om.removed_at is null and (om.expires_at is null or om.expires_at > now()))
+    select m.member_id, true from public.msgr_channel_members m where m.channel_id = ch and m.member_kind = 'user'
+    union all
+    select k.owner_user_id, false from public.msgr_channel_members m join public.msgr_crews k on k.id = m.member_id
+     where m.channel_id = ch and m.member_kind = 'crew' and k.owner_user_id is not null
 $$;
 revoke all on function public.msgr_room_recipients(uuid) from public, anon, authenticated;
 
@@ -46,7 +39,9 @@ create or replace function public.msgr_approval_deciders(ap uuid) returns setof 
 $$;
 revoke all on function public.msgr_approval_deciders(uuid) from public, anon, authenticated;
 
--- 방 단위 방송 — 공개 채널(또는 방 없는 조직 이벤트)은 org:, 그 밖은 받을 사람 각각의 u:
+-- 방 단위 방송 — 공개 채널(또는 방 없는 조직 이벤트)은 org:, 그 밖은 받을 사람 각각의 u:.
+-- 받을 사람 = 방 수신자 + extra(결재 확정권자). 조직 방이면 **모두** 지금 유효한 조직 멤버여야 한다(검수 #605: 확정권자 목록의 조직 밖 사용자·
+-- 조직에서 빠진 크루 소유자에게 결재가 가던 결함). 방 멤버도 확정권자도 아닌 크루 소유자는 깨우기 필드({id, channel_id, crew_id, org_id})만 받는다.
 create or replace function public.msgr_room_send(payload jsonb, event text, org uuid, ch uuid, extra uuid[] default '{}')
   returns void language plpgsql security definer set search_path = public, pg_temp as $$
 declare k text;
@@ -56,9 +51,16 @@ begin
     perform realtime.send(payload, event, 'org:' || org::text, true);
     return;
   end if;
-  perform realtime.send(payload || jsonb_build_object('org_id', org), event, 'u:' || r::text, true)
-    from (select public.msgr_room_recipients(ch) as r union select unnest(extra)) t
-   where t.r is not null;
+  perform realtime.send(case when t.whole then payload || jsonb_build_object('org_id', org)
+                             else jsonb_build_object('id', payload->'id', 'channel_id', payload->'channel_id', 'crew_id', payload->'crew_id', 'org_id', org) end,
+                        event, 'u:' || t.uid::text, true)
+    from (select x.uid, bool_or(x.whole) as whole
+            from (select r.uid, r.in_room as whole from public.msgr_room_recipients(ch) r
+                  union all select e, true from unnest(extra) e) x
+           where x.uid is not null
+             and (org is null or exists (select 1 from public.msgr_org_members om join public.msgr_orgs o on o.id = om.org_id and o.deleted_at is null
+                                          where om.org_id = org and om.user_id = x.uid and om.removed_at is null and (om.expires_at is null or om.expires_at > now())))
+           group by x.uid) t;
 end $$;
 revoke all on function public.msgr_room_send(jsonb, text, uuid, uuid, uuid[]) from public, anon, authenticated;
 
