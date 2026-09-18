@@ -46,7 +46,7 @@ try {
       // Find and click the personal item (first item in menu)
       const personalBtn = p.locator('.msgr-menu-pop button').first();
       const personalLabel = await personalBtn.locator('.label').textContent();
-      assert.ok(personalLabel === (lang === 'ko' ? '개인' : 'Personal'), `Personal button shows "${personalLabel}"`);
+      assert.ok(personalLabel === (lang === 'ko' ? '개인 공간' : 'Personal space'), `Personal button shows "${personalLabel}"`); // 라벨 "개인 공간"(유건 2026-09-18 — 조직과 한눈에 구분)
       await personalBtn.click();
 
       // Should see personal DM list (Alice Friend)
@@ -108,7 +108,7 @@ try {
       await p.locator('.msgr-menu-pop button').first().click();
       await p.locator(width >= 768 ? '[data-sec="dms"]' : '[data-sec="friends"]').waitFor({ state: 'attached' });
       await p.locator('.msgr-org').click(); // 개인 공간 메뉴에 조직 초대 링크가 없다(가상 조직은 관리자가 아니다)
-      assert.equal(await p.locator('.msgr-menu-pop button').filter({ hasText: lang === 'ko' ? '조직 초대 링크' : 'invite link' }).count(), 0, 'no org invite in personal');
+      assert.equal(await p.locator('.msgr-menu-pop button').filter({ hasText: lang === 'ko' ? '멤버 초대' : 'Invite members' }).count(), 0, 'no org invite in personal'); // 조직 초대 항목 라벨(#611: inv.org). 옛 'invite link'는 참여 항목("Join with invite link or code")에 걸려 영어에서 가짜 실패가 났다
       await p.keyboard.press('Escape'); await p.locator('.msgr-menu-pop').waitFor({ state: 'detached' }).catch(() => p.locator('.msgr-scrim').first().click());
       if (width >= 768) {
         await p.locator(`[aria-label="${lang === 'ko' ? '새 채팅' : 'New chat'}"]`).click();

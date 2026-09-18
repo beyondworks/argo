@@ -45,6 +45,7 @@
 .work-discussion { padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-2); margin: 18px 0; }
 .work-discussion-message { border-top: 1px solid var(--border); padding: 8px 0; }
 .msgr-work-button { flex: none; white-space: nowrap; }
+.msgr-work-button[aria-pressed="true"] { background: var(--card-2); border-color: var(--fg-3); color: var(--fg); font-weight: 650; } /* 패널이 열려 있는 동안 눌린 상태 — 다시 누르면 닫힌다(유건 2026-09-18 확정) */
 @media (max-width: 720px) {
   .msgr-work-overlay { padding: 0; }
   .msgr-work-panel { width: 100%; border: 0; border-radius: 0; }
@@ -81,3 +82,12 @@
 
 .work-delivery-status { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); overflow-wrap: anywhere; line-height: 1.5; }
 .work-history-row > div { min-width: 0; }
+
+/* 데스크톱 시트 모드(유건 2026-09-18) — 채널 패널(.msgr-crewsheet)과 같은 자리·폭·비킴 규칙. 머리·탭은 고정, 목록만 스크롤 */
+.msgr-crewsheet.msgr-worksheet { display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden; }
+.msgr-worksheet .work-header { padding: 16px 18px 10px; }
+.msgr-worksheet .work-header h2 { font-size: 15px; }
+.msgr-worksheet .work-tabs { padding: 0 18px 10px; }
+.msgr-worksheet .work-scroll { padding: 14px 18px 18px; }
+.msgr-worksheet :is(button, input, textarea, select):focus-visible { outline: 2px solid var(--mark); outline-offset: 3px; }
+.msgr-work-overlay.msgr-work-confirm { background: transparent; padding: 0; }
