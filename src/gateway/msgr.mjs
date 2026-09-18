@@ -1202,6 +1202,21 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         subscribedOrgs.add(orgId);
       } catch (e) { console.warn(`[argo] msgr realtime 구독 실패(org ${orgId}):`, e.message); }
     }
+    // 비공개 방(조직 DM·비공개 채널·개인 공간) 글·결재·크루 요청은 서버가 조직 토픽이 아니라 방 사람·크루 소유자의 u:<uid>로만 보낸다
+    // (20260918184500 — 조직 전원에게 비공개 방 메타데이터가 새던 것). 조직 토픽만 들으면 폴 주기만큼 늦게 깬다. 서버 적용 전에는 구독이 거절돼도 무해(폴로 완결).
+    const ukey = `${wsId}:u`;
+    if (c.uid && rtChannels.get(ukey)?.__client !== c.client) {
+      try {
+        rtChannels.get(ukey)?.unsubscribe?.();
+        const uch = c.client.channel(`u:${c.uid}`, { config: { private: true } })
+          .on('broadcast', { event: 'message' }, () => { tick().catch(() => {}); })
+          .on('broadcast', { event: 'approval' }, () => { tick().catch(() => {}); })
+          .on('broadcast', { event: 'crew_request' }, () => { tick().catch(() => {}); });
+        uch.__client = c.client;
+        uch.subscribe();
+        rtChannels.set(ukey, uch);
+      } catch (e) { console.warn('[argo] msgr realtime 구독 실패(u:):', e.message); }
+    }
   };
   const iv = setInterval(() => tick().catch(() => {}), pollMs);
   iv.unref?.();
@@ -1210,5 +1225,6 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     stopped = true; clearInterval(iv);
     for (const orgId of subscribedOrgs) { const key = `${wsId}:${orgId}`; try { rtChannels.get(key)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(key); }
     subscribedOrgs = new Set();
+    try { rtChannels.get(`${wsId}:u`)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(`${wsId}:u`);
   };
 }

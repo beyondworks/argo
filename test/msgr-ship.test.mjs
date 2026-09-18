@@ -155,6 +155,6 @@ test('데스크톱 첨부 드롭·OS 알림 배선(유건 제보 2026-09-11 밤)
   assert.match(read('apps/messenger/package.json'), /"@tauri-apps\/plugin-notification"/);
   const app = read('apps/messenger/src/App.jsx');
   assert.doesNotMatch(app, /new Notification\(/, '웹 Notification 직접 호출 금지 — notify.js가 Tauri·브라우저를 가른다');
-  assert.match(app, /if \(!notifyMention\(payload\)\) notifyReply\(payload\);/, '모든 메시지에 알린다(멘션이면 멘션 알림 하나만, 2026-09-12)');
-  assert.match(app, /setBadge\(Object\.entries\(unread\)/, '독 아이콘 숫자 = 안 읽은 합계');
+  assert.match(app, /if \(p && !notifyMention\(p\)\) notifyReply\(p\);/, '모든 메시지에 알린다(멘션이면 멘션 알림 하나만, 2026-09-12) — 읽히는 글만(readableForNotify, 교차 공간 PR)');
+  assert.match(app, /setBadge\(badgeTotal\(\{ current: unread,/, '독 아이콘 숫자 = 안 읽은 합계(모든 공간 — 교차 공간 PR)');
 });
