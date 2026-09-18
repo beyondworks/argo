@@ -607,7 +607,7 @@ function Shell({ session }) {
     const allow = policy?.allow_default ?? 'all';
     const up = await supabase.from('msgr_crews').update({ status: 'active', allow, allow_users: [] }).eq('id', crew.id).select('id');
     if (up.error) throw new Error(up.error.message);
-    // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 참여자면 바로.
+    // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자면 바로·아니면 요청.
     let joined = null;
     if (channelId) {
       const res = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: crew.id });
@@ -742,8 +742,9 @@ function Shell({ session }) {
         q(supabase.from('msgr_messages').select('id').eq('org_id', org.id).eq('author_user_id', uid).order('id', { ascending: false }).limit(200)).catch(() => []),
         q(supabase.from('msgr_crew_approvals').select('id, channel_id, crew_id, action, reason, created_at').eq('org_id', org.id).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => []),
         dmIds.length ? q(supabase.from('msgr_messages').select(cols).in('channel_id', dmIds).is('deleted_at', null).or(`author_user_id.neq.${uid},author_user_id.is.null`).order('id', { ascending: false }).limit(40)).catch(() => []) : [],
-        // 에이전트 참여 요청 — 서버가 방장과 요청자에게만 보여 준다. 요청자 자신의 것은 뺀다(유건 2026-09-16: 방장에게 허용 여부를 묻는다)
-        orgChIds.length ? q(supabase.from('msgr_channel_crew_requests').select('id, channel_id, crew_id, requested_by, created_at').in('channel_id', orgChIds).eq('status', 'pending').neq('requested_by', uid).order('created_at', { ascending: false }).limit(40)).catch(() => []) : [],
+        // 에이전트 참여 요청 — 서버가 결정할 사람(채널 방장·채팅 결재자)과 요청자에게만 보여 준다. 요청자 자신의 것은 뺀다(유건 2026-09-16: 방장에게 허용 여부를 묻는다).
+        // 채팅도 넣는다(20260918170000) — 방을 연 사람이 나가면 결재자가 바뀌는데, 다음 조회부터 새 결재자의 알림함에 대기 요청이 뜬다.
+        orgChIds.length + dmIds.length ? q(supabase.from('msgr_channel_crew_requests').select('id, channel_id, crew_id, requested_by, created_at').in('channel_id', [...orgChIds, ...dmIds]).eq('status', 'pending').neq('requested_by', uid).order('created_at', { ascending: false }).limit(40)).catch(() => []) : [],
       ]);
       const myIds = mine.map((m) => m.id);
       for (const id of myIds) mineRef.current.add(id);
@@ -1550,10 +1551,12 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     if (res.error) return onError(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : res.error.message); // I-3: 서버 게이트의 거절을 정직한 문구로
     await onChanged();
   };
-  // 에이전트 데려오기 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 참여자면 바로. 주인 동반까지 서버가 한다(msgr_crew_join).
+  // 에이전트 데려오기 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자(방을 연 사람 — 나갔으면 남은 사람 중 가장 먼저 들어온 사람)면 바로,
+  // 다른 참여자는 결재자에게 요청(20260918170000). 주인 동반까지 서버가 한다(msgr_crew_join). 결재자는 서버 판정(msgr_dm_approver)을 그대로 받는다 — 한 벌.
   const [joinReqs, setJoinReqs] = useState([]);
+  const [dmApprover, setDmApprover] = useState(null);
   const loadJoinReqs = useCallback(async () => {
-    if (channel.kind === 'dm') { setJoinReqs([]); return; }
+    if (channel.kind === 'dm') { const a = await supabase.rpc('msgr_dm_approver', { ch: channel.id }); setDmApprover(a.error ? null : a.data ?? null); }
     const rows = await q(supabase.from('msgr_channel_crew_requests').select('id, crew_id, requested_by, created_at').eq('channel_id', channel.id).eq('status', 'pending').order('created_at')).catch(() => []);
     setJoinReqs(rows ?? []);
   }, [channel.id, channel.kind]);
@@ -1644,7 +1647,8 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const pendingCrews = new Set(joinReqs.map((r) => r.crew_id));
   const addableCrews = crews.filter((c) => !crewIds.has(c.id) && !pendingCrews.has(c.id) && ((channel.personal_crews ?? 'approval') !== 'blocked' || crewTier(c, org) === 'company')
     && (isDmRoom ? c.owner_user_id === uid : (c.owner_user_id === uid || (!!org?.service_user_id && c.owner_user_id === org.service_user_id)))); // 봇은 등급이 회사여도 주인은 연결한 멤버다 — 남이 연결한 봇도 빠진다
-  const needsApproval = (c) => !isDmRoom && !isHost && (crewTier(c, org) === 'company' || (channel.personal_crews ?? 'approval') === 'approval'); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
+  const isApprover = isDmRoom ? !!dmApprover && dmApprover === uid : isHost; // 참여 요청을 결정하는 사람 — 최종 강제는 서버(msgr_can_decide_crew_join)
+  const needsApproval = (c) => (isDmRoom ? !isApprover : !isHost && (crewTier(c, org) === 'company' || (channel.personal_crews ?? 'approval') === 'approval')); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
   const nodeSet = !!org?.service_user_id; const nodeOn = nodeSet && !!org?.node_seen_at && Date.now() - Date.parse(org.node_seen_at) < AWAY_MS; // I-5·검수 M-4: 노드가 살아 있어야 만들 수 있다(죽은 노드면 영원한 '만드는 중')
   const crewCreate = policy?.crew_create ?? 'channel_admin';
@@ -1739,7 +1743,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
               <div key={`req:${r.id}`} className="row req">
                 <Av name={c?.display_name ?? '?'} crew size="sm" crewId={r.crew_id} /><span className="name">{c?.display_name ?? r.crew_id.slice(0, 8)}</span>
                 <span className="sub">{mine ? t('ch.crew.join.waiting') : t('ch.crew.join.by', { name: nameOfUser(r.requested_by) })}</span>
-                {isHost && !mine && <span className="acts"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => decideJoin(r, true)}>{t('ch.crew.join.approve')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => decideJoin(r, false)}>{t('ch.crew.join.reject')}</button></span>}
+                {isApprover && !mine && <span className="acts"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => decideJoin(r, true)}>{t('ch.crew.join.approve')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => decideJoin(r, false)}>{t('ch.crew.join.reject')}</button></span>}
               </div>
             ); })}
             {!chCrews.length && <p className="empty">{scoped ? t('ch.crews.none.scoped') : t('ch.crews.none')}</p>}
@@ -1783,7 +1787,9 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                     <span className="msgr-klabel">{dispatch ? t('ch.add.mine.short') : needsApproval(c) ? t('ch.crew.join.ask') : c.role_text ?? ''}</span></label>
                 ))}</div>}
                 {rows.length > 0 && <p className="note">{t('ch.add.crew.shared')}</p>}
-                {addableCrews.some(needsApproval) && <p className="note">{t('ch.crew.join.note')}</p>}
+                {addableCrews.some(needsApproval) && <p className="note">{isDmRoom
+                  ? (dmApprover ? t(dmApprover === channel.created_by ? 'dm.crew.join.note.opener' : 'dm.crew.join.note', { name: nameOfUser(dmApprover) }) : t('dm.crew.join.note.unknown'))
+                  : t('ch.crew.join.note')}</p>}
                 {!rows.length && <p className="note">{t('ch.add.crew.none')}</p>}
                 {rows.some((r) => r.dispatch) && <p className="note">{t('ch.add.mine.note')}</p>}
                 {channel.kind === 'private' && <p className="note">{t('ch.add.crew.note')}</p>}
@@ -2067,8 +2073,11 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
   const who = (it) => it.whoKind === 'crew' ? (crews.find((c) => c.id === it.who)?.display_name ?? t('org.crews')) : nameOfUser(it.who);
   const isNew = (it) => Date.parse(it.at) > prevSeen;
-  const shown = items.filter((it) => (kind === 'all' || it.kind === kind) && (!unreadOnly || isNew(it)));
-  const readCount = items.filter((it) => (kind === 'all' || it.kind === kind) && !isNew(it)).length;
+  // 내가 결정할 대기 참여 요청은 읽음과 무관하게 남긴다 — 결정하면 목록에서 빠진다. 시각 기준만 쓰면, 채팅을 연 사람이 나가 결재자가 된
+  // 사람은 그 전에 알림함을 연 적이 있으면 넘겨받은 요청(더 이른 시각)을 영영 못 봤다(픽스처 실측 2026-09-18, 20260918170000).
+  const pendingMine = (it) => !!it.joinReq;
+  const shown = items.filter((it) => (kind === 'all' || it.kind === kind) && (!unreadOnly || isNew(it) || pendingMine(it)));
+  const readCount = items.filter((it) => (kind === 'all' || it.kind === kind) && !isNew(it) && !pendingMine(it)).length;
   const phone = useIsPhone();
   const swipe = useSwipeTabs(INBOX_KINDS, kind, setKind, phone);
   return (<>

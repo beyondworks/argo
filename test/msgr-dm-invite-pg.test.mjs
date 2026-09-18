@@ -75,10 +75,13 @@ test('에이전트는 여럿 들어갈 수 있다 — 한 방에 한 명 제한�
   assert.equal(seats(ch, 'crew').split(',').length, 2, `에이전트 둘 (실제: ${seats(ch, 'crew')})`);
 });
 
-test('대화 중인 방에 에이전트를 나중에 부른다 — 만든 사람이 아니어도 된다', { skip }, () => {
+test('대화 중인 방에 에이전트를 나중에 부른다 — 만든 사람이 아니면 방을 연 사람의 허락을 받는다(20260918170000)', { skip }, () => {
   const ch = dm(U.owner, [{ kind: 'user', id: U.mate }]);
-  asUser(U.mate, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${CREW2}', '${U.mate}')`);
-  assert.ok(seats(ch, 'crew').includes(CREW2.slice(0, 8)), '방에 있는 사람은 자기 에이전트를 부를 수 있다');
+  fails(asUserRaw(U.mate, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${CREW2}', '${U.mate}')`), /row-level security/, '결재 없이 바로 넣기');
+  assert.equal(last(asUser(U.mate, `select public.msgr_crew_join('${ch}', '${CREW2}')`)), 'requested', '방에 있는 사람은 자기 에이전트를 요청한다');
+  const req = last(asUser(U.owner, `select id from public.msgr_channel_crew_requests where channel_id = '${ch}' and crew_id = '${CREW2}' and status = 'pending'`));
+  assert.equal(last(asUser(U.owner, `select public.msgr_crew_join_decide('${req}', true)`)), 'approved', '방을 연 사람이 허락한다');
+  assert.ok(seats(ch, 'crew').includes(CREW2.slice(0, 8)), '허락하면 들어온다');
 });
 
 test('몰래 끼워 넣는 길은 없다 — 방 밖의 사람도, 방 안의 사람도 사람을 밀어 넣지 못한다', { skip }, () => {
