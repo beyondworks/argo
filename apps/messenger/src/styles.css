@@ -240,12 +240,15 @@
 @media (prefers-reduced-motion: reduce) { .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-thread, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-dock { transition: none; } }
 .msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-dock { padding-left: calc(24px + var(--sbw, 0px)); padding-right: calc(428px + var(--sbw, 0px)); }
 .msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-dock > div { min-width: 280px; }
+@container msgr-main (max-width: 731px) { /* 입력창 하한(280) + 패널 비킴(428) + 왼쪽 24보다 좁으면 입력창이 패널 옆에 못 선다 → 패널을 받침 위에서 끝낸다 */
+  .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek) { max-height: calc(100% - var(--msgr-top-h, 63px) - 9px - var(--msgr-dock-h, 0px) - 8px); }
+}
 @container msgr-main (min-width: 1044px) {
   .msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-thread { padding-left: max(24px, calc((100% - 1124px) / 2)); padding-right: calc(max(24px, calc((100% - 1124px) / 2)) + 404px); }
   .msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-dock { padding-left: calc(max(24px, (100% - 1124px) / 2) + var(--sbw, 0px)); padding-right: calc(max(24px, (100% - 1124px) / 2) + var(--sbw, 0px) + 404px); }
 }
 .msgr-sheetwrap .msgr-crewsheet { z-index: 66; } /* 투명 스크림(.msgr-scrim.clear, z 65)보다 위 — 아니면 시트 위의 휠이 스크림에 먹혀 뒤의 스레드가 스크롤된다(유건 실측 2026-09-04) */
-.msgr-crewsheet { position: absolute; top: 72px; right: 24px; width: min(380px, calc(100% - 48px)); max-width: calc(100% - 48px); overflow-x: hidden; box-sizing: border-box; max-height: calc(100% - 96px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; }
+.msgr-crewsheet { position: absolute; top: calc(var(--msgr-top-h, 63px) + 9px); right: 24px; width: min(380px, calc(100% - 48px)); max-width: calc(100% - 48px); overflow-x: hidden; box-sizing: border-box; max-height: calc(100% - var(--msgr-top-h, 63px) - 33px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; } /* top·max-height는 상단 바 실제 높이(--msgr-top-h, Channel이 ResizeObserver로 갱신, 기본 63 = 종전 72/96px) 기준 — 두 줄로 접힌 상단 바를 덮지 않게 */
 .msgr-crewsheet .head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 /* 새 그룹 대화 — PC 모양(유건 제보 2026-09-16). 이 시트의 행·머리 규칙은 폰 미디어쿼리 안에만 있어서,
    PC에서는 머리가 크루 시트의 40px 아바타 칸에 끼어 제목이 두 줄로 갈렸고 고르는 행이 검색칸 옆으로 흘렀다.    폰 시트는 건드리지 않는다(데스크톱·폰 상호 간섭 0 — 폰 모양은 폰 규칙이 정한다). */

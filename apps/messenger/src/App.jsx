@@ -3049,6 +3049,18 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = []
 function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
+  const topRef = useRef(null);
+  // 상단 바 실제 높이 → .msgr-main의 --msgr-top-h. 우측 패널·크루 시트가 그 아래에서 시작한다(상단 바가 두 줄로 접히면 72px 고정 패널이
+  // 둘째 줄의 참여 버튼·탭을 덮어 누를 수 없던 것, 검수 #603 MEDIUM). 폭으로 추정하지 않는다 — 번역·이름 길이에 흔들리지 않게
+  // 입력창 받침(.msgr-dock) 높이도 같이 — 본문이 좁아 입력창이 패널 옆으로 비켜서지 못하면 패널이 받침 위에서 끝난다(900·820px 크루 시트가 전송 버튼을 덮던 것)
+  useLayoutEffect(() => {
+    const el = topRef.current; const main = el?.parentElement;
+    if (!el || !main || typeof ResizeObserver === 'undefined') return undefined;
+    const dock = main.querySelector(':scope > .msgr-dock');
+    const set = () => { main.style.setProperty('--msgr-top-h', `${el.offsetHeight}px`); main.style.setProperty('--msgr-dock-h', `${dock?.offsetHeight ?? 0}px`); };
+    set(); const ro = new ResizeObserver(set); ro.observe(el); if (dock) ro.observe(dock);
+    return () => { ro.disconnect(); main.style.removeProperty('--msgr-top-h'); main.style.removeProperty('--msgr-dock-h'); };
+  }, [preview]); // 미리보기(가입 막대) ↔ 입력창이 바뀌면 받침을 다시 잡는다
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [pending, setPending] = useState([]); // 보냈지만 서버 행이 아직 안 온 내 글(낙관적 렌더)
   const [tab, setTab] = useState('all');
@@ -3201,7 +3213,7 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'check', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
-    <div className="msgr-top">
+    <div className="msgr-top" ref={topRef}>
       <NavButton onMenu={onMenu} />
       <button type="button" className="title msgr-titlebtn" onClick={onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{phone ? <span className="msgr-channel-name">{channel.kind === 'dm' ? dmName(channel) : channel.name}</span> : (channel.kind === 'dm' ? dmName(channel) : channel.name)}<I name="caret" size={13} className="caret" /></button>
       {channel.org_id === null && <span className="msgr-klabel msgr-scope-badge">{t('personal.badge')}</span>}
