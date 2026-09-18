@@ -24,3 +24,14 @@ export function messageEvent(payload, at = Date.now()) {
 export function broadcastEvent(kind, payload, at = Date.now()) {
   return { ...payload, kind, at };
 }
+
+// 창이 다시 보이거나 포커스를 받는 순간 한 번 따라잡는다. 창이 가려져 있는 동안 웹뷰는 타이머를 조이고
+// 방송 처리를 미룰 수 있어서, 앞으로 온 뒤 다음 폴(최대 10초)이나 밀린 방송이 하나씩 처리될 때까지
+// 글이 늦게·하나씩 뜬다. 앞으로 오는 순간 조회 한 번이면 밀린 글이 한꺼번에 들어온다.
+// visibilitychange와 focus는 보통 연달아 오므로 짧은 간격 안에서는 한 번만 부른다.
+export function onForeground(fn, { doc = globalThis.document, win = globalThis.window, now = Date.now, gapMs = 500 } = {}) {
+  let last = -Infinity;
+  const fire = () => { if (doc.visibilityState === 'hidden') return; const t = now(); if (t - last < gapMs) return; last = t; fn(); };
+  doc.addEventListener('visibilitychange', fire); win.addEventListener('focus', fire);
+  return () => { doc.removeEventListener('visibilitychange', fire); win.removeEventListener('focus', fire); };
+}
