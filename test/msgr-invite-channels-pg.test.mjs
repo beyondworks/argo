@@ -332,3 +332,30 @@ test('가드 예외는 수락 본체만: 플래그를 위조해 유효한 관리
   assert.equal(sql(`select count(*) from public.msgr_invite_uses where invite_id = '${adminInvite}'`), '0');
   fails(asUserRaw(U.member, `insert into public.msgr_invite_uses (invite_id, user_id) values ('${adminInvite}', '${U.member}')`), /permission denied|row-level security/, '사용 기록은 사용자가 쓸 수 없다');
 });
+
+test('재검토 A: 역할이 올라가는 수락은 센다 — 1회용 관리자 링크를 기존 멤버 둘이 열면 첫째만 admin(use_count 1), 둘째는 exhausted', { skip }, () => {
+  const a = '99999999-9999-4999-8999-99999999e001'; const b = '99999999-9999-4999-8999-99999999e002';
+  for (const [id, mail] of [[a, 'ra'], [b, 'rb']]) {
+    sql(`insert into auth.users (id, created_at, email) values ('${id}', now(), '${mail}@example.test') on conflict do nothing`);
+    v2(id, codeOf(mkInvite(U.owner, { role: `'member'` })));
+  }
+  const roleOf = (u) => sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${u}'`);
+  const code = codeOf(mkInvite(U.owner, { role: `'admin'`, max_uses: '1' }));
+  v2(a, code);
+  assert.equal(roleOf(a), 'admin');
+  assert.equal(sql(`select use_count || '|' || accepted_by from public.msgr_invites where code = '${code}'`), `1|${a}`, '역할 상승은 사용 1회');
+  fails(asUserRaw(b, `select public.msgr_accept_invite_v2('${code}')`), /msgr_invite_exhausted/, '둘째 기존 멤버');
+  fails(asUserRaw(b, `select public.msgr_accept_invite('${code}')`), /msgr_invite_invalid/, 'v1도 같은 판정');
+  assert.equal(roleOf(b), 'member', '둘째는 그대로 member');
+  globalThis.__raisedAdmin = a; globalThis.__adminInvite = sql(`select id from public.msgr_invites where code = '${code}'`);
+});
+
+test('재검토 B: 과거에 그 초대를 쓴 사람이 강등된 뒤 위조 플래그로 역할을 되돌리지 못한다(가드는 이 트랜잭션의 기록만 인정)', { skip }, () => {
+  const a = globalThis.__raisedAdmin; const id = globalThis.__adminInvite;
+  sql(`update public.msgr_org_members set role = 'member' where org_id = '${ORG}' and user_id = '${a}'`); // 관리자가 강등
+  assert.equal(sql(`select count(*) from public.msgr_invite_uses where invite_id = '${id}' and user_id = '${a}'`), '1', '전제: 과거 사용 기록');
+  const r = asUserRaw(a, `select set_config('msgr.invite_accept', '${id}', false); update public.msgr_org_members set role = 'admin' where org_id = '${ORG}' and user_id = '${a}'`);
+  assert.notEqual(r.status, 0, '과거 기록 + 위조 플래그로 역할 상승이 허용됨');
+  assert.match(r.stderr, /msgr_member_self_only_name/);
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${a}'`), 'member');
+});
