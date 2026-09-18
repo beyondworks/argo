@@ -137,8 +137,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
     catch (e) { if (e.aborted || e.timedOut || e.httpStatus !== undefined || /^API Error: /.test(String(e.message))) throw e; throw Object.assign(new Error(String(e.message || e)), { cause: e }); } // CLI 껍질(exit 코드 문구) 금지 — 분리 검수 MEDIUM-5. t0h는 진단용
   }
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
-  // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는
-  // 이미 allowedTools:[]로 무도구지만 CLI 러너는 caps로 전권을 받아 왔다(danger-full-access/yolo).
+  // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는 oneshot.mjs의
+  // noToolHooks가 도구를 전부 거부한다(allowedTools:[]는 자동 허용 목록일 뿐 도구를 끄지 않는다 — 작업 폴더 안 읽기가
+  // 열려 있었다, 2026-09-18 실제 SDK 실측). CLI 러너는 caps로 전권을 받아 왔다(danger-full-access/yolo).
   // 신뢰할 수 없는 제3자 원문을 요약하는 턴이 전권으로 도는 것을 막는다(분리 검수 2026-08-29 HIGH-1):
   // caps를 전부 false로 눌러 gemini(excludeTools)·agy(--sandbox)를 닫고, 아래 codex는 sandbox를
   // read-only로 분기한다. 기본값 false라 크루 채팅·기존 oneshot 경로는 완전 무변경.

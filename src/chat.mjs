@@ -31,7 +31,7 @@ import { appendEvent, readEvents } from './events.mjs'; // readEvents — mcp �
 import { loadCapabilities } from './capabilities.mjs'; // CAPABILITIES 직참조는 결재 분기 제거로 소멸(#191 검수)
 import { activeFolders } from './workroots.mjs';
 import { fold } from './pathcase.mjs'; // 폴더 비교는 판정(activePin)과 같은 잣대로 — 대소문자 변형 대응
-import { makePermissionGate } from './permission-gate.mjs';
+import { makePermissionGate, gateHooks } from './permission-gate.mjs';
 import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커넥터 = 러너 무관 단일 실행 경로(설계서 §2-2)
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
@@ -1555,6 +1555,7 @@ ${lang === 'en'
     + fallbackDirective;
   const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || openrouterFallbackModel(wantModel)) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
   __turnControl.check();
+  const sdkGate = makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots); // SDK 경로 — canUseTool과 PreToolUse 훅이 같은 판정
   const q = nativeOn ? nativeQuery({
     wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)
@@ -1585,7 +1586,9 @@ ${lang === 'en'
       // 전권은 결재를 없애는 것이지 하드라인을 없애는 것이 아니다(capabilities.mjs 주석).
       permissionMode: 'default',
       allowedTools: readTools,
-      canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),
+      canUseTool: sdkGate,
+      // 작업 폴더 안 읽기 전용 동작(Read·cat)은 SDK가 canUseTool에 묻지 않고 허용한다 — 훅이 그보다 먼저 같은 게이트를 태운다(gateHooks 주석).
+      hooks: gateHooks(sdkGate, lang),
       disallowedTools: [], // 전권 — 막는 것은 게이트의 금지 구역뿐
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       ...(resumeId ? { resume: resumeId } : {}),

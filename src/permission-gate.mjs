@@ -434,6 +434,27 @@ export const stringLeaves = (v, depth = 0, out = []) => {
   else if (typeof v === 'object') for (const x of Object.values(v)) stringLeaves(x, depth + 1, out);
   return out;
 };
+/** SDK PreToolUse 훅 — **모든** 도구 호출을 같은 게이트에 태운다. SDK는 기본 권한 모드에서 작업 폴더 안의 **읽기 전용 동작**(Read,
+    `cat` 같은 읽기 전용 셸)을 canUseTool에 묻지 않고 허용한다 — 실제 SDK 실측(2026-09-18, 0.3.258): 주인 턴의 금지 구역
+    `.connector-secrets.json`이 Read·`cat`으로 모델에 전달됐고 게이트는 한 번도 불리지 않았다. 훅은 그 자동 허용보다 먼저 돈다.
+    canUseTool과 **같은 게이트 인스턴스**를 받는다(판정이 두 벌 생기지 않게). 거부만 전달하고 허용은 빈 값 — 이후 흐름(자동 허용·
+    canUseTool)은 그대로다(게이트의 허용은 입력을 바꾸지 않는다). 게이트가 던지면 거부(fail-closed) — 훅 오류로 도구가 열리지 않게. */
+export function gateHooks(gate, lang = 'ko') {
+  const deny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
+  return { PreToolUse: [{ hooks: [async (input) => {
+    try {
+      const d = await gate(input?.tool_name, input?.tool_input ?? {});
+      return d?.behavior === 'deny' ? deny(d.message) : {};
+    } catch { return deny(FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko']); }
+  }] }] };
+}
+
+/** 도구 없는 SDK 호출(순수 생성 — oneshot)의 PreToolUse 훅: 전부 거부. allowedTools: []는 도구를 끄지 않는다(자동 허용 목록일 뿐) —
+    같은 실측에서 "외부 글 요약" 단발 호출이 회사 폴더의 금지 구역 토큰까지 Read로 읽었다. 신뢰할 수 없는 원문을 다루는 자리라
+    원문에 심은 지시가 곧 자격 유출이 된다. */
+export const noToolHooks = (lang = 'ko') => ({ PreToolUse: [{ hooks: [async () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny',
+  permissionDecisionReason: lang === 'en' ? 'This is a text-only call — no tools.' : '도구 없는 호출이다 — 도구를 쓰지 않는다.' } })] }] });
+
 export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko', workRoots = [], opts = {}) {
   const isForbidden = makeIsForbidden(wsRoot);
   const denyHard = () => ({ behavior: 'deny', message: FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko'] });
