@@ -3050,6 +3050,18 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = []
 function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
+  const topRef = useRef(null);
+  // 상단 바 실제 높이 → .msgr-main의 --msgr-top-h. 우측 패널·크루 시트가 그 아래에서 시작한다(상단 바가 두 줄로 접히면 72px 고정 패널이
+  // 둘째 줄의 참여 버튼·탭을 덮어 누를 수 없던 것, 검수 #603 MEDIUM). 폭으로 추정하지 않는다 — 번역·이름 길이에 흔들리지 않게
+  // 입력창 받침(.msgr-dock) 높이도 같이 — 본문이 좁아 입력창이 패널 옆으로 비켜서지 못하면 패널이 받침 위에서 끝난다(900·820px 크루 시트가 전송 버튼을 덮던 것)
+  useLayoutEffect(() => {
+    const el = topRef.current; const main = el?.parentElement;
+    if (!el || !main || typeof ResizeObserver === 'undefined') return undefined;
+    const dock = main.querySelector(':scope > .msgr-dock');
+    const set = () => { main.style.setProperty('--msgr-top-h', `${el.offsetHeight}px`); main.style.setProperty('--msgr-dock-h', `${dock?.offsetHeight ?? 0}px`); };
+    set(); const ro = new ResizeObserver(set); ro.observe(el); if (dock) ro.observe(dock);
+    return () => { ro.disconnect(); main.style.removeProperty('--msgr-top-h'); main.style.removeProperty('--msgr-dock-h'); };
+  }, [preview]); // 미리보기(가입 막대) ↔ 입력창이 바뀌면 받침을 다시 잡는다
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [pending, setPending] = useState([]); // 보냈지만 서버 행이 아직 안 온 내 글(낙관적 렌더)
   const [tab, setTab] = useState('all');
@@ -3202,7 +3214,7 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'check', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
-    <div className="msgr-top">
+    <div className="msgr-top" ref={topRef}>
       <NavButton onMenu={onMenu} />
       <button type="button" className="title msgr-titlebtn" onClick={onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{phone ? <span className="msgr-channel-name">{channel.kind === 'dm' ? dmName(channel) : channel.name}</span> : (channel.kind === 'dm' ? dmName(channel) : channel.name)}<I name="caret" size={13} className="caret" /></button>
       {channel.org_id === null && <span className="msgr-klabel msgr-scope-badge">{t('personal.badge')}</span>}
@@ -3214,7 +3226,7 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
       {!isPersonal && <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false} aria-label={t('ch.memoryOff')}><I name={channel.crew_memory === false ? 'memoff' : 'memory'} size={14} /></button>}</span>
       <button type="button" className="members" onClick={onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{phone && <I name="dots" size={20} className="ph-dots" />}{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" userId={m.user_id} />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} crewId={c.id} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
       {!isPersonal && <button type="button" className="btn sm msgr-work-button" onClick={() => setWorkOpen(true)} aria-label={t('work.title')}>{t('work.button')}</button>}
-      <div className="msgr-seg" role="tablist">{tabs.map(([k, ic, n]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{ic && <I name={ic} size={13} />}{t(`tab.${k}`)}{n > 0 && <span className="n">{n}</span>}</button>)}</div>
+      <div className="msgr-seg" role="tablist">{tabs.map(([k, ic, n]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)} title={t(`tab.${k}`)} aria-label={n > 0 ? `${t(`tab.${k}`)} ${n}` : t(`tab.${k}`)}>{ic && <I name={ic} size={13} />}<span className={ic ? 'lbl' : undefined}>{t(`tab.${k}`)}</span>{n > 0 && <span className="n">{n}</span>}</button>)}</div>{/* .lbl = 좁은 폭에서 숨기는 글자(아이콘 있는 탭만). 이름은 title·aria-label로 남는다 */}
     </div>
     <div className="msgr-thread" ref={feed}>
       <div className="msgr-spine">
