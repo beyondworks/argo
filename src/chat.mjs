@@ -35,7 +35,7 @@ import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
-import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey } from './thread.mjs';
+import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope } from './thread.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
@@ -533,7 +533,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ action, reason }) => {
       // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다 — 같은 크루의 동시 턴에서도 오배달 없음)
       const item = await addApproval(wsId, { slug: fromSlug, ...(delegatedBy ? { from: delegatedBy } : {}), action, reason,
-        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}) });
+        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), ...approvalScope(mirrorCtx) });
       return text(`결재 요청이 등록되었다(${item.id}). 승인 전에는 절대 그 행동을 실행하지 마라. 지금은 "결재를 올렸고 승인되면 진행하겠다"고 사용자에게 알리고 턴을 마무리하라.${await channelHealthNote()}`);
     },
   );
@@ -566,7 +566,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         // catalog는 주인 결재로 — 완결 경로(approval-actions.mjs kind:'mcp')가 이미 있다(전권 전환 전 대기 항목용으로 남겨 둔 것).
         if (source === 'host') return guestNo(lang === 'en' ? 'Importing a tool from the owner\'s computer' : '주인 컴퓨터의 도구 가져오기');
         const item = await addApproval(wsId, { slug: fromSlug, kind: 'mcp', action: lang === 'en' ? `Install tool: ${cleanId}` : `도구 설치: ${cleanId}`,
-          reason: String(why ?? '').slice(0, 500), payload: { source: 'catalog', id: cleanId }, ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}) });
+          reason: String(why ?? '').slice(0, 500), payload: { source: 'catalog', id: cleanId }, ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), ...approvalScope(mirrorCtx) });
         return text(lang === 'en' ? `Filed an approval for the owner to install "${cleanId}" (${item.id}). Do not say it is installed until approved.` : `도구 "${cleanId}" 설치를 주인 결재로 올렸다(${item.id}). 승인 전에는 설치된 것처럼 말하지 마라.`);
       }
       // 준비 작업 자동 승인 — 도구 설치는 되돌리기 쉽고(설정에서 제거) 회사 밖으로 나가지 않는다.
@@ -611,11 +611,14 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         const delegated = lang === 'en' ? `(Delegated by colleague ${fromName}) ${task}` : `(동료 ${fromName}의 위임) ${task}`;
         // workFolder — 회의실 턴의 위임이면 위임받은 동료도 같은 회의 폴더를 본다(회의 프롬프트가 "동료도 같은 폴더"라
         // 약속하고 위임 결과가 방에 실린다 — 안 넘기면 위임 크루만 개인 고정으로 돈다, 분리 검수 MEDIUM-3).
-        const rulesCtx = (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules' || mirrorCtx?.orgSlug) ? { kind: 'msgr-rules', orgSlug: mirrorCtx.orgSlug, channelName: mirrorCtx.channelName ?? '' } : null; // G-3: 조직 규칙은 위임받은 동료에게도(미러·결재 각인은 kind 'msgr'만)
-        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal, mirrorCtx: rulesCtx }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
+        const rulesCtx = (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules' || mirrorCtx?.orgSlug) ? { kind: 'msgr-rules', orgSlug: mirrorCtx.orgSlug, channelName: mirrorCtx.channelName ?? '', ...(mirrorCtx.channelId ? { channelId: mirrorCtx.channelId } : {}) } : null; // G-3: 조직 규칙은 위임받은 동료에게도(미러·결재 각인은 kind 'msgr'만)
+        // 위임받은 동료도 부른 턴의 범위로 돈다 — 텔레그램 그룹·슬랙 채널·자동 턴 목적지면 그 범위 기록만 붙이고 주인 대화(범위 없는 기록)는 붙이지 않는다
+        // (CLI 러너는 세션이 없어도 최근 기록을 붙인다 — 부른 쪽이 공유 목적지면 위임 결과도 그곳에 미러된다)
+        const childCtx = rulesCtx ?? (turnScope(mirrorCtx) ? { kind: 'scope', scope: turnScope(mirrorCtx) } : null);
+        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal, mirrorCtx: childCtx }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
         // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
         const { appendTurn } = await import('./thread.mjs');
-        await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate', artifacts: r.artifacts })
+        await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate', artifacts: r.artifacts, ...(turnScope(childCtx) ? { contextScope: turnScope(childCtx) } : {}) })
           .catch(() => {});
         // 그룹 대화 미러 — 메신저 그룹에서 시작된 턴이면 상대 크루 봇이 같은 방에 결과를 발화한다(게이트웨이가 수신)
         // mirrorCtx를 이벤트에 직접 실어 보낸다 — 전역 맵 조회(동시 턴 오배달 위험)를 없앤다
@@ -745,7 +748,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       ].filter(Boolean).join(', ');
       const item = await addApproval(wsId, {
         slug: fromSlug, kind: 'profile', ...(delegatedBy ? { from: delegatedBy } : {}),
-        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
+        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), ...approvalScope(mirrorCtx), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
         action: `프로필 변경 — ${who.name}: ${summary}`, reason: why,
         payload: { slug: who.slug, changes, ...(rule ? { rule } : {}), ...(rules ? { rules } : {}), ...(sectionEdit ? sectionEdit : {}) },
       });
@@ -769,7 +772,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       if (bad) return text(bad);
       const item = await addApproval(wsId, {
         slug: fromSlug, kind: 'hire', ...(delegatedBy ? { from: delegatedBy } : {}),
-        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
+        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), ...approvalScope(mirrorCtx), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
         action: `크루 영입 — ${name ? `${name}: ` : ''}${brief}${runner ? ` (러너 ${runner}${model ? ` · ${model}` : ''})` : ''}`,
         reason: why,
         payload: { brief, ...(name ? { name } : {}), ...(team ? { team } : {}), ...(runner ? { runner } : {}), ...(model ? { model } : {}) },

@@ -305,7 +305,7 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
   // 따로 잡는다. 맥락에 담기는 요청자 사슬(손님 판정 재료)은 msgr-guest-turn.test.mjs가 행동으로 잠근다(PR-A).
   const schedSrc = readFileSync(new URL('../src/scheduler.mjs', import.meta.url), 'utf8');
   assert.match(schedSrc, /crewId: msgrCrewIdBySlug\(cid, slug, msg\.msgr\.orgId\) \?\? null, orgSlug: msg\.msgr\.orgSlug \?\? null, channelName: msg\.msgr\.channelName \?\? '' \} : null;/, '배달 턴 맥락 = 수신 크루의 메신저 id');
-  assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : \{\}\) \}\);/, '배달 턴이 채널 문맥으로');
+  assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : await briefingCtx\(cid, 'crewmail', slug\)[^\n]*\) \}\);/, '배달 턴이 채널 문맥으로(메신저 밖 쪽지는 목적지 범위 — 행동은 shared-dest-context)');
 });
 
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
@@ -492,7 +492,7 @@ test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK
   assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false, connectors: cliConnectors \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입');
   assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(mirrorCtx\?\.kind === 'msgr' \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값');
   assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');
-  assert.match(chatSrc, /const rulesCtx = \(mirrorCtx\?\.kind === 'msgr' \|\| mirrorCtx\?\.kind === 'msgr-rules' \|\| mirrorCtx\?\.orgSlug\) \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? '' \} : null;[^\n]*\n\s*const r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: rulesCtx \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만)');
+  assert.match(chatSrc, /const rulesCtx = \(mirrorCtx\?\.kind === 'msgr' \|\| mirrorCtx\?\.kind === 'msgr-rules' \|\| mirrorCtx\?\.orgSlug\) \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? ''[^\n]*\} : null;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const childCtx = rulesCtx \?\? [^\n]*\n\s*const r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: childCtx \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만)');
 });
 
 test('G-4 조직 문서 제안: 브리지 미러가 kind org_doc·payload를 싣고 카드 본문이 제안 안내, 위험 high; chat()은 propose_org_doc 도구를 메신저 턴에만 등록; 후속 문구는 "서버가 반영"', async () => {

@@ -359,7 +359,11 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
     const run = r0.msgr
       ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session })
-      : (message) => chat(wsId, r0.agentSlug, message, null, { source: 'routine' });
+      : async (message) => {
+        // 결과가 공유 목적지(슬랙 채널·텔레그램 그룹·메신저 채널)로 나가면 그 범위 맥락만 — 주인 대화를 붙이지 않는다(gateway briefingCtx, 동적 임포트 = 순환 차단)
+        const destCtx = await (await import('./gateway.mjs')).briefingCtx(wsId, 'routine', r0.agentSlug, { notifications: r0.notifications });
+        return chat(wsId, r0.agentSlug, message, null, { source: 'routine', ...(destCtx ? { mirrorCtx: destCtx } : {}) });
+      };
     const loop = isLoopRoutine(r0);
     let lang = 'ko';
     if (loop || r0.verify) { // verify도 lang을 쓴다 — 검수 MEDIUM-1: en 회사의 재시도 지시가 한국어로 나가던 것

@@ -7,7 +7,8 @@ import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
 import { chat } from './chat.mjs';
 import { mirrorCtxFromOrigin, msgrJournal } from './gateway/msgr-handoff.mjs'; // 쪽지 수신 턴의 요청자 사슬(손님 판정 재료)
-import { msgrCrewIdBySlug } from './gateway/msgr.mjs'; // 쪽지 수신 크루의 메신저 id — 결재 카드·회신이 수신 크루 이름으로 붙는다
+import { msgrCrewIdBySlug } from './gateway/msgr.mjs';
+const briefingCtx = async (...a) => (await import('./gateway.mjs')).briefingCtx(...a); // 지연 로딩 — 무거운 게이트웨이 모듈은 메신저 밖 쪽지 배달 때만 불러온다(routines.mjs의 briefingCtx 호출과 같은 방식) // 쪽지 수신 크루의 메신저 id — 결재 카드·회신이 수신 크루 이름으로 붙는다
 import { readAgentCard } from './persona.mjs';
 import { resolveRunner, isCliTurn, runnerCredType } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
@@ -240,7 +241,7 @@ export function ensureScheduler() {
               const prompt = mailPrompt(msg, 'ko', { hasTools });
               // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
               const mirrorCtx = crewmailMirrorCtx(cid, slug, msg); // 요청자 사슬(손님 판정 재료)을 잇는다 — crewmailMirrorCtx 주석
-              const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : {}) }); // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
+              const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))) }); // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
               // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
               await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts, contextScope: t.contextScope })
                 .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));

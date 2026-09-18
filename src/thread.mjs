@@ -20,6 +20,8 @@ export async function threadMtime(wsId, slug) {
 /** 턴의 기록 범위(단일 원천) — 메신저 DM은 뿌리, 메신저 채널은 채널, 텔레그램 그룹은 그 그룹 채팅 단위. 데스크톱·텔레그램 1:1은 범위 없음
     (전역 sessionId = 주인이 데스크톱·1:1에서 나눈 대화). 범위 턴이 전역 세션을 이어받으면 주인 대화가 다른 참여자가 보는 답에 샌다. */
 export function turnScope(ctx) {
+  if (ctx?.kind === 'scope') return ctx.scope ?? null; // 자동 턴(루틴·작업·쪽지·서류함)·위임·결재 후속이 목적지 범위를 실어 온 맥락(gateway briefingCtx·approvalScope)
+  if (ctx?.kind === 'msgr-rules') return ctx.channelId ? { kind: 'msgr', channelId: ctx.channelId } : null; // 메신저 위임(방어 — 지금은 넘김으로 먼저 빠져 도달하지 않는다)
   if (ctx?.kind === 'msgr') return ctx.channelId ? { kind: ctx.channelKind === 'dm' ? 'msgr-dm' : 'msgr', channelId: ctx.channelId, ...(ctx.threadRoot ? { threadRoot: ctx.threadRoot } : {}) } : null;
   if (ctx?.chatId != null && /group/.test(ctx.chatType ?? '')) return { kind: 'tg-group', chatId: String(ctx.chatId) };
   if (ctx?.kind === 'slack' && ctx.channelId) return { kind: 'slack', channelId: String(ctx.channelId) }; // 슬랙 공유 채널(1:1은 게이트웨이가 ctx를 넘기지 않는다)
@@ -29,7 +31,9 @@ export function turnScope(ctx) {
 export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId : s?.kind === 'tg-group' && s.chatId ? `tg:${s.chatId}` : s?.kind === 'slack' && s.channelId ? `slack:${s.channelId}` : null);
 export const scopedSession = (t, key) => t?.scopedSessions?.[key] ?? { sessionId: null, sessionDevice: null };
 /** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록만(채널·그룹·DM 기록이 데스크톱 대화에 섞이지 않게). */
-export const inContextScope = (m, scope) => { const k = scopeKey(scope); return k ? scopeKey(m.contextScope) === k : !m.contextScope; };
+export const inContextScope = (m, scope) => { const k = scopeKey(scope); return scope ? !!k && scopeKey(m.contextScope) === k : !m.contextScope; }; // 키 없는 범위(여러 공유 목적지 {kind:'shared'})는 아무것도 붙이지 않는다
+/** 결재 항목에 실을 범위 — 메신저가 아닌 범위 턴(텔레그램 그룹·슬랙 채널·자동 턴 목적지)에서 올린 결재의 후속이 그 범위로 돈다(approval-actions followUp). 메신저는 msgr 각인이 맡는다. */
+export const approvalScope = (ctx) => { const s = ctx?.kind === 'msgr' ? null : turnScope(ctx); return s ? { scope: s } : {}; };
 
 async function keepSession(t, sessionId, scope) {
   // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를
