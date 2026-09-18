@@ -146,6 +146,7 @@ test('채팅이 아니면 결재자 없음 — 채널은 방장 결재 그대로
 // ── 결재자 교체 경로 전수(검수 LOW-1) — 기존 사용자를 지우지 않도록 새 사람으로 ─────────────────────
 const joinOrg = (id, email) => {
   sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${email}') on conflict do nothing`);
+  sql(`update public.msgr_org_entitlements set seats = 50 where org_id = '${ORG}'`); // 새 사람을 계속 들이므로 좌석 한도(10)에 걸리지 않게
   const code = last(asUser(U.host, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.host}') returning code`));
   assert.equal(last(asUser(id, `select public.msgr_accept_invite('${code}')`)), ORG);
 };
@@ -213,4 +214,24 @@ test('요청을 볼 수 있는 사람(요청자 제외) = 결정할 수 있는 �
   const p = last(asUser(U.host, `select public.msgr_create_channel('${ORG}', 'private', 'inv-room', '[{"kind":"user","id":"${U.mate}"},{"kind":"user","id":"${U.other}"}]'::jsonb)`));
   assert.equal(join(U.other, p, OTHERC), 'requested');
   check(p, U.other, [U.host, U.mate, U.other], '비공개 채널');
+});
+
+// ── 방장은 채널 조직의 현재 멤버여야 한다(검수 #597 MEDIUM) — 읽기·결정·'방장이면 바로'가 한 판정(msgr_is_channel_host)을 본다 ──
+test('조직을 떠난 채널 생성자·관리자는 대기 요청을 읽지도, 결정하지도, 에이전트를 바로 넣지도 못한다', { skip }, () => {
+  const C = 'c8000000-0000-4000-8000-000000000008', A = 'c9000000-0000-4000-8000-000000000009';
+  joinOrg(C, 'host-left-c@example.test'); joinOrg(A, 'host-left-a@example.test');
+  const p = last(asUser(C, `select public.msgr_create_channel('${ORG}', 'private', 'left-room', '[{"kind":"user","id":"${U.mate}"},{"kind":"user","id":"${A}"}]'::jsonb)`));
+  sql(`update public.msgr_channels set admin_user_ids = array['${A}']::uuid[] where id = '${p}'`);
+  assert.equal(join(U.mate, p, MATEC), 'requested');
+  const req = reqOf(p, MATEC);
+  assert.equal(canDecide(C, p), 't', '전제: 떠나기 전에는 생성자가 방장');
+  assert.equal(canDecide(A, p), 't', '전제: 떠나기 전에는 채널 관리자가 방장');
+  sql(`update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id in ('${C}', '${A}')`);
+  for (const [who, label] of [[C, '생성자'], [A, '채널 관리자']]) {
+    assert.equal(canDecide(who, p), 'f', `떠난 ${label}는 방장이 아니다`);
+    assert.equal(seesReq(who, p), '0', `떠난 ${label}는 대기 요청을 읽지 못한다`);
+    fails(decide(who, req), /msgr_forbidden/, `떠난 ${label}의 허락`);
+    fails(asUserRaw(who, `select public.msgr_crew_join('${p}', '${COMP}')`), /msgr_forbidden/, `떠난 ${label}가 회사 에이전트를 바로 넣기(방장 경로)`);
+  }
+  assert.equal(inCh(p, MATEC), 'f'); assert.equal(inCh(p, COMP), 'f');
 });

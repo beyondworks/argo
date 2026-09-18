@@ -22,8 +22,20 @@ $$;
 revoke all on function public.msgr_dm_approver(uuid) from public, anon;
 grant execute on function public.msgr_dm_approver(uuid) to authenticated;
 
--- 에이전트 참여 요청을 결정할 수 있는가 — 채널은 방장(msgr_is_channel_host, 그대로), 채팅은 결재자.
--- msgr_is_channel_host는 넓히지 않는다: crew_join 채널 분기의 '방장이면 바로'와 앱의 방장 판정이 그것을 본다.
+-- 방장 — 채널 조직의 **현재 멤버**여야 한다(검수 #597 MEDIUM, Argo Dev 재현). 종전(0917)에는 조직에서 내보낸 채널 생성자·관리자도 방장이라
+-- decide로 허락해 에이전트를 넣을 수 있었다(옛 요청 읽기 정책이 요청 id를 가려 실질적으로만 막혀 있었다). 한 자리를 고치면 이 함수를 보는
+-- 소비자 셋이 함께 닫힌다: msgr_crew_join 채널 분기의 '방장이면 바로', msgr_can_decide_crew_join → msgr_crew_join_decide, 요청 읽기 정책.
+-- (앱의 방장 판정은 이 함수를 부르지 않는다 — 화면 표시일 뿐이고 최종은 위 셋이 막는다.)
+create or replace function public.msgr_is_channel_host(ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (select 1 from public.msgr_channels c where c.id = ch and c.kind <> 'dm'
+                     and coalesce(public.msgr_is_member(c.org_id), false)
+                     and (c.created_by = auth.uid() or auth.uid() = any (c.admin_user_ids) or coalesce(public.msgr_is_admin(c.org_id), false)))
+$$;
+revoke all on function public.msgr_is_channel_host(uuid) from public, anon;
+grant execute on function public.msgr_is_channel_host(uuid) to authenticated;
+
+-- 에이전트 참여 요청을 결정할 수 있는가 — 채널은 방장(msgr_is_channel_host), 채팅은 결재자.
 create or replace function public.msgr_can_decide_crew_join(ch uuid) returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
     -- coalesce 필수: 채팅이 아니면 결재자가 NULL이고, NULL = uid는 NULL → plpgsql `if not NULL`은 예외를 던지지 않아 요청자가 스스로 허락했다(드릴 실측)
