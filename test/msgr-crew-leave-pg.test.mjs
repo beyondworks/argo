@@ -75,7 +75,7 @@ test('주인이 비공개 채널을 나가면 그 주인의 에이전트·봇도
   assert.equal(last(asUser(U.mate, `delete from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'user' and member_id = '${U.mate}' returning member_id`)), U.mate);
   assert.equal(userIn(ch, U.mate), '0');
   for (const c of [MINE, MINE2, BOT]) assert.equal(crewIn(ch, c), '0', '주인이 나가면 같이 나간다');
-  assert.equal(crewIn(ch, OTHERS), '1', '남의 에이전트는 남는다');
+  assert.equal(crewIn(ch, OTHERS), '2', '고의 red — 단언만 뒤집음(적용은 성공해야 한다)');
   assert.equal(crewIn(ch, COMPANY), '1', '회사 에이전트는 사람이 주인이 아니다');
   const audit = sql(`select count(*) from public.msgr_audit_log where action = 'crew_left_with_owner' and meta->>'channel_id' = '${ch}'`);
   assert.equal(audit, '3', '빠진 에이전트마다 감사 기록');
