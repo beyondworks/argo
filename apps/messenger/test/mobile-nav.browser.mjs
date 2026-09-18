@@ -45,7 +45,7 @@ await tab('채팅|Chats'); await settle(); await openDm(); s = await st(); ok('�
   const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
   await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(50);
   const mid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const m = document.querySelector('.msgr-main'); return { swiping: sh.classList.contains('swiping-back'), dm: sh.classList.contains('phone-dm'), home: sh.classList.contains('phone-home'), tx: m.style.transform, p: sh.style.getPropertyValue('--swipe-p') }; });
-  ok('끄는 중: 밑에 DM 탭이 깔리고 화면이 손가락을 따라온다', mid.swiping && mid.dm && mid.home && /translateX\(1\d\dpx\)/.test(mid.tx) && Number(mid.p) > 0.2, mid);
+  ok('끄는 중: 밑에 DM 탭이 깔리고 화면이 손가락을 따라온다', mid.swiping && mid.dm && mid.home && mid.tx === 'translateX(80px)' && Number(mid.p) > 0.2, mid); // 방향이 잠긴 지점(40px)부터 따라간다 — 잠금 전 거리가 한꺼번에 반영되던 튐 없음(유건 2026-09-17)
   await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
   s = await st(); const after = await p.evaluate(() => ({ swiping: document.querySelector('.msgr-shell').classList.contains('swiping-back'), tx: document.querySelector('.msgr-main').style.transform }));
   ok('짧게 끌다 놓으면 제자리(대화 유지)·정리됨', s.page === 'chat' && !after.swiping && !after.tx, { s, after });
@@ -57,6 +57,14 @@ await tab('채팅|Chats'); await settle(); await openDm(); s = await st(); ok('�
     const early = after.filter((x) => x.page === 'chat' && x.tx === '' && !/swiping-back/.test(x.cls)); ok('전환 전에 대화 화면이 제자리로 튀는 프레임이 없다(popstate 뒤 정리)', from >= 0 && early.length === 0, { from, early: early.slice(0, 3) });
     ok('스와이프 복귀에는 pop 애니메이션이 겹치지 않는다', !after.some((x) => /anim-pop/.test(x.cls)), after.filter((x) => /anim-/.test(x.cls)).slice(0, 3)); }
   ok('스와이프 뒤 클래스·transform 정리', await p.evaluate(() => !document.querySelector('.msgr-shell').classList.contains('swiping-back') && !document.querySelector('.msgr-main').style.transform));
+  // 유건 2026-09-17: 화면 왼쪽 절반(중앙 근처)에서 시작해도 뒤로 / 되돌리며 놓으면 제자리 / 입력창에서 시작하면 뒤로가기 아님
+  await openDm(); await touch('touchStart', 180, 420); await touch('touchMove', 200, 421); await touch('touchMove', 330, 423); await p.waitForTimeout(30); await touch('touchEnd'); await p.waitForTimeout(700);
+  s = await st(); ok('중앙 근처(180px)에서 시작해도 뒤로', s.page === 'dm' && s.depth === 0, s);
+  await openDm(); await touch('touchStart', 20, 420); for (const x of [40, 90, 140, 190, 220]) { await touch('touchMove', x, 421); await p.waitForTimeout(20); } for (const x of [200, 180, 160]) { await touch('touchMove', x, 421); await p.waitForTimeout(20); } await touch('touchEnd'); await p.waitForTimeout(600);
+  s = await st(); ok('밀었다가 되돌리며 놓으면 제자리', s.page === 'chat' && s.depth === 1, s);
+  const box = await p.locator('.msgr-composer textarea').boundingBox();
+  for (const [label, x] of [['입력창 가운데', box.x + box.width / 3], ['입력줄 첨부 버튼', box.x + 10]]) { await touch('touchStart', x, box.y + box.height / 2); await touch('touchMove', x + 40, box.y + box.height / 2 + 1); await touch('touchMove', x + 200, box.y + box.height / 2 + 2); await touch('touchEnd'); await p.waitForTimeout(600); s = await st(); ok(`${label}에서 시작한 가로 끌기는 뒤로가기가 아니다`, s.page === 'chat', s); }
+  if ((await st()).page === 'chat') { await back(); }
 }
 // 화면 전환 애니메이션(유건 2026-09-15): 대화 열기 = push, 하단 탭 전환 = tab, 뒤로 버튼 = pop. 300ms 뒤 클래스 해제
 {

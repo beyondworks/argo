@@ -3,6 +3,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { resolveTab } from './tabs-state.mjs';
 import { marked } from 'marked';
+import { labelTableCells } from './md-table.mjs';
 import { useLang } from './i18n';
 import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
 import { dropUpClamp } from './c/[ws]/zoom-math.mjs'; // 표시 배율(#334) 좌표 환산 계열 — DropUp 패널 클램프
@@ -296,7 +297,7 @@ export const Markdown = memo(function Markdown({ text, onWikiLink, wsId }) {
       const attr = p.replace(/"/g, '&quot;'); // marked 이스케이프에 의존하지 않고 속성 breakout 자체 차단
       return `<span class="wikilink" data-wiki="${attr}">${p}</span>`;
     });
-    return out;
+    return labelTableCells(out);
   }, [text, wsId]);
   return (
     <div
