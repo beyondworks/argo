@@ -24,7 +24,7 @@ async function seed(ws, { lang = 'ko' } = {}) {
   await writeFile(join(p.root, 'company.json'), JSON.stringify({ name: ws, lang }));
   await writeFile(join(p.chats, 'room-main.json'), JSON.stringify({ messages: [], sid: 1 }));
   for (const [slug, name] of CREW) await writeFile(join(p.root, 'agents', `${slug}.md`), `---\nname: ${name}\nrole: 검증\nrunner: claude\n---\n검증용.\n`);
-  stub.state.calls.length = 0; stub.state.delayMs = 0; stub.state.inflight = 0; stub.state.maxInflight = 0; stub.state.reply = (slug) => `${slug} 답변`;
+  stub.state.calls.length = 0; stub.state.delayMs = 0; stub.state.holdUntil = 0; stub.state.inflight = 0; stub.state.maxInflight = 0; stub.state.reply = (slug) => `${slug} 답변`;
 }
 const kinds = async (ws) => (await loadRoom(ws)).messages.map((m) => m.kind ?? m.who);
 
@@ -37,7 +37,7 @@ test('이름 멘션 4명은 동시에 시작한다 — 총 소요가 발언 1건
 });
 
 test('동시 상한 — concurrency 2면 동시 진행이 2를 넘지 않고, 4명은 두 묶음으로 돈다', async () => {
-  await seed('rp-cap'); stub.state.delayMs = 150;
+  await seed('rp-cap'); stub.state.delayMs = 150; stub.state.holdUntil = 2; // 겹침은 순서로 — 준비 IO가 느려도 두 자리가 차야 발언이 진행된다
   await runRoomTurn('rp-cap', '@전체 의견', [], { rounds: 1, concurrency: 2 });
   assert.equal(stub.state.maxInflight, 2, '상한 초과 = Claude 러너 CLI 프로세스 폭주 / 1이면 동시가 아니다');
   assert.ok(ROOM_CONCURRENCY >= 1);
@@ -95,11 +95,11 @@ test('일부 실패 — 나머지는 계속 답하고 실패는 줄로 남으며
 });
 
 test('마커 v2 — 진행 중 getRoomTurn이 발언자별 상태(speaking/queued/done)·라운드·인원을 싣고, 끝나면 null', async () => {
-  await seed('rp-marker'); stub.state.delayMs = 600;
+  await seed('rp-marker'); stub.state.delayMs = 600; stub.state.holdUntil = 2; // 두 명이 함께 발언 중인 구간을 순서로 보장한다
   const p = runRoomTurn('rp-marker', '@비스트 @울프 @슈리 @에드나 검토', [], { rounds: 1, concurrency: 2 });
-  // 폴링형 — 부하 아래 고정 지연 샘플은 흔들린다. 두 명이 발언 중이 될 때까지 기다린다(상한 600ms 안).
+  // 폴링형 — 부하 아래 고정 지연 샘플은 흔들린다. 두 명이 발언 중이 될 때까지 기다린다(상한 3초 — 윈도우 CI에서 600ms 창을 놓쳤다).
   let mid = null;
-  for (let i = 0; i < 60 && !(mid?.speakers?.filter((s) => s.state === 'speaking').length === 2); i++) { await new Promise((r) => setTimeout(r, 10)); mid = await getRoomTurn('rp-marker'); }
+  for (let i = 0; i < 300 && !(mid?.speakers?.filter((s) => s.state === 'speaking').length === 2); i++) { await new Promise((r) => setTimeout(r, 10)); mid = await getRoomTurn('rp-marker'); }
   assert.equal(mid?.v, 2); assert.equal(mid.total, 4); assert.equal(mid.round, 1); assert.equal(mid.rounds, 1);
   const states = Object.fromEntries(mid.speakers.map((s) => [s.slug, s.state]));
   assert.deepEqual(states, { beast: 'speaking', wolf: 'speaking', shuri: 'queued', edna: 'queued' }, '상한 2 — 둘은 발언 중, 둘은 대기');

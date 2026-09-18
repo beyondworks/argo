@@ -449,6 +449,10 @@ test('같은 크루 앞으로 온 쪽지는 그 크루 안에서 순차, 크루 
   await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-other', message: 'x' });
   await mod.deliverCrewMail(WS, async (slug) => {
     inflight[slug] = (inflight[slug] ?? 0) + 1; max[slug] = Math.max(max[slug] ?? 0, inflight[slug]); total += 1; totalMax = Math.max(totalMax, total);
+    // 겹침은 순서로 — 크루 간 겹침이 한 번 관찰될 때까지(최대 3초) 턴을 붙잡는다. 벽시계(80ms)에 맡기면 느린 러너에서
+    // 다음 턴의 앞 파일 IO가 80ms보다 길어 구간이 비껴 1로 찍혔다(윈도우 CI 실측 2026-09-18, run 35296449429 attempt 1).
+    // 크루 간 동시가 무너지면 3초 뒤 풀려 1로 남는다(=실패로 잡힌다). 같은 크루 순차는 붙잡기가 새 동시성을 만들지 않으므로 그대로 잡힌다.
+    for (const until = Date.now() + 3_000; totalMax < 2 && Date.now() < until;) await sleep(5);
     await sleep(80);
     inflight[slug] -= 1; total -= 1;
   }, { limit: 10, concurrency: 8 });

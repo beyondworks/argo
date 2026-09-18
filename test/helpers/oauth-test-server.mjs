@@ -68,7 +68,7 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
       access.set(at, { clientId: client.client_id, scopes: rec.scopes, expiresAt: Date.now() + accessTtlMs });
       refresh.set(rt, { clientId: client.client_id, scopes: rec.scopes });
       counters.codeGrants += 1;
-      return { access_token: at, token_type: 'bearer', expires_in: Math.floor(accessTtlMs / 1000), refresh_token: rt, scope: rec.scopes.join(' ') };
+      return { access_token: at, token_type: 'bearer', expires_in: Math.max(1, Math.ceil(accessTtlMs / 1000)), refresh_token: rt, scope: rec.scopes.join(' ') };
     },
     async exchangeRefreshToken(client, refreshToken) {
       const rec = refresh.get(refreshToken);
@@ -76,7 +76,7 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
       const at = randomBytes(24).toString('hex');
       access.set(at, { clientId: client.client_id, scopes: rec.scopes, expiresAt: Date.now() + accessTtlMs });
       counters.refreshGrants += 1;
-      return { access_token: at, token_type: 'bearer', expires_in: Math.floor(accessTtlMs / 1000), scope: rec.scopes.join(' ') };
+      return { access_token: at, token_type: 'bearer', expires_in: Math.max(1, Math.ceil(accessTtlMs / 1000)), scope: rec.scopes.join(' ') };
     },
     async verifyAccessToken(token) {
       const rec = access.get(token);

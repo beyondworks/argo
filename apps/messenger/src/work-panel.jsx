@@ -11,7 +11,7 @@ const POLL_MS = 15_000;
 const TERMINAL = new Set(['completed', 'cancelled']);
 const stamp = (value, lang) => value ? new Date(value).toLocaleString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const checked = async (request) => { const { data, error } = await request; if (error) throw error; return data; };
-const missingSchema = (error) => /PGRST20[245]|42P01|42703|42883/.test(error?.code ?? '') || /schema cache|does not exist|Could not find the (table|function)/i.test(error?.message ?? '');
+export const missingSchema = (error) => /PGRST20[245]|42P01|42703|42883/.test(error?.code ?? '') || /schema cache|does not exist|Could not find the (table|function)/i.test(error?.message ?? '');
 const errorText = (error, t) => {
   const message = error?.message ?? '';
   if (missingSchema(error)) return t('work.error.upgrade');
