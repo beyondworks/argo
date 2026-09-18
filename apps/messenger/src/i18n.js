@@ -489,6 +489,7 @@ export const DICT = {
   'set.policy.crewEngine.free': ['무료', 'free'],
   'set.policy.saved': ['조직 정책을 저장했습니다.', 'Organization policy saved.'],
   'set.policy.adminOnly': ['조직 정책은 관리자만 바꿀 수 있습니다.', 'Only admins can change organization policy.'],
+  'set.policy.approverNotMember': ['결재권자는 지금 조직에 있는 멤버·관리자만 지정할 수 있습니다. 목록을 다시 불러온 뒤 골라 주세요.', 'Approvers must be current members or admins of the organization. Reload the list and choose again.'],
   'set.account': ['계정', 'Account'],
   'set.name': ['표시명', 'Display name'],
   'set.name.placeholder': ['이 조직에서 보일 이름', 'Name shown in this organization'],
