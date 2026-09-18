@@ -1014,7 +1014,7 @@ function Shell({ session }) {
   const hostChannels = useMemo(() => new Set(inviteChannels.filter((c) => c.created_by === uid || (c.admin_user_ids ?? []).includes(uid)).map((c) => c.id)), [inviteChannels, uid]); // 서버 msgr_is_channel_host와 같은 규칙(관리자는 창이 따로 취급)
   const orgInvite = () => { const pub = inviteChannels.filter((c) => c.kind === 'public').map((c) => c.id); setInviteFor({ channelIds: pub.length ? pub : chId ? [chId] : [], role: 'member' }); }; // 공개 채널 전부, 없으면 지금 보는 채널
   const createInviteCode = (opts) => createInvite(supabase, { orgId, uid, ...opts }); // { id, code } — 창이 버린 링크는 discardInvite로 정리
-  const inviteShare = (code) => inviteShareText(code, { origin: location.origin, pathname: location.pathname, t });
+  const inviteShare = (code, { channels: chs = [], days = null } = {}) => inviteShareText(code, { origin: location.origin, pathname: location.pathname, t, inviter: nameOfUser(uid), org: org?.name ?? '', channels: chs, days }); // 초대 창이 지금 고른 채널·만료를 넘긴다
   const inviteLinkOf = (code) => inviteLink(code, { origin: location.origin, pathname: location.pathname }) ?? code; // 앱(tauri://)은 열 링크가 없어 코드만
   const manageInvites = () => { setInviteFor(null); setChSheet(false); setSettingsTab('members'); setPage('settings'); setRail(false); }; // 설정 → 멤버의 초대 관리 목록(관리자만 보인다)
   const orgAdmins = members.filter((m) => ['owner', 'admin'].includes(m.role) && m.user_id !== org?.service_user_id);
@@ -2748,10 +2748,10 @@ function OrgCard({ org, uid, members, channels = [], onInvite = null, nameOfUser
   };
   const makeInvite = async (role = 'member') => {
     setBusy(true);
-    const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role, created_by: uid }).select('code').single();
+    const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role, created_by: uid }).select('code, expires_at').single();
     setBusy(false);
     if (res.error) return onError(res.error.message);
-    const share = inviteShareText(res.data.code, { origin: location.origin, pathname: location.pathname, t });
+    const share = inviteShareText(res.data.code, { origin: location.origin, pathname: location.pathname, t, inviter: nameOfUser(uid), org: org.name, days: daysLeft(res.data) });
     await navigator.clipboard?.writeText(share).catch(() => {});
     onNote(`${t('org.inviteMade')} ${share}`); loadInvites().catch(() => {});
   };
@@ -2765,7 +2765,7 @@ function OrgCard({ org, uid, members, channels = [], onInvite = null, nameOfUser
     const rows = await q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(50));
     setAudit(rows);
   };
-  const copyLink = async (inv) => { const share = inviteShareText(inv.code, { origin: location.origin, pathname: location.pathname, t }); await navigator.clipboard?.writeText(share).catch(() => {}); onNote(`${t('org.invite.copied')} ${share}`); };
+  const copyLink = async (inv) => { const share = inviteShareText(inv.code, { origin: location.origin, pathname: location.pathname, t, inviter: nameOfUser(inv.created_by ?? uid), org: org.name, channels: (inv.channel_ids ?? (inv.channel_id ? [inv.channel_id] : [])).map((id) => channels.find((c) => c.id === id)?.name).filter(Boolean), days: daysLeft(inv) }); await navigator.clipboard?.writeText(share).catch(() => {}); onNote(`${t('org.invite.copied')} ${share}`); };
   const live = invites.filter((i) => inviteStatus(i) === 'live');
   const past = invites.filter((i) => !i.for_node && inviteStatus(i) !== 'live'); // 만료·소진·취소는 접힌 "지난 초대"로(설계서 2-3)
   const open = live.filter((i) => !i.for_node); const nodeInvite = live.find((i) => i.for_node) ?? null; // I-4: 노드용 코드는 사람 초대 목록에 섞지 않는다(노드 섹션에서 명령으로)

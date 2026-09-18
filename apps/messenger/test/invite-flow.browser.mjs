@@ -52,6 +52,9 @@ const joinWith = async (page, text) => { await menu(page, '초대 링크·코드
   await page.waitForFunction(() => document.querySelector('.inv-copy')?.textContent.includes('복사됨'));
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   check('clipboard.hasCode', clip.includes(inv.code), clip);
+  const lines = clip.split('\n');
+  check('clipboard.plain3', lines.length === 3 && lines[0].includes('#Lounge') && lines[0].includes('Fixture Organization') && lines[1].endsWith(`?invite=${inv.code}`)
+    && lines[2].includes("'초대 링크·코드로 참여'") && lines[2].includes('7일 안에') && !/\*\*/.test(clip), clip); // 공유 문구 3줄 평문(유건 2026-09-18)
   await page.keyboard.press('Escape');
   check('esc.closes', (await page.locator('.inv-dialog').count()) === 0);
 

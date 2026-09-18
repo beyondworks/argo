@@ -51,7 +51,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   const setRole = (role) => { if (role === 'member' && !perm.member) return; setS((x) => ({ ...x, role }));
     setPicked((cur) => { const ok = cur.filter((id) => channelPick(eligible.find((c) => c.id === id), { isAdmin, hostOf }, role).ok); return role === 'guest' ? ok.slice(0, 1) : ok; }); };
   const markCopied = () => { if (cur.current) cur.current.copied = true; };
-  const copy = async () => { if (!link) return; markCopied(); try { await navigator.clipboard.writeText(shareText ? shareText(link) : link); setCopied(true); } catch { setErr(t('inv.copy.fail')); } };
+  const copy = async () => { if (!link) return; markCopied(); try { await navigator.clipboard.writeText(shareText ? shareText(link, { channels: names, days: s.expiryDays }) : link); setCopied(true); } catch { setErr(t('inv.copy.fail')); } };
   const keydown = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
     if (e.key !== 'Tab') return;

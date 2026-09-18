@@ -33,7 +33,7 @@ function App() {
   return <><Sprite />
     <div style={{ padding: 24 }}><button type="button" className="btn" onClick={() => setOpen(true)}>{t('inv.here')}</button></div>
     {open && <InviteDialog org={{ id: 'org', name: 'Lean-AX' }} channels={CHANNELS} {...props} create={create} t={t} phone={phone}
-      linkOf={(code) => `${location.origin}/?invite=${code}`} shareText={(code) => inviteShareText(code, { origin: location.origin, pathname: '/', t })}
+      linkOf={(code) => `${location.origin}/?invite=${code}`} shareText={(code, ctx) => inviteShareText(code, { origin: location.origin, pathname: '/', t, inviter: '김효율', org: 'Lean-AX', ...ctx })}
       onClose={() => { window.__inv.closed++; setOpen(false); }} onManage={() => {}} />}
   </>;
 }
