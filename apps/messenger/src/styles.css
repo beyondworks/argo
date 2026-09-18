@@ -1358,3 +1358,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-joinbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 auto 16px; width: min(100% - 32px, 720px); box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); color: var(--fg-2); font-size: 13px; }
 .msgr-joinbar span { min-width: 0; }
 .msgr-joinbar .btn { flex: none; }
+
+/* 보낸 직후, 서버 행이 도착하기 전의 내 글. 자리를 먼저 잡아 두고 옅게 보인다. */
+.msgr-mine.pending { opacity: .55; }
+.msgr-mine.pending .meta .mono { font-style: italic; }
+@media (prefers-reduced-motion: reduce) { .msgr-mine.pending { animation: none; } }
