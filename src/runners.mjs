@@ -15,7 +15,6 @@ import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli } from './runners/codex.mjs';
-import { execHttpText } from './runners/http-text.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
@@ -131,11 +130,7 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — gemini 도구 게이팅·agy 반경 인자에 반영
     (codex는 2026-08-21부터 샌드박스 없음 — danger-full-access, 유건 지시 "샌드박스 없이"). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, endpoint = '', format = 'argo' }) {
-  if (runner === 'http') { // HTTP 텍스트 러너(부록 N) — CLI를 띄우지 않으므로 PATH 보강 전에 갈라진다. 실패 번역은 다른 텍스트 러너와 같은 cliTurnFailure.
-    try { const text = await execHttpText({ endpoint, format, prompt, model, kind, readOnly, timeoutMs, signal, cred }); if (!text) throw new Error('외부 엔진이 빈 답을 보냈습니다(응답 JSON에 text/reply/content가 없음). The external engine returned an empty reply.'); return text; }
-    catch (e) { if (e.aborted || e.timedOut || e.httpStatus !== undefined || /^API Error: /.test(String(e.message))) throw e; throw Object.assign(new Error(String(e.message || e)), { cause: e }); } // CLI 껍질(exit 코드 문구) 금지 — 분리 검수 MEDIUM-5. t0h는 진단용
-  }
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는 oneshot.mjs의
   // noToolHooks가 도구를 전부 거부한다(allowedTools:[]는 자동 허용 목록일 뿐 도구를 끄지 않는다 — 작업 폴더 안 읽기가

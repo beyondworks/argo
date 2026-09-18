@@ -2,7 +2,6 @@
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { isStopCommand } from '../../../../../src/stop-command.mjs';
 import { splitEnvelope } from './envelope.mjs';
-import { externalAgentLabel } from '../../../../../src/runners/external-agent.mjs'; // 외부 에이전트 표기(유건 2026-09-08)
 import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
@@ -19,7 +18,7 @@ import { dropUpClamp } from '../../zoom-math.mjs';
 import { matchSlash } from '../../slash-match.mjs';
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
-const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok', http: 'HTTP' /* 외부 에이전트 표기는 external-agent.mjs·t('runner.external') — 이 맵은 폴백 */ };
+const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -365,7 +364,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         setCrewList(d.agents ?? []);
         setAliases(d.company?.aliases ?? []); // '/' 커맨더 사용자 별칭 — 회사 단위 공유
         // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑(K2 오표시 계열)
-        setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '', agent: a.agent || '', endpointHost: a.endpointHost || '' });
+        setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
       })
       .catch(() => { if (alive) setAgent({ name: slug, role: '' }); });
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
@@ -1250,7 +1249,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           slug={slug}
           onEdited={() => api(`/api/companies/${ws}`).then((d) => {
             const a = d.agents.find((x) => x.slug === slug); if (!a) return;
-            setAgent(a); setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '', agent: a.agent || '', endpointHost: a.endpointHost || '' });
+            setAgent(a); setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
           }).catch(() => {})}
           runners={runners}
           autoRunnerId={autoRunnerId}
@@ -1464,7 +1463,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
   // 미지정(자동) 크루는 서버 pickRunner가 고를 첫 연결 러너를 그대로 보여준다 — 'Claude Code' 폴백은
   // Codex/Gemini만 연결한 사용자에게 오표시였다(K2 실사용 신고 2026-07-20). 로딩 중엔 중립 '…'.
   const auto = !sel.runner ? PICK_ORDER.map((id) => runners?.find((r) => r.id === id)).find((r) => r?.authed) : null;
-  const base = sel.runner === 'http' ? externalAgentLabel({ agent: sel.agent, endpoint: sel.endpointHost ? `http://${sel.endpointHost}` : '' }, lang) : (cur?.name ?? (runners === null ? '…' : (auto ? `${t('chat.runnerAuto')} · ${auto.name}` : t('chat.runnerAuto')))); // 외부 에이전트는 종류 이름으로(유건 2026-09-08)
+  const base = (cur?.name ?? (runners === null ? '…' : (auto ? `${t('chat.runnerAuto')} · ${auto.name}` : t('chat.runnerAuto')))); // 외부 에이전트는 종류 이름으로(유건 2026-09-08)
   // 모델 미선택(레거시 크루)이면 러너 이름만 — "기본" 같은 가짜 항목을 만들지 않는다
   const label = sel.model ? `${base} · ${curModel?.label ?? sel.model}` : base;
   return (
@@ -1502,7 +1501,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
           {(runners ?? []).filter((r) => !r.hidden || r.id === sel.runner).map((r) => (
             <div key={r.id} style={{ padding: '2px 0' }}>
               <div className="microlabel" style={{ padding: '4px 8px 2px', color: r.authed ? undefined : 'var(--fg-3)' }}>
-                {r.id === 'http' ? t('runner.external') : r.name}{r.retired ? ` — ${t('runner.retired')}` : r.hidden ? '' : r.authed ? '' : ` — ${t('runner.needConnect')}`}
+                {r.name}{r.retired ? ` — ${t('runner.retired')}` : r.hidden ? '' : r.authed ? '' : ` — ${t('runner.needConnect')}`}
               </div>
               {(r.models ?? []).map((m) => {
                 const active = sel.runner === r.id && (sel.model || '') === m.id;
@@ -1537,7 +1536,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
 function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
   const { t } = useLang();
   const cur = runners?.find((r) => r.id === sel.runner);
-  const runnerLabel = (r) => (r.id === 'http' ? t('runner.external') : r.name) + (r.retired ? ` — ${t('runner.retired')}` : r.hidden ? '' : r.authed ? '' : ` — ${t('runner.needConnect')}`);
+  const runnerLabel = (r) => r.name + (r.retired ? ` — ${t('runner.retired')}` : r.hidden ? '' : r.authed ? '' : ` — ${t('runner.needConnect')}`);
   // 숨김 러너(gemini)는 선택지에서 뺀다(유건 2026-09-03: 선택 불가로 보일 바엔 숨긴다). 현재 값일 때만 남겨 정직 표기.
   const pickable = (runners ?? []).filter((r) => !r.hidden || r.id === sel.runner);
   const box = {
