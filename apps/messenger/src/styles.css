@@ -959,7 +959,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-main, .msgr-phone.phone-home .msgr-rail-close, .msgr-phone.phone-home .msgr-scrim:not(.clear) { display: none; } /* .clear는 조직 창의 바깥 닫기 스크림 — 같이 죽이면 창이 안 닫힌다 */
   .msgr-phone.phone-home .msgr-side .msgr-brand, .msgr-phone.phone-home .msgr-side .msgr-search { display: none; }
   .msgr-phone.phone-home .msgr-side .msgr-orgwrap { position: relative; height: calc(env(safe-area-inset-top) + 54px); padding: env(safe-area-inset-top) calc(var(--ph-pad) + 104px) 10px var(--ph-pad); display: flex; align-items: center; } /* 이름 중심 y84(슬랙) */
-  .msgr-phone.phone-home .msgr-side .msgr-org { width: auto; min-height: 44px; font-size: 18px; font-weight: 700; gap: 12px; padding: 0; border: 0; background: none; }
+  .msgr-phone.phone-home .msgr-side .msgr-org { width: auto; min-width: 0; min-height: 44px; font-size: 18px; font-weight: 700; gap: 12px; padding: 0; border: 0; background: none; }
   .msgr-phone.phone-home .msgr-side .msgr-org .msgr-av { width: 44px; height: 44px; border-radius: 50%; }
   .msgr-phone.phone-home .msgr-side .msgr-org .caret { margin-left: -2px; }
   /* 우상단 프로필 — 풋터의 아바타 하나만. 벨·별·기어는 탭·아바타 메뉴와 중복이라 숨김 */

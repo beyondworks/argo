@@ -88,3 +88,8 @@ test('App.jsx 배선: 소속 조직 전부의 org: 토픽과 u:<나> 토픽을 �
   assert.match(app, /crossRef\.current = \(payload, space\) => \{[\s\S]{0,200}seenOnce\(seenMsgRef\.current, payload\.id\)/, '다른 공간 처리기도 id로 한 번만(이중 송신 대비)');
   assert.match(app, /handleMessageRef\.current = \(payload\) => \{\s*if \(!seenOnce\(seenMsgRef\.current, payload\?\.id\)\) return;/, '보고 있는 공간 처리기도 id로 한 번만');
 });
+
+test('폰 홈 조직 전환 버튼: min-width:0 — 배지가 붙어도 자리 안에서 멈추고 이름만 말줄임(검수 #605, 측정은 test/org-badge-phone.browser.mjs)', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.msgr-phone\.phone-home \.msgr-side \.msgr-org \{[^}]*\bmin-width: 0;/);
+});
