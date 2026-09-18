@@ -926,8 +926,16 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
 }
 
 function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false } = {}) {
-  const ch = rtChannels.get(`${wsId}:${orgId}`);
-  if (!ch) return () => {};
+  const orgCh = rtChannels.get(`${wsId}:${orgId}`);
+  if (!orgCh) return () => {};
+  // 비공개 방(DM·비공개 채널 — full=false)은 그 방의 채널 토픽 dm:<채널>로 보낸다(20260918190000). 조직 토픽은 조직 전원이 들어 비공개 방의 존재·크루 활동이 샜다.
+  // dm:의 발신·수신 정책은 그 방을 읽을 수 있는 사람(msgr_can_read_channel). 채널을 못 열면 조직 토픽으로 되돌아가지 않고 보내지 않는다(누출보다 표시 누락).
+  let own = null;
+  if (!full) {
+    try { own = orgCh.__client?.channel(`dm:${channelId}`, { config: { private: true } }) ?? null; own?.subscribe?.(); } catch { own = null; }
+    if (!own) return () => {};
+  }
+  const ch = own ?? orgCh;
   const send = () => ch.send({ type: 'broadcast', event: 'typing', payload: { channel_id: channelId, crew_id: crewId } }).catch?.(() => {});
   try { send(); } catch { /* 무해 */ }
   const iv = setInterval(() => { try { send(); } catch { /* 무해 */ } }, TYPING_MS);
@@ -949,8 +957,12 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
   };
   const pv = slug ? setInterval(() => { pump().catch(() => {}); }, PROGRESS_MS) : null;
   pv?.unref?.();
-  return () => { stopped = true; clearInterval(iv); if (pv) clearInterval(pv); };
+  return () => {
+    stopped = true; clearInterval(iv); if (pv) clearInterval(pv);
+    if (own) { try { const r = orgCh.__client?.removeChannel ? orgCh.__client.removeChannel(own) : own.unsubscribe?.(); r?.catch?.(() => {}); } catch { /* 무해 */ } }
+  };
 }
+export const _startTypingForTest = startTyping;
 
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
 /** 크루 알림을 아르고 메신저로 — 원점 없는 이벤트를 **그 크루와 나의 1:1 방**에 그 크루 이름으로 올린다(src/msgr-notify.mjs, 유건 결정 2026-09-15: 방 선택 없음).

@@ -700,10 +700,14 @@ function Shell({ session }) {
     });
     return () => { if (rt.current === ch) rt.current = null; cleanup(); }; // React cleanup is synchronous; scope serializes the async removal.
   }, [orgId, session.access_token, resumeEpoch]);
-  // ── 개인 공간 실시간: 열린 개인 1:1 채널의 dm:<채널> 토픽 구독 ──
+  // ── 열린 방의 채널 토픽 dm:<채널> 구독 — 개인 방과 조직의 비공개 방(DM·비공개 채널) ──
+  // 비공개 방의 typing·progress는 조직 토픽이 아니라 이 토픽으로 온다(20260918190000 — 조직 토픽은 조직 전원이 들어 방의 존재·크루 활동이 샜다).
+  // 옛 서버에서는 조직 방 typing이 org:로 계속 오고 이 토픽은 조용할 뿐이라 깨지지 않는다. 글은 handleMessage가 id로 한 번만 처리한다.
   const personalRt = useRef(null);
+  const openKind = useMemo(() => (chId ? channels.find((c) => c.id === chId)?.kind ?? null : null), [channels, chId]);
+  const roomTopic = !!chId && (isPersonal || (openKind !== null && openKind !== 'public'));
   useEffect(() => {
-    if (!isPersonal || !chId) return;
+    if (!roomTopic) return;
     let ch;
     const remove = async () => { if (ch) { await supabase.removeChannel(ch).catch(() => {}); if (personalRt.current === ch) personalRt.current = null; } };
     (async () => {
@@ -711,11 +715,12 @@ function Shell({ session }) {
       ch = supabase.channel(`dm:${chId}`, { config: { private: true } });
       ch.on('broadcast', { event: 'message' }, ({ payload }) => handleMessageRef.current(payload)) // 조직 처리기와 같은 처리 — 알림이 없던 결함(검수 ③)
         .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
-        .subscribe((status) => { if (RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); });
+        .on('broadcast', { event: 'progress' }, ({ payload }) => setProgress((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: { ...payload, at: Date.now() } })))
+        .subscribe((status) => { if (isPersonal && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
       personalRt.current = ch;
     })();
     return () => { remove(); };
-  }, [isPersonal, chId, session.access_token]);
+  }, [roomTopic, isPersonal, chId, session.access_token]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── 다른 공간(보고 있지 않은 조직·개인 공간)의 새 글 — 안 읽음 합계·알림(유건 실측 2026-09-18 "교차되는 메시지 확인 안 됨") ──
   // 구독: 보고 있지 않은 조직마다 org:<조직>(공개 채널 글) + u:<나>(비공개 방 글 — 서버 마이그레이션 적용 뒤). 구독 수 = 조직 수 + 1.
   // 서버 적용 전: 조직은 org: 다중 구독만으로 즉시, 개인 공간은 합계 재조회(15초)로 뜬다. u: 구독 실패·합계 RPC 부재는 옛 동작으로 물러난다.
