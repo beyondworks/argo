@@ -89,7 +89,9 @@ jobs:
   # 순정 Postgres + contrib(pgcrypto)면 된다. 맥 러너 — 개발자가 드릴을 돌리는 환경과 같다. 리눅스는 인자 하나가 128KB(MAX_ARG_STRLEN)를
   # 넘으면 spawn이 E2BIG으로 실패해, 마이그레이션 파일을 `psql -c` 한 인자로 넘기는 테스트 20개 파일이 전부 넘어진다(2026-09-18 CI 실측).
   pg-drill:
-    runs-on: macos-15
+    # 리눅스 러너(빠르고 싸다). 예전엔 153KB 마이그레이션을 psql -c 한 인자로 넘겨 E2BIG(인자 하나 128KB 상한)이었다 —
+    # test/helpers/pg.mjs가 큰 본문을 표준 입력(-1 -f -)으로 보내 해소. 라이브 Supabase와 같은 주 버전 17을 PGDG에서 받는다.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +102,9 @@ jobs:
       - run: npm ci
       - name: PostgreSQL 17
         run: |
-          brew install -q postgresql@17
-          echo "$(brew --prefix postgresql@17)/bin" >> "$GITHUB_PATH"
+          sudo apt-get install -y -q postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -q postgresql-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - run: psql --version && initdb --version
       - run: bash scripts/billing-pg-drill.sh

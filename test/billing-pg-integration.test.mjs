@@ -5,9 +5,10 @@
 // 또는 supabase start 후 ARGO_PG_TEST_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { APPLY_CASES, T_OLD, T_NEW } from './helpers/ls-apply-cases.mjs';
+import { psqlSpawn } from './helpers/pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — npm run test:pg로 실행';
@@ -15,7 +16,7 @@ const UID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url));
 
 function psqlRaw(args) {
-  return spawnSync('psql', [DB, '-X', '-v', 'ON_ERROR_STOP=1', '-q', ...args], { encoding: 'utf8' });
+  return psqlSpawn(DB, args);
 }
 function psql(args) {
   const r = psqlRaw(args);
