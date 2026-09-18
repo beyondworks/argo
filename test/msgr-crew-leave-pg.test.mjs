@@ -81,6 +81,16 @@ test('주인이 비공개 채널을 나가면 그 주인의 에이전트·봇도
   assert.equal(audit, '3', '빠진 에이전트마다 감사 기록');
 });
 
+test('방장이 서비스 계정을 빼도 회사 에이전트는 남는다 — 사람이 주인이 아니다', { skip }, () => {
+  // 회사 에이전트의 owner_user_id는 조직 서비스 계정이다. 그 계정의 사람 행이 지워지면 "주인이 나갔다"로 보여
+  // 회사 에이전트까지 빠질 수 있다 — 트리거의 회사 보호절(msgr_crew_is_company)이 막는 유일한 경로.
+  const ch = room('private', 'Service');
+  put(ch, 'user', U.svc); put(ch, 'crew', COMPANY);
+  asUser(U.host, `delete from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'user' and member_id = '${U.svc}'`);
+  assert.equal(userIn(ch, U.svc), '0');
+  assert.equal(crewIn(ch, COMPANY), '1', '회사 에이전트는 남는다');
+});
+
 test('방장이 사람을 빼도 그 사람의 에이전트가 같이 빠진다 — 경로를 가리지 않는다', { skip }, () => {
   const ch = room('private', 'Kick');
   put(ch, 'user', U.mate); put(ch, 'crew', MINE);
