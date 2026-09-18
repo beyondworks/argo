@@ -24,7 +24,8 @@ test('데스크톱에서만, 열린 패널에만 — 폰 시트와 아래에서 
   assert.match(css, /\.msgr-shell:not\(\.msgr-phone\) \.msgr-main \{ container: msgr-main \/ inline-size; \}/);
 });
 
-test('여백은 180ms로 옮기고 움직임 줄이기 설정에서는 즉시', () => {
-  assert.match(css, /\.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-thread, \.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-dock \{ transition: padding 180ms ease-out; \}/);
+test('여백은 패널 등장(msgrPopIn)과 같은 180ms 곡선으로 옮기고 움직임 줄이기 설정에서는 즉시', () => {
+  assert.match(css, /\.msgr-crewsheet \{[^}]*animation: msgrPopIn 180ms cubic-bezier\(\.23,1,\.32,1\)/, '패널 등장 곡선 — 바뀌면 여백 곡선도 같이 바꾼다(검수 #600 LOW-1)');
+  assert.match(css, /\.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-thread, \.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-dock \{ transition: padding 180ms cubic-bezier\(\.23,1,\.32,1\); \}/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{ \.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-thread, \.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-dock \{ transition: none; \} \}/);
 });
