@@ -177,6 +177,13 @@ async function slackApi(token, method, body) {
   if (!j.ok) throw new Error(`slack ${method}: ${j.error ?? res.status}`);
   return j;
 }
+/** 슬랙 읽기 메서드 — 쿼리 문자열 GET + Bearer. JSON 본문은 "JSON을 지원하는 쓰기 메서드"만 받는다(Slack Web API 문서)라 읽기는 이 모양으로. */
+async function slackRead(token, method, params) {
+  const res = await fetch(`https://slack.com/api/${method}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12_000) });
+  const j = await res.json().catch(() => ({}));
+  if (!j.ok) throw new Error(`slack ${method}: ${j.error ?? res.status}`);
+  return j;
+}
 
 /** 텔레그램·슬랙 턴의 세션 — 1:1은 전역 세션(웹과 같은 스레드, 주인 본인 대화), 텔레그램 그룹·슬랙 공유 채널은 그 방 범위 세션.
     여러 사람이 보는 답이므로 주인의 데스크톱·1:1 대화를 잇지 않는다(업그레이드 전 스레드의 옛 전역 세션 포함). */
@@ -493,7 +500,7 @@ function makeTgAgentHandler(wsId, slug, getCfg) {
     전부 공유로 본다(fail-closed): 사용자가 만든 봇 토큰에 *:read 권한이 있다는 보장이 없다. 폴링이 아니라 턴이 돌 때만 조회하고 채널별로
     캐시한다 — 성공은 프로세스 수명(채널 종류는 거의 안 바뀐다), 실패는 1분(레이트 리밋이 판정을 매번 실패로 만들지 않게 곧 다시 시도). */
 const slackKinds = new Map(); // channelId → { im, until }
-async function slackIsIm(token, channel, { now = Date.now, api = slackApi } = {}) {
+async function slackIsIm(token, channel, { now = Date.now, api = slackRead } = {}) {
   const hit = slackKinds.get(channel);
   if (hit && hit.until > now()) return hit.im;
   let im = false; let until = Infinity;

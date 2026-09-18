@@ -32,14 +32,19 @@ const srv = http.createServer((req, res) => {
 });
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 process.env.ARGO_CLAUDE_BASE_URL = `http://127.0.0.1:${srv.address().port}`;
-const tgSent = []; let infoCalls = 0;
+const tgSent = []; let infoCalls = 0; const infoReqs = [];
 // 슬랙 conversations.info 응답(채널 → 응답). 없는 채널은 권한 없음(ok:false) — 사용자 봇 토큰에 *:read가 없을 때의 실제 모양
 const kinds = { C0SHARED: { ok: true, channel: { id: 'C0SHARED', is_channel: true, is_im: false } }, C0OTHER: { ok: true, channel: { id: 'C0OTHER', is_channel: true, is_im: false } }, D0OWNER: { ok: true, channel: { id: 'D0OWNER', is_im: true } } };
 const origFetch = globalThis.fetch;
 globalThis.fetch = async (url, opts) => {
   if (!String(url).includes('slack.com')) return origFetch(url, opts);
+  const u = new URL(String(url));
+  if (u.pathname === '/api/conversations.info') {
+    // 읽기 메서드 요청 모양을 잠근다 — 쿼리 문자열 GET + Bearer(JSON 본문이면 실제 슬랙이 인자를 못 읽어 판정이 늘 실패 → 모든 1:1이 공유로 떨어진다)
+    infoCalls += 1; infoReqs.push({ method: opts?.method ?? 'GET', channel: u.searchParams.get('channel'), auth: opts?.headers?.authorization, body: opts?.body });
+    const r = kinds[u.searchParams.get('channel')]; return new Response(JSON.stringify(r ?? { ok: false, error: 'missing_scope' }), { headers: { 'content-type': 'application/json' } });
+  }
   const body = JSON.parse(opts?.body ?? '{}'); tgSent.push({ url: String(url), body });
-  if (String(url).endsWith('/conversations.info')) { infoCalls += 1; const r = kinds[body.channel]; return new Response(JSON.stringify(r ?? { ok: false, error: 'missing_scope' }), { headers: { 'content-type': 'application/json' } }); }
   return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
 };
 after(() => { srv.close(); globalThis.fetch = origFetch; });
@@ -123,7 +128,8 @@ test('슬랙 채널 종류 캐시: 같은 채널 두 턴 = 조회 1회, 실패�
   assert.equal(await S.slackIsIm('xoxb', 'D1', { api, now }), true, '1분 뒤 다시 조회해 1:1을 되찾는다'); assert.equal(calls, 2);
   t += 10 * 86_400_000;
   assert.equal(await S.slackIsIm('xoxb', 'D1', { api, now }), true); assert.equal(calls, 2, '성공은 길게 캐시');
-  S.slackKinds.clear(); infoCalls = 0;
+  S.slackKinds.clear(); infoCalls = 0; infoReqs.length = 0;
   await slack('C0SHARED', '첫 턴'); await slack('C0SHARED', '둘째 턴');
   assert.equal(infoCalls, 1, '실제 핸들러: 같은 채널 두 턴에 conversations.info는 한 번');
+  assert.deepEqual(infoReqs[0], { method: 'GET', channel: 'C0SHARED', auth: 'Bearer xoxb-fake', body: undefined }, '읽기 메서드는 쿼리 문자열 GET + Bearer(JSON 본문 아님)');
 });
