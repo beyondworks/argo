@@ -19,6 +19,30 @@ create or replace function public.msgr_can_decide(ap uuid) returns boolean
      where a.id = ap
 $$;
 
+-- ①' 결재 방송 수신자(#605 msgr_approval_deciders)도 같은 규칙 — 판정과 수신자가 어긋나면 제거된 크루 소유자·목록에 남은 게스트에게
+--     결재 메타데이터가 u:로 간다(검토 #606 LOW-2). u ∈ deciders(ap) ⇔ msgr_can_decide(ap) as u 를 pg 대조 시험이 모든 칸에서 잠근다.
+create or replace function public.msgr_approval_deciders(ap uuid) returns setof uuid
+  language sql stable security definer set search_path = public, pg_temp as $$
+    with cur as (select om.user_id, om.role from public.msgr_crew_approvals a
+                   join public.msgr_orgs o on o.id = a.org_id and o.deleted_at is null
+                   join public.msgr_org_members om on om.org_id = a.org_id and om.removed_at is null and (om.expires_at is null or om.expires_at > now())
+                  where a.id = ap)
+    select k.owner_user_id
+      from public.msgr_crew_approvals a join public.msgr_crews k on k.id = a.crew_id left join public.msgr_org_policies p on p.org_id = a.org_id
+     where a.id = ap and (a.risk = 'low' or coalesce(p.approval_high_by, 'admin') = 'owner')
+       and k.owner_user_id in (select user_id from cur)
+    union
+    select cur.user_id
+      from public.msgr_crew_approvals a left join public.msgr_org_policies p on p.org_id = a.org_id, cur
+     where a.id = ap and a.risk <> 'low' and coalesce(p.approval_high_by, 'admin') <> 'owner' and cur.role in ('owner', 'admin')
+    union
+    select u
+      from public.msgr_crew_approvals a join public.msgr_org_policies p on p.org_id = a.org_id, unnest(coalesce(p.approver_user_ids, '{}'::uuid[])) u
+     where a.id = ap and a.risk <> 'low' and p.approval_high_by = 'approvers'
+       and u in (select user_id from cur where role in ('owner', 'admin', 'member'))
+$$;
+revoke all on function public.msgr_approval_deciders(uuid) from public, anon, authenticated;
+
 -- ② 확정 정책의 크루 소유자 갈래(pending 유지 갱신 — 브리지의 카드 링크)도 현재 멤버만. 나머지는 20260903120000 정의 그대로.
 drop policy if exists msgr_approvals_decide on public.msgr_crew_approvals;
 create policy msgr_approvals_decide on public.msgr_crew_approvals for update to authenticated

@@ -198,3 +198,33 @@ test('검토 ② — 관리자가 결재권자를 제거할 때 정책 트리거
   assert.equal(r2.status, 0, r2.stderr);
   assert.equal(Number(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'policy.update'`)), Number(after) + 1, '다음 사람 저장은 감사된다');
 });
+
+// ── #606 LOW-2: 결재 방송 수신자(msgr_approval_deciders, #605)와 확정 판정(msgr_can_decide)이 모든 칸에서 같다 ──
+// 수신자 ⊄ 확정권자면 확정 못 할 사람에게 결재 메타데이터가 u:로 가고, 반대면 확정권자가 카드를 못 받는다.
+test('LOW-2 대조 — u ∈ msgr_approval_deciders(ap) ⇔ msgr_can_decide(ap) as u (모드 × 위험 × 멤버 상태 × 사람)', { skip }, () => {
+  const people = { owner: U.owner, approver: U.approver, crewOwner: U.crewOwner, guest: U.guest, spare: U.spare, outsider: U.outsider };
+  const states = {
+    current: () => {},
+    crewOwnerRemoved: () => member(U.crewOwner, `removed_at = now()`),
+    approverRemoved: () => member(U.approver, `removed_at = now()`),
+    approverExpired: () => member(U.approver, `expires_at = now() - interval '1 second'`),
+  };
+  const mode = (m, ids = []) => sql(`set session_replication_role = replica; update public.msgr_org_policies set approval_high_by = '${m}', approver_user_ids = array[${ids.map((i) => `'${i}'::uuid`).join(',')}]::uuid[] where org_id = '${ORG}'; set session_replication_role = origin;`);
+  const inDeciders = (ap, u) => sql(`select exists (select 1 from public.msgr_approval_deciders('${ap}') d where d = '${u}')`);
+  const mismatch = []; const leaked = []; let cells = 0, yes = 0;
+  for (const [st, apply] of Object.entries(states)) for (const m of ['admin', 'owner', 'approvers']) for (const risk of ['low', 'high']) {
+    reset(); apply();
+    mode(m, m === 'approvers' ? [U.approver, U.guest, U.outsider] : []); // 목록에 게스트·조직 밖 사람을 남겨 둔다(트리거를 끄고 심음)
+    const ap = newAp(risk, `l2-${st}-${m}-${risk}`);
+    for (const [who, u] of Object.entries(people)) {
+      const d = inDeciders(ap, u), c = canDecide(u, ap); cells++; if (c === 't') yes++;
+      if (d !== c) mismatch.push(`${st}/${m}/${risk}/${who}: deciders=${d} can_decide=${c}`);
+      const gone = (who === 'crewOwner' && st === 'crewOwnerRemoved') || (who === 'approver' && (st === 'approverRemoved' || st === 'approverExpired')) || who === 'guest' || who === 'outsider';
+      if (gone && d === 't') leaked.push(`${st}/${m}/${risk}/${who}`);
+    }
+  }
+  console.log(`# LOW-2 cells=${cells} can_decide=true ${yes}`);
+  assert.deepEqual(mismatch, [], '수신자와 확정권자가 어긋난다');
+  assert.deepEqual(leaked, [], '떠난 사람·게스트·조직 밖 사람이 수신자에 있다');
+  assert.ok(yes > 0 && yes < cells, '양쪽 값이 모두 나오는 표여야 대조가 의미 있다');
+});
