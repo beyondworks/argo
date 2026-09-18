@@ -359,3 +359,17 @@ test('재검토 B: 과거에 그 초대를 쓴 사람이 강등된 뒤 위조 �
   assert.match(r.stderr, /msgr_member_self_only_name/);
   assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${a}'`), 'member');
 });
+
+test('재검토 D: 같은 트랜잭션에서 게스트 초대를 수락한 직후 위조 플래그로 자기 게스트 기한을 늘리지 못한다(초대의 guest_days가 상한)', { skip }, () => {
+  const who = '99999999-9999-4999-8999-99999999f001';
+  sql(`insert into auth.users (id, created_at, email) values ('${who}', now(), 'extend@example.test') on conflict do nothing`);
+  const code = codeOf(mkInvite(U.member, { role: `'guest'`, channel_ids: arr(PRIVM), guest_days: '3' }));
+  const id = sql(`select id from public.msgr_invites where code = '${code}'`);
+  const r = psqlRaw(['-A', '-t', '-c', `begin; set local role authenticated; select set_config('argo.uid', '${who}', true); select public.msgr_accept_invite_v2('${code}'); select set_config('msgr.invite_accept', '${id}', true); update public.msgr_org_members set expires_at = '2099-01-01' where org_id = '${ORG}' and user_id = '${who}'; commit;`]);
+  assert.notEqual(r.status, 0, '같은 트랜잭션의 위조 플래그로 기한 연장이 허용됨');
+  assert.match(r.stderr, /msgr_member_self_only_name/);
+  assert.equal(sql(`select count(*) from public.msgr_org_members where org_id = '${ORG}' and user_id = '${who}'`), '0', '트랜잭션 전체가 되돌려진다');
+  // 정상 수락은 그대로 된다(기한 = 초대의 guest_days)
+  v2(who, code);
+  assert.equal(sql(`select (expires_at <= now() + interval '3 days') and (expires_at > now() + interval '2 days') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${who}'`), 't');
+});

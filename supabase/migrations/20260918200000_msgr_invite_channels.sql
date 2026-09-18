@@ -183,7 +183,8 @@ begin
   if nullif(current_setting('msgr.invite_accept', true), '') is not null and old.user_id = auth.uid() and new.removed_at is null
      and (new.role = 'guest') = (new.expires_at is not null)
      and exists (select 1 from public.msgr_invites i where i.id::text = current_setting('msgr.invite_accept', true) and i.org_id = new.org_id and i.role = new.role
-                   and i.revoked_at is null and (i.expires_at is null or i.expires_at > now()))
+                   and i.revoked_at is null and (i.expires_at is null or i.expires_at > now())
+                   and (new.expires_at is null or new.expires_at <= now() + make_interval(days => i.guest_days))) -- 게스트 기한은 그 초대의 guest_days까지만(재검토 #610 D). 멤버·관리자는 기한 null(위 조건) — guest_days(not null, 기본 30)를 보지 않는다
      and exists (select 1 from public.msgr_invite_uses u where u.invite_id::text = current_setting('msgr.invite_accept', true) and u.user_id = new.user_id
                    and u.used_at = now()) -- 이 트랜잭션에서 쓴 기록만(과거에 쓴 사람이 강등 뒤 위조 플래그로 되돌리지 못하게 — 재검토 #610 B)
      then return new; end if; -- msgr_invite_redeem 전용(트랜잭션 지역). 사용 기록은 수락 본체만 쓴다 — 플래그를 위조해도 이 행이 없으면 통과하지 못한다
