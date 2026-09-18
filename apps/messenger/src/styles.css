@@ -225,6 +225,18 @@
 @media (hover: hover) { .msgr-namebtn:hover { text-decoration: underline; text-underline-offset: 3px; } } .msgr-namebtn:active { text-decoration: underline; text-underline-offset: 3px; }
 .msgr-sheetwrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
 .msgr-sheetwrap > * { pointer-events: auto; }
+/* 우측 패널이 열리면 본문이 패널 왼쪽 공간만 쓴다 — 패널이 입력창·전송 버튼을 덮던 것(유건 제보 2026-09-18, 0.1.28부터).
+   본문(.msgr-main) 폭 1044px(글 폭 640 + 패널 380 + 여백 24) 이상이면 스레드·입력창 모두, 그보다 좁으면 입력창만 비킨다(하한 280px — 더 좁으면 겹침 허용).
+   바닥 유지는 스레드 척추의 ResizeObserver(App.jsx Channel)가 한다. 폰 셸은 시트라 제외 */
+.msgr-shell:not(.msgr-phone) .msgr-main { container: msgr-main / inline-size; }
+.msgr-shell:not(.msgr-phone) .msgr-main > .msgr-thread, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-dock { transition: padding 180ms cubic-bezier(.23,1,.32,1); } /* 패널 등장(msgrPopIn)과 같은 곡선 — ease-out이면 패널이 먼저 불투명해져 전송 버튼이 약 0.1초 가려졌다(검수 #600 LOW-1) */
+@media (prefers-reduced-motion: reduce) { .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-thread, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-dock { transition: none; } }
+.msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-dock { padding-left: calc(24px + var(--sbw, 0px)); padding-right: calc(428px + var(--sbw, 0px)); }
+.msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-dock > div { min-width: 280px; }
+@container msgr-main (min-width: 1044px) {
+  .msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-thread { padding-left: max(24px, calc((100% - 1124px) / 2)); padding-right: calc(max(24px, calc((100% - 1124px) / 2)) + 404px); }
+  .msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-dock { padding-left: calc(max(24px, (100% - 1124px) / 2) + var(--sbw, 0px)); padding-right: calc(max(24px, (100% - 1124px) / 2) + var(--sbw, 0px) + 404px); }
+}
 .msgr-sheetwrap .msgr-crewsheet { z-index: 66; } /* 투명 스크림(.msgr-scrim.clear, z 65)보다 위 — 아니면 시트 위의 휠이 스크림에 먹혀 뒤의 스레드가 스크롤된다(유건 실측 2026-09-04) */
 .msgr-crewsheet { position: absolute; top: 72px; right: 24px; width: min(380px, calc(100% - 48px)); max-width: calc(100% - 48px); overflow-x: hidden; box-sizing: border-box; max-height: calc(100% - 96px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; }
 .msgr-crewsheet .head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
