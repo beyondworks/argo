@@ -11,7 +11,7 @@
 import { listCompanies, listAgents } from './hub.mjs';
 import { loadConnections, updateConnection, updateAgentBot } from './connections.mjs';
 import { chat } from './chat.mjs';
-import { loadThread, appendTurn, appendSharedNote } from './thread.mjs';
+import { loadThread, appendTurn, appendSharedNote, turnScope, scopeKey, scopedSession } from './thread.mjs';
 import { resolveWithFollowUp } from './approval-actions.mjs';
 import { setApprovalMeta } from './approvals.mjs';
 import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 작업 완료 통지(잡 핸들러)
@@ -177,6 +177,22 @@ async function slackApi(token, method, body) {
   if (!j.ok) throw new Error(`slack ${method}: ${j.error ?? res.status}`);
   return j;
 }
+/** 슬랙 읽기 메서드 — 쿼리 문자열 GET + Bearer. JSON 본문은 "JSON을 지원하는 쓰기 메서드"만 받는다(Slack Web API 문서)라 읽기는 이 모양으로. */
+async function slackRead(token, method, params) {
+  const res = await fetch(`https://slack.com/api/${method}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12_000) });
+  const j = await res.json().catch(() => ({}));
+  if (!j.ok) throw new Error(`slack ${method}: ${j.error ?? res.status}`);
+  return j;
+}
+
+/** 텔레그램·슬랙 턴의 세션 — 1:1은 전역 세션(웹과 같은 스레드, 주인 본인 대화), 텔레그램 그룹·슬랙 공유 채널은 그 방 범위 세션.
+    여러 사람이 보는 답이므로 주인의 데스크톱·1:1 대화를 잇지 않는다(업그레이드 전 스레드의 옛 전역 세션 포함). */
+async function tgTurnSession(wsId, slug, ctx) {
+  const mirrorCtx = /group/.test(ctx?.chatType ?? '') || ctx?.kind === 'slack' ? ctx : null; // 슬랙 공유 채널도 그 채널 범위
+  const contextScope = turnScope(mirrorCtx) ?? undefined;
+  const t = await loadThread(wsId, slug);
+  return { mirrorCtx, contextScope, sessionId: contextScope ? scopedSession(t, scopeKey(contextScope)).sessionId : t.sessionId };
+}
 
 /** 메신저발 지시 1턴 — 웹과 동일 경로(스레드 이어쓰기 + vault 기억 + 첨부 비전). ctx = 발화 위치(위임 미러용). */
 async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
@@ -195,10 +211,10 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   if (/^\/?(크루|현황|crew|status)$/i.test(text.trim())) return crewStatusReply(wsId, cfg);
   const r = await routeMessage(wsId, cfg, text);
   if (r.error) return r.error;
-  const t = await loadThread(wsId, r.slug);
-  // 그룹에서 온 턴이면 mirrorCtx로 전달 — 위임 미러가 이 턴의 방으로만 발화(전역 맵 오배달 제거)
-  const turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
-  await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts });
+  // 그룹에서 온 턴이면 mirrorCtx로 전달 — 위임 미러가 이 턴의 방으로만 발화(전역 맵 오배달 제거). 세션은 그룹 범위(tgTurnSession)
+  const { sessionId, mirrorCtx, contextScope } = await tgTurnSession(wsId, r.slug, ctx);
+  const turn = await chat(wsId, r.slug, r.msg, sessionId, { source: 'messenger', attachments, mirrorCtx });
+  await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts, contextScope });
   // cc 크루에게 맥락 공유 — 실행은 to 크루만(폭주 방지), 나머지는 다음 턴에 이 맥락을 알고 시작한다
   let footer = '';
   if (r.cc?.length) {
@@ -405,9 +421,9 @@ async function runAgentTurn(wsId, slug, text, attachments, ctx) {
       lang,
     );
   }
-  const t = await loadThread(wsId, slug);
-  const turn = await chat(wsId, slug, text, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
-  await appendTurn(wsId, slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts });
+  const { sessionId, mirrorCtx, contextScope } = await tgTurnSession(wsId, slug, ctx);
+  const turn = await chat(wsId, slug, text, sessionId, { source: 'messenger', attachments, mirrorCtx });
+  await appendTurn(wsId, slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts, contextScope });
   return turn.reply; // 봇 자체가 그 크루 — 이름 프리픽스 불필요
 }
 
@@ -480,13 +496,28 @@ function makeTgAgentHandler(wsId, slug, getCfg) {
     }
   };
 }
+/** 슬랙 채널이 주인 1:1(is_im)인가 — true일 때만 전역 맥락(주인 대화)을 잇는다. 공유 채널·조회 실패(권한 없음·레이트 리밋·네트워크)는
+    전부 공유로 본다(fail-closed): 사용자가 만든 봇 토큰에 *:read 권한이 있다는 보장이 없다. 폴링이 아니라 턴이 돌 때만 조회하고 채널별로
+    캐시한다 — 성공은 프로세스 수명(채널 종류는 거의 안 바뀐다), 실패는 1분(레이트 리밋이 판정을 매번 실패로 만들지 않게 곧 다시 시도). */
+const slackKinds = new Map(); // channelId → { im, until }
+async function slackIsIm(token, channel, { now = Date.now, api = slackRead } = {}) {
+  const hit = slackKinds.get(channel);
+  if (hit && hit.until > now()) return hit.im;
+  let im = false; let until = Infinity;
+  try { im = (await api(token, 'conversations.info', { channel })).channel?.is_im === true; } catch { until = now() + 60_000; }
+  slackKinds.set(channel, { im, until });
+  return im;
+}
+export const _slackForTest = { slackIsIm, slackKinds, makeSlackHandler: (...a) => makeSlackHandler(...a) };
+
 function makeSlackHandler(wsId, getCfg) {
   return async (job) => {
     const cfg = getCfg();
     if (!cfg?.token || !cfg.channel) return; // 연결이 사라짐 — 잡 폐기
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     try {
-      const reply = await runTurn(wsId, cfg, job.text);
+      const shared = !(await slackIsIm(cfg.token, cfg.channel)); // 공유 채널이면 그 채널 범위 세션·기록만(주인 대화를 잇지도 붙이지도 않는다)
+      const reply = await runTurn(wsId, cfg, job.text, [], shared ? { kind: 'slack', channelId: cfg.channel } : null);
       await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: clip(reply) });
     } catch (e) {
       await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang) }).catch(() => {});
@@ -610,6 +641,7 @@ function startAgentTelegram(wsId, slug, getCfg) {
 // 테스트 전용 — 폴러 루프의 콜백 배선(위 handleApprovalCallback 호출)은 실행해야만 보인다:
 // 소스 문자열 단언은 분기가 도는지를 못 본다(listAgents 무음실패 실측 계열). fetch를 가로채 구동한다.
 export const _startAgentTelegramForTest = startAgentTelegram;
+export const _tgHandlersForTest = { makeTgGatewayHandler, makeTgAgentHandler }; // 큐 워커가 부르는 실제 잡 핸들러(그룹 세션 격리 SDK 테스트)
 
 /* ─── 받은 서류함(inbox) — 폴더에 파일을 넣는 것이 곧 지시. 기본 크루가 읽고 처리해 보고한다. ─── */
 const INBOX_MAX_INFLIGHT = 2; // 파일 여러 개를 한꺼번에 떨궈도 동시 크루 턴을 제한(비용 폭주 방지)

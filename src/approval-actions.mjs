@@ -1,7 +1,7 @@
 // 결재 처리의 공통 동작 — 웹 결재함·대화창 카드·메신저 버튼이 같은 경로를 탄다.
 import { resolveApproval } from './approvals.mjs';
 import { chat } from './chat.mjs';
-import { loadThread, appendTurn } from './thread.mjs';
+import { loadThread, appendTurn, turnScope, scopeKey, scopedSession } from './thread.mjs';
 import { emitNotify } from './notify.mjs'; // 후속 턴 결과를 원 채널(메신저)로 — 카드 약속('이어서 보고합니다') 이행
 
 /** 상태 변경 + 후속 처리. kind:'tool'은 대기 중인 턴이 스스로 재개하므로 후속 턴이 없다.
@@ -108,12 +108,16 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
       : `(사장 결재) 요청한 "${item.action}" 이(가) 거절되었다. 실행하지 말고, 대안이 있으면 한두 줄로 정리하라.`;
   }
   const t = await loadThread(wsId, item.slug);
+  // 텔레그램 결재의 후속 답은 카드가 실린 방(item.tg.chatId)으로 나간다(gateway approval_followup). 그 방이 그룹이면 그 그룹 범위 세션을 잇는다 —
+  // 전역 세션(주인의 데스크톱·1:1 대화)을 이으면 주인 대화가 그룹 답에 섞인다. ponytail: 그룹 판정은 채팅 id 부호(Bot API: 그룹·슈퍼그룹 음수, 1:1 양수) — 카드에 방 종류를 저장하지 않아서
+  const tgGroup = item.tg?.chatId && Number(item.tg.chatId) < 0 ? { chatId: item.tg.chatId, chatType: 'group' } : null;
+  const tgScope = turnScope(tgGroup);
   try {
     // 메신저발 결재의 후속 턴은 메신저 턴으로 — 파일 규약(messengerNote)을 받아야 '경로를 적으면
     // 첨부된다'가 작동한다(검수 M-1: 이게 없으면 승인 후속이 규약을 못 받는 유일한 턴이었다).
     const r = item.msgr
       ? await (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, item.slug, item.msgr, msg, t.sessionId, { runChat, session, ownerApproved: approve === true })
-      : await runChat(wsId, item.slug, msg, t.sessionId, item.tg?.chatId ? { source: 'messenger' } : {});
+      : await runChat(wsId, item.slug, msg, tgScope ? scopedSession(t, scopeKey(tgScope)).sessionId : t.sessionId, item.tg?.chatId ? { source: 'messenger', ...(tgGroup ? { mirrorCtx: tgGroup } : {}) } : {});
     await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts, contextScope: r.contextScope });
     // 결재가 메신저에서 왔으면(item.tg) 후속 보고도 그 방으로 — 이 방송이 없어서 카드가
     // "이어서 보고합니다"라고 약속하고 영원히 무소식이었다(실사용 제보 2026-07-30). 파일 첨부는
@@ -127,7 +131,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
       ? `${msg}\n\n(자동 보고 실패 — 하지만 위 처리는 완료되었습니다: ${String(e.message || e).slice(0, 120)})`
       : `${msg}\n\n(후속 실행 실패: ${String(e.message || e).slice(0, 160)})`;
     // A failed reauthorization may not return channel kind. Keep any Messenger failure audit scoped.
-    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: item.msgr ? null : t.sessionId, ...(item.msgr ? { contextScope: { kind: 'msgr', channelId: item.msgr.channelId, threadRoot: item.msgr.threadRoot } } : {}) }).catch(() => {});
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: item.msgr || tgScope ? null : t.sessionId, ...(item.msgr ? { contextScope: { kind: 'msgr', channelId: item.msgr.channelId, threadRoot: item.msgr.threadRoot } } : tgScope ? { contextScope: tgScope } : {}) }).catch(() => {});
     emitNotify({ type: 'approval_followup', wsId, item, reply: note }); // 실패도 무소식보다 통보가 낫다
     throw e;
   }
