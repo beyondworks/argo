@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { reconcilePending, messageEvent, broadcastEvent } from '../src/instant-delivery.mjs';
+import { reconcilePending, messageEvent, broadcastEvent, onForeground } from '../src/instant-delivery.mjs';
 
 test('낙관적 글은 client_msg_id로 맞춰 걷어낸다', () => {
   const pending = [{ clientId: 'cid-1', body: 'ㄱ' }, { clientId: 'cid-2', body: 'ㄴ' }];
@@ -40,4 +40,19 @@ test('App.jsx에는 구분자를 앞에 두고 payload를 전개하는 setEvent�
   assert.deepEqual(bad, [], `구분자 뒤에 전개가 오는 setEvent: ${bad.join(' | ')}`);
   // 세 방송이 모두 헬퍼를 거친다
   for (const k of ['approval', 'reaction', 'edit']) assert.match(app, new RegExp(`setEvent\\(broadcastEvent\\('${k}', payload\\)\\)`), `${k} 방송이 broadcastEvent를 거치지 않는다`);
+});
+
+test('앞으로 온 순간 한 번 따라잡는다 — 보일 때만, 연달아 오는 visibilitychange·focus는 한 번으로, 해제하면 멈춘다', () => {
+  const doc = new EventTarget(); doc.visibilityState = 'hidden'; const win = new EventTarget();
+  let t = 1000, calls = 0; const off = onForeground(() => { calls++; }, { doc, win, now: () => t });
+  doc.dispatchEvent(new Event('visibilitychange')); assert.equal(calls, 0, '가려진 채로는 조회하지 않는다');
+  doc.visibilityState = 'visible'; doc.dispatchEvent(new Event('visibilitychange')); win.dispatchEvent(new Event('focus'));
+  assert.equal(calls, 1, '앞으로 올 때 visibilitychange와 focus가 연달아 와도 한 번');
+  t += 5000; win.dispatchEvent(new Event('focus')); assert.equal(calls, 2, '나중의 포커스 복귀(다른 창에서 돌아옴)도 따라잡는다');
+  off(); t += 5000; win.dispatchEvent(new Event('focus')); doc.dispatchEvent(new Event('visibilitychange')); assert.equal(calls, 2, '해제 뒤엔 부르지 않는다');
+});
+
+test('App.jsx 채널 화면은 앞으로 올 때 글과 결재를 다시 읽는다', () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /useEffect\(\(\) => onForeground\(\(\) => \{ load\(lastId\)\.catch\(\(\) => \{\}\); loadApprovals\(\)\.catch\(\(\) => \{\}\); \}\), \[load, lastId\]\)/);
 });

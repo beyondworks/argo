@@ -30,7 +30,7 @@ import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipi
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
-import { reconcilePending, messageEvent, broadcastEvent } from './instant-delivery.mjs';
+import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -3144,6 +3144,8 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
   }, [chId, keepAnchor]);
   useEffect(() => { const el = feed.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [msgs?.length]);
   useEffect(() => { if (!lastId) return; const mark = () => { if (document.visibilityState !== 'hidden' && document.hasFocus()) onRead?.(chId, lastId); }; mark(); document.addEventListener('visibilitychange', mark); window.addEventListener('focus', mark); return () => { document.removeEventListener('visibilitychange', mark); window.removeEventListener('focus', mark); }; }, [chId, lastId]); // eslint-disable-line react-hooks/exhaustive-deps -- 창이 보여도 초점이 다른 앱에 있으면 읽음으로 치지 않는다(자리 비운 사이 온 글이 조용히 읽음이 되던 결함, 2026-09-12 점검)
+  // 앞으로 온 순간 따라잡기 — 가려진 창에서 밀린 글을 다음 폴·밀린 방송 처리까지 기다리지 않고 한 번에(유건 제보 2026-09-18 "앞으로 오면 하나씩 뜬다")
+  useEffect(() => onForeground(() => { load(lastId).catch(() => {}); loadApprovals().catch(() => {}); }), [load, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
   // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
   useEffect(() => { const iv = setInterval(() => {
     // 방송이 살아 있으면 전량 조회를 반복하지 않는다. 방송이 막 같은 일을 했기 때문이다.
