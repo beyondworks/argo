@@ -1249,3 +1249,128 @@ test('원래 DM 구성원의 결재 후속도 결재 카드가 아닌 원래 tex
   assert.equal(row.thread_root, 100);
   assert.equal(row.meta.disposition, 'done');
 });
+
+// 서버 봉투(msgr_crew_context)가 42501로 실행을 거부하면 클라이언트는 null을 받는다.
+// 실사고 2026-09-17: 그 null을 조용히 return하면서 커서만 전진해, 허용 범위 밖 사람의 멘션(라이브 msg 829)이
+// 거절 안내조차 없이 사라졌다. 실행은 계속 막되(로컬 폴백이 서버보다 느슨하다) 이유는 반드시 남긴다.
+test('drain: 서버 봉투가 실행을 거부해도 이유를 남기고 커서를 전진한다 — 침묵 소실 금지', async () => {
+  const db = fakeDb({ messages: [msg(11)] });
+  db.crewContext = async () => null;            // 42501 → null (권한·상태 거부)
+  db.message = async () => msg(11);             // 원본은 살아 있다
+  db.instructCheck = async () => 'crew_allow';  // 사유: 허용 범위 밖
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(jobsOf(enq).length, 0, '거부된 지시는 실행하지 않는다');
+  const sys = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.deepEqual(sys.map((s) => [s.kind, s.client_msg_id, s.reply_to]), [['system', `deny:${CREW}:11`, 11]], '거부 사유를 채널에 남긴다');
+  assert.match(sys[0].body, /허용된 멤버만|소유자만/);
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 11]], '안내를 남겼으면 커서 전진(무한 재시도 방지)');
+});
+
+test('drain: 봉투 거부 사유가 파견 해제면 권한 문구가 아니라 파견 안내를 낸다', async () => {
+  const db = fakeDb({ messages: [msg(11)] });
+  db.crewContext = async () => null;
+  db.message = async () => msg(11);
+  db.instructCheck = async () => 'inactive';    // 크루가 파견 해제되었거나 사라졌다
+  await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  const sys = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.equal(sys.length, 1);
+  assert.equal(sys[0].client_msg_id, `deny:${CREW}:11`);
+  assert.doesNotMatch(sys[0].body, /소유자만|허용된 멤버만/, '파견 해제를 권한 문제로 잘못 안내하지 않는다');
+  assert.match(sys[0].body, /파견/);
+});
+
+test('drain: 봉투 거부 안내조차 실패하면 커서를 보류해 다음 틱에 재시도한다', async () => {
+  const db = fakeDb({ messages: [msg(11)] });
+  db.crewContext = async () => null;
+  db.message = async () => msg(11);
+  db.instructCheck = async () => 'crew_allow';
+  db.insertMessage = async () => { throw new Error('insert down'); };
+  await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(db.calls.some((c) => c[0] === 'setCursor'), false, '안내를 못 남겼으면 커서 보류');
+});
+
+test('drain: 봉투 조회가 인프라 오류로 실패하면 안내 없이 커서를 보류한다', async () => {
+  const db = fakeDb({ messages: [msg(11)] });
+  db.crewContext = async () => { throw new Error('network down'); };
+  await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(db.calls.some((c) => c[0] === 'insertMessage'), false, '인프라 오류는 사용자에게 거절로 보이지 않는다');
+  assert.equal(db.calls.some((c) => c[0] === 'setCursor'), false, '인프라 오류는 재시도 대상');
+});
+
+test('drain: 원본이 지워져 봉투가 거부되면 안내 없이 커서만 전진한다', async () => {
+  const db = fakeDb({ messages: [msg(11)] });
+  db.crewContext = async () => null;            // 42501 — 권한 거부와 같은 모양으로 온다
+  db.message = async () => ({ ...msg(11), deleted_at: new Date().toISOString() });
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(jobsOf(enq).length, 0);
+  assert.equal(db.calls.some((c) => c[0] === 'insertMessage'), false, '사라진 글에 거절 안내를 달지 않는다');
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 11]], '재시도 대상이 아니므로 커서는 전진');
+});
+
+// 적재 뒤 권한이 회수되면 폴 루프는 이미 커서를 지나갔다 — 워커가 말하지 않으면 그 지시는 영영 무응답이다.
+test('워커: 적재 뒤 봉투가 거부되면 이유를 남기고, 안내 실패로 잡을 되살리지 않는다', async () => {
+  const f = scopedFixture();
+  const job = { msgId: 101, orgId: ORG, channelId: CH, crewId: f.remote.id, slug: 'feynman', text: 'x', authorId: MEMBER, threadRoot: 100, createdAt: new Date().toISOString() };
+  let turns = 0;
+  const handler = M.makeMsgrHandler(WS, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async () => { turns++; return { reply: 'bad' }; } });
+  f.db.crewContext = async () => null;
+  f.db.message = async () => msg(101, { thread_root: 100, deleted_at: null });
+  f.db.instructCheck = async () => 'crew_allow';
+  await handler(job);
+  assert.equal(turns, 0, '거부된 잡은 실행하지 않는다');
+  const sys = f.db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.deepEqual(sys.map((s) => [s.kind, s.client_msg_id, s.reply_to]), [['system', `deny:${f.remote.id}:101`, 101]], '폴 루프와 같은 멱등 키로 이유를 남긴다');
+  f.db.insertMessage = async () => { throw new Error('insert down'); };
+  await handler(job); // 던지면 queue.mjs가 잡 파일을 되돌려 영구 거부된 잡이 매 틱 되살아난다
+  assert.equal(turns, 0);
+});
+
+// 서버의 42501은 네 상황을 한 코드로 묶는다(크루 행 없음·원본 없음·지시 권한 없음·채널 열람 불가).
+// 게이트웨이는 그 넷을 사유별로 갈라 안내한다 — 무엇이든 "소유자만 시킬 수 있다"로 뭉뚱그리면 틀린 설명이 된다.
+test('drain: 봉투 거부 사유 네 갈래가 각각 맞는 안내로 갈린다', async () => {
+  const run = async (stub) => {
+    const db = fakeDb({ messages: [msg(11)] });
+    db.crewContext = async () => null;
+    db.message = async () => msg(11);
+    Object.assign(db, stub);
+    await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+    return db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  };
+  // 1) 크루 행이 없거나 파견 해제 — msgr_instruct_check가 'inactive'로 같은 뿌리를 본다
+  assert.match((await run({ instructCheck: async () => 'inactive' }))[0].body, /파견/);
+  // 2) 원본이 지워짐 — 사라진 글에는 안내하지 않는다
+  assert.deepEqual(await run({ message: async () => ({ ...msg(11), deleted_at: new Date().toISOString() }) }), []);
+  // 3) 지시 권한 없음
+  assert.match((await run({ instructCheck: async () => 'crew_allow' }))[0].body, /소유자만|허용된 멤버만/);
+  assert.match((await run({ instructCheck: async () => 'channel_policy' }))[0].body, /채널 정책/);
+  // 4) 채널 열람 불가 등 — 지시 권한만 보는 2차 판정으로는 'ok'가 나온다. 권한 문구로 속단하지 않고 일반 안내를 낸다.
+  const other = await run({ instructCheck: async () => 'ok' });
+  assert.equal(other.length, 1);
+  assert.doesNotMatch(other[0].body, /소유자만|허용된 멤버만|파견|채널 정책/);
+  assert.match(other[0].body, /받을 수 없습니다/);
+  // 판정 RPC 자체가 죽어도 침묵하지 않는다
+  assert.match((await run({ instructCheck: async () => { throw new Error('rpc down'); } }))[0].body, /받을 수 없습니다/);
+});
+
+// 보관 채널처럼 읽기는 되고 쓰기는 막히는 자리에서는 안내 삽입이 RLS에 영구히 막힌다.
+// 던지면 step이 break되어 그 크루의 큐 전체가 매 틱 같은 자리에서 멈춘다 — 1건 소실보다 나쁘다.
+test('drain: 거절 안내가 권한·제약으로 영구히 막히면 건너뛰고 뒤 메시지까지 진행한다', async () => {
+  const db = fakeDb({ messages: [msg(11), msg(12, { mentions: [] , channel_id: 'dm-ch' })] });
+  db.crewContext = async () => null;
+  db.message = async (id) => msg(id);
+  db.instructCheck = async () => 'crew_allow';
+  db.insertMessage = async () => { const e = new Error('msgr db: new row violates row-level security policy'); e.code = '42501'; throw e; };
+  await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 12]], '영구 실패는 건너뛰고 커서가 끝까지 전진한다');
+});
+
+// permanentWrite가 영구·일시를 가르는 재료는 예외의 .code다. 그 한 줄이 사라지면 모든 실패가 일시로 보여
+// 안내가 막히는 자리에서 크루 큐 전체가 멈춘다(검수 조건 1의 결함 그대로). 어댑터 쪽에 게이트를 둔다.
+test('makeDb.insertMessage: 실패한 insert의 PG 코드를 보존한다(23505는 그대로 멱등)', async () => {
+  const client = (error) => ({ from: () => ({ insert: () => ({ select: () => ({ single: async () => ({ data: null, error }) }) }) }) });
+  await assert.rejects(M.makeDb(client({ code: '42501', message: 'new row violates row-level security policy' })).insertMessage({ channel_id: CH }),
+    (e) => e.code === '42501', 'PG 코드가 보존되지 않으면 영구 실패를 가릴 수 없다');
+  assert.equal(await M.makeDb(client({ code: '23505', message: 'duplicate key' })).insertMessage({ channel_id: CH }), null, '멱등 키 중복은 예외가 아니라 null');
+});

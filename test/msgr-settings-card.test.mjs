@@ -163,7 +163,8 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /let why = envelope \? 'ok' : await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
   assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
-  assert.match(bridge, /body: why === 'channel_policy'\n\s*\? pick\(`이 채널은 회사 크루만 일할 수 있습니다\(채널 정책\)/, '채널 사유 안내');
+  assert.match(bridge, /body: denyBody\(why, crew, lang\),/, '거절 안내가 denyBody 문구 표를 거치지 않는다');
+  assert.match(bridge, /if \(why === 'channel_policy'\) return pick\(`이 채널은 회사 크루만 일할 수 있습니다\(채널 정책\)/, '채널 사유 안내'); // 문구가 실제로 나가는지는 행동으로 — test/msgr-bridge.test.mjs '봉투 거부 사유 네 갈래'
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /when channel is not null and ch\.personal_crews <> 'allowed'\n\s*and not \(o\.service_user_id is not null and c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident'\) then 'channel_policy'/, '서버 채널 정책 판정');
   assert.match(sql, /if not public\.msgr_can_instruct\(new\.crew_id, src\.author_user_id, new\.channel_id\) then/, '답글 게이트가 채널을 안 본다');
