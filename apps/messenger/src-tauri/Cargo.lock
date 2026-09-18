@@ -60,7 +60,11 @@ dependencies = [
 name = "argo-messenger"
 version = "0.1.29"
 dependencies = [
+ "block2",
  "getrandom 0.2.17",
+ "objc2",
+ "objc2-foundation",
+ "objc2-user-notifications",
  "serde",
  "serde_json",
  "tauri",
@@ -2535,7 +2539,10 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
 dependencies = [
+ "bitflags 2.13.1",
+ "block2",
  "objc2",
+ "objc2-core-location",
  "objc2-foundation",
 ]
 
