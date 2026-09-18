@@ -35,7 +35,7 @@ import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
-import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope } from './thread.mjs';
+import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey } from './thread.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
@@ -1013,8 +1013,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 손대지 않고 방 대화로 답하며, 필요한 일은 주인에게 결재로 올린다(규칙 7·9). 아래 강제 지점이 전부 이 한 값을 본다.
   const guest = isGuestCtx(mirrorCtx);
   // 메신저 턴의 기록 범위 — DM은 뿌리 단위, 채널은 채널 단위(세션도 채널마다 따로: thread.mjs scopedSessions). 범위가 있는 기록은 다른 대화에 붙여 넣지 않는다.
-  const contextScope = mirrorCtx?.kind === 'msgr' && mirrorCtx.channelId
-    ? { kind: dmTurn ? 'msgr-dm' : 'msgr', channelId: mirrorCtx.channelId, ...(mirrorCtx.threadRoot ? { threadRoot: mirrorCtx.threadRoot } : {}) } : null;
+  const contextScope = turnScope(mirrorCtx); // 텔레그램 그룹 턴도 그 그룹 범위(주인의 전역 대화를 잇지도 붙이지도 않는다)
   // DM history is supplied by the fresh, authorized thread envelope. Global crew state is not a DM history source.
   // 기억 안 남김(journal.off) 채널은 세션도 남기지 않는다 — 다음 턴이 이 대화를 이어받지 않게.
   const sessionless = dmTurn || (contextScope && journal?.off === true);
@@ -1502,7 +1501,7 @@ ${lang === 'en'
   if (!dmTurn && (sessionId || __freshRetry)) {
     const t = await loadThread(wsId, agentSlug).catch(() => ({ messages: [] }));
     const me = await getDeviceId().catch(() => null);
-    const device = contextScope?.kind === 'msgr' ? scopedSession(t, contextScope.channelId).sessionDevice : t.sessionDevice; // 채널 세션은 채널별 소유 기기
+    const device = scopeKey(contextScope) ? scopedSession(t, scopeKey(contextScope)).sessionDevice : t.sessionDevice; // 범위 세션은 범위별 소유 기기
     const foreign = !!device && !!me && device !== me;
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {

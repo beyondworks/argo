@@ -17,19 +17,28 @@ export async function threadMtime(wsId, slug) {
   try { return (await stat(file(wsId, slug))).mtimeMs; } catch { return 0; }
 }
 
-/** 메신저 채널 세션 — 채널마다 따로 잇는다. 전역 sessionId는 주인이 데스크톱에서 나눈 대화라 채널 턴이 이어받으면 채널 참여자에게 샌다. */
-export const scopedSession = (t, channelId) => t?.scopedSessions?.[channelId] ?? { sessionId: null, sessionDevice: null };
-/** 프롬프트에 붙일 스레드 줄 — 채널 턴은 그 채널 기록만, 그 밖의 턴은 범위 없는 기록만(채널·DM 기록이 데스크톱 대화에 섞이지 않게). */
-export const inContextScope = (m, scope) => (scope?.kind === 'msgr' ? m.contextScope?.kind === 'msgr' && m.contextScope.channelId === scope.channelId : !m.contextScope);
+/** 턴의 기록 범위(단일 원천) — 메신저 DM은 뿌리, 메신저 채널은 채널, 텔레그램 그룹은 그 그룹 채팅 단위. 데스크톱·텔레그램 1:1은 범위 없음
+    (전역 sessionId = 주인이 데스크톱·1:1에서 나눈 대화). 범위 턴이 전역 세션을 이어받으면 주인 대화가 다른 참여자가 보는 답에 샌다. */
+export function turnScope(ctx) {
+  if (ctx?.kind === 'msgr') return ctx.channelId ? { kind: ctx.channelKind === 'dm' ? 'msgr-dm' : 'msgr', channelId: ctx.channelId, ...(ctx.threadRoot ? { threadRoot: ctx.threadRoot } : {}) } : null;
+  if (ctx?.chatId != null && /group/.test(ctx.chatType ?? '')) return { kind: 'tg-group', chatId: String(ctx.chatId) };
+  return null;
+}
+/** 세션을 따로 잇는 범위의 키 — 메신저 채널 = channelId(#593 저장분 그대로), 텔레그램 그룹 = tg:<chatId>. 그 밖(메신저 DM 등)은 세션을 남기지 않는다. */
+export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId : s?.kind === 'tg-group' && s.chatId ? `tg:${s.chatId}` : null);
+export const scopedSession = (t, key) => t?.scopedSessions?.[key] ?? { sessionId: null, sessionDevice: null };
+/** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록만(채널·그룹·DM 기록이 데스크톱 대화에 섞이지 않게). */
+export const inContextScope = (m, scope) => { const k = scopeKey(scope); return k ? scopeKey(m.contextScope) === k : !m.contextScope; };
 
 async function keepSession(t, sessionId, scope) {
   // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를
   // resume하면 CLI가 'No conversation found'로 죽는다(실측: 기기 전환 실패). chat이 사전 분기.
   if (!sessionId) return;
   if (!scope) { t.sessionId = sessionId; t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null); return; }
-  if (scope.kind !== 'msgr' || !scope.channelId) return; // DM 등 나머지 범위 기록은 세션을 남기지 않는다
-  const prev = t.scopedSessions?.[scope.channelId];
-  t.scopedSessions = { ...t.scopedSessions, [scope.channelId]: { sessionId, sessionDevice: await getDeviceId().catch(() => prev?.sessionDevice ?? null) } };
+  const key = scopeKey(scope);
+  if (!key) return; // DM 등 나머지 범위 기록은 세션을 남기지 않는다
+  const prev = t.scopedSessions?.[key];
+  t.scopedSessions = { ...t.scopedSessions, [key]: { sessionId, sessionDevice: await getDeviceId().catch(() => prev?.sessionDevice ?? null) } };
 }
 
 export async function loadThread(wsId, slug) {
