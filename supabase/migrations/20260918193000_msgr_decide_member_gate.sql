@@ -38,10 +38,36 @@ begin
   elsif new.removed_at is not null and old.removed_at is null then o := new.org_id; u := new.user_id; why := 'removed';
   elsif new.role = 'guest' and old.role is distinct from 'guest' then o := new.org_id; u := new.user_id; why := 'guest';
   else return coalesce(new, old); end if;
+  perform set_config('msgr.approvers_prune', '1', true); -- 정책 트리거가 이 갱신을 사람의 정책 변경으로 적지 않게(검토 #606 LOW-1)
   update public.msgr_org_policies set approver_user_ids = array_remove(approver_user_ids, u)
    where org_id = o and u = any (approver_user_ids);
   if found then perform public.msgr_audit(o, 'policy.approver.pruned', 'user', u::text, jsonb_build_object('reason', why)); end if;
+  perform set_config('msgr.approvers_prune', '', true);
   return coalesce(new, old);
+end $$;
+-- 정리 갱신은 policy.update 감사를 한 건 더 남기지 않고 updated_by(마지막으로 정책을 바꾼 사람)도 바꾸지 않는다 — 기록은 policy.approver.pruned 하나.
+--  두 함수는 20260903120000 정의 그대로에 표시 검사만 더한다.
+create or replace function public.msgr_policy_before_update() returns trigger
+  language plpgsql as $$
+begin
+  if current_setting('msgr.approvers_prune', true) = '1' then new.updated_by := old.updated_by; new.updated_at := old.updated_at; return new; end if;
+  new.updated_by := auth.uid(); new.updated_at := now();
+  return new;
+end $$;
+create or replace function public.msgr_policy_after_update() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if current_setting('msgr.approvers_prune', true) = '1' then return new; end if; -- 결재권자 목록 정리뿐 — 잠금 전파·감사할 변경이 없다
+  if new.allow_locked then
+    update public.msgr_crews set allow = new.allow_default, allow_users = case when new.allow_default = 'list' then allow_users else '{}'::uuid[] end
+     where org_id = new.org_id and allow <> new.allow_default;
+  end if;
+  if new.crew_memory_locked then
+    update public.msgr_channels set crew_memory = new.crew_memory_default where org_id = new.org_id and crew_memory <> new.crew_memory_default;
+  end if;
+  perform public.msgr_audit(new.org_id, 'policy.update', 'policy', new.org_id::text, jsonb_build_object(
+    'allow_default', new.allow_default, 'allow_locked', new.allow_locked, 'crew_memory_default', new.crew_memory_default, 'crew_memory_locked', new.crew_memory_locked));
+  return new;
 end $$;
 drop trigger if exists msgr_approvers_prune on public.msgr_org_members;
 create trigger msgr_approvers_prune after update or delete on public.msgr_org_members for each row execute function public.msgr_approvers_prune();

@@ -129,3 +129,72 @@ test('새로 넣는 결재권자는 현재 멤버만 — 남아 있던 항목은
   r = asUserRaw(U.owner, `update public.msgr_org_policies set allow_default = allow_default where org_id = '${ORG}' returning 1`);
   assert.equal(r.status, 0, r.stderr);
 });
+
+// ── 검토 추가(Argo Dev, #606 검토 시험을 옮겨 넣음) ──
+// ④ 소유자 USING 갈래만 떼어 본다: WHERE·RETURNING 없고 SET이 상수인 UPDATE에는 SELECT 정책이 붙지 않는다(PG 문서) → UPDATE USING만 판정.
+test('검토 ④ — 제거된 크루 소유자는 UPDATE USING(소유자 갈래)만으로도 결재 행을 못 건드린다', { skip }, () => {
+  reset(); sql(`update public.msgr_org_policies set approval_high_by = 'admin', approver_user_ids = '{}' where org_id = '${ORG}'`);
+  sql(`update public.msgr_crew_approvals set status = 'expired' where status = 'pending'`);
+  const ap = newAp('high', 'r-using'); // high + admin 모드 → can_decide 갈래는 소유자에게 false, 소유자 USING 갈래만 남는다
+  const upd = (uid) => { const r = asUserRaw(uid, `update public.msgr_crew_approvals set reason = 'probe'`); if (r.status !== 0) return 'ERR ' + r.stderr; return sql(`select coalesce(reason, '(null)') from public.msgr_crew_approvals where id = '${ap}'`) === 'probe' ? '1' : '0'; };
+  const ctl = upd(U.crewOwner); // 대조: 멤버인 소유자는 소유자 갈래로 갱신된다
+  sql(`update public.msgr_crew_approvals set reason = null where id = '${ap}'`);
+  member(U.crewOwner, `removed_at = now()`);
+  const hidden = upd(U.crewOwner); // 크루 표 RLS가 소유자 갈래의 exists를 가린다 — 이 겹 때문에 ②가 떼어지지 않았다
+  // 그 겹을 이 시험에서만 치운다: 소유자는 자기 크루를 늘 읽을 수 있다고 가정(앞으로 크루 읽기 정책이 넓어질 때의 모양)
+  sql(`create policy review_crews_owner_read on public.msgr_crews for select to authenticated using (owner_user_id = auth.uid())`);
+  const gone = upd(U.crewOwner);
+  sql(`drop policy review_crews_owner_read on public.msgr_crews`);
+  console.log(`# review4 hiddenByCrewsRls=${hidden}`);
+  const reason = sql(`select coalesce(reason, '(null)') from public.msgr_crew_approvals where id = '${ap}'`);
+  console.log(`# review4 ctl=${ctl} removed=${gone} reason=${reason}`);
+  assert.equal(ctl, '1', '대조 — 멤버인 소유자');
+  assert.equal(gone, '0', '제거된 소유자 — 소유자 USING 갈래가 막는다');
+  assert.equal(reason, '(null)');
+});
+
+// ① 회귀 — 현재 확정 흐름이 그대로인지(모드 × 위험 × 역할)
+test('검토 ① — 멤버의 확정 흐름은 그대로', { skip }, () => {
+  reset();
+  const mode = (m, ids = []) => sql(`set session_replication_role = replica; update public.msgr_org_policies set approval_high_by = '${m}', approver_user_ids = array[${ids.map((i) => `'${i}'::uuid`).join(',')}]::uuid[] where org_id = '${ORG}'; set session_replication_role = origin;`);
+  const row = [];
+  for (const [m, ids] of [['admin', []], ['owner', []], ['approvers', [U.approver]]]) {
+    mode(m, ids);
+    for (const risk of ['low', 'high']) {
+      const ap = newAp(risk, `r1-${m}-${risk}`);
+      row.push(`${m}/${risk}: owner=${canDecide(U.owner, ap)} crewOwner=${canDecide(U.crewOwner, ap)} approver=${canDecide(U.approver, ap)} guest=${canDecide(U.guest, ap)} outsider=${canDecide(U.outsider, ap)}`);
+    }
+  }
+  console.log('# ' + row.join('\n# '));
+  assert.deepEqual(row, [
+    'admin/low: owner=f crewOwner=t approver=f guest=f outsider=f',
+    'admin/high: owner=t crewOwner=f approver=f guest=f outsider=f',
+    'owner/low: owner=f crewOwner=t approver=f guest=f outsider=f',
+    'owner/high: owner=f crewOwner=t approver=f guest=f outsider=f',
+    'approvers/low: owner=f crewOwner=t approver=f guest=f outsider=f',
+    'approvers/high: owner=t crewOwner=f approver=t guest=f outsider=f',
+  ]);
+  // 확정 UPDATE도 실제로 된다(관리자 high, 소유자 low)
+  mode('admin'); const a1 = newAp('high', 'r1-dec-h'); assert.equal(decide(U.owner, a1), 'approved');
+  const a2 = newAp('low', 'r1-dec-l'); assert.equal(decide(U.crewOwner, a2), 'approved');
+});
+
+// ② prune → 정책 표 갱신이 기존 정책 트리거를 깨운다: 오류·재귀 없음, 부수 효과 기록
+test('검토 ② — 관리자가 결재권자를 제거할 때 정책 트리거 연쇄', { skip }, () => {
+  reset(); plant([U.approver]);
+  const byBefore = sql(`select coalesce(updated_by::text, '(null)') from public.msgr_org_policies where org_id = '${ORG}'`);
+  const before = sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'policy.update'`);
+  const r = asUserRaw(U.owner, `update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id = '${U.approver}'`);
+  assert.equal(r.status, 0, r.stderr);
+  const after = sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'policy.update'`);
+  const by = sql(`select updated_by from public.msgr_org_policies where org_id = '${ORG}'`);
+  console.log(`# review2 policy.update audit ${before}->${after} updated_by=${by === U.owner ? 'owner(제거한 관리자)' : by}`);
+  assert.ok(!approvers().includes(U.approver));
+  // LOW-1: 정리는 사람의 정책 변경이 아니다 — policy.update 감사가 늘지 않고 updated_by도 그대로(기록은 policy.approver.pruned 하나)
+  assert.equal(after, before, 'policy.update 감사가 한 건 더 생기지 않는다');
+  assert.equal(sql(`select coalesce(updated_by::text, '(null)') from public.msgr_org_policies where org_id = '${ORG}'`), byBefore, 'updated_by 유지');
+  // 표시는 트랜잭션 안에서만 — 같은 세션의 다음 정책 저장은 평소대로 감사된다
+  const r2 = asUserRaw(U.owner, `update public.msgr_org_policies set allow_default = allow_default where org_id = '${ORG}' returning 1`);
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.equal(Number(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'policy.update'`)), Number(after) + 1, '다음 사람 저장은 감사된다');
+});
