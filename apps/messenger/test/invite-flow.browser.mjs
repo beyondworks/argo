@@ -109,32 +109,33 @@ const joinWith = async (page, text) => { await menu(page, '초대 링크·코드
   await page.getByRole('menuitem', { name: '내보내기' }).click();
   const ask = page.locator('.msgr-crewsheet .confirm[role="alertdialog"]');
   await ask.waitFor().catch(async (e) => { if (SHOT) await page.screenshot({ path: SHOT }); throw e; });
-  check('kick.notice', /초대 링크가 \d+개/.test(await ask.textContent()), await ask.textContent());
-  await ask.getByRole('button', { name: '내보내기' }).click();
+  check('kick.notice', /내가 확인할 수 있는 초대 링크 중 .*링크가 \d+개/.test(await ask.textContent()), await ask.textContent());
+  await ask.getByRole('button', { name: '링크 취소하고 내보내기', exact: true }).click(); // 관리 목록이 없는 방장도 여기서 취소할 수 있다(검수 LOW)
+  await page.waitForFunction((id) => !!window.__instant.tables.msgr_invites.find((i) => i.id === id)?.revoked_at, inv.id).catch(() => {});
+  check('kick.revokedLinks', await page.evaluate((id) => !!window.__instant.tables.msgr_invites.find((i) => i.id === id)?.revoked_at, inv.id));
   await page.waitForFunction(() => !window.__instant.tables.msgr_channel_members.some((m) => m.channel_id === 'long' && m.member_id === 'user-crystal')).catch(() => {});
   check('kick.done', await page.evaluate(() => !window.__instant.tables.msgr_channel_members.some((m) => m.channel_id === 'long' && m.member_id === 'user-crystal')));
   await page.close();
 }
 
-// (1c) 링크 쌓임 방지(총괄 2026-09-18): 설정을 바꿔 새 링크가 생기면 복사 안 한 이전 링크는 취소, 복사한 링크는 둔다, 닫을 때 복사 안 한 링크 취소
+// (1c) 링크 쌓임 방지(총괄 2026-09-18): 설정을 바꿔 새 링크가 생기면 복사 안 한 이전 링크는 **삭제**(지난 초대에도 안 남김, 검수 LOW), 복사한 링크는 둔다, 닫을 때 복사 안 한 링크 삭제
 {
   const page = await open();
-  const inv = () => page.evaluate(() => structuredClone(window.__instant.tables.msgr_invites ?? []));
-  const ready = (n) => page.waitForFunction((n) => { const b = document.querySelector('.inv-copy'); return (window.__instant.tables.msgr_invites?.length ?? 0) >= n && b && !b.disabled; }, n);
-  await menu(page, '멤버 초대'); await ready(1);
-  await page.locator('.inv-chip', { hasText: 'Lounge Two' }).click(); await ready(2);
-  await page.waitForFunction(() => !!window.__instant.tables.msgr_invites[0].revoked_at).catch(() => {});
-  let rows = await inv();
-  check('stack.uncopiedRevoked', !!rows[0].revoked_at && !rows[1].revoked_at, rows.map((r) => r.revoked_at));
+  const codes = () => page.evaluate(() => (window.__instant.tables.msgr_invites ?? []).map((i) => i.code));
+  const cur = () => page.evaluate(() => window.__instant.tables.msgr_invites.at(-1)?.code);
+  const ready = (code) => page.waitForFunction((code) => { const inv = window.__instant.tables.msgr_invites?.at(-1); const b = document.querySelector('.inv-copy'); return inv && inv.code !== code && b && !b.disabled; }, code);
+  await menu(page, '멤버 초대'); await ready(null); const a = await cur();
+  await page.locator('.inv-chip', { hasText: 'Lounge Two' }).click(); await ready(a); const b = await cur();
+  await page.waitForFunction((a) => !window.__instant.tables.msgr_invites.some((i) => i.code === a), a).catch(() => {});
+  check('stack.uncopiedDeleted', !(await codes()).includes(a) && (await codes()).includes(b), await codes());
   await page.locator('.inv-copy').click(); await page.waitForFunction(() => document.querySelector('.inv-copy')?.textContent.includes('복사됨'));
-  await page.locator('.inv-chip', { hasText: 'Fixture General' }).click(); await ready(3);
+  await page.locator('.inv-chip', { hasText: 'Fixture General' }).click(); await ready(b); const c = await cur();
   await page.waitForTimeout(400);
-  rows = await inv();
-  check('stack.copiedKept', !rows[1].revoked_at && !rows[2].revoked_at, rows.map((r) => r.revoked_at));
+  check('stack.copiedKept', await page.evaluate((b) => { const i = window.__instant.tables.msgr_invites.find((x) => x.code === b); return !!i && !i.revoked_at; }, b));
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !!window.__instant.tables.msgr_invites[2].revoked_at).catch(() => {});
-  rows = await inv();
-  check('stack.closeRevokes', !!rows[2].revoked_at && !rows[1].revoked_at && rows.filter((r) => !r.revoked_at).length === 1, rows.map((r) => r.revoked_at));
+  await page.waitForFunction((c) => !window.__instant.tables.msgr_invites.some((i) => i.code === c), c).catch(() => {});
+  const left = await codes();
+  check('stack.closeDeletes', !left.includes(c) && left.length === 1 && left[0] === b, left);
   await page.close();
 }
 

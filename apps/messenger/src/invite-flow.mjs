@@ -56,14 +56,19 @@ export async function revokeInvite(sb, id) {
   return { legacy: true };
 }
 
-// 초대 창이 만들었다가 버린 링크 정리(총괄 2026-09-18) — 한 번도 안 쓰였을 때만 취소한다. 쓰였거나 읽지 못하면 그대로 둔다(false).
+// 초대 창이 만들었다가 버린 링크 정리(총괄 2026-09-18) — 복사도 사용도 안 된 링크는 "지난 초대"에 남길 이유가 없어 **삭제**한다(검수 LOW).
+// 한 번도 안 쓰였을 때만: 새 서버는 use_count = 0을 삭제 조건에 걸어 확인과 삭제 사이의 수락도 막는다. 쓰였거나 읽지 못하면 그대로 둔다(false).
 export async function discardInvite(sb, id) {
   if (!id) return false;
   let res = await sb.from('msgr_invites').select('id, use_count, accepted_at').eq('id', id).maybeSingle();
-  if (res.error && missingFn(res.error)) res = await sb.from('msgr_invites').select('id, accepted_at').eq('id', id).maybeSingle(); // 옛 서버: use_count 없음
+  const old = !!(res.error && missingFn(res.error));
+  if (old) res = await sb.from('msgr_invites').select('id, accepted_at').eq('id', id).maybeSingle(); // 옛 서버: use_count 없음
   if (res.error || !res.data || (res.data.use_count ?? 0) > 0 || res.data.accepted_at) return false;
-  await revokeInvite(sb, id);
-  return true;
+  let del = sb.from('msgr_invites').delete().eq('id', id);
+  if (!old) del = del.eq('use_count', 0);
+  const out = await del.select('id');
+  if (!out.error && out.data?.length) return true;
+  try { await revokeInvite(sb, id); return true; } catch { return false; } // 삭제가 막히면(정책) 소프트 취소라도
 }
 
 // 목록의 상태 — live | expired | exhausted | revoked. 옛 1회용(열 없음)은 수락되면 소진

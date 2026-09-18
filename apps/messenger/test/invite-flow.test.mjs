@@ -11,7 +11,7 @@ function fakeSb({ rpc = {}, insert, row } = {}) {
     rpc: async (name, args) => { log.push(['rpc', name, args]); const r = rpc[name]; return typeof r === 'function' ? r(args) : r ?? { data: null, error: MISSING_FN }; },
     from: (table) => ({ select: (cols) => ({ eq: () => ({ maybeSingle: async () => { log.push(['select', table, cols]); return typeof row === 'function' ? row(cols) : row; } }) }),
       insert: (row) => ({ select: () => ({ single: async () => { log.push(['insert', table, row]); return insert(row); } }) }),
-      delete: () => ({ eq: (k, v) => ({ select: async () => { log.push(['delete', table, v]); return { data: [{ id: v }], error: null }; } }) }) }) };
+      delete: () => { const eqs = []; const q = { eq: (k, v) => { eqs.push([k, v]); return q; }, select: async () => { log.push(['delete', table, eqs[0][1], ...eqs.slice(1).flat()]); return { data: [{ id: eqs[0][1] }], error: null }; } }; return q; } }) };
 }
 const NOW = Date.parse('2026-09-18T00:00:00Z');
 
@@ -100,10 +100,11 @@ test('설정 요약 — 링크 만료와 게스트 이용 기간을 따로, 게�
   assert.equal(settingsSummary({ role: 'guest', expiryDays: null, maxUses: null, guestDays: 90 }, t), 'inv.expiry.never · inv.uses.sum(1) · inv.role.guest · inv.guest.daysSum(90)');
 });
 
-test('창이 버린 링크 정리 — 안 쓰였으면 취소, 쓰였거나(use_count·옛 accepted_at) 못 읽으면 둔다', async () => {
+test('창이 버린 링크 정리 — 안 쓰였으면 삭제(새 서버는 use_count = 0 조건), 쓰였거나(use_count·옛 accepted_at) 못 읽으면 둔다', async () => {
   const revoked = (sb) => sb.log.some((x) => x[1] === 'msgr_invite_revoke' || x[0] === 'delete');
-  const fresh = fakeSb({ row: { data: { id: 'i', use_count: 0, accepted_at: null }, error: null }, rpc: { msgr_invite_revoke: { data: null, error: null } } });
-  assert.equal(await discardInvite(fresh, 'i'), true); assert.ok(revoked(fresh));
+  const fresh = fakeSb({ row: { data: { id: 'i', use_count: 0, accepted_at: null }, error: null } });
+  assert.equal(await discardInvite(fresh, 'i'), true);
+  assert.deepEqual(fresh.log.at(-1), ['delete', 'msgr_invites', 'i', 'use_count', 0], '소프트 취소가 아니라 삭제, 안 쓰였을 때만');
   const used = fakeSb({ row: { data: { id: 'i', use_count: 1, accepted_at: 'x' }, error: null } });
   assert.equal(await discardInvite(used, 'i'), false); assert.ok(!revoked(used));
   const old = fakeSb({ row: (cols) => cols.includes('use_count') ? { data: null, error: { code: '42703', message: 'column use_count does not exist' } } : { data: { id: 'i', accepted_at: null }, error: null } });

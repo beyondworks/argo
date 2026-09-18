@@ -1727,13 +1727,19 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     let res = await supabase.from('msgr_invites').select('id, channel_ids, expires_at, max_uses, use_count, revoked_at, accepted_at').eq('org_id', org.id);
     if (res.error && missingFn(res.error)) res = await supabase.from('msgr_invites').select('id, channel_id, expires_at, accepted_at').eq('org_id', org.id); // 옛 서버: 게스트 초대만 채널이 있다
     if (res.error) return 0; // 목록을 못 읽으면(권한 등) 안내 없이 예전처럼 내보낸다
-    return (res.data ?? []).filter((i) => inviteStatus(i) === 'live' && ((i.channel_ids ?? []).includes(channel.id) || i.channel_id === channel.id)).length;
-  };
+    return (res.data ?? []).filter((i) => inviteStatus(i) === 'live' && ((i.channel_ids ?? []).includes(channel.id) || i.channel_id === channel.id)).map((i) => i.id);
+  }; // RLS로 내가 읽을 수 있는 것만 — 관리자 아닌 방장은 관리자의 멤버 초대를 못 본다(그래서 문구가 "내가 확인할 수 있는")
   const kickUser = async (m) => {
     if (channel.kind !== 'private') return kick('user', m.user_id);
-    const n = await liveInvitesHere();
-    if (!n) return kick('user', m.user_id);
-    setKickAsk({ id: m.user_id, n });
+    const ids = await liveInvitesHere();
+    if (!ids.length) return kick('user', m.user_id);
+    setKickAsk({ id: m.user_id, ids });
+  };
+  const revokeAndKick = async () => { // 관리 목록이 없는 방장도 "링크를 취소하세요"를 여기서 실행한다(서버 msgr_invite_revoke가 채널 관리자의 게스트 초대 취소를 허용)
+    const { id, ids } = kickAsk; setBusy(true);
+    try { for (const inv of ids) await revokeInvite(supabase, inv); }
+    catch (e) { setBusy(false); return onError(friendlyErr(e.message, t)); } // 링크가 남으면 다시 들어올 수 있으니 내보내지 않고 멈춘다
+    setBusy(false); setKickAsk(null); kick('user', id);
   };
   const isDmRoom = channel.kind === 'dm';
   const inRoom = people.some((m) => m.user_id === uid);
@@ -1821,8 +1827,9 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 )}
               </div>
             ); })}
-            {kickAsk && <div className="confirm" role="alertdialog" aria-label={t('ch.remove')}><p>{t('ch.kick.invites', { n: kickAsk.n })}</p><div className="row">
-              <button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => { const id = kickAsk.id; setKickAsk(null); kick('user', id); }}>{t('ch.kick.anyway')}</button>
+            {kickAsk && <div className="confirm" role="alertdialog" aria-label={t('ch.remove')}><p>{t('ch.kick.invites', { n: kickAsk.ids.length })}</p><div className="row inv-kick-acts">
+              <button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={revokeAndKick}>{t('ch.kick.revokeAll')}</button>
+              <button type="button" className="btn sm" disabled={busy} onClick={() => { const id = kickAsk.id; setKickAsk(null); kick('user', id); }}>{t('ch.kick.anyway')}</button>
               {onManageInvites && <button type="button" className="btn sm" onClick={() => { setKickAsk(null); onManageInvites(); }}>{t('inv.manage')}</button>}
               <button type="button" className="btn sm" onClick={() => setKickAsk(null)}>{t('ui.cancel')}</button></div></div>}
             {chCrews.map((c) => { const on = c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS; const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
