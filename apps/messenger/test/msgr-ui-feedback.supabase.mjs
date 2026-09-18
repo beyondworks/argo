@@ -26,6 +26,7 @@ const state = window.__instant = {
     // 제보 상황: DM 그룹 "다빈치, crystal" — 사람 둘(나·crystal) + 에이전트 다빈치 하나
 
     msgr_channels: [channelRow('general', 'public', 'Fixture General'), channelRow('dm-group', 'dm', 'dm:다빈치, crystal'), { ...channelRow('priv', 'private', '디자인 비공개'), topic: '제품 출시 준비 — 이번 주 목표와 결정 사항을 여기에 모읍니다' },
+      channelRow('lounge', 'public', 'Lounge'), channelRow('lounge2', 'public', 'Lounge Two'), // 참여 안 한 공개 채널 — 초대 코드 가입(lounge)·남이 나를 추가(lounge2) 뒤 사이드바 확인용
       { ...channelRow('long', 'private', '2026 하반기 제품 출시 준비와 파트너 협업 채널'), topic: 'Launch readiness, partner onboarding and weekly decisions — keep everything for the release here' }], // 긴 이름·긴 주제 — 상단 바 접힘 확인용. 비공개 채널 — 에이전트 추가 안내(ch.add.crew.note) 확인용
     msgr_channel_members: [{ channel_id: 'general', member_kind: 'user', member_id: uid },
       { channel_id: 'dm-group', member_kind: 'user', member_id: uid }, { channel_id: 'dm-group', member_kind: 'user', member_id: 'user-crystal' },
@@ -99,6 +100,19 @@ function query(table) {
   return api;
 }
 
+export const JOIN_CODE = '0123456789abcdef'.repeat(3); // parseInviteCode는 48자리 16진수만 받는다
+// 초대 코드 가입 대역 — JOIN_CODE면 나를 공개 채널 lounge의 사람 멤버로 넣고 조직 id를 돌려준다(서버 msgr_accept_invite와 같은 반환형)
+state.acceptInvite = (code) => {
+  if (code !== JOIN_CODE) throw new Error('msgr_invite_invalid');
+  state.addMember('lounge'); return org;
+};
+// 다른 사람이 나를 채널에 넣은 것 — 앱을 거치지 않고 표만 바꾼다. 캐시(memo)를 비워야 다음 조회가 새 행을 본다
+state.addMember = (channel_id, clear = true) => {
+  if (!state.tables.msgr_channel_members.some((m) => m.channel_id === channel_id && m.member_kind === 'user' && m.member_id === uid))
+    state.tables.msgr_channel_members.push({ channel_id, member_kind: 'user', member_id: uid });
+  if (clear) memo.clear();
+};
+
 // 서버 트리거 대역. 실제 트리거처럼 org: 여윈 방송과 ch: 본문 방송을 **둘 다** 쏜다.
 // lean만 쏘면 마이그레이션 적용 전 서버를, 둘 다 쏘면 적용 후 서버를 흉내낸다.
 state.post = ({ body, author = 'user-other', withChannelTopic = true }) => {
@@ -119,7 +133,7 @@ export const supabase = {
   from: query,
   auth: { getSession: async () => ({ data: { session: { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } } }),
           onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
-  rpc: async (name, args) => settle({ rpc: name }, () => name === 'msgr_dm_candidates'
+  rpc: async (name, args) => settle({ rpc: name }, () => name === 'msgr_accept_invite' ? state.acceptInvite(args?.code) : name === 'msgr_dm_candidates'
     ? CREWS.filter((c) => !state.tables.msgr_channel_members.some((m) => m.channel_id === args?.p_channel && m.member_kind === 'crew' && m.member_id === c.id)).map((c) => ({ ...c, delivery_ready: true }))
     : []),
   realtime: { setAuth: async () => { if (state.authDelay) await new Promise((r) => setTimeout(r, state.authDelay)); } },
