@@ -68,6 +68,7 @@ export const crewTier = (crew, org) => (crew?.hosting === 'bot' || (org?.service
 const PAGE = 100;
 const RT_QUIET_MS = 30_000;  // 이 시간 안에 방송이 있었으면 실시간이 살아 있다고 본다
 const RT_SWEEP_MS = 60_000;  // 실시간이 살아 있어도 이 주기로는 보정 조회를 한 번 돌린다
+const RT_DOWN = new Set(['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED']); // 구독이 끊겼다고 알려 주는 상태
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
 const dayKey = (iso) => new Date(iso).toDateString();
@@ -690,7 +691,7 @@ function Shell({ session }) {
         .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent(broadcastEvent('reaction', payload))))
         .on('broadcast', { event: 'edit' }, active(({ payload }) => setEvent(broadcastEvent('edit', payload))))
         .on('broadcast', { event: 'progress' }, active(({ payload }) => setProgress((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: { ...payload, at: Date.now() } }))))
-        .subscribe((status, e) => { if (import.meta.env.DEV) console.log('[rt]', status, e?.message ?? ''); });
+        .subscribe((status, e) => { if (import.meta.env.DEV) console.log('[rt]', status, e?.message ?? ''); if (RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 끊김을 알면 폴이 바로 10초로 복귀
       rt.current = ch;
       if (import.meta.env.DEV) window.__argoRt = ch;
       return remove;
@@ -708,7 +709,7 @@ function Shell({ session }) {
       ch = supabase.channel(`dm:${chId}`, { config: { private: true } });
       ch.on('broadcast', { event: 'message' }, ({ payload }) => { setEvent(messageEvent(payload)); })
         .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
-        .subscribe();
+        .subscribe((status) => { if (RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); });
       personalRt.current = ch;
     })();
     return () => { remove(); };
@@ -3081,7 +3082,11 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
     if (event.kind === 'message' && event.channel_id === chId) {
       rtSeen.current = Date.now();
       if (!(live.current.msgs ?? []).some((m) => m.id === event.id)) load(lastId).catch(() => {});
+      // 결재 카드 글은 approval 방송과 짝으로 온다. 그 방송 하나를 놓치면 채널을 다시 열 때까지 카드가
+      // 비어 있게 된다(크루는 결정을 기다리며 멈추고 사람은 요청을 모른다). 카드 글을 봤으면 결재도 읽는다.
+      if (event.msgKind === 'approval_card') loadApprovals().catch(() => {});
     }
+    if (event.kind === 'rt_down') rtSeen.current = 0; // 알려진 끊김 — 30초 창을 기다리지 않고 다음 폴부터 조회한다
     if (event.kind === 'approval' && event.channel_id === chId) { rtSeen.current = Date.now(); loadApprovals().catch(() => {}); load(lastId).catch(() => {}); }
     if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
     if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
@@ -3115,7 +3120,7 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
     // 보정 조회를 없애지 않고 간격만 늘린다(방송이 끊기면 즉시 10초로 돌아온다).
     const now = Date.now();
     const quiet = now - rtSeen.current > RT_QUIET_MS;
-    if (quiet || now - swept.current > RT_SWEEP_MS) { swept.current = now; load(lastId).catch(() => {}); }
+    if (quiet || now - swept.current > RT_SWEEP_MS) { swept.current = now; load(lastId).catch(() => {}); loadApprovals().catch(() => {}); } // 결재도 함께 — 방송 유실의 이중 방어
     const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {});
   }, 10_000); return () => clearInterval(iv); }, [load, lastId, hydrate]);
   const decide = async (ap, status) => {
