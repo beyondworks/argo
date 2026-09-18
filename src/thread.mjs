@@ -22,10 +22,11 @@ export async function threadMtime(wsId, slug) {
 export function turnScope(ctx) {
   if (ctx?.kind === 'msgr') return ctx.channelId ? { kind: ctx.channelKind === 'dm' ? 'msgr-dm' : 'msgr', channelId: ctx.channelId, ...(ctx.threadRoot ? { threadRoot: ctx.threadRoot } : {}) } : null;
   if (ctx?.chatId != null && /group/.test(ctx.chatType ?? '')) return { kind: 'tg-group', chatId: String(ctx.chatId) };
+  if (ctx?.kind === 'slack' && ctx.channelId) return { kind: 'slack', channelId: String(ctx.channelId) }; // 슬랙 공유 채널(1:1은 게이트웨이가 ctx를 넘기지 않는다)
   return null;
 }
-/** 세션을 따로 잇는 범위의 키 — 메신저 채널 = channelId(#593 저장분 그대로), 텔레그램 그룹 = tg:<chatId>. 그 밖(메신저 DM 등)은 세션을 남기지 않는다. */
-export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId : s?.kind === 'tg-group' && s.chatId ? `tg:${s.chatId}` : null);
+/** 세션을 따로 잇는 범위의 키 — 메신저 채널 = channelId(#593 저장분 그대로), 텔레그램 그룹 = tg:<chatId>, 슬랙 채널 = slack:<channelId>. 그 밖(메신저 DM 등)은 세션을 남기지 않는다. */
+export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId : s?.kind === 'tg-group' && s.chatId ? `tg:${s.chatId}` : s?.kind === 'slack' && s.channelId ? `slack:${s.channelId}` : null);
 export const scopedSession = (t, key) => t?.scopedSessions?.[key] ?? { sessionId: null, sessionDevice: null };
 /** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록만(채널·그룹·DM 기록이 데스크톱 대화에 섞이지 않게). */
 export const inContextScope = (m, scope) => { const k = scopeKey(scope); return k ? scopeKey(m.contextScope) === k : !m.contextScope; };

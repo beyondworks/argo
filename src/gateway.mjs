@@ -178,10 +178,10 @@ async function slackApi(token, method, body) {
   return j;
 }
 
-/** 텔레그램 턴의 세션 — 1:1은 전역 세션(웹과 같은 스레드, 주인 본인 대화), 그룹은 그 그룹 채팅 범위 세션.
-    그룹 답은 다른 참여자도 보므로 주인의 데스크톱·1:1 대화를 잇지 않는다(업그레이드 전 스레드의 옛 전역 세션 포함). */
+/** 텔레그램·슬랙 턴의 세션 — 1:1은 전역 세션(웹과 같은 스레드, 주인 본인 대화), 텔레그램 그룹·슬랙 공유 채널은 그 방 범위 세션.
+    여러 사람이 보는 답이므로 주인의 데스크톱·1:1 대화를 잇지 않는다(업그레이드 전 스레드의 옛 전역 세션 포함). */
 async function tgTurnSession(wsId, slug, ctx) {
-  const mirrorCtx = /group/.test(ctx?.chatType ?? '') ? ctx : null;
+  const mirrorCtx = /group/.test(ctx?.chatType ?? '') || ctx?.kind === 'slack' ? ctx : null; // 슬랙 공유 채널도 그 채널 범위
   const contextScope = turnScope(mirrorCtx) ?? undefined;
   const t = await loadThread(wsId, slug);
   return { mirrorCtx, contextScope, sessionId: contextScope ? scopedSession(t, scopeKey(contextScope)).sessionId : t.sessionId };
@@ -489,13 +489,28 @@ function makeTgAgentHandler(wsId, slug, getCfg) {
     }
   };
 }
+/** 슬랙 채널이 주인 1:1(is_im)인가 — true일 때만 전역 맥락(주인 대화)을 잇는다. 공유 채널·조회 실패(권한 없음·레이트 리밋·네트워크)는
+    전부 공유로 본다(fail-closed): 사용자가 만든 봇 토큰에 *:read 권한이 있다는 보장이 없다. 폴링이 아니라 턴이 돌 때만 조회하고 채널별로
+    캐시한다 — 성공은 프로세스 수명(채널 종류는 거의 안 바뀐다), 실패는 1분(레이트 리밋이 판정을 매번 실패로 만들지 않게 곧 다시 시도). */
+const slackKinds = new Map(); // channelId → { im, until }
+async function slackIsIm(token, channel, { now = Date.now, api = slackApi } = {}) {
+  const hit = slackKinds.get(channel);
+  if (hit && hit.until > now()) return hit.im;
+  let im = false; let until = Infinity;
+  try { im = (await api(token, 'conversations.info', { channel })).channel?.is_im === true; } catch { until = now() + 60_000; }
+  slackKinds.set(channel, { im, until });
+  return im;
+}
+export const _slackForTest = { slackIsIm, slackKinds, makeSlackHandler: (...a) => makeSlackHandler(...a) };
+
 function makeSlackHandler(wsId, getCfg) {
   return async (job) => {
     const cfg = getCfg();
     if (!cfg?.token || !cfg.channel) return; // 연결이 사라짐 — 잡 폐기
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     try {
-      const reply = await runTurn(wsId, cfg, job.text);
+      const shared = !(await slackIsIm(cfg.token, cfg.channel)); // 공유 채널이면 그 채널 범위 세션·기록만(주인 대화를 잇지도 붙이지도 않는다)
+      const reply = await runTurn(wsId, cfg, job.text, [], shared ? { kind: 'slack', channelId: cfg.channel } : null);
       await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: clip(reply) });
     } catch (e) {
       await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang) }).catch(() => {});
