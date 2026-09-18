@@ -3205,8 +3205,8 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
     <div className="msgr-thread" ref={feed}>
       <div className="msgr-spine">
         {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
-        {msgs !== null && !all.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}
-        {tab === 'all' && all.length > 0 && (hasMore
+        {msgs !== null && !all.length && !pendingRows.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}{/* 보내는 중인 첫 글도 내용으로 센다 — 서버 확인 때 안내 줄이 바뀌며 말풍선이 밀리지 않게 */}
+        {tab === 'all' && (all.length > 0 || pendingRows.length > 0) && (hasMore
           ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder} disabled={older} aria-busy={older || undefined}>{t(older ? 'thread.loading' : 'thread.older')}</button></div>
           : <div className="msgr-older start"><span className="msgr-klabel">{t('thread.start')}</span></div>)}
         {rows}
@@ -3267,7 +3267,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
   const [ctxAt, setCtxAt] = useState(null); // 데스크톱 우클릭: 동작 줄을 커서 자리에 고정(유건 지시 2026-09-12)
   const [actsOpen, setActsOpen] = useState(false); // 터치는 길게 눌러야 액션이 열린다(마우스는 hover) — 상시 노출은 화면당 대화를 두세 건으로 줄였다
-  const hold = useLongPress(() => setActsOpen(true));
+  const hold = useLongPress(() => { if (!m.pending) setActsOpen(true); });
   const phone = useIsPhone(); // 폰: 길게 누르면 슬랙식 아래 시트(빠른 반응 줄 + 동작 목록)
   useEffect(() => {
     if (!actsOpen) return undefined;
@@ -3312,7 +3312,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
   const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} />)}</div>;
-  const acts = !m.pending && !ap && !m.deleted_at && !editing && (
+  const acts = !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
     phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)
       <div className="msgr-actsheetwrap" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) setActsOpen(false); }}>{/* 슬랙 참고(유건 2026-09-11): 빠른 반응 줄 → 타일 → 목록. 있는 기능만 싣는다 */}
         <div className="msgr-actsheet" role="dialog" onClick={(e) => e.stopPropagation()}>
@@ -3332,7 +3332,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
         </div>
       </div>, document.body,
     ) : (
-    <div className={`msgr-acts${ctxAt && actsOpen ? ' ctx' : ''}`} style={ctxAt && actsOpen ? { left: Math.max(4, Math.min(ctxAt.x, window.innerWidth - 200)), top: Math.max(4, Math.min(ctxAt.y, window.innerHeight - 180)) } : undefined}>
+    <div className={`msgr-acts${ctxAt && actsOpen ? ' ctx' : ''}${m.pending ? ' pending' : ''}`} inert={m.pending ? true : undefined} style={ctxAt && actsOpen ? { left: Math.max(4, Math.min(ctxAt.x, window.innerWidth - 200)), top: Math.max(4, Math.min(ctxAt.y, window.innerHeight - 180)) } : undefined}>
       <button type="button" onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
       <button type="button" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>
       {mine && m.kind === 'text' && <button type="button" onClick={() => { setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
@@ -3348,7 +3348,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
     </form>
   );
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
-    <div className="msgr-mine" data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
+    <div className="msgr-mine" data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {editing ? editor : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : <Body text={body} />}</div>}
       {attRow}
       {chips}
@@ -3358,7 +3358,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   const isCrew = m.author_kind === 'crew';
   return ( // 동료·크루 글 — 척추 위 아바타(사람 원 / 크루 타일), 크루 답은 척추에 붙는 시트
-    <div className="msgr-row" data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
+    <div className="msgr-row" data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {isCrew && crew ? <button type="button" className="msgr-avbtn" onClick={() => onCrew?.(crew.id)} title={t('crew.sheet')}><Av name={name} crew crewId={crew.id} /></button> : <Av name={name} crew={isCrew} userId={m.author_user_id} />}
       <div style={{ minWidth: 0 }}>
         <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>

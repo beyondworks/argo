@@ -48,7 +48,7 @@ test('모바일 액션은 기본 숨김이고 길게 누른 메시지에서만 �
   const phone = css.slice(css.indexOf('@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) {', css.indexOf('.msgr-shell')));
   assert.match(phone, /\.msgr-acts \{ display: none; \}/, '모바일 기본은 숨김(공간까지 차지하지 않는다)');
   assert.match(phone, /\[data-acts='open'\] \.msgr-acts \{ display: flex;/, '열린 메시지에서만 보인다');
-  assert.match(app, /const hold = useLongPress\(\(\) => setActsOpen\(true\)\);/, '길게 누르면 연다');
+  assert.match(app, /const hold = useLongPress\(\(\) => \{ if \(!m\.pending\) setActsOpen\(true\); \}\);/, '길게 누르면 연다(보내는 중 행은 제외 — 아직 서버 id가 없다)');
   for (const cls of ['msgr-mine', 'msgr-row']) {
     assert.match(app, new RegExp(`<div className="${cls}" data-mid=\\{m\\.id\\} data-acts=\\{actsOpen \\? 'open' : undefined\\} \\{\\.\\.\\.hold\\} onContextMenu=`), `${cls} 래퍼 배선(+ 데스크톱 우클릭 2026-09-12, 스크롤백 앵커 data-mid 2026-09-14)`);
   }

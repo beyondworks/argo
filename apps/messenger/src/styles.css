@@ -1363,4 +1363,5 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
 /* 보낸 직후, 서버 행이 도착하기 전의 내 글. 자리를 먼저 잡아 두고 옅게 보인다. */
 .msgr-mine .meta .sent { display: inline-flex; color: var(--ok); transition: opacity 180ms ease; }
-.msgr-mine .meta .sent.pending { opacity: .35; } /* 보내는 중 — 말풍선은 최종 모양 그대로, 체크만 흐리게 */
+.msgr-mine .meta .sent.pending { opacity: .35; }
+.msgr-acts.pending { visibility: hidden; } /* 보내는 중 — 자리만 차지(hover·포커스에도 안 보임). 누르기는 inert가 막는다 */ /* 보내는 중 — 말풍선은 최종 모양 그대로, 체크만 흐리게 */
