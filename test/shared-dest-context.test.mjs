@@ -32,7 +32,9 @@ const srv = http.createServer((req, res) => { let b = ''; req.on('data', (c) => 
   if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
     bodies.push(b); const last = (JSON.parse(b || '{}').messages ?? []).at(-1);
     const hasResult = Array.isArray(last?.content) && last.content.some((c) => c.type === 'tool_result');
-    if (!hasResult && call) { const c = call; call = null; return sse(res, [['message_start', start()],
+    // 그리고 그 턴의 요청(본문에 when 문구)에만 — 앞 턴의 늦은 요청이 호출을 가로채면 턴이 도구 없이 끝난다(Windows CI 실측: 채널 게시 "done")
+    // 세션 변수(CLAUDECODE 등)가 없는 환경(CI)에서는 SDK가 본 요청 앞에 도구 0개의 세션 제목 생성 요청을 먼저 보낸다 — 도구가 실린 요청에만 호출을 준다(Argo Dev 재현)
+    if (!hasResult && call && (JSON.parse(b || '{}').tools ?? []).length > 0 && (!call.when || b.includes(call.when))) { const c = call; call = null; return sse(res, [['message_start', start()],
       ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu1', name: c.name, input: {} } }],
       ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(c.input) } }],
       ['content_block_stop', { type: 'content_block_stop', index: 0 }], ['message_delta', { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 1 } }], ['message_stop', { type: 'message_stop' }]]); }
@@ -92,7 +94,7 @@ async function reset() {
   bodies = []; call = null;
   return desk.sessionId;
 }
-const DELEGATE = { name: 'mcp__crew__delegate', input: { to: 'y', task: '그룹 일정표를 정리해 줘' } };
+const DELEGATE = { name: 'mcp__crew__delegate', input: { to: 'y', task: '그룹 일정표를 정리해 줘' }, when: '맡겨' };
 const crewBotGroup = (text) => G._tgHandlersForTest.makeTgAgentHandler(ws, 'x', () => ({ token: 'bot-x', ownerId: 1, ownerChat: '200' }))({ text, atts: [], ctx: { chatId: -100111, chatType: 'supergroup' } });
 
 test('위임: 텔레그램 그룹 턴에서 위임받은 동료(CLI) 턴은 주인 대화를 붙이지 않는다 — 위임 기록도 그룹 범위', posixOnly, async () => {
@@ -108,7 +110,7 @@ test('위임: 텔레그램 그룹 턴에서 위임받은 동료(CLI) 턴은 주�
 
 test('위임: 그룹에 실린 결재의 후속 턴에서 위임받은 동료(CLI) 턴도 주인 대화를 붙이지 않는다', posixOnly, async () => {
   await connections();
-  await reset(); call = DELEGATE;
+  await reset(); call = { ...DELEGATE, when: '일정 공유' }; // 후속 턴 문구는 결재 이름을 담는다
   const { addApproval, setApprovalMeta, loadApprovals } = await import('../src/approvals.mjs');
   const { _followUpForTest } = await import('../src/approval-actions.mjs');
   const it = await addApproval(ws, { slug: 'x', action: '일정 공유', reason: '그룹 요청', kind: 'action' });
@@ -132,12 +134,12 @@ test('위임(핀): 메신저 채널 턴의 위임은 동료 턴을 돌리지 않
 test('슬랙 채널에서 올린 결재의 후속 턴은 주인의 전역 세션을 잇지 않는다 — 결재에 슬랙 범위가 실리고 후속은 그 범위로(검수 LOW)', async () => {
   await connections({ slack: true });
   const deskSid = await reset();
-  call = { name: 'mcp__crew__request_approval', input: { action: '고객 메일 발송', reason: '채널에서 요청받음' } };
+  call = { name: 'mcp__crew__request_approval', input: { action: '고객 메일 발송', reason: '채널에서 요청받음' }, when: '고객에게 메일' };
   slackPosts.length = 0;
   await G._slackForTest.makeSlackHandler(ws, () => ({ token: 'xoxb-fake', channel: 'C0SHARED', ownerId: 'U1' }))({ text: '고객에게 메일 보내 줘' });
   const { loadApprovals } = await import('../src/approvals.mjs');
   const item = (await loadApprovals(ws)).find((a) => a.action === '고객 메일 발송');
-  assert.ok(item, `전제: 슬랙 채널 턴에서 결재가 올라갔다 — 채널 게시: ${JSON.stringify(slackPosts.slice(-2)).slice(0, 400)}`);
+  assert.ok(item, `전제: 슬랙 채널 턴에서 결재가 올라갔다 — 채널 게시: ${JSON.stringify(slackPosts.slice(-2)).slice(0, 300)}, 모델 요청 ${bodies.length}건 중 턴 문구 포함 ${bodies.filter((b) => b.includes('고객에게 메일')).length}건, 남은 호출 ${call ? call.name : '없음'}`);
   const { _followUpForTest } = await import('../src/approval-actions.mjs');
   bodies = [];
   await _followUpForTest(ws, item, true);
@@ -223,6 +225,23 @@ test('받은 서류함: 보고가 텔레그램 그룹으로 나가면 서류함 
   const l = await cliLog();
   assert.ok(l.length > 0, '전제: 서류함 턴이 CLI로 돌았다');
   assert.ok(!l.includes(PRIVATE_Y), '그룹으로 보고하는 서류함 턴이 주인 대화를 붙였다');
+});
+
+test('쪽지(메신저 밖): 배달 브리핑이 텔레그램 그룹으로 나가면 수신 크루(CLI) 턴이 주인 대화를 붙이지 않는다 — 실제 sendCrewMail·deliverCrewMail·crewmailTurn', posixOnly, async () => {
+  const { sendCrewMail, deliverCrewMail } = await import('../src/crewmail.mjs');
+  const { crewmailTurn } = await import('../src/scheduler.mjs');
+  await connections({ telegramChat: -100555 });
+  await reset();
+  await sendCrewMail(ws, { from: 'x', fromName: '엑스', to: 'y', message: '자료 정리해서 알려 줘' });
+  await deliverCrewMail(ws, (slug, msg, opts) => crewmailTurn(ws, slug, msg, opts));
+  const l = await cliLog();
+  assert.ok(l.length > 0, '전제: 쪽지 배달 턴이 CLI로 돌았다');
+  assert.ok(!l.includes(PRIVATE_Y), '그룹으로 브리핑되는 쪽지 배달 턴이 주인 대화를 붙였다');
+  await connections(); // 대조군: 브리핑이 없으면(주인 앱뿐) 지금처럼 전역 맥락
+  await reset();
+  await sendCrewMail(ws, { from: 'x', fromName: '엑스', to: 'y', message: '자료 다시 정리해 줘' });
+  await deliverCrewMail(ws, (slug, msg, opts) => crewmailTurn(ws, slug, msg, opts));
+  assert.ok((await cliLog()).includes(PRIVATE_Y), '주인만 보는 쪽지 배달은 지금처럼 전역 맥락');
 });
 
 test('briefingCtx: 목적지 판정 — 그룹·슬랙 채널은 범위, 주인 1:1·연결 없음은 null, 공유 목적지 여럿은 shared', async () => {

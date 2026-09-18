@@ -186,6 +186,32 @@ export function tickFailureDigest(cid, { runFn = runFailureDigest, now = Date.no
   return true;
 }
 
+/** 쪽지 배달 턴 한 통 — 스케줄러가 deliverCrewMail에 넘기는 실행기. 메신저발이면 그 채널 문맥, 메신저 밖이면 배달 브리핑의 목적지 범위(briefingCtx)로 돈다.
+    (export: 목적지 기준 붙여넣기 행동 테스트 — test/shared-dest-context.test.mjs) */
+export async function crewmailTurn(cid, slug, msg, opts) {
+  // 수신 크루의 유효 러너 판정 — CLI 러너(codex/gemini/antigravity) 턴에는 send_to_crew가
+  // 없어 회신 안내가 없는 도구 지시가 된다(분리 검수 MEDIUM 2026-07-28). chat.mjs의 해석
+  // (meta.runner → resolveRunner 폴백)과 같은 경로로 근사한다 — chat()이 턴 시점에 재해석
+  // 하므로 그 사이 러너 상태가 바뀌면 어긋날 수 있으나, 판정 실패·경합의 기본값은 안내
+  // 유지(hasTools:true)라 최악도 기존 동작과 같다.
+  let hasTools = true;
+  try {
+    const { meta } = await readAgentCard(cid, slug);
+    const resolved = await resolveRunner(cid, (meta.runner ?? '').toLowerCase() || null);
+    hasTools = !isCliTurn(resolved.runner, await runnerCredType(cid, resolved.runner)); // gemini API 키(네이티브)는 도구 있음
+  } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
+  const prompt = mailPrompt(msg, 'ko', { hasTools });
+  // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
+  const mirrorCtx = crewmailMirrorCtx(cid, slug, msg); // 요청자 사슬(손님 판정 재료)을 잇는다 — crewmailMirrorCtx 주석
+  const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))) }); // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
+  // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
+  await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts, contextScope: t.contextScope })
+    .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
+  // 배달 알림 — pushEvent의 crewmail 분기(텔레그램 문안)와 짝(재검 N1 보류 해소). 슬랙은
+  // 타입 게이트로 좁혀져 이 이벤트에 반응하지 않는다(과거 event.routine TypeError 경로).
+  emitNotify({ type: 'crewmail', wsId: cid, slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, reply: t.reply, id: msg.id, message: msg.message, msgr: msg.msgr ?? null });
+}
+
 /** 쪽지 수신 턴의 메신저 맥락 — 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러).
     요청자 사슬(uid·origin·rootAuthor·guest)을 **먼저 펼친다**(mirrorCtxFromOrigin) — 빠지면 손님 사슬(손님 B → 크루 X → 쪽지 → 크루 Y)이
     Y에서 주인 턴으로 되살아나거나(승격), 판정이 맥락을 몰라 주인의 쪽지까지 손님이 된다. 수신 쪽 사실(수신 크루 id·채널 이름)은 뒤에서 덮는다.
@@ -226,29 +252,7 @@ export function ensureScheduler() {
           // 회사별 in-flight 가드(consolidating 패턴).
           if (!mailDelivering.has(cid)) {
             mailDelivering.add(cid);
-            deliverCrewMail(cid, async (slug, msg, opts) => {
-              // 수신 크루의 유효 러너 판정 — CLI 러너(codex/gemini/antigravity) 턴에는 send_to_crew가
-              // 없어 회신 안내가 없는 도구 지시가 된다(분리 검수 MEDIUM 2026-07-28). chat.mjs의 해석
-              // (meta.runner → resolveRunner 폴백)과 같은 경로로 근사한다 — chat()이 턴 시점에 재해석
-              // 하므로 그 사이 러너 상태가 바뀌면 어긋날 수 있으나, 판정 실패·경합의 기본값은 안내
-              // 유지(hasTools:true)라 최악도 기존 동작과 같다.
-              let hasTools = true;
-              try {
-                const { meta } = await readAgentCard(cid, slug);
-                const resolved = await resolveRunner(cid, (meta.runner ?? '').toLowerCase() || null);
-                hasTools = !isCliTurn(resolved.runner, await runnerCredType(cid, resolved.runner)); // gemini API 키(네이티브)는 도구 있음
-              } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
-              const prompt = mailPrompt(msg, 'ko', { hasTools });
-              // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
-              const mirrorCtx = crewmailMirrorCtx(cid, slug, msg); // 요청자 사슬(손님 판정 재료)을 잇는다 — crewmailMirrorCtx 주석
-              const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))) }); // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
-              // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
-              await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts, contextScope: t.contextScope })
-                .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
-              // 배달 알림 — pushEvent의 crewmail 분기(텔레그램 문안)와 짝(재검 N1 보류 해소). 슬랙은
-              // 타입 게이트로 좁혀져 이 이벤트에 반응하지 않는다(과거 event.routine TypeError 경로).
-              emitNotify({ type: 'crewmail', wsId: cid, slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, reply: t.reply, id: msg.id, message: msg.message, msgr: msg.msgr ?? null });
-            })
+            deliverCrewMail(cid, (slug, msg, opts) => crewmailTurn(cid, slug, msg, opts))
               .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${cid}):`, e.message))
               .finally(() => mailDelivering.delete(cid));
           }
