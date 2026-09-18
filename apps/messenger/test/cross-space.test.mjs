@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceOf, spaceKey } from '../src/cross-space.mjs';
+import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceOf, spaceKey, joinWithBackoff } from '../src/cross-space.mjs';
 
 // 가짜 supabase — rpc와 from().select().eq().is().maybeSingle() 체인만. 호출 기록을 남긴다.
 function fakeSb({ rpcs = {}, rows = {} } = {}) {
@@ -92,4 +92,25 @@ test('App.jsx 배선: 소속 조직 전부의 org: 토픽과 u:<나> 토픽을 �
 test('폰 홈 조직 전환 버튼: min-width:0 — 배지가 붙어도 자리 안에서 멈추고 이름만 말줄임(검수 #605, 측정은 test/org-badge-phone.browser.mjs)', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.msgr-phone\.phone-home \.msgr-side \.msgr-org \{[^}]*\bmin-width: 0;/);
+});
+
+test('u: 구독 백오프: 거절(CHANNEL_ERROR)되면 채널을 걷고 1분→2분→…→최대 10분 뒤에만 다시 붙는다, 붙으면 간격 초기화, 멈추면 예약·채널 모두 걷힌다', () => {
+  const made = []; const removed = []; const timers = [];
+  const sb = { removeChannel: (c) => { removed.push(c.n); return Promise.resolve('ok'); } };
+  const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
+  const stop = joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: (id) => { if (id) timers[id - 1].cleared = true; } });
+  assert.equal(made.length, 1, '처음엔 바로 붙는다');
+  const fail = () => made.at(-1).cb('CHANNEL_ERROR');
+  for (let i = 0; i < 6; i++) { fail(); timers.at(-1).fn(); }
+  assert.deepEqual(timers.map((x) => x.ms), [60_000, 120_000, 240_000, 480_000, 600_000, 600_000], '두 배씩, 10분 상한');
+  assert.deepEqual(removed, [0, 1, 2, 3, 4, 5], '거절된 채널은 매번 걷는다(realtime-js 자체 재시도 차단)');
+  made.at(-1).cb('CHANNEL_ERROR'); made.at(-1).cb('CHANNEL_ERROR');
+  assert.equal(timers.length, 7, '같은 채널의 오류가 겹쳐 와도 재시도 예약은 하나');
+  timers.at(-1).fn(); made.at(-1).cb('SUBSCRIBED'); made.at(-1).cb('CHANNEL_ERROR');
+  assert.equal(timers.at(-1).ms, 60_000, '붙은 뒤 끊기면 1분부터 다시');
+  stop();
+  assert.equal(timers.at(-1).cleared, true, '멈추면 예약된 재시도 취소');
+  const before = made.length; timers.at(-1).fn(); assert.equal(made.length, before, '멈춘 뒤에는 다시 붙지 않는다');
+  const stop2 = joinWithBackoff(sb, make, { timer: () => 0, clear: () => {} }); const live = made.at(-1).n; stop2();
+  assert.ok(removed.includes(live), '멈추면 붙어 있던 채널도 걷는다');
 });

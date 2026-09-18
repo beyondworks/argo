@@ -15,6 +15,8 @@ const state = window.__instant = {
   latency: 120,            // 한 번의 DB 왕복에 해당하는 시간(ms)
   queries: [],             // 걸린 쿼리 기록 — 테이블별로 몇 번 갔는지 센다
   topics: {},              // 구독된 실시간 토픽 → 핸들러
+  live: new Set(),         // 만들어졌고 아직 걷히지 않은 채널(supabase.getChannels 대역 — 고아 구독 집계)
+  authDelay: 0,            // realtime.setAuth 지연(ms) — 방을 빠르게 옮길 때 정리가 setAuth보다 먼저 끝나는 경쟁을 재현한다
   statusCbs: {},           // 토픽 → 구독 상태 콜백(끊김을 흉내낼 때 부른다)
   nextId: 200,
   tables: {
@@ -38,7 +40,7 @@ const state = window.__instant = {
   },
 };
 // 구독을 놓으면 그 채널이 걸어 둔 핸들러도 실제로 걷어낸다(실제 전송처럼).
-function drop(c) { if (!c?.__own) return; const bag = state.topics[c.__topic]; if (!bag) return;
+function drop(c) { state.live.delete(c); if (!c?.__own) return; const bag = state.topics[c.__topic]; if (!bag) return;
   for (const [ev, w] of c.__own) { const arr = bag[ev]; const i = arr?.indexOf(w) ?? -1; if (i >= 0) arr.splice(i, 1); }
   c.__own.length = 0; state.drops = (state.drops ?? 0) + 1; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -120,16 +122,17 @@ export const supabase = {
   rpc: async (name, args) => settle({ rpc: name }, () => name === 'msgr_dm_candidates'
     ? CREWS.filter((c) => !state.tables.msgr_channel_members.some((m) => m.channel_id === args?.p_channel && m.member_kind === 'crew' && m.member_id === c.id)).map((c) => ({ ...c, delivery_ready: true }))
     : []),
-  realtime: { setAuth: async () => {} },
+  realtime: { setAuth: async () => { if (state.authDelay) await new Promise((r) => setTimeout(r, state.authDelay)); } },
+  getChannels: () => [...state.live].map((c) => ({ topic: `realtime:${c.__topic}` })),
   channel: (name) => { const bag = state.topics[name] ??= {}; const own = [];
     const c = { __topic: name, __own: own,
       on: (_kind, { event }, handler) => { const w = (...a) => { state.hits = (state.hits ?? 0) + 1; return handler(...a); };
         (bag[event] ??= []).push(w); own.push([event, w]); return c; },
       subscribe: (cb) => { state.subscribes = (state.subscribes ?? 0) + 1; (state.statusCbs[name] ??= []).push(cb); cb?.('SUBSCRIBED'); return c; },
       send: async () => {}, unsubscribe: async () => { drop(c); } };
-    return c; },
+    state.live.add(c); return c; },
   removeChannel: async (c) => { drop(c); return 'ok'; },
-  removeAllChannels: async () => { state.topics = {}; },
+  removeAllChannels: async () => { state.topics = {}; state.live.clear(); },
   storage: { from: () => ({ remove: async () => ({ data: [], error: null }), upload: async () => ({ error: null }), list: async () => ({ data: [], error: null }) }) },
 };
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }

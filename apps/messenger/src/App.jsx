@@ -31,7 +31,7 @@ import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
-import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceKey } from './cross-space.mjs'; // 다른 공간의 새 글 — 안 읽음 합계·알림 판단
+import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceKey, joinWithBackoff } from './cross-space.mjs'; // 다른 공간의 새 글 — 안 읽음 합계·알림 판단
 import { notifyPermission, requestNotifyPermission, askNotifyOnce, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -700,22 +700,29 @@ function Shell({ session }) {
     });
     return () => { if (rt.current === ch) rt.current = null; cleanup(); }; // React cleanup is synchronous; scope serializes the async removal.
   }, [orgId, session.access_token, resumeEpoch]);
-  // ── 개인 공간 실시간: 열린 개인 1:1 채널의 dm:<채널> 토픽 구독 ──
-  const personalRt = useRef(null);
+  // ── 열린 방의 채널 토픽 dm:<채널> 구독 — 개인 방과 조직의 비공개 방(DM·비공개 채널) ──
+  // 비공개 방의 typing·progress는 조직 토픽이 아니라 이 토픽으로 온다(20260918190000 — 조직 토픽은 조직 전원이 들어 방의 존재·크루 활동이 샜다).
+  // 옛 서버에서는 조직 방 typing이 org:로 계속 오고 이 토픽은 조용할 뿐이라 깨지지 않는다. 글은 handleMessage가 id로 한 번만 처리한다.
+  const roomRt = useRef(null);
+  const openKind = useMemo(() => (chId ? channels.find((c) => c.id === chId)?.kind ?? null : null), [channels, chId]);
+  const roomTopic = !!chId && (isPersonal || (openKind !== null && openKind !== 'public'));
   useEffect(() => {
-    if (!isPersonal || !chId) return;
-    let ch;
-    const remove = async () => { if (ch) { await supabase.removeChannel(ch).catch(() => {}); if (personalRt.current === ch) personalRt.current = null; } };
+    if (!roomTopic) return;
+    let ch; let live = true; // 정리가 setAuth보다 먼저 끝나면(방을 빠르게 옮길 때) 채널을 만들지 않는다 — 안 그러면 고아 dm: 구독이 옮길 때마다 쌓였다(검수 #607 실측)
     (async () => {
       await supabase.realtime.setAuth(session.access_token);
+      if (!live) return;
       ch = supabase.channel(`dm:${chId}`, { config: { private: true } });
       ch.on('broadcast', { event: 'message' }, ({ payload }) => handleMessageRef.current(payload)) // 조직 처리기와 같은 처리 — 알림이 없던 결함(검수 ③)
         .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
-        .subscribe((status) => { if (RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); });
-      personalRt.current = ch;
+        .on('broadcast', { event: 'progress' }, ({ payload }) => setProgress((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: { ...payload, at: Date.now() } })))
+        .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent(broadcastEvent('reaction', payload))) // 비공개 방의 반응·수정도 이 토픽으로(아래 broadcast)
+        .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent(broadcastEvent('edit', payload)))
+        .subscribe((status) => { if (isPersonal && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
+      roomRt.current = ch;
     })();
-    return () => { remove(); };
-  }, [isPersonal, chId, session.access_token]);
+    return () => { live = false; if (ch) { supabase.removeChannel(ch).catch(() => {}); if (roomRt.current === ch) roomRt.current = null; } };
+  }, [roomTopic, isPersonal, chId, session.access_token]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── 다른 공간(보고 있지 않은 조직·개인 공간)의 새 글 — 안 읽음 합계·알림(유건 실측 2026-09-18 "교차되는 메시지 확인 안 됨") ──
   // 구독: 보고 있지 않은 조직마다 org:<조직>(공개 채널 글) + u:<나>(비공개 방 글 — 서버 마이그레이션 적용 뒤). 구독 수 = 조직 수 + 1.
   // 서버 적용 전: 조직은 org: 다중 구독만으로 즉시, 개인 공간은 합계 재조회(15초)로 뜬다. u: 구독 실패·합계 RPC 부재는 옛 동작으로 물러난다.
@@ -735,7 +742,7 @@ function Shell({ session }) {
   useEffect(() => {
     if (!uid || !session.access_token || !orgs) return;
     const chans = [];
-    let live = true;
+    let live = true; let stopU = () => {};
     (async () => {
       await supabase.realtime.setAuth(session.access_token);
       if (!live) return;
@@ -743,12 +750,12 @@ function Shell({ session }) {
       chans.push(...orgs.filter((o) => o.id !== orgId).map((o) => supabase.channel(`org:${o.id}`, { config: { private: true } })
         .on('broadcast', { event: 'message' }, ({ payload }) => crossRef.current(payload, o.id))
         .subscribe()));
-      chans.push(supabase.channel(`u:${uid}`, { config: { private: true } })
+      // u:<나> — 서버 적용 전에는 거절된다. 거절되면 1분부터 두 배씩 최대 10분 간격으로만 다시 붙는다(Realtime 로그 잡음 방지). 그동안은 합계 재조회로 물러난다.
+      stopU = joinWithBackoff(supabase, () => supabase.channel(`u:${uid}`, { config: { private: true } })
         .on('broadcast', { event: 'message' }, ({ payload }) => { const space = payload?.org_id ?? null; if (here(space)) handleMessageRef.current(payload); else crossRef.current(payload, space); })
-        .on('broadcast', { event: 'approval' }, ({ payload }) => { if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); } })
-        .subscribe()); // 서버 적용 전에는 구독이 거절될 수 있다 — 무해(합계 재조회로 물러난다)
+        .on('broadcast', { event: 'approval' }, ({ payload }) => { if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); } }));
     })();
-    return () => { live = false; for (const c of chans) supabase.removeChannel(c).catch(() => {}); }; // 조직 전환·재연결·로그아웃 때 이 효과가 연 구독만 걷는다(현재 조직 구독은 따로)
+    return () => { live = false; stopU(); for (const c of chans) supabase.removeChannel(c).catch(() => {}); }; // 조직 전환·재연결·로그아웃 때 이 효과가 연 구독만 걷는다(현재 조직 구독은 따로)
   }, [uid, orgIdsKey, orgId, session.access_token, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1405,7 +1412,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (isPersonal ? personalRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => { setPage('settings'); setSettingsTab('friends'); }}><I name="at" size={13} />{t('friends.title')}</button></div></div></>
         ) : (
