@@ -7,6 +7,8 @@
 mod pair;
 #[cfg(desktop)]
 mod agents; // 외부 에이전트 원클릭 연결(헤르메스·오픈클로 플러그인 설치·설정·게이트웨이)
+#[cfg(target_os = "macos")]
+mod notify_mac; // OS 알림 — UNUserNotificationCenter 직결(플러그인의 폐기 API 경로 대체)
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,7 +19,12 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_push_notifications::init()); // APNs·FCM 기기 토큰 + 알림 탭 — 발송은 서버(msgr-push)
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_web_auth::init());
-    #[cfg(desktop)]
+    #[cfg(target_os = "macos")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list,
+        notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send
+    ]);
+    #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder
         .invoke_handler(tauri::generate_handler![pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list]);
     builder
@@ -35,6 +42,9 @@ pub fn run() {
             let _ = (window, event);
         })
         .setup(|_app| {
+            // 앱이 앞에 있어도 다른 방 알림 배너를 띄운다(UN 기본은 전면 앱 알림을 숨김) — 번들 밖(cargo run)이면 조용히 건너뛴다
+            #[cfg(target_os = "macos")]
+            if let Some(mtm) = objc2::MainThreadMarker::new() { notify_mac::install_delegate(mtm); }
             // 인앱 업데이터 + 설치 뒤 재시작 — 데스크톱만(모바일 타깃에는 크레이트 자체가 없다)
             #[cfg(desktop)]
             {
