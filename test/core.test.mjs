@@ -99,6 +99,13 @@ test('mergeThread: 동시 편집 turn 합집합(양쪽 유실 없음, ts 정렬,
   assert.equal(merged.sessionId, 'sR', 'prefer=remote → 원격 sessionId로 수렴');
   assert.equal(JSON.parse(mergeThread(local, remote, 'local').toString()).sessionId, 'sL', 'prefer=local → 로컬');
 });
+test('mergeThread: 메신저 채널 세션은 채널 단위로 합친다 — 한 기기의 채널 세션이 다른 기기 사본에 덮여 사라지지 않는다', () => {
+  const local = Buffer.from(JSON.stringify({ messages: [], scopedSessions: { a: { sessionId: 'la', sessionDevice: 'dL' }, b: { sessionId: 'lb', sessionDevice: 'dL' } } }));
+  const remote = Buffer.from(JSON.stringify({ messages: [], scopedSessions: { b: { sessionId: 'rb', sessionDevice: 'dR' }, c: { sessionId: 'rc', sessionDevice: 'dR' } } }));
+  assert.deepEqual(JSON.parse(mergeThread(local, remote, 'remote').toString()).scopedSessions,
+    { a: { sessionId: 'la', sessionDevice: 'dL' }, b: { sessionId: 'rb', sessionDevice: 'dR' }, c: { sessionId: 'rc', sessionDevice: 'dR' } }, '겹치는 채널은 최근 쪽, 나머지는 양쪽 모두');
+  assert.equal(JSON.parse(mergeThread(Buffer.from('{"messages":[]}'), Buffer.from('{"messages":[]}')).toString()).scopedSessions, undefined, '채널 세션이 없던 스레드 모양은 그대로');
+});
 test('mergeThread: 파싱 불가한 쪽은 반대쪽 blob 채택(빈 상태 리셋 금지)', () => {
   const good = Buffer.from(JSON.stringify({ sessionId: 's', messages: [{ who: 'user', text: 'x', ts: 1 }] }));
   const broken = Buffer.from('{ not json');

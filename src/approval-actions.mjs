@@ -127,7 +127,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
       ? `${msg}\n\n(자동 보고 실패 — 하지만 위 처리는 완료되었습니다: ${String(e.message || e).slice(0, 120)})`
       : `${msg}\n\n(후속 실행 실패: ${String(e.message || e).slice(0, 160)})`;
     // A failed reauthorization may not return channel kind. Keep any Messenger failure audit scoped.
-    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: t.sessionId, ...(item.msgr ? { contextScope: { kind: 'msgr', channelId: item.msgr.channelId, threadRoot: item.msgr.threadRoot } } : {}) }).catch(() => {});
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: item.msgr ? null : t.sessionId, ...(item.msgr ? { contextScope: { kind: 'msgr', channelId: item.msgr.channelId, threadRoot: item.msgr.threadRoot } } : {}) }).catch(() => {});
     emitNotify({ type: 'approval_followup', wsId, item, reply: note }); // 실패도 무소식보다 통보가 낫다
     throw e;
   }

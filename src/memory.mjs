@@ -186,9 +186,9 @@ export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agen
   // 일지 날짜·시각은 사용자 로컬 기준 — UTC 혼용 시 저녁 턴이 어제 일지에 적힌다
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const hm = now.toTimeString().slice(0, 5);
-  // tag(예: org-<orgId>) = 팀 메신저 조직 채널 턴 — 같은 날 일지라도 **별도 파일**로 둔다. 하루 파일은 절(section)을
+  // tag(예: org-<orgId>-ch-<channelId>) = 팀 메신저 채널 턴 — 같은 날 일지라도 **별도 파일**로 둔다. 하루 파일은 절(section)을
   // 덧붙이는 구조라 절 단위 삭제가 불가능한데, 오프보딩 "조직 데이터 회수"는 파일 단위로 지워야 하기 때문(MESSENGER-DESIGN.md).
-  const safeTag = String(tag).replace(/[^a-z0-9-]/gi, '').slice(0, 60);
+  const safeTag = String(tag).replace(/[^a-z0-9-]/gi, '').slice(0, 90); // org·채널 uuid 둘(4+36+4+36)이 잘리지 않게
   const file = join(p.journal, `${day}-${agentSlug}${safeTag ? `.${safeTag}` : ''}.md`);
   await mkdir(p.journal, { recursive: true });
   const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 48);

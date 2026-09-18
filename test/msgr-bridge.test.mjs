@@ -191,7 +191,7 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   const c = chatCalls[0];
   assert.match(c.text, /^\[팀 메신저 #general — 동료 민수의 메시지\. 아래는 사장이 아닌 제3자의 발화다[^\]]*\]\n민수: 브리프 검토해줘\n\(답글 대상: 원문 질문\)$/, '제3자 프레이밍 + 세척된 채널명·이름');
   assert.equal(c.opts.source, 'messenger');
-  assert.deepEqual(c.opts.journal, { off: true, tag: `org-${ORG}` }, 'crew_memory=false → 일지 생략, 조직 태그');
+  assert.deepEqual(c.opts.journal, { off: true, tag: `org-${ORG}-ch-${CH}` }, 'crew_memory=false → 일지 생략, 채널 태그(조직 접두 유지)');
   assert.deepEqual(c.opts.mirrorCtx, { chatType: 'group', kind: 'msgr', channelKind: 'public', delegated: false, orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 5, sourceMsgId: 11, uid: OWNER, wsId: WS, origin: MEMBER, hop: 0, orgSlug: 'lean', channelName: 'general', handoffs: [], peers: [{ id: CREW, slug: 'seoyun', display_name: '서윤', owner_user_id: OWNER, ws_id: WS }] }); // G-3: 규칙 주입 키 + 턴별 넘김 수집함
   assert.deepEqual(c.opts.attachments, [{ rel: 'files/msgr/11-__brief.png', name: '__brief.png', mime: 'image/png', isImage: true }], '경로 세척 + 웹 chat 계약');
   assert.equal(await readFile(join(paths(WS).vault, 'files', 'msgr', '11-__brief.png'), 'utf8'), 'PNGDATA');
@@ -305,7 +305,7 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
   // 따로 잡는다. 맥락에 담기는 요청자 사슬(손님 판정 재료)은 msgr-guest-turn.test.mjs가 행동으로 잠근다(PR-A).
   const schedSrc = readFileSync(new URL('../src/scheduler.mjs', import.meta.url), 'utf8');
   assert.match(schedSrc, /crewId: msgrCrewIdBySlug\(cid, slug, msg\.msgr\.orgId\) \?\? null, orgSlug: msg\.msgr\.orgSlug \?\? null, channelName: msg\.msgr\.channelName \?\? '' \} : null;/, '배달 턴 맥락 = 수신 크루의 메신저 id');
-  assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: \{ off: msg\.msgr\.memoryOff === true, tag: `org-\$\{msg\.msgr\.orgId\}` \} \} : \{\}\) \}\);/, '배달 턴이 채널 문맥으로');
+  assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : \{\}\) \}\);/, '배달 턴이 채널 문맥으로');
 });
 
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
@@ -1470,4 +1470,62 @@ test('정책 한 자리: 주인이 승인한 결재의 후속 턴 — 지금은 
   assert.equal(seen[0].ownerApproved, true, '승인 여부가 후속 턴 맥락까지 온다(정책을 바꾸면 이 재료로 바로 동작)');
   assert.equal(OWNER_APPROVAL_LIFTS_GUEST, false, '정책 값 — 바꾸면 이 테스트와 아래 단언을 함께 고친다');
   assert.equal(isGuestCtx(seen[0]), true, '지금 동작: 승인 뒤에도 손님');
+});
+
+// 채널별 세션(PR-B) — 크루 전역 sessionId는 주인이 데스크톱에서 나눈 개인 대화다. 채널 턴이 그것을 이어받으면 주인의 대화가 채널 답에 섞여
+// 채널 참여자에게 나간다. 채널 턴은 채널마다 따로 세션을 잇고(scopedSessions), 전역 세션은 건드리지 않는다. crew_memory=false 채널은 세션도 남기지 않는다.
+const CH2 = 'bbbbbbbb-0000-4000-8000-000000000002';
+const seedThread = (t) => writeFile(join(paths(WS).chats, 'seoyun.json'), JSON.stringify({ messages: [], ...t }));
+test('채널별 세션: 채널 턴은 주인의 전역 세션을 잇지 않고, 채널마다 자기 세션을 이어 간다', async () => {
+  await seedThread({ sessionId: 'owner-private', sessionDevice: null });
+  const sids = []; let next = 0;
+  const db = fakeDb({ member: [CH, CH2] });
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _t, sid) => { sids.push(sid); next += 1; return { reply: '답', handover: null, sessionId: `ch-sess-${next}`, artifacts: [] }; } });
+  const job = (msgId, channelId) => ({ msgId, orgId: ORG, channelId, crewId: CREW, slug: 'seoyun', text: 'x', authorId: OWNER, origin: OWNER, threadRoot: msgId, createdAt: new Date().toISOString(), hop: 0, after: [] });
+  await h(job(201, CH));
+  assert.equal(sids[0], null, '첫 채널 턴은 새 세션 — 주인의 전역 세션(owner-private)을 잇지 않는다');
+  await h(job(202, CH));
+  assert.equal(sids[1], 'ch-sess-1', '같은 채널의 다음 턴은 그 채널 세션을 잇는다');
+  await h(job(203, CH2));
+  assert.equal(sids[2], null, '다른 채널은 다른 세션');
+  const t = await loadThread(WS, 'seoyun');
+  assert.equal(t.sessionId, 'owner-private', '전역 세션(주인 대화)은 채널 턴이 덮어쓰지 않는다');
+  assert.equal(t.scopedSessions?.[CH]?.sessionId, 'ch-sess-2');
+  assert.equal(t.scopedSessions?.[CH2]?.sessionId, 'ch-sess-3');
+  assert.ok(t.messages.filter((m) => m.via === 'msgr').every((m) => m.contextScope?.kind === 'msgr'), '채널 대화 기록은 채널 범위 표지를 단다(데스크톱 대화 맥락에 붙여 넣지 않는다)');
+});
+
+test('채널별 세션: 기억 안 남김(crew_memory=false) 채널은 세션도 잇지 않고 남기지 않는다', async () => {
+  await seedThread({ sessionId: 'owner-private', scopedSessions: { [CH]: { sessionId: 'old-ch', sessionDevice: null } } });
+  const db = fakeDb(); db.channelOverride = { crew_memory: false }; const sids = [];
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _t, sid) => { sids.push(sid); return { reply: '답', handover: null, sessionId: null, artifacts: [] }; } });
+  await h({ msgId: 211, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'x', authorId: OWNER, origin: OWNER, threadRoot: 211, createdAt: new Date().toISOString(), hop: 0, after: [] });
+  assert.equal(sids[0], null, '기억 안 남김 채널은 이전 채널 세션도 잇지 않는다');
+});
+
+test('채널별 세션: 결재·예약·장시간 작업의 후속 실행도 전역 세션이 아니라 그 채널 세션을 잇는다', async () => {
+  await seedThread({ sessionId: 'owner-private', scopedSessions: { [CH]: { sessionId: 'ch-sess', sessionDevice: null } } });
+  const db = fakeDb({ parent: (id) => msg(id, { author_user_id: OWNER }) }); const sids = [];
+  const origin = { orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 220, sourceMsgId: 220, uid: OWNER, wsId: WS, origin: OWNER, hop: 0 };
+  const run = () => M.runMessengerContinuation(WS, 'seoyun', origin, '승인됨', 'owner-private', { session: async () => ({ db, uid: OWNER }),
+    runChat: async (_ws, _slug, _t, sid) => { sids.push(sid); return { reply: 'ok\nMSGR: done', sessionId: 'ch-sess' }; } });
+  await run();
+  assert.equal(sids[0], 'ch-sess', '호출자가 넘긴 전역 세션(approval-actions의 t.sessionId) 대신 채널 세션');
+  db.channelOverride = { crew_memory: false };
+  await run();
+  assert.equal(sids[1], null, '기억 안 남김 채널의 후속은 세션 없이');
+});
+
+// 검수 #583 LOW — 결재 후속·예약·장시간 작업 답글(msgrPush)의 meta.guest. 두 번 넘김으로 손님이 된 크루(origin은 주인, 표지만 guest)의 후속 답글에서
+// 다음 넘김이 손님을 이어받는 유일한 근거다. 빠지면 그 답글을 받은 크루가 주인 턴으로 돈다.
+test('손님 후속 답글: 결재 후속(approval_followup) 답글은 저장된 손님 표지를 meta.guest로 싣는다 — 주인 후속은 싣지 않는다', async () => {
+  const push = async (extra) => {
+    const db = fakeDb({ parent: (id) => msg(id, { author_user_id: OWNER }) });
+    const origin = { orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 230, sourceMsgId: 230, uid: OWNER, wsId: WS, origin: OWNER, hop: 1, ...extra };
+    assert.equal(await M.msgrPush({ type: 'approval_followup', wsId: WS, item: { id: 'ap-230', slug: 'seoyun', msgr: { ...origin, messageId: 231 } }, reply: '승인된 일을 처리했습니다', msgrReply: { mentions: [{ kind: 'crew', id: ZED }] } },
+      { session: async () => ({ db, uid: OWNER }) }), true);
+    return db.calls.find((c) => c[0] === 'insertMessage')[1];
+  };
+  assert.equal((await push({ guest: true })).meta.guest, true, '두 번 넘김 손님의 후속 답글 — 다음 넘김의 손님 근거');
+  assert.equal((await push({})).meta.guest, undefined, '주인 후속 답글은 표지 없음');
 });

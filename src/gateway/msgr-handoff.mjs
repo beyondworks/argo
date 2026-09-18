@@ -32,6 +32,9 @@ export function mirrorCtxFromOrigin(o, extra = {}) {
     approval-actions → runMessengerContinuation(ownerApproved) → 맥락의 ownerApproved로 이미 연결돼 있다). */
 export const OWNER_APPROVAL_LIFTS_GUEST = false;
 
+/** 메신저 채널 턴의 일지 정책 — off = 기억 안 남김(crew_memory=false: 일지도 세션도 남기지 않는다), tag = 채널 단위 파일(조직 접두는 consolidate isOrgTagged·조직 회수 단위). */
+export const msgrJournal = (orgId, channelId, off) => ({ off: off === true, tag: `org-${orgId}-ch-${channelId}` });
+
 export function isGuestCtx(ctx) {
   if (ctx?.kind !== 'msgr') return false;
   if (OWNER_APPROVAL_LIFTS_GUEST && ctx.ownerApproved === true) return false;

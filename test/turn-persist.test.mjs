@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-turn-'));
-const { beginTurn, appendTurn, loadThread, appendSharedNote } = await import('../src/thread.mjs');
+const { beginTurn, appendTurn, loadThread, appendSharedNote, inContextScope } = await import('../src/thread.mjs');
 
 const WS = 'co', SLUG = 'pepper';
 
@@ -90,10 +90,16 @@ test('⑤ 대기 중인 줄은 프롬프트 맥락에서 제외된다 — 같은
   assert.equal(filters.length,2,'CLI and SDK each reconstruct the recent conversation');
   for (const fn of filters) {
     assert.equal(fn.type,'ArrowFunctionExpression');
-    const accepts=Function(`return (${src.slice(...fn.range)});`)();
+    const predicate=(contextScope)=>Function('inContextScope','contextScope',`return (${src.slice(...fn.range)});`)(inContextScope,contextScope); // 필터가 참조하는 범위 판정·턴 범위를 주입
+    const accepts=predicate(null); // 데스크톱 턴
     assert.equal(accepts({who:'user',text:'finished'}),true);
-    for (const excluded of [{awaiting:true},{shared:true},{failed:'error'},{contextScope:{kind:'msgr-dm'}}]) {
+    for (const excluded of [{awaiting:true},{shared:true},{failed:'error'},{contextScope:{kind:'msgr-dm'}},{contextScope:{kind:'msgr',channelId:'c1'}}]) {
       assert.equal(accepts({who:'user',text:'exclude',...excluded}),false,'the actual predicate must exclude pending, shared, failed and scoped audit messages');
+    }
+    const channel=predicate({kind:'msgr',channelId:'c1'}); // 메신저 채널 턴 — 그 채널 기록만(PR-B)
+    assert.equal(channel({who:'user',text:'same channel',contextScope:{kind:'msgr',channelId:'c1'}}),true);
+    for (const excluded of [{},{contextScope:{kind:'msgr',channelId:'c2'}},{contextScope:{kind:'msgr-dm',channelId:'c1'}},{awaiting:true,contextScope:{kind:'msgr',channelId:'c1'}}]) {
+      assert.equal(channel({who:'user',text:'exclude',...excluded}),false,'a channel turn only reuses its own channel records');
     }
   }
 });
