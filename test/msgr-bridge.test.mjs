@@ -1365,3 +1365,12 @@ test('drain: 거절 안내가 권한·제약으로 영구히 막히면 건너뛰
   await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
   assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 12]], '영구 실패는 건너뛰고 커서가 끝까지 전진한다');
 });
+
+// permanentWrite가 영구·일시를 가르는 재료는 예외의 .code다. 그 한 줄이 사라지면 모든 실패가 일시로 보여
+// 안내가 막히는 자리에서 크루 큐 전체가 멈춘다(검수 조건 1의 결함 그대로). 어댑터 쪽에 게이트를 둔다.
+test('makeDb.insertMessage: 실패한 insert의 PG 코드를 보존한다(23505는 그대로 멱등)', async () => {
+  const client = (error) => ({ from: () => ({ insert: () => ({ select: () => ({ single: async () => ({ data: null, error }) }) }) }) });
+  await assert.rejects(M.makeDb(client({ code: '42501', message: 'new row violates row-level security policy' })).insertMessage({ channel_id: CH }),
+    (e) => e.code === '42501', 'PG 코드가 보존되지 않으면 영구 실패를 가릴 수 없다');
+  assert.equal(await M.makeDb(client({ code: '23505', message: 'duplicate key' })).insertMessage({ channel_id: CH }), null, '멱등 키 중복은 예외가 아니라 null');
+});
