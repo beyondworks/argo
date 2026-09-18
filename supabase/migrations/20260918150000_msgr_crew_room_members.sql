@@ -3,7 +3,7 @@
 -- "방에 있다 = 주인이 데려왔다"가 서버에서 성립해야 새 규칙이 안전하다. 그래서 주인 요청 없이 크루가 방에 들어가던 경로 셋을 같이 막는다:
 --   ① msgr_crew_join 방장 경로(소유자를 안 봤다) ② RLS 직접 삽입(msgr_channel_member_ok가 소유자를 안 봤다 — 조직 DM은 멤버 누구나)
 --   ③ msgr_create_channel의 others(같은 함수만 봤다). 앱은 이미 자기·회사 에이전트만 넣었으므로(App.jsx 후보 필터) 앱 흐름은 그대로다.
--- 회사 에이전트 = 조직 서비스 계정 소유의 상주 크루. msgr_crew_tier는 봇도 'company'로 보지만 봇의 주인은 연결한 멤버라 예외가 아니다.
+-- 회사 에이전트 = 조직 서비스 계정 소유의 상주 크루(판정은 msgr_crew_is_company 하나 — 20260918130000에서 정의, 그래서 이 파일은 그 뒤 버전). msgr_crew_tier는 봇도 'company'로 보지만 봇의 주인은 연결한 멤버라 예외가 아니다.
 -- 이미 방에 들어가 있는 크루에도 즉시 적용된다 — 라이브 실측(2026-09-18): 새로 열리는 것은 Lean Crew 한 방의 8개뿐.
 
 -- ── 1. 에이전트는 주인이 넣는다(회사 에이전트는 방장이, DM은 예외 없음) ─────────────────────
@@ -12,10 +12,9 @@ create or replace function public.msgr_channel_member_ok(ch uuid, kind text, mid
     select case kind
       when 'user' then exists (select 1 from public.msgr_org_members m join public.msgr_channels c on c.id = ch
                                 where m.org_id = c.org_id and m.user_id = mid and m.removed_at is null and (m.expires_at is null or m.expires_at > now()))
-      when 'crew' then exists (select 1 from public.msgr_crews cr join public.msgr_channels c on c.id = ch join public.msgr_orgs o on o.id = cr.org_id
+      when 'crew' then exists (select 1 from public.msgr_crews cr join public.msgr_channels c on c.id = ch
                                 where cr.id = mid and cr.org_id = c.org_id and cr.status = 'active'
-                                  and (cr.owner_user_id = auth.uid()
-                                       or (c.kind <> 'dm' and cr.hosting = 'resident' and o.service_user_id is not null and cr.owner_user_id = o.service_user_id)))
+                                  and (cr.owner_user_id = auth.uid() or (c.kind <> 'dm' and public.msgr_crew_is_company(cr.id))))
       else false end
 $$;
 
@@ -45,8 +44,8 @@ begin
   if c.personal_crews = 'blocked' and tier is distinct from 'company' then raise exception 'msgr_channel_personal_blocked' using errcode = '42501'; end if;
   in_room := exists (select 1 from public.msgr_channel_members m where m.channel_id = ch and m.member_kind = 'user' and m.member_id = me);
   host := public.msgr_is_channel_host(ch);
-  -- 조직 서비스 계정 소유의 상주 크루만 "회사 에이전트"다. tier는 봇도 company로 보지만 봇의 주인은 연결한 멤버다.
-  company := cr.hosting = 'resident' and cr.owner_user_id = (select o.service_user_id from public.msgr_orgs o where o.id = c.org_id);
+  -- 조직 서비스 계정 소유의 상주 크루만 "회사 에이전트"다(msgr_crew_is_company — 20260918130000 정본). tier는 봇도 company로 보지만 봇의 주인은 연결한 멤버다.
+  company := public.msgr_crew_is_company(crew); -- 크루 조직 = 채널 조직은 위에서 이미 확인(msgr_bad_member)
 
   if c.kind = 'dm' then -- 채팅: 참여자가 자기 에이전트만 바로 넣는다(방장이 없다). 종전에는 주인이 같은 방에 있으면 남도 넣었다.
     if not in_room or cr.owner_user_id <> me then raise exception 'msgr_forbidden' using errcode = '42501'; end if;
@@ -78,7 +77,7 @@ create or replace function public.msgr_instruct_check(crew uuid, author uuid, ch
     select case
       when c.id is null or c.status <> 'active' or author is null then 'inactive'
       when channel is not null and ch.personal_crews = 'read_only'
-           and not (c.hosting = 'bot' or (o.service_user_id is not null and c.owner_user_id = o.service_user_id and c.hosting = 'resident')) then 'channel_policy'
+           and not (c.hosting = 'bot' or public.msgr_crew_is_company(c.id)) then 'channel_policy'
       when channel is not null and public.msgr_crew_in_channel(channel, c.id)
            and m.user_id is not null and (m.expires_at is null or m.expires_at > now())
            and ((ch.kind = 'public' and m.role in ('owner', 'admin', 'member') and not (author = any (ch.excluded_user_ids)))
@@ -90,7 +89,6 @@ create or replace function public.msgr_instruct_check(crew uuid, author uuid, ch
     end
       from (select 1) x
       left join public.msgr_crews c on c.id = crew
-      left join public.msgr_orgs o on o.id = c.org_id
       left join public.msgr_channels ch on ch.id = channel
       left join public.msgr_org_members m on m.org_id = c.org_id and m.user_id = author and m.removed_at is null
 $$;

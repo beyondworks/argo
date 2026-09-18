@@ -163,4 +163,11 @@ test('방에 없는 에이전트의 거절 안내 — 받은 멘션에만 그 �
   fails(denyNote(U.other, pub, OTHERC, asked2, `[{"kind":"crew","id":"${HOSTC}"}]`), /msgr_crew_not_in_channel/, '멘션을 단 거절 안내');
   // 거절 안내가 아닌 글(text)은 여전히 막힌다
   fails(asUserRaw(U.other, `insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, reply_to) values ('${pub}', 'crew', '${OTHERC}', 'text', '방에 없는데 답함', ${asked2})`), /msgr_crew_not_in_channel/, '방에 없는 에이전트의 일반 답글');
+  // 키 형식이 멱등을 보장한다 — 같은 멘션에 다른 키로 두 번째 안내를 달아 도배하지 못한다
+  fails(asUserRaw(U.other, `insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, reply_to, client_msg_id)
+    values ('${pub}', 'crew', '${OTHERC}', 'system', '두 번째 안내', ${asked}, 'deny:${OTHERC}:${asked}:2')`), /msgr_crew_not_in_channel/, '다른 키의 두 번째 거절 안내');
+  // 삭제된 글에는 안내를 달지 않는다
+  const gone = last(asUser(U.mate, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${pub}', 'user', '${U.mate}', 'text', '@otherc 지울 글', '[{"kind":"crew","id":"${OTHERC}"}]'::jsonb) returning id`));
+  sql(`update public.msgr_messages set deleted_at = now() where id = ${gone}`);
+  fails(denyNote(U.other, pub, OTHERC, gone), /msgr_crew_not_in_channel/, '삭제된 글에 다는 거절 안내');
 });
