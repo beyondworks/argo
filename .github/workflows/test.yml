@@ -82,3 +82,24 @@ jobs:
       # 이 잡은 패키징을 하지 않으므로 .next가 로컬 모드 산출물로 바뀌어도 무해하다(릴리스 잡은 stage-sidecar가 자기 빌드를 만든다). 맥 러너만(시간).
       - if: runner.os == 'macOS'
         run: npm run smoke:standalone
+
+  # 실 Postgres 드릴 — test/*pg*.test.mjs는 ARGO_PG_TEST_URL이 없으면 skip이라 위 npm test에서는 전부 건너뛴다(2026-09-18 실측:
+  # #585가 msgr-dm-delegation-pg 6건을 깨뜨렸는데 CI 초록). 드릴 스크립트를 그대로 돌린다 — 파일마다 별도 DB, 실패해도 끝까지.
+  # 버전은 라이브 Supabase와 같은 17(supabase/config.toml major_version). 스텁 스키마(auth·storage·realtime·net)는 테스트가 세우므로
+  # 순정 Postgres + contrib(pgcrypto)면 된다. 리눅스 하나 — 드릴은 SQL·node만 쓰고 OS 경로를 타지 않는다.
+  pg-drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: PostgreSQL 17
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -q postgresql-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - run: bash scripts/billing-pg-drill.sh
