@@ -463,9 +463,10 @@ const permanentWrite = (e) => e?.code === '42501' || String(e?.code ?? '').start
 function denyBody(why, crew, lang) {
   if (why === 'channel_policy') return pick(`이 채널은 회사 크루만 일할 수 있습니다(채널 정책). ${crew.display_name}은(는) 개인 크루라 여기서는 지시를 받지 않습니다.`,
     `Only company crews can work in this channel (channel policy). ${crew.display_name} is a personal crew and does not take instructions here.`, lang);
-  // 방에 들어온 에이전트는 방 멤버 누구나 부른다(2026-09-18) — 그러니 이 거절은 "이 방에 없는 에이전트"라는 뜻이다. 들이는 것은 주인이 한다.
-  if (why === 'crew_allow') return pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 이 방에 없는 에이전트라서입니다. 주인이 이 방에 데려오면 방 멤버 누구나 부를 수 있습니다.`,
-    `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — it isn't in this room. Once its owner adds it here, anyone in the room can call it.`, lang);
+  // 방에 들어온 에이전트는 방 멤버 누구나 부른다(2026-09-18). 이 거절은 대개 "이 방에 없는 에이전트"지만, 에이전트가 방에 있는데
+  // 요청자가 그 방을 못 읽는 경우(제외 명단·만료된 멤버 등)에도 같은 코드가 온다 — 한쪽으로 단정하지 않고 두 경우 모두 맞는 문장으로 쓴다.
+  if (why === 'crew_allow') return pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 방에 들어와 있는 에이전트는 그 방 멤버 누구나 부를 수 있습니다. 이 방에 없는 에이전트라면 주인에게 데려와 달라고 요청하세요.`,
+    `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — an agent that is in a room can be called by anyone in that room. If it isn't in this room, ask its owner to add it.`, lang);
   if (why === 'inactive') return pick(`${crew.display_name}은(는) 지금 이 대화에 파견돼 있지 않습니다 — 메신저에서 다시 파견해 주세요.`,
     `${crew.display_name} is not dispatched to this conversation — dispatch the crew again in the messenger.`, lang);
   return pick(`지금은 ${crew.display_name}이(가) 이 지시를 받을 수 없습니다 — 크루 상태와 허용 범위를 확인해 주세요.`,

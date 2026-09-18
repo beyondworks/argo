@@ -138,3 +138,29 @@ test('added_by는 넣는 사람 자신이어야 한다(영향 반경 집계가 �
   asUser(U.host, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'user', '${U.mate}', '${U.host}')`);
   assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${ch}' and member_id = '${U.mate}'`), '1', '앱의 사람 추가(added_by = 나) 경로는 그대로');
 });
+
+// ── 방에 없는 에이전트를 부르면 거절 안내가 그 방에 닿는다(2026-09-18 Argo Dev E2E 실측: msgr_crew_not_in_channel로 조용히 사라짐) ──
+// 새 규칙 뒤로 거절의 주된 경우가 "에이전트가 방에 없을 때"다. 안내는 에이전트 명의 system 글이라 채널 범위 트리거가 막았다.
+// 그래서 **받은 멘션에 대한 거절 안내만** 좁게 연다: 같은 채널의 실재하는 글이 이 에이전트를 멘션했고, 그 글에 대한 deny 키이며, 아무도 멘션하지 않는다.
+const denyNote = (owner, ch, crew, replyTo, extra = '') => asUserRaw(owner, `insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, reply_to, client_msg_id${extra ? ', mentions' : ''})
+  values ('${ch}', 'crew', '${crew}', 'system', '방에 없는 에이전트입니다', ${replyTo}, 'deny:${crew}:${replyTo}'${extra ? `, '${extra}'::jsonb` : ''})`);
+test('방에 없는 에이전트의 거절 안내 — 받은 멘션에만 그 방에 답할 수 있다', { skip }, () => {
+  const pub = last(asUser(U.host, `select public.msgr_create_channel('${ORG}', 'public', 'NoCrew')`));
+  asUser(U.mate, `select public.msgr_join_channel('${pub}')`);
+  assert.equal(inCh(pub, OTHERC), 'f', '전제: 에이전트는 이 방에 없다');
+  const asked = last(asUser(U.mate, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${pub}', 'user', '${U.mate}', 'text', '@otherc 해줘', '[{"kind":"crew","id":"${OTHERC}"}]'::jsonb) returning id`));
+  const r = denyNote(U.other, pub, OTHERC, asked);
+  assert.equal(r.status, 0, `받은 멘션에 대한 거절 안내는 닿는다 — ${r.stderr.trim().slice(0, 160)}`);
+  // 받지 않은 멘션: 이 에이전트를 부르지 않은 글에 deny로 끼어들 수 없다
+  const plain = last(asUser(U.mate, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body) values ('${pub}', 'user', '${U.mate}', 'text', '그냥 대화') returning id`));
+  fails(denyNote(U.other, pub, OTHERC, plain), /msgr_crew_not_in_channel/, '멘션 없는 글에 답하는 deny');
+  // 다른 채널의 글을 reply_to로 빌려 이 방에 쓰지 못한다
+  const elsewhere = last(asUser(U.host, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${PUB}', 'user', '${U.host}', 'text', '@otherc', '[{"kind":"crew","id":"${OTHERC}"}]'::jsonb) returning id`));
+  // 이 경우는 앞서 도는 msgr_message_fill이 먼저 막는다 — 범위 트리거의 같은 채널 조건은 트리거 순서에 기대지 않는 이중 방어다
+  fails(denyNote(U.other, pub, OTHERC, elsewhere), /msgr_reply_cross_channel|msgr_crew_not_in_channel/, '다른 채널 글을 reply_to로');
+  // 안내가 누군가를 멘션하면 넘김 통로가 된다 — 멘션 없는 안내만
+  const asked2 = last(asUser(U.mate, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${pub}', 'user', '${U.mate}', 'text', '@otherc 한 번 더', '[{"kind":"crew","id":"${OTHERC}"}]'::jsonb) returning id`));
+  fails(denyNote(U.other, pub, OTHERC, asked2, `[{"kind":"crew","id":"${HOSTC}"}]`), /msgr_crew_not_in_channel/, '멘션을 단 거절 안내');
+  // 거절 안내가 아닌 글(text)은 여전히 막힌다
+  fails(asUserRaw(U.other, `insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, reply_to) values ('${pub}', 'crew', '${OTHERC}', 'text', '방에 없는데 답함', ${asked2})`), /msgr_crew_not_in_channel/, '방에 없는 에이전트의 일반 답글');
+});
