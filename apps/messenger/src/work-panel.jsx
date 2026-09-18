@@ -88,7 +88,7 @@ function StateNotice({ rows, error, empty, refresh, t }) {
 }
 
 /** Each panel reads the authenticated cloud directly; the phone never calls a desktop localhost. */
-export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClose }) {
+export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClose, sheet = false }) { // sheet: 데스크톱 — 채널 패널과 같은 시트(폭 380, 비킴 규칙 공유). 폰은 전체 화면 오버레이
   const [tab, setTab] = useState('team');
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
@@ -119,15 +119,14 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
   };
   const keydown = (event) => {
     if (event.key === 'Escape' && !deleting) { event.preventDefault(); event.stopPropagation(); if (!actionLock.current) closeRef.current(); }
-    if (event.key !== 'Tab') return;
+    if (event.key !== 'Tab' || (sheet && !deleting)) return; // 시트는 채널 패널처럼 초점을 가두지 않는다(비모달)
     const scope = deleting ? document.querySelector('.msgr-work-overlay .msgr-action-dialog') : dialog.current;
     const buttons = [...scope.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]')].filter((item) => item.getClientRects().length);
     const first = buttons[0], last = buttons.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   };
-  return createPortal(<div className="shell msgr-work-overlay" onKeyDown={keydown} onClick={(event) => { if (event.target === event.currentTarget && !busy && !deleting) onClose(); }}>
-    <section className="msgr-work-panel" ref={dialog} role="dialog" aria-modal="true" aria-label={t('work.title')} inert={deleting ? true : undefined}>
+  const body = (<>
       <header className="work-header"><div><h2>{t('work.title')}</h2><p>{channel.name}</p></div><button className="btn sm" disabled={busy} onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
       <div className="work-tabs" role="tablist" aria-label={t('work.title')}>{['team', 'automations'].map((key) => <button key={key} type="button" role="tab" aria-selected={tab === key} aria-controls={`work-view-${key}`} id={`work-tab-${key}`} tabIndex={tab === key ? 0 : -1} disabled={busy} onClick={() => { setTab(key); setError(null); setNotice(''); }} onKeyDown={(event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'team' : event.key === 'End' ? 'automations' : key === 'team' ? 'automations' : 'team'; setTab(next); event.currentTarget.parentElement.querySelector(`#work-tab-${next}`)?.focus(); } }}>{t(`work.tab.${key}`)}</button>)}</div>
       <div className="work-scroll" role="tabpanel" id={`work-view-${tab}`} aria-labelledby={`work-tab-${tab}`}>
@@ -137,8 +136,20 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
         {tab === 'team' ? <TeamWork key="team" work={work} channel={channel} crews={eligible.filter((crew) => crew.hosting === 'bot' || (work.capabilities ?? []).some((row) => row.id === crew.id && row.work_protocol >= 1))} uid={uid} isAdmin={isAdmin} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} />
           : <Automations key="automations" source={automations} channel={channel} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
       </div>
+  </>);
+  const confirm = deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t('automation.deleted')); })} /></div>;
+  if (sheet) return (<div className="msgr-sheetwrap">
+    <div className="msgr-scrim clear" onClick={() => { if (!busy && !deleting) onClose(); }} />
+    <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} role="dialog" aria-label={t('work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
+{body}
+    </aside>
+    {deleting && createPortal(<div className="shell msgr-work-overlay msgr-work-confirm" onKeyDown={keydown}>{confirm}</div>, document.body)}
+  </div>);
+  return createPortal(<div className="shell msgr-work-overlay" onKeyDown={keydown} onClick={(event) => { if (event.target === event.currentTarget && !busy && !deleting) onClose(); }}>
+    <section className="msgr-work-panel" ref={dialog} role="dialog" aria-modal="true" aria-label={t('work.title')} inert={deleting ? true : undefined}>
+{body}
     </section>
-    {deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t('automation.deleted')); })} /></div>}
+    {deleting && confirm}
   </div>, document.body);
 }
 

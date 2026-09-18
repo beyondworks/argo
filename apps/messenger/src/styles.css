@@ -33,6 +33,14 @@
 .msgr-org { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 12px 6px 6px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); color: var(--fg); font: inherit; font-weight: 600; font-size: 13.5px; text-align: left; cursor: pointer; transition: background 120ms ease; }
 .msgr-org.open { background: var(--card-2); } @media (hover: hover) { .msgr-org:hover { background: var(--card-2); } } .msgr-org:active { background: var(--card-2); }
 .msgr-org .msgr-av { border-radius: 9px; width: 30px; height: 30px; background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+/* 개인 공간 표지(유건 2026-09-18) — 사람 아이콘 + 액센트 옅은 틴트. 라벨("개인 공간")과 함께라 색만으로 구분하지 않는다 */
+.msgr-av.personal { background: rgba(var(--mark-rgb), 0.16); color: var(--fg); border: 1px solid rgba(var(--mark-rgb), 0.5); }
+.msgr-org .msgr-av.personal { background: rgba(var(--mark-rgb), 0.16); color: var(--fg); border-color: rgba(var(--mark-rgb), 0.5); }
+.msgr-org.personal { background: rgba(var(--mark-rgb), 0.08); border-color: rgba(var(--mark-rgb), 0.35); }
+@media (hover: hover) { .msgr-org.personal:hover { background: rgba(var(--mark-rgb), 0.14); } } .msgr-org.personal:active, .msgr-org.personal.open { background: rgba(var(--mark-rgb), 0.14); }
+/* 조직 메뉴 바깥 클릭 닫기 — 사이드바(.side)는 sticky라 z-index auto여도 쌓임 맥락을 만든다. 그래서 안의 투명 스크림(z 65)이 뒤에 그려지는 본문
+   아래에 깔려 본문 클릭이 스크림에 닿지 않았다(데스크톱 실측: 본문 쪽 elementFromPoint = .msgr-thread). 메뉴가 열린 동안만 사이드바를 본문 위로 */
+.msgr-side.menu-open { z-index: 64; }
 .msgr-org .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-org .caret { color: var(--fg-3); transition: transform 160ms cubic-bezier(.23,1,.32,1); }
 .msgr-org.open .caret { transform: rotate(180deg); }
@@ -626,7 +634,11 @@
 .g3-zoom button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--fg-3); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; transition: color 120ms ease, background 120ms ease; }
 @media (hover: hover) { .g3-zoom button:hover { color: var(--fg); background: var(--card-2); } } .g3-zoom button:active { color: var(--fg); background: var(--card-2); }
 .g3-hint { position: absolute; left: 18px; bottom: 12px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--fg-3); pointer-events: none; }
-.msgr-actlist { display: grid; gap: 10px; padding: 18px 28px 40px; max-width: 1100px; }
+.msgr-actlist { display: grid; gap: 10px; padding: 18px var(--act-inset) 40px; }
+/* 기억 페이지 읽기 칼럼(유건 2026-09-18) — 본문은 가운데 최대 820px, 탭 줄도 같은 좌우 기준선. 좁으면 28px 여백으로 창을 채운다.
+   종전: max-width 1100px 왼쪽 정렬 → 넓은 창에서 오른쪽이 크게 비었다. 퍼센트 여백은 각 패널(옆 창 분할 포함) 폭 기준 */
+.msgr-actpane { --act-inset: max(28px, calc((100% - 820px) / 2)); }
+.msgr-shell:not(.msgr-phone) .msgr-actpane .vault-tabs { padding-left: calc(var(--act-inset) - 12px); padding-right: calc(var(--act-inset) - 6px); } /* 첫 탭 글자(탭 안쪽 12px)·마지막 버튼 끝(6px)이 본문 글자 좌우 선과 맞게(실측) */
 .msgr-actlist .head { display: flex; align-items: center; gap: 10px; }
 .msgr-actlist .head h3 { margin: 0; font-size: 15px; }
 .msgr-actlist .head .sub { color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
@@ -961,6 +973,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-orgwrap { position: relative; height: calc(env(safe-area-inset-top) + 54px); padding: env(safe-area-inset-top) calc(var(--ph-pad) + 104px) 10px var(--ph-pad); display: flex; align-items: center; } /* 이름 중심 y84(슬랙) */
   .msgr-phone.phone-home .msgr-side .msgr-org { width: auto; min-width: 0; min-height: 44px; font-size: 18px; font-weight: 700; gap: 12px; padding: 0; border: 0; background: none; }
   .msgr-phone.phone-home .msgr-side .msgr-org .msgr-av { width: 44px; height: 44px; border-radius: 50%; }
+  .msgr-phone.phone-home .msgr-side .msgr-org .msgr-av.personal svg { width: 22px; height: 22px; } /* 44px 원에서 사람 아이콘이 점처럼 보이지 않게 */
   .msgr-phone.phone-home .msgr-side .msgr-org .caret { margin-left: -2px; }
   /* 우상단 프로필 — 풋터의 아바타 하나만. 벨·별·기어는 탭·아바타 메뉴와 중복이라 숨김 */
   .msgr-phone.phone-home .msgr-side .msgr-foot { position: absolute; top: env(safe-area-inset-top); right: var(--ph-pad); width: auto; height: 44px; margin: 0; padding: 0 5px; border: 0; border-radius: 22px; background: var(--card-2); z-index: 2;
