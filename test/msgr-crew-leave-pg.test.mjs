@@ -124,6 +124,21 @@ test('주인이 나가면 그 주인의 대기 요청도 닫힌다 — 방장이
   assert.equal(crewIn(ch, MINE), '0');
 });
 
+test('공개 채널에서 사람을 제외 목록에 넣으면 그 사람의 에이전트도 빠진다 — 참여 행을 안 지우는 호출이어도', { skip }, () => {
+  const ch = room('public', 'Exclude');
+  for (const [k, id] of [['user', U.mate], ['user', U.other], ['crew', MINE], ['crew', BOT], ['crew', OTHERS], ['crew', COMPANY]]) put(ch, k, id);
+  // 제외 목록만 갱신한다(참여 행 삭제 트리거가 걸리지 않는 경로)
+  asUser(U.host, `update public.msgr_channels set excluded_user_ids = array['${U.mate}']::uuid[] where id = '${ch}'`);
+  assert.equal(userIn(ch, U.mate), '1', '사람 행은 이 호출이 지우지 않았다');
+  for (const c of [MINE, BOT]) assert.equal(crewIn(ch, c), '0', '제외된 사람의 에이전트는 빠진다');
+  assert.equal(crewIn(ch, OTHERS), '1', '남의 에이전트는 남는다');
+  assert.equal(crewIn(ch, COMPANY), '1', '회사 에이전트는 남는다');
+  // 이미 제외된 사람은 다시 세지 않는다 — 다른 사람을 더 넣어도 그 사람 것만
+  asUser(U.host, `update public.msgr_channels set excluded_user_ids = array['${U.mate}', '${U.other}']::uuid[] where id = '${ch}'`);
+  assert.equal(crewIn(ch, OTHERS), '0', '새로 제외된 사람의 에이전트');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where action = 'crew_left_with_owner' and meta->>'channel_id' = '${ch}' and meta->>'via' = 'excluded'`), '3');
+});
+
 test('채널을 통째로 지워도 트리거가 넘어지지 않는다(연쇄 삭제 중 발화)', { skip }, () => {
   const ch = room('private', 'Gone');
   put(ch, 'user', U.mate); put(ch, 'crew', MINE);

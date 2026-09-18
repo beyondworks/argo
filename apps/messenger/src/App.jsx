@@ -1608,7 +1608,8 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   // 공개 채널 '내보내기' = 채널 제외 목록(행 삭제가 아님 — 공개 채널 구성원은 암묵). 되돌리기는 목록에서 뺀다. 최종은 RLS(msgr_can_manage_channel·msgr_can_read_channel).
   const excludedUsers = channel.excluded_user_ids ?? []; const excludedCrews = channel.excluded_crew_ids ?? [];
   const excludeMember = async (kind, id) => {
-    if (kind === 'user' && crews.some((c) => c.owner_user_id === id && chCrews.some((x) => x.id === c.id))) return onError(t('ch.remove.ownerBlocked'));
+    const owned = kind === 'user' ? crews.filter((c) => c.owner_user_id === id && chCrews.some((x) => x.id === c.id)).map((c) => c.id) : [];
+    if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); } // 규칙 14 — removeMember와 같은 처리
     const key = kind === 'user' ? 'excluded_user_ids' : 'excluded_crew_ids'; const cur = kind === 'user' ? excludedUsers : excludedCrews;
     if (!cur.includes(id)) await upd({ [key]: [...cur, id] }, t('ch.exclude.done'));
     if (kind === 'user') { // 참여 행도 지운다 — 남기면 목록에는 있는데 열리지 않는 채널이 된다(읽기 판정은 제외 목록을 본다)

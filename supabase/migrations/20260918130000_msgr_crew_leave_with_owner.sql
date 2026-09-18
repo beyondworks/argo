@@ -57,6 +57,37 @@ drop trigger if exists msgr_crews_follow_owner_out on public.msgr_channel_member
 create trigger msgr_crews_follow_owner_out after delete on public.msgr_channel_members
   for each row when (old.member_kind = 'user') execute function public.msgr_crews_follow_owner_out();
 
+-- 공개 채널에서 사람을 제외 목록(excluded_user_ids)에 넣으면 그 사람은 채널을 못 읽는다. 참여 행 삭제가 아니라
+-- 위 트리거가 걸리지 않으므로, 목록에 새로 들어온 사람의 에이전트도 여기서 같이 뺀다(주인 없이 죽은 채 남지 않게).
+create or replace function public.msgr_crews_follow_owner_excluded() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  with gone as (
+    delete from public.msgr_channel_members m using public.msgr_crews cr
+     where m.channel_id = new.id and m.member_kind = 'crew' and m.member_id = cr.id
+       and cr.owner_user_id = any (new.excluded_user_ids)
+       and not (cr.owner_user_id = any (coalesce(old.excluded_user_ids, '{}'::uuid[])))
+       and not public.msgr_crew_is_company(cr.id)
+    returning m.member_id, cr.owner_user_id)
+  insert into public.msgr_audit_log (org_id, actor_user_id, action, target_kind, target_id, meta)
+  select new.org_id, auth.uid(), 'crew_left_with_owner', 'crew', g.member_id::text,
+         jsonb_build_object('channel_id', new.id, 'owner_user_id', g.owner_user_id, 'via', 'excluded')
+    from gone g where new.org_id is not null;
+
+  delete from public.msgr_channel_crew_requests q using public.msgr_crews cr
+   where q.channel_id = new.id and q.status = 'pending' and q.crew_id = cr.id
+     and cr.owner_user_id = any (new.excluded_user_ids)
+     and not (cr.owner_user_id = any (coalesce(old.excluded_user_ids, '{}'::uuid[])))
+     and not public.msgr_crew_is_company(cr.id);
+  return null;
+end $$;
+revoke all on function public.msgr_crews_follow_owner_excluded() from public, anon, authenticated;
+
+drop trigger if exists msgr_crews_follow_owner_excluded on public.msgr_channels;
+create trigger msgr_crews_follow_owner_excluded after update of excluded_user_ids on public.msgr_channels
+  for each row when (new.excluded_user_ids is distinct from old.excluded_user_ids)
+  execute function public.msgr_crews_follow_owner_excluded();
+
 -- 한 채널에서 에이전트 빼기 — 주인 본인 또는 그 채널의 방장. 반환: 'removed' | 'absent'
 create or replace function public.msgr_crew_leave_channel(ch uuid, crew uuid) returns text
   language plpgsql security definer set search_path = public, pg_temp as $$
