@@ -235,7 +235,7 @@ test('동시 수락 경합: max_uses 2에 세 명이 동시에 — 정확히 둘
 test('미리보기: 행선지(조직·채널 이름·초대자·역할·만료)만, 주제·멤버는 없다 — 쓸 수 없는 초대는 {state, org_name}, 틀린 코드는 not_found 하나', { skip }, () => {
   const code = codeOf(mkInvite(U.owner, { role: `'member'`, channel_ids: arr(PRIV, PUB), max_uses: '10' }));
   const p = preview(U.outsider, code);
-  assert.deepEqual(Object.keys(p).sort(), ['channels', 'expires_at', 'inviter_name', 'max_uses', 'org_id', 'org_name', 'role', 'state', 'use_count']);
+  assert.deepEqual(Object.keys(p).sort(), ['channels', 'expires_at', 'inviter_name', 'org_id', 'org_name', 'role', 'state'], '사용 횟수도 싣지 않는다(설계서 1-3 목록)');
   assert.equal(p.state, 'valid'); assert.equal(p.org_name, 'Lean-AX'); assert.equal(p.role, 'member'); assert.equal(p.inviter_name, 'owner');
   assert.deepEqual(p.channels, [{ id: PRIV, name: 'Lean Crew', kind: 'private' }, { id: PUB, name: 'general', kind: 'public' }], '비공개 채널 이름은 의도(설계서 4장)');
   assert.ok(!JSON.stringify(p).includes('비밀 주제'), '주제는 싣지 않는다');
@@ -248,7 +248,9 @@ test('미리보기: 행선지(조직·채널 이름·초대자·역할·만료)�
   asUser(U.owner, `select public.msgr_invite_revoke((select id from public.msgr_invites where code = '${rev}'))`);
   assert.deepEqual(preview(U.outsider, rev), { state: 'revoked', org_name: 'Lean-AX' });
   const one = codeOf(mkInvite(U.owner, { role: `'member'`, channel_ids: arr(PUB) }));
-  v2('99999999-9999-4999-8999-99999999a001', one);
+  const fresh = '99999999-9999-4999-8999-99999999c001';
+  sql(`insert into auth.users (id, created_at, email) values ('${fresh}', now(), 'fresh@example.test') on conflict do nothing`);
+  v2(fresh, one); // 새 사람만 사용을 센다
   assert.deepEqual(preview(U.outsider, one), { state: 'exhausted', org_name: 'Lean-AX' });
   // 이미 멤버: 채널까지 전부 참여 중이면 already_member, 일부만이면 valid
   const both = codeOf(mkInvite(U.owner, { role: `'member'`, channel_ids: arr(PUB, PRIV), max_uses: 'null' }));
@@ -272,4 +274,102 @@ test('사용 기록 표: 그 초대를 볼 수 있는 사람(관리자)만 본�
   assert.notEqual(last(asUser(U.owner, `select count(*) from public.msgr_invite_uses`)), '0');
   assert.equal(last(asUser(U.member, `select count(*) from public.msgr_invite_uses u join public.msgr_invites i on i.id = u.invite_id where i.channel_id is null`)), '0');
   assert.equal(last(asUser(U.n1, `select count(*) from public.msgr_invite_uses`)), '0');
+});
+
+test('강등 없음(검토 #610 MEDIUM): owner·admin이 멤버 링크를 열어도 역할 그대로 + 채널만 참여, 사용 횟수는 세지 않는다', { skip }, () => {
+  const room = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}', 'public', 'launch')`));
+  sql(`delete from public.msgr_channel_members where channel_id = '${room}'`); // 만든 owner도 빼고 시작 — 수락이 넣는지 본다
+  const code = codeOf(mkInvite(U.admin, { role: `'member'`, channel_ids: arr(room), max_uses: '1' }));
+  for (const [uid, role] of [[U.owner, 'owner'], [U.admin, 'admin']]) {
+    const r = v2(uid, code);
+    assert.equal(r.channel_id, room);
+    assert.equal(sql(`select role || '|' || coalesce(expires_at::text, 'null') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${uid}'`), `${role}|null`, `${role}는 강등되지 않는다`);
+    assert.ok(inChannel(uid, room));
+  }
+  assert.equal(last(asUser(U.owner, `select public.msgr_accept_invite('${code}')`)), ORG, 'v1도 같은 본체');
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.owner}'`), 'owner');
+  assert.equal(sql(`select use_count || '|' || coalesce(accepted_by::text, 'null') from public.msgr_invites where code = '${code}'`), '0|null', '기존 멤버는 새 사람용 1회 링크를 써 버리지 않는다');
+  assert.equal(sql(`select count(*) from public.msgr_invite_uses u join public.msgr_invites i on i.id = u.invite_id where i.code = '${code}'`), '2', '기록은 남긴다');
+  const newcomer = '99999999-9999-4999-8999-99999999b001';
+  sql(`insert into auth.users (id, created_at, email) values ('${newcomer}', now(), 'newcomer@example.test') on conflict do nothing`);
+  assert.equal(v2(newcomer, code).org_id, ORG, '새 사람은 아직 쓸 수 있다');
+  assert.equal(sql(`select use_count from public.msgr_invites where code = '${code}'`), '1');
+});
+
+test('게스트가 멤버 링크를 열면 member로 올라가고 게스트 기한이 지워진다 — 더 낮은 역할 링크는 아무것도 바꾸지 않는다', { skip }, () => {
+  const before = sql(`select role || '|' || (expires_at is not null) from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.guest}'`);
+  assert.equal(before, 'guest|true', '전제: 기한 있는 게스트');
+  const code = codeOf(mkInvite(U.owner, { role: `'member'`, channel_ids: arr(PUB) }));
+  v2(U.guest, code);
+  assert.equal(sql(`select role || '|' || coalesce(expires_at::text, 'null') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.guest}'`), 'member|null');
+  assert.ok(inChannel(U.guest, PUB));
+  // 이제 member인 사람이 게스트 링크를 열어도 강등되지 않는다(기존 규칙 유지)
+  const g = codeOf(mkInvite(U.member, { role: `'guest'`, channel_ids: arr(PRIVM) }));
+  v2(U.guest, g);
+  assert.equal(sql(`select role || '|' || coalesce(expires_at::text, 'null') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.guest}'`), 'member|null');
+});
+
+test('다시 들어오기(main·라이브 기존 결함): 제거된 멤버·기한 지난 게스트가 관리자의 새 초대로 다시 들어온다', { skip }, () => {
+  const who = '99999999-9999-4999-8999-99999999d001'; const g = '99999999-9999-4999-8999-99999999d002';
+  for (const [id, mail] of [[who, 'rejoin'], [g, 'reguest']]) sql(`insert into auth.users (id, created_at, email) values ('${id}', now(), '${mail}@example.test') on conflict do nothing`);
+  v2(who, codeOf(mkInvite(U.owner, { role: `'member'` })));
+  sql(`update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id = '${who}'`);
+  assert.equal(last(asUser(who, `select public.msgr_accept_invite('${codeOf(mkInvite(U.owner, { role: `'member'`, channel_ids: arr(PUB) }))}')`)), ORG, 'v1로도 다시 들어온다');
+  assert.equal(sql(`select role || '|' || (removed_at is null) from public.msgr_org_members where org_id = '${ORG}' and user_id = '${who}'`), 'member|true');
+  assert.ok(inChannel(who, PUB));
+  v2(g, codeOf(mkInvite(U.owner, { role: `'guest'`, channel_ids: arr(PRIV), guest_days: '3' })));
+  sql(`update public.msgr_org_members set expires_at = now() - interval '1 day' where org_id = '${ORG}' and user_id = '${g}'`);
+  v2(g, codeOf(mkInvite(U.owner, { role: `'guest'`, channel_ids: arr(PRIV), guest_days: '5' })));
+  assert.equal(sql(`select role || '|' || (expires_at > now() + interval '4 days') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${g}'`), 'guest|true', '새 게스트 기한');
+});
+
+test('가드 예외는 수락 본체만: 플래그를 위조해 유효한 관리자 초대 id를 실어도 본인 역할을 올리지 못한다(사용 기록이 없다)', { skip }, () => {
+  const adminInvite = sql(`select id from public.msgr_invites where code = '${codeOf(mkInvite(U.owner, { role: `'admin'` }))}'`);
+  const r = asUserRaw(U.member, `select set_config('msgr.invite_accept', '${adminInvite}', true); update public.msgr_org_members set role = 'admin' where org_id = '${ORG}' and user_id = '${U.member}'`);
+  assert.notEqual(r.status, 0, '위조 플래그로 역할 상승이 허용됨');
+  assert.match(r.stderr, /msgr_member_self_only_name/);
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.member}'`), 'member');
+  assert.equal(sql(`select count(*) from public.msgr_invite_uses where invite_id = '${adminInvite}'`), '0');
+  fails(asUserRaw(U.member, `insert into public.msgr_invite_uses (invite_id, user_id) values ('${adminInvite}', '${U.member}')`), /permission denied|row-level security/, '사용 기록은 사용자가 쓸 수 없다');
+});
+
+test('재검토 A: 역할이 올라가는 수락은 센다 — 1회용 관리자 링크를 기존 멤버 둘이 열면 첫째만 admin(use_count 1), 둘째는 exhausted', { skip }, () => {
+  const a = '99999999-9999-4999-8999-99999999e001'; const b = '99999999-9999-4999-8999-99999999e002';
+  for (const [id, mail] of [[a, 'ra'], [b, 'rb']]) {
+    sql(`insert into auth.users (id, created_at, email) values ('${id}', now(), '${mail}@example.test') on conflict do nothing`);
+    v2(id, codeOf(mkInvite(U.owner, { role: `'member'` })));
+  }
+  const roleOf = (u) => sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${u}'`);
+  const code = codeOf(mkInvite(U.owner, { role: `'admin'`, max_uses: '1' }));
+  v2(a, code);
+  assert.equal(roleOf(a), 'admin');
+  assert.equal(sql(`select use_count || '|' || accepted_by from public.msgr_invites where code = '${code}'`), `1|${a}`, '역할 상승은 사용 1회');
+  fails(asUserRaw(b, `select public.msgr_accept_invite_v2('${code}')`), /msgr_invite_exhausted/, '둘째 기존 멤버');
+  fails(asUserRaw(b, `select public.msgr_accept_invite('${code}')`), /msgr_invite_invalid/, 'v1도 같은 판정');
+  assert.equal(roleOf(b), 'member', '둘째는 그대로 member');
+  globalThis.__raisedAdmin = a; globalThis.__adminInvite = sql(`select id from public.msgr_invites where code = '${code}'`);
+});
+
+test('재검토 B: 과거에 그 초대를 쓴 사람이 강등된 뒤 위조 플래그로 역할을 되돌리지 못한다(가드는 이 트랜잭션의 기록만 인정)', { skip }, () => {
+  const a = globalThis.__raisedAdmin; const id = globalThis.__adminInvite;
+  sql(`update public.msgr_org_members set role = 'member' where org_id = '${ORG}' and user_id = '${a}'`); // 관리자가 강등
+  assert.equal(sql(`select count(*) from public.msgr_invite_uses where invite_id = '${id}' and user_id = '${a}'`), '1', '전제: 과거 사용 기록');
+  const r = asUserRaw(a, `select set_config('msgr.invite_accept', '${id}', false); update public.msgr_org_members set role = 'admin' where org_id = '${ORG}' and user_id = '${a}'`);
+  assert.notEqual(r.status, 0, '과거 기록 + 위조 플래그로 역할 상승이 허용됨');
+  assert.match(r.stderr, /msgr_member_self_only_name/);
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${a}'`), 'member');
+});
+
+test('재검토 D: 같은 트랜잭션에서 게스트 초대를 수락한 직후 위조 플래그로 자기 게스트 기한을 늘리지 못한다(초대의 guest_days가 상한)', { skip }, () => {
+  const who = '99999999-9999-4999-8999-99999999f001';
+  sql(`insert into auth.users (id, created_at, email) values ('${who}', now(), 'extend@example.test') on conflict do nothing`);
+  const code = codeOf(mkInvite(U.member, { role: `'guest'`, channel_ids: arr(PRIVM), guest_days: '3' }));
+  const id = sql(`select id from public.msgr_invites where code = '${code}'`);
+  const r = psqlRaw(['-A', '-t', '-c', `begin; set local role authenticated; select set_config('argo.uid', '${who}', true); select public.msgr_accept_invite_v2('${code}'); select set_config('msgr.invite_accept', '${id}', true); update public.msgr_org_members set expires_at = '2099-01-01' where org_id = '${ORG}' and user_id = '${who}'; commit;`]);
+  assert.notEqual(r.status, 0, '같은 트랜잭션의 위조 플래그로 기한 연장이 허용됨');
+  assert.match(r.stderr, /msgr_member_self_only_name/);
+  assert.equal(sql(`select count(*) from public.msgr_org_members where org_id = '${ORG}' and user_id = '${who}'`), '0', '트랜잭션 전체가 되돌려진다');
+  // 정상 수락은 그대로 된다(기한 = 초대의 guest_days)
+  v2(who, code);
+  assert.equal(sql(`select (expires_at <= now() + interval '3 days') and (expires_at > now() + interval '2 days') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${who}'`), 't');
 });
