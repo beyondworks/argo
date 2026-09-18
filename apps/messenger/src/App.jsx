@@ -31,6 +31,7 @@ import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
+import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceKey } from './cross-space.mjs'; // 다른 공간의 새 글 — 안 읽음 합계·알림 판단
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -686,7 +687,7 @@ function Shell({ session }) {
       ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
       registerDispose(remove);
       ch
-        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent(messageEvent(payload)); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (payload?.channel_id && payload.id && isPhoneRef.current && dmIdsRef.current.has(payload.channel_id)) supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').eq('id', payload.id).is('deleted_at', null).maybeSingle().then(({ data: r }) => { if (r) setLastMsg((m) => (m[r.channel_id]?.at > Date.parse(r.created_at) ? m : { ...m, [r.channel_id]: { body: String(r.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) } })); }).catch(() => {}); /* 옛 글 응답이 늦게 오면 덮지 않는다(재검수 L-1) */ /* 방송엔 본문이 없다(서버 트리거는 id·채널·멘션만) → 그 글 1건을 조회해 미리보기 갱신(재검수 M-A) */ if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
+        .on('broadcast', { event: 'message' }, active(({ payload }) => handleMessageRef.current(payload))) // 본문은 handleMessage(org:·u:·dm: 공통)
         .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); }))
         .on('broadcast', { event: 'typing' }, active(({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() }))))
         .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent(broadcastEvent('reaction', payload))))
@@ -708,13 +709,47 @@ function Shell({ session }) {
     (async () => {
       await supabase.realtime.setAuth(session.access_token);
       ch = supabase.channel(`dm:${chId}`, { config: { private: true } });
-      ch.on('broadcast', { event: 'message' }, ({ payload }) => { setEvent(messageEvent(payload)); })
+      ch.on('broadcast', { event: 'message' }, ({ payload }) => handleMessageRef.current(payload)) // 조직 처리기와 같은 처리 — 알림이 없던 결함(검수 ③)
         .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
         .subscribe((status) => { if (RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); });
       personalRt.current = ch;
     })();
     return () => { remove(); };
   }, [isPersonal, chId, session.access_token]);
+  // ── 다른 공간(보고 있지 않은 조직·개인 공간)의 새 글 — 안 읽음 합계·알림(유건 실측 2026-09-18 "교차되는 메시지 확인 안 됨") ──
+  // 구독: 보고 있지 않은 조직마다 org:<조직>(공개 채널 글) + u:<나>(비공개 방 글 — 서버 마이그레이션 적용 뒤). 구독 수 = 조직 수 + 1.
+  // 서버 적용 전: 조직은 org: 다중 구독만으로 즉시, 개인 공간은 합계 재조회(15초)로 뜬다. u: 구독 실패·합계 RPC 부재는 옛 동작으로 물러난다.
+  const [spaceTotals, setSpaceTotals] = useState({});
+  const orgIdsKey = useMemo(() => (orgs ?? []).map((o) => o.id).sort().join(','), [orgs]);
+  const totalsTimer = useRef(null);
+  const loadTotals = useCallback(async () => { if (!uid) return; const { totals } = await loadSpaceTotals(supabase, orgIdsKey ? orgIdsKey.split(',') : [], notifyRef.current.muted ?? new Set()); setSpaceTotals(totals); }, [uid, orgIdsKey]);
+  const loadTotalsSoon = useCallback(() => { clearTimeout(totalsTimer.current); totalsTimer.current = setTimeout(() => { loadTotals().catch(() => {}); }, 600); }, [loadTotals]); // 연달아 온 방송은 한 번에 센다
+  useEffect(() => { loadTotals().catch(() => {}); }, [loadTotals, tick, orgId]);
+  const crossRef = useRef(() => {});
+  crossRef.current = (payload, space) => { // 다른 공간 글: 합계 다시 세고, 읽히는 글이면 알림
+    if (!payload || (payload.author_user_id && payload.author_user_id === uid)) return;
+    if (!seenOnce(seenMsgRef.current, payload.id)) return; // 같은 글이 옛 토픽(org:)과 u:로 함께 와도(전환기 이중 송신) 알림은 한 번
+    loadTotalsSoon();
+    notifyReadable(payload, space);
+  };
+  useEffect(() => {
+    if (!uid || !session.access_token || !orgs) return;
+    const chans = [];
+    let live = true;
+    (async () => {
+      await supabase.realtime.setAuth(session.access_token);
+      if (!live) return;
+      const here = (space) => (space == null ? orgId === PERSONAL : space === orgId);
+      chans.push(...orgs.filter((o) => o.id !== orgId).map((o) => supabase.channel(`org:${o.id}`, { config: { private: true } })
+        .on('broadcast', { event: 'message' }, ({ payload }) => crossRef.current(payload, o.id))
+        .subscribe()));
+      chans.push(supabase.channel(`u:${uid}`, { config: { private: true } })
+        .on('broadcast', { event: 'message' }, ({ payload }) => { const space = payload?.org_id ?? null; if (here(space)) handleMessageRef.current(payload); else crossRef.current(payload, space); })
+        .on('broadcast', { event: 'approval' }, ({ payload }) => { if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); } })
+        .subscribe()); // 서버 적용 전에는 구독이 거절될 수 있다 — 무해(합계 재조회로 물러난다)
+    })();
+    return () => { live = false; for (const c of chans) supabase.removeChannel(c).catch(() => {}); }; // 조직 전환·재연결·로그아웃 때 이 효과가 연 구독만 걷는다(현재 조직 구독은 따로)
+  }, [uid, orgIdsKey, orgId, session.access_token, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)
@@ -774,7 +809,12 @@ function Shell({ session }) {
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
   const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet });
   notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet };
-  useEffect(() => { setBadge(Object.entries(unread).reduce((s, [id, u]) => s + (muted.has(id) ? 0 : (u?.n || 0)), 0)); }, [unread, muted]); // 독 아이콘 숫자 = 안 읽은 합계(음소거 채널 제외 — 레일 배지와 같은 규칙)
+  const hereKey = spaceKey(isPersonal ? null : orgId);
+  const hereCount = useMemo(() => { let n = 0; let mention = 0; for (const [id, u] of Object.entries(unread)) if (!muted.has(id)) { n += u?.n || 0; mention += u?.mention || 0; } return { n, mention }; }, [unread, muted]);
+  const spaceCount = (key) => (key === hereKey ? hereCount : spaceTotals[key]) ?? { n: 0, mention: 0 }; // 조직 전환기·개인 공간 입구의 숫자
+  const elsewhere = Object.entries(spaceTotals).reduce((a, [k, u]) => (k === hereKey ? a : { n: a.n + (u?.n || 0), mention: a.mention + (u?.mention || 0) }), { n: 0, mention: 0 }); // 전환 버튼 — 보고 있지 않은 공간의 합
+  const SpaceBadge = ({ c }) => (c?.n > 0 ? <span className={`msgr-badge${c.mention ? ' mark' : ''}`}>{c.n > 99 ? '99+' : c.n}</span> : null);
+  useEffect(() => { setBadge(badgeTotal({ current: unread, currentKey: spaceKey(isPersonal ? null : orgId), muted, totals: spaceTotals })); }, [unread, muted, spaceTotals, orgId, isPersonal]); // 독 아이콘 숫자 = 모든 공간의 안 읽은 합계(음소거 채널 제외 — 레일 배지와 같은 규칙). 보고 있는 공간은 채널별 셈이 최신
   const osNotify = (title, body, tag) => { sendNotify(title, body, tag); }; // Tauri 플러그인·웹 Notification 분기는 notify.js
   const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return !document.hasFocus() || r.page !== 'chat' || r.chId !== channelId; }; // 초점 기준 — 다른 창 뒤에 있어도 visibilityState는 'visible'이라 같은 채널을 띄워 두면 알림이 전부 억제됐다(유건 제보 2026-09-12) // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
@@ -783,24 +823,34 @@ function Shell({ session }) {
     const mentioned = Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid);
     if (!mentioned || !shouldNotify(payload.channel_id)) return;
     const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
-    osNotify(t('notify.mention', { name: who?.display_name || '?', channel: ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), `m:${payload.id}`); return true; // 멘션도 본문 발췌
+    osNotify(t('notify.mention', { name: payload.author_name || who?.display_name || '?', channel: payload.channel_name ?? ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), `m:${payload.id}`); return true; // 멘션도 본문 발췌. 이름은 채운 payload(readableForNotify — 다른 공간 글) 우선
   };
   const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
     const r = notifyRef.current;
     if (!payload || payload.kind !== 'text' || (payload.author_user_id && payload.author_user_id === r.uid)) return; // 크루든 사람이든(사람 DM·답글에 알림이 없던 갭, 2026-09-12 점검) — 내 글은 제외
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     if (!shouldNotify(payload.channel_id)) return; // 모든 메시지에 알림(다른 메신저처럼 — 유건 2026-09-12). 채널 음소거·방해 금지는 shouldNotify
-    const who = payload.author_kind === 'crew' ? r.crews.find((c) => c.id === payload.crew_id)?.display_name : r.members.find((m) => m.user_id === payload.author_user_id)?.display_name;
+    const who = payload.author_name || (payload.author_kind === 'crew' ? r.crews.find((c) => c.id === payload.crew_id)?.display_name : r.members.find((m) => m.user_id === payload.author_user_id)?.display_name); // 채운 payload(다른 공간 글) 우선
     // 본문은 방송에 실리지 않는다(실시간 payload는 id·채널·멘션만 — 조직 토픽 구독자 전원에게 사적 대화가 새지 않게).
     // 그래서 알림 본문이 늘 비어 제목만 떴다(유건 제보 2026-09-16 배너). 내 권한으로 그 글만 읽어 채운다(RLS가 경계).
-    const title = ch?.kind === 'dm' ? (who || '?') : t('notify.message', { name: who || '?', channel: ch?.name ?? '' });
+    const title = (payload.channel_kind ?? ch?.kind) === 'dm' ? (who || '?') : t('notify.message', { name: who || '?', channel: payload.channel_name ?? ch?.name ?? '' });
     const clip = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
     const inline = clip(payload.body);
-    if (inline) { osNotify(title, inline, `r:${payload.id}`); return; }
+    if (inline || 'channel_name' in payload) { osNotify(title, inline || t('notify.attachment'), `r:${payload.id}`); return; } // readableForNotify가 이미 읽은 글(본문 없음 = 첨부만)
     supabase.from('msgr_messages').select('body').eq('id', payload.id).maybeSingle()
       .then(({ data }) => osNotify(title, clip(data?.body) || t('notify.attachment'), `r:${payload.id}`))
       .catch(() => osNotify(title, '', `r:${payload.id}`)); // 못 읽으면 종전처럼 제목만
   };
+  // 보고 있는 공간의 새 글 — org:(공개 채널)·u:<나>(비공개 방, 서버 적용 뒤)·dm:<열린 개인 방> 어느 토픽으로 와도 같은 처리. 같은 글이 두 토픽으로 올 수 있어 id로 한 번만.
+  const seenMsgRef = useRef(new Set());
+  const handleMessageRef = useRef(() => {});
+  handleMessageRef.current = (payload) => {
+    if (!seenOnce(seenMsgRef.current, payload?.id)) return;
+    if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent(messageEvent(payload)); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (payload?.channel_id && payload.id && isPhoneRef.current && dmIdsRef.current.has(payload.channel_id)) supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').eq('id', payload.id).is('deleted_at', null).maybeSingle().then(({ data: r }) => { if (r) setLastMsg((m) => (m[r.channel_id]?.at > Date.parse(r.created_at) ? m : { ...m, [r.channel_id]: { body: String(r.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) } })); }).catch(() => {}); /* 옛 글 응답이 늦게 오면 덮지 않는다(재검수 L-1) */ /* 방송엔 본문이 없다(서버 트리거는 id·채널·멘션만) → 그 글 1건을 조회해 미리보기 갱신(재검수 M-A) */
+    notifyReadable(payload, isPersonal ? null : orgId); // 멘션이면 멘션 알림 하나만 — 알림은 내가 읽을 수 있는 글에만(readableForNotify)
+  };
+  // 알림 전 확인 — 조직 토픽은 조직 전원이 들어, 내가 없는 방의 방송에도 알림이 뜨던 결함(실측 2026-09-18). 읽히는 글이면 이름·본문을 채워 넘긴다.
+  const notifyReadable = (payload, space) => { if (!payload || payload.author_user_id === uid) return; readableForNotify(supabase, payload, space).then((p) => { if (p && !notifyMention(p)) notifyReply(p); }).catch(() => {}); };
   const notifyApproval = (payload) => {
     const r = notifyRef.current;
     if (!payload || payload.status !== 'pending' || !r.isAdmin || !shouldNotify(payload.channel_id)) return; // 확정권 정본은 서버 — 관리자에게만 알린다(저위험은 소유자가 카드에서 본다)
@@ -1206,15 +1256,15 @@ function Shell({ session }) {
         <div className="msgr-brand"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO</div>
         <div className="msgr-orgwrap">
           <button type="button" className={`msgr-org${orgMenu ? ' open' : ''}`} onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}>
-            <Av name={org?.name ?? '?'} /><span className="name">{org?.name ?? t('org.pick')}</span><I name="caret" size={14} className="caret" />
+            <Av name={org?.name ?? '?'} /><span className="name">{org?.name ?? t('org.pick')}</span><SpaceBadge c={elsewhere} /><I name="caret" size={14} className="caret" />
           </button>
           <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="at" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder={t('search.ph')} aria-label={t('search.title')} />{searchQ && <button type="button" className="clear" onClick={() => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>
           {orgMenu && (<>
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
-              <button type="button" role="menuitemradio" aria-checked={isPersonal} className={isPersonal ? 'on' : ''} onClick={() => { setOrgId(PERSONAL); setOrgMenu(false); }}><span className="msgr-av sm ghost"><I name="at" size={13} /></span><span className="label">{t('personal')}</span><span className="msgr-klabel">{t('personal.space')}</span></button>
+              <button type="button" role="menuitemradio" aria-checked={isPersonal} className={isPersonal ? 'on' : ''} onClick={() => { setOrgId(PERSONAL); setOrgMenu(false); }}><span className="msgr-av sm ghost"><I name="at" size={13} /></span><span className="label">{t('personal')}</span><span className="msgr-klabel">{t('personal.space')}</span><SpaceBadge c={spaceCount('personal')} /></button>
               <div className="sep" />
-              {orgs.map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === orgId} className={o.id === orgId ? 'on' : ''} onClick={() => { setOrgId(o.id); setOrgMenu(false); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span></button>)}
+              {orgs.map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === orgId} className={o.id === orgId ? 'on' : ''} onClick={() => { setOrgId(o.id); setOrgMenu(false); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span><SpaceBadge c={spaceCount(o.id)} /></button>)}
               {joinable.map((o) => <button key={`j-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); joinDomain(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}
               {deletedOrgs.map((o) => <button key={`d-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); restoreOrg(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}
               {ent && <div className="seatline"><span className="msgr-klabel">{t('seat.status', { used: members.length, seats: ent.seats, plan: t(`plan.${ent.plan}`) })}</span></div>}
