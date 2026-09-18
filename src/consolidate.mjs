@@ -177,7 +177,8 @@ export async function consolidateMemory(wsId) {
   // (이전: SDK 직호출 + env 미주입 — 호스트 Claude 로그인에만 의존해 BYOK 웹 사용자·타 러너 사용자는 조용히 실패)
   // model은 claude 러너일 때만 haiku 적용(정리는 잔일 — 저비용), maxTurns 4 = 도구 거부돼도 최종 답까지.
   // 2턴 상한 — 프롬프트가 도구 금지를 말해도 턴이 열려 있으면 파일을 읽으러 다녀 비용이 5배로 뛰었다(A/B 실측). readOnly는 CLI 경로
-  // (codex/agy 샌드박스·caps)를 막고, SDK 경로는 이미 allowedTools []라 무효 — 비용 절감은 maxTurns가 담당한다(검수 확인).
+  // (codex/agy 샌드박스·caps)를 막고, SDK 경로는 oneshot의 noToolHooks가 도구를 전부 거부한다 — allowedTools []는 자동 허용 목록일 뿐
+  // 도구를 끄지 않아 작업 폴더 안 읽기가 열려 있었다(2026-09-18 실제 SDK 실측, #587). 비용 상한은 여전히 maxTurns가 담당한다.
   // 배치 작업(새벽 자동 실행, 사용자 대기 없음)이라 공통 기본(120s)보다 넉넉히 — 상한의 목적은
   // 지연 SLO가 아니라 "영원히 안 끝나는 것"을 끊어 스케줄러 in-flight 표시를 반드시 풀어주는 것이다.
   const { runner, text: out, usage, costUsd } = await oneShot(wsId, PROMPT(text, noteTitles, lang, noteCtx),

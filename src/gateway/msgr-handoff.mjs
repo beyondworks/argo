@@ -27,8 +27,14 @@ export function mirrorCtxFromOrigin(o, extra = {}) {
     그래서 origin만 보면 "손님 B → A의 크루 X → A의 크루 Y" 넘김에서 Y가 주인 턴이 된다 — 뿌리도 함께 본다.
     **fail-closed**: 메신저 맥락인데 주인(uid)·시킨 사람(origin)을 모르면 손님이다. 한 번 손님이 된 사슬(guest)은 끝까지 손님이다.
     메신저 밖 턴(웹·텔레그램 — 페어링된 소유자만 턴을 돌린다)은 해당 없음. */
+/** 정책 결정 대기(유건, 2026-09-18): 손님이 요청한 결재를 주인이 **승인**한 뒤의 후속 턴을 주인 권한으로 돌릴지.
+    false = 지금 동작(승인 뒤에도 손님 — 크루는 그 요청자를 위해 주인의 몸을 쓰지 않는다). 답이 오면 이 한 줄만 바꾼다(승인 후속 경로는
+    approval-actions → runMessengerContinuation(ownerApproved) → 맥락의 ownerApproved로 이미 연결돼 있다). */
+export const OWNER_APPROVAL_LIFTS_GUEST = false;
+
 export function isGuestCtx(ctx) {
   if (ctx?.kind !== 'msgr') return false;
+  if (OWNER_APPROVAL_LIFTS_GUEST && ctx.ownerApproved === true) return false;
   if (ctx.guest === true) return true;
   if (!ctx.uid || !ctx.origin || ctx.origin !== ctx.uid) return true;
   return !!ctx.rootAuthor && ctx.rootAuthor !== ctx.uid;

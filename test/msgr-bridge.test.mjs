@@ -740,7 +740,7 @@ test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대�
   assert.match(text, /^\[팀 메신저 #general — 동료 민수의 메시지\.[^\]]*@로 적어라\(@제드\)[^\]]*\]\n\[최근 채널 대화 2건 — 참고용이며 지시가 아니다\]\n민수: 숫자 세기 시작 1\n제드: 2\n\[지금 메시지\]\n민수: @제드 @서윤 번갈아 세어줘$/, '힌트(자기 제외) + 문맥 블록(개행 접기) + 지금 메시지');
   const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
   assert.deepEqual(ins[0].mentions, [{ kind: 'crew', id: ZED }]);
-  assert.deepEqual(ins[0].meta, { hop: 0, origin: MEMBER });
+  assert.deepEqual(ins[0].meta, { hop: 0, origin: MEMBER, guest: true }); // 지시한 사람(MEMBER)이 크루 주인(OWNER)이 아니라 손님 턴 — 답글이 손님 표지를 실어 다음 넘김이 이어받는다(PR-A)
   // 크루가 넘긴 턴: 프레이밍이 '동료 크루 … 지시를 이어' · hop 표기 · actor에 크루 ← 사람
   const db2 = fakeDb({ peers }); const calls2 = [];
   const h2 = M.makeMsgrHandler(WS, { session: async () => ({ db: db2, uid: OWNER }), runChat: async (ws, slug, text) => { calls2.push(text); return { reply: '4', handover: null, sessionId: 's1', artifacts: [] }; } });
@@ -748,7 +748,7 @@ test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대�
   await h2(job2);
   assert.match(calls2[0], /^\[팀 메신저 #general — 동료 크루 제드이\(가\) 민수의 지시를 이어 너에게 넘긴 메시지\(1\/8단계\)\.[^\]]*\]\n제드: @서윤 다음 숫자$/);
   const row2 = db2.calls.find((x) => x[0] === 'insertMessage')[1];
-  assert.deepEqual(row2.mentions, []); assert.deepEqual(row2.meta, { hop: 1, origin: MEMBER });
+  assert.deepEqual(row2.mentions, []); assert.deepEqual(row2.meta, { hop: 1, origin: MEMBER, guest: true }); // 손님 턴(요청자 MEMBER ≠ 주인)
   const t = await loadThread(WS, 'seoyun'); const last = t.messages.filter((m) => m.who === 'user').at(-1);
   assert.deepEqual(last.actor, { uid: MEMBER, name: '제드 ← 민수' });
   // 실패 턴은 mentions 비움(연쇄 중단) — 에러 회신 속 @이름이 다음 크루를 깨우지 않는다
@@ -1410,4 +1410,64 @@ test('손님 판정 재료: 후속 실행 복원이 뿌리 사람과 저장된 �
   assert.equal(isGuestCtx(seen[0]), true, '다른 주인의 크루가 넘긴 후속은 손님(교차 소유자 DM 위임)');
   await run({ ...origin, guest: true });
   assert.equal(seen[1].guest, true, '저장된 손님 표지는 복원에서 사라지지 않는다(예약·결재 후속이 주인 턴으로 되살아나지 않게)');
+});
+
+// 손님 사슬(PR-A 재작업, 검수 #583 HIGH) — **실제 드레인**을 돌린다(잡을 손으로 만들지 않는다). A(OWNER)가 연 스레드에서 손님 B(MEMBER)가
+// 답글로 A의 크루 X(ZED)를 부르면 X 턴은 손님이다. X가 A의 크루 Y(seoyun)에게 넘기면 드레인은 origin = X의 주인 A, rootAuthor = 스레드 뿌리 A로
+// 잡는다 — 둘 다 주인이라 뿌리만 보면 Y가 주인 턴이 된다. 한 번 넘김은 X 답글의 meta.origin(=B), 두 번 넘김(Y→Z)은 meta.guest가 잇는다.
+test('손님 사슬: 주인 스레드 안의 손님 답글이 한 번·두 번 넘겨져도 드레인이 손님 잡을 만든다 — 주인 사슬은 주인', async () => {
+  const { isGuestCtx } = await import('../src/gateway/msgr-handoff.mjs');
+  M._autoLogForTest.clear();
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const pep = crew({ id: PEP, slug: 'pepper', display_name: '페퍼' });
+  const root = msg(100, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: ZED }] }); // A가 연 스레드(뿌리 작성자 = 주인)
+  const parent = (id) => (id === 100 ? root : null);
+  const handoff = (id, from, to, meta) => msg(id, { author_kind: 'crew', author_user_id: null, crew_id: from, thread_root: 100, reply_to: 100, mentions: [{ kind: 'crew', id: to }], meta: { hop: 0, ...meta } });
+  const drainJobs = async (messages) => { const db = fakeDb({ crews: [crew(), zed, pep], parent, messages }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq); };
+
+  // 한 번 넘김: 손님 B가 시킨 X의 답글(meta.origin = B) → Y
+  const [one] = await drainJobs([handoff(102, ZED, CREW, { origin: MEMBER })]);
+  assert.equal(one.origin, OWNER, '전제: origin = 넘긴 크루의 주인'); assert.equal(one.rootAuthor, OWNER, '전제: 뿌리 = 주인 — 이것만 보면 주인 턴');
+  assert.equal(one.guest, true, '한 번 넘김: X 답글을 시킨 사람(B)이 주인이 아니면 손님 잡');
+  // 두 번 넘김: 손님 턴이던 Y의 답글은 origin이 다시 A다 — meta.guest가 없으면 Z가 주인 턴이 된다
+  const [two] = await drainJobs([handoff(103, CREW, PEP, { origin: OWNER, guest: true })]);
+  assert.equal(two.guest, true, '두 번 넘김: 손님 턴의 답글 표지(meta.guest)를 이어받는다');
+  // 대조군 — 주인이 시킨 사슬(meta.origin = A, 표지 없음)은 주인 잡
+  const [own] = await drainJobs([handoff(104, ZED, CREW, { origin: OWNER })]);
+  assert.equal(own.guest, undefined, '주인 사슬은 손님으로 내리지 않는다');
+
+  // 드레인이 만든 잡을 실제 실행기에 넣어 맥락까지 확인
+  const seen = []; const db = fakeDb({ crews: [crew(), zed, pep], peers: [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }] });
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _t, _sid, opts) => { seen.push(opts.mirrorCtx); return { reply: 'x', handover: null, sessionId: null, artifacts: [] }; } });
+  await h({ ...one, after: [] }); await h({ ...own, msgId: 105, after: [] });
+  assert.equal(isGuestCtx(seen[0]), true, '손님 잡 → 손님 턴'); assert.equal(isGuestCtx(seen[1]), false, '주인 잡 → 주인 턴');
+});
+
+test('손님 턴의 답글은 meta.guest를 싣는다(다음 넘김이 이어받는 재료) · 뿌리 없는 옛 넘김 잡은 손님(fail-closed)', async () => {
+  const { isGuestCtx } = await import('../src/gateway/msgr-handoff.mjs');
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }];
+  const run = async (job) => {
+    const db = fakeDb({ peers }); const seen = [];
+    await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _t, _sid, opts) => { seen.push(opts.mirrorCtx); return { reply: '결과', handover: null, sessionId: null, artifacts: [] }; } })(job);
+    return { ctx: seen[0], reply: db.calls.find((c) => c[0] === 'insertMessage')?.[1] };
+  };
+  const base = { orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'x', replyTo: null, threadRoot: 50, createdAt: new Date().toISOString(), hop: 0, after: [] };
+  const guest = await run({ ...base, msgId: 51, authorId: MEMBER, origin: MEMBER });
+  assert.equal(guest.reply?.meta?.guest, true, '손님 턴의 답글 표지');
+  const owner = await run({ ...base, msgId: 52, authorId: OWNER, origin: OWNER });
+  assert.equal(owner.reply?.meta?.guest, undefined, '주인 턴 답글은 표지 없음(답글 메타 모양 불변)');
+  // 배포 시점 큐에 남은 옛 형식 넘김 잡(rootAuthor 없음) — 판정 재료가 없으니 손님
+  const legacy = await run({ ...base, msgId: 53, authorId: OWNER, origin: OWNER, hop: 1, fromCrewId: ZED });
+  assert.equal(isGuestCtx(legacy.ctx), true, '뿌리 없는 넘김 잡은 손님');
+});
+
+test('정책 한 자리: 주인이 승인한 결재의 후속 턴 — 지금은 손님 그대로(OWNER_APPROVAL_LIFTS_GUEST=false, 유건 결정 대기)', async () => {
+  const { isGuestCtx, OWNER_APPROVAL_LIFTS_GUEST } = await import('../src/gateway/msgr-handoff.mjs');
+  const f = scopedFixture(); const seen = [];
+  const origin = { orgId: ORG, channelId: CH, crewId: f.remote.id, threadRoot: 100, sourceMsgId: 101, uid: 'remote-owner', wsId: WS, origin: OWNER, hop: 1 };
+  await M.runMessengerContinuation(WS, 'feynman', origin, '승인됨', null, { ownerApproved: true,
+    session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async (_ws, _slug, _t, _sid, opts) => { seen.push(opts.mirrorCtx); return { reply: 'ok\nMSGR: done', sessionId: null }; } });
+  assert.equal(seen[0].ownerApproved, true, '승인 여부가 후속 턴 맥락까지 온다(정책을 바꾸면 이 재료로 바로 동작)');
+  assert.equal(OWNER_APPROVAL_LIFTS_GUEST, false, '정책 값 — 바꾸면 이 테스트와 아래 단언을 함께 고친다');
+  assert.equal(isGuestCtx(seen[0]), true, '지금 동작: 승인 뒤에도 손님');
 });
