@@ -34,6 +34,12 @@ test('마이그레이션 파일명 버전은 겹치지 않는다(기존 허용 �
   assert.deepEqual(versionDuplicates(names), [], '같은 버전의 마이그레이션이 있다 — 뒤 파일의 버전을 올린다');
 });
 
+test('마이그레이션 파일명은 모두 14자리 버전 + 소문자·숫자·밑줄 이름이다', () => {
+  // 숫자 없는 파일(fix_policy.sql)은 supabase CLI가 경고만 내고 적용하지 않으며, 13·15자리 버전은 정렬 순서를 틀어 먼저·나중이 뒤바뀐다 — 둘 다 조용한 누락이다.
+  const bad = readdirSync(new URL('../supabase/migrations/', import.meta.url)).filter((n) => n.endsWith('.sql') && !/^\d{14}_[a-z0-9_]+\.sql$/.test(n));
+  assert.deepEqual(bad, [], '버전 14자리(YYYYMMDDHHMMSS)_이름.sql 모양이 아니다');
+});
+
 test('판정 자체: 새 중복·허용 쌍에 세 번째 파일이 붙은 경우는 잡고, 허용 쌍만은 통과시킨다', () => {
   const base = ['20260903120000_msgr.sql', '20260903120000_tg_claims_pro_gate_exception.sql', '20260918130000_a.sql'];
   assert.deepEqual(versionDuplicates(base), []);
