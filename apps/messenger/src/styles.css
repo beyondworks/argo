@@ -488,7 +488,8 @@
 .msgr-rowmenu button.confirm .mi { margin-top: 2px; }
 .msgr-rowmenu button.confirm .cf { display: grid; gap: 1px; min-width: 0; }
 .msgr-rowmenu button.confirm .cf .note { font-size: 11px; line-height: 1.35; color: var(--fg-3); white-space: normal; }
-.msgr-addwrap { display: grid; gap: 8px; margin-top: 10px; }
+.msgr-addwrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 10px; } /* 열 정의 없는 grid는 자식의 최소 내용 폭(줄바꿈 없는 설명 전체)까지 늘어 가로 스크롤이 생긴다 */
+.msgr-addwrap .acts { display: flex; align-items: center; gap: 6px; }
 .msgr-addmenu { display: grid; gap: 2px; padding: 6px; border-radius: 14px; background: var(--card-2); }
 .msgr-addmenu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
 @media (hover: hover) { .msgr-addmenu button:hover:not(:disabled) { background: var(--card); } } .msgr-addmenu button:active:not(:disabled) { background: var(--card); }
@@ -661,11 +662,11 @@
 .msgr-search .clear { border: 0; background: none; color: var(--fg-3); padding: 2px; cursor: pointer; display: inline-flex; }
 .msgr-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 /* 에이전트 일괄 추가 목록(유건 2026-09-17: 칩 대신 목록 + 여러 명 선택) — 새 채팅 시트의 체크 행과 같은 결 */
-.msgr-picklist { display: grid; gap: 2px; margin: 6px 0 8px; padding: 4px; max-height: 320px; overflow-y: auto; border: 1px solid var(--border-soft); border-radius: 12px; }
+.msgr-picklist { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin: 6px 0 8px; padding: 4px; max-height: 320px; overflow-y: auto; border: 1px solid var(--border-soft); border-radius: 12px; }
 .msgr-picklist .pickrow { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 8px; border-radius: 10px; cursor: pointer; }
 @media (hover: hover) { .msgr-picklist .pickrow:hover { background: var(--card-2); } } .msgr-picklist .pickrow:active { background: var(--card-2); }
 .msgr-picklist .pickrow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.msgr-picklist .pickrow .msgr-klabel { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-picklist .pickrow .msgr-klabel { max-width: 45%; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-setcard form.row .msgr-input.sm { flex: 1; }
 .msgr-searchres mark { background: var(--mark); color: #1a1a1a; border-radius: 3px; padding: 0 2px; }
 .msgr-folderhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px 2px; font-size: 10.5px; color: var(--fg-3); letter-spacing: 0.02em; }
@@ -1361,6 +1362,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-joinbar .btn { flex: none; }
 
 /* 보낸 직후, 서버 행이 도착하기 전의 내 글. 자리를 먼저 잡아 두고 옅게 보인다. */
-.msgr-mine.pending { opacity: .55; }
-.msgr-mine.pending .meta .mono { font-style: italic; }
-@media (prefers-reduced-motion: reduce) { .msgr-mine.pending { animation: none; } }
+.msgr-mine .meta .sent { display: inline-flex; color: var(--ok); transition: opacity 180ms ease; }
+.msgr-mine .meta .sent.pending { opacity: .35; }
+.msgr-acts.pending { visibility: hidden; } /* 보내는 중 — 자리만 차지(hover·포커스에도 안 보임). 누르기는 inert가 막는다 */ /* 보내는 중 — 말풍선은 최종 모양 그대로, 체크만 흐리게 */

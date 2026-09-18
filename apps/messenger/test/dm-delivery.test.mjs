@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from '../src/dm-delivery.mjs';
+import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from '../src/dm-delivery.mjs';
 import { mentionsFromBody } from '../src/mention-candidates.mjs';
 import { createComposerDelivery } from '../src/composer-delivery.mjs';
 
@@ -76,4 +76,17 @@ test('relay_to helpers fail closed on malformed data instead of throwing', () =>
   assert.equal(relayToNames(undefined, 'CC'), '', 'undefined list');
   assert.equal(relayToNames({}, 'CC'), '', 'non-array list (e.g. a stray object in meta.relay_to)');
   assert.equal(relayToNames([{ role: 'to' }, { role: 'cc', name: 'Wolff' }], 'CC'), 'Wolff (CC)', 'blank labels are dropped, not left as empty items');
+});
+
+test('@ 팝업 후보 — 대화방에서는 그 방에 들어온 에이전트만, 방 밖 에이전트는 빠진다(본문 @이름 해석 풀에는 남는다)', () => {
+  // 유건 제보(2026-09-18): 다빈치만 있는 방 "다빈치, crystal"에서 @를 치면 방 밖 알프레드·비스트·…까지 떴다.
+  const room = [{ id: 'davinci', display_name: '다빈치' }];
+  const outside = [{ id: 'alfred', display_name: '알프레드' }, { id: 'beast', display_name: '비스트' }];
+  assert.deepEqual(mentionPopupCrews({ isDm: true, roomCrews: room, usable: [...room, ...outside] }).map((c) => c.id), ['davinci']);
+  assert.deepEqual(mentionPopupCrews({ isDm: true, roomCrews: null, usable: outside }), [], '방 구성을 모르면 아무도 띄우지 않는다');
+  // 방 밖 에이전트를 받는이로 부르는 길(본문 @이름 해석)은 그대로다
+  assert.deepEqual(dmMentionCrews(room, outside).map((c) => c.id), ['davinci', 'alfred', 'beast']);
+  // 채널은 종전대로 — 방 구성이 있으면 그것, 없으면 쓸 수 있는 전체
+  assert.deepEqual(mentionPopupCrews({ isDm: false, roomCrews: null, usable: outside }).map((c) => c.id), ['alfred', 'beast']);
+  assert.deepEqual(mentionPopupCrews({ isDm: false, roomCrews: room, usable: outside }).map((c) => c.id), ['davinci']);
 });
