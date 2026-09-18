@@ -30,7 +30,7 @@ import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipi
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
-import { reconcilePending, messageEvent, broadcastEvent } from './instant-delivery.mjs';
+import { rowFromBroadcast, reconcilePending, shouldFetchOnEvent, messageEvent, broadcastEvent } from './instant-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -68,6 +68,7 @@ export const crewTier = (crew, org) => (crew?.hosting === 'bot' || (org?.service
 const PAGE = 100;
 const RT_QUIET_MS = 30_000;  // 이 시간 안에 방송이 있었으면 실시간이 살아 있다고 본다
 const RT_SWEEP_MS = 60_000;  // 실시간이 살아 있어도 이 주기로는 보정 조회를 한 번 돌린다
+const CH_TRUST_MS = 10_000; // 본문 방송을 이 시간 안에 받았으면 여윈 쌍둥이는 무시한다
 const RT_DOWN = new Set(['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED']); // 구독이 끊겼다고 알려 주는 상태
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
@@ -714,6 +715,24 @@ function Shell({ session }) {
     })();
     return () => { remove(); };
   }, [isPersonal, chId, session.access_token]);
+  // ── 열린 채널의 ch:<채널> 토픽 — 본문을 실은 방송을 받는 자리 ──
+  // org: 토픽은 조직 멤버 전원이 받으므로 본문을 실을 수 없다(인가 범위가 열람권보다 넓다).
+  // 서버가 아직 이 방송을 보내지 않으면 아무것도 도착하지 않고, 기존 조회 경로가 그대로 맡는다.
+  const chRt = useRef(null);
+  useEffect(() => {
+    if (!chId || isPersonal) return; // 개인 1:1은 이미 dm:<채널>을 구독한다
+    let ch; let dropped = false;
+    const remove = async () => { if (ch) { await supabase.removeChannel(ch).catch(() => {}); if (chRt.current === ch) chRt.current = null; } };
+    (async () => {
+      await supabase.realtime.setAuth(session.access_token);
+      if (dropped) return;
+      ch = supabase.channel(`ch:${chId}`, { config: { private: true } });
+      ch.on('broadcast', { event: 'message' }, ({ payload }) => { if (!dropped) setEvent(messageEvent(payload)); })
+        .subscribe();
+      chRt.current = ch;
+    })();
+    return () => { dropped = true; remove(); };
+  }, [chId, isPersonal, session.access_token, resumeEpoch]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)
@@ -3074,14 +3093,30 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
   const editMsg = async (m, body) => { try { await q(supabase.from('msgr_messages').update({ body, edited_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const deleteMsg = async (m) => { try { await q(supabase.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const lastId = msgs?.at(-1)?.id ?? 0;
-  const rtSeen = useRef(0); const swept = useRef(0); // 마지막 방송 시각·마지막 보정 조회 시각
+  const rtSeen = useRef(0); const swept = useRef(0); const chLive = useRef(0); // 마지막 방송·마지막 보정 조회·마지막 본문 방송 시각
+  // 방송이 렌더에 필요한 필드를 싣고 오면 그것으로 바로 그린다(조회 0회). 서버 트리거가 아직
+  // 여윈 payload를 보내는 동안(마이그레이션 적용 전·구버전 서버)에는 false를 돌려 조회로 떨어진다.
+  const applyBroadcast = useCallback((ev) => {
+    const row = rowFromBroadcast(ev);
+    if (!row) return false;
+    setMsgs((cur) => {
+      const base = cur ?? [];
+      if (base.some((m) => m.id === row.id)) return base; // 방송·조회가 겹쳐도 한 번만
+      return [...base, row];
+    });
+    setPending((cur) => reconcilePending(cur, [row])); // 내 낙관적 글을 진짜 행으로 바꾼다
+    return true;
+  }, []);
   useEffect(() => {
     if (!event) return;
-    // 방송이 실어 오는 것은 id·채널·멘션뿐이라 본문은 조회로 채운다. 이 분기는 구분자가
-    // payload에 덮여 있던 동안 한 번도 닿지 않았다(글은 10초 폴백 폴에서야 그려졌다).
     if (event.kind === 'message' && event.channel_id === chId) {
       rtSeen.current = Date.now();
-      if (!(live.current.msgs ?? []).some((m) => m.id === event.id)) load(lastId).catch(() => {});
+      // 같은 글이 방송 둘로 온다(org: 여윈 것, ch: 본문 실은 것). 본문 실은 쪽이 한 번이라도
+      // 오면 이 서버는 ch:를 보내는 서버다 — 그 뒤로는 여윈 쌍둥이를 보고 조회하지 않는다.
+      // 본문이 끊기면 CH_TRUST_MS 뒤 조회 경로로 스스로 돌아온다.
+      const drawn = applyBroadcast(event);
+      if (drawn) chLive.current = Date.now();
+      if (shouldFetchOnEvent({ eventId: event.id, hasBody: drawn, msgIds: new Set((live.current.msgs ?? []).map((m) => m.id)), chLiveAt: chLive.current, now: Date.now(), trustMs: CH_TRUST_MS })) load(lastId).catch(() => {});
       // 결재 카드 글은 approval 방송과 짝으로 온다. 그 방송 하나를 놓치면 채널을 다시 열 때까지 카드가
       // 비어 있게 된다(크루는 결정을 기다리며 멈추고 사람은 요청을 모른다). 카드 글을 봤으면 결재도 읽는다.
       if (event.msgKind === 'approval_card') loadApprovals().catch(() => {});
