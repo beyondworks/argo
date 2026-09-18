@@ -517,6 +517,7 @@ export const DICT = {
   'sound.wood-marimba': ['나무 건반', 'Wood bar'],
   'set.notify.on': ['알림 켜짐 — 새 메시지가 오면 알립니다(보고 있는 채널·음소거 채널·방해 금지 시간 제외)', 'Notifications on — you’ll be alerted for mentions, replies to you and approvals you can decide'],
   'set.notify.denied': ['브라우저에서 알림이 차단됐습니다. 사이트 설정에서 허용하세요.', 'Notifications are blocked in the browser. Allow them in site settings.'],
+  'set.notify.deniedApp': ['OS에서 알림이 꺼져 있습니다. 시스템 설정 → 알림 → Argo Messenger에서 알림 허용을 켜 주세요.', 'Notifications are turned off for this app. Open System Settings → Notifications → Argo Messenger and allow notifications.'],
   'set.notify.unsupported': ['이 환경은 알림을 지원하지 않습니다.', 'Notifications aren’t supported here.'],
   'set.org': ['조직', 'Organization'],
   'set.org.desc': ['조직 이름, 회사 이메일로 가입 허용, 소유권 넘기기, 삭제.', 'Organization name, joining by company email, ownership handover, deletion.'],
