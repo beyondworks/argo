@@ -13,7 +13,7 @@ function Seg({ label, value, options, onPick }) {
   return <span className="msgr-seg" role="radiogroup" aria-label={label}>{options.map(([v, text]) => <button key={String(v)} type="button" role="radio" aria-checked={value === v} className={value === v ? 'active' : ''} onClick={() => onPick(v)}>{text}</button>)}</span>;
 }
 
-export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initialChannelIds = [], initialRole, create, shareText, linkOf, onClose, onManage, errorText, t, phone = false }) {
+export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initialChannelIds = [], initialRole, create, discard = null, shareText, linkOf, onClose, onManage, errorText, t, phone = false }) {
   const perm = invitePerms({ isAdmin, hostOf });
   const [s, setS] = useState(() => ({ role: initialRole ?? (perm.member ? 'member' : 'guest'), expiryDays: 7, maxUses: null, guestDays: 30 })); // 기본: 멤버 7일·제한 없음, 게스트 7일·1회·이용 30일(총괄 확정)
   const eligible = useMemo(() => channels.filter((c) => c.kind !== 'dm'), [channels]);
@@ -24,13 +24,19 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   const [open, setOpen] = useState(false); // 링크 설정 접힘
   const [link, setLink] = useState(null); const [busy, setBusy] = useState(true); const [err, setErr] = useState(null); const [copied, setCopied] = useState(false);
   const copyRef = useRef(null); const dialog = useRef(null); const seq = useRef(0);
+  // 이 창에서 만든 링크 — 복사하지 않은 채 새 링크로 바뀌거나 창을 닫으면 취소한다(쌓임 방지, 총괄 2026-09-18). 복사한 링크는 이미 건너갔을 수 있어 둔다.
+  const cur = useRef(null); // { id, code, copied }
+  const drop = (inv) => { if (inv && !inv.copied && discard) discard(inv.id).catch(() => {}); };
+  useEffect(() => () => { seq.current = -1; drop(cur.current); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 선택·설정이 바뀌면 새 링크(짧게 모아서) — 늦게 온 옛 응답은 버린다
   useEffect(() => {
     const my = ++seq.current; setBusy(true); setErr(null);
     const timer = setTimeout(async () => {
-      try { const code = await create({ role: s.role, channelIds: picked, expiryDays: s.expiryDays, maxUses: s.role === 'guest' ? 1 : s.maxUses, guestDays: s.guestDays });
-        if (seq.current === my) { setLink(code); setBusy(false); }
+      try { const made = await create({ role: s.role, channelIds: picked, expiryDays: s.expiryDays, maxUses: s.role === 'guest' ? 1 : s.maxUses, guestDays: s.guestDays });
+        if (seq.current !== my) { drop(made); return; } // 늦게 온 옛 응답·닫힌 창 — 보여 준 적 없는 링크
+        drop(cur.current); cur.current = { ...made, copied: false };
+        setLink(made.code); setBusy(false);
       } catch (e) { if (seq.current === my) { setErr(errorText ? errorText(e) : e.message); setBusy(false); } }
     }, link ? 200 : 0);
     return () => clearTimeout(timer);
@@ -44,7 +50,8 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   };
   const setRole = (role) => { if (role === 'member' && !perm.member) return; setS((x) => ({ ...x, role }));
     setPicked((cur) => { const ok = cur.filter((id) => channelPick(eligible.find((c) => c.id === id), { isAdmin, hostOf }, role).ok); return role === 'guest' ? ok.slice(0, 1) : ok; }); };
-  const copy = async () => { if (!link) return; try { await navigator.clipboard.writeText(shareText ? shareText(link) : link); setCopied(true); } catch { setErr(t('inv.copy.fail')); } };
+  const markCopied = () => { if (cur.current) cur.current.copied = true; };
+  const copy = async () => { if (!link) return; markCopied(); try { await navigator.clipboard.writeText(shareText ? shareText(link) : link); setCopied(true); } catch { setErr(t('inv.copy.fail')); } };
   const keydown = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
     if (e.key !== 'Tab') return;
@@ -67,7 +74,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
         </header>
 
         <div className="inv-link">
-          <input className="msgr-input" readOnly value={busy && !link ? t('inv.making') : (link ? (linkOf ? linkOf(link) : link) : '')} aria-label={t('inv.link')} onFocus={(e) => e.target.select()} />
+          <input className="msgr-input" readOnly value={busy && !link ? t('inv.making') : (link ? (linkOf ? linkOf(link) : link) : '')} aria-label={t('inv.link')} onFocus={(e) => e.target.select()} onCopy={markCopied} />{/* 손으로 선택해 복사해도 건너간 링크로 친다 */}
           <button type="button" ref={copyRef} className={`btn btn-primary inv-copy${copied ? ' done' : ''}`} onClick={copy} disabled={!link || busy} aria-live="polite">
             <I name={copied ? 'check' : 'copy'} size={14} />{copied ? t('inv.copied') : t('inv.copy')}
           </button>

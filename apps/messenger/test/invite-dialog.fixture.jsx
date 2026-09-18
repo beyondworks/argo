@@ -20,7 +20,7 @@ const CHANNELS = [
 ];
 const calls = (window.__inv = { calls: [], closed: 0 }).calls;
 const hex = () => Array.from({ length: 48 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
-const create = async (opts) => { calls.push(opts); await new Promise((r) => setTimeout(r, 300)); return hex(); };
+const create = async (opts) => { calls.push(opts); await new Promise((r) => setTimeout(r, 300)); return { id: `inv-${calls.length}`, code: hex() }; };
 
 const PREVIEW = { state: q.get('state') || 'valid', org_id: 'org', org_name: 'Lean-AX', channels: [CHANNELS[0], CHANNELS[2]], inviter_name: '김효율', role: 'member', expires_at: new Date(Date.now() + 5 * 86_400_000).toISOString() };
 

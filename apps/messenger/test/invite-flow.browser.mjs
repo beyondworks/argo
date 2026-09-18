@@ -103,6 +103,7 @@ const joinWith = async (page, text) => { await menu(page, '초대 링크·코드
   await page.waitForFunction(() => { const b = document.querySelector('.inv-copy'); return b && !b.disabled; });
   const inv = await lastInvite(page);
   check('here.channel', JSON.stringify(inv.channel_ids) === '["long"]' && inv.role === 'member', inv);
+  await page.locator('.inv-copy').click(); // 복사한 링크만 남는다 — 복사하지 않고 닫으면 취소된다(아래 1c)
   await page.keyboard.press('Escape');
   await page.locator('.msgr-crewsheet .row', { hasText: 'crystal' }).getByRole('button', { name: '더 보기' }).click();
   await page.getByRole('menuitem', { name: '내보내기' }).click();
@@ -115,6 +116,28 @@ const joinWith = async (page, text) => { await menu(page, '초대 링크·코드
   await page.close();
 }
 
+// (1c) 링크 쌓임 방지(총괄 2026-09-18): 설정을 바꿔 새 링크가 생기면 복사 안 한 이전 링크는 취소, 복사한 링크는 둔다, 닫을 때 복사 안 한 링크 취소
+{
+  const page = await open();
+  const inv = () => page.evaluate(() => structuredClone(window.__instant.tables.msgr_invites ?? []));
+  const ready = (n) => page.waitForFunction((n) => { const b = document.querySelector('.inv-copy'); return (window.__instant.tables.msgr_invites?.length ?? 0) >= n && b && !b.disabled; }, n);
+  await menu(page, '멤버 초대'); await ready(1);
+  await page.locator('.inv-chip', { hasText: 'Lounge Two' }).click(); await ready(2);
+  await page.waitForFunction(() => !!window.__instant.tables.msgr_invites[0].revoked_at).catch(() => {});
+  let rows = await inv();
+  check('stack.uncopiedRevoked', !!rows[0].revoked_at && !rows[1].revoked_at, rows.map((r) => r.revoked_at));
+  await page.locator('.inv-copy').click(); await page.waitForFunction(() => document.querySelector('.inv-copy')?.textContent.includes('복사됨'));
+  await page.locator('.inv-chip', { hasText: 'Fixture General' }).click(); await ready(3);
+  await page.waitForTimeout(400);
+  rows = await inv();
+  check('stack.copiedKept', !rows[1].revoked_at && !rows[2].revoked_at, rows.map((r) => r.revoked_at));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !!window.__instant.tables.msgr_invites[2].revoked_at).catch(() => {});
+  rows = await inv();
+  check('stack.closeRevokes', !!rows[2].revoked_at && !rows[1].revoked_at && rows.filter((r) => !r.revoked_at).length === 1, rows.map((r) => r.revoked_at));
+  await page.close();
+}
+
 // (2) 옛 서버: 만들기는 옛 insert, 참여는 미리보기 없이 바로 수락 → 사이드바에 Lounge
 {
   const page = await open({ noV2: true });
@@ -123,6 +146,8 @@ const joinWith = async (page, text) => { await menu(page, '초대 링크·코드
   const inv = await lastInvite(page);
   check('legacy.insert', inv && !('channel_ids' in inv) && inv.role === 'member', inv);
   await page.keyboard.press('Escape');
+  await page.waitForFunction((code) => !window.__instant.tables.msgr_invites.some((i) => i.code === code), inv.code).catch(() => {});
+  check('legacy.closeDeletes', await page.evaluate((code) => !window.__instant.tables.msgr_invites.some((i) => i.code === code), inv.code)); // 옛 서버: revoke가 없어 delete로
   await joinWith(page, JOIN_CODE);
   const t0 = Date.now(); let ms = null;
   while (Date.now() - t0 < 8000) { if (await inSidebar(page, 'Lounge')) { ms = Date.now() - t0; break; } await page.waitForTimeout(200); }

@@ -1,15 +1,16 @@
 // 초대 서버 호출(invite-flow.mjs) — 새 서버 모양과 옛 서버 폴백을 가짜 supabase로 잠근다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inviteRow, createInvite, previewInvite, acceptInvite, revokeInvite, inviteStatus, daysLeft, inviteErrorKey, missingFn, invitePerms, channelPick, settingsSummary } from '../src/invite-flow.mjs';
+import { discardInvite, inviteRow, createInvite, previewInvite, acceptInvite, revokeInvite, inviteStatus, daysLeft, inviteErrorKey, missingFn, invitePerms, channelPick, settingsSummary } from '../src/invite-flow.mjs';
 
 const MISSING_FN = { code: 'PGRST202', message: 'Could not find the function public.msgr_accept_invite_v2(code) in the schema cache' };
 const MISSING_COL = { code: 'PGRST204', message: "Could not find the 'channel_ids' column of 'msgr_invites' in the schema cache" };
-function fakeSb({ rpc = {}, insert } = {}) {
+function fakeSb({ rpc = {}, insert, row } = {}) {
   const log = [];
   return { log,
     rpc: async (name, args) => { log.push(['rpc', name, args]); const r = rpc[name]; return typeof r === 'function' ? r(args) : r ?? { data: null, error: MISSING_FN }; },
-    from: (table) => ({ insert: (row) => ({ select: () => ({ single: async () => { log.push(['insert', table, row]); return insert(row); } }) }),
+    from: (table) => ({ select: (cols) => ({ eq: () => ({ maybeSingle: async () => { log.push(['select', table, cols]); return typeof row === 'function' ? row(cols) : row; } }) }),
+      insert: (row) => ({ select: () => ({ single: async () => { log.push(['insert', table, row]); return insert(row); } }) }),
       delete: () => ({ eq: (k, v) => ({ select: async () => { log.push(['delete', table, v]); return { data: [{ id: v }], error: null }; } }) }) }) };
 }
 const NOW = Date.parse('2026-09-18T00:00:00Z');
@@ -23,11 +24,11 @@ test('만들 행 — 멤버는 사용 제한 없음을 null로 명시, 만료 �
 });
 
 test('만들기 — 새 서버는 새 행 그대로, 옛 서버(열 없음)는 옛 모양으로 한 번 더(게스트는 channel_id 단수)', async () => {
-  const neo = fakeSb({ insert: () => ({ data: { code: 'NEW' }, error: null }) });
-  assert.deepEqual(await createInvite(neo, { orgId: 'o', uid: 'u', role: 'member', channelIds: ['a'] }, NOW), { code: 'NEW', legacy: false });
+  const neo = fakeSb({ insert: () => ({ data: { id: 'i1', code: 'NEW' }, error: null }) });
+  assert.deepEqual(await createInvite(neo, { orgId: 'o', uid: 'u', role: 'member', channelIds: ['a'] }, NOW), { id: 'i1', code: 'NEW', legacy: false });
   assert.equal(neo.log.length, 1);
-  let n = 0; const old = fakeSb({ insert: (row) => (n++ === 0 ? { data: null, error: MISSING_COL } : { data: { code: 'OLD' }, error: null }) });
-  assert.deepEqual(await createInvite(old, { orgId: 'o', uid: 'u', role: 'guest', channelIds: ['p'], guestDays: 7 }, NOW), { code: 'OLD', legacy: true });
+  let n = 0; const old = fakeSb({ insert: (row) => (n++ === 0 ? { data: null, error: MISSING_COL } : { data: { id: 'i2', code: 'OLD' }, error: null }) });
+  assert.deepEqual(await createInvite(old, { orgId: 'o', uid: 'u', role: 'guest', channelIds: ['p'], guestDays: 7 }, NOW), { id: 'i2', code: 'OLD', legacy: true });
   assert.deepEqual(old.log[1][2], { org_id: 'o', role: 'guest', created_by: 'u', channel_id: 'p', guest_days: 7 });
   const denied = fakeSb({ insert: () => ({ data: null, error: { code: 'P0001', message: 'msgr_invite_channel_forbidden' } }) });
   await assert.rejects(createInvite(denied, { orgId: 'o', uid: 'u', role: 'member', channelIds: ['x'] }), /msgr_invite_channel_forbidden/);
@@ -97,4 +98,17 @@ test('설정 요약 — 링크 만료와 게스트 이용 기간을 따로, 게�
   const t = (k, v) => (v ? `${k}(${Object.values(v).join(',')})` : k);
   assert.equal(settingsSummary({ role: 'member', expiryDays: 7, maxUses: null, guestDays: 30 }, t), 'inv.expiry.sum(7) · inv.uses.unlimited · inv.role.member');
   assert.equal(settingsSummary({ role: 'guest', expiryDays: null, maxUses: null, guestDays: 90 }, t), 'inv.expiry.never · inv.uses.sum(1) · inv.role.guest · inv.guest.daysSum(90)');
+});
+
+test('창이 버린 링크 정리 — 안 쓰였으면 취소, 쓰였거나(use_count·옛 accepted_at) 못 읽으면 둔다', async () => {
+  const revoked = (sb) => sb.log.some((x) => x[1] === 'msgr_invite_revoke' || x[0] === 'delete');
+  const fresh = fakeSb({ row: { data: { id: 'i', use_count: 0, accepted_at: null }, error: null }, rpc: { msgr_invite_revoke: { data: null, error: null } } });
+  assert.equal(await discardInvite(fresh, 'i'), true); assert.ok(revoked(fresh));
+  const used = fakeSb({ row: { data: { id: 'i', use_count: 1, accepted_at: 'x' }, error: null } });
+  assert.equal(await discardInvite(used, 'i'), false); assert.ok(!revoked(used));
+  const old = fakeSb({ row: (cols) => cols.includes('use_count') ? { data: null, error: { code: '42703', message: 'column use_count does not exist' } } : { data: { id: 'i', accepted_at: null }, error: null } });
+  assert.equal(await discardInvite(old, 'i'), true, '옛 서버: use_count 없이 accepted_at으로 판정, 취소는 delete로');
+  assert.deepEqual(old.log.at(-1), ['delete', 'msgr_invites', 'i']);
+  assert.equal(await discardInvite(fakeSb({ row: { data: null, error: { code: '42501', message: 'denied' } } }), 'i'), false);
+  assert.equal(await discardInvite(fakeSb(), null), false);
 });

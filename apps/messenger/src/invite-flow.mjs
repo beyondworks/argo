@@ -17,15 +17,15 @@ export function inviteRow({ orgId, uid, role, channelIds = [], expiryDays = 7, m
 
 export async function createInvite(sb, opts, now = Date.now()) {
   const row = inviteRow(opts, now);
-  let res = await sb.from('msgr_invites').insert(row).select('code').single();
+  let res = await sb.from('msgr_invites').insert(row).select('id, code').single();
   if (res.error && missingFn(res.error)) { // 옛 서버: channel_ids·max_uses 열이 없다 → 옛 모양(게스트는 channel_id 단수, 만료·횟수는 서버 기본)
     const old = { org_id: row.org_id, role: row.role, created_by: row.created_by };
     if (row.role === 'guest') Object.assign(old, { channel_id: row.channel_ids[0], guest_days: row.guest_days });
-    res = await sb.from('msgr_invites').insert(old).select('code').single();
-    if (!res.error) return { code: res.data.code, legacy: true };
+    res = await sb.from('msgr_invites').insert(old).select('id, code').single();
+    if (!res.error) return { id: res.data.id, code: res.data.code, legacy: true };
   }
   if (res.error) throw errOf(res.error);
-  return { code: res.data.code, legacy: false };
+  return { id: res.data.id, code: res.data.code, legacy: false };
 }
 
 // 미리보기 — 서버에 없으면 null(앱은 옛 즉시 수락으로). 틀린 코드는 예외 msgr_invite_not_found
@@ -54,6 +54,16 @@ export async function revokeInvite(sb, id) {
   if (del.error) throw errOf(del.error);
   if (!del.data?.length) throw new Error('msgr_invite_not_found');
   return { legacy: true };
+}
+
+// 초대 창이 만들었다가 버린 링크 정리(총괄 2026-09-18) — 한 번도 안 쓰였을 때만 취소한다. 쓰였거나 읽지 못하면 그대로 둔다(false).
+export async function discardInvite(sb, id) {
+  if (!id) return false;
+  let res = await sb.from('msgr_invites').select('id, use_count, accepted_at').eq('id', id).maybeSingle();
+  if (res.error && missingFn(res.error)) res = await sb.from('msgr_invites').select('id, accepted_at').eq('id', id).maybeSingle(); // 옛 서버: use_count 없음
+  if (res.error || !res.data || (res.data.use_count ?? 0) > 0 || res.data.accepted_at) return false;
+  await revokeInvite(sb, id);
+  return true;
 }
 
 // 목록의 상태 — live | expired | exhausted | revoked. 옛 1회용(열 없음)은 수락되면 소진
