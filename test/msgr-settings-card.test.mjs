@@ -223,11 +223,11 @@ test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목�
   assert.match(app, /const chCrews = !channel \? \[\] : usableCrews\.filter\(\(c\) => chMembers\.some\(\(x\) => x\.member_kind === 'crew' && x\.member_id === c\.id\) && !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\);/, '크루 구성 = 초대된 에이전트(공개 채널도 — 2026-09-16, 종전에는 파견된 에이전트 전원)');
   assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
   assert.match(app, /onCrew=\{\(id\) => \{ setChSheet\(false\); setSheet\(id\); \}\} onDm=\{\(id\) => openDm\('user', id\)\}/, '구성에서 크루 시트·1:1 연결');
-  assert.match(app, /\{isAdmin && <button type="button" role="menuitem" onClick=\{\(\) => \{ setOrgMenu\(false\); invite\(\); \}\}>/, '초대가 조직 메뉴에 없다');
+  assert.match(app, /\{isAdmin && <button type="button" role="menuitem" onClick=\{\(\) => \{ setOrgMenu\(false\); orgInvite\(\); \}\}>/, '초대가 조직 메뉴에 없다(0.1.30: 초대 창을 연다)');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /<div className="sec-head"><h3>\{t\(isDmRoom \? 'dm\.who' : 'ch\.who'\)\}<\/h3>/, '구성 섹션이 첫 절 — 1:1·그룹 대화에서는 "이 대화방"으로 부른다(2026-09-16)');
   assert.ok(ch.indexOf("t('ch.who')") < ch.indexOf("t('ch.settings')"), '구성이 채널 설정보다 앞');
-  assert.match(ch, /canKick && \{ icon: 'x', label: t\('ch\.remove'\), danger: true, disabled: busy, run: \(\) => kick\('user', m\.user_id\) \}/, '비공개 채널 사람 내보내기(행 … 메뉴)'); assert.match(ch, /\{rowMenu && <CtxMenu at=\{rowMenu\.at\} items=\{rowMenu\.items\} onClose=\{\(\) => setRowMenu\(null\)\} \/>\}/, '행 메뉴는 시트 밖(화면 기준)에 띄운다 — 시트 스크롤 영역 안에서 잘렸다(유건 제보 2026-09-16)');
+  assert.match(ch, /canKick && \{ icon: 'x', label: t\('ch\.remove'\), danger: true, disabled: busy, run: \(\) => kickUser\(m\) \}/, '비공개 채널 사람 내보내기(행 … 메뉴) — 살아 있는 초대가 있으면 먼저 알린다(invite-flow.browser.mjs)'); assert.match(ch, /\{rowMenu && <CtxMenu at=\{rowMenu\.at\} items=\{rowMenu\.items\} onClose=\{\(\) => setRowMenu\(null\)\} \/>\}/, '행 메뉴는 시트 밖(화면 기준)에 띄운다 — 시트 스크롤 영역 안에서 잘렸다(유건 제보 2026-09-16)');
   for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
 
@@ -258,7 +258,7 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(oc, /\{canEdit && confirmRemove === m\.user_id && <span className="confirm-inline">/, '제거 2단계');
   assert.match(oc, /update\(\{ removed_at: new Date\(\)\.toISOString\(\) \}\)/, '제거 = removed_at(삭제 아님, 발언 유지)');
   assert.match(oc, /const makeInvite = async \(role = 'member'\) => \{[\s\S]*?insert\(\{ org_id: org\.id, role, created_by: uid \}\)/, '초대 만들기(역할 인자)');
-  assert.match(oc, /from\('msgr_invites'\)\.delete\(\)\.eq\('id', inv\.id\)\.select\('id'\)/, '초대 취소');
+  assert.match(oc, /await revokeInvite\(supabase, inv\.id\)/, '초대 취소(소프트 취소 RPC, 옛 서버는 delete — invite-flow.test.mjs)');
   assert.match(oc, /from\('msgr_audit_log'\)\.select\([^)]*\)\.eq\('org_id', org\.id\)\.order\('at', \{ ascending: false \}\)\.limit\(50\)/, '감사 50건');
   assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
   assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return !document\.hasFocus\(\) \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
@@ -404,9 +404,9 @@ test('J-3 도메인 자동 가입 — 소유자 도메인 행·저장 모양·�
 test('J-4 게스트 — 비공개 채널 시트의 게스트 링크(기간 세그먼트·채널 한정 insert), 멤버 목록 만료 표기, 정책 guest_seats, 서버 판정·좌석·수락', () => {
   const app = read('apps/messenger/src/App.jsx');
   const cs = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
-  assert.match(cs, /insert\(\{ org_id: org\.id, role: 'guest', channel_id: channel\.id, guest_days: guestDays, created_by: uid \}\)/, '게스트 링크 insert 모양');
+  // 0.1.30: 게스트 링크도 초대 창 하나로(insert 모양은 invite-flow.test.mjs inviteRow가 잠근다 — 채널 하나·1회·guest_days)
   assert.match(cs, /const canGuest = channel\.kind === 'private' && canEdit;/, '게스트 링크는 비공개 채널 관리자만');
-  assert.match(cs, /\{add === 'guest' && \(/, '게스트 링크는 추가 메뉴 안');
+  assert.match(cs, /onClick=\{\(\) => \{ setAdd\(null\); onInviteHere\?\.\('guest'\); \}\}/, '추가 메뉴의 게스트 항목은 게스트 초대 창을 연다');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
   assert.match(oc, /t\('org\.guest\.until', \{ when: fmtWhen\(m\.expires_at, lang\) \}\)/, '만료 표기');
   assert.match(app, /select\('user_id, role, display_name, expires_at'\)/, '멤버 조회에 expires_at');
@@ -415,7 +415,7 @@ test('J-4 게스트 — 비공개 채널 시트의 게스트 링크(기간 세�
   assert.match(sql, /if new\.role = 'guest' and not gseats then return new; end if;/, '게스트 좌석 미차지(정책 off)');
   assert.match(sql, /check \(channel_id is null or role = 'guest'\)/, '채널 한정 초대 = 게스트');
   const dict = read('apps/messenger/src/i18n.js');
-  for (const k of ['ch.guest', 'ch.guest.link', 'ch.guest.made', 'org.guest.until', 'org.guest.expired', 'set.policy.guests', 'set.policy.guests.seats']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+  for (const k of ['inv.here.guest', 'inv.channel.guest', 'inv.guest.days', 'org.guest.until', 'org.guest.expired', 'set.policy.guests', 'set.policy.guests.seats']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });
 
 test('J-5 조직 삭제 유예·복구 — 이름 입력 2단계 삭제(네이티브 confirm 없음), 복구는 RPC, 삭제 예정 목록은 메뉴·빈 화면, 서버 트리거·RPC·purge 권한', () => {

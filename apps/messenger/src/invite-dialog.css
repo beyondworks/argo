@@ -1,0 +1,58 @@
+/* 초대 창(invite-dialog.jsx) — 데스크톱은 가운데 카드, 폰은 아래 시트. 등장 180ms cubic-bezier(.23,1,.32,1), 움직임 줄이기면 즉시 */
+.inv-overlay { position: fixed; inset: 0; top: var(--msgr-viewport-top, 0px); height: var(--msgr-viewport-height, 100dvh); z-index: 90; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; place-items: center; padding: 16px; box-sizing: border-box; background: var(--overlay, rgba(0,0,0,.28)); } /* .shell(테마·글꼴 범위)의 228px 첫 열을 한 열로 덮는다 — 안 덮으면 창이 첫 열에 끼어 잘린다(시안 실측) */
+.inv-dialog { width: min(480px, 100%); max-height: calc(var(--msgr-viewport-height, 100dvh) - 32px); overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 18px 18px 14px;
+  background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 20px; box-shadow: var(--shadow-float);
+  animation: invPop 180ms cubic-bezier(.23,1,.32,1) both; }
+@keyframes invPop { from { opacity: 0; transform: scale(.97) translateY(4px); } to { opacity: 1; transform: none; } }
+.inv-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.inv-head h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.inv-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; gap: 14px; align-content: start; overscroll-behavior: contain; margin: 0 -4px; padding: 2px 4px; } /* 제목·링크·[복사]는 위에 남고 아래만 스크롤 — 폰에서 설정을 펼쳐도 링크 줄이 안 밀린다(총괄) */
+.inv-sub.warn { color: var(--warn, #b7791f); }
+.inv-sub { margin: 3px 0 0; font-size: 12.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-x { border: 0; background: none; width: 30px; height: 30px; padding: 0; border-radius: 9px; color: var(--fg-3); display: inline-grid; place-items: center; }
+.inv-link { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.inv-link .msgr-input { height: 38px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg-2); font: inherit; font-family: var(--mono); font-size: 12px; min-width: 0; }
+.inv-copy { height: 38px; padding: 0 14px; border-radius: 12px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; transition: background 150ms ease, color 150ms ease; }
+.inv-copy.done { background: var(--ok); border-color: var(--ok); color: #fff; } /* 복사 피드백은 색·아이콘 교체만(토스트 없음) */
+.inv-hint { margin: -4px 0 0; font-size: 11.5px; color: var(--fg-3); line-height: 1.5; }
+.inv-err { margin: -6px 0 0; font-size: 12px; color: var(--danger, #c0392b); }
+.inv-sec { display: grid; gap: 8px; }
+.inv-label { font-size: 12px; font-weight: 600; color: var(--fg-2); }
+.inv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.inv-chip { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--fg-2); font: inherit; font-size: 12.5px; cursor: pointer; max-width: 100%; }
+.inv-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.inv-chip.on { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
+.inv-chip.locked { opacity: .45; cursor: not-allowed; }
+@media (hover: hover) { .inv-chip:not(.on):not(.locked):hover { background: var(--card-2); } }
+.inv-note { margin: 0; font-size: 11.5px; color: var(--fg-3); line-height: 1.5; }
+.inv-fold { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--border-soft); background: var(--card-2); color: var(--fg); font: inherit; cursor: pointer; text-align: left; }
+.inv-sum { font-size: 12px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-fold .caret { transition: transform 180ms cubic-bezier(.23,1,.32,1); color: var(--fg-3); }
+.inv-fold[aria-expanded='true'] .caret { transform: rotate(180deg); }
+.inv-settings { display: grid; gap: 8px; padding: 4px 2px 0; }
+.inv-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12.5px; color: var(--fg-2); }
+.inv-row .msgr-input.sm { height: 32px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--fg); padding: 0 8px; font: inherit; font-size: 12.5px; }
+.inv-row .msgr-seg { justify-self: start; flex-wrap: wrap; }
+.inv-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border-soft); padding-top: 10px; }
+.inv-manage { border: 0; background: none; color: var(--fg-2); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 2px; }
+.inv-grab { align-self: center; flex: none; width: 36px; height: 4px; border-radius: 999px; background: var(--border); margin: -6px 0 -2px; }
+/* 폰: 아래 시트 */
+.inv-overlay.phone { place-items: end stretch; padding: 0; }
+.inv-overlay.phone .inv-dialog { width: 100%; max-height: 88vh; border-radius: 20px 20px 0 0; padding-bottom: max(14px, env(safe-area-inset-bottom)); animation-name: invSheet; }
+@keyframes invSheet { from { transform: translateY(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+.inv-overlay.phone .inv-row { grid-template-columns: 1fr; gap: 4px; }
+@media (prefers-reduced-motion: reduce) { .inv-dialog, .inv-overlay.phone .inv-dialog { animation: none; } .inv-fold .caret, .inv-copy { transition: none; } }
+
+/* 받는 쪽 미리보기 — 같은 창 틀, 칩은 읽기 전용 */
+.inv-preview .invp-org { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.inv-preview span.inv-chip { cursor: default; }
+.inv-preview .invp-acts { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }
+
+/* 설정의 초대 관리 목록 */
+.inv-row-m { flex-wrap: wrap; row-gap: 4px; }
+.inv-row-m .inv-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.inv-chip.sm { height: 22px; padding: 0 8px; font-size: 11.5px; cursor: default; }
+.inv-past > summary { cursor: pointer; font-size: 12.5px; color: var(--fg-3); padding: 6px 0; }
+
+/* 비공개 채널 내보내기 전 안내 — 버튼 세 개가 좁은 패널에서 잘리지 않게 줄바꿈 */
+.msgr-crewsheet .confirm .row.inv-kick-acts { flex-wrap: wrap; row-gap: 6px; }

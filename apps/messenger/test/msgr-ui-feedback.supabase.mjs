@@ -40,6 +40,12 @@ const state = window.__instant = {
     msgr_crew_approvals: [], msgr_attachments: [], msgr_reactions: [], msgr_reads: [],
   },
 };
+// 주소로 보는 사람을 바꾼다 — ?role=member(관리자 아닌 멤버) ·&host=0(어느 채널의 방장도 아님: 초대 버튼 대신 관리자 안내) ·&nochannels=1(참여한 채널 0개: 빈 상태 안전망)
+{ const sp = new URLSearchParams(globalThis.location?.search ?? '');
+  if (sp.get('role')) { state.tables.msgr_org_members[0].role = sp.get('role'); state.tables.msgr_org_members[1].role = 'owner'; } // 소유자는 늘 있다 — 동료가 맡는다
+  if (sp.get('host') === '0') state.tables.msgr_channels.forEach((c) => { c.created_by = 'user-other'; }); // 방장도 아님 → 초대 버튼 대신 관리자 안내
+  if (sp.get('nochannels')) { state.tables.msgr_channel_members = state.tables.msgr_channel_members.filter((m) => m.member_id !== uid);
+    state.tables.msgr_channels = state.tables.msgr_channels.filter((c) => c.kind === 'public'); } } // 비공개·DM은 멤버가 아니면 서버(RLS)가 안 보여 준다
 // 구독을 놓으면 그 채널이 걸어 둔 핸들러도 실제로 걷어낸다(실제 전송처럼).
 function drop(c) { state.live.delete(c); if (!c?.__own) return; const bag = state.topics[c.__topic]; if (!bag) return;
   for (const [ev, w] of c.__own) { const arr = bag[ev]; const i = arr?.indexOf(w) ?? -1; if (i >= 0) arr.splice(i, 1); }
@@ -55,7 +61,8 @@ function stable(key, value) {
   memo.set(key, { json, value });
   return value;
 }
-async function settle(call, action) { state.queries.push(call.table ?? call.rpc); await sleep(state.latency); return { data: action(), error: null }; }
+async function settle(call, action) { state.queries.push(call.table ?? call.rpc); await sleep(state.latency);
+  try { return { data: action(), error: null }; } catch (e) { if (!e.code) throw e; return { data: null, error: { code: e.code, message: e.message } }; } } // 코드가 있는 오류는 PostgREST처럼 {error}로(옛 서버 폴백 판정용)
 
 function query(table) {
   let op = 'select', values, cols = '*', one = false; const filters = []; const key = []; // key = 필터의 '값'까지 — 개수만 쓰면 gt(id,0)과 gt(id,101)이 같은 키가 된다
@@ -82,6 +89,7 @@ function query(table) {
           const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? '')); return c * (ord[1] ? 1 : -1); });
         const lim = filters.find((f) => f.__limit)?.__limit;
         if (lim != null && op === 'select') rows = rows.slice(0, lim);
+        if (op === 'insert' && table === 'msgr_invites') values = state.inviteInsert(values);
         if (op === 'insert' || op === 'upsert') {
           rows = (Array.isArray(values) ? values : [values]).map((v) => {
             const row = { id: state.nextId++, org_id: org, kind: 'text', created_at: new Date().toISOString(),
@@ -103,8 +111,37 @@ function query(table) {
 export const JOIN_CODE = '0123456789abcdef'.repeat(3); // parseInviteCode는 48자리 16진수만 받는다
 // 초대 코드 가입 대역 — JOIN_CODE면 나를 공개 채널 lounge의 사람 멤버로 넣고 조직 id를 돌려준다(서버 msgr_accept_invite와 같은 반환형)
 state.acceptInvite = (code) => {
-  if (code !== JOIN_CODE) throw new Error('msgr_invite_invalid');
-  state.addMember('lounge'); return org;
+  const inv = code === JOIN_CODE ? { channel_ids: ['lounge'] } : state.tables.msgr_invites?.find((i) => i.code === code);
+  if (!inv) throw Object.assign(new Error('msgr_invite_invalid'), { code: 'P0001' });
+  (inv.channel_ids ?? (inv.channel_id ? [inv.channel_id] : [])).forEach((id) => state.addMember(id)); return org;
+};
+// 초대 개편(0.1.30) 대역 — 새 서버(#610) 모양. noV2 = 새 열·RPC가 없는 옛 서버(앱이 옛 흐름으로 물러나는지 본다)
+state.noV2 = false;
+const missing = (what, code = 'PGRST202') => Object.assign(new Error(`Could not find the ${what} in the schema cache`), { code });
+state.inviteInsert = (v) => {
+  if (state.noV2 && 'channel_ids' in v) throw missing("'channel_ids' column of 'msgr_invites'", 'PGRST204');
+  const code = Array.from({ length: 48 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+  return { expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), use_count: 0, revoked_at: null, ...v, code };
+};
+const inviteOf = (code) => code === JOIN_CODE ? { role: 'member', channel_ids: ['lounge'], created_by: 'user-other', expires_at: null } : state.tables.msgr_invites?.find((i) => i.code === code);
+const joinedHere = (id) => state.tables.msgr_channel_members.some((m) => m.channel_id === id && m.member_kind === 'user' && m.member_id === uid);
+state.invitePreview = (code) => {
+  if (state.noV2) throw missing('function public.msgr_invite_preview(code)');
+  const inv = inviteOf(code); if (!inv) throw Object.assign(new Error('msgr_invite_not_found'), { code: 'P0001' });
+  const chs = (inv.channel_ids ?? []).map((id) => state.tables.msgr_channels.find((c) => c.id === id)).filter(Boolean).map(({ id, name, kind }) => ({ id, name, kind }));
+  const inviter = state.tables.msgr_org_members.find((m) => m.user_id === inv.created_by)?.display_name ?? null;
+  return { state: chs.length && chs.every((c) => joinedHere(c.id)) ? 'already_member' : 'valid', org_id: org, org_name: 'Fixture Organization', channels: chs, inviter_name: inviter, role: inv.role, expires_at: inv.expires_at };
+};
+state.acceptInviteV2 = (code) => {
+  if (state.noV2) throw missing('function public.msgr_accept_invite_v2(code)');
+  const inv = inviteOf(code); if (!inv) throw Object.assign(new Error('msgr_invite_not_found'), { code: 'P0001' });
+  (inv.channel_ids ?? []).forEach((id) => state.addMember(id));
+  if (inv.use_count != null) inv.use_count += 1;
+  return { org_id: org, channel_id: inv.channel_ids?.[0] ?? null, joined_channel_ids: inv.channel_ids ?? [], skipped_channel_ids: [] };
+};
+state.inviteRevoke = (id) => {
+  if (state.noV2) throw missing('function public.msgr_invite_revoke(invite)');
+  const inv = state.tables.msgr_invites?.find((i) => i.id === id); if (inv) inv.revoked_at = new Date().toISOString(); memo.clear(); return null;
 };
 // 다른 사람이 나를 채널에 넣은 것 — 앱을 거치지 않고 표만 바꾼다. 캐시(memo)를 비워야 다음 조회가 새 행을 본다
 state.addMember = (channel_id, clear = true) => {
@@ -133,7 +170,9 @@ export const supabase = {
   from: query,
   auth: { getSession: async () => ({ data: { session: { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } } }),
           onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
-  rpc: async (name, args) => settle({ rpc: name }, () => name === 'msgr_accept_invite' ? state.acceptInvite(args?.code) : name === 'msgr_dm_candidates'
+  rpc: async (name, args) => settle({ rpc: name }, () => name === 'msgr_accept_invite' ? state.acceptInvite(args?.code)
+    : name === 'msgr_invite_preview' ? state.invitePreview(args?.code) : name === 'msgr_accept_invite_v2' ? state.acceptInviteV2(args?.code) : name === 'msgr_invite_revoke' ? state.inviteRevoke(args?.invite)
+    : name === 'msgr_dm_candidates'
     ? CREWS.filter((c) => !state.tables.msgr_channel_members.some((m) => m.channel_id === args?.p_channel && m.member_kind === 'crew' && m.member_id === c.id)).map((c) => ({ ...c, delivery_ready: true }))
     : []),
   realtime: { setAuth: async () => { if (state.authDelay) await new Promise((r) => setTimeout(r, state.authDelay)); } },
