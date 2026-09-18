@@ -9,13 +9,13 @@ const DB=process.env.ARGO_PG_TEST_URL;
 const skip=!DB&&'ARGO_PG_TEST_URL required';
 const OWNER='11111111-1111-4111-8111-111111111111', MEMBER='33333333-3333-4333-8333-333333333333';
 const ATTEMPT='aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-function raw(q){ return spawnSync('psql',[DB,'-X','-q','-A','-t','-v','ON_ERROR_STOP=1','-c',q],{encoding:'utf8'}); }
+function raw(q){ return spawnSync('psql',[DB,'-X','-q','-A','-t','-v','ON_ERROR_STOP=1','-v','SHOW_ALL_RESULTS=off','-c',q],{encoding:'utf8'}); }
 function sql(q){const r=raw(q);if(r.status!==0)throw new Error(r.stderr);return r.stdout.trim().split('\n').at(-1);}
 const as=(u,q)=>sql(`set role authenticated; select set_config('argo.uid','${u}',false); ${q}`);
 const rpc=(u,q)=>JSON.parse(as(u,`select public.${q}`));
 const denied=(u,q)=>assert.notEqual(raw(`set role authenticated;select set_config('argo.uid','${u}',false);${q}`).status,0);
 let CH,CREW,ORG;
-before(()=>{if(!DB)return; const f=fileURLToPath(new URL('../supabase/migrations/20260913110500_msgr_notification_destinations.sql',import.meta.url));const r=spawnSync('psql',[DB,'-X','-q','-v','ON_ERROR_STOP=1','-f',f],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);});
+before(()=>{if(!DB)return; const f=fileURLToPath(new URL('../supabase/migrations/20260913110500_msgr_notification_destinations.sql',import.meta.url));const r=spawnSync('psql',[DB,'-X','-q','-v','ON_ERROR_STOP=1','-v','SHOW_ALL_RESULTS=off','-f',f],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);});
 function fixture(){ CH=sql("select id from public.msgr_channels where name='Automation tests'"); CREW=sql("select id from public.msgr_crews where slug='theirs'");ORG=sql("select id from public.msgr_orgs where slug='lean'"); }
 const routes=(u=OWNER)=>rpc(u,`msgr_notification_routes_sync('notify','[{"kind":"telegram","label":"Telegram","ready":true},{"kind":"slack","label":"Slack","ready":true}]')`);
 const save=(ids=[],id=null,req=null)=>rpc(OWNER,`msgr_automation_save_with_notifications(${id?`'${id}'`:'null'},'${CH}','${CREW}','Daily brief','Summarize','{"kind":"daily","timezone":"UTC","time":"09:00"}',${req?`'${req}'`:'null'},ARRAY[${ids.map(x=>`'${x}'::uuid`).join(',')}]::uuid[])`);
@@ -89,5 +89,5 @@ test('per-device connection readiness never flaps and only ready devices may win
 
 test('two ready devices concurrently claim one external notification only once',{skip},async()=>{
  clear();const advertise=d=>rpc(OWNER,`msgr_notification_routes_sync('notify','[{"kind":"telegram","label":"Ready","ready":true}]','${d}')`);const rs=advertise('mac');advertise('windows');finish(save([rs.find(r=>r.kind==='telegram').id]));
- const results=await Promise.all(['mac','windows'].map(async device=>{const q=`set role authenticated;select set_config('argo.uid','${OWNER}',false);select public.msgr_notification_claim('notify','${ATTEMPT}','${device}')`;const {stdout}=await promisify(execFile)('psql',[DB,'-X','-q','-A','-t','-v','ON_ERROR_STOP=1','-c',q]);return JSON.parse(stdout.trim().split('\n').at(-1));}));assert.equal(results.flat().length,1);
+ const results=await Promise.all(['mac','windows'].map(async device=>{const q=`set role authenticated;select set_config('argo.uid','${OWNER}',false);select public.msgr_notification_claim('notify','${ATTEMPT}','${device}')`;const {stdout}=await promisify(execFile)('psql',[DB,'-X','-q','-A','-t','-v','ON_ERROR_STOP=1','-v','SHOW_ALL_RESULTS=off','-c',q]);return JSON.parse(stdout.trim().split('\n').at(-1));}));assert.equal(results.flat().length,1);
 });

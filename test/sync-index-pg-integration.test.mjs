@@ -4,16 +4,16 @@
 // 판정은 discoverRemote(점 접두 폴더·최상위 파일 제외)·syncTombstones(uid/.tombstones/<wsId>.json 직계만)와 동일.
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { psqlSpawn } from './helpers/pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — npm run test:pg로 실행';
 const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url));
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'; // 고정 uuid(주입 표면 없음)
 
-function psqlRaw(args) { return spawnSync('psql', [DB, '-X', '-v', 'ON_ERROR_STOP=1', '-q', ...args], { encoding: 'utf8' }); }
+function psqlRaw(args) { return psqlSpawn(DB, args); }
 function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr || r.stdout}`); return r.stdout; }
 const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
 const asUser = (uid, q) => sql(`set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`);

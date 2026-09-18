@@ -1,9 +1,9 @@
 // '/' 커맨더 미러(msgr_crews.commands) — 소유자만 갱신, 조직원은 읽기, 형식 제약. 유건 지시 2026-09-14.
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync } from 'node:fs';
+import { psqlSpawn } from './helpers/pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — npm run test:pg로 실행';
@@ -14,7 +14,7 @@ const U = { // 고정 uuid — 값은 전부 이 파일의 상수(주입 표면 
   svc: '77777777-7777-4777-8777-777777777777',
 };
 
-function psqlRaw(args) { return spawnSync('psql', [DB, '-X', '-v', 'ON_ERROR_STOP=1', '-q', ...args], { encoding: 'utf8' }); }
+function psqlRaw(args) { return psqlSpawn(DB, args); }
 function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr || r.stdout}`); return r.stdout; }
 const sql = (q) => psql(['-A', '-t', '-c', q]).trim();                 // 슈퍼유저(RLS 우회) — 시드·관찰 전용. BEFORE 트리거는 슈퍼유저에도 돈다
 const sqlRaw = (q) => psqlRaw(['-A', '-t', '-c', q]);

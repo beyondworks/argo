@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 const db = process.env.ARGO_PG_TEST_URL;
 function sql(query) {
-  const result = spawnSync('psql', [db, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1'], { input: query, encoding: 'utf8' });
+  const result = spawnSync('psql', [db, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1','-v','SHOW_ALL_RESULTS=off'], { input: query, encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr);
   return result.stdout.trim().split('\n').at(-1);
 }
