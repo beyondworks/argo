@@ -16,7 +16,9 @@ const gateway = await import('../src/gateway.mjs');
 const { msgrPush } = await import('../src/gateway/msgr.mjs');
 const { onNotify } = await import('../src/notify.mjs');
 let n = 0;
-async function setup() {
+// requester = 이 방에서 크루에게 지시한 사람. 기본은 주인이 아닌 'person'(종전 그대로). 손님 턴(PR-A)은 주인이 아닌 요청자의
+// 도구·예약·커넥터를 막으므로, 그 도구의 동작을 보는 테스트는 requester: 'owner'(주인 턴)로 돈다 — 검사 대상은 주인 흐름의 동작이다.
+async function setup({ requester = 'person' } = {}) {
   const ws = `continuation-${++n}`;
   await createCompany(ws, '검수', 'alpha');
   await mkdir(paths(ws).agents, { recursive: true });
@@ -25,7 +27,7 @@ async function setup() {
     { id: 'b', slug: 'beta', display_name: '베타', owner_user_id: 'owner', ws_id: ws },
   ];
   for (const p of peers) await writeFile(join(paths(ws).agents, `${p.slug}.md`), `---\nname: ${p.display_name}\nslug: ${p.slug}\n---\n`);
-  const origin = { orgId: 'org', channelId: 'channel', crewId: 'a', threadRoot: 10, sourceMsgId: 10, uid: 'owner', wsId: ws, origin: 'person', hop: 2 };
+  const origin = { orgId: 'org', channelId: 'channel', crewId: 'a', threadRoot: 10, sourceMsgId: 10, uid: 'owner', wsId: ws, origin: requester, hop: 2 };
   const ctx = { ...origin, kind: 'msgr', peers, handoffs: [] };
   const rows = []; const seen = []; const events = [];
   const db = {
@@ -37,7 +39,7 @@ async function setup() {
     org: async () => ({ id: 'org', slug: 'team' }),
     orgCrews: async () => peers,
     channelCrewMembers: async () => new Set(peers.map((p) => p.id)), // 비공개 채널 — 동료 전원이 구성원(채널 범위 게이트, 2026-09-11)
-    message: async (id) => id === 10 ? { id, channel_id: 'channel', author_kind: 'user', author_user_id: 'person', body: '같은 방에서 계속' } : null,
+    message: async (id) => id === 10 ? { id, channel_id: 'channel', author_kind: 'user', author_user_id: requester, body: '같은 방에서 계속' } : null,
     contextOf: async () => [{ id: 11, author_kind: 'crew', crew_id: 'b', body: '이전 결과' }],
     instructCheck: async () => 'ok',
     insertMessage: async (row) => { rows.push(row); return { id: 20 + rows.length }; },
@@ -58,11 +60,11 @@ async function setup() {
     else await runDirectives(ws, slug, [{ action: 'mail', to, message: '이어 할 일' }], { mirrorCtx: opts.mirrorCtx });
     return { reply: '결과', sessionId: null, handover: null };
   };
-  return { ws, peers, origin, ctx, db, session, rows, seen, events, stop, runChat };
+  return { ws, peers, origin, ctx, db, session, rows, seen, events, stop, runChat, requester };
 }
 
 test('verify retries rebuild the collector and blocked loops keep both the decision and result in the same thread', async () => {
-  const f = await setup();
+  const f = await setup({ requester: 'owner' }); // 주인 턴 — 도구·예약·커넥터 동작 자체를 본다(손님 턴 거절은 msgr-guest-turn.test.mjs)
   try {
     const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '조건', prompt: '진행', schedule: { type: 'daily', time: '09:00' }, verify: { files: ['done.txt'], retries: 1 }, msgr: f.origin });
     const run = f.runChat('SDK'); let calls = 0;
@@ -267,7 +269,7 @@ test('delegated Messenger children return asynchronous work to their parent with
 });
 
 test('SDK and CLI connector write approvals retain channel origin; delegated writes return to the parent', async () => {
-  const f = await setup();
+  const f = await setup({ requester: 'owner' }); // 주인 턴 — 도구·예약·커넥터 동작 자체를 본다(손님 턴 거절은 msgr-guest-turn.test.mjs)
   const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
   const { startConnect, closeConnectorPools } = await import('../src/connectors.mjs');
   const server = await startOauthTestServer();
@@ -306,7 +308,7 @@ async function assertDelivered(f, type) {
   assert.equal(f.rows[0].crew_id, 'a');
   assert.match(f.rows[0].body, /이어 할 일/);
   assert.deepEqual(f.rows[0].mentions, [{ kind: 'crew', id: 'b' }]);
-  assert.equal(f.rows[0].meta.origin, 'person');
+  assert.equal(f.rows[0].meta.origin, f.requester, '답글 메타의 origin = 이 방의 요청자');
   assert.equal(f.rows[0].meta.hop, 2);
   assert.deepEqual(await readdir(join(paths(f.ws).root, 'mail', 'beta')).catch(() => []), []);
 }
@@ -335,7 +337,7 @@ for (const runner of ['SDK', 'CLI']) {
   });
   test(`${runner}: list_routines·cancel_routine — 예약을 보고 끄고 지운다(SDK 전용)`, async () => {
     if (runner !== 'SDK') return; // CLI 러너 지시문 패리티는 아직 없다
-    const f = await setup();
+    const f = await setup({ requester: 'owner' }); // 주인 턴 — 도구·예약·커넥터 동작 자체를 본다(손님 턴 거절은 msgr-guest-turn.test.mjs)
     try {
       await sdk(f.ws, 'alpha', f.ctx, 'schedule_task')({ title: '아침 보고', prompt: '진행', type: 'daily', time: '09:00' });
       const [made] = await loadRoutines(f.ws);
@@ -351,7 +353,7 @@ for (const runner of ['SDK', 'CLI']) {
     } finally { f.stop(); }
   });
   test(`${runner}: schedule tools persist the selected crew identity and CLI approvals retain origin`, async () => {
-    const f = await setup();
+    const f = await setup({ requester: 'owner' }); // 주인 턴 — 도구·예약·커넥터 동작 자체를 본다(손님 턴 거절은 msgr-guest-turn.test.mjs)
     try {
       if (runner === 'SDK') await sdk(f.ws, 'alpha', f.ctx, 'schedule_task')({ agentSlug: 'beta', title: '예약', prompt: '진행', type: 'daily', time: '09:00' });
       else await runDirectives(f.ws, 'alpha', [{ action: 'schedule', crew: 'beta', title: '예약', prompt: '진행', time: '09:00' }, { action: 'approval', request: '처리' }], { mirrorCtx: f.ctx });

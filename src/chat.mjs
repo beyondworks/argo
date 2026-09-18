@@ -1,4 +1,4 @@
-import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition } from './gateway/msgr-handoff.mjs';
+import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx } from './gateway/msgr-handoff.mjs';
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -106,6 +106,11 @@ export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allo
    크루 서버(mcp__crew — 서버측 코드)만 허용하고, 외부 MCP는 절대 넣지 않는다: SDK가 bare 항목을
    콜백 상담 전에 자동 승인해(벤더 계약) 게이트의 MCP 분기가 통째로 도달 불가가 된다.
    (export: 회귀 테스트용 — 분리 검수 2026-07-30 MEDIUM) */
+/** 손님 턴이 CLI 실행 경로에 닿았을 때의 답 — 거절 이유를 사용자 말로(러너·샌드박스 용어 없이), 할 수 있는 길을 함께.
+    (export: 회귀 테스트용) */
+export const guestCliRefusal = (name, lang = 'ko') => (lang === 'en'
+  ? `${name} can only be instructed by its owner here — its current engine can't keep the owner's files and accounts out of reach for other people's requests. Ask the owner to run this, or to switch ${name} to an engine that supports shared use.`
+  : `${name}은(는) 지금 주인만 일을 시킬 수 있습니다 — 현재 실행 엔진으로는 다른 사람의 요청에서 주인의 파일·계정을 막아 둘 수 없습니다. 주인에게 대신 요청하거나, ${name}을(를) 함께 쓸 수 있는 엔진으로 바꿔 달라고 해 주세요.`);
 export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__crew']); // 동결 — 모듈 공유 배열이라 런타임 push 오염이 전 회사·전 턴에 번진다(재검수, CAPABILITIES와 같은 계약)
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
@@ -490,6 +495,12 @@ export function connectorToolDescription(connectors, lang = 'ko') {
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
 export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null) { // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달)
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
+  // 크루 도구는 SDK·네이티브 모두 권한 게이트를 건너뛴다(사전 승인·gated:false) — 손님 판정은 **처리기 안이 유일한 자리**다.
+  // 그래서 러너와 무관하게 걸린다. 주인의 비용·설정을 직접 바꾸는 도구(예약·장기 작업·도구 설치)만 막고, 결재·넘김은 그대로 둔다.
+  const guest = isGuestCtx(mirrorCtx);
+  const guestNo = (what) => text(lang === 'en'
+    ? `Not available here: ${what} changes the owner's own setup or spends the owner's budget, and this request came from someone other than the owner. Tell them so in one line and suggest asking the owner directly; do not promise to do it yourself.`
+    : `여기서는 쓸 수 없다: ${what}은(는) 주인의 설정을 바꾸거나 주인의 비용을 쓰는 일인데, 이 요청은 주인이 아닌 사람이 했다. 그 사실을 한 줄로 알리고 주인에게 직접 부탁하라고 안내하라 — 네가 대신 해 주겠다고 약속하지 마라.`);
   // 네이티브 엔진(하네스 통일 P-A)이 **같은 도구 정의·같은 핸들러**를 쓴다 — sink에 {name, description, shape, handler}를 수집한다
   // (SDK 서버 객체는 도구를 내보내지 않는다). sink가 없으면 종전과 동일.
   // sink는 **최종 등재 배열**(아래 createSdkMcpServer tools)과 같은 원천에서 채운다 — tool() 호출 시점에 모으면 동료 0·커넥터 0에서도
@@ -552,6 +563,14 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ source, id, why }) => {
       // 결재 카드 문구 조작(개행·제어문자 주입으로 사장 기만) 방어 — id를 한 줄로 살균한다.
       const cleanId = String(id).replace(/[\r\n\t\x00-\x1f]+/g, ' ').trim().slice(0, 64);
+      if (guest) {
+        // 손님 턴: 즉시 설치 금지. host는 주인 컴퓨터의 MCP를 자격(env)째 가져오므로 결재로도 올리지 않는다 — 주인이 설정 화면에서 할 일.
+        // catalog는 주인 결재로 — 완결 경로(approval-actions.mjs kind:'mcp')가 이미 있다(전권 전환 전 대기 항목용으로 남겨 둔 것).
+        if (source === 'host') return guestNo(lang === 'en' ? 'Importing a tool from the owner\'s computer' : '주인 컴퓨터의 도구 가져오기');
+        const item = await addApproval(wsId, { slug: fromSlug, kind: 'mcp', action: lang === 'en' ? `Install tool: ${cleanId}` : `도구 설치: ${cleanId}`,
+          reason: String(why ?? '').slice(0, 500), payload: { source: 'catalog', id: cleanId }, ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}) });
+        return text(lang === 'en' ? `Filed an approval for the owner to install "${cleanId}" (${item.id}). Do not say it is installed until approved.` : `도구 "${cleanId}" 설치를 주인 결재로 올렸다(${item.id}). 승인 전에는 설치된 것처럼 말하지 마라.`);
+      }
       // 준비 작업 자동 승인 — 도구 설치는 되돌리기 쉽고(설정에서 제거) 회사 밖으로 나가지 않는다.
       // 이력: 도입(#99)부터 `if (caps?.bypass)`의 caps가 정의된 적이 없어 매 호출 ReferenceError —
       // 한 번도 실행되지 못한 채였고, eslint no-undef 도입 첫 실행이 잡았다(2026-07-30). 전권
@@ -785,6 +804,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       agentSlug: z.string().optional().describe('실행할 크루 slug(기본 = 나 자신)'),
     },
     async ({ title, prompt, type, time, date, dows, everyMinutes, agentSlug, maxRuns, maxUsd }) => {
+      if (guest) return guestNo(lang === 'en' ? 'Scheduling a task' : '예약 만들기');
       try {
         const r = await addRoutine(wsId, {
           agentSlug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug),
@@ -805,6 +825,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     '이 회사에 걸린 예약(루틴) 목록을 본다. "뭐 걸려 있어?", "예약 목록", "자동화 현황" 같은 물음에 쓴다.',
     {},
     async () => {
+      if (guest) return guestNo(lang === 'en' ? 'Listing the owner\'s schedules' : '예약 목록 보기');
       try {
         const rs = await loadRoutines(wsId);
         if (!rs.length) return text('걸린 예약이 없다.');
@@ -823,6 +844,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       action: z.enum(['off', 'on', 'delete']).describe('off=끄기(남겨둠), on=다시 켜기, delete=삭제'),
     },
     async ({ id, action }) => {
+      if (guest) return guestNo(lang === 'en' ? 'Changing or deleting a schedule' : '예약 바꾸기·지우기');
       try {
         const before = (await loadRoutines(wsId)).find((x) => x.id === id);
         if (!before) return text(`그런 예약이 없다: ${id}. list_routines로 id를 다시 확인하라.`);
@@ -846,6 +868,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       agentSlug: z.string().optional().describe('실행할 크루 slug(기본 = 나 자신)'),
     },
     async ({ title, prompt, agentSlug }) => {
+      if (guest) return guestNo(lang === 'en' ? 'Starting a long task' : '장기 작업 시작');
       try {
         const { enqueueLongJob } = await import('./gateway.mjs'); // 동적 — gateway가 chat을 import하므로 순환 회피
         const r = await enqueueLongJob(wsId, { slug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug) });
@@ -990,6 +1013,9 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
   // 세 saveHandover 지점이 모두 이 한 함수를 거친다(한 지점만 빠지면 crew_memory=false 채널의 내용이 기억에 새는 무언 결함).
   const dmTurn = mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm';
+  // 손님 턴 — 크루 주인이 아닌 사람이 시킨 메신저 턴(isGuestCtx, fail-closed). 주인의 몸(파일·셸·웹·커넥터·브라우저·도구 설치·예약)에
+  // 손대지 않고 방 대화로 답하며, 필요한 일은 주인에게 결재로 올린다(규칙 7·9). 아래 강제 지점이 전부 이 한 값을 본다.
+  const guest = isGuestCtx(mirrorCtx);
   const contextScope = dmTurn ? { kind: 'msgr-dm', channelId: mirrorCtx.channelId, ...(mirrorCtx.threadRoot ? { threadRoot: mirrorCtx.threadRoot } : {}) } : null;
   // DM history is supplied by the fresh, authorized thread envelope. Global crew state is not a DM history source.
   if (dmTurn) sessionId = null;
@@ -1150,6 +1176,11 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // gemini API 키 자격은 Argo 엔진(네이티브)으로 — 구독·host 자격만 CLI(isCliTurn: 러너 종류 + 자격 축, 2026-09-06)
   const cliTurn = isCliTurn(runner, await runnerCredType(wsId, runner));
   if (cliTurn) {
+    // 손님 턴 허용 목록 = **실행 경로**(러너 이름 아님 — gemini는 자격에 따라 네이티브/CLI로 갈린다). CLI 러너는 자체 셸·파일 도구가
+    // 권한 게이트를 지나지 않고(게이트는 아래 브라우저 MCP 다리에만, codex는 danger-full-access) 읽기 전용 샌드박스도 디스크 읽기는
+    // 못 막아 주인의 볼트를 지킬 수 없다. 그래서 거절 — 정직한 답으로(던지면 큐가 잡을 되살려 매 틱 재시도한다).
+    // 열리는 경로는 SDK·네이티브뿐이다(파일·셸·웹이 게이트의 guest 분기를 지난다). 러너가 새로 생겨도 CLI면 여기서 막힌다.
+    if (guest) return { reply: guestCliRefusal(meta.name || agentSlug, lang), sessionId: null, handover: null };
     const t0 = Date.now();
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
     const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
@@ -1197,7 +1228,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       // 설정을 덮어쓴다 — 주입하지 않고 프롬프트에도 목록을 알리지 않는다(없는 도구 안내 금지).
       if (MCP_CLI_RUNNERS.has(runner)) browserBridge = await createBrowserMcpBridge({
         wsId, slug: agentSlug,
-        canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, cliWorkRoots),
+        canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, cliWorkRoots, { guest }), // 손님 CLI 턴은 위에서 거절 — 방어 겸
       });
       const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server } : null;
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers) : [];
@@ -1539,7 +1570,7 @@ ${lang === 'en'
   const sdkEnv = await sdkEnvFor(wsId, runner);
   if (!nativeOn) {
     browserBridge = await createBrowserMcpBridge({ wsId, slug: agentSlug,
-      canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, workRoots) });
+      canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, workRoots, { guest }) });
     connectedMcp.push('argo_browser');
   }
   // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
@@ -1560,7 +1591,7 @@ ${lang === 'en'
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)
     env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {}, computer: computerOn,
     ...(runner === 'codex' && CODEX_EFFORTS.includes(String(meta.effort ?? '')) ? { effort: meta.effort } : {}), // Responses reasoning.effort(크루 카드 추론 강도)
-    canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { computerUse: computerOn }),
+    canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { computerUse: computerOn, guest }),
     resume: resumeId, lang,
   }) : query({
     prompt: promptInput,
@@ -1584,8 +1615,10 @@ ${lang === 'en'
       // 크리티컬: "크루한테 앱 고쳐달라고 하면 서버 소스를 실제로 고침"). Hermes YOLO와 같은 계약이다 —
       // 전권은 결재를 없애는 것이지 하드라인을 없애는 것이 아니다(capabilities.mjs 주석).
       permissionMode: 'default',
-      allowedTools: readTools,
-      canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),
+      // 사전 승인 목록은 게이트를 **건너뛴다**(bare 항목 = 콜백 전 자동 승인). 손님 턴은 크루 도구(mcp__crew — 처리기가 스스로 손님을 본다)만
+      // 남기고 WebFetch·WebSearch를 빼서 게이트로 보낸다 — 안 빼면 게이트의 guest 분기가 웹 발송을 영영 못 본다. 앞으로 추가될 비-MCP 항목도 같이 빠진다.
+      allowedTools: guest ? readTools.filter((t) => t.startsWith('mcp__')) : readTools,
+      canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { guest }),
       disallowedTools: [], // 전권 — 막는 것은 게이트의 금지 구역뿐
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       ...(resumeId ? { resume: resumeId } : {}),

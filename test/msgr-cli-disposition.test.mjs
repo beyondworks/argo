@@ -45,7 +45,7 @@ async function run(replies, { kind = 'msgr', mutate = null } = {}) {
   await mkdir(paths(ws).agents, { recursive: true });
   const peers = [{ id: 'alpha-id', slug: 'alpha', display_name: '알파', owner_user_id: 'owner', ws_id: ws }, { id: 'beta-id', slug: 'beta', display_name: '베타', owner_user_id: 'owner', ws_id: ws }];
   for (const p of peers) await writeFile(join(paths(ws).agents, `${p.slug}.md`), `---\nname: ${p.display_name}\nslug: ${p.slug}\nrunner: codex\n---\n검수 크루`);
-  const ctx = kind ? { kind, orgId: 'org', channelId: 'channel', crewId: 'alpha-id', uid: 'owner', wsId: ws, peers, handoffs: [] } : null;
+  const ctx = kind ? { kind, orgId: 'org', channelId: 'channel', crewId: 'alpha-id', uid: 'owner', origin: 'owner', wsId: ws, peers, handoffs: [] } : null;
   let calls = 0;
   globalThis.__argoCliDispositionReply = async () => {
     mutate?.(ctx, calls);
