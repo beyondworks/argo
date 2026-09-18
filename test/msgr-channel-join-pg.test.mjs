@@ -49,7 +49,10 @@ before(() => {
   const files = readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x)).sort();
   const JOIN = '20260916190000_msgr_channel_join.sql';
   // 백필을 실제로 태우려면 **그 마이그레이션 전에** 옛 상태(멤버 행 없는 공개 채널 + 글)를 만들어야 한다.
-  for (const f of files.filter((x) => x !== JOIN)) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  // 실제 적용 순서를 지킨다 — JOIN 이후 파일까지 먼저 돌리고 JOIN을 마지막에 다시 돌리면, 뒤 마이그레이션의 재정의가 옛 정의로 덮인다
+  // (2026-09-18 실측: msgr_crew_join·msgr_instruct_check가 덮여 방장이 남의 에이전트를 넣는 구멍을 테스트가 정상으로 잠그고 있었다).
+  const applyMig = (f) => psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  for (const f of files.filter((x) => x < JOIN)) applyMig(f);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
   sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${ORG}'`);
@@ -61,6 +64,7 @@ before(() => {
   post(U.writer, OLD_PUB, '옛 채널에 남긴 글'); // writer는 쓰던 사람 — 백필 대상
   sql(`delete from public.msgr_channel_members where channel_id = '${OLD_PUB}'`); // 옛 공개 채널 상태 재현(멤버 행 없음)
   psql(['-c', readFileSync(mig(JOIN), 'utf8')]); // ← 여기서 백필이 돈다
+  for (const f of files.filter((x) => x > JOIN)) applyMig(f);
   PUB = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}','public','New')`));
 });
 

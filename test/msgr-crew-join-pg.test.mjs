@@ -50,7 +50,10 @@ before(() => {
   const dir = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
   const files = readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x)).sort();
   // 이관(백필)을 실제로 태우려면 그 마이그레이션 **전에** 옛 상태(공개 채널에서 말한 에이전트·말 안 한 에이전트)를 만든다.
-  for (const f of files.filter((x) => x !== JOIN)) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  // 실제 적용 순서를 지킨다 — JOIN 이후 파일까지 먼저 돌리고 JOIN을 마지막에 다시 돌리면, 뒤 마이그레이션의 재정의가 옛 정의로 덮인다
+  // (2026-09-18 실측: msgr_crew_join·msgr_instruct_check가 덮여 방장이 남의 에이전트를 넣는 구멍을 테스트가 정상으로 잠그고 있었다).
+  const applyMig = (f) => psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  for (const f of files.filter((x) => x < JOIN)) applyMig(f);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG = last(asUser(U.host, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.host}') returning id`));
   sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${ORG}'`);
@@ -72,6 +75,7 @@ before(() => {
   sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id) values ('${BLOCKED_PUB}', 'crew', '${SPOKE}', 'text', '막히기 전에 한 말', 'blocked-spoke'), ('${BLOCKED_PUB}', 'crew', '${COMPANY}', 'text', '회사 에이전트의 말', 'blocked-company')`);
   sql(`update public.msgr_channels set personal_crews = 'blocked' where id = '${BLOCKED_PUB}'`);
   psql(['-c', readFileSync(mig(JOIN), 'utf8')]); // ← 이관이 여기서 돈다
+  for (const f of files.filter((x) => x > JOIN)) applyMig(f);
   PUB = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','public','New')`));
   PRIV = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','private','Secret')`));
   for (const ch of [PUB, PRIV]) sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${ch}', 'user', '${U.mate}') on conflict do nothing`);
@@ -181,8 +185,11 @@ test('채팅은 참여자면 바로 넣는다 — 정책과 무관', { skip }, (
   fails(asUserRaw(U.mate, `select public.msgr_crew_join('${dm}', '${MATE_CREW}')`), /msgr_forbidden/, '주인이 방에 없는 에이전트(사람이 딸려 들어가는 길은 없다)');
 });
 
-test('비공개 채널에 방장이 남의 에이전트를 넣으면 주인도 함께 들어온다', { skip }, () => {
+// 종전: 방장이 남의 개인 에이전트를 바로 넣었다(주인 동반). 2026-09-18부터 방에 들어온 에이전트는 방 전원이 부리므로
+// 남의 개인 에이전트는 그 주인이 데려온다 — 방장이 바로 넣는 것은 자기·회사 에이전트뿐이다(test/msgr-crew-room-members-pg 구멍 ①).
+test('비공개 채널에 방장이 회사 에이전트를 넣으면 조직 서비스 계정이 함께 들어온다 — 남의 개인 에이전트는 못 넣는다', { skip }, () => {
   const priv = last(asUser(U.host, `select public.msgr_create_channel('${ORG}','private','Team')`));
-  assert.equal(last(asUser(U.host, `select public.msgr_crew_join('${priv}', '${MATE_CREW}')`)), 'joined');
-  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${priv}' and member_kind = 'user' and member_id = '${U.other}'`), '1', '주인 동반');
+  fails(asUserRaw(U.host, `select public.msgr_crew_join('${priv}', '${MATE_CREW}')`), /msgr_forbidden/, '방장이 남의 개인 에이전트를 데려옴');
+  assert.equal(last(asUser(U.host, `select public.msgr_crew_join('${priv}', '${COMPANY}')`)), 'joined');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${priv}' and member_kind = 'user' and member_id = '${U.svc}'`), '1', '주인(서비스 계정) 동반');
 });
