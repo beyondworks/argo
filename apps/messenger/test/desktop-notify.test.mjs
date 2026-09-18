@@ -11,14 +11,16 @@ test('askNotifyOnce — 아직 안 정한 상태에서 한 번만 묻고, 정한
   const src = readFileSync(new URL('../src/notify.js', import.meta.url), 'utf8');
   // notify.js는 diag.jsx·Tauri 모듈을 불러 노드에서 직접 못 연다 — 판정 함수만 떼어 같은 코드로 돌린다
   const body = src.slice(src.indexOf('export async function askNotifyOnce'), src.indexOf('// 메시지 소리'));
-  const make = (perm, reqResult = 'granted') => {
+  const make = (perm, reqResult = 'granted', tauri = true) => {
     const calls = { req: 0 };
-    const fn = new Function('isMobilePlatform', 'notifyPermission', 'requestNotifyPermission', `${body.replace('export ', '')}; return askNotifyOnce;`)(false, async () => perm, async () => { calls.req += 1; return reqResult; });
+    const fn = new Function('isMobilePlatform', 'inTauri', 'notifyPermission', 'requestNotifyPermission', `${body.replace('export ', '')}; return askNotifyOnce;`)(false, () => tauri, async () => perm, async () => { calls.req += 1; return reqResult; });
     return { fn, calls };
   };
   const store = () => { const m = new Map(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) }; };
   { const { fn, calls } = make('default'); const s = store(); assert.equal(await fn(s), 'granted'); assert.equal(calls.req, 1); await fn(s); assert.equal(calls.req, 1, '두 번째 로그인에는 묻지 않는다'); }
   for (const p of ['granted', 'denied', 'unsupported']) { const { fn, calls } = make(p); assert.equal(await fn(store()), p); assert.equal(calls.req, 0, `${p}이면 묻지 않는다`); }
+  // 브라우저(Tauri 밖)는 미결정이어도 자동으로 묻지 않는다 — 권한 창이 자동화 브라우저 제어권을 가져가 모든 세션의 브라우저 검증을 막았다(2026-09-18). 설정 버튼만 묻는다
+  { const { fn, calls } = make('default', 'granted', false); const s = store(); assert.equal(await fn(s), 'default'); assert.equal(calls.req, 0, '브라우저는 자동 요청 없음'); assert.equal(s.getItem('msgr-notify-asked'), null, '물은 것으로 적지 않는다'); }
 });
 
 // 검수 #604 MEDIUM — 플러그인 2.4.0 데스크톱은 권한을 늘 Granted로 답한다. 맥에서 네이티브가 실패·시간 초과일 때 플러그인으로 내려가면
@@ -31,8 +33,8 @@ test('맥 네이티브가 실패·시간 초과여도 권한을 허용으로 보
     const diag = []; let pluginAsked = 0;
     const plugin = async () => ({ isPermissionGranted: async () => { pluginAsked += 1; return true; }, requestPermission: async () => { pluginAsked += 1; return 'granted'; } });
     const nativeMac = async (cmd) => native[cmd] ?? null;
-    const f = new Function('isMobilePlatform', 'nativeMac', 'plugin', 'pushDiag', 'resolvePermission', 'Notification',
-      `${body}; return { notifyPermission, requestNotifyPermission, askNotifyOnce };`)(false, nativeMac, plugin, (...a) => diag.push(a), resolvePermission, undefined);
+    const f = new Function('isMobilePlatform', 'inTauri', 'nativeMac', 'plugin', 'pushDiag', 'resolvePermission', 'Notification',
+      `${body}; return { notifyPermission, requestNotifyPermission, askNotifyOnce };`)(false, () => true, nativeMac, plugin, (...a) => diag.push(a), resolvePermission, undefined);
     return { f, diag, pluginAsked: () => pluginAsked };
   };
   const store = () => { const m = new Map(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) }; };
