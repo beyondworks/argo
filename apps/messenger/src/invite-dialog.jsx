@@ -5,29 +5,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { I } from './icons.jsx';
-
-export const EXPIRY_DAYS = [1, 7, 30, null]; // null = 만료 없음(서버 expires_at null)
-export const MAX_USES = [1, 10, null];       // null = 제한 없음(서버 기본은 1 — 명시적으로 null을 넘긴다)
-export const GUEST_DAYS = [7, 30, 90];       // 게스트 이용 기간 — 링크 만료와 다르다(기존 게스트 초대와 같은 선택지, 기본 30)
-
-// 누가 무엇을 초대할 수 있나. hostOf = 내가 관리하는 채널 id 집합.
-export function invitePerms({ isAdmin, hostOf }) {
-  return { member: !!isAdmin, guest: !!isAdmin || hostOf.size > 0, anyChannel: !!isAdmin };
-}
-// 이 역할로 이 채널을 넣을 수 있나 — 게스트는 비공개 하나만, 멤버 초대는 공개 전부 + 내가 관리하는 비공개(관리자는 방장 취급)
-export function channelPick(ch, { isAdmin, hostOf }, role) {
-  if (ch.kind === 'dm') return { ok: false, why: 'dm' };
-  const host = isAdmin || hostOf.has(ch.id);
-  if (role === 'guest') return ch.kind === 'private' && host ? { ok: true } : { ok: false, why: ch.kind === 'private' ? 'host' : 'guestPrivate' };
-  return ch.kind === 'public' || host ? { ok: true } : { ok: false, why: 'host' };
-}
-export function settingsSummary(s, t) {
-  const exp = s.expiryDays == null ? t('inv.expiry.never') : t('inv.expiry.sum', { n: s.expiryDays });
-  const max = s.role === 'guest' ? 1 : s.maxUses; // 게스트 링크는 1회용(서버 게스트 초대 규칙)
-  const uses = max == null ? t('inv.uses.unlimited') : t('inv.uses.sum', { n: max });
-  const role = s.role === 'guest' ? `${t('inv.role.guest')} · ${t('inv.guest.daysSum', { n: s.guestDays })}` : t('inv.role.member');
-  return [exp, uses, role].join(' · ');
-}
+import './invite-dialog.css';
+import { EXPIRY_DAYS, MAX_USES, GUEST_DAYS, invitePerms, channelPick, settingsSummary } from './invite-flow.mjs';
 
 // 선택지가 적은 설정은 한 번에 누르는 알약(네이티브 select는 클릭이 는다 — 총괄 결정)
 function Seg({ label, value, options, onPick }) {
@@ -132,6 +111,42 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
 
         {onManage && <footer className="inv-foot"><button type="button" className="inv-manage" onClick={onManage}>{t('inv.manage')}</button></footer>}
         </div>
+      </section>
+    </div>, document.body);
+}
+
+// 받는 쪽 미리보기(설계서 2-2) — 붙여 넣은 코드가 어디로 데려가는지 보여 주고 한 번 눌러 들어간다.
+// p = msgr_invite_preview 결과: valid·already_member면 조직·채널·초대한 사람·만료, expired·exhausted·revoked면 org_name만.
+export function InvitePreview({ p, avatar = null, busy = false, err = null, onJoin, onOpen, onClose, fmtWhen, t, phone = false }) {
+  const main = useRef(null);
+  useEffect(() => { main.current?.focus(); }, [p.state]);
+  const ok = p.state === 'valid', already = p.state === 'already_member';
+  const status = ok ? (p.inviter_name ? t('inv.p.by', { name: p.inviter_name }) : t('inv.p.valid')) : t(`inv.p.${already ? 'already' : p.state}`);
+  const keydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } };
+  const channels = p.channels ?? [];
+  return createPortal(
+    <div className={`shell inv-overlay${phone ? ' phone' : ''}`} onKeyDown={keydown} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <section className="inv-dialog inv-preview" role="dialog" aria-modal="true" aria-labelledby="invp-title">
+        {phone && <div className="inv-grab" aria-hidden="true" />}
+        <header className="inv-head">
+          <div className="invp-org">{avatar}<div><h2 id="invp-title">{p.org_name}</h2><p className={`inv-sub${ok || already ? '' : ' warn'}`}>{status}</p></div></div>
+          <button type="button" className="btn ghost inv-x" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button>
+        </header>
+        {(ok || already) && <div className="inv-body">
+          <div className="inv-sec">
+            <div className="inv-label">{t('inv.channels')}</div>
+            {channels.length
+              ? <div className="inv-chips">{channels.map((c) => <span key={c.id} className="inv-chip"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={12} /><span>{c.name}</span></span>)}</div>
+              : <p className="inv-note">{t('inv.p.noChannels')}</p>}
+          </div>
+          <p className="inv-note">{[p.role === 'guest' && t('inv.p.guest'), p.expires_at ? t('inv.p.expires', { when: fmtWhen(p.expires_at) }) : t('inv.expiry.never')].filter(Boolean).join(' · ')}</p>
+        </div>}
+        {err && <p className="inv-err" role="alert">{err}</p>}
+        <footer className="invp-acts">
+          {ok && <button type="button" ref={main} className="btn btn-primary" disabled={busy} onClick={onJoin}><I name="check" size={14} />{t('inv.p.join')}</button>}
+          {already && <button type="button" ref={main} className="btn btn-primary" onClick={onOpen}>{t('inv.p.open')}</button>}
+          <button type="button" ref={ok || already ? undefined : main} className="btn" onClick={onClose}>{t(ok ? 'ui.cancel' : 'ui.close')}</button>
+        </footer>
       </section>
     </div>, document.body);
 }

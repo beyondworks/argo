@@ -35,10 +35,21 @@
 .inv-row .msgr-seg { justify-self: start; flex-wrap: wrap; }
 .inv-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border-soft); padding-top: 10px; }
 .inv-manage { border: 0; background: none; color: var(--fg-2); font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 2px; }
-.inv-grab { justify-self: center; width: 36px; height: 4px; border-radius: 999px; background: var(--border); margin: -6px 0 -2px; }
+.inv-grab { align-self: center; flex: none; width: 36px; height: 4px; border-radius: 999px; background: var(--border); margin: -6px 0 -2px; }
 /* 폰: 아래 시트 */
 .inv-overlay.phone { place-items: end stretch; padding: 0; }
 .inv-overlay.phone .inv-dialog { width: 100%; max-height: 88vh; border-radius: 20px 20px 0 0; padding-bottom: max(14px, env(safe-area-inset-bottom)); animation-name: invSheet; }
 @keyframes invSheet { from { transform: translateY(24px); opacity: .6; } to { transform: none; opacity: 1; } }
 .inv-overlay.phone .inv-row { grid-template-columns: 1fr; gap: 4px; }
 @media (prefers-reduced-motion: reduce) { .inv-dialog, .inv-overlay.phone .inv-dialog { animation: none; } .inv-fold .caret, .inv-copy { transition: none; } }
+
+/* 받는 쪽 미리보기 — 같은 창 틀, 칩은 읽기 전용 */
+.inv-preview .invp-org { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.inv-preview span.inv-chip { cursor: default; }
+.inv-preview .invp-acts { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }
+
+/* 설정의 초대 관리 목록 */
+.inv-row-m { flex-wrap: wrap; row-gap: 4px; }
+.inv-row-m .inv-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.inv-chip.sm { height: 22px; padding: 0 8px; font-size: 11.5px; cursor: default; }
+.inv-past > summary { cursor: pointer; font-size: 12.5px; color: var(--fg-3); padding: 6px 0; }

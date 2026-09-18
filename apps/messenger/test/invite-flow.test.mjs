@@ -1,7 +1,7 @@
 // 초대 서버 호출(invite-flow.mjs) — 새 서버 모양과 옛 서버 폴백을 가짜 supabase로 잠근다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inviteRow, createInvite, previewInvite, acceptInvite, revokeInvite, inviteStatus, daysLeft, inviteErrorKey, missingFn } from '../src/invite-flow.mjs';
+import { inviteRow, createInvite, previewInvite, acceptInvite, revokeInvite, inviteStatus, daysLeft, inviteErrorKey, missingFn, invitePerms, channelPick, settingsSummary } from '../src/invite-flow.mjs';
 
 const MISSING_FN = { code: 'PGRST202', message: 'Could not find the function public.msgr_accept_invite_v2(code) in the schema cache' };
 const MISSING_COL = { code: 'PGRST204', message: "Could not find the 'channel_ids' column of 'msgr_invites' in the schema cache" };
@@ -77,4 +77,24 @@ test('오류 문구 키 · 누락 판정', () => {
   assert.equal(inviteErrorKey('something else'), null);
   assert.ok(missingFn(MISSING_FN) && missingFn(MISSING_COL) && missingFn({ code: '42883' }));
   assert.ok(!missingFn({ code: 'P0001', message: 'msgr_invite_expired' }));
+});
+
+test('초대 창 권한(총괄 확정) — 관리자 = 멤버·게스트·아무 채널, 관리자 아닌 방장 = 자기 비공개 채널 게스트만, 멤버 = 없음', () => {
+  const pub = { id: 'p', kind: 'public' }, mine = { id: 'm', kind: 'private' }, other = { id: 'o', kind: 'private' }, dm = { id: 'd', kind: 'dm' };
+  const admin = { isAdmin: true, hostOf: new Set() }, host = { isAdmin: false, hostOf: new Set(['m']) }, member = { isAdmin: false, hostOf: new Set() };
+  assert.deepEqual(invitePerms(admin), { member: true, guest: true, anyChannel: true });
+  assert.deepEqual(invitePerms(host), { member: false, guest: true, anyChannel: false });
+  assert.deepEqual(invitePerms(member), { member: false, guest: false, anyChannel: false });
+  assert.ok(channelPick(other, admin, 'member').ok && channelPick(pub, admin, 'member').ok, '관리자는 비공개도 방장 취급');
+  assert.equal(channelPick(dm, admin, 'member').ok, false);
+  assert.deepEqual(channelPick(pub, host, 'guest'), { ok: false, why: 'guestPrivate' }, '게스트는 공개 채널 불가(서버 RLS)');
+  assert.deepEqual(channelPick(other, host, 'guest'), { ok: false, why: 'host' }, '방장 아닌 비공개 = msgr_invite_channel_forbidden');
+  assert.ok(channelPick(mine, host, 'guest').ok);
+  assert.deepEqual(channelPick(other, member, 'member'), { ok: false, why: 'host' });
+});
+
+test('설정 요약 — 링크 만료와 게스트 이용 기간을 따로, 게스트는 늘 1회', () => {
+  const t = (k, v) => (v ? `${k}(${Object.values(v).join(',')})` : k);
+  assert.equal(settingsSummary({ role: 'member', expiryDays: 7, maxUses: null, guestDays: 30 }, t), 'inv.expiry.sum(7) · inv.uses.unlimited · inv.role.member');
+  assert.equal(settingsSummary({ role: 'guest', expiryDays: null, maxUses: null, guestDays: 90 }, t), 'inv.expiry.never · inv.uses.sum(1) · inv.role.guest · inv.guest.daysSum(90)');
 });

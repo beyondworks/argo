@@ -74,3 +74,28 @@ const ERR_KEYS = [
   [/msgr_invite_guest_one_channel/, 'inv.err.guestOne'], [/msgr_seat_limit/, 'seat.limit'],
 ];
 export const inviteErrorKey = (msg) => ERR_KEYS.find(([re]) => re.test(msg ?? ''))?.[1] ?? null;
+
+// 초대 창의 선택지·권한 판정(설계서 2-1) — 화면(invite-dialog.jsx)이 쓰고 이 모듈 시험이 잠근다.
+export const EXPIRY_DAYS = [1, 7, 30, null]; // null = 만료 없음(서버 expires_at null)
+export const MAX_USES = [1, 10, null];       // null = 제한 없음(서버 기본은 1 — 명시적으로 null을 넘긴다)
+export const GUEST_DAYS = [7, 30, 90];       // 게스트 이용 기간 — 링크 만료와 다르다(기존 게스트 초대와 같은 선택지, 기본 30)
+
+// 누가 무엇을 초대할 수 있나. hostOf = 내가 관리하는 채널 id 집합.
+export function invitePerms({ isAdmin, hostOf }) {
+  return { member: !!isAdmin, guest: !!isAdmin || hostOf.size > 0, anyChannel: !!isAdmin };
+}
+// 이 역할로 이 채널을 넣을 수 있나 — 게스트는 비공개 하나만, 멤버 초대는 공개 전부 + 내가 관리하는 비공개(관리자는 방장 취급)
+export function channelPick(ch, { isAdmin, hostOf }, role) {
+  if (ch.kind === 'dm') return { ok: false, why: 'dm' };
+  const host = isAdmin || hostOf.has(ch.id);
+  if (role === 'guest') return ch.kind === 'private' && host ? { ok: true } : { ok: false, why: ch.kind === 'private' ? 'host' : 'guestPrivate' };
+  return ch.kind === 'public' || host ? { ok: true } : { ok: false, why: 'host' };
+}
+export function settingsSummary(s, t) {
+  const exp = s.expiryDays == null ? t('inv.expiry.never') : t('inv.expiry.sum', { n: s.expiryDays });
+  const max = s.role === 'guest' ? 1 : s.maxUses; // 게스트 링크는 1회용(서버 게스트 초대 규칙)
+  const uses = max == null ? t('inv.uses.unlimited') : t('inv.uses.sum', { n: max });
+  const role = s.role === 'guest' ? `${t('inv.role.guest')} · ${t('inv.guest.daysSum', { n: s.guestDays })}` : t('inv.role.member');
+  return [exp, uses, role].join(' · ');
+}
+

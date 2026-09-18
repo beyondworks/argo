@@ -11,9 +11,11 @@ export function parseInviteCode(s) {
 
 /** 공유 안내문 — 브라우저 세션(http 오리진)에서만 링크를 덧붙인다(앱의 tauri://·file: 오리진은 뺀다). */
 export function inviteShareText(code, { origin = '', pathname = '/', t = (k, v) => `${k} ${JSON.stringify(v)}` } = {}) {
-  const link = /^https?:\/\//.test(origin) ? `${origin}${pathname}?invite=${code}` : '';
+  const link = inviteLink(code, { origin, pathname });
   return t('org.invite.text', { code }) + (link ? `\n${link}` : '');
 }
+/** 브라우저(http) 오리진에서만 여는 링크, 앱(tauri://·file:) 오리진이면 null — 초대 창의 링크 칸은 null이면 코드를 보여 준다. */
+export const inviteLink = (code, { origin = '', pathname = '/' } = {}) => /^https?:\/\//.test(origin) ? `${origin}${pathname}?invite=${code}` : null;
 
 /** 친구 링크 공유 문구 — 조직 초대와 섞이지 않게 말부터 다르다("조직에 초대"가 아니라 "친구 추가"다). */
 export function friendShareText(code, { t = (k, v) => `${k} ${JSON.stringify(v)}` } = {}) {
