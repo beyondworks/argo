@@ -81,6 +81,9 @@ pub async fn notify_request() -> Result<String, String> {
 pub async fn notify_send(title: String, body: String, tag: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(c) = center() else { return Err("unsupported".to_string()) };
+        // 거부·미결정이면 보내지 않는다 — UN은 거부 상태에서도 addNotificationRequest를 오류 없이 받아 준다(검수용 번들 실측).
+        // 그러면 "보냈다"로 보이는데 아무것도 안 뜬다. 상태를 먼저 보고 이유를 돌려준다(notify.js가 진단에 남긴다).
+        match current_status(&c)? { "granted" => {}, other => return Err(format!("not allowed: {other}")) }
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(&title));
         content.setBody(&NSString::from_str(&body));
