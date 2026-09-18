@@ -181,9 +181,13 @@ test('CC can read only granted thread; routing tamper, archived channel and root
  sql(`update msgr_channels set archived_at=now() where id='${DM}'`);
  fails(asUserRaw(U.member,`select * from msgr_crew_thread('lean','${OTHER_CREW}',${id})`),/forbidden/,'archived DM');
  sql(`update msgr_channels set archived_at=null where id='${DM}'`);
+ // 규칙 14(20260918130000): 주인이 나가면 그 주인의 에이전트도 같이 나간다 — 되돌릴 때 에이전트 행도 함께 복원한다
+ const ownerCrews=sql(`select coalesce(string_agg(m.member_id::text,','),'') from msgr_channel_members m join msgr_crews c on c.id=m.member_id where m.channel_id='${DM}' and m.member_kind='crew' and c.owner_user_id='${U.owner}'`).split(',').filter(Boolean);
  sql(`delete from msgr_channel_members where channel_id='${DM}' and member_kind='user' and member_id='${U.owner}'`);
+ assert.equal(sql(`select count(*) from msgr_channel_members m join msgr_crews c on c.id=m.member_id where m.channel_id='${DM}' and m.member_kind='crew' and c.owner_user_id='${U.owner}'`),'0','주인이 나가면 주인의 에이전트도 빠진다');
  fails(asUserRaw(U.member,`select * from msgr_crew_thread('lean','${OTHER_CREW}',${id})`),/forbidden/,'root user left');
  sql(`insert into msgr_channel_members(channel_id,member_kind,member_id,added_by) values('${DM}','user','${U.owner}','${U.owner}')`);
+ for (const c of ownerCrews) sql(`insert into msgr_channel_members(channel_id,member_kind,member_id,added_by) values('${DM}','crew','${c}','${U.owner}') on conflict do nothing`);
 });
 test('bots never receive origin DM files through a relay and are denied direct typing or CC execution',{skip},()=>{
  const b=JSON.parse(last(asUser(U.owner,`select msgr_bot_create('${ORG}','openclaw','Wolff','Finance')`)));
