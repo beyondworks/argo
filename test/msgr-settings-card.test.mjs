@@ -263,7 +263,7 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
   assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return !document\.hasFocus\(\) \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
-  assert.match(read('apps/messenger/src/notify.js'), /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히(브라우저 경로 — notify.js)');
+  assert.match(read('apps/messenger/src/notify.js'), /Notification\.permission !== 'granted'\) return \{ ok: false/, '권한 없으면 조용히(브라우저 경로 — notify.js)');
   assert.match(app, /const osNotify = \(title, body, tag\) => \{ sendNotify\(title, body, tag\); \};/, 'OS 알림은 notify.js 한 곳(Tauri 플러그인·브라우저 분기)');
   assert.match(app, /\{tab === 'org' && org && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭)');
   assert.match(app, /\{tab === 'members' && org && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기');
@@ -272,7 +272,7 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(sql, /raise exception 'msgr_member_self_only_name'/, '본인은 역할·제거 표시 변경 불가');
   assert.match(sql, /update public\.msgr_crews set status = 'detached' where org_id = new\.org_id and owner_user_id = new\.user_id and status = 'active';/, '오프보딩 → 크루 detach');
   assert.match(sql, /'author_user_id', new\.author_user_id, 'crew_id', new\.crew_id/, '방송 payload에 author_user_id');
-  for (const k of ['set.name', 'set.name.placeholder', 'set.name.saved', 'set.name.noEdit', 'set.notify.ask', 'set.notify.on', 'set.notify.denied', 'set.notify.unsupported', 'set.org', 'set.org.desc', 'org.name.saved', 'org.noEdit', 'org.member.role', 'org.member.roleSaved', 'org.member.noEdit', 'org.member.remove', 'org.member.remove.confirm', 'org.member.removed', 'org.invites', 'org.invites.desc', 'org.invite.role', 'org.invite.make', 'org.invite.copy', 'org.invite.copied', 'org.invite.revoke', 'org.invite.revoked', 'org.invite.expires', 'org.audit', 'org.audit.load', 'org.audit.reload', 'org.audit.empty', 'org.audit.system', 'notify.mention', 'notify.approval']) {
+  for (const k of ['set.name', 'set.name.placeholder', 'set.name.saved', 'set.name.noEdit', 'set.notify.ask', 'set.notify.on', 'set.notify.denied', 'set.notify.deniedApp', 'set.notify.unsupported', 'set.org', 'set.org.desc', 'org.name.saved', 'org.noEdit', 'org.member.role', 'org.member.roleSaved', 'org.member.noEdit', 'org.member.remove', 'org.member.remove.confirm', 'org.member.removed', 'org.invites', 'org.invites.desc', 'org.invite.role', 'org.invite.make', 'org.invite.copy', 'org.invite.copied', 'org.invite.revoke', 'org.invite.revoked', 'org.invite.expires', 'org.audit', 'org.audit.load', 'org.audit.reload', 'org.audit.empty', 'org.audit.system', 'notify.mention', 'notify.approval']) {
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
 });

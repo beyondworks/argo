@@ -32,7 +32,7 @@ import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from '
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
 import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceKey } from './cross-space.mjs'; // 다른 공간의 새 글 — 안 읽음 합계·알림 판단
-import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
+import { notifyPermission, requestNotifyPermission, askNotifyOnce, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
@@ -815,6 +815,7 @@ function Shell({ session }) {
   const elsewhere = Object.entries(spaceTotals).reduce((a, [k, u]) => (k === hereKey ? a : { n: a.n + (u?.n || 0), mention: a.mention + (u?.mention || 0) }), { n: 0, mention: 0 }); // 전환 버튼 — 보고 있지 않은 공간의 합
   const SpaceBadge = ({ c }) => (c?.n > 0 ? <span className={`msgr-badge${c.mention ? ' mark' : ''}`}>{c.n > 99 ? '99+' : c.n}</span> : null);
   useEffect(() => { setBadge(badgeTotal({ current: unread, currentKey: spaceKey(isPersonal ? null : orgId), muted, totals: spaceTotals })); }, [unread, muted, spaceTotals, orgId, isPersonal]); // 독 아이콘 숫자 = 모든 공간의 안 읽은 합계(음소거 채널 제외 — 레일 배지와 같은 규칙). 보고 있는 공간은 채널별 셈이 최신
+  useEffect(() => { if (uid) askNotifyOnce().catch(() => {}); }, [uid]); // 로그인 뒤 한 번 OS 권한 요청(미결정일 때만) — 종전엔 설정 버튼을 눌러야만 물었고, 맥 플러그인은 늘 '허용'이라 버튼조차 안 보였다
   const osNotify = (title, body, tag) => { sendNotify(title, body, tag); }; // Tauri 플러그인·웹 Notification 분기는 notify.js
   const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return !document.hasFocus() || r.page !== 'chat' || r.chId !== channelId; }; // 초점 기준 — 다른 창 뒤에 있어도 visibilityState는 'visible'이라 같은 채널을 띄워 두면 알림이 전부 억제됐다(유건 제보 2026-09-12) // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
@@ -2610,7 +2611,7 @@ function NotifyRow() {
   if (perm === 'loading') return null;
   if (perm === 'unsupported') return <span className="note">{t('set.notify.unsupported')}</span>;
   if (perm === 'granted') return <span className="note"><I name="check" size={12} /> {t('set.notify.on')}</span>;
-  if (perm === 'denied') return <span className="note">{t('set.notify.denied')}</span>;
+  if (perm === 'denied') return <span className="note">{t(isDesktopTauri() ? 'set.notify.deniedApp' : 'set.notify.denied')}</span>;
   return <button type="button" className="btn sm" onClick={async () => setPerm(await requestNotifyPermission())}><I name="at" size={13} />{t('set.notify.ask')}</button>;
 }
 
