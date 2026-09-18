@@ -23,7 +23,7 @@ const state = window.__instant = {
                        { user_id: 'user-crystal', org_id: org, role: 'member', display_name: 'crystal', removed_at: null }],
     // 제보 상황: DM 그룹 "다빈치, crystal" — 사람 둘(나·crystal) + 에이전트 다빈치 하나
 
-    msgr_channels: [channelRow('general', 'public', 'Fixture General'), channelRow('dm-group', 'dm', 'dm:다빈치, crystal'), channelRow('priv', 'private', '디자인 비공개')], // 비공개 채널 — 에이전트 추가 안내(ch.add.crew.note) 확인용
+    msgr_channels: [channelRow('general', 'public', 'Fixture General'), channelRow('dm-group', 'dm', 'dm:다빈치, crystal'), { ...channelRow('priv', 'private', '디자인 비공개'), topic: '제품 출시 준비 — 이번 주 목표와 결정 사항을 여기에 모읍니다' }], // 비공개 채널 — 에이전트 추가 안내(ch.add.crew.note) 확인용
     msgr_channel_members: [{ channel_id: 'general', member_kind: 'user', member_id: uid },
       { channel_id: 'dm-group', member_kind: 'user', member_id: uid }, { channel_id: 'dm-group', member_kind: 'user', member_id: 'user-crystal' },
       { channel_id: 'dm-group', member_kind: 'crew', member_id: 'crew-davinci' },

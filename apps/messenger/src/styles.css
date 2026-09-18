@@ -101,6 +101,13 @@
 .msgr-top .members .msgr-av { margin-left: -4px; border-color: var(--bg); }
 .msgr-top .members .msgr-av:first-child { margin-left: 0; }
 .msgr-top .members .msgr-av.crew .star { display: none; } /* 스택에선 타일 실루엣만 — 별이 옆 아바타를 덮는다 */
+/* 상단 바 가로 넘침(900·820px 데스크톱에서 문서가 옆으로 밀림) — 본문 폭이 모자라면 ① 주제 숨김 ② 인원 칩·탭은 아이콘만(이름은 title·aria-label)
+   ③ 그래도 모자라면 줄바꿈 — 번역·이름이 길어져도 가로로는 넘치지 않는다. 경계 940px = 한 줄 전체 표시 실측 최대(영어 922px) + 여유. 폰 셸은 따로 */
+.msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top { flex-wrap: wrap; row-gap: 8px; }
+.msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .topic { flex: 1 1 0; } /* 주제는 남는 자리만 — 줄바꿈을 일으키지 않고 말줄임 */
+@container msgr-main (max-width: 939px) {
+  .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .topic, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .members .n, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .msgr-seg .lbl { display: none; }
+}
 .msgr-seg { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border-soft); }
 .msgr-seg button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--fg-2); border: 0; background: none; cursor: pointer; white-space: nowrap; transition: background 120ms ease, color 120ms ease; }
 .msgr-seg button.active { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
