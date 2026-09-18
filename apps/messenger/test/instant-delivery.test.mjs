@@ -92,7 +92,8 @@ test('App.jsx에는 구분자를 앞에 두고 payload를 전개하는 setEvent�
   // 헬퍼 테스트는 헬퍼만 지킨다. 누가 호출부에 인라인으로 { kind: 'x', ...payload }를 다시 쓰면
   // 헬퍼 테스트는 초록인 채로 방송이 죽는다. 그 모양 자체를 막는다.
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  const bad = app.match(/setEvent\(\{\s*kind:\s*'[^']+',\s*\.\.\./g) ?? [];
+  // 구분자 값이 문자열이든 변수든(목록에 없는 새 방송 종류 포함) 전개가 뒤에 오면 막는다
+  const bad = app.match(/setEvent\(\{\s*kind:[^,}]+,\s*\.\.\./g) ?? [];
   assert.deepEqual(bad, [], `구분자 뒤에 전개가 오는 setEvent: ${bad.join(' | ')}`);
   // 세 방송이 모두 헬퍼를 거친다
   for (const k of ['approval', 'reaction', 'edit']) assert.match(app, new RegExp(`setEvent\\(broadcastEvent\\('${k}', payload\\)\\)`), `${k} 방송이 broadcastEvent를 거치지 않는다`);

@@ -9,13 +9,16 @@ const state = window.__instant = {
   latency: 120,            // 한 번의 DB 왕복에 해당하는 시간(ms)
   queries: [],             // 걸린 쿼리 기록 — 테이블별로 몇 번 갔는지 센다
   topics: {},              // 구독된 실시간 토픽 → 핸들러
+  statusCbs: {},           // 토픽 → 구독 상태 콜백(끊김을 흉내낼 때 부른다)
   nextId: 200,
   tables: {
     msgr_org_members: [{ user_id: uid, org_id: org, role: 'owner', display_name: '나', removed_at: null, msgr_orgs: { id: org, name: 'Fixture Organization', slug: 'fixture', owner_user_id: uid } },
                        { user_id: 'user-other', org_id: org, role: 'member', display_name: '동료', removed_at: null }],
     msgr_channels: [channelRow('general', 'public', 'Fixture General')],
     msgr_channel_members: [{ channel_id: 'general', member_kind: 'user', member_id: uid }],
-    msgr_crews: [], msgr_target_prefs: [], msgr_channel_prefs: [],
+    // 결재 카드 시나리오용 크루 하나(다른 사람 소유) — 시작 시 목록에 있어야 카드의 크루 이름이 그려진다
+    msgr_crews: [{ id: 'crew-x', org_id: org, owner_user_id: 'user-other', slug: 'probe', display_name: '탐침 크루', hosting: 'resident', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }],
+    msgr_target_prefs: [], msgr_channel_prefs: [],
     msgr_messages: [{ id: 101, org_id: org, channel_id: 'general', author_kind: 'user', author_user_id: uid, kind: 'text', body: '먼저 있던 글', created_at: now, edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null }],
     msgr_crew_approvals: [], msgr_attachments: [], msgr_reactions: [], msgr_reads: [],
   },
@@ -93,6 +96,9 @@ state.post = ({ body, author = 'user-other', withChannelTopic = true }) => {
   return { id: row.id, body, at };
 };
 
+// 구독이 끊겼다고 알린다(CHANNEL_ERROR·TIMED_OUT·CLOSED) — 실제 전송이 끊길 때 supabase-js가 부르는 것과 같은 자리.
+state.status = (topic, status) => (state.statusCbs[topic] ?? []).forEach((cb) => cb?.(status));
+
 export const supabase = {
   from: query,
   auth: { getSession: async () => ({ data: { session: { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } } }),
@@ -103,7 +109,7 @@ export const supabase = {
     const c = { __topic: name, __own: own,
       on: (_kind, { event }, handler) => { const w = (...a) => { state.hits = (state.hits ?? 0) + 1; return handler(...a); };
         (bag[event] ??= []).push(w); own.push([event, w]); return c; },
-      subscribe: (cb) => { state.subscribes = (state.subscribes ?? 0) + 1; cb?.('SUBSCRIBED'); return c; },
+      subscribe: (cb) => { state.subscribes = (state.subscribes ?? 0) + 1; (state.statusCbs[name] ??= []).push(cb); cb?.('SUBSCRIBED'); return c; },
       send: async () => {}, unsubscribe: async () => { drop(c); } };
     return c; },
   removeChannel: async (c) => { drop(c); return 'ok'; },
