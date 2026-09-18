@@ -139,6 +139,6 @@ export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'hom
     node.addEventListener('touchend', end, { passive: true });
     node.addEventListener('touchcancel', cancel, { passive: true });
     return () => { node.removeEventListener('touchstart', start); node.removeEventListener('touchmove', move); node.removeEventListener('touchend', end); node.removeEventListener('touchcancel', cancel); };
-  }, [enabled, node]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled, node]); // 콜백은 cb ref로 최신값을 읽으므로 의존성은 enabled·node뿐이다(이 레포 eslint에는 react-hooks 규칙이 없어 disable 주석을 쓰면 '규칙 없음' 오류가 난다)
   return { ref: setNode };
 }
