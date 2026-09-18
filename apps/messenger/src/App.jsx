@@ -5,7 +5,7 @@
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Graph3D } from './graph3d.jsx';
-import { WorkPanel } from './work-panel.jsx';
+import { WorkPanel, missingSchema } from './work-panel.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase, configured, q } from './supabase.js';
 import { customServer, SB_URL, SB_ANON } from './supabase.js';
@@ -872,10 +872,15 @@ function Shell({ session }) {
       return;
     }
     const mine = crews.filter((cr) => cr.owner_user_id === uid).map((cr) => cr.id);
-    if (mine.length) { // 내 크루가 그 채널에 있으면 내가 빠지는 순간 크루가 조용히 죽는다(검수 HIGH-3) — 먼저 크루를 빼게 한다
+    if (mine.length) { // 규칙 14: 주인이 나가면 내 에이전트도 같이 나간다(주인 없이 남으면 받지도 쓰지도 못한 채 죽는다 — 검수 HIGH-3)
       const stuck = await q(supabase.from('msgr_channel_members').select('member_id').eq('channel_id', c.id).eq('member_kind', 'crew').in('member_id', mine)).catch(() => null);
       if (!stuck) throw new Error(t('ch.leave.checkFailed')); // 조회 실패면 통과가 아니라 중단(검수 LOW: fail-open)
-      if (stuck.length) throw new Error(t('ch.leave.blocked'));
+      // 서버(20260918130000)는 내가 빠지는 순간 내 에이전트도 같이 뺀다. 그 마이그레이션이 없는 서버에서는 내가 빠지면
+      // 에이전트가 죽은 채 남으므로 먼저 이 방에서 빼고, 빼는 함수가 없는 서버면 종전처럼 막는다.
+      for (const s of stuck) {
+        const r = await supabase.rpc('msgr_crew_leave_channel', { ch: c.id, crew: s.member_id });
+        if (r.error) throw new Error(missingSchema(r.error) ? t('ch.leave.blocked') : friendlyErr(r.error.message, t));
+      }
     }
     const res = await supabase.from('msgr_channel_members').delete().eq('channel_id', c.id).eq('member_kind', 'user').eq('member_id', uid).select('member_id');
     if (res.error) throw new Error(friendlyErr(res.error.message, t));
@@ -1318,7 +1323,7 @@ function Shell({ session }) {
         </div>
       </aside>
       <main className="msgr-main" {...edgeBack}>
-        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
+        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
         {chSheet && channel && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} refreshKey={`${tick}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) setNavTo(pushCard.channel_id); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
@@ -1406,7 +1411,7 @@ function DmGroupSheet({ members, crews, uid, nameOfUser, onCreate, onClose, pers
     </div>
   );
 }
-function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm }) {
+function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName = null, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm }) {
   const { t, lang } = useT();
   const owner = crew.owner_user_id === uid;
   const tier = crewTier(crew, org); // H-3: 회사 크루 / 개인(파견) 크루 — 판정 정본은 서버 msgr_crew_tier
@@ -1426,6 +1431,14 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) }));
     onNote(t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
+  };
+  const [confirmOut, setConfirmOut] = useState(false);
+  const leaveHere = async () => { // 규칙 14: 데려온 것이 동의라면 빼는 것은 동의 철회 — 주인은 방장 동의 없이 이 방에서만 뺄 수 있다
+    setBusy(true); setConfirmOut(false);
+    const { data, error } = await supabase.rpc('msgr_crew_leave_channel', { ch: channelId, crew: crew.id });
+    setBusy(false);
+    if (error) return onError(missingSchema(error) ? t('crew.leaveHere.upgrade') : friendlyErr(error.message, t));
+    onNote(t(data === 'removed' ? 'crew.leaveHere.done' : 'crew.leaveHere.absent', { name: crew.display_name, channel: channelName })); onChanged();
   };
   const save = async (nextAllow, nextList) => {
     setBusy(true);
@@ -1464,6 +1477,8 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
               ? <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => setConfirmRecall(true)}>{t('crew.recall')}</button>
               : <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => setDispatch(true)}>{t('crew.dispatch')}</button>)}
           </span></div>
+          {owner && channelId && channelName && !confirmOut && <div><span className="msgr-klabel">{t('crew.leaveHere.label')}</span><span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => setConfirmOut(true)}>{t('crew.leaveHere', { channel: channelName })}</button></span></div>}
+          {confirmOut && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.leaveHere.confirm', { channel: channelName })}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={leaveHere}>{t('crew.leaveHere', { channel: channelName })}</button><button type="button" className="btn sm" onClick={() => setConfirmOut(false)}>{t('ui.cancel')}</button></span></div>}
           {confirmRecall && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.recall.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => setDispatch(false)}>{t('crew.recall')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRecall(false)}>{t('ui.cancel')}</button></span></div>}
           <div><span className="msgr-klabel">{on ? t('crew.online') : t('crew.away')}</span><span><span className={`msgr-dot${on ? ' mark' : ''}`} /> {crew.last_seen_at ? t('crew.lastSeen', { when: fmtTs(crew.last_seen_at, lang) }) : '—'}</span></div>
         </div>
@@ -1566,8 +1581,23 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     onNote(t(ok ? 'ch.crew.join.approved' : 'ch.crew.join.rejected', { name: crews.find((c) => c.id === r.crew_id)?.display_name ?? '' }));
     await loadJoinReqs(); await onChanged();
   };
+  // 규칙 14: 사람이 빠지면 그 사람의 에이전트도 같이 빠진다. 서버(20260918130000)가 최종 강제하고, 앱은 그 마이그레이션이 없는
+  // 서버를 위해 먼저 이 방에서 뺀다. 빼는 함수가 없는 서버면 'old'를 돌려 종전 차단으로 돌아간다(주인 없이 죽은 에이전트를 남기지 않게).
+  const dropCrews = async (ids) => {
+    for (const id of ids) {
+      const r = await supabase.rpc('msgr_crew_leave_channel', { ch: channel.id, crew: id });
+      if (r.error) return missingSchema(r.error) ? 'old' : friendlyErr(r.error.message, t);
+    }
+    return null;
+  };
+  const leaveCrew = async (id) => { // 주인이 방장이 아니어도 자기 에이전트는 이 방에서 뺄 수 있다(데려온 것이 동의라면 빼는 것은 동의 철회)
+    setBusy(true); const err = await dropCrews([id]); setBusy(false);
+    if (err) return onError(err === 'old' ? t('crew.leaveHere.upgrade') : err);
+    await onChanged();
+  };
   const removeMember = async (kind, id) => {
-    if (kind === 'user' && crews.some((c) => c.owner_user_id === id && chMembers.some((m) => m.member_kind === 'crew' && m.member_id === c.id))) return onError(t('ch.remove.ownerBlocked')); // 검수 HIGH-3: 소유자가 빠지면 크루가 조용히 죽는다
+    const owned = kind === 'user' ? crews.filter((c) => c.owner_user_id === id && chMembers.some((m) => m.member_kind === 'crew' && m.member_id === c.id)).map((c) => c.id) : [];
+    if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); } // 검수 HIGH-3: 소유자만 빠지면 크루가 조용히 죽는다
     setBusy(true);
     const res = await supabase.from('msgr_channel_members').delete().eq('channel_id', channel.id).eq('member_kind', kind).eq('member_id', id).select('member_id');
     setBusy(false);
@@ -1692,6 +1722,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                     { icon: 'star', label: t('ch.open.crew'), run: () => onCrew?.(c.id) },
                     channel.kind !== 'dm' && { icon: 'at', label: t('ch.add.crew.call'), run: () => onMention?.(c) },
                     canKickCrew && { icon: 'x', label: t('ch.remove'), danger: true, disabled: busy, run: () => kick('crew', c.id) },
+                    !canKickCrew && c.owner_user_id === uid && { icon: 'out', label: t('crew.leaveHere', { channel: channel.name }), danger: true, disabled: busy, run: () => leaveCrew(c.id) },
                   ])} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={rowMenu?.key === key}><I name="dots" size={13} /></button>
                 </span>
               </div>
