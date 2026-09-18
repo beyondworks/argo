@@ -2522,4 +2522,6 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 @media (hover: none) {
   .side-group-row .tm-edit, .rail-item .rail-actions, .crew-row .crew-pin, .crew-row .crew-side,
   .vault-tree .row-wrap .row-side, .msg-actions, .rulerow .ruletools, .vault-tab-x { opacity: 1; }
+  /* 늘 보이는 '옆에 열기'는 선택 행 시각(.when)과 같은 자리 — hover에서 .when을 숨기던 짝을 여기에도 둔다 */
+  .vault-tree .row-wrap:has(.row-side) .row .when { opacity: 0; }
 }

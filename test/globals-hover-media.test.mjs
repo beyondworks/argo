@@ -55,4 +55,6 @@ test('hover가 없는 기기에서도 조상 hover로만 드러나던 조작 8�
   for (const s of ['.side-group-row .tm-edit', '.rail-item .rail-actions', '.crew-row .crew-pin', '.crew-row .crew-side', '.vault-tree .row-wrap .row-side', '.msg-actions', '.rulerow .ruletools', '.vault-tab-x']) {
     assert.ok(none.has(s), `${s} — 터치 기기에서 드러날 길이 없다`);
   }
+  // 늘 보이는 '옆에 열기'(.row-side)는 선택 행의 시각(.when)과 같은 자리다 — hover에서 .when을 숨기던 짝을 터치에도 둔다(검수 MEDIUM, 1440 터치 겹침)
+  assert.ok(all.some((r) => inNoHover(r) && parts(r.sel).includes('.vault-tree .row-wrap:has(.row-side) .row .when') && /opacity:\s*0\b/.test(css.slice(css.indexOf(r.sel)))), '터치에서 .row-side와 .when이 겹친다');
 });
