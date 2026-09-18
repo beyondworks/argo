@@ -17,6 +17,21 @@ export async function threadMtime(wsId, slug) {
   try { return (await stat(file(wsId, slug))).mtimeMs; } catch { return 0; }
 }
 
+/** 메신저 채널 세션 — 채널마다 따로 잇는다. 전역 sessionId는 주인이 데스크톱에서 나눈 대화라 채널 턴이 이어받으면 채널 참여자에게 샌다. */
+export const scopedSession = (t, channelId) => t?.scopedSessions?.[channelId] ?? { sessionId: null, sessionDevice: null };
+/** 프롬프트에 붙일 스레드 줄 — 채널 턴은 그 채널 기록만, 그 밖의 턴은 범위 없는 기록만(채널·DM 기록이 데스크톱 대화에 섞이지 않게). */
+export const inContextScope = (m, scope) => (scope?.kind === 'msgr' ? m.contextScope?.kind === 'msgr' && m.contextScope.channelId === scope.channelId : !m.contextScope);
+
+async function keepSession(t, sessionId, scope) {
+  // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를
+  // resume하면 CLI가 'No conversation found'로 죽는다(실측: 기기 전환 실패). chat이 사전 분기.
+  if (!sessionId) return;
+  if (!scope) { t.sessionId = sessionId; t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null); return; }
+  if (scope.kind !== 'msgr' || !scope.channelId) return; // DM 등 나머지 범위 기록은 세션을 남기지 않는다
+  const prev = t.scopedSessions?.[scope.channelId];
+  t.scopedSessions = { ...t.scopedSessions, [scope.channelId]: { sessionId, sessionDevice: await getDeviceId().catch(() => prev?.sessionDevice ?? null) } };
+}
+
 export async function loadThread(wsId, slug) {
   // 대화는 유실이 치명적 — 손상 시 조용히 빈 상태로 리셋하지 않고 throw로 드러낸다(readJson).
   const t = await readJson(file(wsId, slug), { sessionId: null, messages: [] });
@@ -74,7 +89,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       if (aborted) m.aborted = true;
       if (cancellationIncomplete) m.cancellationIncomplete = true;
       if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
-      if (sessionId && !scope) { t.sessionId = sessionId; t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null); }
+      await keepSession(t, sessionId, scope);
       await writeJsonAtomic(file(wsId, slug), t);
       return t;
     }
@@ -92,12 +107,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       // artifacts = 이 턴에 크루가 만든/고친 vault 문서(rel) — 답변 칩으로 바로 연다
       { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }, // 검수 L1 — turnId 없는 갈래(선저장 실패·턴 중 리셋)도 폴백 표식 보존
     );
-    if (sessionId && !scope) {
-      // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를
-      // resume하면 CLI가 'No conversation found'로 죽는다(실측: 기기 전환 실패). chat이 사전 분기.
-      t.sessionId = sessionId;
-      t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null);
-    }
+    await keepSession(t, sessionId, scope);
     await writeJsonAtomic(file(wsId, slug), t);
     return t;
   });

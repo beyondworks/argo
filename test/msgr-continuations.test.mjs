@@ -52,7 +52,7 @@ async function setup({ requester = 'person' } = {}) {
     assert.equal(opts.mirrorCtx.channelId, origin.channelId);
     assert.equal(opts.mirrorCtx.crewId, peers.find((p) => p.slug === slug).id);
     assert.equal(opts.mirrorCtx.threadRoot, 10);
-    assert.deepEqual(opts.journal, { off: true, tag: 'org-org' });
+    assert.deepEqual(opts.journal, { off: true, tag: 'org-org-ch-channel' }); // 채널 단위 일지 태그(PR-B)
     assert.match(msg, /이전 결과/);
     assert.deepEqual(opts.mirrorCtx.handoffs, [], 'each continuation starts a fresh handoff collector');
     const to = slug === 'alpha' ? 'beta' : 'alpha';

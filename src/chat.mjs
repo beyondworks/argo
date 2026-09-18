@@ -35,7 +35,7 @@ import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
-import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
+import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope } from './thread.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
@@ -1012,9 +1012,13 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 손님 턴 — 크루 주인이 아닌 사람이 시킨 메신저 턴(isGuestCtx, fail-closed). 주인의 몸(파일·셸·웹·커넥터·브라우저·도구 설치·예약)에
   // 손대지 않고 방 대화로 답하며, 필요한 일은 주인에게 결재로 올린다(규칙 7·9). 아래 강제 지점이 전부 이 한 값을 본다.
   const guest = isGuestCtx(mirrorCtx);
-  const contextScope = dmTurn ? { kind: 'msgr-dm', channelId: mirrorCtx.channelId, ...(mirrorCtx.threadRoot ? { threadRoot: mirrorCtx.threadRoot } : {}) } : null;
+  // 메신저 턴의 기록 범위 — DM은 뿌리 단위, 채널은 채널 단위(세션도 채널마다 따로: thread.mjs scopedSessions). 범위가 있는 기록은 다른 대화에 붙여 넣지 않는다.
+  const contextScope = mirrorCtx?.kind === 'msgr' && mirrorCtx.channelId
+    ? { kind: dmTurn ? 'msgr-dm' : 'msgr', channelId: mirrorCtx.channelId, ...(mirrorCtx.threadRoot ? { threadRoot: mirrorCtx.threadRoot } : {}) } : null;
   // DM history is supplied by the fresh, authorized thread envelope. Global crew state is not a DM history source.
-  if (dmTurn) sessionId = null;
+  // 기억 안 남김(journal.off) 채널은 세션도 남기지 않는다 — 다음 턴이 이 대화를 이어받지 않게.
+  const sessionless = dmTurn || (contextScope && journal?.off === true);
+  if (sessionless) sessionId = null;
   const handoffStart = mirrorCtx?.handoffs?.length ?? 0;
   const discardHandoffs = () => mirrorCtx?.handoffs?.splice(handoffStart); // 실패한 시도의 미게시 넘김은 재시도에 섞지 않는다
   // Scoped DM audit stays in the thread; auto-journaling would promote private text into shared memory.
@@ -1196,7 +1200,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
       // 발화가 아니므로 화자를 '자동 배달'로 정직 표기(room.mjs 어휘에서 '시스템'=크루가 답하지 않는 줄이라 반전 — 재검수 지적)(배달 프리픽스가 실제 발신자를 이미 담는다).
-      const ctx = (messages ?? []).filter((m) => !m.contextScope && !m.shared && !m.failed && !m.awaiting).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지
+      const ctx = (messages ?? []).filter((m) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지. 채널 턴은 그 채널 기록만
         .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       const attNote = attachments.length
@@ -1498,10 +1502,11 @@ ${lang === 'en'
   if (!dmTurn && (sessionId || __freshRetry)) {
     const t = await loadThread(wsId, agentSlug).catch(() => ({ messages: [] }));
     const me = await getDeviceId().catch(() => null);
-    const foreign = !!t.sessionDevice && !!me && t.sessionDevice !== me;
+    const device = contextScope?.kind === 'msgr' ? scopedSession(t, contextScope.channelId).sessionDevice : t.sessionDevice; // 채널 세션은 채널별 소유 기기
+    const foreign = !!device && !!me && device !== me;
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
-      const ctx = t.messages.filter((m) => !m.contextScope && !m.shared && !m.failed && !m.awaiting).slice(-6) // 실패 턴·화자 규칙은 CLI 경로와 동일(위 주석)
+      const ctx = t.messages.filter((m) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting).slice(-6) // 실패 턴·화자·범위 규칙은 CLI 경로와 동일(위 주석)
         .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       if (ctx) crossCtx = lang === 'en'
@@ -1882,5 +1887,5 @@ ${lang === 'en'
   for (const r of await artDiff(reply)) artifacts.add(r);
   // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
   const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
-  return { reply, sessionId: dmTurn ? null : sid, ...(contextScope ? { contextScope } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  return { reply, sessionId: sessionless ? null : sid, ...(contextScope ? { contextScope } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }
