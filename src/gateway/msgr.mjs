@@ -455,6 +455,17 @@ export async function mirrorCommands(wsId, { db, uid, commands }) {
 }
 export const _resetCommandsForTest = () => commandsPushed.clear();
 
+/** 실행을 거부한 사유별 안내 문구. 거부는 말해 줘야 한다 — 침묵하면 지시가 커서만 지나 영구히 사라진다(실사고 2026-09-17, 라이브 msg 829). */
+function denyBody(why, crew, lang) {
+  if (why === 'channel_policy') return pick(`이 채널은 회사 크루만 일할 수 있습니다(채널 정책). ${crew.display_name}은(는) 개인 크루라 여기서는 지시를 받지 않습니다.`,
+    `Only company crews can work in this channel (channel policy). ${crew.display_name} is a personal crew and does not take instructions here.`, lang);
+  if (why === 'crew_allow') return pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 소유자에게 허용을 요청하세요.`,
+    `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — ask the owner for access.`, lang);
+  if (why === 'inactive') return pick(`${crew.display_name}은(는) 지금 이 대화에 파견돼 있지 않습니다 — 메신저에서 다시 파견해 주세요.`,
+    `${crew.display_name} is not dispatched to this conversation — dispatch the crew again in the messenger.`, lang);
+  return pick(`지금은 ${crew.display_name}이(가) 이 지시를 받을 수 없습니다 — 크루 상태와 허용 범위를 확인해 주세요.`,
+    `${crew.display_name} cannot take this request right now — check the crew status and who is allowed to instruct it.`, lang);
+}
 export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs } = {}) {
   // 회사 소유자 게이트(실사고 2026-09-11): 같은 PC에서 다른 계정으로 로그인하면 기기 세션(uid)이 바뀌는데, 로컬 회사 폴더는 그대로라
   // 브리지가 남의 회사 크루를 그 계정의 조직에 미러·실행했다(lean-win에 Lean-AX 13명). 회사 목록 API(ownerId === user.id)와 같은 규칙으로 DB에 손대기 전에 끊는다.
@@ -487,7 +498,16 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       const copy = (m.mentions ?? []).some((x) => x?.kind === 'crew' && x.id === crew.id && x.role === 'cc');
       if (!targetsCrew(m, crew, dm) && !copy) return;
       const envelope = db.crewContext ? await db.crewContext(wsId, crew.id, m.id, m.channel_id) : null;
-      if (db.crewContext && !envelope) return;
+      if (db.crewContext && !envelope) { // 서버가 이 출처의 실행을 거부했다(42501). 봉투 없이 진행하면 로컬 폴백이 서버보다 느슨해 거부가 뚫린다 — 실행은 막되 이유는 남긴다.
+        if (m.author_kind !== 'user' || !m.author_user_id || !targetsCrew(m, crew, dm)) return; // 크루끼리 넘김·참조 수신은 안내가 채널을 도배한다
+        const alive = await db.message(m.id); // 42501은 '권한 거부'와 '원본이 지워짐'을 구분하지 않는다 — 사라진 글에 엉뚱한 안내를 달지 않는다(조회 실패는 던져서 재시도)
+        if (!alive || alive.deleted_at) return;
+        const why = await db.instructCheck(crew.id, m.author_user_id, m.channel_id).catch(() => null); // 사유를 몰라도 침묵보다 일반 안내가 낫다
+        out.denied++;
+        await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id,
+          client_msg_id: `deny:${crew.id}:${m.id}`, body: denyBody(why === 'ok' ? null : why, crew, lang) }); // 실패는 던진다 → 커서 보류 → 다음 틱 재시도(멱등 키라 중복 없음)
+        return;
+      }
       if (envelope) m = envelope.source;
       if (envelope?.delivery_role === 'cc') {
         // Receipt only: no LLM, execution claim, shared notes or duplicate message body.
@@ -536,11 +556,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         out.denied++;
         await db.insertMessage({
           channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
-          body: why === 'channel_policy'
-            ? pick(`이 채널은 회사 크루만 일할 수 있습니다(채널 정책). ${crew.display_name}은(는) 개인 크루라 여기서는 지시를 받지 않습니다.`,
-              `Only company crews can work in this channel (channel policy). ${crew.display_name} is a personal crew and does not take instructions here.`, lang)
-            : pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 소유자에게 허용을 요청하세요.`,
-              `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — ask the owner for access.`, lang),
+          body: denyBody(why, crew, lang),
         }).catch((e) => console.error('[argo] msgr 거절 안내 실패:', e.message));
         return;
       }
@@ -695,6 +711,16 @@ export function msgrEventOrigin(event) {
 const busyCrew = new Set(); // `${wsId}:${slug}` — 같은 크루는 한 번에 한 턴(상태 파일이 크루당 하나 → 동시 턴이면 다른 채널의 사고·본문이 이 채널 방송에 섞인다). await 이전에 동기 예약해야 TOCTOU가 없다(검수 3R H-1)
 export const _busyCrewForTest = busyCrew;
 const busyWarn = new Map(); // k → 마지막 경고 시각
+/** 워커에서의 거절 안내 — 재료가 메시지(m)가 아니라 잡이라 폴 루프와 따로 쓴다. 문구·멱등 키는 같다. */
+async function noteJobDenied(wsId, job, { db, uid, lang }) {
+  const source = await db.message(job.msgId);
+  if (!source || source.deleted_at || source.author_kind !== 'user' || !source.author_user_id) return; // 사라진 글·크루끼리 넘김은 안내 대상이 아니다
+  const crew = await db.crewBySlug(uid, wsId, job.slug, job.orgId);
+  if (!crew || crew.id !== job.crewId) return;
+  const why = await db.instructCheck(crew.id, source.author_user_id, job.channelId).catch(() => null);
+  await db.insertMessage({ channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'system', reply_to: job.msgId,
+    thread_root: job.threadRoot ?? job.msgId, client_msg_id: `deny:${job.crewId}:${job.msgId}`, body: denyBody(why === 'ok' ? null : why, crew, lang) });
+}
 export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now } = {}) {
   const deliverAttachments = async (db, job, row, reply, lang) => {
     // 답변 속 파일 참조 → Storage 업로드 + 첨부 행. 실패는 채널에 알린다(침묵 금지).
@@ -722,7 +748,12 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     const ctxKey = `${wsId}:${job.slug}`;
     const envelope = db.crewContext ? await db.crewContext(wsId, job.crewId, job.msgId, job.channelId) : null;
-    if (db.crewContext && (!envelope || envelope.delivery_role === 'cc')) return;
+    if (db.crewContext && (!envelope || envelope.delivery_role === 'cc')) {
+      // 적재 뒤 권한 회수·상태 변화로 거부되면 폴 루프는 이미 커서를 지나갔다 — 여기서 말하지 않으면 그 지시는 영영 무응답이다.
+      // 안내 실패는 삼킨다: 여기서 던지면 queue.mjs가 잡 파일을 되돌려(finally rename) 영구 거부된 잡이 매 틱 되살아난다.
+      if (!envelope) await noteJobDenied(wsId, job, { db, uid, lang }).catch((e) => console.error('[argo] msgr 거절 안내 실패(워커):', e?.message ?? e));
+      return;
+    }
     if (envelope) {
       const currentCrew = await db.crewBySlug(uid, wsId, job.slug, job.orgId);
       if (!currentCrew || currentCrew.id !== job.crewId || envelope.channel.org_id !== job.orgId) return;
