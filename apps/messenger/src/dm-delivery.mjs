@@ -4,6 +4,12 @@ export function dmMentionCrews(participants = [], candidates = []) {
   return [...participants, ...candidates].filter((crew) => crew?.id && !seen.has(crew.id) && seen.add(crew.id));
 }
 
+// @ 팝업 후보 — 대화방(DM)은 그 방에 들어온 에이전트만(유건 제보 2026-09-18: 다빈치만 있는 방에서 방 밖 에이전트가 떴다).
+// 방 밖 에이전트를 받는이로 부르는 길은 /to·/cc와 본문 @이름 해석(dmMentionCrews)으로 남는다 — 팝업만 좁힌다.
+export function mentionPopupCrews({ isDm, roomCrews = null, usable = [] }) {
+  return isDm ? (roomCrews ?? []) : (roomCrews ?? usable);
+}
+
 export function setDmRecipient(recipients, crew, role) {
   if (!crew?.id || !['to', 'cc'].includes(role)) return recipients;
   const entry = { kind: 'crew', id: crew.id, name: crew.display_name || crew.name, role };
