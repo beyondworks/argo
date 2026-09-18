@@ -71,7 +71,7 @@ for (const selected of ['codex','claude']) {
     test(`${selected} DM ${freshRetry?'fresh retry':'first turn'} only injects the authorized envelope`, async () => {
       runner=selected;
       const ws = await setup();
-      const result = await chat(ws,'alpha','AUTHORIZED_DM_ENVELOPE','public-session',{source:'messenger',mirrorCtx:{kind:'msgr',channelKind:'dm',channelId:scope.channelId,threadRoot:scope.threadRoot,peers:[]},journal:{off:false},__freshRetry:freshRetry,__seedNotes:['RETRY_FOREIGN_NOTE']});
+      const result = await chat(ws,'alpha','AUTHORIZED_DM_ENVELOPE','public-session',{source:'messenger',mirrorCtx:{kind:'msgr',channelKind:'dm',channelId:scope.channelId,threadRoot:scope.threadRoot,uid:'owner',origin:'owner',peers:[]},journal:{off:false},__freshRetry:freshRetry,__seedNotes:['RETRY_FOREIGN_NOTE']});
       assert.match(captured.prompt,/AUTHORIZED_DM_ENVELOPE/);
       assert.doesNotMatch(captured.prompt,/PUBLIC_HISTORY|PRIVATE_DM_|UNRELATED_CC|RETRY_FOREIGN/);
       assert.equal(captured.options?.resume,undefined);
@@ -105,7 +105,7 @@ test('ordinary SDK resume still uses its own session', async () => {
 test('remote DM colleagues are advertised and SDK tools resolve exact IDs without local mail', async () => {
   runner='claude'; const ws=await setup();
   const peers=[{id:'self',slug:'alpha',display_name:'Alpha'},{id:'remote-one',slug:'duplicate',display_name:'Remote one',owner_user_id:'other-owner',ws_id:'remote-workspace'},{id:'remote-two',slug:'duplicate',display_name:'Remote two'},{id:'copy-id',slug:'copy',display_name:'Copy'}];
-  const ctx={kind:'msgr',channelKind:'dm',channelId:scope.channelId,threadRoot:42,crewId:'self',uid:'owner',wsId:ws,peers,handoffs:[]};
+  const ctx={kind:'msgr',channelKind:'dm',channelId:scope.channelId,threadRoot:42,crewId:'self',uid:'owner',origin:'owner',wsId:ws,peers,handoffs:[]};
   await chat(ws,'alpha','AUTHORIZED_REMOTE_REQUEST',null,{journal:{off:true},mirrorCtx:ctx});
   assert.match(captured.options.systemPrompt,/remote-one/);
   assert.match(captured.options.systemPrompt,/remote-two/);
@@ -130,7 +130,7 @@ test('remote DM colleagues are advertised and SDK tools resolve exact IDs withou
 test('two DM envelopes cannot promote a journal or bleed into a following public CLI turn', async () => {
   runner='codex'; const ws=await setup();
   for (const [channelId,threadRoot,body] of [['dm-a',21,'DM_A_SENSITIVE'],['dm-b',22,'DM_B_SENSITIVE']]) {
-    const turn=await chat(ws,'alpha',body,null,{mirrorCtx:{kind:'msgr',channelKind:'dm',channelId,threadRoot,peers:[]},journal:{off:false,tag:'org-test'}});
+    const turn=await chat(ws,'alpha',body,null,{mirrorCtx:{kind:'msgr',channelKind:'dm',channelId,threadRoot,uid:'owner',origin:'owner',peers:[]},journal:{off:false,tag:'org-test'}});
     assert.equal(turn.handover,null);
     assert.doesNotMatch(captured.prompt,body==='DM_A_SENSITIVE'?/DM_B_SENSITIVE/:/DM_A_SENSITIVE/);
     await appendTurn(ws,'alpha',{userMsg:body,...turn});

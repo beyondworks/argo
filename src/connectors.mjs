@@ -321,6 +321,12 @@ const MSG = {
     ko: (s, d) => `커넥터 '${s}' 상태: ${d} — 설정에서 다시 연결해 주세요`,
     en: (s, d) => `Connector '${s}' status: ${d} — reconnect it in Settings`,
   },
+  // 손님 턴 — 커넥터는 주인의 계정(메일·드라이브 등)이다. 읽기 도구는 결재 없이 통과하므로(connectorToolNeedsApproval)
+  // 주인이 아닌 사람의 요청이 주인의 메일을 읽는 자리였다(규칙 9). 결재 게이트보다 **앞에서** 막는다.
+  guest_blocked: {
+    ko: (s) => `커넥터 '${s}'는 주인의 계정이라 주인이 아닌 사람의 요청으로는 쓸 수 없습니다 — 필요하면 주인에게 결재를 올리세요`,
+    en: (s) => `Connector '${s}' is the owner's account and can't be used for someone else's request — file an approval for the owner if needed`,
+  },
   reauth_required: {
     ko: (s) => `커넥터 '${s}' 인증이 만료되었습니다 — 설정에서 다시 연결해 주세요`,
     en: (s) => `Connector '${s}' authorization expired — reconnect it in Settings`,
@@ -414,7 +420,12 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
   try {
     let result;
     const rec = (await loadStore(wsId).catch(() => ({ servers: {} }))).servers[serverId];
-    if (!rec?.url || rec.status === 'connecting') {
+    const { isGuestCtx } = await import('./gateway/msgr-handoff.mjs'); // 동적 — 다른 msgr-handoff 사용처와 같은 순환 방지
+    if (isGuestCtx(mirrorCtx)) {
+      // 러너 무관 단일 지점(설계서 §1) — SDK use_connector·CLI 지시 블록이 전부 여기로 모인다. approved(결재 완결 재진입)여도 막지 않는다:
+      // 손님 턴이 만든 커넥터 결재는 없다(위 문구가 결재를 '주인에게' 올리라고 하고, 그 결재 완결은 주인의 컨텍스트에서 돈다).
+      result = fail('guest_blocked', connectorMessage('guest_blocked', lang, serverId));
+    } else if (!rec?.url || rec.status === 'connecting') {
       result = fail('not_connected', connectorMessage('not_connected', lang, serverId));
     } else if (rec.status === 'reauth') {
       result = fail('reauth_required', connectorMessage('reauth_required', lang, serverId));

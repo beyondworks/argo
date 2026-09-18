@@ -8,7 +8,36 @@ export function messengerOrigin(ctx, targetSlug = null) {
   if (targetSlug && !target) throw new Error('같은 메신저 조직에 파견된 동료만 실행할 수 있습니다');
   return { orgId: ctx.orgId, channelId: ctx.channelId, ...(ctx.channelKind === 'dm' ? { channelKind: 'dm', ...(ctx.delegated === true ? { delegated: true } : {}) } : {}), crewId: target?.id ?? ctx.crewId,
     threadRoot: ctx.threadRoot ?? null, sourceMsgId: ctx.sourceMsgId ?? ctx.threadRoot ?? null,
-    uid: ctx.uid, wsId: ctx.wsId, origin: ctx.origin ?? null, hop: ctx.hop ?? 0 };
+    uid: ctx.uid, wsId: ctx.wsId, origin: ctx.origin ?? null, hop: ctx.hop ?? 0,
+    // 손님 표지는 사슬을 따라간다 — 쪽지·예약·결재로 옮겨 탄 뒤에도 "주인이 시킨 일"로 되살아나지 않게(넘김 뒤 쪽지는 rootAuthor를 잃는다).
+    ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}) };
+}
+
+/** messengerOrigin 기록 → 턴 맥락(kind:'msgr')의 역방향. 요청자 사슬(uid·origin·rootAuthor·guest)을 **그대로** 옮긴다 —
+    빠뜨리면 손님 판정(isGuestCtx)이 맥락을 몰라 손님 사슬이 주인 턴으로 되살아나거나(승격), 주인의 흐름까지 손님이 된다(fail-closed).
+    쪽지(scheduler) 수신 턴이 쓴다. extra는 수신 쪽 사실(수신 크루 id·채널 이름 등)만. */
+export function mirrorCtxFromOrigin(o, extra = {}) {
+  return { kind: 'msgr', orgId: o.orgId, channelId: o.channelId, threadRoot: o.threadRoot ?? null,
+    uid: o.uid ?? null, wsId: o.wsId ?? null, origin: o.origin ?? null,
+    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...extra };
+}
+
+/** 손님 턴 판정 — 이 메신저 턴을 크루 주인이 아닌 사람이 시켰는가(규칙 7·9: 주인의 몸은 주인만, 주인의 개인 기억은 공유한 것만).
+    origin = 권한 주체(사람 글이면 작성자, 크루 넘김이면 **넘긴 크루의 주인** — msgr.mjs drain), rootAuthor = 넘김 스레드의 뿌리 사람.
+    그래서 origin만 보면 "손님 B → A의 크루 X → A의 크루 Y" 넘김에서 Y가 주인 턴이 된다 — 뿌리도 함께 본다.
+    **fail-closed**: 메신저 맥락인데 주인(uid)·시킨 사람(origin)을 모르면 손님이다. 한 번 손님이 된 사슬(guest)은 끝까지 손님이다.
+    메신저 밖 턴(웹·텔레그램 — 페어링된 소유자만 턴을 돌린다)은 해당 없음. */
+/** 정책 결정 대기(유건, 2026-09-18): 손님이 요청한 결재를 주인이 **승인**한 뒤의 후속 턴을 주인 권한으로 돌릴지.
+    false = 지금 동작(승인 뒤에도 손님 — 크루는 그 요청자를 위해 주인의 몸을 쓰지 않는다). 답이 오면 이 한 줄만 바꾼다(승인 후속 경로는
+    approval-actions → runMessengerContinuation(ownerApproved) → 맥락의 ownerApproved로 이미 연결돼 있다). */
+export const OWNER_APPROVAL_LIFTS_GUEST = false;
+
+export function isGuestCtx(ctx) {
+  if (ctx?.kind !== 'msgr') return false;
+  if (OWNER_APPROVAL_LIFTS_GUEST && ctx.ownerApproved === true) return false;
+  if (ctx.guest === true) return true;
+  if (!ctx.uid || !ctx.origin || ctx.origin !== ctx.uid) return true;
+  return !!ctx.rootAuthor && ctx.rootAuthor !== ctx.uid;
 }
 
 export function stageMessengerHandoff(ctx, { to, cc = [], message }) {

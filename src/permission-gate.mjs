@@ -411,6 +411,12 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
   };
 }
 
+/** 손님 턴 거부 문구 — 크루가 막혔을 때 읽는 유일한 설명이다. 규칙으로 쓰고(도구 목록 열거 금지 — FORBIDDEN_MSG와 같은 이유),
+    할 수 있는 길(방 대화로 답하기·주인 결재)을 함께 준다. 없어진 도구를 지시하지 않는다. */
+const GUEST_MSG = {
+  ko: '이 요청은 주인이 아닌 사람이 했다 — 주인의 파일·셸·웹·연결 계정·브라우저는 쓰지 않는다. 방 대화와 조직 문서만으로 답하라. 주인의 컴퓨터나 계정이 필요한 일이면 그렇다고 한 줄로 답하고 주인에게 직접 부탁하라고 안내하라(주인에게 알릴 필요가 있으면 request_approval을 써도 되지만, 네가 대신 해 주겠다고 약속하지 마라).',
+  en: "This request came from someone other than the owner — do not use the owner's files, shell, web, connected accounts or browser. Answer from the room conversation and organization docs only. If the work needs the owner's computer or accounts, say so in one line and suggest asking the owner directly (you may use request_approval to notify the owner, but do not promise to do it yourself).",
+};
 const FORBIDDEN_MSG = {
   // 목록을 열거하지 않고 **규칙**으로 쓴다 — 차단 대상이 늘 때마다 이 문구가 코드와 어긋나고,
   // 크루는 막혔을 때 이 텍스트만 읽으므로 "그 목록엔 없던데"로 재시도하게 된다(분리 검수 MEDIUM).
@@ -539,6 +545,13 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
   return async function canUseTool(toolName, input) {
     const allow = { behavior: 'allow', updatedInput: input };
     if (toolName === 'TodoWrite') return allow; // 경로 인자가 없다
+    // 손님 턴(주인이 아닌 사람이 시킨 메신저 턴, chat.mjs isGuestCtx) — **허용 목록**: TodoWrite와 크루 도구(처리기가 스스로 손님을 본다)뿐.
+    // 파일 읽기(주인의 볼트 = 개인 기억, 규칙 9)·쓰기·셸·웹·외부 MCP·브라우저·컴퓨터 유즈·하위 에이전트(Task)까지 전부 거부(규칙 7).
+    // 거부 목록이 아니라 허용 목록인 이유: SDK가 새 내장 도구를 들여와도 손님 턴에서는 기본 거부로 닫힌다(하위 에이전트 우회 포함).
+    if (opts.guest) {
+      if (toolName.startsWith('mcp__crew__') || toolName === 'mcp__crew') return allow;
+      return { behavior: 'deny', message: GUEST_MSG[lang === 'en' ? 'en' : 'ko'] };
+    }
     // 자체 크루 서버(mcp__crew__*)만 무검사 — 서버측 코드라 게이트를 지날 이유가 없다. 그 외 MCP는
     // 사장이 연결한 임의 서버(파일 쓰기 도구 포함)라 경로 인자를 검사한다.
     if (toolName.startsWith('mcp__')) {

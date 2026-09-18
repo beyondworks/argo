@@ -6,6 +6,7 @@ import { CATCHUP_MS } from './routine-time.mjs';
 import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
 import { chat } from './chat.mjs';
+import { mirrorCtxFromOrigin } from './gateway/msgr-handoff.mjs'; // 쪽지 수신 턴의 요청자 사슬(손님 판정 재료)
 import { msgrCrewIdBySlug } from './gateway/msgr.mjs'; // 쪽지 수신 크루의 메신저 id — 결재 카드·회신이 수신 크루 이름으로 붙는다
 import { readAgentCard } from './persona.mjs';
 import { resolveRunner, isCliTurn, runnerCredType } from './runners.mjs';
@@ -184,6 +185,15 @@ export function tickFailureDigest(cid, { runFn = runFailureDigest, now = Date.no
   return true;
 }
 
+/** 쪽지 수신 턴의 메신저 맥락 — 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러).
+    요청자 사슬(uid·origin·rootAuthor·guest)을 **먼저 펼친다**(mirrorCtxFromOrigin) — 빠지면 손님 사슬(손님 B → 크루 X → 쪽지 → 크루 Y)이
+    Y에서 주인 턴으로 되살아나거나(승격), 판정이 맥락을 몰라 주인의 쪽지까지 손님이 된다. 수신 쪽 사실(수신 크루 id·채널 이름)은 뒤에서 덮는다.
+    메신저 밖 쪽지는 null. (export: 회귀 테스트용 — 배달 콜백은 ensureScheduler 안의 익명 함수라 직접 돌릴 수 없다) */
+export function crewmailMirrorCtx(cid, slug, msg) {
+  return msg.msgr?.channelId ? { ...mirrorCtxFromOrigin(msg.msgr), kind: 'msgr', orgId: msg.msgr.orgId, channelId: msg.msgr.channelId, threadRoot: msg.msgr.threadRoot ?? null,
+    crewId: msgrCrewIdBySlug(cid, slug, msg.msgr.orgId) ?? null, orgSlug: msg.msgr.orgSlug ?? null, channelName: msg.msgr.channelName ?? '' } : null;
+}
+
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
   globalThis.__argoScheduler = true;
@@ -229,7 +239,7 @@ export function ensureScheduler() {
               } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
               const prompt = mailPrompt(msg, 'ko', { hasTools });
               // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
-              const mirrorCtx = msg.msgr?.channelId ? { kind: 'msgr', orgId: msg.msgr.orgId, channelId: msg.msgr.channelId, threadRoot: msg.msgr.threadRoot ?? null, crewId: msgrCrewIdBySlug(cid, slug, msg.msgr.orgId) ?? null, orgSlug: msg.msgr.orgSlug ?? null, channelName: msg.msgr.channelName ?? '' } : null;
+              const mirrorCtx = crewmailMirrorCtx(cid, slug, msg); // 요청자 사슬(손님 판정 재료)을 잇는다 — crewmailMirrorCtx 주석
               const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: { off: msg.msgr.memoryOff === true, tag: `org-${msg.msgr.orgId}` } } : {}) }); // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
               // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
               await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts })
