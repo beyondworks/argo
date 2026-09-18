@@ -132,8 +132,9 @@ test('회의실 — 발언자 아바타·이름이 canOpenSide(패널 삶 + 크�
 });
 test('회의실 진입로 CSS — 버튼 리셋·이름 hover 밑줄·아바타 hover 링', () => {
   assert.match(css, /^\.room-speaker \{ background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; border-radius: 999px; \}$/m);
-  assert.match(css, /^\.room-speaker\.name:hover, \.room-speaker\.name:focus-visible \{ text-decoration: underline; text-underline-offset: 2px; \}$/m);
-  assert.match(css, /^\.room-speaker:hover > \.avatar, \.room-speaker:focus-visible > \.avatar \{ box-shadow: 0 0 0 2px var\(--primary-soft\); \}$/m);
+  // 2026-09-18: hover는 입력 기기로 가른다 — 키보드 초점(focus-visible)은 모든 기기, 밑줄 hover는 (hover: hover) 안, 누르는 동안(:active)도 밑줄(test/globals-hover-media)
+  assert.match(css, /^\.room-speaker\.name:focus-visible \{ text-decoration: underline; text-underline-offset: 2px; \} @media \(hover: hover\) \{ \.room-speaker\.name:hover \{ text-decoration: underline; text-underline-offset: 2px; \} \} \.room-speaker\.name:active \{ text-decoration: underline; text-underline-offset: 2px; \}$/m);
+  assert.match(css, /^\.room-speaker:focus-visible > \.avatar \{ box-shadow: 0 0 0 2px var\(--primary-soft\); \} @media \(hover: hover\) \{ \.room-speaker:hover > \.avatar \{ box-shadow: 0 0 0 2px var\(--primary-soft\); \} \}$/m);
 });
 test('i18n — room.openSide ko/en 둘 다 {name} 보간', () => {
   const m = read('app/i18n.jsx').match(/^\s*'room\.openSide': \[(.*)\],$/m);

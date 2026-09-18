@@ -1121,11 +1121,8 @@
   background: var(--card);
   box-shadow: -2px -2px 4px var(--nm-hi), 2px 2px 5px var(--nm-lo);
 }
-:root[data-theme='clay'] .btn:not(.btn-primary):hover,
-:root[data-theme='porcelain'] .btn:not(.btn-primary):hover {
-  background: var(--card);
-  box-shadow: -2px -2px 6px var(--nm-hi), 3px 3px 7px var(--nm-lo);
-}
+@media (hover: hover) { :root[data-theme='clay'] .btn:not(.btn-primary):hover, :root[data-theme='porcelain'] .btn:not(.btn-primary):hover { background: var(--card);
+  box-shadow: -2px -2px 6px var(--nm-hi), 3px 3px 7px var(--nm-lo); } }
 :root[data-theme='clay'] .btn:active,
 :root[data-theme='porcelain'] .btn:active {
   box-shadow: inset 2px 2px 4px var(--nm-lo), inset -1px -1px 3px var(--nm-hi);
@@ -1238,7 +1235,7 @@
 /* 사이드바가 콘텐츠보다 한 단계 어둡다(surface1) — 이 테마에서만. */
 :root[data-theme='graphite'] .side { background: #f0f0f0; }
 /* 메뉴 상태는 오버레이로 — 강조색 대신 밝기만 바꾼다(검정 5.5% / 8.5%). */
-:root[data-theme='graphite'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
+@media (hover: hover) { :root[data-theme='graphite'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); } } :root[data-theme='graphite'] .nav-item:active { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
 :root[data-theme='graphite'] .nav-item.active { background: rgba(0, 0, 0, 0.085); color: var(--fg); }
 
 /* ⚠ 이 블록은 위의 라이트 오버라이드(.side·.nav-item)보다 **반드시 뒤에** 와야 한다.
@@ -1285,7 +1282,7 @@
   --ink-rgb: 237, 237, 237; --paper-rgb: 37, 37, 37;
   }
   :root[data-theme='graphite'] .side { background: #1d1d1d; }
-  :root[data-theme='graphite'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+  @media (hover: hover) { :root[data-theme='graphite'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='graphite'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
   :root[data-theme='graphite'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
 }
 
@@ -1343,7 +1340,7 @@
   --ink-rgb: 26, 26, 26; --paper-rgb: 255, 255, 255;
 }
 :root[data-theme='graphite-light'] .side { background: #f0f0f0; }
-:root[data-theme='graphite-light'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
+@media (hover: hover) { :root[data-theme='graphite-light'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); } } :root[data-theme='graphite-light'] .nav-item:active { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
 :root[data-theme='graphite-light'] .nav-item.active { background: rgba(0, 0, 0, 0.085); color: var(--fg); }
 :root[data-theme='graphite-light'] .nav-item.active,
 :root[data-theme='graphite-light'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
@@ -1385,7 +1382,7 @@
   --ink-rgb: 237, 237, 237; --paper-rgb: 37, 37, 37;
 }
 :root[data-theme='graphite-dark'] .side { background: #1d1d1d; }
-:root[data-theme='graphite-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+@media (hover: hover) { :root[data-theme='graphite-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='graphite-dark'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='graphite-dark'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
 :root[data-theme='graphite-dark'] .nav-item.active,
 :root[data-theme='graphite-dark'] .row.active {
@@ -1450,7 +1447,7 @@
   --primary: #ececea; --primary-strong: #ffffff; --primary-fg: #1f1e1b; --primary-fg-dim: rgba(31, 30, 27, 0.72); --primary-fg-line: rgba(31, 30, 27, 0.35); --primary-soft: rgba(236, 236, 234, 0.09);
   --ring: rgba(236, 236, 234, 0.35);
 }
-:root[data-theme='linen'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+@media (hover: hover) { :root[data-theme='linen'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='linen'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='linen'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
 :root[data-theme='linen'] .nav-item.active, :root[data-theme='linen'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
 :root[data-theme='linen'] .row.active { background: var(--secondary); color: var(--fg); }
@@ -1499,7 +1496,7 @@
   --primary: #ececea; --primary-strong: #ffffff; --primary-fg: #1f1e1b; --primary-fg-dim: rgba(31, 30, 27, 0.72); --primary-fg-line: rgba(31, 30, 27, 0.35); --primary-soft: rgba(236, 236, 234, 0.09);
   --ring: rgba(236, 236, 234, 0.35);
 }
-  :root[data-theme='linen'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+  @media (hover: hover) { :root[data-theme='linen'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='linen'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
   :root[data-theme='linen'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
   :root[data-theme='linen'] .nav-item.active,   :root[data-theme='linen'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
   :root[data-theme='linen'] .row.active { background: var(--secondary); color: var(--fg); }
@@ -1546,7 +1543,7 @@
   --primary: #ececea; --primary-strong: #ffffff; --primary-fg: #1f1e1b; --primary-fg-dim: rgba(31, 30, 27, 0.72); --primary-fg-line: rgba(31, 30, 27, 0.35); --primary-soft: rgba(236, 236, 234, 0.09);
   --ring: rgba(236, 236, 234, 0.35);
 }
-:root[data-theme='linen-light'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+@media (hover: hover) { :root[data-theme='linen-light'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='linen-light'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='linen-light'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
 :root[data-theme='linen-light'] .nav-item.active, :root[data-theme='linen-light'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
 :root[data-theme='linen-light'] .row.active { background: var(--secondary); color: var(--fg); }
@@ -1593,7 +1590,7 @@
   --primary: #ececea; --primary-strong: #ffffff; --primary-fg: #1f1e1b; --primary-fg-dim: rgba(31, 30, 27, 0.72); --primary-fg-line: rgba(31, 30, 27, 0.35); --primary-soft: rgba(236, 236, 234, 0.09);
   --ring: rgba(236, 236, 234, 0.35);
 }
-:root[data-theme='linen-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+@media (hover: hover) { :root[data-theme='linen-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='linen-dark'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='linen-dark'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
 :root[data-theme='linen-dark'] .nav-item.active, :root[data-theme='linen-dark'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
 :root[data-theme='linen-dark'] .row.active { background: var(--secondary); color: var(--fg); }
@@ -1656,7 +1653,7 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 }
 .side-group-row { display: flex; align-items: center; }
 .side-group-row .tm-edit { flex: none; background: none; border: 0; color: var(--fg-3); cursor: pointer; padding: 0 10px 0 4px; opacity: 0; transition: opacity 0.15s; }
-.side-group-row:hover .tm-edit, .side-group-row .tm-edit:focus-visible { opacity: 1; }
+.side-group-row .tm-edit:focus-visible { opacity: 1; } @media (hover: hover) { .side-group-row:hover .tm-edit { opacity: 1; } }
 .side-group {
   font-family: var(--mono);
   font-size: 9.5px; font-weight: 500; color: var(--fg-3);
@@ -1671,7 +1668,7 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   transition: background 0.12s, color 0.12s, border-color 0.12s;
   width: 100%; text-align: left;
 }
-.nav-item:hover { background: var(--card-2); color: var(--fg); }
+@media (hover: hover) { .nav-item:hover { background: var(--card-2); color: var(--fg); } } .nav-item:active { background: var(--card-2); color: var(--fg); }
 .nav-item.active { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
 .nav-item.active svg { color: var(--primary-fg); }
 .nav-item svg { color: var(--fg-3); flex: none; transition: color 0.12s; }
@@ -1686,14 +1683,14 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 
 /* 세션 레일 액션(대화명 편집·삭제) — 항목 호버/포커스 시에만 노출 */
 .rail-item .rail-actions { opacity: 0; transition: opacity 0.12s; }
-.rail-item:hover .rail-actions, .rail-item .rail-actions:focus-within { opacity: 1; }
-.rail-item .rail-actions button:hover { background: var(--card-2); color: var(--fg); }
+.rail-item .rail-actions:focus-within { opacity: 1; } @media (hover: hover) { .rail-item:hover .rail-actions { opacity: 1; } }
+@media (hover: hover) { .rail-item .rail-actions button:hover { background: var(--card-2); color: var(--fg); } } .rail-item .rail-actions button:active { background: var(--card-2); color: var(--fg); }
 
 /* 크루 고정 버튼 — 평소 숨김, 행 hover 시 노출. 단 고정된 크루(.pinned)는 상시 표시(어느 크루가 고정됐는지 한눈에) */
 .crew-row .crew-pin { opacity: 0; transition: opacity 0.12s; }
-.crew-row:hover .crew-pin, .crew-row .crew-pin.pinned, .crew-row .crew-pin:focus-visible { opacity: 1; }
+.crew-row .crew-pin.pinned, .crew-row .crew-pin:focus-visible { opacity: 1; } @media (hover: hover) { .crew-row:hover .crew-pin { opacity: 1; } }
 /* 핀 버튼 자체 hover — 행 hover 배경(card-2)과 같으면 버튼 경계가 안 보인다 → 한 단계 진한 토큰 */
-.crew-row .crew-pin:hover { background: var(--border-soft); }
+@media (hover: hover) { .crew-row .crew-pin:hover { background: var(--border-soft); } } .crew-row .crew-pin:active { background: var(--border-soft); }
 
 .side-footer {
   margin-top: auto; padding: 10px;
@@ -1773,7 +1770,7 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 }
 /* 드래그 손잡이 — 왼쪽 가장자리 6px. 드래그 중엔 텍스트 선택·iframe 캡처 방지용으로 .on */
 .split-pane > .split-handle { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; }
-.split-pane > .split-handle:hover, .split-pane > .split-handle.on { background: var(--primary-soft); }
+.split-pane > .split-handle.on { background: var(--primary-soft); } @media (hover: hover) { .split-pane > .split-handle:hover { background: var(--primary-soft); } } .split-pane > .split-handle:active { background: var(--primary-soft); }
 .split-head {
   flex: none; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--border-soft);
@@ -1788,20 +1785,20 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 body.split-resizing { cursor: col-resize; user-select: none; }
 /* 크루 행 '옆에 열기' — 핀과 같은 규칙(행 hover 시 노출). 핀 왼쪽(right:28)에 앉는다 */
 .crew-row .crew-side { opacity: 0; transition: opacity 0.12s; }
-.crew-row:hover .crew-side, .crew-row .crew-side:focus-visible { opacity: 1; }
-.crew-row .crew-side:hover { background: var(--border-soft); }
+.crew-row .crew-side:focus-visible { opacity: 1; } @media (hover: hover) { .crew-row:hover .crew-side { opacity: 1; } }
+@media (hover: hover) { .crew-row .crew-side:hover { background: var(--border-soft); } } .crew-row .crew-side:active { background: var(--border-soft); }
 .crew-row .crew-side:disabled { cursor: default; opacity: 0; }
 /* 기억 탐색기 파일 행 '옆에 열기' */
 .vault-tree .row-wrap { position: relative; }
 .vault-tree .row-wrap .row-side { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); opacity: 0; transition: opacity .12s; display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--fg-3); cursor: pointer; }
-.vault-tree .row-wrap:hover .row-side, .vault-tree .row-wrap .row-side:focus-visible { opacity: 1; }
-.vault-tree .row-wrap:hover .row .when { opacity: 0; }
-.vault-tree .row-wrap .row-side:hover { background: var(--border-soft); color: var(--fg); }
+.vault-tree .row-wrap .row-side:focus-visible { opacity: 1; } @media (hover: hover) { .vault-tree .row-wrap:hover .row-side { opacity: 1; } }
+@media (hover: hover) { .vault-tree .row-wrap:hover .row .when { opacity: 0; } }
+@media (hover: hover) { .vault-tree .row-wrap .row-side:hover { background: var(--border-soft); color: var(--fg); } } .vault-tree .row-wrap .row-side:active { background: var(--border-soft); color: var(--fg); }
 /* 회의실 발언자(아바타·이름) '옆에 열기' — 클릭하면 그 크루의 개별 스레드가 보조 패널로(?side=crew:). 버튼 리셋 +
    hover 밑줄(이름)·링(아바타)으로 진입로임을 드러낸다. 노출 자체는 페이지가 splitAlive·크루 실존으로 게이트한다. */
 .room-speaker { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; border-radius: 999px; }
-.room-speaker.name:hover, .room-speaker.name:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
-.room-speaker:hover > .avatar, .room-speaker:focus-visible > .avatar { box-shadow: 0 0 0 2px var(--primary-soft); }
+.room-speaker.name:focus-visible { text-decoration: underline; text-underline-offset: 2px; } @media (hover: hover) { .room-speaker.name:hover { text-decoration: underline; text-underline-offset: 2px; } } .room-speaker.name:active { text-decoration: underline; text-underline-offset: 2px; }
+.room-speaker:focus-visible > .avatar { box-shadow: 0 0 0 2px var(--primary-soft); } @media (hover: hover) { .room-speaker:hover > .avatar { box-shadow: 0 0 0 2px var(--primary-soft); } }
 /* 좁은 폭(900 미만)에서는 패널을 내리지 않는다 — 본문이 전체폭을 되찾는다 */
 @media (max-width: 899px) { .split-pane { display: none; } }
 
@@ -1838,7 +1835,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   box-shadow: var(--shadow-card);
 }
 .card-i { transition: background 0.15s; }
-.card-i:hover { background: var(--card-2); }
+@media (hover: hover) { .card-i:hover { background: var(--card-2); } } .card-i:active { background: var(--card-2); }
 
 .card-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -1877,12 +1874,12 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   font-weight: 600; font-size: 12.5px; white-space: nowrap;
   transition: background 0.15s, transform 0.1s, opacity 0.15s;
 }
-.btn:hover { background: var(--primary-soft); }
-.btn:active { transform: scale(0.98); }
+@media (hover: hover) { .btn:hover { background: var(--primary-soft); } }
+.btn:active { background: var(--primary-soft); transform: scale(0.98); } /* 눌림 = hover가 주던 배경 + 기존 축소 — 터치 기기는 hover가 없어 누르는 동안 이 배경을 받는다 */
 .btn:disabled { opacity: 0.35; cursor: default; transform: none; }
 
 .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
-.btn-primary:hover { background: var(--primary-strong); }
+@media (hover: hover) { .btn-primary:hover { background: var(--primary-strong); } } .btn-primary:active { background: var(--primary-strong); }
 
 .btn.sm { height: 28px; padding: 0 12px; font-size: 11.5px; }
 /* .btn.sm보다 뒤 + 같은 특이도(0,2,0) — 이전엔 .btn-icon(0,1,0)이 .btn.sm에 져서 좌우 12px 패딩이
@@ -1958,7 +1955,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 }
 .table td { padding: 13px 20px; border-bottom: 1px solid var(--border-soft); }
 .table tbody tr { transition: background 0.12s; cursor: pointer; }
-.table tbody tr:hover { background: var(--card-2); }
+@media (hover: hover) { .table tbody tr:hover { background: var(--card-2); } } .table tbody tr:active { background: var(--card-2); }
 .table tbody tr:last-child td { border-bottom: 0; }
 
 /* 진행바 — 틱 눈금 트랙 위 잉크 바 */
@@ -1982,7 +1979,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   border-top: 1px solid var(--border-soft);
   transition: background 0.12s;
 }
-.row:hover { background: var(--card-2); }
+@media (hover: hover) { .row:hover { background: var(--card-2); } } .row:active { background: var(--card-2); }
 .row.active { background: var(--primary); color: var(--primary-fg); }
 .row.active * { color: inherit !important; }
 
@@ -2041,7 +2038,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 }
 .att-chip .name { overflow: hidden; text-overflow: ellipsis; }
 .att-chip button { color: var(--fg-3); font-size: 11px; font-weight: 700; flex: none; }
-.att-chip button:hover { color: var(--danger); }
+@media (hover: hover) { .att-chip button:hover { color: var(--danger); } } .att-chip button:active { color: var(--danger); }
 /* 컴포저 스택 — 입력창 바로 위에 쌓이는 "이번 턴의 맥락"(고정 작업 폴더 · 대기 중인 지시).
    칩을 옆으로 흘리지 않고 한 줄에 하나씩 세운다: 왼쪽 아이콘 · 가운데 내용(한 줄 말줄임) ·
    오른쪽 조작. 줄 수가 늘어도 레이아웃이 흔들리지 않고, 긴 지시도 폭을 다 먹지 않는다. */
@@ -2060,7 +2057,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   border-radius: 11px;
   font-size: 12.5px; color: var(--fg-2);
 }
-.composer-stack .row:hover { background: var(--card-2); }
+@media (hover: hover) { .composer-stack .row:hover { background: var(--card-2); } } .composer-stack .row:active { background: var(--card-2); }
 .composer-stack .lead { flex: none; display: inline-flex; color: var(--fg-3); }
 .composer-stack .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-stack .act {
@@ -2068,8 +2065,8 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   width: 24px; height: 24px; border: 0; border-radius: 7px;
   background: transparent; color: var(--fg-3); font-size: 11px; font-weight: 700; cursor: pointer;
 }
-.composer-stack .act:hover { background: var(--card); color: var(--danger); }
-.composer-stack .row:hover .act:hover { background: var(--card); }
+@media (hover: hover) { .composer-stack .act:hover { background: var(--card); color: var(--danger); } } .composer-stack .act:active { background: var(--card); color: var(--danger); }
+@media (hover: hover) { .composer-stack .row:hover .act:hover { background: var(--card); } } .composer-stack .row:active .act:active { background: var(--card); }
 .composer-stack .note {
   display: flex; align-items: center; gap: 8px;
   padding: 4px 4px 4px 9px; font-size: 11.5px; color: var(--fg-3);
@@ -2117,7 +2114,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .tabbar { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border-soft); flex: none; overflow-x: auto; scrollbar-width: none; min-width: 0; }
 .tabbar::-webkit-scrollbar { display: none; }
 .tabbar .tab { flex: none; border: 0; background: transparent; color: var(--fg-3); font: inherit; font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; line-height: 1.4; transition: background 0.12s, color 0.12s; }
-.tabbar .tab:hover { color: var(--fg); }
+@media (hover: hover) { .tabbar .tab:hover { color: var(--fg); } } .tabbar .tab:active { color: var(--fg); }
 .tabbar .tab[aria-selected="true"] { background: var(--card-2); color: var(--fg); }
 .tabbar .tab[data-tone="danger"][aria-selected="true"] { color: var(--danger); }
 .tabbar .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -2133,7 +2130,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .settings-tabs { padding: 4px 8px 8px; margin-bottom: 2px; }
 .crew-card-tabs { padding: 0 10px 8px; }
 .crew-tab { border: 0; background: transparent; color: var(--fg-3); font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer; }
-.crew-tab:hover { color: var(--fg); }
+@media (hover: hover) { .crew-tab:hover { color: var(--fg); } } .crew-tab:active { color: var(--fg); }
 .crew-tab.active { background: var(--card-2); color: var(--fg); }
 .crew-drawer-body { flex: 1; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px; }
 .crew-drawer-empty { padding: 22px 12px; font-size: 12.5px; color: var(--fg-3); text-align: center; line-height: 1.6; }
@@ -2143,7 +2140,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   font-size: 12.5px; text-align: left; width: 100%;
   transition: background 0.12s;
 }
-.task-row:hover { background: var(--card-2); }
+@media (hover: hover) { .task-row:hover { background: var(--card-2); } } .task-row:active { background: var(--card-2); }
 .task-row .t-main { flex: 1; min-width: 0; }
 /* display:block 필수 — 인라인 span엔 overflow/ellipsis가 무효라 긴 제목·경로가 드로어 밖으로
    뚫고 나갔다(실사용 신고 2026-07-27 "패널 열면 텍스트 화면 넘침", 하네스 재현: 380px 드로어에서
@@ -2217,13 +2214,13 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 /* 메시지 호버 액션 — 복사·다시 보내기. 평소엔 숨고 그 메시지에 올렸을 때만 드러난다 */
 .msg-wrap { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .msg-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s ease; }
-.msg-wrap:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
+.msg-actions:focus-within { opacity: 1; } @media (hover: hover) { .msg-wrap:hover .msg-actions { opacity: 1; } }
 .msg-actions button {
   border: 0; background: none; cursor: pointer;
   font-size: 10.5px; color: var(--fg-3); padding: 2px 7px; border-radius: 6px;
   transition: background 0.15s, color 0.15s;
 }
-.msg-actions button:hover { background: var(--card-2); color: var(--fg); }
+@media (hover: hover) { .msg-actions button:hover { background: var(--card-2); color: var(--fg); } } .msg-actions button:active { background: var(--card-2); color: var(--fg); }
 
 .memo-chip {
   display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
@@ -2233,7 +2230,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border); color: var(--fg-2);
   transition: background 0.15s, color 0.15s;
 }
-.memo-chip:hover { background: var(--primary-soft); color: var(--fg); }
+@media (hover: hover) { .memo-chip:hover { background: var(--primary-soft); color: var(--fg); } } .memo-chip:active { background: var(--primary-soft); color: var(--fg); }
 
 /* ─── 채팅 인라인 산출물 미리보기 ───
    접힘 기본·펼침은 자체 스크롤 상자 — 채팅 세로 흐름을 무너뜨리지 않는다. 색은 전부 토큰(양 테마 상속). */
@@ -2296,7 +2293,7 @@ button.memo-chip.ap-toggle { background: transparent; cursor: pointer; padding: 
   padding: 0 8px; cursor: pointer;
   transition: background 0.15s;
 }
-.wikilink:hover { background: var(--primary-soft); }
+@media (hover: hover) { .wikilink:hover { background: var(--primary-soft); } } .wikilink:active { background: var(--primary-soft); }
 
 /* 바코드 디테일 — 티켓/계기판 모티프 */
 .barcode {
@@ -2325,11 +2322,11 @@ main.content:has(.vault-split) .vault-split { height: calc(100vh / var(--z, 1) -
 /* 가시성(유건 피드백 2026-08-21 "간격 때문인지 가시성이 떨어진다"): 행 24→30px·글자 13→13.5px·
    굵기 500·본문색 풀 대비·가이드라인을 --border로. 옵시디언 기본 탐색기 수치(행 ~30px, 13.5px). */
 .vault-tree .row { padding: 5px 8px 5px 6px; gap: 6px; border-top: 0; border-radius: 6px; margin: 1px 6px; width: calc(100% - 12px); line-height: 1.45; min-height: 30px; font-size: 13.5px; color: var(--fg); }
-.vault-tree .row:hover { background: var(--card-2); }
+@media (hover: hover) { .vault-tree .row:hover { background: var(--card-2); } } .vault-tree .row:active { background: var(--card-2); }
 .vault-tree .row.active { background: var(--border-soft); color: var(--fg); }
 .vault-tree .row.active * { color: var(--fg) !important; }
 .vault-tree .row .when { opacity: 0; transition: opacity .12s; }
-.vault-tree .row:hover .when, .vault-tree .row.active .when { opacity: 1; }
+.vault-tree .row.active .when { opacity: 1; } @media (hover: hover) { .vault-tree .row:hover .when { opacity: 1; } }
 .vault-tree .tree-kids { margin-left: 15px; border-left: 1px solid var(--border); padding-left: 0; }
 /* 뷰어 본문도 같은 이유로 한 단계 크게 — 13px 마크다운은 노트북 화면에서 작다 */
 .vault-reader .md { font-size: 14.5px; line-height: 1.78; }
@@ -2337,23 +2334,23 @@ main.content:has(.vault-split) .vault-split { height: calc(100vh / var(--z, 1) -
 .vault-tab { font-size: 13px; }
 .vault-toolbar { display: flex; align-items: center; gap: 2px; padding: 6px 8px 4px; flex: none; }
 .vault-toolbar .tb { width: 26px; height: 26px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--fg-3); transition: background .12s, color .12s; }
-.vault-toolbar .tb:hover, .vault-toolbar .tb.on { background: var(--card-2); color: var(--fg); }
+.vault-toolbar .tb.on { background: var(--card-2); color: var(--fg); } @media (hover: hover) { .vault-toolbar .tb:hover { background: var(--card-2); color: var(--fg); } } .vault-toolbar .tb:active { background: var(--card-2); color: var(--fg); }
 /* 창(pane) 탭 스트립 — 옵시디언 탭. 활성 탭만 본문색·하단 액센트, 나머지는 옅게. */
 .vault-tabs { display: flex; align-items: stretch; height: 36px; flex: none; border-bottom: 1px solid var(--border-soft); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .vault-tabs::-webkit-scrollbar { display: none; }
 .vault-tab { display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px; max-width: 200px; min-width: 0; font-size: 12px; color: var(--fg-3); cursor: pointer; border-right: 1px solid var(--border-soft); position: relative; transition: color .12s, background .12s; }
-.vault-tab:hover { color: var(--fg-2); background: var(--card-2); }
+@media (hover: hover) { .vault-tab:hover { color: var(--fg-2); background: var(--card-2); } } .vault-tab:active { color: var(--fg-2); background: var(--card-2); }
 .vault-tab.active { color: var(--fg); font-weight: 600; }
 .vault-tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary); }
 .vault-tab-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .vault-tab-x { flex: none; width: 18px; height: 18px; border-radius: 5px; font-size: 13px; line-height: 1; color: var(--fg-3); opacity: 0; transition: opacity .12s; }
-.vault-tab:hover .vault-tab-x, .vault-tab.active .vault-tab-x { opacity: 1; }
-.vault-tab-x:hover { background: var(--border-soft); color: var(--fg); }
+.vault-tab.active .vault-tab-x { opacity: 1; } @media (hover: hover) { .vault-tab:hover .vault-tab-x { opacity: 1; } }
+@media (hover: hover) { .vault-tab-x:hover { background: var(--border-soft); color: var(--fg); } } .vault-tab-x:active { background: var(--border-soft); color: var(--fg); }
 .vault-pane.focus .vault-tabs { background: transparent; }
 .vault-pane:not(.focus) .vault-tab.active::after { opacity: 0.45; }
 /* 패널 폭 조절 핸들 */
 .vault-split > .vault-handle { width: 5px; flex: none; cursor: col-resize; margin-left: -3px; position: relative; z-index: 2; }
-.vault-split > .vault-handle:hover, .vault-split > .vault-handle.on { background: var(--primary-soft); }
+.vault-split > .vault-handle.on { background: var(--primary-soft); } @media (hover: hover) { .vault-split > .vault-handle:hover { background: var(--primary-soft); } } .vault-split > .vault-handle:active { background: var(--primary-soft); }
 /* 문서 인쇄(PDF 저장) — 뷰어 본문만 종이에 싣는다. 앱 크롬(사이드바·탑바·트리)은 전부 숨김. */
 @media print {
   .side, .topbar, .vault-tree, .vault-reader-bar { display: none !important; }
@@ -2365,7 +2362,7 @@ main.content:has(.vault-split) .vault-split { height: calc(100vh / var(--z, 1) -
 /* ─── 스크롤바 ─── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border-soft); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
-::-webkit-scrollbar-thumb:hover { background-color: var(--border); }
+@media (hover: hover) { ::-webkit-scrollbar-thumb:hover { background-color: var(--border); } } ::-webkit-scrollbar-thumb:active { background-color: var(--border); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 @media (max-width: 900px) {
@@ -2511,10 +2508,20 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 
 /* 크루 카드 규칙 행 — 편집 도구(순서·삭제)는 행에 올렸을 때만(2026-09-07) */
 .rulerow .ruletools { opacity: 0; transition: opacity 0.12s; }
-.rulerow:hover .ruletools, .rulerow:focus-within .ruletools { opacity: 1; }
+.rulerow:focus-within .ruletools { opacity: 1; } @media (hover: hover) { .rulerow:hover .ruletools { opacity: 1; } }
 
 /* Remembered explorer width yields to the actual content area, including display zoom and side panels. */
 @container vault (max-width: 44rem) {
   main.content:has(.vault-split) .vault-split { height: auto; }
   .vault-split > .vault-tree { max-height: calc(45vh / var(--z, 1)); }
+}
+
+/* 마우스가 없는 기기(터치 노트북·태블릿·폰)는 hover가 없어, 조상 hover로만 드러나던 조작에 닿을 길이 없다 — 늘 보이게 한다.
+   전에는 탭하면 hover가 남는 부작용이 유일한 길이었고, 공용 hover를 (hover: hover)로 감싸면 그 길도 사라진다(메신저 1차의 …와 같은 처방).
+   선택자는 각 조작의 기본 숨김 규칙과 같게 둔다 — 비활성 크루 메뉴(.crew-side:disabled)처럼 일부러 숨긴 상태는 명시도가 높아 그대로 숨는다. */
+@media (hover: none) {
+  .side-group-row .tm-edit, .rail-item .rail-actions, .crew-row .crew-pin, .crew-row .crew-side,
+  .vault-tree .row-wrap .row-side, .msg-actions, .rulerow .ruletools, .vault-tab-x { opacity: 1; }
+  /* 늘 보이는 '옆에 열기'는 선택 행 시각(.when)과 같은 자리 — hover에서 .when을 숨기던 짝을 여기에도 둔다 */
+  .vault-tree .row-wrap:has(.row-side) .row .when { opacity: 0; }
 }
