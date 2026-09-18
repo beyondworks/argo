@@ -15,8 +15,6 @@ import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './pe
 import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
 import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
 import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs';
-import { isCardOnlyRunner } from './runners/catalog.mjs'; // 카드 전용 러너(http) 폴백 금지
-import { externalAgentFormat } from './runners/external-agent.mjs'; // 카드 agent → 실행 포맷(사용자는 format을 몰라도 된다) // 원격 카탈로그·alias(불변식 D)
 import { addRoutine, loadRoutines, updateRoutine, removeRoutine } from './routines.mjs'; // schedule_task·list_routines·cancel_routine — 크루가 '나중에 하기'를 걸고, 되돌리는 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
@@ -959,9 +957,7 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
     if (!e?.knownInvalid) { // 게이트가 이미 끊은 턴은 재프로브·재각인 불요(이미 vendor 확정)
       const c = cred ?? await loadCredFn(wsId, runner).catch(() => null);
       if (c && c.type !== 'host') {
-        if (isCardOnlyRunner(runner) && (e?.httpStatus === 401 || e?.httpStatus === 403)) { origin = 'vendor'; await markFn(wsId, runner, c.value).catch(() => {}); } // 엔드포인트가 카드에 있어 독립 프로브가 없다 — 벤더의 401·403이 곧 판정(불변식 A, 분리 검수 HIGH-1)
-        else if (isCardOnlyRunner(runner)) { origin = 'probe'; } // 그 밖의 실패는 판정 불가 — 우리 배관 탓으로 몰지 않는다
-        else if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
+        if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
         else {
           const v = await verifyFn(runner, c.type, c.value).catch(() => ({ ok: null }));
           origin = v?.ok === false ? 'vendor' : v?.ok === true ? 'argo' : 'probe';
@@ -1066,6 +1062,11 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
   // runnerOverride(경쟁 등) 우선 — 카드 러너 대신 이 턴만 지정 러너로. 미가용이면 기존 폴백 체인이 동일하게 처리.
   const wantRunner = ((runnerOverride || meta.runner || '')).toLowerCase() || null;
+  // HTTP 텍스트 러너(runner: http)는 걷어냈다(2026-09-18 — 외부 에이전트는 크루의 두뇌가 아니라 메신저에 봇으로 접속한다).
+  // 카드에 그 값이 남은 크루를 다른 러너로 대신 돌리면 외부 에이전트 크루가 다른 두뇌로 답한다 — 대체하지 않고 정직하게 멈춘다.
+  if (wantRunner === 'http') throw new Error(lang === 'en'
+    ? 'This crew is set to run on an external agent over HTTP, which is no longer supported. Change the runner on the crew card, or connect the external agent to the messenger as a bot.'
+    : '이 크루는 외부 에이전트(HTTP)로 실행하도록 설정돼 있는데, 이 방식은 더 이상 지원하지 않습니다. 크루 카드에서 러너를 바꾸거나, 외부 에이전트는 메신저에 봇으로 연결해 주세요.');
   // __excludeRunners = 지금까지 인증 실패한 러너 **목록**(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외.
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — available:true 폴백은 명시 연결 원칙 위반(검수 MEDIUM:
   // 최악의 상태에서 조용히 호스트 자격을 스캐빈징하게 된다). 아래 !available 분기가 재연결을 안내한다.
@@ -1268,13 +1269,13 @@ ${lang === 'en'
       let reply;
       try {
         __turnControl.check();
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, endpoint: meta.endpoint ?? '', format: externalAgentFormat(meta), effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
       } catch (e) {
         const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, endpoint: meta.endpoint ?? '', format: externalAgentFormat(meta), effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -1397,7 +1398,7 @@ ${lang === 'en'
           return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
-      if (!aborted && !isCardOnlyRunner(runner) && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1). 카드 전용(http)은 폴백 금지 — 외부 두뇌 크루가 다른 두뇌로 답하지 않는다(2차 검수 HIGH-A), 실패는 surfaceRunnerFailure로 내려가 401을 각인한다
+      if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1).
         const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
         if (alt?.available && !tried.includes(alt.runner)) {
           console.warn(`[argo] ${runner} ${e?.toolLockup ? '도구 잠김(재조달 후에도)' : '인증 실패'} — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);

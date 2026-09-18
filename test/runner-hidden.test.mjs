@@ -141,7 +141,6 @@ test('가용 판정 — anyRunnerUsable은 숨김 러너를 세지 않고, onlyH
   const st = { gemini: { company: { connected: true, invalid: false }, hidden: true, retired: true } };
   assert.equal(anyRunnerUsable(st), false);
   assert.equal(onlyHiddenConnected(st), true);
-  assert.equal(onlyHiddenConnected({ http: { company: { connected: true, invalid: false }, hidden: true, retired: false } }), false, '카드 전용 숨김(http)은 제공 종료가 아니다 — 배너 금지(부록 N, 분리 검수 MEDIUM-3)');
   assert.equal(anyRunnerUsable({ ...st, claude: { company: { connected: true, invalid: false }, hidden: false } }), true);
   assert.ok(PICK_ORDER.includes('gemini'), 'PICK_ORDER(자동 표시 순서)에 포함 — 카탈로그 정의 순과 한 벌(검수 LOW-1)');
 });
