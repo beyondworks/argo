@@ -39,6 +39,7 @@ import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 import { reconcileSession } from './resume-session.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
+import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 const realtimeScope = createRealtimeScope();
 const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
@@ -1554,15 +1555,15 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   // 에이전트 데려오기 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자(방을 연 사람 — 나갔으면 남은 사람 중 가장 먼저 들어온 사람)면 바로,
   // 다른 참여자는 결재자에게 요청(20260918170000). 주인 동반까지 서버가 한다(msgr_crew_join). 결재자는 서버 판정(msgr_dm_approver)을 그대로 받는다 — 한 벌.
   const [joinReqs, setJoinReqs] = useState([]);
-  const [dmApprover, setDmApprover] = useState(null);
-  // 결재자 RPC가 없는 서버(20260918170000 적용 전 라이브)는 채팅에 결재가 없다 — 옛 규칙(참여자가 바로 넣음)으로 보고 '승인 필요'를 띄우지 않는다.
+  // 결재자 RPC가 없는 서버(20260918170000 적용 전 라이브)는 채팅에 결재가 없다 — dmApprovalState가 '결재자 모름'으로 보고 '승인 필요'를 띄우지 않는다.
   // 일시 오류여도 같은 쪽으로 물러난다: 최종 판정은 서버가 하고, 요청이 되면 addCrews가 '요청을 보냈다'로 알린다.
-  const [dmLegacy, setDmLegacy] = useState(false);
+  const [dmSt, setDmSt] = useState(() => dmApprovalState(null, uid));
+  const dmApprover = dmSt.approver;
   const loadJoinReqs = useCallback(async () => {
-    if (channel.kind === 'dm') { const a = await supabase.rpc('msgr_dm_approver', { ch: channel.id }); setDmLegacy(!!a.error); setDmApprover(a.error ? null : a.data ?? null); }
+    if (channel.kind === 'dm') setDmSt(dmApprovalState(await supabase.rpc('msgr_dm_approver', { ch: channel.id }), uid));
     const rows = await q(supabase.from('msgr_channel_crew_requests').select('id, crew_id, requested_by, created_at').eq('channel_id', channel.id).eq('status', 'pending').order('created_at')).catch(() => []);
     setJoinReqs(rows ?? []);
-  }, [channel.id, channel.kind]);
+  }, [channel.id, channel.kind, uid]);
   useEffect(() => { loadJoinReqs(); }, [loadJoinReqs, refreshKey]); // 열려 있는 동안에도 — 알림함에서 같은 채널을 누르거나 주기 재조회 때(검수 M-3)
   const joinCrew = async (id) => { // 반환 'joined' | 'requested' | 'already' — 여러 명을 한 번에 넣을 때 한 명씩 부른다(서버 판정은 에이전트마다 다르다)
     const res = await supabase.rpc('msgr_crew_join', { ch: channel.id, crew: id });
@@ -1650,8 +1651,8 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const pendingCrews = new Set(joinReqs.map((r) => r.crew_id));
   const addableCrews = crews.filter((c) => !crewIds.has(c.id) && !pendingCrews.has(c.id) && ((channel.personal_crews ?? 'approval') !== 'blocked' || crewTier(c, org) === 'company')
     && (isDmRoom ? c.owner_user_id === uid : (c.owner_user_id === uid || (!!org?.service_user_id && c.owner_user_id === org.service_user_id)))); // 봇은 등급이 회사여도 주인은 연결한 멤버다 — 남이 연결한 봇도 빠진다
-  const isApprover = isDmRoom ? !!dmApprover && dmApprover === uid : isHost; // 참여 요청을 결정하는 사람 — 최종 강제는 서버(msgr_can_decide_crew_join)
-  const needsApproval = (c) => (isDmRoom ? !dmLegacy && !isApprover : !isHost && (crewTier(c, org) === 'company' || (channel.personal_crews ?? 'approval') === 'approval')); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
+  const isApprover = isDmRoom ? dmSt.isApprover : isHost; // 참여 요청을 결정하는 사람 — 최종 강제는 서버(msgr_can_decide_crew_join)
+  const needsApproval = (c) => (isDmRoom ? dmNeedsApproval(dmSt) : !isHost && (crewTier(c, org) === 'company' || (channel.personal_crews ?? 'approval') === 'approval')); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
   const nodeSet = !!org?.service_user_id; const nodeOn = nodeSet && !!org?.node_seen_at && Date.now() - Date.parse(org.node_seen_at) < AWAY_MS; // I-5·검수 M-4: 노드가 살아 있어야 만들 수 있다(죽은 노드면 영원한 '만드는 중')
   const crewCreate = policy?.crew_create ?? 'channel_admin';

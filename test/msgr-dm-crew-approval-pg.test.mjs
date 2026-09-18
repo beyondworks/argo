@@ -142,3 +142,75 @@ test('채팅이 아니면 결재자 없음 — 채널은 방장 결재 그대로
   assert.equal(last(asUser(U.host, `select public.msgr_crew_join_decide('${reqOf(p, MATEC)}', true)`)), 'approved');
   assert.equal(join(U.host, p, HOSTC), 'joined', '방장 자기 에이전트는 바로');
 });
+
+// ── 결재자 교체 경로 전수(검수 LOW-1) — 기존 사용자를 지우지 않도록 새 사람으로 ─────────────────────
+const joinOrg = (id, email) => {
+  sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${email}') on conflict do nothing`);
+  const code = last(asUser(U.host, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.host}') returning code`));
+  assert.equal(last(asUser(id, `select public.msgr_accept_invite('${code}')`)), ORG);
+};
+const mkCrew = (owner, slug) => last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, status, allow, hosting) values ('${ORG}', '${owner}', 'lean', '${slug}', '${slug}', 'active', 'owner', 'local') returning id`));
+const canDecide = (uid, ch) => last(asUser(uid, `select public.msgr_can_decide_crew_join('${ch}')`));
+const dmOf = (by, users, name) => last(asUser(by, `select public.msgr_create_channel('${ORG}', 'dm', '${name}', '${JSON.stringify(users.map((id) => ({ kind: 'user', id })))}'::jsonb)`));
+
+test('③ 계정 삭제(msgr_delete_me) — 방을 연 사람이 계정을 지우면 남은 사람 중 가장 먼저 들어온 사람이 결재자, 대기 요청이 넘어간다', { skip }, () => {
+  const C = 'c1000000-0000-4000-8000-000000000001', X = 'c2000000-0000-4000-8000-000000000002', Y = 'c3000000-0000-4000-8000-000000000003';
+  for (const [id, e] of [[C, 'del-c'], [X, 'del-x'], [Y, 'del-y']]) joinOrg(id, `${e}@example.test`);
+  const YC = mkCrew(Y, 'del-yc');
+  const g = dmOf(C, [X, Y], 'del-g');
+  assert.equal(join(Y, g, YC), 'requested');
+  const req = reqOf(g, YC);
+  asUser(C, `select public.msgr_delete_me()`);
+  // created_by는 조직 소유자(host)로 넘어가지만 host는 이 방에 없다 → 남은 사람 중 가장 먼저 들어온 사람(동률이면 user id 순 → X)
+  assert.equal(approver(g), X);
+  assert.equal(seesReq(X, g), '1');
+  assert.equal(last(asUser(X, `select public.msgr_crew_join_decide('${req}', true)`)), 'approved');
+  assert.equal(inCh(g, YC), 't');
+});
+
+test('③ 계정 삭제 모서리 — 조직 소유자가 그 방에 있으면 created_by 이관으로 조직 소유자가 결재자가 된다(방 안의 사람이라 규칙 ④ 강제는 유지)', { skip }, () => {
+  const C = 'c4000000-0000-4000-8000-000000000004', Z = 'c0000000-0000-4000-8000-000000000000';
+  joinOrg(C, 'del2-c@example.test'); joinOrg(Z, 'del2-z@example.test');
+  const g = dmOf(C, [Z, U.host], 'del2-g');
+  asUser(C, `select public.msgr_delete_me()`);
+  assert.equal(approver(g), U.host, 'msgr_delete_me가 created_by를 조직 소유자로 바꾸고, 소유자가 방에 있으므로 그 사람(Z가 id로 더 앞서도)');
+  assert.equal(canDecide(Z, g), 'f');
+});
+
+test('③ 조직 탈퇴 정리(msgr_member_offboard) — 방을 연 사람이 조직에서 빠지면 결재자가 넘어간다', { skip }, () => {
+  const C = 'c5000000-0000-4000-8000-000000000005', X = 'c6000000-0000-4000-8000-000000000006', Y = 'c7000000-0000-4000-8000-000000000007';
+  for (const [id, e] of [[C, 'off-c'], [X, 'off-x'], [Y, 'off-y']]) joinOrg(id, `${e}@example.test`);
+  const YC = mkCrew(Y, 'off-yc');
+  const g = dmOf(C, [X, Y], 'off-g');
+  assert.equal(join(Y, g, YC), 'requested');
+  sql(`update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id = '${C}'`);
+  assert.equal(approver(g), X, '트리거가 방에서 뺀 뒤 남은 사람 중 가장 먼저 들어온 사람');
+  assert.equal(seesReq(X, g), '1');
+  assert.equal(canDecide(C, g), 'f', '빠진 사람은 결정하지 못한다');
+});
+
+test('③ added_at이 먼저인 사람이 id보다 앞선다 — 같을 때만 user id 순', { skip }, () => {
+  const g = groupDm('tie');
+  // mate(2222…)를 other(3333…)보다 늦게 들어온 것으로 만든다 → 먼저 들어온 other가 결재자
+  sql(`update public.msgr_channel_members set added_at = added_at + interval '1 minute' where channel_id = '${g}' and member_kind = 'user' and member_id = '${U.mate}'`);
+  assert.equal(last(asUser(U.host, `select public.msgr_leave_dm('${g}')`)), 't');
+  assert.equal(approver(g), U.other, 'id가 뒤여도 먼저 들어온 사람');
+  sql(`update public.msgr_channel_members set added_at = (select added_at from public.msgr_channel_members where channel_id = '${g}' and member_id = '${U.other}') where channel_id = '${g}' and member_id = '${U.mate}'`);
+  assert.equal(approver(g), U.mate, '같으면 user id 순');
+});
+
+// ── 전제 잠금(검수 LOW-2): 요청을 볼 수 있는 사람(요청자 제외) = 결정할 수 있는 사람 ──────────────
+// 알림함이 대기 참여 요청을 읽음과 무관하게 남기는 근거다(App.jsx Inbox pendingMine) — 보이는데 결정 못 하는 사람이 생기면 지울 수 없는 항목이 남는다.
+test('요청을 볼 수 있는 사람(요청자 제외) = 결정할 수 있는 사람 — 채팅(교체 전·후)과 채널', { skip }, () => {
+  const check = (ch, requester, who, label) => {
+    for (const u of who.filter((x) => x !== requester)) assert.equal(seesReq(u, ch) !== '0', canDecide(u, ch) === 't', `${label}: ${u.slice(0, 4)} 보기=${seesReq(u, ch)} 결정=${canDecide(u, ch)}`);
+  };
+  const g = groupDm('inv');
+  assert.equal(join(U.other, g, OTHERC), 'requested');
+  check(g, U.other, [U.host, U.mate, U.other], '채팅 교체 전');
+  asUser(U.host, `select public.msgr_leave_dm('${g}')`);
+  check(g, U.other, [U.host, U.mate, U.other], '채팅 교체 후');
+  const p = last(asUser(U.host, `select public.msgr_create_channel('${ORG}', 'private', 'inv-room', '[{"kind":"user","id":"${U.mate}"},{"kind":"user","id":"${U.other}"}]'::jsonb)`));
+  assert.equal(join(U.other, p, OTHERC), 'requested');
+  check(p, U.other, [U.host, U.mate, U.other], '비공개 채널');
+});

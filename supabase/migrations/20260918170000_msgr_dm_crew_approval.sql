@@ -112,11 +112,13 @@ end $$;
 revoke all on function public.msgr_crew_join_decide(uuid, boolean) from public, anon;
 grant execute on function public.msgr_crew_join_decide(uuid, boolean) to authenticated;
 
--- ── 요청 읽기 — 요청한 사람과 결정할 수 있는 사람만. 채팅에서 msgr_can_manage_channel은 참여자 전원이라 좁힌다 ─────
+-- ── 요청 읽기 — 요청한 사람과 결정할 수 있는 사람만. **볼 수 있는 사람(요청자 제외) = 결정할 수 있는 사람**이 전제다(검수 LOW-2):
+-- 알림함이 대기 참여 요청을 읽음과 무관하게 남기므로(App.jsx Inbox pendingMine), 보이는데 결정 못 하는 사람이 생기면 지울 수 없는 항목이 남는다.
+-- 판정은 definer 함수 하나(msgr_can_decide_crew_join)로 — 정책 안에서 msgr_channels를 직접 읽으면 호출자의 RLS를 타서, 채팅을 나간
+-- 조직 관리자에게는 그 방이 "채팅이 아닌 것"으로 보여 채널 조건(msgr_can_manage_channel)으로 새었다(드릴 실측). 채널은 종전 msgr_can_manage_channel과
+-- 같은 사람들이다(차이는 조직을 떠난 채널 생성자 — 결정은 원래 할 수 있었다).
 drop policy if exists msgr_channel_crew_requests_select on public.msgr_channel_crew_requests;
 create policy msgr_channel_crew_requests_select on public.msgr_channel_crew_requests for select to authenticated
-  using (requested_by = (select auth.uid())
-         or (not exists (select 1 from public.msgr_channels c where c.id = channel_id and c.kind = 'dm') and public.msgr_can_manage_channel(channel_id))
-         or public.msgr_dm_approver(channel_id) = (select auth.uid()));
+  using (requested_by = (select auth.uid()) or public.msgr_can_decide_crew_join(channel_id));
 
 notify pgrst, 'reload schema';
