@@ -144,6 +144,12 @@ test('approval: 확정권자도 지금 유효한 조직 멤버만 — (a) approv
   const hi = sql(`insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk) values ('${ORG}', '${BCREW_DM}', '${BCREW}', 'ap-a', '메일 발송', 'high') returning id`);
   assert.equal(sql(`select count(*) from realtime.sent where event = 'approval' and topic = 'u:${U.outsider}'`), '0', '(a) 조직 밖 사용자의 u:로 결재가 나가지 않는다');
   assert.ok(topicsOf('approval', hi).split(',').includes(`u:${U.extra}`), '목록의 조직 멤버는 받는다');
+  // 이제 msgr_approval_deciders(#606)가 외부인을 먼저 거른다 — 위 단언만으로는 msgr_room_send의 extra 멤버 조건이 잠기지 않는다.
+  // deciders를 거치지 않고 extra로 외부인을 직접 넘겨, 방송 관문 자체가 조직 밖 사용자를 거르는지 본다(검토 #606 LOW).
+  sql('delete from realtime.sent');
+  sql(`select public.msgr_room_send(jsonb_build_object('id', '${hi}'::uuid, 'channel_id', '${BCREW_DM}'::uuid, 'crew_id', '${BCREW}'::uuid), 'approval', '${ORG}', '${BCREW_DM}', array['${U.outsider}']::uuid[])`);
+  assert.equal(sql(`select count(*) from realtime.sent where topic = 'u:${U.outsider}'`), '0', '(a) msgr_room_send의 extra로 넘긴 조직 밖 사용자에게도 가지 않는다');
+  assert.ok(Number(sql(`select count(*) from realtime.sent where event = 'approval'`)) > 0, '대조: 같은 호출로 방 수신자에게는 나간다');
   sql(`delete from public.msgr_org_policies where org_id = '${ORG}'`);
 });
 
