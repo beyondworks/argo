@@ -1367,7 +1367,7 @@ ${lang === 'en'
           return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
-      if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1). 카드 전용(http)은 폴백 금지 — 외부 두뇌 크루가 다른 두뇌로 답하지 않는다(2차 검수 HIGH-A), 실패는 surfaceRunnerFailure로 내려가 401을 각인한다
+      if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1).
         const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
         if (alt?.available && !tried.includes(alt.runner)) {
           console.warn(`[argo] ${runner} ${e?.toolLockup ? '도구 잠김(재조달 후에도)' : '인증 실패'} — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);

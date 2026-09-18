@@ -1463,7 +1463,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
   // 미지정(자동) 크루는 서버 pickRunner가 고를 첫 연결 러너를 그대로 보여준다 — 'Claude Code' 폴백은
   // Codex/Gemini만 연결한 사용자에게 오표시였다(K2 실사용 신고 2026-07-20). 로딩 중엔 중립 '…'.
   const auto = !sel.runner ? PICK_ORDER.map((id) => runners?.find((r) => r.id === id)).find((r) => r?.authed) : null;
-  const base = (cur?.name ?? (runners === null ? '…' : (auto ? `${t('chat.runnerAuto')} · ${auto.name}` : t('chat.runnerAuto')))); // 외부 에이전트는 종류 이름으로(유건 2026-09-08)
+  const base = (cur?.name ?? (runners === null ? '…' : (auto ? `${t('chat.runnerAuto')} · ${auto.name}` : t('chat.runnerAuto'))));
   // 모델 미선택(레거시 크루)이면 러너 이름만 — "기본" 같은 가짜 항목을 만들지 않는다
   const label = sel.model ? `${base} · ${curModel?.label ?? sel.model}` : base;
   return (
