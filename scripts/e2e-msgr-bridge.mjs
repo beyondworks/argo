@@ -90,6 +90,10 @@ try {
   const crew = await q(A, (c) => c.from('msgr_crews').insert({ org_id: org.id, owner_user_id: A.id, ws_id: ws, slug: 'seoyun', display_name: '서윤', allow: 'all' }).select('id').single());
   const denied = await B.client.from('msgr_crews').insert({ org_id: org.id, owner_user_id: A.id, ws_id: ws, slug: 'x', display_name: 'x' });
   check('B가 A 명의 크루 등록 → RLS 거부', !!denied.error);
+  // 방에 들어온 에이전트만 그 방에 쓴다(채널 범위 트리거) — 주인 A가 자기 크루를 general에 데려온다. no-crew는 크루 없는 방(거절 안내 경로)
+  const joined = await A.client.rpc('msgr_crew_join', { ch: ch.id, crew: crew.id });
+  check('주인 A가 크루를 방에 데려옴(msgr_crew_join)', !joined.error, joined.error?.message);
+  const ch2 = await q(A, (c) => c.from('msgr_channels').insert({ org_id: org.id, kind: 'public', name: 'no-crew', created_by: A.id }).select('id').single());
 
   // ── 로컬 시드(A의 아르고) — 회사·크루 카드·가짜 러너 자격·기기 세션 ──
   const { createCompany, updateCompany, paths } = await import('../src/workspace.mjs');
@@ -137,9 +141,12 @@ try {
   const q1 = (await import('node:fs/promises')).readdir(join(paths(ws).root, `.gw-queue-${M.MSGR_KEY}`)).catch(() => []);
   check('큐 비움(잡 파일 잔존 0)', (await q1).filter((n) => n.endsWith('.json')).length === 0);
 
-  // ③ 허용 범위 'owner' → B의 멘션은 거절 안내, 답글 0
+  // ③ 허용 범위 'owner' — 방 안에서는 방 멤버 B도 부린다. 크루가 없는 방에서 부르면 그 방에 거절 안내, 답글 0
   await q(A, (c) => c.from('msgr_crews').update({ allow: 'owner' }).eq('id', crew.id));
-  const m3 = await post(B, '@서윤 이건 막혀야 함');
+  const m3in = await post(B, '@서윤 방 안에서는 부를 수 있다');
+  const r3in = await until(async () => { const r = await repliesTo(m3in.id); return r.find((x) => x.kind === 'text') ? r : null; }, { timeoutMs: 60_000 });
+  check('방 안 크루는 allow=owner여도 방 멤버 B가 부린다', !!r3in);
+  const m3 = await post(B, '@서윤 이건 막혀야 함', { channel_id: ch2.id });
   const r3 = await until(async () => { const r = await repliesTo(m3.id); return r.length ? r : null; }, { timeoutMs: 30_000 });
   check('거절 안내(system, deny:)', !!r3 && r3[0].kind === 'system' && r3[0].client_msg_id === `deny:${crew.id}:${m3.id}`, r3?.[0]?.body?.slice(0, 40));
   await sleep(3000);
@@ -158,7 +165,7 @@ try {
   const card = (await admin.from('msgr_messages').select('kind, body').eq('id', meta.messageId).single()).data;
   const rowLink = (await admin.from('msgr_crew_approvals').select('message_id').eq('id', meta.rowId).single()).data;
   check('미러 행 ↔ 카드 메시지 링크(pending 갱신 정책)', rowLink?.message_id === meta.messageId, `${rowLink?.message_id}/${meta.messageId}`);
-  check('채널에 approval_card 메시지', card?.kind === 'approval_card' && /결재 요청: 메일 발송/.test(card?.body ?? ''));
+  check('채널에 approval_card 메시지', card?.kind === 'approval_card' && /결재 요청(\([^)]*\))?: 메일 발송/.test(card?.body ?? ''));
   const bTry = await B.client.from('msgr_crew_approvals').update({ status: 'approved', decided_by: B.id, decided_at: new Date().toISOString() }).eq('id', meta.rowId).select('id');
   check('B(비소유자)의 확정 → RLS 0행', !bTry.error && (bTry.data ?? []).length === 0);
   const aOk = await A.client.from('msgr_crew_approvals').update({ status: 'approved', decided_by: A.id, decided_at: new Date().toISOString() }).eq('id', meta.rowId).select('id');
