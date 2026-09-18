@@ -1353,3 +1353,15 @@ test('drain: 봉투 거부 사유 네 갈래가 각각 맞는 안내로 갈린�
   // 판정 RPC 자체가 죽어도 침묵하지 않는다
   assert.match((await run({ instructCheck: async () => { throw new Error('rpc down'); } }))[0].body, /받을 수 없습니다/);
 });
+
+// 보관 채널처럼 읽기는 되고 쓰기는 막히는 자리에서는 안내 삽입이 RLS에 영구히 막힌다.
+// 던지면 step이 break되어 그 크루의 큐 전체가 매 틱 같은 자리에서 멈춘다 — 1건 소실보다 나쁘다.
+test('drain: 거절 안내가 권한·제약으로 영구히 막히면 건너뛰고 뒤 메시지까지 진행한다', async () => {
+  const db = fakeDb({ messages: [msg(11), msg(12, { mentions: [] , channel_id: 'dm-ch' })] });
+  db.crewContext = async () => null;
+  db.message = async (id) => msg(id);
+  db.instructCheck = async () => 'crew_allow';
+  db.insertMessage = async () => { const e = new Error('msgr db: new row violates row-level security policy'); e.code = '42501'; throw e; };
+  await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 12]], '영구 실패는 건너뛰고 커서가 끝까지 전진한다');
+});

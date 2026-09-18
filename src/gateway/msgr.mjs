@@ -298,7 +298,7 @@ export function makeDb(client) {
     /** 답글·카드 insert. 중복(client_msg_id unique) → null. */
     async insertMessage(row) {
       const { data, error } = await client.from('msgr_messages').insert(row).select('id').single();
-      if (error) { if (error.code === '23505') return null; throw new Error(`msgr db: ${error.message}`); }
+      if (error) { if (error.code === '23505') return null; throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); }
       return data;
     },
     async attachmentsOf(messageId) {
@@ -455,6 +455,10 @@ export async function mirrorCommands(wsId, { db, uid, commands }) {
 }
 export const _resetCommandsForTest = () => commandsPushed.clear();
 
+/** 같은 입력으로 다시 넣어도 결과가 같은 실패 — 권한(RLS)과 무결성 제약. 재시도가 풀어 주지 않는다.
+    보관 채널처럼 읽기는 되고 쓰기는 막히는 자리가 실재한다(msgr_crew_inbox는 읽기로만 거른다):
+    거기서 던지면 step이 break되어 그 크루의 큐 전체가 매 틱 같은 자리에 멈춘다 — 1건을 잃는 것보다 나쁘다. */
+const permanentWrite = (e) => e?.code === '42501' || String(e?.code ?? '').startsWith('23');
 /** 실행을 거부한 사유별 안내 문구. 거부는 말해 줘야 한다 — 침묵하면 지시가 커서만 지나 영구히 사라진다(실사고 2026-09-17, 라이브 msg 829). */
 function denyBody(why, crew, lang) {
   if (why === 'channel_policy') return pick(`이 채널은 회사 크루만 일할 수 있습니다(채널 정책). ${crew.display_name}은(는) 개인 크루라 여기서는 지시를 받지 않습니다.`,
@@ -505,7 +509,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         const why = await db.instructCheck(crew.id, m.author_user_id, m.channel_id).catch(() => null); // 사유를 몰라도 침묵보다 일반 안내가 낫다
         out.denied++;
         await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id,
-          client_msg_id: `deny:${crew.id}:${m.id}`, body: denyBody(why === 'ok' ? null : why, crew, lang) }); // 실패는 던진다 → 커서 보류 → 다음 틱 재시도(멱등 키라 중복 없음)
+          client_msg_id: `deny:${crew.id}:${m.id}`, body: denyBody(why === 'ok' ? null : why, crew, lang) })
+          .catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 거절 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키라 중복 없음)
         return;
       }
       if (envelope) m = envelope.source;
