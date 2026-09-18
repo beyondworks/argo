@@ -33,6 +33,7 @@ async function approve(authUrl, { tamperState } = {}) {
   return fetch(loc);
 }
 
+const why = (r) => JSON.stringify(r).slice(0, 600); // 실패 원문 — 윈도우 CI에서 false !== true만 남아 분기를 못 봤다(2026-09-14·18)
 const conn = async (id) => (await listConnections(WS)).find((c) => c.id === id);
 
 // ── 표시 언어 재렌더(검수 M1) — 저장된 오류 원문은 역사적으로 ko 하드코딩이라, lang을 받으면
@@ -125,19 +126,20 @@ test('사전 등록 client_id — SDK가 DCR을 건너뛰고 왕복이 성립한
 
 // ── ② 만료 → SDK 자동 refresh(코어는 저장 콜백만) ──
 test('access 만료 후 호출 — refresh 그랜트로 자동 갱신·재시도된다', async () => {
-  const s = await newServer({ accessTtlMs: 1_200 });
+  const s = await newServer({ accessTtlMs: 3_000 }); // 여유 확대(느린 러너) — 원인 해결이 아니다: 실패 분기는 아래 why()가 남긴다
   const id = 'demo-ttl';
   const { authUrl, done } = await startConnect(WS, { id, url: s.mcpUrl, scopes: ['spike.read'] });
   await approve(authUrl);
   assert.equal((await done).ok, true);
-  assert.equal((await callConnectorTool(WS, id, 'search_threads_demo', { query: 'a' })).ok, true);
+  const r1 = await callConnectorTool(WS, id, 'search_threads_demo', { query: 'a' });
+  assert.equal(r1.ok, true, `연결 직후 첫 호출: ${why(r1)}`);
   const before = (await rawStore()).servers[id].tokens.access_token;
 
-  await new Promise((r) => setTimeout(r, 1_600)); // 만료 경과
+  await new Promise((r) => setTimeout(r, 3_500)); // 만료 경과
   // 조회 도구로 잰다 — send_mail_demo는 readOnlyHint=false라 이제 결재 게이트(US-5)에 걸린다.
   // 여기서 잠그려는 것은 "만료가 사용자 실패로 새지 않는다"이지 결재 동작이 아니다.
   const r2 = await callConnectorTool(WS, id, 'search_threads_demo', { query: 'b' });
-  assert.equal(r2.ok, true, '만료가 사용자 실패로 새지 않는다(SDK 투명 갱신 — 스파이크 실증의 행동 잠금)');
+  assert.equal(r2.ok, true, `만료가 사용자 실패로 새지 않는다(SDK 투명 갱신 — 스파이크 실증의 행동 잠금): ${why(r2)} refreshGrants=${s.counters.refreshGrants}`);
   assert.ok(s.counters.refreshGrants >= 1, 'refresh 그랜트 사용됨');
   assert.notEqual((await rawStore()).servers[id].tokens.access_token, before, '갱신 토큰이 영속됨');
   assert.equal((await conn(id)).status, 'connected');
@@ -145,15 +147,16 @@ test('access 만료 후 호출 — refresh 그랜트로 자동 갱신·재시도
 
 // ── ③ refresh 실패 → "재연결 필요" 강등(조용한 무동작 금지) ──
 test('refresh까지 실패 — reauth로 강등되고 이후 호출은 빠르게 정직 실패한다', async () => {
-  const s = await newServer({ accessTtlMs: 1_200 });
+  const s = await newServer({ accessTtlMs: 3_000 }); // 여유 확대(느린 러너) — 원인 해결이 아니다
   const id = 'demo-revoked';
   const { authUrl, done } = await startConnect(WS, { id, url: s.mcpUrl, scopes: ['spike.read'] });
   await approve(authUrl);
   assert.equal((await done).ok, true);
-  assert.equal((await callConnectorTool(WS, id, 'search_threads_demo', { query: 'a' })).ok, true);
+  const r1 = await callConnectorTool(WS, id, 'search_threads_demo', { query: 'a' });
+  assert.equal(r1.ok, true, `연결 직후 첫 호출: ${why(r1)}`);
 
   s.revokeRefresh();
-  await new Promise((r) => setTimeout(r, 1_600)); // 만료 경과 — 이제 갱신 수단이 없다
+  await new Promise((r) => setTimeout(r, 3_500)); // 만료 경과 — 이제 갱신 수단이 없다
   const r = await callConnectorTool(WS, id, 'search_threads_demo', { query: 'b' });
   assert.equal(r.ok, false);
   assert.equal(r.isError, true);
