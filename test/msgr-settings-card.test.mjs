@@ -472,7 +472,10 @@ test('UX 3/3 회사 크루 AI 드롭다운 — 서버 목록(node_info)이 있�
 
 test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(내 크루 있으면 차단)·보관(관리 권한만), 1:1 나가기, 게스트 행 세그먼트 오른쪽, 게스트 링크 라벨', () => {
   const app = read('apps/messenger/src/App.jsx');
-  assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?if \(stuck\.length\) throw new Error\(t\('ch\.leave\.blocked'\)\);[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 멤버 행 삭제, 내 크루가 있으면 차단');
+  // 규칙 14(2026-09-18): 종전 "내 크루가 있으면 차단"을 "내 크루도 같이 나간다"로 바꿨다. 서버 트리거
+  // (20260918130000)가 최종 강제이고, 앱은 그 마이그레이션이 없는 서버를 위해 먼저 이 방에서 뺀 뒤 나간다.
+  // 빼는 함수가 없는 서버에서만 옛 차단으로 돌아간다(그래야 크루가 주인 없이 죽은 채 남지 않는다).
+  assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?for \(const s of stuck\) \{\s*const r = await supabase\.rpc\('msgr_crew_leave_channel', \{ ch: c\.id, crew: s\.member_id \}\);\s*if \(r\.error\) throw new Error\(missingSchema\(r\.error\) \? t\('ch\.leave\.blocked'\) : [^\n]*\n\s*\}[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 크루를 이 방에서 먼저 빼고 내 멤버 행 삭제(빼는 함수가 없는 서버면 차단)');
   assert.match(app, /canManage && \{ icon: 'x', label: t\('ch\.archive'\), run: \(\) => confirmVia\('archive'\)/, '보관은 관리 권한만, 2단계');
   assert.match(app, /c\.kind === 'private' && \{ icon: 'out', label: t\('ch\.leave'\), run: \(\) => confirmVia\('leave'\)/, '나가기는 비공개 채널만(공개는 전원 자동)');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
