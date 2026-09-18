@@ -508,7 +508,7 @@ async function slackIsIm(token, channel, { now = Date.now, api = slackRead } = {
   slackKinds.set(channel, { im, until });
   return im;
 }
-export const _slackForTest = { slackIsIm, slackKinds, makeSlackHandler: (...a) => makeSlackHandler(...a) };
+export const _slackForTest = { slackIsIm, slackKinds, makeSlackHandler: (...a) => makeSlackHandler(...a), startSlack: (...a) => startSlack(...a) };
 
 function makeSlackHandler(wsId, getCfg) {
   return async (job) => {
@@ -724,7 +724,7 @@ function startSlack(wsId, getCfg) {
     const cfg0 = getCfg();
     try {
       if (cfg0 && !cfg0.botUserId) {
-        const auth = await slackApi(cfg0.token, 'auth.test');
+        const auth = await slackRead(cfg0.token, 'auth.test', {}); // 읽기 메서드 — 쿼리 문자열 GET(slackRead 주석)
         await updateConnection(wsId, 'slack', { botUserId: auth.user_id });
         Object.assign(cfg0, { botUserId: auth.user_id }); // 매니저 갱신(10s) 전에도 자기 메시지를 거른다
       }
@@ -748,7 +748,7 @@ function startSlack(wsId, getCfg) {
         const msgs = [];
         let cursor = null;
         for (let p = 0; p < 10; p++) {
-          const h = await slackApi(cfg.token, 'conversations.history', { channel: cfg.channel, oldest: lastTs, limit: 100, ...(cursor ? { cursor } : {}) });
+          const h = await slackRead(cfg.token, 'conversations.history', { channel: cfg.channel, oldest: lastTs, limit: 100, ...(cursor ? { cursor } : {}) }); // 읽기 메서드 — JSON 본문이면 인자를 못 읽는다(slackRead 주석)
           msgs.push(...(h.messages ?? []));
           cursor = h.has_more ? (h.response_metadata?.next_cursor || null) : null;
           if (!cursor) break;
