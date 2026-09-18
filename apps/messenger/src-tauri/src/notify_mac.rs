@@ -39,8 +39,8 @@ fn status_name(s: UNAuthorizationStatus) -> &'static str {
     else { "granted" }
 }
 
-fn wait<T>(rx: mpsc::Receiver<T>) -> Result<T, String> {
-    rx.recv_timeout(Duration::from_secs(20)).map_err(|_| "notification center did not answer".to_string())
+fn wait<T>(rx: mpsc::Receiver<T>, secs: u64) -> Result<T, String> {
+    rx.recv_timeout(Duration::from_secs(secs)).map_err(|_| "notification center did not answer".to_string())
 }
 
 fn current_status(c: &UNUserNotificationCenter) -> Result<&'static str, String> {
@@ -50,7 +50,7 @@ fn current_status(c: &UNUserNotificationCenter) -> Result<&'static str, String> 
         let _ = tx.send(status_name(s));
     });
     c.getNotificationSettingsWithCompletionHandler(&block);
-    wait(rx)
+    wait(rx, 20)
 }
 
 #[tauri::command]
@@ -72,7 +72,8 @@ pub async fn notify_request() -> Result<String, String> {
         });
         let opts = UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound | UNAuthorizationOptions::Badge;
         c.requestAuthorizationWithOptions_completionHandler(opts, &block);
-        if let Some(e) = wait(rx)? { return Err(e); }
+        // 권한 창은 사용자가 응답할 때까지 완료가 오지 않는다 — 10분 기다린다(시간 초과여도 JS는 OS 상태를 다시 읽을 뿐, 허용으로 보지 않는다)
+        if let Some(e) = wait(rx, 600)? { return Err(e); }
         current_status(&c).map(str::to_string) // 요청 뒤 실제 상태(허용·거부)를 다시 읽어 돌려준다
     }).await.map_err(|e| e.to_string())?
 }
@@ -96,7 +97,7 @@ pub async fn notify_send(title: String, body: String, tag: String) -> Result<(),
             let _ = tx.send(msg);
         });
         c.addNotificationRequest_withCompletionHandler(&req, Some(&block));
-        match wait(rx)? { Some(e) => Err(e), None => Ok(()) }
+        match wait(rx, 20)? { Some(e) => Err(e), None => Ok(()) }
     }).await.map_err(|e| e.to_string())?
 }
 

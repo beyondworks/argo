@@ -2,6 +2,7 @@
 // 없었다(유건 제보 2026-09-11 밤 "답변 오면 알림도 와야 해"). 모바일은 아직 제외(푸시는 APNs·FCM 설계 뒤).
 import { inTauri, isMobilePlatform } from './platform.js';
 import { pushDiag } from './diag.jsx';
+import { resolvePermission } from './notify-decide.mjs';
 
 // macOS 데스크톱은 네이티브 명령(src-tauri/src/notify_mac.rs — UNUserNotificationCenter)으로 권한을 묻고 보낸다. 플러그인(2.4.0)의 macOS 경로는
 // 폐기된 NSUserNotificationCenter에 결과를 버리고, 권한을 늘 "허용"으로 답해 OS에 한 번도 묻지 않았다 — 0.1.29까지 이 맥의 알림 설정에
@@ -21,19 +22,23 @@ async function plugin() {
 export async function notifyPermission() { // 'granted' | 'denied' | 'default' | 'unsupported'
   if (isMobilePlatform) return 'unsupported';
   const n = await nativeMac('notify_status');
-  if (n?.ok && n.value !== 'unsupported') return n.value; // 'granted' | 'denied' | 'default' — OS의 실제 상태
-  const p = await plugin();
-  if (p) { try { return (await p.isPermissionGranted()) ? 'granted' : 'default'; } catch { return 'unsupported'; } }
-  return typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+  if (n && !n.ok) pushDiag('notify', `권한 상태 조회 실패: ${n.error}`);
+  return resolvePermission(n, async () => { // 'granted' | 'denied' | 'default' — 맥은 OS의 실제 상태
+    const p = await plugin();
+    if (p) { try { return (await p.isPermissionGranted()) ? 'granted' : 'default'; } catch { return 'unsupported'; } }
+    return typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+  });
 }
 export async function requestNotifyPermission() {
   if (isMobilePlatform) return 'unsupported';
   const n = await nativeMac('notify_request');
   if (n && !n.ok) pushDiag('notify', `권한 요청 실패: ${n.error}`);
-  if (n?.ok && n.value !== 'unsupported') return n.value;
-  const p = await plugin();
-  if (p) { try { return await p.requestPermission(); } catch { return 'denied'; } }
-  return typeof Notification === 'undefined' ? 'unsupported' : Notification.requestPermission();
+  return resolvePermission(n, async () => {
+    const p = await plugin();
+    if (p) { try { return await p.requestPermission(); } catch { return 'denied'; } }
+    // 브라우저(개발 서버) 경로 — 사용자 동작 없이 부르면 브라우저가 무시할 수 있다(askNotifyOnce). 데스크톱·모바일 앱에는 해당 없음
+    return typeof Notification === 'undefined' ? 'unsupported' : Notification.requestPermission();
+  }, () => nativeMac('notify_status')); // 네이티브 요청이 실패·시간 초과면 OS 상태를 다시 읽는다(가짜 허용 금지)
 }
 // 첫 실행·로그인 뒤 한 번만 OS 권한을 묻는다(아직 정하지 않은 상태일 때만). 거부·허용 뒤에는 다시 묻지 않는다 — 설정의 알림 줄이 상태와 안내를 보여 준다.
 export async function askNotifyOnce(store = globalThis.localStorage) {
