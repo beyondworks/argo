@@ -30,6 +30,7 @@ import { dmMentionCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipi
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
+import { reconcilePending, messageEvent } from './instant-delivery.mjs';
 import { notifyPermission, requestNotifyPermission, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
@@ -65,6 +66,8 @@ export const PERSONAL = '__personal__';
 export const limitsPersonal = (channel) => channel?.personal_crews === 'read_only';
 export const crewTier = (crew, org) => (crew?.hosting === 'bot' || (org?.service_user_id && crew?.owner_user_id === org.service_user_id && crew?.hosting === 'resident')) ? 'company' : 'personal'; // 봇(외부 에이전트)도 회사 등급 — 서버 msgr_crew_tier와 같은 규칙(부록 N)
 const PAGE = 100;
+const RT_QUIET_MS = 30_000;  // 이 시간 안에 방송이 있었으면 실시간이 살아 있다고 본다
+const RT_SWEEP_MS = 60_000;  // 실시간이 살아 있어도 이 주기로는 보정 조회를 한 번 돌린다
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
 const dayKey = (iso) => new Date(iso).toDateString();
@@ -661,6 +664,9 @@ function Shell({ session }) {
   };
   const toggleMemory = async (c) => { const r = await supabase.from('msgr_channels').update({ crew_memory: c.crew_memory === false }).eq('id', c.id).select('id'); if (r.error) return setErr(friendlyErr(r.error.message, t)); if (!r.data?.length) return setErr(t('err.denied')); setNote(t(c.crew_memory === false ? 'ch.memory.nowOn' : 'ch.memory.nowOff')); loadOrg(orgId).catch(() => {}); }; // 권한 최종 판정은 RLS(msgr_can_manage_channel)·정책 트리거
   const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { /* 커서 저장 실패는 다음 조회에서 다시 */ } }, [uid]);
+  // event.kind는 '무슨 방송인가'(message·approval·reaction·edit)다. 서버 payload에도 kind가 있는데
+  // 그건 '글 종류'(text·system)다. 전개를 뒤에 두면 후자가 전자를 덮어 방송이 통째로 버려진다 —
+  // 그래서 구분자는 항상 전개 **뒤**에 놓고, 글 종류는 msgKind로 따로 싣는다.
   const [event, setEvent] = useState(null); const [typing, setTyping] = useState({}); const [progress, setProgress] = useState({}); // progress = 실행 카드(단계·도구·사고 과정) 스냅샷, 키 channel:crew
   useEffect(() => { // Realtime — 조직 topic 하나. 방송은 id·채널만 싣는다(본문은 RLS를 지난 조회로).
     if (!orgId || orgId === PERSONAL) return; // 개인 공간은 아래 별도 effect(dm:<채널> 토픽)
@@ -678,11 +684,11 @@ function Shell({ session }) {
       ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
       registerDispose(remove);
       ch
-        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent({ kind: 'message', ...payload, at: Date.now() }); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (payload?.channel_id && payload.id && isPhoneRef.current && dmIdsRef.current.has(payload.channel_id)) supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').eq('id', payload.id).is('deleted_at', null).maybeSingle().then(({ data: r }) => { if (r) setLastMsg((m) => (m[r.channel_id]?.at > Date.parse(r.created_at) ? m : { ...m, [r.channel_id]: { body: String(r.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) } })); }).catch(() => {}); /* 옛 글 응답이 늦게 오면 덮지 않는다(재검수 L-1) */ /* 방송엔 본문이 없다(서버 트리거는 id·채널·멘션만) → 그 글 1건을 조회해 미리보기 갱신(재검수 M-A) */ if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
-        .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); }))
+        .on('broadcast', { event: 'message' }, active(({ payload }) => { if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent(messageEvent(payload)); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (payload?.channel_id && payload.id && isPhoneRef.current && dmIdsRef.current.has(payload.channel_id)) supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').eq('id', payload.id).is('deleted_at', null).maybeSingle().then(({ data: r }) => { if (r) setLastMsg((m) => (m[r.channel_id]?.at > Date.parse(r.created_at) ? m : { ...m, [r.channel_id]: { body: String(r.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) } })); }).catch(() => {}); /* 옛 글 응답이 늦게 오면 덮지 않는다(재검수 L-1) */ /* 방송엔 본문이 없다(서버 트리거는 id·채널·멘션만) → 그 글 1건을 조회해 미리보기 갱신(재검수 M-A) */ if (!notifyMention(payload)) notifyReply(payload); })) // 멘션이면 멘션 알림 하나만
+        .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent({ ...payload, kind: 'approval', at: Date.now() }); notifyApproval(payload); }))
         .on('broadcast', { event: 'typing' }, active(({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() }))))
-        .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() })))
-        .on('broadcast', { event: 'edit' }, active(({ payload }) => setEvent({ kind: 'edit', ...payload, at: Date.now() })))
+        .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent({ ...payload, kind: 'reaction', at: Date.now() })))
+        .on('broadcast', { event: 'edit' }, active(({ payload }) => setEvent({ ...payload, kind: 'edit', at: Date.now() })))
         .on('broadcast', { event: 'progress' }, active(({ payload }) => setProgress((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: { ...payload, at: Date.now() } }))))
         .subscribe((status, e) => { if (import.meta.env.DEV) console.log('[rt]', status, e?.message ?? ''); });
       rt.current = ch;
@@ -700,7 +706,7 @@ function Shell({ session }) {
     (async () => {
       await supabase.realtime.setAuth(session.access_token);
       ch = supabase.channel(`dm:${chId}`, { config: { private: true } });
-      ch.on('broadcast', { event: 'message' }, ({ payload }) => { setEvent({ kind: 'message', ...payload, at: Date.now() }); })
+      ch.on('broadcast', { event: 'message' }, ({ payload }) => { setEvent(messageEvent(payload)); })
         .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
         .subscribe();
       personalRt.current = ch;
@@ -2997,6 +3003,7 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
+  const [pending, setPending] = useState([]); // 보냈지만 서버 행이 아직 안 온 내 글(낙관적 렌더)
   const [tab, setTab] = useState('all');
   const [workOpen, setWorkOpen] = useState(false);
   const feed = useRef(null);
@@ -3005,9 +3012,12 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
   const chId = channel.id;
   const hydrate = useCallback(async (ids) => { // 메시지 묶음의 첨부·반응 — 첫 로드·새 메시지·이전 기록 공용
     if (!ids.length) return;
-    const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
+    // 첨부와 반응은 서로 기다릴 이유가 없다 — 순차로 두면 도착 경로마다 왕복이 하나씩 더 붙는다.
+    const [a, rx] = await Promise.all([
+      q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids)),
+      q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids)),
+    ]);
     setAtts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of a) n[r.message_id].push(r); return n; });
-    const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids));
     setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
   }, []);
   // 이전 기록(스크롤백) — 가장 오래된 id 앞을 한 페이지씩. 위로 스크롤(120px 안)하거나 맨 위 버튼으로.
@@ -3024,7 +3034,7 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
     olderRef.current = true; setOlder(true); // ref 가드 — 한 태스크의 scroll 여러 건이 같은 질의를 겹쳐 내지 않게(검수 #531 L-1)
     stick.current = false; // 이전 기록을 부르는 건 위를 보는 것 — 바닥 추종(toBottom)이 keepAnchor를 덮지 않게 끈다(검수 #531 L-4: 두 주인)
     try {
-      const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
+      const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta, client_msg_id')
         .eq('channel_id', chId).lt('id', first).order('id', { ascending: false }).limit(PAGE));
       const list = rows.reverse();
       setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return [...list.filter((m) => !seen.has(m.id)), ...base]; });
@@ -3035,31 +3045,44 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
   useLayoutEffect(keepAnchor, [msgs, atts, older, keepAnchor]); // 커밋 직후 동기 보정(깜빡임 없음) — 본문·첨부·컨트롤 상태. 채널 전환은 key 리마운트라 별도 초기화 없음
   useEffect(() => { const el = feed.current; if (!el) return; const f = () => { if (el.scrollTop < 120) loadOlder(); }; el.addEventListener('scroll', f, { passive: true }); return () => el.removeEventListener('scroll', f); }, [loadOlder]);
   const load = useCallback(async (afterId = 0) => {
-    const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
+    const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta, client_msg_id')
       .eq('channel_id', chId).gt('id', afterId).order('id', { ascending: afterId ? true : false }).limit(PAGE));
     const list = afterId ? rows : rows.reverse();
     setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
+    setPending((cur) => reconcilePending(cur, list)); // 조회로 도착한 내 글도 낙관적 자리를 비운다
     if (!afterId) setHasMore(rows.length >= PAGE); // 첫 페이지가 꽉 찼으면 위로 더 있을 수 있다(출시 검사 C-1: 100건 상한·스크롤백 부재)
     await hydrate(list.map((m) => m.id));
     if (!afterId) { const rd = await q(supabase.from('msgr_reads').select('last_read_id').eq('channel_id', chId).eq('user_id', uid).maybeSingle()).catch(() => null); setDivider(rd?.last_read_id ?? 0); } // 새 메시지 구분선 기준 — 열 때 한 번 고정
+  }, [chId, hydrate]);
+  // 결재 카드는 메시지 도착 경로에서 분리한다. 전에는 글 한 건이 올 때마다 채널의 결재 전량을
+  // 다시 읽었다(방송 1건 = 결재 조회 1회). 이제 채널을 열 때와 approval 방송이 올 때만 읽는다.
+  const loadApprovals = useCallback(async () => {
     const apRows = await q(supabase.from('msgr_crew_approvals').select('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload').eq('channel_id', chId));
     setAps(Object.fromEntries(apRows.map((r) => [r.id, r])));
-  }, [chId, hydrate]);
+  }, [chId]);
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadApprovals().catch(() => {}); }, [loadApprovals]); // 채널을 열 때 한 번 — 이후는 approval 방송이 갱신한다
   useEffect(() => {
     if (!isMobilePlatform) return;
     return observeMobileResume(() => load(live.current.msgs?.at(-1)?.id ?? 0).catch((e) => onError(e.message))); // 증분 — 첫 페이지로 통째 교체하면 스크롤백 기록이 사라진다(검수 #531 HIGH-2)
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reacts, setReacts] = useState({}); const [divider, setDivider] = useState(0); // 반응(메시지별)·새 메시지 구분선(열 때의 읽음 커서)
   const reloadReacts = useCallback(async (id) => { const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').eq('message_id', id)); setReacts((cur) => ({ ...cur, [id]: rx })); }, []);
-  const reloadMsg = useCallback(async (id) => { const row = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta').eq('id', id).maybeSingle()); if (row) setMsgs((cur) => (cur ?? []).map((m) => (m.id === id ? row : m))); }, []);
+  const reloadMsg = useCallback(async (id) => { const row = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta, client_msg_id').eq('id', id).maybeSingle()); if (row) setMsgs((cur) => (cur ?? []).map((m) => (m.id === id ? row : m))); }, []);
   const toggleReact = async (m, emoji) => { try { const mine = (reacts[m.id] ?? []).some((r) => r.user_id === uid && r.emoji === emoji); if (mine) await q(supabase.from('msgr_reactions').delete().eq('message_id', m.id).eq('user_id', uid).eq('emoji', emoji)); else await q(supabase.from('msgr_reactions').insert({ message_id: m.id, user_id: uid, emoji })); await reloadReacts(m.id); broadcast?.('reaction', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const editMsg = async (m, body) => { try { await q(supabase.from('msgr_messages').update({ body, edited_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const deleteMsg = async (m) => { try { await q(supabase.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const lastId = msgs?.at(-1)?.id ?? 0;
+  const rtSeen = useRef(0); const swept = useRef(0); // 마지막 방송 시각·마지막 보정 조회 시각
   useEffect(() => {
     if (!event) return;
-    if ((event.kind === 'message' || event.kind === 'approval') && event.channel_id === chId) load(lastId).catch(() => {});
+    // 방송이 실어 오는 것은 id·채널·멘션뿐이라 본문은 조회로 채운다. 이 분기는 구분자가
+    // payload에 덮여 있던 동안 한 번도 닿지 않았다(글은 10초 폴백 폴에서야 그려졌다).
+    if (event.kind === 'message' && event.channel_id === chId) {
+      rtSeen.current = Date.now();
+      if (!(live.current.msgs ?? []).some((m) => m.id === event.id)) load(lastId).catch(() => {});
+    }
+    if (event.kind === 'approval' && event.channel_id === chId) { rtSeen.current = Date.now(); loadApprovals().catch(() => {}); load(lastId).catch(() => {}); }
     if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
     if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
   }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3082,10 +3105,19 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
     toBottom();
     return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('wheel', mark); el.removeEventListener('touchmove', mark); el.removeEventListener('keydown', mark); el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); ro.disconnect(); };
   }, [chId, keepAnchor]);
-  useEffect(() => { const el = feed.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [msgs?.length]);
+  useEffect(() => { const el = feed.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [msgs?.length, pending.length]);
   useEffect(() => { if (!lastId) return; const mark = () => { if (document.visibilityState !== 'hidden' && document.hasFocus()) onRead?.(chId, lastId); }; mark(); document.addEventListener('visibilitychange', mark); window.addEventListener('focus', mark); return () => { document.removeEventListener('visibilitychange', mark); window.removeEventListener('focus', mark); }; }, [chId, lastId]); // eslint-disable-line react-hooks/exhaustive-deps -- 창이 보여도 초점이 다른 앱에 있으면 읽음으로 치지 않는다(자리 비운 사이 온 글이 조용히 읽음이 되던 결함, 2026-09-12 점검)
   // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
-  useEffect(() => { const iv = setInterval(() => { load(lastId).catch(() => {}); const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [load, lastId, hydrate]); // hydrate가 실패한 묶음(첨부·반응 미채움)은 다음 폴에서 다시(검수 #531 M-1)
+  useEffect(() => { const iv = setInterval(() => {
+    // 방송이 살아 있으면 전량 조회를 반복하지 않는다. 방송이 막 같은 일을 했기 때문이다.
+    // 다만 첨부·반응이 빈 묶음은 방송과 무관하게 계속 메운다(검수 #531 M-1의 목적).
+    // id는 채널마다 이어지지 않아 빠진 글을 번호로 알아낼 수 없다. 그래서 방송이 흐르는 동안에도
+    // 보정 조회를 없애지 않고 간격만 늘린다(방송이 끊기면 즉시 10초로 돌아온다).
+    const now = Date.now();
+    const quiet = now - rtSeen.current > RT_QUIET_MS;
+    if (quiet || now - swept.current > RT_SWEEP_MS) { swept.current = now; load(lastId).catch(() => {}); }
+    const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {});
+  }, 10_000); return () => clearInterval(iv); }, [load, lastId, hydrate]);
   const decide = async (ap, status) => {
     const res = await supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id');
     if (res.error) return onError(res.error.message);
@@ -3134,6 +3166,12 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
           ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder} disabled={older} aria-busy={older || undefined}>{t(older ? 'thread.loading' : 'thread.older')}</button></div>
           : <div className="msgr-older start"><span className="msgr-klabel">{t('thread.start')}</span></div>)}
         {rows}
+        {tab === 'all' && pending.map((x) => ( // 내 글이므로 남의 글 행이 아니라 반대편 차콜 버블로 그린다
+          <div key={`pending-${x.clientId}`} className="msgr-mine pending" aria-busy="true">
+            <div className="bubble"><Body text={x.body} /></div>
+            <div className="meta"><span className="mono">{t('msg.sending')}</span></div>
+          </div>
+        ))}
         {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} p={p} t={t} />)}
         {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
       </div>
@@ -3141,7 +3179,7 @@ function Channel({ channel, preview = false, onJoin, orgId, org, uid, isAdmin, l
     {workOpen && <WorkPanel key={chId} channel={channel} uid={uid} isAdmin={isAdmin} locked={locked} crews={chCrews} t={t} lang={lang} onClose={() => setWorkOpen(false)} />}
     {preview
       ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
-      : <Composer isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} onSent={async (id) => {
+      : <Composer isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} onPending={(x) => setPending((cur) => [...cur, x])} onPendingSettled={(clientId, ok) => { if (!ok) setPending((cur) => cur.filter((x) => x.clientId !== clientId)); }} onSent={async (id) => {
       try {
         await load(lastId);
         // Realtime may already have loaded the body before an attachment finished (or was retried).
@@ -3426,7 +3464,7 @@ function Attachment({ a, onError }) {
 }
 
 /* ─── 2단 다크 독: 입력 줄 + 도구 줄(첨부·멘션 │ 기억 상태) + 옐로 원형 전송. @멘션 팝업(사람·크루), Enter 전송(IME 조합 제외) ─── */
-function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople = null, scopeCrews = null, locked = false, sbw = 0, typingCrews, mentionReq, onMentionDone, onSent, onError, isPersonal = false }) {
+function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople = null, scopeCrews = null, locked = false, sbw = 0, typingCrews, mentionReq, onMentionDone, onSent, onPending, onPendingSettled, onError, isPersonal = false }) {
   const { t } = useT();
   const phone = useIsPhone(); // 폰은 짧은 안내문(슬랙)
   const delivery = useMemo(() => getComposerSession(JSON.stringify([SB_URL, uid, orgId, chId]), composerTransport(supabase, { orgId, chId, uid })), [uid, orgId, chId]);
@@ -3535,8 +3573,13 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     if (locked || busy || job || deliveryBlocked || rolePick) return; // 명령(/to·/cc)만 있는 글은 보내지 않는다 — 폰은 전송 버튼이 유일한 경로(검수 M-1)
     const inline = mentionsFromBody(text.trim(), byName, mentions, allByName);
     const result = delivery.send(dmDeliveryMentions(inline, recipients)); // 참조 칩은 방 종류와 무관하게 role cc로 합쳐진다
+    // delivery.send는 왕복을 기다리기 전에 job을 먼저 세운다 — 그 clientId로 화면에 먼저 올린다.
+    const posted = delivery.snapshot().job; // 이름을 job으로 두면 이 함수 첫 줄 가드의 바깥 job이 TDZ에 걸린다
+    if (posted) onPending?.({ clientId: posted.clientId, body: posted.body });
     setPop(null); if (ta.current) ta.current.style.height = 'auto';
-    if (await result) onSent(delivery.snapshot().lastDeliveredId);
+    const ok = await result;
+    if (posted) onPendingSettled?.(posted.clientId, ok); // 실패하면 자리를 비우고 실패 카드가 재시도를 맡는다
+    if (ok) onSent(delivery.snapshot().lastDeliveredId);
   };
   const onKey = (e) => {
     if (rolePick) { // /to·/cc 목록 — @멘션 팝업과 같은 키. Escape는 명령을 지운다
@@ -3592,7 +3635,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
       )}
       {isDm && (deliveryBlocked || retryBlocked) && <p className="msgr-dm-delivery-warning" role="alert">{t('dm.delivery.blocked')}</p>}
       {recipients.length > 0 && <div className="msgr-chips msgr-cc-chips" role="group" aria-label={t('dm.delivery.cc')}>{recipients.map((r) => <button key={r.id} type="button" className="msgr-chan" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}><span>{t(`dm.delivery.${r.role}`)} · {r.name}</span><I name="x" size={12} className="mi" /></button>)}</div>}
-      {job && <div className="msgr-delivery" role="status" aria-live="polite">
+      {job && (!busy || job.files.length > 0) && <div className="msgr-delivery" role="status" aria-live="polite">
         <strong>{t(busy ? 'msg.delivery.sending' : job.messageId ? 'msg.delivery.attachFailed' : 'msg.delivery.failed')}</strong>
         <p className="delivery-preview">{job.body || job.files.map((item) => item.file.name).join(', ')}</p>
         {uploading && <p>{t('att.uploading')} · {uploading}</p>}

@@ -270,6 +270,7 @@ export const DICT = {
   'chat.stage.awaiting_approval': ['결재 대기 중', 'Waiting for approval'],
   'msg.attachFail': ['첨부 업로드 실패', 'Attachment upload failed'],
   'msg.delivery.sending': ['메시지를 보내는 중입니다', 'Sending message'],
+  'msg.sending': ['보내는 중', 'Sending'],
   'msg.delivery.failed': ['전송을 확인하지 못했습니다. 다시 시도해 주세요.', 'Delivery could not be confirmed. Please retry.'],
   'msg.delivery.attachFailed': ['메시지는 게시됐지만 일부 첨부를 보내지 못했습니다.', 'Message posted, but some attachments could not be sent.'],
   'msg.delivery.retry': ['다시 보내기', 'Retry delivery'],
