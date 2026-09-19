@@ -3794,7 +3794,8 @@ function Attachment({ a, onError, rowTab = 0 }) {
     try {
       const { data, error } = await supabase.storage.from('msgr').createSignedUrl(a.storage_path, 600); // 서명 URL(단수명) — 버킷 정책은 채널 단위
       if (error) return onError?.(error.message);
-      if (isMobileNative) await (await import('@tauri-apps/plugin-opener')).openUrl(data.signedUrl);
+      // 데스크톱 Tauri 웹뷰도 window.open을 막는다(D54: 칩을 눌러도 아무 일 없음 — 설치본 실측) → Tauri면 기본 브라우저로(오프너 권한: https만)
+      if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(data.signedUrl);
       else window.open(data.signedUrl, '_blank', 'noopener');
     } catch { onError?.(t('msg.attachOpenFail')); }
   };
