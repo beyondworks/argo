@@ -304,6 +304,9 @@ export const DICT = {
   // P0(2026-09-09): 안 읽음·편집·삭제·반응·음소거·조용한 시간
   'msg.new': ['새 메시지', 'New messages'],
   'msg.edited': ['(수정됨)', '(edited)'],
+  'msg.reply': ['답글', 'Reply'],
+  'composer.replyTo': ['{name}에게 답글', 'Replying to {name}'],
+  'composer.replyCancel': ['답글 취소(Esc)', 'Cancel reply (Esc)'],
   'msg.react': ['반응', 'React'],
   'emoji.search': ['이모티콘 검색', 'Search emoji'],
   'emoji.none': ['맞는 이모티콘이 없습니다', 'No matching emoji'],
