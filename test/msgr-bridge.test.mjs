@@ -1591,3 +1591,25 @@ test('D38b 서버가 거절하면(D38 전 서버) 답글 규칙으로만 잡힌 
   assert.equal(db.calls.filter((c) => c[0] === 'insertMessage').length, 0, '멘션 없이 단 답글마다 거절 안내가 붙지 않는다');
   assert.equal(r.denied, 0);
 });
+
+// D43: 주인과의 1:1에서 남의 에이전트를 부른 위임 원본(에이전트는 그 DM 비멤버)을 서버가 거절(42501)하면, 그 DM에 거절 안내를 쓰려다
+// 트리거가 msgr_not_allowed(P0001)로 막고 → 일시 오류로 보고 던져 → 그 크루 커서가 영구히 멈췄다(로컬 실측: 서윤 커서 1261에 정지, 중계본 1263 미처리).
+test('D43 위임 원본(에이전트 비멤버 DM)은 거절 안내 없이 지나가고 커서가 전진한다, 공개 채널 거절 안내는 종전대로', async () => {
+  const db = fakeDb({ messages: [msg(21, { channel_id: 'owner-dm' }), msg(22)], parent: (id) => msg(id, { deleted_at: null }) }); // 원본 재조회 = 살아 있음
+  db.crewContext = async () => null; // 두 글 모두 서버가 이 크루 실행을 거부
+  db.channel = async (id) => ({ id, org_id: ORG, kind: id === 'owner-dm' ? 'dm' : 'public', name: id, crew_memory: true });
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  const inserts = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.deepEqual(inserts.map((r) => r.channel_id), [CH], '비멤버 DM(owner-dm)에는 안내를 쓰지 않는다 — 공개 채널 22에만');
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 22]], '커서가 두 글 뒤로 전진');
+});
+
+test('D43 거절 안내 쓰기가 msgr_not_allowed로 막혀도 커서는 멈추지 않는다(영구 오류로 분류)', async () => {
+  const db = fakeDb({ messages: [msg(31), msg(32)], parent: (id) => msg(id, { deleted_at: null }) });
+  db.crewContext = async () => null;
+  db.insertMessage = async (row) => { db.calls.push(['insertMessage', row]); throw new Error('msgr db: msgr_not_allowed'); };
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq }); // 던지지 않는다
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 32]], '막힌 안내 뒤에도 커서 전진');
+});
