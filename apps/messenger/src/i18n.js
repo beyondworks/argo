@@ -997,6 +997,7 @@ export const DICT = {
   'search.hint': ['메시지 본문, 사람, 에이전트, 채널을 한 번에 찾습니다. 위 검색 칸에 입력하고 Enter.', 'Searches message text, people, agents and channels. Type in the box above and press Enter.'],
   'search.none': ['결과가 없습니다.', 'No results.'],
   'search.count': ['{n}건', '{n} {n|result|results}'],
+  'search.countMore': ['{n}건 이상', '{n}+ results'],
   'search.channels': ['채널', 'Channels'],
   'search.people': ['사람', 'People'],
   'search.agents': ['에이전트', 'Agents'],
