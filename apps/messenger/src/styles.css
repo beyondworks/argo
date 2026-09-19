@@ -335,6 +335,13 @@
 .msgr-step .card { background: var(--card); border: 1px solid var(--border); border-radius: 6px 20px 20px 20px; padding: 13px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; box-shadow: none; }
 .msgr-step .card b { display: block; font-weight: 600; font-size: 13.5px; }
 .msgr-step .card span { color: var(--fg-3); font-size: 12px; }
+.msgr-step .card .acts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.msgr-step .num.done { background: var(--card-2); color: var(--fg-3); }
+.msgr-step.done .card { background: transparent; } .msgr-step.done .card b { color: var(--fg-3); font-weight: 500; }
+/* 첫 채널 뒤 남은 단계(D3) — 스레드 맨 위, 빈 조직 안내와 같은 단계 목록 */
+.msgr-onboard { position: relative; z-index: 1; background: var(--bg); margin: 4px 0 18px; padding: 12px 14px 14px; border: 1px dashed var(--border); border-radius: 16px; display: grid; gap: 10px; } /* 불투명 — 스레드 척추 줄이 카드를 가로지르지 않게 */
+.msgr-phsteps { padding: 4px 16px 12px; }
+.msgr-onboard > header { display: flex; align-items: center; justify-content: space-between; }
 .msgr-center { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--fg-3); font-size: 13px; padding: 24px; }
 
 /* 로그인 — 머리띠 카드 */
