@@ -3253,7 +3253,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = nu
   const { t } = useT();
   const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, invite }) : noOrgSteps({ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg });
   return (<>
-    <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
+    <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t(browse ? 'ch.notJoined.short' : 'ch.noneYet.short') : t('org.none')}</span></div>
     <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
       <span className="msgr-klabel">{org ? t('ch.list') : t('org.pick')}</span>
       {org && !invite ? (<>{/* 빈 상태 안전망(설계서 2-4) — 관리자 아닌 사람이 초대로 들어왔는데 볼 채널이 없을 때 */}
@@ -3480,7 +3480,7 @@ function Channel({ onOutsideDm = null, startCard = null, jumpTo = null, onJumped
       <div className="msgr-spine">
         {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
         {tab === 'all' && msgs !== null && !hasMore && startCard}
-        {msgs !== null && !all.length && !pendingRows.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}{/* 보내는 중인 첫 글도 내용으로 센다 — 서버 확인 때 안내 줄이 바뀌며 말풍선이 밀리지 않게 */}
+        {msgs !== null && !all.length && !pendingRows.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t(chCrews.length && channel.kind !== 'dm' ? 'ch.empty' : 'ch.empty.plain')}</div></div>}{/* 보내는 중인 첫 글도 내용으로 센다 — 서버 확인 때 안내 줄이 바뀌며 말풍선이 밀리지 않게 */}
         {tab === 'all' && (all.length > 0 || pendingRows.length > 0) && (hasMore
           ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder} disabled={older} aria-busy={older || undefined}>{t(older ? 'thread.loading' : 'thread.older')}</button></div>
           : <div className="msgr-older start"><span className="msgr-klabel">{t('thread.start')}</span></div>)}
