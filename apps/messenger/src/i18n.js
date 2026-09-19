@@ -405,6 +405,7 @@ export const DICT = {
   'ch.step3.bot': ['외부 봇 연결', 'Connect a bot'],
   'ch.onboard.title': ['시작하기 — 남은 단계', 'Getting started — what’s left'],
   'ch.onboard.hide': ['시작 안내 닫기', 'Hide getting started'],
+  'org.start': ['시작하기', 'Get started'],
   'org.noneTitle': ['아직 조직이 없습니다.', 'No organization yet.'],
   'org.noneDesc': ['새 조직을 만들거나, 받은 초대 링크로 들어오세요.', 'Create one, or open the invite link you received.'],
   'org.step.create': ['새 조직 만들기', 'Create an organization'],
