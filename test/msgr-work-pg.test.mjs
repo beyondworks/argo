@@ -165,14 +165,13 @@ test('D48: 현재 실행에서 pending 결재가 먼저 생기고 카드 연결�
   reply(w,CREW,'{"disposition":"done"}','Approval is pending; I will continue after the decision');
   assert.equal(status(w),'running','현재 실행 중 먼저 만들어진 미연결 pending 결재를 기다린다');
 
-  sql(`update public.msgr_crew_approvals set status='expired' where id='${approval}'`);
   const next=create();
   sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt) values('${CREW}',${next.root_message_id},'${request()}')`);
   reply(next,CREW,'{"disposition":"done"}','No approval belongs to this later execution');
-  assert.equal(status(next),'blocked','이전 실행에서 남은 미연결 결재는 이후 업무를 붙잡지 않는다');
+  assert.equal(status(next),'blocked','이전 실행에서 pending으로 남은 미연결 결재는 이후 업무를 붙잡지 않는다');
 });
 test('D48: 비총괄 크루가 직접 넣은 비배열·가짜 멘션은 주관 답을 깨뜨리거나 업무를 고착시키지 않는다', {skip},()=>{
-  for (const mentions of ['{}', `[{"kind":"crew","id":"${request()}"}]`]) {
+  for (const mentions of ['{}', `[{"kind":"crew","id":"${request()}"}]`, `[{"kind":"crew","id":"${OTHER_CREW}"}]`]) {
     const w=create();
     asUser(U.member,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${w.channel_id}','crew','${OTHER_CREW}','text','Injected mention',${w.root_message_id},${w.root_message_id},'reply:${OTHER_CREW}:${w.root_message_id}:${request()}','${mentions}','{"disposition":"handoff"}')`);
     reply(w,CREW,'{"disposition":"done"}','No authorized handoff remains');
