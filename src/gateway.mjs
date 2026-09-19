@@ -401,6 +401,7 @@ function startTelegram(wsId, getCfg) {
   })();
   return () => { stopped = true; };
 }
+export const _startTelegramForTest = startTelegram;
 
 /* ─── 크루 직통 봇 — 크루 1명 = 봇 1개(연락처처럼). DM은 1:1(웹과 같은 스레드),
    그룹에 초대하면 @멘션·답장이 그 크루에게 전달된다(텔레그램 기본 프라이버시 모드가 멘션만 전달 → 폭주 없음). ─── */
@@ -1095,6 +1096,18 @@ async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPu
 export const _pushEventForTest = pushEvent;
 
 /* ─── 매니저 — 회사별 연결 설정을 지켜보며 폴러를 켜고 끈다 ─── */
+function installTelegramGatewayCfg(cfgMap, id, cfg) {
+  const live = cfgMap[id];
+  // 페어링은 파일 저장을 await한 뒤 live cfg에 반영된다. 그 사이 먼저 읽힌 manager snapshot이
+  // 같은 토큰의 미페어링 상태면, 저장된 최신 채팅·owner를 다시 지우지 않는다(첫 지시 유실 창).
+  const next = live?.token === cfg?.token && live.chatId != null && cfg.chatId == null
+    ? { ...cfg, chatId: live.chatId, ownerId: live.ownerId, pairCode: '' }
+    : cfg;
+  cfgMap[id] = next;
+  return next;
+}
+export const _installTelegramGatewayCfgForTest = installTelegramGatewayCfg;
+
 export function ensureGateway() {
   if (globalThis.__argoGateway) return;
   globalThis.__argoGateway = true;
@@ -1164,7 +1177,7 @@ export function ensureGateway() {
     const gwCfgKey = (cid, qkey) => qkey.startsWith(TG_AGENT_Q) ? `${cid}:tg-agent:${qkey.slice(TG_AGENT_Q.length)}` : `${cid}:${qkey}`;
     for (const [c, all] of loaded) {
       // cfg 맵은 폴러뿐 아니라 드레인 핸들러도 본다 — 리더 여부와 무관하게 항상 최신화
-      cfgMap[gwCfgKey(c.id, 'telegram')] = all.telegram;
+      installTelegramGatewayCfg(cfgMap, gwCfgKey(c.id, 'telegram'), all.telegram);
       cfgMap[gwCfgKey(c.id, 'slack')] = all.slack;
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) cfgMap[gwCfgKey(c.id, tgAgentQkey(slug))] = bot;
       const qkeys = new Set(['telegram', 'slack', ...Object.keys(all.telegram.agents ?? {}).map(tgAgentQkey)]);
@@ -1229,7 +1242,10 @@ export function ensureGateway() {
           (globalThis.__argoGwCfg ??= {})[id] = cfg;
           running.set(id, { key, stop: kind === 'telegram' ? startTelegram(c.id, getCfg) : startSlack(c.id, getCfg) });
         }
-        if (globalThis.__argoGwCfg) globalThis.__argoGwCfg[id] = cfg;
+        if (globalThis.__argoGwCfg) {
+          if (kind === 'telegram') installTelegramGatewayCfg(globalThis.__argoGwCfg, id, cfg);
+          else globalThis.__argoGwCfg[id] = cfg;
+        }
       }
       // 받은 서류함 감시 — 회사마다 1개(리더만). 파일 드롭 = 지시
       if (leader) {
