@@ -58,7 +58,7 @@ test('개인 공간에서 실시간은 dm:<채널> 토픽을 구독한다', () =
 });
 
 test('개인 공간에서 채널 절·멤버 절·크루 절이 감춰진다', () => {
-  assert.match(src, /\{!isPersonal && <RailSection id="channels"/);
+  assert.match(src, /\{!isPersonal && <RailSection id=\{orgId \? 'channels' : 'start'\}/, '조직 없으면 시작하기 절(D46)');
   assert.match(src, /\{!isPersonal && org && members\.length > 0/);
   assert.match(src, /\{!isPersonal && org && \(myAvailable\.length > 0/);
 });

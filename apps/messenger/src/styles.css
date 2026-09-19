@@ -1310,6 +1310,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
     top: calc(env(safe-area-inset-top) + 62px); bottom: auto; /* 머리 아래 위 시트 — 키보드 높이 계산이 홈에서 화면 밖으로 밀었다(유건 2026-09-11) */
     display: grid; border: 1px solid var(--border-soft); border-radius: 22px; background: var(--card); box-shadow: var(--shadow-float); }
   .msgr-phone .msgr-side .msgr-inline .msgr-input { min-height: 48px; font-size: 16px; }
+  /* 조직 메뉴 안의 입력(새 조직·참여 코드)은 위 시트가 아니라 메뉴 안에 — 시트로 띄우면 메뉴 항목을 가렸다(D46) */
+  .msgr-phone .msgr-side .msgr-menu-pop .msgr-inline { position: static; left: auto; right: auto; top: auto; z-index: auto; padding: 4px 4px 6px; gap: 8px; border: 0; border-radius: 0; background: none; box-shadow: none; animation: none; }
   .msgr-phone .msgr-side .msgr-inline .msgr-seg { justify-self: start; }
   .msgr-phone .msgr-side .msgr-inline .msgr-seg button { height: 36px; padding: 0 14px; font-size: 13px; }
   .msgr-phone .msgr-side .msgr-inline .acts { display: flex; gap: 8px; }
