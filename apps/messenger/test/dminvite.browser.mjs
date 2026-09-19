@@ -269,6 +269,24 @@ await scenario(1280, 'outside-mention-notice', async (p) => {
   assert.ok(joins.some((c) => c.args?.crew === 'crew-1' && c.args?.ch === 'general'), '기존 에이전트 참여 경로(msgr_crew_join)로 요청');
 });
 
+// D31(원장 P2-8). 파견을 해제했다가 다시 파견하면 허용 범위가 조직 기본값으로 조용히 바뀌었다(「모두」→「에이전트 주인만」).
+// available = 소유자가 해제한 상태이므로 다시 파견은 복귀 — status만 바꾸고 허용 범위는 그대로. 레일의 [파견]과 에이전트 시트의 [파견하기] 두 경로.
+for (const via of ['rail', 'sheet']) await scenario(1280, `redispatch-keeps-allow-${via}`, async (p) => {
+  const row = p.locator('.msgr-list .item', { hasText: 'Second Agent' }).first(); await row.waitFor({ timeout: 5000 });
+  if (via === 'rail') await p.locator('.msgr-list button.dispatch').first().click();
+  else {
+    await row.click(); const sheet = p.locator('.msgr-sheet, [role=dialog]').filter({ hasText: 'Second Agent' }).first(); await sheet.waitFor({ timeout: 5000 });
+    await sheet.getByRole('button', { name: '파견하기', exact: true }).click();
+  }
+  await p.waitForFunction(() => window.__dmInviteFixture.tables.msgr_crews.find((c) => c.id === 'crew-3').status === 'active', undefined, { timeout: 5000 });
+  const crew = await p.evaluate(() => window.__dmInviteFixture.tables.msgr_crews.find((c) => c.id === 'crew-3'));
+  assert.deepEqual([crew.allow, crew.allow_users], ['list', ['user-colleague']], '허용 범위와 지정한 사람이 그대로');
+  const upd = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.table === 'msgr_crews' && c.op === 'update').map((c) => Object.keys(c.values ?? {})));
+  assert.deepEqual(upd.at(-1), ['status'], `파견은 status만 바꾼다 (실제: ${JSON.stringify(upd)})`);
+  assert.deepEqual(await p.evaluate(() => window.__dmInviteFixture.tables.msgr_crews.filter((c) => c.id !== 'crew-3').map((c) => c.status)), ['active', 'active', 'active'], '다른 에이전트는 건드리지 않는다');
+  if (via === 'sheet') assert.match(await p.locator('body').innerText(), /허용 범위는 그대로이고, 채널에는 채널의 "\+ 추가"에서 다시 넣으세요/, '다시 넣어야 하는 채널을 안내');
+}, '?recalled=1');
+
 // 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
 await scenario(1280, 'unjoined-preview', async (p) => {
   const rail = () => p.locator('[data-sec="channels"]').innerText();

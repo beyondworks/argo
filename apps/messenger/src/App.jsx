@@ -657,10 +657,11 @@ function Shell({ session }) {
     if (!isMobilePlatform) return;
     return observeMobileResume(() => { setResumeEpoch((x) => x + 1); setTick((x) => x + 1); (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message)); resyncBadge(); });
   }, [orgId, isPersonal, loadOrg, loadPersonal]);
-  // 부록 M: 그 자리 파견 — available → active(허용 범위는 조직 정책 기본값, 잠금이면 서버 게이트가 맞춘다) → 채널 멤버(+소유자 동반). 채널 없이 부르면 조직에만 파견.
+  // 부록 M: 그 자리 파견 — available → active → 채널 멤버(+소유자 동반). 채널 없이 부르면 조직에만 파견.
+  // available은 소유자가 파견을 해제한 상태(20260908140000)라 다시 파견은 복귀다 — 허용 범위는 건드리지 않는다(D31: 「모두」가 조용히
+  // 조직 기본값으로 바뀌었다). 잠금 정책이면 서버 게이트(msgr_crew_policy_gate)와 잠글 때의 일괄 맞춤이 기본값을 보장한다.
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
-    const allow = policy?.allow_default ?? 'all';
-    const up = await supabase.from('msgr_crews').update({ status: 'active', allow, allow_users: [] }).eq('id', crew.id).select('id');
+    const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
     if (up.error) throw new Error(up.error.message);
     // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자면 바로·아니면 요청.
     let joined = null;
@@ -671,7 +672,7 @@ function Shell({ session }) {
     }
     await loadOrg(orgId);
     return joined; // 'joined' | 'requested' | 'already' | null(조직에만 파견)
-  }, [policy, uid, orgId, loadOrg, t]);
+  }, [uid, orgId, loadOrg, t]);
   const loadChMembers = useCallback(async (id) => { if (id !== activeChannel.current) return; const current = memberRequests.current.begin(`${activeOrg.current}:${id}`); if (!id) { setChMembers([]); return; } try { const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); if (current()) setChMembers(rows); } catch { if (current()) setChMembers([]); } }, []);
   useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const [sheetReqTick, setSheetReqTick] = useState(0); // 열린 설정창의 참여 요청을 다시 읽게
@@ -1614,8 +1615,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
   const dispatched = crew.status !== 'available'; const [confirmRecall, setConfirmRecall] = useState(false);
   const setDispatch = async (next) => {
     setBusy(true); setConfirmRecall(false);
-    const patch = next ? { status: 'active', allow: policy?.allow_default ?? 'owner', allow_users: [] } : { status: 'available' };
-    const res = await supabase.from('msgr_crews').update(patch).eq('id', crew.id).select('id');
+    const res = await supabase.from('msgr_crews').update({ status: next ? 'active' : 'available' }).eq('id', crew.id).select('id'); // 다시 파견은 복귀 — 허용 범위 유지(D31, dispatchCrew 주석)
     setBusy(false);
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) }));
