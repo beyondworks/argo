@@ -374,6 +374,8 @@ export const DICT = {
   'msg.delivery.dismiss': ['재시도 그만두기', 'Stop retrying'],
   'crew.away': ['부재중', 'Away'],
   'crew.online': ['대기 중', 'Online'],
+  'crew.offline': ['꺼져 있음', 'Offline'],
+  'mention.away': ['{name}은(는) 지금 꺼져 있어요 — 다시 켜지면 이 글에 답합니다.', '{name} is offline — it will answer this when it’s back.'],
   'ap.approve': ['승인', 'Approve'],
   'ap.reject': ['거절', 'Reject'],
   'ap.ownerOnly': ['이 에이전트의 소유자만 확정할 수 있습니다.', 'Only this agent’s owner can decide.'],

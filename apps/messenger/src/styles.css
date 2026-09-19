@@ -463,6 +463,7 @@
 @media (hover: hover) { .msgr-rows .row:hover { background: var(--card-2); } } .msgr-rows .row:active { background: var(--card-2); }
 .msgr-rows .row .name { font-weight: 600; font-size: 13px; flex: none; white-space: nowrap; max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
 .msgr-rows .row .sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-rows .row .msgr-offline { flex: none; font-size: 11.5px; font-weight: 500; color: var(--fg-2); white-space: nowrap; } /* 부제만 말줄임되고 '꺼져 있음'은 남는다(D23 — 색 점만으로 구분하지 않는다) */
 .msgr-rows .row .btn.ghost { border: 0; background: none; width: 26px; height: 26px; padding: 0; color: var(--fg-3); }
 @media (hover: hover) { .msgr-rows .row .btn.ghost:hover { background: var(--bg); color: var(--fg); } } .msgr-rows .row .btn.ghost:active { background: var(--bg); color: var(--fg); }
 .msgr-rows .row .btn.ghost.text { width: auto; padding: 0 8px; white-space: nowrap; } /* 글자 버튼 — 아이콘 폭 26px 규칙에 걸려 옆 x와 겹쳤다(실측 2026-09-08) */
