@@ -87,7 +87,7 @@
 .msgr-foot .btn.ghost { border: 0; background: none; color: var(--fg-3); width: 30px; height: 30px; padding: 0; border-radius: 9px; }
 .msgr-foot .btn.ghost.on { background: var(--card-2); color: var(--fg); } @media (hover: hover) { .msgr-foot .btn.ghost:hover { background: var(--card-2); color: var(--fg); } } .msgr-foot .btn.ghost:active { background: var(--card-2); color: var(--fg); }
 .msgr-foot .btn.bell { position: relative; }
-.msgr-foot .btn.bell .n { position: absolute; top: -3px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--mark); color: #1a1a1a; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.msgr-foot .btn.bell .n { position: absolute; top: -3px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--mark); color: var(--mark-fg); font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 .msgr-top .crewbtn { white-space: nowrap; }
 .msgr-inbox { display: grid; gap: 6px; max-width: 880px; margin: 0 auto; padding: 18px 24px; }
 .msgr-inbox .msgr-seg { margin-bottom: 6px; }
@@ -702,7 +702,7 @@
 .msgr-picklist .pickrow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .msgr-picklist .pickrow .msgr-klabel { max-width: 45%; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-setcard form.row .msgr-input.sm { flex: 1; }
-.msgr-searchres mark { background: var(--mark); color: #1a1a1a; border-radius: 3px; padding: 0 2px; }
+.msgr-searchres mark { background: var(--mark); color: var(--mark-fg); border-radius: 3px; padding: 0 2px; }
 .msgr-folderhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px 2px; font-size: 10.5px; color: var(--fg-3); letter-spacing: 0.02em; }
 .msgr-foot .me { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; padding: 2px 4px; border-radius: 9px; color: inherit; font: inherit; cursor: pointer; grid-column: 1 / span 2; }
 @media (hover: hover) { .msgr-foot .me:hover { background: var(--card-2); } } .msgr-foot .me:active { background: var(--card-2); }
@@ -767,13 +767,13 @@
 /* P0 (2026-09-09): 안 읽음 배지·새 메시지 구분선·반응·편집 */
 .msgr-badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 999px; background: var(--card-2); color: var(--fg-2); font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; font-variant-numeric: tabular-nums; }
 .msgr-list .item .msgr-badge { background: var(--fg); color: var(--bg); } /* 라이트·다크 모두 또렷하게(유건 제보 2026-09-11 밤) */
-.msgr-badge.mark, .msgr-list .item .msgr-badge.mark { background: var(--mark); color: #1a1a1a; }
+.msgr-badge.mark, .msgr-list .item .msgr-badge.mark { background: var(--mark); color: var(--mark-fg); }
 .msgr-badge.dim { opacity: 0.55; }
 .msgr-list .item.unread .name { color: var(--fg); font-weight: 600; }
 .msgr-list .item.active.unread .name { color: var(--primary-fg); } /* 열린 채널이 안 읽음 상태(알림함 보는 중 새 글)면 이름이 활성 배경과 같은 색이 되어 안 보이던 결함(유건 제보 2026-09-11 밤) */
 .msgr-list .item.active .msgr-badge { background: var(--primary-fg); color: var(--primary); }
 .msgr-newline { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
-.msgr-newline span { padding: 2px 9px; border-radius: 999px; background: var(--mark); color: #1a1a1a; } /* 라이트 바탕에서 노란 글자가 안 읽히던 것(유건 2026-09-09) — 알약으로 */
+.msgr-newline span { padding: 2px 9px; border-radius: 999px; background: var(--mark); color: var(--mark-fg); } /* 라이트 바탕에서 노란 글자가 안 읽히던 것(유건 2026-09-09) — 알약으로 */
 .msgr-newline::before, .msgr-newline::after { content: ''; flex: 1; height: 1.5px; background: var(--mark); }
 .msgr-reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .msgr-reacts button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--fg-2); font: inherit; font-size: 12px; cursor: pointer; }
