@@ -13,6 +13,11 @@ mod notify_mac; // OS 알림 — UNUserNotificationCenter 직결(플러그인의
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_notification::init());
+    // 창 위치·크기 기억(D53, 설치본 T8: 옮긴 창이 재실행 때 기본 자리로 돌아갔다). 표시 여부(VISIBLE)는 저장하지 않는다 —
+    // 닫기가 가리기라 숨긴 채 ⌘Q하면 다음 실행에 창이 안 보이는 채로 뜬다. 빌더에 달아야 설정 파일로 만든 main 창에도 복원이 걸린다.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_window_state::Builder::default()
+        .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE & !tauri_plugin_window_state::StateFlags::FULLSCREEN).build()); // 전체 화면도 뺀다 — 다음 실행이 별도 Space 전체 화면으로 뜬다(검수 #655)
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_deep_link::init());
     #[cfg(mobile)]
@@ -22,7 +27,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list,
-        notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send
+        notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send, notify_mac::notify_take_pending
     ]);
     #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder
@@ -41,15 +46,16 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (window, event);
         })
-        .setup(|_app| {
+        .setup(|app| {
+            let _ = &app; // 모바일 타깃은 아래 cfg 블록이 모두 빠져 쓰지 않는다
             // 앱이 앞에 있어도 다른 방 알림 배너를 띄운다(UN 기본은 전면 앱 알림을 숨김) — 번들 밖(cargo run)이면 조용히 건너뛴다
             #[cfg(target_os = "macos")]
-            if let Some(mtm) = objc2::MainThreadMarker::new() { notify_mac::install_delegate(mtm); }
+            if let Some(mtm) = objc2::MainThreadMarker::new() { notify_mac::install_delegate(mtm, app.handle().clone()); }
             // 인앱 업데이터 + 설치 뒤 재시작 — 데스크톱만(모바일 타깃에는 크레이트 자체가 없다)
             #[cfg(desktop)]
             {
-                _app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
-                _app.handle().plugin(tauri_plugin_process::init())?;
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
             }
             Ok(())
         })

@@ -5,13 +5,16 @@
 import { createClient } from '@supabase/supabase-js';
 import { readProfile } from './server-profile.mjs';
 import { isMobilePlatform } from './platform.js';
+import { guardAnonFetch } from './anon-guard.mjs';
 
 const profile = readProfile(typeof localStorage !== 'undefined' ? localStorage : null);
 export const customServer = !!profile;
 export const SB_URL = profile?.url ?? import.meta.env.VITE_SUPABASE_URL;
 export const SB_ANON = profile?.anon ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const configured = !!(SB_URL && SB_ANON);
-export const supabase = configured ? createClient(SB_URL, SB_ANON, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, ...(isMobilePlatform ? { flowType: 'pkce' } : {}) } }) : null;
+const storedSession = () => { try { return !!supabase?.auth?.storageKey && !!localStorage.getItem(supabase.auth.storageKey); } catch { return false; } };
+export const supabase = configured ? createClient(SB_URL, SB_ANON, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, ...(isMobilePlatform ? { flowType: 'pkce' } : {}) },
+  global: { fetch: guardAnonFetch({ anonKey: SB_ANON, hasStoredSession: storedSession }) } }) : null; // D50: 로그인된 기기의 익명 데이터 요청 차단(anon-guard.mjs)
 
 /** 오류를 던지는 얇은 래퍼 — 화면은 메시지만 보여 준다(값·토큰은 절대 안 싣는다). */
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }

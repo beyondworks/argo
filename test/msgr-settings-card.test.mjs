@@ -251,7 +251,8 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
 });
 
 test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조직 카드(이름·역할·제거 2단계·초대 만들기/취소·감사), 로컬 알림(멘션·관리자 결재, 자기 글 제외, 다른 채널/숨김일 때만), 오프보딩 트리거', () => {
-  const dn = app.slice(app.indexOf('function DisplayNameRow('), app.indexOf('function NotifyRow('));
+  const dn = app.slice(app.indexOf('const saveMyOrgName = '), app.indexOf('function NotifyRow(')); // 저장 쿼리는 첫 진입 이름 카드(D5)와 같이 쓰는 saveMyOrgName에
+  assert.match(dn, /function DisplayNameRow\([\s\S]*?await saveMyOrgName\(org, me, name, t\)/, '설정 이름 칸이 같은 저장을 쓴다');
   assert.match(dn, /from\('msgr_org_members'\)\.update\(\{ display_name: name\.trim\(\) \|\| null \}\)\.eq\('org_id', org\.id\)\.eq\('user_id', me\.user_id\)\.select\('user_id'\)/, '본인 표시명 갱신');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
   assert.match(oc, /from\('msgr_orgs'\)\.update\(\{ name: name\.trim\(\) \}\)\.eq\('id', org\.id\)\.select\('id'\)/, '조직 이름');
@@ -351,29 +352,33 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
   const guard = send.init.body.body[0];
   assert.equal(guard.type, 'IfStatement');
   assert.equal(guard.consequent.type, 'ReturnStatement', '키보드·폼 전송의 첫 행동은 잠금 시 즉시 반환');
-  const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', 'rolePick', `return (${expr});`); // rolePick = 1:1 /to·/cc 명령 모드(명령만 있는 글은 전송 금지 — PR #526)
+  // D50(2026-09-19): 실패 카드(job)는 더 이상 전송을 막지 않는다 — Enter·전송 버튼이 그 글부터 다시 보내고(retryBlocked면 막힘) 성공하면 새 글을 잇는다.
+  const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', 'rolePick', 'retryBlocked', `return (${expr});`); // rolePick = 1:1 /to·/cc 명령 모드(명령만 있는 글은 전송 금지 — PR #526)
   const disabledSource = app.slice(disabled.start, disabled.end);
   const guardSource = app.slice(guard.test.start, guard.test.end);
+  const retryStep = send.init.body.body[1];
+  assert.equal(app.slice(retryStep.start, retryStep.end).replace(/\s+/g, ' '), 'if (job) { if (retryBlocked || !await delivery.retry()) return; onSent(delivery.snapshot().lastDeliveredId); if (!text.trim() && !files.length) return; }', '실패 카드가 있으면 그 글부터 다시 보내고, 실패하면 새 글을 보내지 않는다');
   const check = (buttonSource, handlerSource) => {
     const buttonDisabled = evaluate(buttonSource), handlerBlocked = evaluate(handlerSource);
-    for (let bits = 0; bits < 16; bits++) {
-      const [busy, pending, locked, deliveryBlocked] = [0, 1, 2, 3].map((bit) => !!(bits & (1 << bit)));
+    for (let bits = 0; bits < 32; bits++) {
+      const [busy, pending, locked, deliveryBlocked, retryBlocked] = [0, 1, 2, 3, 4].map((bit) => !!(bits & (1 << bit)));
       const job = pending ? { clientId: 'pending' } : null;
       for (const [text, files] of [['', []], ['  ', []], ['hello', []], ['', [{ name: 'file.txt' }]]]) {
-        const args = [busy, job, locked, deliveryBlocked, text, files, null];
-        assert.equal(!!buttonDisabled(...args), bits !== 0 || (!text.trim() && !files.length), `send button flags=${bits}`);
-        assert.equal(!!handlerBlocked(...args), bits !== 0, `keyboard/form guard flags=${bits}`);
-        const cmd = [busy, job, locked, deliveryBlocked, '/cc', [], { role: 'cc', q: '', list: [] }]; // 명령 모드는 나머지 플래그와 무관하게 차단
+        const args = [busy, job, locked, deliveryBlocked, text, files, null, retryBlocked];
+        const hard = busy || locked || deliveryBlocked;
+        assert.equal(!!buttonDisabled(...args), hard || (job ? retryBlocked : (!text.trim() && !files.length)), `send button flags=${bits}`);
+        assert.equal(!!handlerBlocked(...args), hard, `keyboard/form guard flags=${bits}`);
+        const cmd = [busy, job, locked, deliveryBlocked, '/cc', [], { role: 'cc', q: '', list: [] }, retryBlocked]; // 명령 모드는 나머지 플래그와 무관하게 차단
         assert.equal(!!buttonDisabled(...cmd), true, `send button rolePick flags=${bits}`);
         assert.equal(!!handlerBlocked(...cmd), true, `keyboard/form guard rolePick flags=${bits}`);
       }
     }
   };
   check(disabledSource, guardSource);
-  for (const flag of ['busy', 'job', 'locked', 'deliveryBlocked', 'rolePick']) {
+  for (const flag of ['busy', 'job', 'locked', 'deliveryBlocked', 'rolePick', 'retryBlocked']) {
     const identifier = new RegExp(`\\b${flag}\\b`, 'g');
     assert.throws(() => check(disabledSource.replace(identifier, 'false'), guardSource), /send button/, `removing button ${flag} must fail`);
-    assert.throws(() => check(disabledSource, guardSource.replace(identifier, 'false')), /keyboard\/form guard/, `removing handler ${flag} must fail`);
+    if (flag !== 'job' && flag !== 'retryBlocked') assert.throws(() => check(disabledSource, guardSource.replace(identifier, 'false')), /keyboard\/form guard/, `removing handler ${flag} must fail`);
   }
   assert.match(app, /select\('plan, seats, ls_status'\)/, '자격 조회에 ls_status');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
@@ -439,7 +444,7 @@ test('J-5 조직 삭제 유예·복구 — 이름 입력 2단계 삭제(네이�
 test('검수 반영(코드) — 삭제 조직 목록 제외, 오류 문구 매핑, 조직 전체 초대는 게스트 제외, 카드 값 개행 세척, 서버 가드', () => {
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /rows\.filter\(\(r\) => r\.msgr_orgs && !r\.msgr_orgs\.deleted_at\)/, 'M-3');
-  assert.match(app, /const friendlyErr = \(msg, t\) => \/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑');
+  assert.match(app, /const friendlyErr = \(msg, t\) => \/msgr_session_refreshing\/\.test\(msg\) \? t\('err\.sessionRefreshing'\) : \/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑(D50: 세션 갱신 중이 RLS보다 먼저)');
   assert.ok((app.match(/onError\(friendlyErr\(res\.error\.message, t\)\)/g) || []).length >= 4, 'M-5 적용 4곳 이상');
   assert.match(app, /onClick=\{\(\) => makeInvite\('admin'\)\}/, 'L-3 초대는 멤버·관리자 두 버튼');
   assert.ok(!/makeInvite\('guest'\)/.test(app), 'L-3 조직 전체 게스트 초대 없음');

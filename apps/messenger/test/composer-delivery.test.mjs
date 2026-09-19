@@ -85,6 +85,7 @@ test('transport recovers committed responses and uses scoped message lookup and 
     },
     storage: { from: () => ({ upload: async (path) => { paths.push(path); return { error: { message: 'already exists' } }; },
       list: async (_prefix, { search }) => ({ data: [{ name: search }] }) }) },
+    auth: { getSession: async () => ({ data: { session: { user: { id: 'user' } } } }), refreshSession: async () => assert.fail('응답 유실은 인증 실패가 아니다 — 갱신하지 않는다') },
   };
   const io = composerTransport(client, { orgId: 'org', chId: 'ch', uid: 'user' });
   const job = { clientId: 'stable-client', body: 'body', mentions: [] };
@@ -109,4 +110,51 @@ test('답글(D17) — 답글 대상은 그 한 번의 전송 job에 실리고 re
   const tr = composerTransport(client, { orgId: 'o', chId: 'c', uid: 'u' });
   await tr.message({ body: 'x', mentions: [], clientId: 'k1', replyTo: 42 }); await tr.message({ body: 'y', mentions: [], clientId: 'k2', replyTo: null });
   assert.equal(rows[0].reply_to, 42); assert.equal('reply_to' in rows[1], false, '옛 모양 그대로(답글이 아닐 때)');
+});
+
+// D50(2026-09-19 설치본 실측): 가린 동안 토큰 갱신이 네트워크 오류로 실패하면 supabase-js가 세션 없음으로 보고 익명 키로 insert → RLS 401 원문이 카드에 떴고,
+// 실패 카드가 Enter를 막았다. 로컬 스택 재현: 갱신 fetch 실패 → getSession null → rest 요청 Authorization = 익명 키.
+function authClient({ inserts, session = true, refresh = true }) {
+  const calls = { insert: 0, refresh: 0, lookup: 0 }; let signedIn = session;
+  return { calls, client: {
+    from() { const q = { insert() { return q; }, select() { return q; }, eq() { return q; },
+      single: async () => inserts[calls.insert++] ?? { data: { id: 99 } },
+      maybeSingle: async () => { calls.lookup++; return { data: null }; } }; return q; },
+    auth: { getSession: async () => ({ data: { session: signedIn ? { user: { id: 'user' } } : null } }),
+      refreshSession: async () => { calls.refresh++; if (!refresh) return { data: { session: null }, error: { message: 'Load failed' } }; signedIn = true; return { data: { session: { user: { id: 'user' } } }, error: null }; } },
+  } };
+}
+const RLS = 'new row violates row-level security policy for table "msgr_messages"';
+test('D50: 세션이 비어 있으면(갱신 실패 상태) 또 갱신을 기다리게 하지 않고 세션 문구 키로 바로 실패한다', async () => {
+  const { client, calls } = authClient({ session: false, inserts: [{ status: 401, error: { code: '42501', message: RLS } }] });
+  const io = composerTransport(client, { orgId: 'org', chId: 'ch', uid: 'user' });
+  await assert.rejects(io.message({ clientId: 'c1', body: 'b', mentions: [] }), (e) => e.uiKey === 'msg.delivery.authExpired');
+  assert.deepEqual([calls.insert, calls.refresh, calls.lookup], [1, 0, 0]);
+  const again = authClient({ session: false, inserts: [{ status: 401, error: { code: '42501', message: RLS } }] });
+  const session = createComposerDelivery(composerTransport(again.client, { orgId: 'org', chId: 'ch', uid: 'user' })); session.setText('b');
+  assert.equal(await session.send([]), false);
+  assert.equal(session.snapshot().job.errorKey, 'msg.delivery.authExpired', '카드는 원문 대신 이 키로 문구를 고른다');
+});
+test('D50: 사람이 누른 전송은 insert 전에 supabase-js의 갱신 실패 캐시(60초)를 비운다 — 설치된 auth-js가 그 필드를 쓰는지도 잠근다', async () => {
+  const { client } = authClient({ inserts: [{ data: { id: 13 } }] });
+  client.auth.lastRefreshFailure = { refreshToken: 'x', result: { error: { name: 'AuthRetryableFetchError' } }, expiresAt: Date.now() + 60_000 };
+  const from = client.from; client.from = (t) => { assert.equal(client.auth.lastRefreshFailure, null, 'insert의 토큰 조회가 실제 갱신을 시도하도록 먼저 비운다'); return from(t); };
+  assert.equal(await composerTransport(client, { orgId: 'org', chId: 'ch', uid: 'user' }).message({ clientId: 'c5', body: 'b', mentions: [] }), 13);
+  const { readFileSync } = await import('node:fs'); const { createRequire } = await import('node:module');
+  const src = readFileSync(createRequire(import.meta.url).resolve('@supabase/auth-js/dist/module/GoTrueClient.js'), 'utf8');
+  assert.match(src, /this\.lastRefreshFailure = \{/, 'auth-js가 갱신 실패 캐시 필드를 바꿨다 — D50 재시도가 60초 동안 헛돈다. 비우는 방법을 다시 본다');
+});
+test('D50: 세션은 있는데 서버가 토큰을 거절(401·PGRST303)하면 한 번 갱신 뒤 한 번만 다시 보낸다', async () => {
+  const { client, calls } = authClient({ inserts: [{ status: 401, error: { code: 'PGRST303', message: 'JWT expired' } }, { data: { id: 12 } }] });
+  assert.equal(await composerTransport(client, { orgId: 'org', chId: 'ch', uid: 'user' }).message({ clientId: 'c4', body: 'b', mentions: [] }), 12);
+  assert.deepEqual([calls.insert, calls.refresh], [2, 1]);
+  const dead = authClient({ refresh: false, inserts: [{ status: 401, error: { code: 'PGRST303', message: 'JWT expired' } }] });
+  await assert.rejects(composerTransport(dead.client, { orgId: 'org', chId: 'ch', uid: 'user' }).message({ clientId: 'c6', body: 'b', mentions: [] }), (e) => e.uiKey === 'msg.delivery.authExpired');
+  assert.deepEqual([dead.calls.insert, dead.calls.refresh], [1, 1]);
+});
+test('D50: 세션이 살아 있는 403 거절(진짜 권한 없음)은 갱신하지 않는다 — 원인 은폐·헛 갱신 방지', async () => {
+  const { client, calls } = authClient({ inserts: [{ status: 403, error: { code: '42501', message: RLS } }] });
+  const io = composerTransport(client, { orgId: 'org', chId: 'ch', uid: 'user' });
+  await assert.rejects(io.message({ clientId: 'c3', body: 'b', mentions: [] }), (e) => !e.uiKey && /row-level security/.test(e.message));
+  assert.deepEqual([calls.insert, calls.refresh, calls.lookup], [1, 0, 1]);
 });
