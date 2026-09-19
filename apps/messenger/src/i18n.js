@@ -411,6 +411,7 @@ export const DICT = {
   'org.start': ['시작하기', 'Get started'],
   'name.prompt.title': ['이름을 정해 주세요', 'What should people call you?'],
   'name.prompt.desc': ['지금은 이메일 앞부분({local})으로 보여요. 이 조직 사람들에게 보일 이름입니다.', 'You appear as your email prefix ({local}). This is the name people in this organization see.'],
+  'name.prompt.desc.empty': ['아직 이름이 없어 다른 사람에게 구분되지 않아요. 이 조직에서 보일 이름을 정해 주세요.', 'You don’t have a name yet, so other people can’t identify you. Choose the name shown in this organization.'],
   'name.prompt.skip': ['건너뛰기', 'Skip'],
   'org.noneTitle': ['아직 조직이 없습니다.', 'No organization yet.'],
   'org.noneDesc': ['새 조직을 만들거나, 받은 초대 링크로 들어오세요.', 'Create one, or open the invite link you received.'],
