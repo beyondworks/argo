@@ -24,9 +24,11 @@ begin
      and not exists (
        select 1 from public.msgr_crew_approvals a
        left join public.msgr_messages card on card.id = a.message_id
+       left join public.msgr_messages approval_source on approval_source.id = a.source_msg_id
        where a.channel_id = w.channel_id and a.crew_id = new.crew_id and a.status = 'pending'
          and (
-           a.source_msg_id = new.reply_to
+           (approval_source.deleted_at is null and approval_source.channel_id = w.channel_id
+             and coalesce(approval_source.thread_root, approval_source.id) = w.root_message_id)
            or (a.source_msg_id is null and card.deleted_at is null and card.kind = 'approval_card'
              and card.crew_id = a.crew_id and coalesce(card.thread_root, card.id) = w.root_message_id
              and card.mentions @> jsonb_build_array(jsonb_build_object('kind', 'approval', 'id', a.id::text)))

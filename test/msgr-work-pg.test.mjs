@@ -163,6 +163,12 @@ test('D48: 같은 업무의 총괄 결재가 대기 중이면 running, 결정 �
     reply(w,CREW,'{"disposition":"done"}','The approval was decided; there is no remaining action');
     assert.equal(status(w),'blocked',`${decision} 뒤 후속 답에서 남은 실행이 없으면 다시 도움 필요로 판정한다`);
   }
+
+  const chained=create(); const chainedApproval=pendingApproval(chained,{link:false});
+  const priorCard=sql(`select id from public.msgr_messages where thread_root=${chained.root_message_id} and kind='approval_card' order by id desc limit 1`);
+  asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,meta) values('${chained.channel_id}','crew','${CREW}','text','Follow-up created another approval',${chained.root_message_id},${priorCard},'reply:${CREW}:${priorCard}:${request()}','{"disposition":"done"}')`);
+  assert.equal(status(chained),'running','결재 카드에 단 후속 답도 같은 work root의 새 pending 결재를 기다린다');
+  assert.equal(sql(`select source_msg_id from public.msgr_crew_approvals where id='${chainedApproval}'`),String(chained.root_message_id));
 });
 test('D48: 현재 실행에서 pending 결재가 먼저 생기고 카드 연결이 실패해도 업무를 정지시키지 않는다', {skip},()=>{
   const w=create();
