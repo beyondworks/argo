@@ -58,6 +58,8 @@ try {
       await run.getByText(l['work.result.stalled'],{exact:true}).waitFor({timeout:3000}); // D48: 결과 없는 도움 필요 = 판정 없는 정지 — 사용자 언어로 이유를 보인다
       await p.evaluate(()=>{window.__workFixture.tables.msgr_work_runs[0].result='Need API access';}); await button(d,l,'work.refresh').click();
       await run.getByText('Need API access').waitFor(); assert.equal(await run.getByText(l['work.result.stalled'],{exact:true}).count(),0,'결과가 있으면 그 결과를 보인다');
+      await p.evaluate(()=>{window.__workFixture.tables.msgr_work_runs[0].result='';}); await button(d,l,'work.refresh').click();
+      assert.equal(await run.getByText(l['work.result.stalled'],{exact:true}).count(),0,'빈 명시적 blocked 결과도 무판정 정지로 오인하지 않는다');
       await p.evaluate(()=>{window.__workFixture.tables.msgr_work_runs[0].result=null;});
       await field(run,l,'work.resume').fill('Use the provided fixture milestones.');
       await p.evaluate(()=>window.__workFixture.fail='msgr_work_resume'); await button(run,l,'work.resume').click(); await d.getByRole('alert').waitFor();

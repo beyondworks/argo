@@ -263,7 +263,7 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
     assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it2 }, { session }), false, '음소거된 종류는 카드 없음');
   } finally { await seedCompany(); }
   const ap = db.calls.find((x) => x[0] === 'insertApproval')[1];
-  assert.deepEqual(ap, { org_id: ORG, channel_id: CH, crew_id: CREW, approval_id: it.id, action: '광고 집행', reason: '예산 10만원', risk: 'low' });
+  assert.deepEqual(ap, { org_id: ORG, channel_id: CH, crew_id: CREW, approval_id: it.id, action: '광고 집행', reason: '예산 10만원', risk: 'low', source_msg_id: 7 });
   // H-1: 고위험 문장은 risk 'high' + 카드 본문이 결재권자 안내로 바뀐다
   const hi = await addApproval(WS, { slug: 'seoyun', action: '거래처에 견적서 메일 발송', reason: '월말 마감', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
   assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: hi }, { session }), true);

@@ -1101,6 +1101,7 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
         : pick(`결재 요청: ${it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(확정은 이 크루의 소유자만 할 수 있습니다)`,
           `Approval requested: ${it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(Only this crew's owner can decide)`, lang);
     let ap, card;
+    approval.source_msg_id = ctx.sourceMsgId ?? ctx.threadRoot ?? null;
     if (ctx.delegated === true) {
       if (!c.db.createThreadApproval) throw new Error('메신저 위임 결재 기능을 사용할 수 없습니다');
       ({ approval: ap, message: card } = await c.db.createThreadApproval(event.wsId, ctx.crewId, ctx.sourceMsgId ?? ctx.threadRoot, ctx.channelId, approval, body));

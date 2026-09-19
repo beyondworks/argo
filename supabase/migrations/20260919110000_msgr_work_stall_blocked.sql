@@ -3,6 +3,10 @@
 -- 넘김도 없이 답을 마치면 스레드에서 더 움직일 에이전트가 없는데 업무는 영원히 running이었다("프롬프트는 힌트, 코드가 보장").
 -- 처방: 그런 답이 들어왔고 스레드에 아직 답하지 않은 에이전트 지시도 없으면(정지) blocked(도움 필요)로 바꾸고 이유를 남긴다.
 -- completed로 올리지 않는다 — 계획·분담만의 답을 완료로 오인하지 않는다(기존 원칙). 사람은 "보완하여 계속"·"업무 취소"로 이어간다.
+alter table public.msgr_crew_approvals add column if not exists source_msg_id bigint references public.msgr_messages(id) on delete cascade;
+drop trigger if exists msgr_lock_approvals on public.msgr_crew_approvals;
+create trigger msgr_lock_approvals before update on public.msgr_crew_approvals for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'crew_id', 'approval_id', 'action', 'created_at', 'risk', 'kind', 'payload', 'source_msg_id');
+
 create or replace function public.msgr_work_result() returns trigger
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare w public.msgr_work_runs; verdict text; stalled boolean := false;
@@ -22,13 +26,10 @@ begin
        left join public.msgr_messages card on card.id = a.message_id
        where a.channel_id = w.channel_id and a.crew_id = new.crew_id and a.status = 'pending'
          and (
-           (card.deleted_at is null and coalesce(card.thread_root, card.id) = w.root_message_id)
-           or (a.message_id is null and exists (
-             select 1 from public.msgr_executions current_execution
-             where current_execution.crew_id = new.crew_id and current_execution.source_msg_id = new.reply_to
-               and current_execution.state = 'running'
-               and a.created_at >= current_execution.started_at and a.created_at <= new.created_at
-           ))
+           a.source_msg_id = new.reply_to
+           or (a.source_msg_id is null and card.deleted_at is null and card.kind = 'approval_card'
+             and card.crew_id = a.crew_id and coalesce(card.thread_root, card.id) = w.root_message_id
+             and card.mentions @> jsonb_build_array(jsonb_build_object('kind', 'approval', 'id', a.id::text)))
          )
      ) then
     stalled := not exists (
@@ -38,6 +39,7 @@ begin
       where m.channel_id = w.channel_id and (m.id = w.root_message_id or m.thread_root = w.root_message_id)
         and m.id >= coalesce(w.last_resume_message_id, 0) and m.deleted_at is null
         and x->>'kind' = 'crew'
+        and coalesce(x->>'role', 'to') = 'to'
         and public.msgr_crew_in_channel(w.channel_id, target.id)
         and public.msgr_can_instruct(target.id, w.created_by, w.channel_id)
         and (m.crew_id = w.lead_crew_id or exists (

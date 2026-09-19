@@ -185,7 +185,7 @@ function TeamWork({ work, channel, crews, uid, isAdmin, disabled, busy, act, t, 
       <div className="work-item-top"><strong>{run.goal}</strong><span className={`work-status ${run.status}`}>{t(`work.status.${run.status}`)}</span></div>
       <p className="work-note">{crews.find((crew) => crew.id === run.lead_crew_id)?.display_name ?? t('work.crew.unavailable')} · {stamp(run.created_at, lang)}</p>
       {run.completion_criteria && <p className="work-text"><b>{t('work.completion')}: </b>{run.completion_criteria}</p>}
-      {run.result ? <div className="work-result"><Markdown text={run.result} /></div> : run.status === 'blocked' && <div className="work-result">{t('work.result.stalled')}</div>} {/* 결과 없는 도움 필요 = 총괄이 판정 없이 답을 마친 정지(D48) */}
+      {run.result !== null && run.result !== undefined ? <div className="work-result"><Markdown text={run.result} /></div> : run.status === 'blocked' && <div className="work-result">{t('work.result.stalled')}</div>}
       <div className="work-actions"><button className="btn sm" disabled={!run.root_message_id} onClick={() => setThread({ root: run.root_message_id, workId: run.id, label: run.goal })}>{t('work.discussion')}</button>
         {!TERMINAL.has(run.status) && (run.created_by === uid || isAdmin) && <button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_work_cancel', { p_run: run.id })))}>{t('work.cancel')}</button>}</div>
       {run.status === 'blocked' && (run.created_by === uid || isAdmin) && <ResumeWork run={run} disabled={disabled} act={act} t={t} />}
