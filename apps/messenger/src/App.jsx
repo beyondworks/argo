@@ -41,6 +41,7 @@ import { registerPush, activatePush, deactivatePush, detachPush, mountPush } fro
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 import { reconcileSession } from './resume-session.mjs';
 import { authErrorText } from './auth-errors.mjs';
+import { sessionTransition } from './session-notice.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
@@ -145,7 +146,7 @@ export default function App() {
   const [session, setSession] = useState(undefined);
   const [logoutNotice, setLogoutNotice] = useState('');
   const [signingOut, setSigningOut] = useState(false);
-  const logoutPending = useRef(false); const sessionOwner = useRef(null);
+  const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false);
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
     if (sessionOwner.current !== uid) {
@@ -153,6 +154,10 @@ export default function App() {
       if (sessionOwner.current) deactivatePush(supabase, sessionOwner.current);
       sessionOwner.current = uid;
     }
+    // 누르지 않은 로그아웃(만료·서버에서 끊김) → 로그인 화면에 이유를 적는다(D10). 다시 들어오면 그 안내만 지운다(로그인 뒤 토스트로 남지 않게)
+    const tr = sessionTransition(globalThis.localStorage, next, { pending: logoutPending.current, deleting: deletingAccount.current });
+    if (tr === 'expired') setLogoutNotice('auth.sessionExpired');
+    else if (tr === 'signedIn') setLogoutNotice((v) => (v === 'auth.sessionExpired' ? '' : v));
     setSession(next);
   }, []);
   const signOut = async () => {
@@ -191,7 +196,7 @@ export default function App() {
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
-  const accountDeleted = async () => { try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); };
+  const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
