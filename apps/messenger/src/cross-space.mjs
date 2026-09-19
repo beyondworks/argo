@@ -70,9 +70,14 @@ export function joinWithBackoff(sb, make, { min = 60_000, max = 600_000, timer =
   const join = () => {
     if (stopped) return;
     const c = ch = make();
-    c.subscribe((status) => {
+    c.subscribe((status, err) => {
       if (status === 'SUBSCRIBED') { delay = min; return; }
       if (status !== 'CHANNEL_ERROR' || stopped || ch !== c) return;
+      // 소켓이 붙어 있을 때 서버가 돌려준 평범한 { reason } 객체만 가입 거절이다. TCP 1006은 cause=CloseEvent라 거절이 아니다 —
+      // 채널을 두면 realtime-js가 재연결 뒤 스스로 다시 붙는다. 종전엔 이것도 거절로 보고 60초~10분을 기다려, 창을 다시 연 뒤에도
+      // u:(비공개 방·개인 공간 글) 구독이 비어 그 사이 글의 알림이 사라졌다(D55 실측: 재연결 1초, u:만 61초 뒤 복귀).
+      const cause = err?.cause;
+      if (sb.realtime.isConnected() !== true || cause === null || typeof cause !== 'object' || Object.getPrototypeOf(cause) !== Object.prototype || typeof cause.reason !== 'string') return;
       ch = null; drop(c);
       t = timer(join, delay); delay = Math.min(delay * 2, max);
     });

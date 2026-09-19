@@ -70,7 +70,7 @@ export async function playChime(name = getSound()) {
 export async function sendNotify(title, body = '', tag = '') {
   if (isMobilePlatform) return { ok: false, error: 'mobile' };
   const n = await nativeMac('notify_send', { title: String(title ?? ''), body: String(body ?? ''), tag: String(tag ?? '') });
-  if (n?.ok) { playChime(); return { ok: true }; }
+  if (n?.ok) { pushDiag('notify', `sent ${tag || '-'}`); playChime(); return { ok: true }; } // OS가 받아 준 것까지(D55 진단)
   if (n && n.error !== 'unsupported') { pushDiag('notify', `알림 전송 실패: ${n.error}`); return { ok: false, error: n.error }; }
   const p = await plugin();
   if (p) {
