@@ -10,7 +10,7 @@
 :root[data-theme='graphite'], :root[data-theme='graphite-light'] { --msgr-focus: #6b6b6b; }
 :root[data-theme='graphite-dark'] { --msgr-focus: #9a9a9a; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) { --msgr-focus: #c6a052; } /* 'argo'(시스템)는 globals에서 OS 어둡게를 따르지 않는다 — 밝은 금색 그대로 */
+  :root:not([data-theme]) { --msgr-focus: #c6a052; } /* 설정에서 'argo'(시스템)를 고르면 data-theme을 떼므로 이 줄이 받는다 — OS 어둡게면 바탕이 어두워져(28,24,19) 밝은 금색. 위 :root[data-theme='argo'] 줄은 속성이 직접 붙은 경우용(앱은 붙이지 않는다) */
   :root[data-theme='linen'] { --msgr-focus: #b8b2a5; }
   :root[data-theme='graphite'] { --msgr-focus: #9a9a9a; }
 }
@@ -362,6 +362,10 @@
 /* 첫 채널 뒤 남은 단계(D3) — 스레드 맨 위, 빈 조직 안내와 같은 단계 목록 */
 .msgr-onboard { position: relative; z-index: 1; background: var(--bg); margin: 4px 0 18px; padding: 12px 14px 14px; border: 1px dashed var(--border); border-radius: 16px; display: grid; gap: 10px; } /* 불투명 — 스레드 척추 줄이 카드를 가로지르지 않게 */
 .msgr-phsteps { padding: 4px 16px 12px; }
+/* 첫 진입 이름 카드(D5) — 입력창 바로 위 한 줄 */
+.msgr-nameprompt { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 auto 8px; width: min(704px, calc(100% - 48px)); padding: 10px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+.msgr-nameprompt .txt { flex: 1 1 220px; display: grid; gap: 2px; min-width: 0; } .msgr-nameprompt .txt b { font-size: 13px; } .msgr-nameprompt .txt span { font-size: 12px; color: var(--fg-3); }
+.msgr-nameprompt .msgr-input.inline { flex: 1 1 160px; max-width: 240px; } .msgr-nameprompt .acts { display: flex; gap: 6px; }
 .msgr-onboard > header { display: flex; align-items: center; justify-content: space-between; }
 .msgr-center { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--fg-3); font-size: 13px; padding: 24px; }
 
@@ -463,6 +467,7 @@
 @media (hover: hover) { .msgr-rows .row:hover { background: var(--card-2); } } .msgr-rows .row:active { background: var(--card-2); }
 .msgr-rows .row .name { font-weight: 600; font-size: 13px; flex: none; white-space: nowrap; max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
 .msgr-rows .row .sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-rows .row .msgr-offline { flex: none; font-size: 11.5px; font-weight: 500; color: var(--fg-2); white-space: nowrap; } /* 부제만 말줄임되고 '꺼져 있음'은 남는다(D23 — 색 점만으로 구분하지 않는다) */
 .msgr-rows .row .btn.ghost { border: 0; background: none; width: 26px; height: 26px; padding: 0; color: var(--fg-3); }
 @media (hover: hover) { .msgr-rows .row .btn.ghost:hover { background: var(--bg); color: var(--fg); } } .msgr-rows .row .btn.ghost:active { background: var(--bg); color: var(--fg); }
 .msgr-rows .row .btn.ghost.text { width: auto; padding: 0 8px; white-space: nowrap; } /* 글자 버튼 — 아이콘 폭 26px 규칙에 걸려 옆 x와 겹쳤다(실측 2026-09-08) */

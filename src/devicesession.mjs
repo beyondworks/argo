@@ -97,6 +97,13 @@ const mask = (s) => String(s ?? '').replace(/[A-Za-z0-9_-]{20,}/g, '***').slice(
 const DEAD_GATE_KINDS = new Set(['reused', 'revoked', 'expired']); // 종결 거절만 게이트 — catch-all 'rejected'는 재시도 유지
 const DEAD_RETRY_MS = 60 * 60_000; // 게이트 탈출 밸브 — 같은 토큰 재시도 최소 간격
 const tokenTag = (rt) => createHash('sha256').update(String(rt ?? '')).digest('hex').slice(0, 16);
+// 프로세스 안 기억(D51) — 사망 마커 파일을 못 쓰면(권한·디스크) 게이트가 마커를 못 봐 8초 루프가 같은 죽은 토큰을 계속 보냈다
+// (라이브: 한 기기 refresh_token_already_used 3,072회/24시간). Next가 이 모듈을 여러 사본으로 번들하므로 globalThis에 둔다.
+// rejects: `${root}|${지문}` → { kind, at } · backoff: root → { tag, delay, until } (네트워크·5xx 연속 실패의 대기 창)
+const MEM = (globalThis.__argoDeviceSessionGate ??= { rejects: new Map(), backoff: new Map() });
+const BACKOFF_MIN_MS = 8_000, BACKOFF_MAX_MS = 120_000; // 상한 2분 — 길면 잠자기·와이파이 끊김에서 돌아온 뒤 크루 답장·동기화가 오래 멈춘다(검수 #657). 서버 난사는 거절 기억이 막는다
+/** 테스트 전용 — 대기 창이 지난 것과 같게 */
+export function _resetDeviceBackoffForTest(root) { MEM.backoff.delete(root); }
 /** 리프레시 토큰 거절인가(Invalid Refresh Token 계열) — 네트워크 실패·5xx는 거절이 아니다. */
 const isRejection = (err) => /refresh token/i.test(String(err?.message ?? ''));
 
@@ -133,9 +140,9 @@ async function markDead(root, err, retried, sess) {
     kind: rejectionKind(reason), reason, status: err?.status ?? null, code: err?.code ?? null, retried,
     tokenTag: tokenTag(sess?.refresh_token), // 이 토큰이 거절됐다 — 같은 토큰이면 다시 보내지 않는다(아래 게이트)
   };
-  await writeFile(deadMarkerOf(root), JSON.stringify(info), { mode: 0o600 }).catch(() => {});
+  const written = await writeFile(deadMarkerOf(root), JSON.stringify(info), { mode: 0o600 }).then(() => true, () => false);
   await chmod(deadMarkerOf(root), 0o600).catch(() => {}); // 발행본이 mode 없이 쓴 구형 마커(0644) 위에 덮어도 승격(검수 LOW-2)
-  return info;
+  return { ...info, written }; // written=false면 게이트는 프로세스 기억으로 버틴다(D51) — 로그에 marker: write-failed로 남겨 다음엔 실측으로 가른다
 }
 
 const lastLogKey = new Map(); // root → 마지막 줄 키. 같은 사유의 연속 반복(rejected/error)은 한 줄만 — rotated·reread는 항상 남긴다(회전 이력이 진단의 핵심)
@@ -187,6 +194,15 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
         await logLine(root, { ev: 'skipped', reason: mask(dead.reason) });
         return null;
       }
+      // 마커가 이 토큰을 말하지 않을 때(쓰기 실패·구형 마커)만 프로세스 기억으로 막는다 — 마커가 있으면 위 게이트·탈출 밸브가 정본
+      const tag = tokenTag(sess.refresh_token);
+      const mem = MEM.rejects.get(`${root}|${tag}`);
+      if (mem && dead?.tokenTag !== tag && DEAD_GATE_KINDS.has(mem.kind) && Date.now() - mem.at < DEAD_RETRY_MS) {
+        await logLine(root, { ev: 'skipped', reason: 'memory' });
+        return null;
+      }
+      const bo = MEM.backoff.get(root);
+      if (bo && bo.tag === tag && Date.now() < bo.until) { await logLine(root, { ev: 'skipped', reason: 'backoff' }); return null; }
       const sb = _mkClient(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
       const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });
       if (!error && data?.session) {
@@ -198,6 +214,7 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
           expires_at: s.expires_at ?? 0,
           user: { id: s.user?.id ?? sess.user.id, email: s.user?.email ?? sess.user.email },
         };
+        MEM.backoff.delete(root);
         await persist(next, root);
         await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제(persist의 해제와 같은 계약: '새/살아난 세션을 디스크에 쓰면 옛 사망 판정은 무효'. 한쪽만 고치지 말 것 — 검수 LOW-1)
         await logLine(root, { ev: 'rotated', retried, expires_at: next.expires_at });
@@ -209,7 +226,9 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
       // 오진하면 사용자가 기기 재바인딩(다른 계정이면 이전 주인 로그아웃)까지 가는 과잉 처방이 된다
       // (분리 검수 M3). /api/me가 이 마커만 읽어 회전 없이 판정한다(M4 — UI 마운트발 이중 회전 금지).
       if (!isRejection(error)) {
-        await logLine(root, { ev: 'error', reason: mask(error?.message ?? 'no session'), status: error?.status ?? null });
+        const delay = Math.min(bo?.tag === tag ? bo.delay * 2 : BACKOFF_MIN_MS, BACKOFF_MAX_MS); // 8초 → 16 → … → 2분, 토큰이 바뀌면 처음부터
+        MEM.backoff.set(root, { tag, delay, until: Date.now() + delay });
+        await logLine(root, { ev: 'error', reason: mask(error?.message ?? 'no session'), status: error?.status ?? null, backoffMs: delay });
         return null;
       }
       // 거절 = 이 프로세스가 든 토큰이 서버에서 무효. 다른 프로세스(사이드카·재로그인)가 먼저 회전해
@@ -227,7 +246,8 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
         }
       }
       const info = await markDead(root, error, retried, sess);
-      await logLine(root, { ev: 'rejected', kind: info.kind, reason: info.reason, status: info.status, code: info.code, retried, count: info.count });
+      MEM.rejects.set(`${root}|${tokenTag(sess.refresh_token)}`, { kind: info.kind, at: Date.now() });
+      await logLine(root, { ev: 'rejected', kind: info.kind, reason: info.reason, status: info.status, code: info.code, retried, count: info.count, ...(info.written ? {} : { marker: 'write-failed' }) });
       return null;
     }
   });

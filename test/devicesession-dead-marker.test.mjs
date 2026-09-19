@@ -307,3 +307,34 @@ test('회전 경로는 도장이 똑같아도 디스크를 다시 읽는다 — 
   assert.deepEqual(calls, ['rx'], '도장이 같아도 옛 토큰(rt)을 보내지 않는다 — 보내면 GoTrue가 가족을 폐기한다');
   assert.equal(out?.access_token, 'at3');
 });
+
+// D51(2026-09-19 라이브): 한 기기가 refresh_token_already_used를 8초마다 3,072회/24시간 보냈다. 게이트는 마커 파일에만 기대는데
+// markDead가 쓰기 오류를 삼키면 마커가 없어 매 사이클 같은 죽은 토큰을 다시 보낸다. 프로세스 안 기억으로도 막는다.
+test('사망 마커를 쓰지 못해도 같은 죽은 토큰은 다시 보내지 않는다(프로세스 안 기억, 1시간)', async () => {
+  const { mkdir } = await import('node:fs/promises');
+  const root = await mkRoot(-10);
+  await mkdir(marker(root)); // 마커 자리에 디렉터리 — writeFile 실패(권한·디스크 가득 등과 같은 결과)
+  const calls = [];
+  const client = clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return reject('Invalid Refresh Token: Already Used'); });
+  for (let i = 0; i < 4; i++) assert.equal(await getFreshDeviceSession({ root, _mkClient: client }), null);
+  assert.deepEqual(calls, ['rt'], '마커 없이도 같은 토큰은 한 번만 서버에 간다');
+  assert.equal((await readLog(root)).find((l) => l.ev === 'rejected')?.marker, 'write-failed', '마커 쓰기 실패를 로그로 남긴다(다음엔 실측으로 가른다)');
+  await writeFile(join(root, '.device-session.json'), sessJson('rt9', -10)); // 재로그인(다른 토큰)이면 다시 시도
+  await getFreshDeviceSession({ root, _mkClient: client });
+  assert.deepEqual(calls, ['rt', 'rt9']);
+});
+test('네트워크 실패가 이어지면 간격을 벌린다(8초 루프가 매번 서버를 두드리지 않게) — 성공하면 초기화', async () => {
+  const root = await mkRoot(-10);
+  const calls = [];
+  let fail = true;
+  const client = clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return fail ? reject('fetch failed') : ok('at2', 'rt2'); });
+  for (let i = 0; i < 5; i++) await getFreshDeviceSession({ root, _mkClient: client });
+  assert.equal(calls.length, 1, '연속 실패는 대기 창 안에서 다시 보내지 않는다');
+  const log = await readLog(root);
+  assert.ok(log.filter((l) => l.ev === 'error').every((l) => l.backoffMs <= 120_000), '대기 창 상한 2분(검수 #657 — 잠자기에서 돌아온 뒤 오래 멈추지 않게)');
+  fail = false;
+  const { _resetDeviceBackoffForTest } = await import('../src/devicesession.mjs');
+  _resetDeviceBackoffForTest(root); // 시간이 흐른 것과 같다
+  assert.equal((await getFreshDeviceSession({ root, _mkClient: client }))?.access_token, 'at2');
+  assert.equal(calls.length, 2);
+});

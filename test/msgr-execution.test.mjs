@@ -72,3 +72,21 @@ test('heartbeat is bounded and stoppable without claiming again', async () => {
   await new Promise((r) => setTimeout(r, 15));
   assert.ok(atStop > 0); assert.equal(count, atStop);
 });
+
+test('D25: 앞 프로세스가 답하던 중 끊긴 시도는 interrupted — 이 프로세스가 시작한 시도는 종전대로 pending', async () => {
+  const running = { acquired: false, state: 'running', heartbeat_at: new Date().toISOString() };
+  const cut = job(); cut.msgrExecution = { attempt: 'from-dead-process', phase: 'running' };
+  assert.deepEqual(await beginMessengerExecution('ws', { claimExecution: async () => running }, cut), { kind: 'interrupted', stale: false });
+  const claiming = job(); claiming.msgrExecution = { attempt: 'lost-response', phase: 'claiming' };
+  assert.equal((await beginMessengerExecution('ws', { claimExecution: async () => running }, claiming)).kind, 'pending', '선점 응답 유실은 끊긴 턴이 아니다');
+  const shared = db(), live = job();
+  assert.equal((await beginMessengerExecution('ws', shared, live)).kind, 'run');
+  assert.equal((await beginMessengerExecution('ws', shared, live)).kind, 'pending', '살아 있는 이 프로세스의 턴을 끊긴 것으로 오인하지 않는다');
+});
+
+test('D25: 시작 기록은 프로세스 전역 등록부 — 같은 모듈의 다른 번들 사본도 살아 있는 시도를 끊긴 턴으로 보지 않는다', async () => {
+  const shared = db(), live = job();
+  assert.equal((await beginMessengerExecution('ws', shared, live)).kind, 'run');
+  const copy = await import(`../src/gateway/msgr-execution.mjs?bundle-copy=${Date.now()}`); // Next가 엔트리마다 따로 번들한 사본을 흉내
+  assert.equal((await copy.beginMessengerExecution('ws', shared, live)).kind, 'pending');
+});

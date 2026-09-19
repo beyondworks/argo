@@ -19,7 +19,7 @@ test('loadPersonal 함수가 msgr_dm_personal_list RPC를 호출한다', () => {
 });
 
 test('loadOrgs가 개인 공간(PERSONAL)을 유지한다', () => {
-  assert.match(src, /cur === PERSONAL \? cur :/);
+  assert.match(src, /if \(cur === PERSONAL \|\| \(cur && list\.some\(\(o\) => o\.id === cur\)\)\) return cur;/, '지금 공간이 개인이면 그대로(마지막 공간 복원보다 먼저)');
 });
 
 test('조직 전환 메뉴에 개인 항목이 맨 위에 있다', () => {
