@@ -3,17 +3,62 @@
 -- 넘김도 없이 답을 마치면 스레드에서 더 움직일 에이전트가 없는데 업무는 영원히 running이었다("프롬프트는 힌트, 코드가 보장").
 -- 처방: 그런 답이 들어왔고 스레드에 아직 답하지 않은 에이전트 지시도 없으면(정지) blocked(도움 필요)로 바꾸고 이유를 남긴다.
 -- completed로 올리지 않는다 — 계획·분담만의 답을 완료로 오인하지 않는다(기존 원칙). 사람은 "보완하여 계속"·"업무 취소"로 이어간다.
-alter table public.msgr_crew_approvals add column if not exists source_msg_id bigint references public.msgr_messages(id) on delete cascade;
+alter table public.msgr_crew_approvals add column if not exists source_msg_id bigint;
+alter table public.msgr_crew_approvals drop constraint if exists msgr_crew_approvals_source_msg_id_fkey;
+alter table public.msgr_crew_approvals add constraint msgr_crew_approvals_source_msg_id_fkey foreign key (source_msg_id) references public.msgr_messages(id) on delete set null;
 drop trigger if exists msgr_lock_approvals on public.msgr_crew_approvals;
-create trigger msgr_lock_approvals before update on public.msgr_crew_approvals for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'crew_id', 'approval_id', 'action', 'created_at', 'risk', 'kind', 'payload', 'source_msg_id');
+update public.msgr_crew_approvals a set source_msg_id = card.reply_to
+from public.msgr_messages card
+where a.source_msg_id is null and a.status = 'pending' and card.id = a.message_id
+  and card.kind = 'approval_card' and card.channel_id = a.channel_id and card.crew_id = a.crew_id
+  and card.mentions @> jsonb_build_array(jsonb_build_object('kind', 'approval', 'id', a.id::text))
+  and exists (select 1 from public.msgr_executions e where e.crew_id = a.crew_id and e.source_msg_id = card.reply_to and e.state = 'running');
+create trigger msgr_lock_approvals before update on public.msgr_crew_approvals for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'crew_id', 'approval_id', 'action', 'created_at', 'risk', 'kind', 'payload');
+
+create or replace function public.msgr_approval_source_guard() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare source public.msgr_messages; card public.msgr_messages; crew public.msgr_crews;
+begin
+  if tg_op = 'UPDATE' and old.source_msg_id is not null then
+    if new.source_msg_id is null then return new; end if;
+    if new.source_msg_id is distinct from old.source_msg_id then
+      raise exception 'msgr_immutable_source_msg_id' using errcode = '42501';
+    end if;
+    return new;
+  end if;
+  if new.source_msg_id is null and tg_op = 'UPDATE' and new.message_id is distinct from old.message_id and new.message_id is not null then
+    select * into card from public.msgr_messages where id = new.message_id;
+    if card.id is null or card.deleted_at is not null or card.kind <> 'approval_card' or card.channel_id is distinct from new.channel_id
+       or card.crew_id is distinct from new.crew_id
+       or not (card.mentions @> jsonb_build_array(jsonb_build_object('kind', 'approval', 'id', new.id::text))) then
+      raise exception 'msgr_approval_source_forbidden' using errcode = '42501';
+    end if;
+    new.source_msg_id := card.reply_to;
+  end if;
+  if new.source_msg_id is null then return new; end if;
+  select * into source from public.msgr_messages where id = new.source_msg_id;
+  select * into crew from public.msgr_crews where id = new.crew_id;
+  if source.id is null or source.deleted_at is not null or source.channel_id is distinct from new.channel_id
+     or source.org_id is distinct from new.org_id or crew.org_id is distinct from new.org_id
+     or not exists (select 1 from public.msgr_executions e where e.crew_id = new.crew_id and e.source_msg_id = source.id and e.state = 'running') then
+    raise exception 'msgr_approval_source_forbidden' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+revoke all on function public.msgr_approval_source_guard() from public, anon, authenticated;
+drop trigger if exists a_msgr_approval_source_guard on public.msgr_crew_approvals;
+create trigger a_msgr_approval_source_guard before insert or update on public.msgr_crew_approvals for each row execute function public.msgr_approval_source_guard();
 
 create or replace function public.msgr_work_result() returns trigger
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare w public.msgr_work_runs; verdict text; stalled boolean := false;
+declare w public.msgr_work_runs; verdict text; stalled boolean := false; current_source_id bigint;
 begin
   if new.author_kind <> 'crew' then return new; end if;
   select * into w from public.msgr_work_runs where root_message_id = coalesce(new.thread_root,(select coalesce(m.thread_root,m.id) from public.msgr_messages m where m.id=new.reply_to and m.channel_id=new.channel_id)) and channel_id = new.channel_id for update;
   if w.id is null or w.status <> 'running' or new.reply_to < coalesce(w.last_resume_message_id,0) then return new; end if;
+  select case when parent.kind = 'approval_card' then parent.reply_to else new.reply_to end into current_source_id
+  from public.msgr_messages parent where parent.id = new.reply_to and parent.channel_id = new.channel_id;
+  current_source_id := coalesce(current_source_id, new.reply_to);
   verdict := case when new.meta->>'failed' = 'true' or (new.kind='system' and (new.client_msg_id ~ '^(hopcap|ratecap|stale|deny|execution-unknown|unknown):' or new.meta->>'execution_status'='unknown')) then 'blocked'
     when new.crew_id = w.lead_crew_id and new.meta->>'disposition' = 'done' then new.meta->>'work_status' else null end;
   -- 정지 판정: 총괄의 글(넘김 판정 아님)인데 판정이 없고, 같은 스레드에 이 총괄이 올린 결재가 대기 중이지 않으며,
@@ -23,16 +68,10 @@ begin
      and coalesce(new.meta->>'disposition', 'done') <> 'handoff'
      and not exists (
        select 1 from public.msgr_crew_approvals a
-       left join public.msgr_messages card on card.id = a.message_id
-       left join public.msgr_messages approval_source on approval_source.id = a.source_msg_id
+       join public.msgr_messages approval_source on approval_source.id = a.source_msg_id
        where a.channel_id = w.channel_id and a.crew_id = new.crew_id and a.status = 'pending'
-         and (
-           (approval_source.deleted_at is null and approval_source.channel_id = w.channel_id
-             and coalesce(approval_source.thread_root, approval_source.id) = w.root_message_id)
-           or (a.source_msg_id is null and card.deleted_at is null and card.kind = 'approval_card'
-             and card.crew_id = a.crew_id and coalesce(card.thread_root, card.id) = w.root_message_id
-             and card.mentions @> jsonb_build_array(jsonb_build_object('kind', 'approval', 'id', a.id::text)))
-         )
+         and approval_source.deleted_at is null and approval_source.channel_id = w.channel_id
+         and coalesce(approval_source.thread_root, approval_source.id) = w.root_message_id
      ) then
     stalled := not exists (
       select 1 from public.msgr_messages m
@@ -47,7 +86,7 @@ begin
         and (m.crew_id = w.lead_crew_id or exists (
           select 1 from public.msgr_executions source where source.reply_id = m.id and source.crew_id = m.crew_id and source.state = 'completed'
         ))
-        and not (m.id = new.reply_to and x->>'id' = new.crew_id::text)
+        and not (m.id = current_source_id and x->>'id' = new.crew_id::text)
         and not exists (select 1 from public.msgr_executions e where e.crew_id::text = x->>'id' and e.source_msg_id = m.id and e.state = 'completed'));
     if stalled then verdict := 'blocked'; end if;
   end if;

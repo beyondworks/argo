@@ -79,9 +79,11 @@ const create=(opts={})=>JSON.parse(last(asUser(opts.user??U.owner,`select public
 const handoff=(w,to,body)=>last(asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${w.channel_id}','crew','${CREW}','text','${body}',${w.root_message_id},${w.root_message_id},'reply:${CREW}:${w.root_message_id}:${request()}','[{"kind":"crew","id":"${to}"}]','{"disposition":"handoff","origin":"${U.owner}"}') returning id`));
 const status=(w)=>sql(`select status from public.msgr_work_runs where id='${w.id}'`);
 const reply=(w,crew=CREW,meta='{"disposition":"done"}',body='Result',uid=U.owner)=>last(asUser(uid,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,meta) values('${w.channel_id}','crew','${crew}','text','${body}',${w.root_message_id},${w.root_message_id},'reply:${crew}:${w.root_message_id}:${request()}','${meta}') returning id`));
-const pendingApproval=(w,{source=true,link=true}={})=>{
-  const id=sql(`insert into public.msgr_crew_approvals(org_id,channel_id,crew_id,approval_id,action${source?',source_msg_id':''}) values('${ORG}','${w.channel_id}','${CREW}','ap-${request()}','Send the report'${source?`,${w.root_message_id}`:''}) returning id`);
-  const mid=sql(`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions) values('${w.channel_id}','crew','${CREW}','approval_card','Approval needed',${w.root_message_id},${w.root_message_id},'ap:${CREW}:${request()}','[{"kind":"approval","id":"${id}"}]') returning id`);
+const ensureExecution=(w,sourceId=w.root_message_id)=>sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt,state) select '${CREW}',${sourceId},'${request()}','running' where not exists (select 1 from public.msgr_executions where crew_id='${CREW}' and source_msg_id=${sourceId} and state='running')`);
+const pendingApproval=(w,{source=true,link=true,sourceId=w.root_message_id}={})=>{
+  ensureExecution(w,sourceId);
+  const id=sql(`insert into public.msgr_crew_approvals(org_id,channel_id,crew_id,approval_id,action${source?',source_msg_id':''}) values('${ORG}','${w.channel_id}','${CREW}','ap-${request()}','Send the report'${source?`,${sourceId}`:''}) returning id`);
+  const mid=sql(`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions) values('${w.channel_id}','crew','${CREW}','approval_card','Approval needed',${w.root_message_id},${sourceId},'ap:${CREW}:${request()}','[{"kind":"approval","id":"${id}"}]') returning id`);
   if(link) sql(`update public.msgr_crew_approvals set message_id=${mid} where id='${id}'`);
   return id;
 };
@@ -153,7 +155,8 @@ test('D48: 같은 업무의 총괄 결재가 대기 중이면 running, 결정 �
 
   const legacy=create(); pendingApproval(legacy,{source:false});
   reply(legacy,CREW,'{"disposition":"done"}','Waiting on a pre-migration linked card');
-  assert.equal(status(legacy),'running','source_msg_id가 없는 기존 행도 검증된 카드 링크로 기다린다');
+  assert.equal(sql(`select source_msg_id from public.msgr_crew_approvals where crew_id='${CREW}' and channel_id='${legacy.channel_id}' order by created_at desc limit 1`),String(legacy.root_message_id),'이전 게이트웨이의 카드 연결 때 검증된 실행 원문을 보완한다');
+  assert.equal(status(legacy),'running','검증된 실행 원문으로 보완된 기존 행도 결재를 기다린다');
 
   for (const decision of ['approved','rejected']) {
     const w=create(); const approval=pendingApproval(w);
@@ -201,6 +204,20 @@ test('D48: 현재 실행에서 pending 결재가 먼저 생기고 카드 연결�
   reply(second,CREW,'{"disposition":"done"}','Second approval is still pending'); assert.equal(status(second),'running');
 
   assert.match(asUserRaw(U.owner,`update public.msgr_crew_approvals set source_msg_id=${second.root_message_id} where id='${approval}'`).stderr,/msgr_immutable_source_msg_id/,'결재의 실행 원문은 바꿀 수 없다');
+});
+test('D48: 실행 원문을 하드 삭제해도 결재 기록은 보존되고 출처 없는 pending은 업무를 붙잡지 않는다', {skip},()=>{
+  const w=create();
+  const source=last(asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,author_user_id,kind,body,thread_root,reply_to,client_msg_id) values('${w.channel_id}','user','${U.owner}','text','Please prepare the approval',${w.root_message_id},${w.root_message_id},'${request()}') returning id`));
+  const pending=pendingApproval(w,{sourceId:source});
+  const decided=pendingApproval(w,{sourceId:source});
+  sql(`update public.msgr_crew_approvals set status='approved',decided_by='${U.owner}',decided_at=now() where id='${decided}'`);
+
+  sql(`delete from public.msgr_messages where id=${source}`);
+  assert.equal(sql(`select count(*) from public.msgr_crew_approvals where id in ('${pending}','${decided}')`),'2','pending·결정 기록을 모두 보존한다');
+  assert.equal(sql(`select count(*) from public.msgr_crew_approvals where id in ('${pending}','${decided}') and source_msg_id is null`),'2','삭제된 원문 참조만 비운다');
+
+  reply(w,CREW,'{"disposition":"done"}','The source was removed; user guidance is required');
+  assert.equal(status(w),'blocked','출처를 확인할 수 없는 pending으로 업무를 계속 숨기지 않는다');
 });
 test('D48: 비총괄 크루가 직접 넣은 비배열·가짜 멘션은 주관 답을 깨뜨리거나 업무를 고착시키지 않는다', {skip},()=>{
   for (const mentions of ['{}', `[{"kind":"crew","id":"${request()}"}]`, `[{"kind":"crew","id":"${OTHER_CREW}"}]`]) {
