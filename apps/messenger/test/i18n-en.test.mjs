@@ -29,5 +29,5 @@ test('모든 en 문구 — "a agent" 없음, 숫자 자리 뒤 복수 명사는 
 test('빈 방 문구 — 에이전트가 있는 방만 @ 안내, 채널 없는 조직 상단은 채널 없음', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /t\(chCrews\.length && channel\.kind !== 'dm' \? 'ch\.empty' : 'ch\.empty\.plain'\)/);
-  assert.match(app, /<span className="topic">\{org \? t\('ch\.noneYet\.short'\) : t\('org\.none'\)\}<\/span>/);
+  assert.match(app, /<span className="topic">\{org \? t\(browse \? 'ch\.notJoined\.short' : 'ch\.noneYet\.short'\) : t\('org\.none'\)\}<\/span>/, '둘러볼 공개 채널이 있으면 사이드바와 같은 \'참여한 채널 없음\'(#646 검수)');
 });
