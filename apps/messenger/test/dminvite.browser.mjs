@@ -243,6 +243,32 @@ await scenario(390, 'agent-offline-visible-phone', async (p) => {
   assert.ok(await row.locator('.sub').evaluate((el) => el.scrollWidth > el.clientWidth), '부제는 실제로 말줄임 상태(긴 부제 픽스처가 유효)');
 }, '?away=1');
 
+// D14·D42. 방 밖 에이전트를 @로 부르면 글은 평문으로 가고 안내가 뜬다 — 남의 에이전트는 [1:1로 시키기]가 주인과의 1:1을 열어 본문을 옮긴다
+// (종전: 무안내 40초 침묵 / 남의 에이전트 1:1은 msgr_bad_member 원문). 내 에이전트는 [이 방에 추가 요청]도.
+await scenario(1280, 'outside-mention-notice', async (p) => {
+  await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click(); await p.waitForTimeout(500);
+  const ta = p.locator('.msgr-composer textarea');
+  await ta.fill('@Colleague Agent 표 정리 부탁'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
+  const chip = p.locator('.msgr-outsidechip'); await chip.waitFor({ timeout: 3000 });
+  assert.match(await chip.innerText(), /Colleague Agent은\(는\) 이 방에 없어요/);
+  assert.equal(await chip.locator('button', { hasText: '1:1로 시키기' }).count(), 1, '허용 all → 1:1로 시키기');
+  assert.equal(await chip.locator('button', { hasText: '이 방에 추가 요청' }).count(), 0, '남의 에이전트는 추가 요청 없음(주인만 데려온다)');
+  const sent = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.table === 'msgr_messages' && c.op === 'insert').map((c) => [].concat(c.values)[0]).at(-1));
+  assert.deepEqual(sent?.mentions ?? [], [], '글은 평문(멘션 없음) — 방 밖 에이전트에게 배달하지 않는다');
+  await chip.locator('button', { hasText: '1:1로 시키기' }).click(); await p.waitForTimeout(900);
+  assert.match(await p.locator('.msgr-top').first().innerText(), /Org Colleague/, '주인(Org Colleague)과의 1:1이 열린다(크루를 DM에 넣지 않는다)');
+  assert.equal(await p.locator('.msgr-composer textarea').inputValue(), '@Colleague Agent 표 정리 부탁', '보낸 본문이 입력창에 옮겨져 있다');
+  const created = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.rpc === 'msgr_create_channel'));
+  assert.equal(created.length, 0, '기존 1:1을 쓴다 — 크루 동반 DM 생성(msgr_bad_member 경로)을 부르지 않는다');
+  // 내 에이전트: 1:1 + 이 방에 추가 요청
+  await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click(); await p.waitForTimeout(500);
+  await ta.fill('@Fixture Agent 여기서도'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
+  assert.equal(await chip.locator('button', { hasText: '이 방에 추가 요청' }).count(), 1, '내 에이전트는 추가 요청');
+  await chip.locator('button', { hasText: '이 방에 추가 요청' }).click(); await p.waitForTimeout(700);
+  const joins = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.rpc === 'msgr_crew_join'));
+  assert.ok(joins.some((c) => c.args?.crew === 'crew-1' && c.args?.ch === 'general'), '기존 에이전트 참여 경로(msgr_crew_join)로 요청');
+});
+
 // 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
 await scenario(1280, 'unjoined-preview', async (p) => {
   const rail = () => p.locator('[data-sec="channels"]').innerText();

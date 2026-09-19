@@ -61,3 +61,19 @@ test('mentionsFromBody — @all 은 후보 전원(사람 먼저·크루 순)으�
   assert.deepEqual(mentionsFromBody('메일 x@all.com 확인', cands), [], '이메일 속 @all 은 아니다');
   assert.deepEqual(mentionsFromBody('@ALL', cands).length, 3, '대소문자 무시');
 });
+
+// D14: 방 밖 에이전트 멘션 — 후보는 방 안만(유건 0.1.29), 전송 뒤 안내용으로 방 밖 조직 에이전트를 찾는다
+test('outsideCrewMentions: 방 밖 조직 에이전트만, 방 안 이름·동명 접두는 새지 않음, 멘션 없는 이름은 무시', async () => {
+  const { outsideCrewMentions, canInstructCrew } = await import('../src/mention-candidates.mjs');
+  const org = [{ id: 's', display_name: '서윤' }, { id: 'm', display_name: '민준' }, { id: 'p', display_name: '페퍼' }, { id: 'pv', display_name: '페퍼 (VPS)' }];
+  const room = [{ kind: 'crew', id: 'm', name: '민준' }, { kind: 'user', id: 'u1', name: '비(동료)' }];
+  assert.deepEqual(outsideCrewMentions('@서윤 여기서도 도와줄 수 있어?', room, org).map((c) => c.id), ['s'], '방 밖 서윤');
+  assert.deepEqual(outsideCrewMentions('@민준 표 정리', room, org).map((c) => c.id), [], '방 안 민준은 안내 대상 아님');
+  assert.deepEqual(outsideCrewMentions('서윤 얘기 좀 하자', room, org).map((c) => c.id), [], '@ 없이 이름만은 멘션이 아님');
+  assert.deepEqual(outsideCrewMentions('@페퍼 (VPS) 상태?', [...room, { kind: 'crew', id: 'pv', name: '페퍼 (VPS)' }], org).map((c) => c.id), [], '방 안 "페퍼 (VPS)"의 접두 "페퍼"가 방 밖으로 새지 않는다');
+  assert.deepEqual(outsideCrewMentions('@서윤 @페퍼 둘 다', room, org).map((c) => c.id).sort(), ['p', 's'], '여럿');
+  assert.equal(canInstructCrew({ owner_user_id: 'me', allow: 'owner' }, 'me'), true, '주인');
+  assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'all' }, 'me'), true, '모두');
+  assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'list', allow_users: ['me'] }, 'me'), true, '정한 사람');
+  assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'owner' }, 'me'), false, '주인만');
+});
