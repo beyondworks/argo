@@ -134,5 +134,6 @@ export function execTurnFile(command, args, options = {}) {
     if (timeout > 0) { timer = setTimeout(() => cancel(true), timeout); timer.unref?.(); }
   });
   promise.child = child;
+  promise.ownership = ownership; // 읽기 전용 — 시험이 "루트 종료 전에 관찰됨"을 시간 대신 기록으로 기다린다(병렬 부하에서 500ms 스냅샷이 늦으면 650ms 시계로는 관찰을 놓쳤다)
   return promise;
 }

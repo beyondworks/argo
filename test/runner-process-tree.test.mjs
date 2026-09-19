@@ -42,13 +42,17 @@ test('already aborted signal does not spawn a child',async()=>{
  await assert.rejects(run,e=>e.aborted===true);assert.equal(run.child,undefined);
 });
 test('a detached child observed before root exit is stopped and uncertainty stays explicit', {skip:process.platform==='win32'}, async()=>{
- const dir=await mkdtemp(join(tmpdir(),'argo-root-exited-')); const beat=join(dir,'beat');
+ const dir=await mkdtemp(join(tmpdir(),'argo-root-exited-')); const beat=join(dir,'beat'); const go=join(dir,'go');
  const ac=new AbortController();
- const script=`const {spawn}=require('child_process');const child=spawn(process.execPath,['-e',"setInterval(()=>require('fs').appendFileSync(process.argv[1],'x'),40)",process.argv[1]],{detached:true,stdio:['ignore',process.stdout,process.stderr]});process.stdout.write(String(child.pid)+'\\n');child.unref();setTimeout(()=>process.exit(0),650);`;
- const run=execTurnFile(process.execPath,['-e',script,beat],{signal:ac.signal});let descendant;
+ // 루트는 go 파일이 생길 때까지 산다 — 시험이 소유 기록에 자식이 들어온 것(= 루트 종료 전 관찰)을 확인한 뒤 만든다.
+ // 종전에는 650ms 시계였고, 병렬 부하로 500ms 공유 스냅샷이 늦으면 관찰 전에 루트가 끝나 자식이 멈추지 않았다(8회 중 2회 red, 2026-09-19).
+ const script=`const {spawn}=require('child_process');const fs=require('fs');const child=spawn(process.execPath,['-e',"setInterval(()=>require('fs').appendFileSync(process.argv[1],'x'),40)",process.argv[1]],{detached:true,stdio:['ignore',process.stdout,process.stderr]});process.stdout.write(String(child.pid)+'\\n');child.unref();const t=setInterval(()=>{if(fs.existsSync(process.argv[2])){clearInterval(t);process.exit(0);}},20);`;
+ const run=execTurnFile(process.execPath,['-e',script,beat,go],{signal:ac.signal});let descendant;
  run.child.stdout.on('data',d=>{descendant=Number(String(d).trim());});
  const rejected=assert.rejects(run,e=>e.aborted===true&&e.cancellationIncomplete===true);
  try {
+  await waitFor(()=>Number.isInteger(descendant)&&run.ownership.records.has(descendant));
+  await writeFile(go,'');
   await waitFor(()=>run.child.exitCode===0);ac.abort();await rejected;
   const atStop=await size(beat);await delay(500);assert.equal(await size(beat),atStop);
  } finally { if(Number.isInteger(descendant))try{process.kill(descendant,'SIGKILL');}catch{} }
