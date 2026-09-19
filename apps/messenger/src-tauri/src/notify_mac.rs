@@ -15,12 +15,22 @@ use objc2::{define_class, msg_send, MainThreadOnly};
 use objc2_foundation::{NSBundle, NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
-    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationSettings, UNUserNotificationCenter,
+    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse, UNNotificationSettings, UNUserNotificationCenter,
     UNUserNotificationCenterDelegate,
 };
 use std::ptr::NonNull;
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
+use tauri::Emitter;
+
+// 배너 클릭을 웹뷰에 알릴 앱 핸들 — 대리자는 ObjC 객체라 필드 대신 전역 한 칸(setup에서 한 번 채운다)
+static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+// 마지막 클릭 — 앱이 꺼진 채 배너를 눌러 켜지면(콜드 스타트) 웹뷰가 로그인 뒤에야 듣기 시작해 이벤트를 놓친다(검수 #650).
+// 웹뷰가 듣기를 붙인 직후 notify_take_pending으로 한 번 가져간다. 켜져 있을 때 받은 클릭도 이벤트 처리기가 가져가 비운다.
+static PENDING: Mutex<Option<String>> = Mutex::new(None);
+
+#[tauri::command]
+pub fn notify_take_pending() -> Option<String> { PENDING.lock().ok().and_then(|mut p| p.take()) }
 
 fn in_app_bundle() -> bool {
     let b = NSBundle::mainBundle();
@@ -115,12 +125,27 @@ define_class!(
         fn will_present(&self, _c: &UNUserNotificationCenter, _n: &UNNotification, handler: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>) {
             handler.call((UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List,));
         }
+
+        // 배너 클릭(D52) — OS가 앱을 앞으로 가져오기만 하고 어느 방인지는 몰랐다. 알림 식별자(notify.js가 "종류:글@채널"로 만든다)를
+        // 웹뷰에 넘겨 그 방을 연다(App.jsx navTo — 다른 조직이면 조직을 바꾼 뒤 연다).
+        #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+        fn did_receive(&self, _c: &UNUserNotificationCenter, response: &UNNotificationResponse, handler: &block2::DynBlock<dyn Fn()>) {
+            let id = response.notification().request().identifier().to_string();
+            if let Ok(mut p) = PENDING.lock() { *p = Some(id.clone()); }
+            if let Some(app) = APP.get() {
+                // ⌘M 최소화·닫기(=가리기)여도 방이 보이게 창을 되살린다 — OS 활성화는 최소화를 풀지 않는다
+                if let Some(w) = tauri::Manager::get_webview_window(app, "main") { let _ = w.unminimize(); let _ = w.show(); let _ = w.set_focus(); }
+                let _ = app.emit("msgr-notify-click", id);
+            }
+            handler.call(());
+        }
     }
 );
 
 /// setup에서 한 번 — 대리자는 center가 약하게 붙잡으므로 앱 수명 동안 놓지 않는다(leak).
-pub fn install_delegate(mtm: objc2::MainThreadMarker) {
+pub fn install_delegate(mtm: objc2::MainThreadMarker, app: tauri::AppHandle) {
     let Some(c) = center() else { return };
+    let _ = APP.set(app);
     let d: Retained<NotifyDelegate> = unsafe { msg_send![NotifyDelegate::alloc(mtm), init] };
     c.setDelegate(Some(ProtocolObject::from_ref(&*d)));
     std::mem::forget(d);

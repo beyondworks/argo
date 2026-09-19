@@ -22,7 +22,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list,
-        notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send
+        notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send, notify_mac::notify_take_pending
     ]);
     #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder
@@ -41,15 +41,16 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (window, event);
         })
-        .setup(|_app| {
+        .setup(|app| {
+            let _ = &app; // 모바일 타깃은 아래 cfg 블록이 모두 빠져 쓰지 않는다
             // 앱이 앞에 있어도 다른 방 알림 배너를 띄운다(UN 기본은 전면 앱 알림을 숨김) — 번들 밖(cargo run)이면 조용히 건너뛴다
             #[cfg(target_os = "macos")]
-            if let Some(mtm) = objc2::MainThreadMarker::new() { notify_mac::install_delegate(mtm); }
+            if let Some(mtm) = objc2::MainThreadMarker::new() { notify_mac::install_delegate(mtm, app.handle().clone()); }
             // 인앱 업데이터 + 설치 뒤 재시작 — 데스크톱만(모바일 타깃에는 크레이트 자체가 없다)
             #[cfg(desktop)]
             {
-                _app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
-                _app.handle().plugin(tauri_plugin_process::init())?;
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
             }
             Ok(())
         })
