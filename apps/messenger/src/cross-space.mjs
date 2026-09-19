@@ -70,9 +70,13 @@ export function joinWithBackoff(sb, make, { min = 60_000, max = 600_000, timer =
   const join = () => {
     if (stopped) return;
     const c = ch = make();
-    c.subscribe((status) => {
+    c.subscribe((status, err) => {
       if (status === 'SUBSCRIBED') { delay = min; return; }
       if (status !== 'CHANNEL_ERROR' || stopped || ch !== c) return;
+      // 가입 거절(서버 응답 = err.cause)만 걷고 기다린다. 소켓이 끊겨 난 오류(가린 창의 하트비트 시간 초과·네트워크)는 거절이 아니다 —
+      // 채널을 두면 realtime-js가 재연결 뒤 스스로 다시 붙는다. 종전엔 이것도 거절로 보고 60초~10분을 기다려, 창을 다시 연 뒤에도
+      // u:(비공개 방·개인 공간 글) 구독이 비어 그 사이 글의 알림이 사라졌다(D55 실측: 재연결 1초, u:만 61초 뒤 복귀).
+      if (err?.cause === undefined) return;
       ch = null; drop(c);
       t = timer(join, delay); delay = Math.min(delay * 2, max);
     });

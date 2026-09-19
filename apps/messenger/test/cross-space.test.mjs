@@ -104,17 +104,33 @@ test('u: 구독 백오프: 거절(CHANNEL_ERROR)되면 채널을 걷고 1분→2
   const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
   const stop = joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: (id) => { if (id) timers[id - 1].cleared = true; } });
   assert.equal(made.length, 1, '처음엔 바로 붙는다');
-  const fail = () => made.at(-1).cb('CHANNEL_ERROR');
+  const rejected = () => new Error('Unauthorized', { cause: { reason: 'Unauthorized: you do not have permissions' } }); // 가입 거절 = 서버 응답이 cause
+  const fail = () => made.at(-1).cb('CHANNEL_ERROR', rejected());
   for (let i = 0; i < 6; i++) { fail(); timers.at(-1).fn(); }
   assert.deepEqual(timers.map((x) => x.ms), [60_000, 120_000, 240_000, 480_000, 600_000, 600_000], '두 배씩, 10분 상한');
   assert.deepEqual(removed, [0, 1, 2, 3, 4, 5], '거절된 채널은 매번 걷는다(realtime-js 자체 재시도 차단)');
-  made.at(-1).cb('CHANNEL_ERROR'); made.at(-1).cb('CHANNEL_ERROR');
+  made.at(-1).cb('CHANNEL_ERROR', rejected()); made.at(-1).cb('CHANNEL_ERROR', rejected());
   assert.equal(timers.length, 7, '같은 채널의 오류가 겹쳐 와도 재시도 예약은 하나');
-  timers.at(-1).fn(); made.at(-1).cb('SUBSCRIBED'); made.at(-1).cb('CHANNEL_ERROR');
+  timers.at(-1).fn(); made.at(-1).cb('SUBSCRIBED'); made.at(-1).cb('CHANNEL_ERROR', rejected());
   assert.equal(timers.at(-1).ms, 60_000, '붙은 뒤 끊기면 1분부터 다시');
   stop();
   assert.equal(timers.at(-1).cleared, true, '멈추면 예약된 재시도 취소');
   const before = made.length; timers.at(-1).fn(); assert.equal(made.length, before, '멈춘 뒤에는 다시 붙지 않는다');
   const stop2 = joinWithBackoff(sb, make, { timer: () => 0, clear: () => {} }); const live = made.at(-1).n; stop2();
   assert.ok(removed.includes(live), '멈추면 붙어 있던 채널도 걷는다');
+});
+
+// D55(2026-09-19 설치본 계측): 가린 창에서 하트비트가 끊기자 u:가 CHANNEL_ERROR(원인 없음)를 받았고, 종전 코드는 이를 거절로 보고 채널을 걷어
+// 60초를 기다렸다 — 창을 다시 열어 소켓이 1초 만에 붙은 뒤에도 u:만 61초 뒤 복귀, 그 사이 비공개 방 글(1009)의 알림이 사라졌다.
+test('u: 구독: 소켓이 끊겨 난 오류(서버 응답 없음)는 채널을 걷지 않고 기다리지도 않는다 — 재연결 뒤 realtime-js가 같은 채널을 바로 다시 붙인다', () => {
+  const made = []; const removed = []; const timers = [];
+  const sb = { removeChannel: (c) => { removed.push(c.n); return Promise.resolve('ok'); } };
+  const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
+  joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: () => {} });
+  made[0].cb('SUBSCRIBED');
+  made[0].cb('CHANNEL_ERROR', new Error('heartbeat timeout')); made[0].cb('CLOSED'); // 소켓 끊김 — realtime-js normalizeChannelError(원인 없음)
+  assert.deepEqual([removed.length, timers.length, made.length], [0, 0, 1], '걷지 않고, 재시도 예약도 없다(가입 거절이 아니다)');
+  made[0].cb('SUBSCRIBED'); // 재연결 뒤 realtime-js의 재가입
+  made[0].cb('CHANNEL_ERROR', new Error('Unauthorized', { cause: { reason: 'Unauthorized' } }));
+  assert.deepEqual([removed, timers.map((x) => x.ms)], [[0], [60_000]], '연결된 상태의 가입 거절(서버 응답 = cause)은 여전히 걷고 1분 뒤');
 });
