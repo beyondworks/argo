@@ -3354,6 +3354,7 @@ function Channel({ startCard = null, jumpTo = null, onJumped, channel, preview =
     if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
     if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
   }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [away, setAway] = useState(false); // 바닥에서 한 화면 넘게 올라가 있으면 [맨 아래로](D22 S85)
   const stick = useRef(true); // 바닥 고정 여부 — 사용자가 바닥에서 40px 넘게 올려두면 false(QA: 열릴 때 30px 모자라게 멈춰 마지막 메시지가 가려졌다)
   useEffect(() => { stick.current = true; }, [chId]);
   // 검색에서 고른 글로 가기(D11) — 목록에 없으면 이전 기록을 한 쪽씩 더 불러오고(스크롤백과 같은 길), 찾으면 가운데로 + 1.5초 강조. 끝까지 없으면 그만둔다.
@@ -3375,7 +3376,7 @@ function Channel({ startCard = null, jumpTo = null, onJumped, channel, preview =
     // 그 사이 자란 내용(실행 카드·Markdown 지연 렌더) 때문에 gap≥40으로 읽혀 고정을 풀던 경합(실측 2026-09-09: gap 294px에서 멈춤).
     let userAt = 0; let dragging = false;
     const mark = () => { userAt = Date.now(); };
-    const onScroll = () => { const gap = el.scrollHeight - el.scrollTop - el.clientHeight; if (gap < 40) stick.current = true; else if (dragging || Date.now() - userAt < 600) stick.current = false; };
+    const onScroll = () => { const gap = el.scrollHeight - el.scrollTop - el.clientHeight; if (gap < 40) stick.current = true; else if (dragging || Date.now() - userAt < 600) stick.current = false; setAway(gap > el.clientHeight); };
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('wheel', mark, { passive: true }); el.addEventListener('touchmove', mark, { passive: true }); el.addEventListener('keydown', mark);
     const down = () => { dragging = true; }; const up = () => { dragging = false; };
@@ -3458,6 +3459,7 @@ function Channel({ startCard = null, jumpTo = null, onJumped, channel, preview =
         {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} p={p} t={t} />)}
         {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
       </div>
+      {away && <div className="msgr-tobottom"><button type="button" className="btn sm" onClick={() => { const el = feed.current; if (!el) return; stick.current = true; el.scrollTop = el.scrollHeight; setAway(false); }}><I name="caret" size={13} />{t('thread.toBottom')}</button></div>}
     </div>
     {workOpen && <WorkPanel key={chId} channel={channel} uid={uid} isAdmin={isAdmin} locked={locked} crews={chCrews} t={t} lang={lang} onClose={() => setWorkOpen(false)} sheet={!phone} />}{/* 데스크톱: 채널 패널과 같은 시트(폭 380 + 24, #600·#603 비킴 규칙 공유 — 유건 2026-09-18) */}
     {preview

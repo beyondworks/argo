@@ -125,6 +125,9 @@
 .msgr-older { display: flex; justify-content: center; padding: 2px 0 14px; } /* 스크롤백 컨트롤(이전 메시지 보기 / 불러오는 중 / 대화의 시작) — 스파인 맨 위 */
 .msgr-older.start .msgr-klabel { opacity: .7; }
 .msgr-spine { position: relative; display: flex; flex-direction: column; gap: 20px; }
+/* 맨 아래로(D22 S85) — 스크롤 칸 안에서 바닥에 붙는 높이 0 받침, 버튼만 떠 있다 */
+.msgr-tobottom { position: sticky; bottom: 12px; height: 0; display: flex; justify-content: center; z-index: 2; }
+.msgr-tobottom .btn { position: absolute; bottom: 0; box-shadow: 0 4px 16px rgba(0, 0, 0, .14); background: var(--card); }
 .msgr-spine::before { content: ''; position: absolute; left: 13px; top: 8px; bottom: 8px; width: 2px; background: var(--border); border-radius: 2px; }
 .msgr-tnode { display: flex; align-items: center; gap: 12px; position: relative; }
 .msgr-tnode .msgr-dot { width: 10px; height: 10px; margin-left: 9px; box-shadow: 0 0 0 4px var(--bg); }
