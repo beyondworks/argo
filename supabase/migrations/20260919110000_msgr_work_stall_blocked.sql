@@ -58,3 +58,5 @@ begin
   else update public.msgr_work_runs set updated_at = now() where id = w.id; end if;
   return new;
 end $$;
+
+notify pgrst, 'reload schema';
