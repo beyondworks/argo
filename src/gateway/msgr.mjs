@@ -119,8 +119,11 @@ export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {})
 }
 
 /** 이 메시지가 이 크루를 겨냥하는가 — 사람의 멘션·DM 또는 출처가 있는 크루 멘션. 시스템 글은 제외. */
-export function targetsCrew(m, crew, dmChannels) {
+export function targetsCrew(m, crew, dmChannels, replyParentCrewId = null) {
   if (m.kind !== 'text') return false;
+  // 사람이 비DM 채널에서 이 크루의 글에 [답글]만 달았다(멘션 없음) — 서버 msgr_delivery_target의 셋째 규칙과 같게 받는다(D38b).
+  // 부모 조회는 호출부가 한다(replyParentCrewId). 모르면(null) 종전 규칙만.
+  if (m.author_kind === 'user' && replyParentCrewId && replyParentCrewId === crew.id && !dmChannels.has(m.channel_id)) return true;
   const recipients = (Array.isArray(m.mentions) ? m.mentions : []).filter((x) => x?.kind === 'crew');
   const to = recipients.filter((x) => x.role == null || x.role === 'to');
   const mentioned = to.some((x) => x.id === crew.id);
@@ -495,6 +498,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다
   const channelOf = async (id) => { if (!chCache.has(id)) chCache.set(id, await db.channel(id)); return chCache.get(id); };
+  const parentCache = new Map(); // 이 틱 안의 답글 부모 → crew_id(사람 글이면 null) — 크루마다 다시 읽지 않는다(D38b)
+  const replyParentCrew = async (m) => { if (!parentCache.has(m.reply_to)) { const p = await db.message(m.reply_to); parentCache.set(m.reply_to, p && !p.deleted_at && p.channel_id === m.channel_id && p.author_kind === 'crew' ? p.crew_id : null); } return parentCache.get(m.reply_to); };
   for (const crew of crews) {
     const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
     const member = await db.crewScope(crew.id).catch((e) => { console.error('[argo] msgr 채널 범위 조회 실패 — 이 크루는 이 틱에 답하지 않음(범위를 모르면 답하지 않는다):', e?.message ?? e); return null; });
@@ -503,10 +508,12 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     let max = crew.cursor_msg_id ?? 0;
     const step = async (m) => { // 한 메시지 처리 — 예외(순단)는 이 크루의 커서만 보류하고 다른 크루·결재 동기화는 계속(검수 4R M-3)
       const copy = (m.mentions ?? []).some((x) => x?.kind === 'crew' && x.id === crew.id && x.role === 'cc');
-      if (!targetsCrew(m, crew, dm) && !copy) return;
+      const parentCrew = !targetsCrew(m, crew, dm) && m.author_kind === 'user' && m.reply_to ? await replyParentCrew(m) : null; // 답글만 부모를 본다(틱 안 캐시)
+      if (!targetsCrew(m, crew, dm, parentCrew) && !copy) return;
       const envelope = db.crewContext ? await db.crewContext(wsId, crew.id, m.id, m.channel_id) : null;
       if (db.crewContext && !envelope) { // 서버가 이 출처의 실행을 거부했다(42501). 봉투 없이 진행하면 로컬 폴백이 서버보다 느슨해 거부가 뚫린다 — 실행은 막되 이유는 남긴다.
         if (m.author_kind !== 'user' || !m.author_user_id || !targetsCrew(m, crew, dm)) return; // 크루끼리 넘김·참조 수신은 안내가 채널을 도배한다
+        // 답글 규칙(부모가 이 크루 글)으로만 잡힌 글은 위 3인자 판정에서 빠진다 — D38 전 서버는 이런 답글을 거절하므로, 멘션 없이 단 답글마다 거절 안내가 붙지 않게(D38b)
         const alive = await db.message(m.id); // 42501은 '권한 거부'와 '원본이 지워짐'을 구분하지 않는다 — 사라진 글에 엉뚱한 안내를 달지 않는다(조회 실패는 던져서 재시도)
         if (!alive || alive.deleted_at) return;
         const why = await db.instructCheck(crew.id, m.author_user_id, m.channel_id).catch(() => null); // 사유를 몰라도 침묵보다 일반 안내가 낫다
@@ -526,7 +533,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         await writeFile(join(dir, `${key}.json`), JSON.stringify({ channelId: m.channel_id, threadRoot: envelope.root.id, sourceMsgId: m.id, role: 'cc', receivedAt: new Date(now()).toISOString() }));
         return;
       }
-      if (copy && !targetsCrew(m, crew, dm)) return;
+      if (copy && !targetsCrew(m, crew, dm, parentCrew)) return;
       const ch = envelope?.channel ?? await channelOf(m.channel_id); if (!envelope && !crewInScope(ch, crew.id, member.has(ch?.id))) return; // 초대되지 않았거나 내보낸 채널 — 턴을 돌리지 않는다(서버 트리거 msgr_messages_crew_scope가 최후 방어, 여기서 막아야 유료 실행·insert 실패 로그가 없다)
       const work = m.meta?.work_run_id ? await db.workRun(m.thread_root ?? m.id, m.channel_id) : null;
       if (m.meta?.work_run_id && (!work || !workCanContinue(work, m.id))) return;

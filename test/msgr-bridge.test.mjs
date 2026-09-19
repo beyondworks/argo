@@ -1553,3 +1553,41 @@ test('roomAttachReason: 첨부 실패 사유에 로컬 경로를 싣지 않는�
   assert.equal(roomAttachReason(Object.assign(new Error('25MB 초과'), { roomSafe: true }), 'ko'), '25MB 초과');
   assert.match(roomAttachReason(new Error('storage 500 at https://abc.supabase.co/...'), 'en'), /^could not read or upload the file$/);
 });
+
+// D38b: 사람이 비DM 채널에서 이 크루의 글에 [답글]만 달면(멘션 없음) 받는다 — 서버 msgr_delivery_target 셋째 규칙과 같게.
+// 종전 targetsCrew는 멘션·DM만 봐서, 서버가 배달을 허용해도(D38) Argo 크루는 답글을 집지 않았다(로컬 실측 1217: allowed t, 상주 무반응).
+test('D38b targetsCrew: 크루 글에 단 사람 답글(멘션 없음)은 그 크루 대상, 남의 크루·사람 부모·DM·크루 작성은 종전대로', () => {
+  const reply = msg(21, { mentions: [], reply_to: 20 });
+  assert.equal(M.targetsCrew(reply, crew(), new Set()), false, '부모를 모르면(3인자) 종전과 같다');
+  assert.equal(M.targetsCrew(reply, crew(), new Set(), CREW), true, '부모가 이 크루 글 → 대상');
+  assert.equal(M.targetsCrew(reply, crew(), new Set(), 'other-crew'), false, '부모가 다른 크루 글 → 아님');
+  assert.equal(M.targetsCrew(msg(22, { mentions: [], reply_to: 20, channel_id: 'dm-ch' }), crew(), new Set(['dm-ch']), CREW), true, 'DM은 종전 DM 규칙으로도 대상');
+  assert.equal(M.targetsCrew(msg(23, { mentions: [], reply_to: 20, author_kind: 'crew', crew_id: 'x', author_user_id: null }), crew(), new Set(), CREW), false, '크루가 단 답글은 답글 규칙 대상이 아니다(넘김은 멘션만)');
+  assert.equal(M.targetsCrew(msg(24, { mentions: [], reply_to: 20, kind: 'approval_card' }), crew(), new Set(), CREW), false, '글이 아니면 아님');
+});
+
+test('D38b 드레인: 크루 답에 사람이 [답글]만 달면 적재, 사람 글·다른 크루 글에 단 답글은 무시, 부모 조회는 답글만·틱 안 한 번', async () => {
+  const parents = { 20: msg(20, { author_kind: 'crew', crew_id: CREW, author_user_id: null, mentions: [] }), 30: msg(30, { mentions: [] }), 40: msg(40, { author_kind: 'crew', crew_id: 'other', author_user_id: null, mentions: [] }) };
+  const db = fakeDb({ parent: (id) => parents[id] ?? null, messages: [
+    msg(21, { mentions: [], reply_to: 20 }),   // 이 크루 글에 단 답글 → 적재
+    msg(31, { mentions: [], reply_to: 30 }),   // 사람 글에 단 답글 → 무시
+    msg(41, { mentions: [], reply_to: 40 }),   // 다른 크루 글에 단 답글 → 무시
+    msg(42, { mentions: [], reply_to: 20 }),   // 같은 부모 → 캐시(추가 조회 없음)
+    msg(43, { mentions: [] }),                 // 답글 아님 → 부모 조회 없음
+  ] });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.deepEqual(jobsOf(enq).map((j) => j.msgId), [21, 42], '크루 글에 단 답글만 적재');
+  assert.equal(r.denied, 0, '거절 안내 없음');
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'message').map((c) => c[1]).sort(), [20, 30, 40], '부모 조회는 답글만, 같은 부모는 한 번');
+});
+
+test('D38b 서버가 거절하면(D38 전 서버) 답글 규칙으로만 잡힌 글에는 거절 안내를 달지 않는다', async () => {
+  const db = fakeDb({ parent: (id) => (id === 20 ? msg(20, { author_kind: 'crew', crew_id: CREW, author_user_id: null, mentions: [] }) : { id, deleted_at: null }), messages: [msg(21, { mentions: [], reply_to: 20 })] });
+  db.crewContext = async () => null; // 42501 — 옛 서버는 뿌리가 크루 글이라 거절
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(jobsOf(enq).length, 0, '실행하지 않는다');
+  assert.equal(db.calls.filter((c) => c[0] === 'insertMessage').length, 0, '멘션 없이 단 답글마다 거절 안내가 붙지 않는다');
+  assert.equal(r.denied, 0);
+});
