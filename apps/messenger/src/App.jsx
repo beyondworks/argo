@@ -266,6 +266,9 @@ function useDismiss(open, close, inside, trigger) {
 const SEARCH_LIMIT = 60; // 메시지 검색 한 번에 가져오는 수 — 이만큼 오면 더 있을 수 있다(S22)
 const LAST_CH_KEY = 'argo-msgr-last-ch';
 const readLastCh = (org) => { try { return JSON.parse(localStorage.getItem(LAST_CH_KEY) || '{}')[org] ?? null; } catch { return null; } };
+const LAST_ORG_KEY = 'argo-msgr-last-org'; // 마지막 공간(조직·개인) — 앱을 다시 켜도 거기서 연다(#654 총괄: 설치본 재실행 때 다른 조직 첫 채널로 열림)
+const readLastOrg = () => { try { return localStorage.getItem(LAST_ORG_KEY); } catch { return null; } };
+const writeLastOrg = (org) => { try { if (localStorage.getItem(LAST_ORG_KEY) !== org) localStorage.setItem(LAST_ORG_KEY, org); } catch { /* 저장 못 해도 이번 세션은 그대로 */ } };
 const writeLastCh = (org, ch) => { try { const m = JSON.parse(localStorage.getItem(LAST_CH_KEY) || '{}'); if (m[org] !== ch) localStorage.setItem(LAST_CH_KEY, JSON.stringify({ ...m, [org]: ch })); } catch { /* 저장 못 해도 이번 세션은 그대로 */ } };
 
 function NavButton({ onMenu }) {
@@ -553,7 +556,7 @@ function Shell({ session }) {
     const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info)').eq('user_id', uid).is('removed_at', null));
     const list = rows.filter((r) => r.msgr_orgs && !r.msgr_orgs.deleted_at).map((r) => ({ id: r.org_id, role: r.role, ...r.msgr_orgs }));
     setOrgs(list);
-    setOrgId((cur) => cur === PERSONAL ? cur : cur && list.some((o) => o.id === cur) ? cur : (list[0]?.id ?? null));
+    setOrgId((cur) => { if (cur === PERSONAL || (cur && list.some((o) => o.id === cur))) return cur; const last = readLastOrg(); return last === PERSONAL || list.some((o) => o.id === last) ? last : (list[0]?.id ?? null); });
     setJoinable(await q(supabase.rpc('msgr_joinable_orgs')).catch(() => [])); // J-3: 내 이메일 도메인으로 들어갈 수 있는 조직(서버가 판정)
     setDeletedOrgs(await q(supabase.rpc('msgr_my_deleted_orgs')).catch(() => [])); // J-5: 내가 소유한 삭제 예정 조직(30일 안 복구 가능)
   }, [uid]);
@@ -808,6 +811,7 @@ function Shell({ session }) {
     return () => { live = false; };
   }, [orgId, dmIdsKey, isPhone, resumeEpoch]);
   useEffect(() => { if (!rail && !orgMenu) return; const on = (e) => { if (e.key === 'Escape') { setRail(false); setOrgMenu(false); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail, orgMenu]);
+  useEffect(() => { if (orgId) writeLastOrg(orgId); }, [orgId]);
   useEffect(() => { if (orgId && chId && (channels.some((c) => c.id === chId) || previewChannels.some((c) => c.id === chId))) writeLastCh(orgId, chId); }, [orgId, chId, channels, previewChannels]); // 지금 조직의 채널일 때만 적는다(조직을 바꾸는 사이 옛 채널이 남는 순간 제외)
   useEffect(() => { if (tick % 2 === 0 && orgId) (orgId === PERSONAL ? loadPersonal() : loadOrg(orgId)).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const personalOrg = useMemo(() => ({ id: PERSONAL, name: t('personal'), slug: 'personal', role: 'owner' }), [t]); // 개인 공간용 가상 조직 객체

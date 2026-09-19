@@ -18,3 +18,8 @@ test('마지막 채널 — 지금 조직의 채널일 때만 적고, 불러올 �
   assert.match(src, /const last = readLastCh\(id\); return has\(last\) \? last : \(chs\[0\]\?\.id \?\? null\);/, '조직');
   assert.match(src, /const last = readLastCh\(PERSONAL\); return has\(last\) \? last : \(chs\[0\]\?\.id \?\? null\);/, '개인 공간');
 });
+
+test('마지막 공간(조직·개인)도 기억해 앱을 다시 켜면 거기서 연다 — 지금 공간이 없을 때만, 목록에 남아 있을 때만', () => {
+  assert.match(src, /useEffect\(\(\) => \{ if \(orgId\) writeLastOrg\(orgId\); \}, \[orgId\]\);/);
+  assert.match(src, /const last = readLastOrg\(\); return last === PERSONAL \|\| list\.some\(\(o\) => o\.id === last\) \? last : \(list\[0\]\?\.id \?\? null\);/);
+});
