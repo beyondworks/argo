@@ -27,5 +27,6 @@ export function createRealtimeScope(onError = () => {}) {
       task.catch(onError);
       return () => { disposed = true; release(); return task; };
     },
+    wait() { return tail; },
   };
 }

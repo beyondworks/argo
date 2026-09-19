@@ -4,6 +4,21 @@ import { GoTrueClient } from '@supabase/supabase-js';
 import { authCleanupState } from '../src/auth-storage.mjs';
 import { createSessionRecovery } from '../src/session-recovery.mjs';
 
+test('cleanup marker keeps a completed tombstone until a new session clears it', () => {
+  const values = new Map([['sb-marker-auth-token', 'old-session']]);
+  const storage = { getItem: (name) => values.get(name) ?? null, setItem: (name, value) => values.set(name, value), removeItem: (name) => values.delete(name) };
+  const marker = authCleanupState('sb-marker-auth-token', storage);
+  marker.begin();
+  assert.equal(marker.read(), 'pending');
+  marker.complete();
+  assert.equal(marker.read(), 'complete');
+  assert.equal(marker.hasNewSession(), false);
+  values.set('sb-marker-auth-token', 'new-session');
+  assert.equal(marker.hasNewSession(), true);
+  marker.clear();
+  assert.equal(marker.read(), null);
+});
+
 test('auth-js 2.114.0 can remove primary session before PKCE failure and skip SIGNED_OUT', async () => {
   const key = 'sb-d56-auth-token';
   const values = new Map([
@@ -81,7 +96,7 @@ test('durable recovery marker survives SDK broadcast failure until a later SIGNE
 
   const failed = await recovery.restartSignIn();
   assert.equal(failed.error?.message, 'fixture broadcast failure');
-  assert.equal(marker.read(), true);
+  assert.equal(marker.read(), 'pending');
   assert.equal(waiting.at(-1), true);
   assert.equal(applied.at(-1)?.user?.id, 'fixture-user');
   await recovery.retryNow();
@@ -90,7 +105,7 @@ test('durable recovery marker survives SDK broadcast failure until a later SIGNE
   auth.broadcastChannel.postMessage = originalPost;
   const completed = await recovery.restartSignIn();
   assert.equal(completed.error, null);
-  assert.equal(marker.read(), false);
+  assert.equal(marker.read(), 'complete');
   assert.equal(applied.at(-1), null);
   recovery.stop();
   auth.broadcastChannel?.close();
@@ -118,7 +133,7 @@ test('subscriber rejection after SIGNED_OUT does not restore cleanupPending', as
   const result = await recovery.restartSignIn();
   console.error = originalError;
   assert.equal(result.error, null, 'delivered SIGNED_OUT remains authoritative despite a later subscriber rejection');
-  assert.equal(marker.read(), false);
+  assert.equal(marker.read(), 'complete');
   assert.equal(applied.at(-1), null);
   recovery.stop();
   auth.broadcastChannel?.close();

@@ -10,6 +10,7 @@ function isRetryable(error) {
 // after retryable refresh failures, so remain indeterminate and retry until the
 // refresh succeeds or a real SIGNED_OUT event arrives.
 export function createSessionRecovery({ auth, hasStoredSession, applySession, setWaiting, cleanupState = null,
+  onCleanupPending = () => {},
   setFailure = () => {},
   addEventListener = globalThis.addEventListener?.bind(globalThis),
   removeEventListener = globalThis.removeEventListener?.bind(globalThis),
@@ -20,11 +21,19 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
   let active = false;
   let timer = null;
   let inFlight = null;
+  let cleanupFlight = null;
+  let cleanupReady = null;
   let generation = 0;
-  let cleanupPending = false;
+  let cleanupPhase = null;
+  let markerWriteFailed = false;
 
   const clearRetry = () => { if (timer !== null) clearTimer(timer); timer = null; };
-  const finish = (session) => { clearRetry(); setFailure(null); setWaiting(false); applySession(session); };
+  const finish = (session) => {
+    clearRetry(); setFailure(null);
+    const applied = applySession(session);
+    if (session || !applied?.then) { setWaiting(false); return Promise.resolve(); }
+    return applied.then(() => { if (cleanupPhase !== 'pending') setWaiting(false); });
+  };
   const schedule = () => {
     clearRetry();
     if (active) timer = setTimer(() => { timer = null; return retryNow(); }, retryMs);
@@ -33,20 +42,32 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
     clearRetry(); setWaiting(true); setFailure(error, phase);
   };
   const refreshCleanupState = () => {
-    if (!cleanupState) return cleanupPending;
-    cleanupPending = cleanupState.read();
-    return cleanupPending;
+    if (!cleanupState) return cleanupPhase;
+    const stored = cleanupState.read();
+    const storedPhase = stored === true ? 'pending' : stored || null;
+    cleanupPhase = storedPhase ?? (markerWriteFailed ? 'pending' : null);
+    return cleanupPhase;
   };
+  const enterCleanup = () => {
+    clearRetry(); setFailure(null); setWaiting(true);
+    if (!cleanupReady) cleanupReady = Promise.resolve().then(onCleanupPending);
+    return cleanupReady;
+  };
+  const showCompletedCleanup = () => finish(null);
   const read = async () => {
     const readGeneration = generation;
     try {
-      if (cleanupPending || refreshCleanupState()) { clearRetry(); setWaiting(true); return; }
+      const beforeRead = refreshCleanupState();
+      if (beforeRead === 'pending') { await enterCleanup(); return; }
+      if (beforeRead === 'complete') { await showCompletedCleanup(); return; }
       const { data, error } = await auth.getSession();
       if (!active || generation !== readGeneration) return;
-      if (cleanupPending || refreshCleanupState()) { clearRetry(); setWaiting(true); return; }
-      if (!error) { finish(data.session ?? null); return; }
+      const afterRead = refreshCleanupState();
+      if (afterRead === 'pending') { await enterCleanup(); return; }
+      if (afterRead === 'complete') { await showCompletedCleanup(); return; }
+      if (!error) { await finish(data.session ?? null); return; }
       if (hasStoredSession() && isRetryable(error)) { setFailure(null); setWaiting(true); schedule(); return; }
-      finish(null);
+      await finish(null);
     } catch (error) {
       if (!active || generation !== readGeneration) return;
       // Keep credentials on disk, but only Supabase's retryable fetch error is
@@ -69,10 +90,13 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
   const storage = (event) => {
     if (!cleanupState?.matches(event)) return;
     try {
-      if (refreshCleanupState()) {
-        generation += 1; clearRetry(); setFailure(null); setWaiting(true);
-      }
-    } catch (error) { cleanupPending = true; generation += 1; failClosed(error); }
+      const phase = refreshCleanupState();
+      generation += 1;
+      if (phase === 'pending') { void enterCleanup().catch((error) => failClosed(error)); return; }
+      cleanupReady = null;
+      if (phase === 'complete') { void showCompletedCleanup(); return; }
+      void retryNow();
+    } catch (error) { cleanupPhase = 'pending'; generation += 1; failClosed(error); }
   };
 
   return {
@@ -81,8 +105,10 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
       addEventListener?.('online', online); addEventListener?.('focus', focus); addEventListener?.('storage', storage);
       addVisibilityListener?.('visibilitychange', visibility);
       try {
-        if (refreshCleanupState()) { setWaiting(true); return; }
-      } catch (error) { cleanupPending = true; failClosed(error); return; }
+        const phase = refreshCleanupState();
+        if (phase === 'pending') { await enterCleanup(); return; }
+        if (phase === 'complete') { await showCompletedCleanup(); return; }
+      } catch (error) { cleanupPhase = 'pending'; failClosed(error); return; }
       await retryNow();
     },
     stop() {
@@ -91,34 +117,55 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
       removeVisibilityListener?.('visibilitychange', visibility);
     },
     retryNow,
-    async restartSignIn() {
-      const attemptGeneration = ++generation;
-      clearRetry(); setFailure(null); setWaiting(true);
-      try {
-        cleanupState?.begin(); cleanupPending = true;
-        const { error } = await auth.signOut({ scope: 'local' });
-        if (error) { setFailure(error, 'signout'); return { error }; }
-        // Only SIGNED_OUT proves auth-js completed primary, PKCE/user companion
-        // cleanup and broadcast. Promise success alone cannot open Auth.
-        return { error: null };
-      } catch (error) {
-        if (generation !== attemptGeneration && !cleanupPending) return { error: null };
-        setFailure(error, 'signout');
-        return { error };
-      }
+    restartSignIn() {
+      if (cleanupFlight) return cleanupFlight;
+      cleanupFlight = (async () => {
+        ++generation;
+        clearRetry(); setFailure(null); setWaiting(true);
+        cleanupPhase = 'pending';
+        let markerPersisted = false;
+        try {
+          cleanupState?.begin();
+          markerPersisted = true;
+          markerWriteFailed = false;
+          cleanupReady = null;
+          await enterCleanup();
+          const { error } = await auth.signOut({ scope: 'local' });
+          if (error) { setFailure(error, 'signout'); return { error }; }
+          // Only SIGNED_OUT proves auth-js completed primary, PKCE/user companion
+          // cleanup and broadcast. Promise success alone cannot open Auth.
+          return { error: null };
+        } catch (error) {
+          if (!markerPersisted) markerWriteFailed = true;
+          if (cleanupPhase === 'complete') return { error: null };
+          setFailure(error, 'signout');
+          return { error };
+        }
+      })().finally(() => { cleanupFlight = null; });
+      return cleanupFlight;
     },
     onAuthStateChange(event, session) {
       // Auth events after the initial read started are authoritative. Invalidate
       // that read before applying them so stale identities cannot win later.
       if (event === 'SIGNED_OUT') {
-        try { cleanupState?.complete(); cleanupPending = false; }
-        catch (error) { cleanupPending = true; generation += 1; failClosed(error, 'signout'); return; }
-        generation += 1; finish(null); return;
+        generation += 1;
+        return Promise.resolve(cleanupReady).then(() => {
+          cleanupState?.complete(); cleanupPhase = 'complete'; markerWriteFailed = false; cleanupReady = null;
+          return finish(null);
+        }).catch((error) => { cleanupPhase = 'pending'; failClosed(error, 'signout'); });
       }
-      try { if (cleanupPending || refreshCleanupState()) { generation += 1; clearRetry(); setWaiting(true); return; } }
-      catch (error) { cleanupPending = true; generation += 1; failClosed(error); return; }
-      if (session) { generation += 1; finish(session); }
-      else if (!hasStoredSession()) { generation += 1; finish(null); }
+      try {
+        const phase = refreshCleanupState();
+        if (phase === 'pending') { generation += 1; void enterCleanup().catch((error) => failClosed(error)); return; }
+        if (phase === 'complete') {
+          const hasNewSession = cleanupState?.hasNewSession ? cleanupState.hasNewSession() : hasStoredSession();
+          if (session && hasNewSession) {
+            cleanupState?.clear(); cleanupPhase = null; markerWriteFailed = false; cleanupReady = null;
+          } else { generation += 1; void showCompletedCleanup(); return; }
+        }
+      } catch (error) { cleanupPhase = 'pending'; generation += 1; failClosed(error); return; }
+      if (session) { generation += 1; void finish(session); }
+      else if (!hasStoredSession()) { generation += 1; void finish(null); }
     },
   };
 }

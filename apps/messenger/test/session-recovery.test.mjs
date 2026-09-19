@@ -13,7 +13,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(reads, { stored = true, getSession = null, signOut = async () => ({ error: null }), cleanupState = null } = {}) {
+function fixture(reads, { stored = true, getSession = null, signOut = async () => ({ error: null }), cleanupState = null, onCleanupPending = () => {} } = {}) {
   const applied = [];
   const waiting = [];
   const failures = [];
@@ -25,7 +25,8 @@ function fixture(reads, { stored = true, getSession = null, signOut = async () =
   const recovery = createSessionRecovery({
     auth,
     cleanupState,
-    hasStoredSession: () => stored,
+    hasStoredSession: () => typeof stored === 'function' ? stored() : stored,
+    onCleanupPending,
     applySession: (session) => applied.push(session),
     setWaiting: (value) => waiting.push(value),
     setFailure: (error) => failures.push(error),
@@ -91,7 +92,7 @@ test('SIGNED_OUT always leaves waiting state and preserves the D10 path', async 
   assert.deepEqual(f.applied, []);
 
   // When Supabase reports an actual sign-out.
-  f.recovery.onAuthStateChange('SIGNED_OUT', null);
+  await f.recovery.onAuthStateChange('SIGNED_OUT', null);
 
   // Then null is applied immediately; INITIAL_SESSION null alone does not do this.
   assert.deepEqual(f.applied, [null]);
@@ -136,7 +137,7 @@ test('delayed initial read cannot restore a session after SIGNED_OUT', async () 
   const starting = f.recovery.start();
 
   // When a later authoritative SIGNED_OUT arrives before the old read finishes.
-  f.recovery.onAuthStateChange('SIGNED_OUT', null);
+  await f.recovery.onAuthStateChange('SIGNED_OUT', null);
   pending.resolve({ data: { session: OLD_SESSION }, error: null });
   await starting;
 
@@ -191,6 +192,78 @@ test('failed local sign-out stays waiting and a later retry can finish cleanup',
   f.recovery.stop();
 });
 
+test('cleanup marker write failure remains fail-closed in memory', async () => {
+  const failure = new TypeError('marker storage blocked');
+  let signOutCalls = 0;
+  const f = fixture([], {
+    cleanupState: { begin() { throw failure; }, complete() {}, clear() {}, read: () => null, matches: () => false },
+    signOut: async () => { signOutCalls += 1; return { error: null }; },
+  });
+
+  const result = await f.recovery.restartSignIn();
+  f.recovery.onAuthStateChange('SIGNED_IN', NEW_SESSION);
+
+  assert.equal(result.error, failure);
+  assert.equal(signOutCalls, 0, 'SDK cleanup must not start without a durable boundary');
+  assert.deepEqual(f.applied, [], 'old or new auth activity cannot reopen Shell after marker failure');
+  assert.equal(f.waiting.at(-1), true);
+});
+
+test('cleanup waits for teardown and concurrent restarts share one SDK sign-out', async () => {
+  const barrier = deferred();
+  const order = [];
+  let f;
+  f = fixture([], {
+    cleanupState: {
+      phase: null,
+      begin() { this.phase = 'pending'; order.push('marker:pending'); },
+      complete() { this.phase = 'complete'; order.push('marker:complete'); },
+      clear() { this.phase = null; },
+      read() { return this.phase; },
+      matches: () => false,
+    },
+    onCleanupPending: async () => { order.push('teardown:start'); await barrier.promise; order.push('teardown:done'); },
+    signOut: async () => { order.push('sdk:signout'); await f.recovery.onAuthStateChange('SIGNED_OUT', null); return { error: null }; },
+  });
+
+  const first = f.recovery.restartSignIn();
+  const second = f.recovery.restartSignIn();
+  assert.equal(first, second, 'overlapping restart requests must share one cleanup flight');
+  await Promise.resolve();
+  assert.deepEqual(order, ['marker:pending', 'teardown:start']);
+  barrier.resolve();
+  assert.equal((await first).error, null);
+  assert.deepEqual(order, ['marker:pending', 'teardown:start', 'teardown:done', 'sdk:signout', 'marker:complete']);
+  assert.deepEqual(f.applied, [null]);
+});
+
+test('peer missing broadcasts still observes the durable completed tombstone on focus', async () => {
+  let phase = null;
+  let newStoredSession = false;
+  const cleanupState = {
+    begin() { phase = 'pending'; }, complete() { phase = 'complete'; }, clear() { phase = null; }, read: () => phase,
+    hasNewSession: () => newStoredSession,
+    matches: (event) => event.key === 'cleanup-marker',
+  };
+  const peer = fixture([{ data: { session: OLD_SESSION }, error: null }], { cleanupState });
+  await peer.recovery.start();
+  phase = 'pending';
+  peer.listeners.get('storage')({ key: 'cleanup-marker' });
+
+  // The peer misses both auth-js SIGNED_OUT and the marker's completion event.
+  phase = 'complete';
+  await peer.listeners.get('focus')();
+  peer.recovery.onAuthStateChange('SIGNED_IN', OLD_SESSION);
+
+  assert.deepEqual(peer.applied, [OLD_SESSION, null, null]);
+  assert.equal(peer.waiting.at(-1), false);
+  newStoredSession = true;
+  peer.recovery.onAuthStateChange('SIGNED_IN', NEW_SESSION);
+  assert.deepEqual(peer.applied, [OLD_SESSION, null, null, NEW_SESSION]);
+  assert.equal(phase, null);
+  peer.recovery.stop();
+});
+
 test('partial auth-js cleanup cannot promote a later null read to Auth', async () => {
   let pending = false;
   const failure = new TypeError('PKCE removal failed');
@@ -218,21 +291,21 @@ test('partial auth-js cleanup cannot promote a later null read to Auth', async (
 });
 
 test('cleanup marker makes another tab leave Shell until SIGNED_OUT', async () => {
-  let pending = false;
+  let phase = null;
   const cleanupState = {
-    begin() { pending = true; }, complete() { pending = false; }, read: () => pending,
+    begin() { phase = 'pending'; }, complete() { phase = 'complete'; }, clear() { phase = null; }, read: () => phase,
     matches: (event) => event.key === 'cleanup-marker',
   };
   const f = fixture([{ data: { session: SESSION }, error: null }], { cleanupState });
   await f.recovery.start();
-  pending = true;
+  phase = 'pending';
   f.listeners.get('storage')({ key: 'cleanup-marker' });
   f.recovery.onAuthStateChange('SIGNED_IN', NEW_SESSION);
   assert.equal(f.waiting.at(-1), true, 'shared cleanup marker must hide Shell/realtime');
   assert.deepEqual(f.applied, [SESSION], 'auth activity is blocked while cleanup remains pending');
 
-  f.recovery.onAuthStateChange('SIGNED_OUT', null);
-  assert.equal(pending, false);
+  await f.recovery.onAuthStateChange('SIGNED_OUT', null);
+  assert.equal(phase, 'complete');
   assert.deepEqual(f.applied, [SESSION, null]);
   f.recovery.stop();
 });

@@ -5,6 +5,7 @@ const storageKey = 'sb-fixture-auth-token';
 const session = { user: { id: 'user-me', email: 'fixture@example.invalid' }, access_token: 'fixture', refresh_token: 'fixture-refresh' };
 const nextSession = { user: { id: 'new-user', email: 'new@example.invalid' }, access_token: 'new-fixture', refresh_token: 'new-fixture-refresh' };
 const params = new URLSearchParams(location.search);
+if (params.get('preserveCleanup') !== '1') localStorage.removeItem(`${storageKey}-argo-cleanup-pending`);
 const raceMode = params.get('race');
 const delayedMode = params.get('delayed') ?? (raceMode === 'relogin' ? 'retry' : raceMode ? '1' : null);
 let connected = false;
@@ -13,6 +14,10 @@ let resolveInitial = null;
 let readCount = 0;
 let signOutAttempts = 0;
 const initialRead = delayedMode ? new Promise((resolve) => { resolveInitial = resolve; }) : null;
+const cleanupPhase = () => {
+  const value = localStorage.getItem(`${storageKey}-argo-cleanup-pending`);
+  try { return JSON.parse(value)?.phase ?? value; } catch { return value; }
+};
 
 localStorage.setItem(storageKey, JSON.stringify({ ...session, expires_at: 1 }));
 supabase.auth = {
@@ -70,7 +75,8 @@ window.__d56 = {
     listener?.('SIGNED_IN', nextSession);
   },
   stored() { return localStorage.getItem(storageKey) !== null; },
-  cleanupPending() { return localStorage.getItem(`${storageKey}-argo-cleanup-pending`) === '1'; },
+  cleanupPending() { return cleanupPhase() === 'pending'; },
+  cleanupPhase,
 };
 
 export { configured, customServer, SB_URL, SB_ANON, supabase, q };

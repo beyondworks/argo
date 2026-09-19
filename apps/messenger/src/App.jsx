@@ -156,7 +156,9 @@ export default function App() {
   const [sessionRecoveryError, setSessionRecoveryError] = useState('');
   const [logoutNotice, setLogoutNotice] = useState('');
   const [signingOut, setSigningOut] = useState(false);
+  const [cleanupEpoch, setCleanupEpoch] = useState(0);
   const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false); const recoveryRef = useRef(null);
+  const cleanupCommitWaiters = useRef([]);
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
     if (sessionOwner.current !== uid) {
@@ -170,6 +172,14 @@ export default function App() {
     else if (tr === 'signedIn') setLogoutNotice((v) => (v === 'auth.sessionExpired' ? '' : v));
     setSession(next);
   }, []);
+  useEffect(() => {
+    if (!cleanupEpoch) return;
+    const waiters = cleanupCommitWaiters.current.splice(0);
+    Promise.resolve().then(() => realtimeScope.wait()).then(
+      () => waiters.forEach(({ resolve }) => resolve()),
+      (error) => waiters.forEach(({ reject }) => reject(error)),
+    );
+  }, [cleanupEpoch]);
   const signOut = async () => {
     if (logoutPending.current || !session?.user?.id) return;
     logoutPending.current = true; setSigningOut(true); setLogoutNotice('');
@@ -187,7 +197,7 @@ export default function App() {
     try {
       const { warning } = await detachPush(supabase, session.user.id);
       if (warning) setLogoutNotice('push.logout.detachFailed');
-      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      const { error } = await recoveryRef.current.restartSignIn();
       if (error) await restorePush();
     } catch { await restorePush(); }
     finally { logoutPending.current = false; setSigningOut(false); }
@@ -197,6 +207,14 @@ export default function App() {
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
     const recovery = createSessionRecovery({ auth: supabase.auth, cleanupState: authCleanupState(authKey), hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting,
+      onCleanupPending: async () => {
+        await applySession(null);
+        await new Promise((resolve, reject) => {
+          cleanupCommitWaiters.current.push({ resolve, reject });
+          setSessionWaiting(true);
+          setCleanupEpoch((value) => value + 1);
+        });
+      },
       setFailure: (error, phase) => setSessionRecoveryError(error ? (phase === 'signout' ? 'auth.signInAgainFailed' : 'auth.sessionCheckFailed') : '') });
     recoveryRef.current = recovery;
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => recovery.onAuthStateChange(event, next));
@@ -216,7 +234,7 @@ export default function App() {
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
-  const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
+  const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await recoveryRef.current?.restartSignIn(); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 

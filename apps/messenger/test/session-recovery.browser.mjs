@@ -1,8 +1,9 @@
-import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+
 const base = process.env.D56_BASE_URL || 'http://127.0.0.1:5216';
-const browser = await chromium.launch({ headless: process.env.HEADED !== '1' });
+const browser = await chromium.launch({ headless: process.env.HEADED !== '1', channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
 const page = await browser.newPage({ locale: 'ko-KR' });
 const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
@@ -14,7 +15,7 @@ try {
   assert.equal(await page.getByText('Google로 계속하기').count(), 0, 'retryable failure must not show Auth');
 
   await page.evaluate(() => window.__d56.recover());
-  await page.getByText('Fixture General', { exact: true }).waitFor();
+  await page.getByText('Fixture General', { exact: true }).first().waitFor();
 
   await page.evaluate(() => window.__d56.signedOut());
   await page.getByText(/로그인이 끝났습니다/).waitFor();
@@ -51,7 +52,11 @@ try {
   assert.equal(await page.getByText('Google로 계속하기').count(), 0, 'null reads cannot bypass cleanupPending');
   await page.getByRole('button', { name: '다시 로그인' }).click();
   await page.getByText('Google로 계속하기').waitFor();
-  assert.equal(await page.evaluate(() => window.__d56.cleanupPending()), false, 'SIGNED_OUT clears the cleanup marker');
+  assert.equal(await page.evaluate(() => window.__d56.cleanupPending()), false, 'SIGNED_OUT leaves the pending state');
+  assert.equal(await page.evaluate(() => window.__d56.cleanupPhase()), 'complete', 'completed cleanup remains durable for peers that missed broadcasts');
+  await page.goto(`${base}/?preserveCleanup=1`);
+  await page.getByText('Google로 계속하기').waitFor();
+  assert.equal(await page.getByText('Fixture General', { exact: true }).count(), 0, 'completed tombstone blocks a cached old session after reload');
   assert.deepEqual(errors, []);
   console.log('D56 browser PASS: waiting/recovery + auth ordering + cleanup failure/retry contract');
 } finally {
