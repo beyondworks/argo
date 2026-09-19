@@ -186,8 +186,9 @@ test('G-1: 조직 문서 — 풋터 버튼·페이지 분기, 목록은 org 단�
   assert.match(actv, /<details className="msgr-actfold">/, '활동 기록은 접힌 보조 정보(주 내용은 기억)');
   assert.match(docs, /const canEdit = \(d\) => d\.channel_id \? true : isAdmin;/, '편집권 힌트');
   assert.match(docs, /if \(!res\.data\?\.length\) return onError\(t\('docs\.noEdit'\)\);/, 'RLS 0행 문구');
-  assert.match(docs, /path: `\$\{creating\.folder\}\/\$\{docSlug\(title\)\}\.md`, title, body: '', created_by: uid, updated_by: uid/, '생성 경로·작성자');
-  assert.match(app, /export const docSlug = \(title\) =>/, '슬러그 함수');
+  // 경로 규칙(폴더/슬러그.md·충돌 시 -2 접미·서버 제약 준수)은 apps/messenger/test/doc-path.test.mjs 행동 테스트가 잠근다(D13) — 여기는 연결과 작성자만
+  assert.match(docs, /insertWithFreePath\(creating\.folder, title, \(path\) => supabase\.from\('msgr_org_docs'\)\.insert\(\{ org_id: org\.id, channel_id: channelId \?\? null, path, title, body: '', created_by: uid, updated_by: uid \}\)/, '생성 경로(충돌 접미)·작성자');
+  assert.match(app, /import \{ docSlug, insertWithFreePath, isPathTaken \} from '\.\/doc-path\.mjs';/, '슬러그 함수(doc-path.mjs 정본)');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /select case when ch is null then public\.msgr_is_admin\(org\)\n\s*else public\.msgr_can_write_channel\(ch\) and exists/, '서버 편집권');
   assert.match(sql, /new\.version := old\.version \+ 1; new\.updated_at := now\(\);/, '버전 트리거');
