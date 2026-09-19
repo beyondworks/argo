@@ -125,6 +125,9 @@
 .msgr-older { display: flex; justify-content: center; padding: 2px 0 14px; } /* 스크롤백 컨트롤(이전 메시지 보기 / 불러오는 중 / 대화의 시작) — 스파인 맨 위 */
 .msgr-older.start .msgr-klabel { opacity: .7; }
 .msgr-spine { position: relative; display: flex; flex-direction: column; gap: 20px; }
+/* 맨 아래로(D22 S85) — 스크롤 칸 안에서 바닥에 붙는 높이 0 받침, 버튼만 떠 있다 */
+.msgr-tobottom { position: sticky; bottom: 12px; height: 0; display: flex; justify-content: center; z-index: 2; }
+.msgr-tobottom .btn { position: absolute; bottom: 0; box-shadow: 0 4px 16px rgba(0, 0, 0, .14); background: var(--card); }
 .msgr-spine::before { content: ''; position: absolute; left: 13px; top: 8px; bottom: 8px; width: 2px; background: var(--border); border-radius: 2px; }
 .msgr-tnode { display: flex; align-items: center; gap: 12px; position: relative; }
 .msgr-tnode .msgr-dot { width: 10px; height: 10px; margin-left: 9px; box-shadow: 0 0 0 4px var(--bg); }
@@ -339,6 +342,13 @@
 .msgr-step .card { background: var(--card); border: 1px solid var(--border); border-radius: 6px 20px 20px 20px; padding: 13px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; box-shadow: none; }
 .msgr-step .card b { display: block; font-weight: 600; font-size: 13.5px; }
 .msgr-step .card span { color: var(--fg-3); font-size: 12px; }
+.msgr-step .card .acts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.msgr-step .num.done { background: var(--card-2); color: var(--fg-3); }
+.msgr-step.done .card { background: transparent; } .msgr-step.done .card b { color: var(--fg-3); font-weight: 500; }
+/* 첫 채널 뒤 남은 단계(D3) — 스레드 맨 위, 빈 조직 안내와 같은 단계 목록 */
+.msgr-onboard { position: relative; z-index: 1; background: var(--bg); margin: 4px 0 18px; padding: 12px 14px 14px; border: 1px dashed var(--border); border-radius: 16px; display: grid; gap: 10px; } /* 불투명 — 스레드 척추 줄이 카드를 가로지르지 않게 */
+.msgr-phsteps { padding: 4px 16px 12px; }
+.msgr-onboard > header { display: flex; align-items: center; justify-content: space-between; }
 .msgr-center { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--fg-3); font-size: 13px; padding: 24px; }
 
 /* 로그인 — 머리띠 카드 */
@@ -827,7 +837,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
 /* 프로필 이미지(2026-09-09): 사람·에이전트 아바타 이미지 + 편집 줄 + 에이전트 소개 */
 .msgr-av.img { overflow: hidden; padding: 0; }
-.msgr-av.img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.msgr-av.img img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; } /* 사진 아바타도 글자 아바타처럼 — 누름이 감싼 행으로 가고, 이미지 끌기가 클릭을 가로채지 않게(D19, WebKit 이미지 끌기) */
 .msgr-avatar-edit { display: flex; align-items: center; gap: 12px; }
 .msgr-avatar-edit .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .msgr-avatar-edit .note { flex-basis: 100%; }

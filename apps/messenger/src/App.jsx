@@ -4,6 +4,8 @@
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
+import { dismissHandlers } from './dismiss.mjs';
+import { hasPublicChannel, newChannelKind, stepMarks } from './onboard.mjs';
 import { Graph3D } from './graph3d.jsx';
 import { WorkPanel, missingSchema } from './work-panel.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
@@ -47,7 +49,7 @@ import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 const realtimeScope = createRealtimeScope();
-const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관
+const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/#download' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
 const LegalLinks = ({ t, className = '' }) => (
   <p className={`msgr-legal ${className}`.trim()}>
@@ -101,7 +103,7 @@ const AvatarCtx = createContext({ users: {}, crews: {} }); // 프로필 이미�
 function Av({ name, crew, size, company = false, userId = null, crewId = null, src = null }) { // company: 회사 크루(조직 배지 — 별 대신 각진 해시), 그 외 크루는 별 배지(부록 I·K 등급 표시)
   const ctx = useContext(AvatarCtx);
   const url = src ?? (userId ? ctx.users[userId] : crewId ? ctx.crews[crewId] : null);
-  return <span className={`msgr-av${crew ? ' crew' : ''}${company ? ' company' : ''}${size ? ` ${size}` : ''}${url ? ' img' : ''}`}>{url ? <img src={url} alt="" /> : (name || '?').slice(0, 1)}{crew && <span className="star">{company ? <I name="hash" size={8} /> : <svg viewBox="0 0 16 16"><path d={STAR_D} /></svg>}</span>}</span>;
+  return <span className={`msgr-av${crew ? ' crew' : ''}${company ? ' company' : ''}${size ? ` ${size}` : ''}${url ? ' img' : ''}`}>{url ? <img src={url} alt="" draggable={false} /> : (name || '?').slice(0, 1)}{crew && <span className="star">{company ? <I name="hash" size={8} /> : <svg viewBox="0 0 16 16"><path d={STAR_D} /></svg>}</span>}</span>;
 }
 /** 프로필 이미지 정규화 — 가운데 정사각형으로 잘라 256px JPEG로(업로드 전 클라이언트에서). */
 async function squareImage(file, size = 256) {
@@ -249,6 +251,17 @@ function RailFold({ id, label, count, children }) {
 }
 
 /* ─── 상단 내비 버튼 — 데스크톱은 햄버거(레일 열기), 폰은 뒤로가기(홈 페이지로). 마크업은 데스크톱 쪽이 기존과 동일하다. ─── */
+// 작은 팝오버 닫기 한 벌(D18) — 바깥을 누르면 닫고, Escape는 닫고 연 버튼으로 초점을 돌려준다(K7).
+// inside: 팝오버와 연 버튼을 모두 덮는 선택자(연 버튼을 다시 누르면 그 버튼의 토글이 닫는다), trigger: 초점을 돌려줄 버튼
+function useDismiss(open, close, inside, trigger) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const { down, key } = dismissHandlers({ inside, close, focusTrigger: () => document.querySelector(trigger)?.focus() });
+    document.addEventListener('pointerdown', down, true); document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key); };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 function NavButton({ onMenu }) {
   const { t } = useT();
   const phone = useIsPhone();
@@ -498,6 +511,12 @@ function Shell({ session }) {
   const [jump, setJump] = useState(null); // 검색 결과에서 고른 메시지 { ch, mid } — 그 채널이 열리면 그 글까지 불러와 가운데로 스크롤·강조(D11)
   const [searchQ, setSearchQ] = useState(''); const [searchRes, setSearchRes] = useState(null); const searchRef = useRef(null); // 앱 내 검색(유건 지시 2026-09-09): 메시지 본문·사람·에이전트, ⌘K
   useEffect(() => { const on = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setRail(true); searchRef.current?.focus(); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, []);
+  const leaveSearch = () => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }; // 지우기 버튼·Esc가 같은 일(D18 S101: 결과 화면에서 Esc면 대화로)
+  useEffect(() => { // 결과 화면에서 칸 밖에 초점이 있어도 Esc면 대화로 — 입력칸·열린 창이 먼저 받는다
+    if (page !== 'search') return undefined;
+    const on = (e) => { if (e.key !== 'Escape' || e.defaultPrevented || e.target.closest?.('input, textarea, [role="dialog"], [role="menu"]')) return; leaveSearch(); };
+    window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on);
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
   const runSearch = async (raw) => {
     const qs = raw.trim(); if (!qs || !org) { setSearchRes(null); return; }
     setPage('search'); setRail(false);
@@ -946,12 +965,10 @@ function Shell({ session }) {
   const lpStates = useRef({}); // 폰 레일 행 길게 누르기 상태(행별 — 채널·DM·즐겨찾기 대상)
   useEffect(() => () => { for (const st of Object.values(lpStates.current)) if (st.timer) clearTimeout(st.timer); clearTimeout(animTimer.current); clearTimeout(dmAnimTimer.current); }, []); // 언마운트 시 타이머 해제(검수 L-5)
   const pickDmSort = (v) => { setDmSort(v); try { localStorage.setItem('argo-msgr-dm-sort', v); } catch { /* 저장 못 해도 이번 세션은 적용 */ } };
-  useEffect(() => { // 폰 전용 컨트롤 — onMouseLeave만으로는 터치로 못 닫는다(검수 #541 MEDIUM-4): 바깥 누름·Escape
-    if (!dmSortMenu) return;
-    const down = (e) => { if (!e.target.closest?.('.msgr-dmsort')) setDmSortMenu(false); }; const key = (e) => { if (e.key === 'Escape') setDmSortMenu(false); };
-    document.addEventListener('pointerdown', down, true); document.addEventListener('keydown', key);
-    return () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key); };
-  }, [dmSortMenu]);
+  // onMouseLeave만으로는 터치·키보드로 못 닫는다(검수 #541 MEDIUM-4, D18 S63·K6) — 바깥 누름·Escape. 다른 메뉴 버튼을 누르는 것도 바깥이라 두 메뉴가 겹쳐 열리지 않는다
+  useDismiss(dmSortMenu, () => setDmSortMenu(false), '.msgr-dmsort', '.msgr-dmsort > button');
+  useDismiss(sortMenu, () => setSortMenu(false), '.msgr-railsort', '.msgr-railsort > button');
+  useDismiss(meMenu, () => setMeMenu(false), 'button.me:not(.item), .msgr-rowmenu.me', 'button.me:not(.item)');
   const [lastAt, setLastAt] = useState({}); // 채널 → 마지막 메시지 시각(ms). 최근순 정렬 재료 — 조직 로드 때 한 번 조회, 이후 방송으로 갱신
   const dmIdsRef = useRef(new Set()); // 방송 핸들러가 DM 채널만 담게(조직 토픽엔 모든 채널이 실린다)
 
@@ -1122,10 +1139,18 @@ function Shell({ session }) {
     try {
       if (channels.some((c) => c.kind !== 'dm' && c.name.toLowerCase() === name.trim().toLowerCase())) return setErr(t('ch.dup')); // 검수 M-2: 이름이 기억 페이지 밖에서도 표시 키라 동명은 막는다
       const id = await q(supabase.rpc('msgr_create_channel', { org: orgId, kind: priv ? 'private' : 'public', name: name.trim() })); // 생성+첫 멤버를 서버가 한 번에(생성 직후 열람 예외 폐지 — 검수 HIGH)
-      if (activeOrg.current !== orgId) return; setNewCh(null); await loadOrg(orgId); if (activeOrg.current !== orgId) return; setChId(id); setPage('chat');
+      if (!priv) { await q(supabase.rpc('msgr_join_channel', { ch: id })); joinedRef.current = new Set([...joinedRef.current, id]); } // 서버가 공개 채널은 만든 사람을 참여 행에 안 넣는다(kind<>'public'만) — 옛 서버에서도 참여자로(#626 검수, 서버 수정은 별도). 이미 참여면 서버가 무시
+      if (activeOrg.current !== orgId) return; setNewCh(null); await loadOrg(orgId); if (activeOrg.current !== orgId) return; setChId(id); setPage('chat'); setRail(false); // 폼을 보이려 연 서랍(폰·좁은 폭)은 만든 채널을 가리지 않게 닫는다
     } catch (e) { setErr(/msgr_channel_limit/.test(e.message) ? t('ch.freeLimit') : friendlyErr(e.message, t)); }
   };
-  const openNewCh = () => { setNewCh({ name: '', kind: 'private' }); setRail(true); };
+  // 새 채널 기본 종류(D1): 조직에 공개 채널이 없으면 공개(#general), 있으면 비공개 — 무료 조직은 공개 채널 1개(S33). 안내 문구(ch.step1.sub*)도 같은 판단
+  const hasPublic = hasPublicChannel(channels, previewChannels);
+  const newChKind = newChannelKind(channels, previewChannels);
+  const openNewCh = () => { setNewCh({ name: '', kind: newChKind }); setRail(true); };
+  // 조직 시작 단계 재료(D1·D3·D6) — 빈 조직 안내와 첫 채널 뒤 남은 단계 카드가 같이 쓴다
+  const onboard = { hasPublic, invited: members.length > 1, hasCrew: crews.length > 0, isAdmin: !!isAdmin, adminName: orgAdmins[0]?.display_name || null,
+    openAgents: () => { setSettingsTab('crews'); setPage('settings'); setRail(false); } };
+  const joinWithCode = () => { setRail(true); setOrgMenu(true); setJoinCode(''); setNewOrg(null); }; // D4: 안내 문구가 가리키는 그 메뉴를 바로 연다
   // 채널 찾아보기(유건 2026-09-16) — 조직의 공개 채널 중 아직 안 들어간 것. 들어가야 목록·알림에 뜬다.
   const [browse, setBrowse] = useState(null); // null = 닫힘, [] = 없음, [..] = 목록
   const openBrowse = async () => {
@@ -1326,7 +1351,7 @@ function Shell({ session }) {
           <button type="button" className={`msgr-org${orgMenu ? ' open' : ''}${isPersonal ? ' personal' : ''}`} onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}>
             {isPersonal ? <PersonalMark /> : <Av name={org?.name ?? '?'} />}<span className="name">{isPersonal ? t('personal.space') : (org?.name ?? t('org.pick'))}</span><SpaceBadge c={elsewhere} /><I name="caret" size={14} className="caret" />
           </button>
-          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="at" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setSearchQ(''); e.currentTarget.blur(); } }} placeholder={t('search.ph')} aria-label={t('search.title')} />{searchQ && <button type="button" className="clear" onClick={() => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>
+          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="at" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leaveSearch(); e.currentTarget.blur(); } }} placeholder={t('search.ph')} aria-label={t('search.title')} />{searchQ && <button type="button" className="clear" onClick={leaveSearch} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>
           {orgMenu && (<>
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
@@ -1383,8 +1408,11 @@ function Shell({ session }) {
           <div className="msgr-list">
             {sortedCh.map(chRow)}
           </div>
-        ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
-                  {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: 'public' })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
+        ) : isPhone && org && isAdmin && !isPersonal && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: openNewCh, invite: orgInvite })} /></div>
+          : org && previewChannels.length ? <div className="msgr-hint">{t('inv.empty.title')} <button type="button" className="btn sm" onClick={() => { setRail(true); openBrowse(); }}><I name="at" size={13} />{t('inv.empty.browse')}</button></div>
+          : isPhone && !orgId ? <div className="msgr-phsteps"><OrgStepList steps={noOrgSteps({ t, createOrg: () => { setOrgMenu(true); setNewOrg(''); }, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg })} /></div>
+          : <div className="msgr-hint">{orgId ? t('ch.noneYet') : t('org.none')}</div>}{/* 폰 홈에는 빈 조직 안내(본문)가 안 보인다 — 같은 시작 단계를 목록 자리에(D3) */}
+                  {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: newChKind })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
 </RailSection>}
         {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{DM_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
         {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
@@ -1411,7 +1439,7 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
-        {!isPersonal && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
+        {!isPersonal && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
             {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany], ['mine.bot', 'rail.agents.bot', railBots]]
@@ -1474,15 +1502,15 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} onOutsideDm={dmWithCrew} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => { setPage('settings'); setSettingsTab('friends'); }}><I name="at" size={13} />{t('friends.title')}</button></div></div></>
         ) : (
-          <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? orgInvite : null} askAdmin={askAdmin} browse={previewChannels.length ? () => { setRail(true); openBrowse(); } : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} />
+          <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? orgInvite : null} askAdmin={askAdmin} browse={previewChannels.length ? () => { setRail(true); openBrowse(); } : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} joinWithCode={joinWithCode} onboard={onboard} />
         )}
         </PageBoundary>
       </main>
-      {isPhone && (page === 'dm' || page === 'home') && org && <button type="button" className="msgr-fab" onClick={() => isPersonal && page === 'home' ? (setPage('settings'), setSettingsTab('friends')) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: 'public' })} aria-label={t(page === 'dm' ? 'dm.group.new' : isPersonal ? 'friends.add' : 'ch.new')}><I name="plus" size={22} /></button>}
+      {isPhone && (page === 'dm' || page === 'home') && org && <button type="button" className="msgr-fab" onClick={() => isPersonal && page === 'home' ? (setPage('settings'), setSettingsTab('friends')) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: newChKind })} aria-label={t(page === 'dm' ? 'dm.group.new' : isPersonal ? 'friends.add' : 'ch.new')}><I name="plus" size={22} /></button>}
       {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setPage('settings'); setSettingsTab('friends'); setRail(false); }} members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={crews} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {isPhone && <PhoneTabs page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
     </div>
@@ -2218,6 +2246,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   // 내가 결정할 대기 참여 요청은 읽음과 무관하게 남긴다 — 결정하면 목록에서 빠진다. 시각 기준만 쓰면, 채팅을 연 사람이 나가 결재자가 된
   // 사람은 그 전에 알림함을 연 적이 있으면 넘겨받은 요청(더 이른 시각)을 영영 못 봤다(픽스처 실측 2026-09-18, 20260918170000).
   const pendingMine = (it) => !!it.joinReq;
+  const unreadOf = (k) => items.filter((it) => it.kind === k && (isNew(it) || pendingMine(it))).length; // 탭 숫자는 읽지 않은 것(D37) — 총수면 모두 읽어도 숫자가 남았다
   const shown = items.filter((it) => (kind === 'all' || it.kind === kind) && (!unreadOnly || isNew(it) || pendingMine(it)));
   const readCount = items.filter((it) => (kind === 'all' || it.kind === kind) && !isNew(it) && !pendingMine(it)).length;
   const phone = useIsPhone();
@@ -2231,7 +2260,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
       <button type="button" className="btn sm msgr-backchat" onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
     <div className="msgr-thread page" {...swipe}><div className="msgr-inbox">
-      <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
+      <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && unreadOf(k) > 0 && <span className="n">{unreadOf(k)}</span>}</button>)}</div>
       {phone && <p className="msgr-inboxcounts">{t('inbox.count', { kind: t(`inbox.kind.${kind}`), n: shown.length })}</p>} {/* 폰: 탭 속 숫자 대신 탭 아래 한 줄 — 고른 탭의 개수(유건 2026-09-11) */}
       {!shown.length && <p className="empty">{unreadOnly && readCount ? t('inbox.allRead') : t('inbox.empty')}</p>}
       {readCount > 0 && <button type="button" className="btn sm msgr-inboxtoggle" onClick={() => setUnreadOnly((v) => !v)}>{unreadOnly ? t('inbox.showRead', { n: readCount }) : t('inbox.unreadOnly')}</button>}
@@ -3169,18 +3198,47 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
   );
 }
 
-function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg }) {
-  const { t } = useT();
-  const steps = org ? [
-    ['mark', t('ch.step1'), t('ch.step1.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>],
-    ['', t('ch.step2'), t('ch.step2.sub'), invite ? <button key="b" type="button" className="btn sm" onClick={invite}><I name="copy" size={13} />{t('inv.org')}</button> : null],
-    ['', t('ch.step3'), t('ch.step3.sub'), null],
-  ] : [
+// 조직 시작 단계(빈 조직 안내와 첫 채널 뒤 남은 단계가 같은 목록을 쓴다 — D3). 표지: 'mark' 지금 할 일 · 'done' 끝남 · '' 아직
+function orgSteps({ t, hasChannel, hasPublic, invited, hasCrew, isAdmin, adminName, createChannel, invite, openAgents }) {
+  const m = stepMarks({ hasChannel, isAdmin, invited, hasCrew });
+  const agentActs = <span key="c" className="acts"><button type="button" className={`btn sm${m.agent === 'mark' ? ' btn-primary' : ''}`} onClick={() => openExternal(LEGAL.download)}><I name="doc" size={13} />{t('ch.step3.download')}</button>{isAdmin && openAgents && <button type="button" className="btn sm" onClick={openAgents}><I name="star" size={13} />{t('ch.step3.bot')}</button>}</span>;
+  return [
+    [m.channel, t('ch.step1'), t(hasPublic ? 'ch.step1.subPrivate' : 'ch.step1.sub'), hasChannel ? null : <button key="a" type="button" className="btn btn-primary sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>],
+    ...(isAdmin ? [[m.invite, t('ch.step2'), t('ch.step2.sub'), invite && !invited ? <button key="b" type="button" className={`btn sm${m.invite === 'mark' ? ' btn-primary' : ''}`} onClick={invite}><I name="copy" size={13} />{t('inv.org')}</button> : null]] : []),
+    [m.agent, t('ch.step3'), isAdmin ? t('ch.step3.sub') : adminName ? t('ch.step3.member', { name: adminName }) : t('ch.step3.memberAny'), hasCrew ? null : agentActs],
+  ];
+}
+function OrgStepList({ steps }) {
+  return (<div className="msgr-steps">
+    {steps.map(([mark, title, sub, act], i) => (
+      <div key={i} className={`msgr-step${mark === 'done' ? ' done' : ''}`}><span className={`num${mark ? ` ${mark}` : ''}`}>{mark === 'done' ? <I name="check" size={13} /> : i + 1}</span><div className="card"><div><b>{title}</b>{mark !== 'done' && <span>{sub}</span>}</div>{act}</div></div>
+    ))}
+  </div>);
+}
+// 첫 채널 뒤에도 남은 단계(초대·에이전트)를 스레드 맨 위에 둔다(D3). 다 끝나거나 닫으면 사라진다(조직별로 기억)
+function OnboardCard({ orgId, steps, t }) {
+  const key = `argo-onboard-hide:${orgId}`;
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem(key) === '1'; } catch { return false; } });
+  if (hidden || steps.every(([m]) => m === 'done')) return null;
+  return (<section className="msgr-onboard" aria-label={t('ch.onboard.title')}>
+    <header><span className="msgr-klabel">{t('ch.onboard.title')}</span><button type="button" className="btn ghost sm" onClick={() => { try { localStorage.setItem(key, '1'); } catch { /* 저장 못 해도 이번엔 닫는다 */ } setHidden(true); }} aria-label={t('ch.onboard.hide')}><I name="x" size={13} /></button></header>
+    <OrgStepList steps={steps} />
+  </section>);
+}
+
+// 조직 없는 첫 화면 단계(데스크톱 본문·폰 홈이 같은 목록 — D22 S109)
+function noOrgSteps({ t, createOrg, joinWithCode, joinable = [], joinDomain, deletedOrgs = [], restoreOrg }) {
+  return [
     ...(deletedOrgs.length ? [['', t('org.step.restore'), t('org.step.restore.sub'), <div key="r" className="msgr-chips">{deletedOrgs.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => restoreOrg(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}</div>]] : []), // J-5
     ...(joinable.length ? [['mark', t('org.step.join'), t('org.step.join.sub'), <div key="j" className="msgr-chips">{joinable.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => joinDomain(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}</div>]] : []), // J-3: 회사 도메인 계정이면 초대 없이 바로
     [joinable.length ? '' : 'mark', t('org.step.create'), t('org.step.create.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createOrg}><I name="plus" size={13} />{t('org.new')}</button>],
-    ['', t('org.step.invite'), t('org.step.invite.sub'), null],
+    ['', t('org.step.invite'), t('org.step.invite.sub'), <button key="j" type="button" className="btn sm" onClick={joinWithCode}><I name="at" size={13} />{t('org.join.code')}</button>],
   ];
+}
+
+function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, joinWithCode, onboard }) {
+  const { t } = useT();
+  const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, invite }) : noOrgSteps({ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg });
   return (<>
     <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
     <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
@@ -3192,11 +3250,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = nu
       </>) : (<>
       <h1>{org ? t('ch.noChannelTitle') : t('org.noneTitle')}</h1>
       <p>{org ? t('ch.noChannelDesc') : t('org.noneDesc')}</p>
-      <div className="msgr-steps">
-        {steps.map(([mark, title, sub, act], i) => (
-          <div key={i} className="msgr-step"><span className={`num${mark ? ' mark' : ''}`}>{i + 1}</span><div className="card"><div><b>{title}</b><span>{sub}</span></div>{act}</div></div>
-        ))}
-      </div>
+      <OrgStepList steps={steps} />
       </>)}
     </div></div>
   </>);
@@ -3206,7 +3260,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = nu
 // 개인 공간 표지 — 조직 아바타(글자) 대신 사람 아이콘 + 액센트 틴트. 색만이 아니라 아이콘·라벨로도 조직과 구분한다(유건 2026-09-18).
 function PersonalMark({ sm = false }) { return <span className={`msgr-av personal${sm ? ' sm' : ''}`} aria-hidden="true"><I name="person" size={sm ? 13 : 15} /></span>; }
 
-function Channel({ onOutsideDm = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
+function Channel({ onOutsideDm = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
@@ -3316,6 +3370,7 @@ function Channel({ onOutsideDm = null, jumpTo = null, onJumped, channel, preview
     if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
     if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
   }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [away, setAway] = useState(false); // 바닥에서 한 화면 넘게 올라가 있으면 [맨 아래로](D22 S85)
   const stick = useRef(true); // 바닥 고정 여부 — 사용자가 바닥에서 40px 넘게 올려두면 false(QA: 열릴 때 30px 모자라게 멈춰 마지막 메시지가 가려졌다)
   useEffect(() => { stick.current = true; }, [chId]);
   // 검색에서 고른 글로 가기(D11) — 목록에 없으면 이전 기록을 한 쪽씩 더 불러오고(스크롤백과 같은 길), 찾으면 가운데로 + 1.5초 강조. 끝까지 없으면 그만둔다.
@@ -3337,7 +3392,7 @@ function Channel({ onOutsideDm = null, jumpTo = null, onJumped, channel, preview
     // 그 사이 자란 내용(실행 카드·Markdown 지연 렌더) 때문에 gap≥40으로 읽혀 고정을 풀던 경합(실측 2026-09-09: gap 294px에서 멈춤).
     let userAt = 0; let dragging = false;
     const mark = () => { userAt = Date.now(); };
-    const onScroll = () => { const gap = el.scrollHeight - el.scrollTop - el.clientHeight; if (gap < 40) stick.current = true; else if (dragging || Date.now() - userAt < 600) stick.current = false; };
+    const onScroll = () => { const gap = el.scrollHeight - el.scrollTop - el.clientHeight; if (gap < 40) stick.current = true; else if (dragging || Date.now() - userAt < 600) stick.current = false; setAway(gap > el.clientHeight); };
     el.addEventListener('scroll', onScroll, { passive: true });
     el.addEventListener('wheel', mark, { passive: true }); el.addEventListener('touchmove', mark, { passive: true }); el.addEventListener('keydown', mark);
     const down = () => { dragging = true; }; const up = () => { dragging = false; };
@@ -3411,6 +3466,7 @@ function Channel({ onOutsideDm = null, jumpTo = null, onJumped, channel, preview
     <div className="msgr-thread" ref={feed}>
       <div className="msgr-spine">
         {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
+        {tab === 'all' && msgs !== null && !hasMore && startCard}
         {msgs !== null && !all.length && !pendingRows.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}{/* 보내는 중인 첫 글도 내용으로 센다 — 서버 확인 때 안내 줄이 바뀌며 말풍선이 밀리지 않게 */}
         {tab === 'all' && (all.length > 0 || pendingRows.length > 0) && (hasMore
           ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder} disabled={older} aria-busy={older || undefined}>{t(older ? 'thread.loading' : 'thread.older')}</button></div>
@@ -3419,6 +3475,7 @@ function Channel({ onOutsideDm = null, jumpTo = null, onJumped, channel, preview
         {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} p={p} t={t} />)}
         {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
       </div>
+      {away && <div className="msgr-tobottom"><button type="button" className="btn sm" onClick={() => { const el = feed.current; if (!el) return; stick.current = true; el.scrollTop = el.scrollHeight; setAway(false); }}><I name="caret" size={13} />{t('thread.toBottom')}</button></div>}
     </div>
     {workOpen && <WorkPanel key={chId} channel={channel} uid={uid} isAdmin={isAdmin} locked={locked} crews={chCrews} t={t} lang={lang} onClose={() => setWorkOpen(false)} sheet={!phone} />}{/* 데스크톱: 채널 패널과 같은 시트(폭 380 + 24, #600·#603 비킴 규칙 공유 — 유건 2026-09-18) */}
     {preview
@@ -3581,7 +3638,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   const editor = editing && (
     <form className="msgr-editbox" onSubmit={(e) => { e.preventDefault(); if (draft.trim()) onEdit?.(m, draft.trim()); setEditing(false); }}>
-      <textarea className="msgr-input" rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form.requestSubmit(); } }} autoFocus />
+      <textarea className="msgr-input" rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form.requestSubmit(); } }} autoFocus onFocus={(e) => { const n = e.currentTarget.value.length; e.currentTarget.setSelectionRange(n, n); }} />
       <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!draft.trim()}>{t('ui.save')}</button><button type="button" className="btn sm" onClick={() => setEditing(false)}>{t('ui.cancel')}</button></div>
     </form>
   );
@@ -3807,7 +3864,9 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     const exclude = new Set([...mentionsFromBody(text, byName, [], allByName).map((x) => x.id), ...recipients.map((r) => r.id)]);
     return rolePickCandidates(text, roleCands, { exclude, participants: new Set(isDm ? (scopeCrews ?? []).map((c) => c.id) : []) });
   }, [isDm, text, scopeCrews, byName, allByName, recipients, roleCands]);
-  const slashCands = useMemo(() => rolePick ? null : slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashCrews, freshCmds, t]);
+  const [slashOff, setSlashOff] = useState(null); // Esc로 닫은 그 글자에서는 '/' 목록을 다시 띄우지 않는다(D18 S95) — 글자가 바뀌면 다시
+  useEffect(() => { if (slashOff !== null && text !== slashOff) setSlashOff(null); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
+  const slashCands = useMemo(() => rolePick || text === slashOff ? null : slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
   const [slashSel, setSlashSel] = useState(0);
   useEffect(() => { setSlashSel(0); }, [text]);
   const pickSlash = (cand) => {
@@ -3884,6 +3943,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel((i) => (i + 1) % slashCands.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSel((i) => (i - 1 + slashCands.length) % slashCands.length); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSlash(slashCands[Math.min(slashSel, slashCands.length - 1)]); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setSlashOff(text); return; } // 목록만 닫는다 — 쓴 글은 그대로
     }
     if (pop && candidates.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % candidates.length); return; }

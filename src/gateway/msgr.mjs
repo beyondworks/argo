@@ -462,7 +462,9 @@ export const _resetCommandsForTest = () => commandsPushed.clear();
 /** 같은 입력으로 다시 넣어도 결과가 같은 실패 — 권한(RLS)과 무결성 제약. 재시도가 풀어 주지 않는다.
     보관 채널처럼 읽기는 되고 쓰기는 막히는 자리가 실재한다(msgr_crew_inbox는 읽기로만 거른다):
     거기서 던지면 step이 break되어 그 크루의 큐 전체가 매 틱 같은 자리에 멈춘다 — 1건을 잃는 것보다 나쁘다. */
-const permanentWrite = (e) => e?.code === '42501' || String(e?.code ?? '').startsWith('23');
+// msgr_not_allowed: 크루 글 트리거가 "이 크루는 이 방에 쓸 수 없다"로 막은 것(errcode 없이 P0001) — 재시도해도 같다.
+// 일시 오류로 보면 거절 안내 한 줄 때문에 그 크루의 커서가 영구히 멈춘다(D43 실측: DM 위임 원본 1262에서 서윤 커서 정지).
+const permanentWrite = (e) => e?.code === '42501' || String(e?.code ?? '').startsWith('23') || /msgr_not_allowed/.test(String(e?.message ?? ''));
 /** 실행을 거부한 사유별 안내 문구. 거부는 말해 줘야 한다 — 침묵하면 지시가 커서만 지나 영구히 사라진다(실사고 2026-09-17, 라이브 msg 829). */
 function denyBody(why, crew, lang) {
   if (why === 'channel_policy') return pick(`이 채널은 회사 크루만 일할 수 있습니다(채널 정책). ${crew.display_name}은(는) 개인 크루라 여기서는 지시를 받지 않습니다.`,
@@ -514,6 +516,9 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       if (db.crewContext && !envelope) { // 서버가 이 출처의 실행을 거부했다(42501). 봉투 없이 진행하면 로컬 폴백이 서버보다 느슨해 거부가 뚫린다 — 실행은 막되 이유는 남긴다.
         if (m.author_kind !== 'user' || !m.author_user_id || !targetsCrew(m, crew, dm)) return; // 크루끼리 넘김·참조 수신은 안내가 채널을 도배한다
         // 답글 규칙(부모가 이 크루 글)으로만 잡힌 글은 위 3인자 판정에서 빠진다 — D38 전 서버는 이런 답글을 거절하므로, 멘션 없이 단 답글마다 거절 안내가 붙지 않게(D38b)
+        // 크루가 멤버가 아닌 DM(주인과의 1:1에서 남의 에이전트를 부른 위임 원본 등)에는 안내를 쓸 수 없다 — 서버가 중계본으로 넘기거나 거절한다.
+        // 여기서 쓰려다 막히면 그 크루의 커서가 멈췄다(D43). 조용히 넘어간다(중계본은 그 크루의 DM에서 따로 온다).
+        if (!dm.has(m.channel_id) && (await channelOf(m.channel_id))?.kind === 'dm') return;
         const alive = await db.message(m.id); // 42501은 '권한 거부'와 '원본이 지워짐'을 구분하지 않는다 — 사라진 글에 엉뚱한 안내를 달지 않는다(조회 실패는 던져서 재시도)
         if (!alive || alive.deleted_at) return;
         const why = await db.instructCheck(crew.id, m.author_user_id, m.channel_id).catch(() => null); // 사유를 몰라도 침묵보다 일반 안내가 낫다
