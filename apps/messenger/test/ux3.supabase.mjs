@@ -16,6 +16,7 @@ const state = window.__ux3Fixture = { calls: [], failNext: null, broadcasts: {},
     { channel_id: 'org-dm', member_kind: 'user', member_id: 'user-colleague' },
   ],
   msgr_messages: [
+    { id: 12, channel_id: 'general', org_id: org, author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', body: '확인 부탁해요', created_at: new Date(Date.parse(now) + 1000).toISOString(), deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm12' }, // 이미지 행이 현재 행이 아니게(K10 로빙)
     { id: 11, channel_id: 'general', org_id: org, author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', body: '스크린샷 붙입니다', created_at: now, deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm11' },
   ],
   msgr_attachments: [

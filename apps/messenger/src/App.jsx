@@ -3491,6 +3491,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const deliveryLabels = deliveryRecipients?.length > 0 && <div className="msgr-message-recipients">{deliveryRecipients.map((r) => <span key={r.id}>{t(`dm.delivery.${r.role}`)} · {crewOf(r.id)?.display_name || t('org.crews')}</span>)}</div>;
   // 전달(relay) — 이 글이 다른 1:1에서 넘어온 지시면 출처 캡션(원래 방이 내 목록에 있을 때만 클릭 가능). role(수신/참조) 라벨은 위 deliveryLabels가 이미 mentions에서 그린다.
   const relay = !m.deleted_at && m.meta?.relay;
+  // 첨부만 보낸 내 글 — 본문·인용·수신 표시가 모두 없으면 빈 말풍선을 그리지 않는다(첨부 줄만). 빈 검은 알약이 이미지 위에 떴다(D21)
+  const bareAttach = !m.deleted_at && m.kind !== 'system' && !(body ?? '').trim() && !m.reply_to && !relay && !(deliveryRecipients?.length > 0) && atts.length > 0;
   const relayChannel = relay && channels.find((c) => c.id === relay.channel_id); // 원래 방 — 내가 항상 그 방 멤버라 목록에 있으면 표시 이름을 안다
   const relayCapKey = relay && relayCaptionKey(relay, relayChannel && dmName?.(relayChannel));
   const relayCapText = relay && t(relayCapKey.key, relayCapKey.vars);
@@ -3515,7 +3517,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
-  const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} />)}</div>;
+  const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} rowTab={rowTab} />)}</div>;
   const acts = !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
     phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)
       <div className="msgr-actsheetwrap" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) setActsOpen(false); }}>{/* 슬랙 참고(유건 2026-09-11): 빠른 반응 줄 → 타일 → 목록. 있는 기능만 싣는다 */}
@@ -3555,7 +3557,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className="msgr-mine" ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
-      {editing ? editor : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : <Body text={body} />}</div>}
+      {editing ? editor : bareAttach ? null : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : <Body text={body} />}</div>}
       {attRow}
       {chips}
       <div className="meta">{edited}<span className={m.pending ? 'sent pending' : 'sent'} title={m.pending ? t('msg.sending') : undefined} aria-label={m.pending ? t('msg.sending') : undefined}><I name="check" size={12} /></span><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
@@ -3672,7 +3674,8 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
     </div>
   );
 }
-function Attachment({ a, onError }) {
+function Attachment({ a, onError, rowTab = 0 }) {
+  const tab = rowTab === 0 ? undefined : -1; // 서명 URL·실패 뒤 늦게 붙는 버튼은 행의 로빙 효과가 놓친다 — 직접 탭 순서 밖으로(검수 K10)
   const { t } = useT();
   const open = async () => {
     try {
@@ -3684,17 +3687,19 @@ function Attachment({ a, onError }) {
   };
   const isImg = /^image\//.test(a.mime || '');
   const [src, setSrc] = useState(null); // 이미지는 서명 URL로 인라인(스크린샷 공유가 '파일 버튼'이던 갭, 2026-09-12 점검)
-  useEffect(() => { let on = true; if (!isImg) return undefined; supabase.storage.from('msgr').createSignedUrl(a.storage_path, 3600).then(({ data }) => { if (on && data?.signedUrl) setSrc(data.signedUrl); }).catch(() => {}); return () => { on = false; }; }, [a.storage_path, isImg]);
+  const [imgFail, setImgFail] = useState(false); // 미리보기를 못 그리면 파일 칩으로 물러난다
+  useEffect(() => { let on = true; if (!isImg) return undefined; supabase.storage.from('msgr').createSignedUrl(a.storage_path, 3600).then(({ data }) => { if (!on) return; if (data?.signedUrl) setSrc(data.signedUrl); else setImgFail(true); }).catch(() => { if (on) setImgFail(true); }); return () => { on = false; }; }, [a.storage_path, isImg]);
   // 이미지 클릭 = 그 자리에서 확대(유건 2026-09-16). 브라우저 새 창으로 던지면 대화 맥락에서 떨어진다 — 파일 버튼은 종전대로 밖에서 연다.
-  const [zoom, setZoom] = useState(false);
+  const [zoom, setZoom] = useState(false); const imgBtn = useRef(null);
   useEffect(() => {
     if (!zoom) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') setZoom(false); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); imgBtn.current?.focus({ preventScroll: true }); }; // 닫으면 초점을 이미지로 되돌린다
   }, [zoom]);
   return (<span className="msgr-attach">
-    {src && <img className="msgr-imgprev" src={src} alt={a.name} loading="lazy" onClick={() => setZoom(true)} />}
+    {src && !imgFail && <button type="button" ref={imgBtn} tabIndex={tab} className="msgr-imgbtn" aria-label={a.name} onClick={() => setZoom(true)}><img className="msgr-imgprev" src={src} alt="" loading="lazy" onError={() => setImgFail(true)} /></button>}{/* 버튼이라 키보드(로빙 현재 행에서 Tab)로도 연다 — 검수 K10 */}
+    {isImg && !src && !imgFail && <span className="msgr-imgph" aria-hidden="true" />}{/* 서명 URL 대기 중 자리 틀 — 빈 행으로 보이지 않게 */}
     {zoom && src && createPortal(
       <div className="msgr-lightbox" role="dialog" aria-modal="true" aria-label={a.name} onClick={() => setZoom(false)}>
         <img src={src} alt={a.name} onClick={(e) => e.stopPropagation()} />
@@ -3703,7 +3708,7 @@ function Attachment({ a, onError }) {
           <button type="button" className="btn sm ghost" onClick={() => setZoom(false)} aria-label={t('ui.close')}><I name="x" size={13} /></button>
         </div>
       </div>, document.body)}
-    <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.max(1, Math.round(a.bytes / 1024))}KB</span> : null}</button>
+    {(!isImg || imgFail) && <button type="button" tabIndex={tab} className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.max(1, Math.round(a.bytes / 1024))}KB</span> : null}</button>}{/* 이미지는 미리보기가 곧 파일 — 칩이 한 번 더 나오던 중복(D21). 원본은 라이트박스 [원본 열기] */}
   </span>);
 }
 
