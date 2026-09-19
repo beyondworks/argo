@@ -150,6 +150,23 @@ await scenario(1280, 'public-channel-people', async (p) => {
   const cs = await calls();
   assert.ok(cs.some((c) => c.table === 'msgr_channels' && c.op === 'update' && (c.values?.excluded_user_ids ?? []).includes('user-third')), '내보내면 제외 목록에 든다');
   assert.ok(cs.some((c) => c.table === 'msgr_channel_members' && c.op === 'delete'), '참여 행도 지운다(목록에 남아 안 열리는 채널이 되지 않게)');
+  // D30: 되돌리기는 참여 행까지 되살린다 — 종전에는 제외 목록만 비우고 "다시 들어왔습니다"라고 했으나 목록에는 없었다
+  const restoreBtn = () => sheet.locator('.row', { hasText: 'Third Person' }).locator('button', { hasText: '되돌리기' });
+  const memberRow = () => p.evaluate(() => window.__dmInviteFixture.tables.msgr_channel_members.some((r) => r.channel_id === 'general' && r.member_kind === 'user' && r.member_id === 'user-third'));
+  const excluded = () => p.evaluate(() => window.__dmInviteFixture.tables.msgr_channels.find((c) => c.id === 'general').excluded_user_ids ?? []);
+  assert.equal(await memberRow(), false, '내보낸 뒤에는 참여 행이 없다');
+  // 되살리기가 실패하면 성공 알림도, 제외 해제도 없다
+  await p.evaluate(() => { window.__dmInviteFixture.failNext = 'msgr_channel_members:upsert'; });
+  await restoreBtn().click(); await p.waitForTimeout(700);
+  const toastFail = await p.locator('.msgr-toast').innerText().catch(() => '');
+  assert.ok(!toastFail.includes('다시 들어왔습니다'), `실패하면 성공 알림이 없다 (실제: ${toastFail})`);
+  assert.ok((await excluded()).includes('user-third'), '실패하면 제외 목록도 그대로');
+  await p.locator('.msgr-toast').click().catch(() => {});
+  await restoreBtn().click(); await p.waitForTimeout(700);
+  assert.equal(await memberRow(), true, '되돌리면 참여 행이 다시 생긴다');
+  assert.ok(!(await excluded()).includes('user-third'), '제외 목록에서 빠진다');
+  assert.ok((await people()).includes('Third Person'), '참여자 목록으로 돌아온다');
+  assert.ok((await p.evaluate(() => window.__dmInviteFixture.tables.msgr_channel_members.some((r) => r.channel_id === 'general' && r.member_id === 'user-me'))), '다른 참여 행을 덮어쓰지 않는다');
 });
 
 // 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
