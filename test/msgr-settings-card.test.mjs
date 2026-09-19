@@ -478,11 +478,15 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
   // 빼는 함수가 없는 서버에서만 옛 차단으로 돌아간다(그래야 크루가 주인 없이 죽은 채 남지 않는다).
   assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?for \(const s of stuck\) \{\s*const r = await supabase\.rpc\('msgr_crew_leave_channel', \{ ch: c\.id, crew: s\.member_id \}\);\s*if \(r\.error\) throw new Error\(missingSchema\(r\.error\) \? t\('ch\.leave\.blocked'\) : [^\n]*\n\s*\}[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 크루를 이 방에서 먼저 빼고 내 멤버 행 삭제(빼는 함수가 없는 서버면 차단)');
   assert.match(app, /canManage && \{ icon: 'x', label: t\('ch\.archive'\), run: \(\) => confirmVia\('archive'\)/, '보관은 관리 권한만, 2단계');
-  assert.match(app, /c\.kind === 'private' && \{ icon: 'out', label: t\('ch\.leave'\), run: \(\) => confirmVia\('leave'\)/, '나가기는 비공개 채널만(공개는 전원 자동)');
+  // D16(2026-09-19): 공개 채널도 참여제(20260916190000 — 찾아보기로 스스로 들어간다)라 참여한 사람은 나갈 수 있어야 한다.
+  // 종전 핀 "나가기는 비공개 채널만(공개는 전원 자동)"은 9/16 이전 설계(조직원 전원 자동 참여)를 고정하고 있었다.
+  assert.match(app, /\n\s*\{ icon: 'out', label: t\('ch\.leave'\), run: \(\) => confirmVia\('leave'\) \}, \/\/ 공개 채널도 나간다/, '나가기는 채널 종류와 무관(공개는 찾아보기로 다시 참여)');
+  assert.doesNotMatch(app, /c\.kind === 'private' && \{ icon: 'out', label: t\('ch\.leave'\)/, '비공개 한정 조건이 되살아나지 않는다');
+  assert.match(app, /railActionKey === 'ch\.leave' && railAction\.channel\.kind === 'public' \? 'ch\.leave\.confirm\.note\.public'/, '공개 채널 확인 문구는 찾아보기 재참여 안내');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
   assert.ok(oc.indexOf("t('org.guest.until'") < oc.indexOf('<div className="msgr-seg right"'), '게스트 만료 문구는 세그먼트보다 앞(세그먼트 오른쪽 고정)');
   const dict = read('apps/messenger/src/i18n.js');
-  for (const k of ['org.invite.kind.guest', 'ch.leave', 'ch.leave.blocked', 'ch.archive.confirm.short', 'ch.leave.confirm.note', 'ch.archive.confirm.note', 'dm.leave.confirm.note', 'dm.leave', 'ch.menu.settings']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+  for (const k of ['org.invite.kind.guest', 'ch.leave', 'ch.leave.blocked', 'ch.archive.confirm.short', 'ch.leave.confirm.note', 'ch.leave.confirm.note.public', 'ch.archive.confirm.note', 'dm.leave.confirm.note', 'dm.leave', 'ch.menu.settings']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });
 
 test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→크루·문서/사람/크루/전사 문서)+아르고 기억 그래프(별칭)+문장 목록, 감사 19종 문장 사전, 한국어 조사, 설정의 기록 탭 제거', () => {
