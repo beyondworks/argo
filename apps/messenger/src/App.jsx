@@ -35,6 +35,7 @@ import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
+import { notifyTag, notifyChannel } from './notify-target.mjs'; // 배너 클릭 → 그 방(D52)
 import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceKey, joinWithBackoff } from './cross-space.mjs'; // 다른 공간의 새 글 — 안 읽음 합계·알림 판단
 import { notifyPermission, requestNotifyPermission, askNotifyOnce, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
@@ -418,6 +419,13 @@ function Shell({ session }) {
     }).catch(() => { if (on) setNavTo(null); });
     return () => { on = false; };
   }, [navTo, channels, orgs, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { // 데스크톱 배너 클릭(D52) — 네이티브가 창을 되살리고 알림 식별자를 보낸다. 그 방으로(다른 조직이면 조직 전환 뒤) 연다
+    if (!uid || !isDesktopTauri()) return undefined;
+    let off = () => {}; let live = true;
+    import('@tauri-apps/api/event').then(({ listen }) => listen('msgr-notify-click', ({ payload }) => { const ch = notifyChannel(payload); pushDiag('notify', `click ${ch ?? '-'}`); if (ch) setNavTo(ch); }))
+      .then((u) => { if (live) off = u; else u(); }).catch(() => {});
+    return () => { live = false; off(); };
+  }, [uid]);
   useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
@@ -867,7 +875,7 @@ function Shell({ session }) {
     const mentioned = Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid);
     if (!mentioned || !shouldNotify(payload.channel_id)) return;
     const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
-    osNotify(t('notify.mention', { name: payload.author_name || who?.display_name || '?', channel: payload.channel_name ?? ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), `m:${payload.id}`); return true; // 멘션도 본문 발췌. 이름은 채운 payload(readableForNotify — 다른 공간 글) 우선
+    osNotify(t('notify.mention', { name: payload.author_name || who?.display_name || '?', channel: payload.channel_name ?? ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), notifyTag('m', payload.id, payload.channel_id)); return true; // 멘션도 본문 발췌. 이름은 채운 payload(readableForNotify — 다른 공간 글) 우선
   };
   const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
     const r = notifyRef.current;
@@ -880,10 +888,10 @@ function Shell({ session }) {
     const title = (payload.channel_kind ?? ch?.kind) === 'dm' ? (who || '?') : t('notify.message', { name: who || '?', channel: payload.channel_name ?? ch?.name ?? '' });
     const clip = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
     const inline = clip(payload.body);
-    if (inline || 'channel_name' in payload) { osNotify(title, inline || t('notify.attachment'), `r:${payload.id}`); return; } // readableForNotify가 이미 읽은 글(본문 없음 = 첨부만)
+    if (inline || 'channel_name' in payload) { osNotify(title, inline || t('notify.attachment'), notifyTag('r', payload.id, payload.channel_id)); return; } // readableForNotify가 이미 읽은 글(본문 없음 = 첨부만)
     supabase.from('msgr_messages').select('body').eq('id', payload.id).maybeSingle()
-      .then(({ data }) => osNotify(title, clip(data?.body) || t('notify.attachment'), `r:${payload.id}`))
-      .catch(() => osNotify(title, '', `r:${payload.id}`)); // 못 읽으면 종전처럼 제목만
+      .then(({ data }) => osNotify(title, clip(data?.body) || t('notify.attachment'), notifyTag('r', payload.id, payload.channel_id)))
+      .catch(() => osNotify(title, '', notifyTag('r', payload.id, payload.channel_id))); // 못 읽으면 종전처럼 제목만
   };
   // 보고 있는 공간의 새 글 — org:(공개 채널)·u:<나>(비공개 방, 서버 적용 뒤)·dm:<열린 개인 방> 어느 토픽으로 와도 같은 처리. 같은 글이 두 토픽으로 올 수 있어 id로 한 번만.
   const seenMsgRef = useRef(new Set());
@@ -899,7 +907,7 @@ function Shell({ session }) {
     const r = notifyRef.current;
     if (!payload || payload.status !== 'pending' || !r.isAdmin || !shouldNotify(payload.channel_id)) return; // 확정권 정본은 서버 — 관리자에게만 알린다(저위험은 소유자가 카드에서 본다)
     const ch = r.channels.find((c) => c.id === payload.channel_id);
-    osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', `a:${payload.id}`);
+    osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', notifyTag('a', payload.id, payload.channel_id));
   };
   const [otherNames, setOtherNames] = useState({}); // 개인 그룹 방의 친구 아닌 구성원(친구의 친구) 이름 — 친구 목록(members)에 섞으면 친구로 보인다
   const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || otherNames[id] || (id ? id.slice(0, 8) : t('user.deleted')); // 작성자 id null = 계정 삭제(FK set null) — 글은 남고 이름만 사라진다
