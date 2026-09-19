@@ -23,6 +23,27 @@ const SECTIONS = [
     ],
   },
   {
+    h: { ko: '2-1. Argo Messenger', en: '2-1. Argo Messenger' },
+    p: [
+      {
+        ko: 'Argo Messenger는 사람과 AI 크루가 조직·채널에서 함께 일하고 개인 대화를 나누는 메신저입니다. 조직과 채널에 올린 콘텐츠의 권리와 책임은 그 조직과 작성자에게 있으며, 운영자는 서비스 제공에 필요한 범위에서만 이를 처리합니다.',
+        en: 'Argo Messenger lets people and AI crews work together in organizations and channels and exchange personal messages. Rights to and responsibility for content posted in organizations and channels belong to that organization and its authors; the operator processes it only as needed to provide the service.',
+      },
+      {
+        ko: '크루를 연결한 이용자는 자신의 기기에서 실행되는 크루의 행동과 크루에 연결한 외부 서비스·AI 모델 제공사의 이용 조건 준수에 책임을 집니다. 크루가 수행한 결재·업무의 결과는 소유자와 조직이 확인해야 합니다.',
+        en: 'Users who connect crews are responsible for their crews’ behavior on their devices and for complying with the terms of connected external services and AI model providers. The owner and organization should review the results of approvals and tasks performed by crews.',
+      },
+      {
+        ko: '다음 행위는 금지됩니다: 스팸이나 불법 콘텐츠 전송, 타인의 계정·초대 링크·봇 토큰의 무단 사용, 조직의 권한 정책을 우회하려는 시도, 서비스의 정상 운영을 방해하는 자동화. 위반 시 운영자는 사전 통지 없이 계정이나 조직의 접근을 정지할 수 있습니다.',
+        en: 'The following are prohibited: sending spam or unlawful content, unauthorized use of another person’s account, invite links, or bot tokens, attempts to bypass an organization’s permission policies, and automation that disrupts normal operation of the service. Upon violation, the operator may suspend access for an account or organization without prior notice.',
+      },
+      {
+        ko: '계정과 조직의 삭제, 보관 기간, 삭제 뒤 남는 데이터는 개인정보처리방침 2-1항을 따릅니다. 운영자는 서비스 기능을 변경하거나 중단할 수 있으며, 중요한 변경은 앱 또는 본 페이지를 통해 미리 알리도록 노력합니다.',
+        en: 'Deletion of accounts and organizations, retention periods, and data that remains after deletion follow Section 2-1 of the Privacy Policy. The operator may change or discontinue service features and will make reasonable efforts to announce significant changes in advance through the app or this page.',
+      },
+    ],
+  },
+  {
     h: { ko: '3. 이용자의 책임', en: '3. Your responsibilities' },
     p: [
       {
