@@ -73,6 +73,25 @@ try {
       await p.screenshot({ path: new URL(`personal-space-${lang}-${width}.png`, artifacts).pathname });
     });
 
+    if (lang === 'ko' && width === 1280) await scenario(lang, width, 'space-transition-keeps-last-channel-scoped', async (p) => {
+      await p.locator('.msgr-org').click();
+      await p.locator('.msgr-menu-pop button').first().click();
+      await dmsReady(p);
+      await p.locator('[data-sec="dms"] .item').first().click();
+      const personalChannel = await p.evaluate(() => JSON.parse(localStorage.getItem('argo-msgr-last-ch') || '{}').__personal__);
+      assert.ok(personalChannel, 'personal last channel recorded');
+      await p.evaluate(() => {
+        window.__lastChWrites = [];
+        const original = localStorage.setItem.bind(localStorage);
+        localStorage.setItem = (key, value) => { if (key === 'argo-msgr-last-ch') window.__lastChWrites.push(value); original(key, value); };
+      });
+      await p.locator('.msgr-org').click();
+      await p.locator('.msgr-menu-pop button').filter({ hasText: 'Fixture Organization' }).first().click();
+      await p.locator('[data-sec="channels"] .item').first().waitFor();
+      const polluted = await p.evaluate(({ org, personalChannel }) => window.__lastChWrites.some((value) => JSON.parse(value)[org] === personalChannel), { org: 'org-fixture', personalChannel });
+      assert.equal(polluted, false, 'personal channel is never written under the organization key during transition');
+    });
+
     // 2. Friend DM button calls msgr_dm_personal and navigates
     await scenario(lang, width, 'friend-dm-button', async (p) => {
       // Go to settings > friends

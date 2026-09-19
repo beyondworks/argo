@@ -7,14 +7,15 @@ import { t } from '../src/i18n.js';
 
 const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 test('검색 결과가 상한에서 잘렸으면 이상으로 적는다', () => {
-  assert.match(src, /\.limit\(SEARCH_LIMIT\)/);
-  assert.match(src, /more: msgs\.length >= SEARCH_LIMIT,/);
+  assert.match(src, /\.limit\(SEARCH_LIMIT \+ 1\)/);
+  assert.match(src, /const msgs = found\.slice\(0, SEARCH_LIMIT\);/);
+  assert.match(src, /more: found\.length > SEARCH_LIMIT,/);
   assert.match(src, /t\(res\.more \? 'search\.countMore' : 'search\.count', \{ n: total \}\)/);
   assert.equal(t('search.countMore', 'ko', { n: 60 }), '60건 이상');
   assert.equal(t('search.countMore', 'en', { n: 60 }), '60+ results');
 });
 test('마지막 채널 — 지금 조직의 채널일 때만 적고, 불러올 때 남아 있으면 연다', () => {
-  assert.match(src, /writeLastCh\(orgId, chId\); \}, \[orgId, chId, channels, previewChannels\]\);/);
+  assert.match(src, /loadedOrg\.current === orgId.*writeLastCh\(orgId, chId\); \}, \[orgId, chId, channels, previewChannels\]\);/);
   assert.match(src, /const last = readLastCh\(id\); return has\(last\) \? last : \(chs\[0\]\?\.id \?\? null\);/, '조직');
   assert.match(src, /const last = readLastCh\(PERSONAL\); return has\(last\) \? last : \(chs\[0\]\?\.id \?\? null\);/, '개인 공간');
 });
