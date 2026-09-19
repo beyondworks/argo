@@ -40,6 +40,7 @@ import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 import { reconcileSession } from './resume-session.mjs';
+import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
@@ -298,7 +299,7 @@ function Auth({ logoutNotice = '' }) {
   const pending = enabled === null; // 조회 전엔 눌러도 꺼진 제공자로 갈 수 있다 → 비활성(검수 #530 M-1: 느린 망에서 1.5초 창)
   const authWaiting = isMobileNative ? mobileAuth.waiting : waiting;
   const mobileError = mobileAuth.error ? t(({ expired: 'auth.err.expired', open_failed: 'auth.err.open', provider_denied: 'auth.err.denied', exchange_failed: 'auth.err.exchange' })[mobileAuth.error] || 'auth.err.start') : '';
-  const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
+  const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); } catch (e) { setErr(authErrorText(e.message, t)); } finally { setBusy(false); } }; // 서버 영어 원문 → 사전(D9), 모르는 문구는 원문
   // 앱 웹뷰는 provider 창을 못 띄운다 → 셸이 루프백 브리지를 열고 진짜 브라우저에서 로그인, pairing code로 세션 회수(oauth-handoff.mjs·src-tauri/src/pair.rs).
   // 브라우저(dev·vite preview)에서는 셸이 없어 버튼이 정직하게 안내한다(auth.err.notApp) — 로컬 스택 실측은 dev 비밀번호 로그인으로.
   const viaBrowser = (provider) => run(async () => {
@@ -312,7 +313,7 @@ function Auth({ logoutNotice = '' }) {
       try { if (inTauri()) (await import('@tauri-apps/api/window')).getCurrentWindow().setFocus(); } catch { /* 포커스는 장식 */ }
     } catch (e) {
       const k = { not_app: 'auth.err.notApp', start_failed: 'auth.err.start', open_failed: 'auth.err.open', timeout: 'auth.err.timeout', expired: 'auth.err.expired' }[e.message];
-      throw new Error(k ? t(k) : e.message);
+      throw new Error(k ? t(k) : authErrorText(e.message, t)); // setSession 등이 던지는 GoTrue 원문도 같은 표로
     } finally { setWaiting(''); }
   });
   return (
