@@ -101,7 +101,7 @@ const tokenTag = (rt) => createHash('sha256').update(String(rt ?? '')).digest('h
 // (라이브: 한 기기 refresh_token_already_used 3,072회/24시간). Next가 이 모듈을 여러 사본으로 번들하므로 globalThis에 둔다.
 // rejects: `${root}|${지문}` → { kind, at } · backoff: root → { tag, delay, until } (네트워크·5xx 연속 실패의 대기 창)
 const MEM = (globalThis.__argoDeviceSessionGate ??= { rejects: new Map(), backoff: new Map() });
-const BACKOFF_MIN_MS = 8_000, BACKOFF_MAX_MS = 10 * 60_000;
+const BACKOFF_MIN_MS = 8_000, BACKOFF_MAX_MS = 120_000; // 상한 2분 — 길면 잠자기·와이파이 끊김에서 돌아온 뒤 크루 답장·동기화가 오래 멈춘다(검수 #657). 서버 난사는 거절 기억이 막는다
 /** 테스트 전용 — 대기 창이 지난 것과 같게 */
 export function _resetDeviceBackoffForTest(root) { MEM.backoff.delete(root); }
 /** 리프레시 토큰 거절인가(Invalid Refresh Token 계열) — 네트워크 실패·5xx는 거절이 아니다. */
@@ -226,7 +226,7 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
       // 오진하면 사용자가 기기 재바인딩(다른 계정이면 이전 주인 로그아웃)까지 가는 과잉 처방이 된다
       // (분리 검수 M3). /api/me가 이 마커만 읽어 회전 없이 판정한다(M4 — UI 마운트발 이중 회전 금지).
       if (!isRejection(error)) {
-        const delay = Math.min(bo?.tag === tag ? bo.delay * 2 : BACKOFF_MIN_MS, BACKOFF_MAX_MS); // 8초 → 16 → … → 10분, 토큰이 바뀌면 처음부터
+        const delay = Math.min(bo?.tag === tag ? bo.delay * 2 : BACKOFF_MIN_MS, BACKOFF_MAX_MS); // 8초 → 16 → … → 2분, 토큰이 바뀌면 처음부터
         MEM.backoff.set(root, { tag, delay, until: Date.now() + delay });
         await logLine(root, { ev: 'error', reason: mask(error?.message ?? 'no session'), status: error?.status ?? null, backoffMs: delay });
         return null;

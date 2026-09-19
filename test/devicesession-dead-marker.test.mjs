@@ -330,6 +330,8 @@ test('네트워크 실패가 이어지면 간격을 벌린다(8초 루프가 매
   const client = clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return fail ? reject('fetch failed') : ok('at2', 'rt2'); });
   for (let i = 0; i < 5; i++) await getFreshDeviceSession({ root, _mkClient: client });
   assert.equal(calls.length, 1, '연속 실패는 대기 창 안에서 다시 보내지 않는다');
+  const log = await readLog(root);
+  assert.ok(log.filter((l) => l.ev === 'error').every((l) => l.backoffMs <= 120_000), '대기 창 상한 2분(검수 #657 — 잠자기에서 돌아온 뒤 오래 멈추지 않게)');
   fail = false;
   const { _resetDeviceBackoffForTest } = await import('../src/devicesession.mjs');
   _resetDeviceBackoffForTest(root); // 시간이 흐른 것과 같다
