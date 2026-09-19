@@ -40,12 +40,16 @@ const state = window.__instant = {
     msgr_crew_approvals: [], msgr_attachments: [], msgr_reactions: [], msgr_reads: [],
   },
 };
-// 주소로 보는 사람을 바꾼다 — ?role=member(관리자 아닌 멤버) ·&host=0(어느 채널의 방장도 아님: 초대 버튼 대신 관리자 안내) ·&nochannels=1(참여한 채널 0개: 빈 상태 안전망)
+// 주소로 보는 사람을 바꾼다 — ?role=member(관리자 아닌 멤버) ·&host=0(어느 채널의 방장도 아님: 초대 버튼 대신 관리자 안내) ·&nochannels=1(참여한 채널 0개: 빈 상태 안전망) ·&empty=1(막 만든 조직) ·&noorg=1(조직 없음) ·&nocrews=1(에이전트 0)
 { const sp = new URLSearchParams(globalThis.location?.search ?? '');
   if (sp.get('role')) { state.tables.msgr_org_members[0].role = sp.get('role'); state.tables.msgr_org_members[1].role = 'owner'; } // 소유자는 늘 있다 — 동료가 맡는다
   if (sp.get('host') === '0') state.tables.msgr_channels.forEach((c) => { c.created_by = 'user-other'; }); // 방장도 아님 → 초대 버튼 대신 관리자 안내
   if (sp.get('nochannels')) { state.tables.msgr_channel_members = state.tables.msgr_channel_members.filter((m) => m.member_id !== uid);
-    state.tables.msgr_channels = state.tables.msgr_channels.filter((c) => c.kind === 'public'); } } // 비공개·DM은 멤버가 아니면 서버(RLS)가 안 보여 준다
+    state.tables.msgr_channels = state.tables.msgr_channels.filter((c) => c.kind === 'public'); } // 비공개·DM은 멤버가 아니면 서버(RLS)가 안 보여 준다
+  if (sp.get('empty')) { const T = state.tables; // &empty=1 막 만든 조직: 채널·다른 멤버·에이전트 0(시작 단계 안내 D1·D3·D6)
+    T.msgr_channels = []; T.msgr_channel_members = []; T.msgr_messages = []; T.msgr_crews = []; T.msgr_org_members = T.msgr_org_members.filter((m) => m.user_id === uid); }
+  if (sp.get('noorg')) state.tables.msgr_org_members = [];
+  if (sp.get('nocrews')) state.tables.msgr_crews = []; } // &noorg=1 조직 없는 첫 화면(D4)
 // 구독을 놓으면 그 채널이 걸어 둔 핸들러도 실제로 걷어낸다(실제 전송처럼).
 function drop(c) { state.live.delete(c); if (!c?.__own) return; const bag = state.topics[c.__topic]; if (!bag) return;
   for (const [ev, w] of c.__own) { const arr = bag[ev]; const i = arr?.indexOf(w) ?? -1; if (i >= 0) arr.splice(i, 1); }
@@ -173,6 +177,11 @@ export const supabase = {
           onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
   rpc: async (name, args) => settle({ rpc: name }, () => name === 'msgr_accept_invite' ? state.acceptInvite(args?.code)
     : name === 'msgr_invite_preview' ? state.invitePreview(args?.code) : name === 'msgr_accept_invite_v2' ? state.acceptInviteV2(args?.code) : name === 'msgr_invite_revoke' ? state.inviteRevoke(args?.invite)
+    : name === 'msgr_create_channel' ? (() => { const id = `ch-${state.nextId++}`; // 서버와 같은 모양 — 만든 사람 참여 행은 비공개·DM만(20260903120000: kind <> 'public')
+      state.tables.msgr_channels.push({ ...channelRow(id, args.kind, args.name), created_by: uid });
+      if (args.kind !== 'public') state.tables.msgr_channel_members.push({ channel_id: id, member_kind: 'user', member_id: uid }); return id; })()
+    : name === 'msgr_join_channel' ? (() => { const has = state.tables.msgr_channel_members.some((m) => m.channel_id === args.ch && m.member_kind === 'user' && m.member_id === uid);
+      if (!has) state.tables.msgr_channel_members.push({ channel_id: args.ch, member_kind: 'user', member_id: uid }); state.joins = (state.joins ?? 0) + 1; return null; })()
     : name === 'msgr_dm_candidates'
     ? CREWS.filter((c) => !state.tables.msgr_channel_members.some((m) => m.channel_id === args?.p_channel && m.member_kind === 'crew' && m.member_id === c.id)).map((c) => ({ ...c, delivery_ready: true }))
     : []),
