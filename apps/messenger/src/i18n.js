@@ -57,7 +57,7 @@ export const DICT = {
   'work.cancel.note': ["취소하면 새 위임을 멈춥니다. 이미 실행한 외부 작업은 되돌리지 않습니다.", "Cancelling stops new delegation. External actions already performed are not undone."],
   'work.resume': ["보완하여 계속", "Continue with input"],
   'work.resume.placeholder': ["막힌 문제를 해결할 정보나 다음 지시를 적어주세요.", "Provide missing information or your next instruction."],
-  'work.error.upgrade': ["연결된 서버에 업무·자동화 기능이 아직 적용되지 않았습니다. 서버 업데이트 후 다시 시도하세요.", "This server does not yet support work or automations. Update the server, then try again."],
+  'work.error.upgrade': ["서버의 업무·자동화 기능을 확인할 수 없습니다. 잠시 후 다시 시도하고, 계속되면 관리자에게 문의하세요.", "We couldn’t access the server’s work and automation features. Try again shortly. If this continues, contact your administrator."],
   'work.error.offline': ["자동으로 선택할 연결된 에이전트가 없습니다. 실행 기기를 연결하거나 주관 에이전트를 직접 선택하세요.", "No connected agent is available for automatic selection. Connect an execution device or choose a lead manually."],
   'work.error.crew': ["이 에이전트에게 업무를 맡길 수 없습니다. 채널 참여 여부와 지시 권한을 확인하세요.", "This agent cannot take the assignment. Check its channel membership and your assignment permission."],
   'work.error.denied': ["이 작업을 변경할 권한이 없습니다. 계정과 채널 권한을 확인하세요.", "You do not have permission to change this work. Check your account and channel permissions."],
