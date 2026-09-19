@@ -1409,3 +1409,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 /* 로빙 tabindex 행 초점(검수 K8) — 키보드로 옮길 때만 링. 마우스 클릭 초점에는 안 뜬다 */
 .msgr-row:focus { outline: none; } .msgr-mine:focus { outline: none; }
 .msgr-row:focus-visible, .msgr-mine:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 12px; }
+
+/* 답글 대상 칩(D17) — 입력창 바로 위, 인용 줄(.msgr-quote)과 같은 말투 */
+.msgr-replychip { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 6px 8px 6px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); font-size: 12px; color: var(--fg-2); min-width: 0; }
+.msgr-replychip .q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-replychip .q b { color: var(--fg); font-weight: 600; margin-right: 4px; }
+.msgr-replychip .x { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; border: 0; background: none; color: var(--fg-3); cursor: pointer; }
+@media (hover: hover) { .msgr-replychip .x:hover { background: var(--card); color: var(--fg); } } .msgr-replychip .x:active { background: var(--card); color: var(--fg); }
