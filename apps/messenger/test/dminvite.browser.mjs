@@ -204,6 +204,31 @@ await scenario(1280, 'vacated-dm-label', async (p) => {
   assert.match(await p.locator('.msgr-top').first().innerText(), /나간 대화/, '열어도 제목에 표지가 있다');
 }, '?vacated=1');
 
+// D23·D24. 방에 든 에이전트가 꺼져 있으면(하트비트 90초 끊김) 동료도 글자로 안다 — 종전엔 주인 쪽 점 색만 바뀌고
+// 시트·멘션 목록은 평소와 같았으며, 멘션하면 90초 넘게 입력 중·안내 없이 조용했다(정비사 원장 P-R1·R2·R4).
+await scenario(1280, 'agent-offline-visible', async (p) => {
+  await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click(); await p.waitForTimeout(500);
+  await p.locator('.msgr-top button.members').click();
+  const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor({ timeout: 5000 });
+  const row = sheet.locator('.row', { hasText: 'Fixture Agent' }).first();
+  assert.match(await row.innerText(), /꺼져 있음/, `시트 행에 글자로 (실제: ${(await row.innerText()).replace(/\s+/g, ' ')})`);
+  await sheet.locator('button[aria-label="닫기"]').first().click().catch(() => {});
+  await p.keyboard.press('Escape'); await p.waitForTimeout(300);
+  const ta = p.locator('.msgr-composer textarea');
+  await ta.click(); await ta.pressSequentially('@Fix', { delay: 20 }); await p.waitForTimeout(400);
+  const pop = await p.locator('.msgr-mention-pop, [role=listbox]').first().innerText().catch(() => '');
+  assert.match(pop, /Fixture Agent[\s\S]*꺼져 있음/, `멘션 후보에 꺼짐 표시 (실제: ${pop.replace(/\s+/g, ' ')})`);
+  await ta.fill('@Fixture Agent 오늘 정리해 줘'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
+  const chip = p.locator('.msgr-awaychip'); await chip.waitFor({ timeout: 3000 });
+  assert.match(await chip.innerText(), /Fixture Agent은\(는\) 지금 꺼져 있어요/, '보낸 뒤 꺼짐 안내');
+  // 대조군: 켜진 에이전트는 표시도 안내도 없다(전원 '꺼짐'으로 그리는 변이를 잡는다)
+  await ta.click(); await ta.pressSequentially('@Sec', { delay: 20 }); await p.waitForTimeout(400);
+  const pop2 = await p.locator('.msgr-mention-pop, [role=listbox]').first().innerText().catch(() => '');
+  assert.match(pop2, /Second Agent/); assert.doesNotMatch(pop2, /꺼져 있음/, `켜진 에이전트는 꺼짐 표시 없음 (실제: ${pop2.replace(/\s+/g, ' ')})`);
+  await ta.fill('@Second Agent 확인'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
+  assert.equal(await p.locator('.msgr-awaychip').count(), 0, '켜진 에이전트에게 보내면 안내가 사라지고 새로 뜨지 않는다');
+}, '?away=1');
+
 // 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
 await scenario(1280, 'unjoined-preview', async (p) => {
   const rail = () => p.locator('[data-sec="channels"]').innerText();
