@@ -1240,7 +1240,7 @@ function Shell({ session }) {
                 { icon: 'gear', label: t('ch.menu.settings'), run: () => { setChId(c.id); setPage('chat'); setRail(false); setChSheet(true); } },
                 { icon: 'star', label: t(pinned.has(c.id) ? 'ch.unpin' : 'ch.pin'), run: () => togglePin(c) },
                 { icon: muted.has(c.id) ? 'bell' : 'belloff', label: t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute'), run: () => toggleMute(c) },
-                c.kind === 'private' && { icon: 'out', label: t('ch.leave'), run: () => confirmVia('leave') },
+                { icon: 'out', label: t('ch.leave'), run: () => confirmVia('leave') }, // 공개 채널도 나간다 — 참여 행을 지우면 찾아보기로 다시 들어온다(D16, 종전엔 비공개만)
                 canManage && { icon: 'x', label: t('ch.archive'), run: () => confirmVia('archive') },
                 ...orderItems(c),
                 canManage && { icon: 'trash', label: t('ch.delete'), danger: true, run: () => confirmVia('delete') },
@@ -1423,8 +1423,8 @@ function Shell({ session }) {
         {ctx && <CtxMenu at={ctx} items={ctx.items} onClose={() => setCtx(null)} />}
         {railAction && createPortal(<div ref={actionDialog} onKeyDown={trapActionFocus} className="shell msgr-action-dialog" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(railActionKey)}>
           {railAction.kind === 'delete'
-            ? <DangerModal title={t(railActionKey)} description={<>{t(`${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} requireText={railAction.channel.kind === 'dm' ? dmName(railAction.channel) : railAction.channel.name} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />
-            : <ConfirmModal title={t(railActionKey)} description={<>{t(`${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />}
+            ? <DangerModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} requireText={railAction.channel.kind === 'dm' ? dmName(railAction.channel) : railAction.channel.name} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />
+            : <ConfirmModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />}
         </div>, document.body)}
         <div className="msgr-foot">
           {isPhone && org && !isPersonal && <button type="button" className={`ph-node${nodeAlive ? ' on' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name={nodeAlive ? 'node' : 'nodeoff'} size={18} /></button>}

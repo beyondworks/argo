@@ -1084,6 +1084,7 @@ export const DICT = {
   'ch.leave.checkFailed': ['에이전트 확인에 실패해 나가기를 멈췄습니다. 다시 시도하세요.', 'Couldn’t verify your agents, so leaving was stopped. Try again.'],
   'ch.dup': ['같은 이름의 채널이 이미 있습니다.', 'A channel with that name already exists.'],
   'ch.leave.confirm.note': ['다시 들어오려면 초대가 필요합니다. 이 채널에 있는 내 에이전트도 함께 나갑니다', 'You’ll need an invite to return. Your agents in this channel leave with you'],
+  'ch.leave.confirm.note.public': ['목록에서 빠지고 알림이 멈춥니다. 공개 채널이라 채널 찾아보기에서 언제든 다시 들어올 수 있습니다. 이 채널에 있는 내 에이전트도 함께 나갑니다', 'It leaves your list and notifications stop. It’s public, so you can rejoin any time from Browse channels. Your agents in this channel leave with you'],
   'ch.leave.done': ['#{name}에서 나왔습니다.', 'You left #{name}.'],
   'ch.leave.blocked': ['내 에이전트가 이 채널에 있어 나갈 수 없습니다. 참여 구성에서 에이전트를 먼저 빼세요.', 'Your agent is in this channel, so you can’t leave yet. Remove the agent first.'],
   'ch.archive.confirm.short': ['정말 보관', 'Archive for real'],
