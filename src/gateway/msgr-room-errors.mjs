@@ -9,6 +9,11 @@ export const roomTurnFailure = (lang = 'ko') => pick(
   '에이전트가 지금 답하지 못했습니다. 주인이 Argo 활동에서 원인을 확인할 수 있습니다.',
   'The agent could not answer right now. Its owner can see the cause in Argo activity.', lang);
 
+/** 답하던 중 에이전트(상주)가 다시 시작돼 끊긴 턴(D25). 자동으로 다시 하지 않는 이유와 사용자가 할 일을 함께 말한다. */
+export const roomTurnInterrupted = (lang = 'ko') => pick(
+  '답하던 중 에이전트가 다시 시작돼 이 작업이 중단됐습니다. 일부 도구 실행이 이미 이뤄졌을 수 있어 자동으로 다시 하지 않습니다. 이어서 하려면 다시 지시해 주세요.',
+  'The agent restarted while answering, so this task was interrupted. Some tool actions may already have run, so it will not redo them automatically. Ask again to continue.', lang);
+
 /** 첨부 한 건 실패 사유 — 우리가 만든 사유(없음·크기)만 그대로, 그 밖의 원문(경로가 들어 있을 수 있음)은 일반 사유로. */
 export function roomAttachReason(e, lang = 'ko') {
   const msg = String(e?.message ?? e ?? '');

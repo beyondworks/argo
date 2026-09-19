@@ -21,6 +21,11 @@ export function executionDb(client) {
   };
 }
 
+// 이 프로세스가 시작한 시도. 잡 파일에 phase=running이 남았는데 여기 없으면, 같은 기기의 앞 프로세스가 답하던 중에 죽은 것이다(D25) —
+// 큐는 선점 심박이 끊긴 잡만 되돌리므로(queue.mjs CLAIM_MAX_AGE_MS) 살아 있는 턴이 이렇게 다시 집히지 않는다.
+// globalThis: Next가 이 모듈을 서버 엔트리마다 따로 번들해도 한 프로세스에 등록부 하나(src/turn-abort.mjs 선례) — 사본마다 Set이면
+// 다른 사본이 시작한 살아 있는 시도를 끊긴 턴으로 오판해 거짓 중단 안내를 올린다(검수 #648 권고).
+const startedHere = (globalThis.__argoMsgrStarted ??= new Set());
 const keyOf = (wsId, job) => ({ wsId, crewId: job.crewId, msgId: job.msgId, channelId: job.channelId, attempt: job.msgrExecution.attempt, ...(job.workRunId ? { workRunId: job.workRunId } : {}) });
 async function checkpoint(job, execution, meta) {
   // 메모리도 먼저 바꾼다: 결과 저장이 실패한 동일 프로세스에서 다시 실행하는 일을 막는다.
@@ -36,8 +41,12 @@ export async function beginMessengerExecution(wsId, db, job, meta = {}) {
   if (!job.msgrExecution) await checkpoint(job, { attempt: randomUUID(), phase: 'claiming' }, meta);
   const claim = await db.claimExecution(keyOf(wsId, job));
   if (claim.state === 'completed') return { kind: 'completed', row: { id: claim.reply_id } };
+  // 끊긴 턴은 다시 돌리지 않는다(도구 부작용 중복). 중단 답으로 닫는 것은 호출자 몫 — finish RPC가 시도 소유권을 다시 확인한다.
+  const stale = Date.now() - Date.parse(claim.heartbeat_at) > EXECUTION_STALE_MS;
+  if (!claim.acquired && job.msgrExecution.phase === 'running' && !startedHere.has(job.msgrExecution.attempt)) return { kind: 'interrupted', stale };
   // 동일 attempt 재호출도 acquired=false: RPC 응답 유실/프로세스 재시작 뒤 실제 실행 여부는 단정할 수 없다.
-  if (!claim.acquired) return { kind: 'pending', stale: Date.now() - Date.parse(claim.heartbeat_at) > EXECUTION_STALE_MS };
+  if (!claim.acquired) return { kind: 'pending', stale };
+  startedHere.add(job.msgrExecution.attempt);
   await checkpoint(job, { ...job.msgrExecution, phase: 'running' }, meta);
   return { kind: 'run' };
 }
