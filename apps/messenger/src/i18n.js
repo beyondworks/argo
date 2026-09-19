@@ -442,6 +442,7 @@ export const DICT = {
   'thread.older': ['이전 메시지 보기', 'Show earlier messages'],
   'thread.loading': ['이전 메시지를 불러오는 중…', 'Loading earlier messages…'],
   'thread.start': ['대화의 시작입니다', 'Beginning of the conversation'],
+  'thread.toBottom': ['맨 아래로', 'Jump to latest'],
   'ui.menu': ['메뉴', 'Menu'],
   'ui.settings': ['설정', 'Settings'],
   'ui.back': ['대화로 돌아가기', 'Back to chat'],
