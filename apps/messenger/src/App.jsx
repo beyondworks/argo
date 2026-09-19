@@ -3507,7 +3507,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
-  const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} />)}</div>;
+  const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} rowTab={rowTab} />)}</div>;
   const acts = !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
     phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)
       <div className="msgr-actsheetwrap" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) setActsOpen(false); }}>{/* 슬랙 참고(유건 2026-09-11): 빠른 반응 줄 → 타일 → 목록. 있는 기능만 싣는다 */}
@@ -3662,7 +3662,8 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
     </div>
   );
 }
-function Attachment({ a, onError }) {
+function Attachment({ a, onError, rowTab = 0 }) {
+  const tab = rowTab === 0 ? undefined : -1; // 서명 URL·실패 뒤 늦게 붙는 버튼은 행의 로빙 효과가 놓친다 — 직접 탭 순서 밖으로(검수 K10)
   const { t } = useT();
   const open = async () => {
     try {
@@ -3685,7 +3686,7 @@ function Attachment({ a, onError }) {
     return () => { window.removeEventListener('keydown', onKey); imgBtn.current?.focus({ preventScroll: true }); }; // 닫으면 초점을 이미지로 되돌린다
   }, [zoom]);
   return (<span className="msgr-attach">
-    {src && !imgFail && <button type="button" ref={imgBtn} className="msgr-imgbtn" aria-label={a.name} onClick={() => setZoom(true)}><img className="msgr-imgprev" src={src} alt="" loading="lazy" onError={() => setImgFail(true)} /></button>}{/* 버튼이라 키보드(로빙 현재 행에서 Tab)로도 연다 — 검수 K10 */}
+    {src && !imgFail && <button type="button" ref={imgBtn} tabIndex={tab} className="msgr-imgbtn" aria-label={a.name} onClick={() => setZoom(true)}><img className="msgr-imgprev" src={src} alt="" loading="lazy" onError={() => setImgFail(true)} /></button>}{/* 버튼이라 키보드(로빙 현재 행에서 Tab)로도 연다 — 검수 K10 */}
     {isImg && !src && !imgFail && <span className="msgr-imgph" aria-hidden="true" />}{/* 서명 URL 대기 중 자리 틀 — 빈 행으로 보이지 않게 */}
     {zoom && src && createPortal(
       <div className="msgr-lightbox" role="dialog" aria-modal="true" aria-label={a.name} onClick={() => setZoom(false)}>
@@ -3695,7 +3696,7 @@ function Attachment({ a, onError }) {
           <button type="button" className="btn sm ghost" onClick={() => setZoom(false)} aria-label={t('ui.close')}><I name="x" size={13} /></button>
         </div>
       </div>, document.body)}
-    {(!isImg || imgFail) && <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.max(1, Math.round(a.bytes / 1024))}KB</span> : null}</button>}{/* 이미지는 미리보기가 곧 파일 — 칩이 한 번 더 나오던 중복(D21). 원본은 라이트박스 [원본 열기] */}
+    {(!isImg || imgFail) && <button type="button" tabIndex={tab} className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.max(1, Math.round(a.bytes / 1024))}KB</span> : null}</button>}{/* 이미지는 미리보기가 곧 파일 — 칩이 한 번 더 나오던 중복(D21). 원본은 라이트박스 [원본 열기] */}
   </span>);
 }
 
