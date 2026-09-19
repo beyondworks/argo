@@ -3257,14 +3257,19 @@ function Channel({ jumpTo = null, onJumped, channel, preview = false, onJoin, or
   useLayoutEffect(keepAnchor, [msgs, atts, older, keepAnchor]); // 커밋 직후 동기 보정(깜빡임 없음) — 본문·첨부·컨트롤 상태. 채널 전환은 key 리마운트라 별도 초기화 없음
   useEffect(() => { const el = feed.current; if (!el) return; const f = () => { if (el.scrollTop < 120) loadOlder(); }; el.addEventListener('scroll', f, { passive: true }); return () => el.removeEventListener('scroll', f); }, [loadOlder]);
   const load = useCallback(async (afterId = 0) => {
-    const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta, client_msg_id')
-      .eq('channel_id', chId).gt('id', afterId).order('id', { ascending: afterId ? true : false }).limit(PAGE));
+    // 새 메시지 구분선 기준(열 때의 읽음 커서)은 글과 같이 읽어 글보다 먼저 고정한다 — 글이 그려지면 읽음 표시(onRead)가 커서를 올리므로,
+    // 그 뒤에 읽으면 방금 온 글까지 읽은 것으로 보여 줄이 사라졌다(D15: 다른 채널에 있을 때 온 글)
+    const [rows, rd] = await Promise.all([
+      q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta, client_msg_id')
+        .eq('channel_id', chId).gt('id', afterId).order('id', { ascending: afterId ? true : false }).limit(PAGE)),
+      afterId ? null : q(supabase.from('msgr_reads').select('last_read_id').eq('channel_id', chId).eq('user_id', uid).maybeSingle()).catch(() => null),
+    ]);
+    if (!afterId) setDivider(rd?.last_read_id ?? 0);
     const list = afterId ? rows : rows.reverse();
     setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
     setPending((cur) => reconcilePending(cur, list)); // 조회로 도착한 내 글도 낙관적 자리를 비운다
     if (!afterId) setHasMore(rows.length >= PAGE); // 첫 페이지가 꽉 찼으면 위로 더 있을 수 있다(출시 검사 C-1: 100건 상한·스크롤백 부재)
     await hydrate(list.map((m) => m.id));
-    if (!afterId) { const rd = await q(supabase.from('msgr_reads').select('last_read_id').eq('channel_id', chId).eq('user_id', uid).maybeSingle()).catch(() => null); setDivider(rd?.last_read_id ?? 0); } // 새 메시지 구분선 기준 — 열 때 한 번 고정
   }, [chId, hydrate]);
   // 결재 카드는 메시지 도착 경로에서 분리한다. 전에는 글 한 건이 올 때마다 채널의 결재 전량을
   // 다시 읽었다(방송 1건 = 결재 조회 1회). 이제 채널을 열 때와 approval 방송이 올 때만 읽는다.
