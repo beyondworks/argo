@@ -1,0 +1,116 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js';
+import { createSessionRecovery } from '../src/session-recovery.mjs';
+
+const SESSION = { user: { id: 'review-user' }, access_token: 'fresh' };
+
+function fixture(reads, { stored = true } = {}) {
+  const applied = [];
+  const waiting = [];
+  const timers = new Map();
+  const listeners = new Map();
+  let timerId = 0;
+  const auth = { getSession: async () => reads.shift() };
+  const recovery = createSessionRecovery({
+    auth,
+    hasStoredSession: () => stored,
+    applySession: (session) => applied.push(session),
+    setWaiting: (value) => waiting.push(value),
+    addEventListener: (name, handler) => listeners.set(name, handler),
+    removeEventListener: (name) => listeners.delete(name),
+    setTimer: (handler) => { const id = ++timerId; timers.set(id, handler); return id; },
+    clearTimer: (id) => timers.delete(id),
+  });
+  const runTimer = async () => {
+    const entry = timers.entries().next().value;
+    assert.ok(entry, 'a retry is scheduled');
+    timers.delete(entry[0]);
+    await entry[1]();
+  };
+  return { recovery, applied, waiting, timers, listeners, runTimer };
+}
+
+test('stored session + retryable refresh failure waits, then recovers automatically', async () => {
+  // Given an expired session still stored locally and a temporary refresh outage.
+  const f = fixture([
+    { data: { session: null }, error: new AuthRetryableFetchError('offline', 503) },
+    { data: { session: SESSION }, error: null },
+  ]);
+
+  // When the cold-start read fails and the scheduled retry later succeeds.
+  await f.recovery.start();
+
+  // Then the app keeps authentication indeterminate instead of showing Auth.
+  assert.deepEqual(f.applied, []);
+  assert.deepEqual(f.waiting, [true]);
+  await f.runTimer();
+  assert.deepEqual(f.applied, [SESSION]);
+  assert.deepEqual(f.waiting, [true, false]);
+  f.recovery.stop();
+});
+
+test('online event retries immediately while waiting', async () => {
+  // Given a cold start currently waiting on a retryable network error.
+  const f = fixture([
+    { data: { session: null }, error: new AuthRetryableFetchError('offline', 503) },
+    { data: { session: SESSION }, error: null },
+  ]);
+  await f.recovery.start();
+
+  // When the browser reports that the network returned.
+  await f.listeners.get('online')();
+
+  // Then the stored session is refreshed without a reload.
+  assert.deepEqual(f.applied, [SESSION]);
+  assert.equal(f.timers.size, 0);
+  f.recovery.stop();
+});
+
+test('SIGNED_OUT always leaves waiting state and preserves the D10 path', async () => {
+  // Given bootstrap is waiting after a retryable refresh failure.
+  const f = fixture([{ data: { session: null }, error: new AuthRetryableFetchError('offline', 503) }]);
+  await f.recovery.start();
+
+  // INITIAL_SESSION null is ambiguous while credentials remain stored.
+  f.recovery.onAuthStateChange('INITIAL_SESSION', null);
+  assert.deepEqual(f.applied, []);
+
+  // When Supabase reports an actual sign-out.
+  f.recovery.onAuthStateChange('SIGNED_OUT', null);
+
+  // Then null is applied immediately; INITIAL_SESSION null alone does not do this.
+  assert.deepEqual(f.applied, [null]);
+  assert.equal(f.waiting.at(-1), false);
+  assert.equal(f.timers.size, 0);
+  f.recovery.stop();
+});
+
+test('late INITIAL_SESSION null applies Auth after rejected credentials were removed', () => {
+  // Given auth-js removed rejected credentials before this subscriber attached.
+  const f = fixture([], { stored: false });
+
+  // When the late subscriber receives only INITIAL_SESSION null.
+  f.recovery.onAuthStateChange('INITIAL_SESSION', null);
+
+  // Then the app still reaches the D10/Auth path without needing the missed SIGNED_OUT event.
+  assert.deepEqual(f.applied, [null]);
+});
+
+test('non-retryable refresh rejection and first-run null both show Auth', async () => {
+  // Given one rejected stored credential and one device with no stored session.
+  const rejected = fixture([{ data: { session: null }, error: new AuthApiError('invalid refresh', 400, 'refresh_token_not_found') }]);
+  const firstRun = fixture([{ data: { session: null }, error: null }], { stored: false });
+
+  // When bootstrap reads each state.
+  await rejected.recovery.start();
+  await firstRun.recovery.start();
+
+  // Then neither state is mislabeled as a connection wait.
+  assert.deepEqual(rejected.applied, [null]);
+  assert.deepEqual(firstRun.applied, [null]);
+  assert.equal(rejected.waiting.at(-1), false);
+  assert.equal(firstRun.waiting.at(-1), false);
+  rejected.recovery.stop();
+  firstRun.recovery.stop();
+});

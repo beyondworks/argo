@@ -42,10 +42,11 @@ import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
-import { reconcileSession } from './resume-session.mjs';
 import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
+import { createSessionRecovery } from './session-recovery.mjs';
+import { authStorageKey, hasStoredAuthSession, clearStoredAuthSession } from './auth-storage.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
@@ -149,7 +150,9 @@ function Body({ text }) {
 
 export default function App() {
   const { t } = useT();
+  const authKey = authStorageKey(SB_URL);
   const [session, setSession] = useState(undefined);
+  const [sessionWaiting, setSessionWaiting] = useState(false);
   const [logoutNotice, setLogoutNotice] = useState('');
   const [signingOut, setSigningOut] = useState(false);
   const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false);
@@ -192,18 +195,33 @@ export default function App() {
   useEffect(() => mountMobileAuth(), []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
-    supabase.auth.getSession().then(({ data }) => applySession(data.session ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => applySession(s));
-    const stopResume = isMobilePlatform ? observeMobileResume(() => reconcileSession(supabase.auth, applySession)) : () => {};
-    return () => { stopResume(); sub.subscription.unsubscribe(); };
+    const recovery = createSessionRecovery({ auth: supabase.auth, hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting });
+    const { data: sub } = supabase.auth.onAuthStateChange((event, next) => recovery.onAuthStateChange(event, next));
+    recovery.start();
+    const stopResume = isMobilePlatform ? observeMobileResume(() => recovery.retryNow()) : () => {};
+    return () => { recovery.stop(); stopResume(); sub.subscription.unsubscribe(); };
   }, []);
+  const restartSignIn = async () => {
+    logoutPending.current = true;
+    try { await supabase?.auth.signOut({ scope: 'local' }); }
+    finally { clearStoredAuthSession(authKey); applySession(null); setSessionWaiting(false); logoutPending.current = false; }
+  };
   let body;
   if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
+  else if (sessionWaiting) body = <ConnectionWaiting t={t} onSignIn={restartSignIn} />;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
   const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
+}
+
+function ConnectionWaiting({ t, onSignIn }) {
+  return <div className="msgr-auth"><div className="msgr-card"><div className="band"><I name="hash" size={14} />ARGO<span className="tag">MESSENGER</span></div><div className="body">
+    <h1>{t('auth.connectionWaiting')}</h1>
+    <p>{t('auth.connectionWaiting.desc')}</p>
+    <button type="button" className="btn btn-primary" onClick={onSignIn}>{t('auth.signInAgain')}</button>
+  </div></div></div>;
 }
 
 /* ─── 서버 선택(부록 L): 기본 Argo 클라우드 / 회사 서버(셀프호스트 Supabase) — 프로필은 이 기기에만, 저장 뒤 새로고침 ─── */
