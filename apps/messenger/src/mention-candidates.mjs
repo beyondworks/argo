@@ -37,3 +37,20 @@ export function mentionsFromBody(body, candidates, picked = [], allCandidates = 
   // [Ogilvy, Edna]로 저장돼 뒷사람이 먼저 답한다(라이브 실측 2026-09-12 #175).
   return out.sort((a, b) => a.at - b.at).map(({ kind, id }) => ({ kind, id }));
 }
+
+// 방 밖 에이전트 멘션 — 본문의 @이름 중 이 방 후보(사람·크루)에 없는 조직 에이전트(D14). 멘션 후보는 방 안만 유지하고(유건 0.1.29 재확인),
+// 전송 뒤 "이 방에 없어요" 안내를 띄우는 데만 쓴다. 방 안 이름을 먼저 지워 "@페퍼 (VPS)" 안의 "@페퍼"가 방 밖 동명으로 새지 않게(mentionsFromBody와 같은 규칙).
+export function outsideCrewMentions(body, inRoom = [], orgCrews = []) {
+  let text = String(body ?? '');
+  const blank = (m, lead) => lead + ' '.repeat(m.length - lead.length);
+  for (const x of inRoom.filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length)) text = text.replace(mentionRe(x.name, 'g'), blank);
+  const inIds = new Set(inRoom.filter((x) => x?.kind === 'crew').map((x) => x.id));
+  const out = [];
+  for (const c of orgCrews.filter((c) => c?.display_name && !inIds.has(c.id)).sort((a, b) => b.display_name.length - a.display_name.length)) {
+    if (!mentionRe(c.display_name).test(text)) continue;
+    out.push(c); text = text.replace(mentionRe(c.display_name, 'g'), blank);
+  }
+  return out;
+}
+// 방 밖에서 이 에이전트에게 시킬 수 있나(크루 시트 canMe와 같은 규칙 — 최종 판정은 서버 msgr_instruct_check).
+export const canInstructCrew = (c, uid) => !!c && (c.owner_user_id === uid || c.allow === 'all' || (c.allow === 'list' && (c.allow_users ?? []).includes(uid)));
