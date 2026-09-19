@@ -79,6 +79,12 @@ const create=(opts={})=>JSON.parse(last(asUser(opts.user??U.owner,`select public
 const handoff=(w,to,body)=>last(asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${w.channel_id}','crew','${CREW}','text','${body}',${w.root_message_id},${w.root_message_id},'reply:${CREW}:${w.root_message_id}:${request()}','[{"kind":"crew","id":"${to}"}]','{"disposition":"handoff","origin":"${U.owner}"}') returning id`));
 const status=(w)=>sql(`select status from public.msgr_work_runs where id='${w.id}'`);
 const reply=(w,crew=CREW,meta='{"disposition":"done"}',body='Result',uid=U.owner)=>last(asUser(uid,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,meta) values('${w.channel_id}','crew','${crew}','text','${body}',${w.root_message_id},${w.root_message_id},'reply:${crew}:${w.root_message_id}:${request()}','${meta}') returning id`));
+const pendingApproval=(w)=>{
+  const id=sql(`insert into public.msgr_crew_approvals(org_id,channel_id,crew_id,approval_id,action) values('${ORG}','${w.channel_id}','${CREW}','ap-${request()}','Send the report') returning id`);
+  const mid=sql(`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions) values('${w.channel_id}','crew','${CREW}','approval_card','Approval needed',${w.root_message_id},${w.root_message_id},'ap:${CREW}:${request()}','[{"kind":"approval","id":"${id}"}]') returning id`);
+  sql(`update public.msgr_crew_approvals set message_id=${mid} where id='${id}'`);
+  return id;
+};
 
 test('create chooses an eligible coordinator and atomically persists one root across retries', {skip},()=>{
   const key=request(); const w=create({request:key}); const again=create({request:key});
@@ -137,6 +143,18 @@ test('D48: 동료에게 넘긴 지시가 아직 끝나지 않았거나 총괄 �
   const w4=create(); asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${w4.channel_id}','crew','${CREW}','text','Tool handoff',${w4.root_message_id},${w4.root_message_id},'reply:${CREW}:${w4.root_message_id}:${request()}','[{"kind":"crew","id":"${OTHER_CREW}"}]','{}')`);
   assert.equal(status(w4),'running','판정 줄 없이도 도구로 넘긴 멘션이 실린 답은 동료가 이어받는다');
   const w3=create(); reply(w3,OTHER_CREW,'{"disposition":"done"}','Specialist only',U.member); assert.equal(status(w3),'running','총괄이 아닌 에이전트의 답은 판정하지 않는다');
+});
+test('D48: 같은 업무의 총괄 결재가 대기 중이면 running, 결정 뒤 남은 후속 실행 없는 답에서 다시 판정', {skip},()=>{
+  const other=create(); pendingApproval(other);
+  const isolated=create(); reply(isolated,CREW,'{"disposition":"done"}','No action remains');
+  assert.equal(status(isolated),'blocked','다른 업무의 결재 대기는 이 업무 판정을 막지 않는다');
+
+  const w=create(); const approval=pendingApproval(w);
+  reply(w,CREW,'{"disposition":"done"}','Approval is pending; I will continue after the decision');
+  assert.equal(status(w),'running','같은 스레드에서 이 총괄이 올린 pending 결재가 있으면 기다린다');
+  sql(`update public.msgr_crew_approvals set status='rejected',decided_by='${U.owner}',decided_at=now() where id='${approval}'`);
+  reply(w,CREW,'{"disposition":"done"}','The approval was rejected; there is no remaining action');
+  assert.equal(status(w),'blocked','결재 결정 뒤 후속 답에서 남은 실행이 없으면 다시 도움 필요로 판정한다');
 });
 test('external bot-style terminal markers follow the same fenced/quoted rules', {skip},()=>{
   // 코드 블록·인용 속 표지는 판정이 아니다 — 완료로 올리지 않는다(판정 없는 정지는 D48에 따라 도움 필요)

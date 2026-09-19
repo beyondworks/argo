@@ -12,10 +12,16 @@ begin
   if w.id is null or w.status <> 'running' or new.reply_to < coalesce(w.last_resume_message_id,0) then return new; end if;
   verdict := case when new.meta->>'failed' = 'true' or (new.kind='system' and (new.client_msg_id ~ '^(hopcap|ratecap|stale|deny|execution-unknown|unknown):' or new.meta->>'execution_status'='unknown')) then 'blocked'
     when new.crew_id = w.lead_crew_id and new.meta->>'disposition' = 'done' then new.meta->>'work_status' else null end;
-  -- 정지 판정: 총괄의 글(넘김 판정 아님)인데 판정이 없고, 이번 라운드에 에이전트를 부른 글(이 답 자체의 멘션 포함 — AFTER 트리거)
-  -- 중 그 에이전트의 실행이 끝나지 않은 것이 없다(이 답의 원문은 지금 끝나는 중이므로 제외). 대기 중인 동료가 있으면 종전처럼 running.
+  -- 정지 판정: 총괄의 글(넘김 판정 아님)인데 판정이 없고, 같은 스레드에 이 총괄이 올린 결재가 대기 중이지 않으며,
+  -- 이번 라운드에 에이전트를 부른 글(이 답 자체의 멘션 포함 — AFTER 트리거) 중 그 에이전트의 실행이 끝나지 않은 것이 없다
+  -- (이 답의 원문은 지금 끝나는 중이므로 제외). 결재나 동료 실행이 대기 중이면 종전처럼 running이고, 결재 결정 뒤 후속 답에서 다시 판정한다.
   if verdict is null and new.crew_id = w.lead_crew_id and new.kind = 'text'
-     and coalesce(new.meta->>'disposition', 'done') <> 'handoff' then
+     and coalesce(new.meta->>'disposition', 'done') <> 'handoff'
+     and not exists (
+       select 1 from public.msgr_crew_approvals a join public.msgr_messages card on card.id = a.message_id
+       where a.channel_id = w.channel_id and a.crew_id = new.crew_id and a.status = 'pending'
+         and card.deleted_at is null and coalesce(card.thread_root, card.id) = w.root_message_id
+     ) then
     stalled := not exists (
       select 1 from public.msgr_messages m cross join lateral jsonb_array_elements(m.mentions) x
       where m.channel_id = w.channel_id and (m.id = w.root_message_id or m.thread_root = w.root_message_id)
