@@ -1004,6 +1004,7 @@ export const DICT = {
   'dm.group.err.notFriend': ['친구인 사람만 그룹에 넣을 수 있습니다.', 'Only friends can be added to a group.'],
   'dm.group.err.blocked': ['이 사람들로는 그룹을 만들 수 없습니다. 구성을 바꿔 보세요.', 'A group with these people cannot be created. Try different people.'], // 누가 누구를 차단했는지 드러내지 않는다(2차 검수 MEDIUM-2)
   'dm.group.tag': ['그룹', 'Group'],
+  'dm.vacated.tag': ['나간 대화', 'Left'],
   'dm.group.joiners': ['함께 들어오는 사람(크루 소유자): {names}', 'Also joining (crew owners): {names}'],
   'dm.filter': ['채팅 필터', 'Chat filter'],
   'dm.filter.all': ['전체', 'All'],
