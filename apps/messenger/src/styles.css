@@ -1400,3 +1400,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-mine .meta .sent { display: inline-flex; color: var(--ok); transition: opacity 180ms ease; }
 .msgr-mine .meta .sent.pending { opacity: .35; }
 .msgr-acts.pending { visibility: hidden; } /* 보내는 중 — 자리만 차지(hover·포커스에도 안 보임). 누르기는 inert가 막는다 */ /* 보내는 중 — 말풍선은 최종 모양 그대로, 체크만 흐리게 */
+
+/* 검색에서 고른 글 강조(D11) — 1.5초 동안 --mark 빛이 옅어진다. 움직임 줄이기면 같은 시간 동안 테두리만 */
+@keyframes msgrHit { from { background: rgba(var(--mark-rgb), .28); } to { background: transparent; } }
+.msgr-hit { animation: msgrHit 1.5s ease-out; border-radius: 12px; }
+@media (prefers-reduced-motion: reduce) { .msgr-hit { animation: none; outline: 2px solid rgba(var(--mark-rgb), .6); outline-offset: 4px; } }
