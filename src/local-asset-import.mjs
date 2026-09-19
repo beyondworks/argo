@@ -52,6 +52,15 @@ async function company(wsId, context) {
   return value;
 }
 
+// Windows: 주인이 lock을 지우는 중(delete pending)이면 새 열기가 EPERM/EACCES로 실패한다 — 사라지는 중인 lock이지
+// 손상이 아니므로 다음 바퀴에서 link를 다시 시도한다(CI 실측: 동시 3프로세스 가져오기가 state-invalid로 죽음).
+export const transientLockRead = (e, platform = process.platform) => e?.code === 'ENOENT' || (platform === 'win32' && (e?.code === 'EPERM' || e?.code === 'EACCES'));
+async function lockOwner(lock) {
+  let raw;
+  try { raw = await readFile(lock, 'utf8'); } catch (e) { if (transientLockRead(e)) return null; throw fail('state-invalid'); }
+  try { return JSON.parse(raw); } catch { throw fail('state-invalid'); }
+}
+
 // A live process is never displaced by elapsed time. Fully-written hard-link claims avoid an
 // empty-owner crash window. Reaping is serialized; an interrupted reaper fails closed (bounded wait).
 async function locked(dir, fn) {
@@ -66,7 +75,7 @@ async function locked(dir, fn) {
       try { await mkdir(reaper, { mode: 0o700 }); acquired = true; } catch (e) { if (e.code !== 'EEXIST') throw e; }
       if (acquired) {
         try {
-          const owner = await json(lock, null);
+          const owner = await lockOwner(lock);
           if (owner?.pid) {
             try { process.kill(owner.pid, 0); } catch (e) { if (e.code === 'ESRCH') await unlink(lock).catch(e => { if (e.code !== 'ENOENT') throw e; }); }
           }

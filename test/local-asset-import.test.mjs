@@ -217,6 +217,20 @@ test('concurrent processes importing same scan converge on a single crew', async
   assert.equal((await readdir(paths(f.wsId).agents)).length, 1);
 });
 
+test('reaper treats a lock being deleted on Windows (EPERM/EACCES) as gone, never as corrupt state', () => {
+  // Windows CI(2026-09-19 #639): 동시 가져오기 중 주인이 lock을 지우는 순간 다른 프로세스의 읽기가 EPERM → state-invalid로 죽었다.
+  for (const code of ['EPERM', 'EACCES', 'ENOENT']) assert.equal(api.transientLockRead({ code }, 'win32'), true, code);
+  for (const code of ['EPERM', 'EACCES']) assert.equal(api.transientLockRead({ code }, 'darwin'), false, `POSIX ${code}은 권한 문제라 숨기지 않는다`);
+  assert.equal(api.transientLockRead({ code: 'ENOENT' }, 'linux'), true);
+  assert.equal(api.transientLockRead({ code: 'EIO' }, 'win32'), false);
+  // 배선(Windows 행동은 로컬에서 재현 불가 — 윈도우 CI의 동시 3프로세스 시험이 행동 게이트): 수거자가 lockOwner로 읽는다.
+  return readFile(new URL('../src/local-asset-import.mjs', import.meta.url), 'utf8').then(src => {
+    const body = src.slice(src.indexOf('async function locked('), src.indexOf('const safeName'));
+    assert.match(body, /const owner = await lockOwner\(lock\);/);
+    assert.doesNotMatch(body, /await json\(lock/);
+  });
+});
+
 test('old lock timestamp never evicts a live importer', async () => {
   const f = await fixture(), p = await api.previewLocalAssets(f.wsId, context, {}, f.options);
   const req = { ...request(p), selectedIds: [p.items.find(i => i.kind === 'profile').id] };
