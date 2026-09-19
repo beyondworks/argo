@@ -220,7 +220,7 @@ test('handler: 중복 답글(다른 기기가 먼저)은 업로드 없이 종료
   const h2 = M.makeMsgrHandler(WS, { session: async () => ({ db: fail, uid: OWNER }), runChat: async () => { throw new Error('러너 미연결'); } });
   await h2({ msgId: 13, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'x', authorId: MEMBER, createdAt: new Date().toISOString() });
   const ins = fail.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
-  assert.equal(ins.length, 1); assert.match(ins[0].body, /^처리 실패: 러너 미연결/); assert.equal(ins[0].client_msg_id, `reply:${CREW}:13`);
+  assert.equal(ins.length, 1); assert.match(ins[0].body, /^에이전트가 지금 답하지 못했습니다/); assert.doesNotMatch(ins[0].body, /러너 미연결/, '오류 원문은 방에 싣지 않는다(D26)'); assert.equal(ins[0].client_msg_id, `reply:${CREW}:13`);
   const away = fakeDb();
   const h3 = M.makeMsgrHandler(WS, { session: async () => ({ db: away, uid: OWNER }), runChat: async () => ({ reply: '답', sessionId: null, artifacts: [] }) });
   await h3({ msgId: 14, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'x', authorId: MEMBER, createdAt: new Date(Date.now() - 5 * 60_000).toISOString() });
@@ -756,7 +756,7 @@ test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대�
   const h3 = M.makeMsgrHandler(WS, { session: async () => ({ db: db3, uid: OWNER }), runChat: async () => { throw new Error('러너 미연결 — @제드 확인'); } });
   await h3({ ...job2, msgId: 33, msgrExecution: undefined });
   const row3 = db3.calls.find((x) => x[0] === 'insertMessage')[1];
-  assert.match(row3.body, /@제드/); assert.deepEqual(row3.mentions, []); assert.deepEqual(row3.meta, { hop: 1, origin: MEMBER, failed: true });
+  assert.doesNotMatch(row3.body, /@제드/, '오류 원문(속 @이름 포함)은 방에 싣지 않는다(D26)'); assert.deepEqual(row3.mentions, []); assert.deepEqual(row3.meta, { hop: 1, origin: MEMBER, failed: true });
 });
 
 test('makeDb: 순차 턴은 원본 뒤에 달린 앞 크루 답글도 읽고, 무관한 후속 글·삭제·시스템·다른 채널 글은 제외한다', async () => {
@@ -873,7 +873,7 @@ test('handler: 도구 넘김은 긴 답변에서도 보존하고, 저장된 본�
     throw new Error('턴 실패');
   } })({ ...job, msgId: 202, msgrExecution: undefined });
   const errorRow = failed.calls.find((c) => c[0] === 'insertMessage')[1];
-  assert.match(errorRow.body, /처리 실패/);
+  assert.match(errorRow.body, /에이전트가 지금 답하지 못했습니다/);
   assert.doesNotMatch(errorRow.body, /실행하면 안 됨/);
   assert.deepEqual(errorRow.mentions, []);
 });
@@ -1528,4 +1528,28 @@ test('손님 후속 답글: 결재 후속(approval_followup) 답글은 저장된
   };
   assert.equal((await push({ guest: true })).meta.guest, true, '두 번 넘김 손님의 후속 답글 — 다음 넘김의 손님 근거');
   assert.equal((await push({})).meta.guest, undefined, '주인 후속 답글은 표지 없음');
+});
+
+// D26(정비사 원장 P-C13): 모델 실패 원문에 주인 쪽 로컬 엔드포인트가 들어 있어도 방(손님 포함)에는 싣지 않는다. 원문은 활동 로그(chat())·로컬 콘솔에만.
+test('handler: 크루 턴 실패 글에 오류 원문·주인 쪽 주소가 실리지 않는다(D26)', async () => {
+  const db = fakeDb();
+  const raw = 'API Error: Repeated 529 Overloaded errors — check your inference gateway (127.0.0.1:5291) at /Users/owner/.argo/workspaces/x';
+  const errs = []; const orig = console.error; console.error = (...a) => errs.push(a.join(' '));
+  try {
+    await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async () => { throw new Error(raw); } })({ msgId: 260, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'x', authorId: MEMBER, createdAt: new Date().toISOString() });
+  } finally { console.error = orig; }
+  const row = db.calls.find((x) => x[0] === 'insertMessage')[1];
+  for (const leak of [/127\.0\.0\.1/, /5291/, /inference gateway/, /API Error/, /\/Users\//]) assert.doesNotMatch(row.body, leak, `방에 새지 않는다: ${leak}`);
+  assert.match(row.body, /Argo 활동/, '주인이 원인을 볼 곳을 안내한다');
+  assert.equal(row.meta.failed, true);
+  assert.ok(errs.some((l) => l.includes('127.0.0.1:5291')), '원문은 주인 로컬 콘솔에 남는다');
+});
+
+test('roomAttachReason: 첨부 실패 사유에 로컬 경로를 싣지 않는다 — 없음·크기 사유만 그대로(D26)', async () => {
+  const { roomAttachReason } = await import('../src/gateway/msgr-room-errors.mjs');
+  const eacces = Object.assign(new Error("EACCES: permission denied, open '/Users/owner/.argo/workspaces/acme/vault/files/secret-plan.pdf'"), { code: 'EACCES' });
+  assert.doesNotMatch(roomAttachReason(eacces, 'ko'), /\/Users|EACCES|secret-plan/);
+  assert.equal(roomAttachReason(new Error("ENOENT: no such file, open '/Users/owner/x'"), 'ko'), '파일이 없습니다');
+  assert.equal(roomAttachReason(Object.assign(new Error('25MB 초과'), { roomSafe: true }), 'ko'), '25MB 초과');
+  assert.match(roomAttachReason(new Error('storage 500 at https://abc.supabase.co/...'), 'en'), /^could not read or upload the file$/);
 });
