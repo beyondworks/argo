@@ -3446,7 +3446,8 @@ function Channel({ onOutsideDm = null, startCard = null, jumpTo = null, onJumped
   const all = msgs ?? []; const byId = new Map(all.map((m) => [m.id, m])); // 답글 부모 조회 — 기록이 쌓여도 선형(검수 #531 M-2)
   // 결재 탭 목록과 결재 숫자는 같은 술어(검수 M2): 대기 중인 결재만
   const isPending = (m) => apOf(m)?.status === 'pending';
-  // 탭 숫자 = 읽지 않은 것(D45, 알림함 탭 #636과 같은 기준) — 열 때의 읽음 커서(divider) 뒤에 온 글. 결재는 결정할 일이라 대기 중이면 센다. 탭 목록은 종전대로 전부 보인다
+  // 탭 숫자 = 지난번에 본 뒤 온 것(D45) — 이번에 열 때의 읽음 커서(divider, '새 메시지' 줄과 같은 기준) 뒤의 글. 보는 중에 온 글도 다시 열 때까지 센다
+  // (열면 곧 읽음 처리되므로 현재 커서로 세면 늘 0이 된다 — 검수 권고 (b)). 결재는 결정할 일이라 대기 중이면 센다. 탭 목록은 종전대로 전부 보인다
   const unreadHere = (m) => m.id > divider && !(m.author_kind === 'user' && m.author_user_id === uid);
   const counts = { mention: all.filter((m) => isMention(m) && unreadHere(m)).length, approval: all.filter(isPending).length, crew: all.filter((m) => m.author_kind === 'crew' && unreadHere(m)).length };
   const shown = all.filter((m) => tab === 'all' || (tab === 'mention' && isMention(m)) || (tab === 'approval' && isPending(m)) || (tab === 'crew' && m.author_kind === 'crew'));
