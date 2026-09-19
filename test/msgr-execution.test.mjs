@@ -83,3 +83,10 @@ test('D25: 앞 프로세스가 답하던 중 끊긴 시도는 interrupted — �
   assert.equal((await beginMessengerExecution('ws', shared, live)).kind, 'run');
   assert.equal((await beginMessengerExecution('ws', shared, live)).kind, 'pending', '살아 있는 이 프로세스의 턴을 끊긴 것으로 오인하지 않는다');
 });
+
+test('D25: 시작 기록은 프로세스 전역 등록부 — 같은 모듈의 다른 번들 사본도 살아 있는 시도를 끊긴 턴으로 보지 않는다', async () => {
+  const shared = db(), live = job();
+  assert.equal((await beginMessengerExecution('ws', shared, live)).kind, 'run');
+  const copy = await import(`../src/gateway/msgr-execution.mjs?bundle-copy=${Date.now()}`); // Next가 엔트리마다 따로 번들한 사본을 흉내
+  assert.equal((await copy.beginMessengerExecution('ws', shared, live)).kind, 'pending');
+});
