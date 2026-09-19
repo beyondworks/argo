@@ -422,8 +422,10 @@ function Shell({ session }) {
   useEffect(() => { // 데스크톱 배너 클릭(D52) — 네이티브가 창을 되살리고 알림 식별자를 보낸다. 그 방으로(다른 조직이면 조직 전환 뒤) 연다
     if (!uid || !isDesktopTauri()) return undefined;
     let off = () => {}; let live = true;
-    import('@tauri-apps/api/event').then(({ listen }) => listen('msgr-notify-click', ({ payload }) => { const ch = notifyChannel(payload); pushDiag('notify', `click ${ch ?? '-'}`); if (ch) setNavTo(ch); }))
-      .then((u) => { if (live) off = u; else u(); }).catch(() => {});
+    const go = (id) => { const ch = notifyChannel(id); pushDiag('notify', `click ${ch ?? '-'}`); if (ch) setNavTo(ch); };
+    const take = async () => (await import('@tauri-apps/api/core')).invoke('notify_take_pending').catch(() => null); // 콜드 스타트 클릭(듣기 전에 온 것) — 한 번 가져가 비운다
+    import('@tauri-apps/api/event').then(({ listen }) => listen('msgr-notify-click', ({ payload }) => { take(); go(payload); })) // 켜져 있을 때 받은 클릭도 보관분을 비워, 재로그인 때 옛 클릭으로 다시 이동하지 않게
+      .then((u) => { if (live) { off = u; take().then((id) => { if (live && id) go(id); }); } else u(); }).catch(() => {});
     return () => { live = false; off(); };
   }, [uid]);
   useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다

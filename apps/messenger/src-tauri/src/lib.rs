@@ -22,7 +22,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list,
-        notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send
+        notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send, notify_mac::notify_take_pending
     ]);
     #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder

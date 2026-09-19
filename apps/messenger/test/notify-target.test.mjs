@@ -19,10 +19,15 @@ test('배선: 네이티브 대리자가 클릭을 받아 창을 되살리고 식
   assert.match(rs, /app\.emit\("msgr-notify-click", id\)/);
   assert.match(rs, /handler\.call\(\(\)\);/, '완료 처리기를 불러야 OS가 응답을 끝낸다');
   assert.match(read('../src-tauri/src/lib.rs'), /notify_mac::install_delegate\(mtm, app\.handle\(\)\.clone\(\)\)/);
+  assert.match(rs, /if let Ok\(mut p\) = PENDING\.lock\(\) \{ \*p = Some\(id\.clone\(\)\); \}/, '콜드 스타트 클릭 보관(검수 #650)');
+  assert.match(rs, /pub fn notify_take_pending\(\) -> Option<String> \{ PENDING\.lock\(\)\.ok\(\)\.and_then\(\|mut p\| p\.take\(\)\) \}/, '가져가면 비운다');
+  assert.match(read('../src-tauri/src/lib.rs'), /notify_mac::notify_take_pending/, '명령 등록');
 });
 test('배선: 앱이 클릭 이벤트를 navTo(조직 전환 포함)로 잇고, 모든 OS 알림이 채널을 싣는다', () => {
   const app = read('../src/App.jsx');
-  assert.match(app, /listen\('msgr-notify-click', \(\{ payload \}\) => \{ const ch = notifyChannel\(payload\);[^\n]*?if \(ch\) setNavTo\(ch\); \}\)/);
+  assert.match(app, /const go = \(id\) => \{ const ch = notifyChannel\(id\);[^\n]*?if \(ch\) setNavTo\(ch\); \};/);
+  assert.match(app, /listen\('msgr-notify-click', \(\{ payload \}\) => \{ take\(\); go\(payload\); \}\)/, '켜져 있을 때 클릭 — 보관분도 비운다');
+  assert.match(app, /if \(live\) \{ off = u; take\(\)\.then\(\(id\) => \{ if \(live && id\) go\(id\); \}\); \}/, '듣기를 붙인 직후 콜드 스타트 클릭을 가져간다');
   const calls = [...app.matchAll(/osNotify\([^;]*?(`[amr]:\$\{payload\.id\}`|notifyTag\('[amr]', payload\.id, payload\.channel_id\))/g)].map((m) => m[1]);
   assert.ok(calls.length >= 5, `osNotify 호출 ${calls.length}`);
   assert.ok(calls.every((c) => c.startsWith('notifyTag(')), '채널 없는 식별자로 보내는 알림이 남았다');

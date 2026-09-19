@@ -19,12 +19,18 @@ use objc2_user_notifications::{
     UNUserNotificationCenterDelegate,
 };
 use std::ptr::NonNull;
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::time::Duration;
 use tauri::Emitter;
 
 // 배너 클릭을 웹뷰에 알릴 앱 핸들 — 대리자는 ObjC 객체라 필드 대신 전역 한 칸(setup에서 한 번 채운다)
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
-use std::time::Duration;
+// 마지막 클릭 — 앱이 꺼진 채 배너를 눌러 켜지면(콜드 스타트) 웹뷰가 로그인 뒤에야 듣기 시작해 이벤트를 놓친다(검수 #650).
+// 웹뷰가 듣기를 붙인 직후 notify_take_pending으로 한 번 가져간다. 켜져 있을 때 받은 클릭도 이벤트 처리기가 가져가 비운다.
+static PENDING: Mutex<Option<String>> = Mutex::new(None);
+
+#[tauri::command]
+pub fn notify_take_pending() -> Option<String> { PENDING.lock().ok().and_then(|mut p| p.take()) }
 
 fn in_app_bundle() -> bool {
     let b = NSBundle::mainBundle();
@@ -125,6 +131,7 @@ define_class!(
         #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
         fn did_receive(&self, _c: &UNUserNotificationCenter, response: &UNNotificationResponse, handler: &block2::DynBlock<dyn Fn()>) {
             let id = response.notification().request().identifier().to_string();
+            if let Ok(mut p) = PENDING.lock() { *p = Some(id.clone()); }
             if let Some(app) = APP.get() {
                 // ⌘M 최소화·닫기(=가리기)여도 방이 보이게 창을 되살린다 — OS 활성화는 최소화를 풀지 않는다
                 if let Some(w) = tauri::Manager::get_webview_window(app, "main") { let _ = w.unminimize(); let _ = w.show(); let _ = w.set_focus(); }
