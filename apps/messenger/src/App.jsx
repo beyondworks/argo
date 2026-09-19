@@ -1401,6 +1401,7 @@ function Shell({ session }) {
           </div>
         ) : isPhone && org && isAdmin && !isPersonal && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: openNewCh, invite: orgInvite })} /></div>
           : org && previewChannels.length ? <div className="msgr-hint">{t('inv.empty.title')} <button type="button" className="btn sm" onClick={() => { setRail(true); openBrowse(); }}><I name="at" size={13} />{t('inv.empty.browse')}</button></div>
+          : isPhone && !orgId ? <div className="msgr-phsteps"><OrgStepList steps={noOrgSteps({ t, createOrg: () => { setOrgMenu(true); setNewOrg(''); }, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg })} /></div>
           : <div className="msgr-hint">{orgId ? t('ch.noneYet') : t('org.none')}</div>}{/* 폰 홈에는 빈 조직 안내(본문)가 안 보인다 — 같은 시작 단계를 목록 자리에(D3) */}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: newChKind })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
 </RailSection>}
@@ -3216,14 +3217,19 @@ function OnboardCard({ orgId, steps, t }) {
   </section>);
 }
 
-function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, joinWithCode, onboard }) {
-  const { t } = useT();
-  const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, invite }) : [
+// 조직 없는 첫 화면 단계(데스크톱 본문·폰 홈이 같은 목록 — D22 S109)
+function noOrgSteps({ t, createOrg, joinWithCode, joinable = [], joinDomain, deletedOrgs = [], restoreOrg }) {
+  return [
     ...(deletedOrgs.length ? [['', t('org.step.restore'), t('org.step.restore.sub'), <div key="r" className="msgr-chips">{deletedOrgs.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => restoreOrg(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}</div>]] : []), // J-5
     ...(joinable.length ? [['mark', t('org.step.join'), t('org.step.join.sub'), <div key="j" className="msgr-chips">{joinable.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => joinDomain(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}</div>]] : []), // J-3: 회사 도메인 계정이면 초대 없이 바로
     [joinable.length ? '' : 'mark', t('org.step.create'), t('org.step.create.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createOrg}><I name="plus" size={13} />{t('org.new')}</button>],
     ['', t('org.step.invite'), t('org.step.invite.sub'), <button key="j" type="button" className="btn sm" onClick={joinWithCode}><I name="at" size={13} />{t('org.join.code')}</button>],
   ];
+}
+
+function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, joinWithCode, onboard }) {
+  const { t } = useT();
+  const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, invite }) : noOrgSteps({ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg });
   return (<>
     <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
     <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
