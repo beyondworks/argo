@@ -22,7 +22,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
     return s.role === 'guest' ? ok.slice(0, 1) : ok;
   });
   const [open, setOpen] = useState(false); // 링크 설정 접힘
-  const [link, setLink] = useState(null); const [busy, setBusy] = useState(true); const [err, setErr] = useState(null); const [copied, setCopied] = useState(false);
+  const [made, setMade] = useState(null); const [busy, setBusy] = useState(true); const [err, setErr] = useState(null); const [copied, setCopied] = useState(false);
   const copyRef = useRef(null); const dialog = useRef(null); const seq = useRef(0);
   // 이 창에서 만든 링크 — 복사하지 않은 채 새 링크로 바뀌거나 창을 닫으면 취소한다(쌓임 방지, 총괄 2026-09-18). 복사한 링크는 이미 건너갔을 수 있어 둔다.
   const cur = useRef(null); // { id, code, copied }
@@ -32,18 +32,21 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   // 선택·설정이 바뀌면 새 링크(짧게 모아서) — 늦게 온 옛 응답은 버린다.
   // 옛 링크는 그 순간 지운다: 옛 설정(예: 멤버)의 링크가 새 설정(게스트) 화면에 남아 복사되면 권한이 넘어간다(D32).
   const needChannel = s.role === 'guest' && picked.length === 0; // 서버가 거절(msgr_invite_guest_one_channel) — 만들지 않는다
+  // 링크는 만든 설정(want)과 짝으로 둔다 — 설정이 바뀐 바로 그 렌더부터 옛 링크가 안 보인다(효과에서 지우면 한 프레임 남는다)
+  const want = [s.role, s.expiryDays, s.maxUses, s.guestDays, picked.join(',')].join('|');
+  const link = made?.key === want ? made.code : null;
   useEffect(() => {
-    const my = ++seq.current; drop(cur.current); cur.current = null; setLink(null); setErr(null); setBusy(!needChannel); // 화면에서 지운 링크는 복사할 수 없다 — 안 건너갔으면 바로 정리
+    const my = ++seq.current; drop(cur.current); cur.current = null; setMade(null); setErr(null); setBusy(!needChannel); // 화면에서 지운 링크는 복사할 수 없다 — 안 건너갔으면 바로 정리
     if (needChannel) return undefined;
     const timer = setTimeout(async () => {
-      try { const made = await create({ role: s.role, channelIds: picked, expiryDays: s.expiryDays, maxUses: s.role === 'guest' ? 1 : s.maxUses, guestDays: s.guestDays });
-        if (seq.current !== my) { drop(made); return; } // 늦게 온 옛 응답·닫힌 창 — 보여 준 적 없는 링크
-        cur.current = { ...made, copied: false };
-        setLink(made.code); setBusy(false);
+      try { const inv = await create({ role: s.role, channelIds: picked, expiryDays: s.expiryDays, maxUses: s.role === 'guest' ? 1 : s.maxUses, guestDays: s.guestDays });
+        if (seq.current !== my) { drop(inv); return; } // 늦게 온 옛 응답·닫힌 창 — 보여 준 적 없는 링크
+        cur.current = { ...inv, copied: false };
+        setMade({ code: inv.code, key: want }); setBusy(false);
       } catch (e) { if (seq.current === my) { setErr(errorText ? errorText(e) : e.message); setBusy(false); } }
-    }, link ? 200 : 0);
+    }, made ? 200 : 0);
     return () => clearTimeout(timer);
-  }, [s.role, s.expiryDays, s.maxUses, s.guestDays, picked.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [want]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!busy && link) copyRef.current?.focus(); }, [busy, !!link]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!copied) return undefined; const id = setTimeout(() => setCopied(false), 1500); return () => clearTimeout(id); }, [copied]);
 
@@ -77,7 +80,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
         </header>
 
         <div className="inv-link">
-          <input className="msgr-input" readOnly value={busy ? t('inv.making') : (link ? (linkOf ? linkOf(link) : link) : '')} aria-label={t('inv.link')} onFocus={(e) => e.target.select()} onCopy={markCopied} />{/* 손으로 선택해 복사해도 건너간 링크로 친다 */}
+          <input className="msgr-input" readOnly value={link ? (linkOf ? linkOf(link) : link) : needChannel || err ? '' : t('inv.making')} aria-label={t('inv.link')} onFocus={(e) => e.target.select()} onCopy={markCopied} />{/* 손으로 선택해 복사해도 건너간 링크로 친다 */}
           <button type="button" ref={copyRef} className={`btn btn-primary inv-copy${copied ? ' done' : ''}`} onClick={copy} disabled={!link || busy} aria-live="polite">
             <I name={copied ? 'check' : 'copy'} size={14} />{copied ? t('inv.copied') : t('inv.copy')}
           </button>
