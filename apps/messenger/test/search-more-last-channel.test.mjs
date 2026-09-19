@@ -14,7 +14,7 @@ test('검색 결과가 상한에서 잘렸으면 이상으로 적는다', () => 
   assert.equal(t('search.countMore', 'en', { n: 60 }), '60+ results');
 });
 test('마지막 채널 — 지금 조직의 채널일 때만 적고, 불러올 때 남아 있으면 연다', () => {
-  assert.match(src, /writeLastCh\(orgId, chId\); \}, \[orgId, chId, channels, previewChannels\]\);/);
+  assert.match(src, /loadedOrg\.current === orgId.*writeLastCh\(orgId, chId\); \}, \[orgId, chId, channels, previewChannels\]\);/);
   assert.match(src, /const last = readLastCh\(id\); return has\(last\) \? last : \(chs\[0\]\?\.id \?\? null\);/, '조직');
   assert.match(src, /const last = readLastCh\(PERSONAL\); return has\(last\) \? last : \(chs\[0\]\?\.id \?\? null\);/, '개인 공간');
 });
