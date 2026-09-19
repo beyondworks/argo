@@ -589,7 +589,8 @@ test('점검 2026-09-12 소형 결함 4건: 읽음은 초점 있을 때만 · �
   assert.match(app, /window\.addEventListener\('focus', mark\);/, '초점 복귀 시 읽음');
   assert.match(app, /if \(!payload \|\| payload\.kind !== 'text' \|\| \(payload\.author_user_id && payload\.author_user_id === r\.uid\)\) return;/, '사람 발신도 알림(내 글 제외)');
   assert.match(app, /setBadge\(badgeTotal\(\{ current: unread, currentKey: [^,]+, muted, totals: spaceTotals \}\)\)/, '독 배지 음소거 제외 — 모든 공간 합(badgeTotal, 음소거 제외 행동은 apps/messenger/test/cross-space.test.mjs)');
-  assert.match(app, /<img className="msgr-imgprev" src=\{src\} alt=\{a\.name\} loading="lazy" onClick=\{\(\) => setZoom\(true\)\} \/>/, '이미지 인라인 — 누르면 그 자리에서 확대(유건 2026-09-16)');
+  assert.match(app, /<img className="msgr-imgprev" src=\{src\} alt=\{a\.name\} loading="lazy" onClick=\{\(\) => setZoom\(true\)\} onError=\{\(\) => setImgFail\(true\)\} \/>/, '이미지 인라인 — 누르면 그 자리에서 확대(유건 2026-09-16), 못 그리면 파일 칩으로(D21)');
+  assert.match(app, /\{\(!isImg \|\| imgFail\) && <button type="button" className="msgr-file"/, '이미지는 미리보기가 곧 파일 — 칩 중복 없음(D21)');
   assert.match(app, /className="msgr-lightbox"[\s\S]{0,400}onClick=\{\(\) => setZoom\(false\)\}/, '덮개를 누르면 닫힌다');
   assert.match(app, /if \(e\.key === 'Escape'\) setZoom\(false\);/, 'Esc로도 닫힌다');
 });
