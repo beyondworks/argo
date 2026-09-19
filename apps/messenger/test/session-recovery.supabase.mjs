@@ -11,6 +11,7 @@ let connected = false;
 let listener = null;
 let resolveInitial = null;
 let readCount = 0;
+let signOutAttempts = 0;
 const initialRead = delayedMode ? new Promise((resolve) => { resolveInitial = resolve; }) : null;
 
 localStorage.setItem(storageKey, JSON.stringify({ ...session, expires_at: 1 }));
@@ -38,9 +39,17 @@ supabase.auth = {
         window.__d56.resolveOld();
       }, 100);
     }, 100);
+    if (params.get('signout') === 'observe' || params.get('signout') === 'retry') setTimeout(() => {
+      [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('다시 로그인'))?.click();
+      if (params.get('signout') === 'retry') setTimeout(() => {
+        [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('다시 로그인'))?.click();
+      }, 200);
+    }, 100);
     return { data: { subscription: { unsubscribe() { listener = null; } } } };
   },
   signOut: async () => {
+    signOutAttempts += 1;
+    if (['fail', 'observe', 'retry'].includes(params.get('signout')) && signOutAttempts === 1) return { error: new TypeError('fixture cleanup blocked') };
     localStorage.removeItem(storageKey);
     listener?.('SIGNED_OUT', null);
     return { error: null };
@@ -56,6 +65,7 @@ window.__d56 = {
     localStorage.setItem(storageKey, JSON.stringify({ ...nextSession, expires_at: 4_102_444_800 }));
     listener?.('SIGNED_IN', nextSession);
   },
+  stored() { return localStorage.getItem(storageKey) !== null; },
 };
 
 export { configured, customServer, SB_URL, SB_ANON, supabase, q };

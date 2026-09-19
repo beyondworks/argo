@@ -142,6 +142,8 @@ export const DICT = {
   'auth.connectionWaiting': ['연결을 기다리는 중', 'Waiting for connection'],
   'auth.connectionWaiting.desc': ['저장된 로그인은 그대로 두었습니다. 연결되면 자동으로 이어집니다.', 'Your saved sign-in is still here. This will continue automatically when the connection returns.'],
   'auth.signInAgain': ['다시 로그인', 'Sign in again'],
+  'auth.signInAgainFailed': ['로그인 정보를 정리하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.', 'Could not clear the sign-in information. Check your connection and try again.'],
+  'auth.sessionCheckFailed': ['로그인 상태를 확인하지 못했습니다. 다시 로그인을 시도해 주세요.', 'Could not check your sign-in state. Try signing in again.'],
   'auth.deleted': ['계정이 삭제됐습니다. 이용해 주셔서 감사합니다.', 'Your account has been deleted. Thank you for using Argo.'],
   'acct.delete': ['계정 삭제', 'Delete account'],
   'user.deleted': ['탈퇴한 사용자', 'Deleted user'],

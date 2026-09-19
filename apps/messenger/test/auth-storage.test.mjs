@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasStoredAuthSession, clearStoredAuthSession } from '../src/auth-storage.mjs';
+import { hasStoredAuthSession } from '../src/auth-storage.mjs';
 
 const KEY = 'sb-fixture-auth-token';
 const store = (value) => {
@@ -19,12 +19,4 @@ test('malformed or incomplete storage is not mistaken for a recoverable session'
   }
   assert.equal(hasStoredAuthSession('sb-other-auth-token', store(JSON.stringify({ access_token: 'a', refresh_token: 'r', expires_at: 1 }))), false);
   assert.equal(hasStoredAuthSession(KEY, { getItem() { throw new Error('blocked'); } }), false);
-});
-
-test('explicit re-login clears only the configured auth slot', () => {
-  const storage = store(JSON.stringify({ access_token: 'a', refresh_token: 'r', expires_at: 1 }));
-  storage.values.set('other', 'keep');
-  clearStoredAuthSession(KEY, storage);
-  assert.equal(storage.values.has(KEY), false);
-  assert.equal(storage.values.get('other'), 'keep');
 });

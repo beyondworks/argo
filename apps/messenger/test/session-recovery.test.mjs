@@ -13,18 +13,20 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(reads, { stored = true, getSession = null } = {}) {
+function fixture(reads, { stored = true, getSession = null, signOut = async () => ({ error: null }) } = {}) {
   const applied = [];
   const waiting = [];
+  const failures = [];
   const timers = new Map();
   const listeners = new Map();
   let timerId = 0;
-  const auth = { getSession: getSession ?? (async () => reads.shift()) };
+  const auth = { getSession: getSession ?? (async () => reads.shift()), signOut };
   const recovery = createSessionRecovery({
     auth,
     hasStoredSession: () => stored,
     applySession: (session) => applied.push(session),
     setWaiting: (value) => waiting.push(value),
+    setFailure: (error) => failures.push(error),
     addEventListener: (name, handler) => listeners.set(name, handler),
     removeEventListener: (name) => listeners.delete(name),
     setTimer: (handler) => { const id = ++timerId; timers.set(id, handler); return id; },
@@ -36,7 +38,7 @@ function fixture(reads, { stored = true, getSession = null } = {}) {
     timers.delete(entry[0]);
     await entry[1]();
   };
-  return { recovery, applied, waiting, timers, listeners, runTimer };
+  return { recovery, applied, waiting, failures, timers, listeners, runTimer };
 }
 
 test('stored session + retryable refresh failure waits, then recovers automatically', async () => {
@@ -139,19 +141,75 @@ test('delayed initial read cannot restore a session after SIGNED_OUT', async () 
   f.recovery.stop();
 });
 
-test('explicit re-login choice cancels a delayed initial read', async () => {
+test('verified local sign-out cancels a delayed initial read before showing Auth', async () => {
   // Given the cold-start read is still pending.
   const pending = deferred();
   const f = fixture([], { getSession: () => pending.promise });
   const starting = f.recovery.start();
 
   // When the user chooses the waiting screen's re-login action.
-  f.recovery.chooseSignIn();
+  const result = await f.recovery.restartSignIn();
   pending.resolve({ data: { session: OLD_SESSION }, error: null });
   await starting;
 
   // Then the stale stored identity cannot replace the Auth screen.
+  assert.equal(result.error, null);
   assert.deepEqual(f.applied, [null]);
+  f.recovery.stop();
+});
+
+test('failed local sign-out stays waiting and a later retry can finish cleanup', async () => {
+  // Given stored credentials and a first local sign-out that cannot clean them.
+  const calls = [];
+  let attempt = 0;
+  const failure = new TypeError('storage blocked');
+  const f = fixture([
+    { data: { session: null }, error: new AuthRetryableFetchError('offline', 503) },
+  ], { signOut: async (options) => { calls.push(options); attempt += 1; return { error: attempt === 1 ? failure : null }; } });
+  await f.recovery.start();
+
+  // When the user retries after the first cleanup failure.
+  const first = await f.recovery.restartSignIn();
+  const second = await f.recovery.restartSignIn();
+
+  // Then Auth is applied only after the verified local cleanup succeeds.
+  assert.equal(first.error, failure);
+  assert.equal(second.error, null);
+  assert.deepEqual(f.applied, [null]);
+  assert.deepEqual(calls, [{ scope: 'local' }, { scope: 'local' }]);
+  assert.equal(f.waiting.at(-1), false);
+  f.recovery.stop();
+});
+
+test('auth-js SIGNED_OUT event owns the transition without a duplicate fallback apply', async () => {
+  // Given auth-js broadcasts SIGNED_OUT before its local sign-out promise resolves.
+  let f;
+  f = fixture([
+    { data: { session: null }, error: new AuthRetryableFetchError('offline', 503) },
+  ], { signOut: async () => { f.recovery.onAuthStateChange('SIGNED_OUT', null); return { error: null }; } });
+  await f.recovery.start();
+
+  // When the user asks for a fresh sign-in.
+  await f.recovery.restartSignIn();
+
+  // Then the event is authoritative and the success fallback does not apply null twice.
+  assert.deepEqual(f.applied, [null]);
+  f.recovery.stop();
+});
+
+test('arbitrary thrown TypeError with stored credentials stops automatic retry and surfaces failure', async () => {
+  // Given getSession throws a non-Supabase TypeError while credentials remain.
+  const failure = new TypeError('storage implementation failed');
+  const f = fixture([], { getSession: async () => { throw failure; } });
+
+  // When cold-start recovery reads the session.
+  await f.recovery.start();
+
+  // Then it stays fail-closed without scheduling an infinite retry loop.
+  assert.deepEqual(f.applied, []);
+  assert.equal(f.waiting.at(-1), true);
+  assert.equal(f.failures.at(-1), failure);
+  assert.equal(f.timers.size, 0);
   f.recovery.stop();
 });
 

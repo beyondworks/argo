@@ -31,8 +31,18 @@ try {
   await page.goto(`${base}/?race=relogin`);
   await page.getByText('Google로 계속하기').waitFor();
   assert.equal(await page.getByText('Fixture General', { exact: true }).count(), 0, 'stale initial read must not undo explicit re-login');
+
+  await page.goto(`${base}/?signout=fail`);
+  await page.getByRole('heading', { name: '연결을 기다리는 중' }).waitFor();
+  await page.getByRole('button', { name: '다시 로그인' }).click();
+  await page.getByText(/로그인 정보를 정리하지 못했습니다/).waitFor();
+  assert.equal(await page.getByRole('heading', { name: '연결을 기다리는 중' }).isVisible(), true, 'failed cleanup must remain fail-closed');
+  assert.equal(await page.evaluate(() => window.__d56.stored()), true, 'failed cleanup must not pretend credentials were removed');
+  await page.getByRole('button', { name: '다시 로그인' }).click();
+  await page.getByText('Google로 계속하기').waitFor();
+  assert.equal(await page.evaluate(() => window.__d56.stored()), false, 'Auth is allowed only after local cleanup succeeds');
   assert.deepEqual(errors, []);
-  console.log('D56 browser PASS: waiting/recovery + delayed read loses to SIGNED_OUT/new session/re-login');
+  console.log('D56 browser PASS: waiting/recovery + auth ordering + cleanup failure/retry contract');
 } finally {
   await browser.close();
 }

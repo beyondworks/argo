@@ -3,13 +3,14 @@ import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 const RETRY_MS = 5_000;
 
 function isRetryable(error) {
-  return isAuthRetryableFetchError(error) || error instanceof TypeError;
+  return isAuthRetryableFetchError(error);
 }
 
 // Cold start is different from a real sign-out: auth-js keeps stored credentials
 // after retryable refresh failures, so remain indeterminate and retry until the
 // refresh succeeds or a real SIGNED_OUT event arrives.
 export function createSessionRecovery({ auth, hasStoredSession, applySession, setWaiting,
+  setFailure = () => {},
   addEventListener = globalThis.addEventListener?.bind(globalThis),
   removeEventListener = globalThis.removeEventListener?.bind(globalThis),
   setTimer = globalThis.setTimeout.bind(globalThis), clearTimer = globalThis.clearTimeout.bind(globalThis),
@@ -20,7 +21,7 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
   let generation = 0;
 
   const clearRetry = () => { if (timer !== null) clearTimer(timer); timer = null; };
-  const finish = (session) => { clearRetry(); setWaiting(false); applySession(session); };
+  const finish = (session) => { clearRetry(); setFailure(null); setWaiting(false); applySession(session); };
   const schedule = () => {
     clearRetry();
     if (active) timer = setTimer(() => { timer = null; return retryNow(); }, retryMs);
@@ -31,13 +32,14 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
       const { data, error } = await auth.getSession();
       if (!active || generation !== readGeneration) return;
       if (!error) { finish(data.session ?? null); return; }
-      if (hasStoredSession() && isRetryable(error)) { setWaiting(true); schedule(); return; }
+      if (hasStoredSession() && isRetryable(error)) { setFailure(null); setWaiting(true); schedule(); return; }
       finish(null);
     } catch (error) {
       if (!active || generation !== readGeneration) return;
-      // A thrown read never establishes that credentials were rejected. If
-      // credentials remain on disk, keep them and retry instead of guessing.
-      if (hasStoredSession()) { setWaiting(true); schedule(); return; }
+      // Keep credentials on disk, but only Supabase's retryable fetch error is
+      // safe to loop. An arbitrary TypeError may be a broken storage adapter.
+      if (hasStoredSession() && isRetryable(error)) { setFailure(null); setWaiting(true); schedule(); return; }
+      if (hasStoredSession()) { clearRetry(); setWaiting(true); setFailure(error, 'session'); return; }
       throw error;
     }
   };
@@ -53,7 +55,21 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
     async start() { active = true; addEventListener?.('online', online); await retryNow(); },
     stop() { active = false; generation += 1; clearRetry(); removeEventListener?.('online', online); },
     retryNow,
-    chooseSignIn() { generation += 1; finish(null); },
+    async restartSignIn() {
+      const attemptGeneration = ++generation;
+      clearRetry(); setFailure(null); setWaiting(true);
+      try {
+        const { error } = await auth.signOut({ scope: 'local' });
+        if (error) { setFailure(error, 'signout'); return { error }; }
+        // auth-js normally emits SIGNED_OUT synchronously. A native wrapper may
+        // instead resolve after its own cleanup; only then is Auth safe to show.
+        if (active && generation === attemptGeneration) finish(null);
+        return { error: null };
+      } catch (error) {
+        setFailure(error, 'signout');
+        return { error };
+      }
+    },
     onAuthStateChange(event, session) {
       // Auth events after the initial read started are authoritative. Invalidate
       // that read before applying them so stale identities cannot win later.

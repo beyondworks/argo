@@ -46,7 +46,7 @@ import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
 import { createSessionRecovery } from './session-recovery.mjs';
-import { authStorageKey, hasStoredAuthSession, clearStoredAuthSession } from './auth-storage.mjs';
+import { authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
@@ -153,6 +153,7 @@ export default function App() {
   const authKey = authStorageKey(SB_URL);
   const [session, setSession] = useState(undefined);
   const [sessionWaiting, setSessionWaiting] = useState(false);
+  const [sessionRecoveryError, setSessionRecoveryError] = useState('');
   const [logoutNotice, setLogoutNotice] = useState('');
   const [signingOut, setSigningOut] = useState(false);
   const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false); const recoveryRef = useRef(null);
@@ -195,21 +196,23 @@ export default function App() {
   useEffect(() => mountMobileAuth(), []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
-    const recovery = createSessionRecovery({ auth: supabase.auth, hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting });
+    const recovery = createSessionRecovery({ auth: supabase.auth, hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting,
+      setFailure: (error, phase) => setSessionRecoveryError(error ? (phase === 'signout' ? 'auth.signInAgainFailed' : 'auth.sessionCheckFailed') : '') });
     recoveryRef.current = recovery;
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => recovery.onAuthStateChange(event, next));
     recovery.start();
     const stopResume = isMobilePlatform ? observeMobileResume(() => recovery.retryNow()) : () => {};
     return () => { if (recoveryRef.current === recovery) recoveryRef.current = null; recovery.stop(); stopResume(); sub.subscription.unsubscribe(); };
   }, []);
-  const restartSignIn = () => {
-    logoutPending.current = true;
-    try { clearStoredAuthSession(authKey); recoveryRef.current?.chooseSignIn(); }
-    finally { logoutPending.current = false; }
+  const restartSignIn = async () => {
+    if (signingOut) return;
+    logoutPending.current = true; setSigningOut(true);
+    try { await recoveryRef.current?.restartSignIn(); }
+    finally { logoutPending.current = false; setSigningOut(false); }
   };
   let body;
   if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
-  else if (sessionWaiting) body = <ConnectionWaiting t={t} onSignIn={restartSignIn} />;
+  else if (sessionWaiting) body = <ConnectionWaiting t={t} onSignIn={restartSignIn} error={sessionRecoveryError} busy={signingOut} />;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
@@ -217,11 +220,12 @@ export default function App() {
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
-function ConnectionWaiting({ t, onSignIn }) {
+function ConnectionWaiting({ t, onSignIn, error, busy }) {
   return <div className="msgr-auth"><div className="msgr-card"><div className="band"><I name="hash" size={14} />ARGO<span className="tag">MESSENGER</span></div><div className="body">
     <h1>{t('auth.connectionWaiting')}</h1>
     <p>{t('auth.connectionWaiting.desc')}</p>
-    <button type="button" className="btn btn-primary" onClick={onSignIn}>{t('auth.signInAgain')}</button>
+    {error && <p role="alert" style={{ color: 'var(--danger)' }}>{t(error)}</p>}
+    <button type="button" className="btn btn-primary" onClick={onSignIn} disabled={busy}>{busy ? t('ui.loading') : t('auth.signInAgain')}</button>
   </div></div></div>;
 }
 

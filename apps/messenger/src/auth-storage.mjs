@@ -16,8 +16,3 @@ export function hasStoredAuthSession(key, store = globalThis.localStorage) {
   }
   catch { return false; }
 }
-
-export function clearStoredAuthSession(key, store = globalThis.localStorage) {
-  try { if (key) store?.removeItem(key); }
-  catch { /* 재로그인 화면 전환은 저장소 오류로 막지 않는다 */ }
-}
