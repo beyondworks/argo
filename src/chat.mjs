@@ -1676,7 +1676,9 @@ ${lang === 'en'
       }
       const tu = tus[0];
       // 크루가 이미 말한 텍스트를 상태 파일로 흘린다 — UI 폴이 완료 전에도 부분 표시(스트리밍 체감)
-      const said = (msg.message?.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+      // 단, SDK가 API 오류를 싣는 합성 메시지(msg.error: overloaded·rate_limit·server_error…)는 크루의 말이 아니다 — 원문에 추론 게이트웨이 주소가
+      // 들어 있어("check your inference gateway (127.0.0.1:…)") 메신저 실행 카드로 손님에게 방송됐다(D26 재확인). 원문은 턴 실패 기록(활동 로그)에만.
+      const said = msg.error ? '' : (msg.message?.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
       if (said) partial = partial ? `${partial}\n\n${said}` : said;
       // 사고 과정 — thinking 블록(SDK가 확장 사고를 켠 모델에서 싣는다)을 상태 파일 thought로 흘린다. 회의실·1:1 카드가
       // "무엇을 생각하며 이 답을 내는지"를 접이식으로 보인다(유건 요청 2026-09-06). 없으면 이전 값 유지(setTurnStatus).

@@ -43,7 +43,8 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /if \(people\.length === 1 && crewsIn\.length === 1 && crewOf\(crewsIn\[0\]\.member_id\)\?\.owner_user_id === people\[0\]\.member_id\) return false;/, '그룹 판정 정본: 나 뺀 참가자 2 이상, 남의 크루 1:1(소유자 동반)은 예외');
   assert.match(src, /if \(dmIsGroup\(c\)\) \{ const names = \[\.\.\.crewsIn\.map/, 'dmName은 같은 판정을 쓴다(검수 HIGH-2)');
   assert.match(src, /\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/span>\{lastMsg/, 'DM 탭 행 음소거 벨(검수 HIGH-1 회귀 방지)');
-  assert.match(src, /<><span className="name">\{dmName\(c\)\}<\/span>\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/>/, '데스크톱·홈 행 음소거 벨(회귀 방지)');
+  // D35: 행 이름은 dmBaseName(말줄임) + 나간 대화 라벨(줄지 않음) — 벨은 그 뒤에 그대로
+  assert.match(src, /<><span className="name">\{dmBaseName\(c\)\}<\/span>\{dmVacated\(c\) && <span className="msgr-vacated">\{t\('dm\.vacated\.tag'\)\}<\/span>\}\{muted\.has\(c\.id\) && <I name="belloff" size=\{12\} className="mi" \/>\}<\/>/, '데스크톱·홈 행 음소거 벨(회귀 방지)');
   assert.match(src, /onPointerUp: \(e\) => \{ lp\.onPointerUp\(e\); swallowNext\(\); \}/, 'click 삼킴은 손 뗀 직후에만 등록(검수 HIGH-3)');
   assert.match(src, /draggable=\{!isPhone\}/, '폰 행은 드래그 끔(iOS 드래그 리프트가 click을 삼키는 것 방지) — 홈에도 길게 누르기(2026-09-15)');
   assert.match(src, /select\('id, channel_id, body, author_user_id, crew_id, created_at'\)\.in\('id', ids\)\.is\('deleted_at', null\)/, '한 줄 미리보기는 마지막 글 id로 한 번에, 삭제 글 제외');

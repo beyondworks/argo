@@ -98,3 +98,15 @@ test('transport recovers committed responses and uses scoped message lookup and 
   assert.equal(inserted[1][1].storage_path, paths[0]);
   assert.equal(inserted[1][1].id, 'att-id');
 });
+
+test('답글(D17) — 답글 대상은 그 한 번의 전송 job에 실리고 reply_to로 들어가며, 보낸 뒤 비워진다. 답글이 아니면 reply_to 키가 없다', async () => {
+  const jobs = []; const session = createComposerDelivery(transport({ message: async (job) => { jobs.push(job); return 9; } }));
+  session.setReplyTo({ id: 42, who: 'B', body: '원글' }); session.setText('답합니다');
+  assert.equal(await session.send([]), true);
+  assert.equal(jobs[0].replyTo, 42); assert.equal(session.snapshot().replyTo, null, '보낸 뒤 답글 대상 비움');
+  session.setText('그냥 글'); await session.send([]); assert.equal(jobs[1].replyTo, null);
+  const rows = []; const client = { from: () => ({ insert: (row) => { rows.push(row); return { select: () => ({ single: async () => ({ data: { id: 1 }, error: null }) }) }; } }) };
+  const tr = composerTransport(client, { orgId: 'o', chId: 'c', uid: 'u' });
+  await tr.message({ body: 'x', mentions: [], clientId: 'k1', replyTo: 42 }); await tr.message({ body: 'y', mentions: [], clientId: 'k2', replyTo: null });
+  assert.equal(rows[0].reply_to, 42); assert.equal('reply_to' in rows[1], false, '옛 모양 그대로(답글이 아닐 때)');
+});

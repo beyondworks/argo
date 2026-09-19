@@ -61,6 +61,23 @@ await scenario(1280, 'image-lightbox', async (p) => {
   assert.equal(await p.locator('.msgr-lightbox').count(), 0, '바깥을 눌러도 닫힌다');
 });
 
+// 2b. 이미지 버튼도 로빙 규칙을 따른다(검수 K10) — 서명 URL 뒤 늦게 붙어도 현재 행이 아니면 탭 순서 밖, 현재 행이 되면 Tab → Enter로 연다
+await scenario(1280, 'image-roving', async (p) => {
+  await p.locator('.msgr-imgbtn').first().waitFor({ timeout: 8000 });
+  await p.waitForTimeout(300);
+  assert.equal(await p.locator('.msgr-imgbtn').first().evaluate((b) => b.tabIndex), -1, '현재 행(마지막 글)이 아니면 이미지 버튼은 -1');
+  await p.evaluate(() => [...document.querySelectorAll('.msgr-row, .msgr-mine')].find((x) => x.tabIndex === 0).focus());
+  await p.keyboard.press('ArrowUp');
+  assert.equal(await p.evaluate(() => document.activeElement?.dataset?.mid), '11', '↑로 이미지 행이 현재 행');
+  await p.keyboard.press('Tab');
+  assert.ok(await p.evaluate(() => document.activeElement?.classList.contains('msgr-imgbtn')), 'Tab으로 이미지 버튼');
+  await p.keyboard.press('Enter');
+  await p.locator('.msgr-lightbox').waitFor({ timeout: 5000 });
+  await p.keyboard.press('Escape');
+  await p.waitForTimeout(200);
+  assert.ok(await p.evaluate(() => document.activeElement?.classList.contains('msgr-imgbtn')), '닫으면 초점이 이미지로 돌아온다');
+});
+
 // 3. 배너 알림에 본문이 실린다 — 방송에는 본문이 없으니 앱이 그 글을 읽어 채운다
 await scenario(1280, 'notification-body', async (p) => {
   await p.evaluate(() => window.__ux3Broadcast('message', { id: 11, channel_id: 'general', author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', mentions: [], reply_to: null }));

@@ -38,6 +38,7 @@ import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
 import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, msgrJournal } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
+import { roomTurnFailure, roomAttachReason } from './msgr-room-errors.mjs';
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
@@ -743,12 +744,15 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       const name = basename(ref);
       try {
         const buf = await readFile(join(paths(wsId).vault, ref));
-        if (buf.length > ATTACH_MAX) throw new Error(pick('25MB 초과', 'over 25MB', lang));
+        if (buf.length > ATTACH_MAX) throw Object.assign(new Error(pick('25MB 초과', 'over 25MB', lang)), { roomSafe: true }); // 방에 그대로 보여도 되는 사유
         const path = `${job.orgId}/${job.channelId}/${row.id}/${safeName(name)}`;
         const mime = isImagePath(ref) ? `image/${ref.split('.').pop().toLowerCase().replace('jpg', 'jpeg')}` : '';
         await db.upload(path, buf, mime);
         await db.insertAttachment({ message_id: row.id, org_id: job.orgId, storage_path: path, name: safeName(name), mime, bytes: buf.length });
-      } catch (e) { fails.push({ name, reason: /ENOENT/.test(e.message) ? pick('파일이 없습니다', 'file not found', lang) : String(e.message).slice(0, 80) }); }
+      } catch (e) { // 원문(절대 경로가 들어 있을 수 있음)은 방에 싣지 않는다(D26) — 주인 로컬 콘솔에만
+        if (!/ENOENT/.test(e.message) && !e.roomSafe) console.error(`[argo] msgr 첨부 전달 실패(${wsId}/${job.slug}/${name}):`, e.message);
+        fails.push({ name, reason: roomAttachReason(e, lang) });
+      }
     }
     if (fails.length) {
       await db.insertMessage({ channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'system', reply_to: row.id, thread_root: job.threadRoot ?? job.msgId,
@@ -889,7 +893,10 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       turnTrace = ch.kind === 'public' ? turn.trace ?? null : null; // 메신저 비공개·DM 답글에는 실행 궤적을 추가 저장하지 않는다
     } catch (e) {
       failed = true;
-      reply = pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang);
+      // 방(손님 포함)에는 일반 문구만 — 원문에 주인 쪽 엔드포인트 주소·경로가 들어 있다(D26, 실측 "…inference gateway (127.0.0.1:5291)").
+      // 원문은 chat()이 회사 활동 로그에 이미 남겼다(주인만 본다). 게이트웨이 로컬 콘솔에도 남긴다.
+      console.error(`[argo] msgr 턴 실패(${wsId}/${job.slug}/${job.msgId}):`, String(e?.message ?? e).slice(0, 400));
+      reply = roomTurnFailure(lang);
     } finally {
       stopTyping();
       stopHeartbeat();

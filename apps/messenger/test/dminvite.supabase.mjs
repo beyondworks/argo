@@ -1,7 +1,8 @@
 // Browser-only fixture: no credentials or production client imported.
 export const configured = true, customServer = false, SB_URL = 'http://fixture.invalid', SB_ANON = 'fixture';
 const uid = 'user-me', org = 'org-fixture', now = new Date().toISOString();
-const asMember = new URLSearchParams(location.search).get('role') === 'member'; // 방장이 아닌 참여자 시점(2026-09-16 에이전트 참여 승인)
+const asMember = new URLSearchParams(location.search).get('role') === 'member';
+const withVacated = new URLSearchParams(location.search).get('vacated') === '1'; // D35: 상대가 모두 빠진 대화 // 방장이 아닌 참여자 시점(2026-09-16 에이전트 참여 승인)
 const channel = (id, kind, name, orgId = org) => ({ id, org_id: orgId, kind, name, created_by: asMember ? 'user-colleague' : uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: orgId ? 'approval' : 'blocked' });
 const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts: {}, channelNames: [], tables: {
   msgr_org_members: [
@@ -9,7 +10,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     { user_id: 'user-colleague', org_id: org, role: 'member', display_name: 'Org Colleague', removed_at: null },
     { user_id: 'user-third', org_id: org, role: 'member', display_name: 'Third Person', removed_at: null },
   ],
-  msgr_channels: [channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿'), ...Array.from({ length: 12 }, (_, i) => channel(`fold-${i + 1}`, 'private', `Folder Room ${i + 1}`))],
+  msgr_channels: [...(withVacated ? [channel('left-dm', 'dm', 'dm:Gone Person'), channel('left-group', 'dm', 'dm:Gone Person With A Rather Long Display Name, Fixture Agent'), channel('agent-dm', 'dm', 'dm:Fixture Agent'), channel('renamed-dm', 'dm', 'dm:Old Agent Name'), channel('widened-dm', 'dm', 'dm:Third Person'), channel('owner-left', 'dm', 'dm:Colleague Agent'), channel('people-minus', 'dm', 'dm:Third Person, Gone Person'), channel('gone-widened', 'dm', 'dm:Departed Person')] : []), channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿'), ...Array.from({ length: 12 }, (_, i) => channel(`fold-${i + 1}`, 'private', `Folder Room ${i + 1}`))],
   msgr_crews: [
     { id: 'crew-1', org_id: org, owner_user_id: uid, slug: 'fixture-crew', display_name: 'Fixture Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' },
     { id: 'crew-3', org_id: org, owner_user_id: uid, slug: 'second-crew', display_name: 'Second Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 일괄 추가 대상 둘째(유건 2026-09-17)
@@ -17,6 +18,8 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     { id: 'crew-bot', org_id: org, owner_user_id: 'user-colleague', slug: 'bot-crew', display_name: 'External Bot', hosting: 'bot', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 외부 에이전트 — 남는다
   ],
   msgr_channel_members: [
+    // D35 판정 표: R1 left-dm·R2 left-group·R6 widened-dm·조직을 떠난 상대의 R6 gone-widened(크루가 나중에 들어옴)·남의 크루만 남은 owner-left = 나간 대화 / R3 agent-dm·크루 이름 바뀐 renamed-dm·R5 people-minus = 표지 없음
+    ...(withVacated ? [{ channel_id: 'left-dm', member_kind: 'user', member_id: uid }, { channel_id: 'left-group', member_kind: 'user', member_id: uid }, { channel_id: 'left-group', member_kind: 'crew', member_id: 'crew-1' }, { channel_id: 'agent-dm', member_kind: 'user', member_id: uid }, { channel_id: 'agent-dm', member_kind: 'crew', member_id: 'crew-1' }, { channel_id: 'renamed-dm', member_kind: 'user', member_id: uid, added_at: '2026-09-01T00:00:00Z' }, { channel_id: 'renamed-dm', member_kind: 'crew', member_id: 'crew-3', added_at: '2026-09-01T00:00:00Z' }, { channel_id: 'gone-widened', member_kind: 'user', member_id: uid, added_at: '2026-09-01T00:00:00Z' }, { channel_id: 'gone-widened', member_kind: 'crew', member_id: 'crew-1', added_at: '2026-09-02T00:00:00Z' }, { channel_id: 'widened-dm', member_kind: 'user', member_id: uid }, { channel_id: 'widened-dm', member_kind: 'crew', member_id: 'crew-1' }, { channel_id: 'owner-left', member_kind: 'user', member_id: uid }, { channel_id: 'owner-left', member_kind: 'crew', member_id: 'crew-2' }, { channel_id: 'people-minus', member_kind: 'user', member_id: uid }, { channel_id: 'people-minus', member_kind: 'user', member_id: 'user-third' }] : []),
     { channel_id: 'general', member_kind: 'user', member_id: uid },
     { channel_id: 'org-dm', member_kind: 'user', member_id: uid },
     { channel_id: 'org-dm', member_kind: 'user', member_id: 'user-colleague' },

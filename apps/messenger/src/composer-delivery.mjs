@@ -13,7 +13,7 @@ export function clearComposerSessions() {
 }
 
 export function createComposerDelivery(transport, uuid = () => crypto.randomUUID()) {
-  let state = { text: '', mentions: [], recipients: [], files: [], job: null, busy: false, uploading: '' };
+  let state = { text: '', mentions: [], recipients: [], files: [], replyTo: null, job: null, busy: false, uploading: '' }; // replyTo = { id, who, body } — 답글 대상(D17)
   let disposed = false;
   const listeners = new Set();
   const patch = (delta) => {
@@ -62,17 +62,18 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
     setMentions: (value) => update('mentions', value),
     setRecipients: (value) => update('recipients', value),
     setFiles: (value) => update('files', value),
+    setReplyTo: (value) => update('replyTo', value),
     send(mentions) {
       if (disposed || state.busy || state.job || (!state.text.trim() && !state.files.length)) return Promise.resolve(false);
-      const job = { clientId: uuid(), body: state.text.trim(), mentions, messageId: null,
+      const job = { clientId: uuid(), body: state.text.trim(), mentions, replyTo: state.replyTo?.id ?? null, messageId: null,
         files: state.files.map((file, index) => ({ id: uuid(), file, key: storageKey(file.name, index), uploaded: false, done: false })) };
       // The submitted snapshot is owned by the delivery card; the next draft is independent.
-      patch({ text: '', mentions: [], recipients: [], files: [], job });
+      patch({ text: '', mentions: [], recipients: [], files: [], replyTo: null, job });
       return deliver(job);
     },
     retry() { return state.job ? deliver(state.job) : Promise.resolve(false); },
     dismiss() { if (!state.busy) patch({ job: null }); },
-    dispose() { disposed = true; listeners.clear(); state = { text: '', mentions: [], recipients: [], files: [], job: null, busy: false, uploading: '' }; },
+    dispose() { disposed = true; listeners.clear(); state = { text: '', mentions: [], recipients: [], files: [], replyTo: null, job: null, busy: false, uploading: '' }; },
   };
 }
 
@@ -83,7 +84,7 @@ export function composerTransport(client, { orgId, chId, uid }) {
   return {
     async message(job) {
       const result = await client.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid,
-        body: job.body, mentions: job.mentions, client_msg_id: job.clientId }).select('id').single();
+        body: job.body, mentions: job.mentions, client_msg_id: job.clientId, ...(job.replyTo ? { reply_to: job.replyTo } : {}) }).select('id').single(); // 답글이면 reply_to(서버 트리거가 같은 채널인지 보고 thread_root를 채운다)
       if (!result.error) return result.data.id;
       const found = await client.from('msgr_messages').select('id').eq('channel_id', chId).eq('author_kind', 'user')
         .eq('author_user_id', uid).eq('client_msg_id', job.clientId).maybeSingle();

@@ -197,7 +197,8 @@ export const DICT = {
   'inv.sub.more': ['#{name} 외 {n}개 채널에 들어가요', 'Joins #{name} and {n} more channels'],
   'inv.link': ['초대 링크', 'Invite link'],
   'inv.making': ['링크를 만드는 중…', 'Creating link…'],
-  'inv.remaking': ['바뀐 설정으로 새 링크를 만드는 중… 이전 링크도 그대로 쓸 수 있어요.', 'Creating a new link for these settings… the previous link still works.'],
+  'inv.pickChannel': ['채널을 고르면 링크가 만들어져요.', 'Pick a channel to create the link.'],
+  'inv.sub.guestNone': ['게스트가 들어갈 채널을 아래에서 하나 골라 주세요', 'Choose one channel below for the guest'],
   'inv.copy': ['복사', 'Copy'],
   'inv.copied': ['복사됨', 'Copied'],
   'inv.copy.fail': ['복사하지 못했습니다. 링크를 직접 선택해 복사해 주세요.', 'Could not copy. Select the link and copy it manually.'],
@@ -304,6 +305,9 @@ export const DICT = {
   // P0(2026-09-09): 안 읽음·편집·삭제·반응·음소거·조용한 시간
   'msg.new': ['새 메시지', 'New messages'],
   'msg.edited': ['(수정됨)', '(edited)'],
+  'msg.reply': ['답글', 'Reply'],
+  'composer.replyTo': ['{name}에게 답글', 'Replying to {name}'],
+  'composer.replyCancel': ['답글 취소(Esc)', 'Cancel reply (Esc)'],
   'msg.react': ['반응', 'React'],
   'emoji.search': ['이모티콘 검색', 'Search emoji'],
   'emoji.none': ['맞는 이모티콘이 없습니다', 'No matching emoji'],
@@ -1000,6 +1004,7 @@ export const DICT = {
   'dm.group.err.notFriend': ['친구인 사람만 그룹에 넣을 수 있습니다.', 'Only friends can be added to a group.'],
   'dm.group.err.blocked': ['이 사람들로는 그룹을 만들 수 없습니다. 구성을 바꿔 보세요.', 'A group with these people cannot be created. Try different people.'], // 누가 누구를 차단했는지 드러내지 않는다(2차 검수 MEDIUM-2)
   'dm.group.tag': ['그룹', 'Group'],
+  'dm.vacated.tag': ['나간 대화', 'Left'],
   'dm.group.joiners': ['함께 들어오는 사람(크루 소유자): {names}', 'Also joining (crew owners): {names}'],
   'dm.filter': ['채팅 필터', 'Chat filter'],
   'dm.filter.all': ['전체', 'All'],

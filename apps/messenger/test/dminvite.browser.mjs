@@ -184,6 +184,25 @@ await scenario(1280, 'leave-public-channel', async (p) => {
   assert.ok(calls.some((c) => c.table === 'msgr_channel_members' && c.op === 'delete'), '내 참여 행을 지운다');
   assert.ok(!(await p.locator('[data-sec="channels"]').innerText()).includes('Fixture General'), '목록에서 빠진다');
 });
+// D35. 상대(사람)가 모두 빠진 대화 — 새 1:1·에이전트 DM과 같은 이름으로 보이지 않는다(정비사 원장 P6-3, 검수 R1~R6)
+await scenario(1280, 'vacated-dm-label', async (p) => {
+  const rows = await p.locator('[data-sec="dms"] button.item').evaluateAll((bs) => bs.map((b) => ({ name: b.querySelector('.name')?.innerText.trim(), tag: !!b.querySelector('.msgr-vacated') })));
+  const tagOf = (name) => { const r = rows.find((x) => x.name === name); assert.ok(r, `행 ${name} 있음 (실제: ${JSON.stringify(rows)})`); return r.tag; };
+  assert.equal(tagOf('Gone Person'), true, 'R1 사람이 빠진 1:1 — 표지');
+  assert.equal(tagOf('Gone Person With A Rather Long Display Name, Fixture Agent'), true, 'R2 사람이 빠지고 에이전트만 남은 그룹 — 표지');
+  const third = rows.filter((x) => x.name === 'Third Person').map((x) => x.tag).sort();
+  assert.deepEqual(third, [false, true], `R6(1:1에 에이전트를 더한 뒤 사람이 빠진 방)는 표지, R5(사람 그룹에서 한 명만 빠져 남은 사람 이름으로 보이는 방)는 표지 없음 (실제: ${third})`);
+  assert.equal(tagOf('Colleague Agent'), true, '남의 에이전트만 남은 방 = 그 주인이 빠짐 — 표지');
+  assert.equal(tagOf('Departed Person'), true, 'R6 변형 — 상대가 재가입하지 않고 조직을 떠나 멤버 이름이 없어도, 크루가 나중에 들어온 방이면 표지');
+  assert.equal(tagOf('Fixture Agent'), false, 'R3 에이전트 1:1 — 표지 없음');
+  assert.equal(tagOf('Second Agent'), false, '내 에이전트 이름이 바뀐 1:1 — 표지 없음(새 이름)');
+  // 데스크톱 폭에서 긴 이름은 말줄임되어도 표지는 온전히 보인다(검수 조건 1)
+  const fit = await p.locator('[data-sec="dms"] button.item', { hasText: 'Rather Long' }).first().evaluate((b) => { const tag = b.querySelector('.msgr-vacated').getBoundingClientRect(); const box = b.getBoundingClientRect(); const name = b.querySelector('.name'); return { tagW: tag.width, inside: tag.right <= box.right + 0.5, clipped: name.scrollWidth > name.clientWidth }; });
+  assert.ok(fit.tagW > 20 && fit.inside, `표지가 행 안에 보인다 ${JSON.stringify(fit)}`);
+  assert.ok(fit.clipped, '이름만 말줄임된다');
+  await p.locator('[data-sec="dms"] button.item', { hasText: 'Gone Person' }).first().click(); await p.waitForTimeout(500);
+  assert.match(await p.locator('.msgr-top').first().innerText(), /나간 대화/, '열어도 제목에 표지가 있다');
+}, '?vacated=1');
 
 // 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
 await scenario(1280, 'unjoined-preview', async (p) => {
