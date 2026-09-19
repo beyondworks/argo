@@ -16,4 +16,6 @@ test('비었거나 이메일 앞부분과 같을 때만, 조직별로 한 번(�
   assert.match(src, /const key = `argo-msgr-name-asked:\$\{org\.id\}`;/);
   assert.match(src, /namePrompt=\{org && !isPersonal && me && !orgLocked \? <NamePrompt/, '개인 공간·잠긴 조직 제외');
   assert.equal(t('name.prompt.desc', 'en', { local: 'kim' }), 'You appear as your email prefix (kim). This is the name people in this organization see.');
+  assert.equal(t('name.prompt.desc.empty', 'ko'), '아직 이름이 없어 다른 사람에게 구분되지 않아요. 이 조직에서 보일 이름을 정해 주세요.');
+  assert.equal(t('name.prompt.desc.empty', 'en'), 'You don’t have a name yet, so other people can’t identify you. Choose the name shown in this organization.');
 });

@@ -2750,7 +2750,7 @@ function NamePrompt({ org, me, email, onChanged, onNote, onError }) {
   };
   return (
     <form className="msgr-nameprompt" onSubmit={(e) => { e.preventDefault(); if (!busy) save(); }} aria-label={t('name.prompt.title')}>
-      <div className="txt"><b>{t('name.prompt.title')}</b><span>{t('name.prompt.desc', { local })}</span></div>
+      <div className="txt"><b>{t('name.prompt.title')}</b><span>{t(me.display_name ? 'name.prompt.desc' : 'name.prompt.desc.empty', { local })}</span></div>
       <input className="msgr-input inline" value={name} maxLength={40} placeholder={t('set.name.placeholder')} aria-label={t('set.name')} onChange={(e) => setName(e.target.value)} />
       <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={busy || !name.trim()}><I name="check" size={13} />{t('ui.save')}</button><button type="button" className="btn sm ghost" onClick={close}>{t('name.prompt.skip')}</button></div>
     </form>
