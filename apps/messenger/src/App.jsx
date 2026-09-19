@@ -1504,7 +1504,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} namePrompt={org && !isPersonal && me ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => { setPage('settings'); setSettingsTab('friends'); }}><I name="at" size={13} />{t('friends.title')}</button></div></div></>
         ) : (
@@ -2675,13 +2675,14 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
 const DOC_FOLDERS = ['rules', 'glossary', 'projects', 'journal'];
 export { docSlug }; // 정본은 doc-path.mjs(경로 규칙·충돌 접미와 함께)
 /* ─── F2-3 본인 표시명 편집(RLS msgr_members_update_self — 역할·제거 표시는 트리거가 막는다) ─── */
+const saveMyOrgName = (org, me, name) => supabase.from('msgr_org_members').update({ display_name: name.trim() || null }).eq('org_id', org.id).eq('user_id', me.user_id).select('user_id'); // 설정 이름 칸과 첫 진입 이름 카드(D5)가 같이 쓴다
 function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
   const { t } = useT();
   const [name, setName] = useState(me.display_name ?? ''); const [busy, setBusy] = useState(false);
   useEffect(() => { setName(me.display_name ?? ''); }, [me.display_name]);
   const save = async () => {
     setBusy(true);
-    const res = await supabase.from('msgr_org_members').update({ display_name: name.trim() || null }).eq('org_id', org.id).eq('user_id', me.user_id).select('user_id');
+    const res = await saveMyOrgName(org, me, name);
     setBusy(false);
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('set.name.noEdit'));
@@ -2693,6 +2694,31 @@ function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
       <input className="msgr-input inline" value={name} maxLength={40} placeholder={t('set.name.placeholder')} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); }} />
       <button type="button" className="btn btn-primary sm" disabled={busy || name.trim() === (me.display_name ?? '')} onClick={save}><I name="check" size={13} />{t('ui.save')}</button>
     </div>
+  );
+}
+
+// 첫 진입 이름 카드(D5) — 가입 때 이름을 묻지 않아 조직 표시 이름이 이메일 앞부분이다. 비었거나 앞부분과 같으면 한 번 묻는다(저장·건너뛰기, 조직별로 기억)
+function NamePrompt({ org, me, email, onChanged, onNote, onError }) {
+  const { t } = useT();
+  const local = (email ?? '').split('@')[0];
+  const key = `argo-msgr-name-asked:${org.id}`;
+  const [done, setDone] = useState(() => { try { return localStorage.getItem(key) === '1'; } catch { return false; } });
+  const [name, setName] = useState(''); const [busy, setBusy] = useState(false);
+  const need = !!me && (!me.display_name || me.display_name === local);
+  if (done || !need) return null;
+  const close = () => { try { localStorage.setItem(key, '1'); } catch { /* 저장 못 해도 이번엔 닫는다 */ } setDone(true); };
+  const save = async () => {
+    if (!name.trim()) return;
+    setBusy(true); const res = await saveMyOrgName(org, me, name); setBusy(false);
+    if (res.error) return onError(res.error.message);
+    onNote(t('set.name.saved')); close(); onChanged();
+  };
+  return (
+    <form className="msgr-nameprompt" onSubmit={(e) => { e.preventDefault(); if (!busy) save(); }} aria-label={t('name.prompt.title')}>
+      <div className="txt"><b>{t('name.prompt.title')}</b><span>{t('name.prompt.desc', { local })}</span></div>
+      <input className="msgr-input inline" value={name} maxLength={40} placeholder={t('set.name.placeholder')} aria-label={t('set.name')} onChange={(e) => setName(e.target.value)} />
+      <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={busy || !name.trim()}><I name="check" size={13} />{t('ui.save')}</button><button type="button" className="btn sm ghost" onClick={close}>{t('name.prompt.skip')}</button></div>
+    </form>
   );
 }
 
@@ -3273,7 +3299,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = nu
 // 개인 공간 표지 — 조직 아바타(글자) 대신 사람 아이콘 + 액센트 틴트. 색만이 아니라 아이콘·라벨로도 조직과 구분한다(유건 2026-09-18).
 function PersonalMark({ sm = false }) { return <span className={`msgr-av personal${sm ? ' sm' : ''}`} aria-hidden="true"><I name="person" size={sm ? 13 : 15} /></span>; }
 
-function Channel({ onOutsideDm = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
+function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
@@ -3491,6 +3517,7 @@ function Channel({ onOutsideDm = null, startCard = null, jumpTo = null, onJumped
       {away && <div className="msgr-tobottom"><button type="button" className="btn sm" onClick={() => { const el = feed.current; if (!el) return; stick.current = true; el.scrollTop = el.scrollHeight; setAway(false); }}><I name="caret" size={13} />{t('thread.toBottom')}</button></div>}
     </div>
     {workOpen && <WorkPanel key={chId} channel={channel} uid={uid} isAdmin={isAdmin} locked={locked} crews={chCrews} t={t} lang={lang} onClose={() => setWorkOpen(false)} sheet={!phone} />}{/* 데스크톱: 채널 패널과 같은 시트(폭 380 + 24, #600·#603 비킴 규칙 공유 — 유건 2026-09-18) */}
+    {!preview && namePrompt}
     {preview
       ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
       : <Composer onOutsideDm={onOutsideDm} isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} replyReq={replyReq} onReplyDone={() => setReplyReq(null)} onPending={(x) => setPending((cur) => [...cur, x])} onPendingSettled={(clientId, ok) => { if (!ok) setPending((cur) => cur.filter((x) => x.clientId !== clientId)); }} onSent={async (id) => {

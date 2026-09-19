@@ -362,6 +362,10 @@
 /* 첫 채널 뒤 남은 단계(D3) — 스레드 맨 위, 빈 조직 안내와 같은 단계 목록 */
 .msgr-onboard { position: relative; z-index: 1; background: var(--bg); margin: 4px 0 18px; padding: 12px 14px 14px; border: 1px dashed var(--border); border-radius: 16px; display: grid; gap: 10px; } /* 불투명 — 스레드 척추 줄이 카드를 가로지르지 않게 */
 .msgr-phsteps { padding: 4px 16px 12px; }
+/* 첫 진입 이름 카드(D5) — 입력창 바로 위 한 줄 */
+.msgr-nameprompt { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 auto 8px; width: min(704px, calc(100% - 48px)); padding: 10px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); }
+.msgr-nameprompt .txt { flex: 1 1 220px; display: grid; gap: 2px; min-width: 0; } .msgr-nameprompt .txt b { font-size: 13px; } .msgr-nameprompt .txt span { font-size: 12px; color: var(--fg-3); }
+.msgr-nameprompt .msgr-input.inline { flex: 1 1 160px; max-width: 240px; } .msgr-nameprompt .acts { display: flex; gap: 6px; }
 .msgr-onboard > header { display: flex; align-items: center; justify-content: space-between; }
 .msgr-center { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--fg-3); font-size: 13px; padding: 24px; }
 
