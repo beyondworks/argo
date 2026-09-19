@@ -2220,6 +2220,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   // 내가 결정할 대기 참여 요청은 읽음과 무관하게 남긴다 — 결정하면 목록에서 빠진다. 시각 기준만 쓰면, 채팅을 연 사람이 나가 결재자가 된
   // 사람은 그 전에 알림함을 연 적이 있으면 넘겨받은 요청(더 이른 시각)을 영영 못 봤다(픽스처 실측 2026-09-18, 20260918170000).
   const pendingMine = (it) => !!it.joinReq;
+  const unreadOf = (k) => items.filter((it) => it.kind === k && (isNew(it) || pendingMine(it))).length; // 탭 숫자는 읽지 않은 것(D37) — 총수면 모두 읽어도 숫자가 남았다
   const shown = items.filter((it) => (kind === 'all' || it.kind === kind) && (!unreadOnly || isNew(it) || pendingMine(it)));
   const readCount = items.filter((it) => (kind === 'all' || it.kind === kind) && !isNew(it) && !pendingMine(it)).length;
   const phone = useIsPhone();
@@ -2233,7 +2234,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
       <button type="button" className="btn sm msgr-backchat" onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
     <div className="msgr-thread page" {...swipe}><div className="msgr-inbox">
-      <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && items.some((it) => it.kind === k) && <span className="n">{items.filter((it) => it.kind === k).length}</span>}</button>)}</div>
+      <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && unreadOf(k) > 0 && <span className="n">{unreadOf(k)}</span>}</button>)}</div>
       {phone && <p className="msgr-inboxcounts">{t('inbox.count', { kind: t(`inbox.kind.${kind}`), n: shown.length })}</p>} {/* 폰: 탭 속 숫자 대신 탭 아래 한 줄 — 고른 탭의 개수(유건 2026-09-11) */}
       {!shown.length && <p className="empty">{unreadOnly && readCount ? t('inbox.allRead') : t('inbox.empty')}</p>}
       {readCount > 0 && <button type="button" className="btn sm msgr-inboxtoggle" onClick={() => setUnreadOnly((v) => !v)}>{unreadOnly ? t('inbox.showRead', { n: readCount }) : t('inbox.unreadOnly')}</button>}
