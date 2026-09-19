@@ -1,6 +1,20 @@
 /* 메신저 컴포넌트 — 시안 v2(design/system-v2.css)를 .msgr-* 접두로 이식. 색은 토큰만(평문 금지). 모티프 4개:
    ① 타임라인 척추 ② 사람 원 / 크루 타일 + 별 배지 ③ 2단 다크 독(.msgr-composer는 linen 차콜 스코프 — globals.css) ④ 결재 슬립.
    Argo 부품은 .shell .side(토큰 스코프) .btn .chip과 DropUp·Markdown·imeGuardWith만 쓴다. */
+/* 초점 링(D34) — 본체 --ring(반투명, 라이트 2:1·다크 2.9:1, linen 어두운 레일 1:1)은 globals 공유라 두고, 메신저만 불투명 색으로.
+   테마마다 본문·레일·카드 세 바탕 모두 3:1 이상(실측 표는 PR). 테마 = 계열(linen·graphite·argo) × 방식(시스템·-light·-dark) */
+:root, :root[data-theme='argo'], :root[data-theme='argo-light'] { --msgr-focus: #8f6a1d; }
+:root[data-theme='argo-dark'] { --msgr-focus: #c6a052; }
+:root[data-theme='linen'], :root[data-theme='linen-light'] { --msgr-focus: #7d7355; }
+:root[data-theme='linen-dark'] { --msgr-focus: #b8b2a5; }
+:root[data-theme='graphite'], :root[data-theme='graphite-light'] { --msgr-focus: #6b6b6b; }
+:root[data-theme='graphite-dark'] { --msgr-focus: #9a9a9a; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) { --msgr-focus: #c6a052; } /* 'argo'(시스템)는 globals에서 OS 어둡게를 따르지 않는다 — 밝은 금색 그대로 */
+  :root[data-theme='linen'] { --msgr-focus: #b8b2a5; }
+  :root[data-theme='graphite'] { --msgr-focus: #9a9a9a; }
+}
+.argo-messenger :focus-visible { outline-color: var(--msgr-focus); } /* 본체 전역 :focus-visible(반투명 --ring) 위에 — 버튼·링크·탭 등 메신저 전체(포털 포함, body 클래스) */
 .mi { flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .mi.fill { fill: currentColor; stroke: none; }
 .msgr-klabel { font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--fg-3); }
@@ -153,7 +167,7 @@
 .msgr-imgprev { max-width: min(420px, 100%); max-height: 320px; border-radius: 12px; border: 1px solid var(--border); display: block; cursor: zoom-in; object-fit: contain; background: var(--card-2); }
 .msgr-imgbtn { display: block; width: fit-content; max-width: min(420px, 100%); padding: 0; border: 0; background: none; border-radius: 12px; cursor: zoom-in; }
 .msgr-imgbtn .msgr-imgprev { max-width: 100%; } /* 폭 상한은 버튼이 진다 — 이미지 % 상한은 버튼 폭 계산에서 무시돼 초점 링이 넓어졌다 */
-.msgr-imgbtn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.msgr-imgbtn:focus-visible { outline: 2px solid var(--msgr-focus); outline-offset: 2px; }
 .msgr-imgph { display: block; width: 240px; max-width: 100%; height: 160px; border-radius: 12px; border: 1px solid var(--border); background: var(--card-2); }
 .msgr-mine { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: end; gap: 4px; margin-left: 42px; animation: msgrRise 250ms cubic-bezier(.23,1,.32,1) both; } /* 열을 minmax(0,1fr)로 — 암묵 auto 열은 인용 줄(nowrap)의 최대 콘텐츠 폭까지 자라 긴 원문에 단 내 답글이 스레드를 1만 px 넘게 넓혔다(로컬 실물 재현 2026-09-12: scrollWidth 12,863/1,592) */
 .msgr-mine .bubble { max-width: min(88%, 620px); background: var(--primary); color: var(--primary-fg); border-radius: 20px 6px 20px 20px; padding: 10px 15px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -372,7 +386,7 @@
 .msgr-auth p { margin: 0; color: var(--fg-2); font-size: 13px; line-height: 1.55; }
 .msgr-field { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border); transition: box-shadow 150ms ease; }
 .msgr-field .mi { color: var(--fg-3); }
-.msgr-field:focus-within { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-field:focus-within { box-shadow: 0 0 0 2px var(--msgr-focus); }
 .msgr-field input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; font: inherit; font-size: 13.5px; color: inherit; }
 .msgr-field input::placeholder { color: var(--fg-3); }
 .msgr-auth .btn-primary { height: 44px; font-size: 13px; border-radius: 999px; }
@@ -419,7 +433,7 @@
 /* ─── 인라인 폼(새 채널·새 조직) — 네이티브 prompt 대체. 레일(차콜)·메뉴(카드) 어디서든 토큰만 ─── */
 .msgr-inline { display: grid; gap: 8px; padding: 8px 6px 10px; }
 .msgr-inline .msgr-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; outline: 0; }
-.msgr-inline .msgr-input:focus { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-inline .msgr-input:focus { box-shadow: 0 0 0 2px var(--msgr-focus); }
 .msgr-inline .msgr-input::placeholder { color: var(--fg-3); }
 .msgr-inline .msgr-seg { width: max-content; max-width: 100%; }
 .msgr-inline .msgr-seg button { height: 26px; padding: 0 10px; font-size: 12px; }
@@ -471,7 +485,7 @@
 /* ─── F2 조직 카드·계정 ─── */
 .msgr-setcard h3 { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--fg-2); }
 .msgr-input.inline { flex: 1; min-width: 160px; max-width: 320px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; outline: 0; }
-.msgr-input.inline:focus { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-input.inline:focus { box-shadow: 0 0 0 2px var(--msgr-focus); }
 .msgr-setcard .msgr-rows .row .msgr-seg { margin-left: auto; }
 .msgr-setcard .msgr-rows .row .msgr-seg button { height: 24px; padding: 0 9px; font-size: 11.5px; }
 .msgr-setcard .confirm-inline { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: var(--fg-2); flex-wrap: wrap; }
@@ -580,7 +594,7 @@
 .msgr-sound-select { position: relative; flex: 1; min-width: 0; }
 .argo-messenger .msgr-select { appearance: none; -webkit-appearance: none; display: block; min-width: 0; min-height: 44px; padding: 10px 36px 10px 14px; border: 1px solid var(--border); border-radius: 14px; background-color: var(--card-2); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%238e8d83' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; color: var(--fg); font: inherit; font-size: 16px; line-height: 1.3; text-overflow: ellipsis; cursor: pointer; }
 .argo-messenger .msgr-select:disabled { opacity: .55; cursor: default; }
-.argo-messenger .msgr-select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.argo-messenger .msgr-select:focus-visible { outline: 2px solid var(--msgr-focus); outline-offset: 2px; }
 .msgr-sound-select select { width: 100%; }
 .msgr-setcard .msgr-sound-controls > .btn { flex: 0 0 auto; min-width: 44px; min-height: 44px; padding: 0 14px; white-space: nowrap; }
 
@@ -799,7 +813,7 @@
 .msgr-acts button.danger { color: var(--danger, #d05a5a); }
 .msgr-editbox { display: grid; gap: 8px; max-width: 640px; min-width: 320px; }
 .msgr-editbox textarea.msgr-input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13.5px; resize: vertical; outline: 0; }
-.msgr-editbox textarea.msgr-input:focus { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-editbox textarea.msgr-input:focus { box-shadow: 0 0 0 2px var(--msgr-focus); }
 .msgr-editbox .acts { display: flex; gap: 6px; justify-content: flex-end; }
 
 
@@ -1425,7 +1439,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
 /* 로빙 tabindex 행 초점(검수 K8) — 키보드로 옮길 때만 링. 마우스 클릭 초점에는 안 뜬다 */
 .msgr-row:focus { outline: none; } .msgr-mine:focus { outline: none; }
-.msgr-row:focus-visible, .msgr-mine:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 12px; }
+.msgr-row:focus-visible, .msgr-mine:focus-visible { outline: 2px solid var(--msgr-focus); outline-offset: 4px; border-radius: 12px; }
 
 /* 답글 대상 칩(D17) — 입력창 바로 위, 인용 줄(.msgr-quote)과 같은 말투 */
 .msgr-outsidechip { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 6px; padding: 6px 8px 6px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); font-size: 12px; color: var(--fg-2); min-width: 0; } /* 방 밖 에이전트 안내(D14) — 답글 칩과 같은 자리·모양 */
