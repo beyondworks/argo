@@ -7,12 +7,13 @@ import { t } from '../src/i18n.js';
 
 const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 test('설정 이름 칸과 같은 저장 경로(msgr_org_members, RLS 본인 갱신)', () => {
-  assert.match(src, /const saveMyOrgName = \(org, me, name\) => supabase\.from\('msgr_org_members'\)\.update\(\{ display_name: name\.trim\(\) \|\| null \}\)/);
-  assert.equal(src.match(/await saveMyOrgName\(org, me, name\)/g)?.length, 2, 'DisplayNameRow·NamePrompt');
+  assert.match(src, /const saveMyOrgName = async \(org, me, name, t\) => \{\n  const res = await supabase\.from\('msgr_org_members'\)\.update\(\{ display_name: name\.trim\(\) \|\| null \}\)/);
+  assert.match(src, /if \(res\.error\) return friendlyErr\(res\.error\.message, t\);\n  if \(!res\.data\?\.length\) return t\('set\.name\.noEdit'\);/, '0행이면 바뀌지 않음(#656 검수 조건) — 두 호출부가 같은 판정');
+  assert.equal(src.match(/const err = await saveMyOrgName\(org, me, name, t\)/g)?.length, 2, 'DisplayNameRow·NamePrompt');
 });
 test('비었거나 이메일 앞부분과 같을 때만, 조직별로 한 번(저장·건너뛰기 모두 기억)', () => {
   assert.match(src, /const need = !!me && \(!me\.display_name \|\| me\.display_name === local\);/);
   assert.match(src, /const key = `argo-msgr-name-asked:\$\{org\.id\}`;/);
-  assert.match(src, /namePrompt=\{org && !isPersonal && me \? <NamePrompt/, '개인 공간 제외');
+  assert.match(src, /namePrompt=\{org && !isPersonal && me && !orgLocked \? <NamePrompt/, '개인 공간·잠긴 조직 제외');
   assert.equal(t('name.prompt.desc', 'en', { local: 'kim' }), 'You appear as your email prefix (kim). This is the name people in this organization see.');
 });

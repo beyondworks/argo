@@ -252,7 +252,7 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
 
 test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조직 카드(이름·역할·제거 2단계·초대 만들기/취소·감사), 로컬 알림(멘션·관리자 결재, 자기 글 제외, 다른 채널/숨김일 때만), 오프보딩 트리거', () => {
   const dn = app.slice(app.indexOf('const saveMyOrgName = '), app.indexOf('function NotifyRow(')); // 저장 쿼리는 첫 진입 이름 카드(D5)와 같이 쓰는 saveMyOrgName에
-  assert.match(dn, /function DisplayNameRow\([\s\S]*?await saveMyOrgName\(org, me, name\)/, '설정 이름 칸이 같은 저장을 쓴다');
+  assert.match(dn, /function DisplayNameRow\([\s\S]*?await saveMyOrgName\(org, me, name, t\)/, '설정 이름 칸이 같은 저장을 쓴다');
   assert.match(dn, /from\('msgr_org_members'\)\.update\(\{ display_name: name\.trim\(\) \|\| null \}\)\.eq\('org_id', org\.id\)\.eq\('user_id', me\.user_id\)\.select\('user_id'\)/, '본인 표시명 갱신');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
   assert.match(oc, /from\('msgr_orgs'\)\.update\(\{ name: name\.trim\(\) \}\)\.eq\('id', org\.id\)\.select\('id'\)/, '조직 이름');
