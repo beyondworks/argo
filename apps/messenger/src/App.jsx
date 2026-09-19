@@ -3677,15 +3677,16 @@ function Attachment({ a, onError }) {
   const [imgFail, setImgFail] = useState(false); // 미리보기를 못 그리면 파일 칩으로 물러난다
   useEffect(() => { let on = true; if (!isImg) return undefined; supabase.storage.from('msgr').createSignedUrl(a.storage_path, 3600).then(({ data }) => { if (!on) return; if (data?.signedUrl) setSrc(data.signedUrl); else setImgFail(true); }).catch(() => { if (on) setImgFail(true); }); return () => { on = false; }; }, [a.storage_path, isImg]);
   // 이미지 클릭 = 그 자리에서 확대(유건 2026-09-16). 브라우저 새 창으로 던지면 대화 맥락에서 떨어진다 — 파일 버튼은 종전대로 밖에서 연다.
-  const [zoom, setZoom] = useState(false);
+  const [zoom, setZoom] = useState(false); const imgBtn = useRef(null);
   useEffect(() => {
     if (!zoom) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') setZoom(false); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); imgBtn.current?.focus({ preventScroll: true }); }; // 닫으면 초점을 이미지로 되돌린다
   }, [zoom]);
   return (<span className="msgr-attach">
-    {src && !imgFail && <img className="msgr-imgprev" src={src} alt={a.name} loading="lazy" onClick={() => setZoom(true)} onError={() => setImgFail(true)} />}
+    {src && !imgFail && <button type="button" ref={imgBtn} className="msgr-imgbtn" aria-label={a.name} onClick={() => setZoom(true)}><img className="msgr-imgprev" src={src} alt="" loading="lazy" onError={() => setImgFail(true)} /></button>}{/* 버튼이라 키보드(로빙 현재 행에서 Tab)로도 연다 — 검수 K10 */}
+    {isImg && !src && !imgFail && <span className="msgr-imgph" aria-hidden="true" />}{/* 서명 URL 대기 중 자리 틀 — 빈 행으로 보이지 않게 */}
     {zoom && src && createPortal(
       <div className="msgr-lightbox" role="dialog" aria-modal="true" aria-label={a.name} onClick={() => setZoom(false)}>
         <img src={src} alt={a.name} onClick={(e) => e.stopPropagation()} />
