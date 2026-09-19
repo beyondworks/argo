@@ -390,6 +390,57 @@ test('직통 봇 폴러: callback_query가 결재 확정까지 이어진다 — 
   assert.ok(calls.some((c) => c.url.includes('/botbot-tok-poll/answerCallbackQuery')), '버튼 응답도 그 봇으로 나간다');
 });
 
+test('텔레그램 게이트웨이: 페어링 저장 뒤 겹친 manager stale cfg 교체가 첫 지시를 연결 코드로 되돌리지 않는다(D27 P-X1)', async () => {
+  const { _startTelegramForTest, _installTelegramGatewayCfgForTest } = await import('../src/gateway.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { updateConnection, loadConnections } = await import('../src/connections.mjs');
+  const WS = 'co-d27-first';
+  await createCompany(WS, '첫 지시 보존사', 'pepper');
+  const seeded = await updateConnection(WS, 'telegram', { token: 'bot-tok-d27', enabled: true });
+  const beforePair = seeded.telegram;
+  // 겹친 manager sync가 페어링 전에 loadConnections로 읽어 둔 별도 객체. 임의 cfg 주입이 아니라
+  // ensureGateway가 두 군데에서 호출하는 실제 cfg 설치 경계를 pairing confirmation 직후 태운다.
+  const managerSnapshot = { ...beforePair };
+  const id = `${WS}:telegram`;
+  const cfgMap = { [id]: { ...beforePair } };
+  const calls = [];
+  let poll = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    const body = JSON.parse(opts?.body ?? '{}');
+    calls.push({ url: u, body });
+    if (u.includes('/getUpdates')) {
+      poll += 1;
+      if (poll === 1) return new Response(JSON.stringify({ ok: true, result: [{ update_id: 1, message: { message_id: 1, chat: { id: 4242, type: 'private' }, from: { id: 42 }, text: beforePair.pairCode } }] }), { headers: { 'content-type': 'application/json' } });
+      if (poll === 2) return new Response(JSON.stringify({ ok: true, result: [{ update_id: 2, message: { message_id: 2, chat: { id: 4242, type: 'private' }, from: { id: 42 }, text: '첫 업무 지시' } }] }), { headers: { 'content-type': 'application/json' } });
+      return new Promise(() => {});
+    }
+    if (u.includes('/sendMessage') && String(body.text).includes('연결 코드 확인')) {
+      _installTelegramGatewayCfgForTest(cfgMap, id, managerSnapshot);
+    }
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  const stop = _startTelegramForTest(WS, () => cfgMap[id]);
+  try {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      const queued = (await readdir(queueDir(WS, 'telegram')).catch(() => [])).filter((n) => n.endsWith('.json'));
+      const sentAgain = calls.some((c) => c.url.includes('/sendMessage') && String(c.body.text).includes('6자리 연결 코드'));
+      if (queued.length || sentAgain) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  } finally {
+    stop();
+    globalThis.fetch = origFetch;
+  }
+  const persisted = (await loadConnections(WS)).telegram;
+  const queued = (await readdir(queueDir(WS, 'telegram')).catch(() => [])).filter((n) => n.endsWith('.json'));
+  assert.equal(persisted.chatId, '4242', '파일 저장은 유지된다 — 원인은 connections overwrite가 아니다');
+  assert.equal(cfgMap[id].chatId, '4242', 'manager의 오래된 미페어링 snapshot이 live chatId를 되돌리면 안 된다');
+  assert.equal(queued.length, 1, '페어링 직후 첫 지시가 코드 안내로 소비되지 않고 큐에 적재된다');
+});
+
 test('직통 봇 폴러: 텍스트 결재("승인 ap-…")는 큐를 거치지 않고 즉시 확정된다(교착 방지, 검수 MEDIUM-3)', async () => {
   const { _startAgentTelegramForTest } = await import('../src/gateway.mjs');
   const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
