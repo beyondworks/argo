@@ -1015,6 +1015,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 손님 턴 — 크루 주인이 아닌 사람이 시킨 메신저 턴(isGuestCtx, fail-closed). 주인의 몸(파일·셸·웹·커넥터·브라우저·도구 설치·예약)에
   // 손대지 않고 방 대화로 답하며, 필요한 일은 주인에게 결재로 올린다(규칙 7·9). 아래 강제 지점이 전부 이 한 값을 본다.
   const guest = isGuestCtx(mirrorCtx);
+  // 메신저 문맥 턴의 셸 위험 분류 게이트(D28) — 카드 목적지. 문맥이 불완전해도(예외) 분류는 켠다(결재는 로컬 원장에 남는다).
+  const gateMsgr = mirrorCtx?.kind === 'msgr' ? (() => { try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; } })() : null;
   // 메신저 턴의 기록 범위 — DM은 뿌리 단위, 채널은 채널 단위(세션도 채널마다 따로: thread.mjs scopedSessions). 범위가 있는 기록은 다른 대화에 붙여 넣지 않는다.
   const contextScope = turnScope(mirrorCtx); // 텔레그램 그룹 턴도 그 그룹 범위(주인의 전역 대화를 잇지도 붙이지도 않는다)
   // DM history is supplied by the fresh, authorized thread envelope. Global crew state is not a DM history source.
@@ -1235,7 +1237,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       // 설정을 덮어쓴다 — 주입하지 않고 프롬프트에도 목록을 알리지 않는다(없는 도구 안내 금지).
       if (MCP_CLI_RUNNERS.has(runner)) browserBridge = await createBrowserMcpBridge({
         wsId, slug: agentSlug,
-        canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, cliWorkRoots, { guest }), // 손님 CLI 턴은 위에서 거절 — 방어 겸
+        canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, cliWorkRoots, { guest, msgr: gateMsgr }), // 손님 CLI 턴은 위에서 거절 — 방어 겸
       });
       const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server } : null;
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers) : [];
@@ -1578,7 +1580,7 @@ ${lang === 'en'
   const sdkEnv = await sdkEnvFor(wsId, runner);
   if (!nativeOn) {
     browserBridge = await createBrowserMcpBridge({ wsId, slug: agentSlug,
-      canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, workRoots, { guest }) });
+      canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, workRoots, { guest, msgr: gateMsgr }) });
     connectedMcp.push('argo_browser');
   }
   // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
@@ -1594,13 +1596,13 @@ ${lang === 'en'
     + fallbackDirective;
   const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || openrouterFallbackModel(wantModel)) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
   __turnControl.check();
-  const sdkGate = makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { guest }); // SDK 경로 — canUseTool과 PreToolUse 훅이 같은 판정
+  const sdkGate = makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { guest, msgr: gateMsgr }); // SDK 경로 — canUseTool과 PreToolUse 훅이 같은 판정
   const q = nativeOn ? nativeQuery({
     wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)
     env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {}, computer: computerOn,
     ...(runner === 'codex' && CODEX_EFFORTS.includes(String(meta.effort ?? '')) ? { effort: meta.effort } : {}), // Responses reasoning.effort(크루 카드 추론 강도)
-    canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { computerUse: computerOn, guest }),
+    canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { computerUse: computerOn, guest, msgr: gateMsgr }),
     resume: resumeId, lang,
   }) : query({
     prompt: promptInput,

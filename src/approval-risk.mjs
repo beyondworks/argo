@@ -6,8 +6,8 @@ const HIGH_KINDS = new Set(['connector', 'org_doc']); // org_doc(조직 문서 �
 const LOW_KINDS = new Set(['profile', 'hire', 'loop']); // 회사 안 행동(프로필·영입·루프 재개) — 문장에 '삭제'가 있어도 밖으로 나가지 않는다
 const HIGH_RE = /발송|보내|전송|송금|이체|출금|결제|지불|구매|주문|삭제|지우|폐기|게시|공개|배포|업로드|계약|서명|해지|환불|\b(send|e-?mail|mail|post|publish|deploy|pay(ment)?|purchase|buy|order|wire|transfer|withdraw|delete|remove|erase|drop|contract|sign|cancel|refund|upload)\b/i;
 
-export function approvalRisk({ kind = 'action', action = '', reason = '' } = {}) {
-  if (HIGH_KINDS.has(kind)) return 'high';
+export function approvalRisk({ kind = 'action', action = '', reason = '', payload = null } = {}) {
+  if (HIGH_KINDS.has(kind) || payload?.shell) return 'high'; // 메신저 셸 결재(D28)는 코드 분류가 고위험으로 판정한 명령 — 문장 키워드와 무관하게 조직 정책의 결재권자
   if (LOW_KINDS.has(kind)) return 'low';
   return HIGH_RE.test(`${action}\n${reason}`) ? 'high' : 'low';
 }

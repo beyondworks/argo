@@ -46,6 +46,20 @@ export async function addApproval(wsId, { slug, from, action, reason, kind = 'ac
   return item;
 }
 
+/** 메신저 셸 결재(D28) — 이 크루·이 채널에서 승인됐고 아직 쓰지 않은 같은 명령이 있으면 한 번 쓰고 true.
+    승인 한 번 = 실행 한 번(같은 명령을 다시 하려면 다시 결재). 락 안에서 표시하므로 동시 턴이 같은 승인을 두 번 쓰지 못한다. */
+export async function consumeShellApproval(wsId, { slug, shell, channelId = null }) {
+  return withLock(lockKey(wsId), async () => {
+    const list = await loadApprovals(wsId);
+    const it = list.find((a) => a.status === 'approved' && a.slug === slug && a.payload?.shell === shell && !a.payload?.consumedAt
+      && (a.msgr?.channelId ?? null) === (channelId ?? null));
+    if (!it) return false;
+    it.payload = { ...it.payload, consumedAt: new Date().toISOString() };
+    await save(wsId, list);
+    return true;
+  });
+}
+
 /** 승인/거절 — 상태만 바꾼다. 후속 턴 실행은 API 계층 책임.
     락 안에서 상태를 재확인하므로, 같은 결재에 두 요청(데크 카드+채팅 카드, 웹+메신저)이
     동시에 와도 두 번째는 'approved'를 보고 막힌다 — 되돌릴 수 없는 후속 턴 이중 실행 차단. */
