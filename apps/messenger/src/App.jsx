@@ -1166,14 +1166,24 @@ function Shell({ session }) {
     if (people.length + crewsIn.length < 2) return false;
     if (people.length === 1 && crewsIn.length === 1 && crewOf(crewsIn[0].member_id)?.owner_user_id === people[0].member_id) return false;
     return true; };
-  const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
+  // 상대(사람)가 모두 빠진 대화 — 조직 제거·나가기 뒤 옛 방이 새 1:1·에이전트 DM과 같은 이름으로 보이지 않게(D35). 멤버를 불러오기 전에는 판정하지 않는다(깜빡임 방지).
+  // 판정 = "사람 상대가 있었는데 빠졌는가": 나 말고 사람이 없고,
+  //  · 크루 없음: 저장 이름이 크루 이름이 아니다(해제 sweep으로 크루만 빠진 에이전트 1:1은 종전대로 크루명)
+  //  · 남은 크루가 남의 것: 소유자 동반 규칙상 그 주인(사람)이 빠진 것
+  //  · 남은 크루가 내 것: 저장 이름이 그 크루 이름과 다르고, 그룹 모양("a, b")이거나 지금 멤버의 이름(내 크루 이름이 바뀐 1:1과 구별)
+  const dmVacated = (c) => { if (c._personal_group || dmMembers[c.id] === undefined) return false; const ms = dmMembers[c.id];
+    if (ms.some((m) => m.member_kind === 'user' && m.member_id !== uid)) return false;
+    const base = c.name.replace(/^dm:/, ''); const crew = ms.find((m) => m.member_kind === 'crew');
+    if (!crew) return !crews.some((k) => k.display_name === base);
+    const cr = crewOf(crew.member_id); if (!cr) return false;
+    if (cr.owner_user_id !== uid) return true;
+    return base !== cr.display_name && (base.includes(', ') || members.some((m) => m.display_name === base)); };
+  const dmName = (c) => (dmVacated(c) ? `${dmBaseName(c)} · ${t('dm.vacated.tag')}` : dmBaseName(c));
+  const dmBaseName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
     const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
     if (dmIsGroup(c)) { const names = [...crewsIn.map((m) => crewOf(m.member_id)?.display_name), ...people.map((m) => nameOfUser(m.member_id))].filter(Boolean).join(', ');
       return c._personal_group && people.length <= 1 ? `${names || base} · ${t('dm.group.tag')}` : (names || base); } // 한 명만 남은 개인 그룹이 같은 이름의 1:1과 구별되게(검수 MEDIUM-1) // 그룹 대화 = 멤버 이름 나열(판정 정본 dmIsGroup — 검수 HIGH-2)
-    // 상대가 모두 빠진 대화(조직 제거·나가기 뒤) — 새 1:1·에이전트 DM과 같은 이름으로 보이지 않게 표지를 단다(D35). 멤버를 불러오기 전에는 판정하지 않는다(깜빡임 방지).
-    // 크루 없는 방: 이름이 크루 이름이 아니면(해제 sweep으로 빠진 크루 1:1은 종전대로). 크루만 남은 방: 이름이 그룹 모양("a, b")일 때만(크루 이름 변경과 구별).
-    const vacated = dmMembers[c.id] !== undefined && !other && !c._personal_group && (crew ? base.includes(', ') : !crewName);
-    if (vacated) return `${base} · ${t('dm.vacated.tag')}`;
+    if (dmVacated(c)) return base; // 사람이 빠진 방은 저장 이름(원래 상대) — 표지는 dmName·행 라벨이 붙인다(D35)
     return [crewName, other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · ') || base; };
   const targetFavs = targetPrefs.filter((p) => p.pinned).flatMap((p) => {
     const target = p.target_kind === 'crew' ? crews.find((c) => c.id === p.target_id) : members.find((m) => m.user_id === p.target_id);
@@ -1262,7 +1272,7 @@ function Shell({ session }) {
                 ]),
               ]; return (
             <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items) : {})}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{dmVacated(c) && <span className="msgr-vacated">{t('dm.vacated.tag')}</span>}{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{dmVacated(c) && <span className="msgr-vacated">{t('dm.vacated.tag')}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
             </div>
           ); };

@@ -10,7 +10,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     { user_id: 'user-colleague', org_id: org, role: 'member', display_name: 'Org Colleague', removed_at: null },
     { user_id: 'user-third', org_id: org, role: 'member', display_name: 'Third Person', removed_at: null },
   ],
-  msgr_channels: [...(withVacated ? [channel('left-dm', 'dm', 'dm:Gone Person'), channel('left-group', 'dm', 'dm:Gone Person, Fixture Agent')] : []), channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿'), ...Array.from({ length: 12 }, (_, i) => channel(`fold-${i + 1}`, 'private', `Folder Room ${i + 1}`))],
+  msgr_channels: [...(withVacated ? [channel('left-dm', 'dm', 'dm:Gone Person'), channel('left-group', 'dm', 'dm:Gone Person With A Rather Long Display Name, Fixture Agent'), channel('agent-dm', 'dm', 'dm:Fixture Agent'), channel('renamed-dm', 'dm', 'dm:Old Agent Name'), channel('widened-dm', 'dm', 'dm:Third Person'), channel('owner-left', 'dm', 'dm:Colleague Agent'), channel('people-minus', 'dm', 'dm:Third Person, Gone Person')] : []), channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿'), ...Array.from({ length: 12 }, (_, i) => channel(`fold-${i + 1}`, 'private', `Folder Room ${i + 1}`))],
   msgr_crews: [
     { id: 'crew-1', org_id: org, owner_user_id: uid, slug: 'fixture-crew', display_name: 'Fixture Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' },
     { id: 'crew-3', org_id: org, owner_user_id: uid, slug: 'second-crew', display_name: 'Second Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 일괄 추가 대상 둘째(유건 2026-09-17)
@@ -18,7 +18,8 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
     { id: 'crew-bot', org_id: org, owner_user_id: 'user-colleague', slug: 'bot-crew', display_name: 'External Bot', hosting: 'bot', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 외부 에이전트 — 남는다
   ],
   msgr_channel_members: [
-    ...(withVacated ? [{ channel_id: 'left-dm', member_kind: 'user', member_id: uid }, { channel_id: 'left-group', member_kind: 'user', member_id: uid }, { channel_id: 'left-group', member_kind: 'crew', member_id: 'crew-1' }] : []),
+    // D35 판정 표: R1 left-dm·R2 left-group·R6 widened-dm·남의 크루만 남은 owner-left = 나간 대화 / R3 agent-dm·크루 이름 바뀐 renamed-dm·R5 people-minus = 표지 없음
+    ...(withVacated ? [{ channel_id: 'left-dm', member_kind: 'user', member_id: uid }, { channel_id: 'left-group', member_kind: 'user', member_id: uid }, { channel_id: 'left-group', member_kind: 'crew', member_id: 'crew-1' }, { channel_id: 'agent-dm', member_kind: 'user', member_id: uid }, { channel_id: 'agent-dm', member_kind: 'crew', member_id: 'crew-1' }, { channel_id: 'renamed-dm', member_kind: 'user', member_id: uid }, { channel_id: 'renamed-dm', member_kind: 'crew', member_id: 'crew-3' }, { channel_id: 'widened-dm', member_kind: 'user', member_id: uid }, { channel_id: 'widened-dm', member_kind: 'crew', member_id: 'crew-1' }, { channel_id: 'owner-left', member_kind: 'user', member_id: uid }, { channel_id: 'owner-left', member_kind: 'crew', member_id: 'crew-2' }, { channel_id: 'people-minus', member_kind: 'user', member_id: uid }, { channel_id: 'people-minus', member_kind: 'user', member_id: 'user-third' }] : []),
     { channel_id: 'general', member_kind: 'user', member_id: uid },
     { channel_id: 'org-dm', member_kind: 'user', member_id: uid },
     { channel_id: 'org-dm', member_kind: 'user', member_id: 'user-colleague' },
