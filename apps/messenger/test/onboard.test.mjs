@@ -25,6 +25,7 @@ test('배선 — 새 채널을 여는 세 입구(데스크톱 +·폰 목록 +·�
   assert.doesNotMatch(src, /setNewCh\(\{ name: '', kind: '(public|private)' \}\)/, '입구마다 다른 글자 기본값 없음');
   assert.equal(src.match(/setNewCh\(\{ name: '', kind: newChKind \}\)/g)?.length, 3);
   assert.match(src, /const steps = org \? orgSteps\(\{ t, \.\.\.onboard, hasChannel: false/, '빈 조직 안내');
-  assert.match(src, /startCard=\{org && !isPersonal && org\.role !== 'guest' \? <OnboardCard/, '첫 채널 뒤 남은 단계');
+  assert.match(src, /startCard=\{org && !isPersonal && org\.role !== 'guest' && channel\.kind !== 'dm' \? <OnboardCard/, '첫 채널 뒤 남은 단계 — 조직 채널에서만(DM 제외, #626 검수)');
+  assert.match(src, /if \(!priv\) \{ await q\(supabase\.rpc\('msgr_join_channel', \{ ch: id \}\)\);/, '공개 채널을 만들면 만든 사람이 참여(서버는 참여 행을 안 넣는다 — 행동은 onboarding.browser.mjs)');
   assert.match(src, /<div className="msgr-phsteps"><OrgStepList steps=\{orgSteps\(\{ t, \.\.\.onboard, hasChannel: false/, '폰 홈(본문 안내가 안 보이는 자리)');
 });
