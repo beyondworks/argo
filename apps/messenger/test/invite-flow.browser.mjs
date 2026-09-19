@@ -142,6 +142,28 @@ const joinWith = async (page, text) => { await menu(page, '초대 링크·코드
   await page.close();
 }
 
+// (1d) D32 옛 링크 잔존(권한 상승): 멤버 링크가 뜬 뒤 게스트로 바꾸면(채널 없음) 링크 칸이 비고 복사가 막힌다.
+// 서버처럼 채널 없는 게스트 초대는 거절된다(픽스처 inviteInsert) — 옛 앱은 거절 뒤에도 멤버 링크를 복사하게 뒀다. 채널을 고르면 복사 값 = 새 게스트 코드
+{
+  const page = await open();
+  await menu(page, '멤버 초대');
+  await page.waitForFunction(() => { const b = document.querySelector('.inv-copy'); return b && !b.disabled; });
+  const member = await lastInvite(page);
+  await page.locator('.inv-fold').click(); await page.getByRole('radio', { name: '게스트', exact: true }).click();
+  const box = () => page.evaluate(() => ({ val: document.querySelector('.inv-link input').value, disabled: document.querySelector('.inv-copy').disabled, hint: document.querySelector('.inv-hint').textContent }));
+  const now = await box(); await page.waitForTimeout(600); const later = await box();
+  check('stale.clearedAtOnce', !now.val.includes(member.code) && now.disabled, now);
+  check('stale.guestNoChannel', later.val === '' && later.disabled && later.hint.includes('채널을 고르면'), later);
+  check('stale.memberDropped', !(await page.evaluate((c) => window.__instant.tables.msgr_invites.some((i) => i.code === c), member.code)));
+  await page.locator('.inv-chip', { hasText: '디자인 비공개' }).click();
+  await page.waitForFunction(() => { const b = document.querySelector('.inv-copy'); return b && !b.disabled; });
+  const guest = await lastInvite(page);
+  await page.locator('.inv-copy').click(); await page.waitForFunction(() => document.querySelector('.inv-copy')?.textContent.includes('복사됨'));
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  check('stale.copiesGuest', guest.role === 'guest' && clip.includes(guest.code) && !clip.includes(member.code), { guest, clip });
+  await page.close();
+}
+
 // (2) 옛 서버: 만들기는 옛 insert, 참여는 미리보기 없이 바로 수락 → 사이드바에 Lounge
 {
   const page = await open({ noV2: true });
