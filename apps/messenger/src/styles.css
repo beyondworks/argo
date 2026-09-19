@@ -1426,6 +1426,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-row:focus-visible, .msgr-mine:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 12px; }
 
 /* 답글 대상 칩(D17) — 입력창 바로 위, 인용 줄(.msgr-quote)과 같은 말투 */
+.msgr-outsidechip { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 6px; padding: 6px 8px 6px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); font-size: 12px; color: var(--fg-2); min-width: 0; } /* 방 밖 에이전트 안내(D14) — 답글 칩과 같은 자리·모양 */
+.msgr-outsidechip > .rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.msgr-outsidechip .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.msgr-outsidechip .q { flex: 1 1 180px; min-width: 0; }
 .msgr-replychip { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 6px 8px 6px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); font-size: 12px; color: var(--fg-2); min-width: 0; }
 .msgr-replychip .q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-replychip .q b { color: var(--fg); font-weight: 600; margin-right: 4px; }
