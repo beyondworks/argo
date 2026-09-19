@@ -10,7 +10,7 @@
 :root[data-theme='graphite'], :root[data-theme='graphite-light'] { --msgr-focus: #6b6b6b; }
 :root[data-theme='graphite-dark'] { --msgr-focus: #9a9a9a; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) { --msgr-focus: #c6a052; } /* 'argo'(시스템)는 globals에서 OS 어둡게를 따르지 않는다 — 밝은 금색 그대로 */
+  :root:not([data-theme]) { --msgr-focus: #c6a052; } /* 설정에서 'argo'(시스템)를 고르면 data-theme을 떼므로 이 줄이 받는다 — OS 어둡게면 바탕이 어두워져(28,24,19) 밝은 금색. 위 :root[data-theme='argo'] 줄은 속성이 직접 붙은 경우용(앱은 붙이지 않는다) */
   :root[data-theme='linen'] { --msgr-focus: #b8b2a5; }
   :root[data-theme='graphite'] { --msgr-focus: #9a9a9a; }
 }
