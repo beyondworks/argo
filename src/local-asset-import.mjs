@@ -54,7 +54,9 @@ async function company(wsId, context) {
 
 // Windows: 주인이 lock을 지우는 중(delete pending)이면 새 열기가 EPERM/EACCES로 실패한다 — 사라지는 중인 lock이지
 // 손상이 아니므로 다음 바퀴에서 link를 다시 시도한다(CI 실측: 동시 3프로세스 가져오기가 state-invalid로 죽음).
-export const transientLockRead = (e, platform = process.platform) => e?.code === 'ENOENT' || (platform === 'win32' && (e?.code === 'EPERM' || e?.code === 'EACCES'));
+// 같은 경합의 반대편: 지워지는 중인 lock 이름에 link하거나 수거자가 unlink해도 같은 오류가 난다 — 모두 다음 바퀴로.
+export const lockBusy = (e, platform = process.platform) => platform === 'win32' && (e?.code === 'EPERM' || e?.code === 'EACCES');
+export const transientLockRead = (e, platform = process.platform) => e?.code === 'ENOENT' || lockBusy(e, platform);
 async function lockOwner(lock) {
   let raw;
   try { raw = await readFile(lock, 'utf8'); } catch (e) { if (transientLockRead(e)) return null; throw fail('state-invalid'); }
@@ -70,14 +72,14 @@ async function locked(dir, fn) {
   const started = Date.now();
   try {
     for (;;) {
-      try { await link(claim, lock); break; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+      try { await link(claim, lock); break; } catch (e) { if (e.code !== 'EEXIST' && !lockBusy(e)) throw e; }
       let acquired = false;
       try { await mkdir(reaper, { mode: 0o700 }); acquired = true; } catch (e) { if (e.code !== 'EEXIST') throw e; }
       if (acquired) {
         try {
           const owner = await lockOwner(lock);
           if (owner?.pid) {
-            try { process.kill(owner.pid, 0); } catch (e) { if (e.code === 'ESRCH') await unlink(lock).catch(e => { if (e.code !== 'ENOENT') throw e; }); }
+            try { process.kill(owner.pid, 0); } catch (e) { if (e.code === 'ESRCH') await unlink(lock).catch(e => { if (e.code !== 'ENOENT' && !lockBusy(e)) throw e; }); }
           }
         } finally { await rm(reaper, { recursive: true }); }
       }

@@ -223,11 +223,15 @@ test('reaper treats a lock being deleted on Windows (EPERM/EACCES) as gone, neve
   for (const code of ['EPERM', 'EACCES']) assert.equal(api.transientLockRead({ code }, 'darwin'), false, `POSIX ${code}은 권한 문제라 숨기지 않는다`);
   assert.equal(api.transientLockRead({ code: 'ENOENT' }, 'linux'), true);
   assert.equal(api.transientLockRead({ code: 'EIO' }, 'win32'), false);
+  for (const code of ['EPERM', 'EACCES']) { assert.equal(api.lockBusy({ code }, 'win32'), true); assert.equal(api.lockBusy({ code }, 'darwin'), false); }
+  assert.equal(api.lockBusy({ code: 'ENOENT' }, 'win32'), false, 'link의 ENOENT(claim 없음)는 숨기지 않는다');
   // 배선(Windows 행동은 로컬에서 재현 불가 — 윈도우 CI의 동시 3프로세스 시험이 행동 게이트): 수거자가 lockOwner로 읽는다.
   return readFile(new URL('../src/local-asset-import.mjs', import.meta.url), 'utf8').then(src => {
     const body = src.slice(src.indexOf('async function locked('), src.indexOf('const safeName'));
     assert.match(body, /const owner = await lockOwner\(lock\);/);
     assert.doesNotMatch(body, /await json\(lock/);
+    assert.match(body, /await link\(claim, lock\); break; \} catch \(e\) \{ if \(e\.code !== 'EEXIST' && !lockBusy\(e\)\) throw e; \}/, 'link 경합도 다음 바퀴로');
+    assert.match(body, /unlink\(lock\)\.catch\(e => \{ if \(e\.code !== 'ENOENT' && !lockBusy\(e\)\) throw e; \}\)/, '수거자 unlink 경합도 다음 바퀴로');
   });
 });
 
