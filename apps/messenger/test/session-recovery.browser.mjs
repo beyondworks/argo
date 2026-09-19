@@ -19,8 +19,20 @@ try {
   await page.evaluate(() => window.__d56.signedOut());
   await page.getByText(/로그인이 끝났습니다/).waitFor();
   assert.equal(await page.getByText('Google로 계속하기').isVisible(), true, 'SIGNED_OUT must use the existing D10 Auth path');
+
+  await page.goto(`${base}/?race=signedout`);
+  await page.getByText('Google로 계속하기').waitFor();
+  assert.equal(await page.getByText('Fixture General', { exact: true }).count(), 0, 'stale initial read must not undo SIGNED_OUT');
+
+  await page.goto(`${base}/?race=new`);
+  await page.getByRole('heading', { name: '아직 조직이 없습니다.' }).waitFor();
+  assert.equal(await page.getByText('Fixture General', { exact: true }).count(), 0, 'stale old identity must not replace a newer session');
+
+  await page.goto(`${base}/?race=relogin`);
+  await page.getByText('Google로 계속하기').waitFor();
+  assert.equal(await page.getByText('Fixture General', { exact: true }).count(), 0, 'stale initial read must not undo explicit re-login');
   assert.deepEqual(errors, []);
-  console.log('D56 browser PASS: waiting → automatic recovery → SIGNED_OUT/D10 Auth');
+  console.log('D56 browser PASS: waiting/recovery + delayed read loses to SIGNED_OUT/new session/re-login');
 } finally {
   await browser.close();
 }

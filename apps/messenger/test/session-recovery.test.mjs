@@ -4,14 +4,22 @@ import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js';
 import { createSessionRecovery } from '../src/session-recovery.mjs';
 
 const SESSION = { user: { id: 'review-user' }, access_token: 'fresh' };
+const OLD_SESSION = { user: { id: 'old-user' }, access_token: 'stale' };
+const NEW_SESSION = { user: { id: 'new-user' }, access_token: 'new' };
 
-function fixture(reads, { stored = true } = {}) {
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function fixture(reads, { stored = true, getSession = null } = {}) {
   const applied = [];
   const waiting = [];
   const timers = new Map();
   const listeners = new Map();
   let timerId = 0;
-  const auth = { getSession: async () => reads.shift() };
+  const auth = { getSession: getSession ?? (async () => reads.shift()) };
   const recovery = createSessionRecovery({
     auth,
     hasStoredSession: () => stored,
@@ -113,4 +121,52 @@ test('non-retryable refresh rejection and first-run null both show Auth', async 
   assert.equal(firstRun.waiting.at(-1), false);
   rejected.recovery.stop();
   firstRun.recovery.stop();
+});
+
+test('delayed initial read cannot restore a session after SIGNED_OUT', async () => {
+  // Given the cold-start read is still pending.
+  const pending = deferred();
+  const f = fixture([], { getSession: () => pending.promise });
+  const starting = f.recovery.start();
+
+  // When a later authoritative SIGNED_OUT arrives before the old read finishes.
+  f.recovery.onAuthStateChange('SIGNED_OUT', null);
+  pending.resolve({ data: { session: OLD_SESSION }, error: null });
+  await starting;
+
+  // Then the stale initial result cannot sign the user back in.
+  assert.deepEqual(f.applied, [null]);
+  f.recovery.stop();
+});
+
+test('explicit re-login choice cancels a delayed initial read', async () => {
+  // Given the cold-start read is still pending.
+  const pending = deferred();
+  const f = fixture([], { getSession: () => pending.promise });
+  const starting = f.recovery.start();
+
+  // When the user chooses the waiting screen's re-login action.
+  f.recovery.chooseSignIn();
+  pending.resolve({ data: { session: OLD_SESSION }, error: null });
+  await starting;
+
+  // Then the stale stored identity cannot replace the Auth screen.
+  assert.deepEqual(f.applied, [null]);
+  f.recovery.stop();
+});
+
+test('new auth event wins over a delayed initial read from the previous identity', async () => {
+  // Given the old cold-start read is still pending.
+  const pending = deferred();
+  const f = fixture([], { getSession: () => pending.promise });
+  const starting = f.recovery.start();
+
+  // When a new identity signs in before the old read finishes.
+  f.recovery.onAuthStateChange('SIGNED_IN', NEW_SESSION);
+  pending.resolve({ data: { session: OLD_SESSION }, error: null });
+  await starting;
+
+  // Then the newer auth event remains authoritative.
+  assert.deepEqual(f.applied, [NEW_SESSION]);
+  f.recovery.stop();
 });

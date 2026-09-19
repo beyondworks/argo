@@ -17,6 +17,7 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
   let active = false;
   let timer = null;
   let inFlight = null;
+  let generation = 0;
 
   const clearRetry = () => { if (timer !== null) clearTimer(timer); timer = null; };
   const finish = (session) => { clearRetry(); setWaiting(false); applySession(session); };
@@ -25,12 +26,15 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
     if (active) timer = setTimer(() => { timer = null; return retryNow(); }, retryMs);
   };
   const read = async () => {
+    const readGeneration = generation;
     try {
       const { data, error } = await auth.getSession();
+      if (!active || generation !== readGeneration) return;
       if (!error) { finish(data.session ?? null); return; }
       if (hasStoredSession() && isRetryable(error)) { setWaiting(true); schedule(); return; }
       finish(null);
     } catch (error) {
+      if (!active || generation !== readGeneration) return;
       // A thrown read never establishes that credentials were rejected. If
       // credentials remain on disk, keep them and retry instead of guessing.
       if (hasStoredSession()) { setWaiting(true); schedule(); return; }
@@ -47,12 +51,15 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
 
   return {
     async start() { active = true; addEventListener?.('online', online); await retryNow(); },
-    stop() { active = false; clearRetry(); removeEventListener?.('online', online); },
+    stop() { active = false; generation += 1; clearRetry(); removeEventListener?.('online', online); },
     retryNow,
+    chooseSignIn() { generation += 1; finish(null); },
     onAuthStateChange(event, session) {
-      if (event === 'SIGNED_OUT') { finish(null); return; }
-      if (session) finish(session);
-      else if (!hasStoredSession()) finish(null);
+      // Auth events after the initial read started are authoritative. Invalidate
+      // that read before applying them so stale identities cannot win later.
+      if (event === 'SIGNED_OUT') { generation += 1; finish(null); return; }
+      if (session) { generation += 1; finish(session); }
+      else if (!hasStoredSession()) { generation += 1; finish(null); }
     },
   };
 }

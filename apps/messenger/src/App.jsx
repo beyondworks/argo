@@ -155,7 +155,7 @@ export default function App() {
   const [sessionWaiting, setSessionWaiting] = useState(false);
   const [logoutNotice, setLogoutNotice] = useState('');
   const [signingOut, setSigningOut] = useState(false);
-  const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false);
+  const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false); const recoveryRef = useRef(null);
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
     if (sessionOwner.current !== uid) {
@@ -196,15 +196,16 @@ export default function App() {
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
     const recovery = createSessionRecovery({ auth: supabase.auth, hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting });
+    recoveryRef.current = recovery;
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => recovery.onAuthStateChange(event, next));
     recovery.start();
     const stopResume = isMobilePlatform ? observeMobileResume(() => recovery.retryNow()) : () => {};
-    return () => { recovery.stop(); stopResume(); sub.subscription.unsubscribe(); };
+    return () => { if (recoveryRef.current === recovery) recoveryRef.current = null; recovery.stop(); stopResume(); sub.subscription.unsubscribe(); };
   }, []);
-  const restartSignIn = async () => {
+  const restartSignIn = () => {
     logoutPending.current = true;
-    try { await supabase?.auth.signOut({ scope: 'local' }); }
-    finally { clearStoredAuthSession(authKey); applySession(null); setSessionWaiting(false); logoutPending.current = false; }
+    try { clearStoredAuthSession(authKey); recoveryRef.current?.chooseSignIn(); }
+    finally { logoutPending.current = false; }
   };
   let body;
   if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
