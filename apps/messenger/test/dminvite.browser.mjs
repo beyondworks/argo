@@ -169,6 +169,22 @@ await scenario(1280, 'public-channel-people', async (p) => {
   assert.ok((await p.evaluate(() => window.__dmInviteFixture.tables.msgr_channel_members.some((r) => r.channel_id === 'general' && r.member_id === 'user-me'))), '다른 참여 행을 덮어쓰지 않는다');
 });
 
+// D16. 참여한 공개 채널에서도 나갈 수 있다(정비사 원장 P1-23 — 종전엔 비공개만 '채널 나가기')
+await scenario(1280, 'leave-public-channel', async (p) => {
+  await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click({ button: 'right' });
+  const menu = p.locator('.msgr-ctxmenu'); await menu.waitFor({ timeout: 5000 });
+  const items = await menu.locator('[role=menuitem]').allInnerTexts();
+  assert.ok(items.some((x) => x.includes('채널 나가기')), `공개 채널 메뉴에 나가기 (실제: ${items})`);
+  await menu.locator('[role=menuitem]', { hasText: '채널 나가기' }).click();
+  const dlg = p.locator('.msgr-action-dialog'); await dlg.waitFor({ timeout: 5000 });
+  assert.match(await dlg.innerText(), /찾아보기/, '공개 채널 안내 — 찾아보기로 다시 들어올 수 있다(초대가 필요하다고 하지 않는다)');
+  assert.doesNotMatch(await dlg.innerText(), /초대가 필요/, '비공개용 문구가 아니다');
+  await dlg.locator('button', { hasText: '채널 나가기' }).last().click(); await p.waitForTimeout(900);
+  const calls = await p.evaluate(() => window.__dmInviteFixture.calls);
+  assert.ok(calls.some((c) => c.table === 'msgr_channel_members' && c.op === 'delete'), '내 참여 행을 지운다');
+  assert.ok(!(await p.locator('[data-sec="channels"]').innerText()).includes('Fixture General'), '목록에서 빠진다');
+});
+
 // 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
 await scenario(1280, 'unjoined-preview', async (p) => {
   const rail = () => p.locator('[data-sec="channels"]').innerText();
