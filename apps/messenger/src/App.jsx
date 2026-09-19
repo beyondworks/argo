@@ -4,6 +4,7 @@
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
+import { dismissHandlers } from './dismiss.mjs';
 import { hasPublicChannel, newChannelKind, stepMarks } from './onboard.mjs';
 import { Graph3D } from './graph3d.jsx';
 import { WorkPanel, missingSchema } from './work-panel.jsx';
@@ -250,6 +251,17 @@ function RailFold({ id, label, count, children }) {
 }
 
 /* ─── 상단 내비 버튼 — 데스크톱은 햄버거(레일 열기), 폰은 뒤로가기(홈 페이지로). 마크업은 데스크톱 쪽이 기존과 동일하다. ─── */
+// 작은 팝오버 닫기 한 벌(D18) — 바깥을 누르면 닫고, Escape는 닫고 연 버튼으로 초점을 돌려준다(K7).
+// inside: 팝오버와 연 버튼을 모두 덮는 선택자(연 버튼을 다시 누르면 그 버튼의 토글이 닫는다), trigger: 초점을 돌려줄 버튼
+function useDismiss(open, close, inside, trigger) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const { down, key } = dismissHandlers({ inside, close, focusTrigger: () => document.querySelector(trigger)?.focus() });
+    document.addEventListener('pointerdown', down, true); document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key); };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 function NavButton({ onMenu }) {
   const { t } = useT();
   const phone = useIsPhone();
@@ -499,6 +511,12 @@ function Shell({ session }) {
   const [jump, setJump] = useState(null); // 검색 결과에서 고른 메시지 { ch, mid } — 그 채널이 열리면 그 글까지 불러와 가운데로 스크롤·강조(D11)
   const [searchQ, setSearchQ] = useState(''); const [searchRes, setSearchRes] = useState(null); const searchRef = useRef(null); // 앱 내 검색(유건 지시 2026-09-09): 메시지 본문·사람·에이전트, ⌘K
   useEffect(() => { const on = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setRail(true); searchRef.current?.focus(); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, []);
+  const leaveSearch = () => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }; // 지우기 버튼·Esc가 같은 일(D18 S101: 결과 화면에서 Esc면 대화로)
+  useEffect(() => { // 결과 화면에서 칸 밖에 초점이 있어도 Esc면 대화로 — 입력칸·열린 창이 먼저 받는다
+    if (page !== 'search') return undefined;
+    const on = (e) => { if (e.key !== 'Escape' || e.defaultPrevented || e.target.closest?.('input, textarea, [role="dialog"], [role="menu"]')) return; leaveSearch(); };
+    window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on);
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
   const runSearch = async (raw) => {
     const qs = raw.trim(); if (!qs || !org) { setSearchRes(null); return; }
     setPage('search'); setRail(false);
@@ -947,12 +965,10 @@ function Shell({ session }) {
   const lpStates = useRef({}); // 폰 레일 행 길게 누르기 상태(행별 — 채널·DM·즐겨찾기 대상)
   useEffect(() => () => { for (const st of Object.values(lpStates.current)) if (st.timer) clearTimeout(st.timer); clearTimeout(animTimer.current); clearTimeout(dmAnimTimer.current); }, []); // 언마운트 시 타이머 해제(검수 L-5)
   const pickDmSort = (v) => { setDmSort(v); try { localStorage.setItem('argo-msgr-dm-sort', v); } catch { /* 저장 못 해도 이번 세션은 적용 */ } };
-  useEffect(() => { // 폰 전용 컨트롤 — onMouseLeave만으로는 터치로 못 닫는다(검수 #541 MEDIUM-4): 바깥 누름·Escape
-    if (!dmSortMenu) return;
-    const down = (e) => { if (!e.target.closest?.('.msgr-dmsort')) setDmSortMenu(false); }; const key = (e) => { if (e.key === 'Escape') setDmSortMenu(false); };
-    document.addEventListener('pointerdown', down, true); document.addEventListener('keydown', key);
-    return () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key); };
-  }, [dmSortMenu]);
+  // onMouseLeave만으로는 터치·키보드로 못 닫는다(검수 #541 MEDIUM-4, D18 S63·K6) — 바깥 누름·Escape. 다른 메뉴 버튼을 누르는 것도 바깥이라 두 메뉴가 겹쳐 열리지 않는다
+  useDismiss(dmSortMenu, () => setDmSortMenu(false), '.msgr-dmsort', '.msgr-dmsort > button');
+  useDismiss(sortMenu, () => setSortMenu(false), '.msgr-railsort', '.msgr-railsort > button');
+  useDismiss(meMenu, () => setMeMenu(false), 'button.me:not(.item), .msgr-rowmenu.me', 'button.me:not(.item)');
   const [lastAt, setLastAt] = useState({}); // 채널 → 마지막 메시지 시각(ms). 최근순 정렬 재료 — 조직 로드 때 한 번 조회, 이후 방송으로 갱신
   const dmIdsRef = useRef(new Set()); // 방송 핸들러가 DM 채널만 담게(조직 토픽엔 모든 채널이 실린다)
 
@@ -1326,7 +1342,7 @@ function Shell({ session }) {
           <button type="button" className={`msgr-org${orgMenu ? ' open' : ''}${isPersonal ? ' personal' : ''}`} onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}>
             {isPersonal ? <PersonalMark /> : <Av name={org?.name ?? '?'} />}<span className="name">{isPersonal ? t('personal.space') : (org?.name ?? t('org.pick'))}</span><SpaceBadge c={elsewhere} /><I name="caret" size={14} className="caret" />
           </button>
-          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="at" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setSearchQ(''); e.currentTarget.blur(); } }} placeholder={t('search.ph')} aria-label={t('search.title')} />{searchQ && <button type="button" className="clear" onClick={() => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>
+          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="at" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leaveSearch(); e.currentTarget.blur(); } }} placeholder={t('search.ph')} aria-label={t('search.title')} />{searchQ && <button type="button" className="clear" onClick={leaveSearch} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>
           {orgMenu && (<>
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
@@ -1413,7 +1429,7 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
-        {!isPersonal && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
+        {!isPersonal && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
             {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany], ['mine.bot', 'rail.agents.bot', railBots]]
@@ -3830,7 +3846,9 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
     const exclude = new Set([...mentionsFromBody(text, byName, [], allByName).map((x) => x.id), ...recipients.map((r) => r.id)]);
     return rolePickCandidates(text, roleCands, { exclude, participants: new Set(isDm ? (scopeCrews ?? []).map((c) => c.id) : []) });
   }, [isDm, text, scopeCrews, byName, allByName, recipients, roleCands]);
-  const slashCands = useMemo(() => rolePick ? null : slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashCrews, freshCmds, t]);
+  const [slashOff, setSlashOff] = useState(null); // Esc로 닫은 그 글자에서는 '/' 목록을 다시 띄우지 않는다(D18 S95) — 글자가 바뀌면 다시
+  useEffect(() => { if (slashOff !== null && text !== slashOff) setSlashOff(null); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
+  const slashCands = useMemo(() => rolePick || text === slashOff ? null : slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
   const [slashSel, setSlashSel] = useState(0);
   useEffect(() => { setSlashSel(0); }, [text]);
   const pickSlash = (cand) => {
@@ -3898,6 +3916,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel((i) => (i + 1) % slashCands.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSel((i) => (i - 1 + slashCands.length) % slashCands.length); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSlash(slashCands[Math.min(slashSel, slashCands.length - 1)]); return; }
+      if (e.key === 'Escape') { e.preventDefault(); setSlashOff(text); return; } // 목록만 닫는다 — 쓴 글은 그대로
     }
     if (pop && candidates.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % candidates.length); return; }
