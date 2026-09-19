@@ -178,6 +178,7 @@ await scenario(1280, 'vacated-dm-label', async (p) => {
   const third = rows.filter((x) => x.name === 'Third Person').map((x) => x.tag).sort();
   assert.deepEqual(third, [false, true], `R6(1:1에 에이전트를 더한 뒤 사람이 빠진 방)는 표지, R5(사람 그룹에서 한 명만 빠져 남은 사람 이름으로 보이는 방)는 표지 없음 (실제: ${third})`);
   assert.equal(tagOf('Colleague Agent'), true, '남의 에이전트만 남은 방 = 그 주인이 빠짐 — 표지');
+  assert.equal(tagOf('Departed Person'), true, 'R6 변형 — 상대가 재가입하지 않고 조직을 떠나 멤버 이름이 없어도, 크루가 나중에 들어온 방이면 표지');
   assert.equal(tagOf('Fixture Agent'), false, 'R3 에이전트 1:1 — 표지 없음');
   assert.equal(tagOf('Second Agent'), false, '내 에이전트 이름이 바뀐 1:1 — 표지 없음(새 이름)');
   // 데스크톱 폭에서 긴 이름은 말줄임되어도 표지는 온전히 보인다(검수 조건 1)

@@ -578,7 +578,7 @@ function Shell({ session }) {
     // 미리보기로 연 채널도 유지한다 — 15초마다 다시 읽을 때 첫 채널로 튕기지 않게
     setChId((cur) => cur && (chs.some((c) => c.id === cur) || preview.some((c) => c.id === cur)) ? cur : (chs[0]?.id ?? null)); // 라벨용 보조 조회보다 먼저(검수 2R LOW-1: 보조 조회가 던지면 채널 선택이 안 됐다)
     const dmIds = chs.filter((c) => c.kind === 'dm').map((c) => c.id);
-    if (dmIds.length) { try { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); if (current()) setDmMembers(map); } catch { if (current()) setDmMembers({}); } } else setDmMembers({});
+    if (dmIds.length) { try { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id, added_at').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); if (current()) setDmMembers(map); } catch { if (current()) setDmMembers({}); } } else setDmMembers({});
     return chs; // 호출한 쪽이 방금 새로 생긴 채널을 즉시 찾을 수 있게(state 반영을 기다리지 않는다)
     } catch (error) { if (current()) throw error; }
   }, [orgs, uid]);
@@ -1170,14 +1170,16 @@ function Shell({ session }) {
   // 판정 = "사람 상대가 있었는데 빠졌는가": 나 말고 사람이 없고,
   //  · 크루 없음: 저장 이름이 크루 이름이 아니다(해제 sweep으로 크루만 빠진 에이전트 1:1은 종전대로 크루명)
   //  · 남은 크루가 남의 것: 소유자 동반 규칙상 그 주인(사람)이 빠진 것
-  //  · 남은 크루가 내 것: 저장 이름이 그 크루 이름과 다르고, 그룹 모양("a, b")이거나 지금 멤버의 이름(내 크루 이름이 바뀐 1:1과 구별)
+  //  · 남은 크루가 내 것: 저장 이름이 그 크루 이름과 다르고, 그룹 모양("a, b")·지금 멤버의 이름·크루가 나중에 들어옴 중 하나(내 크루 이름이 바뀐 1:1과 구별)
   const dmVacated = (c) => { if (c._personal_group || dmMembers[c.id] === undefined) return false; const ms = dmMembers[c.id];
     if (ms.some((m) => m.member_kind === 'user' && m.member_id !== uid)) return false;
     const base = c.name.replace(/^dm:/, ''); const crew = ms.find((m) => m.member_kind === 'crew');
     if (!crew) return !crews.some((k) => k.display_name === base);
     const cr = crewOf(crew.member_id); if (!cr) return false;
     if (cr.owner_user_id !== uid) return true;
-    return base !== cr.display_name && (base.includes(', ') || members.some((m) => m.display_name === base)); };
+    // 크루가 나보다 나중에 들어왔다 = 사람과의 1:1에 에이전트를 더한 방(에이전트 1:1은 만들 때 같은 트랜잭션이라 시각이 같다) — 상대가 조직을 떠나 멤버 이름이 없어도 잡힌다
+    const me = ms.find((m) => m.member_kind === 'user' && m.member_id === uid); const addedLater = !!(me?.added_at && crew.added_at && Date.parse(crew.added_at) > Date.parse(me.added_at));
+    return base !== cr.display_name && (base.includes(', ') || members.some((m) => m.display_name === base) || addedLater); };
   const dmName = (c) => (dmVacated(c) ? `${dmBaseName(c)} · ${t('dm.vacated.tag')}` : dmBaseName(c));
   const dmBaseName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
     const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
