@@ -73,7 +73,7 @@ function query(table) {
         let rows = all.filter(r => filters.every(f => f(r)));
         if (op === 'upsert' || op === 'insert') {
           rows = (Array.isArray(values) ? values : [values]).map(v => {
-            const keys = table === 'msgr_target_prefs' ? ['user_id', 'org_id', 'target_kind', 'target_id'] : ['user_id', 'channel_id'];
+            const keys = table === 'msgr_target_prefs' ? ['user_id', 'org_id', 'target_kind', 'target_id'] : table === 'msgr_channel_members' ? ['channel_id', 'member_kind', 'member_id'] : ['user_id', 'channel_id']; // 실제 onConflict와 같은 키 — 종전 키는 채널의 첫 행을 덮어썼다
             const old = op === 'upsert' ? all.find(r => keys.every(k => r[k] === v[k])) : null;
             if (old) { Object.assign(old, v); return old; } const row = { ...v }; all.push(row); return row;
           });

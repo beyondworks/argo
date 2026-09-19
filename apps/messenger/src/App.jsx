@@ -1727,7 +1727,16 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
       await onChanged();
     }
   };
-  const restoreMember = async (kind, id) => { const key = kind === 'user' ? 'excluded_user_ids' : 'excluded_crew_ids'; const cur = kind === 'user' ? excludedUsers : excludedCrews; await upd({ [key]: cur.filter((x) => x !== id) }, t('ch.restore.done')); };
+  const restoreMember = async (kind, id) => {
+    const key = kind === 'user' ? 'excluded_user_ids' : 'excluded_crew_ids'; const cur = kind === 'user' ? excludedUsers : excludedCrews;
+    if (kind === 'user') { // 내보내기가 참여 행까지 지웠으니 되돌리기는 행을 먼저 되살린다 — 제외만 풀면 "다시 들어왔습니다"라고 하고 목록에는 없다(D30)
+      setBusy(true);
+      const res = await supabase.from('msgr_channel_members').upsert([{ channel_id: channel.id, member_kind: 'user', member_id: id, added_by: uid }], { onConflict: 'channel_id,member_kind,member_id' });
+      setBusy(false);
+      if (res.error) return onError(friendlyErr(res.error.message, t)); // 실패하면 제외도 그대로 둔다 — 성공 알림 없이
+    }
+    await upd({ [key]: cur.filter((x) => x !== id) }, t('ch.restore.done'));
+  };
   const kick = (kind, id) => (channel.kind === 'public' ? excludeMember(kind, id) : removeMember(kind, id));
   // 비공개 채널에서 사람을 내보낼 때 — 이 채널로 들어오는 살아 있는 초대가 있으면 다시 들어올 수 있다고 먼저 알린다(총괄 2026-09-18, Discord 선례: 링크는 그대로 유효)
   const [kickAsk, setKickAsk] = useState(null); // { id, n }
