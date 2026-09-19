@@ -781,7 +781,7 @@ export const DICT = {
   'crew.status.active': ['파견 중', 'Dispatched'],
   'crew.status.available': ['파견 해제됨 — 지시·답글·채널 참여를 받지 않습니다', 'Recalled — no instructions, replies or channel membership'],
   'crew.dispatch': ['파견하기', 'Dispatch'],
-  'crew.dispatch.done': ['{name}을(를) 파견했습니다.', '{name} dispatched.'],
+  'crew.dispatch.done': ['{name}을(를) 파견했습니다. 허용 범위는 그대로이고, 채널에는 채널의 "+ 추가"에서 다시 넣으세요.', '{name} dispatched. Its permissions are unchanged; add it back to channels with "+ Add".'],
   'crew.recall': ['파견 해제', 'Recall'],
   'crew.recall.confirm': ['모든 채널에서 빠지고 지시를 받지 않습니다. 언제든 다시 파견할 수 있습니다.', 'Leaves every channel and stops taking instructions. You can dispatch again any time.'],
   'crew.recall.done': ['{name}의 파견을 해제했습니다.', '{name} recalled.'],
