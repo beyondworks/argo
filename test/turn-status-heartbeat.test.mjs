@@ -84,17 +84,25 @@ test('심박 없이 120초를 넘긴 파일은 종전대로 null(고아 판정 �
   assert.equal(await getTurnStatus(ws, 'ghost'), null, '다른 프로세스가 죽인 파일은 심박이 없으니 만료');
 });
 
-test('종료: clearTurnStatus 뒤에는 심박이 파일을 되살리지 않는다(해제 경합 ×40, 심박 1ms)', { timeout: 20_000 }, async t => {
-  _setHeartbeatMsForTest(1);
-  const ws = 'hb-clear'; await seed(ws);
-  for (let i = 0; i < 40; i++) {
-    t.signal.throwIfAborted();
-    await setTurnStatus(ws, 'pepper', 'think', '', '', 'chat');
-    await sleep(3);
-    await clearTurnStatus(ws, 'pepper');
-    await sleep(6); // 해제 직후 착지할 수 있는 심박에게 시간을 준다
-    assert.equal(existsSync(statusPath(ws, 'pepper')), false, `${i}회차: 종료 뒤 부활 = 거짓 '작성 중'`);
-  }
+test('종료: clearTurnStatus 뒤에는 심박이 파일을 되살리지 않는다 — 읽기를 마친 심박의 쓰기가 해제 뒤에 착지하는 경합', async () => {
+  // 종전: 실제 1ms 타이머 ×40회 + 3·6ms 잠에 기대 경합을 "운으로" 만들었다 → Windows 병렬 부하(fsync)에서 20초 초과(2026-09-19 #639 CI).
+  // 지금: 심박의 읽기를 멈춘 채 clear를 부르고, 그 뒤에 풀어 "읽은 심박이 쓰려는 순간 해제"를 매번 만든다.
+  const h = await heartbeatFixture();
+  await h.setTurnStatus('clear', 'pepper', 'think', '', '', 'chat');
+  const blocked = h.blockRead();
+  h.tick(); // 심박이 파일(아직 있음)을 읽는 중
+  await blocked.started.promise;
+  const before = h.stats().writes;
+  let cleared = false;
+  const clearing = h.clearTurnStatus('clear', 'pepper').then(() => { cleared = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(cleared, false, 'clear는 진행 중인 심박이 끝나기를 기다린다');
+  blocked.release.resolve(); // 심박이 읽은 스냅숏으로 쓴다
+  await clearing;
+  assert.equal(h.stats().writes, before + 1, '경합이 실제로 일어났다(해제 도중 심박의 쓰기 1회)');
+  assert.equal(h.files.size, 0, "종료 뒤 부활 = 거짓 '작성 중'");
+  h.tick(); await h.drain();
+  assert.equal(h.files.size, 0, '해제 뒤 타이머는 꺼져 있다');
 });
 
 test('다른 프로세스가 지운 파일 — 이 프로세스의 턴이 살아 있는 동안만 심박이 되돌리고, 종료(clear)와 함께 확실히 사라진다', async () => {
