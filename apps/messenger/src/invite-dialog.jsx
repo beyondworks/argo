@@ -29,13 +29,16 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   const drop = (inv) => { if (inv && !inv.copied && discard) discard(inv.id).catch(() => {}); };
   useEffect(() => () => { seq.current = -1; drop(cur.current); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 선택·설정이 바뀌면 새 링크(짧게 모아서) — 늦게 온 옛 응답은 버린다
+  // 선택·설정이 바뀌면 새 링크(짧게 모아서) — 늦게 온 옛 응답은 버린다.
+  // 옛 링크는 그 순간 지운다: 옛 설정(예: 멤버)의 링크가 새 설정(게스트) 화면에 남아 복사되면 권한이 넘어간다(D32).
+  const needChannel = s.role === 'guest' && picked.length === 0; // 서버가 거절(msgr_invite_guest_one_channel) — 만들지 않는다
   useEffect(() => {
-    const my = ++seq.current; setBusy(true); setErr(null);
+    const my = ++seq.current; drop(cur.current); cur.current = null; setLink(null); setErr(null); setBusy(!needChannel); // 화면에서 지운 링크는 복사할 수 없다 — 안 건너갔으면 바로 정리
+    if (needChannel) return undefined;
     const timer = setTimeout(async () => {
       try { const made = await create({ role: s.role, channelIds: picked, expiryDays: s.expiryDays, maxUses: s.role === 'guest' ? 1 : s.maxUses, guestDays: s.guestDays });
         if (seq.current !== my) { drop(made); return; } // 늦게 온 옛 응답·닫힌 창 — 보여 준 적 없는 링크
-        drop(cur.current); cur.current = { ...made, copied: false };
+        cur.current = { ...made, copied: false };
         setLink(made.code); setBusy(false);
       } catch (e) { if (seq.current === my) { setErr(errorText ? errorText(e) : e.message); setBusy(false); } }
     }, link ? 200 : 0);
@@ -60,8 +63,8 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
   };
   const names = picked.map((id) => eligible.find((c) => c.id === id)?.name).filter(Boolean);
-  // 부제 = 행선지 문장(칩과 겹치는 채널 나열 대신). 채널이 없으면 경고색 — 복사는 막지 않는다
-  const sub = names.length === 0 ? t('inv.sub.none') : names.length === 1 ? t('inv.sub.one', { name: names[0] }) : t('inv.sub.more', { name: names[0], n: names.length - 1 });
+  // 부제 = 행선지 문장(칩과 겹치는 채널 나열 대신). 채널이 없으면 경고색 — 멤버는 복사를 막지 않고, 게스트는 채널을 고를 때까지 링크가 없다
+  const sub = needChannel ? t('inv.sub.guestNone') : names.length === 0 ? t('inv.sub.none') : names.length === 1 ? t('inv.sub.one', { name: names[0] }) : t('inv.sub.more', { name: names[0], n: names.length - 1 });
   const lockTip = (why) => t(why === 'guestPrivate' ? 'inv.ch.guestPrivateTip' : 'inv.ch.lockedTip');
 
   return createPortal(
@@ -74,12 +77,12 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
         </header>
 
         <div className="inv-link">
-          <input className="msgr-input" readOnly value={busy && !link ? t('inv.making') : (link ? (linkOf ? linkOf(link) : link) : '')} aria-label={t('inv.link')} onFocus={(e) => e.target.select()} onCopy={markCopied} />{/* 손으로 선택해 복사해도 건너간 링크로 친다 */}
+          <input className="msgr-input" readOnly value={busy ? t('inv.making') : (link ? (linkOf ? linkOf(link) : link) : '')} aria-label={t('inv.link')} onFocus={(e) => e.target.select()} onCopy={markCopied} />{/* 손으로 선택해 복사해도 건너간 링크로 친다 */}
           <button type="button" ref={copyRef} className={`btn btn-primary inv-copy${copied ? ' done' : ''}`} onClick={copy} disabled={!link || busy} aria-live="polite">
             <I name={copied ? 'check' : 'copy'} size={14} />{copied ? t('inv.copied') : t('inv.copy')}
           </button>
         </div>
-        <p className="inv-hint" role="status">{busy && link ? t('inv.remaking') : t('inv.pasteHint')}</p>
+        <p className="inv-hint" role="status">{needChannel ? t('inv.pickChannel') : t('inv.pasteHint')}</p>
         {err && <p className="inv-err" role="alert">{err}</p>}
         <div className="inv-body">
 

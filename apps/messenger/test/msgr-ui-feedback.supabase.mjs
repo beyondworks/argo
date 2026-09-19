@@ -120,6 +120,7 @@ state.noV2 = false;
 const missing = (what, code = 'PGRST202') => Object.assign(new Error(`Could not find the ${what} in the schema cache`), { code });
 state.inviteInsert = (v) => {
   if (state.noV2 && 'channel_ids' in v) throw missing("'channel_ids' column of 'msgr_invites'", 'PGRST204');
+  if (v.role === 'guest' && (v.channel_ids ?? [v.channel_id].filter(Boolean)).length !== 1) throw Object.assign(new Error('msgr_invite_guest_one_channel'), { code: '22023' }); // 서버 msgr_invite_prepare와 같은 거절
   const code = Array.from({ length: 48 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
   return { expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), use_count: 0, revoked_at: null, ...v, code };
 };
