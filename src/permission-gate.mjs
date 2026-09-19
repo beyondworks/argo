@@ -13,6 +13,8 @@ import { resolve, dirname, join, basename, sep, isAbsolute } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { fold, insideFold } from './pathcase.mjs';
+import { classifyShell, normalizeShell } from './risky-shell.mjs';
+import { addApproval, loadApprovals, consumeShellApproval } from './approvals.mjs';
 
 // 홈은 env로만(HOME/USERPROFILE) — node:os homedir()를 **동적 join**(map/flatMap·slice 인자)에 쓰면
 // Next 추적기(nft)가 빌드타임 부분평가로 홈 루트를 통글롭해 Windows 릴리스 빌드가 죽는다
@@ -447,9 +449,9 @@ export const stringLeaves = (v, depth = 0, out = []) => {
     canUseTool)은 그대로다(게이트의 허용은 입력을 바꾸지 않는다). 게이트가 던지면 거부(fail-closed) — 훅 오류로 도구가 열리지 않게. */
 export function gateHooks(gate, lang = 'ko') {
   const deny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
-  return { PreToolUse: [{ hooks: [async (input) => {
+  return { PreToolUse: [{ hooks: [async (input, toolUseID) => {
     try {
-      const d = await gate(input?.tool_name, input?.tool_input ?? {});
+      const d = await gate(input?.tool_name, input?.tool_input ?? {}, { toolUseID: toolUseID ?? input?.tool_use_id ?? null });
       return d?.behavior === 'deny' ? deny(d.message) : {};
     } catch { return deny(FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko']); }
   }] }] };
@@ -542,8 +544,12 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
     return false;
   };
 
-  return async function canUseTool(toolName, input) {
+  // SDK는 한 도구 호출에 이 게이트를 두 번 부른다(PreToolUse 훅 → canUseTool, 같은 인스턴스). 셸 결재를 한 번 쓴 호출 id를 기억해
+  // 두 번째 판정이 "승인이 없다"며 새 카드를 만들지 않게 한다(D28 실측: 승인 사용 29ms 뒤 같은 명령의 새 대기 결재).
+  const shellGranted = new Set();
+  return async function canUseTool(toolName, input, callOpts = {}) {
     const allow = { behavior: 'allow', updatedInput: input };
+    const toolUseID = typeof callOpts === 'string' ? callOpts : callOpts?.toolUseID ?? null; // 훅은 둘째 인자로 id, canUseTool은 옵션으로
     if (toolName === 'TodoWrite') return allow; // 경로 인자가 없다
     // 손님 턴(주인이 아닌 사람이 시킨 메신저 턴, chat.mjs isGuestCtx) — **허용 목록**: TodoWrite와 크루 도구(처리기가 스스로 손님을 본다)뿐.
     // 파일 읽기(주인의 볼트 = 개인 기억, 규칙 9)·쓰기·셸·웹·외부 MCP·브라우저·컴퓨터 유즈·하위 에이전트(Task)까지 전부 거부(규칙 7).
@@ -625,6 +631,24 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
       // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
       if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd)) return denyHard();
+      // 메신저 문맥 턴(주인 턴 포함)의 고위험 셸 명령은 결재를 거친다(D28) — 모델이 request_approval을 부르지 않아도 코드가 카드를 만든다.
+      // 승인된 같은 명령(이 크루·이 채널)은 한 번 허용한다. 대기 중이면 새 카드를 만들지 않고 그 결재를 가리킨다.
+      if (opts.msgr) {
+        const hit = classifyShell(cmd, lang);
+        if (hit) {
+          const shell = normalizeShell(cmd); const channelId = opts.msgr.channelId ?? null;
+          if (toolUseID && shellGranted.has(toolUseID)) { shellGranted.delete(toolUseID); return allow; } // 같은 호출의 두 번째 판정
+          if (await consumeShellApproval(wsId, { slug, shell, channelId })) { if (toolUseID) shellGranted.add(toolUseID); return allow; }
+          const pending = (await loadApprovals(wsId)).find((a) => a.status === 'pending' && a.slug === slug && a.payload?.shell === shell && (a.msgr?.channelId ?? null) === channelId);
+          const item = pending ?? await addApproval(wsId, { slug, ...(from ? { from } : {}),
+            action: lang === 'en' ? `Run shell command (${hit.label}): ${shell.slice(0, 200)}` : `셸 명령 실행(${hit.label}): ${shell.slice(0, 200)}`,
+            reason: lang === 'en' ? `High-risk command by code rule "${hit.id}" — needs approval before running` : `코드 규칙 "${hit.id}"로 판정한 고위험 명령 — 실행 전 결재가 필요하다`,
+            payload: { shell, rule: hit.id }, ...(opts.msgr.channelId ? { msgr: opts.msgr } : {}) });
+          return { behavior: 'deny', message: lang === 'en'
+            ? `This command is high risk (${hit.label}), so it was sent for approval (${item.id}). Do not run it or work around it. Tell the user you filed an approval and will run it once approved, then end the turn.`
+            : `이 명령은 고위험(${hit.label})이라 결재를 올렸다(${item.id}). 실행하거나 다른 명령으로 우회하지 마라. "결재를 올렸고 승인되면 실행하겠다"고 알리고 턴을 마쳐라.` };
+        }
+      }
       return allow; // 전권 — 리터럴 방어(위 두 줄)가 셸의 하드라인이다
     }
     // 그 외 도구 — 능력 분류 밖(SDK 내장 Task 등). 능력 판정은 여전히 허용 쪽이다(이전 모델도 결재만
