@@ -1405,3 +1405,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 @keyframes msgrHit { from { background: rgba(var(--mark-rgb), .28); } to { background: transparent; } }
 .msgr-hit { animation: msgrHit 1.5s ease-out; border-radius: 12px; }
 @media (prefers-reduced-motion: reduce) { .msgr-hit { animation: none; outline: 2px solid rgba(var(--mark-rgb), .6); outline-offset: 4px; } }
+
+/* 로빙 tabindex 행 초점(검수 K8) — 키보드로 옮길 때만 링. 마우스 클릭 초점에는 안 뜬다 */
+.msgr-row:focus { outline: none; } .msgr-mine:focus { outline: none; }
+.msgr-row:focus-visible, .msgr-mine:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 12px; }

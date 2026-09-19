@@ -3182,6 +3182,7 @@ function Channel({ jumpTo = null, onJumped, channel, preview = false, onJoin, or
   }, [preview]); // 미리보기(가입 막대) ↔ 입력창이 바뀌면 받침을 다시 잡는다
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [pending, setPending] = useState([]); // 보냈지만 서버 행이 아직 안 온 내 글(낙관적 렌더)
+  const [activeMid, setActiveMid] = useState(null); // 로빙 tabindex의 현재 행(없으면 마지막 글) — 목록 전체가 Tab 한 칸(검수 K8)
   const [tab, setTab] = useState('all');
   const [workOpen, setWorkOpen] = useState(false);
   const feed = useRef(null);
@@ -3332,6 +3333,7 @@ function Channel({ jumpTo = null, onJumped, channel, preview = false, onJoin, or
   const isPending = (m) => apOf(m)?.status === 'pending';
   const counts = { mention: all.filter(isMention).length, approval: all.filter(isPending).length, crew: all.filter((m) => m.author_kind === 'crew').length };
   const shown = all.filter((m) => tab === 'all' || (tab === 'mention' && isMention(m)) || (tab === 'approval' && isPending(m)) || (tab === 'crew' && m.author_kind === 'crew'));
+  const tabMid = shown.some((x) => x.id === activeMid) ? activeMid : shown.at(-1)?.id; // 지워졌거나 걸러진 행이면 마지막 글로
   const rows = []; let day = null; let newLine = false;
   // 보낸 직후의 내 글(낙관적)은 목록 끝에 같은 Message로 그린다. 키는 client_msg_id — 서버 행이 오면 같은 키의 같은 요소가
   // 제자리에서 바뀐다(떼었다 붙이면 등장 애니메이션을 다시 타 깜빡였다, 유건 제보 2026-09-18).
@@ -3341,7 +3343,7 @@ function Channel({ jumpTo = null, onJumped, channel, preview = false, onJoin, or
     if (divider > 0 && !newLine && m.id > divider && !(m.author_kind === 'user' && m.author_user_id === uid)) { newLine = true; rows.push(<div key="newline" className="msgr-newline"><span>{t('msg.new')}</span></div>); }
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.client_msg_id || m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} />);
+    rows.push(<Message key={m.client_msg_id || m.id} rowTab={m.id === tabMid ? 0 : -1} onRowFocus={setActiveMid} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'check', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -3419,13 +3421,40 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
     document.body,
   );
 }
-function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete, channels = [], onOpenRelay, dmName }) {
+function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete, channels = [], onOpenRelay, dmName, rowTab = -1, onRowFocus }) {
   const [copied, setCopied] = useState(false);
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
   const [ctxAt, setCtxAt] = useState(null); // 데스크톱 우클릭: 동작 줄을 커서 자리에 고정(유건 지시 2026-09-12)
   const [actsOpen, setActsOpen] = useState(false); // 터치는 길게 눌러야 액션이 열린다(마우스는 hover) — 상시 노출은 화면당 대화를 두세 건으로 줄였다
   const tabStop = ctxAt && actsOpen ? undefined : -1; // 숨은 hover 동작은 탭 순서에서 뺀다 — 메시지마다 2~4칸이라 입력창까지 Tab 76번(검수 D11). 우클릭 메뉴로 열렸을 때만 탭으로 닿는다
   const hold = useLongPress(() => { if (!m.pending) setActsOpen(true); });
+  // 키보드(검수 K8): 메시지 목록은 로빙 tabindex — 목록 전체가 Tab 한 칸, ↑↓·Home·End로 행 이동, Enter·Shift+F10·메뉴 키로 동작 메뉴(우클릭과 같은 .ctx), 메뉴 안 ↑↓, Esc면 행으로
+  const rowRef = useRef(null); const kbCtx = useRef(false);
+  const rowKey = (e) => {
+    if (e.target !== e.currentTarget) return;
+    const rows = () => [...(e.currentTarget.closest('.msgr-thread')?.querySelectorAll('[data-mid][tabindex]') ?? [])];
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const list = rows(); list[list.indexOf(e.currentTarget) + (e.key === 'ArrowDown' ? 1 : -1)]?.focus(); return; }
+    if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); const list = rows(); (e.key === 'Home' ? list[0] : list.at(-1))?.focus(); return; }
+    if ((e.key === 'Enter' || e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && !m.pending && !ap && !m.deleted_at && !editing) {
+      e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); kbCtx.current = true; setCtxAt({ x: r.left + 48, y: r.top + 20 }); setActsOpen(true);
+    }
+  };
+  const menuKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setActsOpen(false); rowRef.current?.focus(); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const bs = [...e.currentTarget.querySelectorAll('button')]; const i = bs.indexOf(document.activeElement); bs[(i + (e.key === 'ArrowDown' ? 1 : -1) + bs.length) % bs.length]?.focus(); }
+  };
+  // 메뉴(.ctx)는 body 포털 — 행의 애니메이션 transform이 fixed 기준을 행으로 바꿔 우클릭·키보드 메뉴가 행 폭만큼(약 500px) 오른쪽에 떴다(K8 검증 중 실측, main도 같음)
+  const ctxRef = useRef(null); const wrapCtx = (el) => (ctxAt && actsOpen ? createPortal(el, document.body) : el);
+  useEffect(() => { if (actsOpen && ctxAt && kbCtx.current) { kbCtx.current = false; ctxRef.current?.querySelector('button')?.focus(); } }, [actsOpen, ctxAt]);
+  // 현재 행이 아닌 행의 안쪽 컨트롤(아바타·이름·반응 칩·링크·파일)도 탭 순서 밖 — 현재 행에서만 Tab으로 들어간다. 동작 줄은 tabStop이 따로 맡는다
+  useEffect(() => {
+    const el = rowRef.current; if (!el) return;
+    for (const x of el.querySelectorAll('a[href], button, input, textarea, select')) {
+      if (x.closest('.msgr-acts')) continue;
+      if (rowTab === 0) { if (x.dataset.rove) { x.removeAttribute('tabindex'); delete x.dataset.rove; } }
+      else if (!x.hasAttribute('tabindex') || x.dataset.rove) { x.setAttribute('tabindex', '-1'); x.dataset.rove = '1'; }
+    }
+  }, [rowTab, atts.length, reacts.length, m.body, editing, parent]);
   const phone = useIsPhone(); // 폰: 길게 누르면 슬랙식 아래 시트(빠른 반응 줄 + 동작 목록)
   useEffect(() => {
     if (!actsOpen) return undefined;
@@ -3490,13 +3519,13 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
         </div>
       </div>, document.body,
     ) : (
-    <div className={`msgr-acts${ctxAt && actsOpen ? ' ctx' : ''}${m.pending ? ' pending' : ''}`} inert={m.pending ? true : undefined} style={ctxAt && actsOpen ? { left: Math.max(4, Math.min(ctxAt.x, window.innerWidth - 200)), top: Math.max(4, Math.min(ctxAt.y, window.innerHeight - 180)) } : undefined}>
+    wrapCtx(<div ref={ctxRef} className={`msgr-acts${ctxAt && actsOpen ? ' ctx' : ''}${m.pending ? ' pending' : ''}`} onKeyDown={ctxAt && actsOpen ? menuKey : undefined} role={ctxAt && actsOpen ? 'menu' : undefined} inert={m.pending ? true : undefined} style={ctxAt && actsOpen ? { left: Math.max(4, Math.min(ctxAt.x, window.innerWidth - 200)), top: Math.max(4, Math.min(ctxAt.y, window.innerHeight - 180)) } : undefined}>
       <button type="button" tabIndex={tabStop} onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
       <button type="button" tabIndex={tabStop} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>
       {mine && m.kind === 'text' && <button type="button" tabIndex={tabStop} onClick={() => { setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
       {mine && (confirmDel ? <button type="button" tabIndex={tabStop} className="danger" onClick={() => { setConfirmDel(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" tabIndex={tabStop} onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
       {picker}
-    </div>
+    </div>)
     )
   );
   const editor = editing && (
@@ -3506,7 +3535,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
     </form>
   );
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
-    <div className="msgr-mine" data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
+    <div className="msgr-mine" ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {editing ? editor : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : <Body text={body} />}</div>}
       {attRow}
       {chips}
@@ -3516,7 +3545,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   const isCrew = m.author_kind === 'crew';
   return ( // 동료·크루 글 — 척추 위 아바타(사람 원 / 크루 타일), 크루 답은 척추에 붙는 시트
-    <div className="msgr-row" data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
+    <div className="msgr-row" ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {isCrew && crew ? <button type="button" className="msgr-avbtn" onClick={() => onCrew?.(crew.id)} title={t('crew.sheet')}><Av name={name} crew crewId={crew.id} /></button> : <Av name={name} crew={isCrew} userId={m.author_user_id} />}
       <div style={{ minWidth: 0 }}>
         <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
