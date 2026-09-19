@@ -1898,7 +1898,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
             {chCrews.map((c) => { const on = c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS; const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
               <div key={key} className="row">
                 <Av name={c.display_name} crew size="sm" company={company} crewId={c.id} /><span className="name">{c.display_name}</span>
-                <span className="sub">{company ? t('crew.tier.company.sub', { org: org?.name ?? '', role: c.role_text ?? '' }) : t('crew.tier.personal.sub', { name: nameOfUser(c.owner_user_id), role: c.role_text ?? '' })}{!on && ` · ${t('crew.offline')}`}</span>
+                <span className="sub">{company ? t('crew.tier.company.sub', { org: org?.name ?? '', role: c.role_text ?? '' }) : t('crew.tier.personal.sub', { name: nameOfUser(c.owner_user_id), role: c.role_text ?? '' })}</span>{!on && <span className="msgr-offline">{t('crew.offline')}</span>}
                 <span className={`msgr-dot${on ? ' mark' : ''}`} title={on ? t('crew.online') : t('crew.away')} />
                 <span className="msgr-rowmenu-wrap" onClick={(e) => e.stopPropagation()}>
                   <button type="button" className="btn sm ghost" onClick={(e) => openRowMenu(e, key, [

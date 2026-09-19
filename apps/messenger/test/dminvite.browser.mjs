@@ -212,6 +212,9 @@ await scenario(1280, 'agent-offline-visible', async (p) => {
   const sheet = p.locator('.msgr-crewsheet'); await sheet.waitFor({ timeout: 5000 });
   const row = sheet.locator('.row', { hasText: 'Fixture Agent' }).first();
   assert.match(await row.innerText(), /꺼져 있음/, `시트 행에 글자로 (실제: ${(await row.innerText()).replace(/\s+/g, ' ')})`);
+  const label = row.locator('.msgr-offline'); const box = await label.boundingBox(); const rowBox = await row.boundingBox();
+  assert.ok(box && box.width > 20 && box.x + box.width <= rowBox.x + rowBox.width, `'꺼져 있음'이 말줄임에 잘리지 않고 행 안에 보인다 (${JSON.stringify(box)})`);
+  assert.equal(await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true, '라벨 자체가 잘리지 않는다');
   await sheet.locator('button[aria-label="닫기"]').first().click().catch(() => {});
   await p.keyboard.press('Escape'); await p.waitForTimeout(300);
   const ta = p.locator('.msgr-composer textarea');
@@ -227,6 +230,17 @@ await scenario(1280, 'agent-offline-visible', async (p) => {
   assert.match(pop2, /Second Agent/); assert.doesNotMatch(pop2, /꺼져 있음/, `켜진 에이전트는 꺼짐 표시 없음 (실제: ${pop2.replace(/\s+/g, ' ')})`);
   await ta.fill('@Second Agent 확인'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
   assert.equal(await p.locator('.msgr-awaychip').count(), 0, '켜진 에이전트에게 보내면 안내가 사라지고 새로 뜨지 않는다');
+}, '?away=1');
+
+// D23 폰 폭 — 긴 부제가 말줄임돼도 '꺼져 있음'은 남는다(검수 d23-pd-sheet: 부제 안에 넣었을 때 잘려 점 색만 남았다)
+await scenario(390, 'agent-offline-visible-phone', async (p) => {
+  await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click(); await p.waitForTimeout(600);
+  await p.locator('.msgr-top button.members').click();
+  const row = p.locator('.msgr-crewsheet .row', { hasText: 'Fixture Agent' }).first(); await row.waitFor({ timeout: 5000 });
+  const label = row.locator('.msgr-offline'); const box = await label.boundingBox(); const rowBox = await row.boundingBox();
+  assert.ok(box && box.width > 20 && box.x + box.width <= rowBox.x + rowBox.width, `폰에서도 '꺼져 있음'이 행 안에 보인다 (${JSON.stringify(box)})`);
+  assert.equal(await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true);
+  assert.ok(await row.locator('.sub').evaluate((el) => el.scrollWidth > el.clientWidth), '부제는 실제로 말줄임 상태(긴 부제 픽스처가 유효)');
 }, '?away=1');
 
 // 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
