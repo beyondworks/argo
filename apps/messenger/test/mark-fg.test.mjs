@@ -10,3 +10,10 @@ test('background: var(--mark) 규칙은 글자색을 고정하지 않는다(--ma
   const fixed = rules.filter((r) => /(^|[;{\s])color:\s*(#|rgb)/.test(r));
   assert.deepEqual(fixed.map((r) => r.trim().slice(0, 60)), [], '--mark 바탕 위 고정 글자색');
 });
+
+test('로그인 머리띠 별은 머리띠 글자색을 따른다 — --mark는 graphite·argo-dark에서 머리띠 바탕(--primary)과 같다(D12 P14)', async () => {
+  const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+  const band = css.match(/\.msgr-auth \.band svg \{[^}]*\}/)?.[0] ?? '';
+  assert.match(band, /fill:\s*currentColor/);
+  assert.doesNotMatch(band, /var\(--mark\)/);
+});
