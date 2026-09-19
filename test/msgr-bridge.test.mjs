@@ -910,6 +910,27 @@ test('handler: 오래된 실행권은 같은 채널에 확인 안내만 남기�
   assert.equal(await db.settled(CREW, 501, CH), false, '확인 안내를 앞 크루 완료로 오인하지 않는다');
 });
 
+test('handler D25: 이 기기에서 답하던 중 끊긴 턴은 다시 돌리지 않고 실패 답(중단 안내)으로 실행을 닫는다 — 닫기가 거절되면 종전 확인 대기', async () => {
+  const db = fakeDb(), finished = [];
+  db.claimExecution = async () => ({ acquired: false, state: 'running', heartbeat_at: new Date().toISOString() });
+  db.finishExecution = async (key, row) => { finished.push({ key, row }); return { id: 777 }; };
+  let runs = 0;
+  const handler = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async () => { runs++; return { reply: '다시 실행 금지' }; } });
+  const cut = { msgId: 601, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '정리', authorId: MEMBER, threadRoot: 601, createdAt: new Date().toISOString(), msgrExecution: { attempt: 'dead-attempt', phase: 'running' } };
+  assert.equal(await handler(cut), undefined, '잡을 끝낸다(DEFER로 큐에 영원히 남지 않는다)');
+  assert.equal(runs, 0);
+  assert.equal(finished.length, 1);
+  const { key, row } = finished[0];
+  assert.equal(key.attempt, 'dead-attempt', '끊긴 그 시도로 닫는다(RPC가 소유권 확인)');
+  assert.deepEqual([row.client_msg_id, row.reply_to, row.meta.failed, row.meta.interrupted], [`reply:${CREW}:601`, 601, true, true]);
+  assert.match(row.body, /중단됐습니다[\s\S]*다시 지시해 주세요/);
+  const { DEFER } = await import('../src/gateway/queue.mjs');
+  db.finishExecution = async () => { throw new Error('msgr_execution_not_owner'); };
+  const other = { ...cut, msgId: 602, threadRoot: 602, msgrExecution: { attempt: 'someone-else', phase: 'running' } };
+  assert.equal(await handler(other), DEFER, '소유권이 없으면 종전 확인 대기');
+  assert.equal(runs, 0);
+});
+
 // ── 채널 범위(유건 원칙 2026-09-11): 채널에 초대된 에이전트만 답하고, 내보낸 에이전트는 못 답한다 — 노드는 턴 자체를 돌리지 않는다(서버 트리거 msgr_messages_crew_scope가 최후 방어) ──
 test('순수: crewInScope — 모든 채널에서 구성원일 때만(공개도, 2026-09-16), 공개 채널에서 내보낸 크루는 거부, 채널 없음·판정 불명은 거부', () => {
   assert.equal(M.crewInScope({ id: CH, kind: 'public', excluded_crew_ids: [] }, CREW, false), false, '초대되지 않은 공개 채널(종전에는 파견된 크루 전원이었다)');

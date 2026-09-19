@@ -38,7 +38,7 @@ import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
 import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, msgrJournal } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
-import { roomTurnFailure, roomAttachReason } from './msgr-room-errors.mjs';
+import { roomTurnFailure, roomTurnInterrupted, roomAttachReason } from './msgr-room-errors.mjs';
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
@@ -867,7 +867,18 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const ctx = { chatType: 'group', kind: 'msgr', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, uid, wsId, origin: job.origin ?? job.authorId ?? null, ...(job.rootAuthor ? { rootAuthor: job.rootAuthor } : {}), ...(job.guest === true || (job.fromCrewId && !job.rootAuthor) ? { guest: true } : {}), hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}) };
     const execution = await beginMessengerExecution(wsId, db, job, executionMeta);
     if (execution.kind === 'completed') return;
-    if (execution.kind === 'pending') {
+    if (execution.kind === 'interrupted') { // 이 기기에서 답하던 중 끊긴 턴(D25) — 실패 답으로 실행을 닫는다(running 고착·5분 뒤 막연한 안내 대신)
+      try {
+        await finishMessengerExecution(wsId, db, job, {
+          channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId,
+          client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: roomTurnInterrupted(lang), mentions: [],
+          meta: { hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, failed: true, interrupted: true },
+        }, executionMeta);
+        console.warn(`[argo] msgr 끊긴 턴 닫음(${wsId}/${job.slug}/${job.msgId}) — 다시 실행하지 않고 중단 안내`);
+        return;
+      } catch (e) { console.error(`[argo] msgr 끊긴 턴 닫기 실패(${wsId}/${job.slug}/${job.msgId}) — 확인 대기로:`, e.message); }
+    }
+    if (execution.kind === 'pending' || execution.kind === 'interrupted') {
       if (execution.stale && now() - (busyWarn.get(ctxKey) ?? 0) > 300_000) {
         busyWarn.set(ctxKey, now());
         console.warn(`[argo] msgr 실행 확인 대기(${wsId}/${job.slug}/${job.msgId}) — 이전 실행의 심박이 끊겼지만 자동으로 다시 실행하지 않습니다`);
