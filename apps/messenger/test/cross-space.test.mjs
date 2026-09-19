@@ -84,7 +84,11 @@ test('App.jsx 배선: 소속 조직 전부의 org: 토픽과 u:<나> 토픽을 �
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /supabase\.channel\(`u:\$\{uid\}`/, 'u:<나> 구독');
   assert.match(app, /orgs\.filter\(\(o\) => o\.id !== orgId\)\.map\(\(o\) => supabase\.channel\(`org:\$\{o\.id\}`/, '보고 있지 않은 조직의 org: 구독');
-  assert.match(app, /const notifyReadable = \(payload, space\) => \{ if \(!payload \|\| payload\.author_user_id === uid \|\| !shouldNotify\(payload\.channel_id\)\) return; readableForNotify\(/, '알림 전 읽힘 확인 — 알릴 상황(shouldNotify)일 때만 조회');
+  // 알림 전 읽힘 확인 — 알릴 상황(shouldNotify)일 때만 조회. D55부터 건너뛴 이유를 진단에 남긴다(notifySkip → 'viewing'은 shouldNotify 거짓)
+  assert.match(app, /const notifySkip = \(payload\) => \{[^\n]*return shouldNotify\(payload\.channel_id\) \? '' : 'viewing'; \};/);
+  const body = app.slice(app.indexOf('const notifyReadable = (payload, space) => {'), app.indexOf('const notifyApproval'));
+  assert.ok(body.indexOf("if (skip) { pushDiag('notify', `${tag} skip:${skip}`); return; }") > 0 && body.indexOf('if (skip)') < body.indexOf('readableForNotify('), '건너뛸 상황이면 조회 전에 돌아간다');
+  assert.match(body, /if \(!payload \|\| payload\.author_user_id === uid\) return;/, '내 글은 알리지 않는다');
   assert.match(app, /crossRef\.current = \(payload, space\) => \{[\s\S]{0,200}seenOnce\(seenMsgRef\.current, payload\.id\)/, '다른 공간 처리기도 id로 한 번만(이중 송신 대비)');
   assert.match(app, /handleMessageRef\.current = \(payload\) => \{\s*if \(!seenOnce\(seenMsgRef\.current, payload\?\.id\)\) return;/, '보고 있는 공간 처리기도 id로 한 번만');
 });

@@ -894,7 +894,14 @@ function Shell({ session }) {
     notifyReadable(payload, isPersonal ? null : orgId); // 멘션이면 멘션 알림 하나만 — 알림은 내가 읽을 수 있는 글에만(readableForNotify)
   };
   // 알림 전 확인 — 알릴 상황(초점·음소거·조용한 시간 — shouldNotify)일 때만 조회한다(방송마다 조회하지 않게). 조직 토픽은 조직 전원이 들어, 내가 없는 방의 방송에도 알림이 뜨던 결함(실측 2026-09-18). 읽히는 글이면 이름·본문을 채워 넘긴다.
-  const notifyReadable = (payload, space) => { if (!payload || payload.author_user_id === uid || !shouldNotify(payload.channel_id)) return; readableForNotify(supabase, payload, space).then((p) => { if (p && !notifyMention(p)) notifyReply(p); }).catch(() => {}); };
+  // 진단(설정 → 진단): 알림을 왜 보냈는지·안 보냈는지 한 줄 — 배너가 안 떴다는 제보를 앱 밖에서 가를 방법이 없었다(D55: 개인 공간 DM 배너 없음, 로컬 재현 불가)
+  const notifySkip = (payload) => { const r = notifyRef.current; if (r.muted.has(payload.channel_id)) return 'muted'; if (inQuiet(r.quiet)) return 'quiet'; return shouldNotify(payload.channel_id) ? '' : 'viewing'; };
+  const notifyReadable = (payload, space) => {
+    if (!payload || payload.author_user_id === uid) return;
+    const tag = `msg ${payload.id} ${space ?? 'personal'}`; const skip = notifySkip(payload);
+    if (skip) { pushDiag('notify', `${tag} skip:${skip}`); return; }
+    readableForNotify(supabase, payload, space).then((p) => { if (!p) { pushDiag('notify', `${tag} skip:unreadable`); return; } pushDiag('notify', `${tag} send`); if (!notifyMention(p)) notifyReply(p); }).catch((e) => pushDiag('notify', `${tag} error`, String(e?.message ?? e).slice(0, 80)));
+  };
   const notifyApproval = (payload) => {
     const r = notifyRef.current;
     if (!payload || payload.status !== 'pending' || !r.isAdmin || !shouldNotify(payload.channel_id)) return; // 확정권 정본은 서버 — 관리자에게만 알린다(저위험은 소유자가 카드에서 본다)
