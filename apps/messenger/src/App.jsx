@@ -40,6 +40,7 @@ import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 import { reconcileSession } from './resume-session.mjs';
+import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -2334,9 +2335,10 @@ function MemNew({ org, channelId, uid, onCreated, onNote, onError, onCancel }) {
   const create = async () => {
     const title = creating.title.trim(); if (!title) return;
     setBusy(true);
-    const res = await supabase.from('msgr_org_docs').insert({ org_id: org.id, channel_id: channelId ?? null, path: `${creating.folder}/${docSlug(title)}.md`, title, body: '', created_by: uid, updated_by: uid }).select('id, path').single();
+    // 같은 경로(영문·숫자 슬러그가 겹침 — "B 채널 메모"·"B 회의록" 둘 다 b)면 -2, -3…으로 다음 경로를 쓴다(D13)
+    const res = await insertWithFreePath(creating.folder, title, (path) => supabase.from('msgr_org_docs').insert({ org_id: org.id, channel_id: channelId ?? null, path, title, body: '', created_by: uid, updated_by: uid }).select('id, path').single());
     setBusy(false);
-    if (res.error) return onError(/duplicate key|msgr_org_docs_path/.test(res.error.message) ? t('docs.dup') : friendlyErr(res.error.message, t));
+    if (res.error) return onError(isPathTaken(res.error.message) ? t('docs.dup') : friendlyErr(res.error.message, t));
     onNote(t('docs.created')); await onCreated(res.data);
   };
   return (
@@ -2594,7 +2596,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
 /* ─── 조직 문서(G-1): 전사(rules/·glossary/·projects/) + 채널 범위. 정본은 서버, 편집권은 RLS(msgr_can_edit_doc) — 화면은 힌트만 ─── */
 /* journal/은 크루 답글마다 서버 트리거가 채널별 일지(journal/YYYY-MM-DD.md)를 자동 갱신하는 폴더 — 사람이 새로 만드는 자리(MemNew)에서는 뺀다. */
 const DOC_FOLDERS = ['rules', 'glossary', 'projects', 'journal'];
-export const docSlug = (title) => { const s = String(title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); return s || `doc-${Date.now().toString(36)}`; }; // 한글 제목은 시간 기반 슬러그(경로 규칙은 영문·숫자만)
+export { docSlug }; // 정본은 doc-path.mjs(경로 규칙·충돌 접미와 함께)
 /* ─── F2-3 본인 표시명 편집(RLS msgr_members_update_self — 역할·제거 표시는 트리거가 막는다) ─── */
 function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
   const { t } = useT();
