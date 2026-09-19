@@ -106,8 +106,13 @@ export const supabase = {
       return state.tables.msgr_channels.filter((c) => c.kind === 'public' && !joined.has(c.id)).map((c) => ({ id: c.id, name: c.name, topic: null, members: 1, created_at: now }));
     }
     if (name === 'msgr_join_channel') { state.tables.msgr_channel_members.push({ channel_id: args.ch, member_kind: 'user', member_id: uid }); return true; }
-    if (name === 'msgr_friend_link_mine') { state.tables.msgr_friend_links ??= [{ code: 'a'.repeat(48), expires_at: now }]; return state.tables.msgr_friend_links; }
-    if (name === 'msgr_friend_link_revoke') { state.tables.msgr_friend_links = []; return null; }
+    if (name === 'msgr_friend_link_mine') { // 서버 모양 — 본인 행(owner_user_id)·7일 만료·취소 표시(revoked_at). 살아 있는 링크가 있으면 그대로 돌려준다
+      const live = (state.tables.msgr_friend_links ??= []).find((l) => l.owner_user_id === uid && !l.revoked_at);
+      if (live) return [{ code: live.code, expires_at: live.expires_at }];
+      const row = { owner_user_id: uid, code: 'a'.repeat(48), expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), revoked_at: null, created_at: new Date().toISOString() };
+      state.tables.msgr_friend_links.push(row); return [{ code: row.code, expires_at: row.expires_at }];
+    }
+    if (name === 'msgr_friend_link_revoke') { for (const l of state.tables.msgr_friend_links ?? []) if (l.owner_user_id === uid) l.revoked_at = new Date().toISOString(); return null; }
     if (name === 'msgr_friend_link_accept') { state.accepted = args.code; return 'friend'; }
     if (name === 'msgr_push_badge_resync') return null;
     return [];

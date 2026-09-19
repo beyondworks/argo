@@ -43,7 +43,10 @@ test('개인 공간의 안 읽음은 org=null로 센다(건너뛰지 않는다 �
 });
 
 test('개인 공간에서는 알림함 조직 질의를 쏘지 않는다(가상 org id는 uuid가 아니다 — 검수 M-2)', () => {
-  assert.match(src, /if \(!org \|\| !uid \|\| isPersonal\) \{ setInbox\(\[\]\); return; \}/);
+  const eff = src.slice(src.indexOf('if (!org || !uid) { setInbox([]); return; }'));
+  assert.ok(eff.length > 0, '알림함 집계');
+  const personal = eff.indexOf('if (isPersonal) { setInbox(friendItems()); return; }'), orgQuery = eff.indexOf("supabase.from('msgr_messages')");
+  assert.ok(personal > 0 && orgQuery > personal, '개인 공간은 친구 요청만 싣고 조직 질의 전에 돌아간다(S15)');
 });
 
 test('개인 공간에서는 붙여넣기 첨부도 막는다(검수 L-4)', () => {
