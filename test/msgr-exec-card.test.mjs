@@ -44,7 +44,7 @@ test('P0: 안 읽음 RPC → 레일 배지(멘션은 mark·음소거는 dim)·�
   assert.match(app, /useEffect\(\(\) => \{ if \(event\?\.kind === 'message'\) loadUnread\(\); \}, \[event\]\);/, '새 메시지 방송이면 재집계');
   assert.match(app, /<span className=\{`msgr-badge\$\{unread\[c\.id\]\.mention \? ' mark' : ''\}\$\{muted\.has\(c\.id\) \? ' dim' : ''\}`\}>\{unread\[c\.id\]\.n\}<\/span>/, '채널 배지');
   assert.match(app, /if \(divider > 0 && !newLine && m\.id > divider && !\(m\.author_kind === 'user' && m\.author_user_id === uid\)\)/, '구분선은 남의 첫 새 글 앞');
-  assert.match(app, /if \(!afterId\) \{ const rd = await q\(supabase\.from\('msgr_reads'\)/, '구분선 기준은 열 때 한 번');
+  assert.match(app, /afterId \? null : q\(supabase\.from\('msgr_reads'\)[\s\S]{0,200}\n    if \(!afterId\) setDivider\(rd\?\.last_read_id \?\? 0\);/, '구분선 기준은 열 때 한 번, 글보다 먼저(D15 순서는 apps/messenger/test/newline-divider.test.mjs)');
   assert.match(app, /onRead\?\.\(chId, lastId\)/, '보는 채널은 커서 갱신');
   assert.match(app, /supabase\.from\('msgr_reads'\)\.upsert\(\{ channel_id: channelId, user_id: uid, last_read_id: lastId/, '커서 upsert');
   assert.match(app, /\{mine && m\.kind === 'text' && <button type="button" tabIndex=\{tabStop\} onClick=\{\(\) => \{ setDraft\(m\.body\); setEditing\(true\); \}\}>/, '편집은 내 글만(숨은 hover 동작은 탭 순서 밖 — D11)');
