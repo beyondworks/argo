@@ -23,6 +23,7 @@ getrandom = "0.2" # pair.rs 페어링 code·verifier — OS CSPRNG
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-window-state = "2" # 창 위치·크기 기억(D53, T8) — 표시 여부는 빼고 저장·복원(닫기=가리기라 숨긴 채 뜨지 않게)
 
 # macOS OS 알림 — UNUserNotificationCenter(notify_mac.rs). 세 크레이트 모두 이미 잠금 파일에 있던 판(wry·tao 경유)
 [target.'cfg(target_os = "macos")'.dependencies]

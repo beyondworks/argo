@@ -13,6 +13,11 @@ mod notify_mac; // OS 알림 — UNUserNotificationCenter 직결(플러그인의
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_notification::init());
+    // 창 위치·크기 기억(D53, 설치본 T8: 옮긴 창이 재실행 때 기본 자리로 돌아갔다). 표시 여부(VISIBLE)는 저장하지 않는다 —
+    // 닫기가 가리기라 숨긴 채 ⌘Q하면 다음 실행에 창이 안 보이는 채로 뜬다. 빌더에 달아야 설정 파일로 만든 main 창에도 복원이 걸린다.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_window_state::Builder::default()
+        .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE & !tauri_plugin_window_state::StateFlags::FULLSCREEN).build()); // 전체 화면도 뺀다 — 다음 실행이 별도 Space 전체 화면으로 뜬다(검수 #655)
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_deep_link::init());
     #[cfg(mobile)]
