@@ -18,9 +18,18 @@ begin
   if verdict is null and new.crew_id = w.lead_crew_id and new.kind = 'text'
      and coalesce(new.meta->>'disposition', 'done') <> 'handoff'
      and not exists (
-       select 1 from public.msgr_crew_approvals a join public.msgr_messages card on card.id = a.message_id
+       select 1 from public.msgr_crew_approvals a
+       left join public.msgr_messages card on card.id = a.message_id
        where a.channel_id = w.channel_id and a.crew_id = new.crew_id and a.status = 'pending'
-         and card.deleted_at is null and coalesce(card.thread_root, card.id) = w.root_message_id
+         and (
+           (card.deleted_at is null and coalesce(card.thread_root, card.id) = w.root_message_id)
+           or (a.message_id is null and exists (
+             select 1 from public.msgr_executions current_execution
+             where current_execution.crew_id = new.crew_id and current_execution.source_msg_id = new.reply_to
+               and current_execution.state = 'running'
+               and a.created_at >= current_execution.started_at and a.created_at <= new.created_at
+           ))
+         )
      ) then
     stalled := not exists (
       select 1 from public.msgr_messages m
