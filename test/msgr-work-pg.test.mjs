@@ -156,6 +156,14 @@ test('D48: 같은 업무의 총괄 결재가 대기 중이면 running, 결정 �
   reply(w,CREW,'{"disposition":"done"}','The approval was rejected; there is no remaining action');
   assert.equal(status(w),'blocked','결재 결정 뒤 후속 답에서 남은 실행이 없으면 다시 도움 필요로 판정한다');
 });
+test('D48: 비총괄 크루가 직접 넣은 비배열·가짜 멘션은 주관 답을 깨뜨리거나 업무를 고착시키지 않는다', {skip},()=>{
+  for (const mentions of ['{}', `[{"kind":"crew","id":"${request()}"}]`]) {
+    const w=create();
+    asUser(U.member,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${w.channel_id}','crew','${OTHER_CREW}','text','Injected mention',${w.root_message_id},${w.root_message_id},'reply:${OTHER_CREW}:${w.root_message_id}:${request()}','${mentions}','{"disposition":"handoff"}')`);
+    reply(w,CREW,'{"disposition":"done"}','No authorized handoff remains');
+    assert.equal(status(w),'blocked',mentions);
+  }
+});
 test('external bot-style terminal markers follow the same fenced/quoted rules', {skip},()=>{
   // 코드 블록·인용 속 표지는 판정이 아니다 — 완료로 올리지 않는다(판정 없는 정지는 D48에 따라 도움 필요)
   const f=create(); reply(f,CREW,'{"disposition":"done"}','```\nWORK: completed'); assert.notEqual(status(f),'completed');

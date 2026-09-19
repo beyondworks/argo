@@ -23,9 +23,17 @@ begin
          and card.deleted_at is null and coalesce(card.thread_root, card.id) = w.root_message_id
      ) then
     stalled := not exists (
-      select 1 from public.msgr_messages m cross join lateral jsonb_array_elements(m.mentions) x
+      select 1 from public.msgr_messages m
+      cross join lateral jsonb_array_elements(case when jsonb_typeof(m.mentions) = 'array' then m.mentions else '[]'::jsonb end) x
+      join public.msgr_crews target on target.id::text = x->>'id' and target.org_id = w.org_id and target.status = 'active'
       where m.channel_id = w.channel_id and (m.id = w.root_message_id or m.thread_root = w.root_message_id)
-        and m.id >= coalesce(w.last_resume_message_id, 0) and m.deleted_at is null and x->>'kind' = 'crew'
+        and m.id >= coalesce(w.last_resume_message_id, 0) and m.deleted_at is null
+        and x->>'kind' = 'crew'
+        and public.msgr_crew_in_channel(w.channel_id, target.id)
+        and public.msgr_can_instruct(target.id, w.created_by, w.channel_id)
+        and (m.crew_id = w.lead_crew_id or exists (
+          select 1 from public.msgr_executions source where source.reply_id = m.id and source.crew_id = m.crew_id and source.state = 'completed'
+        ))
         and not (m.id = new.reply_to and x->>'id' = new.crew_id::text)
         and not exists (select 1 from public.msgr_executions e where e.crew_id::text = x->>'id' and e.source_msg_id = m.id and e.state = 'completed'));
     if stalled then verdict := 'blocked'; end if;
