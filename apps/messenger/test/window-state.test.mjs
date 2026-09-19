@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 test('데스크톱 빌더에 창 상태 플러그인 — 표시 여부(VISIBLE)는 저장·복원하지 않는다(닫기=가리기)', () => {
   const rs = read('../src-tauri/src/lib.rs');
-  assert.match(rs, /#\[cfg\(desktop\)\]\s*let builder = builder\.plugin\(tauri_plugin_window_state::Builder::default\(\)\s*\.with_state_flags\(tauri_plugin_window_state::StateFlags::all\(\) & !tauri_plugin_window_state::StateFlags::VISIBLE\)\.build\(\)\);/);
+  assert.match(rs, /#\[cfg\(desktop\)\]\s*let builder = builder\.plugin\(tauri_plugin_window_state::Builder::default\(\)\s*\.with_state_flags\(tauri_plugin_window_state::StateFlags::all\(\) & !tauri_plugin_window_state::StateFlags::VISIBLE & !tauri_plugin_window_state::StateFlags::FULLSCREEN\)\.build\(\)\);/);
   assert.ok(rs.indexOf('tauri_plugin_window_state') < rs.indexOf('.setup('), '빌더 단계에 달아야 설정 파일의 main 창에도 복원이 걸린다');
   const cargo = read('../src-tauri/Cargo.toml');
   const desktop = cargo.slice(cargo.indexOf(`[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`));
