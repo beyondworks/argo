@@ -16,3 +16,13 @@ export function hasStoredAuthSession(key, store = globalThis.localStorage) {
   }
   catch { return false; }
 }
+
+export function authCleanupState(key, store = globalThis.localStorage) {
+  const markerKey = `${key}-argo-cleanup-pending`;
+  return {
+    begin() { store.setItem(markerKey, '1'); },
+    complete() { store.removeItem(markerKey); },
+    read() { return store.getItem(markerKey) === '1'; },
+    matches(event) { return event?.key === markerKey; },
+  };
+}

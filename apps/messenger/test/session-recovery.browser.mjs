@@ -41,6 +41,17 @@ try {
   await page.getByRole('button', { name: '다시 로그인' }).click();
   await page.getByText('Google로 계속하기').waitFor();
   assert.equal(await page.evaluate(() => window.__d56.stored()), false, 'Auth is allowed only after local cleanup succeeds');
+
+  await page.goto(`${base}/?signout=partial`);
+  await page.getByRole('button', { name: '다시 로그인' }).click();
+  await page.getByText(/로그인 정보를 정리하지 못했습니다/).waitFor();
+  assert.equal(await page.evaluate(() => window.__d56.stored()), false, 'auth-js may already remove the primary key');
+  assert.equal(await page.evaluate(() => window.__d56.cleanupPending()), true, 'durable marker preserves the unfinished cleanup boundary');
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  assert.equal(await page.getByText('Google로 계속하기').count(), 0, 'null reads cannot bypass cleanupPending');
+  await page.getByRole('button', { name: '다시 로그인' }).click();
+  await page.getByText('Google로 계속하기').waitFor();
+  assert.equal(await page.evaluate(() => window.__d56.cleanupPending()), false, 'SIGNED_OUT clears the cleanup marker');
   assert.deepEqual(errors, []);
   console.log('D56 browser PASS: waiting/recovery + auth ordering + cleanup failure/retry contract');
 } finally {

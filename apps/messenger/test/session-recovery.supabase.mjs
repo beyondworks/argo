@@ -49,6 +49,10 @@ supabase.auth = {
   },
   signOut: async () => {
     signOutAttempts += 1;
+    if (params.get('signout') === 'partial' && signOutAttempts === 1) {
+      localStorage.removeItem(storageKey);
+      throw new TypeError('fixture PKCE cleanup blocked');
+    }
     if (['fail', 'observe', 'retry'].includes(params.get('signout')) && signOutAttempts === 1) return { error: new TypeError('fixture cleanup blocked') };
     localStorage.removeItem(storageKey);
     listener?.('SIGNED_OUT', null);
@@ -66,6 +70,7 @@ window.__d56 = {
     listener?.('SIGNED_IN', nextSession);
   },
   stored() { return localStorage.getItem(storageKey) !== null; },
+  cleanupPending() { return localStorage.getItem(`${storageKey}-argo-cleanup-pending`) === '1'; },
 };
 
 export { configured, customServer, SB_URL, SB_ANON, supabase, q };

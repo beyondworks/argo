@@ -46,7 +46,7 @@ import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
 import { createSessionRecovery } from './session-recovery.mjs';
-import { authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
+import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
@@ -196,7 +196,7 @@ export default function App() {
   useEffect(() => mountMobileAuth(), []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
-    const recovery = createSessionRecovery({ auth: supabase.auth, hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting,
+    const recovery = createSessionRecovery({ auth: supabase.auth, cleanupState: authCleanupState(authKey), hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting,
       setFailure: (error, phase) => setSessionRecoveryError(error ? (phase === 'signout' ? 'auth.signInAgainFailed' : 'auth.sessionCheckFailed') : '') });
     recoveryRef.current = recovery;
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => recovery.onAuthStateChange(event, next));

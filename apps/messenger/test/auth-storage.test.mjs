@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasStoredAuthSession } from '../src/auth-storage.mjs';
+import { authCleanupState, hasStoredAuthSession } from '../src/auth-storage.mjs';
 
 const KEY = 'sb-fixture-auth-token';
 const store = (value) => {
@@ -11,6 +11,18 @@ const store = (value) => {
 test('expired but structurally valid stored credentials count as recoverable', () => {
   const storage = store(JSON.stringify({ access_token: 'access', refresh_token: 'refresh', expires_at: 1 }));
   assert.equal(hasStoredAuthSession(KEY, storage), true);
+});
+
+test('cleanup marker is durable and matches only its own storage event', () => {
+  const values = new Map();
+  const storage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) };
+  const state = authCleanupState(KEY, storage);
+  state.begin();
+  assert.equal(state.read(), true);
+  assert.equal(state.matches({ key: `${KEY}-argo-cleanup-pending` }), true);
+  assert.equal(state.matches({ key: KEY }), false);
+  state.complete();
+  assert.equal(state.read(), false);
 });
 
 test('malformed or incomplete storage is not mistaken for a recoverable session', () => {

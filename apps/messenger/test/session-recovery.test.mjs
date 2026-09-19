@@ -13,22 +13,26 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(reads, { stored = true, getSession = null, signOut = async () => ({ error: null }) } = {}) {
+function fixture(reads, { stored = true, getSession = null, signOut = async () => ({ error: null }), cleanupState = null } = {}) {
   const applied = [];
   const waiting = [];
   const failures = [];
   const timers = new Map();
   const listeners = new Map();
+  const visibilityListeners = new Map();
   let timerId = 0;
   const auth = { getSession: getSession ?? (async () => reads.shift()), signOut };
   const recovery = createSessionRecovery({
     auth,
+    cleanupState,
     hasStoredSession: () => stored,
     applySession: (session) => applied.push(session),
     setWaiting: (value) => waiting.push(value),
     setFailure: (error) => failures.push(error),
     addEventListener: (name, handler) => listeners.set(name, handler),
     removeEventListener: (name) => listeners.delete(name),
+    addVisibilityListener: (name, handler) => visibilityListeners.set(name, handler),
+    removeVisibilityListener: (name) => visibilityListeners.delete(name),
     setTimer: (handler) => { const id = ++timerId; timers.set(id, handler); return id; },
     clearTimer: (id) => timers.delete(id),
   });
@@ -38,7 +42,7 @@ function fixture(reads, { stored = true, getSession = null, signOut = async () =
     timers.delete(entry[0]);
     await entry[1]();
   };
-  return { recovery, applied, waiting, failures, timers, listeners, runTimer };
+  return { recovery, applied, waiting, failures, timers, listeners, visibilityListeners, runTimer };
 }
 
 test('stored session + retryable refresh failure waits, then recovers automatically', async () => {
@@ -144,7 +148,9 @@ test('delayed initial read cannot restore a session after SIGNED_OUT', async () 
 test('verified local sign-out cancels a delayed initial read before showing Auth', async () => {
   // Given the cold-start read is still pending.
   const pending = deferred();
-  const f = fixture([], { getSession: () => pending.promise });
+  let f;
+  f = fixture([], { getSession: () => pending.promise,
+    signOut: async () => { f.recovery.onAuthStateChange('SIGNED_OUT', null); return { error: null }; } });
   const starting = f.recovery.start();
 
   // When the user chooses the waiting screen's re-login action.
@@ -165,7 +171,11 @@ test('failed local sign-out stays waiting and a later retry can finish cleanup',
   const failure = new TypeError('storage blocked');
   const f = fixture([
     { data: { session: null }, error: new AuthRetryableFetchError('offline', 503) },
-  ], { signOut: async (options) => { calls.push(options); attempt += 1; return { error: attempt === 1 ? failure : null }; } });
+  ], { cleanupState: { begin() {}, complete() {}, read: () => false, matches: () => false }, signOut: async (options) => {
+    calls.push(options); attempt += 1;
+    if (attempt === 2) queueMicrotask(() => f.recovery.onAuthStateChange('SIGNED_OUT', null));
+    return { error: attempt === 1 ? failure : null };
+  } });
   await f.recovery.start();
 
   // When the user retries after the first cleanup failure.
@@ -178,6 +188,79 @@ test('failed local sign-out stays waiting and a later retry can finish cleanup',
   assert.deepEqual(f.applied, [null]);
   assert.deepEqual(calls, [{ scope: 'local' }, { scope: 'local' }]);
   assert.equal(f.waiting.at(-1), false);
+  f.recovery.stop();
+});
+
+test('partial auth-js cleanup cannot promote a later null read to Auth', async () => {
+  let pending = false;
+  const failure = new TypeError('PKCE removal failed');
+  const f = fixture([], {
+    stored: false,
+    cleanupState: {
+      begin() { pending = true; },
+      complete() { pending = false; },
+      read: () => pending,
+      matches: (event) => event.key === 'cleanup-marker',
+    },
+    getSession: async () => ({ data: { session: null }, error: null }),
+    signOut: async () => { throw failure; },
+  });
+  await f.recovery.start();
+  await f.recovery.restartSignIn();
+
+  await f.listeners.get('online')();
+  f.recovery.onAuthStateChange('INITIAL_SESSION', null);
+
+  assert.deepEqual(f.applied, [null], 'only the pre-cleanup first-run read may show Auth');
+  assert.equal(f.waiting.at(-1), true);
+  assert.equal(pending, true);
+  f.recovery.stop();
+});
+
+test('cleanup marker makes another tab leave Shell until SIGNED_OUT', async () => {
+  let pending = false;
+  const cleanupState = {
+    begin() { pending = true; }, complete() { pending = false; }, read: () => pending,
+    matches: (event) => event.key === 'cleanup-marker',
+  };
+  const f = fixture([{ data: { session: SESSION }, error: null }], { cleanupState });
+  await f.recovery.start();
+  pending = true;
+  f.listeners.get('storage')({ key: 'cleanup-marker' });
+  f.recovery.onAuthStateChange('SIGNED_IN', NEW_SESSION);
+  assert.equal(f.waiting.at(-1), true, 'shared cleanup marker must hide Shell/realtime');
+  assert.deepEqual(f.applied, [SESSION], 'auth activity is blocked while cleanup remains pending');
+
+  f.recovery.onAuthStateChange('SIGNED_OUT', null);
+  assert.equal(pending, false);
+  assert.deepEqual(f.applied, [SESSION, null]);
+  f.recovery.stop();
+});
+
+test('boot, focus, visibility and online all preserve durable cleanupPending', async () => {
+  let pending = true;
+  const f = fixture([], {
+    stored: false,
+    cleanupState: { begin() { pending = true; }, complete() { pending = false; }, read: () => pending, matches: () => false },
+    getSession: async () => { throw new Error('must not read session while cleanup is pending'); },
+  });
+  await f.recovery.start();
+  await f.listeners.get('focus')();
+  await f.listeners.get('online')();
+  await f.visibilityListeners.get('visibilitychange')();
+  assert.deepEqual(f.applied, []);
+  assert.equal(f.waiting.at(-1), true);
+  f.recovery.stop();
+});
+
+test('storage-backed bootstrap TypeError resolves into fixed failure UI', async () => {
+  const failure = new TypeError('storage unavailable');
+  const f = fixture([], { stored: false, getSession: async () => { throw failure; } });
+  await f.recovery.start();
+  assert.deepEqual(f.applied, []);
+  assert.equal(f.waiting.at(-1), true);
+  assert.equal(f.failures.at(-1), failure);
+  assert.equal(f.timers.size, 0);
   f.recovery.stop();
 });
 
