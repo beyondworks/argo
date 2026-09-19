@@ -827,7 +827,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
 /* 프로필 이미지(2026-09-09): 사람·에이전트 아바타 이미지 + 편집 줄 + 에이전트 소개 */
 .msgr-av.img { overflow: hidden; padding: 0; }
-.msgr-av.img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.msgr-av.img img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; } /* 사진 아바타도 글자 아바타처럼 — 누름이 감싼 행으로 가고, 이미지 끌기가 클릭을 가로채지 않게(D19, WebKit 이미지 끌기) */
 .msgr-avatar-edit { display: flex; align-items: center; gap: 12px; }
 .msgr-avatar-edit .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .msgr-avatar-edit .note { flex-basis: 100%; }
