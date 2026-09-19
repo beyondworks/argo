@@ -100,7 +100,7 @@ test('폰 홈 조직 전환 버튼: min-width:0 — 배지가 붙어도 자리 �
 
 test('u: 구독 백오프: 거절(CHANNEL_ERROR)되면 채널을 걷고 1분→2분→…→최대 10분 뒤에만 다시 붙는다, 붙으면 간격 초기화, 멈추면 예약·채널 모두 걷힌다', () => {
   const made = []; const removed = []; const timers = [];
-  const sb = { removeChannel: (c) => { removed.push(c.n); return Promise.resolve('ok'); } };
+  const sb = { realtime: { isConnected: () => true }, removeChannel: (c) => { removed.push(c.n); return Promise.resolve('ok'); } };
   const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
   const stop = joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: (id) => { if (id) timers[id - 1].cleared = true; } });
   assert.equal(made.length, 1, '처음엔 바로 붙는다');
@@ -124,13 +124,21 @@ test('u: 구독 백오프: 거절(CHANNEL_ERROR)되면 채널을 걷고 1분→2
 // 60초를 기다렸다 — 창을 다시 열어 소켓이 1초 만에 붙은 뒤에도 u:만 61초 뒤 복귀, 그 사이 비공개 방 글(1009)의 알림이 사라졌다.
 test('u: 구독: 소켓이 끊겨 난 오류(서버 응답 없음)는 채널을 걷지 않고 기다리지도 않는다 — 재연결 뒤 realtime-js가 같은 채널을 바로 다시 붙인다', () => {
   const made = []; const removed = []; const timers = [];
-  const sb = { removeChannel: (c) => { removed.push(c.n); return Promise.resolve('ok'); } };
+  let connected = false;
+  const sb = { realtime: { isConnected: () => connected }, removeChannel: (c) => { removed.push(c.n); return Promise.resolve('ok'); } };
   const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
   joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: () => {} });
   made[0].cb('SUBSCRIBED');
-  made[0].cb('CHANNEL_ERROR', new Error('heartbeat timeout')); made[0].cb('CLOSED'); // 소켓 끊김 — realtime-js normalizeChannelError(원인 없음)
+  class CloseEventLike extends Event { constructor() { super('close'); this.code = 1006; this.reason = ''; } }
+  connected = true;
+  made[0].cb('CHANNEL_ERROR', new Error('transport closed', { cause: new CloseEventLike() })); // TCP 1006 — cause가 있어도 CloseEvent는 거절이 아니다
+  made[0].cb('CHANNEL_ERROR', new Error('heartbeat timeout')); made[0].cb('CLOSED'); // 하트비트 시간 초과 — cause 없음
   assert.deepEqual([removed.length, timers.length, made.length], [0, 0, 1], '걷지 않고, 재시도 예약도 없다(가입 거절이 아니다)');
   made[0].cb('SUBSCRIBED'); // 재연결 뒤 realtime-js의 재가입
+  connected = false;
   made[0].cb('CHANNEL_ERROR', new Error('Unauthorized', { cause: { reason: 'Unauthorized' } }));
-  assert.deepEqual([removed, timers.map((x) => x.ms)], [[0], [60_000]], '연결된 상태의 가입 거절(서버 응답 = cause)은 여전히 걷고 1분 뒤');
+  assert.deepEqual([removed.length, timers.length], [0, 0], '소켓이 끊긴 상태의 {reason} 오류도 가입 거절로 확정하지 않는다');
+  connected = true;
+  made[0].cb('CHANNEL_ERROR', new Error('Unauthorized', { cause: { reason: 'Unauthorized' } }));
+  assert.deepEqual([removed, timers.map((x) => x.ms)], [[0], [60_000]], '연결된 상태의 가입 거절(평범한 {reason} 객체)은 여전히 걷고 1분 뒤');
 });
