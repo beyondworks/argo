@@ -169,6 +169,16 @@ await scenario(1280, 'public-channel-people', async (p) => {
   assert.ok((await p.evaluate(() => window.__dmInviteFixture.tables.msgr_channel_members.some((r) => r.channel_id === 'general' && r.member_id === 'user-me'))), '다른 참여 행을 덮어쓰지 않는다');
 });
 
+// D35. 상대가 모두 빠진 대화 — 새 1:1·에이전트 DM과 같은 이름으로 보이지 않는다(정비사 원장 P6-3: 조직 제거·재가입 뒤 옛 1:1과 그룹이 "비(동료)"·"민준"으로 남음)
+await scenario(1280, 'vacated-dm-label', async (p) => {
+  const rail = await p.locator('[data-sec="dms"]').innerText();
+  assert.ok(rail.includes('Gone Person · 나간 대화'), `상대가 빠진 1:1에 표지 (실제: ${rail.replace(/\s+/g, ' ')})`);
+  assert.ok(rail.includes('Gone Person, Fixture Agent · 나간 대화'), '사람이 빠지고 에이전트만 남은 그룹도 에이전트 DM 이름으로 보이지 않는다');
+  assert.ok(/Org Colleague(?! · 나간)/.test(rail), '상대가 있는 1:1에는 표지가 없다');
+  await p.locator('[data-sec="dms"] button.item', { hasText: 'Gone Person · 나간 대화' }).first().click(); await p.waitForTimeout(500);
+  assert.match(await p.locator('.msgr-top').first().innerText(), /나간 대화/, '열어도 제목에 표지가 있다');
+}, '?vacated=1');
+
 // 11. 참여하지 않은 공개 채널을 열면 미리보기 — 입력창 자리에 참여 버튼, 참여하면 목록에 들어온다(유건 검수 2026-09-16: 알림함에서 열면 안내 화면이 떴다)
 await scenario(1280, 'unjoined-preview', async (p) => {
   const rail = () => p.locator('[data-sec="channels"]').innerText();

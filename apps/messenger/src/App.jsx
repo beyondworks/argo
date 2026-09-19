@@ -1170,6 +1170,10 @@ function Shell({ session }) {
     const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
     if (dmIsGroup(c)) { const names = [...crewsIn.map((m) => crewOf(m.member_id)?.display_name), ...people.map((m) => nameOfUser(m.member_id))].filter(Boolean).join(', ');
       return c._personal_group && people.length <= 1 ? `${names || base} · ${t('dm.group.tag')}` : (names || base); } // 한 명만 남은 개인 그룹이 같은 이름의 1:1과 구별되게(검수 MEDIUM-1) // 그룹 대화 = 멤버 이름 나열(판정 정본 dmIsGroup — 검수 HIGH-2)
+    // 상대가 모두 빠진 대화(조직 제거·나가기 뒤) — 새 1:1·에이전트 DM과 같은 이름으로 보이지 않게 표지를 단다(D35). 멤버를 불러오기 전에는 판정하지 않는다(깜빡임 방지).
+    // 크루 없는 방: 이름이 크루 이름이 아니면(해제 sweep으로 빠진 크루 1:1은 종전대로). 크루만 남은 방: 이름이 그룹 모양("a, b")일 때만(크루 이름 변경과 구별).
+    const vacated = dmMembers[c.id] !== undefined && !other && !c._personal_group && (crew ? base.includes(', ') : !crewName);
+    if (vacated) return `${base} · ${t('dm.vacated.tag')}`;
     return [crewName, other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · ') || base; };
   const targetFavs = targetPrefs.filter((p) => p.pinned).flatMap((p) => {
     const target = p.target_kind === 'crew' ? crews.find((c) => c.id === p.target_id) : members.find((m) => m.user_id === p.target_id);
