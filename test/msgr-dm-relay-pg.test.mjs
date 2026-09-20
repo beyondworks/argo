@@ -176,6 +176,36 @@ test('crew-to-crew relay stops before revisiting an agent, while a user instruct
  const next=row(relayOf(fresh,OTHER_CREW)); assert.equal(next.meta.relay.depth,1,'a human instruction resets the chain'); assert.notEqual(next.meta.relay.chain_id,relay.meta.relay.chain_id);
 });
 
+test('a crew initiating a handoff is included in the chain and cannot receive the return hop',{skip},()=>{
+ const rootId=post('Ask Mine to delegate');
+ const hand=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${DM}','crew','${CREW}','Delegate research',${rootId},${rootId},'${mention(OTHER_CREW)}','{"disposition":"handoff"}') returning id`));
+ const relay=row(relayOf(hand,OTHER_CREW));
+ const back=last(asUser(U.member,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${relay.channel_id}','crew','${OTHER_CREW}','Return to Mine',${relay.id},${relay.id},'${mention(CREW)}','{"disposition":"handoff"}') returning id`));
+ assert.equal(relayOf(back,CREW),'','A → B → A must stop before the first return to A');
+ assert.deepEqual(relay.meta.relay.visited_crew_ids,[CREW,OTHER_CREW]);
+ assert.equal(row(sql(`select id from msgr_messages where client_msg_id='relaycap:${back}'`)).meta.relay_cycle,true);
+ assert.equal(noteOf(back),'','no delivery note when the only target was blocked');
+});
+
+for (const cycleFirst of [true,false]) test(`mixed cyclic and valid recipients preserve delivery and truthful notes (cycle first: ${cycleFirst})`,{skip},()=>{
+ const rootId=post('Start mixed route',mention(OTHER_CREW));
+ const first=row(relayOf(rootId,OTHER_CREW));
+ const forward=last(asUser(U.member,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${first.channel_id}','crew','${OTHER_CREW}','Next agent',${first.id},${first.id},'${mention(CREW)}','{"disposition":"handoff"}') returning id`));
+ const relay=row(relayOf(forward,CREW));
+ const targets=(cycleFirst?[OTHER_CREW,SECOND]:[SECOND,OTHER_CREW]).map(id=>({kind:'crew',id,role:'to'}));
+ const hand=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${relay.channel_id}','crew','${CREW}','Try both targets',${relay.id},${relay.id},'${JSON.stringify(targets)}','{"disposition":"handoff"}') returning id`));
+ assert.equal(relayOf(hand,OTHER_CREW),'','cyclic recipient is blocked');
+ assert.ok(relayOf(hand,SECOND),'the independent valid recipient receives the handoff');
+ assert.ok(noteOf(hand),'valid delivery always produces its notice');
+ const note=row(noteOf(hand));
+ assert.deepEqual(note.meta.relay_to.map(x=>x.crew_id),[SECOND]);
+ assert.match(note.body,/Second에게 전달했습니다/);
+ assert.doesNotMatch(note.body,/Theirs/);
+ const cap=row(sql(`select id from msgr_messages where client_msg_id='relaycap:${hand}'`));
+ assert.equal(cap.meta.relay_cycle,true);
+ assert.equal(row(relayOf(hand,SECOND)).meta.relay.depth,3);
+});
+
 test('relay permits five distinct hops and stops a sixth before delivery',{skip},()=>{
  const extras=['Third','Fourth','Fifth','Sixth','Seventh'].map((name,i)=>last(asUser(U.owner,`insert into msgr_crews(org_id,owner_user_id,ws_id,slug,display_name,allow,status,last_seen_at,dm_delivery_protocol,work_protocol) values('${ORG}','${U.owner}','lean','route-${i}','${name}','all','active',now(),1,1) returning id`)));
  const route=[OTHER_CREW,...extras];
