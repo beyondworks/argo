@@ -59,8 +59,34 @@ export async function POST(req, { params }) {
   const cs = await csrfDenied(req); if (cs) return cs;
   const lang = await requestLang();
   // 기본 'owner' — 조직 정책 테이블(부록 H-0) 전까지는 가장 좁게 시작하고 크루 시트/카드에서 연다(유건 결정 2026-09-03)
-  const { orgId, slug, allow = 'owner', allowUsers = [] } = await req.json().catch(() => ({}));
+  const { orgId, slug, allow = 'owner', allowUsers = [], activate = false, slugs = [] } = await req.json().catch(() => ({}));
   const users = Array.isArray(allowUsers) ? allowUsers : [];
+  const wanted = Array.isArray(slugs) ? [...new Set(slugs.filter((v) => typeof v === 'string' && v))] : [];
+  if (activate) {
+    if (!UUID.test(String(orgId ?? '')) || !wanted.length) return apiError('msgr_bad_request', lang);
+    const agents = await listAgents(ws);
+    const bySlug = new Map(agents.map((agent) => [agent.slug, agent]));
+    if (wanted.some((wantedSlug) => !bySlug.has(wantedSlug))) return apiError('msgr_crew_not_found', lang);
+    const c = await sessionClient().catch(() => null);
+    if (!c) return authError('auth_required', lang);
+    const existing = new Map((await myRegistrations(c, ws)).filter((r) => r.org_id === orgId).map((r) => [r.slug, r]));
+    for (const wantedSlug of wanted) {
+      const prior = existing.get(wantedSlug);
+      if (prior?.status === 'active') continue;
+      const agent = bySlug.get(wantedSlug);
+      const base = { display_name: agent.name || wantedSlug, role_text: agent.role || null, hosting: process.env.ARGO_TENANT_OWNER ? 'resident' : 'local' };
+      if (prior) {
+        const { error } = await c.client.from('msgr_crews').update({ ...base, status: 'active' }).eq('id', prior.id);
+        if (error) return upstream('POST activate update', error, lang);
+      } else {
+        const row = { org_id: orgId, owner_user_id: c.uid, ws_id: ws, slug: wantedSlug, ...base, status: 'active', allow: 'owner', allow_users: [] };
+        const { error } = await c.client.from('msgr_crews').insert(row);
+        if (error && error.code !== '23505') return upstream('POST activate insert', error, lang);
+      }
+    }
+    const crews = await syncEnabled(ws, c);
+    return Response.json({ ok: true, crews });
+  }
   if (!UUID.test(String(orgId ?? '')) || !slug || !ALLOW.has(allow) || !users.every((u) => UUID.test(String(u)))) return apiError('msgr_bad_request', lang);
   const agent = (await listAgents(ws)).find((a) => a.slug === slug);
   if (!agent) return apiError('msgr_crew_not_found', lang);

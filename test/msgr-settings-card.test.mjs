@@ -50,16 +50,34 @@ test('채널 시트 닫기 효과의 의존성은 [chId]뿐 — tick이 섞이�
 });
 
 // ── H-0 조직 정책: 잠긴 허용 범위는 카드·시트에서 선택 불가 + 정책 안내, 정책 카드는 관리자만 저장 ──
-test('H-0: 라우트가 조직별 policy를 싣고, 카드는 잠금이면 라디오를 끄고 안내를 보인다', () => {
+test('H-0: 라우트가 조직별 policy를 싣고, 카드는 첫 연결만 시작하며 범위·해제는 메신저에서 관리한다', () => {
   assert.match(route, /from\('msgr_org_policies'\)\.select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트가 정책을 조회하지 않는다');
   assert.match(route, /o\.policy = /, '조직에 policy가 붙지 않는다');
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
-  // 2026-09-08 유건 지시: 파견·허용 범위·해제는 메신저에서 — 아르고 카드는 연결 상태 + 읽기 전용 목록만(등록·해제·라디오 없음)
-  assert.doesNotMatch(src, /register\(|unregister\(|role="radio"|method: 'DELETE'/, '아르고 카드에 등록·해제·허용 범위 조작이 남아 있다');
+  assert.match(src, /async function activateOrg\(\)/, '첫 연결을 시작하는 명시적 동작이 없다');
+  assert.match(src, /const missing = agents\.filter\(\(a\) => !regOf\(a\.slug\)\)/, '이미 연결된 크루까지 다시 연결하려 한다');
+  assert.match(src, /api\(`\/api\/companies\/\$\{ws\}\/msgr`, \{ orgId, activate: true, slugs: missing\.map\(\(agent\) => agent\.slug\) \}\)/, '첫 연결이 전용 활성화 요청을 쓰지 않는다');
+  assert.match(route, /if \(activate\) \{[\s\S]*?prior\?\.status === 'active'\) continue/, '활성화 요청이 이미 활성인 크루를 건너뛰지 않는다');
+  assert.match(route, /\.update\(\{ \.\.\.base, status: 'active' \}\)/, '되살린 크루가 기존 허용 범위를 보존하지 않는다');
+  assert.match(route, /\.insert\(row\)/, '없는 크루만 새 기본 허용 범위로 만들지 않는다');
+  assert.doesNotMatch(src, /register\(|unregister\(|role="radio"|method: 'DELETE'/, '아르고 카드에 해제·허용 범위 조작이 남아 있다');
+  assert.match(src, /window\.dispatchEvent\(new Event\('argo:refresh'\)\)/, '연결 뒤 알림 카드가 상태를 갱신하지 않는다');
   assert.match(src, /\{reg \? `\$\{t\('settings\.msgr\.registered'\)\} · \$\{t\(`settings\.msgr\.allow\.\$\{reg\.allow\}`\)\}` : off\}/, '행은 파견 상태·허용 범위를 읽기 전용으로 보인다');
   assert.match(src, /const off = t\(rowOf\(a\.slug\) \? 'settings\.msgr\.notRegistered' : 'settings\.msgr\.notInMessenger'\)/, "행이 없으면 '파견 해제됨'이 아니라 '메신저에 아직 없음'(유건 제보 2026-09-17)");
   assert.match(src, /t\('settings\.msgr\.manage'\)/, '메신저에서 관리한다는 안내가 없다');
   assert.match(i18n, /'settings\.msgr\.allow\.locked': \['[^']+', '[^']+'\]/, 'settings.msgr.allow.locked ko/en');
+});
+
+test('연결 상태는 선택한 조직 기준으로 명시되고, 전체 크루 목록은 이름·역할·상태를 함께 보인다', () => {
+  const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
+  assert.match(src, /settings\.msgr\.connection\.title/, '조직 연결 상태의 명확한 제목이 없다');
+  assert.match(src, /settings\.msgr\.connection\.channelNote/, '조직 연결 수와 채널 참여를 구분하는 안내가 없다');
+  assert.match(src, /settings\.msgr\.roster\.title/, '전체 크루 목록의 제목이 없다');
+  assert.match(src, /agents\.map\(\(a\) => \{ const reg = regOf\(a\.slug\);/, '예외만이 아니라 전체 크루를 보여 주지 않는다');
+  assert.match(src, /<span className="name">\{a\.name\}<\/span><span className="role">\{a\.role\}<\/span>/, '이름과 역할이 한 행 안에 함께 없다');
+  for (const k of ['settings.msgr.connection.title', 'settings.msgr.connection.empty', 'settings.msgr.connection.partial', 'settings.msgr.connection.channelNote', 'settings.msgr.connection.activate', 'settings.msgr.connection.addMissing', 'settings.msgr.connection.connected', 'settings.msgr.connection.notConnected', 'settings.msgr.connection.statusHelp', 'settings.msgr.roster.title', 'settings.msgr.roster.help', 'settings.msgr.err.activate']) {
+    assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
 });
 
 test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 시트는 잠금에 비활성, 정책 카드는 관리자만 저장·비관리자는 안내', () => {

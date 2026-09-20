@@ -816,11 +816,10 @@ function NotifyChannelsCard({ ws }) {
 }
 
 function MsgrCard({ ws, agents }) {
-  // 2026-09-08 유건 지시: 파견·허용 범위·해제는 팀 메신저에서. 이 카드는 "아르고 ↔ 메신저 연결" 상태만 보여 준다(텔레그램·슬랙 카드와 같은 모양).
-  // 아르고 로그인 = 연결: 브리지가 내 크루 전부를 조직에 기본 파견하고, 여기는 어느 조직에 몇 명이 파견 중인지 읽기 전용으로 보인다.
   const { t } = useLang();
   const [st, setSt] = useState(null); // { signedIn, orgs:[{id,name,role}], crews:[등록 행] }
   const [orgId, setOrgId] = useState('');
+  const [activating, setActivating] = useState(false);
   const [err, setErr] = useState('');
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
@@ -828,19 +827,30 @@ function MsgrCard({ ws, agents }) {
   useEffect(() => { load(); }, [load]);
   const regOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug && r.status === 'active');
   const rowOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug); // 행이 없으면 해제가 아니라 메신저에 올라간 적 없음(유건 제보 2026-09-17: 한 번도 안 올라간 크루가 '파견 해제됨'으로 보였다)
-  const bridgeOn = !!st?.crews?.some((r) => r.status === 'active');
   const regCount = agents.filter((a) => regOf(a.slug)).length;
+  const missing = agents.filter((a) => !regOf(a.slug));
   const org = st?.orgs?.find((o) => o.id === orgId);
   const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
+
+  async function activateOrg() {
+    if (!orgId || !missing.length || activating) return;
+    setActivating(true); setErr('');
+    try {
+      await api(`/api/companies/${ws}/msgr`, { orgId, activate: true, slugs: missing.map((agent) => agent.slug) });
+      await load();
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) {
+      setErr(e.message || t('settings.msgr.err.activate'));
+    } finally { setActivating(false); }
+  }
+
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span className="card-title" style={{ minWidth: 0 }}>{t('settings.msgr.title')}</span>
-        {st?.signedIn && (
-          <span className="chip" title={bridgeOn ? t('settings.msgr.bridge.on') : t('settings.msgr.bridge.off')}>
-            {bridgeOn ? <><span className="dot" style={{ background: 'var(--ok)' }} />{t('settings.msgr.bridge.onShort')}</> : t('settings.msgr.bridge.offShort')}
-          </span>
-        )}
+        {st?.signedIn && <span className="chip" title={t('settings.msgr.connection.statusHelp', { n: regCount })}>
+          <span className="dot" style={{ background: regCount ? 'var(--ok)' : 'var(--border)' }} />{t(regCount ? 'settings.msgr.connection.connected' : 'settings.msgr.connection.notConnected')}
+        </span>}
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.downloadHelp')}</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -863,32 +873,41 @@ function MsgrCard({ ws, agents }) {
           </label>
           <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('settings.msgr.count', { n: regCount, total: agents.length })}</span>
         </div>
-        {/* 2026-09-14 유건 결정: 크루 전원이 자동 파견되므로 13줄 "파견 중 · 나만"은 정보가 없다 — 조직별 요약 한 줄 + 예외(미파견·기본 범위 아님)만 펼친다 */}
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
-        {!!agents.length && (() => {
-          const exceptions = agents.filter((a) => { const reg = regOf(a.slug); return !reg || reg.allow !== 'owner'; });
-          return (
-            <details className="msgr-fine" open={exceptions.length > 0}>
-              <summary><span className="microlabel">{t('settings.msgr.exceptions', { n: exceptions.length })}</span><span>{t('settings.msgr.exceptions.help')}</span></summary>
-              {!exceptions.length && <p>{t('settings.msgr.exceptions.none')}</p>}
-              {!!exceptions.length && (
-                <ul className="msgr-crews" role="list">
-                  {exceptions.map((a) => { const reg = regOf(a.slug); const off = t(rowOf(a.slug) ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); return (
-                    <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
-                      <div className="row">
-                        <Avatar name={a.name} sm />
-                        <span className="who" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}><span className="name">{a.name}</span><span className="role">{a.role}</span></span>
-                        <span className="state" title={reg ? t('settings.msgr.registered') : off}>
-                          <span className="dot" aria-hidden="true" />{reg ? `${t('settings.msgr.registered')} · ${t(`settings.msgr.allow.${reg.allow}`)}` : off}
-                        </span>
-                      </div>
-                    </li>
-                  ); })}
-                </ul>
-              )}
-            </details>
-          );
-        })()}
+        {!!agents.length && <>
+          <section className="msgr-connection" aria-labelledby="msgr-connection-title">
+            <div>
+              <span className="microlabel" id="msgr-connection-title">{t('settings.msgr.connection.title')}</span>
+              <p>{regCount ? t('settings.msgr.connection.partial', { n: regCount, total: agents.length }) : t('settings.msgr.connection.empty')}</p>
+              <p className="subnote">{t('settings.msgr.connection.channelNote')}</p>
+            </div>
+            {!!missing.length && <button type="button" className="btn btn-primary sm" disabled={activating} onClick={activateOrg}>
+              {activating ? <Spinner size={12} /> : t(regCount ? 'settings.msgr.connection.addMissing' : 'settings.msgr.connection.activate', { n: missing.length })}
+            </button>}
+          </section>
+          <section className="msgr-roster" aria-labelledby="msgr-roster-title">
+            <div className="msgr-roster-head">
+              <div>
+                <span className="microlabel" id="msgr-roster-title">{t('settings.msgr.roster.title')}</span>
+                <p>{t('settings.msgr.roster.help')}</p>
+              </div>
+              <span className="chip">{t('settings.msgr.count', { n: regCount, total: agents.length })}</span>
+            </div>
+            <ul className="msgr-crews" role="list">
+              {agents.map((a) => { const reg = regOf(a.slug); const off = t(rowOf(a.slug) ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); return (
+                <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
+                  <div className="row">
+                    <Avatar name={a.name} sm />
+                    <span className="who"><span className="name">{a.name}</span><span className="role">{a.role}</span></span>
+                    <span className="state" title={reg ? t('settings.msgr.registered') : off}>
+                      <span className="dot" aria-hidden="true" />{reg ? `${t('settings.msgr.registered')} · ${t(`settings.msgr.allow.${reg.allow}`)}` : off}
+                    </span>
+                  </div>
+                </li>
+              ); })}
+            </ul>
+          </section>
+        </>}
         <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.manage')}</p>
         <details className="msgr-fine">
           <summary><span className="microlabel">{t('settings.msgr.policy')}</span><span>{t('settings.msgr.fine.summary')}</span></summary>
