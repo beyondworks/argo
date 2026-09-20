@@ -517,6 +517,8 @@
 .msgr-node-cmd code { display: block; font: 12px/1.6 var(--mono); word-break: break-all; user-select: all; white-space: pre-wrap; } /* 에이전트 설정은 두 줄(URL·토큰) */
 .msgr-node-cmd .acts { display: flex; gap: 6px; }
 .msgr-node-cmd .note { margin: 0; }
+.msgr-remote-add { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.msgr-remote-add .msgr-input.inline { flex: 1 1 190px; min-width: 160px; }
 .msgr-localimport { display: grid; gap: 12px; padding: 14px; margin: 10px 0; border: 1px solid var(--border); border-radius: 14px; background: var(--card-2); }
 .msgr-localimport-head { display: grid; gap: 3px; font-size: 13px; line-height: 1.5; }
 .msgr-localimport-head > span:last-child { color: var(--fg-2); }
