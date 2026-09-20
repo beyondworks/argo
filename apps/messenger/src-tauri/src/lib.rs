@@ -4,11 +4,13 @@
 // 열어 진짜 브라우저를 그리로 돌려받는다. Argo 앱의 /api/auth/pair·/auth/paired와 같은 계약을 셸 안에 담은 것이다 —
 // 메신저는 Next 서버가 없고(argo.ceo는 랜딩), 셀프호스트에도 서버 의존이 0이어야 한다.
 #[cfg(desktop)]
-mod pair;
-#[cfg(desktop)]
 mod agents; // 외부 에이전트 원클릭 연결(헤르메스·오픈클로 플러그인 설치·설정·게이트웨이)
 #[cfg(target_os = "macos")]
 mod notify_mac; // OS 알림 — UNUserNotificationCenter 직결(플러그인의 폐기 API 경로 대체)
+#[cfg(target_os = "macos")]
+mod native_realtime;
+#[cfg(desktop)]
+mod pair;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -25,13 +27,31 @@ pub fn run() {
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_web_auth::init());
     #[cfg(target_os = "macos")]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list,
-        notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send, notify_mac::notify_take_pending
-    ]);
-    #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder
-        .invoke_handler(tauri::generate_handler![pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list]);
+        .manage(native_realtime::NativeRealtimeState::default())
+        .invoke_handler(tauri::generate_handler![
+            pair::pair_start,
+            pair::pair_claim,
+            agents::agent_connect,
+            agents::agent_list,
+            notify_mac::notify_status,
+            notify_mac::notify_request,
+            notify_mac::notify_send,
+            notify_mac::native_notification_pending_tap,
+            native_realtime::native_realtime_start,
+            native_realtime::native_realtime_update,
+            native_realtime::native_realtime_stop,
+            native_realtime::native_realtime_snapshot,
+            native_realtime::native_realtime_current_session,
+            native_realtime::native_notify_claim_and_send
+        ]);
+    #[cfg(all(desktop, not(target_os = "macos")))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        pair::pair_start,
+        pair::pair_claim,
+        agents::agent_connect,
+        agents::agent_list
+    ]);
     builder
         // macOS: 창 닫기(빨간 버튼·cmd+W) = 앱 가리기 — Argo 본체·Claude Desktop과 같은 관례(유건 요청 2026-09-15).
         // NSApp hide라 독 아이콘이 남고, 독 클릭이 OS 표준 unhide로 창을 복원한다(별도 Reopen 코드 불요).

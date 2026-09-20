@@ -35,7 +35,6 @@ import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport } from './composer-delivery.mjs';
 import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
-import { notifyTag, notifyChannel } from './notify-target.mjs'; // 배너 클릭 → 그 방(D52)
 import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceKey, joinWithBackoff } from './cross-space.mjs'; // 다른 공간의 새 글 — 안 읽음 합계·알림 판단
 import { notifyPermission, requestNotifyPermission, askNotifyOnce, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
@@ -45,6 +44,7 @@ import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
+import { createNativeSessionApplier, mountNativeRealtime, mountNativeNotificationTaps, updateNativeRealtimeContext } from './native-realtime.mjs';
 import { createSessionRecovery } from './session-recovery.mjs';
 import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -149,7 +149,7 @@ function Body({ text }) {
 }
 
 export default function App() {
-  const { t } = useT();
+  const { t, lang } = useT();
   const authKey = authStorageKey(SB_URL);
   const [session, setSession] = useState(undefined);
   const [sessionWaiting, setSessionWaiting] = useState(false);
@@ -206,9 +206,11 @@ export default function App() {
   useEffect(() => mountMobileAuth(), []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
-    const recovery = createSessionRecovery({ auth: supabase.auth, cleanupState: authCleanupState(authKey), hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting,
+    const native = mountNativeRealtime({ enabled: import.meta.env.TAURI_ENV_PLATFORM === 'darwin' && isDesktopTauri(), auth: supabase.auth, supabaseUrl: SB_URL, anonKey: SB_ANON, lang }).catch(() => null);
+    const sessionApplier = createNativeSessionApplier({ native, applySession });
+    const recovery = createSessionRecovery({ auth: supabase.auth, cleanupState: authCleanupState(authKey), hasStoredSession: () => hasStoredAuthSession(authKey), applySession: sessionApplier.apply, setWaiting: setSessionWaiting,
       onCleanupPending: async () => {
-        await applySession(null);
+        await sessionApplier.apply(null);
         await new Promise((resolve, reject) => {
           cleanupCommitWaiters.current.push({ resolve, reject });
           setSessionWaiting(true);
@@ -220,8 +222,8 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => recovery.onAuthStateChange(event, next));
     recovery.start();
     const stopResume = isMobilePlatform ? observeMobileResume(() => recovery.retryNow()) : () => {};
-    return () => { if (recoveryRef.current === recovery) recoveryRef.current = null; recovery.stop(); stopResume(); sub.subscription.unsubscribe(); };
-  }, []);
+    return () => { sessionApplier.dispose(); if (recoveryRef.current === recovery) recoveryRef.current = null; recovery.stop(); stopResume(); sub.subscription.unsubscribe(); native.then((runtime) => runtime?.stop()); };
+  }, [applySession, authKey, lang]);
   const restartSignIn = async () => {
     if (signingOut) return;
     logoutPending.current = true; setSigningOut(true);
@@ -459,6 +461,12 @@ function Shell({ session }) {
   const [pushCard, setPushCard] = useState(null); // 전경 푸시 카드(폰) — 다른 채널 메시지만, 탭하면 그 채널로(유건 2026-09-12)
   const [navTo, setNavTo] = useState(null); // 알림 탭·카드에서 온 "이 채널 열기" 요청 — 목록에 있으면 열고, 다른 조직이면 조직을 바꾼 뒤 연다. 콜드 스타트 때 chId만 세우면 channel이 없어 Channel이 죽었다(시뮬 재현 2026-09-12: 'undefined is not an object (evaluating channel.id)')
   useEffect(() => {
+    let disposed = false; let detach = () => {};
+    mountNativeNotificationTaps({ enabled: import.meta.env.TAURI_ENV_PLATFORM === 'darwin' && isDesktopTauri(), onTap: ({ channelId }) => { if (!disposed) setNavTo(channelId); } })
+      .then((stop) => { if (disposed) stop(); else detach = stop; }).catch(() => {});
+    return () => { disposed = true; detach(); };
+  }, []);
+  useEffect(() => {
     if (!navTo) return;
     if (loadedOrg.current === orgId && channels.some((c) => c.id === navTo)) { setChId(navTo); setPage('chat'); setRail(false); setSheet(null); setNavTo(null); return; }
     if (!orgs || !orgId) return; // 조직·목록 로드 전 — 기다린다
@@ -471,15 +479,6 @@ function Shell({ session }) {
     }).catch(() => { if (on) setNavTo(null); });
     return () => { on = false; };
   }, [navTo, channels, orgs, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { // 데스크톱 배너 클릭(D52) — 네이티브가 창을 되살리고 알림 식별자를 보낸다. 그 방으로(다른 조직이면 조직 전환 뒤) 연다
-    if (!uid || !isDesktopTauri()) return undefined;
-    let off = () => {}; let live = true;
-    const go = (id) => { const ch = notifyChannel(id); pushDiag('notify', `click ${ch ?? '-'}`); if (ch) setNavTo(ch); };
-    const take = async () => (await import('@tauri-apps/api/core')).invoke('notify_take_pending').catch(() => null); // 콜드 스타트 클릭(듣기 전에 온 것) — 한 번 가져가 비운다
-    import('@tauri-apps/api/event').then(({ listen }) => listen('msgr-notify-click', ({ payload }) => { take(); go(payload); })) // 켜져 있을 때 받은 클릭도 보관분을 비워, 재로그인 때 옛 클릭으로 다시 이동하지 않게
-      .then((u) => { if (live) { off = u; take().then((id) => { if (live && id) go(id); }); } else u(); }).catch(() => {});
-    return () => { live = false; off(); };
-  }, [uid]);
   useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
@@ -917,6 +916,7 @@ function Shell({ session }) {
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
   const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet });
   notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet };
+  useEffect(() => { updateNativeRealtimeContext({ lang, sound: getSound(), currentChannel: page === 'chat' ? chId : null, mutedChannelIds: [...muted], orgIds: (orgs ?? []).map((o) => o.id), quietFrom: quiet?.from ?? null, quietTo: quiet?.to ?? null }); }, [lang, page, chId, muted, quiet, orgs]);
   const hereKey = spaceKey(isPersonal ? null : orgId);
   const hereCount = useMemo(() => { let n = 0; let mention = 0; for (const [id, u] of Object.entries(unread)) if (!muted.has(id)) { n += u?.n || 0; mention += u?.mention || 0; } return { n, mention }; }, [unread, muted]);
   const spaceCount = (key) => (key === hereKey ? hereCount : spaceTotals[key]) ?? { n: 0, mention: 0 }; // 조직 전환기·개인 공간 입구의 숫자
@@ -924,7 +924,7 @@ function Shell({ session }) {
   const SpaceBadge = ({ c }) => (c?.n > 0 ? <span className={`msgr-badge${c.mention ? ' mark' : ''}`}>{c.n > 99 ? '99+' : c.n}</span> : null);
   useEffect(() => { setBadge(badgeTotal({ current: unread, currentKey: spaceKey(isPersonal ? null : orgId), muted, totals: spaceTotals })); }, [unread, muted, spaceTotals, orgId, isPersonal]); // 독 아이콘 숫자 = 모든 공간의 안 읽은 합계(음소거 채널 제외 — 레일 배지와 같은 규칙). 보고 있는 공간은 채널별 셈이 최신
   useEffect(() => { if (uid) askNotifyOnce().catch(() => {}); }, [uid]); // 로그인 뒤 한 번 OS 권한 요청(미결정일 때만) — 종전엔 설정 버튼을 눌러야만 물었고, 맥 플러그인은 늘 '허용'이라 버튼조차 안 보였다
-  const osNotify = (title, body, tag) => { sendNotify(title, body, tag); }; // Tauri 플러그인·웹 Notification 분기는 notify.js
+  const osNotify = (title, body, tag, channelId) => { sendNotify(title, body, tag, channelId); }; // Tauri 플러그인·웹 Notification 분기는 notify.js
   const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return !document.hasFocus() || r.page !== 'chat' || r.chId !== channelId; }; // 초점 기준 — 다른 창 뒤에 있어도 visibilityState는 'visible'이라 같은 채널을 띄워 두면 알림이 전부 억제됐다(유건 제보 2026-09-12) // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
     const r = notifyRef.current;
@@ -932,7 +932,7 @@ function Shell({ session }) {
     const mentioned = Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid);
     if (!mentioned || !shouldNotify(payload.channel_id)) return;
     const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
-    osNotify(t('notify.mention', { name: payload.author_name || who?.display_name || '?', channel: payload.channel_name ?? ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), notifyTag('m', payload.id, payload.channel_id)); return true; // 멘션도 본문 발췌. 이름은 채운 payload(readableForNotify — 다른 공간 글) 우선
+    osNotify(t('notify.mention', { name: payload.author_name || who?.display_name || '?', channel: payload.channel_name ?? ch?.name ?? '' }), String(payload.body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140), `m:${payload.id}`, payload.channel_id); return true; // 멘션도 본문 발췌. 이름은 채운 payload(readableForNotify — 다른 공간 글) 우선
   };
   const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
     const r = notifyRef.current;
@@ -945,10 +945,10 @@ function Shell({ session }) {
     const title = (payload.channel_kind ?? ch?.kind) === 'dm' ? (who || '?') : t('notify.message', { name: who || '?', channel: payload.channel_name ?? ch?.name ?? '' });
     const clip = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
     const inline = clip(payload.body);
-    if (inline || 'channel_name' in payload) { osNotify(title, inline || t('notify.attachment'), notifyTag('r', payload.id, payload.channel_id)); return; } // readableForNotify가 이미 읽은 글(본문 없음 = 첨부만)
+    if (inline || 'channel_name' in payload) { osNotify(title, inline || t('notify.attachment'), `r:${payload.id}`, payload.channel_id); return; } // readableForNotify가 이미 읽은 글(본문 없음 = 첨부만)
     supabase.from('msgr_messages').select('body').eq('id', payload.id).maybeSingle()
-      .then(({ data }) => osNotify(title, clip(data?.body) || t('notify.attachment'), notifyTag('r', payload.id, payload.channel_id)))
-      .catch(() => osNotify(title, '', notifyTag('r', payload.id, payload.channel_id))); // 못 읽으면 종전처럼 제목만
+      .then(({ data }) => osNotify(title, clip(data?.body) || t('notify.attachment'), `r:${payload.id}`, payload.channel_id))
+      .catch(() => osNotify(title, '', `r:${payload.id}`, payload.channel_id)); // 못 읽으면 종전처럼 제목만
   };
   // 보고 있는 공간의 새 글 — org:(공개 채널)·u:<나>(비공개 방, 서버 적용 뒤)·dm:<열린 개인 방> 어느 토픽으로 와도 같은 처리. 같은 글이 두 토픽으로 올 수 있어 id로 한 번만.
   const seenMsgRef = useRef(new Set());
@@ -971,7 +971,7 @@ function Shell({ session }) {
     const r = notifyRef.current;
     if (!payload || payload.status !== 'pending' || !r.isAdmin || !shouldNotify(payload.channel_id)) return; // 확정권 정본은 서버 — 관리자에게만 알린다(저위험은 소유자가 카드에서 본다)
     const ch = r.channels.find((c) => c.id === payload.channel_id);
-    osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', notifyTag('a', payload.id, payload.channel_id));
+    osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', `a:${payload.id}`, payload.channel_id);
   };
   const [otherNames, setOtherNames] = useState({}); // 개인 그룹 방의 친구 아닌 구성원(친구의 친구) 이름 — 친구 목록(members)에 섞으면 친구로 보인다
   const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || otherNames[id] || (id ? id.slice(0, 8) : t('user.deleted')); // 작성자 id null = 계정 삭제(FK set null) — 글은 남고 이름만 사라진다
