@@ -64,7 +64,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql', '20260909002000_msgr_profiles_friends.sql', '20260909003000_msgr_message_meta.sql', '20260909004000_msgr_p0_reads_reactions_prefs.sql', '20260909005000_msgr_avatars.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
+    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql', '20260909002000_msgr_profiles_friends.sql', '20260909003000_msgr_message_meta.sql', '20260909004000_msgr_p0_reads_reactions_prefs.sql', '20260909005000_msgr_avatars.sql', '20260920070335_msgr_bot_rename.sql', '20260920071438_msgr_bot_rename_lock.sql', '20260920072631_msgr_bot_set_role.sql', '20260920073108_msgr_bot_role_gate.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -193,6 +193,37 @@ test('회전·폐기: 회전하면 옛 토큰 즉시 무효 · 폐기하면 크�
   for (const call of [`msgr_bot_me('${t2}')`, `msgr_bot_updates('${t2}')`, `msgr_bot_send('${t2}', '${PUB}', 'x')`]) fails(asAnonRaw(`select public.${call}`), /msgr_bot_unauthorized/, call);
   fails(asUserRaw(U.admin, `select public.msgr_bot_rotate('${BOT}')`), /msgr_bot_revoked/, '폐기 뒤 회전');
   assert.equal(sql(`select string_agg(action, ',' order by id) from public.msgr_audit_log where org_id = '${ORG}' and action like 'bot.%'`), 'bot.create,bot.rotate,bot.revoke');
+});
+
+test('이름 변경: 관리자만 · 봇과 크루 표기를 함께 갱신 · 토큰과 연결 상태는 보존 · 감사', { skip }, () => {
+  const fresh = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'hermes', '기존 이름')`)));
+  fails(asUserRaw(U.member, `select public.msgr_bot_rename('${fresh.bot_id}', '다른 이름')`), /msgr_admin_only/, '멤버 변경');
+  fails(asUserRaw(U.admin, `select public.msgr_bot_rename('${fresh.bot_id}', '  ')`), /msgr_bot_name/, '빈 이름');
+  asUser(U.admin, `select public.msgr_bot_rename('${fresh.bot_id}', 'VPS Aesop')`);
+  assert.equal(sql(`select name from public.msgr_bots where id = '${fresh.bot_id}'`), 'VPS Aesop');
+  assert.equal(sql(`select display_name from public.msgr_crews where id = '${fresh.crew_id}'`), 'VPS Aesop');
+  assert.equal(JSON.parse(last(asAnon(`select public.msgr_bot_me('${fresh.token}')`))).name, 'VPS Aesop');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'bot.rename' and target_id = '${fresh.bot_id}'`), '1');
+  sql(`update public.msgr_org_entitlements set ls_status = 'past_due' where org_id = '${ORG}'`);
+  fails(asUserRaw(U.admin, `select public.msgr_bot_rename('${fresh.bot_id}', 'VPS Barnum')`), /msgr_org_locked/, '잠긴 조직 변경');
+  assert.equal(sql(`select name from public.msgr_bots where id = '${fresh.bot_id}'`), 'VPS Aesop');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'bot.rename' and target_id = '${fresh.bot_id}'`), '1');
+  sql(`update public.msgr_org_entitlements set ls_status = null where org_id = '${ORG}'`);
+});
+
+test('직무 변경: 관리자만 · 잠긴 조직에서는 거절 · 감사', { skip }, () => {
+  const fresh = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'hermes', '역할 테스트')`)));
+  fails(asUserRaw(U.member, `select public.msgr_bot_set_role('${fresh.crew_id}', '서비스 개발 팀장')`), /msgr_admin_only/, '멤버 변경');
+  asUser(U.admin, `select public.msgr_bot_set_role('${fresh.crew_id}', '서비스 개발 팀장')`);
+  assert.equal(sql(`select role_text from public.msgr_crews where id = '${fresh.crew_id}'`), '서비스 개발 팀장');
+  fails(asUserRaw(U.admin, `update public.msgr_crews set role_text = '직접 변경' where id = '${fresh.crew_id}'`), /msgr_bot_role_managed/, '직접 변경');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'bot.role' and target_id = '${fresh.bot_id}'`), '1');
+  sql(`update public.msgr_org_entitlements set ls_status = 'past_due' where org_id = '${ORG}'`);
+  fails(asUserRaw(U.admin, `select public.msgr_bot_set_role('${fresh.crew_id}', '코어 개발 팀장')`), /msgr_org_locked/, '잠긴 조직 변경');
+  fails(asUserRaw(U.admin, `update public.msgr_crews set role_text = '직접 변경' where id = '${fresh.crew_id}'`), /msgr_org_locked/, '잠긴 조직 직접 변경');
+  assert.equal(sql(`select role_text from public.msgr_crews where id = '${fresh.crew_id}'`), '서비스 개발 팀장');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'bot.role' and target_id = '${fresh.bot_id}'`), '1');
+  sql(`update public.msgr_org_entitlements set ls_status = null where org_id = '${ORG}'`);
 });
 
 test('기본 파견(20260908140000): 소유자가 파견 해제하면 서버가 채널 멤버를 지우고(모든 채널에서 빠짐) 지시 판정은 inactive, 다시 파견하면 다시 넣어야 한다', { skip }, () => {

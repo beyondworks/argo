@@ -1716,6 +1716,8 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
         {owner && (<section className="msgr-crewprofile">
           <h3>{t('crew.profile')}</h3>
           <AvatarEdit name={crew.display_name} crew url={crew.avatar_url ?? null} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); const url = await uploadAvatar(uid, `crew-${crew.id}`, f); const r = await supabase.from('msgr_crews').update({ avatar_url: url }).eq('id', crew.id).select('id'); setBusy(false); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={async () => { const r = await supabase.from('msgr_crews').update({ avatar_url: null }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
+          <label className="msgr-klabel" htmlFor={`role-${crew.id}`}>{t('crew.role')}</label>
+          <input id={`role-${crew.id}`} className="msgr-input" maxLength={60} defaultValue={crew.role_text ?? ''} placeholder={t('crew.role.ph')} onBlur={async (e) => { const v = e.target.value.trim() || null; if (v === (crew.role_text ?? null)) return; const r = crew.hosting === 'bot' ? await supabase.rpc('msgr_bot_set_role', { bot_crew: crew.id, new_role_text: v }) : await supabase.from('msgr_crews').update({ role_text: v }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
           <label className="msgr-klabel" htmlFor={`bio-${crew.id}`}>{t('crew.bio')}</label>
           <textarea id={`bio-${crew.id}`} className="msgr-input" rows={2} maxLength={300} defaultValue={crew.bio ?? ''} placeholder={t('crew.bio.ph')} onBlur={async (e) => { const v = e.target.value.trim() || null; if (v === (crew.bio ?? null)) return; const r = await supabase.from('msgr_crews').update({ bio: v }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
         </section>)}
@@ -3005,11 +3007,12 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
 
   // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
   //    토큰 원문은 생성·회전 직후 이 화면에만 있고(setup 상태) 저장·로그하지 않는다. 가용성은 마지막 getUpdates(last_seen_at)뿐 — 종료/재시작 버튼 없음(해제 = 토큰 회수).
-  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null);
+  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null); const [renamingBot, setRenamingBot] = useState(null); const [renameName, setRenameName] = useState('');
   const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at, external_id').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
   useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
   const [auto, setAuto] = useState(null); // 원클릭 연결(앱 안에서만): null | { status: 'running'|'done'|'missing'|'failed', results:[{id,name,ok,steps}], reason }
   const [localHermes, setLocalHermes] = useState(null);
+  const [remoteAgentName, setRemoteAgentName] = useState('');
   const [setups, setSetups] = useState([]); // 이번에 만든/회전한 봇들의 설정(이름·두 줄) — 토큰은 화면 상태로만
   const botOf = (kind, extId) => bots.find((b) => !b.revoked_at && b.kind === kind && b.created_by === uid && b.external_id === extId);
   const mineOf = (kind) => bots.find((b) => !b.revoked_at && b.kind === kind && b.created_by === uid);
@@ -3149,14 +3152,23 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
   };
   const addBot = (kind) => kind === 'hermes' && isDesktopTauri() ? openLocalHermes() : connectAll(kind);
   const addAnother = async (kind) => { // 다른 컴퓨터·다른 사람의 에이전트: external_id 없는 봇 하나 + 수동 안내
+    const name = remoteAgentName.trim();
+    if (!name) { onError(t('org.agents.remote.name.required')); return; }
     setBusy(true);
-    try { const made = await mkOrRotate(kind, t('org.agents.name.other', { kind: t(`org.agents.kind.${kind}`) }), null); setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); setAuto(null); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); }
+    try { const made = await mkOrRotate(kind, name, null); setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); setRemoteAgentName(''); setAuto(null); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); }
     catch (e) { onError(String(e?.message ?? e)); } finally { setBusy(false); }
   };
   const rotateBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_rotate', { bot: b.id }); setBusy(false);
     if (r.error) return onError(r.error.message);
     setSetups([{ id: b.id, token: r.data, name: b.name, kind: b.kind }]); setSetup({ id: b.id, token: r.data, kind: b.kind }); onNote(t('org.agents.rotated')); loadBots().catch(() => {}); autoConnect(b.kind, r.data, b);
+  };
+  const renameBot = async (b) => {
+    const name = renameName.trim();
+    if (!name) { onError(t('org.agents.remote.name.required')); return; }
+    setBusy(true); const r = await supabase.rpc('msgr_bot_rename', { bot: b.id, new_name: name }); setBusy(false);
+    if (r.error) return onError(r.error.message);
+    setRenamingBot(null); setRenameName(''); onNote(t('org.agents.renamed')); loadBots().catch(() => {}); onChanged?.();
   };
   const revokeBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_revoke', { bot: b.id }); setBusy(false); setConfirmRevoke(null);
@@ -3177,7 +3189,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
         <button type="button" className="btn btn-primary sm" disabled={busy || isMobilePlatform} onClick={() => addBot('hermes')}><I name="plus" size={13} />{t(isDesktopTauri() ? 'org.agents.local.open' : 'org.agents.add.hermes')}</button>
         <button type="button" className="btn sm" disabled={busy || isMobilePlatform} onClick={() => addBot('openclaw')} title={mineOf('openclaw') ? t('org.agents.reconnect.title') : undefined}>{mineOf('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
-        {(mineOf('hermes') || mineOf('openclaw')) && <span className="msgr-klabel">{t('org.agents.another')} {mineOf('hermes') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('hermes')}>{t('org.agents.kind.hermes')}</button>}{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('openclaw')}>{t('org.agents.kind.openclaw')}</button>}</span>}
+        <span className="msgr-remote-add"><label className="msgr-klabel" htmlFor="remote-agent-name">{t('org.agents.another')}</label><input id="remote-agent-name" className="msgr-input inline" value={remoteAgentName} maxLength={80} placeholder={t('org.agents.remote.name.placeholder')} onChange={(event) => setRemoteAgentName(event.target.value)} /><button type="button" className="btn sm ghost text" disabled={busy || !remoteAgentName.trim()} onClick={() => addAnother('hermes')}>{t('org.agents.kind.hermes')}</button>{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy || !remoteAgentName.trim()} onClick={() => addAnother('openclaw')}>{t('org.agents.kind.openclaw')}</button>}</span>
       </div>
       {localHermes && <div className="msgr-localimport">
         {localHermes.status === 'loading' && <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.local.loading')}</p>}
@@ -3233,14 +3245,14 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
       )}
       {!liveBots.length ? <p className="empty">{t('org.agents.none')}</p> : (
         <div className="msgr-rows">
-          {liveBots.map((b) => { const on = b.last_seen_at && Date.now() - Date.parse(b.last_seen_at) < AWAY_MS; const opened = openBot === b.id; return (
+          {liveBots.map((b) => { const on = b.last_seen_at && Date.now() - Date.parse(b.last_seen_at) < AWAY_MS; const opened = openBot === b.id; const renaming = renamingBot === b.id; return (
             <div key={b.id} className={`msgr-botrow${opened ? ' open' : ''}`}>
               <div className="row">
                 <button type="button" className="main" onClick={() => setOpenBot(opened ? null : b.id)} aria-expanded={opened} title={t('org.agents.detail.open')}>
                   <Av name={b.name} crew size="sm" company /><span className="name">{b.name}</span>
                   <span className="sub"><span className={`msgr-dot${on ? ' mark' : ''}`} /> {botStatus(b)} · {t('org.agents.by', { name: nameOfUser(b.created_by) })}</span>
                 </button>
-                {confirmRevoke !== b.id && <><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => rotateBot(b)}>{t('org.agents.rotate')}</button><button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRevoke(b.id)} title={t('org.agents.revoke')} aria-label={t('org.agents.revoke')}><I name="x" size={13} /></button></>}
+                {confirmRevoke !== b.id && <>{renaming ? <span className="confirm-inline"><input className="msgr-input inline" value={renameName} maxLength={80} aria-label={t('org.agents.rename')} onChange={(event) => setRenameName(event.target.value)} /><button type="button" className="btn btn-primary sm" disabled={busy || !renameName.trim()} onClick={() => renameBot(b)}>{t('org.agents.rename.save')}</button><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => { setRenamingBot(null); setRenameName(''); }}>{t('ui.cancel')}</button></span> : <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => { setRenamingBot(b.id); setRenameName(b.name); }}>{t('org.agents.rename')}</button>}<button type="button" className="btn sm ghost text" disabled={busy || renaming} onClick={() => rotateBot(b)}>{t('org.agents.rotate')}</button><button type="button" className="btn sm ghost" disabled={busy || renaming} onClick={() => setConfirmRevoke(b.id)} title={t('org.agents.revoke')} aria-label={t('org.agents.revoke')}><I name="x" size={13} /></button></>}
                 {confirmRevoke === b.id && <span className="confirm-inline"><span>{t('org.agents.revoke.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => revokeBot(b)}>{t('org.agents.revoke')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRevoke(null)}>{t('ui.cancel')}</button></span>}
               </div>
               {opened && (
