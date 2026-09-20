@@ -554,13 +554,13 @@ function Shell({ session }) {
     window.setTimeout(() => { if (navBackTicket.current === ticket) navBackPending.current = false; }, 500); // 일부 웹뷰가 popstate를 놓친 경우 다음 뒤로 시도는 막지 않는다.
   }, [isPhone]);
   useEffect(() => {
-    if (!isMobileNative) return undefined;
+    if (!isMobileNative || (history.state?.depth ?? 0) === 0) return undefined;
     let disposed = false; let listener = null;
     import('@tauri-apps/api/app').then(({ onBackButtonPress }) => onBackButtonPress(() => goBack())).then((next) => {
       if (disposed) next.unregister(); else listener = next;
     }).catch(() => {});
     return () => { disposed = true; listener?.unregister(); };
-  }, [goBack]);
+  }, [goBack, page, chId]);
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
   const ROOT_ORDER = ['home', 'dm', 'inbox', 'activity']; // 하단 탭 순서 — 전환 애니메이션 방향의 기준(좌우 스와이프는 DM 상단 탭에만 있다)
