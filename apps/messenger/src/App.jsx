@@ -42,10 +42,11 @@ import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
-import { reconcileSession } from './resume-session.mjs';
 import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
+import { createSessionRecovery } from './session-recovery.mjs';
+import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
@@ -149,10 +150,15 @@ function Body({ text }) {
 
 export default function App() {
   const { t } = useT();
+  const authKey = authStorageKey(SB_URL);
   const [session, setSession] = useState(undefined);
+  const [sessionWaiting, setSessionWaiting] = useState(false);
+  const [sessionRecoveryError, setSessionRecoveryError] = useState('');
   const [logoutNotice, setLogoutNotice] = useState('');
   const [signingOut, setSigningOut] = useState(false);
-  const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false);
+  const [cleanupEpoch, setCleanupEpoch] = useState(0);
+  const logoutPending = useRef(false); const sessionOwner = useRef(null); const deletingAccount = useRef(false); const recoveryRef = useRef(null);
+  const cleanupCommitWaiters = useRef([]);
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
     if (sessionOwner.current !== uid) {
@@ -166,6 +172,14 @@ export default function App() {
     else if (tr === 'signedIn') setLogoutNotice((v) => (v === 'auth.sessionExpired' ? '' : v));
     setSession(next);
   }, []);
+  useEffect(() => {
+    if (!cleanupEpoch) return;
+    const waiters = cleanupCommitWaiters.current.splice(0);
+    Promise.resolve().then(() => realtimeScope.wait()).then(
+      () => waiters.forEach(({ resolve }) => resolve()),
+      (error) => waiters.forEach(({ reject }) => reject(error)),
+    );
+  }, [cleanupEpoch]);
   const signOut = async () => {
     if (logoutPending.current || !session?.user?.id) return;
     logoutPending.current = true; setSigningOut(true); setLogoutNotice('');
@@ -183,7 +197,7 @@ export default function App() {
     try {
       const { warning } = await detachPush(supabase, session.user.id);
       if (warning) setLogoutNotice('push.logout.detachFailed');
-      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      const { error } = await recoveryRef.current.restartSignIn();
       if (error) await restorePush();
     } catch { await restorePush(); }
     finally { logoutPending.current = false; setSigningOut(false); }
@@ -192,18 +206,45 @@ export default function App() {
   useEffect(() => mountMobileAuth(), []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
-    supabase.auth.getSession().then(({ data }) => applySession(data.session ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => applySession(s));
-    const stopResume = isMobilePlatform ? observeMobileResume(() => reconcileSession(supabase.auth, applySession)) : () => {};
-    return () => { stopResume(); sub.subscription.unsubscribe(); };
+    const recovery = createSessionRecovery({ auth: supabase.auth, cleanupState: authCleanupState(authKey), hasStoredSession: () => hasStoredAuthSession(authKey), applySession, setWaiting: setSessionWaiting,
+      onCleanupPending: async () => {
+        await applySession(null);
+        await new Promise((resolve, reject) => {
+          cleanupCommitWaiters.current.push({ resolve, reject });
+          setSessionWaiting(true);
+          setCleanupEpoch((value) => value + 1);
+        });
+      },
+      setFailure: (error, phase) => setSessionRecoveryError(error ? (phase === 'signout' ? 'auth.signInAgainFailed' : 'auth.sessionCheckFailed') : '') });
+    recoveryRef.current = recovery;
+    const { data: sub } = supabase.auth.onAuthStateChange((event, next) => recovery.onAuthStateChange(event, next));
+    recovery.start();
+    const stopResume = isMobilePlatform ? observeMobileResume(() => recovery.retryNow()) : () => {};
+    return () => { if (recoveryRef.current === recovery) recoveryRef.current = null; recovery.stop(); stopResume(); sub.subscription.unsubscribe(); };
   }, []);
+  const restartSignIn = async () => {
+    if (signingOut) return;
+    logoutPending.current = true; setSigningOut(true);
+    try { await recoveryRef.current?.restartSignIn(); }
+    finally { logoutPending.current = false; setSigningOut(false); }
+  };
   let body;
   if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
+  else if (sessionWaiting) body = <ConnectionWaiting t={t} onSignIn={restartSignIn} error={sessionRecoveryError} busy={signingOut} />;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
-  const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
+  const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await recoveryRef.current?.restartSignIn(); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
+}
+
+function ConnectionWaiting({ t, onSignIn, error, busy }) {
+  return <div className="msgr-auth"><div className="msgr-card"><div className="band"><I name="hash" size={14} />ARGO<span className="tag">MESSENGER</span></div><div className="body">
+    <h1>{t('auth.connectionWaiting')}</h1>
+    <p>{t('auth.connectionWaiting.desc')}</p>
+    {error && <p role="alert" style={{ color: 'var(--danger)' }}>{t(error)}</p>}
+    <button type="button" className="btn btn-primary" onClick={onSignIn} disabled={busy}>{busy ? t('ui.loading') : t('auth.signInAgain')}</button>
+  </div></div></div>;
 }
 
 /* ─── 서버 선택(부록 L): 기본 Argo 클라우드 / 회사 서버(셀프호스트 Supabase) — 프로필은 이 기기에만, 저장 뒤 새로고침 ─── */

@@ -116,7 +116,7 @@ test('App logout proceeds after push cleanup warning and reports it on the signe
   const calls = []; let notice;
   const context = { logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; },
     detachPush: async () => { calls.push('detach'); return { warning: true }; },
-    supabase: { auth: { signOut: async (options) => { calls.push(options.scope); return {}; } } }, activatePush: () => calls.push('activate') };
+    recoveryRef: { current: { restartSignIn: async () => { calls.push('local'); return {}; } } }, supabase: { auth: {} }, activatePush: () => calls.push('activate') };
   vm.runInNewContext(body, context); await context.signOut();
   assert.deepEqual(calls, ['detach', 'local']); assert.equal(notice, 'push.logout.detachFailed');
 });
@@ -128,7 +128,8 @@ test('App failed logout re-registers the current account token without disposing
   let notice; let cleared = false; const order = [];
   const context = { logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; }, clearComposerSessions: () => { cleared = true; },
     detachPush: async () => { order.push('detach'); return { warning: false }; },
-    supabase: { auth: { signOut: async () => { order.push('signout'); return { error: { message: 'offline' } }; }, getSession: async () => ({ data: { session: { user: { id: 'fixture' } } } }) } },
+    recoveryRef: { current: { restartSignIn: async () => { order.push('signout'); return { error: { message: 'offline' } }; } } },
+    supabase: { auth: { getSession: async () => ({ data: { session: { user: { id: 'fixture' } } } }) } },
     activatePush: () => order.push('activate'), registerPush: async () => { order.push('register'); return 'registered'; } };
   vm.runInNewContext(body, context); await context.signOut();
   assert.equal(cleared, false); assert.deepEqual(order, ['detach', 'signout', 'activate', 'register']); assert.equal(notice, 'push.logout.failed');
@@ -140,7 +141,8 @@ test('App failed logout never restores the previous account after another accoun
   const body = source.slice(start, source.indexOf('  useMobileViewport();', start)).replace('const signOut =', 'globalThis.signOut =');
   const calls = [];
   const context = { logoutPending: { current: false }, session: { user: { id: 'old-user' } }, setSigningOut: () => {}, setLogoutNotice: () => {},
-    detachPush: async () => ({ warning: false }), supabase: { auth: { signOut: async () => { throw new Error('offline'); }, getSession: async () => ({ data: { session: { user: { id: 'new-user' } } } }) } },
+    detachPush: async () => ({ warning: false }), recoveryRef: { current: { restartSignIn: async () => { throw new Error('offline'); } } },
+    supabase: { auth: { getSession: async () => ({ data: { session: { user: { id: 'new-user' } } } }) } },
     activatePush: () => calls.push('activate'), registerPush: async () => { calls.push('register'); return 'registered'; } };
   vm.runInNewContext(body, context); await context.signOut(); assert.deepEqual(calls, []);
 });
@@ -151,7 +153,7 @@ test('App reports a failed push restore after failed logout', async () => {
   const body = source.slice(start, source.indexOf('  useMobileViewport();', start)).replace('const signOut =', 'globalThis.signOut =');
   let notice;
   const context = { logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; },
-    detachPush: async () => ({ warning: false }), supabase: { auth: { signOut: async () => ({ error: { message: 'offline' } }), getSession: async () => ({ data: { session: { user: { id: 'fixture' } } } }) } },
-    activatePush: () => {}, registerPush: async () => 'error:registration' };
+    detachPush: async () => ({ warning: false }), recoveryRef: { current: { restartSignIn: async () => ({ error: { message: 'offline' } }) } },
+    supabase: { auth: { getSession: async () => ({ data: { session: { user: { id: 'fixture' } } } }) } }, activatePush: () => {}, registerPush: async () => 'error:registration' };
   vm.runInNewContext(body, context); await context.signOut(); assert.equal(notice, 'push.logout.restoreFailed');
 });

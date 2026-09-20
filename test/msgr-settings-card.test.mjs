@@ -13,6 +13,7 @@ const page = stripComments(read('app/c/[ws]/settings/page.jsx'));
 const route = stripComments(read('app/api/companies/[ws]/msgr/route.js'));
 const i18n = read('app/i18n.jsx');
 const app = stripComments(read('apps/messenger/src/App.jsx'));
+const sessionRecovery = stripComments(read('apps/messenger/src/session-recovery.mjs'));
 const msgrI18n = read('apps/messenger/src/i18n.js');
 
 test('MsgrCard가 연결 섹션에 꽂혀 있다 — 연결 탭 맨 위', () => {
@@ -89,8 +90,13 @@ test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 
 });
 
 test('메신저 로그아웃은 이 기기(scope local)만 — 전역이면 같은 계정의 아르고 기기 세션 리프레시 토큰까지 폐기된다(2026-09-03 실측: 격리 아르고가 revoked로 죽음)', () => {
+  // D56 moves the actual SDK lifecycle into the recovery owner. App must only
+  // delegate to that owner; searching App alone would falsely report no scope.
   assert.doesNotMatch(app, /auth\.signOut\(\)/, '범위 없는 signOut()이 남아 있다');
-  assert.equal((app.match(/auth\.signOut\(\{ scope: 'local' \}\)/g) ?? []).length, 2, '공용 로그아웃과 계정 삭제 뒤 로컬 정리, 둘 다 local 범위여야 한다'); // 계정 삭제(msgr_delete_me) 뒤에는 서버 세션이 이미 없어 로컬만 비운다
+  assert.match(app, /recoveryRef\.current\.restartSignIn\(\)/, '일반 로그아웃이 D56 recovery 소유자를 거치지 않는다');
+  assert.doesNotMatch(sessionRecovery, /auth\.signOut\(\)/, '범위 없는 signOut()이 남아 있다');
+  const scopes = [...sessionRecovery.matchAll(/auth\.signOut\(([^)]*)\)/g)].map((match) => match[1].trim());
+  assert.deepEqual(new Set(scopes), new Set(["{ scope: 'local' }"]), '모든 로그아웃 수명주기는 이 기기 local 범위여야 한다');
   assert.equal((app.match(/useContext\(SignOutContext\)/g) ?? []).length, 2, '레일·설정 모두 토큰 해제 포함 공용 로그아웃을 사용');
 });
 
