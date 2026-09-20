@@ -7,7 +7,7 @@ const browser = await (engine === 'webkit' ? webkit : chromium).launch({ headles
 const artifacts = new URL(`../artifacts/work-panel-${engine}/`, import.meta.url);
 await mkdir(artifacts, { recursive: true });
 const results = [];
-const labels = ['work.title','work.start','work.goal','work.completion','work.discussion','work.cancel','work.resume','work.empty','work.tab.automations','automation.new','automation.name','automation.prompt','automation.crew','automation.repeat','automation.timezone','automation.history','automation.edit','automation.pause','automation.resume','automation.run','automation.delete','ui.save','ui.cancel','ui.close','work.retry','work.refresh','work.error.upgrade','work.next','work.previous'];
+const labels = ['work.result.stalled','work.title','work.start','work.goal','work.completion','work.discussion','work.cancel','work.resume','work.empty','work.tab.automations','automation.new','automation.name','automation.prompt','automation.crew','automation.repeat','automation.timezone','automation.history','automation.edit','automation.pause','automation.resume','automation.run','automation.delete','ui.save','ui.cancel','ui.close','work.retry','work.refresh','work.error.upgrade','work.next','work.previous'];
 const button = (p, l, key) => p.getByRole('button', { name: l[key], exact: true });
 const field = (p, l, key) => p.locator('label.work-field').filter({ has: p.page().locator('span').filter({ hasText: new RegExp(`^${l[key].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`) }) }).locator('input,textarea,select');
 async function scenario(lang, width, theme, name, fn) {
@@ -55,6 +55,12 @@ try {
       await p.getByText('Fixture team discussion',{exact:true}).waitFor(); assert.equal((await calls(p,'msgr_work_create')).length,1);
       const run=p.locator('.work-item');
       await p.evaluate(()=>window.__workFixture.tables.msgr_work_runs[0].status='blocked'); await button(d,l,'work.refresh').click();
+      await run.getByText(l['work.result.stalled'],{exact:true}).waitFor({timeout:3000}); // D48: 결과 없는 도움 필요 = 판정 없는 정지 — 사용자 언어로 이유를 보인다
+      await p.evaluate(()=>{window.__workFixture.tables.msgr_work_runs[0].result='Need API access';}); await button(d,l,'work.refresh').click();
+      await run.getByText('Need API access').waitFor(); assert.equal(await run.getByText(l['work.result.stalled'],{exact:true}).count(),0,'결과가 있으면 그 결과를 보인다');
+      await p.evaluate(()=>{window.__workFixture.tables.msgr_work_runs[0].result='';}); await button(d,l,'work.refresh').click();
+      assert.equal(await run.getByText(l['work.result.stalled'],{exact:true}).count(),0,'빈 명시적 blocked 결과도 무판정 정지로 오인하지 않는다');
+      await p.evaluate(()=>{window.__workFixture.tables.msgr_work_runs[0].result=null;});
       await field(run,l,'work.resume').fill('Use the provided fixture milestones.');
       await p.evaluate(()=>window.__workFixture.fail='msgr_work_resume'); await button(run,l,'work.resume').click(); await d.getByRole('alert').waitFor();
       assert.equal(await field(run,l,'work.resume').inputValue(),'Use the provided fixture milestones.');

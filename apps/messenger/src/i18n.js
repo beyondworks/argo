@@ -55,6 +55,7 @@ export const DICT = {
   'work.request': ["업무 요청", "Work request"],
   'work.cancel': ["업무 취소", "Cancel work"],
   'work.cancel.note': ["취소하면 새 위임을 멈춥니다. 이미 실행한 외부 작업은 되돌리지 않습니다.", "Cancelling stops new delegation. External actions already performed are not undone."],
+  'work.result.stalled': ["주관 에이전트가 완료 여부를 밝히지 않고 답을 마쳤습니다. 대화를 확인하고, 더 할 일이 있으면 보완하여 계속하세요.", "The lead agent finished without saying whether the work is done. Check the conversation and continue with input if more is needed."],
   'work.resume': ["보완하여 계속", "Continue with input"],
   'work.resume.placeholder': ["막힌 문제를 해결할 정보나 다음 지시를 적어주세요.", "Provide missing information or your next instruction."],
   'work.error.upgrade': ["서버의 업무·자동화 기능을 확인할 수 없습니다. 잠시 후 다시 시도하고, 계속되면 관리자에게 문의하세요.", "We couldn’t access the server’s work and automation features. Try again shortly. If this continues, contact your administrator."],
