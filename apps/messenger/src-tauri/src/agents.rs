@@ -183,6 +183,14 @@ fn hermes_profile_path(cli: &Path, name: &str, h: &Path) -> PathBuf {
     out.lines().find_map(|l| l.trim().strip_prefix("Path:").map(|p| PathBuf::from(p.trim()))).unwrap_or_else(|| if name == "default" { h.join(".hermes") } else { h.join(".hermes/profiles").join(name) })
 }
 
+fn hermes_gateway_running(status: &str) -> bool {
+    let status = status.to_ascii_lowercase();
+    status.contains("gateway is running")
+        || status.contains("gateway is supervised by launchd")
+        || status.contains("gateway service is running")
+        || status.contains("gateway process running")
+}
+
 /// 이 컴퓨터에 있는 에이전트 전원 — 헤르메스는 프로필(각각 격리된 인스턴스), 오픈클로는 등록된 에이전트. 앱은 이 목록으로 봇을 하나씩 만든다.
 #[tauri::command]
 pub fn agent_list(app: tauri::AppHandle, kind: String) -> Result<serde_json::Value, String> {
@@ -233,7 +241,7 @@ pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, agents: V
                 let (e_ok, e_out) = run_env(&cli, &["plugins", "enable", "argo-msgr-platform", "--no-allow-tool-override"], &env);
                 steps.push(step("enable", e_ok, e_out)); if !e_ok { return false; }
                 let (_, st) = run_env(&cli, &["gateway", "status"], &env);
-                let (g_ok, g_out) = if st.contains("Gateway is running") { run_env(&cli, &["gateway", "restart"], &env) } else {
+                let (g_ok, g_out) = if hermes_gateway_running(&st) { run_env(&cli, &["gateway", "restart"], &env) } else {
                     let (i_ok, i_out) = run_env(&cli, &["gateway", "install"], &env);
                     if i_ok { run_env(&cli, &["gateway", "start"], &env) } else { (false, i_out) }
                 };
@@ -277,7 +285,7 @@ pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, agents: V
 
 #[cfg(test)]
 mod tests {
-    use super::{upsert_env, parse_hermes_profiles, parse_openclaw_agents, merge_binding, batch_command_line, installation_id, redact};
+    use super::{upsert_env, parse_hermes_profiles, parse_openclaw_agents, merge_binding, batch_command_line, installation_id, redact, hermes_gateway_running};
     #[test]
     fn binding_upsert_keeps_telegram_other_agents_and_peer_routes() {
         let telegram = serde_json::json!({"match":{"channel":"telegram","accountId":"default"},"agentId":"support"});
@@ -334,6 +342,14 @@ mod tests {
         assert_eq!(parse_hermes_profiles(h), vec![("default".to_string(), true), ("research".to_string(), false)]);
         let o = "Agents:\n- main (default)\n  Workspace: ~/.openclaw/workspace\n- support\n  Workspace: x\nRouting rules map…\n";
         assert_eq!(parse_openclaw_agents(o), vec![("main".to_string(), true), ("support".to_string(), false)]);
+    }
+    #[test]
+    fn launchd_supervised_gateway_is_restarted_after_credential_update() {
+        assert!(hermes_gateway_running("✓ Gateway is supervised by launchd (PID 98041)"));
+        assert!(hermes_gateway_running("✓ Gateway is running"));
+        assert!(hermes_gateway_running("✓ User gateway service is running"));
+        assert!(hermes_gateway_running("✓ Gateway process running (PID: 98041)"));
+        assert!(!hermes_gateway_running("Gateway is not installed"));
     }
     #[test]
     fn upsert_replaces_only_matching_keys() {

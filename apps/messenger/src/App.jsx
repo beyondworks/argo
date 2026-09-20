@@ -1574,7 +1574,7 @@ function Shell({ session }) {
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
           <Channel key={chId} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
@@ -2359,7 +2359,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   </>);
 }
 
-function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onOpenCrew, onAvatar, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
+function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, members = [], nameOfUser, onOpenCrew, onAvatar, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
   const { signOut, signingOut, accountDeleted } = useContext(SignOutContext);
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
@@ -2391,7 +2391,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
           : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
         {tab === 'crews' && org && (<>
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
-          {isAdmin && <OrgCard part="agents" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
+          {isAdmin && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
         {tab === 'friends' && <FriendsCard isPersonal={!org} uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} />}
@@ -2866,7 +2866,7 @@ function InviteRow({ inv, channels, nameOfUser, busy = false, onCopy = null, onR
     </div>
   );
 }
-function OrgCard({ org, uid, members, channels = [], onInvite = null, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew }) {
+function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew }) {
   const { t, lang } = useT();
   const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
   const [invites, setInvites] = useState([]);
@@ -3009,6 +3009,7 @@ function OrgCard({ org, uid, members, channels = [], onInvite = null, nameOfUser
   const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at, external_id').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
   useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
   const [auto, setAuto] = useState(null); // 원클릭 연결(앱 안에서만): null | { status: 'running'|'done'|'missing'|'failed', results:[{id,name,ok,steps}], reason }
+  const [localHermes, setLocalHermes] = useState(null);
   const [setups, setSetups] = useState([]); // 이번에 만든/회전한 봇들의 설정(이름·두 줄) — 토큰은 화면 상태로만
   const botOf = (kind, extId) => bots.find((b) => !b.revoked_at && b.kind === kind && b.created_by === uid && b.external_id === extId);
   const mineOf = (kind) => bots.find((b) => !b.revoked_at && b.kind === kind && b.created_by === uid);
@@ -3016,9 +3017,90 @@ function OrgCard({ org, uid, members, channels = [], onInvite = null, nameOfUser
   const botSetup = (token) => `ARGO_MSGR_URL=${botUrl}\nARGO_MSGR_BOT_TOKEN=${token}`; // 다른 컴퓨터용 두 줄(설정 복사)
   const mkOrRotate = async (kind, name, extId) => { // 같은 에이전트(external_id)의 봇이 있으면 회전, 없으면 생성 — 둘 다 토큰 원문은 지금만
     const cur = extId ? botOf(kind, extId) : null;
-    if (cur) { const r = await supabase.rpc('msgr_bot_rotate', { bot: cur.id }); if (r.error) throw new Error(r.error.message); return { id: cur.id, token: r.data, name: cur.name }; }
+    if (cur) { const r = await supabase.rpc('msgr_bot_rotate', { bot: cur.id }); if (r.error) throw new Error(r.error.message); return { id: cur.id, crewId: cur.crew_id, token: r.data, name: cur.name }; }
     const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name, external_id: extId ?? null }); if (r.error) throw new Error(r.error.message);
-    return { id: r.data.bot_id, token: r.data.token, name };
+    return { id: r.data.bot_id, crewId: r.data.crew_id, token: r.data.token, name };
+  };
+  const localBot = async (targetOrgId, extId) => {
+    if (targetOrgId === org.id) return botOf('hermes', extId) ?? null;
+    const found = await supabase.from('msgr_bots').select('id, crew_id, name').eq('org_id', targetOrgId).eq('kind', 'hermes').eq('created_by', uid).eq('external_id', extId).is('revoked_at', null).maybeSingle();
+    if (found.error) throw new Error(found.error.message);
+    return found.data;
+  };
+  const createLocalHermesBot = async (targetOrgId, name, extId) => {
+    const current = await localBot(targetOrgId, extId);
+    if (current) return { id: current.id, crewId: current.crew_id, name: current.name, existing: true };
+    const created = await supabase.rpc('msgr_bot_create', { org: targetOrgId, kind: 'hermes', name, external_id: extId });
+    if (created.error) throw new Error(created.error.message);
+    return { id: created.data.bot_id, crewId: created.data.crew_id, token: created.data.token, name, existing: false };
+  };
+  const localHermesChannels = async (targetOrgId) => {
+    if (targetOrgId === org.id) return channels;
+    return q(supabase.from('msgr_channels').select('id, kind, name').eq('org_id', targetOrgId).neq('kind', 'dm').is('archived_at', null).order('created_at'));
+  };
+  const openLocalHermes = async () => {
+    if (isMobilePlatform) { onNote(t('org.agents.mobile')); return; }
+    setBusy(true); setLocalHermes({ status: 'loading', agents: [], agentIds: [], channelIds: [], results: [], channelResults: [] });
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const listed = await invoke('agent_list', { kind: 'hermes' });
+      if (listed?.ok && listed.agents?.length) {
+        setLocalHermes({ status: 'ready', agents: listed.agents, installation: listed.installationId, targetOrgId: org.id, targetChannels: channels, agentIds: listed.agents.map((a) => a.id), channelIds: [], results: [], channelResults: [] });
+      } else if (listed?.reason === 'cli_missing') {
+        setLocalHermes({ status: 'missing', agents: [], agentIds: [], channelIds: [], results: [], channelResults: [] });
+      } else throw new Error(t('org.agents.discovery.failed'));
+    } catch (e) { setLocalHermes({ status: 'failed', agents: [], agentIds: [], channelIds: [], results: [], channelResults: [], reason: String(e?.message ?? e) }); }
+    finally { setBusy(false); }
+  };
+  const toggleLocalHermes = (key, id) => setLocalHermes((current) => {
+    if (!current) return current;
+    const selected = new Set(current[key] ?? []); if (selected.has(id)) selected.delete(id); else selected.add(id);
+    return { ...current, [key]: [...selected] };
+  });
+  const chooseLocalHermesOrg = async (targetOrgId) => {
+    const flow = localHermes; if (!flow || targetOrgId === flow.targetOrgId) return;
+    setBusy(true); setLocalHermes({ ...flow, status: 'loadingChannels', channelIds: [] });
+    try { setLocalHermes({ ...flow, status: 'ready', targetOrgId, targetChannels: await localHermesChannels(targetOrgId), channelIds: [] }); }
+    catch (e) { setLocalHermes({ ...flow, status: 'failed', agents: [], agentIds: [], channelIds: [], results: [], channelResults: [], reason: String(e?.message ?? e) }); }
+    finally { setBusy(false); }
+  };
+  const importLocalHermes = async () => {
+    const flow = localHermes;
+    const agents = flow?.agents?.filter((a) => flow.agentIds.includes(a.id)) ?? [];
+    if (!agents.length) { onError(t('org.agents.local.pickAgent')); return; }
+    setBusy(true); setSetup(null); setSetups([]); setAuto(null);
+    setLocalHermes({ ...flow, status: 'connecting', results: [], channelResults: [] });
+    try {
+      const made = [];
+      for (const agent of agents) made.push({ ...(await createLocalHermesBot(flow.targetOrgId, agent.name, externalAgentId(flow.installation, uid, 'hermes', agent.id))), agentId: agent.id, home: agent.home ?? '' });
+      const reconnect = made.filter((bot) => bot.existing);
+      for (const bot of reconnect) {
+        const rotated = await supabase.rpc('msgr_bot_rotate', { bot: bot.id });
+        if (rotated.error) throw new Error(rotated.error.message);
+        bot.token = rotated.data;
+      }
+      const { invoke } = await import('@tauri-apps/api/core');
+      const connected = await invoke('agent_connect', { kind: 'hermes', url: botUrl, agents: made.map((bot) => ({ id: bot.agentId, token: bot.token, home: bot.home })) });
+      const results = made.map((bot) => ({ ...(connected?.results ?? []).find((result) => result.id === bot.agentId), name: bot.name, reconnected: bot.existing }));
+      const available = made.filter((m) => results.find((result) => result.id === m.agentId)?.ok);
+      const channelResults = [];
+      for (const channelId of flow.channelIds) {
+        const channel = flow.targetChannels.find((item) => item.id === channelId);
+        for (const bot of available) {
+          const joined = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: bot.crewId });
+          channelResults.push({ channel: channel?.name ?? channelId, agent: bot.name, status: joined.error ? 'failed' : joined.data });
+        }
+      }
+      setLocalHermes({ ...flow, status: results.every((result) => result.ok) ? 'done' : 'partial', results, channelResults });
+      if (flow.targetOrgId === org.id) { await loadBots(); onChanged?.(); }
+      const joined = channelResults.filter((result) => result.status === 'joined').length;
+      const requested = channelResults.filter((result) => result.status === 'requested').length;
+      const failed = channelResults.filter((result) => result.status === 'failed').length;
+      onNote(t('org.agents.local.done', { n: available.length, joined, requested, failed }));
+    } catch (e) {
+      setLocalHermes({ ...flow, status: 'partial', results: [], channelResults: [], reason: String(e?.message ?? e) });
+      onError(String(e?.message ?? e));
+    } finally { setBusy(false); }
   };
   // [헤르메스 연결하기] = 이 컴퓨터의 헤르메스 프로필(오픈클로는 등록 에이전트) **전원**을 읽어 각각 봇을 만들고(이름 = 그 에이전트 이름) 한 번에 연결(유건 지시 2026-09-08).
   // 앱 밖(브라우저)이거나 CLI가 없으면 봇 하나만 만들고 수동 안내를 보인다.
@@ -3063,7 +3145,7 @@ function OrgCard({ org, uid, members, channels = [], onInvite = null, nameOfUser
       setAuto(r?.ok ? { status: 'done', results } : { status: r?.reason === 'cli_missing' ? 'missing' : 'failed', results, reason: r?.reason ?? '' });
     } catch (e) { setAuto({ status: 'failed', results: [], reason: String(e?.message ?? e) }); }
   };
-  const addBot = (kind) => connectAll(kind);
+  const addBot = (kind) => kind === 'hermes' ? openLocalHermes() : connectAll(kind);
   const addAnother = async (kind) => { // 다른 컴퓨터·다른 사람의 에이전트: external_id 없는 봇 하나 + 수동 안내
     setBusy(true);
     try { const made = await mkOrRotate(kind, t('org.agents.name.other', { kind: t(`org.agents.kind.${kind}`) }), null); setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); setAuto(null); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); }
@@ -3085,15 +3167,41 @@ function OrgCard({ org, uid, members, channels = [], onInvite = null, nameOfUser
     if (!b.last_seen_at) return t('org.agents.waiting', { kind });
     return t(Date.now() - Date.parse(b.last_seen_at) < AWAY_MS ? 'org.agents.on' : 'org.agents.off', { kind, when: fmtWhen(b.last_seen_at, lang) });
   };
+  const localOrgChoices = orgs.filter((candidate) => candidate.role === 'owner' || candidate.role === 'admin');
   if (part === 'agents') { const liveBots = bots.filter((b) => !b.revoked_at); return (
     <section className="msgr-setcard">
       <h2>{t('org.agents')}</h2><p>{t(isMobilePlatform ? 'org.agents.mobile' : 'org.agents.desc')}</p>
       <div className="row">
-        <button type="button" className="btn btn-primary sm" disabled={busy || isMobilePlatform} onClick={() => addBot('hermes')} title={mineOf('hermes') ? t('org.agents.reconnect.title') : undefined}><I name={mineOf('hermes') ? 'at' : 'plus'} size={13} />{mineOf('hermes') ? t('org.agents.reconnect', { kind: t('org.agents.kind.hermes') }) : t('org.agents.add.hermes')}</button>
+        <button type="button" className="btn btn-primary sm" disabled={busy || isMobilePlatform} onClick={() => addBot('hermes')}><I name="plus" size={13} />{t('org.agents.local.open')}</button>
         <button type="button" className="btn sm" disabled={busy || isMobilePlatform} onClick={() => addBot('openclaw')} title={mineOf('openclaw') ? t('org.agents.reconnect.title') : undefined}>{mineOf('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
         {(mineOf('hermes') || mineOf('openclaw')) && <span className="msgr-klabel">{t('org.agents.another')} {mineOf('hermes') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('hermes')}>{t('org.agents.kind.hermes')}</button>}{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('openclaw')}>{t('org.agents.kind.openclaw')}</button>}</span>}
       </div>
+      {localHermes && <div className="msgr-localimport">
+        {localHermes.status === 'loading' && <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.local.loading')}</p>}
+        {localHermes.status === 'loadingChannels' && <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.local.channels.loading')}</p>}
+        {localHermes.status === 'missing' && <><p className="msgr-auto missing">{t('org.agents.local.missing')}</p><div className="acts"><button type="button" className="btn sm" disabled={busy} onClick={openLocalHermes}>{t('org.agents.local.retry')}</button><button type="button" className="btn sm ghost" onClick={() => setLocalHermes(null)}>{t('ui.close')}</button></div></>}
+        {localHermes.status === 'failed' && !localHermes.agents.length && <><p className="msgr-auto failed">{t('org.agents.local.failed')}</p><div className="acts"><button type="button" className="btn sm" disabled={busy} onClick={openLocalHermes}>{t('org.agents.local.retry')}</button><button type="button" className="btn sm ghost" onClick={() => setLocalHermes(null)}>{t('ui.close')}</button></div></>}
+        {['ready', 'connecting'].includes(localHermes.status) && <>
+          <div className="msgr-localimport-head"><span className="msgr-klabel">{t('org.agents.local.h')}</span><span>{t('org.agents.local.desc')}</span></div>
+          <label className="msgr-localimport-target"><span className="msgr-klabel">{t('org.agents.local.org')}</span><select className="msgr-input inline" value={localHermes.targetOrgId} disabled={busy} onChange={(event) => chooseLocalHermesOrg(event.target.value)}>{localOrgChoices.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>
+          <fieldset className="msgr-localimport-list" disabled={busy}>
+            <legend>{t('org.agents.local.agents')}</legend>
+            {localHermes.agents.map((agent) => <label key={agent.id} className={`pick${localHermes.agentIds.includes(agent.id) ? ' on' : ''}`}><input type="checkbox" checked={localHermes.agentIds.includes(agent.id)} onChange={() => toggleLocalHermes('agentIds', agent.id)} /><Av name={agent.name} crew size="sm" company /><span>{agent.name}</span>{agent.default && <span className="msgr-klabel">{t('org.agents.local.default')}</span>}</label>)}
+          </fieldset>
+          <fieldset className="msgr-localimport-list channels" disabled={busy}>
+            <legend>{t('org.agents.local.channels')}</legend>
+            <p className="note">{t('org.agents.local.channels.note')}</p>
+            {!localHermes.targetChannels.length ? <p className="empty">{t('org.agents.local.channels.empty')}</p> : localHermes.targetChannels.map((channel) => <label key={channel.id} className={`pick${localHermes.channelIds.includes(channel.id) ? ' on' : ''}`}><input type="checkbox" checked={localHermes.channelIds.includes(channel.id)} onChange={() => toggleLocalHermes('channelIds', channel.id)} /><I name={channel.kind === 'private' ? 'lock' : 'hash'} size={13} /><span>{channel.name}</span><span className="msgr-klabel">{t(`ch.kind.${channel.kind}`)}</span></label>)}
+          </fieldset>
+          <div className="acts"><button type="button" className="btn btn-primary sm" disabled={busy || !localHermes.agentIds.length} onClick={importLocalHermes}><I name="check" size={13} />{localHermes.status === 'connecting' ? t('org.agents.local.connecting') : t('org.agents.local.connect', { n: localHermes.agentIds.length })}</button><button type="button" className="btn sm ghost" disabled={busy} onClick={() => setLocalHermes(null)}>{t('ui.cancel')}</button></div>
+        </>}
+        {['done', 'partial'].includes(localHermes.status) && <>
+          <div className={`msgr-auto ${localHermes.status === 'done' ? 'done' : 'failed'}`}><p><span className={`msgr-dot${localHermes.status === 'done' ? ' ok' : ''}`} /> {t(localHermes.status === 'done' ? 'org.agents.local.complete' : 'org.agents.local.partial')}</p><ul>{localHermes.results.map((result) => <li key={result.id}><b>{result.name}</b>: {result.reconnected && <>{t('org.agents.local.reconnected')} · </>}{(result.steps ?? []).map((step) => `${step.ok ? '✓' : '✗'} ${t(`org.agents.auto.step.${step.name}`)}`).join(' · ')}</li>)}</ul></div>
+          {!!localHermes.channelResults.length && <div className="msgr-localimport-results"><span className="msgr-klabel">{t('org.agents.local.channelResults')}</span><ul>{localHermes.channelResults.map((result, index) => <li key={`${result.channel}-${result.agent}-${index}`}>{result.channel} · {result.agent}: {t(`org.agents.local.channel.${result.status}`)}</li>)}</ul></div>}
+          <div className="acts"><button type="button" className="btn sm" disabled={busy} onClick={openLocalHermes}>{t('org.agents.local.retry')}</button><button type="button" className="btn sm ghost" onClick={() => setLocalHermes(null)}>{t('ui.close')}</button></div>
+        </>}
+      </div>}
       {setup && (
         <div className="msgr-node-cmd">
           <span className="msgr-klabel">{t('org.agents.setup.h')}</span>

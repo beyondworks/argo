@@ -8,7 +8,7 @@ import { t } from '../apps/messenger/src/i18n.js';
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const app = read('apps/messenger/src/App.jsx');
 const i18n = read('apps/messenger/src/i18n.js');
-const KEYS = ['crew.hosting.bot', 'org.agents', 'org.agents.desc', 'org.agents.none', 'org.agents.add.hermes', 'org.agents.add.openclaw', 'org.agents.add.custom', 'org.agents.kind.hermes', 'org.agents.kind.openclaw', 'org.agents.kind.custom', 'org.agents.waiting', 'org.agents.on', 'org.agents.off', 'org.agents.by', 'org.agents.made', 'org.agents.rotated', 'org.agents.setup.h', 'org.agents.copy', 'org.agents.copied', 'org.agents.setup.hint', 'org.agents.rotate', 'org.agents.revoke', 'org.agents.revoke.confirm', 'org.agents.revoke.done', 'org.agents.setup.hermes.1', 'org.agents.setup.hermes.2', 'org.agents.setup.hermes.3', 'org.agents.setup.openclaw.1', 'org.agents.setup.openclaw.2', 'org.agents.setup.openclaw.3', 'org.agents.setup.custom.1', 'org.agents.setup.custom.2', 'org.agents.setup.custom.3', 'org.agents.auto.running', 'org.agents.auto.done', 'org.agents.auto.after', 'org.agents.auto.failed', 'org.agents.auto.missing', 'org.agents.auto.retry', 'org.agents.auto.step.plugin', 'org.agents.auto.step.env', 'org.agents.auto.step.enable', 'org.agents.auto.step.gateway', 'org.agents.setup.manual', 'org.agents.reconnect', 'org.agents.reconnect.title', 'org.agents.another', 'org.agents.name.mine', 'org.agents.name.other', 'org.agents.made.n', 'org.agents.auto.done.n'];
+const KEYS = ['crew.hosting.bot', 'org.agents', 'org.agents.desc', 'org.agents.none', 'org.agents.add.hermes', 'org.agents.add.openclaw', 'org.agents.add.custom', 'org.agents.kind.hermes', 'org.agents.kind.openclaw', 'org.agents.kind.custom', 'org.agents.waiting', 'org.agents.on', 'org.agents.off', 'org.agents.by', 'org.agents.made', 'org.agents.rotated', 'org.agents.setup.h', 'org.agents.copy', 'org.agents.copied', 'org.agents.setup.hint', 'org.agents.rotate', 'org.agents.revoke', 'org.agents.revoke.confirm', 'org.agents.revoke.done', 'org.agents.setup.hermes.1', 'org.agents.setup.hermes.2', 'org.agents.setup.hermes.3', 'org.agents.setup.openclaw.1', 'org.agents.setup.openclaw.2', 'org.agents.setup.openclaw.3', 'org.agents.setup.custom.1', 'org.agents.setup.custom.2', 'org.agents.setup.custom.3', 'org.agents.auto.running', 'org.agents.auto.done', 'org.agents.auto.after', 'org.agents.auto.failed', 'org.agents.auto.missing', 'org.agents.auto.retry', 'org.agents.auto.step.plugin', 'org.agents.auto.step.env', 'org.agents.auto.step.enable', 'org.agents.auto.step.gateway', 'org.agents.setup.manual', 'org.agents.reconnect', 'org.agents.reconnect.title', 'org.agents.another', 'org.agents.name.mine', 'org.agents.name.other', 'org.agents.made.n', 'org.agents.auto.done.n', 'org.agents.local.open', 'org.agents.local.h', 'org.agents.local.desc', 'org.agents.local.org', 'org.agents.local.agents', 'org.agents.local.channels', 'org.agents.local.channels.loading', 'org.agents.local.channels.note', 'org.agents.local.connect', 'org.agents.local.complete', 'org.agents.local.reconnected', 'org.agents.local.partial', 'org.agents.local.channel.joined', 'org.agents.local.channel.requested', 'org.agents.local.channel.already', 'org.agents.local.channel.failed'];
 
 test('카드가 쓰는 i18n 키는 전부 ko/en 쌍 · 상태 문구는 "헤르메스 에이전트 연결중/연결됨/응답 없음"(유건 지정 표기)', () => {
   for (const k of KEYS) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
@@ -87,6 +87,28 @@ test('원클릭 연결(유건 지시 "이렇게 어려우면 안 돼"): 앱 안�
       assert.ok(commands.includes(command), `${cfg}: ${command} 등록`);
     }
   }
+});
+
+test('로컬 헤르메스 불러오기: 발견한 전 프로필을 기본 선택하고, 기존 봇도 실제 재연결한 뒤 고른 조직과 채널에만 넣는다', () => {
+  const card = app.slice(app.indexOf('// ── 부록 N: 외부 에이전트'), app.indexOf("if (part === 'node') return ("));
+  const local = card.slice(card.indexOf('const openLocalHermes'), card.indexOf('// [헤르메스 연결하기]'));
+  assert.match(local, /invoke\('agent_list', \{ kind: 'hermes' \}\)/, '로컬 Hermes 프로필을 앱에서 읽는다');
+  assert.match(local, /agentIds: listed\.agents\.map\(\(a\) => a\.id\)/, '처음 열면 전체 프로필이 선택된다');
+  assert.match(local, /const agents = flow\?\.agents\?\.filter\(\(a\) => flow\.agentIds\.includes\(a\.id\)\)/, '사용자가 고른 프로필만 연결한다');
+  assert.match(local, /supabase\.rpc\('msgr_crew_join', \{ ch: channelId, crew: bot\.crewId \}\)/, '채널 추가는 서버의 크루 참여 규칙을 지난다');
+  assert.match(local, /setSetup\(null\); setSetups\(\[\]\); setAuto\(null\);/, '로컬 연결은 이전 수동 토큰 화면을 닫는다');
+  assert.doesNotMatch(local, /setSetup\(\{/, '로컬 연결은 원문 토큰 설정 화면을 열지 않는다');
+  assert.match(local, /targetOrgId: org\.id, targetChannels: channels/, '현재 조직의 채널을 첫 대상으로 불러온다');
+  assert.match(local, /targetOrgId, targetChannels: await localHermesChannels\(targetOrgId\)/, '조직을 바꾸면 그 조직의 채널을 다시 읽는다');
+  assert.match(card, /value=\{localHermes\.targetOrgId\}/, '대상 조직을 선택할 수 있다');
+  assert.match(card, /localHermes\.channelIds\.includes\(channel\.id\)/, '채널은 사용자가 선택한다');
+  assert.match(app, /<OrgCard part="agents" org=\{org\} orgs=\{orgs\}[\s\S]*?channels=\{channels\}/, '에이전트 카드가 실제 채널 목록과 조직 선택지를 받는다');
+  const localConnect = local.slice(local.indexOf('const importLocalHermes'), local.indexOf('// [헤르메스 연결하기]'));
+  assert.match(localConnect, /const reconnect = made\.filter\(\(bot\) => bot\.existing\)/, '기존 봇도 재연결 대상으로 분리한다');
+  assert.match(localConnect, /supabase\.rpc\('msgr_bot_rotate', \{ bot: bot\.id \}\)/, '기존 봇은 새 토큰을 받아 실제 로컬 게이트웨이를 갱신한다');
+  assert.match(localConnect, /agents: made\.map\(\(bot\) => \(\{ id: bot\.agentId, token: bot\.token, home: bot\.home \}\)\)/, '새 봇과 기존 봇을 모두 agent_connect로 보낸다');
+  assert.doesNotMatch(localConnect, /existing \? \{ id: bot\.agentId, name: bot\.name, ok: true/, '기존 봇을 실행 없이 성공으로 표시하지 않는다');
+  assert.match(read('apps/messenger/src/styles.css'), /\.msgr-localimport \{/, '불러오기 선택지가 기존 설정 카드 표면과 같은 간격으로 렌더링된다');
 });
 
 // Execute the UI identity function with independent installation/user/profile inputs.
