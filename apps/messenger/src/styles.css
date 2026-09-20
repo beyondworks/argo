@@ -1063,8 +1063,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-thread.page .msgr-klabel { font-size: 11.5px; }
   /* ── 시트(에이전트 상세·채널 상세) — 폰 ── */
   /* ① 홈에서 에이전트를 누르면 시트가 .msgr-main 안에 그려지는데 phone-home은 main을 숨긴다 → 시트가 있을 때만 main을 투명한 전체 화면 층으로 띄운다 */
-  .msgr-phone.phone-home .msgr-main:has(.msgr-sheetwrap) { display: block; position: fixed; inset: 0; z-index: 80; padding: 0; background: none; pointer-events: none; }
-  .msgr-phone.phone-home .msgr-main:has(.msgr-sheetwrap) > :not(.msgr-sheetwrap) { display: none; }
+  .msgr-phone.phone-home:not(.swiping-back) .msgr-main:has(.msgr-sheetwrap) { display: block; position: fixed; inset: 0; z-index: 80; padding: 0; background: none; pointer-events: none; }
+  .msgr-phone.phone-home:not(.swiping-back) .msgr-main:has(.msgr-sheetwrap) > :not(.msgr-sheetwrap) { display: none; }
   .msgr-phone .msgr-sheetwrap { z-index: 75; } /* 아일랜드(70) 위 — 시트가 열렸을 땐 시트가 화면의 주인 */
   /* ② 스크롤이 끝까지 안 되던 것: 시트 높이가 아일랜드 자리까지 내려가 바닥이 아일랜드에 가려졌다 → 아래를 아일랜드 위에서 끊는다. 좌우는 화면 여백선 */
   .msgr-phone .msgr-crewsheet { top: calc(env(safe-area-inset-top) + 8px); right: var(--ph-pad); left: var(--ph-pad); width: auto; max-width: none;
@@ -1191,7 +1191,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home.swiping-back .msgr-side, .msgr-phone.phone-home.swiping-back .msgr-main { will-change: transform; } /* 두 층 모두 합성 레이어 — 드래그 중 재래스터 없이 이동 */
   .msgr-phone.phone-home.swiping-back .msgr-side::after { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, calc((1 - var(--swipe-p, 0)) * .18)); pointer-events: none; } /* 밑 화면 어둡기 — 당겨 올수록 밝아진다 */
   .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); }
-  .msgr-phone.phone-home.swiping-back .msgr-main > :not(.msgr-sheetwrap) { display: revert; }
   .msgr-phone.swiping-back .msgr-fab { display: none; } /* 하단 탭 바는 두 화면이 공유하는 고정 요소라 그대로 둔다 — 사라졌다 돌아오면 부자연스럽다(유건 2026-09-15) */
   /* 스와이프 중 세로 스크롤은 use-phone.js의 네이티브 touchmove preventDefault가 막는다 — 대화 영역 overflow를 켰다 끄면 WebKit이 스크롤 층을 다시 그려 깜빡였다(유건 2026-09-17) */
   /* 화면 전환(유건 2026-09-15 "슬랙·카톡처럼 부드럽게"): 대화 열기 = 오른쪽에서 밀려 들어옴, 탭 전환·뒤로 = 페이드. 전부 transform·opacity(합성 레이어) */
