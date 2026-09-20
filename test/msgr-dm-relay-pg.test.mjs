@@ -163,21 +163,63 @@ test('relay is DM-only; the DM counterpart itself and public channels are untouc
  assert.ok(choices.every(c=>c.delivery_ready===true),'every instructable crew is ready — relay does not depend on runtime version');
 });
 
-test('crew-to-crew ping-pong across DMs stops at relay depth 5 with a notice, user-initiated To always relays',{skip},()=>{
- // Mine(owner) ↔ Theirs(member): each handoff lands as a fresh root in the other DM; depth is carried in meta.relay.depth.
- const theirsDm=sql(`select msgr_dm_for_crew('${ORG}','${U.owner}','${OTHER_CREW}')`);
- let channel=DM, crew=CREW, owner=U.owner, other=OTHER_CREW, rootId=post('Start the loop',mention(OTHER_CREW));
- let relay=row(relayOf(rootId,OTHER_CREW)); assert.equal(relay.meta.relay.depth,1);
- for (let step=2; step<=6; step++) {
-   // the crew that just received the relay hands it back to the other crew from its own DM
-   const inDm=relay.channel_id; const me=step%2===0?OTHER_CREW:CREW; const uid=step%2===0?U.member:U.owner; const peer=step%2===0?CREW:OTHER_CREW;
-   const hand=last(asUser(uid,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${inDm}','crew','${me}','@peer again',${relay.id},${relay.id},'${mention(peer)}','{"disposition":"handoff"}') returning id`));
-   const next=relayOf(hand,peer);
-   if (step<=5) { assert.ok(next,`step ${step} relays`); relay=row(next); assert.equal(relay.meta.relay.depth,step); assert.equal(relay.meta.relay.via_crew_id,me); }
-   else { assert.equal(next,'','depth 6 is not relayed'); const cap=row(sql(`select id from msgr_messages where client_msg_id='relaycap:${hand}'`)); assert.equal(cap.channel_id,inDm); assert.equal(cap.meta.relay_capped,6); assert.match(cap.body,/5단계/); }
- }
+test('crew-to-crew relay stops before revisiting an agent, while a user instruction starts a fresh chain',{skip},()=>{
+ const rootId=post('Start the loop',mention(OTHER_CREW));
+ const relay=row(relayOf(rootId,OTHER_CREW)); assert.equal(relay.meta.relay.depth,1); assert.deepEqual(relay.meta.relay.visited_crew_ids,[OTHER_CREW]);
+ const forward=last(asUser(U.member,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${relay.channel_id}','crew','${OTHER_CREW}','@Mine continue',${relay.id},${relay.id},'${mention(CREW)}','{"disposition":"handoff"}') returning id`));
+ const second=row(relayOf(forward,CREW)); assert.equal(second.meta.relay.depth,2); assert.deepEqual(second.meta.relay.visited_crew_ids,[OTHER_CREW,CREW]);
+ const hand=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${second.channel_id}','crew','${CREW}','@Theirs again',${second.id},${second.id},'${mention(OTHER_CREW)}','{"disposition":"handoff"}') returning id`));
+ assert.equal(relayOf(hand,OTHER_CREW),'','a crew already in the relay chain is never revisited');
+ const cap=row(sql(`select id from msgr_messages where client_msg_id='relaycap:${hand}'`));
+ assert.equal(cap.channel_id,second.channel_id); assert.equal(cap.meta.relay_capped,3); assert.equal(cap.meta.relay_cycle,true);
  const fresh=post('Human asks again',mention(OTHER_CREW));
- assert.equal(row(relayOf(fresh,OTHER_CREW)).meta.relay.depth,1,'a human instruction resets the chain');
+ const next=row(relayOf(fresh,OTHER_CREW)); assert.equal(next.meta.relay.depth,1,'a human instruction resets the chain'); assert.notEqual(next.meta.relay.chain_id,relay.meta.relay.chain_id);
+});
+
+test('a crew initiating a handoff is included in the chain and cannot receive the return hop',{skip},()=>{
+ const rootId=post('Ask Mine to delegate');
+ const hand=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${DM}','crew','${CREW}','Delegate research',${rootId},${rootId},'${mention(OTHER_CREW)}','{"disposition":"handoff"}') returning id`));
+ const relay=row(relayOf(hand,OTHER_CREW));
+ const back=last(asUser(U.member,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${relay.channel_id}','crew','${OTHER_CREW}','Return to Mine',${relay.id},${relay.id},'${mention(CREW)}','{"disposition":"handoff"}') returning id`));
+ assert.equal(relayOf(back,CREW),'','A → B → A must stop before the first return to A');
+ assert.deepEqual(relay.meta.relay.visited_crew_ids,[CREW,OTHER_CREW]);
+ assert.equal(row(sql(`select id from msgr_messages where client_msg_id='relaycap:${back}'`)).meta.relay_cycle,true);
+ assert.equal(noteOf(back),'','no delivery note when the only target was blocked');
+});
+
+for (const cycleFirst of [true,false]) test(`mixed cyclic and valid recipients preserve delivery and truthful notes (cycle first: ${cycleFirst})`,{skip},()=>{
+ const rootId=post('Start mixed route',mention(OTHER_CREW));
+ const first=row(relayOf(rootId,OTHER_CREW));
+ const forward=last(asUser(U.member,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${first.channel_id}','crew','${OTHER_CREW}','Next agent',${first.id},${first.id},'${mention(CREW)}','{"disposition":"handoff"}') returning id`));
+ const relay=row(relayOf(forward,CREW));
+ const targets=(cycleFirst?[OTHER_CREW,SECOND]:[SECOND,OTHER_CREW]).map(id=>({kind:'crew',id,role:'to'}));
+ const hand=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${relay.channel_id}','crew','${CREW}','Try both targets',${relay.id},${relay.id},'${JSON.stringify(targets)}','{"disposition":"handoff"}') returning id`));
+ assert.equal(relayOf(hand,OTHER_CREW),'','cyclic recipient is blocked');
+ assert.ok(relayOf(hand,SECOND),'the independent valid recipient receives the handoff');
+ assert.ok(noteOf(hand),'valid delivery always produces its notice');
+ const note=row(noteOf(hand));
+ assert.deepEqual(note.meta.relay_to.map(x=>x.crew_id),[SECOND]);
+ assert.match(note.body,/Second에게 전달했습니다/);
+ assert.doesNotMatch(note.body,/Theirs/);
+ const cap=row(sql(`select id from msgr_messages where client_msg_id='relaycap:${hand}'`));
+ assert.equal(cap.meta.relay_cycle,true);
+ assert.equal(row(relayOf(hand,SECOND)).meta.relay.depth,3);
+});
+
+test('relay permits five distinct hops and stops a sixth before delivery',{skip},()=>{
+ const extras=['Third','Fourth','Fifth','Sixth','Seventh'].map((name,i)=>last(asUser(U.owner,`insert into msgr_crews(org_id,owner_user_id,ws_id,slug,display_name,allow,status,last_seen_at,dm_delivery_protocol,work_protocol) values('${ORG}','${U.owner}','lean','route-${i}','${name}','all','active',now(),1,1) returning id`)));
+ const route=[OTHER_CREW,...extras];
+ const rootId=post('Visit each specialist once',mention(route[0]));
+ let relay=row(relayOf(rootId,route[0]));
+ for (let depth=2; depth<=5; depth++) {
+   const sender=route[depth-2]; const target=route[depth-1]; const senderUser=sender===OTHER_CREW?U.member:U.owner;
+   const hand=last(asUser(senderUser,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${relay.channel_id}','crew','${sender}','continue',${relay.id},${relay.id},'${mention(target)}','{"disposition":"handoff"}') returning id`));
+   relay=row(relayOf(hand,target)); assert.equal(relay.meta.relay.depth,depth); assert.equal(relay.meta.relay.visited_crew_ids.length,depth);
+ }
+ const hand=last(asUser(U.owner,`insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,mentions,meta) values('${relay.channel_id}','crew','${route[4]}','one more',${relay.id},${relay.id},'${mention(route[5])}','{"disposition":"handoff"}') returning id`));
+ assert.equal(relayOf(hand,route[5]),'','the sixth hop is not delivered');
+ const cap=row(sql(`select id from msgr_messages where client_msg_id='relaycap:${hand}'`));
+ assert.equal(cap.meta.relay_capped,6); assert.equal(cap.meta.relay_cycle,false); assert.match(cap.body,/5단계/);
 });
 
 test('a failing relay target never rolls back the original message; the notice marks that target as failed',{skip},()=>{
@@ -197,4 +239,3 @@ test('clients cannot forge relay markers; only the trigger writes them',{skip},(
  assert.ok(row(relayOf(real,OTHER_CREW)).meta.relay,'trigger-written relay marker survives');
  assert.equal(sql(`select count(*) from msgr_dm_grants`),'0','no grants are written any more');
 });
-

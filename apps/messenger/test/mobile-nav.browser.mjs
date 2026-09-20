@@ -33,6 +33,8 @@ let s = await st(); ok('시작=홈 depth0', s.page === 'home' && s.depth === 0, 
 await tab('채팅|Chats'); await settle(); s = await st(); ok('DM 탭', s.page === 'dm' && s.dm, s);
 await openDm(); s = await st(); ok('DM→대화 depth1', s.page === 'chat' && s.depth === 1, s);
 const label = await p.evaluate(() => [...document.querySelectorAll('.msgr-menu')].find((b) => b.getBoundingClientRect().width > 0)?.getAttribute('aria-label')); ok('상단 뒤로 라벨(대화 화면)', label === '뒤로', label);
+await p.evaluate(() => { const el = [...document.querySelectorAll('.msgr-menu')].find((b) => b.getBoundingClientRect().width > 0); el?.click(); el?.click(); }); await settle(); s = await st(); ok('뒤로를 빠르게 두 번 눌러도 한 단계만 돌아간다', s.page === 'dm' && s.dm && s.depth === 0, s);
+await openDm();
 await back(); s = await st(); ok('뒤로 버튼=DM', s.page === 'dm' && s.dm && s.depth === 0, s);
 await openDm(); await hwBack(); s = await st(); ok('하드웨어 뒤로=DM', s.page === 'dm' && s.dm, s);
 await openDm(); await p.locator('.msgr-tabsearch').click(); await settle(); s = await st(); ok('대화→검색 depth2', s.page === 'search' && s.depth === 2, s);
@@ -54,13 +56,13 @@ await tab('채팅|Chats'); await settle(); await openDm(); s = await st(); ok('�
   const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
   const beforeSwipeLayout = await chatLayout();
   await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(50);
-  const mid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const m = document.querySelector('.msgr-main'); return { swiping: sh.classList.contains('swiping-back'), dm: sh.classList.contains('phone-dm'), home: sh.classList.contains('phone-home'), tx: m.style.transform, p: sh.style.getPropertyValue('--swipe-p') }; });
-  ok('끄는 중: 밑에 DM 탭이 깔리고 화면이 손가락을 따라온다', mid.swiping && mid.dm && mid.home && mid.tx === 'translateX(80px)' && Number(mid.p) > 0.2, mid); // 방향이 잠긴 지점(40px)부터 따라간다 — 잠금 전 거리가 한꺼번에 반영되던 튐 없음(유건 2026-09-17)
+  const mid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const m = document.querySelector('.msgr-main'); const side = document.querySelector('.msgr-side'); return { swiping: sh.classList.contains('swiping-back'), dm: sh.classList.contains('phone-dm'), home: sh.classList.contains('phone-home'), tx: m.style.transform, p: side.style.getPropertyValue('--swipe-p'), shellP: sh.style.getPropertyValue('--swipe-p') }; });
+  ok('끄는 중: 밑에 DM 탭이 깔리고 화면이 손가락을 따라온다', mid.swiping && mid.dm && mid.home && mid.tx === 'translateX(80px)' && Number(mid.p) > 0.2 && !mid.shellP, mid); // 방향이 잠긴 지점(40px)부터 따라간다 — 잠금 전 거리가 한꺼번에 반영되던 튐 없음(유건 2026-09-17)
   const duringSwipeLayout = await chatLayout();
   ok('스와이프 중 헤더·본문·입력창 배치와 고정 탭 바가 유지된다', sameChatLayout(beforeSwipeLayout, duringSwipeLayout), { before: beforeSwipeLayout, during: duringSwipeLayout });
   await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
-  s = await st(); const after = await p.evaluate(() => ({ swiping: document.querySelector('.msgr-shell').classList.contains('swiping-back'), tx: document.querySelector('.msgr-main').style.transform }));
-  ok('짧게 끌다 놓으면 제자리(대화 유지)·정리됨', s.page === 'chat' && !after.swiping && !after.tx, { s, after });
+  s = await st(); const after = await p.evaluate(() => ({ swiping: document.querySelector('.msgr-shell').classList.contains('swiping-back'), tx: document.querySelector('.msgr-main').style.transform, sideP: document.querySelector('.msgr-side').style.getPropertyValue('--swipe-p') }));
+  ok('짧게 끌다 놓으면 제자리(대화 유지)·정리됨', s.page === 'chat' && !after.swiping && !after.tx && !after.sideP, { s, after });
   const afterCancelLayout = await chatLayout();
   ok('스와이프 취소 뒤 대화 배치가 그대로다', sameChatLayout(beforeSwipeLayout, afterCancelLayout), { before: beforeSwipeLayout, after: afterCancelLayout });
   await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const main = document.querySelector('.msgr-main'); window.__tl = []; const snap = () => window.__tl.push({ page: history.state?.page, cls: sh.className, tx: main.style.transform }); new MutationObserver(snap).observe(sh, { attributes: true, attributeFilter: ['class'] }); new MutationObserver(snap).observe(main, { attributes: true, attributeFilter: ['style'] }); window.addEventListener('popstate', () => setTimeout(snap, 0)); });

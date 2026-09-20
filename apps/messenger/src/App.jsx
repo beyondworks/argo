@@ -510,13 +510,13 @@ function Shell({ session }) {
   // 루트(홈·DM·알림함·기억 탭)는 replaceState, 그 위에 여는 화면(대화·설정·검색)은 pushState. 상단 뒤로 버튼·iOS 가장자리 스와이프·
   // Android 하드웨어 뒤로(WryActivity가 webView.goBack → popstate)가 전부 같은 스택을 타서 "그 전 화면"으로 돌아간다. 데스크톱은 무관.
   const ROOT_PAGES = useMemo(() => new Set(['home', 'dm', 'inbox', 'activity']), []);
-  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); const lastRoot = useRef('home'); // lastRoot = 스와이프 뒤로가기 밑에 깔 실제 이전 루트 탭 // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
+  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); const navBackPending = useRef(false); const navBackTicket = useRef(0); const lastRoot = useRef('home'); // lastRoot = 스와이프 뒤로가기 밑에 깔 실제 이전 루트 탭 // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
   useEffect(() => { // popstate 구독은 폰일 때 한 번. 루트 항목 시딩은 state가 없을 때만(폭 전환으로 다시 돌아도 깊이를 지우지 않는다 — 검수 M-4)
     if (!isPhone) return;
     const onPop = (e) => {
       const to = navCollapse.current;
       if (to) { navCollapse.current = null; navPopping.current = false; try { history.replaceState({ page: to, chId: null, depth: 0 }, ''); } catch { /* */ } return; } // 접기 완료 — page는 이미 루트
-      const st = e.state; if (!st?.page) return; navPopping.current = true; if (st.chId) setChId(st.chId); setPage(st.page);
+      const st = e.state; if (!st?.page) return; navBackTicket.current += 1; navBackPending.current = false; navPopping.current = true; if (st.chId) setChId(st.chId); setPage(st.page);
     };
     window.addEventListener('popstate', onPop);
     try { if (!history.state?.page) history.replaceState({ page, chId, depth: 0 }, ''); } catch { /* 일부 웹뷰는 replaceState를 막는다 — 스택 없이 홈으로 */ }
@@ -544,7 +544,27 @@ function Shell({ session }) {
       else history.pushState({ page, chId, depth: depth + 1 }, '');
     } catch { /* 위와 같음 */ }
   }, [page, chId, isPhone, ROOT_PAGES]); // eslint-disable-line react-hooks/exhaustive-deps
-  const goBack = useCallback(() => { if (isPhone && (history.state?.depth ?? 0) > 0) history.back(); else setPage('home'); }, [isPhone]);
+  const goBack = useCallback(() => {
+    if (!isPhone || (history.state?.depth ?? 0) === 0) { setPage('home'); return; }
+    // popstate가 오기 전 연타하면 history가 두 칸 이상 이동해 앱 밖으로 나갈 수 있다. 한 번의 뒤로 이동이 도착할 때까지만 막는다.
+    if (navBackPending.current) return;
+    navBackPending.current = true;
+    const ticket = ++navBackTicket.current;
+    history.back();
+    window.setTimeout(() => { if (navBackTicket.current === ticket) navBackPending.current = false; }, 500); // 일부 웹뷰가 popstate를 놓친 경우 다음 뒤로 시도는 막지 않는다.
+  }, [isPhone]);
+  useEffect(() => {
+    if (!isMobileNative) return undefined;
+    let disposed = false; let listener = null;
+    const onNativeBack = () => {
+      if ((history.state?.depth ?? 0) > 0) { goBack(); return; }
+      import('@tauri-apps/api/core').then(({ invoke }) => invoke('plugin:app|exit')).catch(() => {});
+    };
+    import('@tauri-apps/api/app').then(({ onBackButtonPress }) => onBackButtonPress(onNativeBack)).then((next) => {
+      if (disposed) next.unregister(); else listener = next;
+    }).catch(() => {});
+    return () => { disposed = true; listener?.unregister(); };
+  }, [goBack]);
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
   const ROOT_ORDER = ['home', 'dm', 'inbox', 'activity']; // 하단 탭 순서 — 전환 애니메이션 방향의 기준(좌우 스와이프는 DM 상단 탭에만 있다)
@@ -1276,26 +1296,11 @@ function Shell({ session }) {
     if (people.length + crewsIn.length < 2) return false;
     if (people.length === 1 && crewsIn.length === 1 && crewOf(crewsIn[0].member_id)?.owner_user_id === people[0].member_id) return false;
     return true; };
-  // 상대(사람)가 모두 빠진 대화 — 조직 제거·나가기 뒤 옛 방이 새 1:1·에이전트 DM과 같은 이름으로 보이지 않게(D35). 멤버를 불러오기 전에는 판정하지 않는다(깜빡임 방지).
-  // 판정 = "사람 상대가 있었는데 빠졌는가": 나 말고 사람이 없고,
-  //  · 크루 없음: 저장 이름이 크루 이름이 아니다(해제 sweep으로 크루만 빠진 에이전트 1:1은 종전대로 크루명)
-  //  · 남은 크루가 남의 것: 소유자 동반 규칙상 그 주인(사람)이 빠진 것
-  //  · 남은 크루가 내 것: 저장 이름이 그 크루 이름과 다르고, 그룹 모양("a, b")·지금 멤버의 이름·크루가 나중에 들어옴 중 하나(내 크루 이름이 바뀐 1:1과 구별)
-  const dmVacated = (c) => { if (c._personal_group || dmMembers[c.id] === undefined) return false; const ms = dmMembers[c.id];
-    if (ms.some((m) => m.member_kind === 'user' && m.member_id !== uid)) return false;
-    const base = c.name.replace(/^dm:/, ''); const crew = ms.find((m) => m.member_kind === 'crew');
-    if (!crew) return !crews.some((k) => k.display_name === base);
-    const cr = crewOf(crew.member_id); if (!cr) return false;
-    if (cr.owner_user_id !== uid) return true;
-    // 크루가 나보다 나중에 들어왔다 = 사람과의 1:1에 에이전트를 더한 방(에이전트 1:1은 만들 때 같은 트랜잭션이라 시각이 같다) — 상대가 조직을 떠나 멤버 이름이 없어도 잡힌다
-    const me = ms.find((m) => m.member_kind === 'user' && m.member_id === uid); const addedLater = !!(me?.added_at && crew.added_at && Date.parse(crew.added_at) > Date.parse(me.added_at));
-    return base !== cr.display_name && (base.includes(', ') || members.some((m) => m.display_name === base) || addedLater); };
-  const dmName = (c) => (dmVacated(c) ? `${dmBaseName(c)} · ${t('dm.vacated.tag')}` : dmBaseName(c));
+  const dmName = (c) => dmBaseName(c);
   const dmBaseName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
     const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
     if (dmIsGroup(c)) { const names = [...crewsIn.map((m) => crewOf(m.member_id)?.display_name), ...people.map((m) => nameOfUser(m.member_id))].filter(Boolean).join(', ');
       return c._personal_group && people.length <= 1 ? `${names || base} · ${t('dm.group.tag')}` : (names || base); } // 한 명만 남은 개인 그룹이 같은 이름의 1:1과 구별되게(검수 MEDIUM-1) // 그룹 대화 = 멤버 이름 나열(판정 정본 dmIsGroup — 검수 HIGH-2)
-    if (dmVacated(c)) return base; // 사람이 빠진 방은 저장 이름(원래 상대) — 표지는 dmName·행 라벨이 붙인다(D35)
     return [crewName, other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · ') || base; };
   const targetFavs = targetPrefs.filter((p) => p.pinned).flatMap((p) => {
     const target = p.target_kind === 'crew' ? crews.find((c) => c.id === p.target_id) : members.find((m) => m.user_id === p.target_id);
@@ -1384,7 +1389,7 @@ function Shell({ session }) {
                 ]),
               ]; return (
             <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items) : {})}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{dmVacated(c) && <span className="msgr-vacated">{t('dm.vacated.tag')}</span>}{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{dmVacated(c) && <span className="msgr-vacated">{t('dm.vacated.tag')}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
             </div>
           ); };
@@ -3834,18 +3839,18 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   // 전달 안내(system) — 원래 방에 남는 "누구에게 전달했다" 알림. 각 대상은 그 1:1로 바로 이동하는 버튼.
   // meta.relay_to는 같은 방 멤버가 임의로 넣을 수 있는 값이라 배열이 아닐 수 있다 — .map 크래시 방지(검수 MEDIUM).
   const relayTo = m.kind === 'system' && Array.isArray(m.meta?.relay_to) && m.meta.relay_to.length > 0 ? m.meta.relay_to : null;
-  const relayCapped = m.kind === 'system' && !relayTo && m.meta?.relay_capped; // 위임 릴레이 깊이 상한(서버 body는 한국어 고정 — 여기서 언어별로 다시 그린다)
+  const relayCapped = m.kind === 'system' && !relayTo && m.meta?.relay_capped;
   const sysBody = m.kind === 'system' && (relayTo ? (
     <div className="msgr-sys msgr-relay">
       <span>{t('dm.relay.to', { names: relayToNames(relayTo, t('dm.delivery.cc')) })}</span>
       <div className="msgr-chips">{relayTo.map((e) => <button key={`${e.crew_id}:${e.role}`} type="button" className="msgr-chan" onClick={() => onOpenRelay?.(e.crew_id, e.channel_id)}><span>{t('dm.relay.open', { name: relayToLabel(e, t('dm.delivery.cc')) })}</span></button>)}</div>
     </div>
-  ) : relayCapped ? <div className="msgr-sys">{t('dm.relay.capped')}</div>
+  ) : relayCapped ? <div className="msgr-sys">{t(m.meta?.relay_cycle ? 'dm.relay.cycle' : 'dm.relay.capped')}</div>
   : <div className="msgr-sys">{body}</div>);
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
-  const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} rowTab={rowTab} />)}</div>;
+  const attRow = atts.length > 0 && <div className="msgr-attachments">{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} rowTab={rowTab} />)}</div>;
   const acts = !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
     phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)
       <div className="msgr-actsheetwrap" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) setActsOpen(false); }}>{/* 슬랙 참고(유건 2026-09-11): 빠른 반응 줄 → 타일 → 목록. 있는 기능만 싣는다 */}

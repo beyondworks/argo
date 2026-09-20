@@ -37,9 +37,11 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
   msgr_messages: [
     { id: 21, channel_id: 'open-2', org_id: org, author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', body: 'Lounge note for everyone', created_at: now, deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm21' }, // 참여하지 않은 공개 채널의 글
     { id: 11, channel_id: 'general', org_id: org, author_kind: 'user', author_user_id: 'user-colleague', crew_id: null, kind: 'text', body: '스크린샷 붙입니다', created_at: now, deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm11' },
+    { id: 12, channel_id: 'general', org_id: org, author_kind: 'user', author_user_id: uid, crew_id: null, kind: 'text', body: '내 이미지입니다', created_at: now, deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm12' },
   ],
   msgr_attachments: [
     { id: 'att-1', message_id: 11, channel_id: 'general', org_id: org, name: 'shot.png', mime: 'image/png', bytes: 1024, storage_path: `${org}/general/11/shot.png` },
+    { id: 'att-2', message_id: 12, channel_id: 'general', org_id: org, name: 'mine.png', mime: 'image/png', bytes: 1024, storage_path: `${org}/general/12/mine.png` },
   ],
   msgr_channel_crew_requests: asMember ? [] : [{ id: 'req-1', channel_id: 'general', crew_id: 'crew-2', requested_by: 'user-colleague', status: 'pending', created_at: now }],
   msgr_target_prefs: [], msgr_channel_prefs: Array.from({ length: 12 }, (_, i) => ({ user_id: uid, channel_id: `fold-${i + 1}`, muted: false, pinned: false, pin_pos: null, folder: `Group ${String(i + 1).padStart(2, '0')}` })),

@@ -184,25 +184,21 @@ await scenario(1280, 'leave-public-channel', async (p) => {
   assert.ok(calls.some((c) => c.table === 'msgr_channel_members' && c.op === 'delete'), '내 참여 행을 지운다');
   assert.ok(!(await p.locator('[data-sec="channels"]').innerText()).includes('Fixture General'), '목록에서 빠진다');
 });
-// D35. 상대(사람)가 모두 빠진 대화 — 새 1:1·에이전트 DM과 같은 이름으로 보이지 않는다(정비사 원장 P6-3, 검수 R1~R6)
-await scenario(1280, 'vacated-dm-label', async (p) => {
-  const rows = await p.locator('[data-sec="dms"] button.item').evaluateAll((bs) => bs.map((b) => ({ name: b.querySelector('.name')?.innerText.trim(), tag: !!b.querySelector('.msgr-vacated') })));
-  const tagOf = (name) => { const r = rows.find((x) => x.name === name); assert.ok(r, `행 ${name} 있음 (실제: ${JSON.stringify(rows)})`); return r.tag; };
-  assert.equal(tagOf('Gone Person'), true, 'R1 사람이 빠진 1:1 — 표지');
-  assert.equal(tagOf('Gone Person With A Rather Long Display Name, Fixture Agent'), true, 'R2 사람이 빠지고 에이전트만 남은 그룹 — 표지');
-  const third = rows.filter((x) => x.name === 'Third Person').map((x) => x.tag).sort();
-  assert.deepEqual(third, [false, true], `R6(1:1에 에이전트를 더한 뒤 사람이 빠진 방)는 표지, R5(사람 그룹에서 한 명만 빠져 남은 사람 이름으로 보이는 방)는 표지 없음 (실제: ${third})`);
-  assert.equal(tagOf('Colleague Agent'), true, '남의 에이전트만 남은 방 = 그 주인이 빠짐 — 표지');
-  assert.equal(tagOf('Departed Person'), true, 'R6 변형 — 상대가 재가입하지 않고 조직을 떠나 멤버 이름이 없어도, 크루가 나중에 들어온 방이면 표지');
-  assert.equal(tagOf('Fixture Agent'), false, 'R3 에이전트 1:1 — 표지 없음');
-  assert.equal(tagOf('Second Agent'), false, '내 에이전트 이름이 바뀐 1:1 — 표지 없음(새 이름)');
-  // 데스크톱 폭에서 긴 이름은 말줄임되어도 표지는 온전히 보인다(검수 조건 1)
-  const fit = await p.locator('[data-sec="dms"] button.item', { hasText: 'Rather Long' }).first().evaluate((b) => { const tag = b.querySelector('.msgr-vacated').getBoundingClientRect(); const box = b.getBoundingClientRect(); const name = b.querySelector('.name'); return { tagW: tag.width, inside: tag.right <= box.right + 0.5, clipped: name.scrollWidth > name.clientWidth }; });
-  assert.ok(fit.tagW > 20 && fit.inside, `표지가 행 안에 보인다 ${JSON.stringify(fit)}`);
-  assert.ok(fit.clipped, '이름만 말줄임된다');
+await scenario(1280, 'dm-has-no-vacated-label', async (p) => {
+  const rows = await p.locator('[data-sec="dms"] button.item').evaluateAll((bs) => bs.map((b) => ({ name: b.querySelector('.name')?.innerText.trim(), tag: !!b.querySelector('.msgr-vacated'), text: b.innerText })));
+  assert.ok(rows.some((x) => x.name === 'Gone Person'), `기존 대화도 남아 있다 (실제: ${JSON.stringify(rows)})`);
+  assert.ok(rows.every((x) => !x.tag && !/나간 대화/.test(x.text)), `대화 이름 뒤에 상태 라벨을 붙이지 않는다 (실제: ${JSON.stringify(rows)})`);
   await p.locator('[data-sec="dms"] button.item', { hasText: 'Gone Person' }).first().click(); await p.waitForTimeout(500);
-  assert.match(await p.locator('.msgr-top').first().innerText(), /나간 대화/, '열어도 제목에 표지가 있다');
+  assert.doesNotMatch(await p.locator('.msgr-top').first().innerText(), /나간 대화/, '열어도 제목에는 대화 이름만 보인다');
 }, '?vacated=1');
+
+await scenario(1280, 'own-attachment-right-aligns-with-bubble', async (p) => {
+  await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click();
+  const attachment = p.locator('.msgr-mine .msgr-attachments').first(); await attachment.waitFor({ state: 'visible', timeout: 5000 });
+  const geometry = await attachment.evaluate((el) => { const row = el.closest('.msgr-mine'); const bubble = row?.querySelector('.bubble'); const a = el.getBoundingClientRect(); const b = bubble?.getBoundingClientRect(); return { attachmentRight: a.right, bubbleRight: b?.right }; });
+  assert.ok(geometry.bubbleRight, `내 말풍선이 있다 (${JSON.stringify(geometry)})`);
+  assert.ok(Math.abs(geometry.attachmentRight - geometry.bubbleRight) <= 1, `이미지 첨부와 말풍선의 우측선이 맞는다 (${JSON.stringify(geometry)})`);
+});
 
 // D23·D24. 방에 든 에이전트가 꺼져 있으면(하트비트 90초 끊김) 동료도 글자로 안다 — 종전엔 주인 쪽 점 색만 바뀌고
 // 시트·멘션 목록은 평소와 같았으며, 멘션하면 90초 넘게 입력 중·안내 없이 조용했다(정비사 원장 P-R1·R2·R4).

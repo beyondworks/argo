@@ -15,6 +15,7 @@ export const DICT = {
   'dm.relay.to': ['{names}에게 전달했습니다. 답변은 그 에이전트와의 1:1 대화에 올라옵니다.', 'Forwarded to {names}. Replies will appear in the 1:1 conversation with that agent.'],
   'dm.relay.open': ['{name} 대화 열기', 'Open the {name} conversation'],
   'dm.relay.capped': ['에이전트 사이의 전달이 5단계를 넘어 멈췄습니다. 필요하면 직접 지시해 주세요.', 'Forwarding between agents stopped after 5 hops. Instruct them directly if needed.'],
+  'dm.relay.cycle': ['이미 참여한 에이전트에게 다시 전달하려 해 자동 대화를 멈췄습니다. 계속하려면 에이전트에게 직접 지시해 주세요.', 'Automatic conversation stopped because it tried to send work back to an agent already in this chain. Instruct an agent directly to continue.'],
   'dm.delivery.remove': ['{name} 수신자 해제', 'Remove recipient {name}'],
   'dm.delivery.empty': ['추가로 부를 수 있는 에이전트가 없습니다.', 'No agents are available to add.'],
   'dm.delivery.loadError': ['수신자 목록을 불러오지 못했습니다. 다시 시도하거나 기존 대화 상대에게 메시지를 보내세요.', 'Could not load recipients. Retry, or send a message to your current conversation partner.'],
@@ -1072,7 +1073,6 @@ export const DICT = {
   'dm.group.err.notFriend': ['친구인 사람만 그룹에 넣을 수 있습니다.', 'Only friends can be added to a group.'],
   'dm.group.err.blocked': ['이 사람들로는 그룹을 만들 수 없습니다. 구성을 바꿔 보세요.', 'A group with these people cannot be created. Try different people.'], // 누가 누구를 차단했는지 드러내지 않는다(2차 검수 MEDIUM-2)
   'dm.group.tag': ['그룹', 'Group'],
-  'dm.vacated.tag': ['나간 대화', 'Left'],
   'dm.group.joiners': ['함께 들어오는 사람(크루 소유자): {names}', 'Also joining (crew owners): {names}'],
   'dm.filter': ['채팅 필터', 'Chat filter'],
   'dm.filter.all': ['전체', 'All'],
