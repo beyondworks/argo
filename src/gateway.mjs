@@ -1103,8 +1103,10 @@ function installTelegramGatewayCfg(cfgMap, id, cfg) {
   const next = live?.token === cfg?.token && live.chatId != null && cfg.chatId == null
     ? { ...cfg, chatId: live.chatId, ownerId: live.ownerId, pairCode: '' }
     : cfg;
-  cfgMap[id] = next;
-  return next;
+  // long-poll이 잡아 둔 객체도 같은 설정을 보게 한다 — 응답 전 sync가 객체를 갈아 끼우면
+  // 페어링은 옛 객체에만 반영되고 다음 폴은 다시 미페어링 상태로 시작한다.
+  cfgMap[id] = live && live.token === cfg.token ? Object.assign(live, next) : next;
+  return cfgMap[id];
 }
 export const _installTelegramGatewayCfgForTest = installTelegramGatewayCfg;
 

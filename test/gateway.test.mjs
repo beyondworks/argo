@@ -390,16 +390,16 @@ test('직통 봇 폴러: callback_query가 결재 확정까지 이어진다 — 
   assert.ok(calls.some((c) => c.url.includes('/botbot-tok-poll/answerCallbackQuery')), '버튼 응답도 그 봇으로 나간다');
 });
 
-test('텔레그램 게이트웨이: 페어링 저장 뒤 겹친 manager stale cfg 교체가 첫 지시를 연결 코드로 되돌리지 않는다(D27 P-X1)', async () => {
+for (const syncAt of ['poll', 'paired']) test(`텔레그램 게이트웨이: manager sync(${syncAt}) 뒤 페어링과 첫 지시를 유지한다(D27 P-X1)`, async () => {
   const { _startTelegramForTest, _installTelegramGatewayCfgForTest } = await import('../src/gateway.mjs');
   const { createCompany } = await import('../src/workspace.mjs');
   const { updateConnection, loadConnections } = await import('../src/connections.mjs');
-  const WS = 'co-d27-first';
+  const WS = `co-d27-first-${syncAt}`;
   await createCompany(WS, '첫 지시 보존사', 'pepper');
-  const seeded = await updateConnection(WS, 'telegram', { token: 'bot-tok-d27', enabled: true });
+  const seeded = await updateConnection(WS, 'telegram', { token: `bot-tok-d27-${syncAt}`, enabled: true });
   const beforePair = seeded.telegram;
   // 겹친 manager sync가 페어링 전에 loadConnections로 읽어 둔 별도 객체. 임의 cfg 주입이 아니라
-  // ensureGateway가 두 군데에서 호출하는 실제 cfg 설치 경계를 pairing confirmation 직후 태운다.
+  // 실제 cfg 설치 경계를 long-poll 대기 중 또는 pairing confirmation 직후 태운다.
   const managerSnapshot = { ...beforePair };
   const id = `${WS}:telegram`;
   const cfgMap = { [id]: { ...beforePair } };
@@ -412,11 +412,14 @@ test('텔레그램 게이트웨이: 페어링 저장 뒤 겹친 manager stale cf
     calls.push({ url: u, body });
     if (u.includes('/getUpdates')) {
       poll += 1;
-      if (poll === 1) return new Response(JSON.stringify({ ok: true, result: [{ update_id: 1, message: { message_id: 1, chat: { id: 4242, type: 'private' }, from: { id: 42 }, text: beforePair.pairCode } }] }), { headers: { 'content-type': 'application/json' } });
+      if (poll === 1) {
+        if (syncAt === 'poll') _installTelegramGatewayCfgForTest(cfgMap, id, managerSnapshot);
+        return new Response(JSON.stringify({ ok: true, result: [{ update_id: 1, message: { message_id: 1, chat: { id: 4242, type: 'private' }, from: { id: 42 }, text: beforePair.pairCode } }] }), { headers: { 'content-type': 'application/json' } });
+      }
       if (poll === 2) return new Response(JSON.stringify({ ok: true, result: [{ update_id: 2, message: { message_id: 2, chat: { id: 4242, type: 'private' }, from: { id: 42 }, text: '첫 업무 지시' } }] }), { headers: { 'content-type': 'application/json' } });
       return new Promise(() => {});
     }
-    if (u.includes('/sendMessage') && String(body.text).includes('연결 코드 확인')) {
+    if (syncAt === 'paired' && u.includes('/sendMessage') && String(body.text).includes('연결 코드 확인')) {
       _installTelegramGatewayCfgForTest(cfgMap, id, managerSnapshot);
     }
     return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
