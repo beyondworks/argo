@@ -14,6 +14,7 @@ test('폰 뒤로 = history.back(): 루트 탭은 replaceState, 하위 화면은 
   assert.match(src, /const navBackPending = useRef\(false\); const navBackTicket = useRef\(0\);/, '뒤로가기는 popstate 전까지 한 번만 보낸다');
   assert.match(src, /if \(!isPhone \|\| \(history\.state\?\.depth \?\? 0\) === 0\) \{ setPage\('home'\); return; \}/, '루트(깊이 0)에서는 history.back을 부르지 않는다 — 앱 밖 이전 문서로 나가지 않게');
   assert.match(src, /if \(navBackPending\.current\) return;[\s\S]{0,180}history\.back\(\);[\s\S]{0,180}navBackPending\.current = false/, 'popstate 대기 중 뒤로 연타는 같은 history 이동을 중복 호출하지 않는다');
+  assert.match(src, /import\('@tauri-apps\/api\/app'\)\.then\(\(\{ onBackButtonPress \}\) => onBackButtonPress\(\(\) => goBack\(\)\)\)/, 'Android 물리 뒤로도 goBack 직렬화 경로를 탄다');
   assert.match(src, /if \(depth > 0 && !same\) \{ navCollapse\.current = page; navPopping\.current = true; history\.go\(-depth\);/, '루트 탭은 스택을 접는다(검수 M-3)');
   assert.match(src, /if \(!history\.state\?\.page\) history\.replaceState\(\{ page, chId, depth: 0 \}, ''\);/, '시딩은 state가 없을 때만(폭 전환에 깊이 보존, 검수 M-4)');
   assert.match(src, /history\.replaceState\(history\.state, '', location\.pathname\)/, '초대 링크 정리가 state를 지우지 않는다(L-2)');
