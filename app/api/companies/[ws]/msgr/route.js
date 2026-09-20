@@ -6,10 +6,21 @@ import { apiError } from '../../../../apimsg.mjs';
 import { sessionClient } from '../../../../../src/gateway/msgr.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
 import { loadCompany, updateCompany } from '../../../../../src/workspace.mjs';
+import { msgrGatewayStatus } from '../../../../../src/connections.mjs';
+import { nudgeGateway } from '../../../../../src/gateway.mjs';
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const upstream = (where, e, lang) => { console.error(`[argo] msgr ${where}:`, e?.message ?? e); return apiError('msgr_upstream', lang); }; // PG 원문은 화면이 아니라 로그로
+
+function runtimeState(gateway) {
+  if (gateway?.alive) return { state: 'alive', lastTs: gateway.lastTs };
+  const error = String(gateway?.error ?? '');
+  if (/기기 세션 없음/.test(error)) return { state: 'login' };
+  if (/소유자 계정이 아님/.test(error)) return { state: 'owner' };
+  if (/회사 설정을 읽지 못함/.test(error)) return { state: 'company' };
+  return { state: gateway?.lastTs ? 'offline' : 'waiting' };
+}
 
 async function myRegistrations(c, ws) {
   const { data, error } = await c.client.from('msgr_crews')
@@ -47,8 +58,8 @@ export async function GET(_req, { params }) {
   const c = await sessionClient().catch(() => null);
   if (!c) return Response.json({ signedIn: false, orgs: [], crews: [] });
   try {
-    const [orgs, crews] = await Promise.all([myOrgs(c), myRegistrations(c, ws)]);
-    return Response.json({ signedIn: true, uid: c.uid, orgs, crews });
+    const [orgs, crews, gateway] = await Promise.all([myOrgs(c), myRegistrations(c, ws), msgrGatewayStatus(ws)]);
+    return Response.json({ signedIn: true, uid: c.uid, orgs, crews, runtime: runtimeState(gateway) });
   } catch (e) { return upstream('GET', e, await requestLang()); }
 }
 
@@ -59,9 +70,19 @@ export async function POST(req, { params }) {
   const cs = await csrfDenied(req); if (cs) return cs;
   const lang = await requestLang();
   // 기본 'owner' — 조직 정책 테이블(부록 H-0) 전까지는 가장 좁게 시작하고 크루 시트/카드에서 연다(유건 결정 2026-09-03)
-  const { orgId, slug, allow = 'owner', allowUsers = [], activate = false, slugs = [] } = await req.json().catch(() => ({}));
+  const { orgId, slug, allow = 'owner', allowUsers = [], activate = false, reconnect = false, slugs = [] } = await req.json().catch(() => ({}));
   const users = Array.isArray(allowUsers) ? allowUsers : [];
   const wanted = Array.isArray(slugs) ? [...new Set(slugs.filter((v) => typeof v === 'string' && v))] : [];
+  if (reconnect) {
+    const c = await sessionClient().catch(() => null);
+    if (!c) return Response.json({ ok: false, runtime: { state: 'login' } });
+    const company = await loadCompany(ws);
+    if (company.ownerId !== c.uid) return Response.json({ ok: false, runtime: { state: 'owner' } });
+    const crews = await myRegistrations(c, ws);
+    if (!crews.some((crew) => crew.status === 'active')) return Response.json({ ok: false, runtime: { state: 'noCrews' } });
+    nudgeGateway(ws);
+    return Response.json({ ok: true, runtime: { state: 'reconnecting' } });
+  }
   if (activate) {
     if (!UUID.test(String(orgId ?? '')) || !wanted.length) return apiError('msgr_bad_request', lang);
     const agents = await listAgents(ws);

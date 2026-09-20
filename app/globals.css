@@ -2478,6 +2478,11 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 .msgr-crews { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-soft); border-radius: calc(var(--r) - 4px); overflow: hidden; }
 .msgr-crew + .msgr-crew { border-top: 1px solid var(--border-soft); }
 .msgr-connection { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px; border: 1px solid var(--border-soft); border-radius: calc(var(--r) - 4px); background: color-mix(in srgb, var(--card-2) 55%, transparent); }
+.msgr-runtime { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: calc(var(--r) - 4px); background: color-mix(in srgb, var(--warn) 6%, var(--card-2)); }
+.msgr-runtime.on { background: color-mix(in srgb, var(--ok) 7%, var(--card-2)); }
+.msgr-runtime > div { min-width: 0; }
+.msgr-runtime p { margin: 3px 0 0; color: var(--fg-2); font-size: 11.5px; line-height: 1.5; }
+.msgr-runtime .btn { flex: none; }
 .msgr-connection > div { min-width: 0; }
 .msgr-connection p { margin: 4px 0 0; color: var(--fg-2); font-size: 12px; line-height: 1.6; }
 .msgr-connection .subnote { color: var(--fg-3); font-size: 11px; }
@@ -2510,6 +2515,7 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 .msgr-fine p { font-size: 11.5px; color: var(--fg-3); margin: 8px 0 0 18px; line-height: 1.6; }
 @media (max-width: 640px) {
   .msgr-connection { align-items: flex-start; flex-direction: column; }
+  .msgr-runtime { align-items: flex-start; flex-direction: column; }
   .msgr-crew .row { grid-template-columns: auto minmax(0, 1fr); }
   .msgr-crew .state { grid-column: 2; justify-self: start; font-size: 9.5px; }
   .msgr-crew .more { padding-left: 12px; }

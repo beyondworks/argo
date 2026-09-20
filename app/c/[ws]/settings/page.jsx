@@ -820,11 +820,17 @@ function MsgrCard({ ws, agents }) {
   const [st, setSt] = useState(null); // { signedIn, orgs:[{id,name,role}], crews:[등록 행] }
   const [orgId, setOrgId] = useState('');
   const [activating, setActivating] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [err, setErr] = useState('');
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!st?.signedIn || !st.crews?.some((crew) => crew.status === 'active')) return;
+    const timer = setInterval(load, 8000);
+    return () => clearInterval(timer);
+  }, [st?.signedIn, st?.crews, load]);
   const regOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug && r.status === 'active');
   const rowOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug); // 행이 없으면 해제가 아니라 메신저에 올라간 적 없음(유건 제보 2026-09-17: 한 번도 안 올라간 크루가 '파견 해제됨'으로 보였다)
   const regCount = agents.filter((a) => regOf(a.slug)).length;
@@ -843,6 +849,30 @@ function MsgrCard({ ws, agents }) {
       setErr(e.message || t('settings.msgr.err.activate'));
     } finally { setActivating(false); }
   }
+
+  async function reconnectBridge() {
+    if (reconnecting) return;
+    setReconnecting(true); setErr('');
+    try {
+      const result = await api(`/api/companies/${ws}/msgr`, { reconnect: true });
+      if (result.runtime) setSt((current) => current ? { ...current, runtime: result.runtime } : current);
+      setTimeout(load, 1200);
+    } catch (e) {
+      setErr(e.message || t('settings.msgr.err.reconnect'));
+    } finally { setReconnecting(false); }
+  }
+
+  const runtime = st?.runtime;
+  const runtimeCopy = runtime?.state === 'alive'
+    ? t('settings.msgr.runtime.alive', { s: Math.max(0, Math.round((Date.now() - runtime.lastTs) / 1000)) })
+    : runtime?.state === 'login' ? t('settings.msgr.runtime.login')
+      : runtime?.state === 'owner' ? t('settings.msgr.runtime.owner')
+        : runtime?.state === 'company' ? t('settings.msgr.runtime.company')
+          : runtime?.state === 'noCrews' ? t('settings.msgr.runtime.noCrews')
+            : runtime?.state === 'reconnecting' ? t('settings.msgr.runtime.reconnecting')
+            : runtime?.state === 'offline' ? t('settings.msgr.runtime.offline')
+              : t('settings.msgr.runtime.waiting');
+  const canReconnect = runtime && !['alive', 'login', 'owner', 'noCrews'].includes(runtime.state);
 
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -875,6 +905,15 @@ function MsgrCard({ ws, agents }) {
         </div>
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
         {!!agents.length && <>
+          <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
+            <div>
+              <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
+              <p>{runtimeCopy}</p>
+            </div>
+            {canReconnect && <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>
+              {reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}
+            </button>}
+          </section>
           <section className="msgr-connection" aria-labelledby="msgr-connection-title">
             <div>
               <span className="microlabel" id="msgr-connection-title">{t('settings.msgr.connection.title')}</span>

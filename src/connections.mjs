@@ -83,21 +83,26 @@ export async function syncAgentBotName(wsId, slug, name) {
   }
 }
 
+/** 하트비트 파일만 관용적으로 읽는다. 연결 설정 파일과 독립이라 상태 표시는 설정 손상에도 남는다. */
+async function readGatewayStatus(wsId, kind) {
+  // 게이트웨이 하트비트는 캐시성(재생성 가능) — 손상은 관용하고 "가동 안 함"으로 본다(readJsonLenient).
+  const s = await readJsonLenient(join(paths(wsId).root, `.gateway-${kind}.json`), null);
+  if (!s) return { alive: false, lastTs: null, error: '', holder: null, holderDevice: null };
+  // holder 'other' = 다른 기기가 이 토큰을 받는 중(토큰 단위 소유) — 40초 창 밖이면 낡은 표지라 버린다
+  const fresh = Date.now() - s.ts < 40_000;
+  // holder 'pending' = 클레임 판정 전(정상 과도 상태) — 카드가 빨간 오류가 아니라 주황 대기로 그리도록 그대로 통과(재검수 MEDIUM-C)
+  const holder = fresh && (s.holder === 'other' || s.holder === 'pending') ? s.holder : null;
+  return { alive: s.ok && fresh, lastTs: s.ts, error: s.ok ? '' : s.error, holder, holderDevice: holder === 'other' ? (s.holderDevice ?? null) : null };
+}
+
+/** 팀 메신저 상태는 connections.json을 읽지 않는다. */
+export function msgrGatewayStatus(wsId) { return readGatewayStatus(wsId, 'msgr'); }
+
 /** 게이트웨이 폴러 하트비트 조회 — 40초 내 성공 비트가 있어야 "가동 중". */
 export async function gatewayStatus(wsId) {
-  const read = async (kind) => {
-    // 게이트웨이 하트비트는 캐시성(재생성 가능) — 손상은 관용하고 "가동 안 함"으로 본다(readJsonLenient).
-    const s = await readJsonLenient(join(paths(wsId).root, `.gateway-${kind}.json`), null);
-    if (!s) return { alive: false, lastTs: null, error: '', holder: null, holderDevice: null };
-    // holder 'other' = 다른 기기가 이 토큰을 받는 중(토큰 단위 소유) — 40초 창 밖이면 낡은 표지라 버린다
-    const fresh = Date.now() - s.ts < 40_000;
-    // holder 'pending' = 클레임 판정 전(정상 과도 상태) — 카드가 빨간 오류가 아니라 주황 대기로 그리도록 그대로 통과(재검수 MEDIUM-C)
-    const holder = fresh && (s.holder === 'other' || s.holder === 'pending') ? s.holder : null;
-    return { alive: s.ok && fresh, lastTs: s.ts, error: s.ok ? '' : s.error, holder, holderDevice: holder === 'other' ? (s.holderDevice ?? null) : null };
-  };
-  const out = { telegram: await read('telegram'), slack: await read('slack'), agents: {} };
+  const out = { telegram: await readGatewayStatus(wsId, 'telegram'), slack: await readGatewayStatus(wsId, 'slack'), msgr: await msgrGatewayStatus(wsId), agents: {} };
   const all = await loadConnections(wsId);
-  for (const slug of Object.keys(all.telegram.agents ?? {})) out.agents[slug] = await read(`tg-${slug}`);
+  for (const slug of Object.keys(all.telegram.agents ?? {})) out.agents[slug] = await readGatewayStatus(wsId, `tg-${slug}`);
   return out;
 }
 

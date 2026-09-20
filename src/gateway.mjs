@@ -1290,6 +1290,27 @@ export function ensureGateway() {
       if (!alive.has(id)) { cur.stop(); running.delete(id); }
     }
   };
+  // 설정 화면의 "다시 연결"은 기존 폴러를 중복 생성하지 않고, 매니저 동기화 뒤 팀 메신저 브리지만 즉시 한 번 깨운다.
+  // 일시 네트워크 오류를 15초 다음 틱까지 기다리게 하지 않되, 기존 단일 리더 계약은 그대로 지킨다.
+  globalThis.__argoGatewayNudge = (wsId) => {
+    sync().then(() => {
+      nudgeMsgrBridge(running, wsId);
+    }).catch((e) => console.error('[argo] 메신저 재연결 요청 실패:', e.message));
+  };
   sync().catch(() => {});
   setInterval(() => sync().catch((e) => console.error('[argo] 게이트웨이 sync 오류:', e.message)), 10_000);
+}
+
+/** 설정의 메신저 재연결 요청 — 매니저가 없으면 시작하고, 있으면 팀 메신저 폴만 즉시 깨운다. */
+export function nudgeGateway(wsId) {
+  if (!globalThis.__argoGateway) {
+    ensureGateway();
+    return;
+  }
+  globalThis.__argoGatewayNudge?.(wsId);
+}
+
+/** 지정 회사의 팀 메신저 브리지만 즉시 한 번 깨운다. export는 다중 회사 회귀 테스트용. */
+export function nudgeMsgrBridge(running, wsId) {
+  running.get(`${wsId}:${MSGR_KEY}`)?.stop.nudge?.();
 }

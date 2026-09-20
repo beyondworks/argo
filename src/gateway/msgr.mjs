@@ -1270,10 +1270,12 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   const iv = setInterval(() => tick().catch(() => {}), pollMs);
   iv.unref?.();
   tick().catch(() => {});
-  return () => {
+  const stop = () => {
     stopped = true; clearInterval(iv);
     for (const orgId of subscribedOrgs) { const key = `${wsId}:${orgId}`; try { rtChannels.get(key)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(key); }
     subscribedOrgs = new Set();
     try { rtChannels.get(`${wsId}:u`)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(`${wsId}:u`);
   };
+  stop.nudge = () => tick().catch(() => {});
+  return stop;
 }

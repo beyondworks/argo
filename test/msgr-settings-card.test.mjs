@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { parse } from 'espree';
 import { readFileSync } from 'node:fs';
 import { stripComments } from './helpers/strip-comments.mjs';
+import { nudgeMsgrBridge } from '../src/gateway.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const page = stripComments(read('app/c/[ws]/settings/page.jsx'));
@@ -78,6 +79,30 @@ test('연결 상태는 선택한 조직 기준으로 명시되고, 전체 크루
   for (const k of ['settings.msgr.connection.title', 'settings.msgr.connection.empty', 'settings.msgr.connection.partial', 'settings.msgr.connection.channelNote', 'settings.msgr.connection.activate', 'settings.msgr.connection.addMissing', 'settings.msgr.connection.connected', 'settings.msgr.connection.notConnected', 'settings.msgr.connection.statusHelp', 'settings.msgr.roster.title', 'settings.msgr.roster.help', 'settings.msgr.err.activate']) {
     assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
+});
+
+test('메신저 응답 상태는 안전한 사유를 보이고, 끊겼을 때만 브리지를 다시 깨운다', () => {
+  const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
+  assert.match(route, /msgrGatewayStatus\(ws\)/, 'GET이 브리지 심박을 읽지 않는다');
+  assert.match(route, /function runtimeState\(gateway\)/, '원인을 안전한 상태로 분류하지 않는다');
+  assert.match(route, /if \(reconnect\) \{[\s\S]*?nudgeGateway\(ws\)/, '재연결 요청이 게이트웨이를 깨우지 않는다');
+  assert.match(src, /async function reconnectBridge\(\)/, '카드에 재연결 동작이 없다');
+  assert.match(src, /settings\.msgr\.runtime\.title/, '응답 상태 제목이 없다');
+  assert.match(src, /settings\.msgr\.runtime\.reconnect/, '재연결 버튼이 없다');
+  for (const k of ['settings.msgr.err.reconnect', 'settings.msgr.runtime.title', 'settings.msgr.runtime.alive', 'settings.msgr.runtime.waiting', 'settings.msgr.runtime.offline', 'settings.msgr.runtime.login', 'settings.msgr.runtime.owner', 'settings.msgr.runtime.company', 'settings.msgr.runtime.noCrews', 'settings.msgr.runtime.reconnecting', 'settings.msgr.runtime.reconnect']) {
+    assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('재연결 nudge는 선택한 회사의 메신저 브리지만 깨운다', () => {
+  let first = 0; let second = 0;
+  const running = new Map([
+    ['first:msgr', { stop: { nudge: () => { first++; } } }],
+    ['second:msgr', { stop: { nudge: () => { second++; } } }],
+  ]);
+  nudgeMsgrBridge(running, 'first');
+  assert.equal(first, 1);
+  assert.equal(second, 0);
 });
 
 test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 시트는 잠금에 비활성, 정책 카드는 관리자만 저장·비관리자는 안내', () => {
