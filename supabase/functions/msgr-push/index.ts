@@ -15,10 +15,21 @@ const rest = async (path: string, init: RequestInit = {}) => {
 };
 
 let apnsTok: { jwt: string; at: number } | null = null;
+let apnsPending: Promise<string> | null = null;
 async function apnsAuth() {
   const p8 = Deno.env.get('APNS_KEY_P8'); const kid = Deno.env.get('APNS_KEY_ID'); const team = Deno.env.get('APNS_TEAM_ID');
   if (!p8 || !kid || !team) return null;
-  if (!apnsTok || Date.now() - apnsTok.at > 45 * 60_000) apnsTok = { jwt: await apnsJwt({ p8: p8.replace(/\\n/g, '\n'), keyId: kid, teamId: team }), at: Date.now() };
+  if (!apnsTok || Date.now() - apnsTok.at >= 45 * 60_000) {
+    // Concurrent device sends share the signing operation, including refresh after 45 minutes.
+    // APNs rejects frequent provider-token changes on one connection; the pool/cache are isolate-local.
+    if (!apnsPending) {
+      const at = Date.now();
+      apnsPending = apnsJwt({ p8: p8.replace(/\\n/g, '\n'), keyId: kid, teamId: team, now: Math.floor(at / 1000) })
+        .then((jwt) => { apnsTok = { jwt, at }; return jwt; })
+        .finally(() => { apnsPending = null; });
+    }
+    return apnsPending;
+  }
   return apnsTok.jwt;
 }
 let fcmTok: { token: string; at: number; project: string } | null = null;
@@ -57,7 +68,7 @@ async function sendOne(t: { token: string; platform: string; sound?: string; bad
 async function badgeOnly(uid: string) {
   const toks: { token: string }[] = await rest(`msgr_push_tokens?user_id=eq.${uid}&platform=eq.ios&select=token`);
   if (!toks.length) return Response.json({ ok: true, sent: 0 });
-  const jwt = await apnsAuth(); if (!jwt) return Response.json({ ok: true, sent: 0, skip: 'apns' });
+  const jwt = await apnsAuth(); if (!jwt) return Response.json({ ok: false, sent: 0, skip: 'apns' });
   const badge = Number(await rest(`rpc/msgr_push_unread_total`, { method: 'POST', body: JSON.stringify({ uid }) })) || 0;
   const host = Deno.env.get('APNS_SANDBOX') === '1' ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
   const results = await Promise.all(toks.map(async (t) => {
@@ -68,7 +79,7 @@ async function badgeOnly(uid: string) {
     return r.ok ? 'ok' : `apns ${r.status} ${txt.slice(0, 120)}`;
   }));
   console.log(`[msgr-push] badge ${uid.slice(0, 8)} = ${badge} → ${toks.length} tokens`, results.filter((x) => x !== 'ok'));
-  return Response.json({ ok: true, sent: results.filter((x) => x === 'ok').length }); // 보안 감사 HIGH-1: 임의 uuid의 안읽음 수를 응답으로 돌려주지 않는다
+  return Response.json({ ok: results.every((x) => x === 'ok'), sent: results.filter((x) => x === 'ok').length }); // 보안 감사 HIGH-1: 임의 uuid의 안읽음 수를 응답으로 돌려주지 않는다
 }
 
 // 보안 감사 HIGH-1(2026-09-14): 이 함수는 verify_jwt=false 공개 엔드포인트였다 → 트리거(pg_net)가 msgr_settings.push_secret 을
@@ -113,5 +124,6 @@ Deno.serve(async (req: Request) => {
   const sent = results.filter((x) => x === 'ok').length;
   await rest(`msgr_push_sent?message_id=eq.${id}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ sent }) }).catch(() => null);
   console.log(`[msgr-push] message ${id} → ${toks.length} tokens, sent ${sent}`, results.filter((x) => x !== 'ok'));
-  return Response.json({ ok: true, sent, results });
+  // Acknowledge processing without retrying the batch: accepted devices must not receive duplicates.
+  return Response.json({ ok: sent === results.length, sent, results });
 });
