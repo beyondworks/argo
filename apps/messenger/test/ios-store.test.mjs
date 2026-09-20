@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEnv, parseEnv, uploadPlist, ensureTeam, stampMatches } from '../scripts/ios-store.mjs';
+import { buildEnv, parseEnv, uploadPlist, ensureTeam, stampMatches, ensureSwiftLinkTools } from '../scripts/ios-store.mjs';
 
 test('store build env drops the dev password login and puts the mobile toolchain first on PATH', () => {
   const env = buildEnv({ PATH: '/usr/bin', RUSTUP_HOME: '/tc/rustup', CARGO_HOME: '/tc/cargo' }, parseEnv('VITE_DEV_LOGIN=x\nVITE_API="https://a"\n# c=1\n'));
@@ -8,6 +8,23 @@ test('store build env drops the dev password login and puts the mobile toolchain
   assert.equal(env.VITE_API, 'https://a');
   assert.ok(env.PATH.startsWith('/tc/rustup/toolchains/stable-aarch64-apple-darwin/bin:/tc/cargo/bin:/usr/bin'));
   assert.match(buildEnv({ PATH: '' }).CARGO_HOME, /artifacts[\\/]mobile-native[\\/]cargo$/);
+});
+
+test('Xcode 27 stops before compilation if the active Rust toolchain lacks llvm-tools', () => {
+  const env = { PATH: '/tc/bin' };
+  const spawn = (cmd, args, options) => {
+    assert.equal(options.env, env);
+    return { status: 0, stdout: cmd === 'xcodebuild' ? 'Xcode 27.0\nBuild version 27A266a\n' : args[0] === '--print' ? '/tc/rustup/toolchains/stable\n' : 'rustc 1.98.1\nhost: aarch64-apple-darwin\n' };
+  };
+  assert.throws(() => ensureSwiftLinkTools(env, { spawn, exists: () => false }), /rustup component add llvm-tools/);
+  const paths = [];
+  assert.doesNotThrow(() => ensureSwiftLinkTools(env, { spawn, exists: (path) => { paths.push(path); return true; } }));
+  assert.deepEqual(paths, ['/tc/rustup/toolchains/stable/lib/rustlib/aarch64-apple-darwin/bin/llvm-objcopy']);
+});
+
+test('older Xcode needs no llvm-tools; failed Xcode discovery does not skip the check', () => {
+  assert.doesNotThrow(() => ensureSwiftLinkTools({}, { spawn: () => ({ status: 0, stdout: 'Xcode 26.4\n' }), exists: () => { assert.fail('older Xcode must not inspect llvm-tools'); } }));
+  assert.throws(() => ensureSwiftLinkTools({}, { spawn: () => ({ status: 69, stdout: '' }) }), /xcodebuild 확인 실패/);
 });
 
 import { readAscKey, ascBuildEnv, ascExportArgs } from '../scripts/ios-store.mjs';

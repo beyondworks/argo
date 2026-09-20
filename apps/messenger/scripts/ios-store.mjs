@@ -40,6 +40,23 @@ export const buildEnv = (base, config = {}) => {
   return env;
 };
 
+export const ensureSwiftLinkTools = (env, { spawn = spawnSync, exists = existsSync } = {}) => {
+  const output = (cmd, args) => {
+    const r = spawn(cmd, args, { env, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`[ios-store] ${cmd} 확인 실패 — iOS 빌드 도구를 확인하세요`);
+    return r.stdout.trim();
+  };
+  const major = Number(output('xcodebuild', ['-version']).match(/^Xcode (\d+)/)?.[1]);
+  if (!major) throw new Error('[ios-store] Xcode 버전을 확인할 수 없습니다');
+  if (major < 27) return;
+  const sysroot = output('rustc', ['--print', 'sysroot']);
+  const host = output('rustc', ['-vV']).match(/^host: (.+)$/m)?.[1];
+  if (!sysroot || !host) throw new Error('[ios-store] Rust 툴체인을 확인할 수 없습니다');
+  if (!exists(join(sysroot, 'lib/rustlib', host, 'bin/llvm-objcopy'))) {
+    throw new Error('[ios-store] Xcode 27의 Swift 링크에 llvm-tools가 필요합니다. 빌드와 같은 RUSTUP_HOME·RUSTUP_TOOLCHAIN으로 rustup component add llvm-tools를 실행하세요');
+  }
+};
+
 // App Store Connect API 키(팀 키, **관리자** — '앱 관리' 키는 클라우드 배포 인증서 권한이 없어 export가 "Cloud signing permission error"로 실패, 실측 2026-09-17) — Xcode 계정 세션이 풀려도(실사고 2026-09-11·09-17 "No Accounts") 서명·업로드가 된다.
 // 설정 파일(기본 ~/.appstoreconnect/argo-messenger.json, ASC_API_CONFIG로 바꿈) = { keyId, issuerId, keyPath }. 레포 밖 비공개 파일이고 값은 출력하지 않는다.
 // 없으면 종전처럼 Xcode 계정 세션을 쓴다. tauri ios build는 APPLE_API_KEY·APPLE_API_ISSUER·APPLE_API_KEY_PATH로 같은 키를 쓴다.
@@ -114,6 +131,7 @@ if (mode === 'build') {
   const pbx = join(apple, 'argo-messenger.xcodeproj/project.pbxproj'); const team = JSON.parse(readFileSync(join(app, 'src-tauri/tauri.ios.conf.json'), 'utf8')).bundle.iOS.developmentTeam;
   const before = readFileSync(pbx, 'utf8'); const after = ensureTeam(before, team); if (after !== before) writeFileSync(pbx, after);
   try { unlinkSync(STAMP); } catch { /* 없으면 그만 */ }
+  ensureSwiftLinkTools(env);
   run('npm', ['run', 'mobile:ios:build', '--', '--export-method', 'app-store-connect', '--target', 'aarch64', '--ci', ...(buildNumber ? ['--build-number', String(buildNumber)] : [])], env);
   gateOrDie('build');
   writeFileSync(STAMP, JSON.stringify({ archiveMtimeMs: statSync(ARCHIVE).mtimeMs, buildNumber: buildNumber ?? null, at: new Date().toISOString() }));
