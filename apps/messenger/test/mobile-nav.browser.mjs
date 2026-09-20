@@ -20,6 +20,15 @@ const back = async () => { await p.evaluate(() => { const el = [...document.quer
 const hwBack = async () => { await p.evaluate(() => history.back()); await settle(); };
 const checks = [];
 const ok = (name, cond, got) => { checks.push([name, !!cond]); assert.ok(cond, `${name}: ${JSON.stringify(got)}`); };
+const chatLayout = () => p.evaluate(() => {
+  const main = document.querySelector('.msgr-main').getBoundingClientRect();
+  return Object.fromEntries(['.msgr-top', '.msgr-top .msgr-menu', '.msgr-top .title', '.msgr-work-button', '.msgr-thread', '.msgr-composer', '.msgr-tabbar'].map((selector) => {
+    const el = document.querySelector(selector); if (!el) return [selector, null];
+    const r = el.getBoundingClientRect();
+    return [selector, { display: getComputedStyle(el).display, x: r.x - (selector === '.msgr-tabbar' ? 0 : main.x), y: r.y, width: r.width, height: r.height }];
+  }));
+});
+const sameChatLayout = (a, b) => Object.keys(a).every((key) => a[key] === null ? b[key] === null : b[key] && a[key].display === b[key].display && ['x', 'y', 'width', 'height'].every((dimension) => Math.abs(a[key][dimension] - b[key][dimension]) < 1));
 let s = await st(); ok('시작=홈 depth0', s.page === 'home' && s.depth === 0, s);
 await tab('채팅|Chats'); await settle(); s = await st(); ok('DM 탭', s.page === 'dm' && s.dm, s);
 await openDm(); s = await st(); ok('DM→대화 depth1', s.page === 'chat' && s.depth === 1, s);
@@ -43,12 +52,17 @@ await tab('채팅|Chats'); await settle(); await openDm(); s = await st(); ok('�
 {
   const cdp = await p.context().newCDPSession(p);
   const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+  const beforeSwipeLayout = await chatLayout();
   await touch('touchStart', 10, 420); await touch('touchMove', 40, 422); await touch('touchMove', 120, 424); await p.waitForTimeout(50);
   const mid = await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const m = document.querySelector('.msgr-main'); return { swiping: sh.classList.contains('swiping-back'), dm: sh.classList.contains('phone-dm'), home: sh.classList.contains('phone-home'), tx: m.style.transform, p: sh.style.getPropertyValue('--swipe-p') }; });
   ok('끄는 중: 밑에 DM 탭이 깔리고 화면이 손가락을 따라온다', mid.swiping && mid.dm && mid.home && mid.tx === 'translateX(80px)' && Number(mid.p) > 0.2, mid); // 방향이 잠긴 지점(40px)부터 따라간다 — 잠금 전 거리가 한꺼번에 반영되던 튐 없음(유건 2026-09-17)
+  const duringSwipeLayout = await chatLayout();
+  ok('스와이프 중 헤더·본문·입력창 배치와 고정 탭 바가 유지된다', sameChatLayout(beforeSwipeLayout, duringSwipeLayout), { before: beforeSwipeLayout, during: duringSwipeLayout });
   await touch('touchMove', 60, 424); await touch('touchEnd'); await p.waitForTimeout(500);
   s = await st(); const after = await p.evaluate(() => ({ swiping: document.querySelector('.msgr-shell').classList.contains('swiping-back'), tx: document.querySelector('.msgr-main').style.transform }));
   ok('짧게 끌다 놓으면 제자리(대화 유지)·정리됨', s.page === 'chat' && !after.swiping && !after.tx, { s, after });
+  const afterCancelLayout = await chatLayout();
+  ok('스와이프 취소 뒤 대화 배치가 그대로다', sameChatLayout(beforeSwipeLayout, afterCancelLayout), { before: beforeSwipeLayout, after: afterCancelLayout });
   await p.evaluate(() => { const sh = document.querySelector('.msgr-shell'); const main = document.querySelector('.msgr-main'); window.__tl = []; const snap = () => window.__tl.push({ page: history.state?.page, cls: sh.className, tx: main.style.transform }); new MutationObserver(snap).observe(sh, { attributes: true, attributeFilter: ['class'] }); new MutationObserver(snap).observe(main, { attributes: true, attributeFilter: ['style'] }); window.addEventListener('popstate', () => setTimeout(snap, 0)); });
   await touch('touchStart', 10, 420); await touch('touchMove', 100, 422); await touch('touchMove', 260, 424); await p.waitForTimeout(30); await touch('touchEnd'); await p.waitForTimeout(700);
   s = await st(); ok('화면 폭 35% 넘게 끌고 놓으면 DM 탭으로', s.page === 'dm' && s.dm && s.depth === 0, s);
