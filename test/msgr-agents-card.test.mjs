@@ -74,7 +74,19 @@ test('원클릭 연결(유건 지시 "이렇게 어려우면 안 돼"): 앱 안�
   const conf = read('apps/messenger/src-tauri/tauri.conf.json');
   assert.match(conf, /"\.\.\/\.\.\/\.\.\/integrations\/hermes-argo-msgr\/": "agents\/hermes-argo-msgr\/"/, '헤르메스 플러그인 동봉');
   assert.match(conf, /"\.\.\/\.\.\/\.\.\/integrations\/openclaw-argo-msgr\/": "agents\/openclaw-argo-msgr\/"/, '오픈클로 플러그인 동봉');
-  assert.match(read('apps/messenger/src-tauri/src/lib.rs'), /agents::agent_connect, agents::agent_list/, '핸들러 등록');
+  const lib = read('apps/messenger/src-tauri/src/lib.rs').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  const branches = new Map([...lib.matchAll(/#\[cfg\((.*?)\)\]\s*let builder = builder([\s\S]*?);/g)]
+    .map(([, cfg, body]) => [cfg.replace(/\s/g, ''), body]));
+  for (const cfg of ['target_os="macos"', 'all(desktop,not(target_os="macos"))']) {
+    const body = branches.get(cfg);
+    assert.ok(body, `${cfg} 데스크톱 빌더 분기`);
+    const handlers = body.match(/\.invoke_handler\s*\(\s*tauri::generate_handler!\s*\[([^\]]*)\]\s*\)/)?.[1];
+    assert.ok(handlers, `${cfg} 핸들러 등록`);
+    const commands = handlers.split(',').map((s) => s.trim());
+    for (const command of ['agents::agent_connect', 'agents::agent_list']) {
+      assert.ok(commands.includes(command), `${cfg}: ${command} 등록`);
+    }
+  }
 });
 
 // Execute the UI identity function with independent installation/user/profile inputs.

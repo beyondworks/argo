@@ -85,8 +85,19 @@ test('화면·셸·i18n 핀: OTP 제거, Apple·Google·GitHub 버튼(서버 설
   assert.match(auth, /const pending = enabled === null;/, '조회 전 판정 정의(#530 N-2)');
   assert.match(auth, /supabase\.auth\.setSession\(tokens\)/, '회수한 토큰을 이 앱의 세션으로');
   assert.match(auth, /\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(/, '비밀번호 로그인은 dev 빌드 또는 검수용 번들 플래그에서만');
-  const lib = read('apps/messenger/src-tauri/src/lib.rs');
-  assert.match(lib, /generate_handler!\[pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list\]/, '셸 커맨드 = 페어링 2종 + 외부 에이전트 원클릭 연결');
+  const lib = read('apps/messenger/src-tauri/src/lib.rs').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  const branches = new Map([...lib.matchAll(/#\[cfg\((.*?)\)\]\s*let builder = builder([\s\S]*?);/g)]
+    .map(([, cfg, body]) => [cfg.replace(/\s/g, ''), body]));
+  for (const cfg of ['target_os="macos"', 'all(desktop,not(target_os="macos"))']) {
+    const body = branches.get(cfg);
+    assert.ok(body, `${cfg} 데스크톱 빌더 분기`);
+    const handlers = body.match(/\.invoke_handler\s*\(\s*tauri::generate_handler!\s*\[([^\]]*)\]\s*\)/)?.[1];
+    assert.ok(handlers, `${cfg} 핸들러 등록`);
+    const commands = handlers.split(',').map((s) => s.trim());
+    for (const command of ['pair::pair_start', 'pair::pair_claim', 'agents::agent_connect', 'agents::agent_list']) {
+      assert.ok(commands.includes(command), `${cfg}: ${command} 등록`);
+    }
+  }
   const pair = read('apps/messenger/src-tauri/src/pair.rs');
   assert.match(pair, /TcpListener::bind\(\("127\.0\.0\.1", 0\)\)/, '루프백·임시 포트');
   assert.match(pair, /e\.verifier == verifier/, '회수는 verifier 일치');
