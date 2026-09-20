@@ -228,14 +228,16 @@ test('native notification tap consumes cold-start pending tap and live event onc
   let listener = null;
   let unlistened = 0;
   const listen = async (name, callback) => { assert.equal(name, 'native-notification-tap'); listener = callback; return () => { unlistened += 1; }; };
-  const invoke = async (command) => { assert.equal(command, 'native_notification_pending_tap'); return { channelId: 'cold-channel', messageId: 'message:40' }; };
+  let pending = { channelId: 'cold-channel', messageId: 'message:40' };
+  const invoke = async (command) => { assert.equal(command, 'native_notification_pending_tap'); const tap = pending; pending = null; return tap; };
+  const emit = async (tap) => { pending = tap; await listener({ payload: tap }); };
   // When
   const detach = await attachNativeNotificationTaps({ listen, invoke, onTap: (tap) => navigated.push(tap.channelId) });
-  listener({ payload: { channelId: 'cold-channel', messageId: 'message:40' } });
-  listener({ payload: { channelId: 'live-channel', messageId: 'message:41' } });
-  listener({ payload: { channelId: '', messageId: 'message:42' } });
+  await emit({ channelId: 'cold-channel', messageId: 'message:40' });
+  await emit({ channelId: 'live-channel', messageId: 'message:41' });
+  await emit({ channelId: '', messageId: 'message:42' });
   detach();
-  listener({ payload: { channelId: 'late-channel', messageId: 'message:43' } });
+  await emit({ channelId: 'late-channel', messageId: 'message:43' });
   // Then
   assert.deepEqual(navigated, ['cold-channel', 'live-channel']);
   assert.equal(unlistened, 1);

@@ -4,6 +4,7 @@ const emptyContext = Object.freeze({
 
 let appContext = emptyContext;
 let mountedCoordinator = null;
+const nativeTapStreams = new WeakMap();
 
 const nativeSession = (session) => {
   const userId = session?.user?.id;
@@ -32,6 +33,8 @@ export async function claimNativeNotification(invoke, { messageId, channelId, ti
 
 export async function attachNativeNotificationTaps({ listen, invoke, onTap }) {
   let active = true;
+  const stream = nativeTapStreams.get(invoke) ?? { deliver: null, pending: null };
+  nativeTapStreams.set(invoke, stream);
   const seen = new Set();
   const deliver = (tap) => {
     if (!active || typeof tap?.channelId !== 'string' || !tap.channelId) return;
@@ -40,9 +43,25 @@ export async function attachNativeNotificationTaps({ listen, invoke, onTap }) {
     seen.add(key);
     onTap(tap);
   };
-  const unlisten = await listen('native-notification-tap', ({ payload }) => deliver(payload));
-  try { deliver(await invoke('native_notification_pending_tap')); } catch { /* no pending tap or native command unavailable */ }
-  return () => { if (!active) return; active = false; unlisten(); };
+  const consume = async () => {
+    if (!active) return;
+    try {
+      const tap = await invoke('native_notification_pending_tap');
+      if (!tap) return;
+      if (stream.deliver) stream.deliver(tap);
+      else stream.pending = tap;
+    } catch { /* no pending tap or native command unavailable */ }
+  };
+  stream.deliver = deliver;
+  const unlisten = await listen('native-notification-tap', consume);
+  if (stream.pending) { stream.deliver(stream.pending); stream.pending = null; }
+  await consume();
+  return () => {
+    if (!active) return;
+    active = false;
+    if (stream.deliver === deliver) stream.deliver = null;
+    unlisten();
+  };
 }
 
 export function createNativeSessionApplier({ native, applySession }) {
@@ -71,6 +90,7 @@ export async function mountNativeNotificationTaps({ enabled, onTap }) {
 
 export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabaseUrl, anonKey, lang, getContext }) {
   let active = null;
+  let sessionSync = null;
   let chain = Promise.resolve();
   const enqueue = (task) => {
     const next = chain.then(task, task);
@@ -132,14 +152,25 @@ export function createNativeRealtimeCoordinator({ enabled, auth, invoke, supabas
     if (!payload.accessToken || !payload.refreshToken) return;
     if (payload.accessToken === active.accessToken && payload.refreshToken === active.refreshToken) return;
     active = { ...active, accessToken: payload.accessToken, refreshToken: payload.refreshToken };
+    sessionSync = { generation: active.generation, stop: null };
     try {
       const { error } = await auth.setSession({ access_token: payload.accessToken, refresh_token: payload.refreshToken });
       if (error) throw error;
-      auth.stopAutoRefresh();
-    } catch { await stopActive(true); }
+      if (active?.generation === sessionSync.generation) auth.stopAutoRefresh();
+    } catch {
+      if (active?.generation === sessionSync.generation) await stopActive(true);
+    } finally { sessionSync = null; }
   };
   return {
-    handleAuth: (event, session) => enqueue(() => handleAuthNow(event, session)),
+    handleAuth: (event, session) => {
+      // auth-js awaits SIGNED_OUT subscribers inside setSession; native cleanup
+      // must complete there without waiting behind the setSession queue item.
+      if (sessionSync && event === 'SIGNED_OUT') {
+        sessionSync.stop ??= handleAuthNow(event, session);
+        return sessionSync.stop;
+      }
+      return enqueue(() => handleAuthNow(event, session));
+    },
     handleNativeSession: (payload) => enqueue(() => handleNativeSessionNow(payload)),
     updateContext: () => enqueue(updateContextNow),
     reconcile: () => enqueue(reconcileNow),
