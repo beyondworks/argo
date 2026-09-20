@@ -80,16 +80,18 @@ export function swipeRelease(dx, w, v) {
   return { go, ms };
 }
 export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'home', onStart = null, onEnd = null } = {}) {
-  const ref = useRef({ x: 0, y: 0, base: 0, armed: false, dir: null, dx: 0, el: null, classes: [], samples: [] }); const st = ref.current;
+  const ref = useRef({ x: 0, y: 0, base: 0, armed: false, dir: null, dx: 0, el: null, underlayEl: null, classes: [], samples: [] }); const st = ref.current;
   const cb = useRef({}); cb.current = { onBack, underlay, onStart, onEnd };
   const [node, setNode] = useState(null);
   const shell = () => document.querySelector('.msgr-shell');
-  const setP = (p) => shell()?.style.setProperty('--swipe-p', String(Math.max(0, Math.min(1, p))));
+  // 스와이프 매 프레임에 셸의 상속 CSS 변수를 바꾸면 전체 화면 자식의 스타일이 다시 계산된다.
+  // 실제로 변하는 밑 화면에만 값을 두어 긴 대화 목록에서도 드래그가 가볍게 유지되게 한다.
+  const setP = (p) => st.underlayEl?.style.setProperty('--swipe-p', String(Math.max(0, Math.min(1, p))));
   const underlay_ = () => cb.current.underlay();
   const onEnd_ = () => cb.current.onEnd?.();
-  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay_() : null; const keep = new Set(to === 'dm' ? ['phone-home', 'phone-dm'] : to === 'home' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); sh.style.removeProperty('--swipe-p'); sh.style.removeProperty('--swipe-ms'); } st.classes = []; if (st.el) st.el.style.willChange = ''; onEnd_(); };
+  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay_() : null; const keep = new Set(to === 'dm' ? ['phone-home', 'phone-dm'] : to === 'home' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); } if (st.underlayEl) { st.underlayEl.style.removeProperty('--swipe-p'); st.underlayEl.style.removeProperty('--swipe-ms'); } st.underlayEl = null; st.classes = []; if (st.el) st.el.style.willChange = ''; onEnd_(); };
   const settle = (el, to, ms, then) => {
-    const sh = shell(); sh?.classList.add('settling'); sh?.style.setProperty('--swipe-ms', `${ms}ms`);
+    const sh = shell(); sh?.classList.add('settling'); st.underlayEl?.style.setProperty('--swipe-ms', `${ms}ms`);
     el.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`; el.style.transform = to;
     let fired = false;
     const done = () => { if (fired) return; fired = true; el.removeEventListener('transitionend', done);
@@ -115,7 +117,7 @@ export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'hom
         if (st.dir === 'y') { st.armed = false; return; }
         st.base = t.clientX; // 잠긴 지점부터 따라간다(튐 방지)
         const to = underlay_(); st.classes = to === 'dm' ? ['phone-home', 'phone-dm'] : ['phone-home'];
-        shell()?.classList.add('swiping-back', ...st.classes); cb.current.onStart?.(to);
+        const sh = shell(); sh?.classList.add('swiping-back', ...st.classes); st.underlayEl = sh?.querySelector('.msgr-side') ?? null; cb.current.onStart?.(to);
         st.el.style.willChange = 'transform'; st.el.style.transition = '';
       }
       e.preventDefault(); // 가로로 잠긴 뒤에는 세로 스크롤·바운스를 멈춘다

@@ -510,13 +510,13 @@ function Shell({ session }) {
   // 루트(홈·DM·알림함·기억 탭)는 replaceState, 그 위에 여는 화면(대화·설정·검색)은 pushState. 상단 뒤로 버튼·iOS 가장자리 스와이프·
   // Android 하드웨어 뒤로(WryActivity가 webView.goBack → popstate)가 전부 같은 스택을 타서 "그 전 화면"으로 돌아간다. 데스크톱은 무관.
   const ROOT_PAGES = useMemo(() => new Set(['home', 'dm', 'inbox', 'activity']), []);
-  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); const lastRoot = useRef('home'); // lastRoot = 스와이프 뒤로가기 밑에 깔 실제 이전 루트 탭 // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
+  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); const navBackPending = useRef(false); const navBackTicket = useRef(0); const lastRoot = useRef('home'); // lastRoot = 스와이프 뒤로가기 밑에 깔 실제 이전 루트 탭 // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
   useEffect(() => { // popstate 구독은 폰일 때 한 번. 루트 항목 시딩은 state가 없을 때만(폭 전환으로 다시 돌아도 깊이를 지우지 않는다 — 검수 M-4)
     if (!isPhone) return;
     const onPop = (e) => {
       const to = navCollapse.current;
       if (to) { navCollapse.current = null; navPopping.current = false; try { history.replaceState({ page: to, chId: null, depth: 0 }, ''); } catch { /* */ } return; } // 접기 완료 — page는 이미 루트
-      const st = e.state; if (!st?.page) return; navPopping.current = true; if (st.chId) setChId(st.chId); setPage(st.page);
+      const st = e.state; if (!st?.page) return; navBackTicket.current += 1; navBackPending.current = false; navPopping.current = true; if (st.chId) setChId(st.chId); setPage(st.page);
     };
     window.addEventListener('popstate', onPop);
     try { if (!history.state?.page) history.replaceState({ page, chId, depth: 0 }, ''); } catch { /* 일부 웹뷰는 replaceState를 막는다 — 스택 없이 홈으로 */ }
@@ -544,7 +544,15 @@ function Shell({ session }) {
       else history.pushState({ page, chId, depth: depth + 1 }, '');
     } catch { /* 위와 같음 */ }
   }, [page, chId, isPhone, ROOT_PAGES]); // eslint-disable-line react-hooks/exhaustive-deps
-  const goBack = useCallback(() => { if (isPhone && (history.state?.depth ?? 0) > 0) history.back(); else setPage('home'); }, [isPhone]);
+  const goBack = useCallback(() => {
+    if (!isPhone || (history.state?.depth ?? 0) === 0) { setPage('home'); return; }
+    // popstate가 오기 전 연타하면 history가 두 칸 이상 이동해 앱 밖으로 나갈 수 있다. 한 번의 뒤로 이동이 도착할 때까지만 막는다.
+    if (navBackPending.current) return;
+    navBackPending.current = true;
+    const ticket = ++navBackTicket.current;
+    history.back();
+    window.setTimeout(() => { if (navBackTicket.current === ticket) navBackPending.current = false; }, 500); // 일부 웹뷰가 popstate를 놓친 경우 다음 뒤로 시도는 막지 않는다.
+  }, [isPhone]);
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
   const ROOT_ORDER = ['home', 'dm', 'inbox', 'activity']; // 하단 탭 순서 — 전환 애니메이션 방향의 기준(좌우 스와이프는 DM 상단 탭에만 있다)
