@@ -71,7 +71,9 @@ test('맥 네이티브가 실패·시간 초과여도 권한을 허용으로 보
 test('전송 실패는 삼키지 않는다 — 네이티브 결과를 돌려주고 진단에 남긴다(macOS는 UN 직결)', () => {
   const src = readFileSync(new URL('../src/notify.js', import.meta.url), 'utf8');
   const send = src.slice(src.indexOf('export async function sendNotify'), src.indexOf('export async function setBadge'));
-  assert.match(send, /nativeMac\('notify_send'/);
+  assert.match(send, /nativeMacClaim\(title, body, tag, channelId\)/);
+  assert.match(src, /claimNativeNotification/);
+  assert.doesNotMatch(send, /n\?\.ok[^}]+playChime/s, 'macOS 소리는 native claim 경로가 한 번만 낸다');
   assert.match(send, /pushDiag\('notify', `알림 전송 실패/);
   assert.match(src, /import\.meta\.env\.TAURI_ENV_PLATFORM === 'darwin'/);
   const rs = readFileSync(new URL('../src-tauri/src/notify_mac.rs', import.meta.url), 'utf8');
@@ -81,5 +83,6 @@ test('전송 실패는 삼키지 않는다 — 네이티브 결과를 돌려주�
   const rsSend = rs.slice(rs.indexOf('pub async fn notify_send'), rs.indexOf('define_class!'));
   assert.ok(rsSend.indexOf('current_status(&c)?') > -1 && rsSend.indexOf('current_status(&c)?') < rsSend.indexOf('addNotificationRequest_withCompletionHandler'), '전송 전에 권한 상태를 확인한다');
   const lib = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
-  assert.match(lib, /notify_mac::notify_status, notify_mac::notify_request, notify_mac::notify_send/);
+  assert.match(lib, /notify_mac::notify_status,[\s\S]*notify_mac::notify_request,[\s\S]*notify_mac::notify_send/);
+  assert.match(lib, /native_realtime::native_notify_claim_and_send/);
 });

@@ -58,7 +58,7 @@ before(() => {
     '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql',
     '20260909000000_msgr_bot_external_id.sql', '20260909001000_msgr_crew_folder.sql', '20260909002000_msgr_profiles_friends.sql', '20260909003000_msgr_message_meta.sql',
     '20260909004000_msgr_p0_reads_reactions_prefs.sql', '20260909005000_msgr_avatars.sql', '20260909120000_msgr_execution_claims.sql', '20260909230000_msgr_bot_execution.sql',
-    '20260911150000_msgr_channel_manage.sql', '20260911230000_msgr_channel_scope_enforce.sql', '20260912135036_msgr_target_favorites_dm_leave.sql', '20260912001000_msgr_bot_files.sql', '20260913010000_msgr_work_runs.sql']) psql(['-f', mig(f)]);
+    '20260911150000_msgr_channel_manage.sql', '20260911230000_msgr_channel_scope_enforce.sql', '20260912135036_msgr_target_favorites_dm_leave.sql', '20260912001000_msgr_bot_files.sql', '20260913010000_msgr_work_runs.sql', '20260919110000_msgr_work_stall_blocked.sql']) psql(['-f', mig(f)]);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
   OTHER_ORG = last(asUser(U.guest, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Other', 'other', '${U.guest}') returning id`));
@@ -76,8 +76,17 @@ before(() => {
 let seq=0;
 const request=()=>`99999999-9999-4999-8999-${String(++seq).padStart(12,'0')}`;
 const create=(opts={})=>JSON.parse(last(asUser(opts.user??U.owner,`select public.msgr_work_create('${opts.channel??PUB}','${opts.request??request()}','${opts.goal??'Compare suppliers'}','${opts.criteria??'Three verified sources'}',${opts.lead?`'${opts.lead}'`:'null'})`)));
+const handoff=(w,to,body)=>last(asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${w.channel_id}','crew','${CREW}','text','${body}',${w.root_message_id},${w.root_message_id},'reply:${CREW}:${w.root_message_id}:${request()}','[{"kind":"crew","id":"${to}"}]','{"disposition":"handoff","origin":"${U.owner}"}') returning id`));
 const status=(w)=>sql(`select status from public.msgr_work_runs where id='${w.id}'`);
 const reply=(w,crew=CREW,meta='{"disposition":"done"}',body='Result',uid=U.owner)=>last(asUser(uid,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,meta) values('${w.channel_id}','crew','${crew}','text','${body}',${w.root_message_id},${w.root_message_id},'reply:${crew}:${w.root_message_id}:${request()}','${meta}') returning id`));
+const ensureExecution=(w,sourceId=w.root_message_id)=>sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt,state) select '${CREW}',${sourceId},'${request()}','running' where not exists (select 1 from public.msgr_executions where crew_id='${CREW}' and source_msg_id=${sourceId} and state='running')`);
+const pendingApproval=(w,{source=true,link=true,sourceId=w.root_message_id}={})=>{
+  ensureExecution(w,sourceId);
+  const id=sql(`insert into public.msgr_crew_approvals(org_id,channel_id,crew_id,approval_id,action${source?',source_msg_id':''}) values('${ORG}','${w.channel_id}','${CREW}','ap-${request()}','Send the report'${source?`,${sourceId}`:''}) returning id`);
+  const mid=sql(`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions) values('${w.channel_id}','crew','${CREW}','approval_card','Approval needed',${w.root_message_id},${sourceId},'ap:${CREW}:${request()}','[{"kind":"approval","id":"${id}"}]') returning id`);
+  if(link) sql(`update public.msgr_crew_approvals set message_id=${mid} where id='${id}'`);
+  return id;
+};
 
 test('create chooses an eligible coordinator and atomically persists one root across retries', {skip},()=>{
   const key=request(); const w=create({request:key}); const again=create({request:key});
@@ -110,15 +119,119 @@ test('specialist completion is not whole-work completion; lead must explicitly r
   const w=create();
   reply(w,OTHER_CREW,'{"disposition":"done","work_status":"completed"}','Research only',U.member);
   assert.equal(status(w),'running');
-  reply(w,CREW,'{"disposition":"done"}','A plan'); assert.equal(status(w),'running');
+  const plan=handoff(w,OTHER_CREW,'A plan — @Theirs please research'); assert.equal(status(w),'running','넘김이 있는 계획은 진행 중(완료 아님)');
+  reply(w,OTHER_CREW,'{"disposition":"handoff"}','Research for the lead',U.member); assert.equal(status(w),'running');
+  sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt,state) values('${OTHER_CREW}',${plan},'${request()}','completed')`); // 동료 실행 끝남
   const rid=reply(w,CREW,'{"disposition":"done","work_status":"completed"}','Three checked sources');
   assert.equal(status(w),'completed');
   assert.equal(sql(`select result_message_id from public.msgr_work_runs where id='${w.id}'`),rid);
 });
-test('external bot-style terminal markers follow the same fenced/quoted rules', {skip},()=>{
+// D48(정비사 원장 P-C11·P3-4): 총괄이 판정 표지 없이 넘김도 없이 답을 마치면 스레드에서 더 움직일 에이전트가 없다 — 종전엔 영원히 running
+test('D48: 총괄이 판정 없이 넘김 없이 답을 마치고 대기 중인 동료도 없으면 도움 필요(blocked) — 완료로 올리지 않는다', {skip},()=>{
+  for (const meta of ['{}', '{"disposition":"done"}']) {
+    const w=create(); const rid=reply(w,CREW,meta,'Here is a summary');
+    assert.equal(status(w),'blocked',meta);
+    const [res,rmid]=sql(`select coalesce(result,'<null>'), result_message_id from public.msgr_work_runs where id='${w.id}'`).split('|');
+    assert.equal(res,'<null>','정지 이유는 앱이 사용자 언어로 그린다'); assert.equal(rmid,rid,'총괄의 마지막 답을 가리킨다');
+    const key=request(); assert.equal(JSON.parse(last(asUser(U.owner,`select public.msgr_work_resume('${w.id}','${key}','Also add the price table')`))).status,'running','보완하여 계속으로 이어간다');
+  }
+});
+test('D48: 동료에게 넘긴 지시가 아직 끝나지 않았거나 총괄 판정이 넘김이면 종전처럼 진행 중', {skip},()=>{
+  const w=create(); const h=handoff(w,OTHER_CREW,'Please research');
+  reply(w,CREW,'{"disposition":"done"}','Waiting for research'); assert.equal(status(w),'running','동료 실행이 끝나지 않았다');
+  sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt,state) values('${OTHER_CREW}',${h},'${request()}','completed')`);
+  reply(w,CREW,'{"disposition":"done"}','Summary without a verdict'); assert.equal(status(w),'blocked','동료가 끝난 뒤 판정 없는 총괄 답은 정지');
+  const w2=create(); reply(w2,CREW,'{"disposition":"handoff"}','Handing off'); assert.equal(status(w2),'running','넘김 판정');
+  const w4=create(); asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${w4.channel_id}','crew','${CREW}','text','Tool handoff',${w4.root_message_id},${w4.root_message_id},'reply:${CREW}:${w4.root_message_id}:${request()}','[{"kind":"crew","id":"${OTHER_CREW}"}]','{}')`);
+  assert.equal(status(w4),'running','판정 줄 없이도 도구로 넘긴 멘션이 실린 답은 동료가 이어받는다');
+  const cc=create(); asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${cc.channel_id}','crew','${CREW}','text','For reference only',${cc.root_message_id},${cc.root_message_id},'reply:${CREW}:${cc.root_message_id}:${request()}','[{"kind":"crew","id":"${OTHER_CREW}","role":"cc"}]','{"disposition":"done"}')`);
+  assert.equal(status(cc),'blocked','참조(cc)는 실행 대상이 아니므로 업무를 진행 중에 붙잡지 않는다');
+  const w3=create(); reply(w3,OTHER_CREW,'{"disposition":"done"}','Specialist only',U.member); assert.equal(status(w3),'running','총괄이 아닌 에이전트의 답은 판정하지 않는다');
+});
+test('D48: 같은 업무의 총괄 결재가 대기 중이면 running, 결정 뒤 남은 후속 실행 없는 답에서 다시 판정', {skip},()=>{
+  const other=create(); pendingApproval(other);
+  const isolated=create(); reply(isolated,CREW,'{"disposition":"done"}','No action remains');
+  assert.equal(status(isolated),'blocked','다른 업무의 결재 대기는 이 업무 판정을 막지 않는다');
+
+  const legacy=create(); pendingApproval(legacy,{source:false});
+  reply(legacy,CREW,'{"disposition":"done"}','Waiting on a pre-migration linked card');
+  assert.equal(sql(`select source_msg_id from public.msgr_crew_approvals where crew_id='${CREW}' and channel_id='${legacy.channel_id}' order by created_at desc limit 1`),String(legacy.root_message_id),'이전 게이트웨이의 카드 연결 때 검증된 실행 원문을 보완한다');
+  assert.equal(status(legacy),'running','검증된 실행 원문으로 보완된 기존 행도 결재를 기다린다');
+
+  for (const decision of ['approved','rejected']) {
+    const w=create(); const approval=pendingApproval(w);
+    reply(w,CREW,'{"disposition":"done"}','Approval is pending; I will continue after the decision');
+    assert.equal(status(w),'running','같은 스레드에서 이 총괄이 올린 pending 결재가 있으면 기다린다');
+    sql(`update public.msgr_crew_approvals set status='${decision}',decided_by='${U.owner}',decided_at=now() where id='${approval}'`);
+    reply(w,CREW,'{"disposition":"done"}','The approval was decided; there is no remaining action');
+    assert.equal(status(w),'blocked',`${decision} 뒤 후속 답에서 남은 실행이 없으면 다시 도움 필요로 판정한다`);
+  }
+
+  const chained=create(); const chainedApproval=pendingApproval(chained,{link:false});
+  const priorCard=sql(`select id from public.msgr_messages where thread_root=${chained.root_message_id} and kind='approval_card' order by id desc limit 1`);
+  asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,meta) values('${chained.channel_id}','crew','${CREW}','text','Follow-up created another approval',${chained.root_message_id},${priorCard},'reply:${CREW}:${priorCard}:${request()}','{"disposition":"done"}')`);
+  assert.equal(status(chained),'running','결재 카드에 단 후속 답도 같은 work root의 새 pending 결재를 기다린다');
+  assert.equal(sql(`select source_msg_id from public.msgr_crew_approvals where id='${chainedApproval}'`),String(chained.root_message_id));
+});
+test('D48: 현재 실행에서 pending 결재가 먼저 생기고 카드 연결이 실패해도 업무를 정지시키지 않는다', {skip},()=>{
   const w=create();
-  reply(w,CREW,'{"disposition":"done"}','```\nWORK: completed'); assert.equal(status(w),'running');
-  reply(w,CREW,'{"disposition":"done"}','> WORK: completed'); assert.equal(status(w),'running');
+  sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt) values('${CREW}',${w.root_message_id},'${request()}')`);
+  const approval=sql(`insert into public.msgr_crew_approvals(org_id,channel_id,crew_id,approval_id,action,source_msg_id) values('${ORG}','${w.channel_id}','${CREW}','ap-${request()}','Send the report',${w.root_message_id}) returning id`);
+  assert.equal(sql(`select message_id is null from public.msgr_crew_approvals where id='${approval}'`),'t','카드 insert/update 전 실패 경계');
+  assert.equal(sql(`select source_msg_id from public.msgr_crew_approvals where id='${approval}'`),String(w.root_message_id),'현재 실행 원문을 결재 행에 동기 기록한다');
+  reply(w,CREW,'{"disposition":"done"}','Approval is pending; I will continue after the decision');
+  assert.equal(status(w),'running','현재 실행 중 먼저 만들어진 미연결 pending 결재를 기다린다');
+
+  const linkFailed=create();
+  sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt) values('${CREW}',${linkFailed.root_message_id},'${request()}')`);
+  const linkFailedApproval=pendingApproval(linkFailed,{link:false});
+  assert.equal(sql(`select message_id is null from public.msgr_crew_approvals where id='${linkFailedApproval}'`),'t','카드는 생겼지만 approval 링크 갱신이 실패한 경계');
+  reply(linkFailed,CREW,'{"disposition":"done"}','The card link update failed, but approval is pending');
+  assert.equal(status(linkFailed),'running','불변 source_msg_id로 카드 링크 실패와 무관하게 기다린다');
+
+  const next=create();
+  sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt) values('${CREW}',${next.root_message_id},'${request()}')`);
+  reply(next,CREW,'{"disposition":"done"}','No approval belongs to this later execution');
+  assert.equal(status(next),'blocked','이전 실행에서 pending으로 남은 미연결 결재는 이후 업무를 붙잡지 않는다');
+
+  const first=create(); const second=create();
+  sql(`select set_config('argo.msgr_work_protocol','1',false); insert into public.msgr_executions(crew_id,source_msg_id,attempt) values('${CREW}',${first.root_message_id},'${request()}'),('${CREW}',${second.root_message_id},'${request()}')`);
+  const firstApproval=pendingApproval(first,{link:false}); pendingApproval(second,{link:false});
+  reply(first,CREW,'{"disposition":"done"}','First approval is pending'); assert.equal(status(first),'running');
+  sql(`update public.msgr_crew_approvals set status='rejected',decided_by='${U.owner}',decided_at=now() where id='${firstApproval}'`);
+  reply(first,CREW,'{"disposition":"done"}','Only the other execution approval remains');
+  assert.equal(status(first),'blocked','동시 실행의 다른 결재를 현재 업무에 오귀속하지 않는다');
+  reply(second,CREW,'{"disposition":"done"}','Second approval is still pending'); assert.equal(status(second),'running');
+
+  assert.match(asUserRaw(U.owner,`update public.msgr_crew_approvals set source_msg_id=${second.root_message_id} where id='${approval}'`).stderr,/msgr_immutable_source_msg_id/,'결재의 실행 원문은 바꿀 수 없다');
+});
+test('D48: 실행 원문을 하드 삭제해도 결재 기록은 보존되고 출처 없는 pending은 업무를 붙잡지 않는다', {skip},()=>{
+  const w=create();
+  const source=last(asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,author_user_id,kind,body,thread_root,reply_to,client_msg_id) values('${w.channel_id}','user','${U.owner}','text','Please prepare the approval',${w.root_message_id},${w.root_message_id},'${request()}') returning id`));
+  const pending=pendingApproval(w,{sourceId:source});
+  const decided=pendingApproval(w,{sourceId:source});
+  sql(`update public.msgr_crew_approvals set status='approved',decided_by='${U.owner}',decided_at=now() where id='${decided}'`);
+
+  sql(`delete from public.msgr_messages where id=${source}`);
+  assert.equal(sql(`select count(*) from public.msgr_crew_approvals where id in ('${pending}','${decided}')`),'2','pending·결정 기록을 모두 보존한다');
+  assert.equal(sql(`select count(*) from public.msgr_crew_approvals where id in ('${pending}','${decided}') and source_msg_id is null`),'2','삭제된 원문 참조만 비운다');
+
+  reply(w,CREW,'{"disposition":"done"}','The source was removed; user guidance is required');
+  assert.equal(status(w),'blocked','출처를 확인할 수 없는 pending으로 업무를 계속 숨기지 않는다');
+});
+test('D48: 비총괄 크루가 직접 넣은 비배열·가짜 멘션은 주관 답을 깨뜨리거나 업무를 고착시키지 않는다', {skip},()=>{
+  for (const mentions of ['{}', `[{"kind":"crew","id":"${request()}"}]`, `[{"kind":"crew","id":"${OTHER_CREW}"}]`]) {
+    const w=create();
+    asUser(U.member,`insert into public.msgr_messages(channel_id,author_kind,crew_id,kind,body,thread_root,reply_to,client_msg_id,mentions,meta) values('${w.channel_id}','crew','${OTHER_CREW}','text','Injected mention',${w.root_message_id},${w.root_message_id},'reply:${OTHER_CREW}:${w.root_message_id}:${request()}','${mentions}','{"disposition":"handoff"}')`);
+    reply(w,CREW,'{"disposition":"done"}','No authorized handoff remains');
+    assert.equal(status(w),'blocked',mentions);
+  }
+});
+test('external bot-style terminal markers follow the same fenced/quoted rules', {skip},()=>{
+  // 코드 블록·인용 속 표지는 판정이 아니다 — 완료로 올리지 않는다(판정 없는 정지는 D48에 따라 도움 필요)
+  const f=create(); reply(f,CREW,'{"disposition":"done"}','```\nWORK: completed'); assert.notEqual(status(f),'completed');
+  const q=create(); reply(q,CREW,'{"disposition":"done"}','> WORK: completed'); assert.notEqual(status(q),'completed');
+  const w=create();
   reply(w,CREW,'{"disposition":"done"}','```text\nResult\n```\nWORK: completed'); assert.equal(status(w),'completed');
   assert.ok(!sql(`select result from public.msgr_work_runs where id='${w.id}'`).includes('WORK:'));
 });

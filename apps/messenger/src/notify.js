@@ -3,6 +3,7 @@
 import { inTauri, isMobilePlatform } from './platform.js';
 import { pushDiag } from './diag.jsx';
 import { resolvePermission } from './notify-decide.mjs';
+import { claimNativeNotification, updateNativeRealtimeContext } from './native-realtime.mjs';
 
 // macOS 데스크톱은 네이티브 명령(src-tauri/src/notify_mac.rs — UNUserNotificationCenter)으로 권한을 묻고 보낸다. 플러그인(2.4.0)의 macOS 경로는
 // 폐기된 NSUserNotificationCenter에 결과를 버리고, 권한을 늘 "허용"으로 답해 OS에 한 번도 묻지 않았다 — 0.1.29까지 이 맥의 알림 설정에
@@ -12,6 +13,13 @@ async function nativeMac(cmd, args) {
   if (!isMacDesktop()) return null;
   try { const { invoke } = await import('@tauri-apps/api/core'); return { ok: true, value: await invoke(cmd, args) }; }
   catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+}
+async function nativeMacClaim(title, body, messageId, channelId) {
+  if (!isMacDesktop()) return null;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await claimNativeNotification(invoke, { messageId, channelId, title: String(title ?? ''), body: String(body ?? ''), sound: getSound() });
+  } catch (e) { return { ok: false, status: 'skipped', error: String(e?.message ?? e) }; }
 }
 
 let mod = null;
@@ -55,7 +63,7 @@ export async function askNotifyOnce(store = globalThis.localStorage) {
 export const SOUNDS = ['seatbelt-single', 'seatbelt-hilo', 'wood-knock', 'wood-knock-double', 'wood-marimba'];
 export const DEFAULT_SOUND = 'wood-knock';
 export function getSound() { try { const v = localStorage.getItem('msgr-sound'); return SOUNDS.includes(v) ? v : DEFAULT_SOUND; } catch { return DEFAULT_SOUND; } }
-export function setSound(name) { try { if (SOUNDS.includes(name)) localStorage.setItem('msgr-sound', name); } catch { /* 저장 불가 환경 */ } }
+export function setSound(name) { try { if (SOUNDS.includes(name)) { localStorage.setItem('msgr-sound', name); updateNativeRealtimeContext({ sound: name }); } } catch { /* 저장 불가 환경 */ } }
 const bufs = new Map(); let ctx = null;
 export async function playChime(name = getSound()) {
   try {
@@ -67,11 +75,11 @@ export async function playChime(name = getSound()) {
 }
 // 반환 { ok, error? } — 전송이 OS에 닿지 못하면 진단(설정 → 진단)에 남긴다. 부르는 쪽(notifyReply·notifyMention)은 초점·음소거·방해 금지를
 // 판정한 뒤에만 부른다(shouldNotify). 이름·인자는 그대로라 기존 호출부는 결과를 무시해도 된다.
-export async function sendNotify(title, body = '', tag = '') {
+export async function sendNotify(title, body = '', tag = '', channelId = null) {
   if (isMobilePlatform) return { ok: false, error: 'mobile' };
-  const n = await nativeMac('notify_send', { title: String(title ?? ''), body: String(body ?? ''), tag: String(tag ?? '') });
-  if (n?.ok) { pushDiag('notify', `sent ${tag || '-'}`); playChime(); return { ok: true }; } // OS가 받아 준 것까지(D55 진단)
-  if (n && n.error !== 'unsupported') { pushDiag('notify', `알림 전송 실패: ${n.error}`); return { ok: false, error: n.error }; }
+  const n = await nativeMacClaim(title, body, tag, channelId);
+  if (n?.ok) { pushDiag('notify', `${n.status} ${tag || '-'}`); return { ok: true }; } // 맥 알림·소리·중복 claim은 네이티브 한 곳이 소유
+  if (n) { pushDiag('notify', `알림 전송 실패: ${n.error ?? n.status}`); return { ok: false, error: n.error ?? n.status }; }
   const p = await plugin();
   if (p) {
     try { if (await p.isPermissionGranted()) { p.sendNotification({ title, body }); playChime(); return { ok: true }; } return { ok: false, error: 'not granted' }; }

@@ -1,0 +1,2 @@
+[env]
+SWIFT_RS_RUNTIME_ARCHIVE = { value = "Tauri", force = true }

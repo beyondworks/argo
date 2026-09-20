@@ -1,6 +1,6 @@
 [package]
 name = "argo-messenger"
-version = "0.1.29"
+version = "0.1.30"
 description = "Argo Messenger — 사람과 크루가 같은 채널에서 일하는 조직 공간"
 edition = "2021"
 rust-version = "1.77.2"
@@ -31,6 +31,11 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = "0.3"
 objc2-user-notifications = "0.3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+tokio = { version = "1", features = ["macros", "sync", "time"] }
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-deep-link = "2"
@@ -43,3 +48,6 @@ tauri-plugin-web-auth = { path = "plugins/web-auth" } # 로그인 창 — Chrome
 # iOS 27에서 씬 생명주기가 필수가 된 뒤 이 경로가 실행돼 TestFlight 0.1.27.2가 실행 즉시 죽었다(2026-09-17). tauri가 tao 0.36+를 받게 되면 이 패치를 지운다.
 [patch.crates-io]
 tao = { path = "patches/tao" }
+# Xcode 27 hides the shared SwiftRs C exports; restore them once in the Tauri archive.
+# Upstream fix: https://github.com/Brendonovich/swift-rs/pull/80
+swift-rs = { git = "https://github.com/alchaplinsky/swift-rs", rev = "aaf38d45ab3a4b10a5af3a3dbc64424e998fae8c" }

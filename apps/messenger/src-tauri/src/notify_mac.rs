@@ -10,27 +10,43 @@
 // 호출 즉시 예외로 죽으므로, 번들이 아니면 "unsupported"를 돌려주고 JS가 플러그인으로 물러난다.
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{Bool, ProtocolObject};
+use objc2::runtime::{AnyObject, Bool, ProtocolObject};
 use objc2::{define_class, msg_send, MainThreadOnly};
-use objc2_foundation::{NSBundle, NSError, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{NSBundle, NSDictionary, NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
-    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse, UNNotificationSettings, UNUserNotificationCenter,
+    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
+    UNNotificationSettings, UNNotificationSound, UNUserNotificationCenter,
     UNUserNotificationCenterDelegate,
 };
+use serde::Serialize;
 use std::ptr::NonNull;
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{AppHandle, Emitter};
 
-// 배너 클릭을 웹뷰에 알릴 앱 핸들 — 대리자는 ObjC 객체라 필드 대신 전역 한 칸(setup에서 한 번 채운다)
-static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
-// 마지막 클릭 — 앱이 꺼진 채 배너를 눌러 켜지면(콜드 스타트) 웹뷰가 로그인 뒤에야 듣기 시작해 이벤트를 놓친다(검수 #650).
-// 웹뷰가 듣기를 붙인 직후 notify_take_pending으로 한 번 가져간다. 켜져 있을 때 받은 클릭도 이벤트 처리기가 가져가 비운다.
-static PENDING: Mutex<Option<String>> = Mutex::new(None);
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationTap {
+    channel_id: String,
+    message_id: String,
+}
 
-#[tauri::command]
-pub fn notify_take_pending() -> Option<String> { PENDING.lock().ok().and_then(|mut p| p.take()) }
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static PENDING_TAP: Mutex<Option<NotificationTap>> = Mutex::new(None);
+
+fn remember_tap(tap: NotificationTap) {
+    if let Ok(mut pending) = PENDING_TAP.lock() {
+        *pending = Some(tap);
+    }
+}
+
+fn take_tap() -> Option<NotificationTap> {
+    PENDING_TAP
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.take())
+}
 
 fn in_app_bundle() -> bool {
     let b = NSBundle::mainBundle();
@@ -38,19 +54,26 @@ fn in_app_bundle() -> bool {
 }
 
 fn center() -> Option<Retained<UNUserNotificationCenter>> {
-    if !in_app_bundle() { return None; }
+    if !in_app_bundle() {
+        return None;
+    }
     Some(UNUserNotificationCenter::currentNotificationCenter())
 }
 
 fn status_name(s: UNAuthorizationStatus) -> &'static str {
     // 앱 화면 어휘(notify.js notifyPermission과 같은 값) — provisional·ephemeral도 "보낼 수 있음"이라 granted로 본다
-    if s == UNAuthorizationStatus::Denied { "denied" }
-    else if s == UNAuthorizationStatus::NotDetermined { "default" }
-    else { "granted" }
+    if s == UNAuthorizationStatus::Denied {
+        "denied"
+    } else if s == UNAuthorizationStatus::NotDetermined {
+        "default"
+    } else {
+        "granted"
+    }
 }
 
 fn wait<T>(rx: mpsc::Receiver<T>, secs: u64) -> Result<T, String> {
-    rx.recv_timeout(Duration::from_secs(secs)).map_err(|_| "notification center did not answer".to_string())
+    rx.recv_timeout(Duration::from_secs(secs))
+        .map_err(|_| "notification center did not answer".to_string())
 }
 
 fn current_status(c: &UNUserNotificationCenter) -> Result<&'static str, String> {
@@ -63,52 +86,170 @@ fn current_status(c: &UNUserNotificationCenter) -> Result<&'static str, String> 
     wait(rx, 20)
 }
 
+fn current_capability(c: &UNUserNotificationCenter) -> Result<String, String> {
+    let (tx, rx) = mpsc::channel();
+    let block = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
+        // SAFETY: Category 8 (FFI boundary). Apple's completion handler supplies a
+        // live, non-null settings object for the duration of this callback.
+        let settings = unsafe { settings.as_ref() };
+        let value = format!(
+            "{};alert={:?};sound={:?};badge={:?}",
+            status_name(settings.authorizationStatus()),
+            settings.alertSetting(),
+            settings.soundSetting(),
+            settings.badgeSetting(),
+        );
+        let _ = tx.send(value);
+    });
+    c.getNotificationSettingsWithCompletionHandler(&block);
+    wait(rx, 20)
+}
+
+pub async fn notify_capability_status() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| match center() {
+        None => Ok("unsupported".to_string()),
+        Some(c) => current_capability(&c),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn notify_status() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| match center() {
         None => Ok("unsupported".to_string()),
         Some(c) => current_status(&c).map(str::to_string),
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn notify_request() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let Some(c) = center() else { return Ok("unsupported".to_string()) };
+        let Some(c) = center() else {
+            return Ok("unsupported".to_string());
+        };
         let (tx, rx) = mpsc::channel();
         let block = RcBlock::new(move |_granted: Bool, err: *mut NSError| {
-            let msg = if err.is_null() { None } else { Some(unsafe { &*err }.localizedDescription().to_string()) };
+            let msg = if err.is_null() {
+                None
+            } else {
+                Some(unsafe { &*err }.localizedDescription().to_string())
+            };
             let _ = tx.send(msg);
         });
-        let opts = UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound | UNAuthorizationOptions::Badge;
+        let opts = UNAuthorizationOptions::Alert
+            | UNAuthorizationOptions::Sound
+            | UNAuthorizationOptions::Badge;
         c.requestAuthorizationWithOptions_completionHandler(opts, &block);
         // 권한 창은 사용자가 응답할 때까지 완료가 오지 않는다 — 10분 기다린다(시간 초과여도 JS는 OS 상태를 다시 읽을 뿐, 허용으로 보지 않는다)
-        if let Some(e) = wait(rx, 600)? { return Err(e); }
+        if let Some(e) = wait(rx, 600)? {
+            return Err(e);
+        }
         current_status(&c).map(str::to_string) // 요청 뒤 실제 상태(허용·거부)를 다시 읽어 돌려준다
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn notify_send(title: String, body: String, tag: String) -> Result<(), String> {
+pub async fn notify_send(
+    title: String,
+    body: String,
+    tag: String,
+    sound: Option<String>,
+    channel_id: Option<String>,
+    message_id: Option<String>,
+) -> Result<(), String> {
+    notify_send_guarded(title, body, tag, sound, channel_id, message_id, || true).await
+}
+
+pub async fn notify_send_guarded<F>(
+    title: String,
+    body: String,
+    tag: String,
+    sound: Option<String>,
+    channel_id: Option<String>,
+    message_id: Option<String>,
+    should_send: F,
+) -> Result<(), String>
+where
+    F: Fn() -> bool + Send + 'static,
+{
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(c) = center() else { return Err("unsupported".to_string()) };
+        let Some(c) = center() else {
+            return Err("unsupported".to_string());
+        };
         // 거부·미결정이면 보내지 않는다 — UN은 거부 상태에서도 addNotificationRequest를 오류 없이 받아 준다(검수용 번들 실측).
         // 그러면 "보냈다"로 보이는데 아무것도 안 뜬다. 상태를 먼저 보고 이유를 돌려준다(notify.js가 진단에 남긴다).
-        match current_status(&c)? { "granted" => {}, other => return Err(format!("not allowed: {other}")) }
+        match current_status(&c)? {
+            "granted" => {}
+            other => return Err(format!("not allowed: {other}")),
+        }
+        if !should_send() {
+            return Err("stale notification generation".to_string());
+        }
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(&title));
         content.setBody(&NSString::from_str(&body));
-        // 소리는 앱이 직접 울린다(notify.js playChime) — OS 알림은 무음(종전 플러그인 경로와 같다)
-        let id = if tag.is_empty() { format!("argo-{}", std::process::id()) } else { tag };
-        let req = UNNotificationRequest::requestWithIdentifier_content_trigger(&NSString::from_str(&id), &content, None);
+        if let (Some(channel_id), Some(message_id)) = (channel_id, message_id) {
+            let channel_key = NSString::from_str("channelId");
+            let message_key = NSString::from_str("messageId");
+            let channel_value = NSString::from_str(&channel_id);
+            let message_value = NSString::from_str(&message_id);
+            let user_info = NSDictionary::from_slices(
+                &[&*channel_key, &*message_key],
+                &[&*channel_value, &*message_value],
+            );
+            // SAFETY: Category 8 (FFI boundary). Both dictionary keys and values are NSString,
+            // and erasing the Objective-C generic markers does not change layout or ownership.
+            let user_info = unsafe { user_info.cast_unchecked::<AnyObject, AnyObject>() };
+            // SAFETY: Category 8 (FFI boundary). The retained NSDictionary outlives this
+            // synchronous setter call, which copies the dictionary according to Apple's API.
+            unsafe { content.setUserInfo(user_info) };
+        }
+        if let Some(name) = sound.filter(|name| {
+            matches!(
+                name.as_str(),
+                "seatbelt-single"
+                    | "seatbelt-hilo"
+                    | "wood-knock"
+                    | "wood-knock-double"
+                    | "wood-marimba"
+            )
+        }) {
+            let resource = NSString::from_str(&format!("sounds/{name}.caf"));
+            let notification_sound = UNNotificationSound::soundNamed(&resource);
+            content.setSound(Some(&notification_sound));
+        }
+        let id = if tag.is_empty() {
+            format!("argo-{}", std::process::id())
+        } else {
+            tag
+        };
+        let req = UNNotificationRequest::requestWithIdentifier_content_trigger(
+            &NSString::from_str(&id),
+            &content,
+            None,
+        );
         let (tx, rx) = mpsc::channel();
         let block = RcBlock::new(move |err: *mut NSError| {
-            let msg = if err.is_null() { None } else { Some(unsafe { &*err }.localizedDescription().to_string()) };
+            let msg = if err.is_null() {
+                None
+            } else {
+                Some(unsafe { &*err }.localizedDescription().to_string())
+            };
             let _ = tx.send(msg);
         });
         c.addNotificationRequest_withCompletionHandler(&req, Some(&block));
-        match wait(rx, 20)? { Some(e) => Err(e), None => Ok(()) }
-    }).await.map_err(|e| e.to_string())?
+        match wait(rx, 20)? {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // 앱이 앞에 있을 때도 배너를 보인다 — UN은 기본으로 전면 앱의 알림을 숨긴다. 앱은 "보고 있지 않은 방"에만 보내므로(shouldNotify) 그대로 띄운다.
@@ -122,20 +263,48 @@ define_class!(
 
     unsafe impl UNUserNotificationCenterDelegate for NotifyDelegate {
         #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
-        fn will_present(&self, _c: &UNUserNotificationCenter, _n: &UNNotification, handler: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>) {
-            handler.call((UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List,));
+        fn will_present(
+            &self,
+            _c: &UNUserNotificationCenter,
+            _n: &UNNotification,
+            handler: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+        ) {
+            handler.call((UNNotificationPresentationOptions::Banner
+                | UNNotificationPresentationOptions::List
+                | UNNotificationPresentationOptions::Sound,));
         }
 
-        // 배너 클릭(D52) — OS가 앱을 앞으로 가져오기만 하고 어느 방인지는 몰랐다. 알림 식별자(notify.js가 "종류:글@채널"로 만든다)를
-        // 웹뷰에 넘겨 그 방을 연다(App.jsx navTo — 다른 조직이면 조직을 바꾼 뒤 연다).
         #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
-        fn did_receive(&self, _c: &UNUserNotificationCenter, response: &UNNotificationResponse, handler: &block2::DynBlock<dyn Fn()>) {
-            let id = response.notification().request().identifier().to_string();
-            if let Ok(mut p) = PENDING.lock() { *p = Some(id.clone()); }
-            if let Some(app) = APP.get() {
-                // ⌘M 최소화·닫기(=가리기)여도 방이 보이게 창을 되살린다 — OS 활성화는 최소화를 풀지 않는다
-                if let Some(w) = tauri::Manager::get_webview_window(app, "main") { let _ = w.unminimize(); let _ = w.show(); let _ = w.set_focus(); }
-                let _ = app.emit("msgr-notify-click", id);
+        fn did_receive(
+            &self,
+            _c: &UNUserNotificationCenter,
+            response: &UNNotificationResponse,
+            handler: &block2::DynBlock<dyn Fn()>,
+        ) {
+            let user_info = response.notification().request().content().userInfo();
+            // SAFETY: Category 8 (FFI boundary). Argo creates these local notifications with an
+            // NSDictionary<NSString, NSString>; missing or foreign notification keys return None.
+            let typed = unsafe { user_info.cast_unchecked::<NSString, NSString>() };
+            let channel_key = NSString::from_str("channelId");
+            let message_key = NSString::from_str("messageId");
+            let tap = typed
+                .objectForKey(&channel_key)
+                .zip(typed.objectForKey(&message_key))
+                .map(|(channel_id, message_id)| NotificationTap {
+                    channel_id: channel_id.to_string(),
+                    message_id: message_id.to_string(),
+                });
+            if let Some(tap) = tap {
+                remember_tap(tap.clone());
+                if let Some(app) = APP_HANDLE.get() {
+                    // ⌘M 최소화·닫기(=가리기)여도 방이 보이게 창을 되살린다 — OS 활성화만으로는 최소화가 풀리지 않는다.
+                    if let Some(window) = tauri::Manager::get_webview_window(app, "main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    let _ = app.emit("native-notification-tap", tap);
+                }
             }
             handler.call(());
         }
@@ -143,10 +312,31 @@ define_class!(
 );
 
 /// setup에서 한 번 — 대리자는 center가 약하게 붙잡으므로 앱 수명 동안 놓지 않는다(leak).
-pub fn install_delegate(mtm: objc2::MainThreadMarker, app: tauri::AppHandle) {
+pub fn install_delegate(mtm: objc2::MainThreadMarker, app: AppHandle) {
+    let _ = APP_HANDLE.set(app);
     let Some(c) = center() else { return };
-    let _ = APP.set(app);
     let d: Retained<NotifyDelegate> = unsafe { msg_send![NotifyDelegate::alloc(mtm), init] };
     c.setDelegate(Some(ProtocolObject::from_ref(&*d)));
     std::mem::forget(d);
+}
+
+#[tauri::command]
+pub fn native_notification_pending_tap() -> Option<NotificationTap> {
+    take_tap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_notification_tap_is_consumed_once() {
+        let tap = NotificationTap {
+            channel_id: "channel".to_string(),
+            message_id: "message:42".to_string(),
+        };
+        remember_tap(tap.clone());
+        assert_eq!(take_tap(), Some(tap));
+        assert_eq!(take_tap(), None);
+    }
 }

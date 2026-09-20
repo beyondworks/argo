@@ -2,6 +2,7 @@
 export const configured = true, customServer = false, SB_URL = 'http://fixture.invalid', SB_ANON = 'fixture';
 const uid = 'user-me', org = 'org-fixture', now = new Date().toISOString();
 const asMember = new URLSearchParams(location.search).get('role') === 'member';
+const recalled = new URLSearchParams(location.search).get('recalled') === '1'; // D31: 파견을 해제한 내 에이전트(허용 범위 「지정한 사람」)
 const awayCrew = new URLSearchParams(location.search).get('away') === '1'; // D23·D24: 방에 든 에이전트가 꺼져 있다(하트비트 끊김)
 const withVacated = new URLSearchParams(location.search).get('vacated') === '1'; // D35: 상대가 모두 빠진 대화 // 방장이 아닌 참여자 시점(2026-09-16 에이전트 참여 승인)
 const channel = (id, kind, name, orgId = org) => ({ id, org_id: orgId, kind, name, created_by: asMember ? 'user-colleague' : uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: orgId ? 'approval' : 'blocked' });
@@ -14,7 +15,7 @@ const state = window.__dmInviteFixture = { calls: [], failNext: null, broadcasts
   msgr_channels: [...(withVacated ? [channel('left-dm', 'dm', 'dm:Gone Person'), channel('left-group', 'dm', 'dm:Gone Person With A Rather Long Display Name, Fixture Agent'), channel('agent-dm', 'dm', 'dm:Fixture Agent'), channel('renamed-dm', 'dm', 'dm:Old Agent Name'), channel('widened-dm', 'dm', 'dm:Third Person'), channel('owner-left', 'dm', 'dm:Colleague Agent'), channel('people-minus', 'dm', 'dm:Third Person, Gone Person'), channel('gone-widened', 'dm', 'dm:Departed Person')] : []), channel('general', 'public', 'Fixture General'), channel('open-2', 'public', 'Open Lounge'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('group-dm', 'dm', 'dm:여럿'), ...Array.from({ length: 12 }, (_, i) => channel(`fold-${i + 1}`, 'private', `Folder Room ${i + 1}`))],
   msgr_crews: [
     { id: 'crew-1', org_id: org, owner_user_id: uid, slug: 'fixture-crew', display_name: 'Fixture Agent', hosting: 'local', status: 'active', last_seen_at: awayCrew ? new Date(Date.now() - 10 * 60_000).toISOString() : now, ...(awayCrew ? { role_text: '분기 보고서·회의록·주간 지표를 정리하고 요약하는 기획 담당 에이전트' } : {}), created_at: now, allow: 'all' },
-    { id: 'crew-3', org_id: org, owner_user_id: uid, slug: 'second-crew', display_name: 'Second Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 일괄 추가 대상 둘째(유건 2026-09-17)
+    { id: 'crew-3', org_id: org, owner_user_id: uid, slug: 'second-crew', display_name: 'Second Agent', hosting: 'local', status: recalled ? 'available' : 'active', last_seen_at: now, created_at: now, allow: recalled ? 'list' : 'all', allow_users: recalled ? ['user-colleague'] : [] }, // 일괄 추가 대상 둘째(유건 2026-09-17)
     { id: 'crew-2', org_id: org, owner_user_id: 'user-colleague', slug: 'colleague-crew', display_name: 'Colleague Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 다른 멤버의 크루 — 레일에 나오면 안 된다
     { id: 'crew-bot', org_id: org, owner_user_id: 'user-colleague', slug: 'bot-crew', display_name: 'External Bot', hosting: 'bot', status: 'active', last_seen_at: now, created_at: now, allow: 'all' }, // 외부 에이전트 — 남는다
   ],
@@ -73,6 +74,7 @@ function query(table) {
     order() { return api; }, limit() { return api; }, contains() { return api; }, or() { return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; },
     upsert(v) { op = 'upsert'; values = v; return api; }, update(v) { op = 'update'; values = v; return api; }, delete() { op = 'delete'; return api; }, insert(v) { op = 'insert'; values = v; return api; },
     then(resolve, reject) {
+      if ((op === 'update' || op === 'delete') && !filters.length) return Promise.resolve({ data: null, error: { message: `${op.toUpperCase()} requires a WHERE clause` } }).then(resolve, reject); // 실제 PostgREST(safeupdate)처럼 — 필터가 주석에 먹힌 전체 갱신을 픽스처가 통과시키던 구멍(D31 실측)
       return Promise.resolve(result({ table, op, values }, () => {
         const all = state.tables[table] ?? [];
         let rows = all.filter(r => filters.every(f => f(r)));
