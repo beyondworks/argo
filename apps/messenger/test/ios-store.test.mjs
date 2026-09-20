@@ -19,7 +19,7 @@ test('Xcode 27 stops before compilation if the active Rust toolchain lacks llvm-
   assert.throws(() => ensureSwiftLinkTools(env, { spawn, exists: () => false }), /rustup component add llvm-tools/);
   const paths = [];
   assert.doesNotThrow(() => ensureSwiftLinkTools(env, { spawn, exists: (path) => { paths.push(path); return true; } }));
-  assert.deepEqual(paths, ['/tc/rustup/toolchains/stable/lib/rustlib/aarch64-apple-darwin/bin/llvm-objcopy']);
+  assert.deepEqual(paths.map((path) => path.replaceAll('\\', '/')), ['/tc/rustup/toolchains/stable/lib/rustlib/aarch64-apple-darwin/bin/llvm-objcopy']);
 });
 
 test('older Xcode needs no llvm-tools; failed Xcode discovery does not skip the check', () => {
