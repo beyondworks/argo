@@ -3022,7 +3022,6 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
     return { id: r.data.bot_id, crewId: r.data.crew_id, token: r.data.token, name };
   };
   const localBot = async (targetOrgId, extId) => {
-    if (targetOrgId === org.id) return botOf('hermes', extId) ?? null;
     const found = await supabase.from('msgr_bots').select('id, crew_id, name').eq('org_id', targetOrgId).eq('kind', 'hermes').eq('created_by', uid).eq('external_id', extId).is('revoked_at', null).maybeSingle();
     if (found.error) throw new Error(found.error.message);
     return found.data;
@@ -3081,7 +3080,10 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
       }
       const { invoke } = await import('@tauri-apps/api/core');
       const connected = await invoke('agent_connect', { kind: 'hermes', url: botUrl, agents: made.map((bot) => ({ id: bot.agentId, token: bot.token, home: bot.home })) });
-      const results = made.map((bot) => ({ ...(connected?.results ?? []).find((result) => result.id === bot.agentId), name: bot.name, reconnected: bot.existing }));
+      const results = made.map((bot) => {
+        const result = (connected?.results ?? []).find((item) => item.id === bot.agentId);
+        return { ...result, id: bot.agentId, name: bot.name, reconnected: bot.existing && !!result?.ok };
+      });
       const available = made.filter((m) => results.find((result) => result.id === m.agentId)?.ok);
       const channelResults = [];
       for (const channelId of flow.channelIds) {
@@ -3145,7 +3147,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
       setAuto(r?.ok ? { status: 'done', results } : { status: r?.reason === 'cli_missing' ? 'missing' : 'failed', results, reason: r?.reason ?? '' });
     } catch (e) { setAuto({ status: 'failed', results: [], reason: String(e?.message ?? e) }); }
   };
-  const addBot = (kind) => kind === 'hermes' ? openLocalHermes() : connectAll(kind);
+  const addBot = (kind) => kind === 'hermes' && isDesktopTauri() ? openLocalHermes() : connectAll(kind);
   const addAnother = async (kind) => { // 다른 컴퓨터·다른 사람의 에이전트: external_id 없는 봇 하나 + 수동 안내
     setBusy(true);
     try { const made = await mkOrRotate(kind, t('org.agents.name.other', { kind: t(`org.agents.kind.${kind}`) }), null); setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); setAuto(null); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); }
@@ -3172,7 +3174,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
     <section className="msgr-setcard">
       <h2>{t('org.agents')}</h2><p>{t(isMobilePlatform ? 'org.agents.mobile' : 'org.agents.desc')}</p>
       <div className="row">
-        <button type="button" className="btn btn-primary sm" disabled={busy || isMobilePlatform} onClick={() => addBot('hermes')}><I name="plus" size={13} />{t('org.agents.local.open')}</button>
+        <button type="button" className="btn btn-primary sm" disabled={busy || isMobilePlatform} onClick={() => addBot('hermes')}><I name="plus" size={13} />{t(isDesktopTauri() ? 'org.agents.local.open' : 'org.agents.add.hermes')}</button>
         <button type="button" className="btn sm" disabled={busy || isMobilePlatform} onClick={() => addBot('openclaw')} title={mineOf('openclaw') ? t('org.agents.reconnect.title') : undefined}>{mineOf('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
         {(mineOf('hermes') || mineOf('openclaw')) && <span className="msgr-klabel">{t('org.agents.another')} {mineOf('hermes') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('hermes')}>{t('org.agents.kind.hermes')}</button>}{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('openclaw')}>{t('org.agents.kind.openclaw')}</button>}</span>}
