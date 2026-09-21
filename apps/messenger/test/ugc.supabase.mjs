@@ -5,10 +5,10 @@ export { configured, customServer, SB_URL, SB_ANON, q } from './work-panel.supab
 const state = window.__workFixture;
 const t = state.tables, now = new Date().toISOString();
 t.msgr_messages.push(
-  { id: 201, org_id: 'org-fixture', channel_id: 'general', author_kind: 'user', author_user_id: 'user-other', kind: 'text', body: 'Colleague message to report', created_at: now, deleted_at: null, mentions: [] },
-  { id: 202, org_id: 'org-fixture', channel_id: 'general', author_kind: 'crew', crew_id: 'crew-new', kind: 'text', body: 'Agent answer', created_at: now, deleted_at: null, mentions: [] },
-  { id: 203, org_id: 'org-fixture', channel_id: 'general', author_kind: 'user', author_user_id: 'user-me', kind: 'text', body: 'My own message', created_at: now, deleted_at: null, mentions: [] },
-  { id: 204, org_id: 'org-fixture', channel_id: 'general', author_kind: 'user', author_user_id: 'user-me', kind: 'text', body: 'Replying to colleague', reply_to: 201, created_at: now, deleted_at: null, mentions: [] },
+  { id: 201, channel_id: 'general', author_kind: 'user', author_user_id: 'user-other', kind: 'text', body: 'Colleague message to report', created_at: now, deleted_at: null, mentions: [] },
+  { id: 202, channel_id: 'general', author_kind: 'crew', crew_id: 'crew-new', kind: 'text', body: 'Agent answer', created_at: now, deleted_at: null, mentions: [] },
+  { id: 203, channel_id: 'general', author_kind: 'user', author_user_id: 'user-me', kind: 'text', body: 'My own message', created_at: now, deleted_at: null, mentions: [] },
+  { id: 204, channel_id: 'general', author_kind: 'user', author_user_id: 'user-me', kind: 'text', body: 'Replying to colleague', reply_to: 201, created_at: now, deleted_at: null, mentions: [] },
 );
 const ugc = state.ugc = { reports: [], blocked: [], calls: [] };
 const ok = (data) => Promise.resolve({ data: structuredClone(data), error: null });

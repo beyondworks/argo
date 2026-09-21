@@ -7,7 +7,7 @@
 create table if not exists public.msgr_reports (
   id uuid primary key default gen_random_uuid(),
   message_id bigint references public.msgr_messages(id) on delete set null, -- 글이 지워져도 신고(증거)는 남는다
-  channel_id uuid not null references public.msgr_channels(id) on delete cascade,
+  channel_id uuid references public.msgr_channels(id) on delete set null, -- 채널을 지워도 신고는 남는다(검수 N2)
   org_id uuid references public.msgr_orgs(id) on delete cascade,
   reporter_user_id uuid not null references auth.users(id) on delete cascade,
   author_user_id uuid,   -- 신고 시점 스냅샷(검수 M1) — 작성자가 고치거나 지워도 검토할 수 있게

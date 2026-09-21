@@ -132,4 +132,8 @@ test('신고 시점 본문·작성자를 보존하고, 같은 글의 열린 신�
   assert.equal(last(asUser(U.a, `select message_body || '|' || author_user_id from public.msgr_reports_list() where id = '${r1}'`)), `지울 증거|${U.a}`, '작성자가 지워도 증거가 남는다');
   sql(`delete from public.msgr_messages where id = ${m}`);
   assert.equal(sql(`select count(*) from public.msgr_reports where id = '${r1}'`), '1', '글 행이 사라져도 신고는 남는다');
+  const ch = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','temp','[]'::jsonb)`));
+  const r2 = last(asUser(U.b, `select public.msgr_report_message(${post(U.a, ch, '채널째 지울 글')})`));
+  sql(`delete from public.msgr_channels where id = '${ch}'`);
+  assert.equal(sql(`select coalesce(channel_id::text, 'NULL') || '|' || body_snapshot from public.msgr_reports where id = '${r2}'`), 'NULL|채널째 지울 글', '채널을 지워도 신고·증거는 남는다(검수 N2)');
 });
