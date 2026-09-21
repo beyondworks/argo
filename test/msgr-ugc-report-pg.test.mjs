@@ -177,3 +177,29 @@ test('차단한 사람의 글은 차단한 수신자에게 푸시하지 않는�
   assert.ok(rcpt(back).includes(U.a), '차단당한 쪽(a)은 b의 글 푸시를 계속 받는다(차단은 한 방향)');
   asUser(U.b, `select public.msgr_friend_unblock('${U.a}')`);
 });
+
+test('차단한 사람의 글은 안 읽음 수(채널별·공간별·폰 배지)에서 빠진다', { skip }, () => {
+  const ch = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','unread-block','[]'::jsonb)`));
+  asUser(U.b, `select public.msgr_join_channel('${ch}')`);
+  const counts = () => ({
+    chan: Number(last(asUser(U.b, `select coalesce((select n from public.msgr_unread('${ORG}') where channel_id = '${ch}'), 0)`))),
+    org: Number(last(asUser(U.b, `select coalesce((select n from public.msgr_unread_totals() where org_id = '${ORG}'), 0)`))),
+    badge: Number(sql(`select public.msgr_push_unread_total('${U.b}')`)),
+  });
+  const b0 = counts();
+  last(asUser(U.a, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, client_msg_id, mentions) values ('${ch}', 'user', '${U.a}', 'text', '멘션', gen_random_uuid()::text, '[{"kind":"user","id":"${U.b}"}]'::jsonb) returning id`));
+  const b1 = counts();
+  assert.equal(b1.chan, b0.chan + 1, '차단 전에는 채널 안 읽음에 들어간다');
+  assert.equal(b1.badge, b0.badge + 1, '차단 전에는 폰 배지에 들어간다(멘션)');
+  asUser(U.b, `select public.msgr_friend_remove('${U.a}', true)`);
+  const b2 = counts();
+  assert.equal(b2.chan, b0.chan, '차단 뒤 채널 안 읽음에서 빠진다');
+  const fromA = Number(last(asUser(U.b, `select coalesce(sum(n), 0) from (select least(99, count(*)) n from public.msgr_messages m left join public.msgr_reads r on r.channel_id = m.channel_id and r.user_id = '${U.b}' join public.msgr_channels c on c.id = m.channel_id where c.org_id = '${ORG}' and c.archived_at is null and m.author_user_id = '${U.a}' and m.deleted_at is null and m.id > coalesce(r.last_read_id, 0) and public.msgr_can_read_channel(c.id) group by m.channel_id) s`)));
+  assert.ok(fromA >= 1);
+  assert.equal(b2.org, b1.org - fromA, '공간별 합계에서 차단한 사람의 글이 전부 빠진다(다른 채널 글 포함)');
+  assert.equal(b2.badge, b0.badge, '폰 배지에서도 빠진다');
+  assert.equal(last(asUser(U.b, `select count(*) from public.msgr_user_blocks`)), '1', '내 차단 행은 보인다');
+  assert.equal(last(asUser(U.a, `select count(*) from public.msgr_user_blocks`)), '0', '남이 나를 차단한 행은 안 보인다');
+  fails(asUserRaw(U.b, `insert into public.msgr_user_blocks (blocker, blocked) values ('${U.b}', '${U.c}')`), /permission denied|row-level security/, '직접 쓰기는 여전히 막힌다(RPC로만)');
+  asUser(U.b, `select public.msgr_friend_unblock('${U.a}')`);
+});

@@ -28,6 +28,7 @@ base.from = (table) => {
   };
   return api;
 };
+t.msgr_reactions = [{ message_id: 203, user_id: 'user-other', emoji: '🔥' }, { message_id: 203, user_id: 'user-me', emoji: '👍' }]; // 차단한 사람의 반응 가림 관찰용
 const ugc = state.ugc = { reports: [], blocked: [], calls: [] };
 const ok = (data) => Promise.resolve({ data: structuredClone(data), error: null });
 const original = base.rpc;
