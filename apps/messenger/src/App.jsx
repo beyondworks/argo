@@ -104,7 +104,7 @@ const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
 function useT() { const { lang, setLang, t: ta } = useLang(); return { lang, setLang, ta, t: (k, vars) => tm(k, lang, vars) }; }
 
 /** 아바타 — 사람은 원, 크루는 둥근 사각 타일 + 옐로 별(시안 v2 모티프 ②). */
-const SafetyCtx = createContext({ blocked: new Set(), block: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 대화 목록·답글 인용에서 가린다(알림함·검색·푸시는 아직)
+const SafetyCtx = createContext({ blocked: new Set(), block: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 대화·답글 인용·알림함·검색·DM 미리보기에서 가리고, 푸시는 서버(msgr_push_recipients)가 막는다
 const AvatarCtx = createContext({ users: {}, crews: {} }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url) — Av가 userId/crewId로 찾는다
 function Av({ name, crew, size, company = false, userId = null, crewId = null, src = null }) { // company: 회사 크루(조직 배지 — 별 대신 각진 해시), 그 외 크루는 별 배지(부록 I·K 등급 표시)
   const ctx = useContext(AvatarCtx);
@@ -470,6 +470,7 @@ function Shell({ session }) {
   }, []);
   useEffect(() => {
     if (!navTo) return;
+    if (navTo === 'report') { setSettingsTab('me'); setPage('settings'); setRail(false); setSheet(null); setNavTo(null); return; } // 신고 접수 알림(msgr-push reportPush) → 운영 신고함
     if (loadedOrg.current === orgId && channels.some((c) => c.id === navTo)) { setChId(navTo); setPage('chat'); setRail(false); setSheet(null); setNavTo(null); return; }
     if (!orgs || !orgId) return; // 조직·목록 로드 전 — 기다린다
     let on = true;
@@ -942,8 +943,9 @@ function Shell({ session }) {
   const isAdmin = !isPersonal && org && ['owner', 'admin'].includes(org.role); // 개인 공간의 가상 조직(role owner)은 관리자가 아니다 — 초대 링크 등이 __personal__로 서버에 가던 것(2026-09-16)
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
-  const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet });
-  notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet };
+  const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds });
+  notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds };
+  const fromBlocked = (p) => p?.author_kind !== 'crew' && !!p?.author_user_id && notifyRef.current.blocked.has(p.author_user_id); // 차단한 사람의 글은 OS 알림도 띄우지 않는다(PC 앞이면 서버가 폰 푸시를 안 보내 이 배너가 유일한 알림)
   useEffect(() => { updateNativeRealtimeContext({ lang, sound: getSound(), currentChannel: page === 'chat' ? chId : null, mutedChannelIds: [...muted], orgIds: (orgs ?? []).map((o) => o.id), quietFrom: quiet?.from ?? null, quietTo: quiet?.to ?? null }); }, [lang, page, chId, muted, quiet, orgs]);
   const hereKey = spaceKey(isPersonal ? null : orgId);
   const hereCount = useMemo(() => { let n = 0; let mention = 0; for (const [id, u] of Object.entries(unread)) if (!muted.has(id)) { n += u?.n || 0; mention += u?.mention || 0; } return { n, mention }; }, [unread, muted]);
@@ -957,6 +959,7 @@ function Shell({ session }) {
   const notifyMention = (payload) => {
     const r = notifyRef.current;
     if (!payload || payload.author_user_id === r.uid) return;
+    if (fromBlocked(payload)) return;
     const mentioned = Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid);
     if (!mentioned || !shouldNotify(payload.channel_id)) return;
     const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
@@ -964,7 +967,8 @@ function Shell({ session }) {
   };
   const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
     const r = notifyRef.current;
-    if (!payload || payload.kind !== 'text' || (payload.author_user_id && payload.author_user_id === r.uid)) return; // 크루든 사람이든(사람 DM·답글에 알림이 없던 갭, 2026-09-12 점검) — 내 글은 제외
+    if (!payload || payload.kind !== 'text' || (payload.author_user_id && payload.author_user_id === r.uid)) return;
+    if (fromBlocked(payload)) return; // 크루든 사람이든(사람 DM·답글에 알림이 없던 갭, 2026-09-12 점검) — 내 글은 제외
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     if (!shouldNotify(payload.channel_id)) return; // 모든 메시지에 알림(다른 메신저처럼 — 유건 2026-09-12). 채널 음소거·방해 금지는 shouldNotify
     const who = payload.author_name || (payload.author_kind === 'crew' ? r.crews.find((c) => c.id === payload.crew_id)?.display_name : r.members.find((m) => m.user_id === payload.author_user_id)?.display_name); // 채운 payload(다른 공간 글) 우선
@@ -1609,6 +1613,7 @@ function Shell({ session }) {
 /* ─── DM 미리보기 시트(유건 2026-09-15): 길게 눌러 마지막 12개 글을 읽기 전용으로. 열기 = 대화로. ─── */
 function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
   const { t, lang } = useT();
+  const { blocked } = useContext(SafetyCtx);
   const [rows, setRows] = useState(null);
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   useEffect(() => { let live = true; supabase.from('msgr_messages').select('id, body, author_kind, author_user_id, crew_id, created_at').eq('channel_id', channel.id).is('deleted_at', null).order('id', { ascending: false }).limit(12)
@@ -1620,7 +1625,7 @@ function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
         <header className="head"><strong>{name}</strong><button type="button" className="btn sm" onClick={onOpen}>{t('dm.preview.open')}</button><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
         <div className="peek">
           {rows === null ? <p className="note">{t('ui.loading')}</p> : !rows.length ? <p className="note">{t('dm.preview.empty')}</p> : rows.map((m) => (
-            <div key={m.id} className={`pk${m.author_user_id === uid ? ' me' : ''}`}><span className="who">{whoOf(m)}</span><span className="body">{m.body}</span><span className="when">{fmtDmWhen(Date.parse(m.created_at), lang)}</span></div>
+            <div key={m.id} className={`pk${m.author_user_id === uid ? ' me' : ''}`}><span className="who">{whoOf(m)}</span><span className="body">{m.author_kind === 'user' && m.author_user_id !== uid && blocked.has(m.author_user_id) ? t('msg.blockedUser') : m.body}</span><span className="when">{fmtDmWhen(Date.parse(m.created_at), lang)}</span></div>
           ))}
         </div>
       </section>
@@ -2335,6 +2340,8 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
 /* ─── 검색 결과 페이지 — 메시지(본문 부분 일치, 이 조직·읽을 수 있는 채널만)·사람·에이전트·채널. 전문 검색(tsvector)은 규모가 커지면 v2. ─── */
 function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, onDm, onBack, onMenu }) {
   const { t, lang } = useT();
+  const { blocked } = useContext(SafetyCtx); // 차단한 사람의 글은 검색 결과에서 뺀다
+  if (res) res = { ...res, msgs: res.msgs.filter((m) => !(m.author_kind === 'user' && blocked.has(m.author_user_id))) };
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
   const who = (m) => m.author_kind === 'crew' ? (crews.find((c) => c.id === m.crew_id)?.display_name ?? t('org.crews')) : nameOfUser(m.author_user_id);
   const mark = (text) => { if (!res?.q) return text; const i = text.toLowerCase().indexOf(res.q.toLowerCase()); if (i < 0) return text.slice(0, 160); const s = Math.max(0, i - 40); return <>{s > 0 ? '…' : ''}{text.slice(s, i)}<mark>{text.slice(i, i + res.q.length)}</mark>{text.slice(i + res.q.length, i + res.q.length + 120)}</>; };
@@ -2365,6 +2372,7 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
 const INBOX_KINDS = ['all', 'mention', 'reply', 'approval', 'dm'];
 function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, nameOfUser, dmName, onOpen, onReadAll, onBack, onMenu }) {
   const { t, lang } = useT();
+  const { blocked } = useContext(SafetyCtx); const textOf = (it) => (it.whoKind !== 'crew' && blocked.has(it.who) ? t('msg.blockedUser') : it.text); // 차단한 사람의 글은 알림함에서도 가린다
   const [kind, setKind] = useState(initialKind); // 페이지가 바뀌면 통째로 다시 그려지므로 초기값으로 충분하다
   const [unreadOnly, setUnreadOnly] = useState(true); // 기본은 읽지 않은 것만 — 읽은 항목은 '지난 알림 보기'로(유건 2026-09-11 밤)
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
@@ -2394,7 +2402,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
       {shown.map((it) => (
         <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id, it)}>
           <Av name={who(it)} crew={it.whoKind === 'crew'} size="sm" crewId={it.whoKind === 'crew' ? it.who : null} userId={it.whoKind === 'crew' ? null : it.who} />
-          <span className="body"><span className="line1"><b>{who(it)}</b><span className="msgr-klabel">{[t(`inbox.kind.${it.kind}`), chName(it.channel_id), fmtWhen(it.at, lang)].filter(Boolean).join(' · ')}</span></span><span className="text">{it.text.slice(0, 160)}</span></span>
+          <span className="body"><span className="line1"><b>{who(it)}</b><span className="msgr-klabel">{[t(`inbox.kind.${it.kind}`), chName(it.channel_id), fmtWhen(it.at, lang)].filter(Boolean).join(' · ')}</span></span><span className="text">{textOf(it).slice(0, 160)}</span></span>
         </button>
       ))}
       <p className="note">{t('inbox.note')}</p>

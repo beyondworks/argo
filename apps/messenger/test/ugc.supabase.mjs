@@ -8,8 +8,26 @@ t.msgr_messages.push(
   { id: 201, channel_id: 'general', author_kind: 'user', author_user_id: 'user-other', kind: 'text', body: 'Colleague message to report', created_at: now, deleted_at: null, mentions: [] },
   { id: 202, channel_id: 'general', author_kind: 'crew', crew_id: 'crew-new', kind: 'text', body: 'Agent answer', created_at: now, deleted_at: null, mentions: [] },
   { id: 203, channel_id: 'general', author_kind: 'user', author_user_id: 'user-me', kind: 'text', body: 'My own message', created_at: now, deleted_at: null, mentions: [] },
+  { id: 205, channel_id: 'general', author_kind: 'user', author_user_id: 'user-other', kind: 'text', body: 'Colleague mentions you', created_at: now, deleted_at: null, mentions: [{ kind: 'user', id: 'user-me' }] },
   { id: 204, channel_id: 'general', author_kind: 'user', author_user_id: 'user-me', kind: 'text', body: 'Replying to colleague', reply_to: 201, created_at: now, deleted_at: null, mentions: [] },
 );
+// msgr_messages 조회 보강 — 공용 가짜는 contains(JSON 문자열)·ilike를 몰라 알림함 멘션·검색이 늘 빈다. 이 픽스처에서만 둘을 처리한다(org_id 조건은 한 조직이라 통과)
+const originalFrom = base.from;
+base.from = (table) => {
+  if (table !== 'msgr_messages') return originalFrom(table);
+  const filters = []; let lim = Infinity, orderKey = 'id', asc = true;
+  const api = {
+    select() { return api; }, order(k, o = {}) { orderKey = k; asc = o.ascending ?? true; return api; }, limit(n) { lim = n; return api; },
+    eq(k, v) { if (k !== 'org_id') filters.push((r) => r[k] === v); return api; }, neq(k, v) { filters.push((r) => r[k] !== v); return api; },
+    is(k, v) { filters.push((r) => (r[k] ?? null) === v); return api; }, in(k, vs) { filters.push((r) => vs.includes(r[k])); return api; },
+    lt(k, v) { filters.push((r) => r[k] < v); return api; }, gt(k, v) { filters.push((r) => r[k] > v); return api; },
+    or() { return api; }, maybeSingle() { lim = 1; return api; }, single() { lim = 1; return api; }, range(a, b) { lim = b - a + 1; return api; },
+    contains(k, v) { const want = typeof v === 'string' ? JSON.parse(v) : v; filters.push((r) => want.every((w) => (r[k] ?? []).some((x) => JSON.stringify(x) === JSON.stringify(w)))); return api; },
+    ilike(k, pat) { const needle = pat.replace(/%/g, '').toLowerCase(); filters.push((r) => String(r[k] ?? '').toLowerCase().includes(needle)); return api; },
+    then(res, rej) { const rows = t.msgr_messages.filter((r) => filters.every((f) => f(r))).sort((a, b) => (a[orderKey] > b[orderKey] ? 1 : -1) * (asc ? 1 : -1)).slice(0, lim); return Promise.resolve({ data: structuredClone(rows), error: null }).then(res, rej); },
+  };
+  return api;
+};
 const ugc = state.ugc = { reports: [], blocked: [], calls: [] };
 const ok = (data) => Promise.resolve({ data: structuredClone(data), error: null });
 const original = base.rpc;
@@ -30,4 +48,8 @@ base.rpc = (name, args = {}) => {
   if (name === 'msgr_friend_unblock') { ugc.blocked = ugc.blocked.filter((b) => b.user_id !== args.other); return ok(null); }
   return ok(null);
 };
+// 실시간 방송 흉내 — 공용 가짜는 구독 콜백을 버린다. 여기서는 모아 두고 state.emit(event, payload)로 불러 OS 알림 경로(notifyMention·notifyReply)를 관찰한다
+const handlers = [];
+base.channel = () => { const c = { on: (type, filter, cb) => { handlers.push({ event: filter?.event, cb }); return c; }, subscribe: () => c, send: async () => {}, unsubscribe: async () => {} }; return c; };
+state.emit = (event, payload) => handlers.filter((h) => h.event === event).forEach((h) => h.cb({ payload }));
 export const supabase = base;
