@@ -32,6 +32,8 @@ const PATHS = {
   nodeoff: '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.4"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.4"/><path d="M2.5 2.5l11 11" stroke="var(--bg)" stroke-width="4"/><path d="M2.5 2.5l11 11"/>',
   out: '<path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v7A1.5 1.5 0 0 0 3.5 13H6M9.5 11 13 8l-3.5-3M13 8H6"/>',
   trash: '<path d="M3 5h10M6.5 5V3.5h3V5M4.5 5l.6 8h5.8l.6-8M6.8 7.5v4M9.2 7.5v4"/>', // 채널·대화 삭제(2026-09-11)
+  flag: '<path d="M3.5 2v12M3.5 3h9l-2 3 2 3h-9"/>', // 메시지 신고(App Store 심사 UGC, 2026-09-21)
+  block: '<circle cx="8" cy="8" r="5.8"/><path d="m4.2 4.2 7.6 7.6"/>', // 사용자 차단(친구 설정, 2026-09-21)
 };
 export function Sprite() {
   return (

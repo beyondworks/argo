@@ -53,8 +53,9 @@ import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 const realtimeScope = createRealtimeScope();
 const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/#download' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
-const LegalLinks = ({ t, className = '' }) => (
+const LegalLinks = ({ t, className = '', agree = false }) => (
   <p className={`msgr-legal ${className}`.trim()}>
+    {agree && <span style={{ display: 'block', marginBottom: 4 }}>{t('legal.agree')}</span>}{/* App Store 1.2: 가입 시 약관 동의 + 부적절 콘텐츠·악성 사용자 무관용 고지 */}
     <button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.privacy)}>{t('legal.privacy')}</button>
     <span aria-hidden="true"> · </span>
     <button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.terms)}>{t('legal.terms')}</button>
@@ -103,6 +104,7 @@ const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
 function useT() { const { lang, setLang, t: ta } = useLang(); return { lang, setLang, ta, t: (k, vars) => tm(k, lang, vars) }; }
 
 /** 아바타 — 사람은 원, 크루는 둥근 사각 타일 + 옐로 별(시안 v2 모티프 ②). */
+const SafetyCtx = createContext({ blocked: new Set(), block: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 모든 채널에서 가린다
 const AvatarCtx = createContext({ users: {}, crews: {} }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url) — Av가 userId/crewId로 찾는다
 function Av({ name, crew, size, company = false, userId = null, crewId = null, src = null }) { // company: 회사 크루(조직 배지 — 별 대신 각진 해시), 그 외 크루는 별 배지(부록 I·K 등급 표시)
   const ctx = useContext(AvatarCtx);
@@ -398,7 +400,7 @@ function Auth({ logoutNotice = '' }) {
           {show('apple') && <button type="button" className="btn btn-apple" disabled={busy || pending} onClick={() => viaBrowser('apple')}><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.37 12.7c.02 2.5 2.2 3.33 2.22 3.34-.02.06-.35 1.2-1.15 2.37-.69 1.01-1.41 2.02-2.54 2.04-1.11.02-1.47-.66-2.74-.66s-1.67.64-2.72.68c-1.09.04-1.92-1.1-2.62-2.1C5.4 16.3 4.3 12.55 5.77 10.02c.73-1.25 2.03-2.05 3.44-2.07 1.07-.02 2.08.72 2.74.72.65 0 1.88-.89 3.17-.76.54.02 2.06.22 3.03 1.65-.08.05-1.81 1.06-1.78 3.14M14.3 6.5c.58-.7.97-1.68.86-2.65-.83.03-1.84.55-2.44 1.25-.54.62-1.01 1.61-.88 2.56.93.07 1.88-.47 2.46-1.16"/></svg>{t('auth.apple')}</button>}
           {show('google') && <button type="button" className="btn btn-primary" disabled={busy || pending} onClick={() => viaBrowser('google')}>{t('auth.google')}</button>}
           {show('github') && <button type="button" className="btn" disabled={busy || pending} onClick={() => viaBrowser('github')}>{t('auth.github')}</button>}
-          <LegalLinks t={t} />
+          <LegalLinks t={t} agree />
           {noProviders(enabled) ? <p role="alert" className="msgr-klabel same-method no-providers">{t('auth.noProviders')}</p>
             : <p className="msgr-klabel same-method">{t('auth.sameMethod')}</p>}{/* 버튼이 하나도 없으면 "이전 방법으로" 안내는 모순 — 상태 알림만(검수 #530 N-1) */}
         </>)}
@@ -613,6 +615,12 @@ function Shell({ session }) {
   const [friends, setFriends] = useState([]); // 친구·요청(msgr_my_friends) — 레일 '친구' 절·알림함·설정 카드가 같이 쓴다
   const loadFriends = useCallback(async () => { setFriends(await q(supabase.rpc('msgr_my_friends')).catch(() => [])); }, []);
   useEffect(() => { if (uid) loadFriends(); }, [uid, tick, loadFriends]);
+  const [blockedIds, setBlockedIds] = useState(() => new Set()); // 서버 차단은 개인 1:1·친구만 막는다 — 조직 채널의 글은 화면에서 가린다
+  const loadBlocked = useCallback(async () => { const rows = await q(supabase.rpc('msgr_my_blocked')).catch(() => null); if (rows) setBlockedIds(new Set(rows.map((r) => r.user_id))); }, []);
+  useEffect(() => { if (uid) loadBlocked(); }, [uid, tick, loadBlocked]);
+  const onFriendsChanged = useCallback(() => Promise.all([loadFriends(), loadBlocked()]), [loadFriends, loadBlocked]);
+  const blockUser = useCallback(async (id) => { await q(supabase.rpc('msgr_friend_remove', { other: id, block: true })); await onFriendsChanged(); setNote(t('friends.blocked')); }, [onFriendsChanged, t]);
+  const safetyCtx = useMemo(() => ({ blocked: blockedIds, block: blockUser, onNote: setNote }), [blockedIds, blockUser]);
   const [botKinds, setBotKinds] = useState([]); // 내 에이전트 출처(헤르메스·오픈클로) — 훅은 조기 return보다 앞에(실측: 순서 오류로 빈 화면)
   useEffect(() => { if (!orgId || orgId === PERSONAL) { setBotKinds([]); return; } let live = true; q(supabase.from('msgr_bots').select('crew_id, kind').eq('org_id', orgId).is('revoked_at', null)).then((rows) => { if (live && activeOrg.current === orgId) setBotKinds(rows); }).catch(() => { if (live && activeOrg.current === orgId) setBotKinds([]); }); return () => { live = false; }; }, [orgId, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   // 내가 참여한 채널(공개 포함) — 목록 필터의 근거. 조직 전환과 무관하게 계정 단위라 한 번만 읽는다.
@@ -1421,7 +1429,7 @@ function Shell({ session }) {
   // 조직 명부에는 그대로 있고 서버 권한도 그대로다 — 목록에서 빼는 것은 화면 규칙이다. 회사 크루·외부 에이전트는 남는다.
   const railVisible = crews.filter((c) => c.hosting === 'bot' || c.owner_user_id === uid || crewTier(c, org) === 'company');
   return (
-    <AvatarCtx.Provider value={avatarCtx}>
+    <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}>
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
@@ -1579,7 +1587,7 @@ function Shell({ session }) {
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
           <Channel key={chId} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
@@ -1593,7 +1601,7 @@ function Shell({ session }) {
       {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setPage('settings'); setSettingsTab('friends'); setRail(false); }} members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={crews} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {isPhone && <PhoneTabs personal={isPersonal} page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
     </div>
-    </AvatarCtx.Provider>
+    </SafetyCtx.Provider></AvatarCtx.Provider>
   );
 }
 
@@ -2212,6 +2220,8 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
   const accepted = friends.filter((f) => f.status === 'accepted').sort((a, b) => nameOf(a).localeCompare(nameOf(b), 'ko'));
   // 친구 링크(유건 2026-09-16) — 링크 하나 공유하면 받은 쪽이 열어서 친구가 된다. 조직 초대와 다른 문이다.
   const [link, setLink] = useState(null);      // { code, expires_at }
+  const [blocked, setBlocked] = useState([]);
+  const [confirmBlock, setConfirmBlock] = useState(null);
   useEffect(() => { // 살아 있는 내 링크는 열 때 읽기만 한다(S11) — 만들기 RPC(msgr_friend_link_mine)는 없으면 만드니 부르지 않는다. RLS가 본인 행만 보여 준다
     let live = true;
     q(supabase.from('msgr_friend_links').select('code, expires_at').eq('owner_user_id', uid).is('revoked_at', null).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(1))
@@ -2219,6 +2229,14 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
     return () => { live = false; };
   }, [uid]);
   const [joinLink, setJoinLink] = useState(''); // 받은 링크·코드 붙여넣기
+  useEffect(() => { // UGC 심사용 차단 해제 표면
+    let live = true;
+    q(supabase.rpc('msgr_my_blocked')).then((rows) => { if (live) setBlocked(rows ?? []); }).catch(() => {});
+    return () => { live = false; };
+  }, [uid, friends.length]);
+  const refreshBlocked = useCallback(async () => {
+    try { setBlocked(await q(supabase.rpc('msgr_my_blocked')) ?? []); } catch {}
+  }, []);
   const showLink = async () => {
     setBusy(true);
     try { const [row] = await q(supabase.rpc('msgr_friend_link_mine')); setLink(row ?? null); } catch (e) { onError(e.message); } finally { setBusy(false); }
@@ -2271,6 +2289,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
               {relation === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
               {inOrg && relation !== 'blocked' && <button type="button" className="btn sm" disabled={busy} onClick={() => onDm?.(r.user_id)}><I name="at" size={13} />{t('ui.dm')}</button>}
               {!inOrg && relation === 'friend' && onPersonalDm && <button type="button" className="btn sm" disabled={busy} onClick={() => onPersonalDm(r.user_id)}><I name="at" size={13} />{t('friends.dm')}</button>}
+              {relation !== 'blocked' && <button type="button" className="btn sm ghost danger" disabled={busy} onClick={() => setConfirmBlock(r)}><I name="block" size={13} />{t('friends.block')}</button>}
             </div>
           </div>
         ); })}
@@ -2285,12 +2304,29 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
         {accepted.map((f) => { const inOrg = members.some((m) => m.user_id === f.user_id); return (
           <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" userId={f.user_id} /><span className="name">{nameOf(f)}</span><span className="sub">{[f.handle && `@${f.handle}`, !isPersonal && t(inOrg ? 'rail.friends.here' : 'friends.notHere')].filter(Boolean).join(' · ')}</span>
             {inOrg ? <button type="button" className="btn sm" onClick={() => onDm?.(f.user_id)}><I name="at" size={13} />{t('ui.dm')}</button> : onPersonalDm ? <button type="button" className="btn sm" onClick={() => onPersonalDm(f.user_id)}><I name="at" size={13} />{t('friends.dm')}</button> : <span className="msgr-klabel">{t('friends.inviteHint')}</span>}
+            <button type="button" className="btn sm ghost danger" disabled={busy} onClick={() => setConfirmBlock(f)}><I name="block" size={13} />{t('friends.block')}</button>
             <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setRemoving(f)} title={t('friends.remove')} aria-label={t('friends.remove')}><I name="x" size={13} /></button>
           </div>); })}
+      </div>
+      <h3>{t('friends.blocked.h')}</h3>
+      <div className="msgr-rows">
+        {!blocked.length && <p className="empty">{t('friends.blocked.none')}</p>}
+        {blocked.map((f) => (
+          <div key={f.user_id} className="row">
+            <Av name={nameOf(f)} size="sm" userId={f.user_id} />
+            <span className="name">{nameOf(f)}</span>
+            <span className="sub">{f.handle ? `@${f.handle}` : f.user_id.slice(0, 8)}</span>
+            <button type="button" className="btn sm" disabled={busy} onClick={async () => { setBusy(true); try { await q(supabase.rpc('msgr_friend_unblock', { other: f.user_id })); onNote(t('friends.unblocked')); await refreshBlocked(); await onChanged?.(); } catch (e) { onError(e.message); } finally { setBusy(false); } }}>{t('friends.unblock')}</button>
+          </div>
+        ))}
       </div>
       {removing && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t('friends.remove')}>
         <ConfirmModal title={t('friends.remove')} description={t('friends.remove.confirm', { name: nameOf(removing) })} confirmLabel={t('friends.remove')} busy={busy}
           onConfirm={async () => { const f = removing; await call('msgr_friend_remove', { other: f.user_id, block: false }, t('friends.removed.friend')); setRemoving(null); }} onClose={() => { if (!busy) setRemoving(null); }} />
+      </div>, document.body)}
+      {confirmBlock && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t('friends.block')}>
+        <ConfirmModal title={t('friends.block')} description={t('friends.block.confirm', { name: nameOf(confirmBlock) })} confirmLabel={t('friends.block')} busy={busy}
+          onConfirm={async () => { const f = confirmBlock; await call('msgr_friend_remove', { other: f.user_id, block: true }, t('friends.blocked')); setConfirmBlock(null); await refreshBlocked(); }} onClose={() => { if (!busy) setConfirmBlock(null); }} />
       </div>, document.body)}
     </section>
   );
@@ -2394,8 +2430,11 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, members =
           ? <OrgCard part="members" org={org} uid={uid} members={members} channels={channels} onInvite={onInvite} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
           : <section className="msgr-setcard"><h2>{t('org.members')} · {members.length}</h2><div className="msgr-rows">{members.map((m) => <div key={m.user_id} className="row"><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{m.user_id === org.service_user_id ? t('org.node') : t(`role.${m.role}`)}{m.user_id === uid ? ` · ${t('ui.me')}` : ''}</span></div>)}</div></section>)}
         {tab === 'org' && org && (isAdmin
-          ? <OrgCard part="org" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
-          : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
+          ? <>
+              <OrgCard part="org" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
+              <ReportsCard org={org} uid={uid} isAdmin members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />
+            </>
+          : <><section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section><ReportsCard org={org} uid={uid} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} /></>)}
         {tab === 'crews' && org && (<>
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
           {isAdmin && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
@@ -2506,6 +2545,52 @@ function MemNew({ org, channelId, uid, onCreated, onNote, onError, onCancel }) {
   );
 }
 
+// 신고함(App Store 1.2 UGC) — 관리자는 조직 신고 전부를 보고 처리한다. 멤버는 자기 신고와 처리 상태만 본다(msgr_reports_list가 가른다)
+function ReportsCard({ org, uid, isAdmin = false, members = [], nameOfUser, channels = [], onNote, onError }) {
+  const { t, lang } = useT();
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const chName = (id) => { const c = channels.find((x) => x.id === id); return c ? (c.kind === 'dm' ? c.name : `#${c.name}`) : ''; };
+  const who = (id) => (id === uid ? t('ui.me') : (members.find((m) => m.user_id === id)?.display_name || nameOfUser(id) || id?.slice(0, 8)));
+  const load = useCallback(async () => {
+    const rows = await q(supabase.rpc('msgr_reports_list'));
+    setRows(rows ?? []);
+  }, []);
+  useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+  const resolve = async (row) => {
+    setBusy(true);
+    try {
+      await q(supabase.rpc('msgr_report_resolve', { report: row.id }));
+      onNote(t('reports.done'));
+      await load();
+    } catch (e) {
+      onError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!rows) return null;
+  return (
+    <section className="msgr-setcard">
+      <h2>{t(isAdmin ? 'reports.title' : 'reports.mine')}</h2><p>{t(isAdmin ? 'reports.desc' : 'reports.mine.desc')}</p>
+      <div className="msgr-rows">
+        {!rows.length && <p className="empty">{t('reports.none')}</p>}
+        {rows.map((r) => (
+          <div key={r.id} className="row">
+            <Av name={who(r.author_user_id)} size="sm" userId={r.author_user_id} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="name">{r.message_body}</div>
+              <div className="sub">{[chName(r.channel_id), `${t('reports.from')}: ${who(r.reporter_user_id)}`, `${t('reports.author')}: ${who(r.author_user_id)}`, fmtWhen(r.created_at, lang)].filter(Boolean).join(' · ')}</div>
+              {r.reason && <div className="sub">{r.reason}</div>}
+            </div>
+            <span className="msgr-klabel">{t(r.status === 'open' ? 'reports.open' : 'reports.resolved')}</span>
+            {isAdmin && r.status === 'open' && <button type="button" className="btn sm" disabled={busy} onClick={() => resolve(r)}>{t('reports.resolve')}</button>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 /* 활동 트리 행 — Activity 밖 모듈 수준(안에서 정의하면 렌더마다 새 컴포넌트 타입이라 클릭마다 트리가 리마운트된다, 유건 제보 2026-09-04) */
 function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
   const { openIds, toggle, sel, active, openTab } = c; const has = !!kids; const open = openIds.has(id);
@@ -3776,6 +3861,9 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
   const [ctxAt, setCtxAt] = useState(null); // 데스크톱 우클릭: 동작 줄을 커서 자리에 고정(유건 지시 2026-09-12)
   const [actsOpen, setActsOpen] = useState(false); // 터치는 길게 눌러야 액션이 열린다(마우스는 hover) — 상시 노출은 화면당 대화를 두세 건으로 줄였다
+  const safety = useContext(SafetyCtx);
+  const [reporting, setReporting] = useState(false); const [reportReason, setReportReason] = useState(''); const [safetyBusy, setSafetyBusy] = useState(false);
+  const [confirmBlock, setConfirmBlock] = useState(false);
   const tabStop = ctxAt && actsOpen ? undefined : -1; // 숨은 hover 동작은 탭 순서에서 뺀다 — 메시지마다 2~4칸이라 입력창까지 Tab 76번(검수 D11). 우클릭 메뉴로 열렸을 때만 탭으로 닿는다
   const hold = useLongPress(() => { if (!m.pending) setActsOpen(true); });
   // 키보드(검수 K8): 메시지 목록은 로빙 tabindex — 목록 전체가 Tab 한 칸, ↑↓·Home·End로 행 이동, Enter·Shift+F10·메뉴 키로 동작 메뉴(우클릭과 같은 .ctx), 메뉴 안 ↑↓, Esc면 행으로
@@ -3848,7 +3936,22 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   ) : relayCapped ? <div className="msgr-sys">{t(m.meta?.relay_cycle ? 'dm.relay.cycle' : 'dm.relay.capped')}</div>
   : <div className="msgr-sys">{body}</div>);
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
+  const report = async () => {
+    setSafetyBusy(true);
+    try {
+      await q(supabase.rpc('msgr_report_message', { msg: m.id, reason: reportReason.trim() || null }));
+      setReporting(false); setReportReason(''); safety.onNote(t('report.done'));
+    } catch (e) {
+      onError?.(/msgr_report_own/.test(e.message) ? t('report.err.own') : `${t('report.failed')} (${e.message})`);
+    } finally { setSafetyBusy(false); }
+  };
+  const block = async () => {
+    setSafetyBusy(true);
+    try { await safety.block(m.author_user_id); setConfirmBlock(false); } catch (e) { onError?.(e.message); } finally { setSafetyBusy(false); }
+  };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
+  const canReport = !mine && !m.pending && m.kind !== 'system' && (m.author_kind === 'user' || m.author_kind === 'crew'); // 사람 글과 AI 에이전트 답 모두 신고 가능
+  const canBlock = !mine && !m.pending && m.author_kind === 'user' && !!m.author_user_id && !!safety.block;
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
   const attRow = atts.length > 0 && <div className="msgr-attachments">{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} rowTab={rowTab} />)}</div>;
   const acts = !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
@@ -3863,6 +3966,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
           <div className="tiles">
             {onReply && !m.pending && <button type="button" onClick={() => { onReply(m); setActsOpen(false); }}><I name="reply" size={20} /><span>{t('msg.reply')}</span></button>}
             <button type="button" onClick={() => { copy(); setActsOpen(false); }}><I name="copy" size={20} /><span>{copied ? t('ui.copied') : t('ui.copy')}</span></button>
+            {canReport && <button type="button" onClick={() => { setActsOpen(false); setReporting(true); }}><I name="flag" size={20} /><span>{t('report.action')}</span></button>}
+            {canBlock && <button type="button" onClick={() => { setActsOpen(false); setConfirmBlock(true); }}><I name="block" size={20} /><span>{t('report.block')}</span></button>}
             {mine && m.kind === 'text' && <button type="button" onClick={() => { setDraft(m.body); setEditing(true); setActsOpen(false); }}><I name="gear" size={20} /><span>{t('ui.edit')}</span></button>}
           </div>
           {mine && (confirmDel
@@ -3875,6 +3980,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
     wrapCtx(<div ref={ctxRef} className={`msgr-acts${ctxAt && actsOpen ? ' ctx' : ''}${m.pending ? ' pending' : ''}`} onKeyDown={ctxAt && actsOpen ? menuKey : undefined} role={ctxAt && actsOpen ? 'menu' : undefined} inert={m.pending ? true : undefined} style={ctxAt && actsOpen ? { left: Math.max(4, Math.min(ctxAt.x, window.innerWidth - 200)), top: Math.max(4, Math.min(ctxAt.y, window.innerHeight - 180)) } : undefined}>
       {onReply && !m.pending && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); onReply(m); }}><I name="reply" size={12} />{t('msg.reply')}</button>}
       <button type="button" tabIndex={tabStop} onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
+      {canReport && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); setReporting(true); }}><I name="flag" size={12} />{t('report.action')}</button>}
+      {canBlock && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); setConfirmBlock(true); }}><I name="block" size={12} />{t('report.block')}</button>}
       <button type="button" tabIndex={tabStop} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>
       {mine && m.kind === 'text' && <button type="button" tabIndex={tabStop} onClick={() => { setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
       {mine && (confirmDel ? <button type="button" tabIndex={tabStop} className="danger" onClick={() => { setConfirmDel(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" tabIndex={tabStop} onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
@@ -3888,6 +3995,13 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
       <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!draft.trim()}>{t('ui.save')}</button><button type="button" className="btn sm" onClick={() => setEditing(false)}>{t('ui.cancel')}</button></div>
     </form>
   );
+  const reportModal = (reporting || confirmBlock) && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(reporting ? 'report.title' : 'report.block')}>
+    {reporting
+      ? <ConfirmModal tone="primary" title={t('report.title')} confirmLabel={t('report.action')} busy={safetyBusy} onConfirm={report} onClose={() => { if (!safetyBusy) { setReporting(false); setReportReason(''); } }}
+          description={<>{t('report.desc')}<textarea className="msgr-input" rows={3} maxLength={500} value={reportReason} onChange={(e) => setReportReason(e.target.value)} placeholder={t('report.reason.ph')} aria-label={t('report.reason.ph')} style={{ display: 'block', width: '100%', marginTop: 10, boxSizing: 'border-box', padding: '8px 10px', font: 'inherit', fontSize: 16, resize: 'vertical' }} /></>} />
+      : <ConfirmModal title={t('report.block')} description={t('friends.block.confirm', { name: nameOfUser(m.author_user_id) })} confirmLabel={t('report.block')} busy={safetyBusy} onConfirm={block} onClose={() => { if (!safetyBusy) setConfirmBlock(false); }} />}
+  </div>, document.body);
+  if (!mine && m.author_kind === 'user' && safety.blocked.has(m.author_user_id)) return <div className="msgr-sys" data-mid={m.id}>{t('msg.blockedUser')}</div>; // 차단한 사람의 글 — 본문·첨부·반응을 그리지 않는다
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className="msgr-mine" ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {editing ? editor : bareAttach ? null : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : <Body text={body} />}</div>}
@@ -3895,6 +4009,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
       {chips}
       <div className="meta">{edited}<span className={m.pending ? 'sent pending' : 'sent'} title={m.pending ? t('msg.sending') : undefined} aria-label={m.pending ? t('msg.sending') : undefined}><I name="check" size={12} /></span><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
       {acts}
+      {reportModal}
     </div>
   );
   const isCrew = m.author_kind === 'crew';
@@ -3911,6 +4026,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
         {attRow}
         {chips}
         {acts}
+        {reportModal}
       </div>
     </div>
   );
