@@ -38,6 +38,10 @@ const SECTIONS = [
         en: 'The following are prohibited: sending spam or unlawful content, unauthorized use of another person’s account, invite links, or bot tokens, attempts to bypass an organization’s permission policies, and automation that disrupts normal operation of the service. Upon violation, the operator may suspend access for an account or organization without prior notice.',
       },
       {
+        ko: 'Argo Messenger는 부적절한 콘텐츠(혐오·차별, 괴롭힘·위협, 음란물, 폭력 조장, 불법 콘텐츠)와 다른 이용자를 괴롭히는 이용자를 허용하지 않습니다(무관용). 이용자는 앱의 메시지 메뉴에서 문제가 있는 메시지를 신고하고 다른 이용자를 차단할 수 있으며, 차단한 이용자의 메시지는 화면에서 가려집니다. 운영자는 접수된 신고를 24시간 안에 검토하고, 위반 콘텐츠를 삭제하며 해당 이용자의 접근을 정지합니다. 조직 안의 신고는 그 조직의 관리자도 확인하고 처리합니다.',
+        en: 'Argo Messenger has zero tolerance for objectionable content (hate or discrimination, harassment or threats, sexual content, incitement to violence, unlawful content) and for users who abuse others. You can report a message and block another user from the message menu in the app; messages from blocked users are hidden from you. The operator reviews reports within 24 hours, removes violating content, and suspends the offending user’s access. Reports within an organization can also be reviewed and resolved by that organization’s admins.',
+      },
+      {
         ko: '계정과 조직의 삭제, 보관 기간, 삭제 뒤 남는 데이터는 개인정보처리방침 2-1항을 따릅니다. 운영자는 서비스 기능을 변경하거나 중단할 수 있으며, 중요한 변경은 앱 또는 본 페이지를 통해 미리 알리도록 노력합니다.',
         en: 'Deletion of accounts and organizations, retention periods, and data that remains after deletion follow Section 2-1 of the Privacy Policy. The operator may change or discontinue service features and will make reasonable efforts to announce significant changes in advance through the app or this page.',
       },
@@ -103,7 +107,7 @@ export default function TermsPage() {
   const { lang, t } = useLang();
   const ko = lang === 'ko';
   return (
-    <DocShell kicker={t('legal.kicker')} title={t('terms.title')} updated={t('legal.updated')}>
+    <DocShell kicker={t('legal.kicker')} title={t('terms.title')} updated={t('terms.updated')}>
       {SECTIONS.map((s, i) => (
         <section className="doc-section" key={i}>
           <h2>{ko ? s.h.ko : s.h.en}</h2>

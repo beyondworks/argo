@@ -318,6 +318,7 @@ const DICT = {
   // legal (약관·개인정보)
   'legal.kicker': ['정책', 'Legal'],
   'legal.updated': ['시행일 2026-07-15 · 개정 2026-09-19', 'Effective 2026-07-15 · Revised 2026-09-19'],
+  'terms.updated': ['시행일 2026-07-15 · 개정 2026-09-21', 'Effective 2026-07-15 · Revised 2026-09-21'], // 약관만 개정(신고·차단·무관용) — 개인정보처리방침 날짜와 분리
   'legal.terms': ['이용약관', 'Terms of Service'],
   'legal.privacy': ['개인정보처리방침', 'Privacy Policy'],
   'terms.title': ['이용약관', 'Terms of Service'],
