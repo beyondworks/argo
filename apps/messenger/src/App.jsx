@@ -2411,6 +2411,8 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, members =
   const skins = THEMES.filter((c) => !FAMILY_CODES.includes(c));
   const tabs = [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], ['friends', 'set.tab.friends'], ['me', 'set.tab.me']].filter(Boolean); // 친구는 설정의 별도 분류(유건 지시 2026-09-09) // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
   const [tab, setTab] = useState(org ? 'members' : 'me');
+  const [isOps, setIsOps] = useState(false); // 운영자(msgr_report_operators)만 '운영 신고함'을 본다
+  useEffect(() => { let live = true; q(supabase.rpc('msgr_is_report_operator')).then((v) => { if (live) setIsOps(v === true); }).catch(() => {}); return () => { live = false; }; }, [uid]);
   useEffect(() => { if (initialTab) { setTab(initialTab); onTabUsed?.(); } }, [initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   const phone = useIsPhone();
@@ -2448,6 +2450,7 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, members =
             <LegalLinks t={t} className="in-card" />
           </section>
           <ProfileCard uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} />
+          <ReportsCard mode={isOps ? 'ops' : 'personal'} org={org} uid={uid} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />
           <section className="msgr-setcard">
             <h2>{t('set.lang')}</h2>
             <div className="msgr-seg" role="radiogroup" aria-label={t('set.lang')}>
@@ -2544,7 +2547,7 @@ function MemNew({ org, channelId, uid, onCreated, onNote, onError, onCancel }) {
 }
 
 // 신고함(App Store 1.2 UGC) — 관리자는 조직 신고 전부를 보고 처리한다. 멤버는 자기 신고와 처리 상태만 본다(msgr_reports_list가 가른다)
-function ReportsCard({ org, uid, isAdmin = false, members = [], nameOfUser, channels = [], onNote, onError }) {
+function ReportsCard({ org, uid, isAdmin = false, mode = 'org', members = [], nameOfUser, channels = [], onNote, onError }) { // mode: org(조직 탭) · ops(운영자 — 전부) · personal(내 개인 공간 신고)
   const { t, lang } = useT();
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -2552,8 +2555,9 @@ function ReportsCard({ org, uid, isAdmin = false, members = [], nameOfUser, chan
   const who = (id) => (id === uid ? t('ui.me') : (members.find((m) => m.user_id === id)?.display_name || nameOfUser(id) || id?.slice(0, 8)));
   const load = useCallback(async () => {
     const rows = await q(supabase.rpc('msgr_reports_list'));
-    setRows((rows ?? []).filter((r) => r.org_id === org.id)); // RPC는 내가 관리하는 모든 조직 + 내 신고를 준다 — 지금 조직 것만
-  }, [org.id]);
+    const all = rows ?? []; // RPC는 내가 관리하는 모든 조직 + 내 신고(+운영자면 전부)를 준다 — 화면마다 거른다
+    setRows(mode === 'ops' ? all : mode === 'personal' ? all.filter((r) => !r.org_id && r.reporter_user_id === uid) : all.filter((r) => r.org_id === org?.id));
+  }, [org?.id, mode, uid]);
   useEffect(() => { load().catch((e) => { if (/PGRST202|Could not find the function/.test(e.message)) setRows(null); else onError(e.message); }); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const resolve = async (row) => {
     setBusy(true);
@@ -2567,10 +2571,12 @@ function ReportsCard({ org, uid, isAdmin = false, members = [], nameOfUser, chan
       setBusy(false);
     }
   };
-  if (!rows) return null;
+  if (!rows || (mode === 'personal' && !rows.length)) return null; // 개인 공간 신고가 없으면 카드 자체를 그리지 않는다
+  const canResolve = isAdmin || mode === 'ops';
+  const head = mode === 'ops' ? 'reports.ops' : isAdmin ? 'reports.title' : 'reports.mine';
   return (
     <section className="msgr-setcard">
-      <h2>{t(isAdmin ? 'reports.title' : 'reports.mine')}</h2><p>{t(isAdmin ? 'reports.desc' : 'reports.mine.desc')}</p>
+      <h2>{t(head)}</h2><p>{t(`${head === 'reports.title' ? 'reports' : head}.desc`)}</p>
       <div className="msgr-rows">
         {!rows.length && <p className="empty">{t('reports.none')}</p>}
         {rows.map((r) => (
@@ -2582,7 +2588,7 @@ function ReportsCard({ org, uid, isAdmin = false, members = [], nameOfUser, chan
               {r.reason && <div className="sub">{r.reason}</div>}
             </div>
             <span className="msgr-klabel">{t(r.status === 'open' ? 'reports.open' : 'reports.resolved')}</span>
-            {isAdmin && r.status === 'open' && <button type="button" className="btn sm" disabled={busy} onClick={() => resolve(r)}>{t('reports.resolve')}</button>}
+            {canResolve && r.status === 'open' && <button type="button" className="btn sm" disabled={busy} onClick={() => resolve(r)}>{t('reports.resolve')}</button>}
           </div>
         ))}
       </div>

@@ -17,10 +17,24 @@ create table if not exists public.msgr_reports (
   status text not null default 'open' check (status in ('open', 'resolved')),
   resolved_by uuid references auth.users(id) on delete set null,
   resolved_at timestamptz,
+  notified_at timestamptz, -- 운영자 푸시 선점(msgr-push가 null→now로 한 번만 잡는다)
   created_at timestamptz not null default now()
 );
 alter table public.msgr_reports enable row level security;
 revoke all on public.msgr_reports from public, anon, authenticated; -- 접근은 아래 security definer RPC로만(정책 없음 = 직접 접근 전면 차단)
+-- 운영자(Argo 운영팀) — 모든 신고를 보고 처리한다. 개인 공간 신고는 조직 관리자가 없어 여기로만 간다(검수 H1, 유건 승인 2026-09-21).
+-- 행은 운영자가 직접 넣는다(서비스 역할/SQL). 앱에서 늘리는 경로는 없다.
+create table if not exists public.msgr_report_operators (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+alter table public.msgr_report_operators enable row level security;
+revoke all on public.msgr_report_operators from public, anon, authenticated;
+create or replace function public.msgr_is_report_operator() returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (select 1 from public.msgr_report_operators where user_id = auth.uid())
+$$;
+
 create unique index if not exists msgr_reports_open_once on public.msgr_reports (message_id, reporter_user_id) where status = 'open';
 
 create table if not exists public.msgr_user_blocks (
@@ -84,6 +98,7 @@ create or replace function public.msgr_reports_list()
       left join public.msgr_messages m on m.id = r.message_id
      where r.reporter_user_id = auth.uid()              -- 누구나 자기 신고는 본다(처리 상태 확인)
         or (r.org_id is not null and public.msgr_is_admin(r.org_id)) -- 조직 관리자는 조직 신고 전부
+        or public.msgr_is_report_operator()               -- 운영자는 전부(개인 공간 포함)
      order by r.status, r.created_at desc
 $$;
 
@@ -94,8 +109,8 @@ begin
   if me is null then raise exception 'msgr_auth_required' using errcode = '42501'; end if;
   select * into r from public.msgr_reports where id = report;
   if r.id is null then raise exception 'msgr_report_not_found' using errcode = '22023'; end if;
-  if r.org_id is null or not public.msgr_is_admin(r.org_id) then
-    raise exception 'msgr_report_forbidden' using errcode = '42501'; -- 개인 공간 신고는 신고자만 보고 처리는 운영(문의) 경로
+  if not public.msgr_is_report_operator() and (r.org_id is null or not public.msgr_is_admin(r.org_id)) then
+    raise exception 'msgr_report_forbidden' using errcode = '42501'; -- 개인 공간 신고는 운영자만 처리
   end if;
   update public.msgr_reports set status = 'resolved', resolved_by = me, resolved_at = now()
    where id = r.id and status = 'open';
@@ -126,8 +141,26 @@ create or replace function public.msgr_my_blocked()
      order by k.created_at desc
 $$;
 
+-- 신고가 들어오면 운영자에게 푸시(msgr-push의 report_id 분기). 푸시 URL은 메시지 알림과 같은 msgr_settings.push_url.
+create or replace function public.msgr_report_notify() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare url text;
+begin
+  if not exists (select 1 from public.msgr_report_operators) then return new; end if;
+  select value into url from public.msgr_settings where key = 'push_url';
+  if url is null then return new; end if;
+  perform net.http_post(url := url, headers := public.msgr_push_headers(),
+    body := jsonb_build_object('report_id', new.id), timeout_milliseconds := 5000);
+  return new;
+exception when others then return new; -- 알림 실패가 신고 저장을 막지 않는다(운영 신고함에는 남는다)
+end $$;
+drop trigger if exists msgr_report_notify on public.msgr_reports;
+create trigger msgr_report_notify after insert on public.msgr_reports for each row execute function public.msgr_report_notify();
+
 revoke all on function public.msgr_report_message(bigint, text) from public, anon; grant execute on function public.msgr_report_message(bigint, text) to authenticated;
 revoke all on function public.msgr_reports_list() from public, anon; grant execute on function public.msgr_reports_list() to authenticated;
 revoke all on function public.msgr_report_resolve(uuid) from public, anon; grant execute on function public.msgr_report_resolve(uuid) to authenticated;
 revoke all on function public.msgr_friend_unblock(uuid) from public, anon; grant execute on function public.msgr_friend_unblock(uuid) to authenticated;
 revoke all on function public.msgr_my_blocked() from public, anon; grant execute on function public.msgr_my_blocked() to authenticated;
+revoke all on function public.msgr_is_report_operator() from public, anon; grant execute on function public.msgr_is_report_operator() to authenticated;
+revoke all on function public.msgr_report_notify() from public, anon, authenticated;

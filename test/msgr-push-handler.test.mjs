@@ -11,7 +11,7 @@ const key = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256'
 const p8 = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey('pkcs8', key.privateKey)).toString('base64')}\n-----END PRIVATE KEY-----`;
 
 function edge({ rejectDevice = null, failSigning = 0 } = {}) {
-  const delivered = [], providerTokens = new Set(), claimed = new Set(), writes = [], logs = [];
+  const delivered = [], providerTokens = new Set(), claimed = new Set(), writes = [], logs = [], reportClaims = new Set(), sentText = [];
   let handler, minted = 0, currentProviderToken, providerChangedAt = 0;
   const clock = { now: 1_800_000_000_000 };
   const statuses = [];
@@ -26,7 +26,7 @@ function edge({ rejectDevice = null, failSigning = 0 } = {}) {
         currentProviderToken = jwt; providerChangedAt = clock.now;
       }
       if (url.pathname.endsWith(`/${rejectDevice}`)) return Response.json({ reason: 'TooManyRequests' }, { status: 429 });
-      delivered.push(url.pathname.split('/').at(-1));
+      delivered.push(url.pathname.split('/').at(-1)); sentText.push(JSON.parse(init.body).aps?.alert);
       return new Response(null, { status: 200 });
     }
     assert.equal(url.hostname, 'database.test');
@@ -37,6 +37,12 @@ function edge({ rejectDevice = null, failSigning = 0 } = {}) {
       claimed.add(message_id); return new Response(null, { status: 201 });
     }
     if (path === 'msgr_push_sent' && init.method === 'PATCH') { writes.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); }
+    if (path === 'msgr_reports' && init.method === 'PATCH') { // notified_at 선점 흉내 — 한 번만 행을 돌려준다
+      const id = url.searchParams.get('id').replace('eq.', ''); assert.equal(url.searchParams.get('notified_at'), 'is.null');
+      if (reportClaims.has(id)) return Response.json([]); reportClaims.add(id);
+      return Response.json([{ id, org_id: null, channel_id: 'dm', message_id: 7, reason: '괴롭힘', body_snapshot: '문제 글' }]);
+    }
+    if (path === 'msgr_report_operators') return Response.json([{ user_id: 'operator' }]);
     if (path === 'msgr_messages') return Response.json([{ id: 1, channel_id: 'channel', author_kind: 'crew', crew_id: 'crew', kind: 'text', body: 'fixture' }]);
     if (path === 'rpc/msgr_push_recipients_of') return Response.json(['recipient']);
     if (path === 'msgr_push_tokens') return Response.json(['phone-a', 'phone-b', 'phone-c'].map((token) => ({ token, platform: 'ios', user_id: 'recipient' })));
@@ -48,14 +54,14 @@ function edge({ rejectDevice = null, failSigning = 0 } = {}) {
   vm.runInNewContext(source, {
     ...core, apnsJwt: async (args) => { minted++; if (minted <= failSigning) throw new Error('fixture signing failure'); return core.apnsJwt(args); },
     Deno: { env: { get: (name) => config[name] }, serve: (fn) => { handler = fn; } },
-    fetch, Response, Request, TextEncoder, crypto, Date: { now: () => clock.now },
+    fetch, Response, Request, TextEncoder, crypto, Date: class extends Date { static now() { return clock.now; } },
     console: { log: (...args) => logs.push(args) },
   });
   const invoke = async (body) => {
     const response = await handler(new Request('https://edge.test', { method: 'POST', body: JSON.stringify(body) }));
     statuses.push(response.status); return response.json();
   };
-  return { send: (id = 1) => invoke({ message_id: id }),
+  return { send: (id = 1) => invoke({ message_id: id }), report: (id) => invoke({ report_id: id }), sentText,
     badge: () => invoke({ badge_user: '11111111-1111-1111-1111-111111111111' }),
     delivered, providerTokens, writes, logs, clock, statuses, minted: () => minted };
 }
@@ -119,4 +125,14 @@ test('failed signing is shared, reported, and cleared for the next message', asy
   assert.equal(failed.results.filter((value) => value.includes('fixture signing failure')).length, 3);
   assert.equal((await app.send(2)).sent, 3);
   assert.equal(app.minted(), 2);
+});
+
+test('신고 접수 푸시는 운영자 기기로 한 번만 간다(재생 호출은 dup)', async () => {
+  const app = edge();
+  const rid = '22222222-2222-4222-8222-222222222222';
+  const first = await app.report(rid);
+  assert.equal(first.sent, 3);
+  assert.deepEqual(app.sentText[0], { title: '신고 접수 · 개인 대화', body: '괴롭힘 — 문제 글' });
+  assert.equal((await app.report(rid)).dup, true, '같은 신고 재호출은 보내지 않는다');
+  assert.equal(app.delivered.length, 3);
 });

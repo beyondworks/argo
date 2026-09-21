@@ -14,7 +14,7 @@ const ugc = state.ugc = { reports: [], blocked: [], calls: [] };
 const ok = (data) => Promise.resolve({ data: structuredClone(data), error: null });
 const original = base.rpc;
 base.rpc = (name, args = {}) => {
-  if (!/^msgr_(report|reports_list|my_blocked|friend_remove|friend_unblock)/.test(name)) return original(name, args);
+  if (!/^msgr_(report|reports_list|my_blocked|friend_remove|friend_unblock|is_report_operator)/.test(name)) return original(name, args);
   ugc.calls.push({ name, args: structuredClone(args) });
   if (name === 'msgr_report_message') {
     const m = t.msgr_messages.find((x) => x.id === args.msg);
@@ -22,6 +22,7 @@ base.rpc = (name, args = {}) => {
     const r = { id: `report-${ugc.reports.length + 1}`, message_id: m.id, channel_id: m.channel_id, org_id: m.org_id, reporter_user_id: 'user-me', author_user_id: m.author_user_id ?? null, reason: args.reason, status: 'open', created_at: now, message_body: m.body, message_created_at: m.created_at };
     ugc.reports.push(r); return ok(r.id);
   }
+  if (name === 'msgr_is_report_operator') return ok(!!state.ugcOperator);
   if (name === 'msgr_reports_list') return ok(ugc.reports);
   if (name === 'msgr_report_resolve') { ugc.reports.find((r) => r.id === args.report).status = 'resolved'; return ok(null); }
   if (name === 'msgr_my_blocked') return ok(ugc.blocked);

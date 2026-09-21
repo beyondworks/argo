@@ -1043,6 +1043,8 @@ export const DICT = {
   'reports.title': ['신고함', 'Reports'],
   'reports.desc': ['신고된 메시지입니다. 조직 관리자가 확인하고 처리할 수 있습니다.', 'Reported messages. Organization admins can review and resolve them.'],
   'reports.mine': ['내 신고', 'My reports'],
+  'reports.ops': ['운영 신고함', 'Operator reports'],
+  'reports.ops.desc': ['모든 조직과 개인 대화의 신고입니다. 접수되면 이 계정의 기기로 알림이 갑니다. 24시간 안에 확인해 처리해 주세요.', 'Reports from every organization and personal chat. New reports notify this account’s devices. Review them within 24 hours.'],
   'reports.mine.desc': ['내가 신고한 메시지와 처리 상태입니다.', 'Messages you reported and their status.'],
   'reports.none': ['신고가 없습니다.', 'No reports.'],
   'reports.open': ['확인 중', 'Open'],

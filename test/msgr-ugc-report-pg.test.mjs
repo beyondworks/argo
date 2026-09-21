@@ -111,6 +111,26 @@ test('개인 공간 글 신고는 신고자만 보고, 조직 관리자 처리 �
   fails(asUserRaw(U.a, `select public.msgr_report_resolve('${rid}')`), /msgr_report_forbidden/, '개인 공간 처리');
 });
 
+test('운영자는 개인 공간 신고까지 보고 처리하며, 신고가 들어오면 푸시 요청이 한 번 나간다(검수 H1)', { skip }, () => {
+  sql(`create table if not exists public.fake_http (id serial, url text, body jsonb)`);
+  sql(`create or replace function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $f$ insert into public.fake_http (url, body) values (url, body) returning id::bigint $f$`);
+  sql(`insert into public.msgr_settings (key, value) values ('push_url', 'https://push.example.test/fn') on conflict (key) do update set value = excluded.value`);
+  const ch = last(asUser(U.a, `select public.msgr_dm_personal('${U.d}')`));
+  const before = Number(sql(`select count(*) from public.fake_http`));
+  const noOp = last(asUser(U.a, `select public.msgr_report_message(${post(U.d, ch, '운영자 없을 때')})`));
+  assert.equal(Number(sql(`select count(*) from public.fake_http`)), before, '운영자가 없으면 요청하지 않는다');
+  sql(`insert into public.msgr_report_operators (user_id) values ('${U.c}')`);
+  assert.equal(last(asUser(U.c, `select public.msgr_is_report_operator()`)), 't');
+  assert.equal(last(asUser(U.b, `select public.msgr_is_report_operator()`)), 'f');
+  const rid = last(asUser(U.a, `select public.msgr_report_message(${post(U.d, ch, '운영자에게 갈 글')})`));
+  assert.equal(sql(`select url || '|' || (body->>'report_id') from public.fake_http order by id desc limit 1`), `https://push.example.test/fn|${rid}`, '신고 id로 푸시 요청');
+  assert.ok(rows(asUser(U.c, `select id from public.msgr_reports_list()`)).includes(noOp), '운영자는 개인 공간 신고를 본다');
+  assert.ok(!rows(asUser(U.b, `select id from public.msgr_reports_list()`)).includes(rid), '다른 사람은 못 본다');
+  asUser(U.c, `select public.msgr_report_resolve('${rid}')`);
+  assert.equal(sql(`select status from public.msgr_reports where id = '${rid}'`), 'resolved', '운영자가 처리한다');
+  fails(asUserRaw(U.b, `select count(*) from public.msgr_report_operators`), /permission denied/, '운영자 표는 직접 못 읽는다');
+});
+
 test('차단당한 사람이 역차단·해제로 상대의 차단을 지우지 못한다(검수 C1)', { skip }, () => {
   asUser(U.c, `select public.msgr_friend_remove('${U.a}', true)`); // c가 a를 차단
   asUser(U.a, `select public.msgr_friend_remove('${U.c}', true)`); // a가 역차단
