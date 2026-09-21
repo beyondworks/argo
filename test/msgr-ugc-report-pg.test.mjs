@@ -198,8 +198,8 @@ test('차단한 사람의 글은 안 읽음 수(채널별·공간별·폰 배지
   assert.ok(fromA >= 1);
   assert.equal(b2.org, b1.org - fromA, '공간별 합계에서 차단한 사람의 글이 전부 빠진다(다른 채널 글 포함)');
   assert.equal(b2.badge, b0.badge, '폰 배지에서도 빠진다');
-  fails(asUserRaw(U.b, `select count(*) from public.msgr_user_blocks`), /permission denied/, '차단 표는 여전히 직접 못 읽는다');
-  assert.equal(last(asUser(U.b, `select public.msgr_i_blocked('${U.a}')`)), 't');
-  assert.equal(last(asUser(U.a, `select public.msgr_i_blocked('${U.b}')`)), 'f', '도우미는 내 차단만 답한다(남의 차단 여부를 캐지 못한다)');
+  assert.equal(last(asUser(U.b, `select count(*) from public.msgr_user_blocks`)), '1', '내 차단 행은 보인다');
+  assert.equal(last(asUser(U.a, `select count(*) from public.msgr_user_blocks`)), '0', '남이 나를 차단한 행은 안 보인다');
+  fails(asUserRaw(U.b, `insert into public.msgr_user_blocks (blocker, blocked) values ('${U.b}', '${U.c}')`), /permission denied|row-level security/, '직접 쓰기는 여전히 막힌다(RPC로만)');
   asUser(U.b, `select public.msgr_friend_unblock('${U.a}')`);
 });
