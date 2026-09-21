@@ -163,3 +163,17 @@ test('신고 시점 본문·작성자를 보존하고, 같은 글의 열린 신�
   sql(`delete from public.msgr_channels where id = '${ch}'`);
   assert.equal(sql(`select coalesce(channel_id::text, 'NULL') || '|' || body_snapshot from public.msgr_reports where id = '${r2}'`), 'NULL|채널째 지울 글', '채널을 지워도 신고·증거는 남는다(검수 N2)');
 });
+
+test('차단한 사람의 글은 차단한 수신자에게 푸시하지 않는다(나머지 수신자는 그대로)', { skip }, () => {
+  const ch = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','push-block','[]'::jsonb)`));
+  asUser(U.b, `select public.msgr_join_channel('${ch}')`);
+  const rcpt = (mid) => last(sql(`select array_to_string(public.msgr_push_recipients_of(${mid}), ',')`)).split(',').filter(Boolean);
+  const before = post(U.a, ch, '차단 전');
+  assert.ok(rcpt(before).includes(U.b), 'b는 a의 글 푸시를 받는다');
+  asUser(U.b, `select public.msgr_friend_remove('${U.a}', true)`);
+  const after = post(U.a, ch, '차단 뒤');
+  assert.ok(!rcpt(after).includes(U.b), 'b가 a를 차단하면 a의 글 푸시는 b에게 안 간다');
+  const back = post(U.b, ch, 'b의 글');
+  assert.ok(rcpt(back).includes(U.a), '차단당한 쪽(a)은 b의 글 푸시를 계속 받는다(차단은 한 방향)');
+  asUser(U.b, `select public.msgr_friend_unblock('${U.a}')`);
+});

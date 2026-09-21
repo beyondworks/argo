@@ -92,7 +92,8 @@ async function reportPush(rid: string) {
   if (!ops.length) return Response.json({ ok: true, sent: 0 });
   const toks: { token: string; platform: string; user_id: string; sound?: string }[] = await rest(`msgr_push_tokens?user_id=in.(${ops.join(',')})&select=token,platform,user_id,sound`);
   const text = reportPushText({ body: r.body_snapshot, reason: r.reason, personal: !r.org_id });
-  const results = await Promise.all(toks.map((t) => sendOne(t, text, r.channel_id ?? 'reports', r.message_id ?? 0, `report-${rid}`).catch((e) => `err ${String(e?.message ?? e).slice(0, 120)}`)));
+  // channel_id 자리의 'report' = 앱이 탭 때 운영 신고함을 연다(App.jsx navTo) — 신고된 채널은 운영자가 못 읽을 수 있다
+  const results = await Promise.all(toks.map((t) => sendOne(t, text, 'report', r.message_id ?? 0, `report-${rid}`).catch((e) => `err ${String(e?.message ?? e).slice(0, 120)}`)));
   const sent = results.filter((x) => x === 'ok').length;
   console.log(`[msgr-push] report ${rid.slice(0, 8)} → ${toks.length} operator tokens, sent ${sent}`, results.filter((x) => x !== 'ok'));
   return Response.json({ ok: sent === results.length, sent });

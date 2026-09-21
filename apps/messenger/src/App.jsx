@@ -104,7 +104,7 @@ const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
 function useT() { const { lang, setLang, t: ta } = useLang(); return { lang, setLang, ta, t: (k, vars) => tm(k, lang, vars) }; }
 
 /** 아바타 — 사람은 원, 크루는 둥근 사각 타일 + 옐로 별(시안 v2 모티프 ②). */
-const SafetyCtx = createContext({ blocked: new Set(), block: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 대화 목록·답글 인용에서 가린다(알림함·검색·푸시는 아직)
+const SafetyCtx = createContext({ blocked: new Set(), block: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 대화·답글 인용·알림함·검색·DM 미리보기에서 가리고, 푸시는 서버(msgr_push_recipients)가 막는다
 const AvatarCtx = createContext({ users: {}, crews: {} }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url) — Av가 userId/crewId로 찾는다
 function Av({ name, crew, size, company = false, userId = null, crewId = null, src = null }) { // company: 회사 크루(조직 배지 — 별 대신 각진 해시), 그 외 크루는 별 배지(부록 I·K 등급 표시)
   const ctx = useContext(AvatarCtx);
@@ -470,6 +470,7 @@ function Shell({ session }) {
   }, []);
   useEffect(() => {
     if (!navTo) return;
+    if (navTo === 'report') { setSettingsTab('me'); setPage('settings'); setRail(false); setSheet(null); setNavTo(null); return; } // 신고 접수 알림(msgr-push reportPush) → 운영 신고함
     if (loadedOrg.current === orgId && channels.some((c) => c.id === navTo)) { setChId(navTo); setPage('chat'); setRail(false); setSheet(null); setNavTo(null); return; }
     if (!orgs || !orgId) return; // 조직·목록 로드 전 — 기다린다
     let on = true;
@@ -1609,6 +1610,7 @@ function Shell({ session }) {
 /* ─── DM 미리보기 시트(유건 2026-09-15): 길게 눌러 마지막 12개 글을 읽기 전용으로. 열기 = 대화로. ─── */
 function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
   const { t, lang } = useT();
+  const { blocked } = useContext(SafetyCtx);
   const [rows, setRows] = useState(null);
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   useEffect(() => { let live = true; supabase.from('msgr_messages').select('id, body, author_kind, author_user_id, crew_id, created_at').eq('channel_id', channel.id).is('deleted_at', null).order('id', { ascending: false }).limit(12)
@@ -1620,7 +1622,7 @@ function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
         <header className="head"><strong>{name}</strong><button type="button" className="btn sm" onClick={onOpen}>{t('dm.preview.open')}</button><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
         <div className="peek">
           {rows === null ? <p className="note">{t('ui.loading')}</p> : !rows.length ? <p className="note">{t('dm.preview.empty')}</p> : rows.map((m) => (
-            <div key={m.id} className={`pk${m.author_user_id === uid ? ' me' : ''}`}><span className="who">{whoOf(m)}</span><span className="body">{m.body}</span><span className="when">{fmtDmWhen(Date.parse(m.created_at), lang)}</span></div>
+            <div key={m.id} className={`pk${m.author_user_id === uid ? ' me' : ''}`}><span className="who">{whoOf(m)}</span><span className="body">{m.author_kind === 'user' && m.author_user_id !== uid && blocked.has(m.author_user_id) ? t('msg.blockedUser') : m.body}</span><span className="when">{fmtDmWhen(Date.parse(m.created_at), lang)}</span></div>
           ))}
         </div>
       </section>
@@ -2335,6 +2337,8 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
 /* ─── 검색 결과 페이지 — 메시지(본문 부분 일치, 이 조직·읽을 수 있는 채널만)·사람·에이전트·채널. 전문 검색(tsvector)은 규모가 커지면 v2. ─── */
 function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, onDm, onBack, onMenu }) {
   const { t, lang } = useT();
+  const { blocked } = useContext(SafetyCtx); // 차단한 사람의 글은 검색 결과에서 뺀다
+  if (res) res = { ...res, msgs: res.msgs.filter((m) => !(m.author_kind === 'user' && blocked.has(m.author_user_id))) };
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
   const who = (m) => m.author_kind === 'crew' ? (crews.find((c) => c.id === m.crew_id)?.display_name ?? t('org.crews')) : nameOfUser(m.author_user_id);
   const mark = (text) => { if (!res?.q) return text; const i = text.toLowerCase().indexOf(res.q.toLowerCase()); if (i < 0) return text.slice(0, 160); const s = Math.max(0, i - 40); return <>{s > 0 ? '…' : ''}{text.slice(s, i)}<mark>{text.slice(i, i + res.q.length)}</mark>{text.slice(i + res.q.length, i + res.q.length + 120)}</>; };
@@ -2365,6 +2369,7 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
 const INBOX_KINDS = ['all', 'mention', 'reply', 'approval', 'dm'];
 function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, nameOfUser, dmName, onOpen, onReadAll, onBack, onMenu }) {
   const { t, lang } = useT();
+  const { blocked } = useContext(SafetyCtx); const textOf = (it) => (it.whoKind !== 'crew' && blocked.has(it.who) ? t('msg.blockedUser') : it.text); // 차단한 사람의 글은 알림함에서도 가린다
   const [kind, setKind] = useState(initialKind); // 페이지가 바뀌면 통째로 다시 그려지므로 초기값으로 충분하다
   const [unreadOnly, setUnreadOnly] = useState(true); // 기본은 읽지 않은 것만 — 읽은 항목은 '지난 알림 보기'로(유건 2026-09-11 밤)
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
@@ -2394,7 +2399,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
       {shown.map((it) => (
         <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id, it)}>
           <Av name={who(it)} crew={it.whoKind === 'crew'} size="sm" crewId={it.whoKind === 'crew' ? it.who : null} userId={it.whoKind === 'crew' ? null : it.who} />
-          <span className="body"><span className="line1"><b>{who(it)}</b><span className="msgr-klabel">{[t(`inbox.kind.${it.kind}`), chName(it.channel_id), fmtWhen(it.at, lang)].filter(Boolean).join(' · ')}</span></span><span className="text">{it.text.slice(0, 160)}</span></span>
+          <span className="body"><span className="line1"><b>{who(it)}</b><span className="msgr-klabel">{[t(`inbox.kind.${it.kind}`), chName(it.channel_id), fmtWhen(it.at, lang)].filter(Boolean).join(' · ')}</span></span><span className="text">{textOf(it).slice(0, 160)}</span></span>
         </button>
       ))}
       <p className="note">{t('inbox.note')}</p>
