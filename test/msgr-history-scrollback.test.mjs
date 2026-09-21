@@ -24,7 +24,7 @@ test('스크롤백: 가장 오래된 id 앞을 한 페이지씩(lt·desc·PAGE),
   assert.match(ch, /if \(!first \|\| olderRef\.current \|\| !hasMore\) return;/, '중복 로드(ref 가드)·끝 도달 가드');
   assert.match(ch, /onClick=\{loadOlder\} disabled=\{older\} aria-busy=\{older \|\| undefined\}/, '불러오는 동안 버튼 유지(포커스 소실 없음, L-2)');
   assert.match(ch, /tab === 'all' && \(all\.length > 0 \|\| pendingRows\.length > 0\) && \(hasMore/, '컨트롤은 전체 탭·기록 있을 때만(보내는 중인 내 글도 기록으로 센다 — 첫 글 확인 때 안내 줄이 바뀌며 밀리지 않게)');
-  assert.equal((app.match(/data-mid=\{m\.id\}/g) ?? []).length, 2, 'Message 루트 두 갈래 모두 앵커 식별자');
+  assert.equal((app.match(/data-mid=\{m\.id\}/g) ?? []).length, 3, 'Message 루트 세 갈래(내 글·남의 글·차단 가림 줄) 모두 앵커 식별자 — 가림 줄이 빠지면 이전 기록 로드 때 앵커가 튄다');
   const m = read('apps/messenger/src/i18n.js');
   for (const k of ['thread.older', 'thread.loading', 'thread.start']) assert.ok(new RegExp(`'${k.replace('.', '\\.')}': \\['[^']+', '[^']+'\\]`).test(m), `${k} ko/en`);
 });

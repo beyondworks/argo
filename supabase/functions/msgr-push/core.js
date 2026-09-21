@@ -15,6 +15,12 @@ export function pushText({ body, authorName, channelName, channelKind }) {
   return { title: `${authorName || '?'}${where}`, body: String(body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140) };
 }
 
+/** 신고 접수 알림(운영자용) — 제목에 개인 대화 여부, 본문은 사유 — 신고된 글 발췌(140자). */
+export function reportPushText({ body, reason, personal }) {
+  const excerpt = [reason, body].map((x) => String(x ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean).join(' — ');
+  return { title: personal ? '신고 접수 · 개인 대화' : '신고 접수', body: excerpt.slice(0, 140) || '(내용 없음)' };
+}
+
 export function apnsPayload({ title, body, channelId, messageId, sound = 'wood-knock', badge = null }) {
   // sound = 기기가 고른 소리(msgr_push_tokens.sound) → 앱 번들의 <이름>.caf. 번들에 없으면 iOS가 기본음으로 대체한다. badge = 수신자의 안읽음 총계(아이콘 숫자)
   const file = `${String(sound || 'wood-knock').replace(/[^a-z0-9-]/g, '') || 'wood-knock'}.caf`;
@@ -22,11 +28,11 @@ export function apnsPayload({ title, body, channelId, messageId, sound = 'wood-k
   if (Number.isInteger(badge) && badge >= 0) aps.badge = badge;
   return { aps, channel_id: String(channelId), message_id: String(messageId) };
 }
-export function fcmMessage({ token, title, body, channelId, messageId, sound = 'wood-knock' }) {
+export function fcmMessage({ token, title, body, channelId, messageId, sound = 'wood-knock', tag = String(channelId) }) {
   const choices = ['seatbelt-single', 'seatbelt-hilo', 'wood-knock', 'wood-knock-double', 'wood-marimba'];
   const resource = (choices.includes(sound) ? sound : 'wood-knock').replaceAll('-', '_');
   return { message: { token, notification: { title, body }, data: { channel_id: String(channelId), message_id: String(messageId) },
-    android: { priority: 'high', notification: { channel_id: `msgr_sound_${resource}`, sound: resource, tag: String(channelId) } } } };
+    android: { priority: 'high', notification: { channel_id: `msgr_sound_${resource}`, sound: resource, tag } } } };
 }
 
 /** APNs 토큰 인증 JWT(ES256, .p8) — 유효 1시간 이내로 갱신해서 쓴다. */
