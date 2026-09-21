@@ -46,11 +46,11 @@ async function fcmAuth() {
   return fcmTok;
 }
 
-async function sendOne(t: { token: string; platform: string; sound?: string; badge?: number | null }, text: { title: string; body: string }, channelId: string, messageId: number) {
+async function sendOne(t: { token: string; platform: string; sound?: string; badge?: number | null }, text: { title: string; body: string }, channelId: string, messageId: number, group = `ch-${channelId}`) { // group = 알림 칸(collapse id·tag) — 신고 알림은 메시지 알림과 칸을 나눈다
   if (t.platform === 'ios') {
     const jwt = await apnsAuth(); if (!jwt) return 'skip';
     const host = Deno.env.get('APNS_SANDBOX') === '1' ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
-    const r = await fetch(`${host}/3/device/${t.token}`, { method: 'POST', headers: { authorization: `bearer ${jwt}`, 'apns-topic': Deno.env.get('APNS_TOPIC') ?? 'com.beyondworks.argo.messenger', 'apns-push-type': 'alert', 'apns-priority': '10', 'apns-collapse-id': `ch-${channelId}`.slice(0, 64) },
+    const r = await fetch(`${host}/3/device/${t.token}`, { method: 'POST', headers: { authorization: `bearer ${jwt}`, 'apns-topic': Deno.env.get('APNS_TOPIC') ?? 'com.beyondworks.argo.messenger', 'apns-push-type': 'alert', 'apns-priority': '10', 'apns-collapse-id': group.slice(0, 64) },
       body: JSON.stringify(apnsPayload({ ...text, channelId, messageId, sound: t.sound, badge: t.badge ?? null })) });
     const txt = r.ok ? '' : await r.text();
     if (!r.ok && shouldDropToken('ios', r.status, txt)) await rest(`msgr_push_tokens?token=eq.${encodeURIComponent(t.token)}`, { method: 'DELETE' });
@@ -58,7 +58,7 @@ async function sendOne(t: { token: string; platform: string; sound?: string; bad
   }
   const f = await fcmAuth(); if (!f) return 'skip';
   const r = await fetch(`https://fcm.googleapis.com/v1/projects/${f.project}/messages:send`, { method: 'POST', headers: { Authorization: `Bearer ${f.token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(fcmMessage({ token: t.token, ...text, channelId, messageId, sound: t.sound })) });
+    body: JSON.stringify(fcmMessage({ token: t.token, ...text, channelId, messageId, sound: t.sound, tag: group })) });
   const txt = r.ok ? '' : await r.text();
   if (!r.ok && shouldDropToken('android', r.status, txt)) await rest(`msgr_push_tokens?token=eq.${encodeURIComponent(t.token)}`, { method: 'DELETE' });
   return r.ok ? 'ok' : `fcm ${r.status} ${txt.slice(0, 120)}`;
@@ -92,7 +92,7 @@ async function reportPush(rid: string) {
   if (!ops.length) return Response.json({ ok: true, sent: 0 });
   const toks: { token: string; platform: string; user_id: string; sound?: string }[] = await rest(`msgr_push_tokens?user_id=in.(${ops.join(',')})&select=token,platform,user_id,sound`);
   const text = reportPushText({ body: r.body_snapshot, reason: r.reason, personal: !r.org_id });
-  const results = await Promise.all(toks.map((t) => sendOne(t, text, r.channel_id ?? 'reports', r.message_id ?? 0).catch((e) => `err ${String(e?.message ?? e).slice(0, 120)}`)));
+  const results = await Promise.all(toks.map((t) => sendOne(t, text, r.channel_id ?? 'reports', r.message_id ?? 0, `report-${rid}`).catch((e) => `err ${String(e?.message ?? e).slice(0, 120)}`)));
   const sent = results.filter((x) => x === 'ok').length;
   console.log(`[msgr-push] report ${rid.slice(0, 8)} → ${toks.length} operator tokens, sent ${sent}`, results.filter((x) => x !== 'ok'));
   return Response.json({ ok: sent === results.length, sent });

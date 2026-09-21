@@ -129,6 +129,12 @@ test('운영자는 개인 공간 신고까지 보고 처리하며, 신고가 들
   asUser(U.c, `select public.msgr_report_resolve('${rid}')`);
   assert.equal(sql(`select status from public.msgr_reports where id = '${rid}'`), 'resolved', '운영자가 처리한다');
   fails(asUserRaw(U.b, `select count(*) from public.msgr_report_operators`), /permission denied/, '운영자 표는 직접 못 읽는다');
+  const n0 = Number(sql(`select count(*) from public.fake_http`));
+  const prior = Number(sql(`select count(*) from public.msgr_reports where reporter_user_id = '${U.b}' and created_at > now() - interval '1 hour'`));
+  assert.ok(prior < 5, `앞 테스트의 신고가 상한을 이미 채우면 이 검사는 무의미하다(prior=${prior})`);
+  for (let i = 0; i < 8; i++) asUser(U.b, `select public.msgr_report_message(${post(U.a, PUB, `도배 ${i}`)})`);
+  assert.equal(Number(sql(`select count(*) from public.fake_http`)) - n0, 5 - prior, '한 사람의 신고 푸시는 시간당 5건까지(검수 M1)');
+  assert.ok(Number(sql(`select count(*) from public.msgr_reports where reporter_user_id = '${U.b}'`)) >= 8, '넘친 신고도 저장은 된다');
 });
 
 test('차단당한 사람이 역차단·해제로 상대의 차단을 지우지 못한다(검수 C1)', { skip }, () => {

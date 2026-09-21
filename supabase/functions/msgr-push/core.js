@@ -28,11 +28,11 @@ export function apnsPayload({ title, body, channelId, messageId, sound = 'wood-k
   if (Number.isInteger(badge) && badge >= 0) aps.badge = badge;
   return { aps, channel_id: String(channelId), message_id: String(messageId) };
 }
-export function fcmMessage({ token, title, body, channelId, messageId, sound = 'wood-knock' }) {
+export function fcmMessage({ token, title, body, channelId, messageId, sound = 'wood-knock', tag = String(channelId) }) {
   const choices = ['seatbelt-single', 'seatbelt-hilo', 'wood-knock', 'wood-knock-double', 'wood-marimba'];
   const resource = (choices.includes(sound) ? sound : 'wood-knock').replaceAll('-', '_');
   return { message: { token, notification: { title, body }, data: { channel_id: String(channelId), message_id: String(messageId) },
-    android: { priority: 'high', notification: { channel_id: `msgr_sound_${resource}`, sound: resource, tag: String(channelId) } } } };
+    android: { priority: 'high', notification: { channel_id: `msgr_sound_${resource}`, sound: resource, tag } } } };
 }
 
 /** APNs 토큰 인증 JWT(ES256, .p8) — 유효 1시간 이내로 갱신해서 쓴다. */

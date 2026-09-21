@@ -147,6 +147,9 @@ language plpgsql security definer set search_path = public, pg_temp as $$
 declare url text;
 begin
   if not exists (select 1 from public.msgr_report_operators) then return new; end if;
+  if (select count(*) from public.msgr_reports where reporter_user_id = new.reporter_user_id and created_at > now() - interval '1 hour') > 5 then
+    return new; -- 한 사람이 시간당 5건 넘게 신고하면 푸시는 건너뛴다(검수 M1 — 운영자 기기 폭주 방지). 신고 자체는 신고함에 남는다
+  end if;
   select value into url from public.msgr_settings where key = 'push_url';
   if url is null then return new; end if;
   perform net.http_post(url := url, headers := public.msgr_push_headers(),
@@ -164,3 +167,4 @@ revoke all on function public.msgr_friend_unblock(uuid) from public, anon; grant
 revoke all on function public.msgr_my_blocked() from public, anon; grant execute on function public.msgr_my_blocked() to authenticated;
 revoke all on function public.msgr_is_report_operator() from public, anon; grant execute on function public.msgr_is_report_operator() to authenticated;
 revoke all on function public.msgr_report_notify() from public, anon, authenticated;
+grant select, update on public.msgr_reports to service_role; grant select on public.msgr_report_operators to service_role; -- msgr-push 엣지(서비스 역할)의 선점·운영자 조회 — 기본 권한에 기대지 않는다

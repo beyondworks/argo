@@ -11,7 +11,7 @@ const key = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256'
 const p8 = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey('pkcs8', key.privateKey)).toString('base64')}\n-----END PRIVATE KEY-----`;
 
 function edge({ rejectDevice = null, failSigning = 0 } = {}) {
-  const delivered = [], providerTokens = new Set(), claimed = new Set(), writes = [], logs = [], reportClaims = new Set(), sentText = [];
+  const delivered = [], providerTokens = new Set(), claimed = new Set(), writes = [], logs = [], reportClaims = new Set(), sentText = [], collapse = [];
   let handler, minted = 0, currentProviderToken, providerChangedAt = 0;
   const clock = { now: 1_800_000_000_000 };
   const statuses = [];
@@ -26,7 +26,7 @@ function edge({ rejectDevice = null, failSigning = 0 } = {}) {
         currentProviderToken = jwt; providerChangedAt = clock.now;
       }
       if (url.pathname.endsWith(`/${rejectDevice}`)) return Response.json({ reason: 'TooManyRequests' }, { status: 429 });
-      delivered.push(url.pathname.split('/').at(-1)); sentText.push(JSON.parse(init.body).aps?.alert);
+      delivered.push(url.pathname.split('/').at(-1)); sentText.push(JSON.parse(init.body).aps?.alert); collapse.push(init.headers['apns-collapse-id']);
       return new Response(null, { status: 200 });
     }
     assert.equal(url.hostname, 'database.test');
@@ -61,7 +61,7 @@ function edge({ rejectDevice = null, failSigning = 0 } = {}) {
     const response = await handler(new Request('https://edge.test', { method: 'POST', body: JSON.stringify(body) }));
     statuses.push(response.status); return response.json();
   };
-  return { send: (id = 1) => invoke({ message_id: id }), report: (id) => invoke({ report_id: id }), sentText,
+  return { send: (id = 1) => invoke({ message_id: id }), report: (id) => invoke({ report_id: id }), sentText, collapse,
     badge: () => invoke({ badge_user: '11111111-1111-1111-1111-111111111111' }),
     delivered, providerTokens, writes, logs, clock, statuses, minted: () => minted };
 }
@@ -133,6 +133,13 @@ test('신고 접수 푸시는 운영자 기기로 한 번만 간다(재생 호�
   const first = await app.report(rid);
   assert.equal(first.sent, 3);
   assert.deepEqual(app.sentText[0], { title: '신고 접수 · 개인 대화', body: '괴롭힘 — 문제 글' });
+  assert.deepEqual([...new Set(app.collapse)], [`report-${rid}`], '신고 알림은 채널 메시지 알림과 칸을 나눈다(검수 M2)');
   assert.equal((await app.report(rid)).dup, true, '같은 신고 재호출은 보내지 않는다');
   assert.equal(app.delivered.length, 3);
+});
+
+test('일반 메시지 알림의 알림 칸은 종전 그대로 ch-<채널>', async () => {
+  const app = edge();
+  await app.send();
+  assert.deepEqual([...new Set(app.collapse)], ['ch-channel']);
 });
