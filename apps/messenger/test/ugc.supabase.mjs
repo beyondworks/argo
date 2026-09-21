@@ -48,4 +48,8 @@ base.rpc = (name, args = {}) => {
   if (name === 'msgr_friend_unblock') { ugc.blocked = ugc.blocked.filter((b) => b.user_id !== args.other); return ok(null); }
   return ok(null);
 };
+// 실시간 방송 흉내 — 공용 가짜는 구독 콜백을 버린다. 여기서는 모아 두고 state.emit(event, payload)로 불러 OS 알림 경로(notifyMention·notifyReply)를 관찰한다
+const handlers = [];
+base.channel = () => { const c = { on: (type, filter, cb) => { handlers.push({ event: filter?.event, cb }); return c; }, subscribe: () => c, send: async () => {}, unsubscribe: async () => {} }; return c; };
+state.emit = (event, payload) => handlers.filter((h) => h.event === event).forEach((h) => h.cb({ payload }));
 export const supabase = base;

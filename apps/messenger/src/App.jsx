@@ -943,8 +943,9 @@ function Shell({ session }) {
   const isAdmin = !isPersonal && org && ['owner', 'admin'].includes(org.role); // 개인 공간의 가상 조직(role owner)은 관리자가 아니다 — 초대 링크 등이 __personal__로 서버에 가던 것(2026-09-16)
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
-  const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet });
-  notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet };
+  const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds });
+  notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds };
+  const fromBlocked = (p) => p?.author_kind !== 'crew' && !!p?.author_user_id && notifyRef.current.blocked.has(p.author_user_id); // 차단한 사람의 글은 OS 알림도 띄우지 않는다(PC 앞이면 서버가 폰 푸시를 안 보내 이 배너가 유일한 알림)
   useEffect(() => { updateNativeRealtimeContext({ lang, sound: getSound(), currentChannel: page === 'chat' ? chId : null, mutedChannelIds: [...muted], orgIds: (orgs ?? []).map((o) => o.id), quietFrom: quiet?.from ?? null, quietTo: quiet?.to ?? null }); }, [lang, page, chId, muted, quiet, orgs]);
   const hereKey = spaceKey(isPersonal ? null : orgId);
   const hereCount = useMemo(() => { let n = 0; let mention = 0; for (const [id, u] of Object.entries(unread)) if (!muted.has(id)) { n += u?.n || 0; mention += u?.mention || 0; } return { n, mention }; }, [unread, muted]);
@@ -957,7 +958,7 @@ function Shell({ session }) {
   const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return !document.hasFocus() || r.page !== 'chat' || r.chId !== channelId; }; // 초점 기준 — 다른 창 뒤에 있어도 visibilityState는 'visible'이라 같은 채널을 띄워 두면 알림이 전부 억제됐다(유건 제보 2026-09-12) // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
     const r = notifyRef.current;
-    if (!payload || payload.author_user_id === r.uid) return;
+    if (!payload || payload.author_user_id === r.uid || fromBlocked(payload)) return;
     const mentioned = Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid);
     if (!mentioned || !shouldNotify(payload.channel_id)) return;
     const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
@@ -965,7 +966,7 @@ function Shell({ session }) {
   };
   const notifyReply = (payload) => { // 크루 답변·DM(유건 지시 2026-09-11 밤: 답변 오면 알림, 앱이 뒤에 있으면 OS 알림)
     const r = notifyRef.current;
-    if (!payload || payload.kind !== 'text' || (payload.author_user_id && payload.author_user_id === r.uid)) return; // 크루든 사람이든(사람 DM·답글에 알림이 없던 갭, 2026-09-12 점검) — 내 글은 제외
+    if (!payload || payload.kind !== 'text' || (payload.author_user_id && payload.author_user_id === r.uid) || fromBlocked(payload)) return; // 크루든 사람이든(사람 DM·답글에 알림이 없던 갭, 2026-09-12 점검) — 내 글은 제외
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     if (!shouldNotify(payload.channel_id)) return; // 모든 메시지에 알림(다른 메신저처럼 — 유건 2026-09-12). 채널 음소거·방해 금지는 shouldNotify
     const who = payload.author_name || (payload.author_kind === 'crew' ? r.crews.find((c) => c.id === payload.crew_id)?.display_name : r.members.find((m) => m.user_id === payload.author_user_id)?.display_name); // 채운 payload(다른 공간 글) 우선
