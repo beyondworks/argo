@@ -104,7 +104,7 @@ const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
 function useT() { const { lang, setLang, t: ta } = useLang(); return { lang, setLang, ta, t: (k, vars) => tm(k, lang, vars) }; }
 
 /** 아바타 — 사람은 원, 크루는 둥근 사각 타일 + 옐로 별(시안 v2 모티프 ②). */
-const SafetyCtx = createContext({ blocked: new Set(), block: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 모든 채널에서 가린다
+const SafetyCtx = createContext({ blocked: new Set(), block: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 대화 목록·답글 인용에서 가린다(알림함·검색·푸시는 아직)
 const AvatarCtx = createContext({ users: {}, crews: {} }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url) — Av가 userId/crewId로 찾는다
 function Av({ name, crew, size, company = false, userId = null, crewId = null, src = null }) { // company: 회사 크루(조직 배지 — 별 대신 각진 해시), 그 외 크루는 별 배지(부록 I·K 등급 표시)
   const ctx = useContext(AvatarCtx);
@@ -2316,7 +2316,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
             <Av name={nameOf(f)} size="sm" userId={f.user_id} />
             <span className="name">{nameOf(f)}</span>
             <span className="sub">{f.handle ? `@${f.handle}` : f.user_id.slice(0, 8)}</span>
-            <button type="button" className="btn sm" disabled={busy} onClick={async () => { setBusy(true); try { await q(supabase.rpc('msgr_friend_unblock', { other: f.user_id })); onNote(t('friends.unblocked')); await refreshBlocked(); await onChanged?.(); } catch (e) { onError(e.message); } finally { setBusy(false); } }}>{t('friends.unblock')}</button>
+            <button type="button" className="btn sm" disabled={busy} onClick={async () => { setBusy(true); try { await q(supabase.rpc('msgr_friend_unblock', { other: f.user_id })); onNote(t('friends.unblocked')); await refreshBlocked(); await onChanged?.(); } catch { onError(t('friends.unblock.failed')); } finally { setBusy(false); } }}>{t('friends.unblock')}</button>
           </div>
         ))}
       </div>
@@ -2430,11 +2430,9 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, members =
           ? <OrgCard part="members" org={org} uid={uid} members={members} channels={channels} onInvite={onInvite} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
           : <section className="msgr-setcard"><h2>{t('org.members')} · {members.length}</h2><div className="msgr-rows">{members.map((m) => <div key={m.user_id} className="row"><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{m.user_id === org.service_user_id ? t('org.node') : t(`role.${m.role}`)}{m.user_id === uid ? ` · ${t('ui.me')}` : ''}</span></div>)}</div></section>)}
         {tab === 'org' && org && (isAdmin
-          ? <>
-              <OrgCard part="org" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
-              <ReportsCard org={org} uid={uid} isAdmin members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />
-            </>
-          : <><section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section><ReportsCard org={org} uid={uid} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} /></>)}
+          ? <OrgCard part="org" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
+          : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
+        {tab === 'org' && org && <ReportsCard org={org} uid={uid} isAdmin={!!isAdmin} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />}
         {tab === 'crews' && org && (<>
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
           {isAdmin && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
@@ -2554,9 +2552,9 @@ function ReportsCard({ org, uid, isAdmin = false, members = [], nameOfUser, chan
   const who = (id) => (id === uid ? t('ui.me') : (members.find((m) => m.user_id === id)?.display_name || nameOfUser(id) || id?.slice(0, 8)));
   const load = useCallback(async () => {
     const rows = await q(supabase.rpc('msgr_reports_list'));
-    setRows(rows ?? []);
-  }, []);
-  useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+    setRows((rows ?? []).filter((r) => r.org_id === org.id)); // RPC는 내가 관리하는 모든 조직 + 내 신고를 준다 — 지금 조직 것만
+  }, [org.id]);
+  useEffect(() => { load().catch((e) => { if (/PGRST202|Could not find the function/.test(e.message)) setRows(null); else onError(e.message); }); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const resolve = async (row) => {
     setBusy(true);
     try {
@@ -3942,17 +3940,18 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
       await q(supabase.rpc('msgr_report_message', { msg: m.id, reason: reportReason.trim() || null }));
       setReporting(false); setReportReason(''); safety.onNote(t('report.done'));
     } catch (e) {
-      onError?.(/msgr_report_own/.test(e.message) ? t('report.err.own') : `${t('report.failed')} (${e.message})`);
+      onError?.(/msgr_report_own/.test(e.message) ? t('report.err.own') : t('report.failed'));
     } finally { setSafetyBusy(false); }
   };
   const block = async () => {
     setSafetyBusy(true);
-    try { await safety.block(m.author_user_id); setConfirmBlock(false); } catch (e) { onError?.(e.message); } finally { setSafetyBusy(false); }
+    try { await safety.block(m.author_user_id); setConfirmBlock(false); } catch { onError?.(t('friends.block.failed')); } finally { setSafetyBusy(false); }
   };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const canReport = !mine && !m.pending && m.kind !== 'system' && (m.author_kind === 'user' || m.author_kind === 'crew'); // 사람 글과 AI 에이전트 답 모두 신고 가능
   const canBlock = !mine && !m.pending && m.author_kind === 'user' && !!m.author_user_id && !!safety.block;
-  const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
+  const parentHidden = parent?.author_kind === 'user' && parent.author_user_id !== uid && safety.blocked.has(parent.author_user_id); // 차단한 사람의 글은 인용에서도 가린다
+  const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parentHidden ? t('msg.blockedUser') : <>{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</>}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
   const attRow = atts.length > 0 && <div className="msgr-attachments">{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} rowTab={rowTab} />)}</div>;
   const acts = !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
     phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)
@@ -3977,7 +3976,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
         </div>
       </div>, document.body,
     ) : (
-    wrapCtx(<div ref={ctxRef} className={`msgr-acts${ctxAt && actsOpen ? ' ctx' : ''}${m.pending ? ' pending' : ''}`} onKeyDown={ctxAt && actsOpen ? menuKey : undefined} role={ctxAt && actsOpen ? 'menu' : undefined} inert={m.pending ? true : undefined} style={ctxAt && actsOpen ? { left: Math.max(4, Math.min(ctxAt.x, window.innerWidth - 200)), top: Math.max(4, Math.min(ctxAt.y, window.innerHeight - 180)) } : undefined}>
+    wrapCtx(<div ref={ctxRef} className={`msgr-acts${ctxAt && actsOpen ? ' ctx' : ''}${m.pending ? ' pending' : ''}`} onKeyDown={ctxAt && actsOpen ? menuKey : undefined} role={ctxAt && actsOpen ? 'menu' : undefined} inert={m.pending ? true : undefined} style={ctxAt && actsOpen ? { left: Math.max(4, Math.min(ctxAt.x, window.innerWidth - 200)), top: Math.max(4, Math.min(ctxAt.y, window.innerHeight - 220)) } : undefined}>
       {onReply && !m.pending && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); onReply(m); }}><I name="reply" size={12} />{t('msg.reply')}</button>}
       <button type="button" tabIndex={tabStop} onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
       {canReport && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); setReporting(true); }}><I name="flag" size={12} />{t('report.action')}</button>}
@@ -3995,13 +3994,13 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
       <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!draft.trim()}>{t('ui.save')}</button><button type="button" className="btn sm" onClick={() => setEditing(false)}>{t('ui.cancel')}</button></div>
     </form>
   );
-  const reportModal = (reporting || confirmBlock) && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(reporting ? 'report.title' : 'report.block')}>
+  const reportModal = (reporting || confirmBlock) && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(reporting ? 'report.title' : 'report.block')} onPointerDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>{/* 포털이어도 React 이벤트는 행으로 올라간다 — 입력칸 길게 누르기가 동작 시트를 열던 것(검수 M5) */}
     {reporting
       ? <ConfirmModal tone="primary" title={t('report.title')} confirmLabel={t('report.action')} busy={safetyBusy} onConfirm={report} onClose={() => { if (!safetyBusy) { setReporting(false); setReportReason(''); } }}
-          description={<>{t('report.desc')}<textarea className="msgr-input" rows={3} maxLength={500} value={reportReason} onChange={(e) => setReportReason(e.target.value)} placeholder={t('report.reason.ph')} aria-label={t('report.reason.ph')} style={{ display: 'block', width: '100%', marginTop: 10, boxSizing: 'border-box', padding: '8px 10px', font: 'inherit', fontSize: 16, resize: 'vertical' }} /></>} />
+          description={<>{t(m.org_id ? 'report.desc' : 'report.desc.personal')}<textarea className="msgr-input" rows={3} maxLength={500} value={reportReason} onChange={(e) => setReportReason(e.target.value)} placeholder={t('report.reason.ph')} aria-label={t('report.reason.ph')} style={{ display: 'block', width: '100%', marginTop: 10, boxSizing: 'border-box', padding: '8px 10px', font: 'inherit', fontSize: 16, resize: 'vertical' }} /></>} />
       : <ConfirmModal title={t('report.block')} description={t('friends.block.confirm', { name: nameOfUser(m.author_user_id) })} confirmLabel={t('report.block')} busy={safetyBusy} onConfirm={block} onClose={() => { if (!safetyBusy) setConfirmBlock(false); }} />}
   </div>, document.body);
-  if (!mine && m.author_kind === 'user' && safety.blocked.has(m.author_user_id)) return <div className="msgr-sys" data-mid={m.id}>{t('msg.blockedUser')}</div>; // 차단한 사람의 글 — 본문·첨부·반응을 그리지 않는다
+  if (!mine && m.author_kind === 'user' && safety.blocked.has(m.author_user_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.blockedUser')}</div>; // 차단한 사람의 글 — 본문·첨부·반응을 그리지 않는다
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className="msgr-mine" ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {editing ? editor : bareAttach ? null : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : <Body text={body} />}</div>}

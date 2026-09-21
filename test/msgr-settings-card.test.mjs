@@ -255,7 +255,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
   assert.match(app, /const \[confirmArchive, setConfirmArchive\] = useState\(false\);/, '보관 2단계 상태');
   assert.match(app, /: <div className="confirm"><p>\{t\('ch\.archive\.confirm'\)\}<\/p>/, '보관 확인 문구');
   assert.match(app, /if \(error\) return onError\?\.\(error\.message\);/, '첨부 오류 토스트');
-  assert.match(app, /<span className="q">\{parent\.author_kind === 'user'/, '인용 말줄임 span');
+  assert.match(app, /<span className="q">\{parentHidden \? t\('msg\.blockedUser'\) : <>\{parent\.author_kind === 'user'/, '인용 말줄임 span(차단한 사람의 글이면 가림 문구)');
   assert.match(app, /crs\.sort\(\(a, b\) => \(crewTier\(b, orgRow\) === 'company'\) - \(crewTier\(a, orgRow\) === 'company'\) \|\| a\.display_name\.localeCompare\(b\.display_name, 'ko'\)\);/, '크루 순서 고정');
   assert.match(app, /\{\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(<>/, '개발용 로그인은 DEV 또는 검수용 번들 플래그(VITE_DEV_LOGIN=1)에서만 — 발행 빌드 env엔 이 플래그가 없다');
   const css = read('apps/messenger/src/styles.css');

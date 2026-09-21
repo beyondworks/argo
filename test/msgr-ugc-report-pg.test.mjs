@@ -72,7 +72,7 @@ test('자기 글·시스템 글·읽을 수 없는 글은 신고되지 않는다
   fails(asUserRaw(U.b, `select public.msgr_report_message(${MSG_B})`), /msgr_report_own/, '자기 글');
   const sys = sql(`insert into public.msgr_messages (channel_id, author_kind, kind, body, client_msg_id) values ('${PUB}', 'system', 'system', '입장', gen_random_uuid()::text) returning id`).split('\n').pop();
   fails(asUserRaw(U.b, `select public.msgr_report_message(${sys})`), /msgr_report_no_message/, '시스템 글');
-  fails(asUserRaw(U.c, `select public.msgr_report_message(${MSG_A})`), /msgr_report_forbidden/, '조직 밖 사람');
+  fails(asUserRaw(U.c, `select public.msgr_report_message(${MSG_A})`), /msgr_report_no_message/, '조직 밖 사람 — 존재 여부도 드러내지 않는다(검수 L1)');
   fails(asUserRaw(U.b, `select public.msgr_report_message(999999)`), /msgr_report_no_message/, '없는 글');
 });
 
@@ -109,4 +109,27 @@ test('개인 공간 글 신고는 신고자만 보고, 조직 관리자 처리 �
   assert.ok(rows(asUser(U.a, `select id from public.msgr_reports_list()`)).includes(rid), '신고자는 본다');
   assert.ok(!rows(asUser(U.d, `select id from public.msgr_reports_list()`)).includes(rid), '신고당한 사람은 못 본다');
   fails(asUserRaw(U.a, `select public.msgr_report_resolve('${rid}')`), /msgr_report_forbidden/, '개인 공간 처리');
+});
+
+test('차단당한 사람이 역차단·해제로 상대의 차단을 지우지 못한다(검수 C1)', { skip }, () => {
+  asUser(U.c, `select public.msgr_friend_remove('${U.a}', true)`); // c가 a를 차단
+  asUser(U.a, `select public.msgr_friend_remove('${U.c}', true)`); // a가 역차단
+  assert.deepEqual(rows(asUser(U.c, `select user_id from public.msgr_my_blocked()`)), [U.a], 'c의 차단은 남는다');
+  assert.deepEqual(rows(asUser(U.a, `select user_id from public.msgr_my_blocked()`)), [U.c], 'a의 차단도 따로 보인다');
+  asUser(U.a, `select public.msgr_friend_unblock('${U.c}')`);
+  assert.deepEqual(rows(asUser(U.c, `select user_id from public.msgr_my_blocked()`)), [U.a], 'a가 풀어도 c의 차단은 그대로');
+  assert.equal(sql(`select count(*) from public.msgr_friends where a = least('${U.a}'::uuid, '${U.c}'::uuid) and b = greatest('${U.a}'::uuid, '${U.c}'::uuid) and status = 'blocked' and requested_by = '${U.c}'`), '1', '서버 차단 행은 c 소유로 남는다');
+  fails(asUserRaw(U.a, `select public.msgr_friend_request('${U.c}')`), /msgr_friend_blocked/, '친구 요청은 계속 막힌다');
+  asUser(U.c, `select public.msgr_friend_unblock('${U.a}')`);
+  assert.equal(sql(`select count(*) from public.msgr_friends where status = 'blocked'`), '0', '둘 다 풀어야 서버 차단이 사라진다');
+});
+
+test('신고 시점 본문·작성자를 보존하고, 같은 글의 열린 신고는 하나만 쌓인다(검수 M1·L2)', { skip }, () => {
+  const m = post(U.a, PUB, '지울 증거');
+  const r1 = last(asUser(U.b, `select public.msgr_report_message(${m})`));
+  assert.equal(last(asUser(U.b, `select public.msgr_report_message(${m})`)), r1, '반복 신고는 같은 신고를 돌려준다');
+  sql(`update public.msgr_messages set body = '', deleted_at = now() where id = ${m}`);
+  assert.equal(last(asUser(U.a, `select message_body || '|' || author_user_id from public.msgr_reports_list() where id = '${r1}'`)), `지울 증거|${U.a}`, '작성자가 지워도 증거가 남는다');
+  sql(`delete from public.msgr_messages where id = ${m}`);
+  assert.equal(sql(`select count(*) from public.msgr_reports where id = '${r1}'`), '1', '글 행이 사라져도 신고는 남는다');
 });
