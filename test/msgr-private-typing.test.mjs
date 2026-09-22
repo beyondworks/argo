@@ -52,8 +52,8 @@ test('App.jsx 배선: 열린 방이 개인 방이거나 조직의 비공개 방(
   const eff = app.slice(app.indexOf('const roomTopic ='), app.indexOf('const roomTopic =') + 2600);
   assert.match(eff, /if \(!roomTopic\) return;/);
   assert.match(eff, /supabase\.channel\(`dm:\$\{chId\}`, \{ config: \{ private: true \} \}\)/);
-  assert.match(eff, /event: 'typing' \}, \(\{ payload \}\) => setTyping\(/);
-  assert.match(eff, /event: 'progress' \}, \(\{ payload \}\) => setProgress\(/);
+  assert.match(eff, /event: 'typing' \}, onTypingEvent\)/, 'dm:의 typing도 답글 직후 늦은 방송 거름망(typing-state.js)을 탄다');
+  assert.match(eff, /event: 'progress' \}, onProgressEvent\)/);
   assert.match(eff, /\}, \[roomTopic, isPersonal, chId, session\.access_token\]\);/, '방을 옮기면 다시 구독');
   assert.match(eff, /await supabase\.realtime\.setAuth\(session\.access_token\);\s*if \(!live\) return;\s*ch = supabase\.channel\(`dm:/, '정리가 먼저 끝났으면 채널을 만들지 않는다(고아 dm: 누적 — 검수 #607)');
   assert.match(eff, /return \(\) => \{ live = false;/, '정리에서 live를 끈다');
