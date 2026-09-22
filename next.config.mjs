@@ -12,7 +12,7 @@ export default {
   // webpack이 `new URL(..., import.meta.url)`을 청크 에셋으로 재작성해 프로덕션에서 MODULE_NOT_FOUND가 났던 재검수 NEW-HIGH-2). standalone에
   // 반드시 복사되도록 명시 추적한다(한 라우트에 걸면 산출물 전체에 한 번 복사된다).
   outputFileTracingIncludes: { '/api/companies/[ws]/chat': [
-    './src/engine/grep-worker.mjs', './src/engine/browser-mcp-stdio.mjs', './src/engine/browser-specs.mjs',
+    './src/engine/grep-worker.mjs', './src/engine/browser-mcp-stdio.mjs', './src/engine/browser-specs.mjs', './src/engine/crew-mcp-stdio.mjs',
     './node_modules/@modelcontextprotocol/sdk/package.json', './node_modules/@modelcontextprotocol/sdk/dist/esm/**',
     './node_modules/zod/package.json', './node_modules/zod/index.js', './node_modules/zod/v3/**', './node_modules/zod/v4/**',
     './node_modules/zod-to-json-schema/package.json', './node_modules/zod-to-json-schema/dist/**',

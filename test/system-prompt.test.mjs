@@ -46,15 +46,15 @@ test('systemPromptFor hasTools:false — 없는 도구 대신 지시 블록 문�
   }
 });
 
-test('배선 — CLI 경로가 systemPromptFor에도 hasTools:false를 전달한다(소스 고정)', async () => {
-  // commonDirectives만 hasTools:false고 골격은 기본값이면 schedule_task 지시가 CLI 턴에 그대로 주입된다
+test('배선 — CLI 경로가 systemPromptFor에도 실제 크루 도구 여부(cliTools)를 전달한다(소스 고정)', async () => {
+  // commonDirectives만 도구 여부를 받고 골격은 기본값이면 도구 없는 러너(antigravity)에 schedule_task 지시가 주입된다.
+  // K94(2026-09-22): codex·gemini CLI는 크루 다리로 도구가 생겼다 — 그래서 상수 false가 아니라 다리 유무(cliTools)를 넘긴다.
+  // codex 쪽 실제 프롬프트는 test/cli-crew-wiring.test.mjs가 행동으로 잠근다.
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  // 옵션이 더 붙는 것(예: connectors)은 정당한 확장이라 앵커를 닫지 않는다 — 잠그는 불변식은
-  // "CLI 경로가 hasTools:false를 넘긴다" 하나다. `\s*`가 있어야 옵션이 하나뿐인 `{ hasTools: false }`
-  // (닫는 중괄호 앞 공백) 형태까지 매치한다 — 없으면 브리틀함이 사라진 게 아니라 방향만 옮겨간 것이다.
-  assert.match(src, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false\s*[,}]/,
-    'CLI 경로의 systemPromptFor 호출에 hasTools:false가 없다');
+  assert.match(src, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: cliTools\s*[,}]/,
+    'CLI 경로의 systemPromptFor 호출에 cliTools가 없다');
+  assert.match(src, /const cliTools = !!crewBridge;/, '도구 여부는 실제로 다리가 열렸는지로 정한다');
 });
 
 test('commonDirectives hasTools:true — SDK 도구 지시(결재·설치·즉시 사용)', () => {

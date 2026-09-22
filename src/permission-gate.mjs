@@ -253,6 +253,7 @@ const WS_DOT_FILES = new Set([
   '.workroots.json', '.scaffold.json', '.sync-state.json', '.index.sqlite', '.import.status.json',
   '.failure-digest.json', // 실패 서명 다이제스트 상태(보고 시각) — 크루가 고치면 반복 실패 경보를 영구 침묵시킬 수 있다(#446 검수 D1)
   '.runner-health.json', // 주기 검진 상태(P1-2 후속) — 크루가 고치면 죽은 자격이 초록으로 위장되거나 과금 스로틀이 풀린다
+  '.runner-limits.json', // 구독 잔여 한도(K91, WS_ROOT 직속·계정 지문 키) — 크루가 고치면 입력줄 게이지가 거짓 한도를 보인다
   '.msgr-cc', // scoped messenger CC receipts are runtime metadata, not crew-editable shared memory
   '.gw-queue-', '.gw-offset', // 게이트웨이 큐·오프셋(접두 — 채널 접미를 함께 덮는다)
   // 게이트웨이 상태·락은 **실제 파일 형태로만** 좁힌다(.gateway-{kind}.json / .gateway.lock).
@@ -357,6 +358,10 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
     // 검사해 이 경로를 못 봤다).
     const real = await canonDeep(abs);
     const R = await roots();
+    // mode='scope'(coversControl) — 재귀 루트가 자기 워크스페이스를 통째로 품는가(= 금고가 결과로 흘러나온다).
+    // 위의 틸드 확장·canonDeep을 그대로 타고 deny 쪽이라 폴딩한다 — 글자 비교만 하면 같은 폴더의 대소문자 변형·
+    // 틸드·심링크 루트가 빠져나갔다(K68). canonical·렉시컬 양다리(fail-closed)는 아래 hard 판정과 같은 원칙.
+    if (mode === 'scope') return insideFold(R.ws, real) || insideFold(wsAbs, abs);
     if (inside(real, R.ws)) {
       if (real === R.ws) return false; // 워크스페이스 루트 자체
       const rel = real.slice(R.ws.length + 1).split(sep); // sep — Windows 백슬래시
@@ -472,7 +477,10 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
   // 같은 파일의 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
   // 윈도우식 홈 표기(#448 1R H1): Bash 도구가 PowerShell·cmd 표면을 열어 `~\.codex\auth.json`·`$env:USERPROFILE\…`·`%USERPROFILE%\…`가 실행된다 — 게이트는 셸 무관 리터럴이라 형태를 등재한다(전부 셸이 확실히 확장하는 순진한 시도)
   const winHomeForms = (d) => { const b = d.replace(/\//g, '\\'); return [`~\\${b}`, `$HOME/${d}`, `$HOME\\${b}`, `$env:USERPROFILE\\${b}`, `$env:USERPROFILE/${d}`, `%USERPROFILE%\\${b}`, `%USERPROFILE%/${d}`, `$USERPROFILE/${d}`, `$USERPROFILE\\${b}`]; };
-  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_PATHS.flatMap((d) => [...(homeDir() ? [join(homeDir(), d)] : []), `~/${d}`, ...winHomeForms(d)])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
+  // 홈 절대경로는 HOME·USERPROFILE 둘 다(K68) — homeDir()는 HOME을 먼저 봐서 두 값이 다른 Windows(Git Bash 등)에선 실제 프로필
+  // 경로가 빠졌다. 각각 Windows 슬래시 형태(`C:/Users/x/.codex`)도 둔다 — PowerShell·cmd·Git Bash 모두 받아들이는 표기다.
+  const homeLits = [...new Set([process.env.HOME, process.env.USERPROFILE].filter(Boolean))];
+  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_PATHS.flatMap((d) => [...homeLits.flatMap((h) => { const j = join(h, d); return [j, j.replace(/\\/g, '/')]; }), `~/${d}`, ...winHomeForms(d)])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
   const wsAbs = resolve(wsRoot);
 
   /* 검색 루트가 금고를 품는가 — Grep/Glob은 준 경로 **아래를 재귀**하므로, 경로 자체가 금지가 아니어도
@@ -486,8 +494,9 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
     // 조상까지 봐야 하는 이유: 사장이 홈처럼 넓은 폴더를 작업 폴더(workRoots)로 등록하면 워크스페이스가
     // 그 안에 들어와, 직속만 검사하면 조상 경로에서 들어오는 재귀를 통째로 놓친다.
     // 상대경로는 크루의 cwd(=워크스페이스) 기준 — 서버 프로세스의 cwd로 풀면 엉뚱한 곳을 가리킨다.
-    const abs = isAbsolute(root) ? resolve(root) : resolve(wsAbs, root);
-    return makeInWorkspace(abs)(wsAbs);
+    // 판정은 isForbidden(mode='scope')에 맡긴다 — 틸드 확장·실경로 정규화·대소문자 폴딩이 금지 구역 판정과
+    // 한 벌이어야 같은 폴더를 다른 표기로 줄 때 두 판정이 갈리지 않는다(K68: 글자 비교라 변형 표기가 빠져나갔다).
+    return isForbidden(root, 'scope');
   };
   const denyScope = () => ({ behavior: 'deny', message: lang === 'en'
     ? 'Searching the whole company folder is blocked because it would sweep in settings and credential files. Search a specific folder instead — `vault/` for documents and notes, `skills/` for company skills — and say which folder you searched.'
@@ -513,12 +522,18 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
   // {path:'agents'} deny가 사라지는 회귀). 키 기준이면 {note:'agents'} allow와 {path:'agents'} deny가
   // 동시에 성립한다. 배열 원소는 배열을 담은 키를 상속한다({paths:[...]}).
   const PATHY_KEY_RE = /path|file|dir|folder|target|dest|src|source|location/i; // 'name'·'url'은 제외 — 크루 이름·웹 주소 등 비경로 값이 흔하다(과차단 방향 회귀 방지)
-  const argPathsForbidden = async (obj, depth = 0, keyHint = '') => {
-    if (depth > 4 || obj == null) return false; // 깊이 상한 — 적대적으로 중첩된 인자 트리 비용 차단
+  // 비용 상한은 **값 개수**로 두고, 넘으면 닫는다(fail-closed). 전엔 깊이 4를 넘으면 "검사 끝 = 허용"이라
+  // {a:{b:{c:{d:{e:{path:'capabilities.json'}}}}}} 한 겹으로 금고 차단이 풀렸다(분리 검수 2026-09-22 HIGH, K68 잔여).
+  // 깊이 자체로 막으면 노션 블록처럼 원래 깊은 정상 인자가 막히므로 깊이는 넉넉히(64), 훑은 값 2,000개 초과만 거부한다.
+  const ARG_NODE_CAP = 2000, ARG_DEPTH_CAP = 64;
+  const argPathsForbidden = async (obj, depth = 0, keyHint = '', budget = { n: 0 }) => {
+    if (obj == null) return false;
+    if (depth > ARG_DEPTH_CAP) return true; // 판정 불가 = 닫는다
     const entries = Array.isArray(obj) ? obj.map((v) => [keyHint, v]) : Object.entries(obj);
     for (const [k, v] of entries) {
+      if (++budget.n > ARG_NODE_CAP) return true; // 적대적으로 큰 인자 트리 — 끝까지 못 훑으면 닫는다
       if (v && typeof v === 'object') { // 배열·중첩 객체도 훑는다(아래 주석)
-        if (await argPathsForbidden(v, depth + 1, String(k))) return true;
+        if (await argPathsForbidden(v, depth + 1, String(k), budget)) return true;
         continue;
       }
       if (typeof v !== 'string' || !v.trim()) continue;

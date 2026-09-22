@@ -93,11 +93,23 @@ export function toSchedule(d) {
   return dows?.length ? { type: 'weekly', times, dows } : { type: 'daily', times };
 }
 
+// 지시 블록 ↔ 이번 턴에 크루 다리(K94)로 이미 부른 도구 — **같은 대상·내용**일 때만 블록을 건너뛴다.
+// 도구와 블록을 둘 다 쓴 크루가 결재·쪽지·예약을 두 번 만들던 이중 실행 방지(재현: test/cli-crew-wiring.test.mjs).
+// 종류만 보면 다른 수신자에게 가는 쪽지·별개 결재까지 버린다(분리 검수 MED-3·4) — 그래서 대상 필드를 비교한다.
+const same = (a, b) => { const n = (s) => String(s ?? '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase(); return !!n(a) && n(a) === n(b); };
+const SAME_AS_TOOL = {
+  approval: (d, c) => c.name === 'request_approval' && same(d.request ?? d.action_text, c.input?.action), // 아래 approval 실행과 같은 필드
+  mail: (d, c) => (c.name === 'send_to_crew' || c.name === 'delegate') && same(d.to, c.input?.to),
+  schedule: (d, c) => c.name === 'schedule_task' && same(d.prompt, c.input?.prompt),
+  tool: (d, c) => c.name === 'use_connector' && same(d.server, c.input?.server) && same(d.tool, c.input?.tool),
+};
+export const handledByTool = (d, calls) => { const f = SAME_AS_TOOL[String(d?.action ?? '').toLowerCase()]; return !!f && (calls ?? []).some((c) => f(d, c)); };
+
 /** 지시 실행 — 사람이 읽을 결과 줄 배열을 돌려준다(답변 끝에 붙는다).
     실패도 줄로 남긴다: 조용한 실패는 크루의 거짓말이 된다.
     `results`는 호출측이 건네는 수집함이다(커넥터 도구에 실제로 닿은 호출만 담긴다) — 채워지면
     호출측이 runToolFollowUp으로 후속 턴 1회를 돌린다. `toolHop`은 그 후속 턴 카운터. */
-export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null } = {}) {
+export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null } = {}) {
   const en = lang === 'en';
   const notes = [];
   let budget = TOOL_RESULT_BUDGET_BYTES; // 턴 전체 주입 예산 — 블록이 여럿이면 앞에서부터 소진된다
@@ -116,6 +128,10 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
   for (const d of directives) {
     turnControl?.check(); // Stop before the next side effect, not only after the whole batch.
     const action = String(d.action ?? '').toLowerCase();
+    if (handledByTool(d, usedTools)) {
+      notes.push(en ? `↺ Directive "${action}" skipped — already handled by the tool this turn` : `↺ "${action}" 지시 블록은 건너뜀 — 이번 턴에 이미 도구로 처리됨`);
+      continue;
+    }
     try {
       if (action === 'schedule') {
         const prompt = String(d.prompt ?? '').trim();

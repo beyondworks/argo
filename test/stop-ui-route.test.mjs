@@ -58,7 +58,7 @@ test('actual route retains incomplete cancellation in response and stored conver
 test('actual directive batch stops before its second side effect',async()=>{
  const source=await readFile(new URL('../src/cli-directives.mjs',import.meta.url),'utf8');
  const executed=[];
- const ctx=vm.createContext({TOOL_RESULT_BUDGET_BYTES:24000,listAgents:async()=>[],normalizeSchedule:x=>x,toSchedule:()=>({type:'daily',time:'09:00'}),messengerOrigin:()=>null,
+ const ctx=vm.createContext({TOOL_RESULT_BUDGET_BYTES:24000,handledByTool:()=>false /* K94 이중 실행 판정 — 다리 없는 턴 */,listAgents:async()=>[],normalizeSchedule:x=>x,toSchedule:()=>({type:'daily',time:'09:00'}),messengerOrigin:()=>null,
   addRoutine:async(_ws,data)=>{executed.push(data.title);await interruptTurn('batch','alpha',{source:'chat'});return {id:'one',schedule:{type:'daily',time:'09:00'}};}});
  vm.runInContext(findFunction(source,'runDirectives'),ctx);
  await assert.rejects(withTurnControl('batch','alpha',null,control=>ctx.runDirectives('batch','alpha',[

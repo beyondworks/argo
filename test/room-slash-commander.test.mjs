@@ -140,7 +140,7 @@ test('chat(): 회사 스킬 주입(loadSkills)은 source 분기 앞에서 1회 �
   assert.doesNotMatch(body.slice(0, iLoad), /if\s*\([^)]*\bsource\b/, 'loadSkills 앞에 source를 조건으로 삼는 if 없음(등가 비교 외 형태 — 검수 LOW-4)');
   // 두 러너 경로 모두 같은 skills를 시스템 프롬프트에 싣는다
   assert.match(body, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\)/, 'SDK 경로');
-  assert.match(body, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false/, 'CLI 경로');
+  assert.match(body, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: cliTools/, 'CLI 경로'); // K94: 도구 여부는 크루 다리 유무
   const room = await load('../src/room.mjs');
   assert.match(room, /r = await chat\(wsId, a\.slug, prompt, null, \{ source: 'room', attachments: att, mirrorCtx, workFolder: folder \}\);/, '회의실 발언 = 같은 chat() 진입점(회의 작업 폴더 #400 포함)');
 });

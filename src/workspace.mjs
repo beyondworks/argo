@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { writeJsonAtomic } from './jsonstore.mjs';
+import { writeJsonAtomic, writeFileAtomic } from './jsonstore.mjs';
 import { dropDocCache } from './doc-cache.mjs';
 
 export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
@@ -15,14 +15,12 @@ let deviceId = null;
 export async function getDeviceId() {
   if (deviceId) return deviceId;
   const f = join(WS_ROOT, '.device-id');
-  try {
-    deviceId = (await readFile(f, 'utf8')).trim();
-  } catch {
-    deviceId = `${hostname().split('.')[0]}-${randomUUID().slice(0, 8)}`;
-    await mkdir(WS_ROOT, { recursive: true });
-    await writeFile(f, deviceId);
-  }
-  return deviceId;
+  // 새 신원은 파일이 없거나 비었을 때만 — 권한·잠김(EACCES·EBUSY)으로 못 읽은 것을 새 ID로 덮으면 리스·세션 소유가 어긋난다(K71)
+  const saved = await readFile(f, 'utf8').then((s) => s.trim(), (e) => { if (e?.code === 'ENOENT') return ''; throw e; });
+  if (saved) return (deviceId = saved);
+  const id = `${hostname().split('.')[0]}-${randomUUID().slice(0, 8)}`;
+  await writeFileAtomic(f, id); // 원자 쓰기(디렉터리도 만든다) — 반쯤 쓴 파일이 다음 부팅의 신원이 되지 않게
+  return (deviceId = id);
 }
 
 // 워크스페이스 id는 회사 생성 규칙(route.js: base-base36)이 내는 문자셋만 허용.

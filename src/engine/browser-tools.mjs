@@ -428,14 +428,19 @@ export function createBrowserStatusReader({ probe = detectEgoBrowser, now = Date
 }
 const readBrowserStatus = createBrowserStatusReader();
 export function browserRunners({ wsId, slug = '', runId = randomUUID(), env = process.env, headless, statusReader = readBrowserStatus }) {
-  let owner; let closed = false; let handedOff = false; let queue = Promise.resolve();
+  // closed = 실행 전체 종료(close()만 건다). epoch = 명령 하나의 중단·시간 초과 세대 — 그 명령의 탭만 정리하고 실행은 이어간다(K58: 한 번의
+  // 중단·30초 초과가 실행 전체를 영구히 닫아 이후 모든 호출이 'Browser task closed'였다). 중단된 명령의 뒤늦은 get()은 세대가 바뀌어 동작하지 않는다.
+  let owner; let closed = false; let handedOff = false; let queue = Promise.resolve(); let epoch = 0;
   const workKey = scopeHash([BrowserSession.profileDir(wsId, env, slug), runId]);
   const get = async () => {
+    const gen = epoch;
     if (closed) throw new Error('Browser task closed');
     owner = await BrowserSession.get(wsId, { env, headless, slug });
     if (closed) throw new Error('Browser task closed');
+    if (gen !== epoch) throw new Error('Browser command cancelled');
     const page = slug ? await owner.page(runId) : owner;
     if (closed) { if (slug) await owner.closePage(runId); throw new Error('Browser task closed'); }
+    if (gen !== epoch) throw new Error('Browser command cancelled'); // 탭은 다음 명령이 이어 쓴다(같은 runId) — 닫지 않는다
     return page;
   };
   const actions = {
@@ -471,10 +476,10 @@ export function browserRunners({ wsId, slug = '', runId = randomUUID(), env = pr
       if ((handedOff || BrowserSession.peek(wsId, { env, slug })?.handedOffRuns.has(runId)) && name !== 'browser_status') throw loginError('BROWSER_LOGIN_PAUSED');
       let rejectAborted;
       const aborted = new Promise((_, reject) => { rejectAborted = reject; });
-      const abort = () => { closed = true; if (slug) owner?.closePage(runId).catch(() => {}); rejectAborted(signal.reason ?? new Error('Browser task cancelled')); };
+      const abort = () => { epoch += 1; if (slug) owner?.closePage(runId).catch(() => {}); rejectAborted(signal.reason ?? new Error('Browser task cancelled')); };
       signal?.addEventListener('abort', abort, { once: true });
       try { const result = await Promise.race([action(input), aborted]); signal?.throwIfAborted(); return result; }
-      catch (e) { if (/timed out/.test(String(e?.message))) { closed = true; if (slug) await owner?.closePage(runId); } throw e; }
+      catch (e) { if (/timed out/.test(String(e?.message))) { epoch += 1; if (slug) await owner?.closePage(runId); } throw e; }
       finally { signal?.removeEventListener('abort', abort); }
     };
     const result = (slug ? workQueues.get(workKey) ?? Promise.resolve() : queue).then(execute);

@@ -489,7 +489,7 @@ test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK
   const { readFileSync } = await import('node:fs');
   const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(chatSrc, /const orgRules = mirrorCtx\?\.orgSlug \? await loadOrgRules\(wsId, mirrorCtx\.orgSlug, \{ channelName: mirrorCtx\.channelName \?\? ''/, '규칙 로드');
-  assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false, connectors: cliConnectors \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입');
+  assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: cliTools, connectors: cliConnectors \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입'); // K94: 도구 여부는 크루 다리 유무
   assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(mirrorCtx\?\.kind === 'msgr' \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값');
   assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');
   assert.match(chatSrc, /const rulesCtx = \(mirrorCtx\?\.kind === 'msgr' \|\| mirrorCtx\?\.kind === 'msgr-rules' \|\| mirrorCtx\?\.orgSlug\) \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? ''[^\n]*\} : null;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const childCtx = rulesCtx \?\? [^\n]*\n\s*const r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: childCtx \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만)');

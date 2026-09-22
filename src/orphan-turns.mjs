@@ -15,14 +15,17 @@ import { loadCompany } from './workspace.mjs';
 // 스레드 파일명 — 크루 DM(<slug>.json)·회의실(room-*.json)만. 아카이브(_ 접두)·상태(.status.json)·
 // 휴지통(.trash)은 제외(thread.mjs ANY_ARCH_ID·sync isThread와 같은 경계).
 const THREAD_RE = /^[a-z0-9][a-z0-9-]*\.json$/;
+const BOOT_AT = Date.now() - process.uptime() * 1000; // 이 프로세스 시작 시각 — 고아는 그 전에 받은 지시뿐이다
 
 /** 방금 부팅한 프로세스에는 실행 중인 턴이 없다 — 그런데 awaiting 지시가 남아 있으면 이전 프로세스가
     턴 도중 죽은 것이다. 단 (a) 다른 프로세스가 같은 루트를 서빙 중일 수 있어 **신선한 상태 파일이
     있으면 건너뛰고**(getTurnStatus 2분 창), (b) 방금 도착한 지시(60초 미만)도 경합 회피로 건너뛴다.
+    (a)·(b)로 건너뛴 것이 있으면 두 창이 지난 뒤(retryMs) 한 번 더 쓴다 — 부팅 1회뿐이면 2분 안에 재시작한
+    서버의 죽은 턴이 영영 awaiting으로 남는다(K47). 재방문도 같은 보호를 거친다(살아 있는 턴은 심박으로 계속 신선).
     반환: 표시 전환한 턴 수. (export: 테스트용) */
-export async function sweepOrphanTurns({ now = Date.now() } = {}) {
+export async function sweepOrphanTurns({ now = Date.now(), retryMs = 130_000 } = {}) {
   const root = WS_ROOT; // paths()와 같은 전역 기준 — 이중 루트 금지(테스트는 ARGO_ROOT env 선설정 후 임포트)
-  let marked = 0;
+  let marked = 0, skipped = false;
   const companies = await readdir(root, { withFileTypes: true }).catch(() => []);
   for (const c of companies) {
     if (!c.isDirectory() || c.name.startsWith('.')) continue;
@@ -37,14 +40,15 @@ export async function sweepOrphanTurns({ now = Date.now() } = {}) {
       const t = await readJsonLenient(p, null);
       if (!t?.messages?.some((m) => m.awaiting && m.turnId)) continue;
       // 다른 살아 있는 프로세스가 이 크루의 턴을 돌리는 중이면 손대지 않는다(상태 파일 2분 신선 창)
-      if (await getTurnStatus(wsId, slug)) continue;
+      if (await getTurnStatus(wsId, slug)) { skipped = true; continue; }
       await withLock(`thread:${wsId}:${slug}`, async () => {
         const cur = await readJsonLenient(p, null); // 락 안 재독 — 경합 시 최신 기준
         if (!cur?.messages) return;
         let touched = false;
         for (const m of cur.messages) {
           if (!m.awaiting || !m.turnId) continue;
-          if (now - (m.ts ?? 0) < 60_000) continue; // 방금 지시 — 경합 회피
+          if ((m.ts ?? 0) >= BOOT_AT) continue; // 이 프로세스가 받은 지시 — 여기서 돌고 있다(재방문이 자기 턴을 찍지 않게)
+          if (now - (m.ts ?? 0) < 60_000) { skipped = true; continue; } // 방금 지시 — 경합 회피
           delete m.awaiting;
           const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
           m.failed = lang === 'en'
@@ -57,5 +61,6 @@ export async function sweepOrphanTurns({ now = Date.now() } = {}) {
     }
   }
   if (marked) console.warn(`[argo] 고아 턴 ${marked}건 표시 전환 — 이전 프로세스가 턴 도중 종료됨`);
+  if (skipped && retryMs > 0) setTimeout(() => { sweepOrphanTurns({ retryMs: 0 }).catch(() => {}); }, retryMs).unref?.(); // 재방문은 한 번만
   return marked;
 }
