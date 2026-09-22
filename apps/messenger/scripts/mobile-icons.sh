@@ -1,7 +1,7 @@
 #!/bin/zsh
 # 폰 아이콘 재생성(2026-09-22) — icons/ios·icons/android PNG를 모바일 전용 SVG에서 만든다(mobile-assets.mjs가 이 PNG를 gen/에 복사한다).
-#  · iOS: source-icon-mobile.svg(꽉 찬 바탕, 심볼 ≈58%) → 모든 크기를 투명 채널 없는 RGB로(App Store 1024 요구, fd2f2019)
-#  · 안드로이드 적응형: 전경 = source-icon-android-fg.svg(투명, 심볼은 보이는 66.7% 안에서 ≈58%), 배경 = values/ic_launcher_background
+#  · iOS: source-icon-mobile.svg(꽉 찬 바탕, 심볼 ≈72%) → 모든 크기를 투명 채널 없는 RGB로(App Store 1024 요구, fd2f2019)
+#  · 안드로이드 적응형: 전경 = source-icon-android-fg.svg(투명, 심볼은 보이는 66.7% 안에서 ≈72%), 배경 = values/ic_launcher_background
 #  · 안드로이드 옛 런처(ic_launcher·ic_launcher_round): 같은 모바일 SVG를 둥근 사각형·원으로 잘라서
 # 필요: rsvg-convert(brew librsvg), python3 PIL. 크기는 기존 파일 크기를 그대로 따른다.
 set -e
