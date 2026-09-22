@@ -200,13 +200,30 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   assert.equal(ins[0].reply_to, 11); assert.equal(ins[0].thread_root, 5, '스레드 뿌리를 명시(트리거가 크루 글로 채우면 넘김 연쇄가 끊긴다)'); assert.equal(ins[0].author_kind, 'crew'); assert.equal(ins[0].crew_id, CREW);
   assert.match(ins[0].body, /^보고서입니다/);
   const up = db.calls.find((x) => x[0] === 'upload');
-  assert.equal(up[1], `${ORG}/${CH}/${ins[0].id ?? '?'}/out.pdf`.replace('/?/', `/${900 + db.calls.findIndex((x) => x[0] === 'insertMessage') + 1}/`), '업로드 경로 = <org>/<channel>/<replyId>/<name>');
+  assert.equal(up[1], `${ORG}/${CH}/${ins[0].id ?? '?'}/0-out.pdf`.replace('/?/', `/${900 + db.calls.findIndex((x) => x[0] === 'insertMessage') + 1}/`), '업로드 경로 = <org>/<channel>/<replyId>/<순번>-<ASCII 이름>(앱 storageKey와 같은 규칙)');
   assert.equal(db.calls.some((x) => x[0] === 'insertAttachment' && x[1].name === 'out.pdf'), true);
   assert.equal(ins[1].kind, 'system'); assert.match(ins[1].body, /missing\.png.*파일이 없습니다/s); // 침묵 실패 금지
   const t = await loadThread(WS, 'seoyun');
   const user = t.messages.find((m) => m.who === 'user');
   assert.equal(user.via, 'msgr'); assert.deepEqual(user.actor, { uid: MEMBER, name: '민수' });
   assert.equal(M._activeCtxForTest.size, 0, '턴 문맥은 턴이 끝나면 지운다');
+});
+
+test('handler: 한글 파일명 산출물도 전달된다 — Storage 키는 ASCII(앱 storageKey 규칙), 표시 이름은 원래 이름(라이브 실사고 2026-09-23 Invalid key)', async () => {
+  const db = fakeDb({ parent: { id: 5, body: '질문' } });
+  await mkdir(join(paths(WS).vault, 'files'), { recursive: true });
+  await writeFile(join(paths(WS).vault, 'files', 'Kimi-K3-브리프-전문.md'), '# 브리프');
+  await writeFile(join(paths(WS).vault, 'files', '보고서.md'), '# 보고서');
+  const runChat = async () => ({ reply: '정리했습니다: files/Kimi-K3-브리프-전문.md 그리고 files/보고서.md', handover: null, sessionId: 's1', artifacts: [] });
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat });
+  await h({ msgId: 31, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '브리프 정리', authorId: OWNER, replyTo: 5, threadRoot: 5, createdAt: new Date().toISOString() });
+  const ups = db.calls.filter((x) => x[0] === 'upload').map((x) => x[1]);
+  assert.equal(ups.length, 2, '한글 파일명 산출물이 업로드되지 않았다');
+  for (const k of ups) assert.match(k, /^[A-Za-z0-9._\/-]+$/, `Storage 키에 ASCII 밖 문자가 있다: ${k}`);
+  assert.notEqual(ups[0].split('/').pop(), ups[1].split('/').pop(), '이름이 ASCII로 줄어도 두 파일의 키가 겹치면 안 된다');
+  const names = db.calls.filter((x) => x[0] === 'insertAttachment').map((x) => x[1].name);
+  assert.deepEqual(names, ['Kimi-K3-브리프-전문.md', '보고서.md'], '표시 이름은 원래 한글 이름');
+  assert.equal(db.calls.some((x) => x[0] === 'insertMessage' && x[1].client_msg_id?.startsWith('attfail:')), false, '첨부 실패 안내가 나갔다');
 });
 
 test('handler: 중복 답글(다른 기기가 먼저)은 업로드 없이 종료, 실패는 에러 회신, 오래 기다린 지시엔 부재중 접두', async () => {
