@@ -318,7 +318,7 @@ export default function Deck({ params }) {
             </p>
           </div>
           <Nameplate company={data?.company} memoryCount={data?.memoryCount} links={stats?.links} crew={data?.agents?.length} />
-          <TokenPanel usage={data?.usage} budgetUsd={data?.company?.budgetUsd} payroll={data?.payroll} agents={data?.agents ?? []} />
+          <TokenPanel usage={data?.usage} />
         </div>
       </div>
 
@@ -467,8 +467,8 @@ function MorningBrief({ ws, agents }) {
   );
 }
 
-function TokenPanel({ usage, budgetUsd, payroll, agents }) {
-  const { t, fmtMoney } = useLang();
+function TokenPanel({ usage }) {
+  const { t } = useLang();
   if (!usage) return <Skeleton h={170} style={{ borderRadius: 18 }} />;
   const u = usage.today.turns > 0 ? usage.today : usage.total;
   const scope = usage.today.turns > 0 ? t('deck.scope.today') : t('deck.scope.total');
@@ -505,40 +505,6 @@ function TokenPanel({ usage, budgetUsd, payroll, agents }) {
         </div>
       </div>
 
-      {/* 월 예산 계기 — 상한 대비 지출 (오픈클로 "예측 불가 비용" 정반대편) */}
-      {budgetUsd > 0 && usage.month?.hasCost && (
-        <div style={{ marginTop: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 5 }}>
-            <span style={{ fontWeight: 600 }}>{t('deck.monthBudget')}</span>
-            <span className="mono" style={{ color: usage.month.costUsd >= budgetUsd ? 'var(--danger)' : 'var(--fg-2)' }}>
-              {fmtMoney(usage.month.costUsd, { approx: false })} / {fmtMoney(budgetUsd, { approx: false })}
-            </span>
-          </div>
-          <div className="meter"><div className="meter-track"><div className="meter-fill" style={{ width: `${Math.min((usage.month.costUsd / budgetUsd) * 100, 100)}%` }} /></div></div>
-          <div className="metric-sub2" style={{ marginTop: 4 }}>{t('deck.budgetStop')}</div>
-        </div>
-      )}
-
-      {/* 급여 대장 — 이번 달 크루별 인건비. 비용을 회사 언어로 */}
-      {payroll?.some((p) => p.hasCost) && (
-        <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 7 }}>
-          <span className="microlabel">{t('deck.payroll')}</span>
-          {payroll.filter((p) => p.hasCost).slice(0, 5).map((p) => {
-            const max = Math.max(...payroll.map((x) => x.costUsd), 0.0001);
-            const crew = agents?.find((a) => a.slug === p.slug);
-            return (
-              <div key={p.slug}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 3 }}>
-                  <span style={{ fontWeight: 600 }}>{crew?.name ?? p.slug}</span>
-                  <span className="mono" style={{ color: 'var(--fg-2)' }}>{fmtMoney(p.costUsd, { approx: false })} · {t('deck.payrollTurns', { n: p.turns })}</span>
-                </div>
-                <div className="meter"><div className="meter-track"><div className="meter-fill" style={{ width: `${(p.costUsd / max) * 100}%` }} /></div></div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       {/* 효율 ① 캐시 적중률 */}
       <div style={{ marginTop: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 5 }}>
@@ -549,14 +515,8 @@ function TokenPanel({ usage, budgetUsd, payroll, agents }) {
         <div className="metric-sub2" style={{ marginTop: 4 }}>{t('deck.cacheHint')}</div>
       </div>
 
-      {/* 효율 ② + 형태 지표 */}
+      {/* 효율 ② — 형태 지표 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 5, marginTop: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: '1px dashed var(--border-soft)', paddingBottom: 5 }}>
-          <span className="microlabel">{t('deck.costPerTurn')}</span>
-          <span className="mono" style={{ fontSize: 11 }}>
-            {u.costPerTurn != null ? fmtMoney(u.costPerTurn, { approx: false }) : '—'}
-          </span>
-        </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: '1px dashed var(--border-soft)', paddingBottom: 5 }}>
           <span className="microlabel">{t('deck.contextPerOutput')}</span>
           <span className="mono" style={{ fontSize: 11 }}>{u.inPerOut.toFixed(0)} : 1</span>
@@ -565,7 +525,6 @@ function TokenPanel({ usage, budgetUsd, payroll, agents }) {
           <span className="microlabel">{t('deck.cumulative')}</span>
           <span className="mono" style={{ fontSize: 11 }}>
             {fmtTok(usage.total.contextTotal)} in · {fmtTok(usage.total.output)} out
-            {usage.total.hasCost ? ` · ${fmtMoney(usage.total.costUsd, { approx: false })}` : ''}
           </span>
         </div>
       </div>

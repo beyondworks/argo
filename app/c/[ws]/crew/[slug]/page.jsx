@@ -2,7 +2,7 @@
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { isStopCommand } from '../../../../../src/stop-command.mjs';
 import { splitEnvelope } from './envelope.mjs';
-import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -207,6 +207,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 러너·모델 — 카드 패널과 채팅 셀렉터가 공유하는 단일 상태. 회사 자격(설정 러너 연결)을 병합한 카탈로그.
   const [runners, setRunners] = useState(null);
   const [autoRunnerId, setAutoRunnerId] = useState(null); // 자동 크루가 실제 받을 러너 — 서버 pickRunner 판정(폴백 순서 복제 금지)
+  const [limits, setLimits] = useState([]); // 구독 잔여 한도(회사 API limits) — 입력줄 게이지(K92)
   // 초기 runner는 빈 값 = '자동'. 'claude'를 박으면 카드 로드 실패 시 sel이 초기값에 남고, 이후 강도
   // 변경 한 번이 saveRunner로 runner:'claude'를 PATCH해 **자동 크루가 클로드 고정으로 둔갑**한다
   // (러너 중립성 감사 2026-07-30 — 아래 278행이 경고하던 바로 그 함정).
@@ -363,6 +364,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         setAgent(a);
         setCrewList(d.agents ?? []);
         setAliases(d.company?.aliases ?? []); // '/' 커맨더 사용자 별칭 — 회사 단위 공유
+        setLimits(d.limits ?? []);
         // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑(K2 오표시 계열)
         setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
       })
@@ -488,6 +490,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
   }, [busy, working, liveStage?.startedAt]);
+  // 턴이 끝나면 잔여 한도를 다시 읽는다 — 한도 값은 턴 안에서 저장된다(src/runner-limits.mjs). 첫 로드는 위 light 조회가 한다.
+  const wasWorking = useRef(false);
+  useEffect(() => {
+    if (wasWorking.current && !working) api(`/api/companies/${ws}?light=1`).then((d) => setLimits(d.limits ?? [])).catch(() => {});
+    wasWorking.current = working;
+  }, [working, ws]);
 
   // 진행 단계 고빈도 폴 — 턴이 도는 동안(내 턴 + 시운전·루틴·메신저발) 2.5초 간격.
   // 서버가 턴 종료 시 상태 파일을 지우므로, status가 null로 돌아오면 스스로 멎는다.
@@ -1229,7 +1237,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 <Icon name="clip" size={14} />
               </button>
             </div>
-          <ModelMenu runners={runners} sel={sel} onChange={saveRunner} disabled={busy} />
+          {/* 오른쪽 — 잔여 한도 게이지(이 크루가 쓰는 러너의 구독 한도가 있을 때만, K92) + 모델 버튼 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            <LimitGauge limit={limits.find((l) => l.runner === (sel.runner || autoRunnerId))} />
+            <ModelMenu runners={runners} sel={sel} onChange={saveRunner} disabled={busy} />
+          </div>
         </div>
       </div>
       )}
@@ -1444,6 +1456,62 @@ function SideOpenMenu({ crews, onPick }) {
   );
 }
 
+/** 잔여 한도 게이지(K92, 유건 지시 2026-09-22) — 입력줄 모델 버튼 옆 작은 막대(두 창 중 높은 사용률). 마우스를 올리거나
+    포커스·탭하면 위로 뷰박스: 창별 사용률·리셋까지 남은 시간, 1시간 넘은 값이면 "N시간 전 기준". limit이 없으면(API 키·다른 러너·
+    아직 기록 없음) 아무것도 그리지 않는다. 값은 회사 API limits(src/runner-limits.mjs) — 문구 키는 옛 데크 상태 줄(deck.limit.*) 그대로. */
+function LimitGauge({ limit }) {
+  const { t } = useLang();
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false); // 클릭(터치)으로 연 것 — 마우스가 나가도 닫지 않는다
+  const boxRef = useRef(null);
+  const tipId = useId(); // 옆에 열기(분할)로 같은 러너 게이지가 둘 떠도 id가 겹치지 않게
+  useEffect(() => {
+    if (!open) return;
+    const away = (e) => { if (!boxRef.current?.contains(e.target)) { setOpen(false); setPinned(false); } };
+    const esc = (e) => { if (e.key === 'Escape') { setOpen(false); setPinned(false); } };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('touchstart', away);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('touchstart', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  if (!limit?.windows?.length) return null;
+  const name = RUNNER_LABELS[limit.runner] ?? limit.runner;
+  const top = Math.max(...limit.windows.map((w) => w.pct));
+  const span = (mins) => (mins % 1440 === 0 ? t('deck.limit.days', { n: mins / 1440 }) : t('deck.limit.hours', { n: Math.round(mins / 60) }));
+  const reset = (ms) => {
+    const h = Math.floor(ms / 3_600_000);
+    const m = Math.floor(ms / 60_000) % 60;
+    if (h >= 24) return t('deck.limit.resetDH', { d: Math.floor(h / 24), h: h % 24 });
+    return h ? t('deck.limit.resetHM', { h, m }) : t('deck.limit.resetM', { m: Math.max(1, m) }); // 1시간 미만은 "0시간" 없이 분만, 1분 미만도 "1분 후"
+  };
+  return (
+    <div ref={boxRef} style={{ position: 'relative', flex: 'none' }}
+      onMouseEnter={() => setOpen(true)} onMouseLeave={() => { if (!pinned) setOpen(false); }}>
+      <button type="button" aria-label={`${name} ${t('deck.limit.title')} ${top}%`} aria-describedby={open ? tipId : undefined} aria-expanded={open}
+        onFocus={() => setOpen(true)} onBlur={() => { if (!pinned) setOpen(false); }}
+        onClick={() => { setPinned(!pinned); setOpen(!pinned); }}
+        style={{ display: 'grid', placeItems: 'center', height: 18, padding: '0 4px', background: 'none', border: 0, cursor: 'pointer', borderRadius: 5 }}>
+        <span className="meter-track" style={{ display: 'block', flex: 'none', width: 28, height: 6 }}>
+          <span className="meter-fill" style={{ width: `${Math.min(top, 100)}%`, ...(top >= 90 ? { background: 'var(--danger)' } : {}) }} />
+        </span>
+      </button>
+      {open && (
+        <div id={tipId} role="tooltip" className="card card-float" style={{
+          position: 'absolute', bottom: 'calc(100% + 6px)', right: 0, zIndex: 40, minWidth: 200, padding: '8px 10px',
+          boxShadow: '0 8px 28px rgba(0,0,0,.14)', display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
+          <span style={{ fontWeight: 650, color: 'var(--fg)' }}>{name} {t('deck.limit.title')}</span>
+          {limit.windows.map((w) => (
+            <span key={w.mins} className="mono">
+              {span(w.mins)} {w.pct}%{w.resetsInMs != null ? ` · ${reset(w.resetsInMs)}` : ''}
+            </span>
+          ))}
+          {limit.ageMs >= 3_600_000 && <span style={{ color: 'var(--fg-3)' }}>{t('deck.limit.stale', { n: Math.floor(limit.ageMs / 3_600_000) })}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ModelMenu({ runners, sel, onChange, disabled }) {
   const { t, lang } = useLang();
   const [open, setOpen] = useState(false);
@@ -1638,7 +1706,7 @@ function ScopeGroup({ label, items, value, onToggle, t, onReset }) {
 const CARD_TABS = ['overview', 'ability', 'style', 'link']; // 각 구간은 정확히 한 탭(test/tabs-layout)
 function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onRunnerChange, onClose, onFired, onEdited }) {
   const [editOpen, setEditOpen] = useState(false); // 이름·역할·팀·러너·모델 — 데크 목록에서 옮겨온 편집
-  const { t, fmtMoney } = useLang();
+  const { t } = useLang();
   // 탭 4개 — 개요(최근·엔진·상세) / 능력(스킬·MCP) / 방식(규칙·사장 기억) / 연결·원문(텔레그램·페어링·원문). 마지막 탭 기억.
   const [tab, setTab] = useRememberedTab('argo-card-tab', CARD_TABS, 'overview');
   useScrollLock();
@@ -1857,8 +1925,8 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
               <RunnerPicker runners={runners} sel={sel} onChange={onRunnerChange} />
             </div>
           </div>
-          {/* 상세 정보 — 처리량·토큰·비용·많이 쓴 도구 (usage.jsonl 집계) */}
-          <StatsBlock stats={stats} t={t} fmtTok={fmtTok} fmtMoney={fmtMoney} />
+          {/* 상세 정보 — 처리량·토큰·많이 쓴 도구 (usage.jsonl 집계) */}
+          <StatsBlock stats={stats} t={t} fmtTok={fmtTok} />
           </div>)}
 
           {tab === 'ability' && (<div data-tab-pane="ability" style={{ display: 'grid', gap: 12 }}>
@@ -2046,8 +2114,8 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
   );
 }
 
-/** 상세 정보 — 처리량·토큰·비용·많이 쓴 도구 (usage.jsonl 집계). 카드 개요 탭. */
-function StatsBlock({ stats, t, fmtTok, fmtMoney }) {
+/** 상세 정보 — 처리량·토큰·많이 쓴 도구 (usage.jsonl 집계). 카드 개요 탭. 금액은 보이지 않는다(K91). */
+function StatsBlock({ stats, t, fmtTok }) {
   return (
           <div style={{ display: 'grid', gap: 8 }}>
             <span className="microlabel">{t('chat.card.stats')}</span>
@@ -2055,11 +2123,10 @@ function StatsBlock({ stats, t, fmtTok, fmtMoney }) {
               <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.card.noStats')}</span>
             ) : (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
                   {[
                     [t('chat.card.turns'), String(stats.turns)],
                     [t('chat.card.tokens'), `${fmtTok(stats.contextTotal)} / ${fmtTok(stats.output)}`],
-                    [t('chat.card.cost'), stats.costUsd != null ? fmtMoney(stats.costUsd, { approx: false }) : '—'],
                     [t('chat.card.avgTime'), stats.avgMs != null ? `${(stats.avgMs / 1000).toFixed(0)}s` : '—'],
                   ].map(([k, v]) => (
                     <div key={k}>

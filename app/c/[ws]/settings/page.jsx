@@ -90,10 +90,13 @@ function Settings({ params }) {
 
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [archiveErr, setArchiveErr] = useState('');
   async function archive() {
-    setArchiving(true);
-    await fetch(`/api/companies/${ws}`, { method: 'DELETE' });
-    router.push('/');
+    setArchiving(true); setArchiveErr('');
+    const r = await fetch(`/api/companies/${ws}`, { method: 'DELETE' }).catch(() => null);
+    if (r?.ok) { router.push('/'); return; }
+    // 실패 응답을 보지 않고 홈으로 가던 것(K72) — 보관이 안 됐는데 된 것처럼 보였다. 모달을 닫고 카드에 알린다.
+    setArchiving(false); setArchiveOpen(false); setArchiveErr(t('settings.archive.failed'));
   }
 
   const c = data?.company;
@@ -232,6 +235,7 @@ function Settings({ params }) {
         <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)', flex: 'none' }} onClick={() => setArchiveOpen(true)}>
           <Icon name="trash" size={13} /> {t('settings.archive.btn')}
         </button>
+        {archiveErr && <p role="alert" style={{ flexBasis: '100%', fontSize: 12, color: 'var(--danger)', margin: 0 }}>{archiveErr}</p>}
       </div>
       </div>
       </div>

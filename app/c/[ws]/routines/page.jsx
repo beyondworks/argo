@@ -117,7 +117,7 @@ function RoutineNotifications({ ws, form, setForm, t }) {
 
 export default function Routines({ params }) {
   const { ws } = use(params);
-  const { t, lang, fmtMoney } = useLang();
+  const { t, lang } = useLang();
   const DOW = [t('routines.dow.sun'), t('routines.dow.mon'), t('routines.dow.tue'), t('routines.dow.wed'), t('routines.dow.thu'), t('routines.dow.fri'), t('routines.dow.sat')];
   const TEMPLATES = [
     { title: t('routines.template1.title'), prompt: t('routines.template1.prompt'), schedule: { type: 'daily', time: '09:00' } },
@@ -370,14 +370,14 @@ export default function Routines({ params }) {
                   <input suppressHydrationWarning type="number" min={10} max={1440} step={5} value={form.everyMinutes}
                     onChange={(e) => setForm({ ...form, everyMinutes: e.target.value })} style={{ ...selStyle, width: 110 }} />
                 </label>
-                {/* 루프 상한 — 회차(1~200)·루프 예산(USD, 비우면 월 예산만). 한국어 모드는 원화 병기(fmtMoney 규칙) */}
+                {/* 루프 상한 — 회차(1~200)·루프 예산(USD, 비우면 월 예산만). 금액 환산 표시는 하지 않는다(K92) — 입력 단위(USD)만 라벨에 */}
                 <label style={{ display: 'grid', gap: 4 }}>
                   <span className="microlabel">{t('routines.loop.maxRuns')}</span>
                   <input suppressHydrationWarning type="number" min={1} max={200} value={form.maxRuns}
                     onChange={(e) => setForm({ ...form, maxRuns: e.target.value })} style={{ ...selStyle, width: 90 }} />
                 </label>
                 <label style={{ display: 'grid', gap: 4 }} title={t('routines.loop.maxUsdHint')}>
-                  <span className="microlabel">{t('routines.loop.maxUsd')}{lang === 'ko' && form.maxUsd !== '' && Number(form.maxUsd) > 0 ? ` · ${fmtMoney(Number(form.maxUsd))}` : ''}</span>
+                  <span className="microlabel">{t('routines.loop.maxUsd')}</span>
                   <input suppressHydrationWarning type="number" min={0} step={0.5} value={form.maxUsd} placeholder="—"
                     onChange={(e) => setForm({ ...form, maxUsd: e.target.value })} style={{ ...selStyle, width: 110 }} />
                 </label>
@@ -515,7 +515,7 @@ export default function Routines({ params }) {
                   <td role="cell" className="mono" style={{ fontSize: 11.5 }}>
                     <span className={styles.mobileLabel} aria-hidden="true">{t('routines.colSchedule')}</span>
                     {scheduleLabel(r.schedule, t, DOW)}
-                    {r.schedule?.type === 'interval' && r.loop && <LoopStatus ws={ws} loop={r.loop} t={t} fmtMoney={fmtMoney} />}
+                    {r.schedule?.type === 'interval' && r.loop && <LoopStatus ws={ws} loop={r.loop} t={t} />}
                     {/* 완료 조건 표식 — 이 루틴은 산출물 검사를 통과해야 완료고, 1회 실행이 최대
                         1+재시도 턴까지 커질 수 있다(검수 LOW-4: 설정만 있고 화면 흔적이 없었다).
                         interval(루프)과는 상호 배타라 LoopStatus 자리와 겹치지 않는다. */}
@@ -579,15 +579,15 @@ export default function Routines({ params }) {
   );
 }
 
-/** 루프 진행 — `3/20회 · $0.42` + 상태 칩. 막힘이면 사유와 결재함 안내(결재 카드는 데크에 있다). */
-function LoopStatus({ ws, loop, t, fmtMoney }) {
+/** 루프 진행 — `3/20회` + 상태 칩(사용 금액은 보이지 않는다, K92). 막힘이면 사유와 결재함 안내(결재 카드는 데크에 있다). */
+function LoopStatus({ ws, loop, t }) {
   const reason = loop.stoppedReason;
   const key = reason === 'done' ? 'done' : reason === 'blocked' ? 'blocked' : (reason === 'maxRuns' || reason === 'maxUsd') ? 'limit' : reason === 'manual' ? 'manual' : 'running';
   const color = key === 'running' ? 'var(--primary-strong)' : key === 'done' ? 'var(--ok, var(--fg-2))' : key === 'blocked' ? 'var(--danger)' : 'var(--fg-3)';
   return (
     <div style={{ display: 'grid', gap: 3, marginTop: 4, fontFamily: 'var(--font)' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, fontSize: 11, color: 'var(--fg-2)' }}>
-        {t('routines.loop.progress', { runs: loop.runs ?? 0, max: loop.maxRuns, cost: fmtMoney(loop.spentUsd ?? 0) })}
+        {t('routines.loop.progress', { runs: loop.runs ?? 0, max: loop.maxRuns })}
         <span className="chip" style={{ color, borderColor: color, fontSize: 10, padding: '0 6px', minHeight: 18 }}>{t(`routines.loop.${key}`)}</span>
       </span>
       {key === 'blocked' && (
