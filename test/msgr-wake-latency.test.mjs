@@ -18,7 +18,7 @@ const OWNER = '11111111-1111-4111-8111-111111111111';
 const ORG = 'aaaaaaaa-0000-4000-8000-000000000001', CH = 'bbbbbbbb-0000-4000-8000-000000000001';
 const p = paths(WS);
 for (const d of [p.root, join(p.root, 'chats'), join(p.root, 'agents'), p.journal, p.files]) await mkdir(d, { recursive: true });
-await writeFile(p.company, JSON.stringify({ id: WS, name: '웨이크', lang: 'ko', created: '2026-09-23' }));
+await writeFile(p.company, JSON.stringify({ id: WS, name: '웨이크', lang: 'ko', created: '2026-09-23', ownerId: OWNER }));
 
 const crew = (n) => ({ id: `cccccccc-0000-4000-8000-00000000000${n}`, org_id: ORG, slug: `c${n}`, display_name: `크루${n}`, allow: 'all', allow_users: [], cursor_msg_id: 10, hosting: 'local' });
 const CREWS = [crew(1), crew(2)];
@@ -93,4 +93,49 @@ test('실행 중에 온 깨우기는 버리지 않는다 — 끝난 뒤 한 번 
   for (let i = 0; i < 5 && !releases.length; i++) await new Promise((r) => setImmediate(r));
   assert.equal(runs, 2, `실행 중 깨우기가 ${runs === 1 ? '버려졌다' : '합쳐지지 않았다'}`);
   releases.shift()?.();
+});
+
+// ── 브리지 tick 수준 — 깨우기가 관리 작업을 건너뛰어도 연결 상태·수동 재연결은 종전과 같아야 한다(검수 M1·L1) ──
+function bridgeFakes({ mirrorFails = false } = {}) {
+  const db = fakeDb(); const handlers = {};
+  Object.assign(db, {
+    async myOrgIds() { return [ORG]; },
+    async myCrewRows() { if (mirrorFails) throw new Error('msgr_ws_owned_by_other'); return []; },
+    async orgAllowDefaults() { return {}; },
+    async upsertCrews(rows) { return rows; },
+    async listCommands() { return []; },
+    async mirrorCommands() { return []; },
+  });
+  const client = { channel: (name) => ({ on(_k, { event }, h) { (handlers[`${name}:${event}`] ??= []).push(h); return this; }, subscribe() { return this; }, unsubscribe() {} }) };
+  return { db, client, handlers, session: async () => ({ uid: OWNER, db, client }) };
+}
+const gatewayState = async () => JSON.parse(await (await import('node:fs/promises')).readFile(join(p.root, '.gateway-msgr.json'), 'utf8'));
+const settle = async (ms = 60) => { await new Promise((r) => setTimeout(r, ms)); };
+
+test('깨우기 tick은 연결 상태를 덮어쓰지 않는다 — 미러 실패(다른 계정 소유)는 다음 주기까지 유지(검수 M1)', async () => {
+  const { session, handlers } = bridgeFakes({ mirrorFails: true });
+  const stop = M.startMsgrBridge(WS, { session, pollMs: 60_000 });
+  try {
+    for (let i = 0; i < 40 && !(await gatewayState().catch(() => null)); i++) await settle();
+    const first = await gatewayState();
+    assert.equal(first.ok, false, '전제: 주기 tick이 미러 실패를 연결 실패로 기록');
+    assert.match(first.error, /다른 계정 소유/);
+    handlers[`org:${ORG}:message`]?.forEach((h) => h({ payload: {} })); // 새 메시지 방송 = 깨우기 tick
+    await settle(300);
+    const after = await gatewayState();
+    assert.equal(after.ok, false, '깨우기 tick이 연결 상태를 "연결됨"으로 덮어썼다(설정 화면이 원인을 감춘다)');
+    assert.match(after.error, /다른 계정 소유/);
+  } finally { stop(); }
+});
+
+test('수동 재연결(nudge)은 관리 작업까지 한 번 돈다 — 네트워크 복구 뒤 하트비트가 다음 폴까지 밀리지 않는다(검수 L1)', async () => {
+  const { session, db } = bridgeFakes();
+  const stop = M.startMsgrBridge(WS, { session, pollMs: 60_000 });
+  try {
+    for (let i = 0; i < 40 && !db.calls.some((c) => c[0] === 'heartbeat'); i++) await settle();
+    const before = db.calls.filter((c) => c[0] === 'heartbeat').length;
+    stop.nudge();
+    await settle(300);
+    assert.ok(db.calls.filter((c) => c[0] === 'heartbeat').length > before, 'nudge가 깨우기로 분류돼 하트비트가 다음 폴까지 밀렸다');
+  } finally { stop(); }
 });
