@@ -48,7 +48,7 @@ await createCompany(WS, '배선사', 'captain', null, 'ko');
 await mkdir(paths(WS).agents, { recursive: true });
 await writeFile(join(paths(WS).agents, 'ay.md'), '---\nname: 에이\nrole: 기획\nrunner: codex\n---\n기획한다.\n');
 await writeFile(join(paths(WS).agents, 'bee.md'), '---\nname: 비\nrole: 검증\nrunner: codex\n---\n검증한다.\n');
-await saveRunnerCred(WS, 'codex', 'host', 'host');
+await saveRunnerCred(WS, 'codex', 'apikey', 'sk-test-fake'); // host 자격은 이 기기의 실제 codex 로그인에 기대 CI에서 미가용(9/22 CI red)
 
 test('codex CLI 턴 — 크루 다리가 [mcp_servers.crew](30분 상한)로 실리고, 프롬프트는 결재 도구·동료 명단 판이다', { skip: process.platform === 'win32' }, async () => {
   const r = await chat(WS, 'ay', '비에게 검증을 맡겨라', null, {});

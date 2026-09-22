@@ -45,7 +45,7 @@ for (const name of ['codex', 'agy']) {
   await chmod(join(bin, name), 0o755);
 }
 // 안전 장치 — 실제 CLI(네트워크·과금)가 먼저 잡히면 여기서 멈춘다.
-for (const name of ['codex', 'agy']) {
+for (const name of process.platform === 'win32' ? [] : ['codex', 'agy']) {
   assert.equal(execFileSync(name, ['--version'], { env: process.env }).toString().trim(), `fake-${name}`, `${name}는 가짜여야 한다`);
 }
 

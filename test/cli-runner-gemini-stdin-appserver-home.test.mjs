@@ -40,7 +40,7 @@ for (const name of ['gemini', 'codex']) {
   await writeFile(join(bin, name), fake(name));
   await chmod(join(bin, name), 0o755);
 }
-for (const name of ['gemini', 'codex']) { // 실제 CLI(네트워크·과금)가 먼저 잡히면 여기서 멈춘다
+for (const name of process.platform === 'win32' ? [] : ['gemini', 'codex']) { // 실제 CLI(네트워크·과금)가 먼저 잡히면 여기서 멈춘다
   assert.equal(execFileSync(name, ['--version'], { env: process.env }).toString().trim(), `fake-${name}`, `${name}는 가짜여야 한다`);
 }
 const cwd = join(base, 'cwd');

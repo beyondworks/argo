@@ -44,7 +44,7 @@ const waitFor = async (fn, ms = 5000) => {
 const MANAGED_DIR = join(HOME, '.argo', 'tools', 'codex-cli');
 const MANAGED_BIN = join(MANAGED_DIR, 'codex');
 
-test('K07·K05 로그인 — 캐시가 미설치로 데워진 뒤 관리본만 생겨도 로그인 CLI가 관리본으로 실행되고, 폴링도 관리본으로 로그인을 확인한다', async () => {
+test('K07·K05 로그인 — 캐시가 미설치로 데워진 뒤 관리본만 생겨도 로그인 CLI가 관리본으로 실행되고, 폴링도 관리본으로 로그인을 확인한다', { skip: process.platform === 'win32' }, async () => {
   assert.equal((await detectRunners()).codex.installed, false, '전제: 감지 캐시가 미설치로 데워짐');
   const marker = join(HOME, 'codex-login-args.txt');
   await mkdir(MANAGED_DIR, { recursive: true });
@@ -59,7 +59,7 @@ echo "$@" > '${marker}'
   assert.deepEqual(await runnerLoginStatus('codex'), { supported: true, authed: true }, '폴링이 PATH 이름(codex)만 보면 영원히 미인증');
 });
 
-test('K05 로그인 — 실행 파일을 띄우지 못하면(EACCES) 미처리 error 이벤트 대신 spawn-failed를 돌려준다', async () => {
+test('K05 로그인 — 실행 파일을 띄우지 못하면(EACCES) 미처리 error 이벤트 대신 spawn-failed를 돌려준다', { skip: process.platform === 'win32' }, async () => {
   await mkdir(MANAGED_DIR, { recursive: true });
   await writeFile(MANAGED_BIN, '#!/bin/sh\nexit 0\n');
   await chmod(MANAGED_BIN, 0o644); // 실행 권한 없음 → spawn 'error'(EACCES)
