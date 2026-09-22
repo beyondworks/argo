@@ -29,6 +29,7 @@ for a in "$@"; do
   if [ "$a" = "--" ]; then after=1; fi
   prev="$a"
 done
+[ "$P" = "-" ] && P="$(cat)" # 진짜 codex exec 계약: 프롬프트 자리가 - 면 stdin에서 읽는다(K01 — 러너가 프롬프트를 stdin으로 넘긴다)
 printf '\\n===TURN===\\n%s' "$P" >> "${CAP}"
 [ -n "$OUT" ] && printf '알겠습니다.' > "$OUT"
 exit 0

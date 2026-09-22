@@ -78,8 +78,21 @@ export async function loadNativeSession(wsId, slug, resumeId = null) {
   return { id: `native-${randomUUID()}`, messages: [], resumed: false };
 }
 
+/** 턴 중 저장(K57) — 넘치면 오래된 스크린샷 정리를 전체에 먼저, 그 뒤 마지막 지시 앞(이전 턴)만 예산까지 절단한다.
+    현재 턴(마지막 지시~꼬리)은 손대지 않는다 — 전체를 trimMessages로 자르면 큰 도구 결과가 든 현재 턴이 지시 하나로 줄어
+    모델이 같은 작업(쓰기·쪽지·제출)을 처음부터 반복했다. 현재 턴 단독으로 상한을 넘으면 넘긴 채 저장한다(알려진 한계).
+    tail은 지시로 시작하므로 head가 비어도 전사는 비지 않고 머리가 지시다 — trimMessages의 마지막 지시 복원은 쓰지 않는다(연속 user 방지). */
 export async function saveNativeSession(wsId, slug, sess) {
-  const messages = trimMessages(sess.messages);
+  let messages = sess.messages.slice();
+  const size = (a) => JSON.stringify(a).length;
+  if (size(messages) > SESSION_MAX_CHARS) {
+    messages = dropOldImages(messages);
+    const cut = Math.max(0, messages.findLastIndex(isPromptMsg));
+    const head = messages.slice(0, cut); const tail = messages.slice(cut); const tailSize = size(tail);
+    while (head.length && size(head) + tailSize > SESSION_TRIM_TO) head.shift();
+    while (head.length && !isPromptMsg(head[0])) head.shift();
+    messages = [...head, ...tail];
+  }
   await writeJsonAtomic(sessionFile(wsId, slug), { id: sess.id, at: Date.now(), messages });
   sess.messages = messages;
 }

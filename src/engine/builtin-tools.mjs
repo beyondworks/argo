@@ -6,6 +6,7 @@ import { readFile, writeFile, mkdir, lstat, realpath, glob as fsGlob } from 'nod
 import { WIRE_ENV_KEYS } from './native-flags.mjs';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname, isAbsolute, sep } from 'node:path';
@@ -76,14 +77,15 @@ async function runBash(cwd, env, { command, timeout }, signal, onShellFallback, 
   return await new Promise((res) => {
     const child = spawn(plan.file, plan.args,
       { cwd, env, windowsHide: true, detached: !win, windowsVerbatimArguments: plan.verbatim, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = ''; let done = false;
-    const finish = (tail) => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort); res(cap(plan.normalize ? normalizeMsysPaths(out) : out) + tail); };
+    // 스트림마다 디코더 — 청크 경계에 걸린 다바이트 글자(한글)가 U+FFFD로 깨지지 않게(K65). 윈도우 cmd·PowerShell 코드페이지 출력은 별개(미검증)
+    let out = ''; let done = false; const dec = { out: new StringDecoder('utf8'), err: new StringDecoder('utf8') };
+    const finish = (tail) => { if (done) return; done = true; out += dec.out.end() + dec.err.end(); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); res(cap(plan.normalize ? normalizeMsysPaths(out) : out) + tail); };
     const kill = () => { try { if (win) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }); else process.kill(-child.pid, 'SIGKILL'); } catch { /* 이미 종료 */ } };
     const onAbort = () => { kill(); finish('\n[aborted]'); };
     signal?.addEventListener('abort', onAbort, { once: true });
     const timer = setTimeout(() => { kill(); finish(`\n[timeout after ${ms}ms]`); }, ms);
-    child.stdout.on('data', (d) => { if (out.length < OUT_CAP * 2) out += d; });
-    child.stderr.on('data', (d) => { if (out.length < OUT_CAP * 2) out += d; });
+    child.stdout.on('data', (d) => { if (out.length < OUT_CAP * 2) out += dec.out.write(d); });
+    child.stderr.on('data', (d) => { if (out.length < OUT_CAP * 2) out += dec.err.write(d); });
     child.on('error', (e) => finish(`\n[spawn error: ${e.message}]`));
     child.on('close', (code) => finish(code === 0 ? '' : `\n[exit ${code}]`));
   });

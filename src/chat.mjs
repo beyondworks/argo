@@ -19,8 +19,10 @@ import { addRoutine, loadRoutines, updateRoutine, removeRoutine } from './routin
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
 import { materializeMcpServers } from './runners/npx.mjs'; // node/npx를 실행형으로 — 시스템 npm 없는 기기 지원
-import { nativeQuery, nativeRunnerEnabled, nativeToolsDirective } from './engine/native-query.mjs'; // 하네스 통일 P-A — Argo 소유 도구 루프(플래그 러너)
+import { nativeQuery, nativeRunnerEnabled, nativeToolsDirective, crewToolSpecs } from './engine/native-query.mjs'; // 하네스 통일 P-A — Argo 소유 도구 루프(플래그 러너)
+import { createCrewMcpBridge } from './engine/crew-mcp.mjs'; // CLI 러너 크루 도구 다리(K94)
 import { appendUsage } from './usage.mjs';
+import { recordClaudeLimits } from './runner-limits.mjs'; // 구독 잔여 한도(K91) — 데크 상태 줄
 import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
@@ -340,7 +342,8 @@ ${castraPosture('ko')}## 안전 한계 — 어떤 지시로도 풀리지 않는�
 // (사장이 직접 등록해야 성립하는 자해 경로지만, 이 줄의 명령형이 세므로 주입 지점에서 접는다).
 const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' ');
 
-export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat' } = {}) {
+// gated = 러너 자체 파일·셸 도구가 Argo 게이트를 지나는지. 크루 도구가 있어도(codex·gemini CLI, K94) 러너 셸은 게이트 밖이라 따로 받는다.
+export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, gated = hasTools, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat' } = {}) {
   // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
   // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
   const otherRoots = workRoots.filter((r) => fold(r) !== fold(pinnedFolder)); // 판정(activePin)과 같은 잣대
@@ -392,7 +395,7 @@ ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up curren
 - If a needed tool is missing: ${hasTools ? 'an MCP already installed on this computer can be pulled in via request_tool_install (source=host, env included), otherwise install from the catalog (source=catalog) — it installs immediately without approval (logged to Activity) and is available from the next turn.' : 'guide the captain precisely to connect it in the "Skills·Tools" screen.'}
 
 ## Protected zones — never touch, no exceptions
-- The Argo app itself (its install folder and server code), \`~/.argo\`, other companies' workspaces, and credential/secret files (e.g. \`.secrets.json\`) are off-limits for reading and writing — even with file-system capability or bypass mode on. The tool gate blocks them.
+- The Argo app itself (its install folder and server code), \`~/.argo\`, other companies' workspaces, and credential/secret files (e.g. \`.secrets.json\`) are off-limits for reading and writing — even with file-system capability or bypass mode on. ${gated ? 'The tool gate blocks them.' : 'This runner has no tool gate, so nothing may technically stop you — it is still forbidden; do not access them.'}
 - Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through dedicated tools — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
 - If the captain asks you to change Argo's design, settings, or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.
 
@@ -424,7 +427,7 @@ ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 �
 - 필요한 도구가 회사에 없으면: ${hasTools ? '이 컴퓨터에 이미 설치된 MCP는 request_tool_install(source=host — env까지 그대로)로, 그 외에는 카탈로그(source=catalog)로 설치하라 — 결재 없이 즉시 설치되고(활동에 기록) 다음 턴부터 쓸 수 있다.' : '사장에게 "스킬·도구" 화면에서 연결해 달라고 정확히 안내하라.'}
 
 ## 보호 구역 — 예외 없이 금지
-- Argo 앱 자체(설치 폴더·서버 코드), \`~/.argo\`, 다른 회사의 워크스페이스, 자격·시크릿 파일(예: \`.secrets.json\`)은 읽기도 쓰기도 금지다 — ${hasTools ? '도구 게이트가 하드 차단한다.' : '이 러너에는 도구 게이트가 없어 기술적으로 막히지 않을 수 있다. 그래도 금지다 — 접근하지 마라.'}
+- Argo 앱 자체(설치 폴더·서버 코드), \`~/.argo\`, 다른 회사의 워크스페이스, 자격·시크릿 파일(예: \`.secrets.json\`)은 읽기도 쓰기도 금지다 — ${gated ? '도구 게이트가 하드 차단한다.' : '이 러너에는 도구 게이트가 없어 기술적으로 막히지 않을 수 있다. 그래도 금지다 — 접근하지 마라.'}
 - 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 전용 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
 - 사장이 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
 
@@ -486,6 +489,20 @@ export function connectorToolDescription(connectors, lang = 'ko') {
     return `Call a tool on an external service connected to this company by login (Gmail, Drive, Notion, …). The Argo core runs the call, so it works the same on any runner. server = the connected service id, tool = a tool name on that service, args = that tool's arguments object. Connected right now — ${summary}. ${more ? 'That list is trimmed — if a tool you need is not shown, call it by its documented name anyway; the service validates it. ' : 'Use only names from that list. '}If you need another service, ask the captain to connect it in Settings. Reads and lookups are free, but anything that leaves the company (send, publish, create, update, delete) must go through request_approval first.${reauth ? ' Services marked [needs reconnect] will fail until the captain reconnects them in Settings — say so instead of retrying.' : ''}`;
   }
   return `로그인으로 이 회사에 연결된 외부 서비스(Gmail·Drive·Notion 등)의 도구를 호출한다. Argo 코어가 실행하므로 어떤 러너에서도 똑같이 동작한다. server=연결된 서비스 id, tool=그 서비스의 도구 이름, args=그 도구의 인자 객체. 지금 연결된 것 — ${summary}. ${more ? '이 목록은 잘린 것이다 — 필요한 도구가 안 보이면 그 서비스의 알려진 이름으로 그냥 호출해라(서버가 검증한다). ' : '이 목록에 있는 이름만 써라. '}다른 서비스가 필요하면 사장에게 설정에서 연결해 달라고 안내하라. 조회·읽기는 자유롭게 쓰고, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 request_approval로 결재를 먼저 올려라.${reauth ? ' [재연결 필요] 표시가 붙은 서비스는 호출해도 실패한다 — 재시도하지 말고 사장에게 설정에서 다시 연결해 달라고 알려라.' : ''}`;
+}
+
+/** 이 턴에서 위임·쪽지를 보낼 수 있는 동료 — hop 2 상한, 체인 순환 차단(직전 발신자 회신은 허용), 메신저 턴은 그 방의 내 크루만.
+    SDK·네이티브 턴과 CLI 크루 다리(K94)가 같은 함수를 쓴다(러너마다 명단이 갈리면 도구 광고가 갈린다). */
+async function turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx) {
+  if (hop >= 2) return [];
+  const lastSender = chain.length ? chain[chain.length - 1] : null;
+  return (await listAgents(wsId)).filter((a) => {
+    if (!(a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender))) return false;
+    if (mirrorCtx?.kind === 'msgr-rules') return false;
+    if (mirrorCtx?.kind !== 'msgr') return true;
+    return mirrorCtx.peers?.some((peer) => peer.slug === a.slug
+      && peer.owner_user_id === mirrorCtx.uid && peer.ws_id === wsId) ?? false;
+  });
 }
 
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
@@ -690,7 +707,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         return `${RUNNERS[runner].name} 러너 연결이 무효(재연결 필요) 상태다. 사용자에게 "설정 → AI 연결에서 ${RUNNERS[runner].name}을 다시 연결해 주시면 됩니다"라고 안내해라.`;
       }
       if (s && !s.company.connected && !s.hostAuthed) {
-        return `${RUNNERS[runner].name} 러너가 아직 연결되지 않았다. 사용자에게 "설정 → 러너 연결에서 ${RUNNERS[runner].name}을 연결(API 키 또는 OAuth)해 주시면 바꿔드리겠다"고 안내하라.`;
+        return `${RUNNERS[runner].name} 러너가 아직 연결되지 않았다. 사용자에게 "설정 → AI 연결에서 ${RUNNERS[runner].name}을 연결(API 키 또는 OAuth)해 주시면 바꿔드리겠다"고 안내하라.`;
       }
     }
     return null;
@@ -1155,7 +1172,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   };
   // 참조(cc)로 공유된 맥락 — 이번 턴 프롬프트에 1회 주입(맥락 공유는 기본, 실행은 지시받은 크루만)
   // 재시도(__seedNotes)면 아우터 시도가 이미 소비한 공유 노트를 이어받는다 — 재시도에서 cc 맥락 소실 방지
-  const sharedNotes = dmTurn ? [] : (__seedNotes ?? (from ? [] : await takeSharedNotes(wsId, agentSlug).catch(() => [])));
+  // 범위 턴(메신저 DM·채널·텔레그램 그룹·슬랙 채널)과 손님 턴은 싣지도 소비하지도 않는다 — 노트는 사장의 1:1 지시라 그 방에 새면 안 되고, 다음 1:1 턴이 받는다(검수 K46)
+  const sharedNotes = (contextScope || guest) ? [] : (__seedNotes ?? (from ? [] : await takeSharedNotes(wsId, agentSlug).catch(() => [])));
   const sharedBlock = sharedNotes.length
     ? (lang === 'en'
         ? `## Context shared via cc — what the captain instructed a colleague and the results (shared for your awareness)\n${sharedNotes.join('\n\n---\n\n')}\n\n## Captain's new instruction\n`
@@ -1198,6 +1216,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     const ac = new AbortController();
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort(), __turnControl);
     let browserBridge = null;
+    let crewBridge = null;
     try {
       ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt, frame: __turnControl ?? null }); // frame — 재시도 재귀만 같은 control(turn-abort)
       const { messages } = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
@@ -1212,7 +1231,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
             ? `\n\n(Files the captain attached — read them directly: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
             : `\n\n(사장이 첨부한 파일 — 직접 읽어 참고하라: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`) : '';
       // 러너 공통 지시(결재·능력·환경·도구 활용) — SDK 경로와 같은 규율을 외부 러너에도 적용(러너 독립성).
-      // 외부 CLI에는 크루 도구가 없으므로 hasTools:false — 같은 규칙이 "보고·안내" 형태로 들어간다.
+      // 크루 다리가 붙은 턴(codex)은 hasTools — 도구로 결재·위임. 다리가 없는 러너는 같은 규칙이 "지시 블록·안내" 형태로 들어간다(아래 cliTools).
       const cliCaps = await loadCapabilities(wsId);
       // 폴더 상태 — SDK 경로와 **같은 함수**를 지난다(러너 중립성). 한 번만 재므로 프롬프트와
       // 러너 반경(gemini includeDirectories·agy --add-dir)이 같은 스냅샷을 본다(codex는 2026-08-21부터 반경 없음).
@@ -1239,18 +1258,33 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
         wsId, slug: agentSlug,
         canUseTool: makePermissionGate(wsId, agentSlug, p.root, from, lang, cliWorkRoots, { guest, msgr: gateMsgr }), // 손님 CLI 턴은 위에서 거절 — 방어 겸
       });
-      const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server } : null;
-      const cliMcp = cliMcpServers ? Object.keys(cliMcpServers) : [];
       // 커넥터 요약 — **SDK 턴과 같은 원천**(connectorBriefing: connected + reauth)을 쓴다. 여기서
       // connected만 거르면 전부 reauth인 회사에서 CLI 크루만 커넥터의 존재조차 몰라 "못 한다"고 답하고,
       // 사장은 재연결이 필요하다는 사실을 영영 듣지 못한다 — SDK는 "[재연결 필요]"로 안내하는데
       // CLI만 침묵하는 것은 안내 품질의 러너 편파다(중립성 원칙). 상태 표기는 connectorNames가 한다.
       // 동적 import: connectors.mjs는 MCP 클라이언트 SDK를 끌고 오므로 CLI 턴에서만 로드한다.
       const cliConnectors = await import('./connectors.mjs').then((m) => m.connectorBriefing(wsId)).catch(() => []);
+      // 크루 도구(K94, 유건 지시 2026-09-22 "러너마다 편차가 없어야") — 턴 격리 홈으로 MCP를 받는 CLI(catalog crewBridge: codex)에는
+      // SDK·네이티브와 **같은 정의·처리기**를 크루 다리로 싣는다(서버 이름 crew → mcp__crew__*, 게이트의 크루 도구 판정도 같다).
+      // gemini CLI(회사당 홈 — 동시 턴 신원 섞임)·antigravity(MCP 주입 없음)는 턴 뒤 지시 블록으로 남는다.
+      const bridgeable = !!RUNNERS[runner]?.crewBridge && MCP_CLI_RUNNERS.has(runner);
+      const cliColleagues = bridgeable ? await turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx) : [];
+      if (bridgeable) {
+        const sink = [];
+        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal);
+        // 자식 파일이 없는 산출물(셀프호스트 등)이면 크루 도구 없이 진행한다 — 도구 부재가 턴 사망이 되면 안 된다(분리 검수 LOW-7)
+        crewBridge = await createCrewMcpBridge(crewToolSpecs(sink)).catch((e) => { console.warn(`[argo] 크루 도구 다리 생략(지시 블록으로 진행): ${e?.message ?? e}`); return null; });
+      }
+      // 러너 자체 셸·파일 도구가 Argo 게이트를 지나는지 — codex app-server 엔진만(승인 요청마다 게이트 판정). exec 경로는 danger-full-access라 게이트 밖(분리 검수 LOW-8)
+      const cliGated = runner === 'codex' && process.env.ARGO_CODEX_ENGINE === 'appserver';
+      const cliTools = !!crewBridge;
+      const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server, ...(crewBridge ? { crew: crewBridge.server } : {}) } : null;
+      const cliMcp = cliMcpServers ? Object.keys(cliMcpServers).filter((k) => k !== 'crew') : []; // 안내 목록은 외부 MCP만(SDK connectedMcp와 같게 — crew는 도구 안내로 따로 나간다)
+      const cliRoster = cliTools ? (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : cliColleagues.length ? rosterPrompt(cliColleagues, lang) : '') : ''; // SDK 턴과 같은 식
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource })}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -1291,7 +1325,7 @@ ${lang === 'en'
         }
       }
       __turnControl.check();
-      if (!reply) throw new Error(`${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
+      if (!reply) throw new Error(lang === 'en' ? `The ${RUNNERS[runner].name} runner returned an empty response` : `${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
       // 메신저 제어 줄은 러너 출력에서 먼저 분리한다 — 지시 실행·거부 안내가 뒤에 붙어도 마지막 판정이 유지된다.
       let msgrDisposition = null;
       if (mirrorCtx?.kind === 'msgr') ({ text: reply, disposition: msgrDisposition } = parseMessengerDisposition(reply));
@@ -1304,7 +1338,7 @@ ${lang === 'en'
         if (directives.length || bad.length) {
           const toolResults = [];
           __turnControl.check();
-          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain, toolHop, results: toolResults, mirrorCtx, turnControl: __turnControl });
+          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain, toolHop, results: toolResults, mirrorCtx, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }); // 도구로 이미 한 일은 블록으로 다시 하지 않는다(K94)
           reply = [clean, notes.join('\n')].filter(Boolean).join('\n\n');
           // 커넥터 결과 자동 후속 턴 1회 — 크루의 위 답변은 **결과를 보기 전에** 쓰인 것이라 그대로
           // 두면 반쪽이다(설계서 §2-2). 상한·증가는 runToolFollowUp/runDirectives가 toolHop으로 잠근다.
@@ -1360,7 +1394,7 @@ ${lang === 'en'
               outsideHome = !(denial.path === home || denial.path.startsWith(`${home}/`));
             }
           }
-          reply += denialNote({ ...denial, lang, outsideHome });
+          reply += denialNote({ ...denial, lang, outsideHome, runner });
         }
       }
       if (msgrDisposition) reply = [reply, `MSGR: ${msgrDisposition}`].filter(Boolean).join('\n');
@@ -1433,11 +1467,15 @@ ${lang === 'en'
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
       if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
+      // 턴 전 자격 게이트가 끊은 오류(authExpired)는 우리가 만든 내부 문구라 사용자에겐 재연결 안내로 대체한다 — 이벤트엔 원문(위), SDK 갈래 catch와 같은 계약(검수 K52)
+      // authExpired 필드는 유지한다 — 재시도 프레임을 감싼 바깥 프레임의 자가치유 판정(shouldSelfHeal)이 종전과 같은 신호를 보게. authError로 이중 감싸기를 막는다.
+      if (!aborted && e?.authExpired && !e?.authError) e = Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, authExpired: e.authExpired, cause: e, failCode: e.failCode, failOrigin: e.failOrigin });
       throw aborted ? turnAbortedError(e) : e;
     } finally {
       closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등) — 열린 채 남으면 뒤 턴이 영원히 "겹침"으로 본다
       abortReg.release();
       await browserBridge?.close();
+      await crewBridge?.close();
       // 심박(turn-status 레지스트리)이 생긴 뒤로 clear는 **프로세스 수명 자원(타이머) 해제**다 — 위 두 clear가 도달하지
       // 못하는 경로가 생기면 그 크루가 상주에서 영구 "작성 중"이 된다(검수 MEDIUM-2). 멱등이라 finally에 한 번 더.
       await clearTurnStatus(wsId, agentSlug);
@@ -1461,14 +1499,7 @@ ${lang === 'en'
   // chain 순환 차단의 예외 — **직전 발신자에게는 회신 허용**(분리 검수 HIGH-2: 쪽지는 왕복이 목적인데
   // chain 제외가 회신 경로를 끊고, 2명 회사에선 도구 자체가 미등록이었다). 왕복 폭주는 hop 상한이
   // 가둔다: A(h0)→B(h1 배달 턴)→회신(h2 배달 턴)은 colleagues가 빈 배열이라 더 못 보낸다.
-  const lastSender = chain.length ? chain[chain.length - 1] : null;
-  const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => {
-    if (!(a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender))) return false;
-    if (mirrorCtx?.kind === 'msgr-rules') return false;
-    if (mirrorCtx?.kind !== 'msgr') return true;
-    return mirrorCtx.peers?.some((peer) => peer.slug === a.slug
-      && peer.owner_user_id === mirrorCtx.uid && peer.ws_id === wsId) ?? false;
-  });
+  const colleagues = await turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx); // CLI 크루 다리(K94)와 같은 함수
   // 커넥터 요약 — 턴 시작 1회(설계서 §2-2). 연결 0이면 빈 배열이라 도구가 등재되지 않는다.
   // 조회 실패가 턴을 죽이지 않게 낙하: 커넥터가 없는 것처럼 진행한다(기능 없음 > 턴 사망).
   const connectors = await connectorBriefing(wsId).catch(() => []);
@@ -1529,18 +1560,7 @@ ${lang === 'en'
       : `\n\n(사장이 첨부한 파일 — Read 도구로 열람하라: ${fileAtt.map((a) => `vault/${a.rel}`).join(', ')})`;
   }
   let promptInput = promptText;
-  let promptBlocks = null; // 네이티브 엔진용 — 이미지 첨부는 Messages content 블록 그대로
-  if (imgAtt.length) {
-    const blocks = [{ type: 'text', text: promptText }];
-    promptBlocks = blocks;
-    for (const a of imgAtt) {
-      const buf = await readFile(join(p.vault, a.rel));
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mime, data: buf.toString('base64') } });
-    }
-    promptInput = (async function* () {
-      yield { type: 'user', message: { role: 'user', content: blocks }, parent_tool_use_id: null, session_id: resumeId ?? '' };
-    })();
-  }
+  let promptBlocks = null; // 네이티브 엔진용 — 이미지 첨부는 Messages content 블록 그대로(읽기는 아래 try 안 — 검수 K50)
 
   let reply = '';
   let costUsd = null; // 이 턴의 청구 금액 — 루프 루틴의 예산 합산용. 구독(OAuth)·openrouter·CLI 턴은 null(=0으로 합산)
@@ -1573,6 +1593,23 @@ ${lang === 'en'
   let thought = ''; // 모델의 사고(thinking 블록) 누적 — 상태 파일 thought(뒤 1500자)
   try {
   ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt, frame: __turnControl ?? null }); // frame — 재시도 재귀만 같은 control(turn-abort)
+  // 이미지 첨부 읽기도 try **안**이다(검수 K50) — 밖에서 던지면 실패 이벤트·cc 공유 노트 복원(catch)이 안 돌고,
+  // 사용자에겐 주인 컴퓨터 절대 경로가 든 ENOENT 원문이 갔다. 읽기 실패는 어떤 첨부인지와 할 일로 바꿔 알린다.
+  if (imgAtt.length) {
+    const blocks = [{ type: 'text', text: promptText }];
+    promptBlocks = blocks;
+    for (const a of imgAtt) {
+      const buf = await readFile(join(p.vault, a.rel)).catch((re) => {
+        throw Object.assign(new Error(lang === 'en'
+          ? `Couldn't read the attached image "${a.name || a.rel}" — it may have been moved or deleted. Please attach it again.`
+          : `첨부한 이미지 "${a.name || a.rel}"를 읽지 못했습니다 — 옮겨졌거나 지워졌을 수 있습니다. 다시 첨부해 주세요.`), { cause: re });
+      });
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mime, data: buf.toString('base64') } });
+    }
+    promptInput = (async function* () {
+      yield { type: 'user', message: { role: 'user', content: blocks }, parent_tool_use_id: null, session_id: resumeId ?? '' };
+    })();
+  }
   // sdkEnvFor(자격 게이트 포함)·query 구성은 try **안**이어야 한다 — 게이트의 authExpired가
   // try 밖에서 터지면 아래 catch의 자가치유(AUTH_ERR_RE)·사용자 언어 번역이 전부 미발동하고
   // 원문('grok token expired…')이 그대로 표면화된다(격리 서버 실측 2026-08-31).
@@ -1665,6 +1702,8 @@ ${lang === 'en'
       }
       await setTurnStatus(wsId, agentSlug, 'memory', '', undefined, turnSource);
     }
+    // 구독 사용 한도 — SDK가 claude.ai 구독(OAuth) 턴에만 싣는다. 계정 단위 저장, 실패는 턴과 무관(K91)
+    if (msg.type === 'rate_limit_event' && runner === 'claude') await recordClaudeLimits(sdkEnv, msg.rate_limit_info).catch(() => {});
     if (msg.type === 'assistant') {
       if (msg.message?.model) actualModel = msg.message.model; // SDK가 이 응답을 낸 실제 모델
       const tus = (msg.message?.content ?? []).filter((b) => b.type === 'tool_use');

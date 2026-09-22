@@ -14,7 +14,8 @@
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
-import { appendEvent } from './events.mjs';
+import { withDirLock } from './mutex.mjs';
+import { appendEvent, readEvents } from './events.mjs';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { RUNNER_AUTH, loadRunnerCred, verifyRunnerCred, runnerCredEnv, isCliTurn } from './runners.mjs';
@@ -100,6 +101,11 @@ export async function runTurnProbe(wsId, runner, { fetchImpl = globalThis.fetch,
 export const resolveProbe = (probeFn, verifyFn) => probeFn ?? (verifyFn === verifyRunnerCred ? runTurnProbe : null);
 
 const healthFile = (wsId) => join(paths(wsId).root, HEALTH_FILE_NAME);
+/** 이 러너의 마지막 검진 이벤트가 실패인가 — 카드(lastHealthFailByRunner)와 같은 원천·같은 창(활동 API readEvents 150). */
+async function lastEventFailed(wsId, runner) {
+  const e = (await readEvents(wsId, 150)).find((x) => x?.type === 'runner-health' && x.runner === runner);
+  return e?.ok === false;
+}
 /** 상태 저장 실패 시의 프로세스 내 폴백(검수 MEDIUM-2) — 디스크가 정본, 이건 폭주 방지용 백스톱뿐. */
 const memoState = new Map();
 /** 회사·러너별 결정적 지터(0 ~ 기본 간격의 10%) — 동시 발사 분산용(검수 LOW). 랜덤이 아니라
@@ -143,13 +149,15 @@ export function applyHealthResult(entry, result, now, hash = null) {
     자격은 지우지 않는다(제약 ③). 전이 이벤트는 검진과 같은 규칙(실패 진입 1회만). */
 export async function markRunnerAuthFail(wsId, runner, credValue, { nowMs = Date.now() } = {}) {
   const file = healthFile(wsId);
-  const state = await readJson(file, {});
-  const entry = state[runner];
-  const wasFail = entry?.ok === false;
-  state[runner] = applyHealthResult(entry, { ok: false, reason: 'auth' }, nowMs, credHash(credValue));
-  await writeJsonAtomic(file, state);
+  const { wasFail, next } = await withDirLock(`${file}.lockd`, async () => { // 검진 병합 쓰기와 같은 잠금(K15)
+    const state = await readJson(file, {});
+    const entry = state[runner];
+    state[runner] = applyHealthResult(entry, { ok: false, reason: 'auth' }, nowMs, credHash(credValue));
+    await writeJsonAtomic(file, state);
+    return { wasFail: entry?.ok === false, next: state[runner] };
+  });
   if (!wasFail) await appendEvent(wsId, { type: 'runner-health', runner, ok: false, reason: 'auth', source: 'turn' }).catch(() => {});
-  return state[runner];
+  return next;
 }
 
 /** 한 회사의 연결된 러너를 검진한다. 상태 파일 갱신 + ok:false만 활동 이벤트.
@@ -166,26 +174,27 @@ export async function runHealthChecks(wsId, {
   const disk = await readJson(file, {});
   // 디스크 쓰기가 실패한 적이 있으면 그때의 상태를 얹는다 — 쓰기 불가 환경에서도 스로틀 유지.
   const mem = memoState.get(wsId);
-  const state = mem ? { ...disk, ...mem.state } : disk;
-  let changed = false;
+  const state = mem ? { ...disk, ...mem.state } : { ...disk };
+  const touched = new Set(); // 이번 검진이 바꾼 러너 — 저장은 이것만 병합한다(K15)
+  const pendingEvents = []; // 이벤트는 저장 병합 뒤 반영된 러너만(K15: 건너뛴 러너의 옛 판정을 타임라인에 남기지 않는다)
   const checked = [];
   for (const runner of Object.keys(RUNNER_AUTH)) {
     const entry = state[runner];
     if (!healthDue(entry, runner, nowMs, { intervalMs, billedIntervalMs, jitterMs: jitterMs ?? jitterFor(wsId, runner) })) continue;
     const cred = await loadCredFn(wsId, runner).catch(() => null);
     if (!cred) { // 미연결 — 기록도 남기지 않는다(연결 시 첫 검진이 즉시 돈다)
-      if (entry) { delete state[runner]; changed = true; }
+      if (entry) { delete state[runner]; touched.add(runner); }
       continue;
     }
     // host 마커는 이 컴퓨터의 CLI 로그인이라 원격 판정 대상이 아니다(verify 라우트와 같은 계약).
     // fails는 리셋한다 — apikey로 되돌렸을 때 옛 실패 카운터가 첫 확인을 최대 8h 미루던 것(검수 LOW).
-    if (cred.type === 'host') { state[runner] = { at: nowMs }; changed = true; continue; }
+    if (cred.type === 'host') { state[runner] = { at: nowMs }; touched.add(runner); continue; }
     // **로컬로 이미 아는 만료엔 유료 프로브를 쓰지 않는다**(검수 MEDIUM-1): grok BYOA의 access_token은
     // 수명 1시간인데 검진 간격은 6시간이라, 유휴 회사에선 사실상 매번 만료 토큰으로 과금 POST를 쏘고
     // 판정도 실행 경로(runnerCredEnv의 갱신)와 무관해진다. 만료는 턴 전 자격 게이트(#372)가 이미
     // 사용자에게 알린다 — 검진은 조용히 넘긴다(시각만 갱신).
     if (runner === 'grok' && cred.type === 'oauth' && grokExpired(cred.value, nowMs)) {
-      state[runner] = { ...(entry ?? {}), at: nowMs }; changed = true; continue;
+      state[runner] = { ...(entry ?? {}), at: nowMs }; touched.add(runner); continue;
     }
     const r = await verifyFn(runner, cred.type, cred.value).catch(() => ({ ok: null }));
     const next = applyHealthResult(entry, r, nowMs, credHash(cred.value));
@@ -203,7 +212,7 @@ export async function runHealthChecks(wsId, {
     const wasFail = entry?.ok === false || entry?.probeOk === false;
     const failReason = next.ok === false ? (next.reason ?? null) : next.probeOk === false ? next.probeReason : null;
     const failDetail = next.ok === false ? null : next.probeDetail ?? null;
-    state[runner] = next; changed = true;
+    state[runner] = next; touched.add(runner);
     checked.push({ runner, ok: failNow ? false : (r?.ok ?? null), reason: failNow ? failReason : null });
     // 이벤트는 **상태 전이에서만**(검수 HIGH-1·2): 실패 진입 1회 + 회복(false→true) 1회.
     //  · 지속 실패를 매 검진 적재하면 유휴 회사 타임라인이 검진 행으로 덮인다(러너 수만큼 곱).
@@ -211,19 +220,32 @@ export async function runHealthChecks(wsId, {
     //    (검수 재현: 성공 검진 2회 후에도 ok:false — 사용자는 재연결이 실패했다고 읽는다).
     // 판정 불가(ok:null)는 어느 쪽도 아니다 — 활동 화면을 채우지 않는다. 자격은 그대로(제약 ③).
     if (failNow && !wasFail) {
-      await appendEvent(wsId, { type: 'runner-health', runner, ok: false, ...(failReason ? { reason: failReason } : {}), ...(failDetail ? { detail: failDetail } : {}) }).catch(() => {});
-    } else if (!failNow && r?.ok === true && wasFail) {
-      await appendEvent(wsId, { type: 'runner-health', runner, ok: true }).catch(() => {});
+      pendingEvents.push({ type: 'runner-health', runner, ok: false, ...(failReason ? { reason: failReason } : {}), ...(failDetail ? { detail: failDetail } : {}) });
+    } else if (!failNow && r?.ok === true && (wasFail || (!entry && await lastEventFailed(wsId, runner)))) {
+      // !entry = 재연결·연결 해제가 항목을 지운 뒤의 첫 검진(K36) — 상태로는 직전 실패를 모르므로 카드가 읽는 원천(활동 이벤트)으로 본다.
+      // 마지막 검진 이벤트가 실패면 회복 1회를 남긴다(없으면 카드가 옛 실패를 계속 그린다). 항목이 생긴 뒤엔 상태 전이 규칙 그대로.
+      pendingEvents.push({ type: 'runner-health', runner, ok: true });
     }
   }
-  if (changed) {
-    await writeJsonAtomic(file, state).catch((e) => {
+  if (touched.size) {
+    // 쓰기 직전 재독 + 이번에 검진한 러너만 병합(K15). verify·프로브(수십 초)를 기다리는 동안 재연결(clearHealthEntry)이나
+    // 턴의 인증 실패(markRunnerAuthFail)가 그 러너 항목을 바꿨으면 그쪽이 최신이다 — 옛 판정으로 덮어 되살리지 않는다.
+    // 잠금은 이 짧은 재독·쓰기에만 쥔다(네트워크 대기 동안 쥐면 재연결 저장이 막힌다).
+    await withDirLock(`${file}.lockd`, async () => {
+      const fresh = await readJson(file, {});
+      for (const runner of touched) {
+        if (JSON.stringify(fresh[runner]) !== JSON.stringify(disk[runner])) { touched.delete(runner); continue; }
+        if (state[runner] === undefined) delete fresh[runner]; else fresh[runner] = state[runner];
+      }
+      await writeJsonAtomic(file, fresh);
+    }).catch((e) => {
       // 조용히 삼키면 스로틀이 통째로 사라진다(검수 MEDIUM-2 실측: 매 틱 검증 = 1440회/일).
       // 드러내고, 프로세스 내 폴백 스로틀로 폭주만은 막는다(재시작 시 디스크 상태가 다시 정본).
       console.error(`[argo] 러너 검진 상태 저장 실패(${wsId}):`, e?.message ?? e);
       memoState.set(wsId, { at: nowMs, state });
     });
   }
+  for (const ev of pendingEvents) if (touched.has(ev.runner)) await appendEvent(wsId, ev).catch(() => {});
   return checked;
 }
 
@@ -231,10 +253,12 @@ export async function runHealthChecks(wsId, {
     24h)를 그대로 물려받아 한참 뒤에야 확인된다. saveRunnerCred가 동적 import로 부른다(순환 회피). */
 export async function clearHealthEntry(wsId, runner) {
   const file = healthFile(wsId);
-  const state = await readJson(file, {});
-  if (!(runner in state)) return false;
-  delete state[runner];
-  memoState.delete(wsId);
-  await writeJsonAtomic(file, state).catch(() => {});
-  return true;
+  return withDirLock(`${file}.lockd`, async () => { // 검진 병합 쓰기와 같은 잠금(K15)
+    const state = await readJson(file, {});
+    if (!(runner in state)) return false;
+    delete state[runner];
+    memoState.delete(wsId);
+    await writeJsonAtomic(file, state).catch(() => {});
+    return true;
+  });
 }

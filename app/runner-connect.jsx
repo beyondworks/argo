@@ -1,7 +1,7 @@
 'use client';
 // AI 러너 연결 카드(BYOK/BYOA) — 설정(회사 스코프)과 온보딩(계정 스코프)이 공유하는 단일 구현.
 // ws가 ACCOUNT_WS('@account')면 회사 생성 전 계정 자격(/api/account/keys)에 저장되고,
-// 회사 생성 시 seedRunnerCreds가 새 회사 .secrets.json으로 복사한다(백엔드 src/runners.mjs 참조).
+// 회사 생성 시 seedRunnerCreds가 새 회사 .secrets.json으로 복사한다(codex 구독은 첫 회사로 이동 — 백엔드 src/runners/creds.mjs 참조).
 import { useEffect, useRef, useState } from 'react';
 import { Icon, Skeleton, Spinner, ConfirmModal, api } from './ui';
 import { useLang } from './i18n';
@@ -69,7 +69,7 @@ export function AiConnectionCard({ ws, accordion = false }) {
 /** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내).
     onToggle이 오면 아코디언 모드(온보딩) — 헤더만 보이고 클릭으로 본문을 펼친다. 설정은 기존 그대로. */
 function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, lastTurn = null, healthFail = null, retired = false }) {
-  const { t, fmtMoney } = useLang();
+  const { t } = useLang();
   const methods = st?.methods ?? ['apikey'];
   const hasOauth = methods.includes('oauth');
   const oauthPaste = !!st?.oauthPasteable;
@@ -77,7 +77,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
   const company = st?.company ?? { connected: false };
   // 연결된 방식이 이제 제공되지 않으면(gemini 구독 → API 키 전용) 첫 제공 방식으로 — 종전엔 oauth 상태에 갇혀 "이 컴퓨터에서 로그인" 안내와 해제 버튼만 보였다(검수 M2)
   const shownMethod = (type) => (methods.includes(type) ? type : (methods[0] ?? 'apikey'));
-  const [method, setMethod] = useState(company.connected ? shownMethod(company.type) : 'apikey');
+  const [method, setMethod] = useState(company.connected ? shownMethod(company.type) : shownMethod('apikey'));
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState('');
   const busyWasHost = useRef(false); // 마지막 msg가 host 옵트인에서 났는지(렌더 자리 선택)
@@ -335,9 +335,13 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
     if (busy) return;
     setBusy('remove'); setMsg(''); busyWasHost.current = false; setOk(false);
     try {
-      await fetch(`${keysBase(ws)}?runner=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const res = await fetch(`${keysBase(ws)}?runner=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || t('settings.runners.removeFailed'));
       window.dispatchEvent(new Event('argo:refresh'));
       onChange();
+    } catch (e) {
+      setMsg(String(e.message));
     } finally {
       setBusy('');
     }
@@ -450,7 +454,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       {chip}
       {st?.month?.turns > 0 && (
         <span className="chip mono" title={t('settings.runners.monthTitle')} style={{ fontSize: 10.5 }}>
-          {t('settings.runners.month', { n: st.month.turns })}{st.month.hasCost ? ` · ${fmtMoney(st.month.costUsd)}` : ''}
+          {t('settings.runners.month', { n: st.month.turns })}
         </span>
       )}
       {/* 마지막 턴 상태(P1-1) — "연결됨" 초록불이 실사용 실패를 가리지 않게, 최근 턴이 실패한
@@ -480,10 +484,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>{header}</div>
       )}
       {open && <>
-      {/* 외부 CLI 러너(codex/gemini/antigravity) 정직 표기 — 크루 도구(쪽지·루틴·위임)가 표면에 없다
-          (chat.mjs hasTools:false). "AI 직원 회사" 핵심 약속이 러너에 따라 조용히 빠지므로 카드가 미리 알린다
-          (runtimeBlocked 배지·'권한 근사 적용' 계열). 판정은 서버 runnerStatus.cli — 클라 하드코딩 금지. */}
-      {st?.cli && (
+      {/* 크루 도구가 없는 CLI 러너(antigravity) 정직 표기 — codex·gemini는 크루 다리로 SDK와 같은 도구를 쓴다(K94).
+          "AI 직원 회사" 핵심 약속이 러너에 따라 조용히 빠지므로 카드가 미리 알린다. 판정은 서버 runnerStatus.cli·crewTools — 클라 하드코딩 금지. */}
+      {st?.cli && !st?.crewTools && (
         <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.cliToolsNote')}</span>
       )}
       {retired && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.retiredNote')}</span>}
@@ -538,6 +541,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
                 </span>
               )}
             </div>
+            {msg && !busyWasHost.current && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
             {removeBtn}
           </div>
         )
@@ -641,11 +645,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
             <button className="btn btn-primary sm" disabled={!!busy || !value.trim()} onClick={save}>
               {busy === 'verify' ? <Spinner size={12} /> : t('settings.runners.saveVerify')}
             </button>
-            {company.connected && (
-              <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
-                {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
-              </button>
-            )}
+            {removeBtn}
             {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
           </div>
           </>)}

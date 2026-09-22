@@ -38,7 +38,9 @@ export async function addApproval(wsId, { slug, from, action, reason, kind = 'ac
       resolvedAt: null,
     };
     list.unshift(it);
-    await save(wsId, list.slice(0, 200)); // 오래된 이력은 흘려보낸다
+    // 오래된 이력은 흘려보낸다 — 끝난 결재만. 대기·승인 미사용 셸 결재를 자르면 "존재하지 않는 결재"로 영영 막힌다(K69)
+    let done = 0;
+    await save(wsId, list.filter((a) => a.status === 'pending' || (a.status === 'approved' && a.payload?.shell && !a.payload?.consumedAt) || ++done <= 200));
     return it;
   });
   emitNotify({ type: 'approval', wsId, item }); // 메신저로 결재 버튼 푸시

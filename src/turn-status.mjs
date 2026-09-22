@@ -72,6 +72,7 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
     e = { chain: Promise.resolve(), timer: null, queued: false };
     live.set(k, e);
     e.timer = setInterval(() => {
+      if (e.deferred && !turnGroups(wsId, slug)) { clearTurnStatus(wsId, slug).catch(() => {}); return; } // 서로 미룬 채 모두 끝남(K51 경합)
       if (e.queued) return; // 체인에 심박은 최대 1개 — 쓰기보다 짧은 주기에서 무한히 쌓이지 않게(회의실 마커와 같은 구조)
       e.queued = true;
       enqueue(e, () => touch(wsId, slug)).catch(() => {}).finally(() => { e.queued = false; });
@@ -104,10 +105,17 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
   });
 }
 
-/** 종료 — 심박을 끄고, **진행 중인 쓰기가 끝난 뒤** 파일을 지운다(해제 직후 착지하는 심박이 거짓 '작성 중'을 되살리지 않게). */
+/* 같은 크루의 살아 있는 논리 턴 수 — turn-abort 등록부(globalThis 공유, 논리 턴 = group)를 읽는다. 상태 파일·심박은 크루당 하나라
+   먼저 끝난 턴(1:1)이 지우면 아직 도는 턴(루틴·위임 수신)의 진행 표시·심박이 사라졌다(K51). 호출자(chat.mjs)는 제 턴이 등록된 채
+   clear한다(withTurnControl이 runChat 전체를 감싼다) → 2 이상이면 다른 턴이 남아 있다. 등록 없는 호출(회의실 마커)은 0 — 종전대로. */
+const turnGroups = (wsId, slug) => new Set([...(globalThis.__argoTurnAbort?.get(`${wsId}:${slug}`) ?? [])].map((x) => x.group)).size;
+
+/** 종료 — 심박을 끄고, **진행 중인 쓰기가 끝난 뒤** 파일을 지운다(해제 직후 착지하는 심박이 거짓 '작성 중'을 되살리지 않게).
+    같은 크루의 다른 턴이 아직 돌면 미룬다 — 마지막 턴의 clear가 지우고, 서로 미룬 채 모두 끝나면 심박이 치운다. */
 export async function clearTurnStatus(wsId, slug) {
   const k = keyOf(wsId, slug);
   const e = live.get(k);
+  if (turnGroups(wsId, slug) > 1) { if (e) e.deferred = true; return; }
   if (e) { clearInterval(e.timer); live.delete(k); await e.chain.catch(() => {}); }
   try { await rm(file(wsId, slug), { force: true }); } catch { /* 없으면 그만 */ }
 }

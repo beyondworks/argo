@@ -55,6 +55,13 @@ export const rowBilled = (r, billedMap) =>
   : r.billed === true ? true // 턴 시점 각인이 최우선 — 자격 전환에도 과거 실지출은 불변(HIGH-3)
   : !billedMap ? true : billedMap[rowRunner(r)] === true;
 
+/** 기기 로컬 날짜 'YYYY-MM-DD'(ts 없음·깨진 값은 '') — "오늘"·"이번 달" 경계의 단일 정본. 앱 서버(사이드카·상주)는 사용자 PC에서
+    돌고 행의 ts는 UTC ISO라, toISOString 경계면 한국은 오전 9시에 날이 바뀌고 1일 0~9시 턴이 지난달·월 예산에 잡혔다(K40). */
+const localDay = (at) => {
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 async function readRows(wsId) {
   try {
     const text = await readFile(paths(wsId).usage, 'utf8');
@@ -86,18 +93,20 @@ export async function readDelegations(wsId, limit = 30) {
 export async function readUsageSummary(wsId, billedMap) {
   const rows = await readRows(wsId);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay(Date.now());
   const month = today.slice(0, 7);
   // subTurns = 구독(OAuth) 연결로 돈 턴. SDK는 이런 턴에도 정가 상당액을 리포트하지만 **청구되지 않는다** —
   // 그대로 더해 보여주면 "구독료 안인지 추가 청구인지 헷갈린다"가 된다(실사용 신고 2026-07-26).
   // 금액에서 빼고 개수만 세어, 화면이 "얼마 나갔다"와 "구독으로 썼다"를 구분해 말할 수 있게 한다.
   // 청구/구독 판정은 rowBilled(단일 진실 — 현재 자격 기준) 하나만 쓴다.
-  const agg = () => ({ turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false, subTurns: 0 });
+  // uncounted = 청구되는데 금액을 모르는 턴(CLI 러너·네이티브 엔진은 costUsd: null) — 추정하지 않고 개수만 센다(D4).
+  const agg = () => ({ turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false, subTurns: 0, uncounted: 0 });
   const sum = { today: agg(), month: agg(), total: agg() };
   for (const r of rows) {
     const keys = ['total'];
-    if (r.ts?.startsWith(month)) keys.push('month');
-    if (r.ts?.startsWith(today)) keys.push('today');
+    const day = localDay(r.ts);
+    if (day.startsWith(month)) keys.push('month');
+    if (day === today) keys.push('today');
     for (const key of keys) {
       const s = sum[key];
       s.turns += 1;
@@ -105,6 +114,7 @@ export async function readUsageSummary(wsId, billedMap) {
       s.cacheRead += r.cacheRead; s.cacheCreate += r.cacheCreate;
       if (!rowBilled(r, billedMap)) s.subTurns += 1;
       else if (typeof r.costUsd === 'number') { s.costUsd += r.costUsd; s.hasCost = true; }
+      else s.uncounted += 1;
     }
   }
   const enrich = (s) => ({
@@ -112,7 +122,8 @@ export async function readUsageSummary(wsId, billedMap) {
     contextTotal: s.input + s.cacheRead + s.cacheCreate,           // 모델이 읽은 전체 맥락
     cacheHitRate: s.input + s.cacheRead > 0 ? s.cacheRead / (s.input + s.cacheRead) : 0, // 효율 ①
     inPerOut: s.output > 0 ? (s.input + s.cacheRead + s.cacheCreate) / s.output : 0,     // 출력 1토큰당 읽은 맥락
-    costPerTurn: s.turns > 0 && s.hasCost ? s.costUsd / s.turns : null,                   // 효율 ②
+    // 효율 ② — 분모는 금액이 잡힌 청구 턴만(구독·미집계 턴이 섞이면 낮게 보이던 K41). hasCost면 분모 ≥ 1.
+    costPerTurn: s.hasCost ? s.costUsd / (s.turns - s.subTurns - s.uncounted) : null,
   });
   return { today: enrich(sum.today), month: enrich(sum.month), total: enrich(sum.total) };
 }
@@ -144,10 +155,10 @@ export async function agentStats(wsId, slug, billedMap) {
 
 /** 이번 달 크루별 인건비 — 급여 대장(데크). 비용 큰 순. */
 export async function monthCostByCrew(wsId, billedMap) {
-  const month = new Date().toISOString().slice(0, 7);
+  const month = localDay(Date.now()).slice(0, 7);
   const by = {};
   for (const r of await readRows(wsId)) {
-    if (!r.ts?.startsWith(month) || !r.slug) continue;
+    if (!localDay(r.ts).startsWith(month) || !r.slug) continue;
     const b = (by[r.slug] ??= { slug: r.slug, costUsd: 0, turns: 0, hasCost: false });
     b.turns += 1;
     if (rowBilled(r, billedMap) && typeof r.costUsd === 'number') { b.costUsd += r.costUsd; b.hasCost = true; }
@@ -157,10 +168,10 @@ export async function monthCostByCrew(wsId, billedMap) {
 
 /** 이번 달 러너별 사용량 — 설정 러너 카드 표시용. 러너 도출은 rowRunner(정본). */
 export async function monthCostByRunner(wsId, billedMap) {
-  const month = new Date().toISOString().slice(0, 7);
+  const month = localDay(Date.now()).slice(0, 7);
   const by = {};
   for (const r of await readRows(wsId)) {
-    if (!r.ts?.startsWith(month)) continue;
+    if (!localDay(r.ts).startsWith(month)) continue;
     const runner = rowRunner(r);
     const b = (by[runner] ??= { turns: 0, costUsd: 0, hasCost: false });
     b.turns += 1;
@@ -174,10 +185,10 @@ export async function monthCostByRunner(wsId, billedMap) {
     구독(OAuth) 연결은 SDK가 정가 상당액을 리포트하지만 그 돈이 청구되지는 않는다 —
     그대로 표시하면 "구독료 안인지 추가 청구인지 헷갈린다"가 된다(실사용 신고 2026-07-26·27). */
 export async function monthCost(wsId, billedMap) {
-  const month = new Date().toISOString().slice(0, 7);
+  const month = localDay(Date.now()).slice(0, 7);
   let costUsd = 0, subTurns = 0;
   for (const r of await readRows(wsId)) {
-    if (!r.ts?.startsWith(month)) continue;
+    if (!localDay(r.ts).startsWith(month)) continue;
     if (!rowBilled(r, billedMap)) { subTurns += 1; continue; }
     if (typeof r.costUsd === 'number') costUsd += r.costUsd;
   }

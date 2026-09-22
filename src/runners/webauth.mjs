@@ -3,7 +3,7 @@
 
 import { randomBytes, createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { saveRunnerCred } from './creds.mjs';
+import { saveRunnerCred, verifyRunnerCred } from './creds.mjs';
 import { provisionGeminiCli, probeGeminiOAuth, probeGeminiSubscription } from './gemini.mjs';
 import { pollGrokDeviceLogin, startGrokDeviceLogin } from './grok.mjs';
 
@@ -65,17 +65,28 @@ function startWebAuthListener(runner, wsId, cfg) {
   const handler = async (req, res) => {
     try {
       const u = new URL(req.url, cfg.redirect);
+      // 취소·거절(?error=access_denied 등, RFC 6749 §4.1.2.1) — 안내 없는 404면 사용자는 빈 화면을 보고
+      // 앱 폴링은 영원히 기다렸다(감사 K21). 이번 세션의 state일 때만 실패로 남긴다 — 루프백에 아무나
+      // error를 쏴 진행 중 로그인을 끊지 못하게. 벤더 문자열은 HTML에 넣지 않는다(고정 문구만).
+      const st = webAuthState[runner];
+      if (u.pathname === target.pathname && !u.searchParams.get('code') && u.searchParams.get('error')
+        && st?.state && u.searchParams.get('state') === st.state) {
+        webAuthState[runner] = { failed: u.searchParams.get('error').replace(/[^\w.-]/g, '').slice(0, 60) || 'error', failedWs: wsId, ts: Date.now() };
+        res.setHeader('content-type', 'text/html; charset=utf-8');
+        res.end(page('연결이 취소됐습니다', 'Argo로 돌아가 다시 시도해 주세요.'));
+        return;
+      }
       if (u.pathname !== target.pathname || !u.searchParams.get('code')) { res.statusCode = 404; res.end(); return; }
       const r = await submitRunnerWebAuth(wsId, runner, u.toString()); // 기존 검증 경로 그대로(state/verifier 확인 포함)
       res.setHeader('content-type', 'text/html; charset=utf-8');
       res.end(r.ok
         ? page('연결되었습니다', '이 창을 닫고 Argo로 돌아가세요 — 화면에 곧 "연결됨"이 표시됩니다.')
         : page('연결에 실패했습니다', 'Argo로 돌아가 다시 시도하거나, 이 페이지 주소를 복사해 붙여넣어 주세요.'));
-      if (r.ok) webAuthListeners[runner]?.close?.();
+      if (r.ok) entry.close(); // 등록부의 "현재" 리스너가 아니라 이 요청을 받은 자기 자신(K30)
     } catch { res.statusCode = 500; res.end(); }
   };
   const srv = createServer(handler);
-  srv.on('error', () => { delete webAuthListeners[runner]; /* EADDRINUSE 등 — 붙여넣기 폴백 */ });
+  srv.on('error', () => { if (webAuthListeners[runner] === entry) delete webAuthListeners[runner]; /* EADDRINUSE 등 — 붙여넣기 폴백 */ });
   srv.listen(Number(target.port), '127.0.0.1');
   // IPv6 루프백에도 같은 핸들러를 연다 — 벤더 주소는 `localhost`인데 이름 해석 결과는 환경마다
   // 갈린다(::1 우선이 흔하다). RFC 8252 §7.3이 "IPv4·IPv6 둘 다 바인드하고 되는 쪽을 쓰라"고
@@ -85,9 +96,17 @@ function startWebAuthListener(runner, wsId, cfg) {
   const srv6 = createServer(handler);
   srv6.on('error', () => { /* IPv6 미가용·중복 바인드 — IPv4로 충분하다 */ });
   try { srv6.listen(Number(target.port), '::1'); } catch { /* 위 error 핸들러가 받는다 */ }
-  const closeAll = () => { for (const x of [srv, srv6]) { try { x.close(); } catch { /* 이미 닫힘 */ } } delete webAuthListeners[runner]; };
-  webAuthListeners[runner] = { close: closeAll, address: () => srv.address(), v4: srv, v6: srv6 };
-  const ttl = setTimeout(closeAll, 10 * 60_000);
+  // 자기 자신만 닫고, 등록부에서도 자기일 때만 지운다. 옛 리스너의 TTL이 재시작한 새 리스너 참조를
+  // 지우면 다음 재시작이 살아 있는 리스너를 못 닫아 포트 충돌·옛 wsId 저장이 났다(감사 K30).
+  let ttl = null;
+  const closeAll = () => {
+    clearTimeout(ttl);
+    for (const x of [srv, srv6]) { try { x.close(); } catch { /* 이미 닫힘 */ } }
+    if (webAuthListeners[runner] === entry) delete webAuthListeners[runner];
+  };
+  const entry = { close: closeAll, address: () => srv.address(), v4: srv, v6: srv6 };
+  webAuthListeners[runner] = entry;
+  ttl = setTimeout(closeAll, 10 * 60_000);
   ttl.unref?.();
 }
 
@@ -227,6 +246,12 @@ export function webAuthDone(runner, wsId) {
   return !!(st?.saved && st.savedWs === wsId);
 }
 
+/** 웹 브리지 실패 사유(폴링용) — 콜백 리스너가 받은 취소·거절(error 코드). 없으면 null. */
+export function webAuthFailure(runner, wsId) {
+  const st = webAuthState[runner];
+  return st?.failed && st.failedWs === wsId ? st.failed : null;
+}
+
 /* ─── 기기 코드(device code) 흐름 — 콜백 리스너 없는 계정 로그인 ───
    콜백형(codex·gemini)과 **같은 상태통(webAuthState)·같은 완료 판정(webAuthDone)**을 쓴다.
    그래야 UI(runner-connect.jsx)의 "버튼 → 링크 → 폴링" 경로를 그대로 재사용하고, 완료 판정이
@@ -259,6 +284,7 @@ export async function pollRunnerDeviceAuth(runner, wsId) {
   if (!d) return { ok: false, reason: 'unsupported' };
   const st = webAuthState[deviceKey(runner, wsId)];
   if (st?.saved) return { ok: true }; // 이미 끝난 세션 — 다시 묻지 않는다(코드 1회용). 키에 스코프가 박혀 있다
+  if (st?.rejected) return { ok: false, reason: st.rejected }; // 검증에서 거절된 세션 — 소비된 코드로 다시 묻지 않는다
   if (!st?.deviceCode) return { ok: false, reason: 'no-session' };
   // 기기 코드 수명은 제공자가 준다(실측 1800초). 넘으면 다시 시작해야 한다 — 붙잡고 있으면 영원히 pending이다.
   if (Date.now() - st.ts > 30 * 60_000) return { ok: false, reason: 'expired' };
@@ -266,6 +292,13 @@ export async function pollRunnerDeviceAuth(runner, wsId) {
   try { r = await d.poll(st.deviceCode); } catch (e) { return { ok: false, reason: 'network', detail: String(e?.message || e).slice(0, 120) }; }
   if (r.pending) return { ok: false, pending: true, ...(r.slowDown ? { slowDown: true } : {}) }; // 제공자가 늦추라면 늦춘다(RFC 8628 §3.5)
   if (!r.ok) return { ok: false, reason: r.reason };
+  // 저장 전 실검증 — 키 저장 경로(keys route)와 같은 관문. 로그인은 되지만 API가 막힌 계정(등급·크레딧)이
+  // "연결됨" 뒤 전 턴 403으로만 드러나던 갭(감사 K31). ok:null(판정 불가)은 기존 관용대로 저장한다.
+  const v = await verifyRunnerCred(runner, 'oauth', r.tokens);
+  if (v.ok === false) {
+    webAuthState[deviceKey(runner, wsId)] = { rejected: v.reason || 'auth', ts: Date.now() };
+    return { ok: false, reason: v.reason || 'auth' };
+  }
   await saveRunnerCred(st.ws, runner, 'oauth', r.tokens);
   webAuthState[deviceKey(runner, wsId)] = { saved: true, savedWs: st.ws, ts: Date.now() };
   return { ok: true };

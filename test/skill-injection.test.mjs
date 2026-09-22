@@ -152,7 +152,7 @@ test('배선: route 주입 태깅·마켓 배지·MCP 러너 배너·스코프 �
   const runnersRoute = await readFile(new URL('../app/api/runners/route.js', import.meta.url), 'utf8');
   // 판정 자체는 코어 autoRunnerOf(= pickRunner ∘ 회사상태)가 단위로 잠근다(test/runners-route.test.mjs) —
   // 여기는 라우트가 그 코어 함수를 응답에 배선하는지만 본다(옛 인라인 pickRunner 앵커는 리팩터에 거짓 red).
-  assert.match(runnersRoute, /autoRunnerId: autoRunnerOf\(company\)/, '자동 러너 판정은 코어 단일 진실을 배선(폴백 순서 클라 복제 금지)');
+  assert.match(runnersRoute, /autoRunnerId: autoRunnerOf\(company, defaultRunner\)/, '자동 러너 판정은 코어 단일 진실을 배선(폴백 순서 클라 복제 금지) + 회사 기본 러너(K37)');
   assert.match(runnersRoute, /autoRunnerId/, '자동 크루의 실제 러너를 응답에 노출');
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(chat, /const fails = mcpFailures\(msg\)/, 'init에서 순수 판정 경유 소비(검수 M1)');

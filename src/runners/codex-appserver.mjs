@@ -8,7 +8,8 @@
 // (벤더 ServerRequest 스키마에 write_stdin 승인 없음) 판정 밖이다. 즉 게이트로 셸 읽기 유출을
 // **완전 차단하지는 못한다**. 자격 파일(.secrets.json 계열) 유출의 실질 방어는 at-rest 암호화(P1
 // 후속)이고, 이 게이트는 현행 danger-full-access(게이트 전무) 대비 순증이다(회귀 아님).
-// 마찬가지로 MCP 도구 호출·view_image는 codex 샌드박스 밖 경로라 이 게이트를 지나지 않는다(HIGH-3).
+// view_image는 codex 샌드박스 밖 경로라 이 게이트를 지나지 않는다(HIGH-3). MCP 도구 호출은 0.149.1에서 mcpServer/elicitation/request
+// (codex_approval_kind: mcp_tool_call)로 승인을 물어 게이트를 지난다(2026-09-22 실측 K94 — 전엔 빈 응답이라 전부 거절됐다).
 //
 // 계약 근거(전부 2026-08-28 실측 — 재검증은 scripts/runner-contract-probe.mjs):
 //  · JSONL 프레이밍(개행 구분 JSON-RPC), initialize→initialized→thread/start→turn/start
@@ -55,6 +56,14 @@ export function makeApprovalJudge(wsRoot, { workRoots = [], lang = 'ko' } = {}) 
           if ((await gate('Write', { file_path: String(p) })).behavior !== 'allow') return 'decline';
         }
         return 'accept';
+      }
+      if (kind === 'mcp') {
+        const server = String(payload?.server ?? ''); const tool = String(payload?.tool ?? '');
+        if (!server || !tool) return 'decline'; // 판정 불가
+        const params = payload?.params;
+        // 인자를 못 읽으면(모양 변경·문자열 등) 경로 검사를 할 수 없다 — 크루 서버 밖은 닫는다(fail-closed, 분리 검수 MED-5). 인자 없는 도구는 {}로 온다.
+        if (!params || typeof params !== 'object' || Array.isArray(params)) return server === 'crew' ? 'accept' : 'decline';
+        return (await gate(`mcp__${server}__${tool}`, params)).behavior === 'allow' ? 'accept' : 'decline';
       }
       return 'decline'; // 미지의 승인 종류 — 열지 않는다
     } catch {
@@ -136,9 +145,16 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
           const paths = (item?.changes ?? []).map((c) => c?.path).filter(Boolean);
           const decision = await judge('patch', { paths });
           write({ jsonrpc: '2.0', id: m.id, result: { decision } });
+        } else if (m.method === 'mcpServer/elicitation/request' && m.params?._meta?.codex_approval_kind === 'mcp_tool_call') {
+          // MCP 도구 호출 승인(0.149.1 실측 K94) — 빈 응답이면 codex가 거절해 크루·브라우저·연결 MCP가 이 경로에서 전부 막혔다.
+          // 도구 이름은 메시지에만 있다("…to run tool \"x\"?"). 판정은 SDK 턴과 같은 게이트(mcp__<서버>__<도구>) — 크루 도구는 통과, 그 밖은 인자 경로 검사.
+          const tool = String(m.params?.message ?? '').match(/run tool "([^"]+)"/)?.[1] ?? '';
+          const decision = await judge('mcp', { server: m.params?.serverName, tool, params: m.params?._meta?.tool_params });
+          write({ jsonrpc: '2.0', id: m.id, result: { action: decision === 'accept' ? 'accept' : 'decline', content: {} } });
         } else {
           // 미지의 서버 요청(권한 승격·사용자 입력·MCP elicitation 등) — 열어주지 않는다. 형식이 안 맞는
           // 응답에 codex는 fail-closed(스파이크 실측)라, 빈 응답 = 거부 방향으로 수렴한다.
+          console.warn(`[argo] codex app-server 요청 거부(미처리 종류): ${String(m.method).slice(0, 80)}`); // 거부가 조용하면 "도구가 안 된다"의 원인을 못 찾는다
           write({ jsonrpc: '2.0', id: m.id, result: {} });
         }
         return;
@@ -176,37 +192,40 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
     전부 동일 경로 재사용), 실행 방식만 exec→app-server. ARGO_CODEX_ENGINE=appserver일 때만 탄다. */
 export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko' }) {
   const dir = await mkdtemp(join(tmpdir(), 'argo-codex-as-'));
-  const baseHome = cred?.home ? cred.home : await codexHome();
-  const CODEX_HOME = join(dir, 'home');
-  await mkdir(CODEX_HOME, { recursive: true, mode: 0o700 });
-  const auth = await importCodexAuth(baseHome, CODEX_HOME);
-  await writeCodexTurnConfig(CODEX_HOME, mcpServers);
-  const cmd = await codexCmd(); // 관리본(핀) 우선 — exec 경로와 같은 조달 규율
-  // windowsHide — exec()(shared.mjs)와 동형. 없으면 윈도우 사이드카에서 턴마다 콘솔 창이 뜬다
-  // (2026-08-21 제보 계열, 분리 검수 MEDIUM-3). 스폰 실패·비정상 종료는 아래 child 이벤트로 잡는다.
-  const child = spawn(cmd.file, [...cmd.args, 'app-server'], {
-    cwd,
-    env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME },
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
-  const ownership = watchOwnedProcessTree(child);
+  let auth = null, child = null, ownership = null;
   let ownershipUnverified = false;
   let stderrTail = '';
-  child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
-  // child 실패를 세션과 경쟁시킨다(분리 검수 HIGH-1·MEDIUM-2). spawn 'error'(ENOENT 등)는 리스너가
-  // 없으면 uncaughtException으로 **상주 프로세스를 죽인다**(exec 경로는 promisify라 자동으로 거절이었다).
-  // 'exit'의 종료 코드는 exec 경로가 남기던 신호 — isProcessCrash(shared.mjs)가 'exited with code N'을
-  // 봐 윈도우 크래시(0xC0000005) 1회 재시도를 발동시킨다. 정상 완료(session resolve)가 먼저면 무시된다.
   let settled = false;
-  const childFail = new Promise((_, rej) => {
-    child.on('error', (e) => { if (!settled) rej(Object.assign(e, { stage: 'exec', stderr: stderrTail })); }); // e.code(ENOENT 등) 보존 → apiError가 CLI 미발견 번역
-    child.on('exit', (code, sig) => {
-      if (settled || code === 0 || code == null) return; // 정상·신호 종료(우리 kill)는 세션 결과가 정한다
-      rej(Object.assign(new Error(`app-server exited with code ${code}`), { code, stage: 'exec', stderr: stderrTail }));
-    });
-  });
+  // try는 mkdtemp 직후부터 — 자격 반입 뒤 준비(설정·codexCmd 조달·스폰)가 실패해도 finally가 임시 홈(auth.json
+  // 사본 포함)을 지운다(K76: runners.mjs K11과 같은 모양 — 전엔 이 구간이 try 밖이라 실패 시 자격 사본이 남았다).
   try {
+    const baseHome = cred?.home ? cred.home : await codexHome();
+    const CODEX_HOME = join(dir, 'home');
+    await mkdir(CODEX_HOME, { recursive: true, mode: 0o700 });
+    auth = await importCodexAuth(baseHome, CODEX_HOME);
+    await writeCodexTurnConfig(CODEX_HOME, mcpServers);
+    const cmd = await codexCmd(); // 관리본(핀) 우선 — exec 경로와 같은 조달 규율
+    // windowsHide — exec()(shared.mjs)와 동형. 없으면 윈도우 사이드카에서 턴마다 콘솔 창이 뜬다
+    // (2026-08-21 제보 계열, 분리 검수 MEDIUM-3). 스폰 실패·비정상 종료는 아래 child 이벤트로 잡는다.
+    child = spawn(cmd.file, [...cmd.args, 'app-server'], {
+      cwd,
+      env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    ownership = watchOwnedProcessTree(child);
+    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
+    // child 실패를 세션과 경쟁시킨다(분리 검수 HIGH-1·MEDIUM-2). spawn 'error'(ENOENT 등)는 리스너가
+    // 없으면 uncaughtException으로 **상주 프로세스를 죽인다**(exec 경로는 promisify라 자동으로 거절이었다).
+    // 'exit'의 종료 코드는 exec 경로가 남기던 신호 — isProcessCrash(shared.mjs)가 'exited with code N'을
+    // 봐 윈도우 크래시(0xC0000005) 1회 재시도를 발동시킨다. 정상 완료(session resolve)가 먼저면 무시된다.
+    const childFail = new Promise((_, rej) => {
+      child.on('error', (e) => { if (!settled) rej(Object.assign(e, { stage: 'exec', stderr: stderrTail })); }); // e.code(ENOENT 등) 보존 → apiError가 CLI 미발견 번역
+      child.on('exit', (code, sig) => {
+        if (settled || code === 0 || code == null) return; // 정상·신호 종료(우리 kill)는 세션 결과가 정한다
+        rej(Object.assign(new Error(`app-server exited with code ${code}`), { code, stage: 'exec', stderr: stderrTail }));
+      });
+    });
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
@@ -229,8 +248,8 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     }
     throw e;
   } finally {
-    await ownership.stop();
-    if (!ownershipUnverified) try { child.kill(); } catch { /* 이미 종료 */ }
+    await ownership?.stop(); // 준비 단계 실패면 child·ownership이 아직 없다
+    if (!ownershipUnverified) try { child?.kill(); } catch { /* 이미 종료 */ }
     await recoverCodexAuth(auth).catch(() => {});
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }

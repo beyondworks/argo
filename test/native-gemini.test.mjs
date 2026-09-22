@@ -350,7 +350,7 @@ test('G15. 검진 목적지(L3)·카드 표기(M2 핀) — verifyRunnerCred(gemi
   finally { await srv.close(); if (prev === undefined) delete process.env.GEMINI_BASE_URL; else process.env.GEMINI_BASE_URL = prev; }
   const jsx = await readFile(join(ROOT, 'app', 'runner-connect.jsx'), 'utf8');
   assert.match(jsx, /const shownMethod = \(type\) => \(methods\.includes\(type\) \? type : \(methods\[0\] \?\? 'apikey'\)\);/);
-  assert.match(jsx, /useState\(company\.connected \? shownMethod\(company\.type\) : 'apikey'\)/); assert.match(jsx, /if \(company\.connected\) setMethod\(shownMethod\(company\.type\)\);/);
+  assert.match(jsx, /useState\(company\.connected \? shownMethod\(company\.type\) : shownMethod\('apikey'\)\)/); assert.match(jsx, /if \(company\.connected\) setMethod\(shownMethod\(company\.type\)\);/); // 미연결도 제공 방식으로(K35 — apikey 없는 러너에 키 칸이 뜨던 것)
   const creds = await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8');
   assert.match(creds, /if \(runner === 'gemini' && credType\(type\) !== 'apikey'\) provisionGeminiCli\(\)/, 'API 키 저장은 CLI 조달 생략(L4)');
 });

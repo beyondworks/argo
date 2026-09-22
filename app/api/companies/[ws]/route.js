@@ -4,7 +4,8 @@ import { loadCompany, updateCompany, archiveCompany, paths } from '../../../../s
 import { listAgents, listDocs } from '../../../../src/hub.mjs';
 import { linkStats } from '../../../c/[ws]/graph2d-core.mjs'; // 연결 지표는 기억 그래프와 같은 셈법
 import { readDelegations } from '../../../../src/usage.mjs';
-import { readUsageSummary, monthCostByCrew } from '../../../../src/billing.mjs'; // 금액 집계는 billing 게이트로만
+import { readUsageSummary } from '../../../../src/billing.mjs'; // 금액 집계는 billing 게이트로만
+import { readRunnerLimits } from '../../../../src/runner-limits.mjs'; // 구독 잔여 한도(K91 — 금액 표시 대신) · 크루 대화창 입력줄 게이지(K92)
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
 import { nudgeSync } from '../../../../src/sync.mjs';
@@ -36,10 +37,11 @@ export async function GET(req, { params }) {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     // ?light=1 — 회사·크루만(사이드바 30초 폴·크루 대화창 진입용). 기억 1만 건 listDocs(첫 로드 ≈0.5~1초, 이후 캐시 수십 ms)·집계는 데크만 쓴다.
+    // 잔여 한도(limits)는 light에도 싣는다 — 크루 대화창 입력줄 게이지가 쓴다(K92). 자격 파일 + 작은 JSON 하나라 가볍다.
     const light = new URL(req.url).searchParams.get('light') === '1';
-    const [company, agents, docs, usage, delegations, payroll] = await Promise.all([
+    const [company, agents, docs, usage, delegations, limits] = await Promise.all([
       loadCompany(ws), listAgents(ws),
-      light ? [] : listDocs(ws), light ? null : readUsageSummary(ws), light ? [] : readDelegations(ws), light ? null : monthCostByCrew(ws),
+      light ? [] : listDocs(ws), light ? null : readUsageSummary(ws), light ? [] : readDelegations(ws), readRunnerLimits(ws).catch(() => []),
     ]);
     // 크루별 마지막 대화 시각 — chats/<slug>.json mtime(스레드 영속화의 단일 파일). 사이드바 안읽음 배지 판정용.
     // 대화 파일이 없으면(신규 크루) 필드 자체를 생략 — 클라이언트가 "기록 없음"으로 본다.
@@ -47,14 +49,14 @@ export async function GET(req, { params }) {
     await Promise.all(agents.map(async (a) => {
       try { a.chatTs = (await stat(join(chatsDir, `${a.slug}.json`))).mtimeMs; } catch { /* 대화 없음 */ }
     }));
-    if (light) return Response.json({ company, agents, light: true });
+    if (light) return Response.json({ company, agents, limits, light: true });
     const { deg, ...link } = linkStats(docs); // 1회 계산 — 다이얼·칩·표 열이 같은 셈법을 본다
     return Response.json({
       company, agents,
       memories: docs.slice(0, 6).map((d) => ({ ...d, deg: deg.get(d.rel) ?? 0 })), // 표 "연결" 열 = 해석 후 차수
       memoryCount: docs.length,
       stats: docStats(docs, link),
-      usage, delegations, payroll,
+      usage, delegations, limits,
     });
   } catch {
     // AUTH off(로컬 모드)에선 guardCompany가 회사 존재를 안 보므로 부재 404는 이 catch가 담당한다

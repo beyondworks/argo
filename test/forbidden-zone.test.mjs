@@ -597,3 +597,79 @@ test('윈도우식 홈 표기도 Bash 리터럴 방어 — Bash 도구가 PowerS
   for (const c of deny) assert.equal((await gate('Bash', { command: c })).behavior, 'deny', c);
   for (const c of ['Get-Content notes.md', 'echo $HOME', 'type %USERPROFILE%\\Desktop\\todo.txt', 'ls ~/projects']) assert.equal((await gate('Bash', { command: c })).behavior, 'allow', c);
 });
+
+// ── K68(D5): 재귀 루트 판정이 isForbidden과 같은 정규화를 쓴다 ──────────────────────
+// coversControl은 "검색 루트가 워크스페이스를 품는가"를 대소문자 구분 글자 비교(makeInWorkspace)로만 봐서,
+// 같은 회사 폴더를 대소문자 변형·틸드·심링크로 주면 denyScope가 불발하고 connections.json 같은 금고 내용이
+// 검색 결과로 나왔다(isForbidden은 이 형태들을 이미 정규화하는데 루트 판정만 갈렸다).
+test('K68: 회사 폴더를 대소문자 변형·틸드·심링크로 줘도 Grep/Glob 재귀 루트는 deny, 하위 폴더 검색은 allow', async () => {
+  const H = process.env.HOME;
+  const home = await mkdtemp(join(tmpdir(), 'argo-k68-home-'));
+  const ws = join(home, 'argo', 'k68-co');
+  await mkdir(join(ws, 'vault'), { recursive: true });
+  await mkdir(join(ws, 'skills'), { recursive: true });
+  await writeFile(join(ws, 'connections.json'), '{}');
+  const link = join(await mkdtemp(join(tmpdir(), 'argo-k68-link-')), 'co-link');
+  await symlink(ws, link);
+  process.env.HOME = home; // 틸드 확장 기준 — 게이트 생성 전에 둔다(홈은 env로만 읽힌다)
+  try {
+    const gate = makePermissionGate('k68-co', 's', ws);
+    const variants = [
+      ['~/argo/k68-co', '틸드 경로'],
+      [link, '회사 폴더를 가리키는 심링크'],
+      ...(process.platform === 'darwin' || process.platform === 'win32' ? [[join(dirname(ws), 'K68-CO'), '대소문자 변형(대소문자 무시 FS)']] : []),
+    ];
+    for (const [root, why] of variants) {
+      assert.equal((await gate('Grep', { pattern: 'token', path: root })).behavior, 'deny', `Grep ${why}`);
+      assert.equal((await gate('Glob', { path: root, pattern: '**/*.json' })).behavior, 'deny', `Glob ${why}`);
+    }
+    // path는 허용되는 vault — 절대 패턴은 path를 무시하고 베이스(~/argo/k68-co/)로 재루팅된다(globEnumBase)
+    assert.equal((await gate('Glob', { path: join(ws, 'vault'), pattern: '~/argo/k68-co/**/*.json' })).behavior, 'deny', 'Glob 틸드 절대 패턴(열거 베이스)');
+    // 인접 핀 — 책상 하위 검색은 형태와 무관하게 그대로 열려 있다(허용 분기는 폴딩하지 않는다)
+    for (const root of [join(ws, 'vault'), join(ws, 'skills'), '~/argo/k68-co/vault', join(link, 'skills')]) {
+      assert.equal((await gate('Grep', { pattern: 'x', path: root })).behavior, 'allow', `Grep ${root}`);
+      assert.equal((await gate('Glob', { path: root, pattern: '**/*.md' })).behavior, 'allow', `Glob ${root}`);
+    }
+  } finally {
+    if (H !== undefined) process.env.HOME = H; else delete process.env.HOME;
+  }
+});
+
+test('K68: scope 판정의 대소문자 폴딩 — realpath가 못 푸는 렉시컬 다리(아직 없는 회사 폴더)에서도 변형 루트를 품는다고 본다', { skip: !(process.platform === 'darwin' || process.platform === 'win32') }, async () => {
+  // 존재하는 폴더는 realpath가 대소문자를 정규화해 canonical 다리에서 잡힌다. 폴딩이 일하는 자리는 입력 대소문자가 남는 렉시컬 다리다.
+  const parent = await mkdtemp(join(tmpdir(), 'argo-k68-fold-'));
+  const f = makeIsForbidden(join(parent, 'new-co')); // 스캐폴드 전 — 회사 폴더가 아직 없다
+  assert.equal(await f(join(parent, 'NEW-CO'), 'scope'), true, '대소문자 변형 루트');
+  assert.equal(await f(join(parent, 'new-co', 'vault'), 'scope'), false, '하위 폴더는 품지 않는다');
+});
+
+test('K68: Windows 슬래시 형태 홈 경로와 USERPROFILE 홈도 Bash 리터럴 방어(HOME과 USERPROFILE이 다를 때)', async () => {
+  const H = process.env.HOME, U = process.env.USERPROFILE;
+  process.env.HOME = '/home/k68';           // HOME이 먼저 읽히는 환경(Git Bash 등) — 실제 프로필은 USERPROFILE
+  process.env.USERPROFILE = 'C:\\Users\\x';
+  try {
+    const wsRoot = join(await mkdtemp(join(tmpdir(), 'argo-k68-win-')), 'win-co'); await mkdir(wsRoot, { recursive: true });
+    const gate = makePermissionGate('win-co', 's', wsRoot, null, 'ko', []);
+    for (const c of ['type C:/Users/x/.codex/auth.json', 'Get-Content "C:/Users/x/.claude/.credentials.json"', 'cat /home/k68/.codex/auth.json']) {
+      assert.equal((await gate('Bash', { command: c })).behavior, 'deny', c);
+    }
+    for (const c of ['type C:/Users/x/Desktop/todo.txt', 'ls C:/Users/x', 'git status']) {
+      assert.equal((await gate('Bash', { command: c })).behavior, 'allow', c);
+    }
+  } finally {
+    if (H !== undefined) process.env.HOME = H; else delete process.env.HOME;
+    if (U !== undefined) process.env.USERPROFILE = U; else delete process.env.USERPROFILE;
+  }
+});
+
+test('MCP 인자 깊은 중첩 — 금고 경로를 5겹 넘게 숨겨도 막고, 깊은 정상 인자(노션 블록 모양)는 허용(분리 검수 2026-09-22 HIGH, K68 잔여)', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  let hidden = { path: join(wsRoot, 'capabilities.json') };
+  for (let i = 0; i < 6; i++) hidden = { wrap: hidden };
+  assert.equal((await gate('mcp__filesystem__write_file', hidden)).behavior, 'deny', '깊이 상한을 넘은 인자가 검사 없이 허용됐다');
+  let blocks = { type: 'paragraph', text: '회의록 정리' };
+  for (let i = 0; i < 10; i++) blocks = { type: 'toggle', children: [blocks] };
+  assert.equal((await gate('mcp__notion__append_block_children', { block_id: 'b1', children: [blocks] })).behavior, 'allow', '깊은 정상 인자가 막혔다(과차단 회귀)');
+  const huge = { items: Array.from({ length: 2500 }, (_, i) => ({ note: `n${i}` })) };
+  assert.equal((await gate('mcp__filesystem__write_file', huge)).behavior, 'deny', '끝까지 훑지 못한 인자는 닫는다');
+});

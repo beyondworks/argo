@@ -175,6 +175,8 @@ export async function clearRunnerCred(wsId, runner) {
 
 /** 온보딩 시드 — 회사 생성 전 그 사용자의 계정 스코프에 연결한 자격을 새 회사로 복사한다.
     uid = 회사를 만든 사용자(로컬 모드 'local'). 계정 자격은 남겨 다음 회사도 시드받는다(온보딩 1회 = 전 회사 혜택).
+    예외: codex 구독(oauth)은 이동 — refresh 토큰이 1회용 회전형이라 사본을 여럿 두면 한 회사가 회전하는 순간
+    나머지가 소비된 토큰이 된다("refresh token already used" 실측). 첫 회사만 받고 이후 회사는 미연결로 보인다.
     회사에 이미 있는 러너는 덮지 않는다. */
 export async function seedRunnerCreds(wsId, uid) {
   const acct = await loadSecrets(accountScope(uid)).catch(() => ({ runners: {} }));
@@ -182,10 +184,31 @@ export async function seedRunnerCreds(wsId, uid) {
   for (const [id, c] of Object.entries(acct.runners ?? {})) {
     if (!RUNNER_AUTH[id] || typeof c?.value !== 'string' || !c.value.trim()) continue;
     if (await loadRunnerCred(wsId, id)) continue;
-    await saveRunnerCred(wsId, id, c.type, c.value);
+    if (id === 'codex' && credType(c.type) === 'oauth') {
+      // 이동은 계정 잠금 안에서 "읽고 지우기"를 한 번에 — 같은 계정의 회사 생성이 겹치면 둘 다 스냅샷을 읽고 각자 저장해 회전형 토큰이 복제됐다(분리 검수 2026-09-22 HIGH, K24 잔여)
+      const moved = await takeAccountCred(uid, 'codex');
+      if (!moved) continue; // 다른 회사가 먼저 가져갔다
+      await saveRunnerCred(wsId, id, moved.type, moved.value).catch(async (e) => { await saveRunnerCred(accountScope(uid), id, moved.type, moved.value).catch(() => {}); throw e; }); // 저장 실패면 계정에 되돌린다(자격 유실 방지)
+    } else {
+      await saveRunnerCred(wsId, id, c.type, c.value);
+    }
     seeded += 1;
   }
   return seeded;
+}
+
+/** 계정 스코프 자격을 잠금 안에서 꺼내며 지운다(원자적 이동용) — 이미 없으면 null. clearRunnerCred와 같은 잠금·같은 쓰기 모양. */
+async function takeAccountCred(uid, runner) {
+  const scope = accountScope(uid);
+  return withDirLock(`${secretsFile(scope)}.lockd`, async () => {
+    const s = await loadSecrets(scope);
+    const c = s.runners?.[runner];
+    if (!c || typeof c.value !== 'string' || !c.value.trim()) return null;
+    const { claude, ...rest } = s;
+    delete rest.runners[runner];
+    await writeJsonAtomic(secretsFile(scope), rest);
+    return c;
+  });
 }
 
 /** 마스킹 — 접두사만(보안 규칙). 평문은 어디에도 남기지 않는다. */

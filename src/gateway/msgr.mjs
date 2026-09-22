@@ -478,35 +478,55 @@ function denyBody(why, crew, lang) {
   return pick(`지금은 ${crew.display_name}이(가) 이 지시를 받을 수 없습니다 — 크루 상태와 허용 범위를 확인해 주세요.`,
     `${crew.display_name} cannot take this request right now — check the crew status and who is allowed to instruct it.`, lang);
 }
-export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs } = {}) {
+/** 동시 실행 상한을 둔 map — 결과 순서는 입력 순서 그대로. (export: 회귀 테스트용) */
+export async function mapLimited(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => { for (;;) { const i = next++; if (i >= items.length) return; out[i] = await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs, housekeeping = true } = {}) {
+  // housekeeping=false = 새 메시지 방송이 깨운 tick(2026-09-23 '입력 중' 5~10초 지연 실측): 미러·하트비트·조직 문서는 15초 주기 tick에만 돈다 — 깨우기는 턴 적재만
   // 회사 소유자 게이트(실사고 2026-09-11): 같은 PC에서 다른 계정으로 로그인하면 기기 세션(uid)이 바뀌는데, 로컬 회사 폴더는 그대로라
   // 브리지가 남의 회사 크루를 그 계정의 조직에 미러·실행했다(lean-win에 Lean-AX 13명). 회사 목록 API(ownerId === user.id)와 같은 규칙으로 DB에 손대기 전에 끊는다.
   if (ownerId && ownerId !== uid) return { crews: 0, queued: 0, denied: 0, stale: 0, list: [], skipped: 'owner' };
   const crews = await db.myCrews(uid, wsId);
   const out = { crews: crews.length, queued: 0, denied: 0, stale: 0, list: crews };
-  if (nodeOrgId) { // 정보(러너·모델)는 CLI 감지를 스폰하므로 3초까지만 기다린다 — 감지가 멈춰도 생존 신호는 나간다(검수 M-5: 90초 넘기면 '연결 끊김'으로 뒤집히던 결합). I-4: 크루 0명이어도 노드는 살아 있다고 알린다
+  if (nodeOrgId && housekeeping) { // 정보(러너·모델)는 CLI 감지를 스폰하므로 3초까지만 기다린다 — 감지가 멈춰도 생존 신호는 나간다(검수 M-5: 90초 넘기면 '연결 끊김'으로 뒤집히던 결합). I-4: 크루 0명이어도 노드는 살아 있다고 알린다
     let timer; const info = await Promise.race([runnerInfo(wsId).catch(() => null), new Promise((r) => { timer = setTimeout(r, 3000, null); timer.unref?.(); })]).finally(() => clearTimeout(timer));
     await db.nodeHeartbeat(nodeOrgId, info).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message));
   }
   if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
-  if (!nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => { out.mirrorError = String(e?.message ?? e); console.error('[argo] msgr 크루 인벤토리 미러 실패:', out.mirrorError); }); // 브리지가 상태로 드러낸다(검수 MEDIUM-A: 로그만 남기고 '연결됨'이던 것)
-  if (commandsFor) await mirrorCommands(wsId, { db, uid, commands: await commandsFor(wsId) }).catch((e) => console.error('[argo] msgr 커맨더 목록 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
+  if (housekeeping && !nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => { out.mirrorError = String(e?.message ?? e); console.error('[argo] msgr 크루 인벤토리 미러 실패:', out.mirrorError); }); // 브리지가 상태로 드러낸다(검수 MEDIUM-A: 로그만 남기고 '연결됨'이던 것)
+  if (housekeeping && commandsFor) await mirrorCommands(wsId, { db, uid, commands: await commandsFor(wsId) }).catch((e) => console.error('[argo] msgr 커맨더 목록 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
   if (!crews.length) return out;
-  await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
-  await db.workHeartbeat?.(crews.map((c) => c.id)).catch((e) => console.warn('[argo] msgr work capability:', e.message));
-  for (const orgId of new Set(crews.map((c) => c.org_id))) { // G-2: 조직 문서 미러 — 바뀐 것만, 실패는 로그(턴 처리와 무관)
-    await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
+  if (housekeeping) {
+    await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
+    await db.workHeartbeat?.(crews.map((c) => c.id)).catch((e) => console.warn('[argo] msgr work capability:', e.message));
+    for (const orgId of new Set(crews.map((c) => c.org_id))) { // G-2: 조직 문서 미러 — 바뀐 것만, 실패는 로그(턴 처리와 무관)
+      await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
+    }
   }
   for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다
   const channelOf = async (id) => { if (!chCache.has(id)) chCache.set(id, await db.channel(id)); return chCache.get(id); };
   const parentCache = new Map(); // 이 틱 안의 답글 부모 → crew_id(사람 글이면 null) — 크루마다 다시 읽지 않는다(D38b)
   const replyParentCrew = async (m) => { if (!parentCache.has(m.reply_to)) { const p = await db.message(m.reply_to); parentCache.set(m.reply_to, p && !p.deleted_at && p.channel_id === m.channel_id && p.author_kind === 'crew' ? p.crew_id : null); } return parentCache.get(m.reply_to); };
-  for (const crew of crews) {
+  // 크루별 읽기 3종(DM·범위·받은 글)은 크루끼리 동시에 받아 둔다 — 순서대로면 크루 12명에 36왕복이 쌓였다(2026-09-23 실측 픽업 4~7초).
+  // 처리(적재·커서)는 아래에서 크루 순서대로. 받은 글 조회 실패는 그 크루 차례에 던진다(앞 크루는 종전처럼 처리된 뒤 drain 실패).
+  const CREW_FETCH_LIMIT = 8; // 순간 동시 요청 상한 — 크루 수에 비례해 폭발하지 않게(검수 L2). 총량은 종전과 같다
+  const pre = await mapLimited(crews, CREW_FETCH_LIMIT, async (crew) => {
     const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
     const member = await db.crewScope(crew.id).catch((e) => { console.error('[argo] msgr 채널 범위 조회 실패 — 이 크루는 이 틱에 답하지 않음(범위를 모르면 답하지 않는다):', e?.message ?? e); return null; });
+    if (!member) return { dm, member };
+    try { return { dm, member, msgs: db.crewInbox ? await db.crewInbox(wsId, crew.id, crew.cursor_msg_id ?? 0) : await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0) }; } catch (inboxError) { return { dm, member, inboxError }; }
+  });
+  for (const [ci, crew] of crews.entries()) {
+    const { dm, member, msgs, inboxError } = pre[ci];
     if (!member) continue; // 커서 유지 → 다음 틱 재시도
-    const msgs = db.crewInbox ? await db.crewInbox(wsId, crew.id, crew.cursor_msg_id ?? 0) : await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0);
+    if (inboxError) throw inboxError;
     let max = crew.cursor_msg_id ?? 0;
     const step = async (m) => { // 한 메시지 처리 — 예외(순단)는 이 크루의 커서만 보류하고 다른 크루·결재 동기화는 계속(검수 4R M-3)
       const copy = (m.mentions ?? []).some((x) => x?.kind === 'crew' && x.id === crew.id && x.role === 'cc');
@@ -644,6 +664,13 @@ export const _activeCtxForTest = activeCtx;
 const rtChannels = new Map(); // `${wsId}:${orgId}` → realtime channel(타이핑 방송용, start()가 채움 — 회사별로 분리, 같은 조직에 두 회사가 등록돼도 서로 해제하지 않는다)
 export const _rtChannelsForTest = rtChannels;
 const safeName = (n) => String(n ?? 'file').replace(/[\\/]/g, '_').replace(/\.\./g, '_').slice(0, 80) || 'file';
+// Storage 객체 키 — 앱 attach-files.mjs storageKey와 같은 규칙(ASCII만, 순번 접두로 겹침 방지). 한글 이름은 Storage가 'Invalid key'로 거부했다(라이브 2026-09-23). 표시 이름은 첨부 행 name에 원래대로
+export const storageKey = (name, index = 0) => { // export: 앱 규칙과의 교차 테스트용(검수 L5)
+  const raw = String(name ?? ''); const dot = raw.lastIndexOf('.');
+  const ext = dot > 0 ? raw.slice(dot + 1).replace(/[^A-Za-z0-9]/g, '').slice(0, 12) : '';
+  const stem = (dot > 0 ? raw.slice(0, dot) : raw).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '').slice(0, 60) || 'file';
+  return `${index}-${stem}${ext ? `.${ext}` : ''}`;
+};
 
 async function messengerReply(ctx, text, { db = null, lang = 'ko' } = {}) {
   const workReply = parseWorkReply(ctx.work, ctx.crewId, text);
@@ -752,12 +779,12 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
   const deliverAttachments = async (db, job, row, reply, lang) => {
     // 답변 속 파일 참조 → Storage 업로드 + 첨부 행. 실패는 채널에 알린다(침묵 금지).
     const fails = [];
-    for (const ref of extractFileRefs(reply)) {
+    for (const [i, ref] of extractFileRefs(reply).entries()) {
       const name = basename(ref);
       try {
         const buf = await readFile(join(paths(wsId).vault, ref));
         if (buf.length > ATTACH_MAX) throw Object.assign(new Error(pick('25MB 초과', 'over 25MB', lang)), { roomSafe: true }); // 방에 그대로 보여도 되는 사유
-        const path = `${job.orgId}/${job.channelId}/${row.id}/${safeName(name)}`;
+        const path = `${job.orgId}/${job.channelId}/${row.id}/${storageKey(name, i)}`;
         const mime = isImagePath(ref) ? `image/${ref.split('.').pop().toLowerCase().replace('jpg', 'jpeg')}` : '';
         await db.upload(path, buf, mime);
         await db.insertAttachment({ message_id: row.id, org_id: job.orgId, storage_path: path, name: safeName(name), mime, bytes: buf.length });
@@ -1207,11 +1234,29 @@ export async function createRequestedCrews(wsId, orgId, { db, uid, createCard = 
   return made;
 }
 
+/** 실행 중 호출을 버리지 않고 끝난 뒤 한 번 더 돈다(여러 번 와도 한 번). 인자는 merge로 합친다.
+    busy면 return하던 tick이 새 메시지 깨우기를 버려 다음 15초 폴까지 밀렸다(2026-09-23 실측). (export: 회귀 테스트용) */
+export function coalesce(fn, merge = (a, b) => b ?? a) {
+  let running = null; let pending = false; let pendingArg;
+  const run = (arg) => {
+    if (running) { pendingArg = pending ? merge(pendingArg, arg) : arg; pending = true; return running; }
+    running = (async () => {
+      try { return await fn(arg); } finally {
+        running = null;
+        if (pending) { const a = pendingArg; pending = false; pendingArg = undefined; run(a).catch(() => {}); }
+      }
+    })();
+    return running;
+  };
+  return run;
+}
+
 export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_MS } = {}) {
-  let stopped = false; let busy = false; let subscribedOrgs = new Set();
-  const tick = async () => {
-    if (stopped || busy) return;
-    busy = true;
+  let stopped = false; let subscribedOrgs = new Set(); let lastHousekeeping = 0; let lastMirrorError = null; // 미러는 주기 tick에서만 돈다 — 깨우기 tick이 '연결됨'으로 덮어쓰지 않게 마지막 결과를 들고 있는다(검수 M1)
+  // kind: 'poll'(주기·첫 tick) | 'wake'(방송 깨우기). 깨우기는 턴 적재만 — 관리 작업은 주기 tick 또는 주기만큼 밀렸을 때만
+  const tick = coalesce(async (kind = 'wake') => {
+    if (stopped) return;
+    const housekeeping = kind === 'poll' || Date.now() - lastHousekeeping >= pollMs;
     try {
       const c = await session();
       if (!c) { await beatGateway(wsId, MSGR_KEY, false, '기기 세션 없음 — 로그인 필요').catch(() => {}); return; }
@@ -1220,18 +1265,19 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       let company; try { company = await loadCompany(wsId); } catch (e) { await beatGateway(wsId, MSGR_KEY, false, `회사 설정을 읽지 못함 — ${String(e?.message ?? e).slice(0, 120)}`).catch(() => {}); return; }
       const { lang = 'ko', msgr, ownerId = null } = company;
       if (ownerId !== c.uid) { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return { skipped: 'owner' }; }
-      await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message));
-      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
+      if (housekeeping) { lastHousekeeping = Date.now(); await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message)); }
+      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId, housekeeping }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
       if (r.skipped === 'owner') { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }
-      if (/msgr_ws_owned_by_other/.test(r.mirrorError ?? '')) await beatGateway(wsId, MSGR_KEY, false, '이 회사 크루는 다른 계정 소유로 이미 등록돼 있어 올리지 못함 — 이 회사를 만든 계정으로 로그인하세요').catch(() => {});
+      if (housekeeping) lastMirrorError = r.mirrorError ?? null;
+      if (/msgr_ws_owned_by_other/.test((housekeeping ? r.mirrorError : lastMirrorError) ?? '')) await beatGateway(wsId, MSGR_KEY, false, '이 회사 크루는 다른 계정 소유로 이미 등록돼 있어 올리지 못함 — 이 회사를 만든 계정으로 로그인하세요').catch(() => {});
       else await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
       subscribe(c, r.list ?? [], msgr?.nodeOrgId ?? null); // I-5: 조직 회사는 크루 0명이어도 조직 토픽을 구독(크루 요청 신호)
       return r;
     } catch (e) {
       console.error(`[argo] msgr drain 실패(${wsId}):`, e.message);
       await beatGateway(wsId, MSGR_KEY, false, String(e.message).slice(0, 200)).catch(() => {});
-    } finally { busy = false; }
-  };
+    }
+  }, (a, b) => (a === 'poll' || b === 'poll' ? 'poll' : 'wake'));
   // Realtime = 깨우기 신호(정본은 커서 조회). 구독 실패해도 폴만으로 완결된다.
   const subscribe = (c, crews, extraOrg = null) => {
     const orgs = new Set(crews.map((x) => x.org_id));
@@ -1267,15 +1313,15 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       } catch (e) { console.warn('[argo] msgr realtime 구독 실패(u:):', e.message); }
     }
   };
-  const iv = setInterval(() => tick().catch(() => {}), pollMs);
+  const iv = setInterval(() => tick('poll').catch(() => {}), pollMs);
   iv.unref?.();
-  tick().catch(() => {});
+  tick('poll').catch(() => {});
   const stop = () => {
     stopped = true; clearInterval(iv);
     for (const orgId of subscribedOrgs) { const key = `${wsId}:${orgId}`; try { rtChannels.get(key)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(key); }
     subscribedOrgs = new Set();
     try { rtChannels.get(`${wsId}:u`)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(`${wsId}:u`);
   };
-  stop.nudge = () => tick().catch(() => {});
+  stop.nudge = () => tick('poll').catch(() => {}); // 수동 재연결·복구 신호는 관리 작업까지 한 번(검수 L1)
   return stop;
 }

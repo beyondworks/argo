@@ -20,6 +20,10 @@ export const SHELL_RULES = Object.freeze([
   { id: 'secret-file', ko: '시크릿 파일 접근', en: 'secret file access', re: /(?:^|[\s'"=/<>:])(?:\.env(?:\.[\w-]+)?|id_rsa|id_ed25519|\.netrc|\.pgpass)(?=$|[\s'";|&)])|~\/\.ssh\b|\.aws\/credentials\b/ },
   { id: 'pipe-to-shell', ko: '내려받아 바로 실행', en: 'download piped to shell', re: /\b(?:curl|wget)\b[^;&|]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b|\b(?:ba|z|da)?sh\s+<\(\s*(?:curl|wget)\b|(?:\b(?:ba|z|da)?sh\s+-c|\beval)\s+["']?\$\(\s*(?:curl|wget)\b/ }, // | python·bash <(curl)·sh -c "$(curl)"
   { id: 'disk-wipe', ko: '디스크 덮어쓰기', en: 'disk overwrite', re: /\bmkfs(?:\.\w+)?\b|\bdd\s+[^;&|]*\bof=\/dev\// },
+  // Windows(K74) — Bash 도구가 PowerShell·cmd 표면을 연다(#448). 둘 다 대소문자 무시. PowerShell 매개변수는 약어가 된다(-r·-rec = -Recurse),
+  // cmd는 /s가 재귀다. Remove-Item 별칭 rm·del·erase·ri·rd·rmdir 포함(rm -r·rmdir는 위 POSIX 규칙이 먼저 잡는다).
+  { id: 'win-recursive-delete', ko: '재귀 삭제', en: 'recursive delete', re: new RegExp(`${SEP}(?:remove-item|ri|rm|del|erase|rd|rmdir)\\s(?:[^;&|]*\\s)?(?:-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?|/s)\\b`, 'i') },
+  { id: 'volume-format', ko: '볼륨 포맷', en: 'volume format', re: new RegExp(`\\bformat-volume\\b|${SEP}format(?:\\.com)?\\s+[a-z]:`, 'i') },
 ]);
 
 /** 고위험이면 { id, label }, 아니면 null. lang은 label 언어. */
