@@ -102,9 +102,9 @@ export async function terminateOwnedProcessTree(child, ownership = null) {
 
 /** execFile-compatible result, with cancellation/timeout that ends commands spawned by the CLI too. */
 export function execTurnFile(command, args, options = {}) {
-  const { signal, timeout = 0, ...rest } = options;
+  const { signal, timeout = 0, input, ...rest } = options;
   if (signal?.aborted) return Promise.reject(Object.assign(new Error('중단됨'), { aborted: true }));
-  let child, timer, ownership, stopping = false, settled = false, finish;
+  let child, timer, exitGrace, ownership, stopping = false, settled = false, finish;
   const onAbort = () => cancel(false);
   const cancel = (timeoutReached = false) => {
     if (stopping || settled) return;
@@ -120,7 +120,7 @@ export function execTurnFile(command, args, options = {}) {
   const promise = new Promise((resolve, reject) => {
     finish = (error, stdout, stderr) => {
       if (settled) return; settled = true;
-      clearTimeout(timer); ownership?.stop(); signal?.removeEventListener('abort', onAbort);
+      clearTimeout(timer); clearTimeout(exitGrace); ownership?.stop(); signal?.removeEventListener('abort', onAbort);
       if (error) return reject(Object.assign(error, { stdout: stdout ?? '', stderr: stderr ?? '' }));
       resolve({ stdout, stderr });
     };
@@ -128,7 +128,23 @@ export function execTurnFile(command, args, options = {}) {
       if (!stopping) finish(error, stdout, stderr);
     });
     ownership = watchOwnedProcessTree(child);
-    child.stdin?.end();
+    // 루트가 끝났는데 3초 안에 close가 없으면 손자가 stdio를 물고 있는 것이다(K12) — 전엔 상한(30분)까지 기다려
+    // 성공 결과를 버리고 "시간 초과"가 됐다. 소유 트리를 최선 종료하고(루트가 이미 나가 확인 불가 오류는 삼킨다)
+    // stdio를 끊어 execFile 콜백이 루트가 낸 출력·종료 코드로 발화하게 한다. 중단·시간 초과가 먼저면 그쪽이 이긴다.
+    child.once?.('exit', () => {
+      exitGrace = setTimeout(() => {
+        if (stopping || settled) return;
+        terminateOwnedProcessTree(child, ownership).catch(() => {}).finally(() => {
+          if (stopping || settled) return;
+          child.stdout?.destroy(); child.stderr?.destroy();
+        });
+      }, 3000);
+      exitGrace.unref?.();
+    });
+    // input — 명령줄 길이 상한(Windows 32,767자·Linux 인자당 128KB)을 넘는 프롬프트를 표준 입력으로 준다(K01).
+    // 자식이 다 읽기 전에 끝나면 EPIPE가 난다 — 성패 판정은 execFile 콜백이 하므로 여기선 삼킨다.
+    if (input != null) child.stdin?.on('error', () => {});
+    child.stdin?.end(input);
     signal?.addEventListener('abort', onAbort, { once: true });
     if (signal?.aborted) onAbort();
     if (timeout > 0) { timer = setTimeout(() => cancel(true), timeout); timer.unref?.(); }

@@ -126,7 +126,8 @@ export function geminiMcpServers(mcpServers) {
     if (!def || typeof def !== 'object') continue;
     if (def.url && !def.command) { out[name] = { httpUrl: def.url, ...(def.headers ? { headers: def.headers } : {}) }; continue; }
     if (typeof def.command !== 'string' || !def.command.trim() || !commandExists(def.command)) { skipped.push(name); continue; }
-    out[name] = { command: def.command, ...(Array.isArray(def.args) && def.args.length ? { args: def.args.map(String) } : {}), ...(def.env && typeof def.env === 'object' ? { env: def.env } : {}) };
+    out[name] = { command: def.command, ...(Array.isArray(def.args) && def.args.length ? { args: def.args.map(String) } : {}), ...(def.env && typeof def.env === 'object' ? { env: def.env } : {}),
+      ...(Number.isInteger(def.toolTimeoutSec) && def.toolTimeoutSec > 0 ? { timeout: def.toolTimeoutSec * 1000 } : {}) }; // settings.json timeout(ms) — 크루 다리만(K94)
   }
   if (skipped.length) console.warn(`[argo] gemini MCP 제외(실행 파일 없음): ${skipped.join(', ')}`);
   return out;

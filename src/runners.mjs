@@ -12,6 +12,7 @@ import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
+import { recordCodexRollout } from './runner-limits.mjs'; // 구독 잔여 한도(K91)
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli } from './runners/codex.mjs';
@@ -96,7 +97,9 @@ export {
 export const CLI_CHAT_TURN_TIMEOUT_MS = 30 * 60_000;
 
 export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec', kind = 'chat' } = {}) {
-  if (e?.aborted || e?.cancellationIncomplete) return e;
+  // 정리 확인 불가(cancellationIncomplete)라도 시간 초과면 아래 시간 초과 안내로 번역한다 — 원문 'Runner timed out'이
+  // 사용자에게 그대로 나가던 자리(K13). 중단(aborted)은 그대로 돌려준다.
+  if (e?.aborted || (e?.cancellationIncomplete && !e?.timedOut)) return e;
   // 시간 초과 판정은 이중 조건 — 경과>=상한 **그리고** (우리 kill 흔적(killed) 또는 read 단계).
   // 경과만 보면 상한 직후 도착한 진짜 벤더 오류(예: 401)까지 '시간 초과'로 치환돼 AUTH_ERR_RE
   // 자가치유가 죽는다(분리 검수 M3 실측: 401@301s가 문구째 소실). killed는 exec 타이머 kill의
@@ -116,7 +119,7 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     return Object.assign(new Error(
       `시간 초과: 이 ${kind === 'job' ? '장시간 작업' : '턴'}이 상한 ${cap}을 넘겨 중단됐습니다. ${guide}`
       + `Timed out after the ${capEn} cap — ${guideEn}`,
-    ), { timedOut: true });
+    ), { timedOut: true, ...(e?.cancellationIncomplete ? { cancellationIncomplete: true, cause: e } : {}) }); // 자동 재개 차단 신호(chat.mjs) 보존
   }
   if (e?.code === 'ENOENT' && stage === 'read') {
     // read 단계 한정 — exec 단계 ENOENT는 "CLI 미설치/PATH"라는 정확한 기존 진단(apiError)이 있다.
@@ -156,19 +159,22 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
-    // 회사 자격(apikey·oauth 모두 격리 홈의 auth.json — 'clean'+env키 모드는 codex CLI가 env 키를
-    // 안 읽어 폐기 2026-07-26)이 있으면 그 홈, 없으면 호스트 로그인 상속
-    const baseHome = cred?.home ? cred.home : await codexHome();
-    // per-turn CODEX_HOME — baseHome은 회사 간 공유(codexHome)라 config.toml에 caps를 직접 쓰면 경합한다.
-    // 이번 턴 전용 홈을 만들고 auth.json만 베이스에서 심링크한 뒤 config.toml에 caps를 써넣는다(격리 + 버전 안정).
-    const CODEX_HOME = join(dir, 'home');
-    await mkdir(CODEX_HOME, { recursive: true, mode: 0o700 });
-    // 자격 반입(심링크 → 복사 폴백) + 턴 뒤 갱신 토큰 회수. 계약은 importCodexAuth/recoverCodexAuth의
-    // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
-    const auth = await importCodexAuth(baseHome, CODEX_HOME);
-    await writeCodexTurnConfig(CODEX_HOME, mcpServers); // MCP 주입만 — 샌드박스 섹션은 danger-full-access 전환으로 소멸
-    const cmd = await codexCmd(); // 관리본(핀) 우선 > 즉석 조달 > PATH 폴백(2026-08-25 반전) — 사용자 설치 없이도 돈다
+    let auth = null;
+    // try는 mkdtemp 직후부터 — 자격 반입 뒤 준비 단계(설정·codexCmd 조달)가 실패해도 finally가 임시 홈(auth.json
+    // 사본 포함)을 지운다(K11: 전엔 이 구간이 try 밖이라 조달 실패 시 자격 사본이 임시 폴더에 남았다).
     try {
+      // 회사 자격(apikey·oauth 모두 격리 홈의 auth.json — 'clean'+env키 모드는 codex CLI가 env 키를
+      // 안 읽어 폐기 2026-07-26)이 있으면 그 홈, 없으면 호스트 로그인 상속
+      const baseHome = cred?.home ? cred.home : await codexHome();
+      // per-turn CODEX_HOME — baseHome은 회사 간 공유(codexHome)라 config.toml에 caps를 직접 쓰면 경합한다.
+      // 이번 턴 전용 홈을 만들고 auth.json만 베이스에서 심링크한 뒤 config.toml에 caps를 써넣는다(격리 + 버전 안정).
+      const CODEX_HOME = join(dir, 'home');
+      await mkdir(CODEX_HOME, { recursive: true, mode: 0o700 });
+      // 자격 반입(심링크 → 복사 폴백) + 턴 뒤 갱신 토큰 회수. 계약은 importCodexAuth/recoverCodexAuth의
+      // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
+      auth = await importCodexAuth(baseHome, CODEX_HOME);
+      await writeCodexTurnConfig(CODEX_HOME, mcpServers); // MCP 주입만 — 샌드박스 섹션은 danger-full-access 전환으로 소멸
+      const cmd = await codexCmd(); // 관리본(핀) 우선 > 즉석 조달 > PATH 폴백(2026-08-25 반전) — 사용자 설치 없이도 돈다
       const run = await exec(cmd.file, [
         ...cmd.args,
         // danger-full-access — 유건 지시 2026-08-21 "샌드박스 없이". workspace-write + 홈 한정
@@ -180,8 +186,10 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
         ...codexEffortArgs(effort), // 크루별 추론 강도 — codex도 지원(실측 2026-07-26)
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
-        '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
-      ], { cwd, killTree: true, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
+        // 프롬프트는 표준 입력으로('-' = stdin에서 읽음, 핀 0.149.1 `codex exec --help`). 인자로 넘기면 Windows
+        // 32,767자·Linux 인자당 128KB를 넘는 턴이 "spawn ENAMETOOLONG"으로 죽었다(사용자 실측 K01).
+        '--', '-', // '--'는 유지 — 뒤 인자가 플래그로 해석되지 않게
+      ], { cwd, killTree: true, input: prompt, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
         .catch((e) => {
           const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'exec', kind });
           if (CODEX_LOCKUP_RE.test(String(e?.stderr ?? ''))) t.toolLockup = true; // 실패 턴에도 잠김 신호가 실리면 L2로
@@ -194,6 +202,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       return (await readFile(out, 'utf8').catch((e) => { throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'read', kind }); })).trim();
     } finally {
       await recoverCodexAuth(auth).catch(() => {}); // 복사 모드의 갱신 토큰 회수 — 임시 홈 삭제 전에
+      await recordCodexRollout(join(dir, 'home')).catch(() => {}); // 구독 잔여 한도(K91) — rollout도 임시 홈과 함께 지워지므로 그 전에
       await rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   }
@@ -210,13 +219,15 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
     // 검수 LOW-1) ② 0.21.2에선 두 채널 다 비대화(-p)에서 미적용이라 플래그가 이득도 없다(검수 실증).
     const { stdout } = await exec(cmd.file, [
       ...cmd.args,
-      '-p', prompt,
+      // 프롬프트는 표준 입력으로 — `-p ''`는 비대화 모드만 켜고, 본문은 stdin이 채운다(관리본 0.51.0 --help: "-p …
+      // Appended to input on stdin (if any)"). 인자로 넘기면 Windows 32,767자·Linux 인자당 128KB를 넘는 턴이 죽었다(K01).
+      '-p', '',
       ...(model ? ['-m', model] : []),
       // yolo — 유건 지시 2026-08-21 "샌드박스 없이, 다른 러너도 동일하게". auto_edit(편집만 자동
       // 승인)에선 셸이 비대화에서 실행 불가라 codex 크루는 되는 지시가 gemini 크루만 막혔다(러너
       // 중립성 위반). 벤더 choices 실측: default|auto_edit|yolo — yolo가 전권과 같은 방향이다.
       '--approval-mode', 'yolo',
-    ], { cwd, killTree: true, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
+    ], { cwd, killTree: true, input: prompt, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
       .catch((e) => { throw cliTurnFailure(e, 'gemini', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
     return stdout
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')
@@ -249,7 +260,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       // — --add-dir 플래그 존재만 실측(--help), 밖 접근이 실제로 막히는지는 미확인(검수 MEDIUM-3:
       // 본문과 같은 강도로 표기). 막는 버전이면 이 인자가 열고, 안 막는 버전이면 무해.
       ...agyDirArgs(effCaps, workRoots),
-      '--mode', 'accept-edits',
+      // readOnly(제3자 원문 요약 등)면 plan — 편집 자동 승인을 주지 않는다(K10, agy 1.2.7 --help: choices accept-edits·plan).
+      // codex read-only 분기와 같은 방향. 기본은 벤더 최대 자율 모드 accept-edits 그대로.
+      '--mode', readOnly ? 'plan' : 'accept-edits',
       ...(effCaps?.shell ? [] : ['--sandbox']), // fail-closed(분리 검수 H2) — caps 미전달(oneshot 등)·readOnly면 제한 켬. codex 상시 샌드박스와 같은 방향
       ...(agySec >= 25 ? ['--print-timeout', `${agySec}s`] : []),
     ], { cwd, killTree: true, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'antigravity'), ...(cred?.env ?? {}) } })
@@ -328,7 +341,8 @@ export async function runnerStatus(wsId) {
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
       webConnect: !!meta.webConnect, // 웹 브리지(로그인 URL 표시 + 코드 입력) — claude
       hostUsable: hostOptInAllowed(id), // "이 컴퓨터 로그인 사용" 옵트인 — claude는 non-standalone에서만(키체인)
-      cli: isCliTurn(id, credType(cred?.type ?? meta.methods?.[0])), // 실행 판정(runnerCredType)과 같은 정규화(검수 L2) // 외부 CLI 래핑 — 크루 도구(쪽지·루틴·위임)가 없어(chat.mjs hasTools:false) 카드가 정직 표기한다. 미연결이면 첫 연결 방식 기준(gemini=apikey → 네이티브 → false)
+      cli: isCliTurn(id, credType(cred?.type ?? meta.methods?.[0])), // 실행 판정(runnerCredType)과 같은 정규화(검수 L2) // 외부 CLI 래핑. 미연결이면 첫 연결 방식 기준(gemini=apikey → 네이티브 → false)
+      crewTools: !!RUNNERS[id]?.crewBridge, // 크루 다리 러너(codex)는 SDK와 같은 크루 도구를 쓴다(K94) — 카드 제한 안내는 cli && !crewTools만
       // claude 원클릭(setup-token)은 데스크톱 번들 사이드카에서만 완주 — 상주/웹은 붙여넣기가 정식 경로
       setupOneClick: id === 'claude' && process.env.ARGO_STANDALONE === '1',
       keyUrl: meta.keyUrl,

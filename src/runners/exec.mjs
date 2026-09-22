@@ -74,8 +74,15 @@ export function apiError(e, runner = null) {
       + 'Antigravity timed out — likely agy is not logged in on this machine (run agy in a terminal and sign in with Google), '
       + 'or the task exceeded the time limit.');
   }
-  const m = raw.match(/"message"\s*:\s*"([^"]+)"/);
-  return new Error(maskKeyLike(m ? m[1] : `러너 실행 실패 (exit ${e.code ?? '?'}): ${String(e.stderr ?? e.message).replace(/\s+/g, ' ').slice(-160)}`));
+  // 원인 문구는 stderr 우선, 없을 때만 stdout(K17) — stdout엔 크루가 실행한 명령의 JSON 출력이 섞여 첫 "message"가
+  // 원인을 덮었다(위 stderr 한정 원칙과 같은 이유). JSON 문자열 규칙으로 읽어 이스케이프 따옴표(\")에서 잘리지 않게 한다.
+  const pickMsg = (s) => {
+    const x = s.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (!x) return '';
+    try { return JSON.parse(`"${x[1]}"`); } catch { return x[1]; }
+  };
+  const m = pickMsg(scrub(e.stderr)) || pickMsg(scrub(e.stdout));
+  return new Error(maskKeyLike(m || `러너 실행 실패 (exit ${e.code ?? '?'}): ${String(e.stderr ?? e.message).replace(/\s+/g, ' ').slice(-160)}`));
 }
 
 /** 설치·인증 감지 — 각 CLI의 로그인 산출물(OAuth 크리덴셜 파일)을 본다.
@@ -103,7 +110,9 @@ export async function detectRunners(force = false) {
     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(geminiManagedEntry()),
     exec('agy', ['--version']).then((r) => r.stdout.trim(), () => null),
-    exists(join(home, '.local', 'bin', 'agy')), // 공식 인스톨러 고정 경로 — GUI PATH 누락 대비
+    exists(join(home, '.local', 'bin', 'agy')) // 공식 인스톨러 고정 경로 — GUI PATH 누락 대비
+      // Windows 공식 설치 경로(%LOCALAPPDATA%\agy\bin) — 실행(runners.mjs agyCmd)이 보는 경로를 감지도 본다(K08)
+      .then((ok) => ok || (process.platform === 'win32' && !!process.env.LOCALAPPDATA && exists(join(process.env.LOCALAPPDATA, 'agy', 'bin', 'agy.exe')))),
 
     exists(join(home, '.codex', 'auth.json')),
     exists(join(home, '.gemini', 'oauth_creds.json')),
@@ -137,17 +146,25 @@ export async function detectRunners(force = false) {
   return cache;
 }
 
+// 로그인·상태 확인 실행 파일 — 감지(detectRunners)가 관리본도 설치로 치므로 실행도 관리본을 본다(K05: 관리본만
+// 있는 기기에서 이름 'codex'로 스폰해 ENOENT, 폴링은 영원히 미인증). 턴(codexCmd)과 같은 관리본 우선이되,
+// 버튼·폴링이 ~100MB 조달·핀 승격을 떠안지 않게 존재만 본다. 자격은 HOME(~/.codex) 공유라 어느 쪽이든 같다.
+const connectBin = async (runner, c) => (runner === 'codex' && await exists(codexManagedBin()) ? codexManagedBin() : c.bin);
+
 /** OAuth 연결 시작 — 벤더 CLI의 브라우저 로그인을 서버가 대신 실행한다(서버가 사용자 PC에 있는
     로컬/데스크톱 전용). detached spawn이라 서버 응답을 막지 않고, CLI가 시스템 브라우저를 연다.
     완료는 runnerLoginStatus 폴링으로 감지. runner는 RUNNER_AUTH 화이트리스트 + 고정 인자라 인젝션 없음. */
 export async function startRunnerLogin(runner) {
   const c = RUNNER_AUTH[runner]?.connect;
   if (!c) return { ok: false, reason: 'unsupported' }; // claude(토큰 붙여넣기)·glm(API키)
-  const host = await detectRunners();
+  const host = await detectRunners(true); // 캐시 우회 — 방금 설치한 CLI를 10분 감지 캐시가 not-installed로 거절하지 않게(K07)
   if (!host[runner]?.installed) return { ok: false, reason: 'not-installed' }; // gemini 등 미설치
   try {
     // windowsHide — 로그인 CLI의 콘솔 창이 작업표시줄에 뜨지 않게(브라우저는 CLI가 따로 연다)
-    const child = spawn(c.bin, c.loginArgs, { detached: true, stdio: 'ignore', windowsHide: true });
+    const child = spawn(await connectBin(runner, c), c.loginArgs, { detached: true, stdio: 'ignore', windowsHide: true });
+    // 스폰 실패(ENOENT·EACCES)는 동기 throw가 아니라 비동기 'error' 이벤트다 — 리스너가 없으면 서버의 미처리
+    // 예외가 되고 사용자에겐 ok(브라우저 열림)로 거짓 안내됐다(K05). 뜬 것을 확인한 뒤에만 ok를 돌려준다.
+    await new Promise((res, rej) => { child.once('spawn', res); child.once('error', rej); });
     child.unref(); // 서버와 독립 실행 — 브라우저 로그인이 끝날 때까지 서버를 막지 않는다
     return { ok: true };
   } catch (e) {
@@ -161,8 +178,12 @@ export async function runnerLoginStatus(runner) {
   if (!c) return { supported: false, authed: false };
   await ensureCliPath(); // GUI 기동 PATH 보강
   // codex login status는 "Logged in ..."을 stderr로 낸다 — stdout·stderr 둘 다 검사
-  const r = await exec(c.bin, c.statusArgs).catch((e) => e); // 비영점 종료도 출력은 캡처됨
-  return { supported: true, authed: !!r && c.ok.test(`${r.stdout || ''}\n${r.stderr || ''}`) };
+  const r = await exec(await connectBin(runner, c), c.statusArgs).catch((e) => e); // 비영점 종료도 출력은 캡처됨
+  const authed = !!r && c.ok.test(`${r.stdout || ''}\n${r.stderr || ''}`);
+  // 로그인 완료를 관찰한 자리 — 감지 캐시를 버린다. 10분 캐시가 옛 authed:false를 들고 있으면 저장된 host 마커가
+  // runnerStatus에서 그동안 '재연결 필요'로 남았다(K77). runnerStatus 자체는 캐시를 계속 쓴다(페이지마다 2.7초 방지).
+  if (authed) cache = null;
+  return { supported: true, authed };
 }
 
 /* ─── Claude 원클릭 연결 — 공식 `claude setup-token`을 서버가 PTY로 대행(로컬/데스크톱 전용) ───
@@ -380,7 +401,9 @@ export async function startClaudeSetupToken(wsId) {
   };
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);
-  child.on('exit', () => finish('failed', '로그인이 완료되지 않았습니다 — 브라우저에서 승인한 뒤 표시된 코드를 입력칸에 붙여넣어야 완료됩니다. 다시 시도하거나 토큰을 직접 붙여넣어 주세요'));
+  // 'close'(stdio까지 다 닫힘)로 판정 — 'exit'는 출력이 다 비기 전에 올 수 있어 마지막 토큰 청크를 버리고
+  // 성공을 실패로 표시했다(K06, Node 문서: exit 시점에 stdio 스트림이 아직 열려 있을 수 있다).
+  child.on('close', () => finish('failed', '로그인이 완료되지 않았습니다 — 브라우저에서 승인한 뒤 표시된 코드를 입력칸에 붙여넣어야 완료됩니다. 다시 시도하거나 토큰을 직접 붙여넣어 주세요'));
   child.on('error', (e) => finish('failed', String(e.message || e).slice(0, 160)));
   return { ok: true };
 }

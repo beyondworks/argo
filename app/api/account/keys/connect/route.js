@@ -8,6 +8,7 @@ import {
   startRunnerDeviceAuth, pollRunnerDeviceAuth,
   startClaudeSetupToken, setupTokenStatus, submitSetupCode,
 } from '../../../../../src/runners.mjs';
+import { webAuthFailure } from '../../../../../src/runners/webauth.mjs'; // 취소·거절 사유(K21) — 폴링이 멈출 근거
 import { currentUser, tenantDenied, authError, requestLang } from '../../../../auth.mjs';
 
 /** 통과 시 { scope }(그 사용자의 계정 스코프), 위반 시 { denied: Response }. */
@@ -61,7 +62,8 @@ export async function GET(req) {
   if (meta.webConnect) {
     // 웹 브리지 완료 = 계정 자격 존재
     // 완료 = 이번 브리지 세션의 저장 완료(webAuthDone) — 자격 존재 판정은 재연결이 승인 전 거짓 '연결됨'(감사 2026-07-20)
-    return Response.json({ supported: true, authed: webAuthDone(runner, g.scope) });
+    const failed = webAuthFailure(runner, g.scope); // 취소·거절 — UI 폴링은 pending 아닌 reason에서 멈춘다
+    return Response.json({ supported: true, authed: webAuthDone(runner, g.scope), ...(failed ? { reason: failed } : {}) });
   }
   return Response.json(await runnerLoginStatus(runner));
 }

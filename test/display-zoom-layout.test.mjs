@@ -634,7 +634,8 @@ test('deck grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(0,�
   // grid가 수집·역방향 양쪽을 지나가는 fail-open(분리 검수 M-1 실측: 무잠금 inline-grid·x ? 'grid' : 'flex' 추가가 전건 초록).
   const GRID_RE = /display:\s*[^,}]*grid/;
   const grids = styles.filter((s) => GRID_RE.test(s.body));
-  assert.ok(grids.length >= 11, `grid 인라인 ${grids.length}곳(현재 11) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+  // 10 = 11에서 급여 대장 grid(K91 금액 표시 제거)가 빠짐. 잔여 한도 줄은 데크가 아니라 크루 입력줄 게이지로 옮겼다(K92).
+  assert.ok(grids.length >= 10, `grid 인라인 ${grids.length}곳(현재 10) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
   for (const g of grids) {
     const colDecls = (g.body.match(/gridTemplateColumns/g) ?? []).length;
     const lockedCols = /gridTemplateColumns:\s*['"`][^'"`]*minmax\(0,/.test(g.body)

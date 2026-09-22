@@ -159,9 +159,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // 429(요청 한도)는 자가치유 대상이 아니다 — 일시적 한도인데 다른 벤더로 넘기면 사용자 고지 없이
     // 실제 과금 키로 갈아타게 된다(2R 검수 M1). 402(지속적 잔액 소진)와 달리 기다리면 풀린다.
     if (/openrouter-limit/.test(String(e.message))) {
-      throw Object.assign(new Error(lang === 'en'
+      throw Object.assign(new Error((lang === 'en'
         ? 'OpenRouter rate limit reached (free models: 20/min, and 50/day until $10+ in lifetime credits). Wait a moment and try again, or switch to a paid model.'
-        : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델로 바꿔 주세요.' + otherCauses()), { cause: e });
+        : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델로 바꿔 주세요.') + otherCauses()), { cause: e });
     }
     // 러너 프로세스가 크래시로 죽었으면 **같은 러너로 1회 먼저** 다시 건다. 크래시는 자격·크레딧이
     // 아니라 그 순간 프로세스가 죽은 것이라 대개 다시 걸면 붙는다. 아래 러너 교체보다 앞에 둔다 —
@@ -187,9 +187,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // 402(크레딧 소진)는 연결 문제가 아니다 — "연결 상태 확인" 안내는 키 정상·연결됨 표시와 모순돼
     // 사용자를 오도한다(2R 검수 N2, oneshot 상단 주석의 2026-07-20 모순과 동일 계열). 충전처를 준다.
     if (/openrouter-credit/.test(String(e.message))) {
-      throw Object.assign(new Error(lang === 'en'
+      throw Object.assign(new Error((lang === 'en'
         ? 'OpenRouter credit balance is too low. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.'
-        : 'OpenRouter 크레딧 잔액이 부족합니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.' + otherCauses()), { cause: e });
+        : 'OpenRouter 크레딧 잔액이 부족합니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.') + otherCauses()), { cause: e });
     }
     // xAI도 같은 계열 — 잔액·구독 문제지 연결 문제가 아니다. 위 러너 교체를 먼저 태운 뒤(다른
     // 러너가 연결돼 있으면 영입·기억정리가 살아난다) 갈 곳이 없을 때 충전·구독처를 준다.
@@ -200,9 +200,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // 정상인 사용자가 이 문구를 받고 "러너 연결 정상인데 왜 계속 실패하죠?"라고 되물었다. 우리가 이미
     // 재시도·러너 교체까지 해봤다는 사실과, 이게 연결·잔액 문제가 아니라는 사실을 그대로 말한다.
     if (isProcessCrash(e?.message)) {
-      throw Object.assign(new Error(lang === 'en'
+      throw Object.assign(new Error((lang === 'en'
         ? `The AI program crashed on this computer (it was terminated by the OS, not by Argo). This is not a connection or credit problem — Argo already retried and tried other connected runners. If it keeps happening, reinstalling the runner CLI usually fixes it; security software blocking the process is the other common cause. (${String(e.message).slice(0, 120)})`
-        : `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다(Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다). 연결이나 크레딧 문제가 아닙니다 — Argo가 이미 다시 시도했고, 연결된 다른 러너로도 넘겨봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다. (${String(e.message).slice(0, 120)})` + otherCauses()), { cause: e });
+        : `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다(Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다). 연결이나 크레딧 문제가 아닙니다 — Argo가 이미 다시 시도했고, 연결된 다른 러너로도 넘겨봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다. (${String(e.message).slice(0, 120)})`) + otherCauses()), { cause: e });
     }
     // 엔드포인트 404 — chat과 같은 안내를 여기에도(검수 MEDIUM-3: 402·429·크래시는 양쪽에 있는데 404만
     // 한쪽이었다). oneshot은 온보딩·크루 영입·루틴·기억정리 경로라, base URL이 어긋난 셀프호스트가

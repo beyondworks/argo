@@ -35,6 +35,9 @@ export const RUNNERS = {
     // 받는다(2026-08-21). antigravity는 설정이 호스트 HOME 전용이라 회사별 주입을 하지 않는다. 화면 경고가 kind만 보면 codex 크루에게
     // "어차피 안 돈다"는 거짓을 말하게 된다(분리 검수 2026-08-19 MED-C).
     name: 'Codex', kind: 'cli', mcp: true,
+    // 크루 다리(K94) — 턴마다 격리 홈(mkdtemp)에 config.toml을 써서 동시 턴의 릴레이 토큰이 섞이지 않는 CLI만 켠다.
+    // gemini CLI는 회사당 홈 하나(gemini-home-<ws>)라 동시 턴이 settings.json을 덮어써 다른 크루 신원으로 도구가 돌 수 있다(분리 검수 HIGH-2) — 지시 블록 유지.
+    crewBridge: true,
     models: [
       // GPT-5.6 패밀리(2026-07-09) — Sol(플래그십)·Terra(중간)·Luna(경량). sol id는 로컬 codex 설정으로 실증
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
@@ -416,9 +419,10 @@ export function pickRunner(st, want, exclude = null, { defaultRunner = null } = 
     /api/runners가 이 값을 autoRunnerId로 내려주고 크루 카드가 CLI 경고 판정에 쓴다(검수 PR #209 L4:
     클라가 폴백 순서를 복제하면 갈라진다). 라우트가 아니라 코어에 두는 이유: 라우트 파일은 auth 계층
     (next/headers)에 묶여 Next 밖 단위 테스트가 열 수 없다 — 판정은 코어, 라우트는 배선만.
+    defaultRunner = 회사 기본 러너(company.json) — resolveRunner와 같은 인자를 받아야 판정이 안 갈린다(K37).
     (export: 회귀 테스트용) */
-export function autoRunnerOf(company) {
-  const auto = company ? pickRunner(company, null) : null;
+export function autoRunnerOf(company, defaultRunner = null) {
+  const auto = company ? pickRunner(company, null, null, { defaultRunner }) : null;
   return auto?.available ? auto.runner : null;
 }
 

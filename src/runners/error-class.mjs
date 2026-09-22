@@ -20,9 +20,12 @@ export const OAUTH_SESSION_EXPIRED_RE = /oauth session expired|could not be refr
 // 인증 실패 원문(러너 무관) — 네이티브 엔진·SDK가 내는 `API Error: 401 …`류를 플래그 없이도 분류한다(하네스 통일 P-A).
 // 403은 구독 차단·정책·권한이 섞여 있어 넣지 않는다(구독 차단은 위에서 먼저 잡힌다).
 export const AUTH_TEXT_RE = /\b401\b|invalid (?:api[- ]?key|x-api-key|token|credentials?)|authentication[_ ]error|unauthori[sz]ed/i;
-export const QUOTA_RE = /weekly limit|rate.?limit|too many requests|\b429\b|quota exceeded|usage limit|run out of credits|insufficient.*(credit|balance|fund)|\b402\b/i;
+// session limit — 벤더 원문 "You've hit your session limit · resets 2:20pm (Asia/Seoul)"(사용자 피드백 2026-09-10, K02)
+export const QUOTA_RE = /weekly limit|session limit|rate.?limit|too many requests|\b429\b|quota exceeded|usage limit|run out of credits|insufficient.*(credit|balance|fund)|\b402\b/i;
 export const OVERLOADED_RE = /\boverloaded\b|\b529\b|\b503\b|connection closed mid-response|server-side issue|\bECONNRESET\b|\bETIMEDOUT\b/i;
-export const CLI_MISSING_RE = /러너 CLI를 찾지 못했습니다|runner cli not found|\bENOENT\b|command not found/i;
+// 확정 문구만 본다 — 진짜 CLI 미발견은 apiError(exec.mjs)가 e.code/짧은 stderr로 판정해 이 문구로 바꿔 준다.
+// 원문 전체의 ENOENT·command not found를 보면 크루 셸 출력이 섞인 인증 만료·한도 실패까지 덮었다(K09).
+export const CLI_MISSING_RE = /러너 CLI를 찾지 못했습니다|runner cli not found/i;
 export const MODEL_UNAVAILABLE_RE = /does not support this model|model not found|unknown model|requested entity was not found|no such model|invalid model/i;
 
 /** 코드 표 — UI i18n 키(chat.fail.<code>)와 1:1. 새 코드는 여기와 i18n에 **동시에**(테스트가 대조). */

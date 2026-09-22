@@ -17,7 +17,11 @@
 const BT = '`'; // 백틱 — String.raw 템플릿 안에 직접 못 쓴다(리터럴 종결)
 // 경로: 유닉스 절대/홈 + 윈도우 드라이브(역슬래시·슬래시 둘 다 — C:/ 형태에서 드라이브가 잘리면
 // 홈 판정이 뒤집혀 카드가 억제된다, 검수 2R MEDIUM-2). 드라이브 대안을 앞에 둬 leftmost 매칭.
-const PATH = String.raw`([A-Za-z]:[\\/][^\s'"${BT},)]+|(?:\/|~\/)[^\s'"${BT},)]+)`;
+// 공백 뒤 조각은 다음 구분자(/ \)가 이어질 때만 경로로 잇는다 — "C:\Users\John Doe\a.txt"가 "C:\Users\John"으로
+// 잘려 홈 판정이 뒤집히던 것(K14). 경로 뒤 문장("… while saving")은 구분자가 없어 먹히지 않는다.
+const SEG = String.raw`[^\s'"${BT},)]+`;
+const TAIL = String.raw`(?: [^\s'"${BT},)\\/]+(?=[\\/])${SEG})*`;
+const PATH = String.raw`((?:[A-Za-z]:[\\/]|\/|~\/)${SEG}${TAIL})`;
 // 접두 토큰: ASCII 계열만(명령·파일명·"Error") — 한글 서두("참고:"·"주의:")가 통과하면
 // 설명문이 생 출력으로 오인된다(검수 2R MEDIUM-1).
 const PRE = String.raw`(?:[\w./\\-]{1,40}:\s*){0,2}`;
@@ -114,8 +118,8 @@ export function detectRunnerDenial(text) {
   return null;
 }
 
-/** 거부 안내문(순수) — 전권 모델: 거부의 원인은 능력 토글이 아니라 codex 샌드박스 쓰기 범위
-    (홈·지정 작업 폴더 밖)나 OS 권한·네트워크다. 원인을 단정하지 않고 후보를 나열한다(검수 MEDIUM-3).
+/** 거부 안내문(순수) — 전권 모델: 거부의 원인은 능력 토글이 아니라 러너 쓰기 범위(gemini·agy의 홈·지정
+    작업 폴더 밖 — codex는 2026-08-21부터 범위 없음)나 OS 권한·네트워크다. 원인을 단정하지 않고 후보를 나열한다(검수 MEDIUM-3).
     (능력 OFF·켜기 카드 갈래는 전권 전환으로 도달 불가가 되어 제거 — 분리 검수 2026-07-30) */
 export function denialNote({ cap, path = '', lang = 'ko', outsideHome = false, narration = false, runner = '' }) {
   const en = lang === 'en';
@@ -130,9 +134,14 @@ export function denialNote({ cap, path = '', lang = 'ko', outsideHome = false, n
           ? ' Note: on older Gemini CLI builds the work-folder expansion is ignored by the vendor — if it stays blocked after registering, have the crew save into the company folder (or assign the task to a crew on another runner).'
           : ' 참고: 구버전 Gemini CLI는 벤더 제한으로 작업 폴더 확장이 무시될 수 있습니다 — 등록해도 계속 막히면 결과물을 회사 폴더로 받거나 다른 러너 크루에게 맡겨 주세요.')
       : '';
+    // 범위 갈래는 codex엔 없다(danger-full-access — 아래 strict 갈래와 같은 이유, K14). OS 안내는 서버가 사용자 OS를
+    // 단정하지 않고 macOS·Windows 둘 다 준다(strict 갈래와 같은 관례 — 윈도우 사용자에게 macOS 메뉴만 주던 것).
+    const scope = runner === 'codex' ? '' : (en
+      ? ' If the target is outside your home folder or registered work folders, add it under **Settings → Work folders** and retry.'
+      : ' 대상이 홈 폴더·지정 작업 폴더 밖이면 **설정 → 작업 폴더**에 등록 후 다시 시도해 주세요.');
     return en
-      ? `\n\n---\n⚠ This looks like a blocked file access (based on the crew's own report). If the target is outside your home folder or registered work folders, add it under **Settings → Work folders** and retry. If it's inside your home folder, check OS permissions (**System Settings → Privacy & Security → Files and Folders**, allow Argo, restart the app).${gemCaveat}`
-      : `\n\n---\n⚠ 파일 접근이 막힌 것으로 보입니다(크루 보고 기반). 대상이 홈 폴더·지정 작업 폴더 밖이면 **설정 → 작업 폴더**에 등록 후 다시 시도해 주세요. 홈 안인데도 막히면 OS 권한을 확인해 주세요(**시스템 설정 → 개인정보 보호 및 보안 → 파일 및 폴더**에서 Argo 허용 후 앱 재시작).${gemCaveat}`;
+      ? `\n\n---\n⚠ This looks like a blocked file access (based on the crew's own report).${scope} Otherwise check OS permissions: on macOS, **System Settings → Privacy & Security → Files and Folders**, allow Argo and restart the app; on Windows, check the folder isn't read-only or under controlled folder access.${gemCaveat}`
+      : `\n\n---\n⚠ 파일 접근이 막힌 것으로 보입니다(크루 보고 기반).${scope} 그 밖이면 운영체제 권한을 확인해 주세요 — macOS는 **시스템 설정 → 개인정보 보호 및 보안 → 파일 및 폴더**에서 Argo 허용 후 앱 재시작, 윈도우는 폴더가 읽기 전용인지·제어된 폴더 액세스가 걸려 있는지 확인해 주세요.${gemCaveat}`;
   }
 
   if (cap === 'browser') {
@@ -140,7 +149,9 @@ export function denialNote({ cap, path = '', lang = 'ko', outsideHome = false, n
       ? `\n\n---\n⚠ The network was blocked. Likely one of: ① an actual network problem (offline, VPN, firewall), ② the runner connection not picking up settings — try reconnecting the runner in **Settings → AI connections** (or updating its CLI).`
       : `\n\n---\n⚠ 네트워크가 막혔습니다. 다음 중 하나일 수 있습니다: ① 실제 네트워크 문제(오프라인·VPN·방화벽), ② 러너 연결에 설정이 반영되지 않음 — **설정 → AI 연결**에서 러너 재연결(또는 CLI 업데이트)을 시도해 주세요.`;
   }
-  const candidates = outsideHome
+  // codex는 2026-08-21부터 danger-full-access(샌드박스 없음 — runners.mjs) — 쓰기 범위가 없어 "홈·작업 폴더 밖"은 원인이
+  // 될 수 없다(K14). 범위 갈래는 반경이 남은 러너(gemini includeDirectories·agy --add-dir)에만 준다.
+  const candidates = outsideHome && runner !== 'codex'
     ? (en
         ? `The target is outside your home folder — this runner writes inside your home folder and the work folders you registered. Register that folder in **Settings → Work folders**, or move the file under your home folder, and I'll retry.`
         : `대상이 홈 폴더·지정 작업 폴더 밖입니다 — 이 러너의 쓰기 범위는 거기까지입니다. **설정 → 작업 폴더**에 그 폴더를 등록하시거나 파일을 홈 안으로 옮겨 주시면 다시 시도하겠습니다.`)

@@ -18,6 +18,7 @@ await writeFile(join(BIN, 'codex'), `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "codex-cli 0.0.0-fake"; exit 0; fi
 OUT=""; prev=""; last=""
 for a in "$@"; do if [ "$prev" = "--output-last-message" ]; then OUT="$a"; fi; prev="$a"; last="$a"; done
+[ "$last" = "-" ] && last="$(cat)" # 진짜 codex exec 계약: 프롬프트 자리가 - 면 stdin에서 읽는다(K01 — 러너가 프롬프트를 stdin으로 넘긴다)
 printf '%s\\n=====\\n' "$last" >> "$PWD/.cli-prompts.log"
 [ -n "$OUT" ] && printf 'y done' > "$OUT"
 exit 0

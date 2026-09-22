@@ -1,8 +1,9 @@
 // Codex 러너 — 격리 홈·CLI 자동 조달·샌드박스/추론 강도 인자·auth 반입/회수·턴 config.
 // (runners.mjs 관심사 분리 2026-07-28)
 
-import { readFile, copyFile, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { readFile, copyFile, mkdir, mkdtemp, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { exec, exists } from './shared.mjs';
@@ -14,6 +15,7 @@ async function codexHome() {
   const dir = join(homedir(), '.argo', 'codex-home');
   await mkdir(dir, { recursive: true, mode: 0o700 }); // 턴 홈(mkdtemp·0700)과 같은 등급 — 여기엔 auth.json 심링크가 산다
   if (!(await exists(join(dir, 'auth.json')))) {
+    // auth 원본은 importCodexAuth가 host(~/.codex/auth.json)를 직접 본다(K26) — 이 심링크는 실패해도 턴 자격과 무관
     await symlink(join(homedir(), '.codex', 'auth.json'), join(dir, 'auth.json')).catch(() => {});
   }
   if (!(await exists(join(dir, 'config.toml')))) {
@@ -86,7 +88,10 @@ async function adoptInto(dest, src) {
 // 지운다(분리 검수 MEDIUM-1). 인프로세스 단일 비행(codexProvisioning)은 프로세스 경계를 못 넘으므로
 // mkdir 락(쪽지 선점과 같은 프리미티브 — rename 승자 가정이 윈도우에서 깨졌던 전례)으로 감싼다.
 const CODEX_LOCK_DIR = `${CODEX_TOOL_DIR}.lockd`;
-const LOCK_STALE_MS = 15 * 60_000; // 다운로드 최장(자산별 300s×2) + 여유
+// 보유자는 LOCK_BEAT_MS마다 락 mtime을 갱신한다(심박) — 잔재 판정은 "다운로드 최장"이 아니라 "심박이 끊긴 지 오래"다.
+// 예전 15분 고정은 연결 직후 앱이 죽으면 15분간 첫 대화가 120초 대기 뒤 거짓 문구로 죽었다(K25).
+const LOCK_BEAT_MS = 15_000;
+const LOCK_STALE_MS = 4 * LOCK_BEAT_MS;
 async function withCodexLock(fn) {
   // **부모 먼저 만든다**(C1 회귀 수정 2026-08-26): CODEX_TOOL_DIR 생성은 락 안(fn)에 있으므로, 락
   // 디렉터리의 부모(~/.argo/tools)가 없으면 mkdir(lock)이 ENOENT로 실패하고 아래 catch가 그걸 "보유자
@@ -106,7 +111,9 @@ async function withCodexLock(fn) {
       await new Promise((r) => setTimeout(r, 1500));
     }
   }
-  try { return await fn(); } finally { await rm(CODEX_LOCK_DIR, { recursive: true, force: true }).catch(() => {}); }
+  const beat = setInterval(() => { const t = new Date(); utimes(CODEX_LOCK_DIR, t, t).catch(() => {}); }, LOCK_BEAT_MS); // 심박 — 살아 있는 보유자를 잔재로 오판하지 않게
+  beat.unref?.();
+  try { return await fn(); } finally { clearInterval(beat); await rm(CODEX_LOCK_DIR, { recursive: true, force: true }).catch(() => {}); }
 }
 
 export async function provisionCodexCli({ force = false } = {}) {
@@ -257,7 +264,11 @@ export function codexEffortArgs(effort) {
     베이스 홈에 자격 파일이 없는 경우(호스트 미로그인 등)는 mode:'none'이 정상이다 — 던지지 않는다.
     (과거 'clean'+env키 모드 언급은 폐기 — codex CLI가 env 키를 안 읽어 apikey도 auth.json 경유다.) */
 export async function importCodexAuth(baseHome, turnHome) {
-  const src = join(baseHome, 'auth.json');
+  // 기본 홈(codexHome)이면 host 원본을 직접 본다(K26): 기본 홈의 auth.json은 host로 가는 심링크뿐이라,
+  // 심링크가 막힌 Windows에선 비어 있어 복사 폴백도 실패 → 자격 없는 턴 홈 → 401. 회사 자격 홈은 불변.
+  const src = baseHome === join(homedir(), '.argo', 'codex-home')
+    ? join(homedir(), '.codex', 'auth.json')
+    : join(baseHome, 'auth.json');
   const dst = join(turnHome, 'auth.json');
   try {
     await symlink(src, dst);
@@ -265,7 +276,8 @@ export async function importCodexAuth(baseHome, turnHome) {
   } catch {
     try {
       await copyFile(src, dst);
-      return { mode: 'copy', src, dst };
+      // 반입 시점 내용의 지문 — 회수는 "CLI가 이 사본을 실제로 바꿨는가"로만 판정한다(K27: copyFile은 mtime을 보존하지 않는다)
+      return { mode: 'copy', src, dst, seed: createHash('sha256').update(await readFile(dst)).digest('hex') };
     } catch {
       return { mode: 'none', src, dst };
     }
@@ -279,10 +291,12 @@ export async function recoverCodexAuth(handle) {
   if (handle?.mode !== 'copy') return false;
   // 크로스 프로세스 잠금(불변식 B) — 복사 폴백(Windows 심링크 EPERM)에서 병렬 턴 둘이 각자 회전한 사본을
   // 되돌리면 나중 쓰기가 앞 쓰기의 회전 토큰을 지운다("refresh token already used" 실측 2건과 같은 클래스).
-  // mtime 비교와 복사를 같은 락 안에서 한다 — 비교만 밖에서 하면 TOCTOU.
+  // 비교와 복사를 같은 락 안에서 한다 — 비교만 밖에서 하면 TOCTOU.
+  // 판정은 내용 지문(seed)이다(K27): mtime 비교는 copyFile이 mtime을 보존하지 않아 갱신 안 한 병렬 사본도 "새것"으로 보였고,
+  // 그 사본이 원본을 덮어 mtime을 올리면 정작 회전된 사본의 회수가 건너뛰어졌다. CLI가 사본을 바꾼 경우에만 되돌린다.
   return withDirLock(`${handle.src}.lockd`, async () => {
-    const [a, b] = await Promise.all([stat(handle.dst).catch(() => null), stat(handle.src).catch(() => null)]);
-    if (!a || !b || !(a.mtimeMs > b.mtimeMs)) return false;
+    const [a, b] = await Promise.all([readFile(handle.dst).catch(() => null), stat(handle.src).catch(() => null)]);
+    if (!a || !b || createHash('sha256').update(a).digest('hex') === handle.seed) return false;
     await copyFile(handle.dst, handle.src);
     return true;
   });
@@ -340,6 +354,8 @@ export async function writeCodexTurnConfig(home, mcpServers = null) {
       lines.push(`[mcp_servers.${key}]`);
       lines.push(`command = ${JSON.stringify(def.command)}`);
       if (Array.isArray(def.args) && def.args.length) lines.push(`args = [${def.args.map((a) => JSON.stringify(String(a))).join(', ')}]`);
+      // 도구 호출 상한(초) — Argo 크루 다리만 싣는다(동기 위임이 동료 턴 끝까지 기다림, K94). 하위 표(.env)보다 앞이어야 이 서버 키가 된다.
+      if (Number.isInteger(def.toolTimeoutSec) && def.toolTimeoutSec > 0) lines.push(`tool_timeout_sec = ${def.toolTimeoutSec}`);
       if (def.env && typeof def.env === 'object') {
         lines.push(`[mcp_servers.${key}.env]`);
         for (const [k, v] of Object.entries(def.env)) lines.push(`${k} = ${JSON.stringify(String(v))}`);

@@ -2,7 +2,23 @@
 // 목적: "영입했는데 뭐라고 시키지?"의 빈 화면(첫 3분 이탈)을 없앤다. 실패해도 영입은 유효하다.
 import { chat } from './chat.mjs';
 import { appendTurn } from './thread.mjs';
-import { resolveRunner, visibleRunnerNamesLine } from './runners.mjs'; // 실패 원인 판별 — "연결 없음"과 "연결됐는데 실행 실패"를 구분
+import { resolveRunner, visibleRunnerNamesLine, runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, onlyHiddenConnectedStatus } from './runners.mjs'; // 실패 원인 판별 — "연결 없음"과 "연결됐는데 실행 실패"를 구분
+
+/** 가용 러너가 없을 때의 실제 사유 — 제공 중단 방식·제공 종료 러너·무효 자격·진짜 미연결을 가른다(K39: 전부 "연결 안 됨"으로
+    뭉쳐 연결해 둔 사용자에게 거짓 처방이 됐다). 판정은 chat.mjs의 !available 분기와 같은 전용 함수를 쓴다. 서버측이라 ko/en 병기. */
+async function notConnectedReply(wsId) {
+  const st = await runnerStatus(wsId).catch(() => null); // resolveRunner가 방금 데운 감지 캐시를 탄다
+  const unsupported = unsupportedMethodStatus(st);
+  if (unsupported.length) return `${unsupportedMethodNotice('ko', unsupported)}\n\n${unsupportedMethodNotice('en', unsupported)}`;
+  if (onlyHiddenConnectedStatus(st)) {
+    return `연결된 러너는 더 이상 제공되지 않습니다. 설정 → AI 연결에서 다른 러너(${visibleRunnerNamesLine()})를 연결하면 바로 일을 시작할게요.\n\nThe connected runner is no longer offered. Connect another runner (${visibleRunnerNamesLine('en')}) in Settings → AI connections and I'll get started right away.`;
+  }
+  const invalid = Object.entries(st ?? {}).filter(([, r]) => r?.company?.connected && r.company.invalid).map(([id, r]) => r.name || id);
+  if (invalid.length) {
+    return `연결해 두신 ${invalid.join('·')} 자격을 지금은 쓸 수 없어요(로그아웃·만료 등). 설정 → AI 연결에서 다시 연결하면 바로 일을 시작할게요.\n\nYour ${invalid.join(', ')} connection can't be used right now (signed out or expired). Reconnect it in Settings → AI connections and I'll get started right away.`;
+  }
+  return `AI 연결이 아직 안 되어 있어요. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결하면 바로 일을 시작할게요.\n\nAI isn't connected yet. Connect any runner (${visibleRunnerNamesLine('en')}) in Settings → AI connections and I'll get started right away.`;
+}
 
 const TRIAL_PROMPT = `방금 이 회사에 영입되었다. 사장에게 첫 인사를 하라.
 ① 두 문장 자기소개 — 무엇을 맡고, 어떻게 일하는지.
@@ -35,7 +51,7 @@ export function runTrialTurn(wsId, slug) {
       // 서버측이라 UI 언어를 모른다 — ko/en 병기(다국어 규칙: 하드코딩 단일언어 금지)
       const reply = connected
         ? `첫 시운전이 실패했어요 — AI 연결은 되어 있으니 지시를 한 번 더 보내주시면 이어서 시작할게요.\n(원인: ${m.slice(0, 200)})\n\nThe trial run failed — your AI runner is connected, so just send an instruction and I'll pick it up.\n(Reason: ${m.slice(0, 200)})`
-        : `AI 연결이 아직 안 되어 있어요. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결하면 바로 일을 시작할게요.\n\nAI isn't connected yet. Connect any runner (${visibleRunnerNamesLine('en')}) in Settings → AI connections and I'll get started right away.`;
+        : await notConnectedReply(wsId);
       await appendTurn(wsId, slug, {
         userMsg: '(영입 시운전) 첫 인사와 샘플 산출물을 보여주세요.',
         reply, handover: null, sessionId: null,

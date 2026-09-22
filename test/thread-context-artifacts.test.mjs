@@ -33,6 +33,7 @@ for a in "$@"; do
   if [ "$prev" = "--output-last-message" ]; then OUT="$a"; fi
   prev="$a"; last="$a"
 done
+[ "$last" = "-" ] && last="$(cat)" # 진짜 codex exec 계약: 프롬프트 자리가 - 면 stdin에서 읽는다(K01 — 러너가 프롬프트를 stdin으로 넘긴다)
 printf '%s\\n=====\\n' "$last" >> "$PWD/.fake-prompts"
 [ -n "$OUT" ] && printf '이어서 정리했습니다.' > "$OUT"
 exit 0

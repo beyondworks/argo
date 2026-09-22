@@ -1,6 +1,7 @@
 import { RUNNERS, detectRunners, runnerStatus, autoRunnerOf, isHiddenRunner } from '../../../src/runners.mjs';
 import { isRetiredRunner } from '../../../src/runners/catalog.mjs';
 import { effectiveModels, loadRemoteCatalog } from '../../../src/runners/catalog-remote.mjs'; // 원격 카탈로그 오버레이(불변식 D)
+import { loadCompany } from '../../../src/workspace.mjs';
 import { guardCompany } from '../../auth.mjs';
 
 // 러너 카탈로그 + 설치·연결 상태 — 크루 편집 모달·크루 카드·채팅 셀렉터가 먹는다.
@@ -10,9 +11,13 @@ import { guardCompany } from '../../auth.mjs';
 export async function GET(req) {
   const ws = new URL(req.url).searchParams.get('ws');
   let company = null;
+  let statusError = false;
+  let defaultRunner = null; // 회사 기본 러너 — 턴(resolveRunner)과 같은 인자로 자동 러너를 판정(K37). 읽기 실패 = 기존 순서
   if (ws) {
     const denied = await guardCompany(ws); if (denied) return denied;
-    company = await runnerStatus(ws).catch(() => null);
+    // 조회 실패(자격 파일 손상 등)를 삼키면 전 러너가 '연결 필요'로 그려진다 — 실패는 statusError로 알린다(K38)
+    company = await runnerStatus(ws).catch((e) => { console.error(`[argo] 러너 상태 조회 실패(${ws}):`, e?.message ?? e); statusError = true; return null; });
+    defaultRunner = (await loadCompany(ws).catch(() => null))?.defaultRunner ?? null;
   }
   const status = await detectRunners();
   // 숨김 러너(gemini)도 목록에 **남긴다** — hidden 표지만 싣는다. 목록에서 빼면 이미 gemini로 지정된 크루의 셀렉터가
@@ -32,5 +37,5 @@ export async function GET(req) {
   });
   // 자동 크루의 실제 러너 — 판정은 코어(autoRunnerOf = pickRunner ∘ 회사상태), 여긴 배선만.
   // 클라가 폴백 순서를 복제하면 갈라진다(검수 L4: 경고 조건 r.id===sel.runner가 영원히 거짓).
-  return Response.json({ runners, autoRunnerId: autoRunnerOf(company) });
+  return Response.json({ runners, autoRunnerId: autoRunnerOf(company, defaultRunner), ...(statusError ? { statusError: true } : {}) });
 }
