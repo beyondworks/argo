@@ -44,6 +44,7 @@ import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from '
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
 
 export const MSGR_KEY = 'msgr';
+export const HEARTBEAT_WRITE_MS = 30_000; // 심박 쓰기 최소 간격 — 행 나이 최대 45초 + 앱 재조회 30초 < 판정 90초(검수 #689 M3: 60초면 온라인 크루가 주기적으로 부재중)
 export const POLL_MS = 15_000;          // 폴 주기 = 하트비트 주기(같은 tick). 앱은 last_seen_at 90s 초과를 부재중으로 그린다
 export const STALE_MS = 24 * 3_600_000; // 이보다 오래 대기한 지시는 실행 대신 정직 폐기(queue.mjs LEGACY_JOB_MAX_AGE_MS 관례)
 export const AWAY_NOTE_MS = 90_000;     // 이보다 늦게 처리한 답글엔 "(부재중 대기분 · N분 전 지시)" 접두
@@ -176,7 +177,10 @@ export function makeDb(client) {
       return unwrap(await q.maybeSingle());
     },
     async heartbeat(ids) {
-      if (ids.length) unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids));
+      // HEARTBEAT_WRITE_MS(30초) 넘게 지난 행만 쓴다 — 15초 틱마다 모든 크루 행을 갱신해 msgr_crews가 분당 1,335행씩 다시 써졌다(2026-09-23 DB 점검).
+      // 부재중 판정은 전부 90초(앱 AWAY_MS·work_runs·handoff) — 행 나이 최대 45초에 앱 재조회 30초를 더해도 안쪽.
+      if (ids.length) unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids)
+        .or(`last_seen_at.is.null,last_seen_at.lt.${new Date(Date.now() - HEARTBEAT_WRITE_MS).toISOString()}`));
     },
     /** 크루 인벤토리(2026-09-07 유건 지시 "슬랙처럼 내 에이전트 목록"): 내가 활성 멤버인 조직 목록. */
     async myOrgIds(uid) {

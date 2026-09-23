@@ -6,6 +6,7 @@ import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { psqlSpawn } from './helpers/pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
@@ -137,4 +138,81 @@ test('ack가 커서보다 앞서면 게이트를 우회해 커서를 올린다',
   assert.deepEqual(updates(m1), []); assert.deepEqual(updates(m1), []);
   assert.equal(cursor(), m1);
   assert.deepEqual(updates(plain), []); assert.equal(cursor(), plain, '유휴 중에도 ack는 반영');
+});
+
+// 2026-09-23 VPS 응답 지연(픽업 중앙값 614초): 받을 글이 없는 봇은 ack가 없어 커서가 0에 머물렀고, 매 스캔마다 조직 글 451건을
+// 배달 판정 함수로 다시 훑다가 3초 statement_timeout에 걸렸다(봇당 하루 약 200회). 아무것도 못 준 전체 스캔이면
+// 10분 넘은 글까지 커서를 넘긴다 — 최근 10분 안의 대기 글(초대 직후 배달·순서 대기)은 종전대로 남는다.
+test('아무것도 못 준 전체 스캔은 10분 넘은 글까지 커서를 넘긴다(최근 글은 남긴다)', { skip }, () => {
+  const old = post(PUB, '봇과 무관한 옛 글');
+  sql(`update public.msgr_messages set created_at = now() - interval '11 minutes' where id = ${old}`);
+  const fresh = post(PUB, '봇과 무관한 새 글');
+  assert.deepEqual(updates(m1), []);
+  assert.equal(cursor(), old, '옛 글까지만 전진 — 새 글은 커서 뒤에 남는다');
+  assert.ok(Number(fresh) > Number(cursor()));
+  assert.deepEqual(updates(old), []); m1 = old;
+});
+
+test('배달한 스캔에서는 커서를 ack 밖으로 넘기지 않는다', { skip }, () => {
+  const stale = post(PUB, '무관 글');
+  sql(`update public.msgr_messages set created_at = now() - interval '11 minutes' where id = ${stale}`);
+  const want = post(PUB, '@헤르메스 받아', mention());
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [want]);
+  assert.equal(cursor(), m1, '돌려준 글이 있으면 커서는 ack만 따른다');
+  assert.deepEqual(updates(want), []); m1 = want;
+});
+
+// 검수 #689 HIGH-1·MEDIUM-1 재현 핀: 커서 전진이 "나중에 배달될 수 있는 글"을 건너뛰면 안 된다.
+const age = (id, iv) => sql(`update public.msgr_messages set created_at = now() - interval '${iv}' where id = ${id}`);
+const rescan = () => sql(`update public.msgr_bots set scan_at = now() - interval '31 seconds' where id = '${BOT}'`);
+test('A: 파견 해제 중 받은 멘션은 10분이 넘어도 재개 뒤 배달된다', { skip }, () => {
+  sql(`update public.msgr_crews set status = 'detached' where id = '${BOT_CREW}'`);
+  const held = post(PUB, '@헤르메스 멈춘 동안', mention()); age(held, '11 minutes');
+  assert.deepEqual(updates(m1), []);
+  sql(`update public.msgr_crews set status = 'active' where id = '${BOT_CREW}'`); rescan();
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [held]);
+  assert.deepEqual(updates(held), []); m1 = held;
+});
+test('B: 초대 전 멘션은 10분이 넘어도 초대 뒤 배달된다(방장 결재가 늦는 경우)', { skip }, () => {
+  const PRIV2 = last(asUser(U.admin, `select public.msgr_create_channel('${ORG}', 'private', 'late-invite')`));
+  const s = post(PRIV2, '@헤르메스 비밀', mention(), U.admin); age(s, '11 minutes');
+  assert.deepEqual(updates(m1), []);
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV2}', 'crew', '${BOT_CREW}', '${U.admin}')`);
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [s]);
+  assert.deepEqual(updates(s), []); m1 = s;
+});
+test('C: 과거 시각(created_at)으로 넣은 글이 최근 대기 글을 건너뛰게 하지 못한다', { skip }, () => {
+  const PRIV3 = last(asUser(U.admin, `select public.msgr_create_channel('${ORG}', 'private', 'backdate')`));
+  const fresh = post(PRIV3, '@헤르메스 방금', mention(), U.admin);
+  last(asUser(U.member, `insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body, created_at) values ('${ORG}', '${PUB}', 'user', '${U.member}', 'backdated', now() - interval '1 day') returning id`));
+  assert.deepEqual(updates(m1), []);
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV3}', 'crew', '${BOT_CREW}', '${U.admin}')`);
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [fresh]);
+  assert.deepEqual(updates(fresh), []); m1 = fresh;
+});
+
+// 재검수 #689 HIGH-2 재현 핀(D): 진행 중 트랜잭션의 멘션은 id가 먼저 잡히고 늦게 보인다 — 그 사이 빈 스캔이 커서를 그 id 너머로 넘기면 영영 못 받는다.
+test('D: 늦게 커밋된 멘션(낮은 id)은 그 사이 빈 스캔이 있어도 커밋 뒤 배달된다', { skip }, async () => {
+  const old = post(PUB, '옛 무관 글'); age(old, '11 minutes');
+  const slow = spawn('psql', [DB, '-X', '-q', '-c', `begin; set role authenticated; select set_config('argo.uid', '${U.owner}', true); insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body, mentions) values ('${ORG}', '${PUB}', 'user', '${U.owner}', '@헤르메스 느린 커밋', '${mention()}'::jsonb); select pg_sleep(3); commit;`]);
+  const done = new Promise((r) => slow.on('exit', r));
+  await new Promise((r) => setTimeout(r, 1200));
+  post(PUB, '빠른 무관 글');
+  rescan(); assert.deepEqual(updates(m1), [], '보이는 글 중엔 받을 게 없다');
+  assert.equal(await done, 0);
+  const x = sql(`select id from public.msgr_messages where body = '@헤르메스 느린 커밋'`);
+  rescan(); assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [x], '커서가 느린 멘션을 넘기지 않았다');
+  assert.deepEqual(updates(x), []); m1 = x;
+});
+
+// 재검수 #689 MEDIUM-4 재현 핀(F): 1:1의 크루 자기 답글은 이 크루를 겨냥한 글이 아니다 — 7일 동안 커서를 묶으면 매 스캔이 다시 전체를 훑는다.
+test('F: 1:1의 크루 자기 답글·지운 글은 커서를 묶지 않는다', { skip }, () => {
+  const dm = last(sql(`insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'dm', 'dm-f', '${U.owner}') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${dm}', 'user', '${U.owner}'), ('${dm}', 'crew', '${BOT_CREW}')`);
+  sql(`insert into public.msgr_messages (org_id, channel_id, author_kind, crew_id, body) values ('${ORG}', '${dm}', 'crew', '${BOT_CREW}', '내 답글')`);
+  const gone = post(PUB, '@헤르메스 지울 글', mention()); sql(`update public.msgr_messages set deleted_at = now() where id = ${gone}`);
+  const later = [1, 2, 3].map((i) => post(PUB, `무관 ${i}`));
+  sql(`update public.msgr_messages set created_at = now() - interval '11 minutes' where id > ${m1}`);
+  rescan(); updates(m1);
+  assert.equal(cursor(), later[2], '무관한 글 끝까지 넘겼다');
 });

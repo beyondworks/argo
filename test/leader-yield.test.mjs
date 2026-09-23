@@ -38,10 +38,11 @@ test('판정: 그레이스는 리스 TTL보다 길다 — 자격 있는 기기�
 
 /** fake storage — 업로드를 기록하고, 이후 download는 마지막 업로드 본문(리스 문서)을 돌려준다. */
 const fakeClient = (initialDoc = null) => {
-  const calls = { upload: 0 };
+  const calls = { upload: 0, download: 0 };
   let stored = initialDoc ? Buffer.from(JSON.stringify(initialDoc)) : null;
   const bucket = {
     async download() {
+      calls.download += 1;
       if (!stored) return { data: null, error: { message: 'Object not found' } };
       const buf = stored;
       return { data: { arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) } };
@@ -94,4 +95,29 @@ test('배선: 러너 있으면 정상 획득 + 양보 타이머 리셋', async (
   assert.ok(calls.upload >= 1);
   assert.equal(lease().leader, true);
   assert.equal(lease().yieldSince, 0, '러너 회복 시 양보 타이머는 리셋');
+});
+
+// 2026-09-23 DB 점검: 보유 기기가 동기화 주기(8초)마다 리스를 다시 올려 storage.objects에 업서트가 쌓였다
+// (기기 25대 × 분당 7.5회 — 누적 업데이트 4,255만 건의 한 축). 보유 중이면 TTL/4(30초)마다만 갱신한다.
+test('배선: 확인된 보유자는 30초 안에는 리스를 다시 쓰지 않고(읽기는 매번 — 탈취 감지), 30초가 지나면 다시 쓴다', async () => {
+  const me = await getDeviceId();
+  const { client, calls } = fakeClient({ deviceId: me, token: 't0', ts: Date.now() });
+  _setSyncClientForTest(client);
+  setLease({ leader: true, ownedAt: Date.now() - 5_000 });
+  await renewLease('owner-r1', { runnerUsable: true });
+  assert.equal(calls.upload, 0, '30초 안 — 쓰기 없음');
+  assert.ok(calls.download >= 1, '읽기는 매 주기(검수 #689 M2)');
+  assert.equal(lease().leader, true);
+  setLease({ leader: true, ownedAt: Date.now() - (LEASE_TTL_MS / 4 + 1_000) });
+  await renewLease('owner-r1', { runnerUsable: true });
+  assert.equal(calls.upload, 1, '30초 지나면 갱신');
+  assert.equal(lease().leader, true);
+});
+
+test('배선: 보유 중에도 다른 기기가 fresh 리스를 쥐면 30초를 기다리지 않고 곧바로 양보한다(검수 #689 M2)', async () => {
+  const { client } = fakeClient({ deviceId: 'other-device', token: 'tX', ts: Date.now() });
+  _setSyncClientForTest(client);
+  setLease({ leader: true, ownedAt: Date.now() - 5_000 });
+  await renewLease('owner-r2', { runnerUsable: true });
+  assert.equal(lease().leader, false);
 });
