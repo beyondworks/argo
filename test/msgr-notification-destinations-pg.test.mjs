@@ -91,3 +91,16 @@ test('two ready devices concurrently claim one external notification only once',
  clear();const advertise=d=>rpc(OWNER,`msgr_notification_routes_sync('notify','[{"kind":"telegram","label":"Ready","ready":true}]','${d}')`);const rs=advertise('mac');advertise('windows');finish(save([rs.find(r=>r.kind==='telegram').id]));
  const results=await Promise.all(['mac','windows'].map(async device=>{const q=`set role authenticated;select set_config('argo.uid','${OWNER}',false);select public.msgr_notification_claim('notify','${ATTEMPT}','${device}')`;const {stdout}=await promisify(execFile)('psql',[DB,'-X','-q','-A','-t','-v','ON_ERROR_STOP=1','-v','SHOW_ALL_RESULTS=off','-c',q]);return JSON.parse(stdout.trim().split('\n').at(-1));}));assert.equal(results.flat().length,1);
 });
+
+// 2026-09-23 DB 점검: 30초마다 오는 같은 동기화가 경로·노드 행을 매번 4~5번 다시 썼다(각 표 누적 300만 갱신).
+before(()=>{if(!DB)return;const f=fileURLToPath(new URL('../supabase/migrations/20260923210000_msgr_notification_routes_quiet.sql',import.meta.url));const r=spawnSync('psql',[DB,'-X','-q','-v','ON_ERROR_STOP=1','-f',f],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);});
+test('같은 경로를 60초 안에 다시 동기화하면 행을 쓰지 않고, 바뀌거나 60초가 지나면 쓴다',{skip},()=>{
+ const sync=(ready='true')=>rpc(OWNER,`msgr_notification_routes_sync('quiet','[{"kind":"telegram","label":"Quiet","ready":${ready}}]','q-dev')`);
+ const vers=()=>sql("select string_agg(t.xmin::text,',' order by t.id) from (select id::text id,xmin from public.msgr_notification_routes where ws_id='quiet' union all select n.route_id::text||n.device_id,n.xmin from public.msgr_notification_route_nodes n join public.msgr_notification_routes r on r.id=n.route_id where r.ws_id='quiet') t");
+ sync(); const v0=vers();
+ assert.equal(sync()[0].ready,true); assert.equal(vers(),v0,'같은 내용 재동기화 — 쓰기 없음');
+ assert.equal(sync('false')[0].ready,false,'ready 변화는 즉시 반영'); const v1=vers(); assert.notEqual(v1,v0);
+ sql("update public.msgr_notification_route_nodes n set last_seen_at=now()-interval '61 seconds' from public.msgr_notification_routes r where r.id=n.route_id and r.ws_id='quiet'");
+ sync('false'); assert.equal(sql("select count(*) from public.msgr_notification_route_nodes n join public.msgr_notification_routes r on r.id=n.route_id where r.ws_id='quiet' and n.last_seen_at>now()-interval '5 seconds'"),'1','60초 지나면 신선도 갱신');
+ assert.equal(rpc(OWNER,"msgr_notification_routes_sync('quiet','[]','q-dev')")[0].ready,false,'경로를 빼면 준비 해제(종전 동작)');
+});
