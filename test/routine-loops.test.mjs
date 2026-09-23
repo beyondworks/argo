@@ -150,3 +150,18 @@ test('비루프 interval 루틴(loop 없음)은 프로토콜 없이 그대로 �
   assert.equal('loop' in out, false);
   assert.equal((await byId(r.id)).enabled, true);
 });
+
+// 위험 파일 검수 R-3(2026-09-23): 실패한 회차도 회차·연속 무판정으로 센다 — 안 세면 러너가 끊긴 루프가 상한 없이 영구 재시도한다.
+test('runRoutine: 루프 턴이 연속 실패하면 3회에 blocked 정지 + 결재 1건, 실패 회차도 maxRuns에 센다', async () => {
+  const boom = async () => { throw new Error('러너 연결 끊김'); };
+  const r = await mkLoop({ maxRuns: 10 });
+  for (let i = 0; i < 3; i++) await assert.rejects(runRoutine(WS, r.id, { chatFn: boom }), /러너 연결 끊김/);
+  const cur = await byId(r.id);
+  assert.equal(cur.enabled, false); assert.equal(cur.loop.stoppedReason, 'blocked'); assert.equal(cur.loop.runs, 3);
+  assert.match(cur.loop.stoppedDetail, /러너 연결 끊김/);
+  assert.equal((await loadApprovals(WS)).filter((a) => a.kind === 'loop' && a.payload?.routineId === r.id).length, 1);
+  const r2 = await mkLoop({ maxRuns: 2 });
+  for (let i = 0; i < 2; i++) await assert.rejects(runRoutine(WS, r2.id, { chatFn: boom }));
+  const c2 = await byId(r2.id);
+  assert.equal(c2.enabled, false); assert.equal(c2.loop.stoppedReason, 'maxRuns');
+});

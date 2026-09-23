@@ -355,6 +355,25 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
   // Edits apply to the next execution: never send an in-flight result to a newly chosen recipient.
   const resultRoutine = (current) => ({ ...(current ?? r0), title: r0.title, agentSlug: r0.agentSlug,
     lastRun: r0.lastRun, notifications: r0.notifications, msgr: r0.msgr });
+  const loop = isLoopRoutine(r0);
+  let lang = 'ko';
+  if (loop || r0.verify) { // verify도 lang을 쓴다 — 검수 MEDIUM-1: en 회사의 재시도 지시가 한국어로 나가던 것
+    const { loadCompany } = await import('./workspace.mjs');
+    lang = (await loadCompany(wsId).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
+  }
+  // 루프 정지 알림 — blocked면 사장 결재로 푼다(승인 → approval-actions(kind:'loop')가 resumeLoop, 거절 → 정지 유지). 성공·실패 경로 공용.
+  const announceStop = async (r, stop, msgr) => {
+    if (stop.reason === 'blocked') {
+      const { addApproval } = await import('./approvals.mjs');
+      await addApproval(wsId, {
+        slug: r0.agentSlug, kind: 'loop',
+        action: lang === 'en' ? `Resume loop — ${r0.title}`.slice(0, 300) : `루프 재개 — ${r0.title}`.slice(0, 300),
+        reason: stop.detail, payload: { routineId: id },
+        ...(r0.msgr ? { msgr: msgr ?? r0.msgr } : {}),
+      }).catch((e) => console.error(`[argo] 루프 결재 등록 실패(${wsId}/${id}):`, e.message));
+    }
+    emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), phase: 'stop', ok: true, reply: loopStopMessage(stop.reason, stop.detail, lang, r?.loop ?? r0.loop) });
+  };
   try {
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
     const run = r0.msgr
@@ -364,12 +383,6 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
         const destCtx = await (await import('./gateway.mjs')).briefingCtx(wsId, 'routine', r0.agentSlug, { notifications: r0.notifications });
         return chat(wsId, r0.agentSlug, message, null, { source: 'routine', ...(destCtx ? { mirrorCtx: destCtx } : {}) });
       };
-    const loop = isLoopRoutine(r0);
-    let lang = 'ko';
-    if (loop || r0.verify) { // verify도 lang을 쓴다 — 검수 MEDIUM-1: en 회사의 재시도 지시가 한국어로 나가던 것
-      const { loadCompany } = await import('./workspace.mjs');
-      lang = (await loadCompany(wsId).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
-    }
     // 완료 조건 저장값 정규화는 chat **전** — 오염된 저장값이면 LLM 비용을 쓰기 전에 실패하고,
     // 사유에 루틴 제목을 붙여 어느 설정 문제인지 드러낸다(검수 LOW-2).
     let ver = null;
@@ -436,19 +449,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 타입 판정은 디스크 현재값(cur) — 실행 중 편집으로 타입이 바뀐 루틴을 스냅샷 기준으로
     // 잘못 끄지 않는다(검수 LOW-1: catch와 기준 통일). enabled:false 덮어쓰기라 루프 정지와 무충돌.
     const r = await patchRoutine(wsId, id, (cur) => ({ ...patch, ...(cur.schedule?.type === 'once' ? { enabled: false } : {}) }));
-    if (stop) {
-      if (stop.reason === 'blocked') {
-        // 막힘 = 사장 결재로 푼다. 승인 → approval-actions(kind:'loop')가 resumeLoop, 거절 → 정지 유지.
-        const { addApproval } = await import('./approvals.mjs');
-        await addApproval(wsId, {
-          slug: r0.agentSlug, kind: 'loop',
-          action: lang === 'en' ? `Resume loop — ${r0.title}`.slice(0, 300) : `루프 재개 — ${r0.title}`.slice(0, 300),
-          reason: stop.detail, payload: { routineId: id },
-          ...(r0.msgr ? { msgr: t.msgr ?? r0.msgr } : {}),
-        }).catch((e) => console.error(`[argo] 루프 결재 등록 실패(${wsId}/${id}):`, e.message));
-      }
-      emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), phase: 'stop', ok: true, reply: loopStopMessage(stop.reason, stop.detail, lang, r?.loop ?? r0.loop) });
-    }
+    if (stop) await announceStop(r, stop, t.msgr);
     emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: true, reply: t.reply, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
     return { ok: true, reply: t.reply, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
@@ -460,7 +461,21 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 슬롯을 가로지른 시험 실행(시작<슬롯≤실패)에서 소비되지 않은 슬롯(isDue가 아직 발화할
     // 예약)이 꺼진다(2R LOW-A). 실패는 lastOk:false + 알림으로 드러나고, 재실행은 '실행'으로.
     // 스케줄은 디스크 현재값(cur)으로 판정 — 실행 중 편집을 스냅샷 기준으로 잘못 끄지 않는다.
-    const r = await patchRoutine(wsId, id, (cur) => ({ lastOk: false, lastResult: msg, ...(onceSpent(cur.schedule, new Date(r0.lastRun)) ? { enabled: false } : {}) }));
+    // 루프는 실패한 회차도 센다(위험 파일 검수 R-3, 2026-09-23) — 안 세면 시작 때 각인한 lastRun 덕에 다음 주기에 또 돌아
+    // 러너가 끊긴 루프가 회차·연속 무판정 상한을 영영 못 만나고 실패 알림만 쌓는다. 실패 = 판정 없는 회차.
+    let stop = null;
+    const loopPatch = {};
+    if (loop) {
+      const L = { ...normalizeLoop(r0.loop, r0.loop) };
+      L.runs += 1;
+      L.missingVerdicts += 1;
+      if (L.missingVerdicts >= LOOP_MISSING_LIMIT) stop = { reason: 'blocked', detail: lang === 'en' ? `${LOOP_MISSING_LIMIT} consecutive runs without a verdict — last error: ${msg}` : `${LOOP_MISSING_LIMIT}회 연속 판정 없이 끝남 — 마지막 오류: ${msg}` };
+      else if (L.runs >= L.maxRuns) stop = { reason: 'maxRuns', detail: '' };
+      if (stop) { L.stoppedReason = stop.reason; L.stoppedDetail = String(stop.detail).slice(0, 300); loopPatch.enabled = false; }
+      loopPatch.loop = L;
+    }
+    const r = await patchRoutine(wsId, id, (cur) => ({ lastOk: false, lastResult: msg, ...loopPatch, ...(onceSpent(cur.schedule, new Date(r0.lastRun)) ? { enabled: false } : {}) }));
+    if (stop) await announceStop(r, stop, null);
     emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: false, reply: msg });
     throw e;
   }
