@@ -807,7 +807,7 @@ function Shell({ session }) {
     const remove = async () => {
       if (!ch) return;
       // This client has one org subscription. A timed-out unsubscribe must still release its cache.
-      if (await supabase.removeChannel(ch) !== 'ok') await supabase.removeAllChannels();
+      if (await supabase.removeChannel(ch) !== 'ok') { await supabase.removeAllChannels(); setRoomReset((x) => x + 1); } // 방 구독도 함께 사라졌다 — 다시 맞추게(검수 #690 재검 MEDIUM)
       if (rt.current === ch) rt.current = null;
     };
     const cleanup = realtimeScope.run(async (isDisposed, registerDispose) => {
@@ -838,6 +838,7 @@ function Shell({ session }) {
   const openKind = useMemo(() => (chId ? channels.find((c) => c.id === chId)?.kind ?? null : null), [channels, chId]);
   const roomTopic = !!chId && (isPersonal || (openKind !== null && openKind !== 'public')); // 열린 방의 반응·수정 방송은 그 방 토픽으로(아래 broadcast)
   const roomSubs = useRef(new Map()); // 방 id → 구독 채널
+  const [roomReset, setRoomReset] = useState(0); // removeAllChannels 뒤 방 구독을 다시 맞추는 신호(데스크톱엔 resumeEpoch가 없다)
   const typingIn = (id) => typingInState(typing, id); // 채널 화면의 typingCrews와 같은 6초 창
   const anyTyping = Object.values(typing).some((at) => Date.now() - at < TYPING_WINDOW_MS); // 끝난 표시가 남은 동안만 2초 주기 재그리기
   useEffect(() => { if (!anyTyping) return; const iv = setInterval(() => setTick((x) => x + 1), 2000); return () => clearInterval(iv); }, [anyTyping]); // 신호가 끊긴 표시는 2초 안에 내린다
@@ -1087,7 +1088,7 @@ function Shell({ session }) {
       const subs = roomSubs.current;
       if (roomEpoch.current !== resumeEpoch) { for (const c of subs.values()) supabase.removeChannel(c).catch(() => {}); subs.clear(); roomEpoch.current = resumeEpoch; }
       const want = new Set(roomIdsKey ? roomIdsKey.split(',') : []);
-      for (const [id, c] of subs) if (!want.has(id)) { supabase.removeChannel(c).catch(() => {}); subs.delete(id); }
+      for (const [id, c] of subs) if (!want.has(id) || c.state === 'closed' || supabase.getChannels?.().includes(c) === false) { supabase.removeChannel(c).catch(() => {}); subs.delete(id); } // 빠진 방, 그리고 밖에서 닫힌 채널(removeAllChannels)은 떼고 아래에서 다시 만든다
       for (const id of want) {
         if (subs.has(id)) continue;
         const c = supabase.channel(`dm:${id}`, { config: { private: true } });
@@ -1101,7 +1102,7 @@ function Shell({ session }) {
       }
     })();
     return () => { live = false; };
-  }, [roomIdsKey, isPersonal, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [roomIdsKey, isPersonal, resumeEpoch, roomReset]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { for (const c of roomSubs.current.values()) supabase.removeChannel(c).catch(() => {}); roomSubs.current.clear(); }, []); // 떠날 때 전부 뗀다
   const dmIdsRef = useRef(new Set()); // 방송 핸들러가 DM 채널만 담게(조직 토픽엔 모든 채널이 실린다)
 
