@@ -90,7 +90,7 @@ export async function serverMemoryAvailable(db, crewId, now = Date.now()) {
   if (ok !== null) serverMemoryProbe = { at: now, ok };
   return ok;
 }
-export const _resetServerMemoryProbeForTest = () => { serverMemoryProbe = { at: 0, ok: null }; memoryCache.clear(); purgeAt = 0; };
+export const _resetServerMemoryProbeForTest = () => { serverMemoryProbe = { at: 0, ok: null }; memoryCache.clear(); purgeAt.clear(); };
 // 서버 기억 — 조회가 일시 실패하면 같은 크루·채널의 마지막 기억을 쓴다(규칙이 조용히 빠지지 않게, 검수 #691 M1). ponytail: 프로세스 메모리 500건 상한.
 const memoryCache = new Map();
 export async function crewMemoryCached(db, crewId, channelId) {
@@ -107,7 +107,7 @@ export async function crewMemoryForMail(crewId, channelId) {
   const c = await sessionClient().catch(() => null);
   return c ? crewMemoryCached(c.db, crewId, channelId) : undefined;
 }
-let purgeAt = 0; const PURGE_MS = 10 * 60_000; // 퇴장 회수 판정은 10분마다(검수 #691 LOW-2 — 15초 틱마다 부르던 것)
+const purgeAt = new Map(); const PURGE_MS = 10 * 60_000; // wsId → 마지막 회수 판정. 회사마다 10분에 한 번(검수 #691 LOW-2 — 15초 틱마다 부르던 것, 재검 MEDIUM — 전역 하나면 첫 회사만 돌았다)
 export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {}) {
   const org = await db.org(orgId); if (!org) return { skipped: 'no-org' };
   const dir = join(paths(wsId).org, safeSeg(org.slug));
@@ -554,7 +554,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
     }
     await relocateOrgJournals(wsId).catch((e) => console.error('[argo] msgr 채널 일지 이관 실패:', e?.message ?? e));
-    if (db.channelAccess && Date.now() - purgeAt >= PURGE_MS && (purgeAt = Date.now())) await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
+    if (db.channelAccess && Date.now() - (purgeAt.get(wsId) ?? 0) >= PURGE_MS && purgeAt.set(wsId, Date.now())) await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
   }
   for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다

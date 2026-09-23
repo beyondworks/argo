@@ -508,6 +508,16 @@ test('G-2 조직 문서 미러: 서버 문서 → vault/org/<slug>/<path> 읽기
   const db4 = { ...fakeDb({ docs: [d1] }), crewMemory: async () => ({ docs: [], journal: '' }), channelAccess: async () => new Map() }; // 새 서버 판별 = msgr_channel_access 있음
   await M.drain(WS, { db: db4, uid: OWNER, enqueue: fakeEnqueue() });
   assert.equal(existsSync(paths(WS).org), false, '새 서버면 PC 미러를 지운다');
+  // 퇴장 회수 주기는 회사마다(재검 #691 MEDIUM — 전역 하나면 한 PC의 둘째 회사는 첫 회사가 연 10분 창에 막혀 영영 돌지 않았다)
+  M._resetServerMemoryProbeForTest();
+  const asked = [];
+  for (const ws of [WS, 'co-second']) {
+    await mkdir(join(paths(ws).root, '.msgr-journal'), { recursive: true });
+    await writeFile(join(paths(ws).root, '.msgr-journal', `2026-09-23-x.org-${ORG}-ch-00000000-0000-4000-8000-00000000000${ws === WS ? 'a' : 'b'}.md`), 'j', 'utf8');
+    const db5 = { ...fakeDb({ docs: [] }), crewMemory: async () => ({ docs: [], journal: '' }), channelAccess: async (ids) => { if (ids.length) asked.push(ws); return new Map(); } };
+    await M.drain(ws, { db: db5, uid: OWNER, enqueue: fakeEnqueue() });
+  }
+  assert.deepEqual(asked, [WS, 'co-second'], '두 회사 모두 회수 판정을 받는다');
   M._resetServerMemoryProbeForTest();
   await rm(paths(WS).org, { recursive: true, force: true });
 });

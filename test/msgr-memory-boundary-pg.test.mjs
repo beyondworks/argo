@@ -203,6 +203,16 @@ test('채널을 나간 채널장이 남아 있어도 다른 채널장을 조직�
   assert.throws(() => sql(`update public.msgr_channels set admin_user_ids = array['${U.lead}', '${U.guest}']::uuid[] where id = '${X}'`), /msgr_channel_admin_not_channel_member/, '새로 넣는 채널장은 여전히 채널 멤버여야 한다');
 });
 
+// 재검 #691: 오프보딩 예외를 GUC 표지로 열면 SQL을 직접 쓰는 채널장이 표지를 켜고 채널장을 마음대로 늘렸다 — 예외는 트리거 안에서 온 변경만.
+test('채널장이 오프보딩 표지를 위조해도 만든 사람·관리자만 채널장을 바꾼다', { skip }, () => {
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}'`);
+  const Z = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}', 'private', 'heads-z')`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${Z}', 'user', '${U.member}'), ('${Z}', 'user', '${U.lead}') on conflict do nothing`);
+  sql(`update public.msgr_channels set admin_user_ids = array['${U.member}']::uuid[] where id = '${Z}'`);
+  assert.throws(() => asUser(U.member, `select set_config('argo.msgr_offboard', '1', false); update public.msgr_channels set admin_user_ids = array['${U.member}', '${U.lead}']::uuid[] where id = '${Z}'`), /msgr_channel_admins_owner_only/);
+  assert.equal(sql(`select array_to_string(admin_user_ids, ',') from public.msgr_channels where id = '${Z}'`), U.member);
+});
+
 test('직접 만들지 않은 채널의 채널장도 계정 삭제(msgr_delete_me)로 떠날 수 있고, 채널장 표시가 지워진다', { skip }, () => {
   const Y = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}', 'public', 'heads-y')`));
   sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}' and user_id = '${U.lead}'`);

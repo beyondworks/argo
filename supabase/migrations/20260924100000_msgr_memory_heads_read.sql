@@ -38,10 +38,8 @@ begin
      where cm.channel_id = c.id and c.org_id = new.org_id
        and ((cm.member_kind = 'user' and cm.member_id = new.user_id)
          or (cm.member_kind = 'crew' and cm.member_id in (select id from public.msgr_crews where org_id = new.org_id and owner_user_id = new.user_id)));
-    -- 본인 계정 삭제(msgr_delete_me)도 이 사슬을 탄다 — 채널장 검사의 '만든 사람·관리자만' 판정을 이 제거에서는 건너뛴다(트랜잭션 지역 표지, argo.msgr_journal과 같은 관례)
-    perform set_config('argo.msgr_offboard', '1', true);
+    -- 본인 계정 삭제(msgr_delete_me)도 이 사슬을 탄다 — 채널장 검사의 '만든 사람·관리자만' 판정은 트리거 안에서 온 이 제거에 걸지 않는다(아래 pg_trigger_depth)
     update public.msgr_channels set admin_user_ids = array_remove(admin_user_ids, new.user_id) where org_id = new.org_id and new.user_id = any (admin_user_ids);
-    perform set_config('argo.msgr_offboard', '', true);
     perform public.msgr_audit(new.org_id, 'member.offboard', 'user', new.user_id::text, jsonb_build_object('crews_detached', (select count(*) from public.msgr_crews where org_id = new.org_id and owner_user_id = new.user_id and status = 'detached')));
   elsif new.removed_at is null and old.removed_at is not null then
     update public.msgr_crews set status = 'active' where org_id = new.org_id and owner_user_id = new.user_id and status = 'detached';
@@ -55,7 +53,8 @@ create or replace function public.msgr_channel_admins_guard() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if new.admin_user_ids is distinct from old.admin_user_ids then
-    if auth.uid() is not null and coalesce(current_setting('argo.msgr_offboard', true), '') <> '1' and not (old.created_by = auth.uid() or coalesce(public.msgr_is_admin(old.org_id), false)) then raise exception 'msgr_channel_admins_owner_only'; end if;
+    -- 트리거 안에서 온 변경(오프보딩의 array_remove, depth 2)은 사용자 판정을 건너뛴다. GUC 표지는 SQL을 직접 쓰는 사용자가 켤 수 있어 쓰지 않는다(재검 #691).
+    if auth.uid() is not null and pg_trigger_depth() <= 1 and not (old.created_by = auth.uid() or coalesce(public.msgr_is_admin(old.org_id), false)) then raise exception 'msgr_channel_admins_owner_only'; end if;
     if exists (select 1 from unnest(new.admin_user_ids) u where u <> all (old.admin_user_ids) and not exists (select 1 from public.msgr_org_members m where m.org_id = old.org_id and m.user_id = u and m.removed_at is null and (m.expires_at is null or m.expires_at > now()))) then raise exception 'msgr_channel_admin_not_member'; end if;
     if old.kind = 'private' and exists (select 1 from unnest(new.admin_user_ids) u where u <> all (old.admin_user_ids) and not exists (select 1 from public.msgr_channel_members cm where cm.channel_id = old.id and cm.member_kind = 'user' and cm.member_id = u)) then raise exception 'msgr_channel_admin_not_channel_member'; end if;
     perform public.msgr_audit(old.org_id, 'channel.admins', 'channel', old.id::text, jsonb_build_object('admins', new.admin_user_ids));

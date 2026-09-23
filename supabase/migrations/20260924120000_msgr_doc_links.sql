@@ -67,6 +67,7 @@ revoke all on function public.msgr_channel_people(uuid) from public, anon, authe
 
 -- 일괄 연결: 커서 뒤 갱신된 문서마다 ① 본문의 [[제목]](닫는 괄호까지 일치) ② 사람·부서가 겹치는 다른 채널의 최신 문서 상위 3건(채널당 1건).
 -- 신호가 하나도 없으면 잇지 않는다(내용 유사도만으로는 안 잇는다 — 유건 결정 5). 처리한 문서가 없으면 아무것도 쓰지 않는다.
+-- 임시 표는 pg_temp.로만 부른다 — search_path가 public 먼저라 같은 이름의 public 표가 있으면 그쪽을 쓴다(재검 #691 LOW).
 -- 비용(검수 #691 M3): 채널 쌍 점수는 호출마다 채널별로 한 번만 계산해 임시 표에 두고, 7일 넘은 일지는 원천·대상 모두에서 뺀다
 -- (일지는 답글마다 updated_at이 바뀌어 활동 채널의 오늘 일지만 다시 계산된다). 부하: 문서 200건·채널 N개면 채널 쌍 계산 최대 200×N회 → 채널 단위 캐시로 (배치 안 채널 수)×N.
 create or replace function public.msgr_doc_links_refresh(lim int default 200) returns int
@@ -74,8 +75,9 @@ create or replace function public.msgr_doc_links_refresh(lim int default 200) re
 declare d record; st record; n int := 0; pa uuid[]; da text[];
 begin
   select * into st from public.msgr_doc_link_state where id = 1;
+  if not exists (select 1 from public.msgr_org_docs x where (x.updated_at, x.id) > (st.cursor_at, st.cursor_id)) then return 0; end if; -- 10분마다 도는 cron — 할 일 없으면 임시 표도 안 만든다
   create temp table if not exists msgr_dl_scores (a uuid, b uuid, score int, reason text) on commit drop;
-  truncate msgr_dl_scores;
+  truncate pg_temp.msgr_dl_scores;
   for d in select x.id, x.org_id, x.channel_id, x.body, x.path, x.updated_at from public.msgr_org_docs x
             where (x.updated_at, x.id) > (st.cursor_at, st.cursor_id) order by x.updated_at, x.id limit greatest(1, least(coalesce(lim, 200), 1000)) loop
     st.cursor_at := d.updated_at; st.cursor_id := d.id; n := n + 1;
@@ -85,10 +87,10 @@ begin
        where o.org_id = d.org_id and o.id <> d.id and position('[[' || o.title || ']]' in d.body) > 0
       on conflict do nothing;
     if d.channel_id is null then continue; end if;
-    if not exists (select 1 from msgr_dl_scores where a = d.channel_id) then
+    if not exists (select 1 from pg_temp.msgr_dl_scores where a = d.channel_id) then
       pa := array(select public.msgr_channel_people(d.channel_id));
       da := array(select distinct m.department from public.msgr_org_members m where m.org_id = d.org_id and m.department is not null and m.user_id = any (pa));
-      insert into msgr_dl_scores (a, b, score, reason)
+      insert into pg_temp.msgr_dl_scores (a, b, score, reason)
         select d.channel_id, c.id, p.shared * 2 + p.depts, case when p.shared > 0 then 'people' else 'department' end
           from public.msgr_channels c
           cross join lateral (
@@ -97,12 +99,12 @@ begin
                      where m.org_id = d.org_id and m.department = any (da) and m.user_id in (select public.msgr_channel_people(c.id))) depts
           ) p
          where c.org_id = d.org_id and c.id <> d.channel_id and c.kind in ('public', 'private') and (p.shared > 0 or p.depts > 0);
-      insert into msgr_dl_scores (a, b, score, reason) values (d.channel_id, null, 0, null); -- 계산함 표지(점수 0건이어도 다시 안 센다)
+      insert into pg_temp.msgr_dl_scores (a, b, score, reason) values (d.channel_id, null, 0, null); -- 계산함 표지(점수 0건이어도 다시 안 센다)
     end if;
     insert into public.msgr_doc_links (src_doc, dst_doc, reason)
       select d.id, t.id, t.reason from (
         select distinct on (s.b) o.id, s.reason, s.score, o.updated_at
-          from msgr_dl_scores s join public.msgr_org_docs o on o.channel_id = s.b
+          from pg_temp.msgr_dl_scores s join public.msgr_org_docs o on o.channel_id = s.b
          where s.a = d.channel_id and s.b is not null and not (o.path like 'journal/%' and o.updated_at < now() - interval '7 days')
          order by s.b, o.updated_at desc
       ) t order by t.score desc, t.updated_at desc limit 3
@@ -119,6 +121,7 @@ create or replace function public.msgr_doc_links_for(org uuid) returns table (sr
     select l.src_doc, l.dst_doc, l.reason from public.msgr_doc_links l join public.msgr_org_docs s on s.id = l.src_doc
      where s.org_id = org limit 2000
 $$;
+revoke all on function public.msgr_doc_links_for(uuid) from public, anon;
 grant execute on function public.msgr_doc_links_for(uuid) to authenticated;
 
 do $$
