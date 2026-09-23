@@ -875,7 +875,7 @@ function Shell({ session }) {
         .on('broadcast', { event: 'approval' }, ({ payload }) => { if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); } }));
     })();
     return () => { live = false; stopU(); for (const c of chans) supabase.removeChannel(c).catch(() => {}); }; // 조직 전환·재연결·로그아웃 때 이 효과가 연 구독만 걷는다(현재 조직 구독은 따로)
-  }, [uid, orgIdsKey, orgId, session.access_token, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [uid, orgIdsKey, orgId, session.access_token, resumeEpoch, roomReset]); // eslint-disable-line react-hooks/exhaustive-deps — roomReset: 조직 구독 해제 실패의 removeAllChannels가 u:·다른 조직 구독도 뗐다(재검 #690)
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)

@@ -61,6 +61,7 @@ test('App.jsx 배선: 개인 공간의 방과 조직의 비공개 방(공개 채
   assert.match(eff, /if \(roomEpoch\.current !== resumeEpoch\) \{ for \(const c of subs\.values\(\)\) supabase\.removeChannel\(c\)/, '복귀하면 전부 다시 붙인다');
   assert.match(eff, /return \(\) => \{ live = false;/, '정리에서 live를 끈다');
   assert.match(app, /if \(await supabase\.removeChannel\(ch\) !== 'ok'\) \{ await supabase\.removeAllChannels\(\); setRoomReset\(\(x\) => x \+ 1\); \}/, '조직 구독 해제가 실패해 전부 뗐으면 방 구독도 다시 붙인다(검수 #690 재검 MEDIUM)');
+  assert.match(app, /\}, \[uid, orgIdsKey, orgId, session\.access_token, resumeEpoch, roomReset\]\);/, 'u:·다른 조직 구독도 같이 다시 붙인다(재검 #690 2차)');
   assert.match(eff, /event: 'reaction' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('reaction'/, 'dm:로 반응을 받는다');
   assert.match(eff, /event: 'edit' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('edit'/, 'dm:로 수정을 받는다');
   assert.match(app, /broadcast=\{\(ev, payload\) => \(roomTopic \? roomSubs\.current\.get\(chId\) : rt\.current\)\?\.send\(/, '비공개 방의 반응·수정 송신은 dm:로만(org: 폴백 없음)');
