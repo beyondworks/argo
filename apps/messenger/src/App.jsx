@@ -2671,7 +2671,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
         q(supabase.rpc('msgr_chief_docs', { org: org.id, journal: true, lim: 30 })).catch(() => []),
       ]).then(([a, b, c, e]) => { const seen = new Set(); return [...a, ...b, ...(c ?? []), ...(e ?? [])].filter((d) => d?.id && !seen.has(d.id) && seen.add(d.id)); }), // 본문까지 — 문서 탭·[[링크]] 그래프
       channels.length ? q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', channels.map((c) => c.id))).catch(() => []) : [],
-      q(supabase.from('msgr_doc_links').select('src_doc, dst_doc, reason').limit(2000)).catch(() => []), // 옛 서버엔 표가 없어 빈 목록
+      q(supabase.rpc('msgr_doc_links_for', { org: org.id })).catch(() => []), // 이 조직 링크만(표 전체 RLS 스캔 방지 — 검수 #691 M5). 옛 서버엔 없어 빈 목록
     ]);
     setRows(a); setDocs(d); setCm(m); setLinks(l ?? []);
   }, [org.id, chKey]); // eslint-disable-line react-hooks/exhaustive-deps

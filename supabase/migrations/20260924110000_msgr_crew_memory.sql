@@ -12,18 +12,21 @@ create or replace function public.msgr_crew_memory(crew uuid, ch uuid) returns j
                       where public.msgr_crew_in_channel(ch, k.id)) ok
     )
     select case when not exists (select 1 from k) then null else jsonb_build_object(
-      'docs', coalesce((select jsonb_agg(jsonb_build_object('scope', case when d.channel_id is null then 'org' else 'channel' end,
-                                                             'folder', split_part(d.path, '/', 1), 'title', d.title, 'body', d.body) order by d.channel_id nulls first, d.path)
-                          from public.msgr_org_docs d, k
-                         where d.org_id = k.org_id and d.path not like 'journal/%'
-                           and ((d.channel_id is null and public.msgr_role(k.org_id) in ('owner', 'admin', 'member'))
-                                or (d.channel_id = ch and (select ok from inch)))), '[]'::jsonb),
+      'docs', coalesce((select jsonb_agg(jsonb_build_object('scope', x.scope, 'folder', x.folder, 'title', x.title, 'body', x.body) order by x.ord, x.path)
+                          from (select case when d.channel_id is null then 'org' else 'channel' end scope, split_part(d.path, '/', 1) folder, d.title, left(d.body, 4000) body, d.path,
+                                       case when d.path like 'rules/%' then 0 else 1 end ord -- 규칙 먼저(상한에 잘리지 않게)
+                                  from public.msgr_org_docs d, k
+                                 where d.org_id = k.org_id and d.path not like 'journal/%'
+                                   and ((d.channel_id is null and public.msgr_role(k.org_id) in ('owner', 'admin', 'member'))
+                                        or (d.channel_id = ch and (select ok from inch)))
+                                 order by case when d.path like 'rules/%' then 0 else 1 end, d.channel_id nulls first, d.path limit 20) x), '[]'::jsonb), -- 본문 4,000자·20건 상한(검수 #691 M4)
       'journal', coalesce((select right(string_agg(j.body, E'\n' order by j.path), 4000)
                              from (select d.path, d.body from public.msgr_org_docs d, k
                                     where d.org_id = k.org_id and d.channel_id = ch and d.path like 'journal/%' and (select ok from inch)
                                     order by d.path desc limit 2) j), '')
     ) end
 $$;
+create index if not exists msgr_org_docs_channel_path on public.msgr_org_docs (channel_id, path) where channel_id is not null; -- 이 채널 문서·일지 조회(검수 #691 M4)
 revoke all on function public.msgr_crew_memory(uuid, uuid) from public, anon;
 grant execute on function public.msgr_crew_memory(uuid, uuid) to authenticated;
 

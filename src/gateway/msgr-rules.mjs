@@ -28,7 +28,7 @@ export function formatOrgRules(docs, { org = '', channelName = '', lang = 'ko', 
   for (const d of orgDocs) out += sec(lang === 'en' ? 'Company-wide' : '전사', d);
   for (const d of chDocs) out += sec(lang === 'en' ? `Channel #${channelName}` : `채널 #${channelName}`, d);
   if (out.length > cap) {
-    const note = lang === 'en' ? `\n(… rules truncated at ${cap} chars — read the full set under vault/org/ )\n` : `\n(… 규칙이 ${cap}자를 넘어 앞부분만 실었다 — 전체는 vault/org/ 아래 규칙집을 읽어라)\n`;
+    const note = lang === 'en' ? `\n(… rules truncated at ${cap} chars — ask a channel admin for the full rule set in the messenger)\n` : `\n(… 규칙이 ${cap}자를 넘어 앞부분만 실었다 — 전체 규칙집은 메신저 기억 화면에 있다)\n`; // vault/org/ 미러는 없어졌다(2026-09-24)
     out = out.slice(0, cap - note.length) + note;
   }
   return out;

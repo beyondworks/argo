@@ -29,7 +29,7 @@ test('formatOrgRules: 전사 → 채널 순, 다른 채널 규칙 제외, 규칙
   assert.doesNotMatch(out, /D-body/, '다른 채널 규칙은 안 싣는다');
   assert.equal(formatOrgRules([{ scope: 'channel:design', title: 'D', body: 'x' }], { org: 'lean', channelName: 'marketing' }), '', '해당 없으면 빈 문자열');
   const big = formatOrgRules([{ scope: 'org', title: 'L', body: 'x'.repeat(6000) }], { org: 'lean' });
-  assert.ok(big.length <= ORG_RULES_CAP, `상한 ${big.length}`); assert.match(big, /앞부분만 실었다 — 전체는 vault\/org\/ 아래/);
+  assert.ok(big.length <= ORG_RULES_CAP, `상한 ${big.length}`); assert.match(big, /앞부분만 실었다 — 전체 규칙집은 메신저 기억 화면에 있다/);
   assert.match(formatOrgRules(docs, { org: 'lean', channelName: 'marketing', lang: 'en' }), /## Organization rules \(team messenger "lean"/);
 });
 

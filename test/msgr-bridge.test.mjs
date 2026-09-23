@@ -323,7 +323,7 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
   // 따로 잡는다. 맥락에 담기는 요청자 사슬(손님 판정 재료)은 msgr-guest-turn.test.mjs가 행동으로 잠근다(PR-A).
   const schedSrc = readFileSync(new URL('../src/scheduler.mjs', import.meta.url), 'utf8');
   assert.match(schedSrc, /crewId: msgrCrewIdBySlug\(cid, slug, msg\.msgr\.orgId\) \?\? null, orgSlug: msg\.msgr\.orgSlug \?\? null, channelName: msg\.msgr\.channelName \?\? '' \} : null;/, '배달 턴 맥락 = 수신 크루의 메신저 id');
-  assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : await briefingCtx\(cid, 'crewmail', slug\)[^\n]*\) \}\);/, '배달 턴이 채널 문맥으로(메신저 밖 쪽지는 목적지 범위 — 행동은 shared-dest-context)');
+  assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n(?:\s*if \(mirrorCtx\) \{ const mem = await crewMemoryForMail\(mirrorCtx\.crewId, mirrorCtx\.channelId\)[^\n]*\n)?\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : await briefingCtx\(cid, 'crewmail', slug\)[^\n]*\) \}\);/, '배달 턴이 채널 문맥으로(메신저 밖 쪽지는 목적지 범위 — 행동은 shared-dest-context)');
 });
 
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
@@ -505,7 +505,7 @@ test('G-2 조직 문서 미러: 서버 문서 → vault/org/<slug>/<path> 읽기
   // 새 서버(턴마다 기억): 미러를 만들지 않고 남은 vault/org/를 지운다
   M._resetServerMemoryProbeForTest();
   await mkdir(join(paths(WS).org, 'lean', 'rules'), { recursive: true }); await writeFile(join(paths(WS).org, 'lean', 'rules', 'x.md'), 'old', 'utf8');
-  const db4 = { ...fakeDb({ docs: [d1] }), crewMemory: async () => ({ docs: [], journal: '' }) };
+  const db4 = { ...fakeDb({ docs: [d1] }), crewMemory: async () => ({ docs: [], journal: '' }), channelAccess: async () => new Map() }; // 새 서버 판별 = msgr_channel_access 있음
   await M.drain(WS, { db: db4, uid: OWNER, enqueue: fakeEnqueue() });
   assert.equal(existsSync(paths(WS).org), false, '새 서버면 PC 미러를 지운다');
   M._resetServerMemoryProbeForTest();

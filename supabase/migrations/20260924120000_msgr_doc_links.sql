@@ -65,42 +65,61 @@ create or replace function public.msgr_channel_people(ch uuid) returns setof uui
 $$;
 revoke all on function public.msgr_channel_people(uuid) from public, anon, authenticated;
 
--- 일괄 연결: 커서 뒤 갱신된 문서마다 ① 본문의 [[제목]] ② 다른 채널 문서 중 사람·부서가 겹치는 최신 문서 상위 3건(채널당 1건).
+-- 일괄 연결: 커서 뒤 갱신된 문서마다 ① 본문의 [[제목]](닫는 괄호까지 일치) ② 사람·부서가 겹치는 다른 채널의 최신 문서 상위 3건(채널당 1건).
 -- 신호가 하나도 없으면 잇지 않는다(내용 유사도만으로는 안 잇는다 — 유건 결정 5). 처리한 문서가 없으면 아무것도 쓰지 않는다.
+-- 비용(검수 #691 M3): 채널 쌍 점수는 호출마다 채널별로 한 번만 계산해 임시 표에 두고, 7일 넘은 일지는 원천·대상 모두에서 뺀다
+-- (일지는 답글마다 updated_at이 바뀌어 활동 채널의 오늘 일지만 다시 계산된다). 부하: 문서 200건·채널 N개면 채널 쌍 계산 최대 200×N회 → 채널 단위 캐시로 (배치 안 채널 수)×N.
 create or replace function public.msgr_doc_links_refresh(lim int default 200) returns int
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare d record; st record; n int := 0;
+declare d record; st record; n int := 0; pa uuid[]; da text[];
 begin
   select * into st from public.msgr_doc_link_state where id = 1;
-  for d in select x.id, x.org_id, x.channel_id, x.body, x.updated_at from public.msgr_org_docs x
+  create temp table if not exists msgr_dl_scores (a uuid, b uuid, score int, reason text) on commit drop;
+  truncate msgr_dl_scores;
+  for d in select x.id, x.org_id, x.channel_id, x.body, x.path, x.updated_at from public.msgr_org_docs x
             where (x.updated_at, x.id) > (st.cursor_at, st.cursor_id) order by x.updated_at, x.id limit greatest(1, least(coalesce(lim, 200), 1000)) loop
+    st.cursor_at := d.updated_at; st.cursor_id := d.id; n := n + 1;
+    if d.path like 'journal/%' and d.updated_at < now() - interval '7 days' then continue; end if;
     insert into public.msgr_doc_links (src_doc, dst_doc, reason)
       select d.id, o.id, 'wikilink' from public.msgr_org_docs o
-       where o.org_id = d.org_id and o.id <> d.id and position('[[' || o.title in d.body) > 0
+       where o.org_id = d.org_id and o.id <> d.id and position('[[' || o.title || ']]' in d.body) > 0
       on conflict do nothing;
-    if d.channel_id is not null then
-      insert into public.msgr_doc_links (src_doc, dst_doc, reason)
-        select d.id, c.id, c.reason from (
-          select distinct on (o.channel_id) o.id, o.updated_at,
-                 case when p.shared > 0 then 'people' else 'department' end reason, p.shared * 2 + p.depts score
-            from public.msgr_org_docs o
-            cross join lateral (
-              select (select count(*) from public.msgr_channel_people(d.channel_id) a join public.msgr_channel_people(o.channel_id) b on a = b) shared,
-                     (select count(distinct m1.department) from public.msgr_org_members m1 join public.msgr_org_members m2 on m2.department = m1.department and m2.org_id = m1.org_id
-                       where m1.org_id = d.org_id and m1.department is not null
-                         and m1.user_id in (select public.msgr_channel_people(d.channel_id)) and m2.user_id in (select public.msgr_channel_people(o.channel_id))) depts
-            ) p
-           where o.org_id = d.org_id and o.channel_id is not null and o.channel_id <> d.channel_id and (p.shared > 0 or p.depts > 0)
-           order by o.channel_id, o.updated_at desc
-        ) c order by c.score desc, c.updated_at desc limit 3
-        on conflict do nothing;
+    if d.channel_id is null then continue; end if;
+    if not exists (select 1 from msgr_dl_scores where a = d.channel_id) then
+      pa := array(select public.msgr_channel_people(d.channel_id));
+      da := array(select distinct m.department from public.msgr_org_members m where m.org_id = d.org_id and m.department is not null and m.user_id = any (pa));
+      insert into msgr_dl_scores (a, b, score, reason)
+        select d.channel_id, c.id, p.shared * 2 + p.depts, case when p.shared > 0 then 'people' else 'department' end
+          from public.msgr_channels c
+          cross join lateral (
+            select cardinality(array(select unnest(pa) intersect select public.msgr_channel_people(c.id))) shared,
+                   (select count(distinct m.department) from public.msgr_org_members m
+                     where m.org_id = d.org_id and m.department = any (da) and m.user_id in (select public.msgr_channel_people(c.id))) depts
+          ) p
+         where c.org_id = d.org_id and c.id <> d.channel_id and c.kind in ('public', 'private') and (p.shared > 0 or p.depts > 0);
+      insert into msgr_dl_scores (a, b, score, reason) values (d.channel_id, null, 0, null); -- 계산함 표지(점수 0건이어도 다시 안 센다)
     end if;
-    st.cursor_at := d.updated_at; st.cursor_id := d.id; n := n + 1;
+    insert into public.msgr_doc_links (src_doc, dst_doc, reason)
+      select d.id, t.id, t.reason from (
+        select distinct on (s.b) o.id, s.reason, s.score, o.updated_at
+          from msgr_dl_scores s join public.msgr_org_docs o on o.channel_id = s.b
+         where s.a = d.channel_id and s.b is not null and not (o.path like 'journal/%' and o.updated_at < now() - interval '7 days')
+         order by s.b, o.updated_at desc
+      ) t order by t.score desc, t.updated_at desc limit 3
+      on conflict do nothing;
   end loop;
   if n > 0 then update public.msgr_doc_link_state set cursor_at = st.cursor_at, cursor_id = st.cursor_id where id = 1; end if;
   return n;
 end $$;
 revoke all on function public.msgr_doc_links_refresh(int) from public, anon, authenticated;
+
+-- 기억 화면용 — 이 조직 문서에서 나가는 링크만(표 전체를 RLS로 훑지 않게, 검수 #691 M5). 호출자 권한(invoker)이라 문서·링크 RLS가 그대로 걸린다.
+create or replace function public.msgr_doc_links_for(org uuid) returns table (src_doc uuid, dst_doc uuid, reason text)
+  language sql stable set search_path = public, pg_temp as $$
+    select l.src_doc, l.dst_doc, l.reason from public.msgr_doc_links l join public.msgr_org_docs s on s.id = l.src_doc
+     where s.org_id = org limit 2000
+$$;
+grant execute on function public.msgr_doc_links_for(uuid) to authenticated;
 
 do $$
 begin

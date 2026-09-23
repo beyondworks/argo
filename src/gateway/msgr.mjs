@@ -86,11 +86,28 @@ let serverMemoryProbe = { at: 0, ok: null }; // ponytail: 프로세스 전역 �
 export async function serverMemoryAvailable(db, crewId, now = Date.now()) {
   if (serverMemoryProbe.ok !== null && now - serverMemoryProbe.at < SERVER_MEMORY_RECHECK_MS) return serverMemoryProbe.ok;
   let ok = null;
-  try { ok = (await db.crewMemory?.(crewId, '00000000-0000-0000-0000-000000000000')) !== undefined; } catch { ok = null; }
+  try { ok = db.channelAccess ? (await db.channelAccess([])) !== null : false; } catch { ok = null; } // 가벼운 판별(같은 마이그레이션의 RPC) — 크루 기억 전체를 받지 않는다(검수 #691 M4)
   if (ok !== null) serverMemoryProbe = { at: now, ok };
   return ok;
 }
-export const _resetServerMemoryProbeForTest = () => { serverMemoryProbe = { at: 0, ok: null }; };
+export const _resetServerMemoryProbeForTest = () => { serverMemoryProbe = { at: 0, ok: null }; memoryCache.clear(); purgeAt = 0; };
+// 서버 기억 — 조회가 일시 실패하면 같은 크루·채널의 마지막 기억을 쓴다(규칙이 조용히 빠지지 않게, 검수 #691 M1). ponytail: 프로세스 메모리 500건 상한.
+const memoryCache = new Map();
+export async function crewMemoryCached(db, crewId, channelId) {
+  const k = `${crewId}:${channelId}`;
+  try {
+    const m = await db.crewMemory?.(crewId, channelId);
+    if (m !== undefined) { memoryCache.delete(k); memoryCache.set(k, m); if (memoryCache.size > 500) memoryCache.delete(memoryCache.keys().next().value); }
+    return m;
+  } catch (e) { console.warn('[argo] msgr 서버 기억 조회 실패 — 마지막 기억으로:', e?.message ?? e); return memoryCache.get(k); }
+}
+/** 쪽지 수신 턴(메신저에서 시작된 쪽지)의 서버 기억 — 일반 턴과 같은 출처(검수 #691 M1: 쪽지 턴엔 규칙이 늘 빠졌다). */
+export async function crewMemoryForMail(crewId, channelId) {
+  if (!crewId || !channelId) return undefined;
+  const c = await sessionClient().catch(() => null);
+  return c ? crewMemoryCached(c.db, crewId, channelId) : undefined;
+}
+let purgeAt = 0; const PURGE_MS = 10 * 60_000; // 퇴장 회수 판정은 10분마다(검수 #691 LOW-2 — 15초 틱마다 부르던 것)
 export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {}) {
   const org = await db.org(orgId); if (!org) return { skipped: 'no-org' };
   const dir = join(paths(wsId).org, safeSeg(org.slug));
@@ -537,7 +554,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
     }
     await relocateOrgJournals(wsId).catch((e) => console.error('[argo] msgr 채널 일지 이관 실패:', e?.message ?? e));
-    if (db.channelAccess) await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
+    if (db.channelAccess && Date.now() - purgeAt >= PURGE_MS && (purgeAt = Date.now())) await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
   }
   for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다
@@ -757,7 +774,7 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org.slug, channelName: ch.name ?? '', peers, handoffs: [], ...(work ? { work } : {}),
     ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}) }; // 손님 판정 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
-  const orgMemory = await db.crewMemory?.(crew.id, ch.id).catch(() => undefined); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널) — 없으면 chat이 미러 규칙으로 물러난다
+  const orgMemory = await crewMemoryCached(db, crew.id, ch.id); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널) — 없으면 chat이 미러 규칙으로 물러난다
   return { db, ctx, ch, source, envelope };
 }
 
@@ -929,7 +946,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const orgRow = envelope?.org ?? await db.org(job.orgId); // G-3 규칙 주입 키(미러 폴더 = org slug)·채널 이름(채널 범위 규칙)
     // delegated — 죽은 경로(restoreMessengerContext의 ctx.delegated 주석 참고, msgr_dm_relay 도입 뒤 서버가 더 이상 true를 주지 않는다)
     const ctx = { chatType: 'group', ...authority, channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, wsId, hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}) };
-    const orgMemory = await db.crewMemory?.(job.crewId, job.channelId).catch(() => undefined); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널, 유건 결정 2026-09-24)
+    const orgMemory = await crewMemoryCached(db, job.crewId, job.channelId); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널, 유건 결정 2026-09-24)
     const execution = await beginMessengerExecution(wsId, db, job, executionMeta);
     if (execution.kind === 'completed') return;
     if (execution.kind === 'interrupted') { // 이 기기에서 답하던 중 끊긴 턴(D25) — 실패 답으로 실행을 닫는다(running 고착·5분 뒤 막연한 안내 대신)

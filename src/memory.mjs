@@ -221,7 +221,7 @@ export async function relocateOrgJournals(wsId) {
   let moved = 0;
   for (const n of names) {
     const src = join(p.journal, n); const to = join(dest, n);
-    if (existsSync(to)) { await appendFile(to, await readFile(src, 'utf8')); await import('node:fs/promises').then((f) => f.unlink(src)); }
+    if (existsSync(to)) { const body = await readFile(src, 'utf8'); if ((await readFile(to, 'utf8').catch(() => '')) !== body) await appendFile(to, body); await import('node:fs/promises').then((f) => f.unlink(src)); } // 같은 내용이면 이어 붙이지 않는다(두 기기가 같은 파일을 옮김 — 검수 #691 M2)
     else await rename(src, to);
     moved++;
   }

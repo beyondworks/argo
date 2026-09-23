@@ -26,6 +26,11 @@ test('채널 태그 일지는 .msgr-journal/로 옮겨지고 색인·recall에�
   assert.doesNotMatch(await readFile(p.index, 'utf8'), /org-o1/);
   assert.ok(!(await vaultDocsForTest(WS)).some((d) => /org-o1/.test(d.rel)));
   assert.equal(await relocateOrgJournals(WS), 0, '두 번째는 할 일 없음');
+  await writeFile(join(p.journal, tagged), await readFile(join(p.root, '.msgr-journal', tagged), 'utf8'), 'utf8'); // 다른 기기가 같은 파일을 다시 내려받음
+  assert.equal(await relocateOrgJournals(WS), 1);
+  assert.equal((await readFile(join(p.root, '.msgr-journal', tagged), 'utf8')).match(/기밀/g).length, 1, '같은 내용은 이어 붙이지 않는다');
+  const { EXCLUDE } = await import('../src/sync.mjs');
+  assert.equal(EXCLUDE(`.msgr-journal/${tagged}`), true, '동기화 제외(검수 #691 M2)');
   assert.equal(docKind(`journal/${tagged}`), 'other', '다른 기기가 동기화로 다시 내려도 색인에 오르지 않는다');
 });
 

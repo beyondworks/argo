@@ -183,6 +183,31 @@ test('자동 연결: [[제목]]·공유 참여자·같은 부서로 잇고, 유�
   assert.match(links(dOps), /:department/, '같은 부서(개발)');
   // 가시성: 링크는 양쪽 문서를 읽을 수 있는 사람에게만
   const seen = (uid) => Number(last(asUser(uid, `select count(*) from public.msgr_doc_links where src_doc = '${dDev}'`)));
-  assert.equal(seen(U.member) >= 1, true, 'dev·design·sales 모두 멤버가 아닌 링크는 숨는다');
+  const total = Number(sql(`select count(*) from public.msgr_doc_links where src_doc = '${dDev}'`));
+  assert.equal(seen(U.member), total - 1, 'dev→sales만 숨는다 — member는 sales를 못 읽는다(대상 dst 쪽 권한까지, 검수 #691 테스트 공백 2)');
+  assert.equal(Number(last(asUser(U.member, `select count(*) from public.msgr_doc_links where src_doc = '${dDev}' and dst_doc = '${dSales}'`))), 0);
+  assert.equal(Number(last(asUser(U.member, `select count(*) from public.msgr_doc_links_for('${ORG}') where src_doc = '${dDev}'`))), total - 1, '조직 한정 조회 RPC도 같은 권한(검수 #691 M5)');
   assert.equal(seen(U.guest), 0, 'dev 채널을 못 읽는 사람');
+});
+
+// 검수 #691 HIGH-1: 채널을 나간 채널장(장 예외)이 남아 있는 채널에서 다른 채널장을 조직에서 내보낼 수 있어야 한다.
+test('채널을 나간 채널장이 남아 있어도 다른 채널장을 조직에서 내보낼 수 있다', { skip }, () => {
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}'`);
+  const X = last(asUser(U.member, `select public.msgr_create_channel('${ORG}', 'private', 'heads-x')`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${X}', 'user', '${U.lead}') on conflict do nothing`);
+  sql(`update public.msgr_channels set admin_user_ids = array['${U.lead}', '${U.member}']::uuid[] where id = '${X}'`);
+  sql(`delete from public.msgr_channel_members where channel_id = '${X}' and member_id = '${U.lead}'`); // lead는 나갔지만 채널장(장 예외)
+  asUser(U.owner, `update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id = '${U.member}'`);
+  assert.notEqual(sql(`select removed_at from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.member}'`), '', '내보내기 성공');
+  assert.equal(sql(`select array_to_string(admin_user_ids, ',') from public.msgr_channels where id = '${X}'`), U.lead, '나간 사람만 채널장에서 빠진다');
+  assert.throws(() => sql(`update public.msgr_channels set admin_user_ids = array['${U.lead}', '${U.guest}']::uuid[] where id = '${X}'`), /msgr_channel_admin_not_channel_member/, '새로 넣는 채널장은 여전히 채널 멤버여야 한다');
+});
+
+test('직접 만들지 않은 채널의 채널장도 계정 삭제(msgr_delete_me)로 떠날 수 있고, 채널장 표시가 지워진다', { skip }, () => {
+  const Y = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}', 'public', 'heads-y')`));
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}' and user_id = '${U.lead}'`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${Y}', 'user', '${U.lead}') on conflict do nothing`);
+  sql(`update public.msgr_channels set admin_user_ids = array['${U.lead}']::uuid[] where id = '${Y}'`);
+  asUser(U.lead, `select public.msgr_delete_me()`);
+  assert.equal(sql(`select coalesce(array_to_string(admin_user_ids, ','), '') from public.msgr_channels where id = '${Y}'`), '');
 });
