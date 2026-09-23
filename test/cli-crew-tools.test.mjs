@@ -87,7 +87,11 @@ const elicit = (id, server, tool, params) => ({ id, method: 'mcpServer/elicitati
 async function sessionWith(requests, judge) {
   const srv = fakeServer((emit) => {
     requests.forEach((r, i) => emit(elicit(900 + i, ...r)));
-    setTimeout(() => { emit({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'a1', text: 'ok' } } }); emit({ method: 'turn/completed', params: { turn: { id: 'u1', status: 'completed' } } }); }, 50);
+    // 실제 codex는 승인 응답을 받기 전에 턴을 끝내지 않는다 — 응답이 다 온 뒤에 완료를 보낸다(고정 50ms면 느린 러너에서 판정 전에 턴이 닫혀 null — CI 인텔 맥 실측 2026-09-23)
+    const t0 = Date.now();
+    const done = () => { emit({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'a1', text: 'ok' } } }); emit({ method: 'turn/completed', params: { turn: { id: 'u1', status: 'completed' } } }); };
+    const wait = () => (requests.every((_, i) => srv.received.some((m) => m.id === 900 + i)) || Date.now() - t0 > 4000 ? done() : setTimeout(wait, 10));
+    setTimeout(wait, 10);
   });
   await runAppServerSession({ input: srv.input, output: srv.output, prompt: 'p', cwd: '/w', timeoutMs: 5000, judge });
   return requests.map((_, i) => srv.received.find((m) => m.id === 900 + i)?.result?.action ?? null);
