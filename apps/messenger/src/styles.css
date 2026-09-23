@@ -185,6 +185,12 @@
 .msgr-sub .typing-line { font-size: 12.5px; color: var(--fg-2); }
 @keyframes msgrPulse { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
 .msgr-sys { font-size: 12.5px; color: var(--fg-3); font-style: italic; display: flex; align-items: center; gap: 8px; }
+.msgr-mine .msgr-sys, .msgr-mine .msgr-message-recipients { color: var(--primary-fg-dim); opacity: 1; } /* 내 말풍선 바탕(--primary) 위 — 페이지용 --fg-3은 베이지 바탕에서 1.x:1로 묻혔다(유건 스크린샷 2026-09-23) */
+.msgr-away { font-size: 11px; color: var(--fg-2); margin-bottom: 6px; } /* 크루 답 첫 줄 부재중 안내 — 본문 대신 머리줄(msg-text.mjs splitAwayNote) */
+.msgr-mine .bubble .md, .msgr-row .text .md { white-space: normal; } /* 전달본 마크다운 — 말풍선의 pre-wrap이 HTML 사이 줄바꿈을 빈 줄로 만든다 */
+.msgr-mine .bubble .md :is(code, pre) { background: color-mix(in srgb, var(--primary-fg) 12%, transparent); border-color: var(--primary-fg-line); color: inherit; } /* 내 말풍선 안 코드 — 카드용 --card-2 바탕이 --primary 위에서 글자를 묻었다(검정 말풍선에 흰 상자·흰 글자) */
+.msgr-mine .bubble .md pre code { background: none; border: 0; }
+.msgr-mine .bubble .md :is(a, blockquote) { color: inherit; } .msgr-mine .bubble .md :is(blockquote, th, td, hr) { border-color: var(--primary-fg-line); }
 .msgr-sys.msgr-relay { flex-direction: column; align-items: flex-start; gap: 6px; } /* 전달 안내 — 문장 + 대화 열기 칩(.msgr-chan) 줄 */
 .msgr-relay .msgr-chan { font-style: normal; }
 .msgr-skel { display: grid; gap: 8px; max-width: 640px; padding-top: 4px; }
@@ -824,6 +830,9 @@
 .msgr-list .item.unread .name { color: var(--fg); font-weight: 600; }
 .msgr-list .item.active.unread .name { color: var(--primary-fg); } /* 열린 채널이 안 읽음 상태(알림함 보는 중 새 글)면 이름이 활성 배경과 같은 색이 되어 안 보이던 결함(유건 제보 2026-09-11 밤) */
 .msgr-list .item.active .msgr-badge { background: var(--primary-fg); color: var(--primary); }
+.msgr-busy { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid currentColor; border-right-color: transparent; opacity: .7; animation: msgrSpin 900ms linear infinite; } /* 목록의 '답변 중' — 그 방에서 에이전트 typing 6초 창 */
+@keyframes msgrSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .msgr-busy { animation: none; border-right-color: currentColor; opacity: .45; } }
 .msgr-newline { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
 .msgr-newline span { padding: 2px 9px; border-radius: 999px; background: var(--mark); color: var(--mark-fg); } /* 라이트 바탕에서 노란 글자가 안 읽히던 것(유건 2026-09-09) — 알약으로 */
 .msgr-newline::before, .msgr-newline::after { content: ''; flex: 1; height: 1.5px; background: var(--mark); }

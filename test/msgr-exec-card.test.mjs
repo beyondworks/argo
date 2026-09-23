@@ -34,7 +34,7 @@ test('클라이언트: progress 방송 → ExecCard(단계·경과·도구 수·
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
   assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} p=\{p\} t=\{t\} \/>\)\}\n\s*\{typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\)/, '점 세 개는 카드 없는 크루만');
   assert.match(app, /function ExecCard\(\{ crew, p, t \}\)[\s\S]*?<details className="msgr-exec"[\s\S]*?\{t\('exec\.thought'\)\}[\s\S]*?<StepList steps=\{p\.steps\}[\s\S]*?\{t\('exec\.partial'\)\}/, 'ExecCard 구성');
-  assert.match(app, /\{m\.meta\?\.trace && <Trace trace=\{m\.meta\.trace\} t=\{t\} \/>\}<Markdown text=\{body\} \/>/, '크루 답글 위 궤적');
+  assert.match(app, /\{m\.meta\?\.trace && <Trace trace=\{m\.meta\.trace\} t=\{t\} \/>\}\{awayNote && <div className="msgr-away">\{awayNote\}<\/div>\}<Markdown text=\{shown\} \/>/, '크루 답글 위 궤적(본문 앞 부재중 안내는 머리줄로 분리 — msg-text.mjs)');
   assert.match(app, /function Trace\(\{ trace, t \}\)[\s\S]*?<details className="msgr-trace">/, 'Trace는 details(기본 접힘)');
   for (const k of ['exec.meta', 'exec.thought', 'exec.steps', 'exec.partial', 'trace.summary', 'chat.stage.memory', 'chat.stage.shell', 'chat.stage.runner']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   assert.match(css, /^\.msgr-exec, \.msgr-trace \{/m, '카드 스타일');

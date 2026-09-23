@@ -54,7 +54,8 @@ test('개인 공간에서는 붙여넣기 첨부도 막는다(검수 L-4)', () =
 });
 
 test('개인 공간에서 실시간은 dm:<채널> 토픽을 구독한다', () => {
-  assert.match(src, /supabase\.channel\(`dm:\$\{chId\}`/);
+  assert.match(src, /supabase\.channel\(`dm:\$\{id\}`/);
+  assert.match(src, /roomTopicIds\(channels, chId, isPersonal, 50, lastAt\)/);
 });
 
 test('개인 공간에서 채널 절·멤버 절·크루 절이 감춰진다', () => {

@@ -16,3 +16,17 @@ export function withoutKey(map, key) {
   const { [key]: _gone, ...rest } = map;
   return rest;
 }
+
+export const TYPING_WINDOW_MS = 6000;
+/** 그 방에서 TYPING_WINDOW_MS 안에 typing이 온 크루가 있나 — 목록의 '답변 중' 표시 */
+export const typingIn = (typing, channelId, now = Date.now()) => Object.entries(typing).some(([k, at]) => k.startsWith(`${channelId}:`) && now - at < TYPING_WINDOW_MS);
+
+/** 방 토픽(dm:<방>)을 구독할 방 — 개인 공간은 전부, 조직은 비공개 방(DM·비공개 채널)만. 열린 방은 항상 포함, 상한 max(Realtime 연결당 채널 상한 여유).
+    상한을 넘으면 최근 대화(lastAt) → 최근에 만든 방 순으로 고른다(목록은 만든 순 오름차순이라 그대로 자르면 옛 방만 남았다 — 검수 #690 M1). */
+export function roomTopicIds(channels, openId, isPersonal, max = 50, lastAt = {}) {
+  const priv = (c) => isPersonal || (c.kind && c.kind !== 'public');
+  const open = channels.find((c) => c.id === openId);
+  const recent = channels.filter(priv).map((c, i) => [c, i]).sort((a, b) => ((lastAt[b[0].id] ?? 0) - (lastAt[a[0].id] ?? 0)) || (b[1] - a[1])).map(([c]) => c.id);
+  const ids = [...(open && priv(open) ? [openId] : []), ...recent];
+  return [...new Set(ids)].slice(0, max).sort();
+}
