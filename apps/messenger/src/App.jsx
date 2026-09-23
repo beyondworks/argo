@@ -2507,11 +2507,11 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, members =
 const docRelOf = (d) => `docs/${d.channel_id ?? 'org'}/${d.path.replace(/\.md$/, '')}`; // 문서 → 그래프·탭 id(한 곳). 채널을 넣는다 — 일지는 채널마다 같은 경로(journal/날짜)라 경로만으론 충돌(검수 #551 HIGH-1)
 
 /* 기억 문서 보기·편집(대상 탭) — 조직 문서 = 조직의 기억(부록 G). 편집권 최종 판정은 RLS(전사=관리자·채널=쓰기 가능 멤버) */
-function MemDoc({ doc, isAdmin, nameOfUser, chName, onSaved, onNote, onError }) {
+function MemDoc({ doc, isAdmin, nameOfUser, chName, onSaved, onNote, onError, related = [], onOpen = null, onWiki = null }) {
   const { t, lang } = useT();
   const [edit, setEdit] = useState(null); const [busy, setBusy] = useState(false);
   useEffect(() => { setEdit(null); }, [doc.id]);
-  const canEdit = (d) => d.channel_id ? true : isAdmin;
+  const canEdit = (d) => (d.channel_name ? false : d.channel_id ? true : isAdmin); // 장 열람 문서(channel_name — RPC)는 읽기만(편집 권한은 채널 멤버)
   const save = async () => {
     setBusy(true);
     const res = await supabase.from('msgr_org_docs').update({ title: edit.title.trim(), body: edit.body }).eq('id', doc.id).select('id');
@@ -2533,7 +2533,10 @@ function MemDoc({ doc, isAdmin, nameOfUser, chName, onSaved, onNote, onError }) 
       {edit ? (<>
         <textarea className="msgr-input body" value={edit.body} onChange={(e) => setEdit((x) => ({ ...x, body: e.target.value }))} rows={16} />
         <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !edit.title.trim()} onClick={save}><I name="check" size={13} />{t('ui.save')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => setEdit(null)}>{t('ui.cancel')}</button></div>
-      </>) : (doc.body ? <div className="msgr-sheet"><Markdown text={doc.body} /></div> : <p className="empty">{t('docs.blank')}</p>)}
+      </>) : (doc.body ? <div className="msgr-sheet"><Markdown text={doc.body} onWikiLink={onWiki ?? undefined} /></div> : <p className="empty">{t('docs.blank')}</p>)}
+      {!edit && related.length > 0 && <section className="msgr-related"><div className="msgr-klabel">{t('docs.related')}</div>
+        <ul>{related.map((r) => <li key={r.doc.id}><button type="button" className="msgr-namebtn" onClick={() => onOpen?.(r.doc)}>{r.dir === 'in' ? '← ' : '→ '}{r.doc.title}</button><span className="note">{chName(r.doc.channel_id) && r.doc.channel_id ? `${chName(r.doc.channel_id)} · ` : ''}{t(`docs.related.${r.reason}`)}</span></li>)}</ul>
+      </section>}
     </article>
   );
 }
@@ -2627,7 +2630,7 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
 function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, crews, nameOfUser, dmName = null, onNote, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰에서는 창 나누기(옆에 열기)가 반폭 두 장이 되어 못 쓴다
-  const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
+  const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]); const [links, setLinks] = useState([]); // links = 기억 연결(msgr_doc_links — 양쪽을 읽을 수 있을 때만 보인다)
   // 창(pane)·탭 — 아르고 기억 페이지와 같은 모양: 그래프 노드를 누르면 옆 창(새 창)에 열리고, 트리는 포커스 창에 연다(유건 지시 2026-09-04). 전이는 panes.mjs(순수)
   const [st, setSt] = useState(() => ({ panes: [{ id: 1, tabs: phone ? [{ id: 'org', kind: 'entity', rel: 'org' }] : [GRAPH_TAB, { id: 'org', kind: 'entity', rel: 'org' }], active: phone ? 'org' : 'graph' }], focus: 1 })); // 폰은 그래프 대신 뷰어 한 장(유건 2026-09-10)
   const { panes, focus: focusPane } = st;
@@ -2644,6 +2647,11 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   const openEntity = (rel, opts) => phone
     ? setSt((s) => ({ panes: [{ id: s.panes[0].id, tabs: [{ id: rel, kind: 'entity', rel }], active: rel }], focus: s.panes[0].id }))
     : openTab({ id: rel, kind: 'entity', rel }, opts);
+  // 문서의 연결 — 나가는·들어오는 자동 연결 + 본문 [[제목]](읽을 수 있는 문서만 — docs에 있는 것만 잇는다)
+  const relatedOf = (doc) => { const byId = new Map(docs.map((d) => [d.id, d])); const out = new Map();
+    for (const x of links) { if (x.src_doc === doc.id && byId.has(x.dst_doc)) out.set(x.dst_doc, { doc: byId.get(x.dst_doc), reason: x.reason, dir: 'out' }); else if (x.dst_doc === doc.id && byId.has(x.src_doc) && !out.has(x.src_doc)) out.set(x.src_doc, { doc: byId.get(x.src_doc), reason: x.reason, dir: 'in' }); }
+    for (const m of String(doc.body ?? '').matchAll(/\[\[([^\]|#]+)/g)) { const d = docs.find((y) => y.title === m[1].trim() && y.id !== doc.id); if (d && !out.has(d.id)) out.set(d.id, { doc: d, reason: 'wikilink', dir: 'out' }); }
+    return [...out.values()]; };
   const relOfDoc = (docRel) => { const id = docRel.replace(/\.md$/, ''); return id.startsWith('org/') ? 'org' : id; };
   const closeTab = (paneId, tabId) => setSt((s) => Panes.closeTab(s.panes, s.focus, paneId, tabId));
   const closeOthers = (paneId, id) => setSt((s) => Panes.closeOthers(s.panes, s.focus, paneId, id));
@@ -2653,7 +2661,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   const activateTab = (paneId, tabId) => setSt((s) => Panes.setActive(s.panes, s.focus, paneId, tabId));
   const chKey = channels.map((c) => c.id).join(',');
   const load = useCallback(async () => {
-    const [a, d, m] = await Promise.all([
+    const [a, d, m, l] = await Promise.all([
       q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(400)).catch(() => []), // 감사 열람은 관리자(RLS) — 멤버는 빈 목록
       Promise.all([ /* 일지(journal/)는 따로 최신 30건 — 한 창(400)에 섞으면 오래된 일지가 규칙집·프로젝트를 밀어낸다(검수 #551 HIGH-2) */
         q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).not('path', 'like', 'journal/%').order('path').limit(400)).catch(() => []),
@@ -2663,8 +2671,9 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
         q(supabase.rpc('msgr_chief_docs', { org: org.id, journal: true, lim: 30 })).catch(() => []),
       ]).then(([a, b, c, e]) => { const seen = new Set(); return [...a, ...b, ...(c ?? []), ...(e ?? [])].filter((d) => d?.id && !seen.has(d.id) && seen.add(d.id)); }), // 본문까지 — 문서 탭·[[링크]] 그래프
       channels.length ? q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', channels.map((c) => c.id))).catch(() => []) : [],
+      q(supabase.from('msgr_doc_links').select('src_doc, dst_doc, reason').limit(2000)).catch(() => []), // 옛 서버엔 표가 없어 빈 목록
     ]);
-    setRows(a); setDocs(d); setCm(m);
+    setRows(a); setDocs(d); setCm(m); setLinks(l ?? []);
   }, [org.id, chKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState(null); // 새 기억 폼이 열린 대상(rel)
@@ -2695,9 +2704,10 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
     for (const m of members) out.push({ rel: `${peopleRel(m.user_id)}.md`, title: m.display_name || m.user_id.slice(0, 8), dir: 'notes', links: [] });
     for (const c of crews) out.push({ rel: `${crewRel(c)}.md`, title: c.display_name, dir: 'doc', links: [peopleRel(c.owner_user_id)] });
     const wikiLinks = (body) => [...String(body ?? '').matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim()); // 본문의 [[제목]]이 기억 사이 엣지(아르고 vault와 같은 문법)
-    for (const d of docs) out.push({ rel: `${docRel(d)}.md`, title: d.title, dir: 'doc', links: [...wikiLinks(d.body), ...(d.channel_id ? [] : [`org/${org.slug}`])] });
+    const byId = new Map(docs.map((d) => [d.id, d]));
+    for (const d of docs) out.push({ rel: `${docRel(d)}.md`, title: d.title, dir: 'doc', links: [...wikiLinks(d.body), ...links.filter((x) => x.src_doc === d.id && byId.has(x.dst_doc)).map((x) => docRel(byId.get(x.dst_doc))), ...(d.channel_id ? [] : [`org/${org.slug}`])] }); // 자동 연결(같은 참여자·부서)도 엣지
     return out;
-  }, [org, memChannels, members, crews, docs, cm]);
+  }, [org, memChannels, members, crews, docs, cm, links]);
   const gkey = JSON.stringify(gbuilt); // 내용 키 — 부모가 30초마다 새 배열을 내려도 그래프는 내용이 바뀔 때만 다시 세운다(검수 H-1)
   const gdocs = useMemo(() => gbuilt, [gkey]); // eslint-disable-line react-hooks/exhaustive-deps
   // 선택 대상과 행의 관계
@@ -2818,7 +2828,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
                           {canNew && creating !== sel && <button type="button" className="btn sm" onClick={() => setCreating(sel)}><I name="plus" size={12} />{t('mem.new')}</button>}
                         </div>}
                         {creating === sel && <MemNew org={org} channelId={ch?.id ?? null} uid={uid} onNote={onNote} onError={onError} onCancel={() => setCreating(null)} onCreated={async (d) => { setCreating(null); await load(); openEntity(docRelOf({ ...d, channel_id: d.channel_id ?? ch?.id ?? null })); }} />}
-                        {doc ? <MemDoc doc={doc} isAdmin={isAdmin} nameOfUser={nameOfUser} chName={chLabel} onSaved={load} onNote={onNote} onError={onError} /> : (
+                        {doc ? <MemDoc doc={doc} isAdmin={isAdmin} nameOfUser={nameOfUser} chName={chLabel} onSaved={load} onNote={onNote} onError={onError} related={relatedOf(doc)} onOpen={(d) => openEntity(docRelOf(d))} onWiki={(title) => { const d = docs.find((x) => x.title === title); if (d) openEntity(docRelOf(d)); }} /> : (
                           <div className="msgr-memlist">
                             {sel === 'org' && journals.length > 0 && ( /* 최근 일지 — 채널·DM의 크루 답글이 서버 트리거로 쌓인다(2026-09-16). 전사 문서가 0이어도 첫 화면이 비지 않게 */
                               <div className="folder"><div className="msgr-klabel">{t('mem.journal.recent')}</div>
@@ -3032,6 +3042,18 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
     if (!res.data?.length) return onError(t('org.noEdit'));
     onNote(t('org.name.saved')); onOrgsChanged();
   };
+  // 부서·직급 — 관리자가 정한다(msgr_set_member_profile). 기억 자동 연결(같은 부서)의 재료. 옛 서버엔 열이 없어 null → 입력을 숨긴다.
+  const [profiles, setProfiles] = useState(null);
+  const orgAdmin = ['owner', 'admin'].includes(org.role);
+  const loadProfiles = useCallback(async () => { const r = await supabase.from('msgr_org_members').select('user_id, department, title').eq('org_id', org.id).is('removed_at', null); setProfiles(r.error ? null : new Map((r.data ?? []).map((x) => [x.user_id, x]))); }, [org.id]);
+  useEffect(() => { if (part === 'members' && orgAdmin) loadProfiles().catch(() => setProfiles(null)); }, [part, orgAdmin, loadProfiles]);
+  const saveProfile = async (m, patch) => {
+    const cur = profiles?.get(m.user_id) ?? {}; const next = { department: cur.department ?? '', title: cur.title ?? '', ...patch };
+    if ((cur.department ?? '') === next.department && (cur.title ?? '') === next.title) return;
+    const res = await supabase.rpc('msgr_set_member_profile', { org: org.id, member: m.user_id, dept: next.department, job: next.title });
+    if (res.error) return onError(/msgr_member_profile_forbidden/.test(res.error.message) ? t('org.member.noEdit') : friendlyErr(res.error.message, t));
+    onNote(t('org.member.profileSaved', { name: m.display_name || m.user_id.slice(0, 8) })); loadProfiles().catch(() => {});
+  };
   const setRole = async (m, role) => {
     if (role === m.role) return;
     setBusy(true);
@@ -3100,6 +3122,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
             {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
             {isSvc ? <span className="sub">{t('org.node')}</span> : m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
               : <div className="msgr-seg right" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
+            {orgAdmin && profiles && !isSvc && <span className="msgr-profile">{['department', 'title'].map((k) => <input key={`${m.user_id}:${k}:${profiles.get(m.user_id)?.[k] ?? ''}`} className="msgr-input sm" maxLength={60} defaultValue={profiles.get(m.user_id)?.[k] ?? ''} placeholder={t(`org.member.${k}`)} aria-label={t(`org.member.${k}`)} onBlur={(e) => saveProfile(m, { [k]: e.target.value.trim() })} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />)}</span>}
             {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
             {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
           </div>

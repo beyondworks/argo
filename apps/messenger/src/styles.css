@@ -712,6 +712,12 @@
 .msgr-memdoc header { display: grid; gap: 6px; margin-bottom: 12px; }
 .msgr-memdoc .msgr-sheet { max-width: none; } /* 문서 본문은 말풍선(640px)이 아니라 창 폭을 쓴다 — 기억 페이지가 좁게 보이던 제보(유건 2026-09-14) */
 .msgr-memdoc header h2 { margin: 0; font-size: 20px; }
+.msgr-profile { display: inline-flex; gap: 6px; } .msgr-profile .msgr-input { width: 96px; } /* 멤버 부서·직급(관리자) */
+.msgr-related { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-soft); } /* 연결된 기억(자동 연결·[[링크]]) */
+.msgr-related ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.msgr-related li { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.msgr-related li .note { color: var(--fg-3); font-size: 11.5px; }
+.msgr-memdoc .wikilink { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .msgr-memdoc header .meta { display: flex; align-items: center; gap: 10px; color: var(--fg-3); font-size: 12px; }
 .msgr-memdoc header .note { color: var(--fg-3); font-size: 12px; }
 .msgr-memdoc textarea.body { width: 100%; min-height: 320px; font-family: var(--mono); font-size: 13px; line-height: 1.6; resize: vertical; }

@@ -150,3 +150,39 @@ test('채널 접근 판정: 읽을 수 있거나 장이면 true, 나갔거나 �
   sql(`delete from public.msgr_channel_members where channel_id = '${PRIV}' and member_id = '${U.guest}'`); // 5번 테스트가 다시 넣었다
   assert.equal(rows(U.guest, [PRIV])[PRIV], false, '나간 게스트');
 });
+
+// P3 연결 — 사람·부서가 겹치는 다른 채널 기억을 잇고, 신호가 없으면 잇지 않으며, 링크는 양쪽을 읽을 수 있는 사람에게만 보인다.
+test('자동 연결: [[제목]]·공유 참여자·같은 부서로 잇고, 유휴 재실행은 쓰기 0, 링크는 권한 있는 사람만', { skip }, () => {
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}'`);
+  const mk = (name) => last(asUser(U.member, `select public.msgr_create_channel('${ORG}', 'private', '${name}')`));
+  const DEV = mk('dev'), DESIGN = mk('design'), SALES = mk('sales');
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${DEV}', 'user', '${U.lead}'), ('${DESIGN}', 'user', '${U.lead}') on conflict do nothing`);
+  sql(`delete from public.msgr_channel_members where channel_id = '${SALES}' and member_id = '${U.member}'`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${SALES}', 'user', '${U.admin}') on conflict do nothing`);
+  const doc = (ch, path, title, body) => last(sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${ORG}', '${ch}', '${path}', '${title}', '${body}', '${U.member}', '${U.member}') returning id`));
+  const dDesign = doc(DESIGN, 'projects/ui.md', '시안', '화면 시안');
+  const dSales = doc(SALES, 'projects/deal.md', '영업', '계약');
+  const dDev = doc(DEV, 'projects/api.md', 'API 설계', '[[영업]] 요구 반영');
+  sql(`select public.msgr_doc_links_refresh(1000)`);
+  const links = (src) => sql(`select string_agg(dst_doc::text || ':' || reason, ',' order by reason) from public.msgr_doc_links where src_doc = '${src}'`);
+  assert.match(links(dDev), new RegExp(`${dDesign}:people`), '공유 참여자(lead)');
+  assert.match(links(dDev), new RegExp(`${dSales}:wikilink`), '[[제목]]');
+  assert.doesNotMatch(links(dDesign), new RegExp(dSales), '겹치는 사람·부서 없음(sales엔 조직 관리자만) — 잇지 않는다');
+  const xmin = sql(`select string_agg(xmin::text, ',') from public.msgr_doc_link_state`);
+  assert.equal(sql(`select public.msgr_doc_links_refresh(1000)`), '0'); assert.equal(sql(`select string_agg(xmin::text, ',') from public.msgr_doc_link_state`), xmin, '유휴 재실행은 쓰기 0');
+  // 부서: 관리자만 정한다 → 부서가 같으면 사람이 안 겹쳐도 잇는다
+  assert.throws(() => asUser(U.member, `select public.msgr_set_member_profile('${ORG}', '${U.member}', '개발', '팀장')`), /msgr_member_profile_forbidden/);
+  assert.throws(() => asUser(U.member, `update public.msgr_org_members set department = '개발' where org_id = '${ORG}' and user_id = '${U.member}'`), /msgr_member_profile_forbidden/, '본인 수정 불가');
+  const GUEST_CH = mk('ops');
+  sql(`delete from public.msgr_channel_members where channel_id = '${GUEST_CH}' and member_id = '${U.member}'`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${GUEST_CH}', 'user', '${U.guest}')`);
+  asUser(U.owner, `select public.msgr_set_member_profile('${ORG}', '${U.guest}', '개발', null)`);
+  asUser(U.owner, `select public.msgr_set_member_profile('${ORG}', '${U.lead}', '개발', '팀장')`);
+  const dOps = doc(GUEST_CH, 'projects/ops.md', '운영', '배포');
+  sql(`select public.msgr_doc_links_refresh(1000)`);
+  assert.match(links(dOps), /:department/, '같은 부서(개발)');
+  // 가시성: 링크는 양쪽 문서를 읽을 수 있는 사람에게만
+  const seen = (uid) => Number(last(asUser(uid, `select count(*) from public.msgr_doc_links where src_doc = '${dDev}'`)));
+  assert.equal(seen(U.member) >= 1, true, 'dev·design·sales 모두 멤버가 아닌 링크는 숨는다');
+  assert.equal(seen(U.guest), 0, 'dev 채널을 못 읽는 사람');
+});
