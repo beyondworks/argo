@@ -246,8 +246,12 @@ export async function tryClaimDek(sb, deviceId, { root = WS_ROOT, force = false 
   if (!force && Date.now() - lastClaim < 60_000) return false;
   lastClaim = Date.now();
   try {
-    const { data, error } = await sb.from('wrapped_deks').select('wrap').eq('device_id', deviceId).maybeSingle();
+    const { data, error } = await sb.from('wrapped_deks').select('wrap, wrapped_by').eq('device_id', deviceId).maybeSingle();
     if (error || !data?.wrap) return false;
+    if (data.wrapped_by === deviceId) { // 켜기에서 물러난 뒤 못 지운 자기 랩일 수 있다 — 다른 기기가 있으면 그 계정의 DEK가 아니다(갈라진 열쇠, 검수 #687 MEDIUM). 승인이 덮어쓴다.
+      const { data: others, error: e2 } = await sb.from('wrapped_deks').select('device_id').neq('device_id', deviceId).limit(1);
+      if (e2 || (others ?? []).length) return false;
+    }
     const dekBytes = await openDekWrap(Buffer.from(data.wrap, 'base64'), { root });
     await setDek(dekBytes, { root });
     console.log('[argo] e2ee: 이 기기의 열쇠(DEK) 수신 — 잠김 해제');
