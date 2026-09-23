@@ -762,7 +762,7 @@ export const DICT = {
   'org.agents.vps.where.hostinger': ['Hostinger: hPanel › VPS › 해당 서버 › 브라우저 터미널', 'Hostinger: hPanel › VPS › your server › Browser terminal'],
   'org.agents.vps.where.oracle': ['Oracle Cloud: 컴퓨트 › 인스턴스 › 해당 인스턴스 › 콘솔 연결 또는 Cloud Shell', 'Oracle Cloud: Compute › Instances › your instance › Console connection or Cloud Shell'],
   'org.agents.vps.where.aws': ['AWS: EC2 › 인스턴스 › 해당 인스턴스 › 연결 › EC2 Instance Connect', 'AWS: EC2 › Instances › your instance › Connect › EC2 Instance Connect'],
-  'org.agents.vps.user': ['에이전트를 실행하는 사용자 계정으로 실행해 주세요. 명령은 1시간 동안 한 번만 쓸 수 있습니다.', 'Run it as the user account that runs your agents. The command works once, for one hour.'],
+  'org.agents.vps.user': ['터미널을 연 그대로 붙여넣으면 됩니다(관리자 계정이면 에이전트가 있는 계정을 알아서 찾습니다). 명령은 1시간 동안 한 번만 쓸 수 있습니다.', 'Paste it as the terminal opens — if it is the admin (root) account, the script finds the account your agents run under. The command works once, for one hour.'],
   'org.agents.vps.copy': ['명령 복사', 'Copy command'],
   'org.agents.vps.copied': ['명령을 복사했습니다. 서버 터미널에 붙여넣어 주세요.', 'Command copied. Paste it into the server terminal.'],
   'org.agents.vps.waiting': ['서버에서 명령을 실행하기를 기다리는 중…', 'Waiting for the command to run on the server…'],

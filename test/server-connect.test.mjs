@@ -127,3 +127,107 @@ test('connect.py: 게이트웨이가 없으면 보고하지 않고 안내만 한
   });
   assert.equal(out.code, 3); assert.match(out.so, /찾지 못했습니다/);
 });
+
+// 실서버 사례(2026-09-23 Hostinger VPS): 게이트웨이가 systemd 시스템 서비스(com.ai-native.hermes-gateway@<프로필>)로 돈다.
+// 헤르메스는 이를 "Running manually"로 보고 `gateway restart`로 못 건드리고, `gateway install`을 부르면 게이트웨이가 둘이 된다 → 서비스를 재시작해야 한다.
+async function runConnect({ statusOut, extraBin = {}, approve }) {
+  const dir = await mkdtemp(join(tmpdir(), 'argo-vps-unit-'));
+  const home = join(dir, 'home'); const bin = join(dir, 'bin'); const log = join(dir, 'cli.log');
+  await mkdir(home, { recursive: true }); await mkdir(bin, { recursive: true });
+  const files = {
+    hermes: `#!/bin/sh\necho "hermes $* HH=$HERMES_HOME" >> "$ARGO_TEST_LOG"\ncase "$1 $2" in\n"profile list") printf ' Profile   Model   Gateway\\n ◆default  m  running\\n' ;;\n"profile show") echo "Path: $HOME/.hermes" ;;\n"gateway status") printf '${statusOut}' ;;\nesac\nexit 0\n`,
+    ps: `#!/bin/sh\necho "ps $*" >> "$ARGO_TEST_LOG"\n[ "$4" = 4242 ] && echo "com.ai-native.hermes-gateway@default.service"\nexit 0\n`,
+    ...extraBin,
+  };
+  for (const [n, body] of Object.entries(files)) { await writeFile(join(bin, n), body); await chmod(join(bin, n), 0o755); }
+  const st = { results: null };
+  const rpc = async (fn, a) => {
+    if (fn === 'msgr_server_link_report') { st.approved = approve(a.agents); return null; }
+    if (fn === 'msgr_server_link_status') return { status: 'approved', approved: st.approved };
+    if (fn === 'msgr_server_link_done') { st.results = a.results; return null; }
+  };
+  const srv = createServer(async (req, res) => { let raw = ''; for await (const c of req) raw += c;
+    const { status, body } = await handleLink(parseLinkPath(`http://x${req.url}`), JSON.parse(raw || '{}'), rpc);
+    res.writeHead(status); res.end(JSON.stringify(body)); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}/functions/v1/msgr-bot`;
+  try {
+    const out = await new Promise((resolve) => {
+      const p = spawn('python3', ['-', CODE, base], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, ARGO_TEST_LOG: log, LANG: 'C.UTF-8' } });
+      let so = ''; p.stdout.on('data', (d) => { so += d; }); p.stderr.on('data', (d) => { so += d; });
+      p.on('close', (c) => resolve({ code: c, so })); p.stdin.end(CONNECT_PY);
+    });
+    return { ...out, calls: (await readFile(log, 'utf8')).trim().split('\n'), st };
+  } finally { srv.close(); }
+}
+const pickAll = (agents) => agents.map((a) => ({ kind: a.kind, id: a.id }));
+
+test('connect.py: 시스템 서비스로 도는 게이트웨이는 그 서비스를 재시작한다(gateway restart·install 금지)', { skip }, async () => {
+  const r = await runConnect({ statusOut: '✓ Gateway is running (PID: 4242)\\n  (Running manually, not as a system service)\\n', approve: pickAll,
+    extraBin: { sudo: '#!/bin/sh\necho "sudo $*" >> "$ARGO_TEST_LOG"\nexit 0\n' } });
+  assert.equal(r.code, 0, r.so);
+  assert.ok(r.calls.includes('sudo -n systemctl restart com.ai-native.hermes-gateway@default.service'), r.calls.join('\n'));
+  assert.ok(!r.calls.some((c) => /hermes gateway (restart|install|start)/.test(c)), '헤르메스 자체 재시작·설치를 부르지 않는다');
+  assert.deepEqual(r.st.results.map((x) => x.ok), [true]);
+});
+
+test('connect.py: 서비스 재시작 권한이 없으면 실패로 보고하고 root로 다시 실행하라고 안내한다', { skip }, async () => {
+  const r = await runConnect({ statusOut: '✓ Gateway is running (PID: 4242)\\n', approve: pickAll,
+    extraBin: { sudo: '#!/bin/sh\necho "sudo: a password is required" >&2\nexit 1\n' } });
+  assert.equal(r.code, 7);
+  assert.equal(r.st.results[0].ok, false);
+  assert.match(r.st.results[0].detail, /root/);
+});
+
+test('connect.py: 서비스가 아닌 게이트웨이는 종전대로 hermes gateway restart', { skip }, async () => {
+  const r = await runConnect({ statusOut: '✓ Gateway is running (PID: 777)\\n', approve: pickAll });
+  assert.equal(r.code, 0, r.so);
+  assert.ok(r.calls.some((c) => c.startsWith('hermes gateway restart')));
+});
+
+// root로 붙여넣었을 때(Hostinger 브라우저 터미널 기본): 에이전트 계정으로 넘겨 돌리고, 서비스 재시작은 root가 한다.
+test('connect.py: root이고 에이전트가 다른 계정에 있으면 그 계정으로 넘기고 서비스 재시작은 root가 맡는다', { skip }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'argo-vps-root-'));
+  const crewHome = join(dir, 'crew'); await mkdir(join(crewHome, '.hermes'), { recursive: true });
+  const py = `
+import json, os, sys, types, pwd, subprocess, urllib.request
+src = sys.stdin.read()
+m = types.ModuleType("c"); m.__dict__["__name__"] = "c"; exec(compile(src, "connect.py", "exec"), m.__dict__)
+calls = []
+m.os.geteuid = lambda: 0
+m.pwd.getpwall = lambda: [pwd.struct_passwd(("root","x",0,0,"","/root","/bin/sh")), pwd.struct_passwd(("crew","x",1000,1000,"",${JSON.stringify(crewHome)},"/bin/sh"))]
+m.os.chown = lambda *a: None
+m.list_agents = lambda: ([], {})
+class R:
+    def __init__(s): pass
+    def read(s): return b"print('child')"
+    def __enter__(s): return s
+    def __exit__(s, *a): pass
+m.urllib.request.urlopen = lambda *a, **k: R()
+def fake_call(cmd):
+    calls.append(cmd)
+    if cmd[0] == "runuser":
+        res = [x for x in cmd[-1].split() if x.startswith("ARGO_CONNECT_DEFER=")][0].split("=", 1)[1]
+        json.dump({"results": [{"kind": "hermes", "id": "aesop", "ok": True, "detail": "", "unit": "com.ai-native.hermes-gateway@aesop.service"}], "names": {"hermes:aesop": "aesop"}}, open(res, "w"))
+    return 0
+m.subprocess.call = fake_call
+m.run = lambda cli, args, env=None: (calls.append([cli] + args) or (True, "ok"))
+posted = []
+m.post = lambda path, payload: posted.append((path, payload)) or {}
+rc = m.main(["x", ${JSON.stringify(CODE)}, "https://p.supabase.co/functions/v1/msgr-bot"])
+print(json.dumps({"rc": rc, "calls": calls, "posted": posted}))
+`;
+  const out = await new Promise((resolve) => {
+    const p = spawn('python3', ['-c', py], { env: { PATH: '/usr/bin:/bin', HOME: dir, LANG: 'C.UTF-8' } });
+    let so = ''; p.stdout.on('data', (d) => { so += d; }); p.stderr.on('data', (d) => { so += d; });
+    p.on('close', (c) => resolve({ c, so })); p.stdin.end(CONNECT_PY);
+  });
+  const j = JSON.parse(out.so.trim().split('\n').pop());
+  assert.equal(j.rc, 0, out.so);
+  const ru = j.calls.find((c) => c[0] === 'runuser');
+  assert.deepEqual(ru.slice(0, 3), ['runuser', '-l', 'crew'], '에이전트 계정으로 넘긴다');
+  assert.equal(ru[3], '-c'); assert.match(ru[4], /python3 \S+connect\.py argo_link_/);
+  assert.ok(j.calls.some((c) => c.join(' ') === 'systemctl restart com.ai-native.hermes-gateway@aesop.service'), 'root가 서비스 재시작');
+  assert.deepEqual(j.posted.map((p) => p[0]), ['link/done']);
+  assert.equal(j.posted[0][1].results[0].ok, true); assert.equal('unit' in j.posted[0][1].results[0], false);
+});

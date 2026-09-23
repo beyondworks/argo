@@ -6,7 +6,7 @@
 #   3) 앱에서 관리자가 고른 에이전트에만 플러그인·.env·게이트웨이 재시작을 한다.
 # 토큰 원문은 이 서버의 에이전트 설정(.env 0600 / openclaw.json)에만 쓰고, 화면·네트워크·로그로 내보내지 않는다.
 # 표준 라이브러리만 쓴다(VPS 기본 이미지에 추가 설치 없이). 소스 정본은 이 파일, 배포본은 scripts/build-server-connect.mjs가 만든다.
-import base64, hashlib, json, os, re, secrets, socket, subprocess, sys, time, urllib.error, urllib.request
+import base64, hashlib, json, os, pwd, re, secrets, shlex, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request
 
 BASE = "__ARGO_MSGR_URL__"   # 두 번째 인자(앱이 명령에 넣는 공개 주소 …/functions/v1/msgr-bot)가 정본, 없으면 엣지 함수가 넣은 값
 BASE_RE = re.compile(r"^https?://[A-Za-z0-9.-]+(:[0-9]+)?/functions/v1/msgr-bot$")
@@ -14,6 +14,8 @@ PLUGINS = {}                  # {"hermes": {상대경로: base64}, "openclaw": {
 CODE_RE = re.compile(r"^argo_link_[0-9a-f]{48}$")
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 POLL_S, WAIT_S, CMD_TIMEOUT = 3, 60 * 60, 90
+DEFER = os.environ.get("ARGO_CONNECT_DEFER", "")  # root가 에이전트 계정으로 넘겨 돌릴 때: 시스템 서비스 재시작은 root가 맡는다(결과 파일로 넘김)
+DEFERRED = {}  # 프로필 id → 재시작을 root에게 넘긴 systemd 서비스 이름
 
 
 def say(ko, en):
@@ -157,6 +159,31 @@ def merge_binding(bindings, aid):
     return keep + [{"match": {"channel": "argo-msgr", "accountId": aid}, "agentId": aid}]
 
 
+def gateway_unit(status):
+    """게이트웨이가 systemd 시스템 서비스로 돌면 그 서비스 이름. `hermes gateway status`의 PID로 찾는다(실측 2026-09-23 Hostinger VPS:
+    com.ai-native.hermes-gateway@<프로필>.service, 헤르메스는 이를 "Running manually"로 보고 `gateway restart`로는 못 건드린다)."""
+    m = re.search(r"PID:?\s*(\d+)", status or "")
+    if not m:
+        return None
+    try:
+        unit = subprocess.run(["ps", "-o", "unit=", "-p", m.group(1)], capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return unit if unit.endswith(".service") and not unit.startswith("user@") else None
+
+
+def restart_unit(unit, aid):
+    if os.geteuid() == 0:
+        return run("systemctl", ["restart", unit])
+    if DEFER:
+        DEFERRED[aid] = unit
+        return True, f"restart {unit} (root)"
+    ok, out = run("sudo", ["-n", "systemctl", "restart", unit])
+    if ok:
+        return ok, out
+    return False, f"{unit} 재시작에는 관리자 권한이 필요합니다 — 서버 터미널을 연 그대로(root) 다시 실행하면 자동으로 재시작합니다 / needs root: run again as root"
+
+
 def install_hermes(cli, a, token):
     home = a.get("home") or os.path.expanduser("~/.hermes")
     write_plugin("hermes", os.path.join(home, "plugins/argo-msgr"))
@@ -166,6 +193,9 @@ def install_hermes(cli, a, token):
     if not ok:
         return False, out
     _, st = run(cli, ["gateway", "status"], env)
+    unit = gateway_unit(st)
+    if unit:  # systemd 서비스가 띄운 게이트웨이 — 서비스를 재시작해야 새 .env(EnvironmentFile)를 읽는다. `hermes gateway install`을 부르면 게이트웨이가 둘이 된다
+        return restart_unit(unit, a["id"])
     if gateway_running(st):
         return run(cli, ["gateway", "restart"], env)
     ok, out = run(cli, ["gateway", "install"], env)
@@ -204,6 +234,56 @@ def install_openclaw(cli, agents, tokens):
     return results
 
 
+def agent_users():
+    """헤르메스·오픈클로 설정이 있는 일반 계정(uid ≥ 1000). 서버 콘솔 터미널은 보통 root로 열리는데, 게이트웨이는 다른 계정에서 돈다."""
+    return [p for p in pwd.getpwall() if p.pw_uid >= 1000 and p.pw_dir and any(os.path.isdir(os.path.join(p.pw_dir, d)) for d in (".hermes", ".openclaw"))]
+
+
+def handoff(user, code):
+    """root로 실행됐을 때: 같은 스크립트를 에이전트 계정으로 다시 돌리고(설정 파일 소유권이 그 계정으로 남는다), 시스템 서비스 재시작만 root가 한다."""
+    say(f"에이전트가 '{user.pw_name}' 계정에 있어 그 계정으로 이어서 진행합니다…", f"Agents live under '{user.pw_name}' — continuing as that user…")
+    try:
+        with urllib.request.urlopen(f"{BASE}/connect", timeout=30) as r:
+            src = r.read()
+    except (urllib.error.URLError, OSError) as e:
+        say(f"스크립트를 다시 받지 못했습니다: {e}", f"Could not fetch the script again: {e}"); return 4
+    work = tempfile.mkdtemp(prefix="argo-connect-")
+    script, result = os.path.join(work, "connect.py"), os.path.join(work, "result.json")
+    try:
+        with open(script, "wb") as f:
+            f.write(src)
+        os.chmod(work, 0o700); os.chown(work, user.pw_uid, user.pw_gid)
+        os.chmod(script, 0o600); os.chown(script, user.pw_uid, user.pw_gid)
+        cmd = " ".join(shlex.quote(x) for x in ["env", f"ARGO_CONNECT_DEFER={result}", "python3", script, code, BASE])
+        rc = subprocess.call(["runuser", "-l", user.pw_name, "-c", cmd])
+        if rc != 0 or not os.path.exists(result):
+            return rc or 3
+        with open(result, encoding="utf-8") as f:
+            done = json.load(f)
+    finally:
+        subprocess.call(["rm", "-rf", work])
+    for r in done["results"]:
+        unit = r.pop("unit", None)
+        if unit:
+            ok, out = run("systemctl", ["restart", unit])
+            r["ok"], r["detail"] = ok, (out or f"restarted {unit}")[-300:]
+    return finish(code, done["results"], {tuple(k.split(":", 1)): v for k, v in done["names"].items()})
+
+
+def finish(code, results, names):
+    try:
+        post("link/done", {"code": code, "results": results})
+    except RuntimeError:
+        pass  # 결과 보고 실패는 연결 자체를 되돌리지 않는다 — 앱은 봇의 접속 시각으로도 상태를 본다
+    for r in results:
+        print(f"  {'OK ' if r['ok'] else 'X  '} {names[(r['kind'], r['id'])]}" + ("" if r["ok"] else f" — {r['detail'][-160:]}"))
+    failed = [r for r in results if not r["ok"]]
+    if failed:
+        say(f"{len(failed)}명은 연결하지 못했습니다. 위 내용을 확인한 뒤 앱에서 다시 시도해 주세요.", f"{len(failed)} agent(s) failed. Check the messages above and retry from the app."); return 7
+    say("완료되었습니다. 앱에서 에이전트가 '연결됨'으로 바뀌면 채널에 추가해 쓰면 됩니다.", "Done. Once the agents show as connected in the app, add them to a channel.")
+    return 0
+
+
 def main(argv):
     global BASE
     code = (argv[1] if len(argv) > 1 else os.environ.get("ARGO_LINK_CODE", "")).strip()
@@ -213,6 +293,13 @@ def main(argv):
         say("연결 코드가 없거나 형식이 다릅니다. 앱에서 명령을 다시 복사해 주세요.", "Missing or invalid connection code — copy the command from the app again."); return 2
     say("이 서버의 에이전트를 찾는 중…", "Looking for agents on this server…")
     agents, clis = list_agents()
+    if not agents and os.geteuid() == 0 and not DEFER:
+        users = agent_users()
+        if len(users) == 1:
+            return handoff(users[0], code)
+        if users:
+            say("에이전트가 있는 계정이 여럿입니다: " + ", ".join(u.pw_name for u in users) + " — `sudo -iu <계정>`으로 바꾼 뒤 다시 실행해 주세요.",
+                "Several accounts have agents: " + ", ".join(u.pw_name for u in users) + " — switch with `sudo -iu <user>` and run again."); return 3
     if not agents:
         say("헤르메스·오픈클로 에이전트를 찾지 못했습니다. 게이트웨이를 실행하는 사용자 계정으로 다시 실행해 주세요.",
             "No Hermes or OpenClaw agents found. Run this again as the user that runs the gateway."); return 3
@@ -244,23 +331,17 @@ def main(argv):
     results = []
     for a in [x for x in chosen if x["kind"] == "hermes"]:
         ok, out = install_hermes(clis["hermes"], a, tokens[("hermes", a["id"])])
-        results.append({"kind": "hermes", "id": a["id"], "ok": ok, "detail": out[-300:]})
+        results.append({"kind": "hermes", "id": a["id"], "ok": ok, "detail": out[-300:], **({"unit": DEFERRED[a["id"]]} if a["id"] in DEFERRED else {})})
     oc = [x for x in chosen if x["kind"] == "openclaw"]
     if oc:
         for aid, (ok, out) in install_openclaw(clis["openclaw"], oc, {a["id"]: tokens[("openclaw", a["id"])] for a in oc}).items():
             results.append({"kind": "openclaw", "id": aid, "ok": ok, "detail": out[-300:]})
-    try:
-        post("link/done", {"code": code, "results": results})
-    except RuntimeError:
-        pass  # 결과 보고 실패는 연결 자체를 되돌리지 않는다 — 앱은 봇의 접속 시각으로도 상태를 본다
     names = {(a["kind"], a["id"]): a["name"] for a in agents}
-    for r in results:
-        print(f"  {'OK ' if r['ok'] else 'X  '} {names[(r['kind'], r['id'])]}" + ("" if r["ok"] else f" — {r['detail'][-160:]}"))
-    failed = [r for r in results if not r["ok"]]
-    if failed:
-        say(f"{len(failed)}명은 연결하지 못했습니다. 위 내용을 확인한 뒤 앱에서 다시 시도해 주세요.", f"{len(failed)} agent(s) failed. Check the messages above and retry from the app."); return 7
-    say("완료되었습니다. 앱에서 에이전트가 '연결됨'으로 바뀌면 채널에 추가해 쓰면 됩니다.", "Done. Once the agents show as connected in the app, add them to a channel.")
-    return 0
+    if DEFER:  # root 부모가 서비스를 재시작하고 결과를 보고한다
+        with open(DEFER, "w", encoding="utf-8") as f:
+            json.dump({"results": results, "names": {f"{k}:{i}": v for (k, i), v in names.items()}}, f)
+        return 0
+    return finish(code, results, names)
 
 
 if __name__ == "__main__":
