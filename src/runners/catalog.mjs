@@ -15,6 +15,10 @@ export const RUNNERS = {
       // 거부 / SDK 0.3.258 실턴 통과 2026-09-01). package.json의 SDK 하한이 곧 이 항목의 전제다.
       { id: 'claude-fable-5-1', label: 'Fable 5.1' },
       { id: 'claude-fable-5', label: 'Fable 5' },
+      // Opus 5.5(2026-09-23 유건 요청) — **Agent SDK ≥0.3.280 필수**(번들 CLI 2.1.280+; 0.3.258은 400 "2.1.280 or newer is required" 실측).
+      // 실턴 통과 2026-09-23(SDK 0.3.280, 두 변형 모두). effort 기본이 medium이라 크루 미지정이면 high(defaultClaudeEffort).
+      { id: 'claude-opus-5-5', label: 'Opus 5.5' },
+      { id: 'claude-opus-5-5[1m]', label: 'Opus 5.5 (1M)' },
       { id: 'claude-opus-5', label: 'Opus 5' }, // 실턴 통과 2026-07-25 (runOneShot 'ok' — 카탈로그 규칙: 실행 경로 검증 후에만 추가)
       // [1m] = 1M 컨텍스트 변형(Claude Code CLI --model 접미 규약). 실턴 통과 2026-08-06
       // (SDK 경로 wolff 크루 실챗 왕복 — 두 변형 모두 정상 응답, 4.8[1m]은 모델 자기보고까지 확인).
@@ -200,6 +204,10 @@ export const isCliTurn = (r, credType) => isCliRunner(r) && !(
 );
 export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-pro';
 export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
+
+/** 크루가 effort를 고르지 않았을 때 claude 러너에 보낼 기본값. Opus 5.5는 API 기본이 medium(Opus 5는 high)이라
+    같은 크루가 모델만 바꿔도 얕아지지 않게 high를 준다(유건 결정 2026-09-23). 그 밖의 모델은 '' = SDK 기본 그대로(종전 동작). */
+export const defaultClaudeEffort = (model) => (/^claude-opus-5-5(\[1m\])?$/.test(String(model ?? '')) ? 'high' : '');
 
 export const GLM_DEFAULT_MODEL = 'glm-5.3';
 

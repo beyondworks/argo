@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
 import { loadOrgRules, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
+import { defaultClaudeEffort } from './runners/catalog.mjs';
 import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
 import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
 import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs';
@@ -1657,7 +1658,7 @@ ${lang === 'en'
       // 크루별 추론 강도(요청 2026-07-25) — claude 러너에만. glm/kimi는 SDK 호환 경로로 타 벤더
       // 엔드포인트에 붙어 이 파라미터를 보장하지 않으므로 보내지 않는다(카탈로그 규칙과 같은 원칙:
       // 실행 경로가 받는 것만 보낸다). 화이트리스트는 persona.EFFORT_LEVELS가 저장 시점에 이미 강제.
-      ...(runner === 'claude' && EFFORT_LEVELS.includes(String(meta.effort ?? '')) ? { effort: meta.effort } : {}),
+      ...(runner === 'claude' && EFFORT_LEVELS.includes(String(meta.effort ?? '')) ? { effort: meta.effort } : runner === 'claude' && defaultClaudeEffort(sdkModel) ? { effort: defaultClaudeEffort(sdkModel) } : {}),
       // 전권이어도 SDK의 bypassPermissions로 게이트를 통째로 끄지 않는다 — 파일·셸 도구는 항상
       // canUseTool을 지나 금지 구역(앱 코드·타사 데이터·자격)을 하드 차단한다(실사용 신고 2026-07-22
       // 크리티컬: "크루한테 앱 고쳐달라고 하면 서버 소스를 실제로 고침"). Hermes YOLO와 같은 계약이다 —
