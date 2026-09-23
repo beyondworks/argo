@@ -2652,9 +2652,6 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   const setFocusPane = (paneId) => setSt((s) => (s.focus === paneId ? s : { ...s, focus: paneId }));
   const activateTab = (paneId, tabId) => setSt((s) => Panes.setActive(s.panes, s.focus, paneId, tabId));
   const chKey = channels.map((c) => c.id).join(',');
-  const chiefChannel = (id) => { const d = docs.find((x) => x.channel_id === id && x.channel_name); return d ? { id, name: d.channel_name, kind: d.channel_kind } : undefined; };
-  // 장이 멤버가 아닌 채널 — 문서가 있는 채널만 트리·그래프에 더한다(목록 channels에는 없다)
-  const memChannels = useMemo(() => { const have = new Set(channels.map((c) => c.id)); const extra = new Map(); for (const d of docs) if (d.channel_name && !have.has(d.channel_id)) extra.set(d.channel_id, { id: d.channel_id, name: d.channel_name, kind: d.channel_kind }); return [...channels, ...extra.values()]; }, [channels, docs]);
   const load = useCallback(async () => {
     const [a, d, m] = await Promise.all([
       q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(400)).catch(() => []), // 감사 열람은 관리자(RLS) — 멤버는 빈 목록
@@ -2671,6 +2668,9 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   }, [org.id, chKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState(null); // 새 기억 폼이 열린 대상(rel)
+  const chiefChannel = (id) => { const d = docs.find((x) => x.channel_id === id && x.channel_name); return d ? { id, name: d.channel_name, kind: d.channel_kind } : undefined; };
+  // 장이 멤버가 아닌 채널 — 문서가 있는 채널만 트리·그래프에 더한다(목록 channels에는 없다)
+  const memChannels = useMemo(() => { const have = new Set(channels.map((c) => c.id)); const extra = new Map(); for (const d of docs) if (d.channel_name && !have.has(d.channel_id)) extra.set(d.channel_id, { id: d.channel_id, name: d.channel_name, kind: d.channel_kind }); return [...channels, ...extra.values()]; }, [channels, docs]);
   // 문서 라벨은 참여 안 한 공개 채널까지 찾는다 — 공개 채널 일지는 조직원 누구나 읽어(RLS) 목록에 오는데, 참여 기준(#555) 뒤 channels에는 없어 '삭제된 채널'로 보였다
   const findCh = (id) => channels.find((c) => c.id === id) ?? previewChannels.find((c) => c.id === id) ?? chiefChannel(id); // 장 열람 문서는 채널 행이 안 보여 RPC가 준 이름·종류로(검수 M2)
   const chName = (id) => findCh(id)?.name ?? t('act.deletedChannel');

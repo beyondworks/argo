@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 // 팀 메신저 브리지(src/gateway/msgr.mjs) 행동 테스트 — 가짜 db·chat 주입, 네트워크·러너·실 Supabase 0.
 // 실 supabase-js 체인·RLS 왕복은 scripts/e2e-msgr-bridge.mjs(로컬 Supabase 스택)가 검증한다.
 // 실행: npm test (node --test). 임시 ARGO_ROOT — 실데이터 미접촉.
@@ -335,7 +336,8 @@ test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 
   const direct = src.match(/saveHandover\(/g) ?? [];
   assert.equal(direct.length, 1, 'saveHandover 직접 호출은 journalWrite 정의 1곳뿐 — 한 지점이라도 우회하면 crew_memory=false 채널 내용이 기억에 샌다');
   assert.equal((src.match(/await journalWrite\(reply, meta\.name \|\| agentSlug\)/g) ?? []).length, 3, '세 저장 지점 전부 journalWrite');
-  assert.match(src, /const journalWrite = \(reply, label\) => dmTurn \|\| journal\?\.off \? null : saveHandover\(wsId, agentSlug, userMsg, reply, label, \{ tag: journal\?\.tag \?\? '' \}\);/);
+  // 메신저 채널 턴(조직 태그)은 PC 일지에 쓰지 않는다 — 채널·조직 기억은 서버 일지에만(유건 결정 2026-09-24)
+  assert.match(src, /const journalWrite = \(reply, label\) => dmTurn \|\| journal\?\.off \|\| String\(journal\?\.tag \?\? ''\)\.startsWith\('org-'\) \? null : saveHandover\(wsId, agentSlug, userMsg, reply, label, \{ tag: journal\?\.tag \?\? '' \}\);/);
 });
 
 test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewServer가 journal을 넘긴다(검수 HIGH-2 — 한 곳이 빠지면 crew_memory=false 내용이 일지에 샌다)', async () => {
@@ -489,23 +491,31 @@ test('G-2 조직 문서 미러: 서버 문서 → vault/org/<slug>/<path> 읽기
   await assert.rejects(() => readFile(join(dir, 'glossary', 'terms.md'), 'utf8'), /ENOENT/, '사라진 문서의 미러는 지운다');
   const state = JSON.parse(await readFile(join(dir, M.ORG_DOCS_STATE), 'utf8'));
   assert.deepEqual(state.docs, { 'd-1': { path: 'rules/handbook.md', version: 2 } });
-  // 인덱서: org/ 미러가 기억 검색 인덱스에 오른다(재귀 폴더) + 인덱스 파일에 '조직 문서' 섹션
+  // 인덱서: org/ 미러는 기억 검색·recall·_index.md에 올리지 않는다 — 채널·조직 기억은 서버에만(유건 결정 2026-09-24, 설계 검수 M6)
   const { vaultDocsForTest, updateIndex } = await import('../src/memory.mjs');
   const rels = (await vaultDocsForTest(WS)).map((d) => d.rel);
-  assert.ok(rels.includes('org/lean/rules/handbook.md'), `org 미러가 색인 대상이 아니다: ${rels.join(',')}`);
+  assert.ok(!rels.some((r) => r.startsWith('org/')), `org 미러가 색인 대상에 남았다: ${rels.join(',')}`);
   await updateIndex(WS);
-  assert.match(await readFile(paths(WS).index, 'utf8'), /## 조직 문서[^\n]*\n- \[\[org\/lean\/rules\/handbook\]\] — 규칙집/, '_index.md에 조직 문서 섹션이 없다');
-  // drain이 조직마다 1회 미러를 부른다(하트비트 뒤) — 문서 0인 서버 → 미러 회수
+  assert.doesNotMatch(await readFile(paths(WS).index, 'utf8'), /## 조직 문서/, '_index.md에 조직 문서 절이 남았다');
+  // 옛 서버(msgr_crew_memory 없음): drain이 조직마다 1회 미러를 부른다(하트비트 뒤) — 문서 0인 서버 → 미러 회수
+  M._resetServerMemoryProbeForTest();
   const db3 = fakeDb({ docs: [] }); const enq = fakeEnqueue();
   await M.drain(WS, { db: db3, uid: OWNER, enqueue: enq });
   assert.deepEqual(db3.calls.filter((c) => c[0] === 'docsIndex').map((c) => c[1]), [ORG]);
+  // 새 서버(턴마다 기억): 미러를 만들지 않고 남은 vault/org/를 지운다
+  M._resetServerMemoryProbeForTest();
+  await mkdir(join(paths(WS).org, 'lean', 'rules'), { recursive: true }); await writeFile(join(paths(WS).org, 'lean', 'rules', 'x.md'), 'old', 'utf8');
+  const db4 = { ...fakeDb({ docs: [d1] }), crewMemory: async () => ({ docs: [], journal: '' }) };
+  await M.drain(WS, { db: db4, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(existsSync(paths(WS).org), false, '새 서버면 PC 미러를 지운다');
+  M._resetServerMemoryProbeForTest();
   await rm(paths(WS).org, { recursive: true, force: true });
 });
 
 test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK·CLI 시스템 프롬프트 두 곳에 붙이고, 위임 턴엔 kind msgr-rules 축소 ctx로 이어진다; 브리지는 orgSlug·channelName을 ctx에 싣는다', async () => {
   const { readFileSync } = await import('node:fs');
   const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.match(chatSrc, /const orgRules = mirrorCtx\?\.orgSlug \? await loadOrgRules\(wsId, mirrorCtx\.orgSlug, \{ channelName: mirrorCtx\.channelName \?\? ''/, '규칙 로드');
+  assert.match(chatSrc, /const orgRules = mirrorCtx\?\.orgMemory \? orgMemoryPrompt\(mirrorCtx\.orgMemory, \{ org: mirrorCtx\.orgSlug \?\? '', channelName: mirrorCtx\.channelName \?\? ''[^\n]*\n\s*: mirrorCtx\?\.orgSlug \? await loadOrgRules\(wsId, mirrorCtx\.orgSlug, \{ channelName: mirrorCtx\.channelName \?\? ''/, '규칙 로드 — 서버 기억 우선, 옛 서버면 미러');
   assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: cliTools, connectors: cliConnectors \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입'); // K94: 도구 여부는 크루 다리 유무
   assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(mirrorCtx\?\.kind === 'msgr' \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값');
   assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');

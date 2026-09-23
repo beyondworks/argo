@@ -117,3 +117,36 @@ test('조직에서 나가면 장의 권한도 끝나고, 다시 들어와도 채
   sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}' and user_id = '${U.lead}'`);
   assert.equal(sees(U.lead, PRIV), 0, '재가입만으로 옛 채널 기억이 열리지 않는다');
 });
+
+// P2 — 턴마다 서버 기억(msgr_crew_memory): 크루 주인만, 전사 문서 + 크루가 참여한 이 채널 문서·최근 일지만. 다른 채널 문서는 싣지 않는다(설계 검수 H3).
+test('크루 기억은 전사 문서와 이 채널 문서만 — 다른 채널·남의 크루는 없다', { skip }, () => {
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}'`);
+  const crew = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status) values ('${ORG}', '${U.member}', 'ws1', 'mem-crew', 'Mem', 'local', 'active') returning id`));
+  const OTHER = last(asUser(U.member, `select public.msgr_create_channel('${ORG}', 'private', 'other')`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PRIV}', 'crew', '${crew}') on conflict do nothing`);
+  sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values
+    ('${ORG}', null, 'rules/tone.md', '말투', '존댓말', '${U.owner}', '${U.owner}'),
+    ('${ORG}', '${PRIV}', 'rules/hr.md', '인사 규칙', '기밀', '${U.member}', '${U.member}'),
+    ('${ORG}', '${OTHER}', 'rules/other.md', '다른 채널', '새면 안 됨', '${U.member}', '${U.member}')`);
+  const mem = JSON.parse(last(asUser(U.member, `select public.msgr_crew_memory('${crew}', '${PRIV}')`)));
+  const titles = mem.docs.map((d) => d.title).sort();
+  assert.deepEqual(titles, ['말투', '인사 규칙']);
+  assert.deepEqual(mem.docs.map((d) => d.scope).sort(), ['channel', 'org']);
+  assert.match(mem.journal, /기록/, '이 채널 최근 일지');
+  const other = JSON.parse(last(asUser(U.member, `select public.msgr_crew_memory('${crew}', '${OTHER}')`)));
+  assert.deepEqual(other.docs.map((d) => d.title), ['말투'], '크루가 없는 채널 — 전사 문서만');
+  assert.equal(other.journal, '');
+  assert.equal(last(asUser(U.owner, `select public.msgr_crew_memory('${crew}', '${PRIV}')`)), '', '남의 크루는 빈 결과');
+});
+
+// 퇴장 회수 판정(msgr_channel_access) — PC 사본은 서버가 채널마다 "못 읽음"이라고 명시한 경우에만 지운다(설계 검수 M7: 목록 누락·조회 실패로 지우지 않는다).
+test('채널 접근 판정: 읽을 수 있거나 장이면 true, 나갔거나 없는 채널은 false', { skip }, () => {
+  const rows = (uid, ids) => Object.fromEntries(asUser(uid, `select id || ':' || ok from public.msgr_channel_access(array[${ids.map((x) => `'${x}'`).join(',')}]::uuid[])`).split('\n').filter(Boolean).map((l) => l.split(':')).map(([k, v]) => [k, v === 'true']));
+  const gone = '99999999-9999-4999-8999-999999999999';
+  const m = rows(U.member, [PRIV, DM, gone]);
+  assert.equal(m[PRIV], true); assert.equal(m[DM], true); assert.equal(m[gone], false, '없는 채널(삭제) = 못 읽음');
+  assert.equal(rows(U.owner, [PRIV])[PRIV], true, '조직장');
+  assert.equal(rows(U.owner, [DM])[DM], false, '1:1은 조직장도');
+  sql(`delete from public.msgr_channel_members where channel_id = '${PRIV}' and member_id = '${U.guest}'`); // 5번 테스트가 다시 넣었다
+  assert.equal(rows(U.guest, [PRIV])[PRIV], false, '나간 게스트');
+});

@@ -23,8 +23,12 @@ export function noteDate(d) {
 /** 인덱스 구간 분류. updateIndex가 쓰던 필터와 1:1로 대응한다 — 여기서 갈리면 캐시 산출물이 정본과 달라진다.
     conflict = sync가 텍스트 충돌 시 남기는 `<슬러그>.conflict-<기기>-<ts>.md`(sync.mjs). 내용은 옛 판인데
     mtime이 '지금'이라 주제 노트에 섞이면 최신인 척 최상단을 차지한다. */
+/** 팀 메신저 채널·조직 기억의 PC 사본인가 — 조직 문서 미러(org/)와 채널 태그 일지(journal/<날짜>-<slug>.org-…md).
+    채널·조직 기억은 서버에만 둔다(유건 결정 2026-09-24) — 남은 사본은 색인·검색·recall에 올리지 않는다(다른 채널 턴으로 새는 길, 설계 검수 M6). */
+export const isOrgCopy = (rel) => rel.startsWith('org/') || /^journal\/[^/]*\.org-[^/]*\.md$/.test(rel);
 export function docKind(rel) {
   const base = basename(rel);
+  if (/^journal\/[^/]*\.org-[^/]*\.md$/.test(rel)) return 'other';
   if (rel.startsWith('notes/')) return /\.conflict-.*\.md$/.test(rel) ? 'conflict' : 'note';
   if (rel.startsWith('journal/')) {
     if (/^\d{4}-\d{2}-\d{2}-/.test(base)) return 'journal';
