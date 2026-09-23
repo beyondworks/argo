@@ -240,9 +240,6 @@ export const holdsLeaseOnWriteFailure = (state, now = Date.now()) =>
 
 // (export: 회귀 테스트용 — 판정식이 아닌 **배선**을 잠그기 위해. 프로덕션 호출부는 cycle() 하나다.)
 export async function renewLease(owner, { runnerUsable = true } = {}) {
-  // 확인된 보유자가 TTL/4(30초) 안에 갱신했으면 저장소를 건드리지 않는다. 동기화 주기(8초)마다 업서트하던 것이 storage.objects에
-  // 죽은 행을 쌓았다(2026-09-23 DB 점검: 기기 25대 × 분당 7.5회). 남은 TTL 90초 — 다른 기기는 만료된 리스만 가져간다.
-  if (leaseState.leader && leaseState.ownedAt > 0 && Date.now() - leaseState.ownedAt < LEASE_TTL_MS / 4) return;
   const me = await getDeviceId();
   const key = skey(owner, '_device-lease.json');
   let cur = null;
@@ -264,6 +261,9 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 기기의 잔존 리스가 fresh해도 "갱신"이 아니라 양보 판정을 1회 거친다 — 앱 재시작·재부팅으로 러너 없는
   // 리더가 원상복구되던 우회 차단. 진짜 보유 프로세스(ownedAt>0)의 갱신은 막지 않는다(교대 요동 방지).
   const acquiring = !(fresh && cur?.deviceId === me && leaseState.ownedAt > 0);
+  // 확인된 보유자가 TTL/4(30초) 안에 썼으면 다시 쓰지 않는다 — 읽기는 매 주기 해서 다른 기기의 탈취·경합은 그대로 바로 안다(검수 #689 M2).
+  // 동기화 주기(8초)마다 업서트하던 것이 storage.objects에 죽은 행을 쌓았다(2026-09-23 DB 점검: 기기 25대 × 분당 7.5회).
+  if (!acquiring && leaseState.leader && Date.now() - leaseState.ownedAt < LEASE_TTL_MS / 4) { leaseState.checkedAt = Date.now(); return; }
   if (acquiring && shouldYieldAcquire(runnerUsable, leaseState.yieldSince)) {
     if (!leaseState.yieldSince) {
       leaseState.yieldSince = Date.now();

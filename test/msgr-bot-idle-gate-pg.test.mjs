@@ -160,3 +160,32 @@ test('배달한 스캔에서는 커서를 ack 밖으로 넘기지 않는다', { 
   assert.equal(cursor(), m1, '돌려준 글이 있으면 커서는 ack만 따른다');
   assert.deepEqual(updates(want), []); m1 = want;
 });
+
+// 검수 #689 HIGH-1·MEDIUM-1 재현 핀: 커서 전진이 "나중에 배달될 수 있는 글"을 건너뛰면 안 된다.
+const age = (id, iv) => sql(`update public.msgr_messages set created_at = now() - interval '${iv}' where id = ${id}`);
+const rescan = () => sql(`update public.msgr_bots set scan_at = now() - interval '31 seconds' where id = '${BOT}'`);
+test('A: 파견 해제 중 받은 멘션은 10분이 넘어도 재개 뒤 배달된다', { skip }, () => {
+  sql(`update public.msgr_crews set status = 'detached' where id = '${BOT_CREW}'`);
+  const held = post(PUB, '@헤르메스 멈춘 동안', mention()); age(held, '11 minutes');
+  assert.deepEqual(updates(m1), []);
+  sql(`update public.msgr_crews set status = 'active' where id = '${BOT_CREW}'`); rescan();
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [held]);
+  assert.deepEqual(updates(held), []); m1 = held;
+});
+test('B: 초대 전 멘션은 10분이 넘어도 초대 뒤 배달된다(방장 결재가 늦는 경우)', { skip }, () => {
+  const PRIV2 = last(asUser(U.admin, `select public.msgr_create_channel('${ORG}', 'private', 'late-invite')`));
+  const s = post(PRIV2, '@헤르메스 비밀', mention(), U.admin); age(s, '11 minutes');
+  assert.deepEqual(updates(m1), []);
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV2}', 'crew', '${BOT_CREW}', '${U.admin}')`);
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [s]);
+  assert.deepEqual(updates(s), []); m1 = s;
+});
+test('C: 과거 시각(created_at)으로 넣은 글이 최근 대기 글을 건너뛰게 하지 못한다', { skip }, () => {
+  const PRIV3 = last(asUser(U.admin, `select public.msgr_create_channel('${ORG}', 'private', 'backdate')`));
+  const fresh = post(PRIV3, '@헤르메스 방금', mention(), U.admin);
+  last(asUser(U.member, `insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body, created_at) values ('${ORG}', '${PUB}', 'user', '${U.member}', 'backdated', now() - interval '1 day') returning id`));
+  assert.deepEqual(updates(m1), []);
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV3}', 'crew', '${BOT_CREW}', '${U.admin}')`);
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [fresh]);
+  assert.deepEqual(updates(fresh), []); m1 = fresh;
+});

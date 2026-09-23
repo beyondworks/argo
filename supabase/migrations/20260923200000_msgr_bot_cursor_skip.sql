@@ -1,4 +1,4 @@
--- 봇 커서 전진 — 아무것도 못 준 전체 스캔이면 10분 넘은 글까지 커서를 넘긴다(본문은 20260914170000_msgr_bot_updates_idle_gate.sql 그대로 + 루프 뒤 한 블록).
+-- 봇 커서 전진 — 아무것도 못 준 전체 스캔이면 이 크루와 무관한 글까지 커서를 넘긴다(최근 10분·겨냥 가능한 글 앞에서 멈춤)(본문은 20260914170000_msgr_bot_updates_idle_gate.sql 그대로 + 루프 뒤 한 블록).
 -- 라이브 실측(2026-09-23): VPS 봇 11개 중 10개 커서 0 → 조직 글 451건을 매 스캔 재평가, getUpdates가 봇당 하루 약 200번 3초 제한에 걸림.
 create or replace function public.msgr_bot_updates_before_work(token text,after_id bigint default 0,lim int default 50) returns setof jsonb
 language plpgsql security definer set search_path=public,pg_temp as $function$
@@ -63,11 +63,20 @@ begin
  'mentioned',msgr_to_mentioned(s.mentions,b.crew_id)));
  n:=n+1; exit when n>=greatest(1,least(coalesce(lim,50),100));
  end loop;
- -- 아무것도 못 준 전체 스캔(순서 대기로 중간 반환하지 않았다) — 10분 넘은 글까지 커서를 넘긴다. 받을 글이 없는 봇은 ack가 없어 커서가 0에 머물러
+ -- 아무것도 못 준 전체 스캔(순서 대기로 중간 반환하지 않았다) — 커서를 앞으로 당긴다. 받을 글이 없는 봇은 ack가 없어 커서가 0에 머물러
  -- 매 스캔마다 조직 글 전체를 배달 판정 함수로 다시 훑었다(2026-09-23 라이브: 451건·봇 11개 동시 → 3초 초과, 픽업 중앙값 614초).
- -- 10분 안의 글은 남긴다: 초대 직후 대기 멘션 배달·순서 대기(10분)·커밋 순서 역전이 그 창 안에서 끝난다.
+ -- 넘기는 것은 이 크루와 무관한 글뿐이다. 다음 앞에서 멈춘다(검수 #689 HIGH-1·MEDIUM-1):
+ --   ① 최근 10분 안의 글(id 기준 — created_at을 과거로 넣어도 뒤의 대기 글을 건너뛰지 못한다)
+ --   ② 이 크루를 겨냥할 수 있는 7일 안의 글 — 멘션(to·cc), 이 크루 글에 단 답글·그 스레드, 이 크루가 있는 1:1. 파견 재개·초대 결재 뒤 배달된다.
  if n=0 then
-   update msgr_crews c set cursor_msg_id=x.id from (select max(id) id from msgr_messages where org_id=b.org_id and id>lo and created_at<now()-interval '10 minutes') x
+   update msgr_crews c set cursor_msg_id=x.id from (select least(
+       (select max(m.id) from msgr_messages m where m.org_id=b.org_id and m.id>lo),
+       (select min(m.id)-1 from msgr_messages m where m.org_id=b.org_id and m.id>lo and m.created_at>=now()-interval '10 minutes'),
+       (select min(m.id)-1 from msgr_messages m where m.org_id=b.org_id and m.id>lo and m.created_at>=now()-interval '7 days' and (
+          m.mentions @> jsonb_build_array(jsonb_build_object('id', b.crew_id::text))
+          or exists(select 1 from msgr_messages p where p.id in (m.reply_to, m.thread_root) and p.crew_id=b.crew_id)
+          or exists(select 1 from msgr_channels d where d.id=m.channel_id and d.kind='dm' and msgr_crew_in_channel(d.id,b.crew_id))))
+     ) id) x
     where c.id=b.crew_id and x.id is not null and c.cursor_msg_id<x.id;
  end if;
 end $function$
