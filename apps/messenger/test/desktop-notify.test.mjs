@@ -86,3 +86,13 @@ test('전송 실패는 삼키지 않는다 — 네이티브 결과를 돌려주�
   assert.match(lib, /notify_mac::notify_status,[\s\S]*notify_mac::notify_request,[\s\S]*notify_mac::notify_send/);
   assert.match(lib, /native_realtime::native_notify_claim_and_send/);
 });
+
+// 2026-09-23 유건 제보: '나무 톡'으로 골라도 맥 기본 소리가 났다. UNNotificationSound.soundNamed는 번들 Resources 루트만 보고
+// 하위 폴더 경로(sounds/x.caf)면 조용히 기본 소리로 바꾼다 — caf는 루트에 두고 이름만 넘긴다.
+test('맥 알림 소리 — caf는 번들 Resources 루트에 들어가고 이름만으로 찾는다', () => {
+  const conf = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
+  assert.equal(conf.bundle.resources['sounds/*.caf'], '');
+  const rs = readFileSync(new URL('../src-tauri/src/notify_mac.rs', import.meta.url), 'utf8');
+  assert.match(rs, /format!\("\{name\}\.caf"\)/);
+  assert.doesNotMatch(rs, /"sounds\//);
+});

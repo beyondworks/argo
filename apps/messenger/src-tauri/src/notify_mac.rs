@@ -219,7 +219,9 @@ where
                     | "wood-marimba"
             )
         }) {
-            let resource = NSString::from_str(&format!("sounds/{name}.caf"));
+            // soundNamed looks only at the bundle Resources root (and Library/Sounds); a
+            // subdirectory path silently falls back to the system default sound.
+            let resource = NSString::from_str(&format!("{name}.caf"));
             let notification_sound = UNNotificationSound::soundNamed(&resource);
             content.setSound(Some(&notification_sound));
         }
