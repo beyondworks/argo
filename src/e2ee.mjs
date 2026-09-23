@@ -246,8 +246,11 @@ export async function tryClaimDek(sb, deviceId, { root = WS_ROOT, force = false 
   if (!force && Date.now() - lastClaim < 60_000) return false;
   lastClaim = Date.now();
   try {
-    await loadDeviceE2ee({ root }); // 재시작 직후 키 파일을 읽기 전에 불리면(sync 첫 사이클) 로컬 DEK가 있는 기기도 미보유로 보였다 — 먼저 읽는다(검수 #693 MEDIUM)
-    if (dekBuf) return true;
+    // 로컬 DEK는 캐시가 아니라 디스크로 판정한다 — 재시작 직후(키를 읽기 전)나, 다른 번들 사본·프로세스가 켜기로 setDek한 뒤
+    // 이 사본의 캐시가 낡았을 때 정상 기기도 미보유로 보여 자기 랩을 지웠다(검수 #693 MEDIUM 2건). 디스크에 있으면 캐시를 올리고 끝.
+    await loadDeviceE2ee({ root });
+    const disk = readState(root);
+    if (disk?.dek) { cache = { root, state: disk }; dekBuf = Buffer.from(disk.dek, 'base64'); return true; }
     const { data, error } = await sb.from('wrapped_deks').select('wrap, wrapped_by').eq('device_id', deviceId).maybeSingle();
     if (error || !data?.wrap) return false;
     if (data.wrapped_by === deviceId) { // 켜기에서 물러난 뒤 못 지운 자기 랩일 수 있다 — 다른 기기가 있으면 그 계정의 DEK가 아니다(갈라진 열쇠, 검수 #687 MEDIUM). 승인이 덮어쓴다.

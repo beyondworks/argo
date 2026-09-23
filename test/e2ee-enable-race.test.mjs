@@ -115,3 +115,20 @@ test('거절 뒤 삭제는 자기가 랩한 행만 — 그 사이 커밋된 승�
   assert.equal(await tryClaimDek(sb, 'B', { force: true, root }), false);
   assert.equal(sb.rows.get('B')?.wrapped_by, 'A', '승인 랩이 남는다');
 });
+
+// 검수 #693 MEDIUM 재현(2차): 동기화 루프와 설정 라우트가 서로 다른 모듈 사본이면, 동기화 쪽 캐시는 켜기 전(DEK 없음) 상태로 남는다.
+// 그 사본의 회수가 다른 기기를 보고 정상 기기의 자기 랩을 지우고, 재시작 전까지 DEK를 못 쓰던 것 — 디스크 기준으로 판정하면 둘 다 없어진다.
+test('다른 모듈 사본이 켜기로 열쇠를 저장했으면, 낡은 캐시의 사본도 회수에서 디스크 열쇠를 집고 자기 랩을 지우지 않는다', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-e2ee-copies-'));
+  const Y = await import('../src/e2ee.mjs?copy=sync');
+  const X = await import('../src/e2ee.mjs?copy=route');
+  await Y.loadDeviceE2ee({ root }); // 동기화 첫 사이클 — DEK 없음을 캐시
+  const st = await X.loadDeviceE2ee({ root }); const d = Buffer.alloc(32, 3); await X.setDek(d, { root }); // 설정에서 켜기
+  const sb = fakeSb();
+  sb.rows.set('A', { device_id: 'A', wrap: X.wrapDekFor(st.pub, d).toString('base64'), wrapped_by: 'A' });
+  sb.rows.set('B', { device_id: 'B', wrap: 'x', wrapped_by: 'A' }); // 곧바로 B 승인
+  assert.equal(Y.dek(), null, '동기화 사본의 캐시는 낡았다');
+  assert.equal(await Y.tryClaimDek(sb, 'A', { force: true, root }), true);
+  assert.ok(sb.rows.has('A'), '정상 기기의 자기 랩은 남는다');
+  assert.deepEqual(Y.dek(), d, '동기화 사본도 디스크의 열쇠를 쓴다');
+});
