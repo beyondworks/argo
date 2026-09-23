@@ -118,8 +118,9 @@ export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__c
 function messengerColleagues(ctx, hop) {
   if (ctx?.kind !== 'msgr' || hop >= 2) return [];
   return (ctx.peers ?? []).filter((p) => p.id !== ctx.crewId)
-    .map((p) => ({ id: p.id, slug: p.slug, name: p.display_name || p.slug, role: p.role }));
+    .map((p) => ({ id: p.id, slug: p.slug, name: p.display_name || p.slug, role: p.role ?? p.role_text })); // 서버 봉투는 role_text(dm_relay.sql:68)
 }
+export const _messengerColleaguesForTest = messengerColleagues;
 
 function rosterPrompt(colleagues, lang = 'ko', messenger = false) {
   if (messenger) {
