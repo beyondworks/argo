@@ -118,8 +118,12 @@ test('서버 보고 → 관리자 승인: 고른 에이전트만 봇이 되고, 
   fails(reportRaw(l.code, 'vps-1', [agent('slack', 'x', 'X', tA)]), /msgr_link_bad_agents/, '모르는 종류');
   report(l.code, 'vps-1', [agent('hermes', 'default', 'Hermes', tA), agent('hermes', 'research', 'research', tB), agent('openclaw', 'main', 'OpenClaw', tC)]);
   assert.equal(status(l.code).status, 'reported');
+  fails(reportRaw(l.code, 'evil', [agent('hermes', 'default', 'Hermes', tok())]), /msgr_link_used/, '승인 전 재보고(코드를 본 사람의 목록·해시 바꿔치기) 거절 — 검수 #688 MEDIUM');
+  assert.equal(last(asUser(U.admin, `select host from public.msgr_server_links where id = '${l.link_id}'`)), 'vps-1');
   assert.deepEqual(status(l.code).approved, [], '승인 전에는 목록을 내주지 않는다');
   fails(asUserRaw(U.member, `select public.msgr_server_link_approve('${l.link_id}', '[{"kind":"hermes","id":"default"}]'::jsonb)`), /msgr_admin_only/, '멤버 승인');
+  last(asUser(U.member, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Other', 'other-link', '${U.member}') returning id`));
+  fails(asUserRaw(U.member, `select public.msgr_server_link_approve('${l.link_id}', '[{"kind":"hermes","id":"default"}]'::jsonb)`), /msgr_admin_only/, '다른 조직의 조직장은 이 조직 연결을 승인하지 못한다(검수 #688 LOW)');
   fails(asUserRaw(U.admin, `select public.msgr_server_link_approve('${l.link_id}', '[{"kind":"hermes","id":"ghost"}]'::jsonb)`), /msgr_link_no_picks/, '보고에 없는 에이전트');
   const out = approve(U.admin, l.link_id, [{ kind: 'hermes', id: 'default' }, { kind: 'openclaw', id: 'main' }, { kind: 'hermes', id: 'default' }]);
   assert.equal(out.length, 2, '같은 에이전트를 두 번 골라도 봇은 하나');

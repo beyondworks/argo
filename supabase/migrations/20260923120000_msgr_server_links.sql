@@ -44,13 +44,14 @@ create or replace function public.msgr_server_link_by_code(code text) returns pu
 $$;
 revoke all on function public.msgr_server_link_by_code(text) from public;
 
--- 2) 서버 스크립트(anon, 코드가 자격): 에이전트 목록 보고. 승인 전에는 다시 보고하면 목록을 바꾼다(스크립트 재실행).
+-- 2) 서버 스크립트(anon, 코드가 자격): 에이전트 목록 보고 — 코드당 한 번. 다시 받으면 코드를 본 누군가가 관리자가 보는 목록·토큰 해시를
+--    자기 것으로 바꿔 승인받을 수 있었다(검수 #688 MEDIUM). 스크립트를 다시 돌리려면 앱에서 새 명령을 만든다.
 create or replace function public.msgr_server_link_report(code text, host text, agents jsonb) returns void
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare l public.msgr_server_links := public.msgr_server_link_by_code(code); a jsonb; n int := 0;
 begin
   if l.id is null then raise exception 'msgr_link_invalid'; end if;
-  if l.status not in ('waiting', 'reported') then raise exception 'msgr_link_used'; end if;
+  if l.status <> 'waiting' then raise exception 'msgr_link_used'; end if;
   if coalesce(host, '') !~ '^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$' then raise exception 'msgr_link_bad_agents' using detail = 'host'; end if;
   if jsonb_typeof(agents) is distinct from 'array' or jsonb_array_length(agents) > 50 then raise exception 'msgr_link_bad_agents'; end if;
   for a in select * from jsonb_array_elements(agents) loop
