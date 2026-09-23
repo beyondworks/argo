@@ -11,7 +11,7 @@ import { getDeviceId } from '../../../../src/workspace.mjs';
 import {
   loadDeviceE2ee, dek, setDek, wrapDekFor, openDekWrap, pubFingerprint,
   generateRecoveryCode, deriveRecoveryKek, RECOVERY_KDF, wrapDekWithKek, openDekWithKek,
-  tryClaimDek, _resetClaimForTest,
+  tryClaimDek, _resetClaimForTest, claimFirstWrap,
 } from '../../../../src/e2ee.mjs';
 import { markResealAll, nudgeSync } from '../../../../src/sync.mjs';
 import { proRowActive, TRIAL_DAYS } from '../../../../src/entitlement.mjs';
@@ -104,8 +104,10 @@ export async function POST(req) {
       const recoveryWrap = wrapDekWithKek(kek, dekBytes).toString('base64');
       const myWrap = wrapDekFor(myKeys.pub, dekBytes).toString('base64');
       // 서버 기록(전부 암호문·파라미터) → 성공 후에만 로컬 DEK 확정 — 반쪽 활성(로컬만 켜짐) 방지
-      const { error: e1 } = await sb.from('wrapped_deks').upsert({ user_id: user.id, device_id: deviceId, wrap: myWrap, wrapped_by: deviceId }, { onConflict: 'user_id,device_id' });
-      if (e1) throw new Error(e1.message);
+      // 자기 랩 기록 → 다른 기기 재확인(claimFirstWrap) — 두 기기 동시 켜기로 열쇠가 갈라지지 않게. 복구 랩은 확정 뒤에만.
+      if (!(await claimFirstWrap(sb, { userId: user.id, deviceId, wrap: myWrap, fresh: !mine?.wrap }))) {
+        return apiError('e2ee_already_on_other', lang);
+      }
       const { error: e2 } = await sb.from('recovery_wraps').upsert({ user_id: user.id, wrap: recoveryWrap, kdf: { ...RECOVERY_KDF, salt } }, { onConflict: 'user_id' });
       if (e2) throw new Error(e2.message);
       await setDek(dekBytes);
@@ -121,7 +123,8 @@ export async function POST(req) {
       const dk = dek();
       if (!dk) return apiError('e2ee_no_key_here', lang);
       const target = String(body.deviceId ?? '');
-      if (!target || target === deviceId) return apiError('e2ee_approve_target_required', lang);
+      if (!target) return apiError('e2ee_approve_target_required', lang);
+      if (target === deviceId) return apiError('e2ee_approve_self', lang); // 자기 승인은 '대상 없음'이 아니다 — revoke의 e2ee_revoke_self와 같은 구분(위험 파일 검수 R-5)
       const { data: row, error } = await sb.from('device_keys').select('pubkey').eq('device_id', target).maybeSingle();
       if (error) throw new Error(error.message);
       if (!row?.pubkey) return apiError('e2ee_target_pubkey_missing', lang);

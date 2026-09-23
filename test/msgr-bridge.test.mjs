@@ -1705,3 +1705,19 @@ test('D43 거절 안내 쓰기가 msgr_not_allowed로 막혀도 커서는 멈추
   await M.drain(WS, { db, uid: OWNER, enqueue: enq }); // 던지지 않는다
   assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 32]], '막힌 안내 뒤에도 커서 전진');
 });
+
+// 위험 파일 검수 R-2(2026-09-23): 거절·만료 안내 insert가 일시 오류로 실패하면 커서를 보류해 다음 틱에 다시 안내한다.
+// 전에는 오류를 무조건 삼키고 커서를 전진시켜, 순단 한 번에 지시가 안내 없이 영구히 사라졌다. 영구 실패(권한·제약)는 건너뛴다.
+test('drain: 거절·만료 안내가 일시 오류로 실패하면 커서 보류, 영구 실패면 건너뛰고 전진', async () => {
+  const old = new Date(Date.now() - 25 * 3_600_000).toISOString();
+  const mk = () => fakeDb({ crews: [crew({ allow: 'list', allow_users: [MEMBER] })],
+    messages: [msg(15, { author_user_id: '33333333-3333-4333-8333-333333333333' })] });
+  for (const make of [mk, () => fakeDb({ messages: [msg(16, { created_at: old })] })]) {
+    const db = make(); db.insertMessage = async () => { throw new Error('insert down'); };
+    await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() }).catch(() => {});
+    assert.equal(db.calls.some((c) => c[0] === 'setCursor'), false, '일시 오류면 커서 보류');
+    const db2 = make(); db2.insertMessage = async () => { throw Object.assign(new Error('rls'), { code: '42501' }); };
+    await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
+    assert.equal(db2.calls.some((c) => c[0] === 'setCursor'), true, '영구 실패면 건너뛰고 전진(큐 정지 금지)');
+  }
+});

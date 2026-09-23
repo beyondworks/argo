@@ -586,12 +586,12 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       }
       if (fromCrew && hop > HOP_MAX) {
         await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `hopcap:${crew.id}:${m.id}`,
-          body: pick(`크루끼리 넘기기가 ${HOP_MAX}단계를 넘어 여기서 멈춥니다 — 이어가려면 사람이 다시 지시해 주세요.`, `Crew-to-crew handoff exceeded ${HOP_MAX} hops and stops here — a person needs to re-instruct to continue.`, lang) }).catch((e) => console.error('[argo] msgr 넘김 상한 안내 실패:', e.message));
+          body: pick(`크루끼리 넘기기가 ${HOP_MAX}단계를 넘어 여기서 멈춥니다 — 이어가려면 사람이 다시 지시해 주세요.`, `Crew-to-crew handoff exceeded ${HOP_MAX} hops and stops here — a person needs to re-instruct to continue.`, lang) }).catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 넘김 상한 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
         return;
       }
       if (fromCrew && !autoOk(wsId, now())) {
         await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `ratecap:${crew.id}:${m.id}`,
-          body: pick(`10분 안에 자동 턴이 ${AUTO_MAX}회를 넘어 이 넘김은 실행하지 않았습니다 — 잠시 뒤 사람이 다시 지시해 주세요.`, `Over ${AUTO_MAX} automatic turns in 10 minutes — this handoff was not run; a person can re-instruct shortly.`, lang) }).catch((e) => console.error('[argo] msgr 자동 턴 상한 안내 실패:', e.message));
+          body: pick(`10분 안에 자동 턴이 ${AUTO_MAX}회를 넘어 이 넘김은 실행하지 않았습니다 — 잠시 뒤 사람이 다시 지시해 주세요.`, `Over ${AUTO_MAX} automatic turns in 10 minutes — this handoff was not run; a person can re-instruct shortly.`, lang) }).catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 자동 턴 상한 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
         return;
       }
       let why = envelope ? 'ok' : await db.instructCheck(crew.id, origin, m.channel_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid) ? 'ok' : 'crew_allow'; });
@@ -601,7 +601,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         await db.insertMessage({
           channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
           body: denyBody(why, crew, lang),
-        }).catch((e) => console.error('[argo] msgr 거절 안내 실패:', e.message));
+        }).catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 거절 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
         return;
       }
       if (now() - Date.parse(m.created_at) > STALE_MS) {
@@ -609,7 +609,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         await db.insertMessage({
           channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `stale:${crew.id}:${m.id}`,
           body: pick('대기 시간이 24시간을 넘어 이 지시는 실행하지 않았습니다 — 다시 지시해 주세요.', 'This request waited over 24 hours and was not run — please ask again.', lang),
-        }).catch((e) => console.error('[argo] msgr 만료 안내 실패:', e.message));
+        }).catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 만료 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
         return;
       }
       // 멘션 순서대로 한 크루씩(잡 이름의 순번 + after): 뒤 크루는 앞 크루의 답이 채널에 실린 뒤 돈다 — 문맥이 이어진다(동시 실행이던 때 둘 다 "1"이라 셈).
