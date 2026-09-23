@@ -97,3 +97,36 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
     return fail(500, `Internal: ${String(e?.message ?? e).slice(0, 200)}`);
   }
 }
+
+// VPS 서버 연결(2026-09-23) — 서버 스크립트(connect.py)가 연결 코드로 부르는 경로. 봇 토큰 경로와 따로 둔다(/link/<method>).
+// 코드가 자격이고 판정은 msgr_server_link_* RPC가 한다. 토큰 원문은 오지 않는다(해시만).
+export const LINK_METHODS = ['report', 'status', 'done'];
+const LINK_ERR = {
+  msgr_link_invalid: [404, 'Not Found: connection code is invalid or expired — create a new command in the app'],
+  msgr_link_used: [409, 'Conflict: this connection code was already used — create a new command in the app'],
+  msgr_link_bad_agents: [400, 'Bad Request: agent list is malformed'],
+};
+export function parseLinkPath(url) {
+  const m = new URL(url).pathname.match(/\/link\/([a-z]+)\/?$/);
+  return m ? m[1] : null;
+}
+export async function handleLink(method, params = {}, rpc) {
+  if (!LINK_METHODS.includes(method)) return fail(404, `Not Found: link/${method}`);
+  const code = String(params.code ?? '');
+  if (!/^argo_link_[0-9a-f]{48}$/.test(code)) return fail(400, 'Bad Request: code is missing or malformed');
+  try {
+    if (method === 'report') { await rpc('msgr_server_link_report', { code, host: String(params.host ?? ''), agents: Array.isArray(params.agents) ? params.agents : null }); return reply(200, true); }
+    if (method === 'status') return reply(200, await rpc('msgr_server_link_status', { code }));
+    await rpc('msgr_server_link_done', { code, results: Array.isArray(params.results) ? params.results : null });
+    return reply(200, true);
+  } catch (e) {
+    const name = String(e?.message ?? '').match(/msgr_[a-z_]+/)?.[0];
+    if (name && LINK_ERR[name]) return fail(LINK_ERR[name][0], LINK_ERR[name][1]);
+    return fail(500, `Internal: ${String(e?.message ?? e).slice(0, 200)}`);
+  }
+}
+// /connect 원문 — 스크립트의 BASE 기본값에 이 함수의 공개 주소를 넣는다. 정본은 앱이 명령 두 번째 인자로 넣는 주소이고,
+// 이 값은 인자가 빠졌을 때의 대체다(런타임 SUPABASE_URL이 https 공개 주소가 아니면 넣지 않는다 — 로컬 개발의 내부 주소 등).
+export function connectScript(py, base) {
+  return /^https:\/\/[A-Za-z0-9.-]+(:\d+)?\/functions\/v1\/msgr-bot$/.test(base) ? py.replace('"__ARGO_MSGR_URL__"', JSON.stringify(base)) : py;
+}

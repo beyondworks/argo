@@ -22,6 +22,7 @@ import datetime
 import json
 import logging
 import os
+import random
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -34,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 _POLL_TIMEOUT_S = 20          # server caps at 25
 _BACKOFF_MAX_S = 30
+# 실측(2026-09-23, VPS 11개 봇 76시간 로그): 실패하는 getUpdates 호출은 3.34초(p10 3.28 / p90 4.57)에
+# 일정하게 죽는다 — 서버측 Postgres statement_timeout(≈3초)이 msgr_bot_updates_with_delivery RPC를 끊는 것.
+# 호출 자체가 3.3초인데 30초를 자면 비용의 9배를 '귀 닫고' 버린다. 그 30초 버킷이 전체 무응답 시간의 76%였다.
+_TRANSIENT_BACKOFF_MAX_S = 3.0   # 5xx·네트워크 = 일시적. 짧게 캡한다.
+_TRANSIENT_STREAK_MAX = 12       # 연속 12회 넘게 실패하면 진짜 장애로 보고 느린 사다리로 복귀(관측 버스트의 96%가 12회 이하)
 _MAX_LEN = 20000              # server body cap (msgr_messages.body)
 # Gateway system notices (busy-ack ⚡/⏳/⏩, 💾, 📬 home-channel notice) stay local — the server keeps ONE reply per source
 # message, and a notice must not take the slot the real answer needs (observed: '⚡ Interrupting…' became the reply, answer went plain).
@@ -222,14 +228,32 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             self._poll_task = None
         self._mark_disconnected()
 
+    async def _retry_wait(self, backoff: float, streak: int, transient: bool, what: str) -> float:
+        """다음 폴링 전 대기 — 실제로 잔 시간을 로그에 남기고 다음 백오프를 돌려준다.
+
+        · 일시적 오류(5xx·네트워크)는 3초로 캡한다. 실패 호출이 3.3초에 끝나는데 30초를 자면
+          그 30초 동안 들어온 메시지를 통째로 못 가져간다 — 체감 지연의 본체가 이것이다.
+        · equal jitter(절반 고정 + 절반 난수)로 재시도 위상을 흩는다. 11개 봇이 같은 서버 쿼리를
+          공유하는데 사다리가 똑같으면 같은 순간에 함께 재시도해 경합을 다시 만든다
+          (실측: 실패의 76%가 8개 이상 봇 ±1초 동시, 26%가 11개 전부 동시).
+        · 연속 실패가 길어지면(=진짜 장애) 원래의 느린 30초 사다리로 되돌려 서버를 두들기지 않는다.
+        """
+        cap = _TRANSIENT_BACKOFF_MAX_S if (transient and streak <= _TRANSIENT_STREAK_MAX) else _BACKOFF_MAX_S
+        backoff = min(backoff, cap)
+        delay = backoff / 2 + random.uniform(0, backoff / 2)
+        logger.warning("Argo Messenger: %s — retry in %.1fs", what, delay)
+        await asyncio.sleep(delay)
+        return min(backoff * 2, cap)
+
     async def _poll_loop(self) -> None:
         backoff = 1.0
+        streak = 0            # 연속 실패 횟수 — 성공 한 번이면 0으로 되돌아간다
         while self._running:
             try:
                 await self._flush_outbox()
                 updates = await self._api("getUpdates", {"offset": self._offset, "timeout": _POLL_TIMEOUT_S, "limit": 1, "delivery_protocol": 1},
                                           timeout=_POLL_TIMEOUT_S + 15) or []
-                backoff = 1.0
+                backoff = 1.0; streak = 0
                 for up in updates:
                     try:
                         await self._dispatch(up.get("message") or {})
@@ -247,11 +271,13 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
                     self._running = False
                     self._mark_disconnected()
                     return
-                logger.warning("Argo Messenger: getUpdates %s — retry in %.0fs", e, backoff)
-                await asyncio.sleep(backoff); backoff = min(backoff * 2, _BACKOFF_MAX_S)
+                streak += 1
+                # 429(레이트리밋)는 서버가 '천천히 오라'는 뜻이므로 짧은 캡을 적용하지 않는다.
+                backoff = await self._retry_wait(backoff, streak, e.status >= 500 or e.status == 408,
+                                                 "getUpdates %s" % (e,))
             except Exception as e:
-                logger.warning("Argo Messenger: poll error %s — retry in %.0fs", _redact(str(e)), backoff)
-                await asyncio.sleep(backoff); backoff = min(backoff * 2, _BACKOFF_MAX_S)
+                streak += 1
+                backoff = await self._retry_wait(backoff, streak, True, "poll error %s" % _redact(str(e)))
 
     async def _dispatch(self, m: Dict[str, Any]) -> None:
         text = (m.get("text") or "").strip()

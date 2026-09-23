@@ -1473,3 +1473,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-replychip .q b { color: var(--fg); font-weight: 600; margin-right: 4px; }
 .msgr-replychip .x { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; border: 0; background: none; color: var(--fg-3); cursor: pointer; }
 @media (hover: hover) { .msgr-replychip .x:hover { background: var(--card); color: var(--fg); } } .msgr-replychip .x:active { background: var(--card); color: var(--fg); }
+/* VPS 서버 연결(2026-09-23) — 로컬 불러오기 카드(.msgr-localimport)를 그대로 쓰고 단계·안내만 더한다 */
+.msgr-vps .steps { margin: 0 0 0 18px; padding: 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
+.msgr-vps .msgr-node-cmd { margin: 0; }
+.msgr-vps-where summary { cursor: pointer; font-size: 13px; color: var(--fg-2); }
+.msgr-vps-where ul { margin: 6px 0 0 18px; padding: 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
