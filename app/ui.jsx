@@ -284,6 +284,7 @@ export const Markdown = memo(function Markdown({ text, onWikiLink, wsId }) {
   const html = useMemo(() => {
     const escaped = String(text ?? '').replace(/</g, '&lt;');
     let out = marked.parse(escaped);
+    out = out.replace(/href="\/\/[^"]*"/gi, 'href="#"'); // 프로토콜 상대(//host) 외부 링크 차단 — 아래 필터는 '/' 시작을 동일출처로 보고 통과시켰다(검수 #690 LOW-2)
     out = out.replace(/href="((?!https?:|#|\/)[^"]*)"/gi, (_, h) => {
       const url = rewriteVaultHref(h, wsId);
       return url ? `href="${url.replace(/"/g, '&quot;')}"` : 'href="#"';

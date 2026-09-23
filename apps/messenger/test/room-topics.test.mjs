@@ -9,6 +9,12 @@ test('조직: 비공개 방만, 공개 채널은 org: 토픽이라 뺀다 · 개
   assert.deepEqual(roomTopicIds(list, 'p1', false), ['d1', 'x1']);
   assert.deepEqual(roomTopicIds(list, null, true), ['d1', 'p1', 'x1']);
 });
+test('상한을 넘으면 최근 대화·최근 방 우선(옛 방부터 채우지 않는다 — 검수 #690 M1)', () => {
+  const list = Array.from({ length: 60 }, (_, i) => ch(`d${String(i).padStart(2, '0')}`, 'dm'));
+  const ids = roomTopicIds(list, null, false, 50, { d00: 999 });
+  assert.ok(ids.includes('d00'), '가장 옛 방이라도 최근 대화면 포함');
+  assert.ok(ids.includes('d59') && !ids.includes('d01'), '그다음은 최근에 만든 방');
+});
 test('상한을 넘어도 열린 방은 남는다', () => {
   const list = Array.from({ length: 60 }, (_, i) => ch(`d${String(i).padStart(2, '0')}`, 'dm'));
   const ids = roomTopicIds(list, 'd59', false);

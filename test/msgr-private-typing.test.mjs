@@ -49,14 +49,16 @@ test('App.jsx 배선: 개인 공간의 방과 조직의 비공개 방(공개 채
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /const roomTopic = !!chId && \(isPersonal \|\| \(openKind !== null && openKind !== 'public'\)\);/, '조직 비공개 방도 대상(공개 채널만 제외)');
-  const eff = app.slice(app.indexOf('const roomTopic ='), app.indexOf('const roomTopic =') + 2600);
-  assert.match(eff, /const roomIdsKey = useMemo\(\(\) => roomTopicIds\(channels, chId, isPersonal\)\.join\(','\)/, '구독할 방 = roomTopicIds(열린 방 포함, 상한 50 — room-topics.test.mjs)');
-  assert.match(eff, /if \(!roomIdsKey\) return;/);
+  const eff = app.slice(app.indexOf('const lastAtRank ='), app.indexOf('const lastAtRank =') + 3200); // 구독 효과는 lastAt 선언 뒤(최근순 상한 — 검수 #690 M1)
+  assert.match(eff, /const roomIdsKey = useMemo\(\(\) => roomTopicIds\(channels, chId, isPersonal, 50, lastAt\)\.join\(','\)/, '구독할 방 = roomTopicIds(열린 방 포함, 상한 50·최근순 — room-topics.test.mjs)');
+  assert.match(eff, /for \(const \[id, c\] of subs\) if \(!want\.has\(id\)\) \{ supabase\.removeChannel\(c\)/, '빠진 방만 뗀다(차분 — 검수 #690 M1)');
+  assert.match(eff, /if \(subs\.has\(id\)\) continue;/, '이미 붙은 방은 다시 붙이지 않는다');
   assert.match(eff, /supabase\.channel\(`dm:\$\{id\}`, \{ config: \{ private: true \} \}\)/);
   assert.match(eff, /event: 'typing' \}, onTypingEvent\)/, 'dm:의 typing도 답글 직후 늦은 방송 거름망(typing-state.js)을 탄다');
   assert.match(eff, /event: 'progress' \}, onProgressEvent\)/);
-  assert.match(eff, /\}, \[roomIdsKey, isPersonal, session\.access_token\]\);/, '방 집합이 바뀌면 다시 구독');
-  assert.match(eff, /await supabase\.realtime\.setAuth\(session\.access_token\);\s*if \(!live\) return;\s*for \(const id of roomIdsKey\.split\(','\)\) \{\s*const c = supabase\.channel\(`dm:/, '정리가 먼저 끝났으면 채널을 만들지 않는다(고아 dm: 누적 — 검수 #607)');
+  assert.match(eff, /\}, \[roomIdsKey, isPersonal, resumeEpoch\]\);/, '방 집합·모바일 복귀 때 다시 맞춘다 — 토큰은 조직 구독의 setAuth가 전달(검수 #690 M2)');
+  assert.match(eff, /await supabase\.realtime\.setAuth\(session\.access_token\);\s*if \(!live\) return;/, '정리가 먼저 끝났으면 채널을 만들지 않는다(고아 dm: 누적 — 검수 #607)');
+  assert.match(eff, /if \(roomEpoch\.current !== resumeEpoch\) \{ for \(const c of subs\.values\(\)\) supabase\.removeChannel\(c\)/, '복귀하면 전부 다시 붙인다');
   assert.match(eff, /return \(\) => \{ live = false;/, '정리에서 live를 끈다');
   assert.match(eff, /event: 'reaction' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('reaction'/, 'dm:로 반응을 받는다');
   assert.match(eff, /event: 'edit' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('edit'/, 'dm:로 수정을 받는다');

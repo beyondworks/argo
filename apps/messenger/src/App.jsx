@@ -838,26 +838,6 @@ function Shell({ session }) {
   const openKind = useMemo(() => (chId ? channels.find((c) => c.id === chId)?.kind ?? null : null), [channels, chId]);
   const roomTopic = !!chId && (isPersonal || (openKind !== null && openKind !== 'public')); // 열린 방의 반응·수정 방송은 그 방 토픽으로(아래 broadcast)
   const roomSubs = useRef(new Map()); // 방 id → 구독 채널
-  const roomIdsKey = useMemo(() => roomTopicIds(channels, chId, isPersonal).join(','), [channels, chId, isPersonal]);
-  useEffect(() => {
-    if (!roomIdsKey) return;
-    const subs = []; let live = true; // 정리가 setAuth보다 먼저 끝나면(빠르게 옮길 때) 채널을 만들지 않는다 — 고아 dm: 구독이 쌓였다(검수 #607 실측)
-    (async () => {
-      await supabase.realtime.setAuth(session.access_token);
-      if (!live) return;
-      for (const id of roomIdsKey.split(',')) {
-        const c = supabase.channel(`dm:${id}`, { config: { private: true } }); subs.push(c); roomSubs.current.set(id, c);
-        c
-          .on('broadcast', { event: 'message' }, ({ payload }) => handleMessageRef.current(payload)) // 조직 처리기와 같은 처리 — id로 한 번만(u:와 겹쳐도)
-          .on('broadcast', { event: 'typing' }, onTypingEvent)
-          .on('broadcast', { event: 'progress' }, onProgressEvent)
-          .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent(broadcastEvent('reaction', payload)))
-          .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent(broadcastEvent('edit', payload)))
-          .subscribe((status) => { if (isPersonal && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
-      }
-    })();
-    return () => { live = false; for (const c of subs) { supabase.removeChannel(c).catch(() => {}); for (const [k, v] of roomSubs.current) if (v === c) roomSubs.current.delete(k); } };
-  }, [roomIdsKey, isPersonal, session.access_token]); // eslint-disable-line react-hooks/exhaustive-deps
   const typingIn = (id) => typingInState(typing, id); // 채널 화면의 typingCrews와 같은 6초 창
   const anyTyping = Object.values(typing).some((at) => Date.now() - at < TYPING_WINDOW_MS); // 끝난 표시가 남은 동안만 2초 주기 재그리기
   useEffect(() => { if (!anyTyping) return; const iv = setInterval(() => setTick((x) => x + 1), 2000); return () => clearInterval(iv); }, [anyTyping]); // 신호가 끊긴 표시는 2초 안에 내린다
@@ -1094,6 +1074,35 @@ function Shell({ session }) {
   useDismiss(sortMenu, () => setSortMenu(false), '.msgr-railsort', '.msgr-railsort > button');
   useDismiss(meMenu, () => setMeMenu(false), 'button.me:not(.item), .msgr-rowmenu.me', 'button.me:not(.item)');
   const [lastAt, setLastAt] = useState({}); // 채널 → 마지막 메시지 시각(ms). 최근순 정렬 재료 — 조직 로드 때 한 번 조회, 이후 방송으로 갱신
+  // 방 토픽 구독(목록의 '답변 중', 비공개 방의 글·반응·수정) — 바뀐 방만 붙이고 뗀다(방을 옮길 때 50개 전부 다시 붙이던 것, 검수 #690 M1).
+  // 토큰 갱신은 조직 구독 효과의 setAuth가 조인된 채널에 전달하므로 의존성에 넣지 않는다. 모바일 복귀(resumeEpoch)엔 전부 다시 붙인다(검수 #690 M2).
+  const lastAtRank = Object.entries(lastAt).sort((a, b) => b[1] - a[1]).slice(0, 60).map(([k]) => k).join(','); // 상한 선택용 최근 순위(시각이 바뀌어도 순위가 같으면 다시 계산하지 않는다)
+  const roomIdsKey = useMemo(() => roomTopicIds(channels, chId, isPersonal, 50, lastAt).join(','), [channels, chId, isPersonal, lastAtRank]); // eslint-disable-line react-hooks/exhaustive-deps
+  const roomEpoch = useRef(null);
+  useEffect(() => {
+    let live = true; // 정리가 setAuth보다 먼저 끝나면(빠르게 옮길 때) 채널을 만들지 않는다 — 고아 dm: 구독이 쌓였다(검수 #607 실측)
+    (async () => {
+      await supabase.realtime.setAuth(session.access_token);
+      if (!live) return;
+      const subs = roomSubs.current;
+      if (roomEpoch.current !== resumeEpoch) { for (const c of subs.values()) supabase.removeChannel(c).catch(() => {}); subs.clear(); roomEpoch.current = resumeEpoch; }
+      const want = new Set(roomIdsKey ? roomIdsKey.split(',') : []);
+      for (const [id, c] of subs) if (!want.has(id)) { supabase.removeChannel(c).catch(() => {}); subs.delete(id); }
+      for (const id of want) {
+        if (subs.has(id)) continue;
+        const c = supabase.channel(`dm:${id}`, { config: { private: true } });
+        c.on('broadcast', { event: 'message' }, ({ payload }) => handleMessageRef.current(payload)) // 조직 처리기와 같은 처리 — id로 한 번만(u:와 겹쳐도)
+          .on('broadcast', { event: 'typing' }, onTypingEvent)
+          .on('broadcast', { event: 'progress' }, onProgressEvent)
+          .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent(broadcastEvent('reaction', payload)))
+          .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent(broadcastEvent('edit', payload)))
+          .subscribe((status) => { if (isPersonal && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
+        subs.set(id, c);
+      }
+    })();
+    return () => { live = false; };
+  }, [roomIdsKey, isPersonal, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { for (const c of roomSubs.current.values()) supabase.removeChannel(c).catch(() => {}); roomSubs.current.clear(); }, []); // 떠날 때 전부 뗀다
   const dmIdsRef = useRef(new Set()); // 방송 핸들러가 DM 채널만 담게(조직 토픽엔 모든 채널이 실린다)
 
   const finishChannelAction = async (c, message) => {
