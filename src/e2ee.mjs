@@ -217,6 +217,25 @@ export function openDekWithKek(kek, blob) {
   }
 }
 
+/** 켜기 경합 가드(위험 파일 검수 R-1, 2026-09-23) — 자기 랩을 **먼저 기록한 뒤** 다른 기기 랩을 다시 본다.
+    "없음 확인 → 기록" 순서면 두 기기가 동시에 켤 때 둘 다 확인을 통과해 서로 다른 DEK를 올리고, 이후 서로의
+    암호문을 영원히 못 연다(복구 코드도 한쪽만 맞는다). 기록을 먼저 하면 늦게 확인한 쪽은 반드시 상대 행을 본다 —
+    둘 다 보면 둘 다 물러나고(재시도하면 하나만 이긴다), 갈라진 열쇠는 생기지 않는다.
+    fresh = 이번에 새로 만든 DEK의 랩(물러날 때 지운다). 기존 자기 랩을 이어 쓴 경우는 지우지 않는다.
+    반환: true = 이 기기가 첫 보유자로 확정, false = 다른 기기가 켰다. */
+export async function claimFirstWrap(sb, { userId, deviceId, wrap, fresh }) {
+  const { error: e1 } = await sb.from('wrapped_deks').upsert({ user_id: userId, device_id: deviceId, wrap, wrapped_by: deviceId }, { onConflict: 'user_id,device_id' });
+  if (e1) throw new Error(e1.message);
+  const { data: others, error: e2 } = await sb.from('wrapped_deks').select('device_id').neq('device_id', deviceId).limit(1);
+  if (e2) throw new Error(e2.message);
+  if (!(others ?? []).length) return true;
+  if (fresh) {
+    const { error: e3 } = await sb.from('wrapped_deks').delete().eq('device_id', deviceId);
+    if (e3) console.warn('[argo] e2ee: 물러난 자기 랩 정리 실패:', String(e3.message).slice(0, 80));
+  }
+  return false;
+}
+
 /** 자기 랩 회수(claim) — wrapped_deks에서 내 기기 행을 찾아 DEK를 개봉·보관한다.
     승인(다른 기기가 내 공개키로 랩을 넣어줌) 후 이 기기가 잠김을 푸는 경로. cycle이 DEK 미보유일 때
     60초 간격으로 시도한다(가벼운 own-RLS select 1행). 반환: true = DEK 확보. */
