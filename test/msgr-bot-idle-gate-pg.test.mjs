@@ -138,3 +138,25 @@ test('ack가 커서보다 앞서면 게이트를 우회해 커서를 올린다',
   assert.equal(cursor(), m1);
   assert.deepEqual(updates(plain), []); assert.equal(cursor(), plain, '유휴 중에도 ack는 반영');
 });
+
+// 2026-09-23 VPS 응답 지연(픽업 중앙값 614초): 받을 글이 없는 봇은 ack가 없어 커서가 0에 머물렀고, 매 스캔마다 조직 글 451건을
+// 배달 판정 함수로 다시 훑다가 3초 statement_timeout에 걸렸다(봇당 하루 약 200회). 아무것도 못 준 전체 스캔이면
+// 10분 넘은 글까지 커서를 넘긴다 — 최근 10분 안의 대기 글(초대 직후 배달·순서 대기)은 종전대로 남는다.
+test('아무것도 못 준 전체 스캔은 10분 넘은 글까지 커서를 넘긴다(최근 글은 남긴다)', { skip }, () => {
+  const old = post(PUB, '봇과 무관한 옛 글');
+  sql(`update public.msgr_messages set created_at = now() - interval '11 minutes' where id = ${old}`);
+  const fresh = post(PUB, '봇과 무관한 새 글');
+  assert.deepEqual(updates(m1), []);
+  assert.equal(cursor(), old, '옛 글까지만 전진 — 새 글은 커서 뒤에 남는다');
+  assert.ok(Number(fresh) > Number(cursor()));
+  assert.deepEqual(updates(old), []); m1 = old;
+});
+
+test('배달한 스캔에서는 커서를 ack 밖으로 넘기지 않는다', { skip }, () => {
+  const stale = post(PUB, '무관 글');
+  sql(`update public.msgr_messages set created_at = now() - interval '11 minutes' where id = ${stale}`);
+  const want = post(PUB, '@헤르메스 받아', mention());
+  assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [want]);
+  assert.equal(cursor(), m1, '돌려준 글이 있으면 커서는 ack만 따른다');
+  assert.deepEqual(updates(want), []); m1 = want;
+});
