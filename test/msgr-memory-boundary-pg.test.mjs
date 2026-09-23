@@ -211,6 +211,10 @@ test('채널장이 오프보딩 표지를 위조해도 만든 사람·관리자�
   sql(`update public.msgr_channels set admin_user_ids = array['${U.member}']::uuid[] where id = '${Z}'`);
   assert.throws(() => asUser(U.member, `select set_config('argo.msgr_offboard', '1', false); update public.msgr_channels set admin_user_ids = array['${U.member}', '${U.lead}']::uuid[] where id = '${Z}'`), /msgr_channel_admins_owner_only/);
   assert.equal(sql(`select array_to_string(admin_user_ids, ',') from public.msgr_channels where id = '${Z}'`), U.member);
+  // 임시 표 트리거로 depth를 올려도 마찬가지(재검 #691 실증 — pg_trigger_depth 예외는 위조됐다)
+  assert.throws(() => asUser(U.member, `create temp table t(x int); create function pg_temp.f() returns trigger language plpgsql as $f$ begin update public.msgr_channels set admin_user_ids = array['${U.member}', '${U.lead}']::uuid[] where id = '${Z}'; return new; end $f$; create trigger tt after insert on pg_temp.t for each row execute function pg_temp.f(); insert into t values (1);`), /msgr_channel_admins_owner_only/);
+  assert.throws(() => asUser(U.member, `update public.msgr_channels set admin_user_ids = '{}'::uuid[] where id = '${Z}'`), /msgr_channel_admins_owner_only/, '아직 멤버인 채널장을 빼는 것도 만든 사람·관리자만');
+  assert.equal(sql(`select array_to_string(admin_user_ids, ',') from public.msgr_channels where id = '${Z}'`), U.member);
 });
 
 test('직접 만들지 않은 채널의 채널장도 계정 삭제(msgr_delete_me)로 떠날 수 있고, 채널장 표시가 지워진다', { skip }, () => {
