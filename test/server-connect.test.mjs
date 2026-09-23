@@ -197,7 +197,7 @@ calls = []
 m.os.geteuid = lambda: 0
 m.pwd.getpwall = lambda: [pwd.struct_passwd(("root","x",0,0,"","/root","/bin/sh")), pwd.struct_passwd(("crew","x",1000,1000,"",${JSON.stringify(crewHome)},"/bin/sh"))]
 m.os.chown = lambda *a: None
-m.list_agents = lambda: ([], {})
+m.list_agents = lambda: ([{"kind": "hermes", "id": "default", "name": "Hermes", "default": True, "home": "/root/.hermes"}], {"hermes": "/usr/local/bin/hermes"})  # 실서버: root에도 빈 기본 프로필이 있다 — 그래도 crew로 넘겨야 한다
 class R:
     def __init__(s): pass
     def read(s): return b"print('child')"

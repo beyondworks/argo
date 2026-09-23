@@ -292,14 +292,16 @@ def main(argv):
     if not CODE_RE.match(code) or not BASE_RE.match(BASE):
         say("연결 코드가 없거나 형식이 다릅니다. 앱에서 명령을 다시 복사해 주세요.", "Missing or invalid connection code — copy the command from the app again."); return 2
     say("이 서버의 에이전트를 찾는 중…", "Looking for agents on this server…")
-    agents, clis = list_agents()
-    if not agents and os.geteuid() == 0 and not DEFER:
+    # root로 실행됐으면(서버 콘솔 기본) 에이전트가 사는 일반 계정을 먼저 본다 — root 자신에게도 빈 헤르메스 기본 프로필이 있을 수 있다
+    # (실측 2026-09-23 Hostinger: /root/.hermes 기본 프로필만 잡혀 crew의 11명을 못 찾았다). root에만 에이전트가 있으면 그대로 진행.
+    if os.geteuid() == 0 and not DEFER:
         users = agent_users()
         if len(users) == 1:
             return handoff(users[0], code)
         if users:
             say("에이전트가 있는 계정이 여럿입니다: " + ", ".join(u.pw_name for u in users) + " — `sudo -iu <계정>`으로 바꾼 뒤 다시 실행해 주세요.",
                 "Several accounts have agents: " + ", ".join(u.pw_name for u in users) + " — switch with `sudo -iu <user>` and run again."); return 3
+    agents, clis = list_agents()
     if not agents:
         say("헤르메스·오픈클로 에이전트를 찾지 못했습니다. 게이트웨이를 실행하는 사용자 계정으로 다시 실행해 주세요.",
             "No Hermes or OpenClaw agents found. Run this again as the user that runs the gateway."); return 3
