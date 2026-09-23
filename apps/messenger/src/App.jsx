@@ -2652,13 +2652,19 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   const setFocusPane = (paneId) => setSt((s) => (s.focus === paneId ? s : { ...s, focus: paneId }));
   const activateTab = (paneId, tabId) => setSt((s) => Panes.setActive(s.panes, s.focus, paneId, tabId));
   const chKey = channels.map((c) => c.id).join(',');
+  const chiefChannel = (id) => { const d = docs.find((x) => x.channel_id === id && x.channel_name); return d ? { id, name: d.channel_name, kind: d.channel_kind } : undefined; };
+  // 장이 멤버가 아닌 채널 — 문서가 있는 채널만 트리·그래프에 더한다(목록 channels에는 없다)
+  const memChannels = useMemo(() => { const have = new Set(channels.map((c) => c.id)); const extra = new Map(); for (const d of docs) if (d.channel_name && !have.has(d.channel_id)) extra.set(d.channel_id, { id: d.channel_id, name: d.channel_name, kind: d.channel_kind }); return [...channels, ...extra.values()]; }, [channels, docs]);
   const load = useCallback(async () => {
     const [a, d, m] = await Promise.all([
       q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(400)).catch(() => []), // 감사 열람은 관리자(RLS) — 멤버는 빈 목록
       Promise.all([ /* 일지(journal/)는 따로 최신 30건 — 한 창(400)에 섞으면 오래된 일지가 규칙집·프로젝트를 밀어낸다(검수 #551 HIGH-2) */
         q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).not('path', 'like', 'journal/%').order('path').limit(400)).catch(() => []),
         q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).like('path', 'journal/%').order('updated_at', { ascending: false }).limit(30)).catch(() => []),
-      ]).then(([a, b]) => [...a, ...b]), // 본문까지 — 문서 탭·[[링크]] 그래프
+        // 장(조직장·채널장)만 보는 채널 기억 — 표 권한은 넓히지 않고 RPC로(유건 결정 2026-09-24). 옛 서버엔 RPC가 없어 빈 목록.
+        q(supabase.rpc('msgr_chief_docs', { org: org.id, journal: false, lim: 400 })).catch(() => []),
+        q(supabase.rpc('msgr_chief_docs', { org: org.id, journal: true, lim: 30 })).catch(() => []),
+      ]).then(([a, b, c, e]) => { const seen = new Set(); return [...a, ...b, ...(c ?? []), ...(e ?? [])].filter((d) => d?.id && !seen.has(d.id) && seen.add(d.id)); }), // 본문까지 — 문서 탭·[[링크]] 그래프
       channels.length ? q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', channels.map((c) => c.id))).catch(() => []) : [],
     ]);
     setRows(a); setDocs(d); setCm(m);
@@ -2666,7 +2672,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState(null); // 새 기억 폼이 열린 대상(rel)
   // 문서 라벨은 참여 안 한 공개 채널까지 찾는다 — 공개 채널 일지는 조직원 누구나 읽어(RLS) 목록에 오는데, 참여 기준(#555) 뒤 channels에는 없어 '삭제된 채널'로 보였다
-  const findCh = (id) => channels.find((c) => c.id === id) ?? previewChannels.find((c) => c.id === id);
+  const findCh = (id) => channels.find((c) => c.id === id) ?? previewChannels.find((c) => c.id === id) ?? chiefChannel(id); // 장 열람 문서는 채널 행이 안 보여 RPC가 준 이름·종류로(검수 M2)
   const chName = (id) => findCh(id)?.name ?? t('act.deletedChannel');
   const chLabel = (id) => { const c = findCh(id); return !c ? t('act.deletedChannel') : c.kind === 'dm' ? (dmName?.(c) || t('ui.dm')) : `#${c.name}`; }; // 문서 범위 표기 — 채널은 #이름, DM은 상대 이름(2026-09-16)
   const journals = useMemo(() => docs.filter((d) => d.channel_id && d.path.startsWith('journal/')).sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.path.localeCompare(a.path)), [docs]); // 최근 일지(채널·DM) — 목록과 빈 안내가 같은 술어를 쓴다(검수 M-3)
@@ -2677,7 +2683,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   const gbuilt = useMemo(() => {
     const peopleRel = (id) => `people/${id}`; const chRel = (c) => `channels/${c.id}`; const crewRel = (c) => `crews/${c.id}`; const docRel = docRelOf; // 채널은 id로(이름은 유일하지 않다 — 검수 M-2)
     const out = [];
-    const visible = channels.filter((c) => c.kind !== 'dm');
+    const visible = memChannels.filter((c) => c.kind !== 'dm');
     out.push({ rel: `org/${org.slug}.md`, title: org.name, dir: 'doc', links: [...visible.map(chRel), ...members.map((m) => peopleRel(m.user_id))] });
     for (const c of visible) {
       const ms = cm.filter((x) => x.channel_id === c.id);
@@ -2691,7 +2697,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
     const wikiLinks = (body) => [...String(body ?? '').matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim()); // 본문의 [[제목]]이 기억 사이 엣지(아르고 vault와 같은 문법)
     for (const d of docs) out.push({ rel: `${docRel(d)}.md`, title: d.title, dir: 'doc', links: [...wikiLinks(d.body), ...(d.channel_id ? [] : [`org/${org.slug}`])] });
     return out;
-  }, [org, channels, members, crews, docs, cm]);
+  }, [org, memChannels, members, crews, docs, cm]);
   const gkey = JSON.stringify(gbuilt); // 내용 키 — 부모가 30초마다 새 배열을 내려도 그래프는 내용이 바뀔 때만 다시 세운다(검수 H-1)
   const gdocs = useMemo(() => gbuilt, [gkey]); // eslint-disable-line react-hooks/exhaustive-deps
   // 선택 대상과 행의 관계
@@ -2736,7 +2742,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   const toggle = (id) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const rc = { openIds, toggle, sel, active: focusTab?.id ?? 'graph', openTab: (rel) => { openEntity(rel); setTreeOpen(false); } }; // 트리 행 컨텍스트(ActRow는 모듈 수준 — 리마운트 없음)
   const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && chOf(r) === rel.slice(9))).length;
-  const visibleCh = channels.filter((c) => c.kind !== 'dm');
+  const visibleCh = memChannels.filter((c) => c.kind !== 'dm');
   const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${channels.find((x) => x.id === rel.slice(9))?.name ?? t('act.deletedChannel')}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => docRelOf(d) === rel)?.title ?? rel) : rel;
   return (<>
     <div className="msgr-top">

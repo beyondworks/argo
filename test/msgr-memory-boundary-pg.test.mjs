@@ -71,30 +71,49 @@ before(() => {
   for (const ch of [PRIV, DM]) sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${ORG}', '${ch}', 'journal/2026-09-24.md', 'j', '- 기록', '${U.member}', '${U.member}')`);
 });
 
+// 테이블 권한(RLS)은 넓히지 않는다 — 구버전 앱의 미러(syncOrgDocs)가 사용자 권한으로 표를 읽어 PC에 내려받으므로(설계 검수 H2).
+// 장의 열람은 msgr_chief_docs RPC로만 — 메신저 기억 화면이 부른다.
 const reads = (uid, ch) => Number(last(asUser(uid, `select count(*) from public.msgr_org_docs where channel_id = '${ch}'`)));
+const chief = (uid, ch) => Number(last(asUser(uid, `select count(*) from public.msgr_chief_docs('${ORG}', true, 100) d where d->>'channel_id' = '${ch}'`)));
+const sees = (uid, ch) => reads(uid, ch) + chief(uid, ch);
 
-test('조직장(owner·admin)은 멤버가 아닌 비공개 채널 기억을 읽는다', { skip }, () => {
-  assert.equal(reads(U.owner, PRIV), 1);
-  assert.equal(reads(U.admin, PRIV), 1);
+test('표 권한은 그대로 — 조직장도 멤버가 아닌 비공개 채널 문서를 표에서 직접 읽지 못한다(구버전 미러 누출 방지)', { skip }, () => {
+  assert.equal(reads(U.owner, PRIV), 0);
 });
 
-test('1:1 대화 기억은 조직장도 못 읽는다(참여자만)', { skip }, () => {
-  assert.equal(reads(U.owner, DM), 0);
-  assert.equal(reads(U.admin, DM), 0);
-  assert.equal(reads(U.member, DM), 1);
+test('조직장(owner·admin)은 RPC로 비멤버 비공개 채널 기억을 보고, 채널 이름·종류가 같이 온다', { skip }, () => {
+  assert.equal(chief(U.owner, PRIV), 1);
+  assert.equal(chief(U.admin, PRIV), 1);
+  const row = JSON.parse(last(asUser(U.owner, `select public.msgr_chief_docs('${ORG}', true, 100) limit 1`)));
+  assert.equal(row.channel_name, 'hr'); assert.equal(row.channel_kind, 'private');
+});
+
+test('1:1 대화 기억은 조직장도 못 본다(참여자만)', { skip }, () => {
+  assert.equal(sees(U.owner, DM), 0);
+  assert.equal(sees(U.admin, DM), 0);
+  assert.equal(sees(U.member, DM), 1);
 });
 
 test('나간 멤버·게스트는 다시 못 보고, 채널장은 멤버에서 빠져도 자기 채널을 본다', { skip }, () => {
-  assert.equal(reads(U.guest, PRIV), 1, '멤버일 때는 본다');
+  assert.equal(sees(U.guest, PRIV), 1, '멤버일 때는 본다');
   sql(`delete from public.msgr_channel_members where channel_id = '${PRIV}' and member_id in ('${U.guest}', '${U.lead}')`);
-  assert.equal(reads(U.guest, PRIV), 0, '나간 게스트');
-  assert.equal(reads(U.lead, PRIV), 1, '채널장 예외');
+  assert.equal(sees(U.guest, PRIV), 0, '나간 게스트');
+  assert.equal(sees(U.lead, PRIV), 1, '채널장 예외');
   sql(`delete from public.msgr_channel_members where channel_id = '${DM}' and member_id = '${U.lead}'`);
-  assert.equal(reads(U.lead, DM), 0, '1:1 대화는 채널장 표시가 있어도 참여자만');
+  assert.equal(sees(U.lead, DM), 0, '1:1 대화는 채널장 표시가 있어도 참여자만');
 });
 
-test('조직에서 나가면 장의 권한도 끝난다', { skip }, () => {
+test('게스트는 채널장으로 표시돼 있어도 장 예외를 받지 못한다(설계 검수 H1)', { skip }, () => {
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PRIV}', 'user', '${U.guest}'), ('${PRIV}', 'user', '${U.lead}')`); // 채널장은 채널 멤버여야 지정된다
+  sql(`update public.msgr_channels set admin_user_ids = array['${U.lead}', '${U.guest}']::uuid[] where id = '${PRIV}'`);
+  assert.equal(chief(U.guest, PRIV), 0);
+});
+
+test('조직에서 나가면 장의 권한도 끝나고, 다시 들어와도 채널장 표시가 되살아나지 않는다(설계 검수 M1)', { skip }, () => {
   sql(`update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id in ('${U.lead}', '${U.admin}')`);
-  assert.equal(reads(U.lead, PRIV), 0);
-  assert.equal(reads(U.admin, PRIV), 0);
+  assert.equal(sees(U.lead, PRIV), 0);
+  assert.equal(sees(U.admin, PRIV), 0);
+  assert.equal(sql(`select '${U.lead}' = any(admin_user_ids) from public.msgr_channels where id = '${PRIV}'`), 'f', '오프보딩이 채널장 표시를 지운다');
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}' and user_id = '${U.lead}'`);
+  assert.equal(sees(U.lead, PRIV), 0, '재가입만으로 옛 채널 기억이 열리지 않는다');
 });
