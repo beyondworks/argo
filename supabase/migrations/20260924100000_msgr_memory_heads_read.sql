@@ -58,7 +58,7 @@ begin
     if auth.uid() is not null
        and not (new.admin_user_ids <@ old.admin_user_ids
                 and not exists (select 1 from unnest(old.admin_user_ids) u where u <> all (new.admin_user_ids)
-                                  and exists (select 1 from public.msgr_org_members m where m.org_id = old.org_id and m.user_id = u and m.removed_at is null and (m.expires_at is null or m.expires_at > now()))))
+                                  and exists (select 1 from public.msgr_org_members m where m.org_id = old.org_id and m.user_id = u and m.removed_at is null))) -- 만료(expires_at)는 떠난 게 아니다 — 기한이 연장되면 채널장으로 돌아온다(재검 LOW)
        and not (old.created_by = auth.uid() or coalesce(public.msgr_is_admin(old.org_id), false)) then raise exception 'msgr_channel_admins_owner_only'; end if;
     if exists (select 1 from unnest(new.admin_user_ids) u where u <> all (old.admin_user_ids) and not exists (select 1 from public.msgr_org_members m where m.org_id = old.org_id and m.user_id = u and m.removed_at is null and (m.expires_at is null or m.expires_at > now()))) then raise exception 'msgr_channel_admin_not_member'; end if;
     if old.kind = 'private' and exists (select 1 from unnest(new.admin_user_ids) u where u <> all (old.admin_user_ids) and not exists (select 1 from public.msgr_channel_members cm where cm.channel_id = old.id and cm.member_kind = 'user' and cm.member_id = u)) then raise exception 'msgr_channel_admin_not_channel_member'; end if;
