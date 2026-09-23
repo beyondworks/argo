@@ -10,7 +10,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
-import { loadOrgRules, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
+import { loadOrgRules, orgMemoryPrompt, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
 import { defaultClaudeEffort } from './runners/catalog.mjs';
 import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
@@ -118,8 +118,9 @@ export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__c
 function messengerColleagues(ctx, hop) {
   if (ctx?.kind !== 'msgr' || hop >= 2) return [];
   return (ctx.peers ?? []).filter((p) => p.id !== ctx.crewId)
-    .map((p) => ({ id: p.id, slug: p.slug, name: p.display_name || p.slug, role: p.role }));
+    .map((p) => ({ id: p.id, slug: p.slug, name: p.display_name || p.slug, role: p.role ?? p.role_text })); // 서버 봉투는 role_text(dm_relay.sql:68)
 }
+export const _messengerColleaguesForTest = messengerColleagues;
 
 function rosterPrompt(colleagues, lang = 'ko', messenger = false) {
   if (messenger) {
@@ -629,7 +630,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         const delegated = lang === 'en' ? `(Delegated by colleague ${fromName}) ${task}` : `(동료 ${fromName}의 위임) ${task}`;
         // workFolder — 회의실 턴의 위임이면 위임받은 동료도 같은 회의 폴더를 본다(회의 프롬프트가 "동료도 같은 폴더"라
         // 약속하고 위임 결과가 방에 실린다 — 안 넘기면 위임 크루만 개인 고정으로 돈다, 분리 검수 MEDIUM-3).
-        const rulesCtx = (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules' || mirrorCtx?.orgSlug) ? { kind: 'msgr-rules', orgSlug: mirrorCtx.orgSlug, channelName: mirrorCtx.channelName ?? '', ...(mirrorCtx.channelId ? { channelId: mirrorCtx.channelId } : {}) } : null; // G-3: 조직 규칙은 위임받은 동료에게도(미러·결재 각인은 kind 'msgr'만)
+        const rulesCtx = (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules' || mirrorCtx?.orgSlug) ? { kind: 'msgr-rules', orgSlug: mirrorCtx.orgSlug, channelName: mirrorCtx.channelName ?? '', ...(mirrorCtx.channelId ? { channelId: mirrorCtx.channelId } : {}), ...(mirrorCtx.orgMemory ? { orgMemory: mirrorCtx.orgMemory } : {}) } : null; // 서버 기억도 같은 채널 동료에게(청중이 같다). G-3: 조직 규칙은 위임받은 동료에게도(미러·결재 각인은 kind 'msgr'만)
         // 위임받은 동료도 부른 턴의 범위로 돈다 — 텔레그램 그룹·슬랙 채널·자동 턴 목적지면 그 범위 기록만 붙이고 주인 대화(범위 없는 기록)는 붙이지 않는다
         // (CLI 러너는 세션이 없어도 최근 기록을 붙인다 — 부른 쪽이 공유 목적지면 위임 결과도 그곳에 미러된다)
         const childCtx = rulesCtx ?? (turnScope(mirrorCtx) ? { kind: 'scope', scope: turnScope(mirrorCtx) } : null);
@@ -1044,12 +1045,15 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const handoffStart = mirrorCtx?.handoffs?.length ?? 0;
   const discardHandoffs = () => mirrorCtx?.handoffs?.splice(handoffStart); // 실패한 시도의 미게시 넘김은 재시도에 섞지 않는다
   // Scoped DM audit stays in the thread; auto-journaling would promote private text into shared memory.
-  const journalWrite = (reply, label) => dmTurn || journal?.off ? null : saveHandover(wsId, agentSlug, userMsg, reply, label, { tag: journal?.tag ?? '' });
+  // 메신저 채널 턴(조직 태그)은 PC 일지에 쓰지 않는다 — 채널·조직 기억은 서버 일지(msgr_channel_journal)에만(유건 결정 2026-09-24).
+  const journalWrite = (reply, label) => dmTurn || journal?.off || String(journal?.tag ?? '').startsWith('org-') ? null : saveHandover(wsId, agentSlug, userMsg, reply, label, { tag: journal?.tag ?? '' });
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
   const p = paths(wsId);
   // G-3 조직 규칙: 팀 메신저 조직 턴(mirrorCtx에 orgSlug)이면 미러의 규칙집(전사+그 채널)을 시스템 프롬프트에 항상 붙인다 — 정책 항목이라 끌 수 없고, 위임받은 동료 턴에도 이어진다(kind 'msgr-rules').
-  const orgRules = mirrorCtx?.orgSlug ? await loadOrgRules(wsId, mirrorCtx.orgSlug, { channelName: mirrorCtx.channelName ?? '', lang: (await loadCompany(wsId).catch(() => ({}))).lang ?? 'ko' }).catch(() => '') : '';
+  // 서버 기억(msgr_crew_memory, 유건 결정 2026-09-24)이 있으면 그것으로 — 규칙·용어·프로젝트·이 채널 일지. 옛 서버면 undefined → 미러 규칙(G-3).
+  const orgRules = mirrorCtx?.orgMemory ? orgMemoryPrompt(mirrorCtx.orgMemory, { org: mirrorCtx.orgSlug ?? '', channelName: mirrorCtx.channelName ?? '', lang: (await loadCompany(wsId).catch(() => ({}))).lang ?? 'ko' })
+    : mirrorCtx?.orgSlug ? await loadOrgRules(wsId, mirrorCtx.orgSlug, { channelName: mirrorCtx.channelName ?? '', lang: (await loadCompany(wsId).catch(() => ({}))).lang ?? 'ko' }).catch(() => '') : '';
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
   // 문구를 뺐다. 사라진 화면을 가리키면 막다른 길이 된다. 값은 회사 파일·API로만 바뀐다.

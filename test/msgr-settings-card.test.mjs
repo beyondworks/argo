@@ -233,7 +233,7 @@ test('G-1: 조직 문서 — 풋터 버튼·페이지 분기, 목록은 org 단�
   assert.match(actv, /from\('msgr_org_docs'\)[^\n]*\.like\('path', 'journal\/%'\)\.order\('updated_at', \{ ascending: false \}\)\.limit\(30\)/, '일지는 최신 30건 별도 조회');
   assert.match(actv, /const canNew = sel === 'org' \? isAdmin : !!ch;/, '새 기억은 전사=관리자·채널=멤버, 사람·크루 탭엔 없음');
   assert.match(actv, /<details className="msgr-actfold">/, '활동 기록은 접힌 보조 정보(주 내용은 기억)');
-  assert.match(docs, /const canEdit = \(d\) => d\.channel_id \? true : isAdmin;/, '편집권 힌트');
+  assert.match(docs, /const canEdit = \(d\) => \(d\.channel_name \? false : d\.channel_id \? true : isAdmin\);/, '편집권 힌트(장 열람 문서는 읽기만 — channel_name은 msgr_chief_docs가 붙인다)');
   assert.match(docs, /if \(!res\.data\?\.length\) return onError\(t\('docs\.noEdit'\)\);/, 'RLS 0행 문구');
   // 경로 규칙(폴더/슬러그.md·충돌 시 -2 접미·서버 제약 준수)은 apps/messenger/test/doc-path.test.mjs 행동 테스트가 잠근다(D13) — 여기는 연결과 작성자만
   assert.match(docs, /insertWithFreePath\(creating\.folder, title, \(path\) => supabase\.from\('msgr_org_docs'\)\.insert\(\{ org_id: org\.id, channel_id: channelId \?\? null, path, title, body: '', created_by: uid, updated_by: uid \}\)/, '생성 경로(충돌 접미)·작성자');

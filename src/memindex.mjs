@@ -18,7 +18,7 @@ async function listMd(dir, recursive) {
 import { join, relative, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { paths, WS_ROOT } from './workspace.mjs';
-import { docMeta } from './vaultdoc.mjs';
+import { isOrgCopy, docMeta } from './vaultdoc.mjs';
 import { withLock } from './mutex.mjs';
 import { dropDocCache } from './doc-cache.mjs';
 
@@ -106,7 +106,7 @@ async function refresh(db, wsId) {
   const pendingUpsert = [];
   const pendingDelete = [];
   // 폴더 → 논리 접두 매핑 — readdir 실패를 "빈 폴더"로 오인하면 그 폴더의 전 행이 삭제 대상이 된다
-  const DIR_PREFIX = new Map([[p.journal, 'journal/'], [p.conversations, 'conversations/'], [p.notes, 'notes/'], [p.org, 'org/']]); // org/ = 조직 문서 미러(G-2, 재귀)
+  const DIR_PREFIX = new Map([[p.journal, 'journal/'], [p.conversations, 'conversations/'], [p.notes, 'notes/']]); // org/(조직 문서 미러)는 색인하지 않는다 — 채널·조직 기억은 서버에만(2026-09-24)
 
   // stat은 병렬로 — 이게 스캔 비용의 지배 항목이다. 문서 10만에서 직렬 1275ms → 병렬 363ms(실측).
   // 읽기 동시성은 stat과 분리해 훨씬 낮게 잡는다: stat은 fd를 오래 쥐지 않지만 readFile은 쥔다.
@@ -115,7 +115,7 @@ async function refresh(db, wsId) {
   const STAT_BATCH = 512;
   const READ_BATCH = 24;
   let readFailed = 0;
-  for (const dir of [p.journal, p.conversations, p.notes, p.org]) {
+  for (const dir of [p.journal, p.conversations, p.notes]) {
     let names = [];
     try { names = await listMd(dir, dir === p.org); } catch (e) {
       // 없는 폴더(ENOENT)는 장애가 아니라 정당한 삭제다 — 기존대로 건너뛰어 not-seen 경로가 죽은
@@ -132,6 +132,7 @@ async function refresh(db, wsId) {
       }
       continue;
     }
+    if (dir === p.journal) names = names.filter((n) => !isOrgCopy(`journal/${n}`)); // 채널 태그 일지는 색인하지 않는다(남은 행은 not-seen으로 정리)
     for (let i = 0; i < names.length; i += STAT_BATCH) {
       const slice = names.slice(i, i + STAT_BATCH);
       const stats = await Promise.all(slice.map((n) => stat(join(dir, n)).catch(() => null)));

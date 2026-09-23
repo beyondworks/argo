@@ -1,13 +1,13 @@
 // 회사의 뇌(vault) — 기둥 4. 3층 구조: 일지(journal, 턴 원본 append) → 주제 노트(notes, 정제된 단일 진실)
 // → 정리 데몬(consolidate)이 매일 일지를 주제 노트로 통합한다. 자동 [[링크]] + 인덱스 갱신.
 // 스파이크: TF-IDF 코사인 유사도(무의존). 프로덕션: pgvector 임베딩으로 교체(인터페이스 동일).
-import { readFile, readdir, appendFile, mkdir, stat, utimes } from 'node:fs/promises';
+import { readFile, readdir, appendFile, mkdir, stat, utimes, rename } from 'node:fs/promises';
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join, basename, relative, sep } from 'node:path';
 import { paths } from './workspace.mjs';
 import { GUIDE_NOTE } from './provision.mjs'; // 스캐폴드 안내 노트 — 자동 링크 후보에서 뺀다
-import { docMeta, localDay, noteDate } from './vaultdoc.mjs';
+import { docMeta, localDay, noteDate, isOrgCopy } from './vaultdoc.mjs';
 import { loadDocsMeta, invalidatePath } from './memindex.mjs';
 
 export { localDay, noteDate }; // 기존 호출·회귀 테스트 호환(판정 정본은 vaultdoc.mjs 한 곳)
@@ -50,11 +50,12 @@ const warnedVaultReadFail = new Set(); // 같은 파일 경고 반복 방지(mem
 async function vaultDocs(wsId) {
   const p = paths(wsId);
   const docs = [];
-  for (const dir of [p.journal, p.conversations, p.notes, p.org]) { // org/ = 조직 문서 미러(G-2) — 하위 폴더까지
+  for (const dir of [p.journal, p.conversations, p.notes]) { // org/(조직 문서 미러)는 뺀다 — 채널·조직 기억은 서버에만(2026-09-24)
     let names = [];
     try { names = (await readdir(dir, dir === p.org ? { recursive: true } : undefined)).map((n) => String(n).split('\\').join('/')); } catch { continue; }
     for (const n of names) {
       if (!n.endsWith('.md')) continue;
+      if (dir === p.journal && isOrgCopy(`journal/${n}`)) continue; // 채널 태그 일지 — recall·유사도 문서 집합에서 뺀다
       const file = join(dir, n);
       // rel은 논리 경로('/' 고정) — Windows relative()의 백슬래시가 notes/·journal/ 필터를 깨지 않게
       // mtime은 캐시 경로와 같은 정밀도로 맞춘다 — 안 맞추면 동일자 타이브레이크가 두 경로에서 갈린다
@@ -205,6 +206,44 @@ ${body}
   await appendFile(file, head + section);
   await updateIndex(wsId);
   return { file, linked: [] };
+}
+
+/** 채널 태그 일지(vault/journal/*.org-*.md)를 워크스페이스 점 폴더 .msgr-journal/로 옮긴다 — 지우지 않는다(퇴장 회수 전까지 보존).
+    점 폴더는 크루 파일 도구·셸 게이트가 막고(permission-gate) 동기화 대상도 아니다. 볼트에서 빠지면 동기화가 클라우드 사본도 걷는다.
+    같은 이름이 이미 있으면(다른 기기가 먼저 옮김) 덮지 않고 뒤에 붙인다. 옮긴 게 있으면 색인을 다시 만든다. */
+export async function relocateOrgJournals(wsId) {
+  const p = paths(wsId);
+  let names = [];
+  try { names = (await readdir(p.journal)).filter((n) => isOrgCopy(`journal/${n}`)); } catch { return 0; }
+  if (!names.length) return 0;
+  const dest = join(p.root, '.msgr-journal');
+  await mkdir(dest, { recursive: true });
+  let moved = 0;
+  for (const n of names) {
+    const src = join(p.journal, n); const to = join(dest, n);
+    if (existsSync(to)) { const body = await readFile(src, 'utf8'); if ((await readFile(to, 'utf8').catch(() => '')) !== body) await appendFile(to, body); await import('node:fs/promises').then((f) => f.unlink(src)); } // 같은 내용이면 이어 붙이지 않는다(두 기기가 같은 파일을 옮김 — 검수 #691 M2)
+    else await rename(src, to);
+    moved++;
+  }
+  await updateIndex(wsId);
+  return moved;
+}
+
+/** 퇴장 회수 — .msgr-journal/의 채널 일지 가운데 서버가 "이제 못 읽음"이라고 **명시한** 채널의 것만 지운다(유건 결정 2026-09-24: 나가면 다시 못 본다).
+    access(ids) = Map(channelId → boolean) | null. null(옛 서버·조회 실패)이거나 답에 없는 채널은 지우지 않는다(설계 검수 M7). */
+export async function purgeDepartedJournals(wsId, access) {
+  const dir = join(paths(wsId).root, '.msgr-journal');
+  let names = [];
+  try { names = await readdir(dir); } catch { return 0; }
+  const chOf = (n) => n.match(/\.org-[0-9a-f-]{36}-ch-([0-9a-f-]{36})\.md$/i)?.[1]?.toLowerCase() ?? null;
+  const ids = [...new Set(names.map(chOf).filter(Boolean))];
+  if (!ids.length) return 0;
+  const ok = await access(ids).catch(() => null);
+  if (!(ok instanceof Map)) return 0;
+  let removed = 0;
+  const { unlink } = await import('node:fs/promises');
+  for (const n of names) { const ch = chOf(n); if (ch && ok.get(ch) === false) { await unlink(join(dir, n)).catch(() => {}); removed++; } }
+  return removed;
 }
 
 export function noteSlug(title) {
