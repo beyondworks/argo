@@ -21,7 +21,16 @@ function fakeSb({ deleteFails = false } = {}) {
         neq: (_c, id) => ({ limit: async () => { await tick(); return { data: [...rows.keys()].filter((k) => k !== id).map((device_id) => ({ device_id })), error: null }; } }),
         eq: (_c, id) => ({ maybeSingle: async () => ({ data: rows.get(id) ?? null, error: null }) }),
       }),
-      delete: () => ({ eq: async (_c, id) => { await tick(); if (deleteFails) return { error: { message: 'timeout' } }; rows.delete(id); return { error: null }; } }),
+      delete: () => { // .eq(열, 값)을 이어 붙인 조건을 모두 만족하는 행만 지운다
+        const conds = [];
+        const q = { eq: (c, v) => { conds.push([c, v]); return q; },
+          then: (ok, bad) => (async () => {
+            await tick(); if (deleteFails) return { error: { message: 'timeout' } };
+            for (const [id, r] of rows) if (conds.every(([c, v]) => (c === 'device_id' ? id : r[c]) === v)) rows.delete(id);
+            return { error: null };
+          })().then(ok, bad) };
+        return q;
+      },
     }),
   };
 }
@@ -64,13 +73,45 @@ test('물러난 기기의 랩 삭제가 실패해도, 그 기기는 남은 자�
   assert.equal(await tryClaimDek(sb, 'B', { force: true }), true, '다른 기기가 없으면 자기 랩도 회수한다');
 });
 
-test('회수를 거절한 자기 랩은 지워져 다른 기기 화면에 승인 대상으로 돌아온다(검수 #687 LOW)', async () => {
+test('회수를 거절한 자기 랩은 지워져 다른 기기 화면에 승인 대상으로 돌아온다(검수 #687 LOW) — 로컬에 열쇠가 없는 기기만', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-e2ee-nodek-'));
   const sb = fakeSb();
-  const b = await loadDeviceE2ee();
+  clearDekCache();
+  const b = await loadDeviceE2ee({ root });
   sb.rows.set('A', { device_id: 'A', wrap: 'wa', wrapped_by: 'A' });
   sb.rows.set('B', { device_id: 'B', wrap: wrapDekFor(b.pub, Buffer.alloc(32, 7)).toString('base64'), wrapped_by: 'B' });
   clearDekCache(); _resetClaimForTest();
-  assert.equal(await tryClaimDek(sb, 'B', { force: true }), false);
+  assert.equal(await tryClaimDek(sb, 'B', { force: true, root }), false);
   assert.equal(sb.rows.has('B'), false, 'B 행이 남으면 hasWrap=true라 A에서 승인 버튼이 안 뜬다');
   assert.ok(sb.rows.has('A'), '다른 기기 행은 건드리지 않는다');
+});
+
+// 검수 #693 MEDIUM 재현: 처음 켠 기기(자기 랩)가 재시작하면 sync 첫 사이클이 키 파일을 읽기 전에 회수를 부른다 — 그때 자기 행을 지우면
+// 열쇠를 가진 기기가 다른 기기 화면에 '승인 대기'로 뜨고 제거될 수 있다. 로컬 DEK가 있으면 서버 행을 건드리지 않고 true.
+test('로컬 키 파일에 열쇠가 있는 기기는 재시작 직후(캐시 비움) 회수에서도 자기 랩을 지우지 않는다', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-e2ee-restart-'));
+  clearDekCache();
+  const a = await loadDeviceE2ee({ root });
+  const { setDek } = await import('../src/e2ee.mjs');
+  await setDek(Buffer.alloc(32, 5), { root });
+  const sb = fakeSb();
+  sb.rows.set('A', { device_id: 'A', wrap: wrapDekFor(a.pub, Buffer.alloc(32, 5)).toString('base64'), wrapped_by: 'A' });
+  sb.rows.set('B', { device_id: 'B', wrap: 'wb', wrapped_by: 'A' });
+  clearDekCache(); _resetClaimForTest(); // 재시작: 메모리 캐시 없음, 디스크엔 열쇠
+  assert.equal(await tryClaimDek(sb, 'A', { force: true, root }), true);
+  assert.ok(sb.rows.has('A'), '정상 기기의 자기 랩은 남는다');
+});
+
+test('거절 뒤 삭제는 자기가 랩한 행만 — 그 사이 커밋된 승인 랩은 지우지 않는다(검수 #693 LOW)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-e2ee-approve-race-'));
+  clearDekCache();
+  const b = await loadDeviceE2ee({ root });
+  const sb = fakeSb();
+  sb.rows.set('A', { device_id: 'A', wrap: 'wa', wrapped_by: 'A' });
+  sb.rows.set('B', { device_id: 'B', wrap: wrapDekFor(b.pub, Buffer.alloc(32, 7)).toString('base64'), wrapped_by: 'B' });
+  const from = sb.from; // 다른 기기 조회 직후 A의 승인 upsert가 커밋된다
+  sb.from = () => { const t = from(); const sel = t.select; t.select = (...a) => { const s = sel(...a); const neq = s.neq; s.neq = (...n) => ({ limit: async () => { const r = await neq(...n).limit(); sb.rows.set('B', { device_id: 'B', wrap: 'approved', wrapped_by: 'A' }); return r; } }); return s; }; return t; };
+  clearDekCache(); _resetClaimForTest();
+  assert.equal(await tryClaimDek(sb, 'B', { force: true, root }), false);
+  assert.equal(sb.rows.get('B')?.wrapped_by, 'A', '승인 랩이 남는다');
 });
