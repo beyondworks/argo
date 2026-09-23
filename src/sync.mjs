@@ -240,6 +240,9 @@ export const holdsLeaseOnWriteFailure = (state, now = Date.now()) =>
 
 // (export: 회귀 테스트용 — 판정식이 아닌 **배선**을 잠그기 위해. 프로덕션 호출부는 cycle() 하나다.)
 export async function renewLease(owner, { runnerUsable = true } = {}) {
+  // 확인된 보유자가 TTL/4(30초) 안에 갱신했으면 저장소를 건드리지 않는다. 동기화 주기(8초)마다 업서트하던 것이 storage.objects에
+  // 죽은 행을 쌓았다(2026-09-23 DB 점검: 기기 25대 × 분당 7.5회). 남은 TTL 90초 — 다른 기기는 만료된 리스만 가져간다.
+  if (leaseState.leader && leaseState.ownedAt > 0 && Date.now() - leaseState.ownedAt < LEASE_TTL_MS / 4) return;
   const me = await getDeviceId();
   const key = skey(owner, '_device-lease.json');
   let cur = null;
