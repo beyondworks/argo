@@ -3266,6 +3266,49 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
     try { const made = await mkOrRotate(kind, name, null); setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); setRemoteAgentName(''); setAuto(null); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); }
     catch (e) { onError(String(e?.message ?? e)); } finally { setBusy(false); }
   };
+  // VPS 서버 연결(유건 지시 2026-09-23) — 1회용 코드가 든 명령 한 줄을 서버 콘솔의 브라우저 터미널에 붙여넣으면 서버 스크립트(integrations/server-connect/connect.py)가
+  // 에이전트 목록과 토큰 해시를 보고하고, 여기서 고른 에이전트만 봇이 된다(같은 서버·같은 에이전트는 토큰만 교체). 토큰 원문은 서버의 에이전트 설정에만 있다.
+  // 진행 상태는 msgr_server_links 행(waiting → reported → approved → done)을 2초마다 읽는다.
+  const [vps, setVps] = useState(null); // null | { linkId, command, row, picks, expired }
+  const vpsKey = (a) => `${a.kind}:${a.id}`;
+  const openVps = async () => {
+    setBusy(true);
+    try {
+      const r = await supabase.rpc('msgr_server_link_create', { org: org.id }); if (r.error) throw new Error(r.error.message);
+      setVps({ linkId: r.data.link_id, command: `curl -fsSL ${botUrl}/connect | python3 - ${r.data.code} ${botUrl}`, row: { status: 'waiting', agents: [] }, picks: null, expired: false });
+    } catch (e) { onError(String(e?.message ?? e)); } finally { setBusy(false); }
+  };
+  useEffect(() => { // 다시 들어오면 내가 시작한 진행 중 연결을 잇는다 — 서버 터미널은 아직 기다리고 있다(대기 단계는 명령 원문을 저장하지 않아 새로 만든다)
+    if (part !== 'agents' || vps) return;
+    supabase.from('msgr_server_links').select('id, status, host, agents, approved, results, expires_at').eq('org_id', org.id).eq('created_by', uid)
+      .in('status', ['reported', 'approved']).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => { if (data) setVps((cur) => cur ?? { linkId: data.id, command: null, row: data, picks: data.status === 'reported' ? (data.agents ?? []).map(vpsKey) : null, expired: false }); });
+  }, [part, org.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const vpsLive = !!vps && vps.row.status !== 'done' && !vps.expired;
+  useEffect(() => {
+    if (!vpsLive) return undefined;
+    const id = vps.linkId;
+    const iv = setInterval(async () => {
+      const { data, error } = await supabase.from('msgr_server_links').select('status, host, agents, approved, results, expires_at').eq('id', id).maybeSingle();
+      if (error || !data) return;
+      setVps((cur) => cur?.linkId !== id ? cur : { ...cur, row: data, expired: data.status !== 'done' && Date.parse(data.expires_at) < Date.now(),
+        picks: cur.picks ?? (data.status === 'reported' ? (data.agents ?? []).map(vpsKey) : null) }); // 처음 보고되면 전원 체크(유건 결정 3)
+      if (data.status === 'done') { loadBots().catch(() => {}); onChanged?.(); }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [vpsLive, vps?.linkId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggleVps = (key) => setVps((cur) => { const on = new Set(cur.picks ?? []); if (on.has(key)) on.delete(key); else on.add(key); return { ...cur, picks: [...on] }; });
+  const approveVps = async () => {
+    const picks = (vps.row.agents ?? []).filter((a) => (vps.picks ?? []).includes(vpsKey(a))).map((a) => ({ kind: a.kind, id: a.id }));
+    if (!picks.length) { onError(t('org.agents.vps.pick')); return; }
+    setBusy(true);
+    try {
+      const r = await supabase.rpc('msgr_server_link_approve', { link: vps.linkId, picks }); if (r.error) throw new Error(r.error.message);
+      setVps((cur) => ({ ...cur, row: { ...cur.row, status: 'approved', approved: r.data } })); loadBots().catch(() => {}); onChanged?.();
+    } catch (e) { onError(String(e?.message ?? e)); } finally { setBusy(false); }
+  };
+  const copyVps = async () => { await navigator.clipboard?.writeText(vps.command).catch(() => {}); onNote(t('org.agents.vps.copied')); };
+  const vpsName = (r) => (vps?.row.agents ?? []).find((a) => a.kind === r.kind && a.id === r.id)?.name ?? r.id;
   const rotateBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_rotate', { bot: b.id }); setBusy(false);
     if (r.error) return onError(r.error.message);
@@ -3296,6 +3339,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
       <div className="row">
         <button type="button" className="btn btn-primary sm" disabled={busy || isMobilePlatform} onClick={() => addBot('hermes')}><I name="plus" size={13} />{t(isDesktopTauri() ? 'org.agents.local.open' : 'org.agents.add.hermes')}</button>
         <button type="button" className="btn sm" disabled={busy || isMobilePlatform} onClick={() => addBot('openclaw')} title={mineOf('openclaw') ? t('org.agents.reconnect.title') : undefined}>{mineOf('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
+        <button type="button" className="btn sm" disabled={busy} onClick={openVps}><I name="plus" size={13} />{t('org.agents.vps.open')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
         <span className="msgr-remote-add"><label className="msgr-klabel" htmlFor="remote-agent-name">{t('org.agents.another')}</label><input id="remote-agent-name" className="msgr-input inline" value={remoteAgentName} maxLength={80} placeholder={t('org.agents.remote.name.placeholder')} onChange={(event) => setRemoteAgentName(event.target.value)} /><button type="button" className="btn sm ghost text" disabled={busy || !remoteAgentName.trim()} onClick={() => addAnother('hermes')}>{t('org.agents.kind.hermes')}</button>{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy || !remoteAgentName.trim()} onClick={() => addAnother('openclaw')}>{t('org.agents.kind.openclaw')}</button>}</span>
       </div>
@@ -3323,6 +3367,31 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
           {!!localHermes.channelResults.length && <div className="msgr-localimport-results"><span className="msgr-klabel">{t('org.agents.local.channelResults')}</span><ul>{localHermes.channelResults.map((result, index) => <li key={`${result.channel}-${result.agent}-${index}`}>{result.channel} · {result.agent}: {t(`org.agents.local.channel.${result.status}`)}</li>)}</ul></div>}
           <div className="acts"><button type="button" className="btn sm" disabled={busy} onClick={openLocalHermes}>{t('org.agents.local.retry')}</button><button type="button" className="btn sm ghost" onClick={() => setLocalHermes(null)}>{t('ui.close')}</button></div>
         </>}
+      </div>}
+      {vps && <div className="msgr-localimport msgr-vps">
+        <div className="msgr-localimport-head"><span className="msgr-klabel">{t('org.agents.vps.h')}</span><span>{t('org.agents.vps.desc')}</span></div>
+        {vps.expired ? <><p className="msgr-auto failed">{t('org.agents.vps.expired')}</p><div className="acts"><button type="button" className="btn sm" disabled={busy} onClick={openVps}>{t('org.agents.vps.again')}</button><button type="button" className="btn sm ghost" onClick={() => setVps(null)}>{t('ui.close')}</button></div></>
+        : vps.row.status === 'waiting' ? <>
+          <ol className="steps"><li>{t('org.agents.vps.step1')}</li><li>{t('org.agents.vps.step2')}</li><li>{t('org.agents.vps.step3')}</li></ol>
+          <div className="msgr-node-cmd"><code>{vps.command}</code><div className="acts"><button type="button" className="btn btn-primary sm" onClick={copyVps}><I name="copy" size={13} />{t('org.agents.vps.copy')}</button></div><p className="note">{t('org.agents.vps.user')}</p></div>
+          <details className="msgr-vps-where"><summary>{t('org.agents.vps.where')}</summary><ul><li>{t('org.agents.vps.where.hostinger')}</li><li>{t('org.agents.vps.where.oracle')}</li><li>{t('org.agents.vps.where.aws')}</li></ul></details>
+          <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.vps.waiting')}</p>
+          <div className="acts"><button type="button" className="btn sm ghost" onClick={() => setVps(null)}>{t('ui.cancel')}</button></div>
+        </>
+        : vps.row.status === 'reported' ? <>
+          <p>{t('org.agents.vps.found', { host: vps.row.host, n: (vps.row.agents ?? []).length })}</p>
+          <fieldset className="msgr-localimport-list" disabled={busy}>
+            <legend>{vps.row.host}</legend>
+            {(vps.row.agents ?? []).map((a) => { const k = vpsKey(a); const on = (vps.picks ?? []).includes(k); return <label key={k} className={`pick${on ? ' on' : ''}`}><input type="checkbox" checked={on} onChange={() => toggleVps(k)} /><Av name={a.name} crew size="sm" company /><span>{a.name}</span><span className="msgr-klabel">{t(`org.agents.kind.${a.kind}`)}{a.default ? ` · ${t('org.agents.local.default')}` : ''}</span></label>; })}
+          </fieldset>
+          <div className="acts"><button type="button" className="btn btn-primary sm" disabled={busy || !(vps.picks ?? []).length} onClick={approveVps}><I name="check" size={13} />{t('org.agents.vps.connect', { n: (vps.picks ?? []).length })}</button><button type="button" className="btn sm ghost" disabled={busy} onClick={() => setVps(null)}>{t('ui.cancel')}</button></div>
+        </>
+        : vps.row.status === 'approved' ? <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.vps.installing')}</p>
+        : (() => { const results = vps.row.results ?? []; const ok = results.length > 0 && results.every((r) => r.ok); return <>
+          <div className={`msgr-auto ${ok ? 'done' : 'failed'}`}><p><span className={`msgr-dot${ok ? ' ok' : ''}`} /> {ok ? t('org.agents.vps.done', { host: vps.row.host, n: results.length }) : t('org.agents.vps.partial')}</p>
+            <ul>{results.map((r) => <li key={`${r.kind}:${r.id}`}><b>{vpsName(r)}</b>: {r.ok ? '✓' : '✗'} {t(`org.agents.kind.${r.kind}`)}{(vps.row.approved ?? []).find((x) => x.kind === r.kind && x.id === r.id)?.reused && <> · {t('org.agents.vps.reused')}</>}{!r.ok && r.detail ? ` — ${String(r.detail).slice(0, 160)}` : ''}</li>)}</ul></div>
+          <div className="acts">{!ok && <button type="button" className="btn sm" disabled={busy} onClick={openVps}>{t('org.agents.vps.again')}</button>}<button type="button" className="btn sm ghost" onClick={() => setVps(null)}>{t('ui.close')}</button></div>
+        </>; })()}
       </div>}
       {setup && (
         <div className="msgr-node-cmd">
