@@ -250,7 +250,12 @@ export async function tryClaimDek(sb, deviceId, { root = WS_ROOT, force = false 
     if (error || !data?.wrap) return false;
     if (data.wrapped_by === deviceId) { // 켜기에서 물러난 뒤 못 지운 자기 랩일 수 있다 — 다른 기기가 있으면 그 계정의 DEK가 아니다(갈라진 열쇠, 검수 #687 MEDIUM). 승인이 덮어쓴다.
       const { data: others, error: e2 } = await sb.from('wrapped_deks').select('device_id').neq('device_id', deviceId).limit(1);
-      if (e2 || (others ?? []).length) return false;
+      if (e2) return false;
+      if ((others ?? []).length) { // 거절한 자기 랩은 지운다 — 남겨 두면 hasWrap=true라 다른 기기 화면에 승인 대상으로 뜨지 않아 잠긴 채 남는다(검수 #687 LOW). 같은 계정 열쇠였어도 승인·복구 코드로 다시 받는다.
+        const { error: e3 } = await sb.from('wrapped_deks').delete().eq('device_id', deviceId);
+        if (e3) console.warn('[argo] e2ee: 물러난 자기 랩 정리 실패:', String(e3.message).slice(0, 80));
+        return false;
+      }
     }
     const dekBytes = await openDekWrap(Buffer.from(data.wrap, 'base64'), { root });
     await setDek(dekBytes, { root });

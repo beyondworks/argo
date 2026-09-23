@@ -216,3 +216,18 @@ test('F: 1:1의 크루 자기 답글·지운 글은 커서를 묶지 않는다',
   rescan(); updates(m1);
   assert.equal(cursor(), later[2], '무관한 글 끝까지 넘겼다');
 });
+
+// 재검수 #689 LOW 재현 핀(R): 멤버가 과거 시각으로 넣은 글이 "10분 넘은 글" 기준이 되면, 그 사이 진행 중이던 멘션(낮은 id)을 커서가 넘겼다.
+// 삽입 시각을 서버가 정하면(20260924130000) 그 글은 최근 글이 되어 커서가 움직이지 않는다.
+test('R: 과거 시각으로 넣은 글과 늦게 커밋된 멘션이 겹쳐도 멘션은 배달된다', { skip }, async () => {
+  const slow = spawn('psql', [DB, '-X', '-q', '-c', `begin; set role authenticated; select set_config('argo.uid', '${U.owner}', true); insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body, mentions) values ('${ORG}', '${PUB}', 'user', '${U.owner}', '@헤르메스 느린2', '${mention()}'::jsonb); select pg_sleep(3); commit;`]);
+  const done = new Promise((r) => slow.on('exit', r));
+  await new Promise((r) => setTimeout(r, 1200));
+  const back = last(asUser(U.member, `insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body, created_at) values ('${ORG}', '${PUB}', 'user', '${U.member}', 'backdated2', now() - interval '1 day') returning id`));
+  assert.equal(sql(`select created_at > now() - interval '1 minute' from public.msgr_messages where id = ${back}`), 't', '삽입 시각은 서버가 정한다');
+  rescan(); updates(m1);
+  assert.equal(await done, 0);
+  const x = sql(`select id from public.msgr_messages where body = '@헤르메스 느린2'`);
+  rescan(); assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [x], '느린 멘션이 배달된다');
+  assert.deepEqual(updates(x), []); m1 = x;
+});

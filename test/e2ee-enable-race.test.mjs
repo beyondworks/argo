@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-e2ee-race-'));
-const { claimFirstWrap, tryClaimDek, _resetClaimForTest, loadDeviceE2ee, wrapDekFor, dek } = await import('../src/e2ee.mjs');
+const { claimFirstWrap, tryClaimDek, _resetClaimForTest, loadDeviceE2ee, wrapDekFor, dek, clearDekCache } = await import('../src/e2ee.mjs');
 
 // wrapped_deks 한 계정분(RLS가 user_id로 거른 모양) — 호출마다 한 틱 양보해 두 요청이 실제로 엇갈리게 한다.
 function fakeSb({ deleteFails = false } = {}) {
@@ -62,4 +62,15 @@ test('물러난 기기의 랩 삭제가 실패해도, 그 기기는 남은 자�
   assert.equal(dek(), null);
   sb.rows.delete('A'); _resetClaimForTest();
   assert.equal(await tryClaimDek(sb, 'B', { force: true }), true, '다른 기기가 없으면 자기 랩도 회수한다');
+});
+
+test('회수를 거절한 자기 랩은 지워져 다른 기기 화면에 승인 대상으로 돌아온다(검수 #687 LOW)', async () => {
+  const sb = fakeSb();
+  const b = await loadDeviceE2ee();
+  sb.rows.set('A', { device_id: 'A', wrap: 'wa', wrapped_by: 'A' });
+  sb.rows.set('B', { device_id: 'B', wrap: wrapDekFor(b.pub, Buffer.alloc(32, 7)).toString('base64'), wrapped_by: 'B' });
+  clearDekCache(); _resetClaimForTest();
+  assert.equal(await tryClaimDek(sb, 'B', { force: true }), false);
+  assert.equal(sb.rows.has('B'), false, 'B 행이 남으면 hasWrap=true라 A에서 승인 버튼이 안 뜬다');
+  assert.ok(sb.rows.has('A'), '다른 기기 행은 건드리지 않는다');
 });
