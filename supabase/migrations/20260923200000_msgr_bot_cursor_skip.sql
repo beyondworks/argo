@@ -68,15 +68,18 @@ begin
  -- 넘기는 것은 이 크루와 무관한 글뿐이다. 다음 앞에서 멈춘다(검수 #689 HIGH-1·MEDIUM-1):
  --   ① 최근 10분 안의 글(id 기준 — created_at을 과거로 넣어도 뒤의 대기 글을 건너뛰지 못한다)
  --   ② 이 크루를 겨냥할 수 있는 7일 안의 글 — 멘션(to·cc), 이 크루 글에 단 답글·그 스레드, 이 크루가 있는 1:1. 파견 재개·초대 결재 뒤 배달된다.
+-- 재검수 #689: 넘길 끝은 10분 넘은 글까지만, 그런 글이 없으면 움직이지 않는다(진행 중 트랜잭션이 늦게 커밋하는 낮은 id를 건너뛰지 않게 — HIGH-2).
+-- ponytail: created_at을 과거로 넣은 글(C)과 느린 커밋이 겹치면 여전히 넘길 수 있다 — 필요하면 created_at을 서버 시각으로 고정하는 트리거.
+-- ②에서 크루 자기 글·지운 글·카드/시스템 글과 1:1의 크루 글은 겨냥이 아니다(1:1 자기 답글이 7일간 커서를 묶었다 — MEDIUM-4).
  if n=0 then
-   update msgr_crews c set cursor_msg_id=x.id from (select least(
-       (select max(m.id) from msgr_messages m where m.org_id=b.org_id and m.id>lo),
+   update msgr_crews c set cursor_msg_id=x.id from (select case when a.id is not null then least(a.id,
        (select min(m.id)-1 from msgr_messages m where m.org_id=b.org_id and m.id>lo and m.created_at>=now()-interval '10 minutes'),
-       (select min(m.id)-1 from msgr_messages m where m.org_id=b.org_id and m.id>lo and m.created_at>=now()-interval '7 days' and (
+       (select min(m.id)-1 from msgr_messages m where m.org_id=b.org_id and m.id>lo and m.created_at>=now()-interval '7 days'
+          and m.kind='text' and m.deleted_at is null and m.crew_id is distinct from b.crew_id and (
           m.mentions @> jsonb_build_array(jsonb_build_object('id', b.crew_id::text))
           or exists(select 1 from msgr_messages p where p.id in (m.reply_to, m.thread_root) and p.crew_id=b.crew_id)
-          or exists(select 1 from msgr_channels d where d.id=m.channel_id and d.kind='dm' and msgr_crew_in_channel(d.id,b.crew_id))))
-     ) id) x
+          or (m.author_kind='user' and exists(select 1 from msgr_channels d where d.id=m.channel_id and d.kind='dm' and msgr_crew_in_channel(d.id,b.crew_id)))))
+     ) end id from (select max(m.id) id from msgr_messages m where m.org_id=b.org_id and m.id>lo and m.created_at<now()-interval '10 minutes') a) x
     where c.id=b.crew_id and x.id is not null and c.cursor_msg_id<x.id;
  end if;
 end $function$
