@@ -314,6 +314,7 @@ export const DICT = {
   'msg.attach': ['첨부', 'Attach'],
   'msg.attachOpenFail': ['첨부 파일을 열지 못했습니다. 연결을 확인하고 다시 시도해 주세요.', 'Could not open the attachment. Check your connection and try again.'],
   'msg.typing': ['{name} 입력 중…', '{name} is typing…'],
+  'side.typing': ['답변 중', 'Replying'],
   // P0(2026-09-09): 안 읽음·편집·삭제·반응·음소거·조용한 시간
   'msg.new': ['새 메시지', 'New messages'],
   'msg.edited': ['(수정됨)', '(edited)'],

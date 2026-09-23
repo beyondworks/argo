@@ -4,7 +4,7 @@
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { acceptTyping, typingKey, withoutKey } from './typing-state.js';
+import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS } from './typing-state.js';
 import { dismissHandlers } from './dismiss.mjs';
 import { hasPublicChannel, newChannelKind, stepMarks } from './onboard.mjs';
 import { Graph3D } from './graph3d.jsx';
@@ -833,26 +833,34 @@ function Shell({ session }) {
   // ── 열린 방의 채널 토픽 dm:<채널> 구독 — 개인 방과 조직의 비공개 방(DM·비공개 채널) ──
   // 비공개 방의 typing·progress는 조직 토픽이 아니라 이 토픽으로 온다(20260918190000 — 조직 토픽은 조직 전원이 들어 방의 존재·크루 활동이 샜다).
   // 옛 서버에서는 조직 방 typing이 org:로 계속 오고 이 토픽은 조용할 뿐이라 깨지지 않는다. 글은 handleMessage가 id로 한 번만 처리한다.
-  const roomRt = useRef(null);
+  // 목록의 '답변 중' 표시(유건 2026-09-23): 열린 방 하나만 구독하면 다른 방·다른 화면에서는 그 방의 typing을 못 받는다 → 이 공간의 비공개 방을 모두 구독한다.
+  // 상한 50개(Realtime 연결당 채널 상한 여유) — 열린 방은 항상 포함. 방 집합이 바뀔 때만 다시 붙는다(방을 옮겨도 재구독 없음 — 열린 방이 이미 집합 안이면).
   const openKind = useMemo(() => (chId ? channels.find((c) => c.id === chId)?.kind ?? null : null), [channels, chId]);
-  const roomTopic = !!chId && (isPersonal || (openKind !== null && openKind !== 'public'));
+  const roomTopic = !!chId && (isPersonal || (openKind !== null && openKind !== 'public')); // 열린 방의 반응·수정 방송은 그 방 토픽으로(아래 broadcast)
+  const roomSubs = useRef(new Map()); // 방 id → 구독 채널
+  const roomIdsKey = useMemo(() => roomTopicIds(channels, chId, isPersonal).join(','), [channels, chId, isPersonal]);
   useEffect(() => {
-    if (!roomTopic) return;
-    let ch; let live = true; // 정리가 setAuth보다 먼저 끝나면(방을 빠르게 옮길 때) 채널을 만들지 않는다 — 안 그러면 고아 dm: 구독이 옮길 때마다 쌓였다(검수 #607 실측)
+    if (!roomIdsKey) return;
+    const subs = []; let live = true; // 정리가 setAuth보다 먼저 끝나면(빠르게 옮길 때) 채널을 만들지 않는다 — 고아 dm: 구독이 쌓였다(검수 #607 실측)
     (async () => {
       await supabase.realtime.setAuth(session.access_token);
       if (!live) return;
-      ch = supabase.channel(`dm:${chId}`, { config: { private: true } });
-      ch.on('broadcast', { event: 'message' }, ({ payload }) => handleMessageRef.current(payload)) // 조직 처리기와 같은 처리 — 알림이 없던 결함(검수 ③)
-        .on('broadcast', { event: 'typing' }, onTypingEvent)
-        .on('broadcast', { event: 'progress' }, onProgressEvent)
-        .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent(broadcastEvent('reaction', payload))) // 비공개 방의 반응·수정도 이 토픽으로(아래 broadcast)
-        .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent(broadcastEvent('edit', payload)))
-        .subscribe((status) => { if (isPersonal && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
-      roomRt.current = ch;
+      for (const id of roomIdsKey.split(',')) {
+        const c = supabase.channel(`dm:${id}`, { config: { private: true } }); subs.push(c); roomSubs.current.set(id, c);
+        c
+          .on('broadcast', { event: 'message' }, ({ payload }) => handleMessageRef.current(payload)) // 조직 처리기와 같은 처리 — id로 한 번만(u:와 겹쳐도)
+          .on('broadcast', { event: 'typing' }, onTypingEvent)
+          .on('broadcast', { event: 'progress' }, onProgressEvent)
+          .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent(broadcastEvent('reaction', payload)))
+          .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent(broadcastEvent('edit', payload)))
+          .subscribe((status) => { if (isPersonal && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
+      }
     })();
-    return () => { live = false; if (ch) { supabase.removeChannel(ch).catch(() => {}); if (roomRt.current === ch) roomRt.current = null; } };
-  }, [roomTopic, isPersonal, chId, session.access_token]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { live = false; for (const c of subs) { supabase.removeChannel(c).catch(() => {}); for (const [k, v] of roomSubs.current) if (v === c) roomSubs.current.delete(k); } };
+  }, [roomIdsKey, isPersonal, session.access_token]); // eslint-disable-line react-hooks/exhaustive-deps
+  const typingIn = (id) => typingInState(typing, id); // 채널 화면의 typingCrews와 같은 6초 창
+  const anyTyping = Object.values(typing).some((at) => Date.now() - at < TYPING_WINDOW_MS); // 끝난 표시가 남은 동안만 2초 주기 재그리기
+  useEffect(() => { if (!anyTyping) return; const iv = setInterval(() => setTick((x) => x + 1), 2000); return () => clearInterval(iv); }, [anyTyping]); // 신호가 끊긴 표시는 2초 안에 내린다
   // ── 다른 공간(보고 있지 않은 조직·개인 공간)의 새 글 — 안 읽음 합계·알림(유건 실측 2026-09-18 "교차되는 메시지 확인 안 됨") ──
   // 구독: 보고 있지 않은 조직마다 org:<조직>(공개 채널 글) + u:<나>(비공개 방 글 — 서버 마이그레이션 적용 뒤). 구독 수 = 조직 수 + 1.
   // 서버 적용 전: 조직은 org: 다중 구독만으로 즉시, 개인 공간은 합계 재조회(15초)로 뜬다. u: 구독 실패·합계 RPC 부재는 옛 동작으로 물러난다.
@@ -1382,7 +1390,7 @@ function Shell({ session }) {
               ]; return (
               <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && pinned.has(c.id)} {...(isPhone ? rowLongPress(c, items) : {})}>
                 <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}>
-                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
+                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
                 </button>
                 <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>
 
@@ -1409,7 +1417,7 @@ function Shell({ session }) {
                 ]),
               ]; return (
             <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items) : {})}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
             </div>
           ); };
@@ -1601,7 +1609,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} policy={policy} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomRt.current : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => { setPage('settings'); setSettingsTab('friends'); }}><I name="at" size={13} />{t('friends.title')}</button></div></div></>
         ) : (

@@ -16,3 +16,15 @@ export function withoutKey(map, key) {
   const { [key]: _gone, ...rest } = map;
   return rest;
 }
+
+export const TYPING_WINDOW_MS = 6000;
+/** 그 방에서 TYPING_WINDOW_MS 안에 typing이 온 크루가 있나 — 목록의 '답변 중' 표시 */
+export const typingIn = (typing, channelId, now = Date.now()) => Object.entries(typing).some(([k, at]) => k.startsWith(`${channelId}:`) && now - at < TYPING_WINDOW_MS);
+
+/** 방 토픽(dm:<방>)을 구독할 방 — 개인 공간은 전부, 조직은 비공개 방(DM·비공개 채널)만. 열린 방은 항상 포함, 상한 max(Realtime 연결당 채널 상한 여유). */
+export function roomTopicIds(channels, openId, isPersonal, max = 50) {
+  const priv = (c) => isPersonal || (c.kind && c.kind !== 'public');
+  const open = channels.find((c) => c.id === openId);
+  const ids = [...(open && priv(open) ? [openId] : []), ...channels.filter(priv).map((c) => c.id)];
+  return [...new Set(ids)].slice(0, max).sort();
+}
