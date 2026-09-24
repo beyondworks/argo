@@ -177,7 +177,7 @@ function AvatarEdit({ name, crew = false, crewId = null, url, onUpload, onRemove
   );
 }
 const faceEq = (a, b) => !!a && !!b && a.shape === b.shape && a.color === b.color && a.eyes === b.eyes;
-let faceColMissing = false; // 이 서버에 msgr_crews.face 열이 없다고 한 번 확인됐는지(옛 서버 폴백, 앱 수명 동안 유지)
+const faceCol = { missingAt: 0 }; // msgr_crews.face 열이 없다고 판정한 시각(옛 서버 폴백). 10분만 기억 — 앱이 라이브 적용보다 먼저 켜져도 재시작 없이 face를 다시 읽는다(재검수 #704)
 /** 에이전트 얼굴 고르기(유건 확정 2026-09-24) — 소유자만. 도형 6·색 10·눈 3 중에서 고르면 msgr_crews.face에 저장돼 조직 전원이 같은 얼굴을 본다.
  *  사진이 있으면 목록·대화에는 사진이 우선(Av)이지만, 사진을 지우면 바로 이 얼굴이 나오도록 고르기는 항상 켜져 있다. */
 function FacePicker({ crew, onSave, busy, t }) {
@@ -749,8 +749,8 @@ function Shell({ session }) {
       // 크루 목록 — face(얼굴 고르기, 2026-09-24)는 옛 서버(열 없음)에 없을 수 있다. 없다는 오류(스키마 캐시에 없음·열 없음)면 그 열만 빼고 다시 읽어(다른 열은 이미 옛 서버에서도 됐다) 목록이 통째로 비지 않게 한다.
       (async () => {
         const cols = 'id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio, commands';
-        if (!faceColMissing) try { const rows = await q(supabase.from('msgr_crews').select(`${cols}, face`).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ('face' in r ? r : { ...r, face: null })); }
-        catch (err) { if (!/schema cache|does not exist|could not find/i.test(err?.message ?? '')) throw err; faceColMissing = true; } // 한 번 확인하면 기억 — 15초 재조회마다 실패할 요청을 다시 보내지 않는다(검수 #704 L-3, DB 위생)
+        if (Date.now() - faceCol.missingAt > 600_000) try { const rows = await q(supabase.from('msgr_crews').select(`${cols}, face`).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ('face' in r ? r : { ...r, face: null })); }
+        catch (err) { const msg = err?.message ?? ''; if (!/face/i.test(msg) || !/schema cache|does not exist|could not find/i.test(msg)) throw err; faceCol.missingAt = Date.now(); } // 한 번 확인하면 기억 — 15초 재조회마다 실패할 요청을 다시 보내지 않는다(검수 #704 L-3, DB 위생)
         const rows = await q(supabase.from('msgr_crews').select(cols).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ({ ...r, face: null }));
       })(),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
