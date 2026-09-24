@@ -8,11 +8,23 @@
 # 그래서 목록을 없애고 인자로만 받으며, 더 새 버전이 이미 기록돼 있으면 옛 파일은 적용하지 않는다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# 검문(2026-09-24) — 라이브에는 main에 병합된 것과 **똑같은** 파일만 적용한다. 옛 브랜치에 남은 옛 적용 스크립트·수정 중인 마이그레이션이
+# 라이브 함수를 덮는 사고(9/23)를 구조로 막는다. 접속 정보를 읽기 전에 거른다.
+[ $# -gt 0 ] || { echo "적용할 마이그레이션 이름을 인자로 주세요 (예: 20260923120000_msgr_server_links)"; exit 2; }
+set -- "${@%.sql}" # 확장자를 붙여 줘도 같은 이름으로
+# main을 명시적으로 가져온다 — fetch 대상 설정이 좁으면 `git fetch origin main`이 origin/main을 갱신하지 않아 낡은 main과 비교된다
+git fetch -q origin +refs/heads/main:refs/remotes/origin/main || { echo "거부  origin/main을 가져오지 못했습니다 — 네트워크 확인 뒤 다시"; exit 4; }
+MAINTMP=$(mktemp); trap 'rm -f "$MAINTMP"' EXIT
+same_as_main() { git show "origin/main:$1" > "$MAINTMP" 2>/dev/null || return 1; cmp -s "$MAINTMP" "$1"; } # git show 실패를 빈 파일 비교로 삼키지 않는다
+same_as_main scripts/msgr-live-apply.sh || { echo "거부  이 적용 스크립트가 main 최신과 다릅니다 — main 최신 체크아웃에서 실행하세요"; exit 4; }
+for f in "$@"; do
+  git cat-file -e "origin/main:supabase/migrations/$f.sql" 2>/dev/null || { echo "거부  $f — main에 병합되지 않은 파일"; exit 4; }
+  same_as_main "supabase/migrations/$f.sql" || { echo "거부  $f — main 병합본과 내용이 다릅니다"; exit 4; }
+done
 set -a; . ./.env.local; set +a
 REF=$(echo "$NEXT_PUBLIC_SUPABASE_URL" | sed -E 's#https?://([a-z0-9]+)\.supabase\.co.*#\1#')
 export PGPASSWORD="$SUPABASE_DB_PASSWORD"
 C="host=aws-1-ap-northeast-2.pooler.supabase.com port=5432 user=postgres.$REF dbname=postgres sslmode=require"
-[ $# -gt 0 ] || { echo "적용할 마이그레이션 이름을 인자로 주세요 (예: 20260923120000_msgr_server_links)"; exit 2; }
 FILES=("$@")
 for f in "${FILES[@]}"; do
   V=${f%%_*}
