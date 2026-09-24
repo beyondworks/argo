@@ -62,10 +62,11 @@ before(() => {
   const crew = (owner, slug, hosting = 'local') => last(sql(`select set_config('msgr.bot_create', '1', false); insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, status, hosting) values ('${ORG}', '${owner}', 'lean', '${slug}', '${slug}', 'active', '${hosting}') returning id`));
   MINE = crew(U.mate, 'mine'); MINE2 = crew(U.mate, 'mine2'); OTHERS = crew(U.other, 'others');
   COMPANY = crew(U.svc, 'company', 'resident');
-  BOT = crew(U.mate, 'mate-bot', 'bot'); // 멤버가 연결한 봇 — msgr_crew_tier는 'company'로 보지만 주인은 이 멤버다
+  BOT = crew(U.mate, 'mate-bot', 'bot'); // 멤버가 연결한 봇 — 주인은 이 멤버다(2026-09-24부터 봇도 개인 등급: Argo 에이전트처럼 소유자만)
   assert.equal(sql(`select public.msgr_crew_is_company('${COMPANY}')`), 't');
   assert.equal(sql(`select public.msgr_crew_is_company('${BOT}')`), 'f', '봇은 회사 에이전트가 아니다(주인이 사람)');
-  assert.equal(sql(`select public.msgr_crew_tier('${BOT}')`), 'company', '대조: tier로 판정했으면 봇을 남겼을 것');
+  assert.equal(sql(`select public.msgr_crew_tier('${BOT}')`), 'personal', '봇은 개인 등급(20260924180000)');
+  assert.equal(sql(`select public.msgr_crew_is_company('${BOT}')`), 'f', '회사 에이전트가 아니다 — 주인을 따라 나간다');
 });
 
 test('주인이 비공개 채널을 나가면 그 주인의 에이전트·봇도 나간다 — 남의 에이전트·회사 에이전트는 남는다', { skip }, () => {

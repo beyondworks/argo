@@ -81,7 +81,7 @@ export const PERSONAL = '__personal__';
 // 이 채널이 개인 에이전트의 지시를 막는가 — 보기만(read_only)뿐(서버 msgr_instruct_check와 같다). 방장 승인·못 데려옴은 들어오는 방식만 정하고,
 // 이미 있는 에이전트는 그대로 일한다(유건 2026-09-16: 못 데려옴으로 바꿔도 퇴장시키지 않는다).
 export const limitsPersonal = (channel) => channel?.personal_crews === 'read_only';
-export const crewTier = (crew, org) => (crew?.hosting === 'bot' || (org?.service_user_id && crew?.owner_user_id === org.service_user_id && crew?.hosting === 'resident')) ? 'company' : 'personal'; // 봇(외부 에이전트)도 회사 등급 — 서버 msgr_crew_tier와 같은 규칙(부록 N)
+export const crewTier = (crew, org) => (org?.service_user_id && crew?.owner_user_id === org.service_user_id && crew?.hosting === 'resident') ? 'company' : 'personal'; // 외부 에이전트(봇)도 개인 등급 — Argo 에이전트처럼 소유자가 초대한 곳에서만(유건 2026-09-24). 서버 msgr_crew_tier와 같은 규칙
 const PAGE = 100;
 const RT_QUIET_MS = 30_000;  // 이 시간 안에 방송이 있었으면 실시간이 살아 있다고 본다
 const RT_SWEEP_MS = 60_000;  // 실시간이 살아 있어도 이 주기로는 보정 조회를 한 번 돌린다
@@ -1553,12 +1553,12 @@ function Shell({ session }) {
     finally { actionLock.current = false; setActionBusy(false); }
   };
   const railActionKey = railAction && (railAction.channel.kind === 'dm' ? `dm.${railAction.kind === 'end' ? 'end' : railAction.kind}` : `ch.${railAction.kind}`);
-  const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => { setSheet(c.id); setRail(false); }} onContextMenu={(e) => openCtx(e, crewCtx(c))} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}`}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} crewId={c.id} /><span className="name">{c.display_name}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
+  const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => { setSheet(c.id); setRail(false); }} onContextMenu={(e) => openCtx(e, crewCtx(c))} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}`}><Av name={c.display_name} crew size="xs" company={crewTier(c, org) === 'company'} crewId={c.id} /><span className="name">{c.display_name}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
   // 평평한 목록(유건 결정 2026-09-09). 외부 에이전트(헤르메스·오픈클로 봇)가 있을 때만 '외부' 소제목 하나로 아래에 구분한다.
   const railArgo = myCrews.filter((c) => sourceOf(c) === 'argo'); const railExt = myCrews.filter((c) => sourceOf(c) !== 'argo');
-  const railBots = sortCrews(crews.filter((c) => c.hosting === 'bot' && c.owner_user_id !== uid)); const railCompany = sortCrews(crews.filter((c) => c.hosting !== 'bot' && c.owner_user_id !== uid && crewTier(c, org) === 'company')); // 다른 멤버의 개인 크루는 레일에 두지 않는다(유건 2026-09-16: "다른 멤버의 에이전트는 안 보이게").
-  // 조직 명부에는 그대로 있고 서버 권한도 그대로다 — 목록에서 빼는 것은 화면 규칙이다. 회사 크루·외부 에이전트는 남는다.
-  const railVisible = crews.filter((c) => c.hosting === 'bot' || c.owner_user_id === uid || crewTier(c, org) === 'company');
+  const railCompany = sortCrews(crews.filter((c) => c.owner_user_id !== uid && crewTier(c, org) === 'company')); // 다른 멤버의 에이전트는 레일에 두지 않는다 — 외부(VPS) 봇 포함(유건 2026-09-16 "다른 멤버의 에이전트는 안 보이게", 2026-09-24 "VPS 에이전트도 Argo 에이전트처럼").
+  // 조직 명부에는 그대로 있다 — 목록에서 빼는 것은 화면 규칙이고, 지시는 서버가 허용 범위로 막는다. 회사 크루만 남는다.
+  const railVisible = crews.filter((c) => c.owner_user_id === uid || crewTier(c, org) === 'company');
   return (
     <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}>
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
@@ -1662,7 +1662,7 @@ function Shell({ session }) {
         {!isPersonal && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
-            {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany], ['mine.bot', 'rail.agents.bot', railBots]]
+            {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany]]
               .map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(railRow)}</RailFold>)}
             {myAvailable.map((c) => { // 목록에서 그 자리 파견(유건 지시 2026-09-08) — 채널을 보고 있으면 그 채널까지(DM은 조직만), 아니면 조직만
               const target = channel && (channel.personal_crews ?? 'approval') !== 'blocked' ? channel : null; // 대화방도 그 자리 파견 대상이다(유건 2026-09-16)
