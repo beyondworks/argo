@@ -1157,6 +1157,9 @@ const DICT = {
   'chat.stop': ['중단', 'Stop'],
   'chat.cancelIncomplete': ['자동 재개는 막았지만, 러너가 실행한 일부 작업의 종료를 확인하지 못했습니다. 실행 중인 작업을 확인해 주세요.', 'Automatic resume is blocked, but some tasks started by the runner could not be confirmed stopped. Please check running tasks.'],
   'chat.aborted': ['지시대로 중단했습니다 — 입력을 복원했어요.', 'Stopped as instructed — your input was restored.'],
+  // 지금 바로 보내기로 중단된 경우(총괄 재검수 2026-09-24) — 정지 버튼 문구("입력을 복원했어요")는
+  // 입력창이 이미 비어 있는 이 경로에서 헷갈리므로 사실만 적는다. 재전송 버튼도 숨긴다(아래 렌더).
+  'chat.abortedForSendNow': ['새 지시로 넘어가며 중단했습니다.', 'Stopped to move to a new instruction.'],
   'chat.copy': ['복사', 'Copy'],
   'chat.annotate': ['빨간펜', 'Annotate'],
   'chat.fellBack.auth': ['{from} 인증 오류로 {to}이(가) 대신 답했습니다 — 반복되면 설정 → AI 연결에서 {from}을(를) 다시 연결해 주세요.', '{to} answered instead because {from} hit an authentication error — if this repeats, reconnect {from} in Settings → AI connections.'],
