@@ -140,6 +140,17 @@ test('mirrorRoutines(L-b) — sync 응답 kept가 보낸 행 수와 다르면 "�
   assert.equal(calls, 2, 'kept가 기대와 다르면 캐시를 안 남겨 다음 틱에 다시 확인한다');
 });
 
+test('mirrorRoutines(L-d) — 서버가 건너뛴 행(공백 제목 등)은 skipped로 받아 셈이 맞으면 캐시한다(유휴 매 틱 RPC 방지)', async () => {
+  _resetRoutineMirrorForTest();
+  let calls = 0;
+  const db = { async syncCrewRoutines() { calls++; return { kept: 1, skipped: 1 }; } }; // 2행 중 공백 제목 1행은 서버가 건너뜀
+  const load = async () => [routine(), routine({ id: 'r2', title: '   ' })];
+  await mirrorRoutines('ws1', { db, crews: [CREW], load, log: () => {} });
+  await mirrorRoutines('ws1', { db, crews: [CREW], load, log: () => {} });
+  await mirrorRoutines('ws1', { db, crews: [CREW], load, log: () => {} });
+  assert.equal(calls, 1, 'kept+skipped = 보낸 행 수면 이미 올린 것 — 다시 부르지 않는다');
+});
+
 test('decideRoutineEdit — 로컬이 편집보다 나중이면 superseded, 로컬이 없으면 notfound, 아니면 apply', () => {
   assert.equal(decideRoutineEdit(null, { created_at: '2026-09-20T00:00:00Z' }), 'notfound');
   assert.equal(decideRoutineEdit(routine({ editedAt: '2026-09-21T00:00:00Z' }), { created_at: '2026-09-20T00:00:00Z' }), 'superseded');

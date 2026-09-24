@@ -82,10 +82,11 @@ export async function mirrorRoutines(wsId, { db, crews, load = loadRoutines, log
     try {
       const result = await db.syncCrewRoutines(crew.org_id, crew.id, rows);
       if (result === undefined) { unsupported = true; unsupportedUntil = now() + UNSUPPORTED_RECHECK_MS; break; } // 옛 서버(M4) — 다음 크루도 같은 서버라 더 두드리지 않는다
-      // L-b: 응답의 kept(서버가 실제로 반영한 행 수)가 우리가 보낸 유효 행 수(malformed로 스스로 건너뛴 것 제외)와
-      // 다르면 서버 상태가 우리 예상과 어긋난 것 — 다음 틱에 무조건 다시 확인하도록 "이미 올렸다" 캐시를 남기지 않는다.
-      const expectedKept = rows.filter((r) => r.ext_id && r.title && r.prompt && r.schedule).length;
-      if (typeof result?.kept === 'number' && result.kept !== expectedKept) {
+      // L-b(부분): 서버가 반영(kept)하거나 스스로 건너뛴(skipped) 행이 보낸 행 수와 맞지 않으면 서버 상태가 예상과 어긋난 것 —
+      // 다음 틱에 다시 확인하도록 캐시를 남기지 않는다. 판정은 서버 응답만으로(클라이언트가 유효 행을 따로 세면 공백 제목 같은
+      // 서버·클라이언트 기준 차이로 영영 안 맞아 유휴 폴링이 매 틱 RPC가 된다 — 4차 검수 L-d).
+      // ponytail: 한 틱 안의 회수·재파견(캐시 내용이 같아 RPC를 안 부름)은 못 잡는다. 크루 status 전이 시각을 캐시 키에 넣으면 닫힌다.
+      if (typeof result?.kept === 'number' && result.kept + (result.skipped ?? 0) !== rows.length) {
         pushed.delete(crew.id);
       } else {
         pushed.set(crew.id, json);
