@@ -1063,9 +1063,7 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
     const s = slug ? await getTurnStatus(wsId, slug).catch(() => null) : null;
     if (stopped || !s || s.source !== 'messenger') return; // 종료 뒤 남은 비동기 pump도 다음 채널의 상태를 방송하지 않는다
     // 조직 토픽(org:<id>)은 조직 멤버 전원이 듣는다 — 비공개·DM 채널의 본문·사고·도구 단계는 방송하지 않고 단계만(최종 궤적은 메시지 meta로 열람 RLS를 탄다)
-    // 방 전용 토픽(dm:<채널>)은 그 채널을 읽을 수 있는 사람만 듣는다(20260918184500 msgr_realtime_recv) — 메시지 본문과 같은 범위라 도구 단계를 싣는다.
-    // 조직 토픽으로만 가릴 때 쓰던 빈 steps가 남아 1:1·비공개 방의 카드가 늘 "도구 0회"였다(유건 제보 2026-09-24).
-    const payload = (full || own)
+    const payload = full
       ? { channel_id: channelId, crew_id: crewId, stage: s.stage, detail: s.detail, steps: (s.steps ?? []).slice(-40), thought: s.thought, partial: String(s.partial ?? '').slice(-1200), startedAt: s.startedAt }
       : { channel_id: channelId, crew_id: crewId, stage: s.stage, detail: '', steps: [], thought: '', partial: '', startedAt: s.startedAt }; // detail(파일명·명령 앞부분)도 비공개·DM은 뺀다(검수 2R M-6)
     const key = JSON.stringify(payload);

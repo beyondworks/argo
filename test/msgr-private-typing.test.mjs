@@ -45,27 +45,6 @@ test('비공개 방인데 방 채널을 못 열면 보내지 않는다(조직 �
   rt.delete('ws:O');
 });
 
-// 2026-09-24 유건 제보: 1:1 실행 카드가 늘 "도구 0회". 조직 토픽용 가림(빈 steps)이 방 전용 토픽에도 남아 있었다.
-// 방 토픽(dm:<채널>)은 그 채널을 읽을 수 있는 사람만 듣는다 — 도구 단계를 싣고, 조직 토픽으로는 여전히 한 건도 나가지 않는다.
-test('비공개 방 progress: 방 토픽으로 도구 단계를 싣고, 조직 토픽으로는 보내지 않는다', async () => {
-  const { setTurnStatus } = await import('../src/turn-status.mjs');
-  const { mkdir } = await import('node:fs/promises');
-  const { paths } = await import('../src/workspace.mjs');
-  await mkdir(paths('ws').chats, { recursive: true });
-  const steps = [{ stage: 'tool', detail: 'Bash' }, { stage: 'tool', detail: 'Read' }];
-  await setTurnStatus('ws', 'pepper', 'tool', 'Bash', '', 'messenger', '', steps);
-  const f = fakeClient(); rt.set('ws:O', f.org);
-  const stop = startTyping('ws', 'O', 'C-priv', 'crew-1', 'pepper', { full: false });
-  await new Promise((r) => setTimeout(r, 1700));
-  stop();
-  const prog = f.sent.filter((m) => m.event === 'progress');
-  assert.ok(prog.length >= 1, JSON.stringify(f.sent));
-  assert.ok(prog.every((m) => m.topic === 'dm:C-priv'), '방 토픽으로만');
-  assert.equal(prog.at(-1).payload.steps.length, 2, '도구 단계가 실린다');
-  assert.ok(!f.sent.some((m) => m.topic === 'org:O'), '조직 토픽으로는 한 건도 없다');
-  rt.delete('ws:O');
-});
-
 test('App.jsx 배선: 개인 공간의 방과 조직의 비공개 방(공개 채널 아님)은 dm:<채널>을 구독해 typing·progress를 받는다 — 열린 방만이 아니라 전부(목록의 답변 중, 2026-09-23)', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
