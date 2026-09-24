@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Tabs, useRememberedTab, Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
-import { useLang, stageLabel } from '../../../../i18n';
+import { useLang, stageLabel, fmtMsgTime } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
 import { ArtifactChips } from '../../artifact-chips';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../../work-folder';
@@ -82,7 +82,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 섞여 있었다: 원문 보간 7곳 + encodeURIComponent 7곳(후자는 이중 인코딩). 여기서 한 번 풀고,
   // URL을 만들 때마다 한 번씩만 감싼다.
   const slug = useMemo(() => { try { return decodeURIComponent(slugParam); } catch { return slugParam; } }, [slugParam]);
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
   const [agent, setAgent] = useState(null);
@@ -182,6 +182,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }
   }
   const [busy, setBusy] = useState(false);
+  // busy 최신값을 클로저 안에서 읽는다(지금 보내기 — abortTurn 뒤 정지가 실제로 반영될 때까지 기다려야 하는데,
+  // 그 함수는 클릭 시점 렌더의 busy를 그대로 들고 있어 await 뒤에도 갱신되지 않는다).
+  const busyRef = useRef(false);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   // 크루 길들이기(F) — 같은 지적 2회째면 "회사 규칙으로 기억할까요?" 제안(사장 결정 대기 목록)
@@ -388,10 +392,27 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
+  // 여백 사이징 — 핀 메시지 상단부터 콘텐츠 끝까지가 한 화면이 되도록 부족분만 여백으로 채운다.
+  // 답변이 자라면 여백이 같이 줄어 scrollHeight가 출렁이지 않고, 턴이 끝나도 그 값에 머물러
+  // scrollTop 클램프 점프가 없다. 답변이 한 화면을 넘으면 여백 0 — 빈 공간이 남지 않는다.
+  // 콜백으로 뺀 이유(피드백 7, 2026-09-23) — 기존엔 아래 효과의 고정 deps(thread·busy·liveStage·viewing)에서만
+  // 재계산해서, **컴포저 높이 변화**(입력창 자동 크기·첨부 칩·대기열 스택 등판)로 .thread의 실제 가용 높이
+  // (el.clientHeight)가 바뀌는 경우를 놓쳤다 — 그 순간엔 스레드 배열이 안 바뀌니 deps가 안 돌아 여백이
+  // 낡은(더 큰) 값에 멈춰 "메시지 아래·입력창 위 큰 빈 공간"으로 보였다. 아래 ResizeObserver 효과가
+  // .thread 크기 변화 자체를 관찰해 이 함수를 다시 부른다 — 원인(레이아웃 재계산 누락)을 구조로 닫는다.
+  const recalcSpacer = useCallback(() => {
+    const el = threadRef.current;
+    const spacer = spacerRef.current;
+    if (!el || !spacer) return;
+    const pinned = pinMidRef.current && msgRefs.current.get(pinMidRef.current);
+    const h = pinned && !viewing
+      ? Math.max(0, el.clientHeight - (spacer.getBoundingClientRect().top - pinned.getBoundingClientRect().top) - 12)
+      : 0;
+    spacerHRef.current = h;
+    spacer.style.height = `${h}px`;
+  }, [viewing]);
   // 스크롤 규율.
-  //  ⓪ 여백 사이징 — 핀 메시지 상단부터 콘텐츠 끝까지가 한 화면이 되도록 부족분만 여백으로 채운다.
-  //     답변이 자라면 여백이 같이 줄어 scrollHeight가 출렁이지 않고, 턴이 끝나도 그 값에 머물러
-  //     scrollTop 클램프 점프가 없다. 답변이 한 화면을 넘으면 여백 0 — 빈 공간이 남지 않는다.
+  //  ⓪ 여백 사이징 — 위 recalcSpacer.
   //  ① 전송 직후 — 방금 보낸 내 글을 컨테이너 상단에 붙인다. 그 아래 공간에서 작업 과정과 답변이 흐른다.
   //  ② 그 외 — 하단 근처일 때만 따라간다(추종 목표는 콘텐츠 바닥 — 여백으로는 안 내려간다).
   // liveStage.partial이 의존성에 있어야 스트리밍으로 답변이 자라는 동안에도 시야가 따라간다.
@@ -399,15 +420,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   useEffect(() => {
     const el = threadRef.current;
     if (!el) return;
-    const spacer = spacerRef.current;
-    if (spacer) {
-      const pinned = pinMidRef.current && msgRefs.current.get(pinMidRef.current);
-      const h = pinned && !viewing
-        ? Math.max(0, el.clientHeight - (spacer.getBoundingClientRect().top - pinned.getBoundingClientRect().top) - 12)
-        : 0;
-      spacerHRef.current = h;
-      spacer.style.height = `${h}px`;
-    }
+    recalcSpacer();
     const pin = pinRef.current && msgRefs.current.get(pinRef.current);
     if (pin) {
       pinRef.current = null;
@@ -419,7 +432,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // atBottom=true가 되는데, 위로도 끌면 턴 갱신마다 핀이 풀려 화면이 위로 튄다(실측 -528px, 2026-07-21 신고 본체).
     if (atBottomRef.current) el.scrollTop = Math.max(el.scrollTop, contentBottom(el) - el.clientHeight);
     // working은 아래에서 선언되는 파생값(busy||liveStage)이라 deps에 못 쓴다(TDZ) — stage/partial이 같은 전환을 잡는다
-  }, [thread, busy, liveStage?.partial, liveStage?.stage, viewing]);
+  }, [thread, busy, liveStage?.partial, liveStage?.stage, viewing, recalcSpacer]);
+  // .thread 실제 크기 변화 관찰 — 컴포저(입력창 자동 크기·첨부 칩·대기열 스택)가 자라거나 줄면 그리드 1fr
+  // 행인 .thread의 clientHeight가 바뀐다. 위 효과의 deps로는 못 잡는 변화라 별도로 감시한다.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(recalcSpacer);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [recalcSpacer]);
 
   // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
   useEffect(() => {
@@ -541,14 +563,14 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // 낙관적 표시 — 서버는 턴이 끝난 뒤에야 저장하므로(route.js appendTurn) 도중엔 이 사본이 사장 글의 유일한 원본이다.
     // 그래서 실패해도 스레드에서 빼지 않는다. 빼면 글이 어디에도 남지 않고 입력창으로 되돌아가 "보낸 게 사라졌다"가 된다.
     const mid = `s${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setThread((t) => [...(t ?? []), { who: 'user', text: message, mid, ...(attachments.length ? { attachments } : {}) }]);
+    setThread((t) => [...(t ?? []), { who: 'user', text: message, mid, ts: Date.now(), ...(attachments.length ? { attachments } : {}) }]);
     pinRef.current = mid; // 방금 보낸 글을 화면 상단에 붙인다 — 그 아래로 작업 과정·답변이 흐르도록
     pinMidRef.current = mid; // 여백 계산 기준(핀부터 한 화면) — 다음 전송/대화 전환까지 유지
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
       setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
-      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
+      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ts: Date.now(), ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
       // 실패 턴도 서버가 보존한다(route.js가 failed·aborted로 appendTurn) — 로컬 사본에 같은 필드를
@@ -612,6 +634,32 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     setAborting(true);
     try { await api(`/api/companies/${ws}/chat/abort`, { slug, source: busy ? 'chat' : liveStage?.source }); } catch (e) { setError(String(e.message)); }
     finally { setAborting(false); }
+  }
+
+  // 지금 바로 보내기(피드백 6, 2026-09-23) — 답변 도중 온 새 지시를 대기열 대신 즉시 보낸다. 조사 결과
+  // (러너별 "즉시"의 뜻): SDK·CLI·네이티브 키 러너 공통으로 이미 있는 유일한 중단 메커니즘은 정지 버튼의
+  // abortTurn(interruptTurn — 지금 도는 프로바이더 호출을 끊는다)뿐이고, "진행 중 턴에 새 지시를 주입"하는
+  // 경로는 어떤 러너에도 없다. 그래서 가장 안전한 공통 의미로 "중단 → 새 턴으로 즉시 전송"을 쓴다(정지
+  // 버튼과 같은 중단 경로 재사용 — 새 인터럽트 배선 없음).
+  // 부분 답변 보존: 서버는 중단된 턴에 크루 메시지를 저장하지 않는다(추론 — route.js catch가 실패한
+  // 사용자 메시지만 appendTurn, 확인은 src/thread.mjs). 도중까지 스트리밍된 partial(SDK 러너만 채움 —
+  // CLI·네이티브 키 러너는 partial을 아예 추적하지 않아 이 자리에서 비어 있을 수 있다, 알려진 한계)을
+  // 잃지 않게 로컬 스레드에 '중단됨' 표식과 함께 먼저 남긴 뒤 중단한다.
+  async function sendNow() {
+    if (uploading || aborting) return;
+    const message = input.trim();
+    if (!message) return;
+    const attachments = att;
+    setInput(''); setAtt([]);
+    if (liveStage?.partial) {
+      setThread((cur) => [...(cur ?? []), { who: 'crew', text: liveStage.partial, aborted: true }]);
+    }
+    await abortTurn();
+    // abortTurn은 서버에 중단을 요청할 뿐 — 지금 도는 sendMessage()의 fetch가 실제로 실패로 끝나
+    // busy가 false로 내려가기까지는 별도 왕복이 더 필요하다. 고정 대기 대신 조건 충족까지 폴링(상한 8초).
+    const startedAt = Date.now();
+    while (busyRef.current && Date.now() - startedAt < 8000) await new Promise((r) => setTimeout(r, 120));
+    await sendMessage(message, attachments);
   }
 
   // 메시지 복사 — 잠깐 "복사됨"으로 바뀌는 피드백
@@ -914,6 +962,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>
               )}
+              {/* 보낸 시각 — 조용하게(작은 글씨·옅은 색), 오늘이면 시:분·이전 날짜면 날짜까지(유건 요청 2026-09-21) */}
+              {m.ts && <span className="mono msg-time" style={{ fontSize: 10.5, color: 'var(--fg-3)', padding: '0 4px' }}>{fmtMsgTime(lang, m.ts)}</span>}
               <div className="msg-actions">
                 <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
                 {!viewing && <button type="button" disabled={busy || uploading} onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>}
@@ -939,6 +989,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     {t('chat.modelFallback', { wanted: m.modelFallback.wanted, runner: RUNNER_LABELS[m.modelFallback.runner] ?? m.modelFallback.runner })}
                   </p>
                 )}
+                {/* 지금 보내기(item 6) — 사장이 답변 도중 새 지시를 즉시 보내며 턴을 멈춘 경우, 그때까지의
+                    부분 답변을 잃지 않고 이 자리에 남긴다(서버는 중단 턴에 크루 메시지를 저장하지 않는다 —
+                    로컬 전용 표시). */}
+                {m.aborted && (
+                  <p style={{ margin: '0 0 4px', fontSize: 11.5, color: 'var(--fg-2)' }}>{t('chat.partialAborted')}</p>
+                )}
                 <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}
                   onMouseUp={annotIdx === i ? captureQuote : undefined}
                   onCopy={(e) => {
@@ -961,6 +1017,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                       눈 토글 = 인라인 미리보기(2026-07-31) — 채팅을 떠나지 않고 그 자리에서 본다. */}
                   {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
                 </div>
+                {/* 보낸 시각 — 조용하게, 크루 답변도 동일 규칙(오늘=시:분·이전=날짜 포함) */}
+                {m.ts && <span className="mono msg-time" style={{ fontSize: 10.5, color: 'var(--fg-3)', padding: '0 4px' }}>{fmtMsgTime(lang, m.ts)}</span>}
                 <div className="msg-actions">
                   <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
                   {!viewing && (
@@ -1216,6 +1274,13 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
             autoFocus
           />
+          {/* 지금 바로 보내기 — 답변 중일 때만. 대기열 대신 턴을 멈추고 새 지시를 즉시 새 턴으로 보낸다. */}
+          {busy && (
+            <button type="button" className="btn btn-icon" disabled={uploading || aborting || !input.trim()}
+              title={t('chat.sendNow')} aria-label={t('chat.sendNow')} onClick={sendNow}>
+              <Icon name="bolt" size={15} />
+            </button>
+          )}
           <button className="btn btn-primary btn-icon" disabled={uploading || !input.trim()} aria-label={busy ? t('chat.queue.add') : t('chat.send')}>
             <Icon name="send" size={15} />
           </button>
