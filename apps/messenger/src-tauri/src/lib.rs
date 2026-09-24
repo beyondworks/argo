@@ -26,6 +26,8 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_push_notifications::init()); // APNs·FCM 기기 토큰 + 알림 탭 — 발송은 서버(msgr-push)
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_web_auth::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_apk_installer::init());
     #[cfg(target_os = "macos")]
     let builder = builder
         .manage(native_realtime::NativeRealtimeState::default())

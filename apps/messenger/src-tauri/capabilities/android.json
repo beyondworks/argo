@@ -1,0 +1,13 @@
+{
+  "identifier": "android-apk-installer",
+  "description": "Android 자가 업데이트 — GitHub 릴리스 APK 다운로드·설치 화면(스토어 미발행 단계 전용)",
+  "platforms": [
+    "android"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "apk-installer:default"
+  ]
+}
