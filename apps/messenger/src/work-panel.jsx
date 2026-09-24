@@ -90,7 +90,9 @@ function useCrewRoutines(channel, crews, enabled) {
       // R1(재검수 2차): applied를 걸러내고 가져오면 "루틴별 최신"이 아니라 "루틴별 최신 비-applied"가 된다 — 그 뒤에
       // 실제로 더 최신인 applied가 있어도 모르고 낡은 replaced/superseded를 보여준다. 전부 가져와 진짜 최신을 고른 뒤,
       // 그 최신이 applied가 아닐 때만 안내를 보여준다.
-      const edits = ids.length ? await checked(supabase.from('msgr_crew_routine_edits').select('routine_id,status,op,error,created_at').in('routine_id', ids).order('created_at', { ascending: false })) : [];
+      // L-c(재검수 3차): 루틴이 많고 편집 이력이 쌓이면 이 조회가 무한정 커진다 — 최신순으로 넉넉한 상한만 가져오면
+      // (루틴별 최신 1건이 목적) 대부분의 실사용 범위를 덮으면서 응답 크기를 잡아 둔다.
+      const edits = ids.length ? await checked(supabase.from('msgr_crew_routine_edits').select('routine_id,status,op,error,created_at').in('routine_id', ids).order('created_at', { ascending: false }).limit(Math.min(500, Math.max(50, ids.length * 10)))) : [];
       if (request !== revision.current) return;
       const latest = new Map();
       for (const e of edits ?? []) if (!latest.has(e.routine_id)) latest.set(e.routine_id, e);
@@ -264,23 +266,33 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
     {(routines.rows ?? []).map((routine) => {
       // N4(재검수 2차): 대기 중(pending)인 update patch가 enabled를 바꿨다면, 아직 PC가 반영하기 전이라도 그 값을
       // 기준으로 보여주고 토글한다 — 안 그러면 반영 전에 다시 누른 버튼이 서버 값(옛 값)을 기준으로 다시 걸려 원래 뜻대로 안 돌아간다.
-      const pendingPatch = routine.pendingEdit?.status === 'pending' && routine.pendingEdit.op === 'update' ? routine.pendingEdit.patch : null;
+      const pending = routine.pendingEdit?.status === 'pending';
+      // N6(재검수 3차): 대기 중인 게 delete면 별도 화면 — 편집·토글을 숨기지 않으면 토글 한 번으로 삭제가
+      // 안내 없이 취소된다(서버 폴드 규칙은 "나중 수정이 이긴다"라 되돌릴 수 있는 게 맞지만, 그게 암묵적으로
+      // 일어나면 안 된다 — 명시적 "삭제 취소" 버튼 하나만 둔다).
+      const pendingDelete = pending && routine.pendingEdit.op === 'delete';
+      const pendingPatch = pending && routine.pendingEdit.op === 'update' ? routine.pendingEdit.patch : null;
       const effectiveEnabled = pendingPatch && 'enabled' in pendingPatch ? pendingPatch.enabled : routine.enabled;
       return <article className="work-item" key={routine.id}>
-      <div className="work-item-top"><span className="work-item-title"><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span><span className={`work-status ${effectiveEnabled ? 'running' : 'cancelled'}`}>{t(effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span></div>
+      <div className="work-item-top"><span className="work-item-title"><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span><span className={`work-status ${pendingDelete ? 'blocked' : effectiveEnabled ? 'running' : 'cancelled'}`}>{t(pendingDelete ? 'routine.delete.badge' : effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span></div>
       <p className="work-text">{routine.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === routine.crew_id)?.display_name ?? t('work.crew.unavailable')} · <RoutineSchedule schedule={routine.schedule} t={t} /></p>
-      {routine.pendingEdit?.status === 'pending' && <p className="work-notice">{t('routine.pending')}</p>}
-      {/* replaced = 메신저 쪽 자동 폴드(더 새 메신저 편집이 이걸 흡수, H3) — superseded = PC가 "로컬이 이 편집보다 나중"으로 판단해 버림(H1/H4). 원인이 다르므로 문구도 다르다(M3). */}
-      {routine.pendingEdit?.status === 'replaced' && <p className="work-notice">{t('routine.replaced')}</p>}
-      {routine.pendingEdit?.status === 'superseded' && <p className="work-notice">{t('routine.superseded')}</p>}
-      {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
-      <div className="work-actions">
-        {/* H3: 편집 폼의 초기값은 아직 반영 전인 대기 patch를 덮어써서 보여준다 — 소유자가 두 번째 수정을 시작할 때 낡은(적용 전) 값에서 출발하지 않게 */}
-        <button className="btn sm" disabled={disabled} onClick={() => setEditingRoutine(pendingPatch ? { ...routine, ...pendingPatch } : routine)}>{t('automation.edit')}</button>
-        <button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { enabled: !effectiveEnabled } })), () => routines.refresh())}>{t(effectiveEnabled ? 'automation.pause' : 'automation.resume')}</button>
-        <button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting({ ...routine, kind: 'routine' })}>{t('automation.delete')}</button>
-      </div>
+      {pendingDelete ? <>
+        <p className="work-notice error" role="alert">{t('routine.delete.pending')}</p>
+        <div className="work-actions"><button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: {} })), () => routines.refresh())}>{t('routine.delete.cancel')}</button></div>
+      </> : <>
+        {pending && <p className="work-notice">{t('routine.pending')}</p>}
+        {/* replaced = 메신저 쪽 자동 폴드(더 새 메신저 편집이 이걸 흡수, H3) — superseded = PC가 "로컬이 이 편집보다 나중"으로 판단해 버림(H1/H4). 원인이 다르므로 문구도 다르다(M3). */}
+        {routine.pendingEdit?.status === 'replaced' && <p className="work-notice">{t('routine.replaced')}</p>}
+        {routine.pendingEdit?.status === 'superseded' && <p className="work-notice">{t('routine.superseded')}</p>}
+        {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
+        <div className="work-actions">
+          {/* H3: 편집 폼의 초기값은 아직 반영 전인 대기 patch를 덮어써서 보여준다 — 소유자가 두 번째 수정을 시작할 때 낡은(적용 전) 값에서 출발하지 않게 */}
+          <button className="btn sm" disabled={disabled} onClick={() => setEditingRoutine(pendingPatch ? { ...routine, ...pendingPatch } : routine)}>{t('automation.edit')}</button>
+          <button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { enabled: !effectiveEnabled } })), () => routines.refresh())}>{t(effectiveEnabled ? 'automation.pause' : 'automation.resume')}</button>
+          <button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting({ ...routine, kind: 'routine' })}>{t('automation.delete')}</button>
+        </div>
+      </>}
     </article>;
     })}
     <Pages source={source} disabled={busy} t={t} />

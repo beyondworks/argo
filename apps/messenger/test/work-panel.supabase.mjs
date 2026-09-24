@@ -10,8 +10,13 @@ const now = () => new Date().toISOString();
 state.tables.msgr_crew_routines.push(
   { id: 'routine-1', crew_id: 'crew-new', title: 'Fixture morning brief', prompt: 'Summarize overnight updates.', schedule: { type: 'daily', time: '09:00', times: ['09:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now() },
   { id: 'routine-2', crew_id: 'crew-existing', title: 'Fixture weekly digest', prompt: 'Compile this week’s notes.', schedule: { type: 'weekly', time: '18:00', times: ['18:00'], dows: [1, 3, 5], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now() },
+  { id: 'routine-3', crew_id: 'crew-new', title: 'Fixture stale cleanup', prompt: 'Archive stale threads.', schedule: { type: 'daily', time: '22:00', times: ['22:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now() },
 );
-state.tables.msgr_crew_routine_edits.push({ id: 'edit-1', routine_id: 'routine-2', status: 'pending', op: 'update', patch: { title: 'Fixture weekly digest (edited)' }, created_at: now() });
+state.tables.msgr_crew_routine_edits.push(
+  { id: 'edit-1', routine_id: 'routine-2', status: 'pending', op: 'update', patch: { title: 'Fixture weekly digest (edited)' }, created_at: now() },
+  // N6(재검수 3차) — 삭제 대기 시나리오: WORK_FILTER=routine 캡처에서 편집·토글이 숨고 "삭제 취소" 버튼만 남는지 확인용
+  { id: 'edit-2', routine_id: 'routine-3', status: 'pending', op: 'delete', patch: {}, created_at: now() },
+);
 let nextId = 500;
 async function response(name, args, action) {
   state.workCalls.push({ name, args: structuredClone(args) });
