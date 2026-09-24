@@ -631,9 +631,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const failed = err?.data?.failed ?? String(err.message);
       // viaSendNow — 이 중단이 정지 버튼이 아니라 지금 바로 보내기가 건 것인지(총괄 재검수 2026-09-24).
       // 렌더가 문구·재전송 버튼을 가르는 기준(입력창이 이미 비어 있어 "입력을 복원했어요"가 헷갈림).
-      // viaSendNow — 서버 확인값(err.data.viaSendNow, 재검수 D)을 우선한다: 서버가 저장해 새로고침·
-      // 폴링 병합 뒤에도 남는다. 로컬 표식(sendNowAbortRef)은 그 응답이 아직 안 왔을 때의 낙관적 대체.
-      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true, cancellationIncomplete: !!err?.data?.cancellationIncomplete, ...(err?.data?.viaSendNow || sendNowAbortRef.current ? { viaSendNow: true } : {}) } : {};
+      // 클라이언트 세션 메모리(sendNowAbortRef)로만 판정한다 — 서버 저장은 되돌렸다(4차 재검수
+      // MEDIUM ×2: 표시가 소비 안 되고 남았다가 며칠 뒤 무관한 정지-중단 턴에 잘못 붙어 영구 저장,
+      // 순서 경합). 새로고침·폴링 병합 뒤에는 일반 중단 문구로 돌아가는 것을 알려진 한계로 둔다.
+      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true, cancellationIncomplete: !!err?.data?.cancellationIncomplete, ...(sendNowAbortRef.current ? { viaSendNow: true } : {}) } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
       // 실패 코드·출처(route.js가 code/origin으로 응답) — 서버 보존분(failedCode)과 같은 필드명으로 로컬 사본에도(렌더 일치)
       const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
@@ -691,13 +692,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
 
   // 사장의 정지 버튼 — 진행 중 턴(내 턴·루틴·메신저발 모두)을 멈춘다
   const [aborting, setAborting] = useState(false);
-  // reason — sendImmediate가 'sendNow'를 넘긴다. 원래 턴의 POST /chat(별개 요청)이 서버에서 이
-  // 표시를 읽어 viaSendNow로 저장한다(재검수 D) — 정지 버튼은 넘기지 않아 기존 문구·동작 그대로.
-  async function abortTurn(reason) {
+  async function abortTurn() {
     if (aborting) return;
     setQueueHeld(true); // Hold immediately, even when the provider finishes successfully during cancellation.
     setAborting(true);
-    try { await api(`/api/companies/${ws}/chat/abort`, { slug, source: busy ? 'chat' : liveStage?.source, ...(reason ? { reason } : {}) }); } catch (e) { setError(String(e.message)); }
+    try { await api(`/api/companies/${ws}/chat/abort`, { slug, source: busy ? 'chat' : liveStage?.source }); } catch (e) { setError(String(e.message)); }
     finally { setAborting(false); }
   }
 
@@ -736,7 +735,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         setThread((cur) => [...(cur ?? []), { who: 'crew', text: liveStage.partial, aborted: true, ts: Date.now(), noteId, afterMid: lastUser?.mid, afterText: lastUser?.text }]);
       }
       sendNowAbortRef.current = true; // 원래 턴의 catch가 이 값을 보고 문구·재전송 버튼을 가른다(서버 확인 전 낙관 표시)
-      await abortTurn('sendNow'); // 서버가 이 사유를 원래 턴의 실패 응답에 viaSendNow로 실어 보낸다(재검수 D)
+      await abortTurn(); // viaSendNow 표시는 sendNowAbortRef(클라 세션 메모리)로만 — 서버 저장은 안 한다
       // abortTurn은 서버에 중단을 요청할 뿐 — 지금 도는 sendMessage()의 fetch가 실제로 실패로 끝나
       // busy가 false로 내려가기까지는 별도 왕복이 더 필요하다. 고정 대기 대신 조건 충족까지 폴링(상한 8초).
       const startedAt = Date.now();

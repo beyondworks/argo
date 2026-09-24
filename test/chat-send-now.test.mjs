@@ -258,16 +258,17 @@ test('HIGH(실행, 변이 대조): busy(state)로 되돌리면 실사고가 재�
 
 // ── 총괄 재검수(2026-09-24) — 지금 바로 보내기로 중단된 첫 메시지는 정지 버튼과 다른 문구를 쓰고
 // 재전송 버튼을 숨긴다(입력창이 이미 비어 있어 "입력을 복원했어요"가 헷갈린다는 지적).
-test('viaSendNow: sendMessage catch가 서버 확인값(err.data.viaSendNow)을 우선하고 sendNowAbortRef를 낙관적 대체로 쓴다(재검수 D)', () => {
+test('viaSendNow: sendMessage catch는 sendNowAbortRef(클라 세션 메모리)만으로 판정한다(서버 저장은 되돌림 — 4차 재검수 MEDIUM ×2)', () => {
   const fn = sliceFn('async function sendMessage(', 'async function send(e,');
-  assert.match(fn, /\.\.\.\(err\?\.data\?\.viaSendNow \|\| sendNowAbortRef\.current \? \{ viaSendNow: true \} : \{\}\)/,
-    '서버가 저장한 값이 우선 — 새로고침·폴링 병합 뒤에도 남아야 한다(로컬 ref만 쓰면 그 순간만 표시된다)');
+  assert.match(fn, /\.\.\.\(sendNowAbortRef\.current \? \{ viaSendNow: true \} : \{\}\)/,
+    '서버 확인값(err.data.viaSendNow)을 더는 읽지 않는다 — 되돌린 서버 저장 코드가 남아 있으면 규정 위반');
+  assert.doesNotMatch(fn, /err\?\.data\?\.viaSendNow/, '서버 응답의 viaSendNow 필드를 참조하면 안 된다(되돌림 범위)');
 });
 
 test('viaSendNow: sendImmediate가 abortTurn 호출 전/후로 표식을 세우고 내린다', () => {
   const body = sendImmediateBody();
   const setIdx = body.search(/sendNowAbortRef\.current = true;/);
-  const abortIdx = body.search(/await abortTurn\('sendNow'\);/);
+  const abortIdx = body.search(/await abortTurn\(\);/);
   const clearIdx = body.search(/sendNowAbortRef\.current = false;/);
   assert.ok(setIdx >= 0 && abortIdx >= 0 && clearIdx >= 0, '표식 설정·중단 호출·표식 해제가 모두 있어야 한다');
   assert.ok(setIdx < abortIdx, '표식은 중단을 요청하기 전에 세운다 — 늦으면 원래 턴의 catch가 못 본다');
@@ -473,36 +474,49 @@ test('viaSendNow: 렌더가 문구·재전송 버튼을 가른다(i18n ko/en 등
   assert.match(line, /\[.+,.+\]/, 'ko·en 두 언어 모두 있어야 한다(다국어 상시 규칙)');
 });
 
-// ── D — viaSendNow 서버 저장(재검수 D, 2026-09-24). src/chat.mjs(대화 코어)는 안 건드리고,
-// /chat/abort(별개 요청)가 남긴 사유를 원래 턴의 POST /chat 실패 처리에서 한 번만 소비하는
-// out-of-band 신호(src/turn-abort.mjs의 작은 맵)로 잇는다.
-test('D: turn-abort.mjs가 abort 사유를 저장·소비한다(chat.mjs 미변경)', () => {
-  const src = readFileSync(join(ROOT, 'src/turn-abort.mjs'), 'utf8');
-  assert.match(src, /export function markAbortReason\(/);
-  assert.match(src, /export function takeAbortReason\(/);
-  assert.doesNotMatch(readFileSync(join(ROOT, 'src/turn-abort.mjs'), 'utf8'), /from '\.\/chat\.mjs'/, 'chat.mjs를 참조하지 않는다(대화 코어 미변경)');
+// ── D 되돌림(4차 재검수, 2026-09-24) — viaSendNow 서버 저장이 MEDIUM 결함 두 건(표시 미소비 잔존 →
+// 무관한 정지-중단 턴에 오귀속 영구 저장, 순서 경합)을 만들어 서버 쪽을 전부 되돌렸다. viaSendNow는
+// 클라 세션 메모리(sendNowAbortRef)로만 유지 — 새로고침 뒤 일반 중단 문구로 돌아가는 것은 알려진 한계.
+test('D 되돌림: turn-abort.mjs·abort route·chat route·thread.mjs 어디에도 서버 저장 코드가 남지 않는다', () => {
+  assert.doesNotMatch(readFileSync(join(ROOT, 'src/turn-abort.mjs'), 'utf8'), /markAbortReason|takeAbortReason|__argoAbortReasons/);
+  const abortRoute = readFileSync(join(ROOT, 'app/api/companies/[ws]/chat/abort/route.js'), 'utf8');
+  assert.doesNotMatch(abortRoute, /markAbortReason|reason/);
+  const chatRoute = readFileSync(join(ROOT, 'app/api/companies/[ws]/chat/route.js'), 'utf8');
+  assert.doesNotMatch(chatRoute, /takeAbortReason|viaSendNow/);
+  assert.doesNotMatch(readFileSync(join(ROOT, 'src/thread.mjs'), 'utf8'), /viaSendNow/);
 });
 
-test('D: /chat/abort 라우트가 reason=sendNow일 때만(그리고 실제로 중단됐을 때만) 표시를 남긴다', () => {
-  const src = readFileSync(join(ROOT, 'app/api/companies/[ws]/chat/abort/route.js'), 'utf8');
-  assert.match(src, /import \{ interruptTurn, markAbortReason \}/);
-  assert.match(src, /if \(interrupted && reason === 'sendNow'\) markAbortReason\(ws, slug, 'sendNow'\);/,
-    '중단이 실제로 안 먹혔으면(interrupted:false) 표시를 남기지 않는다 — 무관한 다음 실패가 잘못 태깅되면 안 된다');
+// ── 지금 바로 보내기 버튼은 "내가 이 화면에서 보낸 채팅 턴"이 도는 동안만 보인다(4차 재검수 지적 —
+// working=busy||liveStage로 판정하면 루틴·메신저발 턴 중에도 켜져, 누르면 그 턴을 중단시킨다).
+// 조건식을 소스에서 그대로 뽑아 실제로 실행해 busy/liveStage 조합별 결과를 검증한다(문자열 매치가 아니다).
+function sendNowGateExpr() {
+  const marker = "t('chat.sendNow')";
+  const btnLabelIdx = page.indexOf(marker);
+  assert.ok(btnLabelIdx >= 0, "sendNow 버튼 라벨(t('chat.sendNow'))을 못 찾음");
+  // 라벨보다 앞쪽, 버튼을 감싸는 조건 렌더({EXPR && (…)}) 블록의 시작을 찾는다.
+  const gateOpen = page.lastIndexOf('{', page.lastIndexOf('<button', btnLabelIdx));
+  const gateAnd = page.indexOf('&&', gateOpen);
+  assert.ok(gateOpen >= 0 && gateAnd > gateOpen, 'sendNow 버튼의 조건 렌더 블록을 못 찾음');
+  return page.slice(gateOpen + 1, gateAnd).trim();
+}
+
+function sendNowVisible(busy, liveStage) {
+  const expr = sendNowGateExpr();
+  const fn = new Function('busy', 'liveStage', `return !!(${expr});`);
+  return fn(busy, liveStage);
+}
+
+test('실행: 지금 바로 보내기는 busy(내 채팅 턴)일 때만 보이고, 루틴·메신저발 턴(liveStage만 있음)일 때는 안 보인다', () => {
+  assert.equal(sendNowVisible(false, { source: 'routine' }), false, '루틴 턴만 도는 중이면 숨겨야 한다');
+  assert.equal(sendNowVisible(false, { source: 'messenger' }), false, '메신저발 턴만 도는 중이면 숨겨야 한다');
+  assert.equal(sendNowVisible(false, null), false, '아무 턴도 없으면 당연히 숨긴다');
+  assert.equal(sendNowVisible(true, null), true, '내가 보낸 채팅 턴이 돌면 보인다');
+  assert.equal(sendNowVisible(true, { source: 'routine' }), true, '내 턴이 도는 동안은 liveStage가 곁들여져도 계속 보인다');
 });
 
-test('D: POST /chat 실패 처리가 표시를 소비해 viaSendNow를 저장·응답 둘 다에 싣는다', () => {
-  const src = readFileSync(join(ROOT, 'app/api/companies/[ws]/chat/route.js'), 'utf8');
-  assert.match(src, /import \{ interruptTurn, takeAbortReason \}/);
-  assert.match(src, /const viaSendNow = aborted && takeAbortReason\(ws, slug\) === 'sendNow';/);
-  assert.match(src, /appendTurn\(ws, slug, \{ turnId, userMsg: message\.trim\(\), failed, failedCode, failedOrigin, aborted, cancellationIncomplete, viaSendNow, attachments \}\)/,
-    '저장에도 실려야 새로고침·폴링 병합 뒤에도 남는다');
-  assert.match(src, /Response\.json\(\{ error: failed, code: failedCode, origin: failedOrigin, aborted, cancellationIncomplete, viaSendNow, saved \}/,
-    '응답에도 실려야 지금 이 요청의 클라이언트가 즉시 반영할 수 있다');
-});
-
-test('D: thread.mjs appendTurn이 viaSendNow를 받아 두 저장 경로(진행 중 줄 이어쓰기·새 줄) 모두에 남긴다', () => {
-  const src = readFileSync(join(ROOT, 'src/thread.mjs'), 'utf8');
-  assert.match(src, /export async function appendTurn\(wsId, slug, \{[^}]*viaSendNow[^}]*\}\)/);
-  assert.match(src, /if \(viaSendNow\) m\.viaSendNow = true;/, '진행 중이던 줄(beginTurn이 이미 써 둔 줄)을 이어쓸 때');
-  assert.match(src, /\.\.\.\(viaSendNow \? \{ viaSendNow: true \} : \{\}\) \},\n\s*\);/, '선저장 없이 바로 새 줄을 밀어 넣을 때(레거시 갈래)도');
+test('실행(변이 대조): 게이트를 working(busy||liveStage)으로 되돌리면 루틴 턴 중에도 버튼이 보인다', () => {
+  const original = sendNowGateExpr();
+  assert.equal(original, 'busy', '게이트 표현식이 busy 단독이 아니다 — 재검수 반영 상태와 다름');
+  const mutatedFn = new Function('busy', 'liveStage', 'return !!(busy || !!liveStage);'); // working 되돌림 변이
+  assert.equal(mutatedFn(false, { source: 'routine' }), true, '변이 재현 — working으로 되돌리면 루틴 턴 중에도 버튼이 뜬다(버그)');
 });

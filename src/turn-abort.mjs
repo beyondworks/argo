@@ -8,24 +8,6 @@
 const active = (globalThis.__argoTurnAbort ??= new Map());
 export const turnAbortedError = (cause) => Object.assign(new Error('중단됨'), { aborted: true, ...(cause?.cancellationIncomplete ? { cancellationIncomplete: true, cause } : {}) });
 
-// 중단 사유 — "지금 바로 보내기"가 건 중단인지, 정지 버튼이 건 중단인지(재검수 D, 2026-09-24).
-// /chat/abort 요청(사장의 클릭)과 그 중단이 실제로 도달하는 원래 턴의 POST /chat 응답(완전히
-// 별개의 두 HTTP 요청)을 이 작은 맵으로만 이어 붙인다 — src/chat.mjs의 중첩 catch·재시도 프레임
-// 안까지 사유를 들고 들어가려면 그 파일을 건드려야 해서(대화 코어, 큰 변경) 피한다. 대신 route.js의
-// 실패 처리(이미 aborted/cancellationIncomplete를 같은 방식으로 읽는 자리)가 여기서 한 번만 소비한다.
-// TTL 없이 마지막 값만 들고 있다 — 소비(take) 즉시 지워 다음(무관한) 실패에 새지 않는다.
-const abortReasons = (globalThis.__argoAbortReasons ??= new Map());
-export function markAbortReason(wsId, slug, reason) {
-  if (!reason) return;
-  abortReasons.set(`${wsId}:${slug}`, reason);
-}
-export function takeAbortReason(wsId, slug) {
-  const key = `${wsId}:${slug}`;
-  const reason = abortReasons.get(key) ?? null;
-  abortReasons.delete(key);
-  return reason;
-}
-
 export function registerTurn(wsId, slug, interrupt, { group = Symbol('turn'), source = 'chat' } = {}) {
   const key = `${wsId}:${slug}`;
   const entries = active.get(key) ?? new Set();

@@ -1,5 +1,5 @@
 import { isStopCommand } from '../../../../../src/stop-command.mjs';
-import { interruptTurn, takeAbortReason } from '../../../../../src/turn-abort.mjs';
+import { interruptTurn } from '../../../../../src/turn-abort.mjs';
 import { relative } from 'node:path';
 import { chat } from '../../../../../src/chat.mjs';
 import { paths, loadCompany } from '../../../../../src/workspace.mjs';
@@ -66,19 +66,14 @@ export async function POST(req, { params }) {
       const cancellationIncomplete = !!e?.cancellationIncomplete;
       const failedCode = e?.failCode ?? null; // 실패 코드 표(src/runners/error-class.mjs) — UI 행동 안내·통계
       const failedOrigin = e?.failOrigin ?? null; // vendor/argo/probe
-      // 이 중단이 "지금 바로 보내기"가 건 것인지(재검수 D, 2026-09-24) — /chat/abort(별개 요청)가
-      // markAbortReason으로 남겨 둔 표시를 여기서 한 번만 소비한다. src/chat.mjs의 중첩 catch·재시도
-      // 프레임을 가로질러 사유를 나르려면 그 파일을 건드려야 해서(대화 코어, 큰 변경) 피했다 —
-      // 대신 이 작은 out-of-band 신호로 저장·응답 모두에 싣는다.
-      const viaSendNow = aborted && takeAbortReason(ws, slug) === 'sendNow';
       // 저장 성공 여부(saved)를 응답에 싣는다 — 클라 낙관 사본은 saved=false일 때만 폴링 병합에서
       // 캐리오버한다. 안 실으면 서버 보존분과 사본이 라운드마다 복제 누적된다(분리 검수 HIGH 시뮬레이션).
       // 기록 실패는 무증상으로 삼키지 않는다(scheduler·routines와 같은 규칙 — 검수 LOW).
-      const saved = await appendTurn(ws, slug, { turnId, userMsg: message.trim(), failed, failedCode, failedOrigin, aborted, cancellationIncomplete, viaSendNow, attachments })
+      const saved = await appendTurn(ws, slug, { turnId, userMsg: message.trim(), failed, failedCode, failedOrigin, aborted, cancellationIncomplete, attachments })
         .then(() => true)
         .catch((err) => { console.error(`[argo] 실패 턴 기록 실패(${ws}/${slug}):`, err?.message ?? err); return false; });
       if (saved) nudgeSync();
-      return Response.json({ error: failed, code: failedCode, origin: failedOrigin, aborted, cancellationIncomplete, viaSendNow, saved }, { status: 500 });
+      return Response.json({ error: failed, code: failedCode, origin: failedOrigin, aborted, cancellationIncomplete, saved }, { status: 500 });
     }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
