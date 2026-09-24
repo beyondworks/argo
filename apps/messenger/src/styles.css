@@ -904,14 +904,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 @keyframes msgr-face-surprise-hop { 0% { transform: translateY(0); } 20% { transform: translateY(-4px); } 55% { transform: translateY(2px); } 100% { transform: translateY(0); } }
 /* 대기(idle, 유건 확정 2026-09-24) — 깜빡임·두리번·고개 갸웃·가끔 하품을 섞은 keyframes 세 벌. 크루마다 다른 --face-dur(4~12s)·--face-delay(음수)로 박자·시작 위치가 갈린다(faceMotion, JS 타이머 없음). */
 .msgr-face.s-idle.idle-a .blink { animation: msgr-face-eyes-a var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-.msgr-face.s-idle.idle-a .rig { animation: msgr-face-tilt-a var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
 @keyframes msgr-face-eyes-a {
   0%, 4%, 43%, 96%, 100% { transform: scaleY(1) translateX(0); }
   2% { transform: scaleY(.12); } /* 깜빡임 */
   46% { transform: scaleY(.12); } /* 가끔 두 번 */
   62% { transform: translateX(2.5px); } 70% { transform: translateX(-2.5px); } 78% { transform: translateX(0); } /* 두리번 */
 }
-@keyframes msgr-face-tilt-a { 0%, 100% { transform: rotate(0); } }
 .msgr-face.s-idle.idle-b .blink { animation: msgr-face-eyes-b var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
 .msgr-face.s-idle.idle-b .rig { animation: msgr-face-tilt-b var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
 @keyframes msgr-face-eyes-b {

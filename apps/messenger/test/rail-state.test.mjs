@@ -46,7 +46,7 @@ test('Shell loadOrg ignores late A data, available crews, and errors after switc
   } };
   const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((key) => [`set${key}`, (value) => { state[key] = value; }]));
   const joinedRef = { current: new Set(['A-channel', 'B-channel']) };
-  const deps = { joinedRef, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', readLastCh: () => null, ...setters, setChId: (f) => { state.chId = f(state.chId); } };
+  const deps = { joinedRef, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', readLastCh: () => null, faceColMissing: false, ...setters, setChId: (f) => { state.chId = f(state.chId); } };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   const settle = (id) => { for (const p of pending.filter((p) => p.id === id)) p.done(p.table === 'msgr_channels' ? [{ id: `${id}-channel`, kind: 'public' }] : p.table === 'msgr_crews' ? [{ id: `${id}-crew`, owner_user_id: 'me', display_name: id, status: 'available' }] : p.table === 'msgr_org_members' ? [{ user_id: `${id}-person` }] : { data: null }); };
   const a = loadOrg('A'); activeOrg.current = 'B'; const b = loadOrg('B');

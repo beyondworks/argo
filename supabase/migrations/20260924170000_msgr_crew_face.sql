@@ -19,4 +19,15 @@ alter table public.msgr_crews add constraint msgr_crews_face_shape check (
   )
 );
 
+-- admin 정책(20260903120000)의 with check는 보호 열 목록을 명시해 "나머지는 바꿔도 된다"로 동작한다 — 새 열 face는
+-- 그 목록에 없어 관리자가 남의 크루 얼굴을 바꿀 수 있었다(검수 #704 M-1). "소유자만"을 지키려 face를 더한다.
+-- = 대신 is not distinct from: face는 대개 null이라 = 비교면 NULL이 되어 관리자의 detach(status)까지 막힌다.
+-- 나머지 식은 0903 원문 그대로(라이브 pg_policy와 대조함).
+drop policy if exists msgr_crews_update_admin on public.msgr_crews;
+create policy msgr_crews_update_admin on public.msgr_crews for update to authenticated
+  using (public.msgr_is_admin(org_id))
+  with check (public.msgr_is_admin(org_id) and (owner_user_id, ws_id, slug, allow, allow_users, cursor_msg_id, hosting) =
+    (select c.owner_user_id, c.ws_id, c.slug, c.allow, c.allow_users, c.cursor_msg_id, c.hosting from public.msgr_crews c where c.id = msgr_crews.id)
+    and face is not distinct from (select c.face from public.msgr_crews c where c.id = msgr_crews.id));
+
 comment on column public.msgr_crews.face is '소유자가 고른 얼굴 — {shape:0-5, color:0-9, eyes:0-2}(정수 인덱스). null이면 crew-face.mjs가 id로 무작위 고정값을 쓴다.';

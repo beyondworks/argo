@@ -1,5 +1,5 @@
 // 에이전트 얼굴 모양·색(20260924170000_msgr_crew_face.sql) — 소유자만 바꾼다(기존 msgr_crews_update_owner 재사용),
-// 범위 밖 값은 거절, 같은 값 저장은 행을 바꾸지 않는다(xmin 불변). 하네스는 msgr-server-link-pg.test.mjs와 같다
+// 관리자도 못 바꾼다(admin 정책 with check에 face), 범위 밖 값은 거절. 하네스는 msgr-server-link-pg.test.mjs와 같다
 // (auth.uid() 스텁 + set role). 실행: `npm run test:pg` 또는 `bash scripts/billing-pg-drill.sh test/msgr-crew-face-pg.test.mjs`
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import { psqlSpawn } from './helpers/pg.mjs';
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — npm run test:pg로 실행';
 const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url));
-const U = { owner: '11111111-1111-4111-8111-111111111111', other: '22222222-2222-4222-8222-222222222222' };
+const U = { owner: '11111111-1111-4111-8111-111111111111', other: '22222222-2222-4222-8222-222222222222', admin: '33333333-3333-4333-8333-333333333333' };
 
 function psqlRaw(args) { return psqlSpawn(DB, args); }
 function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr || r.stdout}`); return r.stdout; }
@@ -51,7 +51,7 @@ before(() => {
     '20260903120000_msgr.sql', '20260916210000_msgr_crews_lock_when.sql', '20260924170000_msgr_crew_face.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'face-org', '${U.owner}') returning id`));
-  sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${U.other}', 'member')`);
+  sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${U.other}', 'member'), ('${ORG}', '${U.admin}', 'admin')`);
   CREW = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.owner}', 'lean-ax-face', 'mine', '내 크루') returning id`));
 });
 
@@ -74,10 +74,12 @@ test('범위 밖 값은 거절 — shape·color·eyes 각각, 잉여 키도', { 
   assert.equal(sql(`select face is null from public.msgr_crews where id = '${CREW}'`), 't');
 });
 
-test('같은 값 저장은 행을 바꾸지 않는다(불필요한 쓰기 0 — 유건 지시 2026-09-23 DB 위생)', { skip }, () => {
-  asUser(U.owner, `update public.msgr_crews set face = '{"shape":2,"color":4,"eyes":1}'::jsonb where id = '${CREW}'`);
-  const xmin0 = sql(`select xmin::text from public.msgr_crews where id = '${CREW}'`);
-  asUser(U.owner, `update public.msgr_crews set face = '{"shape":2,"color":4,"eyes":1}'::jsonb where id = '${CREW}' and face is distinct from '{"shape":2,"color":4,"eyes":1}'::jsonb`);
-  const xmin1 = sql(`select xmin::text from public.msgr_crews where id = '${CREW}'`);
-  assert.equal(xmin1, xmin0, '앱이 is distinct from 가드로 쓰면 같은 값은 행을 건드리지 않는다');
+test('관리자도 남의 크루 얼굴은 못 바꾼다 — "소유자만"(검수 #704 M-1). 관리자의 detach(status)는 face가 null이어도 그대로 된다', { skip }, () => {
+  asUser(U.owner, `update public.msgr_crews set face = null where id = '${CREW}'`);
+  denied(U.admin, `update public.msgr_crews set face = '{"shape":5,"color":5,"eyes":2}'::jsonb where id = '${CREW}'`);
+  asUser(U.owner, `update public.msgr_crews set face = '{"shape":1,"color":1,"eyes":1}'::jsonb where id = '${CREW}'`);
+  denied(U.admin, `update public.msgr_crews set face = null where id = '${CREW}'`); // 소유자가 고른 얼굴을 지우는 것도 막는다
+  asUser(U.owner, `update public.msgr_crews set face = null where id = '${CREW}'`);
+  assert.equal(last(asUser(U.admin, `update public.msgr_crews set status = 'detached' where id = '${CREW}' returning status`)), 'detached', 'face null 크루의 detach'); // = 비교였다면 null = null이 NULL이 되어 여기서 막힌다
+  asUser(U.owner, `update public.msgr_crews set status = 'active' where id = '${CREW}'`);
 });

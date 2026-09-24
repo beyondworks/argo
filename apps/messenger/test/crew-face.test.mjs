@@ -89,3 +89,11 @@ test('저장값은 서버 check가 허용하는 세 키뿐 — 얼굴 자리(spo
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(src, /onSave\(faceToStore\(draft\)\)/, '고르기 저장은 faceToStore를 거친다');
 });
+
+test('서버 check 범위 = 클라이언트 배열 길이 — 도형·색·눈을 늘리거나 줄이면 마이그레이션도 같이 바꿔야 한다(검수 #704)', () => {
+  const sql = readFileSync(new URL('../../../supabase/migrations/20260924170000_msgr_crew_face.sql', import.meta.url), 'utf8');
+  const upper = (k) => Number(sql.match(new RegExp(`'${k}'\\)::int between 0 and (\\d+)`))?.[1]);
+  assert.equal(upper('shape'), FACE_SHAPES.length - 1);
+  assert.equal(upper('color'), FACE_COLORS.length - 1);
+  assert.equal(upper('eyes'), FACE_EYES.length - 1);
+});
