@@ -22,9 +22,11 @@ async function patchRoutine(wsId, id, patch) {
     const routines = await loadRoutines(wsId);
     const r = routines.find((x) => x.id === id);
     if (!r) return null; // 실행 중 삭제됐으면 조용히 포기(부활 금지)
-    // 함수형 패치 — 현재 상태를 보고 결정해야 하는 변경(루프 수동 정지 사유 등)은 락 안에서 읽고 쓴다
-    // updatedAt은 모든 patchRoutine 호출의 단일 관문에서 찍는다(메신저 미러의 "나중 수정이 이긴다" 판정 기준).
-    Object.assign(r, typeof patch === 'function' ? patch(r) : patch, { id: r.id, updatedAt: new Date().toISOString() });
+    // 함수형 패치 — 현재 상태를 보고 결정해야 하는 변경(루프 수동 정지 사유 등)은 락 안에서 읽고 쓴다.
+    // editedAt은 여기서 찍지 않는다 — patchRoutine은 실행 기록(runRoutine의 lastRun 등)도 지나가는 공용 관문이라,
+    // 여기서 찍으면 루틴이 한 번 돌기만 해도 메신저의 대기 편집이 "로컬이 더 나중"으로 오판돼 버려진다(분리 검수 H1).
+    // editedAt은 사람이 실제로 내용을 바꾼 경로(addRoutine·updateRoutine)에서만 호출부가 patch에 실어 보낸다.
+    Object.assign(r, typeof patch === 'function' ? patch(r) : patch, { id: r.id });
     await saveRoutines(wsId, routines);
     return { ...r };
   });
@@ -262,7 +264,9 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
     schedule: sched,
     enabled,
     created: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    // editedAt = 사람이 내용을 고친 시각만(생성도 사람이 한 일이므로 찍는다) — 실행(runRoutine)은 안 찍는다.
+    // 메신저 미러의 "나중 수정이 이긴다" 판정과 미러 스냅샷 해시가 이 값을 쓴다(분리 검수 H1).
+    editedAt: new Date().toISOString(),
     lastRun: null, lastOk: null, lastResult: '',
     ...(destinations !== undefined ? { notifications: destinations } : {}),
     // 루프 — interval에만. 다른 타입에 loop가 오면 조용히 버린다(의미 없는 필드를 저장하지 않는다)
@@ -316,7 +320,7 @@ export async function updateRoutine(wsId, id, patch) {
     if (changed) await validateRoutineNotifications(wsId, clean.agentSlug ?? before.agentSlug, next);
   }
   const r = await patchRoutine(wsId, id, (cur) => {
-    const out = { ...clean };
+    const out = { ...clean, editedAt: new Date().toISOString() }; // 사람 편집 경로(H1) — patchRoutine 자체는 더 이상 이 값을 안 찍는다
     const nextSched = out.schedule ?? cur.schedule;
     if ('verify' in out) out.verify = nextSched?.type === 'interval' ? null : normalizeVerify(out.verify);
     else if (nextSched?.type === 'interval' && cur.verify) out.verify = null; // interval로 바꾸면 기존 조건도 비운다

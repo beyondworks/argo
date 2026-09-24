@@ -14,7 +14,7 @@ create table public.msgr_crew_routines (
   schedule jsonb not null,
   enabled boolean not null default true,
   channel_id uuid references public.msgr_channels(id) on delete set null,
-  updated_at timestamptz,   -- Argo 쪽 routine.updatedAt(로컬 시계) — "나중 수정이 이긴다" 판정 기준. 구버전 루틴은 null 가능.
+  updated_at timestamptz,   -- Argo 쪽 routine.editedAt(사람이 고친 시각만 — 실행 필드는 안 찍는다). "나중 수정이 이긴다" 판정 기준. 구버전 루틴은 null 가능.
   synced_at timestamptz not null default now(),
   unique (crew_id, source, ext_id)
 );
@@ -25,8 +25,11 @@ revoke all on public.msgr_crew_routines from public,anon,authenticated;
 grant select on public.msgr_crew_routines to authenticated;
 create policy msgr_crew_routines_read on public.msgr_crew_routines for select to authenticated using (owner_user_id = auth.uid());
 
--- 메신저에서 건 편집 — PC가 켜지면 drain에서 가져가 적용한다. 대기 중(pending) 여러 건이 쌓이면 최신 것만 유효하고
--- 이전 것은 superseded로 접는다(같은 루틴에 두 번 편집해도 PC는 한 번만 반영). 적용 결과(applied/failed)는 PC가 되써준다.
+-- 메신저에서 건 편집 — PC가 켜지면 drain에서 가져가 적용한다.
+-- status: pending(대기) / applied(PC가 반영) / replaced(같은 루틴에 더 새 편집이 생겨 자동으로 접힘 — 메신저 쪽 판정,
+--   H3: 폴드 시 이전 patch가 새 patch에 병합된다) / superseded(PC가 "로컬이 이 편집보다 나중에 바뀌었다"고 판단해 버림 —
+--   PC 쪽 판정, H4: 크루가 여러 조직에 파견돼 같은 루틴에 중복 편집이 생기면 오래된 쪽도 이 상태로 닫는다) / failed(적용 시도 실패
+--   또는 적용할 로컬 루틴이 없음).
 create table public.msgr_crew_routine_edits (
   id uuid primary key default gen_random_uuid(),
   routine_id uuid not null references public.msgr_crew_routines(id) on delete cascade,
@@ -35,7 +38,7 @@ create table public.msgr_crew_routine_edits (
   patch jsonb not null default '{}'::jsonb,
   created_by uuid not null references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
-  status text not null default 'pending' check (status in ('pending','applied','superseded','failed')),
+  status text not null default 'pending' check (status in ('pending','applied','replaced','superseded','failed')),
   error text,
   applied_at timestamptz
 );
@@ -48,22 +51,32 @@ create policy msgr_crew_routine_edits_read on public.msgr_crew_routine_edits for
 
 -- PC → 서버: 이 크루의 Argo 루틴 전체 스냅샷을 올린다. 같은 값이면 쓰지 않는다(IS DISTINCT FROM) — 유휴 폴 때 행이 0으로 남는다.
 -- p_rows 원소: {ext_id, title, prompt, schedule, enabled, channel_id, updated_at}. 스냅샷에 없는 ext_id는 이 크루·source의 행에서 지운다(로컬 삭제 반영).
+-- M2(분리 검수): 모양이 이상한 행 하나가 크루 전체 미러를 막지 않는다 — 그 행만 건너뛰고(skipped 카운트) 나머지는 반영한다.
+-- 존재하지 않는 channel_id(FK 오염)는 예외 대신 null로 떨어뜨린다. title·prompt는 길이 제한에 맞게 자른다(거절하지 않는다).
 create function public.msgr_crew_routines_sync(p_org uuid, p_crew uuid, p_rows jsonb) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare row jsonb; kept text[] := '{}';
+declare row jsonb; kept text[] := '{}'; chan uuid; upd timestamptz; skipped int := 0;
 begin
   if auth.uid() is null then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
-  if not exists (select 1 from public.msgr_crews c where c.id = p_crew and c.org_id = p_org and c.owner_user_id = auth.uid()) then
+  -- M5: 오프보딩·회수(detached/available)된 크루는 더 미러할 수 없다 — 트리거(msgr_crew_routines_offboard)가
+  -- 상태 전이 즉시 기존 행을 지우므로, 여기서 막지 않으면 사라진 미러가 바로 되살아난다.
+  if not exists (select 1 from public.msgr_crews c join public.msgr_org_members m on m.org_id = c.org_id and m.user_id = c.owner_user_id and m.removed_at is null
+      where c.id = p_crew and c.org_id = p_org and c.owner_user_id = auth.uid() and c.status = 'active') then
     raise exception 'msgr_routine_forbidden' using errcode = '42501';
   end if;
   if jsonb_typeof(p_rows) is distinct from 'array' then raise exception 'msgr_routine_invalid_rows'; end if;
   for row in select value from jsonb_array_elements(p_rows) loop
-    if coalesce(row->>'ext_id','') = '' or coalesce(row->>'title','') = '' or coalesce(row->>'prompt','') = ''
-      or jsonb_typeof(row->'schedule') is distinct from 'object' then raise exception 'msgr_routine_invalid_rows'; end if;
+    if coalesce(row->>'ext_id','') = '' or coalesce(btrim(row->>'title'),'') = '' or coalesce(btrim(row->>'prompt'),'') = ''
+      or jsonb_typeof(row->'schedule') is distinct from 'object' then skipped := skipped + 1; continue; end if;
     kept := kept || (row->>'ext_id');
+    chan := null;
+    begin chan := nullif(row->>'channel_id','')::uuid; exception when others then chan := null; end;
+    if chan is not null and not exists (select 1 from public.msgr_channels c where c.id = chan and c.org_id = p_org) then chan := null; end if;
+    upd := null;
+    begin upd := nullif(row->>'updated_at','')::timestamptz; exception when others then upd := null; end;
     insert into public.msgr_crew_routines as t(org_id, crew_id, owner_user_id, source, ext_id, title, prompt, schedule, enabled, channel_id, updated_at, synced_at)
-      values (p_org, p_crew, auth.uid(), 'argo', row->>'ext_id', row->>'title', row->>'prompt', row->'schedule',
-        coalesce((row->>'enabled')::boolean, true), nullif(row->>'channel_id','')::uuid, nullif(row->>'updated_at','')::timestamptz, now())
+      values (p_org, p_crew, auth.uid(), 'argo', row->>'ext_id', left(btrim(row->>'title'),200), left(btrim(row->>'prompt'),20000), row->'schedule',
+        coalesce((row->>'enabled')::boolean, true), chan, upd, now())
       on conflict (crew_id, source, ext_id) do update set
         title = excluded.title, prompt = excluded.prompt, schedule = excluded.schedule, enabled = excluded.enabled,
         channel_id = excluded.channel_id, updated_at = excluded.updated_at, synced_at = now()
@@ -73,40 +86,58 @@ begin
   end loop;
   delete from public.msgr_crew_routines where crew_id = p_crew and source = 'argo'
     and not (ext_id = any(kept));
-  return jsonb_build_object('kept', array_length(kept,1));
+  return jsonb_build_object('kept', coalesce(array_length(kept,1),0), 'skipped', skipped);
 end $$;
 
--- 메신저 → 서버: 소유자가 자기 루틴에 편집을 건다. 같은 루틴의 이전 pending은 superseded로 접는다(최신 편집만 유효).
+-- 메신저 → 서버: 소유자가 자기 루틴에 편집을 건다.
+-- H3: 같은 루틴에 pending이 이미 있으면 그 patch를 새 patch에 먼저 병합(얕은 병합 — 새 값이 이긴다)하고 이전 것은
+-- replaced로 접는다(superseded와 구분 — 이건 "더 새 메신저 편집이 폴드했다"는 뜻이지 PC가 로컬을 더 최신으로 판단한 게 아니다).
+-- delete는 항상 우선 — pending이 delete였거나 이번이 delete면 최종 op는 delete, patch는 비운다.
+-- M1: update의 patch는 title/prompt/schedule/enabled만 허용 — agentSlug·notifications·loop·verify는 메신저에서 못 바꾼다.
 create function public.msgr_crew_routine_edit(p_routine uuid, p_op text, p_patch jsonb default '{}'::jsonb) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare r public.msgr_crew_routines; e public.msgr_crew_routine_edits;
+declare r public.msgr_crew_routines; e public.msgr_crew_routine_edits; prior public.msgr_crew_routine_edits; merged jsonb; final_op text; had_prior boolean;
 begin
   if auth.uid() is null or p_op not in ('update','delete') then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
   select * into r from public.msgr_crew_routines where id = p_routine and owner_user_id = auth.uid();
   if not found then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
-  if p_op = 'update' and jsonb_typeof(p_patch) is distinct from 'object' then raise exception 'msgr_routine_invalid_patch'; end if;
-  update public.msgr_crew_routine_edits set status = 'superseded' where routine_id = p_routine and status = 'pending';
+  if p_op = 'update' then
+    if jsonb_typeof(p_patch) is distinct from 'object' then raise exception 'msgr_routine_invalid_patch'; end if;
+    if (coalesce(p_patch,'{}'::jsonb) - array['title','prompt','schedule','enabled']) <> '{}'::jsonb then raise exception 'msgr_routine_invalid_patch'; end if;
+  end if;
+  select * into prior from public.msgr_crew_routine_edits where routine_id = p_routine and status = 'pending' order by created_at desc limit 1;
+  had_prior := found;
+  if had_prior then update public.msgr_crew_routine_edits set status = 'replaced' where id = prior.id; end if;
+  if p_op = 'delete' or (had_prior and prior.op = 'delete') then
+    final_op := 'delete'; merged := '{}'::jsonb;
+  else
+    merged := coalesce(case when had_prior then prior.patch else null end, '{}'::jsonb) || coalesce(p_patch, '{}'::jsonb);
+    final_op := 'update';
+  end if;
   insert into public.msgr_crew_routine_edits(routine_id, owner_user_id, op, patch, created_by)
-    values (p_routine, auth.uid(), p_op, coalesce(p_patch,'{}'::jsonb), auth.uid()) returning * into e;
+    values (p_routine, auth.uid(), final_op, merged, auth.uid()) returning * into e;
   return to_jsonb(e);
 end $$;
 
--- PC → 서버: 내 크루들의 대기 편집을 가져온다(조직 단위 — drain이 조직마다 부른다).
-create function public.msgr_crew_routine_edits_pending(p_org uuid) returns table(edit_id uuid, routine_id uuid, crew_id uuid, ext_id text, op text, patch jsonb, created_at timestamptz)
+-- PC → 서버: 이 조직에서 **내 크루 목록(p_crews)에 한정해** 대기 편집을 가져온다.
+-- H2: 크루로 거르지 않으면, PC가 다른 워크스페이스(다른 로컬 폴더)의 크루가 낀 org의 편집까지 끌어와 로컬에 없는
+-- routine으로 오판(noop)해 applied로 닫아버린다 — 실제로는 그 편집이 아직 처리된 적이 없는데도 사라진다.
+create function public.msgr_crew_routine_edits_pending(p_org uuid, p_crews uuid[]) returns table(edit_id uuid, routine_id uuid, crew_id uuid, ext_id text, op text, patch jsonb, created_at timestamptz)
 language sql stable security definer set search_path = public, pg_temp as $$
   select e.id, e.routine_id, r.crew_id, r.ext_id, e.op, e.patch, e.created_at
     from public.msgr_crew_routine_edits e join public.msgr_crew_routines r on r.id = e.routine_id
-    where e.status = 'pending' and r.org_id = p_org and r.owner_user_id = auth.uid()
+    where e.status = 'pending' and r.org_id = p_org and r.owner_user_id = auth.uid() and r.crew_id = any(coalesce(p_crews, '{}'::uuid[]))
     order by e.created_at asc
 $$;
 
--- PC → 서버: 적용 결과를 되써준다. applied/failed = 실제 적용 시도 결과. superseded = PC 쪽 루틴이 이 편집보다
--- 나중에(updatedAt) 바뀌어 있어 "나중 수정이 이긴다" 규칙으로 PC가 이 대기 편집을 버린 경우(메신저 쪽 편집 시점의
--- 자동 superseded와 같은 상태값을 PC 판정 경로에서도 쓴다).
+-- PC → 서버: 적용 결과를 되써준다. applied/failed = 실제 적용 시도 결과(적용할 로컬 루틴이 없는 경우도 failed).
+-- superseded = PC 쪽 루틴이 이 편집보다 나중에(editedAt) 바뀌어 있어 "나중 수정이 이긴다" 규칙으로 버린 경우, 또는
+-- 한 크루가 여러 조직에 파견돼 같은 루틴(ext_id)에 중복 편집이 쌓였을 때 더 오래된 쪽(H4). replaced는 메신저 쪽 폴드
+-- 전용(서버가 msgr_crew_routine_edit에서 직접 찍는다) — PC는 replaced를 쓸 일이 없지만 done 경로도 막지 않는다.
 create function public.msgr_crew_routine_edit_done(p_id uuid, p_status text, p_error text default null) returns boolean
 language plpgsql security definer set search_path = public, pg_temp as $$
 begin
-  if auth.uid() is null or p_status not in ('applied','failed','superseded') then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
+  if auth.uid() is null or p_status not in ('applied','failed','superseded','replaced') then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
   update public.msgr_crew_routine_edits set status = p_status, error = p_error, applied_at = now()
     where id = p_id and owner_user_id = auth.uid() and status = 'pending';
   if not found then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
@@ -114,17 +145,29 @@ begin
 end $$;
 
 revoke all on function public.msgr_crew_routines_sync(uuid,uuid,jsonb), public.msgr_crew_routine_edit(uuid,text,jsonb),
-  public.msgr_crew_routine_edits_pending(uuid), public.msgr_crew_routine_edit_done(uuid,text,text) from public,anon,authenticated;
+  public.msgr_crew_routine_edits_pending(uuid,uuid[]), public.msgr_crew_routine_edit_done(uuid,text,text) from public,anon,authenticated;
 grant execute on function public.msgr_crew_routines_sync(uuid,uuid,jsonb), public.msgr_crew_routine_edit(uuid,text,jsonb),
-  public.msgr_crew_routine_edits_pending(uuid), public.msgr_crew_routine_edit_done(uuid,text,text) to authenticated;
+  public.msgr_crew_routine_edits_pending(uuid,uuid[]), public.msgr_crew_routine_edit_done(uuid,text,text) to authenticated;
 
--- DB 위생: 처리된 편집(applied/superseded)은 30일 뒤 정리 — 감사가 필요한 건 applied_at까지 남아 있고 그 이후는 기억 데이터가 아니다.
+-- M5: 오프보딩(msgr_member_offboard가 크루를 detached로 돌림)·수동 detach·회수(available)로 상태가 active를 벗어나면
+-- 그 크루의 미러 행을 지운다(edits는 FK on delete cascade로 함께 사라진다). 되살아나도(active 복귀) 다음 sync가 다시 채운다.
+create function public.msgr_crew_routines_offboard() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  delete from public.msgr_crew_routines where crew_id = new.id;
+  return new;
+end $$;
+revoke all on function public.msgr_crew_routines_offboard() from public,anon,authenticated;
+create trigger msgr_crew_routines_offboard after update of status on public.msgr_crews
+  for each row when (old.status = 'active' and new.status is distinct from 'active') execute function public.msgr_crew_routines_offboard();
+
+-- DB 위생: 처리된 편집(applied/replaced/superseded/failed — L5: failed도 진단 가치가 소진되면 정리 대상)은 30일 뒤 정리.
 -- pg_cron이 없는 환경(로컬 PG 테스트)에서는 아무것도 하지 않는다. 같은 이름이면 cron.schedule이 갱신하므로 다시 적용해도 하나다.
 do $$
 begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
     perform cron.schedule('purge-msgr-crew-routine-edits', '23 3 * * *',
-      $c$delete from public.msgr_crew_routine_edits where status in ('applied','superseded') and coalesce(applied_at,created_at) < now() - interval '30 days'$c$);
+      $c$delete from public.msgr_crew_routine_edits where status in ('applied','replaced','superseded','failed') and coalesce(applied_at,created_at) < now() - interval '30 days'$c$);
   end if;
 end $$;
 

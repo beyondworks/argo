@@ -102,19 +102,37 @@ test('routines — sync 스냅샷에서 빠진 ext_id는 삭제된다', { skip }
   assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_crew_routines where crew_id='${CREW}'`)), '0');
 });
 
-test('edits — 소유자만 편집 걸 수 있고, 이전 pending은 superseded로 접힌다', { skip }, () => {
+test('edits — 소유자만 편집 걸 수 있고, 이전 pending은 replaced로 접힌다(H3: 폴드 — 메신저 쪽 판정)', { skip }, () => {
   asUser(U.owner, `select public.msgr_crew_routines_sync(${rowsSql})`);
   const rid = last(asUser(U.owner, `select id::text from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='r1'`));
   fails(asUserRaw(U.member, `select public.msgr_crew_routine_edit('${rid}','update','{"title":"침입"}'::jsonb)`), /42501|msgr_routine_forbidden/, '비소유자 편집 거절');
   const e1 = last(asUser(U.owner, `select id::text from (select (public.msgr_crew_routine_edit('${rid}','update','{"title":"1차"}'::jsonb))->>'id' as id) x`));
   const e2 = last(asUser(U.owner, `select id::text from (select (public.msgr_crew_routine_edit('${rid}','update','{"title":"2차"}'::jsonb))->>'id' as id) x`));
-  assert.equal(last(asUser(U.owner, `select status from public.msgr_crew_routine_edits where id='${e1}'`)), 'superseded');
+  assert.equal(last(asUser(U.owner, `select status from public.msgr_crew_routine_edits where id='${e1}'`)), 'replaced', 'superseded가 아니라 replaced — PC 판정이 아니라 메신저 쪽 자동 폴드다(M3)');
   assert.equal(last(asUser(U.owner, `select status from public.msgr_crew_routine_edits where id='${e2}'`)), 'pending');
-  const pending = last(asUser(U.owner, `select edit_id::text from public.msgr_crew_routine_edits_pending('${ORG}')`));
+  const pending = last(asUser(U.owner, `select edit_id::text from public.msgr_crew_routine_edits_pending('${ORG}', array['${CREW}']::uuid[])`));
   assert.equal(pending, e2, 'PC는 최신 편집만 가져온다');
   fails(asUserRaw(U.member, `select public.msgr_crew_routine_edit_done('${e2}','applied')`), /42501|msgr_routine_forbidden/, '비소유자 done 거절');
   asUser(U.owner, `select public.msgr_crew_routine_edit_done('${e2}','applied')`);
   assert.equal(last(asUser(U.owner, `select status from public.msgr_crew_routine_edits where id='${e2}'`)), 'applied');
+});
+
+test('edits(H3) — 폴드는 이전 patch를 새 patch에 병합한다(얕은 병합, 새 값이 이긴다) + delete가 항상 우선', { skip }, () => {
+  asUser(U.owner, `select public.msgr_crew_routines_sync(${rowsSql})`);
+  const rid = last(asUser(U.owner, `select id::text from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='r1'`));
+  asUser(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"title":"1차"}'::jsonb)`);
+  const e2 = last(asUser(U.owner, `select id::text from (select (public.msgr_crew_routine_edit('${rid}','update','{"enabled":false}'::jsonb))->>'id' as id) x`));
+  assert.equal(last(asUser(U.owner, `select patch::text from public.msgr_crew_routine_edits where id='${e2}'`)), '{"title": "1차", "enabled": false}', '1차 편집의 title이 2차 patch에 살아있어야 한다(H3 폴드 손실 방지)');
+  const e3 = last(asUser(U.owner, `select id::text from (select (public.msgr_crew_routine_edit('${rid}','delete','{}'::jsonb))->>'id' as id) x`));
+  assert.equal(last(asUser(U.owner, `select op||' '||patch::text from public.msgr_crew_routine_edits where id='${e3}'`)), 'delete {}', 'delete는 이전 patch를 이어받지 않고 우선한다');
+});
+
+test('edits(M1) — patch 허용 목록 밖 필드(agentSlug 등)는 서버가 거절한다', { skip }, () => {
+  asUser(U.owner, `select public.msgr_crew_routines_sync(${rowsSql})`);
+  const rid = last(asUser(U.owner, `select id::text from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='r1'`));
+  fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"agentSlug":"evil"}'::jsonb)`), /msgr_routine_invalid_patch/, 'agentSlug');
+  fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"notifications":{"channels":["telegram"]}}'::jsonb)`), /msgr_routine_invalid_patch/, 'notifications');
+  fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"loop":{"maxUsd":999}}'::jsonb)`), /msgr_routine_invalid_patch/, 'loop');
 });
 
 test('edits — 다른 조직원은 edits 표도 0행', { skip }, () => {
@@ -124,11 +142,63 @@ test('edits — 다른 조직원은 edits 표도 0행', { skip }, () => {
   assert.equal(last(asUser(U.member, `select count(*) from public.msgr_crew_routine_edits where routine_id='${rid}'`)), '0');
 });
 
-test('retention — 30일 지난 applied/superseded 편집은 정리 대상(직접 실행)', { skip }, () => {
+test('edits(H2) — edits_pending은 넘긴 crewIds에 한정된다(다른 크루의 편집은 안 나온다)', { skip }, () => {
+  const crew2 = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.owner}', 'other-ws', 'mine2', 'Mine2') returning id`));
+  asUser(U.owner, `select public.msgr_crew_routines_sync('${ORG}','${crew2}','[{"ext_id":"rx","title":"t","prompt":"p","schedule":{"type":"daily","time":"09:00"}}]'::jsonb)`);
+  const rid2 = last(asUser(U.owner, `select id::text from public.msgr_crew_routines where crew_id='${crew2}'`));
+  asUser(U.owner, `select public.msgr_crew_routine_edit('${rid2}','update','{"title":"n"}'::jsonb)`);
+  // CREW 자신은 앞선 테스트들이 만든 pending을 이미 가지고 있을 수 있다 — "0행"이 아니라 "crew2(rx)가 안 섞인다"를 본다.
+  const onlyCrewExtIds = asUser(U.owner, `select ext_id from public.msgr_crew_routine_edits_pending('${ORG}', array['${CREW}']::uuid[])`).split('\n').filter(Boolean);
+  assert.ok(!onlyCrewExtIds.includes('rx'), 'CREW만 넘겼으니 crew2(rx)의 대기 편집은 안 섞여야 한다(H2 — 다른 워크스페이스 오염 방지)');
+  const bothExtIds = asUser(U.owner, `select ext_id from public.msgr_crew_routine_edits_pending('${ORG}', array['${CREW}','${crew2}']::uuid[])`).split('\n').filter(Boolean);
+  assert.ok(bothExtIds.includes('rx'), 'crew2를 넘기면 rx가 보여야 한다');
+});
+
+test('sync(M2) — 없는 채널(FK 오염)은 예외 대신 null로 떨어지고, 나머지 행은 그대로 반영된다', { skip }, () => {
+  const poison = `p_org=>'${ORG}',p_crew=>'${CREW}',p_rows=>'[{"ext_id":"rp1","title":"t1","prompt":"p","schedule":{"type":"daily"},"channel_id":"99999999-9999-4999-8999-999999999999"},{"ext_id":"rp2","title":"t2","prompt":"p","schedule":{"type":"daily"}}]'::jsonb`;
+  const r = asUserRaw(U.owner, `select public.msgr_crew_routines_sync(${poison})`);
+  assert.equal(r.status, 0, '없는 채널 하나 때문에 전체 sync가 죽으면 안 된다');
+  assert.equal(last(asUser(U.owner, `select channel_id is null from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='rp1'`)), 't');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='rp2'`)), '1', '같은 배치의 다른 행은 정상 반영');
+});
+
+test('sync(M2) — 201자 제목은 거절 대신 200자로 잘려 반영된다(크루 전체 미러가 막히지 않는다)', { skip }, () => {
+  const t = 'x'.repeat(201);
+  const r = asUserRaw(U.owner, `select public.msgr_crew_routines_sync('${ORG}','${CREW}','[{"ext_id":"r9","title":"${t}","prompt":"p","schedule":{"type":"daily"}}]'::jsonb)`);
+  assert.equal(r.status, 0);
+  assert.equal(last(asUser(U.owner, `select length(title) from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='r9'`)), '200');
+});
+
+test('sync(M2) — 구조가 이상한 행(ext_id·title·prompt 없음)은 그 행만 건너뛰고 나머지는 반영된다', { skip }, () => {
+  const rows = `'[{"ext_id":"","title":"t","prompt":"p","schedule":{"type":"daily"}},{"ext_id":"rok","title":"t","prompt":"p","schedule":{"type":"daily"}}]'::jsonb`;
+  const out = last(asUser(U.owner, `select public.msgr_crew_routines_sync('${ORG}','${CREW}',${rows})`));
+  assert.match(out, /"skipped": ?1/);
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='rok'`)), '1');
+});
+
+test('M5 — 크루가 detached되면 미러 행·대기 편집이 트리거로 지워지고, 재동기화·편집은 거절된다', { skip }, () => {
+  const crew3 = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.owner}', 'lean', 'offb', 'Offb') returning id`));
+  asUser(U.owner, `select public.msgr_crew_routines_sync('${ORG}','${crew3}','[{"ext_id":"ro1","title":"t","prompt":"p","schedule":{"type":"daily"}}]'::jsonb)`);
+  const rid3 = last(sql(`select id::text from public.msgr_crew_routines where crew_id='${crew3}'`));
+  assert.notEqual(rid3, '');
+  sql(`update public.msgr_crews set status='detached' where id='${crew3}'`);
+  assert.equal(last(sql(`select count(*) from public.msgr_crew_routines where crew_id='${crew3}'`)), '0', '트리거가 미러 행을 지운다(슈퍼유저로 관찰 — RLS 우회)');
+  fails(asUserRaw(U.owner, `select public.msgr_crew_routines_sync('${ORG}','${crew3}','[{"ext_id":"ro1","title":"t","prompt":"p","schedule":{"type":"daily"}}]'::jsonb)`), /42501|msgr_routine_forbidden/, 'detached 크루로는 재동기화도 거절');
+});
+
+test('M5 — 오프보딩(회사 멤버 제거)도 크루를 detached로 돌려 미러가 지워진다', { skip }, () => {
+  asUser(U.member, `select public.msgr_crew_routines_sync('${ORG}','${OTHER_CREW}','[{"ext_id":"mo1","title":"t","prompt":"p","schedule":{"type":"daily"}}]'::jsonb)`);
+  assert.equal(last(sql(`select count(*) from public.msgr_crew_routines where crew_id='${OTHER_CREW}'`)), '1', '오프보딩 전에는 행이 있어야 한다');
+  sql(`update public.msgr_org_members set removed_at = now() where org_id='${ORG}' and user_id='${U.member}'`);
+  assert.equal(last(sql(`select status from public.msgr_crews where id='${OTHER_CREW}'`)), 'detached');
+  assert.equal(last(sql(`select count(*) from public.msgr_crew_routines where crew_id='${OTHER_CREW}'`)), '0');
+});
+
+test('retention — 30일 지난 applied/replaced/superseded/failed 편집은 정리 대상(직접 실행)', { skip }, () => {
   asUser(U.owner, `select public.msgr_crew_routines_sync(${rowsSql})`);
   const rid = last(asUser(U.owner, `select id::text from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='r1'`));
   const eid = last(asUser(U.owner, `select id::text from (select (public.msgr_crew_routine_edit('${rid}','update','{"title":"x"}'::jsonb))->>'id' as id) x`));
   sql(`update public.msgr_crew_routine_edits set status='applied', applied_at=now()-interval '31 days' where id='${eid}'`);
-  sql(`delete from public.msgr_crew_routine_edits where status in ('applied','superseded') and coalesce(applied_at,created_at) < now() - interval '30 days'`);
+  sql(`delete from public.msgr_crew_routine_edits where status in ('applied','replaced','superseded','failed') and coalesce(applied_at,created_at) < now() - interval '30 days'`);
   assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_crew_routine_edits where id='${eid}'`)), '0');
 });
