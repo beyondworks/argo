@@ -16,3 +16,13 @@ test('짧은 가로 화면 표지는 터치 기기에서 폭 720 초과·높이 
   assert.equal(viewportVars({ keyboard: false, height: 300, width: 800, coarse: false }).short, false);
   assert.equal(viewportVars({ keyboard: false, height: 400, width: 800, coarse: true }).short, false);
 });
+
+test('키보드 모드 표지 — 어떤 입력칸이든 초점이면 html.msgr-kb, 폰 셸은 탭바 자리를 비운다(유건 제보 2026-09-24: 설정 부서 칸에서 카드가 잘리고 빈 띠)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const hook = readFileSync(new URL('../src/mobile-viewport.js', import.meta.url), 'utf8');
+  assert.match(hook, /classList\.toggle\('msgr-kb', !!vars\)/, '변수를 낼 때(키보드)와 같은 조건');
+  assert.match(hook, /classList\.remove\('msgr-kb'\)/, '언마운트 때 정리');
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /html\.msgr-kb \.msgr-phone \.msgr-tabbar[^{]*\{ display: none; \}/);
+  assert.match(css, /html\.msgr-kb \.msgr-phone \.msgr-main \{ padding-bottom: 8px; \}/);
+});

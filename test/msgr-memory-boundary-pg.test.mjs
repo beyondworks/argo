@@ -170,14 +170,18 @@ test('자동 연결: [[제목]]·공유 참여자·같은 부서로 잇고, 유�
   assert.doesNotMatch(links(dDesign), new RegExp(dSales), '겹치는 사람·부서 없음(sales엔 조직 관리자만) — 잇지 않는다');
   const xmin = sql(`select string_agg(xmin::text, ',') from public.msgr_doc_link_state`);
   assert.equal(sql(`select public.msgr_doc_links_refresh(1000)`), '0'); assert.equal(sql(`select string_agg(xmin::text, ',') from public.msgr_doc_link_state`), xmin, '유휴 재실행은 쓰기 0');
-  // 부서: 관리자만 정한다 → 부서가 같으면 사람이 안 겹쳐도 잇는다
-  assert.throws(() => asUser(U.member, `select public.msgr_set_member_profile('${ORG}', '${U.member}', '개발', '팀장')`), /msgr_member_profile_forbidden/);
-  assert.throws(() => asUser(U.member, `update public.msgr_org_members set department = '개발' where org_id = '${ORG}' and user_id = '${U.member}'`), /msgr_member_profile_forbidden/, '본인 수정 불가');
+  // 부서·직급: 본인만 정한다(유건 2026-09-24 — 관리자도 남의 것은 못 바꾼다) → 부서가 같으면 사람이 안 겹쳐도 잇는다
+  assert.throws(() => asUser(U.owner, `select public.msgr_set_member_profile('${ORG}', '${U.member}', '개발', '팀장')`), /msgr_member_profile_forbidden/, '조직장도 남의 부서는 못 바꾼다');
+  assert.throws(() => asUser(U.owner, `update public.msgr_org_members set department = '개발' where org_id = '${ORG}' and user_id = '${U.member}'`), /msgr_member_profile_forbidden/, '직접 수정도 트리거가 막는다');
+  asUser(U.member, `select public.msgr_set_member_profile('${ORG}', '${U.member}', '기획', '매니저')`);
+  assert.equal(sql(`select department || '/' || title from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.member}'`), '기획/매니저', '본인은 자기 부서·직급을 정한다');
+  asUser(U.member, `select public.msgr_set_member_profile('${ORG}', '${U.member}', '', '')`);
+  assert.equal(sql(`select coalesce(department, 'null') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.member}'`), 'null', '빈 값 = 지움');
   const GUEST_CH = mk('ops');
   sql(`delete from public.msgr_channel_members where channel_id = '${GUEST_CH}' and member_id = '${U.member}'`);
   sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${GUEST_CH}', 'user', '${U.guest}')`);
-  asUser(U.owner, `select public.msgr_set_member_profile('${ORG}', '${U.guest}', '개발', null)`);
-  asUser(U.owner, `select public.msgr_set_member_profile('${ORG}', '${U.lead}', '개발', '팀장')`);
+  asUser(U.guest, `select public.msgr_set_member_profile('${ORG}', '${U.guest}', '개발', null)`);
+  asUser(U.lead, `select public.msgr_set_member_profile('${ORG}', '${U.lead}', '개발', '팀장')`);
   const dOps = doc(GUEST_CH, 'projects/ops.md', '운영', '배포');
   sql(`select public.msgr_doc_links_refresh(1000)`);
   assert.match(links(dOps), /:department/, '같은 부서(개발)');

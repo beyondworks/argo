@@ -3061,11 +3061,11 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
     if (!res.data?.length) return onError(t('org.noEdit'));
     onNote(t('org.name.saved')); onOrgsChanged();
   };
-  // 부서·직급 — 관리자가 정한다(msgr_set_member_profile). 기억 자동 연결(같은 부서)의 재료. 옛 서버엔 열이 없어 null → 입력을 숨긴다.
+  // 부서·직급 — 본인이 정한다(msgr_set_member_profile, 유건 2026-09-24). 남의 것은 글자로만 보인다. 기억 자동 연결(같은 부서)의 재료. 옛 서버엔 열이 없어 null → 숨긴다.
   const [profiles, setProfiles] = useState(null);
   const orgAdmin = ['owner', 'admin'].includes(org.role);
   const loadProfiles = useCallback(async () => { const r = await supabase.from('msgr_org_members').select('user_id, department, title').eq('org_id', org.id).is('removed_at', null); setProfiles(r.error ? null : new Map((r.data ?? []).map((x) => [x.user_id, x]))); }, [org.id]);
-  useEffect(() => { if (part === 'members' && orgAdmin) loadProfiles().catch(() => setProfiles(null)); }, [part, orgAdmin, loadProfiles]);
+  useEffect(() => { if (part === 'members') loadProfiles().catch(() => setProfiles(null)); }, [part, loadProfiles]);
   const saveProfile = async (m, patch) => {
     const cur = profiles?.get(m.user_id) ?? {}; const next = { department: cur.department ?? '', title: cur.title ?? '', ...patch };
     if ((cur.department ?? '') === next.department && (cur.title ?? '') === next.title) return;
@@ -3141,7 +3141,8 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
             {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
             {isSvc ? <span className="sub">{t('org.node')}</span> : m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
               : <div className="msgr-seg right" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
-            {orgAdmin && profiles && !isSvc && <span className="msgr-profile">{['department', 'title'].map((k) => <input key={`${m.user_id}:${k}:${profiles.get(m.user_id)?.[k] ?? ''}`} className="msgr-input sm" maxLength={60} defaultValue={profiles.get(m.user_id)?.[k] ?? ''} placeholder={t(`org.member.${k}`)} aria-label={t(`org.member.${k}`)} onBlur={(e) => saveProfile(m, { [k]: e.target.value.trim() })} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />)}</span>}
+            {profiles && !isSvc && isMe && <span className="msgr-profile">{['department', 'title'].map((k) => <input key={`${m.user_id}:${k}:${profiles.get(m.user_id)?.[k] ?? ''}`} className="msgr-input sm" maxLength={60} defaultValue={profiles.get(m.user_id)?.[k] ?? ''} placeholder={t(`org.member.${k}`)} aria-label={t(`org.member.${k}`)} onBlur={(e) => saveProfile(m, { [k]: e.target.value.trim() })} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />)}</span>}
+            {profiles && !isSvc && !isMe && (profiles.get(m.user_id)?.department || profiles.get(m.user_id)?.title) && <span className="sub msgr-profile-text">{[profiles.get(m.user_id)?.department, profiles.get(m.user_id)?.title].filter(Boolean).join(' · ')}</span>}
             {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
             {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
           </div>

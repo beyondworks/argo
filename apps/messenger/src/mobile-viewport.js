@@ -16,6 +16,7 @@ export function useMobileViewport() {
         width: viewport?.width ?? window.innerWidth, coarse: isMobilePlatform || window.matchMedia('(pointer: coarse)').matches });
       for (const k of ['--msgr-viewport-height', '--msgr-viewport-top']) { if (vars) style.setProperty(k, vars[k]); else style.removeProperty(k); }
       document.body.classList.toggle('msgr-short-viewport', short);
+      document.documentElement.classList.toggle('msgr-kb', !!vars); // 키보드 모드 — 어떤 입력칸이든(설정의 부서·직급 칸 포함) 폰 셸이 탭바 자리를 비운다(유건 제보 2026-09-24)
     };
     update();
     viewport?.addEventListener('resize', update);
@@ -40,6 +41,7 @@ export function useMobileViewport() {
       style.removeProperty('--msgr-viewport-height');
       style.removeProperty('--msgr-viewport-top');
       document.body.classList.remove('msgr-short-viewport');
+      document.documentElement.classList.remove('msgr-kb');
     };
   }, []);
 }
