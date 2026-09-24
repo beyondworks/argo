@@ -30,6 +30,7 @@ import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri } from './pla
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
+import { REFRESH_THRESHOLD, pullDistance, shouldRefresh, canStartPull } from './pull-refresh.mjs';
 import { mentionCandidates, mentionsFromBody, ALL_RE, outsideCrewMentions, canInstructCrew } from './mention-candidates.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
@@ -350,6 +351,51 @@ function ServerRow({ t, open = false }) {
   );
 }
 
+// 폰 당겨서 새로고침 — 채팅 목록(.msgr-railbody)과 대화 화면(.msgr-thread) 둘 다 이 훅으로. 맨 위(scrollTop 0)에서 아래로
+// 당길 때만 시작하고, 대화의 "이전 기록 불러오기"(scrollTop<120 스크롤 판정)와는 판정 축이 달라 서로 건드리지 않는다.
+// 새로고침 자체는 location.reload()(전체 화면 재적재, 로그인은 유지) — 유건 결정.
+function usePullToRefresh(enabled) {
+  const [ref, setRef] = useState(null);
+  const idle = { dy: 0, active: false, ready: false, refreshing: false };
+  const [pull, setPull] = useState(idle);
+  const st = useRef({ y: 0, dragging: false });
+  useEffect(() => {
+    if (!enabled || !ref) { setPull(idle); return undefined; }
+    const start = (e) => {
+      if (!canStartPull(ref.scrollTop, e.touches.length)) { st.current.dragging = false; return; }
+      st.current.dragging = true; st.current.y = e.touches[0].clientY;
+    };
+    const move = (e) => {
+      if (!st.current.dragging) return;
+      const dy = e.touches[0].clientY - st.current.y;
+      if (dy <= 0) { setPull(idle); return; } // 위로 밀거나 제자리면 표시 없음(세로 스크롤에 맡긴다)
+      if (ref.scrollTop > 0) { st.current.dragging = false; setPull(idle); return; } // 당기는 중 목록이 스크롤됐으면 포기
+      e.preventDefault(); // 당김 중엔 고무줄 표시가 바운스와 겹치지 않게
+      setPull({ dy: pullDistance(dy), active: true, ready: shouldRefresh(dy), refreshing: false });
+    };
+    const end = (e) => {
+      if (!st.current.dragging) return;
+      const dy = (e.changedTouches?.[0]?.clientY ?? st.current.y) - st.current.y;
+      st.current.dragging = false;
+      if (shouldRefresh(dy)) { setPull({ dy: REFRESH_THRESHOLD, active: true, ready: true, refreshing: true }); location.reload(); }
+      else setPull(idle);
+    };
+    ref.addEventListener('touchstart', start, { passive: true });
+    ref.addEventListener('touchmove', move, { passive: false });
+    ref.addEventListener('touchend', end, { passive: true });
+    ref.addEventListener('touchcancel', end, { passive: true });
+    return () => { ref.removeEventListener('touchstart', start); ref.removeEventListener('touchmove', move); ref.removeEventListener('touchend', end); ref.removeEventListener('touchcancel', end); };
+  }, [enabled, ref]);
+  return { setRef, pull };
+}
+function PullIndicator({ pull, t }) {
+  if (!pull.active) return null;
+  return <div className="msgr-pullrefresh" style={{ height: pull.dy }} role="status" aria-live="polite">
+    <span className={`spin${pull.ready ? ' ready' : ''}`} aria-hidden="true" />
+    <span className="lb">{t(pull.refreshing ? 'refresh.refreshing' : pull.ready ? 'refresh.release' : 'refresh.pull')}</span>
+  </div>;
+}
+
 /* ─── 레일 섹션(채널·1:1·내 크루) — 네이티브 details로 접고 펼친다(유건 지시 2026-09-08). 접힘 상태는 이 브라우저에만(localStorage argo-msgr-rail-fold).
    summary 안의 버튼(새 채널 +)은 클릭 기본 동작을 막아 접힘을 건드리지 않는다. ─── */
 const FOLD_KEY = 'argo-msgr-rail-fold';
@@ -520,6 +566,7 @@ function Shell({ session }) {
   const { t, lang } = useT();
   const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
   const isPhoneRef = useRef(isPhone); isPhoneRef.current = isPhone; // 구독 핸들러(deps에 isPhone 없음)가 최신 값을 보게(재검수 L-2)
+  const pullList = usePullToRefresh(isPhone); // 폰 채팅 목록 당겨서 새로고침 — 데스크톱은 훅이 꺼진 채(enabled=false)
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
@@ -675,6 +722,8 @@ function Shell({ session }) {
   const [jump, setJump] = useState(null); // 검색 결과에서 고른 메시지 { ch, mid } — 그 채널이 열리면 그 글까지 불러와 가운데로 스크롤·강조(D11)
   const [searchQ, setSearchQ] = useState(''); const [searchRes, setSearchRes] = useState(null); const searchRef = useRef(null); // 앱 내 검색(유건 지시 2026-09-09): 메시지 본문·사람·에이전트, ⌘K
   useEffect(() => { const on = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setRail(true); searchRef.current?.focus(); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, []);
+  // 새로고침(⌘R/Ctrl+R/F5) — 입력창에 초점이 있어도 동작. 로그인은 유지(location.reload만, 세션 초기화 아님).
+  useEffect(() => { const onKey = (e) => { const k = e.key.toLowerCase(); if (k === 'f5' || ((e.metaKey || e.ctrlKey) && k === 'r')) { e.preventDefault(); location.reload(); } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, []);
   const leaveSearch = () => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }; // 지우기 버튼·Esc가 같은 일(D18 S101: 결과 화면에서 Esc면 대화로)
   useEffect(() => { // 결과 화면에서 칸 밖에 초점이 있어도 Esc면 대화로 — 입력칸·열린 창이 먼저 받는다
     if (page !== 'search') return undefined;
@@ -1598,7 +1647,7 @@ function Shell({ session }) {
             </div>
           </>)}
         </div>
-        <div className={`msgr-railbody${dmTab && dmAnim ? ` anim-list-${dmAnim}` : ''}`} {...dmSwipe}><div className="msgr-railinner">{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
+        <div className={`msgr-railbody${dmTab && dmAnim ? ` anim-list-${dmAnim}` : ''}`} ref={pullList.setRef} {...dmSwipe}><PullIndicator pull={pullList.pull} t={t} /><div className="msgr-railinner">{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
         {!isPersonal && favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
         </RailSection>)}
@@ -3862,6 +3911,8 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
   const [tab, setTab] = useState('all');
   const [workOpen, setWorkOpen] = useState(false);
   const feed = useRef(null);
+  const pullThread = usePullToRefresh(phone); // 폰 대화 화면 당겨서 새로고침 — feed와 같은 DOM 노드를 같이 본다(아래 setFeed)
+  const setFeed = (node) => { feed.current = node; pullThread.setRef(node); };
   const [sbw, setSbw] = useState(0); // 스레드 스크롤바 폭의 절반 — 독 좌우를 대화 열과 맞춘다(오버레이 스크롤바면 0)
   useEffect(() => { const el = feed.current; if (!el) return; const m = () => setSbw((el.offsetWidth - el.clientWidth) / 2); m(); window.addEventListener('resize', m); return () => window.removeEventListener('resize', m); }, []);
   const chId = channel.id;
@@ -4046,7 +4097,8 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
       {!isPersonal && <button type="button" className="btn sm msgr-work-button" onClick={() => setWorkOpen((v) => !v)} aria-pressed={workOpen} aria-label={t('work.title')}>{t('work.button')}</button>}
       <div className="msgr-seg" role="tablist">{tabs.map(([k, ic, n]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)} title={t(`tab.${k}`)} aria-label={n > 0 ? `${t(`tab.${k}`)} ${n}` : t(`tab.${k}`)}>{ic && <I name={ic} size={13} />}<span className={ic ? 'lbl' : undefined}>{t(`tab.${k}`)}</span>{n > 0 && <span className="n">{n}</span>}</button>)}</div>{/* .lbl = 좁은 폭에서 숨기는 글자(아이콘 있는 탭만). 이름은 title·aria-label로 남는다 */}
     </div>
-    <div className="msgr-thread" ref={feed}>
+    <div className="msgr-thread" ref={setFeed}>
+      <PullIndicator pull={pullThread.pull} t={t} />
       <div className="msgr-spine">
         {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
         {tab === 'all' && msgs !== null && !hasMore && startCard}

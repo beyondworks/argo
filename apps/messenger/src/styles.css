@@ -138,6 +138,13 @@
 .msgr-thread { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; padding: 20px max(24px, calc((100% - 720px) / 2)) 8px; overscroll-behavior: contain; }
 .msgr-older { display: flex; justify-content: center; padding: 2px 0 14px; } /* 스크롤백 컨트롤(이전 메시지 보기 / 불러오는 중 / 대화의 시작) — 스파인 맨 위 */
 .msgr-older.start .msgr-klabel { opacity: .7; }
+/* 폰 당겨서 새로고침 표시 — 목록·대화 스크롤 칸 맨 위, 당긴 만큼만(JS가 height를 준다). 데스크톱은 훅이 꺼져 있어 렌더되지 않는다. */
+@media (max-width: 720px) {
+  .msgr-pullrefresh { display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden; color: var(--fg-3); font-size: 12px; }
+  .msgr-pullrefresh .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--fg-3); animation: msgrPullSpin 700ms linear infinite; flex: none; }
+  .msgr-pullrefresh .spin.ready { border-top-color: var(--mark); }
+  @keyframes msgrPullSpin { to { transform: rotate(360deg); } }
+}
 .msgr-spine { position: relative; display: flex; flex-direction: column; gap: 20px; }
 /* 맨 아래로(D22 S85) — 스크롤 칸 안에서 바닥에 붙는 높이 0 받침, 버튼만 떠 있다 */
 .msgr-tobottom { position: sticky; bottom: 12px; height: 0; display: flex; justify-content: center; z-index: 2; }
