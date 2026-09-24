@@ -26,3 +26,15 @@ test('레일에는 내 에이전트(봇 포함)와 회사 크루만 — 남의 �
   assert.deepEqual(railVisible(crews, 'me', org).map((c) => c.id), ['my-bot', 'company']);
   assert.deepEqual(railVisible(crews, 'bran', org).map((c) => c.id), ['their-bot', 'their-local', 'company']);
 });
+
+test('새 채팅(그룹) 선택 창도 같은 목록 — 남의 에이전트는 후보에 없다(유건 제보 2026-09-24: "그룹에는 다른 사람 에이전트 뜨잖아")', () => {
+  const call = line('{dmGroup && <DmGroupSheet');
+  assert.match(call, /\bcrews=\{railVisible\}/, '레일과 같은 판정(내 에이전트 + 회사 크루)만 넘긴다');
+});
+
+test('검색 결과·활동(기억) 화면의 에이전트 목록도 같은 규칙 — 남의 에이전트는 없다', () => {
+  assert.match(line('setSearchRes({ q: qs'), /agents: crews\.filter\(\(c\) => \(c\.owner_user_id === uid \|\| crewTier\(c, org\) === 'company'\) &&/, '검색');
+  const own = new Function('crews', 'uid', 'org', 'crewTier', `${line('const ownCrews =')}\nreturn ownCrews;`)(crews, 'me', org, crewTier);
+  assert.deepEqual(own.map((c) => c.id), ['my-bot', 'company'], '활동 트리의 에이전트 목록');
+  assert.match(app, /id="crews" label=\{t\('act\.tree\.crews'\)\} sub=\{ownCrews\.length\} depth=\{1\} kids=\{ownCrews\.map/, '트리는 ownCrews를 그린다');
+});
