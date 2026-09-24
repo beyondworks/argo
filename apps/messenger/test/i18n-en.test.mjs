@@ -11,7 +11,7 @@ test('{n|one|other} — 1이면 단수, 나머지는 복수, 한국어는 그대
   assert.equal(t('search.count', 'en', { n: 1 }), '1 result');
   assert.equal(t('inv.days', 'en', { n: 1 }), '1 day');
   assert.equal(t('inv.m.uses', 'en', { used: 0, max: 1 }), '0/1 use');
-  assert.equal(t('exec.meta', 'en', { s: '3s', n: 1 }), '3s · 1 tool call');
+  assert.equal(t('inv.expiry.sum', 'en', { n: 1 }), 'Expires in 1 day');
   assert.equal(t('automation.every', 'en', { n: 5 }), 'Every 5 minutes');
 });
 
