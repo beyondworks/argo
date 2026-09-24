@@ -202,3 +202,16 @@ test('first session application (app start / reload) keeps saved drafts; null st
   assert.equal(getComposerSession('server/user/a', transport(), storage).snapshot().text, '새로고침 전 글');
   clearComposerSessions(storage);
 });
+
+// 검수 2026-09-24: 만료 세션으로 새로고침 → 다른 계정 로그인이면 이전 계정 초안이 남던 경로. 첫 적용은 지금 계정 초안만 남긴다.
+test('first application keeps only the signing-in user\'s drafts; recipients-only drafts are saved too', () => {
+  const storage = memStorage();
+  getComposerSession(JSON.stringify(['srv', 'userA', 'org', 'ch']), transport(), storage).setText('A의 글');
+  getComposerSession(JSON.stringify(['srv', 'userB', 'org', 'ch']), transport(), storage).setRecipients([{ id: 'u9' }]);
+  storage.setItem('unrelated', 'keep');
+  clearComposerSessions(storage, { keepUser: 'userB' });
+  const keys = [...storage.m.keys()].sort();
+  assert.equal(keys.length, 2); assert.ok(keys.includes('unrelated')); assert.ok(keys.some((k) => k.includes('userB')));
+  clearComposerSessions(storage, { keepUser: null });
+  assert.deepEqual([...storage.m.keys()], ['unrelated']);
+});

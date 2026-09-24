@@ -30,7 +30,7 @@ import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri } from './pla
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
-import { REFRESH_THRESHOLD, pullDistance, shouldRefresh, canStartPull } from './pull-refresh.mjs';
+import { REFRESH_THRESHOLD, pullDistance, shouldRefresh, canStartPull, isVerticalPull } from './pull-refresh.mjs';
 import { mentionCandidates, mentionsFromBody, ALL_RE, outsideCrewMentions, canInstructCrew } from './mention-candidates.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
@@ -245,7 +245,7 @@ export default function App() {
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
     if (sessionOwner.current !== uid) {
-      clearComposerSessions(sessionOwner.current ? undefined : null); // 첫 적용(앱 시작·새로고침)은 저장된 초안을 남기고, 로그아웃·계정 전환 때만 지운다
+      clearComposerSessions(undefined, sessionOwner.current ? {} : { keepUser: uid }); // 첫 적용(앱 시작·새로고침)은 지금 계정의 저장 초안만 남기고, 로그아웃·계정 전환은 전부 지운다
       if (sessionOwner.current) deactivatePush(supabase, sessionOwner.current);
       sessionOwner.current = uid;
     }
@@ -358,17 +358,18 @@ function usePullToRefresh(enabled) {
   const [ref, setRef] = useState(null);
   const idle = { dy: 0, active: false, ready: false, refreshing: false };
   const [pull, setPull] = useState(idle);
-  const st = useRef({ y: 0, dragging: false });
+  const st = useRef({ x: 0, y: 0, dragging: false });
   useEffect(() => {
     if (!enabled || !ref) { setPull(idle); return undefined; }
     const start = (e) => {
       if (!canStartPull(ref.scrollTop, e.touches.length)) { st.current.dragging = false; return; }
-      st.current.dragging = true; st.current.y = e.touches[0].clientY;
+      st.current.dragging = true; st.current.x = e.touches[0].clientX; st.current.y = e.touches[0].clientY;
     };
     const move = (e) => {
       if (!st.current.dragging) return;
       const dy = e.touches[0].clientY - st.current.y;
       if (dy <= 0) { setPull(idle); return; } // 위로 밀거나 제자리면 표시 없음(세로 스크롤에 맡긴다)
+      if (!isVerticalPull(e.touches[0].clientX - st.current.x, dy)) { st.current.dragging = false; setPull(idle); return; } // 비스듬한 스와이프(탭 넘기기·뒤로가기)는 당김이 아니다
       if (ref.scrollTop > 0) { st.current.dragging = false; setPull(idle); return; } // 당기는 중 목록이 스크롤됐으면 포기
       e.preventDefault(); // 당김 중엔 고무줄 표시가 바운스와 겹치지 않게
       setPull({ dy: pullDistance(dy), active: true, ready: shouldRefresh(dy), refreshing: false });
@@ -376,8 +377,9 @@ function usePullToRefresh(enabled) {
     const end = (e) => {
       if (!st.current.dragging) return;
       const dy = (e.changedTouches?.[0]?.clientY ?? st.current.y) - st.current.y;
+      const dx = (e.changedTouches?.[0]?.clientX ?? st.current.x) - st.current.x;
       st.current.dragging = false;
-      if (shouldRefresh(dy)) { setPull({ dy: REFRESH_THRESHOLD, active: true, ready: true, refreshing: true }); location.reload(); }
+      if (isVerticalPull(dx, dy) && shouldRefresh(dy)) { setPull({ dy: REFRESH_THRESHOLD, active: true, ready: true, refreshing: true }); location.reload(); }
       else setPull(idle);
     };
     ref.addEventListener('touchstart', start, { passive: true });
@@ -723,7 +725,7 @@ function Shell({ session }) {
   const [searchQ, setSearchQ] = useState(''); const [searchRes, setSearchRes] = useState(null); const searchRef = useRef(null); // 앱 내 검색(유건 지시 2026-09-09): 메시지 본문·사람·에이전트, ⌘K
   useEffect(() => { const on = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setRail(true); searchRef.current?.focus(); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, []);
   // 새로고침(⌘R/Ctrl+R/F5) — 입력창에 초점이 있어도 동작. 로그인은 유지(location.reload만, 세션 초기화 아님).
-  useEffect(() => { const onKey = (e) => { const k = e.key.toLowerCase(); if (k === 'f5' || ((e.metaKey || e.ctrlKey) && k === 'r')) { e.preventDefault(); location.reload(); } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, []);
+  useEffect(() => { const onKey = (e) => { const k = e.key.toLowerCase(); if (k === 'f5' || ((e.metaKey || e.ctrlKey) && (k === 'r' || e.code === 'KeyR'))) { e.preventDefault(); location.reload(); } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, []);
   const leaveSearch = () => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }; // 지우기 버튼·Esc가 같은 일(D18 S101: 결과 화면에서 Esc면 대화로)
   useEffect(() => { // 결과 화면에서 칸 밖에 초점이 있어도 Esc면 대화로 — 입력칸·열린 창이 먼저 받는다
     if (page !== 'search') return undefined;

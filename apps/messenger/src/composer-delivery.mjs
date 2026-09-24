@@ -8,14 +8,15 @@ export function getComposerSession(key, transport, storage = tabStorage()) {
   if (!sessions.has(key)) sessions.set(key, createComposerDelivery(transport, undefined, draftStore(storage, key)));
   return sessions.get(key);
 }
-export function clearComposerSessions(storage = tabStorage()) {
+export function clearComposerSessions(storage = tabStorage(), { keepUser } = {}) {
   for (const session of sessions.values()) session.dispose();
   sessions.clear();
-  try { // 로그아웃 — 이 기기에 남긴 초안도 전부 지운다(다음 사람이 보지 않게)
+  try { // 로그아웃·계정 전환 — 이 기기에 남긴 초안을 지운다(다음 사람이 보지 않게). keepUser: 앱 시작 때 그 계정 초안만 남긴다
     const ids = []; for (let i = 0; i < (storage?.length ?? 0); i++) { const k = storage.key(i); if (k?.startsWith(DRAFT_PREFIX)) ids.push(k); }
-    for (const k of ids) storage.removeItem(k);
+    for (const k of ids) if (!keepUser || draftOwner(k) !== keepUser) storage.removeItem(k);
   } catch { /* 저장소 불가 */ }
 }
+const draftOwner = (id) => { try { return JSON.parse(id.slice(DRAFT_PREFIX.length))[1] ?? null; } catch { return null; } }; // 키 = [서버, uid, 조직, 채널]
 
 // 새로고침(⌘R·당겨서) 뒤에도 쓰던 글이 남게(유건 2026-09-24). sessionStorage = 새로고침엔 남고 앱을 끄면 사라진다.
 // 글·멘션·받는 사람·답글 대상만 — 첨부(File)는 저장하지 않는다. 저장소가 막히거나 값이 깨져도 입력창은 그대로 동작한다.
@@ -26,7 +27,7 @@ export function draftStore(storage, key) {
     id,
     load() { try { const v = JSON.parse(storage?.getItem(id) ?? 'null'); return v && typeof v.text === 'string' ? v : null; } catch { return null; } },
     save({ text, mentions, recipients, replyTo }) {
-      try { if (text || replyTo) storage?.setItem(id, JSON.stringify({ text, mentions, recipients, replyTo })); else storage?.removeItem(id); } catch { /* 저장소 불가 */ }
+      try { if (text || replyTo || mentions?.length || recipients?.length) storage?.setItem(id, JSON.stringify({ text, mentions, recipients, replyTo })); else storage?.removeItem(id); } catch { /* 저장소 불가 */ }
     },
   };
 }

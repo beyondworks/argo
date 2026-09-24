@@ -21,3 +21,8 @@ export function shouldRefresh(dy) {
 export function canStartPull(scrollTop, touches) {
   return scrollTop <= 0 && touches === 1;
 }
+
+// 당김은 세로 제스처일 때만 — 목록 맨 위에서 탭 스와이프·가장자리 뒤로가기를 비스듬히 내린 경우는 새로고침이 아니다(검수 2026-09-24).
+export function isVerticalPull(dx, dy) {
+  return dy > 0 && dy > Math.abs(dx);
+}
