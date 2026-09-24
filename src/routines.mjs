@@ -23,7 +23,8 @@ async function patchRoutine(wsId, id, patch) {
     const r = routines.find((x) => x.id === id);
     if (!r) return null; // 실행 중 삭제됐으면 조용히 포기(부활 금지)
     // 함수형 패치 — 현재 상태를 보고 결정해야 하는 변경(루프 수동 정지 사유 등)은 락 안에서 읽고 쓴다
-    Object.assign(r, typeof patch === 'function' ? patch(r) : patch, { id: r.id });
+    // updatedAt은 모든 patchRoutine 호출의 단일 관문에서 찍는다(메신저 미러의 "나중 수정이 이긴다" 판정 기준).
+    Object.assign(r, typeof patch === 'function' ? patch(r) : patch, { id: r.id, updatedAt: new Date().toISOString() });
     await saveRoutines(wsId, routines);
     return { ...r };
   });
@@ -261,6 +262,7 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
     schedule: sched,
     enabled,
     created: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     lastRun: null, lastOk: null, lastResult: '',
     ...(destinations !== undefined ? { notifications: destinations } : {}),
     // 루프 — interval에만. 다른 타입에 loop가 오면 조용히 버린다(의미 없는 필드를 저장하지 않는다)
