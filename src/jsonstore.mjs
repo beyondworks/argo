@@ -33,17 +33,24 @@ export async function writeFileAtomic(file, body, { mode = 0o644 } = {}) {
   }
 }
 
-/** rename 재시도 — Windows는 대상 파일이 잠깐 잠겨 있으면(동시 rename 경합·AV·인덱서) EPERM/EACCES를
-    던진다(2026-07-27 CI 첫 Windows 실행 실측: 동시 20쓰기에서 EPERM — 동기화·채팅이 같은 파일을 겹쳐
-    쓰는 프로덕션 경로와 동형). win32 한정 — POSIX의 rename EPERM/EACCES는 사실상 영구 조건(디렉터리
-    권한·sticky bit)이라 재시도가 순수 지연일 뿐이다(분리 검수 2026-07-27). 총 ~450ms 백오프 후에도
-    잠겨 있으면 진짜 오류로 올린다 — 조용히 삼키면 유실이 무증상이 된다. */
+/** rename 재시도 — Windows는 대상 파일이 잠깐 잠겨 있으면(동시 rename 경합·AV·인덱서·다른 프로세스가
+    쥔 열린 핸들) EPERM/EACCES를 던진다(2026-07-27 CI 첫 Windows 실행 실측: 동시 20쓰기에서 EPERM —
+    동기화·채팅이 같은 파일을 겹쳐 쓰는 프로덕션 경로와 동형). win32 한정 — POSIX의 rename EPERM/EACCES는
+    사실상 영구 조건(디렉터리 권한·sticky bit)이라 재시도가 순수 지연일 뿐이다(분리 검수 2026-07-27).
+    예산 3초(지수 백오프 50ms→상한 400ms) — 원래 ~450ms였으나 격리 재현(2026-09-24, ssh winpc)에서
+    파일을 읽기용으로 열어 둔 채(AV 스캔·인덱서가 흔히 하는 모양) 600ms만 쥐고 있어도 옛 예산을 넘겨
+    EPERM으로 실패했다(크루 이름 변경 PATCH 제보, 2026-09-08 Windows). 200ms 보유는 옛 예산도 통과했으니
+    변경은 "짧은 경합"이 아니라 "AV 스캔급으로 긴 경합"만 추가로 구제한다. 그래도 잠겨 있으면 진짜
+    오류로 올린다 — 조용히 삼키면 유실이 무증상이 된다. */
 async function renameRetry(tmp, file) {
-  for (let i = 0; ; i++) {
+  const deadline = Date.now() + 3000;
+  let wait = 50;
+  for (;;) {
     try { return await rename(tmp, file); }
     catch (e) {
-      if (process.platform !== 'win32' || (e.code !== 'EPERM' && e.code !== 'EACCES') || i >= 9) throw e;
-      await new Promise((r) => setTimeout(r, 10 * (i + 1)));
+      if (process.platform !== 'win32' || (e.code !== 'EPERM' && e.code !== 'EACCES') || Date.now() >= deadline) throw e;
+      await new Promise((r) => setTimeout(r, wait));
+      wait = Math.min(wait * 2, 400);
     }
   }
 }
