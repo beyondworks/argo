@@ -18,8 +18,8 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍 · 상태 문구는 "헤르�
   assert.doesNotMatch(i18n.slice(i18n.indexOf("'org.agents'"), i18n.indexOf("'org.node.hint'")), /HTTP/, '유건 지시: 화면 표기에 HTTP 같은 기술 용어 금지');
 });
 
-test('봇 = 회사 등급(클라이언트 crewTier) · 내 에이전트 레일에 출처와 함께 포함 · 시트 hosting 표기 · 설정 크루 탭에 카드', () => {
-  assert.match(app, /export const crewTier = \(crew, org\) => \(crew\?\.hosting === 'bot' \|\| /, '봇 회사 등급');
+test('봇 = 개인 등급(클라이언트 crewTier, 2026-09-24 — Argo 에이전트처럼 소유자만) · 내 에이전트 레일에 출처와 함께 포함 · 시트 hosting 표기 · 설정 크루 탭에 카드', () => {
+  assert.doesNotMatch(app, /export const crewTier = [^\n]*hosting === 'bot'/, '봇은 회사 등급이 아니다(행동은 apps/messenger/test/crew-private-rail.test.mjs)');
   assert.match(app, /const myCrews = sortCrews\(crews\.filter\(\(c\) => c\.owner_user_id === uid\)\);/, '내 에이전트 = 아르고 + 내가 연결한 봇(세 출처 한 목록) + 정렬(소속별·이름순·추가순)');
   assert.doesNotMatch(app, /const folders = \[\.\.\.new Set\(myCrews\.map\(\(c\) => c\.folder\)/, '그룹(폴더) 묶음은 뺐다(유건 결정 2026-09-09: 평평한 목록)');
   assert.match(app, /<button type="button" className=\{`msgr-sortbtn\$\{sortMenu \? ' on' : ''\}`\}/, '정렬 아이콘 버튼 → 메뉴(유건 지시)');
@@ -31,9 +31,9 @@ test('봇 = 회사 등급(클라이언트 crewTier) · 내 에이전트 레일�
   assert.match(app, /\['mine\.ext', 'rail\.src\.custom', railExt\][\s\S]*?list\.length > 0 && <RailFold/, '묶음은 비어 있지 않을 때만 — 외부 에이전트 소제목 포함(2026-09-16부터 접기 묶음)');
   assert.doesNotMatch(app, /<RailSection id="agents"/, '에이전트 절은 하나(유건 제보 2026-09-12: 디렉터리 절과 내 에이전트 절이 같은 크루를 두 번 보였다)');
   assert.match(app, /<RailSection id="mine" label=\{`\$\{t\('rail\.agents'\)\} · \$\{railVisible\.length\}`\}/, '절 제목 = 에이전트 · **보이는** 수(다른 멤버의 크루는 빼고 센다 — 유건 2026-09-16)');
-  assert.match(app, /\['mine\.company', 'rail\.agents\.company', railCompany\], \['mine\.bot', 'rail\.agents\.bot', railBots\]\]/, '묶음은 내 에이전트·외부·회사 크루·외부 에이전트 — 다른 멤버의 개인 크루 묶음은 없다');
+  assert.match(app, /\['mine\.company', 'rail\.agents\.company', railCompany\]\]/, '묶음은 내 에이전트·내 외부 에이전트·회사 크루 — 다른 멤버의 에이전트(봇 포함) 묶음은 없다(유건 2026-09-24)');
   assert.match(app, /function RailFold\(\{ id, label, count, children \}\)/, '묶음마다 접었다 편다(유건 2026-09-16) — 접힘은 구역과 같은 저장소');
-  assert.match(app, /const railVisible = crews\.filter\(\(c\) => c\.hosting === 'bot' \|\| c\.owner_user_id === uid \|\| crewTier\(c, org\) === 'company'\);/, '다른 멤버의 개인 크루는 레일에서 제외');
+  assert.match(app, /const railVisible = crews\.filter\(\(c\) => c\.owner_user_id === uid \|\| crewTier\(c, org\) === 'company'\);/, '다른 멤버의 에이전트(봇 포함)는 레일에서 제외');
   for (const k of ['rail.src.argo', 'rail.src.hermes', 'rail.src.openclaw', 'rail.src.custom']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-node-cmd code \{[^}]*white-space: pre-wrap;/, '설정 두 줄이 줄바꿈으로 보인다(실측: 한 줄로 붙어 보였다)');
   assert.match(app, /crew\.hosting === 'resident' \? 'resident' : crew\.hosting === 'bot' \? 'bot' : 'local'/, '시트 hosting 표기');
