@@ -71,6 +71,44 @@ function useRows(table, channelId, enabled, capabilityIds = '') {
   return { ...state, refresh, page, setPage };
 }
 
+/** 업무 > 자동화 1단계 — Argo PC 루틴 미러(msgr_crew_routines). 1:1 방은 그 에이전트의 루틴 전부, 채널은 결과가
+    그 채널로 가는 루틴만(channel_id 일치). RLS가 이미 소유자 행만 보여주므로 여기서는 범위만 고른다. */
+function useCrewRoutines(channel, crews, enabled) {
+  const [state, setState] = useState({ rows: null, error: null });
+  const revision = useRef(0);
+  const isDm = channel.kind === 'dm';
+  const dmCrewId = isDm ? (crews[0]?.id ?? null) : null;
+  const scopeKey = isDm ? `dm:${dmCrewId ?? ''}` : `ch:${channel.id}`;
+  const refresh = useCallback(async () => {
+    if (!enabled || (isDm && !dmCrewId)) { setState({ rows: [], error: null }); return; }
+    const request = ++revision.current;
+    try {
+      let query = supabase.from('msgr_crew_routines').select('id,crew_id,title,prompt,schedule,enabled,channel_id,updated_at').order('title', { ascending: true });
+      query = isDm ? query.eq('crew_id', dmCrewId) : query.eq('channel_id', channel.id);
+      const rows = await checked(query);
+      const ids = (rows ?? []).map((r) => r.id);
+      // R1(재검수 2차): applied를 걸러내고 가져오면 "루틴별 최신"이 아니라 "루틴별 최신 비-applied"가 된다 — 그 뒤에
+      // 실제로 더 최신인 applied가 있어도 모르고 낡은 replaced/superseded를 보여준다. 전부 가져와 진짜 최신을 고른 뒤,
+      // 그 최신이 applied가 아닐 때만 안내를 보여준다.
+      // L-c(재검수 3차): 루틴이 많고 편집 이력이 쌓이면 이 조회가 무한정 커진다 — 최신순으로 넉넉한 상한만 가져오면
+      // (루틴별 최신 1건이 목적) 대부분의 실사용 범위를 덮으면서 응답 크기를 잡아 둔다.
+      const edits = ids.length ? await checked(supabase.from('msgr_crew_routine_edits').select('routine_id,status,op,error,created_at').in('routine_id', ids).order('created_at', { ascending: false }).limit(Math.min(500, Math.max(50, ids.length * 10)))) : [];
+      if (request !== revision.current) return;
+      const latest = new Map();
+      for (const e of edits ?? []) if (!latest.has(e.routine_id)) latest.set(e.routine_id, e);
+      setState({ rows: (rows ?? []).map((r) => { const e = latest.get(r.id); return { ...r, pendingEdit: e && e.status !== 'applied' ? e : null }; }), error: null });
+    } catch (error) { if (request === revision.current) setState((old) => ({ ...old, error })); }
+  }, [enabled, isDm, dmCrewId, channel.id]);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true; let timer;
+    const poll = async () => { if (document.visibilityState !== 'hidden') await refresh(); if (active) timer = setTimeout(poll, POLL_MS); };
+    poll();
+    return () => { active = false; clearTimeout(timer); revision.current++; };
+  }, [refresh, enabled, scopeKey]);
+  return { ...state, refresh };
+}
+
 function CrewSelect({ crews, value, onChange, automatic, t, disabled }) {
   return <label className="work-field"><span>{t(automatic ? 'work.lead' : 'automation.crew')}</span>
     <select className="msgr-select" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} required={!automatic}>
@@ -101,6 +139,7 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
   const eligible = crews.filter((crew) => crew.status === 'active');
   const work = useRows('msgr_work_runs', channel.id, tab === 'team', eligible.map((crew) => crew.id).sort().join(','));
   const automations = useRows('msgr_automations', channel.id, tab === 'automations');
+  const routines = useCrewRoutines(channel, eligible, tab === 'automations');
   const closeRef = useRef(onClose); closeRef.current = onClose;
   useEffect(() => {
     mounted.current = true;
@@ -113,7 +152,7 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
     actionLock.current = true; setBusy(true); setError(null); setNotice('');
     try {
       const data = await operation();
-      if (mounted.current) { done?.(data); await Promise.all([work.refresh(), automations.refresh()]); }
+      if (mounted.current) { done?.(data); await Promise.all([work.refresh(), automations.refresh(), routines.refresh()]); }
     } catch (failure) { if (mounted.current) setError(failure); }
     finally { actionLock.current = false; if (mounted.current) setBusy(false); }
   };
@@ -134,10 +173,10 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
         {error && <p className="work-notice error" role="alert">{errorText(error, t)}</p>}
         {notice && <p className="work-notice" role="status">{notice}</p>}
         {tab === 'team' ? <TeamWork key="team" work={work} channel={channel} crews={eligible.filter((crew) => crew.hosting === 'bot' || (work.capabilities ?? []).some((row) => row.id === crew.id && row.work_protocol >= 1))} uid={uid} isAdmin={isAdmin} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} />
-          : <Automations key="automations" source={automations} channel={channel} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
+          : <Automations key="automations" source={automations} routines={routines} channel={channel} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
       </div>
   </>);
-  const confirm = deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t('automation.deleted')); })} /></div>;
+  const confirm = deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(deleting.kind === 'routine' ? supabase.rpc('msgr_crew_routine_edit', { p_routine: deleting.id, p_op: 'delete' }) : supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t(deleting.kind === 'routine' ? 'routine.delete.requested' : 'automation.deleted')); })} /></div>;
   if (sheet) return (<div className="msgr-sheetwrap">
     <div className="msgr-scrim clear" onClick={() => { if (!busy && !deleting) onClose(); }} />
     <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} role="dialog" aria-label={t('work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
@@ -195,19 +234,25 @@ function TeamWork({ work, channel, crews, uid, isAdmin, disabled, busy, act, t, 
   </>;
 }
 
-function Automations({ source, channel, crews, uid, disabled, busy, act, t, lang, setDeleting, setNotice }) {
+function Automations({ source, routines, channel, crews, uid, disabled, busy, act, t, lang, setDeleting, setNotice }) {
   const [editing, setEditing] = useState(null);
+  const [editingRoutine, setEditingRoutine] = useState(null);
   const [history, setHistory] = useState(null);
   const runRequests = useRef(new Map());
+  const bothLoaded = source.rows !== null && routines.rows !== null;
+  const empty = bothLoaded && !source.rows.length && !(routines.rows ?? []).length;
   return <>
     <p className="work-note">{t('automation.intro')}</p>
     {source.rows !== null && !source.error && <SchedulerStatus t={t} />}
-    <div className="work-section-heading"><h3>{t('work.tab.automations')}</h3><div className="work-actions"><button className="btn sm" onClick={source.refresh} disabled={busy}>{t('work.refresh')}</button><button className="btn btn-primary sm" disabled={disabled || !crews.length || !!source.error || source.rows === null} onClick={() => setEditing({})}>{t('automation.new')}</button></div></div>
+    <div className="work-section-heading"><h3>{t('work.tab.automations')}</h3><div className="work-actions"><button className="btn sm" onClick={() => { source.refresh(); routines.refresh(); }} disabled={busy}>{t('work.refresh')}</button><button className="btn btn-primary sm" disabled={disabled || !crews.length || !!source.error || source.rows === null} onClick={() => setEditing({})}>{t('automation.new')}</button></div></div>
     {!crews.length && <p className="work-notice">{t('work.noCrew')}</p>}
     {editing && <AutomationForm key={editing.id ?? 'new'} value={editing} crews={crews} channel={channel} t={t} disabled={disabled} act={act} onClose={() => setEditing(null)} onSaved={() => { if (!editing.id) source.setPage(0); setEditing(null); setNotice(t('automation.saved')); }} />}
-    <StateNotice {...source} empty={t('automation.empty')} t={t} />
+    {editingRoutine && <RoutineForm key={editingRoutine.id} value={editingRoutine} t={t} disabled={disabled} act={act} onClose={() => setEditingRoutine(null)} onSaved={() => { setEditingRoutine(null); setNotice(t('automation.saved')); }} />}
+    {source.error && <div className="work-notice error" role="alert"><p>{errorText(source.error, t)}</p><button className="btn sm" onClick={source.refresh}>{t('work.retry')}</button></div>}
+    {source.rows === null && <p className="work-note" role="status">{t('ui.loading')}</p>}
+    {empty && <p className="work-empty">{t('automation.empty')}</p>}
     {(source.rows ?? []).map((automation) => <article className="work-item" key={automation.id}>
-      <div className="work-item-top"><strong>{automation.title}</strong><span className={`work-status ${automation.enabled ? 'running' : 'cancelled'}`}>{t(automation.enabled ? 'automation.enabled' : 'automation.paused')}</span></div>
+      <div className="work-item-top"><span className="work-item-title"><strong>{automation.title}</strong><span className="work-source-badge">{t('automation.source.msgr')}</span></span><span className={`work-status ${automation.enabled ? 'running' : 'cancelled'}`}>{t(automation.enabled ? 'automation.enabled' : 'automation.paused')}</span></div>
       <p className="work-text">{automation.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === automation.crew_id)?.display_name ?? t('work.crew.unavailable')} · <Schedule schedule={automation.schedule} t={t} /></p>
       <p className="work-note">{t('automation.next')}: {automation.enabled ? stamp(automation.next_run_at, lang) : '—'} · {t('automation.last')}: {stamp(automation.last_run_at, lang)}</p>
@@ -217,12 +262,54 @@ function Automations({ source, channel, crews, uid, disabled, busy, act, t, lang
       </div>
       {history === automation.id && <RunHistory automationId={automation.id} own={automation.created_by === uid} channelId={channel.id} crews={crews} t={t} lang={lang} />}
     </article>)}
+    {routines.error && <div className="work-notice error" role="alert"><p>{missingSchema(routines.error) ? t('automation.notifications.upgrade') : errorText(routines.error, t)}</p><button className="btn sm" onClick={routines.refresh}>{t('work.retry')}</button></div>}
+    {(routines.rows ?? []).map((routine) => {
+      // N4(재검수 2차): 대기 중(pending)인 update patch가 enabled를 바꿨다면, 아직 PC가 반영하기 전이라도 그 값을
+      // 기준으로 보여주고 토글한다 — 안 그러면 반영 전에 다시 누른 버튼이 서버 값(옛 값)을 기준으로 다시 걸려 원래 뜻대로 안 돌아간다.
+      const pending = routine.pendingEdit?.status === 'pending';
+      // N6(재검수 3차): 대기 중인 게 delete면 별도 화면 — 편집·토글을 숨기지 않으면 토글 한 번으로 삭제가
+      // 안내 없이 취소된다(서버 폴드 규칙은 "나중 수정이 이긴다"라 되돌릴 수 있는 게 맞지만, 그게 암묵적으로
+      // 일어나면 안 된다 — 명시적 "삭제 취소" 버튼 하나만 둔다).
+      const pendingDelete = pending && routine.pendingEdit.op === 'delete';
+      const pendingPatch = pending && routine.pendingEdit.op === 'update' ? routine.pendingEdit.patch : null;
+      const effectiveEnabled = pendingPatch && 'enabled' in pendingPatch ? pendingPatch.enabled : routine.enabled;
+      return <article className="work-item" key={routine.id}>
+      <div className="work-item-top"><span className="work-item-title"><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span><span className={`work-status ${pendingDelete ? 'blocked' : effectiveEnabled ? 'running' : 'cancelled'}`}>{t(pendingDelete ? 'routine.delete.badge' : effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span></div>
+      <p className="work-text">{routine.prompt}</p>
+      <p className="work-note">{crews.find((crew) => crew.id === routine.crew_id)?.display_name ?? t('work.crew.unavailable')} · <RoutineSchedule schedule={routine.schedule} t={t} /></p>
+      {pendingDelete ? <>
+        <p className="work-notice error" role="alert">{t('routine.delete.pending')}</p>
+        <div className="work-actions"><button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: {} })), () => routines.refresh())}>{t('routine.delete.cancel')}</button></div>
+      </> : <>
+        {pending && <p className="work-notice">{t('routine.pending')}</p>}
+        {/* replaced = 메신저 쪽 자동 폴드(더 새 메신저 편집이 이걸 흡수, H3) — superseded = PC가 "로컬이 이 편집보다 나중"으로 판단해 버림(H1/H4). 원인이 다르므로 문구도 다르다(M3). */}
+        {routine.pendingEdit?.status === 'replaced' && <p className="work-notice">{t('routine.replaced')}</p>}
+        {routine.pendingEdit?.status === 'superseded' && <p className="work-notice">{t('routine.superseded')}</p>}
+        {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
+        <div className="work-actions">
+          {/* H3: 편집 폼의 초기값은 아직 반영 전인 대기 patch를 덮어써서 보여준다 — 소유자가 두 번째 수정을 시작할 때 낡은(적용 전) 값에서 출발하지 않게 */}
+          <button className="btn sm" disabled={disabled} onClick={() => setEditingRoutine(pendingPatch ? { ...routine, ...pendingPatch } : routine)}>{t('automation.edit')}</button>
+          <button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { enabled: !effectiveEnabled } })), () => routines.refresh())}>{t(effectiveEnabled ? 'automation.pause' : 'automation.resume')}</button>
+          <button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting({ ...routine, kind: 'routine' })}>{t('automation.delete')}</button>
+        </div>
+      </>}
+    </article>;
+    })}
     <Pages source={source} disabled={busy} t={t} />
   </>;
 }
 
 function Schedule({ schedule = {}, t }) {
   return <>{schedule.kind === 'interval' ? t('automation.every', { n: schedule.minutes }) : <>{t(`automation.kind.${schedule.kind}`)} {schedule.kind === 'weekly' ? (schedule.weekdays ?? []).map((day) => t(`automation.day.${day}`)).join(' · ') : ''} {schedule.time}</>} · {schedule.timezone}</>;
+}
+
+/** Argo 루틴 스케줄 표시 — 필드명이 자동화(kind/weekdays)와 다르다(type/dows, 0=일~6=토). times[]가 여럿이면 전부 보여준다. */
+function RoutineSchedule({ schedule = {}, t }) {
+  if (schedule.type === 'interval') return <>{t('automation.every', { n: schedule.everyMinutes })}</>;
+  if (schedule.type === 'once') return <>{t('routine.kind.once')} {schedule.date} {schedule.time}</>;
+  // L1: 옛 형식(dow 단수만 있고 dows 배열이 없는 아주 오래된 루틴)도 요일 하나로 보여준다.
+  const dows = schedule.dows ?? (schedule.dow != null ? [schedule.dow] : []);
+  return <>{t(`routine.kind.${schedule.type === 'weekly' ? 'weekly' : 'daily'}`)} {schedule.type === 'weekly' ? dows.map((day) => t(`routine.day.${day}`)).join(' · ') : ''} {(schedule.times ?? [schedule.time]).filter(Boolean).join(', ')} · {schedule.tz ?? ''}</>;
 }
 
 function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSaved }) {
@@ -282,6 +369,56 @@ function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSa
     </fieldset>
     {invalid && <p className="work-notice error" role="alert">{t('work.error.schedule')}</p>}
     <div className="work-actions"><button className="btn btn-primary" disabled={disabled || routes === null || !!routesError || !title.trim() || !prompt.trim() || !crew}>{t('ui.save')}</button><button type="button" className="btn" disabled={disabled} onClick={onClose}>{t('ui.cancel')}</button></div>
+  </form>;
+}
+
+/** Argo 루틴 편집 — 메신저에서 건 수정은 즉시 반영되지 않고 msgr_crew_routine_edit로 '반영 대기'에 쌓인다(PC가 켜지면 drain이 가져가 적용).
+    스케줄은 단일 시각의 daily/weekly/interval만 편집 가능 — 하루 여러 시각(times[]가 2개 이상)이거나 once(1회 예약)는 제목·지시만 편집하고
+    스케줄은 읽기전용으로 둔다(첫 시각만 고쳐 나머지 시각을 지우는 사고를 원천 차단 — 유건 지시). */
+function RoutineForm({ value, t, disabled, act, onClose, onSaved }) {
+  const schedule = value.schedule ?? {};
+  const editableSchedule = schedule.type === 'interval' || ((schedule.type ?? 'daily') !== 'once' && (schedule.times?.length ?? 1) <= 1);
+  const [title, setTitle] = useState(value.title ?? '');
+  const [prompt, setPrompt] = useState(value.prompt ?? '');
+  const [type, setType] = useState(schedule.type === 'weekly' ? 'weekly' : schedule.type === 'interval' ? 'interval' : 'daily');
+  const [time, setTime] = useState(schedule.time ?? '09:00');
+  const [minutes, setMinutes] = useState(schedule.everyMinutes ?? 60);
+  const [dows, setDows] = useState(schedule.dows ?? (schedule.dow != null ? [schedule.dow] : [1, 2, 3, 4, 5])); // L1: dow만 있는 옛 형식도 dows로 해석
+  const [invalid, setInvalid] = useState(false);
+  const originalSchedule = useRef(schedule.type === 'interval' ? JSON.stringify({ type: 'interval', everyMinutes: schedule.everyMinutes })
+    // L1: 원본 비교도 같은 dow→dows 승격을 거쳐야 한다 — 안 그러면 옛 형식 루틴은 아무것도 안 바꿔도 스케줄이 "바뀐 것"으로 잡혀 덮어써진다
+    : JSON.stringify({ type: schedule.type ?? 'daily', time: schedule.time, ...((schedule.type ?? 'daily') === 'weekly' ? { dows: schedule.dows ?? (schedule.dow != null ? [schedule.dow] : undefined) } : {}) }));
+  const form = useRef(null);
+  useEffect(() => { form.current?.scrollIntoView({ block: 'nearest' }); }, []);
+  const save = (event) => {
+    event.preventDefault();
+    if (disabled || !title.trim() || !prompt.trim()) return;
+    if (editableSchedule && type === 'interval' && (!Number.isInteger(Number(minutes)) || Number(minutes) < 10 || Number(minutes) > 1440)) { setInvalid(true); return; }
+    if (editableSchedule && type === 'weekly' && !dows.length) { setInvalid(true); return; }
+    setInvalid(false);
+    const patch = {};
+    if (title.trim() !== value.title) patch.title = title.trim();
+    if (prompt.trim() !== value.prompt) patch.prompt = prompt.trim();
+    if (editableSchedule) {
+      const next = type === 'interval' ? { type: 'interval', everyMinutes: Number(minutes) } : { type, time, ...(type === 'weekly' ? { dows } : {}) };
+      if (JSON.stringify(next) !== originalSchedule.current) patch.schedule = { ...next, tz: schedule.tz };
+    }
+    if (!Object.keys(patch).length) { onClose(); return; }
+    act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: value.id, p_op: 'update', p_patch: patch })), onSaved);
+  };
+  return <form className="work-form work-editor" onSubmit={save} ref={form}>
+    <h3>{t('automation.edit')}</h3>
+    <label className="work-field"><span>{t('automation.name')}</span><input value={title} required maxLength={200} onChange={(event) => setTitle(event.target.value)} disabled={disabled} /></label>
+    <label className="work-field"><span>{t('automation.prompt')}</span><textarea value={prompt} required maxLength={18000} rows={3} onChange={(event) => setPrompt(event.target.value)} disabled={disabled} /></label>
+    {editableSchedule ? <>
+      <div className="work-grid"><label className="work-field"><span>{t('automation.repeat')}</span><select value={type} onChange={(event) => setType(event.target.value)} disabled={disabled}>{['daily', 'weekly', 'interval'].map((key) => <option key={key} value={key}>{t(`routine.kind.${key}`)}</option>)}</select></label>
+        {type === 'interval' ? <label className="work-field"><span>{t('automation.minutes')}</span><input type="number" min="10" max="1440" step="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} required disabled={disabled} /></label> : <label className="work-field"><span>{t('automation.time')}</span><input type="time" value={time} onChange={(event) => setTime(event.target.value)} required disabled={disabled} /></label>}</div>
+      {type === 'weekly' && <fieldset className="work-days"><legend>{t('automation.days')}</legend>{[0, 1, 2, 3, 4, 5, 6].map((day) => <label key={day}><input type="checkbox" checked={dows.includes(day)} disabled={disabled} onChange={(event) => setDows((current) => event.target.checked ? [...current, day].sort() : current.filter((v) => v !== day))} />{t(`routine.day.${day}`)}</label>)}</fieldset>}
+      {/* L2: 반복 종류를 바꾸면 Argo 쪽 루프·검증 설정(interval 전용)이 초기화된다 — 메신저는 그 설정을 못 보므로 경고만 */}
+      {type !== (schedule.type ?? 'daily') && <p className="work-note">{t('routine.kind.change.warning')}</p>}
+    </> : <p className="work-note">{t('routine.schedule.readonly')} <RoutineSchedule schedule={schedule} t={t} /></p>}
+    {invalid && <p className="work-notice error" role="alert">{t('work.error.schedule')}</p>}
+    <div className="work-actions"><button className="btn btn-primary" disabled={disabled || !title.trim() || !prompt.trim()}>{t('ui.save')}</button><button type="button" className="btn" disabled={disabled} onClick={onClose}>{t('ui.cancel')}</button></div>
   </form>;
 }
 

@@ -28,6 +28,7 @@ import { enqueueJob, DEFER } from './queue.mjs';
 import { pick } from './protocol.mjs';
 import { beatGateway } from './persist.mjs';
 import { chat } from '../chat.mjs';
+import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
 import { loadThread, appendTurn, scopedSession } from '../thread.mjs';
 import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
 import { loadApprovals, setApprovalMeta } from '../approvals.mjs';
@@ -245,6 +246,24 @@ export function makeDb(client) {
     /** '/' 커맨더 목록 — 이 회사(ws)의 내 크루 행 전부에 같은 목록(회사 단위 별칭·스킬). */
     async setCommands(uid, wsId, commands) { unwrap(await client.from('msgr_crews').update({ commands }).eq('owner_user_id', uid).eq('ws_id', wsId)); },
     async deleteCrews(ids) { if (ids.length) unwrap(await client.from('msgr_crews').delete().in('id', ids)); },
+    /** 업무·자동화 1단계 — 이 크루의 Argo 루틴 스냅샷을 서버에 미러(RPC가 바뀐 것만 쓴다). 옛 서버(RPC 없음)면
+        undefined → 호출부(mirrorRoutines)가 옛 서버로 취급해 조용히 물러난다(M4, crewMemory와 같은 신호). */
+    async syncCrewRoutines(orgId, crewId, rows) {
+      const { data, error } = await client.rpc('msgr_crew_routines_sync', { p_org: orgId, p_crew: crewId, p_rows: rows });
+      if (error) { if (['PGRST202', '42883', 'PGRST205'].includes(error.code)) return undefined; throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); }
+      return data;
+    },
+    /** 메신저에서 건 대기 편집 — 이 조직·내 크루 id 목록(crewIds)에 한정한다(H2: 크루로 거르지 않으면 다른
+        워크스페이스의 크루가 낀 조직의 편집까지 끌어와 오판한다). 옛 서버면 undefined. */
+    async pendingRoutineEdits(orgId, crewIds) {
+      const { data, error } = await client.rpc('msgr_crew_routine_edits_pending', { p_org: orgId, p_crews: crewIds });
+      if (error) { if (['PGRST202', '42883', 'PGRST205'].includes(error.code)) return undefined; throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); }
+      return data ?? [];
+    },
+    async routineEditDone(id, status, error = null) {
+      const { error: e } = await client.rpc('msgr_crew_routine_edit_done', { p_id: id, p_status: status, p_error: error });
+      if (e) { if (['PGRST202', '42883', 'PGRST205'].includes(e.code)) return undefined; throw Object.assign(new Error(`msgr db: ${e.message}`), { code: e.code }); }
+    },
     /** G-2 조직 문서 미러용: 조직 이름·슬러그, 문서 목록(가벼운 열), 본문(바뀐 것만) — RLS가 열람 범위를 정한다(채널 문서는 열람자만). */
     async org(orgId) { return unwrap(await client.from('msgr_orgs').select('id, slug, name').eq('id', orgId).maybeSingle()); },
     async docsIndex(orgId) { return unwrap(await client.from('msgr_org_docs').select('id, channel_id, path, version, updated_at').eq('org_id', orgId)) ?? []; },
@@ -546,6 +565,9 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
   if (housekeeping && !nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => { out.mirrorError = String(e?.message ?? e); console.error('[argo] msgr 크루 인벤토리 미러 실패:', out.mirrorError); }); // 브리지가 상태로 드러낸다(검수 MEDIUM-A: 로그만 남기고 '연결됨'이던 것)
   if (housekeeping && commandsFor) await mirrorCommands(wsId, { db, uid, commands: await commandsFor(wsId) }).catch((e) => console.error('[argo] msgr 커맨더 목록 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
+  // 업무 > 자동화 1단계: 편집을 먼저 반영(대기 → 로컬)한 뒤 그 결과를 포함한 현재 상태를 미러(로컬 → 서버) — 순서를 바꾸면 방금 반영한 편집이 한 틱 늦게 보인다.
+  if (housekeeping && !nodeOrgId && crews.length) await applyRoutineEdits(wsId, { db, crews }).catch((e) => console.error('[argo] msgr 루틴 편집 반영 실패:', e.message));
+  if (housekeeping && !nodeOrgId && crews.length) await mirrorRoutines(wsId, { db, crews }).catch((e) => console.error('[argo] msgr 루틴 미러 실패:', e.message));
   if (!crews.length) return out;
   if (housekeeping) {
     await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
