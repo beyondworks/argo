@@ -52,7 +52,7 @@ import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-s
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
-import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES } from './crew-face.mjs';
+import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, faceToStore } from './crew-face.mjs';
 const realtimeScope = createRealtimeScope();
 const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/#download' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
@@ -213,7 +213,7 @@ function FacePicker({ crew, onSave, busy, t }) {
         ))}</div>
       </div>
       <div className="acts">
-        <button type="button" className="btn sm btn-primary" disabled={busy || !dirty} onClick={() => onSave(draft)}>{t('crew.face.save')}</button>
+        <button type="button" className="btn sm btn-primary" disabled={busy || !dirty} onClick={() => onSave(faceToStore(draft))}>{t('crew.face.save')}</button>
         {stored && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => onSave(null)}>{t('crew.face.reset')}</button>}
       </div>
     </div>

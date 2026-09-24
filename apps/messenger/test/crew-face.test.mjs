@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, DONE_MS, SURPRISE_MS } from '../src/crew-face.mjs';
+import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, DONE_MS, SURPRISE_MS, faceToStore } from '../src/crew-face.mjs';
 
 test('무작위지만 고정 — 얼굴은 크루 id만으로 정해진다(보는 사람·목록·파견·해고와 무관, 검수 #698 H-1)', () => {
   assert.deepEqual(faceOf('crew-a'), faceOf('crew-a'));
@@ -80,4 +80,12 @@ test('배선 — 사진이 있으면 사진, 없으면 얼굴 / 배지 유지 / 
   assert.match(src, /<AvatarEdit name=\{crew\.display_name\} crew crewId=\{crew\.id\}/, '크루 카드 편집 줄(id 없이 그리면 이름 해시로 다른 색이 나왔다 — 실측)');
   assert.match(src, /crew=\{isCrew\} crewId=\{isCrew \? m\.crew_id : null\}/, '목록 밖 크루의 옛 글도 id로(검수 L-1)');
   assert.doesNotMatch(src, /assignFaces/, '목록 기반 배정은 없앴다');
+});
+
+test('저장값은 서버 check가 허용하는 세 키뿐 — 얼굴 자리(spot)를 보내면 라이브 DB가 거절한다(화면 확인 중 발견)', () => {
+  assert.deepEqual(Object.keys(faceToStore(faceOf('crew-x'))).sort(), ['color', 'eyes', 'shape']);
+  const mig = readFileSync(new URL('../../../supabase/migrations/20260924170000_msgr_crew_face.sql', import.meta.url), 'utf8');
+  assert.match(mig, /face - 'shape' - 'color' - 'eyes'/, '서버가 세 키 외에는 거절한다는 전제');
+  const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(src, /onSave\(faceToStore\(draft\)\)/, '고르기 저장은 faceToStore를 거친다');
 });

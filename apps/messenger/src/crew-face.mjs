@@ -73,3 +73,7 @@ export function faceMotion(id) {
   const delay = -((h('delay') % 10000) / 10000) * duration; // -duration~0s(음수) — 크루마다 다른 위상에서 시작
   return { variant: IDLE_VARIANTS[h('variant') % IDLE_VARIANTS.length], duration: `${duration.toFixed(2)}s`, delay: `${delay.toFixed(2)}s` };
 }
+
+/** 저장할 모양(msgr_crews.face) — 서버 check 제약이 허용하는 세 키만. 얼굴 자리(spot)는 id로 정해지고 저장하지 않는다
+ *  (고르기 초안이 faceOf 결과를 그대로 들고 있어 spot까지 보내면 라이브 DB가 check 위반으로 거절한다 — 화면 확인 중 발견 2026-09-24). */
+export const faceToStore = (f) => ({ shape: f.shape, color: f.color, eyes: f.eyes });
