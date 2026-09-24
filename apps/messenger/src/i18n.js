@@ -356,6 +356,7 @@ export const DICT = {
   'profile.quiet.hour': ['{h}시', '{h}:00'],
   'profile.quiet.desc': ['조용한 시간에는 멘션·결재 OS 알림을 보내지 않습니다. 알림함 배지는 그대로 쌓입니다.', 'During quiet hours no OS notifications are sent for mentions or approvals. Inbox badges still accumulate.'],
   // 실행 카드·궤적(유건 요청 2026-09-09: 사고 과정·도구 사용을 클로드코드처럼 드롭다운으로)
+  'exec.preparing': ['답변 준비 중', 'Preparing a reply'],
   'exec.meta': ['{s} · 도구 {n}회', '{s} · {n} tool {n|call|calls}'],
   'exec.thought': ['사고 과정', 'Thinking'],
   'exec.steps': ['도구 사용', 'Tool use'],

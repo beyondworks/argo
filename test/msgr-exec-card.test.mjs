@@ -9,7 +9,7 @@ const read = (p) => readFileSync(fileURLToPath(new URL(`../${p}`, import.meta.ur
 const app = read('apps/messenger/src/App.jsx'); const i18n = read('apps/messenger/src/i18n.js'); const css = read('apps/messenger/src/styles.css');
 const bridge = read('src/gateway/msgr.mjs'); const chat = read('src/chat.mjs'); const ts = read('src/turn-status.mjs');
 
-test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought·ms·model·costUsd)를 반환 · 브리지는 1.5초마다 바뀐 스냅샷만 progress로 방송하고 공개 채널 답글에만 meta.trace를 붙인다', () => {
+test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace를 반환(데스크톱용) · 브리지는 1.5초마다 바뀐 신호만 progress로 방송하고 메신저 답글에는 궤적을 붙이지 않는다', () => {
   assert.match(ts, /steps: Array\.isArray\(steps\) \? steps\.slice\(-40\) : \(prev\.steps \?\? \[\]\)/, '상태 파일 steps(뒤 40)');
   assert.match(chat, /const trace = \{ steps, thought: String\(thought \?\? ''\)\.slice\(-1500\), ms: Date\.now\(\) - t0, model: actualModel \|\| null, costUsd \};/, 'trace 조립');
   const ast=parse(chat,{ecmaVersion:'latest',sourceType:'module'});
@@ -24,20 +24,22 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought�
   assert.match(bridge, /if \(key === last\) return;\n\s*last = key;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '바뀐 스냅샷만 방송');
   assert.match(bridge, /if \(stopped \|\| !s \|\| s\.source !== 'messenger'\) return;/, '상태 파일 source 게이트(검수 M-6)');
   assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public' \}\)/, 'slug 전달 + 본문·사고 방송은 공개 채널만(검수 C-1)');
-  assert.match(bridge, /meta: \{ \.\.\.\(turnTrace \? \{ trace \} : \{\}\), \.\.\.metaBase \}/, '공개 답글 meta.trace(실패 턴은 없음, costUsd 제외) + hop/origin');
+  assert.doesNotMatch(bridge, /turnTrace = ch\.kind === 'public'/, '메신저 답글에는 궤적을 저장하지 않는다(유건 결정 2026-09-24)');
+  assert.match(bridge, /const payload = \{ channel_id: channelId, crew_id: crewId, startedAt: s\.startedAt \};/, 'progress는 "답변 준비 중" 신호만 — 사고·단계·본문 없음(검수 #697 HIGH)');
   assert.match(read('supabase/migrations/20260909003000_msgr_message_meta.sql'), /add column if not exists meta jsonb not null default '\{\}'::jsonb/, 'meta 열');
 });
 
-test('클라이언트: progress 방송 → ExecCard(단계·경과·도구 수·사고 과정·도구 단계·부분 텍스트 드롭다운), 완료 답글은 Trace(접힘) · 점 세 개는 progress 없는 크루만', () => {
+test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 줄(사고·도구 단계·작성 중 본문·궤적 없음 — 유건 결정 2026-09-24) · 점 세 개는 progress 없는 크루만', () => {
   assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, active\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 active() 안에서');
   assert.match(app, /const onProgressEvent = \(\{ payload \}\) => \{ if \(acceptTyping\(settledRef\.current, payload\)\) setProgress\(/, 'progress 처리기 = 답글 직후 늦은 방송 거름 + setProgress(2026-09-23 유령 표시)');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
-  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} p=\{p\} t=\{t\} \/>\)\}\n\s*\{typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\)/, '점 세 개는 카드 없는 크루만');
-  assert.match(app, /function ExecCard\(\{ crew, p, t \}\)[\s\S]*?<details className="msgr-exec"[\s\S]*?\{t\('exec\.thought'\)\}[\s\S]*?<StepList steps=\{p\.steps\}[\s\S]*?\{t\('exec\.partial'\)\}/, 'ExecCard 구성');
-  assert.match(app, /\{m\.meta\?\.trace && <Trace trace=\{m\.meta\.trace\} t=\{t\} \/>\}\{awayNote && <div className="msgr-away">\{awayNote\}<\/div>\}<Markdown text=\{shown\} \/>/, '크루 답글 위 궤적(본문 앞 부재중 안내는 머리줄로 분리 — msg-text.mjs)');
-  assert.match(app, /function Trace\(\{ trace, t \}\)[\s\S]*?<details className="msgr-trace">/, 'Trace는 details(기본 접힘)');
-  for (const k of ['exec.meta', 'exec.thought', 'exec.steps', 'exec.partial', 'trace.summary', 'chat.stage.memory', 'chat.stage.shell', 'chat.stage.runner']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
-  assert.match(css, /^\.msgr-exec, \.msgr-trace \{/m, '카드 스타일');
+  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} \/>\)\}\n\s*\{typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\)/, '점 세 개는 카드 없는 크루만');
+  const card = app.slice(app.indexOf('function ExecCard('), app.indexOf('/** 결재 슬립'));
+  assert.match(card, /\{t\('exec\.preparing'\)\}/, '"답변 준비 중"');
+  for (const gone of ['exec.thought', 'exec.partial', 'StepList', '<details', 'p.thought', 'p.partial', 'p.steps']) assert.ok(!card.includes(gone), `실행 카드에 ${gone} 없음`);
+  assert.doesNotMatch(app, /<Trace /, '완료 답글 위 궤적 드롭다운 없음(옛 meta.trace도 그리지 않는다)');
+  assert.match(i18n, /'exec\.preparing': \['답변 준비 중', 'Preparing a reply'\]/, 'ko/en');
+  assert.match(css, /^\.msgr-exec > \.summary \{/m, '한 줄 스타일');
 });
 
 test('P0: 안 읽음 RPC → 레일 배지(멘션은 mark·음소거는 dim)·굵은 이름·새 메시지 구분선(열 때 커서 고정)·보는 채널은 커서 갱신 · 편집/삭제는 본인 hover 액션 · 반응 칩·피커 · 음소거 메뉴·헤더 표시 · 조용한 시간은 알림 게이트', () => {

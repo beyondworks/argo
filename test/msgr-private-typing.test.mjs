@@ -45,6 +45,25 @@ test('비공개 방인데 방 채널을 못 열면 보내지 않는다(조직 �
   rt.delete('ws:O');
 });
 
+// 검수 #697 HIGH 재현: 크루 상태 파일은 크루당 하나라 같은 크루의 다른 턴(데스크톱 대화·다른 방)이 남긴 사고·본문·명령이 이 방으로 나갈 수 있었다.
+// 메신저에는 "답변 준비 중"만(유건 결정 2026-09-24) — 공개·비공개 어느 방이든 progress에는 방·크루·시작 시각만 싣는다.
+for (const full of [false, true]) test(`progress(${full ? '공개' : '비공개'} 방): 상태 파일에 사고·본문·단계가 있어도 신호(방·크루·시작 시각)만 방송한다`, async () => {
+  const { setTurnStatus } = await import('../src/turn-status.mjs');
+  const { mkdir } = await import('node:fs/promises');
+  const { paths } = await import('../src/workspace.mjs');
+  await mkdir(paths('ws').chats, { recursive: true });
+  await setTurnStatus('ws', 'pepper', 'shell', 'cat ~/secret', 'OWNER-PRIVATE-PARTIAL', 'messenger', 'OWNER-PRIVATE-THOUGHT', [{ stage: 'shell', detail: 'cat ~/secret' }]);
+  const f = fakeClient(); rt.set('ws:O', f.org);
+  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full });
+  await new Promise((r) => setTimeout(r, 1700));
+  stop();
+  const prog = f.sent.filter((m) => m.event === 'progress');
+  assert.ok(prog.length >= 1, JSON.stringify(f.sent));
+  for (const m of prog) assert.deepEqual(Object.keys(m.payload).sort(), ['channel_id', 'crew_id', 'startedAt'], JSON.stringify(m.payload));
+  assert.ok(!JSON.stringify(f.sent).includes('OWNER-PRIVATE') && !JSON.stringify(f.sent).includes('secret'), '사고·본문·명령 문자열이 한 건도 나가지 않는다');
+  rt.delete('ws:O');
+});
+
 test('App.jsx 배선: 개인 공간의 방과 조직의 비공개 방(공개 채널 아님)은 dm:<채널>을 구독해 typing·progress를 받는다 — 열린 방만이 아니라 전부(목록의 답변 중, 2026-09-23)', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
