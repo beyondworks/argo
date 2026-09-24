@@ -1,5 +1,5 @@
 // 에이전트 얼굴 — 평면 단색 도형 + 작은 눈(유건 확정 2026-09-24, 입 없음, Argo 네이비·골드 미사용).
-// 모양·색은 크루 id에서 무작위로 한 번 정해지고 유지된다. 같은 조직 안에서는 먼저 만든 크루부터 안 쓴 색·도형을 받는다.
+// 모양·색은 크루 id에서 무작위로 정해지고 유지된다(id만 입력 — 보는 사람·크루 목록·해고와 무관하게 늘 같은 얼굴. 같은 조직에서 색이 겹칠 수 있다).
 
 export const FACE_COLORS = ['#0E9A55', '#F4A3C4', '#F45A1B', '#F6C443', '#0B6FB8', '#46C7F4', '#7B5CFA', '#14C4CC', '#FFA412', '#FF5E9C'];
 /** 100×100 안의 도형. dyMax: 얼굴이 내려갈 수 있는 한도(알약·말풍선은 낮다) */
@@ -18,24 +18,16 @@ const AWAY_MS = 90_000; // App.jsx AWAY_MS와 같은 부재 판정
 
 const hash = (s) => { let h = 2166136261; for (const c of String(s)) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; } h ^= h >>> 16; h = Math.imul(h, 2246822507); h ^= h >>> 13; h = Math.imul(h, 3266489909); return (h ^ h >>> 16) >>> 0; };
 
-/** 목록 밖 크루(비활성·다른 조직)도 id만으로 같은 얼굴 */
-export function faceOf(id, faces) {
-  if (faces?.[id]) return faces[id];
+/** 크루 id → 얼굴(색·도형·눈·얼굴 자리). 검수 #698 H-1: 조직 목록으로 겹침을 피하면 목록이 사람·상태마다 달라 기존 얼굴이 바뀌었다 → id만 쓴다. */
+export function faceOf(id) {
   const h = (k) => hash(`${id}|${k}`);
   return { color: h('color') % FACE_COLORS.length, shape: h('shape') % FACE_SHAPES.length, eyes: h('eyes') % FACE_EYES.length, spot: h('spot') % SPOTS.length };
 }
 
-/** 조직 크루 전체 → id별 얼굴. 생성 순서대로 배정해 새 크루가 기존 크루 얼굴을 바꾸지 않는다. */
-export function assignFaces(crews) {
-  const list = [...new Map((crews ?? []).filter((c) => c?.id).map((c) => [c.id, c])).values()]
-    .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) || String(a.id).localeCompare(String(b.id)));
-  const used = { color: new Set(), shape: new Set() }, out = {};
-  const take = (key, start, len) => { const u = used[key]; if (u.size >= len) u.clear(); let i = start; while (u.has(i)) i = (i + 1) % len; u.add(i); return i; };
-  for (const c of list) {
-    const base = faceOf(c.id, null);
-    out[c.id] = { ...base, color: take('color', base.color, FACE_COLORS.length), shape: take('shape', base.shape, FACE_SHAPES.length) };
-  }
-  return out;
+/** '완료' 표시가 가장 먼저 끝나는 때까지 남은 ms(없으면 null) — 크루마다 정확히 DONE_MS만 보이게(검수 L-2) */
+export function nextDoneIn(doneAt, now = Date.now()) {
+  const left = Object.values(doneAt ?? {}).map((at) => at + DONE_MS - now).filter((ms) => ms > 0);
+  return left.length ? Math.min(...left) : null;
 }
 
 /** 얼굴 상태 — 준비 중 > 결재 대기 > 완료(답 뒤 2초) > 오프라인 > 쉼 */

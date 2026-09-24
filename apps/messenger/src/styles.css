@@ -894,7 +894,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-av.img img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; } /* 사진 아바타도 글자 아바타처럼 — 누름이 감싼 행으로 가고, 이미지 끌기가 클릭을 가로채지 않게(D19, WebKit 이미지 끌기) */
 /* 에이전트 얼굴(2026-09-24) — 타일 배경·테두리를 걷고 도형 자체가 아바타. 배지(.star)는 그대로 위에 */
 .msgr-av.crew.face { background: transparent; border-color: transparent; border-radius: 0; padding: 0; }
-.msgr-row > .msgr-av.face, .msgr-top .members .msgr-av.face, .msgr-stack .msgr-av.face { box-shadow: none; background: transparent; border-color: transparent; }
+.msgr-row > .msgr-av.face { background: var(--bg); border-radius: 8px; } /* 대화 척추선이 도형 빈 곳으로 비치지 않게 — 바탕색 판 + 기존 4px 테두리 그림자(검수 M-1) */
 .msgr-face { width: 100%; height: 100%; display: block; overflow: visible; }
 .msgr-face .face { fill: #111113; stroke: #111113; stroke-linecap: round; stroke-linejoin: round; }
 .msgr-face .face circle, .msgr-face .face ellipse { stroke: none; }
@@ -910,7 +910,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 @keyframes msgr-face-tilt { 0%, 100% { transform: rotate(0); } 20%, 70% { transform: rotate(-7deg); } }
 .msgr-face.s-done .rig { animation: msgr-face-hop 1s cubic-bezier(.3, 1.5, .5, 1) 2; }
 @keyframes msgr-face-hop { 0%, 100% { transform: translateY(0) scale(1); } 20% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-9px) scale(.96, 1.05); } 75% { transform: translateY(0) scale(1.04, .96); } }
-.msgr-face.s-off .body { filter: saturate(0); opacity: .4; }
+.msgr-face.s-off .body { filter: saturate(0); opacity: .55; } /* 다크 바탕에서도 검은 눈이 보이는 회색 */
 @media (prefers-reduced-motion: reduce) { .msgr-face *, .msgr-face { animation: none !important; transition: none !important; } }
 .msgr-avatar-edit { display: flex; align-items: center; gap: 12px; }
 .msgr-avatar-edit .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

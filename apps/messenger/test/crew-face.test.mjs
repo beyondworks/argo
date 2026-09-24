@@ -2,28 +2,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { assignFaces, faceOf, crewFaceState, FACE_COLORS, FACE_SHAPES, DONE_MS } from '../src/crew-face.mjs';
+import { faceOf, faceGeometry, crewFaceState, nextDoneIn, FACE_COLORS, FACE_SHAPES, DONE_MS } from '../src/crew-face.mjs';
 
-const crew = (id, at) => ({ id, created_at: `2026-09-${String(at).padStart(2, '0')}T00:00:00Z` });
-const org = Array.from({ length: 10 }, (_, i) => crew(`c${i}-${'x'.repeat(i)}`, i + 1));
-
-test('무작위지만 고정 — 같은 크루는 언제 그려도 같은 얼굴(매번 바뀌면 누가 누군지 모른다)', () => {
-  const a = assignFaces(org), b = assignFaces([...org].reverse());
-  for (const c of org) assert.deepEqual(a[c.id], b[c.id], '입력 순서와 무관');
-  assert.deepEqual(faceOf('없는-크루', {}), faceOf('없는-크루', {}), '목록 밖 크루도 id로 고정');
+test('무작위지만 고정 — 얼굴은 크루 id만으로 정해진다(보는 사람·목록·파견·해고와 무관, 검수 #698 H-1)', () => {
+  assert.deepEqual(faceOf('crew-a'), faceOf('crew-a'));
+  assert.equal(faceOf.length, 1, '목록 같은 두 번째 입력을 받지 않는다 — 목록이 달라져도 얼굴이 바뀔 길이 없다');
+  const ids = Array.from({ length: 400 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+  assert.equal(new Set(ids.map((id) => faceOf(id).color)).size, FACE_COLORS.length, '색 10가지가 모두 나온다(무작위 분포)');
+  assert.equal(new Set(ids.map((id) => faceOf(id).shape)).size, FACE_SHAPES.length, '도형 6가지가 모두 나온다');
 });
 
-test('같은 조직 안에서는 색이 겹치지 않는다(10명까지) — 초안에서 셋이 같은 색이던 문제', () => {
-  const f = assignFaces(org);
-  assert.equal(new Set(org.map((c) => f[c.id].color)).size, FACE_COLORS.length);
-  const six = assignFaces(org.slice(0, 6));
-  assert.equal(new Set(Object.values(six).map((x) => x.shape)).size, Math.min(6, FACE_SHAPES.length), '도형도 6명까지는 서로 다르다');
-});
-
-test('새 크루가 들어와도 기존 크루 얼굴은 그대로 — 먼저 만든 크루부터 배정', () => {
-  const before = assignFaces(org.slice(0, 5));
-  const after = assignFaces([...org.slice(0, 5), crew('newcomer', 30)]);
-  for (const c of org.slice(0, 5)) assert.deepEqual(after[c.id], before[c.id]);
+test('얼굴 자리는 모든 조합에서 도형 안 — 알약·말풍선·캡슐 제한', () => {
+  for (let shape = 0; shape < FACE_SHAPES.length; shape++) for (let spot = 0; spot < 6; spot++) {
+    const g = faceGeometry({ color: 0, shape, eyes: 0, spot });
+    assert.ok(g.L - 5 >= 6 && g.R + 5 <= 94, `가로 ${shape}/${spot}: ${g.L}~${g.R}`);
+    if (shape === 3) assert.ok(g.cy >= 44 && g.cy <= 72, `알약 세로 ${spot}: ${g.cy}`);
+    if (shape === 5) assert.ok(g.cy <= 60, `말풍선 꼬리 위 ${spot}: ${g.cy}`);
+    if (shape === 1) assert.ok(g.L >= 30 && g.R <= 70, `캡슐 폭 ${spot}: ${g.L}~${g.R}`);
+  }
 });
 
 test('상태 우선순위 — 준비 중 > 결재 대기 > 완료(답 뒤 2초) > 오프라인 > 쉼', () => {
@@ -38,12 +34,18 @@ test('상태 우선순위 — 준비 중 > 결재 대기 > 완료(답 뒤 2초) 
   assert.equal(crewFaceState({ crew: live, doneAt: now - DONE_MS, now }), 'idle', '2초가 지나면 쉼');
 });
 
-test('배선 — 사진이 있으면 사진, 없으면 얼굴 / 배지 유지 / 사람은 그대로', () => {
+test('완료 타이머 — 가장 먼저 끝나는 크루 기준이라 뒤에 답한 크루가 앞 크루의 완료를 늘리지 않는다(검수 L-2)', () => {
+  assert.equal(nextDoneIn({}, 5000), null);
+  assert.equal(nextDoneIn({ a: 0, b: 1900 }, 1000), 1000, 'a는 1초 남음 — b(2.9초)를 기다리지 않는다');
+  assert.equal(nextDoneIn({ a: 0 }, DONE_MS), null, '정확히 2초면 끝');
+});
+
+test('배선 — 사진이 있으면 사진, 없으면 얼굴 / 배지 유지 / 크루 id가 있는 자리는 모두 id로', () => {
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   const av = src.slice(src.indexOf('function Av('), src.indexOf('/** 프로필 이미지 정규화'));
-  assert.match(av, /url \? <img/, '사진 우선');
-  assert.match(av, /crew \? <CrewFace/, '사진 없는 크루는 얼굴');
+  assert.match(av, /url \? <img[^:]*: crew \? <CrewFace/, '사진 → 얼굴 → 첫 글자 순서');
   assert.match(av, /className="star"/, '등급 배지 유지');
-  assert.match(src, /assignFaces\(\[\.\.\.crews, \.\.\.myAvailable\]\)/, '조직 크루 전체(파견 전 포함)로 한 번 배정');
-  assert.match(src, /<AvatarEdit name=\{crew\.display_name\} crew crewId=\{crew\.id\}/, '크루 카드의 편집 줄도 같은 얼굴(id 없이 그리면 이름 해시로 다른 색이 나왔다 — 실측)');
+  assert.match(src, /<AvatarEdit name=\{crew\.display_name\} crew crewId=\{crew\.id\}/, '크루 카드 편집 줄(id 없이 그리면 이름 해시로 다른 색이 나왔다 — 실측)');
+  assert.match(src, /crew=\{isCrew\} crewId=\{isCrew \? m\.crew_id : null\}/, '목록 밖 크루의 옛 글도 id로(검수 L-1)');
+  assert.doesNotMatch(src, /assignFaces/, '목록 기반 배정은 없앴다');
 });
