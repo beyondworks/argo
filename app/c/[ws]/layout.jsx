@@ -250,13 +250,14 @@ function Shell({ children, params }) {
 
   // 지금 도는 턴(크루별 chats/<slug>.status.json — 작업 독과 같은 /tasks running 목록). 작업 독 배지·패널과
   // 사이드바 크루 행의 '작성 중' 점멸(피드백 9, 2026-09-23 — 2026-09-02 설계 재적용)이 한 폴을 나눠 쓴다.
-  // 도는 턴이 있거나 독이 열려 있으면 3.5초, 아니면 10초. 턴이 끝나 목록에서 빠지면 light 재조회를 바로
-  // 당긴다 — 답변 도착의 안읽음 점이 30초 폴을 기다리지 않게. argo:refresh에도 즉시 당겨, 이 탭에서
-  // 보낸 턴의 점멸이 제때 꺼진다.
+  // 독이 열려 있으면 3.5초, 닫혀 있으면 **항상 10초**(재검수 LOW, 2026-09-24) — 원 설계는 도는 턴이
+  // 있어도 3.5초로 당겼지만, 그러면 독을 안 보는 동안에도(사용자가 관찰하지 않는 상태) 요청 수가
+  // 늘어난다. 링 반영이 최대 10초 늦어지는 손해를 감수하고 유휴 폴 빈도를 원래 TasksDock 하나였을
+  // 때와 같게 유지한다. 턴이 끝나 목록에서 빠지면 light 재조회를 바로 당긴다 — 답변 도착의 안읽음
+  // 점이 그 10초 폴을 기다리지 않게. argo:refresh에도 즉시 당겨, 이 탭에서 보낸 턴의 점멸이 제때 꺼진다.
   const [dockOpen, setDockOpen] = useState(false);
   const [tasks, setTasks] = useState(null);
   const runningRef = useRef(new Set());
-  const anyRunning = (tasks?.running?.length ?? 0) > 0;
   useEffect(() => {
     let alive = true;
     const pull = () => api(`/api/companies/${ws}/tasks`).then((d) => {
@@ -268,9 +269,9 @@ function Shell({ children, params }) {
     }).catch(() => {});
     pull();
     window.addEventListener('argo:refresh', pull);
-    const iv = setInterval(pull, dockOpen || anyRunning ? 3500 : 10000);
+    const iv = setInterval(pull, dockOpen ? 3500 : 10000);
     return () => { alive = false; window.removeEventListener('argo:refresh', pull); clearInterval(iv); };
-  }, [ws, dockOpen, anyRunning, refresh]);
+  }, [ws, dockOpen, refresh]);
   const busySet = new Set((tasks?.running ?? []).map((r) => r.slug));
 
   // 크루 순서 저장 — company.json.crewOrder(slug 배열). 낙관 반영 후 서버 기록(crewPinned과 동일 계약).

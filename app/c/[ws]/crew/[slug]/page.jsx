@@ -186,6 +186,13 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 그 함수는 클릭 시점 렌더의 busy를 그대로 들고 있어 await 뒤에도 갱신되지 않는다).
   const busyRef = useRef(false);
   useEffect(() => { busyRef.current = busy; }, [busy]);
+  // 지금 바로 보내기 — 이 턴에서 이미 부분 답변을 캡처했는지(연속 클릭으로 중복 삽입 방지).
+  // sendMessage가 새 턴 시작 때 false로 되돌린다.
+  const partialCapturedRef = useRef(false);
+  // 지금 바로 보내기 — 연속 클릭 방지(중단 요청~새 턴 시작까지 잠금). 대기열 배출 이펙트의 deps에서도
+  // 쓰이므로 그 이펙트보다 먼저(TDZ) 선언해야 한다 — 실사고: 뒤에 두어 "Cannot access 'sendingNow'
+  // before initialization"으로 화면이 통째로 죽었다(2026-09-24 재검수 뒤 라이브 확인 중 적발).
+  const [sendingNow, setSendingNow] = useState(false);
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   // 크루 길들이기(F) — 같은 지적 2회째면 "회사 규칙으로 기억할까요?" 제안(사장 결정 대기 목록)
@@ -458,7 +465,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             // 실패 사본 캐리오버는 **서버 미보존분(unsaved)만** — 서버가 보존한 실패 턴(route.js
             // failed)은 msgs에 이미 있어, 전부 캐리오버하면 폴링마다 복제가 누적된다(분리 검수 HIGH,
             // 리듀서 시뮬레이션 확증). "서버엔 없는 사본" 전제는 실패 턴 보존으로 무효가 됐다.
-            const unsent = cur.filter((m) => m.failed && m.unsaved);
+            // 지금 바로 보내기의 부분 답변 노트(who:'crew', aborted:true)도 같이 캐리오버 — 서버는
+            // 이 메시지를 절대 만들지 않으므로(사용자 who:'user' aborted와 달리 크루측 aborted는
+            // thread.mjs가 저장 안 함) 복제 위험 없이 안전하게 계속 실어 나를 수 있다(재검수 MEDIUM:
+            // 이 노트가 다음 폴링에서 곧바로 지워지던 문제).
+            const unsent = cur.filter((m) => (m.failed && m.unsaved) || (m.aborted && m.who === 'crew'));
             return unsent.length ? [...msgs, ...unsent] : msgs;
           });
           if (r.sessionId) sessionRef.current = r.sessionId;
@@ -558,7 +569,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const wf = useWorkFolder({ ws, slug, onError: (m) => setError(m), onPinned: () => inputRef.current?.focus() });
 
   async function sendMessage(message, attachments = []) {
-    if (!message || busy || uploading) return;
+    // busyRef(최신값)로 판정 — busy(클로저 값)로 판정하면 sendNow처럼 "중단 뒤 폴링으로 실제 정지를
+    // 기다렸다가 호출"하는 경로에서, 이 함수 자체가 busy=true였던 그 렌더의 클로저를 그대로 들고 있어
+    // 폴링이 끝나도 늘 true로 보여 조용히 return했다(분리 검수 HIGH, 2026-09-24 — 지금 보내기가 새
+    // 메시지 없이 사라짐 + 원래 턴도 안 멈춘 것처럼 보이는 근본 원인).
+    if (!message || busyRef.current || uploading) return false;
+    partialCapturedRef.current = false; // 새 턴 시작 — 이번 턴이 중단되면 다시 부분 답변을 담을 수 있게
     setError(''); setBusy(true); setStage(0);
     // 낙관적 표시 — 서버는 턴이 끝난 뒤에야 저장하므로(route.js appendTurn) 도중엔 이 사본이 사장 글의 유일한 원본이다.
     // 그래서 실패해도 스레드에서 빼지 않는다. 빼면 글이 어디에도 남지 않고 입력창으로 되돌아가 "보낸 게 사라졌다"가 된다.
@@ -572,6 +588,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
       setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ts: Date.now(), ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
       window.dispatchEvent(new Event('argo:refresh'));
+      return true;
     } catch (err) {
       // 실패 턴도 서버가 보존한다(route.js가 failed·aborted로 appendTurn) — 로컬 사본에 같은 필드를
       // 붙여 서버 사본과 렌더가 일치하게 한다(사유는 원문, 중단은 별도 aborted — 재검수 MEDIUM: 원문이
@@ -584,14 +601,18 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
       setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...coded, ...aborted, ...unsaved } : m)));
       setQueueHeld(true); // 대기열 자동 전송 중지 — 남겨 두고 사장이 판단한다
+      return false;
     } finally {
       setBusy(false);
       setLiveStage(null); // 내 턴 종료 — 마지막 partial이 완성 답변과 겹쳐 보이지 않게 즉시 내린다
     }
   }
 
-  async function send(e) {
-    e.preventDefault();
+  // immediate=true(지금 바로 보내기, 피드백 6)도 이 함수를 통과한다 — '/' 커맨더·정지 명령 판정이
+  // sendNow 전용 경로에서 빠지면 그 토큰이 그대로 새 지시로 나간다(분리 검수 지적). immediate는
+  // working(진행 중 턴이 있음)일 때만 "중단 후 즉시 전송"으로 갈라지고, 아니면 평소처럼 보낸다.
+  async function send(e, { immediate = false } = {}) {
+    e?.preventDefault();
     // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/new' 같은 명령 토큰이 크루에게 전송되지 않게
     if (slashMatches.length) { runSlash(slashMatches[Math.min(slashIdx, slashMatches.length - 1)]); return; }
     const message = input.trim();
@@ -599,7 +620,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // 업로드가 끝나기 전에 보내면 그 시점의 att에는 올라가는 중인 파일이 없다 — 첨부 없이 나가고
     // 완료분은 다음 메시지용 칩으로 남는다(사장은 함께 보냈다고 믿는다). 버튼은 disabled로 막혀
     // 있었지만 Enter 경로가 그걸 우회했다(분리 검수 2026-08-03 M-3).
-    if (uploading) return;
+    if (uploading || sendingNow) return;
     const attachments = att;
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     setInput(''); setAtt([]);
@@ -607,6 +628,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       setQueueHeld(true);
       if (working) { await abortTurn(); return; }
     }
+    if (immediate && working) { await sendImmediate(message, attachments); return; }
     // 답변 중이면 스레드가 아니라 대기열로 간다 — 첨부 칩과 같은 물건이라 ✕로 뗄 수 있다.
     // (uploading은 대기열로 보내지 않는다: 업로드가 안 끝난 첨부가 실려 나간다)
     if (busy) { setQueue((q) => [...q, { qid: `q${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: message, attachments }]); return; }
@@ -615,8 +637,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
 
   // 대기열 배출 — 턴이 **성공으로** 끝난 뒤에만 다음 지시를 보낸다.
   // 실패·중단이면 queueHeld가 true라 여기서 멈추고 대기열이 화면에 남는다(자동 발사 금지).
+  // sendingNow 가드 — 지금 바로 보내기가 abortTurn 뒤 busy가 false로 잠깐 내려간 틈(폴링 대기 구간)에
+  // 이 효과가 먼저 발동해 대기열 항목을 가로채면, sendImmediate가 보내려던 지시보다 대기열이 앞서
+  // 나간다(분리 검수 MEDIUM — 순서 보장 없이 같은 busy=false 창을 공유해서 생기는 경합).
   useEffect(() => {
-    if (busy || uploading || queueHeld || !queue.length) return;
+    if (busy || uploading || queueHeld || sendingNow || !queue.length) return;
     const [next, ...rest] = queue;
     setQueue(rest);
     sendMessage(next.text, next.attachments ?? []);
@@ -624,7 +649,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // 잠긴 대기열을 두고 사장이 무관한 지시를 하나 보내면 그 턴이 끝나는 순간 대기열 전체가
     // 저 혼자 나갔다(분리 검수 2026-08-03 M-1). 잠금 안내는 busy 중엔 보이지도 않는다.
     // eslint 규칙은 no-undef 단일 게이트(#191)라 deps 경고는 없다 — 의도적으로 busy·queue만 본다
-  }, [busy, uploading, queueHeld, queue]);
+  }, [busy, uploading, queueHeld, sendingNow, queue]);
 
   // 사장의 정지 버튼 — 진행 중 턴(내 턴·루틴·메신저발 모두)을 멈춘다
   const [aborting, setAborting] = useState(false);
@@ -636,30 +661,44 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     finally { setAborting(false); }
   }
 
-  // 지금 바로 보내기(피드백 6, 2026-09-23) — 답변 도중 온 새 지시를 대기열 대신 즉시 보낸다. 조사 결과
-  // (러너별 "즉시"의 뜻): SDK·CLI·네이티브 키 러너 공통으로 이미 있는 유일한 중단 메커니즘은 정지 버튼의
-  // abortTurn(interruptTurn — 지금 도는 프로바이더 호출을 끊는다)뿐이고, "진행 중 턴에 새 지시를 주입"하는
-  // 경로는 어떤 러너에도 없다. 그래서 가장 안전한 공통 의미로 "중단 → 새 턴으로 즉시 전송"을 쓴다(정지
-  // 버튼과 같은 중단 경로 재사용 — 새 인터럽트 배선 없음).
+  // 지금 바로 보내기(피드백 6, 2026-09-23 — 재검수 2026-09-24 HIGH 반영) — 답변 도중 온 새 지시를
+  // 대기열 대신 즉시 보낸다. 조사 결과(러너별 "즉시"의 뜻): SDK·CLI·네이티브 키 러너 공통으로 이미
+  // 있는 유일한 중단 메커니즘은 정지 버튼의 abortTurn(interruptTurn — 지금 도는 프로바이더 호출을
+  // 끊는다)뿐이고, "진행 중 턴에 새 지시를 주입"하는 경로는 어떤 러너에도 없다. 그래서 가장 안전한
+  // 공통 의미로 "중단 → 새 턴으로 즉시 전송"을 쓴다(정지 버튼과 같은 중단 경로 재사용).
   // 부분 답변 보존: 서버는 중단된 턴에 크루 메시지를 저장하지 않는다(추론 — route.js catch가 실패한
-  // 사용자 메시지만 appendTurn, 확인은 src/thread.mjs). 도중까지 스트리밍된 partial(SDK 러너만 채움 —
-  // CLI·네이티브 키 러너는 partial을 아예 추적하지 않아 이 자리에서 비어 있을 수 있다, 알려진 한계)을
-  // 잃지 않게 로컬 스레드에 '중단됨' 표식과 함께 먼저 남긴 뒤 중단한다.
-  async function sendNow() {
-    if (uploading || aborting) return;
-    const message = input.trim();
-    if (!message) return;
-    const attachments = att;
-    setInput(''); setAtt([]);
-    if (liveStage?.partial) {
-      setThread((cur) => [...(cur ?? []), { who: 'crew', text: liveStage.partial, aborted: true }]);
+  // 사용자 메시지만 appendTurn, 확인은 src/thread.mjs — 서버측 저장은 src/chat.mjs의 여러 중첩
+  // catch·재시도 프레임을 가로질러 partial을 실어 날라야 해 대화 코어의 큰 변경이 필요하다고 판단,
+  // 이번엔 로컬 표시만 함). 도중까지 스트리밍된 partial(SDK 러너만 채움 — CLI·네이티브 키 러너는
+  // partial을 아예 추적하지 않아 이 자리에서 비어 있을 수 있다, 알려진 한계)을 잃지 않게 로컬
+  // 스레드에 '중단됨' 표식과 함께 먼저 남긴 뒤 중단한다.
+  async function sendImmediate(message, attachments) {
+    if (sendingNow) return; // 방어적 재확인 — 버튼 disabled로도 막지만 프로그램적 재호출까지 닫는다
+    setSendingNow(true);
+    try {
+      // 부분 답변이 있고 이번 턴에서 아직 안 담았으면 한 번만 로컬 스레드에 남긴다(중복 삽입 방지).
+      if (liveStage?.partial && !partialCapturedRef.current) {
+        partialCapturedRef.current = true;
+        setThread((cur) => [...(cur ?? []), { who: 'crew', text: liveStage.partial, aborted: true, ts: Date.now() }]);
+      }
+      await abortTurn();
+      // abortTurn은 서버에 중단을 요청할 뿐 — 지금 도는 sendMessage()의 fetch가 실제로 실패로 끝나
+      // busy가 false로 내려가기까지는 별도 왕복이 더 필요하다. 고정 대기 대신 조건 충족까지 폴링(상한 8초).
+      const startedAt = Date.now();
+      while (busyRef.current && Date.now() - startedAt < 8000) await new Promise((r) => setTimeout(r, 120));
+      if (busyRef.current) {
+        // 상한 안에 안 멈췄다 — 조용히 사라지면 안 된다: 입력을 되돌리고 오류를 보인다(분리 검수 HIGH).
+        setInput(message); setAtt(attachments);
+        setError(t('chat.sendNowTimeout'));
+        return;
+      }
+      const ok = await sendMessage(message, attachments);
+      // 새 턴이 성공했으면 이 중단이 만든 대기열 잠금을 푼다 — 실패했으면 sendMessage의 catch가 이미
+      // 다시 잠갔으니(정상 실패 규칙과 동일) 손대지 않는다.
+      if (ok) setQueueHeld(false);
+    } finally {
+      setSendingNow(false);
     }
-    await abortTurn();
-    // abortTurn은 서버에 중단을 요청할 뿐 — 지금 도는 sendMessage()의 fetch가 실제로 실패로 끝나
-    // busy가 false로 내려가기까지는 별도 왕복이 더 필요하다. 고정 대기 대신 조건 충족까지 폴링(상한 8초).
-    const startedAt = Date.now();
-    while (busyRef.current && Date.now() - startedAt < 8000) await new Promise((r) => setTimeout(r, 120));
-    await sendMessage(message, attachments);
   }
 
   // 메시지 복사 — 잠깐 "복사됨"으로 바뀌는 피드백
@@ -1274,11 +1313,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
             autoFocus
           />
-          {/* 지금 바로 보내기 — 답변 중일 때만. 대기열 대신 턴을 멈추고 새 지시를 즉시 새 턴으로 보낸다. */}
+          {/* 지금 바로 보내기 — 답변 중일 때만. send(immediate:true)를 거쳐 '/' 커맨더·정지 명령
+              판정을 그대로 통과한 뒤에만 중단+즉시전송으로 간다(일반 전송과 같은 전처리). */}
           {busy && (
-            <button type="button" className="btn btn-icon" disabled={uploading || aborting || !input.trim()}
-              title={t('chat.sendNow')} aria-label={t('chat.sendNow')} onClick={sendNow}>
-              <Icon name="bolt" size={15} />
+            <button type="button" className="btn btn-icon" disabled={uploading || aborting || sendingNow || !input.trim()}
+              title={t('chat.sendNow')} aria-label={t('chat.sendNow')} onClick={(e) => send(e, { immediate: true })}>
+              {sendingNow ? <Spinner size={13} /> : <Icon name="bolt" size={15} />}
             </button>
           )}
           <button className="btn btn-primary btn-icon" disabled={uploading || !input.trim()} aria-label={busy ? t('chat.queue.add') : t('chat.send')}>

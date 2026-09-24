@@ -1153,6 +1153,7 @@ const DICT = {
   // 답변 도중 즉시 보내기(2026-09-23 유건 요청) — 대기열 대신 지금 턴을 멈추고 새 지시를 바로 보낸다
   'chat.sendNow': ['지금 바로 보내기 — 답변을 멈추고 즉시 보냅니다', 'Send right now — stop the reply and send immediately'],
   'chat.partialAborted': ['일부만 답변한 상태에서 중단됨', 'Stopped mid-answer'],
+  'chat.sendNowTimeout': ['턴이 제때 멈추지 않아 보내지 못했습니다 — 입력을 복원했어요. 잠시 후 다시 시도해 주세요.', "The reply didn't stop in time, so this wasn't sent — your input was restored. Please try again shortly."],
   'chat.stop': ['중단', 'Stop'],
   'chat.cancelIncomplete': ['자동 재개는 막았지만, 러너가 실행한 일부 작업의 종료를 확인하지 못했습니다. 실행 중인 작업을 확인해 주세요.', 'Automatic resume is blocked, but some tasks started by the runner could not be confirmed stopped. Please check running tasks.'],
   'chat.aborted': ['지시대로 중단했습니다 — 입력을 복원했어요.', 'Stopped as instructed — your input was restored.'],
@@ -1735,10 +1736,16 @@ export function fmtMsgTime(lang, ts) {
   if (!ts) return '';
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
   const locale = lang === 'ko' ? 'ko-KR' : 'en-US';
   const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
-  if (d.toDateString() === new Date().toDateString()) return time;
-  const date = d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+  if (d.toDateString() === now.toDateString()) return time;
+  // 작년 이전 날짜는 연도를 붙인다(재검수 LOW, 2026-09-24) — 월·일만으로는 "9월 24일"이 올해인지
+  // 작년인지 구분이 안 돼 오래된 대화를 최근으로 오독하게 된다.
+  const dateOpts = d.getFullYear() === now.getFullYear()
+    ? { month: 'short', day: 'numeric' }
+    : { year: 'numeric', month: 'short', day: 'numeric' };
+  const date = d.toLocaleDateString(locale, dateOpts);
   return lang === 'ko' ? `${date} ${time}` : `${date}, ${time}`;
 }
 
