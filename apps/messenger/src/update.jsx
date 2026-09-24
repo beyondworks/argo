@@ -10,7 +10,10 @@ import { shouldCheckDesktop, shouldShowVersion } from './update-schedule.mjs';
 
 export function useUpdate() {
   const [st, setSt] = useState({ phase: 'idle', version: '', error: '' }); // idle | available | installing | ready | error
-  const ref = useRef({ lastCheckAt: null, dismissedVersion: null, phase: 'idle', busy: false });
+  const ref = useRef({ lastCheckAt: null, dismissedVersion: null, phase: 'idle', busy: false, upd: null });
+  // 확인마다 새로 생기는 Update는 Tauri Resource(백엔드 쪽에 열려 있는 자원)라 안 쓸 게 되면 close()로 정리한다 —
+  // 안 그러면 확인이 반복될수록(30분마다) 예전 Update가 계속 열린 채로 쌓인다.
+  const closeOld = (next) => { const old = ref.current.upd; if (old && old !== next) old.close?.().catch(() => {}); };
   useEffect(() => {
     if (!isDesktopTauri()) return undefined;
     let alive = true;
@@ -21,9 +24,10 @@ export function useUpdate() {
       try {
         const upd = await (await import('@tauri-apps/plugin-updater')).check();
         r.lastCheckAt = Date.now();
-        if (!alive) return;
-        if (upd && shouldShowVersion(upd.version, r.dismissedVersion)) { r.phase = 'available'; setSt({ phase: 'available', version: upd.version, error: '', upd }); }
-        else if (!upd && r.phase !== 'available') { r.phase = 'idle'; setSt((s) => (s.phase === 'available' ? s : { phase: 'idle', version: '', error: '' })); }
+        if (!alive) { upd?.close?.().catch(() => {}); return; }
+        if (upd && shouldShowVersion(upd.version, r.dismissedVersion)) { closeOld(upd); r.phase = 'available'; r.upd = upd; setSt({ phase: 'available', version: upd.version, error: '', upd }); }
+        else if (!upd && r.phase !== 'available') { closeOld(null); r.phase = 'idle'; r.upd = null; setSt((s) => (s.phase === 'available' ? s : { phase: 'idle', version: '', error: '' })); }
+        else upd?.close?.().catch(() => {}); // 이미 알고 있는 버전 그대로 — 새로 받은 Update는 쓸 데가 없다
       } catch (e) {
         r.lastCheckAt = Date.now();
         // 침묵 금지 — 화면 막대는 매번 띄우지 않되(기내 모드 등 반복 실패로 방해받지 않게), 진단에는 남겨 설정→진단에서 확인 가능하게 한다.
@@ -49,6 +53,8 @@ export function useUpdate() {
   const dismiss = () => {
     // "나중에" — 이 버전은 이번 실행 동안 다시 띄우지 않는다(다음 주기 확인에서 shouldShowVersion이 걸러냄). 더 새 버전이 나오면 다시 뜬다.
     if (st.phase === 'available' && st.version) ref.current.dismissedVersion = st.version;
+    ref.current.upd?.close?.().catch(() => {}); // 더 안 쓸 Update 자원 정리
+    ref.current.upd = null;
     ref.current.phase = 'idle';
     setSt({ phase: 'idle', version: '', error: '' });
   };

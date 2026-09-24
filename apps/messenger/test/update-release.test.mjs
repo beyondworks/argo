@@ -17,23 +17,24 @@ test('semver 비교 — 파싱 실패는 비교 불가(null), 실제 태그 모�
   assert.equal(parseSemver('0.10.2').minor, 10, '두 자리 숫자도 자릿수 비교가 아니라 정수 비교');
 });
 
-test('허용 호스트 — github.com·api.github.com·objects.githubusercontent.com만, 그 외는 전부 거부', () => {
+test('허용 호스트 — github.com·api.github.com·release-assets.githubusercontent.com만, 그 외는 전부 거부', () => {
   assert.equal(isAllowedHost('https://github.com/beyondworks/argo-messenger/releases/download/v0.1.38/x.apk'), true);
-  assert.equal(isAllowedHost('https://objects.githubusercontent.com/foo'), true);
+  assert.equal(isAllowedHost('https://release-assets.githubusercontent.com/foo'), true, '실측(2026-09-24): octet-stream 요청의 302 목적지');
   assert.equal(isAllowedHost('https://api.github.com/repos/x'), true);
+  assert.equal(isAllowedHost('https://objects.githubusercontent.com/foo'), false, '이 릴리스 자산 경로의 실제 리다이렉트 목적지가 아니다');
   assert.equal(isAllowedHost('https://evil.example.com/argo-messenger-android.apk'), false);
   assert.equal(isAllowedHost('https://github.com.evil.example.com/x'), false, '호스트 접두 위장 거부');
   assert.equal(isAllowedHost('not a url'), false);
-  assert.deepEqual(ALLOWED_ASSET_HOSTS, ['github.com', 'api.github.com', 'objects.githubusercontent.com']);
+  assert.deepEqual(ALLOWED_ASSET_HOSTS, ['github.com', 'api.github.com', 'release-assets.githubusercontent.com']);
 });
 
-test('GitHub 릴리스 JSON 해석 — 실제 v0.1.38 응답 모양(digest 필드 포함)을 그대로 해석한다', () => {
+test('GitHub 릴리스 JSON 해석 — 실제 v0.1.38 응답 모양(url=api.github.com 자산 id, digest 필드)을 그대로 해석한다', () => {
   const json = {
     tag_name: 'v0.1.38',
     html_url: 'https://github.com/beyondworks/argo-messenger/releases/tag/v0.1.38',
     assets: [
-      { name: 'argo-messenger-0.1.38-android.apk', url: 'https://github.com/beyondworks/argo-messenger/releases/download/v0.1.38/argo-messenger-0.1.38-android.apk', content_type: 'application/vnd.android.package-archive', size: 51984339, digest: 'sha256:514ecd831cade312abf9c937b75a5156243dfddc39a3c3e56bec2cd8c120352e' },
-      { name: 'argo-messenger-macos-apple-silicon.dmg', url: 'https://github.com/beyondworks/argo-messenger/releases/download/v0.1.38/argo-messenger-macos-apple-silicon.dmg', content_type: 'application/x-apple-diskimage', size: 1, digest: 'sha256:abc' },
+      { name: 'argo-messenger-0.1.38-android.apk', url: 'https://api.github.com/repos/beyondworks/argo-messenger/releases/assets/585817095', content_type: 'application/vnd.android.package-archive', size: 51984339, digest: 'sha256:514ecd831cade312abf9c937b75a5156243dfddc39a3c3e56bec2cd8c120352e' },
+      { name: 'argo-messenger-macos-apple-silicon.dmg', url: 'https://api.github.com/repos/beyondworks/argo-messenger/releases/assets/585817091', content_type: 'application/x-apple-diskimage', size: 1, digest: 'sha256:abc' },
       { name: 'evil.apk', url: 'https://evil.example.com/evil.apk', content_type: 'application/vnd.android.package-archive', size: 1, digest: null },
     ],
   };

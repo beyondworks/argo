@@ -25,8 +25,9 @@ export function isNewer(remoteVersion, currentVersion) {
 }
 
 // 자산·릴리스 URL은 이 호스트에서만 받는다 — 릴리스 API 응답이 가리키는 곳이 엉뚱한 서버여도(가정: 응답 변조) 따라가지 않는다.
-// objects.githubusercontent.com은 GitHub가 릴리스 자산을 실제로 서빙하는 리다이렉트 목적지(302 Location).
-export const ALLOWED_ASSET_HOSTS = ['github.com', 'api.github.com', 'objects.githubusercontent.com'];
+// release-assets.githubusercontent.com은 GitHub가 릴리스 자산을 실제로 서빙하는 리다이렉트 목적지(302 Location) —
+// 실측(2026-09-24): `curl -I -H "Accept: application/octet-stream" api.github.com/.../releases/assets/<id>` → 이 호스트로 302.
+export const ALLOWED_ASSET_HOSTS = ['github.com', 'api.github.com', 'release-assets.githubusercontent.com'];
 
 export function isAllowedHost(url) {
   try { return ALLOWED_ASSET_HOSTS.includes(new URL(url).host); } catch { return false; }

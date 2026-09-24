@@ -28,3 +28,9 @@ test('"나중에"는 같은 버전만 억제하고, 설치·완료 상태는 ref
   assert.match(src, /ref\.current\.phase = 'error';/);
   assert.match(src, /shouldShowVersion\(upd\.version, r\.dismissedVersion\)/);
 });
+
+test('안 쓰는 Update 리소스는 close()로 정리한다(30분마다 확인하는데 방치하면 쌓인다)', () => {
+  assert.match(src, /old\.close\?\.\(\)\.catch/, '새 Update로 교체될 때 이전 것을 닫는다');
+  assert.match(src, /upd\?\.close\?\.\(\)\.catch\(\(\) => \{\}\); \/\/ 이미 알고 있는 버전 그대로/, '같은 버전이면 새로 받은 Update를 바로 닫는다');
+  assert.match(src, /ref\.current\.upd\?\.close\?\.\(\)\.catch\(\(\) => \{\}\); \/\/ 더 안 쓸 Update 자원 정리/, '"나중에"를 눌러도 정리한다');
+});

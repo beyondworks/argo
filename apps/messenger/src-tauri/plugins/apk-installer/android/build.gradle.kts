@@ -8,7 +8,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        minSdk = 26 // canRequestPackageInstalls()·FileProvider 흐름은 Oreo(26) 이상을 전제
+        minSdk = 24 // 앱 minSdk(gen/android/app/build.gradle.kts)와 같아야 매니페스트 병합이 된다. API 26 전용 호출은 Kotlin에서 Build.VERSION으로 막는다.
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
