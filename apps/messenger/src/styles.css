@@ -892,6 +892,26 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 /* 프로필 이미지(2026-09-09): 사람·에이전트 아바타 이미지 + 편집 줄 + 에이전트 소개 */
 .msgr-av.img { overflow: hidden; padding: 0; }
 .msgr-av.img img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; } /* 사진 아바타도 글자 아바타처럼 — 누름이 감싼 행으로 가고, 이미지 끌기가 클릭을 가로채지 않게(D19, WebKit 이미지 끌기) */
+/* 에이전트 얼굴(2026-09-24) — 타일 배경·테두리를 걷고 도형 자체가 아바타. 배지(.star)는 그대로 위에 */
+.msgr-av.crew.face { background: transparent; border-color: transparent; border-radius: 0; padding: 0; }
+.msgr-row > .msgr-av.face, .msgr-top .members .msgr-av.face, .msgr-stack .msgr-av.face { box-shadow: none; background: transparent; border-color: transparent; }
+.msgr-face { width: 100%; height: 100%; display: block; overflow: visible; }
+.msgr-face .face { fill: #111113; stroke: #111113; stroke-linecap: round; stroke-linejoin: round; }
+.msgr-face .face circle, .msgr-face .face ellipse { stroke: none; }
+.msgr-face .face .stroke { fill: none; stroke-width: 5; }
+.msgr-face .face .line path { fill: none; stroke-width: 3.8; }
+.msgr-face .rig { transform-box: view-box; transform-origin: 50px 92px; }
+.msgr-face .body { transition: filter .4s, opacity .4s; }
+.msgr-face .blink { transform-box: fill-box; transform-origin: center; animation: msgr-face-blink 5s infinite; }
+@keyframes msgr-face-blink { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
+.msgr-face.s-work .face { animation: msgr-face-wander 2.8s ease-in-out infinite; }
+@keyframes msgr-face-wander { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-7px, -3px); } 50% { transform: translate(0, -6px); } 75% { transform: translate(7px, -3px); } }
+.msgr-face.s-ask .rig { animation: msgr-face-tilt 3s cubic-bezier(.3, 1.4, .5, 1) infinite; }
+@keyframes msgr-face-tilt { 0%, 100% { transform: rotate(0); } 20%, 70% { transform: rotate(-7deg); } }
+.msgr-face.s-done .rig { animation: msgr-face-hop 1s cubic-bezier(.3, 1.5, .5, 1) 2; }
+@keyframes msgr-face-hop { 0%, 100% { transform: translateY(0) scale(1); } 20% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-9px) scale(.96, 1.05); } 75% { transform: translateY(0) scale(1.04, .96); } }
+.msgr-face.s-off .body { filter: saturate(0); opacity: .4; }
+@media (prefers-reduced-motion: reduce) { .msgr-face *, .msgr-face { animation: none !important; transition: none !important; } }
 .msgr-avatar-edit { display: flex; align-items: center; gap: 12px; }
 .msgr-avatar-edit .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .msgr-avatar-edit .note { flex-basis: 100%; }

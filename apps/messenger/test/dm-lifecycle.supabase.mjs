@@ -23,6 +23,6 @@ function query(table){let op='select',values,cols='*',one=false;const filters=[]
  })).then(resolve,reject);},};return api;}
 export const supabase={from:query,auth:{getSession:async()=>({data:{session:{user:{id:uid,email:'fixture@example.invalid'},access_token:'fixture'}}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}})},
  rpc:async(name,args)=>result({rpc:name,args},()=>{if(name==='msgr_create_channel'){const id=`created-dm-${state.tables.msgr_channels.length}`;state.tables.msgr_channels.push(channel(id,args.kind,args.name));state.tables.msgr_channel_members.push({channel_id:id,member_kind:'user',member_id:uid},...args.others.map(m=>({channel_id:id,member_kind:m.kind,member_id:m.id})));return id;}if(name==='msgr_leave_dm'){state.tables.msgr_channels=state.tables.msgr_channels.filter(c=>c.id!==args.ch);return true;}return [];}),
- realtime:{setAuth:async()=>{}},channel:()=>{const c={on:()=>c,subscribe:()=>c,send:async()=>{},unsubscribe:async()=>{}};return c;},removeChannel:async()=>'ok',removeAllChannels:async()=>{},storage:{from:()=>({remove:async()=>({data:[],error:null})})},
+ realtime:{setAuth:async()=>{}},channel:(topic)=>{const c={on:(type,filter,handler)=>{(state.realtime||=[]).push({topic,event:filter?.event,handler});return c;},subscribe:()=>c,send:async()=>{},unsubscribe:async()=>{}};return c;},removeChannel:async()=>'ok',removeAllChannels:async()=>{},storage:{from:()=>({remove:async()=>({data:[],error:null})})},
 };
 export async function q(p){const {data,error}=await p;if(error)throw new Error(error.message);return data;}
