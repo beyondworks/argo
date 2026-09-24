@@ -2493,7 +2493,7 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, members =
       <div className="msgr-setbody">
         {tab === 'members' && org && (isAdmin
           ? <OrgCard part="members" org={org} uid={uid} members={members} channels={channels} onInvite={onInvite} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
-          : <section className="msgr-setcard"><h2>{t('org.members')} · {members.length}</h2><div className="msgr-rows">{members.map((m) => <div key={m.user_id} className="row"><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{m.user_id === org.service_user_id ? t('org.node') : t(`role.${m.role}`)}{m.user_id === uid ? ` · ${t('ui.me')}` : ''}</span></div>)}</div></section>)}
+          : <MemberListCard org={org} uid={uid} members={members} onNote={onNote} onError={onError} t={t} />)}
         {tab === 'org' && org && (isAdmin
           ? <OrgCard part="org" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
           : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
@@ -3041,6 +3041,31 @@ function InviteRow({ inv, channels, nameOfUser, busy = false, onCopy = null, onR
     </div>
   );
 }
+/** 부서·직급 — 본인이 정한다(msgr_set_member_profile, 유건 2026-09-24). 남의 것은 글자로만. 기억 자동 연결(같은 부서)의 재료. 옛 서버엔 열이 없어 null → 숨긴다. */
+function useMemberProfiles(orgId, active) {
+  const [profiles, setProfiles] = useState(null);
+  const load = useCallback(async () => { const r = await supabase.from('msgr_org_members').select('user_id, department, title').eq('org_id', orgId).is('removed_at', null); setProfiles(r.error ? null : new Map((r.data ?? []).map((x) => [x.user_id, x]))); }, [orgId]);
+  useEffect(() => { if (active) load().catch(() => setProfiles(null)); }, [active, load]);
+  return [profiles, load];
+}
+function MemberProfile({ org, m, uid, profiles, reload, onNote, onError, t }) {
+  if (!profiles || m.user_id === org.service_user_id) return null;
+  const cur = profiles.get(m.user_id) ?? {};
+  if (m.user_id !== uid) return cur.department || cur.title ? <span className="sub msgr-profile-text">{[cur.department, cur.title].filter(Boolean).join(' · ')}</span> : null;
+  const save = async (patch) => { // patch = 두 칸의 지금 값 — 한 칸 저장 직후 다른 칸을 저장해도 방금 값이 옛 값으로 되돌아가지 않는다(재검수 #699 N2)
+    const next = { department: cur.department ?? '', title: cur.title ?? '', ...patch };
+    if ((cur.department ?? '') === next.department && (cur.title ?? '') === next.title) return;
+    const res = await supabase.rpc('msgr_set_member_profile', { org: org.id, member: uid, dept: next.department, job: next.title });
+    if (res.error) return onError(/msgr_member_profile_forbidden/.test(res.error.message) ? t('org.member.profileForbidden') : friendlyErr(res.error.message, t));
+    onNote(t('org.member.profileSavedMine')); reload().catch(() => {});
+  };
+  return <span className="msgr-profile">{['department', 'title'].map((k) => <input key={`${k}:${cur[k] ?? ''}`} className="msgr-input sm" maxLength={60} defaultValue={cur[k] ?? ''} placeholder={t(`org.member.${k}`)} aria-label={t(`org.member.${k}`)} onBlur={(e) => { const [department, title] = [...e.currentTarget.parentElement.querySelectorAll('input')].map((i) => i.value.trim()); save({ department, title }); }} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />)}</span>;
+}
+/** 관리자가 아닌 사람의 멤버 탭 — 이름·역할 + 내 부서·직급 칸(남은 글자). 재검수 #699 H1: 이 갈래엔 칸이 없어 멤버·게스트가 자기 부서를 못 정했다. */
+function MemberListCard({ org, uid, members, onNote, onError, t }) {
+  const [profiles, reload] = useMemberProfiles(org.id, true);
+  return (<section className="msgr-setcard"><h2>{t('org.members')} · {members.length}</h2><div className="msgr-rows">{members.map((m) => <div key={m.user_id} className="row"><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{m.user_id === org.service_user_id ? t('org.node') : t(`role.${m.role}`)}{m.user_id === uid ? ` · ${t('ui.me')}` : ''}</span><MemberProfile org={org} m={m} uid={uid} profiles={profiles} reload={reload} onNote={onNote} onError={onError} t={t} /></div>)}</div></section>);
+}
 function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew }) {
   const { t, lang } = useT();
   const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
@@ -3091,18 +3116,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
     if (!res.data?.length) return onError(t('org.noEdit'));
     onNote(t('org.name.saved')); onOrgsChanged();
   };
-  // 부서·직급 — 관리자가 정한다(msgr_set_member_profile). 기억 자동 연결(같은 부서)의 재료. 옛 서버엔 열이 없어 null → 입력을 숨긴다.
-  const [profiles, setProfiles] = useState(null);
-  const orgAdmin = ['owner', 'admin'].includes(org.role);
-  const loadProfiles = useCallback(async () => { const r = await supabase.from('msgr_org_members').select('user_id, department, title').eq('org_id', org.id).is('removed_at', null); setProfiles(r.error ? null : new Map((r.data ?? []).map((x) => [x.user_id, x]))); }, [org.id]);
-  useEffect(() => { if (part === 'members' && orgAdmin) loadProfiles().catch(() => setProfiles(null)); }, [part, orgAdmin, loadProfiles]);
-  const saveProfile = async (m, patch) => {
-    const cur = profiles?.get(m.user_id) ?? {}; const next = { department: cur.department ?? '', title: cur.title ?? '', ...patch };
-    if ((cur.department ?? '') === next.department && (cur.title ?? '') === next.title) return;
-    const res = await supabase.rpc('msgr_set_member_profile', { org: org.id, member: m.user_id, dept: next.department, job: next.title });
-    if (res.error) return onError(/msgr_member_profile_forbidden/.test(res.error.message) ? t('org.member.noEdit') : friendlyErr(res.error.message, t));
-    onNote(t('org.member.profileSaved', { name: m.display_name || m.user_id.slice(0, 8) })); loadProfiles().catch(() => {});
-  };
+  const [profiles, loadProfiles] = useMemberProfiles(org.id, part === 'members');
   const setRole = async (m, role) => {
     if (role === m.role) return;
     setBusy(true);
@@ -3171,7 +3185,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
             {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
             {isSvc ? <span className="sub">{t('org.node')}</span> : m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
               : <div className="msgr-seg right" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
-            {orgAdmin && profiles && !isSvc && <span className="msgr-profile">{['department', 'title'].map((k) => <input key={`${m.user_id}:${k}:${profiles.get(m.user_id)?.[k] ?? ''}`} className="msgr-input sm" maxLength={60} defaultValue={profiles.get(m.user_id)?.[k] ?? ''} placeholder={t(`org.member.${k}`)} aria-label={t(`org.member.${k}`)} onBlur={(e) => saveProfile(m, { [k]: e.target.value.trim() })} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />)}</span>}
+            <MemberProfile org={org} m={m} uid={uid} profiles={profiles} reload={loadProfiles} onNote={onNote} onError={onError} t={t} />
             {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
             {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
           </div>

@@ -1271,6 +1271,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-tabbar, .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-fab,
   .msgr-phone:has(.msgr-side .msgr-inline input:focus) .msgr-tabbar, .msgr-phone:has(.msgr-side .msgr-inline input:focus) .msgr-fab { display: none; } /* 새 채널 이름 칸도 키보드 모드 */
   .msgr-phone:has(.msgr-main .msgr-composer textarea:focus) .msgr-main { padding-bottom: 8px; }
+  /* 설정·검색 등 다른 입력칸도 같은 키보드 모드 — 탭바는 키보드 뒤에 숨는데 그 자리(88px)가 남아 카드가 잘리고 빈 띠가 생겼다(유건 제보 2026-09-24 실기기) */
+  html.msgr-kb .msgr-phone .msgr-tabbar, html.msgr-kb .msgr-phone .msgr-fab { display: none; }
+  html.msgr-kb .msgr-phone .msgr-main { padding-bottom: 8px; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(2) { position: absolute; left: 44px; top: 50%; transform: translateY(-50%); width: 24px; height: 36px; min-width: 24px; min-height: 36px; } /* 흐름 밖 — 입력 시작점 위에 겹친다. 단추가 사라져도 글자 자리가 안 움직인다(유건 2026-09-11) */
   .msgr-phone .msgr-main .msgr-composer:has(textarea:not(:placeholder-shown)) .msgr-tools .tb:nth-child(2) { display: none; } /* @ 단추는 빈 입력창의 안내 역할 — 글자(또는 @)가 들어오면 사라진다. 눌러 넣은 @ 옆에 단추 @가 남아 두 개로 보였다(유건 2026-09-10) */
   .msgr-phone .msgr-main .msgr-composer .send { order: 3; width: 36px; height: 36px; min-width: 36px; min-height: 36px; max-height: 36px; padding: 0; border-radius: 50%; }

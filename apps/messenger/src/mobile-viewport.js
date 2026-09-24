@@ -1,11 +1,10 @@
 import { useEffect } from 'react';
 import { isMobilePlatform } from './platform.js';
-import { viewportVars } from './viewport-vars.mjs';
+import { viewportVars, keyboardTargetFor } from './viewport-vars.mjs';
 
 // 폰 키보드가 떠 있는 동안만 visualViewport 높이·오프셋을 CSS 변수로 넘긴다. 그 외에는 변수를 지워 CSS 기본(100dvh)이 쓰인다.
 // 부팅 직후 visualViewport가 잠깐 작게 보고된 값이 변수에 남아 셸이 화면의 2/3 높이로 굳던 제보(유건 2026-09-14, 실기기 스크린샷)를 막는다.
-const KEYBOARD_TARGET = 'input, textarea, [contenteditable="true"]';
-const keyboardOpen = () => !!document.activeElement?.closest?.(KEYBOARD_TARGET);
+const keyboardOpen = () => keyboardTargetFor(document.activeElement);
 
 export function useMobileViewport() {
   useEffect(() => {
@@ -16,6 +15,7 @@ export function useMobileViewport() {
         width: viewport?.width ?? window.innerWidth, coarse: isMobilePlatform || window.matchMedia('(pointer: coarse)').matches });
       for (const k of ['--msgr-viewport-height', '--msgr-viewport-top']) { if (vars) style.setProperty(k, vars[k]); else style.removeProperty(k); }
       document.body.classList.toggle('msgr-short-viewport', short);
+      document.documentElement.classList.toggle('msgr-kb', !!vars); // 키보드 모드 — 어떤 입력칸이든(설정의 부서·직급 칸 포함) 폰 셸이 탭바 자리를 비운다(유건 제보 2026-09-24)
     };
     update();
     viewport?.addEventListener('resize', update);
@@ -23,7 +23,8 @@ export function useMobileViewport() {
     window.addEventListener('resize', update);
     window.addEventListener('orientationchange', update);
     document.addEventListener('focusin', update);
-    document.addEventListener('focusout', () => setTimeout(update, 50)); // 키보드가 내려간 뒤 값으로
+    const onFocusOut = () => setTimeout(update, 50); // 키보드가 내려간 뒤 값으로
+    document.addEventListener('focusout', onFocusOut);
     // 두 손가락 확대·축소 차단 — WKWebView는 뷰포트 user-scalable=no를 따르지만 제스처 이벤트까지 막아 둔다(유건 2026-09-14)
     const noGesture = (e) => e.preventDefault();
     const noPinch = (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); };
@@ -35,11 +36,13 @@ export function useMobileViewport() {
       window.removeEventListener('resize', update);
       window.removeEventListener('orientationchange', update);
       document.removeEventListener('focusin', update);
+      document.removeEventListener('focusout', onFocusOut); // 언마운트 뒤 키보드 표지를 다시 켜지 않게(재검수 L5)
       document.removeEventListener('gesturestart', noGesture);
       document.removeEventListener('touchmove', noPinch);
       style.removeProperty('--msgr-viewport-height');
       style.removeProperty('--msgr-viewport-top');
       document.body.classList.remove('msgr-short-viewport');
+      document.documentElement.classList.remove('msgr-kb');
     };
   }, []);
 }
