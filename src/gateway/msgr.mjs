@@ -978,7 +978,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     const stopHeartbeat = executionHeartbeat(wsId, db, job);
     activeCtx.set(ctxKey, ctx);
-    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public' }); // 본문·사고·단계는 공개 채널만(조직 토픽은 조직 전원이 듣는다 — 검수 C-1)
+    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public' }); // 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각뿐
     let reply; let failed = false; let replyMentions = []; let replyMeta = {};
     try {
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
