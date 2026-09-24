@@ -245,7 +245,7 @@ export default function App() {
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
     if (sessionOwner.current !== uid) {
-      clearComposerSessions();
+      clearComposerSessions(sessionOwner.current ? undefined : null); // 첫 적용(앱 시작·새로고침)은 저장된 초안을 남기고, 로그아웃·계정 전환 때만 지운다
       if (sessionOwner.current) deactivatePush(supabase, sessionOwner.current);
       sessionOwner.current = uid;
     }

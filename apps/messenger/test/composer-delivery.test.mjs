@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createComposerDelivery, composerTransport, getComposerSession, clearComposerSessions } from '../src/composer-delivery.mjs';
+import { createComposerDelivery, composerTransport, getComposerSession, clearComposerSessions, draftStore } from '../src/composer-delivery.mjs';
 
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const file = (name) => ({ name, size: 4, type: 'text/plain' });
@@ -157,4 +157,48 @@ test('D50: 세션이 살아 있는 403 거절(진짜 권한 없음)은 갱신하
   const io = composerTransport(client, { orgId: 'org', chId: 'ch', uid: 'user' });
   await assert.rejects(io.message({ clientId: 'c3', body: 'b', mentions: [] }), (e) => !e.uiKey && /row-level security/.test(e.message));
   assert.deepEqual([calls.insert, calls.refresh, calls.lookup], [1, 0, 1]);
+});
+
+// 유건 2026-09-24: 새로고침(⌘R·당겨서)해도 쓰던 글이 남아야 한다. 앱을 끄면 사라지는 sessionStorage — 로그아웃은 전부 지운다.
+const memStorage = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), key: (i) => [...m.keys()][i] ?? null, get length() { return m.size; }, m }; };
+
+test('draft text, mentions and reply survive a reload (new session on the same storage); files do not', () => {
+  const storage = memStorage();
+  const before = createComposerDelivery(transport(), undefined, draftStore(storage, 'k1'));
+  before.setText('쓰던 글'); before.setMentions([{ kind: 'crew', id: 'c1' }]); before.setReplyTo({ id: 5, who: '민수', body: 'hi' }); before.setFiles([file('a.txt')]);
+  const after = createComposerDelivery(transport(), undefined, draftStore(storage, 'k1'));
+  const s = after.snapshot();
+  assert.equal(s.text, '쓰던 글'); assert.deepEqual(s.mentions, [{ kind: 'crew', id: 'c1' }]); assert.equal(s.replyTo.id, 5); assert.deepEqual(s.files, []);
+  assert.equal(createComposerDelivery(transport(), undefined, draftStore(storage, 'k2')).snapshot().text, '', 'other channel key stays empty');
+});
+
+test('sending clears the saved draft; an emptied draft is removed, not stored as empty', async () => {
+  const storage = memStorage();
+  const one = createComposerDelivery(transport(), undefined, draftStore(storage, 'k1'));
+  one.setText('보낼 글'); await one.send([]);
+  assert.equal(storage.m.size, 0);
+  one.setText('x'); one.setText('');
+  assert.equal(storage.m.size, 0);
+});
+
+test('logout clears every saved draft; broken or unavailable storage never breaks the composer', () => {
+  const storage = memStorage();
+  storage.setItem('unrelated', 'keep');
+  getComposerSession('server/user/a', transport(), storage).setText('비밀 초안');
+  clearComposerSessions(storage);
+  assert.deepEqual([...storage.m.keys()], ['unrelated']);
+  storage.setItem(draftStore(storage, 'k9').id, '{not json');
+  assert.equal(createComposerDelivery(transport(), undefined, draftStore(storage, 'k9')).snapshot().text, '');
+  const throwing = { getItem() { throw Error('denied'); }, setItem() { throw Error('denied'); }, removeItem() { throw Error('denied'); }, key: () => null, length: 0 };
+  const s = createComposerDelivery(transport(), undefined, draftStore(throwing, 'k1')); s.setText('ok');
+  assert.equal(s.snapshot().text, 'ok');
+  assert.equal(createComposerDelivery(transport(), undefined, draftStore(undefined, 'k1')).snapshot().text, '');
+});
+
+test('first session application (app start / reload) keeps saved drafts; null storage skips the wipe', () => {
+  const storage = memStorage();
+  getComposerSession('server/user/a', transport(), storage).setText('새로고침 전 글');
+  clearComposerSessions(null); // App.applySession: 이전 소유자 없음 = 첫 적용
+  assert.equal(getComposerSession('server/user/a', transport(), storage).snapshot().text, '새로고침 전 글');
+  clearComposerSessions(storage);
 });
