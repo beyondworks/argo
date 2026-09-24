@@ -221,7 +221,9 @@ where
         }) {
             // soundNamed looks only at the bundle Resources root (and Library/Sounds); a
             // subdirectory path silently falls back to the system default sound.
-            let resource = NSString::from_str(&format!("{name}.caf"));
+            // macOS UN plays AIFF/WAV but not our CAF (it falls back to the default sound —
+            // measured 2026-09-24 with a signed test app: caf default, aiff/wav custom). iOS keeps .caf.
+            let resource = NSString::from_str(&format!("{name}.aiff"));
             let notification_sound = UNNotificationSound::soundNamed(&resource);
             content.setSound(Some(&notification_sound));
         }
