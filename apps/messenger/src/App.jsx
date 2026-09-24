@@ -116,7 +116,7 @@ function CrewFace({ id, name, ctx }) {
   const eye = (x, y) => g.eyes === 'stroke' ? <path d={`M${x - 0.6} ${y - 5}q1.2 5 .4 10`} className="stroke" /> : g.eyes === 'bean' ? <ellipse cx={x} cy={y} rx="3.5" ry="5.4" /> : <circle cx={x} cy={y} r="4.2" />;
   const { L, R, cy } = g;
   return (
-    <svg className={`msgr-face s-${st}`} viewBox="0 0 100 100" role="img" aria-label={name ?? ''}>
+    <svg className={`msgr-face s-${st}`} viewBox="0 0 100 100" aria-hidden="true">
       <g className="rig"><path className="body" d={g.d} fill={g.color} />
         <g className="face">
           {st === 'idle' && <g className="blink">{eye(L, cy)}{eye(R, cy)}</g>}
