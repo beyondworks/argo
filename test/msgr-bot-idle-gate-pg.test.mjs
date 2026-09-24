@@ -231,3 +231,27 @@ test('R: 과거 시각으로 넣은 글과 늦게 커밋된 멘션이 겹쳐도 
   rescan(); assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [x], '느린 멘션이 배달된다');
   assert.deepEqual(updates(x), []); m1 = x;
 });
+
+// 2026-09-24 라이브 실측: 배달 판정(msgr_delivery_allowed)이 커서 뒤 글이 아니라 조직 글 전부에 불려 봇당 714ms → 봇 11개 동시 스캔이
+// 3초 statement timeout에 걸려 VPS 봇 첫 반응이 30~50초였다. 판정 횟수를 세어, 커서 아래 옛 글에는 판정이 불리지 않음을 잠근다.
+test('S: 스캔의 배달 판정은 커서 뒤 후보에만 불린다(조직 옛 글 전부에 부르지 않는다)', { skip }, () => {
+  const old = Number(sql(`select count(*) from public.msgr_messages where org_id = '${ORG}' and id <= ${m1}`));
+  assert.ok(old >= 20, `옛 글이 충분해야 의미가 있다: ${old}`);
+  sql(`create sequence if not exists public.spy_delivery_calls;
+       alter function public.msgr_delivery_allowed(uuid, bigint) rename to msgr_delivery_allowed_real;
+       create function public.msgr_delivery_allowed(p_crew uuid, p_source bigint) returns boolean language plpgsql security definer set search_path = public, pg_temp as $f$
+       begin perform nextval('public.spy_delivery_calls'); return public.msgr_delivery_allowed_real(p_crew, p_source); end $f$;
+       grant execute on function public.msgr_delivery_allowed(uuid, bigint) to anon, authenticated, service_role;`);
+  try {
+    const fresh = post(PUB, '@헤르메스 스캔 범위', mention());
+    const before = Number(sql(`select nextval('public.spy_delivery_calls')`));
+    rescan();
+    assert.deepEqual(updates(m1).map((u) => String(u.update_id)), [fresh]);
+    const calls = Number(sql(`select nextval('public.spy_delivery_calls')`)) - before - 1;
+    assert.ok(calls <= 10, `판정 ${calls}회 — 옛 글 ${old}개에 불리면 안 된다`);
+    assert.deepEqual(updates(fresh), []); m1 = fresh;
+  } finally {
+    sql(`drop function public.msgr_delivery_allowed(uuid, bigint);
+         alter function public.msgr_delivery_allowed_real(uuid, bigint) rename to msgr_delivery_allowed;`);
+  }
+});
