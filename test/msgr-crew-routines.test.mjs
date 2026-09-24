@@ -118,6 +118,28 @@ test('mirrorRoutines(N2) — 크루가 이번 틱에 없으면(회수·오프보
   assert.equal(calls, 2, '캐시가 남아 있으면 서버가 비어 있는데도 다시 안 올린다(마이그레이션 주석 "다음 sync가 채운다"가 거짓이 되는 결함)');
 });
 
+test('mirrorRoutines(N5) — 회사(wsId) 2개를 번갈아 돌려도 유휴 상태에서는 서로의 캐시를 안 지운다', async () => {
+  _resetRoutineMirrorForTest();
+  let calls = 0;
+  const db = { async syncCrewRoutines() { calls++; return { kept: 1 }; } };
+  const load = async () => [routine()];
+  const ws1Crews = [{ id: 'a1', org_id: 'O', slug: 'seoyun' }, { id: 'a2', org_id: 'O', slug: 'seoyun' }];
+  const ws2Crews = [{ id: 'b1', org_id: 'O', slug: 'seoyun' }, { id: 'b2', org_id: 'O', slug: 'seoyun' }];
+  for (let i = 0; i < 5; i++) { await mirrorRoutines('ws1', { db, crews: ws1Crews, load }); await mirrorRoutines('ws2', { db, crews: ws2Crews, load }); }
+  assert.equal(calls, 4, '두 회사 × 크루 2명 = 첫 틱에만 4번, 나머지 4틱은 유휴(옛 코드는 회사가 번갈아 서로 캐시를 지워 매 틱 4번씩 더 불렀다)');
+});
+
+test('mirrorRoutines(L-b) — sync 응답 kept가 보낸 행 수와 다르면 "이미 올렸다" 캐시를 남기지 않는다', async () => {
+  _resetRoutineMirrorForTest();
+  let calls = 0;
+  const db = { async syncCrewRoutines() { calls++; return { kept: 0 }; } }; // 서버가 실제로는 0개만 반영(예: 회수·재파견 경합)
+  const load = async () => [routine()]; // 로컬은 유효한 루틴 1개(기대 kept=1)
+  await mirrorRoutines('ws1', { db, crews: [CREW], load, log: () => {} });
+  assert.equal(calls, 1);
+  await mirrorRoutines('ws1', { db, crews: [CREW], load, log: () => {} }); // 같은 내용이라도 kept 불일치였으니 다시 확인해야 한다
+  assert.equal(calls, 2, 'kept가 기대와 다르면 캐시를 안 남겨 다음 틱에 다시 확인한다');
+});
+
 test('decideRoutineEdit — 로컬이 편집보다 나중이면 superseded, 로컬이 없으면 notfound, 아니면 apply', () => {
   assert.equal(decideRoutineEdit(null, { created_at: '2026-09-20T00:00:00Z' }), 'notfound');
   assert.equal(decideRoutineEdit(routine({ editedAt: '2026-09-21T00:00:00Z' }), { created_at: '2026-09-20T00:00:00Z' }), 'superseded');

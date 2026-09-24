@@ -30,32 +30,45 @@ export function buildRoutineRows(routines, crewSlug) {
   }));
 }
 
-const pushed = new Map(); // crewId → 마지막으로 올린 rows의 JSON. 같은 내용이면 폴마다 RPC를 부르지 않는다.
-const failedHash = new Map(); // crewId → 영구 오류로 실패한 rows의 JSON. 내용이 그대로면 재시도 폭풍을 만들지 않는다(M2·N1).
-const backoffUntil = new Map(); // crewId → 다음 재시도 가능 시각(일시 오류 — N1). 내용이 같아도 이 시각 전엔 안 부른다.
-const backoffAttempts = new Map(); // crewId → 연속 일시 오류 횟수(지수 백오프 계산용).
+// 재검수(3차) N5: 캐시를 wsId별로 나눈다. 크루 id 자체는 전역 uuid라 겹치지 않지만, forgetMissingCrews가
+// "이번 호출의 크루 목록에 없으면 지운다"를 하나의 공유 맵에 걸면 회사(wsId) A를 처리할 때 그 목록에 없는
+// 회사 B의 크루 캐시까지 지워버린다 — 한 프로세스가 회사 여러 개를 번갈아 돌리는 drain 루프에서 두 회사가
+// 서로의 캐시를 계속 비워 유휴 상태에서도 매 틱 전부 재동기화됐다.
+const pushedByWs = new Map();     // wsId → Map(crewId → 마지막으로 올린 rows의 JSON)
+const failedHashByWs = new Map(); // wsId → Map(crewId → 영구 오류로 실패한 rows의 JSON)
+const backoffUntilByWs = new Map();   // wsId → Map(crewId → 다음 재시도 가능 시각)
+const backoffAttemptsByWs = new Map(); // wsId → Map(crewId → 연속 일시 오류 횟수)
 const BACKOFF_BASE_MS = 15_000, BACKOFF_CAP_MS = 300_000; // 15초 → 최대 5분
-let unsupportedUntil = 0; // N2-b: 옛 서버(RPC 없음) 판정을 프로세스 단위로 기억 — 10분 안엔 RPC를 다시 안 부른다.
+let unsupportedUntil = 0; // N2-b: 옛 서버(RPC 없음) 판정은 wsId 무관 — 같은 세션이 붙는 같은 서버라 프로세스 단위로 기억한다.
 const UNSUPPORTED_RECHECK_MS = 10 * 60_000;
+const forWs = (byWs, wsId) => { if (!byWs.has(wsId)) byWs.set(wsId, new Map()); return byWs.get(wsId); };
 
-export const _resetRoutineMirrorForTest = () => { pushed.clear(); failedHash.clear(); backoffUntil.clear(); backoffAttempts.clear(); unsupportedUntil = 0; };
+export const _resetRoutineMirrorForTest = () => { pushedByWs.clear(); failedHashByWs.clear(); backoffUntilByWs.clear(); backoffAttemptsByWs.clear(); unsupportedUntil = 0; };
 
-/** 이번 틱의 크루 집합에서 빠진 크루의 캐시를 지운다(N2) — 회수(active→available)·오프보딩으로 서버 트리거가
-    미러 행을 지운 뒤 재파견(다시 active)되면, 크루 id는 같아도 서버 상태가 리셋된 것이므로 다시 올려야 한다.
-    myCrews()가 status='active'만 돌려주므로 "이번 틱에 없다"는 곧 "active를 벗어났다"는 신호다. */
-function forgetMissingCrews(currentIds) {
-  for (const map of [pushed, failedHash, backoffUntil, backoffAttempts]) for (const id of [...map.keys()]) if (!currentIds.has(id)) map.delete(id);
+/** 이번 틱의 크루 집합에서 빠진 크루의 캐시를 지운다(N2) — 이 wsId 몫의 맵만 건드린다(N5: 다른 회사 캐시는 안 건드림).
+    회수(active→available)·오프보딩으로 서버 트리거가 미러 행을 지운 뒤 재파견(다시 active)되면, 크루 id는 같아도
+    서버 상태가 리셋된 것이므로 다시 올려야 한다. myCrews()가 status='active'만 돌려주므로 "이번 틱에 없다"는
+    곧 "active를 벗어났다"는 신호다. */
+function forgetMissingCrews(wsId, currentIds) {
+  for (const byWs of [pushedByWs, failedHashByWs, backoffUntilByWs, backoffAttemptsByWs]) {
+    const map = byWs.get(wsId);
+    if (!map) continue;
+    for (const id of [...map.keys()]) if (!currentIds.has(id)) map.delete(id);
+  }
 }
 
 /** 크루마다 로컬 루틴 스냅샷을 서버에 미러 — 바뀐 크루에만 syncCrewRoutines를 부른다.
     M2: 한 크루의 실패가 나머지 크루의 미러를 막지 않는다(크루별 try/catch).
     N1: 영구 오류만 "같은 내용이면 재시도 안 함"에 걸리고, 일시 오류는 지수 백오프로 다음 틱들에 다시 시도한다.
-    N2-b: 옛 서버 판정은 프로세스 단위로 10분 캐시 — 매 틱 크루 수만큼 RPC를 부르지 않는다. */
+    N2-b: 옛 서버 판정은 프로세스 단위로 10분 캐시 — 매 틱 크루 수만큼 RPC를 부르지 않는다.
+    N5: 캐시는 wsId별로 격리 — 회사(워크스페이스) 여러 개를 번갈아 돌려도 서로의 캐시를 안 지운다. */
 export async function mirrorRoutines(wsId, { db, crews, load = loadRoutines, log = console.error, now = Date.now } = {}) {
+  const pushed = forWs(pushedByWs, wsId), failedHash = forWs(failedHashByWs, wsId);
+  const backoffUntil = forWs(backoffUntilByWs, wsId), backoffAttempts = forWs(backoffAttemptsByWs, wsId);
   // crews는 매 호출 db.myCrews()의 실제 스냅샷(빈 배열도 "지금 active 크루가 없다"는 진짜 신호 — 조회 실패는
   // 호출부가 던진다) — 그래서 비어 있어도 먼저 캐시를 정리한다. 안 그러면 크루 전체가 회수된 뒤 재파견돼도
   // 캐시가 안 지워진 채 남아 "다음 sync가 다시 채운다"(마이그레이션 주석)가 거짓이 된다(N2).
-  forgetMissingCrews(new Set((crews ?? []).map((c) => c.id)));
+  forgetMissingCrews(wsId, new Set((crews ?? []).map((c) => c.id)));
   if (!crews?.length) return { synced: 0, failed: 0, unsupported: false };
   if (now() < unsupportedUntil) return { synced: 0, failed: 0, unsupported: true };
   const routines = await load(wsId);
@@ -69,7 +82,14 @@ export async function mirrorRoutines(wsId, { db, crews, load = loadRoutines, log
     try {
       const result = await db.syncCrewRoutines(crew.org_id, crew.id, rows);
       if (result === undefined) { unsupported = true; unsupportedUntil = now() + UNSUPPORTED_RECHECK_MS; break; } // 옛 서버(M4) — 다음 크루도 같은 서버라 더 두드리지 않는다
-      pushed.set(crew.id, json);
+      // L-b: 응답의 kept(서버가 실제로 반영한 행 수)가 우리가 보낸 유효 행 수(malformed로 스스로 건너뛴 것 제외)와
+      // 다르면 서버 상태가 우리 예상과 어긋난 것 — 다음 틱에 무조건 다시 확인하도록 "이미 올렸다" 캐시를 남기지 않는다.
+      const expectedKept = rows.filter((r) => r.ext_id && r.title && r.prompt && r.schedule).length;
+      if (typeof result?.kept === 'number' && result.kept !== expectedKept) {
+        pushed.delete(crew.id);
+      } else {
+        pushed.set(crew.id, json);
+      }
       failedHash.delete(crew.id);
       backoffUntil.delete(crew.id);
       backoffAttempts.delete(crew.id);
