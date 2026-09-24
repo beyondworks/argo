@@ -243,7 +243,7 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
     {!crews.length && <p className="work-notice">{t('work.noCrew')}</p>}
     {editing && <AutomationForm key={editing.id ?? 'new'} value={editing} crews={crews} channel={channel} t={t} disabled={disabled} act={act} onClose={() => setEditing(null)} onSaved={() => { if (!editing.id) source.setPage(0); setEditing(null); setNotice(t('automation.saved')); }} />}
     {editingRoutine && <RoutineForm key={editingRoutine.id} value={editingRoutine} t={t} disabled={disabled} act={act} onClose={() => setEditingRoutine(null)} onSaved={() => { setEditingRoutine(null); setNotice(t('automation.saved')); }} />}
-    {source.error && <p className="work-notice error" role="alert">{errorText(source.error, t)}</p>}
+    {source.error && <div className="work-notice error" role="alert"><p>{errorText(source.error, t)}</p><button className="btn sm" onClick={source.refresh}>{t('work.retry')}</button></div>}
     {source.rows === null && <p className="work-note" role="status">{t('ui.loading')}</p>}
     {empty && <p className="work-empty">{t('automation.empty')}</p>}
     {(source.rows ?? []).map((automation) => <article className="work-item" key={automation.id}>
@@ -257,16 +257,19 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
       </div>
       {history === automation.id && <RunHistory automationId={automation.id} own={automation.created_by === uid} channelId={channel.id} crews={crews} t={t} lang={lang} />}
     </article>)}
-    {routines.error && <p className="work-notice error" role="alert">{missingSchema(routines.error) ? t('automation.notifications.upgrade') : errorText(routines.error, t)}</p>}
+    {routines.error && <div className="work-notice error" role="alert"><p>{missingSchema(routines.error) ? t('automation.notifications.upgrade') : errorText(routines.error, t)}</p><button className="btn sm" onClick={routines.refresh}>{t('work.retry')}</button></div>}
     {(routines.rows ?? []).map((routine) => <article className="work-item" key={routine.id}>
       <div className="work-item-top"><span className="work-item-title"><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span><span className={`work-status ${routine.enabled ? 'running' : 'cancelled'}`}>{t(routine.enabled ? 'automation.enabled' : 'automation.paused')}</span></div>
       <p className="work-text">{routine.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === routine.crew_id)?.display_name ?? t('work.crew.unavailable')} · <RoutineSchedule schedule={routine.schedule} t={t} /></p>
       {routine.pendingEdit?.status === 'pending' && <p className="work-notice">{t('routine.pending')}</p>}
+      {/* replaced = 메신저 쪽 자동 폴드(더 새 메신저 편집이 이걸 흡수, H3) — superseded = PC가 "로컬이 이 편집보다 나중"으로 판단해 버림(H1/H4). 원인이 다르므로 문구도 다르다(M3). */}
+      {routine.pendingEdit?.status === 'replaced' && <p className="work-notice">{t('routine.replaced')}</p>}
       {routine.pendingEdit?.status === 'superseded' && <p className="work-notice">{t('routine.superseded')}</p>}
       {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
       <div className="work-actions">
-        <button className="btn sm" disabled={disabled} onClick={() => setEditingRoutine(routine)}>{t('automation.edit')}</button>
+        {/* H3: 편집 폼의 초기값은 아직 반영 전인 대기 patch를 덮어써서 보여준다 — 소유자가 두 번째 수정을 시작할 때 낡은(적용 전) 값에서 출발하지 않게 */}
+        <button className="btn sm" disabled={disabled} onClick={() => setEditingRoutine(routine.pendingEdit?.status === 'pending' && routine.pendingEdit.op === 'update' ? { ...routine, ...routine.pendingEdit.patch } : routine)}>{t('automation.edit')}</button>
         <button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { enabled: !routine.enabled } })), () => routines.refresh())}>{t(routine.enabled ? 'automation.pause' : 'automation.resume')}</button>
         <button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting({ ...routine, kind: 'routine' })}>{t('automation.delete')}</button>
       </div>
@@ -283,7 +286,9 @@ function Schedule({ schedule = {}, t }) {
 function RoutineSchedule({ schedule = {}, t }) {
   if (schedule.type === 'interval') return <>{t('automation.every', { n: schedule.everyMinutes })}</>;
   if (schedule.type === 'once') return <>{t('routine.kind.once')} {schedule.date} {schedule.time}</>;
-  return <>{t(`routine.kind.${schedule.type === 'weekly' ? 'weekly' : 'daily'}`)} {schedule.type === 'weekly' ? (schedule.dows ?? []).map((day) => t(`routine.day.${day}`)).join(' · ') : ''} {(schedule.times ?? [schedule.time]).filter(Boolean).join(', ')} · {schedule.tz ?? ''}</>;
+  // L1: 옛 형식(dow 단수만 있고 dows 배열이 없는 아주 오래된 루틴)도 요일 하나로 보여준다.
+  const dows = schedule.dows ?? (schedule.dow != null ? [schedule.dow] : []);
+  return <>{t(`routine.kind.${schedule.type === 'weekly' ? 'weekly' : 'daily'}`)} {schedule.type === 'weekly' ? dows.map((day) => t(`routine.day.${day}`)).join(' · ') : ''} {(schedule.times ?? [schedule.time]).filter(Boolean).join(', ')} · {schedule.tz ?? ''}</>;
 }
 
 function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSaved }) {
@@ -357,10 +362,11 @@ function RoutineForm({ value, t, disabled, act, onClose, onSaved }) {
   const [type, setType] = useState(schedule.type === 'weekly' ? 'weekly' : schedule.type === 'interval' ? 'interval' : 'daily');
   const [time, setTime] = useState(schedule.time ?? '09:00');
   const [minutes, setMinutes] = useState(schedule.everyMinutes ?? 60);
-  const [dows, setDows] = useState(schedule.dows ?? [1, 2, 3, 4, 5]);
+  const [dows, setDows] = useState(schedule.dows ?? (schedule.dow != null ? [schedule.dow] : [1, 2, 3, 4, 5])); // L1: dow만 있는 옛 형식도 dows로 해석
   const [invalid, setInvalid] = useState(false);
   const originalSchedule = useRef(schedule.type === 'interval' ? JSON.stringify({ type: 'interval', everyMinutes: schedule.everyMinutes })
-    : JSON.stringify({ type: schedule.type ?? 'daily', time: schedule.time, ...((schedule.type ?? 'daily') === 'weekly' ? { dows: schedule.dows } : {}) }));
+    // L1: 원본 비교도 같은 dow→dows 승격을 거쳐야 한다 — 안 그러면 옛 형식 루틴은 아무것도 안 바꿔도 스케줄이 "바뀐 것"으로 잡혀 덮어써진다
+    : JSON.stringify({ type: schedule.type ?? 'daily', time: schedule.time, ...((schedule.type ?? 'daily') === 'weekly' ? { dows: schedule.dows ?? (schedule.dow != null ? [schedule.dow] : undefined) } : {}) }));
   const form = useRef(null);
   useEffect(() => { form.current?.scrollIntoView({ block: 'nearest' }); }, []);
   const save = (event) => {
@@ -387,6 +393,8 @@ function RoutineForm({ value, t, disabled, act, onClose, onSaved }) {
       <div className="work-grid"><label className="work-field"><span>{t('automation.repeat')}</span><select value={type} onChange={(event) => setType(event.target.value)} disabled={disabled}>{['daily', 'weekly', 'interval'].map((key) => <option key={key} value={key}>{t(`routine.kind.${key}`)}</option>)}</select></label>
         {type === 'interval' ? <label className="work-field"><span>{t('automation.minutes')}</span><input type="number" min="10" max="1440" step="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} required disabled={disabled} /></label> : <label className="work-field"><span>{t('automation.time')}</span><input type="time" value={time} onChange={(event) => setTime(event.target.value)} required disabled={disabled} /></label>}</div>
       {type === 'weekly' && <fieldset className="work-days"><legend>{t('automation.days')}</legend>{[0, 1, 2, 3, 4, 5, 6].map((day) => <label key={day}><input type="checkbox" checked={dows.includes(day)} disabled={disabled} onChange={(event) => setDows((current) => event.target.checked ? [...current, day].sort() : current.filter((v) => v !== day))} />{t(`routine.day.${day}`)}</label>)}</fieldset>}
+      {/* L2: 반복 종류를 바꾸면 Argo 쪽 루프·검증 설정(interval 전용)이 초기화된다 — 메신저는 그 설정을 못 보므로 경고만 */}
+      {type !== (schedule.type ?? 'daily') && <p className="work-note">{t('routine.kind.change.warning')}</p>}
     </> : <p className="work-note">{t('routine.schedule.readonly')} <RoutineSchedule schedule={schedule} t={t} /></p>}
     {invalid && <p className="work-notice error" role="alert">{t('work.error.schedule')}</p>}
     <div className="work-actions"><button className="btn btn-primary" disabled={disabled || !title.trim() || !prompt.trim()}>{t('ui.save')}</button><button type="button" className="btn" disabled={disabled} onClick={onClose}>{t('ui.cancel')}</button></div>

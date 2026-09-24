@@ -137,6 +137,7 @@ export const DICT = {
   'automation.source.argo': ["Argo", "Argo"],
   'routine.pending': ["수정을 저장했습니다. 담당 에이전트의 Argo가 켜지면 반영됩니다.", "Change saved. It will apply once the agent's Argo comes back online."],
   'routine.superseded': ["이 수정보다 나중에 Argo에서 바뀐 내용이 있어 메신저 쪽 수정은 적용되지 않았습니다. 최신 내용을 확인하세요.", "Argo changed this routine more recently, so this messenger edit was not applied. Check the latest content."],
+  'routine.replaced': ["이후에 메신저에서 다시 수정해 이 수정은 더 최신 수정에 합쳐졌습니다.", "This edit was folded into a newer edit made afterward in the messenger."],
   'routine.failed': ["수정을 반영하지 못했습니다.", "The change could not be applied."],
   'routine.delete.requested': ["삭제를 요청했습니다. 담당 에이전트의 Argo가 켜지면 반영됩니다.", "Deletion requested. It will apply once the agent's Argo comes back online."],
   'routine.schedule.readonly': ["여러 시각으로 예약된 루틴이라 시각·요일은 Argo 앱에서만 바꿀 수 있습니다 —", "This routine has multiple scheduled times, so the time and days can only be changed in the Argo app —"],
@@ -151,6 +152,7 @@ export const DICT = {
   'routine.day.4': ["목", "Thu"],
   'routine.day.5': ["금", "Fri"],
   'routine.day.6': ["토", "Sat"],
+  'routine.kind.change.warning': ["반복 종류를 바꾸면 Argo 쪽의 반복 실행 상한·검증 설정이 초기화될 수 있습니다.", "Changing the repeat type may reset Argo-side loop limits and verification settings."],
 
   'app.title': ['Argo 메신저', 'Argo Messenger'],
   'auth.apple': ['Apple로 계속하기', 'Continue with Apple'],
