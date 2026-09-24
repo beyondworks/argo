@@ -60,7 +60,9 @@ begin
   if auth.uid() is null then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
   -- M5: 오프보딩·회수(detached/available)된 크루는 더 미러할 수 없다 — 트리거(msgr_crew_routines_offboard)가
   -- 상태 전이 즉시 기존 행을 지우므로, 여기서 막지 않으면 사라진 미러가 바로 되살아난다.
+  -- 재검수(2차) 기한 지난 게스트: msgr_channel_member_ok와 같은 기준(m.expires_at is null or > now())으로 거절한다.
   if not exists (select 1 from public.msgr_crews c join public.msgr_org_members m on m.org_id = c.org_id and m.user_id = c.owner_user_id and m.removed_at is null
+        and (m.expires_at is null or m.expires_at > now())
       where c.id = p_crew and c.org_id = p_org and c.owner_user_id = auth.uid() and c.status = 'active') then
     raise exception 'msgr_routine_forbidden' using errcode = '42501';
   end if;
@@ -94,6 +96,8 @@ end $$;
 -- replaced로 접는다(superseded와 구분 — 이건 "더 새 메신저 편집이 폴드했다"는 뜻이지 PC가 로컬을 더 최신으로 판단한 게 아니다).
 -- delete는 항상 우선 — pending이 delete였거나 이번이 delete면 최종 op는 delete, patch는 비운다.
 -- M1: update의 patch는 title/prompt/schedule/enabled만 허용 — agentSlug·notifications·loop·verify는 메신저에서 못 바꾼다.
+-- 재검수(2차) N3: 필드별 jsonb 타입도 검사한다 — enabled는 boolean, title·prompt는 string, schedule은 object.
+-- 문자열 "false"를 boolean 취급하지 않게(예전엔 PC 쪽에서 (row->>'enabled')::boolean로 강제 형변환이 일어나 "false"도 true가 됐다).
 create function public.msgr_crew_routine_edit(p_routine uuid, p_op text, p_patch jsonb default '{}'::jsonb) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare r public.msgr_crew_routines; e public.msgr_crew_routine_edits; prior public.msgr_crew_routine_edits; merged jsonb; final_op text; had_prior boolean;
@@ -101,17 +105,28 @@ begin
   if auth.uid() is null or p_op not in ('update','delete') then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
   select * into r from public.msgr_crew_routines where id = p_routine and owner_user_id = auth.uid();
   if not found then raise exception 'msgr_routine_forbidden' using errcode = '42501'; end if;
+  -- 재검수(2차) 기한 지난 게스트: 루틴 소유자가 이 조직의 유효(만료 안 된) 멤버가 아니면 편집을 거절한다.
+  if not exists (select 1 from public.msgr_org_members m where m.org_id = r.org_id and m.user_id = auth.uid() and m.removed_at is null
+      and (m.expires_at is null or m.expires_at > now())) then
+    raise exception 'msgr_routine_forbidden' using errcode = '42501';
+  end if;
   if p_op = 'update' then
     if jsonb_typeof(p_patch) is distinct from 'object' then raise exception 'msgr_routine_invalid_patch'; end if;
     if (coalesce(p_patch,'{}'::jsonb) - array['title','prompt','schedule','enabled']) <> '{}'::jsonb then raise exception 'msgr_routine_invalid_patch'; end if;
+    if p_patch ? 'enabled' and jsonb_typeof(p_patch->'enabled') <> 'boolean' then raise exception 'msgr_routine_invalid_patch'; end if;
+    if p_patch ? 'title' and jsonb_typeof(p_patch->'title') <> 'string' then raise exception 'msgr_routine_invalid_patch'; end if;
+    if p_patch ? 'prompt' and jsonb_typeof(p_patch->'prompt') <> 'string' then raise exception 'msgr_routine_invalid_patch'; end if;
+    if p_patch ? 'schedule' and jsonb_typeof(p_patch->'schedule') <> 'object' then raise exception 'msgr_routine_invalid_patch'; end if;
   end if;
   select * into prior from public.msgr_crew_routine_edits where routine_id = p_routine and status = 'pending' order by created_at desc limit 1;
   had_prior := found;
   if had_prior then update public.msgr_crew_routine_edits set status = 'replaced' where id = prior.id; end if;
-  if p_op = 'delete' or (had_prior and prior.op = 'delete') then
+  -- 새로 들어온 편집이 최종 결정이다: 이번이 delete면 이전 patch를 버리고 delete가 이긴다. 이번이 update면
+  -- (이전이 delete였더라도) update가 이긴다 — 그래야 "지워달라 했다가 마음이 바뀌어 수정으로 되돌리는" 흐름이 막히지 않는다.
+  if p_op = 'delete' then
     final_op := 'delete'; merged := '{}'::jsonb;
   else
-    merged := coalesce(case when had_prior then prior.patch else null end, '{}'::jsonb) || coalesce(p_patch, '{}'::jsonb);
+    merged := coalesce(case when had_prior and prior.op = 'update' then prior.patch else null end, '{}'::jsonb) || coalesce(p_patch, '{}'::jsonb);
     final_op := 'update';
   end if;
   insert into public.msgr_crew_routine_edits(routine_id, owner_user_id, op, patch, created_by)
@@ -122,6 +137,9 @@ end $$;
 -- PC → 서버: 이 조직에서 **내 크루 목록(p_crews)에 한정해** 대기 편집을 가져온다.
 -- H2: 크루로 거르지 않으면, PC가 다른 워크스페이스(다른 로컬 폴더)의 크루가 낀 org의 편집까지 끌어와 로컬에 없는
 -- routine으로 오판(noop)해 applied로 닫아버린다 — 실제로는 그 편집이 아직 처리된 적이 없는데도 사라진다.
+-- 이 마이그레이션은 아직 라이브에 적용하지 않았다(코드 리뷰 중 인자가 uuid 1개 → uuid,uuid[] 2개로 바뀜) — 개별
+-- 함수 라이브 적용(scripts/msgr-live-apply.sh) 등으로 옛 1-인자 버전이 어딘가(스테이징 등) 이미 존재할 가능성을 막는다.
+drop function if exists public.msgr_crew_routine_edits_pending(uuid);
 create function public.msgr_crew_routine_edits_pending(p_org uuid, p_crews uuid[]) returns table(edit_id uuid, routine_id uuid, crew_id uuid, ext_id text, op text, patch jsonb, created_at timestamptz)
 language sql stable security definer set search_path = public, pg_temp as $$
   select e.id, e.routine_id, r.crew_id, r.ext_id, e.op, e.patch, e.created_at

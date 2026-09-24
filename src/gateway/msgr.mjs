@@ -250,19 +250,19 @@ export function makeDb(client) {
         undefined → 호출부(mirrorRoutines)가 옛 서버로 취급해 조용히 물러난다(M4, crewMemory와 같은 신호). */
     async syncCrewRoutines(orgId, crewId, rows) {
       const { data, error } = await client.rpc('msgr_crew_routines_sync', { p_org: orgId, p_crew: crewId, p_rows: rows });
-      if (error) { if (['PGRST202', '42883', 'PGRST205'].includes(error.code)) return undefined; throw new Error(`msgr db: ${error.message}`); }
+      if (error) { if (['PGRST202', '42883', 'PGRST205'].includes(error.code)) return undefined; throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); }
       return data;
     },
     /** 메신저에서 건 대기 편집 — 이 조직·내 크루 id 목록(crewIds)에 한정한다(H2: 크루로 거르지 않으면 다른
         워크스페이스의 크루가 낀 조직의 편집까지 끌어와 오판한다). 옛 서버면 undefined. */
     async pendingRoutineEdits(orgId, crewIds) {
       const { data, error } = await client.rpc('msgr_crew_routine_edits_pending', { p_org: orgId, p_crews: crewIds });
-      if (error) { if (['PGRST202', '42883', 'PGRST205'].includes(error.code)) return undefined; throw new Error(`msgr db: ${error.message}`); }
+      if (error) { if (['PGRST202', '42883', 'PGRST205'].includes(error.code)) return undefined; throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); }
       return data ?? [];
     },
     async routineEditDone(id, status, error = null) {
       const { error: e } = await client.rpc('msgr_crew_routine_edit_done', { p_id: id, p_status: status, p_error: error });
-      if (e) { if (['PGRST202', '42883', 'PGRST205'].includes(e.code)) return undefined; throw new Error(`msgr db: ${e.message}`); }
+      if (e) { if (['PGRST202', '42883', 'PGRST205'].includes(e.code)) return undefined; throw Object.assign(new Error(`msgr db: ${e.message}`), { code: e.code }); }
     },
     /** G-2 조직 문서 미러용: 조직 이름·슬러그, 문서 목록(가벼운 열), 본문(바뀐 것만) — RLS가 열람 범위를 정한다(채널 문서는 열람자만). */
     async org(orgId) { return unwrap(await client.from('msgr_orgs').select('id, slug, name').eq('id', orgId).maybeSingle()); },

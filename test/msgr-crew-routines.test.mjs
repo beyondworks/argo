@@ -4,7 +4,7 @@
 // 아래 "PR #701 분리 검수" 절은 스크래치패드 프로브(probe.mjs·probe2.mjs)를 옮긴 회귀 테스트다 — 옛 코드
 // (updatedAt을 patchRoutine 단일 관문에서 찍던 버전, pendingRoutineEdits가 orgId만 받던 버전)에서 각각
 // red였음을 커밋 직전에 git stash로 확인했다(보고 참조).
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,9 @@ import { join } from 'node:path';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-msgr-routines-'));
 const rt = await import('../src/routines.mjs');
 const { buildRoutineRows, decideRoutineEdit, mirrorRoutines, applyRoutineEdits, _resetRoutineMirrorForTest } = await import('../src/gateway/msgr-routines.mjs');
+// 모듈 상태(pushed·failedHash·backoff·옛 서버 10분 캐시)가 파일 안 테스트끼리 새지 않게 매 테스트 전에 비운다 —
+// 특히 "옛 서버" 판정은 실제 벽시계로 10분을 기억하므로, 리셋이 없으면 뒤따르는 테스트가 전부 unsupported로 잘못 짧게 끝난다.
+beforeEach(() => _resetRoutineMirrorForTest());
 
 const CREW = { id: 'crew-1', org_id: 'org-1', slug: 'seoyun' };
 const routine = (over = {}) => ({ id: 'r1', agentSlug: 'seoyun', title: '아침 보고', prompt: '오늘 할 일 정리', schedule: { type: 'daily', time: '09:00', times: ['09:00'] }, enabled: true, editedAt: '2026-09-20T00:00:00.000Z', ...over });
@@ -50,10 +53,10 @@ test('mirrorRoutines — 크루 목록이 비면 아무 것도 안 한다', asyn
   assert.equal(calls, 0);
 });
 
-test('mirrorRoutines(M2) — 한 크루가 실패해도 다른 크루는 미러되고, 같은 실패 내용은 재시도하지 않는다', async () => {
+test('mirrorRoutines(M2) — 한 크루가 실패해도 다른 크루는 미러되고, 같은 영구 실패 내용은 재시도하지 않는다', async () => {
   _resetRoutineMirrorForTest();
   const calls = [];
-  const db = { async syncCrewRoutines(org, crewId) { calls.push(crewId); if (crewId === 'bad') throw new Error('poison'); return {}; } };
+  const db = { async syncCrewRoutines(org, crewId) { calls.push(crewId); if (crewId === 'bad') throw Object.assign(new Error('forbidden'), { code: '42501' }); return {}; } };
   const crews = [{ id: 'bad', org_id: 'org-1', slug: 'bad' }, { id: 'good', org_id: 'org-1', slug: 'good' }];
   const load = async () => [routine({ id: 'rb', agentSlug: 'bad' }), routine({ id: 'rg', agentSlug: 'good' })];
   const out1 = await mirrorRoutines('ws1', { db, crews, load, log: () => {} });
@@ -61,13 +64,58 @@ test('mirrorRoutines(M2) — 한 크루가 실패해도 다른 크루는 미러�
   assert.deepEqual(calls, ['bad', 'good'], '실패한 크루 다음도 계속 돈다');
   calls.length = 0;
   await mirrorRoutines('ws1', { db, crews, load, log: () => {} }); // 같은 내용으로 재시도 — bad는 다시 안 부른다, good은 이미 성공해 스킵
-  assert.deepEqual(calls, [], '직전과 같은 실패 내용·같은 성공 내용은 둘 다 다시 안 부른다');
+  assert.deepEqual(calls, [], '직전과 같은 영구 실패 내용·같은 성공 내용은 둘 다 다시 안 부른다');
+});
+
+test('mirrorRoutines(N1) — 일시 오류(코드 없음·네트워크류)는 해시로 영구히 막지 않고 백오프 뒤 다시 시도한다', async () => {
+  _resetRoutineMirrorForTest();
+  let calls = 0, fail = true;
+  const db = { async syncCrewRoutines() { calls++; if (fail) throw new Error('fetch failed (network)'); return {}; } };
+  let now = 1_000_000;
+  const load = async () => [routine()];
+  await mirrorRoutines('ws1', { db, crews: [CREW], load, log: () => {}, now: () => now });
+  assert.equal(calls, 1);
+  await mirrorRoutines('ws1', { db, crews: [CREW], load, log: () => {}, now: () => now }); // 바로 다음 틱 — 아직 백오프 중, 안 부른다
+  assert.equal(calls, 1, '백오프 창 안에서는 같은 내용이라도 다시 두드리지 않는다(폭풍 방지)');
+  now += 20_000; // 15초 백오프를 넘김
+  fail = false; // 서버 정상화
+  await mirrorRoutines('ws1', { db, crews: [CREW], load, log: () => {}, now: () => now });
+  assert.equal(calls, 2, '일시 오류는 failedHash에 안 걸려 내용이 그대로여도 백오프가 끝나면 다시 시도한다');
 });
 
 test('mirrorRoutines(M4) — 옛 서버(undefined 반환)는 실패로 세지 않는다', async () => {
   _resetRoutineMirrorForTest();
   const out = await mirrorRoutines('ws1', { db: { async syncCrewRoutines() { return undefined; } }, crews: [CREW], load: async () => [routine()] });
   assert.equal(out.failed, 0); assert.equal(out.unsupported, true);
+});
+
+test('mirrorRoutines(N2-b) — 옛 서버 판정은 프로세스 단위로 10분 기억한다(크루 수만큼 매 틱 RPC를 안 부른다)', async () => {
+  _resetRoutineMirrorForTest();
+  let calls = 0;
+  const db = { async syncCrewRoutines() { calls++; return undefined; } };
+  const crews = Array.from({ length: 10 }, (_, i) => ({ id: 'c' + i, org_id: 'A', slug: 'a' }));
+  let now = 1_000_000;
+  await mirrorRoutines('ws1', { db, crews, load: async () => [routine()], now: () => now });
+  assert.equal(calls, 1, '첫 크루에서 옛 서버로 판정되면 같은 틱의 나머지 크루는 더 두드리지 않는다');
+  for (let i = 0; i < 3; i++) await mirrorRoutines('ws1', { db, crews, load: async () => [routine()], now: () => now });
+  assert.equal(calls, 1, '10분 안의 다음 틱들은 RPC를 아예 안 부른다');
+  now += 11 * 60_000; // 10분 경과
+  await mirrorRoutines('ws1', { db, crews, load: async () => [routine()], now: () => now });
+  assert.equal(calls, 2, '10분이 지나면 다시 한 번 확인한다');
+});
+
+test('mirrorRoutines(N2) — 크루가 이번 틱에 없으면(회수·오프보딩) 캐시가 지워져 재파견 때 다시 미러한다', async () => {
+  _resetRoutineMirrorForTest();
+  let calls = 0;
+  const db = { async syncCrewRoutines() { calls++; return {}; } };
+  const load = async () => [routine()];
+  await mirrorRoutines('ws1', { db, crews: [CREW], load });
+  assert.equal(calls, 1);
+  await mirrorRoutines('ws1', { db, crews: [CREW], load }); // 같은 내용 — 캐시로 스킵
+  assert.equal(calls, 1);
+  await mirrorRoutines('ws1', { db, crews: [], load }); // 회수·오프보딩 — myCrews가 이 크루를 더 안 돌려준다
+  await mirrorRoutines('ws1', { db, crews: [CREW], load }); // 재파견 — 서버 쪽 미러 행은 트리거가 지웠으니 다시 올려야 한다
+  assert.equal(calls, 2, '캐시가 남아 있으면 서버가 비어 있는데도 다시 안 올린다(마이그레이션 주석 "다음 sync가 채운다"가 거짓이 되는 결함)');
 });
 
 test('decideRoutineEdit — 로컬이 편집보다 나중이면 superseded, 로컬이 없으면 notfound, 아니면 apply', () => {

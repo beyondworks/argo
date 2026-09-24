@@ -241,9 +241,10 @@ function loopStopMessage(reason, detail, lang, loop) {
 
 /** 결재 승인 후 재개 — approval-actions(kind:'loop')가 부른다. 거절이면 부르지 않는다(정지 유지). */
 export async function resumeLoop(wsId, id) {
+  // 재검수(2차): 결재로 재개하는 것도 사람이 한 결정 — editedAt을 찍는다(메신저의 "나중 수정이 이긴다" 판정이 이 재개를 안다).
   return patchRoutine(wsId, id, (r) => (isLoopRoutine(r)
-    ? { enabled: true, loop: { ...r.loop, stoppedReason: null, stoppedDetail: '', missingVerdicts: 0 } }
-    : { enabled: true }));
+    ? { enabled: true, editedAt: new Date().toISOString(), loop: { ...r.loop, stoppedReason: null, stoppedDetail: '', missingVerdicts: 0 } }
+    : { enabled: true, editedAt: new Date().toISOString() }));
 }
 
 /** 이 기기의 시간대 — 로컬 우선 제품이라 서버는 사용자 컴퓨터에서 돈다. 즉 여기서 읽은 시간대가

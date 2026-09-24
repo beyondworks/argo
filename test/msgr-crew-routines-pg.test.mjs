@@ -125,6 +125,10 @@ test('edits(H3) — 폴드는 이전 patch를 새 patch에 병합한다(얕은 �
   assert.equal(last(asUser(U.owner, `select patch::text from public.msgr_crew_routine_edits where id='${e2}'`)), '{"title": "1차", "enabled": false}', '1차 편집의 title이 2차 patch에 살아있어야 한다(H3 폴드 손실 방지)');
   const e3 = last(asUser(U.owner, `select id::text from (select (public.msgr_crew_routine_edit('${rid}','delete','{}'::jsonb))->>'id' as id) x`));
   assert.equal(last(asUser(U.owner, `select op||' '||patch::text from public.msgr_crew_routine_edits where id='${e3}'`)), 'delete {}', 'delete는 이전 patch를 이어받지 않고 우선한다');
+  // 재검수(2차, probe2-pg "C delete-then-update"): 지워달라 했다가 다시 update로 마음을 바꾸면 최종은 update다 — delete가 영구히 못 박히면 안 된다.
+  const e4 = last(asUser(U.owner, `select id::text from (select (public.msgr_crew_routine_edit('${rid}','update','{"title":"after-delete"}'::jsonb))->>'id' as id) x`));
+  assert.equal(last(asUser(U.owner, `select op||' '||patch::text from public.msgr_crew_routine_edits where id='${e4}'`)), 'update {"title": "after-delete"}');
+  assert.equal(last(asUser(U.owner, `select status from public.msgr_crew_routine_edits where id='${e3}'`)), 'replaced');
 });
 
 test('edits(M1) — patch 허용 목록 밖 필드(agentSlug 등)는 서버가 거절한다', { skip }, () => {
@@ -133,6 +137,30 @@ test('edits(M1) — patch 허용 목록 밖 필드(agentSlug 등)는 서버가 �
   fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"agentSlug":"evil"}'::jsonb)`), /msgr_routine_invalid_patch/, 'agentSlug');
   fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"notifications":{"channels":["telegram"]}}'::jsonb)`), /msgr_routine_invalid_patch/, 'notifications');
   fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"loop":{"maxUsd":999}}'::jsonb)`), /msgr_routine_invalid_patch/, 'loop');
+});
+
+test('edits(N3) — patch 필드 타입도 검사한다(문자열 "false"가 boolean으로 통과하면 안 된다)', { skip }, () => {
+  asUser(U.owner, `select public.msgr_crew_routines_sync(${rowsSql})`);
+  const rid = last(asUser(U.owner, `select id::text from public.msgr_crew_routines where crew_id='${CREW}' and ext_id='r1'`));
+  fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"enabled":"false"}'::jsonb)`), /msgr_routine_invalid_patch/, 'enabled 문자열');
+  fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"title":123}'::jsonb)`), /msgr_routine_invalid_patch/, 'title 숫자');
+  fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"prompt":123}'::jsonb)`), /msgr_routine_invalid_patch/, 'prompt 숫자');
+  fails(asUserRaw(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"schedule":"daily"}'::jsonb)`), /msgr_routine_invalid_patch/, 'schedule 문자열');
+  asUser(U.owner, `select public.msgr_crew_routine_edit('${rid}','update','{"enabled":false}'::jsonb)`); // 진짜 boolean은 통과
+  assert.equal(last(asUser(U.owner, `select (patch->>'enabled') from public.msgr_crew_routine_edits where routine_id='${rid}' and status='pending'`)), 'false');
+});
+
+test('만료된 게스트 — sync·edit 모두 거절(msgr_channel_member_ok와 같은 기준: expires_at)', { skip }, () => {
+  // U.guest를 ORG의 시한부 멤버로 합류시킨다(role: member — 게스트 role은 채널 지정이 따로 필요해 여기서는 만료 판정만 본다).
+  const code = last(asUser(U.owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.owner}') returning code`));
+  assert.equal(last(asUser(U.guest, `select public.msgr_accept_invite('${code}')`)), ORG);
+  const guestCrew = last(asUser(U.guest, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.guest}', 'lean', 'guestcrew', 'GuestCrew') returning id`));
+  asUser(U.guest, `select public.msgr_crew_routines_sync('${ORG}','${guestCrew}','[{"ext_id":"g1","title":"t","prompt":"p","schedule":{"type":"daily"}}]'::jsonb)`);
+  const grid = last(asUser(U.guest, `select id::text from public.msgr_crew_routines where crew_id='${guestCrew}'`));
+  assert.notEqual(grid, '');
+  sql(`update public.msgr_org_members set expires_at = now() - interval '1 day' where org_id='${ORG}' and user_id='${U.guest}'`);
+  fails(asUserRaw(U.guest, `select public.msgr_crew_routines_sync('${ORG}','${guestCrew}','[{"ext_id":"g1","title":"t","prompt":"p","schedule":{"type":"daily"}}]'::jsonb)`), /42501|msgr_routine_forbidden/, '기한 지난 게스트 sync');
+  fails(asUserRaw(U.guest, `select public.msgr_crew_routine_edit('${grid}','update','{"title":"x"}'::jsonb)`), /42501|msgr_routine_forbidden/, '기한 지난 게스트 edit');
 });
 
 test('edits — 다른 조직원은 edits 표도 0행', { skip }, () => {
