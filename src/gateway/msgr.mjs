@@ -978,8 +978,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     const stopHeartbeat = executionHeartbeat(wsId, db, job);
     activeCtx.set(ctxKey, ctx);
-    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public' }); // 본문·사고·단계는 공개 채널만(조직 토픽은 조직 전원이 듣는다 — 검수 C-1)
-    let reply; let failed = false; let turnTrace = null; let replyMentions = []; let replyMeta = {};
+    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public' }); // 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각뿐
+    let reply; let failed = false; let replyMentions = []; let replyMeta = {};
     try {
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
@@ -1013,7 +1013,6 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     // 결과를 큐 파일에 먼저 보존하고 DB 답글+실행 완료를 원자적으로 게시한다. 실패 재시도는 위 checkpoint 갈래만 타며 유료 턴을 다시 돌리지 않는다.
     let row = null;
-    const { costUsd: _cost, ...trace } = turnTrace ?? {}; // 턴 비용은 채널 열람자 전원에게 보일 값이 아니다(검수 3R L-11) — 소유자 화면은 활동 타임라인이 정본
     const replyRow = {
       channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId, // 명시 — 트리거는 null일 때 reply_to(크루 글)로 채워 스레드가 끊긴다(검수 2R C-2)
       client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
@@ -1021,10 +1020,10 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     };
     const metaBase = { ...replyMeta, hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}) }; // hop/origin=연쇄 상한·정책 기준
     try {
-      row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: { ...(turnTrace ? { trace } : {}), ...metaBase } }, executionMeta); // trace=궤적 드롭다운(실패 턴은 없음)
+      row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta); // 궤적은 저장하지 않는다(유건 결정 2026-09-24 — 메신저엔 '답변 준비 중'만)
     } catch (e) {
-      // 궤적(steps detail 무제한)이 meta 64KB 제약을 넘기면 답글째 사라진다 — 궤적 없이 한 번 더(유료 턴 결과 보존, 검수 3R L-7)
-      console.error(`[argo] msgr 답글 insert 실패(${wsId}/${job.slug}/${job.msgId}) — 궤적 없이 재시도:`, e.message);
+      // 게시가 한 번 실패해도 유료 턴 결과를 버리지 않는다 — 한 번 더(일시 오류)
+      console.error(`[argo] msgr 답글 insert 실패(${wsId}/${job.slug}/${job.msgId}) — 재시도:`, e.message);
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta);
     }
     if (!row || failed) return; // 중복(다른 기기가 먼저 답함) 또는 실패 — 첨부 없음
