@@ -59,4 +59,30 @@ test('main과 똑같은 파일은 검문을 통과한다(다음 단계인 접속
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test('main이 앞서 나간 뒤(스크립트가 main 최신과 다름) 옛 사본은 거부 — fetch로 최신 main과 비교한다(재검수 M2)', () => {
+  const f = fixture();
+  try {
+    const seed = join(f.root, 'seed');
+    writeFileSync(join(seed, 'scripts/msgr-live-apply.sh'), `${readScript(seed)}\n# main에 들어온 새 검문\n`);
+    git(seed, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qam', 'newer'); git(seed, 'push', '-q', join(f.root, 'origin.git'), 'main');
+    const r = f.run('20990101000000_merged');
+    assert.equal(r.code, 4); assert.match(r.out, /적용 스크립트가 main 최신과 다릅니다/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('main을 못 가져오면 거부(재검수 M2)', () => {
+  const f = fixture();
+  try {
+    git(f.work, 'remote', 'set-url', 'origin', join(f.root, 'no-such.git'));
+    const r = f.run('20990101000000_merged');
+    assert.equal(r.code, 4); assert.match(r.out, /origin\/main을 가져오지 못했습니다/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('확장자를 붙여도 같은 파일로 본다(재검수 L3)', () => {
+  const f = fixture();
+  try { const r = f.run('20990101000000_merged.sql'); assert.notEqual(r.code, 4); assert.doesNotMatch(r.out, /거부/); }
+  finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 function readScript(dir) { return execFileSync('cat', [join(dir, 'scripts/msgr-live-apply.sh')]).toString(); }
