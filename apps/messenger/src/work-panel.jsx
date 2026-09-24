@@ -87,11 +87,14 @@ function useCrewRoutines(channel, crews, enabled) {
       query = isDm ? query.eq('crew_id', dmCrewId) : query.eq('channel_id', channel.id);
       const rows = await checked(query);
       const ids = (rows ?? []).map((r) => r.id);
-      const edits = ids.length ? await checked(supabase.from('msgr_crew_routine_edits').select('routine_id,status,op,error,created_at').in('routine_id', ids).neq('status', 'applied').order('created_at', { ascending: false })) : [];
+      // R1(재검수 2차): applied를 걸러내고 가져오면 "루틴별 최신"이 아니라 "루틴별 최신 비-applied"가 된다 — 그 뒤에
+      // 실제로 더 최신인 applied가 있어도 모르고 낡은 replaced/superseded를 보여준다. 전부 가져와 진짜 최신을 고른 뒤,
+      // 그 최신이 applied가 아닐 때만 안내를 보여준다.
+      const edits = ids.length ? await checked(supabase.from('msgr_crew_routine_edits').select('routine_id,status,op,error,created_at').in('routine_id', ids).order('created_at', { ascending: false })) : [];
       if (request !== revision.current) return;
       const latest = new Map();
       for (const e of edits ?? []) if (!latest.has(e.routine_id)) latest.set(e.routine_id, e);
-      setState({ rows: (rows ?? []).map((r) => ({ ...r, pendingEdit: latest.get(r.id) ?? null })), error: null });
+      setState({ rows: (rows ?? []).map((r) => { const e = latest.get(r.id); return { ...r, pendingEdit: e && e.status !== 'applied' ? e : null }; }), error: null });
     } catch (error) { if (request === revision.current) setState((old) => ({ ...old, error })); }
   }, [enabled, isDm, dmCrewId, channel.id]);
   useEffect(() => {
@@ -258,8 +261,13 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
       {history === automation.id && <RunHistory automationId={automation.id} own={automation.created_by === uid} channelId={channel.id} crews={crews} t={t} lang={lang} />}
     </article>)}
     {routines.error && <div className="work-notice error" role="alert"><p>{missingSchema(routines.error) ? t('automation.notifications.upgrade') : errorText(routines.error, t)}</p><button className="btn sm" onClick={routines.refresh}>{t('work.retry')}</button></div>}
-    {(routines.rows ?? []).map((routine) => <article className="work-item" key={routine.id}>
-      <div className="work-item-top"><span className="work-item-title"><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span><span className={`work-status ${routine.enabled ? 'running' : 'cancelled'}`}>{t(routine.enabled ? 'automation.enabled' : 'automation.paused')}</span></div>
+    {(routines.rows ?? []).map((routine) => {
+      // N4(재검수 2차): 대기 중(pending)인 update patch가 enabled를 바꿨다면, 아직 PC가 반영하기 전이라도 그 값을
+      // 기준으로 보여주고 토글한다 — 안 그러면 반영 전에 다시 누른 버튼이 서버 값(옛 값)을 기준으로 다시 걸려 원래 뜻대로 안 돌아간다.
+      const pendingPatch = routine.pendingEdit?.status === 'pending' && routine.pendingEdit.op === 'update' ? routine.pendingEdit.patch : null;
+      const effectiveEnabled = pendingPatch && 'enabled' in pendingPatch ? pendingPatch.enabled : routine.enabled;
+      return <article className="work-item" key={routine.id}>
+      <div className="work-item-top"><span className="work-item-title"><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span><span className={`work-status ${effectiveEnabled ? 'running' : 'cancelled'}`}>{t(effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span></div>
       <p className="work-text">{routine.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === routine.crew_id)?.display_name ?? t('work.crew.unavailable')} · <RoutineSchedule schedule={routine.schedule} t={t} /></p>
       {routine.pendingEdit?.status === 'pending' && <p className="work-notice">{t('routine.pending')}</p>}
@@ -269,11 +277,12 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
       {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
       <div className="work-actions">
         {/* H3: 편집 폼의 초기값은 아직 반영 전인 대기 patch를 덮어써서 보여준다 — 소유자가 두 번째 수정을 시작할 때 낡은(적용 전) 값에서 출발하지 않게 */}
-        <button className="btn sm" disabled={disabled} onClick={() => setEditingRoutine(routine.pendingEdit?.status === 'pending' && routine.pendingEdit.op === 'update' ? { ...routine, ...routine.pendingEdit.patch } : routine)}>{t('automation.edit')}</button>
-        <button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { enabled: !routine.enabled } })), () => routines.refresh())}>{t(routine.enabled ? 'automation.pause' : 'automation.resume')}</button>
+        <button className="btn sm" disabled={disabled} onClick={() => setEditingRoutine(pendingPatch ? { ...routine, ...pendingPatch } : routine)}>{t('automation.edit')}</button>
+        <button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { enabled: !effectiveEnabled } })), () => routines.refresh())}>{t(effectiveEnabled ? 'automation.pause' : 'automation.resume')}</button>
         <button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting({ ...routine, kind: 'routine' })}>{t('automation.delete')}</button>
       </div>
-    </article>)}
+    </article>;
+    })}
     <Pages source={source} disabled={busy} t={t} />
   </>;
 }
