@@ -3022,14 +3022,14 @@ function MemberProfile({ org, m, uid, profiles, reload, onNote, onError, t }) {
   if (!profiles || m.user_id === org.service_user_id) return null;
   const cur = profiles.get(m.user_id) ?? {};
   if (m.user_id !== uid) return cur.department || cur.title ? <span className="sub msgr-profile-text">{[cur.department, cur.title].filter(Boolean).join(' · ')}</span> : null;
-  const save = async (patch) => {
+  const save = async (patch) => { // patch = 두 칸의 지금 값 — 한 칸 저장 직후 다른 칸을 저장해도 방금 값이 옛 값으로 되돌아가지 않는다(재검수 #699 N2)
     const next = { department: cur.department ?? '', title: cur.title ?? '', ...patch };
     if ((cur.department ?? '') === next.department && (cur.title ?? '') === next.title) return;
     const res = await supabase.rpc('msgr_set_member_profile', { org: org.id, member: uid, dept: next.department, job: next.title });
     if (res.error) return onError(/msgr_member_profile_forbidden/.test(res.error.message) ? t('org.member.profileForbidden') : friendlyErr(res.error.message, t));
     onNote(t('org.member.profileSavedMine')); reload().catch(() => {});
   };
-  return <span className="msgr-profile">{['department', 'title'].map((k) => <input key={`${k}:${cur[k] ?? ''}`} className="msgr-input sm" maxLength={60} defaultValue={cur[k] ?? ''} placeholder={t(`org.member.${k}`)} aria-label={t(`org.member.${k}`)} onBlur={(e) => save({ [k]: e.target.value.trim() })} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />)}</span>;
+  return <span className="msgr-profile">{['department', 'title'].map((k) => <input key={`${k}:${cur[k] ?? ''}`} className="msgr-input sm" maxLength={60} defaultValue={cur[k] ?? ''} placeholder={t(`org.member.${k}`)} aria-label={t(`org.member.${k}`)} onBlur={(e) => { const [department, title] = [...e.currentTarget.parentElement.querySelectorAll('input')].map((i) => i.value.trim()); save({ department, title }); }} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />)}</span>;
 }
 /** 관리자가 아닌 사람의 멤버 탭 — 이름·역할 + 내 부서·직급 칸(남은 글자). 재검수 #699 H1: 이 갈래엔 칸이 없어 멤버·게스트가 자기 부서를 못 정했다. */
 function MemberListCard({ org, uid, members, onNote, onError, t }) {

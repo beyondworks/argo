@@ -10,6 +10,7 @@ const comp = src.slice(src.indexOf('function MemberProfile('), src.indexOf('func
 test('한 컴포넌트가 정한다 — 남은 글자, 나만 입력칸, 저장은 언제나 내 id로', () => {
   assert.match(comp, /if \(m\.user_id !== uid\) return [^;]*msgr-profile-text/);
   assert.match(comp, /member: uid,/, '남의 id로 저장 요청을 만들 수 없다');
+  assert.match(comp, /querySelectorAll\('input'\)\]\.map\(\(i\) => i\.value\.trim\(\)\); save\(\{ department, title \}\)/, '두 칸을 함께 보낸다(N2)');
 });
 
 test('관리자·비관리자 멤버 탭 모두 같은 컴포넌트(재검수 #699 H1 — 비관리자 갈래엔 칸이 없었다)', () => {
