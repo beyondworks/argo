@@ -39,7 +39,7 @@
     "resources": {
       "../../../integrations/hermes-argo-msgr/": "agents/hermes-argo-msgr/",
       "../../../integrations/openclaw-argo-msgr/": "agents/openclaw-argo-msgr/",
-      "sounds/*.caf": ""
+      "sounds/*.aiff": ""
     }
   },
   "plugins": {
