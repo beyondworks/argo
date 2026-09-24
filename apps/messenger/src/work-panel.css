@@ -27,6 +27,8 @@
 .work-item { padding: 16px; margin: 12px 0; border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
 .work-item-top { align-items: flex-start; }
 .work-item-top strong { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; white-space: pre-wrap; }
+.work-item-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.work-source-badge { white-space: nowrap; font-size: 10px; font-weight: 650; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-3); }
 .work-status { white-space: nowrap; font-size: 11px; padding: 4px 8px; border-radius: 8px; background: var(--card-2); }
 .work-status.blocked { color: var(--danger); }
 .work-status.completed { font-weight: 650; }

@@ -71,6 +71,39 @@ function useRows(table, channelId, enabled, capabilityIds = '') {
   return { ...state, refresh, page, setPage };
 }
 
+/** 업무 > 자동화 1단계 — Argo PC 루틴 미러(msgr_crew_routines). 1:1 방은 그 에이전트의 루틴 전부, 채널은 결과가
+    그 채널로 가는 루틴만(channel_id 일치). RLS가 이미 소유자 행만 보여주므로 여기서는 범위만 고른다. */
+function useCrewRoutines(channel, crews, enabled) {
+  const [state, setState] = useState({ rows: null, error: null });
+  const revision = useRef(0);
+  const isDm = channel.kind === 'dm';
+  const dmCrewId = isDm ? (crews[0]?.id ?? null) : null;
+  const scopeKey = isDm ? `dm:${dmCrewId ?? ''}` : `ch:${channel.id}`;
+  const refresh = useCallback(async () => {
+    if (!enabled || (isDm && !dmCrewId)) { setState({ rows: [], error: null }); return; }
+    const request = ++revision.current;
+    try {
+      let query = supabase.from('msgr_crew_routines').select('id,crew_id,title,prompt,schedule,enabled,channel_id,updated_at').order('title', { ascending: true });
+      query = isDm ? query.eq('crew_id', dmCrewId) : query.eq('channel_id', channel.id);
+      const rows = await checked(query);
+      const ids = (rows ?? []).map((r) => r.id);
+      const edits = ids.length ? await checked(supabase.from('msgr_crew_routine_edits').select('routine_id,status,op,error,created_at').in('routine_id', ids).neq('status', 'applied').order('created_at', { ascending: false })) : [];
+      if (request !== revision.current) return;
+      const latest = new Map();
+      for (const e of edits ?? []) if (!latest.has(e.routine_id)) latest.set(e.routine_id, e);
+      setState({ rows: (rows ?? []).map((r) => ({ ...r, pendingEdit: latest.get(r.id) ?? null })), error: null });
+    } catch (error) { if (request === revision.current) setState((old) => ({ ...old, error })); }
+  }, [enabled, isDm, dmCrewId, channel.id]);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true; let timer;
+    const poll = async () => { if (document.visibilityState !== 'hidden') await refresh(); if (active) timer = setTimeout(poll, POLL_MS); };
+    poll();
+    return () => { active = false; clearTimeout(timer); revision.current++; };
+  }, [refresh, enabled, scopeKey]);
+  return { ...state, refresh };
+}
+
 function CrewSelect({ crews, value, onChange, automatic, t, disabled }) {
   return <label className="work-field"><span>{t(automatic ? 'work.lead' : 'automation.crew')}</span>
     <select className="msgr-select" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} required={!automatic}>
@@ -101,6 +134,7 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
   const eligible = crews.filter((crew) => crew.status === 'active');
   const work = useRows('msgr_work_runs', channel.id, tab === 'team', eligible.map((crew) => crew.id).sort().join(','));
   const automations = useRows('msgr_automations', channel.id, tab === 'automations');
+  const routines = useCrewRoutines(channel, eligible, tab === 'automations');
   const closeRef = useRef(onClose); closeRef.current = onClose;
   useEffect(() => {
     mounted.current = true;
@@ -113,7 +147,7 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
     actionLock.current = true; setBusy(true); setError(null); setNotice('');
     try {
       const data = await operation();
-      if (mounted.current) { done?.(data); await Promise.all([work.refresh(), automations.refresh()]); }
+      if (mounted.current) { done?.(data); await Promise.all([work.refresh(), automations.refresh(), routines.refresh()]); }
     } catch (failure) { if (mounted.current) setError(failure); }
     finally { actionLock.current = false; if (mounted.current) setBusy(false); }
   };
@@ -134,10 +168,10 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
         {error && <p className="work-notice error" role="alert">{errorText(error, t)}</p>}
         {notice && <p className="work-notice" role="status">{notice}</p>}
         {tab === 'team' ? <TeamWork key="team" work={work} channel={channel} crews={eligible.filter((crew) => crew.hosting === 'bot' || (work.capabilities ?? []).some((row) => row.id === crew.id && row.work_protocol >= 1))} uid={uid} isAdmin={isAdmin} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} />
-          : <Automations key="automations" source={automations} channel={channel} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
+          : <Automations key="automations" source={automations} routines={routines} channel={channel} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
       </div>
   </>);
-  const confirm = deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t('automation.deleted')); })} /></div>;
+  const confirm = deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(deleting.kind === 'routine' ? supabase.rpc('msgr_crew_routine_edit', { p_routine: deleting.id, p_op: 'delete' }) : supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t(deleting.kind === 'routine' ? 'routine.delete.requested' : 'automation.deleted')); })} /></div>;
   if (sheet) return (<div className="msgr-sheetwrap">
     <div className="msgr-scrim clear" onClick={() => { if (!busy && !deleting) onClose(); }} />
     <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} role="dialog" aria-label={t('work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
@@ -195,19 +229,25 @@ function TeamWork({ work, channel, crews, uid, isAdmin, disabled, busy, act, t, 
   </>;
 }
 
-function Automations({ source, channel, crews, uid, disabled, busy, act, t, lang, setDeleting, setNotice }) {
+function Automations({ source, routines, channel, crews, uid, disabled, busy, act, t, lang, setDeleting, setNotice }) {
   const [editing, setEditing] = useState(null);
+  const [editingRoutine, setEditingRoutine] = useState(null);
   const [history, setHistory] = useState(null);
   const runRequests = useRef(new Map());
+  const bothLoaded = source.rows !== null && routines.rows !== null;
+  const empty = bothLoaded && !source.rows.length && !(routines.rows ?? []).length;
   return <>
     <p className="work-note">{t('automation.intro')}</p>
     {source.rows !== null && !source.error && <SchedulerStatus t={t} />}
-    <div className="work-section-heading"><h3>{t('work.tab.automations')}</h3><div className="work-actions"><button className="btn sm" onClick={source.refresh} disabled={busy}>{t('work.refresh')}</button><button className="btn btn-primary sm" disabled={disabled || !crews.length || !!source.error || source.rows === null} onClick={() => setEditing({})}>{t('automation.new')}</button></div></div>
+    <div className="work-section-heading"><h3>{t('work.tab.automations')}</h3><div className="work-actions"><button className="btn sm" onClick={() => { source.refresh(); routines.refresh(); }} disabled={busy}>{t('work.refresh')}</button><button className="btn btn-primary sm" disabled={disabled || !crews.length || !!source.error || source.rows === null} onClick={() => setEditing({})}>{t('automation.new')}</button></div></div>
     {!crews.length && <p className="work-notice">{t('work.noCrew')}</p>}
     {editing && <AutomationForm key={editing.id ?? 'new'} value={editing} crews={crews} channel={channel} t={t} disabled={disabled} act={act} onClose={() => setEditing(null)} onSaved={() => { if (!editing.id) source.setPage(0); setEditing(null); setNotice(t('automation.saved')); }} />}
-    <StateNotice {...source} empty={t('automation.empty')} t={t} />
+    {editingRoutine && <RoutineForm key={editingRoutine.id} value={editingRoutine} t={t} disabled={disabled} act={act} onClose={() => setEditingRoutine(null)} onSaved={() => { setEditingRoutine(null); setNotice(t('automation.saved')); }} />}
+    {source.error && <p className="work-notice error" role="alert">{errorText(source.error, t)}</p>}
+    {source.rows === null && <p className="work-note" role="status">{t('ui.loading')}</p>}
+    {empty && <p className="work-empty">{t('automation.empty')}</p>}
     {(source.rows ?? []).map((automation) => <article className="work-item" key={automation.id}>
-      <div className="work-item-top"><strong>{automation.title}</strong><span className={`work-status ${automation.enabled ? 'running' : 'cancelled'}`}>{t(automation.enabled ? 'automation.enabled' : 'automation.paused')}</span></div>
+      <div className="work-item-top"><span className="work-item-title"><strong>{automation.title}</strong><span className="work-source-badge">{t('automation.source.msgr')}</span></span><span className={`work-status ${automation.enabled ? 'running' : 'cancelled'}`}>{t(automation.enabled ? 'automation.enabled' : 'automation.paused')}</span></div>
       <p className="work-text">{automation.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === automation.crew_id)?.display_name ?? t('work.crew.unavailable')} · <Schedule schedule={automation.schedule} t={t} /></p>
       <p className="work-note">{t('automation.next')}: {automation.enabled ? stamp(automation.next_run_at, lang) : '—'} · {t('automation.last')}: {stamp(automation.last_run_at, lang)}</p>
@@ -217,12 +257,33 @@ function Automations({ source, channel, crews, uid, disabled, busy, act, t, lang
       </div>
       {history === automation.id && <RunHistory automationId={automation.id} own={automation.created_by === uid} channelId={channel.id} crews={crews} t={t} lang={lang} />}
     </article>)}
+    {routines.error && <p className="work-notice error" role="alert">{missingSchema(routines.error) ? t('automation.notifications.upgrade') : errorText(routines.error, t)}</p>}
+    {(routines.rows ?? []).map((routine) => <article className="work-item" key={routine.id}>
+      <div className="work-item-top"><span className="work-item-title"><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span><span className={`work-status ${routine.enabled ? 'running' : 'cancelled'}`}>{t(routine.enabled ? 'automation.enabled' : 'automation.paused')}</span></div>
+      <p className="work-text">{routine.prompt}</p>
+      <p className="work-note">{crews.find((crew) => crew.id === routine.crew_id)?.display_name ?? t('work.crew.unavailable')} · <RoutineSchedule schedule={routine.schedule} t={t} /></p>
+      {routine.pendingEdit?.status === 'pending' && <p className="work-notice">{t('routine.pending')}</p>}
+      {routine.pendingEdit?.status === 'superseded' && <p className="work-notice">{t('routine.superseded')}</p>}
+      {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
+      <div className="work-actions">
+        <button className="btn sm" disabled={disabled} onClick={() => setEditingRoutine(routine)}>{t('automation.edit')}</button>
+        <button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { enabled: !routine.enabled } })), () => routines.refresh())}>{t(routine.enabled ? 'automation.pause' : 'automation.resume')}</button>
+        <button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting({ ...routine, kind: 'routine' })}>{t('automation.delete')}</button>
+      </div>
+    </article>)}
     <Pages source={source} disabled={busy} t={t} />
   </>;
 }
 
 function Schedule({ schedule = {}, t }) {
   return <>{schedule.kind === 'interval' ? t('automation.every', { n: schedule.minutes }) : <>{t(`automation.kind.${schedule.kind}`)} {schedule.kind === 'weekly' ? (schedule.weekdays ?? []).map((day) => t(`automation.day.${day}`)).join(' · ') : ''} {schedule.time}</>} · {schedule.timezone}</>;
+}
+
+/** Argo 루틴 스케줄 표시 — 필드명이 자동화(kind/weekdays)와 다르다(type/dows, 0=일~6=토). times[]가 여럿이면 전부 보여준다. */
+function RoutineSchedule({ schedule = {}, t }) {
+  if (schedule.type === 'interval') return <>{t('automation.every', { n: schedule.everyMinutes })}</>;
+  if (schedule.type === 'once') return <>{t('routine.kind.once')} {schedule.date} {schedule.time}</>;
+  return <>{t(`routine.kind.${schedule.type === 'weekly' ? 'weekly' : 'daily'}`)} {schedule.type === 'weekly' ? (schedule.dows ?? []).map((day) => t(`routine.day.${day}`)).join(' · ') : ''} {(schedule.times ?? [schedule.time]).filter(Boolean).join(', ')} · {schedule.tz ?? ''}</>;
 }
 
 function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSaved }) {
@@ -282,6 +343,53 @@ function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSa
     </fieldset>
     {invalid && <p className="work-notice error" role="alert">{t('work.error.schedule')}</p>}
     <div className="work-actions"><button className="btn btn-primary" disabled={disabled || routes === null || !!routesError || !title.trim() || !prompt.trim() || !crew}>{t('ui.save')}</button><button type="button" className="btn" disabled={disabled} onClick={onClose}>{t('ui.cancel')}</button></div>
+  </form>;
+}
+
+/** Argo 루틴 편집 — 메신저에서 건 수정은 즉시 반영되지 않고 msgr_crew_routine_edit로 '반영 대기'에 쌓인다(PC가 켜지면 drain이 가져가 적용).
+    스케줄은 단일 시각의 daily/weekly/interval만 편집 가능 — 하루 여러 시각(times[]가 2개 이상)이거나 once(1회 예약)는 제목·지시만 편집하고
+    스케줄은 읽기전용으로 둔다(첫 시각만 고쳐 나머지 시각을 지우는 사고를 원천 차단 — 유건 지시). */
+function RoutineForm({ value, t, disabled, act, onClose, onSaved }) {
+  const schedule = value.schedule ?? {};
+  const editableSchedule = schedule.type === 'interval' || ((schedule.type ?? 'daily') !== 'once' && (schedule.times?.length ?? 1) <= 1);
+  const [title, setTitle] = useState(value.title ?? '');
+  const [prompt, setPrompt] = useState(value.prompt ?? '');
+  const [type, setType] = useState(schedule.type === 'weekly' ? 'weekly' : schedule.type === 'interval' ? 'interval' : 'daily');
+  const [time, setTime] = useState(schedule.time ?? '09:00');
+  const [minutes, setMinutes] = useState(schedule.everyMinutes ?? 60);
+  const [dows, setDows] = useState(schedule.dows ?? [1, 2, 3, 4, 5]);
+  const [invalid, setInvalid] = useState(false);
+  const originalSchedule = useRef(schedule.type === 'interval' ? JSON.stringify({ type: 'interval', everyMinutes: schedule.everyMinutes })
+    : JSON.stringify({ type: schedule.type ?? 'daily', time: schedule.time, ...((schedule.type ?? 'daily') === 'weekly' ? { dows: schedule.dows } : {}) }));
+  const form = useRef(null);
+  useEffect(() => { form.current?.scrollIntoView({ block: 'nearest' }); }, []);
+  const save = (event) => {
+    event.preventDefault();
+    if (disabled || !title.trim() || !prompt.trim()) return;
+    if (editableSchedule && type === 'interval' && (!Number.isInteger(Number(minutes)) || Number(minutes) < 10 || Number(minutes) > 1440)) { setInvalid(true); return; }
+    if (editableSchedule && type === 'weekly' && !dows.length) { setInvalid(true); return; }
+    setInvalid(false);
+    const patch = {};
+    if (title.trim() !== value.title) patch.title = title.trim();
+    if (prompt.trim() !== value.prompt) patch.prompt = prompt.trim();
+    if (editableSchedule) {
+      const next = type === 'interval' ? { type: 'interval', everyMinutes: Number(minutes) } : { type, time, ...(type === 'weekly' ? { dows } : {}) };
+      if (JSON.stringify(next) !== originalSchedule.current) patch.schedule = { ...next, tz: schedule.tz };
+    }
+    if (!Object.keys(patch).length) { onClose(); return; }
+    act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: value.id, p_op: 'update', p_patch: patch })), onSaved);
+  };
+  return <form className="work-form work-editor" onSubmit={save} ref={form}>
+    <h3>{t('automation.edit')}</h3>
+    <label className="work-field"><span>{t('automation.name')}</span><input value={title} required maxLength={200} onChange={(event) => setTitle(event.target.value)} disabled={disabled} /></label>
+    <label className="work-field"><span>{t('automation.prompt')}</span><textarea value={prompt} required maxLength={18000} rows={3} onChange={(event) => setPrompt(event.target.value)} disabled={disabled} /></label>
+    {editableSchedule ? <>
+      <div className="work-grid"><label className="work-field"><span>{t('automation.repeat')}</span><select value={type} onChange={(event) => setType(event.target.value)} disabled={disabled}>{['daily', 'weekly', 'interval'].map((key) => <option key={key} value={key}>{t(`routine.kind.${key}`)}</option>)}</select></label>
+        {type === 'interval' ? <label className="work-field"><span>{t('automation.minutes')}</span><input type="number" min="10" max="1440" step="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} required disabled={disabled} /></label> : <label className="work-field"><span>{t('automation.time')}</span><input type="time" value={time} onChange={(event) => setTime(event.target.value)} required disabled={disabled} /></label>}</div>
+      {type === 'weekly' && <fieldset className="work-days"><legend>{t('automation.days')}</legend>{[0, 1, 2, 3, 4, 5, 6].map((day) => <label key={day}><input type="checkbox" checked={dows.includes(day)} disabled={disabled} onChange={(event) => setDows((current) => event.target.checked ? [...current, day].sort() : current.filter((v) => v !== day))} />{t(`routine.day.${day}`)}</label>)}</fieldset>}
+    </> : <p className="work-note">{t('routine.schedule.readonly')} <RoutineSchedule schedule={schedule} t={t} /></p>}
+    {invalid && <p className="work-notice error" role="alert">{t('work.error.schedule')}</p>}
+    <div className="work-actions"><button className="btn btn-primary" disabled={disabled || !title.trim() || !prompt.trim()}>{t('ui.save')}</button><button type="button" className="btn" disabled={disabled} onClick={onClose}>{t('ui.cancel')}</button></div>
   </form>;
 }
 
