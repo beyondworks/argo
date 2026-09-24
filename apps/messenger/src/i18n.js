@@ -643,7 +643,6 @@ export const DICT = {
   'rail.agents.mine': ['내 에이전트', 'My agents'],
   'rail.agents.company': ['회사 크루', 'Company crews'],
   'rail.agents.others': ['다른 멤버의 크루', "Other members' crews"],
-  'rail.agents.bot': ['외부 에이전트', 'External agents'],
   'rail.me': ['나', 'me'],
   'ch.pin': ['즐겨찾기에 추가', 'Add to favorites'],
   'ch.unpin': ['즐겨찾기 해제', 'Remove from favorites'],
