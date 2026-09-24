@@ -3937,7 +3937,7 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
           ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder} disabled={older} aria-busy={older || undefined}>{t(older ? 'thread.loading' : 'thread.older')}</button></div>
           : <div className="msgr-older start"><span className="msgr-klabel">{t('thread.start')}</span></div>)}
         {rows}
-        {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} p={p} t={t} />)}
+        {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} t={t} />)}
         {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
       </div>
       {away && <div className="msgr-tobottom"><button type="button" className="btn sm" onClick={() => { const el = feed.current; if (!el) return; stick.current = true; el.scrollTop = el.scrollHeight; setAway(false); }}><I name="caret" size={13} />{t('thread.toBottom')}</button></div>}
@@ -4159,7 +4159,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
         {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
           : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} />
           : m.kind === 'system' ? sysBody
-          : isCrew ? <div className="msgr-sheet">{quote}{relayCap}{deliveryLabels}{m.meta?.trace && <Trace trace={m.meta.trace} t={t} />}{awayNote && <div className="msgr-away">{awayNote}</div>}<Markdown text={shown} /></div>
+          : isCrew ? <div className="msgr-sheet">{quote}{relayCap}{deliveryLabels}{awayNote && <div className="msgr-away">{awayNote}</div>}<Markdown text={shown} /></div>
           : <div className="text">{quote}{relayCap}{deliveryLabels}{relay ? <Markdown text={shown} /> : <Body text={body} />}</div>}
         {attRow}
         {chips}
@@ -4170,52 +4170,16 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
 }
 
-/** 단계 라벨 — 서버는 코드만 남기고 여기서 번역(아르고 stageLabel과 같은 규칙). */
-function stageLabel(t, stage, detail = '') { if (!stage) return t('chat.stage.work'); return stage === 'runner' ? t('chat.stage.runner', { name: detail || '' }) : t(`chat.stage.${stage}`); }
-const fmtSec = (ms) => `${Math.max(0, Math.round((ms ?? 0) / 100) / 10)}s`;
-/** 단계 목록 — 클로드코드의 도구 라벨처럼 한 줄에 단계·디테일·시각. */
-function StepList({ steps = [], t }) {
-  if (!steps.length) return null;
-  return <ol className="msgr-steps">{steps.map((s, i) => <li key={i}><span className="mono">{fmtSec(s.t)}</span><span className="st">{stageLabel(t, s.stage, s.detail)}</span>{s.detail && s.stage !== 'runner' && <span className="dt mono" title={s.detail}>{s.detail}</span>}</li>)}</ol>;
-}
-/** 실행 카드 — 크루가 일하는 동안 점 세 개 대신 단계·경과·도구 단계·사고 과정·부분 텍스트를 드롭다운으로(유건 요청 2026-09-09: 클로드코드·코덱스처럼 실시간). */
-function ExecCard({ crew, p, t }) {
-  const [, tick] = useState(0);
-  useEffect(() => { const iv = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(iv); }, []);
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem('argo-msgr-exec-open') !== '0'; } catch { return true; } });
-  const toggle = (e) => { setOpen(e.currentTarget.open); try { localStorage.setItem('argo-msgr-exec-open', e.currentTarget.open ? '1' : '0'); } catch {} };
-  const elapsed = Math.max(0, Date.now() - (p.startedAt ?? p.at));
-  const tools = (p.steps ?? []).filter((s) => s.stage !== 'think' && s.stage !== 'boot' && s.stage !== 'runner').length;
+/** 실행 표시 — 크루가 일하는 동안 "답변 준비 중" 한 줄만(유건 결정 2026-09-24: 메신저에는 사고 과정·도구 단계·작성 중 본문을 보이지 않는다). */
+function ExecCard({ crew, t }) {
   return (
     <div className="msgr-row">
       <Av name={crew.display_name} crew crewId={crew.id} />
       <div style={{ minWidth: 0 }}>
         <div className="who">{crew.display_name}<span className="role">{crew.role_text}</span></div>
-        <details className="msgr-exec" open={open} onToggle={toggle}>
-          <summary><span className="msgr-dot mark pulse" /><span className="st">{stageLabel(t, p.stage, p.detail)}</span>{p.detail && p.stage !== 'runner' && <span className="dt mono">{p.detail}</span>}<span className="msgr-klabel">{t('exec.meta', { s: fmtSec(elapsed), n: tools })}</span><I name="caret" size={12} className="caret" /></summary>
-          <div className="body">
-            {p.thought && <div className="sec"><div className="msgr-klabel">{t('exec.thought')}</div><pre className="thought">{p.thought}</pre></div>}
-            <div className="sec"><div className="msgr-klabel">{t('exec.steps')}</div><StepList steps={p.steps} t={t} />{!(p.steps ?? []).length && <div className="msgr-sys">{t('exec.noSteps')}</div>}</div>
-            {p.partial && <div className="sec"><div className="msgr-klabel">{t('exec.partial')}</div><Markdown text={p.partial} /></div>}
-          </div>
-        </details>
+        <div className="msgr-exec"><div className="summary"><span className="msgr-dot mark pulse" /><span className="st">{t('exec.preparing')}</span></div></div>
       </div>
     </div>
-  );
-}
-/** 궤적 — 완료된 답글 위의 접힌 '사고 과정 · 도구 N회 · 경과' 드롭다운(기본 접힘). */
-function Trace({ trace, t }) {
-  const steps = trace.steps ?? [];
-  const tools = steps.filter((s) => s.stage !== 'think' && s.stage !== 'boot' && s.stage !== 'runner').length;
-  if (!steps.length && !trace.thought) return null;
-  return (
-    <details className="msgr-trace">
-      <summary><I name="star" size={12} /><span>{t('trace.summary', { s: fmtSec(trace.ms), n: tools })}</span>{trace.model && <span className="msgr-klabel mono">{trace.model}</span>}<I name="caret" size={12} className="caret" /></summary>
-      <div className="body">
-        {trace.thought && <div className="sec"><div className="msgr-klabel">{t('exec.thought')}</div><pre className="thought">{trace.thought}</pre></div>}
-        {steps.length > 0 && <div className="sec"><div className="msgr-klabel">{t('exec.steps')}</div><StepList steps={steps} t={t} /></div>}
-      </div>
-    </details>
   );
 }
 

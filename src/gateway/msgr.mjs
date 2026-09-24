@@ -999,7 +999,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
         contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot },
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
-      turnTrace = ch.kind === 'public' ? turn.trace ?? null : null; // 메신저 비공개·DM 답글에는 실행 궤적을 추가 저장하지 않는다
+      // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만). 궤적은 주인 쪽 활동 로그가 정본.
     } catch (e) {
       failed = true;
       // 방(손님 포함)에는 일반 문구만 — 원문에 주인 쪽 엔드포인트 주소·경로가 들어 있다(D26, 실측 "…inference gateway (127.0.0.1:5291)").
@@ -1056,16 +1056,14 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
   try { send(); } catch { /* 무해 */ }
   const iv = setInterval(() => { try { send(); } catch { /* 무해 */ } }, TYPING_MS);
   iv.unref?.();
-  // progress — 상태 파일(chats/<slug>.status.json: 단계·도구 단계 목록·사고 과정·부분 텍스트)을 1.5초마다 읽어 바뀐 것만 방송.
-  // 클라이언트 실행 카드가 클로드코드식 드롭다운으로 실시간 표시(유건 요청 2026-09-09). typing 방송은 구클라이언트용으로 유지.
+  // progress — 이 크루의 메신저 턴이 도는 동안 1.5초마다 '답변 준비 중' 신호(시작 시각). typing 방송은 구클라이언트용으로 유지.
   let last = ''; let stopped = false;
   const pump = async () => {
     const s = slug ? await getTurnStatus(wsId, slug).catch(() => null) : null;
     if (stopped || !s || s.source !== 'messenger') return; // 종료 뒤 남은 비동기 pump도 다음 채널의 상태를 방송하지 않는다
-    // 조직 토픽(org:<id>)은 조직 멤버 전원이 듣는다 — 비공개·DM 채널의 본문·사고·도구 단계는 방송하지 않고 단계만(최종 궤적은 메시지 meta로 열람 RLS를 탄다)
-    const payload = full
-      ? { channel_id: channelId, crew_id: crewId, stage: s.stage, detail: s.detail, steps: (s.steps ?? []).slice(-40), thought: s.thought, partial: String(s.partial ?? '').slice(-1200), startedAt: s.startedAt }
-      : { channel_id: channelId, crew_id: crewId, stage: s.stage, detail: '', steps: [], thought: '', partial: '', startedAt: s.startedAt }; // detail(파일명·명령 앞부분)도 비공개·DM은 뺀다(검수 2R M-6)
+    // 메신저에는 "답변 준비 중"만 보인다(유건 결정 2026-09-24) — 단계·사고·작성 중 본문·도구 단계는 어느 방에도 싣지 않는다.
+    // 크루 상태 파일은 크루당 하나라 같은 크루의 다른 턴(데스크톱 대화·다른 방)이 남긴 값이 섞여 나갈 수 있었다(검수 #697 HIGH).
+    const payload = { channel_id: channelId, crew_id: crewId, startedAt: s.startedAt };
     const key = JSON.stringify(payload);
     if (key === last) return;
     last = key;

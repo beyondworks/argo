@@ -739,8 +739,8 @@ for (const kind of ['public', 'private', 'dm', 'unknown', null, undefined]) test
     assert.equal(row.thread_root, 30);
     assert.deepEqual(row.mentions, disposition === 'handoff' ? [{ kind: 'crew', id: ZED }] : []);
     const expected = { hop: 2, origin: OWNER, ...(disposition === 'done' ? { disposition: 'done' } : {}) };
-    if (kind === 'public') expected.trace = { steps: trace.steps, thought: trace.thought, ms: trace.ms, model: trace.model };
-    assert.deepEqual(row.meta, expected, '비공개·DM·종류 미확인 채널은 trace 없이 일반 답글 메타를 보존');
+    // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만) — 공개 채널도 trace 없음
+    assert.deepEqual(row.meta, expected, '어느 채널이든 trace 없이 일반 답글 메타를 보존');
     assert.deepEqual(job.msgrExecution.replyRow.meta, expected, '재시도용 체크포인트에도 동일한 공개 범위 적용');
     assert.equal(Object.hasOwn(row.meta, 'costUsd'), false);
     assert.equal(Object.hasOwn(row.meta.trace ?? {}, 'costUsd'), false);
