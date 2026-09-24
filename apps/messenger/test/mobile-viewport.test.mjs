@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { viewportVars } from '../src/viewport-vars.mjs';
+import { viewportVars, KEYBOARD_TARGET } from '../src/viewport-vars.mjs';
 
 test('키보드가 없으면 뷰포트 변수를 내지 않는다 — 부팅 직후 작게 보고된 높이가 셸에 굳지 않는다(유건 제보 2026-09-14)', () => {
   assert.equal(viewportVars({ keyboard: false, height: 580, top: 0, width: 402, coarse: true }).vars, null);
@@ -25,4 +25,9 @@ test('키보드 모드 표지 — 어떤 입력칸이든 초점이면 html.msgr-
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
   assert.match(css, /html\.msgr-kb \.msgr-phone \.msgr-tabbar[^{]*\{ display: none; \}/);
   assert.match(css, /html\.msgr-kb \.msgr-phone \.msgr-main \{ padding-bottom: 8px; \}/);
+});
+
+test('키보드 대상은 키보드가 뜨는 칸만 — 체크박스·라디오 등에서는 탭바를 숨기지 않는다(재검수 #699 M1)', () => {
+  for (const type of ['checkbox', 'radio', 'file', 'range', 'button', 'submit', 'color']) assert.ok(KEYBOARD_TARGET.includes(`:not([type=${type}])`), type);
+  assert.match(KEYBOARD_TARGET, /textarea/); assert.match(KEYBOARD_TARGET, /contenteditable/);
 });

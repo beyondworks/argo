@@ -4,9 +4,10 @@
 create or replace function public.msgr_member_profile_guard() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
-  if auth.uid() is not null and (new.department is distinct from old.department or new.title is distinct from old.title)
-     and old.user_id is distinct from auth.uid() then
-    raise exception 'msgr_member_profile_forbidden' using errcode = '42501';
+  if auth.uid() is not null and (new.department is distinct from old.department or new.title is distinct from old.title) then
+    if old.user_id is distinct from auth.uid() then raise exception 'msgr_member_profile_forbidden' using errcode = '42501'; end if;
+    -- 본인이 표를 직접 고쳐도(msgr_members_update_self) 함수와 같은 모양으로 — 앞뒤 공백·빈 값이 '같은 부서' 비교를 어긋나게 한다(재검수 #699 L1)
+    new.department := nullif(btrim(new.department), ''); new.title := nullif(btrim(new.title), '');
   end if;
   return new;
 end $$;

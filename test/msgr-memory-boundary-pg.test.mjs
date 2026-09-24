@@ -175,6 +175,9 @@ test('자동 연결: [[제목]]·공유 참여자·같은 부서로 잇고, 유�
   assert.throws(() => asUser(U.owner, `update public.msgr_org_members set department = '개발' where org_id = '${ORG}' and user_id = '${U.member}'`), /msgr_member_profile_forbidden/, '직접 수정도 트리거가 막는다');
   asUser(U.member, `select public.msgr_set_member_profile('${ORG}', '${U.member}', '기획', '매니저')`);
   assert.equal(sql(`select department || '/' || title from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.member}'`), '기획/매니저', '본인은 자기 부서·직급을 정한다');
+  asUser(U.member, `update public.msgr_org_members set department = '  운영  ', title = ' ' where org_id = '${ORG}' and user_id = '${U.member}'`);
+  assert.equal(sql(`select department || '/' || coalesce(title, 'null') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.member}'`), '운영/null', '본인이 표를 직접 고쳐도 공백 정리(재검수 L1)');
+  asUser(U.owner, `update public.msgr_org_members set role = 'member' where org_id = '${ORG}' and user_id = '${U.member}'`); // 부서를 안 건드리는 관리자 수정은 그대로 통과
   asUser(U.member, `select public.msgr_set_member_profile('${ORG}', '${U.member}', '', '')`);
   assert.equal(sql(`select coalesce(department, 'null') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.member}'`), 'null', '빈 값 = 지움');
   const GUEST_CH = mk('ops');
