@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+const skip = process.platform === 'win32' && '라이브 적용은 맥 운영 전용 bash 스크립트(윈도우 CI의 bash·git 경로가 달라 픽스처가 성립하지 않는다)';
 const SCRIPT = fileURLToPath(new URL('../scripts/msgr-live-apply.sh', import.meta.url));
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'pipe' }).toString();
 
@@ -24,7 +25,7 @@ function fixture() {
   return { root, work, run };
 }
 
-test('main에 없는 마이그레이션은 거부', () => {
+test('main에 없는 마이그레이션은 거부', { skip }, () => {
   const f = fixture();
   try {
     writeFileSync(join(f.work, 'supabase/migrations/20990102000000_local.sql'), 'select 2;\n');
@@ -33,7 +34,7 @@ test('main에 없는 마이그레이션은 거부', () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('main 병합본과 내용이 다르면 거부(수정 중·옛 브랜치 사본)', () => {
+test('main 병합본과 내용이 다르면 거부(수정 중·옛 브랜치 사본)', { skip }, () => {
   const f = fixture();
   try {
     writeFileSync(join(f.work, 'supabase/migrations/20990101000000_merged.sql'), 'select 1; -- 고친 줄\n');
@@ -42,7 +43,7 @@ test('main 병합본과 내용이 다르면 거부(수정 중·옛 브랜치 사
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('적용 스크립트 자체가 main과 다르면 거부(옛 체크아웃의 옛 스크립트)', () => {
+test('적용 스크립트 자체가 main과 다르면 거부(옛 체크아웃의 옛 스크립트)', { skip }, () => {
   const f = fixture();
   try {
     writeFileSync(join(f.work, 'scripts/msgr-live-apply.sh'), `${readScript(f.work)}\n# 옛 사본\n`);
@@ -51,7 +52,7 @@ test('적용 스크립트 자체가 main과 다르면 거부(옛 체크아웃의
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('main과 똑같은 파일은 검문을 통과한다(다음 단계인 접속 정보 읽기에서 멈춤)', () => {
+test('main과 똑같은 파일은 검문을 통과한다(다음 단계인 접속 정보 읽기에서 멈춤)', { skip }, () => {
   const f = fixture();
   try {
     const r = f.run('20990101000000_merged');
@@ -59,7 +60,7 @@ test('main과 똑같은 파일은 검문을 통과한다(다음 단계인 접속
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('main이 앞서 나간 뒤(스크립트가 main 최신과 다름) 옛 사본은 거부 — fetch로 최신 main과 비교한다(재검수 M2)', () => {
+test('main이 앞서 나간 뒤(스크립트가 main 최신과 다름) 옛 사본은 거부 — fetch로 최신 main과 비교한다(재검수 M2)', { skip }, () => {
   const f = fixture();
   try {
     const seed = join(f.root, 'seed');
@@ -70,7 +71,7 @@ test('main이 앞서 나간 뒤(스크립트가 main 최신과 다름) 옛 사�
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('main을 못 가져오면 거부(재검수 M2)', () => {
+test('main을 못 가져오면 거부(재검수 M2)', { skip }, () => {
   const f = fixture();
   try {
     git(f.work, 'remote', 'set-url', 'origin', join(f.root, 'no-such.git'));
@@ -79,7 +80,7 @@ test('main을 못 가져오면 거부(재검수 M2)', () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test('확장자를 붙여도 같은 파일로 본다(재검수 L3)', () => {
+test('확장자를 붙여도 같은 파일로 본다(재검수 L3)', { skip }, () => {
   const f = fixture();
   try { const r = f.run('20990101000000_merged.sql'); assert.notEqual(r.code, 4); assert.doesNotMatch(r.out, /거부/); }
   finally { rmSync(f.root, { recursive: true, force: true }); }
