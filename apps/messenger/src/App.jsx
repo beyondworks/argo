@@ -52,7 +52,7 @@ import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-s
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
-import { faceOf, faceGeometry, crewFaceState, nextDoneIn } from './crew-face.mjs';
+import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES } from './crew-face.mjs';
 const realtimeScope = createRealtimeScope();
 const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/#download' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
@@ -108,22 +108,34 @@ function useT() { const { lang, setLang, t: ta } = useLang(); return { lang, set
 
 /** 아바타 — 사람은 원, 크루는 둥근 사각 타일 + 옐로 별(시안 v2 모티프 ②). */
 const SafetyCtx = createContext({ blocked: new Set(), block: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 대화·답글 인용·알림함·검색·DM 미리보기에서 가리고, 푸시는 서버(msgr_push_recipients)가 막는다
-const AvatarCtx = createContext({ users: {}, crews: {}, faceState: () => 'idle' }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url) — Av가 userId/crewId로 찾는다. faceState = 사진 없는 크루의 얼굴 표정
-/** 에이전트 얼굴(유건 확정 2026-09-24) — 평면 단색 도형 + 작은 눈, 입 없음. 상태 = 쉼·준비 중·결재 대기·완료·오프라인(crew-face.mjs). */
+const AvatarCtx = createContext({ users: {}, crews: {}, faceState: () => 'idle', faceOverride: () => null }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url) — Av가 userId/crewId로 찾는다. faceState = 사진 없는 크루의 얼굴 표정, faceOverride = 소유자가 저장한 모양·색(msgr_crews.face)
+/** 눈 하나(dot·stroke·bean) — 얼굴(CrewFace)과 얼굴 고르기 미리보기(FacePicker)가 함께 쓴다. */
+function FaceEye({ eyes, x, y }) {
+  return eyes === 'stroke' ? <path d={`M${x - 0.6} ${y - 5}q1.2 5 .4 10`} className="stroke" />
+    : eyes === 'bean' ? <ellipse cx={x} cy={y} rx="3.5" ry="5.4" />
+    : <circle cx={x} cy={y} r="4.2" />;
+}
+/** 눈 한 쌍(좌우 대칭) */
+function FaceEyes({ eyes, L, R, cy }) { return <><FaceEye eyes={eyes} x={L} y={cy} /><FaceEye eyes={eyes} x={R} y={cy} /></>; }
+/** 에이전트 얼굴(유건 확정 2026-09-24) — 평면 단색 도형 + 작은 눈, 입 없음. 상태 = 쉼(움직임 있음)·준비 중·결재 대기·놀람(멘션·수신)·완료·오프라인(졸음)(crew-face.mjs).
+ *  대기 중 움직임(깜빡임·두리번·고개 갸웃·하품)은 CSS 애니메이션뿐 — 박자·시작 위치는 faceMotion(id)이 크루마다 다르게 정한다. */
 function CrewFace({ id, name, ctx }) {
-  const g = faceGeometry(faceOf(id ?? name ?? '?'));
+  const key = id ?? name ?? '?';
+  const g = faceGeometry(faceOf(key, ctx.faceOverride?.(id)));
   const st = id ? ctx.faceState(id) : 'idle';
-  const eye = (x, y) => g.eyes === 'stroke' ? <path d={`M${x - 0.6} ${y - 5}q1.2 5 .4 10`} className="stroke" /> : g.eyes === 'bean' ? <ellipse cx={x} cy={y} rx="3.5" ry="5.4" /> : <circle cx={x} cy={y} r="4.2" />;
+  const motion = faceMotion(key);
+  const eye = (x, y) => <FaceEye eyes={g.eyes} x={x} y={y} />;
   const { L, R, cy } = g;
   return (
-    <svg className={`msgr-face s-${st}`} viewBox="0 0 100 100" aria-hidden="true">
+    <svg className={`msgr-face s-${st}${st === 'idle' ? ` idle-${motion.variant}` : ''}`} viewBox="0 0 100 100" aria-hidden="true" style={{ '--face-dur': motion.duration, '--face-delay': motion.delay }}>
       <g className="rig"><path className="body" d={g.d} fill={g.color} />
         <g className="face">
-          {st === 'idle' && <g className="blink">{eye(L, cy)}{eye(R, cy)}</g>}
+          {st === 'idle' && <g className="blink"><FaceEyes eyes={g.eyes} L={L} R={R} cy={cy} /></g>}
           {st === 'work' && <g>{eye(L - 2, cy)}{eye(R - 2, cy)}</g>}
           {st === 'ask' && <g>{eye(L, cy + 2)}{eye(R, cy - 2)}</g>}
+          {st === 'surprise' && <g className="surprise"><FaceEyes eyes={g.eyes} L={L} R={R} cy={cy} /></g>}
           {st === 'done' && <g className="line"><path d={`M${L - 4.5} ${cy + 2}q4.5-7 9 0`} /><path d={`M${R - 4.5} ${cy + 2}q4.5-7 9 0`} /></g>}
-          {st === 'off' && <g className="line"><path d={`M${L - 4.5} ${cy}q4.5 3.5 9 0`} /><path d={`M${R - 4.5} ${cy}q4.5 3.5 9 0`} /></g>}
+          {st === 'off' && <g className="line sleep"><path d={`M${L - 4.5} ${cy}q4.5 3.5 9 0`} /><path d={`M${R - 4.5} ${cy}q4.5 3.5 9 0`} /><text className="zzz" x={R + 6} y={cy - 14}>z</text></g>}
         </g>
       </g>
     </svg>
@@ -160,6 +172,49 @@ function AvatarEdit({ name, crew = false, crewId = null, url, onUpload, onRemove
         <button type="button" className="btn sm" disabled={busy} onClick={() => ref.current?.click()}><I name="plus" size={13} />{t(url ? 'profile.avatar.change' : 'profile.avatar.upload')}</button>
         {url && <button type="button" className="btn sm" disabled={busy} onClick={onRemove}><I name="x" size={13} />{t('profile.avatar.remove')}</button>}
         <span className="note">{t('profile.avatar.note')}</span>
+      </div>
+    </div>
+  );
+}
+const faceEq = (a, b) => !!a && !!b && a.shape === b.shape && a.color === b.color && a.eyes === b.eyes;
+/** 에이전트 얼굴 고르기(유건 확정 2026-09-24) — 소유자만. 도형 6·색 10·눈 3 중에서 고르면 msgr_crews.face에 저장돼 조직 전원이 같은 얼굴을 본다.
+ *  사진이 있으면 목록·대화에는 사진이 우선(Av)이지만, 사진을 지우면 바로 이 얼굴이 나오도록 고르기는 항상 켜져 있다. */
+function FacePicker({ crew, onSave, busy, t }) {
+  const rand = faceOf(crew.id);
+  const stored = crew.face && Number.isInteger(crew.face.shape) && Number.isInteger(crew.face.color) && Number.isInteger(crew.face.eyes) ? crew.face : null;
+  const [draft, setDraft] = useState(stored ?? rand);
+  useEffect(() => { setDraft(stored ?? rand); }, [crew.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const g = faceGeometry(draft);
+  const pick = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
+  const dirty = !faceEq(stored, draft);
+  return (
+    <div className="msgr-facepicker">
+      <svg className="msgr-face preview" viewBox="0 0 100 100" aria-hidden="true"><path d={g.d} fill={g.color} /><g className="face"><FaceEyes eyes={g.eyes} L={g.L} R={g.R} cy={g.cy} /></g></svg>
+      <div className="row" role="group" aria-label={t('crew.face.shape')}>
+        <span className="msgr-klabel">{t('crew.face.shape')}</span>
+        <div className="chips">{FACE_SHAPES.map((s, i) => (
+          <button key={i} type="button" className="chip" aria-pressed={draft.shape === i} disabled={busy} onClick={() => pick('shape', i)} aria-label={t('crew.face.shape.n', { n: i + 1 })}>
+            <svg className="msgr-face" viewBox="0 0 100 100" aria-hidden="true"><path d={s.d} fill={FACE_COLORS[draft.color]} /></svg>
+          </button>
+        ))}</div>
+      </div>
+      <div className="row" role="group" aria-label={t('crew.face.color')}>
+        <span className="msgr-klabel">{t('crew.face.color')}</span>
+        <div className="chips">{FACE_COLORS.map((c, i) => (
+          <button key={i} type="button" className="chip swatch" aria-pressed={draft.color === i} disabled={busy} style={{ background: c }} onClick={() => pick('color', i)} aria-label={t('crew.face.color.n', { n: i + 1 })} />
+        ))}</div>
+      </div>
+      <div className="row" role="group" aria-label={t('crew.face.eyes')}>
+        <span className="msgr-klabel">{t('crew.face.eyes')}</span>
+        <div className="chips">{FACE_EYES.map((e, i) => (
+          <button key={i} type="button" className="chip" aria-pressed={draft.eyes === i} disabled={busy} onClick={() => pick('eyes', i)} aria-label={t('crew.face.eyes.n', { n: i + 1 })}>
+            <svg className="msgr-face" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="42" fill="#dcdcdc" /><g className="face"><FaceEyes eyes={e} L="42" R="58" cy="50" /></g></svg>
+          </button>
+        ))}</div>
+      </div>
+      <div className="acts">
+        <button type="button" className="btn sm btn-primary" disabled={busy || !dirty} onClick={() => onSave(draft)}>{t('crew.face.save')}</button>
+        {stored && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => onSave(null)}>{t('crew.face.reset')}</button>}
       </div>
     </div>
   );
@@ -689,7 +744,13 @@ function Shell({ session }) {
     const [allChs, mems, allCrews, e, pol, joined] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
-      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio, commands').eq('org_id', id).in('status', ['active', 'available'])),
+      // 크루 목록 — face(얼굴 고르기, 2026-09-24)는 옛 서버(열 없음)에 없을 수 있다. 없다는 오류(스키마 캐시에 없음·열 없음)면 그 열만 빼고 다시 읽어(다른 열은 이미 옛 서버에서도 됐다) 목록이 통째로 비지 않게 한다.
+      (async () => {
+        const cols = 'id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio, commands';
+        try { const rows = await q(supabase.from('msgr_crews').select(`${cols}, face`).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ('face' in r ? r : { ...r, face: null })); }
+        catch (err) { if (!/schema cache|does not exist|could not find/i.test(err?.message ?? '')) throw err;
+          const rows = await q(supabase.from('msgr_crews').select(cols).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ({ ...r, face: null })); }
+      })(),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
       supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음),
       // 내가 참여한 채널 — 15초 재조회·조직 전환·코드 가입 때마다 새로 읽는다(한 번만 읽어 남이 나를 공개 채널에 넣거나 초대로 들어와도 새로고침 전까지 사이드바에 안 뜨던 것, 검수 재현 2026-09-18). 같은 Promise.all이라 조직 전환 경쟁에 await를 더하지 않는다
@@ -1005,6 +1066,11 @@ function Shell({ session }) {
   handleMessageRef.current = (payload) => {
     if (!seenOnce(seenMsgRef.current, payload?.id)) return;
     if (payload?.author_kind === 'crew' && payload.crew_id) { settleCrew(payload); setDoneAt((m) => ({ ...m, [payload.crew_id]: Date.now() })); } // 답글이 오면 그 크루의 '입력 중'·실행 카드를 즉시 내린다(6~8초 만료를 기다리던 유령 표시)
+    if (payload?.author_kind === 'user') { // 사람이 보낸 글 — 멘션된 크루, 또는 그 DM 방의 크루가 1초 놀란다(유건 확정 2026-09-24)
+      const surprised = new Set((Array.isArray(payload.mentions) ? payload.mentions : []).filter((m) => m?.kind === 'crew').map((m) => m.id));
+      for (const m of dmMembers[payload.channel_id] ?? []) if (m.member_kind === 'crew') surprised.add(m.member_id);
+      if (surprised.size) setSurprisedAt((cur) => { const next = { ...cur }; for (const id of surprised) next[id] = Date.now(); return next; });
+    }
     if (payload?.author_user_id && payload.author_user_id === uid) mineRef.current.add(payload.id); setEvent(messageEvent(payload)); if (payload?.channel_id && dmIdsRef.current.has(payload.channel_id)) setLastAt((m) => ({ ...m, [payload.channel_id]: Date.now() })); if (payload?.channel_id && payload.id && isPhoneRef.current && dmIdsRef.current.has(payload.channel_id)) supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').eq('id', payload.id).is('deleted_at', null).maybeSingle().then(({ data: r }) => { if (r) setLastMsg((m) => (m[r.channel_id]?.at > Date.parse(r.created_at) ? m : { ...m, [r.channel_id]: { body: plainPreview(r.body), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) } })); }).catch(() => {}); /* 옛 글 응답이 늦게 오면 덮지 않는다(재검수 L-1) */ /* 방송엔 본문이 없다(서버 트리거는 id·채널·멘션만) → 그 글 1건을 조회해 미리보기 갱신(재검수 M-A) */
     notifyReadable(payload, isPersonal ? null : orgId); // 멘션이면 멘션 알림 하나만 — 알림은 내가 읽을 수 있는 글에만(readableForNotify)
   };
@@ -1029,14 +1095,17 @@ function Shell({ session }) {
   useEffect(() => { loadAvatars(); }, [loadAvatars, tick]);
   const [doneAt, setDoneAt] = useState({}); // crew_id → 답이 온 시각(얼굴 '완료' 2초)
   useEffect(() => { const ms = nextDoneIn(doneAt); if (ms == null) { if (Object.keys(doneAt).length) setDoneAt({}); return; } const tm = setTimeout(() => setDoneAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextDoneIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [doneAt]); // 크루마다 정확히 2초
+  const [surprisedAt, setSurprisedAt] = useState({}); // crew_id → 멘션·수신 글이 온 시각(얼굴 '놀람' 1초, doneAt과 같은 모양·같은 만료 로직)
+  useEffect(() => { const ms = nextSurpriseIn(surprisedAt); if (ms == null) { if (Object.keys(surprisedAt).length) setSurprisedAt({}); return; } const tm = setTimeout(() => setSurprisedAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextSurpriseIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [surprisedAt]); // 크루마다 정확히 1초
   const avatarCtx = useMemo(() => {
     const now = Date.now();
     const working = new Set(Object.entries(typing).filter(([, at]) => now - at < TYPING_WINDOW_MS).map(([k]) => k.split(':')[1]));
     const asking = new Set(inbox.filter((it) => it.key.startsWith('approval:') && it.whoKind === 'crew').map((it) => it.who));
     const byId = new Map([...crews, ...myAvailable].map((c) => [c.id, c]));
     return { users: avatars, crews: Object.fromEntries(crews.filter((c) => c.avatar_url).map((c) => [c.id, c.avatar_url])),
-      faceState: (id) => crewFaceState({ crew: byId.get(id) ?? null, working: working.has(id), asking: asking.has(id), doneAt: doneAt[id] ?? 0, now }) };
-  }, [avatars, crews, myAvailable, typing, inbox, doneAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+      faceOverride: (id) => byId.get(id)?.face ?? null,
+      faceState: (id) => crewFaceState({ crew: byId.get(id) ?? null, working: working.has(id), asking: asking.has(id), surprisedAt: surprisedAt[id] ?? 0, doneAt: doneAt[id] ?? 0, now }) };
+  }, [avatars, crews, myAvailable, typing, inbox, doneAt, surprisedAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const crewOf = (id) => crews.find((c) => c.id === id) ?? myAvailable.find((c) => c.id === id);
   const [newOrg, setNewOrg] = useState(null);
   const [joinCode, setJoinCode] = useState(null); // 초대 코드로 가입 — 앱에는 링크가 열릴 오리진이 없어 코드를 직접 붙여 넣는다(invite.mjs)
@@ -1790,6 +1859,8 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
         {owner && (<section className="msgr-crewprofile">
           <h3>{t('crew.profile')}</h3>
           <AvatarEdit name={crew.display_name} crew crewId={crew.id} url={crew.avatar_url ?? null} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); const url = await uploadAvatar(uid, `crew-${crew.id}`, f); const r = await supabase.from('msgr_crews').update({ avatar_url: url }).eq('id', crew.id).select('id'); setBusy(false); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={async () => { const r = await supabase.from('msgr_crews').update({ avatar_url: null }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
+          <label className="msgr-klabel">{t('crew.face')}</label>
+          <FacePicker crew={crew} busy={busy} t={t} onSave={async (face) => { setBusy(true); const r = await supabase.from('msgr_crews').update({ face }).eq('id', crew.id).select('id'); setBusy(false); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
           <label className="msgr-klabel" htmlFor={`role-${crew.id}`}>{t('crew.role')}</label>
           <input id={`role-${crew.id}`} className="msgr-input" maxLength={60} defaultValue={crew.role_text ?? ''} placeholder={t('crew.role.ph')} onBlur={async (e) => { const v = e.target.value.trim() || null; if (v === (crew.role_text ?? null)) return; const r = crew.hosting === 'bot' ? await supabase.rpc('msgr_bot_set_role', { bot_crew: crew.id, new_role_text: v }) : await supabase.from('msgr_crews').update({ role_text: v }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
           <label className="msgr-klabel" htmlFor={`bio-${crew.id}`}>{t('crew.bio')}</label>
