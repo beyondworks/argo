@@ -46,6 +46,7 @@ test('actual route retains incomplete cancellation in response and stored conver
  const saved=[];
  const ctx=vm.createContext({Response,console,isStopCommand,guardCompany:async()=>null,
   beginTurn:async()=> 'turn-id',nudgeSync:()=>{},loadCompany:async()=>({lang:'ko'}),
+  takeAbortReason:()=>null,
   chat:async()=>{throw Object.assign(new Error('중단됨'),{aborted:true,cancellationIncomplete:true});},
   appendTurn:async(...args)=>saved.push(args)});
  vm.runInContext(findFunction(route,'POST'),ctx);

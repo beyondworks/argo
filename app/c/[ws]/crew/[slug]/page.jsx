@@ -194,6 +194,15 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 경로에선 입력창이 비어 있는데도 떠서 헷갈림). 원래 턴의 catch가 실행될 시점까지만 true로
   // 유지하면 되므로 busyRef 폴링이 끝난 직후(원래 턴이 이미 settle된 뒤) 바로 내린다.
   const sendNowAbortRef = useRef(false);
+  // 지금 바로 보내기를 연달아 두 번 누르는 경합 방지(재재검수 2026-09-24 A·B).
+  // sendNowTokenRef — 호출마다 발급하는 신분증. 나중 호출이 있으면(토큰이 갱신되면) 앞선 호출의
+  // sendingNow 해제·정리가 무효화된다(안 하면: 첫 호출의 finally가 두 번째 호출이 폴링하는 도중에
+  // sendingNow를 false로 되돌려, 그 틈에 Enter가 대기열을 건너뛰고 곧장 새 턴을 쏜다 — 검수 B).
+  const sendNowTokenRef = useRef(0);
+  // sendNowHeldBeforeRef — "지금 바로 보내기 연쇄"가 시작되기 **직전**의 대기열 잠금 값을 한 번만
+  // 기억한다(null=연쇄 없음). 매 호출이 그 시점의 queueHeld를 새로 읽으면, 연달아 눌렀을 때 두 번째
+  // 호출은 첫 번째가 이미 걸어 둔 잠금을 "원래 있던 것"으로 오판해 성공해도 안 풀린다(검수 A).
+  const sendNowHeldBeforeRef = useRef(null);
   // 지금 바로 보내기 — 연속 클릭 방지(중단 요청~새 턴 시작까지 잠금). 대기열 배출 이펙트의 deps에서도
   // 쓰이므로 그 이펙트보다 먼저(TDZ) 선언해야 한다 — 실사고: 뒤에 두어 "Cannot access 'sendingNow'
   // before initialization"으로 화면이 통째로 죽었다(2026-09-24 재검수 뒤 라이브 확인 중 적발).
@@ -477,17 +486,25 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             // 리듀서 시뮬레이션 확증). "서버엔 없는 사본" 전제는 실패 턴 보존으로 무효가 됐다.
             const unsent = cur.filter((m) => m.failed && m.unsaved);
             // 로컬 노트는 원래 자리(그 노트가 따라붙은, 중단된 사장 메시지 바로 뒤)에 다시 꽂는다
-            // (재검수 N3 — 예전엔 스레드 맨 끝에 붙어 순서가 어긋났다). afterText로 그 사장 메시지를
-            // 찾는다(mid는 서버에 저장 안 되는 클라 전용 값이라 서버가 돌려준 msgs엔 없다).
-            let next = msgs;
+            // (재검수 N3 — 예전엔 스레드 맨 끝에 붙어 순서가 어긋났다). unsent를 먼저 합쳐 둔다 —
+            // 안 그러면(예전 순서) unsent가 나중에 끝에 붙어, 서버에 아예 저장 안 된 자기 지시보다
+            // 노트가 앞에 놓인다(재검수 C — "찾지 못하면(unsaved) 노트가 자기 지시보다 앞에 놓임").
+            const combined = unsent.length ? [...msgs, ...unsent] : msgs;
+            let next = combined;
             for (const note of localNotes) {
+              // mid 우선(재검수 C) — 문구만으로 찾으면 같은 글을 두 번 보낸 경우 엉뚱한(더 최근) 자리에
+              // 꽂힌다. mid는 그 지시 고유라 서버 확정분에는 없어도(mid 미저장) unsent 로컬 사본에는
+              // 그대로 남아 있다. 둘 다 없으면(mid 불일치·문구 불일치) 안전하게 맨 끝에 둔다.
               let idx = -1;
-              for (let i = next.length - 1; i >= 0; i -= 1) {
-                if (next[i].who === 'user' && next[i].aborted && next[i].text === note.afterText) { idx = i; break; }
+              if (note.afterMid) {
+                for (let i = next.length - 1; i >= 0; i -= 1) { if (next[i].who === 'user' && next[i].mid === note.afterMid) { idx = i; break; } }
+              }
+              if (idx < 0) {
+                for (let i = next.length - 1; i >= 0; i -= 1) { if (next[i].who === 'user' && next[i].aborted && next[i].text === note.afterText) { idx = i; break; } }
               }
               next = idx >= 0 ? [...next.slice(0, idx + 1), note, ...next.slice(idx + 1)] : [...next, note];
             }
-            return unsent.length ? [...next, ...unsent] : next;
+            return next;
           });
           if (r.sessionId) sessionRef.current = r.sessionId;
           setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
@@ -614,7 +631,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const failed = err?.data?.failed ?? String(err.message);
       // viaSendNow — 이 중단이 정지 버튼이 아니라 지금 바로 보내기가 건 것인지(총괄 재검수 2026-09-24).
       // 렌더가 문구·재전송 버튼을 가르는 기준(입력창이 이미 비어 있어 "입력을 복원했어요"가 헷갈림).
-      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true, cancellationIncomplete: !!err?.data?.cancellationIncomplete, ...(sendNowAbortRef.current ? { viaSendNow: true } : {}) } : {};
+      // viaSendNow — 서버 확인값(err.data.viaSendNow, 재검수 D)을 우선한다: 서버가 저장해 새로고침·
+      // 폴링 병합 뒤에도 남는다. 로컬 표식(sendNowAbortRef)은 그 응답이 아직 안 왔을 때의 낙관적 대체.
+      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true, cancellationIncomplete: !!err?.data?.cancellationIncomplete, ...(err?.data?.viaSendNow || sendNowAbortRef.current ? { viaSendNow: true } : {}) } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
       // 실패 코드·출처(route.js가 code/origin으로 응답) — 서버 보존분(failedCode)과 같은 필드명으로 로컬 사본에도(렌더 일치)
       const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
@@ -672,11 +691,13 @@ export default function CrewChat({ params, embedded = false, onClose }) {
 
   // 사장의 정지 버튼 — 진행 중 턴(내 턴·루틴·메신저발 모두)을 멈춘다
   const [aborting, setAborting] = useState(false);
-  async function abortTurn() {
+  // reason — sendImmediate가 'sendNow'를 넘긴다. 원래 턴의 POST /chat(별개 요청)이 서버에서 이
+  // 표시를 읽어 viaSendNow로 저장한다(재검수 D) — 정지 버튼은 넘기지 않아 기존 문구·동작 그대로.
+  async function abortTurn(reason) {
     if (aborting) return;
     setQueueHeld(true); // Hold immediately, even when the provider finishes successfully during cancellation.
     setAborting(true);
-    try { await api(`/api/companies/${ws}/chat/abort`, { slug, source: busy ? 'chat' : liveStage?.source }); } catch (e) { setError(String(e.message)); }
+    try { await api(`/api/companies/${ws}/chat/abort`, { slug, source: busy ? 'chat' : liveStage?.source, ...(reason ? { reason } : {}) }); } catch (e) { setError(String(e.message)); }
     finally { setAborting(false); }
   }
 
@@ -693,10 +714,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 스레드에 '중단됨' 표식과 함께 먼저 남긴 뒤 중단한다.
   async function sendImmediate(message, attachments) {
     if (sendingNow) return; // 방어적 재확인 — 버튼 disabled로도 막지만 프로그램적 재호출까지 닫는다
+    const myToken = ++sendNowTokenRef.current; // 이 호출의 신분증(재재검수 A·B) — 뒤이은 호출이 오면 내 정리는 무효
     setSendingNow(true);
-    // 이번 중단이 걸지 않은 기존 잠금은 우리가 풀지 않는다(재검수 N4) — 바로 보내기 직전에 이미
-    // 다른 이유로 잠겨 있었다면(예: 앞선 실패) 그 판단을 존중해 그대로 둔다.
-    const heldBefore = queueHeld;
+    // 이번 중단이 걸지 않은 기존 잠금은 우리가 풀지 않는다(재검수 N4→재재검수 A) — 연쇄의 **첫**
+    // 호출에서만 캡처한다. 연달아 두 번 누르면 두 번째 호출 시점엔 이미 첫 호출이 잠가 둔 뒤라,
+    // 매번 새로 읽으면 "원래 있던 잠금"으로 오판해 두 번째가 성공해도 안 풀린다.
+    if (sendNowHeldBeforeRef.current === null) sendNowHeldBeforeRef.current = queueHeld;
     let noteId = null; // 되돌릴 수 있게 이번에 넣은 부분 답변 노트를 식별(재검수 N5)
     try {
       // 부분 답변이 있고 이번 턴에서 아직 안 담았으면 한 번만 로컬 스레드에 남긴다(중복 삽입 방지).
@@ -705,13 +728,15 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       if (liveStage?.partial && !partialCapturedRef.current) {
         partialCapturedRef.current = true;
         noteId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        // 지금 중단되는 사장 메시지의 글 — 폴링 병합이 이 노트를 원래 자리(그 메시지 바로 뒤)에
-        // 다시 꽂을 때 찾는 기준(재검수 N3). mid는 서버가 저장 안 하므로 텍스트로 앵커링한다.
-        const afterText = [...(thread ?? [])].reverse().find((m) => m.who === 'user')?.text;
-        setThread((cur) => [...(cur ?? []), { who: 'crew', text: liveStage.partial, aborted: true, ts: Date.now(), noteId, afterText }]);
+        // 지금 중단되는 사장 메시지 — 폴링 병합이 이 노트를 원래 자리(그 메시지 바로 뒤)에 다시
+        // 꽂을 때 찾는 기준(재검수 N3→재재검수 C). mid를 우선 쓴다 — 문구만으로 찾으면 같은 글을
+        // 두 번 보낸 경우 엉뚱한 자리에 꽂힌다(mid는 그 지시 고유). 서버 msgs엔 mid가 없어 문구는
+        // 폴백으로 유지한다.
+        const lastUser = [...(thread ?? [])].reverse().find((m) => m.who === 'user');
+        setThread((cur) => [...(cur ?? []), { who: 'crew', text: liveStage.partial, aborted: true, ts: Date.now(), noteId, afterMid: lastUser?.mid, afterText: lastUser?.text }]);
       }
-      sendNowAbortRef.current = true; // 원래 턴의 catch가 이 값을 보고 문구·재전송 버튼을 가른다
-      await abortTurn();
+      sendNowAbortRef.current = true; // 원래 턴의 catch가 이 값을 보고 문구·재전송 버튼을 가른다(서버 확인 전 낙관 표시)
+      await abortTurn('sendNow'); // 서버가 이 사유를 원래 턴의 실패 응답에 viaSendNow로 실어 보낸다(재검수 D)
       // abortTurn은 서버에 중단을 요청할 뿐 — 지금 도는 sendMessage()의 fetch가 실제로 실패로 끝나
       // busy가 false로 내려가기까지는 별도 왕복이 더 필요하다. 고정 대기 대신 조건 충족까지 폴링(상한 8초).
       const startedAt = Date.now();
@@ -735,13 +760,19 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       // 풀어야 새 턴이 도는 동안의 Enter·전송 버튼·정지 명령이 "무시"가 아니라 기존 규칙(대기열 추가
       // 등)을 정상적으로 탄다(재검수 N1 — await 뒤에 풀면 새 턴이 끝날 때까지 전부 조용히 씹혔다).
       const p = sendMessage(message, attachments);
-      setSendingNow(false);
+      // 내가 아직 최신 호출일 때만 푼다(재검수 B) — 뒤이은 호출이 이미 있었으면(sendNowTokenRef가
+      // 갱신됐으면) 그 호출의 sendingNow=true를 내가 여기서 되돌리면 안 된다.
+      if (sendNowTokenRef.current === myToken) setSendingNow(false);
       const ok = await p;
-      // 성공했고, 이번 중단이 건 잠금이면(원래 안 걸려 있었으면)만 푼다 — 실패는 sendMessage의 catch가
-      // 이미 다시 잠갔으니(정상 실패 규칙과 동일) 손대지 않는다.
-      if (ok && !heldBefore) setQueueHeld(false);
+      // 성공했고, 이번 연쇄가 건 잠금이면(연쇄 시작 전 원래 안 걸려 있었으면)만 푼다 — 실패는
+      // sendMessage의 catch가 이미 다시 잠갔으니(정상 실패 규칙과 동일) 손대지 않는다.
+      if (ok && !sendNowHeldBeforeRef.current) setQueueHeld(false);
     } finally {
-      setSendingNow(false); // 위에서 이미 풀렸어도 안전망(조기 return·예외 등 나머지 경로 커버)
+      // 내가 이 연쇄의 마지막(최신) 호출일 때만 정리한다 — 아니면 아직 도는 뒤이은 호출의 상태를 밟는다.
+      if (sendNowTokenRef.current === myToken) {
+        setSendingNow(false); // 위에서 이미 풀렸어도 안전망(조기 return·예외 등 나머지 경로 커버)
+        sendNowHeldBeforeRef.current = null; // 연쇄 종료 — 다음 지금 바로 보내기는 그 시점 값을 새로 캡처
+      }
     }
   }
 
