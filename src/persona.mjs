@@ -5,6 +5,7 @@ import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
+import { withLock } from './mutex.mjs';
 import { appendUsage } from './usage.mjs';
 import { isBilledRunner, visibleRunnerNamesLine } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
 import { normalizeModelId } from './runners/catalog-remote.mjs'; // 모델 저장 시 alias 정규화(불변식 D)
@@ -91,6 +92,13 @@ function cardPath(wsId, slug) {
   if (dirname(file) !== dir) throw Object.assign(new Error('잘못된 크루 slug'), { code: 'BAD_SLUG' });
   return file;
 }
+
+// 카드 파일 단위 in-process 락 — thread.mjs·room.mjs와 같은 관례(withLock(prefix:wsId:slug)).
+// 분리 검수(2026-09-24): rename 재시도 예산을 3초로 늘리면서 "먼저 읽은 쓰기가 늦게 성공해 나중
+// 변경을 덮어쓰는" lost-update 창이 넓어졌다 — 같은 카드 파일의 read-modify-writeJsonAtomic 전체를
+// 이 락으로 직렬화한다(다른 락 키(workroots·connections)와 이름공간이 겹치지 않아 락 순서 교착 없음 —
+// removeAgentCard가 이 락 안에서 setPin/updateAgentBot을 부르지만 그건 각자 자기 키로 잠근다).
+const cardLockKey = (wsId, slug) => `persona-card:${wsId}:${slug}`;
 
 function parseFrontmatter(md) {
   const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -271,25 +279,27 @@ const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export async function saveAgentCard(wsId, slug, md) {
   const meta = parseFrontmatter(md);
   if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
-  const file = cardPath(wsId, slug);
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
-  // 엔진(runner/model)은 PATCH 경로가 소유한다 — 본문/규칙 저장(PUT)이 통째로 덮어써 엔진 선택을
-  // 조용히 원복시키던 문제(패널 stale) 방어: 들어온 md에 엔진 키가 없으면 디스크의 현재 값을 보존한다.
-  // (사용자가 raw 편집기에서 직접 엔진 키를 넣었으면 그때만 incoming에 존재 → 그 값 존중)
-  let out = md.endsWith('\n') ? md : `${md}\n`;
-  try {
-    const cur = parseFrontmatter(await readFile(file, 'utf8'));
-    if (cur.runner && meta.runner === undefined) out = setFrontmatterKey(out, 'runner', cur.runner);
-    if (cur.model && meta.model === undefined) out = setFrontmatterKey(out, 'model', cur.model);
-    // 스코프·강도도 같은 계약 — 패널이 stale인 채 본문 저장(PUT)하면 칩 토글로 바꾼 skills/mcp가
-    // 옛값으로 되살아나 "설치했는데 이 크루만 안 된다"를 만든다(탐색 A3-4, 제보 2026-07-31).
-    if (cur.skills && meta.skills === undefined) out = setFrontmatterKey(out, 'skills', cur.skills);
-    if (cur.mcp && meta.mcp === undefined) out = setFrontmatterKey(out, 'mcp', cur.mcp);
-    if (cur.effort && meta.effort === undefined) out = setFrontmatterKey(out, 'effort', cur.effort);
-  } catch { /* 디스크 읽기 실패 시 들어온 md 그대로 저장 */ }
-  await writeJsonAtomic(file, out);
-  const saved = parseFrontmatter(out);
-  return { slug, name: saved.name, role: saved.role || '' };
+  return withLock(cardLockKey(wsId, slug), async () => {
+    const file = cardPath(wsId, slug);
+    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    // 엔진(runner/model)은 PATCH 경로가 소유한다 — 본문/규칙 저장(PUT)이 통째로 덮어써 엔진 선택을
+    // 조용히 원복시키던 문제(패널 stale) 방어: 들어온 md에 엔진 키가 없으면 디스크의 현재 값을 보존한다.
+    // (사용자가 raw 편집기에서 직접 엔진 키를 넣었으면 그때만 incoming에 존재 → 그 값 존중)
+    let out = md.endsWith('\n') ? md : `${md}\n`;
+    try {
+      const cur = parseFrontmatter(await readFile(file, 'utf8'));
+      if (cur.runner && meta.runner === undefined) out = setFrontmatterKey(out, 'runner', cur.runner);
+      if (cur.model && meta.model === undefined) out = setFrontmatterKey(out, 'model', cur.model);
+      // 스코프·강도도 같은 계약 — 패널이 stale인 채 본문 저장(PUT)하면 칩 토글로 바꾼 skills/mcp가
+      // 옛값으로 되살아나 "설치했는데 이 크루만 안 된다"를 만든다(탐색 A3-4, 제보 2026-07-31).
+      if (cur.skills && meta.skills === undefined) out = setFrontmatterKey(out, 'skills', cur.skills);
+      if (cur.mcp && meta.mcp === undefined) out = setFrontmatterKey(out, 'mcp', cur.mcp);
+      if (cur.effort && meta.effort === undefined) out = setFrontmatterKey(out, 'effort', cur.effort);
+    } catch { /* 디스크 읽기 실패 시 들어온 md 그대로 저장 */ }
+    await writeJsonAtomic(file, out);
+    const saved = parseFrontmatter(out);
+    return { slug, name: saved.name, role: saved.role || '' };
+  });
 }
 
 /** frontmatter 키를 갱신/삽입/삭제하며 카드 본문은 보존한다. */
@@ -331,67 +341,72 @@ export function scopeServers(servers, scope) {
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, effort, skills, mcp }) {
-  const file = cardPath(wsId, slug);
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
-  let md = await readFile(file, 'utf8');
-  const before = parseFrontmatter(md);
-  if (name !== undefined && name.trim()) {
-    md = setFrontmatterKey(md, 'name', name.trim());
-    // 본문 제목의 옛 이름도 함께 (— "# 이름 — 직함" 관례). 이름을 정규식 리터럴로 이스케이프하고
-    // 치환값은 함수 리플레이서로 넘겨 새 이름의 '$'가 캡처참조로 오해석되는 것까지 막는다.
-    if (before.name) md = md.replace(new RegExp(`^# ${escRe(before.name)}(?= —|$)`, 'm'), () => `# ${name.trim()}`);
-  }
-  if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
-  if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
-  // 모델 저장 정규화(불변식 D, 2026-09-05) — 폐기 id는 원격 alias로 현행 id로 바꿔 저장한다. **거절하지 않는다**
-  // (분리 검수 HIGH-2 라이브 실측: 거절하면 카탈로그에서 제거된 모델(f50a997 등)을 쓰던 업그레이드 사용자의 크루가
-  // 이름·역할 편집까지 전부 막힌다 — crew-edit는 model을 항상 보낸다). 목록 밖 id는 그대로 저장되고, 실행 시
-  // chat.mjs가 기본 모델로 답하며 modelFallback으로 고지한다(오류를 만들지 않는다 — 유건 목적 "모델 스위치에 오류 없이").
-  if (model !== undefined && String(model).trim()) {
-    const rid = (runner !== undefined ? String(runner).trim() : String(before.runner ?? '').trim()) || null;
-    const m = String(model).trim();
-    model = rid ? normalizeModelId(rid, m) : m;
-  }
-  if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
-  if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = 회사 연결 러너(기본)
-  // 추론 강도(요청 2026-07-25) — 화이트리스트 밖 값은 저장하지 않는다(SDK가 거부하는 값이 카드에 굳는 것 방지).
-  // 빈 값 = 모델 기본. claude(SDK) 러너에만 적용된다 — chat.mjs가 러너를 보고 전달 여부를 정한다.
-  if (effort !== undefined) {
-    const v = String(effort).trim().toLowerCase();
-    md = setFrontmatterKey(md, 'effort', EFFORT_LEVELS.includes(v) ? v : '');
-  }
-  if (skills !== undefined) md = setFrontmatterKey(md, 'skills', String(skills).trim()); // 빈 값 = 전체, 'none' = 없음, csv = 지정만
-  if (mcp !== undefined) md = setFrontmatterKey(md, 'mcp', String(mcp).trim());          // 동일 계약(parseScopeList)
-  await writeJsonAtomic(file, md);
-  const after = parseFrontmatter(md);
-  await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: after.name });
-  if (name !== undefined && name.trim() && before.name !== after.name) {
-    // 텔레그램 직통 봇의 표시 이름도 따라가게 — 실패(레이트리밋)해도 카드 수정은 완료된 것
-    import('./connections.mjs').then((m) => m.syncAgentBotName(wsId, slug, after.name)).catch(() => {});
-  }
-  return after;
+  return withLock(cardLockKey(wsId, slug), async () => {
+    const file = cardPath(wsId, slug);
+    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    let md = await readFile(file, 'utf8');
+    const before = parseFrontmatter(md);
+    if (name !== undefined && name.trim()) {
+      md = setFrontmatterKey(md, 'name', name.trim());
+      // 본문 제목의 옛 이름도 함께 (— "# 이름 — 직함" 관례). 이름을 정규식 리터럴로 이스케이프하고
+      // 치환값은 함수 리플레이서로 넘겨 새 이름의 '$'가 캡처참조로 오해석되는 것까지 막는다.
+      if (before.name) md = md.replace(new RegExp(`^# ${escRe(before.name)}(?= —|$)`, 'm'), () => `# ${name.trim()}`);
+    }
+    if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
+    if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
+    // 모델 저장 정규화(불변식 D, 2026-09-05) — 폐기 id는 원격 alias로 현행 id로 바꿔 저장한다. **거절하지 않는다**
+    // (분리 검수 HIGH-2 라이브 실측: 거절하면 카탈로그에서 제거된 모델(f50a997 등)을 쓰던 업그레이드 사용자의 크루가
+    // 이름·역할 편집까지 전부 막힌다 — crew-edit는 model을 항상 보낸다). 목록 밖 id는 그대로 저장되고, 실행 시
+    // chat.mjs가 기본 모델로 답하며 modelFallback으로 고지한다(오류를 만들지 않는다 — 유건 목적 "모델 스위치에 오류 없이").
+    if (model !== undefined && String(model).trim()) {
+      const rid = (runner !== undefined ? String(runner).trim() : String(before.runner ?? '').trim()) || null;
+      const m = String(model).trim();
+      model = rid ? normalizeModelId(rid, m) : m;
+    }
+    if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
+    if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = 회사 연결 러너(기본)
+    // 추론 강도(요청 2026-07-25) — 화이트리스트 밖 값은 저장하지 않는다(SDK가 거부하는 값이 카드에 굳는 것 방지).
+    // 빈 값 = 모델 기본. claude(SDK) 러너에만 적용된다 — chat.mjs가 러너를 보고 전달 여부를 정한다.
+    if (effort !== undefined) {
+      const v = String(effort).trim().toLowerCase();
+      md = setFrontmatterKey(md, 'effort', EFFORT_LEVELS.includes(v) ? v : '');
+    }
+    if (skills !== undefined) md = setFrontmatterKey(md, 'skills', String(skills).trim()); // 빈 값 = 전체, 'none' = 없음, csv = 지정만
+    if (mcp !== undefined) md = setFrontmatterKey(md, 'mcp', String(mcp).trim());          // 동일 계약(parseScopeList)
+    await writeJsonAtomic(file, md);
+    const after = parseFrontmatter(md);
+    await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: after.name });
+    if (name !== undefined && name.trim() && before.name !== after.name) {
+      // 텔레그램 직통 봇의 표시 이름도 따라가게 — 실패(레이트리밋)해도 카드 수정은 완료된 것.
+      // connections.mjs는 자기 자신의 락 키(connections:wsId)를 쓰므로 카드 락과 겹치지 않는다.
+      import('./connections.mjs').then((m) => m.syncAgentBotName(wsId, slug, after.name)).catch(() => {});
+    }
+    return after;
+  });
 }
 
 /** 카드 "## 일하는 방식"에 규칙 한 줄 추가 — CardPanel의 addRule과 동일 규약(서버측). */
 export async function appendAgentRule(wsId, slug, text) {
-  const file = cardPath(wsId, slug);
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
-  const md = await readFile(file, 'utf8');
-  const rule = String(text).trim();
-  if (!rule) return parseFrontmatter(md);
-  const h = '## 일하는 방식';
-  let next;
-  const i = md.indexOf(h);
-  if (i === -1) {
-    next = `${md.trimEnd()}\n\n${h}\n- ${rule}\n`;
-  } else {
-    const rest = md.indexOf('\n## ', i + h.length);
-    const end = rest === -1 ? md.length : rest;
-    next = `${md.slice(0, end).trimEnd()}\n- ${rule}\n${rest === -1 ? '' : md.slice(end)}`;
-  }
-  await writeJsonAtomic(file, next);
-  await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
-  return parseFrontmatter(next);
+  return withLock(cardLockKey(wsId, slug), async () => {
+    const file = cardPath(wsId, slug);
+    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    const md = await readFile(file, 'utf8');
+    const rule = String(text).trim();
+    if (!rule) return parseFrontmatter(md);
+    const h = '## 일하는 방식';
+    let next;
+    const i = md.indexOf(h);
+    if (i === -1) {
+      next = `${md.trimEnd()}\n\n${h}\n- ${rule}\n`;
+    } else {
+      const rest = md.indexOf('\n## ', i + h.length);
+      const end = rest === -1 ? md.length : rest;
+      next = `${md.slice(0, end).trimEnd()}\n- ${rule}\n${rest === -1 ? '' : md.slice(end)}`;
+    }
+    await writeJsonAtomic(file, next);
+    await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
+    return parseFrontmatter(next);
+  });
 }
 
 /** 카드 본문 섹션 파서 — "## 제목" 단위. frontmatter는 건드리지 않는다(엔진·범위 키는 PATCH가 소유). */
@@ -424,40 +439,44 @@ export async function listAgentSections(wsId, slug) {
 /** "## 일하는 방식" 규칙을 통째로 바꾼다(수정·삭제·순서 변경의 단일 원시 연산). 빈 배열이면 섹션은 남기고 규칙만 비운다.
     화면의 규칙 편집기와 크루 도구(update_profile rules)가 같은 함수를 쓴다 — 유건 지시 2026-09-07 "카드 편집에 자유도". */
 export async function setAgentRules(wsId, slug, rules) {
-  const file = cardPath(wsId, slug);
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
-  const list = (Array.isArray(rules) ? rules : []).map((r) => String(r).replace(/\s+/g, ' ').trim()).filter(Boolean);
-  const md = await readFile(file, 'utf8');
-  const doc = splitCardBody(md);
-  const h = '일하는 방식';
-  const bullets = list.map((r) => `- ${r}`).join('\n');
-  const sec = doc.parts.find((p) => p.title === h);
-  if (sec) sec.text = bullets;
-  else doc.parts.push({ title: h, text: bullets });
-  const next = joinCardBody(doc);
-  await writeJsonAtomic(file, next);
-  await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
-  return { ...parseFrontmatter(next), rules: rulesOf(bullets) };
+  return withLock(cardLockKey(wsId, slug), async () => {
+    const file = cardPath(wsId, slug);
+    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    const list = (Array.isArray(rules) ? rules : []).map((r) => String(r).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const md = await readFile(file, 'utf8');
+    const doc = splitCardBody(md);
+    const h = '일하는 방식';
+    const bullets = list.map((r) => `- ${r}`).join('\n');
+    const sec = doc.parts.find((p) => p.title === h);
+    if (sec) sec.text = bullets;
+    else doc.parts.push({ title: h, text: bullets });
+    const next = joinCardBody(doc);
+    await writeJsonAtomic(file, next);
+    await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
+    return { ...parseFrontmatter(next), rules: rulesOf(bullets) };
+  });
 }
 
 /** 카드 본문 한 섹션(## 제목)의 내용을 교체한다. 없는 제목이면 끝에 새 섹션. 빈 body는 섹션 삭제.
     frontmatter·다른 섹션은 그대로 — 원문 textarea 전체 저장보다 좁고 안전한 편집 단위. */
 export async function setAgentSection(wsId, slug, title, body) {
-  const file = cardPath(wsId, slug);
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
   const name = String(title ?? '').replace(/^#+\s*/, '').trim();
   if (!name) throw new Error('섹션 제목이 필요합니다');
-  const text = String(body ?? '').replace(/\r\n/g, '\n').trim();
-  const md = await readFile(file, 'utf8');
-  const doc = splitCardBody(md);
-  const i = doc.parts.findIndex((p) => p.title === name);
-  if (!text) { if (i >= 0) doc.parts.splice(i, 1); }
-  else if (i >= 0) doc.parts[i].text = text;
-  else doc.parts.push({ title: name, text });
-  const next = joinCardBody(doc);
-  await writeJsonAtomic(file, next);
-  await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
-  return parseFrontmatter(next);
+  return withLock(cardLockKey(wsId, slug), async () => {
+    const file = cardPath(wsId, slug);
+    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    const text = String(body ?? '').replace(/\r\n/g, '\n').trim();
+    const md = await readFile(file, 'utf8');
+    const doc = splitCardBody(md);
+    const i = doc.parts.findIndex((p) => p.title === name);
+    if (!text) { if (i >= 0) doc.parts.splice(i, 1); }
+    else if (i >= 0) doc.parts[i].text = text;
+    else doc.parts.push({ title: name, text });
+    const next = joinCardBody(doc);
+    await writeJsonAtomic(file, next);
+    await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
+    return parseFrontmatter(next);
+  });
 }
 
 /** 팀 이름 변경 — 그 팀 소속 전 크루의 frontmatter를 일괄 갱신. */
@@ -467,10 +486,16 @@ export async function renameTeam(wsId, from, to) {
   let changed = 0;
   for (const f of (await readdir(dir)).filter((n) => n.endsWith('.md'))) {
     const file = join(dir, f);
-    const md = await readFile(file, 'utf8');
-    if (parseFrontmatter(md).team !== from) continue;
-    await writeJsonAtomic(file, setFrontmatterKey(md, 'team', to.trim()));
-    changed += 1;
+    const slug = f.slice(0, -3);
+    // 카드 하나씩 자기 락으로 직렬화 — 같은 턴에 다른 필드를 고치는 updateAgentMeta 등과 경쟁해도
+    // read-modify-write가 끼어들지 않는다(파일마다 독립 키라 이 반복 자체는 서로 막지 않는다).
+    const did = await withLock(cardLockKey(wsId, slug), async () => {
+      const md = await readFile(file, 'utf8');
+      if (parseFrontmatter(md).team !== from) return false;
+      await writeJsonAtomic(file, setFrontmatterKey(md, 'team', to.trim()));
+      return true;
+    });
+    if (did) changed += 1;
   }
   if (changed === 0) throw new Error('해당 팀의 크루가 없습니다');
   await appendEvent(wsId, { type: 'crew', op: 'team', name: `${from} → ${to.trim()}` });
@@ -481,10 +506,15 @@ export async function renameTeam(wsId, from, to) {
 export async function removeAgentCard(wsId, slug) {
   const file = cardPath(wsId, slug); // slug 검증 포함
   const dir = paths(wsId).agents;
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
-  const archive = join(dir, '.archive');
-  await mkdir(archive, { recursive: true });
-  await rename(file, join(archive, `${Date.now()}-${slug}.md`));
+  // 카드 락 — 해고(rename to .archive)가 진행 중인 updateAgentMeta 등의 read-modify-write와
+  // 경합하면 "고친 내용이 사라진 채 해고"나 "이미 해고된 파일에 다시 쓰기"가 날 수 있다.
+  // setPin·updateAgentBot은 각자 자기 락 키(workroots·connections)라 여기서 기다려도 교착 없음.
+  await withLock(cardLockKey(wsId, slug), async () => {
+    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    const archive = join(dir, '.archive');
+    await mkdir(archive, { recursive: true });
+    await rename(file, join(archive, `${Date.now()}-${slug}.md`));
+  });
   // 직통 봇 연결도 함께 정리 — 안 걷으면 유령 폴러가 계속 돌고, 토큰 중복 검사가
   // UI에 보이지 않는 해고 크루를 지목해 사용자가 풀 방법이 없어진다(검수 지적).
   const { updateAgentBot } = await import('./connections.mjs'); // 동적 — 모듈 간 순환 방지

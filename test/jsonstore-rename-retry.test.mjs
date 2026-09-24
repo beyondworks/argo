@@ -1,15 +1,61 @@
 // 크루 이름 변경 PATCH의 Windows 오류 제보(2026-09-08) — writeJsonAtomic이 임시파일→rename으로
 // 카드를 저장하는데, 대상 파일을 다른 프로세스(AV 스캔·인덱서 등)가 열어 둔 동안 Windows는
 // rename을 EPERM으로 거절한다. 격리 재현(ssh winpc, 2026-09-24): 옛 예산(~450ms)은 200ms 보유는
-// 통과했지만 600ms 보유부터 실패했다. renameRetry의 예산을 3초(지수 백오프)로 늘렸다 — 이 테스트는
-// win32로 가장해 그 경계를 고정한다(darwin/linux에서도 실행 가능 — 실제 fs 동작은 그대로, platform만 스텁).
+// 통과했지만 600ms 보유부터 실패했다. renameRetry의 예산을 3초(지수 백오프)로 늘렸다.
+//
+// 아래 첫 두 테스트는 실 OS 잠금 시맨틱 없이(가짜 시계·가짜 rename 주입) 예산·백오프 로직 자체를
+// 결정적으로 잠근다(분리 검수 LOW: "테스트 1·3번이 macOS에서 옛 코드로도 통과한다" — process.platform
+// 스텁만으로는 POSIX가 read-share 중 rename을 허용해 재시도 분기 자체를 안 타므로 옛 코드도 우연히
+// 통과했다). renameRetry를 옵션 없이(프로덕션과 동일한 기본 예산 3000ms) 호출하므로, 소스의 실제
+// 예산이 바뀌면(예: 되돌리기) 이 테스트도 함께 붉어진다 — 재구현 사본이 아니라 실코드 경로 검증.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { open, mkdir, writeFile } from 'node:fs/promises';
+import { open, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { writeJsonAtomic } from '../src/jsonstore.mjs';
+import { writeJsonAtomic, renameRetry } from '../src/jsonstore.mjs';
+
+// 가짜 잠금 — releaseAtMs까지는 EPERM, 그 뒤엔 성공. sleep은 실제로 기다리지 않고 가짜 시계만
+// 전진시켜 테스트가 즉시 끝난다(수백 ms~수 초짜리 타이밍을 실시간으로 기다리지 않는다).
+function fakeLock(releaseAtMs) {
+  let clock = 0;
+  let calls = 0;
+  return {
+    renameFn: async () => { calls += 1; if (clock < releaseAtMs) { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; } return true; },
+    now: () => clock,
+    sleep: async (ms) => { clock += ms; },
+    callCount: () => calls,
+  };
+}
+
+test('renameRetry: 프로덕션 기본 예산(3000ms)은 600ms 보유(AV/인덱서급)에서 회복한다', async () => {
+  const { renameFn, now, sleep } = fakeLock(600);
+  const r = await renameRetry('tmp', 'file', { renameFn, now, sleep, platform: 'win32' }); // budgetMs 생략 = 실제 기본값
+  assert.equal(r, true);
+});
+
+test('renameRetry: 예산이 짧으면(옛 ~450ms) 오래 쥔 잠금(2초급)에서 실패한다 — 예산 자체가 핵심 변수임을 고정', async () => {
+  // 2000ms를 쓰는 이유: 재시도 판정이 "다음 sleep 전" 시점의 경과로 gate하므로, 마지막 sleep이
+  // deadline을 살짝 넘겨서라도 짧게 겹친 보유(600ms급)는 옛 예산으로도 우연히 회복될 수 있다
+  // (마지막 대기가 400ms라 450 예산도 750ms까지는 한 번 더 시도한다 — 실측). AV 스캔처럼 훨씬
+  // 길게 쥐는 잠금이라야 "예산이 짧아서 진짜 실패"가 결정적으로 재현된다.
+  const { renameFn, now, sleep } = fakeLock(2000);
+  await assert.rejects(
+    () => renameRetry('tmp', 'file', { renameFn, now, sleep, platform: 'win32', budgetMs: 450 }),
+    (e) => e.code === 'EPERM',
+  );
+  // 같은 잠금에서 프로덕션 기본 예산(3000ms)은 회복해야 한다 — "예산 확대가 실제로 효과 있다"는 대조.
+  const same = fakeLock(2000);
+  const r = await renameRetry('tmp', 'file', { renameFn: same.renameFn, now: same.now, sleep: same.sleep, platform: 'win32' });
+  assert.equal(r, true);
+});
+
+test('renameRetry: 영구 잠금은 예산 소진 뒤 결국 오류를 낸다 — 조용히 삼키지 않는다', async () => {
+  const { renameFn, now, sleep, callCount } = fakeLock(Infinity);
+  await assert.rejects(() => renameRetry('tmp', 'file', { renameFn, now, sleep, platform: 'win32' }), (e) => e.code === 'EPERM');
+  assert.ok(callCount() >= 2, '최소 1회는 재시도했어야 한다');
+});
 
 function asWin32() {
   const desc = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -36,7 +82,7 @@ test('win32: 파일이 600ms 열려 있어도(AV/인덱서급 보유) writeJsonA
 // macOS/Linux에서 재현되지 않는다(POSIX는 read-share 중 rename을 허용) — 그래서 이 테스트는
 // **실제** win32(test.yml의 windows-latest 잡)에서만 돈다. ssh winpc 격리 재현(2026-09-24)이 이미
 // 같은 조건에서 EPERM을 확인했다(관찰 근거, 이 파일 상단 주석).
-test('win32: 계속 잠겨 있으면(영구 잠금) 결국 오류를 낸다 — 조용히 삼키지 않는다', { skip: process.platform !== 'win32' ? '실제 win32 OS 잠금 시맨틱 필요 — windows-latest CI에서만 실행' : false }, async () => {
+test('win32: 계속 잠겨 있으면(영구 잠금) 결국 오류를 내고, 임시파일도 남기지 않는다', { skip: process.platform !== 'win32' ? '실제 win32 OS 잠금 시맨틱 필요 — windows-latest CI에서만 실행' : false }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'argo-rename-'));
   const file = join(dir, 'agent-card.md');
   await writeFile(file, 'before', 'utf8');
@@ -44,6 +90,8 @@ test('win32: 계속 잠겨 있으면(영구 잠금) 결국 오류를 낸다 — 
   try {
     await assert.rejects(() => writeJsonAtomic(file, 'after'), (e) => e.code === 'EPERM' || e.code === 'EACCES');
     assert.equal(await (await import('node:fs/promises')).readFile(file, 'utf8'), 'before', '실패한 갱신이 원본을 건드리면 안 된다');
+    const leftovers = (await readdir(dir)).filter((n) => n.startsWith('.tmp-'));
+    assert.deepEqual(leftovers, [], '최종 실패 뒤 임시파일이 남으면 안 된다(디스크 잔재 누적 방지)');
   } finally { await fh.close().catch(() => {}); }
 });
 

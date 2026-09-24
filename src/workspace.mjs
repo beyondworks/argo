@@ -7,6 +7,7 @@ import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { writeJsonAtomic, writeFileAtomic } from './jsonstore.mjs';
 import { dropDocCache } from './doc-cache.mjs';
+import { withLock } from './mutex.mjs';
 
 export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
 
@@ -87,11 +88,16 @@ export async function loadCompany(wsId) {
   return JSON.parse(await readFile(paths(wsId).company, 'utf8'));
 }
 
-/** 회사 정보 수정 — 이름 등. id/created는 불변. */
+/** 회사 정보 수정 — 이름 등. id/created는 불변.
+    withLock(company:wsId) — read-modify-write 전체를 직렬화한다(분리 검수 2026-09-24: rename
+    재시도 예산이 늘면서 lost-update 창이 넓어졌다). 이 키를 이미 쥔 채 부르는 호출부가 없어
+    락 순서 교착은 없다(grep 확인 — app/api/companies/[ws]/*, accountclaim.mjs, msgr-node.mjs). */
 export async function updateCompany(wsId, patch) {
-  const company = { ...(await loadCompany(wsId)), ...patch, id: wsId };
-  await writeJsonAtomic(paths(wsId).company, company);
-  return company;
+  return withLock(`company:${wsId}`, async () => {
+    const company = { ...(await loadCompany(wsId)), ...patch, id: wsId };
+    await writeJsonAtomic(paths(wsId).company, company);
+    return company;
+  });
 }
 
 /** 회사 보관 — 삭제 대신 .archive/로 폴더째 이동(복구 가능). */

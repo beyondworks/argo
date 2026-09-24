@@ -42,14 +42,22 @@ export async function writeFileAtomic(file, body, { mode = 0o644 } = {}) {
     EPERM으로 실패했다(크루 이름 변경 PATCH 제보, 2026-09-08 Windows). 200ms 보유는 옛 예산도 통과했으니
     변경은 "짧은 경합"이 아니라 "AV 스캔급으로 긴 경합"만 추가로 구제한다. 그래도 잠겨 있으면 진짜
     오류로 올린다 — 조용히 삼키면 유실이 무증상이 된다. */
-async function renameRetry(tmp, file) {
-  const deadline = Date.now() + 3000;
+// 의존성 주입(renameFn·now·sleep·platform) — 실 OS 잠금(다른 프로세스의 열린 핸들) 없이도 예산·백오프
+// 로직 자체를 결정적으로 단위 테스트하기 위함(분리 검수 LOW: "재시도 판정을 순수 함수로 빼거나 rename을
+// 주입"). 프로덕션 호출부(writeFileAtomic)는 옵션 없이 부르므로 기본값(실제 fs.rename·Date.now·실제
+// setTimeout·process.platform·3000ms)이 곧 실제 동작이다 — 테스트가 이 함수를 기본값으로 그대로
+// 호출하면 소스의 실제 예산이 바뀔 때 테스트도 함께 붉어진다(재구현 사본이 아니라 실코드 경로).
+export async function renameRetry(tmp, file, {
+  renameFn = rename, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  platform = process.platform, budgetMs = 3000,
+} = {}) {
+  const deadline = now() + budgetMs;
   let wait = 50;
   for (;;) {
-    try { return await rename(tmp, file); }
+    try { return await renameFn(tmp, file); }
     catch (e) {
-      if (process.platform !== 'win32' || (e.code !== 'EPERM' && e.code !== 'EACCES') || Date.now() >= deadline) throw e;
-      await new Promise((r) => setTimeout(r, wait));
+      if (platform !== 'win32' || (e.code !== 'EPERM' && e.code !== 'EACCES') || now() >= deadline) throw e;
+      await sleep(wait);
       wait = Math.min(wait * 2, 400);
     }
   }
