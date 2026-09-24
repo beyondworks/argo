@@ -5,13 +5,13 @@ const state = window.__workFixture = Object.assign(window.__dmFixture, { unavail
 Object.assign(state.tables, { msgr_work_runs: [], msgr_automations: [], msgr_automation_runs: [], msgr_notification_deliveries: [], msgr_crew_routines: [], msgr_crew_routine_edits: [] });
 state.tables.msgr_channels.forEach(channel => { channel.personal_crews = 'allowed'; });
 state.tables.msgr_crews.forEach(crew => { crew.work_protocol = 1; });
+const now = () => new Date().toISOString();
 // 업무 > 자동화 1단계 — 채널(crew-new · general)과 1:1(crew-existing)에 각각 Argo 루틴 시드 + 반영 대기 편집 1건(WORK_FILTER=routine)
 state.tables.msgr_crew_routines.push(
   { id: 'routine-1', crew_id: 'crew-new', title: 'Fixture morning brief', prompt: 'Summarize overnight updates.', schedule: { type: 'daily', time: '09:00', times: ['09:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now() },
   { id: 'routine-2', crew_id: 'crew-existing', title: 'Fixture weekly digest', prompt: 'Compile this week’s notes.', schedule: { type: 'weekly', time: '18:00', times: ['18:00'], dows: [1, 3, 5], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now() },
 );
 state.tables.msgr_crew_routine_edits.push({ id: 'edit-1', routine_id: 'routine-2', status: 'pending', op: 'update', patch: { title: 'Fixture weekly digest (edited)' }, created_at: now() });
-const now = () => new Date().toISOString();
 let nextId = 500;
 async function response(name, args, action) {
   state.workCalls.push({ name, args: structuredClone(args) });
