@@ -1,10 +1,15 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
+import { cloudConfigProblem } from './scripts/cloud-config-gate.mjs';
 
 // 공유 순수 모듈은 별칭으로(복사 금지 — 사본 드리프트). 루트 워크스페이스 전환은 후속(lockfile·CI 파장).
 const shared = (p) => fileURLToPath(new URL(`../../${p}`, import.meta.url));
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  // 발행 빌드 관문 — 서버 주소 없이 나가는 앱 차단(scripts/cloud-config-gate.mjs)
+  const problem = cloudConfigProblem({ command, platform: process.env.TAURI_ENV_PLATFORM, env: { ...loadEnv(mode, fileURLToPath(new URL('.', import.meta.url)), 'VITE_'), ...process.env } });
+  if (problem) throw new Error(problem);
+  return {
   plugins: [react()],
   // React 사본 하나로(실사고 2026-09-07 v0.1.0: @argo/* 별칭이 루트 node_modules의 react를, 메신저 코드는 apps/messenger의
   // react를 들고 와 빌드에 React가 둘 실렸다 → "Cannot read properties of null (reading 'useState')"로 첫 발행 설치본이 빈 화면.
@@ -20,4 +25,5 @@ export default defineConfig({
   server: { host: process.env.TAURI_DEV_HOST || false, strictPort: true, fs: { allow: [shared('.')] } },
   clearScreen: false,
   envPrefix: ['VITE_', 'TAURI_ENV_'],
+};
 });
