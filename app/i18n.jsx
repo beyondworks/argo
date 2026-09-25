@@ -675,6 +675,7 @@ const DICT = {
   'billing.trialUpgradeHint': ['무료 체험 중입니다 — 미리 업그레이드하면 체험이 끝나도 끊기지 않습니다.', "You're on the free trial — upgrade now and nothing pauses when it ends."],
   'billing.upgradeMonthly': ['Pro 업그레이드 — $12/월', 'Upgrade to Pro — $12/mo'],
   'billing.upgradeYearly': ['연간 $120 (2개월 무료)', 'Yearly $120 (2 months free)'],
+  'billing.signInToPay': ['결제하려면 먼저 로그인하세요 — 결제는 계정에 연결됩니다', 'Sign in first to upgrade — the subscription is tied to your account'],
   'billing.comingSoon': ['결제 준비 중 — 곧 열립니다', 'Billing opens soon'],
   'billing.pastDue': ['결제가 확인되지 않았습니다 — 결제 수단을 확인해 주세요. 확인될 때까지 클라우드는 잠시 유지됩니다.', "Payment didn't go through — please check your payment method. Cloud stays on for a grace period."],
   'billing.managePortal': ['구독 관리', 'Manage subscription'],
