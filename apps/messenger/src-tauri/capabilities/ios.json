@@ -8,6 +8,14 @@
     "main"
   ],
   "permissions": [
-    "web-auth:default"
+    "web-auth:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "itms-beta://*"
+        }
+      ]
+    }
   ]
 }

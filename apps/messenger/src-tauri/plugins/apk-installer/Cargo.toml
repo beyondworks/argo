@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-apk-installer"
+version = "0.1.0"
+description = "Android 전용 — GitHub 릴리스 APK를 앱이 직접 받아 sha256 대조 뒤 FileProvider로 설치 화면을 띄운다(APK 스토어 미발행 단계 전용)"
+edition = "2021"
+rust-version = "1.77.2"
+links = "tauri-plugin-apk-installer"
+publish = false
+
+[dependencies]
+tauri = { version = "2", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri = { version = "2", default-features = false, features = ["wry"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

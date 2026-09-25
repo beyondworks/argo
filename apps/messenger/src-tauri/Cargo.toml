@@ -44,6 +44,10 @@ tauri-plugin-push-notifications = "0.1" # APNs·FCM 기기 토큰 + 알림 탭(�
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-web-auth = { path = "plugins/web-auth" } # 로그인 창 — Chrome 등 기본 브라우저가 콜백을 앱에 안 넘기는 문제(2026-09-10)
 
+# Android APK 자가 업데이트(스토어 미발행 단계) — GitHub 릴리스 APK를 앱이 받아 같은 서명으로 겹쳐 설치(2026-09-24)
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-apk-installer = { path = "plugins/apk-installer" }
+
 # tao 0.35.3 + iOS 씬 구성 해제 후 사용 수정 1줄(tao 0.36.0에서 고쳐졌으나 tauri 2.x는 tao ^0.35만 받는다).
 # iOS 27에서 씬 생명주기가 필수가 된 뒤 이 경로가 실행돼 TestFlight 0.1.27.2가 실행 즉시 죽었다(2026-09-17). tauri가 tao 0.36+를 받게 되면 이 패치를 지운다.
 [patch.crates-io]
