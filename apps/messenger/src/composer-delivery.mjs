@@ -3,22 +3,44 @@ import { storageKey } from './attach-files.mjs';
 // Drafts and retry state live only for this signed-in app session, separately per server/user/channel.
 // Keeping the File objects in memory lets navigation preserve attachments without copying them to disk.
 const sessions = new Map();
-export function getComposerSession(key, transport) {
-  if (!sessions.has(key)) sessions.set(key, createComposerDelivery(transport));
+const tabStorage = () => { try { return globalThis.sessionStorage; } catch { return undefined; } };
+export function getComposerSession(key, transport, storage = tabStorage()) {
+  if (!sessions.has(key)) sessions.set(key, createComposerDelivery(transport, undefined, draftStore(storage, key)));
   return sessions.get(key);
 }
-export function clearComposerSessions() {
+export function clearComposerSessions(storage = tabStorage(), { keepUser } = {}) {
   for (const session of sessions.values()) session.dispose();
   sessions.clear();
+  try { // 로그아웃·계정 전환 — 이 기기에 남긴 초안을 지운다(다음 사람이 보지 않게). keepUser: 앱 시작 때 그 계정 초안만 남긴다
+    const ids = []; for (let i = 0; i < (storage?.length ?? 0); i++) { const k = storage.key(i); if (k?.startsWith(DRAFT_PREFIX)) ids.push(k); }
+    for (const k of ids) if (!keepUser || draftOwner(k) !== keepUser) storage.removeItem(k);
+  } catch { /* 저장소 불가 */ }
+}
+const draftOwner = (id) => { try { return JSON.parse(id.slice(DRAFT_PREFIX.length))[1] ?? null; } catch { return null; } }; // 키 = [서버, uid, 조직, 채널]
+
+// 새로고침(⌘R·당겨서) 뒤에도 쓰던 글이 남게(유건 2026-09-24). sessionStorage = 새로고침엔 남고 앱을 끄면 사라진다.
+// 글·멘션·받는 사람·답글 대상만 — 첨부(File)는 저장하지 않는다. 저장소가 막히거나 값이 깨져도 입력창은 그대로 동작한다.
+const DRAFT_PREFIX = 'msgr-draft:';
+export function draftStore(storage, key) {
+  const id = DRAFT_PREFIX + key;
+  return {
+    id,
+    load() { try { const v = JSON.parse(storage?.getItem(id) ?? 'null'); return v && typeof v.text === 'string' ? v : null; } catch { return null; } },
+    save({ text, mentions, recipients, replyTo }) {
+      try { if (text || replyTo || mentions?.length || recipients?.length) storage?.setItem(id, JSON.stringify({ text, mentions, recipients, replyTo })); else storage?.removeItem(id); } catch { /* 저장소 불가 */ }
+    },
+  };
 }
 
-export function createComposerDelivery(transport, uuid = () => crypto.randomUUID()) {
-  let state = { text: '', mentions: [], recipients: [], files: [], replyTo: null, job: null, busy: false, uploading: '' }; // replyTo = { id, who, body } — 답글 대상(D17)
+export function createComposerDelivery(transport, uuid = () => crypto.randomUUID(), drafts = null) {
+  const saved = drafts?.load();
+  let state = { text: saved?.text ?? '', mentions: saved?.mentions ?? [], recipients: saved?.recipients ?? [], files: [], replyTo: saved?.replyTo ?? null, job: null, busy: false, uploading: '' }; // replyTo = { id, who, body } — 답글 대상(D17)
   let disposed = false;
   const listeners = new Set();
   const patch = (delta) => {
     if (disposed) return;
     state = { ...state, ...delta };
+    if (['text', 'mentions', 'recipients', 'replyTo'].some((k) => k in delta)) drafts?.save(state);
     for (const listener of listeners) listener();
   };
   const update = (key, value) => patch({ [key]: typeof value === 'function' ? value(state[key]) : value });

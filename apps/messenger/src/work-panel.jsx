@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { DangerModal, Markdown } from '@argo/ui';
 import { supabase } from './supabase.js';
 import { I } from './icons.jsx';
+import { toggleId } from './collapse-set.mjs';
 import './work-panel.css';
 
 // Poll only the visible tab: four list reads/minute, plus four small capability reads for team work. Hidden windows pause;
@@ -241,6 +242,9 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
   const runRequests = useRef(new Map());
   const bothLoaded = source.rows !== null && routines.rows !== null;
   const empty = bothLoaded && !source.rows.length && !(routines.rows ?? []).length;
+  // 카드는 처음엔 전부 접혀 있다(제목·소속·상태만) — 패널을 다시 열면 잊는다(유건 결정, 상태를 기억하지 않음).
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleCard = (id) => setExpanded((cur) => toggleId(cur, id));
   return <>
     <p className="work-note">{t('automation.intro')}</p>
     {source.rows !== null && !source.error && <SchedulerStatus t={t} />}
@@ -251,8 +255,12 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
     {source.error && <div className="work-notice error" role="alert"><p>{errorText(source.error, t)}</p><button className="btn sm" onClick={source.refresh}>{t('work.retry')}</button></div>}
     {source.rows === null && <p className="work-note" role="status">{t('ui.loading')}</p>}
     {empty && <p className="work-empty">{t('automation.empty')}</p>}
-    {(source.rows ?? []).map((automation) => <article className="work-item" key={automation.id}>
-      <div className="work-item-top"><span className="work-item-title"><strong>{automation.title}</strong><span className="work-source-badge">{t('automation.source.msgr')}</span></span><span className={`work-status ${automation.enabled ? 'running' : 'cancelled'}`}>{t(automation.enabled ? 'automation.enabled' : 'automation.paused')}</span></div>
+    {(source.rows ?? []).map((automation) => { const open = expanded.has(automation.id); const bodyId = `work-body-msgr-${automation.id}`; return <article className="work-item" key={automation.id}>
+      <button type="button" className="work-item-top work-item-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => toggleCard(automation.id)}>
+        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong>{automation.title}</strong><span className="work-source-badge">{t('automation.source.msgr')}</span></span>
+        <span className={`work-status ${automation.enabled ? 'running' : 'cancelled'}`}>{t(automation.enabled ? 'automation.enabled' : 'automation.paused')}</span>
+      </button>
+      {open && <div className="work-item-body" id={bodyId}>
       <p className="work-text">{automation.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === automation.crew_id)?.display_name ?? t('work.crew.unavailable')} · <Schedule schedule={automation.schedule} t={t} /></p>
       <p className="work-note">{t('automation.next')}: {automation.enabled ? stamp(automation.next_run_at, lang) : '—'} · {t('automation.last')}: {stamp(automation.last_run_at, lang)}</p>
@@ -261,7 +269,8 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
         {automation.created_by === uid && <><button className="btn sm" disabled={disabled} onClick={() => setEditing(automation)}>{t('automation.edit')}</button><button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_automation_set_enabled', { automation: automation.id, enabled: !automation.enabled })))}>{t(automation.enabled ? 'automation.pause' : 'automation.resume')}</button><button className="btn sm" disabled={disabled} onClick={() => { if (!runRequests.current.has(automation.id)) runRequests.current.set(automation.id, crypto.randomUUID()); act(() => checked(supabase.rpc('msgr_automation_run_now', { automation: automation.id, request_id: runRequests.current.get(automation.id) })), () => { runRequests.current.delete(automation.id); setHistory(automation.id); setNotice(t('automation.run.requested')); }); }}>{t('automation.run')}</button><button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting(automation)}>{t('automation.delete')}</button></>}
       </div>
       {history === automation.id && <RunHistory automationId={automation.id} own={automation.created_by === uid} channelId={channel.id} crews={crews} t={t} lang={lang} />}
-    </article>)}
+      </div>}
+    </article>; })}
     {routines.error && <div className="work-notice error" role="alert"><p>{missingSchema(routines.error) ? t('automation.notifications.upgrade') : errorText(routines.error, t)}</p><button className="btn sm" onClick={routines.refresh}>{t('work.retry')}</button></div>}
     {(routines.rows ?? []).map((routine) => {
       // N4(재검수 2차): 대기 중(pending)인 update patch가 enabled를 바꿨다면, 아직 PC가 반영하기 전이라도 그 값을
@@ -273,8 +282,13 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
       const pendingDelete = pending && routine.pendingEdit.op === 'delete';
       const pendingPatch = pending && routine.pendingEdit.op === 'update' ? routine.pendingEdit.patch : null;
       const effectiveEnabled = pendingPatch && 'enabled' in pendingPatch ? pendingPatch.enabled : routine.enabled;
+      const open = expanded.has(routine.id); const bodyId = `work-body-argo-${routine.id}`;
       return <article className="work-item" key={routine.id}>
-      <div className="work-item-top"><span className="work-item-title"><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span><span className={`work-status ${pendingDelete ? 'blocked' : effectiveEnabled ? 'running' : 'cancelled'}`}>{t(pendingDelete ? 'routine.delete.badge' : effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span></div>
+      <button type="button" className="work-item-top work-item-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => toggleCard(routine.id)}>
+        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span>
+        <span className={`work-status ${pendingDelete ? 'blocked' : effectiveEnabled ? 'running' : 'cancelled'}`}>{t(pendingDelete ? 'routine.delete.badge' : effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span>
+      </button>
+      {open && <div className="work-item-body" id={bodyId}>
       <p className="work-text">{routine.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === routine.crew_id)?.display_name ?? t('work.crew.unavailable')} · <RoutineSchedule schedule={routine.schedule} t={t} /></p>
       {pendingDelete ? <>
@@ -293,6 +307,7 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
           <button className="btn sm work-danger" disabled={disabled} onClick={() => setDeleting({ ...routine, kind: 'routine' })}>{t('automation.delete')}</button>
         </div>
       </>}
+      </div>}
     </article>;
     })}
     <Pages source={source} disabled={busy} t={t} />
