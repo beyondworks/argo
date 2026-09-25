@@ -221,9 +221,12 @@ where
         }) {
             // soundNamed looks only at the bundle Resources root (and Library/Sounds); a
             // subdirectory path silently falls back to the system default sound.
-            // macOS UN plays AIFF/WAV but not our CAF (it falls back to the default sound —
-            // measured 2026-09-24 with a signed test app: caf default, aiff/wav custom). iOS keeps .caf.
-            let resource = NSString::from_str(&format!("{name}.aiff"));
+            // 2026-09-24 밤 재관찰(실제 설치본 0.1.37, 실 메시지 알림, log show 직결 확인):
+            // systemsoundserverd가 AudioAnalytics 오류로 "file_type_hint: caff, 실제 헤더: FORM..AIFF"를 남기고
+            // 기본(built-in) 소리로 떨어졌다 — 이 알림 파이프라인은 CAF 컨테이너만 재생하고 순수 AIFF는 디코드 실패로
+            // 기본 소리로 폴백한다. 오전의 애드혹 서명 SoundLab 시험은 배너·소리 자체가 한 번도 present 되지 않은 채
+            // (log show에 Presenting/Playing 이벤트 없음) "청취 확인"이 남아 신뢰할 수 없다 — CAF로 되돌린다.
+            let resource = NSString::from_str(&format!("{name}.caf"));
             let notification_sound = UNNotificationSound::soundNamed(&resource);
             content.setSound(Some(&notification_sound));
         }
