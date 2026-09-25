@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Tabs, useRememberedTab, Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
-import { useLang, stageLabel } from '../../../../i18n';
+import { useLang, stageLabel, fmtMsgTime } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
 import { ArtifactChips } from '../../artifact-chips';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../../work-folder';
@@ -82,7 +82,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 섞여 있었다: 원문 보간 7곳 + encodeURIComponent 7곳(후자는 이중 인코딩). 여기서 한 번 풀고,
   // URL을 만들 때마다 한 번씩만 감싼다.
   const slug = useMemo(() => { try { return decodeURIComponent(slugParam); } catch { return slugParam; } }, [slugParam]);
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
   const [agent, setAgent] = useState(null);
@@ -182,6 +182,31 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }
   }
   const [busy, setBusy] = useState(false);
+  // busy 최신값을 클로저 안에서 읽는다(지금 보내기 — abortTurn 뒤 정지가 실제로 반영될 때까지 기다려야 하는데,
+  // 그 함수는 클릭 시점 렌더의 busy를 그대로 들고 있어 await 뒤에도 갱신되지 않는다).
+  const busyRef = useRef(false);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+  // 지금 바로 보내기 — 이 턴에서 이미 부분 답변을 캡처했는지(연속 클릭으로 중복 삽입 방지).
+  // sendMessage가 새 턴 시작 때 false로 되돌린다.
+  const partialCapturedRef = useRef(false);
+  // 지금 바로 보내기로 중단했다는 표식 — sendMessage의 catch(원래 턴)가 이 값을 읽어 실패 배너
+  // 문구를 가른다(총괄 재검수 2026-09-24: 정지 버튼 문구 "입력을 복원했어요"가 지금 바로 보내기
+  // 경로에선 입력창이 비어 있는데도 떠서 헷갈림). 원래 턴의 catch가 실행될 시점까지만 true로
+  // 유지하면 되므로 busyRef 폴링이 끝난 직후(원래 턴이 이미 settle된 뒤) 바로 내린다.
+  const sendNowAbortRef = useRef(false);
+  // 지금 바로 보내기를 연달아 두 번 누르는 경합 방지(재재검수 2026-09-24 A·B).
+  // sendNowTokenRef — 호출마다 발급하는 신분증. 나중 호출이 있으면(토큰이 갱신되면) 앞선 호출의
+  // sendingNow 해제·정리가 무효화된다(안 하면: 첫 호출의 finally가 두 번째 호출이 폴링하는 도중에
+  // sendingNow를 false로 되돌려, 그 틈에 Enter가 대기열을 건너뛰고 곧장 새 턴을 쏜다 — 검수 B).
+  const sendNowTokenRef = useRef(0);
+  // sendNowHeldBeforeRef — "지금 바로 보내기 연쇄"가 시작되기 **직전**의 대기열 잠금 값을 한 번만
+  // 기억한다(null=연쇄 없음). 매 호출이 그 시점의 queueHeld를 새로 읽으면, 연달아 눌렀을 때 두 번째
+  // 호출은 첫 번째가 이미 걸어 둔 잠금을 "원래 있던 것"으로 오판해 성공해도 안 풀린다(검수 A).
+  const sendNowHeldBeforeRef = useRef(null);
+  // 지금 바로 보내기 — 연속 클릭 방지(중단 요청~새 턴 시작까지 잠금). 대기열 배출 이펙트의 deps에서도
+  // 쓰이므로 그 이펙트보다 먼저(TDZ) 선언해야 한다 — 실사고: 뒤에 두어 "Cannot access 'sendingNow'
+  // before initialization"으로 화면이 통째로 죽었다(2026-09-24 재검수 뒤 라이브 확인 중 적발).
+  const [sendingNow, setSendingNow] = useState(false);
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   // 크루 길들이기(F) — 같은 지적 2회째면 "회사 규칙으로 기억할까요?" 제안(사장 결정 대기 목록)
@@ -388,10 +413,27 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
+  // 여백 사이징 — 핀 메시지 상단부터 콘텐츠 끝까지가 한 화면이 되도록 부족분만 여백으로 채운다.
+  // 답변이 자라면 여백이 같이 줄어 scrollHeight가 출렁이지 않고, 턴이 끝나도 그 값에 머물러
+  // scrollTop 클램프 점프가 없다. 답변이 한 화면을 넘으면 여백 0 — 빈 공간이 남지 않는다.
+  // 콜백으로 뺀 이유(피드백 7, 2026-09-23) — 기존엔 아래 효과의 고정 deps(thread·busy·liveStage·viewing)에서만
+  // 재계산해서, **컴포저 높이 변화**(입력창 자동 크기·첨부 칩·대기열 스택 등판)로 .thread의 실제 가용 높이
+  // (el.clientHeight)가 바뀌는 경우를 놓쳤다 — 그 순간엔 스레드 배열이 안 바뀌니 deps가 안 돌아 여백이
+  // 낡은(더 큰) 값에 멈춰 "메시지 아래·입력창 위 큰 빈 공간"으로 보였다. 아래 ResizeObserver 효과가
+  // .thread 크기 변화 자체를 관찰해 이 함수를 다시 부른다 — 원인(레이아웃 재계산 누락)을 구조로 닫는다.
+  const recalcSpacer = useCallback(() => {
+    const el = threadRef.current;
+    const spacer = spacerRef.current;
+    if (!el || !spacer) return;
+    const pinned = pinMidRef.current && msgRefs.current.get(pinMidRef.current);
+    const h = pinned && !viewing
+      ? Math.max(0, el.clientHeight - (spacer.getBoundingClientRect().top - pinned.getBoundingClientRect().top) - 12)
+      : 0;
+    spacerHRef.current = h;
+    spacer.style.height = `${h}px`;
+  }, [viewing]);
   // 스크롤 규율.
-  //  ⓪ 여백 사이징 — 핀 메시지 상단부터 콘텐츠 끝까지가 한 화면이 되도록 부족분만 여백으로 채운다.
-  //     답변이 자라면 여백이 같이 줄어 scrollHeight가 출렁이지 않고, 턴이 끝나도 그 값에 머물러
-  //     scrollTop 클램프 점프가 없다. 답변이 한 화면을 넘으면 여백 0 — 빈 공간이 남지 않는다.
+  //  ⓪ 여백 사이징 — 위 recalcSpacer.
   //  ① 전송 직후 — 방금 보낸 내 글을 컨테이너 상단에 붙인다. 그 아래 공간에서 작업 과정과 답변이 흐른다.
   //  ② 그 외 — 하단 근처일 때만 따라간다(추종 목표는 콘텐츠 바닥 — 여백으로는 안 내려간다).
   // liveStage.partial이 의존성에 있어야 스트리밍으로 답변이 자라는 동안에도 시야가 따라간다.
@@ -399,15 +441,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   useEffect(() => {
     const el = threadRef.current;
     if (!el) return;
-    const spacer = spacerRef.current;
-    if (spacer) {
-      const pinned = pinMidRef.current && msgRefs.current.get(pinMidRef.current);
-      const h = pinned && !viewing
-        ? Math.max(0, el.clientHeight - (spacer.getBoundingClientRect().top - pinned.getBoundingClientRect().top) - 12)
-        : 0;
-      spacerHRef.current = h;
-      spacer.style.height = `${h}px`;
-    }
+    recalcSpacer();
     const pin = pinRef.current && msgRefs.current.get(pinRef.current);
     if (pin) {
       pinRef.current = null;
@@ -419,7 +453,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // atBottom=true가 되는데, 위로도 끌면 턴 갱신마다 핀이 풀려 화면이 위로 튄다(실측 -528px, 2026-07-21 신고 본체).
     if (atBottomRef.current) el.scrollTop = Math.max(el.scrollTop, contentBottom(el) - el.clientHeight);
     // working은 아래에서 선언되는 파생값(busy||liveStage)이라 deps에 못 쓴다(TDZ) — stage/partial이 같은 전환을 잡는다
-  }, [thread, busy, liveStage?.partial, liveStage?.stage, viewing]);
+  }, [thread, busy, liveStage?.partial, liveStage?.stage, viewing, recalcSpacer]);
+  // .thread 실제 크기 변화 관찰 — 컴포저(입력창 자동 크기·첨부 칩·대기열 스택)가 자라거나 줄면 그리드 1fr
+  // 행인 .thread의 clientHeight가 바뀐다. 위 효과의 deps로는 못 잡는 변화라 별도로 감시한다.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(recalcSpacer);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [recalcSpacer]);
 
   // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
   useEffect(() => {
@@ -432,12 +475,36 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           if (r.mtime) mtimeRef.current = r.mtime;
           const msgs = r.messages ?? [];
           setThread((cur) => {
-            if (cur === null || msgs.length <= cur.length) return cur;
+            if (cur === null) return cur;
+            // 지금 바로 보내기의 로컬 부분 답변 노트(who:'crew', aborted:true — 서버는 절대 안 만든다)는
+            // 개수 비교에서 뺀다(재검수 N3) — 안 빼면 "서버가 실제로 더 앞서 있는지" 판정이 노트 개수만큼
+            // 밀려, 다른 기기·루틴발 새 메시지가 왔는데도 "그대로 유지"로 오판할 수 있다.
+            const localNotes = cur.filter((m) => m.aborted && m.who === 'crew' && m.noteId);
+            if (msgs.length <= cur.length - localNotes.length) return cur;
             // 실패 사본 캐리오버는 **서버 미보존분(unsaved)만** — 서버가 보존한 실패 턴(route.js
             // failed)은 msgs에 이미 있어, 전부 캐리오버하면 폴링마다 복제가 누적된다(분리 검수 HIGH,
             // 리듀서 시뮬레이션 확증). "서버엔 없는 사본" 전제는 실패 턴 보존으로 무효가 됐다.
             const unsent = cur.filter((m) => m.failed && m.unsaved);
-            return unsent.length ? [...msgs, ...unsent] : msgs;
+            // 로컬 노트는 원래 자리(그 노트가 따라붙은, 중단된 사장 메시지 바로 뒤)에 다시 꽂는다
+            // (재검수 N3 — 예전엔 스레드 맨 끝에 붙어 순서가 어긋났다). unsent를 먼저 합쳐 둔다 —
+            // 안 그러면(예전 순서) unsent가 나중에 끝에 붙어, 서버에 아예 저장 안 된 자기 지시보다
+            // 노트가 앞에 놓인다(재검수 C — "찾지 못하면(unsaved) 노트가 자기 지시보다 앞에 놓임").
+            const combined = unsent.length ? [...msgs, ...unsent] : msgs;
+            let next = combined;
+            for (const note of localNotes) {
+              // mid 우선(재검수 C) — 문구만으로 찾으면 같은 글을 두 번 보낸 경우 엉뚱한(더 최근) 자리에
+              // 꽂힌다. mid는 그 지시 고유라 서버 확정분에는 없어도(mid 미저장) unsent 로컬 사본에는
+              // 그대로 남아 있다. 둘 다 없으면(mid 불일치·문구 불일치) 안전하게 맨 끝에 둔다.
+              let idx = -1;
+              if (note.afterMid) {
+                for (let i = next.length - 1; i >= 0; i -= 1) { if (next[i].who === 'user' && next[i].mid === note.afterMid) { idx = i; break; } }
+              }
+              if (idx < 0) {
+                for (let i = next.length - 1; i >= 0; i -= 1) { if (next[i].who === 'user' && next[i].aborted && next[i].text === note.afterText) { idx = i; break; } }
+              }
+              next = idx >= 0 ? [...next.slice(0, idx + 1), note, ...next.slice(idx + 1)] : [...next, note];
+            }
+            return next;
           });
           if (r.sessionId) sessionRef.current = r.sessionId;
           setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
@@ -536,40 +603,55 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const wf = useWorkFolder({ ws, slug, onError: (m) => setError(m), onPinned: () => inputRef.current?.focus() });
 
   async function sendMessage(message, attachments = []) {
-    if (!message || busy || uploading) return;
+    // busyRef(최신값)로 판정 — busy(클로저 값)로 판정하면 sendNow처럼 "중단 뒤 폴링으로 실제 정지를
+    // 기다렸다가 호출"하는 경로에서, 이 함수 자체가 busy=true였던 그 렌더의 클로저를 그대로 들고 있어
+    // 폴링이 끝나도 늘 true로 보여 조용히 return했다(분리 검수 HIGH, 2026-09-24 — 지금 보내기가 새
+    // 메시지 없이 사라짐 + 원래 턴도 안 멈춘 것처럼 보이는 근본 원인).
+    if (!message || busyRef.current || uploading) return false;
+    partialCapturedRef.current = false; // 새 턴 시작 — 이번 턴이 중단되면 다시 부분 답변을 담을 수 있게
     setError(''); setBusy(true); setStage(0);
     // 낙관적 표시 — 서버는 턴이 끝난 뒤에야 저장하므로(route.js appendTurn) 도중엔 이 사본이 사장 글의 유일한 원본이다.
     // 그래서 실패해도 스레드에서 빼지 않는다. 빼면 글이 어디에도 남지 않고 입력창으로 되돌아가 "보낸 게 사라졌다"가 된다.
     const mid = `s${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setThread((t) => [...(t ?? []), { who: 'user', text: message, mid, ...(attachments.length ? { attachments } : {}) }]);
+    setThread((t) => [...(t ?? []), { who: 'user', text: message, mid, ts: Date.now(), ...(attachments.length ? { attachments } : {}) }]);
     pinRef.current = mid; // 방금 보낸 글을 화면 상단에 붙인다 — 그 아래로 작업 과정·답변이 흐르도록
     pinMidRef.current = mid; // 여백 계산 기준(핀부터 한 화면) — 다음 전송/대화 전환까지 유지
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
       setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
-      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
+      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ts: Date.now(), ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
       window.dispatchEvent(new Event('argo:refresh'));
+      return true;
     } catch (err) {
       // 실패 턴도 서버가 보존한다(route.js가 failed·aborted로 appendTurn) — 로컬 사본에 같은 필드를
       // 붙여 서버 사본과 렌더가 일치하게 한다(사유는 원문, 중단은 별도 aborted — 재검수 MEDIUM: 원문이
       // 우연히 'aborted'여도 오판 없음. 라벨은 렌더 시점에 t()로).
       // 서버 저장이 실패했을 때(unsaved)만 폴링 병합이 이 사본을 캐리오버한다(복제 방지 — 검수 HIGH).
       const failed = err?.data?.failed ?? String(err.message);
-      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true, cancellationIncomplete: !!err?.data?.cancellationIncomplete } : {};
+      // viaSendNow — 이 중단이 정지 버튼이 아니라 지금 바로 보내기가 건 것인지(총괄 재검수 2026-09-24).
+      // 렌더가 문구·재전송 버튼을 가르는 기준(입력창이 이미 비어 있어 "입력을 복원했어요"가 헷갈림).
+      // 클라이언트 세션 메모리(sendNowAbortRef)로만 판정한다 — 서버 저장은 되돌렸다(4차 재검수
+      // MEDIUM ×2: 표시가 소비 안 되고 남았다가 며칠 뒤 무관한 정지-중단 턴에 잘못 붙어 영구 저장,
+      // 순서 경합). 새로고침·폴링 병합 뒤에는 일반 중단 문구로 돌아가는 것을 알려진 한계로 둔다.
+      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true, cancellationIncomplete: !!err?.data?.cancellationIncomplete, ...(sendNowAbortRef.current ? { viaSendNow: true } : {}) } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
       // 실패 코드·출처(route.js가 code/origin으로 응답) — 서버 보존분(failedCode)과 같은 필드명으로 로컬 사본에도(렌더 일치)
       const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
       setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...coded, ...aborted, ...unsaved } : m)));
       setQueueHeld(true); // 대기열 자동 전송 중지 — 남겨 두고 사장이 판단한다
+      return false;
     } finally {
       setBusy(false);
       setLiveStage(null); // 내 턴 종료 — 마지막 partial이 완성 답변과 겹쳐 보이지 않게 즉시 내린다
     }
   }
 
-  async function send(e) {
-    e.preventDefault();
+  // immediate=true(지금 바로 보내기, 피드백 6)도 이 함수를 통과한다 — '/' 커맨더·정지 명령 판정이
+  // sendNow 전용 경로에서 빠지면 그 토큰이 그대로 새 지시로 나간다(분리 검수 지적). immediate는
+  // working(진행 중 턴이 있음)일 때만 "중단 후 즉시 전송"으로 갈라지고, 아니면 평소처럼 보낸다.
+  async function send(e, { immediate = false } = {}) {
+    e?.preventDefault();
     // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/new' 같은 명령 토큰이 크루에게 전송되지 않게
     if (slashMatches.length) { runSlash(slashMatches[Math.min(slashIdx, slashMatches.length - 1)]); return; }
     const message = input.trim();
@@ -577,7 +659,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // 업로드가 끝나기 전에 보내면 그 시점의 att에는 올라가는 중인 파일이 없다 — 첨부 없이 나가고
     // 완료분은 다음 메시지용 칩으로 남는다(사장은 함께 보냈다고 믿는다). 버튼은 disabled로 막혀
     // 있었지만 Enter 경로가 그걸 우회했다(분리 검수 2026-08-03 M-3).
-    if (uploading) return;
+    if (uploading || sendingNow) return;
     const attachments = att;
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     setInput(''); setAtt([]);
@@ -585,6 +667,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       setQueueHeld(true);
       if (working) { await abortTurn(); return; }
     }
+    if (immediate && working) { await sendImmediate(message, attachments); return; }
     // 답변 중이면 스레드가 아니라 대기열로 간다 — 첨부 칩과 같은 물건이라 ✕로 뗄 수 있다.
     // (uploading은 대기열로 보내지 않는다: 업로드가 안 끝난 첨부가 실려 나간다)
     if (busy) { setQueue((q) => [...q, { qid: `q${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: message, attachments }]); return; }
@@ -593,8 +676,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
 
   // 대기열 배출 — 턴이 **성공으로** 끝난 뒤에만 다음 지시를 보낸다.
   // 실패·중단이면 queueHeld가 true라 여기서 멈추고 대기열이 화면에 남는다(자동 발사 금지).
+  // sendingNow 가드 — 지금 바로 보내기가 abortTurn 뒤 busy가 false로 잠깐 내려간 틈(폴링 대기 구간)에
+  // 이 효과가 먼저 발동해 대기열 항목을 가로채면, sendImmediate가 보내려던 지시보다 대기열이 앞서
+  // 나간다(분리 검수 MEDIUM — 순서 보장 없이 같은 busy=false 창을 공유해서 생기는 경합).
   useEffect(() => {
-    if (busy || uploading || queueHeld || !queue.length) return;
+    if (busy || uploading || queueHeld || sendingNow || !queue.length) return;
     const [next, ...rest] = queue;
     setQueue(rest);
     sendMessage(next.text, next.attachments ?? []);
@@ -602,7 +688,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // 잠긴 대기열을 두고 사장이 무관한 지시를 하나 보내면 그 턴이 끝나는 순간 대기열 전체가
     // 저 혼자 나갔다(분리 검수 2026-08-03 M-1). 잠금 안내는 busy 중엔 보이지도 않는다.
     // eslint 규칙은 no-undef 단일 게이트(#191)라 deps 경고는 없다 — 의도적으로 busy·queue만 본다
-  }, [busy, uploading, queueHeld, queue]);
+  }, [busy, uploading, queueHeld, sendingNow, queue]);
 
   // 사장의 정지 버튼 — 진행 중 턴(내 턴·루틴·메신저발 모두)을 멈춘다
   const [aborting, setAborting] = useState(false);
@@ -612,6 +698,81 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     setAborting(true);
     try { await api(`/api/companies/${ws}/chat/abort`, { slug, source: busy ? 'chat' : liveStage?.source }); } catch (e) { setError(String(e.message)); }
     finally { setAborting(false); }
+  }
+
+  // 지금 바로 보내기(피드백 6, 2026-09-23 — 재검수 2026-09-24 HIGH 반영) — 답변 도중 온 새 지시를
+  // 대기열 대신 즉시 보낸다. 조사 결과(러너별 "즉시"의 뜻): SDK·CLI·네이티브 키 러너 공통으로 이미
+  // 있는 유일한 중단 메커니즘은 정지 버튼의 abortTurn(interruptTurn — 지금 도는 프로바이더 호출을
+  // 끊는다)뿐이고, "진행 중 턴에 새 지시를 주입"하는 경로는 어떤 러너에도 없다. 그래서 가장 안전한
+  // 공통 의미로 "중단 → 새 턴으로 즉시 전송"을 쓴다(정지 버튼과 같은 중단 경로 재사용).
+  // 부분 답변 보존: 서버는 중단된 턴에 크루 메시지를 저장하지 않는다(추론 — route.js catch가 실패한
+  // 사용자 메시지만 appendTurn, 확인은 src/thread.mjs — 서버측 저장은 src/chat.mjs의 여러 중첩
+  // catch·재시도 프레임을 가로질러 partial을 실어 날라야 해 대화 코어의 큰 변경이 필요하다고 판단,
+  // 이번엔 로컬 표시만 함). 도중까지 스트리밍된 partial(SDK 러너만 채움 — CLI·네이티브 키 러너는
+  // partial을 아예 추적하지 않아 이 자리에서 비어 있을 수 있다, 알려진 한계)을 잃지 않게 로컬
+  // 스레드에 '중단됨' 표식과 함께 먼저 남긴 뒤 중단한다.
+  async function sendImmediate(message, attachments) {
+    if (sendingNow) return; // 방어적 재확인 — 버튼 disabled로도 막지만 프로그램적 재호출까지 닫는다
+    const myToken = ++sendNowTokenRef.current; // 이 호출의 신분증(재재검수 A·B) — 뒤이은 호출이 오면 내 정리는 무효
+    setSendingNow(true);
+    // 이번 중단이 걸지 않은 기존 잠금은 우리가 풀지 않는다(재검수 N4→재재검수 A) — 연쇄의 **첫**
+    // 호출에서만 캡처한다. 연달아 두 번 누르면 두 번째 호출 시점엔 이미 첫 호출이 잠가 둔 뒤라,
+    // 매번 새로 읽으면 "원래 있던 잠금"으로 오판해 두 번째가 성공해도 안 풀린다.
+    if (sendNowHeldBeforeRef.current === null) sendNowHeldBeforeRef.current = queueHeld;
+    let noteId = null; // 되돌릴 수 있게 이번에 넣은 부분 답변 노트를 식별(재검수 N5)
+    try {
+      // 부분 답변이 있고 이번 턴에서 아직 안 담았으면 한 번만 로컬 스레드에 남긴다(중복 삽입 방지).
+      // 아직 "실제로 멈췄는지" 모르는 채로 낙관적으로 넣는다 — 8초 상한을 넘기면(중단이 안 먹혔으면)
+      // 아래에서 되돌린다(사실과 다른 "중단됨" 노트를 남기지 않는다).
+      if (liveStage?.partial && !partialCapturedRef.current) {
+        partialCapturedRef.current = true;
+        noteId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        // 지금 중단되는 사장 메시지 — 폴링 병합이 이 노트를 원래 자리(그 메시지 바로 뒤)에 다시
+        // 꽂을 때 찾는 기준(재검수 N3→재재검수 C). mid를 우선 쓴다 — 문구만으로 찾으면 같은 글을
+        // 두 번 보낸 경우 엉뚱한 자리에 꽂힌다(mid는 그 지시 고유). 서버 msgs엔 mid가 없어 문구는
+        // 폴백으로 유지한다.
+        const lastUser = [...(thread ?? [])].reverse().find((m) => m.who === 'user');
+        setThread((cur) => [...(cur ?? []), { who: 'crew', text: liveStage.partial, aborted: true, ts: Date.now(), noteId, afterMid: lastUser?.mid, afterText: lastUser?.text }]);
+      }
+      sendNowAbortRef.current = true; // 원래 턴의 catch가 이 값을 보고 문구·재전송 버튼을 가른다(서버 확인 전 낙관 표시)
+      await abortTurn(); // viaSendNow 표시는 sendNowAbortRef(클라 세션 메모리)로만 — 서버 저장은 안 한다
+      // abortTurn은 서버에 중단을 요청할 뿐 — 지금 도는 sendMessage()의 fetch가 실제로 실패로 끝나
+      // busy가 false로 내려가기까지는 별도 왕복이 더 필요하다. 고정 대기 대신 조건 충족까지 폴링(상한 8초).
+      const startedAt = Date.now();
+      while (busyRef.current && Date.now() - startedAt < 8000) await new Promise((r) => setTimeout(r, 120));
+      // 원래 턴은 이 시점(폴링 종료)까지 이미 settle됐다(성공적으로 멈췄든, 8초 상한을 넘겼든) —
+      // 표식을 내려 다음(무관한) 실패가 잘못 태깅되지 않게 한다.
+      sendNowAbortRef.current = false;
+      if (busyRef.current) {
+        // 상한 안에 실제로 안 멈췄다 — 조용히 사라지면 안 된다(분리 검수 HIGH). 그사이 사장이 다른
+        // 글을 입력해 뒀을 수 있어 함수 갱신형(setInput 최신값)으로 겹쳐 쓰지 않는다: 비어 있으면
+        // 원래 지시를 그대로, 뭔가 입력돼 있으면 원래 지시를 앞에 붙인다(손실 없음, 재검수 N5).
+        setInput((cur) => (cur.trim() ? `${message}\n${cur}` : message));
+        setAtt((cur) => (cur.length ? [...attachments, ...cur] : attachments));
+        // 중단이 실제로 안 됐으니 "중단됨" 노트도 사실과 다르다 — 넣었으면 되돌린다(재검수 N5).
+        if (noteId) { setThread((cur) => (cur ?? []).filter((m) => m.noteId !== noteId)); partialCapturedRef.current = false; }
+        setError(t('chat.sendNowTimeout'));
+        return;
+      }
+      // 새 턴 시작 — await 하지 않고 먼저 트리거한다. sendMessage는 첫 await(api 호출) 전까지 동기
+      // 실행되므로(setBusy(true) 포함) 이 한 줄이 끝난 시점엔 이미 busy가 true다. sendingNow를 여기서
+      // 풀어야 새 턴이 도는 동안의 Enter·전송 버튼·정지 명령이 "무시"가 아니라 기존 규칙(대기열 추가
+      // 등)을 정상적으로 탄다(재검수 N1 — await 뒤에 풀면 새 턴이 끝날 때까지 전부 조용히 씹혔다).
+      const p = sendMessage(message, attachments);
+      // 내가 아직 최신 호출일 때만 푼다(재검수 B) — 뒤이은 호출이 이미 있었으면(sendNowTokenRef가
+      // 갱신됐으면) 그 호출의 sendingNow=true를 내가 여기서 되돌리면 안 된다.
+      if (sendNowTokenRef.current === myToken) setSendingNow(false);
+      const ok = await p;
+      // 성공했고, 이번 연쇄가 건 잠금이면(연쇄 시작 전 원래 안 걸려 있었으면)만 푼다 — 실패는
+      // sendMessage의 catch가 이미 다시 잠갔으니(정상 실패 규칙과 동일) 손대지 않는다.
+      if (ok && !sendNowHeldBeforeRef.current) setQueueHeld(false);
+    } finally {
+      // 내가 이 연쇄의 마지막(최신) 호출일 때만 정리한다 — 아니면 아직 도는 뒤이은 호출의 상태를 밟는다.
+      if (sendNowTokenRef.current === myToken) {
+        setSendingNow(false); // 위에서 이미 풀렸어도 안전망(조기 return·예외 등 나머지 경로 커버)
+        sendNowHeldBeforeRef.current = null; // 연쇄 종료 — 다음 지금 바로 보내기는 그 시점 값을 새로 캡처
+      }
+    }
   }
 
   // 메시지 복사 — 잠깐 "복사됨"으로 바뀌는 피드백
@@ -909,11 +1070,17 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
                   {/* failedCode(error-class.mjs 표) — 원문 대신 "할 일"을 먼저(불변식 C). 코드 없음/미상은 종전 원문 표시 */}
                   {/* 코드 안내는 행동 지시가 뒤에 오므로 줄바꿈 허용(검수 LOW: EN 한 줄 말줄임이 "switch to an API key in S…"에서 잘림) */}
-                  <span style={{ minWidth: 0, overflow: 'hidden', ...(m.cancellationIncomplete || (m.failedCode && m.failedCode !== 'unknown') ? { whiteSpace: 'normal' } : { textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }} title={m.failed}>{m.cancellationIncomplete ? t('chat.cancelIncomplete') : m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
-                  <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
-                    onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
+                  <span style={{ minWidth: 0, overflow: 'hidden', ...(m.cancellationIncomplete || (m.failedCode && m.failedCode !== 'unknown') ? { whiteSpace: 'normal' } : { textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }} title={m.failed}>{m.cancellationIncomplete ? t('chat.cancelIncomplete') : m.aborted ? (m.viaSendNow ? t('chat.abortedForSendNow') : t('chat.aborted')) : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
+                  {/* 지금 바로 보내기로 중단된 경우는 재전송 버튼을 숨긴다 — 사장이 이미 다음 지시로
+                      넘어갔으므로 "다시 보내기"가 이 옛 지시를 가리키는 게 오히려 혼동(총괄 재검수 2026-09-24) */}
+                  {!m.viaSendNow && (
+                    <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
+                      onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
+                  )}
                 </div>
               )}
+              {/* 보낸 시각 — 조용하게(작은 글씨·옅은 색), 오늘이면 시:분·이전 날짜면 날짜까지(유건 요청 2026-09-21) */}
+              {m.ts && <span className="mono msg-time" style={{ fontSize: 10.5, color: 'var(--fg-3)', padding: '0 4px' }}>{fmtMsgTime(lang, m.ts)}</span>}
               <div className="msg-actions">
                 <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
                 {!viewing && <button type="button" disabled={busy || uploading} onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>}
@@ -939,6 +1106,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     {t('chat.modelFallback', { wanted: m.modelFallback.wanted, runner: RUNNER_LABELS[m.modelFallback.runner] ?? m.modelFallback.runner })}
                   </p>
                 )}
+                {/* 지금 보내기(item 6) — 사장이 답변 도중 새 지시를 즉시 보내며 턴을 멈춘 경우, 그때까지의
+                    부분 답변을 잃지 않고 이 자리에 남긴다(서버는 중단 턴에 크루 메시지를 저장하지 않는다 —
+                    로컬 전용 표시). */}
+                {m.aborted && (
+                  <p style={{ margin: '0 0 4px', fontSize: 11.5, color: 'var(--fg-2)' }}>{t('chat.partialAborted')}</p>
+                )}
                 <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}
                   onMouseUp={annotIdx === i ? captureQuote : undefined}
                   onCopy={(e) => {
@@ -961,6 +1134,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                       눈 토글 = 인라인 미리보기(2026-07-31) — 채팅을 떠나지 않고 그 자리에서 본다. */}
                   {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
                 </div>
+                {/* 보낸 시각 — 조용하게, 크루 답변도 동일 규칙(오늘=시:분·이전=날짜 포함) */}
+                {m.ts && <span className="mono msg-time" style={{ fontSize: 10.5, color: 'var(--fg-3)', padding: '0 4px' }}>{fmtMsgTime(lang, m.ts)}</span>}
                 <div className="msg-actions">
                   <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
                   {!viewing && (
@@ -1216,6 +1391,14 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
             autoFocus
           />
+          {/* 지금 바로 보내기 — 답변 중일 때만. send(immediate:true)를 거쳐 '/' 커맨더·정지 명령
+              판정을 그대로 통과한 뒤에만 중단+즉시전송으로 간다(일반 전송과 같은 전처리). */}
+          {busy && (
+            <button type="button" className="btn btn-icon" disabled={uploading || aborting || sendingNow || !input.trim()}
+              title={t('chat.sendNow')} aria-label={t('chat.sendNow')} onClick={(e) => send(e, { immediate: true })}>
+              {sendingNow ? <Spinner size={13} /> : <Icon name="bolt" size={15} />}
+            </button>
+          )}
           <button className="btn btn-primary btn-icon" disabled={uploading || !input.trim()} aria-label={busy ? t('chat.queue.add') : t('chat.send')}>
             <Icon name="send" size={15} />
           </button>

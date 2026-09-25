@@ -15,7 +15,7 @@ function findFunction(source,name){
 }
 test('actual composer standalone stop bypasses busy queue, holds queued work immediately',async()=>{
  const queued=[],states=[],calls=[];
- const ctx=vm.createContext({isStopCommand,busy:true,working:true,aborting:false,uploading:false,slashMatches:[],input:'멈춰줘',att:[],histIdx:{current:0},ws:'w',slug:'alpha',
+ const ctx=vm.createContext({isStopCommand,busy:true,working:true,aborting:false,uploading:false,sendingNow:false,slashMatches:[],input:'멈춰줘',att:[],histIdx:{current:0},ws:'w',slug:'alpha',
   setInput:()=>{},setAtt:()=>{},setQueue:q=>queued.push(q),setQueueHeld:b=>states.push(b),setAborting:()=>{},setError:()=>{},
   api:async(url)=>calls.push(url), sendMessage:()=>{throw new Error('must not run model');}});
  vm.runInContext(findFunction(ui,'abortTurn')+';'+findFunction(ui,'send'),ctx);
@@ -24,7 +24,7 @@ test('actual composer standalone stop bypasses busy queue, holds queued work imm
 });
 test('actual composer preserves non-control negation and attachment messages in queue',async()=>{
  for(const [input,att] of [['멈추지마',[]],['stop',[{rel:'files/instructions.txt'}]]]){
-  const queued=[];const ctx=vm.createContext({isStopCommand,busy:true,working:true,uploading:false,slashMatches:[],input,att,histIdx:{current:0},setInput:()=>{},setAtt:()=>{},
+  const queued=[];const ctx=vm.createContext({isStopCommand,busy:true,working:true,uploading:false,sendingNow:false,slashMatches:[],input,att,histIdx:{current:0},setInput:()=>{},setAtt:()=>{},
    setQueue:fn=>queued.push(...fn([])),abortTurn:()=>{throw new Error('false stop');},setQueueHeld:()=>{throw new Error('false hold');}});
   vm.runInContext(findFunction(ui,'send'),ctx);await ctx.send({preventDefault(){}});assert.equal(queued[0].text,input);
  }

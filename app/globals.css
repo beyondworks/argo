@@ -1291,9 +1291,12 @@
 /* 활성 항목 안에서는 '강조 배경 위 대비색' 토큰을 **본문 색 계열로 재정의**한다.
    개별 규칙(svg·.nav-sub·고정핀…)을 하나씩 덮으면 새 자식이 생길 때마다 또 죽는다 — 실제로
    아이콘을 고친 뒤에도 부제와 핀이 남아 있었다(실측: 부제가 rgba(26,26,26,.72) = 어두운 배경 위
-   어두운 글씨). 토큰을 스코프에서 갈아끼우면 하위가 전부 따라온다. */
+   어두운 글씨). 토큰을 스코프에서 갈아끼우면 하위가 전부 따라온다.
+   .crew-row.active(피드백 8, 2026-09-23) — 고정 핀·옆에 열기 버튼은 .nav-item의 **형제**라 이 재정의가
+   원래 안 닿았다(CSS 변수는 자손에만 흐른다). 행 전체(.crew-row)에 active를 얹어 스코프를 넓힌다. */
 :root[data-theme='graphite'] .nav-item.active,
-:root[data-theme='graphite'] .row.active {
+:root[data-theme='graphite'] .row.active,
+:root[data-theme='graphite'] .crew-row.active {
   --primary-fg: var(--fg);
   --primary-fg-dim: var(--fg-2);
   --primary-fg-line: var(--border);
@@ -1343,7 +1346,8 @@
 @media (hover: hover) { :root[data-theme='graphite-light'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); } } :root[data-theme='graphite-light'] .nav-item:active { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
 :root[data-theme='graphite-light'] .nav-item.active { background: rgba(0, 0, 0, 0.085); color: var(--fg); }
 :root[data-theme='graphite-light'] .nav-item.active,
-:root[data-theme='graphite-light'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+:root[data-theme='graphite-light'] .row.active,
+:root[data-theme='graphite-light'] .crew-row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
 :root[data-theme='graphite-light'] .row.active { background: var(--secondary); color: var(--fg); }
 :root[data-theme='graphite-light'] .msg-user { background: var(--secondary); color: var(--fg); }
 
@@ -1385,7 +1389,8 @@
 @media (hover: hover) { :root[data-theme='graphite-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='graphite-dark'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='graphite-dark'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
 :root[data-theme='graphite-dark'] .nav-item.active,
-:root[data-theme='graphite-dark'] .row.active {
+:root[data-theme='graphite-dark'] .row.active,
+:root[data-theme='graphite-dark'] .crew-row.active {
   --primary-fg: var(--fg);
   --primary-fg-dim: var(--fg-2);
   --primary-fg-line: var(--border);
@@ -1449,7 +1454,7 @@
 }
 @media (hover: hover) { :root[data-theme='linen'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='linen'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='linen'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
-:root[data-theme='linen'] .nav-item.active, :root[data-theme='linen'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+:root[data-theme='linen'] .nav-item.active, :root[data-theme='linen'] .row.active, :root[data-theme='linen'] .crew-row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
 :root[data-theme='linen'] .row.active { background: var(--secondary); color: var(--fg); }
 
 /* ⚠ 자동(@media) 블록은 위 라이트 오버라이드보다 **반드시 뒤에**(그래파이트와 같은 순서 계약). */
@@ -1498,7 +1503,7 @@
 }
   @media (hover: hover) { :root[data-theme='linen'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='linen'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
   :root[data-theme='linen'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
-  :root[data-theme='linen'] .nav-item.active,   :root[data-theme='linen'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+  :root[data-theme='linen'] .nav-item.active,   :root[data-theme='linen'] .row.active, :root[data-theme='linen'] .crew-row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
   :root[data-theme='linen'] .row.active { background: var(--secondary); color: var(--fg); }
 }
 
@@ -1545,7 +1550,7 @@
 }
 @media (hover: hover) { :root[data-theme='linen-light'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='linen-light'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='linen-light'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
-:root[data-theme='linen-light'] .nav-item.active, :root[data-theme='linen-light'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+:root[data-theme='linen-light'] .nav-item.active, :root[data-theme='linen-light'] .row.active, :root[data-theme='linen-light'] .crew-row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
 :root[data-theme='linen-light'] .row.active { background: var(--secondary); color: var(--fg); }
 
 :root[data-theme='linen-dark'] {
@@ -1592,7 +1597,7 @@
 }
 @media (hover: hover) { :root[data-theme='linen-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); } } :root[data-theme='linen-dark'] .nav-item:active { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='linen-dark'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
-:root[data-theme='linen-dark'] .nav-item.active, :root[data-theme='linen-dark'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+:root[data-theme='linen-dark'] .nav-item.active, :root[data-theme='linen-dark'] .row.active, :root[data-theme='linen-dark'] .crew-row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
 :root[data-theme='linen-dark'] .row.active { background: var(--secondary); color: var(--fg); }
 
 /* 내 말풍선은 차콜 반전 그대로(--primary) — 그래파이트처럼 표면으로 바꾸지 않는다(시안 v2: 내 글 = 척추 반대편 차콜). */
@@ -1691,6 +1696,20 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 .crew-row .crew-pin.pinned, .crew-row .crew-pin:focus-visible { opacity: 1; } @media (hover: hover) { .crew-row:hover .crew-pin { opacity: 1; } }
 /* 핀 버튼 자체 hover — 행 hover 배경(card-2)과 같으면 버튼 경계가 안 보인다 → 한 단계 진한 토큰 */
 @media (hover: hover) { .crew-row .crew-pin:hover { background: var(--border-soft); } } .crew-row .crew-pin:active { background: var(--border-soft); }
+
+/* 사이드바 크루 행 — '작성 중' 표지(피드백 9, 2026-09-23 — 2026-09-02 설계 d2a9d78 재적용). 아바타를 두르는
+   가는 링이 은은하게 숨쉰다(투명도만 — 레이아웃·페인트 비용 0, ease-in-out = 왕복 루프의 대칭 완화).
+   색은 '진행 중' 계열 액센트(작업 독 배지·아르고 스피너와 같은 토큰). 활성 행은 프라이머리 배경이라
+   온-프라이머리 전경색으로 대비를 잡는다(핀 버튼과 같은 규칙).
+   동작 줄이기: 전역 규칙(@media prefers-reduced-motion, 아래쪽)이 반복 횟수를 1로 잘라 기본 상태
+   (불투명 링)로 정지한다 — 표지는 남고 점멸만 사라진다. */
+.crew-writing {
+  position: absolute; inset: -3px; border-radius: 999px; pointer-events: none;
+  border: 1.5px solid var(--accent);
+  animation: crewPulse 1.6s ease-in-out infinite;
+}
+.nav-item.active .crew-writing { border-color: var(--primary-fg); }
+@keyframes crewPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 .side-footer {
   margin-top: auto; padding: 10px;

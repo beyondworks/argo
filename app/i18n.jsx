@@ -182,6 +182,7 @@ const DICT = {
   'nav.tgConnected': ['텔레그램 직통 봇 연결됨', 'Telegram bot connected'],
   'nav.tgOtherDevice': ['텔레그램 직통 봇 — 다른 기기({device})에서 수신 중', 'Telegram bot — receiving on another device ({device})'],
   'nav.tgWaiting': ['텔레그램 직통 봇 — 연결됐지만 수신 대기', 'Telegram bot — connected, not receiving yet'],
+  'nav.writing': ['답변 작성 중', 'Writing a reply'],
   'nav.room': ['회의실', 'Meeting Room'],
   'room.header': ['회의실 — 여러 크루와 한 방에서', 'Meeting room — several crews, one thread'],
   'room.mention': ['부를 크루', 'Mention'],
@@ -1149,9 +1150,16 @@ const DICT = {
   'chat.queue.placeholder': ['답변 중 — 지금 보내면 대기열에 쌓입니다', 'Replying — messages you send now go to the queue'],
   'chat.queue.held': ['자동 전송이 멈춰 있습니다 — 확인 후 보내세요', 'Automatic sending is paused — review, then send'],
   'chat.queue.sendNow': ['지금 보내기', 'Send now'],
+  // 답변 도중 즉시 보내기(2026-09-23 유건 요청) — 대기열 대신 지금 턴을 멈추고 새 지시를 바로 보낸다
+  'chat.sendNow': ['지금 바로 보내기 — 답변을 멈추고 즉시 보냅니다', 'Send right now — stop the reply and send immediately'],
+  'chat.partialAborted': ['일부만 답변한 상태에서 중단됨', 'Stopped mid-answer'],
+  'chat.sendNowTimeout': ['턴이 제때 멈추지 않아 보내지 못했습니다 — 입력을 복원했어요. 잠시 후 다시 시도해 주세요.', "The reply didn't stop in time, so this wasn't sent — your input was restored. Please try again shortly."],
   'chat.stop': ['중단', 'Stop'],
   'chat.cancelIncomplete': ['자동 재개는 막았지만, 러너가 실행한 일부 작업의 종료를 확인하지 못했습니다. 실행 중인 작업을 확인해 주세요.', 'Automatic resume is blocked, but some tasks started by the runner could not be confirmed stopped. Please check running tasks.'],
   'chat.aborted': ['지시대로 중단했습니다 — 입력을 복원했어요.', 'Stopped as instructed — your input was restored.'],
+  // 지금 바로 보내기로 중단된 경우(총괄 재검수 2026-09-24) — 정지 버튼 문구("입력을 복원했어요")는
+  // 입력창이 이미 비어 있는 이 경로에서 헷갈리므로 사실만 적는다. 재전송 버튼도 숨긴다(아래 렌더).
+  'chat.abortedForSendNow': ['새 지시로 넘어가며 중단했습니다.', 'Stopped to move to a new instruction.'],
   'chat.copy': ['복사', 'Copy'],
   'chat.annotate': ['빨간펜', 'Annotate'],
   'chat.fellBack.auth': ['{from} 인증 오류로 {to}이(가) 대신 답했습니다 — 반복되면 설정 → AI 연결에서 {from}을(를) 다시 연결해 주세요.', '{to} answered instead because {from} hit an authentication error — if this repeats, reconnect {from} in Settings → AI connections.'],
@@ -1723,6 +1731,25 @@ export function useLang() {
   const ctx = useContext(LangCtx);
   if (!ctx) throw new Error('useLang은 LanguageProvider 안에서만');
   return ctx;
+}
+
+/** 메시지 보낸 시각 — 오늘이면 시:분(로캘 표기), 이전 날짜면 날짜까지 붙인다(유건 요청 2026-09-21).
+    지역화는 사전(t) 대상이 아니라 Intl 로캘 포맷(fmtMoney·toLocaleDateString('sv-SE')와 같은 계열). */
+export function fmtMsgTime(lang, ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const locale = lang === 'ko' ? 'ko-KR' : 'en-US';
+  const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return time;
+  // 작년 이전 날짜는 연도를 붙인다(재검수 LOW, 2026-09-24) — 월·일만으로는 "9월 24일"이 올해인지
+  // 작년인지 구분이 안 돼 오래된 대화를 최근으로 오독하게 된다.
+  const dateOpts = d.getFullYear() === now.getFullYear()
+    ? { month: 'short', day: 'numeric' }
+    : { year: 'numeric', month: 'short', day: 'numeric' };
+  const date = d.toLocaleDateString(locale, dateOpts);
+  return lang === 'ko' ? `${date} ${time}` : `${date}, ${time}`;
 }
 
 // 진행 단계 코드 → 사람이 읽는 라벨. 알려진 코드만 번역하고, 미지/레거시 문자열(옛 상태 파일의
