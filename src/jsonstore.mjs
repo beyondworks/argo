@@ -33,17 +33,32 @@ export async function writeFileAtomic(file, body, { mode = 0o644 } = {}) {
   }
 }
 
-/** rename 재시도 — Windows는 대상 파일이 잠깐 잠겨 있으면(동시 rename 경합·AV·인덱서) EPERM/EACCES를
-    던진다(2026-07-27 CI 첫 Windows 실행 실측: 동시 20쓰기에서 EPERM — 동기화·채팅이 같은 파일을 겹쳐
-    쓰는 프로덕션 경로와 동형). win32 한정 — POSIX의 rename EPERM/EACCES는 사실상 영구 조건(디렉터리
-    권한·sticky bit)이라 재시도가 순수 지연일 뿐이다(분리 검수 2026-07-27). 총 ~450ms 백오프 후에도
-    잠겨 있으면 진짜 오류로 올린다 — 조용히 삼키면 유실이 무증상이 된다. */
-async function renameRetry(tmp, file) {
-  for (let i = 0; ; i++) {
-    try { return await rename(tmp, file); }
+/** rename 재시도 — Windows는 대상 파일이 잠깐 잠겨 있으면(동시 rename 경합·AV·인덱서·다른 프로세스가
+    쥔 열린 핸들) EPERM/EACCES를 던진다(2026-07-27 CI 첫 Windows 실행 실측: 동시 20쓰기에서 EPERM —
+    동기화·채팅이 같은 파일을 겹쳐 쓰는 프로덕션 경로와 동형). win32 한정 — POSIX의 rename EPERM/EACCES는
+    사실상 영구 조건(디렉터리 권한·sticky bit)이라 재시도가 순수 지연일 뿐이다(분리 검수 2026-07-27).
+    예산 3초(지수 백오프 50ms→상한 400ms) — 원래 ~450ms였으나 격리 재현(2026-09-24, ssh winpc)에서
+    파일을 읽기용으로 열어 둔 채(AV 스캔·인덱서가 흔히 하는 모양) 600ms만 쥐고 있어도 옛 예산을 넘겨
+    EPERM으로 실패했다(크루 이름 변경 PATCH 제보, 2026-09-08 Windows). 200ms 보유는 옛 예산도 통과했으니
+    변경은 "짧은 경합"이 아니라 "AV 스캔급으로 긴 경합"만 추가로 구제한다. 그래도 잠겨 있으면 진짜
+    오류로 올린다 — 조용히 삼키면 유실이 무증상이 된다. */
+// 의존성 주입(renameFn·now·sleep·platform) — 실 OS 잠금(다른 프로세스의 열린 핸들) 없이도 예산·백오프
+// 로직 자체를 결정적으로 단위 테스트하기 위함(분리 검수 LOW: "재시도 판정을 순수 함수로 빼거나 rename을
+// 주입"). 프로덕션 호출부(writeFileAtomic)는 옵션 없이 부르므로 기본값(실제 fs.rename·Date.now·실제
+// setTimeout·process.platform·3000ms)이 곧 실제 동작이다 — 테스트가 이 함수를 기본값으로 그대로
+// 호출하면 소스의 실제 예산이 바뀔 때 테스트도 함께 붉어진다(재구현 사본이 아니라 실코드 경로).
+export async function renameRetry(tmp, file, {
+  renameFn = rename, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  platform = process.platform, budgetMs = 3000,
+} = {}) {
+  const deadline = now() + budgetMs;
+  let wait = 50;
+  for (;;) {
+    try { return await renameFn(tmp, file); }
     catch (e) {
-      if (process.platform !== 'win32' || (e.code !== 'EPERM' && e.code !== 'EACCES') || i >= 9) throw e;
-      await new Promise((r) => setTimeout(r, 10 * (i + 1)));
+      if (platform !== 'win32' || (e.code !== 'EPERM' && e.code !== 'EACCES') || now() >= deadline) throw e;
+      await sleep(wait);
+      wait = Math.min(wait * 2, 400);
     }
   }
 }
