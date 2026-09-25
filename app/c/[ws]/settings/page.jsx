@@ -22,6 +22,7 @@ const MSGR_DL = {
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 // 설정 탭 — 각 카드는 정확히 한 탭에만 속한다(test/tabs-layout). 렌더 순서: 작은 카드 → 전폭(.wide) 카드.
 const SETTINGS_TABS = ['general', 'ai', 'connections', 'devices', 'danger'];
+import { checkoutUrl } from './checkout-link.mjs';
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
 const LS_YEARLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_YEARLY || '';
 
@@ -1795,9 +1796,10 @@ function UpgradeButtons() {
   useEffect(() => { api('/api/me').then((d) => setUser(d.user ?? null)).catch(() => {}); }, []);
 
   if (!LS_MONTHLY && !LS_YEARLY) return <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('billing.comingSoon')}</p>;
-  if (!user) return null; // /api/me 미확보 — user_id/email 없이 링크를 만들지 않는다
-
-  const withRef = (base) => `${base}${base.includes('?') ? '&' : '?'}checkout[custom][user_id]=${encodeURIComponent(user.id)}&checkout[email]=${encodeURIComponent(user.email)}`;
+  if (!user) return null; // /api/me 미확보 — user_id 없이 링크를 만들지 않는다
+  // 게스트(로컬 신원)는 결제를 귀속할 계정이 없다 — 링크 대신 로그인 안내. 이메일은 올바를 때만 붙인다(빈 값·'undefined'면 LS 422, checkout-link.mjs)
+  if (!checkoutUrl(LS_MONTHLY || LS_YEARLY, user)) return <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('billing.signInToPay')}</p>;
+  const withRef = (base) => checkoutUrl(base, user);
   // 결제 의사 신호(fire-and-forget) — 방금 대사가 "구독 없음"을 확정했어도, 곧 결제할 사용자의
   // 복구(웹훅 유실 시 O2 대사)가 24시간 잠기지 않게 부정 확정 게이트만 해제한다. 실패 무해.
   const intent = (plan) => () => api('/api/me/billing/intent', { plan }).catch(() => {});
