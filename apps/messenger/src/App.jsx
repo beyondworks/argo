@@ -22,6 +22,7 @@ import { UpdateBar } from './update.jsx';
 import { MobileUpdateBar } from './mobile-update.jsx';
 import { useLongPress, longPressHandlers } from './long-press.js';
 import { t as tm } from './i18n.js';
+import { approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalExpandDefault } from './approval-display.js';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
 import { Markdown, imeGuardWith, ConfirmModal, DangerModal } from '@argo/ui';
@@ -1083,7 +1084,8 @@ function Shell({ session }) {
       const [ments, mine, aps, dms, joins] = await Promise.all([
         q(supabase.from('msgr_messages').select(cols).eq('org_id', org.id).is('deleted_at', null).contains('mentions', JSON.stringify([{ kind: 'user', id: uid }])).order('id', { ascending: false }).limit(40)).catch(() => []),
         q(supabase.from('msgr_messages').select('id').eq('org_id', org.id).eq('author_user_id', uid).order('id', { ascending: false }).limit(200)).catch(() => []),
-        q(supabase.from('msgr_crew_approvals').select('id, channel_id, crew_id, action, reason, created_at').eq('org_id', org.id).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => []),
+        // payload 추가(분리 검수 M-3) — 알림함 미리보기도 plain 있으면 쉬운 문장 + 명령 한 줄로 카드와 모양을 맞춘다.
+        q(supabase.from('msgr_crew_approvals').select('id, channel_id, crew_id, action, reason, payload, created_at').eq('org_id', org.id).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => []),
         dmIds.length ? q(supabase.from('msgr_messages').select(cols).in('channel_id', dmIds).is('deleted_at', null).or(`author_user_id.neq.${uid},author_user_id.is.null`).order('id', { ascending: false }).limit(40)).catch(() => []) : [],
         // 에이전트 참여 요청 — 서버가 결정할 사람(채널 방장·채팅 결재자)과 요청자에게만 보여 준다. 요청자 자신의 것은 뺀다(유건 2026-09-16: 방장에게 허용 여부를 묻는다).
         // 채팅도 넣는다(20260918170000) — 방을 연 사람이 나가면 결재자가 바뀌는데, 다음 조회부터 새 결재자의 알림함에 대기 요청이 뜬다.
@@ -1099,7 +1101,7 @@ function Shell({ session }) {
       const list = [...ments.map((m) => item('mention', m)), ...replies.filter((m) => !dmSet.has(m.channel_id)).map((m) => item('reply', m)), ...dms.map((m) => item('dm', m)),
         ...friendItems(),
         ...joins.map((r) => ({ kind: 'approval', key: `crewjoin:${r.id}`, joinReq: r.id, channel_id: r.channel_id, at: r.created_at, who: r.crew_id, whoKind: 'crew', text: t('inbox.crewjoin.text', { name: nameOfUser(r.requested_by) }) })),
-        ...aps.map((a) => ({ kind: 'approval', key: `approval:${a.id}`, channel_id: a.channel_id, at: a.created_at, who: a.crew_id, whoKind: 'crew', text: a.reason ? `${a.action} — ${a.reason}` : a.action }))];
+        ...aps.map((a) => ({ kind: 'approval', key: `approval:${a.id}`, channel_id: a.channel_id, at: a.created_at, who: a.crew_id, whoKind: 'crew', text: approvalOneLineSummary(a, t('ap.plain.command')) }))];
       const seenKeys = new Set();
       setInbox(list.filter((it) => !(it.whoKind === 'user' && blockedIds.has(it.who))).filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80));
     })();
@@ -4400,7 +4402,7 @@ function ExecCard({ crew, t }) {
 function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
   // 결재권 판정은 화면용 — 최종은 RLS(msgr_can_decide, decide의 0행 처리). 크루가 목록에 없으면(비활성 등) 소유자 미상으로 보고 버튼을 띄운다(검수 M1).
   const owner = crew ? crew.owner_user_id === uid : true;
-  const high = ap.risk === 'high';
+  const high = approvalExpandDefault(ap);
   const mode = policy?.approval_high_by ?? 'admin';
   const byAdmin = high && mode !== 'owner'; // H-1: 고위험은 정책의 결재권자(기본 관리자). J-1: 'approvers'면 지정 결재권자도
   const isApprover = (policy?.approver_user_ids ?? []).includes(uid);
@@ -4415,13 +4417,15 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
       <div className="band"><I name={bandIcon} size={14} />{band}{high && <span className="msgr-klabel risk">{t('ap.high')}</span>}<span className="id">{ap.approval_id}</span></div>
       <div className="body">
         {/* 쉬운 문장화(유건 확정 2026-09-26) — 크루가 목적·할 일·필요한 것을 채웠으면 그 문장을 먼저 보이고
-            원래 action/reason은 "명령 보기" 접힘으로. 하나도 안 채웠으면(폴백) 기존처럼 action/reason 그대로. */}
-        {ap.payload?.plain && (ap.payload.plain.purpose || ap.payload.plain.task || ap.payload.plain.need) ? (
+            원래 action/reason은 "명령 보기" 접힘으로(고위험이면 기본 펼침 — 분리 검수 M-1). 하나도 안 채웠으면(폴백)
+            기존처럼 action/reason 그대로. approvalPlainFields가 문자열이 아닌 값(손상·조작 데이터)을 걸러낸다
+            (분리 검수 M-2 — 안 걸러내면 React가 던져 채널 화면 전체가 죽는다). */}
+        {(() => { const plain = approvalPlainFields(ap.payload); return plain ? (
           <>
-            {ap.payload.plain.purpose && <div className="plain-line"><b>{t('ap.plain.purpose')}</b> {ap.payload.plain.purpose}</div>}
-            {ap.payload.plain.task && <div className="plain-line task"><b>{t('ap.plain.task')}</b> {ap.payload.plain.task}</div>}
-            {ap.payload.plain.need && <div className="plain-line"><b>{t('ap.plain.need')}</b> {ap.payload.plain.need}</div>}
-            <details className="plain-raw">
+            {plain.purpose && <div className="plain-line"><b>{t('ap.plain.purpose')}</b> {plain.purpose}</div>}
+            {plain.task && <div className="plain-line task"><b>{t('ap.plain.task')}</b> {plain.task}</div>}
+            {plain.need && <div className="plain-line"><b>{t('ap.plain.need')}</b> {plain.need}</div>}
+            <details className="plain-raw" open={high}>
               <summary>{t('ap.plain.raw')}</summary>
               <div className="action">{ap.action}</div>
               {ap.reason && <div className="reason">{ap.reason}</div>}
@@ -4432,11 +4436,11 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
             <div className="action">{ap.action}</div>
             {ap.reason && <div className="reason">{ap.reason}</div>}
           </>
-        )}
+        ); })()}
         {ap.kind === 'org_doc' && ap.payload && (
           <div className="docprop">
             <div className="msgr-klabel">{t('ap.orgDoc')} · {ap.payload.scope === 'org' ? t('docs.scope.org') : t('docs.scope.channel')} · {ap.payload.path}</div>
-            <div className="title">{ap.payload.title}</div>
+            <div className="title">{orgDocTitle(ap.payload, ap.action)}</div>
             <div className="msgr-sheet"><Markdown text={String(ap.payload.body ?? '').slice(0, 1200)} />{String(ap.payload.body ?? '').length > 1200 && <p className="note">{t('ap.orgDoc.more')}</p>}</div>
             {ap.status === 'approved' && <p className="note">{t('ap.orgDoc.applied')}</p>}
           </div>

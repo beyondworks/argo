@@ -1,5 +1,6 @@
 import { loadApprovals } from '../../../../../src/approvals.mjs';
 import { resolveWithFollowUp } from '../../../../../src/approval-actions.mjs';
+import { approvalRisk } from '../../../../../src/approval-risk.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
 import { guardCompany, csrfDenied } from '../../../../auth.mjs';
 
@@ -10,8 +11,10 @@ export async function GET(_req, { params }) {
   // 표시용 이름 매핑 — 카드가 "누가 올린 결재인지(위임 출처 포함)"를 바로 보여준다(업무 흐름 가시화)
   const agents = await listAgents(ws).catch(() => []);
   const nameOf = (s) => agents.find((a) => a.slug === s)?.name ?? s;
+  // 위험 등급 — 메신저 카드와 같은 판정(approvalRisk, 새 판정 만들지 않는다 — 분리 검수 M-1)을 본체 카드도
+  // 그대로 써서, 고위험 결재는 본체 화면에서도 "명령 보기" 기본 펼침 + 고위험 표시를 낼 수 있게 한다.
   return Response.json({
-    approvals: approvals.map((a) => ({ ...a, crewName: nameOf(a.slug), ...(a.from ? { fromName: nameOf(a.from) } : {}) })),
+    approvals: approvals.map((a) => ({ ...a, risk: approvalRisk(a), crewName: nameOf(a.slug), ...(a.from ? { fromName: nameOf(a.from) } : {}) })),
     pending: approvals.filter((a) => a.status === 'pending').length,
   });
 }

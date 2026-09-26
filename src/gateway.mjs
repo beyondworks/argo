@@ -13,7 +13,7 @@ import { loadConnections, updateConnection, updateAgentBot } from './connections
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn, appendSharedNote, turnScope, scopeKey, scopedSession } from './thread.mjs';
 import { resolveWithFollowUp } from './approval-actions.mjs';
-import { setApprovalMeta, approvalPlainText } from './approvals.mjs';
+import { setApprovalMeta, approvalPlainText, approvalCommandLabel } from './approvals.mjs';
 import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 작업 완료 통지(잡 핸들러)
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel } from './sync.mjs';
@@ -1007,14 +1007,15 @@ async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPu
     const dest = resolveTelegramDest(t, 'approval', event.item.slug, agents, { widen: true });
     if (!dest) warnStrandedBots(t, event.wsId, 'approval'); // N1 — "결재가 안 온다"가 가장 먼저 눈에 띄는 증상이라 결재에도 진단 줄
     if (dest) {
-      // 쉬운 문장화(유건 확정 2026-09-26) — 크루가 목적·할 일·필요한 것을 채웠으면 텔레그램에도 명령어
-      // 대신 그 문장이 먼저 보인다(접힘 UI가 없는 창구라 원문은 따로 안 붙인다 — 카드 UI에서 "명령 보기"로).
+      // 쉬운 문장화(유건 확정 2026-09-26) — 크루가 목적·할 일·필요한 것을 채웠으면 텔레그램에도 그 문장이
+      // 먼저 보인다. 분리 검수 H-1: 접힘 UI가 없는 창구라 원문을 아예 숨기면 결재자가 실제로 실행될
+      // 문장을 못 본다 — "명령: <action>" 한 줄을 plain 문장 아래에 항상 붙인다.
       const plainSummary = approvalPlainText(event.item, lang);
       try {
         const res = await tg(dest.token, 'sendMessage', {
           chat_id: dest.chatId,
           text: plainSummary
-            ? pick(`결재 요청 · ${who}\n${tidy(plainSummary)}`, `Approval request · ${who}\n${tidy(plainSummary)}`, lang)
+            ? pick(`결재 요청 · ${who}\n${tidy(plainSummary)}\n${approvalCommandLabel('ko')}: ${tidy(event.item.action)}`, `Approval request · ${who}\n${tidy(plainSummary)}\n${approvalCommandLabel('en')}: ${tidy(event.item.action)}`, lang)
             : pick(`결재 요청 · ${who}\n${tidy(event.item.action)}\n\n사유: ${tidy(event.item.reason)}`, `Approval request · ${who}\n${tidy(event.item.action)}\n\nReason: ${tidy(event.item.reason)}`, lang),
           reply_markup: { inline_keyboard: [[
             { text: pick('✅ 승인', '✅ Approve', lang), callback_data: `ap:${event.item.id}:1` },
@@ -1082,9 +1083,10 @@ async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPu
     const approvalPlain = event.type === 'approval' ? approvalPlainText(event.item, lang) : null;
     const text = event.type === 'approval'
       ? (approvalPlain
+        // 분리 검수 H-1: plain 있어도 실제 실행될 문장(action)을 "명령: " 한 줄로 항상 남긴다.
         ? pick(
-            `결재 요청 · ${who}\n${approvalPlain}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
-            `Approval request · ${who}\n${approvalPlain}\n→ Reply in this channel with "승인 ${event.item.id}" (approve) or "거절 ${event.item.id}" (reject)`,
+            `결재 요청 · ${who}\n${approvalPlain}\n${approvalCommandLabel('ko')}: ${event.item.action}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
+            `Approval request · ${who}\n${approvalPlain}\n${approvalCommandLabel('en')}: ${event.item.action}\n→ Reply in this channel with "승인 ${event.item.id}" (approve) or "거절 ${event.item.id}" (reject)`,
             lang,
           )
         : pick(

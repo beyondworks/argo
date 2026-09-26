@@ -230,6 +230,15 @@
 .msgr-slip .plain-raw { margin-top: 2px; }
 .msgr-slip .plain-raw summary { cursor: pointer; font-size: 11.5px; color: var(--fg-3); }
 .msgr-slip .plain-raw .action, .msgr-slip .plain-raw .reason { margin-top: 6px; }
+/* 펼친 명령이 제목처럼 보이지 않게 — 고정폭·작게·흐리게, 부가 정보로(분리 검수 LOW) */
+.msgr-slip .plain-raw .action { font-family: var(--mono); font-size: 12px; font-weight: 400; letter-spacing: normal; color: var(--fg-2); }
+/* 공백 없는 긴 문장이 데스크톱 폭에서도 잘리지 않게(분리 검수 LOW — 이전엔 폰 폭 미디어쿼리에만 있었다) */
+.msgr-slip .action, .msgr-slip .reason, .msgr-slip .plain-line { overflow-wrap: anywhere; }
+/* 거절·만료 카드는 plain 줄도 기존 action과 같은 흐림 처리(분리 검수 LOW) */
+.msgr-slip.approved .plain-line, .msgr-slip.rejected .plain-line { color: var(--fg-2); }
+.msgr-slip.approved .plain-line.task, .msgr-slip.rejected .plain-line.task { font-weight: 500; }
+.msgr-slip.rejected .plain-line.task { text-decoration: line-through; text-decoration-color: var(--fg-3); }
+.msgr-slip.expired .plain-line { color: var(--fg-3); }
 .msgr-seal { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px 4px 5px; border-radius: 999px; border: 1.5px solid var(--fg-2); color: var(--fg-2); font-size: 11.5px; font-weight: 600; }
 .msgr-seal .mi { width: 18px; height: 18px; padding: 3px; border-radius: 999px; background: var(--fg-2); color: var(--card); stroke-width: 2.2; }
 .msgr-seal.ok { border-color: var(--ok); color: var(--ok); } .msgr-seal.ok .mi { background: var(--ok); }

@@ -491,6 +491,7 @@ export const DICT = {
   'ap.plain.task': ['할 일', 'Task'],
   'ap.plain.need': ['필요한 것', 'Needs'],
   'ap.plain.raw': ['명령 보기', 'View command'],
+  'ap.plain.command': ['명령', 'Command'],
   'msg.deleted': ['이 메시지는 삭제되었습니다.', 'This message was deleted.'],
   'msg.mention': ['멘션', 'Mention'],
   'msg.enter': ['전송', 'send'],

@@ -1,6 +1,7 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { isStopCommand } from '../../../../../src/stop-command.mjs';
+import { approvalExpandDefault } from '../../../../lib/approval-display.mjs';
 import { splitEnvelope } from './envelope.mjs';
 import { use, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -1190,12 +1191,14 @@ export default function CrewChat({ params, embedded = false, onClose }) {
               </div>
             </div>
           )); }); })()}
-        {!viewing && pendings.map((p) => (
+        {!viewing && pendings.map((p) => { const high = approvalExpandDefault(p); return (
           <div key={p.id} className="msg-crew fade-up">
             <Avatar name={agent?.name} sm />
             <div className="card" style={{ padding: '13px 16px', minWidth: 0, flex: 1, borderColor: 'var(--accent)' }}>
-              <div className="microlabel" style={{ marginBottom: 6, color: 'var(--accent)' }}>
+              <div className="microlabel" style={{ marginBottom: 6, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 {p.kind === 'capability' ? t('chat.approval.capTitle') : t('chat.approval.pendingTitle')}
+                {/* 고위험 표시 — 메신저 Slip과 같은 신호(재사용한 approvalRisk), 새 판정 없음(분리 검수 M-1) */}
+                {high && <span className="chip danger">{t('chat.approval.highBadge')}</span>}
               </div>
               {/* 위임 흐름 표기 — 이 카드가 누구의 결재인지(이 크루가 위임한 동료의 요청 / 위임받아 진행 중) */}
               {p.slug !== slug ? (
@@ -1204,15 +1207,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 <div style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: '-2px 0 6px' }}>{t('chat.approval.fromNote', { name: p.fromName ?? p.from })}</div>
               ) : null}
               {/* 쉬운 문장화(유건 확정 2026-09-26) — 크루가 목적·할 일·필요한 것을 채웠으면 그 세 줄을 먼저 보이고
-                  원래 action/reason은 "명령 보기" 접힘으로. 하나도 안 채웠으면(폴백) 기존 카드 그대로. */}
+                  원래 action/reason은 "명령 보기" 접힘으로(고위험이면 기본 펼침 — 분리 검수 M-1). 하나도 안 채웠으면(폴백) 기존 카드 그대로. */}
               {p.plain && (p.plain.purpose || p.plain.task || p.plain.need) ? (
                 <>
                   {p.plain.purpose && <div style={{ fontSize: 13.5, marginTop: 2 }}><b>{t('chat.approval.plain.purpose')}</b> {p.plain.purpose}</div>}
                   {p.plain.task && <div style={{ fontSize: 13.5, fontWeight: 650, marginTop: 2 }}><b style={{ fontWeight: 650 }}>{t('chat.approval.plain.task')}</b> {p.plain.task}</div>}
                   {p.plain.need && <div style={{ fontSize: 12.5, color: 'var(--fg-2)', marginTop: 2 }}><b>{t('chat.approval.plain.need')}</b> {p.plain.need}</div>}
-                  <details style={{ marginTop: 8 }}>
+                  <details open={high} style={{ marginTop: 8 }}>
                     <summary style={{ cursor: 'pointer', fontSize: 11.5, color: 'var(--fg-3)' }}>{t('chat.approval.plain.raw')}</summary>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 6 }}>{p.action}</div>
+                    {/* 부가 정보로 보이게 — 고정폭·작게·흐리게(제목처럼 보이지 않게, 분리 검수 LOW) */}
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 400, color: 'var(--fg-2)', marginTop: 6 }}>{p.action}</div>
                     {p.reason && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.55 }}>{p.reason}</p>}
                   </details>
                 </>
@@ -1232,7 +1236,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
               </div>
             </div>
           </div>
-        ))}
+        ); })}
         {!viewing && working && (
           <div className="msg-crew">
             <Avatar name={agent?.name} sm />

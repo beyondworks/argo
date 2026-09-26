@@ -77,14 +77,25 @@ test('addApproval: plain 값의 개행·제어문자를 살균하고 200자로 �
   assert.equal(saved.plain.task.length, 200, '200자로 잘린다');
 });
 
+test('addApproval: DEL(\\x7f)·줄/문단 구분자(U+2028/2029)·양방향 재정렬 제어문자(U+202A-202E·U+2066-2069)도 살균한다(분리 검수 LOW)', async () => {
+  const ws = await newWs();
+  // U+202E(RLO)로 문구 순서를 시각적으로 뒤집으려는 시도 — 살균되어야 카드 문구 조작 방어가 완결된다.
+  const it = await addApproval(ws, { slug: 'shuri', action: 'x', reason: 'y',
+    plain: { purpose: `앞\x7f뒤`, task: `줄1 줄2 끝`, need: `정상‮뒤집기⁩종료⁦` } });
+  const saved = (await loadApprovals(ws)).find((a) => a.id === it.id);
+  assert.equal(saved.plain.purpose, '앞 뒤');
+  assert.equal(saved.plain.task, '줄1 줄2 끝');
+  assert.equal(saved.plain.need, '정상 뒤집기 종료');
+});
+
 // ── 2) approvalPlainText — 텔레그램·슬랙 등 접힘 UI가 없는 창구용 문장 ──────
 test('approvalPlainText: plain 없으면 null(호출부가 기존 action/reason으로 폴백)', () => {
   assert.equal(approvalPlainText({ action: 'a', reason: 'r' }, 'ko'), null);
 });
 
-test('approvalPlainText: 있는 항목만 줄로 만든다(ko/en)', () => {
+test('approvalPlainText: 있는 항목만 줄로 만든다(ko/en) — 라벨은 UI 사전과 같은 "필요한 것"(분리 검수 LOW)', () => {
   const item = { plain: { purpose: '목적문장', need: '필요문장' } }; // task 없음
-  assert.equal(approvalPlainText(item, 'ko'), '목적: 목적문장\n필요: 필요문장');
+  assert.equal(approvalPlainText(item, 'ko'), '목적: 목적문장\n필요한 것: 필요문장');
   assert.equal(approvalPlainText(item, 'en'), 'Purpose: 목적문장\nNeeds: 필요문장');
 });
 

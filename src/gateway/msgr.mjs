@@ -31,7 +31,7 @@ import { chat } from '../chat.mjs';
 import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
 import { loadThread, appendTurn, scopedSession } from '../thread.mjs';
 import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
-import { loadApprovals, setApprovalMeta, approvalPlainText } from '../approvals.mjs';
+import { loadApprovals, setApprovalMeta, approvalPlainText, approvalCommandLabel } from '../approvals.mjs';
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mjs';
@@ -1206,7 +1206,11 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const approval = { org_id: ctx.orgId, channel_id: ctx.channelId, crew_id: ctx.crewId, approval_id: it.id, action: it.action, reason: it.reason ?? null, risk,
       ...(it.kind === 'org_doc' ? { kind: 'org_doc', payload: it.payload ?? null } : (it.plain ? { payload: { plain: it.plain } } : {})) };
     const plainSummary = it.kind !== 'org_doc' ? approvalPlainText(it, lang) : null;
-    const headline = plainSummary ?? `${it.action}${it.reason ? `${lang === 'en' ? '\nReason: ' : '\n사유: '}${it.reason}` : ''}`;
+    // 분리 검수 H-1: 카드 글 본문(다른 창구·검색·구버전 클라이언트가 보는 텍스트)은 plain이 있어도
+    // 실제 실행될 문장(action)을 "명령: " 한 줄로 반드시 남긴다 — Slip 컴포넌트의 "명령 보기"와 별개로,
+    // 이 본문 자체에서 원문이 사라지면 안 된다.
+    const headline = plainSummary ? `${plainSummary}\n${approvalCommandLabel(lang)}: ${it.action}`
+      : `${it.action}${it.reason ? `${lang === 'en' ? '\nReason: ' : '\n사유: '}${it.reason}` : ''}`;
     const body = it.kind === 'org_doc'
         ? pick(`조직 문서 제안: ${it.payload?.title ?? it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(관리자가 승인하면 서버가 문서에 반영합니다)`,
           `Org doc proposal: ${it.payload?.title ?? it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(An admin's approval writes it to the document)`, lang)

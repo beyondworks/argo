@@ -1342,6 +1342,7 @@ const DICT = {
   'chat.approval.plain.task': ['할 일', 'Task'],
   'chat.approval.plain.need': ['필요한 것', 'Needs'],
   'chat.approval.plain.raw': ['명령 보기', 'View command'],
+  'chat.approval.highBadge': ['고위험', 'High risk'],
 
   // ── 백그라운드 작업 패널
   'tasks.title': ['백그라운드 작업', 'Background Tasks'],
