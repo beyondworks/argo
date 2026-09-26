@@ -5,13 +5,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { autoEnableMsgr, MSGR_AUTO_ENABLE_PROBE_MS, MSGR_AUTO_ENABLE_NO_SESSION_MS } from '../src/gateway/msgr.mjs';
 
-const mk = ({ orgs = ['org-1'], uid = 'u1', session = true, fail = false, hang = false, fresh = null, hasCrew = false } = {}) => {
+const mk = ({ orgs = ['org-1'], uid = 'u1', session = true, fail = false, hang = false, fresh = null, hasCrew = false, latest = null } = {}) => {
   const calls = { probes: 0, updates: [], loads: 0 };
   const deps = {
     probes: new Map(), orgCache: new Map(), now: () => 1_000_000, timeoutMs: 20,
     session: async () => session ? { uid, db: { myOrgIds: async () => { calls.probes += 1; if (fail) throw new Error('db down'); if (hang) return new Promise(() => {}); return orgs; }, hasAnyCrew: async () => hasCrew } } : null,
     load: async (ws) => { calls.loads += 1; return fresh ?? { id: ws, msgr: {} }; },
-    update: async (ws, patch) => { calls.updates.push([ws, patch]); },
+    // 실제 updateCompany처럼 함수 patch는 "쓰기 순간의 최신 값"(latest — 재읽기 뒤 끼어든 저장을 흉내)으로 부른다
+    update: async (ws, patch) => { const cur = latest ?? fresh ?? { id: ws, msgr: {} }; calls.updates.push([ws, typeof patch === 'function' ? patch(cur) : patch]); },
     log: () => {},
   };
   return { deps, calls };
@@ -22,6 +23,11 @@ test('조직 멤버 + 꺼진 회사 → 쓰기 직전 다시 읽은 company.json
   assert.equal(await autoEnableMsgr('ws-a', { company: { id: 'ws-a', ownerId: 'u1', msgr: {} }, ...deps }), true);
   assert.deepEqual(calls.updates, [['ws-a', { msgr: { notify: { mode: 'dm' }, mutedEvents: ['job'], enabled: true } }]]);
   assert.equal(calls.probes, 1); assert.equal(calls.loads, 1);
+});
+test('재읽기와 쓰기 사이에 저장된 msgr 필드도 남는다 — 병합은 쓰기 순간의 최신 값으로(2026-09-26 분리 검수 M-1)', async () => {
+  const { deps, calls } = mk({ fresh: { msgr: {} }, latest: { msgr: { notify: { mode: 'dm' } } } });
+  assert.equal(await autoEnableMsgr('ws-a', { company: { id: 'ws-a', ownerId: 'u1', msgr: {} }, ...deps }), true);
+  assert.deepEqual(calls.updates, [['ws-a', { msgr: { notify: { mode: 'dm' }, enabled: true } }]]);
 });
 test('다시 읽었더니 이미 켜져 있으면(다른 경로가 먼저 켬) 쓰지 않고 true', async () => {
   const { deps, calls } = mk({ fresh: { msgr: { enabled: true } } });

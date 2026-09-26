@@ -448,9 +448,10 @@ export async function autoEnableMsgr(wsId, { company, session = sessionClient, l
     orgCache.set(c.uid, probe);
   }
   if (!probe.orgs.length || probe.hasCrew) return false;
-  const fresh = await load(wsId).catch(() => company); // 쓰기 직전 재읽기 — sync 머리 스냅샷 뒤 저장된 notify·mutedEvents를 덮지 않는다
+  const fresh = await load(wsId).catch(() => company); // 이미 켜졌으면 쓰지 않는다(판정용 재읽기)
   if (fresh.msgr?.enabled) return true;
-  await update(wsId, { msgr: { ...(fresh.msgr ?? {}), enabled: true } });
+  // 병합은 잠금 안의 최신 값으로(함수 patch) — 재읽기와 쓰기 사이에 저장된 notify·mutedEvents를 덮지 않는다
+  await update(wsId, (c) => (c.msgr?.enabled ? {} : { msgr: { ...(c.msgr ?? {}), enabled: true } }));
   return true;
 }
 

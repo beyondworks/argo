@@ -2,10 +2,9 @@
 // 코어(src/*.mjs)는 인증을 모른다 — 요청 문맥(쿠키)이 필요한 이 계층은 라우트/미들웨어에서만 임포트한다.
 // env: NEXT_PUBLIC_SUPABASE_URL · NEXT_PUBLIC_SUPABASE_ANON_KEY (.env.local 또는 배포 env — 값 평문 기록 금지)
 import { readFile } from 'node:fs/promises';
-import { writeJsonAtomic } from '../src/jsonstore.mjs';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
-import { paths } from '../src/workspace.mjs';
+import { paths, updateCompany } from '../src/workspace.mjs';
 import { loadDeviceSession } from '../src/devicesession.mjs';
 import { AUTH_ON, TENANT, authError, tenantDenied } from './authmsg.mjs';
 
@@ -87,8 +86,10 @@ export async function guardCompany(wsId) {
   if (!meta.ownerId) {
     const adopt = process.env.ARGO_ADOPT_OWNER?.trim().toLowerCase();
     if (adopt && user.email && adopt === user.email.trim().toLowerCase()) {
-      await writeJsonAtomic(paths(wsId).company, { ...meta, ownerId: user.id });
-      return null;
+      // 잠금 안에서 귀속 — 사이에 생긴 변경을 덮지 않고, 그새 다른 주인이 생겼으면 통과시키지 않는다
+      const owned = await updateCompany(wsId, (c) => (c.ownerId ? {} : { ownerId: user.id })).catch(() => null); // 그새 보관되면 없는 회사
+      if (!owned) return authError('company_not_found', lang);
+      return owned.ownerId === user.id ? null : authError('company_forbidden', lang);
     }
     return authError('company_forbidden', lang);
   }

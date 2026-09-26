@@ -30,10 +30,11 @@ export async function POST(req, { params }) {
   if (typeof body?.on !== 'boolean' || !['msgr', 'telegram', 'slack'].includes(kind)) return apiError('msgr_notify_bad_request', lang);
   if (kind === 'msgr') {
     if (body.on && !(await sessionClient().catch(() => null))) return authError('auth_required', lang);
-    const company = await loadCompany(ws);
-    const msgr = { ...(company.msgr ?? {}) };
-    if (body.on) msgr.notify = { mode: 'dm' }; else delete msgr.notify;
-    await updateCompany(ws, { msgr });
+    await updateCompany(ws, (c) => {
+      const msgr = { ...(c.msgr ?? {}) };
+      if (body.on) msgr.notify = { mode: 'dm' }; else delete msgr.notify;
+      return { msgr };
+    });
   } else {
     await updateConnection(ws, kind, { mutedEvents: body.on ? [] : [...CHANNEL_EVENTS[kind]] });
   }
