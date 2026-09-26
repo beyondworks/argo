@@ -1771,28 +1771,49 @@ test('중단된 턴은 부분 답 대신 중단자 이름 한 줄을 남기고 �
   assert.equal(M._activeCtxForTest.size, 0, '턴 문맥은 중단 뒤에도 지운다');
 });
 
-test('중단자 이름을 확인 못 하면(조회 실패·기록 없음) "누군가"로 안전하게 대체한다', async () => {
+test('중단자를 확인 못 하면(조회 실패·기록 없음 — 데스크톱 정지 버튼처럼 RPC를 거치지 않은 중단 포함) 이름 없이 일반 문구로(L-5)', async () => {
   const db = fakeDb({ parent: { id: 5, body: '질문' } }); // stopRequestedBy 기본값 null — msgr_executions에 아직 기록이 없는 경합
   const runChat = async () => { throw turnAbortedError(); };
   const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat });
   await h({ msgId: 42, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '일', authorId: MEMBER, replyTo: 5, threadRoot: 5, createdAt: new Date().toISOString() });
   const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
-  assert.equal(ins[0].body, '누군가님이 작업을 중단했습니다.');
+  assert.equal(ins[0].body, '작업이 중단되었습니다.', '이름을 모르면 "님이"를 붙이지 않는다');
 });
 
-test('handleStopRequest: 이 기기가 아는 crew_id만 중단하고, 모르는 crew_id는 조용히 무시한다', async () => {
+// 크루 작업 중단 검수 2026-09-26 H-1: 방송은 깨우기 신호일 뿐이다 — payload만으로는 멈추지 않고, 서버(executionStopInfo)가
+// stop_requested_at을 확인해 줄 때만 멈춘다. 위조된 방송(같은 조직 누구나 org:로 보낼 수 있었던 것)은 이제 서버 확인에서 걸린다.
+test('handleStopRequest: 서버가 stop_requested를 확인해 줄 때만 멈추고, 모르는 crew_id·미확인 요청은 조용히 무시한다', async () => {
   M._crewSlugsForTest.set(`${WS}:${CREW}`, 'seoyun');
+  const fakeSession = (confirmed) => async () => ({ db: { async executionStopInfo() { return confirmed ? { stop_requested_by: MEMBER, stop_requested_at: new Date().toISOString() } : null; } }, uid: OWNER });
   try {
     const calls = [];
-    const reg = registerTurn(WS, 'seoyun', () => calls.push('interrupted'), { source: 'messenger' });
+    const reg = registerTurn(WS, 'seoyun', () => calls.push('interrupted'), { source: 'messenger', tag: 1 });
     try {
-      assert.equal(await M.handleStopRequest(WS, { crew_id: 'unknown-crew-id', source_msg_id: 1 }), false, '모르는 crew_id는 무시');
+      assert.equal(await M.handleStopRequest(WS, { crew_id: 'unknown-crew-id', source_msg_id: 1 }, { session: fakeSession(true) }), false, '모르는 crew_id는 서버 확인도 없이 무시');
       assert.deepEqual(calls, []);
-      assert.equal(await M.handleStopRequest(WS, { crew_id: CREW, source_msg_id: 1 }), true);
+      assert.equal(await M.handleStopRequest(WS, { crew_id: CREW, source_msg_id: 1 }, { session: fakeSession(false) }), false, '위조·아직 기록 없는 방송은 서버 확인에서 걸러 멈추지 않는다(H-1)');
+      assert.deepEqual(calls, [], '서버 확인 전에는 손대지 않는다');
+      assert.equal(await M.handleStopRequest(WS, { crew_id: CREW, source_msg_id: 1 }, { session: fakeSession(true) }), true, '서버가 확인해 준 요청만 멈춘다');
       assert.deepEqual(calls, ['interrupted']);
       assert.equal(reg.wasAborted(), true);
     } finally { reg.release(); }
-    assert.equal(await interruptTurn(WS, 'seoyun', { source: 'messenger' }), false, '이미 끝난 턴에 온 중단 요청은 무시(등록 해제 뒤 재호출)');
+    assert.equal(await interruptTurn(WS, 'seoyun', { source: 'messenger', tag: 1 }), false, '이미 끝난 턴에 온 중단 요청은 무시(등록 해제 뒤 재호출)');
+  } finally { M._crewSlugsForTest.delete(`${WS}:${CREW}`); }
+});
+
+// 크루 작업 중단 검수 2026-09-26 M-1: 같은 크루 slug로 도는 다른 source(예: 텔레그램)의 턴은 source_msg_id 태그가 달라 건드리지 않는다.
+test('handleStopRequest: source_msg_id가 다른(=지금 도는 잡이 아닌) 실행은 서버가 확인해 줘도 그 턴만 멈추고 다른 턴은 그대로', async () => {
+  M._crewSlugsForTest.set(`${WS}:${CREW}`, 'seoyun');
+  const fakeSession = async () => ({ db: { async executionStopInfo() { return { stop_requested_by: MEMBER, stop_requested_at: new Date().toISOString() }; } }, uid: OWNER });
+  try {
+    const calls = [];
+    const telegramTurn = registerTurn(WS, 'seoyun', () => calls.push('telegram-stopped'), { source: 'messenger' }); // 태그 없음 — 텔레그램 브리지처럼
+    const msgrTurn = registerTurn(WS, 'seoyun', () => calls.push('messenger-stopped'), { source: 'messenger', tag: 41 });
+    try {
+      assert.equal(await M.handleStopRequest(WS, { crew_id: CREW, source_msg_id: 41 }, { session: fakeSession }), true);
+      assert.deepEqual(calls, ['messenger-stopped'], '태그가 일치하는 실행만 멈춘다');
+      assert.equal(telegramTurn.wasAborted(), false, '같은 크루의 텔레그램 턴은 건드리지 않는다');
+    } finally { telegramTurn.release(); msgrTurn.release(); }
   } finally { M._crewSlugsForTest.delete(`${WS}:${CREW}`); }
 });
 

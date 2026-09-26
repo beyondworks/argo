@@ -60,19 +60,21 @@ export async function finishMessengerExecution(wsId, db, job, replyRow, meta = {
   return row;
 }
 
-/** intervalMs 마다 심박 왕복 — 응답의 stop_requested가 서면 onStopRequested를 부른다(방송을 놓친 기기의 중단 폴백). */
+/** intervalMs 마다 심박 왕복 — 응답의 stop_requested가 서면 onStopRequested를 부른다(방송을 놓친 기기의 중단 폴백).
+    stop() 뒤에 도착하는 응답은 무시한다 — 늦게 온 stop_requested:true가 이 턴이 끝난 뒤 시작된 다음 턴을
+    잘못 멈추는 창을 막는다(크루 작업 중단 검수 2026-09-26 M-1, E3). */
 export function executionHeartbeat(wsId, db, job, { intervalMs = EXECUTION_HEARTBEAT_MS, log = console.error, onStopRequested } = {}) {
-  let inflight = false;
+  let inflight = false; let stopped = false;
   const timer = setInterval(async () => {
     if (inflight) return;
     inflight = true;
     try {
       const res = await db.heartbeatExecution(keyOf(wsId, job));
-      if (res?.stop_requested) onStopRequested?.();
+      if (res?.stop_requested && !stopped) onStopRequested?.();
     }
     catch (error) { log('[argo] msgr 실행 심박 실패 — 실행권은 다른 기기로 넘기지 않습니다:', error.message); }
     finally { inflight = false; }
   }, intervalMs);
   timer.unref?.();
-  return () => clearInterval(timer);
+  return () => { stopped = true; clearInterval(timer); };
 }
