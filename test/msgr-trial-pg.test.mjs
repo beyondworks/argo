@@ -41,6 +41,7 @@ const invite = (org, ownerId, memberId) => { const r = accept(memberId, makeInvi
 const expireTrial = (org) => sql(`update public.msgr_org_entitlements set trial_ends_at = now() - interval '1 day' where org_id = '${org}'`);
 const trialEndsAt = (org) => sql(`select trial_ends_at from public.msgr_org_entitlements where org_id = '${org}'`);
 const activeCount = (org) => Number(sql(`select count(*) from public.msgr_org_members where org_id = '${org}' and removed_at is null`));
+const ageScan = (crewId) => sql(`update public.msgr_bots set scan_at = now() - interval '1 minute' where crew_id = '${crewId}'`); // 유휴 게이트(30초)를 넘겨 강제로 다시 스캔시킨다
 
 let ORG1, ORG2, ORG3, UNORG, UNCH, UNCREW;
 before(() => {
@@ -334,6 +335,15 @@ test('변이(비교 부호 뒤집기)는 무료 기간 중 크루 턴 허용을 
 //    두 게이트(무료 기간 자격·AI 동의)와 N1(넘김 회귀)·N6(미자격 커서 전진)을 실 Postgres로 잠근다. ──
 const MERGED = '20260927130000_msgr_bot_gates_merged.sql';
 
+// 델타 검수 LOW(4차) — M-3의 순방향 참조 처방(130000의 임시 정의는 "함수가 없을 때만" 만든다)을 잠근다.
+// before()에서 이미 130000→140000 순서로 전체가 한 번 적용됐다(140000이 전환 기간 포함 최종 정의를 덮어씀).
+// 여기서 130000을 단독으로 다시 적용해도(라이브 재현·부분 재적용 흉내) 140000의 최종 정의가 살아 있어야 한다.
+test('델타 M-3: 140000 적용 뒤 130000을 다시 적용해도 전환 기간이 포함된 최종 정의가 남는다', { skip }, () => {
+  psql(['-c', readFileSync(mig(MERGED), 'utf8')]); // 130000 재적용 — create or replace였다면 여기서 전환 기간 case가 지워진다
+  const def = sql(`select pg_get_functiondef('public.msgr_ai_consent_visible(uuid)'::regprocedure)`);
+  assert.ok(def.includes('ai_consent_enforce_after'), '130000을 다시 적용해도 140000의 전환 기간 case가 남아 있어야 한다');
+});
+
 test('H1·N2: 봇 업데이트·실행 게이트(합본) — 미자격이면 0건·실행 행 0개, 자격 있으면 정상 배달(대조군)', { skip }, () => {
   asUser(U.o1, `select public.msgr_set_ai_consent(true)`); // 이 테스트는 자격 게이트만 본다 — 동의 게이트가 먼저 걸리지 않게
   const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('BotGateOrg', 'botgate1', '${U.o1}') returning id`));
@@ -563,40 +573,56 @@ test('변이: 봇 문맥(ctx) 필터 줄을 지우면 미동의 사람의 글이
   sql(orig); // 원래(합본) 정의로 복구
 });
 
-// ── 3차 재검수(2026-09-27 밤) L-1 — 동의 거부로 건너뛴 글도 게이트웨이처럼 커서를 넘긴다(7일 유예창에 남겨 두면
-//    유휴 폴링이 매번 같은 구간을 다시 훑고, 나중에 동의해도 옛 글이 뒤늦게 배달된다). ──
-test('L-1: 동의 거부로 건너뛴 글은 커서를 바로 넘기고, 나중에 동의해도 뒤늦게 배달되지 않는다', { skip }, () => {
-  asUser(U.o1, `select public.msgr_set_ai_consent(false)`);
-  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('ConsentCursorOrg', 'consentcursor1', '${U.o1}') returning id`));
+// ── 델타 검수(2026-09-27 밤, 4차) HIGH — 3차 검수 L-1("동의 거부로 건너뛴 글도 커서를 무조건 전진")을
+//    되돌린다. 그 수정은 커서를 넘기며 #689가 일부러 붙잡아 두던 앞쪽 글(아직 채널 미초대·결재 대기·
+//    파견 재개 전인 겨냥 글, 10분 안에 늦게 커밋되는 낮은 id 글)까지 함께 건너뛰어 봇 배달을 영구히
+//    잃게 만들었다(실측: 검수 scratchpad/rev3/probe2.test.mjs의 D1 시나리오). 거부 글이 커서를 붙잡아
+//    나중에 동의하면 뒤늦게 배달될 수 있는 LOW는 감수한다 — 배달 유실보다 가볍다는 총괄 결정. ──
+test('델타 HIGH: 아직 초대 안 된 채널의 겨냥 글은, 다른 채널의 동의 거부 글이 먼저 와도 초대 뒤 배달된다(#689 유지)', { skip }, () => {
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('CursorKeepOrg', 'cursorkeep1', '${U.o1}') returning id`));
   const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
-  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'CursorConsentBot')`)));
-  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
-  let lastId = '0';
-  for (let i = 0; i < 3; i++) {
-    lastId = last(asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@CursorConsentBot ${i}', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
-  }
-  asAnon(`select public.msgr_bot_updates('${bot.token}')`); // 한 번 폴 — 미동의라 0건이지만 커서는 넘어가야 한다(N6과 같은 요령)
-  const cursor = sql(`select cursor_msg_id from public.msgr_crews where id = '${bot.crew_id}'`);
-  assert.ok(Number(cursor) >= Number(lastId), '거부한 사람의 글도 커서가 이번 스캔 최댓값까지 바로 넘어간다');
-  asUser(U.o1, `select public.msgr_set_ai_consent(true)`); // 나중에 동의해도
+  const ch2 = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','later')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'CursorKeepBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`); // 봇은 처음엔 ch에만, ch2엔 아직 미초대
+  for (const u of [U.a2, U.a3]) sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${org}', '${u}', 'member', 'm') on conflict do nothing`); // 공개 채널 쓰기는 조직 멤버십을 요구한다
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch2}', 'user', '${U.a3}', '${U.o1}') on conflict do nothing`);
+  asUser(U.a3, `select public.msgr_set_ai_consent(true)`); // E 역할 — 동의함(배달 조건 자체와는 무관, 대조를 명확히 하기 위해)
+  asUser(U.a2, `select public.msgr_set_ai_consent(false)`); // D 역할 — 거부함
+  const pending = last(asUser(U.a3, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch2}', 'user', '${U.a3}', 'text', 'E 대기 글 @bot', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
+  last(asUser(U.a2, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.a2}', 'text', 'D 거부 글', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
+  ageScan(bot.crew_id); asAnon(`select public.msgr_bot_updates('${bot.token}')`); // 1차 폴 — D 글은 거부라 건너뛰지만 커서가 E의 대기 글을 앞질러선 안 된다
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch2}', 'crew', '${bot.crew_id}', '${U.o1}')`); // 뒤늦게 초대
+  ageScan(bot.crew_id);
   const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
-  assert.equal(ups.length, 0, '커서를 넘긴 옛 글은 동의해도 뒤늦게 배달되지 않는다(게이트웨이의 24시간 만료 규칙과 일관)');
+  const got = ups.some((u) => u.message.message_id === Number(pending));
+  assert.ok(got, '초대 뒤 대기 글이 배달돼야 한다 — 거부 글의 커서 전진이 이 글을 앞지르면 영구히 유실된다');
+  asUser(U.a2, `select public.msgr_set_ai_consent(true)`);
 });
 
-test('변이: L-1 커서 넘기기를 지우면 거부한 사람의 글이 7일 유예창에 남아 같은 구간을 계속 훑는다 — red 확인', { skip }, () => {
+test('변이: 거부 글에서 커서를 무조건 전진시키는(되돌린) L-1을 다시 넣으면 위 대기 글 배달이 깨진다 — red 확인', { skip }, () => {
   const orig = readFileSync(mig(MERGED), 'utf8');
-  const anchor = " declined_max:=greatest(coalesce(declined_max,0),s.id);\n";
-  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
-  sql(orig.replace(anchor, ""));
-  asUser(U.o1, `select public.msgr_set_ai_consent(false)`);
-  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('MutCursorOrg', 'mutcursor1', '${U.o1}') returning id`));
+  const anchor = "   continue;\n end if;\n if not msgr_cc_delivery_allowed(b.crew_id,s.id) and s.author_kind='user'";
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
+  sql(orig.replace(anchor, "   declined_max:=greatest(coalesce(declined_max,0),s.id);\n   continue;\n end if;\n if not msgr_cc_delivery_allowed(b.crew_id,s.id) and s.author_kind='user'")
+    .replace('r_json jsonb; -- 2026-09-27 최종 합본(H1)', 'r_json jsonb; declined_max bigint; -- 2026-09-27 최종 합본(H1)')
+    .replace('end $function$\n;', " if declined_max is not null then update msgr_crews c set cursor_msg_id=declined_max where c.id=b.crew_id and c.cursor_msg_id<declined_max; end if;\nend $function$\n;"));
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('CursorMutOrg', 'cursormut1', '${U.o1}') returning id`));
   const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
-  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'MutCursorBot')`)));
+  const ch2 = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','later')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'CursorMutBot')`)));
   sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
-  const mid = last(asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@MutCursorBot 부탁', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
-  asAnon(`select public.msgr_bot_updates('${bot.token}')`);
-  const cursorBefore = Number(sql(`select cursor_msg_id from public.msgr_crews where id = '${bot.crew_id}'`));
-  assert.ok(cursorBefore < Number(mid), '변이가 지워지면 거부한 글의 커서 전진이 유예창(10분 미만·최근 글)에 막혀 그대로 남는다(정상 코드라면 넘어가야 하므로 변이가 잡힌다)');
-  sql(orig); // 원래(합본) 정의로 복구
-  asUser(U.o1, `select public.msgr_set_ai_consent(true)`);
+  for (const u of [U.a2, U.a3]) sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${org}', '${u}', 'member', 'm') on conflict do nothing`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch2}', 'user', '${U.a3}', '${U.o1}') on conflict do nothing`);
+  asUser(U.a3, `select public.msgr_set_ai_consent(true)`);
+  asUser(U.a2, `select public.msgr_set_ai_consent(false)`);
+  const pending = last(asUser(U.a3, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch2}', 'user', '${U.a3}', 'text', 'E 대기 글 @bot', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
+  last(asUser(U.a2, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.a2}', 'text', 'D 거부 글', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
+  ageScan(bot.crew_id); asAnon(`select public.msgr_bot_updates('${bot.token}')`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch2}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  ageScan(bot.crew_id);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  const got = ups.some((u) => u.message.message_id === Number(pending));
+  assert.equal(got, false, 'L-1을 되살리면 커서가 대기 글을 앞질러 초대해도 영구히 배달되지 않아야 한다(변이가 잡힘)');
+  sql(orig); // 원래(되돌린) 정의로 복구
+  asUser(U.a2, `select public.msgr_set_ai_consent(true)`);
 });

@@ -121,29 +121,15 @@ function unentitledFixture() { // messenger()의 db에 orgEntitled(false)만 얹
   return { sent: base.sent, session: async () => { const s = await base.session(); return { ...s, db: { ...s.db, orgEntitled: async () => false } }; } };
 }
 
+// M-2(델타 검수, 4차) — 이 파일에 쓰던 writeFileSync 기반 변이 테스트를 없앴다: node --test는 파일들을 병렬
+// 프로세스로 돌리므로, 소스를 실제로 덮어썼다 복구하는 동안 다른 프로세스가 변이된 src/gateway/msgr.mjs를
+// 읽거나 중간에 죽으면 변이된 채로 남을 위험이 있다. 여기서는 행동만 잠그고(자격 없으면 삽입을 시도하지
+// 않는다), 변이 red 확인은 작업자가 로컬에서 그 줄을 지워 이 테스트가 실패하는 것을 수동으로 한 번 본다.
 test('L-8: an unentitled org quietly skips the routine alert insert (no repeated blocked attempts) and never throws', async () => {
   const ws = await workspace(); const fixture = unentitledFixture();
   const e = event(ws, selected(['msgr']));
   assert.equal(await msgrPush(e, fixture), false);
   assert.deepEqual(fixture.sent, []);
-});
-
-test('변이: L-8 자격 사전확인을 지우면 미자격 조직에서도 매번 삽입을 시도한다(무기한 반복) — red 확인', async () => {
-  const { readFileSync, writeFileSync } = await import('node:fs');
-  const file = new URL('../src/gateway/msgr.mjs', import.meta.url);
-  const orig = readFileSync(file, 'utf8');
-  const anchor = "    if (!(c.db.orgEntitled ? await c.db.orgEntitled(target.orgId).catch(() => true) : true)) return false;\n";
-  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))) ?? []).length, 1);
-  writeFileSync(file, orig.replace(anchor, ''));
-  try {
-    const mod = await import('../src/gateway/msgr.mjs?bust=' + Date.now());
-    const ws = await workspace(); const fixture = unentitledFixture();
-    const e = event(ws, selected(['msgr']));
-    assert.equal(await mod.msgrPush(e, fixture), true, 'mutation must let the blocked insert through');
-    assert.equal(fixture.sent.length, 1);
-  } finally {
-    writeFileSync(file, orig);
-  }
 });
 
 test('delivery reports mute, unavailable, provider failure and uncertain network separately', async () => {

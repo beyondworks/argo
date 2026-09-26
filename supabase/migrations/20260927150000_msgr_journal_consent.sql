@@ -16,8 +16,9 @@
 --   3) 읽는 시점(msgr_crew_memory)에 msgr_journal_entries를 다시 조인해 지금 동의 상태를 재판정한다(항목2) —
 --      적을 때는 동의해서 원문이 그대로 적혔더라도, 그 뒤 철회했으면 읽을 때 빠진다.
 --   4) 조직 문서(docs, journal 제외)도 최근 편집자(updated_by)가 거부·철회했으면 뺀다(항목4).
---   5) DB 위생 — msgr_crew_memory는 최근 2일치만 보므로, msgr_journal_entries는 7일 지난 행을 쓰기마다 함께
---      지운다(별도 pg_cron 없음 — 기존 msgr_crews 하트비트 정리와 같은 "쓰는 김에 지우기" 관례).
+--   5) DB 위생 — msgr_crew_memory는 최근 2일치만 보므로, msgr_journal_entries는 7일 지난 행을 pg_cron
+--      (purge-msgr-journal-entries, 03:29)으로 매일 지운다(쓰기 경로의 인라인 삭제는 인덱스를 못 타 델타
+--      검수에서 뺐다).
 --
 -- 알려진 절충(정직하게 표기) — 이 마이그레이션 적용 이전에 쌓인 msgr_org_docs의 옛 journal 텍스트는
 -- msgr_journal_entries로 소급 채우지 않는다(한 줄 텍스트에서 작성자 id를 안전하게 복원할 방법이 없다 — 표시
@@ -36,6 +37,11 @@ create table if not exists public.msgr_journal_entries (
 );
 create index if not exists msgr_journal_entries_lookup on public.msgr_journal_entries (org_id, channel_id, day, id);
 create index if not exists msgr_journal_entries_created on public.msgr_journal_entries (created_at); -- 보존 기간 삭제용
+-- 델타 검수 LOW(4차) — FK 3개(channel_id·source_msg_id·source_author_id) 각각에 단독 인덱스. org_id는 위
+-- lookup 인덱스의 선두 열이라 이미 커버되지만, 나머지 셋은 선두가 아니라 부모 삭제 캐스케이드가 표 전체를 훑는다.
+create index if not exists msgr_journal_entries_channel on public.msgr_journal_entries (channel_id);
+create index if not exists msgr_journal_entries_source_msg on public.msgr_journal_entries (source_msg_id);
+create index if not exists msgr_journal_entries_source_author on public.msgr_journal_entries (source_author_id);
 alter table public.msgr_journal_entries enable row level security;
 revoke all on public.msgr_journal_entries from public, anon, authenticated; -- msgr_crew_memory(SECURITY DEFINER)로만 읽는다, 쓰기는 트리거뿐
 
@@ -74,10 +80,11 @@ begin
   -- 검수 M-1 — msgr_org_docs 쓰기와 별개 예외 범위에 둔다(줄 단위 표 쓰기가 실패해도 방금 성공한 문서 갱신을
   -- 롤백하지 않는다 — 같은 begin/exception 안에 같이 두면 저장점 하나를 공유해 뒤쪽 실패가 앞쪽 성공까지 되돌린다).
   begin
+    -- 델타 검수 LOW(4차) — 여기 있던 인라인 삭제(채널당 매 답글)를 뺐다: channel_id 조건만으로는 인덱스를
+    -- 못 타 매번 표 전체를 훑었다(msgr_journal_entries_lookup은 org_id가 선두라 channel_id 단독 스캔에
+    -- 못 쓰인다). 보존은 아래 03:29 pg_cron(purge-msgr-journal-entries) 하나로만 맡긴다.
     insert into public.msgr_journal_entries(org_id,channel_id,day,source_msg_id,source_author_id,line)
       values(ch.org_id,ch.id,day,src.id,src_author,line);
-    delete from public.msgr_journal_entries -- DB 위생 — msgr_crew_memory는 최근 2일치만 읽는다. 7일 지난 행은 쓰기마다 함께 지운다(별도 크론 없음).
-     where channel_id=ch.id and created_at < now() - interval '7 days';
   exception when others then null; -- 이 표 실패도 답글 저장·문서 갱신을 막지 않는다
   end;
   return new;
@@ -103,7 +110,9 @@ create or replace function public.msgr_crew_memory(crew uuid, ch uuid) returns j
                                  where d.org_id = k.org_id and d.path not like 'journal/%'
                                    and ((d.channel_id is null and public.msgr_role(k.org_id) in ('owner', 'admin', 'member'))
                                         or (d.channel_id = ch and (select ok from inch)))
-                                   and public.msgr_ai_consent_visible(d.updated_by) -- 검수 M-1 항목4 — 최근 편집자가 거부·철회했으면 문서도 뺀다
+                                   -- 델타 검수 M-1(총괄 결정, 2026-09-27 밤) — rules/ 문서는 사람이 아니라 크루에게 주는 안전·운영
+                                   -- 지시라 작성자 동의 여부와 무관하게 항상 넘긴다. 그 밖의 문서(작업 메모 등)는 그대로 거른다.
+                                   and (d.path like 'rules/%' or public.msgr_ai_consent_visible(d.updated_by)) -- 검수 M-1 항목4 — 최근 편집자가 거부·철회했으면 문서도 뺀다(rules/ 제외)
                                  order by case when d.path like 'rules/%' then 0 else 1 end, d.channel_id nulls first, d.path limit 20) x), '[]'::jsonb), -- 본문 4,000자·20건 상한(검수 #691 M4)
       -- 검수 M-1(2026-09-27 밤) — msgr_org_docs.journal/*.md는 여러 사람 원문이 한 줄로 뭉친 텍스트라 사후 필터가 안 된다.
       -- msgr_journal_entries(줄 단위 표, 20260927150000)에서 다시 읽어 지금 동의 상태를 매번 판정한다 — 적을 때는 보였지만
@@ -122,8 +131,8 @@ grant execute on function public.msgr_crew_memory(uuid, uuid) to authenticated;
 
 -- DB 위생 4항(2026-09-23) — msgr_journal_entries는 누적만 되는 표다. 사람이 보는 원본 일지(msgr_org_docs)와
 -- 별개인 AI 읽기 전용 사본이고, msgr_crew_memory도 최근 2일치만 읽으므로 7일 보존이면 충분하다. 원본은 지우지 않는다.
--- 위 트리거의 인라인 delete는 "이 채널에 새로 쓸 때"만 그 채널 몫을 지운다 — 활동이 끊긴 채널은 인라인 경로를 안 타므로
--- 표 전체를 훑는 이 일일 작업이 안전망이다(같은 조건이라 이중 삭제가 아니라 커버리지 보완).
+-- 보존은 이 크론 하나로만 맡긴다 — 트리거 안 인라인 삭제는 델타 검수(LOW)로 뺐다(channel_id 단독 조건이
+-- msgr_journal_entries_lookup의 선두 열(org_id)을 못 타 크루 답글마다 표 전체를 훑었다).
 -- pg_cron이 없는 환경(로컬 PG 테스트)에서는 아무것도 하지 않는다(20260923220000·20260924160000과 같은 형식).
 -- 시각은 기존 purge-cron-run-details(03:17)·purge-msgr-crew-routine-edits(03:23)와 겹치지 않게 03:29.
 do $$
