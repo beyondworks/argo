@@ -20,7 +20,7 @@ export const ALL_RE = /(^|\s)@all(?=$|[\s,.!?:;])/i;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentionRe = (name, flags = '') => new RegExp(`(^|\\s)@${esc(name)}(?=$|[\\s,.!?:;])`, `i${flags}`); // 대소문자 무시(@edna = Edna)
 export function mentionsFromBody(body, candidates, picked = [], allCandidates = candidates) {
-  if (ALL_RE.test(body)) { // @all = 이 채널의 모든 사람·크루(후보 순서 = 사람 먼저·크루 순 — 서버가 이 순서로 크루 차례를 정한다)
+  if (ALL_RE.test(body)) { // @all = 이 채널의 모든 사람·크루(후보 순서 = 사람 먼저·크루 순 — 릴레이 표기일 때만 서버가 이 순서로 크루 차례를 정한다)
     const seenAll = new Set();
     return allCandidates.filter((x) => x?.id && (x.kind === 'user' || x.kind === 'crew') && !seenAll.has(`${x.kind}:${x.id}`) && seenAll.add(`${x.kind}:${x.id}`)).map(({ kind, id }) => ({ kind, id }));
   }
@@ -33,7 +33,7 @@ export function mentionsFromBody(body, candidates, picked = [], allCandidates = 
     seen.add(key); out.push({ kind: x.kind, id: x.id, at: hit.index });
     text = text.replace(mentionRe(x.name, 'g'), (m, lead) => lead + ' '.repeat(m.length - lead.length)); // 구간 소진 — 길이 유지
   }
-  // 본문 등장 순서 — 서버(msgr_bot_updates)가 이 배열 순서로 크루 차례를 정한다. 이름 길이 순으로 내보내면 "@Edna @Ogilvy"가
+  // 본문 등장 순서 — 릴레이(`@A > @B`, 2026-09-26부터 순서는 릴레이에서만)일 때 서버(msgr_bot_updates)가 이 배열 순서로 크루 차례를 정한다. 이름 길이 순으로 내보내면 "@Edna @Ogilvy"가
   // [Ogilvy, Edna]로 저장돼 뒷사람이 먼저 답한다(라이브 실측 2026-09-12 #175).
   return out.sort((a, b) => a.at - b.at).map(({ kind, id }) => ({ kind, id }));
 }
