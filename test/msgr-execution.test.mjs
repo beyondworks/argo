@@ -73,6 +73,23 @@ test('heartbeat is bounded and stoppable without claiming again', async () => {
   assert.ok(atStop > 0); assert.equal(count, atStop);
 });
 
+// 크루 작업 중단(유건 확정 2026-09-26) — 방송을 놓친 기기를 위한 폴백: 심박 응답의 stop_requested를 읽어 콜백을 부른다.
+test('heartbeat calls onStopRequested once the response carries stop_requested', async () => {
+  const pending = job(); pending.msgrExecution = { attempt: 'attempt' };
+  let calls = 0;
+  const stop = executionHeartbeat('ws', { heartbeatExecution: async () => ({ ok: true, stop_requested: true }) }, pending, { intervalMs: 5, onStopRequested: () => { calls++; } });
+  await new Promise((r) => setTimeout(r, 25)); stop();
+  assert.ok(calls > 0, '중단 요청을 읽으면 콜백을 불러야 한다');
+});
+
+test('heartbeat never calls onStopRequested when no stop was requested', async () => {
+  const pending = job(); pending.msgrExecution = { attempt: 'attempt' };
+  let calls = 0;
+  const stop = executionHeartbeat('ws', { heartbeatExecution: async () => ({ ok: true, stop_requested: false }) }, pending, { intervalMs: 5, onStopRequested: () => { calls++; } });
+  await new Promise((r) => setTimeout(r, 25)); stop();
+  assert.equal(calls, 0, '중단 요청이 없으면 콜백을 부르지 않아야 한다');
+});
+
 test('D25: 앞 프로세스가 답하던 중 끊긴 시도는 interrupted — 이 프로세스가 시작한 시도는 종전대로 pending', async () => {
   const running = { acquired: false, state: 'running', heartbeat_at: new Date().toISOString() };
   const cut = job(); cut.msgrExecution = { attempt: 'from-dead-process', phase: 'running' };
@@ -89,4 +106,18 @@ test('D25: 시작 기록은 프로세스 전역 등록부 — 같은 모듈의 �
   assert.equal((await beginMessengerExecution('ws', shared, live)).kind, 'run');
   const copy = await import(`../src/gateway/msgr-execution.mjs?bundle-copy=${Date.now()}`); // Next가 엔트리마다 따로 번들한 사본을 흉내
   assert.equal((await copy.beginMessengerExecution('ws', shared, live)).kind, 'pending');
+});
+
+// 크루 작업 중단 검수 2026-09-26 M-1(E3): 심박 응답이 stop() 뒤에 도착해도 onStopRequested를 부르면 안 된다 —
+// 이 턴이 이미 끝나고 다음 턴이 시작된 사이에 늦은 응답이 그 다음 턴을 잘못 멈춘다.
+test('a heartbeat response that arrives after stop() never calls onStopRequested (late response after turn end)', async () => {
+  const pending = job(); pending.msgrExecution = { attempt: 'attempt' };
+  let release; const gate = new Promise((r) => { release = r; });
+  let calls = 0;
+  const stop = executionHeartbeat('ws', { heartbeatExecution: async () => { await gate; return { ok: true, stop_requested: true }; } }, pending, { intervalMs: 5, onStopRequested: () => { calls++; } });
+  await new Promise((r) => setTimeout(r, 12)); // 심박 1건이 날아간 상태(gate 대기 중)
+  stop();          // 턴 종료(finally의 stopHeartbeat) — 다음 턴이 곧 시작될 수 있다
+  release();       // 늦게 도착한 응답
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(calls, 0, 'stop() 뒤에 도착한 응답은 무시해야 한다');
 });

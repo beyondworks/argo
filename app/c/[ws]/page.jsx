@@ -8,6 +8,7 @@ import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 
 import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected } from '../../runner-connect';
 import { useLang } from '../../i18n';
+import { approvalExpandDefault } from '../../lib/approval-display.mjs';
 import styles from './deck.module.css';
 
 export default function Deck({ params }) {
@@ -402,9 +403,16 @@ function ApprovalsCard({ ws, agents }) {
             <Avatar name={nameOf(a.slug)} size={26} />
             <Link href={`/c/${ws}/crew/${a.slug}`} title={t('deck.approvalOpen')}
               style={{ flex: 1, minWidth: 0, color: 'inherit', textDecoration: 'none' }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{a.action}</div>
+              {/* 쉬운 문장화 — 크루가 목적·할 일·필요한 것을 채웠으면 할 일을 머리글로, 목적을 부제로(폴백: 원래 action/reason).
+                  분리 검수 H-1: plain이 있어도 실제 실행될 명령이 안 보이면 안 된다 — plain.task 아래에 action을 항상 흐린 작은 글씨로. */}
+              <div style={{ fontSize: 12.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                {a.plain?.task || a.action}
+                {approvalExpandDefault(a) && <span className="chip danger" style={{ flex: 'none' }}>{t('chat.approval.highBadge')}</span>}
+              </div>
+              {a.plain?.task && <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--fg-3)', marginTop: 1 }}>{a.action}</div>}
               <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>
-                {nameOf(a.slug)}{a.from ? ` (${t('deck.approvalFrom', { name: nameOf(a.from) })})` : ''} · {a.reason}
+                {nameOf(a.slug)}{a.from ? ` (${t('deck.approvalFrom', { name: nameOf(a.from) })})` : ''}
+                {a.plain?.purpose ? ` · ${a.plain.purpose}` : (a.reason ? ` · ${a.reason}` : '')}
               </div>
             </Link>
             {busy === a.id ? <Spinner /> : (
