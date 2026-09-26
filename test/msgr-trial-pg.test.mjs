@@ -4,8 +4,10 @@
 //   (3) 연장(msgr_extend_trial)은 service_role 전용 — 앱 안에 쿠폰 입력 화면을 두지 않는다(App Store 3.1.1).
 //   (4) 연장되면 알림함이 쓰는 서버 표(msgr_org_announcements)에 안내가 남는다.
 //   (5) 일반 사용자는 trial_ends_at·paid_until 열을 직접 못 바꾼다(테이블 grant가 이미 막는다 — RLS 정책 없음).
-//   (6) msgr_org_entitled(org) = 무료 기간 중 OR paid_until 미래. entitled=false 조직은 크루 텍스트·결재 카드 삽입만 막힌다
-//       (kind=system 안내, 사람 메시지, 개인 공간(org_id null)은 영향 없음) — 게이트웨이 1차 방어의 DB 쪽 2차 방어선.
+//   (6) msgr_org_entitled(org) = 무료 기간 중 OR paid_until 미래 OR msgr_org_plan(org)='team'(레거시 유료 조직 보호 —
+//       라이브 확인 2026-09-26: team 2건, 웹 결제 연동 전까지 크루 작업이 멈추면 안 된다). entitled=false 조직은
+//       크루 텍스트·결재 카드 삽입만 막힌다(kind=system 안내, 사람 메시지, 개인 공간(org_id null)은 영향 없음) —
+//       게이트웨이 1차 방어의 DB 쪽 2차 방어선.
 // 실행: bash scripts/billing-pg-drill.sh test/msgr-trial-pg.test.mjs
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -187,6 +189,42 @@ test('DB 2차 방어 — 개인 공간(org_id null)은 조직 자격과 무관�
   sql(`alter table public.msgr_messages enable trigger msgr_messages_crew_scope; alter table public.msgr_messages enable trigger b_msgr_dm_message_guard`);
   if (r.status !== 0) console.error('[debug personal]', r.stderr);
   assert.equal(r.status, 0, '채널이 조직 소속이 아니면(org_id null) 자격 게이트(msgr_message_entitlement_gate)가 적용되지 않는다');
+});
+
+test('team 플랜 조직은 무료 기간이 끝나도 크루 턴이 허용된다(msgr_org_plan=team) — 라이브 확인(2026-09-26): team 2건 모두 ls_status null', { skip }, () => {
+  const org = last(asUser(U.o2, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('TeamOrg', 'teamorg1', '${U.o2}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 5 where org_id = '${org}'`);
+  expireTrial(org);
+  assert.equal(sql(`select public.msgr_org_entitled('${org}')`), 't', 'team 플랜이면 무료 기간·결제 기간과 무관하게 자격이 있다');
+  const ch = last(asUser(U.o2, `select public.msgr_create_channel('${org}','public','general')`));
+  const crew = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${org}', '${U.o2}', 'ws-team', 'bot', '봇') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${crew}', '${U.o2}')`);
+  const r = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body) values ('${ch}', 'crew', '${crew}', 'text', 'team 플랜은 계속 답한다')`);
+  assert.equal(r.status, 0, 'team 플랜 조직은 무료 기간이 끝나도 크루 텍스트 삽입이 허용된다');
+});
+
+test('변이(team 절 제거)는 team 플랜 조직의 크루 턴을 거부로 바꾼다 — red 확인', { skip }, () => {
+  sql(`create or replace function public.msgr_org_entitled(org uuid) returns boolean
+    language sql stable security definer set search_path = public, pg_temp as $$
+      select public.msgr_org_trial_active(org)
+          or coalesce((select e.paid_until > now() from public.msgr_org_entitlements e where e.org_id = org), false)
+    $$`);
+  const org = last(asUser(U.o2, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('TeamMutant', 'teammutant1', '${U.o2}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 5 where org_id = '${org}'`);
+  expireTrial(org);
+  const ch = last(asUser(U.o2, `select public.msgr_create_channel('${org}','public','general')`));
+  const crew = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${org}', '${U.o2}', 'ws-teammut', 'bot', '봇') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${crew}', '${U.o2}')`);
+  const r = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body) values ('${ch}', 'crew', '${crew}', 'text', 'team 절 없으면 거부돼야 한다')`);
+  assert.notEqual(r.status, 0, 'team 절을 뺀 뒤집힌 버전은 정상 코드라면 통과할 team 플랜 크루 텍스트를 거부한다 — 변이가 잡힌다');
+  assert.match(r.stderr, /msgr_org_unentitled/);
+  // 원래 정의로 복구 — 이 파일의 나머지 테스트(특히 다음 트리얼 비교 변이 테스트)에 영향을 남기지 않는다
+  sql(`create or replace function public.msgr_org_entitled(org uuid) returns boolean
+    language sql stable security definer set search_path = public, pg_temp as $$
+      select public.msgr_org_trial_active(org)
+          or coalesce((select e.paid_until > now() from public.msgr_org_entitlements e where e.org_id = org), false)
+          or public.msgr_org_plan(org) = 'team'
+    $$`);
 });
 
 test('변이(비교 부호 뒤집기)는 무료 기간 중 허용을 거부로 바꾼다 — red 확인', { skip }, () => {

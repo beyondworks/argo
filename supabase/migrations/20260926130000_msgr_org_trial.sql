@@ -25,11 +25,14 @@ create or replace function public.msgr_org_trial_active(org uuid) returns boolea
     select coalesce((select e.trial_ends_at > now() from public.msgr_org_entitlements e where e.org_id = org), false)
 $$;
 
--- ── 자격 판정 단일 관문 — 무료 기간 중 OR 결제 기간 중. 좌석·채널 게이트·크루 턴 게이트가 모두 이 함수 하나만 부른다. ──
+-- ── 자격 판정 단일 관문 — 무료 기간 중 OR 결제 기간 중 OR 레거시 team 플랜. 좌석·채널 게이트·크루 턴 게이트가 모두 이 함수 하나만 부른다. ──
+-- 라이브 읽기 확인(2026-09-26, 총괄): msgr_org_entitlements에 team 2건, 둘 다 ls_status null(정상 결제 중 — 결제 실패면 msgr_org_locked가 따로 잠금).
+--   이 두 조직은 이미 유료 고객이라 웹 결제 연동 전까지도 크루 작업이 멈추면 안 된다 — plan='team'도 자격으로 본다. 나중에 웹 결제가 붙으면 정리.
 create or replace function public.msgr_org_entitled(org uuid) returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
     select public.msgr_org_trial_active(org)
         or coalesce((select e.paid_until > now() from public.msgr_org_entitlements e where e.org_id = org), false)
+        or public.msgr_org_plan(org) = 'team'
 $$;
 
 -- ── 좌석 게이트 재정의(20260903120000의 최종 정의 그대로 + 무료 기간 우회 한 줄) ──
