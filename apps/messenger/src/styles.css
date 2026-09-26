@@ -166,6 +166,9 @@
 .msgr-mine .msgr-quote { color: var(--primary-fg-dim); border-color: var(--primary-fg-line); }
 .msgr-acts { display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity 150ms ease; }
 .msgr-row:focus-within .msgr-acts, .msgr-mine:focus-within .msgr-acts { opacity: 1; } @media (hover: hover) { .msgr-row:hover .msgr-acts, .msgr-mine:hover .msgr-acts { opacity: 1; } }
+/* hover가 없는 넓은 화면(아이패드 데스크톱 폭 + 터치, 2026-09-26) — 길게 누르면 App.jsx의 useLongPress가 data-acts='open'을 붙인다.
+   폰 전용 블록(max-width: 720px)의 같은 규칙은 이 폭엔 안 걸린다 — 폭과 무관하게 입력 기기로 갈라야 한다(감사 원칙, 위 hover:hover와 동일). */
+@media (hover: none) { [data-acts='open'] .msgr-acts { opacity: 1; } }
 .msgr-acts button { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-3); padding: 3px 8px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
 @media (hover: hover) { .msgr-acts button:hover { background: var(--card); border-color: var(--border); color: var(--fg); } } .msgr-acts button:active { background: var(--card); border-color: var(--border); color: var(--fg); }
 .msgr-file { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 7px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--border-soft); font-family: var(--mono); font-size: 11px; color: var(--fg-2); vertical-align: middle; cursor: pointer; margin: 6px 6px 0 0; }

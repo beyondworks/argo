@@ -19,7 +19,7 @@
 | 카테고리 | 비즈니스(보조: 생산성) |
 | 연령 등급 | 4+ 예상(확정 아님 — 사용자 생성 콘텐츠가 있는 앱은 Apple이 신고·차단 수단을 따로 물을 수 있다. 메시지는 조직 내부, "무제한 웹 액세스 없음") |
 | 수출 규정 | 암호화 면제(`ITSAppUsesNonExemptEncryption=false`, Info.plist) |
-| 기기 | iPhone 전용(`TARGETED_DEVICE_FAMILY=1`) — 아이패드 레이아웃은 후속 |
+| 기기 | 아이폰+아이패드(`TARGETED_DEVICE_FAMILY=1,2`, 2026-09-26부터) — 창 폭 기준 반응형(≤720px 폰 셸) |
 
 개인정보 라벨(수집 항목): 이메일·이름(계정), 메시지 본문과 첨부(사용자 콘텐츠, 서버 저장·평문), 푸시 토큰(기기 ID), 진단 정보 없음(로컬만). 추적 없음(ATT 해당 없음).
 
@@ -31,7 +31,7 @@
 
 ## 4. 빌드·업로드
 
-1. `apps/messenger/scripts/ios-store.mjs build <빌드번호>` → `upload` (ipa 게이트: 스킴·버전·암호화 면제·iPhone 전용 `UIDeviceFamily=[1]` 검사).
+1. `apps/messenger/scripts/ios-store.mjs build <빌드번호>` → `upload` (ipa 게이트: 스킴·버전·암호화 면제·아이폰+아이패드 `UIDeviceFamily=[1,2]` 검사).
 2. 업로드된 ipa의 `aps-environment`가 production인지 확인(커밋된 entitlements는 development).
 3. TestFlight에서 로그아웃 상태부터 로그인 왕복(Apple 포함)·데모 조직 가입·메시지·크루 답변·계정 삭제까지 한 번 돌린다.
 
