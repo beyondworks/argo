@@ -700,8 +700,8 @@ export const DICT = {
   'org.delete': ['조직 삭제', 'Delete organization'],
   'org.delete.start': ['삭제 시작…', 'Start deletion…'],
   'org.delete.typeName': ['확인하려면 "{name}"을(를) 그대로 입력', 'Type "{name}" to confirm'],
-  'org.delete.confirm': ['30일 뒤 영구 삭제', 'Delete permanently in 30 days'],
-  'org.delete.desc': ['삭제하면 그 순간부터 모든 멤버와 에이전트가 이 조직을 볼 수 없습니다. 30일 안에는 소유자가 조직 메뉴에서 복구할 수 있고, 지나면 대화·첨부·문서·기록이 영구히 지워집니다.', 'Deleting hides the organization from every member and agent immediately. Within 30 days the owner can restore it from the organization menu; after that, messages, files, documents and logs are erased permanently.'],
+  'org.delete.confirm': ['삭제', 'Delete'], // 2026-09-27 — 자동 영구 삭제 예약은 없다(cron 미배선). 방침과 같은 사실만 약속한다.
+  'org.delete.desc': ['삭제하면 그 순간부터 모든 멤버와 에이전트가 이 조직을 볼 수 없습니다. 30일 안에는 소유자가 조직 메뉴에서 복구할 수 있습니다. 그 뒤 데이터의 영구 삭제를 원하면 지원팀에 요청해 주세요.', 'Deleting hides the organization from every member and agent immediately. Within 30 days the owner can restore it from the organization menu. After that, contact support if you want the data permanently erased.'],
   'org.delete.done': ['"{name}"을(를) 삭제 예정으로 표시했습니다. 30일 안에 복구할 수 있습니다.', '"{name}" is scheduled for deletion. You can restore it within 30 days.'],
   'org.restore.cta': ['삭제 예정 · {days}일 남음 · 복구', 'Pending deletion · {days} {days|day|days} left · restore'],
   'org.restore.done': ['"{name}"을(를) 복구했습니다.', '"{name}" restored.'],
