@@ -17,6 +17,25 @@ test('평범한 문장은 걸리지 않는다(오탐 최소화)', () => {
   assert.equal(containsProfanity(undefined), false);
 });
 
+// 검수 L1(2026-09-27) — 오탐 문장. 한국어는 "시발점·시발역·병신년"처럼 욕설과 겹치는 정상 단어를 예외 처리,
+// 영어는 왼쪽 단어 경계만 걸어 다른 단어 중간에 우연히 낀 부분 문자열(Scunthorpe 등)을 막는다.
+test('검수가 찾은 한국어 오탐 문장은 걸리지 않는다', () => {
+  assert.equal(containsProfanity('이 프로젝트의 시발점이 궁금합니다'), false);
+  assert.equal(containsProfanity('시발역에서 내려서 환승하세요'), false);
+  assert.equal(containsProfanity('올해는 병신년입니다'), false);
+});
+
+test('영어는 단어 중간에 우연히 낀 부분 문자열을 오탐하지 않는다', () => {
+  assert.equal(containsProfanity('I visited Scunthorpe last year'), false); // cunt가 중간에 낌
+});
+
+test('그래도 진짜 욕설(어미가 붙은 형태 포함)은 여전히 잡는다', () => {
+  assert.equal(containsProfanity('아 진짜 시발 짜증나'), true, '순수 시발은 여전히 걸린다');
+  assert.equal(containsProfanity('저 사람 병신 아니냐'), true, '순수 병신은 여전히 걸린다');
+  assert.equal(containsProfanity('you bitches are the worst'), true, '어미가 붙어도 걸린다(오른쪽 경계는 걸지 않는다)');
+  assert.equal(containsProfanity('that is so retarded'), true);
+});
+
 test('대소문자 구분 없이 영어 욕설을 잡는다', () => {
   assert.equal(containsProfanity('FUCK this'), true);
   assert.equal(containsProfanity('Bitch please'), true);
