@@ -405,7 +405,9 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
   const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', 'rolePick', 'retryBlocked', `return (${expr});`); // rolePick = 1:1 /to·/cc 명령 모드(명령만 있는 글은 전송 금지 — PR #526)
   const disabledSource = app.slice(disabled.start, disabled.end);
   const guardSource = app.slice(guard.test.start, guard.test.end);
-  const retryStep = send.init.body.body[1];
+  // 2026-09-26: send()의 잠금 가드 다음 줄은 AI 동의 확인(App Store 5.1.2)이고, 실제 재시도 로직은 동의 뒤 이어 부르는 doSend()로 옮겼다.
+  const doSend = nodes.find((node) => node.type === 'VariableDeclarator' && node.id.name === 'doSend');
+  const retryStep = doSend.init.body.body[0];
   assert.equal(app.slice(retryStep.start, retryStep.end).replace(/\s+/g, ' '), 'if (job) { if (retryBlocked || !await delivery.retry()) return; onSent(delivery.snapshot().lastDeliveredId); if (!text.trim() && !files.length) return; }', '실패 카드가 있으면 그 글부터 다시 보내고, 실패하면 새 글을 보내지 않는다');
   const check = (buttonSource, handlerSource) => {
     const buttonDisabled = evaluate(buttonSource), handlerBlocked = evaluate(handlerSource);
