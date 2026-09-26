@@ -38,6 +38,8 @@ export function createOutbox({ store, send, onState = () => {}, onRejected = () 
     state: () => state,
     pending: () => queue.length,
     has: (key) => queue.some((op) => op.key === key),
+    /** 이 key의 아직 안 보낸 변경을 버린다(충돌 뒤 서버 값으로 되돌릴 때) */
+    async drop(key) { const before = queue.length; queue = queue.filter((op) => op.key !== key || op.sending); if (queue.length !== before) await save(); },
     tries: () => queue[0]?.tries ?? 0,
     async load() {
       queue = (await store.get()) ?? [];
@@ -72,7 +74,11 @@ export function autoFlush(outbox, { delay = 800, maxWait = 5000 } = {}) {
       retry = setTimeout(go, Math.min(30_000, 1000 * 2 ** Math.max(0, outbox.tries() - 1)));
     }
   };
-  if (typeof window !== 'undefined') window.addEventListener('online', go);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', go);
+    // 탭이 가려지면 브라우저가 타이머를 늦춘다(분 단위) — 가려지는 순간 남은 것을 바로 보낸다
+    document.addEventListener('visibilitychange', () => { if (document.hidden && outbox.pending()) go(); });
+  }
   return {
     /** enqueue 직후 부른다 */
     poke() {

@@ -1,7 +1,7 @@
 // 보낼 목록 규칙 — 저장 버튼 없이 무엇도 잃지 않는다(유건 2026-09-26: 노션처럼 모든 것이 비동기 저장).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOutbox } from '../src/core/outbox.js';
+import { createOutbox, autoFlush } from '../src/core/outbox.js';
 
 const memStore = () => { let v; return { get: async () => v, set: async (x) => { v = structuredClone(x); }, peek: () => v }; };
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
@@ -106,4 +106,22 @@ test('상태: 비면 idle, 남아 있으면 pending, 일시 오류면 retrying',
   await ob.flush();
   assert.ok(states.includes('pending'));
   assert.equal(states.at(-1), 'retrying');
+});
+
+// 이유: 가려진 탭은 브라우저가 타이머를 분 단위로 늦춘다 — 입력 직후 탭을 옮기면 다른 기기 반영이 늦어진다. 가려지는 순간 보낸다.
+test('탭이 가려지면 대기 시간을 기다리지 않고 바로 보낸다', async () => {
+  const handlers = {};
+  globalThis.window = { addEventListener() {} };
+  globalThis.document = { hidden: false, addEventListener: (k, f) => { handlers[k] = f; } };
+  try {
+    const sent = [];
+    const ob = outbox({ store: memStore(), send: async (op) => { sent.push(op.key); } });
+    const auto = autoFlush(ob, { delay: 60_000, maxWait: 60_000 });
+    await ob.enqueue({ key: 'page:1', payload: 'a' });
+    auto.poke();
+    document.hidden = true; handlers.visibilitychange();
+    await tick(5);
+    assert.deepEqual(sent, ['page:1']);
+    auto.cancel?.();
+  } finally { delete globalThis.window; delete globalThis.document; }
 });

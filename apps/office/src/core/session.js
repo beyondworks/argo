@@ -13,6 +13,9 @@ const emit = () => listeners.forEach((l) => l());
 export const getMode = () => mode;
 export const useSession = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => mode, () => mode);
 
+/** 공간 구조(조직 위키 최상위·조직 홈)를 바꿀 수 있는가 — 서버 msgr_is_admin과 같은 기준. 'shared'는 남의 공간이라 false */
+export const canManage = (key) => { const s = SPACES.find((x) => x.key === key); return s?.kind === 'me' || s?.role === 'owner' || s?.role === 'admin'; };
+
 const CACHE = 'argo-office-session';
 
 /** 내가 속한 조직(퇴사·삭제 제외) → 공간. 조직 키는 주소에 쓰는 slug, 서버 키는 id */

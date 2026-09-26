@@ -23,8 +23,9 @@ import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
 import { move } from './core/layout.js';
 import { CREWS, PEOPLE } from './data/sample.js';
-import { SPACES, ME, useSession } from './core/session.js';
-import { pullLayouts } from './core/pull.js';
+import { SPACES, ME, useSession, canManage } from './core/session.js';
+import { pullLayouts, pullPages } from './core/pull.js';
+import { flushNow } from './core/sync.js';
 import { Login } from './pages/Login.jsx';
 
 function route(path) {
@@ -43,8 +44,9 @@ function route(path) {
 }
 
 function SaveStatus() {
-  const s = useSaveStatus();
-  return <span className={`save-status ${s}`} role="status" aria-live="polite">{s === 'offline' && <span className="dot ask" />}{t(`save.${s}`)}</span>;
+  const saved = useSaveStatus();
+  const s = useUi().conflict ? 'unsaved' : saved;
+  return <span className={`save-status ${s}`} role="status" aria-live="polite">{(s === 'offline' || s === 'unsaved') && <span className="dot ask" />}{t(`save.${s}`)}</span>;
 }
 
 function Header({ r, page }) {
@@ -59,7 +61,7 @@ function Header({ r, page }) {
         <span className="draft-badge">{t('draft.badge')}</span>
         <SaveStatus />
         {r.view === 'page' && page && <>
-          <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>
+          {useSession() === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
           <button type="button" className="btn sm" onClick={() => setUi({ share: page.id })}><Icon name="share" size={14} />{t('page.share')}</button>
           <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, [...pageMenu(page), { sep: true }, { label: t('page.history'), icon: 'history', run: () => {} }], { anchor: e.currentTarget })}><Icon name="dots" /></button>
         </>}
@@ -100,7 +102,12 @@ export default function App() {
   );
 
   useEffect(() => { if (r.redirect && mode !== 'loading') navigate(r.redirect, { replace: true }); }, [r.redirect, mode]);
-  useEffect(() => { if (mode === 'signedIn') pullLayouts().catch((e) => console.warn('[office] layout pull failed', e?.message)); }, [mode]);
+  useEffect(() => {
+    if (mode !== 'signedIn') return;
+    flushNow(); // 로그인 확인 전에 미뤄 둔 변경을 바로 보낸다
+    pullLayouts().catch((e) => console.warn('[office] layout pull failed', e?.message));
+    pullPages().catch((e) => console.warn('[office] page pull failed', e?.message));
+  }, [mode]);
   useEffect(() => { setUi({ navOpen: false }); }, [path]);
   useEffect(() => {
     const onKey = (e) => {
@@ -109,7 +116,7 @@ export default function App() {
       if (cmd && e.key.toLowerCase() === 'k') { e.preventDefault(); setUi((u) => ({ palette: !u.palette })); }
       else if (cmd && e.key === '\\') { e.preventDefault(); document.documentElement.classList.toggle('nav-collapsed'); }
       else if (cmd && e.key === '/') { e.preventDefault(); setLang(getLang() === 'ko' ? 'en' : 'ko'); }
-      else if (cmd && e.altKey && e.code === 'KeyN' && r.space) { e.preventDefault(); navigate(`${baseOf(r.space)}/p/${createPage(r.space)}`); }
+      else if (cmd && e.altKey && e.code === 'KeyN' && r.space && canManage(r.space)) { e.preventDefault(); navigate(`${baseOf(r.space)}/p/${createPage(r.space)}`); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

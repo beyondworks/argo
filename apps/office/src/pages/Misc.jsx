@@ -77,7 +77,7 @@ export function Trash({ space }) {
 export function Shared() {
   useLang();
   const pages = useStore((s) => s.pages);
-  const rows = pages.filter((p) => p.space === 'lean-studio');
+  const rows = pages.filter((p) => p.space === (getMode() === 'signedIn' ? 'shared' : 'lean-studio')); // 로그인하면 남의 내 공간에서 공유받은 페이지
   return (
     <div className="page-wrap">
       <div className="page-title-row"><h1 className="page-h1">{t('shared.title')}</h1></div>

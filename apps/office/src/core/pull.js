@@ -1,13 +1,15 @@
 // 로그인 뒤 서버의 배치를 가져온다 — 아직 안 보낸 변경이 있는 배치는 이 기기 값을 지킨다(로컬 우선).
 import { getClient } from './supabase.js';
 import { SPACES, ME } from './session.js';
-import { update } from './store.js';
+import { update, getState } from './store.js';
 import { outbox } from './sync.js';
+import { mergePages } from './layout.js';
 
 export async function pullLayouts() {
   const sb = await getClient();
   if (!sb) return;
   const orgs = SPACES.filter((s) => s.kind === 'org');
+  const busy = new Set(Object.keys(getState().layouts ?? {}).filter((k) => outbox.has(`layout:${k}`))); // 요청 전 보낼 것 — 응답은 요청 시점 스냅숏
   const [mine, shared] = await Promise.all([
     sb.from('office_user_layouts').select('space_key, surface, prefs').eq('user_id', ME.id).eq('space_key', 'me'),
     orgs.length ? sb.from('office_space_layouts').select('org_id, surface, layout').in('org_id', orgs.map((o) => o.id)) : { data: [] },
@@ -15,6 +17,34 @@ export async function pullLayouts() {
   const next = {};
   for (const r of mine.data ?? []) next[`${r.surface}:me`] = r.prefs;
   for (const r of shared.data ?? []) { const o = orgs.find((x) => x.id === r.org_id); if (o) next[`${r.surface}:${o.key}`] = r.layout; }
-  const keep = Object.entries(next).filter(([k]) => !outbox.has(`layout:${k}`));
+  const keep = Object.entries(next).filter(([k]) => !busy.has(k) && !outbox.has(`layout:${k}`));
   if (keep.length) update((s) => ({ layouts: { ...s.layouts, ...Object.fromEntries(keep) } }));
+}
+
+/** 볼 수 있는 페이지 목록(본문 제외)을 가져온다 — 아직 안 보낸 변경이 있는 페이지는 이 기기 값을 지킨다. 본문은 열 때 loadPageContent로. */
+const PENDING = ['page-create', 'page', 'order', 'restricted', 'trash'];
+const pendingFor = (id) => PENDING.some((k) => outbox.has(`${k}:${id}`));
+export async function pullPages() {
+  const sb = await getClient();
+  if (!sb) return;
+  const all = () => [...getState().pages, ...getState().trash];
+  const before = new Set(all().map((p) => p.id).filter(pendingFor));                 // 요청 전에 잡는다 — 응답은 요청 시점 스냅숏
+  const { data, error } = await sb.from('office_pages').select('id, space_kind, owner_user_id, org_id, parent_id, position, title, icon, restricted, general, version, updated_at, archived_at, archived_by');
+  if (error) throw error;
+  const orgKey = new Map(SPACES.filter((s) => s.kind === 'org').map((s) => [s.id, s.key]));
+  const spaceOf = (r) => (r.space_kind === 'me' ? (r.owner_user_id === ME.id ? 'me' : 'shared') : orgKey.get(r.org_id));
+  const local = all();
+  const { pages, trash } = mergePages(data ?? [], local, { before, pendingNow: new Set(local.map((p) => p.id).filter(pendingFor)), spaceOf });
+  update(() => ({ pages, trash }));
+}
+
+/** 페이지 본문을 불러온다. force면 이 기기의 아직 안 보낸 저장을 버리고 서버 값으로(충돌 뒤 "새로 불러오기") */
+export async function loadPageContent(id, { force = false } = {}) {
+  const sb = await getClient();
+  if (!sb) return;
+  const busy = outbox.has(`page:${id}`);                                            // 요청 전에 잡는다 — 응답 전에 저장이 끝나면 응답이 더 옛것
+  const { data, error } = await sb.from('office_pages').select('title, content, version, updated_at').eq('id', id).maybeSingle();
+  if (error || !data) return;
+  if (!force && (busy || outbox.has(`page:${id}`))) return;
+  update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, title: data.title, content: data.content, version: data.version, updated: data.updated_at, loadedAt: Date.now() } : p)) }));
 }

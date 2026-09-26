@@ -24,7 +24,7 @@ function Approvals({ space }) {
   return rows.slice(0, 4).map((a) => (
     <Link key={a.id} to={`${baseOf(space)}/approvals?open=${a.id}`} className="mod-row" {...menuProps(() => recordMenu(a, a.plain))}>
       <Face id={a.crew} size={18} />
-      <span className="mod-main"><span className="clamp">{a.plain}</span><small>{crewName(a.crew)}{space === 'me' ? ` · ${spaceName(a.space)}` : ` · #${a.channel}`} · {ago(a.at)}</small></span>
+      <span className="mod-main"><span className="clamp">{a.plain}</span><small>{[crewName(a.crew), space === 'me' ? spaceName(a.space) : `#${a.channel}`, ago(a.at)].filter(Boolean).join(' · ')}</small></span>
       {a.risk === 'high' && <span className="badge warn">{t('risk.high')}</span>}
     </Link>
   ));

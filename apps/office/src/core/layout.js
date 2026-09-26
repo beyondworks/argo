@@ -68,3 +68,26 @@ export function rowsOf(items) {
   }
   return rows;
 }
+
+/**
+ * 서버 페이지 목록(본문 제외) + 이 기기 목록 → 화면 목록.
+ * before = 목록을 요청할 때 보낼 것이 있던 id, pendingNow = 응답을 받은 지금 보낼 것이 있는 id — 둘 중 하나면 이 기기 값을 지킨다.
+ * 응답은 요청 시점 스냅숏이라, 그 사이 끝난 쓰기(새 페이지·저장)를 모른다(9/27 실측: 새 페이지가 사라지고 입력이 유실).
+ */
+export function mergePages(rows, local, { before, pendingNow, spaceOf }) {
+  const keep = (id) => before.has(id) || pendingNow.has(id);
+  const mine = new Map(local.map((p) => [p.id, p]));
+  const pages = [], trash = [], seen = new Set();
+  for (const r of rows) {
+    const space = spaceOf(r);
+    if (!space) continue;
+    seen.add(r.id);
+    const m = mine.get(r.id);
+    if (m && keep(r.id)) { (m.trashedAt ? trash : pages).push(m); continue; }
+    const row = { id: r.id, space, parent: r.parent_id, position: r.position, title: r.title, icon: r.restricted ? 'lock' : 'doc', restricted: r.restricted, general: r.general,
+      version: r.version, updated: r.updated_at, owner: r.owner_user_id, content: m && m.version === r.version ? m.content : undefined };
+    if (r.archived_at) trash.push({ ...row, trashedAt: r.archived_at }); else pages.push(row);
+  }
+  for (const p of local) if (!seen.has(p.id) && keep(p.id)) (p.trashedAt ? trash : pages).push(p); // 아직 서버에 없는(또는 스냅숏 뒤에 생긴) 새 페이지
+  return { pages, trash };
+}

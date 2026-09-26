@@ -3,6 +3,7 @@ import App from './App.jsx';
 import { applyTheme, readTheme } from './core/theme.js';
 import { getLang } from './core/i18n.js';
 import { initSession } from './core/session.js';
+import './core/transport.js'; // 보낼 목록의 서버 전송을 등록한다
 import './tokens.css';
 import './base.css';
 

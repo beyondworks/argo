@@ -3,34 +3,19 @@
 import { get, set } from 'idb-keyval';
 import { createOutbox, autoFlush } from './outbox.js';
 import { setSyncState } from './save.js';
-import { getMode, SPACES } from './session.js';
-import { getClient, classify } from './supabase.js';
 
 const KEY = 'argo-office-outbox';
 
-/** 서버로 보낸다. 로그인 전·예시 데이터 모드이거나 아직 서버 표가 없는 종류는 이 기기에만 둔다(P1~P3에서 종류를 늘린다). */
-async function transport(op) {
-  if (getMode() !== 'signedIn') return;
-  const { type } = op.payload;
-  if (type !== 'layout.set') return; // ponytail: 페이지·메일·결재는 서버 표가 생기는 단계에서 여기에 더한다
-  const sb = await getClient();
-  const [surface, spaceKey] = op.payload.key.split(':');
-  const prefs = { items: op.payload.items };
-  let res;
-  if (spaceKey === 'me') res = await sb.rpc('office_layout_save', { p_space: 'me', p_surface: surface, p_prefs: prefs });
-  else {
-    const org = SPACES.find((s) => s.key === spaceKey);
-    if (!org || !['owner', 'admin'].includes(org.role)) return; // 조직 구조는 관리자만(화면도 막는다)
-    res = await sb.rpc('office_space_layout_save', { p_org: org.id, p_surface: surface, p_layout: prefs });
-  }
-  if (res.error) throw classify(res.error);
-}
+/** 실제 전송은 core/transport.js가 등록한다(가게 상태를 읽어야 해서 여기서 직접 부르면 순환 참조가 된다). 등록 전에는 이 기기에만 둔다. */
+let transport = async () => {};
+let rejected = (op, err) => console.warn('[office] change rejected by server', op.key, err?.message);
+export function setTransport(send, onRejected) { transport = send; if (onRejected) rejected = onRejected; }
 
 export const outbox = createOutbox({
   store: { get: () => get(KEY), set: (v) => set(KEY, v) },
   send: (op) => transport(op).catch((e) => { throw e?.transient === undefined ? Object.assign(e, { transient: true }) : e; }),
   onState: setSyncState,
-  onRejected: (op) => console.warn('[office] change rejected by server', op.key), // P0 서버 연결에서 화면 되돌리기·알림으로 바꾼다
+  onRejected: (op, err) => rejected(op, err),
 });
 const auto = autoFlush(outbox);
 outbox.load().then(() => auto.now());
@@ -40,3 +25,5 @@ export async function queue(key, payload) {
   await outbox.enqueue({ key, payload });
   auto.poke();
 }
+/** 로그인이 확인된 직후 등 — 기다리지 않고 바로 보낸다 */
+export const flushNow = () => auto.now();

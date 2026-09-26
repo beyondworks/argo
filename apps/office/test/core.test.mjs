@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { mergeLayout, sizeForSpan, move } from '../src/core/layout.js';
+import { mergeLayout, sizeForSpan, move, mergePages } from '../src/core/layout.js';
 import { dragHasFiles, filesFromTransfer } from '../src/core/files.js';
 import { imeGuardWith } from '../src/core/ime.js';
 import { build, graphiteBlocks } from '../scripts/gen-tokens.mjs';
@@ -108,4 +108,22 @@ test('연결된 폭 조절: 합은 유지, 옆은 1/3에서 멈추고 밀려나�
 test('줄 나누기: 12열을 넘으면 다음 줄', () => {
   assert.deepEqual(rowsOf([{ id: 'a', size: 'm' }, { id: 'b', size: 'm' }, { id: 'c', size: 'l' }, { id: 'd', size: 's' }, { id: 'e', size: 'full' }]).map((r) => r.map((i) => i.id)), [['a', 'b'], ['c', 'd'], ['e']]);
   assert.deepEqual(rowsOf([{ id: 'a', size: 'l' }, { id: 'b', size: 'm' }]).map((r) => r.map((i) => i.id)), [['a'], ['b']]);
+});
+
+// 이유(9/27 실측): 목록 응답은 요청 시점 스냅숏이다. 요청 뒤 응답 전에 새 페이지 만들기가 끝나면 응답엔 그 페이지가 없고
+// 보낼 목록에서도 이미 빠져 있어, 화면에서 새 페이지가 사라지고 이어 입력한 글이 저장되지 않았다.
+test('목록 병합: 요청 시점에 보낼 것이 있던 페이지는 응답에 없어도 이 기기 값을 지킨다', () => {
+  const local = [{ id: 'new', title: 'B', version: 1 }, { id: 'old', title: 'A', version: 3, content: { x: 1 } }];
+  const rows = [{ id: 'old', title: 'A', version: 2 }];
+  const { pages } = mergePages(rows, local, { before: new Set(['new', 'old']), pendingNow: new Set(), spaceOf: () => 'me' });
+  assert.deepEqual(pages.map((p) => p.id).sort(), ['new', 'old']);
+  assert.equal(pages.find((p) => p.id === 'old').version, 3); // 응답이 더 옛것 — 이 기기 버전을 지켜야 다음 저장이 거짓 충돌이 안 난다
+});
+
+test('목록 병합: 보낼 것이 없던 페이지는 서버 값으로, 서버에 없으면 뺀다', () => {
+  const local = [{ id: 'gone', title: 'X', version: 1 }, { id: 'a', title: 'old', version: 1, content: { v: 1 } }];
+  const rows = [{ id: 'a', title: 'new', version: 2 }, { id: 'z', title: 'Z', version: 1, archived_at: 't' }];
+  const { pages, trash } = mergePages(rows, local, { before: new Set(), pendingNow: new Set(), spaceOf: () => 'me' });
+  assert.deepEqual(pages.map((p) => [p.id, p.title, p.content]), [['a', 'new', undefined]]); // 버전이 달라 본문은 열 때 다시
+  assert.deepEqual(trash.map((p) => p.id), ['z']);
 });

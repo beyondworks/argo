@@ -32,6 +32,14 @@ export function persist(key, value, delay = 300) {
   }, delay));
 }
 
+export function forget(key) {
+  clearTimeout(timers.get(key)); timers.delete(key);
+  try { localStorage.removeItem(key); } catch { /* 캐시일 뿐 */ }
+}
+
+/** 충돌로 못 보낸 내 변경 — 새로고침·탭 닫기 뒤에도 사람이 고를 때까지(사본 저장·새로 불러오기) 이 기기에 남긴다 */
+export const heldKey = (id) => `argo-office-conflict:${id}`;
+
 export function restore(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
 }

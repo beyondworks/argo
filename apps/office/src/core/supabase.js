@@ -19,6 +19,7 @@ export async function getClient() {
 /** 오류를 보낼 목록 규칙으로 가른다 — 권한·형식 거절은 다시 해도 안 되므로 영구(transient=false), 나머지(네트워크 등)는 재시도 */
 export function classify(error) {
   const code = String(error?.code ?? '');
-  const permanent = code === '42501' || code.startsWith('22') || code.startsWith('23') || code === 'PGRST301' || /row-level security|permission denied/i.test(error?.message ?? '');
-  return Object.assign(new Error(error?.message ?? 'request failed'), { transient: !permanent, code });
+  const conflict = /version_conflict/.test(error?.message ?? ''); // 다른 기기가 먼저 저장 — 다시 보내도 같다, 화면에서 사람이 고른다
+  const permanent = conflict || code === '42501' || code.startsWith('22') || code.startsWith('23') || code === 'PGRST301' || /row-level security|permission denied/i.test(error?.message ?? '');
+  return Object.assign(new Error(error?.message ?? 'request failed'), { transient: !permanent, code, conflict });
 }

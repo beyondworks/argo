@@ -12,7 +12,7 @@ import { mergeLayout, SPAN, linkedResize, rowsOf } from '../core/layout.js';
 import { flipGrid } from '../core/motion.js';
 import { baseOf } from '../core/commands.js';
 import { MODULES, DEFAULTS } from './modules.jsx';
-import { SPACES, ME } from '../core/session.js';
+import { SPACES, ME, canManage } from '../core/session.js';
 
 export const layoutKey = (space) => `home:${space}`;
 export const kindOf = (space) => (space === 'me' ? 'me' : 'org');
@@ -94,7 +94,7 @@ export function Home({ space }) {
   const visible = items.filter((i) => !i.hidden);
   const hidden = items.filter((i) => i.hidden);
   const sp = SPACES.find((s) => s.key === space);
-  const canEdit = sp.kind === 'me' || sp.role === 'owner' || sp.role === 'admin'; // 조직 홈 구성은 관리자만(유건 확정: 구조는 공유)
+  const canEdit = canManage(space); // 조직 홈 구성은 관리자만(유건 확정: 구조는 공유)
   const grid = useRef(null);
   const withMotion = (fn) => (grid.current ? flipGrid(grid.current, () => flushSync(fn)) : fn());
   // 경계 손잡이: 같은 줄 오른쪽에 모듈이 있으면 그 모듈과 연결, 혼자인 줄이면 자유 조절, 줄 끝 모듈은 손잡이 없음(격자 끝이 경계)

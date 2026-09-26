@@ -279,6 +279,8 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .page-wrap.doc { max-width: 860px; padding: 36px 56px 160px; min-height: 100%; position: relative; }
 .page-wrap.doc.file-over { box-shadow: inset 0 0 0 2px var(--border); border-radius: var(--rs); }
 .doc-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; min-height: 20px; }
+.conflict { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; margin-bottom: 16px; border-radius: var(--rc); background: var(--warn-soft); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.conflict p { margin-top: 2px; }
 .restricted-note { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-2); background: var(--bg); padding: 8px 12px; border-radius: var(--rc); margin-bottom: 16px; }
 .editor { position: relative; }
 .prose { outline: none; font-size: 15px; line-height: 1.75; }

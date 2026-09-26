@@ -13,7 +13,7 @@ import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
 import { CREWS } from '../data/sample.js';
-import { SPACES, ME } from '../core/session.js';
+import { SPACES, ME, canManage } from '../core/session.js';
 import { restore, persist } from '../core/save.js';
 
 const ACCEPTS = ['mail', 'page', 'file', 'record'];
@@ -47,7 +47,7 @@ function NavItem({ to, icon, label, count, active }) {
 }
 
 function PageRow({ page, depth, path, open, onToggle, hasKids }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `page:${page.id}`, data: { kind: 'page', id: page.id, group: page.parent ?? 'root', label: page.title } });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `page:${page.id}`, disabled: !page.parent && !canManage(page.space), data: { kind: 'page', id: page.id, group: page.parent ?? 'root', label: page.title } });
   const { onTouchStart, ...mouseListeners } = listeners ?? {}; // 터치는 길게 누르기 = 메뉴(끌기는 메뉴 "이동"으로)
   const to = `${baseOf(page.space)}/p/${page.id}`;
   const menu = menuProps(() => pageMenu(page));
@@ -136,7 +136,7 @@ export function Sidebar({ space, path }) {
         </div>
         <div className="nav-section">
           <span>{isMe ? t('nav.pages') : t('nav.wiki')}</span>
-          <button type="button" className="icon-btn sm" aria-label={t('nav.newPage')} onClick={() => navigate(`${base}/p/${createPage(space)}`)}><Icon name="plus" size={14} /></button>
+          {canManage(space) && <button type="button" className="icon-btn sm" aria-label={t('nav.newPage')} onClick={() => navigate(`${base}/p/${createPage(space)}`)}><Icon name="plus" size={14} /></button>}
         </div>
         <div className="tree" role="tree"><Tree space={space} path={path} openMap={openMap} onToggle={toggle} /></div>
         <div className="nav-section"><span>{t('nav.crews')}</span></div>
