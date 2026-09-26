@@ -90,6 +90,7 @@ export const uploadPlist = (teamID) => `<?xml version="1.0" encoding="UTF-8"?>
 //  ① CFBundleURLSchemes에 로그인 복귀 스킴 ② 버전 = tauri.conf.json ③ 수출 규정 면제 키 ④ UIDeviceFamily=[1](iPhone 전용 — TARGETED_DEVICE_FAMILY는 Tauri가
 //  관리하지 않는 Xcode 설정이라 `tauri ios init` 재생성에 되돌아갈 수 있다, 검수 #532 M-3). 하나라도 빠지면 업로드하지 않는다.
 export const LOGIN_SCHEME = 'argo-messenger';
+export const USAGE_KEYS = ['NSCameraUsageDescription', 'NSPhotoLibraryUsageDescription', 'NSMicrophoneUsageDescription'];
 export function ipaGate(info, { version, scheme = LOGIN_SCHEME } = {}) {
   const problems = [];
   const schemes = (info.CFBundleURLTypes ?? []).flatMap((t) => t.CFBundleURLSchemes ?? []);
@@ -99,6 +100,9 @@ export function ipaGate(info, { version, scheme = LOGIN_SCHEME } = {}) {
   if (JSON.stringify(info.UIDeviceFamily ?? null) !== '[1]') problems.push(`UIDeviceFamily가 [1]이 아님(${JSON.stringify(info.UIDeviceFamily ?? null)}) — iPhone 전용 선언(TARGETED_DEVICE_FAMILY=1)이 빠졌거나 되돌아갔다`);
   // ⑤ 씬 생명주기(실사고 2026-09-17: Xcode 27·iOS 27 SDK로 빌드한 0.1.27이 씬 설정 없이 나가 iOS 27에서 실행 즉시 죽었다). tao는 이 값이 true여야 씬 모드로 붙는다
   if (info.UIApplicationSceneManifest?.UIApplicationSupportsMultipleScenes !== true) problems.push('UIApplicationSceneManifest.UIApplicationSupportsMultipleScenes=true 없음(iOS 27에서 실행 즉시 종료)');
+  // 실사고 2026-09-26: 권한 설명 문구 없이 나간 0.1.39가 iPad 심사에서 '사진 찍기' 탭 즉시 TCC 강제 종료(2.1 거절). 첨부 버튼(<input type=file>)이
+  // 카메라·사진 보관함·동영상(마이크) 메뉴를 띄우므로 셋 다 있어야 한다.
+  for (const k of USAGE_KEYS) if (!String(info[k] ?? '').trim()) problems.push(`${k} 없음(첨부 메뉴에서 앱이 강제 종료된다)`);
   return problems;
 }
 const ipaInfo = (ipa) => {
