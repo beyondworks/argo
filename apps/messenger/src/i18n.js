@@ -446,7 +446,7 @@ export const DICT = {
   'ch.step1.sub': ['#general 같은 공개 채널 하나면 충분합니다. 새 채널은 공개로 시작해요', 'One public channel like #general is enough — new channels start as public'],
   'ch.step1.subPrivate': ['공개 채널은 이미 있어요. 새 채널은 비공개로 시작하고, 만들 때 바꿀 수 있어요', 'A public channel already exists, so new channels start as private — you can change it when creating'],
   'ch.step2': ['동료 초대', 'Invite teammates'],
-  'ch.step2.sub': ['초대 링크는 7일 동안 유효하고, 좌석 3개까지 무료입니다', 'Invite links last 7 days; up to 3 seats are free'],
+  'ch.step2.sub': ['초대 링크는 7일 동안 유효합니다', 'Invite links last 7 days'], // 3차 검수 H-2(2026-09-27) — 좌석 한도 없음 정책, 가격·좌석 언급 제거
   'ch.step3': ['에이전트 연결', 'Connect an agent'],
   'ch.step3.sub': ['Argo 앱에서 크루를 이 조직에 연결하면 채널에서 부를 수 있어요. 직접 만든 봇은 외부 봇으로 연결해요', 'Connect a crew to this organization from the Argo app to call it in channels. Your own bot connects as an external bot'],
   'ch.step3.member': ['에이전트는 관리자 {name}님에게 추가를 요청하세요. Argo 앱이 있다면 내 크루를 직접 연결할 수도 있어요', 'Ask the admin {name} to add an agent — or connect your own crew from the Argo app'],
