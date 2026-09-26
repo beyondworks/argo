@@ -64,7 +64,6 @@
 .msgr-menu-pop button.on .label { font-weight: 600; }
 .msgr-menu-pop .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-menu-pop .sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
-.msgr-menu-pop .seatline { padding: 4px 10px 2px; }
 .msgr-av.ghost { background: transparent; border-style: dashed; color: var(--fg-3); }
 .msgr-scrim { display: none; } /* 레일 오버레이 스크림은 폰 폭에서만 — 데스크톱에서 rail 상태가 켜지면 스타일 없는 div가 그리드 첫 칸을 차지해 레일이 밀리고 본문이 다음 행으로 떨어졌다(QA 실측) */
 .msgr-scrim.clear { display: block; background: transparent; z-index: 65; position: fixed; inset: 0; }
@@ -1120,7 +1119,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-scrim.clear { background: rgba(0, 0, 0, .38); z-index: 72; } /* 아일랜드(70)·+(69)까지 덮는다 */
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop { z-index: 73; }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop button { padding: 8px 6px; font-size: 13px; }
-  .msgr-phone.phone-home .msgr-side .msgr-menu-pop .seatline { padding: 4px 6px 2px; }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop .sep { margin: 4px 2px; }
   /* 안내 줄도 목록과 같은 좌우 여백 */
   .msgr-phone.phone-home .msgr-side .msgr-hint { padding: 6px var(--ph-pad) 14px; font-size: 13px; }

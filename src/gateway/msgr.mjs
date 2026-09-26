@@ -395,6 +395,8 @@ export function makeDb(client) {
     async updateApproval(id, patch) { return unwrap(await client.from('msgr_crew_approvals').update(patch).eq('id', id).select('id')) ?? []; },
     /** H-2: 허용 판정의 정본은 서버(msgr_can_instruct). 실패는 throw — 호출자가 로컬 판정으로 폴백하고 로그한다. */
     async instructCheck(crewId, authorId, channelId) { return unwrap(await client.rpc('msgr_instruct_check', { crew: crewId, author: authorId, channel: channelId ?? null })); }, // 'ok'|'inactive'|'crew_allow'|'channel_policy'(I-3)
+    /** 조직 자격(무료 기간 중 OR 결제 기간 중) — 정본은 서버(msgr_org_entitled). 실패(옛 서버 등)는 던져서 호출자가 열어 둔 쪽으로 폴백. */
+    async orgEntitled(orgId) { return unwrap(await client.rpc('msgr_org_entitled', { org: orgId })) === true; },
     /** H-1/H-2: 이 세션(크루 소유자)이 이 결재를 확정할 수 있나 — 정책·위험 등급 반영(msgr_can_decide). */
     async canDecide(apRowId) { return unwrap(await client.rpc('msgr_can_decide', { ap: apRowId })) === true; },
     async approvalsByIds(ids) {
@@ -589,6 +591,9 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다
   const channelOf = async (id) => { if (!chCache.has(id)) chCache.set(id, await db.channel(id)); return chCache.get(id); };
+  const entCache = new Map(); // 이 틱 안의 조직 자격(무료 기간·결제) — 조직마다 한 번만 조회
+  // 실패(옛 서버·네트워크 순단)는 열어 둔다(fail-open) — 판정 한 번 실패로 조직 전체 크루가 조용히 멈추는 쪽이 더 나쁘다(DB 트리거가 최종 방어선).
+  const orgEntitled = async (orgId) => { if (!entCache.has(orgId)) entCache.set(orgId, await (async () => db.orgEntitled(orgId))().catch((e) => { console.error(`[argo] msgr 조직 자격 판정 실패(${wsId}/${orgId}) — 이 틱은 열어 둡니다:`, e?.message ?? e); return true; })); return entCache.get(orgId); }; // 옛 db 어댑터(orgEntitled 없음)의 동기 TypeError도 여기서 잡는다(테스트 더블 포함)
   const parentCache = new Map(); // 이 틱 안의 답글 부모 → crew_id(사람 글이면 null) — 크루마다 다시 읽지 않는다(D38b)
   const replyParentCrew = async (m) => { if (!parentCache.has(m.reply_to)) { const p = await db.message(m.reply_to); parentCache.set(m.reply_to, p && !p.deleted_at && p.channel_id === m.channel_id && p.author_kind === 'crew' ? p.crew_id : null); } return parentCache.get(m.reply_to); };
   // 크루별 읽기 3종(DM·범위·받은 글)은 크루끼리 동시에 받아 둔다 — 순서대로면 크루 12명에 36왕복이 쌓였다(2026-09-23 실측 픽업 4~7초).
@@ -637,6 +642,14 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       }
       if (copy && !targetsCrew(m, crew, dm, parentCrew)) return;
       const ch = envelope?.channel ?? await channelOf(m.channel_id); if (!envelope && !crewInScope(ch, crew.id, member.has(ch?.id))) return; // 초대되지 않았거나 내보낸 채널 — 턴을 돌리지 않는다(서버 트리거 msgr_messages_crew_scope가 최후 방어, 여기서 막아야 유료 실행·insert 실패 로그가 없다)
+      // 조직 자격(2026-09-26 유건 결정): 무료 기간이 끝나고 결제도 없으면 "크루에게 일을 맡기는 것"만 멈춘다 — 사람끼리 대화·기록 열람은 그대로.
+      // 개인 공간(채널 org_id null)은 조직 소속이 아니므로 항상 영향 밖. 안내는 대화당 한 번만(client_msg_id가 크루·채널로 고정 — 중복 삽입은 조용히 무시됨).
+      if (ch?.org_id && !(await orgEntitled(ch.org_id))) {
+        await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `unentitled:${crew.id}:${m.channel_id}`,
+          body: pick('무료 기간이 끝나 이 조직의 크루 작업이 멈췄습니다. 조직 관리자에게 문의하세요.', 'The free period has ended, so crew work is paused for this organization. Contact your organization admin.', lang) })
+          .catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 무료 기간 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
+        return;
+      }
       const work = m.meta?.work_run_id ? await db.workRun(m.thread_root ?? m.id, m.channel_id) : null;
       if (m.meta?.work_run_id && (!work || !workCanContinue(work, m.id))) return;
       const fromCrew = m.author_kind === 'crew';
