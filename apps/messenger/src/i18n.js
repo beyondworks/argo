@@ -392,6 +392,10 @@ export const DICT = {
   'profile.quiet.desc': ['조용한 시간에는 멘션·결재 OS 알림을 보내지 않습니다. 알림함 배지는 그대로 쌓입니다.', 'During quiet hours no OS notifications are sent for mentions or approvals. Inbox badges still accumulate.'],
   // 실행 카드 — '답변 준비 중' 한 줄(유건 결정 2026-09-24)
   'exec.preparing': ['답변 준비 중', 'Preparing a reply'],
+  'exec.stop': ['중단', 'Stop'],
+  'exec.stopping': ['중단 중…', 'Stopping…'],
+  'exec.stopRequested': ['중단 요청됨', 'Stop requested'],
+  'exec.stop.alreadyDone': ['이미 끝난 작업입니다', 'This task has already finished'],
   'msg.attachFail': ['첨부 업로드 실패', 'Attachment upload failed'],
   'msg.delivery.sending': ['메시지를 보내는 중입니다', 'Sending message'],
   'msg.sending': ['보내는 중', 'Sending'],
@@ -1262,6 +1266,7 @@ export const DICT = {
   'err.sessionRefreshing': ['로그인 세션을 갱신하는 중입니다. 연결되면 자동으로 다시 불러옵니다.', 'Refreshing your sign-in session. It will reload automatically once connected.'],
   'err.denied': ['권한이 없습니다.', 'You don’t have permission.'],
   'err.invalid': ['입력값 형식이 올바르지 않습니다.', 'Invalid input format.'],
+  'err.generic': ['처리하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Something went wrong. Please try again shortly.'],
   'ch.crew.new.noNode': ['회사 에이전트 서버를 먼저 연결하세요 (설정 → 에이전트와 서버)', 'Connect a company agent server first (Settings → Agents & server)'],
   'ch.crew.new.pending': ['만드는 중…', 'Creating…'],
   'ch.crew.new.failed': ['실패: {why}', 'Failed: {why}'],

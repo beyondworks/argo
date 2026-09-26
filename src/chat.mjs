@@ -1033,8 +1033,10 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
 export async function chat(wsId, agentSlug, userMsg, sessionId = null, opts = {}) {
+  // opts.abortTag: an id (e.g. a messenger source message id) that scopes interruptTurn() to this one execution —
+  // without it, cancellation falls back to "the latest same-source turn" (crew stop 검수 2026-09-26 M-1).
   return withTurnControl(wsId, agentSlug, opts.__turnControl, (control) =>
-    runChat(wsId, agentSlug, userMsg, sessionId, { ...opts, __turnControl: control }), { source: opts.source ?? (opts.from ? 'delegate' : 'chat') });
+    runChat(wsId, agentSlug, userMsg, sessionId, { ...opts, __turnControl: control }), { source: opts.source ?? (opts.from ? 'delegate' : 'chat'), tag: opts.abortTag ?? null });
 }
 
 async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {

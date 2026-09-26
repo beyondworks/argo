@@ -822,6 +822,10 @@
 .msgr-exec { border: 1px solid var(--border); border-radius: 6px 16px 16px 16px; background: var(--card); max-width: 640px; min-width: 0; font-size: 12.5px; }
 .msgr-exec > .summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; color: var(--fg-2); min-width: 0; }
 .msgr-exec > .summary .st { color: var(--fg); font-weight: 600; white-space: nowrap; }
+.msgr-exec > .summary .msgr-stop-btn { margin-left: auto; flex: none; }
+/* "중단 요청됨"은 완료 확인 문구라 일반 disabled 흐림(opacity)만으로는 라이트·다크 모두에서 대비가 낮았다(재검수 2026-09-26 UI LOW).
+   최고 대비 텍스트(--fg)와 카드 배경(--card-2)으로 고정 — 테마별 opacity 값에 기대지 않는다. */
+.msgr-exec > .summary .msgr-stop-btn.requested { opacity: 1 !important; color: var(--fg); background: var(--card-2); border-color: var(--border); font-weight: 600; }
 .msgr-steps { list-style: none; margin: 0; padding: 0; gap: 3px; } /* 온보딩 단계 목록(OrgStepList) — 지금 보이는 간격 유지(예전 실행 단계 규칙이 덮어쓰던 값) */
 .msgr-dot.pulse { animation: msgrPulse 1.2s ease-in-out infinite; }
 

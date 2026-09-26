@@ -11,7 +11,7 @@ const { _startTypingForTest: startTyping, _rtChannelsForTest: rt } = await impor
 
 function fakeClient() {
   const sent = []; const removed = []; const opened = [];
-  const mk = (topic) => ({ topic, subscribe() {}, unsubscribe() { removed.push(topic); }, send(m) { sent.push({ topic, ...m }); return Promise.resolve('ok'); } });
+  const mk = (topic) => ({ topic, subscribe() {}, unsubscribe() { removed.push(topic); }, send(m) { sent.push({ topic, at: Date.now(), ...m }); return Promise.resolve('ok'); } });
   const client = { channel: (topic) => { opened.push(topic); return mk(topic); }, removeChannel: async (c) => { removed.push(c.topic); return 'ok'; } };
   const org = mk('org:O'); org.__client = client;
   return { client, org, sent, removed, opened };
@@ -54,12 +54,13 @@ for (const full of [false, true]) test(`progress(${full ? '공개' : '비공개'
   await mkdir(paths('ws').chats, { recursive: true });
   await setTurnStatus('ws', 'pepper', 'shell', 'cat ~/secret', 'OWNER-PRIVATE-PARTIAL', 'messenger', 'OWNER-PRIVATE-THOUGHT', [{ stage: 'shell', detail: 'cat ~/secret' }]);
   const f = fakeClient(); rt.set('ws:O', f.org);
-  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full });
+  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full, sourceMsgId: 909 });
   await new Promise((r) => setTimeout(r, 1700));
   stop();
   const prog = f.sent.filter((m) => m.event === 'progress');
   assert.ok(prog.length >= 1, JSON.stringify(f.sent));
-  for (const m of prog) assert.deepEqual(Object.keys(m.payload).sort(), ['channel_id', 'crew_id', 'startedAt'], JSON.stringify(m.payload));
+  // source_msg_id(2026-09-26 크루 작업 중단 버튼의 대상)는 원본 메시지의 정수 id일 뿐 사고·본문이 아니다 — 공개·비공개 모두 실어도 안전.
+  for (const m of prog) { assert.deepEqual(Object.keys(m.payload).sort(), ['channel_id', 'crew_id', 'source_msg_id', 'startedAt'], JSON.stringify(m.payload)); assert.equal(m.payload.source_msg_id, 909); }
   assert.ok(!JSON.stringify(f.sent).includes('OWNER-PRIVATE') && !JSON.stringify(f.sent).includes('secret'), '사고·본문·명령 문자열이 한 건도 나가지 않는다');
   rt.delete('ws:O');
 });
@@ -84,4 +85,25 @@ test('App.jsx 배선: 개인 공간의 방과 조직의 비공개 방(공개 채
   assert.match(eff, /event: 'reaction' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('reaction'/, 'dm:로 반응을 받는다');
   assert.match(eff, /event: 'edit' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('edit'/, 'dm:로 수정을 받는다');
   assert.match(app, /broadcast=\{\(ev, payload\) => \(roomTopic \? roomSubs\.current\.get\(chId\) : rt\.current\)\?\.send\(/, '비공개 방의 반응·수정 송신은 dm:로만(org: 폴백 없음)');
+});
+
+// 화면 QA HIGH(2026-09-26): progress payload가 턴 내내 그대로라 "바뀐 것만" 보내면 턴당 한 번뿐이라
+// 8초 뒤 화면 카드·중단 버튼이 사라졌다. 값이 같아도 다시 보내야 하되, 재검수 2026-09-26 L-b로 실제 방송은
+// 크루당 최소 4초 간격으로 스로틀한다(상태 파일 확인 자체는 1.5초 주기 그대로).
+test('progress는 payload가 바뀌지 않아도 다시 방송하되, 크루당 최소 4초 간격으로 스로틀한다(8초 뒤 카드 소실 방지 + L-b)', async () => {
+  const { setTurnStatus } = await import('../src/turn-status.mjs');
+  const { mkdir } = await import('node:fs/promises');
+  const { paths } = await import('../src/workspace.mjs');
+  await mkdir(paths('ws').chats, { recursive: true });
+  await setTurnStatus('ws', 'pepper', 'shell', 'ls', undefined, 'messenger');
+  const f = fakeClient(); rt.set('ws:O', f.org);
+  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full: true, sourceMsgId: 909 });
+  await new Promise((r) => setTimeout(r, 9000));
+  stop();
+  const prog = f.sent.filter((m) => m.event === 'progress');
+  assert.ok(prog.length >= 2, `9초 동안 최소 4초 간격이면 2건 이상은 나가야(8초 만료 전 재방송): ${prog.length}건`);
+  assert.ok(prog.length <= 3, `9초 동안 4초 간격을 지켰다면 3건을 넘지 않아야(스로틀 확인): ${prog.length}건`);
+  for (let i = 1; i < prog.length; i++) assert.ok(prog[i].at - prog[i - 1].at >= 3900, `연속 방송 간격이 4초에 못 미친다(${prog[i].at - prog[i - 1].at}ms) — L-b 스로틀 확인`);
+  for (const m of prog) assert.deepEqual(m.payload, { channel_id: 'C-x', crew_id: 'crew-1', startedAt: prog[0].payload.startedAt, source_msg_id: 909 }, '내용은 그대로');
+  rt.delete('ws:O');
 });
