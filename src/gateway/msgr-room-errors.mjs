@@ -14,6 +14,10 @@ export const roomTurnInterrupted = (lang = 'ko') => pick(
   '답하던 중 에이전트가 다시 시작돼 이 작업이 중단됐습니다. 일부 도구 실행이 이미 이뤄졌을 수 있어 자동으로 다시 하지 않습니다. 이어서 하려면 다시 지시해 주세요.',
   'The agent restarted while answering, so this task was interrupted. Some tool actions may already have run, so it will not redo them automatically. Ask again to continue.', lang);
 
+/** 사람이 직접 중단시킨 턴(유건 확정 2026-09-26 — 크루 작업 중단) — 답 자리에 이 한 줄만 남기고 그때까지의 답은 올리지 않는다.
+    D25(roomTurnInterrupted, 프로세스 재시작)와는 다른 사고: 프로세스는 살아 있고 사람이 멈춘 것이라 이유를 "다시 지시하라"가 아니라 누가 멈췄는지로 말한다. */
+export const roomTurnStopped = (name, lang = 'ko') => pick(`${name}님이 작업을 중단했습니다.`, `${name} stopped this task.`, lang);
+
 /** 첨부 한 건 실패 사유 — 우리가 만든 사유(없음·크기)만 그대로, 그 밖의 원문(경로가 들어 있을 수 있음)은 일반 사유로. */
 export function roomAttachReason(e, lang = 'ko') {
   const msg = String(e?.message ?? e ?? '');

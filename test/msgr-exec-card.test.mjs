@@ -23,9 +23,9 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace를 반환(데�
   assert.match(bridge, /const PROGRESS_MS = 1_500;/, '방송 주기');
   assert.match(bridge, /if \(key === last\) return;\n\s*last = key;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '바뀐 스냅샷만 방송');
   assert.match(bridge, /if \(stopped \|\| !s \|\| s\.source !== 'messenger'\) return;/, '상태 파일 source 게이트(검수 M-6)');
-  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public' \}\)/, 'slug 전달 + 본문·사고 방송은 공개 채널만(검수 C-1)');
+  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public', sourceMsgId: job\.msgId \}\)/, 'slug·원본 메시지 id 전달(id는 크루 작업 중단 버튼의 대상) + 본문·사고 방송은 공개 채널만(검수 C-1)');
   assert.doesNotMatch(bridge, /turnTrace = ch\.kind === 'public'/, '메신저 답글에는 궤적을 저장하지 않는다(유건 결정 2026-09-24)');
-  assert.match(bridge, /const payload = \{ channel_id: channelId, crew_id: crewId, startedAt: s\.startedAt \};/, 'progress는 "답변 준비 중" 신호만 — 사고·단계·본문 없음(검수 #697 HIGH)');
+  assert.match(bridge, /const payload = \{ channel_id: channelId, crew_id: crewId, startedAt: s\.startedAt, source_msg_id: sourceMsgId \};/, 'progress는 "답변 준비 중" 신호 + 중단 버튼용 원본 메시지 id만 — 사고·단계·본문 없음(검수 #697 HIGH, 2026-09-26 크루 작업 중단)');
   assert.match(read('supabase/migrations/20260909003000_msgr_message_meta.sql'), /add column if not exists meta jsonb not null default '\{\}'::jsonb/, 'meta 열');
 });
 
@@ -33,10 +33,11 @@ test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 �
   assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, active\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 active() 안에서');
   assert.match(app, /const onProgressEvent = \(\{ payload \}\) => \{ if \(acceptTyping\(settledRef\.current, payload\)\) setProgress\(/, 'progress 처리기 = 답글 직후 늦은 방송 거름 + setProgress(2026-09-23 유령 표시)');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
-  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} \/>\)\}\n\s*\{typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\)/, '점 세 개는 카드 없는 크루만');
+  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\)/, '점 세 개는 카드 없는 크루만 + 중단 버튼 배선(2026-09-26)');
   const card = app.slice(app.indexOf('function ExecCard('), app.indexOf('/** 결재 슬립'));
   assert.match(card, /\{t\('exec\.preparing'\)\}/, '"답변 준비 중"');
   for (const gone of ['exec.thought', 'exec.partial', 'StepList', '<details', 'p.thought', 'p.partial', 'p.steps']) assert.ok(!card.includes(gone), `실행 카드에 ${gone} 없음`);
+  assert.match(card, /canStop && <button type="button" className="btn sm ghost msgr-stop-btn"/, '시킨 사람·크루 주인에게만 보이는 중단 버튼(서버 msgr_request_stop이 권한을 다시 검사)');
   assert.doesNotMatch(app, /<Trace /, '완료 답글 위 궤적 드롭다운 없음(옛 meta.trace도 그리지 않는다)');
   assert.match(i18n, /'exec\.preparing': \['답변 준비 중', 'Preparing a reply'\]/, 'ko/en');
   assert.match(css, /^\.msgr-exec > \.summary \{/m, '한 줄 스타일');

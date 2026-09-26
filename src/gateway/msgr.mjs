@@ -22,6 +22,7 @@ import { createClient } from '@supabase/supabase-js';
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
+import { interruptTurn } from '../turn-abort.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
 import { paths, loadCompany, updateCompany } from '../workspace.mjs';
 import { enqueueJob, DEFER } from './queue.mjs';
@@ -40,7 +41,7 @@ import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
 import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, msgrJournal } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
-import { roomTurnFailure, roomTurnInterrupted, roomAttachReason } from './msgr-room-errors.mjs';
+import { roomTurnFailure, roomTurnInterrupted, roomTurnStopped, roomAttachReason } from './msgr-room-errors.mjs';
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
@@ -326,6 +327,10 @@ export function makeDb(client) {
       const r = unwrap(await client.from('msgr_org_members').select('display_name').eq('org_id', orgId).eq('user_id', uid).maybeSingle());
       return r?.display_name ?? null;
     },
+    /** 중단 요청자 — msgr_request_stop이 채운 stop_requested_by(누가 이 실행을 멈춰 달라고 했나). RLS: 크루 소유자만 읽는다(기존 msgr_executions_select). */
+    async executionStopInfo(crewId, sourceId) {
+      return unwrap(await client.from('msgr_executions').select('stop_requested_by, stop_requested_at').eq('crew_id', crewId).eq('source_msg_id', sourceId).maybeSingle());
+    },
     /** 턴 문맥: 직전 대화 + 순서 대기로 기다린 앞 크루의 원본 답글. 삭제·시스템 글 제외. */
     async contextOf(channelId, beforeId, n = CONTEXT_N, after = []) {
       const rows = unwrap(await client.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, body')
@@ -583,7 +588,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     await relocateOrgJournals(wsId).catch((e) => console.error('[argo] msgr 채널 일지 이관 실패:', e?.message ?? e));
     if (db.channelAccess && Date.now() - (purgeAt.get(wsId) ?? 0) >= PURGE_MS && purgeAt.set(wsId, Date.now())) await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
   }
-  for (const crew of crews) crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10)
+  for (const crew of crews) { crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); crewSlugs.set(`${wsId}:${crew.id}`, crew.slug); } // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10). crewSlugs = 중단 방송(crew_id)의 역인덱스
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다
   const channelOf = async (id) => { if (!chCache.has(id)) chCache.set(id, await db.channel(id)); return chCache.get(id); };
   const parentCache = new Map(); // 이 틱 안의 답글 부모 → crew_id(사람 글이면 null) — 크루마다 다시 읽지 않는다(D38b)
@@ -733,6 +738,15 @@ export async function syncApprovals(wsId, { db, uid, resolve = resolveWithFollow
 const failWarn = new Map(); // `${wsId}:${crewId}` → 마지막 처리 실패 로그 시각(폭주 방지)
 const crewIds = new Map(); // `${wsId}:${orgId}:${slug}` → msgr_crews.id (drain이 채운다) — 쪽지 배달 턴의 문맥 크루 id
 export function msgrCrewIdBySlug(wsId, slug, orgId) { return crewIds.get(`${wsId}:${orgId}:${slug}`) ?? null; }
+const crewSlugs = new Map(); // `${wsId}:${crewId}` → slug (drain이 채운다) — 중단 방송(msgr_request_stop이 보내는 crew_id)의 역인덱스
+export const _crewSlugsForTest = crewSlugs;
+/** org:<orgId> 방송의 'stop_request' 핸들러 — 내 크루가 아니면(아직 drain을 못 돈 기기 포함) 조용히 무시한다.
+    폴백은 executionHeartbeat(30초 심박)의 stop_requested 읽기 — 방송을 놓쳐도 중단이 닿는다. */
+export async function handleStopRequest(wsId, payload) {
+  const slug = payload?.crew_id ? crewSlugs.get(`${wsId}:${payload.crew_id}`) : null;
+  if (!slug) return false;
+  return interruptTurn(wsId, slug, { source: 'messenger' });
+}
 const activeCtx = new Map(); // `${wsId}:${slug}` → ctx. 정본은 결재 항목에 각인된 item.msgr(chat.mjs addApproval) — 이 맵은 각인 없는 경로(CLI 지시 블록 등)의 폴백
 export const _activeCtxForTest = activeCtx;
 const rtChannels = new Map(); // `${wsId}:${orgId}` → realtime channel(타이핑 방송용, start()가 채움 — 회사별로 분리, 같은 조직에 두 회사가 등록돼도 서로 해제하지 않는다)
@@ -999,10 +1013,11 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       }
       return DEFER;
     }
-    const stopHeartbeat = executionHeartbeat(wsId, db, job);
+    // onStopRequested: 방송(org:<orgId>의 'stop_request')을 놓친 기기의 폴백 — 30초 심박마다 stop_requested_at을 확인한다.
+    const stopHeartbeat = executionHeartbeat(wsId, db, job, { onStopRequested: () => { interruptTurn(wsId, job.slug, { source: 'messenger' }).catch((e) => console.error(`[argo] msgr 심박 중단 처리 실패(${wsId}/${job.slug}/${job.msgId}):`, e.message)); } });
     activeCtx.set(ctxKey, ctx);
-    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public' }); // 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각뿐
-    let reply; let failed = false; let replyMentions = []; let replyMeta = {};
+    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId }); // 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
+    let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {};
     try {
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
@@ -1024,11 +1039,22 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
       // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만). 궤적은 주인 쪽 활동 로그가 정본.
     } catch (e) {
-      failed = true;
-      // 방(손님 포함)에는 일반 문구만 — 원문에 주인 쪽 엔드포인트 주소·경로가 들어 있다(D26, 실측 "…inference gateway (127.0.0.1:5291)").
-      // 원문은 chat()이 회사 활동 로그에 이미 남겼다(주인만 본다). 게이트웨이 로컬 콘솔에도 남긴다.
-      console.error(`[argo] msgr 턴 실패(${wsId}/${job.slug}/${job.msgId}):`, String(e?.message ?? e).slice(0, 400));
-      reply = roomTurnFailure(lang);
+      if (e?.aborted) { // 사람이 누른 중단(msgr_request_stop) — turn-abort.mjs가 던지는 모양. 그때까지의 부분 답은 버리고 누가 멈췄는지만 남긴다.
+        aborted = true;
+        let stopName = pick('누군가', 'someone', lang);
+        try {
+          const info = await db.executionStopInfo(job.crewId, job.msgId);
+          const stopBy = info?.stop_requested_by;
+          if (stopBy) stopName = clean((await db.memberName(job.orgId, stopBy).catch(() => null)) ?? stopName, 40);
+        } catch (e2) { console.error(`[argo] msgr 중단 요청자 조회 실패(${wsId}/${job.slug}/${job.msgId}):`, e2.message); }
+        reply = roomTurnStopped(stopName, lang);
+      } else {
+        failed = true;
+        // 방(손님 포함)에는 일반 문구만 — 원문에 주인 쪽 엔드포인트 주소·경로가 들어 있다(D26, 실측 "…inference gateway (127.0.0.1:5291)").
+        // 원문은 chat()이 회사 활동 로그에 이미 남겼다(주인만 본다). 게이트웨이 로컬 콘솔에도 남긴다.
+        console.error(`[argo] msgr 턴 실패(${wsId}/${job.slug}/${job.msgId}):`, String(e?.message ?? e).slice(0, 400));
+        reply = roomTurnFailure(lang);
+      }
     } finally {
       stopTyping();
       stopHeartbeat();
@@ -1039,9 +1065,9 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const replyRow = {
       channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId, // 명시 — 트리거는 null일 때 reply_to(크루 글)로 채워 스레드가 끊긴다(검수 2R C-2)
       client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
-      mentions: failed ? [] : replyMentions, // 보이는 원문 멘션 + slug로 확정한 도구 수신자(동명이인을 다시 찾지 않음)
+      mentions: (failed || aborted) ? [] : replyMentions, // 보이는 원문 멘션 + slug로 확정한 도구 수신자(동명이인을 다시 찾지 않음) — 중단된 턴은 넘기지 않는다
     };
-    const metaBase = { ...replyMeta, hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}) }; // hop/origin=연쇄 상한·정책 기준
+    const metaBase = { ...replyMeta, hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}), ...(aborted ? { stopped: true } : {}) }; // hop/origin=연쇄 상한·정책 기준
     try {
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta); // 궤적은 저장하지 않는다(유건 결정 2026-09-24 — 메신저엔 '답변 준비 중'만)
     } catch (e) {
@@ -1049,7 +1075,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       console.error(`[argo] msgr 답글 insert 실패(${wsId}/${job.slug}/${job.msgId}) — 재시도:`, e.message);
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta);
     }
-    if (!row || failed) return; // 중복(다른 기기가 먼저 답함) 또는 실패 — 첨부 없음
+    if (!row || failed || aborted) return; // 중복(다른 기기가 먼저 답함)·실패·중단 — 첨부 없음
     await deliverAttachments(db, job, row, reply, lang);
   };
   return async (job, meta) => {
@@ -1063,7 +1089,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
   };
 }
 
-function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false } = {}) {
+function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false, sourceMsgId = null } = {}) {
   const orgCh = rtChannels.get(`${wsId}:${orgId}`);
   if (!orgCh) return () => {};
   // 비공개 방(DM·비공개 채널 — full=false)은 그 방의 채널 토픽 dm:<채널>로 보낸다(20260918190000). 조직 토픽은 조직 전원이 들어 비공개 방의 존재·크루 활동이 샜다.
@@ -1085,7 +1111,7 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
     if (stopped || !s || s.source !== 'messenger') return; // 종료 뒤 남은 비동기 pump도 다음 채널의 상태를 방송하지 않는다
     // 메신저에는 "답변 준비 중"만 보인다(유건 결정 2026-09-24) — 단계·사고·작성 중 본문·도구 단계는 어느 방에도 싣지 않는다.
     // 크루 상태 파일은 크루당 하나라 같은 크루의 다른 턴(데스크톱 대화·다른 방)이 남긴 값이 섞여 나갈 수 있었다(검수 #697 HIGH).
-    const payload = { channel_id: channelId, crew_id: crewId, startedAt: s.startedAt };
+    const payload = { channel_id: channelId, crew_id: crewId, startedAt: s.startedAt, source_msg_id: sourceMsgId }; // source_msg_id — 중단 버튼이 msgr_request_stop(p_source)에 넘길 대상(유건 확정 2026-09-26)
     const key = JSON.stringify(payload);
     if (key === last) return;
     last = key;
@@ -1363,7 +1389,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         const ch = c.client.channel(`org:${orgId}`, { config: { private: true } })
           .on('broadcast', { event: 'message' }, () => { tick().catch(() => {}); })
           .on('broadcast', { event: 'approval' }, () => { tick().catch(() => {}); })
-          .on('broadcast', { event: 'crew_request' }, () => { tick().catch(() => {}); }); // I-5: 요청 즉시 깨어난다(정본은 pending 조회)
+          .on('broadcast', { event: 'crew_request' }, () => { tick().catch(() => {}); }) // I-5: 요청 즉시 깨어난다(정본은 pending 조회)
+          .on('broadcast', { event: 'stop_request' }, (msg) => { handleStopRequest(wsId, msg?.payload).catch((e) => console.error('[argo] msgr 중단 방송 처리 실패:', e.message)); });
         ch.__client = c.client;
         ch.subscribe();
         rtChannels.set(key, ch);

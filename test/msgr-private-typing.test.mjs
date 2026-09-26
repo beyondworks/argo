@@ -54,12 +54,13 @@ for (const full of [false, true]) test(`progress(${full ? '공개' : '비공개'
   await mkdir(paths('ws').chats, { recursive: true });
   await setTurnStatus('ws', 'pepper', 'shell', 'cat ~/secret', 'OWNER-PRIVATE-PARTIAL', 'messenger', 'OWNER-PRIVATE-THOUGHT', [{ stage: 'shell', detail: 'cat ~/secret' }]);
   const f = fakeClient(); rt.set('ws:O', f.org);
-  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full });
+  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full, sourceMsgId: 909 });
   await new Promise((r) => setTimeout(r, 1700));
   stop();
   const prog = f.sent.filter((m) => m.event === 'progress');
   assert.ok(prog.length >= 1, JSON.stringify(f.sent));
-  for (const m of prog) assert.deepEqual(Object.keys(m.payload).sort(), ['channel_id', 'crew_id', 'startedAt'], JSON.stringify(m.payload));
+  // source_msg_id(2026-09-26 크루 작업 중단 버튼의 대상)는 원본 메시지의 정수 id일 뿐 사고·본문이 아니다 — 공개·비공개 모두 실어도 안전.
+  for (const m of prog) { assert.deepEqual(Object.keys(m.payload).sort(), ['channel_id', 'crew_id', 'source_msg_id', 'startedAt'], JSON.stringify(m.payload)); assert.equal(m.payload.source_msg_id, 909); }
   assert.ok(!JSON.stringify(f.sent).includes('OWNER-PRIVATE') && !JSON.stringify(f.sent).includes('secret'), '사고·본문·명령 문자열이 한 건도 나가지 않는다');
   rt.delete('ws:O');
 });

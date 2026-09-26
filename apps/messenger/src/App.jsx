@@ -3913,6 +3913,7 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
   const [replyReq, setReplyReq] = useState(null); // hover [답글] → 컴포저에 답글 대상(D17)
   const [tab, setTab] = useState('all');
   const [workOpen, setWorkOpen] = useState(false);
+  const [stopping, setStopping] = useState({}); // 중단 요청 중인 실행 — 키 `${crewId}:${sourceMsgId}`(중복 클릭 차단, 유건 확정 2026-09-26 크루 작업 중단)
   const feed = useRef(null);
   const pullThread = usePullToRefresh(phone); // 폰 대화 화면 당겨서 새로고침 — feed와 같은 DOM 노드를 같이 본다(아래 setFeed)
   const setFeed = (node) => { feed.current = node; pullThread.setRef(node); };
@@ -4058,6 +4059,15 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
     if (!res.data?.length) return onError(t(ap.risk === 'high' ? 'ap.approverOnly' : 'ap.ownerOnly')); // RLS 0행 = 결재권 없음(최종 판정은 서버 msgr_can_decide)
     load(lastId).catch(() => {});
   };
+  // 크루 작업 중단(유건 확정 2026-09-26) — 서버(msgr_request_stop)가 권한을 다시 검사한다. 여기 canStop은 화면 노출만 — 숨김이 권한의 전부가 아니다.
+  const requestStop = async (crewId, sourceMsgId) => {
+    const key = `${crewId}:${sourceMsgId}`;
+    if (!sourceMsgId || stopping[key]) return;
+    setStopping((s) => ({ ...s, [key]: true }));
+    try { const { error } = await supabase.rpc('msgr_request_stop', { p_crew: crewId, p_source: sourceMsgId }); if (error) onError(friendlyErr(error.message, t)); }
+    catch (e) { onError(friendlyErr(e.message, t)); }
+    finally { setStopping((s) => { const n = { ...s }; delete n[key]; return n; }); }
+  };
   const typingCrews = Object.entries(typing).filter(([k, at]) => k.startsWith(`${chId}:`) && Date.now() - at < 6000).map(([k]) => crewOf(k.split(':')[1])).filter(Boolean);
   // 실행 카드 — progress 방송(1.5초 주기)이 있는 크루는 점 세 개 대신 단계·도구·사고 과정 카드. 8초 무갱신이면 만료(브리지 심박 30초는 typing이 덮는다).
   const working = Object.entries(progress).filter(([k, p]) => k.startsWith(`${chId}:`) && Date.now() - p.at < 8000 && typing[k] && Date.now() - typing[k] < 6000).map(([k, p]) => [crewOf(k.split(':')[1]), p]).filter(([c]) => c);
@@ -4065,6 +4075,10 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
   const apOf = (m) => m.kind === 'approval_card' ? aps[(m.mentions ?? []).find((x) => x.kind === 'approval')?.id] : null;
   const isMention = (m) => (m.mentions ?? []).some((x) => x.kind === 'user' && x.id === uid);
   const all = msgs ?? []; const byId = new Map(all.map((m) => [m.id, m])); // 답글 부모 조회 — 기록이 쌓여도 선형(검수 #531 M-2)
+  // 중단 버튼 노출 — 그 턴을 시킨 사람(원본 메시지 작성자, 크루 넘김이면 그 크루의 주인) 또는 지금 일하는 크루의 주인만(유건 확정 2026-09-26).
+  // 원본 메시지가 아직 이 목록에 없으면(스크롤백 밖) 숨긴다 — 화면 판단은 보수적으로, 최종 판정은 서버가 한다.
+  const senderOf = (m) => !m ? null : m.author_kind === 'user' ? m.author_user_id : (crewOf(m.crew_id)?.owner_user_id ?? null);
+  const canStop = (crew, p) => !!crew && !!p?.source_msg_id && (crew.owner_user_id === uid || senderOf(byId.get(p.source_msg_id)) === uid);
   // 결재 탭 목록과 결재 숫자는 같은 술어(검수 M2): 대기 중인 결재만
   const isPending = (m) => apOf(m)?.status === 'pending';
   // 탭 숫자 = 지난번에 본 뒤 온 것(D45) — 이번에 열 때의 읽음 커서(divider, '새 메시지' 줄과 같은 기준) 뒤의 글. 보는 중에 온 글도 다시 열 때까지 센다
@@ -4110,7 +4124,7 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
           ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder} disabled={older} aria-busy={older || undefined}>{t(older ? 'thread.loading' : 'thread.older')}</button></div>
           : <div className="msgr-older start"><span className="msgr-klabel">{t('thread.start')}</span></div>)}
         {rows}
-        {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} t={t} />)}
+        {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} t={t} canStop={canStop(c, p)} stopping={!!stopping[`${c.id}:${p.source_msg_id}`]} onStop={() => requestStop(c.id, p.source_msg_id)} />)}
         {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
       </div>
       {away && <div className="msgr-tobottom"><button type="button" className="btn sm" onClick={() => { const el = feed.current; if (!el) return; stick.current = true; el.scrollTop = el.scrollHeight; setAway(false); }}><I name="caret" size={13} />{t('thread.toBottom')}</button></div>}
@@ -4343,14 +4357,17 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
 }
 
-/** 실행 표시 — 크루가 일하는 동안 "답변 준비 중" 한 줄만(유건 결정 2026-09-24: 메신저에는 사고 과정·도구 단계·작성 중 본문을 보이지 않는다). */
-function ExecCard({ crew, t }) {
+/** 실행 표시 — 크루가 일하는 동안 "답변 준비 중" 한 줄만(유건 결정 2026-09-24: 메신저에는 사고 과정·도구 단계·작성 중 본문을 보이지 않는다).
+    canStop이면 그 옆에 중단 버튼(유건 확정 2026-09-26) — 시킨 사람 또는 크루 주인에게만, 서버가 권한을 다시 검사한다. */
+function ExecCard({ crew, t, canStop = false, stopping = false, onStop }) {
   return (
     <div className="msgr-row">
       <Av name={crew.display_name} crew crewId={crew.id} />
       <div style={{ minWidth: 0 }}>
         <div className="who">{crew.display_name}<span className="role">{crew.role_text}</span></div>
-        <div className="msgr-exec"><div className="summary"><span className="msgr-dot mark pulse" /><span className="st">{t('exec.preparing')}</span></div></div>
+        <div className="msgr-exec"><div className="summary"><span className="msgr-dot mark pulse" /><span className="st">{t('exec.preparing')}</span>
+          {canStop && <button type="button" className="btn sm ghost msgr-stop-btn" disabled={stopping} onClick={onStop} aria-label={t('exec.stop')}>{stopping ? t('exec.stopping') : t('exec.stop')}</button>}
+        </div></div>
       </div>
     </div>
   );

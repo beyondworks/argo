@@ -73,6 +73,23 @@ test('heartbeat is bounded and stoppable without claiming again', async () => {
   assert.ok(atStop > 0); assert.equal(count, atStop);
 });
 
+// 크루 작업 중단(유건 확정 2026-09-26) — 방송을 놓친 기기를 위한 폴백: 심박 응답의 stop_requested를 읽어 콜백을 부른다.
+test('heartbeat calls onStopRequested once the response carries stop_requested', async () => {
+  const pending = job(); pending.msgrExecution = { attempt: 'attempt' };
+  let calls = 0;
+  const stop = executionHeartbeat('ws', { heartbeatExecution: async () => ({ ok: true, stop_requested: true }) }, pending, { intervalMs: 5, onStopRequested: () => { calls++; } });
+  await new Promise((r) => setTimeout(r, 25)); stop();
+  assert.ok(calls > 0, '중단 요청을 읽으면 콜백을 불러야 한다');
+});
+
+test('heartbeat never calls onStopRequested when no stop was requested', async () => {
+  const pending = job(); pending.msgrExecution = { attempt: 'attempt' };
+  let calls = 0;
+  const stop = executionHeartbeat('ws', { heartbeatExecution: async () => ({ ok: true, stop_requested: false }) }, pending, { intervalMs: 5, onStopRequested: () => { calls++; } });
+  await new Promise((r) => setTimeout(r, 25)); stop();
+  assert.equal(calls, 0, '중단 요청이 없으면 콜백을 부르지 않아야 한다');
+});
+
 test('D25: 앞 프로세스가 답하던 중 끊긴 시도는 interrupted — 이 프로세스가 시작한 시도는 종전대로 pending', async () => {
   const running = { acquired: false, state: 'running', heartbeat_at: new Date().toISOString() };
   const cut = job(); cut.msgrExecution = { attempt: 'from-dead-process', phase: 'running' };

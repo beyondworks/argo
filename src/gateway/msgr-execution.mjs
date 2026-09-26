@@ -60,12 +60,16 @@ export async function finishMessengerExecution(wsId, db, job, replyRow, meta = {
   return row;
 }
 
-export function executionHeartbeat(wsId, db, job, { intervalMs = EXECUTION_HEARTBEAT_MS, log = console.error } = {}) {
+/** intervalMs 마다 심박 왕복 — 응답의 stop_requested가 서면 onStopRequested를 부른다(방송을 놓친 기기의 중단 폴백). */
+export function executionHeartbeat(wsId, db, job, { intervalMs = EXECUTION_HEARTBEAT_MS, log = console.error, onStopRequested } = {}) {
   let inflight = false;
   const timer = setInterval(async () => {
     if (inflight) return;
     inflight = true;
-    try { await db.heartbeatExecution(keyOf(wsId, job)); }
+    try {
+      const res = await db.heartbeatExecution(keyOf(wsId, job));
+      if (res?.stop_requested) onStopRequested?.();
+    }
     catch (error) { log('[argo] msgr 실행 심박 실패 — 실행권은 다른 기기로 넘기지 않습니다:', error.message); }
     finally { inflight = false; }
   }, intervalMs);

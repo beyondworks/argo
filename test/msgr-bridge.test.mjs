@@ -20,6 +20,7 @@ const { resolveWithFollowUp } = await import('../src/approval-actions.mjs');
 const { loadThread } = await import('../src/thread.mjs');
 const { saveHandover } = await import('../src/memory.mjs');
 const { CHANNEL_EVENTS, channelSends } = await import('../src/channel-events.mjs');
+const { registerTurn, interruptTurn, turnAbortedError } = await import('../src/turn-abort.mjs');
 
 const WS = 'lean-ax-t1';
 const OWNER = '11111111-1111-4111-8111-111111111111', MEMBER = '22222222-2222-4222-8222-222222222222';
@@ -35,7 +36,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0 } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, names = {}, stopRequestedBy = null } = {}) {
   const calls = [];
   const executions = new Map();
   const rec = (k, ...a) => { calls.push([k, ...a]); };
@@ -57,7 +58,9 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCre
     async crewScope() { rec('crewScope'); return new Set(member ?? [...(dm ?? []), CH]); }, // 구성원 채널(기본 = DM + 기본 채널에 초대됨 — 2026-09-16부터 공개 채널도 초대된 에이전트만 답한다)
     async channelCrewMembers(ch) { rec('channelCrewMembers', ch); return new Set(chCrews ?? (peers ?? crews).map((c) => c.id)); }, // 기본 = 조직 크루 전원이 구성원(범위 테스트만 chCrews로 좁힌다)
     async channel(id) { rec('channel', id); return { id, org_id: ORG, kind: 'public', name: 'general', crew_memory: true, ...(this.channelOverride ?? {}) }; },
-    async memberName() { return '민수'; },
+    async memberName(orgId, uid) { rec('memberName', orgId, uid); return names[uid] ?? '민수'; },
+    // 크루 작업 중단(유건 확정 2026-09-26) — msgr_executions.stop_requested_by 조회 흉내.
+    async executionStopInfo(crewId, sourceId) { rec('executionStopInfo', crewId, sourceId); return stopRequestedBy ? { stop_requested_by: stopRequestedBy, stop_requested_at: new Date().toISOString() } : null; },
     async contextOf(ch, before, n, after = []) { rec('contextOf', ch, before, n, after); return context.filter((r) => r.id < before || (r.reply_to === before && after.includes(r.crew_id))).sort((a, b) => a.id - b.id).slice(-n); },
     async orgCrews(org) { rec('orgCrews', org); return (peers ?? crews).map((c) => ({ id: c.id, slug: c.slug, display_name: c.display_name, owner_user_id: c.owner_user_id ?? OWNER, ws_id: c.ws_id ?? WS })); },
     async settled(crewId, msgId, channelId, beforeId = null) { rec('settled', crewId, msgId, channelId, beforeId); if (!channelId) throw new Error('settled: channelId 필수(인덱스 선두열)'); return settledFn(crewId, msgId, beforeId); },
@@ -1740,4 +1743,46 @@ test('drain: 거절·만료 안내가 일시 오류로 실패하면 커서 보�
     await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
     assert.equal(db2.calls.some((c) => c[0] === 'setCursor'), true, '영구 실패면 건너뛰고 전진(큐 정지 금지)');
   }
+});
+
+// 크루 작업 중단(유건 확정 2026-09-26) — 시킨 사람·크루 주인만 중단할 수 있음은 RPC 쪽 pg 테스트(msgr-crew-stop-pg.test.mjs)가 잠근다.
+// 여기서는 게이트웨이가 실제로 aborted 오류를 받았을 때 하는 일(부분 답 폐기 + 중단자 이름 한 줄 + 실행 completed)을 확인한다.
+test('중단된 턴은 부분 답 대신 중단자 이름 한 줄을 남기고 실행을 completed로 닫는다(첨부·넘김 없음)', async () => {
+  const REQUESTER = '55555555-5555-4555-8555-555555555555';
+  const db = fakeDb({ parent: { id: 5, body: '질문' }, names: { [REQUESTER]: '유건' }, stopRequestedBy: REQUESTER });
+  const runChat = async () => { throw turnAbortedError(); }; // msgr_request_stop → 게이트웨이 interruptTurn()이 던지는 것과 같은 모양
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat });
+  await h({ msgId: 41, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '오래 걸리는 일', authorId: MEMBER, replyTo: 5, threadRoot: 5, createdAt: new Date().toISOString() });
+  const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
+  assert.equal(ins.length, 1, '중단 안내 한 건만 — 부분 답·첨부 실패 안내 등 추가 글 없음');
+  assert.equal(ins[0].body, '유건님이 작업을 중단했습니다.', '중단을 요청한 사람의 표시 이름');
+  assert.deepEqual(ins[0].mentions, [], '중단된 턴은 다른 크루로 넘기지 않는다');
+  assert.equal(ins[0].meta.stopped, true);
+  assert.equal(db.calls.some((c) => c[0] === 'insertAttachment'), false, '중단된 턴은 첨부를 올리지 않는다');
+  assert.equal(M._activeCtxForTest.size, 0, '턴 문맥은 중단 뒤에도 지운다');
+});
+
+test('중단자 이름을 확인 못 하면(조회 실패·기록 없음) "누군가"로 안전하게 대체한다', async () => {
+  const db = fakeDb({ parent: { id: 5, body: '질문' } }); // stopRequestedBy 기본값 null — msgr_executions에 아직 기록이 없는 경합
+  const runChat = async () => { throw turnAbortedError(); };
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat });
+  await h({ msgId: 42, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '일', authorId: MEMBER, replyTo: 5, threadRoot: 5, createdAt: new Date().toISOString() });
+  const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
+  assert.equal(ins[0].body, '누군가님이 작업을 중단했습니다.');
+});
+
+test('handleStopRequest: 이 기기가 아는 crew_id만 중단하고, 모르는 crew_id는 조용히 무시한다', async () => {
+  M._crewSlugsForTest.set(`${WS}:${CREW}`, 'seoyun');
+  try {
+    const calls = [];
+    const reg = registerTurn(WS, 'seoyun', () => calls.push('interrupted'), { source: 'messenger' });
+    try {
+      assert.equal(await M.handleStopRequest(WS, { crew_id: 'unknown-crew-id', source_msg_id: 1 }), false, '모르는 crew_id는 무시');
+      assert.deepEqual(calls, []);
+      assert.equal(await M.handleStopRequest(WS, { crew_id: CREW, source_msg_id: 1 }), true);
+      assert.deepEqual(calls, ['interrupted']);
+      assert.equal(reg.wasAborted(), true);
+    } finally { reg.release(); }
+    assert.equal(await interruptTurn(WS, 'seoyun', { source: 'messenger' }), false, '이미 끝난 턴에 온 중단 요청은 무시(등록 해제 뒤 재호출)');
+  } finally { M._crewSlugsForTest.delete(`${WS}:${CREW}`); }
 });
