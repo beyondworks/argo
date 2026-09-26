@@ -68,7 +68,11 @@ before(() => {
   DM = last(sql(`insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'dm', 'dm:x', '${U.member}') returning id`));
   sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${DM}', 'user', '${U.member}'), ('${DM}', 'user', '${U.lead}')`);
   sql(`update public.msgr_channels set admin_user_ids = array['${U.lead}']::uuid[] where id = '${DM}'`);
-  for (const ch of [PRIV, DM]) sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${ORG}', '${ch}', 'journal/2026-09-24.md', 'j', '- 기록', '${U.member}', '${U.member}')`);
+  for (const ch of [PRIV, DM]) {
+    sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${ORG}', '${ch}', 'journal/2026-09-24.md', 'j', '- 기록', '${U.member}', '${U.member}')`);
+    // msgr_crew_memory는 2026-09-27 밤(3차 재검수 M-1)부터 msgr_org_docs의 journal 블록이 아니라 이 줄 단위 표를 읽는다.
+    sql(`insert into public.msgr_journal_entries (org_id, channel_id, day, source_author_id, line) values ('${ORG}', '${ch}', '2026-09-24', '${U.member}', '- 기록')`);
+  }
 });
 
 // 테이블 권한(RLS)은 넓히지 않는다 — 구버전 앱의 미러(syncOrgDocs)가 사용자 권한으로 표를 읽어 PC에 내려받으므로(설계 검수 H2).
@@ -236,4 +240,39 @@ test('직접 만들지 않은 채널의 채널장도 계정 삭제(msgr_delete_m
   sql(`update public.msgr_channels set admin_user_ids = array['${U.lead}']::uuid[] where id = '${Y}'`);
   asUser(U.lead, `select public.msgr_delete_me()`);
   assert.equal(sql(`select coalesce(array_to_string(admin_user_ids, ','), '') from public.msgr_channels where id = '${Y}'`), '');
+});
+
+// 3차 재검수(2026-09-27 밤) M-1 항목4 — 거부한 사람이 최근 고친 조직 문서도 크루 기억에서 빠져야 한다.
+test('검수 M-1 항목4: 조직 문서를 최근 고친 사람이 거부하면 그 문서는 크루 기억에서 빠진다', { skip }, () => {
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}'`);
+  const crew = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status) values ('${ORG}', '${U.member}', 'ws1', 'doc-crew', 'DocCrew', 'local', 'active') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PRIV}', 'crew', '${crew}') on conflict do nothing`);
+  sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values
+    ('${ORG}', null, 'rules/kept.md', '유지', '동의한 사람 문서', '${U.owner}', '${U.owner}'),
+    ('${ORG}', null, 'rules/dropped.md', '제외', '거부한 사람 문서', '${U.member}', '${U.member}')`);
+  const before = JSON.parse(last(asUser(U.member, `select public.msgr_crew_memory('${crew}', '${PRIV}')`)));
+  const beforeTitles = before.docs.map((d) => d.title);
+  assert.ok(beforeTitles.includes('유지') && beforeTitles.includes('제외'), '거부 전에는 둘 다 보인다(대조군)');
+  asUser(U.member, `select public.msgr_set_ai_consent(false)`);
+  const after = JSON.parse(last(asUser(U.member, `select public.msgr_crew_memory('${crew}', '${PRIV}')`)));
+  const afterTitles = after.docs.map((d) => d.title);
+  assert.ok(afterTitles.includes('유지') && !afterTitles.includes('제외'), '최근 편집자가 거부하면 그 문서만 빠진다');
+  asUser(U.member, `select public.msgr_set_ai_consent(true)`); // 되돌린다
+});
+
+test('변이: msgr_crew_memory의 문서 동의 검사를 지우면 거부한 편집자의 문서가 다시 샌다(M-1 항목4) — red 확인', { skip }, () => {
+  const migPath = mig('20260927150000_msgr_journal_consent.sql');
+  const orig = readFileSync(migPath, 'utf8');
+  const anchor = 'and public.msgr_ai_consent_visible(d.updated_by) -- 검수 M-1 항목4 — 최근 편집자가 거부·철회했으면 문서도 뺀다';
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
+  sql(orig.replace(anchor, ''));
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}'`);
+  const crew = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status) values ('${ORG}', '${U.member}', 'ws1', 'mut-doc-crew', 'MutDocCrew', 'local', 'active') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PRIV}', 'crew', '${crew}') on conflict do nothing`);
+  sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${ORG}', null, 'rules/mutdropped.md', '변이제외', '변이로 새는 문서', '${U.member}', '${U.member}')`);
+  asUser(U.member, `select public.msgr_set_ai_consent(false)`);
+  const mem = JSON.parse(last(asUser(U.member, `select public.msgr_crew_memory('${crew}', '${PRIV}')`)));
+  assert.ok(mem.docs.some((d) => d.title === '변이제외'), '검사가 지워지면 거부한 편집자의 문서도 다시 샌다(정상 코드라면 안 보여야 하므로 변이가 잡힌다)');
+  sql(orig); // 원래 정의로 복구
+  asUser(U.member, `select public.msgr_set_ai_consent(true)`);
 });

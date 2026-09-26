@@ -20,11 +20,23 @@
 --   20260913122421 본문을 베이스로 삼아 20260917090000에서 고친 넘김 판정("ch.kind='public' or 채널
 --   멤버십 exists")이 되살아났었다(N1 — 공개 채널·초대 안 된 크루로 넘김이 성공하는 회귀). 이 파일이
 --   나중에 적용되므로 그 회귀도 함께 닫는다.
+--
+-- M-3(2026-09-27 밤, 3차 검수) — 위 (3)의 순방향 참조는 라이브에서 총괄이 버전 순서대로 한 번에 적용하면 문제
+-- 없지만, 이 파일 하나만 단독 적용하면(예: 부분 롤아웃·재현) msgr_ai_consent_visible이 아직 없어 깨진다.
+-- 여기서 임시 정의를 먼저 둔다(전환 기간 없이 "지금 동의했나"만 본다 — 그래도 이 파일의 목적인 "미동의
+-- 사람 글 배제"는 그대로 이뤄진다) — 20260927140000이 뒤이어 적용되면 그 정의가 이 임시 정의를 덮어써
+-- 최종적으로 전환 기간까지 반영된 버전이 된다. 두 파일이 적용된 순서와 무관하게 항상 옳다.
+create or replace function public.msgr_ai_consent_visible(p_user uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (select 1 from public.msgr_ai_consent where user_id = p_user and consent_at is not null)
+$$;
+revoke all on function public.msgr_ai_consent_visible(uuid) from public, anon, authenticated;
+grant execute on function public.msgr_ai_consent_visible(uuid) to service_role;
 
 create or replace function public.msgr_bot_updates_before_work(token text,after_id bigint default 0,lim int default 50) returns setof jsonb
 language plpgsql security definer set search_path=public,pg_temp as $function$
 declare b msgr_bots; s msgr_messages; r msgr_messages; a uuid; won uuid; peers jsonb; ctx jsonb; n int:=0; lo bigint; actor uuid; ch msgr_channels; key text; cur bigint;
-        entitled boolean; ent_marker timestamptz; r_json jsonb; -- 2026-09-27 최종 합본(H1) — 무료 기간 자격(M3) + AI 동의(H2) 둘 다
+        entitled boolean; ent_marker timestamptz; r_json jsonb; declined_max bigint; -- 2026-09-27 최종 합본(H1) — 무료 기간 자격(M3) + AI 동의(H2) 둘 다
 begin
  b:=msgr_bot_auth(token); if b.id is null then raise exception 'msgr_bot_unauthorized'; end if;
  -- 유휴 게이트(2026-09-14 라이브 실측: 봇 11개가 매초 커서 뒤 글 84건을 권한 함수로 재평가 → CPU 96%·회당 0.9초).
@@ -71,6 +83,9 @@ begin
          '앱을 업데이트하고 AI 이용에 동의하면 크루에게 맡길 수 있습니다. / Update the app and agree to AI use to hand this to a crew.',
          jsonb_build_object('disposition','done')) on conflict do nothing;
    end if;
+   -- 검수 L-1(2026-09-27 밤, 3차 재검수) — 게이트웨이처럼 버리고 커서를 넘긴다. 아래 n=0 유예창(7일 멘션 재시도)에 맡기면
+   -- 나중에 동의해도 이 옛 글이 뒤늦게 배달된다(원치 않음) — 동의는 자격과 달리 유예창 의미가 없다(재시도해도 득 될 게 없다).
+   declined_max:=greatest(coalesce(declined_max,0),s.id);
    continue;
  end if;
  if not msgr_cc_delivery_allowed(b.crew_id,s.id) and s.author_kind='user' and s.body ~ '>[ \t\r\n]*@' and s.created_at>now()-interval '2 minutes' and exists(
@@ -136,6 +151,9 @@ begin
           or (m.author_kind='user' and exists(select 1 from msgr_channels d where d.id=m.channel_id and d.kind='dm' and msgr_crew_in_channel(d.id,b.crew_id)))))
      ) end id from (select max(m.id) id from msgr_messages m where m.org_id=b.org_id and m.id>lo and m.created_at<now()-interval '10 minutes') a) x
     where c.id=b.crew_id and x.id is not null and c.cursor_msg_id<x.id;
+ end if;
+ if declined_max is not null then -- L-1 — 위 유예창 로직과 무관하게, 동의 거부로 건너뛴 글까지는 항상 커서를 넘긴다(뒤로는 안 움직인다)
+   update msgr_crews c set cursor_msg_id=declined_max where c.id=b.crew_id and c.cursor_msg_id<declined_max;
  end if;
 end $function$
 ;

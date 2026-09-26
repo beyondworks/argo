@@ -131,3 +131,61 @@ test('crew replies in a memory-enabled channel append to that channel journal; D
  sql(`update msgr_channels set crew_memory=true where id='${PUB}'`);
  fails(asUserRaw(U.owner,`insert into msgr_org_docs(org_id,channel_id,path,title,body,created_by,updated_by) values('${ORG}','${PUB}','secret/x.md','x','',$$${U.owner}$$,$$${U.owner}$$)`),/check|violates/,'folder set stays closed');
 });
+
+// 3차 재검수(2026-09-27 밤) M-1 — 거부·철회한 사람의 원문이 크루 답글마다 채널 일지에 다시 적히면 안 된다.
+test('검수 M-1: 원글 작성자가 거부한 상태로 글을 쓰면 일지에 원문이 적히지 않는다', { skip }, () => {
+  asUser(U.admin, `select public.msgr_set_ai_consent(false)`);
+  const ask = last(asUser(U.admin, `insert into msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values('${PUB}','user','${U.admin}','민감한 원문입니다','[{"kind":"crew","id":"${CREW}"}]') returning id`));
+  asUser(U.owner, `insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,meta) values('${PUB}','crew','${CREW}','응답했습니다',${ask},${ask},'reply:${CREW}:${ask}','{"disposition":"done"}')`);
+  const j = journal(PUB);
+  assert.doesNotMatch(j.body, /민감한 원문입니다/, '거부한 사람의 원문은 일지(사람이 보는 문서)에도 적히지 않는다');
+  assert.match(j.body, /\(비공개 \/ private\)/, '자리는 남기되 내용만 비운다');
+  const entry = JSON.parse(sql(`select coalesce((select to_jsonb(e) from public.msgr_journal_entries e where e.source_msg_id=${ask}),'null')`));
+  assert.ok(entry, '줄 단위 표에도 항목이 남는다(작성자 id 포함)');
+  assert.equal(entry.source_author_id, U.admin);
+  assert.doesNotMatch(entry.line, /민감한 원문입니다/, '줄 단위 표에도 원문이 남지 않는다');
+  asUser(U.admin, `select public.msgr_set_ai_consent(true)`); // 다음 테스트를 위해 되돌린다
+});
+
+test('검수 M-1: 동의한 상태로 쓴 글도 나중에 철회하면 msgr_crew_memory 읽을 때 빠진다(적을 때는 보였어도)', { skip }, () => {
+  asUser(U.admin, `select public.msgr_set_ai_consent(true)`);
+  const ask = last(asUser(U.admin, `insert into msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values('${PUB}','user','${U.admin}','철회 전 원문입니다','[{"kind":"crew","id":"${CREW}"}]') returning id`));
+  asUser(U.owner, `insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,meta) values('${PUB}','crew','${CREW}','응답2',${ask},${ask},'reply:${CREW}:${ask}','{"disposition":"done"}')`);
+  const before = JSON.parse(asUser(U.owner, `select public.msgr_crew_memory('${CREW}','${PUB}')`));
+  assert.match(before.journal, /철회 전 원문입니다/, '동의 중일 때는 기억에 보인다(대조군)');
+  asUser(U.admin, `select public.msgr_set_ai_consent(false)`); // 이제 철회
+  const after = JSON.parse(asUser(U.owner, `select public.msgr_crew_memory('${CREW}','${PUB}')`));
+  assert.doesNotMatch(after.journal, /철회 전 원문입니다/, '철회하면 적을 때 보였던 줄도 기억을 돌려줄 때 빠진다');
+  asUser(U.admin, `select public.msgr_set_ai_consent(true)`); // 되돌린다
+});
+
+test('변이: 일지 트리거의 동의 검사를 지우면 거부한 사람의 원문이 그대로 적힌다(M-1) — red 확인', { skip }, () => {
+  const migPath = mig('20260927150000_msgr_journal_consent.sql');
+  const orig = readFileSync(migPath, 'utf8');
+  const anchor = "quote_body:=case when not src_visible then '(비공개 / private)' else left(regexp_replace(coalesce(src.body,''),'\\s+',' ','g'),160) end;";
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
+  sql(orig.replace(anchor, "quote_body:=left(regexp_replace(coalesce(src.body,''),'\\s+',' ','g'),160);"));
+  asUser(U.admin, `select public.msgr_set_ai_consent(false)`);
+  const ask = last(asUser(U.admin, `insert into msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values('${PUB}','user','${U.admin}','변이로 새는 원문','[{"kind":"crew","id":"${CREW}"}]') returning id`));
+  asUser(U.owner, `insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,meta) values('${PUB}','crew','${CREW}','응답3',${ask},${ask},'reply:${CREW}:${ask}','{"disposition":"done"}')`);
+  const j = journal(PUB);
+  assert.match(j.body, /변이로 새는 원문/, '동의 검사가 지워지면 거부한 사람의 원문도 그대로 적힌다(정상 코드라면 안 보여야 하므로 변이가 잡힌다)');
+  sql(orig); // 원래 정의로 복구
+  asUser(U.admin, `select public.msgr_set_ai_consent(true)`);
+});
+
+test('변이: msgr_crew_memory의 일지 재판정을 지우면 철회한 사람의 옛 줄이 다시 샌다(M-1) — red 확인', { skip }, () => {
+  const migPath = mig('20260927150000_msgr_journal_consent.sql');
+  const orig = readFileSync(migPath, 'utf8');
+  const anchor = "and (je.source_author_id is null or public.msgr_ai_consent_visible(je.source_author_id))";
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
+  sql(orig.replace(anchor, "and true"));
+  asUser(U.admin, `select public.msgr_set_ai_consent(true)`);
+  const ask = last(asUser(U.admin, `insert into msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values('${PUB}','user','${U.admin}','변이 재판정 원문','[{"kind":"crew","id":"${CREW}"}]') returning id`));
+  asUser(U.owner, `insert into msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,meta) values('${PUB}','crew','${CREW}','응답4',${ask},${ask},'reply:${CREW}:${ask}','{"disposition":"done"}')`);
+  asUser(U.admin, `select public.msgr_set_ai_consent(false)`);
+  const mem = JSON.parse(asUser(U.owner, `select public.msgr_crew_memory('${CREW}','${PUB}')`));
+  assert.match(mem.journal, /변이 재판정 원문/, '재판정이 지워지면 철회한 사람의 옛 줄도 기억에 다시 샌다(정상 코드라면 안 보여야 하므로 변이가 잡힌다)');
+  sql(orig); // 원래 정의로 복구
+  asUser(U.admin, `select public.msgr_set_ai_consent(true)`);
+});

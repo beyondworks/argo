@@ -116,6 +116,36 @@ test('selected messenger alert is final, mention-free and phase-idempotent; scop
   await assert.rejects(msgrPush(e, messenger({ scope: false })), /unavailable/);
 });
 
+function unentitledFixture() { // messenger()의 db에 orgEntitled(false)만 얹는다 — sent는 같은 배열을 공유
+  const base = messenger();
+  return { sent: base.sent, session: async () => { const s = await base.session(); return { ...s, db: { ...s.db, orgEntitled: async () => false } }; } };
+}
+
+test('L-8: an unentitled org quietly skips the routine alert insert (no repeated blocked attempts) and never throws', async () => {
+  const ws = await workspace(); const fixture = unentitledFixture();
+  const e = event(ws, selected(['msgr']));
+  assert.equal(await msgrPush(e, fixture), false);
+  assert.deepEqual(fixture.sent, []);
+});
+
+test('변이: L-8 자격 사전확인을 지우면 미자격 조직에서도 매번 삽입을 시도한다(무기한 반복) — red 확인', async () => {
+  const { readFileSync, writeFileSync } = await import('node:fs');
+  const file = new URL('../src/gateway/msgr.mjs', import.meta.url);
+  const orig = readFileSync(file, 'utf8');
+  const anchor = "    if (!(c.db.orgEntitled ? await c.db.orgEntitled(target.orgId).catch(() => true) : true)) return false;\n";
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))) ?? []).length, 1);
+  writeFileSync(file, orig.replace(anchor, ''));
+  try {
+    const mod = await import('../src/gateway/msgr.mjs?bust=' + Date.now());
+    const ws = await workspace(); const fixture = unentitledFixture();
+    const e = event(ws, selected(['msgr']));
+    assert.equal(await mod.msgrPush(e, fixture), true, 'mutation must let the blocked insert through');
+    assert.equal(fixture.sent.length, 1);
+  } finally {
+    writeFileSync(file, orig);
+  }
+});
+
 test('delivery reports mute, unavailable, provider failure and uncertain network separately', async () => {
   const ws = await workspace(); const e = event(ws);
   await updateConnection(ws, 'telegram', { mutedEvents: ['routine'] });

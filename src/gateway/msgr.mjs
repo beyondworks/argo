@@ -1017,9 +1017,14 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         .catch((e) => console.error(`[argo] msgr 무료 기간 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${job.msgId}):`, e?.message ?? e));
       return;
     }
-    // M-2(2026-09-27 저녁, 2차 재검수) — 원문(스레드 뿌리) 작성자가 그 사이 동의를 거부·철회했으면 실행하지 않는다.
-    // envelope 없는 구버전 게이트웨이는 뿌리 작성자를 여기서 알 수 없다 — DB 쪽 문맥 필터(msgr_crew_context)가 최종 방어선.
-    if (ch.org_id && envelope?.root?.author_kind === 'user' && !(db.orgConsentOk ? await db.orgConsentOk(ch.org_id, envelope.root.author_user_id).catch(() => true) : true)) {
+    // M-2(2026-09-27 저녁, 2차 재검수) — 스레드 뿌리 작성자가 그 사이 동의를 거부·철회했으면 실행하지 않는다.
+    // 2026-09-27 밤(3차 검수 M-1) — 적재된 뒤 이번에 답할 그 글(source) 자체의 작성자가 철회하는 경우도 막는다
+    // (뿌리와 source가 다른 사람일 수 있다 — 예: A가 스레드를 열고 B가 방금 답했는데 B가 그 사이 철회). 둘 중 하나라도 걸리면 막는다.
+    // envelope 없는 구버전 게이트웨이는 여기서 알 수 없다 — DB 쪽 문맥 필터(msgr_crew_context)가 최종 방어선.
+    const consentSubjects = new Set([envelope?.root, envelope?.source].filter((m) => m?.author_kind === 'user' && m.author_user_id).map((m) => m.author_user_id));
+    let anyDeclined = false;
+    if (ch.org_id && db.orgConsentOk) for (const uid2 of consentSubjects) { if (!(await db.orgConsentOk(ch.org_id, uid2).catch(() => true))) { anyDeclined = true; break; } }
+    if (ch.org_id && anyDeclined) {
       await db.insertMessage(aiConsentNoticeRow(job.crewId, job.channelId, job.msgId, job.threadRoot, lang))
         .catch((e) => console.error(`[argo] msgr 동의 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${job.msgId}):`, e?.message ?? e));
       return;
@@ -1305,6 +1310,10 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     if (!available.some((r) => r.orgId === target.orgId && r.channelId === target.channelId)) throw new Error('Messenger notification channel unavailable');
     const crew = await c.db.crewBySlug(c.uid, event.wsId, event.routine.agentSlug, target.orgId);
     if (!crew) throw new Error('Messenger notification crew unavailable');
+    // L-8(2026-09-27 밤, 3차 검수) — 루틴은 일정마다 계속 다시 돈다. 자격을 미리 안 보면 미자격 조직에서
+    // 매 스케줄마다 DB 트리거(msgr_org_unentitled)에 막히는 시도가 무기한 쌓인다. 여기서 먼저 조용히 건너뛴다
+    // (사용자 턴의 unentitledNoticeRow와 달리 반복 배경 알림에 매번 안내문을 남기면 그 자체가 스팸이 된다). fail-open.
+    if (!(c.db.orgEntitled ? await c.db.orgEntitled(target.orgId).catch(() => true) : true)) return false;
     const key = [event.wsId, event.routine.id, event.runAt ?? event.routine.lastRun, target.channelId, event.phase ?? (event.ok === false ? 'failed' : 'result')].join(':');
     const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
     await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',

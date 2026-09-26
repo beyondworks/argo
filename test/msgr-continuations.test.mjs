@@ -507,6 +507,31 @@ test('makeMsgrHandler run(): a queued job rechecks the thread root author consen
   f.stop();
 });
 
+// 2026-09-27 밤(3차 검수 M-1) — the thread root and the message actually being answered (source) can be two
+// different people. A consenting root author must not mask a source author who has since declined/withdrawn.
+test('makeMsgrHandler run(): a queued job also rechecks the source author consent when it differs from the thread root', async () => {
+  const f = await setup();
+  const { makeMsgrHandler } = await import('../src/gateway/msgr.mjs');
+  f.db.crewContext = async () => ({
+    delivery_role: 'to',
+    channel: { id: 'channel', org_id: 'org', kind: 'private', crew_memory: false },
+    source: { id: 42, channel_id: 'channel', author_kind: 'user', author_user_id: 'other-person', body: 'hi again', reply_to: 41, thread_root: 41, meta: {} },
+    root: { id: 41, author_kind: 'user', author_user_id: 'person' },
+    peers: [], settled_source: false, settled_predecessors: [],
+  });
+  f.db.orgConsentOk = async (_orgId, userId) => userId !== 'other-person'; // only the source author has declined, not the root author
+  f.db.settled = async () => false;
+  const inserted = [];
+  f.db.insertMessage = async (row) => { inserted.push(row); return { id: 99 }; };
+  let ran = false;
+  const handler = makeMsgrHandler(f.ws, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } });
+  await handler({ msgId: 42, slug: 'alpha', crewId: 'a', channelId: 'channel', orgId: 'org', authorId: 'other-person', threadRoot: 41, text: '작업', createdAt: new Date().toISOString() });
+  assert.equal(ran, false, 'a consenting thread root author must not mask a declined source author');
+  assert.equal(inserted.length, 1);
+  assert.match(inserted[0].client_msg_id, /^aiconsent:a:channel/);
+  f.stop();
+});
+
 // M-1(2026-09-27 저녁, 크루 쪽) — db.workRun is a raw select with no server-side filter; workPrompt must not
 // leak the goal/completion criteria of a team work started by someone who has declined or withdrawn consent.
 test('workPrompt hides the goal/completion criteria when the person who started the team work has declined consent', async () => {
