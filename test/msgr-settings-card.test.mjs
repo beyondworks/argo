@@ -320,8 +320,8 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
   assert.match(read('apps/messenger/src/notify.js'), /Notification\.permission !== 'granted'\) return \{ ok: false/, '권한 없으면 조용히(브라우저 경로 — notify.js)');
   assert.match(app, /const osNotify = \(title, body, tag, channelId\) => \{ sendNotify\(title, body, tag, channelId\); \};/, 'OS 알림은 notify.js 한 곳(Tauri 플러그인·브라우저 분기)이며 클릭 이동용 채널을 함께 넘긴다');
-  assert.match(app, /\{tab === 'org' && org && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭)');
-  assert.match(app, /\{tab === 'members' && org && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기');
+  assert.match(app, /\{tab === 'org' && org && !gated && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭) — 동의 게이트 중엔 예외(App Store 5.1.2 재검수 M-5, 2026-09-27)');
+  assert.match(app, /\{tab === 'members' && org && !gated && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기 — 동의 게이트 중엔 예외(M-5)');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /create policy msgr_members_update_self on public\.msgr_org_members for update to authenticated\n\s*using \(user_id = \(select auth\.uid\(\)\) and removed_at is null\)/, '본인 갱신 정책');
   assert.match(sql, /raise exception 'msgr_member_self_only_name'/, '본인은 역할·제거 표시 변경 불가');
