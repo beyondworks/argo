@@ -9,7 +9,7 @@ import { readRunnerLimits } from '../../../../src/runner-limits.mjs'; // 구독 
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
 import { nudgeSync } from '../../../../src/sync.mjs';
-import { guardCompany, authError, requestLang } from '../../../auth.mjs';
+import { guardCompany, authError, requestLang, csrfDenied } from '../../../auth.mjs';
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
@@ -67,9 +67,13 @@ export async function GET(req, { params }) {
 /** 회사 정보 수정 — 이름·월 예산(USD, 0=무제한). */
 export async function PUT(req, { params }) {
   try {
+    // CSRF — 이 라우트는 fullAuto·credSync 등 회사 설정을 바꾼다(분리 검수 MEDIUM, 2026-09-26).
+    // 로컬 모드에선 guardCompany가 인증 장벽이 아니라, 악성 페이지의 simple POST/PUT이 사장 클릭 없이
+    // 설정을 바꿀 수 있다 — approvals·connectors 라우트와 같은 패턴으로 막는다.
+    const csrf = csrfDenied(req); if (csrf) return csrf;
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases, defaultRunner, credSync, computerUse } = await req.json();
+    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases, defaultRunner, credSync, computerUse, fullAuto } = await req.json();
     const patch = {};
     if (credSync !== undefined) {
       // 자격 증명(러너 로그인·봇 토큰·MCP env) 클라우드 동기화 — false만 옵트아웃(부재/true = 현행 유지).
@@ -107,6 +111,9 @@ export async function PUT(req, { params }) {
       patch.lang = lang; // 시스템(크루 생성) 언어 — 크루 답변·기억이 이 언어를 따른다
     }
     if (computerUse !== undefined) patch.computerUse = computerUse === true; // 컴퓨터 유즈 옵트인 — 불리언만(문자열 'true' 등은 꺼짐으로)
+    // 풀 오토 모드(회사 단위 스위치, 유건 확정 2026-09-26) — 기본 꺼짐, 불리언만. company.json은
+    // 이미 크루 셸 쓰기 금지 목록(WS_CONTROL_FILES, permission-gate.mjs)에 있어 이 값도 같은 가드를 받는다.
+    if (fullAuto !== undefined) patch.fullAuto = fullAuto === true;
     if (budgetUsd !== undefined) {
       const n = Number(budgetUsd);
       if (!Number.isFinite(n) || n < 0) return Response.json({ error: '예산은 0 이상의 숫자' }, { status: 400 });

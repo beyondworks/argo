@@ -515,6 +515,18 @@ const DICT = {
   'settings.caps.shell.desc': ['명령 실행 — 스크립트, 앱 실행, 시스템 작업', 'Run commands — scripts, apps, system tasks'],
   'settings.caps.bypass': ['준비 작업 자동 승인', 'Auto-approve preparation work'],
   'settings.caps.bypass.desc': ['도구 설치·능력 켜기 같은 준비성 결재를 자동 승인합니다. 이메일 발송·게시·구매·삭제처럼 사람이 판단해야 하는 일은 그대로 결재를 받습니다', 'Auto-approves preparation requests like tool installs and capability grants. Actions needing your judgment — sending email, publishing, purchases, deletions — still wait for approval'],
+  // 풀 오토 모드(유건 확정 2026-09-26) — 회사 단위 스위치, 기본 꺼짐. 적용 범위(주인이 직접 지시한 턴만)와
+  // 예외(삭제·구매/결제·민감 정보 변경)는 결과가 갈리는 사실이라 설명에 둘 다 넣는다.
+  'settings.fullAuto.title': ['풀 오토 모드', 'Full auto mode'],
+  // 조치 1(분리 검수 HIGH, 총괄 결정 2026-09-26): 사장이 만든 예약 루틴·긴 작업도 적용 대상임을 명시.
+  // 조치 4(LOW): 코드로 강제되는 범위(연결 서비스의 삭제·결제·민감 변경)와 크루 지시에만 의존하는
+  // 범위(그 밖의 삭제·민감 작업)를 과장 없이 갈라 적는다.
+  'settings.fullAuto.desc': ['켜면 사장이 직접 지시한 턴(본체 채팅·메신저 DM·텔레그램 등)과 사장이 만든 예약 루틴·긴 작업에서도 크루가 결재 없이 바로 실행하고 결과를 보고합니다. 연결 서비스(Gmail·Drive·Notion 등)의 삭제·구매·결제·민감 정보 변경(비밀번호·API 키·토큰·로그인 연결·결제 수단·공유·권한 설정·계정 설정)은 이 설정과 무관하게 시스템이 항상 결재를 겁니다. 연결 서비스 밖의 삭제·민감한 작업은 크루가 스스로 결재를 올리도록 지시받을 뿐 시스템이 강제하지는 않습니다. 조직 채널의 다른 사람 지시·손님 턴에는 적용되지 않습니다.', "When on, crew acts and reports back without approval for turns you gave directly (main chat, messenger DMs, Telegram, etc) — including routines and long-running tasks you scheduled yourself. For connected services (Gmail, Drive, Notion, etc), deletion, purchases/payments, and sensitive changes (passwords, API keys/tokens, login connections, payment methods, sharing/permission settings, account settings) are always gated by the system regardless of this setting. Deletion or sensitive actions outside connected services rely on the crew being instructed to file for approval — the system doesn't enforce those. It doesn't apply to instructions from others in organization channels or guest turns."],
+  'settings.fullAuto.on': ['풀 오토 켜짐', 'Full auto on'],
+  'settings.fullAuto.off': ['풀 오토 꺼짐', 'Full auto off'],
+  'settings.fullAuto.turnOn': ['켜기', 'Turn on'],
+  'settings.fullAuto.turnOff': ['끄기', 'Turn off'],
+  'settings.fullAuto.saveErr': ['저장하지 못했습니다', 'Could not save'],
 
   // ── AI 연결 (Claude BYOK) — 일반 사용자 온보딩
   'settings.ai.title': ['AI 연결 (Claude)', 'AI Connection (Claude)'],
