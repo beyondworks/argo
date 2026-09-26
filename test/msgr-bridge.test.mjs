@@ -20,6 +20,7 @@ const { resolveWithFollowUp } = await import('../src/approval-actions.mjs');
 const { loadThread } = await import('../src/thread.mjs');
 const { saveHandover } = await import('../src/memory.mjs');
 const { CHANNEL_EVENTS, channelSends } = await import('../src/channel-events.mjs');
+const { registerTurn, interruptTurn, turnAbortedError } = await import('../src/turn-abort.mjs');
 
 const WS = 'lean-ax-t1';
 const OWNER = '11111111-1111-4111-8111-111111111111', MEMBER = '22222222-2222-4222-8222-222222222222';
@@ -35,7 +36,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, aiConsent = true, aiConsentMap = null } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, aiConsent = true, aiConsentMap = null, names = {}, stopRequestedBy = null } = {}) {
   const calls = [];
   const executions = new Map();
   const rec = (k, ...a) => { calls.push([k, ...a]); };
@@ -57,7 +58,9 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCre
     async crewScope() { rec('crewScope'); return new Set(member ?? [...(dm ?? []), CH]); }, // 구성원 채널(기본 = DM + 기본 채널에 초대됨 — 2026-09-16부터 공개 채널도 초대된 에이전트만 답한다)
     async channelCrewMembers(ch) { rec('channelCrewMembers', ch); return new Set(chCrews ?? (peers ?? crews).map((c) => c.id)); }, // 기본 = 조직 크루 전원이 구성원(범위 테스트만 chCrews로 좁힌다)
     async channel(id) { rec('channel', id); return { id, org_id: ORG, kind: 'public', name: 'general', crew_memory: true, ...(this.channelOverride ?? {}) }; },
-    async memberName() { return '민수'; },
+    async memberName(orgId, uid) { rec('memberName', orgId, uid); return names[uid] ?? '민수'; },
+    // 크루 작업 중단(유건 확정 2026-09-26) — msgr_executions.stop_requested_by 조회 흉내.
+    async executionStopInfo(crewId, sourceId) { rec('executionStopInfo', crewId, sourceId); return stopRequestedBy ? { stop_requested_by: stopRequestedBy, stop_requested_at: new Date().toISOString() } : null; },
     async contextOf(ch, before, n, after = []) { rec('contextOf', ch, before, n, after); return context.filter((r) => r.id < before || (r.reply_to === before && after.includes(r.crew_id))).sort((a, b) => a.id - b.id).slice(-n); },
     async orgCrews(org) { rec('orgCrews', org); return (peers ?? crews).map((c) => ({ id: c.id, slug: c.slug, display_name: c.display_name, owner_user_id: c.owner_user_id ?? OWNER, ws_id: c.ws_id ?? WS })); },
     async settled(crewId, msgId, channelId, beforeId = null) { rec('settled', crewId, msgId, channelId, beforeId); if (!channelId) throw new Error('settled: channelId 필수(인덱스 선두열)'); return settledFn(crewId, msgId, beforeId); },
@@ -328,6 +331,35 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
   assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n(?:\s*if \(mirrorCtx\) \{ const mem = await crewMemoryForMail\(mirrorCtx\.crewId, mirrorCtx\.channelId\)[^\n]*\n)?\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : await briefingCtx\(cid, 'crewmail', slug\)[^\n]*\) \}\);/, '배달 턴이 채널 문맥으로(메신저 밖 쪽지는 목적지 범위 — 행동은 shared-dest-context)');
 });
 
+// 분리 검수 H-1·M-4 — plain이 있어도 카드 payload에 실리고, 카드 글 본문(다른 창구·검색·구버전
+// 클라이언트가 보는 텍스트)에서 실제 실행될 명령이 사라지면 안 된다. msgrPush를 실제로 태우고
+// insertApproval·insertMessage 호출 인자를 검증한다(소스 문자열 정규식이 아니다).
+test('push: 결재에 plain(목적·할 일·필요한 것)이 있으면 카드 payload에 실리고, 카드 본문에 "명령: <action>" 한 줄이 반드시 남는다', async () => {
+  const db = fakeDb({ parent: msg(7) });
+  const session = async () => ({ db, uid: OWNER });
+  const it = await addApproval(WS, {
+    slug: 'seoyun', action: 'sendGmail(to=subs@list, subject="9월 뉴스레터")', reason: 'CEO 지시',
+    plain: { purpose: '이번 달 뉴스레터 발송 완료', task: '구독자 1200명에게 메일 발송', need: 'Gmail 발송 권한' },
+    msgr: { orgId: ORG, channelId: CH, crewId: CREW },
+  });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session }), true);
+  const ap = db.calls.filter((x) => x[0] === 'insertApproval').at(-1)[1];
+  assert.deepEqual(ap.payload, { plain: { purpose: '이번 달 뉴스레터 발송 완료', task: '구독자 1200명에게 메일 발송', need: 'Gmail 발송 권한' } }, '카드 payload에 plain이 실린다');
+  const card = db.calls.filter((x) => x[0] === 'insertMessage').at(-1)[1];
+  assert.match(card.body, /할 일: 구독자 1200명에게 메일 발송/, 'plain 문장이 카드 본문에 보인다');
+  assert.match(card.body, /명령: sendGmail\(to=subs@list, subject="9월 뉴스레터"\)/, 'H-1: plain이 있어도 실제 실행될 명령이 본문에 항상 남는다');
+});
+
+test('push: 결재에 plain이 없으면(폴백) 카드 본문에 새 "명령:" 줄을 붙이지 않는다(회귀 없음)', async () => {
+  const db = fakeDb({ parent: msg(7) });
+  const session = async () => ({ db, uid: OWNER });
+  const it = await addApproval(WS, { slug: 'seoyun', action: '경쟁사 리포트 업로드', reason: '분기 보고', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session }), true);
+  const card = db.calls.filter((x) => x[0] === 'insertMessage').at(-1)[1];
+  assert.match(card.body, /경쟁사 리포트 업로드/);
+  assert.doesNotMatch(card.body, /명령:/, '폴백 카드는 기존 본문 그대로');
+});
+
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
   const h = await saveHandover(WS, 'seoyun', '지시', '답', '서윤', { tag: 'org-abc' });
   assert.match(h.file, /\d{4}-\d{2}-\d{2}-seoyun\.org-abc\.md$/);
@@ -348,7 +380,7 @@ test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewSer
   assert.ok(calls.length >= 7, `재귀·위임 호출 ${calls.length}곳(기대 7+)`);
   for (const l of calls) assert.match(l, /\bjournal\b/, `journal 미전달: ${l.trim().slice(0, 90)}`);
   assert.match(src, /makeCrewServer\(wsId, agentSlug, [^\n]*workFolder, crewSink, journal, fullAuto\)/, 'makeCrewServer 호출부(crewSink = 네이티브 엔진 도구 sink, 하네스 통일 P-A; fullAuto = 풀 오토 모드 2026-09-26)');
-  assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/, 'request_approval 각인');
+  assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(\(purpose \|\| task \|\| need\) \? \{ plain: \{ purpose, task, need \} \} : \{\}\),\n\s*\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/, 'request_approval 각인(쉬운 문장화 plain 포함)');
   assert.equal((src.match(/\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/g) ?? []).length, 4, '결재 등록 4곳(request_approval·profile·hire·손님 턴 도구 설치) 전부 각인');
   const { isOrgTagged } = await import('../src/consolidate.mjs');
   assert.equal(isOrgTagged('2026-09-03-seoyun.org-abc-123.md'), true); assert.equal(isOrgTagged('2026-09-03-seoyun.md'), false);
@@ -1795,6 +1827,69 @@ test('drain: 거절·만료 안내가 일시 오류로 실패하면 커서 보�
     await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
     assert.equal(db2.calls.some((c) => c[0] === 'setCursor'), true, '영구 실패면 건너뛰고 전진(큐 정지 금지)');
   }
+});
+
+// 크루 작업 중단(유건 확정 2026-09-26) — 시킨 사람·크루 주인만 중단할 수 있음은 RPC 쪽 pg 테스트(msgr-crew-stop-pg.test.mjs)가 잠근다.
+// 여기서는 게이트웨이가 실제로 aborted 오류를 받았을 때 하는 일(부분 답 폐기 + 중단자 이름 한 줄 + 실행 completed)을 확인한다.
+test('중단된 턴은 부분 답 대신 중단자 이름 한 줄을 남기고 실행을 completed로 닫는다(첨부·넘김 없음)', async () => {
+  const REQUESTER = '55555555-5555-4555-8555-555555555555';
+  const db = fakeDb({ parent: { id: 5, body: '질문' }, names: { [REQUESTER]: '유건' }, stopRequestedBy: REQUESTER });
+  const runChat = async () => { throw turnAbortedError(); }; // msgr_request_stop → 게이트웨이 interruptTurn()이 던지는 것과 같은 모양
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat });
+  await h({ msgId: 41, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '오래 걸리는 일', authorId: MEMBER, replyTo: 5, threadRoot: 5, createdAt: new Date().toISOString() });
+  const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
+  assert.equal(ins.length, 1, '중단 안내 한 건만 — 부분 답·첨부 실패 안내 등 추가 글 없음');
+  assert.equal(ins[0].body, '유건님이 작업을 중단했습니다.', '중단을 요청한 사람의 표시 이름');
+  assert.deepEqual(ins[0].mentions, [], '중단된 턴은 다른 크루로 넘기지 않는다');
+  assert.equal(ins[0].meta.stopped, true);
+  assert.equal(db.calls.some((c) => c[0] === 'insertAttachment'), false, '중단된 턴은 첨부를 올리지 않는다');
+  assert.equal(M._activeCtxForTest.size, 0, '턴 문맥은 중단 뒤에도 지운다');
+});
+
+test('중단자를 확인 못 하면(조회 실패·기록 없음 — 데스크톱 정지 버튼처럼 RPC를 거치지 않은 중단 포함) 이름 없이 일반 문구로(L-5)', async () => {
+  const db = fakeDb({ parent: { id: 5, body: '질문' } }); // stopRequestedBy 기본값 null — msgr_executions에 아직 기록이 없는 경합
+  const runChat = async () => { throw turnAbortedError(); };
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat });
+  await h({ msgId: 42, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '일', authorId: MEMBER, replyTo: 5, threadRoot: 5, createdAt: new Date().toISOString() });
+  const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
+  assert.equal(ins[0].body, '작업이 중단되었습니다.', '이름을 모르면 "님이"를 붙이지 않는다');
+});
+
+// 크루 작업 중단 검수 2026-09-26 H-1: 방송은 깨우기 신호일 뿐이다 — payload만으로는 멈추지 않고, 서버(executionStopInfo)가
+// stop_requested_at을 확인해 줄 때만 멈춘다. 위조된 방송(같은 조직 누구나 org:로 보낼 수 있었던 것)은 이제 서버 확인에서 걸린다.
+test('handleStopRequest: 서버가 stop_requested를 확인해 줄 때만 멈추고, 모르는 crew_id·미확인 요청은 조용히 무시한다', async () => {
+  M._crewSlugsForTest.set(`${WS}:${CREW}`, 'seoyun');
+  const fakeSession = (confirmed) => async () => ({ db: { async executionStopInfo() { return confirmed ? { stop_requested_by: MEMBER, stop_requested_at: new Date().toISOString() } : null; } }, uid: OWNER });
+  try {
+    const calls = [];
+    const reg = registerTurn(WS, 'seoyun', () => calls.push('interrupted'), { source: 'messenger', tag: 1 });
+    try {
+      assert.equal(await M.handleStopRequest(WS, { crew_id: 'unknown-crew-id', source_msg_id: 1 }, { session: fakeSession(true) }), false, '모르는 crew_id는 서버 확인도 없이 무시');
+      assert.deepEqual(calls, []);
+      assert.equal(await M.handleStopRequest(WS, { crew_id: CREW, source_msg_id: 1 }, { session: fakeSession(false) }), false, '위조·아직 기록 없는 방송은 서버 확인에서 걸러 멈추지 않는다(H-1)');
+      assert.deepEqual(calls, [], '서버 확인 전에는 손대지 않는다');
+      assert.equal(await M.handleStopRequest(WS, { crew_id: CREW, source_msg_id: 1 }, { session: fakeSession(true) }), true, '서버가 확인해 준 요청만 멈춘다');
+      assert.deepEqual(calls, ['interrupted']);
+      assert.equal(reg.wasAborted(), true);
+    } finally { reg.release(); }
+    assert.equal(await interruptTurn(WS, 'seoyun', { source: 'messenger', tag: 1 }), false, '이미 끝난 턴에 온 중단 요청은 무시(등록 해제 뒤 재호출)');
+  } finally { M._crewSlugsForTest.delete(`${WS}:${CREW}`); }
+});
+
+// 크루 작업 중단 검수 2026-09-26 M-1: 같은 크루 slug로 도는 다른 source(예: 텔레그램)의 턴은 source_msg_id 태그가 달라 건드리지 않는다.
+test('handleStopRequest: source_msg_id가 다른(=지금 도는 잡이 아닌) 실행은 서버가 확인해 줘도 그 턴만 멈추고 다른 턴은 그대로', async () => {
+  M._crewSlugsForTest.set(`${WS}:${CREW}`, 'seoyun');
+  const fakeSession = async () => ({ db: { async executionStopInfo() { return { stop_requested_by: MEMBER, stop_requested_at: new Date().toISOString() }; } }, uid: OWNER });
+  try {
+    const calls = [];
+    const telegramTurn = registerTurn(WS, 'seoyun', () => calls.push('telegram-stopped'), { source: 'messenger' }); // 태그 없음 — 텔레그램 브리지처럼
+    const msgrTurn = registerTurn(WS, 'seoyun', () => calls.push('messenger-stopped'), { source: 'messenger', tag: 41 });
+    try {
+      assert.equal(await M.handleStopRequest(WS, { crew_id: CREW, source_msg_id: 41 }, { session: fakeSession }), true);
+      assert.deepEqual(calls, ['messenger-stopped'], '태그가 일치하는 실행만 멈춘다');
+      assert.equal(telegramTurn.wasAborted(), false, '같은 크루의 텔레그램 턴은 건드리지 않는다');
+    } finally { telegramTurn.release(); msgrTurn.release(); }
+  } finally { M._crewSlugsForTest.delete(`${WS}:${CREW}`); }
 });
 
 test('릴레이 대기 상한은 2분 — 1분 된 지시는 앞 크루를 기다리고, ORDER_WAIT_MS가 120초다', async () => {

@@ -146,7 +146,11 @@ test('메신저 로그아웃은 이 기기(scope local)만 — 전역이면 같�
 test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(고위험=관리자 기본), 정책 카드에 고위험 결재권 행, 브리지가 risk를 싣는다', () => {
   assert.match(app, /select\('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload'\)/, '결재 조회에 risk·kind·payload가 없다');
   const slip = app.slice(app.indexOf('function Slip('), app.indexOf('function Attachment('));
-  assert.match(slip, /const high = ap\.risk === 'high';/, '위험 판정');
+  // 분리 검수 M-1: high 판정은 approvalExpandDefault(ap)로 옮겼다 — approvalRisk 결과("ap.risk")를
+  // "명령 보기 기본 펼침"으로 바꾸는 표시 규칙 하나뿐이고(../src/approval-display.js), 여전히 새 위험
+  // 판정을 만들지 않는다. 그 함수의 행동은 apps/messenger/test/approval-display.test.mjs가 잠근다.
+  assert.match(slip, /const high = approvalExpandDefault\(ap\);/, '위험 판정(표시 규칙 함수 경유)');
+  assert.match(app, /import \{ approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalExpandDefault \} from '\.\/approval-display\.js';/, '결정 로직을 JSX 없는 파일로 분리 — node --test가 실제로 import해 검증할 수 있게(분리 검수 M-2·M-4)');
   assert.match(slip, /const mode = policy\?\.approval_high_by \?\? 'admin';\n\s*const byAdmin = high && mode !== 'owner';/, '정책 기본값은 admin이어야 한다');
   assert.match(slip, /const can = byAdmin \? \(!!isAdmin \|\| \(mode === 'approvers' && isApprover\)\) : owner;/, '확정권 = 고위험이면 관리자(또는 지정 결재권자), 아니면 소유자');
   assert.match(slip, /\{ap\.status === 'pending' && can && \(<>/, '버튼은 확정권자에게만');
@@ -158,7 +162,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
-  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \{\}\) \};/, '미러 행에 risk·(org_doc이면 kind·payload)가 없다');
+  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \(it\.plain \? \{ payload: \{ plain: it\.plain \} \} : \{\}\)\) \};/, '미러 행에 risk·(org_doc이면 kind·payload, plain이면 payload.plain)가 없다');
   assert.match(bridge, /ap = await c\.db\.insertApproval\(approval\)/, '일반 결재가 위험 판정 payload를 사용해야 한다');
   assert.match(bridge, /createThreadApproval\(event\.wsId, ctx\.crewId, ctx\.sourceMsgId \?\? ctx\.threadRoot, ctx\.channelId, approval, body\)/, '위임 결재도 같은 위험 판정 payload를 사용해야 한다');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
