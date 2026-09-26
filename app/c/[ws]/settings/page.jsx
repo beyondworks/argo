@@ -174,6 +174,7 @@ function Settings({ params }) {
       <CrewLanguageCard ws={ws} sysLang={data?.company?.lang} />
       <ZoomCard />
       </div>
+      <div className="cardrow"><FullAutoCard ws={ws} /></div>
       <div className="cardrow"><ThemeCard /></div>
       <div className="cardrow"><LocalAssetImport key={ws} ws={ws} /></div>
       </div>
@@ -329,6 +330,50 @@ function ZoomCard() {
           <span key={k} className="kbd mono" style={{ fontSize: 11, border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px' }}>{k}</span>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** 풀 오토 모드 — 회사 단위 스위치(유건 확정 2026-09-26), 기본 꺼짐. 저장은 company.json(credSync·
+    computerUse와 같은 관례 — PUT /api/companies/[ws], 서버가 불리언만 통과시킨다). company.json은
+    이미 크루 셸 쓰기 금지 목록(permission-gate.mjs WS_CONTROL_FILES)에 있어 이 필드도 같은 가드를
+    받는다 — 크루가 이 파일을 직접 고쳐 스스로 켤 수 없다. */
+function FullAutoCard({ ws }) {
+  const { t } = useLang();
+  const [value, setValue] = useState(null); // null = 로딩
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    api(`/api/companies/${ws}`).then((d) => setValue(d.company?.fullAuto === true)).catch(() => {});
+  }, [ws]);
+  async function save(next) {
+    if (busy) return;
+    setBusy(true); setErr('');
+    try {
+      const r = await fetch(`/api/companies/${ws}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ fullAuto: next }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || t('settings.fullAuto.saveErr'));
+      setValue(next);
+    } catch (e) { setErr(String(e.message || e)); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="card" style={{ padding: 18, display: 'grid', gap: 8 }}>
+      <span className="card-title">{t('settings.fullAuto.title')}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.fullAuto.desc')}</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 'auto', paddingTop: 10 }}>
+        {value === null ? <Skeleton h={18} w={90} /> : (
+          <>
+            <span className={value ? 'pill ok' : 'pill'}>{value ? t('settings.fullAuto.on') : t('settings.fullAuto.off')}</span>
+            <button type="button" className="btn sm" disabled={busy} onClick={() => save(!value)}>
+              {busy ? <Spinner size={12} /> : value ? t('settings.fullAuto.turnOff') : t('settings.fullAuto.turnOn')}
+            </button>
+          </>
+        )}
+      </div>
+      {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
     </div>
   );
 }
