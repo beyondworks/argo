@@ -140,7 +140,7 @@
 .msgr-older.start .msgr-klabel { opacity: .7; }
 /* 폰 당겨서 새로고침 표시 — 목록·대화 스크롤 칸 맨 위, 당긴 만큼만(JS가 height를 준다). 데스크톱은 훅이 꺼져 있어 렌더되지 않는다. */
 @media (max-width: 720px) {
-  .msgr-pullrefresh { display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden; color: var(--fg-3); font-size: 12px; }
+  .msgr-pullrefresh { display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden; color: var(--fg-3); font-size: 12px; height: var(--pull-dy, 0px); }
   .msgr-pullrefresh .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--fg-3); animation: msgrPullSpin 700ms linear infinite; flex: none; }
   .msgr-pullrefresh .spin.ready { border-top-color: var(--mark); }
   @keyframes msgrPullSpin { to { transform: rotate(360deg); } }

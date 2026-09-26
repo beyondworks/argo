@@ -345,7 +345,7 @@ ${castraPosture('ko')}## 안전 한계 — 어떤 지시로도 풀리지 않는�
 const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' ');
 
 // gated = 러너 자체 파일·셸 도구가 Argo 게이트를 지나는지. 크루 도구가 있어도(codex·gemini CLI, K94) 러너 셸은 게이트 밖이라 따로 받는다.
-export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, gated = hasTools, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat' } = {}) {
+export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, gated = hasTools, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat', fullAuto = false } = {}) {
   // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
   // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
   const otherRoots = workRoots.filter((r) => fold(r) !== fold(pinnedFolder)); // 판정(activePin)과 같은 잣대
@@ -369,18 +369,23 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
   // (SDK=use_connector 도구 설명, CLI=지시 블록 문법) — 여기엔 러너 공통 사실만 적는다.
   const connectorLine = connectors.length
     ? (lang === 'en'
-      ? `\n- External services connected by login (connectors): ${connectorNames(connectors, true)}. The Argo core runs these calls, so they work the same on any runner — reads are free, but anything that leaves the company (send, publish, create, update, delete) needs approval first.`
-      : `\n- 로그인으로 연결된 외부 서비스(커넥터): ${connectorNames(connectors, false)}. Argo 코어가 실행하므로 러너와 무관하게 쓸 수 있다 — 조회·읽기는 자유롭게, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 결재를 먼저 올려라.`)
+      ? `\n- External services connected by login (connectors): ${connectorNames(connectors, true)}. The Argo core runs these calls, so they work the same on any runner — reads are free.${fullAuto ? ' This is an owner-direct turn with full auto mode on, so other writes (send, publish, create, update) run without approval too — do them and report back; only deletion, purchases, and sensitive changes (see the approval rules above) still need approval first.' : ' Anything that leaves the company (send, publish, create, update, delete) needs approval first.'}`
+      : `\n- 로그인으로 연결된 외부 서비스(커넥터): ${connectorNames(connectors, false)}. Argo 코어가 실행하므로 러너와 무관하게 쓸 수 있다 — 조회·읽기는 자유롭게.${fullAuto ? ' 주인이 직접 지시한 이 턴은 풀 오토 모드라 그 밖의 쓰기(발송·게시·생성·수정)도 결재 없이 실행하고 결과를 보고하라 — 삭제·구매/결제·민감 정보 변경(위 결재 규칙 참고)만 결재를 먼저 올려라.' : ' 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 결재를 먼저 올려라.'}`)
     : '';
   const responsePacing = ['chat', 'messenger'].includes(source)
     ? (lang === 'en'
       ? '\n## Interactive response delays\n- For a normal question or status summary, use the smallest relevant lookup first. If external rate limits require a long wait, do not block the conversation with sleep or repeated polling: answer with verified facts and identify the unverified remainder and the service limitation. Never claim that a failed lookup found nothing.\n- If the captain explicitly asks you to wait or run work in the background, follow that request using the supported execution tools; describe the wait before starting it. This rule does not shorten necessary builds, tests, or other work the captain requested.\n'
       : '\n## 대화 응답 지연\n- 일반 질문·현황 요약은 관련된 최소 범위부터 조회하라. 외부 서비스 조회 한도 때문에 오래 기다려야 하면 sleep이나 반복 조회로 대화를 붙들지 말고, 확인된 사실을 먼저 답하고 미확인 범위와 서비스 제한을 밝혀라. 조회 실패를 결과 없음으로 말하지 마라.\n- 사장이 명시적으로 기다려 달라거나 백그라운드 작업을 요청했다면 지원되는 실행 도구로 그 지시를 따르고, 대기 전에 이유를 알려라. 이 규칙은 사장이 요청한 빌드·검수 등 필요한 작업 시간을 줄이라는 뜻이 아니다.\n')
     : '';
+  // 풀 오토(회사 단위 스위치, 유건 확정 2026-09-26)에서도 결재를 유지하는 3계급 — 요구사항 3.
+  // connectors.mjs의 CONNECTOR_DELETE/PURCHASE/SENSITIVE_WORDS와 같은 목록을 사람이 읽을 문장으로 풀어쓴 것 —
+  // 목록이 갈라지면 크루가 프롬프트로는 "이제 다 된다"고 말하고 실제로는 커넥터 게이트에 막히는 불일치가 난다.
+  const fullAutoExceptKo = '삭제, 돈이 나가는 일(구매·결제·구독), 민감 정보 변경(비밀번호·API 키·토큰·로그인 연결/해제·결제 수단·공유·권한 설정·계정 설정)';
+  const fullAutoExceptEn = 'deletion, anything that spends money (purchases, payments, subscriptions), and sensitive changes (passwords, API keys/tokens, connecting/disconnecting logins, payment methods, sharing/permission settings, account settings)';
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     return `\n## Approval rules — must follow
-- Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval. ${hasTools ? 'File an approval with the request_approval tool and wait for the decision.' : 'If approval is needed, do not execute — file it by ending your reply with a directive block: ```argo\n{"action":"approval","request":"<the action>","reason":"<why>"}\n``` It lands in the approval inbox, and once approved a follow-up instruction arrives. Never just SAY approval is required without the block (nothing reaches the inbox that way).'}
+- ${fullAuto ? `This is an owner-direct turn and full auto mode is on for this company: go ahead and execute everything except ${fullAutoExceptEn} without approval — including actions that leave the company (sending, publishing, editing, connector writes) — then report what you did.` : 'Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval.'} ${hasTools ? `File ${fullAuto ? `an approval for ${fullAutoExceptEn}` : 'an approval'} with the request_approval tool and wait for the decision.` : 'If approval is needed, do not execute — file it by ending your reply with a directive block: ```argo\n{"action":"approval","request":"<the action>","reason":"<why>"}\n``` It lands in the approval inbox, and once approved a follow-up instruction arrives. Never just SAY approval is required without the block (nothing reaches the inbox that way).'}
 - In-company work like drafting, analysis, and vault notes proceeds right away without approval.
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
@@ -388,7 +393,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
 - File system: ${isCliRunner(runner) && runner !== 'codex' && runner !== 'http' ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
 ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up current information): allowed.
 - Shell commands: allowed.
-- Preparation work (tool installs, setup) runs without approval. Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.
+- Preparation work (tool installs, setup) runs without approval.${fullAuto ? ` For this owner-direct turn, full auto mode also lets most actions that leave the company (sending, publishing, editing shared documents, connector writes) run without approval — do them and report the result. ${fullAutoExceptEn}, and hiring/profile changes, still require approval, so keep filing those.` : ' Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.'}
 - Never tell the captain to "enable file access in Settings". That setting does not exist: access is on by default. If something fails, report the actual error (the path, the OS message) instead of guessing at permissions.
 
 ## Tools & skills — use them proactively
@@ -412,7 +417,7 @@ ${responsePacing}## Your environment (Argo) — guide the captain precisely when
   // 추가하세요"라고 오안내)과 2026-07-29(파일 저장이 안 되자 "설정에서 쓰기 권한을 켜세요"라고
   // 안내했는데 그런 메뉴가 없어 사장이 한참 헤맴). 이제 능력은 전권이라 켤 것 자체가 없다.
   return `\n## 결재 규칙 — 반드시 따를 것
-- 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라. ${hasTools ? 'request_approval 도구로 결재를 올리고 결정을 기다려라.' : '결재가 필요하면 실행하지 말고, 답변 끝에 ```argo\n{"action":"approval","request":"<하려는 행동>","reason":"<왜>"}\n``` 지시 블록을 붙여 결재를 올려라 — 결재함에 등록되고, 승인되면 후속 지시가 온다. 블록 없이 "결재가 필요하다"고 말로만 하지 마라(결재함에 아무것도 안 올라간다).'}
+- ${fullAuto ? `이 턴은 주인이 직접 지시했고 이 회사는 풀 오토 모드가 켜져 있다: ${fullAutoExceptKo}를 뺀 모든 일은 결재 없이 바로 실행하라 — 회사 밖으로 나가는 발송·게시·수정·연결 서비스 쓰기도 포함이다. 실행한 뒤 결과를 보고하라.` : '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라.'} ${hasTools ? `${fullAuto ? `${fullAutoExceptKo}은(는)` : ''} request_approval 도구로 결재를 올리고 결정을 기다려라.` : '결재가 필요하면 실행하지 말고, 답변 끝에 ```argo\n{"action":"approval","request":"<하려는 행동>","reason":"<왜>"}\n``` 지시 블록을 붙여 결재를 올려라 — 결재함에 등록되고, 승인되면 후속 지시가 온다. 블록 없이 "결재가 필요하다"고 말로만 하지 마라(결재함에 아무것도 안 올라간다).'}
 - 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
@@ -420,7 +425,7 @@ ${responsePacing}## Your environment (Argo) — guide the captain precisely when
 - 파일 시스템: ${isCliRunner(runner) && runner !== 'codex' && runner !== 'http' ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
 ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
 - 셸 명령: 허용.
-- 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다. **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.
+- 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다.${fullAuto ? ` 주인이 직접 지시한 이 턴은 풀 오토 모드라 회사 밖으로 나가는 대부분의 행동(발송·게시·문서 수정·연결 서비스 쓰기)도 결재 없이 진행하고 결과를 보고하라. **${fullAutoExceptKo}, 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.` : ' **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.'}
 - **"설정에서 파일 권한을 켜세요"라고 안내하지 마라. 그런 설정은 없다** — 접근은 기본으로 열려 있다. 실패하면 권한 탓으로 추측하지 말고 실제 오류(경로와 OS 메시지)를 그대로 보고하라.
 
 ## 도구·스킬 — 필요하면 알아서 불러 써라
@@ -465,7 +470,7 @@ export const CONNECTOR_DESC_CAP = 1200;
 /** use_connector 설명(순수) — 연결된 서버·도구 요약을 주입한다. 상한 초과분은 절단 표시와 함께 자른다.
     쓰기 계열의 결재 경유는 1차 규칙이 프롬프트다(설계서 §2-4 — 도구 단위 하드 게이트는 2차).
     (export: 회귀 테스트용) */
-export function connectorToolDescription(connectors, lang = 'ko') {
+export function connectorToolDescription(connectors, lang = 'ko', fullAuto = false) {
   const en = lang === 'en';
   const body = connectors.map((c) => {
     const tools = c.tools.length
@@ -488,9 +493,9 @@ export function connectorToolDescription(connectors, lang = 'ko') {
   if (connectors.some((c) => c.more > 0)) more = true; // 서버당 상한으로 잘린 것도 "목록이 전부가 아님"
   const reauth = connectors.some((c) => c.status === 'reauth');
   if (en) {
-    return `Call a tool on an external service connected to this company by login (Gmail, Drive, Notion, …). The Argo core runs the call, so it works the same on any runner. server = the connected service id, tool = a tool name on that service, args = that tool's arguments object. Connected right now — ${summary}. ${more ? 'That list is trimmed — if a tool you need is not shown, call it by its documented name anyway; the service validates it. ' : 'Use only names from that list. '}If you need another service, ask the captain to connect it in Settings. Reads and lookups are free, but anything that leaves the company (send, publish, create, update, delete) must go through request_approval first.${reauth ? ' Services marked [needs reconnect] will fail until the captain reconnects them in Settings — say so instead of retrying.' : ''}`;
+    return `Call a tool on an external service connected to this company by login (Gmail, Drive, Notion, …). The Argo core runs the call, so it works the same on any runner. server = the connected service id, tool = a tool name on that service, args = that tool's arguments object. Connected right now — ${summary}. ${more ? 'That list is trimmed — if a tool you need is not shown, call it by its documented name anyway; the service validates it. ' : 'Use only names from that list. '}If you need another service, ask the captain to connect it in Settings. Reads and lookups are free.${fullAuto ? ' This is an owner-direct turn with full auto mode on, so other writes (send, publish, create, update) go straight through too — the core still requires approval for deletion, purchases, and sensitive changes (sharing, permissions, credentials, payment methods), so those still file to request_approval.' : ' Anything that leaves the company (send, publish, create, update, delete) must go through request_approval first.'}${reauth ? ' Services marked [needs reconnect] will fail until the captain reconnects them in Settings — say so instead of retrying.' : ''}`;
   }
-  return `로그인으로 이 회사에 연결된 외부 서비스(Gmail·Drive·Notion 등)의 도구를 호출한다. Argo 코어가 실행하므로 어떤 러너에서도 똑같이 동작한다. server=연결된 서비스 id, tool=그 서비스의 도구 이름, args=그 도구의 인자 객체. 지금 연결된 것 — ${summary}. ${more ? '이 목록은 잘린 것이다 — 필요한 도구가 안 보이면 그 서비스의 알려진 이름으로 그냥 호출해라(서버가 검증한다). ' : '이 목록에 있는 이름만 써라. '}다른 서비스가 필요하면 사장에게 설정에서 연결해 달라고 안내하라. 조회·읽기는 자유롭게 쓰고, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 request_approval로 결재를 먼저 올려라.${reauth ? ' [재연결 필요] 표시가 붙은 서비스는 호출해도 실패한다 — 재시도하지 말고 사장에게 설정에서 다시 연결해 달라고 알려라.' : ''}`;
+  return `로그인으로 이 회사에 연결된 외부 서비스(Gmail·Drive·Notion 등)의 도구를 호출한다. Argo 코어가 실행하므로 어떤 러너에서도 똑같이 동작한다. server=연결된 서비스 id, tool=그 서비스의 도구 이름, args=그 도구의 인자 객체. 지금 연결된 것 — ${summary}. ${more ? '이 목록은 잘린 것이다 — 필요한 도구가 안 보이면 그 서비스의 알려진 이름으로 그냥 호출해라(서버가 검증한다). ' : '이 목록에 있는 이름만 써라. '}다른 서비스가 필요하면 사장에게 설정에서 연결해 달라고 안내하라. 조회·읽기는 자유롭게 쓰고,${fullAuto ? ' 이 턴은 주인이 직접 지시했고 풀 오토 모드가 켜져 있어 그 밖의 쓰기(발송·게시·생성·수정)도 그대로 나간다 — 삭제·구매/결제·민감 정보 변경(공유·권한·자격·결제 수단 등)은 코어가 여전히 결재를 거니 그건 request_approval로 올려라.' : ' 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 request_approval로 결재를 먼저 올려라.'}${reauth ? ' [재연결 필요] 표시가 붙은 서비스는 호출해도 실패한다 — 재시도하지 말고 사장에게 설정에서 다시 연결해 달라고 알려라.' : ''}`;
 }
 
 /** 이 턴에서 위임·쪽지를 보낼 수 있는 동료 — hop 2 상한, 체인 순환 차단(직전 발신자 회신은 허용), 메신저 턴은 그 방의 내 크루만.
@@ -510,7 +515,7 @@ async function turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx) {
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
     connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
-export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null) { // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달)
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false) { // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다)
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
   // 크루 도구는 SDK·네이티브 모두 권한 게이트를 건너뛴다(사전 승인·gated:false) — 손님 판정은 **처리기 안이 유일한 자리**다.
   // 그래서 러너와 무관하게 걸린다. 주인의 비용·설정을 직접 바꾸는 도구(예약·장기 작업·도구 설치)만 막고, 결재·넘김은 그대로 둔다.
@@ -547,7 +552,12 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
 
   const requestApproval = tool(
     'request_approval',
-    '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)을 실행하기 전에 사장의 결재를 요청한다. action은 하려는 행동 한 문장, reason은 왜 필요한지.',
+    // 풀 오토(회사 단위 스위치)면서 주인 직접 턴(fullAuto=true, 호출부가 guest까지 판정)이면 결재 대상이
+    // 삭제·구매/결제·민감 정보 변경 3계급으로 좁아진다(요구사항 3) — connectors.mjs 커넥터 쓰기 게이트와
+    // 같은 목록. 셸 고위험 결재(risky-shell.mjs)는 이 도구가 아니라 별도 경로라 여기서 언급하지 않는다.
+    fullAuto
+      ? '삭제, 돈이 나가는 일(구매·결제·구독), 민감 정보 변경(비밀번호·API 키·토큰·로그인 연결/해제·결제 수단·공유·권한 설정·계정 설정)을 실행하기 전에 사장의 결재를 요청한다. 그 밖의 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·문서 수정 등)은 이 회사의 풀 오토 모드가 켜져 있고 사장이 직접 지시한 턴이라 결재 없이 바로 실행하고 결과를 보고하면 된다. action은 하려는 행동 한 문장, reason은 왜 필요한지.'
+      : '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)을 실행하기 전에 사장의 결재를 요청한다. action은 하려는 행동 한 문장, reason은 왜 필요한지.',
     { action: z.string(), reason: z.string() },
     async ({ action, reason }) => {
       // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다 — 같은 크루의 동시 턴에서도 오배달 없음)
@@ -904,7 +914,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // 러너 프로세스에서 터져 코어가 개입할 수 없고, CLI 표면과 능력이 갈린다(중립성 위반).
   const useConnector = tool(
     'use_connector',
-    connectorToolDescription(connectors, lang),
+    connectorToolDescription(connectors, lang, fullAuto),
     { server: z.string(), tool: z.string(), args: z.record(z.string(), z.unknown()).optional() },
     async ({ server, tool: toolName, args }) => {
       // 결과·오류 문구는 코어가 이미 회사 언어로 정규화해 돌려준다(미연결·재연결 필요 포함).
@@ -1059,9 +1069,13 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
   // 문구를 뺐다. 사라진 화면을 가리키면 막다른 길이 된다. 값은 회사 파일·API로만 바뀐다.
-  const { budgetUsd, lang = 'ko', computerUse = false } = await loadCompany(wsId).catch(() => ({}));
+  const { budgetUsd, lang = 'ko', computerUse = false, fullAuto: companyFullAuto = false } = await loadCompany(wsId).catch(() => ({}));
   // 컴퓨터 유즈는 회사 명시 옵트인(computerUse:true)만 — 기본 꺼짐(분리 검수 CRITICAL-2: 화면 채널은 권한 게이트 하드라인을 우회한다)
   const computerOn = computerUse === true;
+  // 풀 오토 모드(회사 단위 스위치, 유건 확정 2026-09-26) — 기본 꺼짐 + **주인이 직접 지시한 턴에만**(요구사항 2).
+  // guest는 위에서 이미 isGuestCtx로 판정했다: 손님·조직 채널 타인·뿌리가 주인이 아닌 넘김은 전부 guest=true라
+  // 여기서 자동으로 걸러진다 — 웹 채팅·주인의 메신저 DM·주인의 텔레그램은 guest=false다.
+  const fullAuto = companyFullAuto === true && !guest;
   if (budgetUsd > 0) {
     const spent = (await monthCost(wsId)).costUsd; // 청구 턴만 — 구독(OAuth) 턴은 돈이 안 나가 예산을 갉지 않는다
     if (spent >= budgetUsd) {
@@ -1278,7 +1292,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliColleagues = bridgeable ? await turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx) : [];
       if (bridgeable) {
         const sink = [];
-        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal);
+        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto);
         // 자식 파일이 없는 산출물(셀프호스트 등)이면 크루 도구 없이 진행한다 — 도구 부재가 턴 사망이 되면 안 된다(분리 검수 LOW-7)
         crewBridge = await createCrewMcpBridge(crewToolSpecs(sink)).catch((e) => { console.warn(`[argo] 크루 도구 다리 생략(지시 블록으로 진행): ${e?.message ?? e}`); return null; });
       }
@@ -1291,7 +1305,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -1513,7 +1527,7 @@ ${lang === 'en'
   // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
   const nativeOn = nativeRunnerEnabled(runner);
   const crewSink = nativeOn ? [] : null;
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal);
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto);
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.
@@ -1634,7 +1648,7 @@ ${lang === 'en'
   // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
   const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
     + (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : colleagues.length ? rosterPrompt(colleagues, lang) : '')
-    + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder, source: turnSource })
+    + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder, source: turnSource, fullAuto })
     + (browserBridge ? browserMcpDirective(lang) : '')
     + messengerNote
     + fallbackDirective;

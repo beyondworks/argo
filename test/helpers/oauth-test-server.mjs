@@ -22,7 +22,7 @@ import { z } from 'zod';
  * toolCalls[name] = 그 도구가 **실제로 실행된 횟수**. 결재 게이트가 부작용을 정말 막았는지 재는 유일한 근거다.
  * accessTtlMs를 짧게 주면 만료→자동 refresh 시나리오를 실시간으로 돌릴 수 있다.
  */
-export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
+export async function startOauthTestServer({ accessTtlMs = 3_600_000, extraTools = [] } = {}) {
   // 포트 0 임의 배정 — BASE(issuerUrl)가 라우터 구성보다 먼저 필요하므로, http 서버를 먼저 listen하고
   // 실제 포트를 안 뒤 express 앱을 request 핸들러로 붙인다(선점 경쟁 없음).
   const srv = http.createServer();
@@ -103,6 +103,15 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
       description: '데모 초안 생성(쓰기, annotations 미제공)',
       inputSchema: { subject: z.string() },
     }, async ({ subject }) => { ran('create_draft_demo'); return { content: [{ type: 'text', text: `demo draft "${subject}" created` }] }; });
+    // 기본 3종 + 옵트인 추가 도구 — 호출측이 안 주면 기본 3종 그대로다(기존 호출부의 도구 목록·개수
+    // 단언을 건드리지 않는다). 풀 오토 결재 3계급(delete·purchase·sensitive) 테스트가 쓴다.
+    for (const t of extraTools) {
+      s.registerTool(t.name, {
+        description: t.description ?? `데모 추가 도구 — ${t.name}`,
+        inputSchema: t.inputSchema ?? {},
+        ...(t.annotations ? { annotations: t.annotations } : {}),
+      }, async (input) => { ran(t.name); return (await t.handler?.(input)) ?? { content: [{ type: 'text', text: `demo ${t.name} ran` }] }; });
+    }
     return s;
   }
 

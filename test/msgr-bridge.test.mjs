@@ -348,7 +348,7 @@ test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewSer
   const calls = src.split('\n').filter((l) => /await chat\(wsId, (agentSlug|target\.slug),/.test(l));
   assert.ok(calls.length >= 7, `재귀·위임 호출 ${calls.length}곳(기대 7+)`);
   for (const l of calls) assert.match(l, /\bjournal\b/, `journal 미전달: ${l.trim().slice(0, 90)}`);
-  assert.match(src, /makeCrewServer\(wsId, agentSlug, [^\n]*workFolder, crewSink, journal\)/, 'makeCrewServer 호출부(crewSink = 네이티브 엔진 도구 sink, 하네스 통일 P-A)');
+  assert.match(src, /makeCrewServer\(wsId, agentSlug, [^\n]*workFolder, crewSink, journal, fullAuto\)/, 'makeCrewServer 호출부(crewSink = 네이티브 엔진 도구 sink, 하네스 통일 P-A; fullAuto = 풀 오토 모드 2026-09-26)');
   assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/, 'request_approval 각인');
   assert.equal((src.match(/\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/g) ?? []).length, 4, '결재 등록 4곳(request_approval·profile·hire·손님 턴 도구 설치) 전부 각인');
   const { isOrgTagged } = await import('../src/consolidate.mjs');

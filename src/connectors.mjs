@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
-import { paths } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { appendEvent } from './events.mjs';
@@ -367,6 +367,38 @@ export function connectorToolNeedsApproval(toolName, tools = [], dangerous = [])
   return dangerous.includes(toolName);                 // 서버가 말을 안 했다 — 보완 목록으로 판정
 }
 
+/** 풀 오토(회사 단위 스위치, 유건 확정 2026-09-26)에서도 결재를 유지하는 3계급 — 삭제·구매/결제·민감
+    정보 변경. 판정은 ① 서버 annotations.destructiveHint(삭제만 — MCP 표준에 이 하나뿐), ② 도구 이름에
+    유건이 확정한 키워드가 **부분 문자열로** 있는가다. 부분 문자열은 과차단 쪽으로 기운다(예:
+    "send_payload"가 "pay"에 걸림) — 애매하면 결재를 유지하라는 지시(요구사항 3)를 그대로 따른 것이라
+    의도한 보수적 판정이다. 이름 규칙이 서비스마다 달라 정확한 토큰 경계를 잡을 표준이 없다.
+    (export: 순수함수 — 단위 테스트가 유건이 준 경계 예시를 그대로 잰다) */
+const CONNECTOR_DELETE_WORDS = ['delete', 'remove', 'trash', 'destroy', 'purge'];
+// transfer·refund 추가(분리 검수 MEDIUM, 2026-09-26) — 계좌 이체·환불도 돈이 움직이는 일이다.
+const CONNECTOR_PURCHASE_WORDS = ['purchase', 'buy', 'order', 'checkout', 'pay', 'charge', 'subscription', 'transfer', 'refund'];
+// login·auth·connect·disconnect·unlink·revoke·filter·forward 추가(분리 검수 MEDIUM, 2026-09-26) — 로그인
+// 연결/해제(계정 자체를 바꾸는 일)와 메일 필터·자동전달 규칙(제3자에게 정보가 새는 길을 여는 일)까지 포함.
+// 과차단(예: "reconnect_call" 같은 무관한 이름도 걸림)은 요구사항 3의 "애매하면 결재"를 그대로 따른
+// 의도된 선택이다.
+const CONNECTOR_SENSITIVE_WORDS = ['share', 'permission', 'acl', 'invite', 'public', 'password', 'credential', 'token', 'secret', 'key', 'oauth', 'billing', 'account', 'login', 'auth', 'connect', 'disconnect', 'unlink', 'revoke', 'filter', 'forward'];
+const hasAnyWord = (name, words) => words.some((w) => name.includes(w));
+
+/** 이 도구가 풀 오토에서도 결재가 필요한 3계급 중 무엇인가 — 'delete'|'purchase'|'sensitive'|'general'.
+    'general'만 풀 오토가 결재를 건너뛴다. */
+export function connectorRiskCategory(toolName, annotations = {}) {
+  const name = String(toolName ?? '').toLowerCase();
+  if (annotations?.destructiveHint === true || hasAnyWord(name, CONNECTOR_DELETE_WORDS)) return 'delete';
+  if (hasAnyWord(name, CONNECTOR_PURCHASE_WORDS)) return 'purchase';
+  if (hasAnyWord(name, CONNECTOR_SENSITIVE_WORDS)) return 'sensitive';
+  return 'general';
+}
+
+/** 풀 오토여도 이 도구는 결재를 유지해야 하는가(연결 서비스 쓰기 전용 — 셸 고위험 결재(risky-shell.mjs)와는
+    무관, 그건 손대지 않는다). general이 아니면 전부 결재 유지. */
+export function connectorAlwaysNeedsApproval(toolName, annotations = {}) {
+  return connectorRiskCategory(toolName, annotations) !== 'general';
+}
+
 /** 사람 문구 — 안정 코드(error)와 분리해서 언어만 고른다. */
 export const connectorMessage = (key, lang, ...a) => (MSG[key][lang === 'en' ? 'en' : 'ko'])(...a);
 /** 실패 결과 — error는 소비자가 분기하는 안정 코드, content는 크루가 읽는 회사 언어 문구. */
@@ -399,8 +431,10 @@ async function callViaPool(wsId, serverId, url, tool, args, retryLeft, lang) {
     자동 갱신 시나리오가 approval_pending으로 떨어짐). 만료는 SDK가 조용히 갱신하는 정상 상황인데
     그때마다 사장에게 승인 버튼이 쌓이면 이 기능이 소음이 된다.
     실패했을 땐 카탈로그의 `dangerous`가 근거다 — 실사용에서 **연결된 서버는 반드시 카탈로그에 있다**
-    (connectConnector가 카탈로그에서만 찾는다). 그 목록은 등재 시 실측으로 채운다. */
-async function needsApprovalNow(wsId, serverId, tool) {
+    (connectConnector가 카탈로그에서만 찾는다). 그 목록은 등재 시 실측으로 채운다.
+    fullAuto(회사 단위 스위치 + 주인 직접 턴에서만 true — 호출부가 판정) — 원래 결재가 걸리는 쓰기도
+    delete·purchase·sensitive 3계급(connectorAlwaysNeedsApproval)이 아니면 결재를 건너뛴다. */
+async function needsApprovalNow(wsId, serverId, tool, { fullAuto = false } = {}) {
   const { connectorCatalogFor } = await import('./market.mjs'); // 동적 — market→connectors 순환 방지
   const dangerous = connectorCatalogFor('ko').find((c) => c.id === serverId)?.dangerous ?? [];
   const listed = await listConnectorTools(wsId, serverId).catch(() => ({ ok: false, tools: [] }));
@@ -408,7 +442,10 @@ async function needsApprovalNow(wsId, serverId, tool) {
   // 거절할 호출이라 비용이 없고, 반대로 통과시키면 `dangerous`(닫힌 목록) 밖의 새 쓰기 도구가
   // 무결재로 나간다(분리 검수 실측: annotations 없는 쓰기 도구가 결재 0건으로 실행됐다).
   if (listed.ok && !listed.tools?.some((t) => t?.name === tool)) return true;
-  return connectorToolNeedsApproval(tool, listed.tools ?? [], dangerous);
+  if (!connectorToolNeedsApproval(tool, listed.tools ?? [], dangerous)) return false;
+  if (!fullAuto) return true;
+  const t = listed.tools?.find((x) => x?.name === tool);
+  return connectorAlwaysNeedsApproval(tool, t?.annotations ?? {});
 }
 
 /**
@@ -417,11 +454,20 @@ async function needsApprovalNow(wsId, serverId, tool) {
  */
 export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko', slug = null, approved = false, mirrorCtx = null } = {}) {
   let ok = false;
+  // 풀 오토로 원래 결재가 걸렸을 쓰기를 건너뛴 경우만 채운다 — 활동 기록용(요구사항 c). 애초에
+  // 자유였던 조회까지 기록하면 소음이라 남기지 않는다(DB 위생 규칙, CLAUDE.md 2026-09-23).
+  let autoApprovedNote = null;
   try {
     let result;
     const rec = (await loadStore(wsId).catch(() => ({ servers: {} }))).servers[serverId];
     const { isGuestCtx } = await import('./gateway/msgr-handoff.mjs'); // 동적 — 다른 msgr-handoff 사용처와 같은 순환 방지
-    if (isGuestCtx(mirrorCtx)) {
+    const isGuest = isGuestCtx(mirrorCtx);
+    // 풀 오토(회사 단위 스위치, 유건 확정 2026-09-26) — **주인이 직접 지시한 턴에만**(요구사항 2).
+    // isGuest는 손님·조직 채널 타인·뿌리가 주인이 아닌 넘김을 이미 전부 걸러 준다(isGuestCtx 단일 판정,
+    // src/gateway/msgr-handoff.mjs). 웹 채팅·주인의 텔레그램·슬랙은 mirrorCtx가 'msgr'이 아니라
+    // isGuestCtx가 애초에 false를 준다 — 즉 이 한 줄이 요구사항 2의 적용 범위 그대로다.
+    const fullAuto = !isGuest && (await loadCompany(wsId).catch(() => ({}))).fullAuto === true;
+    if (isGuest) {
       // 러너 무관 단일 지점(설계서 §1) — SDK use_connector·CLI 지시 블록이 전부 여기로 모인다. approved(결재 완결 재진입)여도 막지 않는다:
       // 손님 턴이 만든 커넥터 결재는 없다(위 문구가 결재를 '주인에게' 올리라고 하고, 그 결재 완결은 주인의 컨텍스트에서 돈다).
       result = fail('guest_blocked', connectorMessage('guest_blocked', lang, serverId));
@@ -433,7 +479,7 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       // 저장된 ko 문구를 그대로 끼워 넣으면 영어 모드에 한국어가 샌다 — 코드가 있으면 요청 언어로 다시 그린다.
       const detail = rec.errorCode && MSG[rec.errorCode] ? connectorMessage(rec.errorCode, lang, rec.errorDetail ?? '') : rec.error;
       result = fail('not_connected', connectorMessage('not_connected_status', lang, serverId, `${rec.status}${detail ? ` (${detail})` : ''}`));
-    } else if (!approved && await needsApprovalNow(wsId, serverId, tool)) {
+    } else if (!approved && await needsApprovalNow(wsId, serverId, tool, { fullAuto })) {
       // 결재 게이트 — **러너 무관 단일 지점**이다. SDK 표면(use_connector)도 CLI 지시 블록도 이 함수로
       // 수렴하므로(설계서 §1), 여기 한 번 걸면 어느 러너로도 우회가 없다. 러너별로 걸면 반드시 갈린다.
       const { addApproval } = await import('./approvals.mjs'); // 동적 — approvals→chat→connectors 순환 방지
@@ -463,12 +509,22 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       result = fail('approval_pending', connectorMessage('approval_pending', lang, tool));
     } else {
       result = await callViaPool(wsId, serverId, rec.url, tool, args, 1, lang);
+      // 풀 오토가 원래 결재를 걸었을 쓰기를 건너뛴 경우만 표시한다 — needsApprovalNow(fullAuto:false)로
+      // "풀 오토가 없었다면 결재가 걸렸을까"를 다시 물어본다(listConnectorTools는 풀 캐시라 추가 호출이 아니다).
+      if (fullAuto && !approved && await needsApprovalNow(wsId, serverId, tool, { fullAuto: false })) {
+        autoApprovedNote = { serverId, tool };
+      }
     }
     ok = result.ok;
     return result;
   } finally {
     // 사용 원장 — 활동 화면 가시화(설계서 §2-1). args는 기록하지 않는다(사용자 데이터 최소 수집).
     await appendEvent(wsId, { type: 'connector', server: serverId, tool, ok });
+    // 풀 오토 자동 승인 기록(요구사항 c) — 기존 관례(chat.mjs 도구 설치 자동 승인)와 같은 모양.
+    if (autoApprovedNote) {
+      await appendEvent(wsId, { type: 'approval', slug: slug || 'crew', id: 'auto',
+        action: `${autoApprovedNote.serverId} · ${autoApprovedNote.tool}(풀 오토 자동 승인)`, status: 'approved' }).catch(() => {});
+    }
   }
 }
 
