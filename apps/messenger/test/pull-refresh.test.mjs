@@ -1,8 +1,8 @@
-// 당겨서 새로고침 판정(순수 함수) — 유건 결정: 임계 70px, 맨 위에서만, location.reload()
+// 당겨서 새로고침 판정(순수 함수) — 유건 결정: 임계 약 110px(iOS 기본 앱 수준), 맨 위에서만, location.reload()
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { REFRESH_THRESHOLD, REFRESH_MAX, pullDistance, shouldRefresh, canStartPull, isVerticalPull } from '../src/pull-refresh.mjs';
+import { REFRESH_THRESHOLD, REFRESH_MAX, PULL_QUIET_MS, pullDistance, shouldRefresh, canStartPull, isVerticalPull } from '../src/pull-refresh.mjs';
 
 test('pullDistance — 임계 전엔 1:1, 넘으면 저항(고무줄), 음수는 0', () => {
   assert.equal(pullDistance(-10), 0);
@@ -14,16 +14,24 @@ test('pullDistance — 임계 전엔 1:1, 넘으면 저항(고무줄), 음수는
 });
 
 test('shouldRefresh — 임계 이상만 참', () => {
-  assert.equal(shouldRefresh(69), false);
-  assert.equal(shouldRefresh(70), true);
+  assert.equal(shouldRefresh(REFRESH_THRESHOLD - 1), false);
+  assert.equal(shouldRefresh(REFRESH_THRESHOLD), true);
   assert.equal(shouldRefresh(500), true);
 });
 
-test('canStartPull — 스크롤 맨 위 + 손가락 하나일 때만', () => {
+test('canStartPull — 스크롤 맨 위 + 손가락 하나일 때만(msSinceScroll 생략 시 항상 허용)', () => {
   assert.equal(canStartPull(0, 1), true);
   assert.equal(canStartPull(1, 1), false, '1px라도 내려가 있으면 시작 안 함(대화의 이전 기록 스크롤과 안 겹치게)');
   assert.equal(canStartPull(0, 2), false, '멀티터치는 제외');
   assert.equal(canStartPull(-1, 1), true, 'iOS 바운스로 음수가 나올 수 있어 0 이하는 전부 허용');
+});
+
+// 유건 제보(2026-09-26): "최적화가 안 된 느낌" — 관성 스크롤로 맨 위에 막 닿은 직후 시작한 터치는 당김이 아니다.
+test('canStartPull — 관성 스크롤 직후(PULL_QUIET_MS 안)는 시작 안 함, 지나면 시작', () => {
+  assert.equal(canStartPull(0, 1, 0), false, '방금 스크롤이 멎었다');
+  assert.equal(canStartPull(0, 1, PULL_QUIET_MS - 1), false);
+  assert.equal(canStartPull(0, 1, PULL_QUIET_MS), true, '경계값은 허용');
+  assert.equal(canStartPull(0, 1, PULL_QUIET_MS + 500), true, '충분히 정지해 있었다');
 });
 
 test('배선 — usePullToRefresh 훅이 데스크톱에는 붙지 않고(isPhone만), 새로고침은 location.reload()', () => {
