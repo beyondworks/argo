@@ -329,6 +329,35 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
   assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n(?:\s*if \(mirrorCtx\) \{ const mem = await crewMemoryForMail\(mirrorCtx\.crewId, mirrorCtx\.channelId\)[^\n]*\n)?\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : await briefingCtx\(cid, 'crewmail', slug\)[^\n]*\) \}\);/, '배달 턴이 채널 문맥으로(메신저 밖 쪽지는 목적지 범위 — 행동은 shared-dest-context)');
 });
 
+// 분리 검수 H-1·M-4 — plain이 있어도 카드 payload에 실리고, 카드 글 본문(다른 창구·검색·구버전
+// 클라이언트가 보는 텍스트)에서 실제 실행될 명령이 사라지면 안 된다. msgrPush를 실제로 태우고
+// insertApproval·insertMessage 호출 인자를 검증한다(소스 문자열 정규식이 아니다).
+test('push: 결재에 plain(목적·할 일·필요한 것)이 있으면 카드 payload에 실리고, 카드 본문에 "명령: <action>" 한 줄이 반드시 남는다', async () => {
+  const db = fakeDb({ parent: msg(7) });
+  const session = async () => ({ db, uid: OWNER });
+  const it = await addApproval(WS, {
+    slug: 'seoyun', action: 'sendGmail(to=subs@list, subject="9월 뉴스레터")', reason: 'CEO 지시',
+    plain: { purpose: '이번 달 뉴스레터 발송 완료', task: '구독자 1200명에게 메일 발송', need: 'Gmail 발송 권한' },
+    msgr: { orgId: ORG, channelId: CH, crewId: CREW },
+  });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session }), true);
+  const ap = db.calls.filter((x) => x[0] === 'insertApproval').at(-1)[1];
+  assert.deepEqual(ap.payload, { plain: { purpose: '이번 달 뉴스레터 발송 완료', task: '구독자 1200명에게 메일 발송', need: 'Gmail 발송 권한' } }, '카드 payload에 plain이 실린다');
+  const card = db.calls.filter((x) => x[0] === 'insertMessage').at(-1)[1];
+  assert.match(card.body, /할 일: 구독자 1200명에게 메일 발송/, 'plain 문장이 카드 본문에 보인다');
+  assert.match(card.body, /명령: sendGmail\(to=subs@list, subject="9월 뉴스레터"\)/, 'H-1: plain이 있어도 실제 실행될 명령이 본문에 항상 남는다');
+});
+
+test('push: 결재에 plain이 없으면(폴백) 카드 본문에 새 "명령:" 줄을 붙이지 않는다(회귀 없음)', async () => {
+  const db = fakeDb({ parent: msg(7) });
+  const session = async () => ({ db, uid: OWNER });
+  const it = await addApproval(WS, { slug: 'seoyun', action: '경쟁사 리포트 업로드', reason: '분기 보고', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session }), true);
+  const card = db.calls.filter((x) => x[0] === 'insertMessage').at(-1)[1];
+  assert.match(card.body, /경쟁사 리포트 업로드/);
+  assert.doesNotMatch(card.body, /명령:/, '폴백 카드는 기존 본문 그대로');
+});
+
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
   const h = await saveHandover(WS, 'seoyun', '지시', '답', '서윤', { tag: 'org-abc' });
   assert.match(h.file, /\d{4}-\d{2}-\d{2}-seoyun\.org-abc\.md$/);
@@ -349,7 +378,7 @@ test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewSer
   assert.ok(calls.length >= 7, `재귀·위임 호출 ${calls.length}곳(기대 7+)`);
   for (const l of calls) assert.match(l, /\bjournal\b/, `journal 미전달: ${l.trim().slice(0, 90)}`);
   assert.match(src, /makeCrewServer\(wsId, agentSlug, [^\n]*workFolder, crewSink, journal, fullAuto\)/, 'makeCrewServer 호출부(crewSink = 네이티브 엔진 도구 sink, 하네스 통일 P-A; fullAuto = 풀 오토 모드 2026-09-26)');
-  assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/, 'request_approval 각인');
+  assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(\(purpose \|\| task \|\| need\) \? \{ plain: \{ purpose, task, need \} \} : \{\}\),\n\s*\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/, 'request_approval 각인(쉬운 문장화 plain 포함)');
   assert.equal((src.match(/\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/g) ?? []).length, 4, '결재 등록 4곳(request_approval·profile·hire·손님 턴 도구 설치) 전부 각인');
   const { isOrgTagged } = await import('../src/consolidate.mjs');
   assert.equal(isOrgTagged('2026-09-03-seoyun.org-abc-123.md'), true); assert.equal(isOrgTagged('2026-09-03-seoyun.md'), false);

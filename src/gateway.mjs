@@ -13,7 +13,7 @@ import { loadConnections, updateConnection, updateAgentBot } from './connections
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn, appendSharedNote, turnScope, scopeKey, scopedSession } from './thread.mjs';
 import { resolveWithFollowUp } from './approval-actions.mjs';
-import { setApprovalMeta } from './approvals.mjs';
+import { setApprovalMeta, approvalPlainText, approvalCommandLabel } from './approvals.mjs';
 import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 작업 완료 통지(잡 핸들러)
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel } from './sync.mjs';
@@ -1007,10 +1007,16 @@ async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPu
     const dest = resolveTelegramDest(t, 'approval', event.item.slug, agents, { widen: true });
     if (!dest) warnStrandedBots(t, event.wsId, 'approval'); // N1 — "결재가 안 온다"가 가장 먼저 눈에 띄는 증상이라 결재에도 진단 줄
     if (dest) {
+      // 쉬운 문장화(유건 확정 2026-09-26) — 크루가 목적·할 일·필요한 것을 채웠으면 텔레그램에도 그 문장이
+      // 먼저 보인다. 분리 검수 H-1: 접힘 UI가 없는 창구라 원문을 아예 숨기면 결재자가 실제로 실행될
+      // 문장을 못 본다 — "명령: <action>" 한 줄을 plain 문장 아래에 항상 붙인다.
+      const plainSummary = approvalPlainText(event.item, lang);
       try {
         const res = await tg(dest.token, 'sendMessage', {
           chat_id: dest.chatId,
-          text: pick(`결재 요청 · ${who}\n${tidy(event.item.action)}\n\n사유: ${tidy(event.item.reason)}`, `Approval request · ${who}\n${tidy(event.item.action)}\n\nReason: ${tidy(event.item.reason)}`, lang),
+          text: plainSummary
+            ? pick(`결재 요청 · ${who}\n${tidy(plainSummary)}\n${approvalCommandLabel('ko')}: ${tidy(event.item.action)}`, `Approval request · ${who}\n${tidy(plainSummary)}\n${approvalCommandLabel('en')}: ${tidy(event.item.action)}`, lang)
+            : pick(`결재 요청 · ${who}\n${tidy(event.item.action)}\n\n사유: ${tidy(event.item.reason)}`, `Approval request · ${who}\n${tidy(event.item.action)}\n\nReason: ${tidy(event.item.reason)}`, lang),
           reply_markup: { inline_keyboard: [[
             { text: pick('✅ 승인', '✅ Approve', lang), callback_data: `ap:${event.item.id}:1` },
             { text: pick('❌ 거절', '❌ Reject', lang), callback_data: `ap:${event.item.id}:0` },
@@ -1074,12 +1080,20 @@ async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPu
   // 슬랙은 문안이 준비된 타입만 — 아래 삼항이 approval 외 전부를 루틴 문안으로 다뤄, job·crewmail 등
   // 다른 타입이 오면 event.routine.title에서 매번 TypeError였다(재검 N1). 타입 게이트로 좁힌다.
   if (s.token && s.channel && sends('slack', s)) { // 보낼 수 있는 종류는 CHANNEL_EVENTS.slack이 정본
+    const approvalPlain = event.type === 'approval' ? approvalPlainText(event.item, lang) : null;
     const text = event.type === 'approval'
-      ? pick(
-          `결재 요청 · ${who}: ${event.item.action}\n사유: ${event.item.reason}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
-          `Approval request · ${who}: ${event.item.action}\nReason: ${event.item.reason}\n→ Reply in this channel with "승인 ${event.item.id}" (approve) or "거절 ${event.item.id}" (reject)`,
-          lang,
-        )
+      ? (approvalPlain
+        // 분리 검수 H-1: plain 있어도 실제 실행될 문장(action)을 "명령: " 한 줄로 항상 남긴다.
+        ? pick(
+            `결재 요청 · ${who}\n${approvalPlain}\n${approvalCommandLabel('ko')}: ${event.item.action}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
+            `Approval request · ${who}\n${approvalPlain}\n${approvalCommandLabel('en')}: ${event.item.action}\n→ Reply in this channel with "승인 ${event.item.id}" (approve) or "거절 ${event.item.id}" (reject)`,
+            lang,
+          )
+        : pick(
+            `결재 요청 · ${who}: ${event.item.action}\n사유: ${event.item.reason}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
+            `Approval request · ${who}: ${event.item.action}\nReason: ${event.item.reason}\n→ Reply in this channel with "승인 ${event.item.id}" (approve) or "거절 ${event.item.id}" (reject)`,
+            lang,
+          ))
       : pick(
           `[루틴] ${event.routine.title} ${event.ok ? '' : '(실패)'}\n${event.reply}`,
           `[Routine] ${event.routine.title} ${event.ok ? '' : '(failed)'}\n${event.reply}`,
