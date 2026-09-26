@@ -401,8 +401,9 @@ export function makeDb(client) {
     async updateApproval(id, patch) { return unwrap(await client.from('msgr_crew_approvals').update(patch).eq('id', id).select('id')) ?? []; },
     /** H-2: 허용 판정의 정본은 서버(msgr_can_instruct). 실패는 throw — 호출자가 로컬 판정으로 폴백하고 로그한다. */
     async instructCheck(crewId, authorId, channelId) { return unwrap(await client.rpc('msgr_instruct_check', { crew: crewId, author: authorId, channel: channelId ?? null })); }, // 'ok'|'inactive'|'crew_allow'|'channel_policy'(I-3)
-    /** App Store 5.1.2(2025-11 신설) — 이 사람이 크루(제3자 AI)에게 메시지가 가는 것에 동의했나(msgr_profiles.ai_consent_at). 클라이언트 창은 힌트일 뿐, 정본은 여기. */
-    async aiConsentOk(userId) { return unwrap(await client.rpc('msgr_ai_consent_ok', { p_user: userId })) === true; },
+    /** App Store 5.1.2 재설계(2026-09-27) — 이 사람이 이 조직에서 AI 이용에 동의했나(msgr_ai_consent, 앱 필수 동의 화면이 1차 관문).
+        msgr_org_ai_consent_ok는 같은 조직에 활성 크루를 둔 사람만 물을 수 있게 좁혀 뒀다(검수 L4 — 임의 사용자 프로브 방지). */
+    async orgConsentOk(orgId, userId) { return unwrap(await client.rpc('msgr_org_ai_consent_ok', { p_org: orgId, p_author: userId })) === true; },
     /** H-1/H-2: 이 세션(크루 소유자)이 이 결재를 확정할 수 있나 — 정책·위험 등급 반영(msgr_can_decide). */
     async canDecide(apRowId) { return unwrap(await client.rpc('msgr_can_decide', { ap: apRowId })) === true; },
     async approvalsByIds(ids) {
@@ -551,8 +552,8 @@ function denyBody(why, crew, lang) {
     `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — an agent that is in a room can be called by anyone in that room. If it isn't in this room, ask its owner to add it.`, lang);
   if (why === 'inactive') return pick(`${crew.display_name}은(는) 지금 이 대화에 파견돼 있지 않습니다 — 메신저에서 다시 파견해 주세요.`,
     `${crew.display_name} is not dispatched to this conversation — dispatch the crew again in the messenger.`, lang);
-  if (why === 'ai_consent') return pick(`이 메시지는 크루(AI 에이전트)로 전송되기 전에 제3자 AI 전송 동의가 필요합니다 — 메신저에서 이어서 보내면 동의 창이 뜹니다.`,
-    `This message needs your consent to send to a third-party AI provider before ${crew.display_name} can see it — send it again in the messenger to see the consent prompt.`, lang);
+  if (why === 'ai_consent') return pick(`앱을 업데이트하고 AI 이용에 동의하면 크루에게 맡길 수 있습니다.`,
+    `Update the app and agree to AI use to hand this to a crew.`, lang);
   return pick(`지금은 ${crew.display_name}이(가) 이 지시를 받을 수 없습니다 — 크루 상태와 허용 범위를 확인해 주세요.`,
     `${crew.display_name} cannot take this request right now — check the crew status and who is allowed to instruct it.`, lang);
 }
@@ -601,6 +602,10 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   const channelOf = async (id) => { if (!chCache.has(id)) chCache.set(id, await db.channel(id)); return chCache.get(id); };
   const parentCache = new Map(); // 이 틱 안의 답글 부모 → crew_id(사람 글이면 null) — 크루마다 다시 읽지 않는다(D38b)
   const replyParentCrew = async (m) => { if (!parentCache.has(m.reply_to)) { const p = await db.message(m.reply_to); parentCache.set(m.reply_to, p && !p.deleted_at && p.channel_id === m.channel_id && p.author_kind === 'crew' ? p.crew_id : null); } return parentCache.get(m.reply_to); };
+  // App Store 5.1.2 재설계(2026-09-27, 검수 L9) — 이 틱 안에서 사람당(조직 단위) 한 번만 동의 확인(entCache와 같은 자리·같은 모양).
+  // H3: 확인 함수가 없거나 실패하면 열어 둔다(fail-open) — 1차 관문은 앱의 필수 동의 화면이고, 이 서버 확인은 옛 클라이언트·철회자 대상 보조 방어선이다.
+  const consentCache = new Map();
+  const orgConsentOk = async (orgId, userId) => { const key = `${orgId}:${userId}`; if (!consentCache.has(key)) consentCache.set(key, await (async () => db.orgConsentOk(orgId, userId))().catch((e) => { console.error('[argo] msgr AI 동의 확인 RPC 실패 — 이 틱은 열어 둡니다(fail-open):', e?.message ?? e); return true; })); return consentCache.get(key); }; // 옛 db 어댑터(orgConsentOk 없음)의 동기 TypeError도 여기서 잡는다(entCache와 같은 요령)
   // 크루별 읽기 3종(DM·범위·받은 글)은 크루끼리 동시에 받아 둔다 — 순서대로면 크루 12명에 36왕복이 쌓였다(2026-09-23 실측 픽업 4~7초).
   // 처리(적재·커서)는 아래에서 크루 순서대로. 받은 글 조회 실패는 그 크루 차례에 던진다(앞 크루는 종전처럼 처리된 뒤 drain 실패).
   const CREW_FETCH_LIMIT = 8; // 순간 동시 요청 상한 — 크루 수에 비례해 폭발하지 않게(검수 L2). 총량은 종전과 같다
@@ -686,15 +691,18 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       }
       let why = envelope ? 'ok' : await db.instructCheck(crew.id, origin, m.channel_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid) ? 'ok' : 'crew_allow'; });
       if (!envelope && why === 'ok' && fromCrew && rootAuthor && rootAuthor !== origin) why = await db.instructCheck(crew.id, rootAuthor, m.channel_id).catch(() => 'crew_allow'); // 넘김은 발신 크루 소유자와 뿌리 사람 둘 다 이 크루에게 지시할 수 있어야 한다 — 허용 범위 'all'인 크루를 거쳐 allow='owner' 크루를 부리는 우회 차단(검수 3R M-3) // H-2: 서버가 정본(채널 정책 포함), 답글도 서버 트리거가 재판정
-      // App Store 5.1.2(2025-11 신설, 2026-09-26 대응): 이 턴을 authorize한 사람(들) 전원이 제3자 AI 전송에 동의했어야 한다 — envelope 경로 포함, 클라이언트 창은 힌트일 뿐 정본은 여기.
+      // App Store 5.1.2 재설계(2026-09-27, 유건 결정 "처음 한 번 필수 동의") — 이 턴을 authorize한 사람(들) 전원이 조직 공간에서
+      // AI 이용에 동의했어야 한다(envelope 경로 포함). 1차 관문은 앱의 필수 동의 화면 — 이 확인은 옛 클라이언트·철회자를 위한 보조 방어선.
       if (why === 'ok') {
         const consentSubjects = fromCrew && rootAuthor && rootAuthor !== origin ? [origin, rootAuthor] : [origin];
-        for (const id of consentSubjects) { if (!(await db.aiConsentOk(id).catch((e) => { console.error('[argo] msgr AI 동의 확인 RPC 실패 — 동의 없음으로 취급:', e?.message ?? e); return false; }))) { why = 'ai_consent'; break; } }
+        for (const id of consentSubjects) { if (!(await orgConsentOk(crew.org_id, id))) { why = 'ai_consent'; break; } }
       }
       if (why !== 'ok') {
         out.denied++;
+        // 동의 미완료는 안내가 이 크루·채널에 한 번만 뜨면 된다(검수: "채널당 한 번만 안내") — 메시지마다 새 키를 쓰지 않는다.
         await db.insertMessage({
-          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
+          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id,
+          client_msg_id: why === 'ai_consent' ? `aiconsent:${crew.id}:${m.channel_id}` : `deny:${crew.id}:${m.id}`,
           body: denyBody(why, crew, lang),
         }).catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 거절 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
         return;
