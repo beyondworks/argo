@@ -32,6 +32,8 @@ const raw = (q) => psqlRaw(['-A', '-t', '-c', q]); // superuser 직접 호출 �
 const asUser = (uid, q) => sql(`set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`);
 const asUserRaw = (uid, q) => psqlRaw(['-A', '-t', '-c', `set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`]);
 const asService = (q) => sql(`set role service_role; ${q}`);
+const asAnon = (q) => sql(`set role anon; ${q}`);
+const asAnonRaw = (q) => psqlRaw(['-A', '-t', '-c', `set role anon; ${q}`]);
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';
 const makeInviteCode = (org, ownerId) => last(asUser(ownerId, `insert into public.msgr_invites (org_id, role, created_by) values ('${org}', 'member', '${ownerId}') returning code`));
 const accept = (uid, code) => asUserRaw(uid, `select public.msgr_accept_invite('${code}')`);
@@ -280,13 +282,30 @@ test('L4: 전체 연장 시 team 플랜 조직은 공지 대상에서 빠진다'
 
 test('M5: msgrNotifyPush(데스크톱 알림→메신저 1:1 미러)는 미자격 조직에서도 막히지 않는다', { skip }, () => {
   expireTrial(UNORG); // 앞선 L4(연장 대상 org=null) 테스트가 UNORG도 연장했으므로 다시 만료시킨다
-  const r = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, thread_root, client_msg_id, body) values ('${UNCH}', 'crew', '${UNCREW}', 'text', null, null, 'nt:${UNCREW}:deadbeef', '데스크톱에서 방금 일어난 일을 알려드립니다')`);
-  assert.equal(r.status, 0, 'msgrNotifyPush 모양(nt: 접두·reply_to·thread_root 둘 다 null)의 삽입은 미자격 조직에서도 허용된다');
-  // 같은 크루라도 진짜 크루 턴(reply_to가 있는 일반 text)은 여전히 막힌다 — 우회 통로가 되지 않는다
+  // 게이트웨이 dmWithOwner와 같은 모양의 진짜 1:1(사람=소유자 1명·크루=이 크루 1명)만 만든다
+  const UNDM = last(asUser(U.o3, `select public.msgr_create_channel('${UNORG}','dm','dm:un', '[{"kind":"crew","id":"${UNCREW}"}]'::jsonb)`));
+  const r = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, thread_root, client_msg_id, body) values ('${UNDM}', 'crew', '${UNCREW}', 'text', null, null, 'nt:${UNCREW}:deadbeef', '데스크톱에서 방금 일어난 일을 알려드립니다')`);
+  assert.equal(r.status, 0, 'msgrNotifyPush 모양(nt: 접두·reply_to·thread_root 둘 다 null·진짜 1:1)의 삽입은 미자격 조직에서도 허용된다');
+  // 같은 크루라도 진짜 크루 턴(reply_to가 있는 일반 text)은 여전히 막힌다 — 우회 통로가 되지 않는다(공개 채널로 —
+  // DM에서 reply_to는 msgr_delivery_allowed까지 요구하는 별개 가드(b_msgr_dm_message_guard)가 있어 이 시나리오와 섞이지 않게 격리)
   const anyMsgId = sql(`select id from public.msgr_messages where channel_id = '${UNCH}' limit 1`);
   const r2 = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, client_msg_id, body) values ('${UNCH}', 'crew', '${UNCREW}', 'text', ${anyMsgId}, 'nt:${UNCREW}:fakeout', '진짜 크루 턴인 척')`);
   assert.notEqual(r2.status, 0, 'reply_to가 있으면 nt: 접두를 써도 막힌다(모양이 정확히 같아야만 예외)');
   assert.match(r2.stderr, /msgr_org_unentitled/);
+  // N4(2차 검수) — kind='text'인 진짜 1:1이 아니면 nt: 접두는 예외가 아니다:
+  // (1) 공개 채널(사람이 여럿일 수 있음)
+  const r3 = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, thread_root, client_msg_id, body) values ('${UNCH}', 'crew', '${UNCREW}', 'text', null, null, 'nt:${UNCREW}:pubchan', '공개 채널에 nt: 위장')`);
+  assert.notEqual(r3.status, 0, '공개 채널은 진짜 1:1이 아니라 nt: 접두를 써도 막힌다');
+  assert.match(r3.stderr, /msgr_org_unentitled/);
+  // (2) approval_card는 text가 아니라서 애초에 이 예외 대상이 아니다
+  const r4 = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, thread_root, client_msg_id, body) values ('${UNDM}', 'crew', '${UNCREW}', 'approval_card', null, null, 'nt:${UNCREW}:card', '카드로 위장')`);
+  assert.notEqual(r4.status, 0, 'approval_card는 nt: 접두·모양이 같아도 예외가 아니다(text만 예외)');
+  assert.match(r4.stderr, /msgr_org_unentitled/);
+  // (3) 크루가 둘 낀 DM(진짜 1:1이 아님) — 다른 크루가 낀 방은 거부
+  const UNCREW2 = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${UNORG}', '${U.o3}', 'ws-un2', 'bot2', '봇2') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${UNDM}', 'crew', '${UNCREW2}', '${U.o3}')`);
+  const r5 = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, thread_root, client_msg_id, body) values ('${UNDM}', 'crew', '${UNCREW}', 'text', null, null, 'nt:${UNCREW}:crowded', '크루 둘 낀 방에서 위장')`);
+  assert.notEqual(r5.status, 0, '크루가 둘 이상 낀 방은 진짜 1:1이 아니라 거부된다(다른 DM 불변식이 먼저 막아도 결과는 거부)');
 });
 
 test('변이(비교 부호 뒤집기)는 무료 기간 중 크루 턴 허용을 거부로 바꾼다 — red 확인', { skip }, () => {
@@ -309,4 +328,153 @@ test('변이(비교 부호 뒤집기)는 무료 기간 중 크루 턴 허용을 
       select case when auth.uid() is not null and not public.msgr_is_member(org) then null
         else coalesce((select e.trial_ends_at > now() from public.msgr_org_entitlements e where e.org_id = org), false) end
     $$`);
+});
+
+// ── 2026-09-27 2차 검수(통합 브랜치) — H1 합본 마이그레이션(20260927130000_msgr_bot_gates_merged.sql)의
+//    두 게이트(무료 기간 자격·AI 동의)와 N1(넘김 회귀)·N6(미자격 커서 전진)을 실 Postgres로 잠근다. ──
+const MERGED = '20260927130000_msgr_bot_gates_merged.sql';
+
+test('H1·N2: 봇 업데이트·실행 게이트(합본) — 미자격이면 0건·실행 행 0개, 자격 있으면 정상 배달(대조군)', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`); // 이 테스트는 자격 게이트만 본다 — 동의 게이트가 먼저 걸리지 않게
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('BotGateOrg', 'botgate1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'GateBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  const m1 = last(asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@GateBot 부탁', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
+  assert.equal(JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`)).length, 1, '자격 있는 동안은 정상 배달된다(대조군)');
+  assert.equal(sql(`select count(*) from public.msgr_executions where crew_id = '${bot.crew_id}' and source_msg_id = ${m1}`), '1', '실행 행이 생긴다(대조군)');
+  expireTrial(org);
+  const m2 = last(asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@GateBot 부탁2', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
+  assert.equal(JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`)).length, 0, '미자격 조직은 봇 업데이트 0건');
+  assert.equal(sql(`select count(*) from public.msgr_executions where crew_id = '${bot.crew_id}' and source_msg_id = ${m2}`), '0', '미자격 조직은 실행 행을 만들지 않는다(오펀 running 없음)');
+  assert.equal(sql(`select count(*) from public.msgr_messages where channel_id = '${ch}' and kind = 'system' and client_msg_id like 'unentitled:${bot.crew_id}:%'`), '1', '채널당 1회 안내가 남는다');
+});
+
+test('H1: msgr_bot_finish도 자격이 없으면 실행을 닫고 null을 돌린다(호출부가 403으로 바꾼다)', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`); // 이 테스트는 자격 게이트만 본다 — 동의 게이트가 먼저 걸리지 않게
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('BotFinOrg', 'botfin1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'FinBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@FinBot 부탁', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]')`);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  assert.equal(ups.length, 1);
+  const msg = ups[0].message;
+  expireTrial(org); // 배달은 자격 있는 동안 됐는데, 응답하러 오니 그 사이 무료 기간이 끝난 경쟁 상황
+  const r = asAnonRaw(`select public.msgr_bot_finish('${bot.token}', '${msg.chat.id}', '늦은 응답', ${msg.message_id}, '${msg.execution_attempt}', 'done', '[]')`);
+  assert.equal(r.status, 0, 'RPC 자체는 에러가 아니라 null을 돌린다(호출부에서 403으로 번역)');
+  assert.equal(r.stdout.trim(), '', 'null 반환 — message_id:0 같은 거짓 성공이 아니다');
+  assert.equal(sql(`select state from public.msgr_executions where crew_id = '${bot.crew_id}' and source_msg_id = ${msg.message_id}`), 'completed', '실행 행은 닫혀 running으로 남지 않는다');
+});
+
+test('N1: msgr_bot_finish 넘김은 초대 안 된 크루로 성공하지 않는다(회귀 잠금) — 공개 채널 비멤버 거부, 멤버면 허용', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`); // 이 테스트는 자격 게이트만 본다 — 동의 게이트가 먼저 걸리지 않게
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('HandoffOrg', 'handoff1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const a = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'A')`)));
+  const b = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'B')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${a.crew_id}', '${U.o1}')`);
+  const mentions = JSON.stringify([{ kind: 'crew', id: b.crew_id }]);
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@A 부탁', '[{"kind":"crew","id":"${a.crew_id}","role":"to"}]')`);
+  const ups1 = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${a.token}') x`));
+  assert.equal(ups1.length, 1);
+  const msg1 = ups1[0].message;
+  const r1 = asAnonRaw(`select public.msgr_bot_finish('${a.token}', '${msg1.chat.id}', '넘길게요', ${msg1.message_id}, '${msg1.execution_attempt}', 'handoff', '${mentions}')`);
+  assert.notEqual(r1.status, 0, '초대 안 된 크루(비멤버, 공개 채널)로 넘김은 거부된다 — origin/main 회귀 잠금');
+  assert.match(r1.stderr, /msgr_not_allowed/);
+  // B를 채널 멤버로 넣으면 같은 모양의 넘김이 성공한다(과잉 제한이 아님을 함께 확인)
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${b.crew_id}', '${U.o1}')`);
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@A 부탁2', '[{"kind":"crew","id":"${a.crew_id}","role":"to"}]')`);
+  const ups2 = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${a.token}') x`));
+  assert.equal(ups2.length, 1);
+  const msg2 = ups2[0].message;
+  const r2 = asAnonRaw(`select public.msgr_bot_finish('${a.token}', '${msg2.chat.id}', '넘길게요', ${msg2.message_id}, '${msg2.execution_attempt}', 'handoff', '${mentions}')`);
+  assert.equal(r2.status, 0, 'B가 채널 멤버가 되면 같은 넘김이 성공한다');
+});
+
+test('N6: 미자격 동안 봇 커서는 이번 스캔 최댓값까지 바로 넘어간다(전체 재스캔 방지, 뒤늦은 실행 없음)', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`); // 이 테스트는 자격 게이트만 본다 — 동의 게이트가 먼저 걸리지 않게
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('CursorOrg', 'cursor1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'CursorBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  expireTrial(org);
+  let lastId = '0';
+  for (let i = 0; i < 3; i++) {
+    lastId = last(asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@CursorBot ${i}', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]') returning id`));
+  }
+  asAnon(`select public.msgr_bot_updates('${bot.token}')`);
+  const cursor = sql(`select cursor_msg_id from public.msgr_crews where id = '${bot.crew_id}'`);
+  assert.ok(Number(cursor) >= Number(lastId), '커서가 이번 스캔 최댓값까지 바로 넘어간다 — 자격이 돌아와도 밀린 멘션을 뒤늦게 실행하지 않는다');
+});
+
+test('변이: 합본 봇 업데이트에서 자격 게이트를 지우면 미자격 조직도 배달된다 — red 확인', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`); // 이 테스트는 자격 게이트만 본다 — 동의 게이트가 먼저 걸리지 않게
+  const orig = readFileSync(mig(MERGED), 'utf8');
+  const anchor = ' if not entitled and ch.org_id is not null then\n';
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
+  sql(orig.replace(anchor, ' if false and not entitled and ch.org_id is not null then\n'));
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('MutBotOrg', 'mutbot1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'MutBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  expireTrial(org);
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@MutBot 부탁', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]')`);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  assert.equal(ups.length, 1, '자격 게이트가 지워지면 미자격 조직도 배달된다(정상 코드라면 0이어야 하므로 변이가 잡힌다)');
+  sql(orig); // 원래(합본) 정의로 복구
+});
+
+test('변이: 합본 봇 finish에서 자격 게이트를 지우면 미자격 조직도 응답을 완료한다 — red 확인', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`); // 이 테스트는 자격 게이트만 본다 — 동의 게이트가 먼저 걸리지 않게
+  const orig = readFileSync(mig(MERGED), 'utf8');
+  const anchor = "  if not coalesce(public.msgr_org_entitled(b.org_id), true) then\n    update public.msgr_executions set state = 'completed', heartbeat_at = now() where crew_id = b.crew_id and source_msg_id = src_id;\n    return null;";
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
+  sql(orig.replace(anchor, "  if false and not coalesce(public.msgr_org_entitled(b.org_id), true) then\n    update public.msgr_executions set state = 'completed', heartbeat_at = now() where crew_id = b.crew_id and source_msg_id = src_id;\n    return null;"));
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('MutFinOrg', 'mutfin1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'MutFin')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@MutFin 부탁', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]')`);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  assert.equal(ups.length, 1);
+  const msg = ups[0].message;
+  expireTrial(org);
+  // 메시지 삽입 트리거(msgr_message_entitlement_gate)가 이중 방어로 여전히 막지만(에러 자체는 남는다),
+  // finish 자체의 자격 체크가 지워지면 실행 행을 completed로 닫지 않고 running에 오펀으로 남긴다(M3의 실제 목적) — 여기서 잡는다.
+  asAnonRaw(`select public.msgr_bot_finish('${bot.token}', '${msg.chat.id}', '변이 응답', ${msg.message_id}, '${msg.execution_attempt}', 'done', '[]')`);
+  assert.equal(sql(`select state from public.msgr_executions where crew_id = '${bot.crew_id}' and source_msg_id = ${msg.message_id}`), 'running', '자격 게이트가 지워지면 실행 행이 running으로 오펀 남는다(정상 코드라면 completed여야 하므로 변이가 잡힌다)');
+  sql(orig); // 원래(합본) 정의로 복구
+});
+
+test('변이: 합본 봇 업데이트에서 AI 동의 필터를 지우면 미동의 사람 글도 배달된다 — red 확인', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(false)`); // 명시적으로 미동의 상태에서 시작(테스트 순서와 무관하게)
+  const orig = readFileSync(mig(MERGED), 'utf8');
+  const anchor = " if s.author_kind='user' and not exists(select 1 from msgr_ai_consent ac where ac.user_id=s.author_user_id and ac.consent_at is not null) then\n";
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
+  sql(orig.replace(anchor, " if false and s.author_kind='user' and not exists(select 1 from msgr_ai_consent ac where ac.user_id=s.author_user_id and ac.consent_at is not null) then\n"));
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('MutConsentOrg', 'mutconsent1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'MutConsent')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  // U.o1은 이 파일에서 한 번도 msgr_set_ai_consent를 부르지 않았다 — 기본값(미동의)
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@MutConsent 부탁', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]')`);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  assert.equal(ups.length, 1, 'AI 동의 필터가 지워지면 미동의 사람 글도 배달된다(정상 코드라면 0이어야 하므로 변이가 잡힌다)');
+  sql(orig); // 원래(합본) 정의로 복구
+});
+
+test('H2: AI 동의 안 한 사람의 글은 봇에게 넘어가지 않는다(정상 코드 확인, 위 변이의 대조군)', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(false)`); // 명시적으로 미동의 상태에서 시작(테스트 순서와 무관하게)
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('ConsentOrg', 'consent1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'ConsentBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@ConsentBot 부탁', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]')`);
+  assert.equal(JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`)).length, 0, '미동의 사람 글은 봇 문맥에서 제외된다(넘어가지 않는다)');
+  assert.equal(sql(`select count(*) from public.msgr_messages where channel_id = '${ch}' and kind = 'system' and client_msg_id like 'aiconsent:${bot.crew_id}:%'`), '1', '동의 안내가 채널당 1회 남는다');
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`);
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@ConsentBot 부탁2', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]')`);
+  // 동의 전 건너뛴 첫 글도 소급 배달 대상이 될 수 있다(동의는 자격과 달리 "영영 폐기"가 아니다) — 새 글이 최소 하나는 배달됨을 확인
+  assert.ok(JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`)).length >= 1, '동의하면 다시 정상 배달된다');
 });

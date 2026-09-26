@@ -87,15 +87,25 @@ end $$;
 
 -- ── 크루 턴 DB 쪽 방어(2차 방어선) — 게이트웨이가 막지 못한 우회도 여기서 막는다. 'system' 안내는 예외(막히면 안내 자체가 안 나간다).
 --    msgrNotifyPush(데스크톱 알림→메신저 1:1 미러)도 예외(2026-09-27 M5) — 크루가 "일을 맡은" 게 아니라 이미 일어난 일을
---    소유자 자신과의 1:1에 알리는 것뿐이다. client_msg_id 접두 nt:<그 크루id>: + reply_to·thread_root 둘 다 null인
---    모양으로 좁힌다(msgrNotifyPush의 실제 삽입 모양과 정확히 같음) — 이 좁힌 모양은 소유자 자신의 1:1에서만 의미가
---    있어(다른 사람 채널에는 이 크루로 못 쓴다 — RLS가 크루 글을 그 크루 소유자에게만 허용) 우회 통로가 되지 않는다. ──
+--    소유자 자신과의 1:1에 알리는 것뿐이다. 2026-09-27 N4(2차 검수) — 모양 매칭(client_msg_id 접두·reply_to·thread_root)만으로는
+--    좁지 않다(text 아닌 approval_card도 지나갔다) — 게이트웨이의 dmWithOwner와 같은 규칙으로 실제 채널 구성까지 확인한다:
+--    kind='text'이고, 그 채널이 사람 멤버 정확히 1명(=이 크루의 소유자)·크루 멤버 정확히 1명(=이 크루 자신)인 보관 안 된 DM일 때만.
+--    공개 채널·다른 크루가 낀 방·approval_card는 이 조건을 못 채워 일반 자격 검사로 떨어진다. ──
 create or replace function public.msgr_message_entitlement_gate() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare oid uuid;
+declare oid uuid; dm_ok boolean;
 begin
   if new.author_kind = 'crew' and new.kind in ('text', 'approval_card') then
-    if new.client_msg_id like ('nt:' || new.crew_id::text || ':%') and new.reply_to is null and new.thread_root is null then return new; end if;
+    if new.kind = 'text' and new.client_msg_id like ('nt:' || new.crew_id::text || ':%') and new.reply_to is null and new.thread_root is null then
+      select (ch.kind = 'dm' and ch.archived_at is null
+          and (select count(*) from public.msgr_channel_members cm where cm.channel_id = new.channel_id and cm.member_kind = 'user') = 1
+          and (select count(*) from public.msgr_channel_members cm where cm.channel_id = new.channel_id and cm.member_kind = 'crew') = 1
+          and exists (select 1 from public.msgr_channel_members cm where cm.channel_id = new.channel_id and cm.member_kind = 'crew' and cm.member_id = new.crew_id)
+          and exists (select 1 from public.msgr_channel_members cm join public.msgr_crews c on c.id = new.crew_id
+                        where cm.channel_id = new.channel_id and cm.member_kind = 'user' and cm.member_id = c.owner_user_id))
+        into dm_ok from public.msgr_channels ch where ch.id = new.channel_id;
+      if coalesce(dm_ok, false) then return new; end if;
+    end if;
     select org_id into oid from public.msgr_channels where id = new.channel_id; -- 개인 공간(org_id null)은 대상 밖
     if oid is not null and not coalesce(public.msgr_org_entitled(oid), true) then raise exception 'msgr_org_unentitled'; end if; -- L3로 null이 와도(내부 SECURITY DEFINER 경로라 실제로는 auth.uid() 그대로 전달돼 값이 온다) 열어 둔다(fail-open)
   end if;
@@ -284,25 +294,38 @@ end $$;
 revoke all on function public.msgr_bot_finish(text, uuid, text, bigint, uuid, text, jsonb) from public;
 grant execute on function public.msgr_bot_finish(text, uuid, text, bigint, uuid, text, jsonb) to anon, authenticated;
 
--- ── 자동화(2026-09-27 M4) — msgr_automation_enqueue 재정의(20260913110000 그대로 + 자격 확인). 미자격 조직은 지시 글을
---    올리지 않는다(끄지 않고 다음 예약부터 다시 시도 — next_run_at은 그대로 전진). ──
+-- ── 자동화(2026-09-27 M4, N6 2차 검수로 보강) — msgr_automation_enqueue 재정의(20260913110000 그대로 + 자격 확인).
+--    미자격 조직은 지시 글을 올리지 않는다(끄지 않고 다음 예약부터 다시 시도 — next_run_at은 그대로 전진).
+--    N6(DB 위생): 매 예약마다 blocked 행을 새로 쌓지 않는다 — 이미 직전 실행이 이 자동화를 unentitled로 막았으면
+--    실행 행 없이 예약만 미루고 합성 결과를 돌려준다(자격 종료 구간당 실행 행 1개). ──
 create or replace function public.msgr_automation_enqueue(a public.msgr_automations, mode text) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare r public.msgr_automation_runs; msg bigint;
+declare r public.msgr_automation_runs; msg bigint; already_blocked boolean;
 begin
-  insert into public.msgr_automation_runs(automation_id,scheduled_for,trigger,status)
-    values(a.id,case when mode = 'schedule' then a.next_run_at else clock_timestamp() end,mode,'queued') returning * into r;
   if not public.msgr_automation_authorized(a.created_by,a.channel_id,a.crew_id) then
-    update public.msgr_automation_runs set status = 'blocked',error = 'permission_revoked',finished_at = now() where id = r.id returning * into r;
+    insert into public.msgr_automation_runs(automation_id,scheduled_for,trigger,status,error,finished_at)
+      values(a.id,case when mode = 'schedule' then a.next_run_at else clock_timestamp() end,mode,'blocked','permission_revoked',now()) returning * into r;
     update public.msgr_automations set enabled = false,last_run_at = now(),last_status = 'blocked',updated_at = now() where id = a.id;
     return to_jsonb(r);
   end if;
   if not coalesce(public.msgr_org_entitled(a.org_id), true) then
-    update public.msgr_automation_runs set status = 'blocked',error = 'unentitled',finished_at = now() where id = r.id returning * into r;
+    select a.last_status = 'blocked' and exists(
+        select 1 from public.msgr_automation_runs pr
+          where pr.id = (select id from public.msgr_automation_runs where automation_id = a.id order by created_at desc limit 1) and pr.error = 'unentitled')
+      into already_blocked;
+    if coalesce(already_blocked, false) then
+      update public.msgr_automations set last_run_at = now(),
+        next_run_at = case when mode = 'schedule' then public.msgr_automation_next(a.schedule,now()) else next_run_at end where id = a.id;
+      return jsonb_build_object('status','blocked','error','unentitled','message_id',null);
+    end if;
+    insert into public.msgr_automation_runs(automation_id,scheduled_for,trigger,status,error,finished_at)
+      values(a.id,case when mode = 'schedule' then a.next_run_at else clock_timestamp() end,mode,'blocked','unentitled',now()) returning * into r;
     update public.msgr_automations set last_run_at = now(),last_status = 'blocked',updated_at = now(),
       next_run_at = case when mode = 'schedule' then public.msgr_automation_next(a.schedule,now()) else next_run_at end where id = a.id;
     return to_jsonb(r);
   end if;
+  insert into public.msgr_automation_runs(automation_id,scheduled_for,trigger,status)
+    values(a.id,case when mode = 'schedule' then a.next_run_at else clock_timestamp() end,mode,'queued') returning * into r;
   insert into public.msgr_messages(org_id,channel_id,author_kind,author_user_id,kind,body,mentions,client_msg_id,meta)
     values(a.org_id,a.channel_id,'user',a.created_by,'text',a.prompt,
       jsonb_build_array(jsonb_build_object('kind','crew','id',a.crew_id)), 'automation:' || r.id,
@@ -311,6 +334,27 @@ begin
   update public.msgr_automations set last_run_at = now(),last_message_id = msg,last_status = 'queued',updated_at = now(),
     next_run_at = case when mode = 'schedule' then public.msgr_automation_next(a.schedule,now()) else next_run_at end where id = a.id;
   return to_jsonb(r);
+end $$;
+
+-- ── msgr_automation_run_now 재정의(20260913110000 그대로 + N6 호환) — enqueue가 미자격 반복 구간에서 실행 행 없이
+--    합성 결과(id 없음)를 돌려줄 수 있으므로, request_id 각인 UPDATE는 실제 행(id)이 있을 때만 한다. ──
+create or replace function public.msgr_automation_run_now(automation uuid, request_id uuid default null) returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare a public.msgr_automations; previous jsonb; result jsonb; rid uuid;
+begin
+  select * into a from public.msgr_automations where id = automation for update;
+  if auth.uid() is null or a.created_by is distinct from auth.uid() or a.deleted_at is not null
+    or not public.msgr_automation_authorized(auth.uid(),a.channel_id,a.crew_id) then raise exception 'msgr_automation_forbidden' using errcode = '42501'; end if;
+  if request_id is not null then
+    select to_jsonb(r) into previous from public.msgr_automation_runs r where r.automation_id = automation and r.request_id = msgr_automation_run_now.request_id;
+    if previous is not null then return previous; end if;
+  end if;
+  result := public.msgr_automation_enqueue(a,'manual');
+  rid := nullif(result->>'id','')::uuid;
+  if rid is not null then
+    update public.msgr_automation_runs r set request_id = msgr_automation_run_now.request_id where r.id = rid returning to_jsonb(r) into result;
+  end if;
+  return result;
 end $$;
 
 -- ── msgr_automation_terminal_message 재정의(20260913110000 그대로 + unentitled 사유, 2026-09-27 M4) — 무료 기간이

@@ -36,7 +36,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, aiConsent = true, aiConsentMap = null, names = {}, stopRequestedBy = null, orgEntitled = true } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, aiConsent = true, aiConsentMap = null, names = {}, stopRequestedBy = null, orgEntitled = true, orgEntitlementMarker = '2026-09-01T00:00:00.000Z' } = {}) {
   const calls = [];
   const executions = new Map();
   const rec = (k, ...a) => { calls.push([k, ...a]); };
@@ -44,6 +44,8 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCre
     calls,
     // 조직 자격(2026-09-27 M6) — 기본 true(대부분 테스트는 자격과 무관). throw면 판정 실패를 흉내(호출부가 열어 둬야 한다).
     async orgEntitled(orgId) { rec('orgEntitled', orgId); if (orgEntitled === 'throw') throw new Error('rpc down'); return orgEntitled; },
+    // 자격 만료 마커(2026-09-27 L2) — 안내 client_msg_id에 섞여 재만료 시 새 안내가 다시 뜨게 한다.
+    async orgEntitlementMarker(orgId) { rec('orgEntitlementMarker', orgId); return orgEntitlementMarker; },
     async myCrews() { rec('myCrews'); return crews; },
     async crewBySlug(uid, ws, slug) { rec('crewBySlug', slug); return crews.find((c) => c.slug === slug) ?? null; },
     async heartbeat(ids) { rec('heartbeat', ids); },
@@ -179,11 +181,21 @@ test('drain: 미자격 조직은 크루 텍스트를 시작하지 않고 채널�
   assert.equal(enq.calls.length, 0);
   const sys = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
   assert.ok(sys.length >= 1);
-  assert.ok(sys.every((s) => s.client_msg_id === `unentitled:${CREW}:${CH}`), '채널당 안내는 같은 멱등 키를 쓴다 — 실제 DB 유니크 제약(makeDb.insertMessage 23505→null, 이 가짜 db는 흉내 내지 않는다)이 두 번째부터 조용히 걸러낸다');
+  assert.ok(sys.every((s) => s.client_msg_id === `unentitled:${CREW}:${CH}:${Date.parse('2026-09-01T00:00:00.000Z')}`), '채널당 안내는 같은 멱등 키(자격 마커 포함, L2)를 쓴다 — 실제 DB 유니크 제약(makeDb.insertMessage 23505→null, 이 가짜 db는 흉내 내지 않는다)이 두 번째부터 조용히 걸러낸다');
   assert.equal(sys[0].kind, 'system');
   assert.equal(sys[0].author_kind, 'crew');
   assert.match(sys[0].body, /무료 기간이 끝나|free period has ended/);
   assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 22]], '커서는 그대로 전진한다(재시도 루프에 빠지지 않는다)');
+});
+test('drain: 안내 키는 자격 마커를 섞는다 — 다른 마커(재만료)는 다른 키가 되어 새 안내가 다시 뜬다(L2)', async () => {
+  const dbA = fakeDb({ orgEntitled: false, messages: [msg(25)], orgEntitlementMarker: '2026-09-01T00:00:00.000Z' });
+  await M.drain(WS, { db: dbA, uid: OWNER, enqueue: fakeEnqueue() });
+  const keyA = dbA.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1].client_msg_id)[0];
+  assert.match(keyA, new RegExp(`^unentitled:${CREW}:${CH}:\\d+$`), '마커가 숫자(에폭 ms)로 키에 섞인다');
+  const dbB = fakeDb({ orgEntitled: false, messages: [msg(26)], orgEntitlementMarker: '2026-10-01T00:00:00.000Z' }); // 연장(재만료) — 다른 마커
+  await M.drain(WS, { db: dbB, uid: OWNER, enqueue: fakeEnqueue() });
+  const keyB = dbB.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1].client_msg_id)[0];
+  assert.notEqual(keyA, keyB, '마커가 바뀌면(연장·재만료) 안내 키도 바뀌어 새 안내가 다시 뜬다 — 옛 키의 DB 유니크 제약에 영영 막히지 않는다');
 });
 test('drain: 자격 판정이 실패(RPC 오류)하면 열어 둔다(fail-open)', async () => {
   const db = fakeDb({ orgEntitled: 'throw', messages: [msg(23)] });

@@ -412,3 +412,61 @@ test('scoped continuation audit survives approval, routine and job persistence w
     assert.ok(failed.messages.slice(-2).every(m=>m.contextScope?.channelId===f.origin.channelId),'a failed continuation cannot leak unscoped audit text');
   } finally { f.stop(); }
 });
+
+// 2026-09-27 2차 검수(N3) — 결재 후속(runMessengerContinuation)·큐 잡 핸들러(makeMsgrHandler run())의 자격 재확인은
+// 여태 어떤 테스트도 잠그지 않았다(제거해도 실패 0). 여기서 잠근다.
+test('runMessengerContinuation stops before the expensive turn when the org has lost entitlement', async () => {
+  const f = await setup();
+  const { runMessengerContinuation } = await import('../src/gateway/msgr.mjs');
+  f.db.orgEntitled = async () => false;
+  let ran = false;
+  try {
+    await assert.rejects(runMessengerContinuation(f.ws, 'alpha', f.origin, '진행', null, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } }), /msgr_org_unentitled/);
+    assert.equal(ran, false, 'entitlement is rechecked before the paid turn runs, not after');
+  } finally { f.stop(); }
+});
+
+test('makeMsgrHandler run(): a queued job rechecks entitlement before running and only leaves a channel notice', async () => {
+  const f = await setup();
+  const { makeMsgrHandler } = await import('../src/gateway/msgr.mjs');
+  f.db.orgEntitled = async () => false;
+  f.db.settled = async () => false;
+  const inserted = [];
+  f.db.insertMessage = async (row) => { inserted.push(row); return { id: 99 }; };
+  let ran = false;
+  const handler = makeMsgrHandler(f.ws, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } });
+  await handler({ msgId: 40, slug: 'alpha', crewId: 'a', channelId: 'channel', orgId: 'org', authorId: 'owner', threadRoot: 40, text: '작업', createdAt: new Date().toISOString() });
+  assert.equal(ran, false, 'a job already sitting in the queue is not run once the org has lost entitlement');
+  assert.equal(inserted.length, 1);
+  assert.match(inserted[0].client_msg_id, /^unentitled:a:channel/);
+  f.stop();
+});
+
+// 2026-09-27 N5(유건 결정) — 결재 승인 시 커넥터 payload 실행은 미자격 조직이면 실행하지 않고 카드에 안내만 남긴다.
+// applyRoutineEdits(본체 로컬 기능 설정)는 이 게이트 대상이 아니다 — drain()의 housekeeping에서 별도로 부른다(건드리지 않음).
+test('approval follow-up: an unentitled org does not run a connector payload, it leaves a note instead', async () => {
+  const f = await setup();
+  const approvals = await import('../src/approval-actions.mjs');
+  // applyPayload's own check (the first call) sees unentitled; later calls (runMessengerContinuation's
+  // separate, pre-existing re-check) see entitled so the follow-up turn still runs and we can observe
+  // the outcome text — this isolates the connector-specific gate from the unrelated continuation gate,
+  // which would otherwise also reject the whole follow-up turn and hide what applyPayload actually did.
+  let call = 0;
+  f.db.orgEntitled = async () => { call += 1; return call > 1; };
+  const item = { id: 'ap-connector-1', kind: 'connector', action: 'gmail · send_mail', slug: 'alpha', payload: { serverId: 'gmail', tool: 'send_mail', args: {} }, msgr: f.origin };
+  let seenText = null;
+  await approvals._followUpForTest(f.ws, item, true, { session: f.session, runChat: async (_ws, _slug, text) => { seenText = text; return { reply: 'ok' }; } });
+  assert.match(seenText, /무료 기간이 끝나 실행하지 않았습니다/, 'the outcome note reaches the crew turn instead of the connector actually running');
+  f.stop();
+});
+
+test('approval follow-up: an entitled org still attempts the connector payload (control)', async () => {
+  const f = await setup();
+  const approvals = await import('../src/approval-actions.mjs');
+  f.db.orgEntitled = async () => true;
+  const item = { id: 'ap-connector-2', kind: 'connector', action: 'gmail · send_mail', slug: 'alpha', payload: { serverId: 'gmail', tool: 'send_mail', args: {} }, msgr: f.origin };
+  let seenText = null;
+  await approvals._followUpForTest(f.ws, item, true, { session: f.session, runChat: async (_ws, _slug, text) => { seenText = text; return { reply: 'ok' }; } });
+  assert.doesNotMatch(seenText, /무료 기간이 끝나 실행하지 않았습니다/, 'an entitled org is not frozen by this gate (it fails later for an unrelated reason — no real gmail connector is configured in this fixture)');
+  f.stop();
+});

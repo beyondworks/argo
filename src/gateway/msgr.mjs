@@ -571,6 +571,15 @@ async function unentitledNoticeRow(db, orgId, { crewId, channelId, msgId, thread
   return { channel_id: channelId, author_kind: 'crew', crew_id: crewId, kind: 'system', reply_to: msgId, thread_root: threadRoot ?? msgId, client_msg_id: key,
     body: pick('무료 기간이 끝나 이 조직의 크루 작업이 멈췄습니다. 조직 관리자에게 문의하세요.', 'The free period has ended, so crew work is paused for this organization. Contact your organization admin.', lang) };
 }
+/** 결재 승인 시 커넥터 payload 실행(approval-actions.applyPayload) 전용 — 메신저 결재 항목만 조직 자격을 한 번 확인한다
+    (2026-09-27 N5, 유건 결정). 메신저와 무관한 결재(item.msgr 없음)는 부르지 않는다. 세션·RPC 실패는 fail-open(true) —
+    이 판정 실패가 결재 자체를 막지 않는다(DB 쪽 msgr_message_entitlement_gate가 최종 방어선은 아니다 — 커넥터 실행은
+    메시지 삽입이 아니라 실제 API 호출이라 서버 승인 로직 밖에서 일어나므로, 여기서 여는 쪽으로 폴백한다). */
+export async function msgrOrgEntitledForApproval(orgId, { session = sessionClient } = {}) {
+  const c = await session().catch(() => null);
+  if (!c) return true;
+  return c.db.orgEntitled(orgId).catch(() => true);
+}
 /** 동시 실행 상한을 둔 map — 결과 순서는 입력 순서 그대로. (export: 회귀 테스트용) */
 export async function mapLimited(items, limit, fn) {
   const out = new Array(items.length);
