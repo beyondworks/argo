@@ -42,6 +42,25 @@
 .msgr-railbody { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
 .msgr-railinner { display: flex; flex-direction: column; gap: 4px; }
 .shell.msgr-shell { grid-template-columns: 268px minmax(0, 1fr); height: calc(100vh / var(--z, 1)); min-height: 0; }
+/* 터치(coarse) 데스크톱 폭(아이패드 등)에서 소프트 키보드가 뜨면 — 폰 셸과 같은 원리: 셸을
+   visualViewport 높이(키보드+도구 막대를 뺀 값)에 고정해 웹뷰가 "포커스한 칸을 보여주려고" 문서
+   전체를 위로 스크롤하는 걸 막는다. 안 그러면 머리(레일 로고·채널명)가 화면 밖으로 밀리고 입력창
+   아랫부분(첨부·멘션·보내기)이 키보드 도구 막대 뒤에 가려진다(총괄 실측 native-landscape-14,
+   2026-09-27). 맥·윈도우는 pointer:coarse가 아니라 안 걸린다 — 키보드 이벤트 자체가 없다. */
+@media (pointer: coarse) {
+  .msgr-shell:not(.msgr-phone) {
+    position: fixed; top: var(--msgr-viewport-top, 0px); left: 0; right: 0;
+    height: var(--msgr-viewport-height, 100dvh); min-height: 0; overflow: hidden;
+    /* overflow:hidden 없이는 셸 자신이 (body가 fixed라 스크롤을 잃은 뒤) WKWebView가 포커스 칸을
+       보여주려고 scrollIntoView를 걸 수 있는 가장 가까운 포지션드 조상이 돼, 셸 자체가 위로
+       스크롤되며 채널 머리(.msgr-top)가 화면 밖으로 밀렸다(총괄 실측 native-landscape 재확인 2026-09-27,
+       .msgr-main/.msgr-side에 height:100%+overflow:hidden을 준 뒤에도 재현). */
+    grid-template-rows: minmax(0, 1fr); /* grid-template-rows가 없으면 auto가 돼 행이 셸 높이가 아니라
+      .msgr-main/.msgr-side의 콘텐츠 높이(스레드 실제 길이)로 자란다 — 그래서 아래 height:100%가
+      셸의 700px가 아니라 콘텐츠 높이(예: 1376px)에 걸려 셸 밖으로 넘쳤다(getBoundingClientRect 실측) */
+  }
+  .msgr-shell:not(.msgr-phone) .msgr-main, .msgr-shell:not(.msgr-phone) .msgr-side { height: 100%; overflow: hidden; }
+}
 .msgr-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; font-family: var(--mono); font-weight: 600; letter-spacing: 0.16em; font-size: 12px; }
 .msgr-brand svg { fill: var(--mark); }
 /* 조직 알약 — 아바타·이름·화살표 하나로(유건 실검수: 드롭다운 상자 룩 제거). 누르면 아래에 메뉴 */

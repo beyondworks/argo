@@ -16,6 +16,15 @@ export function useMobileViewport() {
       for (const k of ['--msgr-viewport-height', '--msgr-viewport-top']) { if (vars) style.setProperty(k, vars[k]); else style.removeProperty(k); }
       document.body.classList.toggle('msgr-short-viewport', short);
       document.documentElement.classList.toggle('msgr-kb', !!vars); // 키보드 모드 — 어떤 입력칸이든(설정의 부서·직급 칸 포함) 폰 셸이 탭바 자리를 비운다(유건 제보 2026-09-24)
+      // 아이패드 데스크톱 배치(총괄 실측 2026-09-27): .msgr-shell만 position:fixed로는 부족했다 — WKWebView가
+      // 포커스한 칸을 보여주려고 자신의 네이티브 스크롤뷰(문서 전체를 담는 컨테이너)를 이동시키면, 그 안의
+      // position:fixed 요소도 화면 밖으로 함께 끌려간다(레일 로고·채널 머리 소실을 body 최상위 고정 노드로도
+      // 재현 — .msgr-shell만의 문제가 아니었다). body 자체를 fixed로 만들면 WKWebView가 스크롤할 "문서"가
+      // 없어져 그 동작 자체가 일어나지 않는다(iOS 하이브리드 앱에서 흔히 쓰는 처방).
+      document.body.style.position = vars ? 'fixed' : '';
+      document.body.style.width = vars ? '100%' : '';
+      document.body.style.top = vars ? '0' : '';
+      document.body.style.left = vars ? '0' : '';
     };
     update();
     viewport?.addEventListener('resize', update);
@@ -43,6 +52,7 @@ export function useMobileViewport() {
       style.removeProperty('--msgr-viewport-top');
       document.body.classList.remove('msgr-short-viewport');
       document.documentElement.classList.remove('msgr-kb');
+      document.body.style.position = ''; document.body.style.width = ''; document.body.style.top = ''; document.body.style.left = '';
     };
   }, []);
 }
