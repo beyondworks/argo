@@ -54,3 +54,10 @@ test('hover가 없는 넓은 화면에서도 레일 행 메뉴(…)와 파견 �
   assert.ok(none.includes('.msgr-shell:not(.msgr-phone) .msgr-railrow .more'), '터치 데스크톱에서 … 가 드러나지 않는다');
   assert.ok(none.includes('.msgr-shell:not(.msgr-phone) .msgr-railrow .dispatch'), '터치 데스크톱에서 파견 버튼이 드러나지 않는다');
 });
+
+// 아이패드는 폭이 넓어도(>720px, 데스크톱 셸) 입력은 터치다 — 폰 전용 폭 블록의 data-acts 규칙이 안 걸린다.
+// 답글·복사·반응·삭제 같은 메시지 동작 줄(.msgr-acts)이 넓은 화면 + 터치에서도 길게 누르면 보여야 한다(2026-09-26 아이패드 지원).
+test('hover가 없으면 폭과 무관하게 길게 눌러 연 메시지 동작 줄이 보인다(아이패드 데스크톱 폭)', () => {
+  const none = all.filter((r) => r.at.some((a) => /\(hover:\s*none\)/.test(a)) && !phoneScoped(r)).flatMap((r) => parts(r.sel));
+  assert.ok(none.includes("[data-acts='open'] .msgr-acts"), '폭 제한 없는 (hover: none) 블록에 data-acts 규칙이 없다');
+});
