@@ -402,9 +402,11 @@ function ApprovalsCard({ ws, agents }) {
             <Avatar name={nameOf(a.slug)} size={26} />
             <Link href={`/c/${ws}/crew/${a.slug}`} title={t('deck.approvalOpen')}
               style={{ flex: 1, minWidth: 0, color: 'inherit', textDecoration: 'none' }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{a.action}</div>
+              {/* 쉬운 문장화 — 크루가 목적·할 일·필요한 것을 채웠으면 할 일을 머리글로, 목적을 부제로(폴백: 원래 action/reason) */}
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{a.plain?.task || a.action}</div>
               <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>
-                {nameOf(a.slug)}{a.from ? ` (${t('deck.approvalFrom', { name: nameOf(a.from) })})` : ''} · {a.reason}
+                {nameOf(a.slug)}{a.from ? ` (${t('deck.approvalFrom', { name: nameOf(a.from) })})` : ''}
+                {a.plain?.purpose ? ` · ${a.plain.purpose}` : (a.reason ? ` · ${a.reason}` : '')}
               </div>
             </Link>
             {busy === a.id ? <Spinner /> : (

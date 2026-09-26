@@ -31,7 +31,7 @@ import { chat } from '../chat.mjs';
 import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
 import { loadThread, appendTurn, scopedSession } from '../thread.mjs';
 import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
-import { loadApprovals, setApprovalMeta } from '../approvals.mjs';
+import { loadApprovals, setApprovalMeta, approvalPlainText } from '../approvals.mjs';
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mjs';
@@ -1199,16 +1199,22 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const c = await session(); if (!c) return false;
     const { lang = 'ko' } = company;
     const risk = approvalRisk(it); // H-1: 코드 판정 — 고위험은 조직 정책의 결재권자(기본 관리자)가 확정. 서버가 risk를 잠근다
+    // 쉬운 문장화(유건 확정 2026-09-26) — 크루가 plain(목적·할 일·필요한 것)을 채웠으면 카드 payload에 실어
+    // 앱의 Slip 컴포넌트가 원문 대신 그 문장을 먼저 보여주고, 원래 action/reason은 "명령 보기" 접힘으로.
+    // org_doc은 이미 자기 payload(문서 제목·본문)를 쓰므로 plain과 겹치지 않는다(request_approval·CLI 지시
+    // 블록만 plain을 채울 수 있고 둘 다 kind:'action').
     const approval = { org_id: ctx.orgId, channel_id: ctx.channelId, crew_id: ctx.crewId, approval_id: it.id, action: it.action, reason: it.reason ?? null, risk,
-      ...(it.kind === 'org_doc' ? { kind: 'org_doc', payload: it.payload ?? null } : {}) };
+      ...(it.kind === 'org_doc' ? { kind: 'org_doc', payload: it.payload ?? null } : (it.plain ? { payload: { plain: it.plain } } : {})) };
+    const plainSummary = it.kind !== 'org_doc' ? approvalPlainText(it, lang) : null;
+    const headline = plainSummary ?? `${it.action}${it.reason ? `${lang === 'en' ? '\nReason: ' : '\n사유: '}${it.reason}` : ''}`;
     const body = it.kind === 'org_doc'
         ? pick(`조직 문서 제안: ${it.payload?.title ?? it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(관리자가 승인하면 서버가 문서에 반영합니다)`,
           `Org doc proposal: ${it.payload?.title ?? it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(An admin's approval writes it to the document)`, lang)
         : risk === 'high'
-        ? pick(`결재 요청(고위험): ${it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(고위험 행동 — 조직 정책의 결재권자가 확정합니다)`,
-          `Approval requested (high risk): ${it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(High-risk action — decided by the approver set in organization policy)`, lang)
-        : pick(`결재 요청: ${it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(확정은 이 크루의 소유자만 할 수 있습니다)`,
-          `Approval requested: ${it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(Only this crew's owner can decide)`, lang);
+        ? pick(`결재 요청(고위험): ${headline}\n(고위험 행동 — 조직 정책의 결재권자가 확정합니다)`,
+          `Approval requested (high risk): ${headline}\n(High-risk action — decided by the approver set in organization policy)`, lang)
+        : pick(`결재 요청: ${headline}\n(확정은 이 크루의 소유자만 할 수 있습니다)`,
+          `Approval requested: ${headline}\n(Only this crew's owner can decide)`, lang);
     let ap, card;
     approval.source_msg_id = ctx.sourceMsgId ?? ctx.threadRoot ?? null;
     if (ctx.delegated === true) {

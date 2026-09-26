@@ -222,6 +222,14 @@
 .msgr-slip.approved .action, .msgr-slip.rejected .action { color: var(--fg-2); font-weight: 500; }
 .msgr-slip.rejected .action { text-decoration: line-through; text-decoration-color: var(--fg-3); }
 .msgr-slip.expired .action { color: var(--fg-3); }
+/* 쉬운 문장화(2026-09-26) — 목적·할 일·필요한 것 + 접힘 "명령 보기" */
+.msgr-slip .plain-line { font-size: 13px; line-height: 1.5; }
+.msgr-slip .plain-line b { font-weight: 600; margin-right: 4px; }
+.msgr-slip .plain-line.task { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.msgr-slip .plain-line.task b { font-weight: 650; }
+.msgr-slip .plain-raw { margin-top: 2px; }
+.msgr-slip .plain-raw summary { cursor: pointer; font-size: 11.5px; color: var(--fg-3); }
+.msgr-slip .plain-raw .action, .msgr-slip .plain-raw .reason { margin-top: 6px; }
 .msgr-seal { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px 4px 5px; border-radius: 999px; border: 1.5px solid var(--fg-2); color: var(--fg-2); font-size: 11.5px; font-weight: 600; }
 .msgr-seal .mi { width: 18px; height: 18px; padding: 3px; border-radius: 999px; background: var(--fg-2); color: var(--card); stroke-width: 2.2; }
 .msgr-seal.ok { border-color: var(--ok); color: var(--ok); } .msgr-seal.ok .mi { background: var(--ok); }

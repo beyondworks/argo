@@ -1203,8 +1203,25 @@ export default function CrewChat({ params, embedded = false, onClose }) {
               ) : p.from ? (
                 <div style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: '-2px 0 6px' }}>{t('chat.approval.fromNote', { name: p.fromName ?? p.from })}</div>
               ) : null}
-              <div style={{ fontSize: 13.5, fontWeight: 650 }}>{p.action}</div>
-              {p.reason && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.55 }}>{p.reason}</p>}
+              {/* 쉬운 문장화(유건 확정 2026-09-26) — 크루가 목적·할 일·필요한 것을 채웠으면 그 세 줄을 먼저 보이고
+                  원래 action/reason은 "명령 보기" 접힘으로. 하나도 안 채웠으면(폴백) 기존 카드 그대로. */}
+              {p.plain && (p.plain.purpose || p.plain.task || p.plain.need) ? (
+                <>
+                  {p.plain.purpose && <div style={{ fontSize: 13.5, marginTop: 2 }}><b>{t('chat.approval.plain.purpose')}</b> {p.plain.purpose}</div>}
+                  {p.plain.task && <div style={{ fontSize: 13.5, fontWeight: 650, marginTop: 2 }}><b style={{ fontWeight: 650 }}>{t('chat.approval.plain.task')}</b> {p.plain.task}</div>}
+                  {p.plain.need && <div style={{ fontSize: 12.5, color: 'var(--fg-2)', marginTop: 2 }}><b>{t('chat.approval.plain.need')}</b> {p.plain.need}</div>}
+                  <details style={{ marginTop: 8 }}>
+                    <summary style={{ cursor: 'pointer', fontSize: 11.5, color: 'var(--fg-3)' }}>{t('chat.approval.plain.raw')}</summary>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 6 }}>{p.action}</div>
+                    {p.reason && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.55 }}>{p.reason}</p>}
+                  </details>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13.5, fontWeight: 650 }}>{p.action}</div>
+                  {p.reason && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.55 }}>{p.reason}</p>}
+                </>
+              )}
               <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
                 <button className="btn btn-primary sm" disabled={!!resolving} onClick={() => resolvePending(p.id, true)}>
                   {resolving === p.id ? <Spinner size={12} /> : (p.kind === 'capability' ? t('chat.approval.yes') : t('common.approve'))}

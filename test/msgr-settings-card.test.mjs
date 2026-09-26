@@ -158,7 +158,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
-  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \{\}\) \};/, '미러 행에 risk·(org_doc이면 kind·payload)가 없다');
+  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \(it\.plain \? \{ payload: \{ plain: it\.plain \} \} : \{\}\)\) \};/, '미러 행에 risk·(org_doc이면 kind·payload, plain이면 payload.plain)가 없다');
   assert.match(bridge, /ap = await c\.db\.insertApproval\(approval\)/, '일반 결재가 위험 판정 payload를 사용해야 한다');
   assert.match(bridge, /createThreadApproval\(event\.wsId, ctx\.crewId, ctx\.sourceMsgId \?\? ctx\.threadRoot, ctx\.channelId, approval, body\)/, '위임 결재도 같은 위험 판정 payload를 사용해야 한다');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');

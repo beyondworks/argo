@@ -1338,6 +1338,10 @@ const DICT = {
   'deck.approvalOpen': ['이 크루 대화 열기 — 앞뒤 맥락 보기', 'Open this crew’s chat — see the full context'],
   'chat.approval.yes': ['네, 켜고 진행', 'Yes, enable & continue'],
   'chat.approval.no': ['아니오', 'No'],
+  'chat.approval.plain.purpose': ['목적', 'Purpose'],
+  'chat.approval.plain.task': ['할 일', 'Task'],
+  'chat.approval.plain.need': ['필요한 것', 'Needs'],
+  'chat.approval.plain.raw': ['명령 보기', 'View command'],
 
   // ── 백그라운드 작업 패널
   'tasks.title': ['백그라운드 작업', 'Background Tasks'],

@@ -4414,8 +4414,25 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
     <div className={cls}>
       <div className="band"><I name={bandIcon} size={14} />{band}{high && <span className="msgr-klabel risk">{t('ap.high')}</span>}<span className="id">{ap.approval_id}</span></div>
       <div className="body">
-        <div className="action">{ap.action}</div>
-        {ap.reason && <div className="reason">{ap.reason}</div>}
+        {/* 쉬운 문장화(유건 확정 2026-09-26) — 크루가 목적·할 일·필요한 것을 채웠으면 그 문장을 먼저 보이고
+            원래 action/reason은 "명령 보기" 접힘으로. 하나도 안 채웠으면(폴백) 기존처럼 action/reason 그대로. */}
+        {ap.payload?.plain && (ap.payload.plain.purpose || ap.payload.plain.task || ap.payload.plain.need) ? (
+          <>
+            {ap.payload.plain.purpose && <div className="plain-line"><b>{t('ap.plain.purpose')}</b> {ap.payload.plain.purpose}</div>}
+            {ap.payload.plain.task && <div className="plain-line task"><b>{t('ap.plain.task')}</b> {ap.payload.plain.task}</div>}
+            {ap.payload.plain.need && <div className="plain-line"><b>{t('ap.plain.need')}</b> {ap.payload.plain.need}</div>}
+            <details className="plain-raw">
+              <summary>{t('ap.plain.raw')}</summary>
+              <div className="action">{ap.action}</div>
+              {ap.reason && <div className="reason">{ap.reason}</div>}
+            </details>
+          </>
+        ) : (
+          <>
+            <div className="action">{ap.action}</div>
+            {ap.reason && <div className="reason">{ap.reason}</div>}
+          </>
+        )}
         {ap.kind === 'org_doc' && ap.payload && (
           <div className="docprop">
             <div className="msgr-klabel">{t('ap.orgDoc')} · {ap.payload.scope === 'org' ? t('docs.scope.org') : t('docs.scope.channel')} · {ap.payload.path}</div>

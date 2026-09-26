@@ -181,9 +181,13 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // approval-actions가 후속 턴으로 "이제 실행하라"를 배달한다(경로 동일).
         const request = String(d.request ?? d.action_text ?? '').trim();
         if (!request) throw new Error(en ? 'request is required' : 'request(하려는 행동)가 필요합니다');
+        // 쉬운 문장화(유건 확정 2026-09-26) — purpose/task/need는 선택, SDK request_approval과 같은 계약.
+        // 하나도 없으면 addApproval의 sanitizePlain이 null을 만들어 카드가 기존 action/reason 그대로다(폴백).
+        const { purpose, task, need } = d;
         const item = await addApproval(wsId, {
           slug: fromSlug, msgr: messengerOrigin(mirrorCtx), ...approvalScope(mirrorCtx), action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
           reason: String(d.reason ?? '').replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 300),
+          ...((purpose || task || need) ? { plain: { purpose, task, need } } : {}),
         });
         notes.push(en
           ? `✓ Approval filed (${item.id}) — waiting for the captain. Do NOT perform the action until approved.`
