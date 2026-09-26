@@ -22,7 +22,10 @@ import { useStore, saveLayout, reorderPage, createPage } from './core/store.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
 import { move } from './core/layout.js';
-import { SPACES, CREWS, ME, PEOPLE } from './data/sample.js';
+import { CREWS, PEOPLE } from './data/sample.js';
+import { SPACES, ME, useSession } from './core/session.js';
+import { pullLayouts } from './core/pull.js';
+import { Login } from './pages/Login.jsx';
 
 function route(path) {
   let m;
@@ -82,6 +85,7 @@ const collision = (args) => {
 
 export default function App() {
   useLang();
+  const mode = useSession();
   const url = useUrl();
   const [path, query] = url.split('?');
   const r = route(path);
@@ -95,7 +99,8 @@ export default function App() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  useEffect(() => { if (r.redirect) navigate(r.redirect, { replace: true }); }, [r.redirect]);
+  useEffect(() => { if (r.redirect && mode !== 'loading') navigate(r.redirect, { replace: true }); }, [r.redirect, mode]);
+  useEffect(() => { if (mode === 'signedIn') pullLayouts().catch((e) => console.warn('[office] layout pull failed', e?.message)); }, [mode]);
   useEffect(() => { setUi({ navOpen: false }); }, [path]);
   useEffect(() => {
     const onKey = (e) => {
@@ -110,8 +115,10 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [r.space]);
 
-  if (r.redirect) return null;
   if (r.view === 'public') return <><PublicPage id={r.id} /><ToastHost /></>;
+  if (mode === 'loading') return <div className="boot" aria-busy="true" />;
+  if (mode === 'signedOut') return <Login />;
+  if (r.redirect) return null;
 
   const onDragEnd = ({ active, over }) => {
     setDragging(null);

@@ -431,6 +431,18 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
 .keys div { display: flex; align-items: center; gap: 10px; }
 .keys dt { min-width: 84px; } .keys dd { margin: 0; color: var(--fg-2); }
 
+/* ── 로그인 ── */
+.boot { min-height: 100dvh; background: var(--bg); }
+.login { min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); }
+.login-card { width: min(380px, 100%); display: grid; gap: 10px; padding: 28px 24px; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.login-card h1 { font-size: 20px; font-weight: 680; letter-spacing: -0.02em; }
+.login-mark { width: 34px; height: 34px; font-size: 15px; background: var(--primary); color: var(--primary-fg); border-radius: 9px; }
+.login-buttons { display: grid; gap: 8px; margin-top: 8px; }
+.login-buttons .btn { height: 40px; }
+.login-dev { display: grid; gap: 8px; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.login-dev .input { height: 36px; }
+.login-error { color: var(--danger); font-size: 12.5px; }
+
 /* ── 공개 게시 화면 ── */
 .public { min-height: 100dvh; background: var(--surface); display: grid; grid-template-rows: auto 1fr auto; }
 .public-head { display: flex; align-items: center; gap: 10px; padding: 16px 24px; border-bottom: 1px solid var(--border-soft); }

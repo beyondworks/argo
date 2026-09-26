@@ -13,7 +13,8 @@ import { setUi, useUi } from '../core/ui-state.js';
 import { mailMenu } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer, fmtBytes, MAX_FILE } from '../core/files.js';
 import { imeGuardWith } from '../core/ime.js';
-import { MAIL_FOLDERS, ME } from '../data/sample.js';
+import { MAIL_FOLDERS } from '../data/sample.js';
+import { ME } from '../core/session.js';
 import { crewName } from './modules.jsx';
 
 function MailRow({ m, active }) {

@@ -12,7 +12,8 @@ import { useStore, childrenOf, createPage } from '../core/store.js';
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
-import { SPACES, CREWS, ME } from '../data/sample.js';
+import { CREWS } from '../data/sample.js';
+import { SPACES, ME } from '../core/session.js';
 import { restore, persist } from '../core/save.js';
 
 const ACCEPTS = ['mail', 'page', 'file', 'record'];

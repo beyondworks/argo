@@ -7,7 +7,7 @@ import { THEMES, applyTheme, readTheme } from '../core/theme.js';
 import { useStore, restorePage, resetDraft } from '../core/store.js';
 import { Link } from '../core/router.jsx';
 import { baseOf, mod } from '../core/commands.js';
-import { SPACES, ME } from '../data/sample.js';
+import { SPACES, ME, getMode, signOut } from '../core/session.js';
 
 /** 테마 미리보기 — 앱을 작게 줄인 모습(사이드바·캔버스·카드·글줄). "시스템"은 라이트와 다크를 대각선으로 반씩 보여 준다. */
 function Mini({ tone }) {
@@ -44,6 +44,10 @@ export function Settings() {
         <h2>{t('settings.lang')}</h2>
         <div className="seg">{['ko', 'en'].map((l) => <button key={l} type="button" className={`seg-btn${getLang() === l ? ' on' : ''}`} onClick={() => setLang(l)}>{t(`lang.${l}`)}</button>)}</div>
       </section>
+      {getMode() === 'signedIn' && <section className="set-card">
+        <h2>{t('settings.account')}</h2>
+        <div className="person"><span className="avatar">{ME.name.slice(0, 1)}</span><span className="person-main"><b>{ME.name}</b><small>{ME.email}</small></span><button type="button" className="btn sm" onClick={() => signOut()}>{t('settings.signOut')}</button></div>
+      </section>}
       <section className="set-card">
         <h2>{t('settings.mail')}</h2>
         <div className="person"><span className="dot ok" /><span className="person-main"><b>{ME.email}</b><small>IMAP · SMTP</small></span><button type="button" className="btn sm">{t('mail.connect')}</button></div>

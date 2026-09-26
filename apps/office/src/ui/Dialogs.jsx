@@ -7,7 +7,8 @@ import { t, useLang } from '../core/i18n.js';
 import { useUi, setUi } from '../core/ui-state.js';
 import { useStore, assign } from '../core/store.js';
 import { imeGuardWith } from '../core/ime.js';
-import { CREWS, SPACES, ME, PEOPLE } from '../data/sample.js';
+import { CREWS, PEOPLE } from '../data/sample.js';
+import { SPACES, ME } from '../core/session.js';
 
 export function ShareDialog() {
   useLang();

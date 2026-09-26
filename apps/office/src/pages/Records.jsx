@@ -10,7 +10,8 @@ import { useStore, decide } from '../core/store.js';
 import { recordMenu, fileMenu } from '../core/commands.js';
 import { fmtBytes } from '../core/files.js';
 import { navigate } from '../core/router.jsx';
-import { OUTPUTS, JOURNAL, SPACES, ME } from '../data/sample.js';
+import { OUTPUTS, JOURNAL } from '../data/sample.js';
+import { SPACES, ME } from '../core/session.js';
 import { crewName } from './modules.jsx';
 
 const inSpace = (space) => (x) => space === 'me' || x.space === space;

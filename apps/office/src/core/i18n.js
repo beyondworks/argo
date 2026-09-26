@@ -73,6 +73,12 @@ const DICT = {
   'shared.title': ['공유받은 항목', 'Shared with me'], 'shared.empty': ['공유받은 페이지가 없습니다', 'Nothing shared with you yet'],
   'file.download': ['다운로드', 'Download'], 'file.sendCrew': ['크루에게 보내기', 'Send to crew'], 'record.openMsgr': ['메신저에서 열기', 'Open in Messenger'],
   'lang.ko': ['한국어', '한국어'], 'lang.en': ['English', 'English'], 'public.madeWith': ['Argo Office로 만듦', 'Made with Argo Office'],
+  'login.title': ['Argo Office에 로그인', 'Sign in to Argo Office'], 'login.sub': ['아르고 메신저와 같은 계정으로 로그인합니다', 'Use the same account as Argo Messenger'],
+  'login.google': ['Google로 계속', 'Continue with Google'], 'login.apple': ['Apple로 계속', 'Continue with Apple'], 'login.github': ['GitHub로 계속', 'Continue with GitHub'],
+  'login.dev': ['개발용 로그인(로컬 스택)', 'Dev sign-in (local stack)'], 'login.email': ['이메일', 'Email'], 'login.password': ['비밀번호', 'Password'],
+  'login.submit': ['로그인', 'Sign in'], 'login.failed': ['로그인하지 못했습니다', 'Could not sign in'], 'login.loading': ['불러오는 중…', 'Loading…'],
+  'settings.account': ['계정', 'Account'], 'settings.signOut': ['로그아웃', 'Sign out'],
+  'home.readOnly': ['조직 홈 구성은 관리자가 정합니다', 'Admins arrange the organization home'],
   'draft.badge': ['화면 초안 · 예시 데이터', 'Screen draft · sample data'],
   'time.now': ['방금', 'just now'], 'time.min': ['{n}분 전', '{n}m ago'], 'time.hour': ['{n}시간 전', '{n}h ago'], 'time.day': ['{n}일 전', '{n}d ago'],
 };

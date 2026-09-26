@@ -5,7 +5,7 @@ import { THEMES, applyTheme } from './theme.js';
 import { createPage, duplicatePage, trashPage, archiveMail, setMail, savePage, getState } from './store.js';
 import { setUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
-import { SPACES } from '../data/sample.js';
+import { SPACES } from './session.js';
 
 export const baseOf = (space) => (space === 'me' ? '/me' : `/o/${space}`);
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);

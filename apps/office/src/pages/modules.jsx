@@ -7,7 +7,8 @@ import { Link } from '../core/router.jsx';
 import { t, ago } from '../core/i18n.js';
 import { useStore, toggleTodo } from '../core/store.js';
 import { baseOf, mailMenu, pageMenu, fileMenu, recordMenu } from '../core/commands.js';
-import { CREWS, SPACES, OUTPUTS, JOURNAL } from '../data/sample.js';
+import { CREWS, OUTPUTS, JOURNAL } from '../data/sample.js';
+import { SPACES } from '../core/session.js';
 import { fmtBytes } from '../core/files.js';
 
 export const crewName = (id) => CREWS.find((c) => c.id === id)?.name ?? '';

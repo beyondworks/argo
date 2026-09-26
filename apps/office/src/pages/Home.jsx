@@ -12,7 +12,7 @@ import { mergeLayout, SPAN, linkedResize, rowsOf } from '../core/layout.js';
 import { flipGrid } from '../core/motion.js';
 import { baseOf } from '../core/commands.js';
 import { MODULES, DEFAULTS } from './modules.jsx';
-import { SPACES, ME } from '../data/sample.js';
+import { SPACES, ME } from '../core/session.js';
 
 export const layoutKey = (space) => `home:${space}`;
 export const kindOf = (space) => (space === 'me' ? 'me' : 'org');
@@ -25,16 +25,16 @@ export function useHomeLayout(space) {
 const animated = (el, fn) => (el ? flipGrid(el.closest('.grid'), () => flushSync(fn)) : fn());
 const nearest = (sizes, span) => sizes.reduce((b, s) => (Math.abs(SPAN[s] - span) < Math.abs(SPAN[b] - span) ? s : b), sizes[0]);
 
-function ModuleCard({ item, space, items, partner, canResize }) {
+function ModuleCard({ item, space, items, partner, canResize, canEdit }) {
   const mod = MODULES.find((m) => m.id === item.id);
   const pmod = partner && MODULES.find((m) => m.id === partner.id);
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: `module:${item.id}`, data: { kind: 'module', id: item.id, group: 'grid', label: t(mod.title) } });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: `module:${item.id}`, disabled: !canEdit, data: { kind: 'module', id: item.id, group: 'grid', label: t(mod.title) } });
   const card = useRef(null);
   // 끄는 동안 붙인 임시 폭은 저장된 크기가 그려진 뒤 걷는다(같은 값이라 화면은 그대로)
   useLayoutEffect(() => { if (card.current) card.current.style.gridColumn = ''; }, [item.size]);
   const save = (sizes) => saveLayout(layoutKey(space), items.map((x) => (sizes[x.id] ? { ...x, size: sizes[x.id] } : x)));
   const set = (patch) => animated(card.current, () => saveLayout(layoutKey(space), items.map((x) => (x.id === item.id ? { ...x, ...patch } : x))));
-  const menu = () => [
+  const menu = () => !canEdit ? [{ heading: t('home.readOnly') }] : [
     { heading: t('mod.size') },
     ...mod.sizes.map((s) => ({ label: t(`mod.size.${s}`), checked: item.size === s, run: () => set({ size: s }) })),
     { sep: true },
@@ -76,14 +76,14 @@ function ModuleCard({ item, space, items, partner, canResize }) {
     <section ref={(el) => { setNodeRef(el); card.current = el; }} data-mod={item.id} className={`module size-${item.size}${isDragging ? ' dragging' : ''}`}
       style={{ transform: CSS.Translate.toString(transform), transition }} aria-label={t(mod.title)} {...menuProps(menu)}>
       <header className="module-head">
-        <button type="button" ref={setActivatorNodeRef} className="grip" aria-label={t('mod.drag')} {...mergeHandlers(attributes, listeners)}><Icon name="grip" size={14} /></button>
+        {canEdit && <button type="button" ref={setActivatorNodeRef} className="grip" aria-label={t('mod.drag')} {...mergeHandlers(attributes, listeners)}><Icon name="grip" size={14} /></button>}
         <Icon name={mod.icon} size={14} className="dim" />
         <h3>{t(mod.title)}</h3>
         {mod.link && <Link to={mod.link === '/mail' ? '/me/mail' : `${baseOf(space)}${mod.link}`} className="module-link">{t('mod.more')}</Link>}
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
       </header>
       <div className="module-body"><Body space={space} /></div>
-      {canResize && <span className="col-handle" role="separator" aria-orientation="vertical" aria-label={t('mod.resize')} tabIndex={0} onPointerDown={onResize} onKeyDown={onResizeKey} />}
+      {canEdit && canResize && <span className="col-handle" role="separator" aria-orientation="vertical" aria-label={t('mod.resize')} tabIndex={0} onPointerDown={onResize} onKeyDown={onResizeKey} />}
     </section>
   );
 }
@@ -94,6 +94,7 @@ export function Home({ space }) {
   const visible = items.filter((i) => !i.hidden);
   const hidden = items.filter((i) => i.hidden);
   const sp = SPACES.find((s) => s.key === space);
+  const canEdit = sp.kind === 'me' || sp.role === 'owner' || sp.role === 'admin'; // 조직 홈 구성은 관리자만(유건 확정: 구조는 공유)
   const grid = useRef(null);
   const withMotion = (fn) => (grid.current ? flipGrid(grid.current, () => flushSync(fn)) : fn());
   // 경계 손잡이: 같은 줄 오른쪽에 모듈이 있으면 그 모듈과 연결, 혼자인 줄이면 자유 조절, 줄 끝 모듈은 손잡이 없음(격자 끝이 경계)
@@ -110,14 +111,14 @@ export function Home({ space }) {
           <p className="eyebrow">{today}</p>
           <h1 className="page-h1">{sp.kind === 'me' ? `${t('home.title')} · ${ME.name}` : sp.name}</h1>
         </div>
-        <div className="row-actions">
+        {canEdit ? <div className="row-actions">
           <button type="button" className="btn ghost" onClick={() => withMotion(() => saveLayout(layoutKey(space), []))}>{t('home.reset')}</button>
           <button type="button" className="btn" onClick={add}><Icon name="plus" size={14} />{t('home.addModule')}</button>
-        </div>
+        </div> : <p className="dim small">{t('home.readOnly')}</p>}
       </div>
       <SortableContext items={visible.map((i) => `module:${i.id}`)} strategy={rectSortingStrategy}>
         <div className="grid" ref={grid}>
-          {visible.map((i) => <ModuleCard key={i.id} item={i} space={space} items={items} {...links.get(i.id)} />)}
+          {visible.map((i) => <ModuleCard key={i.id} item={i} space={space} items={items} canEdit={canEdit} {...links.get(i.id)} />)}
         </div>
       </SortableContext>
     </div>
