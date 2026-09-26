@@ -39,9 +39,11 @@ test('무결성 대조 불가(sha256 없음) 자산은 설치하지 않는다', 
   assert.match(src, /if \(!asset\.sha256\) \{ ref\.current\.phase = 'error'; setSt\(\(s\) => \(\{ \.\.\.s, phase: 'error', error: 'missing-sha256' \}\)\); return; \}/);
 });
 
-test('iOS는 다운로드가 아니라 TestFlight를 연다(스토어 밖 자가설치 금지)', () => {
-  assert.match(src, /itms-beta:\/\//);
-  assert.match(src, /isIos[\s\S]{0,80}openTestFlight/);
+test('iOS는 업데이트 확인·막대를 아예 하지 않는다(App Store가 담당, 2.2 베타 유도 금지)', () => {
+  assert.ok(!/itms-beta:\/\//.test(src), 'TestFlight로 여는 경로가 남아 있으면 안 된다');
+  assert.ok(!/openTestFlight/.test(src), 'openTestFlight 함수가 남아 있으면 안 된다');
+  assert.match(src, /if \(!isMobileNative \|\| isIos\) return undefined;/, 'iOS는 GitHub 확인 이펙트 자체를 건너뛴다');
+  assert.match(src, /if \(!isMobileNative \|\| isIos \|\| u\.phase === 'idle'\) return null;/, '막대 렌더도 iOS를 한 번 더 막는다');
 });
 
 test('App.jsx에 실제로 걸려 있다', () => {

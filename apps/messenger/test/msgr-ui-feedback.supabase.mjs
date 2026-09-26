@@ -12,6 +12,8 @@ const CREWS = [crew('davinci', '다빈치', '디자인 리드'), crew('alfred', 
   crew('beast', '비스트', 'AI-Native 조직의 마케팅 전략을 세우고 캠페인을 운영하는 에이전트'), crew('carmack', '카맥', '백엔드 엔지니어'),
   crew('edna', '에드나', '브랜드·의상 디자인 감독'), crew('feynman', '파인만', '리서치·실험 설계'), crew('hermes', 'Hermes', '외부 연결 담당')];
 const state = window.__instant = {
+  aiConsentAt: null,       // 2026-09-26 시각 검증용 — App Store 5.1.2 동의 상태(msgr_profiles.ai_consent_at 대역)
+  mutedCrews: new Set(),   // 2026-09-26 시각 검증용 — 숨긴 크루(msgr_user_blocks.blocked_crew 대역)
   latency: 120,            // 한 번의 DB 왕복에 해당하는 시간(ms)
   queries: [],             // 걸린 쿼리 기록 — 테이블별로 몇 번 갔는지 센다
   topics: {},              // 구독된 실시간 토픽 → 핸들러
@@ -28,7 +30,7 @@ const state = window.__instant = {
     msgr_channels: [channelRow('general', 'public', 'Fixture General'), channelRow('dm-group', 'dm', 'dm:다빈치, crystal'), { ...channelRow('priv', 'private', '디자인 비공개'), topic: '제품 출시 준비 — 이번 주 목표와 결정 사항을 여기에 모읍니다' },
       channelRow('lounge', 'public', 'Lounge'), channelRow('lounge2', 'public', 'Lounge Two'), // 참여 안 한 공개 채널 — 초대 코드 가입(lounge)·남이 나를 추가(lounge2) 뒤 사이드바 확인용
       { ...channelRow('long', 'private', '2026 하반기 제품 출시 준비와 파트너 협업 채널'), topic: 'Launch readiness, partner onboarding and weekly decisions — keep everything for the release here' }], // 긴 이름·긴 주제 — 상단 바 접힘 확인용. 비공개 채널 — 에이전트 추가 안내(ch.add.crew.note) 확인용
-    msgr_channel_members: [{ channel_id: 'general', member_kind: 'user', member_id: uid },
+    msgr_channel_members: [{ channel_id: 'general', member_kind: 'user', member_id: uid }, { channel_id: 'general', member_kind: 'crew', member_id: 'crew-davinci' }, // 2026-09-26: general도 크루가 읽는 채널(AI 동의 창 검증용)
       { channel_id: 'dm-group', member_kind: 'user', member_id: uid }, { channel_id: 'dm-group', member_kind: 'user', member_id: 'user-crystal' },
       { channel_id: 'dm-group', member_kind: 'crew', member_id: 'crew-davinci' },
       { channel_id: 'priv', member_kind: 'user', member_id: uid }, { channel_id: 'priv', member_kind: 'crew', member_id: 'crew-davinci' },
@@ -36,7 +38,9 @@ const state = window.__instant = {
     // 결재 카드 시나리오용 크루 하나(다른 사람 소유) — 시작 시 목록에 있어야 카드의 크루 이름이 그려진다
     msgr_crews: CREWS,
     msgr_target_prefs: [], msgr_channel_prefs: [],
-    msgr_messages: [{ id: 101, org_id: org, channel_id: 'general', author_kind: 'user', author_user_id: uid, kind: 'text', body: '먼저 있던 글', created_at: now, edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null }],
+    msgr_messages: [{ id: 101, org_id: org, channel_id: 'general', author_kind: 'user', author_user_id: uid, kind: 'text', body: '먼저 있던 글', created_at: now, edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null },
+      { id: 102, org_id: org, channel_id: 'general', author_kind: 'crew', crew_id: 'crew-davinci', kind: 'text', body: '안녕하세요, 다빈치입니다. 무엇을 도와드릴까요?', created_at: now, edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null }, // 크루 숨기기(App Store 1.2) 검증용
+      { id: 103, org_id: org, channel_id: 'general', author_kind: 'user', author_user_id: 'user-other', kind: 'text', body: '아 진짜 fuck 이거 왜 안 되지', created_at: now, edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null }], // 부적절 표현 가리기 검증용
     msgr_crew_approvals: [], msgr_attachments: [], msgr_reactions: [], msgr_reads: [],
   },
 };
@@ -186,6 +190,12 @@ export const supabase = {
       if (!has) state.tables.msgr_channel_members.push({ channel_id: args.ch, member_kind: 'user', member_id: uid }); state.joins = (state.joins ?? 0) + 1; return null; })()
     : name === 'msgr_dm_candidates'
     ? CREWS.filter((c) => !state.tables.msgr_channel_members.some((m) => m.channel_id === args?.p_channel && m.member_kind === 'crew' && m.member_id === c.id)).map((c) => ({ ...c, delivery_ready: true }))
+    // 2026-09-26 시각 검증용 대역 — App Store 5.1.2(AI 동의)·1.2(크루 숨기기)
+    : name === 'msgr_my_ai_consent' ? state.aiConsentAt
+    : name === 'msgr_set_ai_consent' ? (state.aiConsentAt = args?.consent ? new Date().toISOString() : null)
+    : name === 'msgr_my_muted_crews' ? [...state.mutedCrews].map((id) => ({ crew_id: id, display_name: CREWS.find((c) => c.id === id)?.display_name ?? '', created_at: now }))
+    : name === 'msgr_mute_crew' ? (state.mutedCrews.add(args?.crew), null)
+    : name === 'msgr_unmute_crew' ? (state.mutedCrews.delete(args?.crew), null)
     : []),
   realtime: { setAuth: async () => { if (state.authDelay) await new Promise((r) => setTimeout(r, state.authDelay)); } },
   getChannels: () => [...state.live].map((c) => ({ topic: `realtime:${c.__topic}` })),

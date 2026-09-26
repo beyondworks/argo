@@ -198,6 +198,8 @@
 .msgr-mine .bubble .md :is(code, pre) { background: color-mix(in srgb, var(--primary-fg) 12%, transparent); border-color: var(--primary-fg-line); color: inherit; } /* 내 말풍선 안 코드 — 카드용 --card-2 바탕이 --primary 위에서 글자를 묻었다(검정 말풍선에 흰 상자·흰 글자) */
 .msgr-mine .bubble .md pre code { background: none; border: 0; }
 .msgr-mine .bubble .md :is(a, blockquote) { color: inherit; } .msgr-mine .bubble .md :is(blockquote, th, td, hr) { border-color: var(--primary-fg-line); }
+.msgr-hidden-msg { background: none; border: 0; padding: 0; font: inherit; font-style: italic; font-size: 12.5px; color: var(--fg-3); cursor: pointer; text-decoration: underline dotted; } /* 부적절 표현 가리기(App Store 1.2, 2026-09-26) */
+.msgr-mine .msgr-hidden-msg { color: var(--primary-fg-dim); }
 .msgr-sys.msgr-relay { flex-direction: column; align-items: flex-start; gap: 6px; } /* 전달 안내 — 문장 + 대화 열기 칩(.msgr-chan) 줄 */
 .msgr-relay .msgr-chan { font-style: normal; }
 .msgr-skel { display: grid; gap: 8px; max-width: 640px; padding-top: 4px; }
