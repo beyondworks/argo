@@ -1114,7 +1114,7 @@ function Shell({ session }) {
       setInbox(list.filter((it) => !(it.whoKind === 'user' && blockedIds.has(it.who))).filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80));
     })();
     return () => { dead = true; };
-  }, [org?.id, uid, tick, channels, previewChannels, friends, blockedIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [org?.id, uid, tick, channels, previewChannels, friends, blockedIds, lang]); // eslint-disable-line react-hooks/exhaustive-deps — lang: 회사 공지 문구(inbox.system.trialExtended)가 언어 전환에 다시 그려지게(2026-09-27 L11)
   const nodeSeenAt = org?.node_seen_at ? Date.parse(org.node_seen_at) : 0; // 상주 노드 하트비트 — 설정 화면과 같은 판정(AWAY_MS)
   const nodeAlive = !!org?.service_user_id && nodeSeenAt > 0 && Date.now() - nodeSeenAt < AWAY_MS;
   const nodeLabel = !org?.service_user_id ? t('org.node.none') : !nodeSeenAt ? t('org.node.never') : t(nodeAlive ? 'org.node.on' : 'org.node.off', { when: fmtWhen(org.node_seen_at, lang) });
@@ -1478,9 +1478,9 @@ function Shell({ session }) {
       const id = await q(supabase.rpc('msgr_create_channel', { org: orgId, kind: priv ? 'private' : 'public', name: name.trim() })); // 생성+첫 멤버를 서버가 한 번에(생성 직후 열람 예외 폐지 — 검수 HIGH)
       if (!priv) { await q(supabase.rpc('msgr_join_channel', { ch: id })); joinedRef.current = new Set([...joinedRef.current, id]); } // 서버가 공개 채널은 만든 사람을 참여 행에 안 넣는다(kind<>'public'만) — 옛 서버에서도 참여자로(#626 검수, 서버 수정은 별도). 이미 참여면 서버가 무시
       if (activeOrg.current !== orgId) return; setNewCh(null); await loadOrg(orgId); if (activeOrg.current !== orgId) return; setChId(id); setPage('chat'); setRail(false); // 폼을 보이려 연 서랍(폰·좁은 폭)은 만든 채널을 가리지 않게 닫는다
-    } catch (e) { setErr(/msgr_channel_limit/.test(e.message) ? t('ch.freeLimit') : friendlyErr(e.message, t)); }
+    } catch (e) { setErr(friendlyErr(e.message, t)); }
   };
-  // 새 채널 기본 종류(D1): 조직에 공개 채널이 없으면 공개(#general), 있으면 비공개 — 무료 조직은 공개 채널 1개(S33). 안내 문구(ch.step1.sub*)도 같은 판단
+  // 새 채널 기본 종류(D1): 조직에 공개 채널이 없으면 공개(#general), 있으면 비공개(안내 문구 ch.step1.sub*도 같은 판단) — 채널 수 한도는 없다(2026-09-27)
   const hasPublic = hasPublicChannel(channels, previewChannels);
   const newChKind = newChannelKind(channels, previewChannels);
   const openNewCh = () => { setNewCh({ name: '', kind: newChKind }); setRail(true); };
@@ -2277,7 +2277,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 <div className="msgr-klabel">{t(isDmRoom ? 'dm.widen' : 'ch.add.user')}</div>
                 {isDmRoom && <p className="note">{t('dm.widen.note')}</p>}
                 <div className="msgr-chips">{addableUsers.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => (isDmRoom ? (setAdd(null), onWiden?.(m.user_id)) : addMember('user', m.user_id))}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div>
-                {!isPersonal && <p className="note">{t('ch.add.user.pool', { n: members.length, seats: ent?.seats ?? '?' })}{onInvite && <> <button type="button" className="btn sm" onClick={() => onInviteHere?.('member')}><I name="copy" size={12} />{t('inv.here')}</button></>}</p>}{/* 개인 공간은 좌석이 없다 */}
+                {!isPersonal && <p className="note">{ent?.plan === 'team' ? t('ch.add.user.pool.team', { n: members.length, seats: ent?.seats ?? '?' }) : t('ch.add.user.pool', { n: members.length })}{onInvite && <> <button type="button" className="btn sm" onClick={() => onInviteHere?.('member')}><I name="copy" size={12} />{t('inv.here')}</button></>}</p>}{/* 좌석 수는 team 플랜에만 의미가 있다(2026-09-27 — 무료 조직은 좌석 한도가 없다) */}
                 <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
               </>)}
               {add === 'crew' && (() => { const rows = [...addableCrews.map((c) => ({ c })), ...(canDispatch ? myAvailable.map((c) => ({ c, dispatch: true })) : [])]; const picked = rows.filter((r) => crewPicks.has(r.c.id)); /* 목록이 갱신돼 빠진 후보는 세지 않는다 */ return (<>
@@ -3751,8 +3751,10 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
   );
   const nomineeName = transfer && transfer !== 'pick' ? (members.find((m) => m.user_id === transfer)?.display_name || transfer.slice(0, 8)) : '';
   // 무료 기간·결제 기간(2026-09-26 유건 결정) — 가격·구매 경로 없이 상태만. 앱 안에는 결제 화면이 없다(웹 결제는 이번 범위 밖).
-  const trialActive = !!ent?.trial_ends_at && Date.parse(ent.trial_ends_at) > Date.now();
-  const paidActive = !!ent?.paid_until && Date.parse(ent.paid_until) > Date.now();
+  // team 플랜(기존에 좌석을 산 조직)은 무료 기간·결제 기간과 무관하게 "이용 중"만 보여 준다(서버 msgr_org_entitled와 같은 규칙 — 2026-09-27 M1).
+  const isTeamPlan = ent?.plan === 'team';
+  const trialActive = !isTeamPlan && !!ent?.trial_ends_at && Date.parse(ent.trial_ends_at) > Date.now();
+  const paidActive = !isTeamPlan && !!ent?.paid_until && Date.parse(ent.paid_until) > Date.now();
   const periodUntil = trialActive ? ent?.trial_ends_at : ent?.paid_until;
   return (
     <section className="msgr-setcard">
@@ -3760,11 +3762,12 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
       {ent && (<>
         <div className="row">
           <span className="msgr-klabel">{t('org.trial.label')}</span>
-          <span className="sub">{trialActive ? t('org.trial.active', { date: fmtDay(periodUntil, lang)[0] })
+          <span className="sub">{isTeamPlan ? t('org.period.active')
+            : trialActive ? t('org.trial.active', { date: fmtDay(periodUntil, lang)[0] })
             : paidActive ? t('org.period.paid', { date: fmtDay(periodUntil, lang)[0] })
             : t('org.trial.ended')}</span>
         </div>
-        {!trialActive && !paidActive && <p className="note">{t('org.trial.endedNote')}</p>}
+        {!isTeamPlan && !trialActive && !paidActive && <p className="note">{t('org.trial.endedNote')}</p>}
       </>)}
       {iAmNominee && (
         <div className="msgr-node-cmd">

@@ -36,12 +36,14 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, names = {}, stopRequestedBy = null } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, names = {}, stopRequestedBy = null, orgEntitled = true } = {}) {
   const calls = [];
   const executions = new Map();
   const rec = (k, ...a) => { calls.push([k, ...a]); };
   return {
     calls,
+    // 조직 자격(2026-09-27 M6) — 기본 true(대부분 테스트는 자격과 무관). throw면 판정 실패를 흉내(호출부가 열어 둬야 한다).
+    async orgEntitled(orgId) { rec('orgEntitled', orgId); if (orgEntitled === 'throw') throw new Error('rpc down'); return orgEntitled; },
     async myCrews() { rec('myCrews'); return crews; },
     async crewBySlug(uid, ws, slug) { rec('crewBySlug', slug); return crews.find((c) => c.slug === slug) ?? null; },
     async heartbeat(ids) { rec('heartbeat', ids); },
@@ -164,6 +166,44 @@ test('drain: 멘션·DM만 적재, 크루 글·미대상 무시, 거절·만료�
   const db2 = fakeDb({ messages: [] }); const enq2 = fakeEnqueue();
   await M.drain(WS, { db: db2, uid: OWNER, enqueue: enq2 });
   assert.equal(db2.calls.some((c) => c[0] === 'setCursor'), false);
+});
+
+// 조직 자격(2026-09-27 분리 검수 M6) — 게이트웨이 1차 방어. DB 트리거는 test/msgr-*-pg.test.mjs가 잠근다.
+test('drain: 미자격 조직은 크루 텍스트를 시작하지 않고 채널당 1회만 안내한다', async () => {
+  const db = fakeDb({ orgEntitled: false, messages: [msg(21), msg(22)] });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 0, '미자격이면 크루 턴을 큐에 넣지 않는다');
+  assert.equal(enq.calls.length, 0);
+  const sys = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.ok(sys.length >= 1);
+  assert.ok(sys.every((s) => s.client_msg_id === `unentitled:${CREW}:${CH}`), '채널당 안내는 같은 멱등 키를 쓴다 — 실제 DB 유니크 제약(makeDb.insertMessage 23505→null, 이 가짜 db는 흉내 내지 않는다)이 두 번째부터 조용히 걸러낸다');
+  assert.equal(sys[0].kind, 'system');
+  assert.equal(sys[0].author_kind, 'crew');
+  assert.match(sys[0].body, /무료 기간이 끝나|free period has ended/);
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 22]], '커서는 그대로 전진한다(재시도 루프에 빠지지 않는다)');
+});
+test('drain: 자격 판정이 실패(RPC 오류)하면 열어 둔다(fail-open)', async () => {
+  const db = fakeDb({ orgEntitled: 'throw', messages: [msg(23)] });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 1, '판정 실패는 차단이 아니라 평소대로 진행한다 — DB 트리거가 최종 방어선');
+  assert.equal(enq.calls.length, 1);
+});
+test('drain: db 어댑터에 orgEntitled가 없는 옛 버전도 열어 둔다', async () => {
+  const db = fakeDb({ messages: [msg(24)] });
+  delete db.orgEntitled;
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 1);
+});
+test('drain: 개인 공간(채널 org_id null)은 조직 자격 확인 대상이 아니다', async () => {
+  const db = fakeDb({ orgEntitled: false, messages: [msg(25)] });
+  db.channelOverride = { org_id: null, kind: 'dm' };
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 1, '개인 공간은 orgEntitled=false와 무관하게 정상 진행한다');
+  assert.equal(db.calls.some((c) => c[0] === 'orgEntitled'), false, '개인 공간은 자격 판정 자체를 부르지 않는다(channel.org_id null)');
 });
 
 test('drain: 앱에서 확정된 결재를 큐 우회로 로컬 정본에 반영(resolvedBy 기록)', async () => {

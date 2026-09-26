@@ -1,13 +1,15 @@
-// 조직 무료 기간 30일 + 유료 구독 자리(유건 결정 2026-09-26, 저녁 2차 정정: 조직 단위 유료 구독·결제는 웹에서·이번엔 판정 자리만).
-// 잠그는 계약: (1) 새 조직은 만든 시각부터 30일 무료 — 무료 기간 중엔 기존 좌석·채널 한도가 적용되지 않는다.
-//   (2) 기간이 끝나면 기존 한도(좌석 3·공개 채널 1)로 돌아가되, 이미 넘긴 기존 멤버·채널은 그대로 둔다(새로 늘리는 것만 막는다).
+// 조직 무료 기간 30일 + 유료 구독 자리(유건 결정 2026-09-26, 2026-09-27 분리 검수 반영 — 최종).
+// 잠그는 계약: (1) 새 조직은 만든 시각부터 30일 무료. (2) 무료 조직은 좌석·공개 채널 수 한도가 아예 없다(무료 기간
+//   중이든 끝났든 — "한도 복귀"는 채택하지 않았다, 2026-09-27 M8·M2). plan='team'(좌석을 산 조직)만 그 좌석 수를
+//   항상 강제한다(무료 기간·자격과 무관 — 라이브 team 2곳 회귀 방지). 공개 채널 수 한도 게이트는 폐기했다.
 //   (3) 연장(msgr_extend_trial)은 service_role 전용 — 앱 안에 쿠폰 입력 화면을 두지 않는다(App Store 3.1.1).
 //   (4) 연장되면 알림함이 쓰는 서버 표(msgr_org_announcements)에 안내가 남는다.
 //   (5) 일반 사용자는 trial_ends_at·paid_until 열을 직접 못 바꾼다(테이블 grant가 이미 막는다 — RLS 정책 없음).
 //   (6) msgr_org_entitled(org) = 무료 기간 중 OR paid_until 미래 OR msgr_org_plan(org)='team'(레거시 유료 조직 보호 —
 //       라이브 확인 2026-09-26: team 2건, 웹 결제 연동 전까지 크루 작업이 멈추면 안 된다). entitled=false 조직은
 //       크루 텍스트·결재 카드 삽입만 막힌다(kind=system 안내, 사람 메시지, 개인 공간(org_id null)은 영향 없음) —
-//       게이트웨이 1차 방어의 DB 쪽 2차 방어선.
+//       게이트웨이 1차 방어의 DB 쪽 2차 방어선. msgr_org_entitled·trial_active는 그 조직 멤버·auth.uid() 없는(서비스·
+//       내부) 호출만 값을 받는다(2026-09-27 L3).
 // 실행: bash scripts/billing-pg-drill.sh test/msgr-trial-pg.test.mjs
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -90,26 +92,34 @@ test('무료 기간 중 4번째 멤버 허용', { skip }, () => {
   assert.equal(activeCount(ORG1), 4);
 });
 
-test('기간 종료 뒤 4번째 거부, 기존 멤버는 유지', { skip }, () => {
+test('무료 조직은 기간이 끝나도 좌석 한도가 없다(2026-09-27 M8·M2 — 한도 복귀 미채택)', { skip }, () => {
   invite(ORG2, U.o2, U.b2); invite(ORG2, U.o2, U.b3); // 소유자 포함 3명
   expireTrial(ORG2);
   assert.equal(activeCount(ORG2), 3, '만료 직후에도 기존 3명은 그대로');
-  const r = accept(U.b4, makeInviteCode(ORG2, U.o2));
-  assert.notEqual(r.status, 0, '무료 기간이 끝나면 원래 좌석 한도(3)가 다시 적용된다');
-  assert.match(r.stderr, /msgr_seat_limit/);
-  assert.equal(activeCount(ORG2), 3, '거부된 뒤에도 기존 3명은 지워지거나 내보내지지 않는다');
+  invite(ORG2, U.o2, U.b4); // 무료 기간이 끝났어도 좌석 한도가 없으므로 4번째도 허용
+  assert.equal(activeCount(ORG2), 4, '무료 조직은 기간이 끝나도 좌석 한도가 없다');
 });
 
-test('무료 기간 중 공개 채널 2개 허용, 종료 뒤 3번째 거부·기존 채널 유지', { skip }, () => {
+test('무료 조직은 공개 채널 수 한도가 없다(2026-09-27 M8·M2 — 채널 수 게이트 폐기)', { skip }, () => {
   const ch1 = last(asUser(U.o3, `select public.msgr_create_channel('${ORG3}','public','ch1')`));
-  const ch2 = last(asUser(U.o3, `select public.msgr_create_channel('${ORG3}','public','ch2')`)); // 무료 조직 기본 한도(1개)를 넘지만 무료 기간이라 허용
+  const ch2 = last(asUser(U.o3, `select public.msgr_create_channel('${ORG3}','public','ch2')`));
   assert.ok(ch1 && ch2 && ch1 !== ch2);
   expireTrial(ORG3);
-  const r = asUserRaw(U.o3, `select public.msgr_create_channel('${ORG3}','public','ch3')`);
-  assert.notEqual(r.status, 0, '무료 기간이 끝나면 공개 채널 1개 한도가 다시 적용된다');
-  assert.match(r.stderr, /msgr_channel_limit/);
+  const ch3 = last(asUser(U.o3, `select public.msgr_create_channel('${ORG3}','public','ch3')`)); // 무료 기간이 끝나도 여전히 허용
+  assert.ok(ch3 && ch3 !== ch1 && ch3 !== ch2);
   const cnt = Number(sql(`select count(*) from public.msgr_channels where org_id = '${ORG3}' and kind = 'public' and archived_at is null`));
-  assert.equal(cnt, 2, '거부된 뒤에도 기존 채널 2개는 보관·삭제되지 않는다');
+  assert.equal(cnt, 3, '무료 조직은 공개 채널 수 한도가 없다');
+});
+
+test('team 플랜 조직은 무료 기간·자격과 무관하게 항상 자기 좌석 수만 강제된다(2026-09-27 M8·M2 — 라이브 team 회귀 방지)', { skip }, () => {
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('TeamSeats', 'teamseats1', '${U.o1}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 3 where org_id = '${org}'`);
+  // 아직 무료 기간이 끝나지 않았다(갓 만든 조직) — 하지만 team 플랜은 무료 기간 여부와 무관하게 좌석 수를 강제해야 한다
+  assert.equal(sql(`select (trial_ends_at > now()) from public.msgr_org_entitlements where org_id = '${org}'`), 't', '무료 기간이 아직 살아 있다(대조군)');
+  invite(org, U.o1, U.a2); invite(org, U.o1, U.a3); // 소유자 포함 3명 = 산 좌석 수
+  const r = accept(U.a4, makeInviteCode(org, U.o1));
+  assert.notEqual(r.status, 0, '무료 기간이 남아 있어도 team 플랜은 산 좌석 수(3)를 넘길 수 없다');
+  assert.match(r.stderr, /msgr_seat_limit/);
 });
 
 test('연장 함수는 service_role만 실행할 수 있다', { skip }, () => {
@@ -227,15 +237,76 @@ test('변이(team 절 제거)는 team 플랜 조직의 크루 턴을 거부로 �
     $$`);
 });
 
-test('변이(비교 부호 뒤집기)는 무료 기간 중 허용을 거부로 바꾼다 — red 확인', { skip }, () => {
+test('L3: 비회원 authenticated는 msgr_org_entitled·trial_active에서 null을 받는다', { skip }, () => {
+  // ORG1은 U.o1의 조직 — U.o2는 그 조직 멤버가 아니다
+  assert.equal(asUser(U.o2, `select public.msgr_org_entitled('${ORG1}')`), '', '비회원은 null(빈 문자열로 나온다 — psql -t)');
+  assert.equal(asUser(U.o2, `select public.msgr_org_trial_active('${ORG1}')`), '', '비회원은 null');
+  assert.notEqual(asUser(U.o1, `select public.msgr_org_entitled('${ORG1}')`), '', '조직 소유자(회원)는 실제 값을 받는다');
+  assert.notEqual(sql(`select public.msgr_org_entitled('${ORG1}')`), '', 'auth.uid()가 없는 호출(서비스·내부 트리거 경로 흉내)도 실제 값을 받는다');
+});
+
+test('M4: 자동화는 미자격 조직에서 발송하지 않고(다음 예약부터 재시도), queued로 남은 실행은 unentitled로 닫힌다', { skip }, () => {
+  const org = last(asUser(U.o3, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('AutoOrg', 'autoorg1', '${U.o3}') returning id`));
+  const ch = last(asUser(U.o3, `select public.msgr_create_channel('${org}','public','general')`));
+  const crew = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${org}', '${U.o3}', 'ws-auto', 'bot', '봇') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${crew}', '${U.o3}')`);
+  const a = JSON.parse(asUser(U.o3, `select public.msgr_automation_save(null, '${ch}', '${crew}', '제목', '지시', '{"kind":"daily","time":"09:00","timezone":"Asia/Seoul"}')`)).id;
+  // 무료 기간 중 — 정상 발송(대조군)
+  const r1 = JSON.parse(asUser(U.o3, `select public.msgr_automation_run_now('${a}', gen_random_uuid())`));
+  assert.equal(r1.status, 'queued'); assert.ok(r1.message_id, '무료 기간 중에는 지시 글이 실제로 올라간다(대조군)');
+  expireTrial(org);
+  // 미자격 — 발송하지 않는다
+  const r2 = JSON.parse(asUser(U.o3, `select public.msgr_automation_run_now('${a}', gen_random_uuid())`));
+  assert.equal(r2.status, 'blocked'); assert.equal(r2.error, 'unentitled'); assert.equal(r2.message_id, null, '미자격 조직은 지시 글을 올리지 않는다');
+  assert.equal(sql(`select enabled from public.msgr_automations where id = '${a}'`), 't', '자동화 자체는 끄지 않는다(다음 예약부터 다시 시도)');
+  // 이미 queued로 남은 실행(무료 기간 중 올라간 r1)은 게이트웨이·봇이 채널에 남긴 unentitled 안내로 닫힌다
+  const notice = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, client_msg_id, body) values ('${ch}', 'crew', '${crew}', 'system', ${r1.message_id}, 'unentitled:${crew}:${ch}', '무료 기간이 끝나 이 조직의 크루 작업이 멈췄습니다.')`);
+  assert.equal(notice.status, 0);
+  assert.equal(sql(`select status || '|' || error from public.msgr_automation_runs where id = '${r1.id}'`), 'blocked|unentitled', '채널당 1회 안내가 뜨면 남은 queued 실행이 unentitled 사유로 닫힌다');
+  // 다시 자격을 얻으면(예: 연장) 다음 예약부터 정상 발송된다
+  asService(`select public.msgr_extend_trial('${org}'::uuid, 30, 'resume')`);
+  const r3 = JSON.parse(asUser(U.o3, `select public.msgr_automation_run_now('${a}', gen_random_uuid())`));
+  assert.equal(r3.status, 'queued'); assert.ok(r3.message_id, '다시 자격을 얻으면 다음 예약부터 정상 발송된다');
+});
+
+test('L4: 전체 연장 시 team 플랜 조직은 공지 대상에서 빠진다', { skip }, () => {
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('TeamL4', 'teaml4-1', '${U.o1}') returning id`));
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 5 where org_id = '${org}'`);
+  const before = trialEndsAt(org);
+  asService(`select public.msgr_extend_trial(null, 5, 'global l4')`);
+  assert.equal(trialEndsAt(org), before, 'team 플랜 조직은 전체 연장 대상에서 빠진다(무료 기간이 안 늘어난다)');
+  assert.equal(sql(`select count(*) from public.msgr_org_announcements where org_id = '${org}'`), '0', 'team 플랜 조직에는 연장 공지도 안 남는다');
+});
+
+test('M5: msgrNotifyPush(데스크톱 알림→메신저 1:1 미러)는 미자격 조직에서도 막히지 않는다', { skip }, () => {
+  expireTrial(UNORG); // 앞선 L4(연장 대상 org=null) 테스트가 UNORG도 연장했으므로 다시 만료시킨다
+  const r = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, thread_root, client_msg_id, body) values ('${UNCH}', 'crew', '${UNCREW}', 'text', null, null, 'nt:${UNCREW}:deadbeef', '데스크톱에서 방금 일어난 일을 알려드립니다')`);
+  assert.equal(r.status, 0, 'msgrNotifyPush 모양(nt: 접두·reply_to·thread_root 둘 다 null)의 삽입은 미자격 조직에서도 허용된다');
+  // 같은 크루라도 진짜 크루 턴(reply_to가 있는 일반 text)은 여전히 막힌다 — 우회 통로가 되지 않는다
+  const anyMsgId = sql(`select id from public.msgr_messages where channel_id = '${UNCH}' limit 1`);
+  const r2 = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, client_msg_id, body) values ('${UNCH}', 'crew', '${UNCREW}', 'text', ${anyMsgId}, 'nt:${UNCREW}:fakeout', '진짜 크루 턴인 척')`);
+  assert.notEqual(r2.status, 0, 'reply_to가 있으면 nt: 접두를 써도 막힌다(모양이 정확히 같아야만 예외)');
+  assert.match(r2.stderr, /msgr_org_unentitled/);
+});
+
+test('변이(비교 부호 뒤집기)는 무료 기간 중 크루 턴 허용을 거부로 바꾼다 — red 확인', { skip }, () => {
   // 원래: trial_ends_at > now(). 뒤집으면 갓 만든 조직도 "무료 기간이 이미 끝난 것"으로 오판해야 한다.
+  // 좌석·채널 한도는 더 이상 trial_active를 안 보므로(2026-09-27 M8), 이 비교가 실제로 걸리는 자리인 크루 텍스트 게이트로 잠근다.
   sql(`create or replace function public.msgr_org_trial_active(org uuid) returns boolean
     language sql stable security definer set search_path = public, pg_temp as $$
       select coalesce((select e.trial_ends_at <= now() from public.msgr_org_entitlements e where e.org_id = org), false)
     $$`);
   const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Mutant', 'mutant1', '${U.o1}') returning id`));
-  invite(org, U.o1, U.a2); invite(org, U.o1, U.a3); // 소유자 포함 3명 — 갓 만든 조직이라 정상 코드라면 무료 기간
-  const r = accept(U.a4, makeInviteCode(org, U.o1)); // 정상 코드라면 4번째도 허용돼야 하지만
-  assert.notEqual(r.status, 0, '뒤집힌 비교는 갓 만든 조직도 무료 기간이 끝난 것으로 오판해 4번째를 거부한다(정상 코드라면 통과) — 변이가 잡힌다');
-  assert.match(r.stderr, /msgr_seat_limit/);
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  const crew = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${org}', '${U.o1}', 'ws-mutant', 'bot', '봇') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${crew}', '${U.o1}')`);
+  const r = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body) values ('${ch}', 'crew', '${crew}', 'text', '갓 만든 조직이라 정상 코드라면 허용돼야 한다')`);
+  assert.notEqual(r.status, 0, '뒤집힌 비교는 갓 만든 조직도 무료 기간이 끝난 것으로 오판해 크루 텍스트를 거부한다(정상 코드라면 통과) — 변이가 잡힌다');
+  assert.match(r.stderr, /msgr_org_unentitled/);
+  // 원래 정의로 복구(파일 끝 — 이후 테스트 없음이지만 습관적으로 되돌린다)
+  sql(`create or replace function public.msgr_org_trial_active(org uuid) returns boolean
+    language sql stable security definer set search_path = public, pg_temp as $$
+      select case when auth.uid() is not null and not public.msgr_is_member(org) then null
+        else coalesce((select e.trial_ends_at > now() from public.msgr_org_entitlements e where e.org_id = org), false) end
+    $$`);
 });

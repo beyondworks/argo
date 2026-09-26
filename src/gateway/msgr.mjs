@@ -403,6 +403,8 @@ export function makeDb(client) {
     async instructCheck(crewId, authorId, channelId) { return unwrap(await client.rpc('msgr_instruct_check', { crew: crewId, author: authorId, channel: channelId ?? null })); }, // 'ok'|'inactive'|'crew_allow'|'channel_policy'(I-3)
     /** 조직 자격(무료 기간 중 OR 결제 기간 중) — 정본은 서버(msgr_org_entitled). 실패(옛 서버 등)는 던져서 호출자가 열어 둔 쪽으로 폴백. */
     async orgEntitled(orgId) { return unwrap(await client.rpc('msgr_org_entitled', { org: orgId })) === true; },
+    /** 자격 종료 시각 표지 — 안내 1회 키에만 쓴다(연장·결제로 값이 바뀌면 다음 미자격 때 새 안내가 나가게, 2026-09-27 L2). */
+    async orgEntitlementMarker(orgId) { return unwrap(await client.rpc('msgr_org_entitlement_marker', { org: orgId })); },
     /** H-1/H-2: 이 세션(크루 소유자)이 이 결재를 확정할 수 있나 — 정책·위험 등급 반영(msgr_can_decide). */
     async canDecide(apRowId) { return unwrap(await client.rpc('msgr_can_decide', { ap: apRowId })) === true; },
     async approvalsByIds(ids) {
@@ -554,6 +556,16 @@ function denyBody(why, crew, lang) {
   return pick(`지금은 ${crew.display_name}이(가) 이 지시를 받을 수 없습니다 — 크루 상태와 허용 범위를 확인해 주세요.`,
     `${crew.display_name} cannot take this request right now — check the crew status and who is allowed to instruct it.`, lang);
 }
+/** 조직 자격(2026-09-26 유건 결정) — 무료 기간이 끝나고 결제도 없으면 "크루에게 일을 맡기는 것"만 멈춘다. drain()·makeMsgrHandler()·
+    runMessengerContinuation() 세 진입점이 모두 이 행 모양을 부른다(insertMessage 실패 처리는 호출부마다 그대로 — drain은 일시 실패를
+    던져 커서를 보류한다, 위험 파일 검수 R-2). 안내는 채널당 1회, 키에 자격 종료 시각(마커)을 넣어 연장·결제 뒤 다시 만료되면 새로
+    안내되게 한다(2026-09-27 L2). insertMessage가 23505를 null로 삼키므로 같은 키의 중복 삽입은 조용히 무시된다. */
+async function unentitledNoticeRow(db, orgId, { crewId, channelId, msgId, threadRoot, lang }) {
+  const marker = await db.orgEntitlementMarker?.(orgId).catch(() => null);
+  const key = `unentitled:${crewId}:${channelId}${marker ? `:${Date.parse(marker)}` : ''}`;
+  return { channel_id: channelId, author_kind: 'crew', crew_id: crewId, kind: 'system', reply_to: msgId, thread_root: threadRoot ?? msgId, client_msg_id: key,
+    body: pick('무료 기간이 끝나 이 조직의 크루 작업이 멈췄습니다. 조직 관리자에게 문의하세요.', 'The free period has ended, so crew work is paused for this organization. Contact your organization admin.', lang) };
+}
 /** 동시 실행 상한을 둔 map — 결과 순서는 입력 순서 그대로. (export: 회귀 테스트용) */
 export async function mapLimited(items, limit, fn) {
   const out = new Array(items.length);
@@ -651,8 +663,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       // 조직 자격(2026-09-26 유건 결정): 무료 기간이 끝나고 결제도 없으면 "크루에게 일을 맡기는 것"만 멈춘다 — 사람끼리 대화·기록 열람은 그대로.
       // 개인 공간(채널 org_id null)은 조직 소속이 아니므로 항상 영향 밖. 안내는 대화당 한 번만(client_msg_id가 크루·채널로 고정 — 중복 삽입은 조용히 무시됨).
       if (ch?.org_id && !(await orgEntitled(ch.org_id))) {
-        await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `unentitled:${crew.id}:${m.channel_id}`,
-          body: pick('무료 기간이 끝나 이 조직의 크루 작업이 멈췄습니다. 조직 관리자에게 문의하세요.', 'The free period has ended, so crew work is paused for this organization. Contact your organization admin.', lang) })
+        await db.insertMessage(await unentitledNoticeRow(db, ch.org_id, { crewId: crew.id, channelId: m.channel_id, msgId: m.id, threadRoot: m.thread_root, lang }))
           .catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 무료 기간 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
         return;
       }
@@ -852,6 +863,9 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
 export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false } = {}) {
   return withLock(`msgr-turn:${wsId}:${slug}`, async () => {
     const { db, ctx, ch, source, envelope } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
+    // 조직 자격(2026-09-27 M5) — 결재 확정 후속도 실행(유료 LLM 호출) 직전에 다시 확인한다. 채널 안내는 drain()의 다음 폴이 낸다
+    // (여기서 또 남기면 실패 노트까지 겹쳐 두 번 시도된다) — 여기서는 비용 큰 실행만 막는다. fail-open.
+    if (ch?.org_id && !(db.orgEntitled ? await db.orgEntitled(ch.org_id).catch(() => true) : true)) throw new Error('msgr_org_unentitled');
     const rows = envelope?.context ?? await db.contextOf(ctx.channelId, Number.MAX_SAFE_INTEGER, CONTEXT_N);
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     const context = rows.map((r) => `${clean(ctx.peers.find((p) => p.id === r.crew_id)?.display_name ?? pick('멤버', 'member', lang), 40)}: ${clean(r.body, 300)}`).join('\n');
@@ -951,6 +965,12 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     if (envelope ? envelope.settled_source : await db.settled(job.crewId, job.msgId, job.channelId)) { console.log(`[argo] msgr 잡 중복(${wsId}/${job.slug}/${job.msgId}) — 이미 답함, 실행 생략`); return; } // 선점 중 재적재된 사본(검수 M-2) — 유료 턴 두 번 방지
     const ch = envelope?.channel ?? await db.channel(job.channelId);
     if (!ch || ch.archived_at) return; // 채널 삭제·보관 — 잡 폐기
+    // 조직 자격(2026-09-27 M5) — 큐에 이미 올라온 잡도 실행 직전에 다시 확인한다(적재 뒤 자격이 바뀌었을 수 있다). fail-open.
+    if (ch.org_id && !(db.orgEntitled ? await db.orgEntitled(ch.org_id).catch(() => true) : true)) {
+      await db.insertMessage(await unentitledNoticeRow(db, ch.org_id, { crewId: job.crewId, channelId: job.channelId, msgId: job.msgId, threadRoot: job.threadRoot, lang }))
+        .catch((e) => console.error(`[argo] msgr 무료 기간 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${job.msgId}):`, e?.message ?? e));
+      return;
+    }
     // A durable queue from the preceding app version may not yet carry workRunId.
     if (!envelope && !job.workRunId) job.workRunId = (await db.message(job.msgId))?.meta?.work_run_id ?? null;
     const work = job.workRunId ? await db.workRun(job.threadRoot ?? job.msgId, job.channelId) : null;
