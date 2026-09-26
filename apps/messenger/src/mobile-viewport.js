@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { isMobilePlatform } from './platform.js';
-import { viewportVars, keyboardTargetFor } from './viewport-vars.mjs';
+import { viewportVars, keyboardTargetFor, keyboardLikelyOpen } from './viewport-vars.mjs';
 
 // 폰 키보드가 떠 있는 동안만 visualViewport 높이·오프셋을 CSS 변수로 넘긴다. 그 외에는 변수를 지워 CSS 기본(100dvh)이 쓰인다.
 // 부팅 직후 visualViewport가 잠깐 작게 보고된 값이 변수에 남아 셸이 화면의 2/3 높이로 굳던 제보(유건 2026-09-14, 실기기 스크린샷)를 막는다.
@@ -11,8 +11,13 @@ export function useMobileViewport() {
     const viewport = window.visualViewport;
     const style = document.documentElement.style;
     const update = () => {
-      const { vars, short } = viewportVars({ keyboard: keyboardOpen(), height: viewport?.height ?? window.innerHeight, top: viewport?.offsetTop ?? 0,
-        width: viewport?.width ?? window.innerWidth, coarse: isMobilePlatform || window.matchMedia('(pointer: coarse)').matches });
+      const innerHeight = window.innerHeight;
+      const height = viewport?.height ?? innerHeight;
+      const coarse = isMobilePlatform || window.matchMedia('(pointer: coarse)').matches;
+      // 3차 검수 M-2(2026-09-27) — 입력칸 초점만으로는 안 잡는다(맥·윈도우 작은 창 로그인 화면이 스크롤을 잃던 결함).
+      // 터치 기기이거나 visualViewport가 창 높이보다 뚜렷이 줄었을 때만 실제 소프트 키보드로 본다.
+      const keyboard = keyboardLikelyOpen({ target: keyboardOpen(), height, innerHeight, coarse });
+      const { vars, short } = viewportVars({ keyboard, height, top: viewport?.offsetTop ?? 0, width: viewport?.width ?? window.innerWidth, coarse });
       for (const k of ['--msgr-viewport-height', '--msgr-viewport-top']) { if (vars) style.setProperty(k, vars[k]); else style.removeProperty(k); }
       document.body.classList.toggle('msgr-short-viewport', short);
       document.documentElement.classList.toggle('msgr-kb', !!vars); // 키보드 모드 — 어떤 입력칸이든(설정의 부서·직급 칸 포함) 폰 셸이 탭바 자리를 비운다(유건 제보 2026-09-24)
