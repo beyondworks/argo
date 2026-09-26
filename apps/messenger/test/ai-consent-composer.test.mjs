@@ -13,24 +13,37 @@ test('전송할 때마다 묻던 이전 설계는 없다 — Composer에 동의 
   assert.ok(!/crewReachable|consentPrompt|confirmAiConsent|aiConsented/.test(composer), 'Composer는 더 이상 동의를 확인하지 않는다(조직 진입 단계에서 이미 걸러졌다)');
 });
 
-test('조직 공간(설정 제외)은 동의 전엔 AiConsentGate를 보여준다 — 로딩 중(undefined)엔 깜빡이지 않는다', () => {
+test('조직 공간(설정 제외)은 동의 전엔 AiConsentGate를 보여준다 — 아직 모르면(로딩) 게이트 대신 로딩 표시', () => {
   assert.match(app, /const orgGateActive = !isPersonal && !!org && aiConsent !== undefined && !aiConsented;/, '개인 공간·설정(별도 예외)·로딩 중은 게이트 대상이 아니다');
-  assert.match(app, /\{orgGateActive && page !== 'settings' \? \(/, '설정 탭은 예외');
+  assert.match(app, /\{aiConsentLoading && page !== 'settings' \? \(/, '3차 검수 L-3 — 조회 중엔 로딩 표시가 먼저');
+  assert.match(app, /\) : orgGateActive && page !== 'settings' \? \(/, '설정 탭은 예외');
   assert.match(app, /<AiConsentGate t=\{t\} onMenu=\{openNav\} onError=\{setErr\} onDecline=\{\(\) => setOrgId\(PERSONAL\)\} \/>/);
 });
 
 // 검수 M-5(2026-09-27) — 동의 전엔 사이드바의 조직 채널·멤버·에이전트·DM 목록과 크루 시트·새 채널 버튼도 막는다(본문만 막던 결함).
-test('동의 전엔 사이드바 채널·멤버·에이전트·DM 절과 크루 시트·설정의 조직 탭도 막힌다(본문만이 아니라)', () => {
+// 3차 검수 L-3(2026-09-27) — "동의 안 함"(orgGateActive)과 "아직 모름"(aiConsentLoading)을 orgBlocked로 묶어 똑같이 가린다.
+test('동의 전엔(또는 아직 모르면) 사이드바 채널·멤버·에이전트·DM 절과 크루 시트·설정의 조직 탭도 막힌다(본문만이 아니라)', () => {
+  assert.match(app, /const orgBlocked = orgGateActive \|\| aiConsentLoading;/);
   for (const needle of [
-    "{!isPersonal && !orgGateActive && favs.length > 0 && (<RailSection id=\"fav\"",
-    "{!isPersonal && !orgGateActive && <RailSection id={orgId ? 'channels' : 'start'}",
-    '{!orgGateActive && (dms.length > 0 || dmTab || !!orgId)',
-    '{!isPersonal && !orgGateActive && org && members.length > 0 && (<RailSection id="people"',
-    '{!isPersonal && !orgGateActive && org && (myAvailable.length > 0 || railVisible.length > 0)',
-    '{sheet && crewOf(sheet) && !orgGateActive && <CrewSheet',
-    '{chSheet && channel && !orgGateActive && <ChannelSheet',
-    'gated={orgGateActive}',
+    '{!isPersonal && !orgBlocked && favs.length > 0 && (<RailSection id="fav"',
+    "{!isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'}",
+    '{!orgBlocked && (dms.length > 0 || dmTab || !!orgId)',
+    '{!isPersonal && !orgBlocked && org && members.length > 0 && (<RailSection id="people"',
+    '{!isPersonal && !orgBlocked && org && (myAvailable.length > 0 || railVisible.length > 0)',
+    '{sheet && crewOf(sheet) && !orgBlocked && <CrewSheet',
+    '{chSheet && channel && !orgBlocked && <ChannelSheet',
+    'gated={orgBlocked}',
   ]) assert.ok(app.includes(needle), `누락: ${needle}`);
+});
+
+test('동의 조회 실패는 fail-open — 로딩에 갇히지 않고 게이트도 걸지 않는다', () => {
+  assert.match(app, /const \[aiConsentFailOpen, setAiConsentFailOpen\] = useState\(false\);/);
+  assert.match(app, /catch \(e\) \{ console\.error\('\[argo\] AI 동의 조회 실패 — 이 세션은 열어 둔다\(fail-open\):', e\?\.message \?\? e\); setAiConsentFailOpen\(true\); \}/);
+  assert.match(app, /const aiConsentLoading = !isPersonal && !!org && aiConsent === undefined && !aiConsentFailOpen;/, '실패면(aiConsentFailOpen) 더 이상 로딩으로 보지 않는다');
+});
+
+test('폰 홈·DM 탭(레일이 화면 전체)에는 조회 중일 때 로딩 표시가, 안 됐을 때 동의 화면이 뜬다', () => {
+  assert.match(app, /\{!isPersonal && aiConsentLoading && \( \/\/ 3차 검수 L-3\(2026-09-27\) — 조회 중엔 채널 목록이 아니라 로딩 표시\(같은 이유로 bare\)\n\s*<OrgGateLoading t=\{t\} bare \/>/);
 });
 
 // 실사고(2026-09-27 시각 확인) — 레일만 막고 대체 화면이 없어 폰 홈·DM 탭이 빈 화면이 됐다. bare 재사용으로 고정.
@@ -76,4 +89,14 @@ test('설정에서 동의를 철회·재동의할 수 있다(AiConsentRow, 조�
   assert.match(app, /function AiConsentRow\(/);
   assert.match(app, /const \{ aiConsented, setAiConsent \} = useContext\(SafetyCtx\);/);
   assert.match(app, /<AiConsentRow t=\{t\} onError=\{onError\} \/>/, '설정 "내 정보" 탭에 실제로 걸려 있다');
+});
+
+// 3차 검수 L-2(2026-09-27) — msgr_my_ai_consent·msgr_my_muted_crews를 공용 15초 tick(다른 화면 새로고침용
+// 심박, someone-typing 중엔 2초로도 돈다)에 얹어 불필요하게 다시 불렀다. 값은 본인이 바꿀 때만 달라지므로
+// 처음 불러올 때·본인이 바꿀 때·포그라운드 복귀(resumeEpoch)로만 좁힌다.
+test('AI 동의·크루 숨기기 조회는 15초 tick이 아니라 처음 불러올 때·포그라운드 복귀에만 다시 돈다', () => {
+  assert.match(app, /useEffect\(\(\) => \{ if \(uid\) loadMutedCrews\(\); \}, \[uid, resumeEpoch, loadMutedCrews\]\);/, 'msgr_my_muted_crews는 resumeEpoch만 — tick 아님');
+  assert.match(app, /useEffect\(\(\) => \{ if \(uid\) loadAiConsent\(\); \}, \[uid, resumeEpoch, loadAiConsent\]\);/, 'msgr_my_ai_consent도 resumeEpoch만 — tick 아님');
+  const shell = app.slice(app.indexOf('const [mutedCrewIds, setMutedCrewIds]'), app.indexOf('const setAiConsent = useCallback'));
+  assert.doesNotMatch(shell, /\[uid, tick,/, '이 둘의 재조회 효과에는 더 이상 tick이 없다');
 });
