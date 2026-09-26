@@ -25,6 +25,12 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>대화에 보낼 사진을 찍을 때 카메라를 사용합니다. (Used to take photos you send in chats.)</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>대화에 사진을 첨부할 때 사진 보관함을 사용합니다. (Used to attach photos to chats.)</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>대화에 보낼 동영상을 찍을 때 마이크를 사용합니다. (Used to record audio for videos you send in chats.)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

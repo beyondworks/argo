@@ -41,11 +41,11 @@ test('upload export options target App Store Connect upload for the configured t
   for (const needle of ['<string>app-store-connect</string>', '<string>upload</string>', '<string>TEAM123</string>']) assert.ok(plist.includes(needle), needle);
 });
 
-import { ipaGate, LOGIN_SCHEME } from '../scripts/ios-store.mjs';
+import { ipaGate, LOGIN_SCHEME, USAGE_KEYS } from '../scripts/ios-store.mjs';
 import { readFileSync as rf } from 'node:fs';
 
 test('ipa 게이트: 로그인 복귀 스킴·버전·암호화 면제 셋 다 있어야 통과(실사고 2026-09-11 — 스킴 없는 ipa가 세 버전 나갔다)', () => {
-  const ok = { CFBundleURLTypes: [{ CFBundleURLSchemes: [LOGIN_SCHEME] }], CFBundleShortVersionString: '0.1.7', ITSAppUsesNonExemptEncryption: false, UIDeviceFamily: [1], UIApplicationSceneManifest: { UIApplicationSupportsMultipleScenes: true } };
+  const ok = { CFBundleURLTypes: [{ CFBundleURLSchemes: [LOGIN_SCHEME] }], CFBundleShortVersionString: '0.1.7', ITSAppUsesNonExemptEncryption: false, UIDeviceFamily: [1], UIApplicationSceneManifest: { UIApplicationSupportsMultipleScenes: true }, ...Object.fromEntries(USAGE_KEYS.map((k) => [k, '설명'])) };
   assert.deepEqual(ipaGate(ok, { version: '0.1.7' }), []);
   // 실사고 2026-09-17: 씬 설정 없는 0.1.27(iOS 27 SDK)이 iOS 27에서 실행 즉시 종료 — 없거나 false면 올리지 않는다
   for (const m of [undefined, {}, { UIApplicationSupportsMultipleScenes: false }]) assert.match(ipaGate({ ...ok, UIApplicationSceneManifest: m }, { version: '0.1.7' })[0], /UIApplicationSceneManifest/, JSON.stringify(m ?? null));
@@ -54,6 +54,9 @@ test('ipa 게이트: 로그인 복귀 스킴·버전·암호화 면제 셋 다 �
   assert.match(ipaGate({ ...ok, CFBundleShortVersionString: '0.1.6' }, { version: '0.1.7' })[0], /버전 불일치/);
   assert.match(ipaGate({ ...ok, ITSAppUsesNonExemptEncryption: undefined }, { version: '0.1.7' })[0], /ITSAppUsesNonExemptEncryption/);
   const plist = rf(new URL('../src-tauri/gen/apple/argo-messenger_iOS/Info.plist', import.meta.url), 'utf8'); // 커밋된 Info.plist에도 씬 설정이 있어야 한다(게이트는 발행 때만 돈다)
+  // 실사고 2026-09-26: 권한 설명 문구 없는 0.1.39가 iPad에서 '사진 찍기' 탭 즉시 강제 종료(App Store 2.1 거절) — 하나라도 없거나 비면 올리지 않는다
+  for (const k of USAGE_KEYS) for (const v of [undefined, '', '  ']) assert.match(ipaGate({ ...ok, [k]: v }, { version: '0.1.7' }).join('\n'), new RegExp(k), `${k}=${JSON.stringify(v ?? null)}`);
+  for (const k of USAGE_KEYS) assert.match(plist, new RegExp(`<key>${k}</key>\\s*<string>[^<]*\\S[^<]*</string>`), `커밋된 Info.plist에 ${k}`);
   assert.match(plist, /<key>UIApplicationSceneManifest<\/key>\s*<dict>\s*<key>UIApplicationSupportsMultipleScenes<\/key>\s*<true\/>/);
 });
 
