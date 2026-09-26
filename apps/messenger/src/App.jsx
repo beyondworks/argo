@@ -59,7 +59,7 @@ import { createRequestGate, createPreferenceQueue, reorderFavorites } from './ra
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, faceToStore } from './crew-face.mjs';
 const realtimeScope = createRealtimeScope();
-const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/download', contact: 'https://argo.ceo/#contact' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관. download = 가격·결제 버튼 없는 전용 페이지(총괄 지시 2026-09-26, 배포 전). contact = 1.5 개발자 연락처(랜딩 문의 폼, lean8kim@gmail.com로 메일)
+const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/download', contact: 'mailto:lean8kim@gmail.com' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관. download = 가격·결제 버튼 없는 전용 페이지(총괄 지시 2026-09-26, 랜딩 배포 전이라 지금은 404 — 배포는 총괄이 앱 발행 전에 함). contact = 1.5 지원 이메일 직행(검수 M5 — 결제 링크가 있는 홈 #contact 대신, 라이브 curl로 확인한 실주소)
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
 const LegalLinks = ({ t, className = '', agree = false }) => (
   <p className={`msgr-legal ${className}`.trim()}>
@@ -814,13 +814,15 @@ function Shell({ session }) {
   const muteCrew = useCallback(async (crewId) => { await q(supabase.rpc('msgr_mute_crew', { crew: crewId })); await loadMutedCrews(); setNote(t('crew.muted')); }, [loadMutedCrews, t]);
   const unmuteCrew = useCallback(async (crewId) => { await q(supabase.rpc('msgr_unmute_crew', { crew: crewId })); await loadMutedCrews(); setNote(t('crew.unmuted')); }, [loadMutedCrews, t]);
   const profanityFilterOn = useProfanityFilterOn();
-  // App Store 5.1.2(2025-11 신설, 2026-09-26) — 크루(제3자 AI)에게 메시지가 가기 전 계정당 한 번 동의. aiConsent: undefined=아직 안 물어봄(로딩), null=미동의, string=동의 시각.
-  // 로딩 중엔 미동의로 다룬다(정본은 서버 — 불확실하면 보내지 않는다, 게이트웨이 쪽과 같은 태도).
+  // App Store 5.1.2 재설계(2026-09-27, 유건 결정 "처음 한 번 필수 동의") — 로그인 뒤(기존 사용자는 업데이트 뒤 첫 실행)
+  // 조직 공간에 들어가기 전 한 번 동의 화면. aiConsent: undefined=아직 안 물어봄(로딩 — 깜빡임 방지로 이 동안은 동의 화면도 안 띄운다),
+  // null=미동의(거부했거나 아직 답하지 않음), string=동의 시각. 거부하면 조직 공간은 막고 개인 공간만 쓴다.
   const [aiConsent, setAiConsentState] = useState(undefined);
   const loadAiConsent = useCallback(async () => { const at = await q(supabase.rpc('msgr_my_ai_consent')).catch(() => undefined); if (at !== undefined) setAiConsentState(at); }, []);
   useEffect(() => { if (uid) loadAiConsent(); }, [uid, tick, loadAiConsent]);
   const setAiConsent = useCallback(async (consent) => { const at = await q(supabase.rpc('msgr_set_ai_consent', { consent })); setAiConsentState(at ?? null); return at ?? null; }, []);
-  const safetyCtx = useMemo(() => ({ blocked: blockedIds, block: blockUser, mutedCrewIds, muteCrew, unmuteCrew, profanityFilterOn, aiConsented: !!aiConsent, aiConsentAt: aiConsent ?? null, setAiConsent, onNote: setNote }), [blockedIds, blockUser, mutedCrewIds, muteCrew, unmuteCrew, profanityFilterOn, aiConsent, setAiConsent]);
+  const aiConsented = !!aiConsent; // 로딩 중(undefined)도 false — 동의 화면은 aiConsent!==undefined로 따로 가른다(로딩 깜빡임 방지)
+  const safetyCtx = useMemo(() => ({ blocked: blockedIds, block: blockUser, mutedCrewIds, muteCrew, unmuteCrew, profanityFilterOn, aiConsented, aiConsentAt: aiConsent ?? null, setAiConsent, onNote: setNote }), [blockedIds, blockUser, mutedCrewIds, muteCrew, unmuteCrew, profanityFilterOn, aiConsented, aiConsent, setAiConsent]);
   const [botKinds, setBotKinds] = useState([]); // 내 에이전트 출처(헤르메스·오픈클로) — 훅은 조기 return보다 앞에(실측: 순서 오류로 빈 화면)
   useEffect(() => { if (!orgId || orgId === PERSONAL) { setBotKinds([]); return; } let live = true; q(supabase.from('msgr_bots').select('crew_id, kind').eq('org_id', orgId).is('revoked_at', null)).then((rows) => { if (live && activeOrg.current === orgId) setBotKinds(rows); }).catch(() => { if (live && activeOrg.current === orgId) setBotKinds([]); }); return () => { live = false; }; }, [orgId, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   // 내가 참여한 채널(공개 포함) — 목록 필터의 근거. 조직 전환과 무관하게 계정 단위라 한 번만 읽는다.
@@ -1129,10 +1131,11 @@ function Shell({ session }) {
         ...joins.map((r) => ({ kind: 'approval', key: `crewjoin:${r.id}`, joinReq: r.id, channel_id: r.channel_id, at: r.created_at, who: r.crew_id, whoKind: 'crew', text: t('inbox.crewjoin.text', { name: nameOfUser(r.requested_by) }) })),
         ...aps.map((a) => ({ kind: 'approval', key: `approval:${a.id}`, channel_id: a.channel_id, at: a.created_at, who: a.crew_id, whoKind: 'crew', text: approvalOneLineSummary(a, t('ap.plain.command')) }))];
       const seenKeys = new Set();
-      setInbox(list.filter((it) => !(it.whoKind === 'user' && blockedIds.has(it.who))).filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80));
+      setInbox(list.filter((it) => !(it.whoKind === 'user' && blockedIds.has(it.who))).filter((it) => it.kind === 'approval' || !(it.whoKind === 'crew' && mutedCrewIds.has(it.who))) // 숨긴 크루는 알림함에서도 빠진다(검수 M4) — 결재 카드는 예외(검수 L5)
+        .filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80));
     })();
     return () => { dead = true; };
-  }, [org?.id, uid, tick, channels, previewChannels, friends, blockedIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [org?.id, uid, tick, channels, previewChannels, friends, blockedIds, mutedCrewIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const nodeSeenAt = org?.node_seen_at ? Date.parse(org.node_seen_at) : 0; // 상주 노드 하트비트 — 설정 화면과 같은 판정(AWAY_MS)
   const nodeAlive = !!org?.service_user_id && nodeSeenAt > 0 && Date.now() - nodeSeenAt < AWAY_MS;
   const nodeLabel = !org?.service_user_id ? t('org.node.none') : !nodeSeenAt ? t('org.node.never') : t(nodeAlive ? 'org.node.on' : 'org.node.off', { when: fmtWhen(org.node_seen_at, lang) });
@@ -1142,9 +1145,10 @@ function Shell({ session }) {
   const isAdmin = !isPersonal && org && ['owner', 'admin'].includes(org.role); // 개인 공간의 가상 조직(role owner)은 관리자가 아니다 — 초대 링크 등이 __personal__로 서버에 가던 것(2026-09-16)
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
-  const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds });
-  notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds };
-  const fromBlocked = (p) => p?.author_kind !== 'crew' && !!p?.author_user_id && notifyRef.current.blocked.has(p.author_user_id); // 차단한 사람의 글은 OS 알림도 띄우지 않는다(PC 앞이면 서버가 폰 푸시를 안 보내 이 배너가 유일한 알림)
+  const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds, mutedCrewIds });
+  notifyRef.current = { channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds, mutedCrewIds };
+  const fromBlocked = (p) => (p?.author_kind !== 'crew' && !!p?.author_user_id && notifyRef.current.blocked.has(p.author_user_id))
+    || (p?.author_kind === 'crew' && !!p?.crew_id && notifyRef.current.mutedCrewIds.has(p.crew_id)); // 차단한 사람·숨긴 크루의 글은 OS 알림도 띄우지 않는다(검수 M4 — PC 앞이면 서버가 폰 푸시를 안 보내 이 배너가 유일한 알림)
   useEffect(() => { updateNativeRealtimeContext({ lang, sound: getSound(), currentChannel: page === 'chat' ? chId : null, mutedChannelIds: [...muted], orgIds: (orgs ?? []).map((o) => o.id), quietFrom: quiet?.from ?? null, quietTo: quiet?.to ?? null }); }, [lang, page, chId, muted, quiet, orgs]);
   const hereKey = spaceKey(isPersonal ? null : orgId);
   const hereCount = useMemo(() => { let n = 0; let mention = 0; for (const [id, u] of Object.entries(unread)) if (!muted.has(id)) { n += u?.n || 0; mention += u?.mention || 0; } return { n, mention }; }, [unread, muted]);
@@ -1829,7 +1833,9 @@ function Shell({ session }) {
           document.body,
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
-        {page === 'activity' && isPersonal ? (
+        {!isPersonal && org && aiConsent !== undefined && !aiConsented && page !== 'settings' ? ( // App Store 5.1.2 재설계 — 조직 공간 진입 전 필수 동의(설정은 예외 — 거기서도 동의할 수 있어야 한다)
+          <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setOrgId(PERSONAL)} />
+        ) : page === 'activity' && isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.noActivity')}</p></div></div></>
         ) : page === 'activity' && org ? (
           <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} previewChannels={previewChannels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
@@ -2604,8 +2610,8 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
 /* ─── 검색 결과 페이지 — 메시지(본문 부분 일치, 이 조직·읽을 수 있는 채널만)·사람·에이전트·채널. 전문 검색(tsvector)은 규모가 커지면 v2. ─── */
 function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, onDm, onBack, onMenu }) {
   const { t, lang } = useT();
-  const { blocked } = useContext(SafetyCtx); // 차단한 사람의 글은 검색 결과에서 뺀다
-  if (res) res = { ...res, msgs: res.msgs.filter((m) => !(m.author_kind === 'user' && blocked.has(m.author_user_id))) };
+  const { blocked, mutedCrewIds } = useContext(SafetyCtx); // 차단한 사람·숨긴 크루의 글은 검색 결과에서 뺀다(검수 M4)
+  if (res) res = { ...res, msgs: res.msgs.filter((m) => !(m.author_kind === 'user' && blocked.has(m.author_user_id)) && !(m.author_kind === 'crew' && mutedCrewIds.has(m.crew_id))) };
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
   const who = (m) => m.author_kind === 'crew' ? (crews.find((c) => c.id === m.crew_id)?.display_name ?? t('org.crews')) : nameOfUser(m.author_user_id);
   const mark = (text) => { if (!res?.q) return text; const i = text.toLowerCase().indexOf(res.q.toLowerCase()); if (i < 0) return text.slice(0, 160); const s = Math.max(0, i - 40); return <>{s > 0 ? '…' : ''}{text.slice(s, i)}<mark>{text.slice(i, i + res.q.length)}</mark>{text.slice(i + res.q.length, i + res.q.length + 120)}</>; };
@@ -3985,6 +3991,27 @@ function noOrgSteps({ t, createOrg, joinWithCode, joinable = [], joinDomain, del
   ];
 }
 
+// App Store 5.1.2 재설계(2026-09-27, 유건 결정 "처음 한 번 필수 동의") — 조직 공간 진입 전 필수 동의 화면.
+// 동의하면 그대로 조직 공간이 뜨고(같은 페이지가 다시 그려진다), 거부하면 개인 공간으로 보낸다(초안 분실 없음 — 아직 방에 안 들어갔다).
+function AiConsentGate({ t, onMenu, onError, onDecline }) {
+  const { setAiConsent } = useContext(SafetyCtx);
+  const [busy, setBusy] = useState(false);
+  const agree = async () => { setBusy(true); try { await setAiConsent(true); } catch { onError?.(t('consent.ai.failed')); } finally { setBusy(false); } };
+  return (<>
+    <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{t('consent.ai.title')}</span></div>
+    <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
+      <h1>{t('consent.ai.title')}</h1>
+      <p>{t('consent.ai.desc')}</p>
+      <p className="note">{t('consent.ai.declineNote')}</p>
+      <div className="acts">
+        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={agree}><I name="check" size={13} />{t('consent.ai.confirm')}</button>
+        <button type="button" className="btn sm ghost" disabled={busy} onClick={onDecline}>{t('consent.ai.decline')}</button>
+      </div>
+      <p><button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.privacy)}>{t('legal.privacy')}</button></p>
+    </div></div>
+  </>);
+}
+
 function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, joinWithCode, onboard }) {
   const { t } = useT();
   const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, invite }) : noOrgSteps({ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg });
@@ -4413,7 +4440,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const canReport = !mine && !m.pending && m.kind !== 'system' && (m.author_kind === 'user' || m.author_kind === 'crew'); // 사람 글과 AI 에이전트 답 모두 신고 가능
   const canBlock = !mine && !m.pending && m.author_kind === 'user' && !!m.author_user_id && !!safety.block;
-  const canMuteCrew = !mine && !m.pending && m.author_kind === 'crew' && !!m.crew_id && !!safety.muteCrew && !safety.mutedCrewIds.has(m.crew_id);
+  const canMuteCrew = !mine && !m.pending && m.author_kind === 'crew' && !!m.crew_id && !!safety.muteCrew && !safety.mutedCrewIds.has(m.crew_id) && crew?.owner_user_id !== uid; // 검수 L5: 내 크루는 숨길 수 없다
   const parentBlockedUser = parent?.author_kind === 'user' && parent.author_user_id !== uid && safety.blocked.has(parent.author_user_id);
   const parentMutedCrew = parent?.author_kind === 'crew' && safety.mutedCrewIds.has(parent.crew_id);
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parentBlockedUser ? t('msg.blockedUser') : parentMutedCrew ? t('msg.mutedCrew') : <>{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {plainPreview(parent.body, 300)}</>}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
@@ -4468,7 +4495,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
       : <ConfirmModal title={t('report.block')} description={t('friends.block.confirm', { name: nameOfUser(m.author_user_id) })} confirmLabel={t('report.block')} busy={safetyBusy} onConfirm={block} onClose={() => { if (!safetyBusy) setConfirmBlock(false); }} />}
   </div>, document.body);
   if (!mine && m.author_kind === 'user' && safety.blocked.has(m.author_user_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.blockedUser')}</div>; // 차단한 사람의 글 — 본문·첨부·반응을 그리지 않는다
-  if (!mine && m.author_kind === 'crew' && safety.mutedCrewIds.has(m.crew_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.mutedCrew')}</div>; // 숨긴 크루·봇의 글(App Store 1.2, 2026-09-26) — 본문·첨부·반응을 그리지 않는다
+  if (!mine && !ap && m.author_kind === 'crew' && safety.mutedCrewIds.has(m.crew_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.mutedCrew')}</div>; // 숨긴 크루·봇의 글(App Store 1.2, 2026-09-26) — 본문·첨부·반응을 그리지 않는다. 결재 카드(ap)는 예외(검수 L5 — 숨겨도 나에게 온 결재는 항상 보여야 한다)
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className="msgr-mine" ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {editing ? editor : bareAttach ? null : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : relay ? <Markdown text={shown} /> : <Body text={body} />}</div>}
@@ -4620,10 +4647,6 @@ function Attachment({ a, onError, rowTab = 0 }) {
 /* ─── 2단 다크 독: 입력 줄 + 도구 줄(첨부·멘션 │ 기억 상태) + 옐로 원형 전송. @멘션 팝업(사람·크루), Enter 전송(IME 조합 제외) ─── */
 function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople = null, scopeCrews = null, locked = false, sbw = 0, typingCrews, mentionReq, onMentionDone, replyReq = null, onReplyDone, onSent, onPending, onPendingSettled, onError, isPersonal = false, onOutsideDm = null }) {
   const { t } = useT();
-  const safety = useContext(SafetyCtx);
-  const crewReachable = (scopeCrews ?? []).length > 0; // App Store 5.1.2 — 이 방을 크루가 읽거나(멤버) DM 상대가 크루면 동의가 필요하다
-  const [consentPrompt, setConsentPrompt] = useState(false);
-  const [consentBusy, setConsentBusy] = useState(false);
   const phone = useIsPhone(); // 폰은 짧은 안내문(슬랙)
   const delivery = useMemo(() => getComposerSession(JSON.stringify([SB_URL, uid, orgId, chId]), composerTransport(supabase, { orgId, chId, uid })), [uid, orgId, chId]);
   const { text, busy, files, mentions, recipients, uploading, job, replyTo } = useSyncExternalStore(delivery.subscribe, delivery.snapshot);
@@ -4732,16 +4755,6 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
   };
   const send = async () => {
     if (locked || busy || deliveryBlocked || rolePick) return; // 명령(/to·/cc)만 있는 글은 보내지 않는다 — 폰은 전송 버튼이 유일한 경로(검수 M-1)
-    if (crewReachable && !safety.aiConsented) { setConsentPrompt(true); return; } // App Store 5.1.2 — 동의 전엔 보내지 않는다(입력한 초안은 그대로 남는다)
-    await doSend();
-  };
-  const confirmAiConsent = async () => {
-    setConsentBusy(true);
-    try { await safety.setAiConsent(true); setConsentPrompt(false); await doSend(); }
-    catch { onError?.(t('consent.ai.failed')); }
-    finally { setConsentBusy(false); }
-  };
-  const doSend = async () => {
     // 실패 카드가 있으면 Enter가 그 글부터 다시 보낸다 — 순서를 지키고, 새 글은 성공한 뒤에 이어 보낸다(D50: 실패 카드가 전송을 통째로 막았다)
     if (job) { if (retryBlocked || !await delivery.retry()) return; onSent(delivery.snapshot().lastDeliveredId); if (!text.trim() && !files.length) return; }
     const inline = mentionsFromBody(text.trim(), byName, mentions, allByName);
@@ -4858,10 +4871,6 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
       <div className="msgr-sub">
         <span className="typing-line">{typingCrews.length > 0 && <><span className="msgr-dot mark" />{t('msg.typing', { name: typingCrews.map((c) => c.display_name).join(', ') })}</>}</span>
       </div>
-      {consentPrompt && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t('consent.ai.title')}>
-        <ConfirmModal tone="primary" title={t('consent.ai.title')} confirmLabel={t('consent.ai.confirm')} busy={consentBusy} onConfirm={confirmAiConsent} onClose={() => { if (!consentBusy) setConsentPrompt(false); }}
-          description={<>{t('consent.ai.desc')} <button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.privacy)}>{t('legal.privacy')}</button></>} />
-      </div>, document.body)}
     </div></div>
   );
 }

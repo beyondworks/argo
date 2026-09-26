@@ -165,9 +165,14 @@ export const DICT = {
   'legal.privacy': ['개인정보처리방침', 'Privacy policy'],
   'legal.terms': ['이용약관', 'Terms of service'],
   'legal.contact': ['문의하기', 'Contact us'],
-  'consent.ai.title': ['크루(AI)에게 메시지 보내기 동의', 'Consent to send messages to AI'],
-  'consent.ai.desc': ['크루에게 보낸 메시지와 첨부는 크루 주인이 설정한 AI 제공자(예: Anthropic, OpenAI, Google, Moonshot, xAI 등)로 전송되어 답변을 만드는 데 쓰입니다. 어떤 제공자를 쓰는지는 크루마다 다릅니다.', 'Messages and attachments you send to a crew are sent to the AI provider its owner has configured (e.g. Anthropic, OpenAI, Google, Moonshot, xAI) to generate a reply. The provider differs per crew.'],
-  'consent.ai.confirm': ['동의하고 보내기', 'Agree and send'],
+  // 2026-09-27 재설계(유건 결정 "처음 한 번 필수 동의") — 조직 공간에 들어가기 전 한 번 보여주는 필수 동의 화면. 문구는
+  // 사실만: 대화(최근 대화 포함)·첨부를 크루·봇이 읽고 제3자 AI 제공자로 보낸다는 것, 제공자는 크루마다 다르다는 것.
+  // "학습에 쓰지 않는다" 같은 우리가 보장 못 하는 약속은 쓰지 않는다. 정확한 문구는 총괄이 새 방식에 맞춰 손본다.
+  'consent.ai.title': ['조직 공간에서 AI 이용 동의', 'Consent to AI use in organization spaces'],
+  'consent.ai.desc': ['이 조직의 AI 크루와 봇은 채널의 대화(최근 대화 포함)와 첨부를 읽고, 각 크루 주인이 설정한 제3자 AI 제공자(예: Anthropic, OpenAI, Google, Moonshot, xAI 등)로 보내 답변을 만듭니다. 어떤 제공자를 쓰는지는 크루마다 다릅니다.', 'This organization’s AI crews and bots read channel conversations (including recent history) and attachments, and send them to the third-party AI provider each crew owner has configured (e.g. Anthropic, OpenAI, Google, Moonshot, xAI). The provider differs per crew.'],
+  'consent.ai.confirm': ['동의하고 계속하기', 'Agree and continue'],
+  'consent.ai.decline': ['거부하고 개인 공간으로', 'Decline and go to personal space'],
+  'consent.ai.declineNote': ['거부하면 이 조직 공간은 쓸 수 없고, 조직 밖 사람끼리의 개인 공간만 쓸 수 있습니다. 나중에 여기서나 설정에서 다시 동의할 수 있습니다.', 'If you decline, you can’t use this organization space — only your personal space (1:1s outside any organization). You can agree again here or in settings later.'],
   'consent.ai.failed': ['동의를 저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요.', 'Could not save your consent. Please try again.'],
   'set.aiConsent.h': ['크루(AI)에게 메시지 전송 동의', 'Consent to send messages to AI'],
   'set.aiConsent.on': ['동의함 — 크루에게 보낸 메시지는 그 크루의 AI 제공자로 전송됩니다.', "Agreed — messages you send to crews are sent to that crew's AI provider."],

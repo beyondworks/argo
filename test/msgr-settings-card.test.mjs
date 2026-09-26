@@ -409,9 +409,9 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
   const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', 'rolePick', 'retryBlocked', `return (${expr});`); // rolePick = 1:1 /to·/cc 명령 모드(명령만 있는 글은 전송 금지 — PR #526)
   const disabledSource = app.slice(disabled.start, disabled.end);
   const guardSource = app.slice(guard.test.start, guard.test.end);
-  // 2026-09-26: send()의 잠금 가드 다음 줄은 AI 동의 확인(App Store 5.1.2)이고, 실제 재시도 로직은 동의 뒤 이어 부르는 doSend()로 옮겼다.
-  const doSend = nodes.find((node) => node.type === 'VariableDeclarator' && node.id.name === 'doSend');
-  const retryStep = doSend.init.body.body[0];
+  // 2026-09-27: App Store 5.1.2가 "전송할 때마다 확인"에서 "로그인 뒤 1회 필수 동의"로 바뀌며 send()의 동의 가드를 없앴다
+  // (검수 반영) — 재시도 로직은 다시 send()의 두 번째 문장이다.
+  const retryStep = send.init.body.body[1];
   assert.equal(app.slice(retryStep.start, retryStep.end).replace(/\s+/g, ' '), 'if (job) { if (retryBlocked || !await delivery.retry()) return; onSent(delivery.snapshot().lastDeliveredId); if (!text.trim() && !files.length) return; }', '실패 카드가 있으면 그 글부터 다시 보내고, 실패하면 새 글을 보내지 않는다');
   const check = (buttonSource, handlerSource) => {
     const buttonDisabled = evaluate(buttonSource), handlerBlocked = evaluate(handlerSource);
@@ -552,7 +552,7 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
 test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→크루·문서/사람/크루/전사 문서)+아르고 기억 그래프(별칭)+문장 목록, 감사 19종 문장 사전, 한국어 조사, 설정의 기록 탭 제거', () => {
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /import \{ Graph3D \} from '\.\/graph3d\.jsx';/, '활동 그래프는 3D 컴포넌트(구성은 아르고 코어 재사용)');
-  assert.match(app, /\{page === 'activity' && isPersonal \? \(/, '활동 페이지 — 개인 공간은 조직 활동 대신 안내');
+  assert.match(app, /page === 'activity' && isPersonal \? \(/, '활동 페이지 — 개인 공간은 조직 활동 대신 안내'); // 2026-09-27: 앞에 AI 동의 게이트 분기가 더 붙어 여는 토큰이 '{'가 아니라 ')'다
   assert.match(app, /\) : page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기(조직)');
   assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\(phone \? 'act\.graph\.hint\.phone' : 'act\.graph\.hint'\)\} labels=\{\{ zoomIn: t\('act\.graph\.zoomIn'\)/, '그래프 탭: 3D 기억 그래프 + 줌 버튼 라벨(폰은 휠·더블클릭 없는 안내문)');
   assert.doesNotMatch(app, /msgr-actlocal|<Graph3D key=\{sel\}/, '대상 탭엔 작은 그래프를 넣지 않는다 — 그래프는 그래프 탭 전담(유건 지시 2026-09-04)');
