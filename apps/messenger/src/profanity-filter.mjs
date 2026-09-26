@@ -4,12 +4,15 @@
 // 2026-09-27 검수 L1: 영어는 왼쪽 단어 경계(\b)만 걸어 다른 단어 중간에 우연히 낀 경우(예: Scunthorpe의 cunt)를 막고
 // (오른쪽은 걸지 않는다 — "fucking"·"bitches"처럼 어미가 붙어도 여전히 욕설이라 잡아야 한다), 한국어는 오탐이 흔한
 // 항목(시발점·시발역·병신년)을 부정형 전방탐색으로 예외 처리한다.
+// 2026-09-27 2차 검수 L2: 남은 오탐 추가 — flame retardant·shitake·Shittim·bitchin(영어), 수박 씨발라 먹어·시발택시(한국어).
+// 오른쪽 경계를 안 거는 설계는 그대로 두고, 알려진 안전한 이어짐만 개별 예외로 뺀다(전수 규칙이 아니라 제보 기반 목록).
 const KOREAN_PATTERNS = [
-  '씨발', '시발(?!점|역)', '개새끼', '병신(?!년)', '좆같', 'ㅆㅂ', 'ㅂㅅ',
+  '씨발(?!라)', '시발(?!점|역|택시)', '개새끼', '병신(?!년)', '좆같', 'ㅆㅂ', 'ㅂㅅ',
 ];
+const ENGLISH_EXCEPT = { retard: 'ant', shit: 'ake|tim', bitch: 'in\\b' }; // 단어 → 그 뒤에 오면 예외로 뺄 이어짐
 const ENGLISH_WORDS = ['fuck', 'shit', 'bitch', 'nigger', 'faggot', 'cunt', 'retard'];
 const escapeRe = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const PARTS = [...KOREAN_PATTERNS, ...ENGLISH_WORDS.map((w) => `\\b${escapeRe(w)}`)];
+const PARTS = [...KOREAN_PATTERNS, ...ENGLISH_WORDS.map((w) => `\\b${escapeRe(w)}${ENGLISH_EXCEPT[w] ? `(?!${ENGLISH_EXCEPT[w]})` : ''}`)];
 const RE = new RegExp(PARTS.join('|'), 'i');
 
 export function containsProfanity(text) {

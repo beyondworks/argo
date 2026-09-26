@@ -29,6 +29,22 @@ test('영어는 단어 중간에 우연히 낀 부분 문자열을 오탐하지 
   assert.equal(containsProfanity('I visited Scunthorpe last year'), false); // cunt가 중간에 낌
 });
 
+// 2차 검수 L2(2026-09-27) — 남은 오탐. 알려진 안전한 이어짐만 개별 예외로 뺀다.
+test('2차 검수가 찾은 오탐 문장은 걸리지 않는다', () => {
+  assert.equal(containsProfanity('This curtain is made of flame retardant fabric'), false);
+  assert.equal(containsProfanity('I love shitake mushrooms in my soup'), false);
+  assert.equal(containsProfanity('Shittim wood is mentioned in the Bible'), false);
+  assert.equal(containsProfanity("that concert was totally bitchin"), false);
+  assert.equal(containsProfanity('수박 씨발라 먹어'), false);
+  assert.equal(containsProfanity('시발택시는 우리나라 최초의 자동차입니다'), false);
+});
+
+test('2차 검수 예외 뒤에도 진짜 욕설과 이어지는 형태는 여전히 잡는다', () => {
+  assert.equal(containsProfanity('you are so retarded'), true, 'retardant만 예외, retarded는 그대로');
+  assert.equal(containsProfanity('what the shit is this'), true, 'shitake·shittim만 예외');
+  assert.equal(containsProfanity('you bitching about everything'), true, 'bitchin만 예외, bitching은 그대로(어미 -ing)');
+});
+
 test('그래도 진짜 욕설(어미가 붙은 형태 포함)은 여전히 잡는다', () => {
   assert.equal(containsProfanity('아 진짜 시발 짜증나'), true, '순수 시발은 여전히 걸린다');
   assert.equal(containsProfanity('저 사람 병신 아니냐'), true, '순수 병신은 여전히 걸린다');
