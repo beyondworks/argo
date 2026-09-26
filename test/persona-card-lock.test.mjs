@@ -74,7 +74,8 @@ test('updateCompany — async patch 함수는 조용히 무시되지 않고 거�
 // 보조 잠금(행동 테스트가 호출부 하나하나를 다 덮지 못하는 자리): 잠금 밖에서 읽은 msgr을 스프레드한 객체 patch가 다시 생기지 않게 한다.
 test('호출부 — 잠금 밖에서 읽은 msgr을 스프레드한 객체 patch가 없다(함수 patch만)', async () => {
   const { readFile, readdir } = await import('node:fs/promises');
-  const root = new URL('..', import.meta.url).pathname;
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('..', import.meta.url)); // Windows에서 .pathname은 /D:/… 라 깨진다(CI 실측)
   const walk = async (d) => (await readdir(d, { withFileTypes: true })).flatMap((e) => e.isDirectory() ? [] : [join(d, e.name)]);
   const files = [];
   for (const d of ['src', 'src/gateway', 'app', 'app/api/companies/[ws]/msgr', 'app/api/companies/[ws]/msgr/notify']) files.push(...(await walk(join(root, d))).filter((f) => /\.(mjs|js|jsx)$/.test(f)));
