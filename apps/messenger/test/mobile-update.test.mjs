@@ -42,6 +42,9 @@ test('무결성 대조 불가(sha256 없음) 자산은 설치하지 않는다', 
 test('iOS는 업데이트 확인·막대를 아예 하지 않는다(App Store가 담당, 2.2 베타 유도 금지)', () => {
   assert.ok(!/itms-beta:\/\//.test(src), 'TestFlight로 여는 경로가 남아 있으면 안 된다');
   assert.ok(!/openTestFlight/.test(src), 'openTestFlight 함수가 남아 있으면 안 된다');
+  // 3차 검수 L-5(2026-09-27) — 코드가 안 쓴 지 오래인데 capability만 남아 있었다. 권한도 같이 지운다.
+  const iosCap = readFileSync(new URL('../src-tauri/capabilities/ios.json', import.meta.url), 'utf8');
+  assert.ok(!/itms-beta/.test(iosCap), 'ios.json의 itms-beta:// 오프너 허용도 지운다(더 이상 안 쓴다)');
   assert.match(src, /if \(!isMobileNative \|\| isIos\) return undefined;/, 'iOS는 GitHub 확인 이펙트 자체를 건너뛴다');
   assert.match(src, /if \(!isMobileNative \|\| isIos \|\| u\.phase === 'idle'\) return null;/, '막대 렌더도 iOS를 한 번 더 막는다');
 });
