@@ -127,6 +127,9 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
    **자동 재실행하지 않고** "중단된 작업"으로 남겨 사장이 재시작을 결정한다
    ("되돌릴 수 없는 것은 사람이 잠근다"와 같은 방향). 실행 핸들러(makeJobHandler)는 gateway.mjs. */
 export const JOBS_QUEUE = 'jobs';
+/** 메신저 큐 동시 턴 — 단체 대화 동시 답변(2026-09-26)이 본체 회의실과 같은 폭으로 돈다(ARGO_ROOM_CONCURRENCY 공유, 기본 8·1~16).
+    같은 크루는 게이트웨이 busyCrew가 한 번에 한 턴으로 묶는다. */
+export const MSGR_MAX_INFLIGHT = Math.min(16, Math.max(1, Number(process.env.ARGO_ROOM_CONCURRENCY) || 8));
 export const JOBS_MAX_INFLIGHT = 1;  // 회사당 동시 1 — 장시간 작업이 메신저 응답을 굶기지 않게 큐 분리
 export const JOBS_MAX_PENDING = 10;  // 대기 상한 — 비용 폭주·큐 폭발 방지
 
