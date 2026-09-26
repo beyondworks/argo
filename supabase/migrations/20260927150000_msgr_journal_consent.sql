@@ -120,4 +120,18 @@ $$;
 revoke all on function public.msgr_crew_memory(uuid, uuid) from public, anon;
 grant execute on function public.msgr_crew_memory(uuid, uuid) to authenticated;
 
+-- DB 위생 4항(2026-09-23) — msgr_journal_entries는 누적만 되는 표다. 사람이 보는 원본 일지(msgr_org_docs)와
+-- 별개인 AI 읽기 전용 사본이고, msgr_crew_memory도 최근 2일치만 읽으므로 7일 보존이면 충분하다. 원본은 지우지 않는다.
+-- 위 트리거의 인라인 delete는 "이 채널에 새로 쓸 때"만 그 채널 몫을 지운다 — 활동이 끊긴 채널은 인라인 경로를 안 타므로
+-- 표 전체를 훑는 이 일일 작업이 안전망이다(같은 조건이라 이중 삭제가 아니라 커버리지 보완).
+-- pg_cron이 없는 환경(로컬 PG 테스트)에서는 아무것도 하지 않는다(20260923220000·20260924160000과 같은 형식).
+-- 시각은 기존 purge-cron-run-details(03:17)·purge-msgr-crew-routine-edits(03:23)와 겹치지 않게 03:29.
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('purge-msgr-journal-entries', '29 3 * * *',
+      $c$delete from public.msgr_journal_entries where created_at < now() - interval '7 days'$c$);
+  end if;
+end $$;
+
 notify pgrst, 'reload schema';
