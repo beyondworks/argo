@@ -40,6 +40,9 @@ targets:
       path: argo-messenger_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
+        NSCameraUsageDescription: "대화에 보낼 사진을 찍을 때 카메라를 사용합니다. (Used to take photos you send in chats.)"
+        NSPhotoLibraryUsageDescription: "대화에 사진을 첨부할 때 사진 보관함을 사용합니다. (Used to attach photos to chats.)"
+        NSMicrophoneUsageDescription: "대화에 보낼 동영상을 찍을 때 마이크를 사용합니다. (Used to record audio for videos you send in chats.)"
         ITSAppUsesNonExemptEncryption: false
         # iOS 27 SDK부터 씬 생명주기 필수 — 없으면 실행 즉시 EXC_BREAKPOINT(실사고 0.1.27 TestFlight 2026-09-17). tao는 이 키가 true일 때 TaoSceneDelegate로 붙는다
         UIApplicationSceneManifest:
