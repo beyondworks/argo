@@ -587,6 +587,15 @@ function aiConsentNoticeRow(crewId, channelId, msgId, threadRoot, lang) {
     client_msg_id: `aiconsent:${crewId}:${channelId}`,
     body: pick('앱을 업데이트하고 AI 이용에 동의하면 크루에게 맡길 수 있습니다.', 'Update the app and agree to AI use to hand this to a crew.', lang) };
 }
+/** M-1(2026-09-27 저녁, 크루 쪽) — db.workRun은 msgr_work_runs를 그대로 select하는 원시 조회라 서버 필터가 없다
+    (봇 쪽은 msgr_bot_updates SQL이 이미 담당 — 2026-09-27 저녁). 업무를 시작한 사람이 동의하지 않았으면
+    workPrompt에 넘기기 전에 목표·완료 기준만 감춘다(다른 필드는 그대로 — lead_crew_id·status 등은 계속 필요하다). */
+async function visibleWork(db, work) {
+  if (!work || !work.created_by) return work;
+  const visible = db.orgConsentOk ? await db.orgConsentOk(work.org_id, work.created_by).catch(() => true) : true;
+  if (visible) return work;
+  return { ...work, goal: '(원문 비공개 / not shared)', completion_criteria: '(원문 비공개 / not shared)' };
+}
 /** 동시 실행 상한을 둔 map — 결과 순서는 입력 순서 그대로. (export: 회귀 테스트용) */
 export async function mapLimited(items, limit, fn) {
   const out = new Array(items.length);
@@ -874,8 +883,9 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   if (!crew || crew.id !== origin.crewId || crew.org_id !== origin.orgId || !ch || ch.org_id !== origin.orgId || !org || !root || root.channel_id !== origin.channelId || root.author_kind !== 'user' || !source || source.channel_id !== origin.channelId) throw new Error('메신저 원래 채널·크루·지시를 확인할 수 없습니다');
   if (ch.archived_at || root.deleted_at || source.deleted_at) throw new Error('보관된 메신저 채널이나 삭제된 지시는 이어서 실행할 수 없습니다');
   if (source.id !== root.id && source.thread_root !== root.id) throw new Error('메신저 원래 지시의 스레드가 다릅니다');
-  const work = root.meta?.work_run_id ? await db.workRun(root.id, ch.id) : null;
+  let work = root.meta?.work_run_id ? await db.workRun(root.id, ch.id) : null;
   if (root.meta?.work_run_id && (!work || !workCanContinue(work, source.id))) throw new Error('메신저 팀 업무가 중단되거나 끝나 후속 실행을 멈춥니다');
+  work = await visibleWork(db, work); // M-1 — 상태 확인(workCanContinue)은 원본으로, 그 뒤부터는 감춘 버전만 쓴다
   const actor = source.author_kind === 'crew' ? await db.crewOwner(source.crew_id) : source.author_kind === 'user' ? source.author_user_id : null;
   if (!actor || (origin.origin && origin.origin !== actor)) throw new Error('메신저 원래 지시자 불일치');
   const actors = new Set([actor, ...(source.author_kind === 'crew' ? [root.author_user_id] : [])]);
@@ -1016,8 +1026,9 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     // A durable queue from the preceding app version may not yet carry workRunId.
     if (!envelope && !job.workRunId) job.workRunId = (await db.message(job.msgId))?.meta?.work_run_id ?? null;
-    const work = job.workRunId ? await db.workRun(job.threadRoot ?? job.msgId, job.channelId) : null;
+    let work = job.workRunId ? await db.workRun(job.threadRoot ?? job.msgId, job.channelId) : null;
     if (job.workRunId && (!work || !workCanContinue(work, job.msgId))) return;
+    work = await visibleWork(db, work); // M-1 — 상태 확인(workCanContinue)은 원본으로, 그 뒤부터는 감춘 버전만 쓴다
     const chMembers = envelope ? new Set() : await db.channelCrewMembers(job.channelId);
     const started = now();
     const waited = started - Date.parse(job.createdAt); // 큐 대기(부재중) — 턴 소요 시간은 포함하지 않는다(검수 MEDIUM-3)

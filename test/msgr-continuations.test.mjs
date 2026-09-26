@@ -506,3 +506,22 @@ test('makeMsgrHandler run(): a queued job rechecks the thread root author consen
   assert.match(inserted[0].client_msg_id, /^aiconsent:a:channel/);
   f.stop();
 });
+
+// M-1(2026-09-27 저녁, 크루 쪽) — db.workRun is a raw select with no server-side filter; workPrompt must not
+// leak the goal/completion criteria of a team work started by someone who has declined or withdrawn consent.
+test('workPrompt hides the goal/completion criteria when the person who started the team work has declined consent', async () => {
+  const f = await setup();
+  const { runMessengerContinuation } = await import('../src/gateway/msgr.mjs');
+  const originalMessage = f.db.message;
+  f.db.message = async (id) => id === 10 ? { ...(await originalMessage(id)), meta: { work_run_id: 'work-1' } } : originalMessage(id);
+  f.db.workRun = async () => ({ id: 'work-1', status: 'running', created_by: 'work-creator', org_id: 'org', lead_crew_id: 'a', goal: '민감한 목표 텍스트', completion_criteria: '완료 기준' });
+  // Isolate M-1 from M-2: the continuation's own source author ('person', f.origin's default) stays
+  // consented so the unrelated M-2 gate does not fire first — only the work's creator has declined.
+  f.db.orgConsentOk = async (_orgId, userId) => userId !== 'work-creator';
+  let seenText = null;
+  const turn = await runMessengerContinuation(f.ws, 'alpha', f.origin, '진행', null, { session: f.session, runChat: async (_ws, _slug, text) => { seenText = text; return { reply: 'ok' }; } });
+  assert.ok(turn);
+  assert.doesNotMatch(seenText, /민감한 목표 텍스트/, 'the goal text must not reach the crew prompt when its author has declined consent');
+  assert.match(seenText, /\(원문 비공개/, 'a placeholder replaces the hidden goal');
+  f.stop();
+});
