@@ -39,8 +39,8 @@ export async function claimLocalToAccount(uid) {
   const orphans = (await listCompanies()).filter((c) => !c.ownerId);
   let claimed = 0;
   for (const c of orphans) { // 하나씩 — 도중 실패해도 이미 귀속된 회사는 유지(재시도 시 남은 것만)
-    await updateCompany(c.id, { ownerId: uid });
-    claimed++;
+    const after = await updateCompany(c.id, (cur) => (cur.ownerId ? {} : { ownerId: uid })); // 잠금 안에서 — 그새 생긴 주인은 덮지 않는다
+    if (after.ownerId === uid) claimed++;
   }
   const creds = await migrateLocalAccountCreds(uid).catch(() => []);
   await clearGuestMode();

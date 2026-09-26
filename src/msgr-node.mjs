@@ -5,7 +5,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { existsSync } from 'node:fs';
 import { saveDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
-import { createCompany, loadCompany, updateCompany, paths } from './workspace.mjs';
+import { createCompany, updateCompany, paths } from './workspace.mjs';
 
 /** 조직 슬러그 → 노드 회사 id(`org-<slug>`) — 회사 폴더 이름 규칙(소문자·숫자·하이픈)에 맞춰 세척 */
 export const nodeWs = (slug) => `org-${String(slug ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'org'}`;
@@ -34,7 +34,7 @@ export async function bootstrapNode({ code, url, anonKey, email, password, lang 
   await saveDeviceSession({ url, anonKey, session });
   const ws = nodeWs(org.slug);
   if (!existsSync(paths(ws).company)) await createCompany(ws, org.name, '회사 노드', session.user.id, lang);
-  await updateCompany(ws, { msgr: { ...((await loadCompany(ws)).msgr ?? {}), enabled: true, nodeOrgId: orgId } });
+  await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled: true, nodeOrgId: orgId } }));
   unwrap(await client.rpc('msgr_node_heartbeat', { org: orgId }));
   return { orgId, ws, uid: session.user.id, orgName: org.name };
 }

@@ -91,10 +91,15 @@ export async function loadCompany(wsId) {
 /** 회사 정보 수정 — 이름 등. id/created는 불변.
     withLock(company:wsId) — read-modify-write 전체를 직렬화한다(분리 검수 2026-09-24: rename
     재시도 예산이 늘면서 lost-update 창이 넓어졌다). 이 키를 이미 쥔 채 부르는 호출부가 없어
-    락 순서 교착은 없다(grep 확인 — app/api/companies/[ws]/*, accountclaim.mjs, msgr-node.mjs). */
+    락 순서 교착은 없다(grep 확인 — app/api/companies/[ws]/*, app/auth.mjs, accountclaim.mjs, msgr-node.mjs,
+    gateway/msgr.mjs). patch가 함수면 잠금 안의 최신 값으로 부른다 — 동기 함수만(Promise는 스프레드하면 빈 객체가 된다). */
 export async function updateCompany(wsId, patch) {
   return withLock(`company:${wsId}`, async () => {
-    const company = { ...(await loadCompany(wsId)), ...patch, id: wsId };
+    const cur = await loadCompany(wsId);
+    // 중첩 필드(msgr 등)를 고칠 때는 함수로 넘긴다 — 잠금 밖에서 읽은 옛 값을 스프레드하면 사이의 변경이 사라진다.
+    const p = typeof patch === 'function' ? patch(cur) : patch;
+    if (typeof p?.then === 'function') throw new Error('updateCompany: patch 함수는 동기여야 합니다');
+    const company = { ...cur, ...p, id: wsId };
     await writeJsonAtomic(paths(wsId).company, company);
     return company;
   });

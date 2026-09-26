@@ -48,7 +48,7 @@ async function syncEnabled(ws, c) {
   try { regs = await myRegistrations(c, ws); } catch (e) { console.error('[argo] msgr 등록 조회 실패 — enabled 유지:', e.message); return []; } // 일시 오류로 브리지를 끄지 않는다
   const enabled = regs.some((r) => r.status === 'active');
   const company = await loadCompany(ws);
-  if (!!company.msgr?.enabled !== enabled) await updateCompany(ws, { msgr: { ...(company.msgr ?? {}), enabled } });
+  if (!!company.msgr?.enabled !== enabled) await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled } }));
   return regs;
 }
 
