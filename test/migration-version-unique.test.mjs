@@ -5,14 +5,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 
-// 허용 목록 — 이미 main과 라이브에 들어간 기존 중복만. 이유를 함께 적고, 새 항목은 늘리지 않는다.
-const KNOWN_DUPLICATES = {
-  // 20260903120000_msgr.sql(메신저 기반 스키마)과 20260903120000_tg_claims_pro_gate_exception.sql이 병렬로 같은 버전을 골랐다.
-  // 두 파일 모두 라이브에 적용돼 있음을 대상 객체로 확인했다(2026-09-18). 이름을 바꾸면 이미 적용된 기록과 어긋나므로 그대로 둔다.
-  '20260903120000': ['20260903120000_msgr.sql', '20260903120000_tg_claims_pro_gate_exception.sql'],
-};
-
-function versionDuplicates(names, known = KNOWN_DUPLICATES) {
+// 허용 목록은 두지 않는다. 유일했던 중복(20260903120000_msgr.sql·20260903120000_tg_claims_pro_gate_exception.sql)은
+// supabase start가 schema_migrations 기본 키 충돌로 멈추게 했다. 라이브 기록(tg_claims_pro_gate_exception = 20260903122559)에
+// 맞춰 tg_claims 파일 버전을 옮겨 해소했다(2026-09-27). msgr.sql은 라이브에 msgr_01~06 여섯 조각으로 기록돼 있어 그대로 둔다.
+function versionDuplicates(names) {
   const byVersion = new Map();
   for (const n of names) {
     const m = /^(\d+)_.+\.sql$/.exec(n);
@@ -22,14 +18,12 @@ function versionDuplicates(names, known = KNOWN_DUPLICATES) {
   const out = [];
   for (const [v, files] of byVersion) {
     if (files.length < 2) continue;
-    const allowed = known[v];
-    if (allowed && files.length === allowed.length && files.every((f) => allowed.includes(f))) continue; // 허용 목록과 정확히 같을 때만
     out.push({ version: v, files: files.sort() });
   }
   return out;
 }
 
-test('마이그레이션 파일명 버전은 겹치지 않는다(기존 허용 목록 제외)', () => {
+test('마이그레이션 파일명 버전은 겹치지 않는다', () => {
   const names = readdirSync(new URL('../supabase/migrations/', import.meta.url));
   assert.deepEqual(versionDuplicates(names), [], '같은 버전의 마이그레이션이 있다 — 뒤 파일의 버전을 올린다');
 });
@@ -40,10 +34,10 @@ test('마이그레이션 파일명은 모두 14자리 버전 + 소문자·숫자
   assert.deepEqual(bad, [], '버전 14자리(YYYYMMDDHHMMSS)_이름.sql 모양이 아니다');
 });
 
-test('판정 자체: 새 중복·허용 쌍에 세 번째 파일이 붙은 경우는 잡고, 허용 쌍만은 통과시킨다', () => {
-  const base = ['20260903120000_msgr.sql', '20260903120000_tg_claims_pro_gate_exception.sql', '20260918130000_a.sql'];
+test('판정 자체: 같은 버전 두 파일은 잡고, 버전이 다르면 통과시킨다', () => {
+  const base = ['20260903120000_msgr.sql', '20260903122559_tg_claims_pro_gate_exception.sql', '20260918130000_a.sql'];
   assert.deepEqual(versionDuplicates(base), []);
   assert.deepEqual(versionDuplicates([...base, '20260918130000_b.sql']), [{ version: '20260918130000', files: ['20260918130000_a.sql', '20260918130000_b.sql'] }]);
-  assert.equal(versionDuplicates([...base, '20260903120000_third.sql']).length, 1, '허용 버전에 파일이 늘면 다시 잡는다');
+  assert.equal(versionDuplicates(['20260903120000_msgr.sql', '20260903120000_tg_claims_pro_gate_exception.sql']).length, 1, '옛 중복 쌍은 다시 잡는다');
   assert.deepEqual(versionDuplicates(['20260101000000_x.sql', 'README.md', '20260101000000_x.sql.bak']), [], 'sql이 아닌 파일은 세지 않는다');
 });
