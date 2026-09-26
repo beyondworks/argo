@@ -435,7 +435,7 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
     assert.throws(() => check(disabledSource.replace(identifier, 'false'), guardSource), /send button/, `removing button ${flag} must fail`);
     if (flag !== 'job' && flag !== 'retryBlocked') assert.throws(() => check(disabledSource, guardSource.replace(identifier, 'false')), /keyboard\/form guard/, `removing handler ${flag} must fail`);
   }
-  assert.match(app, /select\('plan, seats, ls_status'\)/, '자격 조회에 ls_status');
+  assert.match(app, /select\('plan, seats, ls_status, trial_ends_at, paid_until'\)/, '자격 조회에 ls_status·무료 기간·결제 기간(2026-09-26)');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /coalesce\(old\.pending_owner_user_id = me, false\)\) then/, '수락 판정 NULL 방어');
   assert.match(sql, /raise exception 'msgr_transfer_needs_accept'/, '직접 이전 거절');
