@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath, attachFailureNote } from './tg-format.mjs';
 import { beatGateway, loadOffset, saveOffset, loadSlackCursor, saveSlackCursor } from './gateway/persist.mjs';
-import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT } from './gateway/queue.mjs';
+import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT, MSGR_MAX_INFLIGHT } from './gateway/queue.mjs';
 import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage, telegramBriefingDest } from './gateway/protocol.mjs';
 import { routeMessage, crewStatusReply, approvalWho, defaultCrew, resolveTelegramDest } from './gateway/routing.mjs';
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
@@ -1202,7 +1202,7 @@ export function ensureGateway() {
               : qkey.startsWith(TG_AGENT_Q) ? makeTgAgentHandler(c.id, qkey.slice(TG_AGENT_Q.length), getCfg)
                 : null;
         // 장시간 작업은 동시 1 — 한 회사의 긴 작업이 메신저 응답 슬롯을 다 먹지 않게 큐를 분리한다
-        if (handler) drainers.set(id, startQueueWorker(c.id, qkey, handler, qkey === JOBS_QUEUE ? { maxInflight: JOBS_MAX_INFLIGHT } : {}));
+        if (handler) drainers.set(id, startQueueWorker(c.id, qkey, handler, qkey === JOBS_QUEUE ? { maxInflight: JOBS_MAX_INFLIGHT } : qkey === MSGR_KEY ? { maxInflight: MSGR_MAX_INFLIGHT } : {}));
       }
     }
     for (const [id, stop] of drainers) if (!aliveDrain.has(id)) { stop(); drainers.delete(id); }

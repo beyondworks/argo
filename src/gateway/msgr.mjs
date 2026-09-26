@@ -57,7 +57,10 @@ export const CONTEXT_N = 12;            // 턴에 실어 주는 최근 채널 �
 export const HOP_MAX = 8;               // 크루→크루 @넘김 연쇄 상한(스레드 뿌리 기준) — 핑퐁 무한 루프 차단
 export const AUTO_MAX = 20;             // 회사당 10분 안에 허용하는 자동(크루 발) 턴 수 — 비용 폭주 차단
 export const AUTO_WINDOW_MS = 600_000;
-export const ORDER_WAIT_MS = 600_000;   // 한 메시지에 여러 크루가 멘션되면 앞 크루의 답을 이만큼까지 기다렸다가 내 턴(앞 답이 문맥에 실린다)
+export const ORDER_WAIT_MS = 120_000;   // 릴레이(@A > @B)에서 앞 크루의 답을 이만큼까지 기다렸다가 내 턴(앞 답이 문맥에 실린다). 꺼진 기기·한도 초과 크루가 오래 막지 않게 2분(2026-09-26 유건)
+/** 릴레이 표기 — 멘션 뒤 화살표(`@A > @B`). 이때만 멘션 순서를 지킨다. 그 외 여러 멘션은 동시 답변(본체 회의실과 같음, 2026-09-26 유건 결정).
+    DB msgr_bot_updates_before_work(20260926100000)의 `~ '>[ \t\r\n]*@'`와 같은 규칙이다. */
+export const RELAY_RE = />[ \t\r\n]*@/; // 공백은 명시 클래스 — JS \s는 NBSP·전각 공백도 잡아 PG ARE(C locale)와 갈라진다(분리 검수 L-1)
 const TYPING_MS = 4_000;
 const PROGRESS_MS = 1_500; // 실행 카드 방송 주기 — 바뀐 스냅샷만 보낸다
 const ATTACH_MAX = 25 * 1024 * 1024;   // 첨부 내려받기 상한 — 소유자 디스크 보호(앱 업로드 상한과 동일)
@@ -653,9 +656,12 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         if (!root || root.author_kind !== 'user' || !root.author_user_id || root.channel_id !== m.channel_id) return;
         const initialOrder = (Array.isArray(root.mentions) ? root.mentions : []).filter((x) => x?.kind === 'crew' && (x.role == null || x.role === 'to')).map((x) => x.id);
         const senderOrder = initialOrder.indexOf(m.crew_id);
+        // 넘김 접기는 릴레이 뿌리(@A > @B)에서만 — 뒤 크루의 뿌리 턴이 앞 답을 문맥에 안고 돈다는 전제가 순차일 때만 참이다.
+        // 동시 답변 뿌리에서 접으면 이미 문맥을 만든 받는 크루에게 넘김이 사라진다(분리 검수 H-1, 2026-09-26) — 보존해 다음 턴으로 받게 한다.
+        const relayRoot = RELAY_RE.test(String(root.body ?? ''));
         // 뒤 크루가 먼저 끝낸 경우(순서 대기 상한 등)는 늦은 앞 답변을 못 봤다. 그 경우만 새 넘김으로 보존한다.
-        if (m.reply_to === root.id && senderOrder >= 0 && initialOrder.indexOf(crew.id) > senderOrder && !(envelope ? envelope.settled_root_before_source : await db.settled(crew.id, root.id, m.channel_id, m.id))) return;
-        if (targetsCrew(root, crew, dm) && !(envelope ? envelope.settled_root : await db.settled(crew.id, root.id, m.channel_id))) return; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다
+        if (relayRoot && m.reply_to === root.id && senderOrder >= 0 && initialOrder.indexOf(crew.id) > senderOrder && !(envelope ? envelope.settled_root_before_source : await db.settled(crew.id, root.id, m.channel_id, m.id))) return;
+        if (relayRoot && targetsCrew(root, crew, dm) && !(envelope ? envelope.settled_root : await db.settled(crew.id, root.id, m.channel_id))) return; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다
         rootAuthor = root.author_user_id;
         // 손님 사슬 이어받기 — **내리는 방향으로만** 쓴다(위조해도 권한이 오르지 않는다 — 크루 글은 그 크루 주인의 브리지만 쓴다).
         // 뿌리만 보면 "A가 연 스레드에 손님 B가 답글로 A의 크루 X를 부르고 X가 A의 크루 Y에게 넘김"에서 Y가 주인 턴이 된다(검수 #583 HIGH):
@@ -693,16 +699,18 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       }
       // 멘션 순서대로 한 크루씩(잡 이름의 순번 + after): 뒤 크루는 앞 크루의 답이 채널에 실린 뒤 돈다 — 문맥이 이어진다(동시 실행이던 때 둘 다 "1"이라 셈).
       const crewMentions = (Array.isArray(m.mentions) ? m.mentions : []).filter((x) => x?.kind === 'crew' && (x.role == null || x.role === 'to')).map((x) => x.id);
-      const order = Math.max(0, crewMentions.indexOf(crew.id));
+      const relay = !fromCrew && RELAY_RE.test(String(m.body ?? ''));
+      const order = relay ? Math.max(0, crewMentions.indexOf(crew.id)) : 0;
+      const coMentioned = !fromCrew && !relay ? Math.max(0, new Set(crewMentions).size - (crewMentions.includes(crew.id) ? 1 : 0)) : 0; // 동시에 답하는 동료 수(안내용)
       const after = [];
       // 같은 순서를 모든 기기·봇이 공유한다. 꺼진 기기는 ORDER_WAIT_MS 뒤 진행하고, 지시 불가 크루는 기다리지 않는다.
-      if (!fromCrew) for (const id of new Set(crewMentions.slice(0, order))) {
+      if (relay) for (const id of new Set(crewMentions.slice(0, order))) {
         if (envelope ? envelope.peers.some((p) => p.id === id) : await db.instructCheck(id, origin, m.channel_id) === 'ok') after.push(id);
       }
       await enqueue(wsId, MSGR_KEY, `${m.id}-${String(order).padStart(2, '0')}-${crew.slug}`, {
         msgId: m.id, orgId: crew.org_id, channelId: m.channel_id, crewId: crew.id, slug: crew.slug, text: m.body,
         authorId: origin, replyTo: m.reply_to, threadRoot: m.thread_root ?? m.id, createdAt: m.created_at,
-        hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, after, ...(guestChain ? { guest: true } : {}),
+        hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}),
         ...(work ? { workRunId: work.id } : {}),
       });
       out.queued++;
@@ -937,7 +945,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const chName = clean(ch.name, 40);
     const others = peers.filter((p) => p.id !== job.crewId).map((p) => `@${clean(p.display_name, 40)}`);
     const brief = pick(' 요청한 것만 군더더기 없이 답하라 — 지시를 되풀이하거나 진행 계획·상황을 설명하지 마라. 차례를 주고받는 일(게임·릴레이)은 자기 차례 내용만 적고 다음 사람을 @로 넘겨라.', ' Answer only what was asked — do not restate the instruction or narrate your plan or situation. For turn-taking work (games, relays) post only your move and hand off with @name.', lang);
-    const hint = brief + (others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
+    const together = job.coMentioned > 0 ? pick(` 동료 크루 ${job.coMentioned}명이 같은 글에 동시에 답한다 — 남이 다룰 일반론은 짧게, 네 몫에 집중하라.`, ` ${job.coMentioned} other crew(s) are answering the same message at the same time — keep general points short and focus on your part.`, lang) : '';
+    const hint = brief + together + (others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
       ` To hand remaining work to or ask another crew, write its @name in your reply (${others.join(' ')}) and end with MSGR: handoff. For completion, thanks or acknowledgement alone, end with MSGR: done.`, lang) : '');
     const authority = { kind: 'msgr', uid, origin: job.origin ?? job.authorId ?? null, ...(job.rootAuthor ? { rootAuthor: job.rootAuthor } : {}), ...(job.guest === true || (job.fromCrewId && !job.rootAuthor) ? { guest: true } : {}) };
     const guest = isGuestCtx(authority);

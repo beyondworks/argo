@@ -597,9 +597,17 @@ test('UX 3/3 nodeRunnerInfo — 자격 있는 비숨김 러너만, 모델 id·la
 });
 
 const ZED = 'cccccccc-0000-4000-8000-000000000002', PEP = 'cccccccc-0000-4000-8000-000000000003';
-test('drain: 한 메시지에 여러 크루 멘션 → 멘션 순서 잡 이름·after(허용된 앞 크루) · hop 0·origin=사람', async () => {
+// 2026-09-26 유건 결정: 단체 대화는 동시 답변(본체 회의실과 같음). 순서는 본문에 `@A > @B` 릴레이로 쓸 때만.
+test('drain: 여러 크루 멘션(릴레이 아님) → 서로 기다리지 않는다(after 없음) · 같이 부른 동료 수를 잡에 싣는다', async () => {
   const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' }); const me = crew();
-  const db = fakeDb({ crews: [me, zed], messages: [msg(11, { mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: PEP }, { kind: 'crew', id: CREW }] })] });
+  const db = fakeDb({ crews: [me, zed], messages: [msg(11, { body: '@제드 @페퍼 @서윤 의견 줘', mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: PEP }, { kind: 'crew', id: CREW }] })] });
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  for (const j of jobsOf(enq)) { assert.deepEqual(j.after, [], `${j.slug}는 기다리지 않는다`); assert.equal(j.coMentioned, 2, '같은 글에 함께 불린 크루 수(자기 제외)'); }
+});
+test('drain: 여러 크루 멘션(릴레이 @A > @B) → 멘션 순서 잡 이름·after(허용된 앞 크루) · hop 0·origin=사람', async () => {
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' }); const me = crew();
+  const db = fakeDb({ crews: [me, zed], messages: [msg(11, { body: '@제드 > @페퍼 > @서윤 이어서 다듬어', mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: PEP }, { kind: 'crew', id: CREW }] })] });
   const enq = fakeEnqueue();
   await M.drain(WS, { db, uid: OWNER, enqueue: enq });
   const ids = enq.calls.map((c) => c[2]).sort();
@@ -608,10 +616,11 @@ test('drain: 한 메시지에 여러 크루 멘션 → 멘션 순서 잡 이름�
   assert.deepEqual(mine.after, [ZED], '허용된 앞 크루만 기다린다(PEP는 권한 거절)');
   assert.equal(mine.hop, 0); assert.equal(mine.origin, MEMBER); assert.equal(mine.authorId, MEMBER); assert.equal(mine.fromCrewId, null);
   assert.deepEqual(jobsOf(enq).find((j) => j.slug === 'zed').after, []);
+  assert.equal(mine.coMentioned ?? 0, 0, '릴레이는 동시 답변 안내를 싣지 않는다');
 });
 
 test('drain: 다른 PC·외부 봇도 허용되면 선행 순서를 공유하고 권한 철회 시 기다리지 않는다', async () => {
-  const db = fakeDb({ messages: [msg(11, { mentions: [{ kind: 'crew', id: PEP }, { kind: 'crew', id: CREW }] })] });
+  const db = fakeDb({ messages: [msg(11, { body: '@페퍼 > @서윤 이어서', mentions: [{ kind: 'crew', id: PEP }, { kind: 'crew', id: CREW }] })] });
   const original = db.instructCheck;
   db.instructCheck = async (id, ...args) => id === PEP ? 'ok' : original.call(db, id, ...args);
   const enq = fakeEnqueue();
@@ -623,7 +632,7 @@ test('drain: 다른 PC·외부 봇도 허용되면 선행 순서를 공유하고
   assert.equal(ran, 0);
   db.instructCheck = async (id, ...args) => id === PEP ? 'crew_allow' : original.call(db, id, ...args);
   await h(jobsOf(enq)[0]);
-  assert.equal(ran, 1, '선행 권한 철회는 10분 대기를 만들지 않는다');
+  assert.equal(ran, 1, '선행 권한 철회는 대기를 만들지 않는다');
 });
 
 test('drain: 크루 답글의 @멘션 → 상대 크루 턴(origin·hop은 meta가 아니라 뿌리 사람 글·스레드 집계에서 — 위조 불가) · 자기 멘션·표지 없음(쪽지 미러)·뿌리 없음·상한 초과는 안 돈다', async () => {
@@ -675,7 +684,7 @@ test('drain: 크루 답글의 @멘션 → 상대 크루 턴(origin·hop은 meta�
 test('drain: 넘김 뿌리·중복·홉 조회 실패는 커서를 유지하고 복구 뒤 다시 적재한다', async () => {
   for (const method of ['message', 'settled', 'autoTurnsIn']) {
     M._autoLogForTest.clear();
-    const root = msg(40);
+    const root = msg(40, { body: '@제드 > @서윤 이어서' }); // 접기 판정(settled)은 릴레이 뿌리에서만 돈다
     const next = msg(50, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: root.id,
       reply_to: root.id, meta: { origin: MEMBER } });
     const db = fakeDb({ crews: [crew({ cursor_msg_id: 40 })], messages: [next], parent: root, settledFn: () => true });
@@ -765,7 +774,7 @@ test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대�
   const { DEFER } = await import('../src/gateway/queue.mjs');
   assert.equal(await h(job), DEFER, '앞 크루 미완 → 차례 미룸(슬롯 점유 없음)'); assert.equal(await h(job), DEFER); assert.equal(chatCalls.length, 0);
   assert.equal(await h(job), undefined, '앞 크루가 끝나면 실행');
-  assert.equal(await h({ ...job, msgId: 38, msgrExecution: undefined, createdAt: new Date(Date.now() - 11 * 60_000).toISOString(), after: [PEP] }), undefined, '상한(10분) 지난 다른 지시의 대기는 진행'); assert.equal(chatCalls.length, 2);
+  assert.equal(await h({ ...job, msgId: 38, msgrExecution: undefined, createdAt: new Date(Date.now() - 3 * 60_000).toISOString(), after: [PEP] }), undefined, '상한(2분) 지난 다른 지시의 대기는 진행'); assert.equal(chatCalls.length, 2);
   const dbDup = fakeDb({ peers, settledFn: (c, m) => c === CREW && m === 31 }); let dupChat = 0;
   await M.makeMsgrHandler(WS, { session: async () => ({ db: dbDup, uid: OWNER }), runChat: async () => { dupChat++; return { reply: 'x', sessionId: null, artifacts: [] }; } })({ ...job, msgrExecution: undefined });
   assert.equal(dupChat, 0, '이미 답한 메시지의 사본 잡은 턴 없이 종결(M-2)');
@@ -823,7 +832,7 @@ test('makeDb: 순차 턴은 원본 뒤에 달린 앞 크루 답글도 읽고, �
 test('drain: 초기 다중멘션의 정방향 넘김은 완료 시각과 무관하게 접고, 역방향·다음 라운드 넘김은 유지한다', async () => {
   M._autoLogForTest.clear();
   const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
-  const root = msg(40, { mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: CREW }] }); // 사람: @제드 @서윤
+  const root = msg(40, { body: '@제드 > @서윤 번갈아', mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: CREW }] }); // 사람: @제드 > @서윤(릴레이 — 접기는 릴레이 뿌리에서만)
   const relay = msg(41, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 40, reply_to: 40, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: MEMBER } }); // 제드: "1 @서윤"
   const db = fakeDb({ crews: [crew(), zed], messages: [relay], parent: (id) => (id === 40 ? root : null) }); // 서윤의 뿌리 턴 미완(settled 기본 false)
   const enq = fakeEnqueue();
@@ -846,7 +855,7 @@ test('drain: 초기 다중멘션의 정방향 넘김은 완료 시각과 무관�
 for (const via of ['mention', 'tool']) test(`relay ${via}: 같은 원본에 두 크루가 답한 뒤 drain해도 1~6이 순서대로 한 번씩만 이어진다`, async () => {
   M._autoLogForTest.clear();
   const crews = [crew({ cursor_msg_id: 99 }), crew({ id: ZED, slug: 'zed', display_name: '제드', cursor_msg_id: 99 })];
-  const rows = [{ ...msg(100, { body: '@서윤 @제드 1부터 6까지 번갈아 세어줘', mentions: crews.map((c) => ({ kind: 'crew', id: c.id })) }), deleted_at: null }];
+  const rows = [{ ...msg(100, { body: '@서윤 > @제드 1부터 6까지 번갈아 세어줘'  /* 차례 작업은 릴레이 표기(2026-09-26 동시 답변 기본) */, mentions: crews.map((c) => ({ kind: 'crew', id: c.id })) }), deleted_at: null }];
   const queued = [], turns = [];
   const db = fakeDb({ crews, peers: crews, parent: (id) => rows.find((r) => r.id === id), settledFn: (c, m, before) => rows.some((r) => r.client_msg_id === `reply:${c}:${m}` && (before === null || r.id < before)) });
   db.messagesAfter = async (_org, after) => rows.filter((r) => r.id > after);
@@ -1047,7 +1056,7 @@ test('순수: mentionsIn — 대소문자 무시("@edna" = Edna, 끝말잇기 �
 test('handler 프롬프트: 간결 규칙(요청한 것만·차례 작업은 자기 차례만) — 넘김 안내가 없어도 붙는다', () => {
   const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
   assert.match(src, /const brief = pick\(' 요청한 것만 군더더기 없이 답하라/);
-  assert.match(src, /const hint = brief \+ \(others\.length \? pick\(/);
+  assert.match(src, /const hint = brief \+ together \+ \(others\.length \? pick\(/);
 });
 
 test('team work: real drain/handler chain keeps objective across remote ownership and only lead ends work', async () => {
@@ -1785,4 +1794,43 @@ test('handleStopRequest: 이 기기가 아는 crew_id만 중단하고, 모르는
     } finally { reg.release(); }
     assert.equal(await interruptTurn(WS, 'seoyun', { source: 'messenger' }), false, '이미 끝난 턴에 온 중단 요청은 무시(등록 해제 뒤 재호출)');
   } finally { M._crewSlugsForTest.delete(`${WS}:${CREW}`); }
+});
+
+test('릴레이 대기 상한은 2분 — 1분 된 지시는 앞 크루를 기다리고, ORDER_WAIT_MS가 120초다', async () => {
+  assert.equal(M.ORDER_WAIT_MS, 120_000);
+  const db = fakeDb({ settledFn: () => false }); db.instructCheck = async () => 'ok'; // 앞 크루(ZED)에게 지시 가능 — 기다릴 대상
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async () => ({ reply: 'x', sessionId: null, artifacts: [] }) });
+  const { DEFER } = await import('../src/gateway/queue.mjs');
+  const job = { msgId: 71, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '@제드 > @서윤', authorId: MEMBER, replyTo: null, threadRoot: 71, createdAt: new Date(Date.now() - 60_000).toISOString(), hop: 0, origin: MEMBER, fromCrewId: null, after: [ZED] };
+  assert.equal(await h(job), DEFER);
+});
+test('RELAY_RE — 멘션 뒤 화살표만 릴레이로 본다', () => {
+  for (const b of ['@제드 > @서윤', '@제드 >\n@서윤 이어서', '@A > @B > @C']) assert.ok(M.RELAY_RE.test(b), b);
+  for (const b of ['@제드 @서윤 의견', '3 > 2 인가요 @서윤', '@제드 -> 결과', '@제드 >\u00a0@서윤']) assert.ok(!M.RELAY_RE.test(b), JSON.stringify(b)); // NBSP는 DB ARE와 같이 공백 아님
+});
+test('동시 답변 턴은 "같은 글에 함께 불린 동료가 동시에 답한다"는 안내를 싣는다', async () => {
+  const db = fakeDb({});
+  const texts = [];
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (ws, slug, text) => { texts.push(text); return { reply: 'x', sessionId: null, artifacts: [] }; } });
+  const base = { orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '@제드 @서윤 의견', authorId: MEMBER, replyTo: null, createdAt: new Date().toISOString(), hop: 0, origin: MEMBER, fromCrewId: null, after: [] };
+  await h({ ...base, msgId: 81, threadRoot: 81, coMentioned: 1 });
+  await h({ ...base, msgId: 82, threadRoot: 82 });
+  assert.match(texts[0], /동료 크루 1명이 같은 글에 동시에 답한다/);
+  assert.doesNotMatch(texts[1], /동시에 답한다/);
+});
+
+test('동시 답변 뿌리에서 앞 크루의 @넘김은 받는 크루의 뿌리 턴이 아직이어도 접지 않는다(분리 검수 H-1 — 이미 만든 문맥엔 넘김이 없다)', async () => {
+  M._autoLogForTest.clear();
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const root = msg(60, { body: '@제드 @서윤 의견 줘', mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: CREW }] });
+  const handoff = msg(61, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 60, reply_to: 60, body: 'X. @서윤 Y는 네가 맡아줘', mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: MEMBER } });
+  const db = fakeDb({ crews: [crew(), zed], messages: [handoff], parent: (id) => (id === 60 ? root : null) }); // 서윤의 뿌리 턴 미완(settled 기본 false)
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.deepEqual(jobsOf(enq).map((j) => [j.msgId, j.slug, j.fromCrewId]), [[61, 'seoyun', ZED]], '넘김이 보존돼 서윤의 다음 턴으로 온다');
+  M._autoLogForTest.clear();
+});
+test('메신저 큐 동시 턴 = 회의실 폭(기본 8) — 한 기기에서 여러 크루가 동시에 답한다', async () => {
+  const Q = await import('../src/gateway/queue.mjs');
+  assert.equal(Q.MSGR_MAX_INFLIGHT, 8);
 });
