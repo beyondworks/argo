@@ -395,6 +395,8 @@ export function makeDb(client) {
     async updateApproval(id, patch) { return unwrap(await client.from('msgr_crew_approvals').update(patch).eq('id', id).select('id')) ?? []; },
     /** H-2: 허용 판정의 정본은 서버(msgr_can_instruct). 실패는 throw — 호출자가 로컬 판정으로 폴백하고 로그한다. */
     async instructCheck(crewId, authorId, channelId) { return unwrap(await client.rpc('msgr_instruct_check', { crew: crewId, author: authorId, channel: channelId ?? null })); }, // 'ok'|'inactive'|'crew_allow'|'channel_policy'(I-3)
+    /** App Store 5.1.2(2025-11 신설) — 이 사람이 크루(제3자 AI)에게 메시지가 가는 것에 동의했나(msgr_profiles.ai_consent_at). 클라이언트 창은 힌트일 뿐, 정본은 여기. */
+    async aiConsentOk(userId) { return unwrap(await client.rpc('msgr_ai_consent_ok', { p_user: userId })) === true; },
     /** H-1/H-2: 이 세션(크루 소유자)이 이 결재를 확정할 수 있나 — 정책·위험 등급 반영(msgr_can_decide). */
     async canDecide(apRowId) { return unwrap(await client.rpc('msgr_can_decide', { ap: apRowId })) === true; },
     async approvalsByIds(ids) {
@@ -543,6 +545,8 @@ function denyBody(why, crew, lang) {
     `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — an agent that is in a room can be called by anyone in that room. If it isn't in this room, ask its owner to add it.`, lang);
   if (why === 'inactive') return pick(`${crew.display_name}은(는) 지금 이 대화에 파견돼 있지 않습니다 — 메신저에서 다시 파견해 주세요.`,
     `${crew.display_name} is not dispatched to this conversation — dispatch the crew again in the messenger.`, lang);
+  if (why === 'ai_consent') return pick(`이 메시지는 크루(AI 에이전트)로 전송되기 전에 제3자 AI 전송 동의가 필요합니다 — 메신저에서 이어서 보내면 동의 창이 뜹니다.`,
+    `This message needs your consent to send to a third-party AI provider before ${crew.display_name} can see it — send it again in the messenger to see the consent prompt.`, lang);
   return pick(`지금은 ${crew.display_name}이(가) 이 지시를 받을 수 없습니다 — 크루 상태와 허용 범위를 확인해 주세요.`,
     `${crew.display_name} cannot take this request right now — check the crew status and who is allowed to instruct it.`, lang);
 }
@@ -676,6 +680,11 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       }
       let why = envelope ? 'ok' : await db.instructCheck(crew.id, origin, m.channel_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid) ? 'ok' : 'crew_allow'; });
       if (!envelope && why === 'ok' && fromCrew && rootAuthor && rootAuthor !== origin) why = await db.instructCheck(crew.id, rootAuthor, m.channel_id).catch(() => 'crew_allow'); // 넘김은 발신 크루 소유자와 뿌리 사람 둘 다 이 크루에게 지시할 수 있어야 한다 — 허용 범위 'all'인 크루를 거쳐 allow='owner' 크루를 부리는 우회 차단(검수 3R M-3) // H-2: 서버가 정본(채널 정책 포함), 답글도 서버 트리거가 재판정
+      // App Store 5.1.2(2025-11 신설, 2026-09-26 대응): 이 턴을 authorize한 사람(들) 전원이 제3자 AI 전송에 동의했어야 한다 — envelope 경로 포함, 클라이언트 창은 힌트일 뿐 정본은 여기.
+      if (why === 'ok') {
+        const consentSubjects = fromCrew && rootAuthor && rootAuthor !== origin ? [origin, rootAuthor] : [origin];
+        for (const id of consentSubjects) { if (!(await db.aiConsentOk(id).catch((e) => { console.error('[argo] msgr AI 동의 확인 RPC 실패 — 동의 없음으로 취급:', e?.message ?? e); return false; }))) { why = 'ai_consent'; break; } }
+      }
       if (why !== 'ok') {
         out.denied++;
         await db.insertMessage({

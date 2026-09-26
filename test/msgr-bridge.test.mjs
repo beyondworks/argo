@@ -35,7 +35,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0 } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, aiConsent = true, aiConsentMap = null } = {}) {
   const calls = [];
   const executions = new Map();
   const rec = (k, ...a) => { calls.push([k, ...a]); };
@@ -88,6 +88,8 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCre
     async approvalsByIds(ids) { rec('approvalsByIds', ids); return approvals; },
     // H-2: 서버 판정 흉내 — 실제 msgr_can_instruct와 같은 규칙(크루 행 기준). throw 시 브리지는 로컬 판정으로 폴백한다.
     async instructCheck(crewId, authorId, channelId) { rec('instructCheck', crewId, authorId, channelId); if (canInstructThrows) throw new Error('rpc down'); if (channelPolicy[channelId] && channelPolicy[channelId] !== 'allowed') return 'channel_policy'; const c = crews.find((x) => x.id === crewId) ?? peers?.find((x) => x.id === crewId); return c && M.allowedToInstruct(c, authorId, OWNER) ? 'ok' : 'crew_allow'; },
+    // App Store 5.1.2(2026-09-26) — 기본 동의됨(기존 시나리오 회귀 방지). aiConsentMap으로 사람별, aiConsent:false로 전원 미동의를 흉내낸다.
+    async aiConsentOk(userId) { rec('aiConsentOk', userId); return aiConsentMap ? !!aiConsentMap[userId] : aiConsent; },
     async canDecide(apId) { rec('canDecide', apId); return canDecide; },
     // G-2 조직 문서 미러 — 기본은 문서 0(드레인 테스트가 미러로 오염되지 않게)
     async org(orgId) { rec('org', orgId); return orgInfo; },
@@ -1423,6 +1425,50 @@ test('drain: 봉투 거부 사유 네 갈래가 각각 맞는 안내로 갈린�
   assert.match(other[0].body, /받을 수 없습니다/);
   // 판정 RPC 자체가 죽어도 침묵하지 않는다
   assert.match((await run({ instructCheck: async () => { throw new Error('rpc down'); } }))[0].body, /받을 수 없습니다/);
+});
+
+// App Store 5.1.2(2025-11 신설, 2026-09-26 대응) — 지시 권한이 있어도(instructCheck 'ok') 발신자가 제3자 AI 전송에
+// 동의하지 않았으면 이 턴은 크루에게 넘어가지 않는다. 클라이언트 동의 창은 힌트일 뿐, 정본은 이 게이트.
+test('drain: AI 전송 동의가 없으면 지시 권한이 있어도 크루 턴으로 넘기지 않는다(게이트웨이 강제, 클라이언트 창만 믿지 않음)', async () => {
+  const db = fakeDb({ messages: [msg(11)], aiConsent: false });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 0, '동의 없음 — 큐에 넣지 않는다');
+  assert.equal(r.denied, 1);
+  const [inserted] = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.match(inserted.body, /동의/, '동의 필요 안내가 나간다');
+  assert.ok(db.calls.some((c) => c[0] === 'aiConsentOk' && c[1] === MEMBER), '발신자 본인의 동의를 물었다');
+});
+
+test('drain: 동의하면(기본값) 그대로 큐에 들어간다 — 동의 게이트가 정상 턴까지 막지 않는다', async () => {
+  const db = fakeDb({ messages: [msg(11)], aiConsent: true });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 1);
+  assert.equal(r.denied, 0);
+});
+
+test('drain: 동의 확인 RPC가 죽으면 동의 없음으로 취급한다(안전 실패 — 불확실하면 제3자 AI로 보내지 않는다)', async () => {
+  const db = fakeDb({ messages: [msg(11)] });
+  db.aiConsentOk = async () => { throw new Error('rpc down'); };
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(r.queued, 0);
+  assert.equal(r.denied, 1);
+});
+
+test('drain: 크루끼리 넘김은 발신 크루 소유자·뿌리 사람 둘 다 동의해야 한다(AND) — 한쪽만 동의해도 넘어가지 않는다', async () => {
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const root = msg(40, { author_user_id: MEMBER, mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: CREW }] });
+  const relay = msg(41, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 40, reply_to: 40, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: MEMBER } });
+  // origin(ZED 소유자) = OWNER, rootAuthor = MEMBER — OWNER만 동의, MEMBER는 미동의
+  const db = fakeDb({ crews: [crew(), zed], messages: [relay], parent: (id) => (id === 40 ? root : null), settledFn: () => true, aiConsentMap: { [OWNER]: true, [MEMBER]: false } });
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(r.queued, 0, '뿌리 사람이 동의하지 않아 넘김이 실행되지 않는다');
+  assert.equal(r.denied, 1);
+  // 둘 다 동의하면 통과
+  const db2 = fakeDb({ crews: [crew(), zed], messages: [relay], parent: (id) => (id === 40 ? root : null), settledFn: () => true, aiConsentMap: { [OWNER]: true, [MEMBER]: true } });
+  const r2 = await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(r2.queued, 1);
 });
 
 // 보관 채널처럼 읽기는 되고 쓰기는 막히는 자리에서는 안내 삽입이 RLS에 영구히 막힌다.
