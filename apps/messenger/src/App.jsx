@@ -1098,6 +1098,7 @@ function Shell({ session }) {
   useEffect(() => { if (tick % 2 === 0 && orgId) (orgId === PERSONAL ? loadPersonal() : loadOrg(orgId)).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const personalOrg = useMemo(() => ({ id: PERSONAL, name: t('personal'), slug: 'personal', role: 'owner' }), [t]); // 개인 공간용 가상 조직 객체
   const org = isPersonal ? personalOrg : orgs?.find((o) => o.id === orgId);
+  const orgGateActive = !isPersonal && !!org && aiConsent !== undefined && !aiConsented; // App Store 5.1.2 재검수 M-5(2026-09-27 유건 결정) — 동의 전엔 조직 공간 전체(사이드바 채널·멤버·에이전트·DM·크루 시트·새 채널·알림함·기억 탭)를 막는다. 예외: 조직 선택(전환)·개인 공간 전환·설정의 '내 계정' 탭.
   const friendItems = () => friends.filter((f) => f.status === 'pending' && f.requested_by !== uid).map((f) => ({ kind: 'friend', key: `friend:${f.user_id}`, channel_id: null, at: f.created_at, who: f.user_id, whoKind: 'user', text: t('inbox.friend.text', { name: f.display_name || f.handle || '' }), friendName: f.display_name || f.handle })); // 받은 친구 요청 — 조직·개인 공간 알림함이 같이 쓴다
   useEffect(() => { // 알림함 v1(클라이언트 집계): 나를 멘션한 글 · 내 글에 달린 크루 답글 · 대기 결재 · DM 새 글. 읽음 기준은 이 기기(localStorage) — 서버 표(msgr_notifications)는 친구 요청과 함께 v2.
     if (!org || !uid) { setInbox([]); return; }
@@ -1656,7 +1657,7 @@ function Shell({ session }) {
                 ]),
               ]; return (
             <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items) : {})}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && !mutedCrewIds.has(lastMsg[c.id].crewId) && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
             </div>
           ); };
@@ -1726,10 +1727,13 @@ function Shell({ session }) {
           </>)}
         </div>
         <div className={`msgr-railbody${dmTab && dmAnim ? ` anim-list-${dmAnim}` : ''}`} ref={pullList.setRef} {...dmSwipe}><PullIndicator phase={pullList.phase} t={t} /><div className="msgr-railinner">{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
-        {!isPersonal && favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
+        {!isPersonal && !orgGateActive && favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
         </RailSection>)}
-        {!isPersonal && <RailSection id={orgId ? 'channels' : 'start'} label={orgId ? t('ch.list') : t('org.start')} right={!orgId ? null : <span className="right">
+        {!isPersonal && orgGateActive && ( // 검수 M-5(2026-09-27) — 폰 홈·DM 탭은 이 레일이 곧 화면 전체다. 본문 게이트만으론 안 보여 빈 화면이 되던 결함 — 같은 동의 화면을 여기서도(bare)
+          <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setOrgId(PERSONAL)} bare />
+        )}
+        {!isPersonal && !orgGateActive && <RailSection id={orgId ? 'channels' : 'start'} label={orgId ? t('ch.list') : t('org.start')} right={!orgId ? null : <span className="right">
           <button type="button" className="btn" onClick={() => browse ? setBrowse(null) : openBrowse()} disabled={!orgId} title={t('ch.browse')} aria-label={t('ch.browse')} aria-expanded={!!browse}><I name="at" size={14} /></button>
           <button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>
         </span>}>
@@ -1763,7 +1767,7 @@ function Shell({ session }) {
 </RailSection>}
         {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{DM_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
         {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
-        {(dms.length > 0 || dmTab || !!orgId) && !(isPhone && isPersonal && !dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
+        {!orgGateActive && (dms.length > 0 || dmTab || !!orgId) && !(isPhone && isPersonal && !dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
           <button type="button" className="btn" onClick={() => setDmGroup(true)} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
         </span>}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
@@ -1778,7 +1782,7 @@ function Shell({ session }) {
           </div>
           {!members.length && <div className="msgr-hint">{t('friends.none')} {t('phone.friends.add.hint')}</div>}
         </RailSection>)}
-        {!isPersonal && org && members.length > 0 && (<RailSection id="people" label={`${t('rail.people')} · ${members.length}`}>{/* 멤버 디렉터리(유건 2026-09-12) — 나 먼저, 이름순. 누르면 DM */}
+        {!isPersonal && !orgGateActive && org && members.length > 0 && (<RailSection id="people" label={`${t('rail.people')} · ${members.length}`}>{/* 멤버 디렉터리(유건 2026-09-12) — 나 먼저, 이름순. 누르면 DM */}
           <div className="msgr-list dir">
             {[...members].sort((a, b) => (a.user_id === uid ? -1 : b.user_id === uid ? 1 : 0) || String(a.display_name || '').localeCompare(String(b.display_name || ''))).map((m) => (
               <button key={m.user_id} type="button" className={`item${m.user_id === uid ? ' me' : ''}`} onClick={() => { if (m.user_id !== uid) { openDm('user', m.user_id); setRail(false); } }} onContextMenu={(e) => openCtx(e, [m.user_id !== uid && { icon: 'at', label: t('ui.dm'), run: () => { openDm('user', m.user_id); setRail(false); } }, m.user_id !== uid && { icon: 'star', label: t(targetPinned('user', m.user_id) ? 'ch.unpin' : 'ctx.fav'), disabled: favoriteBusy, run: () => toggleTargetPin('user', m.user_id) }, { icon: 'gear', label: t('ctx.members'), run: () => { setSettingsTab('members'); setPage('settings'); setRail(false); } }])} title={m.user_id === uid ? t('rail.me') : t('ui.dm')}>
@@ -1786,7 +1790,7 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
-        {!isPersonal && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
+        {!isPersonal && !orgGateActive && org && (myAvailable.length > 0 || railVisible.length > 0) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
             {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany]]
@@ -1811,7 +1815,7 @@ function Shell({ session }) {
             : <ConfirmModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />}
         </div>, document.body)}
         <div className="msgr-foot">
-          {isPhone && org && !isPersonal && <button type="button" className={`ph-node${nodeAlive ? ' on' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name={nodeAlive ? 'node' : 'nodeoff'} size={18} /></button>}
+          {isPhone && org && !isPersonal && !orgGateActive && <button type="button" className={`ph-node${nodeAlive ? ' on' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name={nodeAlive ? 'node' : 'nodeoff'} size={18} /></button>}
           <button type="button" className="me" onClick={() => { if (isPhone) { setSettingsTab('me'); setPage('settings'); setRail(false); } else setMeMenu((v) => !v); }} aria-haspopup={isPhone ? undefined : 'menu'} aria-expanded={isPhone ? undefined : meMenu} title={t(isPhone ? 'ui.settings' : 'ui.me.menu')}>
             <Av name={me?.display_name || session.user.email} size="sm" userId={uid} /><span className="name">{me?.display_name || session.user.email}</span>
           </button>
@@ -1819,14 +1823,14 @@ function Shell({ session }) {
             <button type="button" role="menuitem" onClick={() => { setMeMenu(false); setSettingsTab('me'); setPage('settings'); setRail(false); }}><I name="gear" size={13} />{t('set.tab.me')}</button>
             <button type="button" role="menuitem" className="danger" disabled={signingOut} onClick={() => { setMeMenu(false); signOut(); }}><I name="out" size={13} />{t('auth.signOut')}</button>
           </div>)}
-          {org && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
-          {org && !isPersonal && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
+          {org && !orgGateActive && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
+          {org && !isPersonal && !orgGateActive && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
         </div>
       </aside>
       <main className="msgr-main" {...edgeBack}>
-        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} />}
-        {chSheet && channel && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} refreshKey={`${tick}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {sheet && crewOf(sheet) && !orgGateActive && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} />}
+        {chSheet && channel && !orgGateActive && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} refreshKey={`${tick}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} discard={(id) => discardInvite(supabase, id)} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
         {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) setNavTo(p.channels[0].id); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
@@ -1836,7 +1840,7 @@ function Shell({ session }) {
           document.body,
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
-        {!isPersonal && org && aiConsent !== undefined && !aiConsented && page !== 'settings' ? ( // App Store 5.1.2 재설계 — 조직 공간 진입 전 필수 동의(설정은 예외 — 거기서도 동의할 수 있어야 한다)
+        {orgGateActive && page !== 'settings' ? ( // App Store 5.1.2 재설계 — 조직 공간 진입 전 필수 동의(설정은 예외 — 거기서도 동의할 수 있어야 한다)
           <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setOrgId(PERSONAL)} />
         ) : page === 'activity' && isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.noActivity')}</p></div></div></>
@@ -1847,7 +1851,7 @@ function Shell({ session }) {
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+          <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgGateActive} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
           <Channel key={chId} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} onBeforeRefresh={saveScreenSnapshot} />
         ) : isPersonal ? (
@@ -1857,7 +1861,7 @@ function Shell({ session }) {
         )}
         </PageBoundary>
       </main>
-      {isPhone && (page === 'dm' || page === 'home') && org && <button type="button" className="msgr-fab" onClick={() => isPersonal && page === 'home' ? (setPage('settings'), setSettingsTab('friends')) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: newChKind })} aria-label={t(page === 'dm' ? 'dm.group.new' : isPersonal ? 'friends.add' : 'ch.new')}><I name="plus" size={22} /></button>}
+      {isPhone && (page === 'dm' || page === 'home') && org && !orgGateActive && <button type="button" className="msgr-fab" onClick={() => isPersonal && page === 'home' ? (setPage('settings'), setSettingsTab('friends')) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: newChKind })} aria-label={t(page === 'dm' ? 'dm.group.new' : isPersonal ? 'friends.add' : 'ch.new')}><I name="plus" size={22} /></button>}
       {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setPage('settings'); setSettingsTab('friends'); setRail(false); }} members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={railVisible} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {isPhone && <PhoneTabs personal={isPersonal} page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
     </div>
@@ -2682,19 +2686,20 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   </>);
 }
 
-function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
+function Settings({ session, me, uid, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
   const { signOut, signingOut, accountDeleted } = useContext(SignOutContext);
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
   const mode = family ? theme.slice(family.length) : null;
   const skins = THEMES.filter((c) => !FAMILY_CODES.includes(c));
-  const tabs = [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], ['friends', 'set.tab.friends'], ['me', 'set.tab.me']].filter(Boolean); // 친구는 설정의 별도 분류(유건 지시 2026-09-09) // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
+  // 검수 M-5(2026-09-27) — 동의 전엔 '내 계정' 탭(동의 카드가 있는 곳)만 연다. 멤버·조직·에이전트 탭은 조직 내용이다.
+  const tabs = gated ? [['me', 'set.tab.me']] : [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], ['friends', 'set.tab.friends'], ['me', 'set.tab.me']].filter(Boolean); // 친구는 설정의 별도 분류(유건 지시 2026-09-09) // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
   const [tab, setTab] = useState(org ? 'members' : 'me');
   const [isOps, setIsOps] = useState(false); // 운영자(msgr_report_operators)만 '운영 신고함'을 본다
   useEffect(() => { let live = true; q(supabase.rpc('msgr_is_report_operator')).then((v) => { if (live) setIsOps(v === true); }).catch(() => {}); return () => { live = false; }; }, [uid]);
-  useEffect(() => { if (initialTab) { setTab(initialTab); onTabUsed?.(); } }, [initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (initialTab) { setTab(gated ? 'me' : initialTab); onTabUsed?.(); } }, [initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (gated) { setTab('me'); return; } if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin, gated]); // eslint-disable-line react-hooks/exhaustive-deps
   const phone = useIsPhone();
   const swipe = useSwipeTabs(tabs.map(([k]) => k), tab, setTab, phone);
   return (<>
@@ -2708,19 +2713,19 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, ent = nul
         {tabs.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
       </nav>
       <div className="msgr-setbody">
-        {tab === 'members' && org && (isAdmin
+        {tab === 'members' && org && !gated && (isAdmin
           ? <OrgCard part="members" org={org} uid={uid} members={members} channels={channels} onInvite={onInvite} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
           : <MemberListCard org={org} uid={uid} members={members} onNote={onNote} onError={onError} t={t} />)}
-        {tab === 'org' && org && (isAdmin
+        {tab === 'org' && org && !gated && (isAdmin
           ? <OrgCard part="org" org={org} uid={uid} members={members} ent={ent} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
           : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
-        {tab === 'org' && org && <ReportsCard org={org} uid={uid} isAdmin={!!isAdmin} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />}
-        {tab === 'crews' && org && (<>
+        {tab === 'org' && org && !gated && <ReportsCard org={org} uid={uid} isAdmin={!!isAdmin} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />}
+        {tab === 'crews' && org && !gated && (<>
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
           {isAdmin && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
-        {tab === 'friends' && <FriendsCard isPersonal={!org} uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} />}
+        {tab === 'friends' && !gated && <FriendsCard isPersonal={!org} uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} />}
         {tab === 'me' && (<>
           <section className="msgr-setcard">
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
@@ -2734,7 +2739,7 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, policy, ent = nul
             <ProfanityFilterRow />
           </section>
           <section className="msgr-setcard">
-            <h2>{t('set.aiConsent.h')}</h2>
+            <h2>{t('consent.ai.title')}</h2>{/* 검수 L-1(2026-09-27) — 게이트와 같은 제목으로 통일(별도 문구 제거) */}
             <AiConsentRow t={t} onError={onError} />
           </section>
           <ProfileCard uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} />
@@ -4012,19 +4017,24 @@ function noOrgSteps({ t, createOrg, joinWithCode, joinable = [], joinDomain, del
 
 // App Store 5.1.2 재설계(2026-09-27, 유건 결정 "처음 한 번 필수 동의") — 조직 공간 진입 전 필수 동의 화면.
 // 동의하면 그대로 조직 공간이 뜨고(같은 페이지가 다시 그려진다), 거부하면 개인 공간으로 보낸다(초안 분실 없음 — 아직 방에 안 들어갔다).
-function AiConsentGate({ t, onMenu, onError, onDecline }) {
+function AiConsentGate({ t, onMenu, onError, onDecline, bare = false }) {
+  // bare — 검수 M-5(2026-09-27): 폰 홈/DM 탭은 레일이 곧 화면이라 이 레일 안에서도 같은 문구·버튼을 그대로 보여준다(중복
+  // 문구 방지 — 새 컴포넌트를 만들지 않는다). 레일에는 이미 자기 상단 바(조직 전환)가 있으니 여기 상단 바는 생략한다.
   const { setAiConsent } = useContext(SafetyCtx);
   const [busy, setBusy] = useState(false);
   const agree = async () => { setBusy(true); try { await setAiConsent(true); } catch { onError?.(t('consent.ai.failed')); } finally { setBusy(false); } };
+  // 유건 결정(2026-09-27, 동의 전환 기간) — 거부도 서버에 남긴다. 전용 RPC 이름은 trial-builder가 확정해 전달할 예정이라
+  // 그때까지는 기존 msgr_set_ai_consent(false)(= setAiConsent(false))로 맞춰 둔다. 기록이 실패해도 개인 공간 전환은 막지 않는다.
+  const decline = async () => { setBusy(true); try { await setAiConsent(false); } catch { /* 거부 기록 실패는 조용히 — 전환은 그대로 진행 */ } finally { setBusy(false); } onDecline(); };
   return (<>
-    <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{t('consent.ai.title')}</span></div>
-    <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
+    {!bare && <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{t('consent.ai.title')}</span></div>}
+    <div className={bare ? 'msgr-consent-rail' : 'msgr-thread'} style={bare ? undefined : { display: 'flex' }}><div className="msgr-empty">
       <h1>{t('consent.ai.title')}</h1>
       <p>{t('consent.ai.desc')}</p>
       <p className="note">{t('consent.ai.declineNote')}</p>
       <div className="acts">
         <button type="button" className="btn btn-primary sm" disabled={busy} onClick={agree}><I name="check" size={13} />{t('consent.ai.confirm')}</button>
-        <button type="button" className="btn sm ghost" disabled={busy} onClick={onDecline}>{t('consent.ai.decline')}</button>
+        <button type="button" className="btn sm ghost" disabled={busy} onClick={decline}>{t('consent.ai.decline')}</button>
       </div>
       <p><button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.privacy)}>{t('legal.privacy')}</button></p>
     </div></div>

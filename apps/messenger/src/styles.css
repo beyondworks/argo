@@ -364,7 +364,7 @@
 .msgr-setcard { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 20px; display: grid; gap: 12px; }
 .msgr-setcard h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .msgr-setcard p { margin: -6px 0 2px; color: var(--fg-2); font-size: 12.5px; line-height: 1.55; }
-.msgr-setcard .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.msgr-setcard .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0; border-top: 0; width: auto; text-align: inherit; } /* 검수 L-3(2026-09-27): app/globals.css의 전역 .row(리스트행 padding 12px 18px+border-top)가 새어 들어와 제목보다 본문이 들여써 보이던 결함 — 여기서 되돌린다 */
 .msgr-setcard .row > .msgr-klabel { min-width: 64px; }
 .msgr-friend-search .msgr-input { flex: 1; min-width: 0; }
 .msgr-friend-person { display: grid; gap: 4px; flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; }
@@ -380,6 +380,11 @@
 
 /* 빈 상태 — 척추 위 단계 노드 */
 .msgr-empty { margin: auto; align-self: center; align-content: start; width: 100%; max-width: 560px; padding: 40px 0; display: grid; gap: 22px; }
+.msgr-empty .acts { display: flex; flex-wrap: wrap; gap: 8px; } /* 검수 L-3(2026-09-27) — 동의 게이트의 동의·거부 버튼이 붙어 있던 결함 */
+/* 검수 M-5(2026-09-27) — 폰 홈·DM 탭은 레일이 화면 전체다. AiConsentGate를 bare로 그 안에도 그대로 보여준다(빈 화면 방지). */
+.msgr-consent-rail { padding: 8px var(--ph-pad, 14px) 20px; }
+.msgr-consent-rail .msgr-empty { margin: 0; align-self: start; padding: 4px 0; max-width: none; }
+.msgr-consent-rail .msgr-empty h1 { font-size: 15px; }
 .msgr-empty h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 1.3; }
 .msgr-empty p { margin: 0; color: var(--fg-2); font-size: 13.5px; line-height: 1.6; }
 .msgr-steps { position: relative; display: grid; gap: 14px; }

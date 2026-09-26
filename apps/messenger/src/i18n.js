@@ -174,9 +174,9 @@ export const DICT = {
   'consent.ai.decline': ['거부하고 개인 공간으로', 'Decline and go to personal space'],
   'consent.ai.declineNote': ['거부하면 이 조직 공간은 쓸 수 없고, 조직 밖 사람끼리의 개인 공간만 쓸 수 있습니다. 나중에 여기서나 설정에서 다시 동의할 수 있습니다.', 'If you decline, you can’t use this organization space — only your personal space (1:1s outside any organization). You can agree again here or in settings later.'],
   'consent.ai.failed': ['동의를 저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요.', 'Could not save your consent. Please try again.'],
-  'set.aiConsent.h': ['크루(AI)에게 메시지 전송 동의', 'Consent to send messages to AI'],
-  'set.aiConsent.on': ['동의함 — 크루에게 보낸 메시지는 그 크루의 AI 제공자로 전송됩니다.', "Agreed — messages you send to crews are sent to that crew's AI provider."],
-  'set.aiConsent.off': ['동의하지 않음 — 크루에게 메시지를 보내면 다시 동의를 물어봅니다.', "Not agreed — you'll be asked again the next time you message a crew."],
+  // 검수 L-1(2026-09-27) — 카드 제목은 게이트(consent.ai.title)와 통일해 별도 키를 두지 않는다. 문구는 새 설계(처음 한 번 필수 동의) 기준.
+  'set.aiConsent.on': ['동의함 — 이 조직의 크루·봇이 대화를 읽고 제3자 AI 제공자로 전송합니다.', "Agreed — this organization's crews and bots read conversations and send them to their AI providers."],
+  'set.aiConsent.off': ['동의하지 않음 — 이 조직 공간을 쓸 수 없습니다. 개인 공간만 사용할 수 있어요.', "Not agreed — you can't use this organization space. Only your personal space is available."],
   'set.aiConsent.revoke': ['동의 철회', 'Withdraw consent'],
   'set.aiConsent.grant': ['지금 동의', 'Agree now'],
   'legal.agree': ['계속하면 이용약관에 동의하게 됩니다. 부적절한 콘텐츠와 악성 사용자는 허용하지 않으며, 신고된 내용은 24시간 안에 검토합니다.', 'By continuing you agree to the Terms of service. Objectionable content and abusive users are not tolerated, and reports are reviewed within 24 hours.'],

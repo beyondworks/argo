@@ -14,8 +14,40 @@ test('전송할 때마다 묻던 이전 설계는 없다 — Composer에 동의 
 });
 
 test('조직 공간(설정 제외)은 동의 전엔 AiConsentGate를 보여준다 — 로딩 중(undefined)엔 깜빡이지 않는다', () => {
-  assert.match(app, /\{!isPersonal && org && aiConsent !== undefined && !aiConsented && page !== 'settings' \? \(/, '개인 공간·설정·로딩 중은 예외');
+  assert.match(app, /const orgGateActive = !isPersonal && !!org && aiConsent !== undefined && !aiConsented;/, '개인 공간·설정(별도 예외)·로딩 중은 게이트 대상이 아니다');
+  assert.match(app, /\{orgGateActive && page !== 'settings' \? \(/, '설정 탭은 예외');
   assert.match(app, /<AiConsentGate t=\{t\} onMenu=\{openNav\} onError=\{setErr\} onDecline=\{\(\) => setOrgId\(PERSONAL\)\} \/>/);
+});
+
+// 검수 M-5(2026-09-27) — 동의 전엔 사이드바의 조직 채널·멤버·에이전트·DM 목록과 크루 시트·새 채널 버튼도 막는다(본문만 막던 결함).
+test('동의 전엔 사이드바 채널·멤버·에이전트·DM 절과 크루 시트·설정의 조직 탭도 막힌다(본문만이 아니라)', () => {
+  for (const needle of [
+    "{!isPersonal && !orgGateActive && favs.length > 0 && (<RailSection id=\"fav\"",
+    "{!isPersonal && !orgGateActive && <RailSection id={orgId ? 'channels' : 'start'}",
+    '{!orgGateActive && (dms.length > 0 || dmTab || !!orgId)',
+    '{!isPersonal && !orgGateActive && org && members.length > 0 && (<RailSection id="people"',
+    '{!isPersonal && !orgGateActive && org && (myAvailable.length > 0 || railVisible.length > 0)',
+    '{sheet && crewOf(sheet) && !orgGateActive && <CrewSheet',
+    '{chSheet && channel && !orgGateActive && <ChannelSheet',
+    'gated={orgGateActive}',
+  ]) assert.ok(app.includes(needle), `누락: ${needle}`);
+});
+
+// 실사고(2026-09-27 시각 확인) — 레일만 막고 대체 화면이 없어 폰 홈·DM 탭이 빈 화면이 됐다. bare 재사용으로 고정.
+test('폰 홈·DM 탭(레일이 화면 전체)에도 같은 동의 화면을 bare로 보여준다 — 빈 화면 금지', () => {
+  assert.match(app, /<AiConsentGate t=\{t\} onMenu=\{openNav\} onError=\{setErr\} onDecline=\{\(\) => setOrgId\(PERSONAL\)\} bare \/>/, '레일 안에서도 같은 문구·버튼');
+  const gate = app.slice(app.indexOf('function AiConsentGate('), app.indexOf('function EmptyOrg('));
+  assert.match(gate, /function AiConsentGate\(\{ t, onMenu, onError, onDecline, bare = false \}\)/);
+  assert.match(gate, /\{!bare && <div className="msgr-top">/, 'bare면 레일이 이미 자기 상단 바를 갖고 있어 중복 상단 바를 생략한다');
+});
+
+test("설정은 동의 전엔 '내 계정' 탭만 연다 — 멤버·조직·에이전트·친구 탭은 조직 내용이다", () => {
+  const settings = app.slice(app.indexOf('function Settings('), app.indexOf('function AiConsentRow('));
+  assert.match(settings, /const tabs = gated \? \[\['me', 'set\.tab\.me'\]\] : \[/, "gated면 tabs가 '내 계정' 하나뿐");
+  assert.match(settings, /if \(gated\) \{ setTab\('me'\); return; \}/);
+  for (const needle of ["'members' && org && !gated", "'org' && org && !gated", "'crews' && org && !gated", "'friends' && !gated"]) {
+    assert.ok(settings.includes(needle), `탭 내용 렌더가 gated를 보지 않음: ${needle}`);
+  }
 });
 
 test('동의하면 setAiConsent(true)만 부르고 그 자리에서 같은 페이지가 다시 그려진다(별도 전송 재시도 로직 없음)', () => {
@@ -23,9 +55,10 @@ test('동의하면 setAiConsent(true)만 부르고 그 자리에서 같은 페�
   assert.match(gate, /const agree = async \(\) => \{ setBusy\(true\); try \{ await setAiConsent\(true\); \}/);
 });
 
-test('거부하면 개인 공간으로 보낸다(조직 공간 접근 차단의 유일한 탈출구)', () => {
+test('거부하면 개인 공간으로 보낸다(조직 공간 접근 차단의 유일한 탈출구) — 서버에도 거부를 남긴다(동의 전환 기간, 2026-09-27)', () => {
   const gate = app.slice(app.indexOf('function AiConsentGate('), app.indexOf('function EmptyOrg('));
-  assert.match(gate, /<button type="button" className="btn sm ghost" disabled=\{busy\} onClick=\{onDecline\}>\{t\('consent\.ai\.decline'\)\}<\/button>/);
+  assert.match(gate, /const decline = async \(\) => \{ setBusy\(true\); try \{ await setAiConsent\(false\); \}/, '기존 msgr_set_ai_consent(false) 구조로 거부를 기록해 둔다 — RPC 이름은 trial-builder가 확정');
+  assert.match(gate, /<button type="button" className="btn sm ghost" disabled=\{busy\} onClick=\{decline\}>\{t\('consent\.ai\.decline'\)\}<\/button>/);
 });
 
 test('안내에는 개인정보처리방침 링크가 있다', () => {
