@@ -1,0 +1,9 @@
+{
+  "name": "Argo Office",
+  "short_name": "Office",
+  "start_url": "/me",
+  "display": "standalone",
+  "background_color": "#e9e6df",
+  "theme_color": "#1f1e1b",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

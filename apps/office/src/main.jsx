@@ -1,0 +1,13 @@
+import { createRoot } from 'react-dom/client';
+import App from './App.jsx';
+import { applyTheme, readTheme } from './core/theme.js';
+import { getLang } from './core/i18n.js';
+import './tokens.css';
+import './base.css';
+
+applyTheme(readTheme());
+document.documentElement.lang = getLang();
+createRoot(document.getElementById('root')).render(<App />);
+
+// PWA — 앱 셸만 캐시한다(오프라인에서 마지막 화면 열기). 개발 서버에서는 등록하지 않는다.
+if ('serviceWorker' in navigator && import.meta.env.PROD) navigator.serviceWorker.register('/sw.js');
