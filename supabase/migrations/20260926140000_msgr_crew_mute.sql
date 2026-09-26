@@ -9,14 +9,20 @@ alter table public.msgr_user_blocks add constraint msgr_user_blocks_target_xor c
 create unique index if not exists msgr_user_blocks_user_uniq on public.msgr_user_blocks (blocker, blocked) where blocked is not null;
 create unique index if not exists msgr_user_blocks_crew_uniq on public.msgr_user_blocks (blocker, blocked_crew) where blocked_crew is not null;
 
+-- 검수 L4(2026-09-27): 내가 속한 조직이나(활성 멤버) 내가 읽을 수 있는 대화에 보이는 크루만 숨길 수 있다 — 임의 uuid로
+-- 아무 크루나 숨겼다는 흔적을 남기지 못하게. 검수 L5: 내 크루는 숨길 수 없다(내 크루 답을 내가 못 보면 오작동으로 보인다).
 create or replace function public.msgr_mute_crew(crew uuid) returns void
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare me uuid := auth.uid();
+declare me uuid := auth.uid(); c public.msgr_crews;
 begin
   if me is null then raise exception 'msgr_auth_required' using errcode = '42501'; end if;
-  if not exists (select 1 from public.msgr_crews where id = crew) then
-    raise exception 'msgr_crew_not_found' using errcode = '22023';
-  end if;
+  select * into c from public.msgr_crews where id = crew;
+  if c.id is null then raise exception 'msgr_crew_not_found' using errcode = '22023'; end if;
+  if c.owner_user_id = me then raise exception 'msgr_crew_mute_own' using errcode = '42501'; end if;
+  if not (
+    exists (select 1 from public.msgr_org_members m where m.org_id = c.org_id and m.user_id = me and m.removed_at is null)
+    or exists (select 1 from public.msgr_channel_members cm where cm.member_kind = 'crew' and cm.member_id = crew and public.msgr_can_read_channel(cm.channel_id))
+  ) then raise exception 'msgr_crew_not_visible' using errcode = '42501'; end if;
   insert into public.msgr_user_blocks (blocker, blocked_crew) values (me, crew) on conflict do nothing;
 end $$;
 

@@ -57,6 +57,9 @@ before(() => {
   }
   sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${U.svc}', 'member')`);
   sql(`update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}'`);
+  // App Store 5.1.2 재설계(2026-09-27, 검수 H1·H2) — 크루·봇 문맥·배달이 동의 없는 사람의 글을 거르기 시작했다.
+  // 이 파일의 기존 시나리오는 전부 정상 대화를 전제하므로 미리 동의해 둔다.
+  for (const uid of [U.host, U.mate, U.other]) asUser(uid, `select public.msgr_set_ai_consent(true)`);
   const crew = (owner, slug, hosting = 'local') => last(sql(`select set_config('msgr.bot_create', '${hosting === 'bot' ? '1' : ''}', false); insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, status, allow, hosting) values ('${ORG}', '${owner}', 'lean', '${slug}', '${slug}', 'active', 'owner', '${hosting}') returning id`));
   HOSTC = crew(U.host, 'hostc'); MATEC = crew(U.mate, 'matec'); OTHERC = crew(U.other, 'otherc'); COMP = crew(U.svc, 'company', 'resident'); MATEBOT = crew(U.mate, 'matebot', 'bot');
   PRIV = last(asUser(U.host, `select public.msgr_create_channel('${ORG}', 'private', 'Lean Crew', '[{"kind":"user","id":"${U.mate}"}]'::jsonb)`));

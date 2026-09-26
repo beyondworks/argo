@@ -71,6 +71,9 @@ before(() => {
   const out = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'hermes', '헤르메스', '외부 에이전트')`)));
   BOT = out.bot_id; BOT_CREW = out.crew_id; TOKEN = out.token;
   sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PUB}', 'crew', '${BOT_CREW}')`); // 공개 채널도 초대된 에이전트만 받는다(2026-09-16)
+  // App Store 5.1.2 재설계(2026-09-27, 검수 H2) — msgr_bot_updates_before_work가 동의하지 않은 사람의 글을 봇에 넘기지
+  // 않기 시작했다. 이 파일의 기존 시나리오는 전부 정상 대화를 전제하므로 미리 동의해 둔다(H2 테스트만 되돌린다).
+  for (const uid of [U.owner, U.admin, U.member]) asUser(uid, `select public.msgr_set_ai_consent(true)`);
 });
 
 const mention = () => JSON.stringify([{ kind: 'crew', id: BOT_CREW }]);
@@ -254,4 +257,21 @@ test('S: 스캔의 배달 판정은 커서 뒤 후보에만 불린다(조직 옛
     sql(`drop function public.msgr_delivery_allowed(uuid, bigint);
          alter function public.msgr_delivery_allowed_real(uuid, bigint) rename to msgr_delivery_allowed;`);
   }
+});
+
+// App Store 5.1.2 재설계(2026-09-27, 검수 H2) — 동의하지 않은 사람의 글은 봇에게 넘기지 않는다(배달=to 건은 크루·채널당
+// 한 번만 시스템 안내), 문맥(ctx)에서도 그 사람 글을 뺀다. H1(msgr_crew_context)과 같은 규칙.
+test('검수 H2: 동의하지 않은 사람이 봇을 부르면 배달하지 않고 크루·채널당 한 번만 안내한다', { skip }, () => {
+  asUser(U.member, `select public.msgr_set_ai_consent(false)`);
+  const m = post(PUB, '@헤르메스 이거 처리해줘', mention(), U.member);
+  assert.deepEqual(updates(m1), [], '동의하지 않은 글은 배달되지 않는다');
+  const notice = sql(`select body from public.msgr_messages where channel_id='${PUB}' and client_msg_id='aiconsent:${BOT_CREW}:${PUB}'`);
+  assert.match(notice, /앱을 업데이트하고 AI 이용에 동의하면/);
+  // 같은 사람이 또 불러도 안내는 한 번만(client_msg_id 충돌로 조용히 억제)
+  const before = sql(`select count(*) from public.msgr_messages where channel_id='${PUB}' and client_msg_id='aiconsent:${BOT_CREW}:${PUB}'`);
+  post(PUB, '@헤르메스 또 불러봄', mention(), U.member);
+  updates(m1);
+  assert.equal(sql(`select count(*) from public.msgr_messages where channel_id='${PUB}' and client_msg_id='aiconsent:${BOT_CREW}:${PUB}'`), before, '안내는 한 번만 — 두 번째 호출은 dup 키로 조용히 억제');
+  m1 = m;
+  asUser(U.member, `select public.msgr_set_ai_consent(true)`); // 뒤 테스트 영향 없게 원복
 });

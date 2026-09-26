@@ -70,6 +70,9 @@ before(() => {
     BOTS[key] = { crew: out.crew_id, token: out.token };
     sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PUB}', 'crew', '${out.crew_id}')`);
   }
+  // App Store 5.1.2 재설계(2026-09-27, 검수 H2) — msgr_bot_updates_before_work가 동의하지 않은 사람의 글을 봇에 넘기지
+  // 않기 시작했다. 이 파일의 기존 시나리오는 전부 정상 대화를 전제하므로 미리 동의해 둔다.
+  for (const uid of [U.owner, U.admin, U.member]) asUser(uid, `select public.msgr_set_ai_consent(true)`);
 });
 
 const both = () => JSON.stringify([{ kind: 'crew', id: BOTS.a.crew }, { kind: 'crew', id: BOTS.b.crew }]);

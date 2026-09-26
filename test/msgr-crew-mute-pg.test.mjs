@@ -47,7 +47,9 @@ before(() => {
   for (const f of readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x)).sort()) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG = last(asUser(U.a, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.a}') returning id`));
-  CREW = last(asUser(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'lean', 'mine', 'Mine') returning id`));
+  // 검수 L5(2026-09-27): 내 크루는 숨길 수 없다 — 뮤트 대상 크루는 U.a 소유가 아니라 동료(U.b) 소유로 둔다(U.a는 조직 멤버라 볼 수 있다).
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${ORG}', '${U.b}', 'member', 'b') on conflict do nothing`);
+  CREW = last(asUser(U.b, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.b}', 'lean', 'colleague', 'Colleague') returning id`));
 });
 
 test('사람 차단(기존)과 크루 뮤트(신규)가 같은 표에 공존한다 — xor 제약, 사람 목록·크루 목록이 서로 섞이지 않는다', { skip }, () => {
