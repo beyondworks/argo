@@ -580,6 +580,13 @@ export async function msgrOrgEntitledForApproval(orgId, { session = sessionClien
   if (!c) return true;
   return c.db.orgEntitled(orgId).catch(() => true);
 }
+/** M-2(2026-09-27 저녁, 2차 재검수) — 원문 작성자 동의 안내(채널당 1회). drain()의 'ai_consent' 안내와 같은 문구·같은
+    client_msg_id 모양(aiconsent:<크루id>:<채널id>)을 쓴다 — 한쪽이 이미 남겼으면 다른 쪽은 DB 유니크 제약으로 조용히 걸러진다. */
+function aiConsentNoticeRow(crewId, channelId, msgId, threadRoot, lang) {
+  return { channel_id: channelId, author_kind: 'crew', crew_id: crewId, kind: 'system', reply_to: msgId, thread_root: threadRoot ?? msgId,
+    client_msg_id: `aiconsent:${crewId}:${channelId}`,
+    body: pick('앱을 업데이트하고 AI 이용에 동의하면 크루에게 맡길 수 있습니다.', 'Update the app and agree to AI use to hand this to a crew.', lang) };
+}
 /** 동시 실행 상한을 둔 map — 결과 순서는 입력 순서 그대로. (export: 회귀 테스트용) */
 export async function mapLimited(items, limit, fn) {
   const out = new Array(items.length);
@@ -892,6 +899,9 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
     // 조직 자격(2026-09-27 M5) — 결재 확정 후속도 실행(유료 LLM 호출) 직전에 다시 확인한다. 채널 안내는 drain()의 다음 폴이 낸다
     // (여기서 또 남기면 실패 노트까지 겹쳐 두 번 시도된다) — 여기서는 비용 큰 실행만 막는다. fail-open.
     if (ch?.org_id && !(db.orgEntitled ? await db.orgEntitled(ch.org_id).catch(() => true) : true)) throw new Error('msgr_org_unentitled');
+    // M-2(2026-09-27 저녁, 2차 재검수) — 원문 작성자가 그 사이 동의를 거부·철회했으면 원문을 다시 보내지 않는다.
+    // 채널 안내는 drain()의 다음 폴이 낸다(위 자격 검사와 같은 이유로 여기서 또 남기지 않는다). fail-open.
+    if (ch?.org_id && source.author_kind === 'user' && !(db.orgConsentOk ? await db.orgConsentOk(ch.org_id, source.author_user_id).catch(() => true) : true)) throw new Error('msgr_ai_consent_declined');
     const rows = envelope?.context ?? await db.contextOf(ctx.channelId, Number.MAX_SAFE_INTEGER, CONTEXT_N);
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     const context = rows.map((r) => `${clean(ctx.peers.find((p) => p.id === r.crew_id)?.display_name ?? pick('멤버', 'member', lang), 40)}: ${clean(r.body, 300)}`).join('\n');
@@ -995,6 +1005,13 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     if (ch.org_id && !(db.orgEntitled ? await db.orgEntitled(ch.org_id).catch(() => true) : true)) {
       await db.insertMessage(await unentitledNoticeRow(db, ch.org_id, { crewId: job.crewId, channelId: job.channelId, msgId: job.msgId, threadRoot: job.threadRoot, lang }))
         .catch((e) => console.error(`[argo] msgr 무료 기간 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${job.msgId}):`, e?.message ?? e));
+      return;
+    }
+    // M-2(2026-09-27 저녁, 2차 재검수) — 원문(스레드 뿌리) 작성자가 그 사이 동의를 거부·철회했으면 실행하지 않는다.
+    // envelope 없는 구버전 게이트웨이는 뿌리 작성자를 여기서 알 수 없다 — DB 쪽 문맥 필터(msgr_crew_context)가 최종 방어선.
+    if (ch.org_id && envelope?.root?.author_kind === 'user' && !(db.orgConsentOk ? await db.orgConsentOk(ch.org_id, envelope.root.author_user_id).catch(() => true) : true)) {
+      await db.insertMessage(aiConsentNoticeRow(job.crewId, job.channelId, job.msgId, job.threadRoot, lang))
+        .catch((e) => console.error(`[argo] msgr 동의 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${job.msgId}):`, e?.message ?? e));
       return;
     }
     // A durable queue from the preceding app version may not yet carry workRunId.

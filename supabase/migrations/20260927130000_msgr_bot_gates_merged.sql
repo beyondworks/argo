@@ -8,7 +8,10 @@
 -- msgr_bot_updates_before_work: 본문은 20260926100000(릴레이 순서 수정본)과 같고, 추가된 것은
 --   (1) 조직 자격 판정 1회 + 미자격이면 후보별로 채널당 1회 안내·건너뛰기(M3),
 --   (2) 안내 client_msg_id에 자격 마커 시각을 섞어 재만료 시 새 안내가 다시 뜨게(L2),
---   (3) AI 미동의 사람 글은 봇에게 넘기지 않고 문맥(ctx)·뿌리 주입에서도 빼기(H2),
+--   (3) AI 미동의 사람 글은 봇에게 넘기지 않고 문맥(ctx)·뿌리 주입에서도 빼기(H2) — 2026-09-27 저녁(2차 재검수)
+--       부터는 20260927140000_msgr_ai_consent_transition.sql의 public.msgr_ai_consent_visible()을 부른다(14일
+--       전환 기간 포함 — "거부"와 "아직 안 물어봄"을 가른다). 이 파일이 먼저 적용되지만 plpgsql 본문은 실행
+--       시점에만 해석되므로 앞을 가리켜도(순방향 참조) 안전하다 — 같은 마이그레이션 배치 안에서 140000이 뒤이어 적용된다.
 --   (4) 미자격일 때는 10분/7일 유예창 없이 이번 스캔 최댓값까지 커서를 바로 넘겨, 자격이 돌아와도
 --       밀린 후보를 뒤늦게 실행하지 않고 다음 폴부터 새 글만 보게(N6, DB 위생 — 전체 재스캔 방지).
 --
@@ -61,7 +64,7 @@ begin
    continue;
  end if;
  -- 검수 H2: 이 글의 사람이 조직 AI 이용에 동의하지 않았으면 봇에게 넘기지 않는다. 배달(to)이면 크루·채널당 한 번 안내하고 건너뛴다.
- if s.author_kind='user' and not exists(select 1 from msgr_ai_consent ac where ac.user_id=s.author_user_id and ac.consent_at is not null) then
+ if s.author_kind='user' and not public.msgr_ai_consent_visible(s.author_user_id) then
    if not msgr_cc_delivery_allowed(b.crew_id,s.id) then
      insert into msgr_messages(channel_id,author_kind,crew_id,kind,client_msg_id,body,meta)
        values(s.channel_id,'crew',b.crew_id,'system','aiconsent:'||b.crew_id||':'||s.channel_id,
@@ -95,9 +98,9 @@ begin
  select m.id,jsonb_build_object('message_id',m.id,'text',m.body,'author_kind',m.author_kind,'crew_id',m.crew_id,'mentions',m.mentions) row
  from msgr_messages m where m.channel_id=ch.id and m.kind='text' and m.deleted_at is null and (case when ch.kind='dm' and msgr_crew_in_channel(ch.id,b.crew_id) then (m.id<=s.id or (m.reply_to=s.id and msgr_to_mentioned(s.mentions,m.crew_id))) else (m.id=r.id or m.thread_root=r.id) end)
  and (s.author_kind='user' or m.id<=s.id)
- and (m.author_kind<>'user' or exists(select 1 from msgr_ai_consent ac where ac.user_id=m.author_user_id and ac.consent_at is not null))
+ and (m.author_kind<>'user' or public.msgr_ai_consent_visible(m.author_user_id))
  order by m.id desc limit 12) h;
- r_json := case when r.author_kind='user' and not exists(select 1 from msgr_ai_consent ac where ac.user_id=r.author_user_id and ac.consent_at is not null)
+ r_json := case when r.author_kind='user' and not public.msgr_ai_consent_visible(r.author_user_id)
    then jsonb_build_object('message_id',r.id,'text','','author_kind',r.author_kind,'crew_id',r.crew_id,'mentions',r.mentions)
    else jsonb_build_object('message_id',r.id,'text',r.body,'author_kind',r.author_kind,'crew_id',r.crew_id,'mentions',r.mentions) end;
  if ch.kind='dm' and not exists(select 1 from jsonb_array_elements(ctx) x where (x->>'message_id')::bigint=r.id) then ctx:=jsonb_build_array(r_json)||ctx; end if;

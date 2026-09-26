@@ -15,6 +15,10 @@ function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Err
 const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
 const asUser = (uid, q) => sql(`set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`);
 const asUserRaw = (uid, q) => psqlRaw(['-A', '-t', '-c', `set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`]);
+const asService = (q) => sql(`set role service_role; ${q}`);
+const asAnon = (q) => sql(`set role anon; ${q}`);
+const asAnonRaw = (q) => psqlRaw(['-A', '-t', '-c', `set role anon; ${q}`]);
+const raw = (q) => psqlRaw(['-A', '-t', '-c', q]);
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';
 
 let ORG;
@@ -26,6 +30,9 @@ before(() => {
       if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
       if not exists (select from pg_roles where rolname = 'service_role') then create role service_role nologin; end if;
     end $$;
+    -- 역할은 클러스터 전체 공유 — 드릴에서 먼저 도는 다른 파일이 bypassrls 없이 이미 만들어 뒀을 수 있다.
+    -- 실 Supabase의 service_role은 항상 RLS를 우회하므로 생성 여부와 무관하게 매번 강제한다(2026-09-27 저녁, msgr_settings 접근에 필요).
+    alter role service_role bypassrls;
     grant usage on schema public to anon, authenticated, service_role;
     create schema if not exists auth; grant usage on schema auth to anon, authenticated, service_role;
     create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now(), email text);
@@ -49,10 +56,11 @@ before(() => {
   ORG = last(asUser(U.a, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.a}') returning id`));
 });
 
-test('기본값은 미동의 — 새 사용자는 행이 없어도 org 단위 확인이 false다', { skip }, () => {
+test('2026-09-27 유건 결정(전환 기간 14일) — 아직 안 물어본 새 사용자는 행이 없어도 전환 기간 동안은 org 단위 확인이 true다', { skip }, () => {
   const crew = last(asUser(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'lean', 'mine', 'Mine') returning id`));
   sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${ORG}', '${U.c}', 'member', 'c') on conflict do nothing`);
-  assert.equal(asUser(U.a, `select public.msgr_org_ai_consent_ok('${ORG}', '${U.c}')`), 'f');
+  // 이 마이그레이션이 막 적용됐으므로(이 드릴의 enforce_after = 적용 시각 + 14일) 아직 전환 기간 안 — H3·M-3(공백기) 방지
+  assert.equal(asUser(U.a, `select public.msgr_org_ai_consent_ok('${ORG}', '${U.c}')`), 't', '아직 안 물어본 기존 사용자는 전환 기간 동안 지금처럼 허용된다');
 });
 
 test('동의하면 본인은 msgr_my_ai_consent로 시각을 본다, 남은 msgr_org_ai_consent_ok로만 존재 여부를 본다(같은 조직·본인 소유 활성 크루가 있을 때만)', { skip }, () => {
@@ -128,4 +136,38 @@ test('검수 L4: 같은 조직 멤버면(채널 공유 없이도) 숨길 수 있
   sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${ORG}', '${U.b}', 'member', 'b') on conflict do nothing`);
   const r = asUserRaw(U.b, `select public.msgr_mute_crew('${crew}')`);
   assert.equal(r.status, 0, r.stderr);
+});
+
+// ── 2026-09-27 저녁(2차 재검수) — 전환 기간 자체(msgr_settings.ai_consent_enforce_after)와 거부의 우선순위를 잠근다. ──
+test('전환 기간이 끝나면 아직 안 물어본 사람도 막힌다 — 기준 시각은 msgr_settings, service_role만 바꿀 수 있다', { skip }, () => {
+  const crew = last(asUser(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'lean', 'expiretest', 'ExpireTest') returning id`));
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${ORG}', '${U.c}', 'member', 'c') on conflict do nothing`);
+  assert.equal(asUser(U.a, `select public.msgr_org_ai_consent_ok('${ORG}', '${U.c}')`), 't', '전환 기간 안 — U.c는 아직 한 번도 안 물어봤지만 허용(대조군)');
+  const denied = asUserRaw(U.a, `update public.msgr_settings set value = (now() - interval '1 day')::text where key = 'ai_consent_enforce_after'`);
+  assert.notEqual(denied.status, 0, '기준 시각은 service_role만 바꿀 수 있다 — authenticated는 거부된다');
+  asService(`update public.msgr_settings set value = (now() - interval '1 day')::text where key = 'ai_consent_enforce_after'`);
+  assert.equal(asUser(U.a, `select public.msgr_org_ai_consent_ok('${ORG}', '${U.c}')`), 'f', '전환 기간이 끝나면 아직 안 물어본 사람도 막힌다');
+  asService(`update public.msgr_settings set value = (now() + interval '14 days')::text where key = 'ai_consent_enforce_after'`); // 다음 테스트를 위해 되돌린다
+});
+
+test('거부·철회는 전환 기간이 남아 있어도 즉시·항상 차단된다("아직 안 물어봄"과 다른 값)', { skip }, () => {
+  asUser(U.b, `select public.msgr_set_ai_consent(false)`); // U.b는 앞선 테스트에서 이미 동의(true)했다 — 여기서 명시적으로 거부
+  assert.equal(asUser(U.a, `select public.msgr_org_ai_consent_ok('${ORG}', '${U.b}')`), 'f', '전환 기간이 아직 14일 남아 있어도 명시적 거부는 즉시 막힌다');
+});
+
+// 검수 L-5(2026-09-27 저녁, 선택 적용) — msgr_bot_file도 같은 동의 판정을 적용한다.
+test('검수 L-5(선택): msgr_bot_file은 파일을 올린 글의 작성자가 동의하지 않았으면 감춘다', { skip }, () => {
+  asUser(U.a, `select public.msgr_set_ai_consent(true)`);
+  asUser(U.c, `select public.msgr_set_ai_consent(false)`); // 파일을 올릴 사람 — 명시적으로 거부
+  const ch = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','l5-file-check')`));
+  const bot = JSON.parse(last(asUser(U.a, `select public.msgr_bot_create('${ORG}', 'hermes', 'L5Bot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.a}')`);
+  const mid = last(asUser(U.c, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body) values ('${ch}', 'user', '${U.c}', 'text', '파일 첨부') returning id`));
+  const att = last(sql(`insert into public.msgr_attachments (message_id, org_id, storage_path, name, mime, bytes) values (${mid}, '${ORG}', '${ORG}/${ch}/${mid}/f.csv', 'f.csv', 'text/csv', 100) returning id`));
+  const r = asAnonRaw(`select public.msgr_bot_file('${bot.token}', '${att}')`);
+  assert.notEqual(r.status, 0, '동의하지 않은 사람이 올린 파일은 봇이 못 받는다');
+  assert.match(r.stderr, /msgr_bot_no_file/, '왜 숨었는지는 노출하지 않는다(파일 없음과 같은 에러)');
+  asUser(U.c, `select public.msgr_set_ai_consent(true)`);
+  const f = JSON.parse(asAnon(`select public.msgr_bot_file('${bot.token}', '${att}')`));
+  assert.equal(f.file_name, 'f.csv', '동의하면 같은 파일을 다시 받는다');
 });

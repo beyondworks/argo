@@ -470,3 +470,39 @@ test('approval follow-up: an entitled org still attempts the connector payload (
   assert.doesNotMatch(seenText, /무료 기간이 끝나 실행하지 않았습니다/, 'an entitled org is not frozen by this gate (it fails later for an unrelated reason — no real gmail connector is configured in this fixture)');
   f.stop();
 });
+
+// 2026-09-27 저녁(2차 재검수, M-2) — 결재 후속(runMessengerContinuation)·큐 잡 핸들러(makeMsgrHandler run())도
+// 원문 작성자의 동의 상태를 실행 직전에 다시 본다(자격 재확인 N3와 같은 두 자리).
+test('runMessengerContinuation stops before the expensive turn when the source author has declined/withdrawn consent', async () => {
+  const f = await setup();
+  const { runMessengerContinuation } = await import('../src/gateway/msgr.mjs');
+  f.db.orgConsentOk = async () => false;
+  let ran = false;
+  try {
+    await assert.rejects(runMessengerContinuation(f.ws, 'alpha', f.origin, '진행', null, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } }), /msgr_ai_consent_declined/);
+    assert.equal(ran, false, 'consent is rechecked before the paid turn runs, not after');
+  } finally { f.stop(); }
+});
+
+test('makeMsgrHandler run(): a queued job rechecks the thread root author consent before running and only leaves a channel notice', async () => {
+  const f = await setup();
+  const { makeMsgrHandler } = await import('../src/gateway/msgr.mjs');
+  f.db.crewContext = async () => ({
+    delivery_role: 'to',
+    channel: { id: 'channel', org_id: 'org', kind: 'private', crew_memory: false },
+    source: { id: 41, channel_id: 'channel', author_kind: 'user', author_user_id: 'person', body: 'hi', reply_to: null, thread_root: null, meta: {} },
+    root: { id: 41, author_kind: 'user', author_user_id: 'person' },
+    peers: [], settled_source: false, settled_predecessors: [],
+  });
+  f.db.orgConsentOk = async () => false;
+  f.db.settled = async () => false;
+  const inserted = [];
+  f.db.insertMessage = async (row) => { inserted.push(row); return { id: 99 }; };
+  let ran = false;
+  const handler = makeMsgrHandler(f.ws, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } });
+  await handler({ msgId: 41, slug: 'alpha', crewId: 'a', channelId: 'channel', orgId: 'org', authorId: 'person', threadRoot: 41, text: '작업', createdAt: new Date().toISOString() });
+  assert.equal(ran, false, 'a job whose thread root author has declined consent is not run');
+  assert.equal(inserted.length, 1);
+  assert.match(inserted[0].client_msg_id, /^aiconsent:a:channel/);
+  f.stop();
+});

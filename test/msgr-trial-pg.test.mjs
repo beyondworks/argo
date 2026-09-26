@@ -450,14 +450,14 @@ test('변이: 합본 봇 finish에서 자격 게이트를 지우면 미자격 �
 test('변이: 합본 봇 업데이트에서 AI 동의 필터를 지우면 미동의 사람 글도 배달된다 — red 확인', { skip }, () => {
   asUser(U.o1, `select public.msgr_set_ai_consent(false)`); // 명시적으로 미동의 상태에서 시작(테스트 순서와 무관하게)
   const orig = readFileSync(mig(MERGED), 'utf8');
-  const anchor = " if s.author_kind='user' and not exists(select 1 from msgr_ai_consent ac where ac.user_id=s.author_user_id and ac.consent_at is not null) then\n";
+  const anchor = " if s.author_kind='user' and not public.msgr_ai_consent_visible(s.author_user_id) then\n";
   assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
-  sql(orig.replace(anchor, " if false and s.author_kind='user' and not exists(select 1 from msgr_ai_consent ac where ac.user_id=s.author_user_id and ac.consent_at is not null) then\n"));
+  sql(orig.replace(anchor, " if false and s.author_kind='user' and not public.msgr_ai_consent_visible(s.author_user_id) then\n"));
   const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('MutConsentOrg', 'mutconsent1', '${U.o1}') returning id`));
   const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
   const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'MutConsent')`)));
   sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
-  // U.o1은 이 파일에서 한 번도 msgr_set_ai_consent를 부르지 않았다 — 기본값(미동의)
+  // U.o1은 위에서 명시적으로 거부했다(전환 기간과 무관하게 항상 차단이어야 한다) — 변이는 그 차단 자체를 지운다
   asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@MutConsent 부탁', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]')`);
   const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
   assert.equal(ups.length, 1, 'AI 동의 필터가 지워지면 미동의 사람 글도 배달된다(정상 코드라면 0이어야 하므로 변이가 잡힌다)');
@@ -477,4 +477,88 @@ test('H2: AI 동의 안 한 사람의 글은 봇에게 넘어가지 않는다(�
   asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions) values ('${ch}', 'user', '${U.o1}', 'text', '@ConsentBot 부탁2', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]')`);
   // 동의 전 건너뛴 첫 글도 소급 배달 대상이 될 수 있다(동의는 자격과 달리 "영영 폐기"가 아니다) — 새 글이 최소 하나는 배달됨을 확인
   assert.ok(JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`)).length >= 1, '동의하면 다시 정상 배달된다');
+});
+
+// ── 2026-09-27 저녁(2차 재검수) — M-1: 팀 업무를 시작한 사람의 동의 여부가 목표·완료 기준 텍스트를 가른다.
+//    배달되는 글 자체는 동의한 다른 사람의 후속 글이라 H2를 통과한다 — work_run.created_by만 가려낸다는 걸 이렇게 격리한다. ──
+test('M-1(2차 재검수, 봇): msgr_bot_updates는 팀 업무를 시작한 사람이 동의하지 않았으면 목표·완료 기준을 감춘다', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(false)`); // 업무를 시작한 사람 — 명시적으로 거부
+  asUser(U.a2, `select public.msgr_set_ai_consent(true)`); // 후속 글을 쓰는 다른 사람 — 동의함(H2를 통과시켜 M-1만 격리)
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('WorkGoalOrg', 'workgoal1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${org}', '${U.a2}', 'member', 'a2') on conflict do nothing`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'user', '${U.a2}', '${U.o1}') on conflict do nothing`);
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'WorkBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  const w = JSON.parse(asUser(U.o1, `select public.msgr_work_create('${ch}', gen_random_uuid(), '민감한 목표 텍스트', '완료 기준 텍스트', '${bot.crew_id}')`));
+  asUser(U.a2, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions, reply_to, thread_root) values ('${ch}', 'user', '${U.a2}', 'text', '@WorkBot 진행 상황?', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]', ${w.root_message_id}, ${w.root_message_id})`);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  assert.equal(ups.length, 1, '동의한 사람의 후속 글은 정상 배달된다(H2 통과 — M-1만 격리해 본다)');
+  assert.doesNotMatch(ups[0].message.text, /민감한 목표 텍스트/, '업무를 시작한 사람이 동의하지 않았으면 목표 텍스트가 프롬프트에 실리지 않는다');
+  assert.equal(ups[0].message.work_run.goal, '(원문 비공개 / not shared)');
+  assert.equal(ups[0].message.work_run.completion_criteria, '(원문 비공개 / not shared)');
+});
+
+// M-4 — 위 필터를 지우는 변이가 red가 되는지 확인한다.
+test('변이: msgr_bot_updates의 목표 감춤(M-1)을 지우면 미동의 사람의 목표가 그대로 샌다 — red 확인', { skip }, () => {
+  const migPath = mig('20260927140000_msgr_ai_consent_transition.sql');
+  const orig = readFileSync(migPath, 'utf8');
+  const anchor = "if not public.msgr_ai_consent_visible(w.created_by) then goal_text:='(원문 비공개 / not shared)'; crit_text:='(원문 비공개 / not shared)'; else";
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다');
+  sql(orig.replace(anchor, "if false then goal_text:='(원문 비공개 / not shared)'; crit_text:='(원문 비공개 / not shared)'; else"));
+  asUser(U.o1, `select public.msgr_set_ai_consent(false)`);
+  asUser(U.a2, `select public.msgr_set_ai_consent(true)`);
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('MutWorkGoalOrg', 'mutworkgoal1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${org}', '${U.a2}', 'member', 'a2') on conflict do nothing`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'user', '${U.a2}', '${U.o1}') on conflict do nothing`);
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'MutWorkBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  const w = JSON.parse(asUser(U.o1, `select public.msgr_work_create('${ch}', gen_random_uuid(), '변이로 새는 목표', '기준', '${bot.crew_id}')`));
+  asUser(U.a2, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions, reply_to, thread_root) values ('${ch}', 'user', '${U.a2}', 'text', '@MutWorkBot 진행 상황?', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]', ${w.root_message_id}, ${w.root_message_id})`);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  assert.match(ups[0].message.text, /변이로 새는 목표/, '필터가 지워지면 미동의 사람의 목표가 그대로 샌다(정상 코드라면 안 보여야 하므로 변이가 잡힌다)');
+  sql(orig); // 원래(합본) 정의로 복구
+});
+
+// M-4(2차 재검수) — 봇 문맥(ctx) 자체도 동의 판정을 잠근다(위 테스트들은 배달 여부·목표 텍스트만 봤다).
+test('M-4: 봇 문맥(ctx)도 동의 판정을 적용한다 — 미동의 사람의 글은 문맥에서 빠진다', { skip }, () => {
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`);
+  asUser(U.a2, `select public.msgr_set_ai_consent(false)`);
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('CtxOrg', 'ctxorg1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${org}', '${U.a2}', 'member', 'a2') on conflict do nothing`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'user', '${U.a2}', '${U.o1}') on conflict do nothing`);
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'CtxBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  const root = last(asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body) values ('${ch}', 'user', '${U.o1}', 'text', '뿌리 글') returning id`));
+  const midByA2 = last(asUser(U.a2, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, reply_to, thread_root) values ('${ch}', 'user', '${U.a2}', 'text', '미동의 사람의 문맥 글', ${root}, ${root}) returning id`));
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions, reply_to, thread_root) values ('${ch}', 'user', '${U.o1}', 'text', '@CtxBot 다시 확인해줘', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]', ${root}, ${root})`);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  assert.equal(ups.length, 1);
+  const ctxIds = ups[0].message.context.map((c) => c.message_id);
+  assert.ok(ctxIds.includes(Number(root)), '동의한 사람의 뿌리 글은 문맥에 있다(대조군)');
+  assert.ok(!ctxIds.includes(Number(midByA2)), '미동의 사람의 글은 문맥에서 빠진다');
+});
+
+test('변이: 봇 문맥(ctx) 필터 줄을 지우면 미동의 사람의 글이 문맥에 그대로 샌다(M-4) — red 확인', { skip }, () => {
+  const orig = readFileSync(mig(MERGED), 'utf8');
+  const anchor = " and (m.author_kind<>'user' or public.msgr_ai_consent_visible(m.author_user_id))\n";
+  assert.equal((orig.match(new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1, '앵커가 정확히 1곳이어야 한다(봇 ctx 필터 줄)');
+  sql(orig.replace(anchor, ""));
+  asUser(U.o1, `select public.msgr_set_ai_consent(true)`);
+  asUser(U.a2, `select public.msgr_set_ai_consent(false)`);
+  const org = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('MutCtxOrg', 'mutctxorg1', '${U.o1}') returning id`));
+  const ch = last(asUser(U.o1, `select public.msgr_create_channel('${org}','public','general')`));
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${org}', '${U.a2}', 'member', 'a2') on conflict do nothing`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'user', '${U.a2}', '${U.o1}') on conflict do nothing`);
+  const bot = JSON.parse(last(asUser(U.o1, `select public.msgr_bot_create('${org}', 'hermes', 'MutCtxBot')`)));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${bot.crew_id}', '${U.o1}')`);
+  const root = last(asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body) values ('${ch}', 'user', '${U.o1}', 'text', '뿌리 글') returning id`));
+  const midByA2 = last(asUser(U.a2, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, reply_to, thread_root) values ('${ch}', 'user', '${U.a2}', 'text', '변이로 새는 문맥 글', ${root}, ${root}) returning id`));
+  asUser(U.o1, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions, reply_to, thread_root) values ('${ch}', 'user', '${U.o1}', 'text', '@MutCtxBot 다시 확인해줘', '[{"kind":"crew","id":"${bot.crew_id}","role":"to"}]', ${root}, ${root})`);
+  const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${bot.token}') x`));
+  const ctxIds = ups[0].message.context.map((c) => c.message_id);
+  assert.ok(ctxIds.includes(Number(midByA2)), '필터 줄이 지워지면 미동의 사람의 글도 문맥에 샌다(정상 코드라면 없어야 하므로 변이가 잡힌다)');
+  sql(orig); // 원래(합본) 정의로 복구
 });
