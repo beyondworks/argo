@@ -5,9 +5,8 @@ import { Icon } from './Icon.jsx';
 import { Face } from './Face.jsx';
 import { t, ago, useLang } from '../core/i18n.js';
 import { useUi, setUi } from '../core/ui-state.js';
-import { useStore, assign, update } from '../core/store.js';
+import { useStore, assign, update, crewsIn } from '../core/store.js';
 import { imeGuardWith } from '../core/ime.js';
-import { CREWS } from '../data/sample.js';
 import { SPACES, ME, getMode } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
 import { baseOf } from '../core/commands.js';
@@ -186,12 +185,14 @@ export function AssignSheet() {
   const [text, setText] = useState('');
   useEffect(() => { if (a) { setCrew(a.crew ?? null); setTask(a.items?.some((i) => i.kind === 'mail') ? 'summary' : 'custom'); setText(''); } }, [a]);
   const label = useMemo(() => a?.items?.map((i) => i.label).filter(Boolean).join(', ') ?? '', [a]);
+  const allCrews = useStore((s) => s.crews);
+  const crews = crewsIn(allCrews, a?.space ?? 'me', ME.id);
   if (!a) return null;
   const hasMail = a.items.some((i) => i.kind === 'mail');
   const close = () => setUi({ assign: null });
   const go = () => {
-    const c = CREWS.find((x) => x.id === crew);
-    assign({ space: a.space === 'me' ? 'beyondworks' : a.space, crew, goal: task === 'custom' ? (text || label) : `${t(`crew.task.${task}`)} · ${label}` });
+    const c = crews.find((x) => x.id === crew);
+    assign({ space: c.space ?? (a.space === 'me' ? 'beyondworks' : a.space), crew, goal: task === 'custom' ? (text || label) : `${t(`crew.task.${task}`)} · ${label}` });
     close(); showToast(t('crew.handed', { crew: c.name }));
   };
   return (
@@ -199,7 +200,7 @@ export function AssignSheet() {
       footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={!crew || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
       {a.items.length > 0 && <div className="assign-items">{a.items.map((i) => <span key={`${i.kind}-${i.id}`} className="chip"><Icon name={{ mail: 'mail', page: 'doc', file: 'file', record: 'run' }[i.kind]} size={12} />{i.label}</span>)}</div>}
       <div className="field-block"><span className="label">{t('nav.crews')}</span>
-        <div className="crew-pick">{CREWS.map((c) => <button key={c.id} type="button" className={`crew-opt${crew === c.id ? ' on' : ''}`} aria-pressed={crew === c.id} onClick={() => setCrew(c.id)}><Face id={c.id} size={26} /><b>{c.name}</b><small>{c.role}</small></button>)}</div>
+        <div className="crew-pick">{crews.map((c) => <button key={c.id} type="button" className={`crew-opt${crew === c.id ? ' on' : ''}`} aria-pressed={crew === c.id} onClick={() => setCrew(c.id)}><Face id={c.id} size={26} /><b>{c.name}</b><small>{c.role}</small></button>)}</div>
       </div>
       <div className="field-block"><span className="label">{t('crew.what')}</span>
         <div className="seg">{TASKS.filter((k) => hasMail || k !== 'reply').map((k) => <button key={k} type="button" className={`seg-btn${task === k ? ' on' : ''}`} aria-pressed={task === k} onClick={() => setTask(k)}>{t(`crew.task.${k}`)}</button>)}</div>

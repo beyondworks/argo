@@ -1,9 +1,10 @@
 // 크루 얼굴 — 메신저와 같은 규칙(평면 단색 도형 + 작은 눈, 입 없음). 모양·색 계산은 메신저 crew-face.mjs를 그대로 쓴다.
 // 오피스는 공식적인 화면이라 대기 애니메이션은 넣지 않는다(정지 얼굴).
 import { faceOf, faceGeometry } from '@msgr/crew-face';
+import { getState } from '../core/store.js';
 
 export function Face({ id, size = 20, dim = false }) {
-  const g = faceGeometry(faceOf(id));
+  const g = faceGeometry(faceOf(id, getState().crews?.find((c) => c.id === id)?.face ?? null));
   const eye = g.eyes === 'stroke'
     ? <><path d={`M${g.L - 3} ${g.cy}h6M${g.R - 3} ${g.cy}h6`} stroke="#1f1e1b" strokeWidth="4" strokeLinecap="round" /></>
     : g.eyes === 'bean'

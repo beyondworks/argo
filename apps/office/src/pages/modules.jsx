@@ -5,14 +5,13 @@ import { Icon } from '../ui/Icon.jsx';
 import { menuProps, openMenu } from '../ui/Menu.jsx';
 import { Link } from '../core/router.jsx';
 import { t, ago } from '../core/i18n.js';
-import { useStore, toggleTodo } from '../core/store.js';
+import { useStore, toggleTodo, crewName, crewsIn, approvalsIn } from '../core/store.js';
 import { baseOf, mailMenu, pageMenu, fileMenu, recordMenu } from '../core/commands.js';
-import { CREWS, OUTPUTS, JOURNAL } from '../data/sample.js';
-import { SPACES } from '../core/session.js';
+import { SPACES, ME } from '../core/session.js';
 import { fmtBytes } from '../core/files.js';
 import { pickCards, statsFor, MAX_CARDS } from '../core/stats.js';
 
-export const crewName = (id) => CREWS.find((c) => c.id === id)?.name ?? '';
+export { crewName };
 const inSpace = (space) => (x) => space === 'me' || x.space === space;
 const spaceName = (key) => SPACES.find((s) => s.key === key)?.name ?? '';
 
@@ -20,7 +19,7 @@ function Empty() { return <div className="mod-empty">{t('mod.empty')}</div>; }
 
 function Approvals({ space }) {
   const list = useStore((s) => s.approvals);
-  const rows = useMemo(() => list.filter(inSpace(space)), [list, space]);
+  const rows = useMemo(() => list.filter(approvalsIn(space)), [list, space]);
   if (!rows.length) return <Empty />;
   return rows.slice(0, 4).map((a) => (
     <Link key={a.id} to={`${baseOf(space)}/approvals?open=${a.id}`} className="mod-row" {...menuProps(() => recordMenu(a, a.plain))}>
@@ -38,8 +37,8 @@ function Work({ space }) {
   return rows.slice(0, 5).map((w) => (
     <div key={w.id} className="mod-row" {...menuProps(() => recordMenu(w, w.goal))}>
       <span className={`dot ${w.status === 'blocked' ? 'ask' : 'work'}`} />
-      <span className="mod-main"><span className="clamp">{w.goal}</span><small>{crewName(w.lead)} · {w.status === 'blocked' ? `${t('status.blocked')} · ${w.blockedBy}` : t('status.running')}</small></span>
-      <span className="mono dim">{w.steps}</span>
+      <span className="mod-main"><span className="clamp">{w.goal}</span><small>{[crewName(w.lead), w.status === 'blocked' ? t('status.blocked') : t('status.running'), w.status === 'blocked' && w.blockedBy].filter(Boolean).join(' · ')}</small></span>
+      <span className="mono dim">{w.steps ?? ago(w.started)}</span>
     </div>
   ));
 }
@@ -64,7 +63,7 @@ function Todos() {
   return rows.map((r) => (
     <label key={r.key} className={`mod-row todo${done[r.key] ? ' done' : ''}`}>
       <input type="checkbox" checked={!!done[r.key]} onChange={() => toggleTodo(r.key)} />
-      <span className="mod-main"><span className="clamp">{r.text}</span><small>{crewName(r.crew)} · {r.from}</small></span>
+      <span className="mod-main"><span className="clamp">{r.text}</span><small>{[crewName(r.crew), r.from].filter(Boolean).join(' · ')}</small></span>
     </label>
   ));
 }
@@ -83,24 +82,26 @@ function Pages({ space }) {
 }
 
 function Outputs({ space }) {
-  const rows = OUTPUTS.filter(inSpace(space));
+  const all = useStore((s) => s.outputs);
+  const rows = useMemo(() => all.filter(inSpace(space)), [all, space]);
   if (!rows.length) return <Empty />;
   return rows.slice(0, 5).map((f) => (
     <div key={f.id} className="mod-row" {...menuProps(() => fileMenu(f))}>
       <Icon name="file" size={14} className="dim" />
-      <span className="mod-main"><span className="clamp mono-name">{f.name}</span><small>{crewName(f.crew)} · #{f.channel}</small></span>
+      <span className="mod-main"><span className="clamp mono-name">{f.name}</span><small>{[crewName(f.crew), f.channel && `#${f.channel}`].filter(Boolean).join(' · ')}</small></span>
       <small className="dim mono">{fmtBytes(f.bytes)}</small>
     </div>
   ));
 }
 
 function Journal({ space }) {
-  const day = JOURNAL.find(inSpace(space));
+  const days = useStore((s) => s.journal);
+  const day = days.find(inSpace(space));
   if (!day) return <Empty />;
   return <>
     <div className="mod-date mono">{day.date}</div>
     {day.entries.map((e, i) => (
-      <div key={i} className="mod-row top"><Face id={e.crew} size={18} /><span className="mod-main"><span>{e.text}</span><small>{crewName(e.crew)}</small></span></div>
+      <div key={i} className="mod-row top"><Face id={e.crew} size={18} /><span className="mod-main"><span>{e.text}</span><small>{[crewName(e.crew) || e.name, e.time].filter(Boolean).join(' · ')}</small></span></div>
     ))}
   </>;
 }
@@ -112,7 +113,7 @@ function Decisions({ space }) {
   return rows.map((d) => (
     <div key={d.id} className="mod-row">
       <span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span>
-      <span className="mod-main"><span className="clamp">{d.plain}</span><small>{d.by} · {ago(d.at)}</small></span>
+      <span className="mod-main"><span className="clamp">{d.plain}</span><small>{[d.by, ago(d.at)].filter(Boolean).join(' · ')}</small></span>
     </div>
   ));
 }
@@ -124,27 +125,28 @@ const recent = (at) => Date.now() - new Date(at).getTime() < WEEK;
 function useStatValues(space) {
   const approvals = useStore((s) => s.approvals), work = useStore((s) => s.work), mails = useStore((s) => s.mails);
   const decisions = useStore((s) => s.decisions), pages = useStore((s) => s.pages), done = useStore((s) => s.todosDone);
+  const crewList = useStore((s) => s.crews), outputs = useStore((s) => s.outputs);
   return useMemo(() => {
     const base = baseOf(space), ok = (text, icon) => ({ tone: 'ok', text, icon }), warn = (text, icon) => ({ tone: 'warn', text, icon });
-    const ap = approvals.filter(inSpace(space)), high = ap.filter((a) => a.risk === 'high').length;
+    const ap = approvals.filter(approvalsIn(space)), high = ap.filter((a) => a.risk === 'high').length;
     const wk = work.filter(inSpace(space)), blocked = wk.filter((w) => w.status === 'blocked').length;
     const unread = mails.filter((m) => m.folder === 'inbox' && m.unread).length;
-    const working = CREWS.filter((c) => c.status === 'work').length, asking = CREWS.filter((c) => c.status === 'ask').length;
+    const cs = crewsIn(crewList, space, ME.id), working = cs.filter((c) => c.status === 'work').length, asking = cs.filter((c) => c.status === 'ask').length;
     const todos = mails.flatMap((m) => (m.note?.todos ?? []).map((_, i) => `${m.id}:${i}`)), todoDone = todos.filter((k) => done[k]).length;
     const dec = decisions.filter(inSpace(space)).filter((d) => recent(d.at)), approved = dec.filter((d) => d.result === 'approved').length;
-    const out = OUTPUTS.filter(inSpace(space)).filter((f) => recent(f.at));
+    const out = outputs.filter(inSpace(space)).filter((f) => recent(f.at));
     const pg = pages.filter((p) => !p.template && p.space === space), pgRecent = pg.filter((p) => p.updated && recent(p.updated)).length;
     return {
       approvals: { n: ap.length, badge: ap.length ? warn(t('stat.b.waiting'), 'stamp') : ok(t('stat.b.none'), 'stamp'), main: high ? t('stat.highRisk', { n: high }) : t('stat.noHighRisk'), sub: t('stat.approvalsSub'), to: `${base}/approvals` },
       work: { n: wk.length, badge: blocked ? warn(t('stat.b.blocked'), 'run') : ok(t('stat.b.normal'), 'run'), main: t('stat.blocked', { n: blocked }), sub: t('stat.workSub'), to: `${base}/work` },
       mail: { n: unread, badge: unread ? warn(t('stat.b.unread'), 'mail') : ok(t('stat.b.none'), 'mail'), main: unread ? t('stat.mailCheck') : t('stat.mailDone'), sub: t('stat.mailSub'), to: '/me/mail' },
-      crews: { n: working, total: CREWS.length, badge: asking ? warn(t('stat.b.check'), 'person') : ok(t('stat.b.normal'), 'person'), main: t('stat.crewWorking'), sub: t('stat.crewAsk', { n: asking }) },
+      crews: { n: working, total: cs.length, badge: asking ? warn(t('stat.b.check'), 'person') : ok(t('stat.b.normal'), 'person'), main: t('stat.crewWorking'), sub: t('stat.crewAsk', { n: asking }) },
       todos: { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
       decisions: { n: dec.length, badge: ok(t('stat.b.week'), 'check'), main: t('stat.decided', { a: approved, r: dec.length - approved }), sub: t('stat.weekSub'), to: `${base}/decisions` },
       outputs: { n: out.length, badge: ok(t('stat.b.week'), 'file'), main: fmtBytes(out.reduce((s, f) => s + f.bytes, 0)), sub: t('stat.weekSub'), to: `${base}/outputs` },
       pages: { n: pg.length, badge: ok(t('stat.b.wiki'), 'doc'), main: t('stat.pagesRecent', { n: pgRecent }), sub: t(space === 'me' ? 'stat.pagesMe' : 'stat.pagesOrg') },
     };
-  }, [approvals, work, mails, decisions, pages, done, space]);
+  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space]);
 }
 
 /** 현황 카드(유건 9/27) — 카드마다 지표를 고른다. 1~5장, 조직 홈은 관리자만 바꾼다(구조는 공유). */

@@ -35,7 +35,7 @@ const DICT = {
   'risk.high': ['높은 위험', 'High risk'], 'risk.low': ['낮은 위험', 'Low risk'],
   'ap.review': ['검토', 'Review'], 'ap.approve': ['승인', 'Approve'], 'ap.reject': ['거절', 'Reject'], 'ap.command': ['명령 보기', 'View command'],
   'ap.from': ['{crew} · #{channel}', '{crew} · #{channel}'], 'ap.empty': ['결재를 기다리는 일이 없습니다', 'Nothing waiting for approval'],
-  'ap.decided': ['{result}했습니다', 'Marked as {result}'], 'ap.who': ['결정할 수 있는 사람: 관리자', 'Who can decide: admins'], 'ap.whoLow': ['결정할 수 있는 사람: 크루 주인', 'Who can decide: crew owner'],
+  'ap.decided': ['{result}했습니다', 'Marked as {result}'], 'ap.noRight': ['이 결재를 결정할 권한이 없습니다', 'You cannot decide this approval'], 'ap.who': ['결정할 수 있는 사람: 관리자', 'Who can decide: admins'], 'ap.whoLow': ['결정할 수 있는 사람: 크루 주인', 'Who can decide: crew owner'],
   'col.goal': ['목표', 'Goal'], 'col.lead': ['맡은 크루', 'Lead'], 'col.status': ['상태', 'Status'], 'col.progress': ['단계', 'Steps'], 'col.started': ['시작', 'Started'],
   'col.channel': ['채널', 'Channel'], 'col.name': ['이름', 'Name'], 'col.size': ['크기', 'Size'], 'col.date': ['날짜', 'Date'], 'col.result': ['결과', 'Result'], 'col.by': ['결정한 사람', 'Decided by'], 'col.item': ['내용', 'Item'], 'col.crew': ['크루', 'Crew'],
   'mail.inbox': ['받은편지함', 'Inbox'], 'mail.drafts': ['임시 보관함', 'Drafts'], 'mail.sent': ['보낸편지함', 'Sent'], 'mail.archive': ['보관함', 'Archive'],

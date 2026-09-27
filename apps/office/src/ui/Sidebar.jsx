@@ -8,11 +8,10 @@ import { Face } from './Face.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link, navigate } from '../core/router.jsx';
 import { t, useLang } from '../core/i18n.js';
-import { useStore, childrenOf, createPage } from '../core/store.js';
+import { crewsIn, approvalsIn, useStore, childrenOf, createPage } from '../core/store.js';
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
-import { CREWS } from '../data/sample.js';
 import { SPACES, ME, canManage } from '../core/session.js';
 import { restore, persist } from '../core/save.js';
 
@@ -110,7 +109,8 @@ export function Sidebar({ space, path }) {
   const toggle = (id) => setOpenMap((m) => { const next = { ...m, [id]: !(m[id] ?? true) }; persist('argo-office-tree', next); return next; });
   const base = baseOf(space);
   const isMe = space === 'me';
-  const pendingHere = approvals.filter((a) => isMe || a.space === space).length;
+  const pendingHere = approvals.filter(approvalsIn(space)).length;
+  const crews = crewsIn(useStore((s) => s.crews), space, ME.id);
   const unread = mails.filter((m) => m.folder === 'inbox' && m.unread).length;
   const at = (p) => path === p;
   return (
@@ -140,7 +140,7 @@ export function Sidebar({ space, path }) {
         </div>
         <div className="tree" role="tree"><Tree space={space} path={path} openMap={openMap} onToggle={toggle} /></div>
         <div className="nav-section"><span>{t('nav.crews')}</span></div>
-        <div className="crews">{CREWS.map((c) => <CrewRow key={c.id} crew={c} space={space} />)}</div>
+        <div className="crews">{crews.map((c) => <CrewRow key={c.id} crew={c} space={space} />)}</div>
       </div>
       <div className="side-foot">
         <NavItem to={`${base}/trash`} icon="trash" label={t('nav.trash')} active={at(`${base}/trash`)} />

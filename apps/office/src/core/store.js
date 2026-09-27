@@ -8,7 +8,7 @@ import { queue } from './sync.js';
 import { between } from './position.js';
 
 const KEY = 'argo-office-draft-v1';
-const fresh = () => ({ pages: S.PAGES.map((p, i) => ({ ...p, position: p.position ?? String.fromCharCode(97 + Math.floor(i / 10)) + (i % 10 + 1) })), mails: S.MAILS, approvals: S.APPROVALS, decisions: S.DECISIONS, work: S.WORK, layouts: {}, trash: [], todosDone: {} });
+const fresh = () => ({ pages: S.PAGES.map((p, i) => ({ ...p, position: p.position ?? String.fromCharCode(97 + Math.floor(i / 10)) + (i % 10 + 1) })), mails: S.MAILS, approvals: S.APPROVALS, decisions: S.DECISIONS, work: S.WORK, crews: S.CREWS, outputs: S.OUTPUTS, journal: S.JOURNAL, layouts: {}, trash: [], todosDone: {} });
 let state = { ...fresh(), ...restore(KEY, {}) };
 const listeners = new Set();
 
@@ -30,6 +30,11 @@ const nowIso = () => new Date().toISOString();
 // 서버로 가는 변경 종류(key가 다르면 합쳐지지 않는다): 만들기 page-create:id / 저장 page:id / 이동 order:id / 휴지통 trash:id / 비공개 restricted:id.
 // 저장은 보내는 순간의 최신 제목·본문과 서버가 아는 버전으로 간다(core/transport.js) — 글자마다 불려도 마지막 값 하나.
 const byPos = (a, b) => ((a.position ?? '') < (b.position ?? '') ? -1 : (a.position ?? '') > (b.position ?? '') ? 1 : 0);
+export const crewName = (id) => state.crews.find((c) => c.id === id)?.name ?? '';
+/** 공간의 크루 — 내 공간은 내 크루(모든 조직), 조직은 그 조직 크루. 예시 크루(공간·주인 없음)는 어디서나 */
+export const crewsIn = (crews, space, me) => crews.filter((c) => (space === 'me' ? !c.owner || c.owner === me : !c.space || c.space === space));
+/** 결재 — 내 공간은 내가 결정할 수 있는 것만(모든 조직), 조직 공간은 그 조직 전부 */
+export const approvalsIn = (space) => (a) => (space === 'me' || a.space === space) && (space !== 'me' || a.canDecide !== false);
 export const childrenOf = (pages, space, parent) => pages.filter((p) => !p.template && p.space === space && (p.parent ?? null) === (parent ?? null)).sort(byPos); // 템플릿은 트리에 안 섞는다
 const descendants = (pages, id) => { const out = []; const walk = (pid) => pages.filter((p) => p.parent === pid).sort(byPos).forEach((c) => { out.push(c.id); walk(c.id); }); walk(id); return out; };
 const lastPos = (pages, space, parent) => childrenOf(pages, space, parent).at(-1)?.position ?? null;

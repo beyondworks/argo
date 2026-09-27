@@ -9,6 +9,7 @@
   /* 표면 톤 — 순백이 튀지 않게 카드색을 캔버스에 62% 섞은 단색(유건 2026-09-26). 반투명 대신 섞은 단색이라
      메뉴·모달처럼 떠 있는 층에도 같은 톤을 그대로 쓴다(뒤가 비치지 않음). 모든 표면은 --card 대신 이 값을 쓴다. */
   --surface: color-mix(in srgb, var(--card) 62%, var(--bg));
+  --lift: color-mix(in srgb, var(--card) 40%, transparent); /* 면 위의 카드 — 순백으로 튀지 않게 반투명(유건 9/26·9/27) */
   --side-w: 15rem; --top-h: 3rem; --ctl: 32px; --rc: 8px; --rs: 12px;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
@@ -234,7 +235,7 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 .ap-big { font-size: 18px; font-weight: 620; line-height: 1.45; letter-spacing: -0.015em; }
 .ap-cmd summary { cursor: pointer; color: var(--fg-2); font-size: 12.5px; }
 .ap-cmd pre { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--rc); background: var(--bg); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
-@media (hover: hover) { .ap-row:hover { background: var(--card); } }
+@media (hover: hover) { .ap-row:hover { background: var(--lift); } }
 
 /* ── 크루 일지 ── */
 .journal-day { margin-bottom: 24px; }
@@ -483,7 +484,7 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
 
 /* 현황 카드(유건 9/27) — 카드 한 장 = 지표 하나. 폭에 맞춰 5→3→2장으로 접힌다 */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(168px, 100%), 1fr)); gap: 12px; padding: 4px 2px 2px; }
-.stat-card { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 14px 16px; border-radius: var(--rc); background: var(--card); box-shadow: inset 0 0 0 1px var(--border-soft); color: inherit; text-decoration: none; }
+.stat-card { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 14px 16px; border-radius: var(--rc); background: var(--lift); box-shadow: inset 0 0 0 1px var(--border-soft); color: inherit; text-decoration: none; }
 a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 @media (hover: hover) { a.stat-card:hover { box-shadow: inset 0 0 0 1px var(--border); } }
 .stat-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
@@ -500,7 +501,7 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 .history { display: grid; gap: 14px; }
 .history .list-row { width: 100%; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .history .list-row.on { background: var(--secondary); }
-.history-preview { display: grid; gap: 12px; padding: 14px 16px; border-radius: var(--rc); background: var(--card); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.history-preview { display: grid; gap: 12px; padding: 14px 16px; border-radius: var(--rc); background: var(--lift); box-shadow: inset 0 0 0 1px var(--border-soft); }
 .history-preview .prose { max-height: 40vh; overflow: auto; font-size: 13.5px; }
 .history-preview .btn { justify-self: end; }
 

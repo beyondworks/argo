@@ -6,13 +6,11 @@ import { Face } from '../ui/Face.jsx';
 import { menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { Sheet, showToast } from '../ui/Overlay.jsx';
 import { t, ago, useLang } from '../core/i18n.js';
-import { useStore, decide } from '../core/store.js';
+import { useStore, decide, crewName, approvalsIn } from '../core/store.js';
 import { recordMenu, fileMenu } from '../core/commands.js';
 import { fmtBytes } from '../core/files.js';
 import { navigate } from '../core/router.jsx';
-import { OUTPUTS, JOURNAL } from '../data/sample.js';
 import { SPACES, ME } from '../core/session.js';
-import { crewName } from './modules.jsx';
 
 const inSpace = (space) => (x) => space === 'me' || x.space === space;
 const spaceName = (key) => SPACES.find((s) => s.key === key)?.name ?? '';
@@ -24,7 +22,7 @@ function Title({ h, sub }) {
 export function Approvals({ space, openId }) {
   useLang();
   const list = useStore((s) => s.approvals);
-  const rows = useMemo(() => list.filter(inSpace(space)), [list, space]);
+  const rows = useMemo(() => list.filter(approvalsIn(space)), [list, space]);
   const cur = rows.find((a) => a.id === openId);
   const close = () => navigate(location.pathname);
   const act = (result) => { decide(cur.id, result, ME.name); close(); showToast(t('ap.decided', { result: t(`status.${result}`) })); };
@@ -43,13 +41,13 @@ export function Approvals({ space, openId }) {
         ))}
       </div>
       <Sheet open={!!cur} onClose={close} title={t('nav.approvals')}
-        footer={cur && <><button type="button" className="btn" onClick={() => act('rejected')}>{t('ap.reject')}</button><button type="button" className="btn primary" onClick={() => act('approved')}><Icon name="check" size={14} />{t('ap.approve')}</button></>}>
+        footer={cur && cur.canDecide !== false && <><button type="button" className="btn" onClick={() => act('rejected')}>{t('ap.reject')}</button><button type="button" className="btn primary" onClick={() => act('approved')}><Icon name="check" size={14} />{t('ap.approve')}</button></>}>
         {cur && <div className="ap-detail">
           <div className="ap-who"><Face id={cur.crew} size={28} /><div><b>{crewName(cur.crew)}</b><small className="dim">#{cur.channel} · {ago(cur.at)}</small></div><span className={`badge ${cur.risk === 'high' ? 'warn' : ''}`}>{t(`risk.${cur.risk}`)}</span></div>
           <p className="ap-big">{cur.plain}</p>
-          <p>{cur.need}</p>
-          <details className="ap-cmd"><summary>{t('ap.command')}</summary><pre>{cur.command}</pre></details>
-          <p className="dim small">{cur.risk === 'high' ? t('ap.who') : t('ap.whoLow')}</p>
+          {cur.need && <p>{cur.need}</p>}
+          {cur.command && <details className="ap-cmd"><summary>{t('ap.command')}</summary><pre>{cur.command}</pre></details>}
+          <p className="dim small">{cur.canDecide === false ? t('ap.noRight') : cur.risk === 'high' ? t('ap.who') : t('ap.whoLow')}</p>
         </div>}
       </Sheet>
     </div>
@@ -77,7 +75,7 @@ export function Work({ space }) {
           <td className="strong">{w.goal}</td>
           <td><span className="who"><Face id={w.lead} size={16} />{crewName(w.lead)}</span></td>
           <td><span className={`badge ${w.status === 'blocked' ? 'warn' : 'ok'}`}>{t(`status.${w.status}`)}</span>{w.blockedBy && <small className="dim"> · {w.blockedBy}</small>}</td>
-          <td className="mono">{w.steps}</td><td className="dim">#{w.channel}</td><td className="dim">{ago(w.started)}</td>
+          <td className="mono">{w.steps ?? '—'}</td><td className="dim">{w.channel && `#${w.channel}`}</td><td className="dim">{ago(w.started)}</td>
         </>} />
     </div>
   );
@@ -95,7 +93,7 @@ export function Decisions({ space }) {
           <td className="strong">{d.plain}</td>
           <td><span className="who"><Face id={d.crew} size={16} />{crewName(d.crew)}</span></td>
           <td><span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span></td>
-          <td>{d.by}</td><td className="dim">{ago(d.at)}</td>
+          <td>{d.by || '—'}</td><td className="dim">{ago(d.at)}</td>
         </>} />
     </div>
   );
@@ -108,14 +106,15 @@ function FileRow({ f }) {
     <tr ref={setNodeRef} className={isDragging ? 'ghost' : ''} {...attributes} {...mergeHandlers(mouse, menuProps(() => fileMenu(f)))}>
       <td className="strong"><span className="who"><Icon name="file" size={14} className="dim" /><span className="mono-name">{f.name}</span></span></td>
       <td><span className="who"><Face id={f.crew} size={16} />{crewName(f.crew)}</span></td>
-      <td className="dim">#{f.channel}</td><td className="mono dim">{fmtBytes(f.bytes)}</td><td className="dim">{ago(f.at)}</td>
+      <td className="dim">{f.channel && `#${f.channel}`}</td><td className="mono dim">{fmtBytes(f.bytes)}</td><td className="dim">{ago(f.at)}</td>
     </tr>
   );
 }
 
 export function Outputs({ space }) {
   useLang();
-  const rows = OUTPUTS.filter(inSpace(space));
+  const all = useStore((s) => s.outputs);
+  const rows = useMemo(() => all.filter(inSpace(space)), [all, space]);
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.outputs')} />
@@ -129,14 +128,15 @@ export function Outputs({ space }) {
 
 export function Journal({ space }) {
   useLang();
-  const days = JOURNAL.filter(inSpace(space));
+  const all = useStore((s) => s.journal);
+  const days = useMemo(() => all.filter(inSpace(space)), [all, space]);
   return (
     <div className="page-wrap">
       <Title h={t('nav.journal')} />
       {days.map((d) => (
-        <section key={d.date} className="journal-day">
+        <section key={`${d.space}|${d.date}`} className="journal-day">
           <h2 className="mono">{d.date}</h2>
-          {d.entries.map((e, i) => <div key={i} className="journal-entry"><Face id={e.crew} size={22} /><div><b>{crewName(e.crew)}</b><p>{e.text}</p></div></div>)}
+          {d.entries.map((e, i) => <div key={i} className="journal-entry"><Face id={e.crew} size={22} /><div><b>{crewName(e.crew) || e.name}</b>{e.time && <small className="dim mono"> {e.time}</small>}<p>{e.text}</p></div></div>)}
         </section>
       ))}
     </div>

@@ -4,6 +4,7 @@ import { SPACES, ME } from './session.js';
 import { update, getState } from './store.js';
 import { outbox } from './sync.js';
 import { mergePages } from './layout.js';
+import { mapBoard } from './board.js';
 
 export async function pullLayouts() {
   const sb = await getClient();
@@ -47,4 +48,30 @@ export async function loadPageContent(id, { force = false } = {}) {
   if (error || !data) return;
   if (!force && (busy || outbox.has(`page:${id}`))) return;
   update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, title: data.title, content: data.content, version: data.version, updated: data.updated_at, loadedAt: Date.now() } : p)) }));
+}
+
+/** 기록판 — 내 조직들의 메신저 기록(크루·진행 중인 일·대기 결재·최근 결정·산출물·일지)을 읽는다. 읽기만(DB 쓰기 0).
+ *  결재 버튼은 서버가 결재권이 있다고 한 것만(msgr_can_decide — 메신저 앱과 같은 판정). */
+export async function pullBoard() {
+  const sb = await getClient();
+  if (!sb) return;
+  const orgs = SPACES.filter((s) => s.kind === 'org');
+  const empty = { crews: [], work: [], approvals: [], decisions: [], outputs: [], journal: [] };
+  if (!orgs.length) { update(() => empty); return; }
+  const ids = orgs.map((o) => o.id);
+  const since = new Date(Date.now() - 30 * 864e5).toISOString();
+  const res = await Promise.all([
+    sb.from('msgr_crews').select('id, org_id, owner_user_id, display_name, department, role_text, face').in('org_id', ids),
+    sb.from('msgr_work_runs').select('id, org_id, channel_id, goal, lead_crew_id, status, created_at').in('org_id', ids).in('status', ['running', 'blocked']).order('created_at', { ascending: false }).limit(100),
+    sb.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, risk, created_at').in('org_id', ids).eq('status', 'pending').order('created_at', { ascending: false }).limit(100),
+    sb.from('msgr_crew_approvals').select('id, org_id, crew_id, action, reason, status, decided_at').in('org_id', ids).in('status', ['approved', 'rejected']).gte('decided_at', since).order('decided_at', { ascending: false }).limit(100),
+    sb.from('msgr_attachments').select('id, org_id, name, bytes, created_at, msg:msgr_messages(channel_id, crew_id)').in('org_id', ids).order('created_at', { ascending: false }).limit(100),
+    sb.from('msgr_channels').select('id, name, kind').in('org_id', ids),
+    sb.from('msgr_org_docs').select('org_id, title, body').in('org_id', ids).like('path', 'journal/%').order('updated_at', { ascending: false }).limit(30),
+  ]);
+  const bad = res.find((r) => r.error);
+  if (bad) throw bad.error;
+  const [crews, runs, approvals, decisions, files, channels, journals] = res.map((r) => r.data ?? []);
+  const can = await Promise.all(approvals.map((a) => sb.rpc('msgr_can_decide', { ap: a.id }).then((r) => (r.data ? a.id : null))));
+  update(() => mapBoard({ crews, runs, approvals, decisions, files, channels, journals }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)) }));
 }

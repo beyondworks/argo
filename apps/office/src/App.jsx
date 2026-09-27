@@ -18,13 +18,13 @@ import { Settings, Trash, Shared, PublicPage } from './pages/Misc.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
 import { useSaveStatus } from './core/save.js';
-import { useStore, saveLayout, reorderPage, createPage } from './core/store.js';
+import { useStore, saveLayout, reorderPage, createPage, getState } from './core/store.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
 import { move } from './core/layout.js';
-import { CREWS, PEOPLE } from './data/sample.js';
+import { PEOPLE } from './data/sample.js';
 import { SPACES, ME, useSession, canManage } from './core/session.js';
-import { pullLayouts, pullPages } from './core/pull.js';
+import { pullLayouts, pullPages, pullBoard } from './core/pull.js';
 import { flushNow } from './core/sync.js';
 import { Login } from './pages/Login.jsx';
 
@@ -107,6 +107,12 @@ export default function App() {
     flushNow(); // 로그인 확인 전에 미뤄 둔 변경을 바로 보낸다
     pullLayouts().catch((e) => console.warn('[office] layout pull failed', e?.message));
     pullPages().catch((e) => console.warn('[office] page pull failed', e?.message));
+    pullBoard().catch((e) => console.warn('[office] board pull failed', e?.message));
+    // 기록판은 실시간 방송 대신 탭으로 돌아올 때 다시 읽는다(최대 1분에 한 번 — 읽기만)
+    let last = Date.now();
+    const onShow = () => { if (document.hidden || Date.now() - last < 60_000) return; last = Date.now(); pullBoard().catch(() => {}); };
+    document.addEventListener('visibilitychange', onShow);
+    return () => document.removeEventListener('visibilitychange', onShow);
   }, [mode]);
   useEffect(() => { setUi({ navOpen: false }); }, [path]);
   useEffect(() => {
@@ -132,7 +138,7 @@ export default function App() {
     if (!over) return;
     const a = active.data.current, o = over.data.current ?? {};
     if (o.accepts?.includes(a.kind)) {
-      const crew = CREWS.find((c) => c.id === o.crew);
+      const crew = getState().crews.find((c) => c.id === o.crew);
       setUi({ assign: { space: r.space, crew: crew.id, items: itemsFromDrag(a) } });
     } else if (a.kind === 'module' && o.kind === 'module' && a.id !== o.id) {
       const visible = homeItems.filter((i) => !i.hidden);

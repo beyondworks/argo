@@ -2,7 +2,7 @@
 // 저장은 보내는 순간의 최신 제목·본문과 서버가 아는 버전으로 간다. 다른 기기가 먼저 저장했으면 충돌 → 페이지에 안내(사람이 고른다).
 import { setTransport } from './sync.js';
 import { getState, update } from './store.js';
-import { getMode, SPACES } from './session.js';
+import { getMode, SPACES, ME } from './session.js';
 import { getClient, classify } from './supabase.js';
 import { setUi, getUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
@@ -60,12 +60,20 @@ async function send(op) {
     case 'page.archive': return rpc('office_page_archive', { p_id: p.id });
     case 'page.restore': return rpc('office_page_restore_archived', { p_id: p.id });
     case 'page.restricted': return rpc('office_page_set_restricted', { p_page: p.id, p_on: p.on });
+    case 'approval.decide': {                                                      // 메신저 앱과 같은 경로(App.jsx decide) — 권한은 RLS 정책 msgr_approvals_decide가 가른다
+      const sb = await getClient();
+      const { data, error } = await sb.from('msgr_crew_approvals').update({ status: p.result, decided_by: ME.id, decided_at: new Date().toISOString() }).eq('id', p.id).eq('status', 'pending').select('id');
+      if (error) throw classify(error);
+      if (!data?.length) throw Object.assign(new Error('office: not decidable'), { transient: false, decide: true }); // 0행 = 결재권 없음·이미 결정됨
+      return;
+    }
     default: return;                                                                 // ponytail: 메일·결재·배정은 서버 표가 생기는 단계에서 여기에 더한다
   }
 }
 
 function rejected(op, err) {
   if (err?.conflict && op.payload.type === 'page.save') { hold(getState().pages.find((x) => x.id === op.payload.id)); setUi({ conflict: op.payload.id }); return; }
+  if (op.payload.type === 'approval.decide') { showToast(t('ap.noRight')); import('./pull.js').then((m) => m.pullBoard()).catch(() => {}); return; }
   showToast(t('sync.rejected'));
   import('./pull.js').then((m) => m.pullPages()).catch(() => {});                  // 서버 상태로 되돌린다
 }
