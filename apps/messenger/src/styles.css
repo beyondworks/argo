@@ -289,14 +289,15 @@
 .msgr-tools .send .mi { stroke-width: 2.2; }
 .msgr-tools .send:active { transform: scale(.94); }
 .msgr-tools .send:disabled { opacity: .4; cursor: default; transform: none; }
-.msgr-tools .filechip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); }
-.msgr-tools .filechip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* .msgr-tools 안(데스크톱)이든 .msgr-filechips 안(폰, App.jsx가 알약 밖에 렌더)이든 같은 모양 — 제목 없는 .filechip 자체로 건다(재검수 2026-09-27: .msgr-tools 스코프였을 때 폰에서 모양이 통째로 빠졌었다) */
+.filechip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); }
+.filechip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 이름이 줄어드는 몫을 전부 가져가야 한다 — 크기표시·삭제버튼까지 overflow-wrap:anywhere를 물려받으면 이름 옆 나머지가 한 글자씩 세로로 쪼개진다(유건 제보 2026-09-27) */
-.msgr-tools .filechip .msgr-klabel, .msgr-tools .filechip .x { flex: none; white-space: nowrap; }
-.msgr-tools .msgr-filechips { display: contents; } /* 폰 알약 컴포저에서만 자기 줄로 뺀다(.msgr-phone 스코프) — 데스크톱은 기존 그대로 */
-.msgr-tools .filechip .x { border: 0; background: none; color: var(--fg-3); cursor: pointer; font: inherit; font-size: 14px; line-height: 1; padding: 0 0 0 2px; } @media (hover: hover) { .msgr-tools .filechip .x:hover { color: var(--fg); } } .msgr-tools .filechip .x:active { color: var(--fg); }
+.filechip .msgr-klabel, .filechip .x { flex: none; white-space: nowrap; }
+.msgr-tools .msgr-filechips { display: contents; } /* 데스크톱(.msgr-tools 안에 그대로) — 폰은 App.jsx가 알약 앞 형제로 렌더해 이 규칙이 안 걸린다 */
+.filechip .x { border: 0; background: none; color: var(--fg-3); cursor: pointer; font: inherit; font-size: 14px; line-height: 1; padding: 0 0 0 2px; } @media (hover: hover) { .filechip .x:hover { color: var(--fg); } } .filechip .x:active { color: var(--fg); }
 .msgr-composer.drop { box-shadow: var(--shadow-float), 0 0 0 2px var(--mark); } /* 파일을 끌어다 놓는 중 */
-.msgr-tools .filechip.busy { border-color: var(--mark); } .msgr-tools .filechip.busy .msgr-klabel { color: var(--mark); animation: msgrPulse 1.2s ease-in-out infinite; }
+.filechip.busy { border-color: var(--mark); } .filechip.busy .msgr-klabel { color: var(--mark); animation: msgrPulse 1.2s ease-in-out infinite; }
 .msgr-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 14px 0; font-size: 11px; color: var(--fg-3); }
 .msgr-sub .typing-line { display: flex; align-items: center; gap: 6px; min-height: 16px; }
 .msgr-sub .msgr-dot { width: 6px; height: 6px; }
@@ -1107,8 +1108,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-auth .msgr-field input { width: 0; max-width: 100%; }
   .msgr-auth .msgr-wait, .msgr-auth .msgr-server .row { flex-wrap: wrap; }
   .argo-messenger :is(.btn, .msgr-titlebtn, .msgr-menu, .msgr-rail-close, .msgr-hchip, .msgr-sortbtn, .msgr-tools .tb, .msgr-tools .send, .msgr-side .msgr-list .item, .msgr-side .msgr-railrow .more, .msgr-side .msgr-foot .me, .msgr-seg button, .msgr-setnav button, .msgr-acts button, .msgr-reacts button, .msgr-pop button, .msgr-emojipop .grid button, .msgr-rowmenu button, .msgr-menu-pop button, .msgr-file) { min-width: 44px; min-height: 44px; height: auto; }
-  .msgr-tools .filechip { max-width: 100%; overflow-wrap: anywhere; }
-  .msgr-tools .filechip button { min-width: 44px; min-height: 44px; }
+  .filechip { max-width: 100%; overflow-wrap: anywhere; }
+  .filechip button { min-width: 44px; min-height: 44px; }
 }
 /* A landscape keyboard can leave only ~240px: keep the header in one row so the composer still fits. */
 @media (min-width: 721px) and (pointer: coarse) and (max-height: 320px) {
@@ -1300,11 +1301,15 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb { display: grid; place-items: center; padding: 0; margin: 0; border: 0; background: none; color: var(--fg-2); min-width: 0; min-height: 0; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb span { display: none; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(1) { order: 0; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-radius: 50%; background: var(--card); border: 1px solid var(--border-soft); }
-  /* 첨부 칩은 알약 한 줄 밖으로 — 안에 두면 클립·입력칸과 폭을 다퉈 글자가 세로로 쪼개졌다(유건 제보 2026-09-27). 알약 위에 자기 줄로 쌓는다 */
-  .msgr-phone .msgr-main .msgr-composer .msgr-tools .msgr-filechips { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); }
-  .msgr-phone .msgr-main .msgr-composer .msgr-tools .filechip { max-width: 100%; }
-  .msgr-phone .msgr-main .msgr-composer:has(.filechip) .msgr-tools .tb:nth-child(2) { display: none; } /* 첨부가 있으면 빈 칸 안내용 @ 글리프도 숨긴다 — 글자가 있을 때와 같은 규칙(유건 2026-09-11) */
-  .msgr-phone .msgr-main .msgr-pop:has(~ .msgr-composer .filechip) { bottom: calc(100% + 8px + 68px); } /* 첨부 칩 줄이 알약 위를 차지한 만큼 멘션 후보창을 더 띄운다 — 겹치면 안 된다(유건 2026-09-27) */
+  /* 첨부 칩(재검수 2026-09-27) — 폰에서는 App.jsx가 알약(form) 앞의 형제 자리에 렌더(.msgr-filechips), 답글칩·cc칩과 같은
+     흐름 안 요소다. 고정 오프셋으로 멘션 후보창을 밀어내지 않는다 — 후보창(.msgr-pop)의 bottom: calc(100% + 8px)은
+     같은 부모(.msgr-dock 안쪽 래퍼)의 실제 쌓인 높이를 기준으로 하므로, 칩 줄이 흐름에 실제로 차지한 높이만큼
+     저절로 더 올라간다(칩 0·1·2·3개 모두 겹침 0px — 고정 px 계산 불필요). */
+  .msgr-phone .msgr-main .msgr-dock .msgr-filechips { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0 var(--ph-pad) 6px; }
+  /* 44px 탭 영역(접근성)은 유지하되 눈에 보이는 상자는 작게 — 크게 잡으면 크기표시와 ×가 벌어져 보인다(유건 재검수 2026-09-27) */
+  .msgr-phone .filechip .x { position: relative; min-width: 0; min-height: 0; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; }
+  .msgr-phone .filechip .x::before { content: ''; position: absolute; inset: -15px; } /* 보이지 않는 44×44 탭 영역 */
+  .msgr-phone .msgr-main .msgr-filechips ~ .msgr-composer .msgr-tools .tb:nth-child(2) { display: none; } /* 첨부가 있으면 빈 칸 안내용 @ 글리프도 숨긴다 — 글자가 있을 때와 같은 규칙(유건 2026-09-11) */
   .msgr-phone .msgr-main:has(.msgr-dock .msgr-sub:not(:empty)) .msgr-thread { padding-bottom: 32px; } /* '입력 중…' 상태 줄은 흐름 밖(absolute)이라 마지막 말풍선과 겹쳤다 → 그만큼 스레드 바닥을 비운다(유건 2026-09-11) */
 
   /* ── 폰 전환·눌림 효과(유건 2026-09-11) — transform·opacity만, 300ms 이하, 움직임 줄이기 설정이면 전부 끈다 ── */
