@@ -41,3 +41,21 @@ test('결재·결정·산출물·일지: 공간 키, 결재권, 문장 대체, �
   assert.deepEqual(b.journal, [{ space: 'bw', date: '2026-09-27', entries: [{ time: '09:12', crew: 'c1', name: '루나', text: '끝' }] }]);
   assert.equal(mapBoard(base, { orgKey: key, decidable: new Set() }).approvals[0].canDecide, false);
 });
+
+// 이유(P2): 크루 공용 문서(msgr_org_docs rules/·glossary/·projects/)는 마크다운 — 오피스는 HTML 문자열 없이 편집기 문서 모양으로만 그린다.
+test('공용 문서: 마크다운 → 문서(제목·목록·문단), 빈 줄은 건너뜀, 굵게 표시는 글자만', async () => {
+  const { mdToDoc } = await import('../src/core/board.js');
+  assert.deepEqual(mdToDoc('# 규칙\n\n- **존댓말** 쓰기\n- 결재 먼저\n본문 한 줄').content, [
+    { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: '규칙' }] },
+    { type: 'bulletList', content: [
+      { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: '존댓말 쓰기' }] }] },
+      { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: '결재 먼저' }] }] }] },
+    { type: 'paragraph', content: [{ type: 'text', text: '본문 한 줄' }] },
+  ]);
+});
+
+test('공용 문서 목록: 일지는 빼고 폴더·공간을 붙인다', async () => {
+  const { mapBoard } = await import('../src/core/board.js');
+  const docs = [{ id: 'x1', org_id: 'o1', channel_id: null, path: 'rules/manners.md', title: '예절', updated_at: 't' }, { id: 'x2', org_id: 'o1', channel_id: 'ch', path: 'journal/2026-09-27.md', title: 'j', updated_at: 't' }];
+  assert.deepEqual(mapBoard({ docs }, { orgKey: new Map([['o1', 'bw']]), decidable: new Set() }).docs, [{ id: 'x1', space: 'bw', folder: 'rules', title: '예절', path: 'rules/manners.md', updated: 't', channel: '' }]);
+});

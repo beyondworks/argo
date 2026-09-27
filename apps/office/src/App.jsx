@@ -13,7 +13,7 @@ import { ShareDialog, AssignSheet, HistorySheet } from './ui/Dialogs.jsx';
 import { Home, useHomeLayout, layoutKey } from './pages/Home.jsx';
 import { Mail, Compose } from './pages/Mail.jsx';
 import { PageView } from './pages/PageView.jsx';
-import { Approvals, Work, Decisions, Outputs, Journal } from './pages/Records.jsx';
+import { Approvals, Work, Decisions, Outputs, Journal, Docs } from './pages/Records.jsx';
 import { Settings, Trash, Shared, PublicPage } from './pages/Misc.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
@@ -39,7 +39,7 @@ function route(path) {
   if (rest === '/') return { space, view: 'home' };
   if ((m = match('/p/:id', rest))) return { space, view: 'page', id: m.id };
   if (space === 'me' && (m = match('/mail/:id', rest))) return { space, view: 'mail', id: m.id };
-  const simple = { '/mail': 'mail', '/shared': 'shared', '/work': 'work', '/approvals': 'approvals', '/decisions': 'decisions', '/outputs': 'outputs', '/journal': 'journal', '/trash': 'trash', '/settings': 'settings' };
+  const simple = { '/mail': 'mail', '/shared': 'shared', '/work': 'work', '/approvals': 'approvals', '/decisions': 'decisions', '/outputs': 'outputs', '/journal': 'journal', '/docs': 'docs', '/trash': 'trash', '/settings': 'settings' };
   return simple[rest] ? { space, view: simple[rest] } : { redirect: baseOf(space) };
 }
 
@@ -51,7 +51,7 @@ function SaveStatus() {
 
 function Header({ r, page }) {
   const sp = SPACES.find((s) => s.key === r.space);
-  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : t({ home: 'nav.home', mail: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
+  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : t({ home: 'nav.home', mail: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', docs: 'nav.docs', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
   return (
     <header className="topbar">
       <button type="button" className="icon-btn nav-toggle" aria-label={t('nav.open')} onClick={() => setUi({ navOpen: true })}><Icon name="menu" /></button>
@@ -151,7 +151,7 @@ export default function App() {
   const views = {
     home: <Home space={r.space} />, mail: <Mail id={r.id} />, page: <PageView id={r.id} />, shared: <Shared />,
     work: <Work space={r.space} />, approvals: <Approvals space={r.space} openId={params.get('open')} />, decisions: <Decisions space={r.space} />,
-    outputs: <Outputs space={r.space} />, journal: <Journal space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
+    outputs: <Outputs space={r.space} />, journal: <Journal space={r.space} />, docs: <Docs space={r.space} openId={params.get('open')} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
   return (
     <DndContext sensors={sensors} collisionDetection={collision} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>

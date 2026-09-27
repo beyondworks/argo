@@ -9,7 +9,26 @@ export function parseJournal(body) {
     .map(([, time, crew, who, ask, text]) => ({ time, crew, who: who ?? null, ask: ask ?? null, text }));
 }
 
-/** rows: { crews, runs, approvals, decisions, files, channels, journals }, orgKey: org_id → 공간 키, decidable: 결재권 있는 결재 id 집합 */
+const txt = (s) => { const t = s.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').trim(); return t ? [{ type: 'text', text: t }] : undefined; };
+const para = (s) => { const c = txt(s); return c ? { type: 'paragraph', content: c } : { type: 'paragraph' }; };
+
+/** 공용 문서 마크다운 → 편집기 문서 모양(제목·글머리 목록·문단). HTML 문자열은 만들지 않는다(화면은 DocView로만 그린다) */
+export function mdToDoc(md) {
+  const out = [];
+  let list = null;
+  for (const raw of String(md ?? '').split('\n')) {
+    const line = raw.trimEnd();
+    const h = /^(#{1,3})\s+(.*)$/.exec(line), li = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (li) { (list ??= (out.push({ type: 'bulletList', content: [] }), out.at(-1))).content.push({ type: 'listItem', content: [para(li[1])] }); continue; }
+    list = null;
+    if (!line.trim()) continue;
+    if (h) { const c = txt(h[2]); out.push(c ? { type: 'heading', attrs: { level: h[1].length }, content: c } : { type: 'heading', attrs: { level: h[1].length } }); continue; }
+    out.push(para(line));
+  }
+  return { type: 'doc', content: out };
+}
+
+/** rows: { crews, runs, approvals, decisions, files, channels, journals, docs }, orgKey: org_id → 공간 키, decidable: 결재권 있는 결재 id 집합 */
 export function mapBoard(rows, { orgKey, decidable }) {
   const space = (org) => orgKey.get(org) ?? null;
   const ch = new Map((rows.channels ?? []).map((c) => [c.id, c.kind === 'dm' ? 'DM' : c.name]));
@@ -33,6 +52,7 @@ export function mapBoard(rows, { orgKey, decidable }) {
     approvals: (rows.approvals ?? []).map((a) => ({ id: a.id, space: space(a.org_id), crew: a.crew_id, plain: a.reason || a.action, risk: a.risk, at: a.created_at, channel: ch.get(a.channel_id) ?? '', canDecide: decidable.has(a.id) })),
     decisions: (rows.decisions ?? []).map((d) => ({ id: d.id, space: space(d.org_id), crew: d.crew_id, plain: d.reason || d.action, result: d.status, by: '', at: d.decided_at })),
     outputs: (rows.files ?? []).map((f) => ({ id: f.id, space: space(f.org_id), name: f.name, crew: f.msg?.crew_id ?? null, channel: ch.get(f.msg?.channel_id) ?? '', bytes: f.bytes, at: f.created_at })),
+    docs: (rows.docs ?? []).filter((d) => !d.path.startsWith('journal/')).map((d) => ({ id: d.id, space: space(d.org_id), folder: d.path.split('/')[0], title: d.title, path: d.path, updated: d.updated_at, channel: ch.get(d.channel_id) ?? '' })),
     journal: [...days.values()].map((d) => ({ ...d, entries: d.entries.sort((a, b) => a.time.localeCompare(b.time)) })).sort((a, b) => b.date.localeCompare(a.date)),
   };
 }

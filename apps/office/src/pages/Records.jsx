@@ -1,5 +1,5 @@
 // 기록판 — 메신저에서 크루와 한 일을 읽어 보여 준다(P2: msgr_work_runs·msgr_crew_approvals·msgr_attachments·조직 문서).
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
@@ -10,6 +10,9 @@ import { useStore, decide, crewName, approvalsIn } from '../core/store.js';
 import { recordMenu, fileMenu } from '../core/commands.js';
 import { fmtBytes } from '../core/files.js';
 import { navigate } from '../core/router.jsx';
+import { loadDocBody } from '../core/pull.js';
+import { mdToDoc } from '../core/board.js';
+import { DocView } from './Misc.jsx';
 import { SPACES, ME } from '../core/session.js';
 
 const inSpace = (space) => (x) => space === 'me' || x.space === space;
@@ -139,6 +142,41 @@ export function Journal({ space }) {
           {d.entries.map((e, i) => <div key={i} className="journal-entry"><Face id={e.crew} size={22} /><div><b>{crewName(e.crew) || e.name}</b>{e.time && <small className="dim mono"> {e.time}</small>}<p>{e.text}</p></div></div>)}
         </section>
       ))}
+    </div>
+  );
+}
+
+const FOLDERS = ['rules', 'glossary', 'projects'];
+
+/** 크루 공용 문서(메신저 조직 문서 — 규칙·용어·프로젝트). 편집은 메신저에서(문서 변경은 결재를 거친다) — 오피스는 읽기 */
+export function Docs({ space, openId }) {
+  useLang();
+  const all = useStore((s) => s.docs);
+  const rows = useMemo(() => all.filter(inSpace(space)), [all, space]);
+  const cur = rows.find((d) => d.id === openId);
+  const [body, setBody] = useState(undefined);
+  useEffect(() => { let live = true; setBody(undefined); if (openId) loadDocBody(openId).then((b) => live && setBody(b)); return () => { live = false; }; }, [openId]);
+  const close = () => navigate(location.pathname);
+  return (
+    <div className="page-wrap">
+      <Title h={t('nav.docs')} sub={t('docs.sub')} />
+      {rows.length === 0 && <div className="empty-state"><Icon name="book" size={20} /><p>{t('docs.empty')}</p></div>}
+      {FOLDERS.map((f) => { const list = rows.filter((d) => d.folder === f); return list.length > 0 && (
+        <section key={f} className="doc-group">
+          <h2 className="label">{t(`docs.${f}`)}</h2>
+          <div className="list">{list.map((d) => (
+            <button key={d.id} type="button" className={`list-row${d.id === openId ? ' on' : ''}`} onClick={() => navigate(`${location.pathname}?open=${d.id}`)}>
+              <Icon name="doc" size={14} className="dim" /><span className="grow">{d.title}</span><small className="dim">{[d.channel && `#${d.channel}`, ago(d.updated)].filter(Boolean).join(' · ')}</small>
+            </button>))}
+          </div>
+        </section>); })}
+      <Sheet open={!!cur} onClose={close} title={cur?.title ?? ''}>
+        {cur && <div className="doc-read">
+          <p className="dim small mono">{cur.path}</p>
+          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <article className="prose"><DocView doc={mdToDoc(body)} /></article> : <p className="dim">{t('docs.empty')}</p>}
+          <p className="dim small">{t('docs.readOnly')}</p>
+        </div>}
+      </Sheet>
     </div>
   );
 }

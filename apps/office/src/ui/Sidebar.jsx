@@ -132,6 +132,7 @@ export function Sidebar({ space, path }) {
             <NavItem to={`${base}/decisions`} icon="check" label={t('nav.decisions')} active={at(`${base}/decisions`)} />
             <NavItem to={`${base}/outputs`} icon="file" label={t('nav.outputs')} active={at(`${base}/outputs`)} />
             <NavItem to={`${base}/journal`} icon="book" label={t('nav.journal')} active={at(`${base}/journal`)} />
+            <NavItem to={`${base}/docs`} icon="doc" label={t('nav.docs')} active={at(`${base}/docs`)} />
           </>}
         </div>
         <div className="nav-section">

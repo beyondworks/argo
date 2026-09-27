@@ -56,7 +56,7 @@ export async function pullBoard() {
   const sb = await getClient();
   if (!sb) return;
   const orgs = SPACES.filter((s) => s.kind === 'org');
-  const empty = { crews: [], work: [], approvals: [], decisions: [], outputs: [], journal: [] };
+  const empty = { crews: [], work: [], approvals: [], decisions: [], outputs: [], journal: [], docs: [] };
   if (!orgs.length) { update(() => empty); return; }
   const ids = orgs.map((o) => o.id);
   const since = new Date(Date.now() - 30 * 864e5).toISOString();
@@ -68,10 +68,19 @@ export async function pullBoard() {
     sb.from('msgr_attachments').select('id, org_id, name, bytes, created_at, msg:msgr_messages(channel_id, crew_id)').in('org_id', ids).order('created_at', { ascending: false }).limit(100),
     sb.from('msgr_channels').select('id, name, kind').in('org_id', ids),
     sb.from('msgr_org_docs').select('org_id, title, body').in('org_id', ids).like('path', 'journal/%').order('updated_at', { ascending: false }).limit(30),
+    sb.from('msgr_org_docs').select('id, org_id, channel_id, path, title, updated_at').in('org_id', ids).not('path', 'like', 'journal/%').order('path').limit(300), // 본문은 열 때만
   ]);
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
-  const [crews, runs, approvals, decisions, files, channels, journals] = res.map((r) => r.data ?? []);
+  const [crews, runs, approvals, decisions, files, channels, journals, docs] = res.map((r) => r.data ?? []);
   const can = await Promise.all(approvals.map((a) => sb.rpc('msgr_can_decide', { ap: a.id }).then((r) => (r.data ? a.id : null))));
-  update(() => mapBoard({ crews, runs, approvals, decisions, files, channels, journals }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)) }));
+  update(() => mapBoard({ crews, runs, approvals, decisions, files, channels, journals, docs }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)) }));
+}
+
+/** 공용 문서 본문 — 목록에는 싣지 않고 열 때만 읽는다(문서당 최대 64KB) */
+export async function loadDocBody(id) {
+  const sb = await getClient();
+  if (!sb) return null;
+  const { data } = await sb.from('msgr_org_docs').select('body').eq('id', id).maybeSingle();
+  return data?.body ?? null;
 }
