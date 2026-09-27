@@ -5,6 +5,7 @@ import { THEMES, applyTheme } from './theme.js';
 import { createPage, duplicatePage, trashPage, archiveMail, setMail, setRestricted, getState } from './store.js';
 import { setUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
+import { loadPageContent } from './pull.js';
 import { canManage } from './session.js';
 
 export const baseOf = (space) => (space === 'me' || space === 'shared' ? '/me' : `/o/${space}`); // shared = 남의 내 공간 페이지를 공유받은 것
@@ -24,6 +25,15 @@ export function globalCommands(space) {
   ].filter(Boolean);
 }
 
+/** 템플릿으로 저장 = 지금 모습의 사본을 템플릿으로(유건 9/27). 조직 템플릿은 관리자만 — 아니면 '내 것'으로 */
+async function saveAsTemplate(page) {
+  if (page.content === undefined) await loadPageContent(page.id);
+  const cur = getState().pages.find((p) => p.id === page.id) ?? page;
+  const space = page.space !== 'me' && page.space !== 'shared' && canManage(page.space) ? page.space : 'me';
+  createPage(space, null, { title: cur.title, content: cur.content, template: true });
+  showToast(t(space === 'me' ? 'page.templateSavedMine' : 'page.templateSaved'));
+}
+
 async function copyLink(path) {
   try { await navigator.clipboard.writeText(location.origin + path); showToast(t('page.linkCopied')); } catch { showToast(location.origin + path); }
 }
@@ -40,7 +50,7 @@ export function pageMenu(page) {
     { label: t('page.addChild'), icon: 'plus', run: () => navigate(`${base}/p/${createPage(page.space, page.id)}`) },
     canTop && { label: t('page.duplicate'), icon: 'copy', shortcut: `${mod}D`, run: () => { const id = duplicatePage(page.id); showToast(t('page.duplicated')); navigate(`${base}/p/${id}`); } },
     { label: t('page.copyLink'), icon: 'link', run: () => copyLink(`${base}/p/${page.id}`) },
-    { label: t('page.asTemplate'), icon: 'template', run: () => showToast(t('page.templateSaved')) },
+    { label: t('page.asTemplate'), icon: 'template', run: () => saveAsTemplate(page) },
     { sep: true },
     { label: t('page.share'), icon: 'share', run: () => setUi({ share: page.id }) },
     { label: t('crew.assign'), icon: 'hand', run: () => setUi({ assign: { space: page.space, items: [{ kind: 'page', id: page.id, label: page.title || t('page.untitled') }] } }) },

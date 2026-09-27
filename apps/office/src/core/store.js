@@ -30,14 +30,14 @@ const nowIso = () => new Date().toISOString();
 // 서버로 가는 변경 종류(key가 다르면 합쳐지지 않는다): 만들기 page-create:id / 저장 page:id / 이동 order:id / 휴지통 trash:id / 비공개 restricted:id.
 // 저장은 보내는 순간의 최신 제목·본문과 서버가 아는 버전으로 간다(core/transport.js) — 글자마다 불려도 마지막 값 하나.
 const byPos = (a, b) => ((a.position ?? '') < (b.position ?? '') ? -1 : (a.position ?? '') > (b.position ?? '') ? 1 : 0);
-export const childrenOf = (pages, space, parent) => pages.filter((p) => p.space === space && (p.parent ?? null) === (parent ?? null)).sort(byPos);
+export const childrenOf = (pages, space, parent) => pages.filter((p) => !p.template && p.space === space && (p.parent ?? null) === (parent ?? null)).sort(byPos); // 템플릿은 트리에 안 섞는다
 const descendants = (pages, id) => { const out = []; const walk = (pid) => pages.filter((p) => p.parent === pid).sort(byPos).forEach((c) => { out.push(c.id); walk(c.id); }); walk(id); return out; };
 const lastPos = (pages, space, parent) => childrenOf(pages, space, parent).at(-1)?.position ?? null;
 
 export function createPage(space, parent = null, from = null) {
   const id = uid();
   const s = getState();
-  const page = { id, space, parent, position: between(lastPos(s.pages, space, parent), null), title: from?.title ?? '', icon: 'doc', updated: nowIso(), version: 1, fresh: true,
+  const page = { id, space, parent, position: between(lastPos(s.pages, space, parent), null), title: from?.title ?? '', icon: 'doc', updated: nowIso(), version: 1, fresh: true, ...(from?.template ? { template: true } : {}),
     content: from?.content ?? { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 } }] } };
   update((st) => ({ pages: [...st.pages, page] }), [[`page-create:${id}`, { type: 'page.create', id }]]);
   return id;
@@ -54,7 +54,7 @@ export function duplicatePage(id) {
   const map = new Map(ids.map((x) => [x, uid()]));
   const src = s.pages.find((q) => q.id === id);
   const next = s.pages.filter((q) => q.space === src.space && (q.parent ?? null) === (src.parent ?? null) && (q.position ?? '') > (src.position ?? '')).sort(byPos)[0];
-  const copies = ids.map((x) => { const p = s.pages.find((q) => q.id === x); return { ...p, id: map.get(x), parent: x === id ? p.parent : map.get(p.parent), restricted: false, version: 1, fresh: true,
+  const copies = ids.map((x) => { const p = s.pages.find((q) => q.id === x); return { ...p, id: map.get(x), parent: x === id ? p.parent : map.get(p.parent), restricted: false, template: false, version: 1, fresh: true,
     position: x === id ? between(src.position ?? null, next?.position ?? null) : p.position, title: x === id ? t('page.copyTitle', { title: p.title || t('page.untitled') }) : p.title, updated: nowIso() }; });
   update((st) => ({ pages: [...st.pages, ...copies] }), copies.map((c) => [`page-create:${c.id}`, { type: 'page.create', id: c.id }]));
   return map.get(id);

@@ -82,7 +82,7 @@ function ModuleCard({ item, space, items, partner, canResize, canEdit }) {
         {mod.link && <Link to={mod.link === '/mail' ? '/me/mail' : `${baseOf(space)}${mod.link}`} className="module-link">{t('mod.more')}</Link>}
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
       </header>
-      <div className="module-body"><Body space={space} /></div>
+      <div className="module-body"><Body space={space} item={item} canEdit={canEdit} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
       {canEdit && canResize && <span className="col-handle" role="separator" aria-orientation="vertical" aria-label={t('mod.resize')} tabIndex={0} onPointerDown={onResize} onKeyDown={onResizeKey} />}
     </section>
   );

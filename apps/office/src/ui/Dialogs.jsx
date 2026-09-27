@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Sheet, showToast } from './Overlay.jsx';
 import { Icon } from './Icon.jsx';
 import { Face } from './Face.jsx';
-import { t, useLang } from '../core/i18n.js';
+import { t, ago, useLang } from '../core/i18n.js';
 import { useUi, setUi } from '../core/ui-state.js';
 import { useStore, assign, update } from '../core/store.js';
 import { imeGuardWith } from '../core/ime.js';
@@ -11,6 +11,9 @@ import { CREWS } from '../data/sample.js';
 import { SPACES, ME, getMode } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
 import { baseOf } from '../core/commands.js';
+import { flushNow, outbox } from '../core/sync.js';
+import { loadPageContent } from '../core/pull.js';
+import { DocView } from '../pages/Misc.jsx';
 
 /** 서버에서 공유 상태를 읽는다 — 사람 목록 RPC가 거절되면 이 사람은 전체 권한이 아니다(서버가 기준). */
 async function loadShare(id) {
@@ -111,6 +114,65 @@ export function ShareDialog() {
         </>}
       </div>)}
     </Modal>
+  );
+}
+
+/** 버전 기록 — 10분 넘게 쉬었다 고치거나 되돌릴 때 서버가 남긴 모습. 되돌리기도 되돌릴 수 있다(되돌리기 직전 모습이 남는다). */
+export function HistorySheet() {
+  useLang();
+  const { history: id } = useUi();
+  const page = useStore((s) => s.pages.find((p) => p.id === id));
+  const [rows, setRows] = useState(null);                       // null 불러오는 중 | 'sample' | 목록
+  const [sel, setSel] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const seq = useRef(0);
+  const load = async () => {
+    const n = ++seq.current;
+    const sb = await getClient();
+    if (!sb || getMode() !== 'signedIn') { if (n === seq.current) setRows('sample'); return; }
+    const { data, error } = await sb.from('office_page_versions').select('version, title, created_at').eq('page_id', id).order('version', { ascending: false }).limit(100);
+    if (n === seq.current) setRows(error ? [] : data);
+  };
+  useEffect(() => { if (!id) return undefined; setRows(null); setSel(null); load(); return () => { seq.current++; }; }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!id || !page) return null;
+  const preview = async (v) => {
+    const sb = await getClient();
+    const { data } = await sb.from('office_page_versions').select('version, title, content').eq('page_id', id).eq('version', v).maybeSingle();
+    if (data) setSel(data);
+  };
+  const restore = async (v, undoing = false) => {
+    setBusy(true);
+    try {
+      await flushNow();                                          // 안 보낸 편집이 있으면 먼저 보낸다 — 못 보내면 되돌리지 않는다(되돌린 뒤 옛 편집이 덮으면 안 된다)
+      if (outbox.has(`page:${id}`) || outbox.has(`page-create:${id}`)) { showToast(t('history.pending')); return; }
+      const prev = page.version;
+      const sb = await getClient();
+      const { data, error } = await sb.rpc('office_page_restore', { p_id: id, p_version: v });
+      if (error) throw error;
+      update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, version: data } : p)) }));
+      await loadPageContent(id, { force: true });
+      setSel(null); load();
+      if (!undoing) showToast(t('history.restored', { n: v }), { undo: () => restore(prev, true) });
+    } catch { showToast(t('history.failed')); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Sheet open onClose={() => setUi({ history: null })} title={t('page.history')}>
+      {rows === null ? <div className="skeleton-lines" aria-busy="true"><span /><span /></div>
+        : rows === 'sample' ? <p className="dim small">{t('history.sample')}</p>
+          : !rows.length ? <div className="empty-state"><Icon name="history" size={20} /><p>{t('history.empty')}</p></div>
+            : <div className="history">
+              <div className="list">{rows.map((r) => (
+                <button key={r.version} type="button" className={`list-row${sel?.version === r.version ? ' on' : ''}`} onClick={() => preview(r.version)}>
+                  <Icon name="history" size={14} className="dim" /><span className="grow">{r.title || t('page.untitled')}</span><small className="dim">{t('history.version', { n: r.version })} · {ago(r.created_at)}</small>
+                </button>))}
+              </div>
+              {sel ? <div className="history-preview">
+                <article className="prose"><DocView doc={sel.content} /></article>
+                <button type="button" className="btn primary" disabled={busy} onClick={() => restore(sel.version)}>{t('history.restore')}</button>
+              </div> : <p className="dim small">{t('history.pick')}</p>}
+            </div>}
+    </Sheet>
   );
 }
 

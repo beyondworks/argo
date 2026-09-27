@@ -22,18 +22,26 @@ if (typeof window !== 'undefined') {
 }
 export const useSaveStatus = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => status, () => 'saved');
 
-const timers = new Map();
-/** 화면 캐시에 key의 최신 값을 쓴다. 같은 key가 빨리 여러 번 오면 마지막 값만 쓴다. */
+const timers = new Map(), waiting = new Map();
+const write = (key) => {
+  if (!waiting.has(key)) return;
+  // ponytail: localStorage 약 5MB가 상한 — 넘으면 이 쓰기가 실패한다. 페이지 본문이 커지면 본문을 IndexedDB(보낼 목록 쪽)로 옮긴다.
+  try { localStorage.setItem(key, JSON.stringify(waiting.get(key))); } catch { /* 용량 초과 */ }
+  waiting.delete(key); clearTimeout(timers.get(key)); timers.delete(key);
+};
+/** 화면 캐시에 key의 최신 값을 쓴다. 같은 key가 빨리 여러 번 오면 마지막 값만 쓴다.
+ *  보낼 목록은 페이지 본문을 이 캐시에서 다시 읽으므로, 떠나기 직전 밀린 쓰기는 바로 한다(9/27 실측: 0.3초 안에 새로고침하면 편집이 유실). */
 export function persist(key, value, delay = 300) {
+  waiting.set(key, value);
   clearTimeout(timers.get(key));
-  timers.set(key, setTimeout(() => {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 용량 초과 — 캐시일 뿐, 원본은 보낼 목록 */ }
-    timers.delete(key);
-  }, delay));
+  timers.set(key, setTimeout(() => write(key), delay));
 }
+const flushAll = () => [...waiting.keys()].forEach(write);
+if (typeof window !== 'undefined') window.addEventListener('pagehide', flushAll);
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.hidden) flushAll(); });
 
 export function forget(key) {
-  clearTimeout(timers.get(key)); timers.delete(key);
+  waiting.delete(key); clearTimeout(timers.get(key)); timers.delete(key);
   try { localStorage.removeItem(key); } catch { /* 캐시일 뿐 */ }
 }
 

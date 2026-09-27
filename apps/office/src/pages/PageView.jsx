@@ -2,8 +2,11 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Icon } from '../ui/Icon.jsx';
 import { showToast } from '../ui/Overlay.jsx';
-import { t, ago, useLang } from '../core/i18n.js';
-import { useStore, createPage } from '../core/store.js';
+import { t, ago, useLang, getLang } from '../core/i18n.js';
+import { useStore, createPage, savePage, trashPage, getState } from '../core/store.js';
+import { navigate } from '../core/router.jsx';
+import { baseOf } from '../core/commands.js';
+import { menuProps } from '../ui/Menu.jsx';
 import { useUi, setUi } from '../core/ui-state.js';
 import { loadPageContent } from '../core/pull.js';
 import { outbox } from '../core/sync.js';
@@ -28,6 +31,42 @@ function ConflictBanner({ page }) {
       <div><b>{t('page.conflict')}</b><p className="dim small">{t('page.conflictHint')}</p></div>
       <div className="row-actions"><button type="button" className="btn" onClick={keepCopy}>{t('page.conflictCopy')}</button><button type="button" className="btn primary" onClick={reload}>{t('page.conflictReload')}</button></div>
     </div>
+  );
+}
+
+const isBlank = (doc) => !JSON.stringify(doc ?? {}).includes('"text"');
+
+/** 빈 새 페이지 아래 "템플릿에서 시작"(유건 9/27, 노션 방식) — 글을 쓰기 시작하면 사라진다. 기본·조직·내 것 3층 */
+function TemplatePicker({ page }) {
+  useLang();
+  const pages = useStore((s) => s.pages);
+  const [lib, setLib] = useState(null);
+  useEffect(() => { let live = true; import('../data/templates.js').then((m) => live && setLib(m)); return () => { live = false; }; }, []);
+  const orgKey = page.space !== 'me' && page.space !== 'shared' ? page.space : null;
+  const saved = pages.filter((p) => p.template && p.id !== page.id);
+  const org = saved.filter((p) => p.space !== 'me' && (!orgKey || p.space === orgKey));
+  const mine = saved.filter((p) => p.space === 'me');
+  const apply = (tpl) => savePage(page.id, { title: tpl.title, content: tpl.content, loadedAt: Date.now() }); // loadedAt이 바뀌면 편집기가 새 본문으로 다시 뜬다
+  const useSaved = async (tp) => {
+    if (tp.content === undefined) await loadPageContent(tp.id);
+    const cur = getState().pages.find((x) => x.id === tp.id);
+    if (cur?.content) apply({ title: cur.title, content: cur.content });
+  };
+  const menuFor = (tp) => (tp.space === 'me' || canManage(tp.space) ? [
+    { label: t('tpl.edit'), icon: 'doc', run: () => navigate(`${baseOf(tp.space)}/p/${tp.id}`) },
+    { label: t('page.trash'), icon: 'trash', danger: true, run: () => trashPage(tp.id) },
+  ] : [{ heading: t('tpl.readOnly') }]);
+  const group = (label, items) => items.length > 0 && <div className="tpl-group"><span className="label">{label}</span><div className="tpl-grid">{items}</div></div>;
+  return (
+    <section className="tpl-picker" aria-label={t('tpl.start')}>
+      <span className="tpl-title">{t('tpl.start')}</span>
+      {!lib ? <div className="skeleton-lines"><span /></div> : <>
+        {group(t('tpl.basic'), lib.BUILTINS.filter((b) => b.group === 'basic').map((b) => <button key={b.id} type="button" className="tpl-item" onClick={() => apply(lib.builtin(b.id, getLang()))}><Icon name="doc" size={14} className="dim" />{b.title[getLang() === 'en' ? 1 : 0]}</button>))}
+        {group(t('tpl.intranet'), lib.BUILTINS.filter((b) => b.group === 'intranet').map((b) => <button key={b.id} type="button" className="tpl-item" onClick={() => apply(lib.builtin(b.id, getLang()))}><Icon name="layout" size={14} className="dim" />{b.title[getLang() === 'en' ? 1 : 0]}</button>))}
+        {group(t('tpl.org'), org.map((tp) => <button key={tp.id} type="button" className="tpl-item" onClick={() => useSaved(tp)} {...menuProps(() => menuFor(tp))}><Icon name="person" size={14} className="dim" />{tp.title || t('page.untitled')}</button>))}
+        {group(t('tpl.mine'), mine.map((tp) => <button key={tp.id} type="button" className="tpl-item" onClick={() => useSaved(tp)} {...menuProps(() => menuFor(tp))}><Icon name="template" size={14} className="dim" />{tp.title || t('page.untitled')}</button>))}
+      </>}
+    </section>
   );
 }
 
@@ -60,10 +99,12 @@ export function PageView({ id }) {
         {page.restricted && <span className="badge"><Icon name="lock" size={12} />{t('page.restricted')}</span>}
         <span className="dim small">{t('page.edited', { when: ago(page.updated) })}</span>
       </div>
+      {page.template && <p className="restricted-note"><Icon name="template" size={12} />{t('tpl.editing')}</p>}
       {page.restricted && <p className="restricted-note"><Icon name="lock" size={12} />{t('page.restrictedNote')}</p>}
       {conflict === page.id && <ConflictBanner page={page} />}
       {needsBody ? <div className="prose skeleton-lines"><span /><span /><span /></div>
         : <Suspense fallback={<div className="prose skeleton-lines"><span /><span /><span /></div>}><Editor key={`${page.id}:${page.loadedAt ?? 0}`} page={page} /></Suspense>}
+      {!needsBody && !page.template && isBlank(page.content) && <TemplatePicker page={page} />}
       {files.length > 0 && <div className="attachments">
         {files.map((f) => <div key={f.key} className="attachment"><Icon name="file" size={14} /><span className="mono-name">{f.name}</span><small className="mono dim">{fmtBytes(f.size)}</small>
           {f.pct < 100 ? <span className="progress"><span style={{ width: `${f.pct}%` }} /></span> : <Icon name="check" size={14} className="ok" />}</div>)}

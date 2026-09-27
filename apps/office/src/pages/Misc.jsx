@@ -78,7 +78,7 @@ export function Trash({ space }) {
 export function Shared() {
   useLang();
   const pages = useStore((s) => s.pages);
-  const rows = pages.filter((p) => p.space === (getMode() === 'signedIn' ? 'shared' : 'lean-studio')); // 로그인하면 남의 내 공간에서 공유받은 페이지
+  const rows = pages.filter((p) => !p.template && p.space === (getMode() === 'signedIn' ? 'shared' : 'lean-studio')); // 로그인하면 남의 내 공간에서 공유받은 페이지
   return (
     <div className="page-wrap">
       <div className="page-title-row"><h1 className="page-h1">{t('shared.title')}</h1></div>
@@ -110,6 +110,9 @@ function Node({ n }) {
   return Tag ? <Tag>{kids}</Tag> : <>{kids}</>;
 }
 
+/** 문서 본문을 읽기 전용으로 — 공개 화면·버전 미리 보기 공용 */
+export const DocView = ({ doc }) => (doc?.content ?? []).map((n, i) => <Node key={i} n={n} />);
+
 export function PublicPage({ id: token }) {
   useLang();
   const local = useStore((s) => s.pages.find((p) => p.id === token));   // 예시 데이터 모드(서버 없음)에서는 페이지 id로 연다
@@ -135,7 +138,7 @@ export function PublicPage({ id: token }) {
   return (
     <div className="public">
       {view.org && <header className="public-head"><span className="space-mark">{view.org.slice(0, 1).toUpperCase()}</span><b>{view.org}</b></header>}
-      <article className="public-body prose">{(view.content?.content ?? []).map((n, i) => <Node key={i} n={n} />)}</article>
+      <article className="public-body prose"><DocView doc={view.content} /></article>
       <footer className="public-foot">{t('public.madeWith')}</footer>
     </div>
   );

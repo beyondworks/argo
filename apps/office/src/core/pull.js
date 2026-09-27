@@ -29,7 +29,7 @@ export async function pullPages() {
   if (!sb) return;
   const all = () => [...getState().pages, ...getState().trash];
   const before = new Set(all().map((p) => p.id).filter(pendingFor));                 // 요청 전에 잡는다 — 응답은 요청 시점 스냅숏
-  const { data, error } = await sb.from('office_pages').select('id, space_kind, owner_user_id, org_id, parent_id, position, title, icon, restricted, general, version, updated_at, archived_at, archived_by');
+  const { data, error } = await sb.from('office_pages').select('id, space_kind, owner_user_id, org_id, parent_id, position, title, icon, restricted, general, is_template, version, updated_at, archived_at, archived_by');
   if (error) throw error;
   const orgKey = new Map(SPACES.filter((s) => s.kind === 'org').map((s) => [s.id, s.key]));
   const spaceOf = (r) => (r.space_kind === 'me' ? (r.owner_user_id === ME.id ? 'me' : 'shared') : orgKey.get(r.org_id));

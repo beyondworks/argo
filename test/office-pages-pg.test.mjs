@@ -242,6 +242,23 @@ test('검색 노출: 전체 권한자만 켜고, 공개 응답에 실리며, 같
   assert.equal(sql(`select xmin from public.office_shares where page_id = '${p}' and principal_kind = 'link'`), x1, '같은 값은 쓰지 않는다');
 });
 
+// 이유(유건 9/27): 템플릿은 "사본을 템플릿으로", 조직 템플릿은 관리자·소유자만 만들고 고친다, 멤버는 골라 쓰기만.
+test('템플릿: 조직 것은 관리자만 만들고 멤버는 보기만, 최상위에만, 내 것은 나만 본다', { skip }, () => {
+  const tpl = (uid, { org = null, parent = null } = {}) => { const id = pid(); return [id, asUserRaw(uid, `select public.office_page_create('${id}', ${org ? `'${org}'` : 'null'}, ${parent ? `'${parent}'` : 'null'}, 'a0', '양식', '${doc('양식 본문')}'::jsonb, true)`)]; };
+  const [ot, ok] = tpl(U.admin, { org: ORG });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(sql(`select is_template from public.office_pages where id = '${ot}'`), 't');
+  assert.equal(access(U.member, ot), 'view', '멤버는 조직 템플릿을 보기만');
+  fails(tpl(U.member, { org: ORG })[1], /office/);
+  const host = create(U.admin, { org: ORG, title: '부모' });
+  fails(tpl(U.admin, { org: ORG, parent: host })[1], /office/);
+  const [mt, mk] = tpl(U.member);
+  assert.equal(mk.status, 0, mk.stderr);
+  assert.equal(access(U.member, mt), 'full');
+  assert.equal(visible(U.admin, mt), false, '내 템플릿은 남에게 안 보인다');
+  assert.equal(sql(`select is_template from public.office_pages where id = '${create(U.member)}'`), 'f', '보통 만들기는 템플릿이 아니다');
+});
+
 // ── 정리 ──
 test('정리: 휴지통 30일·버전 90일 지난 것만 지운다', { skip }, () => {
   const old = create(U.member); const fresh = create(U.member);

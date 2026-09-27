@@ -29,9 +29,13 @@ export function mergeLayout(saved, registry, space, defaults) {
     const mod = usable.get(it.id);
     if (!mod || seen.has(it.id)) continue;
     seen.add(it.id);
-    items.push({ id: it.id, size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, hidden: !!it.hidden });
+    items.push({ id: it.id, size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
   }
-  for (const [id, mod] of usable) if (!seen.has(id)) items.push({ id, size: mod.defaultSize, hidden: true });
+  // 새로 생긴 모듈은 숨긴 채 뒤에 — intro: 'top'인 것만 맨 위에 보이게(유건 9/27: 현황 카드). 한 번 저장된 뒤엔 사용자 선택을 따른다.
+  for (const [id, mod] of usable) if (!seen.has(id)) {
+    if (mod.intro === 'top') items.unshift({ id, size: mod.defaultSize, hidden: false });
+    else items.push({ id, size: mod.defaultSize, hidden: true });
+  }
   return items;
 }
 
@@ -85,7 +89,7 @@ export function mergePages(rows, local, { before, pendingNow, spaceOf }) {
     const m = mine.get(r.id);
     if (m && keep(r.id)) { (m.trashedAt ? trash : pages).push(m); continue; }
     const row = { id: r.id, space, parent: r.parent_id, position: r.position, title: r.title, icon: r.restricted ? 'lock' : 'doc', restricted: r.restricted, general: r.general,
-      version: r.version, updated: r.updated_at, owner: r.owner_user_id, content: m && m.version === r.version ? m.content : undefined };
+      version: r.version, updated: r.updated_at, owner: r.owner_user_id, template: !!r.is_template, content: m && m.version === r.version ? m.content : undefined };
     if (r.archived_at) trash.push({ ...row, trashedAt: r.archived_at }); else pages.push(row);
   }
   for (const p of local) if (!seen.has(p.id) && keep(p.id)) (p.trashedAt ? trash : pages).push(p); // 아직 서버에 없는(또는 스냅숏 뒤에 생긴) 새 페이지

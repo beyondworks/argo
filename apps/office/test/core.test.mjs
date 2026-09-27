@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { mergeLayout, sizeForSpan, move, mergePages } from '../src/core/layout.js';
+import { pickCards, STAT_DEFAULTS } from '../src/core/stats.js';
+import { BUILTINS, builtin } from '../src/data/templates.js';
 import { dragHasFiles, filesFromTransfer } from '../src/core/files.js';
 import { imeGuardWith } from '../src/core/ime.js';
 import { build, graphiteBlocks } from '../scripts/gen-tokens.mjs';
@@ -72,7 +74,7 @@ test('window.confirm/alert/prompt 금지', () => {
 
 // 이유: 모든 화면 문자열은 ko/en 사전으로(프로젝트 규칙). 예시 데이터·사전 파일만 예외.
 test('사전 밖 한글 문자열 금지', () => {
-  for (const p of code.filter((x) => !/i18n\.js$|data\/sample\.js$/.test(x))) {
+  for (const p of code.filter((x) => !/i18n\.js$|data\/sample\.js$|data\/templates\.js$/.test(x))) { // templates.js는 사전처럼 [ko, en] 쌍 — 아래 템플릿 테스트가 영어 쪽을 잠근다
     assert.doesNotMatch(strip(readFileSync(p, 'utf8')), /[가-힣]/, p);
   }
 });
@@ -126,4 +128,43 @@ test('목록 병합: 보낼 것이 없던 페이지는 서버 값으로, 서버�
   const { pages, trash } = mergePages(rows, local, { before: new Set(), pendingNow: new Set(), spaceOf: () => 'me' });
   assert.deepEqual(pages.map((p) => [p.id, p.title, p.content]), [['a', 'new', undefined]]); // 버전이 달라 본문은 열 때 다시
   assert.deepEqual(trash.map((p) => p.id), ['z']);
+});
+
+// 이유(유건 9/27): 현황 카드 모듈은 기존 사용자 홈에도 맨 위에 보여야 한다. 한 번 숨긴 사람에게는 다시 띄우지 않는다.
+test('맨 위 도입 모듈: 저장된 배치에 없으면 맨 위에 보이게, 숨긴 적 있으면 그대로', () => {
+  const reg = [...REG, { id: 'st', sizes: ['full'], defaultSize: 'full', spaces: ['me'], intro: 'top' }];
+  const saved = { items: [{ id: 'a', size: 'm' }] };
+  assert.deepEqual(mergeLayout(saved, reg, 'me', []).map((i) => [i.id, i.hidden]), [['st', false], ['a', false], ['b', true]]);
+  const hid = { items: [{ id: 'a', size: 'm' }, { id: 'st', size: 'full', hidden: true }] };
+  assert.equal(mergeLayout(hid, reg, 'me', []).find((i) => i.id === 'st').hidden, true);
+});
+
+// 이유(유건 9/27): 카드마다 지표를 고른다 — 고른 것이 배치 저장·병합을 거쳐도 남아야 한다.
+test('모듈 설정(cfg)은 병합을 거쳐도 남는다', () => {
+  const saved = { items: [{ id: 'a', size: 'm', cfg: { cards: ['work'] } }] };
+  assert.deepEqual(mergeLayout(saved, REG, 'me', [])[0], { id: 'a', size: 'm', hidden: false, cfg: { cards: ['work'] } });
+});
+
+// 이유(유건 9/27): "4~5개 정도, 카드 역할을 각각 선택". 공간에 없는 지표·모르는 지표·중복은 빼고 5장까지, 비면 기본 세트.
+test('현황 카드 고르기: 공간에 맞는 지표만, 중복 없이, 최대 5장, 비면 기본', () => {
+  assert.deepEqual(pickCards(undefined, 'me'), STAT_DEFAULTS.me);
+  assert.deepEqual(pickCards(['mail', 'decisions', 'nope', 'work', 'work'], 'org'), ['decisions', 'work']);
+  assert.deepEqual(pickCards(['mail', 'nope'], 'org'), STAT_DEFAULTS.org);
+  assert.equal(pickCards(['approvals', 'work', 'mail', 'crews', 'todos', 'pages'], 'me').length, 5);
+  assert.ok(STAT_DEFAULTS.me.length >= 4 && STAT_DEFAULTS.me.length <= 5 && STAT_DEFAULTS.org.length <= 5);
+});
+
+// 이유(유건 9/27): 기본 템플릿 7종 + 인트라넷 기능(드라이브·캘린더·거래처·문서함·전자서명·도구함) 6종, ko/en 모두.
+// 편집기는 빈 글자 노드를 받지 않는다 — 템플릿 하나가 깨지면 페이지가 열리지 않는다.
+test('기본 템플릿: 13종, 언어마다 제목 1단계로 시작, 빈 글자 노드 없음, 영어에 한글 없음', () => {
+  assert.equal(BUILTINS.length, 13);
+  assert.deepEqual([...new Set(BUILTINS.map((b) => b.group))].sort(), ['basic', 'intranet']);
+  const walk = (n, f) => { f(n); (n.content ?? []).forEach((c) => walk(c, f)); };
+  for (const { id } of BUILTINS) for (const lang of ['ko', 'en']) {
+    const t = builtin(id, lang);
+    assert.ok(t.title, `${id}/${lang} title`);
+    assert.deepEqual([t.content.content[0].type, t.content.content[0].attrs.level], ['heading', 1]);
+    walk(t.content, (n) => { if (n.type === 'text') assert.ok(n.text.length > 0, `${id}/${lang} empty text`); });
+    if (lang === 'en') assert.doesNotMatch(JSON.stringify(t.content), /[가-힣]/, `${id} en has Korean`);
+  }
 });

@@ -9,7 +9,7 @@ import { Face } from './ui/Face.jsx';
 import { MenuHost, openMenu } from './ui/Menu.jsx';
 import { ToastHost } from './ui/Overlay.jsx';
 import { Palette } from './ui/Palette.jsx';
-import { ShareDialog, AssignSheet } from './ui/Dialogs.jsx';
+import { ShareDialog, AssignSheet, HistorySheet } from './ui/Dialogs.jsx';
 import { Home, useHomeLayout, layoutKey } from './pages/Home.jsx';
 import { Mail, Compose } from './pages/Mail.jsx';
 import { PageView } from './pages/PageView.jsx';
@@ -63,7 +63,7 @@ function Header({ r, page }) {
         {r.view === 'page' && page && <>
           {useSession() === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
           <button type="button" className="btn sm" onClick={() => setUi({ share: page.id })}><Icon name="share" size={14} />{t('page.share')}</button>
-          <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, [...pageMenu(page), { sep: true }, { label: t('page.history'), icon: 'history', run: () => {} }], { anchor: e.currentTarget })}><Icon name="dots" /></button>
+          <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, [...pageMenu(page), { sep: true }, { label: t('page.history'), icon: 'history', run: () => setUi({ history: page.id }) }], { anchor: e.currentTarget })}><Icon name="dots" /></button>
         </>}
       </div>
     </header>
@@ -161,6 +161,7 @@ export default function App() {
       <Palette open={ui.palette} onClose={() => setUi({ palette: false })} space={r.space} />
       <ShareDialog />
       <AssignSheet />
+      <HistorySheet />
       <Compose />
       <MenuHost />
       <ToastHost />

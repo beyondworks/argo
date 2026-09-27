@@ -40,7 +40,7 @@ async function send(op) {
       if (!row) return;
       const org = row.space === 'me' ? null : orgOf(row.space)?.id;
       if (row.space !== 'me' && !org) return;                                        // 예시 공간의 페이지는 서버에 없다
-      await rpc('office_page_create', { p_id: row.id, p_org: org, p_parent: row.parent ?? null, p_position: row.position ?? 'a', p_title: row.title ?? '', p_content: row.content ?? {} });
+      await rpc('office_page_create', { p_id: row.id, p_org: org, p_parent: row.parent ?? null, p_position: row.position ?? 'a', p_title: row.title ?? '', p_content: row.content ?? {}, p_template: !!row.template });
       patchPage(row.id, { fresh: false });
       return;
     }

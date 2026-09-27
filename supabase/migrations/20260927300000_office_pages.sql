@@ -146,7 +146,9 @@ begin
 end $$;
 
 -- ── 만들기(같은 id 재시도는 한 번만) ──
-create or replace function public.office_page_create(p_id uuid, p_org uuid, p_parent uuid, p_position text, p_title text, p_content jsonb) returns uuid
+-- p_template: 템플릿(유건 9/27 — 사본을 템플릿으로, 최상위에만, 조직 것은 관리자만·멤버는 보기만). 인자 수가 바뀌어 옛 6인자 함수는 지운다(PostgREST 모호성).
+drop function if exists public.office_page_create(uuid, uuid, uuid, text, text, jsonb);
+create or replace function public.office_page_create(p_id uuid, p_org uuid, p_parent uuid, p_position text, p_title text, p_content jsonb, p_template boolean default false) returns uuid
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare uid uuid := auth.uid(); par public.office_pages; ex public.office_pages;
 begin
@@ -156,6 +158,7 @@ begin
     if ex.created_by = uid then return p_id; end if;
     raise exception 'office: id taken' using errcode = '23505';
   end if;
+  if p_template and p_parent is not null then raise exception 'office: templates live at top level' using errcode = '22023'; end if;
   if p_parent is not null then
     select * into par from public.office_pages where id = p_parent;
     if not found then raise exception 'office: parent missing' using errcode = '23503'; end if;
@@ -164,11 +167,11 @@ begin
   elsif p_org is not null and not public.msgr_is_admin(p_org) then
     raise exception 'office: only admins add top-level wiki pages' using errcode = '42501'; -- 위키 최상위 섹션은 관리자만
   end if;
-  insert into public.office_pages (id, space_kind, owner_user_id, org_id, parent_id, position, title, content, general, created_by, updated_by)
+  insert into public.office_pages (id, space_kind, owner_user_id, org_id, parent_id, position, title, content, general, is_template, created_by, updated_by)
   values (p_id, case when p_org is null then 'me' else 'org' end,
           case when p_org is null then coalesce(par.owner_user_id, uid) else uid end,  -- 공유받아 만든 하위 페이지도 원래 주인의 공간에 속한다
           p_org, p_parent, coalesce(p_position, 'a0'), coalesce(p_title, ''), coalesce(p_content, '{}'::jsonb),
-          case when p_org is null then 'invited' else coalesce(par.general, 'org_edit') end, uid, uid);
+          case when p_org is null then 'invited' when p_template then 'org_view' else coalesce(par.general, 'org_edit') end, coalesce(p_template, false), uid, uid);
   return p_id;
 end $$;
 
@@ -385,7 +388,7 @@ end $$;
 -- ── 실행 권한 ──
 do $$ declare f text; begin
   foreach f in array array[
-    'office_page_access(uuid)', 'office_need(uuid, text)', 'office_page_create(uuid, uuid, uuid, text, text, jsonb)',
+    'office_page_access(uuid)', 'office_need(uuid, text)', 'office_page_create(uuid, uuid, uuid, text, text, jsonb, boolean)',
     'office_page_save(uuid, text, jsonb, integer)', 'office_page_restore(uuid, integer)', 'office_page_move(uuid, uuid, text)',
     'office_page_archive(uuid)', 'office_page_restore_archived(uuid)', 'office_page_delete(uuid)', 'office_page_duplicate(uuid, text)',
     'office_share_set(uuid, uuid, text)', 'office_page_set_general(uuid, text)', 'office_page_set_restricted(uuid, boolean)',
