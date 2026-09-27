@@ -9,7 +9,7 @@ const CACHE_MAX = 100;
 
 /** 기기에 번역을 맡긴다. onPart(map) — 조각이 올 때마다 지금까지의 원문→번역 표. signal로 취소한다.
     실패 code: offline(켜진 기기 없음) · no_subscription(기기에 Claude 구독 연결 없음) · too_large · failed · timeout · cancelled */
-export async function translateStrings(strings, { lang = 'ko', onPart = () => {}, signal, ackMs = 8000, graceMs = 1500, timeoutMs = 180_000 } = {}) {
+export async function translateStrings(strings, { lang = 'ko', onPart = () => {}, signal, ackMs = 8000, graceMs = 3000, timeoutMs = 180_000 } = {}) {
   const sb = await getClient();
   const uid = (await sb.auth.getSession()).data.session?.user.id;
   if (!uid) throw Object.assign(new Error('signed out'), { code: 'signed_out' });
@@ -36,7 +36,8 @@ export async function translateStrings(strings, { lang = 'ko', onPart = () => {}
       ch.on('broadcast', { event: 'office_translate_ack' }, ({ payload }) => {
         if (payload?.rid !== rid || claimed) return;
         if (payload.ready) { claimed = payload.device; cast('office_translate_claim', { rid, device: claimed }); return; }
-        if (!why) { why = payload.code ?? 'offline'; timers.push(setTimeout(() => { if (!claimed) fail(why); }, graceMs)); }
+        if (!why) { why = payload.code ?? 'offline'; timers.push( // 준비된 기기가 조금 늦게 답할 수 있어 잠깐 더 기다린다(재검수 LOW)
+          setTimeout(() => { if (!claimed) fail(why); }, graceMs)); }
       })
         .on('broadcast', { event: 'office_translate_part' }, mine((p) => {
           const src = bs[p.i]?.items ?? [];

@@ -18,7 +18,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
   // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
   // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, sdk = null, onText = null, only = null, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, sdk = null, onText = null, only = null, __query = query, __exclude = null, __crashRetry = false, __failures = [] } = opts;
   // sdk — Claude SDK 경로에만 적용하는 속도·격리 설정(오피스 번역: 도구 목록 비우기·짧은 지시문·생각 끄기·계정 원격 MCP 차단). 권한 훅·자격·작업 폴더는 덮지 못하게 허용 목록으로만
   const sdkTune = Object.fromEntries(Object.entries(sdk ?? {}).filter(([k]) => ['tools', 'systemPrompt', 'thinking', 'effort', 'strictMcpConfig', 'mcpServers'].includes(k)));
   // __failures는 재귀에 **명시 전달**(아래 두 recursion) — opts를 직접 오염시키면 호출자가 재사용하는
@@ -65,7 +65,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       if (!text) throw new Error('empty-reply');
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }
-    const sdkEnv = await sdkEnvFor(wsId, runner);
+    // API 키 방식을 허용하지 않는 고정(오피스 번역: 구독만)이면 키 env를 비운다 — host 자격은 프로세스 env를 그대로 넘겨 키가 있으면 키로 과금될 수 있다(재검수 LOW)
+    const baseEnv = await sdkEnvFor(wsId, runner);
+    const sdkEnv = only && !only.types.includes('apikey') ? { ...(baseEnv ?? process.env), ANTHROPIC_API_KEY: '' } : baseEnv;
     let text = ''; let isErr = false; let apiErrSt = 0; let failed = null; let usage = null; let costUsd = null;
     // 행(hang) 상한 — SDK 경로엔 타임아웃이 없어 소켓 정체 시 이 async iterator가 영영 안 끝난다.
     // 그러면 호출자(스케줄러)의 in-flight 표시가 안 풀려 그 회사 기억 정리가 **무증상 영구 정지**한다
@@ -104,7 +106,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         throw e;
       }
       text = r.text; usage = r.usage; costUsd = null;
-    } else for await (const msg of query({
+    } else for await (const msg of __query({ // __query: 테스트가 SDK 대신 끼운다
       prompt,
       options: {
         abortController: ac,

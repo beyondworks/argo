@@ -336,6 +336,35 @@ test('검수 LOW: 공유 목록은 전체 권한자만, 비공개 블록 작성�
 });
 
 // M3: 목록 조회는 후보를 좁혀도 결과는 전체 표 조회(RLS)와 같아야 한다 — 소유자·관리자·멤버·게스트·바깥 공유·퇴사자
+// 이유(재검수 LOW): 비공개 페이지를 보기 공유로 받은 멤버가 복제하면 사본이 비공개로 남는데, 공유가 따라가지 않아 만든 사람도 못 봤다
+test('비공개 페이지를 복제한 멤버는 자기 사본을 보고 고칠 수 있다, 다른 멤버에게는 여전히 안 보인다', { skip }, () => {
+  const parent = create(U.admin, { org: ORG, title: '복제 부모' });
+  asUser(U.admin, `select public.office_page_set_general('${parent}', 'org_edit')`);
+  const sec = create(U.admin, { org: ORG, parent, title: '비공개 원본' });
+  asUser(U.admin, `select public.office_page_set_restricted('${sec}', true)`);
+  asUser(U.admin, `select public.office_share_set('${sec}', '${U.member}', 'view')`);
+  const copy = last(asUser(U.member, `select public.office_page_duplicate('${sec}')`));
+  assert.equal(access(U.member, copy), 'edit', '만든 사람은 사본을 본다(편집까지 — 공유는 못 한다)');
+  assert.equal(access(U.gone, copy), 'none'); assert.equal(access(U.guest, copy), 'none');
+  const other = '88888888-8888-4888-8888-888888888888';
+  sql(`insert into auth.users (id, created_at, email) values ('${other}', now(), 'other@example.test') on conflict do nothing`);
+  sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${other}', 'member') on conflict do nothing`);
+  assert.equal(access(other, copy), 'none', '비공개 영역의 사본은 다른 멤버에게 안 보인다');
+});
+
+// 이유(재검수 M3): 결과만 같고 권한 판정은 표 전체에 하던 것 — 내가 속하지 않은 조직 페이지에는 판정 자체를 하지 않아야 목록이 표 크기에 묶이지 않는다
+test('검수 M3(비용): 목록은 내 후보 페이지에만 권한을 판정한다', { skip }, () => {
+  const other = last(asUser(U.outsider, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Other', 'm3-other', '${U.outsider}') returning id`));
+  sql(`insert into public.msgr_org_entitlements (org_id, plan, seats) values ('${other}', 'team', 20) on conflict (org_id) do update set plan = 'team'`);
+  for (let i = 0; i < 40; i++) create(U.outsider, { org: other, title: `남의 조직 ${i}` });
+  const steps = ['begin', "set track_functions = 'all'", 'set role authenticated', `select set_config('argo.uid', '${U.member}', false)`, 'select count(*) from public.office_page_list()',
+    'reset role', "select coalesce(sum(calls), 0) from pg_stat_xact_user_functions where funcname = 'office_page_access'", 'select count(*) from public.office_pages', 'commit'];
+  const out = psql(['-q', '-A', '-t', ...steps.flatMap((q) => ['-c', q])]).split('\n').filter(Boolean); // 호출 수는 트랜잭션 단위라 한 트랜잭션으로
+  const [listed, calls, total] = [out.at(-3), out.at(-2), out.at(-1)].map(Number);
+  assert.ok(listed > 0);
+  assert.ok(calls <= total - 40, `권한 판정 ${calls}회 — 전체 ${total}행 중 남의 조직 40행은 판정하지 않아야 한다`);
+});
+
 test('검수 M3: 페이지 목록 함수 = RLS 전체 조회와 같은 결과', { skip }, () => {
   const mine = create(U.friend, { title: '친구 개인' });
   asUser(U.friend, `select public.office_share_set('${mine}', '${U.member}', 'view')`);

@@ -288,9 +288,10 @@ end $$;
 -- ── 복제(공유·비공개·비공개 블록은 따라가지 않는다) ──
 create or replace function public.office_page_duplicate(p_id uuid, p_title text default null) returns uuid
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare uid uuid := auth.uid(); src public.office_pages; r record; map jsonb := '{}'::jsonb; nid uuid; root uuid; admin boolean;
+declare uid uuid := auth.uid(); src public.office_pages; r record; map jsonb := '{}'::jsonb; nid uuid; root uuid; admin boolean; src_acc text;
 begin
   perform public.office_need(p_id, 'view');
+  src_acc := public.office_page_access(p_id);
   select * into src from public.office_pages where id = p_id;
   if src.parent_id is not null then perform public.office_need(src.parent_id, 'edit');
   elsif src.org_id is not null and not public.msgr_is_admin(src.org_id) then raise exception 'office: only admins add top-level wiki pages' using errcode = '42501';
@@ -311,6 +312,11 @@ begin
             case when r.id = p_id then coalesce(p_title, r.title) else r.title end,
             r.icon, r.content, r.general, r.restricted and not admin, uid, uid);
   end loop;
+  -- 비공개 영역의 사본은 공유가 따라가지 않아 만든 사람도 못 본다(재검수 LOW) — 만든 사람에게만 붙인다. 원본을 전체 권한으로 보던 사람이 아니면 편집까지(남에게 공유는 못 한다)
+  if public.office_page_access(root) = 'none' then
+    insert into public.office_shares (page_id, principal_kind, user_id, role, created_by)
+    values (root, 'user', uid, case when src_acc = 'full' then 'full' else 'edit' end, uid);
+  end if;
   return root;
 end $$;
 
@@ -402,15 +408,19 @@ $$;
 
 -- ── 페이지 목록 — 후보를 내 공간·내 조직·내게 공유된 트리로 먼저 좁히고, 권한 판정(RLS)은 그 후보에만 돈다.
 -- 전체 표를 조건 없이 읽으면 모든 사용자가 불러올 때마다 테넌트 전체 페이지 × 조상 깊이만큼 판정했다(검수 M3, #533과 같은 계열).
+-- 후보(내 공간·내 조직·공유받은 트리)를 먼저 id로 구하고, 권한 판정은 그 후보에만 한다(재검수 M3: invoker면 RLS 판정이 표 전체에 먼저 붙는다).
+-- definer라 RLS를 거치지 않으므로 읽기 정책(office_pages_read)과 같은 판정 office_page_access <> 'none'을 여기서 직접 건다 — 결과 동일은 드릴이 잠근다.
 create or replace function public.office_page_list() returns setof public.office_pages
-  language sql stable security invoker set search_path = public, pg_temp as $$
+  language sql stable security definer set search_path = public, pg_temp as $$
   with recursive shared as (
     select s.page_id as id from public.office_shares s where s.principal_kind = 'user' and s.user_id = auth.uid()
-    union select c.id from public.office_pages c join shared on c.parent_id = shared.id)
-  select p.* from public.office_pages p
-   where (p.space_kind = 'me' and p.owner_user_id = auth.uid())
-      or p.org_id in (select m.org_id from public.msgr_org_members m where m.user_id = auth.uid() and m.removed_at is null)
-      or p.id in (select id from shared)
+    union select c.id from public.office_pages c join shared on c.parent_id = shared.id),
+  cand as materialized (
+    select x.id, public.office_page_access(x.id) as acc from (
+      select p.id from public.office_pages p where p.space_kind = 'me' and p.owner_user_id = auth.uid()
+      union select p.id from public.office_pages p join public.msgr_org_members m on m.org_id = p.org_id and m.user_id = auth.uid() and m.removed_at is null
+      union select id from shared) x)
+  select p.* from public.office_pages p join cand on cand.id = p.id where cand.acc <> 'none'
 $$;
 revoke all on function public.office_page_list() from public, anon;
 grant execute on function public.office_page_list() to authenticated;
