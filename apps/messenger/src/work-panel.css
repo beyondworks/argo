@@ -25,17 +25,18 @@
 .work-notice p { margin: 0 0 8px; }
 .work-notice.error, .work-danger { color: var(--danger); }
 .work-item { padding: 16px; margin: 12px 0; border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
-.work-item-top { align-items: flex-start; }
-.work-item-top strong { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; white-space: pre-wrap; }
+/* 접힌 윗줄은 한 줄 고정 — 이름·소속·상태가 카드마다 같은 자리에 온다(유건 2026-09-27: 넘치면 열이 안 맞는다고 제보). */
+.work-item-top strong { font-size: 14px; line-height: 1.6; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 처음엔 접힘 — 윗줄(제목·소속·상태)만 실제 button. 나머지 카드 내용은 눌러야 펼쳐진다(유건 결정 2026-09-24). */
 .work-item-toggle { width: 100%; background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
 .work-item-toggle:focus-visible { outline: 2px solid var(--mark); outline-offset: 3px; }
-.work-caret { flex: none; margin-top: 3px; transition: transform 150ms ease; color: var(--fg-3); }
+.work-caret { flex: none; transition: transform 150ms ease; color: var(--fg-3); }
 .work-caret.open { transform: rotate(180deg); }
 .work-item-body { margin-top: 12px; }
-.work-item-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
-.work-source-badge { white-space: nowrap; font-size: 10px; font-weight: 650; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-3); }
-.work-status { white-space: nowrap; font-size: 11px; padding: 4px 8px; border-radius: 8px; background: var(--card-2); }
+.work-item-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.work-item-title strong { flex: 1 1 auto; }
+.work-source-badge { flex: none; white-space: nowrap; font-size: 10px; font-weight: 650; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-3); }
+.work-status { flex: none; white-space: nowrap; font-size: 11px; padding: 4px 8px; border-radius: 8px; background: var(--card-2); }
 .work-status.blocked { color: var(--danger); }
 .work-status.completed { font-weight: 650; }
 .work-text { font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }

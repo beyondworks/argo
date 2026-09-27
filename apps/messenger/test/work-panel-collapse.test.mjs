@@ -20,7 +20,7 @@ test('배선 — 카드는 기본 접힘(useState(() => new Set())), 윗줄은 �
   // 메신저 자동화 카드
   assert.match(src, /const open = expanded\.has\(automation\.id\); const bodyId = `work-body-msgr-\$\{automation\.id\}`;/);
   assert.match(src, /<button type="button" className="work-item-top work-item-toggle" aria-expanded=\{open\} aria-controls=\{bodyId\} onClick=\{\(\) => toggleCard\(automation\.id\)\}>/);
-  assert.match(src, /<I name="caret" size=\{14\} className=\{`work-caret\$\{open \? ' open' : ''\}`\} \/><strong>\{automation\.title\}<\/strong>/);
+  assert.match(src, /<I name="caret" size=\{14\} className=\{`work-caret\$\{open \? ' open' : ''\}`\} \/><strong title=\{automation\.title\}>\{automation\.title\}<\/strong>/, '제목에 title 속성 — 한 줄로 잘려도 가리키면 전체 보임(유건 2026-09-27)');
   // Argo 루틴 카드
   assert.match(src, /const open = expanded\.has\(routine\.id\); const bodyId = `work-body-argo-\$\{routine\.id\}`;/);
   assert.match(src, /<button type="button" className="work-item-top work-item-toggle" aria-expanded=\{open\} aria-controls=\{bodyId\} onClick=\{\(\) => toggleCard\(routine\.id\)\}>/);
