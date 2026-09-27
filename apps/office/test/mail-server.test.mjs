@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { seal, unseal, sealState, openState, mailKey } from '../server/seal.js';
-import { decodeWords, parseAddress, envelope, content, buildRaw, missingScopes, SCOPES } from '../server/gmail.js';
+import { decodeWords, parseAddress, envelope, content, buildRaw, missingScopes, SCOPES, tidy, inlineImages, VIEWABLE } from '../server/gmail.js';
 
 const key = randomBytes(32);
 
@@ -72,4 +72,27 @@ test('보낼 메시지: 첨부는 multipart/mixed, 한글 파일명', () => {
 test('권한: 동의 화면에서 하나라도 끄면 빠진 권한을 알려 준다', () => {
   assert.deepEqual(missingScopes(`openid ${SCOPES.join(' ')}`), []);
   assert.deepEqual(missingScopes(`openid ${SCOPES[0]}`), [SCOPES[1]]);
+});
+
+// 이유(9/27 실측): 뉴스레터 요약 끝의 U+034F·공백 반복이 목록 줄마다 "…"를 띄웠다.
+test('요약: 미리보기 채움 문자를 걷고 공백을 하나로', () => {
+  assert.equal(tidy('Buy credits today \u034f \u034f \u200c\u00a0 \u034f'), 'Buy credits today');
+});
+
+// 이유(유건 9/27): 메일 그림이 깨지면 안 된다 — 본문 속 그림(cid)은 첨부 목록이 아니라 본문에 data:로.
+test('본문 속 그림: cid 파트는 첨부에서 빠지고 data: 주소로 바뀐다', () => {
+  const c = content({ payload: { mimeType: 'multipart/related', parts: [
+    { mimeType: 'text/html', body: { data: Buffer.from('<img src="cid:logo@x"><img src="cid:gone">').toString('base64url') } },
+    { mimeType: 'image/png', filename: 'logo.png', headers: [{ name: 'Content-ID', value: '<logo@x>' }], body: { attachmentId: 'I1', size: 3 } },
+  ] } });
+  assert.deepEqual(c.attachments, []);
+  assert.deepEqual(c.inline.map((i) => i.cid), ['logo@x']);
+  const out = inlineImages(c.html, { 'logo@x': { type: 'image/png', data: Buffer.from('PNG').toString('base64url') } });
+  assert.equal(out, `<img src="data:image/png;base64,${Buffer.from('PNG').toString('base64')}"><img src="cid:gone">`, '못 받은 그림은 그대로 둔다');
+});
+
+// 이유: 첨부는 그대로 열려야 한다 — 다만 html·svg는 앱 출처에서 스크립트가 돌 수 있어 내려받기로.
+test('첨부: 볼 수 있는 형식만 새 탭, html·svg·오피스 문서는 내려받기', () => {
+  for (const t of ['application/pdf', 'image/png', 'image/jpeg', 'text/plain', 'video/mp4', 'audio/mpeg']) assert.ok(VIEWABLE.test(t), t);
+  for (const t of ['text/html', 'image/svg+xml', 'application/xml', 'application/vnd.ms-excel', 'application/octet-stream', '']) assert.ok(!VIEWABLE.test(t), t);
 });

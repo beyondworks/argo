@@ -19,7 +19,7 @@ import { ME, useSession } from '../core/session.js';
 import { crewName } from './modules.jsx';
 import {
   loadAccounts, pullMail, readMail, connectGoogle, finishConnect, disconnectAccount, mailConfig, adminNote,
-  saveDraft, sendMail, fileToPart, downloadAttachment, mailDoc, mailPaper, ATTACH_CAP,
+  saveDraft, sendMail, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
 } from '../core/mail.js';
 
 const ok = (a) => a.status === 'ok';
@@ -48,20 +48,17 @@ function MailRow({ m, active, tag }) {
 
 /** 실제 메일 본문 — 격리된 틀(sandbox, 스크립트 없음)에 넣고 바깥 이미지는 누를 때만 */
 function MailBody({ m }) {
-  const [c, setC] = useState(null); const [err, setErr] = useState(false); const [images, setImages] = useState(false);
-  useEffect(() => { let live = true; setC(null); setErr(false); setImages(false); readMail(m).then((x) => live && setC(x), () => live && setErr(true)); return () => { live = false; }; }, [m.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [c, setC] = useState(null); const [err, setErr] = useState(false);
+  useEffect(() => { let live = true; setC(null); setErr(false); readMail(m).then((x) => live && setC(x), () => live && setErr(true)); return () => { live = false; }; }, [m.id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (err) return <p className="dim">{t('mailc.readFailed')}</p>;
   if (!c) return <p className="dim">{t('mailc.loading')}</p>;
   return (
     <>
       {c.attachments.length > 0 && <div className="chips mail-atts">{c.attachments.map((a) => (
-        <button key={a.id} type="button" className="chip" onClick={() => downloadAttachment(m, a).catch(() => showToast(t('mailc.readFailed')))}><Icon name="file" size={12} />{a.name}<small className="mono">{fmtBytes(a.size)}</small></button>
+        <button key={a.id} type="button" className="chip" onClick={() => openAttachment(m, a).catch(() => showToast(t('mailc.readFailed')))}><Icon name="file" size={12} />{a.name}<small className="mono">{fmtBytes(a.size)}</small></button>
       ))}</div>}
       {c.html ? (
-        <>
-          {!images && /<img[^>]+src=["']?https?:/i.test(c.html) && <div className="blocked-note"><Icon name="lock" size={12} />{t('mail.imagesBlocked')}<button type="button" className="btn ghost sm" onClick={() => setImages(true)}>{t('mailc.showImages')}</button></div>}
-          <iframe className="mail-frame" title={m.subject} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={mailDoc(c.html, { images, paper: mailPaper() })} />
-        </>
+        <iframe className="mail-frame" title={m.subject} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={mailDoc(c.html, { paper: mailPaper() })} />
       ) : <div className="reader-body mail-text">{c.text ?? m.snippet}</div>}
     </>
   );
@@ -92,10 +89,7 @@ function Reader({ m, onBack }) {
           <ul>{m.note.todos.map((x) => <li key={x}>{x}</li>)}</ul>
         </section>
       )}
-      {m.account ? <MailBody m={m} /> : <>
-        <div className="blocked-note"><Icon name="lock" size={12} />{t('mail.imagesBlocked')}</div>
-        <div className="reader-body">{m.body.map((p, i) => <p key={i}>{p}</p>)}</div>
-      </>}
+      {m.account ? <MailBody m={m} /> : <div className="reader-body">{m.body.map((p, i) => <p key={i}>{p}</p>)}</div>}
     </article>
   );
 }

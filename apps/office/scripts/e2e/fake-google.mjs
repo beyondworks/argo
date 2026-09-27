@@ -11,15 +11,18 @@ const codes = new Map(), refresh = new Map(), access = new Map(), log = [];
 const boxes = new Map(), drafts = new Map();
 const b64 = (s) => Buffer.from(s).toString('base64url');
 const HIT = `http://127.0.0.1:${PORT}`;
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='; // 1×1 그림
 function box(email) {
   if (!boxes.has(email)) {
-    const html = `<h1>견적 확인</h1><p>안녕하세요, ${email} 님.</p><img src="https://tracker.example/pixel.png"><script>parent.document.title='HACKED'</script><a href="https://example.com">링크</a>`;
+    // 본문 속 그림(cid)·크기 클래스만 있는 그림·두 번 변환된 기호(링크드인 실측 모양)·열리는 링크
+    const html = `<h1>견적 확인</h1><p>안녕하세요, ${email} 님.</p><p>Chairman &amp;amp; CEO</p><img class="rounded-full w-12 h-12 w-[88px] h-[88px]" alt="avatar" src="cid:logo@fake"><img src="https://tracker.example/pixel.png?e=1&amp;amp;v=2"><script>parent.document.title='HACKED'</script><a id="open" href="${HIT}/hit-link-open">링크</a>`;
     // 공격 메일: 문서 이동(meta refresh·base), 끼워 넣기(link·form), 위험 링크(javascript:)
     const attack = `<p>본문 NAVTEST</p><meta http-equiv="refresh" content="1;url=${HIT}/hit-refresh"><base href="${HIT}/hit-base/"><a id="rel" href="x">rel</a><a id="js" href="javascript:alert(1)">js</a><link rel="stylesheet" href="${HIT}/hit-link.css"><form action="${HIT}/hit-form"><button>f</button></form>`;
     boxes.set(email, new Map([
       ['m1', { id: 'm1', threadId: 't1', labelIds: ['INBOX', 'UNREAD'], internalDate: String(Date.now() - 3600e3), snippet: `FAKE-${email.split('@')[1]} 수정 견적 &amp; 일정`,
         headers: { From: '=?UTF-8?B?' + Buffer.from('박지현').toString('base64') + '?= <jihyun@hanbit.example>', To: email, Subject: `FAKE-${email.split('@')[1]} 수정 견적`, 'Message-ID': `<m1-${email}@hanbit.example>` },
-        parts: [{ mimeType: 'text/html', body: { data: b64(html) } }, { mimeType: 'application/pdf', filename: '견적서.pdf', body: { attachmentId: 'A1', size: 5 } }] }],
+        parts: [{ mimeType: 'text/html', body: { data: b64(html) } }, { mimeType: 'image/png', filename: 'logo.png', headers: [{ name: 'Content-ID', value: '<logo@fake>' }], body: { attachmentId: 'I1', size: 70 } },
+          { mimeType: 'application/pdf', filename: '견적서.pdf', body: { attachmentId: 'A1', size: 5 } }] }],
       ['m2', { id: 'm2', threadId: 't2', labelIds: ['INBOX'], internalDate: String(Date.now() - 7200e3), snippet: '주간 보고',
         headers: { From: 'Ops <ops@corp.example>', To: email, Subject: `FAKE 주간 보고 ${email}` }, parts: [{ mimeType: 'text/plain', body: { data: b64('텍스트 본문입니다.') } }] }],
       ['m3', { id: 'm3', threadId: 't3', labelIds: ['INBOX'], internalDate: String(Date.now() - 10800e3), snippet: 'nav test',
@@ -91,7 +94,7 @@ http.createServer(async (req, res) => {
       x.labelIds = [...new Set([...x.labelIds.filter((l) => !b.removeLabelIds.includes(l)), ...b.addLabelIds])];
       log.push({ t: 'modify', email, id: x.id, add: b.addLabelIds, remove: b.removeLabelIds }); return send(res, 200, { id: x.id, labelIds: x.labelIds });
     }
-    if (/^\/messages\/\w+\/attachments\/\w+$/.test(rest)) return send(res, 200, { data: b64('%PDF-'), size: 5 });
+    if ((m = /^\/messages\/\w+\/attachments\/(\w+)$/.exec(rest))) return send(res, 200, m[1] === 'I1' ? { data: Buffer.from(png, 'base64').toString('base64url'), size: 70 } : { data: b64('%PDF-1.4 fake'), size: 13 });
     if (rest === '/drafts' && req.method === 'POST') { const id = `d${drafts.size + 1}`; drafts.set(id, { email, raw: JSON.parse(await body(req)).message.raw }); log.push({ t: 'draft.create', email, id }); return send(res, 200, { id }); }
     if ((m = /^\/drafts\/(\w+)$/.exec(rest))) {
       if (req.method === 'PUT') { drafts.get(m[1]).raw = JSON.parse(await body(req)).message.raw; log.push({ t: 'draft.update', id: m[1] }); return send(res, 200, { id: m[1] }); }

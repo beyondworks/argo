@@ -4,6 +4,7 @@ import { getClient } from './supabase.js';
 import { getMode } from './session.js';
 import { update, getState } from './store.js';
 import { outbox } from './sync.js';
+import { VIEWABLE } from './viewable.js';
 
 const CAP = 3 * 1024 * 1024; // ponytail: 서버 함수 요청 한도(4.5MB, base64 4/3배) 안 — 큰 첨부는 브라우저 → Gmail 직접 올리기로 넓힌다
 export const ATTACH_CAP = CAP;
@@ -83,6 +84,18 @@ export const fileToPart = (f) => new Promise((ok, no) => {
   r.readAsDataURL(f);
 });
 
+/** 첨부 열기 — PDF·그림·글·영상은 새 탭에서 바로, 나머지는 내려받기. 탭은 누른 순간에 연다(받은 뒤 열면 팝업 차단에 걸린다) */
+export async function openAttachment(m, a) {
+  if (!VIEWABLE.test(a.type ?? '')) return downloadAttachment(m, a);
+  const w = window.open('', '_blank');
+  try {
+    const blob = await api('attachment', null, { query: { account: m.account, id: m.gid, att: a.id, name: a.name, type: a.type } });
+    const url = URL.createObjectURL(new Blob([blob], { type: a.type }));
+    if (w) { w.opener = null; w.location.href = url; } else location.assign(url);
+    setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+  } catch (e) { w?.close(); throw e; }
+}
+
 export async function downloadAttachment(m, a) {
   const blob = await api('attachment', null, { query: { account: m.account, id: m.gid, att: a.id, name: a.name } });
   const url = URL.createObjectURL(blob);
@@ -96,14 +109,36 @@ const DROP = 'script,meta,base,link,object,embed,iframe,frame,frameset,form,port
 export function cleanMailHtml(html, parse = (h) => new DOMParser().parseFromString(h, 'text/html')) {
   const doc = parse(String(html ?? ''));
   doc.querySelectorAll(DROP).forEach((e) => e.remove());
+  // 두 번 변환된 기호(&amp;amp;) 되돌리기 — 9/27 실측: 링크드인 메일의 프로필 사진 주소가 '&amp;v=…'로 와서 서명이 깨져 403, 본문엔 'Chairman &amp; CEO'
+  const once = (v) => v.replace(/&(amp|lt|gt|quot|#39|#x27);/g, (m, e) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#x27': "'" })[e]);
+  doc.querySelectorAll('[src],[href],[srcset],[background]').forEach((el) => ['src', 'href', 'srcset', 'background'].forEach((a) => { const v = el.getAttribute(a); if (v?.includes('&amp;')) el.setAttribute(a, v.replace(/&amp;/g, '&')); }));
+  const walk = doc.createTreeWalker(doc.body, 4);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) if (/&(amp|lt|gt|quot|#39|#x27);/.test(n.nodeValue)) n.nodeValue = once(n.nodeValue);
+  // 크기를 클래스 이름으로만 적고 스타일은 싣지 않은 메일(9/27 링크드인: w-[88px] h-8 rounded-full…) — 그 값만 읽어 그림에 적용한다.
+  // 대괄호 값(w-[88px]) → 숫자 눈금(w-8 = 32px) → w-full 순. 숫자 width·height 속성이 있으면 그것을 따른다
+  const size = (cls, k) => {
+    const b = new RegExp(`(?:^|\\s)${k}-\\[(\\d+(?:\\.\\d+)?)px\\]`).exec(cls)?.[1];
+    if (b) return `${b}px`;
+    const n = new RegExp(`(?:^|\\s)${k}-(\\d+(?:\\.5)?)(?:\\s|$)`).exec(cls)?.[1];
+    if (n) return `${n * 4}px`;
+    return new RegExp(`(?:^|\\s)${k}-full(?:\\s|$)`).test(cls) ? '100%' : null;
+  };
+  doc.querySelectorAll('img[class]').forEach((img) => {
+    const c = img.className;
+    const w = !/^\d+$/.test(img.getAttribute('width') ?? '') && size(c, 'w'), h = !/^\d+$/.test(img.getAttribute('height') ?? '') && size(c, 'h'), mw = size(c, 'max-w');
+    if (w) img.style.width = w;
+    if (h) img.style.height = h;
+    if (mw) img.style.maxWidth = mw;
+    if (/(?:^|\s)rounded-full(?:\s|$)/.test(c)) img.style.borderRadius = '50%';
+  });
   doc.querySelectorAll('[href]').forEach((a) => { if (!/^(https?:|mailto:|tel:|#)/i.test(a.getAttribute('href').trim())) a.removeAttribute('href'); });
   return [...doc.head.querySelectorAll('style')].map((s) => s.outerHTML).join('') + doc.body.innerHTML; // 메일은 <head>의 style을 쓴다
 }
 
-/** 메일 HTML을 격리된 틀에 넣을 문서 — 스크립트 없음(sandbox), 바깥 이미지·글꼴·연결 차단(CSP), 이동·끼워 넣기 태그 제거, 링크는 새 탭.
+/** 메일 HTML을 격리된 틀에 넣을 문서 — 스크립트 없음(sandbox), 그림·글꼴 외 연결 차단(CSP), 이동·끼워 넣기 태그 제거, 링크는 새 탭.
  *  ponytail: 서버 정화(sanitize-html) 대신 브라우저 DOMParser로 걷어내고 sandbox + CSP로 막는다 — 틀 안은 출처가 없어 앱 쿠키·저장소에 닿지 않는다 */
-export function mailDoc(html, { images = false, paper = 'transparent' } = {}) {
-  const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:${images ? ' https: http:' : ''}; font-src data:`;
+export function mailDoc(html, { paper = 'transparent' } = {}) {
+  const csp = "default-src 'none'; style-src 'unsafe-inline'; img-src data: https: http:; font-src data: https:"; // 그림은 바로 보인다(유건 9/27: 깨지면 안 된다) — 본문 속 그림(cid)은 서버가 data:로 바꿔 넣는다
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank">
 <style>body{margin:0;padding:14px 16px;font:14px/1.6 -apple-system,'Pretendard Variable',sans-serif;color:#1d1d1f;background:${paper};word-break:keep-all;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style></head><body>${cleanMailHtml(html)}</body></html>`;
 }

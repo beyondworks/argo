@@ -2,7 +2,7 @@
 // env: OFFICE_GOOGLE_CLIENT_ID · OFFICE_GOOGLE_CLIENT_SECRET · OFFICE_MAIL_KEY · OFFICE_ORIGIN · VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY
 // 크루는 이 함수로 보내지 않는다(초안까지 — P4/P5). 여기의 send는 사람이 보내기를 누를 때만.
 import { mailKey, seal, unseal, sealState, openState } from '../../server/seal.js';
-import { envelope, content, buildRaw, FOLDER_QUERY, SCOPES, missingScopes } from '../../server/gmail.js';
+import { envelope, content, buildRaw, inlineImages, VIEWABLE, FOLDER_QUERY, SCOPES, missingScopes } from '../../server/gmail.js';
 import { createHash, randomBytes } from 'node:crypto';
 
 const env = process.env;
@@ -124,7 +124,14 @@ const OPS = {
   async read(jwt, { account, id }) {
     const token = await accessToken(jwt, account);
     const msg = await gmail(token, `/messages/${encodeURIComponent(id)}?format=full`);
-    return { ...envelope(msg, account), ...content(msg) };
+    const c = content(msg);
+    // 본문 속 그림은 함께 받아 넣는다(합쳐서 8MB까지 — 넘는 것은 자리만 남는다) — 따로 부르면 그림마다 왕복이 생긴다
+    let budget = 8 * 1024 * 1024;
+    const want = c.inline.filter((i) => i.data || (budget -= i.size) >= 0);
+    const got = await Promise.all(want.map((i) => (i.data ? i : gmail(token, `/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(i.id)}`).then((a) => ({ ...i, data: a.data })).catch(() => null))));
+    const images = Object.fromEntries(got.filter(Boolean).map((i) => [i.cid, i]));
+    const { inline, ...rest } = c;
+    return { ...envelope(msg, account), ...rest, html: inlineImages(c.html, images) };
   },
 
   // 읽음·보관 — add/remove는 라벨 id(UNREAD·INBOX)만 허용
@@ -183,7 +190,8 @@ async function attachment(request, q) {
     if (!jwt) throw fail(401, 'signed_out');
     const token = await accessToken(jwt, q.account);
     const a = await gmail(token, `/messages/${encodeURIComponent(q.id)}/attachments/${encodeURIComponent(q.att)}`);
-    return new Response(Buffer.from(a.data, 'base64url'), { headers: { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(q.name || 'file')}`, 'cache-control': 'no-store' } });
+    const view = VIEWABLE.test(q.type ?? '');                                                        // 볼 수 있는 형식만 형식 그대로, 나머지는 내려받기
+    return new Response(Buffer.from(a.data, 'base64url'), { headers: { 'content-type': view ? q.type : 'application/octet-stream', 'x-content-type-options': 'nosniff', 'content-disposition': `${view ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(q.name || 'file')}`, 'cache-control': 'no-store' } });
   } catch (e) { return json({ error: e.code ?? 'server' }, e.status ?? 500); }
 }
 

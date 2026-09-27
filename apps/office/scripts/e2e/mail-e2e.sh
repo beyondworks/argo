@@ -1,6 +1,6 @@
 #!/bin/zsh
-# 메일 연결 E2E(개발 전용) — 가짜 Google(:58401, 이 스크립트가 새로 띄움) + dev(:5190, dev-fake.sh) + 로컬 스택(58322)
-# + ego Space "Argo - 오피스"의 p1 탭(member@office.test 로그인).
+# 메일 연결 E2E(개발 전용) — 가짜 Google(:58401, 이 스크립트가 새로 띄움) + dev(:5191, dev-fake.sh) + 로컬 스택(58322)
+# + ego Space "Argo - 오피스"의 전용 탭(E2E 사용자 mail-e2e@office.test — 실제 계정을 연결해 쓰는 :5190·member@와 섞이지 않게).
 # 개인 Gmail 연결 → 회사(Workspace) 추가 → 통합 목록 → 읽기(격리 틀·이미지 차단·첨부) → 공격 메일(이동·끼워 넣기 제거)
 # → 읽음·보관 → 답장(초안 자동 저장·스레드·발송) → 관리자 차단·권한 누락 안내 → 만료 → 연결 해제(구글 철회·DB 삭제).
 S=${0:A:h}
@@ -13,28 +13,43 @@ node $S/fake-google.mjs > /dev/null 2>&1 &
 for i in {1..20}; do curl -sf $F/log >/dev/null && break; sleep 0.5; done
 ctl() { curl -sf -X POST $F/control -d "$1" >/dev/null || fail "control"; }
 flog() { curl -sf $F/log; }
-B=$("${P[@]}" -c "select id from auth.users where email='member@office.test'")
-[[ -n $B ]] || fail "local stack or test user missing"
+B=$("${P[@]}" -c "select id from auth.users where email='mail-e2e@office.test'")
+[[ -n $B ]] || fail "E2E user missing — create mail-e2e@office.test (password in ~/.cache/argo-office/e2e-pass)"
+PW=$(cat ~/.cache/argo-office/e2e-pass)
+APP=http://localhost:5191
 "${P[@]}" -c "delete from office_mail_accounts where user_id='$B'"
 stage() { local in=$(cat) o; for i in 1 2 3; do o=$(print -r -- "$in" | zsh $S/eg.sh 2>&1); [[ $o == *"timed out: Page.setWebLifecycleState"* ]] || break; sleep 3; done; print -r -- "$o"; }
-HEAD='const task = await taskSpace("Argo - 오피스"); const page = task.page("p1"); await page.cdp("Page.setWebLifecycleState", { state: "active" });
+HEAD='const task = await taskSpace("Argo - 오피스"); const page = (await task.pages()).find((p) => p.label === "p3") ?? await task.newPage(); await page.cdp("Page.setWebLifecycleState", { state: "active" });
 await page.cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
 const has = async (s) => { const end = Date.now() + 45000; while (Date.now() < end) { try { if (await page.evaluate((s) => document.body.innerText.includes(s), s)) return; } catch {} await page.waitForTimeout(400); } throw new Error("timeout " + s); }; // 이동 중에도 버틴다
 const click = (sel, text) => page.evaluate(([sel, text]) => { const b = [...document.querySelectorAll(sel)].find((x) => x.innerText.includes(text)); if (!b) throw new Error("no " + text); b.click(); }, [sel, text]);'
 J() { print -r -- "$1" | grep '^J=' | cut -c3-; }
 
+# 0) E2E 사용자로 로그인(이 탭만 — :5191은 따로 저장소)
+O0=$(stage <<JS
+$HEAD
+await page.goto("$APP/me/mail", { timeout: 60000 });
+await page.waitForTimeout(2500);
+if (await page.evaluate(() => !!document.querySelector("input[type=password]"))) {
+  await page.fill("input[type=email]", "mail-e2e@office.test"); await page.fill("input[type=password]", "$PW");
+  await page.click("button[type=submit]"); await has("계정 추가").catch(() => {}); await has("메일");
+}
+console.log("J=" + JSON.stringify(await page.evaluate(() => document.querySelector(".space-switch, .sidebar")?.innerText.includes("mail-e2e@office.test"))));
+JS
+); [[ $(J "$O0") == true ]] || { print -r -- "$O0" | tail -3; fail "e2e login"; }
+
 # 1) 개인 Gmail 연결
 ctl '{"email":"owner@gmail.example","name":"김유건"}'
 O=$(stage <<JS
 $HEAD
-await page.goto("http://localhost:5190/me/mail", { timeout: 60000 });
+await page.goto("$APP/me/mail", { timeout: 60000 });
 await has("Google로 연결");
 const admin = await page.evaluate(() => !!document.querySelector(".mail-connect .link-btn"));
 await click(".mail-connect .btn", "Google로 연결");
 await has("FAKE-gmail.example 수정 견적");
 console.log("J=" + JSON.stringify({ admin, url: await page.url() }));
 JS
-); J1=$(J "$O"); echo "1: $J1"; [[ $J1 == *'"url":"http://localhost:5190/me/mail"'* && $J1 == *'"admin":true'* ]] || { print -r -- "$O" | tail -3; fail "connect personal"; }
+); J1=$(J "$O"); echo "1: $J1"; [[ $J1 == *'"url":"'$APP'/me/mail"'* && $J1 == *'"admin":true'* ]] || { print -r -- "$O" | tail -3; fail "connect personal"; }
 [[ $("${P[@]}" -c "select count(*) from office_mail_accounts a join office_mail_secrets s on s.account_id=a.id where a.user_id='$B' and a.address='owner@gmail.example' and s.sealed like 'v1.%' and s.access_sealed like 'v1.%' and a.hosted_domain is null") == 1 ]] || fail "personal account row"
 flog | grep -q '"prompt":"consent","access_type":"offline"' || fail "auth params (offline+consent)"
 
@@ -55,9 +70,35 @@ $HEAD
 await click(".mail-row", "FAKE-gmail.example 수정 견적");
 await page.waitForSelector(".mail-frame", { timeout: 30000 });
 await page.waitForTimeout(1500);
-console.log("J=" + JSON.stringify(await page.evaluate(() => { const f = document.querySelector(".mail-frame"); return { sandbox: f.getAttribute("sandbox"), csp: /img-src data: cid:;/.test(f.srcdoc), title: document.title, blocked: !!document.querySelector(".blocked-note"), att: [...document.querySelectorAll(".mail-atts .chip")].map((c) => c.innerText.replace(/\s+/g, " ")), from: document.querySelector(".reader-meta b")?.innerText }; })));
+console.log("J=" + JSON.stringify(await page.evaluate(() => { const f = document.querySelector(".mail-frame"); const d = new DOMParser().parseFromString(f.srcdoc, "text/html"); const av = d.querySelector("img[alt=avatar]");
+  return { sandbox: f.getAttribute("sandbox"), csp: /img-src data: https: http:/.test(f.srcdoc), title: document.title, att: [...document.querySelectorAll(".mail-atts .chip")].map((c) => c.innerText.replace(/\s+/g, " ")), from: document.querySelector(".reader-meta b")?.innerText,
+    cid: av?.getAttribute("src").startsWith("data:image/png;base64,"), avatar: av && [av.style.width, av.style.height, av.style.borderRadius].join(" "), amp: d.body.textContent.includes("Chairman & CEO") && !f.srcdoc.includes("&amp;amp;"), trackerQ: d.querySelector("img[src*=tracker]")?.getAttribute("src") }; })));
 JS
-); J3=$(J "$O"); echo "3: $J3"; [[ $J3 == *'"sandbox":"allow-popups allow-popups-to-escape-sandbox"'* && $J3 == *'"csp":true'* && $J3 != *HACKED* && $J3 == *'"blocked":true'* && $J3 == *'견적서.pdf'* && $J3 == *'"from":"박지현"'* ]] || { print -r -- "$O" | tail -3; fail "read"; }
+); J3=$(J "$O"); echo "3: $J3"; [[ $J3 == *'"sandbox":"allow-popups allow-popups-to-escape-sandbox"'* && $J3 == *'"csp":true'* && $J3 != *HACKED* && $J3 == *'"att":["견적서.pdf'*'"]'* && $J3 != *logo.png* && $J3 == *'"from":"박지현"'* && $J3 == *'"cid":true'* && $J3 == *'"avatar":"88px 88px 50%"'* && $J3 == *'"amp":true'* && $J3 == *'pixel.png?e=1&v=2'* ]] || { print -r -- "$O" | tail -3; fail "read"; }
+
+# 3c) 첨부는 새 탭에서 바로(PDF), 본문 링크는 새 탭으로 열린다
+O=$(stage <<JS
+$HEAD
+const pop1 = page.waitForEvent("popup", { timeout: 20000 });
+await page.click(".mail-atts .chip", { label: "open pdf attachment" });
+const t1 = await pop1; await page.waitForTimeout(1500);
+const u1 = await t1.url(); const ct = await t1.evaluate(() => document.contentType).catch(() => "?"); await t1.close();
+// 메일 틀은 별도 프로세스라 안쪽 위치를 읽을 수 없다 — 같은 mailDoc·같은 sandbox로 링크가 틀을 가득 채운 시험 틀을 띄워 가운데를 누른다
+const at = await page.evaluate(async () => {
+  const m = await import("/src/core/mail.js");
+  const f = document.createElement("iframe"); f.className = "probe-link"; f.setAttribute("sandbox", "allow-popups allow-popups-to-escape-sandbox");
+  f.srcdoc = m.mailDoc('<a id="open" style="display:block;height:160px;background:#ddd" href="http://127.0.0.1:58401/hit-link-open">링크</a>');
+  f.style.cssText = "position:fixed;left:40px;top:40px;width:300px;height:200px;z-index:99999;border:0";
+  document.body.append(f); await new Promise((ok) => setTimeout(ok, 800)); return { x: 190, y: 120 };
+});
+const pop2 = page.waitForEvent("popup", { timeout: 20000 });
+await page.mouse.click(at.x, at.y, { label: "click link in mail" });
+let u2 = ""; try { const t2 = await pop2; await page.waitForTimeout(1000); u2 = await t2.url(); await t2.close(); } catch (e) { u2 = "none"; }
+await page.evaluate(() => document.querySelector(".probe-link")?.remove());
+console.log("J=" + JSON.stringify({ u1: u1.slice(0, 5), ct, u2 }));
+JS
+); J3c=$(J "$O"); echo "3c: $J3c"; [[ $J3c == *'"u1":"blob:"'* && $J3c == *'"ct":"application/pdf"'* && $J3c == *'"u2":"http://127.0.0.1:58401/hit-link-open"'* ]] || { print -r -- "$O" | tail -3; fail "attachment/link open"; }
+flog | grep -q '"path":"/hit-link-open"' || fail "link did not reach its page"
 for i in {1..20}; do flog | grep -qE '"id":"m1","add":\[[^]]*\],"remove":\["UNREAD"' && break; sleep 1; done
 flog | grep -qE '"id":"m1","add":\[[^]]*\],"remove":\["UNREAD"' || fail "mark read not sent"
 
@@ -72,7 +113,7 @@ const r = await page.evaluate(() => { const d = document.querySelector(".mail-fr
 const ctlr = await page.evaluate(async () => {
   const m = await import("/src/core/mail.js");
   const attack = '<meta http-equiv="refresh" content="0;url=http://127.0.0.1:58401/hit-ctl-refresh"><link rel="stylesheet" href="http://127.0.0.1:58401/hit-ctl-link.css"><img src="http://127.0.0.1:58401/hit-ctl-img">';
-  const raw = m.mailDoc("", { images: true }).replace("<body>", "<body>" + attack); // 걷어내기 없이, 이미지 허용 CSP
+  const raw = m.mailDoc("").replace("<body>", "<body>" + attack); // 걷어내기 없이, 같은 CSP
   const f = document.createElement("iframe"); f.setAttribute("sandbox", "allow-popups allow-popups-to-escape-sandbox"); f.srcdoc = raw; f.style.cssText = "position:fixed;left:-9999px;width:10px;height:10px";
   document.body.append(f); await new Promise((ok) => setTimeout(ok, 3000)); f.remove(); return true;
 });
@@ -126,7 +167,7 @@ for C in '{"deny":"admin_policy_enforced"}|회사 관리자가 외부 앱 연결
   ctl "${C%%|*}"
   O=$(stage <<JS
 $HEAD
-await page.goto("http://localhost:5190/me/mail", { timeout: 60000 });
+await page.goto("$APP/me/mail", { timeout: 60000 });
 await has("계정 추가");
 await click(".mail-accounts .nav-item", "계정 추가");
 await has("${C#*|}");
@@ -142,7 +183,7 @@ ctl '{"expire":true}'
 "${P[@]}" -c "update office_mail_secrets set access_expires = now() - interval '1 minute' where account_id in (select id from office_mail_accounts where user_id='$B' and address='owner@gmail.example')"
 O=$(stage <<JS
 $HEAD
-await page.goto("http://localhost:5190/me/mail", { timeout: 60000 });
+await page.goto("$APP/me/mail", { timeout: 60000 });
 await has("연결이 만료됐습니다");
 console.log("J=" + JSON.stringify(await page.evaluate(() => [...document.querySelectorAll(".mail-account")].map((a) => a.innerText.replace(/\s+/g, " ")))));
 JS
