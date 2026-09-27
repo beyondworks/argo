@@ -8,6 +8,8 @@ mod agents; // 외부 에이전트 원클릭 연결(헤르메스·오픈클로 �
 #[cfg(target_os = "macos")]
 mod notify_mac; // OS 알림 — UNUserNotificationCenter 직결(플러그인의 폐기 API 경로 대체)
 #[cfg(target_os = "macos")]
+mod notification_sound;
+#[cfg(target_os = "macos")]
 mod native_realtime;
 #[cfg(desktop)]
 mod pair;
