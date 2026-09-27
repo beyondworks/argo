@@ -85,8 +85,9 @@ function ViaText({ via, text, t }) {
   return (
     <button type="button" className="card" aria-expanded={open} title={open ? t('chat.via.collapse') : t('chat.via.expand')}
       onClick={() => setOpen((v) => !v)}
-      style={{ padding: '10px 13px', fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap', textAlign: 'left', fontFamily: 'inherit', lineHeight: 'inherit', cursor: 'pointer', ...clamp }}>
-      {body}
+      style={{ padding: '10px 13px', fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap', textAlign: 'left', fontFamily: 'inherit', lineHeight: 'inherit', cursor: 'pointer' }}>
+      {/* 줄 자르기는 안쪽 글자에 — 패딩 있는 카드에 걸면 셋째 줄 윗부분이 아래 패딩에 비친다(실측 2026-09-27) */}
+      <span style={clamp}>{body}</span>
     </button>
   );
 }
