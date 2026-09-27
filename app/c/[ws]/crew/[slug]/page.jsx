@@ -3,6 +3,7 @@
 import { isStopCommand } from '../../../../../src/stop-command.mjs';
 import { approvalExpandDefault } from '../../../../lib/approval-display.mjs';
 import { splitEnvelope } from './envelope.mjs';
+import { viaSummary } from './via-summary.mjs';
 import { use, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
@@ -75,6 +76,21 @@ function UserText({ text }) {
 // 래퍼·액션 버튼·레이아웃은 건수에 비례해 키 입력마다 다시 도는 비용이었다(652건: 키당 ~130ms → 창 60건).
 const THREAD_WINDOW = 60;
 const THREAD_STEP = 100;
+// 배달 지시 카드 본문 — 두 줄로 접고 눌러야 펼친다(제보 2026-09-27 "구구절절 올라오게 하지 말라").
+// 회의실 발언은 프롬프트 원문 대신 사장의 마지막 발언만(viaSummary).
+function ViaText({ via, text, t }) {
+  const [open, setOpen] = useState(false);
+  const body = viaSummary(via, text);
+  const clamp = open ? {} : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' };
+  return (
+    <button type="button" className="card" aria-expanded={open} title={open ? t('chat.via.collapse') : t('chat.via.expand')}
+      onClick={() => setOpen((v) => !v)}
+      style={{ padding: '10px 13px', fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap', textAlign: 'left', fontFamily: 'inherit', lineHeight: 'inherit', cursor: 'pointer', ...clamp }}>
+      {body}
+    </button>
+  );
+}
+
 export default function CrewChat({ params, embedded = false, onClose }) {
   const { ws, slug: slugParam } = use(params);
   // 경로 조각은 **디코딩되지 않은 채** 온다(한글 이름 크루면 '%ED%81%B4…'). 예전엔 이 값을 그대로
@@ -1046,7 +1062,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                러너 프롬프트 관점의 역할일 뿐 사장이 쓴 글이 아니다(신고 2026-07-28 "내가 쓴 게 아니거든"). */
             <div key={i} className="fade-up" style={{ alignSelf: 'flex-start', maxWidth: '85%', display: 'grid', gap: 4 }}>
               <span className="microlabel" title={t('chat.via.hint')} style={{ color: 'var(--fg-3)' }}>{t(`chat.via.${['crewmail', 'delegate', 'routine', 'job', 'room'].includes(m.via) ? m.via : 'generic'}`)}</span>
-              <div className="card" style={{ padding: '10px 13px', fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap' }}>{m.text}</div>
+              <ViaText via={m.via} text={m.text} t={t} />
             </div>
           ) : m.who === 'user' ? (
             <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}
