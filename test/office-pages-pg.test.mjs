@@ -1,4 +1,4 @@
-// 아르고 오피스 페이지·공유(20260927100000_office_pages.sql) — 유건 확정 규칙(2026-09-26)을 DB에서 잠근다.
+// 아르고 오피스 페이지·공유(20260927300000_office_pages.sql) — 유건 확정 규칙(2026-09-26)을 DB에서 잠근다.
 // 권한: 조직 소유자·관리자 전체 / 멤버 기본 편집(일반 접근에 따라) / 게스트는 공유분만 / 내 공간은 만든 사람만 / 공유는 부모에서 상속·가장 높은 역할.
 // 비공개(관리자 지정)는 관리자와 지정한 사람만, 퇴사 즉시 차단. 복제는 공유·비공개를 따라가지 않는다. 버전 90일·휴지통 30일.
 // 하네스는 msgr-crew-face-pg.test.mjs와 같다. 실행: bash scripts/billing-pg-drill.sh test/office-pages-pg.test.mjs
@@ -65,7 +65,9 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260927100000_office_pages.sql']) psql(['-f', mig(f)]);
+    '20260903120000_msgr.sql', '20260909002000_msgr_profiles_friends.sql', '20260927300000_office_pages.sql']) psql(['-f', mig(f)]);
+  // 이유(9/27 실측): 라이브 Supabase는 pgcrypto가 extensions 스키마에 있어 search_path=public 함수에서 gen_random_bytes가 안 보인다 — 게시가 전부 실패했다. 드릴도 같게.
+  psql(['-c', 'create schema if not exists extensions; alter extension pgcrypto set schema extensions;']);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'pages-org', '${U.owner}') returning id`));
   sql(`insert into public.msgr_org_entitlements (org_id, plan, seats) values ('${ORG}', 'team', 20) on conflict (org_id) do update set plan = 'team', seats = 20`);
@@ -214,6 +216,30 @@ test('공개 게시: 게시된 링크만 로그인 없이 읽고, 기록 카드�
   asUser(U.admin, `select public.office_page_publish('${p}', false)`);
   assert.equal(asAnon(`select public.office_public_page('${token}') is null`), 't', '게시를 끄면 링크도 죽는다');
   fails(psqlRaw(['-A', '-t', '-c', `set role anon; select count(*) from public.office_pages`]));
+});
+
+// 이유: 공유 창은 누가 어떤 역할인지 보여 줘야 하지만, 메신저 규칙대로 남의 이메일은 내주지 않는다(msgr_find_user와 같은 원칙).
+test('공유 목록: 전체 권한자만 이름·역할을 받고 이메일은 싣지 않는다', { skip }, () => {
+  const p = create(U.admin, { org: ORG, title: '공유목록' });
+  asUser(U.admin, `select public.office_share_set('${p}', '${U.member}', 'edit')`);
+  sql(`insert into public.msgr_profiles (user_id, display_name) values ('${U.member}', '멤버님') on conflict (user_id) do update set display_name = excluded.display_name`);
+  const out = last(asUser(U.admin, `select string_agg(name || ':' || role, ',') from public.office_page_people('${p}')`));
+  assert.equal(out, '멤버님:edit');
+  assert.doesNotMatch(asUser(U.admin, `select row_to_json(x)::text from public.office_page_people('${p}') x`), /@/);
+  fails(asUserRaw(U.member, `select * from public.office_page_people('${p}')`), /office/);
+});
+
+// 이유: 게시는 검색 노출을 기본으로 끈다(유건 확정). 켜는 것은 전체 권한자만, 같은 값이면 행을 건드리지 않는다(DB 위생).
+test('검색 노출: 전체 권한자만 켜고, 공개 응답에 실리며, 같은 값이면 쓰기 0', { skip }, () => {
+  const p = create(U.admin, { org: ORG, title: '검색노출' });
+  const token = last(asUser(U.admin, `select public.office_page_publish('${p}', true)`));
+  assert.equal(asAnon(`select public.office_public_page('${token}') ->> 'index'`), 'false');
+  fails(asUserRaw(U.member, `select public.office_page_set_index('${p}', true)`), /office/);
+  asUser(U.admin, `select public.office_page_set_index('${p}', true)`);
+  assert.equal(asAnon(`select public.office_public_page('${token}') ->> 'index'`), 'true');
+  const x1 = sql(`select xmin from public.office_shares where page_id = '${p}' and principal_kind = 'link'`);
+  asUser(U.admin, `select public.office_page_set_index('${p}', true)`);
+  assert.equal(sql(`select xmin from public.office_shares where page_id = '${p}' and principal_kind = 'link'`), x1, '같은 값은 쓰지 않는다');
 });
 
 // ── 정리 ──

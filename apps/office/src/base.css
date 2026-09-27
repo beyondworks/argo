@@ -381,7 +381,8 @@ input[role='switch']::after { content: ''; position: absolute; top: 2px; left: 2
 input[role='switch']:checked { background: var(--primary); }
 input[role='switch']:checked::after { transform: translateX(14px); background: var(--primary-fg); }
 .url-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--rc); background: var(--bg); font-family: var(--mono); font-size: 12px; overflow: hidden; }
-.url-row a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.url-row a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-note { margin: 0 0 12px; display: flex; align-items: center; gap: 6px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 26px; padding: 0 9px; border-radius: 7px; background: var(--bg); font-size: 12.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .assign-items { display: flex; flex-wrap: wrap; gap: 6px; }

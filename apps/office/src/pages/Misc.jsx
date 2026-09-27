@@ -1,5 +1,5 @@
 // 설정·휴지통·공유받은 항목·공개 게시 화면.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../ui/Icon.jsx';
 import { showToast } from '../ui/Overlay.jsx';
 import { t, ago, useLang, getLang, setLang } from '../core/i18n.js';
@@ -8,6 +8,7 @@ import { useStore, restorePage, resetDraft } from '../core/store.js';
 import { Link } from '../core/router.jsx';
 import { baseOf, mod } from '../core/commands.js';
 import { SPACES, ME, getMode, signOut } from '../core/session.js';
+import { getClient } from '../core/supabase.js';
 
 /** 테마 미리보기 — 앱을 작게 줄인 모습(사이드바·캔버스·카드·글줄). "시스템"은 라이트와 다크를 대각선으로 반씩 보여 준다. */
 function Mini({ tone }) {
@@ -88,20 +89,53 @@ export function Shared() {
 }
 
 /** 공개 게시 화면 — 조직 로고가 위에, 하단에 작은 "Argo Office로 만듦". 결재·메일 참조와 비공개 블록은 빠진다. */
-export function PublicPage({ id }) {
+const TAG = { paragraph: 'p', bulletList: 'ul', orderedList: 'ol', taskList: 'ul', listItem: 'li', taskItem: 'li', blockquote: 'blockquote', codeBlock: 'pre' };
+/** 공개 본문 그리기 — HTML 문자열을 쓰지 않고 노드를 React 요소로만 만든다. 링크는 http(s)만. */
+function Node({ n }) {
+  if (n.type === 'text') {
+    let el = n.text;
+    for (const m of n.marks ?? []) {
+      if (m.type === 'bold') el = <strong>{el}</strong>;
+      else if (m.type === 'italic') el = <em>{el}</em>;
+      else if (m.type === 'code') el = <code>{el}</code>;
+      else if (m.type === 'link' && /^https?:\/\//.test(m.attrs?.href ?? '')) el = <a href={m.attrs.href} rel="noopener nofollow" target="_blank">{el}</a>;
+    }
+    return el;
+  }
+  if (n.type === 'hardBreak') return <br />;
+  if (n.type === 'horizontalRule') return <hr />;
+  const kids = (n.content ?? []).map((c, i) => <Node key={i} n={c} />);
+  if (n.type === 'heading') { const H = `h${Math.min(3, Math.max(1, n.attrs?.level ?? 1))}`; return <H>{kids}</H>; }
+  const Tag = TAG[n.type];
+  return Tag ? <Tag>{kids}</Tag> : <>{kids}</>;
+}
+
+export function PublicPage({ id: token }) {
   useLang();
-  const page = useStore((s) => s.pages.find((p) => p.id === id));
-  const org = SPACES.find((s) => s.key === page?.space && s.kind === 'org');
-  if (!page) return <div className="public"><div className="empty-state"><p>{t('mail.empty')}</p></div></div>;
-  const text = (n) => (n.content ?? []).map((c) => c.text ?? text(c)).join('');
+  const local = useStore((s) => s.pages.find((p) => p.id === token));   // 예시 데이터 모드(서버 없음)에서는 페이지 id로 연다
+  const [doc, setDoc] = useState(undefined);                             // undefined 불러오는 중 | null 없음·게시 꺼짐
+  useEffect(() => {
+    let live = true;
+    getClient().then(async (sb) => {
+      if (!sb) return live && setDoc(null);
+      const { data } = await sb.rpc('office_public_page', { p_token: token });
+      if (live) setDoc(data ?? null);
+    }).catch(() => live && setDoc(null));
+    return () => { live = false; };
+  }, [token]);
+  const view = doc ?? (doc === null && local ? { title: local.title, content: local.content, org: SPACES.find((s) => s.key === local.space && s.kind === 'org')?.name, index: false } : doc);
+  useEffect(() => {                                                      // 검색 노출은 기본 끔(유건 확정) — 켠 페이지만 허용
+    let m = document.querySelector('meta[name="robots"]');
+    if (!m) { m = document.createElement('meta'); m.name = 'robots'; document.head.append(m); }
+    m.content = view?.index ? 'index, follow' : 'noindex, nofollow';
+    if (view) document.title = view.title || t('page.untitled');
+  }, [view]);
+  if (view === undefined) return <div className="public" aria-busy="true" />;
+  if (!view) return <div className="public"><div className="empty-state"><Icon name="doc" size={20} /><p>{t('public.missing')}</p></div></div>;
   return (
     <div className="public">
-      <header className="public-head"><span className="space-mark">{org?.mark ?? ME.name[0]}</span><b>{org?.name ?? ME.name}</b></header>
-      <article className="public-body prose">
-        {(page.content.content ?? []).map((n, i) => n.type === 'heading' ? <h1 key={i} className={`h${n.attrs.level}`}>{text(n)}</h1>
-          : n.type === 'paragraph' ? <p key={i}>{text(n)}</p>
-            : <ul key={i}>{(n.content ?? []).map((li, j) => <li key={j}>{text(li)}</li>)}</ul>)}
-      </article>
+      {view.org && <header className="public-head"><span className="space-mark">{view.org.slice(0, 1).toUpperCase()}</span><b>{view.org}</b></header>}
+      <article className="public-body prose">{(view.content?.content ?? []).map((n, i) => <Node key={i} n={n} />)}</article>
       <footer className="public-foot">{t('public.madeWith')}</footer>
     </div>
   );

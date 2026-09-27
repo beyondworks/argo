@@ -320,12 +320,33 @@ begin
   perform public.office_need(p_page, 'full');
   select link_token into tok from public.office_shares where page_id = p_page and principal_kind = 'link';
   if tok is null then
-    tok := translate(encode(gen_random_bytes(18), 'base64'), '+/=', '-_');
+    tok := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');  -- 244비트. pgcrypto는 라이브에서 extensions 스키마라 search_path=public에서 안 보인다(9/27 실측)
     insert into public.office_shares (page_id, principal_kind, link_token, published, created_by) values (p_page, 'link', tok, p_on, auth.uid());
   else
     update public.office_shares set published = p_on where page_id = p_page and principal_kind = 'link' and published is distinct from p_on;
   end if;
   return tok;
+end $$;
+
+-- 검색 엔진 노출(기본 끔) — 게시 링크에만 붙는다. 같은 값이면 쓰지 않는다.
+create or replace function public.office_page_set_index(p_page uuid, p_on boolean) returns void
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  perform public.office_need(p_page, 'full');
+  update public.office_shares set allow_index = p_on where page_id = p_page and principal_kind = 'link' and allow_index is distinct from p_on;
+end $$;
+
+-- 공유 창의 사람 목록 — 전체 권한자만. 이름·역할만 내주고 이메일은 싣지 않는다(msgr_find_user와 같은 원칙).
+create or replace function public.office_page_people(p_page uuid) returns table (user_id uuid, name text, role text)
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  perform public.office_need(p_page, 'full');
+  return query
+    select s.user_id, coalesce(pr.display_name, split_part(u.email, '@', 1)), s.role
+      from public.office_shares s join auth.users u on u.id = s.user_id
+      left join public.msgr_profiles pr on pr.user_id = s.user_id
+     where s.page_id = p_page and s.principal_kind = 'user'
+     order by s.created_at;
 end $$;
 
 -- 공개 화면에서 뺄 노드(기록 카드·메일 참조·비공개 블록 자리표시)
@@ -368,7 +389,7 @@ do $$ declare f text; begin
     'office_page_save(uuid, text, jsonb, integer)', 'office_page_restore(uuid, integer)', 'office_page_move(uuid, uuid, text)',
     'office_page_archive(uuid)', 'office_page_restore_archived(uuid)', 'office_page_delete(uuid)', 'office_page_duplicate(uuid, text)',
     'office_share_set(uuid, uuid, text)', 'office_page_set_general(uuid, text)', 'office_page_set_restricted(uuid, boolean)',
-    'office_page_publish(uuid, boolean)'] loop
+    'office_page_publish(uuid, boolean)', 'office_page_set_index(uuid, boolean)', 'office_page_people(uuid)'] loop
     execute format('revoke all on function public.%s from public, anon', f);
     execute format('grant execute on function public.%s to authenticated', f);
   end loop;

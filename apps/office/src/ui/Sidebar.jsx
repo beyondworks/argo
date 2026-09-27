@@ -32,7 +32,7 @@ function SpaceSwitcher({ space }) {
   return (
     <button type="button" className="space-switch" onClick={open} aria-haspopup="menu">
       <SpaceMark space={cur} />
-      <span className="space-name"><b>{cur.kind === 'me' ? t('space.me') : cur.name}</b><small>{cur.kind === 'me' ? ME.email : `${t(`space.role.${cur.role}`)} · ${t('space.members', { n: cur.members })}`}</small></span>
+      <span className="space-name"><b>{cur.kind === 'me' ? t('space.me') : cur.name}</b><small>{cur.kind === 'me' ? ME.email : [t(`space.role.${cur.role}`), cur.members != null && t('space.members', { n: cur.members })].filter(Boolean).join(' · ')}</small></span>
       <Icon name="caret" size={14} />
     </button>
   );

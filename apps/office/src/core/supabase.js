@@ -6,6 +6,16 @@ export const configured = !!(URL_ && ANON);
 /** 로컬 개발 스택에서만 이메일·비밀번호 로그인을 연다(운영은 OAuth만 — 메신저와 같은 규칙) */
 export const devPasswordLogin = configured && import.meta.env.DEV && /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(URL_);
 
+/** 서버에서 켜진 로그인 방식({ google: true, … }). 못 읽으면 null — 그때는 버튼을 다 보인다.
+ *  꺼진 방식을 누르면 인증 서버의 오류 JSON 화면으로 떨어진다(9/27 실측: 로컬 스택은 이메일만 켜짐). */
+export async function authProviders() {
+  if (!configured) return null;
+  try {
+    const r = await fetch(`${URL_}/auth/v1/settings`, { headers: { apikey: ANON } });
+    return r.ok ? ((await r.json()).external ?? null) : null;
+  } catch { return null; }
+}
+
 let client = null;
 export async function getClient() {
   if (!configured) return null;
