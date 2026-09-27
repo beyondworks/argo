@@ -74,6 +74,7 @@ kbd { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 0 
 .btn:active { transform: scale(0.97); }
 .btn.primary { background: var(--primary); color: var(--primary-fg); box-shadow: none; }
 .btn.ghost { background: transparent; box-shadow: none; color: var(--fg-2); }
+.btn.on { background: var(--secondary); color: var(--fg); }
 .btn.sm { height: 26px; padding: 0 9px; font-size: 12.5px; }
 .btn.block { width: 100%; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }

@@ -18,7 +18,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
   // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
   // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, sdk = null, onText = null, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  // sdk — Claude SDK 경로에만 적용하는 속도·격리 설정(오피스 번역: 도구 목록 비우기·짧은 지시문·생각 끄기·계정 원격 MCP 차단). 권한 훅·자격·작업 폴더는 덮지 못하게 허용 목록으로만
+  const sdkTune = Object.fromEntries(Object.entries(sdk ?? {}).filter(([k]) => ['tools', 'systemPrompt', 'thinking', 'effort', 'strictMcpConfig', 'mcpServers'].includes(k)));
   // __failures는 재귀에 **명시 전달**(아래 두 recursion) — opts를 직접 오염시키면 호출자가 재사용하는
   // opts 객체에 이전 호출의 실패가 섞인다(분리 검수 L2).
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
@@ -111,8 +113,11 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
         ...(osModel ? { model: osModel } : {}),
+        ...sdkTune,
+        ...(onText ? { includePartialMessages: true } : {}), // 흘려받기(오피스 번역) — 받은 글자 조각을 호출자에게 바로 넘긴다
       },
     })) {
+      if (onText && msg.type === 'stream_event' && msg.event?.type === 'content_block_delta' && msg.event.delta?.type === 'text_delta') { try { onText(msg.event.delta.text); } catch { /* 호출자 오류가 실행을 끊지 않게 */ } }
       if (msg.type === 'result') {
         usage = msg.usage; costUsd = msg.total_cost_usd;
         if (msg.subtype === 'success') { text = msg.result; isErr = !!msg.is_error; apiErrSt = Number(msg.api_error_status) || 0; } else failed = msg.subtype;

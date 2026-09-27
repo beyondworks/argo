@@ -45,6 +45,7 @@ import { roomTurnFailure, roomTurnInterrupted, roomTurnStopped, roomAttachReason
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
+import { handleTranslate, warm as warmTranslate } from './office-translate.mjs';
 
 export const MSGR_KEY = 'msgr';
 export const HEARTBEAT_WRITE_MS = 30_000; // 심박 쓰기 최소 간격 — 행 나이 최대 45초 + 앱 재조회 30초 < 판정 90초(검수 #689 M3: 60초면 온라인 크루가 주기적으로 부재중)
@@ -1435,6 +1436,23 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         rtChannels.set(ukey, uch);
       } catch (e) { console.warn('[argo] msgr realtime 구독 실패(u:):', e.message); }
     }
+    // 오피스 메일 번역 — 본인만 보내고 받는 ot:<uid>(20260927174000). 주인 구독으로 번역해 같은 토픽으로 돌려준다(메일 내용은 DB를 거치지 않는다).
+    // 여러 회사 연결이 함께 들어도 요청 번호로 한 번만 처리한다(office-translate.mjs).
+    const okey = `${wsId}:ot`;
+    if (c.uid && rtChannels.get(okey)?.__client !== c.client) {
+      try {
+        rtChannels.get(okey)?.unsubscribe?.();
+        const och = c.client.channel(`ot:${c.uid}`, { config: { private: true } })
+          .on('broadcast', { event: 'office_translate' }, (msg) => {
+            handleTranslate(wsId, msg?.payload, { send: (event, payload) => och.send({ type: 'broadcast', event, payload }) })
+              .catch((e) => console.error('[argo] 오피스 번역 처리 실패:', e.message));
+          });
+        och.__client = c.client;
+        och.subscribe();
+        rtChannels.set(okey, och);
+        warmTranslate();
+      } catch (e) { console.warn('[argo] msgr realtime 구독 실패(ot:):', e.message); }
+    }
   };
   const iv = setInterval(() => tick('poll').catch(() => {}), pollMs);
   iv.unref?.();
@@ -1443,7 +1461,7 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     stopped = true; clearInterval(iv);
     for (const orgId of subscribedOrgs) { const key = `${wsId}:${orgId}`; try { rtChannels.get(key)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(key); }
     subscribedOrgs = new Set();
-    try { rtChannels.get(`${wsId}:u`)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(`${wsId}:u`);
+    for (const k of [`${wsId}:u`, `${wsId}:ot`]) { try { rtChannels.get(k)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(k); }
   };
   stop.nudge = () => tick('poll').catch(() => {}); // 수동 재연결·복구 신호는 관리 작업까지 한 번(검수 L1)
   return stop;

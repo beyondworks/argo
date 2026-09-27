@@ -1,4 +1,4 @@
-// 아르고 오피스 메일 계정(20260927310000_office_mail.sql) — 본인 계정만, 토큰 표는 함수로만, 같은 값이면 쓰지 않는다.
+// 아르고 오피스 메일 계정(20260927171000_office_mail.sql) — 본인 계정만, 토큰 표는 함수로만, 같은 값이면 쓰지 않는다.
 // 실행: bash scripts/billing-pg-drill.sh test/office-mail-pg.test.mjs
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +7,7 @@ import { psqlSpawn } from './helpers/pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/office-mail-pg.test.mjs';
-const mig = fileURLToPath(new URL('../supabase/migrations/20260927310000_office_mail.sql', import.meta.url));
+const mig = fileURLToPath(new URL('../supabase/migrations/20260927171000_office_mail.sql', import.meta.url));
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
 
 const raw = (q) => psqlSpawn(DB, ['-A', '-t', '-c', q]);

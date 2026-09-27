@@ -17,6 +17,7 @@ import { imeGuardWith } from '../core/ime.js';
 import { MAIL_FOLDERS } from '../data/sample.js';
 import { ME, useSession } from '../core/session.js';
 import { crewName } from './modules.jsx';
+import { translateMail } from '../core/translate.js';
 import {
   loadAccounts, pullMail, readMail, connectGoogle, finishConnect, disconnectAccount, mailConfig, adminNote,
   saveDraft, sendMail, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
@@ -47,7 +48,7 @@ function MailRow({ m, active, tag }) {
 }
 
 /** 실제 메일 본문 — 격리된 틀(sandbox, 스크립트 없음)에 넣고 바깥 이미지는 누를 때만 */
-function MailBody({ m }) {
+function MailBody({ m, tr }) {
   const [c, setC] = useState(null); const [err, setErr] = useState(false);
   useEffect(() => { let live = true; setC(null); setErr(false); readMail(m).then((x) => live && setC(x), () => live && setErr(true)); return () => { live = false; }; }, [m.id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (err) return <p className="dim">{t('mailc.readFailed')}</p>;
@@ -58,26 +59,44 @@ function MailBody({ m }) {
         <button key={a.id} type="button" className="chip" onClick={() => openAttachment(m, a).catch(() => showToast(t('mailc.readFailed')))}><Icon name="file" size={12} />{a.name}<small className="mono">{fmtBytes(a.size)}</small></button>
       ))}</div>}
       {c.html ? (
-        <iframe className="mail-frame" title={m.subject} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={mailDoc(c.html, { paper: mailPaper() })} />
-      ) : <div className="reader-body mail-text">{c.text ?? m.snippet}</div>}
+        <iframe className="mail-frame" title={m.subject} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={mailDoc(tr?.html ?? c.html, { paper: mailPaper() })} />
+      ) : <div className="reader-body mail-text">{tr?.text ?? c.text ?? m.snippet}</div>}
     </>
   );
 }
 
 function Reader({ m, onBack }) {
   const [c, setC] = useState(null);
-  useEffect(() => { let live = true; setC(null); if (m?.account) readMail(m).then((x) => live && setC(x), () => {}); return () => { live = false; }; }, [m?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 번역(버튼을 누를 때만) — { busy, done, total, subject, html, text }. 다른 메일로 가면 원문으로
+  const [tr, setTr] = useState(null); const [showTr, setShowTr] = useState(false);
+  const shown = useRef(m?.id); shown.current = m?.id;                                  // 번역 중에 다른 메일로 가면 늦게 온 결과를 버린다
+  useEffect(() => { let live = true; setC(null); setTr(null); setShowTr(false); if (m?.account) readMail(m).then((x) => live && setC(x), () => {}); return () => { live = false; }; }, [m?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const translate = async () => {
+    if (tr && !tr.busy) { setShowTr((v) => !v); return; }
+    if (!c || tr?.busy) return;
+    const id = m.id;
+    setTr({ busy: true, done: 0, total: 0 }); setShowTr(true);
+    try {
+      const out = await translateMail(m, c, { onProgress: (p) => { if (shown.current === id) setTr((cur) => (cur?.busy ? { ...p, busy: true } : cur)); } });
+      if (shown.current !== id) return;
+      setTr(out);
+      if (out.partial) showToast(t('tr.partial'));
+    } catch (e) { if (shown.current !== id) return; setTr(null); setShowTr(false); showToast(t(e.code === 'offline' ? 'tr.offline' : 'tr.failed')); }
+  };
   if (!m) return <div className="empty-state"><Icon name="mail" size={20} /><p>{t('mail.select')}</p></div>;
   const reply = () => setUi({ compose: { to: m.addr, subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`, account: m.account, threadId: m.threadId, inReplyTo: c?.messageId, references: c?.references } });
   return (
     <article className={`reader${m.account ? ' real' : ''}`}>
       <header className="reader-head">
         <button type="button" className="icon-btn only-narrow" aria-label={t('mail.back')} onClick={onBack}><Icon name="back" /></button>
-        <h2>{m.subject}</h2>
+        <h2>{showTr && tr?.subject ? tr.subject : m.subject}</h2>
         <div className="reader-meta"><b>{m.from}</b><span className="dim">&lt;{m.addr}&gt;</span><span className="dim mono">{ago(m.at)}</span></div>
         <div className="reader-actions">
           <button type="button" className="btn primary" onClick={() => setUi({ assign: { space: 'me', items: [{ kind: 'mail', id: m.id, label: m.subject }] } })}><Icon name="hand" size={14} />{t('crew.assign')}</button>
           <button type="button" className="btn" onClick={reply}><Icon name="reply" size={14} />{t('mail.reply')}</button>
+          {m.account && <button type="button" className={`btn${showTr && tr && !tr.busy ? ' on' : ''}`} disabled={!c || tr?.busy} aria-pressed={showTr && !!tr && !tr.busy} onClick={translate}>
+            <Icon name="globe" size={14} />{tr?.busy ? t('tr.busy', { n: tr.done, t: tr.total || '…' }) : showTr && tr ? t('tr.original') : t('tr.translate')}
+          </button>}
           {m.folder !== 'archive' && <button type="button" className="btn" onClick={() => { const undo = archiveMail(m.id); showToast(t('mail.archived'), { undo }); navigate('/me/mail'); }}><Icon name="archive" size={14} />{t('mail.archiveIt')}</button>}
           <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, mailMenu(m), { anchor: e.currentTarget })}><Icon name="dots" /></button>
         </div>
@@ -89,7 +108,7 @@ function Reader({ m, onBack }) {
           <ul>{m.note.todos.map((x) => <li key={x}>{x}</li>)}</ul>
         </section>
       )}
-      {m.account ? <MailBody m={m} /> : <div className="reader-body">{m.body.map((p, i) => <p key={i}>{p}</p>)}</div>}
+      {m.account ? <MailBody m={m} tr={showTr ? tr : null} /> : <div className="reader-body">{m.body.map((p, i) => <p key={i}>{p}</p>)}</div>}
     </article>
   );
 }

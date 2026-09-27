@@ -1,4 +1,4 @@
-// 아르고 오피스 페이지·공유(20260927300000_office_pages.sql) — 유건 확정 규칙(2026-09-26)을 DB에서 잠근다.
+// 아르고 오피스 페이지·공유(20260927170000_office_pages.sql) — 유건 확정 규칙(2026-09-26)을 DB에서 잠근다.
 // 권한: 조직 소유자·관리자 전체 / 멤버 기본 편집(일반 접근에 따라) / 게스트는 공유분만 / 내 공간은 만든 사람만 / 공유는 부모에서 상속·가장 높은 역할.
 // 비공개(관리자 지정)는 관리자와 지정한 사람만, 퇴사 즉시 차단. 복제는 공유·비공개를 따라가지 않는다. 버전 90일·휴지통 30일.
 // 하네스는 msgr-crew-face-pg.test.mjs와 같다. 실행: bash scripts/billing-pg-drill.sh test/office-pages-pg.test.mjs
@@ -65,7 +65,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260909002000_msgr_profiles_friends.sql', '20260927300000_office_pages.sql']) psql(['-f', mig(f)]);
+    '20260903120000_msgr.sql', '20260909002000_msgr_profiles_friends.sql', '20260927170000_office_pages.sql']) psql(['-f', mig(f)]);
   // 이유(9/27 실측): 라이브 Supabase는 pgcrypto가 extensions 스키마에 있어 search_path=public 함수에서 gen_random_bytes가 안 보인다 — 게시가 전부 실패했다. 드릴도 같게.
   psql(['-c', 'create schema if not exists extensions; alter extension pgcrypto set schema extensions;']);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);

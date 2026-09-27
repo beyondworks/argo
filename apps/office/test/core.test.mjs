@@ -168,3 +168,19 @@ test('기본 템플릿: 13종, 언어마다 제목 1단계로 시작, 빈 글자
     if (lang === 'en') assert.doesNotMatch(JSON.stringify(t.content), /[가-힣]/, `${id} en has Korean`);
   }
 });
+
+/* ── 메일 번역 묶음(유건 9/27: 버튼 누를 때만, 빠르게) ── */
+import { batches, wanted } from '../src/core/tr-batch.js';
+// 이유: 같은 문장을 두 번 보내면 구독 한도와 시간만 쓴다, 묶음이 크면 첫 결과가 늦다
+test('번역 묶음: 같은 문장은 한 번, 글자 수·개수 상한으로 나눈다', () => {
+  const b = batches(['a', 'a', 'x'.repeat(2000), 'y'.repeat(1000), ...Array.from({ length: 45 }, (_, i) => `s${i}`)]);
+  assert.deepEqual(b[0].items, ['a', 'x'.repeat(2000)]);
+  assert.equal(b[1].items[0], 'y'.repeat(1000));
+  assert.ok(b.every((x) => x.items.length <= 40 && x.items.join('').length <= 2400));
+  assert.deepEqual(b.map((x) => x.i), b.map((_, i) => i));
+});
+test('번역 대상: 숫자·기호·주소만인 조각은 보내지 않는다', () => {
+  for (const s of ['1,817,093', '→', 'https://example.com/a', 'kim@corp.co.kr', '  ', '팔로우 1,234명']) assert.equal(wanted(s), false, s);
+  for (const s of ['Hello', 'Founder and CEO, NVIDIA', '알고 있는 Sungyoon 님', 'こんにちは']) assert.equal(wanted(s), true, s);
+  assert.equal(wanted('팔로우', 'en'), true, '영어로 옮길 땐 한글도 보낸다');
+});

@@ -102,6 +102,34 @@ flog | grep -q '"path":"/hit-link-open"' || fail "link did not reach its page"
 for i in {1..20}; do flog | grep -qE '"id":"m1","add":\[[^]]*\],"remove":\["UNREAD"' && break; sleep 1; done
 flog | grep -qE '"id":"m1","add":\[[^]]*\],"remove":\["UNREAD"' || fail "mark read not sent"
 
+# 3t) 번역(버튼을 누를 때만) — 기기가 꺼져 있으면 안내, 켜져 있으면 기기(가짜)가 ot:<uid>로 번역을 흘려보내고, 원문 보기로 되돌린다
+O=$(stage <<JS
+$HEAD
+await click(".mail-row", "FAKE-gmail.example 수정 견적");
+await page.waitForSelector(".mail-frame", { timeout: 30000 }); await page.waitForTimeout(800);
+await click(".reader-actions .btn", "번역");
+await has("Argo 앱이 켜져 있어야 번역됩니다");
+console.log("J=" + JSON.stringify({ label: await page.evaluate(() => [...document.querySelectorAll(".reader-actions .btn")].map((b) => b.innerText.trim()).find((x) => /번역|원문/.test(x))) }));
+JS
+); [[ $(J "$O") == *'"label":"번역"'* ]] || { print -r -- "$O" | tail -3; fail "translate offline notice"; }
+node $S/fake-device.mjs mail-e2e@office.test ~/.cache/argo-office/e2e-pass $APP > ~/.cache/argo-office/fake-device.log 2>&1 &
+DEV=$!
+for i in {1..30}; do grep -q "device SUBSCRIBED" ~/.cache/argo-office/fake-device.log && break; sleep 0.5; done
+grep -q "device SUBSCRIBED" ~/.cache/argo-office/fake-device.log || { kill $DEV; cat ~/.cache/argo-office/fake-device.log | tail -3; fail "fake device did not subscribe"; }
+O=$(stage <<JS
+$HEAD
+const t0 = Date.now();
+await click(".reader-actions .btn", "번역");
+await page.waitForFunction(() => [...document.querySelectorAll(".reader-actions .btn")].some((b) => b.innerText.includes("원문 보기")), undefined, { timeout: 30000 });
+const ms = Date.now() - t0;
+const tr = await page.evaluate(() => ({ h2: document.querySelector(".reader-head h2").innerText, body: new DOMParser().parseFromString(document.querySelector(".mail-frame").srcdoc, "text/html").body.textContent }));
+await click(".reader-actions .btn", "원문 보기");
+await page.waitForTimeout(500);
+const back = await page.evaluate(() => ({ h2: document.querySelector(".reader-head h2").innerText, body: new DOMParser().parseFromString(document.querySelector(".mail-frame").srcdoc, "text/html").body.textContent }));
+console.log("J=" + JSON.stringify({ ms, h2: tr.h2, trBody: tr.body.includes("번역:Chairman & CEO"), keptKo: tr.body.includes("견적 확인") && !tr.body.includes("번역:견적 확인"), backH2: back.h2, backBody: back.body.includes("Chairman & CEO") && !back.body.includes("번역:") }));
+JS
+); kill $DEV 2>/dev/null; J3t=$(J "$O"); echo "3t: $J3t"; [[ $J3t == *'"h2":"번역:FAKE-gmail.example 수정 견적"'* && $J3t == *'"trBody":true'* && $J3t == *'"keptKo":true'* && $J3t == *'"backH2":"FAKE-gmail.example 수정 견적"'* && $J3t == *'"backBody":true'* ]] || { print -r -- "$O" | tail -3; fail "translate"; }
+
 # 3b) 공격 메일 — 이동(meta refresh·base)·끼워 넣기(link·form)가 틀에 들어가지 않고, 외부 요청이 0건. 위험 링크는 href 제거.
 #     대조군: 같은 공격 HTML을 걷어내지 않고 같은 sandbox·CSP로 띄우면 무엇이 새는지 함께 기록한다(검사가 새는 것을 잡을 수 있는지 확인).
 O=$(stage <<JS

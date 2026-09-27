@@ -1,4 +1,4 @@
-// 서버 전송 — 보낼 목록의 변경을 Supabase 함수로 보낸다. 쓰기는 전부 권한을 확인하는 DB 함수로만(20260927300000_office_pages.sql).
+// 서버 전송 — 보낼 목록의 변경을 Supabase 함수로 보낸다. 쓰기는 전부 권한을 확인하는 DB 함수로만(20260927170000_office_pages.sql).
 // 저장은 보내는 순간의 최신 제목·본문과 서버가 아는 버전으로 간다. 다른 기기가 먼저 저장했으면 충돌 → 페이지에 안내(사람이 고른다).
 import { setTransport } from './sync.js';
 import { getState, update } from './store.js';
