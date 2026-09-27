@@ -3,17 +3,17 @@
 // 확인 시점: 시작(새로고침 포함)·포그라운드 복귀·포그라운드 유지 중 30분 주기(update-schedule.mjs, 백그라운드 중엔 확인 안 함,
 // 시작·복귀도 최소 간격 5분 — GitHub 비인증 시간당 60회 한도).
 // Android: 앱이 APK를 직접 받아 설치 화면을 띄운다(같은 서명 겹쳐쓰기 = 데이터·로그인 유지) — 네이티브 plugin:apk-installer.
-// iOS: TestFlight 앱을 열도록 안내만(스토어 심사 밖에서 앱이 스스로를 설치할 수 없다).
+// iOS: 이 막대를 아예 띄우지 않는다 — App Store 배포본에서 업데이트는 App Store가 담당하고, TestFlight로 유도하는 문구·동작은
+// 스토어 심사(2.2 베타 유도 금지) 대상이라 2026-09-26부터 iOS는 GitHub 확인 자체를 하지 않는다.
 import { useEffect, useRef, useState } from 'react';
 
-import { isMobileNative } from './platform.js';
+import { isMobileNative, isIos } from './platform.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { pushDiag } from './diag.jsx';
 import { parseGithubRelease, pickAndroidAsset, isNewer } from './update-release.mjs';
 import { shouldCheckMobile, shouldShowVersion } from './update-schedule.mjs';
 
 const RELEASE_API = 'https://api.github.com/repos/beyondworks/argo-messenger/releases/latest';
-const IOS_TESTFLIGHT_URL = 'itms-beta://'; // 앱 ID 없이도 TestFlight 앱 자체를 연다(설치된 빌드가 이미 TestFlight로 받은 것이므로 존재 보장)
 // 마지막 확인 시각을 sessionStorage에 둔다 — location.reload() 직후의 'start' 확인이 메모리(ref)만으로는 간격 판정을
 // 우회한다(리로드가 ref를 지우므로). sessionStorage는 같은 웹뷰 세션 동안(진짜 앱 재시작 전까지) 남는다.
 const LAST_CHECK_KEY = 'msgr-update-last-check';
@@ -52,7 +52,7 @@ export function useMobileUpdate() {
   downloadRef.current = downloadAndInstall;
 
   useEffect(() => {
-    if (!isMobileNative) return undefined;
+    if (!isMobileNative || isIos) return undefined; // iOS는 App Store가 업데이트를 담당 — 확인 자체를 하지 않는다
     let alive = true;
     const check = async (reason) => {
       const r = ref.current;
@@ -88,11 +88,6 @@ export function useMobileUpdate() {
     setSt({ phase: 'idle', version: '', error: '', progress: 0 });
   };
 
-  const openTestFlight = async () => {
-    try { await (await import('@tauri-apps/plugin-opener')).openUrl(IOS_TESTFLIGHT_URL); }
-    catch (e) { setSt((s) => ({ ...s, phase: 'error', error: String(e?.message ?? e) })); }
-  };
-
   const openInstallSettings = async () => {
     try { const { invoke } = await import('@tauri-apps/api/core'); await invoke('plugin:apk-installer|open_unknown_sources_settings'); }
     catch (e) { setSt((s) => ({ ...s, phase: 'error', error: String(e?.message ?? e) })); }
@@ -100,21 +95,18 @@ export function useMobileUpdate() {
 
   const retry = () => { ref.current.phase = 'available'; setSt((s) => ({ ...s, phase: 'available', error: '' })); };
 
-  return { ...st, dismiss, openTestFlight, downloadAndInstall, openInstallSettings, retry };
+  return { ...st, dismiss, downloadAndInstall, openInstallSettings, retry };
 }
 
 export function MobileUpdateBar({ t }) {
   const u = useMobileUpdate();
-  if (!isMobileNative || u.phase === 'idle') return null;
-  const isIos = import.meta.env.TAURI_ENV_PLATFORM === 'ios';
+  if (!isMobileNative || isIos || u.phase === 'idle') return null; // iOS는 useMobileUpdate가 phase를 'idle' 밖으로 옮기지 않지만, 방어적으로 한 번 더 막는다
   return (
     <div className="msgr-updbar" role="status">
       {u.phase === 'available' && (
         <>
           <span>{t('upd.available', { v: u.version })}</span>
-          {isIos
-            ? <button type="button" className="btn sm btn-primary" onClick={u.openTestFlight}>{t('upd.mobile.testflight')}</button>
-            : <button type="button" className="btn sm btn-primary" onClick={u.downloadAndInstall}>{t('upd.mobile.get')}</button>}
+          <button type="button" className="btn sm btn-primary" onClick={u.downloadAndInstall}>{t('upd.mobile.get')}</button>
           <button type="button" className="btn sm ghost" onClick={u.dismiss}>{t('upd.later')}</button>
         </>
       )}

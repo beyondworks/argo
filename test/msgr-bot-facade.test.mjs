@@ -93,6 +93,15 @@ test('오류 매핑: DB raise 이름 → 401/403/400 · 미지 오류 500(본문
   assert.equal(r.status, 500); assert.ok(r.body.description.length < 220);
 });
 
+test('LOW(2차 검수) — msgr_bot_finish가 null을 돌리면(미자격 조직) 200 message_id:0이 아니라 403 msgr_org_unentitled', async () => {
+  const attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const rpc = fakeRpc({ msgr_bot_finish: null });
+  const result = await handle({ token: T, method: 'sendMessage', params: { chat_id: CH, text: 'late', reply_to_message_id: 7, execution_attempt: attempt } }, rpc);
+  assert.equal(result.status, 403, '거짓 성공(200 message_id:0)이 아니라 403이어야 한다');
+  assert.equal(result.body.ok, false);
+  assert.match(result.body.description, /free period has ended/);
+});
+
 test('claim-bound responses forward attempt/disposition/mentions without accepting client origin or thread', async () => {
   const attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const rpc = fakeRpc({ msgr_bot_finish: 99 });

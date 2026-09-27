@@ -3,6 +3,7 @@
 // (텔레그램의 크루 봇 DM과 같은 감각). 저장: company.json.msgr.notify = { mode: 'dm' }. 종류별 세부는 company.msgr.mutedEvents(기존 채널 공통 규칙).
 // 원점 귀속 규칙(메신저에서 시작한 실행은 그 방으로만)은 그대로 — 원점이 없는 이벤트에만 쓴다(gateway.mjs pushEvent).
 import { CHANNEL_EVENTS } from './channel-events.mjs';
+import { approvalPlainText, approvalCommandLabel } from './approvals.mjs';
 
 /** 보낼 수 있는 종류 = 메신저 채널이 받는 종류(channel-events.mjs 정본). */
 export const MSGR_NOTIFY_EVENTS = CHANNEL_EVENTS.msgr;
@@ -29,8 +30,11 @@ export function formatMsgrNotify(event, lang = 'ko', names = {}) {
   switch (event.type) {
     case 'approval': {
       const it = event.item ?? {};
-      return en ? `[Approval needed] ${one(it.action)}${it.reason ? `\n${body(it.reason)}` : ''}\n(Decide in the Argo app › Approvals)`
-        : `[결재 요청] ${one(it.action)}${it.reason ? `\n${body(it.reason)}` : ''}\n(아르고 앱 › 결재에서 처리)`;
+      // 쉬운 문장화(분리 검수 M-3) — plain 있으면 그 문장 + "명령: <action>" 한 줄, 없으면 기존 action/reason.
+      const plain = approvalPlainText(it, lang);
+      const summary = plain ? `${plain}\n${approvalCommandLabel(lang)}: ${one(it.action)}` : `${one(it.action)}${it.reason ? `\n${body(it.reason)}` : ''}`;
+      return en ? `[Approval needed] ${summary}\n(Decide in the Argo app › Approvals)`
+        : `[결재 요청] ${summary}\n(아르고 앱 › 결재에서 처리)`;
     }
     case 'job':
       return en ? `[Long task ${event.ok === false ? 'stopped' : 'done'}] ${one(event.title)}\n\n${body(event.reply)}`

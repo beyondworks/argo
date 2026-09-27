@@ -1235,6 +1235,8 @@ const DICT = {
   'settings.defaultRunnerAuto': ['자동 (연결 순서)', 'Auto (connection order)'],
   'chat.via.room': ['회의실 발언', 'Meeting room turn'],
   'chat.via.generic': ['자동 배달', 'Auto-delivered'],
+  'chat.via.expand': ['눌러서 전체 보기', 'Click to show all'],
+  'chat.via.collapse': ['눌러서 접기', 'Click to collapse'],
   'chat.via.hint': ['사장이 쓴 글이 아니라 자동 배달된 지시입니다', 'Delivered automatically — not written by you'],
   'chat.newChatConfirm': ['새 대화를 시작할까요? 지금 대화는 보관함에 적재되고(삭제 아님), 회사 기억(vault)도 그대로 남습니다.', 'Start a new chat? The current thread is archived (not deleted), and company memory stays intact.'],
   'chat.cardTitle': ['크루 카드', 'Crew Card'],
@@ -1338,6 +1340,11 @@ const DICT = {
   'deck.approvalOpen': ['이 크루 대화 열기 — 앞뒤 맥락 보기', 'Open this crew’s chat — see the full context'],
   'chat.approval.yes': ['네, 켜고 진행', 'Yes, enable & continue'],
   'chat.approval.no': ['아니오', 'No'],
+  'chat.approval.plain.purpose': ['목적', 'Purpose'],
+  'chat.approval.plain.task': ['할 일', 'Task'],
+  'chat.approval.plain.need': ['필요한 것', 'Needs'],
+  'chat.approval.plain.raw': ['명령 보기', 'View command'],
+  'chat.approval.highBadge': ['고위험', 'High risk'],
 
   // ── 백그라운드 작업 패널
   'tasks.title': ['백그라운드 작업', 'Background Tasks'],

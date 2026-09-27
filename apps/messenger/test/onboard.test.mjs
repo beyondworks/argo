@@ -29,3 +29,10 @@ test('배선 — 새 채널을 여는 세 입구(데스크톱 +·폰 목록 +·�
   assert.match(src, /if \(!priv\) \{ await q\(supabase\.rpc\('msgr_join_channel', \{ ch: id \}\)\);/, '공개 채널을 만들면 만든 사람이 참여(서버는 참여 행을 안 넣는다 — 행동은 onboarding.browser.mjs)');
   assert.match(src, /<div className="msgr-phsteps"><OrgStepList steps=\{orgSteps\(\{ t, \.\.\.onboard, hasChannel: false/, '폰 홈(본문 안내가 안 보이는 자리)');
 });
+
+test('iOS는 "Argo 앱 받기" 버튼을 숨긴다(3.1.1/3.1.3 — 앱에는 가격·결제로 이어지는 링크를 두지 않는다), 다른 플랫폼은 그대로', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(src, /const agentActs = <span key="c" className="acts">\{!isIos && <button[\s\S]{0,200}onClick=\{\(\) => openExternal\(LEGAL\.download\)\}/, 'download 버튼이 !isIos로 가려져야 한다');
+  assert.match(src, /download: 'https:\/\/argo\.ceo\/download'/, '가격·결제 버튼 없는 전용 다운로드 페이지를 가리켜야 한다(총괄 지시 2026-09-26)');
+});

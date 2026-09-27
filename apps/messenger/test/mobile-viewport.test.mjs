@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { viewportVars, KEYBOARD_TARGET } from '../src/viewport-vars.mjs';
+import { viewportVars, KEYBOARD_TARGET, keyboardLikelyOpen } from '../src/viewport-vars.mjs';
 
 test('키보드가 없으면 뷰포트 변수를 내지 않는다 — 부팅 직후 작게 보고된 높이가 셸에 굳지 않는다(유건 제보 2026-09-14)', () => {
   assert.equal(viewportVars({ keyboard: false, height: 580, top: 0, width: 402, coarse: true }).vars, null);
@@ -30,4 +30,30 @@ test('키보드 모드 표지 — 어떤 입력칸이든 초점이면 html.msgr-
 test('키보드 대상은 키보드가 뜨는 칸만 — 체크박스·라디오 등에서는 탭바를 숨기지 않는다(재검수 #699 M1)', () => {
   for (const type of ['checkbox', 'radio', 'file', 'range', 'button', 'submit', 'color']) assert.ok(KEYBOARD_TARGET.includes(`:not([type=${type}])`), type);
   assert.match(KEYBOARD_TARGET, /textarea/); assert.match(KEYBOARD_TARGET, /contenteditable/);
+});
+
+// 3차 검수 M-2(2026-09-27) — 맥·윈도우 작은 창 로그인 화면에서 입력칸에 초점만 가도 body가 fixed로 잠겨
+// 스크롤을 못 하던 결함. 소프트 키보드가 실제로 떴다고 볼 조건(터치 기기, 또는 뷰포트가 뚜렷이 줄었을 때)을 잠근다.
+test('입력칸에 초점이 가도 터치 기기가 아니고 뷰포트도 안 줄었으면 키보드로 보지 않는다(맥·윈도우 작은 창)', () => {
+  assert.equal(keyboardLikelyOpen({ target: true, height: 700, innerHeight: 720, coarse: false }), false, '20% 미만 변화는 브라우저 크롬 오차로 본다');
+  assert.equal(keyboardLikelyOpen({ target: true, height: 720, innerHeight: 720, coarse: false }), false, '변화 없음');
+});
+
+test('터치 기기는 입력칸 초점만으로 키보드로 본다(뷰포트가 아직 안 줄었어도)', () => {
+  assert.equal(keyboardLikelyOpen({ target: true, height: 874, innerHeight: 874, coarse: true }), true);
+});
+
+test('터치 기기가 아니어도 뷰포트가 20% 넘게 뚜렷이 줄면 키보드로 본다', () => {
+  assert.equal(keyboardLikelyOpen({ target: true, height: 500, innerHeight: 720, coarse: false }), true);
+});
+
+test('키보드가 뜨는 칸이 아니면 나머지 조건과 무관하게 키보드가 아니다', () => {
+  assert.equal(keyboardLikelyOpen({ target: false, height: 300, innerHeight: 720, coarse: true }), false);
+});
+
+test('mobile-viewport.js는 초점 여부만이 아니라 keyboardLikelyOpen을 거쳐 키보드를 판정한다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const hook = readFileSync(new URL('../src/mobile-viewport.js', import.meta.url), 'utf8');
+  assert.match(hook, /import \{ viewportVars, keyboardTargetFor, keyboardLikelyOpen \} from '\.\/viewport-vars\.mjs';/);
+  assert.match(hook, /const keyboard = keyboardLikelyOpen\(\{ target: keyboardOpen\(\), height, innerHeight, coarse \}\);/);
 });

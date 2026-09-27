@@ -5,7 +5,10 @@ import { mkdtemp } from './helpers/tmp.mjs'; // 종료 시 일괄 삭제(잔여�
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-msgr-notify-')); // 격리 루트 — 실데이터·저장소 workspaces/ 미접촉(gateway.test.mjs 관례)
-import { normalizeMsgrNotify, msgrNotifyWants, formatMsgrNotify, msgrNotifyCrewSlug, MSGR_NOTIFY_EVENTS } from '../src/msgr-notify.mjs';
+// 동적 import — msgr-notify.mjs가 이제 approvals.mjs(→workspace.mjs)를 물고 있어(분리 검수 M-3),
+// 정적 import면 ES 모듈 그래프가 위 ARGO_ROOT 대입보다 먼저 workspace.mjs의 WS_ROOT를 확정해 버린다
+// (gateway.test.mjs 관례와 같은 이유 — "WS_ROOT는 모듈 로드 시 확정되므로 import보다 먼저 심는다").
+const { normalizeMsgrNotify, msgrNotifyWants, formatMsgrNotify, msgrNotifyCrewSlug, MSGR_NOTIFY_EVENTS } = await import('../src/msgr-notify.mjs');
 
 const ORG = '11111111-1111-4111-8111-111111111111', CH = '22222222-2222-4222-8222-222222222222';
 
@@ -40,6 +43,23 @@ test('formatMsgrNotify — 종류별 머리·이름 치환(slug 노출 없음)·
   assert.equal(msgrNotifyCrewSlug({ type: 'routine', routine: { agentSlug: 'r' } }), 'r');
   assert.equal(msgrNotifyCrewSlug({ type: 'delegate', to: 'b' }), 'b');
   assert.equal(msgrNotifyCrewSlug({ type: 'job', slug: 'j' }), 'j');
+});
+
+// 분리 검수 M-3 — 주인·크루 1:1 알림도 다른 창구(텔레그램·슬랙·메신저 카드 본문)와 같은 규칙: plain 있으면
+// 그 문장 + "명령: <action>" 한 줄, 없으면(폴백) 기존 action/사유 그대로.
+test('formatMsgrNotify — approval: plain 있으면 쉬운 문장 + "명령: <action>" 한 줄, 없으면(폴백) 기존 그대로', () => {
+  const withPlain = { type: 'approval', item: { action: 'sendGmail(to=subs@list)', reason: 'CEO 지시',
+    plain: { purpose: '뉴스레터 발송 완료', task: '구독자 발송', need: 'Gmail 권한' } } };
+  const ko = formatMsgrNotify(withPlain, 'ko');
+  assert.match(ko, /할 일: 구독자 발송/, '쉬운 문장이 먼저 보인다');
+  assert.match(ko, /명령: sendGmail\(to=subs@list\)/, 'H-1: plain이 있어도 실제 실행될 명령이 보인다');
+  const en = formatMsgrNotify(withPlain, 'en');
+  assert.match(en, /Task: 구독자 발송/);
+  assert.match(en, /Command: sendGmail\(to=subs@list\)/);
+  // 폴백 — plain 없으면 회귀 없이 기존 그대로(위 종류별 테스트가 이미 잠근 계약과 동일한 문자열)
+  const fallback = formatMsgrNotify({ type: 'approval', item: { action: '메일 발송', reason: '고객 회신' } }, 'ko');
+  assert.match(fallback, /^\[결재 요청\] 메일 발송\n고객 회신\n\(아르고 앱/);
+  assert.doesNotMatch(fallback, /명령:/, '폴백은 새 "명령:" 줄을 붙이지 않는다');
 });
 
 test('pushEvent — 켜져 있을 때 원점 없는 이벤트만 간다(원점 있음·음소거·미설정·옛 형식은 호출 0), 배달 실패는 삼킨다', async () => {

@@ -257,7 +257,7 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
     {empty && <p className="work-empty">{t('automation.empty')}</p>}
     {(source.rows ?? []).map((automation) => { const open = expanded.has(automation.id); const bodyId = `work-body-msgr-${automation.id}`; return <article className="work-item" key={automation.id}>
       <button type="button" className="work-item-top work-item-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => toggleCard(automation.id)}>
-        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong>{automation.title}</strong><span className="work-source-badge">{t('automation.source.msgr')}</span></span>
+        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong title={automation.title}>{automation.title}</strong><span className="work-source-badge">{t('automation.source.msgr')}</span></span>
         <span className={`work-status ${automation.enabled ? 'running' : 'cancelled'}`}>{t(automation.enabled ? 'automation.enabled' : 'automation.paused')}</span>
       </button>
       {open && <div className="work-item-body" id={bodyId}>
@@ -285,7 +285,7 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
       const open = expanded.has(routine.id); const bodyId = `work-body-argo-${routine.id}`;
       return <article className="work-item" key={routine.id}>
       <button type="button" className="work-item-top work-item-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => toggleCard(routine.id)}>
-        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span>
+        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong title={routine.title}>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span>
         <span className={`work-status ${pendingDelete ? 'blocked' : effectiveEnabled ? 'running' : 'cancelled'}`}>{t(pendingDelete ? 'routine.delete.badge' : effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span>
       </button>
       {open && <div className="work-item-body" id={bodyId}>

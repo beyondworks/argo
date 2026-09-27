@@ -36,10 +36,31 @@
 .msgr-av.sm { width: 22px; height: 22px; font-size: 10px; }
 
 /* ── 레일(.side 토큰 스코프 안: linen에선 차콜) ── */
-.msgr-side { width: 268px; padding: 16px 14px 14px; gap: 4px; border-right: 1px solid var(--border-soft); overflow: hidden; } /* 스크롤은 railbody만 — 풋터는 항상 보인다(QA: 채널 30개면 풋터가 밀려 사라졌다) */
+/* 데스크톱 레이아웃(폰 셸 아님)도 안전 영역이 필요하다 — 아이패드 넓은 폭(가로 포함)에서 ARGO 로고가 상태 표시줄에 겹쳤다(총괄 실측 2026-09-26).
+   맥·윈도우는 env(safe-area-inset-*)가 0이라 max()가 기존 값을 그대로 낸다 — 화면이 바뀌지 않는다. */
+.msgr-side { width: 268px; padding: max(16px, env(safe-area-inset-top)) 14px 14px max(14px, env(safe-area-inset-left)); gap: 4px; border-right: 1px solid var(--border-soft); overflow: hidden; } /* 스크롤은 railbody만 — 풋터는 항상 보인다(QA: 채널 30개면 풋터가 밀려 사라졌다) */
 .msgr-railbody { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
 .msgr-railinner { display: flex; flex-direction: column; gap: 4px; }
 .shell.msgr-shell { grid-template-columns: 268px minmax(0, 1fr); height: calc(100vh / var(--z, 1)); min-height: 0; }
+/* 터치(coarse) 데스크톱 폭(아이패드 등)에서 소프트 키보드가 뜨면 — 폰 셸과 같은 원리: 셸을
+   visualViewport 높이(키보드+도구 막대를 뺀 값)에 고정해 웹뷰가 "포커스한 칸을 보여주려고" 문서
+   전체를 위로 스크롤하는 걸 막는다. 안 그러면 머리(레일 로고·채널명)가 화면 밖으로 밀리고 입력창
+   아랫부분(첨부·멘션·보내기)이 키보드 도구 막대 뒤에 가려진다(총괄 실측 native-landscape-14,
+   2026-09-27). 맥·윈도우는 pointer:coarse가 아니라 안 걸린다 — 키보드 이벤트 자체가 없다. */
+@media (pointer: coarse) {
+  .msgr-shell:not(.msgr-phone) {
+    position: fixed; top: var(--msgr-viewport-top, 0px); left: 0; right: 0;
+    height: var(--msgr-viewport-height, 100dvh); min-height: 0; overflow: hidden;
+    /* overflow:hidden 없이는 셸 자신이 (body가 fixed라 스크롤을 잃은 뒤) WKWebView가 포커스 칸을
+       보여주려고 scrollIntoView를 걸 수 있는 가장 가까운 포지션드 조상이 돼, 셸 자체가 위로
+       스크롤되며 채널 머리(.msgr-top)가 화면 밖으로 밀렸다(총괄 실측 native-landscape 재확인 2026-09-27,
+       .msgr-main/.msgr-side에 height:100%+overflow:hidden을 준 뒤에도 재현). */
+    grid-template-rows: minmax(0, 1fr); /* grid-template-rows가 없으면 auto가 돼 행이 셸 높이가 아니라
+      .msgr-main/.msgr-side의 콘텐츠 높이(스레드 실제 길이)로 자란다 — 그래서 아래 height:100%가
+      셸의 700px가 아니라 콘텐츠 높이(예: 1376px)에 걸려 셸 밖으로 넘쳤다(getBoundingClientRect 실측) */
+  }
+  .msgr-shell:not(.msgr-phone) .msgr-main, .msgr-shell:not(.msgr-phone) .msgr-side { height: 100%; overflow: hidden; }
+}
 .msgr-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; font-family: var(--mono); font-weight: 600; letter-spacing: 0.16em; font-size: 12px; }
 .msgr-brand svg { fill: var(--mark); }
 /* 조직 알약 — 아바타·이름·화살표 하나로(유건 실검수: 드롭다운 상자 룩 제거). 누르면 아래에 메뉴 */
@@ -64,7 +85,6 @@
 .msgr-menu-pop button.on .label { font-weight: 600; }
 .msgr-menu-pop .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-menu-pop .sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
-.msgr-menu-pop .seatline { padding: 4px 10px 2px; }
 .msgr-av.ghost { background: transparent; border-style: dashed; color: var(--fg-3); }
 .msgr-scrim { display: none; } /* 레일 오버레이 스크림은 폰 폭에서만 — 데스크톱에서 rail 상태가 켜지면 스타일 없는 div가 그리드 첫 칸을 차지해 레일이 밀리고 본문이 다음 행으로 떨어졌다(QA 실측) */
 .msgr-scrim.clear { display: block; background: transparent; z-index: 65; position: fixed; inset: 0; }
@@ -115,7 +135,7 @@
 
 /* ── 본문 ── */
 .msgr-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: calc(100vh / var(--z, 1)); }
-.msgr-top { display: flex; align-items: center; gap: 14px; padding: 14px 24px 12px; border-bottom: 1px solid var(--border); background: var(--bg); }
+.msgr-top { display: flex; align-items: center; gap: 14px; padding: max(14px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) 12px 24px; border-bottom: 1px solid var(--border); background: var(--bg); }
 .msgr-top .title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; white-space: nowrap; }
 .msgr-top .title .mi { color: var(--fg-3); }
 .msgr-top .topic { font-size: 12.5px; color: var(--fg-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -166,6 +186,9 @@
 .msgr-mine .msgr-quote { color: var(--primary-fg-dim); border-color: var(--primary-fg-line); }
 .msgr-acts { display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity 150ms ease; }
 .msgr-row:focus-within .msgr-acts, .msgr-mine:focus-within .msgr-acts { opacity: 1; } @media (hover: hover) { .msgr-row:hover .msgr-acts, .msgr-mine:hover .msgr-acts { opacity: 1; } }
+/* hover가 없는 넓은 화면(아이패드 데스크톱 폭 + 터치, 2026-09-26) — 길게 누르면 App.jsx의 useLongPress가 data-acts='open'을 붙인다.
+   폰 전용 블록(max-width: 720px)의 같은 규칙은 이 폭엔 안 걸린다 — 폭과 무관하게 입력 기기로 갈라야 한다(감사 원칙, 위 hover:hover와 동일). */
+@media (hover: none) { [data-acts='open'] .msgr-acts { opacity: 1; } }
 .msgr-acts button { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-3); padding: 3px 8px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
 @media (hover: hover) { .msgr-acts button:hover { background: var(--card); border-color: var(--border); color: var(--fg); } } .msgr-acts button:active { background: var(--card); border-color: var(--border); color: var(--fg); }
 .msgr-file { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 7px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--border-soft); font-family: var(--mono); font-size: 11px; color: var(--fg-2); vertical-align: middle; cursor: pointer; margin: 6px 6px 0 0; }
@@ -198,6 +221,8 @@
 .msgr-mine .bubble .md :is(code, pre) { background: color-mix(in srgb, var(--primary-fg) 12%, transparent); border-color: var(--primary-fg-line); color: inherit; } /* 내 말풍선 안 코드 — 카드용 --card-2 바탕이 --primary 위에서 글자를 묻었다(검정 말풍선에 흰 상자·흰 글자) */
 .msgr-mine .bubble .md pre code { background: none; border: 0; }
 .msgr-mine .bubble .md :is(a, blockquote) { color: inherit; } .msgr-mine .bubble .md :is(blockquote, th, td, hr) { border-color: var(--primary-fg-line); }
+.msgr-hidden-msg { background: none; border: 0; padding: 0; font: inherit; font-style: italic; font-size: 12.5px; color: var(--fg-3); cursor: pointer; text-decoration: underline dotted; } /* 부적절 표현 가리기(App Store 1.2, 2026-09-26) */
+.msgr-mine .msgr-hidden-msg { color: var(--primary-fg-dim); }
 .msgr-sys.msgr-relay { flex-direction: column; align-items: flex-start; gap: 6px; } /* 전달 안내 — 문장 + 대화 열기 칩(.msgr-chan) 줄 */
 .msgr-relay .msgr-chan { font-style: normal; }
 .msgr-skel { display: grid; gap: 8px; max-width: 640px; padding-top: 4px; }
@@ -222,6 +247,23 @@
 .msgr-slip.approved .action, .msgr-slip.rejected .action { color: var(--fg-2); font-weight: 500; }
 .msgr-slip.rejected .action { text-decoration: line-through; text-decoration-color: var(--fg-3); }
 .msgr-slip.expired .action { color: var(--fg-3); }
+/* 쉬운 문장화(2026-09-26) — 목적·할 일·필요한 것 + 접힘 "명령 보기" */
+.msgr-slip .plain-line { font-size: 13px; line-height: 1.5; }
+.msgr-slip .plain-line b { font-weight: 600; margin-right: 4px; }
+.msgr-slip .plain-line.task { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.msgr-slip .plain-line.task b { font-weight: 650; }
+.msgr-slip .plain-raw { margin-top: 2px; }
+.msgr-slip .plain-raw summary { cursor: pointer; font-size: 11.5px; color: var(--fg-3); }
+.msgr-slip .plain-raw .action, .msgr-slip .plain-raw .reason { margin-top: 6px; }
+/* 펼친 명령이 제목처럼 보이지 않게 — 고정폭·작게·흐리게, 부가 정보로(분리 검수 LOW) */
+.msgr-slip .plain-raw .action { font-family: var(--mono); font-size: 12px; font-weight: 400; letter-spacing: normal; color: var(--fg-2); }
+/* 공백 없는 긴 문장이 데스크톱 폭에서도 잘리지 않게(분리 검수 LOW — 이전엔 폰 폭 미디어쿼리에만 있었다) */
+.msgr-slip .action, .msgr-slip .reason, .msgr-slip .plain-line { overflow-wrap: anywhere; }
+/* 거절·만료 카드는 plain 줄도 기존 action과 같은 흐림 처리(분리 검수 LOW) */
+.msgr-slip.approved .plain-line, .msgr-slip.rejected .plain-line { color: var(--fg-2); }
+.msgr-slip.approved .plain-line.task, .msgr-slip.rejected .plain-line.task { font-weight: 500; }
+.msgr-slip.rejected .plain-line.task { text-decoration: line-through; text-decoration-color: var(--fg-3); }
+.msgr-slip.expired .plain-line { color: var(--fg-3); }
 .msgr-seal { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px 4px 5px; border-radius: 999px; border: 1.5px solid var(--fg-2); color: var(--fg-2); font-size: 11.5px; font-weight: 600; }
 .msgr-seal .mi { width: 18px; height: 18px; padding: 3px; border-radius: 999px; background: var(--fg-2); color: var(--card); stroke-width: 2.2; }
 .msgr-seal.ok { border-color: var(--ok); color: var(--ok); } .msgr-seal.ok .mi { background: var(--ok); }
@@ -247,10 +289,15 @@
 .msgr-tools .send .mi { stroke-width: 2.2; }
 .msgr-tools .send:active { transform: scale(.94); }
 .msgr-tools .send:disabled { opacity: .4; cursor: default; transform: none; }
-.msgr-tools .filechip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); }
-.msgr-tools .filechip .x { border: 0; background: none; color: var(--fg-3); cursor: pointer; font: inherit; font-size: 14px; line-height: 1; padding: 0 0 0 2px; } @media (hover: hover) { .msgr-tools .filechip .x:hover { color: var(--fg); } } .msgr-tools .filechip .x:active { color: var(--fg); }
+/* .msgr-tools 안(데스크톱)이든 .msgr-filechips 안(폰, App.jsx가 알약 밖에 렌더)이든 같은 모양 — 제목 없는 .filechip 자체로 건다(재검수 2026-09-27: .msgr-tools 스코프였을 때 폰에서 모양이 통째로 빠졌었다) */
+.filechip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); }
+.filechip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 이름이 줄어드는 몫을 전부 가져가야 한다 — 크기표시·삭제버튼까지 overflow-wrap:anywhere를 물려받으면 이름 옆 나머지가 한 글자씩 세로로 쪼개진다(유건 제보 2026-09-27) */
+.filechip .msgr-klabel, .filechip .x { flex: none; white-space: nowrap; }
+.msgr-tools .msgr-filechips { display: contents; } /* 데스크톱(.msgr-tools 안에 그대로) — 폰은 App.jsx가 알약 앞 형제로 렌더해 이 규칙이 안 걸린다 */
+.filechip .x { border: 0; background: none; color: var(--fg-3); cursor: pointer; font: inherit; font-size: 14px; line-height: 1; padding: 0 0 0 2px; } @media (hover: hover) { .filechip .x:hover { color: var(--fg); } } .filechip .x:active { color: var(--fg); }
 .msgr-composer.drop { box-shadow: var(--shadow-float), 0 0 0 2px var(--mark); } /* 파일을 끌어다 놓는 중 */
-.msgr-tools .filechip.busy { border-color: var(--mark); } .msgr-tools .filechip.busy .msgr-klabel { color: var(--mark); animation: msgrPulse 1.2s ease-in-out infinite; }
+.filechip.busy { border-color: var(--mark); } .filechip.busy .msgr-klabel { color: var(--mark); animation: msgrPulse 1.2s ease-in-out infinite; }
 .msgr-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 14px 0; font-size: 11px; color: var(--fg-3); }
 .msgr-sub .typing-line { display: flex; align-items: center; gap: 6px; min-height: 16px; }
 .msgr-sub .msgr-dot { width: 6px; height: 6px; }
@@ -346,7 +393,7 @@
 .msgr-setcard { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 20px; display: grid; gap: 12px; }
 .msgr-setcard h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .msgr-setcard p { margin: -6px 0 2px; color: var(--fg-2); font-size: 12.5px; line-height: 1.55; }
-.msgr-setcard .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.msgr-setcard .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0; border-top: 0; width: auto; text-align: inherit; } /* 검수 L-3(2026-09-27): app/globals.css의 전역 .row(리스트행 padding 12px 18px+border-top)가 새어 들어와 제목보다 본문이 들여써 보이던 결함 — 여기서 되돌린다 */
 .msgr-setcard .row > .msgr-klabel { min-width: 64px; }
 .msgr-friend-search .msgr-input { flex: 1; min-width: 0; }
 .msgr-friend-person { display: grid; gap: 4px; flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; }
@@ -362,6 +409,11 @@
 
 /* 빈 상태 — 척추 위 단계 노드 */
 .msgr-empty { margin: auto; align-self: center; align-content: start; width: 100%; max-width: 560px; padding: 40px 0; display: grid; gap: 22px; }
+.msgr-empty .acts { display: flex; flex-wrap: wrap; gap: 8px; } /* 검수 L-3(2026-09-27) — 동의 게이트의 동의·거부 버튼이 붙어 있던 결함 */
+/* 검수 M-5(2026-09-27) — 폰 홈·DM 탭은 레일이 화면 전체다. AiConsentGate를 bare로 그 안에도 그대로 보여준다(빈 화면 방지). */
+.msgr-consent-rail { padding: 8px var(--ph-pad, 14px) 20px; }
+.msgr-consent-rail .msgr-empty { margin: 0; align-self: start; padding: 4px 0; max-width: none; }
+.msgr-consent-rail .msgr-empty h1 { font-size: 15px; }
 .msgr-empty h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 1.3; }
 .msgr-empty p { margin: 0; color: var(--fg-2); font-size: 13.5px; line-height: 1.6; }
 .msgr-steps { position: relative; display: grid; gap: 14px; }
@@ -1056,8 +1108,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-auth .msgr-field input { width: 0; max-width: 100%; }
   .msgr-auth .msgr-wait, .msgr-auth .msgr-server .row { flex-wrap: wrap; }
   .argo-messenger :is(.btn, .msgr-titlebtn, .msgr-menu, .msgr-rail-close, .msgr-hchip, .msgr-sortbtn, .msgr-tools .tb, .msgr-tools .send, .msgr-side .msgr-list .item, .msgr-side .msgr-railrow .more, .msgr-side .msgr-foot .me, .msgr-seg button, .msgr-setnav button, .msgr-acts button, .msgr-reacts button, .msgr-pop button, .msgr-emojipop .grid button, .msgr-rowmenu button, .msgr-menu-pop button, .msgr-file) { min-width: 44px; min-height: 44px; height: auto; }
-  .msgr-tools .filechip { max-width: 100%; overflow-wrap: anywhere; }
-  .msgr-tools .filechip button { min-width: 44px; min-height: 44px; }
+  .filechip { max-width: 100%; overflow-wrap: anywhere; }
+  .filechip button { min-width: 44px; min-height: 44px; }
 }
 /* A landscape keyboard can leave only ~240px: keep the header in one row so the composer still fits. */
 @media (min-width: 721px) and (pointer: coarse) and (max-height: 320px) {
@@ -1124,7 +1176,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-scrim.clear { background: rgba(0, 0, 0, .38); z-index: 72; } /* 아일랜드(70)·+(69)까지 덮는다 */
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop { z-index: 73; }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop button { padding: 8px 6px; font-size: 13px; }
-  .msgr-phone.phone-home .msgr-side .msgr-menu-pop .seatline { padding: 4px 6px 2px; }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop .sep { margin: 4px 2px; }
   /* 안내 줄도 목록과 같은 좌우 여백 */
   .msgr-phone.phone-home .msgr-side .msgr-hint { padding: 6px var(--ph-pad) 14px; font-size: 13px; }
@@ -1250,6 +1301,15 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb { display: grid; place-items: center; padding: 0; margin: 0; border: 0; background: none; color: var(--fg-2); min-width: 0; min-height: 0; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb span { display: none; }
   .msgr-phone .msgr-main .msgr-composer .msgr-tools .tb:nth-child(1) { order: 0; width: 36px; height: 36px; min-width: 36px; min-height: 36px; border-radius: 50%; background: var(--card); border: 1px solid var(--border-soft); }
+  /* 첨부 칩(재검수 2026-09-27) — 폰에서는 App.jsx가 알약(form) 앞의 형제 자리에 렌더(.msgr-filechips), 답글칩·cc칩과 같은
+     흐름 안 요소다. 고정 오프셋으로 멘션 후보창을 밀어내지 않는다 — 후보창(.msgr-pop)의 bottom: calc(100% + 8px)은
+     같은 부모(.msgr-dock 안쪽 래퍼)의 실제 쌓인 높이를 기준으로 하므로, 칩 줄이 흐름에 실제로 차지한 높이만큼
+     저절로 더 올라간다(칩 0·1·2·3개 모두 겹침 0px — 고정 px 계산 불필요). */
+  .msgr-phone .msgr-main .msgr-dock .msgr-filechips { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0 var(--ph-pad) 6px; }
+  /* 44px 탭 영역(접근성)은 유지하되 눈에 보이는 상자는 작게 — 크게 잡으면 크기표시와 ×가 벌어져 보인다(유건 재검수 2026-09-27) */
+  .msgr-phone .filechip .x { position: relative; min-width: 0; min-height: 0; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; }
+  .msgr-phone .filechip .x::before { content: ''; position: absolute; inset: -15px; } /* 보이지 않는 44×44 탭 영역 */
+  .msgr-phone .msgr-main .msgr-filechips ~ .msgr-composer .msgr-tools .tb:nth-child(2) { display: none; } /* 첨부가 있으면 빈 칸 안내용 @ 글리프도 숨긴다 — 글자가 있을 때와 같은 규칙(유건 2026-09-11) */
   .msgr-phone .msgr-main:has(.msgr-dock .msgr-sub:not(:empty)) .msgr-thread { padding-bottom: 32px; } /* '입력 중…' 상태 줄은 흐름 밖(absolute)이라 마지막 말풍선과 겹쳤다 → 그만큼 스레드 바닥을 비운다(유건 2026-09-11) */
 
   /* ── 폰 전환·눌림 효과(유건 2026-09-11) — transform·opacity만, 300ms 이하, 움직임 줄이기 설정이면 전부 끈다 ── */

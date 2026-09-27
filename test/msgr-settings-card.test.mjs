@@ -146,7 +146,11 @@ test('메신저 로그아웃은 이 기기(scope local)만 — 전역이면 같�
 test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(고위험=관리자 기본), 정책 카드에 고위험 결재권 행, 브리지가 risk를 싣는다', () => {
   assert.match(app, /select\('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload'\)/, '결재 조회에 risk·kind·payload가 없다');
   const slip = app.slice(app.indexOf('function Slip('), app.indexOf('function Attachment('));
-  assert.match(slip, /const high = ap\.risk === 'high';/, '위험 판정');
+  // 분리 검수 M-1: high 판정은 approvalExpandDefault(ap)로 옮겼다 — approvalRisk 결과("ap.risk")를
+  // "명령 보기 기본 펼침"으로 바꾸는 표시 규칙 하나뿐이고(../src/approval-display.js), 여전히 새 위험
+  // 판정을 만들지 않는다. 그 함수의 행동은 apps/messenger/test/approval-display.test.mjs가 잠근다.
+  assert.match(slip, /const high = approvalExpandDefault\(ap\);/, '위험 판정(표시 규칙 함수 경유)');
+  assert.match(app, /import \{ approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalExpandDefault \} from '\.\/approval-display\.js';/, '결정 로직을 JSX 없는 파일로 분리 — node --test가 실제로 import해 검증할 수 있게(분리 검수 M-2·M-4)');
   assert.match(slip, /const mode = policy\?\.approval_high_by \?\? 'admin';\n\s*const byAdmin = high && mode !== 'owner';/, '정책 기본값은 admin이어야 한다');
   assert.match(slip, /const can = byAdmin \? \(!!isAdmin \|\| \(mode === 'approvers' && isApprover\)\) : owner;/, '확정권 = 고위험이면 관리자(또는 지정 결재권자), 아니면 소유자');
   assert.match(slip, /\{ap\.status === 'pending' && can && \(<>/, '버튼은 확정권자에게만');
@@ -158,7 +162,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
-  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \{\}\) \};/, '미러 행에 risk·(org_doc이면 kind·payload)가 없다');
+  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \(it\.plain \? \{ payload: \{ plain: it\.plain \} \} : \{\}\)\) \};/, '미러 행에 risk·(org_doc이면 kind·payload, plain이면 payload.plain)가 없다');
   assert.match(bridge, /ap = await c\.db\.insertApproval\(approval\)/, '일반 결재가 위험 판정 payload를 사용해야 한다');
   assert.match(bridge, /createThreadApproval\(event\.wsId, ctx\.crewId, ctx\.sourceMsgId \?\? ctx\.threadRoot, ctx\.channelId, approval, body\)/, '위임 결재도 같은 위험 판정 payload를 사용해야 한다');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
@@ -255,7 +259,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
   assert.match(app, /const \[confirmArchive, setConfirmArchive\] = useState\(false\);/, '보관 2단계 상태');
   assert.match(app, /: <div className="confirm"><p>\{t\('ch\.archive\.confirm'\)\}<\/p>/, '보관 확인 문구');
   assert.match(app, /if \(error\) return onError\?\.\(error\.message\);/, '첨부 오류 토스트');
-  assert.match(app, /<span className="q">\{parentHidden \? t\('msg\.blockedUser'\) : <>\{parent\.author_kind === 'user'/, '인용 말줄임 span(차단한 사람의 글이면 가림 문구)');
+  assert.match(app, /<span className="q">\{parentBlockedUser \? t\('msg\.blockedUser'\) : parentMutedCrew \? t\('msg\.mutedCrew'\) : <>\{parent\.author_kind === 'user'/, '인용 말줄임 span(차단한 사람·숨긴 크루의 글이면 가림 문구, 2026-09-26)');
   assert.match(app, /crs\.sort\(\(a, b\) => \(crewTier\(b, orgRow\) === 'company'\) - \(crewTier\(a, orgRow\) === 'company'\) \|\| a\.display_name\.localeCompare\(b\.display_name, 'ko'\)\);/, '크루 순서 고정');
   assert.match(app, /\{\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(<>/, '개발용 로그인은 DEV 또는 검수용 번들 플래그(VITE_DEV_LOGIN=1)에서만 — 발행 빌드 env엔 이 플래그가 없다');
   const css = read('apps/messenger/src/styles.css');
@@ -316,8 +320,8 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
   assert.match(read('apps/messenger/src/notify.js'), /Notification\.permission !== 'granted'\) return \{ ok: false/, '권한 없으면 조용히(브라우저 경로 — notify.js)');
   assert.match(app, /const osNotify = \(title, body, tag, channelId\) => \{ sendNotify\(title, body, tag, channelId\); \};/, 'OS 알림은 notify.js 한 곳(Tauri 플러그인·브라우저 분기)이며 클릭 이동용 채널을 함께 넘긴다');
-  assert.match(app, /\{tab === 'org' && org && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭)');
-  assert.match(app, /\{tab === 'members' && org && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기');
+  assert.match(app, /\{tab === 'org' && org && !gated && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭) — 동의 게이트 중엔 예외(App Store 5.1.2 재검수 M-5, 2026-09-27)');
+  assert.match(app, /\{tab === 'members' && org && !gated && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기 — 동의 게이트 중엔 예외(M-5)');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /create policy msgr_members_update_self on public\.msgr_org_members for update to authenticated\n\s*using \(user_id = \(select auth\.uid\(\)\) and removed_at is null\)/, '본인 갱신 정책');
   assert.match(sql, /raise exception 'msgr_member_self_only_name'/, '본인은 역할·제거 표시 변경 불가');
@@ -405,6 +409,8 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
   const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', 'rolePick', 'retryBlocked', `return (${expr});`); // rolePick = 1:1 /to·/cc 명령 모드(명령만 있는 글은 전송 금지 — PR #526)
   const disabledSource = app.slice(disabled.start, disabled.end);
   const guardSource = app.slice(guard.test.start, guard.test.end);
+  // 2026-09-27: App Store 5.1.2가 "전송할 때마다 확인"에서 "로그인 뒤 1회 필수 동의"로 바뀌며 send()의 동의 가드를 없앴다
+  // (검수 반영) — 재시도 로직은 다시 send()의 두 번째 문장이다.
   const retryStep = send.init.body.body[1];
   assert.equal(app.slice(retryStep.start, retryStep.end).replace(/\s+/g, ' '), 'if (job) { if (retryBlocked || !await delivery.retry()) return; onSent(delivery.snapshot().lastDeliveredId); if (!text.trim() && !files.length) return; }', '실패 카드가 있으면 그 글부터 다시 보내고, 실패하면 새 글을 보내지 않는다');
   const check = (buttonSource, handlerSource) => {
@@ -429,7 +435,7 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
     assert.throws(() => check(disabledSource.replace(identifier, 'false'), guardSource), /send button/, `removing button ${flag} must fail`);
     if (flag !== 'job' && flag !== 'retryBlocked') assert.throws(() => check(disabledSource, guardSource.replace(identifier, 'false')), /keyboard\/form guard/, `removing handler ${flag} must fail`);
   }
-  assert.match(app, /select\('plan, seats, ls_status'\)/, '자격 조회에 ls_status');
+  assert.match(app, /select\('plan, seats, ls_status, trial_ends_at, paid_until'\)/, '자격 조회에 ls_status·무료 기간·결제 기간(2026-09-26)');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /coalesce\(old\.pending_owner_user_id = me, false\)\) then/, '수락 판정 NULL 방어');
   assert.match(sql, /raise exception 'msgr_transfer_needs_accept'/, '직접 이전 거절');
@@ -546,7 +552,7 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
 test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→크루·문서/사람/크루/전사 문서)+아르고 기억 그래프(별칭)+문장 목록, 감사 19종 문장 사전, 한국어 조사, 설정의 기록 탭 제거', () => {
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /import \{ Graph3D \} from '\.\/graph3d\.jsx';/, '활동 그래프는 3D 컴포넌트(구성은 아르고 코어 재사용)');
-  assert.match(app, /\{page === 'activity' && isPersonal \? \(/, '활동 페이지 — 개인 공간은 조직 활동 대신 안내');
+  assert.match(app, /page === 'activity' && isPersonal \? \(/, '활동 페이지 — 개인 공간은 조직 활동 대신 안내'); // 2026-09-27: 앞에 AI 동의 게이트 분기가 더 붙어 여는 토큰이 '{'가 아니라 ')'다
   assert.match(app, /\) : page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기(조직)');
   assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\(phone \? 'act\.graph\.hint\.phone' : 'act\.graph\.hint'\)\} labels=\{\{ zoomIn: t\('act\.graph\.zoomIn'\)/, '그래프 탭: 3D 기억 그래프 + 줌 버튼 라벨(폰은 휠·더블클릭 없는 안내문)');
   assert.doesNotMatch(app, /msgr-actlocal|<Graph3D key=\{sel\}/, '대상 탭엔 작은 그래프를 넣지 않는다 — 그래프는 그래프 탭 전담(유건 지시 2026-09-04)');

@@ -36,12 +36,16 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, names = {}, stopRequestedBy = null } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCrews = null, attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' }, context = [], peers = null, settledFn = () => false, autoTurns = 0, aiConsent = true, aiConsentMap = null, names = {}, stopRequestedBy = null, orgEntitled = true, orgEntitlementMarker = '2026-09-01T00:00:00.000Z' } = {}) {
   const calls = [];
   const executions = new Map();
   const rec = (k, ...a) => { calls.push([k, ...a]); };
   return {
     calls,
+    // 조직 자격(2026-09-27 M6) — 기본 true(대부분 테스트는 자격과 무관). throw면 판정 실패를 흉내(호출부가 열어 둬야 한다).
+    async orgEntitled(orgId) { rec('orgEntitled', orgId); if (orgEntitled === 'throw') throw new Error('rpc down'); return orgEntitled; },
+    // 자격 만료 마커(2026-09-27 L2) — 안내 client_msg_id에 섞여 재만료 시 새 안내가 다시 뜨게 한다.
+    async orgEntitlementMarker(orgId) { rec('orgEntitlementMarker', orgId); return orgEntitlementMarker; },
     async myCrews() { rec('myCrews'); return crews; },
     async crewBySlug(uid, ws, slug) { rec('crewBySlug', slug); return crews.find((c) => c.slug === slug) ?? null; },
     async heartbeat(ids) { rec('heartbeat', ids); },
@@ -91,6 +95,8 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCre
     async approvalsByIds(ids) { rec('approvalsByIds', ids); return approvals; },
     // H-2: 서버 판정 흉내 — 실제 msgr_can_instruct와 같은 규칙(크루 행 기준). throw 시 브리지는 로컬 판정으로 폴백한다.
     async instructCheck(crewId, authorId, channelId) { rec('instructCheck', crewId, authorId, channelId); if (canInstructThrows) throw new Error('rpc down'); if (channelPolicy[channelId] && channelPolicy[channelId] !== 'allowed') return 'channel_policy'; const c = crews.find((x) => x.id === crewId) ?? peers?.find((x) => x.id === crewId); return c && M.allowedToInstruct(c, authorId, OWNER) ? 'ok' : 'crew_allow'; },
+    // App Store 5.1.2 재설계(2026-09-27) — 기본 동의됨(기존 시나리오 회귀 방지). aiConsentMap으로 사람별, aiConsent:false로 전원 미동의를 흉내낸다.
+    async orgConsentOk(orgId, userId) { rec('orgConsentOk', orgId, userId); return aiConsentMap ? !!aiConsentMap[userId] : aiConsent; },
     async canDecide(apId) { rec('canDecide', apId); return canDecide; },
     // G-2 조직 문서 미러 — 기본은 문서 0(드레인 테스트가 미러로 오염되지 않게)
     async org(orgId) { rec('org', orgId); return orgInfo; },
@@ -164,6 +170,54 @@ test('drain: 멘션·DM만 적재, 크루 글·미대상 무시, 거절·만료�
   const db2 = fakeDb({ messages: [] }); const enq2 = fakeEnqueue();
   await M.drain(WS, { db: db2, uid: OWNER, enqueue: enq2 });
   assert.equal(db2.calls.some((c) => c[0] === 'setCursor'), false);
+});
+
+// 조직 자격(2026-09-27 분리 검수 M6) — 게이트웨이 1차 방어. DB 트리거는 test/msgr-*-pg.test.mjs가 잠근다.
+test('drain: 미자격 조직은 크루 텍스트를 시작하지 않고 채널당 1회만 안내한다', async () => {
+  const db = fakeDb({ orgEntitled: false, messages: [msg(21), msg(22)] });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 0, '미자격이면 크루 턴을 큐에 넣지 않는다');
+  assert.equal(enq.calls.length, 0);
+  const sys = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.ok(sys.length >= 1);
+  assert.ok(sys.every((s) => s.client_msg_id === `unentitled:${CREW}:${CH}:${Date.parse('2026-09-01T00:00:00.000Z')}`), '채널당 안내는 같은 멱등 키(자격 마커 포함, L2)를 쓴다 — 실제 DB 유니크 제약(makeDb.insertMessage 23505→null, 이 가짜 db는 흉내 내지 않는다)이 두 번째부터 조용히 걸러낸다');
+  assert.equal(sys[0].kind, 'system');
+  assert.equal(sys[0].author_kind, 'crew');
+  assert.match(sys[0].body, /무료 기간이 끝나|free period has ended/);
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [['setCursor', CREW, 22]], '커서는 그대로 전진한다(재시도 루프에 빠지지 않는다)');
+});
+test('drain: 안내 키는 자격 마커를 섞는다 — 다른 마커(재만료)는 다른 키가 되어 새 안내가 다시 뜬다(L2)', async () => {
+  const dbA = fakeDb({ orgEntitled: false, messages: [msg(25)], orgEntitlementMarker: '2026-09-01T00:00:00.000Z' });
+  await M.drain(WS, { db: dbA, uid: OWNER, enqueue: fakeEnqueue() });
+  const keyA = dbA.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1].client_msg_id)[0];
+  assert.match(keyA, new RegExp(`^unentitled:${CREW}:${CH}:\\d+$`), '마커가 숫자(에폭 ms)로 키에 섞인다');
+  const dbB = fakeDb({ orgEntitled: false, messages: [msg(26)], orgEntitlementMarker: '2026-10-01T00:00:00.000Z' }); // 연장(재만료) — 다른 마커
+  await M.drain(WS, { db: dbB, uid: OWNER, enqueue: fakeEnqueue() });
+  const keyB = dbB.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1].client_msg_id)[0];
+  assert.notEqual(keyA, keyB, '마커가 바뀌면(연장·재만료) 안내 키도 바뀌어 새 안내가 다시 뜬다 — 옛 키의 DB 유니크 제약에 영영 막히지 않는다');
+});
+test('drain: 자격 판정이 실패(RPC 오류)하면 열어 둔다(fail-open)', async () => {
+  const db = fakeDb({ orgEntitled: 'throw', messages: [msg(23)] });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 1, '판정 실패는 차단이 아니라 평소대로 진행한다 — DB 트리거가 최종 방어선');
+  assert.equal(enq.calls.length, 1);
+});
+test('drain: db 어댑터에 orgEntitled가 없는 옛 버전도 열어 둔다', async () => {
+  const db = fakeDb({ messages: [msg(24)] });
+  delete db.orgEntitled;
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 1);
+});
+test('drain: 개인 공간(채널 org_id null)은 조직 자격 확인 대상이 아니다', async () => {
+  const db = fakeDb({ orgEntitled: false, messages: [msg(25)] });
+  db.channelOverride = { org_id: null, kind: 'dm' };
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 1, '개인 공간은 orgEntitled=false와 무관하게 정상 진행한다');
+  assert.equal(db.calls.some((c) => c[0] === 'orgEntitled'), false, '개인 공간은 자격 판정 자체를 부르지 않는다(channel.org_id null)');
 });
 
 test('drain: 앱에서 확정된 결재를 큐 우회로 로컬 정본에 반영(resolvedBy 기록)', async () => {
@@ -329,6 +383,35 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
   assert.match(schedSrc, /const mirrorCtx = crewmailMirrorCtx\(cid, slug, msg\);[^\n]*\n(?:\s*if \(mirrorCtx\) \{ const mem = await crewMemoryForMail\(mirrorCtx\.crewId, mirrorCtx\.channelId\)[^\n]*\n)?\s*const t = await chat\(cid, slug, prompt, null, \{ from: opts\.from, hop: opts\.hop, chain: opts\.chain, source: 'crewmail', \.\.\.\(mirrorCtx \? \{ mirrorCtx, journal: msgrJournal\(msg\.msgr\.orgId, msg\.msgr\.channelId, msg\.msgr\.memoryOff\) \} : await briefingCtx\(cid, 'crewmail', slug\)[^\n]*\) \}\);/, '배달 턴이 채널 문맥으로(메신저 밖 쪽지는 목적지 범위 — 행동은 shared-dest-context)');
 });
 
+// 분리 검수 H-1·M-4 — plain이 있어도 카드 payload에 실리고, 카드 글 본문(다른 창구·검색·구버전
+// 클라이언트가 보는 텍스트)에서 실제 실행될 명령이 사라지면 안 된다. msgrPush를 실제로 태우고
+// insertApproval·insertMessage 호출 인자를 검증한다(소스 문자열 정규식이 아니다).
+test('push: 결재에 plain(목적·할 일·필요한 것)이 있으면 카드 payload에 실리고, 카드 본문에 "명령: <action>" 한 줄이 반드시 남는다', async () => {
+  const db = fakeDb({ parent: msg(7) });
+  const session = async () => ({ db, uid: OWNER });
+  const it = await addApproval(WS, {
+    slug: 'seoyun', action: 'sendGmail(to=subs@list, subject="9월 뉴스레터")', reason: 'CEO 지시',
+    plain: { purpose: '이번 달 뉴스레터 발송 완료', task: '구독자 1200명에게 메일 발송', need: 'Gmail 발송 권한' },
+    msgr: { orgId: ORG, channelId: CH, crewId: CREW },
+  });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session }), true);
+  const ap = db.calls.filter((x) => x[0] === 'insertApproval').at(-1)[1];
+  assert.deepEqual(ap.payload, { plain: { purpose: '이번 달 뉴스레터 발송 완료', task: '구독자 1200명에게 메일 발송', need: 'Gmail 발송 권한' } }, '카드 payload에 plain이 실린다');
+  const card = db.calls.filter((x) => x[0] === 'insertMessage').at(-1)[1];
+  assert.match(card.body, /할 일: 구독자 1200명에게 메일 발송/, 'plain 문장이 카드 본문에 보인다');
+  assert.match(card.body, /명령: sendGmail\(to=subs@list, subject="9월 뉴스레터"\)/, 'H-1: plain이 있어도 실제 실행될 명령이 본문에 항상 남는다');
+});
+
+test('push: 결재에 plain이 없으면(폴백) 카드 본문에 새 "명령:" 줄을 붙이지 않는다(회귀 없음)', async () => {
+  const db = fakeDb({ parent: msg(7) });
+  const session = async () => ({ db, uid: OWNER });
+  const it = await addApproval(WS, { slug: 'seoyun', action: '경쟁사 리포트 업로드', reason: '분기 보고', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session }), true);
+  const card = db.calls.filter((x) => x[0] === 'insertMessage').at(-1)[1];
+  assert.match(card.body, /경쟁사 리포트 업로드/);
+  assert.doesNotMatch(card.body, /명령:/, '폴백 카드는 기존 본문 그대로');
+});
+
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
   const h = await saveHandover(WS, 'seoyun', '지시', '답', '서윤', { tag: 'org-abc' });
   assert.match(h.file, /\d{4}-\d{2}-\d{2}-seoyun\.org-abc\.md$/);
@@ -349,7 +432,7 @@ test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewSer
   assert.ok(calls.length >= 7, `재귀·위임 호출 ${calls.length}곳(기대 7+)`);
   for (const l of calls) assert.match(l, /\bjournal\b/, `journal 미전달: ${l.trim().slice(0, 90)}`);
   assert.match(src, /makeCrewServer\(wsId, agentSlug, [^\n]*workFolder, crewSink, journal, fullAuto\)/, 'makeCrewServer 호출부(crewSink = 네이티브 엔진 도구 sink, 하네스 통일 P-A; fullAuto = 풀 오토 모드 2026-09-26)');
-  assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/, 'request_approval 각인');
+  assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(\(purpose \|\| task \|\| need\) \? \{ plain: \{ purpose, task, need \} \} : \{\}\),\n\s*\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/, 'request_approval 각인(쉬운 문장화 plain 포함)');
   assert.equal((src.match(/\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/g) ?? []).length, 4, '결재 등록 4곳(request_approval·profile·hire·손님 턴 도구 설치) 전부 각인');
   const { isOrgTagged } = await import('../src/consolidate.mjs');
   assert.equal(isOrgTagged('2026-09-03-seoyun.org-abc-123.md'), true); assert.equal(isOrgTagged('2026-09-03-seoyun.md'), false);
@@ -1426,6 +1509,77 @@ test('drain: 봉투 거부 사유 네 갈래가 각각 맞는 안내로 갈린�
   assert.match(other[0].body, /받을 수 없습니다/);
   // 판정 RPC 자체가 죽어도 침묵하지 않는다
   assert.match((await run({ instructCheck: async () => { throw new Error('rpc down'); } }))[0].body, /받을 수 없습니다/);
+});
+
+// App Store 5.1.2 재설계(2026-09-27, 유건 결정 "처음 한 번 필수 동의") — 지시 권한이 있어도(instructCheck 'ok')
+// 발신자가 조직에서 AI 이용에 동의하지 않았으면 이 턴은 크루에게 넘어가지 않는다. 1차 관문은 앱의 필수 동의 화면이고
+// 이 게이트는 옛 클라이언트·철회자를 위한 보조 방어선. 안내는 채널·크루당 한 번만(메시지마다 새 키를 쓰지 않는다).
+test('drain: AI 전송 동의가 없으면 지시 권한이 있어도 크루 턴으로 넘기지 않는다(게이트웨이 강제, 클라이언트 창만 믿지 않음)', async () => {
+  const db = fakeDb({ messages: [msg(11)], aiConsent: false });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 0, '동의 없음 — 큐에 넣지 않는다');
+  assert.equal(r.denied, 1);
+  const [inserted] = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.match(inserted.body, /동의/, '동의 필요 안내가 나간다');
+  assert.equal(inserted.client_msg_id, `aiconsent:${CREW}:${CH}`, '메시지마다가 아니라 채널·크루당 한 번만 안내(같은 사람이 또 보내도 dup 키로 조용히 억제)');
+  assert.ok(db.calls.some((c) => c[0] === 'orgConsentOk' && c[1] === ORG && c[2] === MEMBER), '발신자 본인의 조직 단위 동의를 물었다');
+});
+
+test('drain: 동의하면(기본값) 그대로 큐에 들어간다 — 동의 게이트가 정상 턴까지 막지 않는다', async () => {
+  const db = fakeDb({ messages: [msg(11)], aiConsent: true });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.queued, 1);
+  assert.equal(r.denied, 0);
+});
+
+// 검수 H3(2026-09-27): 동의 확인 함수가 없거나 호출이 실패하면(마이그레이션 미적용·셀프호스트 옛 DB) 턴을 막지 말고
+// 열어 둔다(fail-open) — entCache(조직 자격)와 같은 태도. 1차 관문은 앱의 필수 동의 화면이라 이 확인은 보조 방어선일 뿐이다.
+test('drain: 동의 확인 RPC가 없거나 죽으면 열어 둔다(fail-open) — 옛 db 어댑터의 동기 TypeError도 포함', async () => {
+  const db = fakeDb({ messages: [msg(11)] });
+  db.orgConsentOk = async () => { throw new Error('rpc down'); };
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(r.queued, 1, 'RPC가 죽어도 턴은 막히지 않는다');
+  assert.equal(r.denied, 0);
+  const db2 = fakeDb({ messages: [msg(12)] });
+  delete db2.orgConsentOk; // 옛 db 어댑터 — 함수 자체가 없다(동기 TypeError)
+  const r2 = await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(r2.queued, 1);
+  assert.equal(r2.denied, 0);
+});
+
+test('drain: 이 틱 안에서 같은 사람의 동의는 크루가 여럿이어도 한 번만 묻는다(검수 L9, entCache와 같은 요령)', async () => {
+  const beast = crew({ id: ZED, slug: 'beast', display_name: '비스트' });
+  const db = fakeDb({ crews: [crew(), beast], messages: [msg(11), msg(12, { mentions: [{ kind: 'crew', id: ZED }] })], aiConsent: false });
+  await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  const calls = db.calls.filter((c) => c[0] === 'orgConsentOk' && c[2] === MEMBER);
+  assert.equal(calls.length, 1, '같은 조직·같은 사람이면 크루 둘 다에 대해 한 번만 물어야 한다');
+});
+
+test('drain: 크루끼리 넘김은 발신 크루 소유자·뿌리 사람 둘 다 동의해야 한다(AND) — 한쪽만 동의해도 넘어가지 않는다', async () => {
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const root = msg(40, { author_user_id: MEMBER, mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: CREW }] });
+  const relay = msg(41, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 40, reply_to: 40, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: MEMBER } });
+  // origin(ZED 소유자) = OWNER, rootAuthor = MEMBER — OWNER만 동의, MEMBER는 미동의
+  const db = fakeDb({ crews: [crew(), zed], messages: [relay], parent: (id) => (id === 40 ? root : null), settledFn: () => true, aiConsentMap: { [OWNER]: true, [MEMBER]: false } });
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(r.queued, 0, '뿌리 사람이 동의하지 않아 넘김이 실행되지 않는다');
+  assert.equal(r.denied, 1);
+  // 둘 다 동의하면 통과
+  const db2 = fakeDb({ crews: [crew(), zed], messages: [relay], parent: (id) => (id === 40 ? root : null), settledFn: () => true, aiConsentMap: { [OWNER]: true, [MEMBER]: true } });
+  const r2 = await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(r2.queued, 1);
+});
+
+// 검수 M2(2026-09-27): 봉투(envelope) 경로도 같은 게이트를 거친다 — "봉투 경로에서만 끔" 변이가 red가 돼야 한다.
+test('drain: 봉투(crewContext) 경로도 같은 동의 게이트를 거친다 — envelope가 있어도 미동의면 막힌다', async () => {
+  const source = msg(11);
+  const db = fakeDb({ messages: [source], aiConsent: false });
+  db.crewContext = async () => ({ source, root: source, channel: { id: CH, org_id: ORG, kind: 'public' }, peers: [], context: [], delegated: false, delivery_role: 'to', actor: MEMBER, attachments: [], settled_source: false, settled_root: false, settled_root_before_source: false, auto_turns: 0, settled_predecessors: [] });
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(r.queued, 0, '봉투가 있어도 조직 동의가 없으면 턴을 넘기지 않는다');
+  assert.equal(r.denied, 1);
 });
 
 // 보관 채널처럼 읽기는 되고 쓰기는 막히는 자리에서는 안내 삽입이 RLS에 영구히 막힌다.

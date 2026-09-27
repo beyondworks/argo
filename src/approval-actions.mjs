@@ -27,7 +27,7 @@ export async function resolveWithFollowUp(wsId, id, approve, opts = {}) {
 }
 
 /** profile/hire 승인 — payload를 서버가 직접 적용. 성공 요약 문자열을 돌려준다(후속 턴 메시지 재료). */
-async function applyPayload(wsId, item) {
+async function applyPayload(wsId, item, { session } = {}) {
   const p = item.payload ?? {};
   if (item.kind === 'profile') {
     const { updateAgentMeta, appendAgentRule, setAgentRules, setAgentSection } = await import('./persona.mjs');
@@ -61,6 +61,13 @@ async function applyPayload(wsId, item) {
     if (item.action !== `${serverId} · ${tool}`) {
       return `실행 취소 — 결재 내용(${item.action})과 실행 대상(${serverId} · ${tool})이 다르다. 사장에게 다시 올려라.`;
     }
+    // 2026-09-27 N5(유건 결정) — 메신저 결재는 실행 직전 조직 자격을 다시 본다. 메신저와 무관한 결재(item.msgr 없음)는 그대로 실행.
+    if (item.msgr?.orgId) {
+      const { msgrOrgEntitledForApproval } = await import('./gateway/msgr.mjs');
+      if (!(await msgrOrgEntitledForApproval(item.msgr.orgId, { session }))) {
+        return '무료 기간이 끝나 실행하지 않았습니다. 조직 관리자에게 문의하세요.';
+      }
+    }
     const r = await callConnectorTool(wsId, serverId, tool, args ?? {}, { lang: lang ?? 'ko', approved: true });
     if (!r.ok) {
       const detail = r.content?.[0]?.text ?? r.error ?? '';
@@ -88,7 +95,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
     // 서버가 payload를 먼저 적용하고, 결과를 크루가 사용자에게 보고한다(크루 재실행 금지 — 이중 적용 방지)
     let outcome;
     try {
-      outcome = await applyPayload(wsId, item);
+      outcome = await applyPayload(wsId, item, { session });
     } catch (e) {
       outcome = `적용 실패: ${String(e.message || e).slice(0, 160)}`;
     }

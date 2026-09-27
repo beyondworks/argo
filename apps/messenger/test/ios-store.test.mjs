@@ -45,11 +45,13 @@ import { ipaGate, LOGIN_SCHEME, USAGE_KEYS } from '../scripts/ios-store.mjs';
 import { readFileSync as rf } from 'node:fs';
 
 test('ipa 게이트: 로그인 복귀 스킴·버전·암호화 면제 셋 다 있어야 통과(실사고 2026-09-11 — 스킴 없는 ipa가 세 버전 나갔다)', () => {
-  const ok = { CFBundleURLTypes: [{ CFBundleURLSchemes: [LOGIN_SCHEME] }], CFBundleShortVersionString: '0.1.7', ITSAppUsesNonExemptEncryption: false, UIDeviceFamily: [1], UIApplicationSceneManifest: { UIApplicationSupportsMultipleScenes: true }, ...Object.fromEntries(USAGE_KEYS.map((k) => [k, '설명'])) };
+  const ok = { CFBundleURLTypes: [{ CFBundleURLSchemes: [LOGIN_SCHEME] }], CFBundleShortVersionString: '0.1.7', ITSAppUsesNonExemptEncryption: false, UIDeviceFamily: [1, 2], UIApplicationSceneManifest: { UIApplicationSupportsMultipleScenes: true }, ...Object.fromEntries(USAGE_KEYS.map((k) => [k, '설명'])) };
   assert.deepEqual(ipaGate(ok, { version: '0.1.7' }), []);
+  assert.deepEqual(ipaGate({ ...ok, UIDeviceFamily: [2, 1] }, { version: '0.1.7' }), [], '순서 무관 — [2,1]도 통과');
   // 실사고 2026-09-17: 씬 설정 없는 0.1.27(iOS 27 SDK)이 iOS 27에서 실행 즉시 종료 — 없거나 false면 올리지 않는다
   for (const m of [undefined, {}, { UIApplicationSupportsMultipleScenes: false }]) assert.match(ipaGate({ ...ok, UIApplicationSceneManifest: m }, { version: '0.1.7' })[0], /UIApplicationSceneManifest/, JSON.stringify(m ?? null));
-  for (const fam of [undefined, [1, 2], [2]]) assert.match(ipaGate({ ...ok, UIDeviceFamily: fam }, { version: '0.1.7' })[0], /UIDeviceFamily/, `iPhone 전용 선언 되돌림 적발(${JSON.stringify(fam ?? null)}, 검수 #532 M-3)`);
+  // 2026-09-26: 아이패드 지원 추가 — [1]만(아이패드 선언 소실)·[2]만(아이폰 선언 소실)·undefined 모두 적발
+  for (const fam of [undefined, [1], [2]]) assert.match(ipaGate({ ...ok, UIDeviceFamily: fam }, { version: '0.1.7' })[0], /UIDeviceFamily/, `아이폰+아이패드 선언 되돌림 적발(${JSON.stringify(fam ?? null)}, 검수 #532 M-3 · 2026-09-26 아이패드 확장)`);
   assert.match(ipaGate({ ...ok, CFBundleURLTypes: [] }, { version: '0.1.7' })[0], /스킴 없음/);
   assert.match(ipaGate({ ...ok, CFBundleShortVersionString: '0.1.6' }, { version: '0.1.7' })[0], /버전 불일치/);
   assert.match(ipaGate({ ...ok, ITSAppUsesNonExemptEncryption: undefined }, { version: '0.1.7' })[0], /ITSAppUsesNonExemptEncryption/);

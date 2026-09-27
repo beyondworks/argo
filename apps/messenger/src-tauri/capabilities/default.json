@@ -12,6 +12,9 @@
       "allow": [
         {
           "url": "https://*"
+        },
+        {
+          "url": "mailto:*"
         }
       ]
     }

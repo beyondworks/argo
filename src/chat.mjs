@@ -385,7 +385,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     return `\n## Approval rules — must follow
-- ${fullAuto ? `This is an owner-direct turn and full auto mode is on for this company: go ahead and execute everything except ${fullAutoExceptEn} without approval — including actions that leave the company (sending, publishing, editing, connector writes) — then report what you did.` : 'Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval.'} ${hasTools ? `File ${fullAuto ? `an approval for ${fullAutoExceptEn}` : 'an approval'} with the request_approval tool and wait for the decision.` : 'If approval is needed, do not execute — file it by ending your reply with a directive block: ```argo\n{"action":"approval","request":"<the action>","reason":"<why>"}\n``` It lands in the approval inbox, and once approved a follow-up instruction arrives. Never just SAY approval is required without the block (nothing reaches the inbox that way).'}
+- ${fullAuto ? `This is an owner-direct turn and full auto mode is on for this company: go ahead and execute everything except ${fullAutoExceptEn} without approval — including actions that leave the company (sending, publishing, editing, connector writes) — then report what you did.` : 'Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval.'} ${hasTools ? `File ${fullAuto ? `an approval for ${fullAutoExceptEn}` : 'an approval'} with the request_approval tool and wait for the decision.` : 'If approval is needed, do not execute — file it by ending your reply with a directive block: ```argo\n{"action":"approval","request":"<the action>","reason":"<why>","purpose":"<what for — optional>","task":"<what you will do — optional>","need":"<what you need for it — optional>"}\n``` Fill purpose/task/need and the captain sees a plain sentence instead of raw wording; leave them out and the captain still sees request/reason as before. It lands in the approval inbox, and once approved a follow-up instruction arrives. Never just SAY approval is required without the block (nothing reaches the inbox that way).'}
 - In-company work like drafting, analysis, and vault notes proceeds right away without approval.
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
@@ -417,7 +417,7 @@ ${responsePacing}## Your environment (Argo) — guide the captain precisely when
   // 추가하세요"라고 오안내)과 2026-07-29(파일 저장이 안 되자 "설정에서 쓰기 권한을 켜세요"라고
   // 안내했는데 그런 메뉴가 없어 사장이 한참 헤맴). 이제 능력은 전권이라 켤 것 자체가 없다.
   return `\n## 결재 규칙 — 반드시 따를 것
-- ${fullAuto ? `이 턴은 주인이 직접 지시했고 이 회사는 풀 오토 모드가 켜져 있다: ${fullAutoExceptKo}를 뺀 모든 일은 결재 없이 바로 실행하라 — 회사 밖으로 나가는 발송·게시·수정·연결 서비스 쓰기도 포함이다. 실행한 뒤 결과를 보고하라.` : '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라.'} ${hasTools ? `${fullAuto ? `${fullAutoExceptKo}은(는)` : ''} request_approval 도구로 결재를 올리고 결정을 기다려라.` : '결재가 필요하면 실행하지 말고, 답변 끝에 ```argo\n{"action":"approval","request":"<하려는 행동>","reason":"<왜>"}\n``` 지시 블록을 붙여 결재를 올려라 — 결재함에 등록되고, 승인되면 후속 지시가 온다. 블록 없이 "결재가 필요하다"고 말로만 하지 마라(결재함에 아무것도 안 올라간다).'}
+- ${fullAuto ? `이 턴은 주인이 직접 지시했고 이 회사는 풀 오토 모드가 켜져 있다: ${fullAutoExceptKo}를 뺀 모든 일은 결재 없이 바로 실행하라 — 회사 밖으로 나가는 발송·게시·수정·연결 서비스 쓰기도 포함이다. 실행한 뒤 결과를 보고하라.` : '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라.'} ${hasTools ? `${fullAuto ? `${fullAutoExceptKo}은(는)` : ''} request_approval 도구로 결재를 올리고 결정을 기다려라.` : '결재가 필요하면 실행하지 말고, 답변 끝에 ```argo\n{"action":"approval","request":"<하려는 행동>","reason":"<왜>","purpose":"<무엇을 위해(선택)>","task":"<무엇을 한다(선택)>","need":"<그러기 위해 필요한 것(선택)>"}\n``` 지시 블록을 붙여 결재를 올려라 — purpose·task·need를 채우면 사장 화면에 명령어 대신 쉬운 문장이 먼저 보이고, 비우면 지금처럼 request·reason이 그대로 보인다. 결재함에 등록되고, 승인되면 후속 지시가 온다. 블록 없이 "결재가 필요하다"고 말로만 하지 마라(결재함에 아무것도 안 올라간다).'}
 - 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
@@ -555,13 +555,17 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     // 풀 오토(회사 단위 스위치)면서 주인 직접 턴(fullAuto=true, 호출부가 guest까지 판정)이면 결재 대상이
     // 삭제·구매/결제·민감 정보 변경 3계급으로 좁아진다(요구사항 3) — connectors.mjs 커넥터 쓰기 게이트와
     // 같은 목록. 셸 고위험 결재(risky-shell.mjs)는 이 도구가 아니라 별도 경로라 여기서 언급하지 않는다.
-    fullAuto
+    // 쉬운 문장화(유건 확정 2026-09-26) — purpose/task/need는 선택 항목. 채우면 사장 화면에 명령어 대신
+    // "무엇을 위해(목적)·무엇을 한다(할 일)·그러기 위해 무엇이 필요하다(필요한 것)" 쉬운 문장이 먼저 보이고
+    // 원래 action/reason은 "명령 보기" 접힘으로 들어간다. 비우면(폴백) 지금과 같은 카드 그대로.
+    `${fullAuto
       ? '삭제, 돈이 나가는 일(구매·결제·구독), 민감 정보 변경(비밀번호·API 키·토큰·로그인 연결/해제·결제 수단·공유·권한 설정·계정 설정)을 실행하기 전에 사장의 결재를 요청한다. 그 밖의 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·문서 수정 등)은 이 회사의 풀 오토 모드가 켜져 있고 사장이 직접 지시한 턴이라 결재 없이 바로 실행하고 결과를 보고하면 된다. action은 하려는 행동 한 문장, reason은 왜 필요한지.'
-      : '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)을 실행하기 전에 사장의 결재를 요청한다. action은 하려는 행동 한 문장, reason은 왜 필요한지.',
-    { action: z.string(), reason: z.string() },
-    async ({ action, reason }) => {
+      : '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)을 실행하기 전에 사장의 결재를 요청한다. action은 하려는 행동 한 문장, reason은 왜 필요한지.'} purpose(무엇을 위해)·task(무엇을 한다)·need(그러기 위해 필요한 권한·자원)를 채우면 사장 화면에 명령어 대신 쉬운 문장으로 먼저 보인다 — 예: purpose="이번 달 뉴스레터 발송 완료", task="구독자 1200명에게 메일 발송", need="Gmail 발송 권한". 셋 다 선택 항목이고, 비우면 action·reason이 그대로 보인다.`,
+    { action: z.string(), reason: z.string(), purpose: z.string().optional(), task: z.string().optional(), need: z.string().optional() },
+    async ({ action, reason, purpose, task, need }) => {
       // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다 — 같은 크루의 동시 턴에서도 오배달 없음)
       const item = await addApproval(wsId, { slug: fromSlug, ...(delegatedBy ? { from: delegatedBy } : {}), action, reason,
+        ...((purpose || task || need) ? { plain: { purpose, task, need } } : {}),
         ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), ...approvalScope(mirrorCtx) });
       return text(`결재 요청이 등록되었다(${item.id}). 승인 전에는 절대 그 행동을 실행하지 마라. 지금은 "결재를 올렸고 승인되면 진행하겠다"고 사용자에게 알리고 턴을 마무리하라.${await channelHealthNote()}`);
     },

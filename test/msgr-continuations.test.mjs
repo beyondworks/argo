@@ -412,3 +412,141 @@ test('scoped continuation audit survives approval, routine and job persistence w
     assert.ok(failed.messages.slice(-2).every(m=>m.contextScope?.channelId===f.origin.channelId),'a failed continuation cannot leak unscoped audit text');
   } finally { f.stop(); }
 });
+
+// 2026-09-27 2차 검수(N3) — 결재 후속(runMessengerContinuation)·큐 잡 핸들러(makeMsgrHandler run())의 자격 재확인은
+// 여태 어떤 테스트도 잠그지 않았다(제거해도 실패 0). 여기서 잠근다.
+test('runMessengerContinuation stops before the expensive turn when the org has lost entitlement', async () => {
+  const f = await setup();
+  const { runMessengerContinuation } = await import('../src/gateway/msgr.mjs');
+  f.db.orgEntitled = async () => false;
+  let ran = false;
+  try {
+    await assert.rejects(runMessengerContinuation(f.ws, 'alpha', f.origin, '진행', null, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } }), /msgr_org_unentitled/);
+    assert.equal(ran, false, 'entitlement is rechecked before the paid turn runs, not after');
+  } finally { f.stop(); }
+});
+
+test('makeMsgrHandler run(): a queued job rechecks entitlement before running and only leaves a channel notice', async () => {
+  const f = await setup();
+  const { makeMsgrHandler } = await import('../src/gateway/msgr.mjs');
+  f.db.orgEntitled = async () => false;
+  f.db.settled = async () => false;
+  const inserted = [];
+  f.db.insertMessage = async (row) => { inserted.push(row); return { id: 99 }; };
+  let ran = false;
+  const handler = makeMsgrHandler(f.ws, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } });
+  await handler({ msgId: 40, slug: 'alpha', crewId: 'a', channelId: 'channel', orgId: 'org', authorId: 'owner', threadRoot: 40, text: '작업', createdAt: new Date().toISOString() });
+  assert.equal(ran, false, 'a job already sitting in the queue is not run once the org has lost entitlement');
+  assert.equal(inserted.length, 1);
+  assert.match(inserted[0].client_msg_id, /^unentitled:a:channel/);
+  f.stop();
+});
+
+// 2026-09-27 N5(유건 결정) — 결재 승인 시 커넥터 payload 실행은 미자격 조직이면 실행하지 않고 카드에 안내만 남긴다.
+// applyRoutineEdits(본체 로컬 기능 설정)는 이 게이트 대상이 아니다 — drain()의 housekeeping에서 별도로 부른다(건드리지 않음).
+test('approval follow-up: an unentitled org does not run a connector payload, it leaves a note instead', async () => {
+  const f = await setup();
+  const approvals = await import('../src/approval-actions.mjs');
+  // applyPayload's own check (the first call) sees unentitled; later calls (runMessengerContinuation's
+  // separate, pre-existing re-check) see entitled so the follow-up turn still runs and we can observe
+  // the outcome text — this isolates the connector-specific gate from the unrelated continuation gate,
+  // which would otherwise also reject the whole follow-up turn and hide what applyPayload actually did.
+  let call = 0;
+  f.db.orgEntitled = async () => { call += 1; return call > 1; };
+  const item = { id: 'ap-connector-1', kind: 'connector', action: 'gmail · send_mail', slug: 'alpha', payload: { serverId: 'gmail', tool: 'send_mail', args: {} }, msgr: f.origin };
+  let seenText = null;
+  await approvals._followUpForTest(f.ws, item, true, { session: f.session, runChat: async (_ws, _slug, text) => { seenText = text; return { reply: 'ok' }; } });
+  assert.match(seenText, /무료 기간이 끝나 실행하지 않았습니다/, 'the outcome note reaches the crew turn instead of the connector actually running');
+  f.stop();
+});
+
+test('approval follow-up: an entitled org still attempts the connector payload (control)', async () => {
+  const f = await setup();
+  const approvals = await import('../src/approval-actions.mjs');
+  f.db.orgEntitled = async () => true;
+  const item = { id: 'ap-connector-2', kind: 'connector', action: 'gmail · send_mail', slug: 'alpha', payload: { serverId: 'gmail', tool: 'send_mail', args: {} }, msgr: f.origin };
+  let seenText = null;
+  await approvals._followUpForTest(f.ws, item, true, { session: f.session, runChat: async (_ws, _slug, text) => { seenText = text; return { reply: 'ok' }; } });
+  assert.doesNotMatch(seenText, /무료 기간이 끝나 실행하지 않았습니다/, 'an entitled org is not frozen by this gate (it fails later for an unrelated reason — no real gmail connector is configured in this fixture)');
+  f.stop();
+});
+
+// 2026-09-27 저녁(2차 재검수, M-2) — 결재 후속(runMessengerContinuation)·큐 잡 핸들러(makeMsgrHandler run())도
+// 원문 작성자의 동의 상태를 실행 직전에 다시 본다(자격 재확인 N3와 같은 두 자리).
+test('runMessengerContinuation stops before the expensive turn when the source author has declined/withdrawn consent', async () => {
+  const f = await setup();
+  const { runMessengerContinuation } = await import('../src/gateway/msgr.mjs');
+  f.db.orgConsentOk = async () => false;
+  let ran = false;
+  try {
+    await assert.rejects(runMessengerContinuation(f.ws, 'alpha', f.origin, '진행', null, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } }), /msgr_ai_consent_declined/);
+    assert.equal(ran, false, 'consent is rechecked before the paid turn runs, not after');
+  } finally { f.stop(); }
+});
+
+test('makeMsgrHandler run(): a queued job rechecks the thread root author consent before running and only leaves a channel notice', async () => {
+  const f = await setup();
+  const { makeMsgrHandler } = await import('../src/gateway/msgr.mjs');
+  f.db.crewContext = async () => ({
+    delivery_role: 'to',
+    channel: { id: 'channel', org_id: 'org', kind: 'private', crew_memory: false },
+    source: { id: 41, channel_id: 'channel', author_kind: 'user', author_user_id: 'person', body: 'hi', reply_to: null, thread_root: null, meta: {} },
+    root: { id: 41, author_kind: 'user', author_user_id: 'person' },
+    peers: [], settled_source: false, settled_predecessors: [],
+  });
+  f.db.orgConsentOk = async () => false;
+  f.db.settled = async () => false;
+  const inserted = [];
+  f.db.insertMessage = async (row) => { inserted.push(row); return { id: 99 }; };
+  let ran = false;
+  const handler = makeMsgrHandler(f.ws, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } });
+  await handler({ msgId: 41, slug: 'alpha', crewId: 'a', channelId: 'channel', orgId: 'org', authorId: 'person', threadRoot: 41, text: '작업', createdAt: new Date().toISOString() });
+  assert.equal(ran, false, 'a job whose thread root author has declined consent is not run');
+  assert.equal(inserted.length, 1);
+  assert.match(inserted[0].client_msg_id, /^aiconsent:a:channel/);
+  f.stop();
+});
+
+// 2026-09-27 밤(3차 검수 M-1) — the thread root and the message actually being answered (source) can be two
+// different people. A consenting root author must not mask a source author who has since declined/withdrawn.
+test('makeMsgrHandler run(): a queued job also rechecks the source author consent when it differs from the thread root', async () => {
+  const f = await setup();
+  const { makeMsgrHandler } = await import('../src/gateway/msgr.mjs');
+  f.db.crewContext = async () => ({
+    delivery_role: 'to',
+    channel: { id: 'channel', org_id: 'org', kind: 'private', crew_memory: false },
+    source: { id: 42, channel_id: 'channel', author_kind: 'user', author_user_id: 'other-person', body: 'hi again', reply_to: 41, thread_root: 41, meta: {} },
+    root: { id: 41, author_kind: 'user', author_user_id: 'person' },
+    peers: [], settled_source: false, settled_predecessors: [],
+  });
+  f.db.orgConsentOk = async (_orgId, userId) => userId !== 'other-person'; // only the source author has declined, not the root author
+  f.db.settled = async () => false;
+  const inserted = [];
+  f.db.insertMessage = async (row) => { inserted.push(row); return { id: 99 }; };
+  let ran = false;
+  const handler = makeMsgrHandler(f.ws, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } });
+  await handler({ msgId: 42, slug: 'alpha', crewId: 'a', channelId: 'channel', orgId: 'org', authorId: 'other-person', threadRoot: 41, text: '작업', createdAt: new Date().toISOString() });
+  assert.equal(ran, false, 'a consenting thread root author must not mask a declined source author');
+  assert.equal(inserted.length, 1);
+  assert.match(inserted[0].client_msg_id, /^aiconsent:a:channel/);
+  f.stop();
+});
+
+// M-1(2026-09-27 저녁, 크루 쪽) — db.workRun is a raw select with no server-side filter; workPrompt must not
+// leak the goal/completion criteria of a team work started by someone who has declined or withdrawn consent.
+test('workPrompt hides the goal/completion criteria when the person who started the team work has declined consent', async () => {
+  const f = await setup();
+  const { runMessengerContinuation } = await import('../src/gateway/msgr.mjs');
+  const originalMessage = f.db.message;
+  f.db.message = async (id) => id === 10 ? { ...(await originalMessage(id)), meta: { work_run_id: 'work-1' } } : originalMessage(id);
+  f.db.workRun = async () => ({ id: 'work-1', status: 'running', created_by: 'work-creator', org_id: 'org', lead_crew_id: 'a', goal: '민감한 목표 텍스트', completion_criteria: '완료 기준' });
+  // Isolate M-1 from M-2: the continuation's own source author ('person', f.origin's default) stays
+  // consented so the unrelated M-2 gate does not fire first — only the work's creator has declined.
+  f.db.orgConsentOk = async (_orgId, userId) => userId !== 'work-creator';
+  let seenText = null;
+  const turn = await runMessengerContinuation(f.ws, 'alpha', f.origin, '진행', null, { session: f.session, runChat: async (_ws, _slug, text) => { seenText = text; return { reply: 'ok' }; } });
+  assert.ok(turn);
+  assert.doesNotMatch(seenText, /민감한 목표 텍스트/, 'the goal text must not reach the crew prompt when its author has declined consent');
+  assert.match(seenText, /\(원문 비공개/, 'a placeholder replaces the hidden goal');
+  f.stop();
+});

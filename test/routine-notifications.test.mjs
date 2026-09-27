@@ -116,6 +116,22 @@ test('selected messenger alert is final, mention-free and phase-idempotent; scop
   await assert.rejects(msgrPush(e, messenger({ scope: false })), /unavailable/);
 });
 
+function unentitledFixture() { // messenger()의 db에 orgEntitled(false)만 얹는다 — sent는 같은 배열을 공유
+  const base = messenger();
+  return { sent: base.sent, session: async () => { const s = await base.session(); return { ...s, db: { ...s.db, orgEntitled: async () => false } }; } };
+}
+
+// M-2(델타 검수, 4차) — 이 파일에 쓰던 writeFileSync 기반 변이 테스트를 없앴다: node --test는 파일들을 병렬
+// 프로세스로 돌리므로, 소스를 실제로 덮어썼다 복구하는 동안 다른 프로세스가 변이된 src/gateway/msgr.mjs를
+// 읽거나 중간에 죽으면 변이된 채로 남을 위험이 있다. 여기서는 행동만 잠그고(자격 없으면 삽입을 시도하지
+// 않는다), 변이 red 확인은 작업자가 로컬에서 그 줄을 지워 이 테스트가 실패하는 것을 수동으로 한 번 본다.
+test('L-8: an unentitled org quietly skips the routine alert insert (no repeated blocked attempts) and never throws', async () => {
+  const ws = await workspace(); const fixture = unentitledFixture();
+  const e = event(ws, selected(['msgr']));
+  assert.equal(await msgrPush(e, fixture), false);
+  assert.deepEqual(fixture.sent, []);
+});
+
 test('delivery reports mute, unavailable, provider failure and uncertain network separately', async () => {
   const ws = await workspace(); const e = event(ws);
   await updateConnection(ws, 'telegram', { mutedEvents: ['routine'] });
