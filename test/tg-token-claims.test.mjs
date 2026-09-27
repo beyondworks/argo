@@ -149,7 +149,7 @@ test('동기화 발견·내보내기 — .tg-claims 폴더는 점 접두라 회�
   assert.match(src, /if \(!c\.id && !String\(c\.name\)\.startsWith\('\.'\)\) out\.push/, '발견 필터가 점 접두를 거른다');
   const exp = await load('../src/cloudexport.mjs');
   assert.match(exp, /!String\(e\.name\)\.startsWith\('\.'\)/, '내보내기도 점 접두를 거른다');
-  const mig = await load('../supabase/migrations/20260903120000_tg_claims_pro_gate_exception.sql');
+  const mig = await load('../supabase/migrations/20260903122559_tg_claims_pro_gate_exception.sql');
   // 예외는 프리픽스(like %)가 아니라 실제 키 형태(24 hex + .json)만 — 비-Pro의 무제한 저장 채널 차단(재검수 L-A)
   assert.equal((mig.match(/or name ~ \('\^' \|\| \(select auth\.uid\(\)::text\) \|\| '\/\\\.tg-claims\/\[0-9a-f\]\{24\}\\\.json\$'\)/g) ?? []).length, 2, 'insert·update 정책 둘 다 키 형태 예외(재검수 H-1·L-A)');
   assert.doesNotMatch(mig, /like .*tg-claims/, '프리픽스 like 예외 금지');
