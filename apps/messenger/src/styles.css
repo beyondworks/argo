@@ -160,7 +160,8 @@
 .msgr-older.start .msgr-klabel { opacity: .7; }
 /* 폰 당겨서 새로고침 표시 — 목록·대화 스크롤 칸 맨 위, 당긴 만큼만(JS가 height를 준다). 데스크톱은 훅이 꺼져 있어 렌더되지 않는다. */
 @media (max-width: 720px) {
-  .msgr-pullrefresh { display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden; color: var(--fg-3); font-size: 12px; height: var(--pull-dy, 0px); }
+  .msgr-pullrefresh { position: absolute; z-index: 3; left: 0; right: 0; top: 0; display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden; color: var(--fg-3); background: var(--bg); font-size: 12px; height: var(--pull-dy, 0px); pointer-events: none; }
+  .msgr-railbody, .msgr-thread { position: relative; }
   .msgr-pullrefresh .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--fg-3); animation: msgrPullSpin 700ms linear infinite; flex: none; }
   .msgr-pullrefresh .spin.ready { border-top-color: var(--mark); }
   @keyframes msgrPullSpin { to { transform: rotate(360deg); } }
@@ -1305,7 +1306,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
      흐름 안 요소다. 고정 오프셋으로 멘션 후보창을 밀어내지 않는다 — 후보창(.msgr-pop)의 bottom: calc(100% + 8px)은
      같은 부모(.msgr-dock 안쪽 래퍼)의 실제 쌓인 높이를 기준으로 하므로, 칩 줄이 흐름에 실제로 차지한 높이만큼
      저절로 더 올라간다(칩 0·1·2·3개 모두 겹침 0px — 고정 px 계산 불필요). */
-  .msgr-phone .msgr-main .msgr-dock .msgr-filechips { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0 var(--ph-pad) 6px; }
+  .msgr-phone .msgr-main .msgr-dock .msgr-filechips { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0 var(--ph-pad) 6px; max-height: min(144px, 20dvh); overflow-y: auto; min-width: 0; }
+  .msgr-phone .msgr-dock .filechip { max-width: 100%; min-width: 0; box-sizing: border-box; flex: none; }
+  .msgr-phone .msgr-dock .filechip > svg { flex: none; }
   /* 44px 탭 영역(접근성)은 유지하되 눈에 보이는 상자는 작게 — 크게 잡으면 크기표시와 ×가 벌어져 보인다(유건 재검수 2026-09-27) */
   .msgr-phone .filechip .x { position: relative; min-width: 0; min-height: 0; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; }
   .msgr-phone .filechip .x::before { content: ''; position: absolute; inset: -15px; } /* 보이지 않는 44×44 탭 영역 */

@@ -22,7 +22,9 @@ test('.filechip 기본 모양은 .msgr-tools 스코프가 아니다 — 폰에�
 });
 
 test('폰: 첨부 칩 줄은 정상 흐름 요소(margin만, position:absolute 아님) — 멘션 후보창 오프셋을 고정값으로 미리 계산하지 않는다', () => {
-  assert.match(css, /\.msgr-phone [^\n]*\.msgr-filechips \{ display: flex; flex-direction: column;[^}]*margin: 0 var\(--ph-pad\) 6px; \}/, '알약 앞 형제로 정상 흐름 — position:absolute면 후보창이 실제 높이를 못 따라간다');
+  assert.match(css, /\.msgr-phone [^\n]*\.msgr-filechips \{ display: flex; flex-direction: column;[^}]*margin: 0 var\(--ph-pad\) 6px;[^}]*\}/, '알약 앞 형제로 정상 흐름 — position:absolute면 후보창이 실제 높이를 못 따라간다');
+  assert.match(css, /\.msgr-phone [^\n]*\.msgr-filechips \{[^}]*max-height: min\(144px, 20dvh\); overflow-y: auto; min-width: 0;/, '다중 첨부가 입력창을 밀어내지 않고 자체 스크롤한다');
+  assert.match(css, /\.msgr-phone \.msgr-dock \.filechip \{ max-width: 100%; min-width: 0; box-sizing: border-box;/, '긴 파일명도 부모 폭 안에 머문다');
   assert.doesNotMatch(css, /\.msgr-filechips \{[^}]*position: absolute/, '칩 줄에 절대배치를 다시 걸면 멘션 후보창 오프셋 계산이 고정값 추측으로 되돌아간다');
   assert.doesNotMatch(css, /\.msgr-pop:has\(~ \.msgr-composer \.filechip\)/, '후보창에 칩 존재 여부로 고정 px를 더하는 :has() 땜질은 칩 개수마다 값이 달라 겹침이 재발한다 — 정상 흐름 배치로 대체');
 });

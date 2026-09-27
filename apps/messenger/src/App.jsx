@@ -32,7 +32,8 @@ import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri, isIos } from
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useSwipeTabs, useEdgeSwipeBack } from './use-phone.js';
-import { REFRESH_THRESHOLD, pullDistance, shouldRefresh, canStartPull, isVerticalPull } from './pull-refresh.mjs';
+import { bindPullRefresh } from './pull-refresh.mjs';
+import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
 import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snapshot.mjs';
 import { mentionCandidates, mentionsFromBody, ALL_RE, outsideCrewMentions, canInstructCrew } from './mention-candidates.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from './dm-delivery.mjs';
@@ -368,68 +369,20 @@ function ServerRow({ t, open = false }) {
   );
 }
 
-// 폰 당겨서 새로고침 — 채팅 목록(.msgr-railbody)과 대화 화면(.msgr-thread) 둘 다 이 훅으로. 맨 위(scrollTop 0)에서
-// 정지해 있는 상태로 시작해 아래로 당길 때만 진행하고, 대화의 "이전 기록 불러오기"(scrollTop<120 스크롤 판정)와는
-// 판정 축이 달라 서로 건드리지 않는다. 새로고침 자체는 location.reload()(전체 화면 재적재, 로그인은 유지) — 유건 결정.
-// 최적화(유건 제보 2026-09-26 "최적화가 안 된 느낌"): touchmove마다 React state를 바꾸지 않는다 — 당김 거리는
-// ref+rAF로 인디케이터 DOM에 CSS 변수(--pull-dy)로 직접 쓰고, React state(phase)는 단계가 바뀔 때만(대기→당기는
-// 중→놓으면 새로고침→새로고침 중) 갱신해 리렌더를 그 경계에서만 낸다.
-function usePullToRefresh(enabled, onBeforeRefresh) {
+// Refresh data in place: never remount the shell, composer or current conversation.
+function usePullToRefresh(enabled, onRefresh, onError) {
   const [node, setNode] = useState(null);
-  const [phase, setPhase] = useState('idle'); // 'idle' | 'pulling' | 'ready' | 'refreshing'
-  const phaseRef = useRef('idle');
-  const st = useRef({ x: 0, y: 0, dragging: false, lastScrollAt: -Infinity, dy: 0, raf: 0 });
-  const setPhaseIfChanged = (next) => { if (phaseRef.current !== next) { phaseRef.current = next; setPhase(next); } };
-  // 매 프레임 높이는 스크롤러(node)의 CSS 변수로 — 표시(PullIndicator)는 그 안에 있어 상속받는다. 표시가 막 생기는 첫 프레임에도
-  // 값이 이미 있어 빈 프레임이 없다(QA 2026-09-26: 표시 DOM에 쓰면 생성 전 첫 값이 버려졌다).
-  const applyDy = (dy, el) => {
-    st.current.dy = dy;
-    if (st.current.raf) return;
-    st.current.raf = requestAnimationFrame(() => {
-      st.current.raf = 0;
-      el?.style.setProperty('--pull-dy', `${pullDistance(st.current.dy)}px`);
-    });
-  };
+  const [phase, setPhase] = useState('idle');
+  const callbacks = useRef({ onRefresh, onError });
+  callbacks.current = { onRefresh, onError };
   useEffect(() => {
-    if (!enabled || !node) { setPhaseIfChanged('idle'); return undefined; }
-    const onScroll = () => { st.current.lastScrollAt = Date.now(); }; // 관성 스크롤이 맨 위에 닿는 순간을 기억(관성 직후 당김 시작 방지)
-    const start = (e) => {
-      const msSinceScroll = Date.now() - st.current.lastScrollAt;
-      if (!canStartPull(node.scrollTop, e.touches.length, msSinceScroll)) { st.current.dragging = false; return; }
-      st.current.dragging = true; st.current.x = e.touches[0].clientX; st.current.y = e.touches[0].clientY;
-    };
-    const cancel = () => { st.current.dragging = false; applyDy(0, node); setPhaseIfChanged('idle'); };
-    const move = (e) => {
-      if (!st.current.dragging) return;
-      const dy = e.touches[0].clientY - st.current.y;
-      if (dy <= 0) { cancel(); return; } // 위로 밀거나 제자리면 표시 없음(세로 스크롤에 맡긴다)
-      if (!isVerticalPull(e.touches[0].clientX - st.current.x, dy)) { cancel(); return; } // 비스듬한 스와이프(탭 넘기기·뒤로가기)는 당김이 아니다
-      if (node.scrollTop > 0) { cancel(); return; } // 당기는 중 목록이 스크롤됐으면 포기
-      e.preventDefault(); // 당김 중엔 고무줄 표시가 바운스와 겹치지 않게
-      applyDy(dy, node);
-      setPhaseIfChanged(shouldRefresh(dy) ? 'ready' : 'pulling');
-    };
-    const end = (e) => {
-      if (!st.current.dragging) return;
-      const dy = (e.changedTouches?.[0]?.clientY ?? st.current.y) - st.current.y;
-      const dx = (e.changedTouches?.[0]?.clientX ?? st.current.x) - st.current.x;
-      st.current.dragging = false;
-      if (isVerticalPull(dx, dy) && shouldRefresh(dy)) {
-        applyDy(REFRESH_THRESHOLD, node); setPhaseIfChanged('refreshing');
-        onBeforeRefresh?.(); // 화면 복원 스냅샷 저장(sessionStorage, 1회) — 재부팅 뒤 같은 화면으로
-        location.reload();
-      } else cancel();
-    };
-    node.addEventListener('scroll', onScroll, { passive: true });
-    node.addEventListener('touchstart', start, { passive: true });
-    node.addEventListener('touchmove', move, { passive: false });
-    node.addEventListener('touchend', end, { passive: true });
-    node.addEventListener('touchcancel', end, { passive: true });
-    return () => {
-      node.removeEventListener('scroll', onScroll); node.removeEventListener('touchstart', start); node.removeEventListener('touchmove', move); node.removeEventListener('touchend', end); node.removeEventListener('touchcancel', end);
-      if (st.current.raf) cancelAnimationFrame(st.current.raf);
-    };
-  }, [enabled, node, onBeforeRefresh]);
+    if (!enabled || !node) { setPhase('idle'); return undefined; }
+    return bindPullRefresh(node, {
+      refresh: () => callbacks.current.onRefresh(),
+      phase: setPhase,
+      error: (e) => callbacks.current.onError?.(e.message),
+    });
+  }, [enabled, node]);
   return { setRef: setNode, phase };
 }
 function PullIndicator({ phase, t }) {
@@ -622,7 +575,10 @@ function Shell({ session }) {
     const page = pageRef.current;
     writeScreenSnapshot(isPhoneRef.current ? window.sessionStorage : null, { page, dmFilter: dmFilterRef.current });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- ref로만 읽는다(당겨서 새로고침 시점의 최신값)
-  const pullList = usePullToRefresh(isPhone, saveScreenSnapshot); // 폰 채팅 목록 당겨서 새로고침 — 데스크톱은 훅이 꺼진 채(enabled=false)
+  const pullList = usePullToRefresh(isPhone, async () => {
+    const id = activeOrg.current;
+    await Promise.all([loadOrgs(), id === PERSONAL ? loadPersonal() : loadOrg(id), loadUnread()]);
+  }, (message) => setErr(friendlyErr(message, t)));
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
@@ -780,7 +736,7 @@ function Shell({ session }) {
   const [searchQ, setSearchQ] = useState(''); const [searchRes, setSearchRes] = useState(null); const searchRef = useRef(null); // 앱 내 검색(유건 지시 2026-09-09): 메시지 본문·사람·에이전트, ⌘K
   useEffect(() => { const on = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setRail(true); searchRef.current?.focus(); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, []);
   // 새로고침(⌘R/Ctrl+R/F5) — 입력창에 초점이 있어도 동작. 로그인은 유지(location.reload만, 세션 초기화 아님).
-  useEffect(() => { const onKey = (e) => { const k = e.key.toLowerCase(); if (k === 'f5' || ((e.metaKey || e.ctrlKey) && (k === 'r' || e.code === 'KeyR'))) { e.preventDefault(); location.reload(); } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, []);
+  useEffect(() => { const onKey = (e) => { const k = e.key.toLowerCase(); if (k === 'f5' || ((e.metaKey || e.ctrlKey) && (k === 'r' || e.code === 'KeyR'))) { e.preventDefault(); saveScreenSnapshot(); location.reload(); } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, []);
   const leaveSearch = () => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }; // 지우기 버튼·Esc가 같은 일(D18 S101: 결과 화면에서 Esc면 대화로)
   useEffect(() => { // 결과 화면에서 칸 밖에 초점이 있어도 Esc면 대화로 — 입력칸·열린 창이 먼저 받는다
     if (page !== 'search') return undefined;
@@ -1871,7 +1827,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} onBeforeRefresh={saveScreenSnapshot} />
+          <Channel key={chId} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => { setPage('settings'); setSettingsTab('friends'); }}><I name="at" size={13} />{t('friends.title')}</button></div></div></>
         ) : (
@@ -4094,7 +4050,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = nu
 // 개인 공간 표지 — 조직 아바타(글자) 대신 사람 아이콘 + 액센트 틴트. 색만이 아니라 아이콘·라벨로도 조직과 구분한다(유건 2026-09-18).
 function PersonalMark({ sm = false }) { return <span className={`msgr-av personal${sm ? ' sm' : ''}`} aria-hidden="true"><I name="person" size={sm ? 13 : 15} /></span>; }
 
-function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false, onBeforeRefresh }) {
+function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
@@ -4118,8 +4074,11 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
   const [stopping, setStopping] = useState({}); // 중단 요청 "중"(RPC 왕복 동안) — 키 `${crewId}:${sourceMsgId}`(중복 클릭 차단, 유건 확정 2026-09-26 크루 작업 중단)
   const [stopRequested, setStopRequested] = useState({}); // 중단 요청 "됨"(RPC true) — 그 실행 카드가 사라질 때까지 버튼을 비활성 고정(분리 검수 L-3)
   const feed = useRef(null);
-  const pullThread = usePullToRefresh(phone, onBeforeRefresh); // 폰 대화 화면 당겨서 새로고침 — feed와 같은 DOM 노드를 같이 본다(아래 setFeed)
-  const setFeed = (node) => { feed.current = node; pullThread.setRef(node); };
+  const pullThread = usePullToRefresh(phone, async () => {
+    stick.current = false;
+    await Promise.all([load(0, true), loadApprovals()]);
+  }, onError);
+  const setFeed = useCallback((node) => { feed.current = node; pullThread.setRef(node); }, [pullThread.setRef]);
   const [sbw, setSbw] = useState(0); // 스레드 스크롤바 폭의 절반 — 독 좌우를 대화 열과 맞춘다(오버레이 스크롤바면 0)
   useEffect(() => { const el = feed.current; if (!el) return; const m = () => setSbw((el.offsetWidth - el.clientWidth) / 2); m(); window.addEventListener('resize', m); return () => window.removeEventListener('resize', m); }, []);
   const chId = channel.id;
@@ -4157,7 +4116,7 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
   }, [msgs, hasMore, chId, hydrate]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(keepAnchor, [msgs, atts, older, keepAnchor]); // 커밋 직후 동기 보정(깜빡임 없음) — 본문·첨부·컨트롤 상태. 채널 전환은 key 리마운트라 별도 초기화 없음
   useEffect(() => { const el = feed.current; if (!el) return; const f = () => { if (el.scrollTop < 120) loadOlder(); }; el.addEventListener('scroll', f, { passive: true }); return () => el.removeEventListener('scroll', f); }, [loadOlder]);
-  const load = useCallback(async (afterId = 0) => {
+  const load = useCallback(async (afterId = 0, preserve = false) => {
     // 새 메시지 구분선 기준(열 때의 읽음 커서)은 글과 같이 읽어 글보다 먼저 고정한다 — 글이 그려지면 읽음 표시(onRead)가 커서를 올리므로,
     // 그 뒤에 읽으면 방금 온 글까지 읽은 것으로 보여 줄이 사라졌다(D15: 다른 채널에 있을 때 온 글)
     const [rows, rd] = await Promise.all([
@@ -4165,11 +4124,16 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
         .eq('channel_id', chId).gt('id', afterId).order('id', { ascending: afterId ? true : false }).limit(PAGE)),
       afterId ? null : q(supabase.from('msgr_reads').select('last_read_id').eq('channel_id', chId).eq('user_id', uid).maybeSingle()).catch(() => null),
     ]);
-    if (!afterId) setDivider(rd?.last_read_id ?? 0);
-    const list = afterId ? rows : rows.reverse();
-    setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
+    if (!afterId && !preserve) setDivider(rd?.last_read_id ?? 0);
+    const firstId = live.current.msgs?.[0]?.id;
+    const throughId = rows[0]?.id;
+    const list = preserve ? await refreshMessageWindow({ firstId, throughId, pageSize: PAGE,
+      fetchPage: (cursor, until, limit) => q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, thread_root, created_at, edited_at, deleted_at, meta, client_msg_id')
+        .eq('channel_id', chId).gt('id', cursor).lte('id', until).order('id', { ascending: true }).limit(limit)),
+    }) : afterId ? rows : rows.reverse();
+    setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); if (preserve) return mergeRefreshedMessages(base, list, firstId, throughId); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
     setPending((cur) => reconcilePending(cur, list)); // 조회로 도착한 내 글도 낙관적 자리를 비운다
-    if (!afterId) setHasMore(rows.length >= PAGE); // 첫 페이지가 꽉 찼으면 위로 더 있을 수 있다(출시 검사 C-1: 100건 상한·스크롤백 부재)
+    if (!afterId && !preserve) setHasMore(rows.length >= PAGE);
     await hydrate(list.map((m) => m.id));
   }, [chId, hydrate]);
   // 결재 카드는 메시지 도착 경로에서 분리한다. 전에는 글 한 건이 올 때마다 채널의 결재 전량을
@@ -4923,7 +4887,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
         <div className="msgr-tools">
           {!isPersonal && <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>}
           <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={insertAt} disabled={busy} title={t('msg.mention')}><I name="at" size={15} /><span>{t('msg.mention')}</span></button>
-          {(files.length > 0 || channel.crew_memory === false) && <span className="sep" />}
+          {!phone && (files.length > 0 || channel.crew_memory === false) && <span className="sep" />}
           {!phone && fileChipsNode}
           {channel.crew_memory === false && <span className="tb on" title={t('ch.crewMemory')}><I name="memoff" size={15} /><span>{t('ch.memoryOff')}</span></span>}
           <button className="send" onMouseDown={(e) => e.preventDefault()} disabled={busy || locked || deliveryBlocked || !!rolePick || (job ? retryBlocked : (!text.trim() && !files.length))} aria-label={t('msg.send')} title={locked ? t('org.locked.short') : t('msg.send')}><I name="up" size={16} /></button>

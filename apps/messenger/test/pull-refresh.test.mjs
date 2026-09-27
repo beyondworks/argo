@@ -34,11 +34,13 @@ test('canStartPull — 관성 스크롤 직후(PULL_QUIET_MS 안)는 시작 안 
   assert.equal(canStartPull(0, 1, PULL_QUIET_MS + 500), true, '충분히 정지해 있었다');
 });
 
-test('배선 — usePullToRefresh 훅이 데스크톱에는 붙지 않고(isPhone만), 새로고침은 location.reload()', () => {
+test('배선 — 모바일 당김은 데이터 갱신, 키보드 새로고침은 전체 재적재', () => {
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(src, /function usePullToRefresh\(/, 'usePullToRefresh 훅 정의');
   assert.match(src, /usePullToRefresh\([^)]*isPhone/, '폰 여부로만 켠다');
-  assert.match(src, /location\.reload\(\)/, '새로고침은 location.reload (로그인 유지)');
+  const hook = src.slice(src.indexOf('function usePullToRefresh('), src.indexOf('function PullIndicator('));
+  assert.doesNotMatch(hook, /location\.reload/);
+  assert.match(hook, /bindPullRefresh/);
   assert.match(src, /k === 'f5' \|\| \(\(e\.metaKey \|\| e\.ctrlKey\) && \(k === 'r' \|\| e\.code === 'KeyR'\)\)/, '데스크톱 ⌘R/Ctrl+R/F5 새로고침 — 한글 입력기에서도(e.code)');
   const dict = readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8');
   for (const k of ['refresh.pull', 'refresh.release', 'refresh.refreshing']) assert.match(dict, new RegExp(`'${k.replace(/\./g, '\\.')}': \\[["'][^"']+["'], ["'][^"']+["']\\]`), `${k} ko/en`);

@@ -7,12 +7,13 @@ import { readFileSync } from 'node:fs';
 
 test('load — 읽음 커서는 글과 같이 읽고, 글을 상태에 넣기 전에 구분선을 고정한다', () => {
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  const start = src.indexOf('const load = useCallback(async (afterId = 0) => {');
+  const start = src.indexOf('const load = useCallback(async (afterId = 0, preserve = false) => {');
   const body = src.slice(start, src.indexOf('}, [chId, hydrate]);', start));
   assert.ok(start > 0 && body.length > 0, 'load를 찾는다');
   const reads = body.indexOf("from('msgr_reads')"), divider = body.indexOf('setDivider('), msgs = body.indexOf('setMsgs('), hydrate = body.indexOf('await hydrate(');
   assert.ok(reads > 0 && divider > 0 && msgs > 0 && hydrate > 0);
   assert.match(body, /await Promise\.all\(\[/, '글과 커서를 같이 읽는다(지연 추가 없음)');
   assert.ok(divider < msgs, '구분선이 글보다 먼저 — 글이 그려진 뒤의 읽음 표시가 끼어들 수 없다');
+  assert.match(body, /if \(!afterId && !preserve\) setDivider\(rd\?\.last_read_id \?\? 0\);/, '첫 로드만 구분선을 고정하고 당겨서 새로고침은 원래 기준을 보존한다');
   assert.ok(reads < msgs && divider < hydrate, '커서 조회가 hydrate 뒤로 밀리지 않는다');
 });

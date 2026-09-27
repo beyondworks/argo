@@ -10,7 +10,7 @@ test('스크롤백: 가장 오래된 id 앞을 한 페이지씩(lt·desc·PAGE),
   const app = read('apps/messenger/src/App.jsx');
   const ch = app.slice(app.indexOf('function Channel('), app.indexOf('function Composer('));
   assert.match(ch, /\.eq\('channel_id', chId\)\.lt\('id', first\)\.order\('id', \{ ascending: false \}\)\.limit\(PAGE\)/, '역방향 페이지 질의');
-  assert.match(ch, /if \(!afterId\) setHasMore\(rows\.length >= PAGE\)/, '첫 로드에서 더 있음 판정');
+  assert.match(ch, /if \(!afterId && !preserve\) setHasMore\(rows\.length >= PAGE\)/, '첫 로드에서 더 있음 판정, 보존 새로고침에서는 기존 스크롤백 경계를 유지');
   assert.match(ch, /setHasMore\(rows\.length >= PAGE\);\n\s+await hydrate\(list\.map\(\(m\) => m\.id\)\);/, '이전 페이지도 첨부·반응을 채운다');
   assert.match(ch, /const node = el\?\.querySelector\('\[data-mid\]'\); anchor\.current = node \? \{ node, y: yOf\(el, node\) \} : null;[^\n]*\n\s+olderRef\.current = true; setOlder\(true\);/, '앵커(맨 위 메시지 노드·위치)는 컨트롤이 바뀌기 전에 기록(L-6)');
   assert.match(ch, /el\.scrollTop \+= y - a\.y; a\.y = y;/, '앵커 위치 델타로 보정(가산 — 사용자 스크롤과 충돌 없음)');
