@@ -122,7 +122,7 @@ test('OS3. 배선 핀 — oneshot.mjs가 플래그 러너를 nativeOneShot로 �
   assert.match(src, /if \(nativeRunnerEnabled\(runner\)\) \{\n[\s\S]*?try \{ r = await nativeOneShot\(\{ env: sdkEnv, model: osModel, prompt, signal: ac\.signal, lang \}\); \}/);
   // 네이티브 실패도 openrouter-credit/limit 접두로 승격(분리 검수 3R HIGH-2 — 승격 없이는 429가 말없이 타 벤더로 갈아탄다)
   assert.match(src, /if \(runner === 'openrouter' && isOpenRouterLimitError\(t\)\) throw Object\.assign\(new Error\(`openrouter-limit: \$\{t\.slice\(0, 140\)\}`\), \{ cause: e \}\);/);
-  assert.match(src, /\} else for await \(const msg of query\(\{/, '구 경로(SDK) 폴백 유지');
+  assert.match(src, /\} else for await \(const msg of __query\(\{/, '구 경로(SDK) 폴백 유지');
   assert.equal((src.match(/osModel/g) ?? []).length >= 3, true, '모델 선택 한 곳 정의·두 엔진 사용');
   assert.match(src, /\.\.\.\(osModel \? \{ model: osModel \} : \{\}\),/);
 });
@@ -135,4 +135,47 @@ test('OS4. 네이티브 원샷의 OpenRouter 429는 요청 한도 안내로 정�
     await assert.rejects(runOneShot(ws, '직함을 추천해', { timeoutMs: 20_000 }), (e) => { assert.match(e.message, /요청 한도|rate limit/i, `429 안내: ${e.message}`); return true; });
     assert.equal(srv.bodies.length, 1, '재시도 폭주 없음(429는 기다리면 풀린다)');
   } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; }
+});
+
+// 오피스 번역(유건 9/27: api는 안 쓴다, 본인 구독으로) — 러너를 고정하면 다른 러너·다른 자격 방식으로 넘어가지 않는다
+test('OS5. only 고정 — 허용 방식의 자격이 없으면 no_subscription, 실패해도 다른 러너로 자가치유하지 않는다', { timeout: 30_000 }, async () => {
+  const ws = 'os5'; await createCompany(ws, '원샷5', '사장');
+  await saveRunnerCred(ws, 'claude', 'apikey', 'sk-ant-api03-fake-key-1234567890');
+  await saveRunnerCred(ws, 'openrouter', 'apikey', 'fake-or-key-1234567890');
+  await saveRunnerCred(ws, 'glm', 'apikey', 'fake-glm-key-1234567890');
+  const or = await fakeMessages([{ status: 500, json: { type: 'error', error: { type: 'api_error', message: 'boom' } } }]);
+  const glm = await fakeMessages([msg('자가치유로 온 답')]);
+  process.env.OPENROUTER_BASE_URL = or.base; process.env.GLM_BASE_URL = glm.base;
+  try {
+    await assert.rejects(runOneShot(ws, 'x', { only: { runner: 'claude', types: ['oauth', 'host'] }, timeoutMs: 20_000 }), (e) => e.code === 'no_subscription');
+    assert.equal(or.bodies.length + glm.bodies.length, 0, 'Claude API 키가 있어도, 다른 러너가 있어도 쓰지 않는다');
+    const ws2 = 'os5b'; await createCompany(ws2, '원샷5b', '사장'); // Claude 자격 없이 — 자가치유가 가짜 키로 실제 Anthropic에 나가지 않게
+    await saveRunnerCred(ws2, 'openrouter', 'apikey', 'fake-or-key-1234567890'); await saveRunnerCred(ws2, 'glm', 'apikey', 'fake-glm-key-1234567890');
+    await assert.rejects(runOneShot(ws2, 'x', { only: { runner: 'openrouter', types: ['apikey'] }, timeoutMs: 20_000 }));
+    assert.ok(or.bodies.length >= 1); assert.equal(glm.bodies.length, 0, '고정한 러너가 실패해도 GLM으로 넘어가지 않는다');
+  } finally { await or.close(); await glm.close(); delete process.env.OPENROUTER_BASE_URL; delete process.env.GLM_BASE_URL; }
+});
+
+// 오피스 번역의 호스트 로그인 경로(재검수 LOW): 프로세스 env에 API 키가 있으면 SDK가 구독 대신 키로 과금할 수 있다 — API 키 방식을 허용하지 않는 고정이면 비운다.
+// 러너가 다시 시작하면(크래시 재시도) 흘려받기 호출자에게 null로 알려 모은 글자를 비우게 한다.
+test('OS6. only(API 키 불허)면 SDK env의 ANTHROPIC_API_KEY를 비운다, 시도마다 onText(null)', { timeout: 30_000 }, async () => {
+  const ws = 'os6'; await createCompany(ws, '원샷6', '사장'); await saveRunnerCred(ws, 'claude', 'host', 'host');
+  const prev = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = 'sk-ant-api03-not-a-real-key';
+  const seen = []; const texts = []; let n = 0;
+  const fakeQuery = ({ options }) => (async function* () {
+    seen.push(options);
+    if (++n === 1) throw new Error('Claude Code process exited with code 139');
+    yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '["번역"]' } } };
+    yield { type: 'result', subtype: 'success', result: '["번역"]', usage: {}, total_cost_usd: 0 };
+  })();
+  try {
+    const r = await runOneShot(ws, 'x', { only: { runner: 'claude', types: ['oauth', 'host'] }, onText: (d) => texts.push(d), __query: fakeQuery, timeoutMs: 20_000 });
+    assert.equal(r.text, '["번역"]');
+    assert.equal(seen.length, 2, '크래시는 같은 러너로 1회 재시도');
+    for (const o of seen) for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX']) assert.equal(o.env?.[k], '', `${k} — 구독이 아닌 경로로 과금되지 않게`);
+    assert.deepEqual(texts, [null, null, '["번역"]'], '시도마다 새로 시작을 알린다');
+    n = 1; seen.length = 0;
+    await runOneShot(ws, 'x', { only: { runner: 'claude', types: ['host', 'apikey'] }, __query: fakeQuery, timeoutMs: 20_000 });
+    assert.notEqual(seen[0].env?.ANTHROPIC_API_KEY, '', 'API 키를 허용하는 고정은 그대로');
+  } finally { if (prev === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = prev; }
 });

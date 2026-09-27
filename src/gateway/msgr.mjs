@@ -45,6 +45,7 @@ import { roomTurnFailure, roomTurnInterrupted, roomTurnStopped, roomAttachReason
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
+import { joinTranslate, leaveTranslate } from './office-translate.mjs';
 
 export const MSGR_KEY = 'msgr';
 export const HEARTBEAT_WRITE_MS = 30_000; // 심박 쓰기 최소 간격 — 행 나이 최대 45초 + 앱 재조회 30초 < 판정 90초(검수 #689 M3: 60초면 온라인 크루가 주기적으로 부재중)
@@ -1541,6 +1542,9 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         rtChannels.set(ukey, uch);
       } catch (e) { console.warn('[argo] msgr realtime 구독 실패(u:):', e.message); }
     }
+    // 오피스 메일 번역 — 본인만 보내고 받는 ot:<uid>(20260927174000). 주인 구독으로 번역해 같은 토픽으로 돌려준다(메일 내용은 DB를 거치지 않는다).
+    // 통로는 사용자당 하나이고 회사들은 그 목록에 합류한다 — 연결을 같이 쓰므로 회사별로 구독·해제하면 서로 끊는다(office-translate.mjs joinTranslate).
+    if (c.uid) try { joinTranslate(c.client, c.uid, wsId); } catch (e) { console.warn('[argo] msgr realtime 구독 실패(ot:):', e.message); }
   };
   const iv = setInterval(() => tick('poll').catch(() => {}), pollMs);
   iv.unref?.();
@@ -1550,6 +1554,7 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     for (const orgId of subscribedOrgs) { const key = `${wsId}:${orgId}`; try { rtChannels.get(key)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(key); }
     subscribedOrgs = new Set();
     try { rtChannels.get(`${wsId}:u`)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(`${wsId}:u`);
+    leaveTranslate(wsId);
   };
   stop.nudge = () => tick('poll').catch(() => {}); // 수동 재연결·복구 신호는 관리 작업까지 한 번(검수 L1)
   return stop;

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko" data-theme="linen">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#1f1e1b" />
+    <title>Argo Office</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="preload" href="/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin />
+    <script>
+      // 첫 페인트 전에 테마를 입힌다(깜빡임 방지) — core/theme.js와 같은 규칙.
+      (function () {
+        var th = 'linen';
+        try { var v = localStorage.getItem('argo-office-theme'); if (/^(linen|graphite)(-light|-dark)?$/.test(v)) th = v; } catch (e) {}
+        var el = document.documentElement; el.dataset.theme = th;
+        if (th === 'linen' && window.matchMedia('(prefers-color-scheme: dark)').matches) el.classList.add('dark-emul');
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

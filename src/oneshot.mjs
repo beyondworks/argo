@@ -18,13 +18,19 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
   // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
   // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, sdk = null, onText = null, only = null, __query = query, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  // sdk — Claude SDK 경로에만 적용하는 속도·격리 설정(오피스 번역: 도구 목록 비우기·짧은 지시문·생각 끄기·계정 원격 MCP 차단). 권한 훅·자격·작업 폴더는 덮지 못하게 허용 목록으로만
+  const sdkTune = Object.fromEntries(Object.entries(sdk ?? {}).filter(([k]) => ['tools', 'systemPrompt', 'thinking', 'effort', 'strictMcpConfig', 'mcpServers'].includes(k)));
   // __failures는 재귀에 **명시 전달**(아래 두 recursion) — opts를 직접 오염시키면 호출자가 재사용하는
   // opts 객체에 이전 호출의 실패가 섞인다(분리 검수 L2).
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
   // want=null(무선호) — 이 경로는 러너 독립이 명세라 claude 선호를 가장하지 않는다(선택 순서는 동일)
-  const resolved = await resolveRunner(wsId, null, { exclude: __exclude })
-    .catch(() => ({ runner: 'claude', available: false, fellBack: false, credButNoCli: [] }));
+  // only { runner, types } — 러너와 자격 방식을 고정한다(오피스 번역: 주인의 Claude 구독만, API 키·다른 러너로 넘어가지 않는다). 아래 자가치유도 건너뛴다
+  const resolved = only
+    ? { runner: only.runner, available: only.types.includes(await runnerCredType(wsId, only.runner).catch(() => null)) }
+    : await resolveRunner(wsId, null, { exclude: __exclude })
+      .catch(() => ({ runner: 'claude', available: false, fellBack: false, credButNoCli: [] }));
+  if (!resolved.available && only) throw Object.assign(new Error(`no-subscription: ${only.runner} ${only.types.join('/')} not connected`), { code: 'no_subscription' });
   if (!resolved.available) {
     // 자가치유 제외 끝이면 사실대로 — "하나도 연결돼 있지 않습니다"는 거짓(chat.mjs와 동일, Grok 제보 2026-08-06)
     if (__exclude?.length) throw new Error(authExcludedNoRunnerMsg(__exclude, lang));
@@ -59,7 +65,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       if (!text) throw new Error('empty-reply');
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }
-    const sdkEnv = await sdkEnvFor(wsId, runner);
+    // API 키 방식을 허용하지 않는 고정(오피스 번역: 구독만)이면 키 env를 비운다 — host 자격은 프로세스 env를 그대로 넘겨 키·토큰·Bedrock/Vertex 설정이 있으면 구독이 아닌 경로로 과금될 수 있다(재검수 LOW)
+    const baseEnv = await sdkEnvFor(wsId, runner);
+    const sdkEnv = only && !only.types.includes('apikey') ? { ...(baseEnv ?? process.env), ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', CLAUDE_CODE_USE_BEDROCK: '', CLAUDE_CODE_USE_VERTEX: '' } : baseEnv;
     let text = ''; let isErr = false; let apiErrSt = 0; let failed = null; let usage = null; let costUsd = null;
     // 행(hang) 상한 — SDK 경로엔 타임아웃이 없어 소켓 정체 시 이 async iterator가 영영 안 끝난다.
     // 그러면 호출자(스케줄러)의 in-flight 표시가 안 풀려 그 회사 기억 정리가 **무증상 영구 정지**한다
@@ -84,6 +92,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       : runner === 'gemini' ? (known(want) ? want : GEMINI_DEFAULT_MODEL)
       : runner === 'codex' ? (known(want) ? want : CODEX_DEFAULT_MODEL)
       : (model || null);
+    if (onText) try { onText(null); } catch { /* 호출자 오류가 실행을 끊지 않게 */ } // 흘려받기 새 시작 — 크래시 재시도로 다시 들어오면 호출자가 모은 글자를 비운다
     if (nativeRunnerEnabled(runner)) {
       // 네이티브 엔진(P-A') — 도구 없는 단발 호출. 오류는 `API Error: <status> …`로 던져 아래 catch(자가치유·안내)가 그대로 받는다.
       let r;
@@ -97,7 +106,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         throw e;
       }
       text = r.text; usage = r.usage; costUsd = null;
-    } else for await (const msg of query({
+    } else for await (const msg of __query({ // __query: 테스트가 SDK 대신 끼운다
       prompt,
       options: {
         abortController: ac,
@@ -111,8 +120,11 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
         ...(osModel ? { model: osModel } : {}),
+        ...sdkTune,
+        ...(onText ? { includePartialMessages: true } : {}), // 흘려받기(오피스 번역) — 받은 글자 조각을 호출자에게 바로 넘긴다
       },
     })) {
+      if (onText && msg.type === 'stream_event' && msg.event?.type === 'content_block_delta' && msg.event.delta?.type === 'text_delta') { try { onText(msg.event.delta.text); } catch { /* 호출자 오류가 실행을 끊지 않게 */ } }
       if (msg.type === 'result') {
         usage = msg.usage; costUsd = msg.total_cost_usd;
         if (msg.subtype === 'success') { text = msg.result; isErr = !!msg.is_error; apiErrSt = Number(msg.api_error_status) || 0; } else failed = msg.subtype;
@@ -176,7 +188,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // "한 벤더가 죽으면 회사가 선다"는 러너 중립성 원칙 위반이다.)
     // want=null — 선호를 두지 않는다(이전 'claude'는 같은 파일 상단 주석과 모순된 표류였다).
     // (__crashRetry는 ...opts로 이월된다 — 크래시 재시도는 이 체인 전체에서 1회다.)
-    {
+    if (!only) {
       const tried = excludeWith(__exclude, runner);
       const alt = await resolveRunner(wsId, null, { exclude: tried }).catch(() => null);
       if (alt?.available && !tried.includes(alt.runner)) {
