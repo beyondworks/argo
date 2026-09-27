@@ -270,3 +270,81 @@ test('정리: 휴지통 30일·버전 90일 지난 것만 지운다', { skip }, 
   assert.equal(last(sql(`select count(*) from public.office_pages where id = '${fresh}'`)), '1');
   assert.equal(last(sql(`select string_agg(version::text, ',') from public.office_page_versions where page_id = '${fresh}'`)), '91');
 });
+
+/* ── 병합 전 분리 검수(9/27) 지적 — 고치기 전에 재현으로 잠근다 ── */
+// HIGH: 멤버가 공개 페이지를 복제하면 그 아래 관리자 전용 비공개 하위가 비공개 없이 복사돼 조직 전체에 보였다
+test('검수 HIGH: 복제는 복제하는 사람이 볼 수 있는 하위만, 관리자가 아니면 숨김을 풀지 않는다', { skip }, () => {
+  const top = create(U.admin, { org: ORG });
+  asUser(U.admin, `select public.office_page_set_general('${top}', 'org_edit')`);
+  const mid = create(U.member, { org: ORG, parent: top, title: '인사' });            // 멤버는 최상위를 복제할 수 없다 — 한 단계 아래를 복제
+  const hidden = create(U.admin, { org: ORG, parent: mid, title: '임원 보수표' });
+  asUser(U.admin, `select public.office_page_set_restricted('${hidden}', true)`);
+  const open = create(U.member, { org: ORG, parent: mid, title: '공개 하위' });
+  const copy = last(asUser(U.member, `select public.office_page_duplicate('${mid}')`));
+  const kids = last(sql(`select string_agg(title, ',' order by title) from public.office_pages where parent_id = '${copy}'`));
+  assert.equal(kids, '공개 하위', '멤버가 못 보는 비공개 하위는 복사하지 않는다');
+  // 비공개 페이지에 보기 공유만 받은 사람이 복제해도 사본은 여전히 숨는다
+  asUser(U.admin, `select public.office_share_set('${hidden}', '${U.member}', 'view')`);
+  const c2 = last(asUser(U.member, `select public.office_page_duplicate('${hidden}')`));
+  assert.equal(access(U.guest, c2), 'none'); assert.equal(last(sql(`select restricted from public.office_pages where id = '${c2}'`)), 't');
+  assert.equal(visible(U.friend, c2), false);
+  void open;
+});
+
+// M1: 퇴사자·휴지통 페이지의 allowed 명단은 페이지 접근과 무관하게 비공개 블록을 계속 읽었다
+test('검수 M1: 비공개 블록은 지정받았어도 페이지에 접근할 수 없으면(퇴사 등) 못 받는다', { skip }, () => {
+  const p = create(U.admin, { org: ORG });
+  asUser(U.admin, `insert into public.office_private_blocks (page_id, block_id, content, allowed) values ('${p}', 'pay', '{"type":"table"}', array['${U.gone}']::uuid[])`);
+  assert.equal(last(asUser(U.gone, `select count(*) from public.office_private_blocks where page_id = '${p}'`)), '0');
+});
+
+// M2: 비공개 트리 안 페이지에 편집 공유만 받은 사람이 공개 부모 아래로 옮겨 숨김을 풀었다
+test('검수 M2: 숨김이 바뀌는 이동은 관리자만', { skip }, () => {
+  const top = create(U.admin, { org: ORG });
+  const secret = create(U.admin, { org: ORG, parent: top });
+  asUser(U.admin, `select public.office_page_set_restricted('${secret}', true)`);
+  const inside = create(U.admin, { org: ORG, parent: secret });
+  asUser(U.admin, `select public.office_share_set('${inside}', '${U.member}', 'edit')`);
+  fails(asUserRaw(U.member, `select public.office_page_move('${inside}', '${top}', 'z')`), /restrict|admin/);
+  asUser(U.admin, `select public.office_page_move('${inside}', '${top}', 'z')`);
+});
+
+// LOW: 게시 뒤 비공개로 바꾸거나 조직이 지워져도 공개 링크가 열렸다
+test('검수 LOW: 비공개가 된 페이지·지워진 조직의 공개 링크는 닫힌다', { skip }, () => {
+  const p = create(U.admin, { org: ORG, title: '게시했다가 비공개' });
+  const token = last(asUser(U.admin, `select public.office_page_publish('${p}', true)`));
+  assert.notEqual(last(asAnon(`select public.office_public_page('${token}')`)), '');
+  asUser(U.admin, `select public.office_page_set_restricted('${p}', true)`);
+  assert.equal(last(asAnon(`select coalesce(public.office_public_page('${token}')::text, 'null')`)), 'null');
+  fails(asUserRaw(U.member, `select public.office_page_hidden('${p}')`), /permission denied/); // 비공개 여부를 밖에서 떠보지 못한다
+});
+
+// LOW: 보기 권한자도 공유 대상·링크 토큰을 읽었고, 비공개 블록 작성자를 남으로 적을 수 있었고, 퇴사자가 휴지통에서 되살렸다
+test('검수 LOW: 공유 목록은 전체 권한자만, 비공개 블록 작성자는 본인, 퇴사자는 복원 못 한다', { skip }, () => {
+  const p = create(U.admin, { org: ORG });
+  asUser(U.admin, `select public.office_page_set_general('${p}', 'org_view')`);
+  asUser(U.admin, `select public.office_page_publish('${p}', true)`);
+  assert.equal(last(asUser(U.member, `select count(*) from public.office_shares where page_id = '${p}'`)), '0');
+  assert.equal(last(asUser(U.admin, `select count(*) from public.office_shares where page_id = '${p}'`)), '1');
+  asUser(U.admin, `insert into public.office_private_blocks (page_id, block_id, content, created_by) values ('${p}', 'w', '{}', '${U.owner}')`);
+  assert.equal(last(sql(`select created_by from public.office_private_blocks where page_id = '${p}' and block_id = 'w'`)), U.admin);
+  const q = create(U.admin, { org: ORG });
+  asUser(U.admin, `select public.office_share_set('${q}', '${U.gone}', 'edit')`);
+  sql(`update public.office_pages set archived_at = now(), archived_by = '${U.gone}' where id = '${q}'`);
+  fails(asUserRaw(U.gone, `select public.office_page_restore_archived('${q}')`), /access required/);
+  assert.equal(last(sql(`select archived_at is not null from public.office_pages where id = '${q}'`)), 't', '퇴사자는 되살리지 못한다');
+});
+
+// M3: 목록 조회는 후보를 좁혀도 결과는 전체 표 조회(RLS)와 같아야 한다 — 소유자·관리자·멤버·게스트·바깥 공유·퇴사자
+test('검수 M3: 페이지 목록 함수 = RLS 전체 조회와 같은 결과', { skip }, () => {
+  const mine = create(U.friend, { title: '친구 개인' });
+  asUser(U.friend, `select public.office_share_set('${mine}', '${U.member}', 'view')`);
+  create(U.friend, { parent: mine, title: '친구 개인 하위' });
+  const g = create(U.admin, { org: ORG, title: '게스트 공유' });
+  asUser(U.admin, `select public.office_share_set('${g}', '${U.guest}', 'view')`);
+  for (const [k, u] of Object.entries(U)) {
+    const all = last(asUser(u, `select coalesce(string_agg(id::text, ',' order by id), '') from public.office_pages`));
+    const list = last(asUser(u, `select coalesce(string_agg(id::text, ',' order by id), '') from public.office_page_list()`));
+    assert.equal(list, all, k);
+  }
+});

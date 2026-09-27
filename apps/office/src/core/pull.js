@@ -30,7 +30,8 @@ export async function pullPages() {
   if (!sb) return;
   const all = () => [...getState().pages, ...getState().trash];
   const before = new Set(all().map((p) => p.id).filter(pendingFor));                 // 요청 전에 잡는다 — 응답은 요청 시점 스냅숏
-  const { data, error } = await sb.from('office_pages').select('id, space_kind, owner_user_id, org_id, parent_id, position, title, icon, restricted, general, is_template, version, updated_at, archived_at, archived_by');
+  // 후보를 내 공간·내 조직·공유받은 트리로 좁혀 읽는다(office_page_list) — 전체 표를 읽으면 테넌트 전체 페이지를 권한 판정한다(검수 M3)
+  const { data, error } = await sb.rpc('office_page_list').select('id, space_kind, owner_user_id, org_id, parent_id, position, title, icon, restricted, general, is_template, version, updated_at, archived_at, archived_by');
   if (error) throw error;
   const orgKey = new Map(SPACES.filter((s) => s.kind === 'org').map((s) => [s.id, s.key]));
   const spaceOf = (r) => (r.space_kind === 'me' ? (r.owner_user_id === ME.id ? 'me' : 'shared') : orgKey.get(r.org_id));

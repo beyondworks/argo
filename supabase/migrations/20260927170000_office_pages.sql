@@ -112,6 +112,14 @@ begin
   return case res when 3 then 'full' when 2 then 'edit' when 1 then 'view' else 'none' end;
 end $$;
 
+/** 자신이나 조상이 비공개인가(관리자 지정 숨김) — 이동·공개 링크·복제가 같은 기준을 쓴다 */
+create or replace function public.office_page_hidden(p_page uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+  with recursive up as (select id, parent_id, restricted, 0 as d from public.office_pages where id = p_page
+                        union all select p.id, p.parent_id, p.restricted, up.d + 1 from public.office_pages p join up on p.id = up.parent_id where up.d < 32)
+  select coalesce(bool_or(restricted), false) from up
+$$;
+
 alter table public.office_pages enable row level security;
 alter table public.office_shares enable row level security;
 alter table public.office_page_versions enable row level security;
@@ -120,15 +128,26 @@ alter table public.office_private_blocks enable row level security;
 drop policy if exists office_pages_read on public.office_pages;
 create policy office_pages_read on public.office_pages for select to authenticated using (public.office_page_access(id) <> 'none');
 drop policy if exists office_shares_read on public.office_shares;
-create policy office_shares_read on public.office_shares for select to authenticated using (public.office_page_access(page_id) <> 'none');
+create policy office_shares_read on public.office_shares for select to authenticated
+  using (public.office_page_access(page_id) = 'full' or (principal_kind = 'user' and user_id = auth.uid())); -- 남의 공유·링크 토큰은 전체 권한자만, 내게 온 공유는 나도
 drop policy if exists office_page_versions_read on public.office_page_versions;
 create policy office_page_versions_read on public.office_page_versions for select to authenticated using (public.office_page_access(page_id) <> 'none');
 drop policy if exists office_private_blocks_read on public.office_private_blocks;
 create policy office_private_blocks_read on public.office_private_blocks for select to authenticated
-  using (public.office_page_access(page_id) = 'full' or auth.uid() = any(allowed));
+  using (public.office_page_access(page_id) = 'full' or (auth.uid() = any(allowed) and public.office_page_access(page_id) <> 'none'));
 drop policy if exists office_private_blocks_write on public.office_private_blocks;
 create policy office_private_blocks_write on public.office_private_blocks for all to authenticated
   using (public.office_page_access(page_id) = 'full') with check (public.office_page_access(page_id) = 'full');
+
+create or replace function public.office_private_blocks_author() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is not null then new.created_by := case when tg_op = 'UPDATE' then old.created_by else auth.uid() end; end if;
+  return new;
+end $$;
+drop trigger if exists office_private_blocks_author on public.office_private_blocks;
+create trigger office_private_blocks_author before insert or update on public.office_private_blocks
+  for each row execute function public.office_private_blocks_author();
 
 revoke all on public.office_pages, public.office_shares, public.office_page_versions, public.office_private_blocks from anon;
 grant select on public.office_pages, public.office_shares, public.office_page_versions to authenticated;
@@ -227,6 +246,10 @@ begin
   elsif pg.org_id is not null and not public.msgr_is_admin(pg.org_id) then
     raise exception 'office: only admins add top-level wiki pages' using errcode = '42501';
   end if;
+  if pg.org_id is not null and not public.msgr_is_admin(pg.org_id)
+     and public.office_page_hidden(p_id) is distinct from (pg.restricted or (p_parent is not null and public.office_page_hidden(p_parent))) then
+    raise exception 'office: only admins move pages across restricted areas' using errcode = '42501'; -- 편집 공유자가 비공개 밖으로 옮겨 숨김을 푸는 것(검수 M2)
+  end if;
   update public.office_pages set parent_id = p_parent, position = p_position, updated_at = now()
    where id = p_id and (parent_id is distinct from p_parent or position is distinct from p_position);
 end $$;
@@ -247,7 +270,8 @@ declare pg public.office_pages;
 begin
   select * into pg from public.office_pages where id = p_id;
   if not found or pg.archived_at is null then return; end if;
-  if pg.archived_by is distinct from auth.uid() then perform public.office_need(p_id, 'full'); end if; -- 지운 사람 또는 전체 권한자
+  if pg.archived_by is distinct from auth.uid() then perform public.office_need(p_id, 'full'); -- 지운 사람 또는 전체 권한자
+  else perform public.office_need(p_id, 'view'); end if;                                     -- 지운 사람도 지금 접근할 수 있어야(퇴사하면 못 되살린다)
   with recursive t as (select id from public.office_pages where id = p_id
                        union all select c.id from public.office_pages c join t on c.parent_id = t.id)
   update public.office_pages set archived_at = null, archived_by = null
@@ -264,7 +288,7 @@ end $$;
 -- ── 복제(공유·비공개·비공개 블록은 따라가지 않는다) ──
 create or replace function public.office_page_duplicate(p_id uuid, p_title text default null) returns uuid
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare uid uuid := auth.uid(); src public.office_pages; r record; map jsonb := '{}'::jsonb; nid uuid; root uuid;
+declare uid uuid := auth.uid(); src public.office_pages; r record; map jsonb := '{}'::jsonb; nid uuid; root uuid; admin boolean;
 begin
   perform public.office_need(p_id, 'view');
   select * into src from public.office_pages where id = p_id;
@@ -272,18 +296,20 @@ begin
   elsif src.org_id is not null and not public.msgr_is_admin(src.org_id) then raise exception 'office: only admins add top-level wiki pages' using errcode = '42501';
   elsif src.space_kind = 'me' and src.owner_user_id <> uid then raise exception 'office: not your space' using errcode = '42501';
   end if;
+  admin := src.org_id is not null and public.msgr_is_admin(src.org_id);
   for r in with recursive t as (select p.*, 0 as d from public.office_pages p where p.id = p_id
-                                union all select c.*, t.d + 1 from public.office_pages c join t on c.parent_id = t.id where c.archived_at is null)
+                                union all select c.*, t.d + 1 from public.office_pages c join t on c.parent_id = t.id
+                                 where c.archived_at is null and public.office_page_access(c.id) <> 'none')   -- 볼 수 없는 하위(비공개 등)는 복사하지 않는다
            select * from t order by d loop
     nid := gen_random_uuid();
     if r.id = p_id then root := nid; end if;
     map := map || jsonb_build_object(r.id::text, nid);
-    insert into public.office_pages (id, space_kind, owner_user_id, org_id, parent_id, position, title, icon, content, general, created_by, updated_by)
+    insert into public.office_pages (id, space_kind, owner_user_id, org_id, parent_id, position, title, icon, content, general, restricted, created_by, updated_by)
     values (nid, r.space_kind, case when r.space_kind = 'me' then r.owner_user_id else uid end, r.org_id,
             case when r.id = p_id then r.parent_id else (map ->> r.parent_id::text)::uuid end,
             case when r.id = p_id then left(r.position || 'm', 64) else r.position end,
             case when r.id = p_id then coalesce(p_title, r.title) else r.title end,
-            r.icon, r.content, r.general, uid, uid);
+            r.icon, r.content, r.general, r.restricted and not admin, uid, uid);
   end loop;
   return root;
 end $$;
@@ -369,9 +395,25 @@ create or replace function public.office_public_page(p_token text) returns jsonb
   select jsonb_build_object('title', p.title, 'content', public.office_strip(p.content), 'org', o.name, 'index', s.allow_index)
     from public.office_shares s
     join public.office_pages p on p.id = s.page_id and p.archived_at is null
-    left join public.msgr_orgs o on o.id = p.org_id and o.deleted_at is null
+    left join public.msgr_orgs o on o.id = p.org_id
    where s.principal_kind = 'link' and s.published and s.link_token = p_token
+     and (p.org_id is null or o.deleted_at is null) and not public.office_page_hidden(p.id)
 $$;
+
+-- ── 페이지 목록 — 후보를 내 공간·내 조직·내게 공유된 트리로 먼저 좁히고, 권한 판정(RLS)은 그 후보에만 돈다.
+-- 전체 표를 조건 없이 읽으면 모든 사용자가 불러올 때마다 테넌트 전체 페이지 × 조상 깊이만큼 판정했다(검수 M3, #533과 같은 계열).
+create or replace function public.office_page_list() returns setof public.office_pages
+  language sql stable security invoker set search_path = public, pg_temp as $$
+  with recursive shared as (
+    select s.page_id as id from public.office_shares s where s.principal_kind = 'user' and s.user_id = auth.uid()
+    union select c.id from public.office_pages c join shared on c.parent_id = shared.id)
+  select p.* from public.office_pages p
+   where (p.space_kind = 'me' and p.owner_user_id = auth.uid())
+      or p.org_id in (select m.org_id from public.msgr_org_members m where m.user_id = auth.uid() and m.removed_at is null)
+      or p.id in (select id from shared)
+$$;
+revoke all on function public.office_page_list() from public, anon;
+grant execute on function public.office_page_list() to authenticated;
 
 -- ── 정리(휴지통 30일·버전 90일) — 기억 데이터 정리 기간은 유건 승인 값(2026-09-26) ──
 create or replace function public.office_purge() returns void
@@ -400,3 +442,6 @@ end $$;
 revoke all on function public.office_public_page(text) from public;
 grant execute on function public.office_public_page(text) to anon, authenticated;
 revoke all on function public.office_purge() from public, anon, authenticated;
+-- 내부용(정의자 함수 안에서만 부른다) — 밖에서 비공개 여부를 떠보지 못하게
+revoke all on function public.office_page_hidden(uuid) from public, anon, authenticated;
+revoke all on function public.office_private_blocks_author() from public, anon, authenticated;
