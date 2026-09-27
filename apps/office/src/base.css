@@ -276,6 +276,30 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .blocked-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-3); margin: 14px 0 4px; }
 .reader-body p { margin: 0 0 12px; font-size: 14.5px; line-height: 1.75; max-width: 70ch; }
 
+/* 연결한 계정(여러 개) · 연결 안내 · 실제 메일 본문 */
+.mail-accounts { display: grid; gap: 1px; margin: 8px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); }
+.mail-accounts .mail-account { padding: 0 2px 0 0; border-radius: var(--rc); gap: 2px; }
+.mail-accounts .mail-account.active { background: var(--secondary); }
+.mail-account-name { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; height: 30px; padding: 0 7px; color: var(--fg-2); font-size: 12.5px; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mail-account-name .badge { height: 17px; padding: 0 5px; font-size: 10.5px; flex-shrink: 0; }
+.mail-account-name .ellip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.icon-btn.sm { width: 26px; height: 26px; }
+.link-btn { color: var(--fg-2); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border); padding: 2px 4px; }
+.link-btn.small { font-size: 12px; }
+.row-gap { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.btn.danger { background: var(--danger); color: var(--primary-fg); box-shadow: none; }
+.field select { height: var(--ctl); border-radius: var(--rc); background: var(--card); color: var(--fg); padding: 0 8px; box-shadow: inset 0 0 0 1px var(--border-soft); border: 0; font: inherit; }
+.mail-tag { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 5px; background: var(--secondary); color: var(--fg-2); font-size: 11px; }
+.mail-banner { display: flex; align-items: center; gap: 8px; padding: 9px 14px; font-size: 12.5px; color: var(--fg-2); background: var(--warn-soft); border-bottom: 1px solid var(--border-soft); }
+.mail-banner .btn { margin-left: auto; }
+.mail-connect h3 { font-size: 16px; font-weight: 640; color: var(--fg); }
+.mail-connect p { max-width: 36ch; }
+.reader.real { display: flex; flex-direction: column; height: 100%; max-width: none; padding-bottom: 16px; }
+.mail-atts { margin: 12px 0 0; }
+.mail-atts .chip { cursor: pointer; }
+.mail-frame { flex: 1; min-height: 320px; width: 100%; margin-top: 12px; border: 0; border-radius: var(--rs); box-shadow: 0 0 0 1px var(--border-soft); }
+.mail-text { white-space: pre-wrap; margin-top: 14px; font-size: 14.5px; line-height: 1.75; max-width: 70ch; }
+
 /* ── 페이지(편집기) ── */
 .page-wrap.doc { max-width: 860px; padding: 36px 56px 160px; min-height: 100%; position: relative; }
 .page-wrap.doc.file-over { box-shadow: inset 0 0 0 2px var(--border); border-radius: var(--rs); }

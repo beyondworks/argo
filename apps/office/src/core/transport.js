@@ -67,13 +67,22 @@ async function send(op) {
       if (!data?.length) throw Object.assign(new Error('office: not decidable'), { transient: false, decide: true }); // 0행 = 결재권 없음·이미 결정됨
       return;
     }
-    default: return;                                                                 // ponytail: 메일·결재·배정은 서버 표가 생기는 단계에서 여기에 더한다
+    case 'mail.flag': {                                                            // 합쳐진 변경이라 patch가 아니라 지금 상태(읽음·폴더)를 그대로 보낸다 — 여러 번 보내도 같다
+      const m = getState().mails.find((x) => x.id === p.id);
+      if (!m?.account) return;                                                     // 예시 메일
+      const inbox = m.folder === 'inbox' ? 'add' : m.folder === 'archive' ? 'remove' : null;
+      const { api } = await import('./mail.js');
+      await api('modify', { account: m.account, id: m.gid, add: [...(m.unread ? ['UNREAD'] : []), ...(inbox === 'add' ? ['INBOX'] : [])], remove: [...(m.unread ? [] : ['UNREAD']), ...(inbox === 'remove' ? ['INBOX'] : [])] });
+      return;
+    }
+    default: return;                                                                 // ponytail: 배정은 크루 단계(P4)에서 여기에 더한다
   }
 }
 
 function rejected(op, err) {
   if (err?.conflict && op.payload.type === 'page.save') { hold(getState().pages.find((x) => x.id === op.payload.id)); setUi({ conflict: op.payload.id }); return; }
   if (op.payload.type === 'approval.decide') { showToast(t('ap.noRight')); import('./pull.js').then((m) => m.pullBoard()).catch(() => {}); return; }
+  if (op.payload.type === 'mail.flag') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
   showToast(t('sync.rejected'));
   import('./pull.js').then((m) => m.pullPages()).catch(() => {});                  // 서버 상태로 되돌린다
 }

@@ -1,5 +1,6 @@
-// 메일(내 공간) — 폴더 | 목록 | 본문. 본문은 원래 메일 서버에 두고 필요할 때 불러온다(P3: IMAP). 크루는 초안까지만 쓴다.
-import { useEffect, useMemo, useState } from 'react';
+// 메일(내 공간) — 계정·폴더 | 목록 | 본문. 본문은 메일 서버(Gmail)에 두고 볼 때 가져온다. 크루는 초안까지만 쓴다.
+// 로그인 전(예시 모드)은 예시 메일, 로그인 뒤는 연결한 계정(Gmail·Google Workspace, 여러 개)의 메일.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
@@ -14,10 +15,22 @@ import { mailMenu } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer, fmtBytes, MAX_FILE } from '../core/files.js';
 import { imeGuardWith } from '../core/ime.js';
 import { MAIL_FOLDERS } from '../data/sample.js';
-import { ME } from '../core/session.js';
+import { ME, useSession } from '../core/session.js';
 import { crewName } from './modules.jsx';
+import {
+  loadAccounts, pullMail, readMail, connectGoogle, finishConnect, disconnectAccount, mailConfig, adminNote,
+  saveDraft, sendMail, fileToPart, downloadAttachment, mailDoc, mailPaper, ATTACH_CAP,
+} from '../core/mail.js';
 
-function MailRow({ m, active }) {
+const ok = (a) => a.status === 'ok';
+const domain = (addr) => String(addr ?? '').split('@')[1] ?? '';
+async function copyAdminNote() {
+  await navigator.clipboard.writeText(adminNote(t, await mailConfig()));
+  showToast(t('mailc.copied'));
+}
+const reconnect = (a) => connectGoogle(a?.address).catch((e) => showToast(t(`mailc.err.${e.code === 'not_configured' ? 'not_configured' : 'other'}`)));
+
+function MailRow({ m, active, tag }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: m.subject } });
   const { onTouchStart, ...mouse } = listeners ?? {};
   return (
@@ -27,24 +40,48 @@ function MailRow({ m, active }) {
       <span className="mail-from">{m.unread && <span className="dot mark" />}{m.from}</span>
       <span className="mail-time mono">{ago(m.at)}</span>
       <span className="mail-subject">{m.subject}</span>
-      <span className="mail-snippet">{m.body[0]}</span>
+      <span className="mail-snippet">{tag && <span className="mail-tag">{tag}</span>}{m.snippet ?? m.body?.[0]}</span>
       {m.note && <span className="mail-crew"><Face id={m.note.crew} size={14} />{t('mail.note', { crew: crewName(m.note.crew) })}</span>}
     </button>
   );
 }
 
-function Reader({ m, onBack }) {
-  if (!m) return <div className="empty-state"><Icon name="mail" size={20} /><p>{t('mail.select')}</p></div>;
+/** 실제 메일 본문 — 격리된 틀(sandbox, 스크립트 없음)에 넣고 바깥 이미지는 누를 때만 */
+function MailBody({ m }) {
+  const [c, setC] = useState(null); const [err, setErr] = useState(false); const [images, setImages] = useState(false);
+  useEffect(() => { let live = true; setC(null); setErr(false); setImages(false); readMail(m).then((x) => live && setC(x), () => live && setErr(true)); return () => { live = false; }; }, [m.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (err) return <p className="dim">{t('mailc.readFailed')}</p>;
+  if (!c) return <p className="dim">{t('mailc.loading')}</p>;
   return (
-    <article className="reader">
+    <>
+      {c.attachments.length > 0 && <div className="chips mail-atts">{c.attachments.map((a) => (
+        <button key={a.id} type="button" className="chip" onClick={() => downloadAttachment(m, a).catch(() => showToast(t('mailc.readFailed')))}><Icon name="file" size={12} />{a.name}<small className="mono">{fmtBytes(a.size)}</small></button>
+      ))}</div>}
+      {c.html ? (
+        <>
+          {!images && /<img[^>]+src=["']?https?:/i.test(c.html) && <div className="blocked-note"><Icon name="lock" size={12} />{t('mail.imagesBlocked')}<button type="button" className="btn ghost sm" onClick={() => setImages(true)}>{t('mailc.showImages')}</button></div>}
+          <iframe className="mail-frame" title={m.subject} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={mailDoc(c.html, { images, paper: mailPaper() })} />
+        </>
+      ) : <div className="reader-body mail-text">{c.text ?? m.snippet}</div>}
+    </>
+  );
+}
+
+function Reader({ m, onBack }) {
+  const [c, setC] = useState(null);
+  useEffect(() => { let live = true; setC(null); if (m?.account) readMail(m).then((x) => live && setC(x), () => {}); return () => { live = false; }; }, [m?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!m) return <div className="empty-state"><Icon name="mail" size={20} /><p>{t('mail.select')}</p></div>;
+  const reply = () => setUi({ compose: { to: m.addr, subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`, account: m.account, threadId: m.threadId, inReplyTo: c?.messageId, references: c?.references } });
+  return (
+    <article className={`reader${m.account ? ' real' : ''}`}>
       <header className="reader-head">
         <button type="button" className="icon-btn only-narrow" aria-label={t('mail.back')} onClick={onBack}><Icon name="back" /></button>
         <h2>{m.subject}</h2>
         <div className="reader-meta"><b>{m.from}</b><span className="dim">&lt;{m.addr}&gt;</span><span className="dim mono">{ago(m.at)}</span></div>
         <div className="reader-actions">
           <button type="button" className="btn primary" onClick={() => setUi({ assign: { space: 'me', items: [{ kind: 'mail', id: m.id, label: m.subject }] } })}><Icon name="hand" size={14} />{t('crew.assign')}</button>
-          <button type="button" className="btn" onClick={() => setUi({ compose: { to: m.addr, subject: `Re: ${m.subject}` } })}><Icon name="reply" size={14} />{t('mail.reply')}</button>
-          <button type="button" className="btn" onClick={() => { const undo = archiveMail(m.id); showToast(t('mail.archived'), { undo }); navigate('/me/mail'); }}><Icon name="archive" size={14} />{t('mail.archiveIt')}</button>
+          <button type="button" className="btn" onClick={reply}><Icon name="reply" size={14} />{t('mail.reply')}</button>
+          {m.folder !== 'archive' && <button type="button" className="btn" onClick={() => { const undo = archiveMail(m.id); showToast(t('mail.archived'), { undo }); navigate('/me/mail'); }}><Icon name="archive" size={14} />{t('mail.archiveIt')}</button>}
           <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, mailMenu(m), { anchor: e.currentTarget })}><Icon name="dots" /></button>
         </div>
       </header>
@@ -55,8 +92,10 @@ function Reader({ m, onBack }) {
           <ul>{m.note.todos.map((x) => <li key={x}>{x}</li>)}</ul>
         </section>
       )}
-      <div className="blocked-note"><Icon name="lock" size={12} />{t('mail.imagesBlocked')}</div>
-      <div className="reader-body">{m.body.map((p, i) => <p key={i}>{p}</p>)}</div>
+      {m.account ? <MailBody m={m} /> : <>
+        <div className="blocked-note"><Icon name="lock" size={12} />{t('mail.imagesBlocked')}</div>
+        <div className="reader-body">{m.body.map((p, i) => <p key={i}>{p}</p>)}</div>
+      </>}
     </article>
   );
 }
@@ -64,24 +103,62 @@ function Reader({ m, onBack }) {
 export function Compose() {
   useLang();
   const { compose } = useUi();
-  const [to, setTo] = useState(''); const [subject, setSubject] = useState(''); const [body, setBody] = useState('');
-  const [files, setFiles] = useState([]); const [over, setOver] = useState(false); const [saved, setSaved] = useState(false);
-  useEffect(() => { if (compose) { setTo(compose.to ?? ''); setSubject(compose.subject ?? ''); setBody(''); setFiles([]); setSaved(false); } }, [compose]);
-  useEffect(() => { if (!compose || !body) return; const id = setTimeout(() => setSaved(true), 1200); return () => clearTimeout(id); }, [compose, body, to, subject]);
+  const real = useSession() === 'signedIn';
+  const accounts = useStore((s) => s.mailAccounts);
+  const usable = useMemo(() => (accounts ?? []).filter(ok), [accounts]);
+  const [to, setTo] = useState(''); const [cc, setCc] = useState(''); const [subject, setSubject] = useState(''); const [body, setBody] = useState('');
+  const [from, setFrom] = useState(''); const [files, setFiles] = useState([]); const [over, setOver] = useState(false);
+  const [saved, setSaved] = useState(false); const [busy, setBusy] = useState(false); const [dirty, setDirty] = useState(false);
+  const draft = useRef(null); const pending = useRef(null);
+  useEffect(() => {
+    if (!compose) return;
+    setTo(compose.to ?? ''); setCc(''); setSubject(compose.subject ?? ''); setBody(''); setFiles([]); setSaved(false); setDirty(false);
+    setFrom(compose.account ?? usable[0]?.id ?? ''); draft.current = null;
+  }, [compose]); // eslint-disable-line react-hooks/exhaustive-deps
+  const msg = () => ({ account: from, threadId: compose?.threadId, inReplyTo: compose?.inReplyTo, references: compose?.references, to, cc, subject, text: body, from: usable.find((a) => a.id === from)?.address });
+  // 초안 자동 저장: 손댄 뒤 2초 멈추면, 바뀐 것이 있을 때만(임시 보관함에 한 통 — 같은 초안을 고친다)
+  useEffect(() => {
+    if (!compose || !dirty) return;
+    if (!real) { const id = setTimeout(() => setSaved(true), 1200); return () => clearTimeout(id); }
+    if (!from || !(to || subject || body)) return;
+    const id = setTimeout(async () => {
+      pending.current = saveDraft({ ...msg(), draftId: draft.current?.account === from ? draft.current.id : undefined })
+        .then((r) => { draft.current = { id: r.draftId, account: from }; setSaved(true); }, () => {});
+    }, 2000);
+    return () => clearTimeout(id);
+  }, [compose, dirty, to, cc, subject, body, from]); // eslint-disable-line react-hooks/exhaustive-deps
   const close = () => setUi({ compose: null });
+  const edit = (fn) => (e) => { fn(e.target.value); setDirty(true); setSaved(false); };
   const add = (list) => {
-    const ok = list.filter((f) => f.size <= MAX_FILE);
-    if (ok.length < list.length) showToast(t('page.tooBig'));
-    setFiles((cur) => [...cur, ...ok.map((f) => ({ name: f.name, size: f.size }))]);
+    const okFiles = list.filter((f) => f.size <= MAX_FILE);
+    if (okFiles.length < list.length) showToast(t('page.tooBig'));
+    setFiles((cur) => [...cur, ...okFiles]);
+  };
+  const send = async () => {
+    if (!real) { close(); showToast(t('mail.send')); return; }
+    if (!from) { showToast(t('mailc.noAccount')); return; }
+    if (files.reduce((n, f) => n + f.size, 0) > ATTACH_CAP) { showToast(t('mailc.tooBig')); return; }
+    setBusy(true);
+    try {
+      await pending.current;                                                         // 저장 중인 초안이 있으면 끝난 뒤 그 초안을 지우며 보낸다
+      await sendMail({ ...msg(), draftId: draft.current?.account === from ? draft.current.id : undefined, attachments: await Promise.all(files.map(fileToPart)) });
+      close(); showToast(t('mailc.sent'));
+    } catch { showToast(t('mailc.sendFailed')); } finally { setBusy(false); }
   };
   return (
     <Modal open={!!compose} onClose={close} title={t('mail.compose')} width={620}
-      footer={<><span className="dim small">{saved ? t('mail.draftSaved') : ''}</span><button type="button" className="btn primary" onClick={() => { close(); showToast(t('mail.send')); }}><Icon name="send" size={14} />{t('mail.send')}</button></>}>
+      footer={<><span className="dim small">{saved ? t('mail.draftSaved') : ''}</span><button type="button" className="btn primary" disabled={busy || !to.trim()} onClick={send}><Icon name="send" size={14} />{t('mail.send')}</button></>}>
       <div className={`compose${over ? ' file-over' : ''}`} onDragOver={(e) => { if (dragHasFiles(e.dataTransfer)) { e.preventDefault(); setOver(true); } }} onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); add(filesFromTransfer(e.dataTransfer)); }}>
-        <label className="field"><span>{t('mail.to')}</span><input value={to} onChange={(e) => setTo(e.target.value)} {...imeGuardWith()} /></label>
-        <label className="field"><span>{t('mail.subject')}</span><input value={subject} onChange={(e) => setSubject(e.target.value)} {...imeGuardWith()} /></label>
-        <textarea className="compose-body" value={body} onChange={(e) => { setBody(e.target.value); setSaved(false); }} rows={10} />
+        {real && usable.length > 1 && (
+          <label className="field"><span>{t('mailc.from')}</span>
+            <select value={from} onChange={edit(setFrom)}>{usable.map((a) => <option key={a.id} value={a.id}>{a.address}</option>)}</select>
+          </label>
+        )}
+        <label className="field"><span>{t('mail.to')}</span><input value={to} onChange={edit(setTo)} {...imeGuardWith()} /></label>
+        {real && <label className="field"><span>{t('mailc.cc')}</span><input value={cc} onChange={edit(setCc)} {...imeGuardWith()} /></label>}
+        <label className="field"><span>{t('mail.subject')}</span><input value={subject} onChange={edit(setSubject)} {...imeGuardWith()} /></label>
+        <textarea className="compose-body" value={body} onChange={edit(setBody)} rows={10} />
         {files.length > 0 && <div className="chips">{files.map((f, i) => <span key={i} className="chip"><Icon name="file" size={12} />{f.name}<small className="mono">{fmtBytes(f.size)}</small></span>)}</div>}
         {over && <div className="drop-hint">{t('mail.dropHere')}</div>}
       </div>
@@ -89,12 +166,106 @@ export function Compose() {
   );
 }
 
+/** 계정이 없을 때 — Google로 연결(로그인 → 권한 승인), 회사 계정이 막혔을 때의 안내문 */
+function ConnectPanel() {
+  const [cfg, setCfg] = useState(undefined);
+  useEffect(() => { let live = true; mailConfig().then((c) => live && setCfg(c)); return () => { live = false; }; }, []);
+  return (
+    <div className="empty-state mail-connect">
+      <Icon name="mail" size={22} />
+      <h3>{t('mailc.title')}</h3>
+      <p className="dim small">{t('mailc.sub')}</p>
+      {cfg !== undefined && (cfg?.google
+        ? <button type="button" className="btn primary" onClick={() => reconnect()}>{t('mailc.google')}</button>
+        : <p className="dim small">{t('mailc.notConfigured')}</p>)}
+      {cfg?.google && <button type="button" className="link-btn small" onClick={copyAdminNote}>{t('mailc.blockedQ')} {t('mailc.copyAdmin')}</button>}
+    </div>
+  );
+}
+
+/** Google이 돌려보내는 자리(/me/mail/connect?code&state 또는 ?error) — 서버가 토큰을 받아 봉인·저장 */
+export function MailConnect({ query }) {
+  useLang();
+  const mode = useSession();
+  const [error, setError] = useState(null);
+  const started = useRef(false);
+  useEffect(() => {
+    if (mode !== 'signedIn' || started.current) return;
+    started.current = true;
+    const q = new URLSearchParams(query ?? '');
+    if (q.get('error')) { setError(q.get('error')); return; }
+    finishConnect(q.get('code'), q.get('state'))
+      .then(async ({ address }) => { await loadAccounts(); showToast(t('mailc.connected', { addr: address })); navigate('/me/mail', { replace: true }); })
+      .catch((e) => setError(e.code));
+  }, [mode, query]);
+  const known = ['access_denied', 'admin_policy_enforced', 'scopes', 'state', 'not_configured'];
+  return (
+    <div className="empty-state mail-connect">
+      <Icon name="mail" size={22} />
+      {!error ? <p>{t('mailc.connecting')}</p> : <>
+        <p>{t(`mailc.err.${known.includes(error) ? error : 'other'}`)}</p>
+        <div className="row-gap">
+          <button type="button" className="btn primary" onClick={() => reconnect()}>{t('mailc.reconnect')}</button>
+          <button type="button" className="btn" onClick={() => navigate('/me/mail', { replace: true })}>{t('mail.back')}</button>
+        </div>
+        <button type="button" className="link-btn small" onClick={copyAdminNote}>{t('mailc.copyAdmin')}</button>
+      </>}
+    </div>
+  );
+}
+
+function AccountList({ accounts, pick, setPick }) {
+  const [bye, setBye] = useState(null);
+  const menu = (a) => [
+    ...(ok(a) ? [] : [{ label: t('mailc.reconnect'), icon: 'mail', run: () => reconnect(a) }]),
+    { label: t('mailc.disconnect'), icon: 'x', run: () => setBye(a) },
+  ];
+  return (
+    <div className="mail-accounts">
+      {accounts.length > 1 && <button type="button" className={`nav-item${pick === 'all' ? ' active' : ''}`} onClick={() => setPick('all')}><span className="nav-label">{t('mailc.all')}</span></button>}
+      {accounts.map((a) => (
+        <div key={a.id} className={`mail-account${pick === a.id ? ' active' : ''}`} {...menuProps(() => menu(a))}>
+          <button type="button" className="mail-account-name" onClick={() => setPick(accounts.length > 1 ? a.id : 'all')} title={a.address}>
+            <span className={`dot ${ok(a) ? 'ok' : 'ask'}`} /><span className="ellip">{a.address}</span>{a.hosted_domain && <small className="badge">{t('mailc.work')}</small>}
+          </button>
+          {!ok(a) && <button type="button" className="link-btn small" onClick={() => reconnect(a)}>{t('mailc.reconnect')}</button>}
+          <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(a), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
+        </div>
+      ))}
+      <button type="button" className="nav-item dim" onClick={() => reconnect()}><Icon name="plus" /><span className="nav-label">{t('mailc.add')}</span></button>
+      <Modal open={!!bye} onClose={() => setBye(null)} title={t('mailc.disconnectTitle', { addr: bye?.address ?? '' })}
+        footer={<><button type="button" className="btn" onClick={() => setBye(null)}>{t('cancel')}</button>
+          <button type="button" className="btn danger" onClick={async () => { const a = bye; setBye(null); try { await disconnectAccount(a.id); showToast(t('mailc.disconnected')); } catch { showToast(t('mailc.err.other')); } }}>{t('mailc.disconnect')}</button></>}>
+        <p>{t('mailc.disconnectBody')}</p>
+      </Modal>
+    </div>
+  );
+}
+
 export function Mail({ id }) {
   useLang();
+  const real = useSession() === 'signedIn';
   const mails = useStore((s) => s.mails);
+  const accounts = useStore((s) => s.mailAccounts) ?? [];
   const [folder, setFolder] = useState('inbox');
+  const [pick, setPick] = useState('all');
+  const [loading, setLoading] = useState(false);
   const [listW, setListW] = useWidth('argo-office-mail-list', 360, 280, 560);
-  const rows = useMemo(() => mails.filter((m) => m.folder === folder).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)), [mails, folder]);
+  const [ready, setReady] = useState(!real);
+  useEffect(() => { if (real) loadAccounts().catch(() => {}).finally(() => setReady(true)); }, [real]);
+  const accKey = accounts.filter(ok).map((a) => a.id).join(',');
+  useEffect(() => {
+    if (!real || !accKey) return;
+    let live = true; setLoading(true);
+    const run = () => pullMail(folder).catch(() => {}).finally(() => live && setLoading(false));
+    run();
+    let last = Date.now();
+    const onShow = () => { if (document.hidden || Date.now() - last < 60_000) return; last = Date.now(); run(); };
+    document.addEventListener('visibilitychange', onShow);
+    return () => { live = false; document.removeEventListener('visibilitychange', onShow); };
+  }, [real, folder, accKey]);
+  const inView = (m) => m.folder === folder && (pick === 'all' || m.account === pick);
+  const rows = useMemo(() => mails.filter(inView).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)), [mails, folder, pick]); // eslint-disable-line react-hooks/exhaustive-deps
   const cur = mails.find((m) => m.id === id);
   useEffect(() => { if (cur?.unread) setMail(cur.id, { unread: false }); }, [cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // 목록 키보드: j/k 이동, e 보관, r 답장(입력 중이 아닐 때만)
@@ -103,18 +274,21 @@ export function Mail({ id }) {
       if (e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
       const i = rows.findIndex((m) => m.id === id);
       if (e.key === 'j' || e.key === 'k') { const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'j' ? 1 : -1)))]; if (next) { navigate(`/me/mail/${next.id}`); if (next.unread) setMail(next.id, { unread: false }); } }
-      if (e.key === 'e' && cur) { const undo = archiveMail(cur.id); showToast(t('mail.archived'), { undo }); }
-      if (e.key === 'r' && cur) setUi({ compose: { to: cur.addr, subject: `Re: ${cur.subject}` } });
+      if (e.key === 'e' && cur && cur.folder !== 'archive') { const undo = archiveMail(cur.id); showToast(t('mail.archived'), { undo }); }
+      if (e.key === 'r' && cur) setUi({ compose: { to: cur.addr, subject: `Re: ${cur.subject}`, account: cur.account, threadId: cur.threadId } });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [rows, id, cur]);
-  const counts = useMemo(() => Object.fromEntries(MAIL_FOLDERS.map((f) => [f.id, mails.filter((m) => m.folder === f.id && m.unread).length])), [mails]);
+  const counts = useMemo(() => Object.fromEntries(MAIL_FOLDERS.map((f) => [f.id, mails.filter((m) => m.folder === f.id && m.unread && (pick === 'all' || m.account === pick)).length])), [mails, pick]);
+  const multi = accounts.length > 1;
+  const noAccounts = real && ready && !accounts.length;
+  const expired = accounts.filter((a) => !ok(a));
   return (
     <div className={`mail${cur ? ' has-reader' : ''}`} style={{ '--list-w': `${listW}px` }}>
       <aside className="mail-folders">
-        <button type="button" className="btn primary block" onClick={() => setUi({ compose: {} })}><Icon name="draft" size={14} />{t('mail.compose')}</button>
-        <div className="mail-account"><span className="dot ok" />{ME.email}</div>
+        <button type="button" className="btn primary block" disabled={real && !accounts.some(ok)} onClick={() => setUi({ compose: {} })}><Icon name="draft" size={14} />{t('mail.compose')}</button>
+        {real ? <AccountList accounts={accounts} pick={pick} setPick={setPick} /> : <div className="mail-account"><span className="dot ok" />{ME.email}</div>}
         {MAIL_FOLDERS.map((f) => (
           <button key={f.id} type="button" className={`nav-item${folder === f.id ? ' active' : ''}`} onClick={() => { setFolder(f.id); navigate('/me/mail'); }}>
             <Icon name={{ inbox: 'inbox', drafts: 'draft', sent: 'send', archive: 'archive' }[f.id]} /><span className="nav-label">{t(f.name)}</span>{counts[f.id] > 0 && <span className="nav-count">{counts[f.id]}</span>}
@@ -122,7 +296,10 @@ export function Mail({ id }) {
         ))}
       </aside>
       <section className="mail-list" role="listbox" aria-label={t(`mail.${folder}`)}>
-        {rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} />) : <div className="empty-state"><p>{t('mail.empty')}</p></div>}
+        {expired.length > 0 && <div className="mail-banner"><span className="dot ask" />{t('mailc.expired')}<button type="button" className="btn sm" onClick={() => reconnect(expired[0])}>{t('mailc.reconnect')}</button></div>}
+        {noAccounts ? <ConnectPanel />
+          : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
+          : <div className="empty-state"><p>{t(loading || (real && !ready) ? 'mailc.loading' : 'mail.empty')}</p></div>}
       </section>
       <SplitHandle width={listW} onChange={setListW} label={t('mod.resize')} />
       <section className="mail-reader"><Reader m={cur} onBack={() => navigate('/me/mail')} /></section>
