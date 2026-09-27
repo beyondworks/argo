@@ -59,9 +59,9 @@ test('개인 공간에서 실시간은 dm:<채널> 토픽을 구독한다', () =
 });
 
 test('개인 공간에서 채널 절·멤버 절·크루 절이 감춰진다', () => {
-  assert.match(src, /\{!isPersonal && <RailSection id=\{orgId \? 'channels' : 'start'\}/, '조직 없으면 시작하기 절(D46)');
-  assert.match(src, /\{!isPersonal && org && members\.length > 0/);
-  assert.match(src, /\{!isPersonal && org && \(myAvailable\.length > 0/);
+  assert.match(src, /\{!isPersonal && !orgBlocked && <RailSection id=\{orgId \? 'channels' : 'start'\}/, '조직 없으면 시작하기 절(D46) — 검수 M-5·3차 L-3으로 동의 게이트·로딩 조건도 같이 본다(orgBlocked)');
+  assert.match(src, /\{!isPersonal && !orgBlocked && org && members\.length > 0/);
+  assert.match(src, /\{!isPersonal && !orgBlocked && org && \(myAvailable\.length > 0/);
 });
 
 test('개인 공간에서 업무 버튼·첨부 버튼이 감춰진다', () => {

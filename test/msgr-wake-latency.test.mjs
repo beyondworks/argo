@@ -41,6 +41,7 @@ function fakeDb({ scopeGate = null } = {}) {
     async message() { return null; },
     async channel(id) { return { id, org_id: ORG, kind: 'public', name: 'general', crew_memory: true }; },
     async instructCheck() { return 'ok'; },
+    async aiConsentOk() { return true; }, // App Store 5.1.2(2026-09-26) — 이 파일은 지연 배선 관심사, 동의는 항상 켜 둔다
     async crewOwner() { return OWNER; },
     async settled() { return false; },
     async autoTurnsIn() { return 0; },

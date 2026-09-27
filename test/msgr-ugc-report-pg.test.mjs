@@ -203,3 +203,28 @@ test('차단한 사람의 글은 안 읽음 수(채널별·공간별·폰 배지
   fails(asUserRaw(U.b, `insert into public.msgr_user_blocks (blocker, blocked) values ('${U.b}', '${U.c}')`), /permission denied|row-level security/, '직접 쓰기는 여전히 막힌다(RPC로만)');
   asUser(U.b, `select public.msgr_friend_unblock('${U.a}')`);
 });
+
+// 검수 M4(2026-09-27) — 숨긴 크루·봇의 글도 차단한 사람의 글과 같은 자리(안 읽음 수·푸시)에서 빠져야 한다.
+test('숨긴 크루의 글은 안 읽음 수(채널별·공간별·폰 배지)와 푸시에서도 빠진다', { skip }, () => {
+  const ch = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','unread-crewmute','[]'::jsonb)`));
+  asUser(U.b, `select public.msgr_join_channel('${ch}')`);
+  const crew = last(asUser(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'lean', 'muteme', 'MuteMe') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${ch}', 'crew', '${crew}')`);
+  const counts = () => ({
+    chan: Number(last(asUser(U.b, `select coalesce((select n from public.msgr_unread('${ORG}') where channel_id = '${ch}'), 0)`))),
+    badge: Number(sql(`select public.msgr_push_unread_total('${U.b}')`)),
+  });
+  const rcpt = (mid) => last(sql(`select array_to_string(public.msgr_push_recipients_of(${mid}), ',')`)).split(',').filter(Boolean);
+  const b0 = counts();
+  const before = last(sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id) values ('${ch}', 'crew', '${crew}', 'text', '숨기기 전', gen_random_uuid()::text) returning id`));
+  const b1 = counts();
+  assert.equal(b1.chan, b0.chan + 1, '숨기기 전에는 채널 안 읽음에 들어간다');
+  assert.ok(rcpt(before).includes(U.b), '숨기기 전에는 b에게 푸시된다');
+  asUser(U.b, `select public.msgr_mute_crew('${crew}')`);
+  const b2 = counts();
+  assert.equal(b2.chan, b0.chan, '숨긴 뒤 채널 안 읽음에서 빠진다');
+  assert.equal(b2.badge, b0.badge, '폰 배지에서도 빠진다');
+  const after = last(sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id) values ('${ch}', 'crew', '${crew}', 'text', '숨긴 뒤', gen_random_uuid()::text) returning id`));
+  assert.ok(!rcpt(after).includes(U.b), '숨긴 뒤에는 b에게 푸시되지 않는다');
+  asUser(U.b, `select public.msgr_unmute_crew('${crew}')`);
+});

@@ -11,7 +11,7 @@ const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.m
 const U = { // 고정 uuid — 값은 전부 이 파일의 상수(주입 표면 없음)
   owner: '11111111-1111-4111-8111-111111111111', admin: '22222222-2222-4222-8222-222222222222',
   member: '33333333-3333-4333-8333-333333333333', guest: '44444444-4444-4444-8444-444444444444',
-  svc: '77777777-7777-4777-8777-777777777777',
+  svc: '77777777-7777-4777-8777-777777777777', newbie: '88888888-8888-4888-8888-888888888888', // 2026-09-27 전환 기간 검사 전용(아직 한 번도 동의를 묻지 않은 사람)
 };
 
 function psqlRaw(args) { return psqlSpawn(DB, args); }
@@ -71,6 +71,9 @@ before(() => {
     const code = last(asUser(U.owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.owner}') returning code`));
     assert.equal(last(asUser(uid, `select public.msgr_accept_invite('${code}')`)), ORG);
   }
+  // App Store 5.1.2 재설계(2026-09-27, 검수 H1) — msgr_crew_context가 동의하지 않은 사람의 글을 빼기 시작했다.
+  // 이 파일의 기존 시나리오는 전부 정상 대화를 전제하므로 여기서 미리 동의해 둔다(검수 H1 테스트만 필요한 곳에서 되돌린다).
+  for (const uid of [U.owner, U.admin, U.member, U.guest]) asUser(uid, `select public.msgr_set_ai_consent(true)`);
   CREW = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.owner}', 'lean', 'mine', 'Mine') returning id`));
   OTHER_CREW = last(asUser(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.member}', 'lean', 'theirs', 'Theirs') returning id`));
   PUB = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}','public','Work')`));
@@ -363,4 +366,58 @@ test('hard deletion of the relay source revokes capabilities without blocking fo
  assert.equal(sql(`select count(*) from msgr_dm_grants where root_message_id=${relay}`),'0');
  assert.equal(sql(`select dm_source_msg_id is null from msgr_crew_approvals where id='${ap.approval.id}'`),'t');
  fails(asUserRaw(U.member,`select msgr_crew_context('lean','${OTHER_CREW}',${relay},'${relayCh}')`),/forbidden/,'deleted request cannot expose context');
+});
+
+// App Store 5.1.2 재설계(2026-09-27, 검수 H1) — msgr_crew_context가 크루에게 주는 문맥(context)·뿌리(root)에서
+// AI 이용에 동의하지 않은 사람의 글을 뺀다. 크루 턴 자체는 막지 않는다(그건 게이트웨이가 org 단위로 판정).
+test('검수 H1: msgr_crew_context는 동의하지 않은 사람의 글을 문맥·뿌리에서 뺀다(크루 턴 자체는 막지 않는다)', { skip }, () => {
+  asUser(U.member, `select public.msgr_set_ai_consent(false)`); // before()가 전부 동의시켜 뒀다 — 이 테스트만 되돌린다
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PUB}', 'crew', '${CREW}') on conflict do nothing`);
+  const early = last(asUser(U.member, `insert into msgr_messages(channel_id,author_kind,author_user_id,kind,body) values('${PUB}','user','${U.member}','text','민감한 초안 — 아직 동의 안 함') returning id`));
+  const source = last(asUser(U.owner, `insert into msgr_messages(channel_id,author_kind,author_user_id,kind,body,mentions) values('${PUB}','user','${U.owner}','text','정리해줘','${mention(CREW)}') returning id`));
+  // U.member는 아직 동의 전 — 문맥에서 빠져야 한다
+  let e = env(source, CREW, U.owner, PUB);
+  assert.ok(!e.context.some((x) => x.id === Number(early)), '동의 전 글은 문맥에 없다');
+  // 동의하면 같은 호출에서 다시 보인다(과거로 소급 삭제가 아니라 조회 시점 필터라는 뜻)
+  asUser(U.member, `select public.msgr_set_ai_consent(true)`);
+  e = env(source, CREW, U.owner, PUB);
+  assert.ok(e.context.some((x) => x.id === Number(early) && x.body === '민감한 초안 — 아직 동의 안 함'), '동의하면 문맥에 다시 보인다');
+});
+
+test('검수 H1: 뿌리(root)가 동의하지 않은 사람의 글이면 본문을 비운다(구조는 유지)', { skip }, () => {
+  asUser(U.member, `select public.msgr_set_ai_consent(false)`); // 되돌려서 미동의 상태로(앞 테스트에서 동의함)
+  const pub2 = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}','public','root-consent-check')`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${pub2}', 'crew', '${CREW}') on conflict do nothing`);
+  const root = last(asUser(U.member, `insert into msgr_messages(channel_id,author_kind,author_user_id,kind,body,mentions) values('${pub2}','user','${U.member}','text','미동의 사람의 뿌리 글','${mention(CREW)}') returning id`));
+  const e = JSON.parse(last(asUser(U.owner, `select msgr_crew_context('lean','${CREW}',${root},'${pub2}')`)));
+  assert.equal(e.root.body, '', '뿌리 작성자가 동의하지 않았으면 본문을 비운다');
+  assert.equal(e.root.id, Number(root), 'id는 그대로 — 연결 구조는 유지한다');
+});
+
+// 2026-09-27 저녁(2차 재검수, HIGH-1) — 위 두 테스트는 root·context만 봤다. source(이번 배달 글 자체)와
+// 첨부는 그대로 새고 있었다 — 여기서 그 자리를 잠근다.
+test('검수 HIGH-1(2차 재검수): source(배달 글 자체)도 동의하지 않았으면 본문·첨부를 비운다', { skip }, () => {
+  asUser(U.member, `select public.msgr_set_ai_consent(false)`);
+  const pub3 = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}','public','source-consent-check')`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${pub3}', 'crew', '${CREW}') on conflict do nothing`);
+  const source = last(asUser(U.member, `insert into msgr_messages(channel_id,author_kind,author_user_id,kind,body,mentions) values('${pub3}','user','${U.member}','text','미동의 사람이 지금 막 보낸 글','${mention(CREW)}') returning id`));
+  sql(`insert into public.msgr_attachments (message_id, org_id, storage_path, name, mime, bytes) values (${source}, '${ORG}', '${ORG}/${pub3}/${source}/f.png', 'f.png', 'image/png', 10)`);
+  const e = JSON.parse(last(asUser(U.owner, `select msgr_crew_context('lean','${CREW}',${source},'${pub3}')`)));
+  assert.equal(e.source.body, '', '이번 배달 글 자체도 작성자가 동의하지 않았으면 본문을 비운다');
+  assert.equal(e.source.id, Number(source), 'id는 그대로 — 연결 구조는 유지한다');
+  assert.deepEqual(e.attachments, [], '첨부도 함께 숨는다(파일까지 새면 본문을 비운 의미가 없다)');
+  asUser(U.member, `select public.msgr_set_ai_consent(true)`);
+  const e2 = JSON.parse(last(asUser(U.owner, `select msgr_crew_context('lean','${CREW}',${source},'${pub3}')`)));
+  assert.equal(e2.source.body, '미동의 사람이 지금 막 보낸 글', '동의하면 같은 호출에서 다시 보인다');
+  assert.equal(e2.attachments.length, 1, '동의하면 첨부도 다시 보인다');
+});
+
+// 2026-09-27(유건 결정, 전환 기간 14일) — 아직 한 번도 동의를 물어보지 않은 기존 사용자는 전환 기간 동안 지금처럼 보인다.
+test('2026-09-27 유건 결정 — 아직 안 물어본 사람의 글은 전환 기간 동안 문맥에서 빠지지 않는다', { skip }, () => {
+  const pub4 = last(asUser(U.owner, `select public.msgr_create_channel('${ORG}','public','never-asked-check')`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${pub4}', 'crew', '${CREW}') on conflict do nothing`);
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${ORG}', '${U.newbie}', 'member', 'newbie') on conflict do nothing`);
+  const source = last(asUser(U.newbie, `insert into msgr_messages(channel_id,author_kind,author_user_id,kind,body,mentions) values('${pub4}','user','${U.newbie}','text','한 번도 안 물어본 사람 글','${mention(CREW)}') returning id`));
+  const e = JSON.parse(last(asUser(U.owner, `select msgr_crew_context('lean','${CREW}',${source},'${pub4}')`)));
+  assert.equal(e.source.body, '한 번도 안 물어본 사람 글', '아직 안 물어본 사람은(행 없음) 전환 기간 동안 거부한 사람과 다르게 취급된다');
 });

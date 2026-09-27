@@ -401,6 +401,13 @@ export function makeDb(client) {
     async updateApproval(id, patch) { return unwrap(await client.from('msgr_crew_approvals').update(patch).eq('id', id).select('id')) ?? []; },
     /** H-2: 허용 판정의 정본은 서버(msgr_can_instruct). 실패는 throw — 호출자가 로컬 판정으로 폴백하고 로그한다. */
     async instructCheck(crewId, authorId, channelId) { return unwrap(await client.rpc('msgr_instruct_check', { crew: crewId, author: authorId, channel: channelId ?? null })); }, // 'ok'|'inactive'|'crew_allow'|'channel_policy'(I-3)
+    /** App Store 5.1.2 재설계(2026-09-27) — 이 사람이 이 조직에서 AI 이용에 동의했나(msgr_ai_consent, 앱 필수 동의 화면이 1차 관문).
+        msgr_org_ai_consent_ok는 같은 조직에 활성 크루를 둔 사람만 물을 수 있게 좁혀 뒀다(검수 L4 — 임의 사용자 프로브 방지). */
+    async orgConsentOk(orgId, userId) { return unwrap(await client.rpc('msgr_org_ai_consent_ok', { p_org: orgId, p_author: userId })) === true; },
+    /** 조직 자격(무료 기간 중 OR 결제 기간 중) — 정본은 서버(msgr_org_entitled). 실패(옛 서버 등)는 던져서 호출자가 열어 둔 쪽으로 폴백. */
+    async orgEntitled(orgId) { return unwrap(await client.rpc('msgr_org_entitled', { org: orgId })) === true; },
+    /** 자격 종료 시각 표지 — 안내 1회 키에만 쓴다(연장·결제로 값이 바뀌면 다음 미자격 때 새 안내가 나가게, 2026-09-27 L2). */
+    async orgEntitlementMarker(orgId) { return unwrap(await client.rpc('msgr_org_entitlement_marker', { org: orgId })); },
     /** H-1/H-2: 이 세션(크루 소유자)이 이 결재를 확정할 수 있나 — 정책·위험 등급 반영(msgr_can_decide). */
     async canDecide(apRowId) { return unwrap(await client.rpc('msgr_can_decide', { ap: apRowId })) === true; },
     async approvalsByIds(ids) {
@@ -549,8 +556,45 @@ function denyBody(why, crew, lang) {
     `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — an agent that is in a room can be called by anyone in that room. If it isn't in this room, ask its owner to add it.`, lang);
   if (why === 'inactive') return pick(`${crew.display_name}은(는) 지금 이 대화에 파견돼 있지 않습니다 — 메신저에서 다시 파견해 주세요.`,
     `${crew.display_name} is not dispatched to this conversation — dispatch the crew again in the messenger.`, lang);
+  if (why === 'ai_consent') return pick(`앱을 업데이트하고 AI 이용에 동의하면 크루에게 맡길 수 있습니다.`,
+    `Update the app and agree to AI use to hand this to a crew.`, lang);
   return pick(`지금은 ${crew.display_name}이(가) 이 지시를 받을 수 없습니다 — 크루 상태와 허용 범위를 확인해 주세요.`,
     `${crew.display_name} cannot take this request right now — check the crew status and who is allowed to instruct it.`, lang);
+}
+/** 조직 자격(2026-09-26 유건 결정) — 무료 기간이 끝나고 결제도 없으면 "크루에게 일을 맡기는 것"만 멈춘다. drain()·makeMsgrHandler()·
+    runMessengerContinuation() 세 진입점이 모두 이 행 모양을 부른다(insertMessage 실패 처리는 호출부마다 그대로 — drain은 일시 실패를
+    던져 커서를 보류한다, 위험 파일 검수 R-2). 안내는 채널당 1회, 키에 자격 종료 시각(마커)을 넣어 연장·결제 뒤 다시 만료되면 새로
+    안내되게 한다(2026-09-27 L2). insertMessage가 23505를 null로 삼키므로 같은 키의 중복 삽입은 조용히 무시된다. */
+async function unentitledNoticeRow(db, orgId, { crewId, channelId, msgId, threadRoot, lang }) {
+  const marker = await db.orgEntitlementMarker?.(orgId).catch(() => null);
+  const key = `unentitled:${crewId}:${channelId}${marker ? `:${Date.parse(marker)}` : ''}`;
+  return { channel_id: channelId, author_kind: 'crew', crew_id: crewId, kind: 'system', reply_to: msgId, thread_root: threadRoot ?? msgId, client_msg_id: key,
+    body: pick('무료 기간이 끝나 이 조직의 크루 작업이 멈췄습니다. 조직 관리자에게 문의하세요.', 'The free period has ended, so crew work is paused for this organization. Contact your organization admin.', lang) };
+}
+/** 결재 승인 시 커넥터 payload 실행(approval-actions.applyPayload) 전용 — 메신저 결재 항목만 조직 자격을 한 번 확인한다
+    (2026-09-27 N5, 유건 결정). 메신저와 무관한 결재(item.msgr 없음)는 부르지 않는다. 세션·RPC 실패는 fail-open(true) —
+    이 판정 실패가 결재 자체를 막지 않는다(DB 쪽 msgr_message_entitlement_gate가 최종 방어선은 아니다 — 커넥터 실행은
+    메시지 삽입이 아니라 실제 API 호출이라 서버 승인 로직 밖에서 일어나므로, 여기서 여는 쪽으로 폴백한다). */
+export async function msgrOrgEntitledForApproval(orgId, { session = sessionClient } = {}) {
+  const c = await session().catch(() => null);
+  if (!c) return true;
+  return c.db.orgEntitled(orgId).catch(() => true);
+}
+/** M-2(2026-09-27 저녁, 2차 재검수) — 원문 작성자 동의 안내(채널당 1회). drain()의 'ai_consent' 안내와 같은 문구·같은
+    client_msg_id 모양(aiconsent:<크루id>:<채널id>)을 쓴다 — 한쪽이 이미 남겼으면 다른 쪽은 DB 유니크 제약으로 조용히 걸러진다. */
+function aiConsentNoticeRow(crewId, channelId, msgId, threadRoot, lang) {
+  return { channel_id: channelId, author_kind: 'crew', crew_id: crewId, kind: 'system', reply_to: msgId, thread_root: threadRoot ?? msgId,
+    client_msg_id: `aiconsent:${crewId}:${channelId}`,
+    body: pick('앱을 업데이트하고 AI 이용에 동의하면 크루에게 맡길 수 있습니다.', 'Update the app and agree to AI use to hand this to a crew.', lang) };
+}
+/** M-1(2026-09-27 저녁, 크루 쪽) — db.workRun은 msgr_work_runs를 그대로 select하는 원시 조회라 서버 필터가 없다
+    (봇 쪽은 msgr_bot_updates SQL이 이미 담당 — 2026-09-27 저녁). 업무를 시작한 사람이 동의하지 않았으면
+    workPrompt에 넘기기 전에 목표·완료 기준만 감춘다(다른 필드는 그대로 — lead_crew_id·status 등은 계속 필요하다). */
+async function visibleWork(db, work) {
+  if (!work || !work.created_by) return work;
+  const visible = db.orgConsentOk ? await db.orgConsentOk(work.org_id, work.created_by).catch(() => true) : true;
+  if (visible) return work;
+  return { ...work, goal: '(원문 비공개 / not shared)', completion_criteria: '(원문 비공개 / not shared)' };
 }
 /** 동시 실행 상한을 둔 map — 결과 순서는 입력 순서 그대로. (export: 회귀 테스트용) */
 export async function mapLimited(items, limit, fn) {
@@ -595,8 +639,15 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   for (const crew of crews) { crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); crewSlugs.set(`${wsId}:${crew.id}`, crew.slug); } // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10). crewSlugs = 중단 방송(crew_id)의 역인덱스
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다
   const channelOf = async (id) => { if (!chCache.has(id)) chCache.set(id, await db.channel(id)); return chCache.get(id); };
+  const entCache = new Map(); // 이 틱 안의 조직 자격(무료 기간·결제) — 조직마다 한 번만 조회
+  // 실패(옛 서버·네트워크 순단)는 열어 둔다(fail-open) — 판정 한 번 실패로 조직 전체 크루가 조용히 멈추는 쪽이 더 나쁘다(DB 트리거가 최종 방어선).
+  const orgEntitled = async (orgId) => { if (!entCache.has(orgId)) entCache.set(orgId, await (async () => db.orgEntitled(orgId))().catch((e) => { console.error(`[argo] msgr 조직 자격 판정 실패(${wsId}/${orgId}) — 이 틱은 열어 둡니다:`, e?.message ?? e); return true; })); return entCache.get(orgId); }; // 옛 db 어댑터(orgEntitled 없음)의 동기 TypeError도 여기서 잡는다(테스트 더블 포함)
   const parentCache = new Map(); // 이 틱 안의 답글 부모 → crew_id(사람 글이면 null) — 크루마다 다시 읽지 않는다(D38b)
   const replyParentCrew = async (m) => { if (!parentCache.has(m.reply_to)) { const p = await db.message(m.reply_to); parentCache.set(m.reply_to, p && !p.deleted_at && p.channel_id === m.channel_id && p.author_kind === 'crew' ? p.crew_id : null); } return parentCache.get(m.reply_to); };
+  // App Store 5.1.2 재설계(2026-09-27, 검수 L9) — 이 틱 안에서 사람당(조직 단위) 한 번만 동의 확인(entCache와 같은 자리·같은 모양).
+  // H3: 확인 함수가 없거나 실패하면 열어 둔다(fail-open) — 1차 관문은 앱의 필수 동의 화면이고, 이 서버 확인은 옛 클라이언트·철회자 대상 보조 방어선이다.
+  const consentCache = new Map();
+  const orgConsentOk = async (orgId, userId) => { const key = `${orgId}:${userId}`; if (!consentCache.has(key)) consentCache.set(key, await (async () => db.orgConsentOk(orgId, userId))().catch((e) => { console.error('[argo] msgr AI 동의 확인 RPC 실패 — 이 틱은 열어 둡니다(fail-open):', e?.message ?? e); return true; })); return consentCache.get(key); }; // 옛 db 어댑터(orgConsentOk 없음)의 동기 TypeError도 여기서 잡는다(entCache와 같은 요령)
   // 크루별 읽기 3종(DM·범위·받은 글)은 크루끼리 동시에 받아 둔다 — 순서대로면 크루 12명에 36왕복이 쌓였다(2026-09-23 실측 픽업 4~7초).
   // 처리(적재·커서)는 아래에서 크루 순서대로. 받은 글 조회 실패는 그 크루 차례에 던진다(앞 크루는 종전처럼 처리된 뒤 drain 실패).
   const CREW_FETCH_LIMIT = 8; // 순간 동시 요청 상한 — 크루 수에 비례해 폭발하지 않게(검수 L2). 총량은 종전과 같다
@@ -643,6 +694,13 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       }
       if (copy && !targetsCrew(m, crew, dm, parentCrew)) return;
       const ch = envelope?.channel ?? await channelOf(m.channel_id); if (!envelope && !crewInScope(ch, crew.id, member.has(ch?.id))) return; // 초대되지 않았거나 내보낸 채널 — 턴을 돌리지 않는다(서버 트리거 msgr_messages_crew_scope가 최후 방어, 여기서 막아야 유료 실행·insert 실패 로그가 없다)
+      // 조직 자격(2026-09-26 유건 결정): 무료 기간이 끝나고 결제도 없으면 "크루에게 일을 맡기는 것"만 멈춘다 — 사람끼리 대화·기록 열람은 그대로.
+      // 개인 공간(채널 org_id null)은 조직 소속이 아니므로 항상 영향 밖. 안내는 대화당 한 번만(client_msg_id가 크루·채널로 고정 — 중복 삽입은 조용히 무시됨).
+      if (ch?.org_id && !(await orgEntitled(ch.org_id))) {
+        await db.insertMessage(await unentitledNoticeRow(db, ch.org_id, { crewId: crew.id, channelId: m.channel_id, msgId: m.id, threadRoot: m.thread_root, lang }))
+          .catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 무료 기간 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
+        return;
+      }
       const work = m.meta?.work_run_id ? await db.workRun(m.thread_root ?? m.id, m.channel_id) : null;
       if (m.meta?.work_run_id && (!work || !workCanContinue(work, m.id))) return;
       const fromCrew = m.author_kind === 'crew';
@@ -682,10 +740,18 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       }
       let why = envelope ? 'ok' : await db.instructCheck(crew.id, origin, m.channel_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid) ? 'ok' : 'crew_allow'; });
       if (!envelope && why === 'ok' && fromCrew && rootAuthor && rootAuthor !== origin) why = await db.instructCheck(crew.id, rootAuthor, m.channel_id).catch(() => 'crew_allow'); // 넘김은 발신 크루 소유자와 뿌리 사람 둘 다 이 크루에게 지시할 수 있어야 한다 — 허용 범위 'all'인 크루를 거쳐 allow='owner' 크루를 부리는 우회 차단(검수 3R M-3) // H-2: 서버가 정본(채널 정책 포함), 답글도 서버 트리거가 재판정
+      // App Store 5.1.2 재설계(2026-09-27, 유건 결정 "처음 한 번 필수 동의") — 이 턴을 authorize한 사람(들) 전원이 조직 공간에서
+      // AI 이용에 동의했어야 한다(envelope 경로 포함). 1차 관문은 앱의 필수 동의 화면 — 이 확인은 옛 클라이언트·철회자를 위한 보조 방어선.
+      if (why === 'ok') {
+        const consentSubjects = fromCrew && rootAuthor && rootAuthor !== origin ? [origin, rootAuthor] : [origin];
+        for (const id of consentSubjects) { if (!(await orgConsentOk(crew.org_id, id))) { why = 'ai_consent'; break; } }
+      }
       if (why !== 'ok') {
         out.denied++;
+        // 동의 미완료는 안내가 이 크루·채널에 한 번만 뜨면 된다(검수: "채널당 한 번만 안내") — 메시지마다 새 키를 쓰지 않는다.
         await db.insertMessage({
-          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
+          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id,
+          client_msg_id: why === 'ai_consent' ? `aiconsent:${crew.id}:${m.channel_id}` : `deny:${crew.id}:${m.id}`,
           body: denyBody(why, crew, lang),
         }).catch((e) => { if (!permanentWrite(e)) throw e; console.error(`[argo] msgr 거절 안내를 넣을 수 없어 건너뜁니다(${wsId}/${crew.slug}/${m.id}):`, e?.message ?? e); }); // 일시 실패는 던져서 커서 보류·재시도(멱등 키) — 위험 파일 검수 R-2
         return;
@@ -817,8 +883,9 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   if (!crew || crew.id !== origin.crewId || crew.org_id !== origin.orgId || !ch || ch.org_id !== origin.orgId || !org || !root || root.channel_id !== origin.channelId || root.author_kind !== 'user' || !source || source.channel_id !== origin.channelId) throw new Error('메신저 원래 채널·크루·지시를 확인할 수 없습니다');
   if (ch.archived_at || root.deleted_at || source.deleted_at) throw new Error('보관된 메신저 채널이나 삭제된 지시는 이어서 실행할 수 없습니다');
   if (source.id !== root.id && source.thread_root !== root.id) throw new Error('메신저 원래 지시의 스레드가 다릅니다');
-  const work = root.meta?.work_run_id ? await db.workRun(root.id, ch.id) : null;
+  let work = root.meta?.work_run_id ? await db.workRun(root.id, ch.id) : null;
   if (root.meta?.work_run_id && (!work || !workCanContinue(work, source.id))) throw new Error('메신저 팀 업무가 중단되거나 끝나 후속 실행을 멈춥니다');
+  work = await visibleWork(db, work); // M-1 — 상태 확인(workCanContinue)은 원본으로, 그 뒤부터는 감춘 버전만 쓴다
   const actor = source.author_kind === 'crew' ? await db.crewOwner(source.crew_id) : source.author_kind === 'user' ? source.author_user_id : null;
   if (!actor || (origin.origin && origin.origin !== actor)) throw new Error('메신저 원래 지시자 불일치');
   const actors = new Set([actor, ...(source.author_kind === 'crew' ? [root.author_user_id] : [])]);
@@ -839,6 +906,12 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
 export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false } = {}) {
   return withLock(`msgr-turn:${wsId}:${slug}`, async () => {
     const { db, ctx, ch, source, envelope } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
+    // 조직 자격(2026-09-27 M5) — 결재 확정 후속도 실행(유료 LLM 호출) 직전에 다시 확인한다. 채널 안내는 drain()의 다음 폴이 낸다
+    // (여기서 또 남기면 실패 노트까지 겹쳐 두 번 시도된다) — 여기서는 비용 큰 실행만 막는다. fail-open.
+    if (ch?.org_id && !(db.orgEntitled ? await db.orgEntitled(ch.org_id).catch(() => true) : true)) throw new Error('msgr_org_unentitled');
+    // M-2(2026-09-27 저녁, 2차 재검수) — 원문 작성자가 그 사이 동의를 거부·철회했으면 원문을 다시 보내지 않는다.
+    // 채널 안내는 drain()의 다음 폴이 낸다(위 자격 검사와 같은 이유로 여기서 또 남기지 않는다). fail-open.
+    if (ch?.org_id && source.author_kind === 'user' && !(db.orgConsentOk ? await db.orgConsentOk(ch.org_id, source.author_user_id).catch(() => true) : true)) throw new Error('msgr_ai_consent_declined');
     const rows = envelope?.context ?? await db.contextOf(ctx.channelId, Number.MAX_SAFE_INTEGER, CONTEXT_N);
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     const context = rows.map((r) => `${clean(ctx.peers.find((p) => p.id === r.crew_id)?.display_name ?? pick('멤버', 'member', lang), 40)}: ${clean(r.body, 300)}`).join('\n');
@@ -938,10 +1011,29 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     if (envelope ? envelope.settled_source : await db.settled(job.crewId, job.msgId, job.channelId)) { console.log(`[argo] msgr 잡 중복(${wsId}/${job.slug}/${job.msgId}) — 이미 답함, 실행 생략`); return; } // 선점 중 재적재된 사본(검수 M-2) — 유료 턴 두 번 방지
     const ch = envelope?.channel ?? await db.channel(job.channelId);
     if (!ch || ch.archived_at) return; // 채널 삭제·보관 — 잡 폐기
+    // 조직 자격(2026-09-27 M5) — 큐에 이미 올라온 잡도 실행 직전에 다시 확인한다(적재 뒤 자격이 바뀌었을 수 있다). fail-open.
+    if (ch.org_id && !(db.orgEntitled ? await db.orgEntitled(ch.org_id).catch(() => true) : true)) {
+      await db.insertMessage(await unentitledNoticeRow(db, ch.org_id, { crewId: job.crewId, channelId: job.channelId, msgId: job.msgId, threadRoot: job.threadRoot, lang }))
+        .catch((e) => console.error(`[argo] msgr 무료 기간 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${job.msgId}):`, e?.message ?? e));
+      return;
+    }
+    // M-2(2026-09-27 저녁, 2차 재검수) — 스레드 뿌리 작성자가 그 사이 동의를 거부·철회했으면 실행하지 않는다.
+    // 2026-09-27 밤(3차 검수 M-1) — 적재된 뒤 이번에 답할 그 글(source) 자체의 작성자가 철회하는 경우도 막는다
+    // (뿌리와 source가 다른 사람일 수 있다 — 예: A가 스레드를 열고 B가 방금 답했는데 B가 그 사이 철회). 둘 중 하나라도 걸리면 막는다.
+    // envelope 없는 구버전 게이트웨이는 여기서 알 수 없다 — DB 쪽 문맥 필터(msgr_crew_context)가 최종 방어선.
+    const consentSubjects = new Set([envelope?.root, envelope?.source].filter((m) => m?.author_kind === 'user' && m.author_user_id).map((m) => m.author_user_id));
+    let anyDeclined = false;
+    if (ch.org_id && db.orgConsentOk) for (const uid2 of consentSubjects) { if (!(await db.orgConsentOk(ch.org_id, uid2).catch(() => true))) { anyDeclined = true; break; } }
+    if (ch.org_id && anyDeclined) {
+      await db.insertMessage(aiConsentNoticeRow(job.crewId, job.channelId, job.msgId, job.threadRoot, lang))
+        .catch((e) => console.error(`[argo] msgr 동의 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${job.msgId}):`, e?.message ?? e));
+      return;
+    }
     // A durable queue from the preceding app version may not yet carry workRunId.
     if (!envelope && !job.workRunId) job.workRunId = (await db.message(job.msgId))?.meta?.work_run_id ?? null;
-    const work = job.workRunId ? await db.workRun(job.threadRoot ?? job.msgId, job.channelId) : null;
+    let work = job.workRunId ? await db.workRun(job.threadRoot ?? job.msgId, job.channelId) : null;
     if (job.workRunId && (!work || !workCanContinue(work, job.msgId))) return;
+    work = await visibleWork(db, work); // M-1 — 상태 확인(workCanContinue)은 원본으로, 그 뒤부터는 감춘 버전만 쓴다
     const chMembers = envelope ? new Set() : await db.channelCrewMembers(job.channelId);
     const started = now();
     const waited = started - Date.parse(job.createdAt); // 큐 대기(부재중) — 턴 소요 시간은 포함하지 않는다(검수 MEDIUM-3)
@@ -1218,6 +1310,10 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     if (!available.some((r) => r.orgId === target.orgId && r.channelId === target.channelId)) throw new Error('Messenger notification channel unavailable');
     const crew = await c.db.crewBySlug(c.uid, event.wsId, event.routine.agentSlug, target.orgId);
     if (!crew) throw new Error('Messenger notification crew unavailable');
+    // L-8(2026-09-27 밤, 3차 검수) — 루틴은 일정마다 계속 다시 돈다. 자격을 미리 안 보면 미자격 조직에서
+    // 매 스케줄마다 DB 트리거(msgr_org_unentitled)에 막히는 시도가 무기한 쌓인다. 여기서 먼저 조용히 건너뛴다
+    // (사용자 턴의 unentitledNoticeRow와 달리 반복 배경 알림에 매번 안내문을 남기면 그 자체가 스팸이 된다). fail-open.
+    if (!(c.db.orgEntitled ? await c.db.orgEntitled(target.orgId).catch(() => true) : true)) return false;
     const key = [event.wsId, event.routine.id, event.runAt ?? event.routine.lastRun, target.channelId, event.phase ?? (event.ok === false ? 'failed' : 'result')].join(':');
     const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
     await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',

@@ -61,10 +61,22 @@ define_class!(
     fn scene_willConnectToSession_options(
       &self,
       scene: &UIScene,
-      _session: &UISceneSession,
+      session: &UISceneSession,
       connection_options: &UISceneConnectionOptions,
     ) {
       unsafe {
+        // 아이패드 다중 창(Dock 길게 누르기 "새로운 윈도우"·앱 전환기 '+') 차단(유건 지시 2026-09-26) — 두 번째 씬이
+        // 붙으려는 순간 즉시 파기 요청한다. UIApplicationSupportsMultipleScenes 자체는 true로 남긴다: tao는 이 값이
+        // true여야 TaoSceneDelegate로 붙고, false면 iOS 27에서 실행 즉시 종료한다(실사고 0.1.27, project.yml 주석).
+        // 로그인 세션·Supabase 실시간 구독·작성 중 초안이 전역(모듈 싱글턴) 상태라 두 창이 동시에 살면 서로 덮어써
+        // 꼬인다 — 여러 창을 "안전하게" 만드는 대신 애초에 한 창만 허용한다. Split View·Slide Over는 다른 앱과 화면을
+        // 나누는 것이라 이 앱의 씬은 여전히 하나이므로 영향 없다.
+        let mtm = MainThreadMarker::new().unwrap();
+        let application = UIApplication::sharedApplication(mtm);
+        if application.connectedScenes().count() > 1 {
+          application.requestSceneSessionDestruction_options_errorHandler(session, None, None);
+          return;
+        }
         app_state::connect_scene(scene, connection_options);
       }
     }

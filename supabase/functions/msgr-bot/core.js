@@ -20,6 +20,7 @@ const ERR = {
   msgr_bot_bad_body: [400, 'Bad Request: body must contain 1 to 20000 characters'],
   msgr_bot_handoff_limit: [409, 'Conflict: conversation handoff limit reached'],
   msgr_bot_unauthorized: [401, 'Unauthorized: bad or revoked bot token'],
+  msgr_org_unentitled: [403, 'Forbidden: this organization free period has ended, crew work is paused'], // 2026-09-27 M3 — DB 트리거(msgr_message_entitlement_gate)가 막을 때 500이 아니라 의미 있는 응답
   msgr_not_allowed: [403, 'Forbidden: crew allow policy or channel policy rejects this author'],
   msgr_bot_not_member: [403, 'Forbidden: add the bot to this channel first'],
   msgr_bot_no_channel: [400, 'Bad Request: chat not found in this org'],
@@ -90,6 +91,9 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       ? await rpc('msgr_bot_send', { token, channel: chat, body: text, src_id: src })
       : await rpc('msgr_bot_finish', { token, channel: chat, body: text, src_id: src, attempt,
         disposition: params.disposition ?? 'done', mentions: params.mentions ?? [] });
+    // 2026-09-27 LOW(2차 검수) — 미자격 조직은 msgr_bot_finish가 실행 행을 닫고 null을 돌린다(RPC 자체는 성공).
+    // 여기서 그대로 200 {message_id:0}을 주면 거짓 성공이 된다 — null이면 자격 종료로 번역한다.
+    if (id == null) return fail(...ERR.msgr_org_unentitled);
     return reply(200, { message_id: Number(id), chat: { id: chat }, text, reply_to_message_id: src ?? undefined });
   } catch (e) {
     const name = String(e?.message ?? '').match(/msgr_[a-z_]+/)?.[0];
