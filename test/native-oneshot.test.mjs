@@ -172,7 +172,7 @@ test('OS6. only(API 키 불허)면 SDK env의 ANTHROPIC_API_KEY를 비운다, �
     const r = await runOneShot(ws, 'x', { only: { runner: 'claude', types: ['oauth', 'host'] }, onText: (d) => texts.push(d), __query: fakeQuery, timeoutMs: 20_000 });
     assert.equal(r.text, '["번역"]');
     assert.equal(seen.length, 2, '크래시는 같은 러너로 1회 재시도');
-    for (const o of seen) assert.equal(o.env?.ANTHROPIC_API_KEY, '', 'API 키로 과금되지 않게');
+    for (const o of seen) for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX']) assert.equal(o.env?.[k], '', `${k} — 구독이 아닌 경로로 과금되지 않게`);
     assert.deepEqual(texts, [null, null, '["번역"]'], '시도마다 새로 시작을 알린다');
     n = 1; seen.length = 0;
     await runOneShot(ws, 'x', { only: { runner: 'claude', types: ['host', 'apikey'] }, __query: fakeQuery, timeoutMs: 20_000 });

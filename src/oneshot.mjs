@@ -65,9 +65,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       if (!text) throw new Error('empty-reply');
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }
-    // API 키 방식을 허용하지 않는 고정(오피스 번역: 구독만)이면 키 env를 비운다 — host 자격은 프로세스 env를 그대로 넘겨 키가 있으면 키로 과금될 수 있다(재검수 LOW)
+    // API 키 방식을 허용하지 않는 고정(오피스 번역: 구독만)이면 키 env를 비운다 — host 자격은 프로세스 env를 그대로 넘겨 키·토큰·Bedrock/Vertex 설정이 있으면 구독이 아닌 경로로 과금될 수 있다(재검수 LOW)
     const baseEnv = await sdkEnvFor(wsId, runner);
-    const sdkEnv = only && !only.types.includes('apikey') ? { ...(baseEnv ?? process.env), ANTHROPIC_API_KEY: '' } : baseEnv;
+    const sdkEnv = only && !only.types.includes('apikey') ? { ...(baseEnv ?? process.env), ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', CLAUDE_CODE_USE_BEDROCK: '', CLAUDE_CODE_USE_VERTEX: '' } : baseEnv;
     let text = ''; let isErr = false; let apiErrSt = 0; let failed = null; let usage = null; let costUsd = null;
     // 행(hang) 상한 — SDK 경로엔 타임아웃이 없어 소켓 정체 시 이 async iterator가 영영 안 끝난다.
     // 그러면 호출자(스케줄러)의 in-flight 표시가 안 풀려 그 회사 기억 정리가 **무증상 영구 정지**한다
