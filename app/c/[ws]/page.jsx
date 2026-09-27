@@ -407,7 +407,6 @@ function ApprovalsCard({ ws, agents }) {
                   분리 검수 H-1: plain이 있어도 실제 실행될 명령이 안 보이면 안 된다 — plain.task 아래에 action을 항상 흐린 작은 글씨로. */}
               <div style={{ fontSize: 12.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
                 {a.plain?.task || a.action}
-                {approvalExpandDefault(a) && <span className="chip danger" style={{ flex: 'none' }}>{t('chat.approval.highBadge')}</span>}
               </div>
               {a.plain?.task && <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--fg-3)', marginTop: 1 }}>{a.action}</div>}
               <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>
@@ -415,6 +414,9 @@ function ApprovalsCard({ ws, agents }) {
                 {a.plain?.purpose ? ` · ${a.plain.purpose}` : (a.reason ? ` · ${a.reason}` : '')}
               </div>
             </Link>
+            {/* 고위험 표지는 제목 글자 뒤가 아니라 버튼 바로 왼쪽 고정 칸 — 제목이 두 줄로 넘으면 표지가 버튼보다 위로 떠
+                열이 어긋났다(제보 2026-09-27 "결재함에 버튼 열 왜 안 맞아"). */}
+            {approvalExpandDefault(a) && <span className="chip danger" style={{ flex: 'none' }}>{t('chat.approval.highBadge')}</span>}
             {busy === a.id ? <Spinner /> : (
               <div style={{ display: 'flex', gap: 6, flex: 'none' }}>
                 <button className="btn sm btn-primary" onClick={() => resolve(a.id, true)}>{t('deck.approve')}</button>
