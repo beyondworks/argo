@@ -512,3 +512,9 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 .tpl-item { display: flex; align-items: center; gap: 8px; min-width: 0; height: 34px; padding: 0 10px; border: 0; border-radius: var(--rc); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 @media (hover: hover) { .tpl-item:hover { box-shadow: inset 0 0 0 1px var(--border); } }
 .tpl-item:active { transform: scale(0.97); }
+
+/* 비공개 블록 */
+.private-block { margin: 6px 0; padding: 10px 12px; border-radius: var(--rc); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.private-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.private-body > :first-child { margin-top: 0; }
+.block-grip { display: grid; place-items: center; width: 100%; height: 100%; }
