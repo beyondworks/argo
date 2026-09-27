@@ -49,6 +49,8 @@ const DICT = {
   'tr.translate': ['번역', 'Translate'], 'tr.original': ['원문 보기', 'Show original'], 'tr.busy': ['번역 중… {n}/{t}', 'Translating… {n}/{t}'],
   'tr.offline': ['Argo 앱이 켜져 있어야 번역됩니다 — 메신저에 연결된 내 기기의 구독으로 번역합니다', 'Open the Argo app to translate — it runs on your own device with your subscription'],
   'tr.failed': ['번역하지 못했습니다. 잠시 뒤 다시 눌러 주세요', 'Could not translate. Please try again shortly'],
+  'tr.noSub': ['번역은 내 기기 Argo 앱에 연결된 Claude 구독으로 합니다 — Argo 앱 설정 → AI 연결에서 Claude 구독을 연결해 주세요', 'Translation uses the Claude subscription connected in the Argo app on your device — connect it in Settings → AI connections'],
+  'tr.tooLarge': ['메일이 너무 길어 번역하지 않았습니다', 'This email is too long to translate'],
   'tr.partial': ['일부 문단은 번역하지 못해 원문으로 두었습니다', 'Some paragraphs could not be translated and were left as is'],
   'mailc.title': ['메일 계정을 연결하세요', 'Connect a mail account'],
   'mailc.sub': ['Gmail·Google Workspace(회사 도메인) 계정을 Google 로그인과 권한 승인으로 연결합니다', 'Connect Gmail or Google Workspace (company domain) with Google sign-in and one approval'],

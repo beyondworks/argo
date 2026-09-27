@@ -65,23 +65,27 @@ function MailBody({ m, tr }) {
   );
 }
 
+const TR_ERR = { offline: 'tr.offline', no_subscription: 'tr.noSub', too_large: 'tr.tooLarge' };
+
 function Reader({ m, onBack }) {
   const [c, setC] = useState(null);
   // 번역(버튼을 누를 때만) — { busy, done, total, subject, html, text }. 다른 메일로 가면 원문으로
   const [tr, setTr] = useState(null); const [showTr, setShowTr] = useState(false);
   const shown = useRef(m?.id); shown.current = m?.id;                                  // 번역 중에 다른 메일로 가면 늦게 온 결과를 버린다
-  useEffect(() => { let live = true; setC(null); setTr(null); setShowTr(false); if (m?.account) readMail(m).then((x) => live && setC(x), () => {}); return () => { live = false; }; }, [m?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const stopTr = useRef(null);                                                          // 번역 중에 다른 메일로 가면 기기에 취소를 보낸다(남은 묶음이 구독 한도를 쓰지 않게)
+  useEffect(() => { let live = true; setC(null); setTr(null); setShowTr(false); if (m?.account) readMail(m).then((x) => live && setC(x), () => {}); return () => { live = false; stopTr.current?.abort(); }; }, [m?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const translate = async () => {
     if (tr && !tr.busy) { setShowTr((v) => !v); return; }
     if (!c || tr?.busy) return;
     const id = m.id;
     setTr({ busy: true, done: 0, total: 0 }); setShowTr(true);
     try {
-      const out = await translateMail(m, c, { onProgress: (p) => { if (shown.current === id) setTr((cur) => (cur?.busy ? { ...p, busy: true } : cur)); } });
+      const ac = new AbortController(); stopTr.current = ac;
+      const out = await translateMail(m, c, { signal: ac.signal, onProgress: (p) => { if (shown.current === id) setTr((cur) => (cur?.busy ? { ...p, busy: true } : cur)); } });
       if (shown.current !== id) return;
       setTr(out);
       if (out.partial) showToast(t('tr.partial'));
-    } catch (e) { if (shown.current !== id) return; setTr(null); setShowTr(false); showToast(t(e.code === 'offline' ? 'tr.offline' : 'tr.failed')); }
+    } catch (e) { if (shown.current !== id) return; setTr(null); setShowTr(false); if (e.code !== 'cancelled') showToast(t(TR_ERR[e.code] ?? 'tr.failed')); }
   };
   if (!m) return <div className="empty-state"><Icon name="mail" size={20} /><p>{t('mail.select')}</p></div>;
   const reply = () => setUi({ compose: { to: m.addr, subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`, account: m.account, threadId: m.threadId, inReplyTo: c?.messageId, references: c?.references } });

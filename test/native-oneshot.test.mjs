@@ -136,3 +136,22 @@ test('OS4. 네이티브 원샷의 OpenRouter 429는 요청 한도 안내로 정�
     assert.equal(srv.bodies.length, 1, '재시도 폭주 없음(429는 기다리면 풀린다)');
   } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; }
 });
+
+// 오피스 번역(유건 9/27: api는 안 쓴다, 본인 구독으로) — 러너를 고정하면 다른 러너·다른 자격 방식으로 넘어가지 않는다
+test('OS5. only 고정 — 허용 방식의 자격이 없으면 no_subscription, 실패해도 다른 러너로 자가치유하지 않는다', { timeout: 30_000 }, async () => {
+  const ws = 'os5'; await createCompany(ws, '원샷5', '사장');
+  await saveRunnerCred(ws, 'claude', 'apikey', 'sk-ant-api03-fake-key-1234567890');
+  await saveRunnerCred(ws, 'openrouter', 'apikey', 'fake-or-key-1234567890');
+  await saveRunnerCred(ws, 'glm', 'apikey', 'fake-glm-key-1234567890');
+  const or = await fakeMessages([{ status: 500, json: { type: 'error', error: { type: 'api_error', message: 'boom' } } }]);
+  const glm = await fakeMessages([msg('자가치유로 온 답')]);
+  process.env.OPENROUTER_BASE_URL = or.base; process.env.GLM_BASE_URL = glm.base;
+  try {
+    await assert.rejects(runOneShot(ws, 'x', { only: { runner: 'claude', types: ['oauth', 'host'] }, timeoutMs: 20_000 }), (e) => e.code === 'no_subscription');
+    assert.equal(or.bodies.length + glm.bodies.length, 0, 'Claude API 키가 있어도, 다른 러너가 있어도 쓰지 않는다');
+    const ws2 = 'os5b'; await createCompany(ws2, '원샷5b', '사장'); // Claude 자격 없이 — 자가치유가 가짜 키로 실제 Anthropic에 나가지 않게
+    await saveRunnerCred(ws2, 'openrouter', 'apikey', 'fake-or-key-1234567890'); await saveRunnerCred(ws2, 'glm', 'apikey', 'fake-glm-key-1234567890');
+    await assert.rejects(runOneShot(ws2, 'x', { only: { runner: 'openrouter', types: ['apikey'] }, timeoutMs: 20_000 }));
+    assert.ok(or.bodies.length >= 1); assert.equal(glm.bodies.length, 0, '고정한 러너가 실패해도 GLM으로 넘어가지 않는다');
+  } finally { await or.close(); await glm.close(); delete process.env.OPENROUTER_BASE_URL; delete process.env.GLM_BASE_URL; }
+});

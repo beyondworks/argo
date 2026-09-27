@@ -112,10 +112,22 @@ await has("Argo 앱이 켜져 있어야 번역됩니다");
 console.log("J=" + JSON.stringify({ label: await page.evaluate(() => [...document.querySelectorAll(".reader-actions .btn")].map((b) => b.innerText.trim()).find((x) => /번역|원문/.test(x))) }));
 JS
 ); [[ $(J "$O") == *'"label":"번역"'* ]] || { print -r -- "$O" | tail -3; fail "translate offline notice"; }
-node $S/fake-device.mjs mail-e2e@office.test ~/.cache/argo-office/e2e-pass $APP > ~/.cache/argo-office/fake-device.log 2>&1 &
-DEV=$!
-for i in {1..30}; do grep -q "device SUBSCRIBED" ~/.cache/argo-office/fake-device.log && break; sleep 0.5; done
-grep -q "device SUBSCRIBED" ~/.cache/argo-office/fake-device.log || { kill $DEV; cat ~/.cache/argo-office/fake-device.log | tail -3; fail "fake device did not subscribe"; }
+# 기기 켜기 — startdev <로그 이름> [환경변수…]. 실제 앱과 같은 통로 함수(joinTranslate)를 쓴다
+startdev() { local log=~/.cache/argo-office/$1.log; shift; env "$@" node $S/fake-device.mjs mail-e2e@office.test ~/.cache/argo-office/e2e-pass $APP > $log 2>&1 & LASTDEV=$!
+  for i in {1..30}; do grep -q "device SUBSCRIBED" $log && break; sleep 0.5; done
+  grep -q "device SUBSCRIBED" $log || { kill $LASTDEV; tail -3 $log; fail "fake device did not subscribe"; }; }
+# 3t-1) 켜진 기기에 Claude 구독이 없으면 "꺼져 있음"이 아니라 구독 연결 안내(검수 M6)
+startdev fake-device-nosub NOSUB=1; DEV0=$LASTDEV
+O=$(stage <<JS
+$HEAD
+await click(".reader-actions .btn", "번역");
+await has("Claude 구독을 연결해 주세요");
+console.log("J=" + JSON.stringify({ ok: true }));
+JS
+); kill $DEV0 2>/dev/null; [[ $(J "$O") == *'"ok":true'* ]] || { print -r -- "$O" | tail -3; fail "translate no-subscription notice"; }
+# 3t-2) 같은 사용자의 기기 두 대가 켜져 있어도 화면이 고른 한 대만 번역한다(검수 M4)
+startdev fake-device DEVICE_WS=e2e-device-a; DEV=$LASTDEV
+startdev fake-device-b DEVICE_WS=e2e-device-b; DEVB=$LASTDEV
 O=$(stage <<JS
 $HEAD
 const t0 = Date.now();
@@ -128,7 +140,10 @@ await page.waitForTimeout(500);
 const back = await page.evaluate(() => ({ h2: document.querySelector(".reader-head h2").innerText, body: new DOMParser().parseFromString(document.querySelector(".mail-frame").srcdoc, "text/html").body.textContent }));
 console.log("J=" + JSON.stringify({ ms, h2: tr.h2, trBody: tr.body.includes("번역:Chairman & CEO"), keptKo: tr.body.includes("견적 확인") && !tr.body.includes("번역:견적 확인"), backH2: back.h2, backBody: back.body.includes("Chairman & CEO") && !back.body.includes("번역:") }));
 JS
-); kill $DEV 2>/dev/null; J3t=$(J "$O"); echo "3t: $J3t"; [[ $J3t == *'"h2":"번역:FAKE-gmail.example 수정 견적"'* && $J3t == *'"trBody":true'* && $J3t == *'"keptKo":true'* && $J3t == *'"backH2":"FAKE-gmail.example 수정 견적"'* && $J3t == *'"backBody":true'* ]] || { print -r -- "$O" | tail -3; fail "translate"; }
+); sleep 1; kill $DEV $DEVB 2>/dev/null; J3t=$(J "$O"); echo "3t: $J3t";
+W=$(cat ~/.cache/argo-office/fake-device.log ~/.cache/argo-office/fake-device-b.log | grep -c '^worked'); R=$(cat ~/.cache/argo-office/fake-device.log ~/.cache/argo-office/fake-device-b.log | grep -c '^request')
+[[ $W == 1 && $R == 2 ]] || fail "two devices: requests=$R worked=$W (want 2 received, 1 worked)"
+ [[ $J3t == *'"h2":"번역:FAKE-gmail.example 수정 견적"'* && $J3t == *'"trBody":true'* && $J3t == *'"keptKo":true'* && $J3t == *'"backH2":"FAKE-gmail.example 수정 견적"'* && $J3t == *'"backBody":true'* ]] || { print -r -- "$O" | tail -3; fail "translate"; }
 
 # 3b) 공격 메일 — 이동(meta refresh·base)·끼워 넣기(link·form)가 틀에 들어가지 않고, 외부 요청이 0건. 위험 링크는 href 제거.
 #     대조군: 같은 공격 HTML을 걷어내지 않고 같은 sandbox·CSP로 띄우면 무엇이 새는지 함께 기록한다(검사가 새는 것을 잡을 수 있는지 확인).
