@@ -1743,10 +1743,12 @@ function Shell({ session }) {
         {!isPersonal && !orgBlocked && favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
         </RailSection>)}
-        {!isPersonal && orgGateActive && ( // 검수 M-5(2026-09-27) — 폰 홈·DM 탭은 이 레일이 곧 화면 전체다. 본문 게이트만으론 안 보여 빈 화면이 되던 결함 — 같은 동의 화면을 여기서도(bare)
+        {!isPersonal && isPhone && orgGateActive && ( // 검수 M-5(2026-09-27) — 폰 홈·DM 탭은 이 레일이 곧 화면 전체다. 본문 게이트만으론 안 보여 빈 화면이 되던 결함 — 같은 동의 화면을 여기서도(bare)
+          // 재검수(2026-09-27, iPad 세로 넓은 배치 실측) — isPhone 없이 orgGateActive만 보면 사이드바+본문이 함께 보이는
+          // 넓은 배치에서 게이트가 두 번(레일 bare + 본문) 뜬다. bare는 사이드바가 화면 전체인 폰 셸에서만.
           <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setOrgId(PERSONAL)} bare />
         )}
-        {!isPersonal && aiConsentLoading && ( // 3차 검수 L-3(2026-09-27) — 조회 중엔 채널 목록이 아니라 로딩 표시(같은 이유로 bare)
+        {!isPersonal && isPhone && aiConsentLoading && ( // 3차 검수 L-3(2026-09-27) — 조회 중엔 채널 목록이 아니라 로딩 표시(같은 이유로 bare, 같은 이유로 isPhone)
           <OrgGateLoading t={t} bare />
         )}
         {!isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'} label={orgId ? t('ch.list') : t('org.start')} right={!orgId ? null : <span className="right">

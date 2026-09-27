@@ -43,7 +43,7 @@ test('동의 조회 실패는 fail-open — 로딩에 갇히지 않고 게이트
 });
 
 test('폰 홈·DM 탭(레일이 화면 전체)에는 조회 중일 때 로딩 표시가, 안 됐을 때 동의 화면이 뜬다', () => {
-  assert.match(app, /\{!isPersonal && aiConsentLoading && \( \/\/ 3차 검수 L-3\(2026-09-27\) — 조회 중엔 채널 목록이 아니라 로딩 표시\(같은 이유로 bare\)\n\s*<OrgGateLoading t=\{t\} bare \/>/);
+  assert.match(app, /\{!isPersonal && isPhone && aiConsentLoading && \( \/\/ 3차 검수 L-3\(2026-09-27\) — 조회 중엔 채널 목록이 아니라 로딩 표시\(같은 이유로 bare, 같은 이유로 isPhone\)\n\s*<OrgGateLoading t=\{t\} bare \/>/);
 });
 
 // 실사고(2026-09-27 시각 확인) — 레일만 막고 대체 화면이 없어 폰 홈·DM 탭이 빈 화면이 됐다. bare 재사용으로 고정.
@@ -52,6 +52,14 @@ test('폰 홈·DM 탭(레일이 화면 전체)에도 같은 동의 화면을 bar
   const gate = app.slice(app.indexOf('function AiConsentGate('), app.indexOf('function EmptyOrg('));
   assert.match(gate, /function AiConsentGate\(\{ t, onMenu, onError, onDecline, bare = false \}\)/);
   assert.match(gate, /\{!bare && <div className="msgr-top">/, 'bare면 레일이 이미 자기 상단 바를 갖고 있어 중복 상단 바를 생략한다');
+});
+
+// 재검수(2026-09-27, iPad Air 11 세로 시뮬레이터 실측) — 넓은 배치(사이드바+본문이 함께 보임)에서 isPhone 없이
+// orgGateActive만 봐서 레일 bare 게이트와 본문 게이트가 동시에 두 번 떴다. bare는 사이드바가 화면 전체인
+// 폰 셸(use-phone, 720px)에서만 떠야 한다.
+test('레일의 bare 게이트·로딩은 폰 폭(isPhone)에서만 뜬다 — 넓은 배치에서 본문과 겹치지 않는다', () => {
+  assert.match(app, /\{!isPersonal && isPhone && orgGateActive && \( \/\/ 검수 M-5/, '레일 bare 게이트는 isPhone 선행 조건');
+  assert.match(app, /\{!isPersonal && isPhone && aiConsentLoading && \(/, '레일 bare 로딩도 isPhone 선행 조건');
 });
 
 test("설정은 동의 전엔 '내 계정' 탭만 연다 — 멤버·조직·에이전트·친구 탭은 조직 내용이다", () => {
