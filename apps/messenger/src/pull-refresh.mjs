@@ -1,5 +1,5 @@
 // 폰 당겨서 새로고침(pull-to-refresh) — 순수 판정 로직만 여기. 실제 터치 배선은 App.jsx의 usePullToRefresh.
-// 유건 결정: 새로고침 = location.reload()(로그인 유지), 목록·대화 맨 위에서만.
+// 새로고침은 현재 React 트리를 유지한 채 데이터만 갱신한다.
 // 유건 제보(2026-09-26): "너무 민감하다" — 임계를 iOS 기본 앱 수준(약 110px)으로 올리고, 저항(고무줄) 한도도 같은 비율로 맞췄다(옛 70px 기준 120px과 같은 비율).
 export const REFRESH_THRESHOLD = 110; // 이 거리 넘겨 놓으면 손을 떼는 순간 새로고침
 export const REFRESH_MAX = 190; // 표시상 당김 한도(고무줄 — 그 뒤로는 서서히만 늘어난다)
@@ -30,4 +30,38 @@ export function canStartPull(scrollTop, touches, msSinceScroll = Infinity) {
 // 당김은 세로 제스처일 때만 — 목록 맨 위에서 탭 스와이프·가장자리 뒤로가기를 비스듬히 내린 경우는 새로고침이 아니다(검수 2026-09-24).
 export function isVerticalPull(dx, dy) {
   return dy > 0 && dy > Math.abs(dx);
+}
+
+// Keep the gesture lifecycle testable without a browser reload or React remount.
+export function bindPullRefresh(node, { refresh, phase, error, now = Date.now }) {
+  let startAt = null; let busy = false; let disposed = false; let lastScroll = -Infinity;
+  const reset = () => { startAt = null; node.style.setProperty('--pull-dy', '0px'); phase('idle'); };
+  const scroll = () => { lastScroll = now(); };
+  const start = (e) => {
+    if (busy || !canStartPull(node.scrollTop, e.touches.length, now() - lastScroll)) return;
+    startAt = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+  const move = (e) => {
+    if (!startAt || busy) return;
+    if (e.touches.length !== 1) { reset(); return; }
+    const dy = e.touches[0].clientY - startAt.y;
+    if (!isVerticalPull(e.touches[0].clientX - startAt.x, dy) || node.scrollTop > 0) { reset(); return; }
+    e.preventDefault();
+    node.style.setProperty('--pull-dy', `${Math.min(56, pullDistance(dy) * .5)}px`);
+    phase(shouldRefresh(dy) ? 'ready' : 'pulling');
+  };
+  const end = async (e) => {
+    if (!startAt || busy) return;
+    const touch = e.changedTouches?.[0];
+    const accepted = touch && isVerticalPull(touch.clientX - startAt.x, touch.clientY - startAt.y) && shouldRefresh(touch.clientY - startAt.y);
+    startAt = null;
+    if (!accepted) { reset(); return; }
+    busy = true; node.style.setProperty('--pull-dy', '44px'); phase('refreshing');
+    try { await refresh(); } catch (err) { if (!disposed) error(err); }
+    finally { busy = false; if (!disposed) reset(); }
+  };
+  const cancel = () => { if (!busy) reset(); };
+  const events = { scroll, touchstart: start, touchmove: move, touchend: end, touchcancel: cancel };
+  for (const [type, fn] of Object.entries(events)) node.addEventListener(type, fn, { passive: type !== 'touchmove' });
+  return () => { disposed = true; for (const [type, fn] of Object.entries(events)) node.removeEventListener(type, fn); node.style.removeProperty('--pull-dy'); };
 }

@@ -26,7 +26,8 @@ test('vite 설정이 이 검사를 실제로 부른다', async () => {
   assert.equal(typeof config, 'function', 'defineConfig에 함수를 넘겨 command를 받아야 한다');
   const saved = { ...process.env };
   try {
-    process.env.TAURI_ENV_PLATFORM = 'ios'; delete process.env.VITE_SUPABASE_URL; delete process.env.VITE_SUPABASE_ANON_KEY;
+    // Explicit empty overrides keep this negative case independent of a developer's .env.local.
+    process.env.TAURI_ENV_PLATFORM = 'ios'; process.env.VITE_SUPABASE_URL = ''; process.env.VITE_SUPABASE_ANON_KEY = '';
     assert.throws(() => config({ command: 'build', mode: 'gate-test-no-env' }), /VITE_SUPABASE_URL/);
     Object.assign(process.env, full);
     assert.doesNotThrow(() => config({ command: 'build', mode: 'gate-test-no-env' }));

@@ -87,25 +87,21 @@ test('전송 실패는 삼키지 않는다 — 네이티브 결과를 돌려주�
   assert.match(lib, /native_realtime::native_notify_claim_and_send/);
 });
 
-// 2026-09-23 유건 제보: '나무 톡'으로 골라도 맥 기본 소리가 났다. UNNotificationSound.soundNamed는 번들 Resources 루트만 보고
-// 하위 폴더 경로(sounds/x.caf)면 조용히 기본 소리로 바꾼다 — caf는 루트에 두고 이름만 넘긴다.
-// 2026-09-24 밤 재관찰(설치본 0.1.37 실제 메시지 알림, `log show`로 시스템 로그 직결 확인): 루트 caf→아이프로 바꾼 뒤에도
-// 여전히 기본 소리였다. usernoted/systemsoundserverd가 남긴 실 로그: `file_type_hint: caff`인데 실제 파일 헤더는
-// `FORM....AIFF` → AudioAnalytics 디코드 오류 → "built in action"(시스템 기본음)으로 폴백. 즉 이 알림 파이프라인은
-// CAF 컨테이너만 재생하고 순수 AIFF는 디코드 실패로 기본 소리로 떨어진다 — CAF로 되돌린다.
-// (오전의 애드혹 서명 SoundLab 시험 — "aiff/wav만 커스텀으로 울렸다"는 근거였던 시험 — 은 같은 `log show`로 재조사하니
-// 세 알림 모두 Presenting/Playing 이벤트가 하루 종일 단 한 번도 없었다 — 배너·소리 자체가 뜬 적이 없어 그 결론은 근거가 없다.)
-test('맥 알림 소리 — caf가 번들 Resources 루트에 들어가고 이름만으로 찾는다(aiff는 이 알림 파이프라인이 디코드하지 못해 기본 소리로 떨어진다)', () => {
-  const conf = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
-  assert.equal(conf.bundle.resources['sounds/*.caf'], '');
-  assert.equal(conf.bundle.resources['sounds/*.aiff'], undefined, '맥 번들에 aiff를 싣지 않는다(디코드 실패로 기본 소리로 떨어진다 — 2026-09-24 실측)');
+test('맥 알림 소리 — 미리듣기 WAV를 사용자 소리 폴더에 등록한 다음 macOS에 이름을 전달한다', () => {
   const rs = readFileSync(new URL('../src-tauri/src/notify_mac.rs', import.meta.url), 'utf8');
-  assert.match(rs, /format!\("\{name\}\.caf"\)/);
-  assert.doesNotMatch(rs, /"sounds\//);
+  const assets = readFileSync(new URL('../src-tauri/src/notification_sound.rs', import.meta.url), 'utf8');
+  assert.match(rs, /sound\.as_deref\(\)\.and_then\(crate::notification_sound::asset\)/);
+  assert.match(rs, /home\.join\("Library\/Sounds"\)/);
+  assert.ok(rs.indexOf('notification_sound::register(') < rs.indexOf('UNNotificationSound::soundNamed('));
+  assert.match(rs, /NSString::from_str\(filename\)/);
+  assert.match(rs, /custom sound registration failed/);
   const SOUNDS = JSON.parse(readFileSync(new URL('../src/notify.js', import.meta.url), 'utf8').match(/export const SOUNDS = (\[[^\]]*\])/)[1].replace(/'/g, '"'));
   assert.equal(SOUNDS.length, 5);
-  for (const name of SOUNDS) { // 설정에서 고를 수 있는 소리마다 실제 CAF 파일이 있어야 한다(매직 바이트 'caff')
-    const buf = readFileSync(new URL(`../src-tauri/sounds/${name}.caf`, import.meta.url));
-    assert.equal(buf.subarray(0, 4).toString('latin1'), 'caff', `${name}.caf 형식`);
+  for (const name of SOUNDS) {
+    assert.ok(assets.includes(`"argo-messenger-${name}.wav"`));
+    assert.ok(assets.includes(`include_bytes!("../../public/sounds/${name}.wav")`));
+    const buf = readFileSync(new URL(`../public/sounds/${name}.wav`, import.meta.url));
+    assert.equal(buf.subarray(0, 4).toString('latin1'), 'RIFF', `${name}.wav 형식`);
+    assert.equal(buf.subarray(8, 12).toString('latin1'), 'WAVE');
   }
 });
