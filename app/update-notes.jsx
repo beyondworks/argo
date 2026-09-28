@@ -16,12 +16,11 @@ export function UpdateNotesCard({ version, items, t, onConfirm, saving = false, 
     onKeyDown={(event) => { if (event.key === 'Escape' && !saving) { event.stopPropagation(); onDismiss(); } }}
     style={{ position: 'fixed', right: 'max(16px, env(safe-area-inset-right))', bottom: 'max(16px, env(safe-area-inset-bottom))',
       width: 'min(420px, calc(90vw / var(--z, 1)))', maxWidth: 'calc(100% - max(16px, env(safe-area-inset-right)) - 16px)',
-      maxHeight: 'min(520px, calc(80vh / var(--z, 1)))', overflowY: 'auto', zIndex: 90,
+      maxHeight: 'min(520px, calc(80vh / var(--z, 1)))', overflowY: 'auto', overflowWrap: 'anywhere', zIndex: 90,
       background: 'var(--card)', boxShadow: 'var(--shadow-float)', color: 'var(--fg)' }}>
-    <div className="card-head">
-      <h2 id={titleId} className="card-title" style={{ margin: 0 }}>{t('updates.title', { version })}</h2>
-      <span className="rule" />
-      <button type="button" className="btn sm" disabled={saving} onClick={onDismiss} aria-label={t('common.close')}>×</button>
+    <div className="card-head" style={{ gap: 8, alignItems: 'flex-start' }}>
+      <h2 id={titleId} className="card-title" style={{ margin: 0, minWidth: 0, flex: 1, display: 'block', overflowWrap: 'anywhere' }}>{t('updates.title', { version })}</h2>
+      <button type="button" className="btn sm" style={{ flexShrink: 0 }} disabled={saving} onClick={onDismiss} aria-label={t('common.close')}>×</button>
     </div>
     <div style={{ padding: '0 20px 18px', fontSize: 13, lineHeight: 1.6 }}>
       {items.length > 0 && <><p style={{ marginTop: 0, color: 'var(--fg-2)' }}>{t('updates.intro')}</p>

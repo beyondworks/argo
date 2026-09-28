@@ -179,6 +179,22 @@ test('업데이트 패널의 고정 기준 영역은 스크롤바·우측 안전
   }
 });
 
+test('업데이트 패널 헤더는 제목을 줄바꿈하고 닫기 버튼의 폭을 보존한다', () => {
+  const panel = sources.get('app/update-notes.jsx').split('<div className="card-head"')[0];
+  assert.match(panel, /overflowWrap:\s*'anywhere'/, '좁은 화면의 영문 긴 단어도 패널을 넘치지 않는다');
+  const header = sources.get('app/update-notes.jsx').match(/<div className="card-head"[\s\S]*?<\/div>/)?.[0];
+  assert.ok(header, '실제 패널 헤더를 검사한다');
+  const title = header.match(/<h2\b[^>]+>/)?.[0];
+  const close = header.match(/<button\b[^>]+>/)?.[0];
+  assert.ok(title && close);
+  assert.match(title, /minWidth:\s*0\b/);
+  assert.match(title, /flex:\s*1\b/);
+  assert.match(title, /display:\s*'block'/);
+  assert.match(title, /overflowWrap:\s*'anywhere'/);
+  assert.match(close, /flexShrink:\s*0\b/);
+  assert.doesNotMatch(header, /className="rule"/, '장식선과 두 번째 gap이 닫기 버튼 공간을 차지하지 않는다');
+});
+
 /* ── 인접 핀: 상단바 배율 반응형 (검수 별건 — 미디어쿼리 배율 사각) ─────────────
    미디어쿼리(max-width:900px)는 실 뷰포트 기준이라 배율 2 × 1280(유효 640)에서 미발동, 시계·
    버전·search-pill이 넘쳤다(검수 실측: pill right 1490 > cw 1424). JS 판정(clientWidth ÷ zoom
