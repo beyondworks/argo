@@ -32,10 +32,28 @@ export function isVerticalPull(dx, dy) {
   return dy > 0 && dy > Math.abs(dx);
 }
 
+// Argo 별 심볼(App.jsx STAR_D 재사용) 회전·크기 — 당긴 거리(가공값, pullDistance 결과)에 비례해 커지며 돈다(유건 확정 2026-09-29).
+const STAR_MIN_SCALE = 0.55; // 0px에서도 아주 작게 보이기 시작
+const STAR_MAX_DEG = 480; // 임계보다 더 당기면 한 바퀴 반 가까이 — 새로고침 중 CSS 연속 회전으로 이어진다
+export function pullRotationDeg(dist) {
+  const clamped = Math.max(0, Math.min(dist, REFRESH_MAX));
+  return (clamped / REFRESH_MAX) * STAR_MAX_DEG;
+}
+export function pullStarScale(dist) {
+  const clamped = Math.max(0, Math.min(dist, REFRESH_THRESHOLD));
+  return STAR_MIN_SCALE + (clamped / REFRESH_THRESHOLD) * (1 - STAR_MIN_SCALE);
+}
+// 튐(scale pulse) 트리거 — 아직 ready/refreshing이 아니었다가 막 그 상태로 넘어갈 때만 참(재진입마다 한 번씩만 튄다).
+export function enteredReady(prevPhase, nextPhase) {
+  const already = prevPhase === 'ready' || prevPhase === 'refreshing';
+  const now = nextPhase === 'ready' || nextPhase === 'refreshing';
+  return !already && now;
+}
+
 // Keep the gesture lifecycle testable without a browser reload or React remount.
 export function bindPullRefresh(node, { refresh, phase, error, now = Date.now }) {
   let startAt = null; let busy = false; let disposed = false; let lastScroll = -Infinity;
-  const reset = () => { startAt = null; node.style.setProperty('--pull-dy', '0px'); phase('idle'); };
+  const reset = () => { startAt = null; node.style.setProperty('--pull-dy', '0px'); node.style.setProperty('--pull-deg', '0'); node.style.setProperty('--pull-scale', String(pullStarScale(0))); phase('idle'); };
   const scroll = () => { lastScroll = now(); };
   const start = (e) => {
     if (busy || !canStartPull(node.scrollTop, e.touches.length, now() - lastScroll)) return;
@@ -47,7 +65,10 @@ export function bindPullRefresh(node, { refresh, phase, error, now = Date.now })
     const dy = e.touches[0].clientY - startAt.y;
     if (!isVerticalPull(e.touches[0].clientX - startAt.x, dy) || node.scrollTop > 0) { reset(); return; }
     e.preventDefault();
-    node.style.setProperty('--pull-dy', `${Math.min(56, pullDistance(dy) * .5)}px`);
+    const dist = pullDistance(dy);
+    node.style.setProperty('--pull-dy', `${Math.min(56, dist * .5)}px`);
+    node.style.setProperty('--pull-deg', String(pullRotationDeg(dist)));
+    node.style.setProperty('--pull-scale', String(pullStarScale(dist)));
     phase(shouldRefresh(dy) ? 'ready' : 'pulling');
   };
   const end = async (e) => {
@@ -63,5 +84,5 @@ export function bindPullRefresh(node, { refresh, phase, error, now = Date.now })
   const cancel = () => { if (!busy) reset(); };
   const events = { scroll, touchstart: start, touchmove: move, touchend: end, touchcancel: cancel };
   for (const [type, fn] of Object.entries(events)) node.addEventListener(type, fn, { passive: type !== 'touchmove' });
-  return () => { disposed = true; for (const [type, fn] of Object.entries(events)) node.removeEventListener(type, fn); node.style.removeProperty('--pull-dy'); };
+  return () => { disposed = true; for (const [type, fn] of Object.entries(events)) node.removeEventListener(type, fn); node.style.removeProperty('--pull-dy'); node.style.removeProperty('--pull-deg'); node.style.removeProperty('--pull-scale'); };
 }
