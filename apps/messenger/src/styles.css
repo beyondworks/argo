@@ -1204,6 +1204,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-setcard > * { min-width: 0; }
   .msgr-phone .msgr-setcard .msgr-field:has(select) { max-width: 100%; flex-wrap: wrap; height: auto; min-height: 44px; padding-block: 6px; }
   .msgr-phone .msgr-setcard .msgr-field select, .msgr-phone .msgr-setcard .row > .msgr-input { min-width: 0; max-width: 100%; }
+  .msgr-phone .msgr-setcard .row > .msgr-input { flex: 1 1 0; } /* 남는 폭을 채운다 — 189px로 멈춰 아이디 안내 문구가 잘렸다(2026-09-29 점검) */
   /* 설정 탭 줄 = 알림함 거르개(.msgr-seg)와 같은 분절 컨트롤 — 앱 안에서 한 가지 모양만 쓴다(유건 2026-09-10) */
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav { display: flex; position: static; gap: 2px; padding: 2px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border-soft); overflow-x: auto; scrollbar-width: none; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setnav::-webkit-scrollbar { display: none; }
@@ -1655,6 +1656,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 
 /* 안드로이드 웹뷰 기본 탭 강조(하늘색 사각형) 끄기 — 누름 표시는 각 버튼의 :active가 맡는다. 네이티브 메신저에는 이 사각형이 없다(2026-09-29 점검) */
 html { -webkit-tap-highlight-color: transparent; }
+.argo-messenger :is(input[type='checkbox'], input[type='radio']) { accent-color: var(--primary); } /* 컴포넌트별로 지정하다 빠진 곳(설정 프로필)이 브라우저 기본 파랑으로 나왔다 — 앱 전체 기본값 */
 /* ─── 모바일 정돈(2026-09-29 유건 지시 "메이저 메신저와 이질감 없게" — 카카오톡·라인·텔레그램·슬랙 대조) ─── */
 /* 연속 메시지 묶음(msg-group.mjs): 이름·아바타는 묶음 첫 글에만, 시간·전송 표시는 마지막 글에만. 줄 간격 20 → 6 */
 /* 폰 한정 — 데스크톱은 말풍선 아래 도구 막대(.msgr-acts, 32px)가 흐름 안에 있어 묶어도 38px씩 벌어졌다(2026-09-29 실측). 데스크톱 묶음은 막대를 띄우는 설계와 함께 따로 */
