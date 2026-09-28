@@ -39,20 +39,44 @@ export async function handoff({ supabaseUrl, provider }, deps) {
   throw new Error('timeout');
 }
 
-/** GoTrue 공개 설정에서 켜진 제공자를 읽는다 → { apple, google, github } (boolean). 실패·모양 이상이면 null(= 게이팅 안 함).
-    검수 #528 HIGH-2: 서버에 Apple이 꺼져 있으면 버튼이 죽은 채 보이고 5분 타임아웃까지 기다렸다. */
-export async function fetchProviderSettings(supabaseUrl, fetchFn = globalThis.fetch, anonKey = '') {
+export const PROVIDER_SETTINGS_TIMEOUT_MS = 8_000;
+
+/** One request per Auth mount or manual retry; no polling/backoff loop. 100 clients
+ * opening once make 100 settings GETs, zero writes. Never collapse failure into
+ * the initial loading state or expose a server response body in the UI. */
+export async function fetchProviderSettings(supabaseUrl, fetchFn = globalThis.fetch, anonKey = '', { signal, timeoutMs = PROVIDER_SETTINGS_TIMEOUT_MS } = {}) {
+  const fail = (error, status = null) => ({ enabled: null, error, status });
+  if (signal?.aborted) return fail('cancelled');
+  const controller = new AbortController();
+  let timer, cancel;
+  const interrupted = new Promise((resolve) => {
+    cancel = () => { resolve(fail('cancelled')); controller.abort(); };
+    signal?.addEventListener('abort', cancel, { once: true });
+    timer = setTimeout(() => { resolve(fail('timeout')); controller.abort(); }, timeoutMs);
+  });
+  const request = async () => {
+    let r;
+    try {
+      r = await fetchFn(`${supabaseUrl}/auth/v1/settings`, { signal: controller.signal, headers: { accept: 'application/json', ...(anonKey ? { apikey: anonKey } : {}) } });
+    } catch { return fail('offline'); }
+    const status = r?.status ?? null;
+    if (!r?.ok) return fail(status === 402 ? 'restricted' : status === 429 ? 'rateLimited' : 'failed', status);
+    try {
+      const ext = (await r.json())?.external;
+      if (!ext || typeof ext !== 'object' || Array.isArray(ext) || PROVIDERS.some((p) => ext[p] !== undefined && typeof ext[p] !== 'boolean')) return fail('failed', status);
+      return { enabled: Object.fromEntries(PROVIDERS.map((p) => [p, ext[p] !== false])), error: null, status };
+    } catch { return fail('failed', status); }
+  };
   try {
-    const r = await fetchFn(`${supabaseUrl}/auth/v1/settings`, { headers: { accept: 'application/json', ...(anonKey ? { apikey: anonKey } : {}) } }); // 호스티드 게이트웨이가 apikey를 요구해도 조용히 fail-open 되지 않게(검수 #530 L-4)
-    if (!r?.ok) return null;
-    const j = await r.json();
-    const ext = j?.external;
-    if (!ext || typeof ext !== 'object') return null;
-    return Object.fromEntries(PROVIDERS.map((p) => [p, ext[p] !== false])); // 명시적으로 꺼진 것만 숨긴다 — 키가 없는(구버전) 응답은 보여 준다
-  } catch { return null; }
+    // The race also bounds body parsing and transports that ignore AbortSignal.
+    return await Promise.race([request(), interrupted]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+  }
 }
 
-/** 버튼 표시 판정(검수 #530 M-2: 행동으로 잠근다). enabled=null(미조회·실패) → 표시, 명시적 false만 숨김. */
+/** Unknown settings keep button placeholders visible; Auth separately gates loading/error. */
 export const providerShown = (enabled, p) => !enabled || enabled[p] !== false;
 /** 서버가 제공자를 하나도 켜지 않았다(검수 #530 H-1: 버튼 0개면 안내와 서버 바꾸기 유도). */
 export const noProviders = (enabled) => !!enabled && PROVIDERS.every((p) => enabled[p] === false);
