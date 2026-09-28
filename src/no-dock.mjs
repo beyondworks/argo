@@ -10,24 +10,26 @@
 //   · Bun: 제목을 설정해도 **등록되지 않는다**(bun -e A/B 실측). SDK가 띄우는 `claude`는 Bun
 //     컴파일 단일 실행 파일이라 이 프리로드가 안 걸리지만, 애초에 아이콘을 만들지 않는다.
 //   · codex(Rust)·기타 네이티브 바이너리: NODE_OPTIONS 무관. 등록 여부는 미검증.
-// 크루 턴이 아이콘을 만드는 실제 주체는 회사에 연결된 stdio MCP 서버(npx·node)다 — npm이 자기
+// 확인된 주체는 회사에 연결된 stdio MCP 서버(npx·node)다 — npm이 자기
 // 제목을 `npm exec …`로 바꾼다. 실측: `npx -y @modelcontextprotocol/server-memory` 1대 = 등록 1건.
 //
 // 처방: 자식들이 상속하는 NODE_OPTIONS에 프리로드를 걸어 제목 **setter만** 무력화한다. 읽기는
 // 그대로라 ps·Activity Monitor 표시와 진단은 변하지 않는다. 러너 경로는 전부 세척된 process.env를
 // 기반으로 env를 만든다(creds.sdkEnvFor·exec·codex-appserver·engine의 shellEnv). 단 MCP를 띄우는
 // CLI는 NODE_OPTIONS를 제거할 수 있으므로 materializeMcpServers가 서버별 env에도 심을 명시한다.
+// Claude SDK도 CLI spawn 직전에 제거하므로 SDK custom spawn 경계에서 활성 심만 복구한다.
 //
 // ⚠ NODE_OPTIONS는 **모든** node 자식이 상속한다(크루가 Bash로 돌리는 명령 포함). 값이 조금이라도
-// 깨지면 그 자식들이 전부 죽으므로, 채택 전에 **프로브 자식 1회**로 실제 유효성을 확인하고 통과할
+// 깨지면 그 자식들이 전부 죽으므로, 채택 전에 프로브 자식으로 실제 유효성을 확인하고 통과할
 // 때만 대입한다(파일 부재·따옴표 파손·권한·node 버전 거절을 한 검사로 덮는다 — 분리 검수 MEDIUM-2:
 // 존재 확인만으로는 `"`·`\`가 든 홈 경로에서 나는 파손을 못 잡는다). 실패는 조용히 넘어간다 —
-// 아이콘 억제가 크루 턴을 막는 것이 훨씬 나쁘다.
+// 아이콘 억제가 크루 턴을 막는 것이 훨씬 나쁘다. 준비·프로브 실패는 제한된 1회 재시도만 한다.
 // 데스크톱 앱(2026-09-15, PR #539)은 Rust가 기동 때 같은 심을 같은 경로에 쓰고 **초기 env**로 넣는다(번들 안 node는
 // 제목 설정 시 Foreground 등록 — 프로브 실패 한 번으로 세션 내내 아이콘이 뜨던 구멍). 그 경우 아래는 "이미 걸림"으로
 // 조기 반환해 프로브·이중 --require가 없다. Rust 쪽도 같은 fail-open 원칙(문자 게이트·실패 시 미적용)이다.
 import { access, chmod, mkdir, rename, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -51,16 +53,20 @@ if (process.platform === 'darwin') {
 export const noDockShimPath = () => join(homedir(), '.argo', 'tools', 'no-dock.cjs');
 
 /** 시간 상한 — 응답 없는 네트워크 홈에서 부팅이 멈추지 않게(분리 검수 LOW-1). */
-const withTimeout = (p, ms, label) => Promise.race([
-  p,
-  new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} 시간 초과(${ms}ms)`)), ms).unref?.()),
-]);
+const withTimeout = async (p, ms, label) => {
+  let timer;
+  try {
+    return await Promise.race([p, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} 시간 초과(${ms}ms)`)), ms);
+    })]);
+  } finally { clearTimeout(timer); }
+};
 
 /** 프리로드 파일 보장(멱등) — tmp에 쓰고 rename으로 갈아 끼운다. 동시 부팅이 겹쳐도 자식이 반쪽 파일을
     읽지 않는다(분리 검수 MEDIUM-4, 레포의 writeJsonAtomic과 같은 관례). 0600 — ~/.argo 산출물 관례. */
 export async function ensureNoDockShim(path = noDockShimPath()) {
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
   await writeFile(tmp, SHIM_SRC, { encoding: 'utf8', mode: 0o600 });
   await chmod(tmp, 0o600).catch(() => { /* 파일시스템이 모드를 무시 — 내용이 본체다 */ });
   await rename(tmp, path);
@@ -72,8 +78,21 @@ export async function ensureNoDockShim(path = noDockShimPath()) {
     판정은 **경로 정확 일치**다(분리 검수 LOW-2: 파일명만 보면 다른 홈의 낡은 항목을 내 것으로 오인한다). */
 export function withNoDock(prev, path) {
   const cur = String(prev ?? '').trim();
-  const arg = /\s/.test(path) ? `"${path}"` : path;
-  if (cur.includes(`--require ${arg}`)) return cur;
+  // Node ParseNodeOptionsEnvVar: only spaces split tokens; double quotes group,
+  // backslashes escape inside quotes. Shell/single-quote parsing differs.
+  const tokens = [];
+  let quoted = false; let start = true;
+  for (let i = 0; i < cur.length; i++) {
+    let c = cur[i];
+    if (c === '\\' && quoted) { if (++i === cur.length) { quoted = true; break; } c = cur[i]; }
+    else if (c === ' ' && !quoted) { start = true; continue; }
+    else if (c === '"') { quoted = !quoted; continue; }
+    if (start) { tokens.push(c); start = false; } else tokens[tokens.length - 1] += c;
+  }
+  if (!quoted && tokens.some((token, i) =>
+    ((token === '--require' || token === '-r') && tokens[i + 1] === path)
+    || token === `--require=${path}`)) return cur;
+  const arg = /[\s"\\]/.test(path) ? `"${path.replace(/["\\]/g, '\\$&')}"` : path;
   return `--require ${arg}${cur ? ` ${cur}` : ''}`;
 }
 
@@ -89,36 +108,41 @@ export function noDockMcpEnv(env, {
 }
 
 /** 프로브 — 합성한 NODE_OPTIONS로 빈 자식을 한 번 띄워 본다. exit 0일 때만 채택한다. */
-export function probeNodeOptions(env, composed, { spawnFn = spawn, execPath = process.execPath } = {}) {
+export function probeNodeOptions(env, composed, { spawnFn = spawn, execPath = process.execPath, timeoutMs = 10_000 } = {}) {
   return new Promise((resolve) => {
-    let done = false;
-    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    let done = false; let timer;
+    const finish = (ok) => { if (!done) { done = true; clearTimeout(timer); resolve(ok); } };
     try {
       const c = spawnFn(execPath, ['-e', ''], { stdio: 'ignore', env: { ...env, NODE_OPTIONS: composed } });
       c.on('error', () => finish(false));
       c.on('close', (code) => finish(code === 0));
+      timer = setTimeout(() => { try { c.kill('SIGKILL'); } catch { /* already exited */ } finish(false); }, timeoutMs);
     } catch { finish(false); }
   });
 }
 
 /** 부팅 시 1회 — 이후 spawn되는 node 자식이 상속한다. 반환: 건 경로 | null(비적용). */
 export async function setupNoDock({
-  env = process.env, platform = process.platform, path = noDockShimPath(), timeoutMs = 10_000, probe = probeNodeOptions, // 2초→10초: 부팅 직후 바쁜 기기에서 프로브가 늦어 조용히 미적용되면 그 세션 내내 아이콘이 뜬다(유건 지시 2026-09-15 "언제가 됐든 뜨면 안 돼")
+  env = process.env, platform = process.platform, path = noDockShimPath(), timeoutMs = 10_000, probe = probeNodeOptions,
+  prepare = ensureNoDockShim,
 } = {}) {
   if (platform !== 'darwin') return null; // Dock이 없는 OS — 건드릴 이유가 없다
-  try {
-    const shim = await withTimeout(ensureNoDockShim(path), timeoutMs, '프리로드 파일 준비');
-    const composed = withNoDock(env.NODE_OPTIONS, shim);
-    if (composed === String(env.NODE_OPTIONS ?? '').trim()) return shim; // 이미 걸림(재부팅·중첩 실행)
-    const ok = await withTimeout(probe(env, composed), timeoutMs, '프리로드 프로브');
-    if (!ok) { // 파일이 사라졌거나 경로가 NODE_OPTIONS 문법을 깨뜨린다 — 걸면 모든 node 자식이 죽는다
-      console.warn('[argo] Dock 아이콘 억제 프리로드 미적용 — 프로브 자식이 실패했습니다(경로:', shim, ')');
-      return null;
-    }
-    env.NODE_OPTIONS = composed;
-    return shim;
-  } catch (e) {
-    console.warn('[argo] Dock 아이콘 억제 프리로드 준비 실패(무시하고 계속):', e?.message ?? e);
-    return null;
+  // Transient preparation/probe failure gets one bounded retry. Each attempt's
+  // preparation + probe share a deadline; never publish a failed composition.
+  let failure;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const deadline = Date.now() + timeoutMs;
+    try {
+      const shim = await withTimeout(prepare(path), timeoutMs, '프리로드 파일 준비');
+      const composed = withNoDock(env.NODE_OPTIONS, shim);
+      if (composed === String(env.NODE_OPTIONS ?? '').trim()) return shim; // 이미 걸림(재부팅·중첩 실행)
+      const remaining = Math.max(1, deadline - Date.now());
+      const ok = await withTimeout(probe(env, composed, { timeoutMs: remaining }), remaining, '프리로드 프로브');
+      if (!ok) throw new Error('프리로드 프로브 자식 실패');
+      env.NODE_OPTIONS = composed;
+      return shim;
+    } catch (e) { failure = e; }
   }
+  console.warn('[argo] Dock 아이콘 억제 프리로드 준비 실패(2회, 무시하고 계속):', failure?.message ?? failure);
+  return null;
 }

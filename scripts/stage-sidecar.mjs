@@ -57,12 +57,8 @@ renameSync(join(serverDest, 'server.js'), join(serverDest, 'server-next.mjs'));
 //      (npm exec·MCP 서버·CLI 러너 — 번들 node라 제목을 설정하면 Foreground 앱으로 등록돼 Dock에 뜬다, 실측 2026-09-15)이 아이콘을 만든다.
 //      초기 env는 스냅샷·세척·상속 어디서도 빠지지 않는다. 정본은 src/no-dock.mjs SHIM_SRC 하나.
 writeFileSync(join(serverDest, 'no-dock.cjs'), SHIM_SRC);
-writeFileSync(join(serverDest, 'server.js'), `// Dock 아이콘 방지 부트스트랩 — stage-sidecar가 생성(정본은 server-next.mjs).
-// macOS: process.title 세터가 LaunchServices에 Foreground 앱으로 등록해 Dock에 node 아이콘이
-// 뜬다(실측 2026-08-21). Next(start-server.js)의 'next-server (vX)' 설정을 세터 차단으로 막는다.
-// 잃는 것은 ps 표시 이름뿐이다.
-const t0 = process.title;
-Object.defineProperty(process, 'title', { configurable: true, get: () => t0, set: () => {} });
+writeFileSync(join(serverDest, 'server.js'), `// Dock 아이콘 방지 부트스트랩 — 정본은 server-next.mjs.
+import './no-dock.cjs';
 await import('./server-next.mjs');
 `);
 

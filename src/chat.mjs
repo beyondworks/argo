@@ -8,6 +8,7 @@ import { CASTRA_POSTURE } from './prompts/castra-posture.mjs';
 export const castraPosture = (lang = 'ko') => (process.env.ARGO_CASTRA === '0' ? '' : `${lang === 'en' ? '' : '(아래 실행 계약은 영어 원문이다. 답변은 한국어로 한다 — 이 계약이 답변 언어를 바꾸지 않는다.)\n'}${CASTRA_POSTURE}\n\n`);
 import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
+import { sdkNoDockOptions } from './sdk-no-dock.mjs';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
 import { loadOrgRules, orgMemoryPrompt, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
@@ -1659,6 +1660,7 @@ ${lang === 'en'
   const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || openrouterFallbackModel(wantModel)) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
   __turnControl.check();
   const sdkGate = makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { guest, msgr: gateMsgr }); // SDK 경로 — canUseTool과 PreToolUse 훅이 같은 판정
+  const sdkStderr = (d) => { stderrTail = (stderrTail + d).slice(-2000); };
   const q = nativeOn ? nativeQuery({
     wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)
@@ -1675,7 +1677,8 @@ ${lang === 'en'
       systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail,
       mcpServers: { ...(servers ?? {}), crew: crewServer, argo_browser: browserBridge.server },
       // CLI stderr 꼬리 보관 — 실패 시 errors[]가 비면 이걸 진단으로 쓴다(아래 결과 처리).
-      stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
+      stderr: sdkStderr,
+      ...sdkNoDockOptions({ stderr: sdkStderr }),
       // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
       ...(sdkEnv ? { env: sdkEnv } : {}),
       ...(sdkModel ? { model: sdkModel } : {}),

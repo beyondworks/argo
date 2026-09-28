@@ -3,12 +3,10 @@
 // stage-sidecar.mjs와 같은 조립 절차(standalone + static/public + SDK 네이티브 + 시크릿 스캔)를
 // 따르되, Tauri 리소스 대신 dist-server/argo-server-<버전>-<플랫폼>.tar.gz 를 만든다.
 // ⚠ 절차를 바꾸면 stage-sidecar.mjs도 함께 — 두 스크립트는 같은 서버 트리 계약을 공유한다.
-//   의도된 비대칭 하나(2026-08-21): sidecar 쪽의 Dock 아이콘 방지 심(server.js 세터 무력화)은
-//   여기 적용하지 않는다 — 이 타르볼은 리눅스 systemd 경로(install.sh)라 Dock이 없고, 맥에서
-//   수동 `node server.js`로 띄우는 경우만 아이콘이 남는다(수용).
 // Supabase env 없이 빌드하면 로컬 모드(무인증 단일 사용자) 서버가 된다 — 셀프호스트 1차 기본.
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { SHIM_SRC } from '../src/no-dock.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,6 +31,22 @@ const tree = join(dist, 'argo-server');
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(tree, { recursive: true });
 cpSync(standalone, tree, { recursive: true });
+
+// Next가 process.title을 설정하기 전에 사이드카와 같은 macOS 프리로드를 적용한다.
+{
+  const srv = readFileSync(join(tree, 'server.js'), 'utf8');
+  const pkgType = JSON.parse(readFileSync(join(tree, 'package.json'), 'utf8')).type;
+  if (!/^\s*import /m.test(srv) || pkgType !== 'module') {
+    console.error(`[stage-server] Dock 심 전제 붕괴 — server.js ESM=${/^\s*import /m.test(srv)}, package.json type=${pkgType}. 심 코드를 Next 형식에 맞게 갱신하라.`);
+    process.exit(1);
+  }
+}
+renameSync(join(tree, 'server.js'), join(tree, 'server-next.mjs'));
+writeFileSync(join(tree, 'no-dock.cjs'), SHIM_SRC);
+writeFileSync(join(tree, 'server.js'), `// Dock 아이콘 방지 부트스트랩 — 정본은 server-next.mjs.
+import './no-dock.cjs';
+await import('./server-next.mjs');
+`);
 
 // 3) Claude Agent SDK 네이티브 CLI 보장 — standalone 추적 누락 대비(stage-sidecar 3.4와 동일 근거)
 {

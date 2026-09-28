@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -22,6 +23,7 @@ test('MCP env는 활성 Argo 심만 전달하고 다른 OS·미적용 상태는 
   const parentEnv = { NODE_OPTIONS: withNoDock('--inspect=0', path), SUPABASE_SERVICE_ROLE_KEY: 'fixture-only' };
   for (const platform of ['linux', 'win32']) assert.equal(noDockMcpEnv(env, { platform, parentEnv, path }), env);
   assert.equal(noDockMcpEnv(env, { platform: 'darwin', parentEnv: {}, path }), env);
+  assert.equal(noDockMcpEnv(env, { platform: 'darwin', parentEnv: { NODE_OPTIONS: '--require /tmp/shim.backup' }, path: '/tmp/shim' }), env);
   const out = noDockMcpEnv(env, { platform: 'darwin', parentEnv, path });
   assert.deepEqual(out, { CUSTOM: 'kept', NODE_OPTIONS: withNoDock('--trace-warnings', path) });
   assert.deepEqual(noDockMcpEnv(out, { platform: 'darwin', parentEnv, path }), out, '중복 전달도 멱등');
@@ -62,6 +64,9 @@ const childTitleAfterSet = (env) => new Promise((resolve, reject) => {
 });
 
 test('withNoDock — 기존 NODE_OPTIONS 보존·같은 경로 중복 부착 금지·공백 경로 따옴표(순수)', () => {
+  assert.equal(withNoDock('--require /a/no-dock.cjs.backup', '/a/no-dock.cjs'), '--require /a/no-dock.cjs --require /a/no-dock.cjs.backup');
+  assert.equal(withNoDock('--require=/a/no-dock.cjs', '/a/no-dock.cjs'), '--require=/a/no-dock.cjs');
+  assert.equal(withNoDock('-r "/a/no-dock.cjs"', '/a/no-dock.cjs'), '-r "/a/no-dock.cjs"');
   assert.equal(withNoDock('', '/a/no-dock.cjs'), '--require /a/no-dock.cjs');
   assert.equal(withNoDock(undefined, '/a/no-dock.cjs'), '--require /a/no-dock.cjs');
   assert.equal(withNoDock('--max-old-space-size=4096', '/a/no-dock.cjs'),
@@ -123,6 +128,61 @@ test('setupNoDock — 파일 준비가 실패해도 env를 건드리지 않고 �
     const path = await setupNoDock({ env, platform: 'darwin', path: join(blocker, 'sub', 'no-dock.cjs') });
     assert.equal(path, null);
     assert.equal(env.NODE_OPTIONS, '--trace-warnings');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('setupNoDock retries transient preparation and probe failures once, adopting only success', async () => {
+  for (const failAt of ['prepare', 'probe']) {
+    const path = await tmpShim();
+    const env = { NODE_OPTIONS: '--trace-warnings' };
+    let preparations = 0; let probes = 0;
+    try {
+      assert.equal(await setupNoDock({ env, platform: 'darwin', path,
+        prepare: async (p) => { if (++preparations === 1 && failAt === 'prepare') throw Error('transient'); return ensureNoDockShim(p); },
+        probe: async (e, composed, opts) => {
+          assert.equal(e.NODE_OPTIONS, '--trace-warnings', 'not adopted before success');
+          if (++probes === 1 && failAt === 'probe') return false;
+          return probeNodeOptions(e, composed, opts);
+        },
+      }), path);
+      assert.equal(preparations, 2);
+      assert.equal(probes, failAt === 'probe' ? 2 : 1);
+      assert.equal(env.NODE_OPTIONS, withNoDock('--trace-warnings', path));
+    } finally { await rm(join(path, '..'), { recursive: true, force: true }); }
+  }
+});
+
+test('setupNoDock bounds hanging preparation/probes to two attempts without adoption', async () => {
+  for (const failAt of ['prepare', 'probe']) {
+    const env = { NODE_OPTIONS: '--trace-warnings' }; let attempts = 0;
+    const hang = () => { attempts++; return new Promise(() => {}); };
+    assert.equal(await setupNoDock({ env, platform: 'darwin', timeoutMs: 10,
+      prepare: failAt === 'prepare' ? hang : async () => '/fixture/no-dock.cjs',
+      probe: failAt === 'probe' ? hang : async () => true,
+    }), null);
+    assert.equal(attempts, 2);
+    assert.equal(env.NODE_OPTIONS, '--trace-warnings');
+  }
+});
+
+test('probeNodeOptions terminates a hung child on timeout', async () => {
+  const child = new EventEmitter(); let killed;
+  child.kill = (signal) => { killed = signal; return true; };
+  assert.equal(await probeNodeOptions({}, '', { spawnFn: () => child, timeoutMs: 10 }), false);
+  assert.equal(killed, 'SIGKILL');
+  child.emit('close', 0); // late completion must not adopt
+});
+
+test('withNoDock quotes unusual paths using real Node parsing, without duplicate preloads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'argo-nodock-'));
+  try {
+    for (const name of ['space path.cjs', 'quote"path.cjs', 'slash\\path.cjs']) {
+      const path = join(dir, name);
+      await ensureNoDockShim(path);
+      const composed = withNoDock('--trace-warnings', path);
+      assert.equal(withNoDock(composed, path), composed);
+      assert.equal(await probeNodeOptions({}, composed), true);
+    }
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

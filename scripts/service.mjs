@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { localBindProof } from '../src/local-asset-access.mjs';
+import { setupNoDock } from '../src/no-dock.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const installedUnitPath = join(homedir(), '.config', 'systemd', 'user', 'argo.service');
@@ -101,11 +102,14 @@ function assertIdle() {
 
 /* ─── macOS: launchd LaunchAgent ─── */
 const plistPath = () => join(homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
-function darwinInstall() {
+async function darwinInstall() {
   const { dir, out, err } = logPaths();
   mkdirSync(dir, { recursive: true });
   mkdirSync(dirname(plistPath()), { recursive: true });
   const env = { NODE_ENV: 'production', ARGO_LOCAL_BIND_PROOF: BIND_PROOF, PATH: `${dirname(NODE)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin` };
+  // launchd does not inherit the installer environment. Prepare and validate the
+  // preload before Next can set process.title, without copying shell credentials.
+  await setupNoDock({ env });
   if (process.env.ARGO_ROOT) env.ARGO_ROOT = process.env.ARGO_ROOT; // 설치 시점 데이터 루트를 굽는다
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -121,7 +125,7 @@ function darwinInstall() {
   <key>StandardOutPath</key><string>${out}</string>
   <key>StandardErrorPath</key><string>${err}</string>
   <key>EnvironmentVariables</key><dict>
-${Object.entries(env).map(([k, v]) => `    <key>${k}</key><string>${v}</string>`).join('\n')}
+${Object.entries(env).map(([k, v]) => `    <key>${k}</key><string>${String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')}</string>`).join('\n')}
   </dict>
 </dict></plist>
 `;
@@ -236,7 +240,7 @@ if (cmd === 'install') {
   assertIdle();
   ensureBuild();
   assertIdle();
-  const restore = impl.install();
+  const restore = await impl.install();
   process.stdout.write(`[argo] 서비스 등록 완료 — 응답 대기`);
   let up = false;
   for (let i = 0; i < 30 && !up; i++) { // 콜드 스타트 최대 60초 대기
