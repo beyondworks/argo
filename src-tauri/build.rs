@@ -4,7 +4,7 @@ fn main() {
   // (실사고 2026-09-17: 권한이 없어 저장이 늘 실패했고, 그 폴백이 창을 파일로 항해시켜 앱이 갇혔다).
   tauri_build::try_build(
     tauri_build::Attributes::new()
-      .app_manifest(tauri_build::AppManifest::new().commands(&["save_download"])),
+      .app_manifest(tauri_build::AppManifest::new().commands(&["save_download", "read_update_notes_version", "acknowledge_update_notes_version"])),
   )
   .expect("failed to run tauri-build")
 }

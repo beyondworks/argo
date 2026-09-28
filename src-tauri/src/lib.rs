@@ -12,6 +12,7 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 #[cfg(target_os = "macos")]
 mod no_dock;
+mod update_notes;
 
 // 부트 화면(public/index.html)에 실시간 상태를 알린다 — 실패도 화면에 보이게(무한 대기 방지).
 // port: 프론트가 이동할 서버 포트(선택 확정 후) — boot.js가 후보 목록 맨 앞에 넣는다.
@@ -145,10 +146,23 @@ fn is_file_route_nav(url: &tauri::Url) -> bool {
     local && !inline && segs.len() == 4 && segs[0] == "api" && segs[1] == "companies" && matches!(segs[3], "files" | "vault")
 }
 
+#[tauri::command]
+async fn read_update_notes_version(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || update_notes::read(&dir)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn acknowledge_update_notes_version(app: tauri::AppHandle, version: String) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let installed = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || update_notes::acknowledge(&dir, &version, &installed)).await.map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![save_download])
+        .invoke_handler(tauri::generate_handler![save_download, read_update_notes_version, acknowledge_update_notes_version])
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("file-nav-guard")
                 .on_navigation(|_webview, url| !is_file_route_nav(url))

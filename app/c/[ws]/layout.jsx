@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api } from '../../ui';
 import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
+import UpdateNotes from '../../update-notes';
 import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
@@ -186,7 +187,7 @@ function Shell({ children, params }) {
 
   // 상단 버전 뱃지 — 데스크톱 앱에서는 네이티브 설치 버전 + Tauri 업데이터가 단일 진실(설정 카드와 동일 소스).
   // 새 버전이 있으면 뱃지가 '업데이트'로 바뀌고, 클릭하면 바로 다운로드·설치·재시작한다.
-  const { isApp: updIsApp, current: appVersion, available: updateVersion, phase: updPhase, install: installUpdate } = useAppUpdate();
+  const { isApp: updIsApp, current: appVersion, versionReady, available: updateVersion, phase: updPhase, install: installUpdate } = useAppUpdate();
 
   // 크루 안읽음 배지 — 서버 chatTs(chats/<slug>.json mtime) vs 로컬 확인 시각(localStorage argo-seen:{ws}).
   // null = 로드 전(오탐 방지). 처음 보는 크루는 현재 상태를 기준선으로 삼아 설치 직후 전 크루 배지가 켜지지 않게 한다.
@@ -604,6 +605,8 @@ function Shell({ children, params }) {
           confirmLabel={t('common.save')} onConfirm={doRenameTeam} onClose={() => setRenameTeam(null)} />
       )}
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
+      <UpdateNotes current={appVersion} ready={versionReady} isApp={updIsApp}
+        blocked={!data || data.missing || !tasks || !!tasks.running?.length || dockOpen || fbOpen || renameTeam != null || ['checking', 'installing', 'ready'].includes(updPhase)} />
     </div>
   );
 }
