@@ -39,6 +39,15 @@ function fakeServer({ onTurnStart }) {
 }
 const decisionOf = (received) => received.find((m) => m.result?.decision)?.result?.decision ?? null;
 
+test('GPT-6 app-server passes exact model and model-specific effort', async () => {
+  for (const [model, effort, expected] of [['gpt-6-sol', 'ultra', 'ultra'], ['gpt-6-luna', 'max', 'max'], ['gpt-6-luna', 'ultra', undefined]]) {
+    const srv = fakeServer({ onTurnStart: (emit) => emit({ method: 'turn/completed', params: { turn: { id: 'u1', status: 'completed' } } }) });
+    await runAppServerSession({ input: srv.input, output: srv.output, prompt: 'fixture', cwd: '/w', model, effort, timeoutMs: 5000 });
+    assert.equal(srv.received.find((m) => m.method === 'thread/start').params.model, model);
+    assert.equal(srv.received.find((m) => m.method === 'turn/start').params.effort, expected);
+  }
+});
+
 test('승인 왕복 — 게이트 allow면 accept가 전송되고 턴이 완주한다', async () => {
   const srv = fakeServer({
     onTurnStart: (emit) => {

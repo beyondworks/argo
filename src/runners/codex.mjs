@@ -8,6 +8,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { exec, exists } from './shared.mjs';
 import { withDirLock } from '../mutex.mjs';
+import { codexModelEffort } from '../model-effort.mjs';
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
     (전역 config의 spawn_agent 커스텀 스키마가 신형 모델의 예약 도구와 충돌하는 사례 확인) */
@@ -247,13 +248,12 @@ async function codexCmd() {
 
 /** 크루별 추론 강도 → codex CLI 인자(순수). codex도 강도를 지원한다 — `-c model_reasoning_effort=…`가
     인식되는 키임을 실측(2026-07-26, codex-cli 0.144.1: 미인식 키는 --strict-config에서 즉시 에러,
-    이 키는 통과하고 low·high·xhigh 모두 실턴 성공). 'max'는 Claude 전용 명칭이라 xhigh로 사상한다.
+    이 키는 통과하고 low·high·xhigh 모두 실턴 성공). 기존 모델은 max→xhigh, GPT-6 Sol/Luna는 모델별 값을 보존한다.
     빈 값·미지원 값이면 인자를 넣지 않는다(모델 기본). (export: 회귀 테스트용 — 순수 함수) */
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
-export function codexEffortArgs(effort) {
-  const v = String(effort ?? '').trim().toLowerCase();
-  const mapped = v === 'max' ? 'xhigh' : v;
-  return CODEX_EFFORTS.includes(mapped) ? ['-c', `model_reasoning_effort=${mapped}`] : [];
+export function codexEffortArgs(effort, model) {
+  const mapped = codexModelEffort(effort, model);
+  return mapped ? ['-c', `model_reasoning_effort=${mapped}`] : [];
 }
 
 /** 턴 전용 CODEX_HOME에 베이스의 auth.json을 반입한다 — 심링크 우선, 실패하면 **복사 폴백**.

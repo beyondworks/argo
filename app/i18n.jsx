@@ -233,6 +233,7 @@ const DICT = {
   'runner.effort.high': ['높음', 'High'],
   'runner.effort.xhigh': ['매우 높음', 'Extra high'],
   'runner.effort.max': ['최대', 'Max'],
+  'runner.effort.ultra': ['최고', 'Ultra'],
   'topbar.monthCost': ['이번 달 사용액', 'This month'],
   'topbar.monthSubUse': ['이번 달 사용량 — 구독 연결이라 추가 청구가 없습니다', 'This month — on your subscription, no extra charge'],
   'topbar.monthTurns': ['{n}턴', '{n} turns'],
