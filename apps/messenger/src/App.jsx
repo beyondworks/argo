@@ -2705,7 +2705,7 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
-      <span className="title"><I name="at" size={18} />{t('search.title')}{res && <span className="msgr-klabel">“{res.q}” · {t(res.more ? 'search.countMore' : 'search.count', { n: total })}</span>}</span>
+      <span className="title"><I name="search" size={18} />{t('search.title')}{res && <span className="msgr-klabel">“{res.q}” · {t(res.more ? 'search.countMore' : 'search.count', { n: total })}</span>}</span>
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
     <div className="msgr-thread page"><div className="msgr-inbox msgr-searchres">
