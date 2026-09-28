@@ -86,19 +86,30 @@ test('pushEvent — 켜져 있을 때 원점 없는 이벤트만 간다(원점 �
   await _pushEventForTest(job, { pushMsgr, notifyMsgr: boom }); // 던지지 않는다
 });
 
-test('시스템 프롬프트 — Castra 실행 계약이 ko/en 골격 모두에 안전 한계 앞에 들어가고, Castra 스크립트 이름은 없다(크루에게 없는 도구)', async () => {
-  const { systemPromptFor, castraPosture } = await import('../src/chat.mjs');
+test('시스템 프롬프트 — lean-forge 계약 하나만 ko/en 안전 한계 앞에 주입한다', async () => {
+  const { systemPromptFor } = await import('../src/chat.mjs');
   for (const lang of ['ko', 'en']) {
     const p = systemPromptFor('# 카드', '/tmp/ws', '', { name: '알파' }, lang);
-    const at = p.indexOf('## Castra execution contract'); const safety = p.indexOf(lang === 'en' ? '## Safety limits' : '## 안전 한계');
-    assert.ok(at > 0 && safety > at, `${lang}: Castra 절이 안전 한계 앞에`);
+    const at = p.indexOf('## lean-forge execution contract'); const safety = p.indexOf(lang === 'en' ? '## Safety limits' : '## 안전 한계');
+    assert.ok(at > 0 && safety > at, `${lang}: lean-forge 절이 안전 한계 앞에`);
+    assert.equal(p.split('## lean-forge execution contract').length - 1, 1);
+    assert.doesNotMatch(p, /## Castra execution contract/);
     assert.doesNotMatch(p, /castra_runtime\.py|castra_notes\.py|Stop guard|circuit breaker|worktrees|complete safety/, 'Argo 크루에 없는 Castra 도구·훅·워크트리를 지시하지 않고, 대본 답변(클라우드 안전)과 충돌하는 문장이 없다');
-    for (const h of ['### Start from the user\'s result', '### Make checks capable of catching the defect', '### Stop on an evidenced outcome', '### Precedence']) assert.ok(p.includes(h), `${lang}: ${h}`);
-    if (lang === 'ko') assert.match(p, /영어 원문이다\. 답변은 한국어로/, 'ko 골격이 castraPosture(\'ko\')를 넘긴다(배선 핀)'); else assert.doesNotMatch(p, /영어 원문/);
+    for (const h of ['### SETTLE', '### BUILD', '### PROVE', '### REPORT']) assert.ok(p.includes(h), `${lang}: ${h}`);
+    if (lang === 'ko') assert.match(p, /영어 원문이다\. 답변은 한국어로/); else assert.doesNotMatch(p, /영어 원문/);
   }
-  assert.ok(castraPosture('ko').length > 3000, '계약 본문'); assert.match(castraPosture('ko'), /^\(아래 실행 계약은 영어 원문이다/, 'ko 골격엔 언어 안내 한 줄'); assert.doesNotMatch(castraPosture('en'), /영어 원문/);
-  process.env.ARGO_CASTRA = '0';
-  try { assert.equal(castraPosture('ko'), '', 'ARGO_CASTRA=0 옵트아웃'); } finally { delete process.env.ARGO_CASTRA; }
+  const previous = process.env.ARGO_LEAN_FORGE;
+  process.env.ARGO_LEAN_FORGE = '0';
+  try {
+    for (const lang of ['ko', 'en']) {
+      const p = systemPromptFor('# 카드', '/tmp/ws', '', { name: '알파' }, lang);
+      assert.doesNotMatch(p, /## lean-forge execution contract|## Castra execution contract/);
+      assert.ok(p.includes(lang === 'en' ? '## Safety limits' : '## 안전 한계'));
+    }
+  } finally {
+    if (previous === undefined) delete process.env.ARGO_LEAN_FORGE;
+    else process.env.ARGO_LEAN_FORGE = previous;
+  }
 });
 
 /** 가짜 메신저 클라이언트 — 멤버십 조회·DM 생성 RPC만 흉내. 크루 beta는 두 조직에 파견(ORG는 1:1 방 있음, ORG2는 없음 → 생성). */
