@@ -17,6 +17,7 @@ delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 register(new URL('./helpers/next-esm-resolve.mjs', import.meta.url));
 
 const { paths } = await import('../src/workspace.mjs');
+const { writeJsonAtomic } = await import('../src/jsonstore.mjs');
 const { setTurnStatus, clearTurnStatus, getTurnStatus } = await import('../src/turn-status.mjs');
 const { withRoomTurnStatus, getRoomTurn, ROOM_TURN_SLUG } = await import('../src/room.mjs');
 
@@ -34,10 +35,11 @@ async function seed(ws) {
 }
 const statusPath = (ws, slug) => join(paths(ws).chats, `${slug}.status.json`);
 const backdate = async (ws, slug, ageMs) => {
-  // 원자 교체(tmp+rename) — 진행 중 하트비트의 읽기와 겹쳐도 빈 파일을 보이지 않는다(윈도우 CI 실사고)
+  // 운영과 같은 원자 교체·Windows 잠금 재시도 — 단발 rename은 하트비트와 겹칠 때 EPERM으로 실패한다.
   const f = statusPath(ws, slug); const s = JSON.parse(await readFile(f, 'utf8'));
-  const tmp = `${f}.${process.pid}.tmp`; await writeFile(tmp, JSON.stringify({ ...s, ts: Date.now() - ageMs }));
-  await (await import('node:fs/promises')).rename(tmp, f);
+  const ts = Date.now() - ageMs;
+  await writeJsonAtomic(f, { ...s, ts });
+  return ts;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -57,8 +59,17 @@ test('withRoomTurnStatus: 하트비트가 마커를 주기 갱신하고 발언�
   let inside = null;
   await withRoomTurnStatus(ws, async (mark) => {
     await mark('pepper'); // 발언자 갱신(루프가 하는 일) — 래퍼의 mark만이 하트비트와 값을 공유한다
-    await backdate(ws, ROOM_TURN_SLUG, 100_000);               // 100초 전 — 아직 2분 창 안(하트비트가 읽을 수 있게)
-    await sleep(180);                                          // 하트비트 40ms × 여러 회
+    const oldTs = await backdate(ws, ROOM_TURN_SLUG, 100_000); // 100초 전 — 아직 2분 창 안
+    // startedAt은 턴 시작 시각이라 심박을 증명하지 못한다. 실제 ts 전진을 기다리되,
+    // 운영 renameRetry의 3초 잠금 예산 안의 지연을 180ms 고정 대기로 오판하지 않는다.
+    const deadline = Date.now() + 5_000;
+    let refreshed;
+    do {
+      refreshed = JSON.parse(await readFile(statusPath(ws, ROOM_TURN_SLUG), 'utf8'));
+      if (refreshed.ts > oldTs) break;
+      await sleep(20);
+    } while (Date.now() < deadline);
+    assert.ok(refreshed.ts > oldTs, '하트비트가 마커 ts를 실제로 갱신해야 한다');
     inside = await getTurnStatus(ws, ROOM_TURN_SLUG);
   }, { heartbeatMs: 40 });
   assert.ok(inside && Date.now() - inside.startedAt < 60_000, '전제 — 마커가 살아 있다');
