@@ -80,3 +80,11 @@ test('맨 위에서 아래로 끄는 첫 움직임부터 기본 스크롤을 막
   f.events.touchstart(ev(100)); f.events.touchmove(ev(96));
   assert.equal(prevented, 0, '위로 미는 스크롤은 막지 않는다'); f.cleanup();
 });
+
+// 재검수 MEDIUM-A: 'dy > 0'만 보면 맨 위에서 가로로 미는 제스처(넓은 코드 블록·칩 줄)가 살짝 아래로 기울어도 막혀 가로 스크롤이 죽는다 — 수직 우세일 때만 막는다.
+test('맨 위에서 가로가 주된 움직임이면 막지 않는다', () => {
+  const f = fixture(async () => {}, { minMs: 0 });
+  let prevented = 0; const ev = (x, y) => ({ touches: [{ clientX: x, clientY: y }], changedTouches: [{ clientX: x, clientY: y }], preventDefault() { prevented++; } });
+  f.events.touchstart(ev(100, 0)); f.events.touchmove(ev(92, 2));
+  assert.equal(prevented, 0, '가로 8px·아래 2px은 가로 스크롤'); f.cleanup();
+});

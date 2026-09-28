@@ -1551,7 +1551,7 @@ function Shell({ session }) {
   // 안전망(검수 LOW): 끄는 중 행이 사라지면(DM 삭제·필터 전환) 그 행의 pointerup이 안 와 끌기 상태가 남고 위 리스너가 앱 전체 스크롤을 막는다 → 창 수준에서 한 번 더 정리
   useEffect(() => {
     const f = (e) => { if (touchDrag.current) e.preventDefault(); };
-    const end = () => { const d = touchDrag.current; if (!d) return; setTimeout(() => { if (touchDrag.current !== d) return; touchDrag.current = null; d.el.removeAttribute('data-lift'); d.el.style.removeProperty('transform'); d.container?.querySelectorAll('[data-drop]').forEach((n) => n.removeAttribute('data-drop')); setDrag(null); }, 0); };
+    const end = (e) => { const d = touchDrag.current; if (!d || (d.pid != null && e.pointerId !== d.pid)) return; setTimeout(() => { if (touchDrag.current !== d) return; touchDrag.current = null; d.el.removeAttribute('data-lift'); d.el.style.removeProperty('transform'); d.container?.querySelectorAll('[data-drop]').forEach((n) => n.removeAttribute('data-drop')); setDrag(null); }, 0); };
     document.addEventListener('touchmove', f, { passive: false }); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
     return () => { document.removeEventListener('touchmove', f); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, []);
@@ -1632,7 +1632,7 @@ function Shell({ session }) {
 
   // 폰 '직접 배치' 길게 눌러 끌기(유건 확정 2026-09-29 #9 — 1차 구현, 자동 스크롤 제외) — 길게 눌러도 8px 이상 움직여야 진짜 드래그로 본다.
   // 안 움직이고 놓으면(탭-홀드) 기존처럼 행 메뉴가 열린다 — DM 탭은 점 세 개 버튼이 없어 길게 누르기가 메뉴로 가는 유일한 길이라(유건 2026-09-15) 그 경로를 남겨 둔다.
-  const beginTouchDrag = (id, el, onDrop, x, y) => { touchDrag.current = { id, el, onDrop, startX: x, startY: y, moved: false, rows: [] }; };
+  const beginTouchDrag = (id, el, onDrop, x, y, pid = null) => { touchDrag.current = { id, el, onDrop, startX: x, startY: y, moved: false, rows: [], pid }; }; // pid: 끄는 손가락 — 창 수준 안전망이 다른 손가락의 pointerup에 반응하지 않게
   // 끄는 동안 행이 손가락을 따라오고(들어 올린 모양), 놓을 자리엔 선을 긋는다 — 흐려진 행만 제자리에 있어 어디로 가는지 안 보였다(2026-09-29 점검)
   const markDropAt = (d, y) => { const before = dropBeforeIdAtY(d.rows, y); d.container?.querySelectorAll('[data-drop]').forEach((n) => n.removeAttribute('data-drop'));
     const at = before ? d.container?.querySelector(`[data-drag-id="${before}"]`) : d.container?.querySelector(`[data-drag-id="${d.rows.at(-1)?.id}"]`);
@@ -1707,14 +1707,14 @@ function Shell({ session }) {
   // 폰 레일 행 길게 누르기 → 행 메뉴(점 세 개와 같은 항목; DM 탭은 미리보기 포함). 홈에도 적용(유건 2026-09-15). iOS 웹뷰는 길게 눌러도 contextmenu를 안 내고, 안드로이드는 낸다 → 800ms 안 중복은 onContextMenu가 삼킨다
   const rowLongPress = (c, items, dragCtx = null) => { const st = (lpStates.current[c.id] ??= { timer: null, x: 0, y: 0, el: null, firedAt: 0, opened: false });
     const { clear, ...lp } = longPressHandlers(st, () => { st.firedAt = Date.now(); st.opened = true; if (!st.el) return;
-      if (dragCtx) { beginTouchDrag(c.id, st.el, dragCtx.onDrop, st.x, st.y); return; } // 직접 배치 모드 — 길게 누르면 끌기 대기(움직여야 진짜 드래그, #9)
+      if (dragCtx) { beginTouchDrag(c.id, st.el, dragCtx.onDrop, st.x, st.y, st.pid); return; } // 직접 배치 모드 — 길게 누르면 끌기 대기(움직여야 진짜 드래그, #9)
       openCtx({ preventDefault() {}, stopPropagation() {}, currentTarget: st.el, clientX: st.x, clientY: st.y }, items, c.id); });
     void clear;
     // 손을 뗄 때 오는 click(메뉴 뒤 배경에 떨어져 메뉴를 닫고, 행에 떨어지면 대화를 연다)은 **이 누름으로 메뉴가 열렸을 때만, pointerup 직후 300ms 안에서** 한 번 삼킨다 —
     // 상태 플래그라 오래 누르고 있다가 떼도 보호되고(재검수 M-B), iOS가 click을 안 내는 경우(드래그 리프트·콜아웃)엔 300ms 뒤 풀려 다음 탭(메뉴 항목)을 먹지 않는다(검수 HIGH-3)
     const swallowNext = () => { if (!st.opened) return; st.opened = false; const swallow = (e) => { e.preventDefault(); e.stopPropagation(); }; document.addEventListener('click', swallow, { capture: true, once: true }); setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 300); };
     return { ...lp,
-      onPointerDown: (e) => { st.el = e.currentTarget; lp.onPointerDown(e); },
+      onPointerDown: (e) => { st.el = e.currentTarget; st.pid = e.pointerId; lp.onPointerDown(e); },
       onPointerMove: (e) => { lp.onPointerMove(e); if (dragCtx && touchDrag.current?.id === c.id) moveTouchDrag(e.clientX, e.clientY); },
       onPointerUp: (e) => {
         lp.onPointerUp(e);
