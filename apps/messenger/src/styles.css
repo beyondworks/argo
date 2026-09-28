@@ -1672,6 +1672,12 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-tabbar::before { content: ''; position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--ph-tab) + 30px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); background: linear-gradient(to top, var(--bg) 60%, transparent); pointer-events: none; z-index: -1; }
   /* + 버튼은 검색 원과 14px 띄운다(붙어 있어 한 덩어리로 보였다) */
   .msgr-phone .msgr-fab { bottom: calc(max(16px, calc(env(safe-area-inset-bottom) - 18px)) + var(--ph-tab) + 14px); }
+  /* 크루 글 머리 — 이름·역할·시각이 세 줄(62px)로 쌓였다(역할 100% 줄바꿈이 시각까지 밀었다). 한 줄로, 길면 역할만 말줄임(슬랙 모바일) */
+  .msgr-phone .msgr-row .who { flex-wrap: nowrap; min-width: 0; }
+  .msgr-phone .msgr-row .who .role { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .msgr-row .who :is(.msgr-namebtn, .ts) { flex: none; }
+  /* 상대 말풍선은 내용 폭 — '좋아요 👍' 한 줄도 화면 폭 전체로 늘어났다(내 말풍선·상용 메신저는 내용 폭) */
+  .msgr-phone .msgr-row > div > .msgr-sheet { width: fit-content; max-width: 100%; }
   /* 직접 배치 끌기 — 들어 올린 행은 흐림 대신 그림자·살짝 확대로 손가락을 따라오고, 놓을 자리엔 금색 선 */
   .msgr-phone .msgr-railrow[data-lift], .msgr-phone .msgr-railrow.dragging[data-lift] { position: relative; z-index: 6; opacity: 1; background: var(--card); border-radius: 14px; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); scale: 1.02; transition: scale 140ms ease-out, box-shadow 140ms ease-out; }
   .msgr-phone .msgr-railrow[data-drop] { position: relative; }
