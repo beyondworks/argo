@@ -60,6 +60,7 @@ import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
 import { typingSummary, typingLabelParams, shouldGroupTypingBubbles, typingBubbleFaces } from './typing-summary.mjs';
 import { unreadOpenScrollTarget, channelOnScreen } from './unread-open-scroll.mjs';
+import { fmtDmWhen } from './list-when.mjs';
 import { dropBeforeIdAtY } from './drag-reorder.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, faceToStore } from './crew-face.mjs';
@@ -110,11 +111,6 @@ const stopErr = (msg, t) => /msgr_not_allowed/.test(msg) ? t('err.denied') : /Co
 /** 오늘이면 시각만, 아니면 날짜+시각 — 초대 만료(7일 뒤)·노드 마지막 응답·기록처럼 며칠 전후일 수 있는 시각용(시간만 보이면 "오늘 02:31"로 읽힌다 — I-4 실측) */
 const fmtWhen = (iso, lang) => { const d = new Date(iso); const time = fmtTs(iso, lang); if (d.toDateString() === new Date().toDateString()) return time;
   return `${d.toLocaleDateString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric' })} ${time}`; };
-/** 슬랙식 DM 목록 시각 — 오늘은 시각, 6일 안이면 요일, 그 밖은 월·일(유건 2026-09-15). */
-const fmtDmWhen = (ms, lang) => { const d = new Date(ms); const now = new Date(); const loc = lang === 'en' ? 'en-US' : 'ko-KR';
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: false });
-  if (now - d < 6 * 86_400_000) return d.toLocaleDateString(loc, { weekday: 'short' });
-  return d.toLocaleDateString(loc, { month: 'short', day: 'numeric' }); };
 const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
   ? [d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), d.toLocaleDateString('en-US', { weekday: 'long' })]
   : [d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }), d.toLocaleDateString('ko-KR', { weekday: 'long' })]; };
@@ -393,12 +389,13 @@ function usePullToRefresh(enabled, onRefresh, onError) {
   return { setRef: setNode, phase, pulse };
 }
 function PullIndicator({ phase, pulse = 0, t }) {
-  if (phase === 'idle') return null;
+  // 쉬는 동안(idle)에도 붙여 둔다 — 손을 떼거나 새로고침이 끝날 때 띠가 한 번에 사라지지 않고 접히게(높이 전환, 2026-09-29 점검)
+  const idle = phase === 'idle';
   const ready = phase === 'ready' || phase === 'refreshing';
   const spinning = phase === 'refreshing';
-  return <div className={`msgr-pullrefresh${ready ? ' ready' : ''}${spinning ? ' spinning' : ''}`} role="status" aria-live="polite">
+  return <div className={`msgr-pullrefresh${idle ? ' idle' : ''}${ready ? ' ready' : ''}${spinning ? ' spinning' : ''}`} role="status" aria-live="polite">
     <svg key={pulse} className="star" viewBox="0 0 16 16" aria-hidden="true"><path d={STAR_D} /></svg>
-    <span className="lb">{t(phase === 'refreshing' ? 'refresh.refreshing' : ready ? 'refresh.release' : 'refresh.pull')}</span>
+    {!idle && <span className="lb">{t(phase === 'refreshing' ? 'refresh.refreshing' : ready ? 'refresh.release' : 'refresh.pull')}</span>}
   </div>;
 }
 
@@ -4427,7 +4424,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, start
           ? <div className="msgr-row msgr-typing-group"><span className="msgr-facestack">{typingBubbleGroupFaces.map((f) => <Av key={f.id} name={f.name} crew crewId={f.id} size="xs" />)}</span><div className="msgr-typing"><i /><i /><i /><span className="lb">{typingBubbleGroupLabel && t(typingBubbleGroupLabel.key, typingBubbleGroupLabel.vars)}</span></div></div>
           : typingBubbleShown.map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
       </div>
-      {away && <div className="msgr-tobottom"><button type="button" className="btn sm" onClick={() => { const el = feed.current; if (!el) return; stick.current = true; el.scrollTop = el.scrollHeight; setAway(false); }}><I name="caret" size={13} />{t('thread.toBottom')}</button></div>}
+      {away && <div className="msgr-tobottom"><button type="button" className="btn sm" onClick={() => { const el = feed.current; if (!el) return; stick.current = true; el.scrollTop = el.scrollHeight; setAway(false); }} aria-label={t('thread.toBottom')}><I name="caret" size={13} /><span className="lbl">{t('thread.toBottom')}</span></button></div>}
     </div>
     {workOpen && <WorkPanel key={chId} channel={channel} uid={uid} isAdmin={isAdmin} locked={locked} crews={chCrews} t={t} lang={lang} onClose={() => setWorkOpen(false)} sheet={!phone} />}{/* 데스크톱: 채널 패널과 같은 시트(폭 380 + 24, #600·#603 비킴 규칙 공유 — 유건 2026-09-18) */}
     {!preview && namePrompt}

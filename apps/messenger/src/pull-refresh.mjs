@@ -51,7 +51,11 @@ export function enteredReady(prevPhase, nextPhase) {
 }
 
 // Keep the gesture lifecycle testable without a browser reload or React remount.
-export function bindPullRefresh(node, { refresh, phase, error, now = Date.now }) {
+// 조회가 빨리 끝나도 '새로고침 중'을 이만큼은 보여 준다 — 72ms만 번쩍이면 새로고침됐는지 알 수 없다(2026-09-29 실측, iOS 기본 당김도 약 0.5~1초)
+export const REFRESH_MIN_MS = 600;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export function bindPullRefresh(node, { refresh, phase, error, now = Date.now, minMs = REFRESH_MIN_MS, delay = sleep }) {
   let startAt = null; let busy = false; let disposed = false; let lastScroll = -Infinity;
   const reset = () => { startAt = null; node.style.setProperty('--pull-dy', '0px'); node.style.setProperty('--pull-deg', '0'); node.style.setProperty('--pull-scale', String(pullStarScale(0))); phase('idle'); };
   const scroll = () => { lastScroll = now(); };
@@ -78,8 +82,9 @@ export function bindPullRefresh(node, { refresh, phase, error, now = Date.now })
     startAt = null;
     if (!accepted) { reset(); return; }
     busy = true; node.style.setProperty('--pull-dy', '44px'); phase('refreshing');
+    const until = now() + minMs;
     try { await refresh(); } catch (err) { if (!disposed) error(err); }
-    finally { busy = false; if (!disposed) reset(); }
+    finally { const left = until - now(); if (left > 0 && !disposed) await delay(left); busy = false; if (!disposed) reset(); }
   };
   const cancel = () => { if (!busy) reset(); };
   const events = { scroll, touchstart: start, touchmove: move, touchend: end, touchcancel: cancel };

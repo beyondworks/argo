@@ -160,8 +160,11 @@
 .msgr-older.start .msgr-klabel { opacity: .7; }
 /* 폰 당겨서 새로고침 표시 — 목록·대화 스크롤 칸 맨 위, 본문을 덮지 않고 당긴 만큼 아래로 밀어낸다(유건 제보 2026-09-29: "표시줄이 본문 위를 덮는다").
    배경은 기존 표면 토큰(--card-2)으로 본문과 구분, Argo 별(STAR_D)이 당긴 거리에 비례해 커지며 돈다. 데스크톱은 훅이 꺼져 있어 렌더되지 않는다. */
+.msgr-pullrefresh { display: none; } /* 데스크톱 폭: 훅이 꺼져 늘 idle — 붙어 있어도 안 보이게 */
 @media (max-width: 720px) {
   .msgr-pullrefresh { display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden; color: var(--fg-3); background: var(--card-2); border-bottom: 1px solid var(--border); font-size: 12px; height: var(--pull-dy, 0px); pointer-events: none; }
+  .msgr-pullrefresh.idle, .msgr-pullrefresh.spinning { transition: height 260ms cubic-bezier(.2, .8, .2, 1); } /* 손가락을 따라갈 땐(pulling·ready) 전환 없이, 놓은 뒤에만 접힘 */
+  .msgr-pullrefresh.idle { border-bottom-width: 0; } /* 쉬는 동안 1px도 차지하지 않게 */
   .msgr-pullrefresh .star { width: 16px; height: 16px; fill: var(--fg-3); flex: none; transform: rotate(calc(var(--pull-deg, 0) * 1deg)) scale(var(--pull-scale, .55)); }
   .msgr-pullrefresh.ready .star { fill: var(--mark); animation: msgrPullBounce 220ms ease-out; }
   .msgr-pullrefresh.spinning .star { animation: msgrPullSpin 700ms linear infinite; transform: none; }
@@ -169,6 +172,7 @@
   @keyframes msgrPullBounce { 0% { transform: scale(1); } 45% { transform: scale(1.25); } 100% { transform: scale(1); } }
   @media (prefers-reduced-motion: reduce) {
     .msgr-pullrefresh .star { animation: none !important; transform: scale(1) !important; }
+    .msgr-pullrefresh { transition: none !important; }
   }
 }
 .msgr-spine { position: relative; display: flex; flex-direction: column; gap: 20px; }
@@ -220,8 +224,11 @@
 .msgr-typing { align-items: center; } .msgr-typing .lb { margin-left: 6px; font-size: 12px; color: var(--fg-2); } /* 점 세 개만으로는 데스크톱에서 '입력 중'이 안 읽힌다(유건 제보 2026-09-11) */
 /* 4명 이상 동시 입력 — 말풍선 하나로 묶고 얼굴을 겹쳐 보인다(유건 확정 2026-09-29) */
 .msgr-typing-group .msgr-facestack { display: flex; align-items: center; }
-.msgr-typing-group .msgr-facestack .msgr-av { margin-left: -10px; border-color: var(--bg); box-shadow: 0 0 0 2px var(--bg); }
+.msgr-typing-group .msgr-facestack .msgr-av { margin-left: -5px; border-color: var(--bg); box-shadow: 0 0 0 2px var(--bg); }
 .msgr-typing-group .msgr-facestack .msgr-av:first-child { margin-left: 0; }
+.msgr-typing-group .msgr-facestack .msgr-av .star { display: none; } /* 겹친 얼굴마다 별이 붙어 어수선했다 — 묶음에선 얼굴만 */
+.msgr-row.msgr-typing-group { display: flex; align-items: center; gap: 8px; } /* 그리드 아바타 칸(28px)에 얼굴 여럿이 안 들어가 말풍선을 덮었다 — 얼굴 폭만큼 자리를 준다 */
+.msgr-typing-group > .msgr-typing { flex: none; min-width: 0; max-width: 100%; padding: 9px 12px; }
 .msgr-sub .typing-line { font-size: 12.5px; color: var(--fg-2); }
 @keyframes msgrPulse { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
 .msgr-sys { font-size: 12.5px; color: var(--fg-3); font-style: italic; display: flex; align-items: center; gap: 8px; }
@@ -1157,7 +1164,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .md td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 1px; font-size: 11.5px; color: var(--fg-3); }
   .msgr-phone .md td:first-child { padding: 0 0 6px; font-weight: 600; color: var(--fg); }
   .msgr-phone .md td:first-child::before { display: none; }
-  .msgr-phone .msgr-main .msgr-dock .msgr-sub { position: absolute; left: var(--ph-pad); right: var(--ph-pad); bottom: 100%; min-height: 0; margin: 0; padding: 0 0 2px; pointer-events: none; } /* 컴포저 아래 상태줄(작성 중 등)은 슬랙처럼 입력줄 '위'에 띄운다 — 세로 자리 0 */
+  .msgr-phone .msgr-main .msgr-dock .msgr-sub { display: none; } /* 폰은 대화 안 입력 중 말풍선 하나만(텔레그램·아이메시지) — 입력줄 위 같은 문구가 두 번 보였다(2026-09-29 점검). 종전엔 이 줄이 마지막 말풍선과 겹쳐 스레드 바닥을 32px 비웠다(09-11) */
   .msgr-phone .msgr-main .msgr-dock .msgr-cc-chips { margin: 0 var(--ph-pad) 4px; padding-left: 4px; }
   .msgr-phone .msgr-main .msgr-dock .msgr-slashpop, .msgr-phone .msgr-main .msgr-dock .msgr-rolepop { left: var(--ph-pad); right: var(--ph-pad); width: auto; } /* 입력창 알약과 같은 좌우 여백(검수 #527 L-1) */
 
@@ -1324,7 +1331,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .filechip .x { position: relative; min-width: 0; min-height: 0; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; }
   .msgr-phone .filechip .x::before { content: ''; position: absolute; inset: -15px; } /* 보이지 않는 44×44 탭 영역 */
   .msgr-phone .msgr-main .msgr-filechips ~ .msgr-composer .msgr-tools .tb:nth-child(2) { display: none; } /* 첨부가 있으면 빈 칸 안내용 @ 글리프도 숨긴다 — 글자가 있을 때와 같은 규칙(유건 2026-09-11) */
-  .msgr-phone .msgr-main:has(.msgr-dock .msgr-sub:not(:empty)) .msgr-thread { padding-bottom: 32px; } /* '입력 중…' 상태 줄은 흐름 밖(absolute)이라 마지막 말풍선과 겹쳤다 → 그만큼 스레드 바닥을 비운다(유건 2026-09-11) */
 
   /* ── 폰 전환·눌림 효과(유건 2026-09-11) — transform·opacity만, 300ms 이하, 움직임 줄이기 설정이면 전부 끈다 ── */
   @media (prefers-reduced-motion: no-preference) {
@@ -1433,8 +1439,11 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* DM 탭(슬랙식, 유건 2026-09-15): 상단 필터 분절 + 두 줄 행(이름·시각 / 마지막 글 한 줄) */
   .msgr-phone.phone-dm .msgr-dmfilter { order: -1; width: auto; margin: 6px var(--ph-pad) 2px; overflow: visible; } /* 폰 전역 .msgr-seg order:9(맨 아래) 되돌림 — 필터는 목록 위 */
   .msgr-phone.phone-dm .msgr-dmfilter button { flex: 1 1 0; min-width: 0; justify-content: center; height: 32px; padding: 0 6px; font-size: 12.5px; white-space: nowrap; }
-  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .item { height: auto; min-height: 58px; padding: 8px 10px; }
-  .msgr-phone.phone-dm .item .msgr-av { width: 40px; height: 40px; }
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .item { height: auto; min-height: 68px; padding: 10px 10px; gap: 12px; }
+  .msgr-phone.phone-dm .msgr-side .item .msgr-av { width: 44px; height: 44px; font-size: 16px; } /* .msgr-side까지 써야 홈 탭 24px 규칙(.phone-home — DM 탭에도 붙는다)을 이긴다(2026-09-29 실측 24px) */
+  .msgr-phone.phone-dm .msgr-side .item .msgr-av.crew:not(.face) { border-radius: 12px; }
+  .msgr-phone.phone-dm .msgr-side .item .msgr-av.crew .star { width: 16px; height: 16px; right: -5px; top: -5px; border-width: 2px; }
+  .msgr-phone.phone-dm .msgr-side .item .msgr-av.crew .star svg { width: 8px; height: 8px; }
   .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .msgr-railrow .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .msgr-railrow .item { padding-right: 10px; } /* 점 세 개 자리 회수 */
   .msgr-phone.phone-dm .item .dmtext { display: grid; gap: 2px; flex: 1; min-width: 0; text-align: left; }
   .msgr-phone.phone-dm .item .dmline { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -1517,7 +1526,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-inbox .msgr-inboxcounts { order: 0; margin: -2px 2px 4px; font-size: 12px; color: var(--fg-3); line-height: 1.5; }
   .msgr-phone .msgr-inbox .empty { order: 1; margin: 4px 0 0; padding: 36px 16px; border: 1px dashed var(--border); border-radius: 14px; background: var(--card-2); text-align: center; font-size: 13px; line-height: 1.6; } /* 빈 상태도 경계가 보이게(점선 카드, 유건 2026-09-11) */
   .msgr-phone .msgr-inbox .note { order: 8; margin-top: 4px; }
-  .msgr-phone .msgr-inboxrow { border-radius: 10px; padding: 12px; }
+  /* 알림함 — 상자가 겹겹이 무거웠다(2026-09-29 점검). 슬랙 활동·카카오 알림처럼 구분선 있는 행, 새 항목은 바탕 옅은 강조 */
+  .msgr-phone .msgr-inbox { gap: 0; }
+  .msgr-phone .msgr-inboxrow { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 14px 4px; }
+  .msgr-phone .msgr-inboxrow.new { background: color-mix(in srgb, var(--mark) 9%, transparent); border-bottom-color: var(--border); margin: 0 calc(-1 * var(--ph-pad)); padding-inline: calc(var(--ph-pad) + 4px); }
+  .msgr-phone .msgr-inboxrow > .msgr-av { width: 36px; height: 36px; font-size: 14px; }
+  .msgr-phone .msgr-inbox :is(.msgr-seg, .msgr-inboxcounts, .msgr-inboxtoggle, .empty) { margin-bottom: 8px; }
 
   /* ── 기억: 아르고의 트리+그래프는 그대로 두고 손가락 규격으로 ── */
   .msgr-phone .msgr-actsplit { position: relative; padding-top: 0; }
@@ -1637,6 +1651,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-vps-where summary { cursor: pointer; font-size: 13px; color: var(--fg-2); }
 .msgr-vps-where ul { margin: 6px 0 0 18px; padding: 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
 
+/* 안드로이드 웹뷰 기본 탭 강조(하늘색 사각형) 끄기 — 누름 표시는 각 버튼의 :active가 맡는다. 네이티브 메신저에는 이 사각형이 없다(2026-09-29 점검) */
+html { -webkit-tap-highlight-color: transparent; }
 /* ─── 모바일 정돈(2026-09-29 유건 지시 "메이저 메신저와 이질감 없게" — 카카오톡·라인·텔레그램·슬랙 대조) ─── */
 /* 연속 메시지 묶음(msg-group.mjs): 이름·아바타는 묶음 첫 글에만, 시간·전송 표시는 마지막 글에만. 줄 간격 20 → 6 */
 .msgr-spine > .msgr-row.cont, .msgr-spine > .msgr-mine.cont { margin-top: -14px; }
@@ -1651,4 +1667,17 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-tabbar::before { content: ''; position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--ph-tab) + 30px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); background: linear-gradient(to top, var(--bg) 60%, transparent); pointer-events: none; z-index: -1; }
   /* + 버튼은 검색 원과 14px 띄운다(붙어 있어 한 덩어리로 보였다) */
   .msgr-phone .msgr-fab { bottom: calc(max(16px, calc(env(safe-area-inset-bottom) - 18px)) + var(--ph-tab) + 14px); }
+  /* 홈·채팅 목록의 점 세 개 — 폰은 길게 누르기로 같은 메뉴가 뜬다(rowLongPress). 상시 노출은 줄마다 잡음이었다 */
+  .msgr-phone .msgr-side .msgr-railrow .more { display: none; }
+  .msgr-phone .msgr-side .msgr-railrow .item { padding-right: 12px; }
+  /* 채팅 탭의 "@ 채팅" 머리글은 탭 이름과 겹친다 — 정렬·새 채팅 버튼만 오른쪽에 남긴다 */
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group :is(.sec-ic, .lbl) { display: none; }
+  /* 맨 아래로 — 폰은 가운데 알약이 말풍선을 가렸다. 텔레그램·카카오톡처럼 오른쪽 아래 둥근 버튼 */
+  .msgr-phone .msgr-tobottom { justify-content: flex-end; padding-right: var(--ph-pad); }
+  .msgr-phone .msgr-tobottom .btn { width: 44px; height: 44px; padding: 0; border-radius: 999px; justify-content: center; border: 1px solid var(--border); }
+  .msgr-phone .msgr-tobottom .btn .lbl { display: none; }
+  .msgr-phone .msgr-tobottom .btn svg { width: 18px; height: 18px; }
+  /* 알림함 칩 줄 — 오른쪽 칩이 잘려 보였다. 가로로 밀리는 줄임을 가장자리 흐림으로 알린다 */
+  .msgr-phone .msgr-inbox .msgr-seg { overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .msgr-phone .msgr-inbox .msgr-seg::-webkit-scrollbar { display: none; }
 }
