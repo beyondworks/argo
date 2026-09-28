@@ -59,6 +59,9 @@ const DISCOVER_MS = Number(process.env.ARGO_SYNC_DISCOVER_MS) || 300_000;
 const ownerPrefixOk = (o) => typeof o === 'string' && /^[^\s/]+$/.test(o) && o !== 'undefined' && o !== 'null';
 const UPLOAD_BACKOFF_MS = 10 * 60_000; // 업로드가 전부 거절된 회사(플랜 미확인·무자격)는 이만큼 쉰다 — 8초마다 재시도하던 폭풍(30분 1만 건 RLS 거절) 차단
 const uploadBackoff = new Map(); // wsId → until(ms)
+const companyRetry = new Map(); // owner/ws → bounded failure cooldown; local nudge cannot bypass it
+const companyIdle = new Map();
+const IDLE_PROBE_MS = 60_000;
 // 크로스 프로세스 락 스테일 판정 — CYCLE_MS와 분리한다. 주기 단축(45→8s)이 이중 동기화 방어막을
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
@@ -91,7 +94,14 @@ const DEV_ARTIFACT_SEGS = new Set([
   '.cache', '.parcel-cache', '.pytest_cache', '.mypy_cache', '.playwright-mcp', 'DerivedData',
 ]);
 export const isDevArtifactSeg = (name) => DEV_ARTIFACT_SEGS.has(name) || name.startsWith('chrome_profile');
-export const isDevArtifactRel = (rel) => rel.split('/').some(isDevArtifactSeg);
+export const isDevArtifactRel = (rel) => {
+  const parts = rel.split('/');
+  if (parts.some(isDevArtifactSeg)) return true;
+  // Chromium disk-cache signatures, not arbitrary documents named Default/Cache.
+  // Profile directory names may be user-chosen/Unicode; the cache layout is stable.
+  return /(?:^|\/)(?:Cache\/Cache_Data|GPUCache|ShaderCache|GrShaderCache)\/(?:data_\d+|index|f_[0-9a-f]+)$/.test(rel)
+    || /(?:^|\/)Dictionaries\/(?:en-US-10-1|ko-3-0)\.bdic$/.test(rel);
+};
 
 export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (isLocalImportRel(rel)) return true;
@@ -189,7 +199,7 @@ function resetDiscoverClock() { globalThis.__argoLastDiscover = 0; }
 const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/ensureSync 게이트)
 // 테스트 전용 — fake storage를 주입해 syncCompany를 실 Supabase 없이 실행 검증한다.
 // 프로덕션 경로는 절대 호출하지 않는다(ensureClient가 실 클라이언트를 세팅). (export: 통합 테스트용)
-export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; }
+export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); }
 
 // 스토리지 키 — 한글·특수문자 세그먼트는 base64url로(스토리지가 %·비ASCII 키를 거부, 실측).
 // 매니페스트에 논리 경로를 담고 키는 항상 이 함수로 파생하므로 역디코딩은 불필요하다.
@@ -447,7 +457,7 @@ async function walk(dir, base = dir, out = {}, failed = null) {
       if (isDevArtifactSeg(e.name)) continue;
       await walk(full, base, out, failed);
     }
-    else if (!EXCLUDE(rel)) {
+    else if (!EXCLUDE(rel) && !isDevArtifactRel(rel)) {
       try {
         const buf = await readFile(full);
         const st = await stat(full).catch(() => null);
@@ -610,6 +620,56 @@ async function upload(key, buf) {
    같은 안전 패턴), 클라우드에 이미 있는 자격 암호문은 마커(CRED_WITHDRAWN)로 **덮어써** 회수한다 —
    remove가 아닌 이유는 secretbox.mjs 마커 주석 참조(구버전·미반영 기기의 로컬 자격 오삭제 차단). */
 export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
+  const key = `${client().storage.url ?? 'test'}/${owner}/${wsId}`;
+  const prior = companyRetry.get(key);
+  if (prior && Date.now() < prior.until) return { skipped: 'retry-backoff', retryAt: prior.until };
+  const deferFailure = () => {
+    companyIdle.delete(key);
+    const failures = Math.min((prior?.failures ?? 0) + 1, 6);
+    companyRetry.set(key, { failures, until: Date.now() + Math.min(600_000, 30_000 * 2 ** (failures - 1)) });
+  };
+  const fingerprint = async () => {
+    const failed = new Set();
+    const files = await walk(paths(wsId).root, paths(wsId).root, {}, failed);
+    return failed.size ? null : JSON.stringify([!!dek(), cryptoOn(), !!opts.noSecrets, files]);
+  };
+  const canIdle = !isRestore && !opts.reseal && !opts.freePlan;
+  const idle = companyIdle.get(key);
+  const beforeFingerprint = canIdle ? await fingerprint() : null;
+  if (canIdle && idle && Date.now() - idle.at < IDLE_PROBE_MS && beforeFingerprint === idle.fingerprint) {
+    return { skipped: 'idle-probe', retryAt: idle.at + IDLE_PROBE_MS, pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0 };
+  }
+  try {
+    let revision = null;
+    const bucket = client().storage.from(BUCKET);
+    if (canIdle && typeof bucket.info === 'function') {
+      // Capture revision BEFORE the GET: a concurrent writer can only cause an extra
+      // fetch next time, never bless old content with a newer revision.
+      const { data, error } = await bucket.info(skey(owner, wsId, '__manifest__.json'));
+      if (error && ![404, 400, 501].includes(Number(error.status ?? error.statusCode))) throw new Error(`매니페스트 메타데이터 읽기 실패: ${String(error.message).slice(0, 80)}`);
+      if (data?.version || data?.etag) revision = JSON.stringify([data.version, data.etag, data.lastModified, data.size]);
+      if (revision && idle?.revision === revision && beforeFingerprint === idle.fingerprint) {
+        companyIdle.set(key, { ...idle, at: Date.now() });
+        return { skipped: 'idle-probe', pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0 };
+      }
+    }
+    const result = await syncCompanyOnce(wsId, owner, isRestore, opts);
+    if (result.failed > 0) { deferFailure(); return result; }
+    companyRetry.delete(key);
+    if (canIdle && !result.failed && !result.held) {
+      const stamp = await fingerprint();
+      if (stamp !== null && stamp === beforeFingerprint) companyIdle.set(key, { at: Date.now(), fingerprint: stamp, revision });
+      else companyIdle.delete(key);
+    } else companyIdle.delete(key);
+    return result;
+  } catch (e) {
+    // 30s → 60s → ... → 10min per company/device; nudge does not reset the cooldown.
+    deferFailure();
+    throw e;
+  }
+}
+
+async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   const root = paths(wsId).root;
   const noSecrets = !!opts.noSecrets || hostedCredsOff();
   const me = await getDeviceId();
@@ -617,6 +677,8 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // 매니페스트 읽기 — "없음(최초 푸시)"과 "읽기 실패(네트워크·타임아웃·5xx)"를 반드시 구분한다.
   // 실패를 빈 원격으로 오인하면 base의 전 파일을 '원격에서 삭제됨'으로 판정해 로컬을 통째로 지운다(대형 유실 원인).
   let remote = { files: {} };
+  let manifestExists = false;
+  let manifestNeedsSeal = false;
   {
     const { data, error } = await client().storage.from(BUCKET).download(manifestKey);
     if (error) {
@@ -625,11 +687,18 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
       if (!notFound) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
       // notFound = 원격 진짜 없음(최초 푸시). 이때 base(.sync-state)도 비어 삭제 분기가 안 타므로 안전.
     } else {
+      manifestExists = true;
       // 관용 개봉 — 매니페스트가 봉투일 수도(다른 기기가 스위치 on), 평문일 수도 있다. 둘 다 수용.
-      try { remote = JSON.parse(openSecretCompat(Buffer.from(await data.arrayBuffer())).toString()); }
+      try {
+        const bytes = Buffer.from(await data.arrayBuffer());
+        const target = dek() ? 'argosecret.v3:' : cryptoOn() ? 'argosecret.v2:' : null;
+        manifestNeedsSeal = !!target && !bytes.subarray(0, target.length).equals(Buffer.from(target));
+        remote = JSON.parse(openSecretCompat(bytes).toString());
+      }
       catch (e) { throw new Error(`매니페스트 파싱 실패 — 삭제 보류: ${String(e.message).slice(0, 80)}`); }
     }
   }
+  const originalFiles = JSON.stringify(remote.files);
   // 원격 매니페스트 키 위생(P1-7) — 변조된 키(경로 탈출 `../..`)를 FS 반영 전에 걸러낸다. 걸러진 키는 이 사이클 무시.
   if (remote.files && typeof remote.files === 'object') {
     let dropped = 0;
@@ -927,6 +996,12 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // 주의: 병합 항목은 업로드 매니페스트에만 넣고 내 base(state)에는 넣지 않는다 — base에 넣으면
   // "로컬에 없는데 base에 있음 = 내가 지움"으로 오판해 다음 사이클에 원격 삭제를 전파해 버린다.
   // base에 없으니 다음 사이클에 '원격 신규 → 받기'로 정상 pull된다.
+  let manifestDenied = false;
+  // Unchanged remote probe: one full GET, zero PUTs. The outer 60s idle gate bounds
+  // steady-state to 1,440 manifests/day/device/company; 100 × 420KB ≈ 60.5GB/day.
+  // This is a bound, not a scalable replacement for a revision/conditional index.
+  // No write means no lost-update window requiring a second GET. Resealing must write.
+  if (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files)) {
   const uploadFiles = { ...remote.files };
   {
     // 재읽기는 두 단계로 갈라 관용의 범위를 정확히 한다(분리 검수 HIGH-1):
@@ -964,7 +1039,6 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const manifestBuf = Buffer.from(JSON.stringify({ ...remote, files: uploadFiles }));
   // cryptoOn() 동반 확인(보안 검수 2026-07-23) — 파일 경로의 가드(`isEncRel && !cryptoOn()` continue)와 동일 규약.
   // 키 미확보 사이클에 sealSecret이 throw해 동기화가 멈추던 비대칭 제거(데이터 위험은 없었으나 가용성 문제).
-  let manifestDenied = false;
   try {
     // E2EE 활성이면 매니페스트도 v3 — 이것이 곧 **열쇠 없는 기기의 안전 게이트**다: DEK 미보유 기기는
     // 매니페스트 개봉이 보류 오류로 떨어져 회사 동기화가 통째로 멈춘다(파일 단위 오염·오삭제 원천 불가,
@@ -982,6 +1056,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     // 부작용이 없고, free 한정이 안전 조건이다. pull 실패(failed>0)만이 관용을 막는 조건이다.
     if (!(opts.freePlan && failed === 0)) throw e;
     manifestDenied = true;
+  }
   }
   // base는 **디스크가 실제로 가진 것만** 주장한다(분리 검수 #436 CRITICAL-1 실측: 키 미확보·pull 실패로 손대지 않은 원격 항목을 그대로
   // 흡수하면 다음 사이클이 그것을 "로컬에서 지웠음"으로 읽어 원격·원본 기기 로컬까지 삭제 — 어디에도 안 남음). 이번 사이클에 로컬과
@@ -1363,6 +1438,7 @@ async function cycle() {
     try {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal });
+      if (r.skipped === 'retry-backoff') { status.companies[wsId] = { ts: Date.now(), ...r }; companyFailed++; continue; }
       if (!freePlan && (r.uploadDenied ?? 0) > 0 && (r.pushed ?? 0) === 0) { // 확정 free는 이미 스킵 경로 — 여기는 미확인·무자격이 거절당하는 경우
         uploadBackoff.set(wsId, Date.now() + UPLOAD_BACKOFF_MS);
         console.warn(`[argo] 동기화(${wsId}): 업로드 ${r.uploadDenied}건 전부 거절 — ${UPLOAD_BACKOFF_MS / 60_000}분 보류(플랜 미확인·무자격 재시도 폭풍 차단)`);
@@ -1372,6 +1448,7 @@ async function cycle() {
       // 다음 사이클이 회사째 재시도한다(무변경 재푸시 비용 < 영구 평문 잔존).
       if (reseal && (r.failed ?? 0) === 0) await clearReseal(wsId).catch(() => {});
       status.companies[wsId] = { ts: Date.now(), ...r };
+      if (r.failed > 0) { status.lastError = `동기화 파일 ${r.failed}건 실패 — 잠시 후 재시도`; companyFailed++; }
       // 키 미확보 보류는 "성공"이 아니다 — 무증상이면 셀프호스트의 account_keys 미적용 같은 영구 무동작이 정상으로 보인다(#436 검수 HIGH-2)
       if (r.held) { status.lastError = `${wsId}: 계정 키 미확보 — 파일 ${r.held}개 동기화 보류(재시도 중)${accountKeyError() ? ` — ${accountKeyError()}` : ''}`; companyFailed++; }
     } catch (e) {
