@@ -45,9 +45,9 @@ export const RUNNERS = {
     models: [
       // GPT-5.6 패밀리(2026-07-09) — Sol(플래그십)·Terra(중간)·Luna(경량). sol id는 로컬 codex 설정으로 실증
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-      // GPT-6 Astra(2026-09-22) — ChatGPT 구독 codex exec 실응답 확인. 기본은 Sol 유지(유건 결정) — models[0]이 러너 전환 기본값이라 두 번째 자리
+      // GPT-6 Astra(2026-09-22) — 핀 0.157.1 이상에서만 돈다(0.149.1은 400 — 2026-09-28 실사고, test/codex-pin-lockup.test.mjs가 잠금). 기본은 Sol 유지(유건 결정) — models[0]이 러너 전환 기본값이라 두 번째 자리
       { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
-      // Local Codex catalog metadata verified 2026-09-28; vendor turns remain unverified.
+      // GPT-6 Sol·Luna — 핀 0.157.1 + ChatGPT 구독 로그인으로 실제 턴·셸 도구·MCP 호출 확인(2026-09-29).
       { id: 'gpt-6-sol', label: 'GPT-6 Sol' },
       { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
       { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
