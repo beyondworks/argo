@@ -1667,6 +1667,12 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-tabbar::before { content: ''; position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--ph-tab) + 30px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); background: linear-gradient(to top, var(--bg) 60%, transparent); pointer-events: none; z-index: -1; }
   /* + 버튼은 검색 원과 14px 띄운다(붙어 있어 한 덩어리로 보였다) */
   .msgr-phone .msgr-fab { bottom: calc(max(16px, calc(env(safe-area-inset-bottom) - 18px)) + var(--ph-tab) + 14px); }
+  /* 직접 배치 끌기 — 들어 올린 행은 흐림 대신 그림자·살짝 확대로 손가락을 따라오고, 놓을 자리엔 금색 선 */
+  .msgr-phone .msgr-railrow[data-lift], .msgr-phone .msgr-railrow.dragging[data-lift] { position: relative; z-index: 6; opacity: 1; background: var(--card); border-radius: 14px; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); scale: 1.02; transition: scale 140ms ease-out, box-shadow 140ms ease-out; }
+  .msgr-phone .msgr-railrow[data-drop] { position: relative; }
+  .msgr-phone .msgr-railrow[data-drop]::before { content: ''; position: absolute; left: 14px; right: 14px; height: 3px; border-radius: 3px; background: var(--mark); pointer-events: none; }
+  .msgr-phone .msgr-railrow[data-drop='before']::before { top: -2px; }
+  .msgr-phone .msgr-railrow[data-drop='after']::before { bottom: -2px; }
   /* 홈·채팅 목록의 점 세 개 — 폰은 길게 누르기로 같은 메뉴가 뜬다(rowLongPress). 상시 노출은 줄마다 잡음이었다 */
   .msgr-phone .msgr-side .msgr-railrow .more { display: none; }
   .msgr-phone .msgr-side .msgr-railrow .item { padding-right: 12px; }

@@ -57,3 +57,15 @@ test('fast refresh still shows the refreshing state for the minimum time', async
   await slow.pull(); assert.deepEqual(waits, [570], 'already slow refresh adds no wait');
   f.cleanup(); slow.cleanup();
 });
+
+// 길게 눌러 행 메뉴가 뜬 뒤 아래로 끌면 새로고침까지 같이 시작됐다(2026-09-29 실측, 직접 배치 끌기와도 충돌) — 길게 누르기(450ms·10px)와 같은 기준으로 가른다.
+test('a touch held still past the long-press time never becomes a pull', async () => {
+  let t = 0; let calls = 0;
+  const f = fixture(async () => { calls++; }, { minMs: 0, now: () => t });
+  f.events.touchstart(f.touch(0));
+  t = 500; f.events.touchmove(f.touch(140));
+  assert.ok(!f.phases.includes('ready') && !f.phases.includes('pulling'), 'no pull phase after a long press');
+  await f.events.touchend(f.touch(140)); assert.equal(calls, 0);
+  t = 1000; f.events.touchstart(f.touch(0)); t = 1100; f.events.touchmove(f.touch(140)); await f.events.touchend(f.touch(140));
+  assert.equal(calls, 1, 'a quick pull still refreshes'); f.cleanup();
+});

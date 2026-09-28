@@ -53,6 +53,10 @@ export function enteredReady(prevPhase, nextPhase) {
 // Keep the gesture lifecycle testable without a browser reload or React remount.
 // 조회가 빨리 끝나도 '새로고침 중'을 이만큼은 보여 준다 — 72ms만 번쩍이면 새로고침됐는지 알 수 없다(2026-09-29 실측, iOS 기본 당김도 약 0.5~1초)
 export const REFRESH_MIN_MS = 600;
+// 길게 누르기(long-press.js: 450ms·10px)와 같은 기준 — 그 시간 안에 이 거리를 넘겨 움직여야 당김이다.
+// 가만히 누르고 있다 끌면 행 메뉴·직접 배치 끌기이지 새로고침이 아니다(2026-09-29 실측: 메뉴가 뜬 채 새로고침까지 시작).
+export const PULL_HOLD_MS = 450;
+export const PULL_ENGAGE_PX = 10;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function bindPullRefresh(node, { refresh, phase, error, now = Date.now, minMs = REFRESH_MIN_MS, delay = sleep }) {
@@ -61,13 +65,18 @@ export function bindPullRefresh(node, { refresh, phase, error, now = Date.now, m
   const scroll = () => { lastScroll = now(); };
   const start = (e) => {
     if (busy || !canStartPull(node.scrollTop, e.touches.length, now() - lastScroll)) return;
-    startAt = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    startAt = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: now(), engaged: false };
   };
   const move = (e) => {
     if (!startAt || busy) return;
     if (e.touches.length !== 1) { reset(); return; }
-    const dy = e.touches[0].clientY - startAt.y;
-    if (!isVerticalPull(e.touches[0].clientX - startAt.x, dy) || node.scrollTop > 0) { reset(); return; }
+    const dx = e.touches[0].clientX - startAt.x, dy = e.touches[0].clientY - startAt.y;
+    if (!startAt.engaged) {
+      if (now() - startAt.t >= PULL_HOLD_MS) { startAt = null; return; } // 길게 누르기였다 — 이 터치는 끝까지 당김 아님
+      if (Math.hypot(dx, dy) <= PULL_ENGAGE_PX) return;
+      startAt.engaged = true;
+    }
+    if (!isVerticalPull(dx, dy) || node.scrollTop > 0) { reset(); return; }
     e.preventDefault();
     const dist = pullDistance(dy);
     node.style.setProperty('--pull-dy', `${Math.min(56, dist * .5)}px`);
@@ -78,7 +87,7 @@ export function bindPullRefresh(node, { refresh, phase, error, now = Date.now, m
   const end = async (e) => {
     if (!startAt || busy) return;
     const touch = e.changedTouches?.[0];
-    const accepted = touch && isVerticalPull(touch.clientX - startAt.x, touch.clientY - startAt.y) && shouldRefresh(touch.clientY - startAt.y);
+    const accepted = touch && startAt.engaged && isVerticalPull(touch.clientX - startAt.x, touch.clientY - startAt.y) && shouldRefresh(touch.clientY - startAt.y);
     startAt = null;
     if (!accepted) { reset(); return; }
     busy = true; node.style.setProperty('--pull-dy', '44px'); phase('refreshing');

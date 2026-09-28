@@ -1546,6 +1546,9 @@ function Shell({ session }) {
   useEffect(() => { const h = (e) => { if (!e.target.closest?.('input, textarea, [contenteditable="true"], a[href]')) e.preventDefault(); }; document.addEventListener('contextmenu', h); return () => document.removeEventListener('contextmenu', h); }, []); // 웹뷰 기본 메뉴(다시 로드 등)는 입력창 밖에서는 띄우지 않는다
   // 훅은 전부 위 조기 return 앞에(실측 2026-09-12: 뒤에 두면 'Rendered more hooks')
   const touchDrag = useRef(null); // { id, el, onDrop, startX, startY, moved, rows } — 아래 조기 반환보다 먼저(훅 순서, 2026-09-29 실측: 반환 뒤에 두면 조직 로딩 직후 'Rendered more hooks' 로 앱 전체가 멈췄다)
+  // 길게 눌러 끌기 대기 중엔 브라우저 스크롤을 막는다 — 막지 않으면 23px쯤 움직였을 때 pointercancel이 와 드롭이 사라졌다(2026-09-29 실측).
+  // React의 onTouchMove는 passive라 preventDefault가 안 먹어 문서에 직접 단다.
+  useEffect(() => { const f = (e) => { if (touchDrag.current) e.preventDefault(); }; document.addEventListener('touchmove', f, { passive: false }); return () => document.removeEventListener('touchmove', f); }, []);
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
   const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
@@ -1620,19 +1623,31 @@ function Shell({ session }) {
   // 폰 '직접 배치' 길게 눌러 끌기(유건 확정 2026-09-29 #9 — 1차 구현, 자동 스크롤 제외) — 길게 눌러도 8px 이상 움직여야 진짜 드래그로 본다.
   // 안 움직이고 놓으면(탭-홀드) 기존처럼 행 메뉴가 열린다 — DM 탭은 점 세 개 버튼이 없어 길게 누르기가 메뉴로 가는 유일한 길이라(유건 2026-09-15) 그 경로를 남겨 둔다.
   const beginTouchDrag = (id, el, onDrop, x, y) => { touchDrag.current = { id, el, onDrop, startX: x, startY: y, moved: false, rows: [] }; };
+  // 끄는 동안 행이 손가락을 따라오고(들어 올린 모양), 놓을 자리엔 선을 긋는다 — 흐려진 행만 제자리에 있어 어디로 가는지 안 보였다(2026-09-29 점검)
+  const markDropAt = (d, y) => { const before = dropBeforeIdAtY(d.rows, y); d.container?.querySelectorAll('[data-drop]').forEach((n) => n.removeAttribute('data-drop'));
+    const at = before ? d.container?.querySelector(`[data-drag-id="${before}"]`) : d.container?.querySelector(`[data-drag-id="${d.rows.at(-1)?.id}"]`);
+    at?.setAttribute('data-drop', before ? 'before' : 'after'); };
+  const clearTouchDrag = (d) => { if (!d) return; d.el.removeAttribute('data-lift'); d.el.style.removeProperty('transform'); d.container?.querySelectorAll('[data-drop]').forEach((n) => n.removeAttribute('data-drop')); };
   const moveTouchDrag = (x, y) => {
-    const d = touchDrag.current; if (!d || d.moved) return;
-    if (Math.hypot(x - d.startX, y - d.startY) < 8) return;
-    d.moved = true;
-    const container = d.el.closest('.msgr-list, .msgr-folder');
-    d.rows = container ? [...container.querySelectorAll('[data-drag-id]')].filter((n) => n.dataset.dragId !== d.id).map((n) => { const r = n.getBoundingClientRect(); return { id: n.dataset.dragId, top: r.top, height: r.height }; }) : [];
-    setDrag(d.id); // 데스크톱 드래그와 같은 .dragging 시각 표시 재사용
+    const d = touchDrag.current; if (!d) return;
+    if (!d.moved) {
+      if (Math.hypot(x - d.startX, y - d.startY) < 8) return;
+      d.moved = true;
+      d.container = d.el.closest('.msgr-list, .msgr-folder');
+      d.rows = d.container ? [...d.container.querySelectorAll('[data-drag-id]')].filter((n) => n.dataset.dragId !== d.id).map((n) => { const r = n.getBoundingClientRect(); return { id: n.dataset.dragId, top: r.top, height: r.height }; }) : [];
+      d.el.setAttribute('data-lift', ''); // 클래스가 아니라 data 속성 — setDrag 재렌더가 className을 다시 써 지웠다(2026-09-29 실측)
+      setDrag(d.id); // 데스크톱 드래그와 같은 .dragging 표시(폰은 [data-lift]가 흐림 대신 들어 올림으로 바꾼다)
+    }
+    d.el.style.transform = `translateY(${y - d.startY}px)`;
+    markDropAt(d, y);
   };
   const endTouchDrag = (y) => {
     const d = touchDrag.current; touchDrag.current = null;
+    clearTouchDrag(d);
     if (d?.moved) { d.onDrop(d.id, dropBeforeIdAtY(d.rows, y)); setDrag(null); }
     return !!d?.moved;
   };
+  const cancelTouchDrag = () => { const d = touchDrag.current; touchDrag.current = null; clearTouchDrag(d); if (d?.moved) setDrag(null); };
   const dragStart = (c) => (e) => { setDrag(c.id); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', c.id); } catch { /* 웹뷰 차이 */ } };
   const dragOver = (e) => { if (drag) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } };
   const dropOnRow = (e, c) => { e.preventDefault(); e.stopPropagation(); const id = drag; setDrag(null); if (!id || id === c.id) return;
@@ -1696,6 +1711,7 @@ function Shell({ session }) {
         if (dragCtx && touchDrag.current?.id === c.id) { if (!endTouchDrag(e.clientY) && st.el) openCtx({ preventDefault() {}, stopPropagation() {}, currentTarget: st.el, clientX: st.x, clientY: st.y }, items, c.id); } // 안 움직였으면 메뉴로 폴백
         swallowNext();
       },
+      onPointerCancel: (e) => { lp.onPointerCancel(e); if (touchDrag.current?.id === c.id) cancelTouchDrag(); }, // 브라우저가 제스처를 가져가면 들어 올린 행·흐림이 남지 않게
     }; };
   const dmRow = (c) => { const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const isGroupRow = dmIsGroup(c); const withCrew = !!dmCrew && !isGroupRow; const confirmVia = (kind) => { setActionError(''); setRailAction({ channel: c, kind }); }; const items = [
                 ...(dmTab ? [{ icon: 'doc', label: t('dm.preview'), run: () => setDmPeek(c) }] : []),
