@@ -3,7 +3,7 @@
 export const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 const who = (m) => (m.author_kind === 'crew' ? `c:${m.crew_id}` : `u:${m.author_user_id}`);
-const plain = (m) => !m.deleted_at && (m.kind == null || m.kind === 'text'); // 시스템·결재 카드·지운 글은 묶지 않는다
+const plain = (m) => !m.deleted_at && !m.edited_at && (m.kind == null || m.kind === 'text'); // 시스템·결재 카드·지운 글·편집된 글은 묶지 않는다('편집됨' 표시가 머리·꼬리에 있어 묶으면 숨는다)
 
 export function sameGroup(prev, m, windowMs = GROUP_WINDOW_MS) {
   if (!prev || !m || !plain(prev) || !plain(m)) return false;

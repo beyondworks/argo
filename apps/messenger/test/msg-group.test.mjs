@@ -32,3 +32,9 @@ test('groupFlags — 첫 글만 머리, 마지막 글만 꼬리, 끊는 자리(�
   const cut = groupFlags(list, (i) => i === 2); // 셋째 글 앞에 "새 메시지" 줄
   assert.deepEqual(cut.map((f) => [f.cont, f.tail]).slice(0, 3), [[false, false], [true, true], [false, true]]);
 });
+
+// 검수 MEDIUM-3: 묶인 글은 머리(.who)·꼬리(.meta)를 숨겨 '편집됨' 표시까지 사라졌다 — 편집된 글은 앞뒤로 끊어 표시가 남게 한다.
+test('편집된 글은 묶지 않는다(앞 글과도, 뒤 글과도)', () => {
+  assert.equal(sameGroup(crew('a', 0), crew('a', 1, { edited_at: at(2) })), false);
+  assert.equal(sameGroup(crew('a', 0, { edited_at: at(2) }), crew('a', 1)), false);
+});

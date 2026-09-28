@@ -69,3 +69,14 @@ test('a touch held still past the long-press time never becomes a pull', async (
   t = 1000; f.events.touchstart(f.touch(0)); t = 1100; f.events.touchmove(f.touch(140)); await f.events.touchend(f.touch(140));
   assert.equal(calls, 1, 'a quick pull still refreshes'); f.cleanup();
 });
+
+// 검수 MEDIUM-5: 10px 인정 전에는 기본 동작을 안 막아, 실기기에선 브라우저 스크롤·바운스가 먼저 제스처를 가져갈 수 있었다(main은 첫 움직임부터 막음).
+test('맨 위에서 아래로 끄는 첫 움직임부터 기본 스크롤을 막는다(인정 전이어도), 위로 미는 움직임은 막지 않는다', () => {
+  const f = fixture(async () => {}, { minMs: 0 });
+  let prevented = 0; const ev = (y) => ({ touches: [{ clientX: 10, clientY: y }], changedTouches: [{ clientX: 10, clientY: y }], preventDefault() { prevented++; } });
+  f.events.touchstart(ev(0)); f.events.touchmove(ev(4));
+  assert.equal(prevented, 1, '4px 아래(인정 전)도 막는다');
+  f.events.touchcancel(ev(4)); prevented = 0;
+  f.events.touchstart(ev(100)); f.events.touchmove(ev(96));
+  assert.equal(prevented, 0, '위로 미는 스크롤은 막지 않는다'); f.cleanup();
+});

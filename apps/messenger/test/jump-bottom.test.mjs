@@ -11,3 +11,11 @@ test('배선 — 스크롤 거리로 버튼을 켜고, 누르면 바닥 고정�
   const i18n = readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8');
   assert.match(i18n, /'thread\.toBottom': \['맨 아래로', 'Jump to latest'\]/);
 });
+
+// 검수 HIGH-1(2026-09-29): 당김 표시(.msgr-pullrefresh)가 쉬는 동안에도 스레드 첫 자식으로 붙자 firstElementChild 관찰이 높이 0 요소로 빠져
+// 첨부·Markdown이 늦게 커질 때 바닥을 안 따라갔다(데스크톱 실측 gap 415). 관찰 대상은 이름으로 고른다.
+test('바닥 따라가기 ResizeObserver는 .msgr-spine을 관찰한다', () => {
+  const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(src, /const spine = el\.querySelector\(':scope > \.msgr-spine'\); if \(spine\) ro\.observe\(spine\);/);
+  assert.doesNotMatch(src, /const spine = el\.firstElementChild;/);
+});

@@ -59,7 +59,7 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.doesNotMatch(src, /useSwipeTabs\(ROOT_ORDER/, '하단 탭 스와이프는 없앤다');
   assert.match(src, /\{\.\.\.\(isPhone \? rowLongPress\(c, items\) : \{\}\)\}/, '폰 레일 행(채널·즐겨찾기 대상) 길게 누르기 = 점 세 개 메뉴');
   assert.equal((src.match(/\{\.\.\.\(isPhone \? rowLongPress\(c, items\) : \{\}\)\}/g) || []).length, 2, '채널·대상 행 둘(DM 행은 직접 배치 끌기 분기가 붙어 별도 패턴, 2026-09-29)');
-  assert.match(src, /rowLongPress\(c, items, dmTab && dmSort === 'custom' \? \{ onDrop: reorderDmCustom \} : null\)/, 'DM 행 길게 누르기 — 직접 배치 모드면 메뉴 대신 끌기(2026-09-29)');
+  assert.match(src, /rowLongPress\(c, items, dmTab && dmSort === 'custom' && dmFilter === 'all' && !pinned\.has\(c\.id\) \? \{ onDrop: reorderDmCustom \} : null\)/, 'DM 행 길게 누르기 — 직접 배치 모드면 메뉴 대신 끌기(2026-09-29). 필터 보기·고정 단락은 끌기 없음(검수 MEDIUM-1: 부분 목록 재번호가 전체 순서를 섞었다)');
   assert.match(src, /setDmGroup\(false\); \/\/ 시트는 어느 경로든 닫는다/, '한 명 경로에서도 시트 닫힘(검수 HIGH-1)');
   assert.match(src, /const dmTab = isPhone && \(page === 'dm' \|\| swipeTo === 'dm'\);/, '스와이프 중 밑 화면 DM 탭 미리 그리기');
   assert.match(src, /\{!dmTab && <button type="button" className="more"/, 'DM 탭에는 점 세 개 없음(길게 누르기 메뉴로 대체)');

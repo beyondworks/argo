@@ -1548,7 +1548,13 @@ function Shell({ session }) {
   const touchDrag = useRef(null); // { id, el, onDrop, startX, startY, moved, rows } — 아래 조기 반환보다 먼저(훅 순서, 2026-09-29 실측: 반환 뒤에 두면 조직 로딩 직후 'Rendered more hooks' 로 앱 전체가 멈췄다)
   // 길게 눌러 끌기 대기 중엔 브라우저 스크롤을 막는다 — 막지 않으면 23px쯤 움직였을 때 pointercancel이 와 드롭이 사라졌다(2026-09-29 실측).
   // React의 onTouchMove는 passive라 preventDefault가 안 먹어 문서에 직접 단다.
-  useEffect(() => { const f = (e) => { if (touchDrag.current) e.preventDefault(); }; document.addEventListener('touchmove', f, { passive: false }); return () => document.removeEventListener('touchmove', f); }, []);
+  // 안전망(검수 LOW): 끄는 중 행이 사라지면(DM 삭제·필터 전환) 그 행의 pointerup이 안 와 끌기 상태가 남고 위 리스너가 앱 전체 스크롤을 막는다 → 창 수준에서 한 번 더 정리
+  useEffect(() => {
+    const f = (e) => { if (touchDrag.current) e.preventDefault(); };
+    const end = () => { const d = touchDrag.current; if (!d) return; setTimeout(() => { if (touchDrag.current !== d) return; touchDrag.current = null; d.el.removeAttribute('data-lift'); d.el.style.removeProperty('transform'); d.container?.querySelectorAll('[data-drop]').forEach((n) => n.removeAttribute('data-drop')); setDrag(null); }, 0); };
+    document.addEventListener('touchmove', f, { passive: false }); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+    return () => { document.removeEventListener('touchmove', f); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
+  }, []);
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
   const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
@@ -1613,9 +1619,13 @@ function Shell({ session }) {
   };
   // DM 탭 '직접 배치' 순서(유건 확정 2026-09-29) — msgr_channel_prefs.sort_pos. 새로 생긴 DM은 sortByCustomOrder가 맨 아래로(sort_pos 없음).
   const reorderDmCustom = async (dragId, beforeId = null) => {
+    // 필터·고정 단락에선 끌기를 켜지 않는다(검수 MEDIUM-1: 부분 목록을 0..k로 다시 매기면 '전체' 순서가 섞였다). 위치가 바뀐 행만 쓴다(DB 위생)
     const ids = reorderFavorites(dmList.map((c) => c.id), dragId, beforeId);
+    const now = new Date().toISOString();
+    const rows = ids.map((id, i) => ({ channel_id: id, sort_pos: i, user_id: uid, updated_at: now })).filter((r) => dmSortPos[r.channel_id] !== r.sort_pos);
+    if (!rows.length) return;
     try {
-      await prefQueue.current.enqueue(() => q(supabase.from('msgr_channel_prefs').upsert(ids.map((id, i) => ({ channel_id: id, sort_pos: i, user_id: uid })))));
+      await prefQueue.current.enqueue(() => q(supabase.from('msgr_channel_prefs').upsert(rows)));
       setDmSortPos((m) => { const next = { ...m }; ids.forEach((id, i) => { next[id] = i; }); return next; });
     } catch (e) { setErr(friendlyErr(e.message, t)); }
   };
@@ -1652,7 +1662,7 @@ function Shell({ session }) {
   const dragOver = (e) => { if (drag) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } };
   const dropOnRow = (e, c) => { e.preventDefault(); e.stopPropagation(); const id = drag; setDrag(null); if (!id || id === c.id) return;
     if (favs.some((f) => f.id === id) && favs.some((f) => f.id === c.id)) return reorderFav(id, c.id); // 끌어서 옮기는 것은 즐겨찾기 안의 순서
-    if (dmTab && dmSort === 'custom' && c.kind === 'dm' && dmList.some((x) => x.id === id) && dmList.some((x) => x.id === c.id)) return reorderDmCustom(id, c.id); // DM 탭 직접 배치 — 순서가 보이는 폰 채팅 탭에서만(데스크톱 레일은 정렬을 안 쓰는데 끌면 안 보이는 순서가 저장됐다, 2026-09-29 실측)
+    if (dmTab && dmSort === 'custom' && dmFilter === 'all' && !pinned.has(id) && !pinned.has(c.id) && c.kind === 'dm' && dmList.some((x) => x.id === id) && dmList.some((x) => x.id === c.id)) return reorderDmCustom(id, c.id); // DM 탭 직접 배치 — 순서가 보이는 폰 채팅 탭에서만(데스크톱 레일은 정렬을 안 쓰는데 끌면 안 보이는 순서가 저장됐다, 2026-09-29 실측)
     if (railSort === 'custom' && myCrews.some((x) => x.id === id) && myCrews.some((x) => x.id === c.id)) return reorderRailCustom(id, c.id); // '내 에이전트' 직접 배치(내 소유 크루만)
   };
   const orderItems = (c) => { const at = favs.findIndex((f) => f.id === c.id); return at < 0 ? [] : [
@@ -1724,8 +1734,8 @@ function Shell({ session }) {
                   { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
                 ]),
               ]; return (
-            <div key={c.id} data-drag-id={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items, dmTab && dmSort === 'custom' ? { onDrop: reorderDmCustom } : null) : {})}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && !mutedCrewIds.has(lastMsg[c.id].crewId) && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+            <div key={c.id} data-drag-id={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items, dmTab && dmSort === 'custom' && dmFilter === 'all' && !pinned.has(c.id) ? { onDrop: reorderDmCustom } : null) : {})}>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(t('time.yesterday'), lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && !mutedCrewIds.has(lastMsg[c.id].crewId) && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
             </div>
           ); };
@@ -1963,7 +1973,7 @@ function DmPeekSheet({ channel, name, uid, whoOf, onOpen, onClose }) {
         <header className="head"><strong>{name}</strong><button type="button" className="btn sm" onClick={onOpen}>{t('dm.preview.open')}</button><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
         <div className="peek">
           {rows === null ? <p className="note">{t('ui.loading')}</p> : !rows.length ? <p className="note">{t('dm.preview.empty')}</p> : rows.map((m) => (
-            <div key={m.id} className={`pk${m.author_user_id === uid ? ' me' : ''}`}><span className="who">{whoOf(m)}</span><span className="body">{m.author_kind === 'user' && m.author_user_id !== uid && blocked.has(m.author_user_id) ? t('msg.blockedUser') : m.body}</span><span className="when">{fmtDmWhen(Date.parse(m.created_at), lang)}</span></div>
+            <div key={m.id} className={`pk${m.author_user_id === uid ? ' me' : ''}`}><span className="who">{whoOf(m)}</span><span className="body">{m.author_kind === 'user' && m.author_user_id !== uid && blocked.has(m.author_user_id) ? t('msg.blockedUser') : m.body}</span><span className="when">{fmtDmWhen(t('time.yesterday'), Date.parse(m.created_at), lang)}</span></div>
           ))}
         </div>
       </section>
@@ -4306,7 +4316,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, start
     el.addEventListener('pointerdown', down); window.addEventListener('pointerup', up);
     const toBottom = () => { if (stick.current) el.scrollTop = el.scrollHeight; };
     const ro = new ResizeObserver(() => { keepAnchor(); toBottom(); }); // 렌더 뒤 높이 변화(Markdown·첨부·타이핑 표시)에도 바닥을 따라간다. 앵커 되맞춤이 먼저(바닥 고정이면 toBottom이 이긴다)
-    const spine = el.firstElementChild; if (spine) ro.observe(spine);
+    const spine = el.querySelector(':scope > .msgr-spine'); if (spine) ro.observe(spine); // 첫 자식이 아니라 이름으로 — 당김 표시가 늘 붙어 첫 자식이 된 뒤 관찰이 높이 0 요소로 빠져 바닥 따라가기가 꺼졌다(2026-09-29 검수 HIGH-1)
     toBottom();
     return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('wheel', mark); el.removeEventListener('touchmove', mark); el.removeEventListener('keydown', mark); el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); ro.disconnect(); };
   }, [chId, keepAnchor]);
@@ -4407,7 +4417,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, start
     if (divider > 0 && !newLine && isNewAt(m)) { newLine = true; rows.push(<div key="newline" className="msgr-newline"><span>{t('msg.new')}</span></div>); }
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.client_msg_id || m.id} rowTab={m.id === tabMid ? 0 : -1} onRowFocus={setActiveMid} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} onReply={(x) => setReplyReq({ id: x.id, who: x.author_kind === 'user' ? nameOfUser(x.author_user_id) : crewOf(x.crew_id)?.display_name ?? '', body: (x.body ?? '').replace(/\s+/g, ' ').slice(0, 120) })} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} isPersonal={isPersonal} cont={flags[i].cont} tail={flags[i].tail} inDm={channel.kind === 'dm'} />);
+    rows.push(<Message key={m.client_msg_id || m.id} rowTab={m.id === tabMid ? 0 : -1} onRowFocus={setActiveMid} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} onReply={(x) => setReplyReq({ id: x.id, who: x.author_kind === 'user' ? nameOfUser(x.author_user_id) : crewOf(x.crew_id)?.display_name ?? '', body: (x.body ?? '').replace(/\s+/g, ' ').slice(0, 120) })} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} isPersonal={isPersonal} cont={flags[i].cont} tail={flags[i].tail} inDm={phone && channel.kind === 'dm'} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'check', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -4446,7 +4456,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, start
     {!preview && namePrompt}
     {preview
       ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
-      : <Composer onOutsideDm={onOutsideDm} isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingLabel={typingLabel} mentionReq={mentionReq} onMentionDone={onMentionDone} replyReq={replyReq} onReplyDone={() => setReplyReq(null)} onPending={(x) => setPending((cur) => [...cur, x])} onPendingSettled={(clientId, ok) => { if (!ok) setPending((cur) => cur.filter((x) => x.clientId !== clientId)); }} onSent={async (id) => {
+      : <Composer onOutsideDm={onOutsideDm} isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingLabel={typingLabel} mentionReq={mentionReq} onMentionDone={onMentionDone} replyReq={replyReq} onReplyDone={() => setReplyReq(null)} onPending={(x) => { stick.current = true; setPending((cur) => [...cur, x]); }} onPendingSettled={(clientId, ok) => { if (!ok) setPending((cur) => cur.filter((x) => x.clientId !== clientId)); }} onSent={async (id) => {
       try {
         await load(lastId);
         // Realtime may already have loaded the body before an attachment finished (or was retried).

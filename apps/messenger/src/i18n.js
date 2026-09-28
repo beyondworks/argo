@@ -1189,6 +1189,7 @@ export const DICT = {
   'search.messages': ['메시지', 'Messages'],
   'rail.sort': ['정렬', 'Sort'],
   'dm.sort': ['채팅 정렬', 'Sort chats'],
+  'time.yesterday': ['어제', 'Yesterday'],
   'dm.sort.recent': ['최근 메시지순', 'Recent messages'],
   'dm.sort.unread': ['안읽은 메시지 먼저', 'Unread first'],
   'dm.sort.name': ['이름순', 'By name'],

@@ -73,6 +73,7 @@ export function bindPullRefresh(node, { refresh, phase, error, now = Date.now, m
     const dx = e.touches[0].clientX - startAt.x, dy = e.touches[0].clientY - startAt.y;
     if (!startAt.engaged) {
       if (now() - startAt.t >= PULL_HOLD_MS) { startAt = null; return; } // 길게 누르기였다 — 이 터치는 끝까지 당김 아님
+      if (dy > 0 && node.scrollTop <= 0) e.preventDefault(); // 인정 전이어도 맨 위에서 아래로면 막는다 — 늦게 막으면 실기기에선 브라우저 바운스가 먼저 가져간다(검수 MEDIUM-5)
       if (Math.hypot(dx, dy) <= PULL_ENGAGE_PX) return;
       startAt.engaged = true;
     }
