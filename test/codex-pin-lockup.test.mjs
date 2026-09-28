@@ -7,12 +7,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CODEX_PIN, codexAssetUrl, codexAssetNameFor, codexHostAssetNameFor, CODEX_LOCKUP_RE } from '../src/runners/codex.mjs';
 import { lockupAction } from '../src/runners.mjs';
+import { RUNNERS } from '../src/runners/catalog.mjs';
 
 test('조달 URL은 핀 버전 — latest 금지(무통보 업스트림 변경 차단)', () => {
   assert.match(CODEX_PIN, /^rust-v\d+\.\d+\.\d+$/, 'CODEX_PIN은 릴리스 태그 형식');
   const url = codexAssetUrl('x.tar.gz');
   assert.ok(url.includes(`/releases/download/${CODEX_PIN}/`), url);
   assert.ok(!/latest/.test(url), 'latest가 되살아났다 — 핀 원칙 위반');
+});
+
+// 2026-09-28 실사고: GPT-6 Astra·Sol·Luna를 목록에 넣으며 PC에 설치된 최신 codex로만 응답을 확인했다. Argo는 핀 버전(0.149.1)으로
+// 실행해 세 모델 모두 400("ChatGPT 계정에서 지원 안 함"·"더 새 버전 필요")으로 전멸했다. 0.157.1이 세 모델의 실제 턴·셸 도구·MCP 호출을 통과한 첫 핀이다.
+test('GPT-6 계열이 Codex 모델 목록에 있으면 핀은 0.157.1 이상 — 핀이 못 돌리는 모델을 목록에 싣지 않는다', () => {
+  const ver = CODEX_PIN.replace(/^rust-v/, '').split('.').map(Number);
+  const atLeast = (min) => { for (let i = 0; i < 3; i++) { if (ver[i] !== min[i]) return ver[i] > min[i]; } return true; };
+  const gpt6 = RUNNERS.codex.models.map((m) => m.id).filter((id) => /^gpt-6-/.test(id));
+  if (gpt6.length) assert.ok(atLeast([0, 157, 1]), `핀 ${CODEX_PIN}으로는 ${gpt6.join(', ')} 턴이 400으로 실패한다`);
 });
 
 test('codex·host 자산 이름이 6트리플 전부 짝으로 존재(윈도우는 .exe.tar.gz)', () => {

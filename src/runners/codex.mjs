@@ -38,7 +38,9 @@ const codexHostManagedBin = () => join(CODEX_TOOL_DIR, CODEX_HOST_BIN);
     (0.148+에서 host 없이는 도구 fail-closed)을 무통보로 전 사용자에게 실어 날랐다. 승격 절차:
     새 버전은 러너 계약 프로브(scripts/runner-contract-probe.mjs — PR3에서 추가 예정, 그 전엔 수동 프로브) 통과 확인 후 이 상수만 올린다.
     (export: 회귀 테스트·계약 프로브용) */
-export const CODEX_PIN = 'rust-v0.149.1';
+// 0.149.1 → 0.157.1(2026-09-29): 0.149.1은 GPT-6 Astra·Sol·Luna를 서버가 400으로 거절한다. 0.157.1로 계약 프로브 19/19,
+// Argo 로그인 실제 턴(셸 도구 파일 생성·MCP 도구 호출)을 GPT-6 세 모델과 GPT-5.6 Sol에서 확인했다.
+export const CODEX_PIN = 'rust-v0.157.1';
 export const codexAssetUrl = (asset) => `https://github.com/openai/codex/releases/download/${CODEX_PIN}/${asset}`;
 /** 플랫폼 → 릴리스 자산 이름. 래퍼 bin/codex.js의 트리플 표와 동일 매핑. (export: 순수 — 회귀 테스트용) */
 export function codexTripleFor(platform, arch) {
