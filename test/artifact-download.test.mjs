@@ -68,7 +68,9 @@ test('배선: 채팅 칩·프리뷰(공용 모듈)·기억 페이지·설정 리
 test('Rust: save_download 커맨드 등록 + basename 강제(경로 조작 차단)', async () => {
   const rs = await at('src-tauri/src/lib.rs');
   assert.ok(rs.includes('fn save_download('), '커맨드 정의');
-  assert.ok(rs.includes('generate_handler![save_download]'), 'invoke_handler 등록 — 빠지면 호출이 조용히 실패');
+  const registered = source => source.match(/\.invoke_handler\s*\(\s*tauri::generate_handler!\s*\[([^\]]*)\]\s*\)/)?.[1].split(',').map(s => s.trim()) ?? [];
+  assert.ok(registered(rs).includes('save_download'), 'invoke_handler 등록 — 다른 커맨드가 함께 등록되어도 다운로드는 유지');
+  assert.ok(!registered(rs.replace(/generate_handler!\[save_download,/, 'generate_handler![')).includes('save_download'), '다운로드 등록 삭제 변이는 거부');
   assert.ok(rs.includes('.file_name()'), 'basename 강제');
   assert.ok(rs.includes('download_dir()'), 'OS 다운로드 폴더');
   // 이름 후보 소진 시 원본 덮어쓰기 금지(검수 MEDIUM) — 조용한 데이터 유실

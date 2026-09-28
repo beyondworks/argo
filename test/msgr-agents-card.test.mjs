@@ -76,7 +76,12 @@ test('원클릭 연결(유건 지시 "이렇게 어려우면 안 돼"): 앱 안�
   assert.match(rs, /pub fn agent_list\(app: tauri::AppHandle, kind: String\)/, '에이전트 목록 커맨드'); assert.match(rs, /\("HERMES_HOME", hh\.display\(\)\.to_string\(\)\)/, '헤르메스 프로필 홈 격리');
   assert.match(rs, /a\.token\.starts_with\("argo_bot_"\) && a\.token\.len\(\) == 57/, '토큰 형식 검사');
   assert.match(rs, /"cli_missing"/, 'CLI 없음 사유'); assert.match(rs, /from_mode\(0o600\)/, '.env 0600');
-  assert.doesNotMatch(rs, /println!|eprintln!/, '토큰이 로그로 새지 않게 — 출력 없음');
+  const fixedDockWarning = 'eprintln!("[argo-messenger] Dock suppression unavailable; preserving CLI environment")';
+  const unexpectedOutput = source => /(?:e?print(?:ln)?|dbg)!/.test(source.replace(fixedDockWarning, ''));
+  assert.equal(unexpectedOutput(rs), false, '고정 Dock 실패 안내 외 출력 금지 — 토큰·CLI 출력은 로그에 싣지 않는다');
+  for (const leaked of ['eprintln!("{}", a.token)', 'println!("{}", output)', 'dbg!(&agents)']) {
+    assert.equal(unexpectedOutput(rs.replace(fixedDockWarning, leaked)), true, '동적 로그 추가 변이는 거부');
+  }
   const conf = read('apps/messenger/src-tauri/tauri.conf.json');
   assert.match(conf, /"\.\.\/\.\.\/\.\.\/integrations\/hermes-argo-msgr\/": "agents\/hermes-argo-msgr\/"/, '헤르메스 플러그인 동봉');
   assert.match(conf, /"\.\.\/\.\.\/\.\.\/integrations\/openclaw-argo-msgr\/": "agents\/openclaw-argo-msgr\/"/, '오픈클로 플러그인 동봉');
