@@ -17,11 +17,20 @@ marked.setOptions({ breaks: true, gfm: true });
 /* ─── 스크롤 락 — 모달/팝업 열림 동안 body 스크롤 차단(뒷 페이지 간섭·스크롤 체이닝 방지).
    중첩 모달 대비 참조 카운트 — 마지막 하나가 닫힐 때만 원복. ─── */
 let _lockCount = 0, _prevOverflow = '';
+let _folderDialogCount = 0;
+export const OVERLAY_EVENT = 'argo:overlay-state';
+export const overlayActive = () => _lockCount > 0 || _folderDialogCount > 0;
+const notifyOverlay = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(OVERLAY_EVENT)); };
+let _pendingWork = 0;
+export const UI_WORK_EVENT = 'argo:ui-work';
+export const uiWorkActive = () => _pendingWork > 0;
+const notifyWork = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(UI_WORK_EVENT)); };
 export function useScrollLock() {
   useEffect(() => {
     if (_lockCount === 0) { _prevOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; }
     _lockCount += 1;
-    return () => { _lockCount -= 1; if (_lockCount <= 0) { _lockCount = 0; document.body.style.overflow = _prevOverflow; } };
+    notifyOverlay();
+    return () => { _lockCount -= 1; if (_lockCount <= 0) { _lockCount = 0; document.body.style.overflow = _prevOverflow; } notifyOverlay(); };
   }, []);
 }
 
@@ -330,21 +339,27 @@ export const imeGuardWith = (onKeyDown) => ({
 });
 
 export async function api(path, opts) {
-  const res = await fetch(path, opts && {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(opts),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    // api()는 훅 밖(컴포넌트 외부)에서도 호출되므로 localStorage를 직접 읽는다.
-    const lang = (typeof window !== 'undefined' && localStorage.getItem('argo-lang')) || 'ko';
-    const fallback = lang === 'en' ? `Request failed (${res.status})` : `요청 실패 (${res.status})`;
-    const err = new Error(data.error || fallback);
-    err.data = data; // 에러 바디의 부가 필드(예: chat의 failed·saved)를 호출부가 읽을 수 있게
-    throw err;
+  const work = !!opts;
+  if (work) { _pendingWork += 1; notifyWork(); }
+  try {
+    const res = await fetch(path, opts && {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // api()는 훅 밖(컴포넌트 외부)에서도 호출되므로 localStorage를 직접 읽는다.
+      const lang = (typeof window !== 'undefined' && localStorage.getItem('argo-lang')) || 'ko';
+      const fallback = lang === 'en' ? `Request failed (${res.status})` : `요청 실패 (${res.status})`;
+      const err = new Error(data.error || fallback);
+      err.data = data; // 에러 바디의 부가 필드(예: chat의 failed·saved)를 호출부가 읽을 수 있게
+      throw err;
+    }
+    return data;
+  } finally {
+    if (work) { _pendingWork -= 1; notifyWork(); }
   }
-  return data;
 }
 
 export function timeAgo(input, lang = 'ko') {
@@ -800,6 +815,8 @@ function setFolderDialogBroken(v) {
     취소와 실패를 부르는 쪽이 갈라야 하는 이유: 픽커가 죽은 채(구버전 바이너리엔 dialog
     플러그인이 없다 — v0.1.32 실사고) 경로 입력 폴백까지 감춰버리면 막다른 길이 된다. */
 export async function openFolderDialog(title) {
+  _folderDialogCount += 1;
+  notifyOverlay();
   try {
     const { open } = await import('@tauri-apps/plugin-dialog');
     const dir = await open({ directory: true, multiple: false, title });
@@ -809,5 +826,8 @@ export async function openFolderDialog(title) {
     setFolderDialogBroken(true);
     console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e);
     throw e; // 부르는 쪽이 폴백을 열고 **사유를 표시**해야 한다 — 삼키면 v0.1.32 사고 재현
+  } finally {
+    _folderDialogCount -= 1;
+    notifyOverlay();
   }
 }

@@ -11,6 +11,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exec, exists } from './shared.mjs';
 import { commandExists } from './codex.mjs';
+import { noDockMcpEnv } from '../no-dock.mjs';
 
 // 위협모델 명시(분리 검수 2026-08-21 MED-4): 호스팅(서비스 키 워커) 문맥에서도 이 조달이 돈다 —
 // 단 대상은 safeMcpServersForRuntime을 **이미 통과한**(카탈로그 검증 command) 서버뿐이고, 내려받는
@@ -69,14 +70,18 @@ export async function provisionNpx() {
     - command 'npx' → 시스템 npx가 있으면 그대로(사용자 npm 캐시 존중), 없으면 관리본을 조달해
       [우리 노드, npx-cli.js, ...원래 args]로 재작성. 조달 실패(오프라인 등)는 원형 유지 —
       commandExists 게이트가 기존대로 정직하게 거른다(조용한 삭제 금지).
-    - url/기타 command는 원형 그대로. 입력 맵은 불변(scopeServers 계약과 동일). */
+    - stdio 서버는 Dock 프리로드를 명시 env로 전달한다(MCP의 부모 env 선별 상속 대응).
+    - url 서버는 원형 그대로. 입력 맵은 불변(scopeServers 계약과 동일). */
 export async function materializeMcpServers(servers, {
   hasSystemNpx = () => commandExists('npx'),
   provide = provisionNpx,
 } = {}) {
   const out = {};
-  for (const [name, def] of Object.entries(servers ?? {})) {
+  for (const [name, original] of Object.entries(servers ?? {})) {
+    let def = original;
     if (!def || typeof def !== 'object' || !def.command) { out[name] = def; continue; }
+    const env = noDockMcpEnv(def.env);
+    if (env !== def.env) def = { ...def, env };
     if (def.command === 'node') { out[name] = { ...def, command: process.execPath }; continue; }
     if (def.command === 'npx' && !hasSystemNpx()) {
       try {

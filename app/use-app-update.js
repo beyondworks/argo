@@ -11,6 +11,15 @@
 //   정적 버전(NEXT_PUBLIC_APP_VERSION)만 노출하고 업데이트 어포던스는 뜨지 않는다.
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+// The settings card and shell use separate hook instances; installation is app-wide.
+let sharedInstallPhase = 'idle';
+const installListeners = new Set();
+const publishInstallPhase = (phase) => {
+  sharedInstallPhase = phase;
+  for (const notify of installListeners) notify(phase);
+};
+const installationBusy = () => sharedInstallPhase === 'installing' || sharedInstallPhase === 'ready';
+
 // 데스크톱 셸 판별 — Tauri 런타임이면 자가 업데이트 경로가 존재한다.
 // export — 설정의 시스템 권한 카드 등이 재사용(판별 로직 복사본 증식 방지, 분리 검수 L2).
 export const inTauri = () => typeof window !== 'undefined'
@@ -20,6 +29,7 @@ export function useAppUpdate() {
   const [isApp, setIsApp] = useState(false);
   // 초기값은 빌드타임 버전(웹·최초 렌더용). 앱이면 마운트 후 네이티브 getVersion()으로 덮어써 진실을 맞춘다.
   const [current, setCurrent] = useState(process.env.NEXT_PUBLIC_APP_VERSION || '');
+  const [versionReady, setVersionReady] = useState(false);
   const [available, setAvailable] = useState(null); // 새 버전 문자열 | null(없음/미확인)
   const [checked, setChecked] = useState(false);    // 최초 확인 완료 여부 — "최신입니다" 표시 구분용
   const [phase, setPhase] = useState('idle');       // idle | checking | installing | ready | error
@@ -28,6 +38,7 @@ export function useAppUpdate() {
   // 업데이트 확인 — Tauri 업데이터가 latest.json(argo-agent 릴리스)과 네이티브 버전을 대조.
   // 설치 중에는 상태를 건드리지 않는다(설치 흐름을 덮어쓰지 않게).
   const check = useCallback(async () => {
+    if (installationBusy()) return;
     if (!inTauri()) {
       // 웹(상주·셀프호스트) — 자가 업데이트는 없지만 **새 버전 존재는 알 수 있어야 한다**
       // (실사용 요청 2026-07-27 "웹버전만 쓰는 사람 업데이트 쉽게"). 서버 프록시(/api/update-check)가
@@ -47,31 +58,38 @@ export function useAppUpdate() {
       } catch { setPhase('error'); }
       return;
     }
-    setPhase((p) => (p === 'installing' ? p : 'checking'));
+    setPhase(() => (installationBusy() ? sharedInstallPhase : 'checking'));
     try {
       const upd = await (await import('@tauri-apps/plugin-updater')).check();
       updRef.current = upd || null;
       setAvailable(upd ? upd.version : null);
       setChecked(true);
-      setPhase((p) => (p === 'installing' ? p : 'idle'));
+      setPhase(() => (installationBusy() ? sharedInstallPhase : 'idle'));
     } catch {
-      setPhase((p) => (p === 'installing' ? p : 'error'));
+      setPhase(() => (installationBusy() ? sharedInstallPhase : 'error'));
     }
   }, []);
 
   // 즉시 설치 — 다운로드·설치(서명 검증은 Rust 업데이터가) 후 재시작. 뱃지·카드 공용 액션.
   const install = useCallback(async () => {
-    if (!inTauri()) return;
+    if (!inTauri() || installationBusy()) return;
     if (!updRef.current) { await check(); if (!updRef.current) return; } // 핸들 없으면 한 번 확인
-    setPhase('installing');
+    if (installationBusy()) return;
+    publishInstallPhase('installing');
     try {
       await updRef.current.downloadAndInstall();
-      setPhase('ready');
+      publishInstallPhase('ready');
       await (await import('@tauri-apps/plugin-process')).relaunch();
     } catch {
-      setPhase('error');
+      publishInstallPhase('error');
     }
   }, [check]);
+
+  useEffect(() => {
+    installListeners.add(setPhase);
+    if (installationBusy()) setPhase(sharedInstallPhase);
+    return () => { installListeners.delete(setPhase); };
+  }, []);
 
   // 마운트 시: 앱이면 네이티브 버전 로드 + 최초 확인, 이후 1시간마다 재확인(기존 뱃지 주기와 동일).
   useEffect(() => {
@@ -80,14 +98,14 @@ export function useAppUpdate() {
     let alive = true;
     if (app) {
       import('@tauri-apps/api/app').then((m) => m.getVersion())
-        .then((v) => { if (alive && v) setCurrent(v); })
+        .then((v) => { if (alive && v) { setCurrent(v); setVersionReady(true); } })
         .catch(() => { /* 버전 조회 실패 — 빌드타임 값 유지 */ });
-    }
+    } else setVersionReady(true);
     // 웹도 최초 확인 + 1시간 주기 재확인 — check()가 환경별 경로(Tauri 업데이터/서버 프록시)를 스스로 고른다
     check();
     const iv = setInterval(check, 60 * 60 * 1000);
     return () => { alive = false; clearInterval(iv); };
   }, [check]);
 
-  return { isApp, current, available, checked, phase, check, install };
+  return { isApp, current, versionReady, available, checked, phase, check, install };
 }

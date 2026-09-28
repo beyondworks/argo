@@ -26,15 +26,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makePermissionGate } from '../permission-gate.mjs';
 import { scrubServerSecrets } from './shared.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, CODEX_EFFORTS } from './codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig } from './codex.mjs';
+import { codexModelEffort } from '../model-effort.mjs';
 
 /** 크루 effort → app-server ReasoningEffort 값(순수). CLI 인자(codexEffortArgs)와 같은 사상 —
-    'max'는 Claude 전용 명칭이라 xhigh로. 미지원 값은 null(모델 기본). (export: 회귀 테스트용) */
-export function codexEffortValue(effort) {
-  const v = String(effort ?? '').trim().toLowerCase();
-  const mapped = v === 'max' ? 'xhigh' : v;
-  return CODEX_EFFORTS.includes(mapped) ? mapped : null;
-}
+    기존 모델 max→xhigh, GPT-6 Sol/Luna는 모델별 값 보존. 미지원 값은 null(모델 기본). */
+export const codexEffortValue = codexModelEffort;
 
 /** 승인 판정자 — permission-gate를 codex 승인 표면에 사상한다(규칙 사본 금지: 판정은 게이트 함수
     자신이 한다). exec는 Bash 판정(명령 문자열 리터럴 방어), 패치는 경로별 Write 판정.
@@ -182,7 +179,7 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
       });
       const threadId = th?.thread?.id;
       if (!threadId) throw new Error('thread/start가 스레드 id를 주지 않았습니다');
-      const eff = codexEffortValue(effort);
+      const eff = codexEffortValue(effort, model);
       await send('turn/start', { threadId, input: [{ type: 'text', text: prompt }], ...(eff ? { effort: eff } : {}) });
     })().catch((e) => finish(rejectP, e));
   });

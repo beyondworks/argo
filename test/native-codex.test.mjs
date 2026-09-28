@@ -43,6 +43,21 @@ const sse = (events) => events.map((e) => `event: ${e.type}\ndata: ${JSON.string
 const completed = (output, extra = {}) => ({ type: 'response.completed', response: { id: 'resp_1', model: 'gpt-5.6-sol', status: 'completed', output, usage: { input_tokens: 12, output_tokens: 4, input_tokens_details: { cached_tokens: 3 } }, ...extra } });
 const respond = (res, status, body, ct = 'text/event-stream') => { res.writeHead(status, { 'content-type': ct }); res.end(body); };
 
+test('GPT-6 Sol/Luna native query delivers exact model/effort to isolated HTTP backend', async () => {
+  const { codexModelEffort } = await import('../src/model-effort.mjs');
+  const srv = await fakeServer((_c, _n, res) => respond(res, 200, sse([completed([{ type: 'message', content: [{ type: 'output_text', text: 'fixture reply' }] }])])));
+  try {
+    for (const [model, effort] of [['gpt-6-sol', 'ultra'], ['gpt-6-luna', 'max']]) {
+      const output = [];
+      for await (const event of nativeQuery({ wsId: 'gpt6-wire', slug: 's', prompt: 'fixture', cwd: process.env.ARGO_ROOT, model, effort: codexModelEffort(effort, model), saveSession: false,
+        env: { ARGO_WIRE: 'responses', RESPONSES_BASE_URL: srv.base, RESPONSES_TOKEN: 'fixture-token' } })) output.push(event);
+      const body = JSON.parse(srv.calls.at(-1).body);
+      assert.equal(body.model, model); assert.equal(body.reasoning.effort, effort);
+      assert.ok(output.some((e) => e.type === 'result'));
+    }
+  } finally { await srv.close(); }
+});
+
 test('C1. Responses 변환(순수) — instructions·input 항목(input_text/output_text·function_call·function_call_output·input_image)·도구 정의·store:false·stream·reasoning', () => {
   const req = toResponsesRequest({ system: 'SYS', model: 'gpt-5.6-sol', effort: 'high',
     tools: [{ name: 'Read', description: 'r', input_schema: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } }],
@@ -198,7 +213,7 @@ test('C9. 원샷 — 플래그 on + codex API 키 회사의 runOneShot이 가짜
     const b = JSON.parse(srv.calls[0].body); assert.equal('tools' in b, false); assert.equal(b.model, CODEX_DEFAULT_MODEL); assert.equal(srv.calls[0].headers.authorization, 'Bearer fake-openai-key-111111');
   } finally { await srv.close(); delete process.env.ARGO_OPENAI_BASE_URL; }
   const chat = await readFile(join(ROOT, 'src', 'chat.mjs'), 'utf8');
-  assert.match(chat, /runner === 'codex' \? \(effModel \|\| CODEX_DEFAULT_MODEL\)/); assert.match(chat, /runner === 'codex' && CODEX_EFFORTS\.includes\(String\(meta\.effort \?\? ''\)\) \? \{ effort: meta\.effort \} : \{\}/);
+  assert.match(chat, /runner === 'codex' \? \(effModel \|\| CODEX_DEFAULT_MODEL\)/); assert.match(chat, /codexModelEffort\(meta\.effort, sdkModel\)/);
   const creds = await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8');
   assert.match(creds, /if \(runner === 'codex' && cred\.type !== 'host' && nativeRunnerEnabled\('codex'\)\) \{/);
 });

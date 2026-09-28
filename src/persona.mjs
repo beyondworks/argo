@@ -9,6 +9,7 @@ import { withLock } from './mutex.mjs';
 import { appendUsage } from './usage.mjs';
 import { isBilledRunner, visibleRunnerNamesLine } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
 import { normalizeModelId } from './runners/catalog-remote.mjs'; // 모델 저장 시 alias 정규화(불변식 D)
+import { CLAUDE_EFFORTS, normalizeCrewEffort } from './model-effort.mjs';
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
 import { isReservedSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
@@ -338,7 +339,7 @@ export function scopeServers(servers, scope) {
 
 /** 크루별 추론 강도 — Claude Agent SDK의 effort 계약(sdk.d.ts: 'low'|'medium'|'high'|'xhigh'|'max').
     '' = 모델 기본. (export: UI 옵션·회귀 테스트 공용 — 값 목록이 두 곳에서 갈리지 않게) */
-export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const EFFORT_LEVELS = CLAUDE_EFFORTS;
 
 export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, effort, skills, mcp }) {
   return withLock(cardLockKey(wsId, slug), async () => {
@@ -366,10 +367,10 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
     if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
     if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = 회사 연결 러너(기본)
     // 추론 강도(요청 2026-07-25) — 화이트리스트 밖 값은 저장하지 않는다(SDK가 거부하는 값이 카드에 굳는 것 방지).
-    // 빈 값 = 모델 기본. claude(SDK) 러너에만 적용된다 — chat.mjs가 러너를 보고 전달 여부를 정한다.
-    if (effort !== undefined) {
-      const v = String(effort).trim().toLowerCase();
-      md = setFrontmatterKey(md, 'effort', EFFORT_LEVELS.includes(v) ? v : '');
+    // 빈 값 = 모델 기본. Claude와 Codex의 지원 값만 저장하며 모델 전환 때도 재검사한다.
+    if (effort !== undefined || model !== undefined || runner !== undefined) {
+      const next = parseFrontmatter(md);
+      md = setFrontmatterKey(md, 'effort', normalizeCrewEffort(effort ?? before.effort, next.runner, next.model));
     }
     if (skills !== undefined) md = setFrontmatterKey(md, 'skills', String(skills).trim()); // 빈 값 = 전체, 'none' = 없음, csv = 지정만
     if (mcp !== undefined) md = setFrontmatterKey(md, 'mcp', String(mcp).trim());          // 동일 계약(parseScopeList)

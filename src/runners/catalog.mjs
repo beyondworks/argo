@@ -47,6 +47,9 @@ export const RUNNERS = {
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
       // GPT-6 Astra(2026-09-22) — ChatGPT 구독 codex exec 실응답 확인. 기본은 Sol 유지(유건 결정) — models[0]이 러너 전환 기본값이라 두 번째 자리
       { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
+      // Local Codex catalog metadata verified 2026-09-28; vendor turns remain unverified.
+      { id: 'gpt-6-sol', label: 'GPT-6 Sol' },
+      { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
       { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
       { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
       { id: 'gpt-5.5', label: 'GPT-5.5' },

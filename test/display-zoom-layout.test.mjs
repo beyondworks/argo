@@ -30,9 +30,9 @@ const ZOOMS = [1.25, 2]; // 대표 배율·수동 최대 — 식은 z에 선형�
 
 /* ── ① 치수 식 산술 평가 ───────────────────────────────────────────── */
 
-// CSS 길이 식 평가기 — calc/min/max, vh/px, var(--z[, 폴백])만. 미지 구문은 조용히 통과가 아니라
+// CSS 길이 식 평가기 — calc/min/max, vh/vw/px/%, 우측 안전영역, var(--z[, 폴백])만. 미지 구문은 조용히 통과가 아니라
 // 화이트리스트 검사로 시끄럽게 실패한다(fail-closed — 새 단위가 들어오면 평가기를 넓혀야 함).
-function evalSize(expr, { z } = {}) {
+function evalSize(expr, { z, viewportHeight = V, viewportWidth = V, containingWidth = viewportWidth / (z ?? 1), safeAreaRight = 0 } = {}) {
   let s = String(expr).trim();
   s = s.replace(/var\(\s*--z\s*(?:,\s*([^)]+))?\s*\)/g, (_, fb) => {
     if (z != null) return `(${z})`;
@@ -40,7 +40,10 @@ function evalSize(expr, { z } = {}) {
     // 폴백 없는 var(--z)는 변수 미설정(배율 1) 시 선언 전체가 무효 — 실브라우저와 같게 실패시킨다
     throw new Error(`var(--z) 폴백 없음 — 배율 1(변수 미설정)에서 선언이 무효가 된다: ${expr}`);
   });
-  s = s.replace(/(\d*\.?\d+)vh/gi, (_, n) => `(${n}*${V}/100)`);
+  s = s.replace(/(\d*\.?\d+)vh/gi, (_, n) => `(${n}*${viewportHeight}/100)`);
+  s = s.replace(/(\d*\.?\d+)vw/gi, (_, n) => `(${n}*${viewportWidth}/100)`);
+  s = s.replace(/(\d*\.?\d+)%/g, (_, n) => `(${n}*${containingWidth}/100)`);
+  s = s.replace(/env\(safe-area-inset-right\)/g, `(${safeAreaRight})`);
   s = s.replace(/(\d*\.?\d+)px/gi, '($1)');
   s = s.replace(/\bcalc\(/gi, '(').replace(/\bmin\(/gi, 'Math.min(').replace(/\bmax\(/gi, 'Math.max(');
   const residue = s.replace(/Math\.(min|max)/g, '').replace(/[\d\s+\-*/().,]/g, '');
@@ -129,6 +132,67 @@ test('배율 1(변수 미설정)은 --z=1 명시와 동일 — var 폴백(, 1)�
   for (const d of decls) {
     assert.equal(evalSize(d.expr, {}), evalSize(d.expr, { z: 1 }), `${d.where}: ${d.expr}`);
   }
+});
+
+test('업데이트 노트는 좁고 낮은 화면에서도 배율별 너비 90%·높이 80% 안에 머문다', () => {
+  const source = sources.get('app/update-notes.jsx');
+  const height = decls.find((d) => d.file === 'app/update-notes.jsx' && d.prop === 'maxHeight');
+  const width = source.match(/\bwidth:\s*'([^']+)'/)?.[1];
+  assert.ok(height && width, '실제 업데이트 패널의 치수 선언을 검사한다');
+  for (const [viewportWidth, viewportHeight] of [[320, 480], [768, 600], [1280, 900]]) {
+    for (const z of [0.7, 1, 1.25, 2]) {
+      const actualWidth = evalSize(width, { z, viewportWidth }) * z;
+      const actualHeight = evalSize(height.expr, { z, viewportHeight }) * z;
+      assert.ok(actualWidth > 0 && actualWidth <= Math.min(420 * z, viewportWidth * 0.9) + 1e-6,
+        `${viewportWidth}px 화면·배율 ${z}: 패널 너비 ${actualWidth}px가 넘친다`);
+      assert.ok(actualHeight > 0 && actualHeight <= Math.min(520 * z, viewportHeight * 0.8) + 1e-6,
+        `${viewportHeight}px 화면·배율 ${z}: 패널 높이 ${actualHeight}px가 넘친다`);
+    }
+  }
+  assert.equal(evalSize(width), evalSize(width, { z: 1 }), '배율 미설정 너비도 정상 배율과 같다');
+});
+
+test('업데이트 패널의 고정 기준 영역은 스크롤바·우측 안전영역을 제외해 좌측 넘침을 막는다', () => {
+  const source = sources.get('app/update-notes.jsx');
+  const width = source.match(/\bwidth:\s*'([^']+)'/)?.[1];
+  const maxWidth = source.match(/\bmaxWidth:\s*'([^']+)'/)?.[1];
+  const right = source.match(/\bright:\s*'([^']+)'/)?.[1];
+  assert.ok(width && right);
+  const bounds = (viewportWidth, z, scrollbar, safeAreaRight) => {
+    const options = { viewportWidth, z, containingWidth: (viewportWidth - scrollbar) / z, safeAreaRight };
+    const actualWidth = Math.min(evalSize(width, options), maxWidth ? evalSize(maxWidth, options) : Infinity) * z;
+    const actualRight = viewportWidth - scrollbar - evalSize(right, options) * z;
+    return { x: actualRight - actualWidth, width: actualWidth, right: actualRight };
+  };
+  assert.deepEqual(bounds(320, 2, 16, 0), { x: 32, width: 240, right: 272 }, '실제 Aside 320×480·배율2 재현 좌표');
+  for (const viewportWidth of [320, 768, 1280]) {
+    for (const z of [0.7, 1, 1.25, 2]) {
+      for (const scrollbar of [0, 16]) {
+        for (const safeAreaRight of [0, 28]) {
+          const actual = bounds(viewportWidth, z, scrollbar, safeAreaRight);
+          assert.ok(actual.x >= 16 * z - 1e-6 && actual.width > 0,
+            JSON.stringify({ viewportWidth, z, scrollbar, safeAreaRight, actual }));
+          assert.ok(actual.right <= viewportWidth - scrollbar - safeAreaRight * z + 1e-6);
+        }
+      }
+    }
+  }
+});
+
+test('업데이트 패널 헤더는 제목을 줄바꿈하고 닫기 버튼의 폭을 보존한다', () => {
+  const panel = sources.get('app/update-notes.jsx').split('<div className="card-head"')[0];
+  assert.match(panel, /overflowWrap:\s*'anywhere'/, '좁은 화면의 영문 긴 단어도 패널을 넘치지 않는다');
+  const header = sources.get('app/update-notes.jsx').match(/<div className="card-head"[\s\S]*?<\/div>/)?.[0];
+  assert.ok(header, '실제 패널 헤더를 검사한다');
+  const title = header.match(/<h2\b[^>]+>/)?.[0];
+  const close = header.match(/<button\b[^>]+>/)?.[0];
+  assert.ok(title && close);
+  assert.match(title, /minWidth:\s*0\b/);
+  assert.match(title, /flex:\s*1\b/);
+  assert.match(title, /display:\s*'block'/);
+  assert.match(title, /overflowWrap:\s*'anywhere'/);
+  assert.match(close, /flexShrink:\s*0\b/);
+  assert.doesNotMatch(header, /className="rule"/, '장식선과 두 번째 gap이 닫기 버튼 공간을 차지하지 않는다');
 });
 
 /* ── 인접 핀: 상단바 배율 반응형 (검수 별건 — 미디어쿼리 배율 사각) ─────────────

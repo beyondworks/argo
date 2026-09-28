@@ -6,14 +6,51 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { ensureNoDockShim, noDockShimPath, probeNodeOptions, setupNoDock, withNoDock } from '../src/no-dock.mjs';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ensureNoDockShim, noDockShimPath, noDockMcpEnv, probeNodeOptions, setupNoDock, withNoDock } from '../src/no-dock.mjs';
 
 const isMac = process.platform === 'darwin';
 const tmpShim = async () => join(await mkdtemp(join(tmpdir(), 'argo-nodock-')), 'no-dock.cjs');
+
+test('MCP env는 활성 Argo 심만 전달하고 다른 OS·미적용 상태는 보존한다', () => {
+  const env = { NODE_OPTIONS: '--trace-warnings', CUSTOM: 'kept' };
+  const path = '/tmp/argo space/no-dock.cjs';
+  const parentEnv = { NODE_OPTIONS: withNoDock('--inspect=0', path), SUPABASE_SERVICE_ROLE_KEY: 'fixture-only' };
+  for (const platform of ['linux', 'win32']) assert.equal(noDockMcpEnv(env, { platform, parentEnv, path }), env);
+  assert.equal(noDockMcpEnv(env, { platform: 'darwin', parentEnv: {}, path }), env);
+  assert.equal(noDockMcpEnv(env, { platform: 'darwin', parentEnv: { NODE_OPTIONS: '--require /tmp/shim.backup' }, path: '/tmp/shim' }), env);
+  const out = noDockMcpEnv(env, { platform: 'darwin', parentEnv, path });
+  assert.deepEqual(out, { CUSTOM: 'kept', NODE_OPTIONS: withNoDock('--trace-warnings', path) });
+  assert.deepEqual(noDockMcpEnv(out, { platform: 'darwin', parentEnv, path }), out, '중복 전달도 멱등');
+});
+
+test('MCP 선별 상속 경계를 지나도 Node 제목 억제와 서버 실행이 유지된다', { skip: !isMac, timeout: 10_000 }, async () => {
+  const path = await tmpShim();
+  const parentEnv = {};
+  await setupNoDock({ env: parentEnv, path });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ['-e', `process.title = 'argo-mcp-dock-regression'; process.stderr.write(JSON.stringify({title:process.title,result:1+1}) + '\\n'); setInterval(()=>{},1000);`],
+    env: noDockMcpEnv({}, { parentEnv, path }), stderr: 'pipe',
+  });
+  let output = '';
+  const report = new Promise((resolve, reject) => {
+    transport.onerror = reject;
+    transport.onclose = () => reject(new Error('MCP가 결과를 쓰기 전에 종료됨'));
+    transport.stderr.on('data', (data) => { output += data; if (output.includes('\n')) resolve(JSON.parse(output.trim())); });
+  });
+  try {
+    await transport.start();
+    const result = await report;
+    assert.notEqual(result.title, 'argo-mcp-dock-regression');
+    assert.equal(result.result, 2);
+  } finally { await transport.close(); await rm(join(path, '..'), { recursive: true, force: true }); }
+});
 
 /** 자식을 띄워 "제목 대입이 먹히는가"를 본다 — 프리로드가 걸리면 옛 값이 그대로 나온다. */
 const childTitleAfterSet = (env) => new Promise((resolve, reject) => {
@@ -27,6 +64,9 @@ const childTitleAfterSet = (env) => new Promise((resolve, reject) => {
 });
 
 test('withNoDock — 기존 NODE_OPTIONS 보존·같은 경로 중복 부착 금지·공백 경로 따옴표(순수)', () => {
+  assert.equal(withNoDock('--require /a/no-dock.cjs.backup', '/a/no-dock.cjs'), '--require /a/no-dock.cjs --require /a/no-dock.cjs.backup');
+  assert.equal(withNoDock('--require=/a/no-dock.cjs', '/a/no-dock.cjs'), '--require=/a/no-dock.cjs');
+  assert.equal(withNoDock('-r "/a/no-dock.cjs"', '/a/no-dock.cjs'), '-r "/a/no-dock.cjs"');
   assert.equal(withNoDock('', '/a/no-dock.cjs'), '--require /a/no-dock.cjs');
   assert.equal(withNoDock(undefined, '/a/no-dock.cjs'), '--require /a/no-dock.cjs');
   assert.equal(withNoDock('--max-old-space-size=4096', '/a/no-dock.cjs'),
@@ -91,6 +131,74 @@ test('setupNoDock — 파일 준비가 실패해도 env를 건드리지 않고 �
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test('setupNoDock retries transient preparation and probe failures once, adopting only success', async () => {
+  for (const failAt of ['prepare', 'probe']) {
+    const path = await tmpShim();
+    const env = { NODE_OPTIONS: '--trace-warnings' };
+    let preparations = 0; let probes = 0;
+    try {
+      assert.equal(await setupNoDock({ env, platform: 'darwin', path,
+        prepare: async (p) => { if (++preparations === 1 && failAt === 'prepare') throw Error('transient'); return ensureNoDockShim(p); },
+        probe: async (e, composed, opts) => {
+          assert.equal(e.NODE_OPTIONS, '--trace-warnings', 'not adopted before success');
+          if (++probes === 1 && failAt === 'probe') return false;
+          return probeNodeOptions(e, composed, opts);
+        },
+      }), path);
+      assert.equal(preparations, 2);
+      assert.equal(probes, failAt === 'probe' ? 2 : 1);
+      assert.equal(env.NODE_OPTIONS, withNoDock('--trace-warnings', path));
+    } finally { await rm(join(path, '..'), { recursive: true, force: true }); }
+  }
+});
+
+test('setupNoDock bounds hanging preparation/probes to two attempts without adoption', async () => {
+  for (const failAt of ['prepare', 'probe']) {
+    const env = { NODE_OPTIONS: '--trace-warnings' }; let attempts = 0;
+    const hang = () => { attempts++; return new Promise(() => {}); };
+    assert.equal(await setupNoDock({ env, platform: 'darwin', timeoutMs: 10,
+      prepare: failAt === 'prepare' ? hang : async () => '/fixture/no-dock.cjs',
+      probe: failAt === 'probe' ? hang : async () => true,
+    }), null);
+    assert.equal(attempts, 2);
+    assert.equal(env.NODE_OPTIONS, '--trace-warnings');
+  }
+});
+
+test('probeNodeOptions terminates a hung child on timeout', async () => {
+  const child = new EventEmitter(); let killed;
+  child.kill = (signal) => { killed = signal; return true; };
+  assert.equal(await probeNodeOptions({}, '', { spawnFn: () => child, timeoutMs: 10 }), false);
+  assert.equal(killed, 'SIGKILL');
+  child.emit('close', 0); // late completion must not adopt
+});
+
+test('withNoDock escapes double quotes and backslashes on every platform', () => {
+  for (const [path, expected] of [
+    ['/tmp/quote"path.cjs', String.raw`--require "/tmp/quote\"path.cjs"`],
+    [String.raw`C:\Users\runner\space path.cjs`, String.raw`--require "C:\\Users\\runner\\space path.cjs"`],
+  ]) {
+    assert.equal(withNoDock('', path), expected);
+    assert.equal(withNoDock(expected, path), expected);
+  }
+});
+
+test('withNoDock quotes platform-valid unusual paths using real Node parsing, without duplicate preloads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'argo-nodock-'));
+  try {
+    const names = ['space path.cjs', "single'quote.cjs", 'slash\\path.cjs'];
+    // A double quote is not a legal Windows filename; its encoding is covered above.
+    if (process.platform !== 'win32') names.push('quote"path.cjs');
+    for (const name of names) {
+      const path = join(dir, name);
+      await ensureNoDockShim(path);
+      const composed = withNoDock('--trace-warnings', path);
+      assert.equal(withNoDock(composed, path), composed);
+      assert.equal(await probeNodeOptions({}, composed), true);
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('probeNodeOptions — 깨진 NODE_OPTIONS는 거절하고 정상 값은 통과시킨다', { skip: !isMac && 'macOS 전용 처방' }, async () => {
   const p = await tmpShim();
   try {
@@ -145,7 +253,7 @@ test('배선 — 서버 부팅 훅이 스케줄러보다 먼저 setupNoDock을 �
 });
 
 // ── 사이드카 초기 env 경로(2026-09-15, 유건 "언제가 됐든 뜨면 안 돼") — 런타임 프로브 의존을 없애는 두 번째 방어선 ──
-test('배선 — stage-sidecar가 리소스에 no-dock.cjs를 쓰고, lib.rs(macOS)가 그것을 ~/.argo/tools로 복사해 NODE_OPTIONS 초기 env로 넣는다(문자 게이트·기존 값 보존·fail-open)', async () => {
+test('배선 — sidecar 리소스와 native 공통 심이 같은 본문이며 macOS 초기 env에 연결된다', async () => {
   const { readFile } = await import('node:fs/promises');
   const { SHIM_SRC } = await import('../src/no-dock.mjs');
   assert.match(SHIM_SRC, /Object\.defineProperty\(process, 'title'/, '심 본문은 세터 무력화');
@@ -153,10 +261,9 @@ test('배선 — stage-sidecar가 리소스에 no-dock.cjs를 쓰고, lib.rs(mac
   assert.match(stage, /import \{ SHIM_SRC \} from '\.\.\/src\/no-dock\.mjs'/, '정본 하나(SHIM_SRC)에서 동봉');
   assert.match(stage, /writeFileSync\(join\(serverDest, 'no-dock\.cjs'\), SHIM_SRC\)/, '리소스 server/no-dock.cjs');
   const rs = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
-  assert.match(rs, /#\[cfg\(target_os = "macos"\)\]\s*fn no_dock_node_options\(server_dir: &str, home: Option<std::path::PathBuf>\) -> Result<String, String>/, 'macOS 전용 헬퍼');
-  assert.match(rs, /\.join\("\.argo"\)\.join\("tools"\)/, '번들 밖 안정 경로 = JS noDockShimPath와 동일(~/.argo/tools/no-dock.cjs)');
-  assert.match(rs, /if p\.contains\('"'\) \|\| p\.contains\('\\\\'\) \{ return Err/, 'NODE_OPTIONS를 깨는 문자 게이트(fail-open)');
-  assert.match(rs, /any\(char::is_whitespace\)/, '공백 경로는 따옴표');
+  assert.match(rs, /#\[cfg\(target_os = "macos"\)\]\s*mod no_dock;/, 'macOS 전용 공통 심');
+  assert.match(rs, /no_dock::prepare\(&home,/, '본체가 공통 preparation을 사용');
+  assert.equal(await readFile(new URL('../src-tauri/src/no-dock.cjs', import.meta.url), 'utf8'), SHIM_SRC);
   assert.match(rs, /std::env::var\("NODE_OPTIONS"\)/, '기존 NODE_OPTIONS 보존');
   assert.match(rs, /Ok\(v\) => cmd = cmd\.env\("NODE_OPTIONS", v\),\s*Err\(e\) => log::warn!/, '실패는 경고만');
   assert.ok(rs.indexOf('cmd = cmd.env("NODE_OPTIONS"') < rs.indexOf('.args(["server.js"])'), '스폰 전에 env');

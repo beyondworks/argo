@@ -183,7 +183,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
         // 크루 자기 카드 수정으로 우회 가능하던 반쪽 격리였다(분리 검수 MED-3 판정: 경계 아님).
         // readOnly면 read-only 샌드박스(순수 생성 — 파일·셸 불가). 기본은 전권(유건 지시 2026-08-21).
         'exec', '--sandbox', readOnly ? 'read-only' : 'danger-full-access', '--skip-git-repo-check',
-        ...codexEffortArgs(effort), // 크루별 추론 강도 — codex도 지원(실측 2026-07-26)
+        ...codexEffortArgs(effort, model), // Model-specific effort; legacy max still maps to xhigh.
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         // 프롬프트는 표준 입력으로('-' = stdin에서 읽음, 핀 0.149.1 `codex exec --help`). 인자로 넘기면 Windows

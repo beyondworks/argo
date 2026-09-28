@@ -38,8 +38,9 @@ test('principal and company ownership never broaden from cookies or auth-off', (
 test('actual service install paths overwrite inherited proof and retain bind/port/restart contracts', async () => {
   const source = (await readFile(new URL('../scripts/service.mjs', import.meta.url), 'utf8')).replace(/^#!.*\n/, '').replace(/^import .*;\n/gm, '');
   for (const platform of ['darwin', 'linux', 'win32']) for (const host of ['127.0.0.1', '0.0.0.0']) {
-    const files = new Map(), commands = [];
+    const files = new Map(), commands = [], dockEnvs = [];
     const sandbox = {
+      setupNoDock: async ({ env }) => { dockEnvs.push(env); env.NODE_OPTIONS = '--require /temporary-home/no-dock.cjs'; },
       localBindProof, process: { platform, env: { ARGO_HOST: host, ARGO_PORT: '43210', ARGO_LOCAL_BIND_PROOF: 'inherited-invalid', USER: 'tester' }, execPath: '/node', argv: ['node', 'service', 'install'], getuid: () => 501, stdout: { write() {} }, exit: () => { throw new Error('unexpected exit'); } },
       dirname: (p) => p.slice(0, p.lastIndexOf('/')), join: (...p) => p.join('/'), fileURLToPath: () => '/repo/scripts/service.mjs', homedir: () => '/temporary-home',
       existsSync: (p) => p.endsWith('BUILD_ID'), mkdirSync() {}, rmSync() {}, readdirSync: () => [], readFileSync: p => p.endsWith('package.json') ? '{"version":"test-version"}' : 'test-build', writeFileSync: (p, data) => files.set(p, data),
@@ -48,6 +49,8 @@ test('actual service install paths overwrite inherited proof and retain bind/por
     await vm.runInNewContext(`(async () => { ${source.replaceAll('import.meta.url', "'file:///repo/scripts/service.mjs'")} })()`, sandbox);
     if (platform === 'linux') assert.ok(commands.indexOf('systemctl --user restart argo') > commands.indexOf('systemctl --user enable argo'));
     const generated = [...files.values()].join('\n');
+    assert.equal(dockEnvs.length, platform === 'darwin' ? 1 : 0);
+    if (platform === 'darwin') assert.ok(generated.includes('<key>NODE_OPTIONS</key><string>--require /temporary-home/no-dock.cjs</string>'));
     assert.ok(generated.includes(`start${platform === 'darwin' ? '</string><string>-H</string><string>' : ' -H '}${host}`));
     assert.ok(generated.includes('43210'));
     assert.ok(!generated.includes('inherited-invalid'));

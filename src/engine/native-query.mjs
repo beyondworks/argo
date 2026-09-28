@@ -72,6 +72,7 @@ export function visionCapable(model, env = process.env) {
   if (raw === '*') return true;
   if (raw === 'none') return false;
   if (raw) return raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean).some((s) => m.includes(s));
+  if (m === 'gpt-6-sol' || m === 'gpt-6-luna') return true;
   return /claude|gpt-4o|gpt-4\.1|gpt-5|\bo[134]\b|gemini|grok-(2-vision|3|4)|glm-4\.?\d?v|glm-5|qwen[^/]*vl|pixtral|llava|minimax|kimi-k[23]|vision/.test(m);
 }
 

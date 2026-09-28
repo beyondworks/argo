@@ -1,6 +1,7 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { isStopCommand } from '../../../../../src/stop-command.mjs';
+import { effortLevels, normalizeCrewEffort } from '../../../../../src/model-effort.mjs';
 import { approvalExpandDefault } from '../../../../lib/approval-display.mjs';
 import { splitEnvelope } from './envelope.mjs';
 import { viaSummary } from './via-summary.mjs';
@@ -1780,7 +1781,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
           {/* {...sel} 스프레드 — runner/model만 바꾸고 effort는 보존(검수 LOW: 통째 교체는 카드
               패널의 추론 강도 표시를 '기본'으로 되돌려 보였다. 저장은 PATCH가 보존해 표시만의 문제). */}
           <button type="button" role="menuitemradio" aria-checked={!sel.runner}
-            onClick={() => { onChange({ ...sel, runner: '', model: '' }); setOpen(false); }}
+            onClick={() => { onChange({ ...sel, runner: '', model: '', effort: normalizeCrewEffort(sel.effort, '', '') }); setOpen(false); }}
             style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
               background: !sel.runner ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
               cursor: 'pointer', padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
@@ -1798,7 +1799,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
                 return (
                   <button key={`${r.id}:${m.id}`} type="button" role="menuitemradio" aria-checked={active}
                     disabled={!r.authed}
-                    onClick={() => { onChange({ ...sel, runner: r.id, model: m.id }); setOpen(false); }}
+                    onClick={() => { onChange({ ...sel, runner: r.id, model: m.id, effort: normalizeCrewEffort(sel.effort, r.id, m.id) }); setOpen(false); }}
                     style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
                       background: active ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
                       cursor: r.authed ? 'pointer' : 'not-allowed',
@@ -1842,8 +1843,9 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
         onChange={(e) => {
           const next = runners?.find((r) => r.id === e.target.value);
           // 러너를 바꾸면 그 러너의 첫 모델을 바로 선택 — "기본" 가짜 항목 없이 항상 실제 모델.
-          // effort는 유지한다 — 떨구면 저장값(PATCH 미포함이라 보존)과 화면이 어긋난다(검수 LOW-8).
-          onChange({ ...sel, runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
+          // 지원되는 effort는 유지하고 모델 전용 값은 해제해 저장값과 화면을 맞춘다.
+          const runner = e.target.value, model = next?.models?.[0]?.id ?? '';
+          onChange({ ...sel, runner, model, effort: normalizeCrewEffort(sel.effort, runner, model) });
         }}>
         {/* 로딩 폴백으로 가짜 Claude 항목을 만들지 않는다 — '' = 자동(첫 연결 러너) */}
         <option value="">{t('runner.autoOption')}</option>
@@ -1853,7 +1855,7 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
       </select>
       {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
       <select value={sel.model} disabled={busy || (cur && !cur.authed)} style={box}
-        onChange={(e) => onChange({ ...sel, runner: sel.runner, model: e.target.value })}>
+        onChange={(e) => onChange({ ...sel, model: e.target.value, effort: normalizeCrewEffort(sel.effort, sel.runner, e.target.value) })}>
         {!sel.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
         {(cur?.models ?? []).map((m) => (
           <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
@@ -1869,15 +1871,12 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
           aria-label={t('runner.effortLabel')}
           onChange={(e) => onChange({ ...sel, effort: e.target.value })}>
           <option value="">{t('runner.effortDefault')}</option>
-          {EFFORT_OPTIONS.map((v) => <option key={v} value={v}>{t(`runner.effort.${v}`)}</option>)}
+          {effortLevels(sel.runner, sel.model).map((v) => <option key={v} value={v}>{t(`runner.effort.${v}`)}</option>)}
         </select>
       )}
     </>
   );
 }
-// persona.EFFORT_LEVELS와 같은 목록 — 클라이언트 번들이 서버 모듈(node:fs 의존)을 끌어오지 않게 값만 복제한다.
-// 불일치 시 저장 단계(updateAgentMeta 화이트리스트)가 정본이라 잘못된 값이 카드에 굳지는 않는다.
-const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** 카드 패널 — 카드가 곧 시스템 프롬프트. 열람·편집·해고(깃헙식 확인). */
 /** 능력 범위 원문 해석 — 백엔드 parseScopeList와 동일 계약(''=전체→null, 'none'=[], csv=목록). */

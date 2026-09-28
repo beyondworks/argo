@@ -2,6 +2,7 @@
 // 실사용 신고(2026-07-19): 크루 영입이 Claude SDK 하드코딩이라 Codex만 연결한 사용자는 영입 자체가
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { sdkNoDockOptions } from './sdk-no-dock.mjs';
 import { noToolHooks } from './permission-gate.mjs';
 import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; // 하네스 통일 P-A' — 플래그 러너의 원샷도 Argo 엔진으로(같은 러너 두 경로 갈림 제거)
 import { paths } from './workspace.mjs';
@@ -116,6 +117,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         settingSources: [], // 호스트 머신의 CLAUDE.md 등 미주입(테넌트 격리)
         maxTurns,
         ...(sdkEnv ? { env: sdkEnv } : {}),
+        ...sdkNoDockOptions(),
         // openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
         // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).

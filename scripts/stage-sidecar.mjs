@@ -52,17 +52,13 @@ cpSync(standalone, serverDest, { recursive: true });
   }
 }
 renameSync(join(serverDest, 'server.js'), join(serverDest, 'server-next.mjs'));
-// 3.35) 자식용 프리로드 심을 리소스에 동봉 — Rust(lib.rs no_dock_node_options)가 기동 때 ~/.argo/tools/no-dock.cjs로 복사해 NODE_OPTIONS=--require <그 경로>를 **초기 env**로 넣는다.
+// 3.35) 부트스트랩용 심 동봉. 두 Rust 셸은 같은 본문을 컴파일해 ~/.argo/tools/no-dock.cjs를 준비한다(바이트 일치 테스트).
 //      런타임 setupNoDock(~/.argo/tools/no-dock.cjs, 프로브 뒤 대입)만 믿으면 프로브 실패·타임아웃 한 번에 그 세션의 모든 node 자식
 //      (npm exec·MCP 서버·CLI 러너 — 번들 node라 제목을 설정하면 Foreground 앱으로 등록돼 Dock에 뜬다, 실측 2026-09-15)이 아이콘을 만든다.
-//      초기 env는 스냅샷·세척·상속 어디서도 빠지지 않는다. 정본은 src/no-dock.mjs SHIM_SRC 하나.
+//      SDK·MCP의 env 세척 경계에서는 활성 심을 별도로 복구한다. 정본은 src/no-dock.mjs SHIM_SRC.
 writeFileSync(join(serverDest, 'no-dock.cjs'), SHIM_SRC);
-writeFileSync(join(serverDest, 'server.js'), `// Dock 아이콘 방지 부트스트랩 — stage-sidecar가 생성(정본은 server-next.mjs).
-// macOS: process.title 세터가 LaunchServices에 Foreground 앱으로 등록해 Dock에 node 아이콘이
-// 뜬다(실측 2026-08-21). Next(start-server.js)의 'next-server (vX)' 설정을 세터 차단으로 막는다.
-// 잃는 것은 ps 표시 이름뿐이다.
-const t0 = process.title;
-Object.defineProperty(process, 'title', { configurable: true, get: () => t0, set: () => {} });
+writeFileSync(join(serverDest, 'server.js'), `// Dock 아이콘 방지 부트스트랩 — 정본은 server-next.mjs.
+import './no-dock.cjs';
 await import('./server-next.mjs');
 `);
 

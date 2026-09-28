@@ -10,6 +10,9 @@ use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
+#[cfg(target_os = "macos")]
+mod no_dock;
+mod update_notes;
 
 // 부트 화면(public/index.html)에 실시간 상태를 알린다 — 실패도 화면에 보이게(무한 대기 방지).
 // port: 프론트가 이동할 서버 포트(선택 확정 후) — boot.js가 후보 목록 맨 앞에 넣는다.
@@ -81,31 +84,17 @@ fn is_same_version_argo(port: u16) -> bool {
     let is_argo = text.contains("\"argo\":true") || text.contains("\"argo\": true");
     let same_ver = text.contains(&format!("\"version\":\"{}\"", env!("CARGO_PKG_VERSION")))
         || text.contains(&format!("\"version\": \"{}\"", env!("CARGO_PKG_VERSION")));
-    is_argo && same_ver
+    // Version alone can adopt an old resident with the pre-fix spawn paths.
+    // Bound the numeric token so a future incompatible protocol is not accepted.
+    let dock_protocol = ["\"dockProtocol\":1,", "\"dockProtocol\":1}", "\"dockProtocol\": 1,", "\"dockProtocol\": 1}"]
+        .iter().any(|marker| text.contains(marker));
+    is_argo && same_ver && dock_protocol
 }
 
-/// macOS Dock 아이콘 억제 — 사이드카 초기 env에 넣을 NODE_OPTIONS 값. 번들 리소스의 심(server/no-dock.cjs)을 **번들 밖 안정 경로**
-/// `~/.argo/tools/no-dock.cjs`(src/no-dock.mjs noDockShimPath와 같은 경로)에 복사해 가리킨다: 앱 이동·업데이트로 번들이 바뀌어도
-/// 실행 중인 node 자식이 죽지 않고, JS setupNoDock이 같은 경로를 보고 프로브·이중 --require 없이 조기 반환한다(검수 #539 MEDIUM-1·2).
-/// 어느 단계든 실패하면 Err — 호출자는 경고만 남기고 env를 넣지 않는다(fail-open: 없는·깨진 --require는 모든 node 자식을 죽인다, HIGH-1).
 #[cfg(target_os = "macos")]
-fn no_dock_node_options(server_dir: &str, home: Option<std::path::PathBuf>) -> Result<String, String> {
-    use std::os::unix::fs::PermissionsExt;
-    let src = std::path::Path::new(server_dir).join("no-dock.cjs");
-    let body = std::fs::read(&src).map_err(|e| format!("심 원본 없음 {}: {e}", src.display()))?;
-    let dir = home.ok_or_else(|| "홈 디렉터리를 알 수 없음".to_string())?.join(".argo").join("tools");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let dest = dir.join("no-dock.cjs");
-    let p = dest.to_string_lossy().to_string();
-    // NODE_OPTIONS 문법을 깨는 문자(실측: `"`는 unterminated string으로 node 즉사, 따옴표 안 `\`는 이스케이프로 먹혀 MODULE_NOT_FOUND)
-    if p.contains('"') || p.contains('\\') { return Err(format!("경로에 NODE_OPTIONS를 깨는 문자가 있어 넣지 않음: {p}")); }
-    let tmp = dir.join(format!("no-dock.cjs.tmp-{}", std::process::id()));
-    std::fs::write(&tmp, &body).and_then(|_| std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)))
-        .and_then(|_| std::fs::rename(&tmp, &dest)).map_err(|e| format!("{}: {e}", dest.display()))?;
-    let arg = if p.chars().any(char::is_whitespace) { format!("\"{p}\"") } else { p };
-    // 사용자의 기존 NODE_OPTIONS는 뒤에 보존(JS withNoDock과 대칭, LOW-1)
-    let prev = std::env::var("NODE_OPTIONS").ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-    Ok(match prev { Some(v) => format!("--require {arg} {v}"), None => format!("--require {arg}") })
+fn no_dock_node_options(_server_dir: &str, home: Option<std::path::PathBuf>) -> Result<String, String> {
+    let home = home.ok_or_else(|| "홈 디렉터리를 알 수 없음".to_string())?;
+    no_dock::prepare(&home, std::env::var("NODE_OPTIONS").ok().as_deref())
 }
 
 // Windows 리소스 경로의 \\?\ (UNC) 프리픽스 제거 — node가 스크립트 경로 인자로 받지 못해
@@ -157,10 +146,23 @@ fn is_file_route_nav(url: &tauri::Url) -> bool {
     local && !inline && segs.len() == 4 && segs[0] == "api" && segs[1] == "companies" && matches!(segs[3], "files" | "vault")
 }
 
+#[tauri::command]
+async fn read_update_notes_version(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || update_notes::read(&dir)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn acknowledge_update_notes_version(app: tauri::AppHandle, version: String) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let installed = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || update_notes::acknowledge(&dir, &version, &installed)).await.map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![save_download])
+        .invoke_handler(tauri::generate_handler![save_download, read_update_notes_version, acknowledge_update_notes_version])
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("file-nav-guard")
                 .on_navigation(|_webview, url| !is_file_route_nav(url))
@@ -389,6 +391,25 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn adoption_rejects_same_version_without_current_dock_protocol() {
+        for (protocol, expected) in [("", false), (",\"dockProtocol\":0", false), (",\"dockProtocol\":10", false), (",\"dockProtocol\":1", true)] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let body = format!("{{\"argo\":true,\"version\":\"{}\"{protocol}}}", env!("CARGO_PKG_VERSION"));
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut request = [0; 512];
+                let _ = socket.read(&mut request);
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                socket.write_all(response.as_bytes()).unwrap();
+            });
+            assert_eq!(is_same_version_argo(port), expected);
+            server.join().unwrap();
+        }
+    }
+
     #[test]
     fn local_asset_proof_follows_actual_bind() {
         assert_eq!(local_bind_proof("127.0.0.1"), "127.0.0.1");

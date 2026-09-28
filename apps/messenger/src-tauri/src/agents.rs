@@ -74,9 +74,29 @@ fn redact(text: &str) -> String {
 
 fn run(cli: &Path, args: &[&str]) -> (bool, String) { run_env(cli, args, &[]) }
 fn run_env(cli: &Path, args: &[&str], extra: &[(&str, String)]) -> (bool, String) {
+    run_env_with_home(cli, args, extra, home().ok().as_deref())
+}
+fn run_env_with_home(cli: &Path, args: &[&str], extra: &[(&str, String)], dock_home: Option<&Path>) -> (bool, String) {
     let mut cmd = match command(cli, args) { Ok(cmd) => cmd, Err(e) => return (false, e) };
     match std::env::join_paths(cli_dirs()) { Ok(path) => { cmd.env("PATH", path); }, Err(e) => return (false, e.to_string()) }
     for (k, v) in extra { cmd.env(k, v); }
+    #[cfg(target_os = "macos")]
+    {
+        let inherited = std::env::var("NODE_OPTIONS").ok();
+        let previous = extra.iter().rev().find(|(k, _)| *k == "NODE_OPTIONS").map(|(_, v)| v.as_str()).or(inherited.as_deref());
+        let prepared = (|| {
+            let options = crate::no_dock::prepare(dock_home.ok_or("Home unavailable")?, previous)?;
+            let node = find_cli("node").ok_or("Node executable unavailable")?;
+            crate::no_dock::validate(&node, &options, Duration::from_secs(10))?;
+            Ok::<_, String>(options)
+        })();
+        match prepared {
+            Ok(options) => { cmd.env("NODE_OPTIONS", options); }
+            Err(_) => eprintln!("[argo-messenger] Dock suppression unavailable; preserving CLI environment"),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = dock_home;
     let mut child = match cmd.env("NO_COLOR", "1").env("FORCE_COLOR", "0").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(c) => c, Err(e) => return (false, format!("spawn failed: {e}")),
     };
@@ -286,6 +306,27 @@ pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, agents: V
 #[cfg(test)]
 mod tests {
     use super::{upsert_env, parse_hermes_profiles, parse_openclaw_agents, merge_binding, batch_command_line, installation_id, redact, hermes_gateway_running};
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn agent_commands_preserve_environment_and_suppress_node_title() {
+        let node = super::find_cli("node").expect("system Node required for integration test");
+        let dir = std::env::temp_dir().join(format!("argo messenger dock {}", std::process::id()));
+        let script = "const before=process.title;process.title='argo-title-test';process.stdout.write(JSON.stringify({blocked:process.title===before,marker:process.env.ARGO_DOCK_TEST,colors:process.env.NO_COLOR,flags:process.env.NODE_OPTIONS}))";
+        let env = [("NODE_OPTIONS", "--no-warnings".to_string()), ("ARGO_DOCK_TEST", "preserved".to_string())];
+        let (ok, out) = super::run_env_with_home(&node, &["-e", script], &env, Some(&dir));
+        assert!(ok, "{out}");
+        let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(value["blocked"], true);
+        assert_eq!(value["marker"], "preserved");
+        assert_eq!(value["colors"], "1");
+        assert!(value["flags"].as_str().unwrap().contains("--no-warnings"));
+        let blocked_home = dir.join("file"); std::fs::write(&blocked_home, "not a directory").unwrap();
+        let (ok, out) = super::run_env_with_home(&node, &["-p", "process.env.NODE_OPTIONS"], &env, Some(&blocked_home));
+        assert!(ok, "{out}"); assert_eq!(out.trim(), "--no-warnings");
+        let (ok, out) = super::run_env_with_home(&node, &["-e", "console.error('argo_bot_test');process.exit(7)"], &env, Some(&dir));
+        assert!(!ok); assert_eq!(out.trim(), "[redacted]");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn binding_upsert_keeps_telegram_other_agents_and_peer_routes() {
         let telegram = serde_json::json!({"match":{"channel":"telegram","accountId":"default"},"agentId":"support"});
