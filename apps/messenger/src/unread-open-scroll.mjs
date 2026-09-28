@@ -14,3 +14,7 @@ export function unreadOpenScrollTarget({ scrollHeight, dividerTop, clientHeight,
   const raw = dividerTop - clientHeight * ratio;
   return { scrollTop: Math.min(Math.max(0, raw), max), stick: false };
 }
+
+// 대화가 실제로 화면에 있는가 — 폰 홈·채팅 목록 탭은 마지막 대화를 display:none으로 그려 둔다(styles.css .phone-home .msgr-main).
+// 그 상태에서 읽음 처리·첫 스크롤 계산을 하면 열지도 않은 대화가 읽음이 되고, 높이 0에서 계산한 위치로 굳는다(2026-09-29 점검).
+export const channelOnScreen = ({ isPhone, page }) => !(isPhone && (page === 'home' || page === 'dm'));

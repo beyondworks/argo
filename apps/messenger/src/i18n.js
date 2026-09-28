@@ -368,8 +368,6 @@ export const DICT = {
   'msg.new': ['새 메시지', 'New messages'],
   'msg.edited': ['(수정됨)', '(edited)'],
   'msg.reply': ['답글', 'Reply'],
-  'composer.ph.ch': ['#{name}에 메시지 보내기', 'Message #{name}'],
-  'composer.ph.dm': ['메시지 보내기', 'Message'],
   'composer.replyTo': ['{name}에게 답글', 'Replying to {name}'],
   'composer.replyCancel': ['답글 취소(Esc)', 'Cancel reply (Esc)'],
   'msg.react': ['반응', 'React'],
