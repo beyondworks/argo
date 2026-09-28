@@ -6,6 +6,9 @@
 #[cfg(desktop)]
 mod agents; // 외부 에이전트 원클릭 연결(헤르메스·오픈클로 플러그인 설치·설정·게이트웨이)
 #[cfg(target_os = "macos")]
+#[path = "../../../../src-tauri/src/no_dock.rs"]
+mod no_dock;
+#[cfg(target_os = "macos")]
 mod notify_mac; // OS 알림 — UNUserNotificationCenter 직결(플러그인의 폐기 API 경로 대체)
 #[cfg(target_os = "macos")]
 mod notification_sound;

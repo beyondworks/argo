@@ -129,7 +129,9 @@ function probe(i) {
     .then(function (d) {
       if (timer) clearTimeout(timer);
       // 신원 + (셸 버전을 아는 경우) 버전까지 일치해야 이동 — 다른 버전의 Argo는 건너뛴다
-      if (d && d.argo === true && (!APP_VER || d.version === APP_VER)) { goto(target); } else { probe(i + 1); }
+      // Even if the native boot event was lost, never adopt a same-version
+      // resident that predates the Dock fixes. A new shell cannot patch its env.
+      if (d && d.argo === true && d.dockProtocol === 1 && (!APP_VER || d.version === APP_VER)) { goto(target); } else { probe(i + 1); }
     })
     .catch(function () { if (timer) clearTimeout(timer); probe(i + 1); });
 }

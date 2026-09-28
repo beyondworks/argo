@@ -3,6 +3,7 @@
 // 도구 정의·입력 검증·처리기는 네이티브 엔진과 같은 crewToolSpecs(makeCrewServer의 sink) — SDK·네이티브·CLI가 한 원천이다.
 // 권한: 크루 도구는 SDK에서도 사전 승인(게이트 밖)이고 손님·주인 판정은 처리기 안에 있다 — 여기서도 게이트를 따로 태우지 않는다.
 import { createServer } from 'node:http';
+import { noDockMcpEnv } from '../no-dock.mjs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
@@ -55,7 +56,8 @@ export async function createCrewMcpBridge(specs = []) {
   server.unref();
   let closing;
   return {
-    server: { command: process.execPath, args: [worker], env: { ARGO_CREW_RELAY_URL: `http://127.0.0.1:${server.address().port}/`, ARGO_CREW_RELAY_TOKEN: token }, toolTimeoutSec: 1800 },
+    // Added after customer MCP materialization; carry the preload here too.
+    server: { command: process.execPath, args: [worker], env: noDockMcpEnv({ ARGO_CREW_RELAY_URL: `http://127.0.0.1:${server.address().port}/`, ARGO_CREW_RELAY_TOKEN: token }), toolTimeoutSec: 1800 },
     called,
     close: () => closing ??= (async () => {
       controller.abort();

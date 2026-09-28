@@ -41,6 +41,17 @@ function load({ fetchImpl, hasAC = true }) {
 }
 
 const drain = () => new Promise((r) => setImmediate(r));
+
+test('ping route publishes the exact adoption protocol without runtime health claims', async () => {
+  const source = readFileSync(new URL('../app/api/ping/route.js', import.meta.url), 'utf8')
+    .replace(/^import .*;$/gm, '').replace('export async function GET', 'async function GET');
+  const get = vm.runInNewContext(`${source}\nGET`, {
+    Response, pkg: { version: '9.9.9' }, readFileSync: () => 'fixture-build',
+  });
+  const response = await get();
+  assert.deepEqual(await response.json(), { argo: true, version: '9.9.9', buildId: 'fixture-build', dockProtocol: 1 });
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+});
 /** 무응답 선점 모사 — signal abort에만 반응해 reject(진짜 매달리는 fetch). */
 const hangingFetch = (calls) => (url, opts) => {
   calls.push(url);
@@ -86,7 +97,7 @@ test('port 이벤트 = 단일 교체 + 버전 각인 (같은 버전 상주로 �
 
 test('정상 즉답: 신원·버전 일치 서버로 이동하고 상한 타이머를 해제한다 (정상 경로 회귀 0)', async () => {
   const { ctx, timers } = load({
-    fetchImpl: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ argo: true, version: '0.0.0' }) }),
+    fetchImpl: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ argo: true, version: '0.0.0', dockProtocol: 1 }) }),
   });
   await drain(); await drain(); await drain();
   const goDelay = timers.find((t) => t.ms === 350);
@@ -116,7 +127,7 @@ test('신원 게이트: argo 마커 없는 응답(타 앱)으로는 이동하지
   const { ctx, timers } = load({
     fetchImpl: (url) => Promise.resolve({
       ok: true,
-      json: () => Promise.resolve(String(url).includes('3001') ? { hello: 'imposter' } : { argo: true, version: '0.0.0' }),
+      json: () => Promise.resolve(String(url).includes('3001') ? { hello: 'imposter' } : { argo: true, version: '0.0.0', dockProtocol: 1 }),
     }),
   });
   for (let n = 0; n < 6 && !timers.find((t) => t.ms === 350); n++) await drain();
@@ -128,7 +139,7 @@ test('버전 게이트: 셸 버전을 알면 다른 버전의 Argo는 건너뛴�
   const { ctx, listeners, timers } = load({
     fetchImpl: (url) => Promise.resolve({
       ok: true,
-      json: () => Promise.resolve({ argo: true, version: String(url).includes('3001') ? '0.0.1' : '9.9.9' }),
+      json: () => Promise.resolve({ argo: true, version: String(url).includes('3001') ? '0.0.1' : '9.9.9', dockProtocol: 1 }),
     }),
   });
   listeners.boot({ payload: { version: '9.9.9' } }); // port 없이 버전만 — 목록은 그대로
@@ -144,3 +155,14 @@ test('AbortController 부재 웹뷰: 예외 없이 구 동작으로 강등 (사�
   assert.equal(calls.length, 1);
   assert.equal(timers.filter((t) => t.ms === 1500 || t.ms === 8000).length, 0, '타이머 미배선 — 조용한 강등');
 });
+
+for (const stale of [undefined, 0, 10]) {
+  test(`same-version resident protocol ${stale} is not adopted even without a boot event`, async () => {
+    const { ctx, timers } = load({ fetchImpl: url => Promise.resolve({ ok: true,
+      json: () => Promise.resolve({ argo: true, version: '9.9.9', dockProtocol: String(url).includes('3001') ? stale : 1 }),
+    }) });
+    for (let n = 0; n < 8 && !timers.find(t => t.ms === 350); n++) await drain();
+    timers.find(t => t.ms === 350)?.fn();
+    assert.equal(ctx.__navigated, 'http://localhost:3011');
+  });
+}

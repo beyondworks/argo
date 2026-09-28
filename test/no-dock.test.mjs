@@ -240,7 +240,7 @@ test('배선 — 서버 부팅 훅이 스케줄러보다 먼저 setupNoDock을 �
 });
 
 // ── 사이드카 초기 env 경로(2026-09-15, 유건 "언제가 됐든 뜨면 안 돼") — 런타임 프로브 의존을 없애는 두 번째 방어선 ──
-test('배선 — stage-sidecar가 리소스에 no-dock.cjs를 쓰고, lib.rs(macOS)가 그것을 ~/.argo/tools로 복사해 NODE_OPTIONS 초기 env로 넣는다(문자 게이트·기존 값 보존·fail-open)', async () => {
+test('배선 — sidecar 리소스와 native 공통 심이 같은 본문이며 macOS 초기 env에 연결된다', async () => {
   const { readFile } = await import('node:fs/promises');
   const { SHIM_SRC } = await import('../src/no-dock.mjs');
   assert.match(SHIM_SRC, /Object\.defineProperty\(process, 'title'/, '심 본문은 세터 무력화');
@@ -248,10 +248,9 @@ test('배선 — stage-sidecar가 리소스에 no-dock.cjs를 쓰고, lib.rs(mac
   assert.match(stage, /import \{ SHIM_SRC \} from '\.\.\/src\/no-dock\.mjs'/, '정본 하나(SHIM_SRC)에서 동봉');
   assert.match(stage, /writeFileSync\(join\(serverDest, 'no-dock\.cjs'\), SHIM_SRC\)/, '리소스 server/no-dock.cjs');
   const rs = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
-  assert.match(rs, /#\[cfg\(target_os = "macos"\)\]\s*fn no_dock_node_options\(server_dir: &str, home: Option<std::path::PathBuf>\) -> Result<String, String>/, 'macOS 전용 헬퍼');
-  assert.match(rs, /\.join\("\.argo"\)\.join\("tools"\)/, '번들 밖 안정 경로 = JS noDockShimPath와 동일(~/.argo/tools/no-dock.cjs)');
-  assert.match(rs, /if p\.contains\('"'\) \|\| p\.contains\('\\\\'\) \{ return Err/, 'NODE_OPTIONS를 깨는 문자 게이트(fail-open)');
-  assert.match(rs, /any\(char::is_whitespace\)/, '공백 경로는 따옴표');
+  assert.match(rs, /#\[cfg\(target_os = "macos"\)\]\s*mod no_dock;/, 'macOS 전용 공통 심');
+  assert.match(rs, /no_dock::prepare\(&home,/, '본체가 공통 preparation을 사용');
+  assert.equal(await readFile(new URL('../src-tauri/src/no-dock.cjs', import.meta.url), 'utf8'), SHIM_SRC);
   assert.match(rs, /std::env::var\("NODE_OPTIONS"\)/, '기존 NODE_OPTIONS 보존');
   assert.match(rs, /Ok\(v\) => cmd = cmd\.env\("NODE_OPTIONS", v\),\s*Err\(e\) => log::warn!/, '실패는 경고만');
   assert.ok(rs.indexOf('cmd = cmd.env("NODE_OPTIONS"') < rs.indexOf('.args(["server.js"])'), '스폰 전에 env');

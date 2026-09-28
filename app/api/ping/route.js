@@ -12,7 +12,9 @@ try { buildId = readFileSync('.next/BUILD_ID', 'utf8').trim(); } catch { /* dev 
 
 export async function GET() {
   return Response.json(
-    { argo: true, version: pkg.version, buildId },
+    // Adoption capability, not a claim that every external process is healthy.
+    // Old same-version residents must not bypass the repaired spawn boundaries.
+    { argo: true, version: pkg.version, buildId, dockProtocol: 1 },
     { headers: { 'access-control-allow-origin': '*', 'cache-control': 'no-store' } },
   );
 }

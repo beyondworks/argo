@@ -1,5 +1,6 @@
 // The host owns browser profiles; per-turn stdio children only forward scoped tool calls.
 import { createServer } from 'node:http';
+import { noDockMcpEnv } from '../no-dock.mjs';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
@@ -61,7 +62,8 @@ export async function createBrowserMcpBridge({ wsId, slug, runId = randomUUID(),
   server.unref();
   let closing;
   return {
-    server: { command: process.execPath, args: [worker], env: { ARGO_BROWSER_RELAY_URL: `http://127.0.0.1:${server.address().port}/`, ARGO_BROWSER_RELAY_TOKEN: token } },
+    // Added after customer MCP materialization; carry the preload here too.
+    server: { command: process.execPath, args: [worker], env: noDockMcpEnv({ ARGO_BROWSER_RELAY_URL: `http://127.0.0.1:${server.address().port}/`, ARGO_BROWSER_RELAY_TOKEN: token }) },
     close: () => closing ??= (async () => {
       controller.abort();
       try { await runners.close(); } catch { /* Cleanup must not interrupt the parent turn's finally. */ }

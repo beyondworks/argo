@@ -37,7 +37,7 @@ try {
     try { const r = await fetch(`${base}/api/ping`, { signal: AbortSignal.timeout(2000) }); if (r.ok) { ping = await r.json(); break; } } catch { /* startup */ }
     await new Promise(r => setTimeout(r, 500));
   }
-  assert.deepEqual(ping, { argo: true, version, buildId }, `Distribution identity mismatch: ${output}`);
+  assert.deepEqual(ping, { argo: true, version, buildId, dockProtocol: 1 }, `Distribution identity mismatch: ${output}`);
   const me = await fetch(`${base}/api/me`, { signal: AbortSignal.timeout(10000) });
   assert.equal(me.status, 200);
   const identity = await me.json();
