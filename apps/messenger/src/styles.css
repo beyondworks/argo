@@ -1273,6 +1273,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-sec > summary.msgr-group::after { content: ''; width: 9px; height: 9px; margin-left: auto; border-right: 2px solid var(--fg-2); border-bottom: 2px solid var(--fg-2); transform: translateY(-3px) rotate(45deg); transition: transform 150ms ease; }
   .msgr-phone.phone-home .msgr-sec[open] > summary.msgr-group::after { transform: translateY(2px) rotate(-135deg); }
   .msgr-phone.phone-home .msgr-sec > summary.msgr-group .right:empty { display: none; }
+  /* '내 에이전트'만 정렬 버튼을 폰에도 — 직접 배치(길게 눌러 끌기)를 켤 길이 없었다(유건 2026-09-29 "에이전트 목록 직접 배치 켜줘") */
+  .msgr-phone.phone-home .msgr-sec[data-sec='mine'] > summary.msgr-group .right { display: inline-flex; align-items: center; margin-left: auto; }
+  .msgr-phone.phone-home .msgr-sec[data-sec='mine'] > summary.msgr-group::after { margin-left: 12px; }
   /* 목록 행 */
   .msgr-phone.phone-home .msgr-side .item { min-height: 44px; padding: 0 var(--ph-pad); gap: 16px; font-size: var(--ph-txt); color: var(--fg-2); border-radius: 0; background: none; }
   .msgr-phone.phone-home .msgr-side .item.active { background: none; color: var(--fg); font-weight: 500; }   /* 띠 대신 잉크 — 굵기는 그대로(행마다 굵기가 바뀌면 흔들려 보인다) */
