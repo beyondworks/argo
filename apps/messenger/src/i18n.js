@@ -362,6 +362,7 @@ export const DICT = {
   'msg.attach': ['첨부', 'Attach'],
   'msg.attachOpenFail': ['첨부 파일을 열지 못했습니다. 연결을 확인하고 다시 시도해 주세요.', 'Could not open the attachment. Check your connection and try again.'],
   'msg.typing': ['{name} 입력 중…', '{name} is typing…'],
+  'msg.typing.others': ['{name} 외 {n}명 입력 중…', '{name} and {n} {n|other|others} are typing…'], // 2명 이상 — 가장 먼저 입력을 시작한 이름만(유건 확정 2026-09-29)
   'side.typing': ['답변 중', 'Replying'],
   // P0(2026-09-09): 안 읽음·편집·삭제·반응·음소거·조용한 시간
   'msg.new': ['새 메시지', 'New messages'],
@@ -1189,6 +1190,7 @@ export const DICT = {
   'dm.sort.recent': ['최근 메시지순', 'Recent messages'],
   'dm.sort.unread': ['안읽은 메시지 먼저', 'Unread first'],
   'dm.sort.name': ['이름순', 'By name'],
+  'dm.sort.custom': ['직접 배치', 'Custom order'],
   'dm.pinned': ['즐겨찾기', 'Favorites'],
   'dm.group.new': ['새 채팅', 'New chat'],
   'dm.new': ['새 채팅', 'New chat'],
@@ -1220,6 +1222,7 @@ export const DICT = {
   'dm.preview.other': ['상대', 'Them'],
   'rail.sort.name': ['이름순', 'By name'],
   'rail.sort.added': ['추가순', 'By date added'],
+  'rail.sort.custom': ['직접 배치', 'Custom order'],
   'ui.me.menu': ['내 계정·로그아웃', 'My account · sign out'],
   'org.members.search': ['이름으로 찾기', 'Search by name'],
   'org.members.more': ['{n}명 더 보기', 'Show {n} more'],
