@@ -21,6 +21,7 @@ import { sortDms, DM_SORTS } from './dm-sort.mjs';
 import { UpdateBar } from './update.jsx';
 import { MobileUpdateBar } from './mobile-update.jsx';
 import { useLongPress, longPressHandlers } from './long-press.js';
+import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalExpandDefault } from './approval-display.js';
 import { useLang } from '@argo/i18n';
@@ -461,7 +462,7 @@ function PhoneTabs({ page, onPick, activity, search, goingTo = null, personal = 
     <nav className="msgr-tabbar" aria-label={t('phone.tabs')}>
       {page === 'search' ? (
         <form className="msgr-island msgr-island-search" onSubmit={(e) => { e.preventDefault(); search.run(search.q); }}>
-          <I name="search" size={16} /><input autoFocus value={search.q} onChange={(e) => search.set(e.target.value)} placeholder={t('search.ph')} aria-label={t('search.title')} enterKeyHint="search" />
+          <I name="search" size={16} /><input autoFocus value={search.q} onChange={(e) => search.set(e.target.value)} placeholder={t('search.ph.phone')} aria-label={t('search.title')} enterKeyHint="search" />
           <button type="button" className="msgr-tabclose" onClick={() => { search.set(''); onPick('home'); }} aria-label={t('ui.close')}><I name="x" size={16} /></button>
         </form>
       ) : (
@@ -1678,7 +1679,7 @@ function Shell({ session }) {
   const railVisible = crews.filter((c) => c.owner_user_id === uid || crewTier(c, org) === 'company');
   return (
     <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}>
-    <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
+    <div className={`shell msgr-shell${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
       <aside id="msgr-navigation" className={`side msgr-side${orgMenu ? ' menu-open' : ''}`}>
@@ -2610,6 +2611,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
 /* ─── 검색 결과 페이지 — 메시지(본문 부분 일치, 이 조직·읽을 수 있는 채널만)·사람·에이전트·채널. 전문 검색(tsvector)은 규모가 커지면 v2. ─── */
 function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, onDm, onBack, onMenu }) {
   const { t, lang } = useT();
+  const phone = useIsPhone();
   const { blocked, mutedCrewIds } = useContext(SafetyCtx); // 차단한 사람·숨긴 크루의 글은 검색 결과에서 뺀다(검수 M4)
   if (res) res = { ...res, msgs: res.msgs.filter((m) => !(m.author_kind === 'user' && blocked.has(m.author_user_id)) && !(m.author_kind === 'crew' && mutedCrewIds.has(m.crew_id))) };
   const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
@@ -2623,7 +2625,7 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
     <div className="msgr-thread page"><div className="msgr-inbox msgr-searchres">
-      {!res && <p className="empty">{t('search.hint')}</p>}
+      {!res && <p className="empty">{t(phone ? 'search.hint.phone' : 'search.hint')}</p>}
       {res && !total && <p className="empty">{t('search.none')}</p>}
       {res?.channels.length > 0 && <><div className="msgr-klabel">{t('search.channels')}</div><div className="msgr-chips">{res.channels.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => onOpen(c.id)}><I name={c.kind === 'private' ? 'lock' : 'hash'} size={13} /><span>{c.name}</span></button>)}</div></>}
       {res?.people.length > 0 && <><div className="msgr-klabel">{t('search.people')}</div><div className="msgr-chips">{res.people.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => onDm(m.user_id)}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div></>}
@@ -4290,11 +4292,15 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
   // 제자리에서 바뀐다(떼었다 붙이면 등장 애니메이션을 다시 타 깜빡였다, 유건 제보 2026-09-18).
   const pendingRows = tab === 'all' ? pending.map((x) => ({ id: `pending:${x.clientId}`, client_msg_id: x.clientId, author_kind: 'user', author_user_id: uid, crew_id: null,
     kind: 'text', body: x.body, mentions: [], reply_to: x.replyTo ?? null, created_at: x.at, edited_at: null, deleted_at: null, meta: null, pending: true })) : []; // 답글이면 보내는 중에도 인용 줄을 그린다
-  for (const m of [...shown, ...pendingRows]) {
-    if (divider > 0 && !newLine && m.id > divider && !(m.author_kind === 'user' && m.author_user_id === uid)) { newLine = true; rows.push(<div key="newline" className="msgr-newline"><span>{t('msg.new')}</span></div>); }
+  const seq = [...shown, ...pendingRows];
+  const isNewAt = (m) => divider > 0 && m.id > divider && !(m.author_kind === 'user' && m.author_user_id === uid);
+  const newAt = seq.findIndex(isNewAt); // "새 메시지" 줄이 끼는 자리 — 거기서 묶음을 끊는다
+  const flags = groupFlags(seq, (i) => i === newAt);
+  for (const [i, m] of seq.entries()) {
+    if (divider > 0 && !newLine && isNewAt(m)) { newLine = true; rows.push(<div key="newline" className="msgr-newline"><span>{t('msg.new')}</span></div>); }
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.client_msg_id || m.id} rowTab={m.id === tabMid ? 0 : -1} onRowFocus={setActiveMid} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} onReply={(x) => setReplyReq({ id: x.id, who: x.author_kind === 'user' ? nameOfUser(x.author_user_id) : crewOf(x.crew_id)?.display_name ?? '', body: (x.body ?? '').replace(/\s+/g, ' ').slice(0, 120) })} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} isPersonal={isPersonal} />);
+    rows.push(<Message key={m.client_msg_id || m.id} rowTab={m.id === tabMid ? 0 : -1} onRowFocus={setActiveMid} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} onReply={(x) => setReplyReq({ id: x.id, who: x.author_kind === 'user' ? nameOfUser(x.author_user_id) : crewOf(x.crew_id)?.display_name ?? '', body: (x.body ?? '').replace(/\s+/g, ' ').slice(0, 120) })} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} isPersonal={isPersonal} cont={flags[i].cont} tail={flags[i].tail} inDm={channel.kind === 'dm'} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'check', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -4304,7 +4310,7 @@ function Channel({ namePrompt = null, onOutsideDm = null, startCard = null, jump
       {channel.org_id === null && <span className="msgr-klabel msgr-scope-badge">{t('personal.badge')}</span>}
       {channel.org_id && org && <span className="msgr-klabel msgr-scope-badge">{org.name}</span>}
       {channel.topic && <span className="topic">{channel.topic}</span>}
-      {phone && <span className="msgr-sub">{t('phone.meta', { n: people.length, c: chCrews.length })}</span>}
+      {phone && <span className="msgr-sub">{channel.kind === 'dm' && chCrews.length === 1 && people.length <= 1 ? (chCrews[0].role_text || t('org.crews')) : t('phone.meta', { n: people.length, c: chCrews.length })}</span>}
       {/* 켜고 끄는 자리가 안 보인다(유건 2026-09-09) → 표지 자체가 토글. 아이콘만, 꺼짐 = 취소선·붉은색 */}
       <span className="msgr-hchips"><button type="button" className={`msgr-hchip${muted ? ' off' : ''}`} onClick={onToggleMute} title={t(muted ? 'ch.mute.off.tip' : 'ch.mute.on.tip')} aria-pressed={muted} aria-label={t('ch.muted')}><I name={muted ? 'belloff' : 'bell'} size={14} /></button>
       {!isPersonal && <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false} aria-label={t('ch.memoryOff')}><I name={channel.crew_memory === false ? 'memoff' : 'memory'} size={14} /></button>}</span>
@@ -4382,7 +4388,7 @@ function FilteredBody({ text, on, t, children }) {
   if (on && !reveal && containsProfanity(text)) return <button type="button" className="msgr-hidden-msg" onClick={() => setReveal(true)}>{t('msg.profanity.hidden')}</button>;
   return children;
 }
-function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete, onReply, channels = [], onOpenRelay, dmName, rowTab = -1, onRowFocus, isPersonal = false }) {
+function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete, onReply, channels = [], onOpenRelay, dmName, rowTab = -1, onRowFocus, isPersonal = false , cont = false, tail = true, inDm = false}) {
   const [copied, setCopied] = useState(false);
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
   const [ctxAt, setCtxAt] = useState(null); // 데스크톱 우클릭: 동작 줄을 커서 자리에 고정(유건 지시 2026-09-12)
@@ -4392,7 +4398,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const [reporting, setReporting] = useState(false); const [reportReason, setReportReason] = useState(''); const [safetyBusy, setSafetyBusy] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
   const tabStop = ctxAt && actsOpen ? undefined : -1; // 숨은 hover 동작은 탭 순서에서 뺀다 — 메시지마다 2~4칸이라 입력창까지 Tab 76번(검수 D11). 우클릭 메뉴로 열렸을 때만 탭으로 닿는다
-  const hold = useLongPress(() => { if (!m.pending) setActsOpen(true); });
+  const openedAt = useRef(0); // 길게 눌러 연 시트는 손을 떼는 순간의 클릭이 바로 배경에 떨어져 닫혔다(에뮬레이션 실측 2026-09-29) — 열린 직후 잠깐은 배경 누름을 무시
+  const hold = useLongPress(() => { if (!m.pending) { openedAt.current = Date.now(); setActsOpen(true); } });
   // 키보드(검수 K8): 메시지 목록은 로빙 tabindex — 목록 전체가 Tab 한 칸, ↑↓·Home·End로 행 이동, Enter·Shift+F10·메뉴 키로 동작 메뉴(우클릭과 같은 .ctx), 메뉴 안 ↑↓, Esc면 행으로
   const rowRef = useRef(null); const kbCtx = useRef(false);
   const rowKey = (e) => {
@@ -4488,7 +4495,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const attRow = atts.length > 0 && <div className="msgr-attachments">{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} rowTab={rowTab} />)}</div>;
   const acts = !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
     phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)
-      <div className="msgr-actsheetwrap" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) setActsOpen(false); }}>{/* 슬랙 참고(유건 2026-09-11): 빠른 반응 줄 → 타일 → 목록. 있는 기능만 싣는다 */}
+      <div className="msgr-actsheetwrap" onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget && Date.now() - openedAt.current > 450) setActsOpen(false); }}>{/* 슬랙 참고(유건 2026-09-11): 빠른 반응 줄 → 타일 → 목록. 있는 기능만 싣는다 */}
         <div className="msgr-actsheet" role="dialog" onClick={(e) => e.stopPropagation()}>
           <div className="grab" />
           <div className="quick">
@@ -4538,7 +4545,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   if (!mine && m.author_kind === 'user' && safety.blocked.has(m.author_user_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.blockedUser')}</div>; // 차단한 사람의 글 — 본문·첨부·반응을 그리지 않는다
   if (!mine && !ap && m.author_kind === 'crew' && safety.mutedCrewIds.has(m.crew_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.mutedCrew')}</div>; // 숨긴 크루·봇의 글(App Store 1.2, 2026-09-26) — 본문·첨부·반응을 그리지 않는다. 결재 카드(ap)는 예외(검수 L5 — 숨겨도 나에게 온 결재는 항상 보여야 한다)
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
-    <div className="msgr-mine" ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
+    <div className={`msgr-mine${cont ? ' cont' : ''}${tail ? '' : ' notail'}`} ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {editing ? editor : bareAttach ? null : <div className="bubble">{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : relay ? <Markdown text={shown} /> : <Body text={body} />}</div>}
       {attRow}
       {chips}
@@ -4549,10 +4556,10 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   );
   const isCrew = m.author_kind === 'crew';
   return ( // 동료·크루 글 — 척추 위 아바타(사람 원 / 크루 타일), 크루 답은 척추에 붙는 시트
-    <div className="msgr-row" ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
+    <div className={`msgr-row${cont ? ' cont' : ''}${tail ? '' : ' notail'}`} ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
       {isCrew && crew ? <button type="button" className="msgr-avbtn" onClick={() => onCrew?.(crew.id)} title={t('crew.sheet')}><Av name={name} crew crewId={crew.id} /></button> : <Av name={name} crew={isCrew} crewId={isCrew ? m.crew_id : null} userId={isCrew ? null : m.author_user_id} />}
       <div style={{ minWidth: 0 }}>
-        <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
+        <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && !inDm && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
         {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
           : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} />
           : m.kind === 'system' ? sysBody
@@ -4901,7 +4908,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, scopePeople 
         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); }}
         onDrop={(e) => { e.preventDefault(); setDragging(false); if (!busy && !isPersonal) addFiles(e.dataTransfer?.files); }}>{/* 개인 공간은 첨부 저장 경로가 없다 — 붙여넣기·버튼만 막고 드롭이 빠져 msgr/__personal__/로 올리다 RLS 거부(2R 검수, 실스택 재현 2026-09-16) */}
         <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-        <textarea ref={ta} rows={1} maxLength={20000} value={text} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)}
+        <textarea ref={ta} rows={1} maxLength={20000} value={text} placeholder={locked ? undefined : isDm ? t('composer.ph.dm') : t('composer.ph.ch', { name: channel?.name ?? '' })} onChange={onChange} onBlur={() => setPop(null)} {...imeGuardWith(onKey)}
           onPaste={(e) => { const pasted = [...(e.clipboardData?.files ?? [])]; if (!pasted.length || busy || isPersonal) return; /* 개인 공간은 첨부 저장 경로가 없다(검수 L-4) */ e.preventDefault(); addFiles(pasted.map((f) => (f.name && f.name !== 'image.png') ? f : new File([f], `paste-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type }))); }} /* 클립보드 이미지 붙여넣기(유건 2026-09-11 밤) — 이름 없는 캡처는 paste-시각.png */ placeholder={t(phone ? 'phone.composer.ph' : 'msg.placeholder2')} /> {/* 초점이 빠지면 멘션 팝업을 닫는다 — 폰엔 Esc가 없다. 후보 단추는 mousedown preventDefault라 초점을 뺏지 않는다 */}
         <div className="msgr-tools">
           {!isPersonal && <button type="button" className="tb" onMouseDown={(e) => e.preventDefault()} onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>}
