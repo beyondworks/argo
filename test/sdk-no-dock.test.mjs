@@ -42,10 +42,12 @@ test('spawn preserves SDK contract and captured preload, not parent flags or cre
   const child = spawnClaudeCodeProcess({ command: process.execPath, args, cwd: home, env, signal });
   let out = ''; child.stdout.on('data', d => { out += d; });
   assert.deepEqual(await once(child, 'exit'), [0, null]);
-  assert.deepEqual(JSON.parse(out), { preloaded: 'yes', marker: 'preserved', cwd: await realpath(home) });
+  const result = JSON.parse(out);
+  assert.deepEqual({ ...result, cwd: await realpath(result.cwd) }, { preloaded: 'yes', marker: 'preserved', cwd: await realpath(home) });
   assert.equal(stderr, '한글 진단');
   assert.equal(forwarded.command, process.execPath);
   assert.equal(forwarded.args, args);
+  assert.equal(forwarded.options.cwd, home);
   assert.equal(forwarded.options.signal, signal);
   assert.equal(forwarded.options.windowsHide, true);
   assert.deepEqual(forwarded.options.stdio, ['pipe', 'pipe', 'pipe']);
