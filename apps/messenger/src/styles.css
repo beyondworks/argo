@@ -1684,6 +1684,11 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-railrow[data-drop]::before { content: ''; position: absolute; left: 14px; right: 14px; height: 3px; border-radius: 3px; background: var(--mark); pointer-events: none; }
   .msgr-phone .msgr-railrow[data-drop='before']::before { top: -2px; }
   .msgr-phone .msgr-railrow[data-drop='after']::before { bottom: -2px; }
+  /* 참여 구성 시트 머리 — 폭이 좁아 제목이 두 줄, 인원 수가 '에이전트 / 12'로 쪼개졌다. 제목·수는 왼쪽 두 줄, 초대 버튼은 오른쪽 */
+  .msgr-crewsheet .sec-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; align-items: center; }
+  .msgr-crewsheet .sec-head h3 { grid-column: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .msgr-crewsheet .sec-head .sub { grid-column: 1; grid-row: 2; white-space: nowrap; }
+  .msgr-crewsheet .sec-head > .btn { grid-column: 2; grid-row: 1 / 3; }
   /* 홈·채팅 목록의 점 세 개 — 폰은 길게 누르기로 같은 메뉴가 뜬다(rowLongPress). 상시 노출은 줄마다 잡음이었다 */
   .msgr-phone .msgr-side .msgr-railrow .more { display: none; }
   .msgr-phone .msgr-side .msgr-railrow .item { padding-right: 12px; }
