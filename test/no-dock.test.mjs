@@ -10,10 +10,45 @@ import { readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { ensureNoDockShim, noDockShimPath, probeNodeOptions, setupNoDock, withNoDock } from '../src/no-dock.mjs';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ensureNoDockShim, noDockShimPath, noDockMcpEnv, probeNodeOptions, setupNoDock, withNoDock } from '../src/no-dock.mjs';
 
 const isMac = process.platform === 'darwin';
 const tmpShim = async () => join(await mkdtemp(join(tmpdir(), 'argo-nodock-')), 'no-dock.cjs');
+
+test('MCP env는 활성 Argo 심만 전달하고 다른 OS·미적용 상태는 보존한다', () => {
+  const env = { NODE_OPTIONS: '--trace-warnings', CUSTOM: 'kept' };
+  const path = '/tmp/argo space/no-dock.cjs';
+  const parentEnv = { NODE_OPTIONS: withNoDock('--inspect=0', path), SUPABASE_SERVICE_ROLE_KEY: 'fixture-only' };
+  for (const platform of ['linux', 'win32']) assert.equal(noDockMcpEnv(env, { platform, parentEnv, path }), env);
+  assert.equal(noDockMcpEnv(env, { platform: 'darwin', parentEnv: {}, path }), env);
+  const out = noDockMcpEnv(env, { platform: 'darwin', parentEnv, path });
+  assert.deepEqual(out, { CUSTOM: 'kept', NODE_OPTIONS: withNoDock('--trace-warnings', path) });
+  assert.deepEqual(noDockMcpEnv(out, { platform: 'darwin', parentEnv, path }), out, '중복 전달도 멱등');
+});
+
+test('MCP 선별 상속 경계를 지나도 Node 제목 억제와 서버 실행이 유지된다', { skip: !isMac, timeout: 10_000 }, async () => {
+  const path = await tmpShim();
+  const parentEnv = {};
+  await setupNoDock({ env: parentEnv, path });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ['-e', `process.title = 'argo-mcp-dock-regression'; process.stderr.write(JSON.stringify({title:process.title,result:1+1}) + '\\n'); setInterval(()=>{},1000);`],
+    env: noDockMcpEnv({}, { parentEnv, path }), stderr: 'pipe',
+  });
+  let output = '';
+  const report = new Promise((resolve, reject) => {
+    transport.onerror = reject;
+    transport.onclose = () => reject(new Error('MCP가 결과를 쓰기 전에 종료됨'));
+    transport.stderr.on('data', (data) => { output += data; if (output.includes('\n')) resolve(JSON.parse(output.trim())); });
+  });
+  try {
+    await transport.start();
+    const result = await report;
+    assert.notEqual(result.title, 'argo-mcp-dock-regression');
+    assert.equal(result.result, 2);
+  } finally { await transport.close(); await rm(join(path, '..'), { recursive: true, force: true }); }
+});
 
 /** 자식을 띄워 "제목 대입이 먹히는가"를 본다 — 프리로드가 걸리면 옛 값이 그대로 나온다. */
 const childTitleAfterSet = (env) => new Promise((resolve, reject) => {

@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { materializeMcpServers } from '../src/runners/npx.mjs';
+import { noDockShimPath, withNoDock } from '../src/no-dock.mjs';
 
 const SERVERS = {
   mem: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] },
@@ -35,4 +36,28 @@ test('조달 실패 → 원형 유지(조용한 삭제 금지 — commandExists 
 test('입력 맵 불변 — 같은 맵을 SDK·CLI 두 경로가 이어 쓴다(scopeServers 계약과 동일)', async () => {
   await materializeMcpServers(SERVERS, { hasSystemNpx: () => false, provide: async () => '/m/npx-cli.js' });
   assert.equal(SERVERS.mem.command, 'npx', '원본이 바뀌면 뒤따르는 소비자가 오염된다');
+});
+
+test('macOS MCP 정의는 부모의 검증된 Dock 프리로드만 명시적으로 전달한다', { skip: process.platform !== 'darwin' }, async () => {
+  const previous = process.env.NODE_OPTIONS;
+  process.env.NODE_OPTIONS = withNoDock('--trace-warnings', noDockShimPath());
+  const servers = {
+    ...SERVERS,
+    custom: { ...SERVERS.custom, env: { NODE_OPTIONS: '--max-old-space-size=256', TOOL_SETTING: 'kept' } },
+  };
+  try {
+    for (const hasNpx of [true, false]) {
+      const out = await materializeMcpServers(servers, { hasSystemNpx: () => hasNpx, provide: async () => '/managed/npx-cli.js' });
+      for (const name of ['mem', 'custom', 'bin']) {
+        assert.equal(out[name].env.NODE_OPTIONS, withNoDock(servers[name].env?.NODE_OPTIONS, noDockShimPath()));
+        assert.equal(out[name].env.HOME, undefined, '부모 env 전체를 MCP에 복사하지 않는다');
+      }
+      assert.equal(out.custom.env.TOOL_SETTING, 'kept');
+      assert.equal(servers.custom.env.NODE_OPTIONS, '--max-old-space-size=256', '입력 불변');
+      assert.equal(out.remote, servers.remote, '원격 서버에는 프로세스 설정을 넣지 않는다');
+    }
+  } finally {
+    if (previous === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = previous;
+  }
 });

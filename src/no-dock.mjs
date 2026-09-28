@@ -15,8 +15,8 @@
 //
 // 처방: 자식들이 상속하는 NODE_OPTIONS에 프리로드를 걸어 제목 **setter만** 무력화한다. 읽기는
 // 그대로라 ps·Activity Monitor 표시와 진단은 변하지 않는다. 러너 경로는 전부 세척된 process.env를
-// 기반으로 env를 만들므로(creds.sdkEnvFor·exec·codex-appserver·engine의 shellEnv) 부팅 때 한 번
-// 걸면 그 아래 node 자식이 모두 덮인다.
+// 기반으로 env를 만든다(creds.sdkEnvFor·exec·codex-appserver·engine의 shellEnv). 단 MCP를 띄우는
+// CLI는 NODE_OPTIONS를 제거할 수 있으므로 materializeMcpServers가 서버별 env에도 심을 명시한다.
 //
 // ⚠ NODE_OPTIONS는 **모든** node 자식이 상속한다(크루가 Bash로 돌리는 명령 포함). 값이 조금이라도
 // 깨지면 그 자식들이 전부 죽으므로, 채택 전에 **프로브 자식 1회**로 실제 유효성을 확인하고 통과할
@@ -75,6 +75,17 @@ export function withNoDock(prev, path) {
   const arg = /\s/.test(path) ? `"${path}"` : path;
   if (cur.includes(`--require ${arg}`)) return cur;
   return `--require ${arg}${cur ? ` ${cur}` : ''}`;
+}
+
+/** MCP 런타임은 부모 env를 선별 상속한다. 부팅 때 채택된 Argo 심만 서버별 env에 명시한다.
+    서버 고유 옵션은 보존하고, 부모의 다른 Node 옵션·자격은 복사하지 않는다. */
+export function noDockMcpEnv(env, {
+  platform = process.platform, parentEnv = process.env, path = noDockShimPath(),
+} = {}) {
+  if (platform !== 'darwin') return env;
+  const active = String(parentEnv.NODE_OPTIONS ?? '').trim();
+  if (!active || withNoDock(active, path) !== active) return env;
+  return { ...env, NODE_OPTIONS: withNoDock(env?.NODE_OPTIONS, path) };
 }
 
 /** 프로브 — 합성한 NODE_OPTIONS로 빈 자식을 한 번 띄워 본다. exit 0일 때만 채택한다. */
