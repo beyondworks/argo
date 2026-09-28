@@ -1636,3 +1636,19 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-vps .msgr-node-cmd { margin: 0; }
 .msgr-vps-where summary { cursor: pointer; font-size: 13px; color: var(--fg-2); }
 .msgr-vps-where ul { margin: 6px 0 0 18px; padding: 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
+
+/* ─── 모바일 정돈(2026-09-29 유건 지시 "메이저 메신저와 이질감 없게" — 카카오톡·라인·텔레그램·슬랙 대조) ─── */
+/* 연속 메시지 묶음(msg-group.mjs): 이름·아바타는 묶음 첫 글에만, 시간·전송 표시는 마지막 글에만. 줄 간격 20 → 6 */
+.msgr-spine > .msgr-row.cont, .msgr-spine > .msgr-mine.cont { margin-top: -14px; }
+.msgr-row.cont > .msgr-av, .msgr-row.cont > .msgr-avbtn { visibility: hidden; }
+.msgr-row.cont .who { display: none; }
+.msgr-mine.notail > .meta { display: none; }
+@media (max-width: 720px) {
+  /* 대화방은 전체 화면 — 탭바·+ 버튼을 숨기고 입력창을 바닥 안전 영역에 붙인다(뒤로 스와이프 중엔 탭바가 함께 들어온다) */
+  .msgr-phone.phone-chat:not(.swiping-back) .msgr-tabbar, .msgr-phone.phone-chat:not(.swiping-back) .msgr-fab { display: none; }
+  .msgr-phone.phone-chat .msgr-main { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  /* 탭바 뒤 바탕 — 목록이 탭바 아래로 비치지 않게(탭바 쌓임 맥락 안 z-index -1 = 탭 버튼 아래, 본문 위) */
+  .msgr-phone .msgr-tabbar::before { content: ''; position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--ph-tab) + 30px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); background: linear-gradient(to top, var(--bg) 60%, transparent); pointer-events: none; z-index: -1; }
+  /* + 버튼은 검색 원과 14px 띄운다(붙어 있어 한 덩어리로 보였다) */
+  .msgr-phone .msgr-fab { bottom: calc(max(16px, calc(env(safe-area-inset-bottom) - 18px)) + var(--ph-tab) + 14px); }
+}
