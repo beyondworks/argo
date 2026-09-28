@@ -15,7 +15,8 @@ export function UpdateNotesCard({ version, items, t, onConfirm, saving = false, 
   return <section className="card card-float" role="dialog" aria-modal="false" aria-labelledby={titleId}
     onKeyDown={(event) => { if (event.key === 'Escape' && !saving) { event.stopPropagation(); onDismiss(); } }}
     style={{ position: 'fixed', right: 'max(16px, env(safe-area-inset-right))', bottom: 'max(16px, env(safe-area-inset-bottom))',
-      width: 'min(420px, calc(90vw / var(--z, 1)))', maxHeight: 'min(520px, calc(80vh / var(--z, 1)))', overflowY: 'auto', zIndex: 90,
+      width: 'min(420px, calc(90vw / var(--z, 1)))', maxWidth: 'calc(100% - max(16px, env(safe-area-inset-right)) - 16px)',
+      maxHeight: 'min(520px, calc(80vh / var(--z, 1)))', overflowY: 'auto', zIndex: 90,
       background: 'var(--card)', boxShadow: 'var(--shadow-float)', color: 'var(--fg)' }}>
     <div className="card-head">
       <h2 id={titleId} className="card-title" style={{ margin: 0 }}>{t('updates.title', { version })}</h2>

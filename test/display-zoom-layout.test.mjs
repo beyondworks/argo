@@ -30,9 +30,9 @@ const ZOOMS = [1.25, 2]; // 대표 배율·수동 최대 — 식은 z에 선형�
 
 /* ── ① 치수 식 산술 평가 ───────────────────────────────────────────── */
 
-// CSS 길이 식 평가기 — calc/min/max, vh/vw/px, var(--z[, 폴백])만. 미지 구문은 조용히 통과가 아니라
+// CSS 길이 식 평가기 — calc/min/max, vh/vw/px/%, 우측 안전영역, var(--z[, 폴백])만. 미지 구문은 조용히 통과가 아니라
 // 화이트리스트 검사로 시끄럽게 실패한다(fail-closed — 새 단위가 들어오면 평가기를 넓혀야 함).
-function evalSize(expr, { z, viewportHeight = V, viewportWidth = V } = {}) {
+function evalSize(expr, { z, viewportHeight = V, viewportWidth = V, containingWidth = viewportWidth / (z ?? 1), safeAreaRight = 0 } = {}) {
   let s = String(expr).trim();
   s = s.replace(/var\(\s*--z\s*(?:,\s*([^)]+))?\s*\)/g, (_, fb) => {
     if (z != null) return `(${z})`;
@@ -42,6 +42,8 @@ function evalSize(expr, { z, viewportHeight = V, viewportWidth = V } = {}) {
   });
   s = s.replace(/(\d*\.?\d+)vh/gi, (_, n) => `(${n}*${viewportHeight}/100)`);
   s = s.replace(/(\d*\.?\d+)vw/gi, (_, n) => `(${n}*${viewportWidth}/100)`);
+  s = s.replace(/(\d*\.?\d+)%/g, (_, n) => `(${n}*${containingWidth}/100)`);
+  s = s.replace(/env\(safe-area-inset-right\)/g, `(${safeAreaRight})`);
   s = s.replace(/(\d*\.?\d+)px/gi, '($1)');
   s = s.replace(/\bcalc\(/gi, '(').replace(/\bmin\(/gi, 'Math.min(').replace(/\bmax\(/gi, 'Math.max(');
   const residue = s.replace(/Math\.(min|max)/g, '').replace(/[\d\s+\-*/().,]/g, '');
@@ -148,6 +150,33 @@ test('업데이트 노트는 좁고 낮은 화면에서도 배율별 너비 90%�
     }
   }
   assert.equal(evalSize(width), evalSize(width, { z: 1 }), '배율 미설정 너비도 정상 배율과 같다');
+});
+
+test('업데이트 패널의 고정 기준 영역은 스크롤바·우측 안전영역을 제외해 좌측 넘침을 막는다', () => {
+  const source = sources.get('app/update-notes.jsx');
+  const width = source.match(/\bwidth:\s*'([^']+)'/)?.[1];
+  const maxWidth = source.match(/\bmaxWidth:\s*'([^']+)'/)?.[1];
+  const right = source.match(/\bright:\s*'([^']+)'/)?.[1];
+  assert.ok(width && right);
+  const bounds = (viewportWidth, z, scrollbar, safeAreaRight) => {
+    const options = { viewportWidth, z, containingWidth: (viewportWidth - scrollbar) / z, safeAreaRight };
+    const actualWidth = Math.min(evalSize(width, options), maxWidth ? evalSize(maxWidth, options) : Infinity) * z;
+    const actualRight = viewportWidth - scrollbar - evalSize(right, options) * z;
+    return { x: actualRight - actualWidth, width: actualWidth, right: actualRight };
+  };
+  assert.deepEqual(bounds(320, 2, 16, 0), { x: 32, width: 240, right: 272 }, '실제 Aside 320×480·배율2 재현 좌표');
+  for (const viewportWidth of [320, 768, 1280]) {
+    for (const z of [0.7, 1, 1.25, 2]) {
+      for (const scrollbar of [0, 16]) {
+        for (const safeAreaRight of [0, 28]) {
+          const actual = bounds(viewportWidth, z, scrollbar, safeAreaRight);
+          assert.ok(actual.x >= 16 * z - 1e-6 && actual.width > 0,
+            JSON.stringify({ viewportWidth, z, scrollbar, safeAreaRight, actual }));
+          assert.ok(actual.right <= viewportWidth - scrollbar - safeAreaRight * z + 1e-6);
+        }
+      }
+    }
+  }
 });
 
 /* ── 인접 핀: 상단바 배율 반응형 (검수 별건 — 미디어쿼리 배율 사각) ─────────────
