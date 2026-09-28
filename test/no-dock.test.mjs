@@ -173,10 +173,23 @@ test('probeNodeOptions terminates a hung child on timeout', async () => {
   child.emit('close', 0); // late completion must not adopt
 });
 
-test('withNoDock quotes unusual paths using real Node parsing, without duplicate preloads', async () => {
+test('withNoDock escapes double quotes and backslashes on every platform', () => {
+  for (const [path, expected] of [
+    ['/tmp/quote"path.cjs', String.raw`--require "/tmp/quote\"path.cjs"`],
+    [String.raw`C:\Users\runner\space path.cjs`, String.raw`--require "C:\\Users\\runner\\space path.cjs"`],
+  ]) {
+    assert.equal(withNoDock('', path), expected);
+    assert.equal(withNoDock(expected, path), expected);
+  }
+});
+
+test('withNoDock quotes platform-valid unusual paths using real Node parsing, without duplicate preloads', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'argo-nodock-'));
   try {
-    for (const name of ['space path.cjs', 'quote"path.cjs', 'slash\\path.cjs']) {
+    const names = ['space path.cjs', "single'quote.cjs", 'slash\\path.cjs'];
+    // A double quote is not a legal Windows filename; its encoding is covered above.
+    if (process.platform !== 'win32') names.push('quote"path.cjs');
+    for (const name of names) {
       const path = join(dir, name);
       await ensureNoDockShim(path);
       const composed = withNoDock('--trace-warnings', path);

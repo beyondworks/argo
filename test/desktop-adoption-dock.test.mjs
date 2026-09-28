@@ -15,7 +15,7 @@ test('desktop source adoption gate rejects stale resident over isolated HTTP soc
   const dir = await mkdtemp(join(tmpdir(), 'argo-adoption-dock-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const harness = join(dir, 'adoption.rs');
-  const binary = join(dir, 'adoption');
+  const binary = join(dir, process.platform === 'win32' ? 'adoption.exe' : 'adoption');
   await writeFile(harness, `use std::io::{Read, Write};\nuse std::net::TcpStream;\nuse std::time::Duration;\n${predicate}\n#[test]\n${behavior}\n`);
   execFileSync('rustc', ['--edition=2021', '--test', harness, '-o', binary], { env: { ...process.env, CARGO_PKG_VERSION: '9.9.9' }, stdio: 'pipe' });
   const result = execFileSync(binary, [], { encoding: 'utf8' });
