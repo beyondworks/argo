@@ -207,6 +207,25 @@ export async function reprovisionCodexCli() {
   return true;
 }
 
+/** 관리본이 핀 버전이 아닌가 — 승격이 실패(오프라인·스로틀 1시간)해 낡은 관리본으로 턴이 돈 경우, 또는 관리본이
+    없어 PATH 설치본(버전 미상)으로 폴백한 경우 true. */
+export async function codexPinStale() {
+  const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
+  return stamp !== CODEX_PIN;
+}
+
+/** 낡은 codex의 모델 거절 → 업데이트 대기 안내(순수). "requires a newer version"은 버전 문제가 확실하다. "not supported when
+    using Codex with a ChatGPT account"는 0.149.1이 GPT-6에 내는 문구지만(2026-09-28 실측) 핀이 최신이면 계정 문제라 건드리지
+    않는다(→ error-class의 model_unavailable). 문구는 error-class RUNNER_OUTDATED_RE와 한 쌍 — 바꾸면 같이. */
+const CODEX_NEWER_RE = /requires a newer version of codex/i;
+const CODEX_ACCOUNT_RE = /not supported when using codex with a chatgpt account/i;
+export function codexOutdatedError(msg, stale) {
+  const s = String(msg ?? '');
+  if (!(CODEX_NEWER_RE.test(s) || (stale && CODEX_ACCOUNT_RE.test(s)))) return null;
+  return new Error('Codex 실행기 업데이트가 아직 끝나지 않아 이 모델을 쓸 수 없습니다(자동 재시도 최대 1시간). '
+    + `Codex runner update is not finished, so this model is unavailable (automatic retry within an hour). (${s})`);
+}
+
 /** codex 실행 커맨드 해석 — **관리본(핀 버전) 우선**, PATH 설치본은 조달 실패 시 폴백.
     2026-08-25 반전: PATH 우선이던 시절엔 사용자 자체 설치 CLI의 자동 업데이트가 검증 없이 턴에
     유입됐다(code_mode_host 사고 계열). 로그인 자격은 HOME(~/.codex/auth.json) 공유라 어떤 버전으로

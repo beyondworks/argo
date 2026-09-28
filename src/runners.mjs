@@ -15,7 +15,7 @@ import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존
 import { recordCodexRollout } from './runner-limits.mjs'; // 구독 잔여 한도(K91)
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli } from './runners/codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale } from './runners/codex.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
@@ -190,10 +190,10 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
         // 32,767자·Linux 인자당 128KB를 넘는 턴이 "spawn ENAMETOOLONG"으로 죽었다(사용자 실측 K01).
         '--', '-', // '--'는 유지 — 뒤 인자가 플래그로 해석되지 않게
       ], { cwd, killTree: true, input: prompt, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
-        .catch((e) => {
+        .catch(async (e) => {
           const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'exec', kind });
           if (CODEX_LOCKUP_RE.test(String(e?.stderr ?? ''))) t.toolLockup = true; // 실패 턴에도 잠김 신호가 실리면 L2로
-          throw t;
+          throw codexOutdatedError(t?.message, await codexPinStale()) ?? t; // 낡은 관리본의 모델 거절 → 업데이트 대기 안내(ko/en)
         });
       // 도구 잠김은 "성공" 턴으로 위장한다 — 턴은 완주하고 모델이 "도구가 차단됐다"는 답만 남긴다
       // (2026-08-25 제보의 형태). stderr의 벤더 경고를 보고 잠김 턴을 실패로 승격해 자가치유(chat.mjs)에 넘긴다.

@@ -1200,6 +1200,7 @@ const DICT = {
   'chat.fail.vendor_overloaded': ['AI 서비스 쪽 일시 장애입니다(과부하·연결 끊김) — 잠시 뒤 다시 보내 주세요. 입력은 복원했습니다.', 'Temporary issue on the AI service side (overloaded or dropped) — try again shortly. Your input was restored.'],
   'chat.fail.endpoint_not_found': ['엔드포인트가 404를 돌려줬습니다 — 설정 → AI 연결의 base URL·데이터 정책·프록시를 확인해 주세요. ({msg})', 'The endpoint returned 404 — check the base URL, data policy and proxy in Settings → AI connections. ({msg})'],
   'chat.fail.cli_missing': ['러너 실행 파일을 찾지 못했습니다 — 앱을 재시작하거나 설정 → AI 연결에서 다시 연결해 주세요.', 'Runner executable not found — restart the app or reconnect in Settings → AI connections.'],
+  'chat.fail.runner_outdated': ['Codex 실행기가 아직 새 버전으로 업데이트되지 않아 이 모델을 쓸 수 없습니다 — 앱이 1시간 안에 자동으로 다시 받습니다. 인터넷 연결을 확인하고 잠시 뒤 다시 보내거나, 크루 카드에서 GPT-5.6 모델을 골라 주세요. 입력은 복원했습니다.', 'The Codex runner has not finished updating, so this model is unavailable — the app retries the download automatically within an hour. Check your internet connection and try again shortly, or pick a GPT-5.6 model in the crew card. Your input was restored.'],
   'chat.fail.model_unavailable': ['이 계정·러너에서 쓸 수 없는 모델입니다 — 크루 카드에서 다른 모델을 골라 주세요. ({msg})', 'This model is not available for this account or runner — pick another model in the crew card. ({msg})'],
   'chat.fail.crash': ['러너 프로세스가 비정상 종료됐습니다 — 다시 보내 주세요. 반복되면 앱을 재시작해 주세요. ({msg})', 'The runner process crashed — try again. If it repeats, restart the app. ({msg})'],
   'chat.fail.aborted': ['중단됐습니다.', 'Stopped.'],

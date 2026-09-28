@@ -5,7 +5,7 @@
 //  ④ lockupAction: 미재시도=재조달, 재시도 후=러너 교체(인증 실패와 같은 계열)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CODEX_PIN, codexAssetUrl, codexAssetNameFor, codexHostAssetNameFor, CODEX_LOCKUP_RE } from '../src/runners/codex.mjs';
+import { CODEX_PIN, codexAssetUrl, codexAssetNameFor, codexHostAssetNameFor, CODEX_LOCKUP_RE, codexOutdatedError } from '../src/runners/codex.mjs';
 import { lockupAction } from '../src/runners.mjs';
 import { RUNNERS } from '../src/runners/catalog.mjs';
 
@@ -23,6 +23,21 @@ test('GPT-6 계열이 Codex 모델 목록에 있으면 핀은 0.157.1 이상 —
   const atLeast = (min) => { for (let i = 0; i < 3; i++) { if (ver[i] !== min[i]) return ver[i] > min[i]; } return true; };
   const gpt6 = RUNNERS.codex.models.map((m) => m.id).filter((id) => /^gpt-6-/.test(id));
   if (gpt6.length) assert.ok(atLeast([0, 157, 1]), `핀 ${CODEX_PIN}으로는 ${gpt6.join(', ')} 턴이 400으로 실패한다`);
+});
+
+// 승격 실패(오프라인·스로틀)로 낡은 관리본에 머문 PC에서 GPT-6을 고르면 벤더 영어 원문만 떴다(분리 검수 #744 L1, 유건 지시로 ko/en 안내).
+test('codexOutdatedError — "newer version" 거절은 항상, "ChatGPT 계정 미지원" 거절은 핀이 낡았을 때만 업데이트 대기 안내로 바꾼다', () => {
+  const newer = "The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.";
+  const acct = "The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.";
+  for (const [msg, stale, want] of [[newer, false, true], [newer, true, true], [acct, true, true], [acct, false, false], ['Incorrect API key provided', true, false], ['', true, false]]) {
+    const e = codexOutdatedError(msg, stale);
+    assert.equal(!!e, want, `${msg.slice(0, 40)} stale=${stale}`);
+    if (e) {
+      assert.match(e.message, /Codex 실행기 업데이트가 아직 끝나지 않아/);
+      assert.match(e.message, /Codex runner update is not finished/);
+      assert.ok(e.message.includes(msg), '원문 보존(진단용)');
+    }
+  }
 });
 
 test('codex·host 자산 이름이 6트리플 전부 짝으로 존재(윈도우는 .exe.tar.gz)', () => {

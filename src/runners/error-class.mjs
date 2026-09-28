@@ -26,16 +26,18 @@ export const OVERLOADED_RE = /\boverloaded\b|\b529\b|\b503\b|connection closed m
 // 확정 문구만 본다 — 진짜 CLI 미발견은 apiError(exec.mjs)가 e.code/짧은 stderr로 판정해 이 문구로 바꿔 준다.
 // 원문 전체의 ENOENT·command not found를 보면 크루 셸 출력이 섞인 인증 만료·한도 실패까지 덮었다(K09).
 export const CLI_MISSING_RE = /러너 CLI를 찾지 못했습니다|runner cli not found/i;
-export const MODEL_UNAVAILABLE_RE = /does not support this model|model not found|unknown model|requested entity was not found|no such model|invalid model/i;
+export const MODEL_UNAVAILABLE_RE = /does not support this model|model not found|unknown model|requested entity was not found|no such model|invalid model|not supported when using codex with a chatgpt account/i;
+// 낡은 codex 관리본의 모델 거절 — codex.mjs codexOutdatedError가 만드는 확정 문구만 본다(그 함수와 한 쌍).
+export const RUNNER_OUTDATED_RE = /Codex 실행기 업데이트가 아직 끝나지 않아|codex runner update is not finished/i;
 
 /** 코드 표 — UI i18n 키(chat.fail.<code>)와 1:1. 새 코드는 여기와 i18n에 **동시에**(테스트가 대조). */
 export const FAIL_CODES = Object.freeze([
   'aborted', 'auth_expired', 'subscription_blocked', 'quota', 'vendor_overloaded',
-  'endpoint_not_found', 'cli_missing', 'model_unavailable', 'crash', 'unknown',
+  'endpoint_not_found', 'cli_missing', 'runner_outdated', 'model_unavailable', 'crash', 'unknown',
 ]);
 const ORIGIN = Object.freeze({
   aborted: 'user', auth_expired: 'probe', subscription_blocked: 'vendor', quota: 'vendor', vendor_overloaded: 'vendor',
-  endpoint_not_found: 'vendor', cli_missing: 'argo', model_unavailable: 'vendor', crash: 'argo', unknown: 'probe',
+  endpoint_not_found: 'vendor', cli_missing: 'argo', runner_outdated: 'argo', model_unavailable: 'vendor', crash: 'argo', unknown: 'probe',
 });
 
 /** 원문 + 호출자가 이미 아는 표식(flags) → { code, origin }. flags는 chat.mjs가 판정한 것을 그대로 받는다
@@ -50,6 +52,7 @@ export function classifyRunnerError(msg, { flags = {} } = {}) {
   if (flags.endpointNotFound) return out('endpoint_not_found');
   if (flags.crash || flags.lockup) return out('crash');
   if (CLI_MISSING_RE.test(s)) return out('cli_missing');
+  if (RUNNER_OUTDATED_RE.test(s)) return out('runner_outdated');
   if (flags.credit || QUOTA_RE.test(s)) return out('quota');
   if (flags.auth || OAUTH_SESSION_EXPIRED_RE.test(s) || AUTH_TEXT_RE.test(s)) return out('auth_expired');
   if (MODEL_UNAVAILABLE_RE.test(s)) return out('model_unavailable');
