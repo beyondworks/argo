@@ -63,7 +63,7 @@ const treeSource = (await readFile(new URL('../src/runners/process-tree.mjs', im
  .replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
 for (const failAt of [1,3,5]) test(`inspection failure ${failAt} settles cancellation and releases known stopped children`,async()=>{
  const signals=[];let inspect=0;
- const table='200 100 Sun Sep 13 00:00:00 2026\n201 200 Sun Sep 13 00:00:01 2026\n';
+ const table='200 100 S Sun Sep 13 00:00:00 2026\n201 200 S Sun Sep 13 00:00:01 2026\n';
  const child={pid:200,exitCode:null,signalCode:null,stdin:{end(){}},kill:sig=>signals.push([200,sig])};
  const {execTurnFile:execFixture}=runInNewContext(`${treeSource}\n({execTurnFile})`,{
   execFile:()=>child,promisify:()=>async()=>{if(++inspect>=failAt)throw new Error('inspection unavailable');return {stdout:table};},
@@ -79,7 +79,7 @@ for (const failAt of [1,3,5]) test(`inspection failure ${failAt} settles cancell
 for (const tracked of [false,true]) test(`a replaced root identity is never signalled (tracked=${tracked})`,async()=>{
  const signals=[];let inspect=0;
  const {terminateOwnedProcessTree:terminate}=runInNewContext(`${treeSource}\n({terminateOwnedProcessTree})`,{
-  execFile:()=>{},promisify:()=>async()=>({stdout:`200 100 ${++inspect===1?'original':'replacement'}\n`}),
+  execFile:()=>{},promisify:()=>async()=>({stdout:`200 100 S ${++inspect===1?'original':'replacement'}\n`}),
   process:{pid:100,platform:'darwin',kill:(pid,sig)=>signals.push([pid,sig])},setTimeout,clearTimeout,setInterval,clearInterval,
  });
  const ownership=tracked?{records:new Map([[200,{pid:200,parent:100,birth:'original'}]]),stop:async()=>{}}:null;
