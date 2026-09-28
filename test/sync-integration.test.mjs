@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-sync-int-'));
 process.env.ARGO_ROOT = ROOT;
@@ -19,7 +20,7 @@ delete process.env.ARGO_SYNC_ALLOW_MASS_DELETE;
 
 const { syncCompany, _setSyncClientForTest, _tombstonesForTest, isDiscoverDue } = await import('../src/sync.mjs');
 const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
-const { openSecretCompat } = await import('../src/secretbox.mjs');
+const { openSecretCompat, sealSecret } = await import('../src/secretbox.mjs');
 // 회사 데이터 전체 봉투(v2)가 기본 켜짐(2026-09-06) — 실환경처럼 계정 키를 확보해야 동기화가 돈다(미확보 = 전체 불가시 보류).
 const fakeKeySb = (b64) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { key_b64: b64 }, error: null }) }) }) }) });
 await ensureAccountKey(fakeKeySb(Buffer.alloc(32, 9).toString('base64')), 'owner-sync-integration');
@@ -30,6 +31,140 @@ const { archiveCompany, TOMBSTONE_DIR } = await import('../src/workspace.mjs');
 const OWNER = 'o';
 const hashBuf = (buf) => createHash('sha1').update(buf).digest('hex').slice(0, 16);
 const meta = (buf, m = 1000) => ({ m, s: buf.length, h: hashBuf(buf) });
+
+test('one idle hour bounds manifest reads to 57 with 8s ticks and never rewrites', async () => {
+  const buf = Buffer.from('unchanged');
+  const { fake } = await setup('idle-egress', { localFiles: { 'vault/a.md': buf }, state: { 'vault/a.md': meta(buf) }, remoteFiles: { 'vault/a.md': meta(buf) } });
+  fake._store.set(`${OWNER}/idle-egress/__manifest__.json`, sealSecret(fake._store.get(`${OWNER}/idle-egress/__manifest__.json`)));
+  const bucket = fake.storage.from(); let reads = 0, writes = 0, bytes = 0;
+  const download = bucket.download.bind(bucket), upload = bucket.upload.bind(bucket);
+  const size = fake._store.get(`${OWNER}/idle-egress/__manifest__.json`).length;
+  bucket.download = async (key) => { if (key.endsWith('__manifest__.json')) { reads++; bytes += fake._store.get(key).length; } return download(key); };
+  bucket.upload = async (...args) => { writes++; return upload(...args); };
+  const realNow = Date.now; let now = realNow(); Date.now = () => now;
+  try {
+    for (let i = 0; i < 450; i++) { await syncCompany('idle-egress', OWNER); now += 8000; }
+  } finally { Date.now = realNow; }
+  assert.equal(reads, 57); assert.equal(writes, 0); assert.equal(bytes, size * 57);
+});
+
+test('partial blob download failure also backs off even when manifest write succeeds', async () => {
+  const buf = Buffer.from('remote');
+  const { fake } = await setup('partial-egress', { remoteFiles: { 'vault/a.md': meta(buf) } });
+  let reads = 0; const bucket = fake.storage.from(), download = bucket.download.bind(bucket);
+  bucket.download = async (key) => { reads++; return key.endsWith('a.md') ? { error: { status: 403, message: 'denied' } } : download(key); };
+  assert.equal((await syncCompany('partial-egress', OWNER)).failed, 1);
+  const before = reads;
+  assert.equal((await syncCompany('partial-egress', OWNER)).skipped, 'retry-backoff');
+  assert.equal(reads, before);
+});
+
+test('revision probe avoids full GET across an idle hour and detects remote revision changes', async () => {
+  const { fake } = await setup('revision-egress', {});
+  const key = `${OWNER}/revision-egress/__manifest__.json`;
+  fake._store.set(key, sealSecret(fake._store.get(key)));
+  const bucket = fake.storage.from(); let reads = 0, infos = 0, version = 'v1';
+  const download = bucket.download.bind(bucket);
+  bucket.info = async () => { infos++; return { data: { version, size: fake._store.get(key).length } }; };
+  bucket.download = async (...args) => { reads++; return download(...args); };
+  const realNow = Date.now; let now = realNow(); Date.now = () => now;
+  try {
+    for (let i = 0; i < 450; i++) { await syncCompany('revision-egress', OWNER); now += 8000; }
+    assert.equal(reads, 1); assert.equal(infos, 57);
+    version = 'v2'; now += 61_000;
+    await syncCompany('revision-egress', OWNER);
+    assert.equal(reads, 2);
+    bucket.info = async () => ({ error: { status: 402, message: 'quota' } }); now += 61_000;
+    await assert.rejects(syncCompany('revision-egress', OWNER), /quota/);
+    assert.equal((await syncCompany('revision-egress', OWNER)).skipped, 'retry-backoff');
+    assert.equal(reads, 2, 'metadata failure never falls through to full download');
+  } finally { Date.now = realNow; }
+});
+
+test('local file changes bypass idle probe delay for immediate push', async () => {
+  const buf = Buffer.from('before');
+  const { fake, wsRoot } = await setup('changed-egress', { localFiles: { 'vault/a.md': buf }, state: { 'vault/a.md': meta(buf) }, remoteFiles: { 'vault/a.md': meta(buf) } });
+  await syncCompany('changed-egress', OWNER);
+  await writeFile(join(wsRoot, 'vault/a.md'), 'after');
+  const r = await syncCompany('changed-egress', OWNER);
+  assert.equal(r.pushed, 1);
+  assert.equal(openSecretCompat(fake._store.get(`${OWNER}/changed-egress/vault/a.md`)).toString(), 'after');
+});
+
+test('a local edit during the remote read is not cached as already synced', async () => {
+  const buf = Buffer.from('before');
+  const { fake, wsRoot } = await setup('racing-egress', { localFiles: { 'vault/a.md': buf }, state: { 'vault/a.md': meta(buf) }, remoteFiles: { 'vault/a.md': meta(buf) } });
+  const bucket = fake.storage.from(), upload = bucket.upload.bind(bucket);
+  bucket.info = async () => ({ data: { version: 'same' } });
+  let changed = false;
+  bucket.upload = async (...args) => {
+    if (!changed) { changed = true; await writeFile(join(wsRoot, 'vault/a.md'), 'concurrent edit'); }
+    return upload(...args);
+  };
+  await syncCompany('racing-egress', OWNER);
+  const result = await syncCompany('racing-egress', OWNER);
+  assert.equal(result.pushed, 1);
+  assert.equal(openSecretCompat(fake._store.get(`${OWNER}/racing-egress/vault/a.md`)).toString(), 'concurrent edit');
+});
+
+test('manifest write failure backs off repeated cycles and recovers after the deadline', async () => {
+  const { fake } = await setup('retry-egress', {});
+  const bucket = fake.storage.from(); let reads = 0, writes = 0;
+  const download = bucket.download.bind(bucket), upload = bucket.upload.bind(bucket);
+  bucket.download = async (...args) => { reads++; return download(...args); };
+  bucket.upload = async (...args) => { writes++; return writes === 1 ? { error: { status: 402, message: 'quota unavailable' } } : upload(...args); };
+  await assert.rejects(syncCompany('retry-egress', OWNER), /quota/);
+  const atFailure = reads;
+  for (let i = 0; i < 20; i++) assert.equal((await syncCompany('retry-egress', OWNER)).skipped, 'retry-backoff');
+  assert.equal(reads, atFailure); assert.equal(writes, 1);
+  const realNow = Date.now; Date.now = () => realNow() + 31_000;
+  try { assert.equal((await syncCompany('retry-egress', OWNER)).skipped, undefined); }
+  finally { Date.now = realNow; }
+  assert.equal(writes, 2);
+});
+
+test('isolated HTTP storage: 402 downloads back off without further requests, then recover', async () => {
+  const { fake } = await setup('http-egress', {});
+  let requests = 0, blocked = true;
+  const server = createServer((req, res) => {
+    requests++;
+    if (blocked) { res.writeHead(402); res.end('quota'); return; }
+    res.end(fake._store.get(`${OWNER}/http-egress/__manifest__.json`));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const bucket = fake.storage.from();
+  bucket.download = async () => {
+    const r = await fetch(`http://127.0.0.1:${server.address().port}/manifest`);
+    if (!r.ok) { await r.text(); return { error: { status: r.status, message: 'quota' } }; }
+    return { data: new Blob([await r.arrayBuffer()]) };
+  };
+  const realNow = Date.now;
+  try {
+    await assert.rejects(syncCompany('http-egress', OWNER), /quota/);
+    for (let i = 0; i < 10; i++) assert.equal((await syncCompany('http-egress', OWNER)).skipped, 'retry-backoff');
+    assert.equal(requests, 1);
+    blocked = false; Date.now = () => realNow() + 31_000;
+    assert.equal((await syncCompany('http-egress', OWNER)).failed, 0);
+    assert.ok(requests > 1);
+  } finally { Date.now = realNow; await new Promise((resolve) => server.close(resolve)); }
+});
+
+test('browser cache signatures are invisible in both directions without excluding user Default documents', async () => {
+  const junk = Buffer.from('cache'), doc = Buffer.from('keep');
+  const cache = 'vault/검수-profile/Default/Cache/Cache_Data/data_0';
+  const shader = 'vault/pdf-render-profile/GrShaderCache/index';
+  const keep = 'vault/Default/Cache/notes.md';
+  const { fake, wsRoot } = await setup('cache-egress', {
+    localFiles: { [cache]: junk, [keep]: doc },
+    remoteFiles: { [shader]: meta(junk) }, remoteBlobs: { [shader]: junk },
+  });
+  await syncCompany('cache-egress', OWNER);
+  assert.equal(fake._store.has(`${OWNER}/cache-egress/${cache}`), false);
+  assert.equal(existsSync(join(wsRoot, shader)), false);
+  assert.equal(fake._store.has(`${OWNER}/cache-egress/${shader}`), true, 'no remote deletion');
+  assert.equal(existsSync(join(wsRoot, cache)), true, 'no local deletion');
+  assert.equal(fake._store.has(`${OWNER}/cache-egress/${keep}`), true);
+});
 
 // fake Supabase storage — 인메모리 Map<key, Buffer>. from(BUCKET).download/upload/remove만 구현.
 function fakeStorage(initial = {}) {
@@ -574,7 +709,10 @@ test('통합 RS1: 원격 room-main·별칭 카드는 안 내려오고 원격도 
   assert.ok(manifest.files['agents/Zroom-main.md'], '매니페스트 항목도 유지');
   assert.ok(!manifest.files['agents/room-main.md']);
   // 두 번째 사이클(base에 원격 충돌 항목이 남은 상태) — 여기서 '로컬 삭제'로 읽혀 원격이 지워지는 게 EXCLUDE 방식의 결함이었다
-  const r2 = await syncCompany(wsId, OWNER);
+  const realNow = Date.now; Date.now = () => realNow() + 61_000;
+  let r2;
+  try { r2 = await syncCompany(wsId, OWNER); } finally { Date.now = realNow; }
+  assert.notEqual(r2.skipped, 'idle-probe', '보존 검사는 실제 원격 probe를 실행한다');
   assert.equal(r2.deletedR, 0, '2사이클에도 원격 삭제 0');
   assert.ok(fake._store.has(`${OWNER}/${wsId}/agents/Zroom-main.md`));
   assert.ok(!existsSync(join(wsRoot, 'agents', 'Zroom-main.md')));
