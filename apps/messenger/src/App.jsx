@@ -1652,7 +1652,7 @@ function Shell({ session }) {
   const dragOver = (e) => { if (drag) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } };
   const dropOnRow = (e, c) => { e.preventDefault(); e.stopPropagation(); const id = drag; setDrag(null); if (!id || id === c.id) return;
     if (favs.some((f) => f.id === id) && favs.some((f) => f.id === c.id)) return reorderFav(id, c.id); // 끌어서 옮기는 것은 즐겨찾기 안의 순서
-    if (dmSort === 'custom' && c.kind === 'dm' && dmList.some((x) => x.id === id) && dmList.some((x) => x.id === c.id)) return reorderDmCustom(id, c.id); // DM 탭 직접 배치
+    if (dmTab && dmSort === 'custom' && c.kind === 'dm' && dmList.some((x) => x.id === id) && dmList.some((x) => x.id === c.id)) return reorderDmCustom(id, c.id); // DM 탭 직접 배치 — 순서가 보이는 폰 채팅 탭에서만(데스크톱 레일은 정렬을 안 쓰는데 끌면 안 보이는 순서가 저장됐다, 2026-09-29 실측)
     if (railSort === 'custom' && myCrews.some((x) => x.id === id) && myCrews.some((x) => x.id === c.id)) return reorderRailCustom(id, c.id); // '내 에이전트' 직접 배치(내 소유 크루만)
   };
   const orderItems = (c) => { const at = favs.findIndex((f) => f.id === c.id); return at < 0 ? [] : [

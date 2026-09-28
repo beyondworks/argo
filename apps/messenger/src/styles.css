@@ -1655,10 +1655,11 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 html { -webkit-tap-highlight-color: transparent; }
 /* ─── 모바일 정돈(2026-09-29 유건 지시 "메이저 메신저와 이질감 없게" — 카카오톡·라인·텔레그램·슬랙 대조) ─── */
 /* 연속 메시지 묶음(msg-group.mjs): 이름·아바타는 묶음 첫 글에만, 시간·전송 표시는 마지막 글에만. 줄 간격 20 → 6 */
-.msgr-spine > .msgr-row.cont, .msgr-spine > .msgr-mine.cont { margin-top: -14px; }
-.msgr-row.cont > .msgr-av, .msgr-row.cont > .msgr-avbtn { visibility: hidden; }
-.msgr-row.cont .who { display: none; }
-.msgr-mine.notail > .meta { display: none; }
+/* 폰 한정 — 데스크톱은 말풍선 아래 도구 막대(.msgr-acts, 32px)가 흐름 안에 있어 묶어도 38px씩 벌어졌다(2026-09-29 실측). 데스크톱 묶음은 막대를 띄우는 설계와 함께 따로 */
+.msgr-phone .msgr-spine > .msgr-row.cont, .msgr-phone .msgr-spine > .msgr-mine.cont { margin-top: -14px; }
+.msgr-phone .msgr-row.cont > .msgr-av, .msgr-phone .msgr-row.cont > .msgr-avbtn { visibility: hidden; }
+.msgr-phone .msgr-row.cont .who { display: none; }
+.msgr-phone .msgr-mine.notail > .meta { display: none; }
 @media (max-width: 720px) {
   /* 대화방은 전체 화면 — 탭바·+ 버튼을 숨기고 입력창을 바닥 안전 영역에 붙인다(뒤로 스와이프 중엔 탭바가 함께 들어온다) */
   .msgr-phone.phone-chat:not(.swiping-back) .msgr-tabbar, .msgr-phone.phone-chat:not(.swiping-back) .msgr-fab { display: none; }
