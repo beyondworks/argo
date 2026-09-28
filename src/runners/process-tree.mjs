@@ -1,16 +1,39 @@
 // Cancellation owns one spawned CLI and its descendants, never a command name or user-wide process set.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { performance } from 'node:perf_hooks';
 const execFileP = promisify(execFile);
 
-async function processTable() {
-  const { stdout } = await execFileP('ps', ['-axo', 'pid=,ppid=,lstart='], { timeout: 2000, maxBuffer: 2e6, windowsHide: true });
+async function processTable(timeout = 2000) {
+  const { stdout } = await execFileP('ps', ['-axo', 'pid=,ppid=,stat=,lstart='], { timeout, maxBuffer: 2e6, windowsHide: true });
   return new Map(stdout.split('\n').flatMap(line => {
-    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/);
-    return m ? [[Number(m[1]), { pid: Number(m[1]), parent: Number(m[2]), birth: m[3] }]] : [];
+    if (!line.trim()) return [];
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/);
+    if (!m) throw new Error('The runner process inspection could not be parsed.');
+    return [[Number(m[1]), { pid: Number(m[1]), parent: Number(m[2]), state: m[3], birth: m[4] }]];
   }));
 }
 const signalPid = (pid, signal) => { try { process.kill(pid, signal); } catch (e) { if (e.code !== 'ESRCH') throw e; } };
+
+async function waitForOwnedExit(owned) {
+  const pending = new Map(owned);
+  const deadline = performance.now() + 2000;
+  while (pending.size) {
+    const remaining = Math.ceil(deadline - performance.now());
+    if (remaining <= 0) throw new Error('The runner process exit could not be confirmed in time.');
+    const table = await processTable(remaining);
+    if (!table.size) throw new Error('The runner process exit inspection returned no processes.');
+    for (const [pid, record] of pending) {
+      const current = table.get(pid);
+      // Reused PIDs are not ours. Zombies cannot execute, even if their new parent has not reaped them.
+      if (!current || current.birth !== record.birth || current.state.startsWith('Z')) pending.delete(pid);
+    }
+    if (pending.size) {
+      const pause = Math.min(50, Math.max(0, deadline - performance.now()));
+      if (pause > 0) await new Promise(resolve => setTimeout(resolve, pause));
+    }
+  }
+}
 
 // One shared snapshot per 500ms while CLI turns are active, no per-crew polling process.
 const watchers = new Set(); let watchTimer = null, inspection = null;
@@ -98,6 +121,11 @@ export async function terminateOwnedProcessTree(child, ownership = null) {
   }
   // A departed root may have launched children between snapshots; never claim those were verified.
   if (!rootVerified) throw Object.assign(new Error('Known child processes stopped; unobserved descendants could not be verified.'), { ownershipUnverified: true });
+  try { await waitForOwnedExit(owned); }
+  catch (error) {
+    // Signals were already sent. Uncertain exit must not trigger a fallback kill of a possibly reused PID.
+    throw Object.assign(error, { ownershipUnverified: true });
+  }
 }
 
 /** execFile-compatible result, with cancellation/timeout that ends commands spawned by the CLI too. */
