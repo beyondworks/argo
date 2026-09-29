@@ -74,7 +74,9 @@ Deno.serve(async (req) => {
   // 수신자라 같은 가드를 여기서도 건다. ls_status·ends_at 등 결제 상태 컬럼은 그대로 기록한다
   // (접근만 안 내려간다 — granted 계정이 결제 상태를 잃었다는 사실 자체는 숨기지 않는다).
   if (plan === 'free') {
-    const { data: cur } = await sb.from('entitlements').select('granted').eq('user_id', userId).maybeSingle();
+    const { data: cur, error: grantedErr } = await sb.from('entitlements').select('granted').eq('user_id', userId).maybeSingle();
+    // 마이그레이션 전(granted 열 없음)이면 오류로 비어 예전 동작 그대로 — 원인 구분용으로만 남긴다.
+    if (grantedErr) console.warn('[ls-webhook] granted 조회 실패 — 가드 건너뜀:', grantedErr.message);
     if (cur?.granted) plan = 'pro';
   }
   // FK(auth.users)가 쓰레기 user_id를 거른다 — 실패는 500으로 드러내 LS가 재시도하게 둔다.

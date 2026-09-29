@@ -128,3 +128,13 @@ test('runCloudPurge: 삭제 직전 재확인이 실패하면 그 계정을 지�
   await assert.rejects(() => runCloudPurge({ sb, execute: true, confirm: 1, log: () => {} }), /timeout/);
   assert.equal(storage._store.size, 1, '재확인 실패인데 지워졌다');
 });
+
+// 재검수 LOW(2026-09-29): 재확인 값이 분명한 false가 아니면(null 등) 지우지 않는다 — 모호하면 보존.
+test('runCloudPurge: 재확인 값이 false가 아니면(null) 건너뛴다', async () => {
+  const storage = fakeStorage({ [`u1/ws1/a.txt`]: { size: 10 } });
+  const sb = fakeSb([{ user_id: 'u1', purge_after: '2026-11-01' }], storage);
+  const rpc = sb.rpc;
+  sb.rpc = async (name, args) => (name === 'is_pro_for' ? { data: null, error: null } : rpc(name, args));
+  await runCloudPurge({ sb, execute: true, confirm: 1, log: () => {} });
+  assert.equal(storage._store.size, 1, '재확인 값이 모호한데 지워졌다');
+});
