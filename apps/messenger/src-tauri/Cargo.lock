@@ -74,6 +74,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-apk-installer",
  "tauri-plugin-deep-link",
+ "tauri-plugin-haptics",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-process",
@@ -4197,6 +4198,20 @@ dependencies = [
  "url",
  "windows-registry 0.5.3",
  "windows-result 0.3.4",
+]
+
+[[package]]
+name = "tauri-plugin-haptics"
+version = "2.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67ab59e8202362fb5fec1158bdb497466983ddac2483e606e4d5c1bf9b118c6c"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -687,6 +687,9 @@ export const DICT = {
   'rail.agents.others': ['다른 멤버의 크루', "Other members' crews"],
   'rail.me': ['나', 'me'],
   'ch.pin': ['즐겨찾기에 추가', 'Add to favorites'],
+  'swipe.fav': ['즐겨찾기', 'Favorite'], // 폰 줄 밀기 버튼(짧게)
+  'swipe.unfav': ['해제', 'Unfavorite'],
+  'swipe.read': ['읽음', 'Read'],
   'ch.unpin': ['즐겨찾기 해제', 'Remove from favorites'],
   'set.sound.preview': ['듣기', 'Play'],
   'sound.seatbelt-single': ['안전띠 사인(딩)', 'Seatbelt sign (ding)'],

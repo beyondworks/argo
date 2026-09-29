@@ -28,7 +28,9 @@ pub fn run() {
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_deep_link::init());
     #[cfg(mobile)]
-    let builder = builder.plugin(tauri_plugin_push_notifications::init()); // APNs·FCM 기기 토큰 + 알림 탭 — 발송은 서버(msgr-push)
+    let builder = builder.plugin(tauri_plugin_push_notifications::init());
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_haptics::init()); // 짧은 진동 — JS는 src/haptics.js만 부른다 // APNs·FCM 기기 토큰 + 알림 탭 — 발송은 서버(msgr-push)
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_web_auth::init());
     #[cfg(target_os = "android")]
