@@ -8,6 +8,9 @@ export class ArgoMsgrError extends Error {
 }
 export const MAX_LEN = 20000;                 // 서버 본문 상한(msgr_messages.body)
 export const POLL_TIMEOUT_S = 20;             // 서버 상한 25초
+// 전송 중인 outbox 파일 → 그 전송 promise. 답장 경로(send)와 폴 전 재전송(flush)이 같은 파일을 동시에 보내 같은 답장 RPC가 두 번 나가던
+// 경합(검수 M1)을 막는다. makeApi는 호출마다 새로 만들고 플러그인 모듈 사본도 여럿일 수 있어 프로세스 전체에서 하나(globalThis 고정 키)로 둔다.
+const inflight = (globalThis[Symbol.for('argo-msgr.outbox-inflight')] ??= new Map());
 
 export async function recordCcReceipt({ url, token }, message, outboxDir = process.env.ARGO_MSGR_OUTBOX_DIR || join(homedir(), '.argo-msgr', 'outbox')) {
   const dir = join(outboxDir, 'receipts');
@@ -48,10 +51,20 @@ export function makeApi({ url, token, fetchImpl = globalThis.fetch, outboxDir = 
     await unlink(file).catch((e) => { if (e.code !== 'ENOENT') throw e; });
     return result;
   };
+  const deliverOnce = (file) => { // 같은 파일은 한 번에 하나의 전송만 — 이미 보내는 중이면 그 결과를 같이 기다린다
+    let p = inflight.get(file);
+    if (!p) {
+      p = deliverSaved(file).finally(() => { if (inflight.get(file) === p) inflight.delete(file); });
+      inflight.set(file, p);
+    }
+    return p;
+  };
   const flush = async () => {
     const files = await readdir(outboxDir).catch((e) => { if (e.code === 'ENOENT') return []; throw e; });
     for (const file of files.filter((f) => f.startsWith(prefix + '-') && f.endsWith('.json')).sort()) {
-      try { await deliverSaved(join(outboxDir, file)); } catch (e) { if (!permanent(e)) throw e; }
+      const path = join(outboxDir, file);
+      if (inflight.has(path)) continue; // 답장 경로가 지금 보내는 중 — 폴은 건너뛴다(기다리지도 않는다)
+      try { await deliverOnce(path); } catch (e) { if (!permanent(e)) throw e; }
     }
   };
   const send = async (params) => {
@@ -65,11 +78,11 @@ export function makeApi({ url, token, fetchImpl = globalThis.fetch, outboxDir = 
       await writeFile(tmp, JSON.stringify(params), { mode: 0o600 });
       await rename(tmp, file);
     }
-    return deliverSaved(file);
+    return deliverOnce(file);
   };
   return {
     getMe: () => call('getMe'),
-    // events=1 — 크루 계약 1-a 이벤트(routine_edit·approval_decided)도 받는다. 이벤트 항목은 update_id가 없고 offset과 무관하다.
+    // events=1 — 크루 계약 이벤트(routine_edit·approval_decided·config)도 받는다. 이벤트 항목은 update_id가 없고 offset과 무관하다.
     getUpdates: async (offset, limit = 1) => { await flush(); return call('getUpdates', { offset, limit, timeout: POLL_TIMEOUT_S, delivery_protocol: 1, events: 1 }, { timeoutMs: (POLL_TIMEOUT_S + 15) * 1000 }); },
     sendMessage: (chatId, text, replyTo, execution = {}) => send({ ...execution, chat_id: chatId, text: String(text).slice(0, MAX_LEN), ...(replyTo != null ? { reply_to_message_id: replyTo } : {}) }),
     // 크루 계약 1-a — 예약 작업 미러·편집 결과·위험 작업 결재 카드. 판정은 전부 서버(msgr_bot_* RPC)가 한다.
@@ -78,6 +91,9 @@ export function makeApi({ url, token, fetchImpl = globalThis.fetch, outboxDir = 
     requestApproval: (payload) => call('requestApproval', payload, { post: true }),
     ackApproval: (approvalId) => call('ackApproval', { approval_id: approvalId }, { post: true }),
     expireApproval: (approvalId) => call('expireApproval', { approval_id: approvalId }, { post: true }),
+    // 크루 계약 1-b — 버전·승인 모드 보고(바뀔 때만 부른다, 응답 {mirror_all}), 결재 결정 뒤 후속 보고(결재 한 건에 한 번, 서버가 방·원문을 정한다)
+    reportStatus: (payload) => call('reportStatus', payload, { post: true }),
+    sendFollowup: (approvalId, text) => call('sendMessage', { approval_id: approvalId, text: String(text).slice(0, MAX_LEN) }, { post: true }),
   };
 }
 

@@ -106,7 +106,7 @@ exit 0
 
     const calls = (await readFile(log, 'utf8')).trim().split('\n');
     const hh = `HH=${join(home, '.hermes')}`;
-    for (const c of ['plugins enable argo-msgr-platform --no-allow-tool-override', 'gateway install', 'gateway start']) assert.ok(calls.includes(`hermes ${c} ${hh}`), `hermes ${c}`);
+    for (const c of ['plugins enable argo-msgr-platform --no-allow-tool-override', 'config set approvals.mode manual', 'gateway install', 'gateway start']) assert.ok(calls.includes(`hermes ${c} ${hh}`), `hermes ${c}`);
     assert.ok(!calls.some((c) => c.includes('research') && !c.startsWith('hermes profile show')), 'research에는 설치 명령이 없다');
 
     // 오픈클로 main: 플러그인·계정(해시 일치 토큰)·바인딩·게이트웨이 재시작
@@ -115,6 +115,7 @@ exit 0
     assert.equal(set('url'), base); assert.equal(set('enabled'), 'true'); assert.equal(sha(set('token')), hashOf('openclaw', 'main'));
     assert.ok(calls.includes('openclaw config set bindings [{"match": {"channel": "argo-msgr", "accountId": "main"}, "agentId": "main"}]'));
     assert.ok(calls.includes('openclaw gateway restart'));
+    assert.ok(calls.indexOf('openclaw config set tools.exec.mode ask') >= 0 && calls.indexOf('openclaw config set tools.exec.mode ask') < calls.indexOf('openclaw gateway restart'), '실행 승인 기본값 ask는 재시작 전에');
 
     assert.deepEqual(st.results.map((r) => `${r.kind}:${r.id}:${r.ok}`), ['hermes:default:true', 'openclaw:main:true']);
     assert.equal(st.host.length > 0, true);
@@ -341,4 +342,36 @@ test('connect.py(오픈클로): 최소 버전(2026.8.1) 미만이면 설치하�
   }
   const ok = await runOpenclawOnly({ openclaw: fakeOpenclaw({ version: 'OpenClaw 2026.8.1 (1a2b3c4)' }) });
   assert.equal(ok.code, 0, ok.so);
+});
+
+// 1-b(2026-09-29 유건 결정) — 연결할 때 위험 명령은 사람에게 묻는 모드를 기본값으로, 이미 명시한 값은 덮어쓰지 않는다(카드에 실제 모드 안내)
+test('connect.py: 승인 모드 기본값 — 명시한 값이 없을 때만 Hermes manual·OpenClaw ask, 있으면 그대로(블록·한 줄 YAML 둘 다)', { skip }, async () => {
+  const py = String.raw`
+import importlib.util, sys, os, tempfile
+spec = importlib.util.spec_from_file_location('connect', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+assert m.yaml_sets('approvals:\n  mode: smart\n', 'approvals', 'mode')
+assert m.yaml_sets('approvals: {mode: off, timeout: 60}\n', 'approvals', 'mode')
+assert m.yaml_sets('model: x\napprovals:\n  # 주석\n\n  timeout: 60\n  mode: manual\nother: 1\n', 'approvals', 'mode')
+assert not m.yaml_sets('approvals:\n  timeout: 60\nmode: smart\n', 'approvals', 'mode'), '다른 최상위 키의 mode는 아니다'
+assert not m.yaml_sets('auxiliary:\n  approvals:\n    mode: smart\n', 'approvals', 'mode'), '중첩된 같은 이름은 아니다'
+assert not m.yaml_sets('approvals:\n  gateway:\n    mode: strict\n  timeout: 60\n', 'approvals', 'mode'), 'approvals 아래 더 깊은 mode는 아니다(검수 LOW)'
+assert not m.yaml_sets('', 'approvals', 'mode')
+calls = []
+m.run = lambda cli, args, env=None: calls.append(args) or (True, '')
+d = tempfile.mkdtemp()
+assert m.default_manual_approvals_hermes('hermes', d, {}) == 'manual' and calls[-1] == ['config', 'set', 'approvals.mode', 'manual']
+open(os.path.join(d, 'config.yaml'), 'w').write('approvals:\n  mode: smart\n')
+n = len(calls)
+assert m.default_manual_approvals_hermes('hermes', d, {}) == 'kept' and len(calls) == n, '명시한 smart는 덮어쓰지 않는다'
+m.run = lambda cli, args, env=None: calls.append(args) or ((False, 'Config path not found') if args[:2] == ['config', 'get'] else (True, ''))
+assert m.default_ask_exec_openclaw('openclaw') == 'ask' and calls[-1] == ['config', 'set', 'tools.exec.mode', 'ask']
+m.run = lambda cli, args, env=None: calls.append(args) or ((True, '"full"\n') if args[:2] == ['config', 'get'] else (True, ''))
+n = len(calls)
+assert m.default_ask_exec_openclaw('openclaw') == 'kept' and len(calls) == n + 1, '명시한 full은 덮어쓰지 않는다'
+m.run = lambda cli, args, env=None: (False, 'boom')
+assert m.default_manual_approvals_hermes('hermes', tempfile.mkdtemp(), {}) == 'failed', '설정 실패는 연결을 막지 않고 보고만'
+`;
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync('python3', ['-c', py, new URL('../integrations/server-connect/connect.py', import.meta.url).pathname], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
 });

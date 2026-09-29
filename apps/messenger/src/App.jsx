@@ -91,6 +91,13 @@ export const externalAgentId = (installation, owner, kind, id) => {
 
 const AWAY_MS = 90_000;
 // 에이전트가 꺼져 있나(상주·봇 하트비트 90초 끊김, 한 번도 안 켜짐 포함) — 주인만 보던 색 점을 모두가 읽는 글자로 드러낸다(D23·D24)
+// 1-b(2026-09-29): 외부 에이전트 연결 도구의 최신 버전 — 보고가 없거나(0.3.0 이전) 더 낮으면 "업데이트 필요". 설정은 강제하지 않고 보여 준다.
+const ADAPTER_LATEST = { hermes: '0.3.0', openclaw: '0.3.0' };
+const semverLess = (a, b) => { const x = String(a).split('.').map((n) => parseInt(n, 10) || 0), y = String(b).split('.').map((n) => parseInt(n, 10) || 0); for (let i = 0; i < 3; i++) { if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0); } return false; };
+const adapterOutdated = (b) => !!ADAPTER_LATEST[b.kind] && (!b.state?.adapter_version || semverLess(b.state.adapter_version, ADAPTER_LATEST[b.kind]));
+// 승인 방식: 사람에게 묻는다(ask) / 보조 AI가 판단해 스스로 승인(ai) / 묻지 않고 실행(none) / 모름(unknown). Hermes manual·smart·off, OpenClaw ask·allowlist·deny·auto·full
+const approvalLevel = (mode) => ({ manual: 'ask', ask: 'ask', allowlist: 'ask', deny: 'ask', smart: 'ai', auto: 'ai', off: 'none', full: 'none' })[String(mode ?? '').toLowerCase()] ?? 'unknown';
+const APPROVAL_FIX = { hermes: 'hermes config set approvals.mode manual', openclaw: 'openclaw config set tools.exec.mode ask' };
 const crewAway = (c) => !c?.last_seen_at || Date.now() - Date.parse(c.last_seen_at) >= AWAY_MS;
 /** 개인 공간을 뜻하는 orgId 상수. null은 "조직 없음(EmptyOrg)"이므로 센티넬로 구분한다. */
 export const PERSONAL = '__personal__';
@@ -3625,7 +3632,14 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
   // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
   //    토큰 원문은 생성·회전 직후 이 화면에만 있고(setup 상태) 저장·로그하지 않는다. 가용성은 마지막 getUpdates(last_seen_at)뿐 — 종료/재시작 버튼 없음(해제 = 토큰 회수).
   const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null); const [renamingBot, setRenamingBot] = useState(null); const [renameName, setRenameName] = useState('');
-  const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at, external_id').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
+  const loadBots = useCallback(async () => { if (part !== 'agents') return;
+    const list = await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at, external_id').eq('org_id', org.id).order('created_at'));
+    // 1-b: 어댑터가 보고한 버전·승인 모드·"모든 예약 작업 보기"(표가 없는 옛 서버면 빈 값 — 카드는 예전처럼)
+    const ids = (list ?? []).map((b) => b.id);
+    const st = ids.length ? await supabase.from('msgr_bot_state').select('bot_id, adapter_version, approval_mode, mirror_all, mirror_all_applied').in('bot_id', ids) : { data: [] };
+    const byId = new Map((st.error ? [] : st.data ?? []).map((r) => [r.bot_id, r]));
+    setBots((list ?? []).map((b) => ({ ...b, state: byId.get(b.id) ?? null }))); }, [org.id, part]);
+  const setMirrorAll = async (b, on) => { setBusy(true); try { const r = await supabase.rpc('msgr_bot_set_mirror_all', { p_bot: b.id, p_on: on }); if (r.error) throw new Error(r.error.message); await loadBots(); } catch (e) { onError(e.message); } finally { setBusy(false); } };
   useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
   const [auto, setAuto] = useState(null); // 원클릭 연결(앱 안에서만): null | { status: 'running'|'done'|'missing'|'failed', results:[{id,name,ok,steps}], reason }
   const [localHermes, setLocalHermes] = useState(null);
@@ -3950,7 +3964,13 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
                     <div><span className="msgr-klabel">{t('org.agents.by.label')}</span><span>{nameOfUser(b.created_by)}</span></div>
                     <div><span className="msgr-klabel">{t('org.agents.detail.created')}</span><span>{fmtWhen(b.created_at, lang)}</span></div>
                     <div><span className="msgr-klabel">{t('org.agents.detail.token')}</span><span><code>{b.token_hint}…</code>{b.rotated_at ? ` · ${t('org.agents.detail.rotated', { when: fmtWhen(b.rotated_at, lang) })}` : ''}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.detail.adapter')}</span><span>{b.state?.adapter_version ?? t('org.agents.detail.adapter.unknown')}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.detail.approvals')}</span><span>{t(`org.agents.approvals.${approvalLevel(b.state?.approval_mode)}`, { mode: b.state?.approval_mode ?? '' })}</span></div>
                   </div>
+                  {adapterOutdated(b) && <p className="note">{t('org.agents.adapter.outdated', { latest: ADAPTER_LATEST[b.kind] })}</p>}
+                  {['ai', 'none'].includes(approvalLevel(b.state?.approval_mode)) && <p className="note">{t('org.agents.approvals.fix')} <code>{APPROVAL_FIX[b.kind] ?? APPROVAL_FIX.hermes}</code></p>}
+                  {b.created_by === uid && <><label className="msgr-check"><input type="checkbox" checked={!!b.state?.mirror_all} disabled={busy || !b.state?.adapter_version} onChange={(e) => setMirrorAll(b, e.target.checked)} /> {t('org.agents.mirrorAll')}</label>
+                    <p className="note">{b.state?.adapter_version ? t(b.state?.mirror_all && b.state?.mirror_all_applied !== b.state?.mirror_all ? 'org.agents.mirrorAll.pending' : 'org.agents.mirrorAll.hint') : t('org.agents.mirrorAll.needUpdate')}</p></>}
                   <p className="note">{t('org.agents.detail.hint')}</p>
                   <div className="acts">{onOpenCrew && <button type="button" className="btn sm" onClick={() => onOpenCrew(b.crew_id)}><I name="star" size={13} />{t('org.agents.detail.openCrew')}</button>}<button type="button" className="btn sm ghost text" onClick={() => setOpenBot(null)}>{t('ui.close')}</button></div>
                 </div>

@@ -140,7 +140,9 @@ test('미러 상태 파일 — 재시작 뒤에도 사람이 고친 시각이 �
 test('편집 반영 — 끄기·일정은 OpenClaw 스케줄러 update 한 번, 메신저 전달 작업이 아니면 failed, 편집 뒤 사람이 고쳤으면 superseded', async (t) => {
   const cron = fakeCron([argoJob(), localJob()]);
   const api = fakeApi({ setRoutines: (p) => ({ total: (p.rows ?? []).length }), routineEditDone: true });
-  const m = new RoutineMirror({ api, cronAccess: async () => ({ state: 'ready', cron }), accountId: 'main', stateFile: await tmpState(t), tz: () => 'Asia/Seoul', mirrorAll: () => false });
+  // 시계를 고정한다 — 실제 시계를 쓰면 편집 시각(e6 14:00Z)보다 늦은 시각에 돌 때 '사람이 고침'으로 superseded가 되던 시한 결함(2026-09-29 14:34Z 실측)
+  const m = new RoutineMirror({ api, cronAccess: async () => ({ state: 'ready', cron }), accountId: 'main', stateFile: await tmpState(t), tz: () => 'Asia/Seoul', mirrorAll: () => false,
+    now: () => Date.parse('2026-09-29T13:30:00Z') });
   const done = () => api.calls.filter((x) => x[0] === 'routineEditDone').at(-1)[1];
   await m.applyEdit({ event: 'routine_edit', edit_id: 'e1', ext_id: 'j1', op: 'update', patch: { enabled: false, schedule: { type: 'daily', time: '07:15' } }, created_at: '2026-09-29T09:00:00+00:00' });
   assert.deepEqual(cron.calls, [['update', 'j1', { schedule: { kind: 'cron', expr: '15 7 * * *', tz: 'Asia/Seoul' }, enabled: false }]]);
@@ -269,9 +271,10 @@ test('배선 — 턴이 승인 대기로 멈춘 동안 결정 이벤트가 와�
     defineChannelPluginEntry: (x) => x, buildBaseAccountStatusSnapshot: () => ({}), buildBaseChannelStatusSummary: () => ({}), deleteAccountFromConfigSection: () => ({}), setAccountEnabledInConfigSection: () => ({}),
   });
   // index.ts registerFull → 게이트웨이 서비스 등록 → 시작하면 스케줄러 핸들을 받는다
-  const services = [];
-  entry.registerFull({ registerService: (svc) => services.push(svc) });
+  const services = [], tools = [];
+  entry.registerFull({ version: '0.3.0', registerService: (svc) => services.push(svc), registerTool: (factory, opts) => tools.push([factory, opts]) });
   assert.equal(services.length, 1); assert.equal(services[0].id, 'argo-msgr-routines');
+  assert.deepEqual(tools.map(([, o]) => o), [{ name: 'argo_request_approval' }], '결재 도구(1-b)는 선택 도구가 아니다');
   const cron = fakeCron([argoJob()]);
   await services[0].start({ getCron: () => cron });
 
@@ -292,6 +295,7 @@ test('배선 — 턴이 승인 대기로 멈춘 동안 결정 이벤트가 와�
     if (method === 'expireApproval') return ok({ status: 'expired', expired_now: true });
     if (method === 'routineEditDone' || method === 'sendMessage') return ok(method === 'sendMessage' ? { message_id: 99 } : true);
     if (method === 'setRoutines') return ok({ total: (body.rows ?? []).length });
+    if (method === 'reportStatus') return ok({ mirror_all: false });
     if (method === 'getUpdates') {
       polls++;
       if (logs.some((l) => /dispatch failed/.test(l))) return { status: 401, json: async () => ({ ok: false, error_code: 401, description: 'stop: turn failed' }) }; // 턴 안 단언 실패는 매달리지 않고 끝낸다
@@ -363,6 +367,7 @@ test('재시작 복구 — 답 대상이 "argo-msgr:<채널>"로 와도 서버�
   });
   const sent = [];
   globalThis.fetch = async (url, init) => { sent.push([url.split('/').pop(), init?.body ? JSON.parse(init.body) : null]); return { status: 200, json: async () => ({ ok: true, result: { message_id: 5 } }) }; };
+  channel.setArgoRuntime({ channel: { activity: { record() {} } } }); // 앞 테스트가 런타임을 넣었는지와 무관하게(같은 data: 모듈을 공유한다)
   const plugin = channel.argoMsgrPlugin;
   const cfg = { channels: { 'argo-msgr': { accounts: { default: { url: 'https://x.test/functions/v1/msgr-bot', token: 'argo_bot_' + 'a'.repeat(48), enabled: true } } } } };
   assert.equal(plugin.messaging.normalizeTarget(`argo-msgr:${CH}`), CH);
