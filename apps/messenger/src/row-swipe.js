@@ -39,7 +39,7 @@ const velocity = (samples, now) => { const a = samples[0], b = samples[samples.l
 
 /** 목록 컨테이너에 줄 밀기를 붙인다. 줄 = [data-swipe-id], 움직이는 면 = 그 안의 > .item, 버튼 칸 = .msgr-swipeacts. 해제 함수를 돌려준다 */
 export function bindRowSwipe(container, { onFull, blocked = () => false }) {
-  let g = null; let open = null;
+  let g = null; let open = null; let closedAt = 0; // closedAt: 열린 칸을 다른 줄 누름으로 닫은 시각 — 그 누름의 click은 대화를 열지 않는다(유건 2026-09-29: 팝업이 먼저 닫혀야)
   const paintRow = (row) => (x) => {
     const item = row.querySelector(':scope > .item'); if (item) item.style.transform = x ? `translate3d(${x}px,0,0)` : '';
     row.style.setProperty('--sw', String(Math.round(x))); row.toggleAttribute('data-swipe', x !== 0); row.dataset.side = x > 0 ? 'lead' : x < 0 ? 'trail' : '';
@@ -48,7 +48,7 @@ export function bindRowSwipe(container, { onFull, blocked = () => false }) {
   const start = (e) => {
     if (e.touches.length !== 1) { g = null; return; }
     const row = e.target.closest?.('[data-swipe-id]');
-    if (open && open !== row) close(open);
+    if (open && open !== row) { close(open); closedAt = Date.now(); }
     if (!row || blocked() || e.target.closest?.('.msgr-swipeacts')) { g = null; return; }
     cancelAnimationFrame(row._swRaf);
     const widths = rowWidths(row.clientHeight); row.toggleAttribute('data-compact', widths.compact);
@@ -83,20 +83,23 @@ export function bindRowSwipe(container, { onFull, blocked = () => false }) {
   const cancel = () => { if (g?.row && g.dir === 'x') close(g.row); g = null; };
   // 민 직후·열린 채 누른 줄은 대화를 열지 않고 닫기만 한다. 버튼을 누르면 동작 뒤 닫는다
   const click = (e) => {
+    if (Date.now() - closedAt < 500) { e.preventDefault(); e.stopPropagation(); return; } // 밀기 줄이 아닌 곳(멤버 줄 등)을 눌러 닫은 경우도
     const row = e.target.closest?.('[data-swipe-id]'); if (!row) return;
     if (e.target.closest?.('.msgr-swipeacts')) { setTimeout(() => close(row), 0); return; }
     if (Date.now() - Number(row.dataset.swipedAt || 0) < 400 || (row._swX ?? 0) !== 0) { e.preventDefault(); e.stopPropagation(); close(row); }
   };
   const onScroll = () => { if (open) close(open); };
+  const outside = (e) => { if (open && !container.contains(e.target)) close(open); }; // 목록 밖(머리·탭 바) 누름도 연 칸을 닫는다
   container.addEventListener('touchstart', start, { passive: true });
   container.addEventListener('touchmove', move, { passive: false });
   container.addEventListener('touchend', end, { passive: true });
   container.addEventListener('touchcancel', cancel, { passive: true });
   container.addEventListener('click', click, true);
   container.addEventListener('scroll', onScroll, { passive: true });
+  document.addEventListener('touchstart', outside, { capture: true, passive: true });
   return () => {
     container.removeEventListener('touchstart', start); container.removeEventListener('touchmove', move); container.removeEventListener('touchend', end);
-    container.removeEventListener('touchcancel', cancel); container.removeEventListener('click', click, true); container.removeEventListener('scroll', onScroll);
+    container.removeEventListener('touchcancel', cancel); container.removeEventListener('click', click, true); container.removeEventListener('scroll', onScroll); document.removeEventListener('touchstart', outside, { capture: true });
     if (open) { cancelAnimationFrame(open._swRaf); open._swX = 0; paintRow(open)(0); open = null; }
   };
 }
