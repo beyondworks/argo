@@ -265,6 +265,49 @@ def restart_unit(unit, aid):
     return False, f"{unit} 재시작에는 관리자 권한이 필요합니다 — 서버 터미널을 연 그대로(root) 다시 실행하면 자동으로 재시작합니다 / needs root: run again as root"
 
 
+def yaml_sets(text, top, sub):
+    """원본 YAML에 top.sub가 명시돼 있는가(기본값과 구분) — PyYAML 없이 두 형태만: 블록(`top:` 아래 들여쓴 `sub:`)과 한 줄(`top: {sub: …}`)."""
+    lines = (text or "").splitlines()
+    for i, line in enumerate(lines):
+        if re.match(rf"^{re.escape(top)}\s*:\s*\{{[^}}]*\b{re.escape(sub)}\s*:", line):
+            return True
+        if re.match(rf"^{re.escape(top)}\s*:\s*(#.*)?$", line):
+            indent = None   # 바로 아래 한 단계만(approvals.gateway.mode 같은 더 깊은 mode는 아니다 — 검수 LOW)
+            for nxt in lines[i + 1:]:
+                if not nxt.strip() or nxt.lstrip().startswith("#"):
+                    continue
+                if not nxt[:1].isspace():
+                    break
+                lead = len(nxt) - len(nxt.lstrip())
+                indent = lead if indent is None else indent
+                if lead == indent and re.match(rf"^\s+{re.escape(sub)}\s*:", nxt):
+                    return True
+    return False
+
+
+def default_manual_approvals_hermes(cli, home, env):
+    """1-b(2026-09-29 유건 결정): 연결할 때 위험 명령은 사람에게 묻는 manual을 기본값으로. 이미 명시한 값(smart 등)은 덮어쓰지 않는다 —
+    그 경우 메신저 에이전트 카드가 실제 모드를 보여 준다. Hermes 기본값 smart는 보조 AI가 괜찮다고 보면 카드 없이 실행한다."""
+    try:
+        text = open(os.path.join(home, "config.yaml"), encoding="utf-8").read()
+    except OSError:
+        text = ""
+    if yaml_sets(text, "approvals", "mode"):
+        return "kept"
+    ok, _ = run(cli, ["config", "set", "approvals.mode", "manual"], env)
+    return "manual" if ok else "failed"
+
+
+def default_ask_exec_openclaw(cli):
+    """OpenClaw 기본값 full은 사람 승인 없이 모든 명령을 실행한다(결재 카드가 한 번도 뜨지 않는다). 명시한 값이 없을 때만 ask로."""
+    ok, out = run(cli, ["config", "get", "tools.exec.mode"])
+    val = (out or "").strip().strip('"') if ok else ""
+    if val and val.lower() not in ("undefined", "null", "none"):
+        return "kept"
+    ok, _ = run(cli, ["config", "set", "tools.exec.mode", "ask"])
+    return "ask" if ok else "failed"
+
+
 def install_hermes(cli, a, token):
     home = a.get("home") or os.path.expanduser("~/.hermes")
     write_plugin("hermes", os.path.join(home, "plugins/argo-msgr"))
@@ -273,6 +316,11 @@ def install_hermes(cli, a, token):
     ok, out = run(cli, ["plugins", "enable", "argo-msgr-platform", "--no-allow-tool-override"], env)
     if not ok:
         return False, out
+    mode = default_manual_approvals_hermes(cli, home, env)
+    if mode == "manual":
+        say(f"  {a['id']}: 위험 명령은 메신저 결재로 묻도록 설정했습니다(approvals.mode=manual)", f"  {a['id']}: dangerous commands now ask for approval in the messenger (approvals.mode=manual)")
+    elif mode == "failed":
+        say(f"  {a['id']}: 승인 모드를 설정하지 못했습니다 — 연결은 계속합니다", f"  {a['id']}: could not set the approval mode — continuing")
     _, st = run(cli, ["gateway", "status"], env)
     unit = gateway_unit(st)
     if unit:  # systemd 서비스가 띄운 게이트웨이 — 서비스를 재시작해야 새 .env(EnvironmentFile)를 읽는다. `hermes gateway install`을 부르면 게이트웨이가 둘이 된다
@@ -312,6 +360,11 @@ def install_openclaw(cli, agents, tokens):
             results[a["id"]] = (False, out or "Invalid bindings config"); continue
         results[a["id"]] = run(cli, ["config", "set", "bindings", json.dumps(merge_binding(bindings, a["id"]))])
     if all(ok for ok, _ in results.values()):
+        mode = default_ask_exec_openclaw(cli)
+        if mode == "ask":
+            say("  위험 명령은 메신저 결재로 묻도록 설정했습니다(tools.exec.mode=ask)", "  dangerous commands now ask for approval in the messenger (tools.exec.mode=ask)")
+        elif mode == "failed":
+            say("  실행 승인 모드를 설정하지 못했습니다 — 연결은 계속합니다", "  could not set the exec approval mode — continuing")
         g = run(cli, ["gateway", "restart"])
         if not g[0]:
             i = run(cli, ["gateway", "install"])

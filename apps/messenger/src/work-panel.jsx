@@ -22,6 +22,7 @@ const errorText = (error, t) => {
   if (/no_eligible|invalid_crew|crew_not|lead_not/i.test(message)) return t('work.error.crew');
   if (/permission_revoked/i.test(message)) return t('automation.error.revoked');
   if (/not_editable/i.test(message)) return t('routine.error.notEditable');
+  if (/invalid_channel/i.test(message)) return t('routine.error.channel');
   if (/denied|forbidden|permission|not_allowed|row.level security|not_member/i.test(message)) return t('work.error.denied');
   if (/bad_goal|bad_instruction|request_conflict/i.test(message)) return t('work.error.input');
   if (/timezone|schedule|invalid_time|weekdays|interval/i.test(message)) return t('work.error.schedule');
@@ -287,16 +288,22 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
       const effectiveEnabled = pendingPatch && 'enabled' in pendingPatch ? pendingPatch.enabled : routine.enabled;
       const open = expanded.has(routine.id); const bodyId = `work-body-argo-${routine.id}`;
       const editable = routine.editable !== false; // 열 자체가 없는(구서버) 응답은 undefined — 기존 Argo 동작대로 편집 가능
+      const noRoute = !editable && routine.status?.delivery === 'none'; // 1-b ③: 결과를 보낼 곳이 없는 외부 작업 — 소유자가 방을 고른다
       return <article className="work-item" key={routine.id}>
       <button type="button" className="work-item-top work-item-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => toggleCard(routine.id)}>
-        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong title={routine.title}>{routine.title}</strong><span className="work-source-badge">{t(ROUTINE_SOURCE_LABEL[routine.source] ?? 'automation.source.custom')}</span></span>
+        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong title={routine.title}>{routine.title}</strong><span className="work-source-badge">{t(ROUTINE_SOURCE_LABEL[routine.source] ?? 'automation.source.custom')}</span>{noRoute && <span className="work-source-badge warn">{t('routine.route.badge')}</span>}</span>
         <span className={`work-status ${pendingDelete ? 'blocked' : effectiveEnabled ? 'running' : 'cancelled'}`}>{t(pendingDelete ? 'routine.delete.badge' : effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span>
       </button>
       {open && <div className="work-item-body" id={bodyId}>
       <p className="work-text">{routine.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === routine.crew_id)?.display_name ?? t('work.crew.unavailable')} · <RoutineSchedule schedule={routine.schedule} t={t} /></p>
       {routine.status?.last_run_at && <p className="work-note">{t('routine.status.last')} · {stamp(routine.status.last_run_at, lang)}{routine.status.last_status ? ` · ${routine.status.last_status}` : ''}</p>}
-      {!editable ? <p className="work-note">{t('routine.readonly.external')}</p> : pendingDelete ? <>
+      {noRoute ? <>
+        <p className="work-notice">{t('routine.route.none')}</p>
+        {pending && <p className="work-notice">{t('routine.pending.ext')}</p>}
+        {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
+        <RouteChooser routine={routine} channel={channel} t={t} disabled={disabled} act={act} onSaved={() => { routines.refresh(); setNotice(t('automation.saved')); }} />
+      </> : !editable ? <p className="work-note">{t('routine.readonly.external')}</p> : pendingDelete ? <>
         <p className="work-notice error" role="alert">{t('routine.delete.pending')}</p>
         <div className="work-actions"><button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: {} })), () => routines.refresh())}>{t('routine.delete.cancel')}</button></div>
       </> : <>
@@ -317,6 +324,32 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
     })}
     <Pages source={source} disabled={busy} t={t} />
   </>;
+}
+
+/** 1-b ③ 보낼 방 고르기 — 이 1:1 대화(소유자와 그 에이전트) 또는 그 에이전트가 들어간 채널만. 서버(_msgr_routine_channel_ok)가 다시 판정한다. */
+function RouteChooser({ routine, channel, t, disabled, act, onSaved }) {
+  const [options, setOptions] = useState(null);
+  const [value, setValue] = useState('');
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const members = await checked(supabase.from('msgr_channel_members').select('channel_id').eq('member_kind', 'crew').eq('member_id', routine.crew_id));
+      const ids = [...new Set((members ?? []).map((m) => m.channel_id))]; // 지금 연 채널도 그 에이전트가 들어가 있으면 선택지(검수 LOW) — 1:1 방은 아래에서 따로
+      const rooms = ids.length ? await checked(supabase.from('msgr_channels').select('id,kind,name').in('id', ids).neq('kind', 'dm').is('archived_at', null).order('name')) : [];
+      if (live) setOptions([...(channel.kind === 'dm' ? [{ id: channel.id, label: t('routine.route.dm') }] : []), ...(rooms ?? []).map((r) => ({ id: r.id, label: `# ${r.name}` }))]);
+    })().catch(() => { if (live) setOptions([]); });
+    return () => { live = false; };
+  }, [routine.crew_id, channel.id, channel.kind, t]);
+  if (options === null) return <p className="work-note" role="status">{t('ui.loading')}</p>;
+  return <div className="work-actions">
+    <label className="work-field"><span>{t('routine.route.pick')}</span>
+      <select className="msgr-select" value={value} onChange={(event) => setValue(event.target.value)} disabled={disabled}>
+        <option value="">{t('routine.route.choose')}</option>
+        {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+      </select>
+    </label>
+    <button className="btn sm" disabled={disabled || !value} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { channel_id: value } })), onSaved)}>{t('routine.route.save')}</button>
+  </div>;
 }
 
 function Schedule({ schedule = {}, t }) {

@@ -12,14 +12,20 @@ const CH = '11111111-1111-4111-8111-111111111111';
 const PRELUDE = String.raw`
 import asyncio, importlib.util, sys, types, tempfile, json, datetime
 from pathlib import Path
-for name in ['gateway', 'gateway.config', 'gateway.platforms', 'gateway.platforms.base', 'cron', 'cron.jobs', 'tools', 'tools.approval', 'hermes_time']:
+for name in ['gateway', 'gateway.config', 'gateway.platforms', 'gateway.platforms.base', 'cron', 'cron.jobs', 'tools', 'tools.approval', 'hermes_time',
+             'tools.approval_context', 'gateway.session_context']:
     sys.modules[name] = types.ModuleType(name)
 sys.modules['gateway.config'].Platform = str
 class Box:
     def __init__(self, **kwargs): self.__dict__.update(kwargs)
 class Base:
-    def __init__(self, **kwargs): self._message_handler = True
+    def __init__(self, **kwargs): self._message_handler = True; self.EVENTS = []; self._pending_messages = {}
     def _source_session_key(self, source): return 'sk:' + str(getattr(source, 'chat_id', ''))
+    def build_source(self, **kw): return Box(**kw)
+    async def handle_message(self, event): self.EVENTS.append((event, self._inbound.get()))
+SESSION = {}
+sys.modules['gateway.session_context'].get_session_env = lambda name, default='': SESSION.get(name, default)
+sys.modules['tools.approval_context']._get_approval_mode = lambda: 'smart'
 b = sys.modules['gateway.platforms.base']
 b.BasePlatformAdapter = Base
 b.MessageEvent = b.SendResult = Box
@@ -49,8 +55,11 @@ a = m.ArgoMsgrAdapter(Box(extra={}))
 tmp = tempfile.TemporaryDirectory()
 a._outbox = Path(tmp.name) / 'outbox'
 a._routines_file = Path(tmp.name) / 'routines.json'
+a._agent_file = Path(tmp.name) / 'agent-approvals.json'
 calls = []
 RESP = {}
+async def settle():
+    while a._tasks: await asyncio.gather(*list(a._tasks))
 async def api(method, params=None, **kwargs):
     calls.append((method, params))
     r = RESP.get(method)
@@ -233,7 +242,7 @@ async def go():
 asyncio.run(go())
 `));
 
-test('L-12 — edit_message를 재정의하지 않는다(Hermes가 도구 진행 말풍선을 켜서 채널에 진행 글이 올라가지 않게), 늦은 결정은 기록만', () => run(String.raw`
+test('L-12 — edit_message를 재정의하지 않는다(Hermes가 도구 진행 말풍선을 켜서 채널에 진행 글이 올라가지 않게), 늦은 승인은 결정한 사람에게 후속 보고로 알린다(1-b)', () => run(String.raw`
 assert 'edit_message' not in m.ArgoMsgrAdapter.__dict__
 a._approvals['hx-late'] = {'session_key':'sk','request_id':'rL','card':'1'}
 RESP['ackApproval'] = {'claimed': True, 'status': 'approved'}
@@ -245,6 +254,183 @@ class H(logging.Handler):
 m.logger.addHandler(H())
 asyncio.run(a._handle_event({'event':'approval_decided','approval_id':'hx-late','status':'approved','resume':True}))
 assert any('stopped waiting' in g for g in got), got
+fu = [p for (mm, p) in calls if mm == 'sendMessage']
+assert len(fu) == 1 and fu[0]['approval_id'] == 'hx-late' and '실행되지 않았습니다' in fu[0]['text'], fu
+a._approvals['hx-rej'] = {'session_key':'sk','request_id':'rR','card':'1'}
+asyncio.run(a._handle_event({'event':'approval_decided','approval_id':'hx-rej','status':'rejected','resume':False,'reason':'rejected'}))
+assert len([1 for (mm, p) in calls if mm == 'sendMessage']) == 1, '늦은 반려는 알릴 것이 없다(어차피 실행 안 됨)'
+`));
+
+// ── 1-b(2026-09-29 유건 결정) — 누가 연결하든 같은 계약: 버전·모드 보고, 소유자 스위치, 보낼 곳 없는 작업의 방 지정, 에이전트 결재 ──
+test('전달 상태 — 파일로 남기는 작업은 local, 보낼 곳 없는 작업(origin인데 출처 없음·판정 빈 목록)은 none, 메신저 작업은 표시 없음', () => run(String.raw`
+assert m.job_delivery({'deliver':'local'}) == 'local'
+assert m.job_delivery({'deliver':'origin'}) == 'none'
+assert m.job_delivery({'deliver':'origin','origin':{'platform':'telegram','chat_id':'1'}}) == 'local'
+assert m.job_delivery({'deliver':'origin'}, lambda j: []) == 'none', 'Hermes 판정이 빈 목록이면 보낼 곳 없음(VPS 실측 4건)'
+assert m.job_delivery({'deliver':'telegram:1'}, lambda j: [{'platform':'telegram','chat_id':'1'}]) == 'local'
+now = datetime.datetime.now(datetime.timezone.utc)
+row = m.job_to_row({'id':'j','name':'야간','prompt':'p','schedule':{'kind':'cron','expr':'0 1 * * *'},'deliver':'origin'}, None, {}, True, now)
+assert row['editable'] is False and row['status']['delivery'] == 'none'
+row = m.job_to_row({'id':'k','name':'브리프','prompt':'p','schedule':{'kind':'cron','expr':'0 12 * * *'},'deliver':'argo_msgr:' + CH}, None, {}, False, now)
+assert row['editable'] is True and 'delivery' not in row['status']
+`));
+
+test('보고 — 버전·실제 승인 모드는 바뀔 때만 보내고, 서버가 켠 "모든 예약 작업 보기"를 반영한 뒤 반영값을 다시 보고한다(환경 변수 불필요)', () => run(String.raw`
+m._PLUGIN_VERSION = '0.3.0'
+cj.JOBS[:] = [{'id':'j1','name':'야간','prompt':'p','schedule':{'kind':'cron','expr':'0 1 * * *'},'deliver':'local'}]
+RESP['reportStatus'] = {'mirror_all': False}
+RESP['setRoutines'] = lambda p: {'total': len(p['rows'])}
+async def go():
+    await a._report_status()
+    assert calls[-1] == ('reportStatus', {'version':'0.3.0','approval_mode':'smart','mirror_all_applied':False})
+    n = len(calls); await a._report_status(); assert len(calls) == n, '같으면 호출 0'
+    RESP['reportStatus'] = {'mirror_all': True}
+    sys.modules['tools.approval_context']._get_approval_mode = lambda: 'manual'
+    await a._report_status()
+    sent = [p for (mm, p) in calls if mm == 'setRoutines']
+    assert sent and [r['ext_id'] for r in sent[-1]['rows']] == ['j1'] and sent[-1]['rows'][0]['editable'] is False, '켜면 파일 작업도 읽기 전용으로'
+    assert calls[-1] == ('reportStatus', {'version':'0.3.0','approval_mode':'manual','mirror_all_applied':True}), calls[-1]
+    RESP['reportStatus'] = {'mirror_all': False}   # 서버 설정이 꺼졌다(설정 이벤트와 보고 응답은 같은 값을 준다)
+    await a._handle_event({'event':'config','mirror_all':False})
+    assert a._mirror_all is False and [p for (mm, p) in calls if mm == 'setRoutines'][-1]['rows'] == []
+asyncio.run(go())
+`));
+
+test('방 지정 — 보낼 곳 없는 작업은 channel_id만 받아 argo_msgr:<방>으로 바꾸고, 다른 필드나 파일 작업은 not_editable', () => run(String.raw`
+cj.JOBS[:] = [{'id':'n1','name':'야간','prompt':'p','schedule':{'kind':'cron','expr':'0 1 * * *'},'deliver':'origin'},
+              {'id':'l1','name':'로컬','prompt':'p','schedule':{'kind':'cron','expr':'0 2 * * *'},'deliver':'local'},
+              {'id':'n2','name':'야간2','prompt':'p','schedule':{'kind':'cron','expr':'0 3 * * *'},'deliver':'origin'}]
+RESP['setRoutines'] = lambda p: {'total': len(p['rows'])}
+async def go():
+    await a._apply_routine_edit({'edit_id':'e1','ext_id':'n1','op':'update','patch':{'channel_id':CH}})
+    assert ('update','n1',{'deliver':'argo_msgr:' + CH}) in cj.CALLS
+    assert [p for (mm, p) in calls if mm == 'routineEditDone'][-1]['status'] == 'applied'
+    await a._apply_routine_edit({'edit_id':'e2','ext_id':'n2','op':'update','patch':{'channel_id':CH,'title':'x'}})
+    assert [p for (mm, p) in calls if mm == 'routineEditDone'][-1]['error'] == 'not_editable'
+    await a._apply_routine_edit({'edit_id':'e3','ext_id':'l1','op':'update','patch':{'channel_id':CH}})
+    assert [p for (mm, p) in calls if mm == 'routineEditDone'][-1]['error'] == 'not_editable', '의도적으로 밖에 보내는 작업은 방 지정 대상 아님'
+    await a._apply_routine_edit({'edit_id':'e4','ext_id':'n2','op':'update','patch':{'channel_id':'not-a-uuid'}})
+    assert [p for (mm, p) in calls if mm == 'routineEditDone'][-1]['status'] == 'failed'
+asyncio.run(go())
+`));
+
+test('에이전트 결재 — 도구는 메신저 대화에서만, 처리 중인 원문에 kind=agent로 올리고 파일에 남긴다', () => run(String.raw`
+out = json.loads(m._approval_tool({'title':'광고비 집행'}))
+assert 'error' in out, '어댑터가 없거나 메신저 대화가 아니면 거절'
+m._ADAPTER = a
+SESSION.update({'HERMES_SESSION_PLATFORM':'telegram','HERMES_SESSION_KEY':'sk'})
+assert 'error' in json.loads(m._approval_tool({'title':'광고비 집행'})), '다른 플랫폼 세션'
+SESSION['HERMES_SESSION_PLATFORM'] = 'argo_msgr'
+assert 'error' in json.loads(m._approval_tool({'title':'광고비 집행'})), '처리 중인 원문이 없으면 거절'
+a._pending[5] = {'message_id':5,'execution_attempt':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','chat':{'id':CH}}
+a._session_src['sk'] = 5; a._session_source['sk'] = {'chat_id':CH,'chat_name':'dm','chat_type':'dm','thread_id':'argo-dm:' + CH + ':conversation','user_id':'u','user_name':'김'}
+SESSION['HERMES_SESSION_MESSAGE_ID'] = '5'
+posted = []
+m._call = lambda base, token, method, params=None, **kw: posted.append((method, params)) or {'id':'x','message_id':90,'status':'pending'}
+out = json.loads(m._approval_tool({'title':'광고비 집행','reason':'캠페인'}))
+assert out['ok'] and out['status'] == 'pending' and out['approval_id'].startswith('ag-'), out
+meth, p = posted[-1]
+assert meth == 'requestApproval' and p['kind'] == 'agent' and p['execution_attempt'].startswith('aaaa') and p['title'] == '광고비 집행' and p['reason'] == '캠페인'
+saved = json.loads(a._agent_file.read_text())
+assert saved[out['approval_id']]['session_key'] == 'sk' and saved[out['approval_id']]['title'] == '광고비 집행'
+b2 = m.ArgoMsgrAdapter(Box(extra={})); b2._agent_file = a._agent_file; b2._load_agent_approvals()
+assert out['approval_id'] in b2._agent_approvals, '재시작 뒤에도 재개 정보가 남는다'
+# 그룹 채널: 한 세션에 A(5)의 턴이 도는 동안 B(6)가 들어와 세션 기억이 6을 가리켜도, 이 턴의 메시지 id(5)로 A에 붙인다(OpenClaw 검수 H2와 같은 위험)
+a._pending[6] = {'message_id':6,'execution_attempt':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','chat':{'id':CH}}; a._session_src['sk'] = 6
+json.loads(m._approval_tool({'title':'A의 결재'}))
+assert posted[-1][1]['execution_attempt'].startswith('aaaa'), posted[-1]
+# 재개 턴(메시지 id 'apf:<부모>'): 실행 행이 없으니 승인된 부모 결재의 원문에 붙인다(검수 M-3)
+SESSION['HERMES_SESSION_MESSAGE_ID'] = 'apf:ag-parent'
+json.loads(m._approval_tool({'title':'이어서 메일 발송'}))
+assert posted[-1][1].get('parent_approval_id') == 'ag-parent' and 'execution_attempt' not in posted[-1][1], posted[-1]
+`));
+
+test('재개 턴의 위험 명령 — 부모 결재 원문에 카드, 후속 보고를 올리면 부모 연결이 끝난다. 재개 대기는 폴 루프를 막지 않는다', () => run(String.raw`
+ap.QUEUE['skR'] = [{'request_id':'rR','command':'rm -rf /tmp/ads'}]
+a._resume_parent['skR'] = 'ag-parent'; a._resume_parent_at['skR'] = datetime.datetime.now().timestamp()
+a._resume_parent['skOld'] = 'ag-old'; a._resume_parent_at['skOld'] = datetime.datetime.now().timestamp() - 3600
+assert a._parent_for('skOld') is None and 'skOld' not in a._resume_parent, '30분 지난 부모 연결은 쓰지 않는다(재개 턴 실패로 후속 보고가 없어도)'
+RESP['requestApproval'] = {'id':'x','message_id':91,'status':'pending'}
+RESP['sendMessage'] = lambda p: {'message_id': 92}
+async def go():
+    res = await a._send_exec_approval_prompt(Box(chat_id=CH, session_key='skR', command='rm -rf /tmp/ads', description='d'))
+    assert res.success and calls[-1][1]['parent_approval_id'] == 'ag-parent' and calls[-1][1]['command'] == 'rm -rf /tmp/ads', calls[-1]
+    await a._post_followup('ag-parent', '정리했습니다.')
+    assert 'skR' not in a._resume_parent, '후속 보고 뒤에는 이어서 올리지 않는다'
+    src = {'chat_id':CH,'chat_name':'dm','chat_type':'dm','thread_id':'t','user_id':'u','user_name':'김'}
+    a._agent_approvals['ag-busy'] = {'session_key':'skB','source':src,'title':'바쁜 대화'}
+    a._pending_messages['skB'] = object()
+    RESP['ackApproval'] = {'claimed': True, 'status': 'approved'}
+    await asyncio.wait_for(a._handle_event({'event':'approval_decided','approval_id':'ag-busy','status':'approved','resume':True,'agent':True}), 1)
+    assert a._tasks, '바쁜 세션을 기다리는 재개는 따로 돈다(폴 루프는 바로 돌아온다)'
+    for t in list(a._tasks): t.cancel()
+asyncio.run(go())
+`));
+
+test('보고 — 프로세스 전체 --yolo면 설정과 관계없이 off로 보고, 보낼 곳 없는 작업은 스위치 없이도 미러', () => run(String.raw`
+m._PLUGIN_VERSION = '0.3.0'
+ap._YOLO_MODE_FROZEN = True
+RESP['reportStatus'] = {'mirror_all': False}
+asyncio.run(a._report_status())
+assert calls[-1][1]['approval_mode'] == 'off', calls[-1]
+now = datetime.datetime.now(datetime.timezone.utc)
+assert m.job_to_row({'id':'n','name':'야간','prompt':'p','schedule':{'kind':'cron','expr':'0 1 * * *'},'deliver':'origin'}, None, {}, False, now)['status']['delivery'] == 'none'
+assert m.job_to_row({'id':'l','name':'로컬','prompt':'p','schedule':{'kind':'cron','expr':'0 1 * * *'},'deliver':'local'}, None, {}, False, now) is None, 'local은 스위치를 켰을 때만'
+`));
+
+test('에이전트 결재 결정 — 선점 ack 뒤 같은 대화로 재개하고, 그 턴의 최종 답만 후속 보고(한 번)로 보낸다. 반려·재개 불가·정보 없음 처리', () => run(String.raw`
+src = {'chat_id':CH,'chat_name':'dm','chat_type':'dm','thread_id':'argo-dm:x','user_id':'u','user_name':'김'}
+a._agent_approvals = {'ag-1': {'session_key':'sk:' + CH,'source':src,'title':'광고비 집행'}, 'ag-2': {'session_key':'sk2','source':src,'title':'증액'},
+                      'ag-3': {'session_key':'sk3','source':src,'title':'삭제'}}
+RESP['ackApproval'] = {'claimed': False, 'status': 'approved'}
+RESP['sendMessage'] = lambda p: {'message_id': 501}
+async def go():
+    await a._handle_event({'event':'approval_decided','approval_id':'ag-1','status':'approved','resume':True,'agent':True,'decided_by_name':'유건'})
+    await settle()
+    assert a.EVENTS == [], '선점 못 하면 재개하지 않는다'
+    a._agent_approvals['ag-1'] = {'session_key':'sk:' + CH,'source':src,'title':'광고비 집행'}
+    RESP['ackApproval'] = {'claimed': True, 'status': 'approved'}
+    await a._handle_event({'event':'approval_decided','approval_id':'ag-1','status':'approved','resume':True,'agent':True,'decided_by_name':'유건'})
+    await settle()
+    ev, ctx = a.EVENTS[-1]
+    assert ev.internal is True and ev.message_id == 'apf:ag-1' and ev.metadata == {'gateway_session_key':'sk:' + CH}
+    assert 'APPROVED by 유건' in ev.text and '광고비 집행' in ev.text and ctx['followup'] == 'apf:ag-1'
+    assert 'ag-1' not in json.loads(a._agent_file.read_text()), '처리한 결재는 파일에서 지운다'
+    a._running = True
+    draft = await a.send(CH, '진행 중…', reply_to='apf:ag-1', metadata={})
+    assert draft.success and not [1 for (mm, p) in calls if mm == 'sendMessage'], '초안·진행 글은 보내지 않는다'
+    done = await a.send(CH, '집행했습니다.', reply_to='apf:ag-1', metadata={'notify': True})
+    assert done.success and calls[-1] == ('sendMessage', {'approval_id':'ag-1','text':'집행했습니다.'})
+    again = await a.send(CH, '또', reply_to='apf:ag-1', metadata={'notify': True})
+    assert again.success is False, '후속 보고는 한 번만'
+    await a._handle_event({'event':'approval_decided','approval_id':'ag-2','status':'rejected','resume':False,'reason':'rejected','agent':True,'decided_by_name':'유건'})
+    await settle()
+    assert 'REJECTED' in a.EVENTS[-1][0].text
+    n = len(a.EVENTS)
+    await a._handle_event({'event':'approval_decided','approval_id':'ag-3','status':'approved','resume':False,'reason':'ai_consent','agent':True})
+    await settle()
+    assert len(a.EVENTS) == n, '서버 재판정 실패(동의 철회 등)면 재개하지 않는다'
+    await a._handle_event({'event':'approval_decided','approval_id':'ag-9','status':'approved','resume':True,'agent':True})
+    await settle()
+    assert calls[-1][0] == 'sendMessage' and calls[-1][1]['approval_id'] == 'ag-9' and '다시 말씀해' in calls[-1][1]['text'], '재개 정보를 잃었으면 사람에게 알린다'
+asyncio.run(go())
+`));
+
+test('등록 — plugin.yaml 버전을 읽고 결재 도구를 argo_msgr 도구 묶음으로 등록한다', () => run(String.raw`
+reg = {}
+class Ctx:
+    manifest = Box(version='0.3.0')
+    def register_tool(self, **kw): reg['tool'] = kw
+    def register_platform(self, **kw): reg['platform'] = kw
+m.register(Ctx())
+assert m._PLUGIN_VERSION == '0.3.0'
+assert reg['tool']['name'] == 'argo_request_approval' and reg['tool']['toolset'] == 'argo_msgr' and reg['tool']['schema']['parameters']['required'] == ['title']
+assert 'argo_request_approval' in reg['platform']['platform_hint']
+class Old:
+    def register_platform(self, **kw): reg['old'] = kw
+m._PLUGIN_VERSION = ''
+m.register(Old())
+assert m._PLUGIN_VERSION == '0.3.0', '옛 Hermes(manifest·register_tool 없음)도 plugin.yaml에서 버전을 읽고 연결은 된다'
 `));
 
 test('폴 루프 — 이벤트는 처리하되 offset은 메시지만 올리고, getUpdates는 events=1로 부른다', () => run(String.raw`
