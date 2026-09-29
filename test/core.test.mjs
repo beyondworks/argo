@@ -479,25 +479,33 @@ test('계정 키 — 생성·재사용·경합·캐시', async () => {
   assert.equal(accountKey(), null);
 });
 
-/* ── 요금제 게이트 — plan 조회 fail-safe + 강제 스위치 (M-2d Task 2) ── */
+/* ── 요금제 게이트 — plan 조회 fail-safe + 강제 스위치 (M-2d Task 2) ──
+   2026-09-29: fetchPlan은 my_plan() RPC를 부른다(14일 무료 체험 폐지 — R1·R3, entitlement.mjs 참조).
+   fakePlanSb는 그 RPC를 uid별로 흉내 낸다(rows[uid] = plan 문자열, rows.error면 rpc 자체가 오류). */
 import { fetchPlan, syncEntitled } from '../src/entitlement.mjs';
 
-function fakePlanSb(rows) {
-  return { from: () => ({ select: () => ({ eq: (_c, uid) => ({ maybeSingle: async () => rows.error ? { data: null, error: rows.error } : { data: rows[uid] ? { plan: rows[uid] } : null, error: null } }) }) }) };
+function fakePlanSb(rows, uid) {
+  return {
+    rpc: async (name) => {
+      if (name !== 'my_plan') return { data: null, error: { message: `unknown rpc ${name}` } };
+      if (rows.error) return { data: null, error: rows.error };
+      return { data: { plan: rows[uid] ?? 'free' }, error: null };
+    },
+  };
 }
 
 test('entitlement — 부재 free·존재 pro·오류/무오너 null·강제 게이트', async () => {
-  assert.equal(await fetchPlan(fakePlanSb({ 'u-p': 'pro' }), 'u-p'), 'pro');
-  assert.equal(await fetchPlan(fakePlanSb({}), 'u-x'), 'free');            // 행 부재 → 무료(RLS is_pro=false와 일치)
-  assert.equal(await fetchPlan(fakePlanSb({ error: { message: 'boom' } }), 'u-x'), null); // 오류 → null(미확인·낙관, 유료 오차단 방지)
-  assert.equal(await fetchPlan(fakePlanSb({}), null), null);               // 오너 없음 → null(미확인)
+  assert.equal(await fetchPlan(fakePlanSb({ 'u-p': 'pro' }, 'u-p'), 'u-p'), 'pro');
+  assert.equal(await fetchPlan(fakePlanSb({}, 'u-x'), 'u-x'), 'free');            // 행 부재 → 무료(RLS is_pro=false와 일치)
+  assert.equal(await fetchPlan(fakePlanSb({ error: { message: 'boom' } }, 'u-x'), 'u-x'), null); // 오류 → null(미확인·낙관, 유료 오차단 방지)
+  assert.equal(await fetchPlan(fakePlanSb({}, 'u-x'), null), null);               // 오너 없음 → null(미확인)
   const prev = process.env.ARGO_ENFORCE_PLAN;
   try {
     delete process.env.ARGO_ENFORCE_PLAN;                                  // 강제 off(기본)
-    assert.deepEqual(await syncEntitled(fakePlanSb({}), 'u-x'), { ok: true, plan: 'free' });
+    assert.deepEqual(await syncEntitled(fakePlanSb({}, 'u-x'), 'u-x'), { ok: true, plan: 'free' });
     process.env.ARGO_ENFORCE_PLAN = '1';                                   // 강제 on
-    assert.deepEqual(await syncEntitled(fakePlanSb({}), 'u-x'), { ok: false, plan: 'free' });
-    assert.deepEqual(await syncEntitled(fakePlanSb({ 'u-p': 'pro' }), 'u-p'), { ok: true, plan: 'pro' });
+    assert.deepEqual(await syncEntitled(fakePlanSb({}, 'u-x'), 'u-x'), { ok: false, plan: 'free' });
+    assert.deepEqual(await syncEntitled(fakePlanSb({ 'u-p': 'pro' }, 'u-p'), 'u-p'), { ok: true, plan: 'pro' });
   } finally {
     if (prev === undefined) delete process.env.ARGO_ENFORCE_PLAN; else process.env.ARGO_ENFORCE_PLAN = prev;
   }

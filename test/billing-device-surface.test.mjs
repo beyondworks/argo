@@ -23,7 +23,11 @@ test('스코프 방어선: 사용자 스코프는 RLS, 서비스 롤일 때만 .
     '서비스 롤 경로에만 .eq — RLS 경로에서 .eq를 유일 방어선으로 착각하지 않는다');
 });
 
-test('체험 배지 created_at도 서비스키 없이 얻는다(GoTrue /user)', () => {
-  assert.ok(route.includes('userClient.auth.getUser()'), '사용자 토큰으로 created_at');
-  assert.ok(route.includes('/auth/v1/admin/users/'), '서비스 롤 경로는 admin 조회 유지');
+test('체험 배지·삭제예정(trialEndsAt·purgeAfter)도 서비스키 없이 얻는다(my_plan RPC, 2026-09-29)', () => {
+  // 이전엔 GoTrue /user로 created_at을 받아 클라에서 +14일을 계산했다 — 14일 무료 체험 폐지(R1)로
+  // "T 이전 가입자만 남은 체험"은 서버만 안다. userClient 경로는 자기 JWT로 my_plan()을 그대로
+  // 부른다(서비스키 불요 불변식 유지) — 서비스 롤 경로만 uid를 명시해 부른다.
+  assert.ok(route.includes('planExtras(sb)'), '사용자 스코프(userClient) 경로가 uid 없이 self로 my_plan을 부른다');
+  assert.ok(route.includes("planExtras(sb, userClient ? undefined : user.id)"), '서비스 롤 경로만 uid를 명시');
+  assert.ok(route.includes("sb.rpc('my_plan')"), 'my_plan RPC 호출이 있다');
 });

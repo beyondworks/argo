@@ -4,16 +4,6 @@
 // 강제 on에서도 게이트는 사이클 조기 return이라 비파괴(다음 사이클 재시도).
 // ⚠ 이 파일은 클라이언트 번들에도 포함된다(설정 SyncCard가 trialBadgeState를 import) — node:* import·부작용 금지.
 
-export const TRIAL_DAYS = 14; // 가입 후 무료 체험(2026-07-24 유건 확정: 2주 Free → Pro $16/월). 서버 is_pro와 대칭 유지.
-
-/** 가입 시각 → 체험 종료 시각(fetchPlan·서버 is_pro의 14일 창과 동일 계산 — 대칭 유지가 계약).
-    pro면 null(의미 없음), 파싱 불가도 null. D-day 배지·임박 배너의 단일 원천. (export: 회귀 테스트용) */
-export const trialEnd = (createdAt, plan) => {
-  if (plan === 'pro') return null;
-  const c = Date.parse(createdAt ?? '');
-  return Number.isFinite(c) ? new Date(c + TRIAL_DAYS * 86_400_000).toISOString() : null;
-};
-
 /** 체험 배지·임박 배너 상태(순수) — 설정 SyncCard의 유일한 판정. **만료 하한이 핵심**:
     만료된 무료 사용자에게 'D-0'과 임박 배너가 영구 표시되던 회귀(분리 검수 H1 실측 2026-07-28)를
     이 함수와 테스트가 잠근다. daysLeft는 최소 1(살아 있는데 D-0이 없게 — 의미 모호성 제거). */
@@ -46,26 +36,25 @@ export const proRowActive = (row) => row?.plan === 'pro' && !(row.ends_at && Dat
     강등되지 않고, LS 호출량은 쿨다운 2컬럼(10분·24시간)이 그대로 막는다. */
 export const reconcileUnneeded = (row) => proRowActive(row) && !!row?.ls_subscription_id;
 
-/** 계정 plan. 'pro' | 'trial'(가입 14일 이내 무료 체험 — 서버 is_pro와 대칭) | 'free' | null(조회 실패·오너 미상=미확인).
-    조회 실패를 'free'가 아닌 null로 두어, 일시적 실패로 유료 사용자를 오차단하지 않는다(아래 syncEntitled). */
+/** 계정 plan. 'pro' | 'trial'(T 이전 가입자의 남은 체험 — R1) | 'free' | null(조회 실패·오너 미상=미확인).
+    조회 실패를 'free'가 아닌 null로 두어, 일시적 실패로 유료 사용자를 오차단하지 않는다(아래 syncEntitled).
+    ⚠ 2026-09-29 변경: 체험 마감일을 여기서 가입일로 다시 계산하지 않는다 — 14일 무료 체험이 폐지되면서
+    "T 이전 가입자만 남은 기간 보장"이라는 조건은 서버(마이그레이션 20260929110000의 T)만 안다. 클라가
+    가입일+14일을 다시 계산하면 T 이후 가입자도 체험처럼 보인다(회귀). 서버 RPC my_plan()의 판정을
+    그대로 받는다 — 이게 R3 "앱 판정=서버 판정"의 실제 위치다. */
 export async function fetchPlan(sb, ownerId) {
   if (!ownerId) return null; // 오너 미상 — 미확인(낙관 진행)
   try {
-    const { data, error } = await sb.from('entitlements').select('plan, ends_at').eq('user_id', ownerId).maybeSingle();
-    if (error) throw new Error(error.message);
-    // 서버 is_pro와 대칭(마이그레이션 20260730050000) — pro라도 ends_at이 지났으면 무효. 해지·만료
-    // 웹훅 1건이 유실돼도 양쪽에서 저절로 꺼진다(전수리뷰 2026-07-30 #5). 판정은 공유 술어(위) 하나로.
-    if (proRowActive(data)) return 'pro';
-    // 무행/free — 가입 14일 무료 체험 창인지 판정(서버 is_pro의 OR 조건과 대칭). 세션 본인일 때만 확인 가능.
-    // 일시 실패(네트워크·GoTrue 오류)는 파일 불변식대로 null(미확인 낙관) — 체험 중 사용자를 오차단하지 않는다
-    // (검수 MEDIUM 2026-07-24). auth 자체가 없는 클라(mock·서비스 모드)만 free 폴백 — 최종 집행은 서버 RLS.
-    try {
+    // 세션 신원 확인 — sb가 ownerId 본인으로 인증돼 있는지(단일 오너 전제의 방어선). auth 미지원
+    // 클라(mock·서비스 모드)는 이 확인을 건너뛰고 RPC 결과만 믿는다(기존 관용 유지).
+    if (typeof sb?.auth?.getUser === 'function') {
       const { data: u, error: aerr } = await sb.auth.getUser();
-      if (aerr) return null; // 일시 실패 — 미확인(낙관), 다음 사이클 재판정
-      const created = u?.user?.id === ownerId ? Date.parse(u.user.created_at) : NaN;
-      if (Number.isFinite(created) && Date.now() - created < TRIAL_DAYS * 86_400_000) return 'trial';
-    } catch { /* auth 미지원 클라(mock·서비스 모드) — free 폴백 */ }
-    return 'free'; // 행 없음/'free' + 체험 종료 → 무료(RLS is_pro=false와 일치)
+      if (!aerr && u?.user && u.user.id !== ownerId) return 'free'; // 세션 불일치 — 남의 판정을 오너 것으로 안 믿는다
+    }
+    const { data, error } = await sb.rpc('my_plan');
+    if (error) throw new Error(error.message);
+    const plan = data?.plan;
+    return plan === 'pro' || plan === 'trial' ? plan : 'free';
   } catch (e) {
     console.warn('[argo] 플랜 조회 실패 — 미확인(낙관 진행):', e.message);
     return null;
