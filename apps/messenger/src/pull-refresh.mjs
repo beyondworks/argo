@@ -32,36 +32,72 @@ export function isVerticalPull(dx, dy) {
   return dy > 0 && dy > Math.abs(dx);
 }
 
+// Argo 별 심볼(App.jsx STAR_D 재사용) 회전·크기 — 당긴 거리(가공값, pullDistance 결과)에 비례해 커지며 돈다(유건 확정 2026-09-29).
+const STAR_MIN_SCALE = 0.55; // 0px에서도 아주 작게 보이기 시작
+const STAR_MAX_DEG = 480; // 임계보다 더 당기면 한 바퀴 반 가까이 — 새로고침 중 CSS 연속 회전으로 이어진다
+export function pullRotationDeg(dist) {
+  const clamped = Math.max(0, Math.min(dist, REFRESH_MAX));
+  return (clamped / REFRESH_MAX) * STAR_MAX_DEG;
+}
+export function pullStarScale(dist) {
+  const clamped = Math.max(0, Math.min(dist, REFRESH_THRESHOLD));
+  return STAR_MIN_SCALE + (clamped / REFRESH_THRESHOLD) * (1 - STAR_MIN_SCALE);
+}
+// 튐(scale pulse) 트리거 — 아직 ready/refreshing이 아니었다가 막 그 상태로 넘어갈 때만 참(재진입마다 한 번씩만 튄다).
+export function enteredReady(prevPhase, nextPhase) {
+  const already = prevPhase === 'ready' || prevPhase === 'refreshing';
+  const now = nextPhase === 'ready' || nextPhase === 'refreshing';
+  return !already && now;
+}
+
 // Keep the gesture lifecycle testable without a browser reload or React remount.
-export function bindPullRefresh(node, { refresh, phase, error, now = Date.now }) {
+// 조회가 빨리 끝나도 '새로고침 중'을 이만큼은 보여 준다 — 72ms만 번쩍이면 새로고침됐는지 알 수 없다(2026-09-29 실측, iOS 기본 당김도 약 0.5~1초)
+export const REFRESH_MIN_MS = 600;
+// 길게 누르기(long-press.js: 450ms·10px)와 같은 기준 — 그 시간 안에 이 거리를 넘겨 움직여야 당김이다.
+// 가만히 누르고 있다 끌면 행 메뉴·직접 배치 끌기이지 새로고침이 아니다(2026-09-29 실측: 메뉴가 뜬 채 새로고침까지 시작).
+export const PULL_HOLD_MS = 450;
+export const PULL_ENGAGE_PX = 10;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export function bindPullRefresh(node, { refresh, phase, error, now = Date.now, minMs = REFRESH_MIN_MS, delay = sleep }) {
   let startAt = null; let busy = false; let disposed = false; let lastScroll = -Infinity;
-  const reset = () => { startAt = null; node.style.setProperty('--pull-dy', '0px'); phase('idle'); };
+  const reset = () => { startAt = null; node.style.setProperty('--pull-dy', '0px'); node.style.setProperty('--pull-deg', '0'); node.style.setProperty('--pull-scale', String(pullStarScale(0))); phase('idle'); };
   const scroll = () => { lastScroll = now(); };
   const start = (e) => {
     if (busy || !canStartPull(node.scrollTop, e.touches.length, now() - lastScroll)) return;
-    startAt = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    startAt = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: now(), engaged: false };
   };
   const move = (e) => {
     if (!startAt || busy) return;
     if (e.touches.length !== 1) { reset(); return; }
-    const dy = e.touches[0].clientY - startAt.y;
-    if (!isVerticalPull(e.touches[0].clientX - startAt.x, dy) || node.scrollTop > 0) { reset(); return; }
+    const dx = e.touches[0].clientX - startAt.x, dy = e.touches[0].clientY - startAt.y;
+    if (!startAt.engaged) {
+      if (now() - startAt.t >= PULL_HOLD_MS) { startAt = null; return; } // 길게 누르기였다 — 이 터치는 끝까지 당김 아님
+      if (isVerticalPull(dx, dy) && node.scrollTop <= 0) e.preventDefault(); // 인정 전이어도 맨 위에서 아래(수직 우세)면 막는다 — 가로 제스처는 두고(재검수 MEDIUM-A) — 늦게 막으면 실기기에선 브라우저 바운스가 먼저 가져간다(검수 MEDIUM-5)
+      if (Math.hypot(dx, dy) <= PULL_ENGAGE_PX) return;
+      startAt.engaged = true;
+    }
+    if (!isVerticalPull(dx, dy) || node.scrollTop > 0) { reset(); return; }
     e.preventDefault();
-    node.style.setProperty('--pull-dy', `${Math.min(56, pullDistance(dy) * .5)}px`);
+    const dist = pullDistance(dy);
+    node.style.setProperty('--pull-dy', `${Math.min(56, dist * .5)}px`);
+    node.style.setProperty('--pull-deg', String(pullRotationDeg(dist)));
+    node.style.setProperty('--pull-scale', String(pullStarScale(dist)));
     phase(shouldRefresh(dy) ? 'ready' : 'pulling');
   };
   const end = async (e) => {
     if (!startAt || busy) return;
     const touch = e.changedTouches?.[0];
-    const accepted = touch && isVerticalPull(touch.clientX - startAt.x, touch.clientY - startAt.y) && shouldRefresh(touch.clientY - startAt.y);
+    const accepted = touch && startAt.engaged && isVerticalPull(touch.clientX - startAt.x, touch.clientY - startAt.y) && shouldRefresh(touch.clientY - startAt.y);
     startAt = null;
     if (!accepted) { reset(); return; }
     busy = true; node.style.setProperty('--pull-dy', '44px'); phase('refreshing');
+    const until = now() + minMs;
     try { await refresh(); } catch (err) { if (!disposed) error(err); }
-    finally { busy = false; if (!disposed) reset(); }
+    finally { const left = until - now(); if (left > 0 && !disposed) await delay(left); busy = false; if (!disposed) reset(); }
   };
   const cancel = () => { if (!busy) reset(); };
   const events = { scroll, touchstart: start, touchmove: move, touchend: end, touchcancel: cancel };
   for (const [type, fn] of Object.entries(events)) node.addEventListener(type, fn, { passive: type !== 'touchmove' });
-  return () => { disposed = true; for (const [type, fn] of Object.entries(events)) node.removeEventListener(type, fn); node.style.removeProperty('--pull-dy'); };
+  return () => { disposed = true; for (const [type, fn] of Object.entries(events)) node.removeEventListener(type, fn); node.style.removeProperty('--pull-dy'); node.style.removeProperty('--pull-deg'); node.style.removeProperty('--pull-scale'); };
 }

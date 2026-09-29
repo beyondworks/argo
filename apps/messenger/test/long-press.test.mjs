@@ -48,10 +48,13 @@ test('모바일 액션은 기본 숨김이고 길게 누른 메시지에서만 �
   const phone = css.slice(css.indexOf('@media (max-width: 720px), (pointer: coarse) and (max-height: 600px) {', css.indexOf('.msgr-shell')));
   assert.match(phone, /\.msgr-acts \{ display: none; \}/, '모바일 기본은 숨김(공간까지 차지하지 않는다)');
   assert.match(phone, /\[data-acts='open'\] \.msgr-acts \{ display: flex;/, '열린 메시지에서만 보인다');
-  assert.match(app, /const hold = useLongPress\(\(\) => \{ if \(!m\.pending\) setActsOpen\(true\); \}\);/, '길게 누르면 연다(보내는 중 행은 제외 — 아직 서버 id가 없다)');
+  assert.match(app, /const hold = useLongPress\(\(\) => \{ if \(!m\.pending\) \{ openedAt\.current = Date\.now\(\); setActsOpen\(true\); \} \}\);/, '길게 누르면 연다(보내는 중 행은 제외 — 아직 서버 id가 없다)');
+  assert.match(app, /msgr-actsheetwrap" onClick=\{\(e\) => \{ e\.stopPropagation\(\); if \(e\.target === e\.currentTarget && Date\.now\(\) - openedAt\.current > 450\) setActsOpen\(false\); \}\}/, '길게 눌러 연 직후 손을 떼는 클릭이 시트 배경에 떨어져도 닫지 않는다(2026-09-29 실측)');
   for (const cls of ['msgr-mine', 'msgr-row']) {
-    assert.match(app, new RegExp(`<div className="${cls}" ref=\\{rowRef\\} tabIndex=\\{m\\.pending \\? undefined : rowTab\\} onFocus=\\{[^}]+\\}\\} onKeyDown=\\{rowKey\\} data-mid=\\{m\\.id\\} data-acts=\\{actsOpen \\? 'open' : undefined\\} \\{\\.\\.\\.hold\\} onContextMenu=`), `${cls} 래퍼 배선(+ 데스크톱 우클릭 2026-09-12, 스크롤백 앵커 data-mid 2026-09-14)`);
+    const head = '<div className={`' + cls + "${cont ? ' cont' : ''}${tail ? '' : ' notail'}`} ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={";
+    assert.ok(app.includes(head), `${cls} 래퍼 배선(묶음 cont·notail 클래스 2026-09-29)`);
   }
+  assert.equal((app.match(/onKeyDown=\{rowKey\} data-mid=\{m\.id\} data-acts=\{actsOpen \? 'open' : undefined\} \{\.\.\.hold\} onContextMenu=/g) ?? []).length, 2, '두 래퍼 모두 hold·data-acts·우클릭 배선(데스크톱 우클릭 2026-09-12, 스크롤백 앵커 data-mid 2026-09-14)');
   assert.match(app, /closest\?\.\('\.msgr-acts, \.msgr-actsheet, \.msgr-emojipop'\)/, '바깥을 누르면 닫되 액션·폰 시트(body 포털)·이모지 피커는 예외');
   assert.match(phone, /\.msgr-mine \.bubble[^\n]*user-select: none;/, '본문 선택을 막아야 길게 누르기가 시스템 선택 메뉴에 가로채이지 않는다');
 });

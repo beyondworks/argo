@@ -7,9 +7,11 @@ import './styles.css';
 import { LanguageProvider } from '@argo/i18n';
 import { ThemeProvider } from '@argo/theme';
 import App from './App.jsx';
+import { startSplash } from './splash.js'; // 시작 스플래시(북극성) — React보다 먼저 첫 화면에
 import { RootBoundary, pushDiag } from './diag.jsx'; // 빈 화면 대신 오류 문구 + 다시 열기(유건 제보 2026-09-12 알림 탭 → 빈 화면)
 
 pushDiag('boot', `start ${location.href.slice(0, 80)}`, navigator.userAgent.slice(0, 80));
+startSplash();
 createRoot(document.getElementById('root')).render(
   <RootBoundary><LanguageProvider><ThemeProvider defaultTheme="linen"><App /></ThemeProvider></LanguageProvider></RootBoundary>,
 );
