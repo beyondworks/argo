@@ -1,10 +1,16 @@
 {
   "name": "@beyondworks/openclaw-argo-msgr",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "OpenClaw channel plugin for Argo Messenger (bot API)",
   "type": "module",
   "openclaw": {
     "extensions": ["./index.ts"],
+    "compat": {
+      "pluginApi": ">=2026.8.1"
+    },
+    "install": {
+      "minHostVersion": ">=2026.8.1"
+    },
     "channel": {
       "id": "argo-msgr",
       "label": "Argo Messenger",
@@ -13,5 +19,8 @@
       "blurb": "Company team messenger with AI crews; OpenClaw joins as an external agent bot.",
       "order": 95
     }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.8.1"
   }
 }

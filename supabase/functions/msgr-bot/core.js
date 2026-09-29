@@ -2,7 +2,10 @@
 // 텔레그램 Bot API 규율을 차용한다: 주소 /bot<token>/<method>, 봉투 {ok, result} | {ok:false, error_code, description},
 // getUpdates 롱폴 + offset(= 마지막 update_id + 1 = ack). 정책·권한 판정은 전부 DB RPC(msgr_bot_*)에 있고 이 층은 번역만 한다.
 // ponytail: 레이트 리밋 없음 — 토큰당 RPC 1초 폴이 상한. 남용이 보이면 엣지에서 토큰별 카운터.
-export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile'];
+export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile',
+  // 외부 에이전트 크루 계약 1-a(20260929130000) — 자동화(크루 루틴) 미러·편집, 위험 명령 결재 카드. 판정은 전부 msgr_bot_* RPC.
+  'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FILE_URL_TTL_S = 600; // getFile 서명 URL 수명 — 봇은 즉시 내려받는다
 const MAX_WAIT_MS = 25_000; // 텔레그램은 ~50초, 엣지 펑션 벽시계 안에서 여유 있게
 const POLL_MS = 1_000;
@@ -27,6 +30,11 @@ const ERR = {
   msgr_bot_no_file: [400, 'Bad Request: file not found in this org'],
   msgr_bot_bad_reply: [400, 'Bad Request: reply target not in chat'],
   msgr_reply_cross_channel: [400, 'Bad Request: reply target not in chat'],
+  msgr_routine_forbidden: [403, 'Forbidden: this crew cannot sync or close these routines'],
+  msgr_routine_invalid_rows: [400, 'Bad Request: rows must be an array of routines'],
+  msgr_routine_too_many: [400, 'Bad Request: at most 200 routines per snapshot'],
+  msgr_approval_invalid: [400, 'Bad Request: approval_id (1-80 of A-Z a-z 0-9 . _ : -) and command are required'],
+  msgr_approval_conflict: [409, 'Conflict: this approval_id already exists with a different command or source'],
 };
 
 export function parseRequest(url, headers = {}, body = null) {
@@ -56,9 +64,16 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const lim = Math.min(100, Math.max(1, Number(params.limit) || 50));
       const waitMs = Math.min(maxWaitMs, Math.max(0, Number(params.timeout) || 0) * 1000);
       const deadline = now() + waitMs;
+      // 이벤트(루틴 편집·결재 결정)는 옵트인(events=1)한 어댑터에게만, 요청당 한 번 조회한다. update_id·offset과 무관하고
+      // 서버가 60초 임대로 중복을 막는다. 이벤트 조회는 선택 기능 — 어떤 오류든(옛 서버의 RPC 없음, 시간 초과, 교착) 메시지 수신을
+      // 막지 않게 빈 목록으로 넘긴다(검수 M-5). 서버가 닫힐 때까지 다시 보내므로 유실은 없다. 토큰 오류는 아래 메시지 조회가 401로 알린다.
+      const evs = Number(params.events) === 1 ? await rpc('msgr_bot_events', { token }).catch((e) => {
+        console.warn('[msgr-bot] events skipped:', String(e?.code ?? ''), String(e?.message ?? '').slice(0, 200));
+        return [];
+      }) : [];
       for (;;) {
         const ups = await rpc(Number(params.delivery_protocol) === 1 ? 'msgr_bot_updates_with_delivery' : 'msgr_bot_updates', { token, after_id: Math.max(0, offset - 1), lim });
-        if (ups.length || now() >= deadline) return reply(200, ups);
+        if (ups.length || evs?.length || now() >= deadline) return reply(200, [...(evs ?? []), ...ups]);
         await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
       }
     }
@@ -69,6 +84,26 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const url = sign ? await sign(f.storage_path, FILE_URL_TTL_S) : null;
       if (!url) return fail(500, 'Internal: file signing unavailable');
       return reply(200, { file_id: f.file_id, file_name: f.file_name, mime_type: f.mime_type, file_size: f.file_size, file_path: url });
+    }
+    if (method === 'setRoutines') { // 예약 작업 스냅샷 전체. unsupported면 행은 두고 사유만(읽기 실패로 미러를 지우지 않게)
+      const unsupported = params.unsupported == null ? null : String(params.unsupported);
+      if (!Array.isArray(params.rows) && !unsupported) return fail(400, 'Bad Request: rows must be an array');
+      return reply(200, await rpc('msgr_bot_routines_sync', { token, p_rows: Array.isArray(params.rows) ? params.rows : [], p_unsupported: unsupported }));
+    }
+    if (method === 'routineEditDone') {
+      const status = String(params.status ?? '');
+      if (!UUID_RE.test(String(params.edit_id ?? '')) || !['applied', 'failed', 'superseded'].includes(status)) return fail(400, 'Bad Request: edit_id (uuid) and status (applied|failed|superseded) are required');
+      return reply(200, await rpc('msgr_bot_routine_edit_done', { token, p_id: params.edit_id, p_status: status, p_error: params.error == null ? null : String(params.error) }));
+    }
+    if (method === 'requestApproval') { // 위험 명령 결재 카드. 원문은 실행 시도(execution_attempt)로 서버가 정하고, 등급은 서버가 고위험으로 정한다
+      if (!UUID_RE.test(String(params.execution_attempt ?? ''))) return fail(400, 'Bad Request: execution_attempt (uuid) is required');
+      return reply(200, await rpc('msgr_bot_request_approval', { token, p_attempt: params.execution_attempt, p_approval_id: String(params.approval_id ?? ''),
+        p_command: String(params.command ?? ''), p_reason: params.reason == null ? null : String(params.reason) }));
+    }
+    if (method === 'ackApproval' || method === 'expireApproval') { // ack = 선점(claimed=true인 한 번만 재개), expire = 에이전트 쪽 대기 종료
+      const id = String(params.approval_id ?? '');
+      if (!id) return fail(400, 'Bad Request: approval_id is required');
+      return reply(200, await rpc(method === 'ackApproval' ? 'msgr_bot_ack_approval' : 'msgr_bot_expire_approval', { token, p_approval_id: id }));
     }
     const chat = String(params.chat_id ?? '');
     if (!/^[0-9a-f-]{36}$/i.test(chat)) return fail(400, 'Bad Request: chat_id must be a channel id');
