@@ -163,3 +163,10 @@ test('채널 스레드에 이미 크루 답이 쌓였으면 그만큼 상한이 
   for (let i = 0; i < 3; i++) sql(`insert into msgr_messages(channel_id, author_kind, crew_id, kind, body, reply_to, thread_root, client_msg_id) values ('${PUB}','crew','${OTHERS[i]}','text','pre${i}',${src},${src},'pre:${src}:${i}')`);
   assert.deepEqual(row(finish(m, 7)), { mentions: 0, disposition: 'done', dropped: 7, reason: 'mentions' }, '9 - 3 = 6명까지');
 });
+
+// 3차 검수 LOW: 같은 크루가 cc로 먼저, to로 뒤에 오면 중복 제거가 cc만 남겨 일을 받지 못했다(main은 둘 다 저장해 to로 받음) — to를 우선
+test('같은 크루가 cc·to로 겹치면 to를 남긴다', { skip }, () => {
+  const m = claim(post(U.owner)); assert.ok(m);
+  const out = finishIn(PUB, m, [{ kind: 'crew', id: OTHERS[2], role: 'cc' }, { kind: 'crew', id: OTHERS[2], role: 'to' }]);
+  assert.equal(sql(`select string_agg(value->>'role', ',') from msgr_messages, jsonb_array_elements(mentions) where id = ${out}`), 'to');
+});

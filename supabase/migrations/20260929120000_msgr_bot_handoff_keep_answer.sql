@@ -37,7 +37,7 @@ begin
   end if;
   -- 중복을 없앤 배열로 바꾼 뒤 센다 — 같은 크루 반복으로 상한을 피하거나 큰 배열이 반복문·저장을 키우지 않게(검수 LOW-4, 재검수 MEDIUM-1: 2만 개 반복 12초)
   select coalesce(jsonb_agg(v order by o), '[]'::jsonb) into mentions
-    from (select distinct on (value->>'id') value as v, o from jsonb_array_elements(mentions) with ordinality e(value, o) order by value->>'id', o) d;
+    from (select distinct on (value->>'id') value as v, o from jsonb_array_elements(mentions) with ordinality e(value, o) order by value->>'id', (value->>'role' = 'cc'), o) d; -- 같은 크루가 cc·to로 겹치면 to를 남긴다(3차 검수 LOW)
   n := jsonb_array_length(mentions);
   -- 한도를 넘어도 답은 버리지 않는다 — 전달(멘션)만 빼고 일반 답으로 저장해 사장이 답과 사유를 본다.
   -- 종전엔 예외로 답 전체가 사라져 10분 뒤 "결과 미도착" 안내만 떴다(2026-09-29 페퍼 - v, 멘션 9명 → 409).
