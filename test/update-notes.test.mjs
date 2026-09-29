@@ -18,7 +18,7 @@ test('only exact, safe, stable x.y.z versions with authored notes are eligible',
   assert.equal(updateNotesFor('0.1.89', '0.1.89').length, 4);
   assert.deepEqual(updateNotesFor('0.1.88', '0.1.88'), []);
   assert.deepEqual(updateNotesFor('0.1.88', '0.1.89'), []);
-  assert.deepEqual(updateNotesFor('0.1.90', '0.1.90'), []);
+  assert.deepEqual(updateNotesFor('0.1.9999', '0.1.9999'), []);
   assert.deepEqual(updateNotesFor('0.1.89-rc.1', '0.1.89-rc.1'), []);
 });
 
@@ -30,7 +30,7 @@ test('first visit and skipped versions show current notes; acknowledged or downg
   assert.equal(shouldShowUpdateNotes({ ...eligible, ackVersion: 'bad marker' }), true);
   assert.equal(shouldShowUpdateNotes({ ...eligible, current: '0.1.88' }), false);
   assert.equal(shouldShowUpdateNotes({ ...eligible, current: '0.1.88', bundleVersion: '0.1.88' }), false);
-  assert.equal(shouldShowUpdateNotes({ ...eligible, current: '0.1.90', bundleVersion: '0.1.90' }), false);
+  assert.equal(shouldShowUpdateNotes({ ...eligible, current: '0.1.9999', bundleVersion: '0.1.9999' }), false);
 });
 
 test('busy, hidden, editing, overlay and session dismissal defer display without acknowledgement', () => {
@@ -56,7 +56,7 @@ test('web marker is written only by explicit acknowledgement and never moved bac
   const newer = store('0.1.100');
   await acknowledgeUpdateNotesVersion('0.1.89', { isApp: false, storage: newer });
   assert.deepEqual(newer.writes, []);
-  await assert.rejects(acknowledgeUpdateNotesVersion('0.1.90', { isApp: false, storage }), /No update notes/);
+  await assert.rejects(acknowledgeUpdateNotesVersion('0.1.9999', { isApp: false, storage }), /No update notes/);
 });
 
 test('native uses exact commands and waits for successful acknowledgement, with no web fallback', async () => {
@@ -88,4 +88,12 @@ test('native and web storage failures reject instead of claiming a saved acknowl
   await assert.rejects(readUpdateNotesVersion({ isApp: false, storage: { getItem() { throw new Error('storage blocked'); } } }), /storage blocked/);
   await assert.rejects(acknowledgeUpdateNotesVersion('0.1.89', { isApp: false,
     storage: { getItem: () => null, setItem() { throw new Error('storage full'); } } }), /storage full/);
+});
+
+// 0.1.90 안내(#751 대기열 바로 보내기) — 항목이 빠지면 업데이트 뒤 안내가 조용히 안 뜬다.
+test('0.1.90 업데이트 안내 항목이 있고 i18n 사전에 ko·en 둘 다 있다', async () => {
+  const keys = updateNotesFor('0.1.90', '0.1.90');
+  assert.deepEqual([...keys], ['updates.note.steer', 'updates.note.firstSend']);
+  const src = (await import('node:fs')).readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  for (const k of keys) assert.match(src, new RegExp(`'${k.replace('.', '\\.')}': \\['[^']+', '[^']+'\\]`), k);
 });
