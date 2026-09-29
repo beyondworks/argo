@@ -11,10 +11,6 @@ import { ToastHost } from './ui/Overlay.jsx';
 import { Palette } from './ui/Palette.jsx';
 import { ShareDialog, AssignSheet, HistorySheet } from './ui/Dialogs.jsx';
 import { Home } from './pages/Home.jsx';
-import { Mail, Compose, MailConnect } from './pages/Mail.jsx';
-import { PageView } from './pages/PageView.jsx';
-import { Approvals, Work, Decisions, Outputs, Journal, Docs } from './pages/Records.jsx';
-import { Settings, Trash, Shared, PublicPage } from './pages/Misc.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
 import { useSaveStatus, useLegacyRecovery } from './core/save.js';
@@ -30,6 +26,25 @@ import { loadAccounts, pullMail } from './core/mail.js';
 
 const BusinessPage = lazy(() => import('./business/BusinessPage.jsx'));
 const ModuleLibrary = lazy(() => import('./pages/ModuleLibrary.jsx'));
+const Perf = lazy(() => import('./pages/Perf.jsx')); // 성과 기록(유건 9/29)
+const Assets = lazy(() => import('./pages/Assets.jsx')); // 노하우·업무 세트(유건 9/29)
+const Tools = lazy(() => import('./pages/Tools.jsx')); // 도구함(유건 9/29)
+// 메일 화면은 메일을 열 때만 필요하다 — 첫 화면 JS 150KB 상한(할 일 화면을 붙이며 넘은 0.1KB를 여기서 되찾는다)
+const Mail = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.Mail })));
+const MailConnect = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.MailConnect })));
+const Compose = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.Compose })));
+// 기본 화면(홈·메일)이 아닌 화면은 쓸 때만 불러온다(첫 화면 150KB 상한, 유건 9/26) — DocView는 core/ui로 옮겨 Records/Dialogs가 공용으로 정적으로 쓴다.
+const PageView = lazy(() => import('./pages/PageView.jsx').then((m) => ({ default: m.PageView })));
+const Approvals = lazy(() => import('./pages/Records.jsx').then((m) => ({ default: m.Approvals })));
+const Work = lazy(() => import('./pages/Records.jsx').then((m) => ({ default: m.Work })));
+const Decisions = lazy(() => import('./pages/Records.jsx').then((m) => ({ default: m.Decisions })));
+const Outputs = lazy(() => import('./pages/Records.jsx').then((m) => ({ default: m.Outputs })));
+const Journal = lazy(() => import('./pages/Records.jsx').then((m) => ({ default: m.Journal })));
+const Docs = lazy(() => import('./pages/Records.jsx').then((m) => ({ default: m.Docs })));
+const Settings = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.Settings })));
+const Trash = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.Trash })));
+const Shared = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.Shared })));
+const PublicPage = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.PublicPage })));
 
 function route(path) {
   let m;
@@ -44,7 +59,7 @@ function route(path) {
   if ((m = match('/p/:id', rest))) return { space, view: 'page', id: m.id };
   if (space === 'me' && rest === '/mail/connect') return { space, view: 'mailConnect' };             // Google 권한 승인 뒤 돌아오는 자리
   if (space === 'me' && (m = match('/mail/:id', rest))) return { space, view: 'mail', id: m.id };
-  const simple = { '/mail': 'mail', '/shared': 'shared', '/work': 'work', '/approvals': 'approvals', '/decisions': 'decisions', '/outputs': 'outputs', '/journal': 'journal', '/docs': 'docs', '/trash': 'trash', '/settings': 'settings' };
+  const simple = { '/mail': 'mail', '/shared': 'shared', '/work': 'work', '/approvals': 'approvals', '/decisions': 'decisions', '/outputs': 'outputs', '/journal': 'journal', '/docs': 'docs', '/perf': 'perf', '/knowhow': 'knowhow', '/tools': 'tools', '/trash': 'trash', '/settings': 'settings' };
   return simple[rest] ? { space, view: simple[rest] } : { redirect: baseOf(space) };
 }
 
@@ -57,7 +72,7 @@ function SaveStatus() {
 function Header({ r, page }) {
   const mode = useSession();
   const sp = SPACES.find((s) => s.key === r.space);
-  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t({ business: 'nav.business', home: 'nav.home', mail: 'nav.mail', mailConnect: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', docs: 'nav.docs', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
+  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t({ business: 'nav.business', home: 'nav.home', mail: 'nav.mail', mailConnect: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', docs: 'nav.docs', perf: 'nav.perf', knowhow: 'nav.knowhow', tools: 'nav.tools', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
   return (
     <header className="topbar">
       <button type="button" className="icon-btn nav-toggle" aria-label={t('nav.open')} onClick={() => setUi({ navOpen: true })}><Icon name="menu" /></button>
@@ -140,7 +155,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [r.space]);
 
-  if (r.view === 'public') return <><PublicPage id={r.id} /><ToastHost /></>;
+  if (r.view === 'public') return <><Suspense fallback={<div className="public" aria-busy="true" />}><PublicPage id={r.id} /></Suspense><ToastHost /></>;
   if (mode === 'loading') return <div className="boot" aria-busy="true" />;
   if (mode === 'signedOut') return <Login />;
   if (r.redirect) return null;
@@ -160,7 +175,7 @@ export default function App() {
     business: <Suspense fallback={<div className="boot" aria-busy="true" />}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} />}</Suspense>,
     home: <Home space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
     work: <Work space={r.space} />, approvals: <Approvals space={r.space} openId={params.get('open')} />, decisions: <Decisions space={r.space} />,
-    outputs: <Outputs space={r.space} />, journal: <Journal space={r.space} />, docs: <Docs space={r.space} openId={params.get('open')} />, trash: <Trash space={r.space} />, settings: <Settings />,
+    outputs: <Outputs space={r.space} />, journal: <Journal space={r.space} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
   return (
     <DndContext sensors={sensors} collisionDetection={collision} measuring={{ droppable: { strategy: dragging?.kind === 'module' ? MeasuringStrategy.Always : MeasuringStrategy.WhileDragging } }} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
@@ -169,7 +184,7 @@ export default function App() {
         <div className="nav-scrim" onClick={() => setUi({ navOpen: false })} />
         <main className="main">
           <Header r={r} page={page} />
-          <div className={`content view-${r.view}`}><LegacyRecoveryNotice />{views[r.view]}</div>
+          <div className={`content view-${r.view}`}><LegacyRecoveryNotice /><Suspense fallback={<div className="boot" aria-busy="true" />}>{views[r.view]}</Suspense></div>
         </main>
       </div>
       <DragOverlay dropAnimation={null}>{dragging ? <DragChip data={dragging} /> : null}</DragOverlay>
@@ -177,7 +192,7 @@ export default function App() {
       <ShareDialog />
       <AssignSheet />
       <HistorySheet />
-      <Compose />
+      <Suspense fallback={null}><Compose /></Suspense>
       <MenuHost />
       <ToastHost />
     </DndContext>

@@ -14,14 +14,14 @@ function useScrollLock(on) {
   }, [on]);
 }
 
-function useDialog(open, onClose) {
+export function useDialog(open, onClose) {
   const ref = useRef(null);
   useScrollLock(open);
   useEffect(() => {
     if (!open) return;
     const back = document.activeElement;
     // autoFocus 대신 마운트 뒤 포커스 — 폰에서는 키보드가 튀어나오지 않게 생략
-    if (!matchMedia('(pointer: coarse)').matches) ref.current?.querySelector('input, textarea, select, button:not(.x)')?.focus({ preventScroll: true });
+    if (!matchMedia('(pointer: coarse)').matches) (ref.current?.querySelector('[data-autofocus]') ?? ref.current?.querySelector('input, textarea, select, button:not(.x)'))?.focus({ preventScroll: true }); // data-autofocus: 첫 칸이 이미 정해진 창(예: 캠페인이 고정된 광고비 기록)
     const onKey = (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
       if (e.key === 'Tab' && ref.current) { // 포커스를 대화상자 안에 가둔다

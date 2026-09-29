@@ -18,7 +18,6 @@ import { imeGuardWith } from '../core/ime.js';
 import { MAIL_FOLDERS } from '../data/sample.js';
 import { ME, useSession } from '../core/session.js';
 import { crewName } from './modules.jsx';
-import { translateMail } from '../core/translate.js';
 import {
   loadAccounts, pullMail, readMail, connectGoogle, finishConnect, disconnectAccount, mailConfig, adminNote,
   saveDraft, sendMail, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
@@ -83,6 +82,7 @@ function Reader({ m, onBack }) {
     setTr({ busy: true, done: 0, total: 0 }); setShowTr(true);
     try {
       const ac = new AbortController(); stopTr.current = ac;
+      const { translateMail } = await import('../core/translate.js'); // 번역 버튼을 눌렀을 때만(첫 화면 150KB 상한, 유건 9/26)
       const out = await translateMail(m, c, { signal: ac.signal, onProgress: (p) => { if (shown.current === id) setTr((cur) => (cur?.busy ? { ...p, busy: true } : cur)); } });
       if (shown.current !== id) return;
       setTr(out);

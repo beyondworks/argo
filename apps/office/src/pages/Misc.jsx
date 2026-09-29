@@ -9,6 +9,7 @@ import { Link } from '../core/router.jsx';
 import { baseOf, mod } from '../core/commands.js';
 import { SPACES, ME, getMode, signOut } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
+import { DocView } from '../ui/DocView.jsx';
 
 /** 테마 미리보기 — 앱을 작게 줄인 모습(사이드바·캔버스·카드·글줄). "시스템"은 라이트와 다크를 대각선으로 반씩 보여 준다. */
 function Mini({ tone }) {
@@ -89,30 +90,6 @@ export function Shared() {
 }
 
 /** 공개 게시 화면 — 조직 로고가 위에, 하단에 작은 "Argo Office로 만듦". 결재·메일 참조와 비공개 블록은 빠진다. */
-const TAG = { paragraph: 'p', bulletList: 'ul', orderedList: 'ol', taskList: 'ul', listItem: 'li', taskItem: 'li', blockquote: 'blockquote', codeBlock: 'pre' };
-/** 공개 본문 그리기 — HTML 문자열을 쓰지 않고 노드를 React 요소로만 만든다. 링크는 http(s)만. */
-function Node({ n }) {
-  if (n.type === 'text') {
-    let el = n.text;
-    for (const m of n.marks ?? []) {
-      if (m.type === 'bold') el = <strong>{el}</strong>;
-      else if (m.type === 'italic') el = <em>{el}</em>;
-      else if (m.type === 'code') el = <code>{el}</code>;
-      else if (m.type === 'link' && /^https?:\/\//.test(m.attrs?.href ?? '')) el = <a href={m.attrs.href} rel="noopener nofollow" target="_blank">{el}</a>;
-    }
-    return el;
-  }
-  if (n.type === 'hardBreak') return <br />;
-  if (n.type === 'horizontalRule') return <hr />;
-  const kids = (n.content ?? []).map((c, i) => <Node key={i} n={c} />);
-  if (n.type === 'heading') { const H = `h${Math.min(3, Math.max(1, n.attrs?.level ?? 1))}`; return <H>{kids}</H>; }
-  const Tag = TAG[n.type];
-  return Tag ? <Tag>{kids}</Tag> : <>{kids}</>;
-}
-
-/** 문서 본문을 읽기 전용으로 — 공개 화면·버전 미리 보기 공용 */
-export const DocView = ({ doc }) => (doc?.content ?? []).map((n, i) => <Node key={i} n={n} />);
-
 export function PublicPage({ id: token }) {
   useLang();
   const local = useStore((s) => s.pages.find((p) => p.id === token));   // 예시 데이터 모드(서버 없음)에서는 페이지 id로 연다

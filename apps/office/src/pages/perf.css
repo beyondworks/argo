@@ -1,0 +1,68 @@
+/* 성과 기록(유건 9/29) — 모듈 카드·현황 카드 규칙을 그대로 쓰고, 기록 목록만 따로 */
+.perf { display: flex; flex-direction: column; gap: var(--module-gap); } /* grid 금지: .module의 span 6이 보이지 않는 칸을 만든다(9/29 두 번 겪음) */
+.perf .page-title-row { margin-bottom: 4px; }
+.perf-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; }
+.perf-nav { display: flex; align-items: center; gap: 6px; }
+.perf-nav strong { min-width: 150px; text-align: center; font-weight: 600; }
+.perf .flip { transform: rotate(180deg); }
+.perf-stats { padding: 0; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
+.perf-stats .stat-num { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* 금액이 두 줄로 잘리지 않게 */
+.perf .module-head .badge, .perf .module-head > .dim { margin-left: auto; }
+.perf-goal-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 10px; padding: 12px 16px 14px; }
+.perf-goal { display: grid; gap: 8px; align-content: start; padding: 12px 14px; border-radius: var(--rc); background: var(--lift); box-shadow: inset 0 0 0 1px var(--border-soft); min-width: 0; }
+.perf-goal.empty { display: flex; align-items: center; gap: 6px; justify-content: center; color: var(--fg-3); font: inherit; font-size: 13px; cursor: pointer; border: 0; min-height: 76px; }
+@media (hover: hover) { .perf-goal.empty:hover { color: var(--fg); box-shadow: inset 0 0 0 1px var(--border); } }
+.perf-goal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.perf-goal-head strong { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; }
+.perf-goal .bar { height: 8px; border-radius: 4px; background: var(--secondary); overflow: hidden; }
+.perf-goal .bar i { display: block; height: 100%; background: var(--fg-2); border-radius: 4px; }
+.perf-note-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; padding: 12px 16px 0; }
+.perf-note-add select.input { max-width: 180px; }
+.perf-lock-hint { padding: 4px 16px 0; margin: 0; }
+.perf-days { list-style: none; margin: 0; padding: 6px 8px 12px; display: grid; gap: 6px; }
+.perf-day h4 { margin: 10px 8px 4px; font-size: 12px; font-weight: 600; color: var(--fg-3); }
+.perf-day ul, .perf-brief ul, .perf-requests ul { list-style: none; margin: 0; padding: 0; display: grid; }
+.perf-brief ul { padding: 6px 8px 10px; }
+.perf-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--rc); min-width: 0; font-size: 13.5px; }
+.perf-item-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.perf-item strong.mono { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.perf-item small.ok { color: var(--ok, var(--fg-2)); }
+.perf-item small.late, .perf .badge.late { color: var(--danger); }
+.perf-item .badge.k-uncontract, .perf-item .badge.k-credit, .perf-item .badge.k-refund, .perf-item .badge.mail-caution { color: var(--danger); }
+.perf-item .badge.mail-good { color: var(--ok, var(--fg)); }
+.perf-req.pending { color: var(--fg-3); } .perf-req.approved { color: var(--fg); } .perf-req.rejected { color: var(--danger); }
+.perf-item .perf-more { opacity: 1; }
+@media (hover: hover) { .perf-item .perf-more { opacity: 0; } .perf-item:hover .perf-more, .perf-item .perf-more:focus-visible { opacity: 1; } }
+.perf-review-body { display: grid; gap: 10px; padding: 12px 16px 14px; }
+.perf-review-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.perf-review-row p, .perf-review-body > p { margin: 0; }
+.perf-review.st-requested { box-shadow: inset 0 0 0 1px var(--border); }
+.perf-thread { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.perf-thread li { display: grid; gap: 4px; padding: 10px 12px; border-radius: var(--rc); background: var(--lift); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.perf-thread li p { margin: 0; white-space: pre-wrap; }
+.perf-thread li.c-objection .badge { color: var(--danger); }
+.perf-thread li .badge { justify-self: start; }
+.perf-comment { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; }
+.perf-snapshot .perf-comment { grid-template-columns: minmax(0, 1fr) auto; }
+.perf-snapshot { display: flex; flex-direction: column; gap: var(--module-gap); }
+.perf-form { display: grid; gap: 12px; }
+.perf-quote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--border); color: var(--fg-2); white-space: pre-wrap; }
+.perf-requests ul { padding: 6px 8px 10px; }
+.perf-team td.num { text-align: right; }
+@media (max-width: 560px) {
+  .perf-note-add { grid-template-columns: minmax(0, 1fr) auto; }
+  .perf-note-add select.input { grid-column: 1 / -1; max-width: none; grid-row: 2; }
+  .perf-comment { grid-template-columns: minmax(0, 1fr) auto; }
+  .perf-comment select.input { grid-column: 1 / -1; }
+  .perf-nav strong { min-width: 0; }
+}
+@media print {
+  .sidebar, .topbar, header.top, .perf-bar, .perf-note-add, .perf-lock-hint, .perf-more, .perf-comment, .perf-review-row .btn, .perf-goal.empty { display: none !important; }
+  .perf .module { break-inside: avoid; box-shadow: none; border: 1px solid #ccc; }
+}
+/* 노하우 목록 — 제목 줄을 눌러 연다 */
+.asset-open { text-align: left; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+@media (hover: hover) { .asset-open:hover strong { text-decoration: underline; } }
+/* 도구함 — 꺼진 도구는 흐리게 */
+.perf-item.tool-off .perf-item-main, .perf-item.tool-off .badge { opacity: 0.55; }
+.tool-switch input { width: 16px; height: 16px; accent-color: var(--primary); margin: 0; }

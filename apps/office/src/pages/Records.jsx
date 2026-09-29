@@ -12,7 +12,7 @@ import { fmtBytes } from '../core/files.js';
 import { navigate } from '../core/router.jsx';
 import { loadDocBody } from '../core/pull.js';
 import { mdToDoc } from '../core/board.js';
-import { DocView } from './Misc.jsx';
+import { DocView } from '../ui/DocView.jsx';
 import { SPACES, ME } from '../core/session.js';
 
 const inSpace = (space) => (x) => space === 'me' || x.space === space;

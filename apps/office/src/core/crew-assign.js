@@ -45,6 +45,25 @@ export function composeAssign({ instruction, items = [], t }) {
   return { body, meta };
 }
 
+/** 도구함(5단계) → 맡기는 글에 붙일 문단: 이름 (주소): 사용법. 사용법은 도구마다 600자까지 */
+export function composeTools(tools, t) {
+  if (!tools?.length) return '';
+  return `[${t('crew.tools.head')}]\n${tools.map((x) => `- ${x.title}${x.url ? ` (${x.url})` : ''}${String(x.guide ?? '').trim() ? `: ${excerpt(String(x.guide).replace(/\s+/g, ' ').trim(), 600)}` : ''}`).join('\n')}`;
+}
+
+/** 업무 세트(4단계) → 맡기는 글에 붙일 문단. used = office_asset_write 'asset.use' 결과. 노하우 본문은 max를 노하우 수로 나눠 자른다 */
+export function composeSet(used, t, max = 6000) {
+  if (!used) return '';
+  const per = Math.floor(max / Math.max(1, used.knowhow?.length ?? 0));
+  return [
+    [`[${t('crew.set.head')}] ${used.title}`, String(used.body ?? '').trim()].filter(Boolean).join('\n'),
+    ...(used.knowhow ?? []).map((k) => `[${t('crew.set.knowhow')}] ${k.title}\n${excerpt(k.body, per)}`),
+    used.tools?.length ? `${t('crew.set.tools')}: ${used.tools.join(', ')}` : null,
+    composeTools(used.tool_list, t) || null,
+    used.checks?.length ? `${t('crew.set.checks')}:\n${used.checks.map((c) => `- [ ] ${c}`).join('\n')}` : null,
+  ].filter(Boolean).join('\n\n');
+}
+
 /** 서버 거절 사유 → 사용자 문구 키(i18n crew.fail.*) */
 export const ASSIGN_REASONS = ['unentitled', 'locked', 'consent', 'not_allowed', 'no_crew', 'unavailable'];
 const deny = (code) => Object.assign(new Error(`assign_${code}`), { transient: false, assign: code });

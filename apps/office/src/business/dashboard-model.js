@@ -66,3 +66,6 @@ export function chartSeries(daily, metric, filters) {
   }
   return result;
 }
+
+/** 기간 거래 목록 — 이 기간에 금액이 하나도 움직이지 않은 거래(₩0 줄)는 뺀다 */
+export const periodOrders = (orders) => (orders ?? []).filter((row) => METRICS.some((metric) => Number(row[metric] || 0) !== 0));

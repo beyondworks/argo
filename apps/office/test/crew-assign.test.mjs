@@ -115,3 +115,27 @@ test('보내기: 서버 함수 거절(P0001)은 권한 없음으로 끝낸다 �
   const network = fakeDb({ insertError: Object.assign(new Error('fetch failed'), { transient: true }) });
   await assert.rejects(deliverToCrew(network, job), (e) => e.transient === true && !e.assign);
 });
+
+// 4단계(유건 9/29): 업무 세트를 고르면 노하우 본문·도구·끝나기 전 점검 목록이 맡기는 글에 실린다
+test('composeSet: 세트 이름·설명·노하우 본문·도구·점검 목록, 길면 노하우마다 몫을 나눠 자른다', async () => {
+  const { composeSet } = await import('../src/core/crew-assign.js');
+  const tt = (k) => ({ 'crew.set.head': '업무 세트', 'crew.set.knowhow': '노하우', 'crew.set.tools': '쓰는 도구', 'crew.set.checks': '끝내기 전에 확인할 것' })[k] ?? k;
+  const text = composeSet({ title: '견적 대응', body: '견적 요청이 오면', tools: ['메일'], checks: ['부가세 표기'], knowhow: [{ title: '견적서 순서', body: '1. 단가표\n2. PDF' }] }, tt);
+  assert.match(text, /^\[업무 세트\] 견적 대응\n견적 요청이 오면/);
+  assert.match(text, /\[노하우\] 견적서 순서\n1\. 단가표\n2\. PDF/);
+  assert.match(text, /쓰는 도구: 메일/);
+  assert.match(text, /끝내기 전에 확인할 것:\n- \[ \] 부가세 표기/);
+  const long = composeSet({ title: 's', body: '', tools: [], checks: [], knowhow: [{ title: 'a', body: 'x'.repeat(9000) }, { title: 'b', body: 'y'.repeat(9000) }] }, tt, 6000);
+  assert.ok(long.length <= 6400, `길이 ${long.length}`);
+  assert.equal(composeSet(null, tt), '');
+});
+
+// 5단계(유건 9/29): 크루에게 배정·켜진 도구와 세트가 묶은 도구의 사용법이 맡기는 글에 실린다
+test('composeTools·composeSet: 도구 이름·주소·사용법', async () => {
+  const { composeTools, composeSet } = await import('../src/core/crew-assign.js');
+  const tt = (k) => ({ 'crew.set.head': '업무 세트', 'crew.set.knowhow': '노하우', 'crew.set.tools': '쓰는 도구', 'crew.set.checks': '끝내기 전에 확인할 것', 'crew.tools.head': '쓸 수 있는 도구' })[k] ?? k;
+  const tools = [{ title: '볼타 세금계산서', url: 'https://app.bolta.io', guide: '계약 완료 뒤 발행' }, { title: '사내 위키', url: null, guide: '' }];
+  assert.equal(composeTools(tools, tt), '[쓸 수 있는 도구]\n- 볼타 세금계산서 (https://app.bolta.io): 계약 완료 뒤 발행\n- 사내 위키');
+  assert.equal(composeTools([], tt), '');
+  assert.match(composeSet({ title: 's', body: '', tools: [], checks: [], knowhow: [], tool_list: tools }, tt), /\[쓸 수 있는 도구\]\n- 볼타 세금계산서/);
+});

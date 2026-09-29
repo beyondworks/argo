@@ -2,6 +2,7 @@ import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { getClient } from '../core/supabase.js';
 import { ME, SPACES, getMode, useSession } from '../core/session.js';
 import { validateFilters } from './dashboard-model.js';
+import { isSameUserEcho } from '../core/auth-events.js';
 
 const fail = (message, code = message) => Object.assign(new Error(message), { code });
 const journalKey = (scope, namespace) => `${namespace}:${scope.uid}:${scope.org ?? 'me'}`;
@@ -12,7 +13,7 @@ export function businessError(error) {
     business_aggregate_limit: 'aggregate', business_insufficient_stock: 'stock', business_version_conflict: 'version', business_amount_exceeds_balance: 'balance',
     business_order_state: 'orderState', business_number: 'number', business_quantity: 'quantity', business_not_found: 'missing',
     business_kind_in_use: 'kindInUse', business_product_only: 'productOnly', business_total_limit: 'total', business_dates: 'dates',
-    business_idempotency_conflict: 'pending', business_input: 'input', business_settings: 'input', business_settings_duplicate: 'input', business_kind: 'input',
+    business_idempotency_conflict: 'pending', business_input: 'input', business_owner: 'owner', business_settings: 'input', business_settings_duplicate: 'input', business_kind: 'input',
   };
   if (specific[error?.message]) return `biz.error.${specific[error.message]}`;
   if (['PGRST202', 'PGRST205', '42883', '42P01'].includes(error?.code)) return 'biz.error.schema';
@@ -127,6 +128,7 @@ export function createBusinessClient({ client, scope, journal, key = () => crypt
     subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     getSnapshot: () => snapshot,
     refresh, mutate, retryPending,
+    call: async (fn, args = {}) => { const expected = current(); return rpc(expected, fn, { ...args, p_org: expected.org }); }, // 따로 붙은 함수(거래 담당자 등) — 같은 범위·세션 확인을 거친다
     report: async (filters) => {
       const expected = current();
       return rpc(expected, `${rpcPrefix}_report`, { ...reportArgs(filters), p_org: expected.org });
@@ -151,7 +153,8 @@ export function useScopedBusiness(space, createClient = createBusinessClient) {
     scoped.refresh().catch(() => {});
     getClient().then((sb) => {
       if (!alive || !sb) return;
-      subscription = sb.auth.onAuthStateChange((event) => {
+      subscription = sb.auth.onAuthStateChange((event, session) => {
+        if (isSameUserEcho(event, session, { signedIn: getMode() === 'signedIn', uid: ME.id })) return; // 탭 복귀 때 오는 같은 사용자 SIGNED_IN은 다시 읽지 않는다
         if (event === 'SIGNED_OUT' || event === 'SIGNED_IN') { scoped.invalidate(); queueMicrotask(() => { if (alive) scoped.refresh().catch(() => {}); }); }
       }).data.subscription;
     });

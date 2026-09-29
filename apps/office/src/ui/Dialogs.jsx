@@ -13,8 +13,9 @@ import { baseOf } from '../core/commands.js';
 import { flushNow, outbox } from '../core/sync.js';
 import { loadPageContent } from '../core/pull.js';
 import { readMail } from '../core/mail.js';
-import { composeAssign, htmlText, docText } from '../core/crew-assign.js';
-import { DocView } from '../pages/Misc.jsx';
+import { composeAssign, composeSet, composeTools, htmlText, docText } from '../core/crew-assign.js';
+import { rpc } from '../core/tasks.js';
+import { DocView } from './DocView.jsx';
 import { publicWebUrl } from '../core/platform.js';
 
 /** 서버에서 공유 상태를 읽는다 — 사람 목록 RPC가 거절되면 이 사람은 전체 권한이 아니다(서버가 기준). */
@@ -186,7 +187,14 @@ export function AssignSheet() {
   const [crew, setCrew] = useState(null);
   const [task, setTask] = useState('summary');
   const [text, setText] = useState('');
-  useEffect(() => { if (a) { setCrew(a.crew ?? null); setTask(a.items?.some((i) => i.kind === 'mail') ? 'summary' : 'custom'); setText(''); } }, [a]);
+  const [sets, setSets] = useState([]), [setId, setSetId] = useState(''); // 업무 세트(4단계) — 고르면 노하우·도구·점검 목록이 글에 실린다
+  const orgOfSheet = SPACES.find((sp) => sp.kind === 'org' && sp.key === a?.space)?.id;
+  useEffect(() => { if (a) { setCrew(a.crew ?? null); setTask(a.items?.some((i) => i.kind === 'mail') ? 'summary' : 'custom'); setText(''); setSetId(''); } }, [a]);
+  useEffect(() => {
+    let live = true;
+    if (a && orgOfSheet && getMode() === 'signedIn') rpc('office_asset_list', { p_org: orgOfSheet }).then((l) => { if (live) setSets([...l.company, ...l.mine].filter((x) => x.kind === 'set')); }).catch(() => {});
+    return () => { live = false; };
+  }, [a, orgOfSheet]);
   const label = useMemo(() => a?.items?.map((i) => i.label).filter(Boolean).join(', ') ?? '', [a]);
   const allCrews = useStore((s) => s.crews);
   const live = getMode() === 'signedIn';
@@ -222,7 +230,12 @@ export function AssignSheet() {
         }
         return { ...i };
       }));
-      const instruction = task === 'custom' ? text.trim() || label : t(`crew.ask.${task}`);
+      const asked = task === 'custom' ? text.trim() || label : t(`crew.ask.${task}`);
+      const used = setId ? await rpc('office_asset_write', { p_org: orgId, p_action: 'asset.use', p_data: { id: setId } }) : null;
+      // 이 크루에게 배정·켜진 도구(5단계) — 세트가 이미 실은 도구는 빼고
+      const mine = await rpc('office_asset_write', { p_org: orgId, p_action: 'crew.tools', p_data: { id: crypto.randomUUID(), crew_id: c.id } }).then((r) => r.tools).catch(() => []);
+      const extra = mine.filter((x) => !used?.tool_list?.some((y) => y.id === x.id));
+      const instruction = [asked, used && composeSet(used, t), composeTools(extra, t)].filter(Boolean).join('\n\n');
       sendToCrew({ orgId, crewId: c.id, crewName: c.name, ...composeAssign({ instruction, items, t }) });
       close(); showToast(t('crew.sending', { crew: c.name }));
     } catch { showToast(t('crew.fail.read')); }
@@ -240,6 +253,8 @@ export function AssignSheet() {
         <div className="seg">{TASKS.filter((k) => hasMail || k !== 'reply').map((k) => <button key={k} type="button" className={`seg-btn${task === k ? ' on' : ''}`} aria-pressed={task === k} onClick={() => setTask(k)}>{t(`crew.task.${k}`)}</button>)}</div>
         {task === 'custom' && <textarea className="input area" rows={4} value={text} placeholder={t('crew.customPh')} onChange={(e) => setText(e.target.value)} />}
       </div>
+      {sets.length > 0 && <label className="field-block"><span className="label">{t('crew.set.pick')}</span>
+        <select className="input" value={setId} onChange={(e) => setSetId(e.target.value)}><option value="">{t('crew.set.none')}</option>{sets.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select></label>}
       <p className="data-note"><Icon name="lock" size={12} />{t('crew.dataNote')}</p>
     </Sheet>
   );

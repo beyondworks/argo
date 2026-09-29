@@ -6,6 +6,7 @@ import { transformSync } from 'esbuild';
 import { createContext, createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { OFFICE_MODULES, BUSINESS_MODULES, CHART_MODULES } from '../src/core/module-registry.js';
+import { linkedTotals, effectOf } from '../src/business/marketing-model.js';
 
 test('shared registry preserves legacy modules and exposes all eight business home cards', () => {
   assert.deepEqual(OFFICE_MODULES.filter((m) => !m.businessTab).map((m) => m.id), ['stats','approvals','mail','todos','pages','work','outputs','journal','decisions']);
@@ -23,7 +24,7 @@ const source = readFileSync(new URL('../src/business/HomeModules.jsx', import.me
 const compiled = transformSync(source, { loader: 'jsx', jsx: 'automatic', format: 'cjs' }).code;
 const module = { exports: {} };
 let context;
-const dependencies = { require: createRequire(import.meta.url), module, exports: module.exports, createContext, useContext: () => context, t: (key) => key, getLang: () => 'en', baseOf: (space) => space === 'me' ? '/me' : `/o/${space}`, Link: ({ to, ...props }) => createElement('a', { href: to, ...props }), InfoTip: ({ text }) => createElement('span', { className: 'info-tip' }, text) }; // 집계 기준은 (i) 안에 — 문구가 카드에 실제로 실리는지 본다
+const dependencies = { require: createRequire(import.meta.url), module, exports: module.exports, createContext, useContext: () => context, t: (key) => key, getLang: () => 'en', baseOf: (space) => space === 'me' ? '/me' : `/o/${space}`, Link: ({ to, ...props }) => createElement('a', { href: to, ...props }), InfoTip: ({ text }) => createElement('span', { className: 'info-tip' }, text), linkedTotals, effectOf }; // 집계 기준은 (i) 안에 — 문구가 카드에 실제로 실리는지 본다
 new Function(...Object.keys(dependencies), compiled)(...Object.values(dependencies));
 const card = (tab) => renderToStaticMarkup(createElement(module.exports.BusinessHomeCard, { space: 'me', tab }));
 const data = { settings: { enabled: BUSINESS_MODULES.map((m) => m.businessTab) }, customers: [{ id: 'c1', name: 'Actual customer', email: 'test@example.invalid' }], items: [{ id: 'p1', kind: 'product', name: 'Actual product', price: 300, stock: 7, reserved: 2 }], orders: [{ id: 'o1', title: 'Actual order', status: 'confirmed' }] };
@@ -76,14 +77,16 @@ test('marketing performance distinguishes missing reports, read failures and und
   assert.doesNotMatch(card('performance'), /mkt.metric.spend/);
   context = { business: { data }, marketing: { data: { campaigns: [] } }, performance: { error: 'biz.error.request' } };
   assert.match(card('performance'), /biz.error.request/);
-  context.performance = { report: { metrics: { spend: 0, sales: 100, paid: 50, roas: null } } };
+  // 홈 카드도 마케팅 탭과 같이 광고와 연결된 거래만 센다 — 연결 안 된 매출(5,000)이 광고 효과를 부풀리지 않게(분리 검수 M3)
+  context.performance = { report: { metrics: { spend: 0, sales: 5100, paid: 5050, roas: null }, campaigns: [{ id: 'a', spend: 0, sales: 100, paid: 50 }, { id: null, spend: 0, sales: 5000, paid: 5000 }] } };
   let html = card('performance');
+  assert.match(html, /₩100/); assert.doesNotMatch(html, /5,100/);
   assert.match(html, /mkt.ratio.na/);
   assert.doesNotMatch(html, /NaN|Infinity/);
   assert.doesNotMatch(html, /biz.home.open/); // '모두 보기'는 카드 머리에만 — 본문에 같은 링크를 또 두지 않는다(유건 9/29)
-  context.performance.report.metrics.roas = 2.5;
+  context.performance.report.campaigns[0].spend = 40;
   html = card('performance');
-  assert.match(html, /250%/);
+  assert.match(html, /mkt.times/); // 광고 효과는 %가 아니라 "광고비의 N배"로(유건 9/29)
   assert.doesNotMatch(html, /mkt.ratio.na/);
   context.business.data = { ...data, settings: { enabled: [] } };
   assert.match(card('performance'), /bizui.disabled/);
