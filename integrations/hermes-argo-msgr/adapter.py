@@ -138,8 +138,30 @@ def _uuid_like(v) -> bool:
     return bool(re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', str(v or ''), re.I))
 
 
-def job_msgr_channel(job) -> Optional[str]:
-    """결과를 메신저로 보내는 작업이면 그 채널 id(없으면 ''), 아니면 None. 설계 D2 — 메신저 전달 작업만 기본으로 보이고 고칠 수 있다."""
+def _hermes_delivery_resolver():
+    """Hermes가 실제 전달에 쓰는 목적지 판정(cron.scheduler_delivery) — deliver=origin인데 출처가 없으면 홈 채널로 대체하는 등
+    문자열만으로는 알 수 없는 규칙을 그대로 따르기 위해. 없는 버전이면 None(문자열 판정으로 대체)."""
+    try:
+        from cron.scheduler_delivery import _resolve_delivery_targets
+        return _resolve_delivery_targets
+    except Exception:
+        return None
+
+
+def job_msgr_channel(job, resolve=None) -> Optional[str]:
+    """결과를 메신저로 보내는 작업이면 그 채널 id(없으면 ''), 아니면 None. 설계 D2 — 메신저 전달 작업만 기본으로 보이고 고칠 수 있다.
+    resolve(Hermes 목적지 판정)가 있으면 실제 목적지로 판단한다(2026-09-29 VPS 실측: deliver=origin·출처 없음 작업 4개)."""
+    if resolve is not None:
+        try:
+            targets = resolve(job)
+        except Exception:
+            targets = None
+        if targets:   # 목적지가 정해지면 그대로 따른다. 빈 목록(플랫폼 등록 전 등)이면 아래 문자열 판정 — 명시한 argo_msgr를 놓치지 않게
+            for t in targets:
+                if str((t or {}).get('platform') or '').lower() == 'argo_msgr':
+                    chat = str(t.get('chat_id') or '')
+                    return chat if _uuid_like(chat) else ''
+            return None
     deliver = str(job.get('deliver') or '')
     for tok in [t.strip() for t in deliver.split(',') if t.strip()]:
         head, _, rest = tok.partition(':')
@@ -227,9 +249,9 @@ def decide_routine_edit(job, state) -> str:
     return 'superseded' if sent and job_fingerprint(job) != sent else 'apply'
 
 
-def job_to_row(job, tz, state, mirror_all=False, now=None):
+def job_to_row(job, tz, state, mirror_all=False, now=None, resolve=None):
     """Hermes 작업 → setRoutines 행. 메신저 전달 작업이 아니면(기본) None — ARGO_MSGR_MIRROR_ALL=1이면 보이되 고칠 수 없다."""
-    chan = job_msgr_channel(job)
+    chan = job_msgr_channel(job, resolve)
     if chan is None and not mirror_all:
         return None
     prompt = str(job.get('prompt') or '').strip() or '(스크립트 작업 / script job)'
@@ -644,7 +666,7 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             return
         jobs = await asyncio.to_thread(cj.list_jobs, True)   # 읽기 실패는 예외 → 빈 스냅샷을 보내지 않는다(L6)
         now = datetime.datetime.now(datetime.timezone.utc)
-        tz, mirror_all = _hermes_tz(), os.getenv('ARGO_MSGR_MIRROR_ALL', '').strip() == '1'
+        tz, mirror_all, resolve = _hermes_tz(), os.getenv('ARGO_MSGR_MIRROR_ALL', '').strip() == '1', _hermes_delivery_resolver()
         rows, seen = [], set()
         for job in jobs or []:
             jid = str(job.get('id') or '')
@@ -656,7 +678,7 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             if st.get('fp') and st['fp'] != fp:
                 st['changed_at'] = now.isoformat()   # 사람이 고친 시각(메신저 편집 반영 포함 — Argo editedAt과 같은 뜻)
             st['fp'] = fp
-            row = job_to_row(job, tz, st, mirror_all, now)
+            row = job_to_row(job, tz, st, mirror_all, now, resolve)
             if row is None:
                 continue
             if row['status'] != (st.get('status_sent') or {}).get('value'):
@@ -690,7 +712,7 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             verdict = decide_routine_edit(job, self._rstate.get(jid))
             if verdict == 'failed':
                 err = 'routine_not_found'
-            elif job_msgr_channel(job) is None:
+            elif job_msgr_channel(job, _hermes_delivery_resolver()) is None:
                 err = 'not_editable'   # 서버도 막지만 어댑터가 한 번 더(메신저 전달 작업만 고친다)
             elif verdict == 'superseded':
                 status = 'superseded'

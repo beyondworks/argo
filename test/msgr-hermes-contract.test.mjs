@@ -106,6 +106,13 @@ assert ch({'deliver':'argo_msgr:'+CH}) == CH
 assert ch({'deliver':'origin','origin':{'platform':'argo_msgr','chat_id':CH}}) == CH
 assert ch({'deliver':'origin','origin':{'platform':'telegram','chat_id':'1'}}) is None
 assert ch({'deliver':'telegram,argo_msgr'}) == ''
+# Hermes 목적지 판정이 있으면 그것을 따른다 — deliver=origin·출처 없음은 홈 채널로 대체될 수 있다(VPS 실측)
+assert ch({'deliver':'origin'}, lambda j: [{'platform':'argo_msgr','chat_id':CH}]) == CH
+assert ch({'deliver':'origin'}, lambda j: [{'platform':'telegram','chat_id':'1'}]) is None
+assert ch({'deliver':'origin'}, lambda j: []) is None, '아무 데도 안 가면 메신저 작업 아님'
+assert ch({'deliver':'argo_msgr:'+CH}, lambda j: []) == CH, '판정이 비면(플랫폼 등록 전) 명시한 argo_msgr는 문자열로 인정'
+assert ch({'deliver':'argo_msgr:'+CH}, lambda j: (_ for _ in ()).throw(RuntimeError('x'))) == CH, '판정 함수가 실패하면 문자열로 대체'
+assert m.job_to_row({'id':'o1','name':'n','prompt':'p','schedule':{'kind':'interval','minutes':30},'deliver':'origin'}, None, {}, resolve=lambda j: [{'platform':'argo_msgr','chat_id':CH}])['editable'] is True
 local = {'id':'j1','name':'야간 핸드오버','prompt':'정리','schedule':{'kind':'cron','expr':'49 0 * * *'},'deliver':'local','enabled':True}
 assert m.job_to_row(local, 'Asia/Seoul', {}) is None
 row = m.job_to_row(local, 'Asia/Seoul', {}, mirror_all=True)
