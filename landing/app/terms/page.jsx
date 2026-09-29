@@ -26,24 +26,49 @@ const SECTIONS = [
     h: { ko: '2-1. Argo Messenger', en: '2-1. Argo Messenger' },
     p: [
       {
-        ko: 'Argo Messenger는 사람과 AI 크루가 조직·채널에서 함께 일하고 개인 대화를 나누는 메신저입니다. 조직과 채널에 올린 콘텐츠의 권리와 책임은 그 조직과 작성자에게 있으며, 운영자는 서비스 제공에 필요한 범위에서만 이를 처리합니다.',
-        en: 'Argo Messenger lets people and AI crews work together in organizations and channels and exchange personal messages. Rights to and responsibility for content posted in organizations and channels belong to that organization and its authors; the operator processes it only as needed to provide the service.',
+        ko: 'Argo Messenger는 사람과 AI 크루(에이전트)가 조직·채널 단위로 함께 일하는 메신저입니다. 조직과 채널에 올린 콘텐츠의 권리와 책임은 그 조직과 작성자에게 있으며, 운영자는 서비스 제공에 필요한 범위에서만 이를 처리합니다.',
+        en: 'Argo Messenger is a messenger where people and AI crews (agents) work together in organizations and channels. Rights to and responsibility for content posted in organizations and channels belong to that organization and its authors; the operator processes it only as needed to provide the service.',
       },
       {
-        ko: '크루를 연결한 이용자는 자신의 기기에서 실행되는 크루의 행동과 크루에 연결한 외부 서비스·AI 모델 제공사의 이용 조건 준수에 책임을 집니다. 크루가 수행한 결재·업무의 결과는 소유자와 조직이 확인해야 합니다.',
-        en: 'Users who connect crews are responsible for their crews’ behavior on their devices and for complying with the terms of connected external services and AI model providers. The owner and organization should review the results of approvals and tasks performed by crews.',
+        ko: '크루를 메신저에 연결한 이용자(크루 소유자)는 자신의 기기에서 실행되는 크루의 행동, 크루에 연결한 외부 서비스(텔레그램·슬랙·외부 봇 등)의 이용 조건 준수, 그리고 크루가 사용하는 AI 모델 제공사의 약관 준수에 대해 책임을 집니다. 크루가 조직에서 실행한 결재·업무의 결과는 소유자와 조직이 확인해야 합니다.',
+        en: 'A user who connects a crew to the messenger (the crew owner) is responsible for the behavior of crews running on their device, for complying with the terms of any external services connected to the crew (such as Telegram, Slack, or external bots), and for complying with the terms of the AI model providers the crew uses. The owner and the organization should review the results of approvals and tasks that crews carry out.',
       },
       {
         ko: '다음 행위는 금지됩니다: 스팸이나 불법 콘텐츠 전송, 타인의 계정·초대 링크·봇 토큰의 무단 사용, 조직의 권한 정책을 우회하려는 시도, 서비스의 정상 운영을 방해하는 자동화. 위반 시 운영자는 사전 통지 없이 계정이나 조직의 접근을 정지할 수 있습니다.',
         en: 'The following are prohibited: sending spam or unlawful content, unauthorized use of another person’s account, invite links, or bot tokens, attempts to bypass an organization’s permission policies, and automation that disrupts normal operation of the service. Upon violation, the operator may suspend access for an account or organization without prior notice.',
       },
       {
-        ko: 'Argo Messenger는 부적절한 콘텐츠(혐오·차별, 괴롭힘·위협, 음란물, 폭력 조장, 불법 콘텐츠)와 다른 이용자를 괴롭히는 이용자를 허용하지 않습니다(무관용). 이용자는 앱의 메시지 메뉴에서 문제가 있는 메시지를 신고하고 다른 이용자를 차단할 수 있으며, 차단한 이용자의 메시지는 화면에서 가려집니다. 운영자는 접수된 신고를 24시간 안에 검토하고, 위반 콘텐츠를 삭제하며 해당 이용자의 접근을 정지합니다. 조직 안의 신고는 그 조직의 관리자도 확인하고 처리합니다.',
-        en: 'Argo Messenger has zero tolerance for objectionable content (hate or discrimination, harassment or threats, sexual content, incitement to violence, unlawful content) and for users who abuse others. You can report a message and block another user from the message menu in the app; messages from blocked users are hidden from you. The operator reviews reports within 24 hours, removes violating content, and suspends the offending user’s access. Reports within an organization can also be reviewed and resolved by that organization’s admins.',
+        ko: 'Argo는 부적절한 콘텐츠와 악의적인 사용자를 허용하지 않습니다(무관용). 욕설·혐오·괴롭힘·위협, 성적으로 노골적인 콘텐츠, 폭력을 조장하는 콘텐츠, 스팸, 불법 콘텐츠, 타인의 개인정보를 동의 없이 올리는 행위가 여기에 해당하며, AI 크루가 만든 콘텐츠도 같은 기준을 적용합니다.',
+        en: 'Argo has zero tolerance for objectionable content and abusive users. This includes insults, hate speech, harassment, threats, sexually explicit content, content that promotes violence, spam, unlawful content, and posting others’ personal information without consent. Content produced by AI crews is held to the same standard.',
       },
       {
-        ko: '계정과 조직의 삭제, 보관 기간, 삭제 뒤 남는 데이터는 개인정보처리방침 2-1항을 따릅니다. 운영자는 서비스 기능을 변경하거나 중단할 수 있으며, 중요한 변경은 앱 또는 본 페이지를 통해 미리 알리도록 노력합니다.',
-        en: 'Deletion of accounts and organizations, retention periods, and data that remains after deletion follow Section 2-1 of the Privacy Policy. The operator may change or discontinue service features and will make reasonable efforts to announce significant changes in advance through the app or this page.',
+        ko: '신고: 문제가 있는 메시지는 메시지 메뉴(휴대폰에서는 메시지를 길게 누르기)에서 “메시지 신고”를 눌러 신고할 수 있습니다. 조직 안의 신고는 조직 관리자에게, 개인 대화의 신고는 Argo 운영팀에게 전달됩니다. 차단: 같은 메뉴의 “사용자 차단” 또는 설정 › 친구에서 “차단”을 누르면, 그 사용자는 친구에서 빠지고 나에게 개인 1:1 메시지를 새로 보낼 수 없으며 그 사용자의 글은 내 화면에서 가려집니다. 차단은 설정 › 친구의 “차단 관리”에서 해제할 수 있습니다.',
+        en: 'Reporting: to report a problematic message, open the message menu (long-press the message on a phone) and tap “Report message.” Reports within an organization go to its admins; reports in personal conversations go to the Argo team. Blocking: tap “Block user” in the same menu, or “Block” under Settings › Friends. The blocked user is removed from your friends, can no longer send you new personal 1:1 messages, and their messages are hidden on your screen. You can unblock under “Blocked users” in Settings › Friends.',
+      },
+      {
+        ko: '신고는 접수 후 24시간 안에 검토합니다. 운영자 또는 조직 관리자는 이 약관을 위반한 콘텐츠를 삭제하고, 이를 올린 사용자를 조직에서 내보내거나 계정의 이용을 정지할 수 있습니다.',
+        en: 'Reports are reviewed within 24 hours of receipt. The operator or the organization’s admins may remove content that violates these terms and remove the user who posted it from the organization or suspend their account.',
+      },
+      {
+        ko: '계정과 조직의 삭제, 보관 기간, 삭제 뒤 남는 데이터는 개인정보처리방침 2-1항과 4항을 따릅니다. 운영자는 서비스 기능을 변경하거나 중단할 수 있으며, 중요한 변경은 앱 또는 본 페이지를 통해 미리 알리도록 노력합니다.',
+        en: 'Deletion of accounts and organizations, retention periods, and data that remains after deletion follow Sections 2-1 and 4 of the Privacy Policy. The operator may change or discontinue service features and will make reasonable efforts to announce significant changes in advance through the app or this page.',
+      },
+    ],
+  },
+  {
+    h: { ko: '2-2. 유료 구독', en: '2-2. Paid subscriptions' },
+    p: [
+      {
+        ko: '유료 기능은 조직 단위 구독으로 제공되며, 웹에서 결제합니다. 결제는 결제 대행사 Lemon Squeezy가 판매자로서 처리하므로, 결제·청구·세금·영수증에는 Lemon Squeezy의 약관과 정책도 적용됩니다. 요금과 결제 주기는 웹사이트의 요금 안내에 게시된 내용을 따릅니다.',
+        en: 'Paid features are offered as a per-organization subscription purchased on the web. Payments are processed by Lemon Squeezy as the merchant of record, so Lemon Squeezy’s terms and policies also apply to payment, billing, taxes, and receipts. Prices and billing periods follow what is posted on the pricing information on our website.',
+      },
+      {
+        ko: '조직마다 처음 30일은 무료로 이용할 수 있습니다. 무료 기간이 끝난 뒤 유료 기능을 계속 쓰려면 구독이 필요합니다.',
+        en: 'Each organization can use the service free for its first 30 days. To keep using paid features after the free period, a subscription is required.',
+      },
+      {
+        ko: '구독은 결제 대행사가 제공하는 구독 관리 페이지에서 언제든 해지할 수 있습니다. 해지하면 다음 결제부터 청구되지 않으며, 이미 결제한 기간이 끝날 때까지 유료 기능을 쓸 수 있습니다. 환불은 판매자인 Lemon Squeezy의 환불 정책과 관련 법령을 따릅니다.',
+        en: 'You can cancel a subscription at any time on the subscription management page provided by the payment processor. After cancellation you will not be charged again, and paid features remain available until the end of the period you have already paid for. Refunds follow the refund policy of Lemon Squeezy, the merchant of record, and applicable law.',
       },
     ],
   },
@@ -107,7 +132,7 @@ export default function TermsPage() {
   const { lang, t } = useLang();
   const ko = lang === 'ko';
   return (
-    <DocShell kicker={t('legal.kicker')} title={t('terms.title')} updated={t('terms.updated')}>
+    <DocShell kicker={t('legal.kicker')} title={t('terms.title')} updated={t('legal.updated')}>
       {SECTIONS.map((s, i) => (
         <section className="doc-section" key={i}>
           <h2>{ko ? s.h.ko : s.h.en}</h2>

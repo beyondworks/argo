@@ -210,6 +210,9 @@ const DICT = {
   'download.mac': ['macOS용 다운로드', 'Download for macOS'],
   'download.win': ['Windows용 다운로드', 'Download for Windows'],
   'download.note': ['macOS 13+ · Windows 10+ · Apple Silicon/Intel', 'macOS 13+ · Windows 10+ · Apple Silicon/Intel'],
+  // /download — 설치파일만 있는 다운로드 전용 페이지(가격·결제 없음). 메신저 앱의 'Argo 앱 받기'가 오는 자리(App Store 3.1.1).
+  'download.page.help': ['설치 방법과 첫 실행 안내는 문서에서 볼 수 있습니다.', 'Installation steps and first-run guidance are in the docs.'],
+  'download.page.docs': ['설치 문서 보기', 'Read the install guide'],
 
   // star modal (다운로드 전 깃헙 스타 요청)
   'star.title': ['잠깐 — 스타 하나가 큰 힘이 됩니다', 'One star goes a long way'],
@@ -317,8 +320,7 @@ const DICT = {
 
   // legal (약관·개인정보)
   'legal.kicker': ['정책', 'Legal'],
-  'legal.updated': ['시행일 2026-07-15 · 개정 2026-09-19', 'Effective 2026-07-15 · Revised 2026-09-19'],
-  'terms.updated': ['시행일 2026-07-15 · 개정 2026-09-21', 'Effective 2026-07-15 · Revised 2026-09-21'], // 약관만 개정(신고·차단·무관용) — 개인정보처리방침 날짜와 분리
+  'legal.updated': ['시행일 2026-07-15 · 개정 2026-09-26', 'Effective 2026-07-15 · Revised 2026-09-26'],
   'legal.terms': ['이용약관', 'Terms of Service'],
   'legal.privacy': ['개인정보처리방침', 'Privacy Policy'],
   'terms.title': ['이용약관', 'Terms of Service'],
@@ -334,6 +336,7 @@ export function LanguageProvider({ children }) {
   useEffect(() => {
     const saved = typeof window !== 'undefined' && localStorage.getItem('argo-landing-lang');
     if (saved === 'en' || saved === 'ko') setLang(saved);
+    else if (typeof navigator !== 'undefined' && /^ko/i.test(navigator.language || '')) setLang('ko'); // 저장된 선택이 없으면 브라우저 언어(한국어 기기는 KO를 누르기 전에도 한글로)
   }, []);
 
   useEffect(() => {

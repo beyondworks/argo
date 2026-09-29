@@ -4,8 +4,8 @@ import { useLang } from '@/lib/i18n';
 
 // 레몬스퀴지 체크아웃 — 공개 링크(시크릿 아님). 앱 릴리스 빌드에 주입되는 것과 같은 상품
 // (Argo Pro $12/월 · $120/년, 2026-08-05 라이브 승인). 유건 지시 2026-08-06: 랜딩에서도 결제.
-const LS_MONTHLY = 'https://argo-agent.lemonsqueezy.com/checkout/buy/1c3a92a4-7132-4721-8ee8-90ccc2b276df?enabled=1956350';
-const LS_YEARLY = 'https://argo-agent.lemonsqueezy.com/checkout/buy/b2510d00-a537-41d0-8552-aaa1478b35e1?enabled=1956353';
+const LS_MONTHLY = 'https://argo-agent.lemonsqueezy.com/checkout/buy/8ec2b79d-6d8b-415e-bae0-4563cc07cb83?enabled=2079807';
+const LS_YEARLY = 'https://argo-agent.lemonsqueezy.com/checkout/buy/a68219ba-6885-4613-83b9-68045af86241?enabled=2079849'; // buy/ 뒤 값 = 변형(연간 a68219ba). 월간 값을 쓰면 US$12가 담긴다(2026-09-26 에드나 확정)
 
 const PLANS = [
   { id: 'p1', features: ['f1', 'f2', 'f3'] },
