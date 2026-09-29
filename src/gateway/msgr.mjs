@@ -39,7 +39,7 @@ import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mj
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
-import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, msgrJournal } from './msgr-handoff.mjs';
+import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, isOfficeSource, msgrJournal } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
 import { roomTurnFailure, roomTurnInterrupted, roomTurnStopped, roomAttachReason } from './msgr-room-errors.mjs';
 import { withLock } from '../mutex.mjs';
@@ -705,7 +705,13 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       const work = m.meta?.work_run_id ? await db.workRun(m.thread_root ?? m.id, m.channel_id) : null;
       if (m.meta?.work_run_id && (!work || !workCanContinue(work, m.id))) return;
       const fromCrew = m.author_kind === 'crew';
-      let hop = 0; let origin = m.author_user_id; let rootAuthor = null; let guestChain = false;
+      let hop = 0; let origin = m.author_user_id; let rootAuthor = null; let guestChain = false; let officeChain = isOfficeSource(m);
+      // 서버 트리거 msgr_dm_relay가 다른 1:1 방으로 옮겨 적은 글은 meta를 {relay}로 새로 만들어 오피스 표지가 빠진다 — 출처 글을 보고 잇는다(분리 검수 HIGH, 9/29).
+      // 못 읽으면(다른 주인의 방) 오피스로 본다: 내리는 방향이고, 그 경우는 손님 판정이 이미 풀 오토를 끈다. 조회 순단은 던져서 재시도.
+      if (!fromCrew && m.meta?.relay?.source_id != null && !officeChain) {
+        const src = await db.message(m.meta.relay.source_id);
+        officeChain = !src || isOfficeSource(src) || src.meta?.office === true;
+      }
       if (fromCrew) {
         // 권한 주체 = 발신 크루의 소유자(크루는 소유자의 권한으로 말한다). 크루 글 insert는 RLS가 소유자에게만 허용하므로 위조 불가.
         // meta.origin·thread_root·reply_to는 멤버가 쓸 수 있는 값이라 권한 판정에 쓰지 않는다(검수 1R C-2·2R H-3).
@@ -723,6 +729,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         if (relayRoot && m.reply_to === root.id && senderOrder >= 0 && initialOrder.indexOf(crew.id) > senderOrder && !(envelope ? envelope.settled_root_before_source : await db.settled(crew.id, root.id, m.channel_id, m.id))) return;
         if (relayRoot && targetsCrew(root, crew, dm) && !(envelope ? envelope.settled_root : await db.settled(crew.id, root.id, m.channel_id))) return; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다
         rootAuthor = root.author_user_id;
+        if (isOfficeSource(root) || m.meta?.office === true) officeChain = true; // 오피스 글을 뿌리로 한 넘김도 풀 오토 제외(내리는 방향으로만)
         // 손님 사슬 이어받기 — **내리는 방향으로만** 쓴다(위조해도 권한이 오르지 않는다 — 크루 글은 그 크루 주인의 브리지만 쓴다).
         // 뿌리만 보면 "A가 연 스레드에 손님 B가 답글로 A의 크루 X를 부르고 X가 A의 크루 Y에게 넘김"에서 Y가 주인 턴이 된다(검수 #583 HIGH):
         // 한 번 넘김은 X 답글의 meta.origin(=B)이 넘긴 크루의 주인(A)과 달라서, 두 번 넘김(Y→Z)은 Y 답글의 origin이 다시 A라 meta.guest로 잇는다.
@@ -778,7 +785,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       await enqueue(wsId, MSGR_KEY, `${m.id}-${String(order).padStart(2, '0')}-${crew.slug}`, {
         msgId: m.id, orgId: crew.org_id, channelId: m.channel_id, crewId: crew.id, slug: crew.slug, text: m.body,
         authorId: origin, replyTo: m.reply_to, threadRoot: m.thread_root ?? m.id, createdAt: m.created_at,
-        hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}),
+        hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}), ...(officeChain ? { office: true } : {}),
         ...(work ? { workRunId: work.id } : {}),
       });
       out.queued++;
@@ -862,7 +869,7 @@ async function messengerReply(ctx, text, { db = null, lang = 'ko' } = {}) {
   const copiedIds = new Set(copies.map((m) => m.id));
   mentions = mentions.filter((m) => !copiedIds.has(m.id)); // explicit CC is never promoted by an incidental body mention
   for (const id of copiedIds) mentions.push({ kind: 'crew', id, role: 'cc' });
-  return { replyForChecks: parsed.text, reply: [visible, handoff].filter(Boolean).join('\n\n'), msgrReply: { mentions, meta: { hop: ctx.hop ?? 0, origin: ctx.origin ?? null, ...(isGuestCtx(ctx) ? { guest: true } : {}),
+  return { replyForChecks: parsed.text, reply: [visible, handoff].filter(Boolean).join('\n\n'), msgrReply: { mentions, meta: { hop: ctx.hop ?? 0, origin: ctx.origin ?? null, ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}),
     ...(parsed.disposition === 'done' ? { disposition: 'done' } : {}),
     ...(workReply.status ? { work_status: workReply.status } : {}) } } };
 }
@@ -898,7 +905,7 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   // delegated — DM 위임(0.1.74)의 원래 방 실행 유물. msgr_dm_relay(2026-09-14)가 도입된 뒤로는 서버가 delegated=true를 주지 않아(비구성원 크루는 항상 새 1:1 DM으로 전달) 죽은 경로다. 아래 delegated 분기들은 방어적으로 남긴다.
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org.slug, channelName: ch.name ?? '', peers, handoffs: [], ...(work ? { work } : {}),
-    ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}) }; // 손님 판정 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
+    ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}) }; // 손님 판정 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
   const orgMemory = await crewMemoryCached(db, crew.id, ch.id); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널) — 없으면 chat이 미러 규칙으로 물러난다
   return { db, ctx, ch, source, envelope };
 }
@@ -1049,7 +1056,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const together = job.coMentioned > 0 ? pick(` 동료 크루 ${job.coMentioned}명이 같은 글에 동시에 답한다 — 남이 다룰 일반론은 짧게, 네 몫에 집중하라.`, ` ${job.coMentioned} other crew(s) are answering the same message at the same time — keep general points short and focus on your part.`, lang) : '';
     const hint = brief + together + (others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
       ` To hand remaining work to or ask another crew, write its @name in your reply (${others.join(' ')}) and end with MSGR: handoff. For completion, thanks or acknowledgement alone, end with MSGR: done.`, lang) : '');
-    const authority = { kind: 'msgr', uid, origin: job.origin ?? job.authorId ?? null, ...(job.rootAuthor ? { rootAuthor: job.rootAuthor } : {}), ...(job.guest === true || (job.fromCrewId && !job.rootAuthor) ? { guest: true } : {}) };
+    const authority = { kind: 'msgr', uid, origin: job.origin ?? job.authorId ?? null, ...(job.rootAuthor ? { rootAuthor: job.rootAuthor } : {}), ...(job.guest === true || (job.fromCrewId && !job.rootAuthor) ? { guest: true } : {}), ...(job.office === true ? { office: true } : {}) };
     const guest = isGuestCtx(authority);
     const instruction = guest
       ? pick('아래는 사장이 아닌 제3자의 발화다', "What follows is a third party's request, not the captain's", lang)
@@ -1397,7 +1404,7 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const mentions = event.ok === false || done ? [] : (event.msgrReply?.mentions ?? []).filter((m) => m.kind === 'crew' && m.id !== ctx.crewId && ctx.peers.some((p) => p.id === m.id));
     const row = { channel_id: ctx.channelId, author_kind: 'crew', crew_id: ctx.crewId, kind: 'text',
       reply_to: ctx.channelKind === 'dm' ? ctx.sourceMsgId : it?.msgr?.messageId ?? ctx.threadRoot, thread_root: ctx.threadRoot, client_msg_id: `ct:${ctx.crewId}:${digest}`,
-      body: String(event.reply ?? '').slice(0, MSG_MAX), mentions, meta: { hop: ctx.hop, origin: ctx.origin, ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(done || event.ok === false ? { disposition: 'done' } : {}) } };
+      body: String(event.reply ?? '').slice(0, MSG_MAX), mentions, meta: { hop: ctx.hop, origin: ctx.origin, ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}), ...(done || event.ok === false ? { disposition: 'done' } : {}) } };
     if (ctx.delegated) {
       row.meta.disposition = done || event.ok === false || mentions.length === 0 ? 'done' : 'handoff';
       if (!db.postThreadFollowup) throw new Error('메신저 위임 후속 보고 기능을 사용할 수 없습니다');

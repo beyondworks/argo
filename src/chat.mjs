@@ -1,4 +1,4 @@
-import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx } from './gateway/msgr-handoff.mjs';
+import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, fullAutoAllowed } from './gateway/msgr-handoff.mjs';
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -1079,7 +1079,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 풀 오토 모드(회사 단위 스위치, 유건 확정 2026-09-26) — 기본 꺼짐 + **주인이 직접 지시한 턴에만**(요구사항 2).
   // guest는 위에서 이미 isGuestCtx로 판정했다: 손님·조직 채널 타인·뿌리가 주인이 아닌 넘김은 전부 guest=true라
   // 여기서 자동으로 걸러진다 — 웹 채팅·주인의 메신저 DM·주인의 텔레그램은 guest=false다.
-  const fullAuto = companyFullAuto === true && !guest;
+  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx); // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
   if (budgetUsd > 0) {
     const spent = (await monthCost(wsId)).costUsd; // 청구 턴만 — 구독(OAuth) 턴은 돈이 안 나가 예산을 갉지 않는다
     if (spent >= budgetUsd) {

@@ -460,13 +460,13 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
   try {
     let result;
     const rec = (await loadStore(wsId).catch(() => ({ servers: {} }))).servers[serverId];
-    const { isGuestCtx } = await import('./gateway/msgr-handoff.mjs'); // 동적 — 다른 msgr-handoff 사용처와 같은 순환 방지
+    const { isGuestCtx, fullAutoAllowed } = await import('./gateway/msgr-handoff.mjs'); // 동적 — 다른 msgr-handoff 사용처와 같은 순환 방지
     const isGuest = isGuestCtx(mirrorCtx);
     // 풀 오토(회사 단위 스위치, 유건 확정 2026-09-26) — **주인이 직접 지시한 턴에만**(요구사항 2).
     // isGuest는 손님·조직 채널 타인·뿌리가 주인이 아닌 넘김을 이미 전부 걸러 준다(isGuestCtx 단일 판정,
     // src/gateway/msgr-handoff.mjs). 웹 채팅·주인의 텔레그램·슬랙은 mirrorCtx가 'msgr'이 아니라
     // isGuestCtx가 애초에 false를 준다 — 즉 이 한 줄이 요구사항 2의 적용 범위 그대로다.
-    const fullAuto = !isGuest && (await loadCompany(wsId).catch(() => ({}))).fullAuto === true;
+    const fullAuto = fullAutoAllowed(mirrorCtx) && (await loadCompany(wsId).catch(() => ({}))).fullAuto === true; // 손님·오피스에서 맡긴 턴 제외
     if (isGuest) {
       // 러너 무관 단일 지점(설계서 §1) — SDK use_connector·CLI 지시 블록이 전부 여기로 모인다. approved(결재 완결 재진입)여도 막지 않는다:
       // 손님 턴이 만든 커넥터 결재는 없다(위 문구가 결재를 '주인에게' 올리라고 하고, 그 결재 완결은 주인의 컨텍스트에서 돈다).
