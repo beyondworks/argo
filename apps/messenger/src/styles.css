@@ -1129,7 +1129,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-auth .msgr-field { width: 100%; min-width: 0; }
   .msgr-auth .msgr-field input { width: 0; max-width: 100%; }
   .msgr-auth .msgr-wait, .msgr-auth .msgr-server .row { flex-wrap: wrap; }
-  .argo-messenger :is(.btn, .msgr-titlebtn, .msgr-menu, .msgr-rail-close, .msgr-hchip, .msgr-sortbtn, .msgr-tools .tb, .msgr-tools .send, .msgr-side .msgr-list .item, .msgr-side .msgr-railrow .more, .msgr-side .msgr-foot .me, .msgr-seg button, .msgr-setnav button, .msgr-acts button, .msgr-reacts button, .msgr-pop button, .msgr-emojipop .grid button, .msgr-rowmenu button, .msgr-menu-pop button, .msgr-file) { min-width: 44px; min-height: 44px; height: auto; }
+  .argo-messenger :is(.btn, .msgr-titlebtn, .msgr-menu, .msgr-rail-close, .msgr-hchip, .msgr-sortbtn, .msgr-tools .tb, .msgr-tools .send, .msgr-side .msgr-list .item, .msgr-side .msgr-railrow .more, .msgr-side .msgr-foot .me, .msgr-seg button, .msgr-setnav button, .msgr-acts button, .msgr-pop button, .msgr-emojipop .grid button, .msgr-rowmenu button, .msgr-menu-pop button, .msgr-file) { min-width: 44px; min-height: 44px; height: auto; }
   .filechip { max-width: 100%; overflow-wrap: anywhere; }
   .filechip button { min-width: 44px; min-height: 44px; }
 }
@@ -1782,6 +1782,11 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-swipeacts .read { background: var(--primary); color: var(--primary-fg); }
   .msgr-phone .msgr-railrow[data-full] .msgr-swipeacts .read { display: none; } /* 끝까지 밀면 첫 동작(알림 끄기)이 칸 전체 */
   .msgr-phone .msgr-railrow[data-full][data-side='trail'] .msgr-swipeacts .mute { align-items: flex-start; padding-left: 22px; }
+  /* 반응 칩은 알약(유건 2026-09-29) — 44px 최소 크기에 걸려 원처럼 커졌던 것을 되돌리고, 누르는 범위만 위아래 8px 투명하게 넓힌다. 내가 누른 반응은 1px 테두리 + 옅은 바탕 */
+  .msgr-phone .msgr-reacts { gap: 6px; }
+  .msgr-phone .msgr-reacts button { position: relative; height: 28px; padding: 0 10px; font-size: 13px; }
+  .msgr-phone .msgr-reacts button::before { content: ''; position: absolute; inset: -8px -2px; }
+  .msgr-phone .msgr-reacts button.on { box-shadow: none; background: var(--primary-soft); }
   .msgr-phone .msgr-swipeacts .mute svg { --bg: var(--fg-3); } /* 알림 끄기 사선의 테두리(스프라이트의 stroke=var(--bg))를 단추 색으로 — 글자색(var(--bg))과 같아 사선이 4px 굵기로 보였다(유건 실기기 2026-09-29). <use> 안쪽은 선택자가 안 닿아 변수로 넘긴다 */
   .msgr-phone .msgr-railrow[data-compact] .msgr-swipeacts svg { width: 15px; height: 15px; } /* 홈의 낮은 줄 — 칸도 좁게(row-swipe.js rowWidths) */
   .msgr-phone .msgr-railrow[data-compact] .msgr-swipeacts .fav { padding-right: 16px; }
