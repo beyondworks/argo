@@ -91,8 +91,8 @@ test('배선: chat.mjs — 잡 6시간·대화 CLI_CHAT_TURN_TIMEOUT_MS 상한 +
   assert.match(src, /source === 'job' \? 21_600_000/, '잡 상한 6시간');
   assert.match(src, /envCap > 0 \? envCap : CLI_CHAT_TURN_TIMEOUT_MS\)/, '대화 상한은 runners.mjs 상수 하나에서 — 300_000 리터럴 금지');
   assert.doesNotMatch(src, /: 300_000\);/, '옛 5분 리터럴 잔존 금지');
-  assert.equal((src.match(/timeoutMs: cliTimeoutMs/g) ?? []).length, 2, '본 호출 + 강등 재시도 호출');
-  assert.equal((src.match(/kind: source === 'job' \? 'job' : 'chat'/g) ?? []).length, 2, 'kind 인지형 안내 배선');
+  assert.equal((src.match(/timeoutMs: cliTimeoutMs/g) ?? []).length, 3, '본 호출 + 강등 재시도 호출 + 끼워 넣기 이어 실행(2026-09-29)');
+  assert.equal((src.match(/kind: source === 'job' \? 'job' : 'chat'/g) ?? []).length, 3, 'kind 인지형 안내 배선');
 });
 
 test('배선: 턴을 태우는 라우트의 maxDuration은 호스티드(Vercel Pro) 함수 상한 800 그대로 — CLI 러너는 로컬 프로세스에서만 돌아(호스티드 워커엔 CLI 없음) 두 상한이 한 실행 환경에 겹치지 않는다', async () => {

@@ -54,7 +54,7 @@ export async function POST(req, { params }) {
         t = { reply: lang === 'en'
           ? (interrupted ? 'Stopping the current execution.' : 'There is no active execution to stop.')
           : (interrupted ? '현재 실행을 중단하고 있습니다.' : '중단할 실행 중인 작업이 없습니다.'), sessionId: sessionId || null };
-      } else t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+      } else t = await chat(ws, slug, message.trim(), sessionId || null, { attachments, ...(turnId ? { abortTag: turnId } : {}) }); // abortTag — 바로 보내기(chat/steer)가 정확히 이 턴을 고른다
     } catch (e) {
       // 실패·중단 턴도 스레드에 남긴다 — 성공 뒤에만 저장하면 지시문이 새로고침에 증발하고 비용만
       // 남는다(전수리뷰 2026-07-30 #1). UI는 m.failed로 사유+재전송을 그린다(기존 낙관 사본 패턴).
