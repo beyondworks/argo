@@ -33,14 +33,18 @@ export function useIsPhone() {
 export const SWIPE_LOCK_PX = 10;
 /** 시작 가능 여부 — 왼쪽 절반, 입력창 아님, 가로로 스크롤 가능한 조상 위가 아님 */
 export const SWIPE_BACK_EDGE = 40; // 뒤로가기는 왼쪽 끝 40px에서만 시작(유건 승인 2026-09-29 — 카카오톡·왓츠앱·라인·아이메시지의 iOS 기본 방식. 목록 줄 밀기·밀어서 답장과 겹치지 않게)
+/** 가로 제스처(뒤로가기·밀어서 답장)가 양보할 자리인가 — 입력칸, 가로로 스크롤되는 내용(코드·넓은 표) 위 */
+export function yieldsHorizontalGesture(target) {
+  for (let el = target; el && el.nodeType === 1; el = el.parentElement) {
+    if (el.matches?.('input, textarea, select, [contenteditable="true"], .msgr-composer')) return true; // 입력줄(첨부·멘션 버튼 포함) 위
+    const ox = typeof getComputedStyle === 'function' ? getComputedStyle(el).overflowX : '';
+    if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 1) return true; // 그 스크롤이 먼저(유건 결정)
+  }
+  return false;
+}
 export function canStartSwipeBack(target, x, width) { // eslint-disable-line no-unused-vars
   if (x > SWIPE_BACK_EDGE) return false;
-  for (let el = target; el && el.nodeType === 1; el = el.parentElement) {
-    if (el.matches?.('input, textarea, select, [contenteditable="true"], .msgr-composer')) return false; // 입력줄(첨부·멘션 버튼 포함) 위에서는 뒤로가기 아님
-    const ox = typeof getComputedStyle === 'function' ? getComputedStyle(el).overflowX : '';
-    if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 1) return false; // 가로로 스크롤되는 내용(코드·넓은 표) 위에서는 그 스크롤이 먼저(유건 결정)
-  }
-  return true;
+  return !yieldsHorizontalGesture(target);
 }
 /** 놓을 때 판정 — dx: 밀린 거리, w: 화면 폭, v: 최근 속도(px/ms, +는 뒤로 가는 방향). 반환 { go, ms } */
 export function swipeRelease(dx, w, v) {

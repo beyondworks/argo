@@ -2,7 +2,7 @@
 //  · 줄: 오른쪽으로 밀기 = 즐겨찾기(고정), 왼쪽으로 밀기 = 알림 끄기·읽음 버튼. 절반 넘게 밀면 첫 동작을 바로 실행(iOS 메일 방식).
 //  · 메시지: 왼쪽으로 밀어 60px을 넘기고 놓으면 답장(텔레그램·카카오톡 방향 — 오른쪽 뒤로가기와 겹치지 않는다).
 // 움직임은 뒤로 스와이프와 같은 스프링(springStep)이라 손을 뗀 속도를 이어받는다.
-import { springStep } from './use-phone.js';
+import { springStep, yieldsHorizontalGesture } from './use-phone.js';
 import { haptic } from './haptics.js';
 
 export const ROW_LEAD_W = 88;   // 오른쪽으로 연 칸(즐겨찾기 버튼 하나)
@@ -107,8 +107,9 @@ export function bindRowSwipe(container, { onFull, blocked = () => false }) {
 /** 메시지 한 줄에 밀어서 답장을 붙인다(왼쪽으로만). 해제 함수를 돌려준다 */
 export function bindSwipeReply(el, onReply) {
   let g = null; let cur = 0; // cur = 지금 보이는 거리
-  const paint = (x) => { cur = x; el.style.transform = x ? `translate3d(${x}px,0,0)` : ''; el.style.setProperty('--rp', String(Math.min(1, -x / REPLY_AT))); el.toggleAttribute('data-swipe-reply', x !== 0); };
-  const start = (e) => { if (e.touches.length !== 1) { g = null; return; } cancelAnimationFrame(el._swRaf); const t = e.touches[0]; g = { x: t.clientX, y: t.clientY, dir: null, lockX: 0, dx: 0, armed: false }; };
+  const paint = (x) => { cur = x; el.style.transform = x ? `translate3d(${x}px,0,0)` : ''; el.style.setProperty('--rp', String(Math.min(1, -x / REPLY_AT))); el.toggleAttribute('data-swipe-reply', x !== 0); if (x) el.toggleAttribute('data-swiped', true); }; // data-swiped: 한 번 민 말풍선은 등장 애니메이션을 다시 돌리지 않는다(검수 L4)
+  const start = (e) => { if (e.touches.length !== 1 || yieldsHorizontalGesture(e.target)) { g = null; return; } cancelAnimationFrame(el._swRaf); const t = e.touches[0]; // 코드 블록 가로 스크롤·편집 칸 위에서는 양보(검수 H1)
+    g = { x: t.clientX, y: t.clientY, dir: null, lockX: 0, dx: 0, armed: false }; };
   const move = (e) => {
     if (!g) return; const t = e.touches[0]; const dx = t.clientX - g.x, dy = t.clientY - g.y;
     if (!g.dir) {

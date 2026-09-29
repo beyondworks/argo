@@ -83,3 +83,24 @@ test('햅틱은 모바일 앱에서만 — 네이티브 플러그인은 모바�
   const lib = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
   assert.match(lib, /#\[cfg\(mobile\)\]\n\s*let builder = builder\.plugin\(tauri_plugin_haptics::init\(\)\);/);
 });
+
+// 검수 H1(2026-09-29): 밀어서 답장이 코드 블록 가로 스크롤을 막고 답장까지 열었다 — 가로로 넘치는 내용·입력칸 위에서는 시작하지 않는다
+test('밀어서 답장 — 가로 스크롤되는 코드 블록 위에서는 스크롤이 먼저, 보통 글 위에서는 답장', async () => {
+  const { bindSwipeReply } = await import('../src/row-swipe.js');
+  const node = (props = {}, parent = null) => ({ nodeType: 1, parentElement: parent, matches: () => false, scrollWidth: 100, clientWidth: 100, _ox: 'visible', ...props });
+  globalThis.getComputedStyle = (el) => ({ overflowX: el._ox ?? 'visible' });
+  globalThis.requestAnimationFrame ??= (f) => setTimeout(() => f(performance.now()), 0); globalThis.cancelAnimationFrame ??= (id) => clearTimeout(id);
+  const run = (target) => {
+    const h = {}; const el = { addEventListener: (t, f) => { h[t] = f; }, removeEventListener() {}, style: { transform: '', setProperty() {} }, toggleAttribute() {} };
+    let replied = 0, prevented = 0; const off = bindSwipeReply(el, () => { replied++; });
+    const ev = (x) => ({ target, touches: [{ clientX: x, clientY: 100 }], preventDefault: () => { prevented++; } });
+    h.touchstart(ev(300)); for (const x of [285, 260, 230, 200]) h.touchmove(ev(x)); h.touchend(ev(200)); off();
+    return { replied, prevented };
+  };
+  const msg = node(); const text = node({}, msg);
+  assert.deepEqual(run(text), { replied: 1, prevented: 4 }, '보통 글 — 답장');
+  const pre = node({ _ox: 'auto', scrollWidth: 600, clientWidth: 300 }, msg); const code = node({}, pre);
+  assert.deepEqual(run(code), { replied: 0, prevented: 0 }, '넘치는 코드 블록 — 가로 스크롤에 양보');
+  const ta = node({ matches: (s) => s.includes('textarea') }, msg);
+  assert.deepEqual(run(ta), { replied: 0, prevented: 0 }, '편집 칸 — 글자 선택에 양보');
+});

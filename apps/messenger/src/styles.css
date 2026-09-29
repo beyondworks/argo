@@ -1793,6 +1793,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-railrow[data-compact][data-full][data-side='trail'] .msgr-swipeacts .mute { padding-left: 16px; }
   .msgr-phone .msgr-sortwrap .msgr-rowmenu[data-up] { top: auto; bottom: calc(100% + 4px); } /* 아래 공간이 탭 바·새 대화 단추에 가리면 위로 연다(유건 실기기 2026-09-29) */
   /* 밀어서 답장 — 말풍선이 왼쪽으로 밀리며 오른쪽에서 답장 화살표가 드러난다(--rp 0→1) */
+  .msgr-phone :is([data-swipe-reply], [data-swiped]) { animation: none; }
   .msgr-phone [data-swipe-reply] { will-change: transform; animation: none; } /* 등장 애니메이션(msgrRise … both)이 끝난 뒤에도 transform:none을 쥐고 있어 인라인 이동이 안 보였다(2026-09-29 실측) */
   .msgr-phone [data-swipe-reply]::after { content: ''; position: absolute; top: 50%; right: -42px; width: 24px; height: 24px; margin-top: -12px; pointer-events: none;
     background: var(--fg-2); opacity: var(--rp, 0); transform: scale(calc(.6 + var(--rp, 0) * .4));

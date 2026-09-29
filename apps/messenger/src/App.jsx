@@ -1635,11 +1635,12 @@ function Shell({ session }) {
   const dmList = !dmTab ? (isPhone && dmSort === 'custom' ? dmSorted(dms) : dms) : dmFilter === 'fav' ? dmPinnedTop : dmSorted(dmPool.filter(dmVisible)); // dms는 이미 고정 제외 — 전체 탭의 고정은 아래 별도 단락, 즐겨찾기 탭은 고정 순서 그대로(검수 L-6)
   const dmPinnedShown = dmTab && dmFilter === 'all' ? dmPinnedTop : [];
   const chBase = [...channels].filter((c) => c.kind !== 'dm' && !pinned.has(c.id)).sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
-  const sortedCh = chBase.some((c) => dmSortPos[c.id] != null) ? sortByCustomOrder(chBase, dmSortPos, (c) => c.name) : chBase; // 한 번이라도 끌어 옮겼으면 그 순서(유건 2026-09-29 "어디든 꾹 눌러 배치") — sort_pos는 채널·DM 공용 표(msgr_channel_prefs)
+  const sortedCh = isPhone && chBase.some((c) => dmSortPos[c.id] != null) ? sortByCustomOrder(chBase, dmSortPos, (c) => c.name) : chBase; // 폰에서 한 번이라도 끌어 옮겼으면 그 순서(유건 2026-09-29 "어디든 꾹 눌러 배치") — 데스크톱은 종전 순서(DM과 같은 규칙, 검수 M2) — sort_pos는 채널·DM 공용 표(msgr_channel_prefs)
   const reorderFav = async (dragId, beforeId = null, visible = null) => {
     if (favoriteLock.current) return;
-    favoriteLock.current = true; setFavoriteBusy(true);
     const ids = reorderVisibleInFull(favs.map((c) => c.id), visible ?? favs.map((c) => c.id), dragId, beforeId); // 채팅 탭 고정 단락은 즐겨찾기의 일부(DM만)
+    if (sameOrder(ids, favs.map((c) => c.id))) return; // 제자리(검수 M1)
+    favoriteLock.current = true; setFavoriteBusy(true);
     const channelPatches = []; const targetPatches = [];
     ids.forEach((id, i) => { const c = favs.find((f) => f.id === id); if (c.kind === 'target') targetPatches.push({ target_kind: c.targetKind, target_id: c.targetId, pin_pos: i }); else channelPatches.push({ channel_id: id, pin_pos: i }); });
     try {
@@ -1656,8 +1657,11 @@ function Shell({ session }) {
   };
   // DM 탭 '직접 배치' 순서(유건 확정 2026-09-29) — msgr_channel_prefs.sort_pos. 새로 생긴 DM은 sortByCustomOrder가 맨 아래로(sort_pos 없음).
   // 채널 목록도 같은 열(유건 2026-09-29) — 걸러 보이는 일부에서 끌어도 전체 순서에 반영한다(검수 MEDIUM-1: 부분 목록만 0..k로 매기면 전체가 섞였다). 위치가 바뀐 행만 쓴다(DB 위생)
-  const reorderChannelPos = async (full, dragId, beforeId = null, visible = null) => {
-    const ids = reorderVisibleInFull(full.map((c) => c.id), visible ?? full.map((c) => c.id), dragId, beforeId);
+  const sameOrder = (a, b) => a.length === b.length && a.every((id, i) => id === b[i]);
+  const reorderChannelPos = async (full, dragId, beforeId = null, visible = null, onMoved = null) => {
+    const base = full.map((c) => c.id); const ids = reorderVisibleInFull(base, visible ?? base, dragId, beforeId);
+    if (sameOrder(ids, base)) return; // 제자리에 놓으면 정렬 전환도 쓰기도 없다(검수 M1)
+    onMoved?.();
     const now = new Date().toISOString();
     const rows = ids.map((id, i) => ({ channel_id: id, sort_pos: i, user_id: uid, updated_at: now })).filter((r) => dmSortPos[r.channel_id] !== r.sort_pos);
     if (!rows.length) return;
@@ -1667,7 +1671,7 @@ function Shell({ session }) {
     } catch (e) { setErr(friendlyErr(e.message, t)); }
   };
   // DM을 끌면 그 정렬이 '직접 배치'로 바뀐다 — 지금 보이는 순서에서 옮긴 자리만 달라진다. 홈·채팅 탭이 같은 순서를 쓴다
-  const reorderDmCustom = (dragId, beforeId = null, visible = null) => { if (dmSort !== 'custom') pickDmSort('custom'); return reorderChannelPos(dmTab ? dmSorted(dmPool) : dmList, dragId, beforeId, visible); };
+  const reorderDmCustom = (dragId, beforeId = null, visible = null) => reorderChannelPos(dmTab ? dmSorted(dmPool) : dmList, dragId, beforeId, visible, () => { if (dmSort !== 'custom') pickDmSort('custom'); });
   const reorderChannels = (dragId, beforeId = null, visible = null) => reorderChannelPos(sortedCh, dragId, beforeId, visible);
 
   // 폰 '직접 배치' 길게 눌러 끌기(유건 확정 2026-09-29 #9 — 1차 구현, 자동 스크롤 제외) — 길게 눌러도 8px 이상 움직여야 진짜 드래그로 본다.
@@ -1718,9 +1722,11 @@ function Shell({ session }) {
   // '내 에이전트' 직접 배치(유건 확정 2026-09-29 — 내 소유 크루만, 회사 소속 railCompany는 대상 밖) — msgr_target_prefs.sort_pos.
   // pinned를 항상 같이 실어 보낸다: 이 테이블은 pinned default true라, sort_pos만 보내 새 행을 만들면 즐겨찾기로 잘못 켜진다(#8).
   // 끌면 정렬이 '직접 배치'로 바뀐다(유건 2026-09-29) — 지금 보이는 순서에서 옮긴 자리만 달라진다. 멤버도 같은 표(target_kind 'user')
-  const reorderTargetPos = async (kind, full, dragId, beforeId = null, visible = null) => {
+  const reorderTargetPos = async (kind, full, dragId, beforeId = null, visible = null, onMoved = null) => {
     if (favoriteLock.current) return;
     const ids = reorderVisibleInFull(full, visible ?? full, dragId, beforeId);
+    if (sameOrder(ids, full)) return; // 제자리(검수 M1)
+    onMoved?.();
     const pos = (id) => targetPrefs.find((p) => p.target_kind === kind && p.target_id === id)?.sort_pos;
     const patches = ids.map((id, i) => ({ target_kind: kind, target_id: id, sort_pos: i, pinned: targetPinned(kind, id) })).filter((p) => pos(p.target_id) !== p.sort_pos); // 위치가 바뀐 행만(DB 위생)
     if (!patches.length) return;
@@ -1734,15 +1740,15 @@ function Shell({ session }) {
   // 멤버 디렉터리 — 나 먼저·이름순, 한 번이라도 끌어 옮겼으면 그 순서(유건 2026-09-29)
   const peopleBase = [...members].sort((a, b) => (a.user_id === uid ? -1 : b.user_id === uid ? 1 : 0) || String(a.display_name || '').localeCompare(String(b.display_name || '')));
   const peoplePos = Object.fromEntries(targetPrefs.filter((p) => p.target_kind === 'user' && p.sort_pos != null).map((p) => [p.target_id, p.sort_pos]));
-  const peopleSorted = peopleBase.some((m) => peoplePos[m.user_id] != null) ? sortByCustomOrder(peopleBase.map((m) => ({ ...m, id: m.user_id })), peoplePos, (m) => String(m.display_name || '')) : peopleBase;
+  const peopleSorted = isPhone && peopleBase.some((m) => peoplePos[m.user_id] != null) ? sortByCustomOrder(peopleBase.map((m) => ({ ...m, id: m.user_id })), peoplePos, (m) => String(m.display_name || '')) : peopleBase;
   // 만료된 손님은 목록엔 보여도 순서를 저장하지 않는다 — 대상 설정 RLS가 만료 멤버를 거부해 한 번에 보낸 행 전체가 403이었다(2026-09-29 로컬 실측). 순서 없이 맨 아래로 간다
   const reorderPeople = (dragId, beforeId = null, visible = null) => { const live = new Set(peopleSorted.filter((m) => !(m.expires_at && Date.parse(m.expires_at) <= Date.now())).map((m) => m.user_id)); return reorderTargetPos('user', [...live], dragId, beforeId, visible?.filter((id) => live.has(id))); };
   const personCtx = (m) => [m.user_id !== uid && { icon: 'at', label: t('ui.dm'), run: () => { openDm('user', m.user_id); setRail(false); } }, m.user_id !== uid && { icon: 'star', label: t(targetPinned('user', m.user_id) ? 'ch.unpin' : 'ctx.fav'), disabled: favoriteBusy, run: () => toggleTargetPin('user', m.user_id) }, { icon: 'gear', label: t('ctx.members'), run: () => { setSettingsTab('members'); setPage('settings'); setRail(false); } }];
-  const reorderRailCustom = (dragId, beforeId = null, visible = null) => { if (railSort !== 'custom') pickSort('custom'); return reorderTargetPos('crew', myCrews.map((c) => c.id), dragId, beforeId, visible); };
+  const reorderRailCustom = (dragId, beforeId = null, visible = null) => reorderTargetPos('crew', myCrews.map((c) => c.id), dragId, beforeId, visible, () => { if (railSort !== 'custom') pickSort('custom'); });
   // 행은 아바타·이름·상태점만(유건 지적 2026-09-09 "레일이 복잡"). 출처는 글자 대신 소속별 정렬일 때 소제목으로.
   const crewCtx = (c) => [{ icon: 'gear', label: t('ctx.crew.card'), run: () => { setSheet(c.id); setRail(false); } }, { icon: 'at', label: t('ui.dm'), run: () => { dmWithCrew(c.id); setRail(false); } }, { icon: 'star', label: t(targetPinned('crew', c.id) ? 'ch.unpin' : 'ctx.fav'), disabled: favoriteBusy, run: () => toggleTargetPin('crew', c.id) }];
   // 폰 줄 밀기(유건 승인 2026-09-29): 오른쪽 = 즐겨찾기(고정), 왼쪽 = 알림 끄기·읽음. 단추는 아이콘만(유건 2026-09-29 "아이콘만 봐도 안다"), 이름은 aria-label. 절반 넘게 밀면 첫 동작 바로 실행(row-swipe.js)
-  const markChannelRead = async (c) => { try { const last = await q(supabase.from('msgr_messages').select('id').eq('channel_id', c.id).order('id', { ascending: false }).limit(1).maybeSingle()); if (last?.id) await markRead(c.id, last.id); } catch (e) { setErr(e.message); } }; // 누를 때 한 번만 조회
+  const markChannelRead = async (c) => { if (!unread[c.id]?.n) return; try { const last = await q(supabase.from('msgr_messages').select('id').eq('channel_id', c.id).order('id', { ascending: false }).limit(1).maybeSingle()); if (last?.id) await markRead(c.id, last.id); } catch (e) { setErr(e.message); } }; // 누를 때 한 번만 조회
   const swipeActs = (c) => (
     <div className="msgr-swipeacts" aria-hidden="true">
       <div className="lead"><button type="button" tabIndex={-1} className="fav" onClick={() => togglePin(c)} aria-label={t(pinned.has(c.id) ? 'swipe.unfav' : 'swipe.fav')}><I name="star" size={18} /></button></div>
@@ -1773,14 +1779,14 @@ function Shell({ session }) {
   const rowLongPress = (c, items, dragCtx = null) => { const st = (lpStates.current[c.id] ??= { timer: null, x: 0, y: 0, el: null, firedAt: 0, opened: false });
     const { clear, ...lp } = longPressHandlers(st, () => { st.firedAt = Date.now(); st.opened = true; if (!st.el) return;
       openCtx({ preventDefault() {}, stopPropagation() {}, currentTarget: st.el, clientX: st.x, clientY: st.y }, items, c.id);
-      if (dragCtx) beginTouchDrag(c.id, st.el, dragCtx.onDrop, st.x, st.y, st.pid); }); // 메뉴가 뜬 채 움직이면 끌기(8px, moveTouchDrag가 메뉴를 닫는다) — 어느 목록이든(유건 2026-09-29)
+      if (dragCtx) beginTouchDrag(c.id, st.el, dragCtx.onDrop, st.mx ?? st.x, st.my ?? st.y, st.pid); }); // 끌기 기준점 = 메뉴가 뜬 순간의 손가락 위치 — 누른 자리 기준이면 8~10px 흔들림이 곧바로 끌기가 됐다(검수 M1) // 메뉴가 뜬 채 움직이면 끌기(8px, moveTouchDrag가 메뉴를 닫는다) — 어느 목록이든(유건 2026-09-29)
     void clear;
     // 손을 뗄 때 오는 click(메뉴 뒤 배경에 떨어져 메뉴를 닫고, 행에 떨어지면 대화를 연다)은 **이 누름으로 메뉴가 열렸을 때만, pointerup 직후 300ms 안에서** 한 번 삼킨다 —
     // 상태 플래그라 오래 누르고 있다가 떼도 보호되고(재검수 M-B), iOS가 click을 안 내는 경우(드래그 리프트·콜아웃)엔 300ms 뒤 풀려 다음 탭(메뉴 항목)을 먹지 않는다(검수 HIGH-3)
     const swallowNext = () => { if (!st.opened) return; st.opened = false; const swallow = (e) => { e.preventDefault(); e.stopPropagation(); }; document.addEventListener('click', swallow, { capture: true, once: true }); setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 300); };
     return { ...lp,
-      onPointerDown: (e) => { st.el = e.currentTarget; st.pid = e.pointerId; lp.onPointerDown(e); },
-      onPointerMove: (e) => { lp.onPointerMove(e); if (dragCtx && touchDrag.current?.id === c.id) moveTouchDrag(e.clientX, e.clientY); },
+      onPointerDown: (e) => { st.el = e.currentTarget; st.pid = e.pointerId; st.mx = null; st.my = null; lp.onPointerDown(e); },
+      onPointerMove: (e) => { st.mx = e.clientX; st.my = e.clientY; lp.onPointerMove(e); if (dragCtx && touchDrag.current?.id === c.id) moveTouchDrag(e.clientX, e.clientY); },
       onPointerUp: (e) => {
         lp.onPointerUp(e);
         if (dragCtx && touchDrag.current?.id === c.id) endTouchDrag(e.clientY); // 안 움직였으면 뜬 메뉴가 그대로 남는다
@@ -4385,7 +4391,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, start
     const spine = el.querySelector(':scope > .msgr-spine'); if (spine) ro.observe(spine); // 첫 자식이 아니라 이름으로 — 당김 표시가 늘 붙어 첫 자식이 된 뒤 관찰이 높이 0 요소로 빠져 바닥 따라가기가 꺼졌다(2026-09-29 검수 HIGH-1)
     // 목록 창이 줄면(키보드가 올라옴) 보던 아래쪽을 그대로 둔다 — 바닥이면 바닥, 위를 보던 중이면 줄어든 만큼 올린다(카톡·텔레그램 방식, 유건 실기기 2026-09-29: 말풍선이 키보드에 가렸다)
     let h = el.clientHeight;
-    const roBox = new ResizeObserver(() => { const d = h - el.clientHeight; h = el.clientHeight; if (stick.current) toBottom(); else if (d > 0) el.scrollTop += d; });
+    const roBox = new ResizeObserver(() => { const d = h - el.clientHeight; h = el.clientHeight; if (!el.closest('.msgr-phone')) return; if (stick.current) toBottom(); else if (d > 0) el.scrollTop += d; }); // 폰만(검수 L1)
     roBox.observe(el);
     toBottom();
     return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('wheel', mark); el.removeEventListener('touchmove', mark); el.removeEventListener('keydown', mark); el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); ro.disconnect(); roBox.disconnect(); };

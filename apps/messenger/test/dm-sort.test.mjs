@@ -63,7 +63,8 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.equal((src.match(/rowLongPress\((?:c, items|\{ id: m\.user_id \}, personCtx\(m\)), \{ onDrop:/g) || []).length, 4, '채널·DM·즐겨찾기 대상·멤버 행 모두 끌기 가능(유건 2026-09-29 "어디든"). 에이전트 행은 내 소유만(railCompany 제외 결정)');
   assert.match(src, /rowLongPress\(c, items, mine \? \{ onDrop: reorderRailCustom \} : null\)/, '에이전트 — 내 소유만');
   assert.match(src, /rowLongPress\(c, items, \{ onDrop: \(dmTab \? dmFilter === 'fav' \|\| \(dmFilter === 'all' && pinned\.has\(c\.id\)\) : pinned\.has\(c\.id\)\) \? reorderFav : reorderDmCustom \}\)/, 'DM 행 — 어느 보기든 끌기(유건 2026-09-29). 고정 단락·즐겨찾기 보기는 즐겨찾기 순서, 나머지는 DM 순서');
-  assert.match(src, /const reorderDmCustom = \(dragId, beforeId = null, visible = null\) => \{ if \(dmSort !== 'custom'\) pickDmSort\('custom'\); return reorderChannelPos\(dmTab \? dmSorted\(dmPool\) : dmList, dragId, beforeId, visible\); \};/, '끌면 직접 배치로 바뀌고, 필터 보기는 전체 목록에 반영(reorderVisibleInFull — 검수 MEDIUM-1 부분 재번호 방지)');
+  assert.match(src, /const reorderDmCustom = \(dragId, beforeId = null, visible = null\) => reorderChannelPos\(dmTab \? dmSorted\(dmPool\) : dmList, dragId, beforeId, visible, \(\) => \{ if \(dmSort !== 'custom'\) pickDmSort\('custom'\); \}\);/, '끌어 순서가 실제로 바뀌면 직접 배치로, 필터 보기는 전체 목록에 반영(reorderVisibleInFull)');
+  assert.match(src, /if \(sameOrder\(ids, base\)\) return; \/\/ 제자리에 놓으면 정렬 전환도 쓰기도 없다/, '제자리 놓기는 전환·쓰기 0(검수 M1)');
   assert.match(src, /setDmGroup\(false\); \/\/ 시트는 어느 경로든 닫는다/, '한 명 경로에서도 시트 닫힘(검수 HIGH-1)');
   assert.match(src, /const dmTab = isPhone && \(page === 'dm' \|\| swipeTo === 'dm'\);/, '스와이프 중 밑 화면 DM 탭 미리 그리기');
   assert.match(src, /\{!dmTab && <button type="button" className="more"/, 'DM 탭에는 점 세 개 없음(길게 누르기 메뉴로 대체)');
