@@ -1741,14 +1741,14 @@ function Shell({ session }) {
   const reorderRailCustom = (dragId, beforeId = null, visible = null) => { if (railSort !== 'custom') pickSort('custom'); return reorderTargetPos('crew', myCrews.map((c) => c.id), dragId, beforeId, visible); };
   // 행은 아바타·이름·상태점만(유건 지적 2026-09-09 "레일이 복잡"). 출처는 글자 대신 소속별 정렬일 때 소제목으로.
   const crewCtx = (c) => [{ icon: 'gear', label: t('ctx.crew.card'), run: () => { setSheet(c.id); setRail(false); } }, { icon: 'at', label: t('ui.dm'), run: () => { dmWithCrew(c.id); setRail(false); } }, { icon: 'star', label: t(targetPinned('crew', c.id) ? 'ch.unpin' : 'ctx.fav'), disabled: favoriteBusy, run: () => toggleTargetPin('crew', c.id) }];
-  // 폰 줄 밀기(유건 승인 2026-09-29): 오른쪽 = 즐겨찾기(고정), 왼쪽 = 알림 끄기·읽음. 절반 넘게 밀면 첫 동작 바로 실행(row-swipe.js)
+  // 폰 줄 밀기(유건 승인 2026-09-29): 오른쪽 = 즐겨찾기(고정), 왼쪽 = 알림 끄기·읽음. 단추는 아이콘만(유건 2026-09-29 "아이콘만 봐도 안다"), 이름은 aria-label. 절반 넘게 밀면 첫 동작 바로 실행(row-swipe.js)
   const markChannelRead = async (c) => { try { const last = await q(supabase.from('msgr_messages').select('id').eq('channel_id', c.id).order('id', { ascending: false }).limit(1).maybeSingle()); if (last?.id) await markRead(c.id, last.id); } catch (e) { setErr(e.message); } }; // 누를 때 한 번만 조회
   const swipeActs = (c) => (
     <div className="msgr-swipeacts" aria-hidden="true">
-      <div className="lead"><button type="button" tabIndex={-1} className="fav" onClick={() => togglePin(c)}><I name="star" size={18} /><span>{t(pinned.has(c.id) ? 'swipe.unfav' : 'swipe.fav')}</span></button></div>
+      <div className="lead"><button type="button" tabIndex={-1} className="fav" onClick={() => togglePin(c)} aria-label={t(pinned.has(c.id) ? 'swipe.unfav' : 'swipe.fav')}><I name="star" size={18} /></button></div>
       <div className="trail">
-        <button type="button" tabIndex={-1} className="mute" onClick={() => toggleMute(c)}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={18} /><span>{t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}</span></button>
-        <button type="button" tabIndex={-1} className="read" onClick={() => markChannelRead(c)}><I name="check" size={18} /><span>{t('swipe.read')}</span></button>
+        <button type="button" tabIndex={-1} className="mute" onClick={() => toggleMute(c)} aria-label={t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={18} /></button>
+        <button type="button" tabIndex={-1} className="read" onClick={() => markChannelRead(c)} aria-label={t('swipe.read')}><I name="check" size={18} /></button>
       </div>
     </div>
   );
