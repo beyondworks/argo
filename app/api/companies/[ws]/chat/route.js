@@ -54,7 +54,7 @@ export async function POST(req, { params }) {
         t = { reply: lang === 'en'
           ? (interrupted ? 'Stopping the current execution.' : 'There is no active execution to stop.')
           : (interrupted ? '현재 실행을 중단하고 있습니다.' : '중단할 실행 중인 작업이 없습니다.'), sessionId: sessionId || null };
-      } else t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+      } else t = await chat(ws, slug, message.trim(), sessionId || null, { attachments, ...(turnId ? { abortTag: turnId } : {}) }); // abortTag — 바로 보내기(chat/steer)가 정확히 이 턴을 고른다
     } catch (e) {
       // 실패·중단 턴도 스레드에 남긴다 — 성공 뒤에만 저장하면 지시문이 새로고침에 증발하고 비용만
       // 남는다(전수리뷰 2026-07-30 #1). UI는 m.failed로 사유+재전송을 그린다(기존 낙관 사본 패턴).
@@ -77,7 +77,7 @@ export async function POST(req, { params }) {
     }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
-    await appendTurn(ws, slug, { turnId, userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback });
+    await appendTurn(ws, slug, { turnId, userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, steerFailed: t.steerFailed, artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback });
     nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
     // 크루 길들이기(리서치 접목 F) — 이 라우트는 **사장 직접 대화의 단일 관문**이다(위임·루틴·쪽지
     // 미경유라 "직접 턴" 판정이 구조로 보장된다). 교정 감지는 fire-and-forget: 응답을 막지 않고,
@@ -89,7 +89,7 @@ export async function POST(req, { params }) {
         return detectAndTrack(ws, { userMsg: message.trim(), lang });
       })
       .catch((e) => console.error(`[argo] 교정 감지 실패(${ws}/${slug}):`, e?.message ?? e));
-    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, ...(t.fellBack ? { fellBack: t.fellBack } : {}), ...(t.modelFallback ? { modelFallback: t.modelFallback } : {}) }); // 폴백 안내를 그 턴에 즉시(검수 M1 — 폴링 병합이 같은 길이면 서버 사본을 안 받는다)
+    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, ...(t.fellBack ? { fellBack: t.fellBack } : {}), ...(t.modelFallback ? { modelFallback: t.modelFallback } : {}), ...(t.steerFailed ? { steerFailed: t.steerFailed } : {}) }); // 폴백 안내를 그 턴에 즉시(검수 M1 — 폴링 병합이 같은 길이면 서버 사본을 안 받는다)
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }

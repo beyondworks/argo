@@ -1172,19 +1172,16 @@ const DICT = {
   'chat.queue.label': ['대기 중 {n}건', '{n} queued'],
   'chat.queue.add': ['대기열에 넣기', 'Add to queue'],
   'chat.queue.remove': ['대기열에서 빼기', 'Remove from queue'],
-  'chat.queue.placeholder': ['답변 중 — 지금 보내면 대기열에 쌓입니다', 'Replying — messages you send now go to the queue'],
+  'chat.queue.placeholder': ['답변 중 — 보내면 대기열에 쌓이고, 대기열에서 바로 보낼 수 있습니다', 'Replying — messages go to the queue, and you can send them right away from there'],
   'chat.queue.held': ['자동 전송이 멈춰 있습니다 — 확인 후 보내세요', 'Automatic sending is paused — review, then send'],
   'chat.queue.sendNow': ['지금 보내기', 'Send now'],
-  // 답변 도중 즉시 보내기(2026-09-23 유건 요청) — 대기열 대신 지금 턴을 멈추고 새 지시를 바로 보낸다
-  'chat.sendNow': ['지금 바로 보내기 — 답변을 멈추고 즉시 보냅니다', 'Send right now — stop the reply and send immediately'],
-  'chat.partialAborted': ['일부만 답변한 상태에서 중단됨', 'Stopped mid-answer'],
-  'chat.sendNowTimeout': ['턴이 제때 멈추지 않아 보내지 못했습니다 — 입력을 복원했어요. 잠시 후 다시 시도해 주세요.', "The reply didn't stop in time, so this wasn't sent — your input was restored. Please try again shortly."],
+  // 대기열에서 바로 보내기(끼워 넣기, 2026-09-29 유건 요청) — 답변을 멈추지 않고 작업 중인 크루에게 전달한다
+  'chat.queue.steer': ['바로 보내기', 'Send now'],
+  'chat.queue.steerHint': ['답변을 멈추지 않고 지금 작업 중인 크루에게 전달합니다', 'Deliver to the crew now, without stopping its reply'],
+  'chat.queue.steerLater': ['지금은 끼워 넣을 수 없어 대기열에 남겼습니다 — 답변이 끝나면 보냅니다', "Couldn't add it to the running reply, so it stays queued — it'll be sent when the reply finishes"],
   'chat.stop': ['중단', 'Stop'],
   'chat.cancelIncomplete': ['자동 재개는 막았지만, 러너가 실행한 일부 작업의 종료를 확인하지 못했습니다. 실행 중인 작업을 확인해 주세요.', 'Automatic resume is blocked, but some tasks started by the runner could not be confirmed stopped. Please check running tasks.'],
   'chat.aborted': ['지시대로 중단했습니다 — 입력을 복원했어요.', 'Stopped as instructed — your input was restored.'],
-  // 지금 바로 보내기로 중단된 경우(총괄 재검수 2026-09-24) — 정지 버튼 문구("입력을 복원했어요")는
-  // 입력창이 이미 비어 있는 이 경로에서 헷갈리므로 사실만 적는다. 재전송 버튼도 숨긴다(아래 렌더).
-  'chat.abortedForSendNow': ['새 지시로 넘어가며 중단했습니다.', 'Stopped to move to a new instruction.'],
   'chat.copy': ['복사', 'Copy'],
   'chat.annotate': ['빨간펜', 'Annotate'],
   'chat.fellBack.auth': ['{from} 인증 오류로 {to}이(가) 대신 답했습니다 — 반복되면 설정 → AI 연결에서 {from}을(를) 다시 연결해 주세요.', '{to} answered instead because {from} hit an authentication error — if this repeats, reconnect {from} in Settings → AI connections.'],

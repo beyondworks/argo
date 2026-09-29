@@ -121,7 +121,7 @@ const sumUsage = (acc, u = {}) => {
   return acc;
 };
 
-async function* run(opts, ac, isInterrupted) {
+async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false }) {
   const { wsId, slug, prompt, cwd, systemPrompt, env = {}, model, crewTools = [], mcpServers = {}, canUseTool, lang = 'ko',
     resume = null, maxTokens, maxSteps = NATIVE_MAX_STEPS, fetchImpl = globalThis.fetch, saveSession = true, effort = '' } = opts;
   if (!model) throw new Error('native engine: model is required');
@@ -171,8 +171,14 @@ async function* run(opts, ac, isInterrupted) {
         const text = content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
         if (saveSession) await saveNativeSession(wsId, slug, sess);
         // total_cost_usd: null — Anthropic 단가로 타 벤더를 계산하던 오액(openrouter 규칙)을 전 러너로. 토큰은 usage에.
-        yield { type: 'result', subtype: 'success', result: text, session_id: sess.id, usage, total_cost_usd: null, is_error: false, num_turns: steps };
-        return;
+        yield { type: 'result', subtype: 'success', result: text, session_id: sess.id, usage: { ...usage }, total_cost_usd: null, is_error: false, num_turns: steps };
+        // 마지막 답을 쓰는 사이에 온 끼워 넣기 — SDK처럼 같은 실행 안에서 한 번 더 답한다(result가 한 번 더 나온다).
+        // 확인과 닫기 사이에 await가 없어 이 뒤로 들어오는 끼워 넣기는 거절된다(호출부가 대기열에 남긴다).
+        if (!inbox.items.length) { inbox.closed = true; return; }
+        inbox.continued = inbox.items.splice(0); // 이 이어진 실행에 실린 끼워 넣기 — 실패하면 호출부가 이것만 실패로 표시한다
+        sess.messages.push({ role: 'user', content: steerNote(inbox.continued, lang) });
+        for (const k of Object.keys(usage)) delete usage[k]; // 앞 result가 이미 집계했다 — 다음 result는 이어진 몫만
+        continue;
       }
       const results = [];
       for (const u of uses) {
@@ -194,10 +200,13 @@ async function* run(opts, ac, isInterrupted) {
         }
         results.push({ type: 'tool_result', tool_use_id: u.id, content: blocks ?? (text.slice(0, TOOL_RESULT_CAP) || '(empty)'), ...(isError ? { is_error: true } : {}) });
       }
+      // 도구가 도는 사이에 온 끼워 넣기 — 다음 모델 호출에 도구 결과와 같이 싣는다(tool_result 블록 뒤 text 블록)
+      if (inbox.items.length) results.push({ type: 'text', text: steerNote(inbox.items.splice(0), lang) });
       sess.messages.push({ role: 'user', content: results });
       if (saveSession) await saveNativeSession(wsId, slug, sess); // 단계마다 영속 — 중단·크래시에도 문맥 보존
     }
   } finally {
+    inbox.closed = true; // 실패·중단·상한 종료도 이후 끼워 넣기를 거절한다
     await browserTools.close().catch(() => {});
     await mcp.close();
   }
@@ -219,7 +228,21 @@ export async function nativeOneShot({ env = {}, model, prompt, systemPrompt = ''
 export function nativeQuery(opts) {
   const ac = new AbortController();
   let interrupted = false;
-  const gen = run(opts, ac, () => interrupted);
+  const inbox = { items: [], closed: false, continued: null };
+  const gen = run(opts, ac, () => interrupted, inbox);
   gen.interrupt = async () => { interrupted = true; ac.abort(); };
+  /** 끼워 넣기 — 멈추지 않고 다음 모델 호출에 싣는다. 실행이 끝났으면 false(호출부가 대기열에 남긴다). */
+  gen.steer = async (text) => {
+    if (inbox.closed || interrupted || !String(text ?? '').trim()) return false;
+    inbox.items.push(String(text));
+    return true;
+  };
+  gen.continuedTexts = () => inbox.continued; // 마지막 답 뒤 이어진 실행에 실린 끼워 넣기(없으면 null)
   return gen;
+}
+
+/** 끼워 넣은 사장 메시지를 모델에게 보이는 글로 감싼다(순수) — SDK(Claude Code)가 쓰는 표지와 같은 뜻. */
+export function steerNote(texts, lang = 'ko') {
+  const body = texts.join('\n\n');
+  return lang === 'en' ? `The captain sent a new message while you were working:\n${body}` : `사장이 작업 중에 새 메시지를 보냈다:\n${body}`;
 }

@@ -58,3 +58,16 @@ test('영어 회사는 영어 사유·아카이브(_)·상태 파일은 스캔 �
   assert.equal(n, 1, '아카이브는 제외');
   assert.match((await readThread('w3', 'crew')).messages[0].failed, /server restarted/i);
 });
+
+test('끼워 넣은 줄(steerOf)도 부모 턴과 같이 실패로 전환 — 대기 표시가 영영 남지 않는다(끼워 넣기 검수 7)', async () => {
+  await mkCompany('w-steer');
+  const old = Date.now() - 10 * 60_000;
+  await writeFile(join(ROOT, 'w-steer', 'chats', 'pepper.json'), thread([
+    { who: 'user', text: '죽은 턴 지시', ts: old, turnId: 't9-abc', awaiting: true },
+    { who: 'user', text: '끼워 넣은 것', ts: old + 1000, steerOf: 't9-abc', steerId: 's1', awaiting: true },
+  ]));
+  await sweepOrphanTurns();
+  const [, s] = (await readThread('w-steer', 'pepper')).messages;
+  assert.equal(s.awaiting, undefined);
+  assert.match(s.failed, /서버가 재시작되어 중단/, '재전송 버튼이 뜨게 실패 표시');
+});

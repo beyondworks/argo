@@ -31,7 +31,9 @@ export function dropOldImages(messages) {
     return { ...m, content: m.content.map((b) => (b?.type === 'tool_result' && Array.isArray(b.content) ? { ...b, content: strip(b.content) } : b?.type === 'image' ? IMAGE_DROPPED : b)) };
   });
 }
-const isPromptMsg = (m) => m?.role === 'user' && (Array.isArray(m.content) ? m.content.some((b) => b?.type !== 'tool_result') : true);
+// 지시 = 글이 있고 tool_result가 없는 user. 끼워 넣기(native-query steerNote)는 tool_result 뒤에 글을 붙이므로, "비tool_result 블록이 하나라도"로
+// 판정하면 그 도구 결과 메시지가 절단 뒤 머리로 남아 짝 없는 tool_result → 다음 턴 벤더 400이 반복된다(검수 4, 2026-09-29).
+const isPromptMsg = (m) => m?.role === 'user' && (Array.isArray(m.content) ? m.content.some((b) => b?.type !== 'tool_result') && !m.content.some((b) => b?.type === 'tool_result') : true);
 export function trimMessages(messages, maxChars = SESSION_MAX_CHARS, trimTo = SESSION_TRIM_TO) {
   let out = messages.slice();
   const size = () => JSON.stringify(out).length;
@@ -66,7 +68,7 @@ export function sanitizeTranscript(messages) {
     while (out.length && out.at(-1).role === 'user') out.pop();
   }
   // 머리는 텍스트를 품은 user여야 한다 — tool_result만 든 user가 머리에 남으면 짝 없는 결과(재검수 LOW, trimMessages와 같은 술어)
-  while (out.length && !(out[0].role === 'user' && (typeof out[0].content === 'string' || out[0].content.some((b) => b?.type !== 'tool_result')))) out.shift();
+  while (out.length && !isPromptMsg(out[0])) out.shift();
   return out;
 }
 

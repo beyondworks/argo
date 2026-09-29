@@ -2063,6 +2063,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
    오른쪽 조작. 줄 수가 늘어도 레이아웃이 흔들리지 않고, 긴 지시도 폭을 다 먹지 않는다. */
 .composer-stack {
   display: grid; gap: 1px;
+  grid-template-columns: minmax(0, 1fr); /* 암묵 열은 긴 지시(nowrap)의 전체 폭으로 늘어나 말줄임이 안 걸리고 줄 끝 버튼이 밖으로 밀렸다(2026-09-29 390px 실측) */
   padding: 5px;
   border-radius: 16px;
   border: 1px solid var(--border-soft);
