@@ -9,6 +9,7 @@ import { showToast } from '../ui/Overlay.jsx';
 import { t } from './i18n.js';
 import { persist, heldKey, getStorageScope, scopedStorageKey } from './save.js';
 import { apiUrl } from './platform.js';
+import { deliverToCrew } from './crew-assign.js';
 
 const hold = (row) => row && persist(heldKey(row.id), { title: row.title ?? '', content: row.content }, 0);
 
@@ -96,7 +97,18 @@ async function send(op) {
       if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 }); }
       return;
     }
-    default: return;                                                                 // ponytail: 배정은 크루 단계(P4)에서 여기에 더한다
+    case 'crew.assign': {                                                          // 크루에게 맡기기 — 메신저 앱과 같은 방(내 크루와의 1:1)에 같은 표로 쓴다(core/crew-assign.js deliverToCrew)
+      const run = async (q) => { const r = await q.setHeader('Authorization', `Bearer ${token}`); assertOwner(); if (r.error) throw classify(r.error); return r.data ?? []; };
+      await deliverToCrew({
+        rpc,
+        myChannels: () => run(sb.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', owner)),
+        members: (ids) => run(sb.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', ids)),
+        insert: (row) => run(sb.from('msgr_messages').insert(row)),
+      }, { owner, orgId: p.orgId, crewId: p.crewId, crewName: p.crewName, body: p.body, meta: p.meta, clientId: p.clientId });
+      showToast(t('crew.sent', { crew: p.crewName ?? '' }));
+      return;
+    }
+    default: return;
   }
 }
 
@@ -111,6 +123,7 @@ function rejected(op, err) {
   }
   if (err?.conflict && op.payload.type === 'page.save') { hold(getState().pages.find((x) => x.id === op.payload.id)); setUi({ conflict: op.payload.id }); return; }
   if (op.payload.type === 'approval.decide') { showToast(t('ap.noRight')); import('./pull.js').then((m) => m.pullBoard()).catch(() => {}); return; }
+  if (op.payload.type === 'crew.assign') { showToast(t(`crew.fail.${err?.assign ?? 'generic'}`)); return; }
   if (op.payload.type === 'mail.flag') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
   showToast(t('sync.rejected'));
   import('./pull.js').then((m) => m.pullPages()).catch(() => {});                  // 서버 상태로 되돌린다
