@@ -73,7 +73,23 @@ assert s({'kind':'cron','expr':'0 9,18 * * *'})['times'] == ['09:00','18:00']
 assert s({'kind':'cron','expr':'0 9 * * 1-5', 'display':'평일 9시'})['type'] == 'raw', '범위는 raw'
 assert s({'kind':'cron','expr':'*/7 * * * *'}) == {'type':'raw','expr':'*/7 * * * *','display':'*/7 * * * *'}
 assert s({'kind':'interval','minutes':30}) == {'type':'interval','everyMinutes':30}
-assert s({'kind':'once','run_at':'2026-10-01T00:30:00+00:00'}, 'Asia/Seoul') == {'type':'once','date':'2026-10-01','time':'09:30','tz':'Asia/Seoul'}
+try:
+    from zoneinfo import ZoneInfo; ZoneInfo('Asia/Seoul'); has_tz = True
+except Exception:
+    has_tz = False   # Windows Python은 tzdata가 기본으로 없다 — 그때는 시각을 틀리게 바꾸지 않고 raw(원문·읽기 전용)로 둔다
+once = s({'kind':'once','run_at':'2026-10-01T00:30:00+00:00','display':'once at 2026-10-01 00:30'}, 'Asia/Seoul')
+if has_tz:
+    assert once == {'type':'once','date':'2026-10-01','time':'09:30','tz':'Asia/Seoul'}, once
+else:
+    assert once['type'] == 'raw' and once['display'] == 'once at 2026-10-01 00:30', once
+import zoneinfo as _zi
+_real = _zi.ZoneInfo
+_zi.ZoneInfo = lambda k: (_ for _ in ()).throw(_zi.ZoneInfoNotFoundError(k))   # tzdata 없는 환경 흉내(Windows CI)
+try:
+    nz = s({'kind':'once','run_at':'2026-10-01T00:30:00+00:00','display':'once at 2026-10-01 00:30'}, 'Asia/Seoul')
+    assert nz['type'] == 'raw' and nz['display'] == 'once at 2026-10-01 00:30', nz
+finally:
+    _zi.ZoneInfo = _real
 c = m.msgr_to_cron_string
 assert c({'type':'daily','time':'09:30'}) == '30 9 * * *'
 assert c({'type':'weekly','times':['08:05'],'dows':[3,1]}) == '5 8 * * 1,3'
