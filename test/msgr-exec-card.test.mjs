@@ -37,7 +37,8 @@ test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 �
   assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, active\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 active() 안에서');
   assert.match(app, /const onProgressEvent = \(\{ payload \}\) => \{ if \(acceptTyping\(settledRef\.current, payload\)\) setProgress\(/, 'progress 처리기 = 답글 직후 늦은 방송 거름 + setProgress(2026-09-23 유령 표시)');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
-  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\)/, '점 세 개는 카드 없는 크루만 + 중단 버튼 3단 상태 배선(2026-09-26)');
+  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');
+  assert.match(app, /const typingBubbleShown = typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\);/, '점 세 개는 카드 없는 크루만(2026-09-29 입력 중 묶음으로 변수화)');
   const card = app.slice(app.indexOf('function ExecCard('), app.indexOf('/** 결재 슬립'));
   assert.match(card, /\{t\('exec\.preparing'\)\}/, '"답변 준비 중"');
   for (const gone of ['exec.thought', 'exec.partial', 'StepList', '<details', 'p.thought', 'p.partial', 'p.steps']) assert.ok(!card.includes(gone), `실행 카드에 ${gone} 없음`);
@@ -53,7 +54,8 @@ test('P0: 안 읽음 RPC → 레일 배지(멘션은 mark·음소거는 dim)·�
   assert.match(app, /supabase\.rpc\('msgr_unread', \{ org: orgId === PERSONAL \? null : orgId \}\)/, '안 읽음 RPC(개인 공간은 org=null)');
   assert.match(app, /useEffect\(\(\) => \{ if \(event\?\.kind === 'message'\) loadUnread\(\); \}, \[event\]\);/, '새 메시지 방송이면 재집계');
   assert.match(app, /<span className=\{`msgr-badge\$\{unread\[c\.id\]\.mention \? ' mark' : ''\}\$\{muted\.has\(c\.id\) \? ' dim' : ''\}`\}>\{unread\[c\.id\]\.n\}<\/span>/, '채널 배지');
-  assert.match(app, /if \(divider > 0 && !newLine && m\.id > divider && !\(m\.author_kind === 'user' && m\.author_user_id === uid\)\)/, '구분선은 남의 첫 새 글 앞');
+  assert.match(app, /const isNewAt = \(m\) => divider > 0 && m\.id > divider && !\(m\.author_kind === 'user' && m\.author_user_id === uid\);/, '구분선은 남의 첫 새 글 앞(2026-09-29 연속 묶음이 같은 자리에서 끊도록 함수화)');
+  assert.match(app, /if \(divider > 0 && !newLine && isNewAt\(m\)\)/, '구분선은 한 번만');
   assert.match(app, /afterId \? null : q\(supabase\.from\('msgr_reads'\)[\s\S]{0,200}\n    if \(!afterId && !preserve\) setDivider\(rd\?\.last_read_id \?\? 0\);/, '구분선 기준은 열 때 한 번, 글보다 먼저, 보존 새로고침에서는 변경하지 않는다(D15 순서는 apps/messenger/test/newline-divider.test.mjs)');
   assert.match(app, /onRead\?\.\(chId, lastId\)/, '보는 채널은 커서 갱신');
   assert.match(app, /supabase\.from\('msgr_reads'\)\.upsert\(\{ channel_id: channelId, user_id: uid, last_read_id: lastId/, '커서 upsert');
