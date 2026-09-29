@@ -33,7 +33,7 @@ const srv = http.createServer((req, res) => {
       return res.end();
     }
     const raw = JSON.stringify(body.messages);
-    const scene = raw.match(/\[(MID|LATE|BOOT|FAIL)\]/)?.[1] ?? '?';
+    const scene = raw.match(/\[(MID|LATE|BOOT|FAIL|TFAIL)\]/)?.[1] ?? '?';
     (bodies[scene] ??= []).push(raw);
     const step = await onRequest(scene, bodies[scene].length, raw);
     if (step.status) { res.writeHead(step.status, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'fixture vendor failure' } })); }
@@ -62,7 +62,7 @@ const { chat } = await import('../src/chat.mjs');
 const { steerTurn } = await import('../src/turn-abort.mjs');
 await createCompany(ws, '끼워 넣기 SDK', 'owner', null, 'ko');
 await mkdir(paths(ws).agents, { recursive: true });
-for (const slug of ['mid', 'late', 'boot']) await writeFile(join(paths(ws).agents, `${slug}.md`), `---\nname: ${slug}\nrole: 검증\nrunner: claude\n---\n검증용.\n`);
+for (const slug of ['mid', 'late', 'boot', 'tfail']) await writeFile(join(paths(ws).agents, `${slug}.md`), `---\nname: ${slug}\nrole: 검증\nrunner: claude\n---\n검증용.\n`);
 await saveRunnerCred(ws, 'claude', 'apikey', `sk-ant-api03-${'x'.repeat(80)}`); // 형식만 맞춘 가짜 — 요청은 로컬 가짜 엔드포인트로만 간다
 
 test('SDK: 도구가 도는 사이 넣은 메시지는 멈추지 않고 도구 결과와 같은 다음 요청에 실린다(result 1회)', { timeout: 120_000 }, async () => {
@@ -76,6 +76,20 @@ test('SDK: 도구가 도는 사이 넣은 메시지는 멈추지 않고 도구 �
   assert.match(bodies.MID[1], /사장이 작업 중에 새 메시지를 보냈다:\\n중간 끼워 넣기/, '도구 결과 뒤 요청에 실렸다');
   assert.equal(r.reply, '반영한 답');
   assert.equal(await steerTurn(ws, 'mid', { text: '늦음' }), false, '끝난 턴은 받지 않는다');
+});
+
+// 도구가 실패하면 SDK는 PostToolUse가 아니라 PostToolUseFailure를 부른다 — 거기서도 실어야 한다. 안 실으면 답이 끝난 뒤 한 번 더
+// 실행되고 답이 두 번 합쳐진다(윈도우 CI 간헐 실패로 드러남, 2026-09-29 실험: 요청 3회·"반영한 답\n\n반영한 답").
+test('SDK: 실패한 도구 결과 뒤에도 같은 다음 요청에 실린다(추가 실행 없음)', { timeout: 120_000 }, async () => {
+  onRequest = async (scene, n) => {
+    if (n === 1) { assert.equal(await steerTurn(ws, 'tfail', { text: '실패 뒤 끼워 넣기' }), true); return { bash: 'sleep 1; exit 3' }; }
+    return { text: '실패 뒤 답' };
+  };
+  const r = await chat(ws, 'tfail', '[TFAIL] 작업해', null, { journal: { off: true } });
+  assert.equal(bodies.TFAIL.length, 2, '추가 실행 없이 한 번에');
+  assert.match(bodies.TFAIL[1], /"is_error":true/, '도구가 실제로 실패한 경우를 본다');
+  assert.match(bodies.TFAIL[1], /실패 뒤 끼워 넣기/);
+  assert.equal(r.reply, '실패 뒤 답');
 });
 
 test('SDK: 마지막 답을 쓰는 사이 넣은 메시지는 같은 실행에서 이어 답하고, 답을 합친다', { timeout: 120_000 }, async () => {
