@@ -253,6 +253,9 @@ export const holdsLeaseOnWriteFailure = (state, now = Date.now()) =>
 
 // (export: 회귀 테스트용 — 판정식이 아닌 **배선**을 잠그기 위해. 프로덕션 호출부는 cycle() 하나다.)
 export async function renewLease(owner, { runnerUsable = true } = {}) {
+  // 관찰 전용 프로세스(argo 대화 화면 — 동기화만 하고 게이트웨이·스케줄러는 안 돈다)는 담당을 맡지 않는다. 맡으면 다른 기기가 양보한 채
+  // 아무도 메신저·루틴을 돌리지 않는다(2026-09-29 argo CLI). 리스를 읽지도 쓰지도 않는다 — 호출·쓰기 0.
+  if (process.env.ARGO_NO_LEADER === '1') { leaseState.leader = false; leaseState.ownedAt = 0; leaseState.checkedAt = Date.now(); return; }
   const me = await getDeviceId();
   const key = skey(owner, '_device-lease.json');
   let cur = null;
@@ -261,7 +264,10 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     if (data) cur = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
   } catch { /* 최초 */ }
   const fresh = cur && Date.now() - cur.ts < LEASE_TTL_MS;
-  if (fresh && cur.deviceId !== me) {
+  // 실행 담당 우선 기기(ARGO_PREFER_LEADER=1 — 항상 켜진 서버의 argo CLI 상주, 2026-09-29): 다른 **일반** 기기가 잡은 새 리스는
+  // 양보하지 않고 가져온다. 우선 기기끼리는 먼저 잡은 쪽을 존중(요동 금지). 러너 없는 우선 기기는 아래 양보 판정이 그대로 막는다.
+  const preferred = process.env.ARGO_PREFER_LEADER === '1';
+  if (fresh && cur.deviceId !== me && !(preferred && !cur.preferred)) {
     if (leaseState.leader) console.log(`[argo] 동기화: 실행 리더 양보 → ${cur.deviceId}`);
     leaseState.leader = false;
     leaseState.ownedAt = 0; // 남에게 넘겼으니 보유 이력 소멸
@@ -292,7 +298,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 이중 리더 창을 좁힌다: 내 토큰을 쓰고, 잠깐 뒤 다시 읽어 최종 승자가 나인지 확인.
   const token = randomUUID();
   const { error: upErr } = await client().storage.from(BUCKET).upload(
-    key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now() })]),
+    key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now(), ...(preferred ? { preferred: true } : {}) })]),
     { upsert: true, contentType: 'application/json' },
   );
   // 쓰기 실패(네트워크·RLS 거부 등) = 판정 불가. **확인된 보유자이고 TTL 내일 때만** 유지하고,

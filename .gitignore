@@ -40,7 +40,9 @@ apps/messenger/design/shots/
 browser/
 # 서버 일괄 재봉인 진행 파일(scripts/cloud-reseal-all.mjs)
 .reseal-all-progress.json
-/bin/
+# 윈도우 CI가 받아 두는 busybox 등(#448) — CLI 입구 bin/argo.mjs만 추적
+/bin/*
+!/bin/argo.mjs
 
 # 스크롤백 변이 주입기 백업·로컬 검사 설정(apps/messenger/test/scrollback.*)
 *.mutbak
