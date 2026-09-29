@@ -55,7 +55,7 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /dragging' : ''\}`\} onDragStart=\{dragStart\(c\)\}[^\n]*draggable=\{!isPhone\}/, 'DM 행은 draggable={!isPhone} 하나만(맨 draggable 중복 없음 — 빌드 경고)');
   assert.match(src, /function DmPeekSheet\(/, '미리보기 시트');
   assert.match(src, /function DmGroupSheet\(/, '새 그룹 대화 시트'); assert.match(src, /const createGroupDm = async \(picks\) =>/, '그룹 생성'); assert.match(src, /isPersonal && page === 'home' \? \(setPage\('settings'\), setSettingsTab\('friends'\)\) : page === 'dm' \? setDmGroup\(true\) : setNewCh\(\{ name: '', kind: newChKind \}\)/, 'DM 탭의 +는 그룹 대화 — 개인 공간도 같다(유건 2026-09-17), 개인 홈 +는 친구 추가 — 행동은 personal-space.browser.mjs');
-  assert.match(src, /const dmSwipe = useSwipeTabs\(DM_FILTERS, dmFilter, pickDmFilter, isPhone && \(page === 'dm' \|\| swipeTo === 'dm'\)\)/, 'DM 탭에서 좌우 스와이프 = 상단 거르개 탭 이동(유건 2026-09-15 교정: 하단 탭이 아니다), 탭 누름과 같은 pickDmFilter');
+  assert.doesNotMatch(src, /useSwipeTabs/, '좌우로 밀어 탭(거르개·설정 탭) 옮기기는 뺐다 — 줄 밀기·밀어서 답장과 겹친다(유건 2026-09-29, 종전 2026-09-15 DM 거르개 스와이프)');
   assert.doesNotMatch(src, /useSwipeTabs\(ROOT_ORDER/, '하단 탭 스와이프는 없앤다');
   assert.match(src, /\{\.\.\.\(isPhone \? rowLongPress\(c, items\) : \{\}\)\}/, '폰 레일 행(채널·즐겨찾기 대상) 길게 누르기 = 점 세 개 메뉴');
   assert.equal((src.match(/\{\.\.\.\(isPhone \? rowLongPress\(c, items\) : \{\}\)\}/g) || []).length, 2, '채널·대상 행 둘(DM 행은 직접 배치 끌기 분기가 붙어 별도 패턴, 2026-09-29)');

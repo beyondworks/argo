@@ -1767,6 +1767,26 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone.swiping-back .msgr-tabbar { z-index: 0; transform: translate3d(calc((var(--swipe-p, 0) - 1) * 28vw), 0, 0); will-change: transform; }
   /* 튕김 — 스크롤 끝에서는 목록만 늘어나고 문서 전체(머리·탭바)는 제자리 */
   html:has(.msgr-shell.msgr-phone), body:has(.msgr-shell.msgr-phone) { overscroll-behavior: none; }
+  /* 목록 줄 밀기(유건 승인 2026-09-29) — 버튼 칸은 줄 뒤에 깔려 민 만큼(--sw px)만 드러난다. 오른쪽 = 즐겨찾기, 왼쪽 = 알림·읽음 */
+  .msgr-phone .msgr-railrow[data-swipe-id] > .item { position: relative; z-index: 1; }
+  .msgr-phone .msgr-railrow[data-swipe] > .item { background: var(--bg); will-change: transform; }
+  .msgr-phone .msgr-swipeacts { position: absolute; inset: 0; z-index: 0; display: flex; visibility: hidden; pointer-events: none; }
+  .msgr-phone .msgr-railrow[data-swipe] .msgr-swipeacts { visibility: visible; pointer-events: auto; }
+  .msgr-phone .msgr-swipeacts .lead { display: flex; width: max(0px, calc(var(--sw, 0) * 1px)); overflow: hidden; }
+  .msgr-phone .msgr-swipeacts .trail { display: flex; width: max(0px, calc(var(--sw, 0) * -1px)); overflow: hidden; margin-left: auto; }
+  .msgr-phone .msgr-railrow[data-side='lead'] .msgr-swipeacts .trail, .msgr-phone .msgr-railrow[data-side='trail'] .msgr-swipeacts .lead { display: none; }
+  .msgr-phone .msgr-swipeacts button { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0 6px; border: 0; border-radius: 0; font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; }
+  .msgr-phone .msgr-swipeacts .fav { align-items: flex-end; padding-right: 22px; background: var(--mark); color: var(--mark-fg); } /* 아이콘이 줄 가장자리를 따라온다 */
+  .msgr-phone .msgr-swipeacts .mute { background: var(--fg-3); color: var(--bg); }
+  .msgr-phone .msgr-swipeacts .read { background: var(--primary); color: var(--primary-fg); }
+  .msgr-phone .msgr-railrow[data-full] .msgr-swipeacts .read { display: none; } /* 끝까지 밀면 첫 동작(알림 끄기)이 칸 전체 */
+  .msgr-phone .msgr-railrow[data-full][data-side='trail'] .msgr-swipeacts .mute { align-items: flex-start; padding-left: 22px; }
+  /* 밀어서 답장 — 말풍선이 왼쪽으로 밀리며 오른쪽에서 답장 화살표가 드러난다(--rp 0→1) */
+  .msgr-phone [data-swipe-reply] { will-change: transform; animation: none; } /* 등장 애니메이션(msgrRise … both)이 끝난 뒤에도 transform:none을 쥐고 있어 인라인 이동이 안 보였다(2026-09-29 실측) */
+  .msgr-phone [data-swipe-reply]::after { content: ''; position: absolute; top: 50%; right: -42px; width: 24px; height: 24px; margin-top: -12px; pointer-events: none;
+    background: var(--fg-2); opacity: var(--rp, 0); transform: scale(calc(.6 + var(--rp, 0) * .4));
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 14L4 9l5-5'/%3E%3Cpath d='M4 9h10.5a5.5 5.5 0 0 1 0 11H11'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 14L4 9l5-5'/%3E%3Cpath d='M4 9h10.5a5.5 5.5 0 0 1 0 11H11'/%3E%3C/svg%3E") center / contain no-repeat; }
   @media (prefers-reduced-transparency: reduce) {
     .msgr-phone :is(.msgr-side .msgr-orgwrap, .msgr-main > .msgr-top)::before { background: var(--ph-bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
   }

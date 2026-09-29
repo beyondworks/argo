@@ -32,7 +32,8 @@ import { Sprite, I, STAR_D } from './icons.jsx';
 import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri, isIos } from './platform.js';
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
-import { useIsPhone, useSwipeTabs, useEdgeSwipeBack, headerCollapse } from './use-phone.js';
+import { useIsPhone, useEdgeSwipeBack, headerCollapse } from './use-phone.js';
+import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
 const BIG_TITLE_PAGES = new Set(['home', 'dm', 'inbox']); // 폰에서 큰 제목을 쓰는 탭 페이지 — 기억은 탭 줄·폴더 서랍이 머리 아래에 있어 작은 제목만(2026-09-29)
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
@@ -1314,7 +1315,6 @@ function Shell({ session }) {
   const pickDmFilter = (k) => { // 폰 DM 상단 탭 — 탭 누름·좌우 스와이프가 같은 경로, 목록이 방향대로 들어온다(유건 2026-09-15: "스와이프로 탭 이동"은 하단 탭이 아니라 DM 안의 상단 탭)
     if (k === dmFilter) return; const dir = DM_FILTERS.indexOf(k) > DM_FILTERS.indexOf(dmFilter) ? 'left' : 'right'; setDmFilter(k); const body = document.querySelector('.msgr-side .msgr-railbody'); if (body) body.scrollTop = 0; // 거르개 바뀌면 맨 위부터(카톡) — 범위 밖 스크롤의 iOS 튕김 방지
     const n = ++dmAnimSeq.current; setDmAnim(`${dir}-${n % 2 ? 'a' : 'b'}`); clearTimeout(dmAnimTimer.current); dmAnimTimer.current = setTimeout(() => setDmAnim(null), 260); };
-  const dmSwipe = useSwipeTabs(DM_FILTERS, dmFilter, pickDmFilter, isPhone && (page === 'dm' || swipeTo === 'dm')); // 훅 — 조건부 반환(orgs === null) 앞에 둔다
   const [lastMsg, setLastMsg] = useState({}); // channel_id → { body, mine, at } — DM 목록 한 줄 미리보기
   const [dmPeek, setDmPeek] = useState(null); // 길게 눌러 '대화 미리보기' 시트
   const [dmGroup, setDmGroup] = useState(false); // 폰 DM 탭 + → 새 그룹 대화 시트(유건 2026-09-15: 그룹 탭은 있는데 맺는 기능이 없다)
@@ -1564,6 +1564,12 @@ function Shell({ session }) {
   const openCtx = (e, items, trigger = null) => { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const returnFocus = e.currentTarget.closest('.msgr-railrow')?.querySelector('button.item') ?? e.currentTarget; setCtx({ x: e.clientX || r.left, y: e.clientY || r.bottom, items, trigger, returnFocus }); };
   useEffect(() => { const h = (e) => { if (!e.target.closest?.('input, textarea, [contenteditable="true"], a[href]')) e.preventDefault(); }; document.addEventListener('contextmenu', h); return () => document.removeEventListener('contextmenu', h); }, []); // 웹뷰 기본 메뉴(다시 로드 등)는 입력창 밖에서는 띄우지 않는다
   // 훅은 전부 위 조기 return 앞에(실측 2026-09-12: 뒤에 두면 'Rendered more hooks')
+  const swipeLive = useRef({}); swipeLive.current = { channels, togglePin: (c) => togglePin(c), toggleMute: (c) => toggleMute(c) };
+  useEffect(() => { // 폰 홈·채팅 탭 목록 줄 밀기 — 끝까지 민 동작: 오른쪽 즐겨찾기, 왼쪽 알림 끄기
+    if (!isPhone || !(page === 'home' || page === 'dm')) return undefined;
+    const el = document.querySelector('.msgr-side .msgr-railbody'); if (!el) return undefined;
+    return bindRowSwipe(el, { blocked: () => !!touchDrag.current, onFull: (id, dir) => { const c = swipeLive.current.channels.find((x) => x.id === id); if (!c) return; if (dir === 'lead') swipeLive.current.togglePin(c); else swipeLive.current.toggleMute(c); } });
+  }, [isPhone, page, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   const touchDrag = useRef(null); // { id, el, onDrop, startX, startY, moved, rows } — 아래 조기 반환보다 먼저(훅 순서, 2026-09-29 실측: 반환 뒤에 두면 조직 로딩 직후 'Rendered more hooks' 로 앱 전체가 멈췄다)
   // 길게 눌러 끌기 대기 중엔 브라우저 스크롤을 막는다 — 막지 않으면 23px쯤 움직였을 때 pointercancel이 와 드롭이 사라졌다(2026-09-29 실측).
   // React의 onTouchMove는 passive라 preventDefault가 안 먹어 문서에 직접 단다.
@@ -1707,6 +1713,17 @@ function Shell({ session }) {
   };
   // 행은 아바타·이름·상태점만(유건 지적 2026-09-09 "레일이 복잡"). 출처는 글자 대신 소속별 정렬일 때 소제목으로.
   const crewCtx = (c) => [{ icon: 'gear', label: t('ctx.crew.card'), run: () => { setSheet(c.id); setRail(false); } }, { icon: 'at', label: t('ui.dm'), run: () => { dmWithCrew(c.id); setRail(false); } }, { icon: 'star', label: t(targetPinned('crew', c.id) ? 'ch.unpin' : 'ctx.fav'), disabled: favoriteBusy, run: () => toggleTargetPin('crew', c.id) }];
+  // 폰 줄 밀기(유건 승인 2026-09-29): 오른쪽 = 즐겨찾기(고정), 왼쪽 = 알림 끄기·읽음. 절반 넘게 밀면 첫 동작 바로 실행(row-swipe.js)
+  const markChannelRead = async (c) => { try { const last = await q(supabase.from('msgr_messages').select('id').eq('channel_id', c.id).order('id', { ascending: false }).limit(1).maybeSingle()); if (last?.id) await markRead(c.id, last.id); } catch (e) { setErr(e.message); } }; // 누를 때 한 번만 조회
+  const swipeActs = (c) => (
+    <div className="msgr-swipeacts" aria-hidden="true">
+      <div className="lead"><button type="button" tabIndex={-1} className="fav" onClick={() => togglePin(c)}><I name="star" size={18} /><span>{t(pinned.has(c.id) ? 'swipe.unfav' : 'swipe.fav')}</span></button></div>
+      <div className="trail">
+        <button type="button" tabIndex={-1} className="mute" onClick={() => toggleMute(c)}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={18} /><span>{t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}</span></button>
+        <button type="button" tabIndex={-1} className="read" onClick={() => markChannelRead(c)}><I name="check" size={18} /><span>{t('swipe.read')}</span></button>
+      </div>
+    </div>
+  );
   const chRow = (c) => { const canManage = isAdmin || c.created_by === uid || (c.admin_user_ids ?? []).includes(uid); const confirmVia = (kind) => { setActionError(''); setRailAction({ channel: c, kind }); }; const items = [
                 { icon: 'gear', label: t('ch.menu.settings'), run: () => { setChId(c.id); setPage('chat'); setRail(false); setChSheet(true); } },
                 { icon: 'star', label: t(pinned.has(c.id) ? 'ch.unpin' : 'ch.pin'), run: () => togglePin(c) },
@@ -1716,7 +1733,7 @@ function Shell({ session }) {
                 ...orderItems(c),
                 canManage && { icon: 'trash', label: t('ch.delete'), danger: true, run: () => confirmVia('delete') },
               ]; return (
-              <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && pinned.has(c.id)} {...(isPhone ? rowLongPress(c, items) : {})}>
+              <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && pinned.has(c.id)} data-swipe-id={isPhone ? c.id : undefined} {...(isPhone ? rowLongPress(c, items) : {})}>{isPhone && swipeActs(c)}
                 <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}>
                   <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
                 </button>
@@ -1754,7 +1771,7 @@ function Shell({ session }) {
                   { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
                 ]),
               ]; return (
-            <div key={c.id} data-drag-id={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} {...(isPhone ? rowLongPress(c, items, dmTab && dmSort === 'custom' && dmFilter === 'all' && !pinned.has(c.id) ? { onDrop: reorderDmCustom } : null) : {})}>
+            <div key={c.id} data-drag-id={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} data-swipe-id={isPhone ? c.id : undefined} {...(isPhone ? rowLongPress(c, items, dmTab && dmSort === 'custom' && dmFilter === 'all' && !pinned.has(c.id) ? { onDrop: reorderDmCustom } : null) : {})}>{isPhone && swipeActs(c)}
               <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(t('time.yesterday'), lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && !mutedCrewIds.has(lastMsg[c.id].crewId) && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
             </div>
@@ -1830,7 +1847,7 @@ function Shell({ session }) {
             </div>
           </>)}
         </div>
-        <div className={`msgr-railbody${dmTab && dmAnim ? ` anim-list-${dmAnim}` : ''}`} ref={pullList.setRef} {...dmSwipe}><PullIndicator phase={pullList.phase} pulse={pullList.pulse} t={t} /><div className="msgr-railinner">
+        <div className={`msgr-railbody${dmTab && dmAnim ? ` anim-list-${dmAnim}` : ''}`} ref={pullList.setRef}><PullIndicator phase={pullList.phase} pulse={pullList.pulse} t={t} /><div className="msgr-railinner">
           {isPhone && (dmTab ? <h1 className="msgr-bigtitle">{t('phone.tab.dm')}</h1> : <button type="button" className="msgr-bigtitle" onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}><span className="name">{isPersonal ? t('personal.space') : (org?.name ?? t('org.pick'))}</span><SpaceBadge c={elsewhere} /><I name="caret" size={18} className="caret" /></button>)}{/* 폰 큰 제목(유건 승인 초안 2026-09-29) — 스크롤하면 머리의 작은 제목으로 접힌다. 홈은 조직 전환 단추를 겸한다 */}{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
         {!isPersonal && !orgBlocked && favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
@@ -2772,7 +2789,6 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   const shown = items.filter((it) => (kind === 'all' || it.kind === kind) && (!unreadOnly || isNew(it) || pendingMine(it)));
   const readCount = items.filter((it) => (kind === 'all' || it.kind === kind) && !isNew(it) && !pendingMine(it)).length;
   const phone = useIsPhone();
-  const swipe = useSwipeTabs(INBOX_KINDS, kind, setKind, phone);
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
@@ -2781,7 +2797,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
       <button type="button" className="btn sm msgr-readall" style={{ marginLeft: 'auto' }} onClick={onReadAll} disabled={!items.some((it) => Date.parse(it.at) > prevSeen)}><I name="check" size={13} />{t('inbox.readAll')}</button>
       <button type="button" className="btn sm msgr-backchat" onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-thread page" {...swipe}><div className="msgr-inbox">
+    <div className="msgr-thread page"><div className="msgr-inbox">
       {phone && <h1 className="msgr-bigtitle">{t('inbox.title')}</h1>}
       <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && unreadOf(k) > 0 && <span className="n">{unreadOf(k)}</span>}</button>)}</div>
       {phone && <p className="msgr-inboxcounts">{t('inbox.count', { kind: t(`inbox.kind.${kind}`), n: shown.length })}</p>} {/* 폰: 탭 속 숫자 대신 탭 아래 한 줄 — 고른 탭의 개수(유건 2026-09-11) */}
@@ -2813,14 +2829,13 @@ function Settings({ session, me, uid, org, orgs = [], isAdmin, gated = false, po
   useEffect(() => { if (initialTab) { setTab(gated ? 'me' : initialTab); onTabUsed?.(); } }, [initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (gated) { setTab('me'); return; } if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin, gated]); // eslint-disable-line react-hooks/exhaustive-deps
   const phone = useIsPhone();
-  const swipe = useSwipeTabs(tabs.map(([k]) => k), tab, setTab, phone);
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
       <span className="title"><I name="gear" size={18} />{t('ui.settings')}</span>
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-thread page" {...swipe}><div className="msgr-settings tabs">
+    <div className="msgr-thread page"><div className="msgr-settings tabs">
       <nav className="msgr-setnav" aria-label={t('ui.settings')}>
         {tabs.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
       </nav>
@@ -4570,6 +4585,10 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
     }
   }, [rowTab, atts.length, reacts.length, m.body, editing, parent]);
   const phone = useIsPhone(); // 폰: 길게 누르면 슬랙식 아래 시트(빠른 반응 줄 + 동작 목록)
+  // 밀어서 답장(유건 승인 2026-09-29) — 왼쪽으로 60px 넘게 밀고 놓으면 답장. 오른쪽은 뒤로가기 몫이라 받지 않는다
+  const replyLive = useRef(null); replyLive.current = () => onReply?.(m);
+  const canSwipeReply = phone && !!onReply && !m.pending && !m.deleted_at;
+  useEffect(() => { const el = rowRef.current; if (!canSwipeReply || !el || el.classList.contains('msgr-sys')) return undefined; return bindSwipeReply(el, () => replyLive.current?.()); }, [canSwipeReply]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!actsOpen) return undefined;
     const off = (e) => { if (!e.target.closest?.('.msgr-acts, .msgr-actsheet, .msgr-emojipop')) setActsOpen(false); }; // 폰 시트는 body 포털이라 행 밖 — 안에서 누른 건 바깥이 아니다

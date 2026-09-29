@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { springStep, headerCollapse, canStartSwipeBack } from '../src/use-phone.js';
 import { longPressHandlers } from '../src/long-press.js';
+import { rowSwipeRelease, replyOffset, REPLY_AT, ROW_LEAD_W, ROW_TRAIL_W } from '../src/row-swipe.js';
 
 const run = (x, v, target, ms) => { const xs = []; for (let t = 0; t < ms; t += 16) { [x, v] = springStep(x, v, target, 0.016); xs.push(x); } return xs; };
 
@@ -31,10 +32,28 @@ test('큰 제목 접힘 — 8px까지는 큰 제목 그대로, 36px에서 작은
   assert.equal(headerCollapse(-40), 0, 'iOS 위쪽 고무줄(음수)은 큰 제목');
 });
 
-test('뒤로 스와이프 시작 구역은 그대로 왼쪽 절반 — 25px로 좁힐지는 유건 확인 대기(2026-09-29)', () => {
+test('뒤로 스와이프는 왼쪽 끝 40px에서만 — 카카오톡·왓츠앱·라인·아이메시지 방식(유건 승인 2026-09-29)', () => {
   const el = { nodeType: 1, matches: () => false, parentElement: null };
-  assert.equal(canStartSwipeBack(el, 150, 390), true);
-  assert.equal(canStartSwipeBack(el, 200, 390), false);
+  globalThis.getComputedStyle ??= () => ({ overflowX: 'visible' });
+  assert.equal(canStartSwipeBack(el, 30, 390), true);
+  assert.equal(canStartSwipeBack(el, 150, 390), false);
+});
+
+test('줄 밀기 판정 — 44px 넘게 밀면 칸이 열리고, 절반 넘게 밀면 바로 실행, 되돌리며 놓으면 닫힌다', () => {
+  assert.deepEqual(rowSwipeRelease(30, 390, 0), { action: 'close', dir: 'lead', to: 0 }, '덜 밀면 닫힘');
+  assert.deepEqual(rowSwipeRelease(60, 390, 0), { action: 'open', dir: 'lead', to: ROW_LEAD_W }, '오른쪽 = 즐겨찾기 칸');
+  assert.deepEqual(rowSwipeRelease(-60, 390, 0), { action: 'open', dir: 'trail', to: -ROW_TRAIL_W }, '왼쪽 = 알림·읽음 칸');
+  assert.equal(rowSwipeRelease(200, 390, 0).action, 'full', '절반(195px) 넘게 = 즐겨찾기 바로');
+  assert.equal(rowSwipeRelease(-200, 390, 0).action, 'full', '절반 넘게 왼쪽 = 알림 끄기 바로');
+  assert.equal(rowSwipeRelease(100, 390, -800).action, 'close', '되돌리며 놓으면 닫힘');
+});
+
+test('밀어서 답장 — 60px까지는 손가락 그대로, 넘으면 무거워져 90px 안에서 멈춘다. 오른쪽은 움직이지 않는다', () => {
+  assert.equal(replyOffset(20), 0, '오른쪽(뒤로가기 방향)은 0');
+  assert.equal(replyOffset(-40), -40);
+  assert.equal(replyOffset(-60), -60);
+  assert.ok(replyOffset(-200) >= -90 && replyOffset(-200) < -60, `끝까지 밀어도 90px 안(${replyOffset(-200)})`);
+  assert.equal(REPLY_AT, 60);
 });
 
 test('길게 누르기가 울린 뒤에 메뉴·끌기가 열린다(햅틱은 이 한 곳 — 끌어 집기도 길게 누르기를 거친다)', async () => {

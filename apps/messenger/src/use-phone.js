@@ -17,36 +17,6 @@ export function useIsPhone() {
   return phone;
 }
 
-// 탭 페이지(알림함 거르개·설정 탭)의 좌우 스와이프 — 본문을 쓸면 옆 탭으로(유건 2026-09-10). 하단 아일랜드와는 무관하다.
-// 세로 스크롤과 겹치지 않게: 가로 60px 이상 + 가로가 세로보다 확실히 클 때만. 가로 스크롤 상자(분절 컨트롤 등) 안에서 시작한 터치는 제외.
-export function useSwipeTabs(order, current, pick, enabled = true) {
-  const ref = useRef({ x: 0, y: 0, skip: false, dir: null, el: null }); const start = ref.current; // 터치 도중 리렌더돼도 시작점을 잃지 않게
-  if (!enabled) return {};
-  const unlock = () => { if (start.el && start.dir === 'x') start.el.style.overflowY = ''; start.dir = null; };
-  return {
-    onTouchStart: (e) => {
-      const t = e.touches[0]; start.x = t.clientX; start.y = t.clientY; start.dir = null; start.el = e.currentTarget;
-      start.skip = !!e.target.closest?.('input, textarea, select, [contenteditable], .msgr-seg, .msgr-setnav');
-    },
-    onTouchMove: (e) => { // 방향 잠금: 처음 10px에서 가로로 정해지면 놓을 때까지 세로 스크롤을 멈춘다(스와이프 중 위아래로 튀던 것)
-      if (start.skip || start.dir) return;
-      const t = e.touches[0]; const dx = Math.abs(t.clientX - start.x); const dy = Math.abs(t.clientY - start.y);
-      if (dx < 10 && dy < 10) return;
-      start.dir = dx > dy * 1.2 ? 'x' : 'y'; if (start.dir === 'x') start.el.style.overflowY = 'hidden';
-    },
-    onTouchCancel: unlock,
-    onTouchEnd: (e) => {
-      const wasX = start.dir === 'x'; unlock();
-      if (start.skip || !wasX) return;
-      const t = e.changedTouches[0]; const dx = t.clientX - start.x; const dy = t.clientY - start.y;
-      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-      const i = order.indexOf(current); if (i < 0) return;
-      const next = order[i + (dx < 0 ? 1 : -1)]; // 왼쪽으로 쓸면 다음 탭
-      if (next != null) pick(next);
-    },
-  };
-}
-
 // 왼쪽 가장자리에서 오른쪽으로 쓸면 뒤로 — iOS 내비게이션 관례(유건 2026-09-11). 2026-09-15 유건 제보("인터랙션이 어색하고 부자연스럽다") 뒤 손질:
 //  · 밑에 까는 화면 = 실제로 돌아갈 루트(홈/DM). 전에는 늘 홈을 깔아 DM으로 돌아갈 때 화면이 튀었다.
 //  · 손가락을 1:1로 따라간다(전엔 0.9배). 밑 화면은 -28%에서 따라 들어오고 어둡기가 걷힌다(styles.css .swiping-back).
@@ -62,8 +32,9 @@ export function useSwipeTabs(order, current, pick, enabled = true) {
 //  · 세로 스크롤은 네이티브 touchmove(passive:false)의 preventDefault로 막는다 — 스와이프 도중 대화 영역 overflow를 켰다 끄면 WebKit이 스크롤 층을 다시 그린다.
 export const SWIPE_LOCK_PX = 10;
 /** 시작 가능 여부 — 왼쪽 절반, 입력창 아님, 가로로 스크롤 가능한 조상 위가 아님 */
-export function canStartSwipeBack(target, x, width) {
-  if (x > width / 2) return false;
+export const SWIPE_BACK_EDGE = 40; // 뒤로가기는 왼쪽 끝 40px에서만 시작(유건 승인 2026-09-29 — 카카오톡·왓츠앱·라인·아이메시지의 iOS 기본 방식. 목록 줄 밀기·밀어서 답장과 겹치지 않게)
+export function canStartSwipeBack(target, x, width) { // eslint-disable-line no-unused-vars
+  if (x > SWIPE_BACK_EDGE) return false;
   for (let el = target; el && el.nodeType === 1; el = el.parentElement) {
     if (el.matches?.('input, textarea, select, [contenteditable="true"], .msgr-composer')) return false; // 입력줄(첨부·멘션 버튼 포함) 위에서는 뒤로가기 아님
     const ox = typeof getComputedStyle === 'function' ? getComputedStyle(el).overflowX : '';
