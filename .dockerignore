@@ -15,3 +15,5 @@ src-tauri
 .omc
 .claude
 .fablize
+# 마케팅 랜딩(별도 Vercel 배포, 에셋 약 80MB) — 워커 이미지와 무관
+landing

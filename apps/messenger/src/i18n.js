@@ -14,6 +14,8 @@ export const DICT = {
   'dm.relay.fromOther': ['다른 대화에서 전달됨', 'Forwarded from another conversation'],
   'dm.relay.to': ['{names}에게 전달했습니다. 답변은 그 에이전트와의 1:1 대화에 올라옵니다.', 'Forwarded to {names}. Replies will appear in the 1:1 conversation with that agent.'],
   'dm.relay.open': ['{name} 대화 열기', 'Open the {name} conversation'],
+  'msg.handoffDropped.mentions': ['에이전트 {n}명에게는 넘기지 않았습니다. 한 번에 넘길 수 있는 수를 넘었습니다.', 'Not handed to {n} {n|agent|agents}: over the per-turn limit.'],
+  'msg.handoffDropped.hop': ['에이전트 사이의 대화가 너무 길게 이어져 넘기지 않았습니다.', 'Not handed off: the agent thread is already too long.'],
   'dm.relay.capped': ['에이전트 사이의 전달이 5단계를 넘어 멈췄습니다. 필요하면 직접 지시해 주세요.', 'Forwarding between agents stopped after 5 hops. Instruct them directly if needed.'],
   'dm.relay.cycle': ['이미 참여한 에이전트에게 다시 전달하려 해 자동 대화를 멈췄습니다. 계속하려면 에이전트에게 직접 지시해 주세요.', 'Automatic conversation stopped because it tried to send work back to an agent already in this chain. Instruct an agent directly to continue.'],
   'dm.delivery.remove': ['{name} 수신자 해제', 'Remove recipient {name}'],
@@ -685,6 +687,9 @@ export const DICT = {
   'rail.agents.others': ['다른 멤버의 크루', "Other members' crews"],
   'rail.me': ['나', 'me'],
   'ch.pin': ['즐겨찾기에 추가', 'Add to favorites'],
+  'swipe.fav': ['즐겨찾기', 'Favorite'], // 폰 줄 밀기 버튼(짧게)
+  'swipe.unfav': ['해제', 'Unfavorite'],
+  'swipe.read': ['읽음', 'Read'],
   'ch.unpin': ['즐겨찾기 해제', 'Remove from favorites'],
   'set.sound.preview': ['듣기', 'Play'],
   'sound.seatbelt-single': ['안전띠 사인(딩)', 'Seatbelt sign (ding)'],

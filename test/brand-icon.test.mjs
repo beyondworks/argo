@@ -22,8 +22,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CANON = 'Argo_gold.svg';      // 화면 안(파비콘)
 const CANON_APP = 'Argo_app.svg';   // OS 아이콘(독·작업표시줄·설치본)
 
-// 프레임워크가 위치를 강제하는 사본들. landing/은 별도 배포 브랜치에만 있어 main 체크아웃엔
-// 없다 — 있을 때만 검사한다(랜딩 브랜치에서 테스트를 돌리면 거기서도 잠긴다).
+// 프레임워크가 위치를 강제하는 사본들. landing/은 2026-09-29(#756)부터 main에 있다 —
+// 없는 체크아웃을 위해 있을 때만 검사한다.
 const COPIES = ['app/icon.svg', 'landing/app/icon.svg']; // 파비콘 계열만 — 앱 아이콘은 정본이 다르다
 
 test('브랜드 마크 사본이 정본과 바이트 동일하다', () => {
