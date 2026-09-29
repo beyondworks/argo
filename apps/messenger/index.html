@@ -9,6 +9,10 @@
     <script>try{var t=localStorage.getItem('argo-theme')||'linen';if(t!=='argo')document.documentElement.dataset.theme=t}catch(e){}</script>
   </head>
   <body class="argo-messenger">
+    <!-- 시작 스플래시 바탕 — 첫 페인트부터 네이티브 시작 화면과 같은 색(#1F1E1B)을 이어 간다. src/splash.js가 이어받아 채우고 닫는다.
+         스크립트가 끝내 안 돌면 8초 뒤 CSS만으로 사라져 앱을 가리지 않는다 -->
+    <style>@keyframes argoSplashGone{to{opacity:0;visibility:hidden}}</style>
+    <div id="argo-splash" aria-hidden="true" style="position:fixed;inset:0;z-index:2147483000;background:#1F1E1B;animation:argoSplashGone .3s 8s forwards"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

@@ -61,6 +61,7 @@ import { createRequestGate, createPreferenceQueue, reorderFavorites } from './ra
 import { typingSummary, typingLabelParams, shouldGroupTypingBubbles, typingBubbleFaces } from './typing-summary.mjs';
 import { unreadOpenScrollTarget, channelOnScreen } from './unread-open-scroll.mjs';
 import { fmtDmWhen } from './list-when.mjs';
+import { markAppReady } from './splash.js';
 import { dropBeforeIdAtY } from './drag-reorder.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, faceToStore } from './crew-face.mjs';
@@ -331,6 +332,8 @@ export default function App() {
     try { await recoveryRef.current?.restartSignIn(); }
     finally { logoutPending.current = false; setSigningOut(false); }
   };
+  // 스플래시 준비 신호 — 로그인 화면·연결 대기·설정 없음 화면이 뜨면 준비된 것(조직 로딩 끝은 Shell에서)
+  useEffect(() => { if (!configured || sessionWaiting || session === null) markAppReady(); }, [configured, sessionWaiting, session]);
   let body;
   if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
   else if (sessionWaiting) body = <ConnectionWaiting t={t} onSignIn={restartSignIn} error={sessionRecoveryError} busy={signingOut} />;
@@ -1555,6 +1558,7 @@ function Shell({ session }) {
     document.addEventListener('touchmove', f, { passive: false }); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
     return () => { document.removeEventListener('touchmove', f); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, []);
+  useEffect(() => { if (orgs !== null) markAppReady(); }, [orgs]); // 스플래시 준비 신호 — 조직을 불러온 뒤(조기 반환 앞, 훅 순서)
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
   const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
