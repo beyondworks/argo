@@ -6,7 +6,7 @@
 
 ## 앱에서 연결 · 업데이트
 
-아르고 메신저 → 설정 → 크루와 서버 → 외부 에이전트에서 [오픈클로 연결하기]를 사용합니다. 네이티브 앱이 함께 배포된 플러그인(0.2.0)을 설치하고 연결 설정을 반영합니다. 기존 연결도 이 화면에서 다시 연결하면 포함된 최신 플러그인으로 갱신됩니다. 실행 중인 모든 외부 런타임에 조용히 배포하는 방식은 아닙니다.
+아르고 메신저 → 설정 → 크루와 서버 → 외부 에이전트에서 [오픈클로 연결하기]를 사용합니다. 네이티브 앱이 함께 배포된 플러그인(0.3.0)을 설치하고 연결 설정을 반영합니다. 기존 연결도 이 화면에서 다시 연결하면 포함된 최신 플러그인으로 갱신됩니다. 실행 중인 모든 외부 런타임에 조용히 배포하는 방식은 아닙니다.
 
 ## 수동 설치 (개발 · 자체 호스팅)
 
@@ -45,6 +45,21 @@ Argo 크루와 같은 계약으로 메신저 "업무 > 자동화"와 결재 카�
 - **편집 반영**: `getUpdates {events: 1}`의 `routine_edit` 이벤트를 받아 Argo와 같이 판정(작업 없음 = `routine_not_found`, 메신저 전달 작업 아님 = `not_editable`, 편집 뒤 사람이 고쳤으면 `superseded`)한 뒤 스케줄러 `update`(이름·지시·일정·켜기/끄기 한 번에) 또는 `remove`로 반영하고 `routineEditDone` → 바로 다시 미러합니다. 여러 시각은 분이 같을 때만(cron 한 줄) 반영하고, `once` 일정으로 바꾸는 편집은 실패로 닫습니다.
 - **위험 작업 결재**: 채널 네이티브 승인(`approvalCapability.native` + `nativeRuntime`)으로 이 메신저 대화에서 시작된 exec·plugin 승인 요청을 결재 카드로 올립니다(`requestApproval` — 그 채팅에서 아직 답하지 않은 실행 중 원문의 `execution_attempt`). 메신저에서 결정되면(`approval_decided`) 먼저 `ackApproval`로 선점하고 `claimed: true`일 때만 `resolveApprovalOverGateway`로 OpenClaw에 돌려줍니다(승인 + `resume: true`면 `allow-once`, 그 밖은 `deny`). OpenClaw 쪽 대기가 시간 초과로 끝나거나 다른 화면에서 결정되면 열린 카드를 `expireApproval`로 닫습니다. 카드를 못 만들면 OpenClaw 기존 경로(운영자 화면·CLI `openclaw approvals resolve`)가 그대로 남습니다. `system-agent`(게이트웨이 설정 변경) 승인은 카드로 올리지 않습니다.
 - 실행 지시는 폴 루프를 막지 않고 돌립니다(승인 대기 중에도 결정 이벤트를 받아야 하므로). 서버는 한 번 준 원문을 실행 기록으로 다시 주지 않으므로 offset은 바로 올립니다. CC 수신 확인은 지금처럼 저장이 끝난 뒤 offset을 올립니다.
+
+## 크루 계약 1-b — 보고·설정·방 지정·에이전트 결재 (2026-09-29, 플러그인 0.3.0)
+
+Hermes 어댑터 1-b와 같은 동작입니다. 판정은 전부 아르고 서버가 합니다.
+
+- **버전·승인 모드 보고**: 연결 직후와 60초 주기(예약 작업 미러와 같은 주기)에 `(version, approval_mode, mirror_all_applied)`가 마지막 보고와 다를 때만 `reportStatus`를 보냅니다(평상시 호출 0). 버전은 OpenClaw가 넘기는 `api.version`(package.json 0.3.0), 승인 모드는 설정 `tools.exec.mode`(없으면 OpenClaw 기본값 `full`)입니다. 호스트 승인 문서까지 합친 실제 값은 계산하지 않습니다.
+- **버전·승인 모드 보고(에이전트별)**: 이 계정에 묶인 에이전트(`bindings`의 계정 묶음, 없으면 `main`)에 `agents.entries.<id>.tools.exec.mode`가 있으면 그 값을 먼저 보고합니다.
+- **모든 예약 작업 보기**: 소유자가 메신저에서 켠 값(`reportStatus` 응답·`config` 이벤트)을 따르고, 바뀌면 미러를 바로 다시 보내고 반영값을 다시 보고합니다. `ARGO_MSGR_MIRROR_ALL=1`도 계속 OR로 동작합니다. 스위치가 켜졌을 때만 보이는 것은 `local` 작업이고, 결과를 보낼 곳이 없는 `none` 작업은 원래 결과를 보내려던 작업이라 스위치와 관계없이 늘 보입니다(소유자가 방을 고르게).
+- **전달 상태**: 메신저로 보내지 않는 작업은 `status.delivery`를 붙입니다. `local` = 의도적으로 다른 곳(다른 채널·webhook·`mode: none`·main/current/session 대화), `none` = isolated 작업이 announce인데 채널·대상·묶인 대화가 없음(OpenClaw도 "no route, will fail-closed"로 표시).
+  - 판단 근거(검수 L5, 그대로 둠): 문서는 채널·대상이 없는 announce가 "session history or a single configured channel"로 대체된다고 하지만, isolated 작업은 예전 대화의 채널 경로를 물려받지 않고(`docs/automation/cron-jobs/payloads.md` "does not inherit … channel/group routing"), 이 채널만 설정돼 있어도 대상 방 id 없이는 보내지 못합니다(실측: "Delivering to Argo Messenger requires target <channel id>"). 틀려도 결과는 소유자가 방을 한 번 고를 수 있게 되는 것뿐이라 `none`으로 둡니다.
+- **방 지정**: `routine_edit`의 `channel_id` → 그 작업의 전달을 `{mode: announce, channel: argo-msgr, to: <방>, accountId: <이 계정>}`으로 바꿉니다. 메신저 전달 작업이 아니어도 patch가 `channel_id` 하나뿐이고 전달 상태가 `none`이면 받습니다.
+- **에이전트 결재 도구 `argo_request_approval`**: 이 채널 대화에서, 처리 중인 메신저 원문(또는 재개 중인 부모 결재)이 있을 때만 보입니다(다른 채널·예약 작업 실행에서는 숨김). OpenClaw Tool Search 목록 뒤로 숨기지 않습니다(`catalogMode: "direct-only"`). 원문은 세션 키와 도구 문맥의 요청자(`requesterSenderId`)로 정확히 정합니다 — 그룹 채널은 모든 글이 한 세션이라 요청자가 원문 발신자와 같아야 하고, 후보가 정확히 하나가 아니면 거절합니다("그 채팅의 최근 원문" 대체 없음). 그 원문에 `requestApproval {kind: agent}` 카드를 올리고, 재개 정보(세션 키·원문 위치·제목 — 본문·토큰 없음)를 `~/.argo-msgr/agent-approvals-<서버·토큰 해시>.json`(0600, 30일 보관)에 남깁니다. 결정되면 `ackApproval`로 선점한 뒤, 그 세션에서 이 플러그인이 띄운 턴이 돌고 있으면 끝날 때까지 기다렸다가(10초 간격, 5분 상한 — 넘으면 "전달하지 못했습니다" 후속 보고) 같은 세션에 결정 안내를 넣어 턴을 돌리고, 그 턴의 답을 `sendMessage {approval_id, text}` 후속 보고로 한 번 올립니다. 재개 정보가 없으면 "다시 말해 달라"(반려면 "진행하지 않는다") 후속 보고로 끝냅니다.
+- **재개 턴 안의 카드·순서**: 재개 턴에는 실행 기록(`execution_attempt`)이 없어서, 그 턴의 셸 승인과 새 결재는 `parent_approval_id`(재개 중인 승인된 부모 결재)로 올립니다. 후속 보고를 올리거나 재개 턴이 끝나면 부모 연결을 지웁니다. 재개 턴이 도는 동안 같은 세션에 온 새 글은 그 턴이 끝난 뒤에 넣어 두 턴의 답이 섞이지 않게 합니다. 셸 승인 카드는 요청에 세션 키가 있으면 그 세션의 원문에만 붙입니다.
+- **후속 보고 재시도·전송 중복**: 후속 보고의 일시 오류는 1초·3초 뒤 두 번 더 시도합니다(서버가 같은 요청이면 같은 글을 돌려줌). outbox에서 전송 중인 답장은 폴 전 재전송이 건너뛰어 같은 답장이 두 번 나가지 않습니다.
+- **늦은 결정 알림**: 셸·플러그인 결재가 승인됐는데 OpenClaw가 이미 기다리기를 멈췄으면(대기 정보 없음·`resolveApprovalOverGateway` 실패·`applied: false`) "결정이 늦게 도착해 명령은 실행되지 않았습니다" 후속 보고를 올립니다.
 
 ## 검증 기록 (2026-09-29, openclaw 2026.9.6)
 
