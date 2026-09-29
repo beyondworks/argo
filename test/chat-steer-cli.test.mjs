@@ -57,14 +57,56 @@ test('CLI: 실행 중 받은 메시지로 같은 턴에서 이어 실행하고 �
 
 test('CLI: 크래시로 자동 재시도하면 받은 끼워 넣기가 재시도로 넘어간다 — 조용히 사라지지 않는다(검수 1)', async () => {
   const ws = 'steer-cli-3'; await setup(ws); calls.length = 0;
-  onCall = async (n, args) => {
+  onCall = async (n) => {
     if (n === 1) { assert.equal(await steerTurn(ws, 'alpha', { text: '크래시 전 끼워 넣기' }), true); throw new Error('codex exited with code 139'); }
-    if (n === 2) return '재시도 첫 답';
-    return `이어진 답: ${args.prompt.includes('크래시 전 끼워 넣기') ? '받음' : '못 받음'}`;
+    return '재시도 답';
   };
   const r = await chat(ws, 'alpha', '원래 지시', null, { journal: { off: true } });
-  assert.equal(calls.length, 3, '크래시 → 재시도 본 실행 → 끼워 넣기 이어 실행');
-  assert.equal(r.reply, '재시도 첫 답\n\n이어진 답: 받음');
+  // 재시도가 통로를 달면 되돌린 메시지를 넘겨받는다 — 실행 전에 받았으니 재시도 첫 실행 프롬프트에 바로 실린다(L1: 이어 실행을 한 번 더 돌지 않는다)
+  assert.equal(calls.length, 2, '크래시 → 재시도 1회(메시지 포함)');
+  assert.match(calls[1].prompt, /## 사장이 이어서 보낸 메시지\n크래시 전 끼워 넣기/);
+  assert.equal(r.reply, '재시도 답');
+});
+
+test('CLI: 실행 전(준비 중)에 받은 끼워 넣기는 첫 실행에 바로 싣는다 — 전체를 한 번 더 돌지 않는다(총괄 검수 L1)', async () => {
+  const ws = 'steer-cli-5'; await setup(ws); calls.length = 0;
+  onCall = async () => '한 번에 답';
+  const turn = chat(ws, 'alpha', '원래 지시', null, { journal: { off: true } });
+  assert.equal(await steerTurn(ws, 'alpha', { text: '준비 중 끼워 넣기' }), true);
+  const r = await turn;
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].prompt, /원래 지시[\s\S]*## 사장이 이어서 보낸 메시지\n준비 중 끼워 넣기/);
+  assert.equal(r.reply, '한 번에 답');
+});
+
+test('CLI: 첫 답의 argo 블록은 이어 실행 전에 한 번만 실행되고, 이어 실행에는 결과가 사실로 넘어간다(총괄 검수 M-3)', async () => {
+  const ws = 'steer-cli-6'; await setup(ws); calls.length = 0;
+  const block = (prompt) => '```argo\n' + JSON.stringify({ action: 'schedule', every: '30m', title: prompt, prompt }) + '\n```';
+  onCall = async (n) => {
+    if (n === 1) { assert.equal(await steerTurn(ws, 'alpha', { text: '하나 더 예약해' }), true); return `예약합니다.\n${block('첫 예약')}`; }
+    return `추가로 예약합니다.\n${block('둘째 예약')}`;
+  };
+  const r = await chat(ws, 'alpha', '예약 부탁', null, { journal: { off: true } });
+  assert.equal(calls.length, 2);
+  assert.doesNotMatch(calls[1].prompt, /```argo/, '이미 실행한 블록 원문을 다시 넘기지 않는다');
+  assert.match(calls[1].prompt, /✓ 루틴 등록됨/, '실행 결과를 사실로 넘긴다');
+  const { loadRoutines } = await import('../src/routines.mjs');
+  const titles = (await loadRoutines(ws)).map((x) => x.prompt).sort();
+  assert.deepEqual(titles, ['둘째 예약', '첫 예약'], '각 블록이 정확히 한 번씩 — 합친 답을 다시 파싱해 첫 예약이 두 번 생기면 안 된다');
+  assert.doesNotMatch(r.reply, /```argo/);
+});
+
+test('CLI: 이어 실행이 실패해도 이미 끝난 첫 답은 남고, 첫 실행을 다시 돌리지 않는다 — 실패는 끼워 넣은 쪽에만(총괄 검수 M-1)', async () => {
+  const ws = 'steer-cli-4'; await setup(ws); calls.length = 0;
+  onCall = async (n) => {
+    if (n === 1) { assert.equal(await steerTurn(ws, 'alpha', { text: '이어서 할 일' }), true); return '첫 답(명령 실행 완료)'; }
+    throw new Error('codex exited with code 139');
+  };
+  const r = await chat(ws, 'alpha', '원래 지시', null, { journal: { off: true } });
+  assert.equal(calls.length, 2, `첫 실행(danger-full-access 명령 포함)을 크래시 재시도로 다시 돌리면 안 된다 — 실행 ${calls.length}회`);
+  assert.equal(r.reply, '첫 답(명령 실행 완료)');
+  assert.match(String(r.steerFailed?.reason ?? ''), /139/, '끼워 넣은 쪽 실패 사유');
+  assert.deepEqual(r.steerFailed?.texts, ['이어서 할 일']);
 });
 
 test('CLI: 끼워 넣기가 없으면 실행은 한 번(기존 동작 그대로)', async () => {

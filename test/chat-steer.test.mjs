@@ -146,6 +146,7 @@ test('네이티브: 마지막 답을 쓰는 사이 온 메시지는 같은 실�
   assert.deepEqual(bodies[1].slice(-2).map((m) => m.role), ['assistant', 'user']);
   assert.match(lastUser(bodies[1]).content, /하나 더/);
   assert.equal(results[1].usage.input_tokens, 1, '둘째 result는 이어진 몫만 — 앞 result와 중복 집계 금지');
+  assert.deepEqual(q.continuedTexts(), ['하나 더'], '이어진 실행에 실린 것 — 그 실행이 실패하면 chat()이 이것만 실패로 표시한다(M-1)');
 });
 
 test('스레드: 끼워 넣은 메시지는 원래 지시 뒤·답 앞에 저장되고, 실패하면 같이 실패로 표시된다', async () => {
@@ -167,6 +168,14 @@ test('스레드: 끼워 넣은 메시지는 원래 지시 뒤·답 앞에 저장
   await appendTurn(ws, 'd', { turnId: t2, userMsg: 'a', failed: '중단됨', aborted: true });
   const m2 = (await loadThread(ws, 'd')).messages;
   assert.ok(m2.every((m) => m.failed && m.aborted && !m.awaiting), '실패 턴이면 끼워 넣은 메시지도 재전송할 수 있게 실패로');
+
+  // 턴은 답했지만 이어진 실행이 실패(steerFailed) — 답은 저장하고, 그 실행에 실린 줄만 실패(총괄 검수 M-1). 엔진 글엔 첨부 안내가 뒤에 붙는다
+  const t3 = await beginTurn(ws, 'e', { userMsg: '원 지시' });
+  await addSteer(ws, 'e', { text: '앞서 전달된 것' });
+  await addSteer(ws, 'e', { text: '이어진 실행에 실린 것' });
+  await appendTurn(ws, 'e', { turnId: t3, userMsg: '원 지시', reply: '첫 답', steerFailed: { texts: ['이어진 실행에 실린 것\n\n(사장이 첨부한 파일 — …)'], reason: 'API Error: 500' } });
+  const m3 = (await loadThread(ws, 'e')).messages;
+  assert.deepEqual(m3.map((m) => `${m.who}:${m.text}:${m.failed ?? ''}`), ['user:원 지시:', 'user:앞서 전달된 것:', 'user:이어진 실행에 실린 것:API Error: 500', 'crew:첫 답:']);
 });
 
 // codex app-server — turn/steer(0.157.1 스키마: threadId·expectedTurnId·input 필수)
@@ -219,7 +228,7 @@ test('CLI 이어 실행 프롬프트: 원 프롬프트 + 방금 답 + 새 메시
 test('CLI 경로: 받아 둔 끼워 넣기를 실행 직후 같은 턴에서 이어 실행하고, 확인 뒤 닫는다', () => {
   const src = readFileSync(join(ROOT, 'src/chat.mjs'), 'utf8');
   const cli = src.slice(src.indexOf('const cliInbox ='), src.indexOf('if (!reply) throw new Error(lang ==='));
-  assert.match(cli, /while \(cliInbox\.items\.length\) \{[\s\S]*cliSteerPrompt\(prompt, reply, cliInbox\.items\.splice\(0\), lang\)[\s\S]*\}\n\s*cliInbox\.closed = true;/);
+  assert.match(cli, /while \(cliInbox\.items\.length\) \{[\s\S]*const texts = cliInbox\.items\.splice\(0\);[\s\S]*cliSteerPrompt\(runPrompt, doneText, texts, lang\)[\s\S]*\}\n\s*cliInbox\.closed = true;/);
   assert.match(src, /abortReg\.setSteer\(async \(text\) => \{\s*if \(nativeOn \? !\(await q\.steer\(text\)\)/, 'SDK·네이티브 경로도 통로를 단다');
   assert.match(src, /abortReg\?\.detachSteer\(steerAccepted\); closeSdkInput\(\);/, 'SDK 실패 → 받은 끼워 넣기를 그룹에 되돌린다(재시도가 다시 받는다)');
   assert.match(src, /hooks: \[async \(input\) => \(sdkInbox\.items\.length && !input\?\.agent_id/, '서브에이전트 도구 뒤에는 싣지 않는다'); 

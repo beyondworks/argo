@@ -80,7 +80,7 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope }) {
+export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -100,6 +100,8 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
         if (x.steerOf !== turnId) return;
         end = Math.max(end, i); delete x.awaiting;
         if (failed) Object.assign(x, { failed, ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) });
+        // 턴은 답했지만 이 줄을 실은 이어진 실행이 실패했다(chat.mjs steerFailed) — 이 줄만 실패(재전송 가능). 엔진 글은 첨부 안내가 뒤에 붙어 앞부분으로 맞춘다
+        else if (steerFailed?.texts?.some((t) => String(t).startsWith(x.text))) x.failed = steerFailed.reason || 'failed';
       });
       if (scope) m.contextScope = scope;
       if (attachments?.length) m.attachments = attachments;

@@ -1354,15 +1354,18 @@ ${lang === 'en'
       // 답변 머리에 강등 안내 한 줄을 남긴다 — 접근권 있는 계정은 게이트 모델 그대로, 없는 계정도 채팅 단절 없음.
       let usedModel = effModel;
       let reply;
+      // 실행 전(준비 중)에 받은 끼워 넣기는 첫 실행 프롬프트에 바로 싣는다 — 이어 실행으로 미루면 전체를 한 번 더 돈다(총괄 검수 L1)
+      const early = cliInbox.items.splice(0);
+      const runPrompt = early.length ? `${prompt}\n\n## ${lang === 'en' ? 'More from the captain (sent while you were getting ready)' : '사장이 이어서 보낸 메시지'}\n${early.join('\n\n')}` : prompt;
       try {
         __turnControl.check();
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
       } catch (e) {
         const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -1371,14 +1374,31 @@ ${lang === 'en'
       }
       // 실행 중에 받아 둔 끼워 넣기 — 같은 턴 안에서 방금 답에 이어 실행한다(사장이 멈추라고 한 게 아니므로 답은 합친다).
       // 확인과 닫기 사이에 await가 없어 이 뒤로 온 끼워 넣기는 거절되고 사장 화면의 대기열에 남는다.
+      // 앞 실행의 ```argo 블록은 이어 실행 전에 실행하고 결과를 사실로 넘긴다(SDK에서 도구가 이미 실행된 것과 같은 순서) — 합친 답을 끝에 한 번에
+      // 파싱하면 첫 답의 블록과 이어진 답의 블록이 둘 다 실행된다(총괄 검수 M-3: 9시 예약 + 10시 예약). doneText = 블록 실행을 마친 앞 실행들의 답.
+      // 이어 실행이 실패하면 이미 끝난 앞 답은 그대로 저장하고 실패는 끼워 넣은 쪽에만 둔다 — 던지면 크래시 재시도가 첫 실행(danger-full-access
+      // 명령 포함)을 다시 돌리고 첫 답까지 실패로 저장됐다(총괄 검수 M-1).
+      let doneText = '';
+      let steerFailed = null;
       while (cliInbox.items.length) {
         __turnControl.check();
-        const more = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: cliSteerPrompt(prompt, reply, cliInbox.items.splice(0), lang), cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
-        if (more) reply = [reply, more].filter(Boolean).join('\n\n');
+        const texts = cliInbox.items.splice(0);
+        const { parseDirectives, runDirectives } = await import('./cli-directives.mjs');
+        const seg = parseDirectives(reply);
+        const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
+        doneText = [doneText, seg.directives.length || seg.bad.length ? [seg.clean, segNotes.join('\n')].filter(Boolean).join('\n\n') : reply].filter(Boolean).join('\n\n');
+        try {
+          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: cliSteerPrompt(runPrompt, doneText, texts, lang), cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
+        } catch (e) {
+          if (abortReg.wasAborted() || e?.aborted) throw e;
+          steerFailed = { texts, reason: String(e?.message || e).slice(0, 400) };
+          reply = '';
+          break;
+        }
       }
       cliInbox.closed = true;
       __turnControl.check();
-      if (!reply) throw new Error(lang === 'en' ? `The ${RUNNERS[runner].name} runner returned an empty response` : `${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
+      if (!reply && !doneText) throw new Error(lang === 'en' ? `The ${RUNNERS[runner].name} runner returned an empty response` : `${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
       // 메신저 제어 줄은 러너 출력에서 먼저 분리한다 — 지시 실행·거부 안내가 뒤에 붙어도 마지막 판정이 유지된다.
       let msgrDisposition = null;
       if (mirrorCtx?.kind === 'msgr') ({ text: reply, disposition: msgrDisposition } = parseMessengerDisposition(reply));
@@ -1414,6 +1434,7 @@ ${lang === 'en'
           }
         }
       }
+      if (doneText) reply = [doneText, reply].filter(Boolean).join('\n\n'); // 앞 실행들(블록 실행 완료) + 마지막 실행(위에서 블록 실행)
       // 러너 독립성 — 외부 CLI의 샌드박스 거부를 SDK 러너와 같은 능력 안내로 승격한다.
       // SDK는 permission-gate가 도구 호출 전에 카드를 띄우지만 외부 CLI는 프로세스 안에서 거부돼
       // 크루가 생 에러를 옮기거나("zsh: operation not permitted") 자연어로 서술만 한다(실측 캡처 2건).
@@ -1461,7 +1482,7 @@ ${lang === 'en'
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
-      return { reply, sessionId: null, handover, artifacts: await artDiff(reply), ...(contextScope ? { contextScope } : {}), ...fellBackInfo, ...modelFallbackInfo };
+      return { reply, sessionId: null, handover, artifacts: await artDiff(reply), ...(contextScope ? { contextScope } : {}), ...(steerFailed ? { steerFailed } : {}), ...fellBackInfo, ...modelFallbackInfo };
     } catch (e) {
       abortReg.detachSteer(cliInbox.accepted); cliInbox.closed = true; // SDK 갈래 catch와 같은 이유(검수 1) — 재시도가 다시 넘겨받는다
       discardHandoffs();
@@ -1648,6 +1669,10 @@ ${lang === 'en'
   // 보내 같은 실행에서 이어 답하게 한다. SDK 입력 큐에 바로 넣던 첫 구현은 턴 시작 직후 온 메시지를 SDK가 쥔 채 입력이 닫혀 사라졌다.
   const sdkInbox = { items: [], out: [], wake: null, closed: false };
   const steerAccepted = []; // 이 시도가 받은 끼워 넣기 전부(이미 실은 것 포함)
+  // 이어진 실행(마지막 답 뒤 끼워 넣기로 한 번 더 도는 실행)에 실린 끼워 넣기와, 그 실행이 실패했을 때의 표시.
+  // 이미 끝난 앞 답은 턴의 답으로 두고 실패는 끼워 넣은 쪽에만 — 턴 전체를 실패로 올리면 첫 답이 사라진다(총괄 검수 M-1).
+  let continuing = null;
+  let steerFailed = null;
   // result가 여러 번 오면(끼워 넣기로 이어진 실행) 사용량 행은 이어진 몫만 — SDK total_cost_usd·도구 횟수·경과 시간은 실행 누적값이다(검수 실측: 비용 이중 기록)
   const usageMark = { cost: 0, ms: t0, tools: {} };
   const closeSdkInput = () => { sdkInbox.closed = true; sdkInbox.wake?.(); };
@@ -1755,6 +1780,8 @@ ${lang === 'en'
     return true;
   });
   __turnControl.check();
+  const contTexts = () => (nativeOn ? q.continuedTexts?.() : continuing) ?? null;
+  try { // 이어진 실행 도중의 예외만 아래 catch가 받아 첫 답을 지킨다 — 그 밖의 예외는 그대로 다시 던진다
   for await (const msg of q) {
     __turnControl.check();
     if (msg.type === 'system' && msg.subtype === 'init') {
@@ -1844,18 +1871,27 @@ ${lang === 'en'
         const fromStderr = stderrTail.match(/"message"\s*:\s*"([^"]+)"/)?.[1] || stderrTail.slice(-400);
         const detail = clean(fromErrors || fromStderr);
         if (detail) console.error(`[argo] 턴 실패 상세(${agentSlug}):`, detail.slice(0, 1000));
+        if (prevReply && contTexts()?.length) { steerFailed = { texts: contTexts(), reason: detail || msg.subtype }; reply = prevReply; closeSdkInput(); break; }
         throw new Error(`턴 실패: ${msg.subtype}${detail ? ` — ${detail.slice(0, 300)}` : ''}`);
       }
       // 이어진 실행의 result가 벤더 오류 원문(is_error)이면 합치지 않는다 — 합치면 "오류 원문으로 시작" 판정(isSwallowedSdkError)이 빗나가
       // 오류가 답으로 저장되고 자가치유가 안 돈다(검수 9). 이 턴은 아래 삼킴 게이트가 실패로 올린다.
+      if (prevReply && contTexts()?.length && isSwallowedSdkError(resultIsError, resultApiErrStatus, reply)) {
+        steerFailed = { texts: contTexts(), reason: String(reply).trim().slice(0, 400) }; reply = prevReply; resultIsError = false; resultApiErrStatus = 0; closeSdkInput(); break;
+      }
       if (prevReply && !resultIsError) reply = `${prevReply}\n\n${reply}`;
       // 도구 없이 답이 끝났는데 남은 끼워 넣기가 있으면 새 입력으로 보내 같은 실행에서 이어 답하게 한다(다음 result가 또 온다).
       // 없으면 입력을 닫는다 — 확인과 닫기 사이에 await가 없어 이 뒤로 온 것은 거절되고 사장 화면의 대기열에 남는다.
       if (!nativeOn) {
-        if (sdkInbox.items.length) { sdkInbox.out.push({ type: 'user', message: { role: 'user', content: steerNote(sdkInbox.items.splice(0), lang) }, parent_tool_use_id: null, session_id: sid ?? '' }); sdkInbox.wake?.(); }
+        if (sdkInbox.items.length) { continuing = sdkInbox.items.splice(0); sdkInbox.out.push({ type: 'user', message: { role: 'user', content: steerNote(continuing, lang) }, parent_tool_use_id: null, session_id: sid ?? '' }); sdkInbox.wake?.(); }
         else closeSdkInput();
       }
     }
+  }
+  } catch (loopErr) {
+    if (!(reply && contTexts()?.length) || abortReg?.wasAborted() || loopErr?.aborted) throw loopErr;
+    steerFailed = { texts: contTexts(), reason: String(loopErr?.message || loopErr).slice(0, 400) }; // reply = 이미 끝난 앞 답 그대로
+    closeSdkInput();
   }
   __turnControl.check();
   // OpenRouter 크레딧 소진 — CLI가 402를 "성공한 답변 텍스트"로 삼킨다(실측 2026-07-27:
@@ -2027,5 +2063,5 @@ ${lang === 'en'
   for (const r of await artDiff(reply)) artifacts.add(r);
   // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
   const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
-  return { reply, sessionId: sessionless ? null : sid, ...(contextScope ? { contextScope } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  return { reply, sessionId: sessionless ? null : sid, ...(contextScope ? { contextScope } : {}), ...(steerFailed ? { steerFailed } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }

@@ -208,6 +208,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 요청 중에 턴이 끝나면 배출이 같은 항목을 새 턴으로 또 보내지 않게 막는다(응답을 보고 대기열에서 빼거나 남긴다).
   const [steering, setSteering] = useState('');
   const turnMidRef = useRef(null); // 지금 도는 내 턴의 사장 메시지 mid
+  const [steerNotice, setSteerNotice] = useState(''); // 바로 보내기를 못 했을 때 대기열 칸 안의 안내(오류 배너가 아니다 — 대기열에 남아 곧 나간다)
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   // 크루 길들이기(F) — 같은 지적 2회째면 "회사 규칙으로 기억할까요?" 제안(사장 결정 대기 목록)
@@ -583,7 +584,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const wf = useWorkFolder({ ws, slug, onError: (m) => setError(m), onPinned: () => inputRef.current?.focus() });
 
   async function sendMessage(message, attachments = []) {
-    // busyRef(최신값)로 판정 — busy(클로저 값)로 판정하면 sendNow처럼 "중단 뒤 폴링으로 실제 정지를
+    // busyRef(최신값)로 판정 — busy(클로저 값)로 판정하면 "비동기 대기 뒤 다시 호출"하는 경로(옛 지금 보내기)에서 실제 정지를
     // 기다렸다가 호출"하는 경로에서, 이 함수 자체가 busy=true였던 그 렌더의 클로저를 그대로 들고 있어
     // 폴링이 끝나도 늘 true로 보여 조용히 return했다(분리 검수 HIGH, 2026-09-24).
     if (!message || busyRef.current || uploading) return false;
@@ -599,7 +600,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
       setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
-      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ts: Date.now(), ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
+      // steerFailed — 턴은 답했지만 끼워 넣은 것을 실은 이어진 실행이 실패했다(서버 appendTurn과 같은 규칙으로 그 줄만 실패 → 재전송 버튼)
+      const steerMiss = (m) => m.steerOfMid === mid && r.steerFailed?.texts?.some((x) => String(x).startsWith(m.text));
+      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : steerMiss(m) ? { ...m, failed: r.steerFailed.reason || 'failed' } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ts: Date.now(), ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
       window.dispatchEvent(new Event('argo:refresh'));
       return true;
     } catch (err) {
@@ -691,7 +694,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           while (list[at + 1]?.steerOfMid === mid) at += 1;
           return [...list.slice(0, at + 1), steered, ...list.slice(at + 1)];
         });
-      } else setError(t('chat.queue.steerLater')); // 무반응 금지 — 받을 실행이 없으면 대기열에 남아 답이 끝난 뒤 나간다
+      } else { setSteerNotice(t('chat.queue.steerLater')); setTimeout(() => setSteerNotice(''), 6000); } // 무반응 금지 — 받을 실행이 없으면 대기열에 남아 답이 끝난 뒤 나간다
     } catch (e) { setError(String(e.message)); }
     finally { setSteering(''); }
   }
@@ -1307,6 +1310,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             ))}
             {/* 자동 전송이 멈춘 상태(실패·중단 턴 또는 새로고침 복원) — 이유를 적고 사장이 직접 보낸다.
                 이 자리가 없으면 대기열은 영영 못 나가고 지우는 것 말고 길이 없다. */}
+            {queue.length > 0 && steerNotice && <div className="note"><span className="name">{steerNotice}</span></div>}
             {queue.length > 0 && queueHeld && !busy && (
               <div className="note">
                 <span className="name">{t('chat.queue.held')}</span>

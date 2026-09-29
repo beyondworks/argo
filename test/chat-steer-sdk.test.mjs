@@ -33,9 +33,10 @@ const srv = http.createServer((req, res) => {
       return res.end();
     }
     const raw = JSON.stringify(body.messages);
-    const scene = raw.match(/\[(MID|LATE|BOOT)\]/)?.[1] ?? '?';
+    const scene = raw.match(/\[(MID|LATE|BOOT|FAIL)\]/)?.[1] ?? '?';
     (bodies[scene] ??= []).push(raw);
     const step = await onRequest(scene, bodies[scene].length, raw);
+    if (step.status) { res.writeHead(step.status, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'fixture vendor failure' } })); }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const ev = (t, d) => res.write(`event: ${t}\ndata: ${JSON.stringify({ type: t, ...d })}\n\n`);
     ev('message_start', { message: { id: 'm', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } });
@@ -104,4 +105,15 @@ test('SDK: 턴 시작 직후(엔진 준비 중) 넣은 메시지도 사라지지
   const all = bodies.BOOT.join('\n');
   assert.match(all, /부팅 중 끼워 넣기/, '모델에 한 번은 실려야 한다');
   assert.match(r.reply, /받은 답/);
+});
+
+test('SDK: 이어진 실행이 벤더 오류로 끝나도 첫 답은 남고, 실패는 끼워 넣은 쪽에만(총괄 검수 M-1)', { timeout: 120_000 }, async () => {
+  await writeFile(join(paths(ws).agents, 'fail.md'), '---\nname: fail\nrole: 검증\nrunner: claude\n---\n검증용.\n');
+  onRequest = async (scene, n) => {
+    if (n === 1) { assert.equal(await steerTurn(ws, 'fail', { text: '실패할 끼워 넣기' }), true); return { text: '첫 답' }; }
+    return { status: 500 };
+  };
+  const r = await chat(ws, 'fail', '[FAIL] 답해', null, { journal: { off: true } });
+  assert.equal(r.reply, '첫 답');
+  assert.deepEqual(r.steerFailed?.texts, ['실패할 끼워 넣기']);
 });

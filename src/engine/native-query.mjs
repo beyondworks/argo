@@ -175,7 +175,8 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
         // 마지막 답을 쓰는 사이에 온 끼워 넣기 — SDK처럼 같은 실행 안에서 한 번 더 답한다(result가 한 번 더 나온다).
         // 확인과 닫기 사이에 await가 없어 이 뒤로 들어오는 끼워 넣기는 거절된다(호출부가 대기열에 남긴다).
         if (!inbox.items.length) { inbox.closed = true; return; }
-        sess.messages.push({ role: 'user', content: steerNote(inbox.items.splice(0), lang) });
+        inbox.continued = inbox.items.splice(0); // 이 이어진 실행에 실린 끼워 넣기 — 실패하면 호출부가 이것만 실패로 표시한다
+        sess.messages.push({ role: 'user', content: steerNote(inbox.continued, lang) });
         for (const k of Object.keys(usage)) delete usage[k]; // 앞 result가 이미 집계했다 — 다음 result는 이어진 몫만
         continue;
       }
@@ -227,7 +228,7 @@ export async function nativeOneShot({ env = {}, model, prompt, systemPrompt = ''
 export function nativeQuery(opts) {
   const ac = new AbortController();
   let interrupted = false;
-  const inbox = { items: [], closed: false };
+  const inbox = { items: [], closed: false, continued: null };
   const gen = run(opts, ac, () => interrupted, inbox);
   gen.interrupt = async () => { interrupted = true; ac.abort(); };
   /** 끼워 넣기 — 멈추지 않고 다음 모델 호출에 싣는다. 실행이 끝났으면 false(호출부가 대기열에 남긴다). */
@@ -236,6 +237,7 @@ export function nativeQuery(opts) {
     inbox.items.push(String(text));
     return true;
   };
+  gen.continuedTexts = () => inbox.continued; // 마지막 답 뒤 이어진 실행에 실린 끼워 넣기(없으면 null)
   return gen;
 }
 
