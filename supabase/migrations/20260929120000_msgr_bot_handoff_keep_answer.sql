@@ -4,7 +4,7 @@
 -- 조직 활성 에이전트 수까지 ③ 에이전트끼리의 넘김 5명·스레드 10홉 상한은 그대로. 나머지 본문은 20260927130000_msgr_bot_gates_merged.sql 그대로.
 create or replace function public.msgr_bot_finish(token text, channel uuid, body text, src_id bigint, attempt uuid, disposition text, mentions jsonb default '[]') returns bigint
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare b public.msgr_bots; s public.msgr_messages; e public.msgr_executions; rid bigint; root_id bigint; origin_user uuid; hop int; target jsonb; dest uuid; cap int := 5; dropped int; reason text;
+declare b public.msgr_bots; s public.msgr_messages; e public.msgr_executions; rid bigint; root_id bigint; origin_user uuid; hop int; target jsonb; dest uuid; cap int := 5; dropped int; reason text; n int; ch_kind text;
 begin
   b := public.msgr_bot_auth(token);
   if b.id is null then raise exception 'msgr_bot_unauthorized'; end if;
@@ -24,15 +24,22 @@ begin
   if disposition = 'done' then mentions := '[]'; end if;
   -- 사람이 직접 시킨 턴(원문이 사람 글)이고 그 사람이 봇 소유자·조직 소유자/관리자면 조직의 활성 에이전트 수까지 넘길 수 있다(전체 공지).
   -- 에이전트끼리 넘길 때(원문이 크루 글)는 5명 그대로 — 서로 부르며 폭주하는 것을 막는 상한.
-  if s.author_kind = 'user' and (s.author_user_id = (select owner_user_id from public.msgr_crews where id = b.crew_id)
+  -- 에이전트가 DM에서 넘기면 전달 트리거가 받는 쪽 1:1에 사람 글(meta.relay.via_crew_id)을 새로 만든다 — 이건 사람 지시가 아니다(검수 #752 HIGH-1).
+  -- 채널은 스레드 10홉 상한이 받은 답까지 막으므로 확대 상한을 9명으로 둔다(넘김 1 + 답 9). DM 넘김은 각자의 1:1로 전달되어 그 상한이 없다(검수 MEDIUM-2).
+  select kind into ch_kind from public.msgr_channels where id = channel;
+  if s.author_kind = 'user' and coalesce(s.meta->'relay'->>'via_crew_id', '') = ''
+     and (s.author_user_id = (select owner_user_id from public.msgr_crews where id = b.crew_id)
       or exists (select 1 from public.msgr_org_members m where m.org_id = b.org_id and m.user_id = s.author_user_id
-                 and m.removed_at is null and m.role in ('owner', 'admin'))) then
-    cap := greatest(5, (select count(*)::int from public.msgr_crews where org_id = b.org_id and status = 'active' and id <> b.crew_id));
+                 and m.removed_at is null and (m.expires_at is null or m.expires_at > now()) and m.role in ('owner', 'admin'))) then
+    cap := (select count(*)::int from public.msgr_crews where org_id = b.org_id and status = 'active' and id <> b.crew_id);
+    cap := greatest(5, case when ch_kind = 'dm' then cap else least(cap, 9) end);
   end if;
+  -- 상한은 서로 다른 크루 수로 센다 — 같은 크루 반복으로 상한을 채우거나 안내 숫자가 부풀지 않게(검수 LOW-4)
+  select count(distinct value->>'id')::int into n from jsonb_array_elements(mentions);
   -- 한도를 넘어도 답은 버리지 않는다 — 전달(멘션)만 빼고 일반 답으로 저장해 사장이 답과 사유를 본다.
   -- 종전엔 예외로 답 전체가 사라져 10분 뒤 "결과 미도착" 안내만 떴다(2026-09-29 페퍼 - v, 멘션 9명 → 409).
-  if disposition = 'handoff' and (hop >= 10 or jsonb_array_length(mentions) > cap) then
-    dropped := jsonb_array_length(mentions); reason := case when hop >= 10 then 'hop' else 'mentions' end;
+  if disposition = 'handoff' and (hop >= 10 or n > cap) then
+    dropped := n; reason := case when hop >= 10 then 'hop' else 'mentions' end;
     mentions := '[]'; disposition := 'done';
   end if;
   for target in select value from jsonb_array_elements(mentions) loop

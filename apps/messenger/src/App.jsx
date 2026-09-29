@@ -4571,7 +4571,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   // 전달(relay) — 이 글이 다른 1:1에서 넘어온 지시면 출처 캡션(원래 방이 내 목록에 있을 때만 클릭 가능). role(수신/참조) 라벨은 위 deliveryLabels가 이미 mentions에서 그린다.
   const relay = !m.deleted_at && m.meta?.relay;
   // 넘김 한도에 걸려 멘션을 뺀 봇 답(서버 msgr_bot_finish가 meta에 남김) — 왜 아무도 이어받지 않는지 답 위에 한 줄(유건 2026-09-29, 페퍼 - v 9명 공지)
-  const handoffNote = !m.deleted_at && m.meta?.handoff_dropped > 0 && <div className="msgr-message-recipients">{t(m.meta.handoff_reason === 'hop' ? 'msg.handoffDropped.hop' : 'msg.handoffDropped.mentions', { n: m.meta.handoff_dropped })}</div>;
+  const handoffNote = !m.deleted_at && Number.isInteger(m.meta?.handoff_dropped) && m.meta.handoff_dropped > 0 && // 크루 소유자가 자기 크루 글 meta를 직접 쓸 수 있다 — 양의 정수만(검수 LOW-6)
+    <div className="msgr-message-recipients">{t(m.meta.handoff_reason === 'hop' ? 'msg.handoffDropped.hop' : 'msg.handoffDropped.mentions', { n: m.meta.handoff_dropped })}</div>;
   // 첨부만 보낸 내 글 — 본문·인용·수신 표시가 모두 없으면 빈 말풍선을 그리지 않는다(첨부 줄만). 빈 검은 알약이 이미지 위에 떴다(D21)
   const bareAttach = !m.deleted_at && m.kind !== 'system' && !(body ?? '').trim() && !m.reply_to && !relay && !(deliveryRecipients?.length > 0) && atts.length > 0;
   const relayChannel = relay && channels.find((c) => c.id === relay.channel_id); // 원래 방 — 내가 항상 그 방 멤버라 목록에 있으면 표시 이름을 안다

@@ -61,7 +61,7 @@ before(() => {
   sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${ORG}'`);
   sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${U.admin}', 'admin'), ('${ORG}', '${U.member}', 'member')`);
   BOT = JSON.parse(last(asUser(U.owner, `select msgr_bot_create('${ORG}','hermes','pepper','moderator')`)));
-  OTHERS = Array.from({ length: 7 }, (_, i) => JSON.parse(last(asUser(U.owner, `select msgr_bot_create('${ORG}','hermes','peer${i}','peer')`))).crew_id);
+  OTHERS = Array.from({ length: 11 }, (_, i) => JSON.parse(last(asUser(U.owner, `select msgr_bot_create('${ORG}','hermes','peer${i}','peer')`))).crew_id);
   sql(`update msgr_crews set allow='all', last_seen_at=now(), dm_delivery_protocol=1 where org_id='${ORG}'`);
   PUB = last(asUser(U.owner, `select msgr_create_channel('${ORG}','public','ops','[]')`));
   for (const id of [BOT.crew_id, ...OTHERS]) sql(`insert into msgr_channel_members(channel_id, member_kind, member_id) values ('${PUB}','crew','${id}') on conflict do nothing`);
@@ -71,6 +71,8 @@ before(() => {
 const post = (author, text = 'go') => last(asUser(author, `insert into public.msgr_messages(channel_id, author_kind, author_user_id, body, mentions) values ('${PUB}', 'user', '${author}', '${text}', '[{"kind":"crew","id":"${BOT.crew_id}"}]') returning id`));
 const claim = (src) => JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${BOT.token}') x`)).map((u) => u.message).find((m) => m.message_id === Number(src));
 const finish = (m, n, disposition = 'handoff') => asAnon(`select public.msgr_bot_finish('${BOT.token}', '${PUB}', 'answer', ${m.message_id}, '${m.execution_attempt}', '${disposition}', '${JSON.stringify(OTHERS.slice(0, n).map((id) => ({ kind: 'crew', id })))}')`);
+const claimAny = (src) => JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${BOT.token}') x`)).map((u) => u.message).find((m) => m.message_id === Number(src));
+const finishIn = (ch, m, mentions) => asAnon(`select public.msgr_bot_finish('${BOT.token}', '${ch}', 'answer', ${m.message_id}, '${m.execution_attempt}', 'handoff', '${JSON.stringify(mentions)}')`);
 const row = (id) => JSON.parse(sql(`select jsonb_build_object('mentions', jsonb_array_length(mentions), 'disposition', meta->>'disposition', 'dropped', meta->'handoff_dropped', 'reason', meta->>'handoff_reason') from msgr_messages where id = ${id}`));
 
 test('소유자가 직접 시킨 턴 — 활성 에이전트 수까지 멘션해 넘긴다(9명 공지가 409로 사라지던 사고)', { skip }, () => {
@@ -101,4 +103,41 @@ test('에이전트가 넘긴 턴(원문이 크루 글)은 소유자 뿌리여도
   const relay = sql(`insert into msgr_messages(channel_id, author_kind, crew_id, kind, body, reply_to, thread_root, client_msg_id, mentions, meta) values ('${PUB}','crew','${OTHERS[0]}','text','@pepper next',${root},${root},'peer-relay:${root}','[{"kind":"crew","id":"${BOT.crew_id}"}]','{"disposition":"handoff","hop":1}') returning id`).split('\n').pop();
   const m = claim(relay); assert.ok(m, '크루 넘김 글도 봇이 받는다');
   assert.deepEqual(row(finish(m, 6)), { mentions: 0, disposition: 'done', dropped: 6, reason: 'mentions' });
+});
+
+// 검수 #752 HIGH-1: 에이전트가 DM에서 넘기면 전달 트리거가 받는 쪽 1:1에 "사람 글"(meta.relay.via_crew_id)을 새로 만든다 —
+// 이걸 사람이 시킨 턴으로 보면 에이전트끼리의 넘김이 5명 상한을 벗어나 전달마다 불어났다(재현: 6명 넘김 → 전달 6건, depth 2).
+test('DM 전달로 받은 에이전트의 넘김(via_crew_id)은 사람 지시가 아니다 — 5명 상한', { skip }, () => {
+  const X = OTHERS[10];
+  const dm = sql(`select msgr_dm_for_crew('${ORG}','${U.owner}','${X}')`);
+  const root = last(asUser(U.owner, `insert into public.msgr_messages(channel_id, author_kind, author_user_id, body, mentions) values ('${dm}','user','${U.owner}','do it','[{"kind":"crew","id":"${X}"}]') returning id`));
+  sql(`insert into msgr_messages(channel_id, author_kind, crew_id, kind, body, reply_to, thread_root, client_msg_id, mentions, meta) values ('${dm}','crew','${X}','text','@pepper go',${root},${root},'reply:${X}:${root}','[{"kind":"crew","id":"${BOT.crew_id}"}]','{"disposition":"handoff","hop":0}')`);
+  const r = JSON.parse(sql(`select jsonb_build_object('id',id,'channel',channel_id,'via',meta->'relay'->>'via_crew_id') from msgr_messages where client_msg_id='relay:'||(select id from msgr_messages where client_msg_id='reply:${X}:${root}')||':${BOT.crew_id}'`));
+  assert.equal(r.via, X, '전제: 에이전트 경유 전달 글');
+  const m = claimAny(r.id); assert.ok(m);
+  const out = finishIn(r.channel, m, OTHERS.slice(0, 6).map((id) => ({ kind: 'crew', id })));
+  assert.deepEqual(row(out), { mentions: 0, disposition: 'done', dropped: 6, reason: 'mentions' });
+  assert.equal(sql(`select count(*) from msgr_messages where client_msg_id like 'relay:${out}:%'`), '0', '전달이 불어나지 않는다');
+});
+
+// 검수 #752 MEDIUM-2: 채널에서는 스레드 10홉 상한 때문에 10명 이상에게 넘기면 10번째 답부터 받기가 거절돼 사라졌다 —
+// 채널의 확대 상한은 9명(넘김 1 + 답 9 = 10 안). DM 넘김은 각자의 1:1로 전달되어 이 상한이 없다(이번 사고는 DM, 9명).
+test('채널에서 소유자 턴의 확대 상한은 9명 — 10명이면 저장만(답 유실 방지)', { skip }, () => {
+  const m = claim(post(U.owner)); assert.ok(m);
+  assert.deepEqual(row(finish(m, 10)), { mentions: 0, disposition: 'done', dropped: 10, reason: 'mentions' });
+  const ok = claim(post(U.owner)); assert.equal(row(finish(ok, 9)).mentions, 9);
+});
+
+test('DM에서 소유자 턴은 활성 에이전트 수까지(10명)', { skip }, () => {
+  const dm = sql(`select msgr_dm_for_crew('${ORG}','${U.owner}','${BOT.crew_id}')`);
+  const src = last(asUser(U.owner, `insert into public.msgr_messages(channel_id, author_kind, author_user_id, body, mentions) values ('${dm}','user','${U.owner}','모두에게 전달','[{"kind":"crew","id":"${BOT.crew_id}"}]') returning id`));
+  const m = claimAny(src); assert.ok(m, '봇이 DM 글을 받는다');
+  assert.equal(row(finishIn(dm, m, OTHERS.slice(0, 10).map((id) => ({ kind: 'crew', id })))).mentions, 10);
+});
+
+// 검수 #752 LOW-4: 같은 크루를 반복해 상한을 채우거나, 안내 숫자에 중복이 섞이지 않게 서로 다른 크루 수로 센다
+test('중복 멘션은 한 번으로 센다', { skip }, () => {
+  const m = claim(post(U.member)); assert.ok(m);
+  const dup = [...Array(6)].map(() => ({ kind: 'crew', id: OTHERS[0] }));
+  assert.equal(row(finishIn(PUB, m, dup)).disposition, 'handoff', '서로 다른 크루는 1명 — 상한(5) 안');
 });
