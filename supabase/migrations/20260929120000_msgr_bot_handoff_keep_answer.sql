@@ -32,10 +32,13 @@ begin
       or exists (select 1 from public.msgr_org_members m where m.org_id = b.org_id and m.user_id = s.author_user_id
                  and m.removed_at is null and (m.expires_at is null or m.expires_at > now()) and m.role in ('owner', 'admin'))) then
     cap := (select count(*)::int from public.msgr_crews where org_id = b.org_id and status = 'active' and id <> b.crew_id);
-    cap := greatest(5, case when ch_kind = 'dm' then cap else least(cap, 9) end);
+    cap := greatest(5, case when ch_kind = 'dm' and (select count(*) from public.msgr_channel_members where channel_id = channel and member_kind = 'crew') = 1
+                            then cap else least(cap, 9 - hop) end); -- 같은 방에서 답하는 넘김(채널·크루 여럿인 그룹 대화)은 10홉 안(재검수 MEDIUM-2)
   end if;
-  -- 상한은 서로 다른 크루 수로 센다 — 같은 크루 반복으로 상한을 채우거나 안내 숫자가 부풀지 않게(검수 LOW-4)
-  select count(distinct value->>'id')::int into n from jsonb_array_elements(mentions);
+  -- 중복을 없앤 배열로 바꾼 뒤 센다 — 같은 크루 반복으로 상한을 피하거나 큰 배열이 반복문·저장을 키우지 않게(검수 LOW-4, 재검수 MEDIUM-1: 2만 개 반복 12초)
+  select coalesce(jsonb_agg(v order by o), '[]'::jsonb) into mentions
+    from (select distinct on (value->>'id') value as v, o from jsonb_array_elements(mentions) with ordinality e(value, o) order by value->>'id', o) d;
+  n := jsonb_array_length(mentions);
   -- 한도를 넘어도 답은 버리지 않는다 — 전달(멘션)만 빼고 일반 답으로 저장해 사장이 답과 사유를 본다.
   -- 종전엔 예외로 답 전체가 사라져 10분 뒤 "결과 미도착" 안내만 떴다(2026-09-29 페퍼 - v, 멘션 9명 → 409).
   if disposition = 'handoff' and (hop >= 10 or n > cap) then

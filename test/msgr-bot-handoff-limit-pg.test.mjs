@@ -141,3 +141,25 @@ test('중복 멘션은 한 번으로 센다', { skip }, () => {
   const dup = [...Array(6)].map(() => ({ kind: 'crew', id: OTHERS[0] }));
   assert.equal(row(finishIn(PUB, m, dup)).disposition, 'handoff', '서로 다른 크루는 1명 — 상한(5) 안');
 });
+
+// 재검수 #752 MEDIUM-1: 서로 다른 크루 수만 세면 같은 크루 2만 번 반복 배열이 통과해 반복문·저장이 커졌다(호출 12초) — 중복을 없앤 배열로 바꿔 저장
+test('대량 중복 멘션은 중복을 없앤 배열로 저장한다', { skip }, () => {
+  const m = claim(post(U.owner)); assert.ok(m);
+  const out = finishIn(PUB, m, [...Array(2000)].map(() => ({ kind: 'crew', id: OTHERS[1] })));
+  assert.deepEqual(row(out), { mentions: 1, disposition: 'handoff', dropped: null, reason: null });
+});
+
+// 재검수 #752 MEDIUM-2: 같은 방에서 답하는 넘김(채널·크루 여럿인 그룹 대화)은 스레드 10홉 안이어야 답이 다 저장된다 —
+// 확대 상한 = 9 - 이미 쌓인 크루 글 수. 활성 수까지는 크루가 하나뿐인 1:1 DM(대상이 각자의 1:1로 전달)만.
+test('그룹 대화(크루 여럿인 dm)는 채널과 같은 9명 상한', { skip }, () => {
+  const g = last(asUser(U.owner, `select msgr_create_channel('${ORG}','dm','dm:group','${JSON.stringify([BOT.crew_id, ...OTHERS].map((id) => ({ kind: 'crew', id })))}')`));
+  const src = last(asUser(U.owner, `insert into public.msgr_messages(channel_id, author_kind, author_user_id, body, mentions) values ('${g}','user','${U.owner}','모두','[{"kind":"crew","id":"${BOT.crew_id}"}]') returning id`));
+  const m = claimAny(src); assert.ok(m, '그룹 대화 글을 봇이 받는다');
+  assert.deepEqual(row(finishIn(g, m, OTHERS.slice(0, 10).map((id) => ({ kind: 'crew', id })))), { mentions: 0, disposition: 'done', dropped: 10, reason: 'mentions' });
+});
+
+test('채널 스레드에 이미 크루 답이 쌓였으면 그만큼 상한이 줄어든다(9 - hop)', { skip }, () => {
+  const src = post(U.owner); const m = claim(src); assert.ok(m);
+  for (let i = 0; i < 3; i++) sql(`insert into msgr_messages(channel_id, author_kind, crew_id, kind, body, reply_to, thread_root, client_msg_id) values ('${PUB}','crew','${OTHERS[i]}','text','pre${i}',${src},${src},'pre:${src}:${i}')`);
+  assert.deepEqual(row(finish(m, 7)), { mentions: 0, disposition: 'done', dropped: 7, reason: 'mentions' }, '9 - 3 = 6명까지');
+});
