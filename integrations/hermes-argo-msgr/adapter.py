@@ -12,14 +12,18 @@ Wire (Telegram Bot API discipline, JSON): GET  {url}/bot{token}/getMe
                                           POST {url}/bot{token}/routineEditDone {edit_id, status, error}
                                           POST {url}/bot{token}/requestApproval {execution_attempt, approval_id, command, reason}   (위험 명령 결재 카드)
                                           POST {url}/bot{token}/ackApproval|expireApproval {approval_id}
-getUpdates?events=1 also returns {event: routine_edit|approval_decided, …} items (no update_id; the server leases them for 60s
-and re-sends until closed). Crew contract 1-a (2026-09-29): the same automation/approval contract Argo crews use.
+                                          POST {url}/bot{token}/requestApproval {kind: agent, execution_attempt, approval_id, title, reason}  (에이전트가 올리는 결재)
+                                          POST {url}/bot{token}/sendMessage {approval_id, text}   (결정 뒤 후속 보고 — 한 번만, 원문 답글)
+                                          POST {url}/bot{token}/reportStatus {version, approval_mode, mirror_all_applied}   (바뀔 때만)
+getUpdates?events=1 also returns {event: routine_edit|approval_decided|config, …} items (no update_id; the server leases them for 60s
+and re-sends until closed). Crew contract 1-a/1-b (2026-09-29): the same automation/approval contract Argo crews use.
 Who may instruct the bot, which channels it reads, and channel policies are all decided by the Argo server
 (getUpdates only returns mentions / DMs / replies addressed to this bot; sendMessage re-checks the policy on
 every reply). So inbound events are marked role_authorized — no per-user allow-list is needed here.
 """
 import asyncio
 import contextvars
+import threading
 import hashlib
 from pathlib import Path
 import uuid
@@ -50,6 +54,9 @@ _MAX_LEN = 20000              # server body cap (msgr_messages.body)
 # Gateway system notices (busy-ack ⚡/⏳/⏩, 💾, 📬 home-channel notice) stay local — the server keeps ONE reply per source
 # message, and a notice must not take the slot the real answer needs (observed: '⚡ Interrupting…' became the reply, answer went plain).
 _SYSTEM_PREFIXES = ('⚡', '⏳', '⏩', '💾', '📬')
+_ADAPTER = None               # 이 프로세스(=프로필 하나)의 연결된 어댑터 — 결재 도구가 쓴다
+_PLUGIN_VERSION = ''          # register(ctx)에서 plugin.yaml version을 읽는다(메신저에 "업데이트 필요" 판정용 보고)
+_FOLLOWUP_PREFIX = 'apf:'     # 결재 결정 뒤 재개 턴의 가짜 message_id — 그 턴의 답은 후속 보고로 간다
 
 
 def _cfg(extra: Dict[str, Any], env: str, key: str, default: str = "") -> str:
@@ -249,10 +256,32 @@ def decide_routine_edit(job, state) -> str:
     return 'superseded' if sent and job_fingerprint(job) != sent else 'apply'
 
 
+def job_delivery(job, resolve=None) -> Optional[str]:
+    """메신저로 안 보내는 작업의 전달 상태(1-b ③): 'local' = 파일로 남기거나 다른 곳으로 보낸다(의도), 'none' = 보낼 곳이 없다
+    (deliver=origin인데 출처 없음 등 — 2026-09-29 VPS 실측 4건, 소유자가 메신저에서 방을 고르면 argo_msgr:<방>으로 바꾼다)."""
+    deliver = str(job.get('deliver') or '').strip()
+    toks = [t.strip() for t in deliver.split(',') if t.strip()]
+    if toks and all(t == 'local' for t in toks):
+        return 'local'
+    if resolve is not None:
+        try:
+            targets = resolve(job)
+        except Exception:
+            targets = None
+        if targets:
+            return 'local'
+        if targets is not None:
+            return 'none'
+    if not toks or any(t == 'origin' for t in toks) and not job.get('origin'):
+        return 'none'
+    return 'local'
+
+
 def job_to_row(job, tz, state, mirror_all=False, now=None, resolve=None):
     """Hermes 작업 → setRoutines 행. 메신저 전달 작업이 아니면(기본) None — ARGO_MSGR_MIRROR_ALL=1이면 보이되 고칠 수 없다."""
     chan = job_msgr_channel(job, resolve)
-    if chan is None and not mirror_all:
+    # 보낼 곳이 없는 작업(none)은 원래 결과를 보내려던 것이라 스위치와 관계없이 보여 소유자가 방을 고르게 한다(1-b ③, 검수 확인)
+    if chan is None and not mirror_all and job_delivery(job, resolve) != 'none':
         return None
     prompt = str(job.get('prompt') or '').strip() or '(스크립트 작업 / script job)'
     title = str(job.get('name') or '').strip() or prompt[:40]
@@ -267,7 +296,9 @@ def job_to_row(job, tz, state, mirror_all=False, now=None, resolve=None):
         fresh = not prev or not (prev.get('value') or {}).get('last_run_at') or (now - datetime.datetime.fromisoformat(prev.get('at'))).total_seconds() >= _STATUS_MIN_S
     except Exception:
         fresh = True
-    row['status'] = status if fresh else prev.get('value')
+    row['status'] = dict(status if fresh else (prev.get('value') or {}))
+    if chan is None:
+        row['status']['delivery'] = job_delivery(job, resolve)
     return row
 
 
@@ -368,6 +399,16 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         self._unsupported_sent: Optional[str] = None
         self._approvals: Dict[str, Dict[str, Any]] = {}   # approval_id → {session_key, request_id, card}
         self._session_src: Dict[str, int] = {}             # Hermes 세션 키 → 그 세션이 지금 처리 중인 원문 id(승인 카드를 붙일 곳, 검수 M-3)
+        self._session_source: Dict[str, Dict[str, Any]] = {}   # 세션 키 → build_source 인자(결재 결정 뒤 같은 대화로 재개할 때)
+        self._agent_file = self._outbox.parent / ('agent-approvals-' + self._outbox_prefix[:24] + '.json')
+        self._agent_approvals: Dict[str, Dict[str, Any]] = {}  # 에이전트 결재 id → {session_key, source, title} (재시작 뒤에도 재개)
+        self._followed: set = set()                        # 후속 보고를 이미 올린 결재 id
+        self._agent_lock = threading.Lock()               # 결재 도구(에이전트 스레드)와 이벤트 루프가 같은 표·파일을 쓴다(검수 LOW)
+        self._resume_parent: Dict[str, str] = {}          # 재개 턴의 세션 키 → 부모 결재 id(그 턴의 위험 명령·새 결재는 부모의 원문에 붙는다, 검수 M-3)
+        self._resume_parent_at: Dict[str, float] = {}      # 연결한 시각 — 재개 턴이 실패해 후속 보고가 없어도 30분 뒤엔 쓰지 않는다(재검수 MEDIUM과 같은 위험)
+        self._tasks: set = set()                           # 폴 루프 밖에서 도는 재개 작업(참조 유지)
+        self._mirror_all = False                           # 소유자가 메신저에서 켠 "모든 예약 작업 보기"(서버 설정)
+        self._status_sent = None                           # 마지막으로 보고한 (version, approval_mode, mirror_all_applied)
 
     @property
     def name(self) -> str:
@@ -392,6 +433,9 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         logger.info("Argo Messenger: connected as %s (%s) in org %s", self._me.get("first_name"), self._me.get("kind"),
                     (self._me.get("org") or {}).get("name"))
         self._running = True
+        global _ADAPTER
+        _ADAPTER = self
+        self._load_agent_approvals()
         self._poll_task = asyncio.create_task(self._poll_loop())
         self._routines_task = asyncio.create_task(self._routines_loop())
         self._mark_connected()
@@ -491,14 +535,17 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             return
         self._pending[mid] = m
         context = self._inbound.set(m)
-        source = self.build_source(
+        skw = dict(
             chat_id=chat_id, chat_name=chat.get("name") or chat_id,
             chat_type="dm" if chat.get("kind") == "dm" else "group",
             thread_id=("argo-dm:" + chat_id + ":" + (str(m.get("thread_root") or mid) if m.get('delegated') else 'conversation')) if chat.get("kind") == "dm" else None,
-            user_id=str(frm.get("id") or ""), user_name=frm.get("name") or "", message_id=str(mid) if mid else None,
+            user_id=str(frm.get("id") or ""), user_name=frm.get("name") or "")
+        source = self.build_source(**skw, message_id=str(mid) if mid else None,
             role_authorized=True)   # the Argo server already decided this author may address the bot
         try:
-            self._session_src[self._source_session_key(source)] = mid
+            sk = self._source_session_key(source)
+            self._session_src[sk] = mid
+            self._session_source[sk] = skw
         except Exception:
             pass   # 세션 키를 못 구하면 승인 카드는 글자 안내로 넘어간다(_send_exec_approval_prompt)
         files = await self._fetch_attachments(m, mid)
@@ -577,6 +624,12 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
                    metadata: Optional[Dict[str, Any]] = None) -> SendResult:
         if not self._running and not self._me:
             return SendResult(success=False, error="Not connected")
+        # 결재 결정 뒤 재개 턴의 답 → 그 결재의 후속 보고(서버가 방·원문을 정하고 한 번만 받는다)
+        fu = str(reply_to or '') if str(reply_to or '').startswith(_FOLLOWUP_PREFIX) else ('' if reply_to else str((self._inbound.get() or {}).get('followup') or ''))
+        if fu:
+            if not (metadata or {}).get('notify') or content.lstrip().startswith(_SYSTEM_PREFIXES):
+                return SendResult(success=True)
+            return await self._post_followup(fu[len(_FOLLOWUP_PREFIX):] if fu.startswith(_FOLLOWUP_PREFIX) else fu, content)
         # ContextVar follows the originating async execution; another chat cannot replace its source.
         # The permanent database claim accepts one final reply and never silently spills chunks as plain posts.
         src: Optional[int] = None
@@ -647,6 +700,12 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         self._load_rstate()
         while self._running:
             try:
+                await self._report_status()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:   # 보고는 표시용 — 실패해도 미러는 계속
+                logger.warning("Argo Messenger: reportStatus failed — %s", _redact(str(e)))
+            try:
                 await self._sync_routines()
             except asyncio.CancelledError:
                 raise
@@ -666,7 +725,7 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             return
         jobs = await asyncio.to_thread(cj.list_jobs, True)   # 읽기 실패는 예외 → 빈 스냅샷을 보내지 않는다(L6)
         now = datetime.datetime.now(datetime.timezone.utc)
-        tz, mirror_all, resolve = _hermes_tz(), os.getenv('ARGO_MSGR_MIRROR_ALL', '').strip() == '1', _hermes_delivery_resolver()
+        tz, mirror_all, resolve = _hermes_tz(), self._mirror_all or os.getenv('ARGO_MSGR_MIRROR_ALL', '').strip() == '1', _hermes_delivery_resolver()
         rows, seen = [], set()
         for job in jobs or []:
             jid = str(job.get('id') or '')
@@ -710,14 +769,16 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             jid = str(ev.get('ext_id') or '')
             job = next((j for j in (await asyncio.to_thread(cj.list_jobs, True) or []) if str(j.get('id')) == jid), None)
             verdict = decide_routine_edit(job, self._rstate.get(jid))
+            patch = ev.get('patch') or {}
+            route_only = ev.get('op') == 'update' and set(patch) == {'channel_id'}
+            resolve = _hermes_delivery_resolver()
             if verdict == 'failed':
                 err = 'routine_not_found'
-            elif job_msgr_channel(job, _hermes_delivery_resolver()) is None:
-                err = 'not_editable'   # 서버도 막지만 어댑터가 한 번 더(메신저 전달 작업만 고친다)
+            elif job_msgr_channel(job, resolve) is None and not (route_only and job_delivery(job, resolve) == 'none'):
+                err = 'not_editable'   # 서버도 막지만 어댑터가 한 번 더(메신저 전달 작업만 고치고, 보낼 곳 없는 작업은 방 지정만)
             elif verdict == 'superseded':
                 status = 'superseded'
             else:
-                patch = ev.get('patch') or {}
                 if ev.get('op') == 'delete':
                     await asyncio.to_thread(cj.remove_job, jid)
                 else:
@@ -731,6 +792,10 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
                         if not expr:
                             raise ValueError('schedule not representable in Hermes cron')
                         updates['schedule'] = expr
+                    if 'channel_id' in patch:   # 1-b ③: 소유자가 고른 방으로 결과를 보낸다
+                        if not _uuid_like(patch.get('channel_id')):
+                            raise ValueError('channel_id must be a channel id')
+                        updates['deliver'] = 'argo_msgr:' + str(patch['channel_id'])
                     if updates:
                         await asyncio.to_thread(cj.update_job, jid, updates)
                     if patch.get('enabled') is False:
@@ -751,6 +816,12 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             await self._sync_routines(force=True)   # done이 실패해도(더 새 편집이 접은 경우 등) 반영 결과는 바로 미러
 
     # ── 크루 계약 1-a: 위험 명령 → 결재 카드 ─────────────────────────────────
+    def _parent_for(self, session_key) -> Optional[str]:
+        sk = str(session_key)
+        if sk in self._resume_parent and datetime.datetime.now().timestamp() - self._resume_parent_at.get(sk, 0) > 1800:
+            self._resume_parent.pop(sk, None); self._resume_parent_at.pop(sk, None)
+        return self._resume_parent.get(sk)
+
     def _source_for_session(self, session_key) -> Optional[Dict[str, Any]]:
         """승인 대기는 에이전트 스레드에서 오므로 ContextVar가 없다 — 그 세션이 처리 중인 원문(검수 M-3: 채팅 단위로 고르면 다른 원문에 붙는다)."""
         mid = self._session_src.get(str(session_key))
@@ -777,7 +848,19 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
 
     async def _send_exec_approval_prompt(self, prompt) -> SendResult:
         m = self._source_for_session(prompt.session_key)
-        rid = self._match_request_id(prompt.session_key, prompt.command) if m else None
+        parent = None if m else self._parent_for(prompt.session_key)
+        rid = self._match_request_id(prompt.session_key, prompt.command) if (m or parent) else None
+        if parent and rid:   # 재개 턴 — 실행 행이 없으니 승인된 부모 결재의 원문에 카드를 붙인다(검수 M-3)
+            approval_id = 'hx-' + uuid.uuid4().hex[:24]
+            self._approvals[approval_id] = {'session_key': prompt.session_key, 'request_id': rid, 'card': None}
+            try:
+                res = await self._api('requestApproval', {'parent_approval_id': parent, 'approval_id': approval_id,
+                                                          'command': prompt.command, 'reason': prompt.description}, post=True) or {}
+            except Exception as e:
+                self._approvals.pop(approval_id, None)
+                return SendResult(success=False, error=getattr(e, 'description', None) or _redact(str(e)))
+            self._approvals[approval_id]['card'] = str(res.get('message_id') or '')
+            return SendResult(success=True, message_id=self._approvals[approval_id]['card'] or None)
         if not m or not rid:   # 원문이나 풀 요청을 하나로 정하지 못하면 Hermes의 기존 /approve 글자 안내로 넘긴다(지금보다 나빠지지 않게)
             return SendResult(success=False, error="No unique Argo execution/approval request for this prompt")
         approval_id = 'hx-' + uuid.uuid4().hex[:24]
@@ -798,15 +881,155 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
     async def _on_approval_decided(self, ev) -> None:
         aid = str(ev.get('approval_id') or '')
         ack = await self._api('ackApproval', {'approval_id': aid}, post=True) or {}
-        info = self._approvals.pop(aid, None)
-        if not ack.get('claimed') or not info or not info.get('request_id'):   # 선점 못 했으면(다른 어댑터·재시도) 재개하지 않는다. 재시작 뒤라면 대기 스레드도 이미 없다
+        if ev.get('agent'):
+            with self._agent_lock:
+                info = self._agent_approvals.pop(aid, None)
+            self._save_agent_approvals()
+            if ack.get('claimed'):   # 바쁜 세션을 기다리는 동안 폴 루프(모든 채널 수신)를 막지 않게 따로 돌린다(검수 M-2)
+                task = asyncio.create_task(self._resume_agent_approval(aid, ev, info))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
             return
-        choice = 'once' if ev.get('status') == 'approved' and ev.get('resume') else 'deny'
-        reason = None if choice == 'once' else 'Argo Messenger: ' + str(ev.get('reason') or ev.get('status') or 'rejected')
-        from tools.approval import resolve_gateway_approval
-        if not resolve_gateway_approval(info['session_key'], choice, reason=reason, request_id=info['request_id']):
-            # 에이전트가 이미 기다리기를 멈췄다(Hermes 기한 5분 초과·중단) — 카드는 결정됐지만 명령은 실행되지 않았다(검수 L-6)
-            logger.warning("Argo Messenger: approval %s decided (%s) after the agent stopped waiting — command was not run", aid, ev.get('status'))
+        info = self._approvals.pop(aid, None)
+        if not ack.get('claimed'):   # 선점 못 했으면(다른 어댑터·재시도) 재개하지 않는다
+            return
+        late = not info or not info.get('request_id')   # 재시작 뒤라 대기 스레드가 이미 없다
+        if not late:
+            choice = 'once' if ev.get('status') == 'approved' and ev.get('resume') else 'deny'
+            reason = None if choice == 'once' else 'Argo Messenger: ' + str(ev.get('reason') or ev.get('status') or 'rejected')
+            from tools.approval import resolve_gateway_approval
+            late = not resolve_gateway_approval(info['session_key'], choice, reason=reason, request_id=info['request_id'])
+        if late and ev.get('status') == 'approved' and ev.get('resume'):
+            # 에이전트가 이미 기다리기를 멈췄다(Hermes 기한 5분 초과·중단·재시작) — 카드는 승인됐지만 명령은 실행되지 않았다. 결정한 사람에게 알린다(1-a L-12 후속)
+            logger.warning("Argo Messenger: approval %s decided after the agent stopped waiting — command was not run", aid)
+            await self._post_followup(aid, '결정이 늦게 도착해 명령은 실행되지 않았습니다(에이전트의 승인 대기 시간이 지났습니다). 필요하면 다시 요청해 주세요.\n'
+                                           '/ The decision arrived after the agent stopped waiting, so the command was not run. Ask again if it is still needed.')
+
+    # ── 1-b: 에이전트가 올리는 결재 → 결정 뒤 같은 대화에서 재개 → 후속 보고 ─────────────────────
+    def _load_agent_approvals(self):
+        try:
+            self._agent_approvals = json.loads(self._agent_file.read_text()) if self._agent_file.exists() else {}
+        except Exception:
+            self._agent_approvals = {}
+
+    def _save_agent_approvals(self):
+        try:
+            with self._agent_lock:
+                snapshot = json.dumps(self._agent_approvals)
+            self._agent_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            tmp = self._agent_file.with_suffix('.' + uuid.uuid4().hex + '.tmp')
+            with open(tmp, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as out:
+                out.write(snapshot)
+            os.replace(tmp, self._agent_file)
+        except Exception as e:
+            logger.warning("Argo Messenger: agent approvals not saved — %s", _redact(str(e)))
+
+    def request_agent_approval(self, session_key: str, title: str, reason: Optional[str], message_id: str = '') -> Dict[str, Any]:
+        """결재 도구(에이전트 스레드에서 동기 호출). 이 턴이 처리 중인 원문에 결재 카드를 붙인다.
+        원문은 그 턴의 메시지 id(HERMES_SESSION_MESSAGE_ID)로 정한다 — 그룹 채널은 모든 글이 한 세션이라 세션 단위로 고르면 뒤에 온
+        다른 사람의 글에 붙는다(OpenClaw 검수 H2와 같은 위험). 재개 턴은 id가 'apf:<부모 결재>'라 부모를 바로 안다."""
+        mid = str(message_id or '')
+        if mid.startswith(_FOLLOWUP_PREFIX):
+            m, parent = None, mid[len(_FOLLOWUP_PREFIX):]
+        elif mid.isdigit():
+            cand = self._pending.get(int(mid))
+            m, parent = (cand if cand and cand.get('execution_attempt') and int(mid) not in self._replied else None), None
+        else:
+            m = self._source_for_session(session_key)
+            parent = None if m else self._parent_for(session_key)
+        skw = self._session_source.get(str(session_key))
+        if not (m or parent) or not skw:
+            raise ArgoMsgrError(409, 'No active Argo Messenger request in this conversation — approvals attach to the message you are answering')
+        aid = 'ag-' + uuid.uuid4().hex[:24]
+        where = {'execution_attempt': m['execution_attempt']} if m else {'parent_approval_id': parent}   # 재개 턴이면 승인된 부모 결재의 원문(검수 M-3)
+        res = _call(self.base_url, self.token, 'requestApproval', {'kind': 'agent', **where, 'approval_id': aid,
+                                                                   'title': title, 'reason': reason}, post=True) or {}
+        with self._agent_lock:
+            self._agent_approvals[aid] = {'session_key': str(session_key), 'source': skw, 'title': title}
+        self._save_agent_approvals()
+        return {'approval_id': aid, 'status': res.get('status', 'pending'), 'card_message_id': res.get('message_id')}
+
+    async def _post_followup(self, aid: str, content: str) -> SendResult:
+        if aid in self._followed:
+            return SendResult(success=False, error="This approval already has its follow-up")
+        try:
+            res = await self._api('sendMessage', {'approval_id': aid, 'text': content[:_MAX_LEN]}, post=True) or {}
+        except ArgoMsgrError as e:
+            logger.warning("Argo Messenger: follow-up for %s failed — %s", aid, e)
+            return SendResult(success=False, error=e.description)
+        except Exception as e:
+            return SendResult(success=False, error=_redact(str(e)))
+        self._followed.add(aid)
+        for sk, parent in list(self._resume_parent.items()):   # 후속 보고를 올렸으면 그 재개 턴은 끝났다(서버도 더 이상 이어서 받지 않는다)
+            if parent == aid:
+                self._resume_parent.pop(sk, None)
+        return SendResult(success=True, message_id=str(res.get('message_id') or ''))
+
+    async def _resume_agent_approval(self, aid: str, ev, info) -> None:
+        status, who = ev.get('status'), ev.get('decided_by_name') or 'the approver'
+        if status == 'approved' and not ev.get('resume'):
+            return   # 서버 재판정 실패(동의 철회·전달 불가 등) — 이어서 할 수도, 보고할 수도 없다(후속 보고도 서버가 거절)
+        if status not in ('approved', 'rejected'):
+            return
+        if not info or not info.get('source'):   # 재시작 등으로 원래 대화를 잃었다 — 사람에게 알리고 끝낸다
+            await self._post_followup(aid, ('결재가 승인됐습니다. 이어서 진행하려면 이 대화에서 다시 말씀해 주세요.\n/ Approved — ask again here to continue.')
+                                      if status == 'approved' else '결재가 반려되어 진행하지 않습니다.\n/ Rejected — not proceeding.')
+            return
+        title = info.get('title') or ev.get('action') or ''
+        text = ((f'[Argo Messenger — approval decided] Your approval request "{title}" was APPROVED by {who}. '
+                 'Carry out the approved work now and report the result. Your reply is posted as the follow-up on the approval card.')
+                if status == 'approved' else
+                (f'[Argo Messenger — approval decided] Your approval request "{title}" was REJECTED by {who}. '
+                 'Do not carry out that work. Reply briefly to acknowledge; your reply is posted as the follow-up on the approval card.'))
+        source = self.build_source(**info['source'], role_authorized=True)
+        sk = info.get('session_key')
+        for _ in range(30):   # 세션에 대기 메시지가 있으면 internal 이벤트는 조용히 버려진다(Hermes base.py) — 비면 넣는다
+            if not sk or sk not in getattr(self, '_pending_messages', {}):
+                break
+            await asyncio.sleep(10)
+        else:
+            await self._post_followup(aid, '결재 결과를 에이전트에게 전달하지 못했습니다(대화가 계속 바쁩니다). 이어서 진행하려면 다시 말씀해 주세요.\n'
+                                           '/ Could not hand the decision to the agent (conversation stayed busy). Ask again to continue.')
+            return
+        if sk:
+            self._resume_parent[sk] = aid if status == 'approved' else self._resume_parent.get(sk, '')
+            self._resume_parent_at[sk] = datetime.datetime.now().timestamp() if status == 'approved' else self._resume_parent_at.get(sk, 0)
+            self._session_source.setdefault(sk, info['source'])   # 재시작 뒤 재개여도 이 턴의 새 결재가 같은 대화로 이어지게
+            if not self._resume_parent[sk]:
+                self._resume_parent.pop(sk, None)
+        context = self._inbound.set({'followup': _FOLLOWUP_PREFIX + aid, 'chat': {'id': info['source'].get('chat_id')}})
+        try:
+            await self.handle_message(MessageEvent(text=text, message_type=MessageType.TEXT, source=source, message_id=_FOLLOWUP_PREFIX + aid,
+                                                   internal=True, allow_gateway_control=False, metadata={'gateway_session_key': sk} if sk else {}))
+        finally:
+            self._inbound.reset(context)
+
+    # ── 1-b: 버전·승인 모드 보고, "모든 예약 작업 보기" 설정 ────────────────────────────
+    async def _report_status(self) -> None:
+        try:
+            from tools.approval_context import _get_approval_mode
+            mode = str(_get_approval_mode() or 'unknown')
+        except Exception:
+            mode = 'unknown'
+        try:   # 프로세스 전체 --yolo(HERMES_YOLO_MODE)면 설정과 관계없이 묻지 않고 실행한다(검수 LOW). 세션 단위 /yolo는 대화마다라 보고하지 않는다
+            import tools.approval as _ap
+            if getattr(_ap, '_YOLO_MODE_FROZEN', False):
+                mode = 'off'
+        except Exception:
+            pass
+        cur = (_PLUGIN_VERSION or 'unknown', mode, self._mirror_all)
+        if cur == self._status_sent:
+            return   # 바뀐 게 없으면 네트워크 호출도 없다
+        res = await self._api('reportStatus', {'version': cur[0], 'approval_mode': cur[1], 'mirror_all_applied': cur[2]}, post=True) or {}
+        self._status_sent = cur
+        await self._apply_mirror_all(bool(res.get('mirror_all')))
+
+    async def _apply_mirror_all(self, on: bool) -> None:
+        if on == self._mirror_all:
+            return
+        self._mirror_all = on
+        await self._sync_routines(force=True)
+        await self._report_status()   # 반영했다고 알린다(서버가 설정 이벤트를 그만 준다)
 
     async def _handle_event(self, ev) -> None:
         kind = ev.get('event')
@@ -814,6 +1037,8 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             await self._apply_routine_edit(ev)
         elif kind == 'approval_decided':
             await self._on_approval_decided(ev)
+        elif kind == 'config':
+            await self._apply_mirror_all(bool(ev.get('mirror_all')))
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         c = self._chats.get(str(chat_id)) or {}
@@ -856,7 +1081,55 @@ async def _standalone_send(pconfig, chat_id, message, *, thread_id=None, media_f
         return {"error": _redact(str(e))}
 
 
+_APPROVAL_TOOL = 'argo_request_approval'
+_APPROVAL_SCHEMA = {
+    'name': _APPROVAL_TOOL,
+    'description': ('Ask a human in Argo Messenger to approve something before you do it (spending, sending messages to outsiders, '
+                    'deleting or changing important data, anything you were told needs approval). Posts an approval card on the message '
+                    'you are answering. The decision arrives later in this same conversation, then you continue and report. After calling it, '
+                    'tell the person you requested approval and end your turn — do not do the work until approved.'),
+    'parameters': {'type': 'object', 'properties': {
+        'title': {'type': 'string', 'description': 'What needs approval, one short line (e.g. "Spend $400 on this week\'s ads")'},
+        'reason': {'type': 'string', 'description': 'Why, and what will happen once approved (optional)'}},
+        'required': ['title']},
+}
+
+
+def _approval_tool(args=None, **_kw) -> str:
+    args = args or {}
+    try:
+        from gateway.session_context import get_session_env
+        platform, session_key = get_session_env('HERMES_SESSION_PLATFORM'), get_session_env('HERMES_SESSION_KEY')
+        message_id = get_session_env('HERMES_SESSION_MESSAGE_ID')
+    except Exception:
+        platform, session_key, message_id = '', '', ''
+    if platform != 'argo_msgr' or _ADAPTER is None:
+        return json.dumps({'error': 'argo_request_approval works only in Argo Messenger conversations'}, ensure_ascii=False)
+    title = str(args.get('title') or '').strip()
+    if not title:
+        return json.dumps({'error': 'title is required'}, ensure_ascii=False)
+    try:
+        out = _ADAPTER.request_agent_approval(session_key, title[:300], (str(args.get('reason')).strip()[:1000] or None) if args.get('reason') else None, message_id)
+    except ArgoMsgrError as e:
+        return json.dumps({'error': e.description}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({'error': _redact(str(e))[:300]}, ensure_ascii=False)
+    return json.dumps({'ok': True, **out, 'next': 'Approval card posted. Tell the person you requested approval and end this turn. '
+                       'The decision will arrive in this conversation; only then continue.'}, ensure_ascii=False)
+
+
 def register(ctx):
+    global _PLUGIN_VERSION
+    _PLUGIN_VERSION = str(getattr(getattr(ctx, 'manifest', None), 'version', '') or '')
+    if not _PLUGIN_VERSION:   # 옛 Hermes(manifest 없음) — plugin.yaml에서 직접
+        try:
+            hit = re.search(r'^version:\s*([^\s#]+)', Path(__file__).with_name('plugin.yaml').read_text(), re.M)
+            _PLUGIN_VERSION = hit.group(1) if hit else ''
+        except Exception:
+            pass
+    if callable(getattr(ctx, 'register_tool', None)):
+        ctx.register_tool(name=_APPROVAL_TOOL, toolset='argo_msgr', schema=_APPROVAL_SCHEMA, handler=_approval_tool,
+                          description=_APPROVAL_SCHEMA['description'], emoji='✅')
     ctx.register_platform(
         name="argo_msgr",
         label="Argo Messenger",
@@ -877,4 +1150,6 @@ def register(ctx):
             "someone mentions you, DMs you, or replies to your post; your answer is posted as a reply in that channel. "
             "Markdown is supported. Answer in the language the person used (usually Korean); keep it concise. "
             "Scheduled jobs you create with deliver=argo_msgr appear automatically in the messenger's Automation panel, "
-            "where the owner can pause or edit them; dangerous commands you run are shown to the owner as approval cards."))
+            "where the owner can pause or edit them; dangerous commands you run are shown to the owner as approval cards. "
+            "When something needs a person's approval before you act, call argo_request_approval, then end your turn; "
+            "the decision comes back in the same conversation."))

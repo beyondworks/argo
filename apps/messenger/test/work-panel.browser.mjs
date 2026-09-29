@@ -10,7 +10,10 @@ const artifacts = new URL(`../artifacts/work-panel-${engine}/`, import.meta.url)
 await mkdir(artifacts, { recursive: true });
 const results = [];
 const labels = ['work.result.stalled','work.title','work.start','work.goal','work.completion','work.discussion','work.cancel','work.resume','work.empty','work.tab.automations','automation.new','automation.name','automation.prompt','automation.crew','automation.repeat','automation.timezone','automation.history','automation.edit','automation.pause','automation.resume','automation.run','automation.delete','ui.save','ui.cancel','ui.close','work.retry','work.refresh','work.error.upgrade','work.next','work.previous',
-  'automation.source.custom','routine.readonly.external','routine.error.notEditable','routine.status.last','routine.schedule.readonly','routine.pending','routine.pending.ext'];
+  'automation.source.custom','routine.readonly.external','routine.error.notEditable','routine.status.last','routine.schedule.readonly','routine.pending','routine.pending.ext',
+  'routine.route.badge','routine.route.none','routine.route.pick','routine.route.save','routine.route.dm','routine.error.channel',
+  'ui.settings','set.tab.crews','org.agents.detail.adapter.unknown','org.agents.adapter.outdated','org.agents.approvals.ai','org.agents.approvals.ask','org.agents.approvals.fix',
+  'org.agents.mirrorAll','org.agents.mirrorAll.needUpdate','org.agents.mirrorAll.pending','org.agents.mirrorAll.hint'];
 const button = (p, l, key) => p.getByRole('button', { name: l[key], exact: true });
 const field = (p, l, key) => p.locator('label.work-field').filter({ has: p.page().locator('span').filter({ hasText: new RegExp(`^${l[key].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`) }) }).locator('input,textarea,select');
 async function scenario(lang, width, theme, name, fn) {
@@ -206,6 +209,49 @@ try {
       await button(d,l,'ui.save').click();
       await d.getByText(l['routine.error.notEditable'],{exact:true}).waitFor();
       await p.screenshot({path:new URL(`ext-agent-${lang}-${width}-${theme}.png`,artifacts).pathname});
+      // 1-b ③ 보낼 곳 없는 작업 — 배지·안내, 고를 수 있는 방은 이 1:1 대화와 그 에이전트가 들어간 채널뿐, 서버 거절은 사용자 문장으로
+      await card('Fixture nightly handover').locator('.work-item-top').click();
+      assert.equal((await card('Fixture nightly handover').locator('.work-source-badge.warn').innerText()).trim(),l['routine.route.badge']);
+      await card('Fixture nightly handover').getByText(l['routine.route.none'],{exact:true}).waitFor();
+      assert.equal(await button(card('Fixture nightly handover'),l,'automation.edit').count(),0,'읽기 전용 작업은 방 지정만');
+      const pick=field(card('Fixture nightly handover'),l,'routine.route.pick');
+      await pick.locator('option').nth(2).waitFor({state:'attached'});
+      assert.deepEqual((await pick.locator('option').allInnerTexts()).slice(1),[l['routine.route.dm'],'# Fixture Private']);
+      assert.equal(await button(card('Fixture nightly handover'),l,'routine.route.save').isDisabled(),true,'방을 고르기 전에는 저장 불가');
+      await p.evaluate(()=>window.__workFixture.fail={name:'msgr_crew_routine_edit',message:'msgr_routine_invalid_channel'});
+      await pick.selectOption('private'); await button(card('Fixture nightly handover'),l,'routine.route.save').click();
+      await d.getByText(l['routine.error.channel'],{exact:true}).waitFor();
+      await button(card('Fixture nightly handover'),l,'routine.route.save').click();
+      await card('Fixture nightly handover').getByText(l['routine.pending.ext'],{exact:true}).waitFor();
+      const edits=(await calls(p,'msgr_crew_routine_edit')).filter((c)=>c.args.p_routine==='routine-noroute');
+      assert.deepEqual(edits.at(-1).args,{p_routine:'routine-noroute',p_op:'update',p_patch:{channel_id:'private'}});
+      await card('Fixture nightly handover').scrollIntoViewIfNeeded(); await d.screenshot({path:new URL(`ext-agent-noroute-${lang}-${width}-${theme}.png`,artifacts).pathname});
+    });
+    // 1-b — 에이전트 카드: 연결 도구 버전(예전이면 업데이트 안내), 위험 명령 승인 방식(스스로 승인하면 고치는 명령), 소유자 스위치(예전 도구는 비활성)
+    if(width>=720) await scenario(lang,width,theme,'ext-agent-card',async(p,l)=>{
+      await p.getByRole('button',{name:l['ui.settings'],exact:true}).first().click();
+      await p.getByRole('button',{name:l['set.tab.crews'],exact:true}).click();
+      const row=(name)=>p.locator('.msgr-botrow').filter({hasText:name});
+      await row('Fixture Old Hermes').locator('button.main').click();
+      const old=row('Fixture Old Hermes');
+      await old.getByText(l['org.agents.detail.adapter.unknown'],{exact:true}).waitFor();
+      await old.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.0'),{exact:true}).waitFor();
+      await old.getByText(l['org.agents.approvals.ai'].replace('{mode}','smart'),{exact:true}).waitFor();
+      assert.ok((await old.innerText()).includes('hermes config set approvals.mode manual'),'고치는 명령');
+      assert.equal(await old.locator('input[type=checkbox]').isDisabled(),true,'예전 도구는 스위치 비활성');
+      await old.getByText(l['org.agents.mirrorAll.needUpdate'],{exact:true}).waitFor();
+      await old.scrollIntoViewIfNeeded(); await p.screenshot({path:new URL(`ext-agent-card-old-${lang}-${width}-${theme}.png`,artifacts).pathname});
+      await row('Fixture New Claw').locator('button.main').click();
+      const neu=row('Fixture New Claw');
+      await neu.getByText('0.3.0',{exact:true}).waitFor();
+      await neu.getByText(l['org.agents.approvals.ask'].replace('{mode}','ask'),{exact:true}).waitFor();
+      assert.equal(await neu.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.0'),{exact:true}).count(),0,'최신이면 업데이트 안내 없음');
+      assert.equal(await neu.getByText(l['org.agents.approvals.fix'],{exact:false}).count(),0,'결재로 묻는 모드면 고치는 명령 없음');
+      await neu.getByText(l['org.agents.mirrorAll.hint'],{exact:true}).waitFor();
+      await neu.locator('input[type=checkbox]').check();
+      await neu.getByText(l['org.agents.mirrorAll.pending'],{exact:true}).waitFor();
+      assert.deepEqual((await p.evaluate(()=>window.__workFixture.workCalls.filter((c)=>c.name==='msgr_bot_set_mirror_all'))).map((c)=>c.args),[{p_bot:'bot-new',p_on:true}]);
+      await neu.scrollIntoViewIfNeeded(); await p.screenshot({path:new URL(`ext-agent-card-new-${lang}-${width}-${theme}.png`,artifacts).pathname});
     });
     if(width<720) await scenario(lang,width,theme,'short-screen-scroll-keyboard',async(p,l)=>{
       const d=await open(p,l); await tab(d,l); await button(d,l,'automation.new').click();
