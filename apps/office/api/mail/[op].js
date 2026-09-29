@@ -81,14 +81,23 @@ const OPS = {
   // 화면이 연결 버튼·관리자 안내문을 그릴 때 — 클라이언트 ID는 공개값
   async config() { return { google: env.OFFICE_GOOGLE_CLIENT_ID ? { clientId: env.OFFICE_GOOGLE_CLIENT_ID, scopes: SCOPES } : null }; },
 
-  async start(jwt, { hint } = {}) {
+  async relay(_jwt, { state, code, error } = {}) {
+    const st = openState(mailKey(), state);
+    if (!st) throw fail(400, 'state');
+    if (st.desktop !== true) return { desktop: false };
+    if ((!code && !error) || (code && error)) throw fail(400, 'state');
+    const q = new URLSearchParams({ state, ...(error ? { error: String(error) } : { code: String(code) }) });
+    return { desktop: true, url: `argo-office://mail/callback?${q}` };
+  },
+
+  async start(jwt, { hint, desktop } = {}) {
     const { client_id } = client();
     const uid = await me(jwt);
     const verifier = randomBytes(32).toString('base64url');
     const q = new URLSearchParams({
       client_id, redirect_uri: redirectUri(), response_type: 'code', scope: ['openid', 'email', 'profile', ...SCOPES].join(' '),
       access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true',               // consent: 다시 연결해도 갱신 토큰을 받는다
-      state: sealState(mailKey(), { uid, v: verifier }), code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
+      state: sealState(mailKey(), { uid, v: verifier, ...(desktop === true ? { desktop: true } : {}) }), code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
     });
     if (hint) q.set('login_hint', hint);
     return { url: `${G.auth()}?${q}` };
@@ -97,6 +106,7 @@ const OPS = {
   async finish(jwt, { code, state }) {
     const st = openState(mailKey(), state);
     if (!st) throw fail(400, 'state');
+    if (!code || await me(jwt) !== st.uid) throw fail(400, 'state');
     const tok = await tokenCall({ grant_type: 'authorization_code', code, redirect_uri: redirectUri(), code_verifier: st.v });
     const missing = missingScopes(tok.scope);
     if (missing.length) {                                                                    // 동의 화면에서 권한을 끈 경우 — 받은 토큰은 돌려준다
@@ -173,6 +183,7 @@ async function handle(request, op, args) {
   try {
     if (!Object.hasOwn(OPS, op)) throw fail(404, 'op');
     if (op === 'config') return json(await OPS.config());
+    if (op === 'relay') return json(await OPS.relay(null, args));
     const jwt = /^Bearer (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1];
     if (!jwt) throw fail(401, 'signed_out');
     return json(await OPS[op](jwt, args));
@@ -195,12 +206,27 @@ async function attachment(request, q) {
   } catch (e) { return json({ error: e.code ?? 'server' }, e.status ?? 500); }
 }
 
-export async function GET(request) {
+async function get(request) {
   const q = Object.fromEntries(new URL(request.url).searchParams);
   const op = opOf(request);
   if (op === 'attachment') return attachment(request, q);
   return ['config', 'list', 'read'].includes(op) ? handle(request, op, q) : json({ error: 'method' }, 405); // 바꾸는 동작은 POST로만
 }
-export async function POST(request) {
+async function post(request) {
   return handle(request, opOf(request), await request.json().catch(() => ({})));
 }
+
+const DESKTOP_ORIGINS = new Set(['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost']);
+function cors(request, response) {
+  const source = request.headers.get('origin');
+  response.headers.set('vary', 'Origin');
+  if (DESKTOP_ORIGINS.has(source)) {
+    response.headers.set('access-control-allow-origin', source);
+    response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
+    response.headers.set('access-control-allow-headers', 'Authorization, Content-Type');
+  }
+  return response;
+}
+export async function GET(request) { return cors(request, await get(request)); }
+export async function POST(request) { return cors(request, await post(request)); }
+export async function OPTIONS(request) { return cors(request, new Response(null, { status: DESKTOP_ORIGINS.has(request.headers.get('origin')) ? 204 : 403 })); }

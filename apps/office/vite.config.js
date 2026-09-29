@@ -37,6 +37,10 @@ export default defineConfig(({ mode }) => {
   Object.assign(process.env, loadEnv(mode, process.cwd(), ''), { ...process.env });
   return {
     plugins: [react(), localApi()],
+    server: {
+      cors: { origin: [/^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/, 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'] },
+      watch: { ignored: ['**/src-tauri/**'] },
+    },
     resolve: {
       dedupe: ['react', 'react-dom'],
       alias: { '@msgr/crew-face': shared('apps/messenger/src/crew-face.mjs') },

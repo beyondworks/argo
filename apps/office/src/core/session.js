@@ -2,8 +2,9 @@
 // 모드: sample(서버 설정 없음 → 예시 데이터) | loading | signedOut | signedIn
 import { useSyncExternalStore } from 'react';
 import * as SAMPLE from '../data/sample.js';
-import { configured, getClient } from './supabase.js';
-import { restore, persist } from './save.js';
+import { configured, getClient, devPasswordLogin } from './supabase.js';
+import { isDesktop } from './platform.js';
+import { restore, persist, setStorageScope } from './save.js';
 
 export let SPACES = SAMPLE.SPACES;
 export let ME = SAMPLE.ME;
@@ -17,6 +18,7 @@ export const useSession = () => useSyncExternalStore((l) => { listeners.add(l); 
 export const canManage = (key) => { const s = SPACES.find((x) => x.key === key); return s?.kind === 'me' || s?.role === 'owner' || s?.role === 'admin'; };
 
 const CACHE = 'argo-office-session';
+let applying = 0;
 
 /** 내가 속한 조직(퇴사·삭제 제외) → 공간. 조직 키는 주소에 쓰는 slug, 서버 키는 id */
 async function loadSpaces(sb, me) {
@@ -29,31 +31,49 @@ async function loadSpaces(sb, me) {
 }
 
 async function apply(sb, session) {
+  const request = ++applying;
+  const uid = session?.user.id ?? null;
+  mode = 'loading'; setStorageScope(uid); emit();
+  const [{ activateDraftScope }, { activateSyncScope }] = await Promise.all([import('./store.js'), import('./sync.js')]);
+  if (request !== applying) return;
+  activateDraftScope(uid);
+  await activateSyncScope(uid);
+  if (request !== applying) return;
   if (!session) { mode = 'signedOut'; ME = SAMPLE.ME; SPACES = SAMPLE.SPACES; emit(); return; }
   const u = session.user;
   ME = { id: u.id, name: u.user_metadata?.full_name || u.user_metadata?.name || (u.email ?? '').split('@')[0], email: u.email ?? '' };
   const cached = restore(CACHE, null);
-  if (cached?.uid === u.id) { SPACES = cached.spaces; mode = 'signedIn'; emit(); } // 지난번 목록으로 먼저 그린다(로컬 우선)
+  SPACES = cached?.uid === u.id ? cached.spaces : [{ key: 'me', kind: 'me', name: ME.name, role: 'owner' }];
   try {
-    SPACES = await loadSpaces(sb, ME);
+    const spaces = await loadSpaces(sb, ME);
+    if (request !== applying) return;
+    SPACES = spaces;
     persist(CACHE, { uid: u.id, spaces: SPACES });
   } catch (e) { console.warn('[office] spaces load failed', e?.message); }
-  mode = 'signedIn'; emit();
+  if (request === applying) { mode = 'signedIn'; emit(); }
 }
 
 export async function initSession() {
   const sb = await getClient();
-  if (!sb) return;
+  if (!sb) {
+    setStorageScope('sample');
+    const [{ activateDraftScope }, { activateSyncScope }] = await Promise.all([import('./store.js'), import('./sync.js')]);
+    activateDraftScope('sample'); await activateSyncScope('sample');
+    return;
+  }
   const { data } = await sb.auth.getSession();
   await apply(sb, data.session);
   sb.auth.onAuthStateChange((event, session) => { if (event !== 'INITIAL_SESSION' && event !== 'TOKEN_REFRESHED') apply(sb, session); });
 }
 
-export async function signInWith(provider) {
+export async function signInWith(provider, options) {
+  if (isDesktop()) return (await import('./desktop-auth.js')).signInDesktop(provider, options);
   const sb = await getClient();
-  await sb.auth.signInWithOAuth({ provider, options: { redirectTo: `${location.origin}/me` } });
+  const { error } = await sb.auth.signInWithOAuth({ provider, options: { redirectTo: `${location.origin}/me` } });
+  if (error) throw error;
 }
 export async function signInWithPassword(email, password) {
+  if (!devPasswordLogin) throw new Error('password_login_disabled');
   const sb = await getClient();
   const { error } = await sb.auth.signInWithPassword({ email, password });
   if (error) throw error;

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs><clipPath id="tile"><rect width="1024" height="1024" rx="224"/></clipPath>
+<filter id="shadow" x="-25%" y="-25%" width="150%" height="160%"><feGaussianBlur stdDeviation="12"/></filter></defs>
+<rect x="96" y="110" width="832" height="832" rx="182" fill="#211b13" opacity="0.24" filter="url(#shadow)"/>
+<g transform="translate(96 96) scale(0.8125)" clip-path="url(#tile)">
+  <defs>
+    <linearGradient id="paper" x2="0.8" y2="1">
+      <stop stop-color="#faf7ee"/><stop offset="0.65" stop-color="#efe9dc"/><stop offset="1" stop-color="#e3daca"/>
+    </linearGradient>
+    <linearGradient id="graphite" x2="0.7" y2="1">
+      <stop stop-color="#373936"/><stop offset="1" stop-color="#292b29"/>
+    </linearGradient>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.72" numOctaves="3" seed="17" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.055"/></feComponentTransfer>
+      <feBlend in="SourceGraphic" mode="multiply"/>
+    </filter>
+  </defs>
+  <g filter="url(#grain)">
+    <path fill="url(#paper)" d="M0 0H1024V1024H0Z"/>
+    <g fill="url(#graphite)">
+      <path d="M250 252H367Q399 252 408 284Q420 334 466 334H558Q604 334 616 284Q625 252 657 252H774Q826 252 826 304V416Q826 484 754 484H618Q568 484 540 443L512 402L484 443Q456 484 406 484H270Q198 484 198 416V304Q198 252 250 252Z"/>
+      <path d="M250 572H369Q402 572 416 604Q432 645 471 645H553Q592 645 608 604Q622 572 655 572H774Q826 572 826 624V688Q826 768 746 768H278Q198 768 198 688V624Q198 572 250 572Z"/>
+    </g>
+  </g>
+  <!-- Original Argo_app.svg star path, uniformly scaled between the cabinet trays. -->
+  <path fill="url(#graphite)" transform="translate(512 528) scale(0.46) translate(-440.789 -591.804)" d="M477.056 628.071L440.789 770.352L404.56 628.224L262.241 591.804L404.408 555.423L440.789 413.256L477.209 555.575L619.337 591.804L477.056 628.071Z"/>
+</g>
+<rect x="97" y="97" width="830" height="830" rx="181" fill="none" stroke="#fff" stroke-opacity="0.5" stroke-width="2"/>
+</svg>

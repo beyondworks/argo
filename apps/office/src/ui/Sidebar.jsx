@@ -122,6 +122,7 @@ export function Sidebar({ space, path }) {
       <div className="side-scroll">
         <div className="nav-group">
           <NavItem to={base} icon="home" label={t('nav.home')} active={at(base)} />
+          <NavItem to={`${base}/business/library`} icon="layout" label={t('library.title')} active={path.startsWith(`${base}/business/`)} />
           {isMe ? <>
             <NavItem to="/me/mail" icon="mail" label={t('nav.mail')} count={unread} active={path.startsWith('/me/mail')} />
             <NavItem to={`${base}/approvals`} icon="stamp" label={t('nav.approvals')} count={pendingHere} active={at(`${base}/approvals`)} />

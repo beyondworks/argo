@@ -5,6 +5,8 @@ import { getMode } from './session.js';
 import { update, getState } from './store.js';
 import { outbox } from './sync.js';
 import { VIEWABLE } from './viewable.js';
+import { isDesktop, apiUrl, saveAttachment } from './platform.js';
+import { startDesktopMail } from './desktop-auth.js';
 
 const CAP = 3 * 1024 * 1024; // ponytail: 서버 함수 요청 한도(4.5MB, base64 4/3배) 안 — 큰 첨부는 브라우저 → Gmail 직접 올리기로 넓힌다
 export const ATTACH_CAP = CAP;
@@ -12,7 +14,7 @@ export const ATTACH_CAP = CAP;
 export async function api(op, body, { method = body ? 'POST' : 'GET', query } = {}) {
   const sb = await getClient();
   const jwt = (await sb?.auth.getSession())?.data.session?.access_token;
-  const r = await fetch(`/api/mail/${op}${query ? `?${new URLSearchParams(query)}` : ''}`, {
+  const r = await fetch(apiUrl(`/api/mail/${op}${query ? `?${new URLSearchParams(query)}` : ''}`), {
     method, headers: { ...(jwt ? { authorization: `Bearer ${jwt}` } : {}), ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined,
   });
   if (op === 'attachment' && r.ok) return r.blob();
@@ -64,7 +66,13 @@ export async function readMail(m) {
 
 /** Google 로그인 → 권한 승인 화면으로 보낸다(돌아오는 곳: /me/mail/connect) */
 export async function connectGoogle(hint) {
-  const { url } = await api('start', { hint });
+  const { url } = await api('start', { hint, ...(isDesktop() ? { desktop: true } : {}) });
+  if (isDesktop()) {
+    const result = await startDesktopMail(url);
+    await loadAccounts();
+    await pullMail('inbox');
+    return result;
+  }
   location.assign(url);
 }
 export const finishConnect = (code, state) => api('finish', { code, state });
@@ -86,6 +94,7 @@ export const fileToPart = (f) => new Promise((ok, no) => {
 
 /** 첨부 열기 — PDF·그림·글·영상은 새 탭에서 바로, 나머지는 내려받기. 탭은 누른 순간에 연다(받은 뒤 열면 팝업 차단에 걸린다) */
 export async function openAttachment(m, a) {
+  if (isDesktop()) return downloadAttachment(m, a);
   if (!VIEWABLE.test(a.type ?? '')) return downloadAttachment(m, a);
   const w = window.open('', '_blank');
   try {
@@ -98,6 +107,7 @@ export async function openAttachment(m, a) {
 
 export async function downloadAttachment(m, a) {
   const blob = await api('attachment', null, { query: { account: m.account, id: m.gid, att: a.id, name: a.name } });
+  if (isDesktop()) return saveAttachment(blob, a.name);
   const url = URL.createObjectURL(blob);
   Object.assign(document.createElement('a'), { href: url, download: a.name }).click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
