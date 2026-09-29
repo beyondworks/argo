@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { springStep, headerCollapse, canStartSwipeBack } from '../src/use-phone.js';
 import { longPressHandlers } from '../src/long-press.js';
-import { rowSwipeRelease, replyOffset, REPLY_AT, ROW_LEAD_W, ROW_TRAIL_W } from '../src/row-swipe.js';
+import { rowSwipeRelease, replyOffset, rowWidths, REPLY_AT, ROW_LEAD_W, ROW_TRAIL_W } from '../src/row-swipe.js';
 
 const run = (x, v, target, ms) => { const xs = []; for (let t = 0; t < ms; t += 16) { [x, v] = springStep(x, v, target, 0.016); xs.push(x); } return xs; };
 
@@ -46,6 +46,14 @@ test('줄 밀기 판정 — 44px 넘게 밀면 칸이 열리고, 절반 넘게 �
   assert.equal(rowSwipeRelease(200, 390, 0).action, 'full', '절반(195px) 넘게 = 즐겨찾기 바로');
   assert.equal(rowSwipeRelease(-200, 390, 0).action, 'full', '절반 넘게 왼쪽 = 알림 끄기 바로');
   assert.equal(rowSwipeRelease(100, 390, -800).action, 'close', '되돌리며 놓으면 닫힘');
+});
+
+// 홈 줄은 채팅 줄보다 낮아 같은 칸이면 아이콘이 크고 너무 길게 빠졌다(유건 실기기 2026-09-29) — 줄 높이에 맞춰 칸을 좁힌다
+test('줄 밀기 칸 폭 — 낮은 줄(홈 44px)은 좁게, 높은 줄(채팅 64px)은 그대로', () => {
+  assert.deepEqual(rowWidths(44), { lead: 64, trail: 128, compact: true });
+  assert.deepEqual(rowWidths(64), { lead: ROW_LEAD_W, trail: ROW_TRAIL_W, compact: false });
+  assert.deepEqual(rowSwipeRelease(-60, 390, 0, rowWidths(44)), { action: 'open', dir: 'trail', to: -128 }, '낮은 줄은 128px까지만 열린다');
+  assert.deepEqual(rowSwipeRelease(60, 390, 0, rowWidths(44)), { action: 'open', dir: 'lead', to: 64 });
 });
 
 test('밀어서 답장 — 60px까지는 손가락 그대로, 넘으면 무거워져 90px 안에서 멈춘다. 오른쪽은 움직이지 않는다', () => {

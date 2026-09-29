@@ -1684,11 +1684,11 @@ html { -webkit-tap-highlight-color: transparent; }
   /* 상대 말풍선은 내용 폭 — '좋아요 👍' 한 줄도 화면 폭 전체로 늘어났다(내 말풍선·상용 메신저는 내용 폭) */
   .msgr-phone .msgr-row > div > .msgr-sheet { width: fit-content; max-width: 100%; }
   /* 직접 배치 끌기 — 들어 올린 행은 흐림 대신 그림자·살짝 확대로 손가락을 따라오고, 놓을 자리엔 금색 선 */
-  .msgr-phone .msgr-railrow[data-lift], .msgr-phone .msgr-railrow.dragging[data-lift] { position: relative; z-index: 6; opacity: 1; background: var(--card); border-radius: 14px; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); scale: 1.02; transition: scale 140ms ease-out, box-shadow 140ms ease-out; }
-  .msgr-phone .msgr-railrow[data-drop] { position: relative; }
-  .msgr-phone .msgr-railrow[data-drop]::before { content: ''; position: absolute; left: 14px; right: 14px; height: 3px; border-radius: 3px; background: var(--mark); pointer-events: none; }
-  .msgr-phone .msgr-railrow[data-drop='before']::before { top: -2px; }
-  .msgr-phone .msgr-railrow[data-drop='after']::before { bottom: -2px; }
+  .msgr-phone [data-drag-id][data-lift], .msgr-phone [data-drag-id].dragging[data-lift] { position: relative; z-index: 6; opacity: 1; background: var(--card); border-radius: 14px; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); scale: 1.02; transition: scale 140ms ease-out, box-shadow 140ms ease-out; }
+  .msgr-phone [data-drag-id][data-drop] { position: relative; }
+  .msgr-phone [data-drag-id][data-drop]::before { content: ''; position: absolute; left: 14px; right: 14px; height: 3px; border-radius: 3px; background: var(--mark); pointer-events: none; }
+  .msgr-phone [data-drag-id][data-drop='before']::before { top: -2px; }
+  .msgr-phone [data-drag-id][data-drop='after']::before { bottom: -2px; }
   /* 참여 구성 시트 머리 — 폭이 좁아 제목이 두 줄, 인원 수가 '에이전트 / 12'로 쪼개졌다. 제목·수는 왼쪽 두 줄, 초대 버튼은 오른쪽 */
   .msgr-crewsheet .sec-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; align-items: center; }
   .msgr-crewsheet .sec-head h3 { grid-column: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1746,6 +1746,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-main > .msgr-top { position: absolute; top: 0; left: 0; right: 0; z-index: 25; }
   .msgr-phone .msgr-main > .msgr-top ~ .msgr-thread { padding-top: calc(var(--msgr-top-h, var(--ph-top-h)) + 12px); scroll-padding-top: calc(var(--msgr-top-h, var(--ph-top-h)) + 12px); }
   .msgr-phone .msgr-main > .msgr-top ~ .msgr-actsplit { padding-top: var(--ph-top-h); }
+  .msgr-phone .msgr-main > .msgr-top ~ .msgr-actsplit :is(.msgr-acttree, .msgr-treescrim) { top: var(--ph-top-h); } /* 기억 서랍은 머리 아래에서 — 머리가 겹친 뒤 inset 0이면 첫 줄이 상태 표시줄 밑에 깔렸다(유건 실기기 2026-09-29) */
   /* 작은 제목 — 가운데. 큰 제목 페이지(홈·채팅·알림함)는 접힐 때만 드러난다 */
   .msgr-phone .msgr-side .msgr-smalltitle { min-width: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); opacity: var(--hp, 1); }
   .msgr-phone .msgr-top:has(.msgr-backchat) { grid-template-columns: 88px minmax(0, 1fr) 88px; column-gap: 0; padding-inline: var(--ph-pad); }
@@ -1781,6 +1782,12 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-swipeacts .read { background: var(--primary); color: var(--primary-fg); }
   .msgr-phone .msgr-railrow[data-full] .msgr-swipeacts .read { display: none; } /* 끝까지 밀면 첫 동작(알림 끄기)이 칸 전체 */
   .msgr-phone .msgr-railrow[data-full][data-side='trail'] .msgr-swipeacts .mute { align-items: flex-start; padding-left: 22px; }
+  .msgr-phone .msgr-swipeacts .mute svg { --bg: var(--fg-3); } /* 알림 끄기 사선의 테두리(스프라이트의 stroke=var(--bg))를 단추 색으로 — 글자색(var(--bg))과 같아 사선이 4px 굵기로 보였다(유건 실기기 2026-09-29). <use> 안쪽은 선택자가 안 닿아 변수로 넘긴다 */
+  .msgr-phone .msgr-railrow[data-compact] .msgr-swipeacts button { gap: 2px; font-size: 10.5px; font-weight: 500; } /* 홈의 낮은 줄 — 칸도 좁게(row-swipe.js rowWidths) */
+  .msgr-phone .msgr-railrow[data-compact] .msgr-swipeacts svg { width: 15px; height: 15px; }
+  .msgr-phone .msgr-railrow[data-compact] .msgr-swipeacts .fav { padding-right: 16px; }
+  .msgr-phone .msgr-railrow[data-compact][data-full][data-side='trail'] .msgr-swipeacts .mute { padding-left: 16px; }
+  .msgr-phone .msgr-sortwrap .msgr-rowmenu[data-up] { top: auto; bottom: calc(100% + 4px); } /* 아래 공간이 탭 바·새 대화 단추에 가리면 위로 연다(유건 실기기 2026-09-29) */
   /* 밀어서 답장 — 말풍선이 왼쪽으로 밀리며 오른쪽에서 답장 화살표가 드러난다(--rp 0→1) */
   .msgr-phone [data-swipe-reply] { will-change: transform; animation: none; } /* 등장 애니메이션(msgrRise … both)이 끝난 뒤에도 transform:none을 쥐고 있어 인라인 이동이 안 보였다(2026-09-29 실측) */
   .msgr-phone [data-swipe-reply]::after { content: ''; position: absolute; top: 50%; right: -42px; width: 24px; height: 24px; margin-top: -12px; pointer-events: none;

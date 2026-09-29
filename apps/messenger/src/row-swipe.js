@@ -9,14 +9,16 @@ export const ROW_LEAD_W = 88;   // 오른쪽으로 연 칸(즐겨찾기 버튼 �
 export const ROW_TRAIL_W = 168; // 왼쪽으로 연 칸(알림·읽음 버튼 둘)
 export const ROW_OPEN_MIN = 44; // 이만큼은 밀어야 칸이 열린다
 export const REPLY_AT = 60;     // 메시지를 이만큼 밀면 답장
+/** 줄 높이에 맞춘 칸 폭 — 홈 줄(낮음)은 좁게·작은 글씨(data-compact), 채팅 줄은 그대로(유건 실기기 2026-09-29: 홈은 아이콘이 크고 너무 길게 빠졌다) */
+export const rowWidths = (h) => (h < 56 ? { lead: 64, trail: 128, compact: true } : { lead: ROW_LEAD_W, trail: ROW_TRAIL_W, compact: false });
 const LOCK_PX = 10;
 
 /** 줄을 놓을 때 — dx: 민 거리(+오른쪽), w: 줄 폭, v: 최근 속도(px/s). { action: full|open|close, dir: lead|trail, to } */
-export function rowSwipeRelease(dx, w, v) {
+export function rowSwipeRelease(dx, w, v, widths = rowWidths(Infinity)) {
   const dir = dx > 0 ? 'lead' : 'trail'; const a = Math.abs(dx);
   if (a >= w * 0.5) return { action: 'full', dir, to: 0 };
   const back = v !== 0 && Math.sign(v) !== Math.sign(dx) && Math.abs(v) > 200; // 되돌리며 놓으면 닫는다
-  if (a >= ROW_OPEN_MIN && !back) return { action: 'open', dir, to: dx > 0 ? ROW_LEAD_W : -ROW_TRAIL_W };
+  if (a >= ROW_OPEN_MIN && !back) return { action: 'open', dir, to: dx > 0 ? widths.lead : -widths.trail };
   return { action: 'close', dir, to: 0 };
 }
 /** 메시지 밀기의 보이는 거리 — 답장 기준까지는 손가락 그대로, 넘으면 점점 무겁게(최대 약 90px) */
@@ -49,7 +51,8 @@ export function bindRowSwipe(container, { onFull, blocked = () => false }) {
     if (open && open !== row) close(open);
     if (!row || blocked() || e.target.closest?.('.msgr-swipeacts')) { g = null; return; }
     cancelAnimationFrame(row._swRaf);
-    const t = e.touches[0]; g = { row, x: t.clientX, y: t.clientY, base: row._swX ?? 0, lockX: 0, dir: null, dx: row._swX ?? 0, samples: [], full: false };
+    const widths = rowWidths(row.clientHeight); row.toggleAttribute('data-compact', widths.compact);
+    const t = e.touches[0]; g = { row, widths, x: t.clientX, y: t.clientY, base: row._swX ?? 0, lockX: 0, dir: null, dx: row._swX ?? 0, samples: [], full: false };
   };
   const move = (e) => {
     if (!g) return;
@@ -71,7 +74,7 @@ export function bindRowSwipe(container, { onFull, blocked = () => false }) {
   const end = (e) => {
     if (!g || g.dir !== 'x') { g = null; return; }
     const row = g.row; const w = row.clientWidth || 1; const v = velocity(g.samples, e.timeStamp);
-    const r = rowSwipeRelease(g.dx, w, v); g = null;
+    const r = rowSwipeRelease(g.dx, w, v, g.widths); g = null;
     row.dataset.swipedAt = String(Date.now()); row.removeAttribute('data-full');
     if (r.action === 'full') { onFull(row.dataset.swipeId, r.dir); close(row, v); }
     else if (r.action === 'open') { open = row; animate(row, row._swX ?? 0, r.to, v, paintRow(row)); }
