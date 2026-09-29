@@ -40,7 +40,7 @@ test('parseRequest: /bot<token>/<method> 경로 · Bearer 헤더 폴백 · 쿼�
 });
 
 test('토큰 없음 401 · 모르는 메서드 404 · 지원 메서드 5종', async () => {
-  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile', 'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval']);
+  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile', 'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval', 'reportStatus']);
   assert.equal((await handle({ token: null, method: 'getMe' }, fakeRpc({}))).status, 401);
   const r = await handle({ token: T, method: 'setWebhook' }, fakeRpc({}));
   assert.equal(r.status, 404); assert.equal(r.body.ok, false); assert.match(r.body.description, /setWebhook/);
@@ -193,4 +193,41 @@ test('requestApproval·ackApproval·expireApproval — 위험 등급·원문은 
   assert.deepEqual((await handle({ token: T, method: 'expireApproval', params: { approval_id: 'ap-1' } }, rpc)).body.result, { status: 'expired' });
   const c = await handle({ token: T, method: 'requestApproval', params: { execution_attempt: attempt, approval_id: 'ap-1', command: 'rm /' } }, fakeRpc({ msgr_bot_request_approval: pgErr('msgr_approval_conflict') }));
   assert.equal(c.status, 409);
+});
+
+// 1-b(2026-09-29) — 누가 연결하든 같은 계약: 버전·모드 보고, 에이전트 결재, 후속 보고
+test('reportStatus — 문자열·불리언으로 번역해 전달하고, 응답(mirror_all)을 그대로 돌려준다', async () => {
+  const rpc = fakeRpc({ msgr_bot_report_status: { mirror_all: true } });
+  const r = await handle({ token: T, method: 'reportStatus', params: { version: '0.3.0', approval_mode: 'smart', mirror_all_applied: 'true' } }, rpc);
+  assert.deepEqual(r.body.result, { mirror_all: true });
+  assert.deepEqual(rpc.calls[0], ['msgr_bot_report_status', { token: T, p_version: '0.3.0', p_approval_mode: 'smart', p_mirror_all_applied: true }]);
+  await handle({ token: T, method: 'reportStatus', params: {} }, rpc);
+  assert.deepEqual(rpc.calls[1][1], { token: T, p_version: null, p_approval_mode: null, p_mirror_all_applied: null }, '빠진 값은 null(서버가 기존 값 유지)');
+});
+
+test('requestApproval kind=agent — 제목·사유로 에이전트 결재 RPC, 명령 RPC는 부르지 않는다', async () => {
+  const attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const rpc = fakeRpc({ msgr_bot_request_agent_approval: { id: 'x', status: 'pending', risk: 'high' } });
+  await handle({ token: T, method: 'requestApproval', params: { kind: 'agent', execution_attempt: attempt, approval_id: 'ag-1', title: '광고비', reason: '캠페인', risk: 'low' } }, rpc);
+  assert.deepEqual(rpc.calls, [['msgr_bot_request_agent_approval', { token: T, p_attempt: attempt, p_approval_id: 'ag-1', p_title: '광고비', p_reason: '캠페인' }]]);
+  assert.equal((await handle({ token: T, method: 'requestApproval', params: { kind: 'agent', approval_id: 'ag-1', title: 't' } }, rpc)).status, 400, '실행 시도 없음');
+});
+
+test('sendMessage + approval_id — 후속 보고 RPC(방·원문은 서버가 정함), chat_id 없이도 된다, 결정 전이면 403', async () => {
+  const rpc = fakeRpc({ msgr_bot_followup: 501 });
+  const r = await handle({ token: T, method: 'sendMessage', params: { approval_id: 'ag-1', text: '집행했습니다.' } }, rpc);
+  assert.equal(r.status, 200); assert.equal(r.body.result.message_id, 501);
+  assert.deepEqual(rpc.calls, [['msgr_bot_followup', { token: T, p_approval_id: 'ag-1', p_body: '집행했습니다.' }]]);
+  assert.equal((await handle({ token: T, method: 'sendMessage', params: { approval_id: 'ag-1', text: ' ' } }, rpc)).status, 400);
+  const denied = await handle({ token: T, method: 'sendMessage', params: { approval_id: 'ag-1', text: 'x' } }, fakeRpc({ msgr_bot_followup: pgErr('msgr_not_allowed') }));
+  assert.equal(denied.status, 403);
+});
+
+test('requestApproval + parent_approval_id — 재개 턴 카드는 이어서 올리는 RPC로(실행 시도 없이), 셸·에이전트 구분은 kind', async () => {
+  const rpc = fakeRpc({ msgr_bot_request_followup_approval: { id: 'x', status: 'pending' } });
+  await handle({ token: T, method: 'requestApproval', params: { parent_approval_id: 'ag-1', approval_id: 'hx-2', command: 'rm -rf /tmp/a', reason: 'r' } }, rpc);
+  await handle({ token: T, method: 'requestApproval', params: { parent_approval_id: 'ag-1', approval_id: 'ag-2', kind: 'agent', title: '메일 발송' } }, rpc);
+  assert.deepEqual(rpc.calls, [
+    ['msgr_bot_request_followup_approval', { token: T, p_parent: 'ag-1', p_approval_id: 'hx-2', p_kind: 'shell', p_text: 'rm -rf /tmp/a', p_reason: 'r' }],
+    ['msgr_bot_request_followup_approval', { token: T, p_parent: 'ag-1', p_approval_id: 'ag-2', p_kind: 'agent', p_text: '메일 발송', p_reason: null }]]);
 });

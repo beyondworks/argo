@@ -4,7 +4,10 @@
 // ponytail: 레이트 리밋 없음 — 토큰당 RPC 1초 폴이 상한. 남용이 보이면 엣지에서 토큰별 카운터.
 export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile',
   // 외부 에이전트 크루 계약 1-a(20260929130000) — 자동화(크루 루틴) 미러·편집, 위험 명령 결재 카드. 판정은 전부 msgr_bot_* RPC.
-  'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval'];
+  'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval',
+  // 1-b(20260929150000) — 어댑터 버전·승인 모드 보고(설정은 강제하지 않고 메신저에 보여 준다). 에이전트 결재는 requestApproval kind='agent',
+  // 결정 뒤 후속 보고는 sendMessage + approval_id.
+  'reportStatus'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FILE_URL_TTL_S = 600; // getFile 서명 URL 수명 — 봇은 즉시 내려받는다
 const MAX_WAIT_MS = 25_000; // 텔레그램은 ~50초, 엣지 펑션 벽시계 안에서 여유 있게
@@ -33,7 +36,8 @@ const ERR = {
   msgr_routine_forbidden: [403, 'Forbidden: this crew cannot sync or close these routines'],
   msgr_routine_invalid_rows: [400, 'Bad Request: rows must be an array of routines'],
   msgr_routine_too_many: [400, 'Bad Request: at most 200 routines per snapshot'],
-  msgr_approval_invalid: [400, 'Bad Request: approval_id (1-80 of A-Z a-z 0-9 . _ : -) and command are required'],
+  msgr_approval_invalid: [400, 'Bad Request: approval_id (1-80 of A-Z a-z 0-9 . _ : -) and command (or title) are required'],
+  msgr_routine_invalid_channel: [403, 'Forbidden: choose a DM between the owner and this agent, or a channel the agent is in'],
   msgr_approval_conflict: [409, 'Conflict: this approval_id already exists with a different command or source'],
 };
 
@@ -95,8 +99,22 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       if (!UUID_RE.test(String(params.edit_id ?? '')) || !['applied', 'failed', 'superseded'].includes(status)) return fail(400, 'Bad Request: edit_id (uuid) and status (applied|failed|superseded) are required');
       return reply(200, await rpc('msgr_bot_routine_edit_done', { token, p_id: params.edit_id, p_status: status, p_error: params.error == null ? null : String(params.error) }));
     }
-    if (method === 'requestApproval') { // 위험 명령 결재 카드. 원문은 실행 시도(execution_attempt)로 서버가 정하고, 등급은 서버가 고위험으로 정한다
+    if (method === 'reportStatus') { // 값이 바뀔 때만 서버가 쓴다. 응답 mirror_all = 소유자가 켠 "모든 예약 작업 보기"
+      const applied = params.mirror_all_applied == null ? null : params.mirror_all_applied === true || params.mirror_all_applied === 'true';
+      return reply(200, await rpc('msgr_bot_report_status', { token, p_version: params.version == null ? null : String(params.version),
+        p_approval_mode: params.approval_mode == null ? null : String(params.approval_mode), p_mirror_all_applied: applied }));
+    }
+    if (method === 'requestApproval' && params.parent_approval_id != null) { // 재개 턴(실행 행 없음)의 카드 — 승인된 부모 결재의 원문에 붙인다(검수 M-3)
+      return reply(200, await rpc('msgr_bot_request_followup_approval', { token, p_parent: String(params.parent_approval_id), p_approval_id: String(params.approval_id ?? ''),
+        p_kind: params.kind === 'agent' ? 'agent' : 'shell', p_text: String(params.kind === 'agent' ? (params.title ?? '') : (params.command ?? '')),
+        p_reason: params.reason == null ? null : String(params.reason) }));
+    }
+    if (method === 'requestApproval') { // 결재 카드. 원문은 실행 시도(execution_attempt)로 서버가 정하고, 등급은 서버가 고위험으로 정한다
       if (!UUID_RE.test(String(params.execution_attempt ?? ''))) return fail(400, 'Bad Request: execution_attempt (uuid) is required');
+      if (params.kind === 'agent') { // 에이전트가 스스로 올리는 결재(도구) — 명령 대신 제목·사유. 기한 없음, 결정되면 approval_decided(agent=true)
+        return reply(200, await rpc('msgr_bot_request_agent_approval', { token, p_attempt: params.execution_attempt, p_approval_id: String(params.approval_id ?? ''),
+          p_title: String(params.title ?? ''), p_reason: params.reason == null ? null : String(params.reason) }));
+      }
       return reply(200, await rpc('msgr_bot_request_approval', { token, p_attempt: params.execution_attempt, p_approval_id: String(params.approval_id ?? ''),
         p_command: String(params.command ?? ''), p_reason: params.reason == null ? null : String(params.reason) }));
     }
@@ -104,6 +122,12 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const id = String(params.approval_id ?? '');
       if (!id) return fail(400, 'Bad Request: approval_id is required');
       return reply(200, await rpc(method === 'ackApproval' ? 'msgr_bot_ack_approval' : 'msgr_bot_expire_approval', { token, p_approval_id: id }));
+    }
+    if (method === 'sendMessage' && params.approval_id != null) { // 후속 보고: 결정된 결재 한 건에 한 번만 원문 답글로(서버가 방·원문을 정한다)
+      const body = String(params.text ?? '');
+      if (!body.trim()) return fail(400, 'Bad Request: text is empty');
+      const id = await rpc('msgr_bot_followup', { token, p_approval_id: String(params.approval_id), p_body: body });
+      return reply(200, { message_id: Number(id), approval_id: String(params.approval_id), text: body });
     }
     const chat = String(params.chat_id ?? '');
     if (!/^[0-9a-f-]{36}$/i.test(chat)) return fail(400, 'Bad Request: chat_id must be a channel id');
