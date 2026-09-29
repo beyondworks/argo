@@ -51,7 +51,9 @@ export async function fetchPlan(sb, ownerId) {
       const { data: u, error: aerr } = await sb.auth.getUser();
       if (!aerr && u?.user && u.user.id !== ownerId) return 'free'; // 세션 불일치 — 남의 판정을 오너 것으로 안 믿는다
     }
-    const { data, error } = await sb.rpc('my_plan');
+    // p_uid: 서비스 모드(service_role)는 auth.uid()가 비어 오너를 직접 넘겨야 한다(보안 검수 M1).
+    // 사용자 세션이면 서버가 auth.uid()와 같은지만 확인한다.
+    const { data, error } = await sb.rpc('my_plan', { p_uid: ownerId });
     if (error) throw new Error(error.message);
     const plan = data?.plan;
     return plan === 'pro' || plan === 'trial' ? plan : 'free';

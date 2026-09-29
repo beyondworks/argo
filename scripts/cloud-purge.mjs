@@ -97,6 +97,11 @@ export async function runCloudPurge({ sb, execute = false, confirm = null, log =
     throw new Error(`--confirm(${confirm})이 실제 대상 수(${reports.length})와 다릅니다 — 그 사이 바뀐 대상이 있는지 다시 확인하세요. 삭제하지 않았습니다.`);
   }
   for (const r of reports) {
+    // 목록을 뽑은 뒤 결제한 사용자를 지우지 않도록 계정마다 삭제 직전에 다시 확인한다(보안 검수 H2).
+    // 재확인 실패는 삭제 근거가 없으므로 멈춘다.
+    const { data: proNow, error: proErr } = await sb.rpc('is_pro_for', { p_uid: r.userId });
+    if (proErr) throw new Error(`${r.userId} Pro 재확인 실패: ${proErr.message ?? proErr} — 이 계정부터 삭제하지 않았습니다.`);
+    if (proNow === true) { log(`  건너뜀: ${r.userId} (삭제 직전 Pro 확인)`); continue; }
     const keys = r.keys;
     for (let i = 0; i < keys.length; i += 500) {
       const { error: rmErr } = await storage.remove(keys.slice(i, i + 500));

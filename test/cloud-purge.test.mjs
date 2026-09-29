@@ -62,9 +62,14 @@ test('reportFor: 바이트·파일·폴더 수를 정확히 센다', async () =>
   assert.equal(r.purgeAfter, '2026-11-01T00:00:00Z');
 });
 
-function fakeSb(candidates, storage) {
+// proNow: 목록을 뽑은 뒤 결제해 Pro가 된 계정 — is_pro_for가 true를 준다.
+function fakeSb(candidates, storage, proNow = new Set()) {
   return {
-    rpc: async (name) => (name === 'plan_purge_candidates' ? { data: candidates, error: null } : { data: null, error: { message: `unknown rpc ${name}` } }),
+    rpc: async (name, args) => {
+      if (name === 'plan_purge_candidates') return { data: candidates, error: null };
+      if (name === 'is_pro_for') return { data: proNow.has(args?.p_uid), error: null };
+      return { data: null, error: { message: `unknown rpc ${name}` } };
+    },
     storage: { from: () => storage },
   };
 }
@@ -104,4 +109,22 @@ test('runCloudPurge: 대상 0명이면 --execute --confirm=0도 안전하게 통
   const { deleted, reports } = await runCloudPurge({ sb: fakeSb([], storage), execute: true, confirm: 0, log: () => {} });
   assert.equal(deleted, true);
   assert.equal(reports.length, 0);
+});
+
+// 보안 검수 H2(2026-09-29): 목록을 뽑은 뒤 삭제 전에 결제한 사용자의 자료를 지우면 안 된다.
+test('runCloudPurge: 삭제 직전 Pro가 된 계정은 건너뛰고 자료를 남긴다', async () => {
+  const storage = fakeStorage({ [`u1/ws1/a.txt`]: { size: 10 }, [`u2/ws1/b.txt`]: { size: 10 } });
+  const sb = fakeSb([{ user_id: 'u1', purge_after: '2026-11-01' }, { user_id: 'u2', purge_after: '2026-11-01' }], storage, new Set(['u2']));
+  const { deleted } = await runCloudPurge({ sb, execute: true, confirm: 2, log: () => {} });
+  assert.equal(deleted, true);
+  assert.deepEqual([...storage._store.keys()], ['u2/ws1/b.txt'], 'Pro가 된 u2의 자료는 남고 u1만 지워져야 한다');
+});
+
+test('runCloudPurge: 삭제 직전 재확인이 실패하면 그 계정을 지우지 않고 멈춘다', async () => {
+  const storage = fakeStorage({ [`u1/ws1/a.txt`]: { size: 10 } });
+  const sb = fakeSb([{ user_id: 'u1', purge_after: '2026-11-01' }], storage);
+  const rpc = sb.rpc;
+  sb.rpc = async (name, args) => (name === 'is_pro_for' ? { data: null, error: { message: 'timeout' } } : rpc(name, args));
+  await assert.rejects(() => runCloudPurge({ sb, execute: true, confirm: 1, log: () => {} }), /timeout/);
+  assert.equal(storage._store.size, 1, '재확인 실패인데 지워졌다');
 });

@@ -245,3 +245,18 @@ test('R4: purge_after 경계 — pro=null, T 이후 가입자·만료된 체험=
     psqlRaw(['-A', '-t', '-c', `delete from public.entitlements where user_id = '${UID}'`]);
   }
 });
+
+// 검수 #753 H1: my_plan(p_uid)는 "sub 클레임이 없으면 서비스 경로"로 보고 남의 플랜·삭제 예정일을 돌려줬다 —
+// 경계는 클레임 부재가 아니라 역할(service_role)로 판정한다. 역할 클레임이 service_role일 때만 p_uid를 쓴다.
+test('my_plan 권한: authenticated인데 sub가 없으면 남의 uid를 조회하지 못한다, service_role만 p_uid 사용', { skip }, () => {
+  psql(['-c', `create or replace function auth.uid() returns uuid language sql stable as 'select null::uuid'`]);
+  sql(`delete from public.entitlements where user_id = '${UID}'`);
+  sql(`insert into public.entitlements (user_id, plan, granted) values ('${UID}', 'pro', true)`);
+  try {
+    const asRole = (role) => psql(['-A', '-t', '-c', `set role ${role}; select set_config('request.jwt.claims', '{"role":"${role}"}', false); select public.my_plan('${UID}'::uuid)->>'plan'`]).trim().split('\n').pop();
+    const r = psqlRaw(['-A', '-t', '-c', `set role authenticated; select set_config('request.jwt.claims', '{"role":"authenticated"}', false); select public.my_plan('${UID}'::uuid)`]);
+    assert.notEqual(r.status, 0, 'sub 없는 authenticated가 남의 uid를 넘기면 거부된다');
+    assert.match(r.stderr, /my_plan_forbidden/);
+    assert.equal(asRole('service_role'), 'pro', '서비스 롤은 넘긴 uid의 판정을 받는다(서버 /api/me/billing 경로)');
+  } finally { sql(`delete from public.entitlements where user_id = '${UID}'`); }
+});

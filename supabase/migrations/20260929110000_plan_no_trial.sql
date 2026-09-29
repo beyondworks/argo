@@ -89,13 +89,15 @@ create or replace function public.my_plan(p_uid uuid default null) returns jsonb
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare uid uuid; te timestamptz;
 begin
-  if auth.uid() is not null then
-    if p_uid is not null and p_uid is distinct from auth.uid() then
+  -- 경계는 역할로 판정한다 — "sub 클레임이 없으면 서비스 경로"로 보면 sub 없는 authenticated 토큰이 남의 판정을 읽는다(검수 #753 H1).
+  if coalesce(nullif(current_setting('request.jwt.claim.role', true), ''),
+              nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'role') = 'service_role' then
+    uid := p_uid; -- 서비스 롤 경로(기기 세션 폴백, app/api/me/billing) — 호출부가 검증된 uid를 넘긴다
+  else
+    uid := auth.uid();
+    if p_uid is not null and p_uid is distinct from uid then
       raise exception 'my_plan_forbidden' using errcode = '42501';
     end if;
-    uid := auth.uid();
-  else
-    uid := p_uid; -- 서비스 롤 경로(기기 세션 폴백, app/api/me/billing) — 호출부가 검증된 uid를 넘긴다
   end if;
   if uid is null then
     return jsonb_build_object('plan', 'free', 'trialEndsAt', null, 'purgeAfter', null);

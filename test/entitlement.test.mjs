@@ -85,3 +85,12 @@ test('reconcileUnneeded: 부여 Pro(구독 없는 pro)는 대사가 돌아야 �
   assert.equal(reconcileUnneeded({ plan: 'free', ls_subscription_id: 'sub_1' }), false);
   assert.equal(reconcileUnneeded(null), false, '무행은 항상 대사 적격');
 });
+
+// 보안 검수 M1(2026-09-29): 서비스 모드(service_role)는 auth.uid()가 비어 오너를 p_uid로 넘겨야
+// 서버가 그 오너의 plan을 판정한다. 인자를 빼면 서비스 모드 오너가 모두 free로 보인다.
+test('fetchPlan: my_plan에 p_uid로 오너를 넘긴다', async () => {
+  let seen;
+  const sb = { rpc: async (name, args) => { seen = { name, args }; return { data: { plan: 'pro' }, error: null }; } };
+  assert.equal(await fetchPlan(sb, 'owner-1'), 'pro');
+  assert.deepEqual(seen, { name: 'my_plan', args: { p_uid: 'owner-1' } });
+});
