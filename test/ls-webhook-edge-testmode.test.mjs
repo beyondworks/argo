@@ -52,3 +52,12 @@ test('엣지 수신자: 게이트가 재시도 폭주를 만들지 않는다(200
   assert.ok(m, '게이트 응답의 status를 찾지 못했다');
   assert.equal(m[1], '200', 'test_mode 차단은 200이어야 한다 — 4xx/5xx면 LS가 무한 재시도한다');
 });
+
+// R2(2026-09-29): 이 레거시 수신자는 upsert를 직접 써서 apply_ls_event의 SQL 가드(plan = case when
+// e.granted then e.plan else excluded.plan end)를 안 탄다 — 여기서도 같은 계약을 걸어야 한다.
+test('엣지 수신자: granted 가드가 upsert보다 먼저다 — 부여 Pro는 결제 웹훅이 plan을 못 내린다', () => {
+  const guard = code.search(/cur\?\.granted/);
+  assert.notEqual(guard, -1, 'granted 가드가 없다 — 부여 Pro가 결제 취소 웹훅에 내려간다');
+  const write = code.search(/\.upsert\(/);
+  assert.ok(guard < write, 'granted 가드가 쓰기보다 뒤에 있다 — 차단 전에 plan이 이미 확정된다');
+});

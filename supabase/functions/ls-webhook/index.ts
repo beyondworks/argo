@@ -69,6 +69,14 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     { auth: { persistSession: false } },
   );
+  // R2(2026-09-29): entitlements.granted=true(운영자 부여 Pro)는 결제 웹훅이 plan을 못 내린다 —
+  // 정본 경로(apply_ls_event)는 SQL에서 이미 이걸 지키지만, 이 함수는 upsert를 직접 쓰는 레거시
+  // 수신자라 같은 가드를 여기서도 건다. ls_status·ends_at 등 결제 상태 컬럼은 그대로 기록한다
+  // (접근만 안 내려간다 — granted 계정이 결제 상태를 잃었다는 사실 자체는 숨기지 않는다).
+  if (plan === 'free') {
+    const { data: cur } = await sb.from('entitlements').select('granted').eq('user_id', userId).maybeSingle();
+    if (cur?.granted) plan = 'pro';
+  }
   // FK(auth.users)가 쓰레기 user_id를 거른다 — 실패는 500으로 드러내 LS가 재시도하게 둔다.
   // ends_at 동반 필수(2026-07-30) — is_pro가 ends_at을 집행하게 되면서, plan만 쓰면 해지→재개 시
   // 옛 해지일이 행에 남아 그 날짜에 결정론적으로 잠긴다(분리 검수 MEDIUM: PostgREST upsert는
