@@ -122,7 +122,7 @@ export function Sidebar({ space, path }) {
       <div className="side-scroll">
         <div className="nav-group">
           <NavItem to={base} icon="home" label={t('nav.home')} active={at(base)} />
-          <NavItem to={`${base}/business/library`} icon="layout" label={t('library.title')} active={path.startsWith(`${base}/business/`)} />
+          <NavItem to={`${base}/business/analytics`} icon="chart" label={t('nav.business')} active={path.startsWith(`${base}/business/`) && !path.startsWith(`${base}/business/library`)} />
           {isMe ? <>
             <NavItem to="/me/mail" icon="mail" label={t('nav.mail')} count={unread} active={path.startsWith('/me/mail')} />
             <NavItem to={`${base}/approvals`} icon="stamp" label={t('nav.approvals')} count={pendingHere} active={at(`${base}/approvals`)} />
@@ -143,6 +143,9 @@ export function Sidebar({ space, path }) {
         <div className="tree" role="tree"><Tree space={space} path={path} openMap={openMap} onToggle={toggle} /></div>
         <div className="nav-section"><span>{t('nav.crews')}</span></div>
         <div className="crews">{crews.map((c) => <CrewRow key={c.id} crew={c} space={space} />)}</div>
+      </div>
+      <div className="side-dock">{/* 모듈 보관함은 패널 맨 아래, 휴지통 구분선 바로 위(유건 9/29) */}
+        <NavItem to={`${base}/business/library`} icon="layout" label={t('library.title')} active={path.startsWith(`${base}/business/library`)} />
       </div>
       <div className="side-foot">
         <NavItem to={`${base}/trash`} icon="trash" label={t('nav.trash')} active={at(`${base}/trash`)} />

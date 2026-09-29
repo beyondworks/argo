@@ -1,8 +1,8 @@
 export const BUSINESS_UI_DICT = {
-  'bizui.title': ['업무 모듈', 'Business modules'],
+  'bizui.title': ['업무', 'Business'],
   'bizui.customers': ['거래처', 'Customers'], 'bizui.catalog': ['상품·서비스', 'Products & services'],
   'bizui.orders': ['거래', 'Transactions'], 'bizui.inventory': ['재고', 'Inventory'],
-  'bizui.payments': ['청구·입금', 'Billing & payments'], 'bizui.analytics': ['분석', 'Analytics'], 'bizui.modules': ['모듈 관리', 'Manage modules'],
+  'bizui.payments': ['청구·입금', 'Billing & payments'], 'bizui.analytics': ['분석', 'Analytics'], 'bizui.modules': ['업무 기능 켜고 끄기', 'Turn features on or off'],
   'bizui.subtitle': ['서비스와 상품 거래를 한곳에서 관리합니다.', 'Manage service and product transactions together.'],
   'bizui.add': ['추가', 'Add'], 'bizui.edit': ['수정', 'Edit'], 'bizui.save': ['저장', 'Save'], 'bizui.cancel': ['닫기', 'Close'],
   'bizui.name': ['이름', 'Name'], 'bizui.email': ['이메일', 'Email'], 'bizui.notes': ['메모', 'Notes'],

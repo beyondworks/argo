@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { t, useLang, getLang } from '../core/i18n.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
+import { Icon } from '../ui/Icon.jsx';
+import { InfoTip } from '../ui/InfoTip.jsx';
 import PerformanceBoard from './PerformanceBoard.jsx';
 import { useMarketing, marketingError } from './marketing-data.js';
 import { defaultPeriod, validateFilters } from './dashboard-model.js';
@@ -27,8 +29,11 @@ export function marketingPayload(kind, value) {
 }
 
 function Field({ name, children }) { return <label className="field-block bizui-field"><span className="label">{label(name)}</span>{children}</label>; }
-function Table({ columns, children, empty }) { return empty ? <p className="empty-state">{t('bizui.empty')}</p> : <div className="table-wrap bizui-table-wrap"><table className="table bizui-table"><thead><tr>{columns.map((column) => <th key={column}>{column === 'edit' ? t('bizui.edit') : label(column)}</th>)}</tr></thead><tbody>{children}</tbody></table></div>; }
-function SectionTitle({ name, disabled, onAdd }) { return <div className="page-title-row bizui-toolbar"><h2>{label(name)}</h2>{onAdd && <button type="button" className="btn" disabled={disabled} onClick={onAdd}>{t('bizui.add')}</button>}</div>; }
+const NUM = new Set(['budget', 'spend', 'impressions', 'clicks', 'leads', 'target', 'actual', 'ratio', 'sales', 'paid', 'orders', 'roas', 'cpl']);
+const cls = (column) => (NUM.has(column) ? 'num' : column === 'edit' ? 'act' : undefined);
+function Table({ columns, children, empty }) { return empty ? <p className="empty-state">{t('bizui.empty')}</p> : <div className="table-wrap bizui-table-wrap"><table className="table bizui-table"><thead><tr>{columns.map((column) => <th key={column} className={cls(column)}>{column === 'edit' ? '' : label(column)}</th>)}</tr></thead><tbody>{children}</tbody></table></div>; }
+function SectionTitle({ name, disabled, onAdd, tip }) { return <div className="biz-section"><h2>{label(name)}</h2>{tip && <InfoTip text={tip} />}{onAdd && <button type="button" className="btn sm" disabled={disabled} onClick={onAdd}><Icon name="plus" size={13} />{t('bizui.add')}</button>}</div>; }
+const Edit = ({ disabled, onClick, children }) => <td className="act"><button type="button" className="btn sm ghost" disabled={disabled} onClick={onClick}>{children ?? t('bizui.edit')}</button></td>;
 
 export default function Marketing({ space, tab = 'marketing', business }) {
   useLang();
@@ -54,7 +59,8 @@ export default function Marketing({ space, tab = 'marketing', business }) {
     return () => { sequence.current += 1; };
   }, [data, business?.data, reportKey, marketing.report, revision]);
   const launch = (kind, value = {}) => { setFormError(null); setDialog({ kind, value }); };
-  const refresh = () => { marketing.refresh().catch(() => {}); setRevision((value) => value + 1); };
+  // 업무 ⋯ 새로고침 — 마케팅 원본만 다시 받는다. 성과 보고서는 data가 바뀌면 효과가 한 번 다시 부른다(중복 호출 없게)
+  useEffect(() => { const refresh = () => { marketing.refresh().catch(() => {}); }; window.addEventListener('office:biz-refresh', refresh); return () => window.removeEventListener('office:biz-refresh', refresh); }, [marketing.refresh]);
   const retry = async () => {
     const captured = dialog, currentScope = scope.current;
     try {
@@ -62,7 +68,7 @@ export default function Marketing({ space, tab = 'marketing', business }) {
       if (result?.id && scope.current === currentScope) { setDialog((current) => current === captured ? null : current); setFormError(null); showToast(t('bizui.saved')); }
     } catch (failure) { if (scope.current === currentScope) setFormError(marketingError(failure)); }
   };
-  const pendingNotice = uncertain && <div className="bizui-error" role="alert"><p>{t('bizui.pending')}</p><button type="button" className="btn" disabled={busy} onClick={retry}>{t('bizui.retry')}</button></div>;
+  const pendingNotice = uncertain && <div className="bizui-error" role="alert"><span>{t('bizui.pending')}</span><button type="button" className="btn sm" disabled={busy} onClick={retry}>{t('bizui.retry')}</button></div>;
   const save = async (kind, value) => {
     const captured = dialog, currentScope = scope.current;
     setFormError(null);
@@ -77,31 +83,30 @@ export default function Marketing({ space, tab = 'marketing', business }) {
     catch (failure) { setReportError(marketingError(failure)); }
   };
   return <section aria-label={label(tab === 'performance' ? 'performance' : 'campaigns')}>
-    <div className="row-actions"><button type="button" className="btn ghost" disabled={busy || loading} onClick={refresh}>{t('biz.refresh')}</button></div>
     {error && <p className="bizui-error" role="alert">{t(error)}</p>}{pendingNotice}
     {loading && !data && <p role="status">{t('biz.loading')}</p>}
     {data && <>
       {!data.can_write && <p className="bizui-muted">{t('bizui.readOnly')}</p>}
-      <p className="biz-source">{label('sourceHelp')}</p>
       {tab === 'performance' ? <>
-        <SectionTitle name="performance" /><p className="biz-source">{label('reportBasis')}</p>
-        <form className="biz-dashboard-filters" onSubmit={apply}>
-          <Field name="starts_on"><input className="input" type="date" required value={draft.from} onChange={(event) => setDraft({ ...draft, from: event.target.value })} /></Field>
-          <Field name="ends_on"><input className="input" type="date" required value={draft.to} onChange={(event) => setDraft({ ...draft, to: event.target.value })} /></Field>
-          <Field name="campaign_id"><select className="input" value={draft.campaign || ''} onChange={(event) => setDraft({ ...draft, campaign: event.target.value || null })}><option value="">{label('all')}</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></Field>
-          <button className="btn" disabled={reportLoading}>{t('biz.filters.apply')}</button>
+        <form className="biz-bar biz-filter" onSubmit={apply}>
+          <input className="input" type="date" required aria-label={label('starts_on')} value={draft.from} onChange={(event) => setDraft({ ...draft, from: event.target.value })} />
+          <span className="dash">–</span>
+          <input className="input" type="date" required aria-label={label('ends_on')} value={draft.to} onChange={(event) => setDraft({ ...draft, to: event.target.value })} />
+          <select className="input" aria-label={label('campaign_id')} value={draft.campaign || ''} onChange={(event) => setDraft({ ...draft, campaign: event.target.value || null })}><option value="">{label('all')}</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select>
+          <button className="btn sm" disabled={reportLoading}>{t('biz.filters.apply')}</button>
+          <InfoTip text={`${label('sourceHelp')} ${label('reportBasis')}`} />
         </form>
-        {reportError && <p className="bizui-error" role="alert">{t(reportError)}</p>}{reportLoading && <p role="status">{t('biz.loading')}</p>}
+        {reportError && <p className="bizui-error" role="alert">{t(reportError)}</p>}{reportLoading && !report && <p className="dim small" role="status">{t('biz.loading')}</p>}
         {report && <PerformanceBoard space={space} business={business} report={report} campaigns={campaigns} formatValue={format} />}
-        <SectionTitle name="goals" disabled={blocked} onAdd={() => launch('goal')} /><p className="biz-source">{label('goalHelp')}</p>
-        <Table columns={['name', 'campaign_id', 'period', 'metric', 'target', 'actual', 'ratio', 'edit']} empty={!data.goals.length}>{data.goals.map((goal) => { const result = report?.goals?.find((entry) => entry.id === goal.id); return <tr key={goal.id}><td>{goal.name}</td><td>{goal.campaign_id ? campaignName(goal.campaign_id) : label('all')}</td><td>{goal.starts_on} – {goal.ends_on}</td><td>{label(goal.metric)}</td><td>{format(goal.metric, goal.target)}</td><td>{format(goal.metric, result?.actual)}</td><td>{format('ratio', result?.ratio)}</td><td><button className="btn sm" disabled={blocked} onClick={() => launch('goal', goal)}>{t('bizui.edit')}</button></td></tr>; })}</Table>
+        <SectionTitle name="goals" tip={label('goalHelp')} disabled={blocked} onAdd={() => launch('goal')} />
+        <Table columns={['name', 'campaign_id', 'period', 'metric', 'target', 'actual', 'ratio', 'edit']} empty={!data.goals.length}>{data.goals.map((goal) => { const result = report?.goals?.find((entry) => entry.id === goal.id); return <tr key={goal.id}><td>{goal.name}</td><td>{goal.campaign_id ? campaignName(goal.campaign_id) : label('all')}</td><td className="mono">{goal.starts_on} – {goal.ends_on}</td><td>{label(goal.metric)}</td><td className="num">{format(goal.metric, goal.target)}</td><td className="num">{format(goal.metric, result?.actual)}</td><td className="num">{format('ratio', result?.ratio)}</td><Edit disabled={blocked} onClick={() => launch('goal', goal)} /></tr>; })}</Table>
       </> : <>
-        <SectionTitle name="campaigns" disabled={blocked} onAdd={() => launch('campaign')} />
-        <Table columns={['name', 'channel', 'period', 'budget', 'status', 'edit']} empty={!campaigns.length}>{campaigns.map((campaign) => <tr key={campaign.id}><td>{campaign.name}</td><td>{campaign.channel}</td><td>{campaign.starts_on} – {campaign.ends_on}</td><td>{format('budget', campaign.budget)}</td><td><span className="badge">{label(campaign.status)}</span></td><td><button className="btn sm" disabled={blocked} onClick={() => launch('campaign', campaign)}>{t('bizui.edit')}</button></td></tr>)}</Table>
-        <SectionTitle name="daily" disabled={blocked || !campaigns.length} onAdd={() => launch('daily')} /><p className="biz-source">{label(campaigns.length ? 'dailyHelp' : 'noCampaigns')}</p>
-        <Table columns={['date', 'campaign_id', 'spend', 'impressions', 'clicks', 'leads', 'source', 'edit']} empty={!data.daily.length}>{data.daily.map((row) => <tr key={row.id}><td>{row.date}</td><td>{campaignName(row.campaign_id)}</td>{['spend', 'impressions', 'clicks', 'leads'].map((key) => <td key={key}>{format(key, row[key])}</td>)}<td>{label(row.source)}</td><td><button className="btn sm" disabled={blocked} onClick={() => launch('daily', row)}>{t('bizui.edit')}</button></td></tr>)}</Table>
-        <SectionTitle name="attribution" /><p className="biz-source">{label('attributionHelp')}</p>
-        <Table columns={['order_id', 'campaign_id', 'edit']} empty={!orders.length}>{orders.map((order) => { const attribution = data.attributions.find((row) => row.order_id === order.id); return <tr key={order.id}><td>{order.title}</td><td>{campaignName(attribution?.campaign_id)}</td><td><button className="btn sm" disabled={blocked} onClick={() => launch('attribution', { order_id: order.id, campaign_id: attribution?.campaign_id ?? '', version: attribution?.version ?? 0 })}>{label('connect')}</button></td></tr>; })}</Table>
+        <SectionTitle name="campaigns" tip={label('sourceHelp')} disabled={blocked} onAdd={() => launch('campaign')} />
+        <Table columns={['name', 'channel', 'period', 'budget', 'status', 'edit']} empty={!campaigns.length}>{campaigns.map((campaign) => <tr key={campaign.id}><td>{campaign.name}</td><td>{campaign.channel}</td><td className="mono">{campaign.starts_on} – {campaign.ends_on}</td><td className="num">{format('budget', campaign.budget)}</td><td><span className="badge">{label(campaign.status)}</span></td><Edit disabled={blocked} onClick={() => launch('campaign', campaign)} /></tr>)}</Table>
+        <SectionTitle name="daily" tip={label(campaigns.length ? 'dailyHelp' : 'noCampaigns')} disabled={blocked || !campaigns.length} onAdd={() => launch('daily')} />
+        <Table columns={['date', 'campaign_id', 'spend', 'impressions', 'clicks', 'leads', 'source', 'edit']} empty={!data.daily.length}>{data.daily.map((row) => <tr key={row.id}><td className="mono">{row.date}</td><td>{campaignName(row.campaign_id)}</td>{['spend', 'impressions', 'clicks', 'leads'].map((key) => <td key={key} className="num">{format(key, row[key])}</td>)}<td>{label(row.source)}</td><Edit disabled={blocked} onClick={() => launch('daily', row)} /></tr>)}</Table>
+        <SectionTitle name="attribution" tip={label('attributionHelp')} />
+        <Table columns={['order_id', 'campaign_id', 'edit']} empty={!orders.length}>{orders.map((order) => { const attribution = data.attributions.find((row) => row.order_id === order.id); return <tr key={order.id}><td>{order.title}</td><td>{campaignName(attribution?.campaign_id)}</td><Edit disabled={blocked} onClick={() => launch('attribution', { order_id: order.id, campaign_id: attribution?.campaign_id ?? '', version: attribution?.version ?? 0 })}>{label('connect')}</Edit></tr>; })}</Table>
       </>}
       {dialog && <MarketingForm key={`${dialog.kind}:${dialog.value.id || dialog.value.order_id || ''}`} dialog={dialog} campaigns={campaigns} orders={orders} blocked={blocked} busy={busy} error={formError} pendingNotice={pendingNotice} dismiss={() => { if (!busy) setDialog(null); }} save={save} />}
     </>}

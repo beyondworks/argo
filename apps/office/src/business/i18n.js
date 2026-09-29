@@ -3,7 +3,7 @@ export const BUSINESS_DICT = {
   'biz.error.aggregate': ['집계 금액이 표시 가능한 범위를 초과합니다. 조회 기간이나 거래처를 좁혀 주세요.', 'The aggregate exceeds the supported range. Narrow the period or customer filter.'],
   'biz.dashboard': ['대시보드', 'Dashboards'],
   'biz.dashboard.new': ['새 대시보드', 'New dashboard'],
-  'biz.dashboard.name': ['대시보드 이름', 'Dashboard name'],
+  'biz.dashboard.name': ['대시보드 이름', 'Dashboard name'], 'biz.dashboard.rename': ['이름 바꾸기', 'Rename'],
   'biz.dashboard.default': ['매출·수금 현황', 'Sales and collections'],
   'biz.dashboard.create': ['대시보드 만들기', 'Create dashboard'],
   'biz.dashboard.empty': ['아직 대시보드가 없습니다. 실제 거래를 연결할 대시보드를 만드세요.', 'No dashboards yet. Create one to follow your actual transactions.'],

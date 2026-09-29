@@ -1,68 +1,109 @@
-.bizui-tabs { flex-wrap: wrap; }
-.bizui-tabs .tab { display: inline-flex; align-items: center; }
-.bizui-toolbar { margin-top: 20px; margin-bottom: 14px; }
-.bizui-toolbar h2,.bizui-page > h2 { font-size: 14px; font-weight: 620; }
-.bizui-page > h3,.bizui-detail > h3 { font-size: 13px; font-weight: 620; margin: 20px 0 12px; }
-.bizui-muted { color: var(--fg-3); font-size: 12.5px; }
-.bizui-table-wrap { margin: 12px 0 20px; }
-.bizui-detail { min-width: 0; max-width: 100%; }
+/* 업무 화면 — 공용 부품(탭·표·카드·버튼·모달)만 쓰고 여기에는 업무 화면에만 있는 배치만 둔다(유건 9/29: 한 사람이 만든 것처럼) */
+
+/* 탭 줄 = 탭 + 오른쪽 동작 하나(추가·새 대시보드). 같은 이름을 제목으로 한 번 더 쓰지 않는다 */
+.biz-tabbar { display: flex; align-items: flex-end; gap: 12px; border-bottom: 1px solid var(--border-soft); margin: -4px 0 16px; }
+.biz-tabbar > .tabs { flex: 1; min-width: 0; flex-wrap: wrap; margin: 0; border-bottom: 0; } /* 좁은 폭에서는 줄바꿈 — 숨은 탭이 없게 */
+.biz-tabbar .tab { flex: none; display: inline-flex; align-items: center; }
+.biz-tab-actions { display: flex; align-items: center; gap: 6px; padding-bottom: 4px; flex: none; }
+
+/* 도구 줄 — 대시보드 전환·필터·모듈 추가가 한 줄에 */
+.biz-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: var(--ctl); margin-bottom: 12px; }
+.biz-bar > .spacer { flex: 1; }
+.biz-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.biz-filter .input { height: 30px; font-size: 12.5px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); } /* 면 위에 바로 놓이는 입력 — 채운 입력이 바탕과 같은 색이라 경계를 준다 */
+.biz-bar .seg { box-shadow: inset 0 0 0 1px var(--border-soft); }
+.biz-filter .dash { color: var(--fg-3); }
+.biz-section { display: flex; align-items: center; gap: 6px; margin: 24px 0 10px; }
+.biz-section:first-child { margin-top: 0; }
+.biz-section h2 { font-size: 13px; font-weight: 620; }
+.biz-section > .btn { margin-left: auto; }
+
+/* 기준 설명 — 누를 때만 보인다 */
+.info-tip { position: relative; display: inline-flex; }
+.info-tip > summary { list-style: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: var(--fg-3); cursor: pointer; }
+.info-tip > summary::-webkit-details-marker { display: none; }
+.info-tip[open] > summary { color: var(--fg); background: var(--secondary); }
+.info-pop { position: absolute; z-index: 30; top: calc(100% + 6px); left: -8px; width: min(320px, calc(100vw - 32px)); padding: 10px 12px; border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border), var(--shadow-float); font-size: 12.5px; line-height: 1.55; color: var(--fg-2); animation: pop 140ms var(--ease-out); transform-origin: top left; }
+.info-tip.end .info-pop { left: auto; right: -8px; transform-origin: top right; }
+
+/* 표 */
+.bizui-table-wrap { margin: 0; }
 .bizui-table { min-width: 540px; }
 .bizui-table td:first-child { min-width: 130px; }
-.bizui-table td { font-variant-numeric: tabular-nums; }
+.table td.act, .table th.act { width: 1%; text-align: right; white-space: nowrap; }
 .bizui-link { text-align: left; font-weight: 550; }
-.bizui-error,.biz-error { padding: 10px 14px; border-radius: var(--rc); background: var(--danger-soft); color: var(--danger); font-size: 12.5px; margin: 12px 0; }
-.bizui-form { display: grid; gap: 16px; }
-.bizui-form-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+@media (hover: hover) { .bizui-link:hover { text-decoration: underline; text-underline-offset: 3px; } }
+.bizui-muted { color: var(--fg-3); font-size: 12.5px; margin-bottom: 12px; }
+
+/* 입력 창 */
 .bizui-field { min-width: 0; }
 .bizui-field .input { width: 100%; }
 .bizui-field textarea { min-height: 90px; margin-top: 0; }
-.bizui-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
 .bizui-order-line { border: 1px solid var(--border-soft); border-radius: var(--rs); padding: 14px; display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: 12px; }
 .bizui-order-line legend { font-size: 12px; color: var(--fg-3); padding: 0 4px; }
 .bizui-order-line > button { grid-column: 1 / -1; justify-self: end; }
-.bizui-line-card { margin: 12px 0; }
-.bizui-line-card h3 { font-size: 13px; font-weight: 620; }
-.bizui-balances { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 14px 16px; border-radius: var(--rc); background: var(--lift); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.bizui-total { display: flex; justify-content: space-between; align-items: baseline; padding-top: 4px; }
+.bizui-total strong { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+
+/* 거래 상세(옆 시트) */
+.bizui-detail { display: grid; gap: 16px; min-width: 0; }
+.bizui-balances { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; border-radius: var(--rc); background: var(--lift); box-shadow: inset 0 0 0 1px var(--border-soft); margin: 0; }
 .bizui-balances dt { font-size: 12.5px; color: var(--fg-2); }
-.bizui-balances dd { margin: 6px 0 0; font-size: 18px; font-variant-numeric: tabular-nums; }
-.bizui-module-list { max-width: 640px; }
-.bizui-module-list > p { color: var(--fg-3); font-size: 12.5px; }
-.bizui-module-list .switch-row { padding: 14px 0; border-bottom: 1px solid var(--border-soft); }
+.bizui-balances dd { margin: 4px 0 0; font-family: var(--mono); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bizui-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bizui-line { display: grid; gap: 6px; padding: 12px 14px; border-radius: var(--rc); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.bizui-line-head { display: flex; align-items: baseline; gap: 8px; }
+.bizui-line-head strong { font-weight: 600; }
+.bizui-line p { color: var(--fg-2); font-size: 12.5px; }
+.bizui-line .mono { font-size: 12.5px; }
+.bizui-detail h3 { font-size: 13px; font-weight: 620; }
+.bizui-entries { display: grid; list-style: none; margin: 0; padding: 0; }
+.bizui-entries li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
+.bizui-entries li:last-child { border-bottom: 0; }
+.bizui-entries strong { margin-left: auto; font-size: 13.5px; font-weight: 600; }
+.bizui-entries p { flex-basis: 100%; }
+
+/* 업무 기능 켜고 끄기 */
+.bizui-module-list { display: grid; }
+.bizui-module-list .switch-row { padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
+.bizui-module-list .switch-row:last-child { border-bottom: 0; }
+
+/* 대시보드 */
 .biz-dashboard { display: grid; gap: var(--module-gap); }
-.biz-dashboard-tabs { flex-wrap: wrap; margin: 0; align-items: center; }
-.biz-dashboard-tabs > .btn { margin-left: auto; margin-bottom: 4px; }
-.biz-dashboard-toolbar,.biz-dashboard-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-.biz-dashboard-filters { padding: 20px var(--module-inset); gap: 12px; border-radius: var(--rs); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); }
-.biz-dashboard-filters + .biz-dashboard { margin-top: var(--module-gap); }
-.page-module-node { font-size: 13.5px; line-height: 1.6; margin: 12px 0; min-width: 0; }
-.page-wrap.doc.wide { max-width: 1240px; }
-.prose .page-module-node .module-head h3 { font-size: var(--module-title); line-height: 1.45; font-weight: 620; margin: 0; }
-.prose .page-module-node p { margin: 0; }
-.biz-chart-frame { width: 100%; min-width: 0; }
+.biz-dashboard-editor { display: grid; gap: 16px; }
+
+/* 모듈 안 차트·지표 — 16px 시작선(본문 8px + 여기 8px) */
+.biz-kpi-wrap { display: grid; align-content: start; gap: 6px; padding: 10px 8px 8px; }
+.biz-kpi-wrap .stat-sub { font-size: 12px; white-space: normal; }
+.biz-chart-frame { min-width: 0; margin: 8px 8px 0; } /* 안쪽 여백이 아닌 바깥 여백 — clientWidth로 잰 폭이 실제 그릴 폭과 같게 */
 .biz-chart-scroll { max-height: 360px; overflow: auto; min-width: 0; }
 .biz-chart { display: block; width: 100%; height: auto; max-width: 100%; }
-.biz-chart text { fill: var(--fg-2); font-size: var(--module-caption); font-family: inherit; font-variant-numeric: tabular-nums; }
-.biz-chart-line { fill: none; stroke: var(--fg); stroke-width: 2; }
+.biz-chart text { fill: var(--fg-3); font-size: 11px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.biz-chart text.name { font-family: inherit; font-size: 12px; fill: var(--fg-2); }
+.biz-chart-line { fill: none; stroke: var(--fg); stroke-width: 1.5; stroke-linejoin: round; }
+.biz-chart-dot { fill: var(--fg); }
 .biz-chart-bar { fill: var(--fg-2); }
-.biz-chart-axis { stroke: var(--border); fill: none; }
-.biz-donut { width: 160px; height: 160px; flex: none; }
+.biz-chart-axis { stroke: var(--border-soft); fill: none; }
+.biz-donut { width: 140px; height: 140px; flex: none; }
 .biz-donut-service { stroke: var(--fg); fill: none; }
 .biz-donut-product { stroke: var(--fg-3); fill: none; }
-.biz-chart-legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; font-size: 12.5px; color: var(--fg-2); }
-.biz-chart-legend ul { padding-left: 16px; }
-.biz-kpi-wrap { display: grid; align-content: start; gap: 12px; min-height: 88px; }
-.biz-kpi, .module-body .biz-kpi { display: block; font-family: inherit; font-size: var(--metric-size); font-weight: 650; line-height: 1.2; letter-spacing: -0.025em; font-variant-numeric: tabular-nums; margin: 0; overflow-wrap: anywhere; }
-.biz-kpi-wrap .stat-sub { font-size: var(--module-caption); line-height: 1.5; white-space: normal; }
-.biz-widget-body details { font-size: var(--module-caption); color: var(--fg-2); }
-.biz-widget-body details[open] > summary { margin-bottom: 12px; }
+.biz-chart-legend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 20px; padding: 12px 8px; }
+.biz-chart-legend ul { display: grid; gap: 6px; font-size: 12.5px; color: var(--fg-2); }
+.biz-chart-legend li { display: flex; align-items: baseline; gap: 8px; }
+.biz-chart-legend li i { width: 8px; height: 8px; border-radius: 2px; align-self: center; }
+.biz-chart-legend strong, .biz-chart-legend span { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.biz-chart-legend strong { color: var(--fg); font-weight: 600; }
+.biz-widget-body details { font-size: 12px; color: var(--fg-3); padding-top: 6px; }
+.biz-widget-body details > summary { cursor: pointer; width: max-content; }
+.biz-widget-body details[open] > summary { margin-bottom: 8px; }
 .biz-table-wrap { max-width: 100%; }
 .biz-table-wrap > .biz-table { min-width: 540px; }
-.biz-table th,.biz-table td:not(:first-child) { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.biz-empty,.biz-source { font-size: var(--module-caption); line-height: 1.5; color: var(--fg-3); }
-.biz-dashboard-editor { display: grid; gap: 16px; }
-@media (hover:hover) { .bizui-link:hover { text-decoration: underline; text-underline-offset: 3px; } }
-@media (max-width:700px) {
+.biz-table th { white-space: nowrap; }
+.biz-empty { font-size: 12.5px; color: var(--fg-3); padding-block: 18px; text-align: center; }
+
+@media (max-width: 700px) {
   .bizui-order-line { grid-template-columns: 1fr 1fr; }
   .bizui-order-line .bizui-field:first-of-type { grid-column: 1 / -1; }
-  .biz-dashboard-filters .field-block { flex: 1 1 140px; min-width: 0; }
+  .biz-filter { width: 100%; }
+  .biz-filter .input[type=date] { flex: 1 1 120px; min-width: 0; }
 }

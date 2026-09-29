@@ -16,18 +16,18 @@ function PerformanceModule({ item, space }) {
     const chart = campaignBars(report.campaigns);
     if (!chart.rows.length) return <p className="biz-empty">{t('bizui.empty')}</p>;
     return <><HorizontalBarChart label={label('campaignChart')} rows={chart.rows} low={chart.low} high={chart.high} formatValue={(value) => formatValue('sales', value)} unnamed={label('unattributed')} />
-      <p className="biz-source">{label('chartLimit')}</p><details><summary>{t('biz.chart.data')}</summary><div className="table-wrap biz-table-wrap"><table className="table"><thead><tr><th>{label('name')}</th><th>{label('sales')}</th></tr></thead><tbody>{chart.rows.map((row) => <tr key={row.id ?? 'unattributed'}><td>{row.name || label('unattributed')}</td><td>{formatValue('sales', row.sales)}</td></tr>)}</tbody></table></div></details></>;
+      <details><summary>{t('biz.chart.data')}</summary><p>{label('chartLimit')}</p><div className="table-wrap biz-table-wrap"><table className="table"><thead><tr><th>{label('name')}</th><th className="num">{label('sales')}</th></tr></thead><tbody>{chart.rows.map((row) => <tr key={row.id ?? 'unattributed'}><td>{row.name || label('unattributed')}</td><td className="num">{formatValue('sales', row.sales)}</td></tr>)}</tbody></table></div></details></>;
   }
   if (item.id === 'comparison' || item.id === 'sourceOrders') {
     const isOrders = item.id === 'sourceOrders', rows = isOrders ? report.orders : report.campaigns;
     if (!rows?.length) return <p className="biz-empty">{t('bizui.empty')}</p>;
     const columns = isOrders ? ['order_id', 'campaign_id', 'sales', 'paid'] : ['name', 'channel', 'spend', 'sales', 'paid', 'orders', 'roas', 'cpl'];
-    return <div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr>{columns.map((column) => <th key={column}>{label(column)}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id ?? 'unattributed'}>
+    return <div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr>{columns.map((column, index) => <th key={column} className={index > 1 ? 'num' : undefined}>{label(column)}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id ?? 'unattributed'}>
       <td>{isOrders ? <Link className="bizui-link" to={`${baseOf(space)}/business/orders?open=${encodeURIComponent(row.id)}`}>{row.title}</Link> : row.name || label('unattributed')}</td>
-      <td>{isOrders ? campaignName(row.campaign_id) : row.channel || '—'}</td>{columns.slice(2).map((key) => <td key={key}>{formatValue(key, row[key])}</td>)}
+      <td>{isOrders ? campaignName(row.campaign_id) : row.channel || '—'}</td>{columns.slice(2).map((key) => <td key={key} className="num">{formatValue(key, row[key])}</td>)}
     </tr>)}</tbody></table></div>;
   }
-  return <div className="biz-kpi-wrap"><strong className="biz-kpi">{formatValue(item.id, report.metrics[item.id])}</strong>{report.previous && <small className="stat-sub">{label('previous')}: {formatValue(item.id, report.previous[item.id])}</small>}</div>;
+  return <div className="biz-kpi-wrap"><strong className="biz-kpi metric">{formatValue(item.id, report.metrics[item.id])}</strong>{report.previous && <small className="stat-sub">{label('previous')} <span className="mono">{formatValue(item.id, report.previous[item.id])}</span></small>}</div>;
 }
 
 export default function PerformanceBoard({ space, business, report, campaigns, formatValue }) {
@@ -39,10 +39,10 @@ export default function PerformanceBoard({ space, business, report, campaigns, f
     try { await business.mutate('settings.save', { ...business.data.settings, performance: { items: next } }); return true; }
     catch (failure) { setError(businessError(failure)); return false; }
   };
-  const resolveModule = (item) => ({ title: label(item.id === 'campaigns' ? 'campaignChart' : item.id), icon: 'layout', sizes: ['s', 'm', 'l', 'full'], render: PerformanceModule });
+  const resolveModule = (item) => ({ title: label(item.id === 'campaigns' ? 'campaignChart' : item.id), icon: ['campaigns', 'comparison', 'sourceOrders'].includes(item.id) ? 'chart' : 'target', sizes: ['s', 'm', 'l', 'full'], render: PerformanceModule });
   return <div className="biz-dashboard">
     {error && <p className="bizui-error" role="alert">{t(error)}</p>}
-    {canEdit && <div className="row-actions"><ModuleAddButton items={items.filter((item) => item.hidden).map((item) => ({ id: item.id, title: resolveModule(item).title, icon: 'layout', run: () => save([...items.filter((entry) => entry.id !== item.id), { ...item, hidden: false }]) }))} /></div>}
+    {canEdit && items.some((item) => item.hidden) && <div className="biz-bar"><span className="spacer" /><ModuleAddButton items={items.filter((item) => item.hidden).map((item) => ({ id: item.id, title: resolveModule(item).title, icon: resolveModule(item).icon, run: () => save([...items.filter((entry) => entry.id !== item.id), { ...item, hidden: false }]) }))} /></div>}
     <PerformanceContext.Provider value={{ report, campaigns, formatValue }}><ModuleGrid id={`performance:${space}`} items={items} canEdit={canEdit} onChange={save} resolveModule={resolveModule} space={space} bodyClassName="biz-widget-body" /></PerformanceContext.Provider>
     {!items.some((item) => !item.hidden) && <p className="biz-empty">{t('biz.noWidgets')}</p>}
   </div>;

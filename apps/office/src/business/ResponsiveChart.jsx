@@ -26,7 +26,7 @@ export function HorizontalBarChart({ label, rows, low, high, formatValue, unname
     const nameLimit = Math.max(4, Math.floor((width - amount.length * 8 - 24) / 12));
     const visibleName = name.length > nameLimit ? `${name.slice(0, nameLimit)}…` : name;
     return <g key={row.id ?? 'unattributed'}><title>{`${name}: ${amount}`}</title>
-      <text x="0" y={y}>{visibleName}</text><text x={width} y={y} textAnchor="end">{amount}</text>
+      <text className="name" x="0" y={y}>{visibleName}</text><text x={width} y={y} textAnchor="end">{amount}</text>
       <line className="biz-chart-axis" x1="0" x2={width} y1={y + 14} y2={y + 14} />
       <rect className="biz-chart-bar" x={bar.x} y={y + 7} width={bar.width} height="14" rx="2" />
       <line className="biz-chart-axis" x1={bar.baseline} x2={bar.baseline} y1={y + 4} y2={y + 24} />

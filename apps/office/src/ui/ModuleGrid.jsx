@@ -72,12 +72,11 @@ function ModuleCard({ item, space, items, partner, canResize, canEdit, scope, co
     <section ref={(el) => { setNodeRef(el); card.current = el; }} data-mod={item.id} className={`module size-${item.size}${isDragging ? ' dragging' : ''}`}
       aria-label={mod.title} {...menuProps(menu)}>
       <header className="module-head">
+        {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}
         <h3>{mod.title}</h3>
-        <div className="module-controls">
         {mod.link && <Link to={mod.link} className="module-link">{t('mod.more')}</Link>}
         {canEdit && <button type="button" ref={setActivatorNodeRef} className="grip" aria-label={t('mod.drag')} {...mergeHandlers(attributes, listeners)}><Icon name="grip" size={14} /></button>}
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
-        </div>
       </header>
       <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
       {canEdit && canResize && <span className="col-handle" role="separator" aria-orientation="vertical" aria-label={t('mod.resize')} tabIndex={0} onPointerDown={onResize} onKeyDown={onResizeKey} />}

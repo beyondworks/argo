@@ -128,7 +128,7 @@ test('daily chart fills absent ledger days with zero within applied range', () =
 const dashboardModule = { exports: {} };
 const dependencies = { require, module: dashboardModule, exports: dashboardModule.exports,
   getLang: () => 'en', t: key => key, useLang: () => {}, createContext, useContext, useEffect, useId, useMemo, useRef, useState,
-  Modal: () => null, ModuleAddButton: () => null, ModuleGrid: () => null, CHART_MODULES, businessError, ...model };
+  Modal: () => null, ModuleAddButton: () => null, ModuleGrid: () => null, Icon: () => null, InfoTip: () => null, openMenu: () => {}, window: { addEventListener() {}, removeEventListener() {} }, CHART_MODULES, businessError, ...model };
 new Function(...Object.keys(dependencies), chartCompiled)(...Object.values(dependencies));
 for (const populated of [false, true]) {
   test(`whole BusinessDashboard first render with ${populated ? 'existing' : 'zero'} dashboards`, () => {

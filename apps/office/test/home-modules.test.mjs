@@ -23,7 +23,7 @@ const source = readFileSync(new URL('../src/business/HomeModules.jsx', import.me
 const compiled = transformSync(source, { loader: 'jsx', jsx: 'automatic', format: 'cjs' }).code;
 const module = { exports: {} };
 let context;
-const dependencies = { require: createRequire(import.meta.url), module, exports: module.exports, createContext, useContext: () => context, t: (key) => key, getLang: () => 'en', baseOf: (space) => space === 'me' ? '/me' : `/o/${space}`, Link: ({ to, ...props }) => createElement('a', { href: to, ...props }) };
+const dependencies = { require: createRequire(import.meta.url), module, exports: module.exports, createContext, useContext: () => context, t: (key) => key, getLang: () => 'en', baseOf: (space) => space === 'me' ? '/me' : `/o/${space}`, Link: ({ to, ...props }) => createElement('a', { href: to, ...props }), InfoTip: ({ text }) => createElement('span', { className: 'info-tip' }, text) }; // 집계 기준은 (i) 안에 — 문구가 카드에 실제로 실리는지 본다
 new Function(...Object.keys(dependencies), compiled)(...Object.values(dependencies));
 const card = (tab) => renderToStaticMarkup(createElement(module.exports.BusinessHomeCard, { space: 'me', tab }));
 const data = { settings: { enabled: BUSINESS_MODULES.map((m) => m.businessTab) }, customers: [{ id: 'c1', name: 'Actual customer', email: 'test@example.invalid' }], items: [{ id: 'p1', kind: 'product', name: 'Actual product', price: 300, stock: 7, reserved: 2 }], orders: [{ id: 'o1', title: 'Actual order', status: 'confirmed' }] };
@@ -80,7 +80,7 @@ test('marketing performance distinguishes missing reports, read failures and und
   let html = card('performance');
   assert.match(html, /mkt.ratio.na/);
   assert.doesNotMatch(html, /NaN|Infinity/);
-  assert.match(html, /href="\/me\/business\/performance"/);
+  assert.doesNotMatch(html, /biz.home.open/); // '모두 보기'는 카드 머리에만 — 본문에 같은 링크를 또 두지 않는다(유건 9/29)
   context.performance.report.metrics.roas = 2.5;
   html = card('performance');
   assert.match(html, /250%/);

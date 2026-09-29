@@ -5,6 +5,7 @@ import { t, getLang } from '../core/i18n.js';
 import { baseOf } from '../core/commands.js';
 import { Link } from '../core/router.jsx';
 import { defaultPeriod } from './dashboard-model.js';
+import { InfoTip } from '../ui/InfoTip.jsx';
 
 const HomeBusiness = createContext(null);
 const money = (value) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(value);
@@ -66,13 +67,12 @@ export function BusinessHomeCard({ space, tab }) {
   if (tab === 'inventory') content = <Rows rows={data.items.filter((row) => row.kind === 'product')} path={rowPath} render={(row) => main(row.name, `${t('bizui.available')}: ${row.stock - row.reserved} · ${t('bizui.reserved')}: ${row.reserved}`)} />;
   if (tab === 'marketing') content = <Rows rows={marketing.data.campaigns} path={rowPath} render={(row) => main(row.name, `${row.channel} · ${t(`mkt.status.${row.status}`)}`)} />;
   if (tab === 'performance') content = <>
-    <p className="dim">{from} — {to} · {t('biz.home.utc')}</p>
+    <p className="mod-period"><span className="mono">{from} – {to}</span><InfoTip text={t('biz.home.utc')} /></p>
     {!performance ? <p role="status">{t('biz.loading')}</p> : performance.error ? <div role="alert"><p>{t(performance.error)}</p><button className="btn" onClick={() => marketing.refresh().catch(() => {})}>{t('biz.refresh')}</button></div> : ['spend', 'sales', 'paid', 'roas'].map((metric) => <div className="mod-row" key={metric}><span className="mod-main">{t(`mkt.metric.${metric}`)}</span><strong className="mono">{metric === 'roas' ? performance.report.metrics.roas == null ? t('mkt.ratio.na') : new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'percent', maximumFractionDigits: 2 }).format(performance.report.metrics.roas) : money(performance.report.metrics[metric])}</strong></div>)}
   </>;
   if (tab === 'payments' || tab === 'analytics') content = <>
-    <p className="dim">{from} — {to} · {t('biz.home.utc')}</p>
+    <p className="mod-period"><span className="mono">{from} – {to}</span><InfoTip text={`${t('biz.home.utc')} · ${t('biz.home.balanceThrough')}`} /></p>
     {!summary ? <p role="status">{t('biz.loading')}</p> : summary.error ? <div role="alert"><p>{t(summary.error)}</p><button className="btn" onClick={() => business.refresh().catch(() => {})}>{t('biz.refresh')}</button></div> : (tab === 'payments' ? ['invoiced', 'paid', 'receivable'] : ['sales', 'invoiced', 'paid', 'receivable']).map((metric) => <div className="mod-row" key={metric}><span className="mod-main">{t(`biz.metric.${metric}`)}</span><strong className="mono">{money(summary.report.metrics[metric])}</strong></div>)}
-    <small className="dim">{t('biz.home.balanceThrough')}</small>
   </>;
-  return <>{content}<Link className="mod-row" to={path}>{t('biz.home.open')}</Link></>;
+  return content;
 }

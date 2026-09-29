@@ -1,36 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { ModuleGrid, ModuleAddButton } from './ModuleGrid.jsx';
 import { MODULES, BusinessHomeProvider } from '../pages/modules.jsx';
 import { ME, SPACES } from '../core/session.js';
 import { t } from '../core/i18n.js';
 import { baseOf } from '../core/commands.js';
-import { navigate } from '../core/router.jsx';
 import { moduleDefinition } from '../core/module-placement-model.js';
 import { normalizeModuleItems, moduleAllowedInSpace } from '../core/module-items.js';
-import { useBusiness, businessError } from '../business/data.js';
-import { BusinessChart } from '../business/Dashboard.jsx';
-import { defaultPeriod, validateFilters, widgetMetrics } from '../business/dashboard-model.js';
-import '../business/business.css';
+import { widgetMetrics } from '../business/dashboard-model.js';
 
-function ChartModule({ item, space }) {
-  const business = useBusiness(space);
-  const [result, setResult] = useState(null);
-  const module = moduleDefinition(item);
-  const metric = item.cfg?.metric ?? 'sales';
-  let filters, invalid = false;
-  try { filters = validateFilters(item.cfg?.filters ?? defaultPeriod()); invalid = !widgetMetrics(module.chartType).includes(metric); } catch { invalid = true; }
-  const key = JSON.stringify([business.scopeKey, filters, item.id]);
-  useEffect(() => {
-    let active = true;
-    if (invalid || !business.data) return;
-    business.report(filters).then((report) => { if (active) setResult({ key, report }); }).catch((error) => { if (active) setResult({ key, error: businessError(error) }); });
-    return () => { active = false; };
-  }, [key, business.data, business.report, invalid]);
-  if (invalid) return <p role="alert">{t('library.invalid')}</p>;
-  const error = business.error || (result?.key === key && result.error);
-  if (error) return <div className="mod-empty" role="alert"><p>{t(error)}</p><button className="btn" onClick={() => business.refresh().catch(() => {})}>{t('biz.refresh')}</button></div>;
-  if (!business.data || result?.key !== key) return <p className="mod-empty" role="status">{t('biz.loading')}</p>;
-  return <><p className="dim small">{filters.from} — {filters.to} · {t('biz.home.utc')}</p><BusinessChart widget={{ ...item, type: module.chartType, metric: item.cfg?.metric ?? 'sales' }} report={result.report} filters={filters} onOpenOrder={(id) => navigate(`${baseOf(space)}/business/orders?open=${encodeURIComponent(id)}`)} /></>;
+// 그래프 모듈은 업무 데이터 계층 전체를 끌고 오므로 쓸 때만 불러온다(첫 화면 150KB 상한, 유건 9/26)
+const LazyChartModule = lazy(() => import('../business/HomeChart.jsx'));
+function ChartModule(props) {
+  return <Suspense fallback={<p className="mod-empty" role="status">{t('biz.loading')}</p>}><LazyChartModule {...props} /></Suspense>;
 }
 
 export function resolveSurfaceModule(item, space) {

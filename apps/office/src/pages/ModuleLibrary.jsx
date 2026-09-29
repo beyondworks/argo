@@ -53,17 +53,17 @@ export default function ModuleLibrary({ space, targetId }) {
   const groups = ['workspace', 'business', 'charts'];
   return <section className="page-wrap wide module-library-page">
     <header className="page-title-row"><div><h1 className="page-h1">{t('library.title')}</h1><p className="dim">{t('library.subtitle')}</p></div></header>
-    <label className="field-block library-search"><span className="label">{t('library.search')}</span><input type="search" className="input" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+    <label className="library-search"><Icon name="search" size={14} /><input type="search" className="input" placeholder={t('library.search')} aria-label={t('library.search')} value={query} onChange={(event) => setQuery(event.target.value)} /></label>
     {groups.map((group) => {
       const entries = modules.filter((module) => (module.chartType ? 'charts' : module.businessTab ? 'business' : 'workspace') === group);
-      return !!entries.length && <section key={group} aria-label={t(`library.${group}`)}>
-        <div className="page-title-row bizui-toolbar"><h2>{t(`library.${group}`)}</h2></div>
+      return !!entries.length && <section key={group} className="library-group" aria-label={t(`library.${group}`)}>
+        <h2 className="library-group-title">{t(`library.${group}`)}</h2>
         <div className="table-wrap"><table className="table module-library-table">
           <colgroup><col /><col className="library-open-column" /><col className="library-add-column" /></colgroup>
           <tbody>{entries.map((module) => <tr key={module.id}>
-            <td><span className="library-module-name"><Icon name={module.icon} size={16} /><span>{t(module.title)}</span></span></td>
-            <td>{module.link && <Link className="btn ghost" to={module.link === '/mail' ? '/me/mail' : `${baseOf(space)}${module.link}`}>{t('library.open')}</Link>}</td>
-            <td><button className="btn" onClick={() => setSelected(module)} aria-label={t('library.addNamed', { name: t(module.title) })}>{t('library.addModule')}</button></td>
+            <td><span className="library-module-name"><Icon name={module.icon} size={14} className="dim" /><span>{t(module.title)}</span></span></td>
+            <td>{module.link && <Link className="btn sm ghost" to={module.link === '/mail' ? '/me/mail' : `${baseOf(space)}${module.link}`}>{t('library.open')}</Link>}</td>
+            <td><button type="button" className="btn sm" onClick={() => setSelected(module)} aria-label={t('library.addNamed', { name: t(module.title) })}><Icon name="plus" size={13} />{t('bizui.add')}</button></td>
           </tr>)}</tbody>
         </table></div>
       </section>;
