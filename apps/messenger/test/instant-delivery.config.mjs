@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 const fake = fileURLToPath(new URL('./instant-delivery.supabase.mjs', import.meta.url));
 // IN_BASELINE_REF를 주면 그 커밋의 App.jsx를 불러온다 — 수정 전후를 같은 픽스처로 잰다.
 // 체크아웃의 파일은 바꾸지 않는다(git show로 읽기만 한다).
-export default mergeConfig(base, {
+// base(../vite.config.js)가 2026-09-25 cloud-config-gate 도입(b3ac2f16)으로 콜백 형태가 됐다 — mergeConfig는 객체만 받으므로 먼저 풀어준다(2026-09-26, 이 픽스처 하네스 한정 수리).
+const resolvedBase = typeof base === 'function' ? await base({ command: 'serve', mode: 'development' }) : base;
+export default mergeConfig(resolvedBase, {
   envDir: '/dev/null',
   plugins: [{
     name: 'isolated-instant-backend', enforce: 'pre',
