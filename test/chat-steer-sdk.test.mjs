@@ -23,6 +23,15 @@ const srv = http.createServer((req, res) => {
     if (!(req.method === 'POST' && req.url.startsWith('/v1/messages'))) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
     const body = JSON.parse(b || '{}');
     if (!body.stream) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 'x', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 't' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } })); }
+    // 도구 없는 요청 = SDK의 세션 제목 생성(CI 등 Claude Code 밖에서만 나간다) — 장면 요청으로 세지 않는다(로컬 초록·CI red, 2026-09-18 메모와 같은 모양)
+    if (!(body.tools ?? []).length) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const e = (t, d) => res.write(`event: ${t}\ndata: ${JSON.stringify({ type: t, ...d })}\n\n`);
+      e('message_start', { message: { id: 't', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } }); // 비용 0 — 실행 비용 단언에 섞이지 않게
+      e('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }); e('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'title' } });
+      e('content_block_stop', { index: 0 }); e('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 0 } }); e('message_stop', {});
+      return res.end();
+    }
     const raw = JSON.stringify(body.messages);
     const scene = raw.match(/\[(MID|LATE|BOOT)\]/)?.[1] ?? '?';
     (bodies[scene] ??= []).push(raw);
