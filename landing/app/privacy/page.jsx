@@ -94,8 +94,8 @@ const SECTIONS = [
     h: { ko: '6. 쿠키·로컬 저장소', en: '6. Cookies & local storage' },
     p: [
       {
-        ko: '이 웹사이트는 추적용 광고 쿠키를 사용하지 않습니다. 언어 설정 저장에만 localStorage를 사용합니다.',
-        en: 'This website does not use advertising or tracking cookies. It uses localStorage only to remember your language preference.',
+        ko: '이 웹사이트는 추적용 광고 쿠키를 사용하지 않습니다. 언어 설정과 다운로드 안내에서 선택한 “그냥 다운로드”를 localStorage에 저장합니다. GitHub 연동 검증, 설치 파일 선택, 다운로드 안내 재노출 방지에 필요한 쿠키도 사용합니다.',
+        en: 'This website does not use advertising or tracking cookies. It uses localStorage to remember your language preference and your “Just download” choice in the download prompt. Cookies are also used to verify the GitHub connection, remember the selected installer, and avoid showing the download prompt again.',
       },
     ],
   },

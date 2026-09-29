@@ -4,8 +4,8 @@ import { useLang } from '@/lib/i18n';
 import { ScrollTrigger } from '@/lib/gsap';
 
 // Q&A — 컨텍트 아래(유건 지시 2026-08-06). 출처: 인앱 피드백 76건의 빈번 클러스터
-// (read-only/작업폴더·러너 연결·데이터 위치·결제/체험·메신저) + 제품 문서. 셀프 커스터마이즈
-// (GitHub 클론 + 코딩 에이전트) 안내 포함. 네이티브 <details>로 JS 없이 접고 편다.
+// (read-only/작업폴더·러너 연결·데이터 위치·결제/체험·메신저) + 제품 문서. 러너 추가·권한 요청은
+// 문의 폼으로 안내(2026-09-07: 소스 레포 프라이빗 전환으로 "클론해서 직접" 안내 제거). 네이티브 <details>로 JS 없이 접고 편다.
 const ITEMS = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7'];
 
 export default function FaqSection() {

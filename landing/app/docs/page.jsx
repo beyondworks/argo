@@ -206,10 +206,26 @@ const GROUPS = [
         h: { ko: '13. 보안', en: '13. Security' },
         body: [
           {
-            ko: 'API 키·비밀번호·접속 문자열 같은 비밀은 값이 아니라 이름·위치로만 다룹니다. 외부에서 들어오는 지시(웹 페이지·문서 내용)는 “데이터”로 취급해 프롬프트 주입을 방어합니다.',
-            en: 'Secrets — API keys, passwords, connection strings — are handled by name and location, never by value. Instructions arriving from outside (web pages, document contents) are treated as data, defending against prompt injection.',
+            ko: '크루는 당신의 컴퓨터에서 당신 계정 권한으로, 셸을 포함한 전권으로 돕니다. 그 위에서 권한 게이트가 절대 열리지 않는 구역을 지킵니다 — 실행 중인 Argo 코드, 러너 자격(~/.codex·~/.claude·~/.gemini·~/.argo), 다른 회사의 워크스페이스, 그리고 회사 금고(연결·MCP·루틴·크루 정의 파일). SDK 러너의 파일·검색·MCP 도구 호출에는 이 판정이 코드로 강제됩니다.',
+            en: 'Crews run on your computer, as your user, with full access including the shell. On top of that, the permission gate holds a hard line that never opens — the running Argo code, runner credentials (~/.codex, ~/.claude, ~/.gemini, ~/.argo), other companies\' workspaces, and the company vault (connections, MCP, routines, crew definitions). For SDK runners this is enforced in code on every file, search and MCP tool call.',
+          },
+          {
+            ko: '막지 못하는 것도 그대로 말합니다. 셸 명령은 문자열이라 금지 파일명이 그대로 들어간 시도만 잡고, 변수·상대경로 조합은 통과합니다. Codex·Gemini 같은 외부 CLI 러너는 게이트를 지나지 않습니다. 크루가 읽는 모든 것 — vault 문서, 메신저로 온 메시지, 가져온 웹 페이지 — 이 지시가 될 수 있고, 프롬프트 주입이 성공하면 그 결과는 당신 계정 권한의 로컬 명령 실행입니다. 시스템 프롬프트는 외부 입력을 데이터로 취급하라고 지시하지만, 그것은 계약이지 보장이 아닙니다.',
+            en: 'We also say what it cannot stop. Shell commands are strings, so only naive attempts that spell out a forbidden filename are caught; variables and relative paths get through. External CLI runners such as Codex and Gemini do not pass through the gate at all. Everything a crew reads — vault documents, messenger messages, fetched web pages — can carry instructions, and a successful prompt injection means local command execution as your user. The system prompt tells crews to treat outside input as data; that is a contract, not a guarantee.',
+          },
+          {
+            ko: '적대적 모델 출력에 대한 진짜 경계는 프로세스 밖, 즉 OS 격리(컨테이너·샌드박스)뿐입니다. Argo는 아직 크루 실행을 컨테이너에 가두는 옵션을 제공하지 않습니다 — 알려진 제품 갭이고 우선순위 트랙입니다. 그때까지는 신뢰할 수 없는 입력 표면(공개 메일함·불특정 다수 채널·임의 URL 수집)을 크루의 상시 입력으로 두지 말고, 작업 폴더를 필요한 만큼만 등록하고, 연결한 러너 계정에 지출 한도를 걸어 두세요.',
+            en: 'The only real boundary against an adversarial model is outside the process — OS-level isolation (a container or sandbox). Argo does not yet ship an option that confines crew execution to a container; this is a known product gap and a priority track. Until then, do not wire untrusted input surfaces (a public mailbox, open channels, arbitrary URL ingestion) into a crew as a standing input, register only the work folders you need, and set a spending cap on the runner accounts you connect.',
+          },
+          {
+            ko: '비밀은 값이 아니라 이름·위치로만 다룹니다. 러너 자격·봇 토큰·MCP 환경변수는 클라우드로 올라가지 않으며(14-1절), 코드 어디에도 시크릿 평문을 두지 않고 커밋 훅이 벤더별 키 패턴을 잡습니다. 전체 신뢰 모델과 제보 범위는 소스 레포의 SECURITY.md에 있습니다.',
+            en: 'Secrets are handled by name and location, never by value. Runner credentials, bot tokens and MCP env vars never sync to the cloud (see 14-1), no secret is kept in plaintext anywhere in the code, and a commit hook catches vendor key patterns. The full trust model and report scope live in SECURITY.md in the source repo.',
           },
         ],
+        caveat: {
+          ko: '"완료·검증됨·무결" 같은 도장을 붙이지 않습니다. 이 페이지가 말하는 경계와 코드가 어긋나면 코드가 정본이고, 그 어긋남 자체가 유용한 제보입니다.',
+          en: 'We do not stamp "complete", "verified" or "airtight" on anything. Where this page and the code disagree, the code is canonical — and the disagreement itself is a useful report.',
+        },
       },
     ],
   },
@@ -225,6 +241,39 @@ const GROUPS = [
             en: 'Connect a crew to a Telegram or Slack gateway to continue with the same context on your phone. Add external tools and servers via MCP in one click, and sign in to sync context between web and app.',
           },
         ],
+      },
+      {
+        // 앱 설정 → 동기화 카드의 "자세히 보기"가 여기로 온다(argo.ceo/docs#privacy-sync).
+        // 정본은 소스 레포 docs/privacy-sync.md — 레포가 프라이빗이라 사용자에게 보이는 사본은 이 절이다.
+        // 정본이 바뀌면 이 절도 같이 고친다(2026-09-07 기준 동기화).
+        id: 'privacy-sync',
+        h: { ko: '14-1. 동기화와 자격 증명 — 무엇이 올라가고, 열쇠는 어디에', en: '14-1. Sync & credentials — what goes up, where the key lives' },
+        body: [
+          {
+            ko: '로그인하지 않으면 아무것도 컴퓨터 밖으로 나가지 않습니다. 동기화 전체는 환경변수 ARGO_SYNC=0으로 끌 수 있습니다.',
+            en: 'If you never sign in, nothing leaves your computer. Set the environment variable ARGO_SYNC=0 to disable sync entirely.',
+          },
+          {
+            ko: '자격 증명은 클라우드로 가지 않습니다 — 러너 로그인 토큰·API 키(.secrets.json), 텔레그램·슬랙 봇 토큰(connections.json), MCP 환경변수(mcp.json) 세 파일은 호스티드 동기화에서 구조적으로 제외됩니다. 새로 저장되는 자격은 운영자를 포함해 본인 외에는 아무도 볼 수 없고, 새 기기에서는 러너·봇을 다시 연결하면 됩니다. 과거 버전에서 올라간 사본은 다음 동기화에 회수됩니다(무료 플랜은 클라우드 쓰기 제약으로 보류되고 Pro·체험이 되면 실행됩니다).',
+            en: 'Credentials are not uploaded — the three credential files (runner login tokens and API keys in .secrets.json, Telegram/Slack bot tokens in connections.json, MCP env vars in mcp.json) are structurally excluded from hosted sync. Newly saved credentials are reachable by no one but you, operator included; new devices simply reconnect runners and bots. A copy left by an older version is withdrawn on the next sync (deferred on the free plan by a cloud-write restriction, and run once you are on Pro/trial).',
+          },
+          {
+            ko: '회사 데이터(기억·대화·크루)는 봉투 암호화(AES-256-GCM)로 Argo 클라우드에 복제됩니다. 다만 그 봉투를 여는 계정별 열쇠가 같은 클라우드에 있어, 서버 운영자는 기술적으로 회사 데이터를 복호화할 수 있습니다 — 이 데이터에 한해서는 "운영자도 절대 볼 수 없다"고 말하지 않습니다. 사용자만 여는 종단간 암호화는 별도로 진행 중입니다.',
+            en: 'Company data (memory, chats, crew) replicates to Argo cloud with envelope encryption (AES-256-GCM). Its per-account key lives in the same cloud, so the operator can technically decrypt that data — for this category we do not claim "operator-proof". End-to-end encryption that only you can open is in progress separately.',
+          },
+          {
+            ko: '팀 메신저의 조직·채널·메시지·첨부는 구성원이 함께 보는 데이터라 서버에 평문으로 저장되며(조직 간은 RLS로 분리), 운영자가 기술적으로 읽을 수 있습니다. 원치 않으면 셀프호스트 Supabase를 쓰거나 메신저를 쓰지 않으면 됩니다.',
+            en: 'Team messenger data (orgs, channels, messages, attachments) is shared among members, so it is stored in plaintext on the server (orgs are separated by RLS) and the operator can technically read it. If you prefer not, self-host Supabase or skip the messenger.',
+          },
+          {
+            ko: '셀프호스트(내 서버·내 Supabase)에서는 운영자가 곧 본인이므로, 자격 증명을 기기 간에 동기화할지 회사 단위로 선택할 수 있습니다(설정 → 기기 간 동기화 → 자격 증명 동기화).',
+            en: 'On self-hosting (your server, your Supabase) the operator is you, so you may choose per company whether credential files sync across devices (Settings → Device sync → Credential sync).',
+          },
+        ],
+        caveat: {
+          ko: '클라우드 워커(운영자가 프로비저닝해 사용자 대신 크루를 돌리는 인스턴스)는 자격 접근이 전제인 위임 모델이라 위 보장의 범위 밖이며, 별도 설계 중입니다. 플랫폼 차원의 백업·스냅샷 보존 기간 동안의 과거 사본까지는 보장하지 않습니다.',
+          en: 'Cloud workers (operator-provisioned instances that run your crew for you) are a delegation model that presumes credential access, so they fall outside the guarantee above and are designed separately. Past copies within platform-level backup/snapshot retention are not covered.',
+        },
       },
     ],
   },
