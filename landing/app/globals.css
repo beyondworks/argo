@@ -874,6 +874,20 @@ video {
   display: block;
 }
 
+/* /download 전용 페이지 — 고정 내비(58px) 아래에서 시작, 랜딩 섹션 구분선은 뺀다 */
+.download-page .download-section {
+  padding-top: calc(58px + clamp(40px, 8svh, 90px));
+  border-top: 0;
+}
+.download-page-help {
+  padding: 0 var(--pad-x) clamp(60px, 12svh, 120px);
+  color: var(--fg-2);
+}
+.download-page-help a {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
 /* ── install — 히어로와 1장 사이 터미널 한 줄 인터루드 ── */
 
 /* 챕터 인트로와 동일 문법·동일 수치(chapter-intro 참조) — 풀스크린 센터 정렬, 정적 섹션 */
