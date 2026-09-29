@@ -15,7 +15,7 @@ test('주소는 /bot<token>/<method>, GET 쿼리·POST JSON, {ok,result} 풀기,
   const api = makeApi({ url: 'https://x.supabase.co/functions/v1/msgr-bot/', token: T, fetchImpl: f });
   assert.deepEqual(await api.getMe(), { id: 'b1' });
   assert.equal(f.calls[0][0], `https://x.supabase.co/functions/v1/msgr-bot/bot${T}/getMe`);
-  await api.getUpdates(5); assert.match(f.calls[1][0], /getUpdates\?offset=5&limit=1&timeout=20&delivery_protocol=1$/);
+  await api.getUpdates(5); assert.match(f.calls[1][0], /getUpdates\?offset=5&limit=1&timeout=20&delivery_protocol=1&events=1$/);
   assert.equal((await api.sendMessage('c1', '네', 3)).message_id, 7);
   assert.deepEqual(JSON.parse(f.calls[2][1].body), { chat_id: 'c1', text: '네', reply_to_message_id: 3 }); assert.equal(f.calls[2][1].method, 'POST');
   await api.sendMessage('c1', '평문'); assert.equal('reply_to_message_id' in JSON.parse(f.calls[3][1].body), false);
@@ -98,25 +98,39 @@ test('actual OpenClaw inbound handler excludes tool/draft/reasoning and finishes
     process.env.ARGO_MSGR_OUTBOX_DIR=dir;
     const file=new URL('../integrations/openclaw-argo-msgr/src/channel.ts',import.meta.url);
     let source=stripTypeScriptTypes(await readFile(file,'utf8'));
-    source=source.replace(/import \{[\s\S]*?\} from "openclaw\/plugin-sdk";/, `const {buildBaseAccountStatusSnapshot,buildBaseChannelStatusSummary,createReplyPrefixOptions,DEFAULT_ACCOUNT_ID,deleteAccountFromConfigSection,formatTextWithAttachmentLinks,resolveOutboundMediaUrls,setAccountEnabledInConfigSection}=globalThis.__argoSdkFixture;`);
+    // OpenClaw 2026.8.1+ SDK 하위 경로 import를 픽스처로 바꾼다(루트 openclaw/plugin-sdk는 없다)
+    const sdkImports=source.match(/import \{[\s\S]*?\} from "openclaw\/plugin-sdk\/[a-z-]+";/g)??[];
+    assert.ok(sdkImports.length>0 && !/from "openclaw\/plugin-sdk"/.test(source),'루트 SDK를 쓰지 않는다');
+    for (const line of sdkImports) source=source.replace(line,`const {${line.match(/\{([\s\S]*?)\}/)[1]}}=globalThis.__argoSdkFixture;`);
     source=source.replace('"./api.js"',JSON.stringify(new URL('../integrations/openclaw-argo-msgr/src/api.js',import.meta.url).href));
+    source=source.replace('"./contract.js"',JSON.stringify(new URL('../integrations/openclaw-argo-msgr/src/contract.js',import.meta.url).href));
     source+='\nexport {handleInbound};';
-    globalThis.__argoSdkFixture={createReplyPrefixOptions:()=>({}),formatTextWithAttachmentLinks:t=>t,resolveOutboundMediaUrls:()=>[],DEFAULT_ACCOUNT_ID:'default'};
+    globalThis.__argoSdkFixture={createChannelInboundEnvelopeBuilder:()=>(o)=>o.body,formatTextWithAttachmentLinks:t=>t,resolveOutboundMediaUrls:()=>[],DEFAULT_ACCOUNT_ID:'default',
+      createChannelApprovalCapability:x=>x,createChannelApprovalNativeRuntimeAdapter:x=>x,CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY:'approval.native'};
     const channel=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
     const calls=[];
     globalThis.fetch=async(url,init)=>{calls.push(JSON.parse(init.body));return {status:200,json:async()=>({ok:true,result:{message_id:99}})};};
     const sessions=[];
-    channel.setArgoRuntime({channel:{activity:{record(){}},routing:{resolveAgentRoute:()=>({agentId:'a',sessionKey:'s',accountId:'default'})},session:{resolveStorePath:()=>dir,readSessionUpdatedAt:()=>null,recordInboundSession:async({sessionKey})=>{sessions.push(sessionKey);}},reply:{formatAgentEnvelope:o=>o.body,resolveEnvelopeFormatOptions:()=>({}),finalizeInboundContext:o=>o,dispatchReplyWithBufferedBlockDispatcher:async({dispatcherOptions:d,replyOptions:r})=>{
-      assert.equal(r.disableBlockStreaming,true);
-      await d.deliver({text:'private tool output'},{kind:'tool'});
-      await d.deliver({text:'partial'},{kind:'block'});
-      await d.deliver({text:'reasoning',isReasoning:true},{kind:'final'});
-      await d.deliver({text:'@Peer next\nMSGR: handoff'},{kind:'final'});
-    }}}});
+    const contexts=[];
+    channel.setArgoRuntime({channel:{activity:{record(){}},routing:{resolveAgentRoute:()=>({agentId:'a',sessionKey:'s',accountId:'default'})},inbound:{
+      buildContext:(p)=>{contexts.push(p);return {SessionKey:p.route.dispatchSessionKey,BodyForAgent:p.message.bodyForAgent};},
+      dispatch:async({route,ctxPayload,delivery:d,replyOptions:r})=>{
+        sessions.push(route.sessionKey); assert.equal(ctxPayload.SessionKey,route.sessionKey);
+        assert.equal(r.disableBlockStreaming,true);
+        assert.equal(r.sourceReplyDeliveryMode,'automatic','운영자 설정(visibleReplies=message_tool)과 무관하게 답을 받아 아르고로 보낸다');
+        await d.deliver({text:'private tool output'},{kind:'tool'});
+        await d.deliver({text:'partial'},{kind:'block'});
+        await d.deliver({text:'reasoning',isReasoning:true},{kind:'final'});
+        await d.deliver({text:'@Peer next\nMSGR: handoff'},{kind:'final'});
+      }}}});
     await channel.handleInbound({m:{message_id:5,text:'go',chat:{id:'chat'},from:{id:'user'},execution_attempt:'claim',peers:[{id:'peer',name:'Peer'}]},account:{url:'https://channel.test',token:T,accountId:'default'},cfg:{},log:()=>{}});
     assert.equal(calls.length,1); assert.equal(calls[0].text,'@Peer next');
     assert.equal(calls[0].execution_attempt,'claim');assert.equal(calls[0].reply_to_message_id,5);
     assert.deepEqual(calls[0].mentions,[{kind:'crew',id:'peer'}]);
+    // 모델이 읽는 본문(BodyForAgent)에 스레드 맥락·넘김 규칙이 실린다 — 원문만 넘기면 MSGR 표지·동료 목록을 모른다(2026.9.6 실측)
+    assert.match(contexts[0].message.bodyForAgent,/^go\n[\s\S]*\[Argo Messenger delivery\][\s\S]*Available colleagues: @Peer/);
+    assert.equal(contexts[0].message.rawBody,'go'); assert.equal(contexts[0].access.commands.authorized,false);
+    assert.equal(contexts[0].conversation.kind,'group'); assert.equal(contexts[0].access.mentions.wasMentioned,true);
     for (const id of [6,7]) await channel.handleInbound({m:{message_id:id,thread_root:id,delegated:true,text:'DM request',chat:{id:'chat',kind:'dm'},from:{id:'user'},execution_attempt:'claim',peers:[]},account:{url:'https://channel.test',token:T,accountId:'default'},cfg:{},log:()=>{}});
     assert.deepEqual(sessions,['s','s:argo-dm:chat:6','s:argo-dm:chat:7']);
     assert.deepEqual(calls.slice(1).map(p=>p.chat_id),['chat','chat']);

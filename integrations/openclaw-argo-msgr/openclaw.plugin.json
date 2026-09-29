@@ -3,5 +3,30 @@
   "name": "Argo Messenger",
   "description": "Argo Messenger channel plugin — OpenClaw connects to a company's Argo Messenger as a bot (like Telegram/Slack).",
   "channels": ["argo-msgr"],
-  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} }
+  "configSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+  "channelConfigs": {
+    "argo-msgr": {
+      "label": "Argo Messenger",
+      "description": "Company team messenger with AI crews (bot API)",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "url": { "type": "string" },
+          "token": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "name": { "type": "string" },
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": { "url": { "type": "string" }, "token": { "type": "string" }, "enabled": { "type": "boolean" }, "name": { "type": "string" } }
+            }
+          }
+        }
+      },
+      "uiHints": { "url": { "label": "Server URL" }, "token": { "label": "Bot token", "sensitive": true } }
+    }
+  }
 }
