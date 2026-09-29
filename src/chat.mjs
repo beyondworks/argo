@@ -1764,8 +1764,9 @@ ${lang === 'en'
       canUseTool: sdkGate,
       // 작업 폴더 안 읽기 전용 동작(Read·cat)은 SDK가 canUseTool에 묻지 않고 허용한다 — 훅이 그보다 먼저 같은 게이트를 태운다(gateHooks 주석).
       // 서브에이전트(agent_id) 안의 도구 뒤에는 싣지 않는다 — 본 에이전트가 못 보고 사라진다. 본 에이전트의 다음 도구나 result 뒤에 싣는다
-      hooks: { ...gateHooks(sdkGate, lang), PostToolUse: [{ hooks: [async (input) => (sdkInbox.items.length && !input?.agent_id
-        ? { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: steerNote(sdkInbox.items.splice(0), lang) } } : {})] }] },
+      // 실패한 도구 뒤에는 SDK가 PostToolUse 대신 PostToolUseFailure를 부른다 — 같은 방식으로 싣는다(안 실으면 답 뒤 추가 실행·답 중복)
+      hooks: { ...gateHooks(sdkGate, lang), ...Object.fromEntries(['PostToolUse', 'PostToolUseFailure'].map((ev) => [ev, [{ hooks: [async (input) => (sdkInbox.items.length && !input?.agent_id
+        ? { hookSpecificOutput: { hookEventName: ev, additionalContext: steerNote(sdkInbox.items.splice(0), lang) } } : {})] }]])) },
       disallowedTools: [], // 전권 — 막는 것은 게이트의 금지 구역뿐
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       ...(resumeId ? { resume: resumeId } : {}),
