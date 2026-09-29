@@ -7,7 +7,7 @@ import { useLenis } from '@/components/SmoothScroll';
 import { DL, detectTarget } from '@/lib/downloads';
 import BrandMark from '@/components/BrandMark';
 
-// 소스 레포 링크·스타 게이트 제거(2026-09-07 유건 지시: 레포 프라이빗 전환, 다운로드는 파일로만).
+// GitHub 아이콘·스타 게이트 없음 — 다운로드는 설치파일로만(2026-09-29 운영과 동일하게 확정).
 // 상단 DOWNLOAD = 기기 맞춤 설치파일 직다운로드(argo-agent 릴리스 자산 — 페이지가 아니라 파일).
 
 export default function Nav() {

@@ -244,7 +244,7 @@ const GROUPS = [
       },
       {
         // 앱 설정 → 동기화 카드의 "자세히 보기"가 여기로 온다(argo.ceo/docs#privacy-sync).
-        // 정본은 소스 레포 docs/privacy-sync.md — 레포가 프라이빗이라 사용자에게 보이는 사본은 이 절이다.
+        // 정본은 소스 레포 docs/privacy-sync.md — 사용자가 읽는 사본은 이 절이다.
         // 정본이 바뀌면 이 절도 같이 고친다(2026-09-07 기준 동기화).
         id: 'privacy-sync',
         h: { ko: '14-1. 동기화와 자격 증명 — 무엇이 올라가고, 열쇠는 어디에', en: '14-1. Sync & credentials — what goes up, where the key lives' },
