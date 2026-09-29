@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { stripTypeScriptTypes } from 'node:module';
 import {
   jobDelivery, jobToRow, buildEditPatch, RoutineMirror, ApprovalBridge, agentDecisionPrompt,
-  FOLLOWUP_LATE, FOLLOWUP_LOST_APPROVED, FOLLOWUP_LOST_REJECTED, FOLLOWUP_BUSY, FOLLOWUP_FAILED, APPROVAL_TOOL_PARAMETERS,
+  FOLLOWUP_LATE, FOLLOWUP_LOST_APPROVED, FOLLOWUP_LOST_REJECTED, FOLLOWUP_BUSY, FOLLOWUP_FAILED, followupText, APPROVAL_TOOL_PARAMETERS,
 } from '../integrations/openclaw-argo-msgr/src/contract.js';
 import { makeApi } from '../integrations/openclaw-argo-msgr/src/api.js';
 
@@ -339,7 +339,7 @@ test('도구 등록 — argo-msgr 대화에서만, 처리 중인 메신저 원�
   const manifest = JSON.parse(await readFile(new URL('../integrations/openclaw-argo-msgr/openclaw.plugin.json', import.meta.url), 'utf8'));
   assert.deepEqual(manifest.contracts, { tools: ['argo_request_approval'] }, '매니페스트 contracts.tools 선언(없으면 OpenClaw가 등록을 거절한다)');
   assert.equal(manifest.toolMetadata?.argo_request_approval?.optional, undefined, '선택 도구가 아니다');
-  assert.equal(JSON.parse(await readFile(new URL('../integrations/openclaw-argo-msgr/package.json', import.meta.url), 'utf8')).version, '0.3.0');
+  assert.equal(JSON.parse(await readFile(new URL('../integrations/openclaw-argo-msgr/package.json', import.meta.url), 'utf8')).version, '0.3.1');
   // 승인 모드: 살아 있는 설정(runtime.config.current) → 계정 시작 때 설정 → 없으면 OpenClaw 기본값 full.
   // 이 계정에 묶인 에이전트의 agents.entries.<id>.tools.exec.mode가 있으면 그 값(검수 L2)
   channel.setArgoRuntime({ config: { current: () => ({ tools: { exec: { mode: 'allowlist' } } }) } });
@@ -693,4 +693,14 @@ test('재검수 — 재개 턴이 예외로 끝나도 부모 연결을 풀고 �
   b.approvals.set('hx-1', { externalId: 'e1', kind: 'exec' });
   assert.equal(await b.onDecided({ approval_id: 'hx-1', status: 'approved', resume: true }), 'allow-once');
   assert.deepEqual(api.calls.slice(n).map((c) => c[0]), ['ackApproval'], '이미 승인돼 실행됐으면 "실행되지 않았다"고 알리지 않는다');
+});
+
+test('후속 보고 본문 — 넘김 표지는 한 줄이든 줄 끝(백틱 포함)이든 떼고 코드 블록 안은 그대로, 보낼 때 적용', async () => {
+  assert.equal(followupText('확인했습니다. `MSGR: done`'), '확인했습니다.');
+  assert.equal(followupText('끝\nMSGR: handoff\n'), '끝');
+  assert.equal(followupText('코드\n```\nMSGR: done\n```'), '코드\n```\nMSGR: done\n```');
+  const api = fakeApi({ sendFollowup: { message_id: 1 } });
+  const b = new ApprovalBridge({ api, resolve: async () => {} });
+  await b.followup('ag-m', '했습니다 `MSGR: done`');
+  assert.deepEqual(api.calls.at(-1), ['sendFollowup', { approval_id: 'ag-m', text: '했습니다' }]);
 });

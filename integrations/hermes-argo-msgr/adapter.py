@@ -372,6 +372,13 @@ def relay_reply(text, m):
     return {'text': body, 'execution_attempt': m.get('execution_attempt'), 'disposition': disposition, 'mentions': mentions}
 
 
+def followup_text(text):
+    """후속 보고 본문 — 넘김 표지(MSGR: done|handoff)는 사람에게 보이면 안 된다. 한 줄 표지는 relay_reply 규칙으로, 모델이 줄 끝에 붙인 표지
+    (예: '…확인했습니다. `MSGR: done`', 2026-09-30 효원 실측)도 뗀다. 후속 보고는 넘김이 없다(done)."""
+    body = relay_reply(str(text or ''), {})['text'].rstrip()
+    return re.sub(r'[ \t]*`?MSGR: (?:handoff|done)`?[ \t]*$', '', body).rstrip() or body
+
+
 class ArgoMsgrAdapter(BasePlatformAdapter):
     SUPPORTS_MESSAGE_EDITING = False  # Final-only delivery; draft sends must not consume an execution claim.
     def __init__(self, config):
@@ -953,7 +960,7 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         if aid in self._followed:
             return SendResult(success=False, error="This approval already has its follow-up")
         try:
-            res = await self._api('sendMessage', {'approval_id': aid, 'text': content[:_MAX_LEN]}, post=True) or {}
+            res = await self._api('sendMessage', {'approval_id': aid, 'text': followup_text(content)[:_MAX_LEN]}, post=True) or {}
         except ArgoMsgrError as e:
             logger.warning("Argo Messenger: follow-up for %s failed — %s", aid, e)
             return SendResult(success=False, error=e.description)
