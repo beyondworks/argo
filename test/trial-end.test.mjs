@@ -1,25 +1,12 @@
-// trialEnd — 체험 D-day 배지·임박 배너의 단일 원천. 여기가 어긋나면 배너 시점과
-// 서버 실제 차단 시점(is_pro의 14일 창)이 조용히 불일치한다(분리 검수 권고로 잠금).
+// trialBadgeState — 체험 D-day 배지·임박 배너의 단일 원천. 여기가 어긋나면 배너 시점과
+// 서버 실제 차단 시점이 조용히 불일치한다(분리 검수 권고로 잠금).
+//
+// 2026-09-29 변경: trialEnd(가입일+14일을 클라이언트에서 계산)는 제거했다 — 14일 무료 체험 폐지(R1)
+// 이후 "T(마이그레이션 20260929110000) 이전 가입자만 남은 체험"이라는 조건은 서버만 안다. trialEndsAt은
+// 이제 항상 서버(my_plan() RPC)가 준 값이고, 이 파일은 그 값을 받은 **뒤의** 배지 표시 로직만 검증한다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { trialEnd, trialBadgeState, TRIAL_DAYS } from '../src/entitlement.mjs';
-
-test('trialEnd: pro면 null — 배지·배너 의미 없음', () => {
-  assert.equal(trialEnd('2026-07-01T00:00:00Z', 'pro'), null);
-});
-
-test('trialEnd: 가입 + TRIAL_DAYS 정확히 — 서버 is_pro 14일 창과 대칭', () => {
-  const c = '2026-07-01T00:00:00Z';
-  const end = trialEnd(c, null);
-  assert.equal(Date.parse(end) - Date.parse(c), TRIAL_DAYS * 86_400_000);
-  assert.equal(trialEnd(c, 'free'), end); // free 명시 행도 동일(취소 후에도 잔여 체험창 유지 계약)
-});
-
-test('trialEnd: 파싱 불가·부재는 null — D-NaN 배지 원천 차단', () => {
-  assert.equal(trialEnd('not-a-date', null), null);
-  assert.equal(trialEnd(null, null), null);
-  assert.equal(trialEnd(undefined, 'free'), null);
-});
+import { trialBadgeState } from '../src/entitlement.mjs';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-07-28T00:00:00Z');
@@ -45,4 +32,10 @@ test('trialBadgeState: pro·파싱 불가·부재는 비활성', () => {
   assert.equal(trialBadgeState(new Date(NOW + 5 * DAY).toISOString(), 'pro', NOW).active, false);
   assert.equal(trialBadgeState('not-a-date', null, NOW).active, false);
   assert.equal(trialBadgeState(null, null, NOW).active, false);
+});
+
+test('trialBadgeState: trialEndsAt이 null이면(서버가 "체험 없음"으로 판정) 항상 비활성 — T 이후 가입자', () => {
+  // R1: T 이후 가입자는 my_plan()이 trialEndsAt=null을 준다(entitlement.mjs 주석 참조). plan이
+  // 무엇이든(보통 'free') 이 값 하나로 배지가 꺼져야 한다 — 클라가 따로 가입일을 계산하지 않는다.
+  assert.equal(trialBadgeState(null, 'free', NOW).active, false);
 });

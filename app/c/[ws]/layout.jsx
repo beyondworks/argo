@@ -505,7 +505,7 @@ function Shell({ children, params }) {
           <Icon name="plus" size={15} /> {t('nav.hire')}
         </Link>
 
-        {/* 베타 피드백 — 인앱 모달로 작성 후 서버가 Supabase에 저장(브라우저 안 열림). 클라우드(로그인) 모드에서만. */}
+        {/* 피드백 — 인앱 모달로 작성 후 서버가 Supabase에 저장(브라우저 안 열림). 클라우드(로그인) 모드에서만. */}
         {me?.authOn && (
           <button
             type="button"
@@ -516,7 +516,6 @@ function Shell({ children, params }) {
           >
             <Icon name="send" size={15} />
             <span style={{ flex: 1 }}>{t('nav.feedback')}</span>
-            <span className="mono" style={{ fontSize: 9, letterSpacing: '0.06em', color: 'var(--primary)', border: '1px solid var(--primary-fg-line)', borderRadius: 4, padding: '1px 4px' }}>{t('feedback.beta')}</span>
           </button>
         )}
         <Link

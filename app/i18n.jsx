@@ -324,8 +324,7 @@ const DICT = {
   'split.noCrew': ['옆에 열 다른 크루가 없습니다', 'No other crew to open beside'],
   'split.docMissing': ['문서를 찾을 수 없습니다', 'Document not found'],
   'nav.feedback': ['피드백', 'Feedback'],
-  'feedback.beta': ['베타', 'Beta'],
-  'feedback.title': ['베타 피드백', 'Beta feedback'],
+  'feedback.title': ['피드백', 'Feedback'],
   'feedback.desc': ['불편했던 점·바라는 점 무엇이든 적어주세요. 그대로 전달됩니다.', 'Tell us what felt off or what you wish it did — anything helps.'],
   // 이슈 미러링이 켜진 배포에서만 뜬다 — 공개 저장소에 올라간다는 사실을 안 알리면
   // 사용자는 키·경로를 그대로 적는다(분리 검수 2026-08-03 H1).
@@ -642,6 +641,8 @@ const DICT = {
   'settings.sync.off': ['꺼짐', 'Off'],
   // offHelp 교정(2026-08-29 2차): 자격 3종은 Argo 클라우드로 올라가지 않는다(호스티드=구조적 강제, 셀프호스트=선택). 모드 무관 참.
   'settings.sync.offHelp': ['클라우드 키가 설정되면 자동으로 켜집니다. 회사 폴더가 클라우드에 복제돼 어느 컴퓨터에서 열어도 같은 회사가 이어집니다. 단 자격 증명(러너 로그인·봇 토큰·MCP 키)은 Argo 클라우드로 올라가지 않고 각 기기에만 저장됩니다(셀프호스트는 설정에서 선택).', 'Turns on automatically once cloud keys are configured. Your company folder replicates to the cloud so the same company continues on any computer. Credentials (runner logins, bot tokens, MCP keys), however, never go to Argo cloud — they stay on each device (self-hosting is a choice in settings).'],
+  // free 플랜 동기화 배지(2026-09-29 R3) — "가동 중/꺼짐" 대신 이 사실을 고정 표시. 여러 기기 동기화는 Pro뿐.
+  'settings.sync.freeNote': ['이 기기에만 저장됩니다 · 여러 기기 동기화는 Pro', 'Stored on this device only · multi-device sync is Pro'],
   'settings.sync.credToggle': ['자격 증명 동기화', 'Credential sync'],
   'settings.sync.credOn': ['포함됨', 'Included'],
   'settings.sync.credOff': ['제외됨', 'Excluded'],
@@ -709,6 +710,8 @@ const DICT = {
   'billing.trialEnding': ['무료 체험이 곧 끝납니다. 클라우드 동기화·멀티기기를 계속 쓰려면 Pro로 업그레이드하세요 — 결제하지 않아도 로컬 사용은 그대로이고, 클라우드 데이터도 사라지지 않고 보존됩니다.', "Your free trial ends soon. Upgrade to Pro to keep cloud sync and multi-device — even if you don't, local use continues and your cloud data is safely preserved."],
   'billing.cancelledUntil': ['해지 예약됨 — {date}까지 이용 가능', 'Cancellation scheduled — available until {date}'],
   'billing.cloudPaused': ['구독이 종료돼 클라우드 동기화가 잠자는 중입니다 — 로컬 사용은 그대로이고, 데이터는 안전하게 보존됩니다. 재구독하면 그 자리에서 이어집니다.', 'Your subscription ended, so cloud sync is asleep — local use is unaffected and your data is safely preserved. Resubscribe and it resumes right where it left off.'],
+  // 클라우드 사본 삭제 예정(R4, 2026-09-29) — Pro가 아닌 계정의 클라우드 사본은 30일 보관 후 삭제(운영 스크립트, 이번엔 자동 실행 아님).
+  'billing.purgeNotice': ['Pro가 아니어서 클라우드 사본은 {date}에 삭제됩니다 — 업그레이드하면 삭제되지 않습니다.', "You're not on Pro, so this cloud copy will be deleted on {date} — upgrade to keep it."],
   'settings.conn.token': ['봇 토큰', 'Bot Token'],
   'settings.conn.tokenSaved': ['저장됨', 'saved'],
   'settings.conn.tokenPlaceholder': ['변경할 때만 입력', 'Enter only to change'],

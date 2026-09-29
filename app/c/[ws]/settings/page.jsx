@@ -1460,6 +1460,7 @@ function SyncCard({ ws }) {
     </div>
   );
   const mine = sync?.companies?.[ws];
+  const purgeAfter = bill?.purgeAfter ?? null; // R4 — Pro면 서버가 이미 null을 준다(추가 plan 체크 불필요)
   return (
     // 와이드 — 이 카드는 상태 줄·결제 표면·내보내기가 겹쳐 세로로 길어지는데 340px 트랙 하나에
     // 갇혀 있었다(유건 지시 2026-08-19). 위험 구역 카드와 같은 방식으로 열 전체를 쓴다.
@@ -1476,12 +1477,29 @@ function SyncCard({ ws }) {
         ) : plan === 'free' ? (
           <span className="pill" style={{ flex: 'none' }}>{t('billing.plan.free')}</span>
         ) : null}
-        {sync === null ? <Skeleton h={18} w={70} /> : sync.on ? (
+        {/* free는 "가동 중/꺼짐" 대신 이 사실을 고정 표시(R3, 2026-09-29) — 동기화 루프가 돌아도
+            서버 RLS가 free의 쓰기를 거부해 "가동 중"이 거짓 안심을 준다. 결제 버튼은 아래 본문에. */}
+        {plan === 'free' ? (
+          <span className="pill" style={{ flex: 'none' }}>{t('settings.sync.freeNote')}</span>
+        ) : sync === null ? <Skeleton h={18} w={70} /> : sync.on ? (
           <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('settings.sync.on')}</span>
         ) : (
           <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('settings.sync.off')}</span>
         )}
       </div>
+      {purgeAfter && mine && (
+        // R4: Pro가 아닌 사람의 클라우드 사본은 30일 보관 후 삭제. 실제 삭제는 별도 운영 스크립트
+        // (scripts/cloud-purge.mjs, 이번엔 자동 실행하지 않음) — 여기는 안내뿐. 내려받는 버튼(CloudExportRow)은
+        // 이 카드 안 기존의 단일 렌더 지점(아래, sync.paywalled || plan==='free')을 그대로 가리킨다 —
+        // 렌더 지점을 두 곳으로 늘리면 분리 검수 CRITICAL이 잠근 직교 렌더 불변식이 깨진다(test/cloudexport.test.mjs).
+        // mine(sync.companies[ws]) 존재 = 이 회사가 동기화를 한 번이라도 한 적 있다 — 클라우드 사본이
+        // 있을 가능성의 근사(정확한 존재 확인은 Storage 조회가 필요해 이번 범위에선 근사로 둔다).
+        <div style={{ display: 'grid', gap: 4, marginTop: 4 }}>
+          <span style={{ fontSize: 12, color: 'var(--danger)' }}>
+            {t('billing.purgeNotice', { date: new Date(purgeAfter).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') })}
+          </span>
+        </div>
+      )}
       {sync?.on ? (
         <div style={{ display: 'grid', gap: 4, fontSize: 12.5, color: 'var(--fg-2)' }}>
           <span>{sync.leader ? t('settings.sync.leader') : t('settings.sync.follower')}</span>
@@ -1571,7 +1589,11 @@ function SyncCard({ ws }) {
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
           <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
-          {trialImminent ? (
+          {plan === 'free' ? (
+            // R3(2026-09-29): 동기화를 켠 적 없는 free 사용자도 결제 진입로가 있어야 한다 — 이 자리가
+            // 비어 있어 체험을 한 번도 못 겪은 신규 free 계정은 결제 버튼을 볼 방법이 없었다.
+            <UpgradeButtons />
+          ) : trialImminent ? (
             // 동기화를 안 켠 체험자에게도 임박 안내 — 이들이 가장 큰 코호트(검수 커버리지 질문 → 포함 결정)
             <div style={{ display: 'grid', gap: 6 }}>
               <span style={{ color: 'var(--fg-2)', fontSize: 12, fontWeight: 650 }}>{t('billing.trialEnding')}</span>

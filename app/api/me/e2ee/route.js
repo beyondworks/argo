@@ -14,7 +14,6 @@ import {
   tryClaimDek, _resetClaimForTest, claimFirstWrap,
 } from '../../../../src/e2ee.mjs';
 import { markResealAll, nudgeSync } from '../../../../src/sync.mjs';
-import { proRowActive, TRIAL_DAYS } from '../../../../src/entitlement.mjs';
 
 export const maxDuration = 60;
 
@@ -89,10 +88,10 @@ export async function POST(req) {
       }
       // 플랜 게이트 — 동기화가 실제로 도는 상태(Pro·체험)에서만: 재봉인 push가 free RLS에 막혀
       // "켰는데 아무것도 암호화 안 됨"이 되는 것을 정직하게 사전 차단(#325 HIGH-2와 같은 원칙).
-      const { data: ent } = await sb.from('entitlements').select('plan,ends_at').maybeSingle();
-      const created = (await sb.auth.getUser()).data?.user?.created_at;
-      const trial = created ? (Date.now() - new Date(created).getTime()) < TRIAL_DAYS * 86_400_000 : false;
-      if (!(proRowActive(ent ?? {}) || trial)) {
+      // 2026-09-29: 체험을 가입일+14일로 여기서 다시 계산하지 않는다 — T(마이그레이션 20260929110000)
+      // 이전 가입자만 남은 체험이 있고, 그 판정은 서버 my_plan() RPC만 안다(R1·R3, entitlement.mjs 참조).
+      const { data: myPlan } = await sb.rpc('my_plan');
+      if (myPlan?.plan !== 'pro' && myPlan?.plan !== 'trial') {
         return apiError('e2ee_plan_required', lang);
       }
       const myKeys = await loadDeviceE2ee();
