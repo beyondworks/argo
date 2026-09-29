@@ -1608,7 +1608,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-dm-delivery-warning { margin: 4px 0 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; font-size: 12px; line-height: 1.5; }
 
 @media (max-width: 720px) {
-  .msgr-phone .msgr-main .msgr-thread.page .msgr-sound-controls > .btn.sm { min-height: 44px; height: 44px; }
+  .msgr-phone .msgr-main .msgr-thread.page .msgr-sound-controls > .btn.sm { min-height: 40px; height: 40px; min-width: 40px; padding: 0 10px; } /* 옆 선택 상자와 같은 40px(2026-09-29 설정 크기 정돈) */
 }
 
 /* 이미지 확대(유건 2026-09-16) — 클릭하면 그 자리에서 크게 본다. 스크림을 눌러도, Esc로도 닫힌다. */
@@ -1692,6 +1692,21 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-crewsheet .sec-head h3 { grid-column: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .msgr-crewsheet .sec-head .sub { grid-column: 1; grid-row: 2; white-space: nowrap; }
   .msgr-crewsheet .sec-head > .btn { grid-column: 2; grid-row: 1 / 3; }
+  /* 채팅 탭 머리 — 새 채팅은 오른쪽 아래 + 버튼이 맡으니 머리의 +는 뺀다. 정렬 아이콘의 오른쪽 끝을 행의 시각 오른쪽 끝(12px 안쪽)에 맞춘다(유건 2026-09-29) */
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group .right > .btn { display: none; }
+  .msgr-phone.phone-dm .msgr-dmsort .msgr-sortbtn { display: inline-flex; justify-content: flex-end; align-items: center; padding: 0; }
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group { padding-right: 12px; } /* 행의 시각 오른쪽 끝(화면 끝에서 12px)과 같은 선 */
+  /* 멘션 후보창 — 기준이 화면 폭 전체 입력 영역이라 입력창(좌우 --ph-pad 안쪽)보다 넓게 펼쳐졌다(유건 2026-09-29). 입력창 폭에 맞춘다 */
+  .msgr-phone .msgr-dock .msgr-pop { left: var(--ph-pad); right: var(--ph-pad); width: auto; }
+  /* 업무 창·설정 — 주변 글(12~13px)보다 입력칸(16px)·버튼(44px)만 한 단계 커 보였다(유건 2026-09-29). 입력 확대는 뷰포트 maximum-scale=1이 막는다(09-14부터) */
+  .msgr-work-panel :is(input, textarea, select), .msgr-phone .msgr-setcard :is(input, textarea, select) { font-size: 14px !important; }
+  .msgr-work-panel .work-header h2 { font-size: 17px; }
+  .msgr-work-panel .work-tabs button { padding: 8px; }
+  .msgr-work-panel .work-field :is(input, textarea, select) { padding: 9px 11px; }
+  .msgr-work-panel .msgr-select, .msgr-phone .msgr-setcard .msgr-select { min-height: 40px; padding-block: 8px; }
+  .argo-messenger .msgr-work-panel .btn.btn, .msgr-phone .msgr-setcard .btn.btn { min-height: 36px; } /* 폰 전역 44px 규칙(:is 안 .msgr-side .msgr-list .item 때문에 명시도 0,4,0)을 이긴다 */
+  .argo-messenger .msgr-work-panel .btn.btn.btn-primary { min-height: 40px; }
+  .argo-messenger .msgr-work-panel .work-header .btn.btn { min-width: 36px; width: 36px; padding: 0; } /* 닫기 원 — 높이만 줄면 타원이 된다 */
   /* 홈·채팅 목록의 점 세 개 — 폰은 길게 누르기로 같은 메뉴가 뜬다(rowLongPress). 상시 노출은 줄마다 잡음이었다 */
   .msgr-phone .msgr-side .msgr-railrow .more { display: none; }
   .msgr-phone .msgr-side .msgr-railrow .item { padding-right: 12px; }
