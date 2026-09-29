@@ -79,33 +79,54 @@ export function swipeRelease(dx, w, v) {
   const ms = Math.round(Math.min(320, Math.max(160, remain / Math.max(Math.abs(v), 0.8))));
   return { go, ms };
 }
+/** 임계 감쇠 스프링 한 단계(반응 0.35초, 넘침 없음) — x·v는 px·px/s. 손을 뗀 속도를 그대로 이어받고, 도중에 다시 잡아도 현재 값에서 출발한다(유건 승인 초안 2026-09-29) */
+export function springStep(x, v, target, dt, response = 0.35) {
+  const k = (2 * Math.PI / response) ** 2, c = 4 * Math.PI / response;
+  for (let i = 0; i < 4; i++) { const a = -k * (x - target) - c * v; v += a * dt / 4; x += v * dt / 4; }
+  return [x, v];
+}
+/** 폰 큰 제목 접힘 정도 — 스크롤 8px부터 28px 동안 0→1(머리의 재질·작은 제목이 드러난다) */
+export const headerCollapse = (y) => Math.min(1, Math.max(0, (y - 8) / 28));
 export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'home', onStart = null, onEnd = null } = {}) {
-  const ref = useRef({ x: 0, y: 0, base: 0, armed: false, dir: null, dx: 0, el: null, underlayEl: null, classes: [], samples: [] }); const st = ref.current;
+  const ref = useRef({ x: 0, y: 0, base: 0, armed: false, dir: null, dx: 0, el: null, underlayEl: null, tabbarEl: null, classes: [], samples: [], raf: 0 }); const st = ref.current;
   const cb = useRef({}); cb.current = { onBack, underlay, onStart, onEnd };
   const [node, setNode] = useState(null);
   const shell = () => document.querySelector('.msgr-shell');
   // 스와이프 매 프레임에 셸의 상속 CSS 변수를 바꾸면 전체 화면 자식의 스타일이 다시 계산된다.
   // 실제로 변하는 밑 화면에만 값을 두어 긴 대화 목록에서도 드래그가 가볍게 유지되게 한다.
-  const setP = (p) => st.underlayEl?.style.setProperty('--swipe-p', String(Math.max(0, Math.min(1, p))));
+  const setP = (p) => { const v = String(Math.max(0, Math.min(1, p))); st.underlayEl?.style.setProperty('--swipe-p', v); st.tabbarEl?.style.setProperty('--swipe-p', v); }; // 탭바도 밑 화면과 함께 들어온다(초안 승인)
   const underlay_ = () => cb.current.underlay();
   const onEnd_ = () => cb.current.onEnd?.();
-  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay_() : null; const keep = new Set(to === 'dm' ? ['phone-home', 'phone-dm'] : to === 'home' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); } if (st.underlayEl) { st.underlayEl.style.removeProperty('--swipe-p'); st.underlayEl.style.removeProperty('--swipe-ms'); } st.underlayEl = null; st.classes = []; if (st.el) st.el.style.willChange = ''; onEnd_(); };
-  const settle = (el, to, ms, then) => {
-    const sh = shell(); sh?.classList.add('settling'); st.underlayEl?.style.setProperty('--swipe-ms', `${ms}ms`);
-    el.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`; el.style.transform = to;
-    let fired = false;
-    const done = () => { if (fired) return; fired = true; el.removeEventListener('transitionend', done);
+  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay_() : null; const keep = new Set(to === 'dm' ? ['phone-home', 'phone-dm'] : to === 'home' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); } if (st.underlayEl) { st.underlayEl.style.removeProperty('--swipe-p'); st.underlayEl.style.removeProperty('--swipe-ms'); } st.tabbarEl?.style.removeProperty('--swipe-p'); st.underlayEl = null; st.tabbarEl = null; st.classes = []; if (st.el) st.el.style.willChange = ''; onEnd_(); };
+  const paint = (el, x) => { el.style.transform = `translateX(${x}px)`; setP(x / (el.clientWidth || 1)); };
+  // 놓은 뒤 마무리 — 스프링이 손을 뗀 속도(px/s)에서 출발한다. 끝나기 전에 다시 잡으면 start()가 멈추고 그 자리부터 따라간다
+  const settle = (el, target, v0, then) => {
+    cancelAnimationFrame(st.raf); let x = st.dx, v = v0, last = 0;
+    const done = () => {
+      st.raf = 0; // st.el은 cleanup이 will-change를 지울 때까지 둔다
       const finish = (arrived) => requestAnimationFrame(() => { el.style.transition = ''; el.style.transform = ''; cleanup(arrived); });
       if (!then) { finish(false); return; }
       // 뒤로: 밀린 상태를 유지한 채 history.back() → 화면이 실제로 바뀐 뒤(popstate) 정리. 400ms 안에 안 오면 그냥 정리(안전망)
       let ended = false; const onPop = () => { if (ended) return; ended = true; window.removeEventListener('popstate', onPop); finish(true); };
-      window.addEventListener('popstate', onPop); setTimeout(onPop, 400); then(); };
-    el.addEventListener('transitionend', done); setTimeout(done, ms + 80); // transitionend가 안 오는 경우(탭 전환·리렌더)의 안전망
+      window.addEventListener('popstate', onPop); setTimeout(onPop, 400); then();
+    };
+    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) { st.dx = target; paint(el, target); done(); return; }
+    const step = (now) => {
+      const dt = Math.min(0.032, last ? (now - last) / 1000 : 1 / 60); last = now;
+      [x, v] = springStep(x, v, target, dt);
+      if (Math.abs(x - target) < 0.5 && Math.abs(v) < 10) { st.dx = target; paint(el, target); done(); return; }
+      st.dx = x; paint(el, x); st.raf = requestAnimationFrame(step);
+    };
+    st.raf = requestAnimationFrame(step);
   };
   useEffect(() => {
     if (!enabled || !node) return undefined;
     const start = (e) => {
-      const t = e.touches[0]; st.armed = e.touches.length === 1 && canStartSwipeBack(e.target, t.clientX, window.innerWidth);
+      const t = e.touches[0];
+      if (st.raf && st.el === node && e.touches.length === 1) { // 마무리 중에 다시 잡음 — 그 자리부터 손가락을 따라간다(도중에 잡기)
+        cancelAnimationFrame(st.raf); st.raf = 0; st.armed = true; st.dir = 'x'; st.base = t.clientX - st.dx; st.samples = []; return;
+      }
+      st.armed = e.touches.length === 1 && canStartSwipeBack(e.target, t.clientX, window.innerWidth);
       st.x = t.clientX; st.y = t.clientY; st.dx = 0; st.dir = null; st.el = node; st.samples = [];
     };
     const move = (e) => {
@@ -117,25 +138,25 @@ export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'hom
         if (st.dir === 'y') { st.armed = false; return; }
         st.base = t.clientX; // 잠긴 지점부터 따라간다(튐 방지)
         const to = underlay_(); st.classes = to === 'dm' ? ['phone-home', 'phone-dm'] : ['phone-home'];
-        const sh = shell(); sh?.classList.add('swiping-back', ...st.classes); st.underlayEl = sh?.querySelector('.msgr-side') ?? null; cb.current.onStart?.(to);
+        const sh = shell(); sh?.classList.add('swiping-back', ...st.classes); st.underlayEl = sh?.querySelector('.msgr-side') ?? null; st.tabbarEl = sh?.querySelector('.msgr-tabbar') ?? null; cb.current.onStart?.(to);
         st.el.style.willChange = 'transform'; st.el.style.transition = '';
       }
       e.preventDefault(); // 가로로 잠긴 뒤에는 세로 스크롤·바운스를 멈춘다
       const w = st.el.clientWidth || 1; st.dx = Math.max(0, Math.min(t.clientX - st.base, w));
       st.samples.push([e.timeStamp, t.clientX]); while (st.samples.length > 2 && e.timeStamp - st.samples[0][0] > 100) st.samples.shift();
-      st.el.style.transform = `translateX(${st.dx}px)`; setP(st.dx / w);
+      paint(st.el, st.dx);
     };
     const end = (e) => {
       if (!st.armed || !st.el || st.dir !== 'x') { st.armed = false; return; }
       const el = st.el; const w = el.clientWidth || 1;
       const [t0, x0] = st.samples[0] ?? [e.timeStamp, st.base]; const [t1, x1] = st.samples[st.samples.length - 1] ?? [e.timeStamp, st.base];
       const v = t1 > t0 ? (x1 - x0) / (t1 - t0) : 0;
-      const { go, ms } = swipeRelease(st.dx, w, e.timeStamp - t1 > 120 ? 0 : v); // 멈춘 채 놓으면 속도 0
-      setP(go ? 1 : 0);
-      if (go) settle(el, `translateX(${w}px)`, ms, cb.current.onBack); else settle(el, 'translateX(0)', ms);
+      const vr = e.timeStamp - t1 > 120 ? 0 : v; // 멈춘 채 놓으면 속도 0
+      const { go } = swipeRelease(st.dx, w, vr);
+      settle(el, go ? w : 0, vr * 1000, go ? cb.current.onBack : null); // 손을 뗀 속도 그대로 이어서(px/ms → px/s)
       st.armed = false;
     };
-    const cancel = () => { if (st.el && st.dx) { setP(0); settle(st.el, 'translateX(0)', 180); } else if (st.dir === 'x') cleanup(); st.armed = false; };
+    const cancel = () => { if (st.el && st.dx) settle(st.el, 0, 0); else if (st.dir === 'x') cleanup(); st.armed = false; };
     node.addEventListener('touchstart', start, { passive: true });
     node.addEventListener('touchmove', move, { passive: false });
     node.addEventListener('touchend', end, { passive: true });
