@@ -3734,7 +3734,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
       if (isDesktopTauri() && ['hermes', 'openclaw'].includes(kind)) {
         const { invoke } = await import('@tauri-apps/api/core');
         const l = await invoke('agent_list', { kind });
-        if (l?.ok && l.agents?.length) { agents = l.agents; installation = l.installationId; } else if (l?.reason === 'cli_missing') setAuto({ status: 'missing', results: [] }); else if (!l?.ok) throw new Error(t('org.agents.discovery.failed'));
+        if (l?.ok && l.agents?.length) { agents = l.agents; installation = l.installationId; } else if (l?.reason === 'cli_missing') setAuto({ status: 'missing', results: [] }); else if (l?.reason === 'openclaw_outdated') setAuto({ status: 'outdated', results: [], version: l.version ?? '' }); // cli_missing과 같게 — 수동 연결 봇을 만들고 업데이트 안내를 같이 보인다 else if (!l?.ok) throw new Error(t('org.agents.discovery.failed'));
       }
       if (!agents) { // 수동: 이 컴퓨터에 에이전트가 없거나 앱 밖 — 봇 하나(다른 컴퓨터용)
         const made = await mkOrRotate(kind, kind === 'custom' ? t('org.agents.kind.custom') : t('org.agents.name.mine', { who: nameOfUser(uid), kind: t(`org.agents.kind.${kind}`) }), null);
@@ -3748,7 +3748,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
       const { invoke } = await import('@tauri-apps/api/core');
       const r = await invoke('agent_connect', { kind, url: botUrl, agents: made.map((m) => ({ id: m.agentId, token: m.token, home: m.home })) });
       const results = (r?.results ?? []).map((x) => ({ ...x, name: made.find((m) => m.agentId === x.id)?.name ?? x.id }));
-      setAuto(r?.ok ? { status: 'done', results } : { status: r?.reason === 'cli_missing' ? 'missing' : 'failed', results, reason: r?.reason ?? '' });
+      setAuto(r?.ok ? { status: 'done', results } : { status: r?.reason === 'cli_missing' ? 'missing' : r?.reason === 'openclaw_outdated' ? 'outdated' : 'failed', results, reason: r?.reason ?? '', version: r?.results?.[0]?.version ?? '' });
       onNote(t('org.agents.made.n', { n: made.length }));
     } catch (e) { onError(String(e?.message ?? e)); setAuto((a) => a?.status === 'running' ? { status: 'failed', results: [], reason: String(e?.message ?? e) } : a); }
     finally { setBusy(false); }
@@ -3764,7 +3764,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
       const { id } = local; const home = local.home ?? '';
       const r = await invoke('agent_connect', { kind, url: botUrl, agents: [{ id, token, home }] });
       const results = (r?.results ?? []).map((x) => ({ ...x, name: bot.name }));
-      setAuto(r?.ok ? { status: 'done', results } : { status: r?.reason === 'cli_missing' ? 'missing' : 'failed', results, reason: r?.reason ?? '' });
+      setAuto(r?.ok ? { status: 'done', results } : { status: r?.reason === 'cli_missing' ? 'missing' : r?.reason === 'openclaw_outdated' ? 'outdated' : 'failed', results, reason: r?.reason ?? '', version: r?.results?.[0]?.version ?? '' });
     } catch (e) { setAuto({ status: 'failed', results: [], reason: String(e?.message ?? e) }); }
   };
   const addBot = (kind) => kind === 'hermes' && isDesktopTauri() ? openLocalHermes() : connectAll(kind);
@@ -3918,6 +3918,7 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
             <div className="acts"><button type="button" className="btn sm" onClick={() => connectAll(setup.kind)}>{t('org.agents.auto.retry')}</button></div>
           </div>)}
           {auto?.status === 'missing' && <p className="msgr-auto missing">{t('org.agents.auto.missing', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>}
+          {auto?.status === 'outdated' && <p className="msgr-auto failed">{t('org.agents.openclaw.outdated', { need: '2026.8.1', have: auto.version || t('org.agents.openclaw.versionUnknown') })}</p>}
           {auto?.status !== 'done' && auto?.status !== 'running' && (<>
             <span className="msgr-klabel">{t('org.agents.setup.manual')}</span>
             <ol className="steps">{/* 유건 질문 2026-09-08 "두 줄을 어디에 넣나" — 앱 밖(브라우저)이거나 이 컴퓨터에 에이전트가 없을 때의 수동 안내 */}

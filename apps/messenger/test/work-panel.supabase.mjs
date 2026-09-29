@@ -8,9 +8,17 @@ state.tables.msgr_crews.forEach(crew => { crew.work_protocol = 1; });
 const now = () => new Date().toISOString();
 // 업무 > 자동화 1단계 — 채널(crew-new · general)과 1:1(crew-existing)에 각각 Argo 루틴 시드 + 반영 대기 편집 1건(WORK_FILTER=routine)
 state.tables.msgr_crew_routines.push(
-  { id: 'routine-1', crew_id: 'crew-new', title: 'Fixture morning brief', prompt: 'Summarize overnight updates.', schedule: { type: 'daily', time: '09:00', times: ['09:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now() },
-  { id: 'routine-2', crew_id: 'crew-existing', title: 'Fixture weekly digest', prompt: 'Compile this week’s notes.', schedule: { type: 'weekly', time: '18:00', times: ['18:00'], dows: [1, 3, 5], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now() },
-  { id: 'routine-3', crew_id: 'crew-new', title: 'Fixture stale cleanup', prompt: 'Archive stale threads.', schedule: { type: 'daily', time: '22:00', times: ['22:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now() },
+  { id: 'routine-1', crew_id: 'crew-new', title: 'Fixture morning brief', prompt: 'Summarize overnight updates.', schedule: { type: 'daily', time: '09:00', times: ['09:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now(), source: 'argo', editable: true, status: null },
+  { id: 'routine-2', crew_id: 'crew-existing', title: 'Fixture weekly digest', prompt: 'Compile this week’s notes.', schedule: { type: 'weekly', time: '18:00', times: ['18:00'], dows: [1, 3, 5], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now(), source: 'argo', editable: true, status: null },
+  { id: 'routine-3', crew_id: 'crew-new', title: 'Fixture stale cleanup', prompt: 'Archive stale threads.', schedule: { type: 'daily', time: '22:00', times: ['22:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now(), source: 'argo', editable: true, status: null },
+  // 외부 에이전트 계약 1-a(WORK_FILTER=ext) — 1:1(crew-existing)에만 얹는다. 'general' 채널 시나리오(페이지네이션 등)의
+  // 루틴 개수를 건드리지 않게 channel_id는 비운다(Argo 루틴과 같은 크루 스코프 규칙). Hermes(편집 가능+상태),
+  // OpenClaw(편집 불가+raw 일정+오류 상태), 미지정 source(외부 에이전트 배지 폴백).
+  { id: 'routine-hermes', crew_id: 'crew-existing', title: 'Fixture Hermes cron', prompt: 'Summarize overnight Hermes runs.', schedule: { type: 'daily', time: '07:30', times: ['07:30'], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now(), source: 'hermes', editable: true, status: { last_run_at: now(), last_status: 'ok' } },
+  // raw 일정 + 편집 가능 — RoutineForm이 once·여러 시각과 같은 취급으로 일정만 읽기전용, 제목·지시는 편집 가능해야 한다.
+  { id: 'routine-hermes-raw', crew_id: 'crew-existing', title: 'Fixture Hermes raw schedule', prompt: 'Compact raw job.', schedule: { type: 'raw', expr: '0 */3 * * *', display: '3시간마다' }, enabled: true, channel_id: null, updated_at: now(), source: 'hermes', editable: true, status: null },
+  { id: 'routine-openclaw', crew_id: 'crew-existing', title: 'Fixture OpenClaw scan', prompt: 'Run local scan.', schedule: { type: 'raw', expr: '*/15 * * * 1-5', display: '평일 15분마다' }, enabled: true, channel_id: null, updated_at: now(), source: 'openclaw', editable: false, status: { last_run_at: now(), last_status: 'error' } },
+  { id: 'routine-custom', crew_id: 'crew-existing', title: 'Fixture custom bot', prompt: 'Ping the custom bot.', schedule: { type: 'daily', time: '06:00', times: ['06:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now(), source: 'custom', editable: false, status: null },
 );
 state.tables.msgr_crew_routine_edits.push(
   { id: 'edit-1', routine_id: 'routine-2', status: 'pending', op: 'update', patch: { title: 'Fixture weekly digest (edited)' }, created_at: now() },
@@ -22,7 +30,9 @@ async function response(name, args, action) {
   state.workCalls.push({ name, args: structuredClone(args) });
   if (state.hold === name) { state.hold = null; await new Promise(resolve => { state.release = () => { state.release = null; resolve(); }; }); }
   if (state.unavailable) return { data: null, error: { code: 'PGRST205', message: 'Could not find the table in the schema cache' } };
-  if (state.fail === name) { state.fail = null; return { data: null, error: { message: 'Fixture network failure' } }; }
+  // state.fail은 이름 문자열(기존) 또는 {name,message}(외부 에이전트 계약 1-a — msgr_routine_not_editable 같은 특정 오류 문구 주입용).
+  const failTarget = typeof state.fail === 'object' && state.fail ? state.fail.name : state.fail;
+  if (failTarget === name) { const message = typeof state.fail === 'object' ? state.fail.message : 'Fixture network failure'; state.fail = null; return { data: null, error: { message } }; }
   try { return { data: structuredClone(action()), error: null }; }
   catch (error) { return { data: null, error: { message: error.message } }; }
 }
