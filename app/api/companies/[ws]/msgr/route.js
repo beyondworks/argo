@@ -25,7 +25,7 @@ function runtimeState(gateway) {
 async function myRegistrations(c, ws) {
   const { data, error } = await c.client.from('msgr_crews')
     .select('id, org_id, slug, display_name, hosting, status, allow, allow_users, last_seen_at, msgr_orgs(name, slug)')
-    .eq('owner_user_id', c.uid).eq('ws_id', ws);
+    .eq('owner_user_id', c.uid).eq('ws_id', ws).not('org_id', 'is', null); // 조직 등록만 — 개인 공간 행(org NULL)은 이 카드의 연결·해제 판정 대상이 아니다(분리 검수 M2)
   if (error) throw new Error(error.message);
   return data ?? [];
 }
