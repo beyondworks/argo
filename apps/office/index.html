@@ -13,9 +13,9 @@
       // 첫 페인트 전에 테마를 입힌다(깜빡임 방지) — core/theme.js와 같은 규칙.
       (function () {
         var th = 'linen';
-        try { var v = localStorage.getItem('argo-office-theme'); if (/^(linen|graphite)(-light|-dark)?$/.test(v)) th = v; } catch (e) {}
+        try { var v = localStorage.getItem('argo-office-theme'); if (/^(linen|graphite|cream|sand|peach|mist|glow)(-light|-dark)?$/.test(v)) th = v; } catch (e) {}
         var el = document.documentElement; el.dataset.theme = th;
-        if (th === 'linen' && window.matchMedia('(prefers-color-scheme: dark)').matches) el.classList.add('dark-emul');
+        if (/^(linen|cream|sand|peach|mist|glow)$/.test(th) && window.matchMedia('(prefers-color-scheme: dark)').matches) el.classList.add('dark-emul');
       })();
     </script>
   </head>
