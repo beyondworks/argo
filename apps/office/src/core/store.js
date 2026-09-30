@@ -133,7 +133,6 @@ export const favOf = (s) => readFav(s.layouts['fav:me']?.items, (x) => (x.kind =
 export const isFav = (kind, id) => favOf(state).some((x) => x.kind === kind && x.id === id);
 export const saveFav = (op) => saveLayout('fav:me', writeFav(favOf(state), op));
 export const toggleFav = (kind, id) => saveFav(isFav(kind, id) ? { remove: `${kind}:${id}` } : { add: { kind, id } });
-export const saveTabs = (order) => saveLayout('biztabs:me', order.map((id) => ({ id })));
 export const saveLayout = (key, items) => {
   const current = state.layouts[key];
   if (getStorageScope() !== 'sample' && (!Number.isInteger(current?.version) || current?.conflict)) return false;

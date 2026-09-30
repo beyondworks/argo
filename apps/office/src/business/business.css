@@ -4,6 +4,12 @@
 .biz-tabbar { display: flex; align-items: flex-end; gap: 12px; border-bottom: 1px solid var(--border-soft); margin: -4px 0 16px; }
 .biz-tabbar > .tabs { flex: 1; min-width: 0; flex-wrap: wrap; margin: 0; border-bottom: 0; } /* 좁은 폭에서는 줄바꿈 — 숨은 탭이 없게 */
 .biz-tabbar .tab { flex: none; display: inline-flex; align-items: center; }
+/* 숨긴 탭(유건 9/30 5번) — 좌측 메뉴 '숨긴 메뉴 N'과 같은 모양의 '숨긴 탭 N', 주소로 들어와 보고 있는 숨긴 탭은 제자리에 흐리게 + 눈 가림 표시 */
+.biz-tabbar .tab { gap: 5px; }
+.biz-tabbar .tab.tab-hidden { color: var(--fg-3); }
+.biz-tabbar .tab.tab-hidden .ico { opacity: 0.8; }
+.biz-tab-more { flex: none; display: inline-flex; align-items: center; gap: 4px; align-self: center; height: 28px; padding: 0 8px; color: var(--fg-3); font-size: 12px; border-radius: var(--rc); }
+@media (hover: hover) { .biz-tab-more:hover { background: var(--card-2); color: var(--fg-2); } }
 .biz-tab-actions { display: flex; align-items: center; gap: 6px; padding-bottom: 4px; flex: none; }
 
 /* 도구 줄 — 대시보드 전환·필터·모듈 추가가 한 줄에 */

@@ -57,9 +57,6 @@ export function writeNav(state, op) {
   return [...order.map((id) => (hidden.has(id) ? { id, hidden: true } : { id })), ...sections.map((s) => ({ id: `sec:${s}` }))];
 }
 
-/** 업무 탭: 조직이 켠 탭(enabled)만, 내 순서(saved) 먼저, 새로 켠 탭은 기본 순서(modules)대로 뒤에 */
-export const orderTabs = (modules, enabled, saved = []) => ordered(modules.filter((m) => enabled.includes(m)), (saved ?? []).map((x) => x?.id));
-
 /** 즐겨찾기(유건 9/30 #7) — 페이지·에이전트를 사람마다 한 목록(office_user_layouts fav:me). alive(x)가 아닌 항목(휴지통·권한 없음)은 숨기고,
  *  writeFav는 보이는 목록에서 새로 쓰므로 다음 저장 때 저장값에서도 빠진다. 16KB 행 한도 안에 들게 FAV_MAX개까지 */
 export const FAV_MAX = 100;
