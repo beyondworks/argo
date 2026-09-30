@@ -207,6 +207,7 @@ export function Sidebar({ space, path }) {
   const nav = readNav(useStore((s) => s.layouts['nav:me']?.items), kind);
   const DEF = {
     home: { to: base, icon: 'home', label: t('nav.home'), active: at(base) },
+    calendar: { to: `${base}/calendar`, icon: 'calendar', label: t('nav.calendar'), active: at(`${base}/calendar`) },
     business: { to: `${base}/business/analytics`, icon: 'chart', label: t('nav.business'), active: path.startsWith(`${base}/business/`) && !path.startsWith(`${base}/business/library`) },
     mail: { to: '/me/mail', icon: 'mail', label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
     work: { to: `${base}/work`, icon: 'run', label: t('nav.work'), active: at(`${base}/work`) },

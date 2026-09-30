@@ -34,6 +34,7 @@ const ModuleLibrary = lazy(() => import('./pages/ModuleLibrary.jsx'));
 const Perf = lazy(() => import('./pages/Perf.jsx')); // 성과 기록(유건 9/29)
 const Assets = lazy(() => import('./pages/Assets.jsx')); // 노하우·업무 세트(유건 9/29)
 const Tools = lazy(() => import('./pages/Tools.jsx')); // 도구함(유건 9/29)
+const Calendar = lazy(() => import('./calendar/Calendar.jsx')); // 일정(유건 9/30)
 // 메일 화면은 메일을 열 때만 필요하다 — 첫 화면 JS 150KB 상한(할 일 화면을 붙이며 넘은 0.1KB를 여기서 되찾는다)
 const Mail = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.Mail })));
 const MailConnect = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.MailConnect })));
@@ -64,7 +65,7 @@ function route(path) {
   if ((m = match('/p/:id', rest))) return { space, view: 'page', id: m.id };
   if (space === 'me' && rest === '/mail/connect') return { space, view: 'mailConnect' };             // Google 권한 승인 뒤 돌아오는 자리
   if (space === 'me' && (m = match('/mail/:id', rest))) return { space, view: 'mail', id: m.id };
-  const simple = { '/mail': 'mail', '/shared': 'shared', '/work': 'work', '/approvals': 'approvals', '/decisions': 'decisions', '/outputs': 'outputs', '/journal': 'journal', '/docs': 'docs', '/perf': 'perf', '/knowhow': 'knowhow', '/tools': 'tools', '/trash': 'trash', '/settings': 'settings' };
+  const simple = { '/calendar': 'calendar', '/mail': 'mail', '/shared': 'shared', '/work': 'work', '/approvals': 'approvals', '/decisions': 'decisions', '/outputs': 'outputs', '/journal': 'journal', '/docs': 'docs', '/perf': 'perf', '/knowhow': 'knowhow', '/tools': 'tools', '/trash': 'trash', '/settings': 'settings' };
   return simple[rest] ? { space, view: simple[rest] } : { redirect: baseOf(space) };
 }
 
@@ -77,7 +78,7 @@ function SaveStatus() {
 function Header({ r, page }) {
   const mode = useSession();
   const sp = SPACES.find((s) => s.key === r.space);
-  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t({ business: 'nav.business', home: 'nav.home', mail: 'nav.mail', mailConnect: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', docs: 'nav.docs', perf: 'nav.perf', knowhow: 'nav.knowhow', tools: 'nav.tools', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
+  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t({ calendar: 'nav.calendar', business: 'nav.business', home: 'nav.home', mail: 'nav.mail', mailConnect: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', docs: 'nav.docs', perf: 'nav.perf', knowhow: 'nav.knowhow', tools: 'nav.tools', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
   return (
     <header className="topbar">
       <button type="button" className="icon-btn nav-toggle" aria-label={t('nav.open')} onClick={() => setUi({ navOpen: true })}><Icon name="menu" /></button>
@@ -181,7 +182,7 @@ export default function App() {
   const params = new URLSearchParams(query ?? '');
   const views = {
     business: <Suspense fallback={<div className="boot" aria-busy="true" />}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} />}</Suspense>,
-    home: <Home space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
+    home: <Home space={r.space} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
     work: <Work space={r.space} openId={params.get('open')} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
     outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
