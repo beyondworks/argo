@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NAV, readNav, writeNav, moveId, readFav, writeFav, FAV_MAX } from '../src/core/nav-model.js';
+import { NAV, readNav, writeNav, moveId, readFav, writeFav, FAV_MAX, routeInfo, favTarget, routeLabelKey, routeIcon, VIEWS, NAV_ICON } from '../src/core/nav-model.js';
 
 // 이유(유건 9/30): "좌측 패널 메뉴가 하드코딩이면 모듈식이 아니다" — 사람마다 순서를 바꾸고 숨긴다(기기가 바뀌어도 같게 DB).
 // 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다. 메뉴·페이지(위키)·에이전트 세 칸의 순서도 바꾼다.
@@ -79,4 +79,36 @@ test('즐겨찾기는 FAV_MAX개까지(한 행 16KB 한도) — 넘치면 추가
   const full = Array.from({ length: FAV_MAX }, (_, i) => ({ kind: 'page', id: `p${i}` }));
   assert.equal(writeFav(full, { add: { kind: 'page', id: 'extra' } }).length, FAV_MAX);
   assert.ok(JSON.stringify({ items: full.map((x) => ({ ...x, id: '00000000-0000-0000-0000-000000000000' })) }).length < 16384);
+});
+
+// 이유(유건 10/1 "좌측 패널에 즐겨찾는 페이지"): 위키 페이지가 없는 조직도 일정·업무 탭·결재함 같은 화면을 즐겨찾기에 넣는다.
+// 위키 페이지는 원래 종류('page')로, 그 밖의 화면은 주소('route')로 — 이름은 저장하지 않고 메뉴 사전으로 만든다.
+test('즐겨찾기 대상: 페이지는 page, 화면은 route, 메일 한 통·모르는 주소는 없음', () => {
+  assert.deepEqual(favTarget('/o/lean-ax/p/abc'), { kind: 'page', id: 'abc' });
+  assert.deepEqual(favTarget('/me/p/abc'), { kind: 'page', id: 'abc' });
+  assert.deepEqual(favTarget('/o/lean-ax/calendar'), { kind: 'route', id: '/o/lean-ax/calendar' });
+  assert.deepEqual(favTarget('/o/lean-ax/business/customers'), { kind: 'route', id: '/o/lean-ax/business/customers' });
+  assert.deepEqual(favTarget('/me'), { kind: 'route', id: '/me' });
+  for (const bad of ['/me/mail/m1', '/o/x/business/nope', '/o/x/zzz', '/s/abc', '/', '', undefined]) assert.equal(favTarget(bad), null, String(bad));
+});
+
+test('화면 즐겨찾기 이름·아이콘: 메뉴 사전과 업무 탭 사전, 모듈 보관함', () => {
+  assert.deepEqual(routeInfo('/o/lean-ax/business/customers'), { space: 'lean-ax', view: 'business', tab: 'customers' });
+  assert.equal(routeLabelKey(routeInfo('/o/lean-ax/business/customers')), 'bizui.customers');
+  assert.equal(routeLabelKey(routeInfo('/o/lean-ax/business/library')), 'library.title');
+  assert.equal(routeLabelKey(routeInfo('/me/approvals')), 'nav.approvals');
+  assert.equal(routeLabelKey(routeInfo('/me')), 'nav.home');
+  assert.equal(routeInfo('/me/calendar').space, 'me');
+  for (const v of VIEWS) assert.ok(NAV_ICON[v] && routeIcon(routeInfo(`/me/${v}`)), v);
+  assert.equal(routeIcon(routeInfo('/me/business/customers')), 'person');
+});
+
+test('즐겨찾기 읽기: route는 모양이 맞는 주소만 — 페이지·에이전트와 한 목록, 끌어 옮기기도 같은 키', () => {
+  const items = [{ kind: 'route', id: '/o/a/calendar' }, { kind: 'route', id: '/o/a/nope' }, { kind: 'route', id: 'javascript:alert(1)' }, { kind: 'page', id: 'p1' }, { kind: 'route', id: '/o/a/calendar' }];
+  const shown = readFav(items, () => true);
+  assert.deepEqual(shown, [{ kind: 'route', id: '/o/a/calendar' }, { kind: 'page', id: 'p1' }]);
+  assert.deepEqual(writeFav(shown, { move: ['page:p1', 'route:/o/a/calendar'] }).map((x) => x.kind), ['page', 'route']);
+  assert.deepEqual(writeFav(shown, { remove: 'route:/o/a/calendar' }), [{ kind: 'page', id: 'p1' }]);
+  const long = Array.from({ length: FAV_MAX }, () => ({ kind: 'route', id: `/o/${'x'.repeat(40)}/business/performance` }));
+  assert.ok(JSON.stringify({ items: long }).length < 16384, '긴 주소 100개도 한 행 16KB 안');
 });

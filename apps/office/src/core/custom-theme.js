@@ -46,7 +46,7 @@ export function buildVars(c, m, base) {
   const side = hex(m.side) ?? base.side, accent = hex(m.accent), badge = hex(m.badge);
   // 투명도 — 카드·사이드바가 바탕을 a만큼 비친다. 글자 대비는 비친 뒤의 색으로 잰다
   const cardSeen = mix(card, bg, 1 - a), sideSeen = mix(side, bg, 1 - a);
-  const surface = hex(m.card) || hex(m.bg) ? mix(cardSeen, bg, 0.62) : base.surface;
+  const surface = hex(m.card) || hex(m.bg) ? mix(cardSeen, bg, 0.85) : base.surface; // base.css --surface(카드 85%)
   if (hex(m.bg)) {
     v['--bg'] = toHex(bg);
     v['--frame'] = toHex(mix(bg, inkFor([bg]), 0.9));
@@ -82,7 +82,7 @@ export function buildVars(c, m, base) {
   if (c.radius != null) {
     const r = Math.min(RADIUS_MAX, Math.max(0, c.radius)), px = (k) => `${Math.round(r * k)}px`;
     Object.assign(v, {
-      '--rs': px(1), '--r-lg': px(1), '--t-main-r': px(1), '--t-win-r': px(1.25), '--r': px(0.75), '--t-pop-r': px(0.75), '--t-tile-r': px(0.9),
+      '--rs': px(1), '--r-lg': px(1), '--t-main-r': px(1), '--t-win-r': px(1.25), '--r': px(0.75),
       '--rc': px(0.5), '--t-nav-r': px(0.5), '--t-btn-r': px(0.5), '--t-icon-r': px(0.5), '--t-chip-r': px(0.5), '--r-sm': px(0.45),
       '--t-input-r': px(0.55), '--t-seg-r': px(0.55),
     });
@@ -103,7 +103,7 @@ function probe(theme) {
   el.dataset.theme = theme; el.classList.remove('dark-emul');
   const d = document.createElement('div'); d.style.cssText = 'position:absolute;visibility:hidden'; document.body.append(d);
   const read = (tok, prop = 'backgroundColor') => { d.style.background = ''; d.style.color = ''; d.style[prop === 'color' ? 'color' : 'background'] = `var(${tok})`; return parse(getComputedStyle(d)[prop]); };
-  const out = { bg: read('--bg'), card: read('--card'), side: read('--side-bg'), surface: read('--float'), /* --surface는 반투명 — 캔버스 위에 보이는 색은 불투명한 --float와 같다 */ fg: read('--fg', 'color'), sideFg: read('--side-fg', 'color') };
+  const out = { bg: read('--bg'), card: read('--card'), side: read('--side-bg'), surface: read('--float'), /* --surface는 반투명 — 캔버스 위에 보이는 색은 불투명한 --float에 가깝다(다크는 --float가 조금 더 밝다) */ fg: read('--fg', 'color'), sideFg: read('--side-fg', 'color') };
   d.remove(); el.dataset.theme = keep.th; el.classList.toggle('dark-emul', keep.emul);
   return out;
 }

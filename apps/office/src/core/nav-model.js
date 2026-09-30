@@ -1,3 +1,5 @@
+import { BUSINESS_MODULES } from './module-registry.js';
+
 // 좌측 메뉴·업무 탭 순서(유건 9/30: "메뉴가 하드코딩이면 모듈식이 아니다") — 사람마다 저장한다(office_user_layouts nav:me · biztabs:me).
 // 메뉴는 내 공간·조직 공간 목록이 달라도 순서·숨김은 한 목록으로 둔다. 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다.
 export const NAV = {
@@ -5,6 +7,9 @@ export const NAV = {
   org: ['home', 'calendar', 'business', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'knowhow', 'tools'],
 };
 export const SECTIONS = ['menu', 'pages', 'crews'];
+// 공간 주소 뒤에 붙는 화면(App.jsx route가 같은 목록을 쓴다) — 메뉴 이름 사전은 nav.<화면>, 아이콘은 NAV_ICON
+export const VIEWS = ['calendar', 'mail', 'shared', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'knowhow', 'tools', 'trash', 'settings'];
+export const NAV_ICON = { home: 'home', calendar: 'calendar', business: 'chart', mail: 'mail', work: 'run', approvals: 'stamp', decisions: 'check', outputs: 'file', journal: 'book', docs: 'doc', perf: 'target', shared: 'share', knowhow: 'book', tools: 'box', trash: 'trash', settings: 'gear' };
 const LOCKED = new Set(['home']);
 // 두 목록을 합친 기본 순서 — 어느 공간에서 걸러 내도 그 공간의 기본 순서가 나온다(테스트가 잠근다)
 const ALL = ['home', 'calendar', 'business', 'mail', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'shared', 'knowhow', 'tools'];
@@ -57,13 +62,33 @@ export function writeNav(state, op) {
   return [...order.map((id) => (hidden.has(id) ? { id, hidden: true } : { id })), ...sections.map((s) => ({ id: `sec:${s}` }))];
 }
 
-/** 즐겨찾기(유건 9/30 #7) — 페이지·에이전트를 사람마다 한 목록(office_user_layouts fav:me). alive(x)가 아닌 항목(휴지통·권한 없음)은 숨기고,
+/** 즐겨찾기에 넣을 수 있는 화면 주소 → { space, view, tab } — 홈·메뉴 화면·업무 탭(모듈 보관함 포함). 페이지·메일 한 통·모르는 주소는 null */
+export function routeInfo(path) {
+  const m = typeof path === 'string' && /^\/(?:me|o\/([^/]+))(\/[^?#]*)?$/.exec(path);
+  if (!m) return null;
+  const space = m[1] ?? 'me', rest = m[2] ?? '';
+  if (!rest) return { space, view: 'home' };
+  if (rest === '/business') return { space, view: 'business' };
+  const tab = /^\/business\/([a-z]+)$/.exec(rest)?.[1];
+  if (tab) return tab === 'library' || BUSINESS_MODULES.some((x) => x.businessTab === tab) ? { space, view: 'business', tab } : null;
+  return VIEWS.includes(rest.slice(1)) ? { space, view: rest.slice(1) } : null;
+}
+/** 지금 보고 있는 화면의 즐겨찾기 대상 — 위키 페이지는 'page'(원래 종류), 그 밖의 화면은 'route'(주소). 이름은 저장하지 않고 그릴 때 사전으로 만든다 */
+export function favTarget(path) {
+  const page = /^\/(?:me|o\/[^/]+)\/p\/([^/?#]+)$/.exec(path ?? '')?.[1];
+  return page ? { kind: 'page', id: page } : routeInfo(path) ? { kind: 'route', id: path } : null;
+}
+/** 화면 즐겨찾기의 이름 사전 키·아이콘 */
+export const routeLabelKey = (r) => (r.tab ? (r.tab === 'library' ? 'library.title' : `bizui.${r.tab}`) : `nav.${r.view}`);
+export const routeIcon = (r) => (r.tab ? (r.tab === 'library' ? 'layout' : BUSINESS_MODULES.find((x) => x.businessTab === r.tab).icon) : NAV_ICON[r.view]);
+
+/** 즐겨찾기(유건 9/30 #7) — 페이지·에이전트·화면(route, 10/1)을 사람마다 한 목록(office_user_layouts fav:me). alive(x)가 아닌 항목(휴지통·권한 없음)은 숨기고,
  *  writeFav는 보이는 목록에서 새로 쓰므로 다음 저장 때 저장값에서도 빠진다. 16KB 행 한도 안에 들게 FAV_MAX개까지 */
 export const FAV_MAX = 100;
 export const favKey = (x) => `${x.kind}:${x.id}`;
 export function readFav(items, alive) {
   const seen = new Set();
-  return (Array.isArray(items) ? items : []).filter((x) => x && ['page', 'crew'].includes(x.kind) && typeof x.id === 'string' && !seen.has(favKey(x)) && seen.add(favKey(x)) && alive(x)).map(({ kind, id }) => ({ kind, id }));
+  return (Array.isArray(items) ? items : []).filter((x) => x && ['page', 'crew', 'route'].includes(x.kind) && typeof x.id === 'string' && (x.kind !== 'route' || routeInfo(x.id)) && !seen.has(favKey(x)) && seen.add(favKey(x)) && alive(x)).map(({ kind, id }) => ({ kind, id }));
 }
 /** op: { add: {kind, id} } | { remove: key } | { move: [key, key] } */
 export function writeFav(list, op) {

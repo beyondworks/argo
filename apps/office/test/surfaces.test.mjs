@@ -47,11 +47,24 @@ const radiusOf = (cls) => {
   assert.ok(hit.length, `${cls} 규칙 없음`);
   return hit.at(-1).trim();
 };
-test('큰 틀은 --rs, 틀 안의 카드·줄·버튼은 --rc', () => {
-  for (const c of ['.module', '.set-card', '.table-wrap', '.vw-lane', '.deal-lane', '.modal', '.menu', '.palette', '.login-card', '.mkt-summary']) assert.equal(radiusOf(c), 'var(--rs)', c);
-  for (const c of ['.btn', '.stat-card', '.list-row', '.ap-row', '.journal-entry', '.mod-row', '.deal-card', '.mkt-card', '.vw-kcard', '.vw-card', '.perf-goal', '.cal-row']) assert.equal(radiusOf(c), 'var(--rc)', c);
-  // 셸이 현황 카드만 따로 크게 둥글리던 규칙(--t-tile-r)이 돌아오지 않게
-  assert.doesNotMatch(read('../src/themes.css'), /\.stat-card[^{]*\{[^}]*border-radius/);
+// 이유(유건 10/1 "카드 모서리 둥근값 통일"): 9/30에 틀(--rs)과 그 안 카드(--rc)를 두 단으로 나눴더니 홈 모듈(12px)과 현황 카드(8px)가 서로 달라 보였다.
+// 카드류는 모두 --rs 하나, --rc는 버튼·입력·배지·칩·탭·메뉴 항목 같은 작은 조작 요소만. 카드류에 --rc(또는 고정값)가 오면 실패한다.
+const CARDS = ['.module', '.set-card', '.table-wrap', '.stat-card', '.vw-lane', '.vw-card', '.vw-kcard', '.deal-lane', '.deal-card', '.mkt-card', '.mkt-summary', '.card-fields', '.card-empty',
+  '.list-row', '.ap-row', '.journal-entry', '.rec-row', '.perf-goal', '.perf-thread li', '.history-preview', '.tpl-item', '.private-block', '.conflict', '.bizui-line', '.bizui-order-line', '.bizui-balances',
+  '.modal', '.menu', '.palette', '.info-pop', '.mention-list', '.vw-selbar', '.login-card'];
+const CONTROLS = ['.btn', '.icon-btn', '.input', '.nav-item', '.tree-row', '.crew-btn', '.seg', '.menu-item', '.palette-row', '.fold-item', '.cal-row', '.vw-row', '.mod-row'];
+test('카드류는 --rs 하나, --rc는 작은 조작 요소만', () => {
+  for (const c of CARDS) assert.equal(radiusOf(c), 'var(--rs)', c);
+  for (const c of CONTROLS.filter((x) => x !== '.fold-item')) assert.equal(radiusOf(c), 'var(--rc)', c);
+  // 카드류 규칙 어디에도(여러 선택자를 묶은 규칙 포함) --rc가 없다
+  for (const f of SCREEN) for (const { sel, decl } of rules(screen(f))) {
+    if (sel.split(',').some((s) => CARDS.includes(s.trim()))) assert.doesNotMatch(decl, /border-radius\s*:[^;]*--rc/, `${f} ${sel}`);
+  }
+  // 셸이 현황 카드·메뉴만 따로 둥글리던 토큰(--t-tile-r·--t-pop-r)이 돌아오지 않게
+  const themes = read('../src/themes.css');
+  assert.doesNotMatch(themes, /\.stat-card[^{]*\{[^}]*border-radius/);
+  assert.doesNotMatch(themes, /--t-(tile|pop)-r/);
+  assert.match(themes, /:is\(\.menu, \.palette\) \{ border-radius: var\(--rs\); \}/);
 });
 
 // 이유(4번): 전체 너비는 사람마다 한 번 정하면 모든 페이지에 — 첫 페인트와 전환 버튼이 같은 키를 봐야 새로고침에 깜빡이지 않는다.
