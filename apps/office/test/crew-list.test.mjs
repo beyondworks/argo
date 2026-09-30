@@ -7,36 +7,35 @@ const ME = 'me';
 const c = (id, extra = {}) => ({ id, name: id, owner: 'other', ownerName: '김관리', company: false, access: 'ok', dept: '', pinned: false, pinPos: null, sortPos: null, status: 'idle', ...extra });
 const names = (g) => g.crews.map((x) => x.id);
 
-test('기본 묶음: 고정 → 내 크루 → 회사 크루 → 동료 크루, 빈 묶음은 빠진다', () => {
-  const r = groupCrews([c('동료1'), c('회사1', { company: true }), c('내것', { owner: ME }), c('고정', { pinned: true, pinPos: 0 })], { me: ME });
-  assert.deepEqual(r.groups.map((g) => [g.key, names(g)]), [['pinned', ['고정']], ['mine', ['내것']], ['company', ['회사1']], ['peer', ['동료1']]]);
+test('오피스에는 내 크루만 — 회사 크루·동료 크루는 쓸 수 있어도 빠진다(유건 9/30), 묶음은 고정 → 내 크루', () => {
+  const r = groupCrews([c('동료1'), c('회사1', { company: true }), c('내것', { owner: ME }), c('고정', { owner: ME, pinned: true, pinPos: 0 }), c('남의고정', { pinned: true, pinPos: 1 })], { me: ME });
+  assert.deepEqual(r.groups.map((g) => [g.key, names(g)]), [['pinned', ['고정']], ['mine', ['내것']]]);
   assert.deepEqual(r.blocked, []);
 });
 
-test('쓸 수 없는 크루(access ≠ ok)는 묶음에서 빠지고 blocked로 — 고정해 둔 크루라도', () => {
-  const r = groupCrews([c('막힘', { access: 'crew_allow', pinned: true }), c('꺼짐', { access: 'inactive' }), c('됨')], { me: ME });
-  assert.deepEqual(r.groups.map((g) => g.key), ['peer']);
-  assert.deepEqual(r.blocked.map((x) => x.id), ['꺼짐', '막힘']);
+test('남의 크루는 꺼졌든 막혔든 없다 — 맨 아래 칸에는 꺼진 내 크루만', () => {
+  const r = groupCrews([c('막힘', { access: 'crew_allow' }), c('남의꺼짐', { access: 'inactive' }), c('내꺼짐', { owner: ME, access: 'inactive' }), c('됨', { owner: ME })], { me: ME });
+  assert.deepEqual(r.groups.map((g) => [g.key, names(g)]), [['mine', ['됨']]]);
+  assert.deepEqual(r.blocked.map((x) => x.id), ['내꺼짐']);
 });
 
-test('순서: 내 크루는 직접 배치(sortPos) 순서, 없는 크루는 뒤에 이름순 — 고정 묶음은 pinPos, 회사·동료 크루는 이름순(끌어 옮기지 않는다)', () => {
+test('순서: 내 크루는 직접 배치(sortPos) 순서, 없는 크루는 뒤에 이름순 — 고정 묶음은 pinPos, 둘 다 끌어 옮긴다', () => {
   const mine = { owner: ME };
-  const r = groupCrews([c('다', mine), c('가', { ...mine, sortPos: 1 }), c('나', { ...mine, sortPos: 0 }), c('라', mine), c('동료나', { sortPos: 0 }), c('동료가', { sortPos: 5 }), c('P2', { pinned: true, pinPos: 1 }), c('P1', { pinned: true, pinPos: 0 })], { me: ME });
+  const r = groupCrews([c('다', mine), c('가', { ...mine, sortPos: 1 }), c('나', { ...mine, sortPos: 0 }), c('라', mine), c('P2', { ...mine, pinned: true, pinPos: 1 }), c('P1', { ...mine, pinned: true, pinPos: 0 })], { me: ME });
   assert.deepEqual(names(r.groups[0]), ['P1', 'P2']);
   assert.deepEqual(names(r.groups[1]), ['나', '가', '다', '라']);
-  assert.deepEqual(names(r.groups[2]), ['동료가', '동료나']);
-  assert.deepEqual(r.groups.map((g) => g.movable), [true, true, false]);
+  assert.deepEqual(r.groups.map((g) => g.movable), [true, true]);
 });
 
 test('부서별 묶음: 부서 이름순, 부서 없음은 맨 뒤 — 고정 묶음은 그대로 맨 위', () => {
-  const r = groupCrews([c('a', { dept: '영업' }), c('b', { dept: '' }), c('d', { dept: '마케팅' }), c('p', { pinned: true, dept: '영업' })], { me: ME, by: 'dept' });
+  const r = groupCrews([c('a', { owner: ME, dept: '영업' }), c('b', { owner: ME, dept: '' }), c('d', { owner: ME, dept: '마케팅' }), c('p', { owner: ME, pinned: true, dept: '영업' })], { me: ME, by: 'dept' });
   assert.deepEqual(r.groups.map((g) => [g.key, g.label ?? null, names(g)]), [['pinned', null, ['p']], ['dept:마케팅', '마케팅', ['d']], ['dept:영업', '영업', ['a']], ['dept:', null, ['b']]]);
 });
 
 test('검색은 이름·주인·부서·직무에서, 일하는 중만 보기는 status가 work·ask인 크루만', () => {
-  const list = [c('오길비', { dept: '마케팅', status: 'work' }), c('울프', { ownerName: '오세훈' }), c('비스트', { role: '광고 오퍼레이터' })];
+  const list = [c('오길비', { owner: ME, dept: '마케팅', status: 'work' }), c('울프', { owner: ME, job: '영업 팀장' }), c('비스트', { owner: ME, role: '광고 오퍼레이터' })];
   assert.deepEqual(groupCrews(list, { me: ME, query: '오길' }).groups.flatMap(names), ['오길비']);
-  assert.deepEqual(groupCrews(list, { me: ME, query: '오세훈' }).groups.flatMap(names), ['울프']); // 주인 이름으로도
+  assert.deepEqual(groupCrews(list, { me: ME, query: '팀장' }).groups.flatMap(names), ['울프']); // 직무로도
   assert.deepEqual(groupCrews(list, { me: ME, query: '광고' }).groups.flatMap(names), ['비스트']);
   assert.deepEqual(groupCrews(list, { me: ME, working: true }).groups.flatMap(names), ['오길비']);
 });

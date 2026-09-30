@@ -77,7 +77,7 @@ const DICT = {
   'nav.pages': ['페이지', 'Pages'], 'nav.wiki': ['조직 위키', 'Wiki'], 'nav.crews': ['크루', 'Crew'],
   // 좌측 크루 목록 정리(9/30)
   'crew.group.pinned': ['고정', 'Pinned'], 'crew.group.mine': ['내 크루', 'My crew'], 'crew.group.company': ['회사 크루', 'Company crew'], 'crew.group.peer': ['동료 크루', "Teammates' crew"],
-  'crew.group.noDept': ['부서 없음', 'No department'], 'crew.blocked': ['쓸 수 없는 크루 {n}', 'Unavailable crew ({n})'],
+  'crew.group.noDept': ['부서 없음', 'No department'], 'crew.blocked': ['꺼진 내 크루 {n}', 'My crew turned off ({n})'],
   'crew.owner.me': ['내 크루', 'Mine'], 'crew.owner.company': ['회사', 'Company'], 'crew.owner.unknown': ['이름 없음', 'Unnamed'],
   'crew.tip.job': ['직무: {job}', 'Role: {job}'], 'crew.tip.dept': ['부서: {dept}', 'Department: {dept}'], 'crew.tip.owner': ['주인: {name}', 'Owner: {name}'], 'crew.tip.noJob': ['직무가 적혀 있지 않습니다', 'No role set'],
   'crew.deny.crew_allow': ['주인만(또는 주인이 정한 사람만) 쓸 수 있는 크루입니다. 주인에게 허용을 요청하세요.', 'Only the owner (or people they chose) can use this crew. Ask the owner for access.'],
