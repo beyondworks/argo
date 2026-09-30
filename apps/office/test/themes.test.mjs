@@ -113,7 +113,8 @@ function tokens(theme) {
     const color = dark
       ? sel.includes(`[data-theme='${fam}-dark']`)
       : sel.includes(`[data-theme='${fam}-light']`) || (isAuto && sel.includes(`[data-theme='${fam}']`) && !sel.includes('dark-emul'));
-    if (!base && !shape && !color) continue;
+    const modeDark = dark && sel.includes("[data-theme$='-dark']"); // base.css 다크 표면(light-dark() 대신 모드별 블록)
+    if (!base && !shape && !color && !modeDark) continue;
     for (const d of r.decl.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) out[d[1]] = d[2].trim();
   }
   return out;

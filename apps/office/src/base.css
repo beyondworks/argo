@@ -13,18 +13,21 @@
   /* 10/1 유건 "카드·버튼 외곽선 빼고 면 색으로 구분" — 경계선 대신 면 차이. 구분 정도는 test/surfaces.test.mjs가 7색 × 라이트·다크 숫자로 잠근다.
      --wash 글자색을 옅게 얹는 면(라이트는 살짝 어둡게, 다크는 살짝 밝게 — 어느 면 위에서도 방향이 맞다): 카드 안 카드·버튼·입력.
      --sunk 칸반 칸처럼 카드를 담는 판(다크는 바탕보다 어둡게 가라앉혀 그 위 카드가 떠 보이게) */
-  --wash: light-dark(color-mix(in srgb, var(--fg) 5%, transparent), color-mix(in srgb, var(--fg) 4%, transparent));
+  --wash: color-mix(in srgb, var(--fg) 5%, transparent);
   --surface: color-mix(in srgb, var(--card) 85%, transparent);
   --lift: var(--wash);
   --field: color-mix(in srgb, var(--card) 80%, transparent);
-  --float: light-dark(color-mix(in srgb, var(--card) 85%, var(--bg)), color-mix(in srgb, var(--fg) 4%, color-mix(in srgb, var(--card) 85%, var(--bg))));
-  --sunk: light-dark(color-mix(in srgb, var(--fg) 2.5%, transparent), rgb(0 0 0 / 0.16));
+  --float: color-mix(in srgb, var(--card) 85%, var(--bg));
+  --sunk: color-mix(in srgb, var(--fg) 2.5%, transparent);
   /* 둥글기(유건 10/1 "카드 모서리 통일") — 카드류(모듈·현황 카드·설정 카드·표 바탕·칸반 칸과 카드·목록 카드형 줄·패널·모달·메뉴 팝업)는 --rs 하나,
      --rc는 버튼·입력·배지·칩·탭·메뉴 항목 같은 작은 조작 요소만. 셸·커스텀이 값을 바꾼다 */
   --side-w: 15rem; --top-h: 3rem; --ctl: 32px; --rc: 8px; --rs: 12px;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --module-gap: 12px; /* 모듈 사이 간격 — 격자·현황 카드·업무 대시보드 공용 */
 }
+/* 다크 표면 — light-dark()는 macOS 14.5 이전 웹뷰(데스크톱 앱)에서 무효라 값이 통째로 빠진다(메뉴 바탕이 투명해짐). 모드별로 나눠 적는다 */
+:root:is([data-theme$='-dark'], .dark-emul) { --wash: color-mix(in srgb, var(--fg) 4%, transparent); --float: color-mix(in srgb, var(--fg) 4%, color-mix(in srgb, var(--card) 85%, var(--bg))); --sunk: rgb(0 0 0 / 0.16); }
+@media (prefers-color-scheme: dark) { :root[data-theme='graphite'] { --wash: color-mix(in srgb, var(--fg) 4%, transparent); --float: color-mix(in srgb, var(--fg) 4%, color-mix(in srgb, var(--card) 85%, var(--bg))); --sunk: rgb(0 0 0 / 0.16); } }
 /* 흐린 글자(--fg-3) — 외곽선을 빼고 면 차이로 카드를 가르면서(10/1) 카드 안 카드·메뉴 위 흐린 글자가 4.5:1 아래로 내려가는 세 곳만 오피스에서 한 단계 진하게(다크는 밝게) */
 :root[data-theme='linen-dark'], :root[data-theme='linen'].dark-emul { --fg-3: #a39d91; }
 /* 사이드바 표면 — linen은 라이트에서도 차콜(메신저 프레임 문법), graphite는 콘텐츠보다 한 단계 어둡다 */
