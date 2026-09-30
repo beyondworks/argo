@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { applyCliEnv, publicSupabaseFromDotenv } from '../src/cli/env.mjs';
+import { applyCliEnv, publicSupabaseFromDotenv, cliLang } from '../src/cli/env.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const base = await mkdtemp(join(tmpdir(), 'argo-cli-bin-'));
@@ -30,6 +30,16 @@ test('설정: .env에서 공개 Supabase 값 두 개만 꺼낸다 — 서비스 
   assert.equal(env.SUPABASE_SERVICE_ROLE_KEY, undefined);
   const mac = { ARGO_CLI_HOME: join(base, 'cfg-y') }; applyCliEnv({ repoRoot: base, env: mac, platform: 'darwin' });
   assert.equal(mac.ARGO_BROWSER_HEADLESS, undefined, '맥은 화면이 있다');
+});
+
+test('언어 — cli.json > LC_ALL > LANG > macOS 언어 설정 순, 비어 있으면 macOS 한국어 사용자에게 영어가 나오지 않는다', () => {
+  const ko = () => 'ko_KR'; const en = () => 'en_US';
+  assert.equal(cliLang({}, {}, { platform: 'darwin', appleLocale: ko }), 'ko', 'LANG이 빈 맥 터미널(실측) — macOS 언어를 따른다');
+  assert.equal(cliLang({}, {}, { platform: 'darwin', appleLocale: en }), 'en');
+  assert.equal(cliLang({}, { LANG: 'en_US.UTF-8' }, { platform: 'darwin', appleLocale: ko }), 'en', 'LANG이 있으면 그것이 먼저');
+  assert.equal(cliLang({}, { LC_ALL: 'ko_KR.UTF-8', LANG: 'en_US.UTF-8' }, { platform: 'linux' }), 'ko', 'LC_ALL이 LANG보다 먼저');
+  assert.equal(cliLang({ lang: 'en' }, { LANG: 'ko_KR.UTF-8' }, { platform: 'darwin', appleLocale: ko }), 'en', 'cli.json 선택이 가장 먼저');
+  assert.equal(cliLang({}, {}, { platform: 'linux', appleLocale: ko }), 'en', '맥이 아니면 macOS 설정을 보지 않는다');
 });
 
 // 가짜 Messages 엔드포인트 — 크루 턴이 실제 SDK로 끝까지 돈다(chat-steer-sdk.test.mjs와 같은 방식)

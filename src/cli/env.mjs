@@ -5,6 +5,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 export const cliHome = (env = process.env) => env.ARGO_CLI_HOME || join(homedir(), '.argo');
 export const configFile = (env = process.env) => join(cliHome(env), 'cli.json');
@@ -50,4 +51,10 @@ export function applyCliEnv({ repoRoot, env = process.env, platform = process.pl
   return cfg;
 }
 
-export const cliLang = (cfg = {}, env = process.env) => (cfg.lang === 'en' || cfg.lang === 'ko' ? cfg.lang : /^ko/i.test(env.LANG ?? env.LC_ALL ?? '') ? 'ko' : 'en');
+const readAppleLocale = () => { try { return spawnSync('defaults', ['read', '-g', 'AppleLocale'], { encoding: 'utf8', timeout: 2000 }).stdout ?? ''; } catch { return ''; } };
+/** 순서: cli.json > LC_ALL > LANG > macOS 언어 설정(맥 터미널은 LANG이 비어 있는 경우가 많다 — Node도 그때 en-US로 본다, 실측) > en */
+export function cliLang(cfg = {}, env = process.env, { platform = process.platform, appleLocale = readAppleLocale } = {}) {
+  if (cfg.lang === 'en' || cfg.lang === 'ko') return cfg.lang;
+  const loc = env.LC_ALL || env.LANG || (platform === 'darwin' ? appleLocale() : '');
+  return /^ko/i.test(String(loc).trim()) ? 'ko' : 'en';
+}
