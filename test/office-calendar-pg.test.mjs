@@ -201,3 +201,24 @@ test('범위 400일 초과는 거절, anon 호출은 거절', {skip}, ()=>{
   assert.match(raw(userSql(U.member,q)).stderr,/permission denied/,q); // 내부 함수는 정의자 함수 안에서만
  }
 });
+
+// 이유: 같은 사람이 담당자 목록(office_org_people)과 달력에서 다른 이름으로 보이면 안 된다 — 조직 일정은 조직 안 표시 이름 먼저
+test('owner_name: 조직 일정은 office_org_people과 같은 이름, 개인 일정은 프로필 이름', {skip}, ()=>{
+ const o=write(U.member,'save',ev({org_id:ORG,title:'이름'})).event;
+ const people=JSON.parse(last(sql(userSql(U.member,`select office_org_people(${quote(ORG)})`))));
+ assert.equal(o.owner_name,people.find(p=>p.user_id===U.member).name); assert.equal(o.owner_name,'member');
+ assert.ok(list(U.admin).events.some(e=>e.id===o.id&&e.owner_name==='member'));
+ assert.equal(write(U.member,'save',ev({title:'개인 이름'})).event.owner_name,'멤버');
+});
+
+// 이유: 종료일(UNTIL) 당일에 시작해 다음 날까지 이어지는 마지막 회차가 범위 첫날에 걸치면 달력에 보여야 한다
+test('반복 기간: UNTIL이 범위 시작 전날이어도 마지막 회차가 범위 시작을 넘으면 포함', {skip}, ()=>{
+ const night=ev({title:'야간',starts_at:'2026-09-01T22:00:00+09:00',ends_at:'2026-09-02T02:00:00+09:00',rrule:'FREQ=DAILY;UNTIL=20260930'});
+ const done=ev({title:'야간 끝남',starts_at:'2026-09-01T22:00:00+09:00',ends_at:'2026-09-02T02:00:00+09:00',rrule:'FREQ=DAILY;UNTIL=20260929'});
+ const short=ev({title:'범위 첫날 오전에 끝남',starts_at:'2026-09-01T10:00:00+09:00',ends_at:'2026-09-01T11:00:00+09:00',rrule:'FREQ=DAILY;UNTIL=20261001'});
+ for(const x of [night,done,short])write(U.admin,'save',x);
+ const got=ids(U.admin);
+ assert.ok(got.includes(night.id)); // 9/30 22:00 ~ 10/1 02:00
+ assert.ok(!got.includes(done.id)); // 9/29 22:00 ~ 9/30 02:00
+ assert.ok(!ids(U.admin,'2026-10-01T12:00:00+09:00','2026-10-02T00:00:00+09:00').includes(short.id)); // 마지막 회차가 범위 시작 전에 끝남
+});

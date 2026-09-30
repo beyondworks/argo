@@ -84,8 +84,10 @@ $$;
 create or replace function public.office_event_json(e public.office_events, p_who uuid) returns jsonb
 language sql stable security definer set search_path = public, pg_temp as $$
   select jsonb_build_object('id', e.id, 'org_id', e.org_id, 'owner', e.owner,
-    'owner_name', coalesce((select coalesce(nullif(p.display_name, ''), split_part(u.email, '@', 1))
-      from auth.users u left join public.msgr_profiles p on p.user_id = u.id where u.id = e.owner), '?'),
+    'owner_name', coalesce((select coalesce(nullif(m.display_name, ''), nullif(p.display_name, ''), split_part(u.email, '@', 1))
+      from auth.users u left join public.msgr_profiles p on p.user_id = u.id
+        left join public.msgr_org_members m on m.org_id = e.org_id and m.user_id = u.id -- 조직 일정은 조직 안 표시 이름 먼저(office_org_people과 같은 기준)
+      where u.id = e.owner), '?'),
     'crew', e.crew, 'visibility', e.visibility, 'title', e.title, 'note', e.note, 'location', e.location, 'category', e.category,
     'customer_id', e.customer_id, 'customer_name', (select c.name from public.office_business_customers c where c.id = e.customer_id),
     'all_day', e.all_day, 'starts_at', e.starts_at, 'ends_at', e.ends_at, 'attendees', to_jsonb(e.attendees),
@@ -283,11 +285,10 @@ end $$;
 -- 읽기: 호출자에게 보이는 일정(개인 + 멤버인 조직의 공개·내가 주인·내가 참석자) 중 기간에 걸치는 것. 반복 전개는 클라이언트가 한다
 create or replace function public.office_event_list(p_from timestamptz, p_to timestamptz) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare who uuid := auth.uid(); from_day date;
+declare who uuid := auth.uid();
 begin
   if who is null then raise exception 'calendar_forbidden' using errcode = '42501'; end if;
   if p_from is null or p_to is null or p_to <= p_from or p_to - p_from > interval '400 days' then raise exception 'calendar_invalid'; end if;
-  from_day := (p_from at time zone 'Asia/Seoul')::date;
   return jsonb_build_object(
     'events', coalesce((select jsonb_agg(public.office_event_json(e, who) order by e.starts_at, e.id)
       from public.office_events e where e.id in (select e.id from public.office_events e
@@ -296,7 +297,9 @@ begin
                 and (e.visibility = 'org' or e.owner = who or who = any(e.attendees))))
           and e.starts_at < p_to
           and case when e.rrule is null then e.ends_at > p_from
-                   else coalesce(public.office_event_until(e.rrule) >= from_day, true) end
+                   -- 반복: 마지막 가능한 회차(UNTIL 날짜의 시작 시각 + 회차 길이)가 범위 시작보다 늦게 끝나면 포함 — UNTIL 당일에 시작해 다음 날까지 가는 회차
+                   else coalesce(((public.office_event_until(e.rrule) + (e.starts_at at time zone 'Asia/Seoul')::time) at time zone 'Asia/Seoul')
+                                 + (e.ends_at - e.starts_at) > p_from, true) end
         order by e.starts_at, e.id limit 3000)), '[]'::jsonb), -- ponytail: 화면용 3000건, 넘으면 기간을 줄인다
     'orgs', coalesce((select jsonb_agg(jsonb_build_object('id', o.id, 'name', o.name, 'role', m.role) order by m.joined_at, o.id)
       from public.msgr_org_members m join public.msgr_orgs o on o.id = m.org_id
