@@ -3,6 +3,7 @@
 -- 목록 노출: 개인 크루 행은 주인만 select한다. 방 안의 남의 크루는 msgr_personal_room_crews()가 표시용 열만 돌려준다
 --   ("내 에이전트"·"추가 후보"에 남의 에이전트가 나오면 안 된다 — 유건 2026-09-30).
 -- 인원 한도(무료 플랜, 유건 2026-09-30): 사람이 둘 이상인 개인 방은 사람+에이전트 4명까지. 혼자 쓰는 방은 내 에이전트 제한 없음. Pro는 제한 없음(Pro 한도 미정).
+-- 2주 유예: 기존 사용자는 2026-10-14까지, 신규 가입자는 가입부터 2주(msgr_free_grace).
 -- 외부 봇(Hermes·OpenClaw)은 다음 단계 — 이 파일은 hosting='local'만 연다.
 
 -- 1) 표
@@ -385,6 +386,17 @@ begin
 end $function$;
 
 
+-- 5-0) 무료 한도 유예(유건 2026-09-30 "2주 동안은 Pro처럼"): 기존 사용자는 오늘부터 2주(설정 free_limits_grace_until — 10/14 끝까지),
+--      신규 가입자는 가입부터 2주. 둘 중 늦은 쪽까지 한도를 걸지 않는다. 날짜는 설정 값만 고치면 바뀐다(마이그레이션 불필요).
+insert into public.msgr_settings (key, value) values ('free_limits_grace_until', '2026-10-15T00:00:00+09:00') on conflict (key) do nothing;
+create or replace function public.msgr_free_grace(p_uid uuid)
+returns boolean language sql stable security definer set search_path = public, pg_temp as $$
+  select now() < greatest(
+    coalesce((select value::timestamptz from public.msgr_settings where key = 'free_limits_grace_until'), '-infinity'::timestamptz),
+    coalesce((select u.created_at + interval '14 days' from auth.users u where u.id = p_uid), '-infinity'::timestamptz))
+$$;
+revoke all on function public.msgr_free_grace(uuid) from public, anon, authenticated;
+
 -- 5) 인원 한도(무료 플랜, 유건 2026-09-30) — 참여 행이 들어가는 모든 길(msgr_crew_join·요청 승인·그룹 만들기)을 한 곳에서 막는다.
 --    사람이 둘 이상인 개인 방은 사람+에이전트 4명까지. 혼자 쓰는 방은 에이전트 제한 없음. 넣는 사람이 Pro면 제한 없음.
 --    짝 방(1:1)에 사람을 다시 넣는 것(나갔다 돌아오기)은 세지 않는다 — 원래 있던 사람이 돌아오지 못하게 되면 안 된다.
@@ -402,7 +414,8 @@ begin
   if new.member_kind = 'user' then nu := nu + 1; else nc := nc + 1; end if;
   if nu >= 2 and nu + nc > 4 then
     -- 한도에 걸릴 때만 요금제를 묻는다(동적 호출 — 요금제 마이그레이션이 없는 테스트 DB에서도 이 트리거가 깨지지 않게)
-    execute 'select coalesce(public.is_pro_for($1), false)' into pro using coalesce(auth.uid(), new.added_by);
+    pro := public.msgr_free_grace(coalesce(auth.uid(), new.added_by)); -- 2주 유예 중이면 Pro처럼
+    if not pro then execute 'select coalesce(public.is_pro_for($1), false)' into pro using coalesce(auth.uid(), new.added_by); end if;
     if not pro then raise exception 'msgr_room_limit' using errcode = '22023', hint = '무료 플랜은 한 대화방에 나를 포함해 4명(에이전트 포함)까지입니다'; end if;
   end if;
   return new;
