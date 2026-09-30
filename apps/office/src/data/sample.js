@@ -113,3 +113,50 @@ export const JOURNAL = [
     { crew: 'crew-luna', text: 'nextfield 제안서 발송(승인됨). 회신 대기.' },
     { crew: 'crew-hana', text: '결제 오류 문의 답변 게시(승인됨).' } ] },
 ];
+
+// 성과 기록 예시(유건 9/30) — 서버 office_perf_report와 같은 모양. 오늘부터 14개월 전까지 날짜마다 규칙적으로 만든다(거래처는 가상)
+const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+const back = (day, n) => { const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+const CLIENTS = ['한빛코퍼레이션', '넥스트필드', '오름상사', '다온랩', '새봄물산'];
+function perfRows() {
+  const today = kstToday(), r = { deals: [], tasks: [], approvals: [], pages: [], crew: [], notes: [], mail: [], asks: [] };
+  for (let i = 0; i < 430; i++) {
+    const day = back(today, i), dow = new Date(`${day}T00:00:00Z`).getUTCDay(), c = CLIENTS[i % CLIENTS.length];
+    if (dow === 0 || dow === 6) continue; // 주말은 비운다
+    if (i % 9 === 2) r.deals.push({ day, order_id: `o${i}`, title: `${c} 연간 유지보수`, kind: 'contract', amount: 1200000 + (i % 4) * 300000, co: i % 18 === 2 ? 2 : 1 });
+    if (i % 9 === 2 && i % 27 === 2) r.deals.push({ day, order_id: `o${i}`, title: `${c} 연간 유지보수`, kind: 'uncontract', amount: -(1200000 + (i % 4) * 300000), co: 1 });
+    if (i % 8 === 3) r.deals.push({ day, order_id: `o${i - 1}`, title: `${c} 구축 1차`, kind: 'invoice', amount: 800000, co: 1 });
+    if (i % 11 === 4) r.deals.push({ day, order_id: `o${i - 2}`, title: `${c} 구축 1차`, kind: 'payment', amount: 800000, co: 1 });
+    if (i % 3 !== 1) r.tasks.push({ id: `t${i}`, title: ['견적서 보내기', '회의록 정리', '계약서 검토', '제안서 수정'][i % 4], due_on: i % 5 ? day : null, day, done: true, on_time: i % 5 !== 0 && i % 8 !== 0 });
+    if (i % 2 === 0) r.approvals.push({ day, n: 1 + (i % 3) });
+    if (i % 6 === 1) r.pages.push({ day, page_id: `pg${i}`, title: `${c} 미팅 메모` });
+    if (i % 4 === 2) r.crew.push({ day, n: 1 + (i % 2) });
+    if (i % 5 === 0) r.mail.push({ thread_id: `m${i}`, day, grade: ['good', 'normal', 'caution'][i % 3], customer: c, reasons: i % 3 === 2 ? ['pushy', 'late_reply'] : ['thanks', 'quick_reply'], account: null, message_id: null });
+    if (i % 4 === 1) r.asks.push({ id: i, day, minutes: 20 + (i % 5) * 15, unanswered: false, done: i % 8 === 1 });
+    if (i % 10 === 3) r.notes.push({ id: `n${i}`, day, body: `${c} 담당자에게 일정 조율 없이 한 번에 합의받음`, edited: false });
+  }
+  return r;
+}
+let perfDemo = null;
+/** 기간 안 기록과 합계 — 합계 계산은 서버와 같은 기준(계약 = 계약 − 취소, 받은 돈 = 입금 − 환불) */
+export function perfSample(from, to) {
+  perfDemo ??= { ...perfRows(), requests: [] };
+  const inRange = (x) => x.day >= from && x.day <= to;
+  const pick = Object.fromEntries(['deals', 'tasks', 'approvals', 'pages', 'crew', 'notes', 'mail', 'asks'].map((k) => [k, perfDemo[k].filter(inRange)]));
+  const sum = (kinds) => pick.deals.filter((d) => kinds.includes(d.kind)).reduce((a, d) => a + d.amount, 0);
+  const due = pick.tasks.filter((x) => x.due_on), ans = pick.asks.filter((q) => q.minutes != null);
+  return { ...pick, goals: [], reviews: [], requests: perfDemo.requests, totals: {
+    contract: sum(['contract', 'uncontract']), invoiced: sum(['invoice', 'credit']), paid: sum(['payment', 'refund']),
+    tasks_done: pick.tasks.length, tasks_due: due.length, tasks_on_time: due.filter((x) => x.on_time).length, tasks_done_due: due.length,
+    mail_threads: pick.mail.length, mail_good: pick.mail.filter((m) => m.grade === 'good').length, mail_normal: pick.mail.filter((m) => m.grade === 'normal').length, mail_caution: pick.mail.filter((m) => m.grade === 'caution').length,
+    req_count: pick.asks.length, req_minutes: ans.length ? Math.round(ans.reduce((a, q) => a + q.minutes, 0) / ans.length) : null, req_unanswered: pick.asks.filter((q) => q.unanswered).length, req_done: pick.asks.filter((q) => q.done).length,
+    approvals: pick.approvals.reduce((a, x) => a + x.n, 0), pages: pick.pages.length, crew: pick.crew.reduce((a, x) => a + x.n, 0),
+  } };
+}
+/** 예시 모드 쓰기 — 성과 한 줄 추가와 고치기 요청만 화면 메모리에 남긴다(새로고침하면 사라진다) */
+export function perfSampleWrite(action, data) {
+  perfSample('0000-00-00', '0000-00-00');
+  if (action === 'note.add') perfDemo.notes.push({ id: data.id, day: data.day, body: data.body, edited: false });
+  else if (action === 'edit.request') perfDemo.requests.push({ id: data.id, note_id: data.note_id, reason: data.reason, status: 'pending' });
+  return null;
+}

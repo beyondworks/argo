@@ -33,6 +33,11 @@ export const PERF_DICT = {
   'perf.k.contract': ['계약', 'Contract'], 'perf.k.uncontract': ['계약 취소', 'Contract undone'], 'perf.k.invoice': ['청구', 'Billed'], 'perf.k.credit': ['청구 감액', 'Billing reduced'],
   'perf.k.payment': ['입금', 'Paid'], 'perf.k.refund': ['환불', 'Refund'], 'perf.co': ['공동 {n}명', 'shared by {n}'],
   'perf.taskDone': ['할 일 끝냄', 'To-do done'], 'perf.onTime': ['기한 안', 'on time'], 'perf.late': ['기한 넘김', 'late'], 'perf.noDue': ['기한 없음', 'no due date'],
+  // 주간·월간·연간 접은 줄의 요약 칩(유건 9/30) — 순서는 perf-model SUMMARY_KEYS
+  'perf.s.contract': ['계약', 'Contracts'], 'perf.s.uncontract': ['계약 취소', 'Undone'], 'perf.s.invoice': ['청구', 'Billed'], 'perf.s.credit': ['청구 감액', 'Reduced'],
+  'perf.s.payment': ['입금', 'Paid'], 'perf.s.refund': ['환불', 'Refunds'], 'perf.s.task': ['할 일', 'To-dos'], 'perf.s.approval': ['결재', 'Approvals'],
+  'perf.s.page': ['문서', 'Docs'], 'perf.s.crew': ['에이전트', 'Agent tasks'], 'perf.s.mail_good': ['거래처 좋음', 'Client happy'], 'perf.s.mail_normal': ['거래처 보통', 'Client okay'],
+  'perf.s.mail_caution': ['거래처 주의', 'Client watch'], 'perf.s.ask': ['메신저 요청', 'Chat asks'], 'perf.s.note': ['성과 한 줄', 'Wins'],
   'perf.approvals': ['결재 {n}건 처리', '{n} approvals'], 'perf.pages': ['문서 작성·수정', 'Docs written'], 'perf.crew': ['에이전트에게 일 {n}건 맡김', '{n} tasks sent to agents'],
   'perf.note': ['성과 한 줄', 'Win'], 'perf.note.hint': ['오늘 한 일 중 기록해 둘 성과를 한 줄로', 'One line about a result worth remembering'], 'perf.note.add': ['남기기', 'Add'],
   'perf.note.goal': ['목표 연결', 'Link goal'], 'perf.note.noGoal': ['연결 안 함', 'No goal'], 'perf.note.edited': ['관리자 허용으로 수정됨', 'Edited with manager approval'],
