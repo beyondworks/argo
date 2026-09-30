@@ -20,7 +20,8 @@ function Deals({ orders, data, openOrder }) {
 export function CustomerCard({ customer: c, data, blocked, run, launch, openOrder }) {
   const hide = (field) => ({ on: c.redacted?.includes(field), disabled: blocked, onToggle: () => run('redact.set', { entity: 'customer', id: c.id, field, on: !c.redacted?.includes(field) }).catch(() => {}) });
   const rows = [['ceo', c.ceo], ['manager', c.manager], ['phone', c.phone], ['email', c.email], ['biz_no', c.biz_no], ['account', c.account],
-    ['category', label(`category.${c.category ?? 'customer'}`)], ['customerStatus', label(`status.${c.status ?? 'active'}`)], ['address', c.address]];
+    ['category', label(`category.${c.category ?? 'customer'}`)], ['customerStatus', label(`status.${c.status ?? 'active'}`)], ['address', c.address],
+    ...(c.created_at ? [['createdAt', new Date(c.created_at).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: 'long', day: 'numeric' })]] : [])]; // 등록일(유건 9/30) — 서버가 돌려줄 때만
   const orders = data.orders.filter((o) => o.customer_id === c.id);
   const total = orders.filter((o) => o.status !== 'cancelled').reduce((s, o) => s + dealAmounts(o, data.lines, data.entries).total, 0);
   return <div className="bizui-detail">

@@ -6,7 +6,7 @@ import { transformSync } from 'esbuild';
 import * as model from '../src/business/dashboard-model.js';
 import * as period from '../src/business/dashboard-period.js';
 import { createContext, createElement, useContext, useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
-import { timeSeriesGeometry, horizontalBarGeometry } from '../src/business/chart-geometry.js';
+import { timeSeriesGeometry, horizontalBarGeometry, nearestIndex, shortMoney } from '../src/business/chart-geometry.js';
 import { CHART_MODULES } from '../src/core/module-registry.js';
 import { renderToStaticMarkup } from 'react-dom/server';
 const require = createRequire(import.meta.url);
@@ -114,7 +114,7 @@ const chartModule={exports:{}};
 const responsiveModule={exports:{}};
 const responsiveSource=readFileSync(new URL('../src/business/ResponsiveChart.jsx',import.meta.url),'utf8').replace(/^import .*;$/gm,'');
 new Function('require','module','exports','useLayoutEffect','useRef','useState','horizontalBarGeometry',transformSync(responsiveSource,{loader:'jsx',jsx:'automatic',format:'cjs'}).code)(require,responsiveModule,responsiveModule.exports,useLayoutEffect,useRef,useState,horizontalBarGeometry);
-new Function('require','module','exports','getLang','t','METRICS','chartSeries','createContext','ResponsiveChart','timeSeriesGeometry',chartCompiled)(require,chartModule,chartModule.exports,()=> 'en',k=>k,model.METRICS,model.chartSeries,createContext,responsiveModule.exports.ResponsiveChart,timeSeriesGeometry);
+new Function('require','module','exports','getLang','t','METRICS','chartSeries','createContext','ResponsiveChart','timeSeriesGeometry','useState','useRef','nearestIndex','shortMoney',chartCompiled)(require,chartModule,chartModule.exports,()=> 'en',k=>k,model.METRICS,model.chartSeries,createContext,responsiveModule.exports.ResponsiveChart,timeSeriesGeometry,useState,useRef,nearestIndex,shortMoney);
 test('actual React chart renders negative bars, data table, and rejects misleading negative donut',()=>{
  const report={metrics:{sales:5},daily:[{date:'2026-09-01',sales:20},{date:'2026-09-02',sales:-15}],mix:[{kind:'product',amount:-15}],orders:[]};
  const render=type=>renderToStaticMarkup(createElement(chartModule.exports.BusinessChart,{widget:{type,metric:'sales'},report,onOpenOrder:()=>{}}));

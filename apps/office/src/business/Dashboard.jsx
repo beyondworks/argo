@@ -10,7 +10,7 @@ import { businessError } from './data.js';
 import { CHARTS, METRICS, chartSeries, periodOrders, configureWidget, defaultDashboard, newWidget, normalizeDashboards, validateFilters, widgetMetrics } from './dashboard-model.js';
 import { PRESETS, firstDay, resolveFilters } from './dashboard-period.js';
 import { ResponsiveChart } from './ResponsiveChart.jsx';
-import { timeSeriesGeometry } from './chart-geometry.js';
+import { timeSeriesGeometry, nearestIndex, shortMoney } from './chart-geometry.js';
 
 const money = (value) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(Number(value));
 const ChartContext = createContext(null);
@@ -50,12 +50,29 @@ export function BusinessChart({ widget, report, onOpenOrder, filters }) {
   }
   const series = chartSeries(report.daily, widget.metric, filters);
   if (!series.length) return <p className="biz-empty">{t('biz.noRows')}</p>;
+  return <><TimeSeries series={series} type={widget.type} label={t(`biz.metric.${widget.metric}`)} /><details><summary>{t('biz.chart.data')}</summary><div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr><th>{t('biz.chart.date')}</th><th className="num">{t(`biz.metric.${widget.metric}`)}</th></tr></thead><tbody>{series.map((p) => <tr key={p.date}><td className="mono">{p.date}</td><td className="num">{money(p.value)}</td></tr>)}</tbody></table></div></details></>;
+}
+
+/** 선·막대 그래프 — 마우스를 올리면 가장 가까운 날짜에 세로선·점과 '날짜 · 값'(유건 9/30). 키보드·화면 읽기는 아래 '데이터 표'가 맡는다 */
+function TimeSeries({ series, type, label }) {
+  const [hover, setHover] = useState(-1);
+  const geometry = useRef(null); // 마지막으로 그린 점 위치 — 마우스 좌표를 가장 가까운 날짜로 바꿀 때 쓴다
   const axisMoney = (value) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'currency', currency: 'KRW', notation: 'compact', maximumFractionDigits: 1 }).format(value);
-  return <><ResponsiveChart label={t(`biz.metric.${widget.metric}`)}>{(width, height) => {
+  const track = (event) => { const points = geometry.current?.points; if (!points) return; const next = nearestIndex(points, event.clientX - event.currentTarget.getBoundingClientRect().left); if (next !== hover) setHover(next); };
+  const svg = { onPointerMove: track, onPointerDown: track, onPointerLeave: () => setHover(-1), onPointerCancel: () => setHover(-1) };
+  const overlay = (width) => { // 값 풍선 — 가장자리에서는 안쪽으로 붙인다
+    const point = geometry.current?.points[hover];
+    if (!point) return null;
+    const side = point.x < 90 ? 'start' : point.x > width - 90 ? 'end' : 'mid';
+    return <div className={`biz-chart-tip ${side}`} style={{ left: side === 'end' ? undefined : point.x, right: side === 'end' ? width - point.x : undefined }} aria-hidden="true"><span className="mono">{point.date}</span> · <strong>{shortMoney(point.value, getLang())}</strong></div>;
+  };
+  return <ResponsiveChart label={label} svg={svg} overlay={overlay}>{(width, height) => {
     const extent = [Math.min(0, ...series.map((point) => point.value)), Math.max(0, ...series.map((point) => point.value))];
     const labelWidth = Math.max(...extent.map((value) => axisMoney(value).length)) * 8 + 12;
     const chart = timeSeriesGeometry(series, width, height, labelWidth);
+    geometry.current = chart;
     const dateLabel = (date) => width < 400 ? date.slice(5) : date;
+    const on = chart.points[hover];
     return <>
       {[chart.high, (chart.high + chart.low) / 2, chart.low].filter((value, index, all) => all.indexOf(value) === index).map((value) => {
         const y = chart.bottom - (value - chart.low) / (chart.high - chart.low || 1) * (chart.bottom - chart.top);
@@ -63,9 +80,10 @@ export function BusinessChart({ widget, report, onOpenOrder, filters }) {
       })}
       {chart.low < 0 && chart.high > 0 && <line className="biz-chart-axis" x1={chart.left} x2={chart.right} y1={chart.baseline} y2={chart.baseline} />}
       <text x={chart.left} y={height - 8}>{dateLabel(series[0].date)}</text>{series.length > 1 && <text x={chart.right} y={height - 8} textAnchor="end">{dateLabel(series.at(-1).date)}</text>}
-      {widget.type === 'line' ? <><polyline className="biz-chart-line" points={chart.points.map((point) => `${point.x},${point.y}`).join(' ')} />{chart.points.map((point, index) => <circle key={point.date} className="biz-chart-dot" cx={point.x} cy={point.y} r={chart.points.length <= 14 || index === chart.points.length - 1 ? 2.5 : 0}><title>{`${point.date}: ${money(point.value)}`}</title></circle>)}</> : chart.points.map((point) => <rect key={point.date} className="biz-chart-bar" x={point.x - chart.barWidth / 2} y={Math.min(chart.baseline, point.y)} width={chart.barWidth} height={Math.abs(chart.baseline - point.y)}><title>{`${point.date}: ${money(point.value)}`}</title></rect>)}
+      {type === 'line' ? <><polyline className="biz-chart-line" points={chart.points.map((point) => `${point.x},${point.y}`).join(' ')} />{chart.points.map((point, index) => <circle key={point.date} className="biz-chart-dot" cx={point.x} cy={point.y} r={chart.points.length <= 14 || index === chart.points.length - 1 ? 2.5 : 0} />)}</> : chart.points.map((point, index) => <rect key={point.date} className={`biz-chart-bar${index === hover ? ' on' : ''}`} x={point.x - chart.barWidth / 2} y={Math.min(chart.baseline, point.y)} width={chart.barWidth} height={Math.abs(chart.baseline - point.y)} />)}
+      {on && <g className="biz-chart-hover"><line x1={on.x} x2={on.x} y1={chart.top} y2={chart.bottom} /><circle cx={on.x} cy={on.y} r="4" /></g>}
     </>;
-  }}</ResponsiveChart><details><summary>{t('biz.chart.data')}</summary><div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr><th>{t('biz.chart.date')}</th><th className="num">{t(`biz.metric.${widget.metric}`)}</th></tr></thead><tbody>{series.map((p) => <tr key={p.date}><td className="mono">{p.date}</td><td className="num">{money(p.value)}</td></tr>)}</tbody></table></div></details></>;
+  }}</ResponsiveChart>;
 }
 
 export function BusinessDashboard({ business, space, onOpenOrder }) {
