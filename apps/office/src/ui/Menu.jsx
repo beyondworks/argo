@@ -33,6 +33,7 @@ export function MenuHost() {
   const [pos, setPos] = useState(null);
   const [idx, setIdx] = useState(-1);
 
+  // 자리를 재기 전에는 opacity 0 — visibility:hidden이면 처음 여는 메뉴에 초점이 안 가 키보드(↓·Enter)로 못 골랐다
   useLayoutEffect(() => {
     setPos(null);
     if (!m || !ref.current) return;
@@ -71,10 +72,10 @@ export function MenuHost() {
   };
   return createPortal(
     <div ref={ref} className="menu" role="menu" tabIndex={-1} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}
-      style={{ left: pos?.x ?? m.x, top: pos?.y ?? m.y, visibility: pos ? 'visible' : 'hidden' }}>
+      style={{ left: pos?.x ?? m.x, top: pos?.y ?? m.y, opacity: pos ? 1 : 0 }}>
       {m.items.map((it, i) => it.sep ? <div key={i} className="menu-sep" role="separator" />
         : it.heading ? <div key={i} className="menu-heading">{it.heading}</div>
-          : <button key={i} type="button" role={it.checked != null ? 'menuitemradio' : 'menuitem'} aria-checked={it.checked ?? undefined} disabled={it.disabled}
+          : <button key={i} type="button" role={it.checked != null ? 'menuitemradio' : 'menuitem'} aria-checked={it.checked} disabled={it.disabled}
             className={`menu-item${i === idx ? ' on' : ''}${it.danger ? ' danger' : ''}`} onPointerMove={() => setIdx(i)} onClick={() => run(it)}>
             <span className="menu-ico">{it.face ?? (it.icon && <Icon name={it.icon} size={14} />)}</span>
             <span className="menu-label">{it.label}</span>

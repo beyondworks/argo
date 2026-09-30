@@ -37,6 +37,15 @@ export function colLabel(by, key, people, items) {
   return key === `p:${people.me}` ? t('views.me') : people.name(key);
 }
 
+/** 드롭다운(유건 9/30 피드백 2번) — `보기: 월 ⌄` 모양 버튼 하나. 누르거나 ↓로 열고, 메뉴 안은 화살표·Enter·Esc(메뉴 호스트), 닫으면 버튼으로 초점이 돌아온다.
+ *  options: [{ value, label }] — 보기·묶기·정렬·색이 같은 모양을 쓴다 */
+export function Dropdown({ label, value, options, onChange }) {
+  const open = (e) => openMenu(e, options.map((o) => ({ label: o.label, checked: o.value === value, run: () => onChange(o.value) })), { anchor: e.currentTarget });
+  return <button type="button" className="btn sm vw-dd" aria-haspopup="menu" onClick={open} onKeyDown={(e) => { if (e.key === 'ArrowDown') open(e); }}>
+    <span className="vw-dd-k">{label}:</span>{options.find((o) => o.value === value)?.label}<Icon name="caret" size={12} />
+  </button>;
+}
+
 /* ── 보기 설정 메뉴(카드 ⋯ 메뉴·빈 곳 우클릭·도구 막대가 같이 쓴다) ── */
 export function viewMenu(cfg, set, views) {
   return [
