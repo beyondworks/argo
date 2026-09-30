@@ -10,6 +10,9 @@ await mkdir(artifacts, { recursive: true });
 const results = [];
 const PORT = process.env.PS_TEST_PORT || 5199;
 
+// 전환기 — 데스크톱은 레일 머리(.msgr-org), 폰은 홈 큰 제목(.msgr-bigtitle, 폰 셸은 레일 머리를 숨긴다)
+const switcher = (p) => p.locator(p.viewportSize().width < 768 ? '.msgr-bigtitle' : '.msgr-org');
+
 async function scenario(lang, width, name, fn) {
   if (process.env.PS_TEST_FILTER && !`${lang}/${width}/${name}`.match(process.env.PS_TEST_FILTER)) return;
   const phone = width < 768; // 폰 폭은 모바일 기기로 연다(personal-space-mark.browser.mjs와 같다 — 폭만 줄이면 전환기가 숨는다)
@@ -40,7 +43,7 @@ try {
 
     // 0. 친구 추가 팝업(유건 2026-09-30) — 개인 공간 친구 옆 +(폰은 홈 +)로 설정에 가지 않고 팝업에서 이메일·아이디로 찾아 요청
     await scenario(lang, width, 'friend-add-popup', async (p) => {
-      await p.locator(width < 768 ? '.msgr-bigtitle' : '.msgr-org').click(); await p.locator('.msgr-menu-pop').waitFor(); // 폰은 홈 큰 제목이 전환기
+      await switcher(p).click(); await p.locator('.msgr-menu-pop').waitFor();
       await p.locator('.msgr-menu-pop button').first().click();
       if (width < 768) await p.locator('.msgr-fab').click();
       else await p.locator('[data-sec="friends"] summary .right button').click();
@@ -60,7 +63,7 @@ try {
     // 1. Switch to personal space and see friend DM list
     await scenario(lang, width, 'switch-to-personal', async (p) => {
       // Open org switcher menu
-      await p.locator('.msgr-org').click();
+      await switcher(p).click();
       await p.locator('.msgr-menu-pop').waitFor();
 
       // Find and click the personal item (first item in menu)
@@ -94,7 +97,7 @@ try {
     });
 
     if (lang === 'ko' && width === 1280) await scenario(lang, width, 'space-transition-keeps-last-channel-scoped', async (p) => {
-      await p.locator('.msgr-org').click();
+      await switcher(p).click();
       await p.locator('.msgr-menu-pop button').first().click();
       await dmsReady(p);
       await p.locator('[data-sec="dms"] .item').first().click();
@@ -105,7 +108,7 @@ try {
         const original = localStorage.setItem.bind(localStorage);
         localStorage.setItem = (key, value) => { if (key === 'argo-msgr-last-ch') window.__lastChWrites.push(value); original(key, value); };
       });
-      await p.locator('.msgr-org').click();
+      await switcher(p).click();
       await p.locator('.msgr-menu-pop button').filter({ hasText: 'Fixture Organization' }).first().click();
       await p.locator('[data-sec="channels"] .item').first().waitFor();
       const polluted = await p.evaluate(({ org, personalChannel }) => window.__lastChWrites.some((value) => JSON.parse(value)[org] === personalChannel), { org: 'org-fixture', personalChannel });
@@ -143,10 +146,10 @@ try {
     // 실사고 2026-09-16: 가상 조직(role owner)이 설정·isAdmin·openDm에 새어 초대·봇 조회, 초대 링크 생성, msgr_create_channel이 __personal__로 400.
     const leakCheck = async (p) => assert.deepEqual((await calls(p)).filter(c => JSON.stringify(c).includes('__personal__')).map(c => `${c.table || c.rpc}:${c.op || 'rpc'}`), []);
     await scenario(lang, width, 'personal-new-chat-no-org', async (p) => {
-      await p.locator('.msgr-org').click();
+      await switcher(p).click();
       await p.locator('.msgr-menu-pop button').first().click();
       await p.locator(width >= 768 ? '[data-sec="dms"]' : '[data-sec="friends"]').waitFor({ state: 'attached' });
-      await p.locator('.msgr-org').click(); // 개인 공간 메뉴에 조직 초대 링크가 없다(가상 조직은 관리자가 아니다)
+      await switcher(p).click(); // 개인 공간 메뉴에 조직 초대 링크가 없다(가상 조직은 관리자가 아니다)
       assert.equal(await p.locator('.msgr-menu-pop button').filter({ hasText: lang === 'ko' ? '멤버 초대' : 'Invite members' }).count(), 0, 'no org invite in personal'); // 조직 초대 항목 라벨(#611: inv.org). 옛 'invite link'는 참여 항목("Join with invite link or code")에 걸려 영어에서 가짜 실패가 났다
       await p.keyboard.press('Escape'); await p.locator('.msgr-menu-pop').waitFor({ state: 'detached' }).catch(() => p.locator('.msgr-scrim').first().click());
       if (width >= 768) {
@@ -174,7 +177,7 @@ try {
 
     // 2c. 개인 공간 검색에서 사람을 누르면 개인 1:1(조직 DM 생성으로 가지 않는다)
     if (width >= 768) await scenario(lang, width, 'personal-search-person', async (p) => {
-      await p.locator('.msgr-org').click();
+      await switcher(p).click();
       await p.locator('.msgr-menu-pop button').first().click();
       await dmsReady(p);
       const box = p.locator('input[placeholder*="⌘K"]'); await box.fill('Colleague'); await box.press('Enter');
@@ -188,7 +191,7 @@ try {
     // 3. Personal space hides attach, crew, work buttons
     await scenario(lang, width, 'hidden-org-buttons', async (p) => {
       // Switch to personal space
-      await p.locator('.msgr-org').click();
+      await switcher(p).click();
       await p.locator('.msgr-menu-pop').waitFor();
       await p.locator('.msgr-menu-pop button').first().click();
 
@@ -217,13 +220,15 @@ try {
         assert.equal(await p.getByText('dropped-in-personal.txt').count(), 0, 'drop ignored in personal space');
       } else assert.fail('personal DM row not visible');
       if (width < 768) { // 카톡식(유건 2026-09-17): 개인 공간 홈 = 친구 목록(+ = 친구 추가), 채팅 탭 = 채팅 목록(+ = 친구 목록으로)
+        await p.evaluate(() => history.back()); await p.locator('.msgr-tabbar').waitFor(); // 폰 대화는 전체 화면이라 탭바가 없다 — 목록으로 나온다
         await p.locator('.msgr-tabbar [role=tab]').first().click();
         await p.locator('[data-sec="friends"]').waitFor();
         assert.equal(await p.locator('[data-sec="dms"]').count(), 0, 'home tab: no chat list in personal space');
         assert.ok((await p.locator('[data-sec="friends"] .item').allTextContents()).some((x) => x.includes('Alice Friend')), 'home tab lists friends');
-        await p.locator('.msgr-fab').click();
-        await p.locator('.msgr-setnav').waitFor();
-        assert.equal(await p.locator('.msgr-setnav button[aria-current="page"]').innerText(), lang === 'ko' ? '친구' : 'Friends', 'home + opens add friend');
+        await p.locator('.msgr-fab').click(); // 홈 + = 친구 추가 팝업(유건 2026-09-30: 설정으로 가지 않는다)
+        await p.locator('.msgr-friendadd').waitFor();
+        assert.equal(await p.locator('.msgr-setnav').count(), 0, 'home + opens the add-friend popup, not settings');
+        await p.keyboard.press('Escape'); await p.locator('.msgr-friendadd').waitFor({ state: 'detached' });
         await p.locator('.msgr-tabbar [role=tab]').nth(1).click();
         await p.locator('[data-sec="dms"]').waitFor();
         assert.equal(await p.locator('[data-sec="friends"]').isVisible(), false, 'chat tab: friends hidden');
@@ -236,6 +241,7 @@ try {
         assert.deepEqual([...g.targets].sort(), ['user-alice', 'user-colleague'], 'group of two friends');
         assert.equal((await rpcCalls(p, 'msgr_create_channel')).length, 0, 'not an org channel');
         await p.locator('.msgr-composer').waitFor(); // 새 방이 열린다
+        await p.evaluate(() => history.back()); await p.locator('.msgr-tabbar').waitFor(); // 전체 화면 대화에서 목록으로
         await p.locator('.msgr-tabbar [role=tab]').nth(1).click();
         const groupRow = p.locator('[data-sec="dms"] .item', { hasText: 'Alice Friend' }).filter({ hasText: 'Org Colleague' });
         await groupRow.first().waitFor(); // 목록에 구성원 이름으로 보인다
@@ -246,13 +252,13 @@ try {
     // 4. Switch back to org and channels/members return
     await scenario(lang, width, 'switch-back-to-org', async (p) => {
       // First switch to personal
-      await p.locator('.msgr-org').click();
+      await switcher(p).click();
       await p.locator('.msgr-menu-pop').waitFor();
       await p.locator('.msgr-menu-pop button').first().click();
       await p.locator(width >= 768 ? '[data-sec="dms"]' : '[data-sec="friends"]').waitFor({ timeout: 5000 }); // 폰은 홈 탭(친구)에 머문다 — 채팅 탭은 채널 절을 숨긴다
 
       // Now switch back to org
-      await p.locator('.msgr-org').click();
+      await switcher(p).click();
       await p.locator('.msgr-menu-pop').waitFor();
       // The org button is after the personal + separator, so find by name
       const orgBtn = p.locator('.msgr-menu-pop button').filter({ hasText: 'Fixture Organization' }).first();

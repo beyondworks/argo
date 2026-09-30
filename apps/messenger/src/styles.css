@@ -1803,3 +1803,9 @@ html { -webkit-tap-highlight-color: transparent; }
     .msgr-phone :is(.msgr-side .msgr-orgwrap, .msgr-main > .msgr-top)::before { background: var(--ph-bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
   }
 }
+
+/* 친구 추가 팝업(2026-09-30) — 전역 .row(padding 12px 18px + 윗선)가 새어 제목 아래 선이 두 줄로 보였다. 폰 머리는 제목 옆에 부제목을 붙인다(부제목이 오른쪽 끝으로 밀렸다). */
+.msgr-friendadd .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; width: auto; text-align: inherit; }
+.msgr-friendadd .msgr-friend-search { border-top: 0; padding-top: 2px; }
+.msgr-friendadd .head strong { flex: none; }
+.msgr-friendadd .head .msgr-klabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
