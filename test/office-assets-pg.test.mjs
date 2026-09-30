@@ -202,3 +202,34 @@ test('상한: 사람마다 한 범위에 자산 1000개까지(보관 포함) —
  sql(`insert into office_assets(id,scope,owner,kind,title) select gen_random_uuid(),'u:${who}',${quote(who)},'knowhow','x'||g from generate_series(1,1000) g`);
  assert.match(writeFail(who,'asset.create',{id:randomUUID(),kind:'knowhow',scope:'me',title:'하나 더',body:''},null),/asset_limit/);
 });
+
+test('목록은 본문 앞 300자만 — 열 때 asset.get으로 전체, 올리기 요청에는 덮어쓸 회사 사본 표시', {skip}, ()=>{
+ const id=randomUUID(), long='가'.repeat(5000); write(U.member2,'asset.create',{id,kind:'knowhow',scope:'me',title:'긴 노하우',body:long});
+ const row=list(U.member2).mine.find(a=>a.id===id);
+ assert.equal(row.body.length,300); assert.equal(row.body_cut,true);
+ const full=write(U.member2,'asset.get',{id}); assert.equal(full.body,long); assert.equal(full.body_cut,false);
+ assert.match(writeFail(U.member,'asset.get',{id}),/asset_not_found/); // 남의 개인 노하우는 못 연다
+ const req=randomUUID(); write(U.member2,'asset.promote',{id:req,asset_id:id});
+ const p=list(U.admin).promotions.find(x=>x.id===req); assert.equal(p.body,long); assert.equal(p.replaces,null); // 관리자는 요청 본문 전체를 본다
+ const r=manage(U.admin,'promotion.decide',{id:req,approve:true});
+ write(U.member2,'asset.update',{id,version:1,title:'긴 노하우',body:'짧게'});
+ const req2=randomUUID(); write(U.member2,'asset.promote',{id:req2,asset_id:id});
+ assert.deepEqual(list(U.admin).promotions.find(x=>x.id===req2).replaces,{id:r.asset_id,version:1});
+ manage(U.admin,'promotion.decide',{id:req2,approve:false});
+ // 회사 사본을 보관하면 같은 버전을 다시 올릴 수 있다
+ write(U.admin,'asset.archive',{id:r.asset_id});
+ write(U.member2,'asset.promote',{id:randomUUID(),asset_id:id});
+});
+
+test('옛 요청(버전 없음)은 승인하지 않는다 — 다시 요청하게', {skip}, ()=>{
+ const a=randomUUID(); write(U.member,'asset.create',{id:a,kind:'knowhow',scope:'me',title:'옛 요청',body:'x'});
+ const req=randomUUID(); write(U.member,'asset.promote',{id:req,asset_id:a});
+ sql(`update office_asset_promotions set asset_version=null where id=${quote(req)}`);
+ assert.match(manageFail(U.admin,'promotion.decide',{id:req,approve:true}),/asset_input/);
+});
+
+test('도구 주소: 공개 도메인 이름만 — 숫자 IP 표기·점 없는 이름·끝 점·전각·퍼센트 인코딩·잘못된 포트는 거절', {skip}, ()=>{
+ const bad=['http://2130706433/','http://0x7f000001/','http://0177.0.0.1/','http://0/','http://%31%32%37.0.0.1/','http://127。0。0。1/','http://１２７.0.0.1/','http://100.64.0.1/','http://8.8.8.8/','http://localtest.me/','http://metadata.google.internal./','http://printer.local./','http://intranet/','https://a.example:99999/','https://a.example:0/','http://127.0.0.1.nip.io/'];
+ for(const url of bad)assert.match(writeFail(U.member,'asset.create',{id:randomUUID(),kind:'tool',scope:'me',title:'도구',body:'',spec:{tool_kind:'service',url,crews:[]}}),/asset_input/,url);
+ for(const url of ['https://app.bolta.io','https://mail.google.com:443/mail','http://my-tool.co.kr/a?b=1#c'])write(U.member,'asset.create',{id:randomUUID(),kind:'tool',scope:'me',title:'도구',body:'',spec:{tool_kind:'service',url,crews:[]}});
+});

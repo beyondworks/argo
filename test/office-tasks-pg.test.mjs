@@ -202,3 +202,11 @@ test('거래 담당자: 마이그레이션을 다시 적용해도 관리자가 �
  const r=psqlSpawn(DB,['-f',fileURLToPath(new URL('../supabase/migrations/20260929180000_office_tasks_owners.sql',import.meta.url))]); if(r.status!==0)throw new Error(r.stderr);
  assert.equal(sql(`select cardinality(owners) from office_business_orders where id=${quote(o)}`),'0');
 });
+
+test('할 일 상한: 취소한 일과 1년 넘은 끝낸 일은 세지 않는다', {skip}, ()=>{
+ const who=U.member2;
+ sql(`insert into office_tasks(id,scope,title,assignee,created_by,cancelled_at) select gen_random_uuid(),'o:${ORG}','x',${quote(who)},${quote(who)},now() from generate_series(1,3000);
+  insert into office_tasks(id,scope,title,assignee,created_by,done_at) select gen_random_uuid(),'o:${ORG}','x',${quote(who)},${quote(who)},now()-interval '400 days' from generate_series(1,2500)`);
+ task('task.create',{id:randomUUID(),title:'아직 된다',due_on:null},{u:who});
+ sql(`delete from office_tasks where created_by=${quote(who)} and title='x'`);
+});

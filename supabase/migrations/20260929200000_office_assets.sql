@@ -84,7 +84,8 @@ end $$;
 
 create or replace function public.office_asset_json(a public.office_assets) returns jsonb
 language sql stable set search_path = public, pg_temp as $$
-  select jsonb_build_object('id', a.id, 'kind', a.kind, 'scope', case when a.scope like 'u:%' then 'me' else 'org' end, 'title', a.title, 'body', a.body, 'spec', a.spec,
+  -- 목록용: 본문은 앞 300자만(열 때 asset.get으로 전체) — 목록을 여는 곳마다 전체 본문을 내려받지 않게(분리 검수 9/30)
+  select jsonb_build_object('id', a.id, 'kind', a.kind, 'scope', case when a.scope like 'u:%' then 'me' else 'org' end, 'title', a.title, 'body', left(a.body, 300), 'body_cut', length(a.body) > 300, 'spec', a.spec,
     'source_key', a.source_key, 'promoted_from', a.promoted_from, 'version', a.version, 'uses', a.uses, 'owner', a.owner, 'updated_at', a.updated_at)
 $$;
 
@@ -119,8 +120,12 @@ begin
   exception when others then raise exception 'asset_input'; end;
   if p_spec ? 'enabled' and jsonb_typeof(p_spec->'enabled') <> 'boolean' then raise exception 'asset_input'; end if;
   -- 주소: http(s)만, 계정 정보·제어 문자·내부 주소는 거절(크루가 이 주소를 열 수 있다)
-  if url is not null and (url ~ '[[:cntrl:]]' or url ~* '^https?://[^/?#]*@' or host is null or host = ''
-      or host ~ '^(localhost|127\.|10\.|0\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|\[)' or host ~ '\.(local|localhost|internal)$') then raise exception 'asset_input'; end if;
+  -- 허용 목록: 점으로 나뉜 공개 도메인 이름만(끝 칸은 글자로 시작 — 숫자 IP 표기·IPv6·점 없는 이름·끝 점·전각·퍼센트 인코딩이 모두 빠진다),
+  -- 내부용 이름·IP로 풀리는 도메인 접미사와 1~65535 밖 포트는 거절. ponytail: DNS로 풀린 IP 검사는 주소를 가져오는 쪽 몫
+  if url is not null and (url ~ '[[:cntrl:]]' or url ~* '^https?://[^/?#]*@' or host is null
+      or host !~ '^([a-z0-9-]+\.)+[a-z][a-z0-9-]*$'
+      or host ~ '(^|\.)(local|localhost|internal|home\.arpa|localtest\.me|nip\.io|sslip\.io|xip\.io|lvh\.me)$'
+      or (url ~* '^https?://[^/?#]*:' and coalesce(substring(url from '^[A-Za-z]+://[^/?#:]*:([0-9]{1,5})(?:[/?#]|$)'), '0')::int not between 1 and 65535)) then raise exception 'asset_input'; end if;
   if kind not in ('service', 'mcp', 'plugin', 'account', 'other') or (url is not null and (url !~* '^https?://[^\s]+$' or length(url) > 500)) or cardinality(crews) > 50
     or exists (select 1 from unnest(crews) i where not exists (select 1 from public.msgr_crews c where c.id = i
       and (case when p_scope like 'o:%' then c.org_id = substr(p_scope, 3)::uuid else c.owner_user_id = p_who end))) then raise exception 'asset_input'; end if;
@@ -149,7 +154,9 @@ begin
     'mine', coalesce((select jsonb_agg(public.office_asset_json(a) order by a.updated_at desc) from (select * from public.office_assets a where a.scope = 'u:' || c.who and a.archived_at is null order by a.updated_at desc limit 300) a), '[]'::jsonb),
     'company', case when p_org is null then '[]'::jsonb else coalesce((select jsonb_agg(public.office_asset_json(a) order by a.kind, a.title) from (select * from public.office_assets a where a.scope = c.sc and a.archived_at is null order by a.kind, a.title limit 300) a), '[]'::jsonb) end, -- ponytail: 300개씩, 넘으면 검색·커서
     'promotions', case when p_org is null then '[]'::jsonb else coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'asset_id', p.asset_id, 'requested_by', p.requested_by, 'status', p.status,
-        'title', v.title, 'body', v.body, 'version', v.version, 'created_at', p.created_at) order by p.created_at)
+        'title', v.title, 'body', v.body, 'version', v.version, 'created_at', p.created_at,
+        'replaces', (select jsonb_build_object('id', k.id, 'version', k.version) from public.office_assets k
+          where k.scope = 'o:' || p_org and k.promoted_from = p.asset_id and k.archived_at is null order by k.created_at limit 1)) order by p.created_at)
       from public.office_asset_promotions p join public.office_assets a on a.id = p.asset_id
         join public.office_asset_versions v on v.asset_id = p.asset_id and v.version = coalesce(p.asset_version, a.version)
       where p.org_id = p_org and p.status = 'pending' and (c.role = 'manager' or p.requested_by = c.who)), '[]'::jsonb) end,
@@ -176,6 +183,7 @@ begin
       if exists (select 1 from public.office_assets where id = aid and scope = target and owner = c.who and kind = p_data->>'kind' and title = ttl and body = bod) then return jsonb_build_object('id', aid); end if;
       raise exception 'asset_conflict';
     end if;
+    perform pg_advisory_xact_lock(hashtextextended('office-asset-limit:' || c.who, 0)); -- 동시 요청이 상한을 넘지 않게
     if (select count(*) from public.office_assets where scope = target and owner = c.who) >= 1000 then raise exception 'asset_limit'; end if; -- 사람·범위당 상한(보관 포함)
     insert into public.office_assets(id, scope, owner, kind, title, body, spec, source_key) values (aid, target, c.who, p_data->>'kind', ttl, bod, sp, nullif(left(p_data->>'source_key', 200), ''));
     insert into public.office_asset_versions(asset_id, version, title, body, spec, author) values (aid, 1, ttl, bod, sp, c.who);
@@ -183,7 +191,8 @@ begin
   elsif p_action = 'asset.promote' then -- (id = 요청 id, asset_id = 올릴 내 노하우) -- 개인 노하우 → 이 조직 회사 노하우로 올리기 요청
     select * into a from public.office_assets where id = public.office_task_input(p_data->>'asset_id', 'uuid')::uuid and scope = 'u:' || c.who and kind = 'knowhow' and archived_at is null;
     if not found or p_org is null then raise exception 'asset_input'; end if;
-    if exists (select 1 from public.office_asset_promotions x where x.org_id = p_org and x.asset_id = a.id and x.status = 'approved' and x.asset_version = a.version) then raise exception 'asset_input'; end if; -- 이미 올라간 버전
+    if exists (select 1 from public.office_asset_promotions x join public.office_assets r on r.id = x.result_id and r.archived_at is null
+      where x.org_id = p_org and x.asset_id = a.id and x.status = 'approved' and x.asset_version = a.version) then raise exception 'asset_input'; end if; -- 이미 올라간 버전(회사 사본을 보관했으면 다시 올릴 수 있다)
     insert into public.office_asset_promotions(id, org_id, asset_id, requested_by, asset_version) values (aid, p_org, a.id, c.who, a.version);
     return jsonb_build_object('id', aid);
   elsif p_action = 'crew.tools' then -- 크루에게 맡길 때: 그 크루에게 배정되고 켜진, 내가 볼 수 있는 도구와 사용법(쓴 횟수도 올린다)
@@ -192,8 +201,13 @@ begin
         and coalesce((x.spec->>'enabled')::boolean, true) and x.spec->'crews' ? (p_data->>'crew_id');
     update public.office_assets set uses = uses + 1 where id in (select (e->>'id')::uuid from jsonb_array_elements(out) e);
     return jsonb_build_object('tools', out);
+  elsif p_action = 'asset.get' then -- 편집 창을 열 때 본문 전체
+    select * into a from public.office_assets where id = aid and archived_at is null and (scope = 'u:' || c.who or scope = c.sc);
+    if not found then raise exception 'asset_not_found'; end if;
+    return public.office_asset_json(a) || jsonb_build_object('body', a.body, 'body_cut', false);
   elsif p_action = 'suggest.dismiss' then
     if length(coalesce(p_data->>'key', '')) not between 1 and 200 then raise exception 'asset_input'; end if;
+    perform pg_advisory_xact_lock(hashtextextended('office-asset-limit:' || c.who, 0));
     if (select count(*) from public.office_asset_dismissed where user_id = c.who and scope = c.sc) >= 1000 then raise exception 'asset_limit'; end if;
     insert into public.office_asset_dismissed(user_id, scope, key) values (c.who, c.sc, p_data->>'key') on conflict do nothing;
     return jsonb_build_object('ok', true);
@@ -249,6 +263,7 @@ begin
   if p_action = 'promotion.decide' then
     select * into p from public.office_asset_promotions where id = public.office_task_input(p_data->>'id', 'uuid')::uuid and org_id = p_org for update;
     if not found or p.status <> 'pending' then raise exception 'asset_input'; end if;
+    if p.asset_version is null and coalesce((p_data->>'approve')::boolean, false) then raise exception 'asset_input'; end if; -- 버전 없는 옛 요청은 다시 요청하게(거절은 된다)
     if not coalesce((p_data->>'approve')::boolean, false) then
       update public.office_asset_promotions set status = 'rejected', decided_by = c.who, decided_at = clock_timestamp() where id = p.id;
       return jsonb_build_object('id', p.id);

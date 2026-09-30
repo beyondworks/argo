@@ -29,7 +29,9 @@ export default function Tools({ space }) {
   const manager = data?.role === 'manager' || !org;
   const list = data ? (tab === 'company' ? data.company : data.mine).filter((a) => a.kind === 'tool') : [];
   const canEdit = (a) => a.scope === 'me' || manager;
-  const toggle = (a) => write('asset.update', { id: a.id, version: a.version, title: a.title, body: a.body, spec: { ...a.spec, enabled: !a.spec.enabled } }).catch(() => {});
+  // 목록은 사용법 앞부분만 온다 — 고치거나 켜고 끌 때는 전체를 받아 잘린 사용법으로 덮어쓰지 않는다
+  const full = (a) => (a.body_cut ? rpc('office_asset_write', { p_org: org, p_action: 'asset.get', p_data: { id: a.id } }) : Promise.resolve(a));
+  const toggle = (a) => full(a).then((x) => write('asset.update', { id: x.id, version: x.version, title: x.title, body: x.body, spec: { ...x.spec, enabled: !x.spec.enabled } })).catch((e) => showToast(t(errKey(e))));
   const crewName = (id) => allCrews.find((c) => c.id === id)?.name ?? '?';
   return <div className="page-wrap wide perf">
     <div className="page-title-row"><div><h1 className="page-h1">{t('tool.title')}</h1><p className="dim">{t('tool.subtitle')}</p></div>
@@ -44,7 +46,7 @@ export default function Tools({ space }) {
         : <ul className="perf-days">{list.map((a) => <li key={a.id} className={`perf-item${a.spec.enabled ? '' : ' tool-off'}`}>
           <label className="tool-switch" title={t(a.spec.enabled ? 'tool.on' : 'tool.off')}><input type="checkbox" checked={!!a.spec.enabled} disabled={!canEdit(a)} onChange={() => toggle(a)} aria-label={t('tool.enabled')} /></label>
           <span className="badge">{t(`tool.kind.${a.spec.tool_kind}`)}</span>
-          <button type="button" className="perf-item-main asset-open" onClick={() => setEdit({ ...a, spec: { crews: [], ...a.spec, url: a.spec.url ?? '' } })}><strong>{a.title}</strong><br />
+          <button type="button" className="perf-item-main asset-open" onClick={() => full(a).then((x) => setEdit({ ...x, spec: { crews: [], ...x.spec, url: x.spec.url ?? '' } })).catch((e) => showToast(t(errKey(e))))}><strong>{a.title}</strong><br />
             <small className="dim">{[a.spec.crews?.length ? t('tool.crews', { names: a.spec.crews.map(crewName).join(', ') }) : t('tool.noCrew'), t('tool.uses', { n: a.uses })].join(' · ')}</small></button>
           {a.spec.url && <a className="btn ghost sm" href={a.spec.url} target="_blank" rel="noreferrer noopener">{t('tool.open')}</a>}
         </li>)}</ul>}

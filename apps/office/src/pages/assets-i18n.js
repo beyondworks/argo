@@ -13,6 +13,7 @@ export const ASSET_DICT = {
   'asset.kind.knowhow': ['노하우', 'Know-how'], 'asset.kind.set': ['업무 세트', 'Work set'], 'asset.uses': ['{n}번 사용', 'used {n}×'], 'asset.fromPersonal': ['직원 노하우에서 올림', 'shared by a member'],
   'asset.promote': ['회사 노하우로 올리기', 'Share with company'], 'asset.promoteSent': ['관리자에게 승인을 요청했습니다', 'Sent to your manager'],
   'asset.hint': ['내 노하우는 조직을 옮기거나 그만둬도 내 것으로 남습니다. 회사 노하우는 승인된 사본이라 회사에 남습니다. 고칠 때마다 이전 버전이 남습니다.', 'Your know-how stays yours even if you leave; company know-how is an approved copy that stays with the company. Every edit keeps the previous version.'],
+  'asset.replaces': ['승인하면 지금 있는 회사 노하우(v{v})를 이 내용으로 고칩니다. 관리자가 고친 부분도 바뀝니다.', 'Approving replaces the current company copy (v{v}), including any admin edits.'],
   'asset.view': ['노하우 보기', 'View'], 'asset.edit': ['고치기', 'Edit'], 'asset.archive': ['보관', 'Archive'], 'asset.close': ['닫기', 'Close'], 'asset.save': ['저장', 'Save'], 'asset.saved': ['저장했습니다', 'Saved'],
   'asset.knowhowHint': ['일하는 순서와 주의할 점을 적어 두면, 크루에게 일을 맡길 때 업무 세트로 함께 보낼 수 있습니다.', 'Write the steps and things to watch; you can send it to a crew as part of a work set.'],
   'asset.setHint': ['크루에게 일을 맡길 때 이 세트를 고르면 묶은 노하우·도구·점검 목록이 맡기는 글에 함께 실립니다.', 'Pick this set when handing work to a crew — its know-how, tools and checklist go with the request.'],

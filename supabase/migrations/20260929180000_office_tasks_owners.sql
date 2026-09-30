@@ -137,8 +137,12 @@ begin
       if not exists (select 1 from public.msgr_org_members where org_id = p_org and user_id = target and removed_at is null and role <> 'guest') then raise exception 'task_assignee'; end if;
     end if;
     select * into t from public.office_tasks where id = tid;
-    if not found and (select count(*) from public.office_tasks x where x.scope = sc and x.created_by = who) >= 5000 then raise exception 'task_limit'; end if; -- ponytail: 사람·범위당 상한, 오래된 일 보관 정리가 생기면 끝낸 일은 빼고 센다
-    if found then -- 같은 요청이 두 번 온 것만 허용
+    if t.id is null then -- perform가 FOUND를 바꾸므로 행 값으로 판정한다
+      perform pg_advisory_xact_lock(hashtextextended('office-task-limit:' || who, 0)); -- 동시 요청이 상한을 넘지 않게
+      if (select count(*) from public.office_tasks x where x.scope = sc and x.created_by = who and x.cancelled_at is null
+          and (x.done_at is null or x.done_at > now() - interval '1 year')) >= 5000 then raise exception 'task_limit'; end if; -- 사람·범위당: 취소한 일·1년 넘은 끝낸 일은 세지 않는다
+    end if;
+    if t.id is not null then -- 같은 요청이 두 번 온 것만 허용
       if t.scope = sc and t.title = ttl and t.note = body and t.due_on is not distinct from due and t.assignee = target and t.created_by = who then return to_jsonb(t) - 'scope'; end if;
       raise exception 'task_conflict';
     end if;
@@ -218,5 +222,6 @@ revoke all on function public.office_business_owners_set(uuid, uuid, uuid[], tex
   public.office_task_write(uuid, text, jsonb), public.office_task_list(uuid), public.office_task_input(text, text),
   public.office_business_owner_default() from public, anon;
 revoke all on function public.office_task_input(text, text), public.office_business_owner_default() from authenticated; -- 내부용(정의자 함수 안에서만)
+revoke all on sequence public.office_task_events_id_seq, public.office_business_owner_history_id_seq from anon, authenticated;
 grant execute on function public.office_business_owners_set(uuid, uuid, uuid[], text), public.office_org_people(uuid),
   public.office_task_write(uuid, text, jsonb), public.office_task_list(uuid) to authenticated;

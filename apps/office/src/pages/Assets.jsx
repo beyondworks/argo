@@ -17,12 +17,15 @@ const lines = (s) => String(s ?? '').split('\n').map((x) => x.trim()).filter(Boo
 export default function Assets({ space }) {
   useLang();
   const org = orgOf(space);
-  const [data, setData] = useState(null), [error, setError] = useState(null), [edit, setEdit] = useState(null), [tab, setTab] = useState(org ? 'company' : 'mine');
+  const [data, setData] = useState(null), [error, setError] = useState(null), [edit, setEdit] = useState(null), [promo, setPromo] = useState(null), [tab, setTab] = useState(org ? 'company' : 'mine');
   const load = useCallback(() => rpc('office_asset_list', { p_org: org }).then((d) => { setData(d); setError(null); }).catch((e) => setError(errKey(e))), [org]);
   useEffect(() => { setData(null); load(); }, [load]);
   const write = async (action, payload) => { try { const r = await rpc('office_asset_write', { p_org: org, p_action: action, p_data: payload }); await load(); return r; } catch (e) { showToast(t(errKey(e))); throw e; } };
   const decide = (id, approve) => rpc('office_asset_manage', { p_org: org, p_action: 'promotion.decide', p_data: { id, approve } }).then(() => { showToast(t(approve ? 'asset.promoted' : 'asset.rejected')); load(); }).catch((e) => showToast(t(errKey(e))));
   const manager = data?.role === 'manager';
+  // 목록은 본문 앞부분만 온다 — 고치기 전에 전체를 받아야 잘린 본문으로 덮어쓰지 않는다
+  const open = (a) => (a.body_cut ? rpc('office_asset_write', { p_org: org, p_action: 'asset.get', p_data: { id: a.id } }) : Promise.resolve(a))
+    .then((x) => setEdit({ ...x, spec: { knowhow: [], tools: [], checks: [], ...x.spec } })).catch((e) => showToast(t(errKey(e))));
   const draft = (s) => setEdit({ kind: 'knowhow', scope: 'me', title: t('asset.draftTitle', { k: s.key }), source_key: s.key,
     body: `${t('asset.draftDone')}\n${s.tasks.map((x) => `- ${x.title} (${day(x.done_at)})${x.note ? ` — ${x.note}` : ''}`).join('\n')}\n\n${t('asset.draftSteps')}\n1. \n2. \n3. `, spec: {} });
   const blank = (kind) => setEdit({ kind, scope: tab === 'company' && manager ? 'org' : 'me', title: '', body: '', spec: { knowhow: [], tools: [], checks: [] } });
@@ -41,7 +44,8 @@ export default function Assets({ space }) {
           <button type="button" className="btn primary sm" onClick={() => draft(s)}>{t('asset.keep')}</button></li>)}</ul></section>}
       {data.promotions.length > 0 && <section className="module"><header className="module-head"><Icon name="stamp" size={15} /><h3>{t('asset.promotions')}</h3></header>
         <ul className="perf-days">{data.promotions.map((p) => <li key={p.id} className="perf-item">
-          <span className="perf-item-main"><strong>{p.title}</strong><br /><small className="dim clamp">{lines(p.body).slice(0, 2).join(' · ')}</small></span>
+          <button type="button" className="perf-item-main asset-open" onClick={() => setPromo(p)}><strong>{p.title}</strong><br /><small className="dim clamp">{lines(p.body).slice(0, 2).join(' · ')}</small>
+            {p.replaces && <small className="dim">{t('asset.replaces', { v: p.replaces.version })}</small>}</button>
           {manager ? <><button type="button" className="btn sm" onClick={() => decide(p.id, false)}>{t('asset.reject')}</button><button type="button" className="btn primary sm" onClick={() => decide(p.id, true)}>{t('asset.approve')}</button></>
             : <span className="badge">{t('asset.pending')}</span>}</li>)}</ul></section>}
       {org && <div className="perf-bar"><div className="seg" role="tablist">{['company', 'mine'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`seg-btn${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{t(`asset.tab.${k}`)}</button>)}</div></div>}
@@ -49,13 +53,20 @@ export default function Assets({ space }) {
         {!list.length ? <p className="mod-empty">{t(tab === 'company' ? 'asset.emptyCompany' : 'asset.emptyMine')}</p>
           : <ul className="perf-days">{list.map((a) => <li key={a.id} className="perf-item">
             <span className="badge">{t(`asset.kind.${a.kind}`)}</span>
-            <button type="button" className="perf-item-main asset-open" onClick={() => setEdit({ ...a, spec: { knowhow: [], tools: [], checks: [], ...a.spec } })}><strong>{a.title}</strong><br />
+            <button type="button" className="perf-item-main asset-open" onClick={() => open(a)}><strong>{a.title}</strong><br />
               <small className="dim">{[t('asset.uses', { n: a.uses }), `v${a.version}`, day(a.updated_at), a.promoted_from && t('asset.fromPersonal')].filter(Boolean).join(' · ')}</small></button>
             {org && a.scope === 'me' && a.kind === 'knowhow' && !data.promotions.some((p) => p.asset_id === a.id) && <button type="button" className="btn ghost sm" onClick={() => write('asset.promote', { id: crypto.randomUUID(), asset_id: a.id }).then(() => showToast(t('asset.promoteSent'))).catch(() => {})}>{t('asset.promote')}</button>}
           </li>)}</ul>}
       </section>
       <p className="dim small">{t('asset.hint')}</p>
     </>}
+    {promo && <Modal open width={640} title={promo.title} onClose={() => setPromo(null)} footer={<><span className="spacer" />
+      <button type="button" className="btn" onClick={() => setPromo(null)}>{t('asset.close')}</button>
+      {manager && <><button type="button" className="btn" onClick={() => { decide(promo.id, false); setPromo(null); }}>{t('asset.reject')}</button>
+        <button type="button" className="btn primary" onClick={() => { decide(promo.id, true); setPromo(null); }}>{t('asset.approve')}</button></>}</>}>
+      {promo.replaces && <p className="dim small">{t('asset.replaces', { v: promo.replaces.version })}</p>}
+      <p className="perf-quote">{promo.body}</p>
+    </Modal>}
     {edit && <Editor edit={edit} setEdit={setEdit} data={data} manager={manager} org={org} write={write} />}
   </div>;
 }
