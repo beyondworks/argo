@@ -253,10 +253,9 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
 
       if (a.action === 'delete') {
         if (scope === 'this') await writeEvent(c, 'skip', { id: row.id, day: a.day, crew });
-        else if (scope === 'following' && a.day > firstDay) {
-          const rr = parseRrule(row.rrule);
-          await writeEvent(c, 'save', saveData({ ...row, rrule: buildRrule(rr.freq, rr.interval, addDays(a.day, -1)) }, crew));
-        } else await writeEvent(c, 'delete', { id: row.id, crew });
+        // 이후 지우기 = next 없는 split — 서버가 UNTIL을 전날로 자르고 그 뒤의 회차 수정 행까지 지운다(save로 UNTIL만 바꾸면 유령 회차가 남는다)
+        else if (scope === 'following' && a.day > firstDay) await writeEvent(c, 'split', { id: row.id, day: a.day, crew });
+        else await writeEvent(c, 'delete', { id: row.id, crew });
         const what = scope === 'this' ? pick(`${a.day} 회차만`, `only the ${a.day} occurrence`, lang) : scope === 'following' ? pick(`${a.day} 회차부터 이후`, `from ${a.day} onward`, lang) : pick('전체', 'entirely', lang);
         return pick(`일정 "${row.title}"을(를) ${what} 지웠다.`, `Deleted "${row.title}" ${what}.`, lang);
       }

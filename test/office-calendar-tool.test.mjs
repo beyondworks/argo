@@ -142,7 +142,8 @@ test('C6. 주인 일정 update·delete — 반복은 scope를 요구하고, this
 
   f = use(fakeSession([weekly]));
   await run({ action: 'delete', id: 'w1', day: '2026-10-15', scope: 'following' });
-  assert.equal(writes(f)[0].args.p_data.rrule, 'FREQ=WEEKLY;UNTIL=20261014', '이후 지우기 = UNTIL을 전날로');
+  // 이유: save로 UNTIL만 바꾸면 그 뒤의 '이번만 수정' 행이 달력에 유령처럼 남는다 — next 없는 split이 서버에서 자르고 치운다
+  assert.deepEqual(writes(f)[0].args, { p_action: 'split', p_data: { id: 'w1', day: '2026-10-15', crew: 'alpha' } }, '이후 지우기 = next 없는 split');
 
   f = use(fakeSession([ev()]));
   await run({ action: 'delete', id: 'e1', day: '2026-10-02' });
