@@ -266,6 +266,7 @@ export function AssignSheet() {
   return (
     <Sheet open onClose={close} title={fixed ? t('crew.assignTo', { crew: main.name }) : t('crew.assign')}
       footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={busy || !crew || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
+      {main && <div className="ap-who assign-who"><Face id={main.id} size={32} /><div><b>{main.name}</b>{(main.job || main.role) && <small className="dim">{main.job || main.role}</small>}</div></div>}{/* 맡을 에이전트 얼굴(유건 9/30) */}
       {a.items.length > 0 && <div className="assign-items">{a.items.map((i) => <span key={`${i.kind}-${i.id}`} className="chip"><Icon name={{ mail: 'mail', page: 'doc', file: 'file', record: 'run' }[i.kind]} size={12} />{i.label}</span>)}</div>}
       {!fixed && <label className="field-block"><span className="label">{t('crew.to')}</span>
         {crews.length ? <select className="input" value={crew ?? ''} onChange={(e) => { setCrew(e.target.value || null); setAt(null); }}><option value="" disabled>{t('crew.pick')}</option>{crews.map((c) => <option key={c.id} value={c.id}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}</select>
