@@ -154,8 +154,8 @@ test('skip은 exdates에 한 번만, split은 원래 행 UNTIL을 전날로·새
  // 첫 회차에서 split = 원래 행 삭제
  const f=ev({org_id:ORG,title:'매일',starts_at:'2026-10-05T09:00:00+09:00',ends_at:'2026-10-05T09:30:00+09:00',rrule:'FREQ=DAILY;UNTIL=20261010'}); write(U.member,'save',f);
  const g=ev({org_id:ORG,title:'매일(바뀜)',starts_at:'2026-10-05T10:00:00+09:00',ends_at:'2026-10-05T10:30:00+09:00',rrule:'FREQ=DAILY;UNTIL=20261010'});
- write(U.member,'split',{id:f.id,day:'2026-10-05',next:g});
- assert.equal(row(f.id),null); assert.equal(row(g.id).title,'매일(바뀜)');
+ write(U.admin,'split',{id:f.id,day:'2026-10-05',next:g});
+ assert.equal(row(f.id),null); assert.equal(row(g.id).title,'매일(바뀜)'); assert.equal(row(g.id).owner,U.member); // 원래 행이 지워져도 주인은 원래 주인
  assert.match(writeFail(U.member,'skip',{id:g.id,day:'2026-09-01'}),/calendar_invalid/); // 시작 전 날짜
 });
 
@@ -221,4 +221,23 @@ test('반복 기간: UNTIL이 범위 시작 전날이어도 마지막 회차가 
  assert.ok(got.includes(night.id)); // 9/30 22:00 ~ 10/1 02:00
  assert.ok(!got.includes(done.id)); // 9/29 22:00 ~ 9/30 02:00
  assert.ok(!ids(U.admin,'2026-10-01T12:00:00+09:00','2026-10-02T00:00:00+09:00').includes(short.id)); // 마지막 회차가 범위 시작 전에 끝남
+});
+
+// 이유: '이 일정 및 이후 삭제' — next 없는 split은 자르기만 한다. 그 뒤의 회차 수정 행이 달력에 유령처럼 남으면 안 된다
+test('next 없는 split: UNTIL을 전날로·이후 회차 수정 행 삭제·새 행 없음(첫 회차면 원래 행 삭제)', {skip}, ()=>{
+ const e=ev({org_id:ORG,title:'자르기',starts_at:'2026-10-05T10:00:00+09:00',ends_at:'2026-10-05T11:00:00+09:00',rrule:'FREQ=WEEKLY'}); write(U.member,'save',e);
+ write(U.member,'skip',{id:e.id,day:'2026-10-26'});
+ const o=ev({org_id:ORG,title:'자르기(이번만)',parent_id:e.id,recur_on:'2026-10-19',starts_at:'2026-10-19T15:00:00+09:00',ends_at:'2026-10-19T16:00:00+09:00'}); write(U.member,'save',o);
+ const keep=ev({org_id:ORG,title:'자르기(앞 회차)',parent_id:e.id,recur_on:'2026-10-05',starts_at:'2026-10-05T15:00:00+09:00',ends_at:'2026-10-05T16:00:00+09:00'}); write(U.member,'save',keep);
+ const count=()=>Number(sql(`select count(*) from office_events where id=${quote(e.id)} or parent_id=${quote(e.id)} or title like '자르기%'`));
+ const n0=count();
+ const r=write(U.member,'split',{id:e.id,day:'2026-10-12'});
+ assert.equal(r.ok,true); assert.equal(r.event.rrule,'FREQ=WEEKLY;UNTIL=20261011');
+ assert.equal(row(e.id).rrule,'FREQ=WEEKLY;UNTIL=20261011'); assert.deepEqual(row(e.id).exdates,['2026-10-05']);
+ assert.ok(!ids(U.member).includes(o.id)); assert.equal(row(o.id),null); // 이후 회차 수정 행은 목록에도 표에도 없다
+ assert.ok(ids(U.member).includes(keep.id));                           // 앞 회차 수정 행은 남는다
+ assert.equal(count(),n0-1);                                           // 새 행은 만들지 않는다
+ // 첫 회차에서 자르기 = 원래 행 삭제(회차 수정 행도 같이)
+ const f=write(U.member,'split',{id:e.id,day:'2026-10-05'});
+ assert.equal(f.ok,true); assert.equal(f.event,null); assert.equal(row(e.id),null); assert.equal(row(keep.id),null);
 });

@@ -216,7 +216,7 @@ end $$;
 create or replace function public.office_event_write(p_action text, p_data jsonb) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-  who uuid := auth.uid(); v_crew text; e public.office_events%rowtype; eid uuid; d date; nxt jsonb; until date; start_day date;
+  who uuid := auth.uid(); v_crew text; e public.office_events%rowtype; eid uuid; d date; nxt jsonb; until date; start_day date; orig_owner uuid;
 begin
   if who is null then raise exception 'calendar_forbidden' using errcode = '42501'; end if;
   if jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text) > 20000 then raise exception 'calendar_invalid'; end if;
@@ -243,7 +243,7 @@ begin
   if e.rrule is null or e.parent_id is not null then raise exception 'calendar_invalid'; end if;
   d := public.office_event_in(p_data->>'day', 'date')::date;
   if d is null then raise exception 'calendar_invalid'; end if;
-  start_day := (e.starts_at at time zone 'Asia/Seoul')::date;
+  start_day := (e.starts_at at time zone 'Asia/Seoul')::date; orig_owner := e.owner;
   until := public.office_event_until(e.rrule);
 
   if p_action = 'skip' then
@@ -257,25 +257,35 @@ begin
     return jsonb_build_object('ok', true, 'event', public.office_event_json(e, who));
   end if;
 
-  -- split: 원래 행은 day 전날까지(첫 회차면 지움), 그 뒤는 next를 새 행으로. 한 트랜잭션
+  -- split: 원래 행은 day 전날까지(첫 회차면 지움), 그 뒤는 next를 새 행으로. 한 트랜잭션.
+  -- next가 없으면 자르기만 한다('이 일정 및 이후 삭제') — 새 행 없이, 이후 회차 수정 행도 같이 지운다
   nxt := p_data->'next';
-  if jsonb_typeof(nxt) is distinct from 'object' then raise exception 'calendar_invalid'; end if;
-  nxt := nxt - 'parent_id' - 'recur_on' - 'crew';
-  if nullif(nxt->>'id', '') is null then nxt := nxt || jsonb_build_object('id', gen_random_uuid()); end if;
-  if nxt->>'id' = eid::text or exists (select 1 from public.office_events where id = (nxt->>'id')::uuid) then raise exception 'calendar_invalid'; end if;
-  if e.owner <> who and public.office_event_in(nxt->>'org_id', 'uuid')::uuid is distinct from e.org_id then
-    raise exception 'calendar_forbidden' using errcode = '42501'; -- 관리자가 남의 일정을 나눌 때는 같은 공간에만
+  if nxt is not null and jsonb_typeof(nxt) <> 'null' then
+    if jsonb_typeof(nxt) <> 'object' then raise exception 'calendar_invalid'; end if;
+    nxt := nxt - 'parent_id' - 'recur_on' - 'crew';
+    if nullif(nxt->>'id', '') is null then nxt := nxt || jsonb_build_object('id', gen_random_uuid()); end if;
+    if nxt->>'id' = eid::text or exists (select 1 from public.office_events where id = (nxt->>'id')::uuid) then raise exception 'calendar_invalid'; end if;
+    if e.owner <> who and public.office_event_in(nxt->>'org_id', 'uuid')::uuid is distinct from e.org_id then
+      raise exception 'calendar_forbidden' using errcode = '42501'; -- 관리자가 남의 일정을 나눌 때는 같은 공간에만
+    end if;
+  else
+    nxt := null;
   end if;
   if d <= start_day then
-    delete from public.office_events where id = eid;
+    delete from public.office_events where id = eid; -- 회차 수정 행도 같이(cascade)
+    e := null;
   else
-    delete from public.office_events where parent_id = eid and recur_on >= d; -- 이후 회차를 따로 고친 행은 새 일정이 대신한다
-    update public.office_events set
-      rrule = regexp_replace(rrule, ';UNTIL=[0-9]{8}$', '') || ';UNTIL=' || to_char(least(coalesce(until, d - 1), d - 1), 'YYYYMMDD'),
-      exdates = coalesce((select array_agg(x order by x) from unnest(exdates) x where x < d), '{}'), updated_at = now()
-      where id = eid;
+    delete from public.office_events where parent_id = eid and recur_on >= d; -- 이후 회차를 따로 고친 행은 새 일정이 대신하거나 같이 지워진다
+    update public.office_events set rrule = x.r, exdates = x.ex, crew = coalesce(v_crew, crew), updated_at = now()
+      from (select regexp_replace(e.rrule, ';UNTIL=[0-9]{8}$', '') || ';UNTIL=' || to_char(least(coalesce(until, d - 1), d - 1), 'YYYYMMDD') r,
+                   coalesce((select array_agg(v order by v) from unnest(e.exdates) v where v < d), '{}') ex) x
+      where id = eid and (rrule, exdates) is distinct from (x.r, x.ex); -- 이미 잘려 있으면 다시 쓰지 않는다
+    select * into e from public.office_events where id = eid;
   end if;
-  e := public.office_event_save(nxt, who, v_crew, e.owner);
+  if nxt is null then
+    return jsonb_build_object('ok', true, 'id', eid, 'event', case when e.id is not null then public.office_event_json(e, who) end);
+  end if;
+  e := public.office_event_save(nxt, who, v_crew, orig_owner); -- 첫 회차에서 나눠 원래 행이 지워져도 새 일정의 주인은 원래 주인
   return jsonb_build_object('ok', true, 'event', public.office_event_json(e, who));
 exception
   when check_violation or not_null_violation or foreign_key_violation or unique_violation or invalid_text_representation then
