@@ -6,7 +6,9 @@ import { createPage, duplicatePage, trashPage, archiveMail, setMail, setRestrict
 import { setUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
 import { loadPageContent } from './pull.js';
-import { canManage } from './session.js';
+import { canManage, ME, getMode } from './session.js';
+import { pinCrew, canPin } from './crew-prefs.js';
+import { isMine } from './crew-list.js';
 import { publicWebUrl, openExternal } from './platform.js';
 
 export const baseOf = (space) => (space === 'me' || space === 'shared' ? '/me' : `/o/${space}`); // shared = 남의 내 공간 페이지를 공유받은 것
@@ -91,8 +93,9 @@ export function recordMenu(rec, label) {
 
 export function crewMenu(crew, space) {
   return [
-    { label: t('crew.assignTo', { crew: crew.name }), icon: 'hand', run: () => setUi({ assign: { space, crew: crew.id, items: [] } }) },
+    ...((crew.access ?? 'ok') === 'ok' && (getMode() !== 'signedIn' || isMine(crew, ME.id)) ? [{ label: t('crew.assignTo', { crew: crew.name }), icon: 'hand', run: () => setUi({ assign: { space, crew: crew.id, items: [] } }) }] : []),
     { label: t('crew.dm'), icon: 'hash', run: () => showToast(t('record.openMsgr')) },
+    ...(canPin(crew) ? [{ sep: true }, { label: t(crew.pinned ? 'crew.unpin' : 'crew.pin'), run: () => pinCrew(crew, !crew.pinned).catch(() => showToast(t('crew.saveFail'))) }] : []),
   ];
 }
 

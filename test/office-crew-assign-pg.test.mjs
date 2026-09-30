@@ -100,3 +100,51 @@ test('동의를 거두면 msgr_my_ai_consent가 비어 오피스는 보내기 �
   asUser(U.other, `select public.msgr_set_ai_consent(false)`);
   assert.equal(last(asUser(U.other, `select coalesce(public.msgr_my_ai_consent()::text, '(null)')`)), '(null)');
 });
+
+// ── 좌측 크루 목록(유건 9/30): 주인 이름·쓸 수 있는지(메신저와 같은 판정)·내 고정/순서(메신저 레일과 같은 행)
+const crewList = (uid, orgs) => JSON.parse(last(asUser(uid, `select public.office_crew_list(array[${orgs.map((o) => `'${o}'`).join(',')}]::uuid[])`)));
+const listed = (uid, orgs = [ORG]) => Object.fromEntries(crewList(uid, orgs).map((c) => [c.display_name, c]));
+test('크루 목록: 주인 이름과 쓸 수 있는지 — 주인이 "주인만"으로 바꾸면 남에게는 crew_allow, 꺼진 크루는 inactive', { skip }, () => {
+  psql(['-f', mig('20260930120000_office_crew_list.sql')]);
+  let l = listed(U.me);
+  assert.equal(l['오토'].owner_name, 'other'); assert.equal(l['오토'].access, 'ok'); assert.equal(l['페퍼'].access, 'ok'); assert.equal(l['오토'].company, false);
+  sql(`update public.msgr_crews set allow = 'owner' where id = '${THEIRS}'`);
+  l = listed(U.me);
+  assert.equal(l['오토'].access, 'crew_allow');
+  assert.equal(listed(U.other)['오토'].access, 'ok'); // 주인은 그대로
+  sql(`update public.msgr_crews set allow = 'all' where id = '${THEIRS}'`);
+  sql(`update public.msgr_crews set status = 'available' where id = '${THEIRS}'`);
+  assert.equal(listed(U.me)['오토'].access, 'inactive');
+  sql(`update public.msgr_crews set status = 'active' where id = '${THEIRS}'`);
+});
+test('크루 목록: 고정·순서는 내 것만(메신저 msgr_target_prefs와 같은 행), 조직 밖 사람은 아무것도 못 본다', { skip }, () => {
+  asUser(U.me, `insert into public.msgr_target_prefs (user_id, org_id, target_kind, target_id, pinned, pin_pos, sort_pos) values ('${U.me}', '${ORG}', 'crew', '${THEIRS}', true, 0, 3)`);
+  const mine = listed(U.me)['오토'];
+  assert.deepEqual([mine.pinned, mine.pin_pos, mine.sort_pos], [true, 0, 3]);
+  const theirs = listed(U.other)['오토'];
+  assert.deepEqual([theirs.pinned, theirs.pin_pos, theirs.sort_pos], [false, null, null]);
+  assert.deepEqual(crewList(U.late, [ORG]), []);
+  fails(psqlRaw(['-A', '-t', '-c', `set role anon; select public.office_crew_list(array['${ORG}']::uuid[])`]), /permission denied/);
+});
+
+// ── 고정·순서 쓰기(분리 검수 MEDIUM-2): 바꾸려는 칸만 — 오피스의 오래된 화면이 메신저에서 켠 고정을 끄지 않는다
+const prefs = (uid, action, ids, on = null) => asUser(uid, `select public.office_crew_prefs('${ORG}', '${action}', array[${ids.map((i) => `'${i}'`).join(',')}]::uuid[], ${on === null ? 'null' : on})`);
+const prefRow = (uid, crew) => last(sql(`select coalesce(pinned::text,'-')||'|'||coalesce(pin_pos::text,'-')||'|'||coalesce(sort_pos::text,'-') from public.msgr_target_prefs where user_id='${uid}' and org_id='${ORG}' and target_kind='crew' and target_id='${crew}'`));
+test('순서 쓰기는 sort_pos만 — 메신저에서 켠 고정은 그대로, 새 행은 고정 꺼짐(표 기본값 true 함정)', { skip }, () => {
+  sql(`delete from public.msgr_target_prefs where user_id='${U.other}'`);
+  asUser(U.other, `insert into public.msgr_target_prefs (user_id, org_id, target_kind, target_id, pinned, pin_pos) values ('${U.other}', '${ORG}', 'crew', '${THEIRS}', true, 4)`); // 메신저가 켠 고정
+  prefs(U.other, 'sort', [MINE, THEIRS]);
+  assert.equal(prefRow(U.other, THEIRS), 'true|4|1');
+  assert.equal(prefRow(U.other, MINE), 'false|-|0');
+});
+test('고정 순서는 쓰던 번호 칸을 다시 나눈다, 고정이 다른 곳에서 바뀌었으면 stale — 고정 켜기는 채널 즐겨찾기까지 본 맨 뒤 번호', { skip }, () => {
+  sql(`delete from public.msgr_target_prefs where user_id='${U.me}'`);
+  prefs(U.me, 'pin', [MINE], true); prefs(U.me, 'pin', [THEIRS], true);
+  assert.equal(prefRow(U.me, MINE), 'true|0|-'); assert.equal(prefRow(U.me, THEIRS), 'true|1|-');
+  prefs(U.me, 'pin_order', [THEIRS, MINE]);
+  assert.equal(prefRow(U.me, THEIRS), 'true|0|-'); assert.equal(prefRow(U.me, MINE), 'true|1|-');
+  prefs(U.me, 'pin', [MINE], false);
+  fails(asUserRaw(U.me, `select public.office_crew_prefs('${ORG}', 'pin_order', array['${MINE}','${THEIRS}']::uuid[])`), /crew_prefs_stale/);
+  assert.equal(prefRow(U.me, MINE), 'false|-|-');
+  fails(asUserRaw(U.other, `select public.office_crew_prefs('${ORG}', 'sort', array['${EXPIRED_CREW}']::uuid[])`)); // 다른 조직 크루는 RLS가 거절
+});

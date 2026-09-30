@@ -199,7 +199,7 @@ export function AssignSheet() {
   const allCrews = useStore((s) => s.crews);
   const live = getMode() === 'signedIn';
   // 1:1 방은 내 크루와만 열린다(msgr_create_channel·메신저와 같은 규칙) — 로그인 상태에서는 내 크루만 보인다
-  const crews = crewsIn(allCrews, a?.space ?? 'me', ME.id).filter((c) => !live || c.owner === ME.id);
+  const crews = crewsIn(allCrews, a?.space ?? 'me', ME.id).filter((c) => !live || (c.owner === ME.id && !c.company && (c.access ?? 'ok') === 'ok')); // 꺼진 크루·권한 없는 크루는 빼고(사이드바와 같은 규칙)
   const [busy, setBusy] = useState(false);
   if (!a) return null;
   const hasMail = a.items.some((i) => i.kind === 'mail');

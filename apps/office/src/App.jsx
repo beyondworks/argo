@@ -7,9 +7,9 @@ import { Sidebar } from './ui/Sidebar.jsx';
 import { Icon } from './ui/Icon.jsx';
 import { Face } from './ui/Face.jsx';
 import { MenuHost, openMenu } from './ui/Menu.jsx';
-import { ToastHost } from './ui/Overlay.jsx';
+import { ToastHost, showToast } from './ui/Overlay.jsx';
+import { moveCrew } from './core/crew-prefs.js';
 import { Palette } from './ui/Palette.jsx';
-import { ShareDialog, AssignSheet, HistorySheet } from './ui/Dialogs.jsx';
 import { Home } from './pages/Home.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
@@ -25,6 +25,10 @@ import { Login } from './pages/Login.jsx';
 import { loadAccounts, pullMail } from './core/mail.js';
 
 const BusinessPage = lazy(() => import('./business/BusinessPage.jsx'));
+// 공유·맡기기·이력 창은 첫 화면 묶음에서 떼어 첫 화면 뒤에 따로 받는다(9/30 크루 목록 정리로 150KB 초과분 회수)
+const ShareDialog = lazy(() => import('./ui/Dialogs.jsx').then((m) => ({ default: m.ShareDialog })));
+const AssignSheet = lazy(() => import('./ui/Dialogs.jsx').then((m) => ({ default: m.AssignSheet })));
+const HistorySheet = lazy(() => import('./ui/Dialogs.jsx').then((m) => ({ default: m.HistorySheet })));
 const ModuleLibrary = lazy(() => import('./pages/ModuleLibrary.jsx'));
 const Perf = lazy(() => import('./pages/Perf.jsx')); // 성과 기록(유건 9/29)
 const Assets = lazy(() => import('./pages/Assets.jsx')); // 노하우·업무 세트(유건 9/29)
@@ -99,7 +103,7 @@ function LegacyRecoveryNotice() {
 
 function DragChip({ data }) {
   if (!data) return null;
-  const icon = { mail: 'mail', page: 'doc', file: 'file', record: 'run', module: 'layout' }[data.kind] ?? 'doc';
+  const icon = { mail: 'mail', page: 'doc', file: 'file', record: 'run', module: 'layout', crew: 'hand' }[data.kind] ?? 'doc';
   return <div className="drag-chip"><Icon name={icon} size={14} /><span>{data.label || t('page.untitled')}</span></div>;
 }
 
@@ -168,6 +172,7 @@ export default function App() {
       const crew = getState().crews.find((c) => c.id === o.crew);
       setUi({ assign: { space: r.space, crew: crew.id, items: itemsFromDrag(a) } });
     } else if (a.kind === 'page' && o.kind === 'page' && a.id !== o.id) reorderPage(a.id, o.id);
+    else if (a.kind === 'crew' && o.kind === 'crew' && a.group === o.group && a.id !== o.id) moveCrew(a.order, a.id, o.id, a.mode).catch(() => showToast(t('crew.saveFail')));
   };
 
   const params = new URLSearchParams(query ?? '');
@@ -189,9 +194,7 @@ export default function App() {
       </div>
       <DragOverlay dropAnimation={null}>{dragging ? <DragChip data={dragging} /> : null}</DragOverlay>
       <Palette open={ui.palette} onClose={() => setUi({ palette: false })} space={r.space} />
-      <ShareDialog />
-      <AssignSheet />
-      <HistorySheet />
+      <Suspense fallback={null}><ShareDialog /><AssignSheet /><HistorySheet /></Suspense>
       <Suspense fallback={null}><Compose /></Suspense>
       <MenuHost />
       <ToastHost />

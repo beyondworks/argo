@@ -128,7 +128,7 @@ html.nav-collapsed .side { visibility: hidden; }
 .search-btn { display: flex; align-items: center; gap: 8px; height: var(--ctl); padding: 0 10px; border-radius: var(--rc); background: var(--side-hover); color: var(--side-fg-3); text-align: left; }
 .search-btn span { flex: 1; }
 .search-btn kbd { color: var(--side-fg-3); box-shadow: inset 0 0 0 1px var(--side-line); }
-.side-scroll { flex: 1; overflow: auto; padding: 4px 8px 8px; overscroll-behavior: contain; }
+.side-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 4px 8px 8px; overscroll-behavior: contain; } /* 가로 스크롤 금지(9/30) — 긴 이름은 줄임표 */
 .nav-group { display: grid; gap: 1px; }
 .nav-item { display: flex; align-items: center; gap: 9px; height: var(--ctl); padding: 0 9px; border-radius: var(--rc); color: var(--side-fg-2); width: 100%; text-align: left; }
 .nav-item.active { background: var(--side-active); color: var(--side-fg); font-weight: 560; }
@@ -136,6 +136,7 @@ html.nav-collapsed .side { visibility: hidden; }
 .nav-label small { color: var(--side-fg-3); font-size: 11.5px; font-weight: 400; }
 .nav-count { font-family: var(--mono); font-size: 11px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-grid; place-items: center; background: var(--side-mark); color: var(--mark-fg); font-weight: 600; }
 .nav-section { display: flex; align-items: center; justify-content: space-between; padding: 16px 9px 4px; font-size: 11.5px; font-weight: 600; color: var(--side-fg-3); }
+.nav-section > span { flex: 1; min-width: 0; }
 .nav-section .icon-btn { color: var(--side-fg-3); }
 .tree-row { display: flex; align-items: center; gap: 2px; height: 30px; padding-right: 4px; border-radius: var(--rc); color: var(--side-fg-2); touch-action: manipulation; user-select: none; -webkit-touch-callout: none; }
 .tree-row.active { background: var(--side-active); color: var(--side-fg); }
@@ -145,7 +146,19 @@ html.nav-collapsed .side { visibility: hidden; }
 .tree-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 2px; line-height: 30px; }
 .tree-more { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; color: var(--side-fg-3); opacity: 0; flex: none; }
 .tree-row:focus-within .tree-more { opacity: 1; }
-.crews { display: grid; gap: 1px; }
+.crews, .crew-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; } /* minmax(0) — 칸이 긴 이름 폭만큼 늘어나 패널에 가로 스크롤이 생기던 원인 */
+.crew-group + .crew-group { margin-top: 6px; }
+.crew-group-head { display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: var(--rc); color: var(--side-fg-3); font-size: 11.5px; text-align: left; min-width: 0; }
+.crew-group-head span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crew-group-head small { font-family: var(--mono); font-size: 11px; }
+.crew-search { margin: 2px 2px 6px; height: 28px; padding: 0 9px; border-radius: var(--rc); border: 0; background: var(--side-hover); color: var(--side-fg); font: inherit; font-size: 12.5px; min-width: 0; }
+.crew-search::placeholder { color: var(--side-fg-3); }
+.crew-row { min-width: 0; touch-action: manipulation; user-select: none; -webkit-touch-callout: none; }
+.crew-row.dragging { opacity: 0.4; }
+.crew-row.blocked .crew-btn { opacity: 0.5; }
+.crew-btn .crew-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.crew-btn .nav-label small { flex: none; max-width: 48%; overflow: hidden; text-overflow: ellipsis; } /* 이름이 길어도 주인은 보이게 */
+.crew-empty { margin: 4px 9px; color: var(--side-fg-3); font-size: 12px; }
 .crew-row { border-radius: var(--rc); transition: background-color 120ms ease, box-shadow 120ms ease; }
 .crew-btn { display: flex; align-items: center; gap: 9px; width: 100%; height: 34px; padding: 0 9px; border-radius: var(--rc); color: var(--side-fg-2); text-align: left; }
 .shell.is-dragging .crew-row.drop-ok { box-shadow: inset 0 0 0 1px var(--side-line); }
@@ -156,6 +169,7 @@ html.nav-collapsed .side { visibility: hidden; }
   .space-switch:hover, .nav-item:hover, .tree-row:hover, .crew-btn:hover { background: var(--side-hover); color: var(--side-fg); }
   .tree-row:hover .tree-more { opacity: 1; }
   .tree-toggle:hover, .tree-more:hover, .nav-section .icon-btn:hover { background: var(--side-active); color: var(--side-fg); }
+  .crew-group-head:hover { background: var(--side-hover); color: var(--side-fg-2); }
 }
 
 /* ── 헤더 ── */

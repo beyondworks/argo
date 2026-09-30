@@ -35,8 +35,10 @@ export function mapBoard(rows, { orgKey, decidable }) {
   const leading = new Set((rows.runs ?? []).filter((r) => r.status === 'running').map((r) => r.lead_crew_id));
   const asking = new Set((rows.approvals ?? []).map((a) => a.crew_id));
   const crews = (rows.crews ?? []).map((c) => ({
-    id: c.id, name: c.display_name, role: c.department || c.role_text || '', owner: c.owner_user_id, space: space(c.org_id), face: c.face ?? null,
+    id: c.id, name: c.display_name, role: c.department || c.role_text || '', dept: c.department || '', job: c.role_text || '', owner: c.owner_user_id, space: space(c.org_id), org: c.org_id, face: c.face ?? null,
     status: leading.has(c.id) ? 'work' : asking.has(c.id) ? 'ask' : 'idle',
+    // 좌측 목록 정리(9/30): 주인·쓸 수 있는지(메신저와 같은 판정)·내 고정/순서 — office_crew_list가 없을 때(옛 DB)는 모두 쓸 수 있는 것으로
+    ownerName: c.owner_name ?? null, company: !!c.company, access: c.access ?? 'ok', pinned: !!c.pinned, pinPos: c.pin_pos ?? null, sortPos: c.sort_pos ?? null,
   }));
   const byName = (org, name) => (rows.crews ?? []).find((c) => c.org_id === org && c.display_name === name)?.id ?? null;
   const days = new Map();
