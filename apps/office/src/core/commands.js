@@ -2,13 +2,13 @@
 import { navigate } from './router.jsx';
 import { t, setLang, getLang } from './i18n.js';
 import { THEMES, SHELLS, applyTheme, applyShell } from './theme.js';
-import { createPage, duplicatePage, trashPage, archiveMail, setMail, setRestricted, getState } from './store.js';
+import { createPage, duplicatePage, trashPage, archiveMail, setMail, setRestricted, getState, isFav, toggleFav } from './store.js';
 import { setUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
 import { loadPageContent } from './pull.js';
 import { canManage, ME, getMode } from './session.js';
 import { pinCrew, canPin } from './crew-prefs.js';
-import { isMine } from './crew-list.js';
+import { isMine, usable } from './crew-list.js';
 import { publicWebUrl, openExternal } from './platform.js';
 
 export const baseOf = (space) => (space === 'me' || space === 'shared' ? '/me' : `/o/${space}`); // shared = 남의 내 공간 페이지를 공유받은 것
@@ -44,6 +44,9 @@ async function copyLink(path) {
 }
 
 /* ── 대상별 우클릭 메뉴 ── */
+/** 즐겨찾기에 추가/빼기(유건 9/30 #7) — 좌측 패널 맨 위 칸, 사람마다 계정에 저장 */
+const favItem = (kind, id) => ({ label: t(isFav(kind, id) ? 'fav.remove' : 'fav.add'), icon: 'star', run: () => { if (toggleFav(kind, id) === false) showToast(t('crew.saveFail')); } });
+
 export function pageMenu(page) {
   const base = baseOf(page.space);
   const canRestrict = page.space !== 'me' && canManage(page.space);
@@ -51,6 +54,7 @@ export function pageMenu(page) {
   return [
     { label: t('page.open'), icon: 'doc', run: () => navigate(`${base}/p/${page.id}`) },
     { label: t('page.openTab'), icon: 'share', run: () => openExternal(publicWebUrl(`${base}/p/${page.id}`)).catch(() => showToast(t('share.failed'))) },
+    !page.template && favItem('page', page.id),
     { sep: true },
     { label: t('page.addChild'), icon: 'plus', run: () => navigate(`${base}/p/${createPage(page.space, page.id)}`) },
     canTop && { label: t('page.duplicate'), icon: 'copy', shortcut: `${mod}D`, run: () => { const id = duplicatePage(page.id); showToast(t('page.duplicated')); navigate(`${base}/p/${id}`); } },
@@ -91,9 +95,12 @@ export function recordMenu(rec, label) {
 }
 
 export function crewMenu(crew, space) {
+  const ok = usable(crew) && (getMode() !== 'signedIn' || isMine(crew, ME.id)); // 좌측 목록은 쓸 수 있는 내 크루만 싣는다
   return [
-    ...((crew.access ?? 'ok') === 'ok' && (getMode() !== 'signedIn' || isMine(crew, ME.id)) ? [{ label: t('crew.assignTo', { crew: crew.name }), icon: 'hand', run: () => setUi({ assign: { space, crew: crew.id, items: [] } }) }] : []),
-    ...(canPin(crew) ? [{ sep: true }, { label: t(crew.pinned ? 'crew.unpin' : 'crew.pin'), run: () => pinCrew(crew, !crew.pinned).catch(() => showToast(t('crew.saveFail'))) }] : []),
+    ok && { label: t('crew.assignTo', { crew: crew.name }), icon: 'hand', run: () => setUi({ assign: { space, crew: crew.id, items: [] } }) },
+    { sep: true },
+    canPin(crew) && { label: t(crew.pinned ? 'crew.unpin' : 'crew.pin'), run: () => pinCrew(crew, !crew.pinned).catch(() => showToast(t('crew.saveFail'))) },
+    ok && isMine(crew, ME.id) && favItem('crew', crew.id),
   ];
 }
 

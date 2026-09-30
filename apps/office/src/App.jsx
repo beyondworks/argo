@@ -13,7 +13,7 @@ import { Home } from './pages/Home.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
 import { useSaveStatus, useLegacyRecovery } from './core/save.js';
-import { useStore, reorderPage, createPage, getState, saveNav, saveTabs } from './core/store.js';
+import { useStore, reorderPage, createPage, getState, saveNav, saveTabs, saveFav } from './core/store.js';
 import { moveId } from './core/nav-model.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
@@ -106,7 +106,7 @@ function LegacyRecoveryNotice() {
 
 function DragChip({ data }) {
   if (!data) return null;
-  const icon = { mail: 'mail', page: 'doc', file: 'file', record: 'run', module: 'layout', crew: 'hand', nav: 'grip', navsec: 'grip', biztab: 'grip' }[data.kind] ?? 'doc';
+  const icon = { mail: 'mail', page: 'doc', file: 'file', record: 'run', module: 'layout', crew: 'hand', nav: 'grip', navsec: 'grip', biztab: 'grip', fav: 'star' }[data.kind] ?? 'doc';
   return <div className="drag-chip"><Icon name={icon} size={14} /><span>{data.label || t('page.untitled')}</span></div>;
 }
 
@@ -178,6 +178,7 @@ export default function App() {
     else if (a.kind === 'crew' && o.kind === 'crew' && a.group === o.group && a.id !== o.id) moveCrew(a.order, a.id, o.id, a.mode).catch(() => showToast(t('crew.saveFail')));
     else if ((a.kind === 'nav' || a.kind === 'navsec') && o.kind === a.kind && a.id !== o.id) { if (saveNav(a.kind === 'nav' ? { move: [a.id, o.id] } : { section: [a.id, o.id] }, a.navKind) === false) showToast(t('nav.saveFail')); }
     else if (a.kind === 'biztab' && o.kind === 'biztab' && a.id !== o.id) { if (saveTabs(moveId(a.order, a.id, o.id)) === false) showToast(t('nav.saveFail')); }
+    else if (a.kind === 'fav' && o.kind === 'fav' && a.id !== o.id) { if (saveFav({ move: [a.id, o.id] }) === false) showToast(t('nav.saveFail')); } // 즐겨찾기 안 순서(키 'page:id'·'crew:id')
   };
 
   const params = new URLSearchParams(query ?? '');
