@@ -110,7 +110,7 @@ function CrewRow({ crew, space, group, order, mode, blocked, movable }) {
       onDrop={(e) => { e.preventDefault(); setFileOver(false); const files = filesFromTransfer(e.dataTransfer); if (direct && files.length) setUi({ assign: { space, crew: crew.id, items: files.map((f, i) => ({ kind: 'file', id: `drop-${i}`, label: f.name })) } }); }}>
       <button ref={setNodeRef} type="button" className="crew-btn" onClick={open} title={isOver || fileOver ? t('crew.drop', { crew: crew.name }) : tip}>
         <Face id={crew.id} size={18} />
-        <span className="nav-label"><span className="crew-name">{crew.name}</span><small>{owner}</small></span>
+        <span className="nav-label"><span className="crew-name">{crew.name}</span><small>{isMine(crew, ME.id) ? crew.role : owner}</small></span>{/* 오피스에는 내 크루만 — 작은 글씨는 부서(없으면 직무) */}
         {!blocked && <span className={`dot ${crew.status}`} aria-label={t(`crew.status.${crew.status}`)} />}
       </button>
     </div>
