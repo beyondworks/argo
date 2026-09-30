@@ -66,5 +66,10 @@ export const BUSINESS_UI_DICT = {
   'bizui.owners.title': ['거래 담당자', 'Deal owners'], 'bizui.owners.hint': ['담당자의 성과 기록에 이 거래의 계약·청구·입금이 쌓입니다. 여러 명을 고르면 각자의 기록에 공동 담당으로 남습니다.', "This deal's contract, billing and payments go into each owner's performance record. Pick several to share it."],
   'bizui.owners.reason': ['바꾸는 이유', 'Reason for the change'], 'bizui.owners.reasonHint': ['예: 공동 영업, 담당 인수인계', 'e.g. joint sale, handover'], 'bizui.owners.saved': ['담당자를 바꿨습니다', 'Owner updated'],
   'bizui.owners.former': ['나간 사람', 'Former member'],
+  // 거래 묶기·거래처 정렬(유건 9/30)
+  'bizui.group': ['묶기', 'Group'], 'bizui.group.stage': ['진행 상황', 'Progress'], 'bizui.group.customer': ['거래처', 'Customer'], 'bizui.group.owner': ['담당자', 'Owner'], 'bizui.group.month': ['월', 'Month'],
+  'bizui.group.noMonth': ['계약 전', 'Not contracted yet'],
+  'bizui.sort': ['정렬', 'Sort'], 'bizui.sort.name': ['이름순', 'Name'], 'bizui.sort.deals': ['거래 건수순', 'Most deals'], 'bizui.sort.recent': ['최근 등록순', 'Recently added'],
+  'bizui.createdAt': ['등록일', 'Added on'],
   'bizui.source.referrerCustomer': ['소개한 곳', 'Referred by (customer)'], 'bizui.source.referrerName': ['소개한 사람', 'Referred by (person)'], 'bizui.source.referrerNameHint': ['예: 한동하 대표', 'e.g. Jane Kim'],
 };
