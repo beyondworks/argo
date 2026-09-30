@@ -1,7 +1,7 @@
 // 폴더 보기(유건 9/30) — 기록 화면 네 개가 쓰는 묶기 규칙. 날짜는 한국(KST) 기준.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HUMAN, folderKey, folderize, isoDay, dateBucket, byDate, journalDigest, fileGroup } from '../src/core/board.js';
+import { HUMAN, folderKey, folderize, isoDay, dateBucket, byDate, journalDigest, fileGroup } from '../src/core/folders.js';
 
 // 이유: 서버 시각은 UTC로 온다 — 한국 자정(UTC 15:00)을 기준으로 날짜가 바뀌어야 오늘/어제가 맞다.
 test('isoDay: 한국 자정 직전·직후', () => {

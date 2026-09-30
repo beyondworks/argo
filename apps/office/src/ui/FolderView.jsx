@@ -1,13 +1,16 @@
 // 폴더 보기(유건 9/30) — 기록 화면 네 개(산출물·일지·결정·결재)가 같은 틀을 쓴다.
 // 왼쪽 = 폴더(전체 + 에이전트별 + 사람, 최근 활동순), 오른쪽 = 고른 폴더의 항목을 날짜 구간으로. 폰 폭에서는 폴더가 위쪽 가로 칩 줄.
-// 고른 폴더는 주소(?folder=)에 남긴다 — 새로고침·뒤로 가기에도 그대로. 묶기 규칙(순수 함수)은 core/board.js.
+// 고른 폴더는 주소(?folder=)에 남긴다 — 새로고침·뒤로 가기에도 그대로. 묶기 규칙(순수 함수)은 core/folders.js.
 import { useEffect, useMemo, useRef } from 'react';
 import { Face } from './Face.jsx';
 import { Icon } from './Icon.jsx';
-import { t, getLang } from '../core/i18n.js';
+import { t, getLang, registerDict } from '../core/i18n.js';
 import { navigate } from '../core/router.jsx';
 import { crewName } from '../core/store.js';
-import { HUMAN, folderize } from '../core/board.js';
+import { HUMAN, folderize } from '../core/folders.js';
+import { FOLD_DICT } from './folder-i18n.js';
+
+registerDict(FOLD_DICT);
 
 /** 지금 주소의 쿼리 일부만 바꾼 주소(null·''은 뺀다) — ?folder=와 ?open=이 서로를 지우지 않게 */
 export function withQuery(patch) {
