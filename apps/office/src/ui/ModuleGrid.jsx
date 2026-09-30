@@ -74,8 +74,7 @@ function ModuleCard({ item, space, items, partner, canResize, canEdit, scope, co
       aria-label={mod.title} {...menuProps(menu)}>
       <header className="module-head">
         {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}
-        <h3>{mod.title}</h3>
-        {mod.link && <Link to={mod.link} className="module-link">{t('mod.more')}</Link>}
+        <h3>{mod.link ? <Link to={mod.link} className="module-title">{mod.title}</Link> : mod.title}</h3>{/* 제목을 누르면 그 화면으로(유건 9/30 — '모두 보기' 대신) */}
         {canEdit && <button type="button" ref={setActivatorNodeRef} className="grip" aria-label={t('mod.drag')} {...mergeHandlers(attributes, listeners)}><Icon name="grip" size={14} /></button>}
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
       </header>

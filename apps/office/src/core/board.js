@@ -28,6 +28,10 @@ export function mdToDoc(md) {
   return { type: 'doc', content: out };
 }
 
+const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null); // payload는 검증 없는 jsonb — 문자열만 화면에 싣는다
+/** 결재 한 줄 핵심(유건 9/30 #7) — 에이전트가 적은 목적(purpose)·할 일(task), 없으면 null(화면은 요청 원문 앞부분) */
+export const approvalHead = (plain) => str(plain?.purpose) || str(plain?.task);
+
 /** rows: { crews, runs, approvals, decisions, files, channels, journals, docs }, orgKey: org_id → 공간 키, decidable: 결재권 있는 결재 id 집합 */
 export function mapBoard(rows, { orgKey, decidable }) {
   const space = (org) => orgKey.get(org) ?? null;
@@ -52,7 +56,7 @@ export function mapBoard(rows, { orgKey, decidable }) {
   return {
     crews,
     work: (rows.runs ?? []).map((r) => ({ id: r.id, space: space(r.org_id), goal: r.goal, lead: r.lead_crew_id, status: r.status, started: r.created_at, channel: ch.get(r.channel_id) ?? '', done: r.completion_criteria ?? null })),
-    approvals: (rows.approvals ?? []).map((a) => ({ id: a.id, space: space(a.org_id), crew: a.crew_id, plain: a.reason || a.action, risk: a.risk, at: a.created_at, channel: ch.get(a.channel_id) ?? '', canDecide: decidable.has(a.id) })),
+    approvals: (rows.approvals ?? []).map((a) => ({ id: a.id, space: space(a.org_id), crew: a.crew_id, plain: a.reason || a.action, head: approvalHead(a.pl), need: str(a.pl?.need), risk: a.risk, at: a.created_at, channel: ch.get(a.channel_id) ?? '', canDecide: decidable.has(a.id) })),
     decisions: (rows.decisions ?? []).map((d) => ({ id: d.id, space: space(d.org_id), crew: d.crew_id, plain: d.reason || d.action, action: d.action, risk: d.risk ?? null, result: d.status,
       by: who.get(`${d.org_id}|${d.decided_by}`) ?? '', at: d.decided_at, asked: d.created_at ?? null, channel: ch.get(d.channel_id) ?? '' })), // 결정한 사람 = 조직 멤버 이름(9/30: 늘 '—'이던 결함)
     outputs: (rows.files ?? []).map((f) => ({ id: f.id, space: space(f.org_id), name: f.name, crew: f.msg?.crew_id ?? null, channel: ch.get(f.msg?.channel_id) ?? '', bytes: f.bytes, at: f.created_at, path: f.storage_path ?? null, mime: f.mime ?? '' })),

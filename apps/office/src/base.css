@@ -156,7 +156,6 @@ html.nav-collapsed .side { visibility: hidden; }
 .crew-search::placeholder { color: var(--side-fg-3); }
 .crew-row { min-width: 0; touch-action: manipulation; user-select: none; -webkit-touch-callout: none; }
 .crew-row.dragging { opacity: 0.4; }
-.crew-row.blocked .crew-btn { opacity: 0.5; }
 .crew-btn .crew-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .crew-btn .nav-label small { flex: none; max-width: 48%; overflow: hidden; text-overflow: ellipsis; } /* 이름이 길어도 주인은 보이게 */
 .crew-empty { margin: 4px 9px; color: var(--side-fg-3); font-size: 12px; }
@@ -197,7 +196,7 @@ html.nav-collapsed .side { visibility: hidden; }
 .list-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--rs); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); }
 
 /* ── 모듈 격자 ── */
-/* 카드 해부(유건 9/29 확정): 머리 42px · 아이콘+13px 제목, 오른쪽은 모두 보기 · 옮기기 손잡이 · ⋯. 머리 아이콘·목록 첫 요소·숫자·표 첫 글자는 모두 카드 왼쪽 16px 한 선에서 시작한다.
+/* 카드 해부(유건 9/29 확정, 9/30 '모두 보기' 대신 제목이 링크): 머리 42px · 아이콘+13px 제목, 오른쪽은 옮기기 손잡이 · ⋯. 머리 아이콘·목록 첫 요소·숫자·표 첫 글자는 모두 카드 왼쪽 16px 한 선에서 시작한다.
    본문은 8px 여백 + 행 안쪽 8px — 행 배경(hover)은 8px부터 칠해지고 글자는 16px에 선다 */
 .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--module-gap); align-items: stretch; } /* 같은 줄은 가장 긴 모듈 높이로(유건 2026-09-26) */
 .module { grid-column: span 6; background: var(--surface); border-radius: var(--rs); box-shadow: inset 0 0 0 1px var(--border-soft); position: relative; min-width: 0; display: flex; flex-direction: column; }
@@ -207,10 +206,12 @@ html.nav-collapsed .side { visibility: hidden; }
 .module-head { position: relative; display: flex; align-items: center; gap: 8px; height: 42px; flex: none; padding: 0 8px 0 16px; border-bottom: 1px solid var(--border-soft); }
 .module-head > .ico { flex: none; }
 .module-head h3 { font-size: 13px; font-weight: 620; flex: 1; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.grip { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 6px; color: var(--fg-3); cursor: grab; touch-action: none; transition: opacity 120ms var(--ease-out); } /* 머리 오른쪽 '모두 보기'와 ⋯ 사이(유건 9/29) */
+.grip { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 6px; color: var(--fg-3); cursor: grab; touch-action: none; transition: opacity 120ms var(--ease-out); } /* 머리 오른쪽 ⋯ 앞(유건 9/29) */
 .grip:active { cursor: grabbing; }
 .module-head > .grip + .icon-btn { margin-left: -6px; } /* 손잡이와 ⋯는 한 쌍 — 둘 사이만 2px */
-.module-link { font-size: 12px; color: var(--fg-3); padding: 0 6px; }
+.module-title { color: inherit; text-decoration: none; text-underline-offset: 3px; border-radius: 4px; }
+.module-title::after { content: '→'; display: inline-block; margin-left: 4px; opacity: 0; transition: opacity 120ms var(--ease-out); } /* 누르면 그 화면으로 간다는 표시 — hover·키보드 초점에서만 */
+.module-title:focus-visible { text-decoration: underline; } .module-title:focus-visible::after { opacity: 1; }
 .module-body { padding: 6px 8px 10px; display: grid; align-content: start; gap: 1px; min-height: 64px; min-width: 0; }
 .module-body > :where(p, small, details, .biz-empty) { padding-inline: 8px; }
 .mod-row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--rc); min-width: 0; }
@@ -252,7 +253,7 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
   .grip:hover { background: var(--primary-soft); color: var(--fg); }
   .col-handle:hover::after { background: var(--border); }
   a.mod-row:hover, .mod-row.todo:hover { background: var(--primary-soft); }
-  .module-link:hover { color: var(--fg); }
+  .module-title:hover { text-decoration: underline; } .module-title:hover::after { opacity: 1; }
 }
 
 /* ── 표 ── */
@@ -310,6 +311,11 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 .rec-row { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 44px; padding: 8px 14px; border-radius: var(--rs); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); text-align: left; color: inherit; cursor: pointer; }
 .rec-row.on { background: var(--secondary); }
 .rec-row.ghost { opacity: 0.4; }
+/* 결재 카드(유건 9/30 #7) — 줄 전체가 아니라 안쪽 버튼이 상세를 연다. 오른쪽은 바로 승인·거절(가장 높은 위험도는 '열어서 확인') */
+.ap-row { padding: 0 10px 0 0; cursor: default; }
+.ap-open { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 44px; padding: 8px 4px 8px 14px; text-align: left; color: inherit; border-radius: inherit; }
+.ap-quick { display: flex; gap: 6px; flex: none; }
+@media (max-width: 560px) { .ap-row { flex-wrap: wrap; padding: 0; } .ap-open { flex-basis: 100%; padding-right: 14px; } .ap-quick { margin-left: auto; padding: 0 10px 10px; } }
 .rec-row .face, .rec-row .badge, .rec-row > .icon, .rec-row > svg { flex: none; }
 .rec-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .rec-who { flex: none; max-width: 30%; overflow: hidden; color: var(--fg-2); font-size: 12.5px; }
@@ -458,7 +464,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border-soft); }
 .modal-foot > .dim:first-child, .modal-foot > .btn.ghost:first-child { margin-right: auto; }
 .scrim-sheet { place-items: stretch end; padding: 0; grid-template-rows: minmax(0, 1fr); } /* 행 높이를 창에 맞춘다 — 내용만큼 늘어나 창 밖으로 나가면 본문이 스크롤되지 않았다(9/29 유건 제보) */
-.sheet { width: min(460px, 100vw); height: 100%; background: var(--surface); box-shadow: inset 1px 0 0 var(--border); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; animation: slide-in 260ms var(--ease-drawer); }
+.sheet { width: min(var(--panel-w, 520px), 100vw); height: 100%; background: var(--surface); box-shadow: inset 1px 0 0 var(--border); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; animation: slide-in 260ms var(--ease-drawer); }
 .sheet-body { padding: 18px; overflow: auto; display: grid; gap: 18px; align-content: start; }
 .toast { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 70; display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 16px; border-radius: 10px; background: var(--primary); color: var(--primary-fg); font-size: 13px; animation: toast-in 220ms var(--ease-out); max-width: calc(100vw - 32px); }
 .toast-undo { font-weight: 620; text-decoration: underline; text-underline-offset: 3px; padding: 2px 4px; }
@@ -705,21 +711,16 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
   .task-add .input[type=date], .task-add select.input { width: auto; max-width: none; }
 }
 /* 노션식 열기(Peek) — 옆(폭 조절)·가운데·전체 화면 */
-.peek-scrim { grid-template-rows: minmax(0, 1fr); }
-.peek-scrim.peek-side { place-items: stretch end; padding: 0; }
-.peek-scrim.peek-center { place-items: center; padding: 32px; }
-.peek-scrim.peek-full { place-items: stretch; padding: 0; }
-.peek { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; max-width: 100vw; background: var(--surface); }
-.peek .modal-head { gap: 4px; }
-.peek .modal-head h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.peek.peek-side { height: 100%; box-shadow: inset 1px 0 0 var(--border); animation: slide-in 260ms var(--ease-drawer); }
-.peek.peek-center { width: min(920px, 100%); height: min(88vh, 100%); border-radius: var(--rs); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), inset 0 0 0 1px var(--border-soft); overflow: hidden; }
-.peek.peek-full { width: 100%; height: 100%; }
-.peek-full .peek-body { width: min(960px, 100%); margin: 0 auto; }
-.peek-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 1; touch-action: none; }
-.peek-resize:focus-visible { outline: none; background: var(--border); }
-@media (hover: hover) { .peek-resize:hover { background: var(--border); } }
-@media (max-width: 700px) { .peek.peek-side { width: 100vw !important; } .peek-resize { display: none; } .peek-scrim.peek-center { padding: 12px; } }
+/* 오른쪽 패널 공용(유건 9/30 #8, ui/Panel.jsx) — 왼쪽 가장자리 손잡이로 폭 조절, 머리 버튼으로 전체 화면. 폰 폭은 늘 전체 폭 */
+.panel { position: relative; }
+.panel .modal-head { gap: 4px; }
+.panel.full { width: 100vw; box-shadow: none; }
+.panel.full .sheet-body { padding-inline: max(18px, calc((100% - 960px) / 2)); } /* 전체 화면에서도 글줄은 960px 안 — 스크롤 막대는 화면 끝에 */
+.panel-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 1; touch-action: none; }
+.panel-resize::after { content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: var(--fg-3); opacity: 0; transition: opacity 120ms var(--ease-out); }
+.panel-resize:focus-visible { outline: none; } .panel-resize:focus-visible::after, .panel-resize:active::after { opacity: 1; }
+@media (hover: hover) { .panel-resize:hover::after { opacity: 1; } }
+@media (max-width: 767.98px) { .panel { width: 100vw; } .panel-resize, .panel-full-btn { display: none; } }
 
 /* 좌측 메뉴 순서·숨김(유건 9/30) — 끄는 중인 줄은 흐리게, 칸 제목은 끌기 손잡이 */
 .side-sec.dragging, .side .dragging { opacity: 0.45; }

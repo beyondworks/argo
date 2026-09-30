@@ -61,7 +61,6 @@ export const BUSINESS_UI_DICT = {
   'bizui.source.returning': ['기존 고객(다시 맡김)', 'Returning customer'], 'bizui.source.inbound': ['직접 문의', 'Direct inquiry'], 'bizui.source.search_sns': ['검색·SNS', 'Search or social'],
   'bizui.source.other': ['기타', 'Other'], 'bizui.source.campaign': ['광고 캠페인', 'Ad campaign'], 'bizui.source.campaigns': ['광고 캠페인', 'Ad campaigns'],
   'bizui.card.deals': ['관련 거래', 'Related deals'], 'bizui.card.noDeals': ['아직 관련 거래가 없습니다.', 'No related deals yet.'],
-  'peek.side': ['옆에서 열기', 'Open to the side'], 'peek.center': ['가운데에서 열기', 'Open in the center'], 'peek.full': ['전체 화면으로 열기', 'Open full page'], 'peek.mode': ['여는 방식', 'How to open'], 'peek.resize': ['폭 조절', 'Resize'],
   'bizui.owners.field': ['담당자', 'Owner'], 'bizui.owners.none': ['담당자 없음', 'No owner'], 'bizui.owners.change': ['담당자 바꾸기', 'Change owner'],
   'bizui.owners.title': ['거래 담당자', 'Deal owners'], 'bizui.owners.hint': ['담당자의 성과 기록에 이 거래의 계약·청구·입금이 쌓입니다. 여러 명을 고르면 각자의 기록에 공동 담당으로 남습니다.', "This deal's contract, billing and payments go into each owner's performance record. Pick several to share it."],
   'bizui.owners.reason': ['바꾸는 이유', 'Reason for the change'], 'bizui.owners.reasonHint': ['예: 공동 영업, 담당 인수인계', 'e.g. joint sale, handover'], 'bizui.owners.saved': ['담당자를 바꿨습니다', 'Owner updated'],

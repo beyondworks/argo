@@ -9,7 +9,6 @@ import { Face } from './ui/Face.jsx';
 import { MenuHost, openMenu } from './ui/Menu.jsx';
 import { ToastHost, showToast } from './ui/Overlay.jsx';
 import { moveCrew } from './core/crew-prefs.js';
-import { Palette } from './ui/Palette.jsx';
 import { Home } from './pages/Home.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
@@ -26,6 +25,8 @@ import { Login } from './pages/Login.jsx';
 import { loadAccounts, pullMail } from './core/mail.js';
 
 const BusinessPage = lazy(() => import('./business/BusinessPage.jsx'));
+// ⌘K 창은 열 때만 받는다(첫 화면 150KB 상한 — 9/30 오른쪽 패널·결재 카드 버튼을 붙이며 옮김)
+const Palette = lazy(() => import('./ui/Palette.jsx').then((m) => ({ default: m.Palette })));
 // 공유·맡기기·이력 창은 첫 화면 묶음에서 떼어 첫 화면 뒤에 따로 받는다(9/30 크루 목록 정리로 150KB 초과분 회수)
 const ShareDialog = lazy(() => import('./ui/Dialogs.jsx').then((m) => ({ default: m.ShareDialog })));
 const AssignSheet = lazy(() => import('./ui/Dialogs.jsx').then((m) => ({ default: m.AssignSheet })));
@@ -197,7 +198,7 @@ export default function App() {
         </main>
       </div>
       <DragOverlay dropAnimation={null}>{dragging ? <DragChip data={dragging} /> : null}</DragOverlay>
-      <Palette open={ui.palette} onClose={() => setUi({ palette: false })} space={r.space} />
+      {ui.palette && <Suspense fallback={null}><Palette open onClose={() => setUi({ palette: false })} space={r.space} /></Suspense>}
       <Suspense fallback={null}><ShareDialog /><AssignSheet /><HistorySheet /></Suspense>
       <Suspense fallback={null}><Compose /></Suspense>
       <MenuHost />

@@ -34,7 +34,7 @@ test('크루 상태: 담당 중 → work, 대기 결재 → ask, 그 외 idle. �
 // 이유: 결재 버튼은 서버가 결재권이 있다고 한 것만(msgr_can_decide). 쉬운 문장이 비면 동작 이름으로.
 test('결재·결정·산출물·일지: 공간 키, 결재권, 문장 대체, 채널 이름, 일지 크루 id', () => {
   const b = mapBoard(base, { orgKey: key, decidable: new Set(['a1']) });
-  assert.deepEqual(b.approvals[0], { id: 'a1', space: 'bw', crew: 'c2', plain: 'send_mail', risk: 'high', at: 't2', channel: '영업', canDecide: true });
+  assert.deepEqual(b.approvals[0], { id: 'a1', space: 'bw', crew: 'c2', plain: 'send_mail', head: null, need: null, risk: 'high', at: 't2', channel: '영업', canDecide: true });
   assert.deepEqual(b.decisions[0], { id: 'd1', space: 'bw', crew: 'c1', plain: '공지 게시', action: 'post', risk: null, result: 'approved', by: '', at: 't3', asked: null, channel: '' });
   assert.deepEqual(b.work[0], { id: 'w1', space: 'bw', goal: '재견적', lead: 'c1', status: 'running', started: 't1', channel: '영업', done: null });
   assert.deepEqual(b.outputs[0], { id: 'f1', space: 'bw', name: 'a.pdf', crew: 'c1', channel: '영업', bytes: 10, at: 't4', path: null, mime: '' });

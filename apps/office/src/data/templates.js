@@ -96,7 +96,7 @@ const T = [
     [['감사 기록', 'Audit trail'], 'ul', [['시각 · 행위자 · 행동 · IP', 'Time · actor · action · IP']]],
     [['완료본 링크', 'Signed copy'], 'p'],
   ] },
-  { id: 'tool', group: 'intranet', title: ['도구 등록 카드', 'Tool card'], sections: [
+  { id: 'tool', group: 'intranet', title: ['플러그인 등록 카드', 'Plugin card'], sections: [
     [['기본 정보', 'Basics'], 'ul', [['이름: ', 'Name: '], ['종류: 스킬 / MCP / 플러그인', 'Kind: skill / MCP / plugin'], ['호출 명령어: ', 'Command: ']]],
     [['상태', 'Status'], 'todo', [['활성화', 'Enabled'], ['공유됨', 'Shared']]],
     [['사용 환경', 'Where it runs'], 'ul', [['쓰는 도구: 클로드 코드 / 코덱스 / 헤르메스', 'Used by: Claude Code / Codex / Hermes'], ['전송 방식: stdio / http', 'Transport: stdio / http']]],
