@@ -153,7 +153,7 @@
   .cal-scrim { position: absolute; inset: 0; z-index: 19; background: var(--overlay); }
   .cal-bar { padding: 8px 12px; gap: 6px; }
   .cal-title { font-size: 15px; order: 1; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .cal-tools { order: 2; width: 100%; margin-left: 0; }
+  .cal-tools { order: 2; width: 100%; margin-left: 0; justify-content: flex-end; } /* 폰에서도 '보기'·'색'은 오른쪽 끝(유건 9/30 1번) */
   .cal-month { grid-template-rows: auto repeat(6, minmax(58px, 1fr)); }
   .cal-mhead span { text-align: center; padding: 6px 0; }
   .cal-wfg { grid-template-rows: 30px 12px; }
