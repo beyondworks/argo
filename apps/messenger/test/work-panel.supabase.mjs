@@ -22,14 +22,14 @@ state.tables.msgr_crew_routines.push(
   // 1-b ③ — 결과를 보낼 곳이 없는 외부 작업(VPS 실측: deliver=origin·출처 없음). 소유자가 방을 고르면 에이전트가 그 방으로 보낸다
   { id: 'routine-noroute', crew_id: 'crew-existing', title: 'Fixture nightly handover', prompt: 'Write the nightly handover.', schedule: { type: 'daily', time: '23:50', times: ['23:50'], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now(), source: 'hermes', editable: false, status: { delivery: 'none' } },
 );
-// 1-b — 설정 > 에이전트와 서버의 봇 카드: 예전 연결 도구(버전 보고 없음·smart)와 최신(0.3.0·ask). 둘 다 이 사용자가 만든 봇.
+// 1-b — 설정 > 에이전트와 서버의 봇 카드: 예전 연결 도구(버전 보고 없음·smart)와 최신(0.3.2·ask). 둘 다 이 사용자가 만든 봇.
 const fixtureUid = state.tables.msgr_org_members[0].user_id, fixtureOrg = state.tables.msgr_org_members[0].org_id;
 state.tables.msgr_bots = [
   { id: 'bot-old', crew_id: 'crew-existing', kind: 'hermes', name: 'Fixture Old Hermes', token_hint: 'argo_bot_ab12', created_by: fixtureUid, created_at: now(), rotated_at: null, revoked_at: null, last_seen_at: now(), external_id: null, org_id: fixtureOrg },
   { id: 'bot-new', crew_id: 'crew-new', kind: 'openclaw', name: 'Fixture New Claw', token_hint: 'argo_bot_cd34', created_by: fixtureUid, created_at: now(), rotated_at: null, revoked_at: null, last_seen_at: now(), external_id: null, org_id: fixtureOrg }];
 state.tables.msgr_bot_state = [
   { bot_id: 'bot-old', adapter_version: null, approval_mode: 'smart', mirror_all: false, mirror_all_applied: null },
-  { bot_id: 'bot-new', adapter_version: '0.3.0', approval_mode: 'ask', mirror_all: false, mirror_all_applied: false }];
+  { bot_id: 'bot-new', adapter_version: '0.3.2', approval_mode: 'ask', mirror_all: false, mirror_all_applied: false }];
 state.tables.msgr_crew_routine_edits.push(
   { id: 'edit-1', routine_id: 'routine-2', status: 'pending', op: 'update', patch: { title: 'Fixture weekly digest (edited)' }, created_at: now() },
   // N6(재검수 3차) — 삭제 대기 시나리오: WORK_FILTER=routine 캡처에서 편집·토글이 숨고 "삭제 취소" 버튼만 남는지 확인용

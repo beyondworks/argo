@@ -1326,8 +1326,9 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
     await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
       reply_to: null, thread_root: null, client_msg_id: `rn:${crew.id}:${digest}`,
-      body: pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${event.reply ?? ''}`,
-        `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${event.reply ?? ''}`, company.lang).slice(0, MSG_MAX),
+      // 루틴 답에도 모델이 넘김 표지를 붙인다 — 결과 글에는 판정이 없으니 본문에서만 뗀다(유건 2026-09-30 "말 끝마다 MSGR Done")
+      body: pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${parseMessengerDisposition(event.reply ?? '').text}`,
+        `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${parseMessengerDisposition(event.reply ?? '').text}`, company.lang).slice(0, MSG_MAX),
       mentions: [], meta: { disposition: 'done', notification: 'routine', routine_id: event.routine.id } });
     return true;
   }

@@ -28,9 +28,18 @@ test('마커가 없거나 잘못된 값이면 본문을 고치거나 판정을 �
 });
 
 test('인라인·인용·들여쓴 코드의 마커를 현재 턴 판정으로 읽지 않는다', () => {
-  for (const text of ['설명: MSGR: done', '> MSGR: done', '    MSGR: done', '\tMSGR: done', '`MSGR: done`', '"MSGR: done"']) {
+  for (const text of ['> MSGR: done', '    MSGR: done', '\tMSGR: done', '`MSGR: done`', '"MSGR: done"', '앞\n> 인용 MSGR: done', '```\n코드 MSGR: done']) {
     assert.deepEqual(parseMessengerDisposition(text), { text, disposition: null });
   }
+  assert.deepEqual(parseMessengerDisposition('설명: MSGR: done'), { text: '설명:', disposition: null }, '문장 끝에 붙은 표지는 판정 없이 본문에서만 뗀다');
+});
+
+// 유건 2026-09-30 "말 끝마다 MSGR Done 왜 붙이는거야?" — 운영 실측: 모델이 표지를 마지막 문장 끝에 붙여 그대로 보였다(페퍼·효원·월터·보스웰).
+test('문장 끝에 붙은 표지는 사람에게 보이지 않게 뗀다(판정은 하지 않는다)', () => {
+  assert.deepEqual(parseMessengerDisposition('실제로 받은 답변만 전달하겠습니다. MSGR: done'), { text: '실제로 받은 답변만 전달하겠습니다.', disposition: null });
+  assert.deepEqual(parseMessengerDisposition('파일 내용을 읽어 확인했습니다. `MSGR: done`\n'), { text: '파일 내용을 읽어 확인했습니다.', disposition: null });
+  assert.deepEqual(parseMessengerDisposition('첫 줄\n@슈리 확인 부탁해요. MSGR: handoff'), { text: '첫 줄\n@슈리 확인 부탁해요.', disposition: null }, '인라인 handoff는 넘기지 않는다(종전과 같다)');
+  assert.deepEqual(parseMessengerDisposition('끝. `MSGR: done'), { text: '끝. `MSGR: done', disposition: null }, '짝 없는 백틱은 그대로');
 });
 
 test('닫히지 않은 코드 펜스 내부의 마지막 마커를 읽지 않는다', () => {

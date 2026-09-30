@@ -530,8 +530,12 @@ export class ApprovalBridge {
         this.resuming.set(k, running);
         if (status === 'approved') this.parents.set(k, { approvalId, source: info.source });
       }
-      let answer = '', failed = false;
-      try { answer = String((await this.resume({ approvalId, info, text })) ?? '').trim(); }
+      let answer = '', failed = false, files = null;
+      try { // resume은 문자열(답) 또는 { text, names, attach }(답에 파일이 붙은 경우 — attach(후속 보고 글 id)가 파일을 그 글에 올린다)
+        const out = await this.resume({ approvalId, info, text });
+        if (out && typeof out === 'object') { answer = String(out.text ?? '').trim(); files = out; }
+        else answer = String(out ?? '').trim();
+      }
       catch (e) { failed = true; this.log(`argo-msgr: resumed turn for ${approvalId} failed — ${redact(e?.message ?? e)}`); }
       finally {
         end();
@@ -540,7 +544,12 @@ export class ApprovalBridge {
         // 재검수 MEDIUM: 예외가 나도 부모 연결을 푼다 — 남아 있으면 24시간 동안 같은 세션의 다른 실행이 옛 원문에 카드를 붙인다
         if (this.parents.get(k)?.approvalId === approvalId) this.parents.delete(k);
       }
-      if (answer) await this.followup(approvalId, answer);
+      if (files?.names?.length && typeof files.attach === 'function' && !failed) {
+        // 후속 보고가 아직이면 이제 올린다(글 없이 파일만이면 파일 이름으로) — 그 글에 파일을 붙인다. 후속 보고가 실패하면 파일도 올리지 않는다.
+        const res = await this.followup(approvalId, answer || files.names.join(', '));
+        if (res?.message_id) await files.attach(Number(res.message_id)).catch((e) => this.log(`argo-msgr: follow-up files for ${approvalId} failed — ${redact(e?.message ?? e)}`));
+        else this.log(`argo-msgr: follow-up files for ${approvalId} not sent — no follow-up message`);
+      } else if (answer) await this.followup(approvalId, answer);
       else if (failed) await this.followup(approvalId, FOLLOWUP_FAILED); // 결정한 사람이 아무 안내 없이 기다리지 않게
     });
     return status === 'approved' ? 'resumed' : 'rejected';

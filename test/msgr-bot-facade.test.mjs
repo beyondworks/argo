@@ -40,7 +40,7 @@ test('parseRequest: /bot<token>/<method> 경로 · Bearer 헤더 폴백 · 쿼�
 });
 
 test('토큰 없음 401 · 모르는 메서드 404 · 지원 메서드 5종', async () => {
-  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile', 'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval', 'reportStatus']);
+  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile', 'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval', 'reportStatus', 'createUpload', 'attachFile']);
   assert.equal((await handle({ token: null, method: 'getMe' }, fakeRpc({}))).status, 401);
   const r = await handle({ token: T, method: 'setWebhook' }, fakeRpc({}));
   assert.equal(r.status, 404); assert.equal(r.body.ok, false); assert.match(r.body.description, /setWebhook/);
@@ -230,4 +230,43 @@ test('requestApproval + parent_approval_id — 재개 턴 카드는 이어서 �
   assert.deepEqual(rpc.calls, [
     ['msgr_bot_request_followup_approval', { token: T, p_parent: 'ag-1', p_approval_id: 'hx-2', p_kind: 'shell', p_text: 'rm -rf /tmp/a', p_reason: 'r' }],
     ['msgr_bot_request_followup_approval', { token: T, p_parent: 'ag-1', p_approval_id: 'ag-2', p_kind: 'agent', p_text: '메일 발송', p_reason: null }]]);
+});
+
+// 봇 파일 보내기(20260930160000) — 유건 2026-09-30 "외부 에이전트랑 내부 에이전트 모두 파일 송수신". 파일 바이트는 엣지를 거치지 않는다(서명 업로드 주소로 직접 PUT).
+test('createUpload: 서버 판정 경로 → 서명 업로드 주소, 서명 불가 500. attachFile: 등록 → file_id. 판정 오류는 의미 있는 상태로', async () => {
+  const PATH = 'org/ch/7/bot-0a1b2c3d-report.pdf';
+  const rpc = fakeRpc({ msgr_bot_attach_prepare: { storage_path: PATH }, msgr_bot_attach_commit: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+  const signed = []; const signUpload = async (path) => { signed.push(path); return `https://x.supabase.co/storage/v1/object/upload/sign/msgr/${path}?token=t`; };
+  const r = await handle({ token: T, method: 'createUpload', params: { message_id: '7', file_name: '보고서.pdf', file_size: 1234 } }, rpc, { signUpload });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.result, { storage_path: PATH, upload_url: `https://x.supabase.co/storage/v1/object/upload/sign/msgr/${PATH}?token=t`, method: 'PUT', max_bytes: 26214400 });
+  assert.deepEqual(rpc.calls[0], ['msgr_bot_attach_prepare', { token: T, p_message: 7, p_name: '보고서.pdf', p_bytes: 1234 }]);
+  assert.deepEqual(signed, [PATH], '서버가 정한 경로만 서명한다');
+  assert.equal((await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, rpc)).status, 500, '서명 불가 → 500');
+  const purged = []; const rpc2 = fakeRpc({ msgr_bot_attach_prepare: { storage_path: PATH, purge: ['o/c/5/bot-11111111-old.pdf'] } });
+  const r2 = await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, rpc2, { signUpload, purgeUploads: async (p) => { purged.push(...p); } });
+  assert.deepEqual(purged, ['o/c/5/bot-11111111-old.pdf'], '서버가 고른 미등록 업로드를 지운다');
+  assert.equal(r2.body.result.purge, undefined, '지울 목록은 봇에게 돌려주지 않는다');
+  const r3 = await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, rpc2, { signUpload, purgeUploads: async () => { throw new Error('storage down'); } });
+  assert.equal(r3.status, 200, '정리 실패가 업로드를 막지 않는다');
+  const a = await handle({ token: T, method: 'attachFile', params: { message_id: 7, storage_path: PATH, file_name: '보고서.pdf', mime_type: 'application/pdf' } }, rpc);
+  assert.deepEqual(a.body.result, { file_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', message_id: 7 });
+  assert.deepEqual(rpc.calls.at(-1), ['msgr_bot_attach_commit', { token: T, p_message: 7, p_path: PATH, p_name: '보고서.pdf', p_mime: 'application/pdf' }]);
+  for (const bad of [undefined, 0, -1, 'x', 1.5]) assert.equal((await handle({ token: T, method: 'attachFile', params: { message_id: bad } }, rpc)).status, 400, `message_id ${bad}`);
+  for (const [name, status] of [['msgr_bot_file_too_large', 413], ['msgr_bot_bad_attach_target', 403], ['msgr_bot_upload_missing', 409], ['msgr_bot_too_many_files', 409], ['msgr_bot_attach_expired', 409], ['msgr_bot_not_member', 403]]) {
+    const out = await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, fakeRpc({ msgr_bot_attach_prepare: pgErr(name) }), { signUpload });
+    assert.equal(out.status, status, name);
+  }
+});
+
+// 유건 2026-09-30 "말 끝마다 MSGR Done 왜 붙이는거야?" — 옛 연결 도구도 서버에서 한 번 더 뗀다(엣지 배포만으로 모든 봇에 적용).
+test('sendMessage 본문의 넘김 표지는 서버가 뗀다 — 문장 끝·독립 줄 모두, 인용·코드는 그대로', async () => {
+  const rpc = fakeRpc({ msgr_bot_send: 5, msgr_bot_followup: 6 });
+  for (const [text, want] of [['전달하겠습니다. MSGR: done', '전달하겠습니다.'], ['확인했습니다. `MSGR: done`', '확인했습니다.'], ['결과입니다.\n\nMSGR: handoff', '결과입니다.'], ['> 인용 MSGR: done', '> 인용 MSGR: done'], ['```\n코드 MSGR: done', '```\n코드 MSGR: done']]) {
+    await handle({ token: T, method: 'sendMessage', params: { chat_id: CH, text } }, rpc);
+    assert.equal(rpc.calls.at(-1)[1].body, want, text);
+  }
+  await handle({ token: T, method: 'sendMessage', params: { approval_id: 'ap1', text: '집행했습니다. MSGR: done' } }, rpc);
+  assert.equal(rpc.calls.at(-1)[1].p_body, '집행했습니다.');
+  assert.equal((await handle({ token: T, method: 'sendMessage', params: { chat_id: CH, text: 'MSGR: done' } }, rpc)).status, 400, '표지뿐이면 빈 글');
 });
