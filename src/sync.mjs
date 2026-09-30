@@ -711,6 +711,10 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     for (const k of Object.keys(remote.files)) if (!safeRel(k)) { delete remote.files[k]; dropped++; }
     if (dropped) console.warn(`[sync] 안전하지 않은 원격 매니페스트 키 ${dropped}개 무시(경로 탈출 차단) — ws=${wsId}`);
   }
+  // 새 기기 복원(원격에서만 발견) — 회사 폴더가 아직 없으면 먼저 만든다. 부재를 walk 실패('' = 루트)로 기록하면
+  // 원격 전 파일이 "로컬 unknown"으로 보류돼 첫 사이클이 0개를 받고, 다음 발견 주기(5분)까지 회사가 없는 것처럼 보였다
+  // (실측 2026-09-30 argo CLI 첫 로그인). 복원이 아닌 회사의 walk 실패 보류는 그대로다(대량 유실 방어).
+  if (isRestore) await mkdir(root, { recursive: true });
   const failedDirs = new Set();
   const local = await walk(root, root, {}, failedDirs); // 자격 3종은 diff 루프의 불가시 가드가 단일 게이트(walk 중복 게이트 금지 — 등가 변이 실증)
   const state = (await loadState(wsId)).files ?? {};
