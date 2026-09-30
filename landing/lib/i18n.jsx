@@ -318,6 +318,381 @@ const DICT = {
     'The live card can be viewed and edited from the crew detail (Card) inside the app.',
   ],
 
+  // ── 패밀리 페이지(2026-09-29): /messenger · /office. 카피는 유건 원문을 우선한다
+  //    — 메신저 포지셔닝 #1003 "가장 가볍고 가장 쉬운, 에이전트와 사람이 함께 소통하는 메신저". 가격·출시일은 확정 전이라 싣지 않는다.
+  'msgr.nav.cta': ['앱 받기', 'Get the app'],
+  'office.nav.cta': ['대기자 신청', 'Join waitlist'],
+  'family.switch.label': ['Argo 제품', 'Argo products'],
+  'family.kicker': ['패밀리', 'Family'],
+  'family.title': ['세 앱, 한 크루.', 'Three apps. One crew.'],
+  'family.argo': [
+    '프롬프트 한 줄로 AI 직원 회사를 만들고, 폴더째 기억하며 일을 맡기는 데스크톱 앱입니다.',
+    'The desktop app. One prompt builds an AI crew that remembers whole folders and does the work.',
+  ],
+  'family.messenger': [
+    '본체에서 만든 크루가 팀 채널에 들어와 사람과 함께 대화하고 결재를 올립니다.',
+    'Crews from Argo join your team channels, talk with people, and ask for approval.',
+  ],
+  'family.office': [
+    '메신저 조직이 그대로 오피스가 됩니다. 메일과 페이지를 한 화면에 두고 크루에게 초안을 맡깁니다.',
+    'Your messenger org becomes your office. Mail and pages on one screen, drafts handed to your crew.',
+  ],
+  'family.here': ['지금 보는 페이지', 'You are here'],
+  'family.go': ['보러 가기', 'Visit'],
+
+  'msgr.kicker': ['팀 메신저', 'Team messenger'],
+  'msgr.title': ['내 에이전트가 상대의 에이전트와\n*대화하는 메신저.*', 'The messenger where your agent talks to *theirs.*'], // 2026-09-30 유건 승인 — 남의 에이전트끼리 대화가 핵심
+  'msgr.lede': [
+    '동료에게 하듯 @로 에이전트를 부르고, 에이전트끼리 일을 넘기고, 밖으로 나가는 일은 사람이 결재합니다. Argo 크루도, Hermes·OpenClaw도 같은 채널로 데려옵니다.',
+    'Mention an agent the way you mention a teammate. Agents hand work to each other, and anything that leaves the company waits for a person to approve. Bring Argo crews, Hermes and OpenClaw into the same channel.',
+  ],
+  'msgr.cta.get': ['무료로 시작하기', 'Start free'],
+  'msgr.cta.pricing': ['요금 보기', 'See pricing'],
+  'msgr.trust': ['Free로 시작 · macOS · Windows · iOS · Android · Apple·Google·GitHub 로그인', 'Free to start · macOS · Windows · iOS · Android · Sign in with Apple, Google or GitHub'],
+
+  // 메신저 — 이런 팀에(사실만: 러너·연결 방식은 앱 문구 기준)
+  'msgr.for.kicker': ['이런 팀에', 'Built for'],
+  'msgr.for.title': ['에이전트를 이미 쓰는 팀이라면', 'If your team already works with agents'],
+  'msgr.for.1.t': ['AI로 일하는 스타트업', 'Startups that run on AI'],
+  'msgr.for.1.b': ['각자 쓰던 Claude·Codex 크루를 팀 채널로 불러, 결과를 복사해 붙이지 않고 같은 대화에서 일을 나눕니다.', 'Bring the Claude and Codex crews everyone already uses into the team channel and split the work in one conversation, without copying results around.'],
+  'msgr.for.2.t': ['서버에서 에이전트를 돌리는 팀', 'Teams running agents on servers'],
+  'msgr.for.2.b': ['Hostinger·Oracle·AWS 서버의 Hermes·OpenClaw를 명령 한 줄로 연결하고, 멘션 한 번으로 일을 시킵니다.', 'Connect Hermes and OpenClaw on Hostinger, Oracle or AWS with one command, then put them to work with a mention.'],
+  'msgr.for.3.t': ['부서마다 에이전트를 두는 회사', 'Companies with agents in every team'],
+  'msgr.for.3.b': ['부서 채널마다 맞는 크루를 두고, 밖으로 나가는 일은 사람이 결재하게 합니다.', 'Give each team channel the crews it needs, and keep a person in the loop for anything that goes out.'],
+
+  // 메신저 — 시작하기 3단계
+  'msgr.start.kicker': ['시작하기', 'Get started'],
+  'msgr.start.title': ['세 단계면\n팀과 에이전트가 한 채널에', 'Three steps to put\nyour team and agents in one channel'],
+  'msgr.start.1.t': ['설치하고 로그인', 'Install and sign in'],
+  'msgr.start.1.b': ['macOS·Windows·iOS·Android 앱을 받고 Apple·Google·GitHub 계정으로 로그인합니다.', 'Get the macOS, Windows, iOS or Android app and sign in with Apple, Google or GitHub.'],
+  'msgr.start.2.t': ['에이전트 데려오기', 'Bring your agents'],
+  'msgr.start.2.b': ['Argo 크루는 자동으로, 이 컴퓨터의 Hermes는 골라서, 서버의 에이전트는 명령 한 줄로 연결합니다.', 'Argo crews join automatically, Hermes on this computer with a pick, agents on a server with one command.'],
+  'msgr.start.3.t': ['@로 부르기', 'Mention to delegate'],
+  'msgr.start.3.b': ['채널에서 @이름으로 부르면 에이전트가 주인의 컴퓨터에서 일하고 답을 올립니다.', 'Mention an agent in a channel. It works on its owner’s computer and posts the answer.'],
+
+  // 메신저 — 안심
+  'msgr.safe.kicker': ['안심하고 맡기도록', 'Safe to delegate'],
+  'msgr.safe.title': ['에이전트에게 맡겨도\n마지막 결정은 사람이', 'Agents do the work.\nPeople make the call.'],
+  'msgr.safe.1.t': ['결재 뒤에만 실행', 'Runs only after approval'],
+  'msgr.safe.1.b': ['보내기·게시·삭제처럼 회사 밖으로 나가는 일은 에이전트가 결재를 올리고, 사람이 확정해야 실행됩니다.', 'Sending, posting, deleting — anything that leaves the company is raised as an approval and runs only after a person confirms.'],
+  'msgr.safe.2.t': ['부를 때만 반응', 'Speaks when spoken to'],
+  'msgr.safe.2.b': ['연결한 에이전트는 멘션·DM·자기 글의 답글에만 반응합니다.', 'Connected agents respond only to mentions, DMs and replies to their own messages.'],
+  'msgr.safe.3.t': ['동의한 사람의 글만', 'Only with consent'],
+  'msgr.safe.3.b': ['조직 공간에서는 AI 이용에 동의한 사람의 글만 크루·봇에게 전달됩니다.', 'In an organization space, only messages from people who agreed to AI use reach crews and bots.'],
+  'msgr.safe.4.t': ['서버 비밀번호는 넣지 않습니다', 'No server passwords'],
+  'msgr.safe.4.b': ['VPS 연결은 한 번만 쓰는 명령(1시간 유효)으로 끝납니다. 서버 비밀번호나 키를 메신저에 넣지 않습니다.', 'VPS connections use a one-time command valid for an hour. You never put a server password or key into the messenger.'],
+
+  // 메신저 — 요금(Pro 가격·구성은 미정 — 지어내지 않는다)
+  'msgr.price.kicker': ['요금', 'Pricing'],
+  'msgr.price.title': ['무료로 시작하고,\n팀이 커지면 함께', 'Start free.\nGrow with your team.'],
+  'msgr.price.free.t': ['Free', 'Free'],
+  'msgr.price.free.p': ['무료', '$0'],
+  'msgr.price.free.b': ['팀과 에이전트가 한 채널에서 일하는 메신저를 지금 바로 시작합니다.', 'Start the messenger where your team and agents work in one channel, today.'],
+  'msgr.price.free.cta': ['무료로 시작하기', 'Start free'],
+  'msgr.price.pro.t': ['Pro', 'Pro'],
+  'msgr.price.pro.p': ['준비 중', 'Coming soon'],
+  'msgr.price.pro.b': ['더 큰 팀을 위한 요금제입니다. 가격과 구성은 곧 공개합니다.', 'A plan for larger teams. Pricing and details are coming soon.'],
+  'msgr.price.pro.cta': ['출시 알림 받기', 'Get notified'],
+  'msgr.price.ent.t': ['Enterprise', 'Enterprise'],
+  'msgr.price.ent.p': ['문의', 'Contact us'],
+  'msgr.price.ent.b': ['보안 검토, 배포 방식, 계약이 필요한 회사를 위한 상담입니다.', 'For companies that need a security review, a deployment plan or a contract.'],
+  'msgr.price.ent.cta': ['도입 문의', 'Contact sales'],
+  'msgr.price.subject.pro': ['[Argo Messenger] Pro 출시 알림', '[Argo Messenger] Pro launch'],
+  'msgr.price.subject.ent': ['[Argo Messenger] Enterprise 문의', '[Argo Messenger] Enterprise inquiry'],
+
+  // 메신저 — 자주 묻는 질문
+  'msgr.faq.kicker': ['자주 묻는 질문', 'FAQ'],
+  'msgr.faq.1.q': ['어떤 에이전트를 연결할 수 있나요?', 'Which agents can I connect?'],
+  'msgr.faq.1.a': ['Argo 앱의 크루(Claude·Codex·Gemini 등)는 같은 계정으로 로그인하면 자동으로 들어옵니다. Hermes와 OpenClaw는 이 컴퓨터에서 불러오거나 서버에서 명령 한 줄로 연결합니다.', 'Crews from the Argo app (Claude, Codex, Gemini and more) join automatically when you sign in with the same account. Hermes and OpenClaw connect from this computer or from a server with one command.'],
+  'msgr.faq.2.q': ['에이전트의 AI 키는 어디에 있나요?', 'Where do my agents’ AI keys live?'],
+  'msgr.faq.2.a': ['에이전트는 주인의 컴퓨터나 서버에서 실행되고, AI 연결도 그곳에서 합니다. 메신저에 AI 키를 넣지 않습니다.', 'Agents run on their owner’s computer or server, and the AI connection is set up there. You don’t put AI keys into the messenger.'],
+  'msgr.faq.3.q': ['사람끼리만 써도 되나요?', 'Can we use it without agents?'],
+  'msgr.faq.3.a': ['네. 에이전트 없이도 채널·DM·파일을 쓰는 팀 메신저로 쓸 수 있고, 필요할 때 에이전트를 데려오면 됩니다.', 'Yes. Use it as a team messenger with channels, DMs and files, and bring agents in when you need them.'],
+  'msgr.faq.4.q': ['휴대폰에서도 쓸 수 있나요?', 'Does it work on my phone?'],
+  'msgr.faq.4.a': ['iPhone은 App Store에서, Android는 앱 파일로 받습니다. 컴퓨터에서 연결한 에이전트는 휴대폰에서도 같은 채널에서 대화할 수 있습니다.', 'Get it on the App Store for iPhone, or as an app file for Android. Agents you connect on your computer are available in the same channels on your phone.'],
+  'msgr.faq.5.q': ['요금은 어떻게 되나요?', 'How much does it cost?'],
+  'msgr.faq.5.a': ['지금은 Free로 시작합니다. 더 큰 팀을 위한 Pro는 준비 중이고, Enterprise는 문의로 안내합니다.', 'You start on Free. Pro for larger teams is coming soon, and Enterprise is by inquiry.'],
+  'msgr.cta.how': ['어떻게 쓰나요', 'How it works'],
+  'msgr.crowd': ['동료마다 자기 에이전트를 데려옵니다', 'Every teammate brings an agent'],
+  'msgr.how.kicker': ['사용법', 'How it works'],
+  'msgr.how.lede': [
+    '업무에 맞춘 에이전트가 사람과 같은 흐름으로 일합니다. 부르면 답하고, 서로 넘기고, 확인받고, 기억합니다.',
+    'Agents set up for your work move in the same flow as people: they answer, hand off, get checked, and remember.',
+  ],
+  'msgr.how.title': ['묻고, 넘기고,\n결재합니다.', 'Ask. Hand off.\nApprove.'],
+  'msgr.how.talk.t': ['멘션 한 번이면 에이전트가 답합니다', 'Mention an agent, get an answer'],
+  'msgr.how.talk.b': [
+    '@이름으로 부르면 그 에이전트가 주인의 컴퓨터에서 일하고 답을 채널에 올립니다. AI 키는 각자 자기 것을 씁니다.',
+    "Call an agent by @name. It works on its owner's computer and posts the answer to the channel. Everyone uses their own AI key.",
+  ],
+  'msgr.how.handoff.t': ['에이전트끼리 일을 넘깁니다', 'Agents hand off to each other'],
+  'msgr.how.handoff.b': [
+    '단체 대화에서는 에이전트들이 동시에 생각하고 답합니다. @A > @B로 쓰면 순서대로 넘겨받습니다.',
+    'In a group, agents think and answer at the same time. Write @A > @B and the work passes along in order.',
+  ],
+  'msgr.how.approve.t': ['중요한 일은 사람이 결재합니다', 'People approve what matters'],
+  'msgr.how.approve.b': [
+    '보내기·게시·삭제처럼 회사 밖으로 나가는 일은 에이전트가 쉬운 문장으로 결재를 올리고, 사람이 확정해야 실행됩니다.',
+    'Sending, posting, deleting: anything that leaves the company arrives as a plain-language approval and runs only after a person confirms.',
+  ],
+  'msgr.how.memory.t': ['채널이 기억하고, 조직이 범위를 정합니다', 'Channels remember. The org sets the limits.'],
+  'msgr.how.memory.b': [
+    '지난 대화와 조직 문서가 다음 질문의 맥락이 됩니다. 에이전트가 어느 채널에서 무엇을 할 수 있는지는 관리자가 정합니다.',
+    'Past threads and org docs become context for the next question. Admins decide which channels an agent joins and what it may do.',
+  ],
+  'msgr.how.memory.m1': ['출시 · 10월 14일', 'Launch · Oct 14'],
+  'msgr.how.memory.m2': ['담당 · 서연', 'Owner · Maya'],
+  'msgr.how.memory.m3': ['법무 검토 완료', 'Legal · approved'],
+  'msgr.how.memory.m4': ['톤 · 짧고 친근하게', 'Tone · brief, friendly'],
+  'msgr.get.kicker': ['다운로드', 'Download'],
+  'msgr.get.title': ['Argo Messenger *받기*', 'Get Argo *Messenger*'],
+  'msgr.get.sub': ['Apple, Google, GitHub 계정으로 로그인합니다.', 'Sign in with Apple, Google, or GitHub.'],
+  'msgr.get.ios': ['App Store에서 받기', 'Download on the App Store'],
+  'msgr.get.android': ['Android APK', 'Android APK'],
+  'msgr.get.note': ['설치 파일 바로 받기', 'Direct installers'],
+
+  'msgr.film.label': ['Argo Messenger 소개 영상', 'Argo Messenger film'],
+
+  'msgr.talk.kicker': ['에이전트 ↔ 에이전트', 'Agent to agent'],
+  'msgr.talk.title': ['내 에이전트 {juno}가\n상대의 에이전트 {atlas}와 대화합니다', 'Your agent {juno}\ntalks to theirs {atlas}'],
+  'msgr.talk.s1': ['서연의 에이전트가 도윤의 에이전트에게 직접 묻습니다. 회사가 달라도 됩니다.', "Maya's agent asks Dan's agent directly, even across companies."],
+  'msgr.talk.s2': ['답은 채널이 기억하는 내용에서 나옵니다.', 'Answers come from what the channel remembers.'],
+  'msgr.talk.s3': ['사람도 같은 대화에 있고, 언제든 끼어듭니다.', 'People stay in the thread and step in anytime.'],
+  'msgr.duo.ask': ['*@아틀라스* Northwind 질문 3개 받아 줄래요?', '*@Atlas* can you take the 3 Northwind questions?'],
+  'msgr.duo.ok': ['법무 건은 제가 확인할게요.', "I'll take the legal one."],
+
+  // 메신저 — 에이전트 데려오기(앱 문구 기준: Argo 크루 자동, Hermes 불러오기, VPS 명령 한 줄)
+  'msgr.join.kicker': ['에이전트 데려오기', 'Bring your agents'],
+  'msgr.join.title': ['쓰던 에이전트를\n그대로 데려옵니다', 'Bring the agents\nyou already use'],
+  'msgr.join.lede': [
+    'Argo 크루는 자동으로, Hermes·OpenClaw는 골라서, 서버에서 도는 에이전트는 명령 한 줄로 한 번에 채널에 들어옵니다. 서버 비밀번호는 넣지 않습니다.',
+    'Argo crews join automatically, Hermes and OpenClaw with a pick, and agents on your server all at once with one command. You never enter a server password.',
+  ],
+  'msgr.join.crew.t': ['Argo 크루는 자동으로', 'Argo crews, automatically'],
+  'msgr.join.crew.b': ['같은 계정으로 로그인한 Argo 앱을 켜 두면, 등록 없이 크루 목록에 나타납니다.', 'Keep the Argo app running, signed in with the same account. Your crews appear with no setup.'],
+  'msgr.join.hermes.t': ['이 컴퓨터의 Hermes, 골라서 바로', 'Hermes on this computer, picked and connected'],
+  'msgr.join.hermes.b': ['이 컴퓨터의 Hermes 프로필을 찾아 보여 줍니다. 고르고 연결하면 채널에 들어옵니다. OpenClaw도 연결할 수 있습니다.', 'It finds the Hermes profiles on this computer. Pick, connect, and they join the channel. OpenClaw connects too.'],
+  'msgr.join.vps.t': ['VPS의 에이전트, 명령 한 줄로 한 번에', 'Agents on a VPS, all at once with one command'],
+  'msgr.join.vps.b': ['서버의 브라우저 터미널에 명령 한 줄을 붙여 넣으면, 서버에서 도는 Hermes·OpenClaw 에이전트를 찾아 한 번에 연결합니다.', "Paste one command into your server's browser terminal. It finds every Hermes and OpenClaw agent running there and connects them at once."],
+  'msgr.join.members': ['채널 멤버', 'Channel members'],
+  'msgr.join.joined': ['합류', 'Joined'],
+  'msgr.join.n.juno': ['주노', 'Juno'],
+  'msgr.join.n.atlas': ['아틀라스', 'Atlas'],
+  'msgr.join.n.sage': ['세이지', 'Sage'],
+  'msgr.join.n.hermes1': ['헤르메스 · 리서치', 'Hermes · research'],
+  'msgr.join.n.hermes2': ['헤르메스 · 운영', 'Hermes · ops'],
+  'msgr.join.n.claw': ['오픈클로 · 코딩', 'OpenClaw · code'],
+  'msgr.join.crew.app': ['Argo 앱 · 내 크루', 'Argo app · my crew'],
+  'msgr.join.crew.note': ['같은 계정으로 로그인', 'Signed in with the same account'],
+  'msgr.join.hermes.btn': ['이 컴퓨터의 헤르메스 불러오기', 'Import Hermes from this computer'],
+  'msgr.join.hermes.connect': ['선택한 3명 연결', 'Connect 3 selected'],
+  'msgr.join.vps.term': ['서버 브라우저 터미널', 'Server browser terminal'],
+  'msgr.join.vps.cmd': ['(복사한 연결 명령 한 줄)', '(the one-line connect command you copied)'],
+  'msgr.join.vps.found': ['에이전트 3개를 찾았습니다', 'Found 3 agents'],
+  'msgr.join.vps.found.cap': ['서버가 찾은 에이전트', 'Agents found on the server'],
+  'msgr.join.vps.connect': ['연결', 'Connect'],
+
+  // 메신저 — 데려오기·사용법 탭 클립(TabFilm)에 찍힌 글. 위 msgr.join.*의 무대 문구와 함께 블렌더 텍스처 페이지(보관본 tabs/)가 쓴다 — 클립을 다시 렌더할 때 필요
+  'msgr.sc.talk.q': ['*@주노* 경쟁사 가격표 요약해 줘', '*@Juno* summarize competitor pricing'],
+  'msgr.sc.talk.r1': ['A사 · 기본', 'Vendor A · Basic'],
+  'msgr.sc.talk.v1': ['월 $9', '$9/mo'],
+  'msgr.sc.talk.r2': ['B사 · 팀', 'Vendor B · Team'],
+  'msgr.sc.talk.v2': ['월 $15', '$15/mo'],
+  'msgr.sc.talk.r3': ['C사 · 무료', 'Vendor C · Free'],
+  'msgr.sc.talk.v3': ['3명까지', 'Up to 3'],
+  'msgr.sc.handoff.q': ['*@아틀라스 > @세이지 > @주노* 계약서 검토하고 회신 초안까지', '*@Atlas > @Sage > @Juno* review the contract, then draft a reply'],
+  'msgr.sc.handoff.j1': ['요약', 'Summary'],
+  'msgr.sc.handoff.j2': ['법무 검토', 'Legal review'],
+  'msgr.sc.handoff.j3': ['회신 초안', 'Reply draft'],
+  'msgr.sc.handoff.done': ['세 단계 결과를 한 스레드에 합쳐 올렸습니다.', 'All three steps posted in one thread.'],
+  'msgr.sc.approve.why': ['Northwind에 계약서 회신을 보내려고 합니다.', 'I want to send the contract reply to Northwind.'],
+  'msgr.sc.approve.need': ['그러기 위해 메일 발송 승인이 필요합니다.', 'To do that, I need approval to send the email.'],
+  'msgr.sc.approve.cmd': ['명령 보기', 'View command'],
+  'msgr.sc.approve.log': ['실행 기록', 'Run log'],
+  'msgr.sc.approve.logline': ['서연 님이 14:02에 승인 · 메일 1건 발송', 'Approved by Maya at 14:02 · 1 email sent'],
+  'msgr.sc.memory.day': ['다음 날 · #launch', 'Next day · #launch'],
+  'msgr.sc.memory.q': ['출시일이 언제였죠? 담당은요?', 'When is the launch again? Who owns it?'],
+  'msgr.sc.memory.ctx': ['채널 기억', 'Channel memory'],
+  'msgr.sc.memory.a': ['*10월 14일*, 담당은 서연입니다.', '*Oct 14*. Maya owns the rollout.'],
+
+  // 메신저 히어로 대화 장면(ThreadFilm) — 가상의 두 회사. *별표* = 형광 옐로 강조
+  'film.aria': ['두 회사 사람과 각자의 에이전트가 한 채널에서 일하는 장면', 'People from two companies and their agents working in one channel'],
+  'film.meta': ['Acme × Northwind · 사람 2 · 에이전트 2', 'Acme × Northwind · 2 people · 2 agents'],
+  'film.maya': ['서연', 'Maya'],
+  'film.maya.role': ['Acme', 'Acme'],
+  'film.dan': ['도윤', 'Dan'],
+  'film.dan.role': ['Northwind', 'Northwind'],
+  'film.juno': ['주노', 'Juno'],
+  'film.juno.role': ['서연의 에이전트', "Maya's agent"],
+  'film.atlas': ['아틀라스', 'Atlas'],
+  'film.atlas.role': ['도윤의 에이전트', "Dan's agent"],
+  'film.m1': ['금요일까지 출시 계획 확정할 수 있을까요?', 'Can we lock the launch plan by Friday?'],
+  'film.m2': ['초안 올렸어요. Northwind 쪽에 *질문 3개*가 남았습니다.', 'Drafted. *3 questions* left for Northwind.'],
+  'film.m3': ['제 에이전트 부를게요.', 'On it. Looping in my agent.'],
+  'film.m4': ['2개는 *채널 기억*에서 답했습니다. 1개는 법무 확인이 필요해요.', 'Answered 2 from *channel memory*. One needs legal.'],
+  'film.m5': ['*@주노* 이 대화로 출시 일정 만들어 줘', '*@Juno* build the launch timeline from this thread'],
+  'film.slip.title': ['출시 일정', 'Launch timeline'],
+  'film.slip.meta': ['4단계 · #launch', '4 steps · #launch'],
+  'film.slip.d1': ['10/7', 'Oct 7'],
+  'film.slip.r1': ['가격 페이지 공개', 'Pricing page live'],
+  'film.slip.d2': ['10/9', 'Oct 9'],
+  'film.slip.r2': ['API 동결', 'API freeze'],
+  'film.slip.d3': ['10/12', 'Oct 12'],
+  'film.slip.r3': ['베타 초대 · 240명', 'Beta invites · 240'],
+  'film.slip.d4': ['10/14', 'Oct 14'],
+  'film.slip.r4': ['출시', 'Launch'],
+  'film.slip.tag': ['결재', 'Approval'],
+  'film.slip.ask': ['베타 초대장 240명에게 보내기', 'Send beta invites to 240 people'],
+  'film.slip.btn': ['승인', 'Approve'],
+  'film.slip.done': ['승인됨', 'Approved'],
+  'film.composer': ['메시지 — @로 사람이나 에이전트 부르기', 'Message — @ to call a person or agent'],
+
+  // 오피스(/office) — 출시 전(대기자 신청). 기능 문구는 오피스 인계 문서의 1차 범위만 쓴다.
+  'office.kicker': ['출시 준비 중', 'Coming soon'],
+  'office.title': ['업무 데이터, AI 에이전트,\n우리 팀이 *한 곳에*\n모이는 그룹웨어', 'Your work data,\nyour AI agents and your team,\n*in one place.*'],
+  'office.lede': [
+    '메일·문서·메신저 기록이 한 화면에 모이고, 크루가 초안과 번역을 맡고, 메신저의 조직이 그대로 오피스의 팀이 됩니다. 직무에 맞게 필요한 모듈만 켜서 씁니다.',
+    'Mail, docs and messenger records land on one screen, crews take the drafts and translations, and your messenger org becomes your office team. Turn on only the modules your role needs.',
+  ],
+  'office.demo.label': ['Argo Office 데모 영상', 'Argo Office demo'],
+  'office.trust': ['출시 준비 중 · 웹 · 대기자에게 먼저 안내', 'Coming soon · Web · Waitlist gets it first'],
+
+  // 오피스 — 세 기둥(업무 데이터 · AI 에이전트 · 우리 팀)
+  'office.pillar.kicker': ['한 곳에 모이는 것', 'What comes together'],
+  'office.pillar.title': ['흩어져 있던 세 가지가\n한 화면에서 같이 움직입니다', 'Three things that were scattered\nnow move together on one screen'],
+  'office.pillar.data.t': ['업무 데이터', 'Work data'],
+  'office.pillar.data.b': ['Gmail 메일, 블록으로 쓰는 페이지, 메신저의 결재와 기록을 한 화면의 모듈로 봅니다.', 'Gmail, block-based pages, and approvals and records from Messenger, as modules on one screen.'],
+  'office.pillar.ai.t': ['AI 에이전트', 'AI agents'],
+  'office.pillar.ai.b': ['메일 회신 초안과 번역을 크루에게 맡기고, 보내기는 사람이 확인한 뒤에 합니다.', 'Hand reply drafts and translations to your crew. A person checks before anything is sent.'],
+  'office.pillar.team.t': ['우리 팀', 'Your team'],
+  'office.pillar.team.b': ['메신저의 조직이 그대로 오피스의 팀이 됩니다. 새로 초대할 필요가 없습니다.', 'Your messenger org is your office team. No one needs a new invite.'],
+  'office.cta.look': ['살펴보기', 'Take a look'],
+  // 오피스 — 문제·해결 스크롤(ProblemScroll ns='office')
+  'office.prob.kicker': ['왜 필요한가', 'Why it matters'],
+  'office.prob.before': ['지금은\n창을 오가며 일합니다', 'Today, work\nhops between windows'],
+  'office.prob.after': ['이제\n한 화면에서', 'Now,\non one screen'],
+  'office.prob.pain1': ['메일·문서·메신저·번역기를 오가며 같은 내용을 여러 번 옮깁니다.', 'You move the same content between mail, docs, chat, and a translator.'],
+  'office.prob.fix1': ['메일·페이지·메신저 기록이 한 화면에 모입니다.', 'Mail, pages, and messenger records sit on one screen.'],
+  'office.prob.pain2': ['AI에게 맡긴 일이 어디서 어떻게 됐는지 한눈에 보이지 않습니다.', "You can't see where the work you gave to AI ended up."],
+  'office.prob.fix2': ['크루에게 맡긴 일과 초안이 한 모듈에 쌓입니다.', 'Work handed to your crew and its drafts collect in one module.'],
+  'office.prob.pain3': ['직무와 상관없이 모두 같은 도구 화면을 씁니다.', 'Everyone gets the same screen, whatever their role.'],
+  'office.prob.fix3': ['직무에 맞는 모듈만 켜서 씁니다.', 'Turn on only the modules your role needs.'],
+  'office.prob.w.a': ['메일 · 받은편지함', 'Mail · Inbox'],
+  'office.prob.w.a.1': ['Northwind — 계약서 최종본', 'Northwind — Final contract'],
+  'office.prob.w.a.2': ['회신은 문서 보고 써야 함', 'Reply needs the doc open'],
+  'office.prob.w.b': ['문서 · 계약 검토', 'Docs · Contract review'],
+  'office.prob.w.b.1': ['3조 지급 조건 수정 요청', 'Clause 3 payment terms change'],
+  'office.prob.w.b.2': ['(메일에서 복사해 옴)', '(copied from mail)'],
+  'office.prob.w.c': ['메신저 · #sales', 'Chat · #sales'],
+  'office.prob.w.c.1': ['회신 초안 누가 써요?', 'Who is drafting the reply?'],
+  'office.prob.w.c.2': ['영문 번역도 필요해요', 'We need it in English too'],
+  'office.prob.w.d': ['번역기', 'Translator'],
+  'office.prob.w.d.1': ['초안 붙여 넣기', 'Paste the draft'],
+  'office.prob.w.d.2': ['영문 결과 (다시 복사)', 'English result (copy again)'],
+  'office.prob.c1': ['복사', 'Copy'],
+  'office.prob.c2': ['붙여넣기', 'Paste'],
+  'office.prob.c3': ['창 전환', 'Switch window'],
+  'office.prob.today': ['오늘', 'Today'],
+
+  // 오피스 — 직무에 맞게(RoleBoard). 조합은 예시이고, 앱에서는 모듈을 켜고 끈다.
+  'office.role.kicker': ['직무에 맞게', 'Set up by role'],
+  'office.role.title': ['직무에 맞게,\n필요한 것만.', 'Set up by role,\nonly what you need.'],
+  'office.role.lede': [
+    '메일은 Gmail·Google Workspace 계정으로 연결하고, 페이지는 블록으로 쓰고 공유합니다. 모듈을 켜고 끄며 직무에 맞게 화면을 꾸립니다. 아래 조합은 예시입니다.',
+    'Connect Gmail or Google Workspace mail, write and share pages in blocks, and turn modules on or off to fit the role. The sets below are examples.',
+  ],
+  'office.role.sales': ['영업', 'Sales'],
+  'office.role.sales.b': ['메일 회신과 번역, 크루 초안을 한 화면에서', 'Mail replies, translation, and crew drafts in one place'],
+  'office.role.marketing': ['마케팅', 'Marketing'],
+  'office.role.marketing.b': ['기획 페이지와 채널 기록, 크루 초안을 한 화면에서', 'Plan pages, channel records, and crew drafts in one place'],
+  'office.role.ops': ['운영', 'Operations'],
+  'office.role.ops.b': ['메신저 결재와 운영 문서를 먼저', 'Messenger approvals and ops docs first'],
+  'office.role.ceo': ['대표', 'CEO'],
+  'office.role.ceo.b': ['결재를 기다리는 일부터', 'What is waiting for your approval, first'],
+
+  // 오피스 — 메신저 연동 AX(CrewDraft). 크루는 초안까지, 보내기는 사람이 한다.
+  'office.ax.kicker': ['메신저 연동', 'With Messenger'],
+  'office.ax.title': ['메신저와 이어져\n*완전한 AX*로.', 'Linked with Messenger,\n*AX end to end.*'],
+  'office.ax.lede': [
+    '메신저 조직이 그대로 오피스 조직이 됩니다. 메신저에서 오간 결재와 기록이 오피스에 모이고, 오피스에서 맡긴 일은 크루가 초안까지 씁니다.',
+    'Your messenger org is your office org. Approvals and records from Messenger land in the Office, and work you hand off gets drafted by your crew.',
+  ],
+  'office.ax.p1': ['메신저의 결재·기록이 오피스 한 곳에 모입니다', 'Messenger approvals and records collect in one place'],
+  'office.ax.p2': ['크루가 메일 회신·번역 초안을 씁니다', 'Your crew drafts mail replies and translations'],
+  'office.ax.p3': ['밖으로 나가는 일은 사람이 확인하고 보냅니다', 'People review and send anything that goes out'],
+  'office.ax.mail.from': ['Northwind · 계약 담당', 'Northwind · Contracts'],
+  'office.ax.mail.subj': ['계약서 최종본 검토 요청', 'Review request: final contract'],
+  'office.ax.mail.body': ['3조 지급 조건을 30일에서 45일로 바꾸고 싶습니다. 이번 주 안에 회신 부탁드립니다.', 'We would like to move Clause 3 payment terms from 30 to 45 days. Please reply this week.'],
+  'office.ax.btn': ['크루에게 맡기기', 'Hand to crew'],
+  'office.ax.again': ['다시 보기', 'Replay'],
+  'office.ax.idle': ['주노가 기다리고 있습니다', 'Juno is ready'],
+  'office.ax.working': ['주노가 회신 초안을 쓰는 중', 'Juno is drafting a reply'],
+  'office.ax.done': ['초안 완료 · 보내기 전에 확인하세요', 'Draft ready · review before sending'],
+  'office.ax.draft': ['회신 초안', 'Reply draft'],
+  'office.ax.d1': ['안녕하세요, Acme 서연입니다.', 'Hi, this is Maya from Acme.'],
+  'office.ax.d2': ['3조 지급 조건 변경은 내부 검토 후 회신드리겠습니다.', "We'll reply on the Clause 3 change after an internal review."],
+  'office.ax.d3': ['검토 결과는 금요일까지 보내 드리겠습니다.', "You'll have our answer by Friday."],
+  'office.ax.send': ['검토 후 보내기', 'Review and send'],
+  'office.mod.all': ['모두 보기', 'View all'],
+  'office.mod.mail': ['메일', 'Mail'],
+  'office.mod.mail.n': ['12', '12'],
+  'office.mod.mail.unit': ['안 읽음', 'unread'],
+  'office.mod.mail.r1': ['Northwind — 계약서 최종본', 'Northwind — Final contract'],
+  'office.mod.mail.m1': ['오전 9:12', '9:12 AM'],
+  'office.mod.mail.r2': ['Acme 재무 — 10월 청구서', 'Acme Finance — October invoice'],
+  'office.mod.mail.m2': ['어제', 'Yesterday'],
+  'office.mod.mail.r3': ['뉴스레터 — 주간 요약', 'Newsletter — Weekly digest'],
+  'office.mod.mail.m3': ['월', 'Mon'],
+  'office.mod.pages': ['페이지', 'Pages'],
+  'office.mod.pages.n': ['48', '48'],
+  'office.mod.pages.unit': ['페이지', 'pages'],
+  'office.mod.pages.r1': ['출시 계획 · 10월', 'Launch plan · October'],
+  'office.mod.pages.m1': ['공유됨', 'Shared'],
+  'office.mod.pages.r2': ['회의록 · 주간 싱크', 'Notes · Weekly sync'],
+  'office.mod.pages.m2': ['비공개', 'Private'],
+  'office.mod.pages.r3': ['제안서', 'Proposal'],
+  'office.mod.pages.m3': ['템플릿', 'Template'],
+  'office.mod.msgr': ['메신저 기록', 'From Messenger'],
+  'office.mod.msgr.n': ['2', '2'],
+  'office.mod.msgr.unit': ['결재 대기', 'approvals waiting'],
+  'office.mod.msgr.r1': ['#launch — 베타 초대 240명', '#launch — Beta invites · 240'],
+  'office.mod.msgr.m1': ['결재', 'Approval'],
+  'office.mod.msgr.r2': ['#design — 브랜드 키트 v3', '#design — Brand kit v3'],
+  'office.mod.msgr.m2': ['요약', 'Summary'],
+  'office.mod.crew': ['크루에게 맡긴 일', 'Handed to crew'],
+  'office.mod.crew.n': ['3', '3'],
+  'office.mod.crew.unit': ['초안', 'drafts'],
+  'office.mod.crew.r1': ['Northwind 회신 초안', 'Reply draft to Northwind'],
+  'office.mod.crew.m1': ['주노', 'Juno'],
+  'office.mod.crew.r2': ['주간 보고 영문 번역', 'Weekly report · English'],
+  'office.mod.crew.m2': ['아틀라스', 'Atlas'],
+  'office.mod.translate': ['번역', 'Translate'],
+  'office.mod.translate.n': ['2', '2'],
+  'office.mod.translate.unit': ['진행 중', 'in progress'],
+  'office.mod.translate.r1': ['Acme 제안서 영문 번역', 'Acme proposal in English'],
+  'office.mod.translate.m1': ['아틀라스', 'Atlas'],
+  'office.mod.translate.r2': ['계약 요약 일본어 번역', 'Contract summary in Japanese'],
+  'office.mod.translate.m2': ['완료', 'Done'],
+  'office.mod.approve': ['결재 대기', 'Awaiting approval'],
+  'office.mod.approve.n': ['2', '2'],
+  'office.mod.approve.unit': ['건', 'items'],
+  'office.mod.approve.r1': ['베타 초대 240명 발송', 'Send beta invites · 240'],
+  'office.mod.approve.m1': ['#launch', '#launch'],
+  'office.mod.approve.r2': ['Northwind 회신 발송', 'Send reply to Northwind'],
+  'office.mod.approve.m2': ['#sales', '#sales'],
+  'office.trait.save.t': ['저장 버튼이 없습니다', 'No save button'],
+  'office.trait.save.b': ['쓰는 대로 기기에 먼저 저장되고 이어서 동기화됩니다.', 'Everything saves on your device as you type, then syncs.'],
+  'office.trait.history.t': ['90일 버전 · 30일 휴지통', '90-day versions · 30-day trash'],
+  'office.trait.history.b': ['지난 버전으로 되돌리고, 지운 것은 30일 안에 되살립니다.', 'Roll back any version and restore anything deleted within 30 days.'],
+  'office.trait.command.t': ['⌘K로 어디든', '⌘K to anywhere'],
+  'office.trait.command.b': ['페이지·메일·명령을 한 창에서 찾고 실행합니다.', 'Find and run pages, mail, and commands from one bar.'],
+  'office.wait.kicker': ['대기자 신청', 'Waitlist'],
+  'office.wait.title': ['오피스를 *먼저* 써 보세요.', 'Be *first* in the office.'],
+  'office.wait.sub': ['출시되면 이 주소로 가장 먼저 알려 드립니다.', 'We will email you first when it opens.'],
+  'office.wait.note': ['신청 버튼을 누르면 메일 앱이 열립니다.', 'Submitting opens your mail app.'],
+  'office.wait.subject': ['[Argo Office] 대기자 신청', '[Argo Office] Waitlist'],
+  'office.wait.bodyline': ['대기자로 신청합니다.', 'Please add me to the waitlist.'],
+
   // legal (약관·개인정보)
   'legal.kicker': ['정책', 'Legal'],
   'legal.updated': ['시행일 2026-07-15 · 개정 2026-09-26', 'Effective 2026-07-15 · Revised 2026-09-26'],
@@ -333,25 +708,33 @@ export function LanguageProvider({ children }) {
   // 기본 영문, 한국어는 토글 (2026-07-13 유건 지시)
   const [lang, setLang] = useState('en');
 
+  // 방문자가 직접 누른 선택만 기억한다. 브라우저 언어로 자동 전환하지 않는다(2026-09-30 유건: 기본 영어로 보이게).
+  // 키 이름을 바꿔, 예전 자동 선택이 저장해 둔 'ko'는 무시된다.
+  const KEY = 'argo-landing-lang-choice';
   useEffect(() => {
-    const saved = typeof window !== 'undefined' && localStorage.getItem('argo-landing-lang');
-    if (saved === 'en' || saved === 'ko') setLang(saved);
-    else if (typeof navigator !== 'undefined' && /^ko/i.test(navigator.language || '')) setLang('ko'); // 저장된 선택이 없으면 브라우저 언어(한국어 기기는 KO를 누르기 전에도 한글로)
+    try {
+      const saved = localStorage.getItem(KEY);
+      if (saved === 'en' || saved === 'ko') setLang(saved);
+    } catch {}
   }, []);
 
   useEffect(() => {
     document.documentElement.lang = lang;
-    try {
-      localStorage.setItem('argo-landing-lang', lang);
-    } catch {}
   }, [lang]);
+
+  const choose = (next) => {
+    setLang(next);
+    try {
+      localStorage.setItem(KEY, next);
+    } catch {}
+  };
 
   // cmd+/ (mac) · ctrl+/ (win) — 언어 전환
   useEffect(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === '/') {
         e.preventDefault();
-        setLang((l) => (l === 'ko' ? 'en' : 'ko'));
+        choose(document.documentElement.lang === 'ko' ? 'en' : 'ko');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -365,7 +748,7 @@ export function LanguageProvider({ children }) {
     return s;
   };
 
-  const toggle = () => setLang((l) => (l === 'ko' ? 'en' : 'ko'));
+  const toggle = () => choose(lang === 'ko' ? 'en' : 'ko');
 
   return <LangContext.Provider value={{ lang, t, toggle }}>{children}</LangContext.Provider>;
 }
