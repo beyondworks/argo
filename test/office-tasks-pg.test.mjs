@@ -203,10 +203,19 @@ test('거래 담당자: 마이그레이션을 다시 적용해도 관리자가 �
  assert.equal(sql(`select cardinality(owners) from office_business_orders where id=${quote(o)}`),'0');
 });
 
-test('할 일 상한: 취소한 일과 1년 넘은 끝낸 일은 세지 않는다', {skip}, ()=>{
+test('할 일 상한: 최근 1년에 만든 일을 센다 — 만들고 바로 취소해도 센다(저장 공간 무제한 방지), 1년 넘게 전에 만든 일은 뺀다', {skip}, ()=>{
  const who=U.member2;
- sql(`insert into office_tasks(id,scope,title,assignee,created_by,cancelled_at) select gen_random_uuid(),'o:${ORG}','x',${quote(who)},${quote(who)},now() from generate_series(1,3000);
-  insert into office_tasks(id,scope,title,assignee,created_by,done_at) select gen_random_uuid(),'o:${ORG}','x',${quote(who)},${quote(who)},now()-interval '400 days' from generate_series(1,2500)`);
- task('task.create',{id:randomUUID(),title:'아직 된다',due_on:null},{u:who});
+ sql(`insert into office_tasks(id,scope,title,assignee,created_by,cancelled_at) select gen_random_uuid(),'o:${ORG}','x',${quote(who)},${quote(who)},now() from generate_series(1,5000)`);
+ assert.match(tfail('task.create',{id:randomUUID(),title:'넘침',due_on:null},{u:who}),/task_limit/);
+ sql(`update office_tasks set created_at=now()-interval '400 days' where created_by=${quote(who)} and title='x'`);
+ task('task.create',{id:randomUUID(),title:'1년 지나면 된다',due_on:null},{u:who});
  sql(`delete from office_tasks where created_by=${quote(who)} and title='x'`);
+});
+
+test('할 일 하나의 기한·제목 바꾸기는 200번까지 — 이력이 끝없이 쌓이지 않게', {skip}, ()=>{
+ const id=newTask();
+ sql(`insert into office_task_events(task_id,kind,actor) select ${quote(id)},'due',${quote(U.member)} from generate_series(1,200)`); // 200번 바꾼 뒤
+ assert.match(tfail('task.due',{id,due_on:'2026-12-01'}),/task_limit/);
+ assert.match(tfail('task.title',{id,title:'바꾼 제목'}),/task_limit/);
+ task('task.done',{id}); // 끝내기는 막지 않는다
 });

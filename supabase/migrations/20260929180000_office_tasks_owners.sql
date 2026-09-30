@@ -139,8 +139,8 @@ begin
     select * into t from public.office_tasks where id = tid;
     if t.id is null then -- perform가 FOUND를 바꾸므로 행 값으로 판정한다
       perform pg_advisory_xact_lock(hashtextextended('office-task-limit:' || who, 0)); -- 동시 요청이 상한을 넘지 않게
-      if (select count(*) from public.office_tasks x where x.scope = sc and x.created_by = who and x.cancelled_at is null
-          and (x.done_at is null or x.done_at > now() - interval '1 year')) >= 5000 then raise exception 'task_limit'; end if; -- 사람·범위당: 취소한 일·1년 넘은 끝낸 일은 세지 않는다
+      if (select count(*) from public.office_tasks x where x.scope = sc and x.created_by = who
+          and x.created_at > now() - interval '1 year') >= 5000 then raise exception 'task_limit'; end if; -- 사람·범위당 최근 1년에 만든 일(취소도 센다 — 만들고 취소하기로 무한히 쌓지 못하게, 1년 지나면 풀린다)
     end if;
     if t.id is not null then -- 같은 요청이 두 번 온 것만 허용
       if t.scope = sc and t.title = ttl and t.note = body and t.due_on is not distinct from due and t.assignee = target and t.created_by = who then return to_jsonb(t) - 'scope'; end if;
@@ -159,6 +159,9 @@ begin
     raise exception 'task_forbidden' using errcode = '42501';
   end if;
   if t.cancelled_at is not null then raise exception 'task_cancelled'; end if;
+  if p_action in ('task.due', 'task.title') and (select count(*) from public.office_task_events e where e.task_id = tid and e.kind in ('due', 'title')) >= 200 then
+    raise exception 'task_limit'; -- 할 일 하나의 기한·제목 이력은 200번까지(끝내기·다시 열기는 막지 않는다)
+  end if;
 
   if p_action = 'task.done' then
     if t.done_at is null then -- 두 번 눌려도 한 번

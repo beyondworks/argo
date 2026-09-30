@@ -229,7 +229,7 @@ test('옛 요청(버전 없음)은 승인하지 않는다 — 다시 요청하�
 });
 
 test('도구 주소: 공개 도메인 이름만 — 숫자 IP 표기·점 없는 이름·끝 점·전각·퍼센트 인코딩·잘못된 포트는 거절', {skip}, ()=>{
- const bad=['http://2130706433/','http://0x7f000001/','http://0177.0.0.1/','http://0/','http://%31%32%37.0.0.1/','http://127。0。0。1/','http://１２７.0.0.1/','http://100.64.0.1/','http://8.8.8.8/','http://localtest.me/','http://metadata.google.internal./','http://printer.local./','http://intranet/','https://a.example:99999/','https://a.example:0/','http://127.0.0.1.nip.io/'];
+ const bad=['http://2130706433/','http://0x7f000001/','http://0177.0.0.1/','http://0/','http://%31%32%37.0.0.1/','http://127。0。0。1/','http://１２７.0.0.1/','http://100.64.0.1/','http://8.8.8.8/','http://localtest.me/','http://metadata.google.internal./','http://printer.local./','http://intranet/','https://a.example:99999/','https://a.example:0/','http://127.0.0.1.nip.io/','http://nas.lan/','http://erp.corp/','http://wiki.intranet/','http://router.home/','http://box.localdomain/','http://a.test/','http://a.invalid/','http://kubernetes.default.svc/','http://x.traefik.me/','http://x.vcap.me/','http://127.0.0.1.example/','https://\u212a.example/','https://한글.kr/'];
  for(const url of bad)assert.match(writeFail(U.member,'asset.create',{id:randomUUID(),kind:'tool',scope:'me',title:'도구',body:'',spec:{tool_kind:'service',url,crews:[]}}),/asset_input/,url);
  for(const url of ['https://app.bolta.io','https://mail.google.com:443/mail','http://my-tool.co.kr/a?b=1#c'])write(U.member,'asset.create',{id:randomUUID(),kind:'tool',scope:'me',title:'도구',body:'',spec:{tool_kind:'service',url,crews:[]}});
 });

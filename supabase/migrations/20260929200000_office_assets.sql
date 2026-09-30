@@ -113,7 +113,7 @@ end $$;
 create or replace function public.office_asset_tool_spec(p_spec jsonb, p_scope text, p_who uuid) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare kind text := coalesce(p_spec->>'tool_kind', 'service'); url text := nullif(btrim(coalesce(p_spec->>'url', '')), ''); crews uuid[];
-  host text := lower(substring(url from '^[A-Za-z]+://([^/:?#]*)'));
+  host text := substring(url from '^[A-Za-z]+://([^/:?#]*)'); -- 소문자로 바꾸지 않는다(켈빈 기호 같은 글자가 ASCII로 바뀌어 통과하지 않게)
 begin
   begin
     select coalesce(array_agg(distinct x::uuid), '{}') into crews from jsonb_array_elements_text(coalesce(p_spec->'crews', '[]')) x;
@@ -123,8 +123,8 @@ begin
   -- 허용 목록: 점으로 나뉜 공개 도메인 이름만(끝 칸은 글자로 시작 — 숫자 IP 표기·IPv6·점 없는 이름·끝 점·전각·퍼센트 인코딩이 모두 빠진다),
   -- 내부용 이름·IP로 풀리는 도메인 접미사와 1~65535 밖 포트는 거절. ponytail: DNS로 풀린 IP 검사는 주소를 가져오는 쪽 몫
   if url is not null and (url ~ '[[:cntrl:]]' or url ~* '^https?://[^/?#]*@' or host is null
-      or host !~ '^([a-z0-9-]+\.)+[a-z][a-z0-9-]*$'
-      or host ~ '(^|\.)(local|localhost|internal|home\.arpa|localtest\.me|nip\.io|sslip\.io|xip\.io|lvh\.me)$'
+      or octet_length(host) <> length(host) or host !~* '^([a-z0-9-]+\.)+[a-z][a-z0-9-]*$' or host ~ '^[0-9]+(\.[0-9]+){3}\.'
+      or host ~* '(^|\.)(local|localhost|localdomain|internal|intranet|lan|corp|home|test|invalid|svc|home\.arpa|localtest\.me|nip\.io|sslip\.io|xip\.io|lvh\.me|traefik\.me|vcap\.me)$'
       or (url ~* '^https?://[^/?#]*:' and coalesce(substring(url from '^[A-Za-z]+://[^/?#:]*:([0-9]{1,5})(?:[/?#]|$)'), '0')::int not between 1 and 65535)) then raise exception 'asset_input'; end if;
   if kind not in ('service', 'mcp', 'plugin', 'account', 'other') or (url is not null and (url !~* '^https?://[^\s]+$' or length(url) > 500)) or cardinality(crews) > 50
     or exists (select 1 from unnest(crews) i where not exists (select 1 from public.msgr_crews c where c.id = i
