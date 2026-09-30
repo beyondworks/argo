@@ -247,6 +247,8 @@ const DICT = {
   'updates.note.workflow': ['작업 전 확인할 사항과 결과의 검증 범위를 구분하도록 크루 실행 지침을 정리했습니다.', 'Crew instructions now distinguish open decisions before work from what was actually verified afterward.'],
   'updates.note.steer': ['크루가 답하는 중에 보낸 메시지를 대기열에서 "바로 보내기"로 답을 멈추지 않고 끼워 넣을 수 있습니다.', 'While a crew is replying, use "Send now" on a queued message to add it to the running turn without stopping the reply.'],
   'updates.note.firstSend': ['대화를 열자마자 보낸 메시지가 답하는 동안 화면에서 사라지던 문제를 수정했습니다.', 'Fixed messages sent right after opening a chat disappearing from the thread while the crew replied.'],
+  'updates.note.sonnet55': ['크루 모델에 Claude Sonnet 5.5와 Sonnet 5.5 (1M)이 추가되었습니다.', 'Claude Sonnet 5.5 and Sonnet 5.5 (1M) are now available as crew models.'],
+  'updates.note.msgrMarker': ['메신저에서 크루 답 끝에 "MSGR: done" 같은 표시가 보이던 문제를 수정했습니다.', 'Fixed markers like "MSGR: done" showing at the end of crew replies in Messenger.'],
   'topbar.monthCost': ['이번 달 사용액', 'This month'],
   'topbar.monthSubUse': ['이번 달 사용량 — 구독 연결이라 추가 청구가 없습니다', 'This month — on your subscription, no extra charge'],
   'topbar.monthTurns': ['{n}턴', '{n} turns'],
