@@ -62,6 +62,7 @@ function route(path) {
   if (!space) return { redirect: '/me' };
   const rest = path.slice(baseOf(space).length) || '/';
   if (rest === '/') return { space, view: 'home' };
+  if (rest === '/business') return { space, view: 'business', tab: null }; // 탭 없이 오면 업무 화면이 보이는 첫 탭을 고른다(분석을 숨긴 사람)
   if ((m = match('/business/:tab', rest))) return { space, view: 'business', tab: m.tab };
   if ((m = match('/p/:id', rest))) return { space, view: 'page', id: m.id };
   if (space === 'me' && rest === '/mail/connect') return { space, view: 'mailConnect' };             // Google 권한 승인 뒤 돌아오는 자리

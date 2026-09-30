@@ -118,7 +118,7 @@ function CustomerTable({ rows, dated, blocked, run, launch, openCard }) {
   </div>;
 }
 
-export default function BusinessPage({ space, tab: requested = 'analytics', openId }) {
+export default function BusinessPage({ space, tab: requested = null, openId }) {
   const savedTabs = useStore((st) => st.layouts['biztabs:me']?.items);
   const tab = requested === 'performance' ? 'marketing' : requested;
   useLang();
