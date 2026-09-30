@@ -37,7 +37,7 @@
 .cal-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ev); flex: none; }
 .cal-dot.task { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fg-2); }
 .cal-chip { display: flex; align-items: center; gap: 5px; width: 100%; height: 20px; padding: 0 6px; border-radius: 5px; font-size: 12px; text-align: left; color: var(--fg); min-width: 0; overflow: hidden; }
-.cal-chip.bar { background: color-mix(in srgb, var(--ev) 24%, var(--surface)); }
+.cal-chip.bar { background: color-mix(in srgb, var(--ev) 24%, var(--float)); }
 .cal-chip.neutral.bar { background: var(--secondary); }
 .cal-chip.task { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--fg-2); }
 .cal-chip.done .cal-chip-title, .cal-row.done .clamp { text-decoration: line-through; color: var(--fg-3); }
@@ -48,7 +48,7 @@
 
 /* 날짜 머리 — 오늘은 원, 공휴일은 빨간 숫자 + 이름, 기념일은 회색 작은 이름 */
 .cal-date { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.cal-num { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 4px; border-radius: 12px; font-size: 12.5px; font-weight: 520; color: var(--fg); font-variant-numeric: tabular-nums; flex: none; }
+.cal-num { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 4px; border-radius: 999px; font-size: 12.5px; font-weight: 520; color: var(--fg); font-variant-numeric: tabular-nums; flex: none; }
 .cal-num.red { color: var(--danger); }
 .cal-num.today { background: var(--primary); color: var(--primary-fg); font-weight: 650; }
 @media (hover: hover) { .cal-num:not(.today):hover { background: var(--primary-soft); } }
@@ -90,7 +90,7 @@
 .cal-tg-day { display: grid; justify-items: center; gap: 2px; padding: 8px 4px 6px; min-width: 0; }
 .cal-tg-day > small { font-size: 11.5px; color: var(--fg-3); }
 .cal-tg-day .cal-date { flex-direction: column; gap: 2px; max-width: 100%; }
-.cal-tg-day .cal-num { min-width: 32px; height: 32px; border-radius: 16px; font-size: 16px; }
+.cal-tg-day .cal-num { min-width: 32px; height: 32px; border-radius: 999px; font-size: 16px; }
 .cal-tg-all { border-bottom: 1px solid var(--border-soft); padding: 3px 0; position: relative; }
 .cal-tg-label { grid-column: 1; align-self: center; font-size: 11px; color: var(--fg-3); text-align: right; padding-right: 8px; }
 .cal-tg-all .cal-cell { border-left: 1px solid var(--border-soft); border-right: 0; }
@@ -100,7 +100,7 @@
 .cal-hours { position: relative; grid-column: 1; }
 .cal-hours small { position: absolute; right: 8px; transform: translateY(-50%); font-size: 10.5px; color: var(--fg-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .cal-tg-col { position: relative; border-left: 1px solid var(--border-soft); min-width: 0; }
-.cal-block { position: absolute; display: grid; align-content: start; gap: 1px; padding: 3px 6px; border-radius: 6px; text-align: left; overflow: hidden; color: var(--fg); background: color-mix(in srgb, var(--ev) 26%, var(--surface)); box-shadow: 0 0 0 1px var(--surface); z-index: 1; min-width: 0; }
+.cal-block { position: absolute; display: grid; align-content: start; gap: 1px; padding: 3px 6px; border-radius: 6px; text-align: left; overflow: hidden; color: var(--fg); background: color-mix(in srgb, var(--ev) 26%, var(--float)); box-shadow: 0 0 0 1px var(--float); z-index: 1; min-width: 0; }
 .cal-block.neutral { background: var(--secondary); }
 .cal-block strong { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-block small { font-size: 11px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -148,7 +148,7 @@
 /* 휴대폰 폭 — 레일은 버튼으로 여는 서랍, 기본 보기는 목록, 월 보기는 점 */
 @media (max-width: 767px) {
   .cal { grid-template-columns: minmax(0, 1fr); }
-  .cal-rail { position: absolute; inset: 0 auto 0 0; width: min(300px, 86vw); z-index: 20; background: var(--surface); box-shadow: var(--shadow-float), inset -1px 0 0 var(--border-soft); transform: translateX(-105%); visibility: hidden; transition: transform 240ms var(--ease-drawer), visibility 0s linear 240ms; }
+  .cal-rail { position: absolute; inset: 0 auto 0 0; width: min(300px, 86vw); z-index: 20; background: var(--float); box-shadow: var(--shadow-float), inset -1px 0 0 var(--border-soft); transform: translateX(-105%); visibility: hidden; transition: transform 240ms var(--ease-drawer), visibility 0s linear 240ms; }
   .cal.rail-open .cal-rail { transform: none; visibility: visible; transition: transform 240ms var(--ease-drawer); }
   .cal-scrim { position: absolute; inset: 0; z-index: 19; background: var(--overlay); }
   .cal-bar { padding: 8px 12px; gap: 6px; }

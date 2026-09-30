@@ -1,6 +1,6 @@
 // 앱 셸 — 사이드바 · 헤더(경로·저장 상태·페이지 동작) · 내용. 끌어다 놓기는 한 DndContext가 전부 받는다
 // (메일을 사이드바 크루에게, 모듈을 격자 안에서, 페이지를 트리 안에서).
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
 import { DndContext, DragOverlay, MeasuringStrategy, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, pointerWithin, closestCenter } from '@dnd-kit/core';
 import { moduleKeyboardCoordinates } from './core/module-keyboard.js';
 import { Sidebar } from './ui/Sidebar.jsx';
@@ -17,6 +17,7 @@ import { useStore, reorderPage, createPage, getState, saveNav, saveTabs } from '
 import { moveId } from './core/nav-model.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
+import { isFullWidth, onWidth, toggleWidth } from './core/theme.js';
 import { PEOPLE } from './data/sample.js';
 import { SPACES, ME, useSession, canManage } from './core/session.js';
 import { pullLayouts, pullPages, pullBoard } from './core/pull.js';
@@ -76,6 +77,13 @@ function SaveStatus() {
   return <span className={`save-status ${s}`} role="status" aria-live="polite">{(s === 'offline' || s === 'unsaved') && <span className="dot ask" />}{t(`save.${s}`)}</span>;
 }
 
+/** 가운데 보기 ⇄ 전체 너비(유건 9/30) — 폭 제한이 없는 화면(설정·휴지통·모듈 보관함·메일)에서는 숨긴다 */
+function WidthToggle() {
+  const full = useSyncExternalStore(onWidth, isFullWidth);
+  const label = t(full ? 'width.center' : 'width.full');
+  return <button type="button" className="icon-btn width-toggle" aria-pressed={full} aria-label={label} title={label} onClick={toggleWidth}><Icon name="width" /></button>;
+}
+
 function Header({ r, page }) {
   const mode = useSession();
   const sp = SPACES.find((s) => s.key === r.space);
@@ -88,6 +96,7 @@ function Header({ r, page }) {
       <div className="top-right">
         {mode === 'sample' && <span className="draft-badge">{t('draft.badge')}</span>}
         <SaveStatus />
+        {!['settings', 'trash', 'mail', 'mailConnect'].includes(r.view) && r.tab !== 'library' && <WidthToggle />}
         {r.view === 'page' && page && <>
           {mode === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
           <button type="button" className="btn sm" onClick={() => setUi({ share: page.id })}><Icon name="share" size={14} />{t('page.share')}</button>

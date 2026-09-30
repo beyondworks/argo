@@ -36,4 +36,14 @@ export function applyShell(shell) {
   save(SHELL_KEY, shell);
 }
 
+/* 본문 폭(유건 9/30) — 가운데 보기 ⇄ 전체 너비. 사람별 편의라 이 기기에 저장(localStorage), 첫 페인트는 index.html이 같은 키로 입힌다 */
+export const WIDTH_KEY = 'argo-office-width';
+const widthSubs = new Set();
+export const isFullWidth = () => document.documentElement.classList.contains('full-width');
+export const onWidth = (f) => { widthSubs.add(f); return () => widthSubs.delete(f); };
+export function toggleWidth() {
+  save(WIDTH_KEY, document.documentElement.classList.toggle('full-width') ? 'full' : 'center');
+  widthSubs.forEach((f) => f());
+}
+
 mq?.addEventListener('change', () => applyTheme(readTheme()));

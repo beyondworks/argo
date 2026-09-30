@@ -89,6 +89,7 @@ const DICT = {
   'crew.viaChannel': ['{crew}은(는) 메신저 채널에서 @{crew}로 불러 일을 시킬 수 있습니다. 오피스에서 바로 맡기기는 내 에이전트만 됩니다.', 'Mention @{crew} in a Messenger channel to use this agent. Direct hand-off from Office works with your own agent only.'],
   'nav.trash': ['휴지통', 'Trash'], 'nav.settings': ['설정', 'Settings'], 'nav.newPage': ['새 페이지', 'New page'],
   'nav.collapse': ['사이드바 접기', 'Collapse sidebar'], 'nav.open': ['메뉴 열기', 'Open menu'],
+  'width.full': ['전체 너비로 보기', 'Full width'], 'width.center': ['가운데로 보기', 'Centered width'],
   'save.saved': ['저장됨', 'Saved'], 'save.saving': ['저장 중…', 'Saving…'], 'save.unsaved': ['저장 안 됨', 'Not saved'], 'save.offline': ['오프라인 — 연결되면 저장', 'Offline — saves when back online'],
   'home.title': ['오늘', 'Today'], 'home.addModule': ['모듈 추가', 'Add module'], 'home.noHidden': ['추가할 모듈이 없습니다', 'All modules are on the board'],
   'home.reset': ['기본 배치로 되돌리기', 'Reset to default layout'],

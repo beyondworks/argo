@@ -96,49 +96,79 @@ test('themes.css: hover는 (hover: hover) 안에서만, transition: all 금지',
 });
 
 /* ── 글자 대비(WCAG): 본문 4.5:1 ── */
+// 색 값은 tokens.css(linen·graphite) → base.css(표면 토큰 기본값·사이드바) → themes.css(셸 기본값·새 다섯 색) 순서로 쌓는다(뒤가 이긴다)
+const tokensCss = readFileSync(new URL('../src/tokens.css', import.meta.url), 'utf8');
+const baseCss = readFileSync(new URL('../src/base.css', import.meta.url), 'utf8');
+const ALL = [...rulesOf(tokensCss), ...rulesOf(baseCss), ...rulesOf(css)];
 function tokens(theme) {
   const isAuto = !/-(light|dark)$/.test(theme);
   const dark = theme.endsWith('-dark');
   const out = {};
-  for (const r of rulesOf(css)) {
+  for (const r of ALL) {
     const sel = r.sel;
     const fam = theme.replace(/-(light|dark)$/, '');
-    // 모양 블록(@family)과, 이 테마의 색 블록만 읽는다
+    // 표면 기본값(:root)·모양 블록(@family)과, 이 테마의 색 블록만 읽는다
+    const base = sel.trim() === ':root';
     const shape = sel.trim() === `:root[data-theme^='${fam}']`;
     const color = dark
       ? sel.includes(`[data-theme='${fam}-dark']`)
       : sel.includes(`[data-theme='${fam}-light']`) || (isAuto && sel.includes(`[data-theme='${fam}']`) && !sel.includes('dark-emul'));
-    if (!shape && !color) continue;
+    if (!base && !shape && !color) continue;
     for (const d of r.decl.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) out[d[1]] = d[2].trim();
   }
   return out;
 }
-const rgba = (v) => {
+// 값 풀기 — #hex · rgba() · var(--x) · color-mix(in srgb, A N%, B|transparent)(알파를 곱해 섞는다 = 브라우저와 같은 계산)
+function resolve(t, v, depth = 0) {
+  v = (v ?? '').trim();
+  assert.ok(depth < 12, `순환: ${v}`);
   const h = v.match(/^#([0-9a-f]{6})$/i);
   if (h) return { r: parseInt(h[1].slice(0, 2), 16), g: parseInt(h[1].slice(2, 4), 16), b: parseInt(h[1].slice(4), 16), a: 1 };
   const r = v.match(/^rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\s*\)$/);
-  return r ? { r: +r[1], g: +r[2], b: +r[3], a: r[4] === undefined ? 1 : +r[4] } : null;
-};
+  if (r) return { r: +r[1], g: +r[2], b: +r[3], a: r[4] === undefined ? 1 : +r[4] };
+  if (v === 'transparent') return { r: 0, g: 0, b: 0, a: 0 };
+  const va = v.match(/^var\(--([a-z0-9-]+)\)$/);
+  if (va) return resolve(t, t[va[1]], depth + 1);
+  const m = v.match(/^color-mix\(in srgb,\s*(.+?)\s+([\d.]+)%,\s*(.+)\)$/);
+  if (m) {
+    const [x, y, p] = [resolve(t, m[1], depth + 1), resolve(t, m[3], depth + 1), +m[2] / 100];
+    const a = x.a * p + y.a * (1 - p);
+    const ch = (k) => (a ? (x[k] * x.a * p + y[k] * y.a * (1 - p)) / a : 0);
+    return { r: ch('r'), g: ch('g'), b: ch('b'), a };
+  }
+  return null;
+}
 const over = (top, bottom) => ({ r: top.r * top.a + bottom.r * (1 - top.a), g: top.g * top.a + bottom.g * (1 - top.a), b: top.b * top.a + bottom.b * (1 - top.a), a: 1 });
 const lum = ({ r, g, b }) => [r, g, b].map((c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }).reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
 const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
 
-for (const fam of NEW) for (const mode of ['light', 'dark']) {
+// 이유(유건 9/30 흰색 줄이기): 카드·버튼·메뉴 바탕이 반투명이라 글자 대비는 '밑바탕 위에 섞여 보이는 색'으로 잰다 —
+// 캔버스 위 카드, 카드 위 작은 카드·입력칸, 본문 판(panel·pill·window) 위 카드, 떠 있는 층까지. 린넨·그래파이트도 같은 규칙.
+const SEEN = (t, c) => {
+  const bg = c('bg'), surface = over(c('surface'), bg), main = over(c('t-main-bg'), bg);
+  return { bg, card: c('card'), surface, float: c('float'), 'lift on surface': over(c('lift'), surface), 'field on surface': over(c('field'), surface),
+    'surface on surface': over(c('surface'), surface), main, 'surface on main': over(c('surface'), main) };
+};
+for (const fam of ['linen', 'graphite', ...NEW]) for (const mode of ['light', 'dark']) {
   const theme = `${fam}-${mode}`;
   test(`대비 4.5:1 — ${theme}`, () => {
     const t = tokens(theme);
-    const c = (name) => { const v = rgba(t[name] ?? ''); assert.ok(v, `${theme}: --${name} = ${t[name]}`); return v; };
+    const c = (name) => { const v = resolve(t, t[name]); assert.ok(v, `${theme}: --${name} = ${t[name]}`); return v.a < 1 ? over(v, resolve(t, t.bg)) : v; };
+    const raw = (name) => { const v = resolve(t, t[name]); assert.ok(v, `${theme}: --${name} = ${t[name]}`); return v; };
     const pairs = [];
-    const on = (fg, bg, label = `${fg}/${bg}`) => pairs.push([label, ratio(c(fg), c(bg))]);
-    for (const bg of ['bg', 'card', 'surface']) for (const fg of ['fg', 'fg-2', 'fg-3']) on(fg, bg);
-    on('primary-fg', 'primary'); on('mark-fg', 'mark');
-    for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) on(fg, 'side-bg');
-    pairs.push(['side-fg on side-active', ratio(c('side-fg'), over(c('side-active'), c('side-bg')))]); // 선택된 메뉴(반투명 배경은 사이드바 위에 올린 색)
-    for (const n of [1, 2, 3, 4, 5, 6]) for (const ink of ['tile-ink-2', 'tile-ink-3']) on(ink, `tile-${n}`);
-    // 상태 글자: 반투명 배지 배경을 카드 위에 올린 색 위에서
-    for (const base of ['card', 'surface', 'bg']) for (const k of ['ok', 'warn', 'danger']) pairs.push([`${k}/${k}-soft on ${base}`, ratio(c(k), over(c(`${k}-soft`), c(base)))]);
-    pairs.push(['fg on mark(배지 글자)', ratio(c('fg'), c('mark'))]);
-    const bad = pairs.filter(([l, r]) => r < 4.5 && !l.startsWith('fg on mark'));
+    const seen = SEEN(t, raw);
+    assert.equal(seen.float.a, 1, '떠 있는 층은 불투명해야 한다(뒤 글자가 비치면 못 읽는다)');
+    for (const [where, bg] of Object.entries(seen)) for (const fg of ['fg', 'fg-2', 'fg-3']) pairs.push([`${fg} on ${where}`, ratio(c(fg), bg)]);
+    // 상태 배지 글자(반투명 배지 배경을 표면 위에 올린 색) — 새 다섯 색만. linen·graphite는 메신저 생성 토큰(tokens.css)이라 여기서 고치지 않는다(9/30 기준 linen 3.2~4.4)
+    if (NEW.includes(fam)) for (const base of ['card', 'surface', 'bg']) for (const k of ['ok', 'warn', 'danger']) pairs.push([`${k}/${k}-soft on ${base}`, ratio(c(k), over(raw(`${k}-soft`), seen[base]))]);
+    pairs.push(['primary-fg/primary', ratio(c('primary-fg'), c('primary'))]);
+    if (NEW.includes(fam)) {
+      pairs.push(['mark-fg/mark', ratio(c('mark-fg'), c('mark'))]);
+      for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) pairs.push([`${fg}/side-bg`, ratio(c(fg), c('side-bg'))]);
+      pairs.push(['side-fg on side-active', ratio(c('side-fg'), over(raw('side-active'), c('side-bg')))]); // 선택된 메뉴(반투명 배경은 사이드바 위에 올린 색)
+      for (const n of [1, 2, 3, 4, 5, 6]) for (const ink of ['tile-ink-2', 'tile-ink-3']) pairs.push([`${ink}/tile-${n}`, ratio(c(ink), c(`tile-${n}`))]);
+    }
+    const bad = pairs.filter(([, r]) => r < 4.5);
     assert.deepEqual(bad.map(([l, r]) => `${l} ${r.toFixed(2)}`), []);
   });
 }
@@ -151,7 +181,7 @@ test('녹는 사이드바 셸: 보정하지 않는 색은 사이드바 글자가
     const t = tokens(`${fam}-${mode}`);
     if (fix.includes(`'${fam}'`)) continue;
     for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) {
-      const r = ratio(rgba(t[fg]), rgba(t.bg));
+      const r = ratio(resolve(t, t[fg]), resolve(t, t.bg));
       assert.ok(r >= 4.5, `${fam}-${mode}: --${fg} ${t[fg]} / --bg ${t.bg} = ${r.toFixed(2)} — 보정 목록에 넣어야 한다`);
     }
   }
