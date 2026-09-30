@@ -52,3 +52,31 @@ test('moving across a neighbor and back restores the original order without savi
   assert.deepEqual(state.items, pair);
   assert.equal(moduleDrag(state, step('end', 'kpi')).commit, null);
 });
+
+// 이유(유건 9/30): 모듈을 옮기면 가만히 있어도 자리가 또 바뀌어 엉뚱한 곳에 놓였다(운영·로컬 재현: work를 approvals 자리로 끌어
+// 멈췄는데 outputs 뒤로 튐). 대상의 앞쪽 절반이면 그 앞, 뒤쪽 절반이면 그 뒤 — 옮긴 뒤 같은 포인터로 다시 재도 결과가 같다.
+import { sideOf } from '../src/core/module-drag.js';
+
+test('놓을 쪽: 가로로 꽉 찬 모듈은 위·아래 절반, 나머지는 왼쪽·오른쪽 절반', () => {
+  const rect = { left: 0, top: 0, width: 400, height: 200 };
+  assert.equal(sideOf(rect, { x: 100, y: 190 }, 'm'), 'before');
+  assert.equal(sideOf(rect, { x: 300, y: 10 }, 'm'), 'after');
+  assert.equal(sideOf(rect, { x: 390, y: 50 }, 'full'), 'before');
+  assert.equal(sideOf(rect, { x: 10, y: 150 }, 'full'), 'after');
+  assert.equal(sideOf(rect, { x: 200, y: 100 }, 'm'), 'after'); // 정확히 가운데는 뒤
+});
+
+test('앞·뒤로 넣기, 같은 자리면 그대로(같은 배열) — 두 모듈이 서로 계속 자리를 바꾸지 않는다', () => {
+  const abc = [{ id: 'a', size: 'm' }, { id: 'b', size: 'm' }, { id: 'c', size: 's' }, { id: 'h', size: 'm', hidden: true }];
+  const act = (type, extra = {}) => ({ type, scope: 'analysis', source: abc, items: abc, canEdit: true, active: target('c'), ...extra });
+  let state = moduleDrag(null, act('start')).drag;
+  state = moduleDrag(state, act('over', { over: { ...target('a'), side: 'before' } })).drag;
+  assert.deepEqual(state.items.map((i) => i.id), ['c', 'a', 'b', 'h']);
+  const again = moduleDrag(state, act('over', { over: { ...target('a'), side: 'before' } })).drag;
+  assert.equal(again, state); // 같은 포인터로 다시 재도 바뀌지 않는다
+  state = moduleDrag(state, act('over', { over: { ...target('a'), side: 'after' } })).drag;
+  assert.deepEqual(state.items.map((i) => i.id), ['a', 'c', 'b', 'h']);
+  state = moduleDrag(state, act('over', { over: { ...target('b'), side: 'after' } })).drag;
+  assert.deepEqual(state.items.map((i) => i.id), ['a', 'b', 'c', 'h']);
+  assert.equal(moduleDrag(state, act('end', { over: target('b') })).commit, null); // 원래 순서로 돌아오면 저장하지 않는다
+});

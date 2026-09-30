@@ -35,9 +35,9 @@ test('크루 상태: 담당 중 → work, 대기 결재 → ask, 그 외 idle. �
 test('결재·결정·산출물·일지: 공간 키, 결재권, 문장 대체, 채널 이름, 일지 크루 id', () => {
   const b = mapBoard(base, { orgKey: key, decidable: new Set(['a1']) });
   assert.deepEqual(b.approvals[0], { id: 'a1', space: 'bw', crew: 'c2', plain: 'send_mail', risk: 'high', at: 't2', channel: '영업', canDecide: true });
-  assert.deepEqual(b.decisions[0], { id: 'd1', space: 'bw', crew: 'c1', plain: '공지 게시', result: 'approved', by: '', at: 't3' });
-  assert.deepEqual(b.work[0], { id: 'w1', space: 'bw', goal: '재견적', lead: 'c1', status: 'running', started: 't1', channel: '영업' });
-  assert.deepEqual(b.outputs[0], { id: 'f1', space: 'bw', name: 'a.pdf', crew: 'c1', channel: '영업', bytes: 10, at: 't4' });
+  assert.deepEqual(b.decisions[0], { id: 'd1', space: 'bw', crew: 'c1', plain: '공지 게시', action: 'post', risk: null, result: 'approved', by: '', at: 't3', asked: null, channel: '' });
+  assert.deepEqual(b.work[0], { id: 'w1', space: 'bw', goal: '재견적', lead: 'c1', status: 'running', started: 't1', channel: '영업', done: null });
+  assert.deepEqual(b.outputs[0], { id: 'f1', space: 'bw', name: 'a.pdf', crew: 'c1', channel: '영업', bytes: 10, at: 't4', path: null, mime: '' });
   assert.deepEqual(b.journal, [{ space: 'bw', date: '2026-09-27', entries: [{ time: '09:12', crew: 'c1', name: '루나', text: '끝' }] }]);
   assert.equal(mapBoard(base, { orgKey: key, decidable: new Set() }).approvals[0].canDecide, false);
 });
@@ -58,4 +58,14 @@ test('공용 문서 목록: 일지는 빼고 폴더·공간을 붙인다', async
   const { mapBoard } = await import('../src/core/board.js');
   const docs = [{ id: 'x1', org_id: 'o1', channel_id: null, path: 'rules/manners.md', title: '예절', updated_at: 't' }, { id: 'x2', org_id: 'o1', channel_id: 'ch', path: 'journal/2026-09-27.md', title: 'j', updated_at: 't' }];
   assert.deepEqual(mapBoard({ docs }, { orgKey: new Map([['o1', 'bw']]), decidable: new Set() }).docs, [{ id: 'x1', space: 'bw', folder: 'rules', title: '예절', path: 'rules/manners.md', updated: 't', channel: '' }]);
+});
+
+// 이유(유건 9/30): 결정 기록의 '결정한 사람'이 늘 '—'였다 — decided_by를 조직 멤버 이름으로. 산출물은 눌러서 열 수 있게 저장 경로·종류를 싣는다.
+test('결정한 사람은 조직 멤버 이름으로, 산출물은 저장 경로·종류를 싣는다', () => {
+  const b = mapBoard({ ...base,
+    decisions: [{ id: 'd2', org_id: ORG, channel_id: 'ch1', crew_id: 'c1', action: 'rm -rf x', reason: '정리', risk: 'high', status: 'rejected', decided_by: 'u9', decided_at: 't5', created_at: 't4' }],
+    files: [{ id: 'f2', org_id: ORG, name: '보고.md', bytes: 3, mime: null, storage_path: 'o1/ch1/보고.md', created_at: 't4', msg: { channel_id: 'ch1', crew_id: 'c1' } }],
+    members: [{ org_id: ORG, user_id: 'u9', display_name: '유건' }] }, { orgKey: key, decidable: new Set() });
+  assert.deepEqual(b.decisions[0], { id: 'd2', space: 'bw', crew: 'c1', plain: '정리', action: 'rm -rf x', risk: 'high', result: 'rejected', by: '유건', at: 't5', asked: 't4', channel: '영업' });
+  assert.deepEqual([b.outputs[0].path, b.outputs[0].mime], ['o1/ch1/보고.md', '']);
 });

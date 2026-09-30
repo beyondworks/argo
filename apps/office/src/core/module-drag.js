@@ -1,5 +1,12 @@
 import { reorderModules } from './layout.js';
 
+/** 포인터가 대상 모듈의 앞쪽 절반이면 'before', 뒤쪽이면 'after' — 가로로 꽉 찬 모듈은 위·아래, 나머지는 왼쪽·오른쪽 */
+export function sideOf(rect, point, size) {
+  return size === 'full'
+    ? (point.y < rect.top + rect.height / 2 ? 'before' : 'after')
+    : (point.x < rect.left + rect.width / 2 ? 'before' : 'after');
+}
+
 export function moduleDrag(state, action) {
   const unchanged = () => ({ drag: state, commit: null });
   const valid = state && state.scope === action.scope && state.source === action.source && action.canEdit;
@@ -16,5 +23,5 @@ export function moduleDrag(state, action) {
   }
   if (action.type !== 'over' || !target || over.id === state.active.id) return unchanged();
   const items = reorderModules(state.items, state.scope, state.active, over);
-  return { drag: { ...state, items }, commit: null };
+  return items === state.items ? unchanged() : { drag: { ...state, items }, commit: null };
 }

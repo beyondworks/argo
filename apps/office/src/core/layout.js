@@ -53,6 +53,13 @@ export function reorderModules(items, scope, active, over) {
   const visible = items.filter((item) => !item.hidden);
   const from = visible.findIndex((item) => item.id === active.id), to = visible.findIndex((item) => item.id === over.id);
   if (from < 0 || to < 0) return items;
+  if (over.side) { // 포인터가 대상의 앞·뒤 어느 절반에 있는지로 넣는다(9/30) — 옮긴 뒤 다시 재도 같은 결과라 떨리지 않는다
+    const rest = visible.filter((item) => item.id !== active.id);
+    const at = rest.findIndex((item) => item.id === over.id) + (over.side === 'after' ? 1 : 0);
+    if (at === from) return items;
+    rest.splice(at, 0, visible[from]);
+    return [...rest, ...items.filter((item) => item.hidden)];
+  }
   return [...move(visible, from, to), ...items.filter((item) => item.hidden)];
 }
 

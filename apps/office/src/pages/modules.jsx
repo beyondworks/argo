@@ -38,11 +38,11 @@ function Work({ space }) {
   const rows = useMemo(() => list.filter(inSpace(space)), [list, space]);
   if (!rows.length) return <Empty />;
   return rows.slice(0, 5).map((w) => (
-    <div key={w.id} className="mod-row" {...menuProps(() => recordMenu(w, w.goal))}>
+    <Link key={w.id} to={`${baseOf(space)}/work?open=${w.id}`} className="mod-row" {...menuProps(() => recordMenu(w, w.goal))}>
       <span className={`dot ${w.status === 'blocked' ? 'ask' : 'work'}`} />
       <span className="mod-main"><span className="clamp">{w.goal}</span><small>{[crewName(w.lead), w.status === 'blocked' ? t('status.blocked') : t('status.running'), w.status === 'blocked' && w.blockedBy].filter(Boolean).join(' · ')}</small></span>
       <span className="mono dim">{w.steps ?? ago(w.started)}</span>
-    </div>
+    </Link>
   ));
 }
 
@@ -96,22 +96,23 @@ function Outputs({ space }) {
   const rows = useMemo(() => all.filter(inSpace(space)), [all, space]);
   if (!rows.length) return <Empty />;
   return rows.slice(0, 5).map((f) => (
-    <div key={f.id} className="mod-row" {...menuProps(() => fileMenu(f))}>
+    <Link key={f.id} to={`${baseOf(space)}/outputs?open=${f.id}`} className="mod-row" {...menuProps(() => fileMenu(f))}>
       <Icon name="file" size={14} className="dim" />
       <span className="mod-main"><span className="clamp mono-name">{f.name}</span><small>{[crewName(f.crew), f.channel && `#${f.channel}`].filter(Boolean).join(' · ')}</small></span>
       <small className="dim mono">{fmtBytes(f.bytes)}</small>
-    </div>
+    </Link>
   ));
 }
 
+// 홈에는 최근 5건만, 두 줄까지(유건 9/30: 125건이 끝없이 이어져 피곤했다). 전체는 일지 화면에서.
 function Journal({ space }) {
   const days = useStore((s) => s.journal);
   const day = days.find(inSpace(space));
   if (!day) return <Empty />;
   return <>
     <div className="mod-date mono">{day.date}</div>
-    {day.entries.map((e, i) => (
-      <div key={i} className="mod-row top"><Face id={e.crew} size={18} /><span className="mod-main"><span>{e.text}</span><small>{[crewName(e.crew) || e.name, e.time].filter(Boolean).join(' · ')}</small></span></div>
+    {day.entries.slice(-5).reverse().map((e, i) => (
+      <Link key={i} to={`${baseOf(space)}/journal`} className="mod-row top"><Face id={e.crew} size={18} /><span className="mod-main"><span className="clamp two">{e.text}</span><small>{[crewName(e.crew) || e.name, e.time].filter(Boolean).join(' · ')}</small></span></Link>
     ))}
   </>;
 }
@@ -121,10 +122,10 @@ function Decisions({ space }) {
   const rows = useMemo(() => list.filter(inSpace(space)).slice(0, 5), [list, space]);
   if (!rows.length) return <Empty />;
   return rows.map((d) => (
-    <div key={d.id} className="mod-row">
+    <Link key={d.id} to={`${baseOf(space)}/decisions?open=${d.id}`} className="mod-row">
       <span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span>
       <span className="mod-main"><span className="clamp">{d.plain}</span><small>{[d.by, ago(d.at)].filter(Boolean).join(' · ')}</small></span>
-    </div>
+    </Link>
   ));
 }
 

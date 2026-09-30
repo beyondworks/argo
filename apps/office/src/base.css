@@ -66,6 +66,7 @@ kbd { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 0 
 .strong { font-weight: 550; }
 .grow { flex: 1; min-width: 0; }
 .clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.clamp.two { -webkit-line-clamp: 2; } .clamp.three { -webkit-line-clamp: 3; }
 .ok { color: var(--ok); }
 .ico { flex: none; }
 
@@ -281,7 +282,13 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 /* ── 크루 일지 ── */
 .journal-day { margin-bottom: 24px; }
 .journal-day h2 { font-size: 12px; color: var(--fg-3); font-weight: 500; margin-bottom: 6px; }
-.journal-entry { display: flex; gap: 12px; padding: 12px 14px; background: var(--surface); border-radius: var(--rs); box-shadow: inset 0 0 0 1px var(--border-soft); margin-bottom: 6px; }
+.journal-entry { display: flex; gap: 12px; padding: 12px 14px; background: var(--surface); border-radius: var(--rs); box-shadow: inset 0 0 0 1px var(--border-soft); margin-bottom: 6px; width: 100%; text-align: left; color: inherit; }
+.journal-entry p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.journal-more { margin-top: 4px; }
+.table tr.row-link { cursor: pointer; }
+.fact { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; font-size: 13px; }
+.file-img { display: block; max-width: 100%; height: auto; border-radius: var(--rs); }
+.file-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: var(--bg); padding: 12px; border-radius: var(--rs); max-height: 70vh; overflow: auto; }
 
 /* ── 메일 ── */
 .mail { display: grid; grid-template-columns: 208px var(--list-w) 6px minmax(0, 1fr); height: 100%; }

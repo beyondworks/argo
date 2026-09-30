@@ -77,15 +77,13 @@ export function mailMenu(mail) {
 
 export function fileMenu(file) {
   return [
-    { label: t('file.download'), icon: 'file', run: () => showToast(file.name) },
+    { label: t('file.download'), icon: 'file', run: () => import('../pages/Records.jsx').then((m) => m.downloadOutput(file)) },
     { label: t('file.sendCrew'), icon: 'hand', run: () => setUi({ assign: { space: file.space, items: [{ kind: 'file', id: file.id, label: file.name }] } }) },
-    { label: t('record.openMsgr'), icon: 'hash', run: () => showToast(t('record.openMsgr')) },
-  ];
+  ]; // '메신저에서 열기'는 뺐다(9/30) — 메신저에 대화·메시지로 바로 가는 주소가 아직 없어 누르면 아무 일도 없었다
 }
 
 export function recordMenu(rec, label) {
   return [
-    { label: t('record.openMsgr'), icon: 'hash', run: () => showToast(t('record.openMsgr')) },
     { label: t('crew.assign'), icon: 'hand', run: () => setUi({ assign: { space: rec.space, items: [{ kind: 'record', id: rec.id, label }] } }) },
     { label: t('page.copyLink'), icon: 'link', run: () => copyLink(location.pathname) },
   ];
@@ -94,7 +92,6 @@ export function recordMenu(rec, label) {
 export function crewMenu(crew, space) {
   return [
     ...((crew.access ?? 'ok') === 'ok' && (getMode() !== 'signedIn' || isMine(crew, ME.id)) ? [{ label: t('crew.assignTo', { crew: crew.name }), icon: 'hand', run: () => setUi({ assign: { space, crew: crew.id, items: [] } }) }] : []),
-    { label: t('crew.dm'), icon: 'hash', run: () => showToast(t('record.openMsgr')) },
     ...(canPin(crew) ? [{ sep: true }, { label: t(crew.pinned ? 'crew.unpin' : 'crew.pin'), run: () => pinCrew(crew, !crew.pinned).catch(() => showToast(t('crew.saveFail'))) }] : []),
   ];
 }
