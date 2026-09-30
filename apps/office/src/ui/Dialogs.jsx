@@ -13,7 +13,7 @@ import { baseOf } from '../core/commands.js';
 import { flushNow, outbox } from '../core/sync.js';
 import { loadPageContent } from '../core/pull.js';
 import { readMail } from '../core/mail.js';
-import { composeAssign, composeSet, composeTools, htmlText, docText } from '../core/crew-assign.js';
+import { composeAssign, composeSet, composeTools, htmlText, docText, mentionAt, mentionCands, putMention } from '../core/crew-assign.js';
 import { rpc } from '../core/tasks.js';
 import { DocView } from './DocView.jsx';
 import { publicWebUrl } from '../core/platform.js';
@@ -187,9 +187,11 @@ export function AssignSheet() {
   const [crew, setCrew] = useState(null);
   const [task, setTask] = useState('summary');
   const [text, setText] = useState('');
+  const [at, setAt] = useState(null), [hi, setHi] = useState(0); // '@' 후보 목록이 열린 자리({ start, q, caret })와 강조한 줄
+  const box = useRef(null), shut = useRef(-1); // shut: Esc로 닫은 '@'의 자리 — 키를 뗄 때(onSelect) 다시 열지 않게
   const [sets, setSets] = useState([]), [setId, setSetId] = useState(''); // 업무 세트(4단계) — 고르면 노하우·도구·점검 목록이 글에 실린다
   const orgOfSheet = SPACES.find((sp) => sp.kind === 'org' && sp.key === a?.space)?.id;
-  useEffect(() => { if (a) { setCrew(a.crew ?? null); setTask(a.items?.some((i) => i.kind === 'mail') ? 'summary' : 'custom'); setText(''); setSetId(''); } }, [a]);
+  useEffect(() => { if (a) { setCrew(a.crew ?? null); setTask(a.items?.some((i) => i.kind === 'mail') ? 'summary' : 'custom'); setText(''); setAt(null); shut.current = -1; setSetId(''); } }, [a]);
   useEffect(() => {
     let live = true;
     if (a && orgOfSheet && getMode() === 'signedIn') rpc('office_asset_list', { p_org: orgOfSheet }).then((l) => { if (live) setSets([...l.company, ...l.mine].filter((x) => x.kind === 'set')); }).catch(() => {});
@@ -202,13 +204,33 @@ export function AssignSheet() {
   const crews = crewsIn(allCrews, a?.space ?? 'me', ME.id).filter((c) => !live || (c.owner === ME.id && !c.company && (c.access ?? 'ok') === 'ok')); // 꺼진 크루·권한 없는 크루는 빼고(사이드바와 같은 규칙)
   const [busy, setBusy] = useState(false);
   if (!a) return null;
+  // 좌측에서 고른 에이전트면 그 한 명만(유건 9/30) — 메일·페이지 메뉴에서 열었으면 고르기 칸
+  const main = crews.find((x) => x.id === crew), fixed = !!a.crew && main?.id === a.crew;
+  // '@' 멘션 — 글에 "@이름"만 넣고, 넘김은 주 에이전트가 메신저 @넘김으로 한다(협업 태그 없음)
+  const cands = at && main ? mentionCands(allCrews, main, at.q).slice(0, 8) : [];
+  const sync = (el) => {
+    const m = mentionAt(el.value, el.selectionStart);
+    if (!m) shut.current = -1;
+    setAt(m && m.start !== shut.current && el.selectionStart === el.selectionEnd ? { ...m, caret: el.selectionStart } : null);
+  };
+  const pick = (c) => {
+    const r = putMention(text, at, at.caret, c.name);
+    setText(r.text); setAt(null);
+    requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(r.caret, r.caret); });
+  };
+  const onKey = (e) => {
+    if (!cands.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setHi((i) => (i + (e.key === 'ArrowDown' ? 1 : cands.length - 1)) % cands.length); }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); pick(cands[Math.min(hi, cands.length - 1)]); }
+    else if (e.key === 'Escape') { e.stopPropagation(); shut.current = at.start; setAt(null); } // 창은 닫지 않고 목록만
+  };
   const hasMail = a.items.some((i) => i.kind === 'mail');
   const close = () => setUi({ assign: null });
   const go = async () => {
     const c = crews.find((x) => x.id === crew);
     if (!c || busy) return;
     if (!live) { // 예시 데이터 — 화면에서만
-      assign({ space: c.space ?? a.space, crew, goal: task === 'custom' ? (text || label) : `${t(`crew.task.${task}`)} · ${label}` });
+      assign({ space: c.space ?? a.space, crew, goal: task === 'custom' ? (text || label) : [`${t(`crew.task.${task}`)} · ${label}`, text.trim()].filter(Boolean).join(' — ') });
       close(); showToast(t('crew.handed', { crew: c.name })); return;
     }
     const orgId = SPACES.find((sp) => sp.kind === 'org' && sp.key === c.space)?.id;
@@ -230,7 +252,7 @@ export function AssignSheet() {
         }
         return { ...i };
       }));
-      const asked = task === 'custom' ? text.trim() || label : t(`crew.ask.${task}`);
+      const asked = task === 'custom' ? text.trim() || label : [t(`crew.ask.${task}`), text.trim()].filter(Boolean).join('\n\n'); // 미리 정한 일에도 덧붙인 말(@넘김 포함)을 싣는다
       const used = setId ? await rpc('office_asset_write', { p_org: orgId, p_action: 'asset.use', p_data: { id: setId } }) : null;
       // 이 크루에게 배정·켜진 도구(5단계) — 세트가 이미 실은 도구는 빼고
       const mine = await rpc('office_asset_write', { p_org: orgId, p_action: 'crew.tools', p_data: { id: crypto.randomUUID(), crew_id: c.id } }).then((r) => r.tools).catch(() => []);
@@ -242,16 +264,24 @@ export function AssignSheet() {
     finally { setBusy(false); }
   };
   return (
-    <Sheet open onClose={close} title={t('crew.assign')}
+    <Sheet open onClose={close} title={fixed ? t('crew.assignTo', { crew: main.name }) : t('crew.assign')}
       footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={busy || !crew || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
       {a.items.length > 0 && <div className="assign-items">{a.items.map((i) => <span key={`${i.kind}-${i.id}`} className="chip"><Icon name={{ mail: 'mail', page: 'doc', file: 'file', record: 'run' }[i.kind]} size={12} />{i.label}</span>)}</div>}
-      <div className="field-block"><span className="label">{t('nav.crews')}</span>
-        {!crews.length && <p className="dim small">{t('crew.fail.no_crew')}</p>}
-        <div className="crew-pick">{crews.map((c) => <button key={c.id} type="button" className={`crew-opt${crew === c.id ? ' on' : ''}`} aria-pressed={crew === c.id} onClick={() => setCrew(c.id)}><Face id={c.id} size={26} /><b>{c.name}</b><small>{c.role}</small></button>)}</div>
-      </div>
+      {!fixed && <label className="field-block"><span className="label">{t('crew.to')}</span>
+        {crews.length ? <select className="input" value={crew ?? ''} onChange={(e) => { setCrew(e.target.value || null); setAt(null); }}><option value="" disabled>{t('crew.pick')}</option>{crews.map((c) => <option key={c.id} value={c.id}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}</select>
+          : <p className="dim small">{t('crew.fail.no_crew')}</p>}</label>}
       <div className="field-block"><span className="label">{t('crew.what')}</span>
-        <div className="seg">{TASKS.filter((k) => hasMail || k !== 'reply').map((k) => <button key={k} type="button" className={`seg-btn${task === k ? ' on' : ''}`} aria-pressed={task === k} onClick={() => setTask(k)}>{t(`crew.task.${k}`)}</button>)}</div>
-        {task === 'custom' && <textarea className="input area" rows={4} value={text} placeholder={t('crew.customPh')} onChange={(e) => setText(e.target.value)} />}
+        {a.items.length > 0 && <div className="seg">{TASKS.filter((k) => hasMail || k !== 'reply').map((k) => <button key={k} type="button" className={`seg-btn${task === k ? ' on' : ''}`} aria-pressed={task === k} onClick={() => setTask(k)}>{t(`crew.task.${k}`)}</button>)}</div>}
+        <div className="mention-wrap">
+          <textarea ref={box} data-autofocus className="input area" rows={4} value={text} placeholder={t(task === 'custom' ? 'crew.customPh' : 'crew.morePh')} aria-label={t(task === 'custom' ? 'crew.customPh' : 'crew.morePh')}
+            aria-autocomplete="list" aria-controls={cands.length ? 'assign-mention' : undefined} aria-activedescendant={cands.length ? `assign-mention-${Math.min(hi, cands.length - 1)}` : undefined}
+            onChange={(e) => { setText(e.target.value); setHi(0); sync(e.target); }} onSelect={(e) => sync(e.target)} onBlur={() => setAt(null)} {...imeGuardWith(onKey)} />
+          {cands.length > 0 && <div id="assign-mention" role="listbox" className="mention-list">{cands.map((c, i) => (
+            <div key={c.id} id={`assign-mention-${i}`} role="option" aria-selected={i === Math.min(hi, cands.length - 1)} className={`mention-opt${i === Math.min(hi, cands.length - 1) ? ' on' : ''}`}
+              onMouseDown={(e) => { e.preventDefault(); pick(c); }} onMouseEnter={() => setHi(i)}>
+              <Face id={c.id} size={20} /><b>{c.name}</b><small>{c.owner === ME.id || !c.owner ? c.role : c.ownerName ?? ''}</small></div>))}</div>}
+          {at && main && !at.q && !cands.length && <p className="dim small">{t('crew.mention.none')}</p>}
+        </div>
       </div>
       {sets.length > 0 && <label className="field-block"><span className="label">{t('crew.set.pick')}</span>
         <select className="input" value={setId} onChange={(e) => setSetId(e.target.value)}><option value="">{t('crew.set.none')}</option>{sets.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select></label>}

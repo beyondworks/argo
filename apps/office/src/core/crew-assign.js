@@ -65,6 +65,21 @@ export function composeSet(used, t, max = 6000) {
 }
 
 /** 서버 거절 사유 → 사용자 문구 키(i18n crew.fail.*) */
+// 입력칸 '@' 멘션(유건 9/30) — 글에 "@이름"만 넣는다. 넘김은 주 에이전트가 메신저 @넘김(msgr-handoff peers)으로 한다.
+/** 커서 바로 앞이 줄 처음·공백 뒤의 "@글자"면 { start, q } */
+export function mentionAt(text, caret) {
+  const m = /(^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
+  return m ? { start: caret - m[2].length - 1, q: m[2] } : null;
+}
+/** 넘길 수 있는 에이전트 — 주 에이전트와 같은 조직, 내가 시킬 수 있는(메신저 peers와 같은 판정), 주 에이전트 빼고 */
+export const mentionCands = (crews, main, q = '') => crews.filter((c) => c.id !== main.id && (c.space ?? null) === (main.space ?? null)
+  && (c.access ?? 'ok') === 'ok' && c.name.toLowerCase().includes(q.toLowerCase()));
+/** "@q"를 "@이름 "으로 바꾼다 — 뒤에 이미 공백이 있으면 그 공백을 쓴다 */
+export function putMention(text, at, caret, name) {
+  const rest = text.slice(caret), ins = `@${name}${/^\s/.test(rest) ? '' : ' '}`;
+  return { text: text.slice(0, at.start) + ins + rest, caret: at.start + ins.length + (/^\s/.test(rest) ? 1 : 0) };
+}
+
 export const ASSIGN_REASONS = ['unentitled', 'locked', 'consent', 'not_allowed', 'no_crew', 'unavailable'];
 const deny = (code) => Object.assign(new Error(`assign_${code}`), { transient: false, assign: code });
 

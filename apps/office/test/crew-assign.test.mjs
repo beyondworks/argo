@@ -139,3 +139,27 @@ test('composeTools·composeSet: 도구 이름·주소·사용법', async () => {
   assert.equal(composeTools([], tt), '');
   assert.match(composeSet({ title: 's', body: '', tools: [], checks: [], knowhow: [], tool_list: tools }, tt), /\[쓸 수 있는 도구\]\n- 볼타 세금계산서/);
 });
+
+// 맡기기 창 '@' 멘션(유건 9/30): "이 페이지를 너가 검토하고 결과를 @00한테 넘겨서 초안 만들어" — 글에 이름만 넣고, 넘김은 주 에이전트가 메신저 @넘김으로 한다.
+import { mentionAt, mentionCands, putMention } from '../src/core/crew-assign.js';
+
+test('멘션 찾기: 커서 바로 앞이 줄 처음·공백 뒤의 "@글자"일 때만', () => {
+  assert.deepEqual(mentionAt('결과를 @오길', 7), { start: 4, q: '오길' });
+  assert.deepEqual(mentionAt('@', 1), { start: 0, q: '' });
+  assert.equal(mentionAt('mail@example', 12), null); // 메일 주소는 멘션이 아니다
+  assert.equal(mentionAt('@오길비 다음', 8), null); // 공백을 치면 끝난다
+  assert.deepEqual(mentionAt('줄\n@a', 4), { start: 2, q: 'a' });
+});
+
+test('후보: 주 에이전트와 같은 조직에서 내가 시킬 수 있는 에이전트, 주 에이전트는 뺀다(메신저 넘김 대상과 같은 판정)', () => {
+  const main = { id: 'm', name: '루나', space: 'lean' };
+  const crews = [main, { id: 'a', name: '오길비', space: 'lean' }, { id: 'b', name: '오토', space: 'lean', access: 'crew_allow' }, { id: 'c', name: '오스카', space: 'other' }, { id: 'd', name: '울프', space: 'lean', access: 'ok' }];
+  assert.deepEqual(mentionCands(crews, main, '').map((c) => c.id), ['a', 'd']);
+  assert.deepEqual(mentionCands(crews, main, '오').map((c) => c.id), ['a']);
+});
+
+test('고르면 "@이름 "으로 바꾸고 커서는 그 뒤 — 뒤에 이미 공백이 있으면 두 번 넣지 않는다', () => {
+  const text = '결과를 @오 넘겨', caret = 6;
+  assert.deepEqual(putMention(text, mentionAt(text, caret), caret, '오길비'), { text: '결과를 @오길비 넘겨', caret: 9 });
+  assert.deepEqual(putMention('@', { start: 0, q: '' }, 1, '울프'), { text: '@울프 ', caret: 4 });
+});
