@@ -126,3 +126,33 @@ test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 
   assert.ok(t.messages.some((m) => m.who === 'crew' && m.text === '크루 답입니다'), '앱과 같은 대화 기록');
   assert.ok(t.messages.every((m) => !m.awaiting), '멈춘 턴도 대기 표시가 남지 않는다');
 });
+
+test('AI 미연결 기기 — 첫 화면에 /ai 안내, 말을 걸면 /ai로 안내(앱 문구 "설정 →" 아님), 코어 로그는 화면 대신 cli.log', { skip: !hasPy && 'python3 pty 필요(맥·리눅스)', timeout: 120_000 }, async () => {
+  const b2 = await mkdtemp(join(tmpdir(), 'argo-cli-repl-norunner-'));
+  const env2 = { ...env, HOME: join(b2, 'home'), USERPROFILE: join(b2, 'home'), ARGO_CLI_HOME: join(b2, 'cli'), ARGO_ROOT: join(b2, 'root') };
+  delete env2.ARGO_SYNC; // 동기화 시작 로그([argo] …)가 실제로 찍히게 — 화면이 아니라 cli.log로 가야 한다
+  await mkdir(env2.HOME, { recursive: true });
+  const seed = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    const { saveDeviceSession } = await import(${JSON.stringify(pathToFileURL(join(REPO, 'src/devicesession.mjs')).href)});
+    const { createCompany, paths } = await import(${JSON.stringify(pathToFileURL(join(REPO, 'src/workspace.mjs')).href)});
+    const fs = await import('node:fs/promises');
+    await saveDeviceSession({ url: 'https://example.invalid', anonKey: 'anon-fake', session: { access_token: 'a', refresh_token: 'r', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-nr', email: 'nr@example.invalid' } } });
+    await createCompany('nr-co', '연결 없는 회사', 'captain', 'u-nr', 'ko');
+    await fs.writeFile(paths('nr-co').agents + '/nova.md', '---\\nname: 노바\\nrole: 확인\\nrunner: claude\\n---\\n확인용.\\n');`], { env: env2, encoding: 'utf8' });
+  assert.equal(seed.status, 0, seed.stderr);
+  const steps = [{ label: 'chat', keys: '안녕\r', wait: 40, until: '\n› ' }, { label: 'exit', keys: 'exit\r', wait: 5 }];
+  const r = await new Promise((resolve) => {
+    const c = spawn('python3', ['-c', DRIVER, process.execPath, JSON.stringify(steps), join(REPO, 'bin', 'argo.mjs')], { env: env2 });
+    let o = ''; let e = ''; c.stdout.on('data', (d) => (o += d)); c.stderr.on('data', (d) => (e += d));
+    c.on('close', () => resolve({ o, e }));
+  });
+  assert.ok(r.o.trim(), `pty 운전기 출력 없음: ${r.e.slice(-800)}`);
+  const { res } = JSON.parse(r.o.trim().split('\n').pop());
+  const out = Object.fromEntries(res.map((x) => [x.label, x.out]));
+  assert.match(out.boot, /이 기기에는 아직 AI가 연결되지 않았습니다\. \/ai로 연결하세요/);
+  assert.doesNotMatch(out.boot, /\[argo\]/, '코어 로그가 화면에 끼지 않는다');
+  assert.match(out.chat, /\/ai/);
+  assert.doesNotMatch(out.chat, /설정 →/, '앱 기준 안내가 아니라 CLI 명령으로');
+  const log = await readFile(join(env2.ARGO_CLI_HOME, 'cli.log'), 'utf8').catch(() => '');
+  assert.match(log, /\[argo\]/, '코어 로그는 cli.log에');
+});

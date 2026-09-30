@@ -49,3 +49,14 @@ test('진행 줄 폭 — 한글은 2칸으로 세어 터미널 한 줄을 넘기
   assert.ok(s.endsWith('…'));
   assert.equal(fit('짧음', 40), '짧음');
 });
+
+test('CLI 안내 — 앱 기준 "설정 → AI 연결"은 /ai로, 코어 진단 로그([argo] …)는 대화 화면이 아닌 파일로', async () => {
+  const { cliHintText, isCoreLog } = await import('../src/cli/ui.mjs');
+  assert.equal(cliHintText('AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude 중 하나를 연결한 뒤'), 'AI 러너가 하나도 연결돼 있지 않습니다. /ai에서 Claude 중 하나를 연결한 뒤');
+  assert.equal(cliHintText('Connect one in Settings → AI connections (Claude)'), 'Connect one in /ai (Claude)');
+  assert.equal(isCoreLog('[argo] 기기 간 동기화 시작 (8s 주기)'), true);
+  assert.equal(isCoreLog('[sync] 안전하지 않은 키'), true);
+  assert.equal(isCoreLog('  노바'), false);
+  assert.equal(isCoreLog('[1] 목록 번호'), false, '숫자 대괄호는 사용자 문구일 수 있다');
+  assert.equal(isCoreLog({}), false);
+});

@@ -15,7 +15,7 @@ import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { applyCliEnv, writeConfig, cliHome, cliLang } from '../src/cli/env.mjs';
 import { launchdPlist, systemdUnit } from '../src/cli/service.mjs';
-import { banner, parseInput, style, fit, termWidth } from '../src/cli/ui.mjs';
+import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText } from '../src/cli/ui.mjs';
 
 // 사용자에게 필요 없는 경고는 숨긴다 — node:sqlite(기억 인덱스)의 ExperimentalWarning, SDK의 canUseTool 안내
 // (Argo는 도구 허용을 PreToolUse 훅으로 처리한다 — #587). 대화 중 진행 줄 사이에 끼어들었다(실측). 다른 경고는 그대로 보인다.
@@ -41,6 +41,8 @@ const T = {
     quitHint: '나가려면 /quit 또는 exit를 입력하세요.', unknownCmd: (n) => `모르는 명령입니다: /${n} — /help로 명령을 볼 수 있습니다.`,
     newDone: '새 대화를 시작했습니다. 이전 대화는 앱의 대화 기록에 보관됩니다.', serveStart: '이 터미널에서 메신저 대기를 시작합니다. 끝내려면 Ctrl+C를 누르세요.',
     noTty: 'argo 대화 화면은 터미널에서 실행하세요. 스크립트에서는 argo chat <크루> "지시"를 쓰세요.',
+    noRunner: '이 기기에는 아직 AI가 연결되지 않았습니다. /ai로 연결하세요(연결 정보는 기기마다 따로 두고 클라우드로 보내지 않습니다).',
+    hostAvail: (names) => `이 컴퓨터에 로그인되어 있는 AI(${names})는 /ai에서 "이 컴퓨터 로그인 사용"으로 바로 연결할 수 있습니다.`,
     help: [['/crew [이름]', '대화할 크루 바꾸기'], ['/new', '새 대화 시작(지금 대화는 보관)'], ['/hire', '크루 영입'], ['/ai', 'AI 연결'],
       ['/serve', '이 터미널에서 메신저 대기(상주)'], ['/browser', '크루 브라우저 준비'], ['/status', '계정·회사·기기 상태'], ['/quit, exit', '나가기'],
       ['Ctrl+C', '답하는 중이면 멈추기, 입력 중이면 지우기']], failed: (m) => `실패: ${m}`, oneLiner: '크루를 한 줄로 설명하세요(예: 쇼핑몰 광고 카피를 쓰는 마케터): ', crewName: '이름(비우면 자동): ', created: (n) => `영입했습니다: ${n}`,
@@ -68,6 +70,8 @@ const T = {
     quitHint: 'Type /quit or exit to leave.', unknownCmd: (n) => `Unknown command: /${n} — see /help.`,
     newDone: 'Started a new conversation. The previous one is kept in the app\'s history.', serveStart: 'Starting messenger standby in this terminal. Press Ctrl+C to stop.',
     noTty: 'Run the argo chat screen in a terminal. From scripts, use argo chat <crew> "message".',
+    noRunner: 'No AI is connected on this device yet. Connect one with /ai (connection details stay on each device and never go to the cloud).',
+    hostAvail: (names) => `${names} is signed in on this computer — in /ai choose "Use this computer's login" to connect right away.`,
     help: [['/crew [name]', 'switch crew'], ['/new', 'start a new conversation (current one is kept)'], ['/hire', 'hire a crew'], ['/ai', 'AI connections'],
       ['/serve', 'messenger standby in this terminal'], ['/browser', 'prepare the crew browser'], ['/status', 'account, company, device'], ['/quit, exit', 'leave'],
       ['Ctrl+C', 'stop the reply, or clear the line']], failed: (m) => `Failed: ${m}`, oneLiner: 'Describe the crew in one line (e.g. a marketer who writes ad copy): ', crewName: 'Name (blank = auto): ', created: (n) => `Hired: ${n}`,
@@ -354,6 +358,14 @@ async function status() {
 async function interactive() {
   if (!rl || !process.stdout.isTTY) { console.error(T.noTty); process.exit(1); }
   process.env.ARGO_NO_LEADER = '1'; // 대화 화면은 동기화만 — 실행 담당(메신저·루틴)은 맡지 않는다(argo run·/serve가 맡는다)
+  // 코어 진단 로그("[argo] 동기화 시작…")는 대화 사이에 끼지 않게 ~/.argo/cli.log로(실측: 배너 위에 떴다). 1MB 넘으면 한 번 교체 — 쌓이기만 하지 않게.
+  const { appendFileSync, statSync, renameSync, mkdirSync: mk } = await import('node:fs');
+  const logFile = join(cliHome(), 'cli.log');
+  try { mk(cliHome(), { recursive: true }); if (statSync(logFile).size > 1_000_000) renameSync(logFile, `${logFile}.1`); } catch { /* 없음 */ }
+  for (const k of ['log', 'warn', 'error']) {
+    const orig = console[k].bind(console);
+    console[k] = (...a) => { if (!isCoreLog(a[0])) return orig(...a); try { appendFileSync(logFile, `${new Date().toISOString()} ${k} ${a.map((x) => (x instanceof Error ? x.message : String(x))).join(' ')}\n`, { mode: 0o600 }); } catch { /* 로그 실패는 무시 */ } };
+  }
   const s = await requireSession({ interactive: true });
   const ws = await pickCompany(s.user.id, { interactive: true });
   const { ensureSync } = await import('../src/sync.mjs'); ensureSync(); // 여기서 한 대화가 앱에도 보이게
@@ -362,6 +374,17 @@ async function interactive() {
   const company = (await ownCompanies(s.user.id)).find((c) => c.id === ws);
   console.log(`\n${banner({ cols: cols(), version, color }).join('\n')}\n`);
   console.log(dim(`  ${s.user.email ?? ''} · ${company?.name ?? ws}`));
+  // 이 기기에 연결된 AI가 없으면 먼저 알린다 — 연결 정보는 기기마다 따로(클라우드 미동기, 유건 지시 2026-08-29)
+  try {
+    const { runnerStatus } = await import('../src/runners.mjs');
+    const st = await runnerStatus(ws);
+    if (!Object.values(st).some((v) => v?.company?.connected)) {
+      console.log(`  ${T.noRunner}`);
+      const host = Object.values(st).filter((v) => v?.hostUsable && !v?.hidden).map((v) => v.name).filter(Boolean);
+      if (host.length) console.log(`  ${dim(T.hostAvail(host.join('·')))}`);
+      console.log('');
+    }
+  } catch { /* 안내일 뿐 — 실패해도 대화는 연다 */ }
   let crew = await pickCrew(ws);
   const showCrew = () => console.log(`  ${crew ? T.talkingTo(bold(crew.name)) : T.noCrew}   ${dim(`·  ${T.headHint}`)}\n`);
   showCrew();
@@ -404,7 +427,7 @@ async function interactive() {
     if (!crew) { console.log(T.noCrew); continue; }
     muted = true; // 답하는 중 입력 반향을 막는다 — 친 줄은 대기열로 받는다(onQueuedLine)
     try { const t = await turn(ws, crew, p.text, sid); sid = t.sessionId ?? sid; }
-    catch (e) { console.log(e?.aborted ? `  ${dim(T.stopped)}\n` : `  ${T.failed(String(e?.message || e).slice(0, 400))}\n`); }
+    catch (e) { console.log(e?.aborted ? `  ${dim(T.stopped)}\n` : `  ${T.failed(cliHintText(String(e?.message || e).slice(0, 400)))}\n`); }
     finally { muted = false; }
   }
 }

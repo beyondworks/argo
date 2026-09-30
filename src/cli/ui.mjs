@@ -57,3 +57,8 @@ export function fit(s, cols) {
   for (const ch of String(s)) { const cw = wide(ch.codePointAt(0)) ? 2 : 1; if (w + cw > cols - 1) return `${out}…`; out += ch; w += cw; }
   return out;
 }
+
+/** 코어 모듈의 진단 로그인가 — "[argo] 동기화…", "[sync] …" 처럼 대괄호 접두. 대화 화면에서는 파일로 보낸다. */
+export const isCoreLog = (first) => typeof first === 'string' && /^\[[a-z][\w-]*\]/i.test(first);
+/** 앱 기준 안내(설정 → AI 연결)를 CLI 명령으로 바꿔 보인다 — 원문(앱·기록)은 그대로. */
+export const cliHintText = (msg) => String(msg ?? '').replace(/설정 → AI 연결/g, '/ai').replace(/Settings → AI connections/g, '/ai');
