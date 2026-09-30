@@ -16,7 +16,7 @@ const PATHS = {
   book: '<path d="M3 3.5A1.5 1.5 0 0 1 4.5 2H13v10.5H4.5A1.5 1.5 0 0 0 3 14zM3 14a1.5 1.5 0 0 1 1.5-1.5H13V15H4.5A1.5 1.5 0 0 1 3 14z"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
   search: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/>',
-  gear: '<circle cx="8" cy="8" r="2"/><path d="M8 1.8v1.6M8 12.6v1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M1.8 8h1.6M12.6 8h1.6M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"/>',
+  gear: '<g transform="scale(0.6667)" stroke-width="2.25"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></g>', // 톱니바퀴(Lucide settings, ISC) — 24 격자를 16으로 줄이고 선 굵기 1.5를 맞춤
   trash: '<path d="M3 5h10M6.5 5V3.5h3V5M4.5 5l.6 8h5.8l.6-8M6.8 7.5v4M9.2 7.5v4"/>',
   dots: '<circle cx="3.5" cy="8" r="1.1" fill="currentColor"/><circle cx="8" cy="8" r="1.1" fill="currentColor"/><circle cx="12.5" cy="8" r="1.1" fill="currentColor"/>',
   caret: '<path d="m4 6 4 4 4-4"/>',
@@ -37,6 +37,15 @@ const PATHS = {
   template: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.8"/><path d="M2.5 6h11M6 6v7.5"/>',
   resize: '<path d="M13 7v6H7M13 13 8.5 8.5"/>',
   person: '<circle cx="8" cy="5.5" r="2.7"/><path d="M2.8 14a5.2 5.2 0 0 1 10.4 0"/>',
+  info: '<circle cx="8" cy="8" r="5.8"/><path d="M8 7.3v3.7M8 5.1v.1"/>',
+  refresh: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.8h-2.8"/>',
+  chart: '<path d="M2.5 13.5h11M4.5 11V8M8 11V4.5M11.5 11V7"/>',
+  box: '<path d="M2.5 5 8 2.5 13.5 5v6L8 13.5 2.5 11z"/><path d="M2.5 5 8 7.5 13.5 5M8 7.5v6"/>',
+  tag: '<path d="M2.5 2.5h5.3l5.7 5.7-5.3 5.3-5.7-5.7z"/><circle cx="5.3" cy="5.3" r="0.9"/>',
+  receipt: '<path d="M3.5 2h9v12l-1.8-1.2-1.8 1.2L7.1 12.8 5.3 14l-1.8-1.2z"/><path d="M6 5.5h4M6 8h4"/>',
+  deal: '<path d="M2.5 5.5h9l-2.3-2.3M13.5 10.5h-9l2.3 2.3"/>',
+  megaphone: '<path d="M2.5 6.5v3h2.2l5.3 3v-9l-5.3 3zM12 6.2a2.5 2.5 0 0 1 0 3.6M5 9.5l.8 3.5"/>',
+  target: '<circle cx="8" cy="8" r="5.8"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r="0.6"/>',
 };
 
 export function Icon({ name, size = 16, className = '', title }) {

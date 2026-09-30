@@ -9,13 +9,15 @@ import { TaskItem } from '@tiptap/extension-task-item';
 import { DragHandle } from '@tiptap/extension-drag-handle-react';
 import { Icon } from '../ui/Icon.jsx';
 import { t } from '../core/i18n.js';
-import { savePage } from '../core/store.js';
+import { savePage, getState } from '../core/store.js';
 import { getClient } from '../core/supabase.js';
 import { flushNow, outbox } from '../core/sync.js';
 import { canManage } from '../core/session.js';
 import { openMenu } from '../ui/Menu.jsx';
 import { showToast } from '../ui/Overlay.jsx';
 import { DocView } from './Misc.jsx';
+import { PageModuleNode } from '../ui/PageModuleNode.jsx';
+import { getStorageScope } from '../core/save.js';
 
 /** 비공개 블록 자리 — 본문은 office_private_blocks에만 있다. 권한 없는 사람은 데이터 자체를 받지 않고(RLS), 공개 화면은 서버가 이 노드를 뺀다.
  *  ponytail: 비공개인 동안은 읽기 전용 — 고치려면 공개로 되돌려 고친 뒤 다시 비공개로(안쪽 편집기는 필요해지면). */
@@ -45,7 +47,7 @@ function PrivateView({ node, editor, getPos, extension }) {
   return (
     <NodeViewWrapper className="private-block" contentEditable={false}>
       <div className="private-head"><span className="badge"><Icon name="lock" size={12} />{t('block.privateBadge')}</span>
-        {row && canEdit && <button type="button" className="btn sm ghost" onClick={unhide}>{t('block.unhide')}</button>}</div>
+        {row && canEdit && editor.isEditable && <button type="button" className="btn sm ghost" onClick={unhide}>{t('block.unhide')}</button>}</div>
       {row === undefined ? <div className="skeleton-lines"><span /></div>
         : row ? <div className="private-body"><DocView doc={{ content: [row.content] }} /></div>
           : <p className="dim small">{t('block.hidden')}</p>}
@@ -84,13 +86,21 @@ function slashQuery(editor) {
   return m ? { q: m[1].toLowerCase(), from: $from.start(), to: $from.pos } : null;
 }
 
-export default function Editor({ page }) {
+export default function Editor({ page, canEdit = false }) {
   // 비공개로 바꾸기는 페이지 전체 권한자만(서버 정책과 같다) — 내 공간은 내 페이지, 조직은 관리자
   const canPrivate = page.space === 'me' || (page.space !== 'shared' && canManage(page.space));
   const handle = useRef(null);
   const [slash, setSlash] = useState(null); // { q, from, to, x, y, idx }
   const slashRef = useRef(null); slashRef.current = slash;
   const timer = useRef(null);
+  const pending = useRef(null);
+  const savePending = () => {
+    clearTimeout(timer.current);
+    const next = pending.current;
+    pending.current = null;
+    const current = next && getState().pages.find((entry) => entry.id === next.id);
+    if (current && getStorageScope() === next.owner && current.loadedAt === next.loadedAt) savePage(next.id, next.patch);
+  };
   const items = useMemo(() => (slash ? BLOCKS.filter((b) => !slash.q || b.words.includes(slash.q) || t(b.key).toLowerCase().includes(slash.q)) : []), [slash]);
   const itemsRef = useRef(items); itemsRef.current = items;
 
@@ -107,8 +117,10 @@ export default function Editor({ page }) {
       Placeholder.configure({ placeholder: ({ node }) => (node.type.name === 'heading' && node.attrs.level === 1 ? t('page.titlePh') : t('page.placeholder')) }),
       TaskList, TaskItem.configure({ nested: true }),
       PrivateBlock.configure({ pageId: page.id, canEdit: canPrivate }),
+      PageModuleNode.configure({ space: page.space, sourceOwner: page.owner ?? null }),
     ],
     content: page.content,
+    editable: canEdit,
     immediatelyRender: true,
     editorProps: {
       attributes: { class: 'prose', spellcheck: 'false' },
@@ -124,19 +136,20 @@ export default function Editor({ page }) {
       },
     },
     onUpdate: ({ editor: ed }) => {
+      if (!ed.isEditable) return;
       const sq = slashQuery(ed);
       if (sq) { const c = ed.view.coordsAtPos(sq.to); setSlash((cur) => ({ ...sq, x: c.left, y: c.bottom + 6, idx: cur && cur.q === sq.q ? cur.idx : 0 })); } else if (slashRef.current) setSlash(null);
       clearTimeout(timer.current);
-      timer.current = setTimeout(() => {
-        const json = ed.getJSON();
-        const first = json.content?.[0];
-        const title = first?.type === 'heading' ? (first.content ?? []).map((n) => n.text ?? '').join('') : page.title;
-        savePage(page.id, { content: json, title });
-      }, 800);
+      const json = ed.getJSON();
+      const first = json.content?.[0];
+      const title = first?.type === 'heading' ? (first.content ?? []).map((n) => n.text ?? '').join('') : page.title;
+      pending.current = { id: page.id, owner: getStorageScope(), loadedAt: page.loadedAt, patch: { content: json, title } };
+      timer.current = setTimeout(savePending, 800);
     },
     onSelectionUpdate: ({ editor: ed }) => { if (slashRef.current && !slashQuery(ed)) setSlash(null); },
   }, [page.id]);
   const editorRef = useRef(null); editorRef.current = editor;
+  useEffect(() => { editor?.setEditable(canEdit); }, [editor, canEdit]);
 
   /** 비공개로: 내용을 서버 비공개 표에 먼저 저장하고, 저장된 뒤에만 문서 자리를 바꾼다(중간에 실패해도 내용이 사라지지 않는다) */
   const makePrivate = async ({ node, pos }) => {
@@ -154,15 +167,15 @@ export default function Editor({ page }) {
     const h = handle.current;
     if (!h?.node) return;
     openMenu(e, [
-      canPrivate && h.pos > 0 && h.node.type.name !== 'privateBlock' && { label: t('block.private'), icon: 'lock', run: () => makePrivate(h) },
+      canPrivate && h.pos > 0 && !['privateBlock', 'moduleGrid'].includes(h.node.type.name) && { label: t('block.private'), icon: 'lock', run: () => makePrivate(h) },
       { label: t('block.delete'), icon: 'trash', danger: true, run: () => editor.chain().focus().deleteRange({ from: h.pos, to: h.pos + h.node.nodeSize }).run() },
     ].filter(Boolean), { anchor: e.currentTarget });
   };
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => () => savePending(), []);
 
   return (
     <div className="editor">
-      {editor && <DragHandle editor={editor} className="block-handle" onNodeChange={(d) => { handle.current = d; }}><span className="block-grip" role="button" tabIndex={-1} aria-label={t('block.menu')} onClick={blockMenu}><Icon name="grip" size={14} /></span></DragHandle>}
+      {editor && canEdit && <DragHandle editor={editor} className="block-handle" onNodeChange={(d) => { handle.current = d; }}><span className="block-grip" role="button" tabIndex={-1} aria-label={t('block.menu')} onClick={blockMenu}><Icon name="grip" size={14} /></span></DragHandle>}
       <EditorContent editor={editor} />
       {slash && (
         <div className="menu slash" role="listbox" style={{ left: Math.min(slash.x, innerWidth - 240), top: Math.min(slash.y, innerHeight - 320) }}>

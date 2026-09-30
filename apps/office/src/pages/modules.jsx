@@ -1,5 +1,6 @@
 // 모듈 등록부 — 홈 격자에 놓이는 것은 전부 여기 한 줄씩. 직무별 템플릿(2차)·크루가 만드는 모듈(3차)도 여기에 항목을 더하는 것으로 끝난다.
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
+import { OFFICE_MODULES } from '../core/module-registry.js';
 import { Face } from '../ui/Face.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { menuProps, openMenu } from '../ui/Menu.jsx';
@@ -183,17 +184,15 @@ function Stats({ space, item, canEdit, setCfg }) {
 }
 
 // sizes: s=1/3, m=1/2, l=2/3, full=전체. spaces: 이 모듈을 쓸 수 있는 공간 종류.
-export const MODULES = [
-  { id: 'stats', title: 'mod.stats', icon: 'layout', sizes: ['l', 'full'], defaultSize: 'full', spaces: ['me', 'org'], intro: 'top', render: Stats },
-  { id: 'approvals', title: 'mod.approvals', icon: 'stamp', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/approvals', render: Approvals },
-  { id: 'mail', title: 'mod.mail', icon: 'mail', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me'], link: '/mail', render: Mail },
-  { id: 'todos', title: 'mod.todos', icon: 'check', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me'], render: Todos },
-  { id: 'pages', title: 'mod.pages', icon: 'doc', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], render: Pages },
-  { id: 'work', title: 'mod.work', icon: 'run', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/work', render: Work },
-  { id: 'outputs', title: 'mod.outputs', icon: 'file', sizes: ['m', 'l', 'full'], defaultSize: 'l', spaces: ['org'], link: '/outputs', render: Outputs },
-  { id: 'journal', title: 'mod.journal', icon: 'book', sizes: ['s', 'm', 'l', 'full'], defaultSize: 's', spaces: ['org'], link: '/journal', render: Journal },
-  { id: 'decisions', title: 'mod.decisions', icon: 'check', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'full', spaces: ['org'], link: '/decisions', render: Decisions },
-];
+const renderers = { stats: Stats, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
+const BusinessHomeCard = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeCard })));
+const LazyBusinessHomeProvider = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeProvider })));
+export function BusinessHomeProvider(props) {
+  return <Suspense fallback={<div className="mod-empty" role="status">{t('biz.loading')}</div>}><LazyBusinessHomeProvider {...props} /></Suspense>;
+}
+export const MODULES = OFFICE_MODULES.map((module) => ({ ...module, render: renderers[module.id] ?? function BusinessModule(props) {
+  return <Suspense fallback={<div className="mod-empty" role="status">{t('biz.loading')}</div>}><BusinessHomeCard {...props} tab={module.businessTab} /></Suspense>;
+} }));
 
 export const DEFAULTS = {
   me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'work', size: 'full' }],

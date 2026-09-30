@@ -7,6 +7,7 @@ import { setUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
 import { loadPageContent } from './pull.js';
 import { canManage } from './session.js';
+import { publicWebUrl, openExternal } from './platform.js';
 
 export const baseOf = (space) => (space === 'me' || space === 'shared' ? '/me' : `/o/${space}`); // shared = 남의 내 공간 페이지를 공유받은 것
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -35,7 +36,8 @@ async function saveAsTemplate(page) {
 }
 
 async function copyLink(path) {
-  try { await navigator.clipboard.writeText(location.origin + path); showToast(t('page.linkCopied')); } catch { showToast(location.origin + path); }
+  const url = publicWebUrl(path);
+  try { await navigator.clipboard.writeText(url); showToast(t('page.linkCopied')); } catch { showToast(url); }
 }
 
 /* ── 대상별 우클릭 메뉴 ── */
@@ -45,7 +47,7 @@ export function pageMenu(page) {
   const canTop = page.parent || canManage(page.space); // 위키 최상위에 만들기·복제는 관리자만(서버와 같은 기준)
   return [
     { label: t('page.open'), icon: 'doc', run: () => navigate(`${base}/p/${page.id}`) },
-    { label: t('page.openTab'), icon: 'share', run: () => window.open(`${base}/p/${page.id}`, '_blank', 'noopener') },
+    { label: t('page.openTab'), icon: 'share', run: () => openExternal(publicWebUrl(`${base}/p/${page.id}`)).catch(() => showToast(t('share.failed'))) },
     { sep: true },
     { label: t('page.addChild'), icon: 'plus', run: () => navigate(`${base}/p/${createPage(page.space, page.id)}`) },
     canTop && { label: t('page.duplicate'), icon: 'copy', shortcut: `${mod}D`, run: () => { const id = duplicatePage(page.id); showToast(t('page.duplicated')); navigate(`${base}/p/${id}`); } },

@@ -1,29 +1,53 @@
-// 보낼 목록을 앱에 연결한다 — 브라우저 IndexedDB에 목록을 두고, 입력이 멈추면(0.8초·최대 5초) 보낸다.
-// 전송: 서버 연결 전에는 "이 기기에 받아 두기"(아무 데도 보내지 않고 성공). 서버 연결 단계에서 이 함수만 Supabase 전송으로 바꾼다.
 import { get, set } from 'idb-keyval';
 import { createOutbox, autoFlush } from './outbox.js';
-import { setSyncState } from './save.js';
+import { setSyncState, getStorageScope, scopedStorageKey, setLegacyRecovery } from './save.js';
 
 const KEY = 'argo-office-outbox';
-
-/** 실제 전송은 core/transport.js가 등록한다(가게 상태를 읽어야 해서 여기서 직접 부르면 순환 참조가 된다). 등록 전에는 이 기기에만 둔다. */
-let transport = async () => {};
-let rejected = (op, err) => console.warn('[office] change rejected by server', op.key, err?.message);
+let transport = async () => { throw Object.assign(new Error('transport not ready'), { transient: true }); };
+let rejected = () => {};
 export function setTransport(send, onRejected) { transport = send; if (onRejected) rejected = onRejected; }
+const boxes = new Map();
+let active = null;
+const suspended = () => Object.assign(new Error('account changed'), { transient: true });
 
-export const outbox = createOutbox({
-  store: { get: () => get(KEY), set: (v) => set(KEY, v) },
-  send: (op) => transport(op).catch((e) => { throw e?.transient === undefined ? Object.assign(e, { transient: true }) : e; }),
-  onState: setSyncState,
-  onRejected: (op, err) => rejected(op, err),
-});
-const auto = autoFlush(outbox);
-outbox.load().then(() => auto.now());
-
-/** 변경 하나를 보낼 목록에 넣는다. 같은 key의 아직 안 보낸 변경은 마지막 값으로 합쳐진다. */
-export async function queue(key, payload) {
-  await outbox.enqueue({ key, payload });
-  auto.poke();
+export async function activateSyncScope(uid) {
+  active = null;
+  if (!uid) { setSyncState('idle'); return; }
+  let entry = boxes.get(uid);
+  if (!entry) {
+    const key = scopedStorageKey(KEY, uid);
+    const box = createOutbox({
+      store: { get: () => get(key), set: (value) => set(key, value) },
+      send: async (op) => {
+        if (active !== entry || getStorageScope() !== uid || op.payload.ownerUid !== uid) throw suspended();
+        try { await transport(op); } catch (error) { throw error?.transient === undefined ? Object.assign(error, { transient: true }) : error; }
+      },
+      onState: (state) => { if (active === entry) setSyncState(state); },
+      onRejected: (op, error) => { if (active === entry && getStorageScope() === uid) rejected(op, error); },
+    });
+    entry = { uid, box, ready: box.load() };
+    boxes.set(uid, entry);
+  }
+  await entry.ready;
+  if (getStorageScope() !== uid) return;
+  active = entry;
+  setSyncState(entry.box.state());
 }
-/** 로그인이 확인된 직후 등 — 기다리지 않고 바로 보낸다 */
+
+export const outbox = {
+  state: () => active?.box.state() ?? 'idle', pending: () => active?.box.pending() ?? 0,
+  has: (key) => active?.box.has(key) ?? false, tries: () => active?.box.tries() ?? 0,
+  drop: (key) => active?.box.drop(key) ?? Promise.resolve(),
+  flush: () => active?.box.flush() ?? Promise.resolve(true),
+};
+const auto = autoFlush(outbox);
+get(KEY).then((rows) => setLegacyRecovery({ pending: Array.isArray(rows) ? rows.length : 0 })).catch(() => {});
+
+export async function queue(key, payload) {
+  const entry = active;
+  if (!entry || getStorageScope() !== entry.uid) throw suspended();
+  await entry.ready;
+  await entry.box.enqueue({ key, payload: { ...payload, ownerUid: entry.uid } });
+  if (active === entry) auto.poke();
+}
 export const flushNow = () => auto.now();

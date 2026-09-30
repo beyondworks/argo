@@ -10,7 +10,7 @@ import { menuProps } from '../ui/Menu.jsx';
 import { useUi, setUi } from '../core/ui-state.js';
 import { loadPageContent } from '../core/pull.js';
 import { outbox } from '../core/sync.js';
-import { canManage } from '../core/session.js';
+import { canManage, getMode } from '../core/session.js';
 import { restore, forget, heldKey } from '../core/save.js';
 import { dragHasFiles, filesFromTransfer, fmtBytes, MAX_FILE } from '../core/files.js';
 
@@ -34,7 +34,8 @@ function ConflictBanner({ page }) {
   );
 }
 
-const isBlank = (doc) => !JSON.stringify(doc ?? {}).includes('"text"');
+const hasModules = (doc) => doc?.type === 'moduleGrid' || (doc?.content?.some(hasModules) ?? false);
+const isBlank = (doc) => !hasModules(doc) && !JSON.stringify(doc ?? {}).includes('"text"');
 
 /** 빈 새 페이지 아래 "템플릿에서 시작"(유건 9/27, 노션 방식) — 글을 쓰기 시작하면 사라진다. 기본·조직·내 것 3층 */
 function TemplatePicker({ page }) {
@@ -77,11 +78,14 @@ export function PageView({ id }) {
   const [files, setFiles] = useState([]);
   const { conflict } = useUi();
   const needsBody = page && page.content === undefined;
-  useEffect(() => { if (needsBody) loadPageContent(id); }, [id, needsBody]); // 목록에는 본문이 없다 — 열 때 불러온다
+  const needsAccess = page && page.access === undefined && getMode() !== 'sample';
+  const canEdit = page?.access === 'edit' || page?.access === 'full' || (getMode() === 'sample' && page?.space !== 'shared');
+  useEffect(() => { if (needsBody || needsAccess) loadPageContent(id); }, [id, needsBody, needsAccess]); // 목록에는 본문이 없다 — 열 때 불러온다
   useEffect(() => { if (restore(heldKey(id), null)) setUi({ conflict: id }); }, [id]); // 고르지 않은 충돌이 남아 있으면 다시 묻는다
   if (!page) return <div className="page-wrap"><div className="empty-state"><Icon name="doc" size={20} /><p>{t('page.missing')}</p></div></div>;
   const drop = (e) => {
     e.preventDefault(); setOver(false);
+    if (!canEdit) return;
     const list = filesFromTransfer(e.dataTransfer);
     const ok = list.filter((f) => f.size <= MAX_FILE);
     if (ok.length < list.length) showToast(t('page.tooBig'));
@@ -93,18 +97,19 @@ export function PageView({ id }) {
     showToast(t('page.uploaded', { n: ok.length }));
   };
   return (
-    <div className={`page-wrap doc${over ? ' file-over' : ''}`} onDragOver={(e) => { if (dragHasFiles(e.dataTransfer)) { e.preventDefault(); setOver(true); } }}
+    <div className={`page-wrap doc${hasModules(page.content) ? ' wide' : ''}${over ? ' file-over' : ''}`} onDragOver={(e) => { if (canEdit && dragHasFiles(e.dataTransfer)) { e.preventDefault(); setOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(false); }} onDrop={drop}>
       <div className="doc-meta">
         {page.restricted && <span className="badge"><Icon name="lock" size={12} />{t('page.restricted')}</span>}
         <span className="dim small">{t('page.edited', { when: ago(page.updated) })}</span>
+        {canEdit && !needsBody && <button type="button" className="btn sm ghost" onClick={() => navigate(`${baseOf(page.space)}/business/library?target=${encodeURIComponent(page.id)}`)}><Icon name="plus" size={14} />{t('library.addModule')}</button>}
       </div>
       {page.template && <p className="restricted-note"><Icon name="template" size={12} />{t('tpl.editing')}</p>}
       {page.restricted && <p className="restricted-note"><Icon name="lock" size={12} />{t('page.restrictedNote')}</p>}
       {conflict === page.id && <ConflictBanner page={page} />}
       {needsBody ? <div className="prose skeleton-lines"><span /><span /><span /></div>
-        : <Suspense fallback={<div className="prose skeleton-lines"><span /><span /><span /></div>}><Editor key={`${page.id}:${page.loadedAt ?? 0}`} page={page} /></Suspense>}
-      {!needsBody && !page.template && isBlank(page.content) && <TemplatePicker page={page} />}
+        : <Suspense fallback={<div className="prose skeleton-lines"><span /><span /><span /></div>}><Editor key={`${page.id}:${page.loadedAt ?? 0}`} page={page} canEdit={canEdit} /></Suspense>}
+      {canEdit && !needsBody && !page.template && isBlank(page.content) && <TemplatePicker page={page} />}
       {files.length > 0 && <div className="attachments">
         {files.map((f) => <div key={f.key} className="attachment"><Icon name="file" size={14} /><span className="mono-name">{f.name}</span><small className="mono dim">{fmtBytes(f.size)}</small>
           {f.pct < 100 ? <span className="progress"><span style={{ width: `${f.pct}%` }} /></span> : <Icon name="check" size={14} className="ok" />}</div>)}

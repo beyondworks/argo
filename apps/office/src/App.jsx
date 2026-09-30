@@ -1,8 +1,8 @@
 // 앱 셸 — 사이드바 · 헤더(경로·저장 상태·페이지 동작) · 내용. 끌어다 놓기는 한 DndContext가 전부 받는다
 // (메일을 사이드바 크루에게, 모듈을 격자 안에서, 페이지를 트리 안에서).
-import { useEffect, useState } from 'react';
-import { DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, pointerWithin, closestCenter } from '@dnd-kit/core';
-import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { DndContext, DragOverlay, MeasuringStrategy, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, pointerWithin, closestCenter } from '@dnd-kit/core';
+import { moduleKeyboardCoordinates } from './core/module-keyboard.js';
 import { Sidebar } from './ui/Sidebar.jsx';
 import { Icon } from './ui/Icon.jsx';
 import { Face } from './ui/Face.jsx';
@@ -10,24 +10,26 @@ import { MenuHost, openMenu } from './ui/Menu.jsx';
 import { ToastHost } from './ui/Overlay.jsx';
 import { Palette } from './ui/Palette.jsx';
 import { ShareDialog, AssignSheet, HistorySheet } from './ui/Dialogs.jsx';
-import { Home, useHomeLayout, layoutKey } from './pages/Home.jsx';
+import { Home } from './pages/Home.jsx';
 import { Mail, Compose, MailConnect } from './pages/Mail.jsx';
 import { PageView } from './pages/PageView.jsx';
 import { Approvals, Work, Decisions, Outputs, Journal, Docs } from './pages/Records.jsx';
 import { Settings, Trash, Shared, PublicPage } from './pages/Misc.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
-import { useSaveStatus } from './core/save.js';
-import { useStore, saveLayout, reorderPage, createPage, getState } from './core/store.js';
+import { useSaveStatus, useLegacyRecovery } from './core/save.js';
+import { useStore, reorderPage, createPage, getState } from './core/store.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
-import { move } from './core/layout.js';
 import { PEOPLE } from './data/sample.js';
 import { SPACES, ME, useSession, canManage } from './core/session.js';
 import { pullLayouts, pullPages, pullBoard } from './core/pull.js';
 import { flushNow } from './core/sync.js';
 import { Login } from './pages/Login.jsx';
 import { loadAccounts, pullMail } from './core/mail.js';
+
+const BusinessPage = lazy(() => import('./business/BusinessPage.jsx'));
+const ModuleLibrary = lazy(() => import('./pages/ModuleLibrary.jsx'));
 
 function route(path) {
   let m;
@@ -38,6 +40,7 @@ function route(path) {
   if (!space) return { redirect: '/me' };
   const rest = path.slice(baseOf(space).length) || '/';
   if (rest === '/') return { space, view: 'home' };
+  if ((m = match('/business/:tab', rest))) return { space, view: 'business', tab: m.tab };
   if ((m = match('/p/:id', rest))) return { space, view: 'page', id: m.id };
   if (space === 'me' && rest === '/mail/connect') return { space, view: 'mailConnect' };             // Google 권한 승인 뒤 돌아오는 자리
   if (space === 'me' && (m = match('/mail/:id', rest))) return { space, view: 'mail', id: m.id };
@@ -52,24 +55,31 @@ function SaveStatus() {
 }
 
 function Header({ r, page }) {
+  const mode = useSession();
   const sp = SPACES.find((s) => s.key === r.space);
-  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : t({ home: 'nav.home', mail: 'nav.mail', mailConnect: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', docs: 'nav.docs', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
+  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t({ business: 'nav.business', home: 'nav.home', mail: 'nav.mail', mailConnect: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', docs: 'nav.docs', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
   return (
     <header className="topbar">
       <button type="button" className="icon-btn nav-toggle" aria-label={t('nav.open')} onClick={() => setUi({ navOpen: true })}><Icon name="menu" /></button>
       <button type="button" className="icon-btn collapse-toggle" aria-label={t('nav.collapse')} onClick={() => document.documentElement.classList.toggle('nav-collapsed')}><Icon name="sidebar" /></button>
       <nav className="crumbs" aria-label="breadcrumb"><Link to={baseOf(r.space)}>{sp.kind === 'me' ? t('space.me') : sp.name}</Link><Icon name="chevron" size={12} className="dim" /><span className="crumb-cur">{crumb}</span></nav>
       <div className="top-right">
-        {useSession() === 'sample' && <span className="draft-badge">{t('draft.badge')}</span>}
+        {mode === 'sample' && <span className="draft-badge">{t('draft.badge')}</span>}
         <SaveStatus />
         {r.view === 'page' && page && <>
-          {useSession() === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
+          {mode === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
           <button type="button" className="btn sm" onClick={() => setUi({ share: page.id })}><Icon name="share" size={14} />{t('page.share')}</button>
           <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, [...pageMenu(page), { sep: true }, { label: t('page.history'), icon: 'history', run: () => setUi({ history: page.id }) }], { anchor: e.currentTarget })}><Icon name="dots" /></button>
         </>}
       </div>
     </header>
   );
+}
+
+function LegacyRecoveryNotice() {
+  const { draft, pending } = useLegacyRecovery();
+  if (!draft && !pending) return null;
+  return <div className="conflict" role="status"><div><p className="small">{t('recovery.preserved')}</p><p className="dim small">{t(draft ? 'recovery.draft' : 'recovery.pending', { n: pending })}</p></div></div>;
 }
 
 function DragChip({ data }) {
@@ -82,7 +92,7 @@ function DragChip({ data }) {
 const collision = (args) => {
   const a = args.active.data.current ?? {};
   const targets = args.droppableContainers.filter((c) => { const d = c.data.current ?? {}; return d.accepts ? d.accepts.includes(a.kind) : d.kind === a.kind && d.group === a.group; });
-  const within = pointerWithin({ ...args, droppableContainers: targets.filter((c) => c.data.current?.accepts) });
+  const within = pointerWithin({ ...args, droppableContainers: targets.filter((c) => a.kind === 'module' || c.data.current?.accepts) });
   if (within.length) return within;
   return closestCenter({ ...args, droppableContainers: targets.filter((c) => !c.data.current?.accepts) });
 };
@@ -95,12 +105,11 @@ export default function App() {
   const r = route(path);
   const ui = useUi();
   const page = useStore((s) => (r.view === 'page' ? s.pages.find((p) => p.id === r.id) : null));
-  const homeItems = useHomeLayout(r.space ?? 'me');
   const [dragging, setDragging] = useState(null);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, { coordinateGetter: moduleKeyboardCoordinates }),
   );
 
   useEffect(() => { if (r.redirect && mode !== 'loading') navigate(r.redirect, { replace: true }); }, [r.redirect, mode]);
@@ -143,30 +152,27 @@ export default function App() {
     if (o.accepts?.includes(a.kind)) {
       const crew = getState().crews.find((c) => c.id === o.crew);
       setUi({ assign: { space: r.space, crew: crew.id, items: itemsFromDrag(a) } });
-    } else if (a.kind === 'module' && o.kind === 'module' && a.id !== o.id) {
-      const visible = homeItems.filter((i) => !i.hidden);
-      const from = visible.findIndex((i) => i.id === a.id), to = visible.findIndex((i) => i.id === o.id);
-      saveLayout(layoutKey(r.space), [...move(visible, from, to), ...homeItems.filter((i) => i.hidden)]);
     } else if (a.kind === 'page' && o.kind === 'page' && a.id !== o.id) reorderPage(a.id, o.id);
   };
 
   const params = new URLSearchParams(query ?? '');
   const views = {
+    business: <Suspense fallback={<div className="boot" aria-busy="true" />}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} />}</Suspense>,
     home: <Home space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
     work: <Work space={r.space} />, approvals: <Approvals space={r.space} openId={params.get('open')} />, decisions: <Decisions space={r.space} />,
     outputs: <Outputs space={r.space} />, journal: <Journal space={r.space} />, docs: <Docs space={r.space} openId={params.get('open')} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
   return (
-    <DndContext sensors={sensors} collisionDetection={collision} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
+    <DndContext sensors={sensors} collisionDetection={collision} measuring={{ droppable: { strategy: dragging?.kind === 'module' ? MeasuringStrategy.Always : MeasuringStrategy.WhileDragging } }} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
       <div className={`shell${ui.navOpen ? ' nav-open' : ''}${dragging ? ` is-dragging drag-${dragging.kind}` : ''}`}>
         <Sidebar space={r.space} path={path} />
         <div className="nav-scrim" onClick={() => setUi({ navOpen: false })} />
         <main className="main">
           <Header r={r} page={page} />
-          <div className={`content view-${r.view}`}>{views[r.view]}</div>
+          <div className={`content view-${r.view}`}><LegacyRecoveryNotice />{views[r.view]}</div>
         </main>
       </div>
-      <DragOverlay dropAnimation={null}>{dragging && dragging.kind !== 'module' ? <DragChip data={dragging} /> : null}</DragOverlay>
+      <DragOverlay dropAnimation={null}>{dragging ? <DragChip data={dragging} /> : null}</DragOverlay>
       <Palette open={ui.palette} onClose={() => setUi({ palette: false })} space={r.space} />
       <ShareDialog />
       <AssignSheet />

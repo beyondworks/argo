@@ -13,6 +13,7 @@ import { baseOf } from '../core/commands.js';
 import { flushNow, outbox } from '../core/sync.js';
 import { loadPageContent } from '../core/pull.js';
 import { DocView } from '../pages/Misc.jsx';
+import { publicWebUrl } from '../core/platform.js';
 
 /** 서버에서 공유 상태를 읽는다 — 사람 목록 RPC가 거절되면 이 사람은 전체 권한이 아니다(서버가 기준). */
 async function loadShare(id) {
@@ -46,8 +47,8 @@ export function ShareDialog() {
   if (!page) return null;
   const sp = SPACES.find((s) => s.key === page.space);
   const isOrg = sp?.kind === 'org';
-  const pageUrl = `${location.origin}${baseOf(page.space)}/p/${page.id}`;
-  const pubUrl = st?.link?.link_token ? `${location.origin}/s/${st.link.link_token}` : '';
+  const pageUrl = publicWebUrl(`${baseOf(page.space)}/p/${page.id}`);
+  const pubUrl = st?.link?.link_token ? publicWebUrl(`/s/${st.link.link_token}`) : '';
   const can = st && typeof st === 'object';
   const call = async (fn, args) => {
     setBusy(true);

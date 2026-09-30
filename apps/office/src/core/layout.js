@@ -21,18 +21,20 @@ export function sizeForSpan(cols) {
 export function mergeLayout(saved, registry, space, defaults) {
   const usable = new Map(registry.filter((m) => m.spaces.includes(space)).map((m) => [m.id, m]));
   if (!saved?.items?.length) {
-    return defaults.filter((d) => usable.has(d.id)).map((d) => ({ id: d.id, size: d.size, hidden: false }));
+    const visible = defaults.filter((d) => usable.has(d.id)).map((d) => ({ id: d.id, size: d.size, hidden: false }));
+    const included = new Set(visible.map((item) => item.id));
+    return [...visible, ...[...usable.values()].filter((mod) => !mod.repeatable && !included.has(mod.id)).map((mod) => ({ id: mod.id, size: mod.defaultSize, hidden: true }))];
   }
   const seen = new Set();
   const items = [];
   for (const it of saved.items) {
-    const mod = usable.get(it.id);
+    const mod = usable.get(it.moduleId ?? it.id);
     if (!mod || seen.has(it.id)) continue;
     seen.add(it.id);
-    items.push({ id: it.id, size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
+    items.push({ id: it.id, ...(it.moduleId ? { moduleId: it.moduleId } : {}), size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
   }
   // 새로 생긴 모듈은 숨긴 채 뒤에 — intro: 'top'인 것만 맨 위에 보이게(유건 9/27: 현황 카드). 한 번 저장된 뒤엔 사용자 선택을 따른다.
-  for (const [id, mod] of usable) if (!seen.has(id)) {
+  for (const [id, mod] of usable) if (!mod.repeatable && !items.some((item) => (item.moduleId ?? item.id) === id)) {
     if (mod.intro === 'top') items.unshift({ id, size: mod.defaultSize, hidden: false });
     else items.push({ id, size: mod.defaultSize, hidden: true });
   }
@@ -44,6 +46,14 @@ export function move(list, from, to) {
   const [x] = next.splice(from, 1);
   next.splice(to, 0, x);
   return next;
+}
+
+export function reorderModules(items, scope, active, over) {
+  if (active?.kind !== 'module' || over?.kind !== 'module' || active.group !== scope || over.group !== scope || active.id === over.id) return items;
+  const visible = items.filter((item) => !item.hidden);
+  const from = visible.findIndex((item) => item.id === active.id), to = visible.findIndex((item) => item.id === over.id);
+  if (from < 0 || to < 0) return items;
+  return [...move(visible, from, to), ...items.filter((item) => item.hidden)];
 }
 
 /**
@@ -89,7 +99,8 @@ export function mergePages(rows, local, { before, pendingNow, spaceOf }) {
     const m = mine.get(r.id);
     if (m && keep(r.id)) { (m.trashedAt ? trash : pages).push(m); continue; }
     const row = { id: r.id, space, parent: r.parent_id, position: r.position, title: r.title, icon: r.restricted ? 'lock' : 'doc', restricted: r.restricted, general: r.general,
-      version: r.version, updated: r.updated_at, owner: r.owner_user_id, template: !!r.is_template, content: m && m.version === r.version ? m.content : undefined };
+      version: r.version, updated: r.updated_at, owner: r.owner_user_id, orgId: r.org_id, access: r.access, template: !!r.is_template, content: m && m.version === r.version ? m.content : undefined,
+      loadedAt: m && m.version === r.version ? m.loadedAt : undefined };
     if (r.archived_at) trash.push({ ...row, trashedAt: r.archived_at }); else pages.push(row);
   }
   for (const p of local) if (!seen.has(p.id) && keep(p.id)) (p.trashedAt ? trash : pages).push(p); // 아직 서버에 없는(또는 스냅숏 뒤에 생긴) 새 페이지
