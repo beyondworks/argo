@@ -5,6 +5,7 @@
 //   node scripts/intranet-migrate.mjs                      이관 실행 + 대조
 // 환경 변수(값은 출력하지 않는다): OFFICE_MIGRATE_URL, OFFICE_MIGRATE_ANON_KEY, OFFICE_MIGRATE_EMAIL, OFFICE_MIGRATE_PASSWORD,
 //   OFFICE_MIGRATE_ORG(없으면 그 계정의 내 공간), OFFICE_MIGRATE_SIGNUP=1(계정이 없으면 만든다 — 로컬 검증 전용), INTRANET_DB(기본 AI-Native/data/board.db)
+// DB 방식(비밀번호 없는 계정): OFFICE_MIGRATE_DB_UID(계정 id) + OFFICE_MIGRATE_PG(psql 접속 문자열, 비밀번호는 PGPASSWORD) — 로그인 대신 그 계정 id로 같은 함수를 부른다
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -25,19 +26,36 @@ console.log(`계획: 거래처 ${expected.customers}곳(원본 ${customers.lengt
 if (dry) { console.log('예상 합계', expected); process.exit(0); }
 
 const need = (k) => { const v = process.env[k]; if (!v) { console.error(`${k} 가 없습니다`); process.exit(2); } return v; };
-const { createClient } = await import('@supabase/supabase-js');
-const sb = createClient(need('OFFICE_MIGRATE_URL'), need('OFFICE_MIGRATE_ANON_KEY'), { auth: { persistSession: false } });
-const email = need('OFFICE_MIGRATE_EMAIL'), password = need('OFFICE_MIGRATE_PASSWORD');
-let { error: signInError } = await sb.auth.signInWithPassword({ email, password });
-if (signInError && process.env.OFFICE_MIGRATE_SIGNUP === '1') {
-  const { error } = await sb.auth.signUp({ email, password });
-  if (error) { console.error('계정을 만들지 못했습니다:', error.message); process.exit(1); }
-  ({ error: signInError } = await sb.auth.signInWithPassword({ email, password }));
-}
-if (signInError) { console.error('로그인 실패:', signInError.message); process.exit(1); }
 const org = process.env.OFFICE_MIGRATE_ORG || null;
-
-const rpc = async (fn, args) => { const { data, error } = await sb.rpc(fn, args); if (error) throw Object.assign(new Error(`${fn}: ${error.message}`), { code: error.code }); return data; };
+let rpc;
+if (process.env.OFFICE_MIGRATE_DB_UID) {
+  // DB 방식(9/30 운영 이관): Google·GitHub로만 로그인하는 계정은 비밀번호가 없다 → DB에 접속해 앱이 부르는 같은 함수를
+  // 그 계정 id(auth.uid())로 부른다. 권한·저장 규칙은 앱과 같다. 접속 정보는 OFFICE_MIGRATE_PG(비밀번호는 PGPASSWORD)로만 받는다.
+  const uid = need('OFFICE_MIGRATE_DB_UID'), conn = need('OFFICE_MIGRATE_PG');
+  const lit = (v) => (v === null || v === undefined ? 'null' : `'${String(v).replaceAll("'", "''")}'`);
+  const arg = (v) => (v !== null && typeof v === 'object' ? `${lit(JSON.stringify(v))}::jsonb` : lit(v));
+  const claims = lit(JSON.stringify({ sub: uid, role: 'authenticated' }));
+  rpc = async (fn, args) => {
+    const call = `select public.${fn}(${Object.entries(args).map(([k, v]) => `${k} => ${arg(v)}`).join(', ')})::text;`;
+    const sql = `begin;\nset local role authenticated;\nselect set_config('request.jwt.claims', ${claims}, true);\n${call}\ncommit;\n`;
+    try {
+      const out = execFileSync('psql', [conn, '-X', '-A', '-t', '-q', '-v', 'ON_ERROR_STOP=1'], { input: sql, encoding: 'utf8' });
+      return JSON.parse(out.trim().split('\n').filter(Boolean).at(-1));
+    } catch (e) { throw new Error(`${fn}: ${String(e.stderr || e.message).split('\n')[0]}`); }
+  };
+} else {
+  const { createClient } = await import('@supabase/supabase-js');
+  const sb = createClient(need('OFFICE_MIGRATE_URL'), need('OFFICE_MIGRATE_ANON_KEY'), { auth: { persistSession: false } });
+  const email = need('OFFICE_MIGRATE_EMAIL'), password = need('OFFICE_MIGRATE_PASSWORD');
+  let { error: signInError } = await sb.auth.signInWithPassword({ email, password });
+  if (signInError && process.env.OFFICE_MIGRATE_SIGNUP === '1') {
+    const { error } = await sb.auth.signUp({ email, password });
+    if (error) { console.error('계정을 만들지 못했습니다:', error.message); process.exit(1); }
+    ({ error: signInError } = await sb.auth.signInWithPassword({ email, password }));
+  }
+  if (signInError) { console.error('로그인 실패:', signInError.message); process.exit(1); }
+  rpc = async (fn, args) => { const { data, error } = await sb.rpc(fn, args); if (error) throw Object.assign(new Error(`${fn}: ${error.message}`), { code: error.code }); return data; };
+}
 const keyOf = (...parts) => { const h = createHash('sha256').update(['intranet-migrate', org ?? 'me', ...parts].join(':')).digest('hex'); return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`; };
 const write = async (key, action, data) => (await rpc('office_business_write', { p_org: org, p_key: key, p_action: action, p_data: data })).id;
 
