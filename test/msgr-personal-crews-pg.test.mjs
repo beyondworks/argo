@@ -52,6 +52,7 @@ before(() => {
   const base = ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260929110000_plan_no_trial.sql'];
   for (const f of [...base, ...readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x))].sort()) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
+  sql(`delete from public.msgr_settings where key = 'free_limits_grace_until'`); // 한도 테스트는 유예가 끝난 뒤를 본다(유예 자체는 별도 테스트가 날짜를 넣어 본다)
   // 조직 대조군 — a·d가 같은 조직
   ORG = last(asUser(U.a, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.a}') returning id`));
   sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${ORG}'`);
@@ -142,6 +143,26 @@ test('무료 한도: 사람이 둘 이상이면 사람+에이전트 4명까지, 
   // 나갔다 돌아오는 1:1 사람은 세지 않는다
   asUser(U.b, `select public.msgr_leave_dm('${AB}')`);
   assert.match(last(asUser(U.b, `select public.msgr_dm_personal('${U.a}')`)), /^[0-9a-f-]{36}$/, '1:1로 돌아오기는 한도와 무관');
+});
+
+test('2주 유예(유건 2026-09-30 "2주 동안은 Pro처럼"): 기존 사용자는 정한 날짜까지, 신규 가입자는 가입부터 2주 동안 무료 한도가 없다', { skip }, () => {
+  // 기존 사용자 c(가입 30일 전) — 유예 날짜가 앞이면 한도 없음, 지나면 한도
+  const [C1, C2, C3] = ['c1', 'c2', 'c3'].map((x) => personalCrew(U.c, x));
+  const CB = last(asUser(U.c, `select public.msgr_dm_personal('${U.b}')`));
+  for (const x of [C1, C2]) assert.equal(join(U.c, CB, x), 'joined');
+  sql(`insert into public.msgr_settings (key, value) values ('free_limits_grace_until', (now() + interval '3 days')::text) on conflict (key) do update set value = excluded.value`);
+  assert.equal(join(U.c, CB, C3), 'joined', '유예 중 — 사람 2 + 에이전트 3 = 5명도 된다');
+  asUser(U.c, `select public.msgr_crew_leave_channel('${CB}', '${C3}')`);
+  sql(`update public.msgr_settings set value = (now() - interval '1 minute')::text where key = 'free_limits_grace_until'`);
+  fails(asUserRaw(U.c, `select public.msgr_crew_join('${CB}', '${C3}')`), /msgr_room_limit/, '유예가 지나면 한도');
+  // 신규 가입자 f(방금 가입) — 유예 날짜가 지났어도 가입부터 2주
+  const F = '66666666-6666-4666-8666-666666666666';
+  sql(`insert into auth.users (id, created_at, email) values ('${F}', now(), 'f@example.test') on conflict do nothing`);
+  befriend(U.c, F);
+  const [F1, F2, F3] = ['f1', 'f2', 'f3'].map((x) => personalCrew(F, x));
+  const CF = last(asUser(F, `select public.msgr_dm_personal('${U.c}')`));
+  for (const x of [F1, F2, F3]) assert.equal(join(F, CF, x), 'joined', '가입 2주 안 — 한도 없음');
+  sql(`delete from public.msgr_settings where key = 'free_limits_grace_until'`);
 });
 
 test('분리 검수 반영: 개인 방 동의는 명시적 동의만, 없어진 크루는 한도에 안 센다, 옛 앱엔 크루 1:1을 주지 않는다, 작업 심박은 같은 값을 다시 쓰지 않는다', { skip }, () => {
