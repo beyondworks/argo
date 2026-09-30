@@ -1809,3 +1809,6 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-friendadd .msgr-friend-search { border-top: 0; padding-top: 2px; }
 .msgr-friendadd .head strong { flex: none; }
 .msgr-friendadd .head .msgr-klabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 개인 방 에이전트 참여 요청 줄(2026-09-30) — 허락·거절을 한 묶음으로 오른쪽에 */
+.msgr-joinbar-acts { display: inline-flex; gap: 6px; flex: none; }

@@ -29,8 +29,8 @@ test('동의 전엔(또는 아직 모르면) 사이드바 채널·멤버·에이
     "{!isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'}",
     '{!orgBlocked && (dms.length > 0 || dmTab || !!orgId)',
     '{!isPersonal && !orgBlocked && org && members.length > 0 && (<RailSection id="people"',
-    '{!isPersonal && !orgBlocked && org && (myAvailable.length > 0 || railVisible.length > 0)',
-    '{sheet && crewOf(sheet) && !orgBlocked && <CrewSheet',
+    '{(isPersonal ? railVisible.length > 0 : !orgBlocked && org && (myAvailable.length > 0 || railVisible.length > 0))', // 개인 공간 에이전트(2026-09-30) — 조직 쪽은 그대로 동의 게이트가 막는다
+    '{sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet',
     '{chSheet && channel && !orgBlocked && <ChannelSheet',
     'gated={orgBlocked}',
   ]) assert.ok(app.includes(needle), `누락: ${needle}`);
@@ -50,7 +50,7 @@ test('폰 홈·DM 탭(레일이 화면 전체)에는 조회 중일 때 로딩 �
 test('폰 홈·DM 탭(레일이 화면 전체)에도 같은 동의 화면을 bare로 보여준다 — 빈 화면 금지', () => {
   assert.match(app, /<AiConsentGate t=\{t\} onMenu=\{openNav\} onError=\{setErr\} onDecline=\{\(\) => setOrgId\(PERSONAL\)\} bare \/>/, '레일 안에서도 같은 문구·버튼');
   const gate = app.slice(app.indexOf('function AiConsentGate('), app.indexOf('function EmptyOrg('));
-  assert.match(gate, /function AiConsentGate\(\{ t, onMenu, onError, onDecline, bare = false \}\)/);
+  assert.match(gate, /function AiConsentGate\(\{ t, onMenu, onError, onDecline, bare = false, personal = false \}\)/); // personal — 개인 공간 에이전트 동의(2026-09-30): 조직 문구 대신 개인 문구
   assert.match(gate, /\{!bare && <div className="msgr-top">/, 'bare면 레일이 이미 자기 상단 바를 갖고 있어 중복 상단 바를 생략한다');
 });
 
@@ -78,8 +78,9 @@ test('동의하면 setAiConsent(true)만 부르고 그 자리에서 같은 페�
 
 test('거부하면 개인 공간으로 보낸다(조직 공간 접근 차단의 유일한 탈출구) — 서버에도 거부를 남긴다(동의 전환 기간, 2026-09-27)', () => {
   const gate = app.slice(app.indexOf('function AiConsentGate('), app.indexOf('function EmptyOrg('));
-  assert.match(gate, /const decline = async \(\) => \{ setBusy\(true\); try \{ await setAiConsent\(false\); \}/, '기존 msgr_set_ai_consent(false) 구조로 거부를 기록해 둔다 — RPC 이름은 trial-builder가 확정');
-  assert.match(gate, /<button type="button" className="btn sm ghost" disabled=\{busy\} onClick=\{decline\}>\{t\('consent\.ai\.decline'\)\}<\/button>/);
+  assert.match(gate, /setBusy\(true\); try \{ await setAiConsent\(false\); \}/, '기존 msgr_set_ai_consent(false) 구조로 거부를 기록해 둔다 — RPC 이름은 trial-builder가 확정');
+  assert.match(gate, /const decline = async \(\) => \{ if \(personal\) return onDecline\(\);/, '개인 공간의 "지금은 안 함"은 거부로 기록하지 않는다(조직 글까지 문맥에서 빠지므로)');
+  assert.match(gate, /<button type="button" className="btn sm ghost" disabled=\{busy\} onClick=\{decline\}>\{t\(personal \? 'consent\.ai\.personal\.decline' : 'consent\.ai\.decline'\)\}<\/button>/);
 });
 
 test('안내에는 개인정보처리방침 링크가 있다', () => {

@@ -42,6 +42,9 @@ const CONTRACT = {
   msgr_org_entitled: { server: '봇 RPC 안에서 판정(msgr_bot_updates_before_work·msgr_bot_events)' },
   msgr_org_entitlement_marker: { server: '봇 RPC 안에서 판정' },
   msgr_org_ai_consent_ok: { server: '봇 RPC 안에서 판정(msgr_ai_consent_visible)' },
+  // 개인 공간 에이전트 1단계(2026-09-30) — 외부 봇의 개인 공간 참여는 다음 단계(봇 1:1·개인 방 스캔). 그때 봇 경로를 정한다.
+  msgr_personal_ai_consent_ok: { pending: '개인 방 동의 확인 — 봇은 아직 개인 방에 들어가지 않는다(개인 공간 봇 단계에서 봇 RPC 안 판정으로)' },
+  msgr_profiles: { argoOnly: '개인 방 지시자 표시 이름(조직 이름이 없는 방) — 봇은 메시지 봉투의 이름을 쓴다' },
   msgr_instruct_check: { server: '배달 전에 서버가 판정(msgr_delivery_allowed)' },
   // 기억·문서
   msgr_crew_memory: { pending: '3단계 — 크루 기억(VPS argo_memory 플러그인과 맞춘다)' },
@@ -59,7 +62,7 @@ const CONTRACT = {
   msgr_notification_finish: { argoOnly: 'Argo 데스크톱 알림 경로' },
 };
 // 다음 단계로 미룬 항목 — 늘리거나 줄일 때 이 목록을 같이 고친다(조용히 늘지 않게).
-const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_work_heartbeat', 'office_event_list', 'office_event_write'];
+const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_event_list', 'office_event_write'];
 
 function gatewayCalls() {
   const dir = root('src/gateway');
