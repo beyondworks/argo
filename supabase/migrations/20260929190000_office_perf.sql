@@ -135,6 +135,42 @@ alter table public.office_perf_mail enable row level security;
 alter table public.office_perf_mail_sync enable row level security;
 revoke all on public.office_perf_mail, public.office_perf_mail_sync from anon, authenticated;
 
+-- 문서 실적: 사람·날짜·문서당 한 줄. office_page_versions는 90일 뒤 office_purge가 지우므로 성과 기록은 버전 표를 직접 세지 않는다
+-- (연간 정리가 90일 뒤 비는 결함, 9/30). 버전이 들어올 때 트리거가 한 줄을 넣고, 같은 날 다시 고치면 제목이 바뀐 경우만 고친다.
+create table if not exists public.office_perf_page_days (
+  org_id uuid not null references public.msgr_orgs(id) on delete cascade,
+  user_id uuid not null,
+  day date not null,
+  page_id uuid not null,                                  -- 문서가 지워져도 실적은 남는다(참조 없음)
+  title text not null default '' check (length(title) <= 500),
+  primary key (org_id, user_id, day, page_id)
+);
+alter table public.office_perf_page_days enable row level security; -- 정책 없음: 함수로만
+revoke all on public.office_perf_page_days from anon, authenticated;
+
+create or replace function public.office_perf_page_day() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.created_by is null then return new; end if;
+  insert into public.office_perf_page_days(org_id, user_id, day, page_id, title)
+    select p.org_id, new.created_by, (new.created_at at time zone 'Asia/Seoul')::date, new.page_id, left(coalesce(nullif(new.title, ''), p.title), 500)
+    from public.office_pages p where p.id = new.page_id and p.org_id is not null
+    on conflict (org_id, user_id, day, page_id) do update set title = excluded.title
+      where public.office_perf_page_days.title is distinct from excluded.title;
+  return new;
+end $$;
+revoke all on function public.office_perf_page_day() from public, anon, authenticated;
+drop trigger if exists office_perf_page_day on public.office_page_versions;
+create trigger office_perf_page_day after insert on public.office_page_versions for each row execute function public.office_perf_page_day();
+-- 이미 있는 버전을 한 번 옮긴다(여러 번 적용해도 같은 결과)
+insert into public.office_perf_page_days(org_id, user_id, day, page_id, title)
+  select distinct on (p.org_id, v.created_by, (v.created_at at time zone 'Asia/Seoul')::date, v.page_id)
+    p.org_id, v.created_by, (v.created_at at time zone 'Asia/Seoul')::date, v.page_id, left(coalesce(nullif(v.title, ''), p.title), 500)
+  from public.office_page_versions v join public.office_pages p on p.id = v.page_id
+  where p.org_id is not null and v.created_by is not null
+  order by p.org_id, v.created_by, (v.created_at at time zone 'Asia/Seoul')::date, v.page_id, v.version desc
+  on conflict do nothing;
+
 create or replace function public.office_perf_mail_grade(p_reasons text[]) returns text
 language sql immutable as $$
   select case when p_reasons && array['pushy', 'late_reply'] then 'caution' when p_reasons && array['thanks', 'quick_reply'] then 'good' else 'normal' end
@@ -245,10 +281,8 @@ begin
     where a.org_id = p_org and a.decided_by = p_user and a.status in ('approved', 'rejected') and a.decided_at >= lo and a.decided_at < hi group by 1) s;
 
   select coalesce(jsonb_agg(jsonb_build_object('day', d, 'page_id', page_id, 'title', title) order by d, title), '[]') into pages from (
-    select distinct on ((v.created_at at time zone 'Asia/Seoul')::date, v.page_id) (v.created_at at time zone 'Asia/Seoul')::date d, v.page_id, p.title
-    from public.office_page_versions v join public.office_pages p on p.id = v.page_id
-    where p.org_id = p_org and v.created_by = p_user and v.created_at >= lo and v.created_at < hi
-    order by 1, 2, v.version desc) s;
+    select x.day d, x.page_id, x.title from public.office_perf_page_days x
+    where x.org_id = p_org and x.user_id = p_user and x.day between p_from and p_to) s;
 
   select coalesce(jsonb_agg(jsonb_build_object('day', d, 'n', n) order by d), '[]') into crew from (
     select (m.created_at at time zone 'Asia/Seoul')::date d, count(*) n from public.msgr_messages m
@@ -503,7 +537,7 @@ end $$;
 -- 퇴사 후 3년이 지난 사람의 성과 기록 정리. p_dry(기본)이면 세기만 한다. 사용자에게 열지 않는다(운영자·예약 작업 전용).
 create or replace function public.office_perf_purge(p_dry boolean default true) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare n_notes bigint; n_goals bigint; n_reviews bigint; n_requests bigint;
+declare n_notes bigint; n_goals bigint; n_reviews bigint; n_requests bigint; n_pages bigint;
 begin
   create temp table if not exists perf_gone on commit drop as
     select m.org_id, m.user_id from public.msgr_org_members m where m.removed_at < now() - interval '3 years';
@@ -511,9 +545,11 @@ begin
   select count(*) into n_goals from public.office_perf_goals x join perf_gone g using (org_id, user_id);
   select count(*) into n_reviews from public.office_perf_reviews x join perf_gone g using (org_id, user_id);
   select count(*) into n_requests from public.office_perf_edit_requests x join perf_gone g using (org_id, user_id);
+  select count(*) into n_pages from public.office_perf_page_days x join perf_gone g using (org_id, user_id);
   if not p_dry then
     delete from public.office_perf_edit_requests x using perf_gone g where x.org_id = g.org_id and x.user_id = g.user_id;
     delete from public.office_perf_mail x using perf_gone g where x.org_id = g.org_id and x.user_id = g.user_id;
+    delete from public.office_perf_page_days x using perf_gone g where x.org_id = g.org_id and x.user_id = g.user_id;
     delete from public.office_perf_mail_sync x using perf_gone g where x.org_id = g.org_id and x.user_id = g.user_id;
     delete from public.office_perf_reviews x using perf_gone g where x.org_id = g.org_id and x.user_id = g.user_id;
     delete from public.office_perf_goals x using perf_gone g where x.org_id = g.org_id and x.user_id = g.user_id;
@@ -521,7 +557,7 @@ begin
     delete from public.office_perf_notes x using perf_gone g where x.org_id = g.org_id and x.user_id = g.user_id;
   end if;
   drop table perf_gone;
-  return jsonb_build_object('dry', p_dry, 'notes', n_notes, 'goals', n_goals, 'reviews', n_reviews, 'requests', n_requests);
+  return jsonb_build_object('dry', p_dry, 'notes', n_notes, 'goals', n_goals, 'reviews', n_reviews, 'requests', n_requests, 'pages', n_pages);
 end $$;
 
 revoke all on function public.office_perf_role(uuid), public.office_perf_bounds(text), public.office_perf_locked(uuid, uuid, date), public.office_perf_compute(uuid, uuid, date, date),

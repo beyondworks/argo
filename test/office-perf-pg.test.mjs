@@ -289,3 +289,15 @@ test('메일 신호: 제한 통과 뒤 2분이 지나면 넣을 수 없다', {sk
  sql(`update office_perf_mail_sync set synced_at=now()-interval '3 minutes' where user_id=${quote(U.member)}`);
  assert.match(callFail(U.member,'office_perf_mail_put',`${quote(ORG)},${quote(acc)},${j([{thread_id:'late',customer_id:cid,day:TODAY,reasons:['thanks'],reply_minutes:1,last_message_id:'m-late'}])}`),/perf_claim/);
 });
+
+test('문서 실적: 문서 버전이 90일 정리로 지워져도 성과 기록의 "고친 문서"는 남는다 — 연간 정리(연봉 협상)가 90일 뒤 비지 않게', {skip}, ()=>{
+ const D=kst(new Date(Date.now()-100*864e5)), page=randomUUID();
+ sql(`insert into office_pages(id,space_kind,owner_user_id,org_id,title,created_by)values(${quote(page)},'org',${quote(U.member)},${quote(ORG)},'제안서',${quote(U.member)});
+  insert into office_page_versions(page_id,version,title,created_by,created_at)values(${quote(page)},1,'제안서',${quote(U.member)},${quote(at(D,'10'))}),(${quote(page)},2,'제안서',${quote(U.member)},${quote(at(D,'15'))})`);
+ const before=report(U.member,D,D).pages;
+ assert.deepEqual(before.map(p=>[p.day,p.page_id,p.title]),[[D,page,'제안서']]); // 같은 날 두 번 고쳐도 한 줄
+ sql(`select office_purge()`);
+ assert.equal(sql(`select count(*) from office_page_versions where page_id=${quote(page)}`),'0'); // 90일 정리는 그대로 돈다
+ assert.deepEqual(report(U.member,D,D).pages.map(p=>[p.day,p.page_id,p.title]),[[D,page,'제안서']]);
+ assert.notEqual(raw(userSql(U.member,`select count(*) from office_perf_page_days`)).status,0); // 표를 직접 읽는 길은 없다
+});
