@@ -77,7 +77,7 @@ test('themes.css: 모든 규칙이 plain이 아닌 셸 또는 새 다섯 색 아
 
 // 이유(유건 9/30): 왼쪽 테두리 막대는 AI 티가 난다 — 활성 표시든 인용이든 쓰지 않는다.
 test('왼쪽 테두리 막대 금지 — themes.css·base.css·페이지 css', () => {
-  for (const f of ['../src/themes.css', '../src/base.css', '../src/business/business.css', '../src/pages/module-library.css']) {
+  for (const f of ['../src/themes.css', '../src/base.css', '../src/business/business.css', '../src/pages/module-library.css', '../src/pages/perf.css']) {
     const body = strip(readFileSync(new URL(f, import.meta.url), 'utf8'));
     assert.doesNotMatch(body, /border-left\s*:|border-inline-start\s*:|inset\s+([2-9]|\d{2,})[\d.]*px\s+0\s+0\s/, f); // 1px은 서랍 가장자리 선이라 막대가 아니다
   }
