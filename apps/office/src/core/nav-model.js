@@ -1,13 +1,13 @@
 // 좌측 메뉴·업무 탭 순서(유건 9/30: "메뉴가 하드코딩이면 모듈식이 아니다") — 사람마다 저장한다(office_user_layouts nav:me · biztabs:me).
 // 메뉴는 내 공간·조직 공간 목록이 달라도 순서·숨김은 한 목록으로 둔다. 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다.
 export const NAV = {
-  me: ['home', 'business', 'mail', 'approvals', 'shared', 'knowhow', 'tools'],
-  org: ['home', 'business', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'knowhow', 'tools'],
+  me: ['home', 'calendar', 'business', 'mail', 'approvals', 'shared', 'knowhow', 'tools'],
+  org: ['home', 'calendar', 'business', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'knowhow', 'tools'],
 };
 export const SECTIONS = ['menu', 'pages', 'crews'];
 const LOCKED = new Set(['home']);
 // 두 목록을 합친 기본 순서 — 어느 공간에서 걸러 내도 그 공간의 기본 순서가 나온다(테스트가 잠근다)
-const ALL = ['home', 'business', 'mail', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'shared', 'knowhow', 'tools'];
+const ALL = ['home', 'calendar', 'business', 'mail', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'shared', 'knowhow', 'tools'];
 
 /** a를 b 자리로 옮긴 새 배열 — 같은 자리·없는 id면 그대로 */
 export function moveId(list, a, b) {

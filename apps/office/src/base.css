@@ -694,6 +694,7 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 .task-group h4 { margin: 6px 8px 2px; font-size: 12px; font-weight: 600; color: var(--fg-3); }
 .task-group.g-overdue h4 { color: var(--danger, #c0392b); }
 .task-row.overdue small { color: var(--danger, #c0392b); }
+.task-row.focus { background: var(--primary-soft); } /* 달력에서 누른 할 일 */
 @media (hover: hover) { .task-row .task-more { opacity: 0; } .task-row:hover .task-more, .task-row .task-more:focus-visible { opacity: 1; } }
 .task-done-toggle { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: var(--fg-3); background: none; border: 0; cursor: pointer; }
 .task-done-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }

@@ -198,7 +198,9 @@ function Stats({ space, item, canEdit, setCfg }) {
 }
 
 // sizes: s=1/3, m=1/2, l=2/3, full=전체. spaces: 이 모듈을 쓸 수 있는 공간 종류.
-const renderers = { stats: Stats, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
+const Upcoming = lazy(() => import('../calendar/Upcoming.jsx')); // 다가오는 일정(유건 9/30) — 달력 사전·계산과 함께 쓸 때만 받는다
+const Calendar = (props) => <Suspense fallback={<div className="mod-empty" role="status">…</div>}><Upcoming {...props} /></Suspense>;
+const renderers = { stats: Stats, calendar: Calendar, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
 const BusinessHomeCard = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeCard })));
 const LazyBusinessHomeProvider = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeProvider })));
 export function BusinessHomeProvider(props) {
@@ -209,6 +211,6 @@ export const MODULES = OFFICE_MODULES.map((module) => ({ ...module, render: rend
 } }));
 
 export const DEFAULTS = {
-  me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'work', size: 'full' }],
-  org: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'todos', size: 'full' }],
+  me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'calendar', size: 'm' }, { id: 'work', size: 'm' }],
+  org: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'calendar', size: 'm' }, { id: 'todos', size: 'm' }],
 };

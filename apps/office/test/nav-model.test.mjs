@@ -14,13 +14,20 @@ test('저장값이 없으면 공간별 기본 메뉴 순서, 세 칸은 메뉴 �
 
 test('순서·숨김은 한 목록으로 저장하고, 그 공간에 없는 메뉴는 건너뛴다(내 공간의 메일은 조직에 안 보임)', () => {
   let items = writeNav(readNav([], 'org'), { move: ['perf', 'home'] }); // 성과 기록을 맨 위로
-  assert.deepEqual(readNav(items, 'org').shown.slice(0, 3), ['perf', 'home', 'business']);
+  assert.deepEqual(readNav(items, 'org').shown.slice(0, 3), ['perf', 'home', 'calendar']);
   items = writeNav(readNav(items, 'org'), { hide: 'outputs' });
   assert.deepEqual(readNav(items, 'org').hidden, ['outputs']);
   assert.ok(!readNav(items, 'org').shown.includes('outputs'));
   assert.deepEqual(readNav(items, 'me').shown, NAV.me); // 내 공간 목록에는 영향 없음(성과 기록·산출물이 없다)
   items = writeNav(readNav(items, 'org'), { show: 'outputs' });
   assert.ok(readNav(items, 'org').shown.includes('outputs'));
+});
+
+// 이유(유건 9/30 일정 명세): 좌측 메뉴 '일정'은 개인·조직 모두 홈 바로 다음
+test('일정 메뉴는 두 공간 모두 홈 바로 다음', () => {
+  assert.deepEqual(NAV.me.slice(0, 2), ['home', 'calendar']);
+  assert.deepEqual(NAV.org.slice(0, 2), ['home', 'calendar']);
+  assert.deepEqual(readNav([], 'me').shown.slice(0, 2), ['home', 'calendar']);
 });
 
 test('홈은 숨길 수 없고, 모르는 id·중복은 버린다', () => {
