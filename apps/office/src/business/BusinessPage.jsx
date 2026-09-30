@@ -19,6 +19,17 @@ import { cellsInBox, bulkRedact } from './cell-pick.js';
 import { dealAmounts, vatOf } from './deal-model.js';
 import './business.css';
 import { BUSINESS_MODULES } from '../core/module-registry.js';
+import { SortableContext, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { useStore } from '../core/store.js';
+import { orderTabs } from '../core/nav-model.js';
+
+/** 업무 탭 — 끌어서 순서를 바꾼다(사람마다, biztabs:me — 유건 9/30). 켜기·끄기는 조직 설정 그대로 */
+function BizTab({ id, to, on, order, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `biztab:${id}`, data: { kind: 'biztab', id, group: 'biztab', order, label: children } });
+  const { onTouchStart, ...mouse } = listeners ?? {};
+  return <Link ref={setNodeRef} to={to} style={{ transform: CSS.Translate.toString(transform), transition }} className={`tab${on ? ' on' : ''}${isDragging ? ' dragging' : ''}`} aria-current={on ? 'page' : undefined} {...attributes} {...mouse} role="link">{children}</Link>;
+}
 
 // 성과 분석은 마케팅 탭 안으로 합쳤다(유건 9/29) — 예전 주소·홈 카드는 마케팅으로 이어진다
 const MODULES = BUSINESS_MODULES.map((module) => module.businessTab).filter((key) => key !== 'performance');
@@ -83,6 +94,7 @@ function CustomerTable({ rows, blocked, run, launch, openCard }) {
 }
 
 export default function BusinessPage({ space, tab: requested = 'analytics', openId }) {
+  const savedTabs = useStore((st) => st.layouts['biztabs:me']?.items);
   const tab = requested === 'performance' ? 'marketing' : requested;
   useLang();
   const business = useBusiness(space);
@@ -122,6 +134,7 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
     inventory: <InfoTip end text={label('singleStock')} />,
   }[current];
   const enabled = data?.settings?.enabled || MODULES;
+  const tabs = orderTabs(MODULES, enabled, savedTabs); // 내 탭 순서(사람마다)
   function enabledNow(d, key) { return (d.settings?.enabled || MODULES).includes(key); }
   const [openKind, openRef] = openId?.includes(':') ? openId.split(':') : ['order', openId];
   const order = openKind === 'order' ? data?.orders.find((row) => row.id === openRef) : null;
@@ -132,7 +145,7 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
   return <section className="page-wrap wide bizui-page">
     <header className="page-title-row"><div><h1 className="page-h1">{label('title')}</h1><p className="dim">{label('subtitle')}</p></div><button type="button" className="icon-btn" aria-label={t('more')} disabled={busy || loading} onClick={pageMenu}><Icon name="dots" /></button></header>
     <div className="biz-tabbar">
-      <nav className="tabs" aria-label={label('title')}>{MODULES.filter((key) => enabled.includes(key)).map((key) => <Link key={key} to={`${path}/${key}`} className={`tab${current === key ? ' on' : ''}`} aria-current={current === key ? 'page' : undefined}>{label(key)}</Link>)}</nav>
+      <nav className="tabs" aria-label={label('title')}><SortableContext items={tabs.map((key) => `biztab:${key}`)} strategy={horizontalListSortingStrategy}>{tabs.map((key) => <BizTab key={key} id={key} order={tabs} to={`${path}/${key}`} on={current === key}>{label(key)}</BizTab>)}</SortableContext></nav>
       {tabAction && <div className="biz-tab-actions">{tabAction}</div>}
     </div>
     {((!data && error) || (formError && !dialog && !openId)) && <p className="bizui-error" role="alert">{t(!data && error ? error : formError)}</p>}

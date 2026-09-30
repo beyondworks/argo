@@ -7,6 +7,7 @@ import { t } from './i18n.js';
 import { queue } from './sync.js';
 import { between } from './position.js';
 import { SPACES } from './session.js';
+import { writeNav, readNav } from './nav-model.js';
 
 const KEY = 'argo-office-draft-v1';
 const fresh = () => ({ pages: S.PAGES.map((p, i) => ({ ...p, position: p.position ?? String.fromCharCode(97 + Math.floor(i / 10)) + (i % 10 + 1) })), mails: S.MAILS, mailAccounts: [], approvals: S.APPROVALS, decisions: S.DECISIONS, work: S.WORK, crews: S.CREWS, outputs: S.OUTPUTS, journal: S.JOURNAL, docs: [], layouts: {}, trash: [], todosDone: {} });
@@ -124,6 +125,9 @@ export function decide(id, result, by) {
 }
 
 /* ── 배치 ── */
+/** 좌측 메뉴 순서·숨김·칸 순서(사람마다, nav-model.js) — 저장할 수 없는 상태면 false */
+export const saveNav = (op, kind) => saveLayout('nav:me', writeNav(readNav(state.layouts['nav:me']?.items, kind), op));
+export const saveTabs = (order) => saveLayout('biztabs:me', order.map((id) => ({ id })));
 export const saveLayout = (key, items) => {
   const current = state.layouts[key];
   if (getStorageScope() !== 'sample' && (!Number.isInteger(current?.version) || current?.conflict)) return false;

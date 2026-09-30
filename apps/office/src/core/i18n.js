@@ -74,6 +74,9 @@ const DICT = {
   'nav.outputs': ['산출물', 'Deliverables'], 'nav.journal': ['에이전트 일지', 'Agent journal'], 'nav.docs': ['공용 문서', 'Shared docs'], 'nav.perf': ['성과 기록', 'Performance record'], 'nav.knowhow': ['노하우', 'Know-how'],
   'docs.sub': ['에이전트가 함께 쓰는 규칙·용어·프로젝트 문서', 'Rules, glossary and project docs your agents share'], 'docs.rules': ['규칙', 'Rules'], 'docs.glossary': ['용어', 'Glossary'], 'docs.projects': ['프로젝트', 'Projects'],
   'docs.empty': ['아직 공용 문서가 없습니다', 'No shared docs yet'], 'docs.readOnly': ['공용 문서는 메신저에서 고칩니다(바꿀 때 결재를 거칩니다)', 'Edit shared docs in the messenger (changes go through approval)'],
+  'nav.hide': ['메뉴에서 숨기기', 'Hide from menu'], 'nav.homeFixed': ['홈은 숨길 수 없습니다', 'Home can’t be hidden'], 'nav.hiddenN': ['숨긴 메뉴 {n}', '{n} hidden'], 'nav.hiddenHead': ['눌러서 다시 보이기', 'Click to show again'],
+  'nav.saveFail': ['순서를 저장하지 못했습니다. 잠시 뒤 다시 해 주세요.', 'Could not save the order. Try again shortly.'],
+  'nav.sec.menu': ['메뉴', 'Menu'], 'nav.sec.pages': ['페이지', 'Pages'], 'nav.sec.crews': ['에이전트', 'Agents'], 'nav.secUp': ['칸을 위로', 'Move section up'], 'nav.secDown': ['칸을 아래로', 'Move section down'],
   'nav.pages': ['페이지', 'Pages'], 'nav.wiki': ['조직 위키', 'Wiki'], 'nav.crews': ['에이전트', 'Agents'],
   // 좌측 크루 목록 정리(9/30)
   'crew.group.pinned': ['고정', 'Pinned'], 'crew.group.mine': ['내 에이전트', 'My agents'], 'crew.group.company': ['회사 에이전트', 'Company agents'], 'crew.group.peer': ['동료 에이전트', "Teammates' agents"],
