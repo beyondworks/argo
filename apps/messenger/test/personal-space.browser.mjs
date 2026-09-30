@@ -60,6 +60,67 @@ try {
       await sheet.waitFor({ state: 'detached' });
     });
 
+    // 0b. 개인 공간 에이전트(유건 2026-09-30) — 내 에이전트는 보이고 친구 에이전트는 내 목록·추가 후보에 안 나온다, 크루 1:1, 친구 방에 내 에이전트 넣기, 무료 한도 안내
+    await scenario(lang, width, 'personal-agents', async (p) => {
+      await switcher(p).click(); await p.locator('.msgr-menu-pop').waitFor(); await p.locator('.msgr-menu-pop button').first().click();
+      const mine = p.locator('[data-sec="mine"]'); await mine.waitFor();
+      assert.ok((await mine.innerText()).includes('My Agent'), '내 에이전트가 개인 공간 레일에 보인다');
+      assert.ok(!(await mine.innerText()).includes("Alice's Agent"), '친구 에이전트는 내 목록에 안 나온다');
+      await p.screenshot({ path: new URL(`personal-agents-rail-${lang}-${width}.png`, artifacts).pathname });
+      await mine.locator('.item', { hasText: 'My Agent' }).click();
+      await p.waitForFunction(() => window.__psFixture.calls.some((c) => c.rpc === 'msgr_dm_personal_crew' && c.args?.crew === 'pcrew-mine'));
+      await p.locator('.msgr-composer').waitFor();
+      if (width < 768) return; // 폰: 레일·크루 1:1까지(방 설정은 데스크톱에서 본다)
+      await p.locator('[data-sec="dms"] .item', { hasText: 'Alice Friend' }).click();
+      await p.locator('.msgr-titlebtn').click();
+      const sheet = p.locator('.msgr-crewsheet').last(); await sheet.waitFor();
+      assert.ok((await sheet.innerText()).includes("Alice's Agent"), '방 안의 친구 에이전트는 방 구성원으로 보인다');
+      await sheet.locator('.msgr-addwrap .btn-primary').click();
+      await sheet.locator('.msgr-addmenu [role=menuitem]', { hasText: lang === 'ko' ? '에이전트 추가' : 'Add agent' }).click();
+      const names = await sheet.locator('.msgr-picklist .pickrow .name').allInnerTexts();
+      assert.deepEqual(names, ['My Agent'], '추가 후보는 내 에이전트만: ' + JSON.stringify(names));
+      await sheet.locator('.msgr-picklist .pickrow input').first().check();
+      await p.evaluate(() => { window.__psFixture.roomLimit = true; });
+      await sheet.locator('.msgr-addwrap .acts .btn-primary').click();
+      await p.getByText(lang === 'ko' ? '4명(에이전트 포함)까지' : 'up to 4 members').first().waitFor();
+      await p.screenshot({ path: new URL(`personal-agents-limit-${lang}-${width}.png`, artifacts).pathname });
+      await p.evaluate(() => { window.__psFixture.roomLimit = false; });
+      if (!(await sheet.locator('.msgr-picklist').count())) { await sheet.locator('.msgr-addwrap .btn-primary').click(); await sheet.locator('.msgr-addmenu [role=menuitem]', { hasText: lang === 'ko' ? '에이전트 추가' : 'Add agent' }).click(); }
+      const box = sheet.locator('.msgr-picklist .pickrow input').first(); if (!(await box.isChecked())) await box.check();
+      await sheet.locator('.msgr-addwrap .acts .btn-primary').click();
+      await p.waitForFunction(() => window.__psFixture.calls.filter((c) => c.rpc === 'msgr_crew_join' && c.args?.crew === 'pcrew-mine').length >= 2);
+      await p.screenshot({ path: new URL(`personal-agents-joined-${lang}-${width}.png`, artifacts).pathname });
+    });
+
+    // 0c. AI 이용 동의 전 — 에이전트를 부르려는 순간에만 묻는다(조직처럼 공간 전체를 막지 않는다)
+    await scenario(lang, width, 'personal-agents-consent', async (p) => {
+      await p.evaluate(() => localStorage.setItem('psFixtureAiConsent', 'none')); await p.reload(); await p.locator('.msgr-org').waitFor({ state: 'attached' });
+      await switcher(p).click(); await p.locator('.msgr-menu-pop').waitFor(); await p.locator('.msgr-menu-pop button').first().click();
+      await p.locator('[data-sec="mine"] .item', { hasText: 'My Agent' }).click();
+      await p.getByRole('heading', { name: lang === 'ko' ? '에이전트를 쓰려면 AI 이용 동의가 필요합니다' : 'AI use consent is needed to use agents' }).waitFor();
+      assert.equal(await p.getByText(lang === 'ko' ? '조직 공간은 쓸 수 없고' : 'can’t use this organization space').count(), 0, '개인 공간에 조직 문구가 나오지 않는다');
+      assert.equal((await rpcCalls(p, 'msgr_dm_personal_crew')).length, 0, '동의 전에는 크루 1:1을 만들지 않는다');
+      await p.screenshot({ path: new URL(`personal-agents-consent-${lang}-${width}.png`, artifacts).pathname });
+      await p.getByRole('button', { name: lang === 'ko' ? '지금은 안 함' : 'Not now' }).click();
+      await p.getByRole('heading', { name: lang === 'ko' ? '에이전트를 쓰려면 AI 이용 동의가 필요합니다' : 'AI use consent is needed to use agents' }).waitFor({ state: 'detached' });
+      assert.equal((await rpcCalls(p, 'msgr_set_ai_consent')).length, 0, '"지금은 안 함"은 거부로 기록하지 않는다(조직 글까지 문맥에서 빠지므로)');
+      await p.evaluate(() => localStorage.removeItem('psFixtureAiConsent'));
+    });
+
+    // 0d. 개인 방 보조 줄(분리 검수 M6·H3) — 승인자에게 친구 에이전트 참여 요청, 동의 전인 사람에게 동의 안내
+    if (width >= 768) await scenario(lang, width, 'personal-room-bar', async (p) => {
+      await p.evaluate(() => localStorage.setItem('psFixtureAiConsent', 'none')); await p.reload(); await p.locator('.msgr-org').waitFor({ state: 'attached' });
+      await switcher(p).click(); await p.locator('.msgr-menu-pop').waitFor(); await p.locator('.msgr-menu-pop button').first().click();
+      await p.locator('[data-sec="dms"] .item', { hasText: 'Alice Friend' }).click();
+      const req = p.locator('.msgr-joinbar', { hasText: 'Alice Friend' }); await req.waitFor();
+      await p.locator('.msgr-joinbar', { hasText: lang === 'ko' ? '동의한 사람의 글만' : 'only read messages from people who agreed' }).waitFor();
+      await p.screenshot({ path: new URL(`personal-room-bar-${lang}-${width}.png`, artifacts).pathname });
+      await req.getByRole('button', { name: lang === 'ko' ? '허락' : 'Approve' }).click();
+      await p.waitForFunction(() => window.__psFixture.calls.some((c) => c.rpc === 'msgr_crew_join_decide' && c.args?.req === 'req-alice' && c.args?.approve === true));
+      await req.waitFor({ state: 'detached' });
+      await p.evaluate(() => localStorage.removeItem('psFixtureAiConsent'));
+    });
+
     // 1. Switch to personal space and see friend DM list
     await scenario(lang, width, 'switch-to-personal', async (p) => {
       // Open org switcher menu
@@ -85,9 +146,13 @@ try {
       const channelSection = p.locator('[data-sec="channels"]');
       assert.equal(await channelSection.count(), 0, 'channels section hidden in personal space');
 
-      // Agents section should not be visible
+      // 에이전트 절: 개인 공간은 내 개인 에이전트만(2026-09-30) — 조직 크루(Fixture Agent)는 섞이지 않는다
       const agentSection = p.locator('[data-sec="mine"]');
-      assert.equal(await agentSection.count(), 0, 'agents section hidden in personal space');
+      if (width < 768) assert.equal(await agentSection.isVisible(), false, '폰 채팅 탭에는 에이전트 절이 보이지 않는다(홈 탭에서 본다 — personal-agents 시나리오)');
+      else {
+        await agentSection.waitFor(); const agentText = await agentSection.innerText();
+        assert.ok(agentText.includes('My Agent') && !agentText.includes('Fixture Agent'), 'personal agents only in personal space: ' + agentText);
+      }
 
       // People section should not be visible
       const peopleSection = p.locator('[data-sec="people"]');
