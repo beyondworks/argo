@@ -75,9 +75,11 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 .vw-form p { margin: 0; }
 .vw-form .input { width: 100%; }
 
-/* 일정 페이지 도구 — 보기별 묶기·필터·정렬 */
-.vw-tools { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.vw-tools .input { width: auto; max-width: 150px; }
+/* 드롭다운 — `보기: 월 ⌄`. 이름은 흐리게, 고른 값은 진하게 */
+.vw-dd { gap: 4px; padding: 0 7px 0 10px; }
+.vw-dd-k { color: var(--fg-3); font-weight: 450; }
+.vw-dd .ico { color: var(--fg-3); margin-left: 1px; }
+.vw-dd.on { background: var(--secondary); }
 .cal-body.v-board { padding: 0; }
 .cal-emb { --ev: var(--fg-3); }
 .cal-emb .cal-month { min-height: 0; grid-template-rows: auto repeat(6, minmax(40px, auto)); }

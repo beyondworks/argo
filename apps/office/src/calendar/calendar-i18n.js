@@ -2,7 +2,6 @@
 export const CAL_DICT = {
   'cal.rail': ['캘린더 목록', 'Calendars panel'], 'cal.create': ['만들기', 'Create'], 'cal.today': ['오늘', 'Today'], 'cal.prev': ['이전', 'Previous'], 'cal.next': ['다음', 'Next'],
   'cal.prevMonth': ['이전 달', 'Previous month'], 'cal.nextMonth': ['다음 달', 'Next month'], 'cal.loading': ['불러오는 중…', 'Loading…'],
-  'cal.view': ['보기', 'View'],
   'cal.colorBy': ['색', 'Color'], 'cal.c.category': ['분류', 'Category'], 'cal.c.person': ['사람', 'Person'], 'cal.c.agent': ['에이전트', 'Agent'],
   'cal.calendars': ['캘린더', 'Calendars'], 'cal.overlays': ['함께 보기', 'Also show'], 'cal.cal.me': ['내 일정', 'My calendar'], 'cal.cal.org': ['조직 일정', 'Team calendar'], 'cal.cal.mine': ['내 일정(주인·참석)', 'Mine (owner or attending)'],
   'cal.tasks': ['할 일 기한', 'To-do due dates'], 'cal.holidays': ['공휴일', 'Holidays'],

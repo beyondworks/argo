@@ -1,8 +1,9 @@
 // 일정 데이터 — 서버 office_event_list / office_event_write 함수로만(표를 직접 읽는 길은 없다). 명세: 유건 9/30.
 // 부하: 달력을 열거나 읽기 창(한 달 격자·목록 31일·거래처 360일)이 바뀔 때 1회 읽기, 저장·삭제 때만 쓰기. 폴링 없음.
+// 연속 월 보기는 스크롤이 멈춘 뒤 보이는 주의 달 격자 창(보통 2~3개)만 읽는다 — 지나간 달은 캐시에서 꺼내 다시 받지 않는다.
 // 읽은 창은 화면 메모리에 두고 다시 쓰며(같은 창을 다시 받지 않음), 쓰기 뒤에만 비우고 지금 창을 한 번 다시 읽는다.
 // 예시 모드(서버 설정 없음)는 아래 예시 일정을 화면 메모리에서 읽고 쓴다(새로고침하면 처음으로).
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { configured } from '../core/supabase.js';
 import { rpc } from '../core/tasks.js';
 import { kstStart } from './model.js';
@@ -38,6 +39,24 @@ export function useEvents(from, to) {
     return () => { const n = active.get(key) - 1; if (n > 0) active.set(key, n); else active.delete(key); };
   }, [key]);
   return cache.get(key) ?? { loading: true };
+}
+
+/** 여러 창(연속 월 보기) — fetchWins: 읽어 둘 창(스크롤이 멈춘 뒤 보이는 주의 창), showWins: 그릴 창(이미 읽은 것만 꺼낸다, 새로 읽지 않음).
+ *  창 단위·키가 useEvents와 같아 같은 기간은 한 번만 읽는다. 반환 { events(창을 합쳐 id로 한 번씩), loading, error } */
+export function useEventWindows(fetchWins, showWins) {
+  const v = useSyncExternalStore(subscribe, () => version, () => version);
+  const keyOf = ([f, t]) => `${f}|${t}`;
+  const fkeys = fetchWins.map(keyOf), fsig = fkeys.join(','), ssig = showWins.map(keyOf).join(',');
+  useEffect(() => {
+    for (const k of fkeys) { active.set(k, (active.get(k) ?? 0) + 1); if (!cache.has(k)) fetchWindow(k, ...k.split('|')); }
+    return () => { for (const k of fkeys) { const n = active.get(k) - 1; if (n > 0) active.set(k, n); else active.delete(k); } };
+  }, [fsig]);
+  return useMemo(() => {
+    const byId = new Map();
+    for (const k of ssig.split(',')) for (const e of cache.get(k)?.events ?? []) byId.set(e.id, e);
+    const wins = fkeys.map((k) => cache.get(k));
+    return { events: [...byId.values()], loading: wins.some((w) => !w || w.loading), error: wins.find((w) => w?.error)?.error ?? null };
+  }, [ssig, fsig, v]);
 }
 
 /** 쓰기 — 실패하면 사전 키를 담은 오류를 던진다. 성공하면 읽은 창을 비우고 보고 있는 창만 다시 읽는다 */

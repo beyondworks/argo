@@ -129,3 +129,33 @@ test('공휴일 이름 번역', async () => {
   const { KR_HOLIDAYS } = await import('../src/calendar/holidays-kr.js');
   for (const [, name] of KR_HOLIDAYS) assert.doesNotMatch(holidayName(name, en), /[가-힣]/, name); // 지금 표의 이름은 전부 영어가 있다
 });
+
+// 연속 월 보기 — 주 높이·제목 달·읽기 창이 틀리면 스크롤 중 제목이 엉뚱하거나 일정 칩이 빠진다
+import { weekFit, dominantMonth, weekWindows } from '../src/calendar/model.js';
+test('weekFit: 홀수 주 수로 보이는 높이를 채운다', () => {
+  assert.deepEqual(weekFit(770, 118), { n: 5, h: 154 });
+  assert.deepEqual(weekFit(600, 58), { n: 9, h: 66 });
+  assert.equal(weekFit(100, 118).n, 1);
+  assert.ok(weekFit(0, 118).h >= 24);
+});
+test('dominantMonth: 보이는 날짜가 가장 많은 달, 동점이면 앞 달', () => {
+  // 9/14 주부터 5주: 9월 17일, 10월 18일
+  assert.equal(dominantMonth('2026-09-14', 0, 100, 500), '2026-10');
+  // 9/14 주부터 3주(9/14~10/4): 9월 17일, 10월 4일
+  assert.equal(dominantMonth('2026-09-14', 0, 100, 300), '2026-09');
+  // 반 주씩 걸친 위치도 센다
+  assert.equal(dominantMonth('2026-08-31', 50, 100, 500), '2026-09');
+  // 2026-06-29 주: 6월 2일·7월 5일 — 한 주만 보이면 7월
+  assert.equal(dominantMonth('2026-06-29', 0, 100, 100), '2026-07');
+});
+test('weekWindows: 각 주의 월~일이 적어도 한 창 안에 든다', () => {
+  const base = '2025-12-29';
+  const wins = weekWindows(base, 0, 60);
+  for (let i = 0; i <= 60; i++) {
+    const mon = addDays(base, i * 7), sun = addDays(mon, 6);
+    assert.ok(wins.some(([f, t]) => f <= mon && sun < t), mon);
+  }
+  // 같은 달은 한 창만(같은 기간을 두 번 읽지 않는다)
+  assert.equal(new Set(wins.map((w) => w.join())).size, wins.length);
+  assert.deepEqual(weekWindows(base, 0, 0), [windowOf('month', '2025-12-01')]);
+});
