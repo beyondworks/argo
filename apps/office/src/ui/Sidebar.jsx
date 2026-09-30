@@ -8,15 +8,15 @@ import { Face } from './Face.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link, navigate } from '../core/router.jsx';
 import { t, useLang } from '../core/i18n.js';
-import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav, favOf } from '../core/store.js';
-import { readNav } from '../core/nav-model.js';
+import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav, favOf, saveFav } from '../core/store.js';
+import { readNav, routeInfo, routeLabelKey, routeIcon, favKey, NAV_ICON } from '../core/nav-model.js';
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
 import { groupCrews, isMine } from '../core/crew-list.js';
 import { showToast } from './Overlay.jsx';
 import { SPACES, ME, canManage, getMode } from '../core/session.js';
-import { restore, persist } from '../core/save.js';
+import { restore, persist, scopedStorageKey } from '../core/save.js';
 
 const ACCEPTS = ['mail', 'page', 'file', 'record'];
 
@@ -165,8 +165,8 @@ function CrewSection({ space, crews, handle }) {
       {groups.map((g) => {
         const mode = g.key === 'pinned' ? 'pin' : 'sort', order = g.crews.map((c) => c.id), label = t(`crew.group.${g.key}`);
         return <div key={g.key} className="crew-group" role="group" aria-label={label}>
-          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key]} onClick={() => toggle(g.key)}><Icon name={fold[g.key] ? 'chevron' : 'caret'} size={12} /><span>{label}</span><small>{g.crews.length}</small></button>
-          {!fold[g.key] && <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
+          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><span>{label}</span><small>{g.crews.length}</small></button>
+          {(!fold[g.key] || query) && <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
             {g.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}`} order={order} mode={mode} movable={g.movable} />)}
           </SortableContext>}
         </div>;
@@ -176,34 +176,37 @@ function CrewSection({ space, crews, handle }) {
   </>;
 }
 
-/** 즐겨찾기 한 줄 — 끌어서 순서, 우클릭은 그 페이지·에이전트의 메뉴(맨 위에 '즐겨찾기에서 빼기'가 있다) */
+/** 즐겨찾기 한 줄 — 끌어서 순서, 우클릭은 그 페이지·에이전트의 메뉴(맨 위에 '즐겨찾기에서 빼기'가 있다). 화면(route)은 이름을 메뉴 사전으로 만들고 공간 이름을 작게 */
 function FavRow({ fav, space, path }) {
-  const key = `${fav.kind}:${fav.id}`;
+  const key = favKey(fav);
   const page = useStore((s) => (fav.kind === 'page' ? s.pages.find((p) => p.id === fav.id) : null));
   const crew = useStore((s) => (fav.kind === 'crew' ? s.crews.find((c) => c.id === fav.id) : null));
-  const label = page ? page.title || t('page.untitled') : crew?.name;
+  const r = fav.kind === 'route' && routeInfo(fav.id), sp = r && SPACES.find((x) => x.key === r.space);
+  const label = page ? page.title || t('page.untitled') : r ? t(routeLabelKey(r)) : crew?.name;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `fav:${key}`, data: { kind: 'fav', id: key, group: 'fav', label } });
   const { onTouchStart, ...mouse } = listeners ?? {}; // 터치는 길게 누르기 = 메뉴
-  const menu = menuProps(() => (page ? pageMenu(page) : crewMenu(crew, space)));
-  const to = page && `${baseOf(page.space)}/p/${page.id}`;
-  const inner = page ? <Icon name={page.restricted ? 'lock' : 'doc'} /> : <Face id={crew.id} size={18} />;
+  const menu = menuProps(() => (page ? pageMenu(page) : crew ? crewMenu(crew, space) : [{ label: t('fav.remove'), icon: 'star', run: () => { if (saveFav({ remove: key }) === false) showToast(t('crew.saveFail')); } }]));
+  const to = page ? `${baseOf(page.space)}/p/${page.id}` : r && fav.id;
+  const inner = page ? <Icon name={page.restricted ? 'lock' : 'doc'} /> : r ? <Icon name={routeIcon(r)} /> : <Face id={crew.id} size={18} />;
   return <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={isDragging ? 'dragging' : ''} {...attributes} {...mergeHandlers(mouse, menu)} role="none">
-    {page ? <Link to={to} className={`nav-item${path === to ? ' active' : ''}`} aria-current={path === to ? 'page' : undefined} draggable={false}>{inner}<span className="nav-label">{label}</span></Link>
+    {to ? <Link to={to} className={`nav-item${path === to ? ' active' : ''}`} aria-current={path === to ? 'page' : undefined} draggable={false}>{inner}<span className="nav-label">{label}</span>{sp && <small className="fav-space">{sp.kind === 'me' ? t('space.me') : sp.name}</small>}</Link>
       : <button type="button" className="nav-item" onClick={() => setUi({ assign: { space, crew: crew.id, items: [] } })}>{inner}<span className="nav-label">{label}</span></button>}
   </div>;
 }
 
-/** 좌측 패널 맨 위 즐겨찾기(유건 9/30 #7) — 모든 공간에서 같은 목록(계정에 저장). 비어 있으면 칸을 싣지 않는다 */
+/** 좌측 패널 맨 위 즐겨찾기(유건 9/30 #7, 10/1 "안 보인다") — 모든 공간에서 같은 목록(계정에 저장). 비어 있어도 칸과 안내 한 줄을 보이고,
+ *  제목을 눌러 접는다(접힘은 사람마다 이 기기에) */
+const FAV_FOLD = 'argo-office-fav-fold';
 function FavSection({ space, path }) {
   const layouts = useStore((s) => s.layouts), pages = useStore((s) => s.pages), crews = useStore((s) => s.crews);
   const favs = useMemo(() => favOf({ layouts, pages, crews }), [layouts, pages, crews]);
-  if (!favs.length) return null;
-  const keys = favs.map((x) => `fav:${x.kind}:${x.id}`);
+  const [fold, setFold] = useState(() => restore(scopedStorageKey(FAV_FOLD), false));
+  const flip = () => setFold((f) => { persist(scopedStorageKey(FAV_FOLD), !f); return !f; });
   return <div className="side-sec">
-    <div className="nav-section"><span>{t('fav.title')}</span></div>
-    <div className="nav-group"><SortableContext items={keys} strategy={verticalListSortingStrategy}>
-      {favs.map((x) => <FavRow key={`${x.kind}:${x.id}`} fav={x} space={space} path={path} />)}
-    </SortableContext></div>
+    <div className="nav-section"><button type="button" className="sec-fold" aria-expanded={!fold} onClick={flip}>{t('fav.title')}<Icon name={fold ? 'chevron' : 'caret'} size={12} /></button></div>
+    {!fold && (favs.length ? <div className="nav-group"><SortableContext items={favs.map((x) => `fav:${favKey(x)}`)} strategy={verticalListSortingStrategy}>
+      {favs.map((x) => <FavRow key={favKey(x)} fav={x} space={space} path={path} />)}
+    </SortableContext></div> : <p className="crew-empty">{t('fav.empty')}</p>)}
   </div>;
 }
 
@@ -222,20 +225,20 @@ export function Sidebar({ space, path }) {
   const kind = isMe ? 'me' : 'org';
   const nav = readNav(useStore((s) => s.layouts['nav:me']?.items), kind);
   const DEF = {
-    home: { to: base, icon: 'home', label: t('nav.home'), active: at(base) },
-    calendar: { to: `${base}/calendar`, icon: 'calendar', label: t('nav.calendar'), active: at(`${base}/calendar`) },
-    business: { to: `${base}/business`, icon: 'chart', label: t('nav.business'), active: (path === `${base}/business` || path.startsWith(`${base}/business/`)) && !path.startsWith(`${base}/business/library`) },
-    mail: { to: '/me/mail', icon: 'mail', label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
-    work: { to: `${base}/work`, icon: 'run', label: t('nav.work'), active: at(`${base}/work`) },
-    approvals: { to: `${base}/approvals`, icon: 'stamp', label: t('nav.approvals'), count: pendingHere, active: at(`${base}/approvals`) },
-    decisions: { to: `${base}/decisions`, icon: 'check', label: t('nav.decisions'), active: at(`${base}/decisions`) },
-    outputs: { to: `${base}/outputs`, icon: 'file', label: t('nav.outputs'), active: at(`${base}/outputs`) },
-    journal: { to: `${base}/journal`, icon: 'book', label: t('nav.journal'), active: at(`${base}/journal`) },
-    docs: { to: `${base}/docs`, icon: 'doc', label: t('nav.docs'), active: at(`${base}/docs`) },
-    perf: { to: `${base}/perf`, icon: 'target', label: t('nav.perf'), active: at(`${base}/perf`) },
-    shared: { to: '/me/shared', icon: 'share', label: t('nav.shared'), active: at('/me/shared') },
-    knowhow: { to: `${base}/knowhow`, icon: 'book', label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
-    tools: { to: `${base}/tools`, icon: 'box', label: t('nav.tools'), active: at(`${base}/tools`) },
+    home: { to: base, icon: NAV_ICON.home, label: t('nav.home'), active: at(base) },
+    calendar: { to: `${base}/calendar`, icon: NAV_ICON.calendar, label: t('nav.calendar'), active: at(`${base}/calendar`) },
+    business: { to: `${base}/business`, icon: NAV_ICON.business, label: t('nav.business'), active: (path === `${base}/business` || path.startsWith(`${base}/business/`)) && !path.startsWith(`${base}/business/library`) },
+    mail: { to: '/me/mail', icon: NAV_ICON.mail, label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
+    work: { to: `${base}/work`, icon: NAV_ICON.work, label: t('nav.work'), active: at(`${base}/work`) },
+    approvals: { to: `${base}/approvals`, icon: NAV_ICON.approvals, label: t('nav.approvals'), count: pendingHere, active: at(`${base}/approvals`) },
+    decisions: { to: `${base}/decisions`, icon: NAV_ICON.decisions, label: t('nav.decisions'), active: at(`${base}/decisions`) },
+    outputs: { to: `${base}/outputs`, icon: NAV_ICON.outputs, label: t('nav.outputs'), active: at(`${base}/outputs`) },
+    journal: { to: `${base}/journal`, icon: NAV_ICON.journal, label: t('nav.journal'), active: at(`${base}/journal`) },
+    docs: { to: `${base}/docs`, icon: NAV_ICON.docs, label: t('nav.docs'), active: at(`${base}/docs`) },
+    perf: { to: `${base}/perf`, icon: NAV_ICON.perf, label: t('nav.perf'), active: at(`${base}/perf`) },
+    shared: { to: '/me/shared', icon: NAV_ICON.shared, label: t('nav.shared'), active: at('/me/shared') },
+    knowhow: { to: `${base}/knowhow`, icon: NAV_ICON.knowhow, label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
+    tools: { to: `${base}/tools`, icon: NAV_ICON.tools, label: t('nav.tools'), active: at(`${base}/tools`) },
   };
   const showHidden = (e) => openMenu(e, [{ heading: t('nav.hiddenHead') }, ...nav.hidden.map((id) => ({ label: DEF[id].label, icon: DEF[id].icon, run: () => { if (saveNav({ show: id }, kind) === false) saveFail(); } }))], { anchor: e.currentTarget });
   const sections = {

@@ -3,15 +3,21 @@
 import { t, registerDict } from '../core/i18n.js';
 import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
+import { isFav, toggleFav, getState } from '../core/store.js';
+import { favTarget } from '../core/nav-model.js';
+import { showToast } from '../ui/Overlay.jsx';
 import { VIEWS_DICT } from './views-i18n.js';
 
 registerDict(VIEWS_DICT);
 export function viewCommands(space) {
   if (!space || space === 'shared') return [];
   const cal = `${baseOf(space)}/calendar`;
+  // 지금 화면을 즐겨찾기에 넣고 빼기(상단 ☆와 같은 대상) — 템플릿 페이지는 우클릭 메뉴처럼 뺀다
+  const fav = favTarget(location.pathname), tpl = fav?.kind === 'page' && getState().pages.find((p) => p.id === fav.id)?.template;
   return [
+    fav && !tpl && { id: 'fav', label: t(isFav(fav.kind, fav.id) ? 'fav.remove' : 'fav.add'), icon: 'star', run: () => { if (toggleFav(fav.kind, fav.id) === false) showToast(t('crew.saveFail')); } },
     { id: 'newEvent', label: t('views.cmd.newEvent'), icon: 'calendar', run: () => navigate(`${cal}?new=event`) },
     { id: 'newTask', label: t('views.cmd.newTask'), icon: 'check', run: () => navigate(`${cal}?new=task`) },
     ...['list', 'card', 'kanban', 'table', 'week', 'month'].map((v) => ({ id: `view-${v}`, label: t('views.cmd.view', { name: t(`views.v.${v}`) }), icon: 'layout', run: () => navigate(`${cal}?view=${v}`) })),
-  ];
+  ].filter(Boolean);
 }

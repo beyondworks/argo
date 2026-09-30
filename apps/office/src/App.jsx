@@ -13,7 +13,8 @@ import { Home } from './pages/Home.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
 import { useSaveStatus, useLegacyRecovery } from './core/save.js';
-import { useStore, reorderPage, createPage, getState, saveNav, saveFav } from './core/store.js';
+import { useStore, reorderPage, createPage, getState, saveNav, saveFav, favOf, toggleFav } from './core/store.js';
+import { VIEWS, favTarget } from './core/nav-model.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
 import { isFullWidth, onWidth, toggleWidth } from './core/theme.js';
@@ -67,8 +68,7 @@ function route(path) {
   if ((m = match('/p/:id', rest))) return { space, view: 'page', id: m.id };
   if (space === 'me' && rest === '/mail/connect') return { space, view: 'mailConnect' };             // Google 권한 승인 뒤 돌아오는 자리
   if (space === 'me' && (m = match('/mail/:id', rest))) return { space, view: 'mail', id: m.id };
-  const simple = { '/calendar': 'calendar', '/mail': 'mail', '/shared': 'shared', '/work': 'work', '/approvals': 'approvals', '/decisions': 'decisions', '/outputs': 'outputs', '/journal': 'journal', '/docs': 'docs', '/perf': 'perf', '/knowhow': 'knowhow', '/tools': 'tools', '/trash': 'trash', '/settings': 'settings' };
-  return simple[rest] ? { space, view: simple[rest] } : { redirect: baseOf(space) };
+  return VIEWS.includes(rest.slice(1)) ? { space, view: rest.slice(1) } : { redirect: baseOf(space) };
 }
 
 function SaveStatus() {
@@ -84,10 +84,19 @@ function WidthToggle() {
   return <button type="button" className="icon-btn width-toggle" aria-pressed={full} aria-label={label} title={label} onClick={toggleWidth}><Icon name="width" /></button>;
 }
 
-function Header({ r, page }) {
+/** 지금 화면을 즐겨찾기에 넣고 빼기(유건 10/1 "좌측 패널에 즐겨찾는 페이지") — 위키 페이지는 페이지로, 그 밖의 화면은 주소로. 템플릿·메일 한 통처럼 대상이 없으면 숨긴다 */
+function FavToggle({ path, page }) {
+  const target = page?.template ? null : favTarget(path);
+  const on = useStore((s) => !!target && favOf(s).some((x) => x.kind === target.kind && x.id === target.id));
+  if (!target) return null;
+  const label = t(on ? 'fav.remove' : 'fav.add');
+  return <button type="button" className="icon-btn fav-toggle" aria-pressed={on} aria-label={label} title={label} onClick={() => { if (toggleFav(target.kind, target.id) === false) showToast(t('crew.saveFail')); }}><Icon name="star" /></button>;
+}
+
+function Header({ r, page, path }) {
   const mode = useSession();
   const sp = SPACES.find((s) => s.key === r.space);
-  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t({ calendar: 'nav.calendar', business: 'nav.business', home: 'nav.home', mail: 'nav.mail', mailConnect: 'nav.mail', shared: 'nav.shared', work: 'nav.work', approvals: 'nav.approvals', decisions: 'nav.decisions', outputs: 'nav.outputs', journal: 'nav.journal', docs: 'nav.docs', perf: 'nav.perf', knowhow: 'nav.knowhow', tools: 'nav.tools', trash: 'nav.trash', settings: 'nav.settings' }[r.view]);
+  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t(`nav.${r.view === 'mailConnect' ? 'mail' : r.view}`);
   return (
     <header className="topbar">
       <button type="button" className="icon-btn nav-toggle" aria-label={t('nav.open')} onClick={() => setUi({ navOpen: true })}><Icon name="menu" /></button>
@@ -96,6 +105,7 @@ function Header({ r, page }) {
       <div className="top-right">
         {mode === 'sample' && <span className="draft-badge">{t('draft.badge')}</span>}
         <SaveStatus />
+        <FavToggle path={path} page={page} />
         {!['settings', 'trash', 'mail', 'mailConnect'].includes(r.view) && r.tab !== 'library' && <WidthToggle />}
         {r.view === 'page' && page && <>
           {mode === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
@@ -203,7 +213,7 @@ export default function App() {
         <Sidebar space={r.space} path={path} />
         <div className="nav-scrim" onClick={() => setUi({ navOpen: false })} />
         <main className="main">
-          <Header r={r} page={page} />
+          <Header r={r} page={page} path={path} />
           <div className={`content view-${r.view}`}><LegacyRecoveryNotice /><Suspense fallback={<div className="boot" aria-busy="true" />}>{views[r.view]}</Suspense></div>
         </main>
       </div>
