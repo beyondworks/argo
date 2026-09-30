@@ -100,7 +100,8 @@ export const supabase = {
     if (name === 'msgr_unread') return [];
     if (name === 'msgr_joinable_orgs') return [];
     if (name === 'msgr_my_deleted_orgs') return [];
-    if (name === 'msgr_friend_request') return 'friend';
+    if (name === 'msgr_find_user') return [{ user_id: 'user-newbie', display_name: 'New Person', handle: 'newbie', relation: 'none' }]; // 친구 추가 팝업(2026-09-30)
+    if (name === 'msgr_friend_request') return args?.target === 'user-newbie' ? 'sent' : 'friend';
     if (name === 'msgr_dm_latest') return [];
     if (name === 'msgr_push_badge_resync') return null;
     return [];

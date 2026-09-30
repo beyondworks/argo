@@ -54,7 +54,7 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /payload\.id && isPhoneRef\.current && dmIdsRef\.current\.has/, '구독 핸들러는 폰 여부를 ref로 본다(재검수 L-2)');
   assert.match(src, /dragging' : ''\}`\} onDragStart=\{dragStart\(c\)\}[^\n]*draggable=\{!isPhone\}/, 'DM 행은 draggable={!isPhone} 하나만(맨 draggable 중복 없음 — 빌드 경고)');
   assert.match(src, /function DmPeekSheet\(/, '미리보기 시트');
-  assert.match(src, /function DmGroupSheet\(/, '새 그룹 대화 시트'); assert.match(src, /const createGroupDm = async \(picks\) =>/, '그룹 생성'); assert.match(src, /isPersonal && page === 'home' \? \(setPage\('settings'\), setSettingsTab\('friends'\)\) : page === 'dm' \? setDmGroup\(true\) : setNewCh\(\{ name: '', kind: newChKind \}\)/, 'DM 탭의 +는 그룹 대화 — 개인 공간도 같다(유건 2026-09-17), 개인 홈 +는 친구 추가 — 행동은 personal-space.browser.mjs');
+  assert.match(src, /function DmGroupSheet\(/, '새 그룹 대화 시트'); assert.match(src, /const createGroupDm = async \(picks\) =>/, '그룹 생성'); assert.match(src, /isPersonal && page === 'home' \? setFriendAdd\(true\) : page === 'dm' \? setDmGroup\(true\) : setNewCh\(\{ name: '', kind: newChKind \}\)/, 'DM 탭의 +는 그룹 대화 — 개인 공간도 같다(유건 2026-09-17), 개인 홈 +는 친구 추가 팝업(유건 2026-09-30 — 설정으로 보내지 않는다) — 행동은 personal-space.browser.mjs');
   assert.doesNotMatch(src, /useSwipeTabs/, '좌우로 밀어 탭(거르개·설정 탭) 옮기기는 뺐다 — 줄 밀기·밀어서 답장과 겹친다(유건 2026-09-29, 종전 2026-09-15 DM 거르개 스와이프)');
   assert.doesNotMatch(src, /useSwipeTabs\(ROOT_ORDER/, '하단 탭 스와이프는 없앤다');
   assert.match(src, /\{\.\.\.\(isPhone \? rowLongPress\(c, items, \{ onDrop: pinned\.has\(c\.id\) \? reorderFav : reorderChannels \}\) : \{\}\)\}/, '폰 채널 행 길게 누르기 = 점 세 개 메뉴, 움직이면 끌기(즐겨찾기면 즐겨찾기 순서, 아니면 채널 순서 — 유건 2026-09-29)');

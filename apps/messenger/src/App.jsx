@@ -1326,6 +1326,7 @@ function Shell({ session }) {
     const n = ++dmAnimSeq.current; setDmAnim(`${dir}-${n % 2 ? 'a' : 'b'}`); clearTimeout(dmAnimTimer.current); dmAnimTimer.current = setTimeout(() => setDmAnim(null), 260); };
   const [lastMsg, setLastMsg] = useState({}); // channel_id → { body, mine, at } — DM 목록 한 줄 미리보기
   const [dmPeek, setDmPeek] = useState(null); // 길게 눌러 '대화 미리보기' 시트
+  const [friendAdd, setFriendAdd] = useState(false); // 개인 공간 친구 추가 팝업(유건 2026-09-30 — 설정으로 보내지 않는다)
   const [dmGroup, setDmGroup] = useState(false); // 폰 DM 탭 + → 새 그룹 대화 시트(유건 2026-09-15: 그룹 탭은 있는데 맺는 기능이 없다)
   const lpStates = useRef({}); // 폰 레일 행 길게 누르기 상태(행별 — 채널·DM·즐겨찾기 대상)
   useEffect(() => () => { for (const st of Object.values(lpStates.current)) if (st.timer) clearTimeout(st.timer); clearTimeout(animTimer.current); clearTimeout(dmAnimTimer.current); }, []); // 언마운트 시 타이머 해제(검수 L-5)
@@ -1942,7 +1943,7 @@ function Shell({ session }) {
           <div className="msgr-list">{dmList.map(dmRow)}</div>
           {!dmList.length && <div className="msgr-hint">{t('phone.dm.empty')}</div>}
         </RailSection>)}
-        {isPersonal && !dmTab && (<RailSection id="friends" label={`${t('rail.friends')} · ${members.length}`} forceOpen>{/* 채팅 → 친구 순서(유건 2026-09-18 — 대화가 먼저, 조직의 채널/채팅 → 멤버와 같은 순서). 개인 공간 홈 = 친구 목록, 채팅 탭 = 채팅 목록(카톡식, 유건 2026-09-17). 개인 공간의 members는 수락된 친구다(loadPersonal) */}
+        {isPersonal && !dmTab && (<RailSection id="friends" label={`${t('rail.friends')} · ${members.length}`} forceOpen right={<button type="button" className="btn" onClick={() => setFriendAdd(true)} title={t('friends.add')} aria-label={t('friends.add')}><I name="plus" size={14} /></button>}>{/* 채팅 → 친구 순서(유건 2026-09-18 — 대화가 먼저, 조직의 채널/채팅 → 멤버와 같은 순서). 개인 공간 홈 = 친구 목록, 채팅 탭 = 채팅 목록(카톡식, 유건 2026-09-17). 개인 공간의 members는 수락된 친구다(loadPersonal) */}
           <div className="msgr-list dir">
             {[...members].sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''))).map((m) => (
               <button key={m.user_id} type="button" className="item" onClick={() => { openPersonalDm(m.user_id); setRail(false); }} title={t('friends.dm')}>
@@ -2026,14 +2027,16 @@ function Shell({ session }) {
         ) : channel ? (
           <Channel key={chId} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
-          <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => { setPage('settings'); setSettingsTab('friends'); }}><I name="at" size={13} />{t('friends.title')}</button></div></div></>
+          <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
           <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? orgInvite : null} askAdmin={askAdmin} browse={previewChannels.length ? () => { setRail(true); openBrowse(); } : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} joinWithCode={joinWithCode} onboard={onboard} />
         )}
         </PageBoundary>
       </main>
-      {isPhone && (page === 'dm' || page === 'home') && org && !orgBlocked && <button type="button" className="msgr-fab" onClick={() => isPersonal && page === 'home' ? (setPage('settings'), setSettingsTab('friends')) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: newChKind })} aria-label={t(page === 'dm' ? 'dm.group.new' : isPersonal ? 'friends.add' : 'ch.new')}><I name="plus" size={22} /></button>}
-      {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setPage('settings'); setSettingsTab('friends'); setRail(false); }} members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={railVisible} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
+      {isPhone && (page === 'dm' || page === 'home') && org && !orgBlocked && <button type="button" className="msgr-fab" onClick={() => isPersonal && page === 'home' ? setFriendAdd(true) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: newChKind })} aria-label={t(page === 'dm' ? 'dm.group.new' : isPersonal ? 'friends.add' : 'ch.new')}><I name="plus" size={22} /></button>}
+      {friendAdd && <FriendAddSheet onClose={() => setFriendAdd(false)} uid={uid} friends={friends} members={isPersonal ? [] : members} onChanged={onFriendsChanged}
+        onDm={(id) => { setFriendAdd(false); openDm('user', id); }} onPersonalDm={(id) => { setFriendAdd(false); openPersonalDm(id); setRail(false); }} onNote={setNote} onError={setErr} />}
+      {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setFriendAdd(true); }} members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={railVisible} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
       {isPhone && <PhoneTabs personal={isPersonal} page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
     </div>
     </SafetyCtx.Provider></AvatarCtx.Provider>
@@ -2634,12 +2637,9 @@ function ProfileCard({ uid, onNote, onError, onAvatar }) {
 }
 
 /* ─── 친구(디스코드·슬랙·텔레그램식): 이메일(정확 일치, 상대가 허용) 또는 아이디로 찾아 요청 → 수락. 판정은 전부 서버 RPC(msgr_find_user·msgr_friend_*). ─── */
-function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onNote, onError, isPersonal = false }) {
-  const { t, lang } = useT();
-  const { mutedCrewIds, unmuteCrew } = useContext(SafetyCtx);
-  const [mutedCrews, setMutedCrews] = useState([]);
-  const loadMutedCrews = useCallback(async () => { try { setMutedCrews(await q(supabase.rpc('msgr_my_muted_crews')) ?? []); } catch {} }, []);
-  useEffect(() => { loadMutedCrews(); }, [uid, mutedCrewIds.size, loadMutedCrews]);
+/** 친구 찾기 — 이메일·아이디로 찾고 요청·수락·대화 열기. 설정 > 친구와 개인 공간의 친구 추가 팝업이 같이 쓴다(유건 2026-09-30: 설정으로 보내지 말고 팝업에서 바로). */
+function FriendFinder({ uid, friends, members, onChanged, onDm, onPersonalDm, onNote, onError, onBlock = null, autoFocus = false }) {
+  const { t } = useT();
   const [qs, setQs] = useState(''); const [res, setRes] = useState(null); const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false); const [searchError, setSearchError] = useState('');
   const searchRequest = useRef(0);
@@ -2655,6 +2655,56 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
   };
   // ok는 고정 문구이거나, 서버 반환값(예: 같은 조직이라 바로 'friend'가 된 경우와 'sent'로 대기한 경우)에 따라 문구를 고르는 함수.
   const call = async (fn, args, ok) => { setBusy(true); try { const result = await q(supabase.rpc(fn, args)); onNote(typeof ok === 'function' ? ok(result) : ok); await onChanged?.(); if (res) await find(); } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); } finally { setBusy(false); } };
+  const nameOf = (f) => members.find((m) => m.user_id === f.user_id)?.display_name || f.display_name || f.handle || f.user_id.slice(0, 8);
+  const relOf = (r) => { const f = friends.find((x) => x.user_id === r.user_id); return !f ? (r.relation === 'blocked' ? 'blocked' : 'none') : f.status === 'accepted' ? 'friend' : f.status === 'pending' ? (f.requested_by === uid ? 'sent' : 'received') : r.relation; }; // 친구 목록이 갱신되면 요청 거절·친구 해제도 검색 결과에 반영한다.
+  return (<>
+    <form className="row msgr-friend-search" onSubmit={(e) => { e.preventDefault(); if (!busy && !searching) find(); }}><input className="msgr-input sm" value={qs} disabled={busy} onChange={(e) => { searchRequest.current += 1; setQs(e.target.value); setRes(null); setSearchError(''); setSearching(false); }} placeholder={t('friends.find.ph')} aria-label={t('friends.find.ph')} autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus={autoFocus} /><button type="submit" className="btn sm" disabled={busy || searching || qs.trim().replace(/^@/, '').length < 3}>{t('friends.find')}</button></form>
+    {searching && <p className="note" role="status">{t('ui.loading')}</p>}
+    {searchError && <p className="note danger" role="alert">{friendlyErr(searchError, t)}</p>}
+    {res && (<div className="msgr-rows msgr-friend-results" aria-live="polite">
+      {!res.length && <p className="empty">{t('friends.find.none')}</p>}
+      {res.map((r) => { const inOrg = members.some((m) => m.user_id === r.user_id && (!m.expires_at || Date.parse(m.expires_at) > Date.now())); const relation = relOf(r); return (
+        <div key={r.user_id} className="row msgr-friend-result">
+          <Av name={nameOf(r)} size="sm" userId={r.user_id} />
+          <div className="msgr-friend-person"><strong>{nameOf(r)}</strong>{r.handle && <span className="sub">@{r.handle}</span>}{inOrg && <span className="msgr-klabel">{t('friends.state.member')}</span>}</div>
+          <div className="msgr-friend-actions">
+            {relation === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, (result) => result === 'friend' ? t('friends.accepted') : t('friends.sent'))}>{t('friends.request')}</button>}
+            {relation === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
+            {relation === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
+            {relation === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
+            {inOrg && relation !== 'blocked' && <button type="button" className="btn sm" disabled={busy} onClick={() => onDm?.(r.user_id)}><I name="at" size={13} />{t('ui.dm')}</button>}
+            {!inOrg && relation === 'friend' && onPersonalDm && <button type="button" className="btn sm" disabled={busy} onClick={() => onPersonalDm(r.user_id)}><I name="at" size={13} />{t('friends.dm')}</button>}
+            {onBlock && relation !== 'blocked' && <button type="button" className="btn sm ghost danger" disabled={busy} onClick={() => onBlock(r)}><I name="block" size={13} />{t('friends.block')}</button>}
+          </div>
+        </div>
+      ); })}
+    </div>)}
+  </>);
+}
+
+function FriendAddSheet({ onClose, ...finder }) {
+  const { t } = useT();
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup msgr-friendadd" role="dialog" aria-label={t('friends.add')}>
+        <header className="head"><strong>{t('friends.add')}</strong><span className="msgr-klabel">{t('friends.add.sub')}</span><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+        <div className="peek"><FriendFinder {...finder} autoFocus={!('ontouchstart' in window)} /></div>
+      </section>
+    </div>
+  );
+}
+
+function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onNote, onError, isPersonal = false }) {
+  const { t, lang } = useT();
+  const { mutedCrewIds, unmuteCrew } = useContext(SafetyCtx);
+  const [mutedCrews, setMutedCrews] = useState([]);
+  const loadMutedCrews = useCallback(async () => { try { setMutedCrews(await q(supabase.rpc('msgr_my_muted_crews')) ?? []); } catch {} }, []);
+  useEffect(() => { loadMutedCrews(); }, [uid, mutedCrewIds.size, loadMutedCrews]);
+  const [busy, setBusy] = useState(false);
+  // ok는 고정 문구이거나, 서버 반환값에 따라 문구를 고르는 함수.
+  const call = async (fn, args, ok) => { setBusy(true); try { const result = await q(supabase.rpc(fn, args)); onNote(typeof ok === 'function' ? ok(result) : ok); await onChanged?.(); } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); } finally { setBusy(false); } };
   const nameOf = (f) => members.find((m) => m.user_id === f.user_id)?.display_name || f.display_name || f.handle || f.user_id.slice(0, 8); // 같은 조직이면 조직 이름 우선(프로필 미설정 시 이메일 앞부분 대신)
   const received = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const [removing, setRemoving] = useState(null); // 친구 삭제 확인(S16) — 되돌리려면 다시 요청·수락이 필요하다
@@ -2698,7 +2748,6 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
     } catch (e) { onError(/msgr_link_invalid/.test(e.message) ? t('friends.link.invalid') : /blocked/.test(e.message) ? t('friends.link.blocked') : e.message); }
     finally { setBusy(false); }
   };
-  const relOf = (r) => { const f = friends.find((x) => x.user_id === r.user_id); return !f ? (r.relation === 'blocked' ? 'blocked' : 'none') : f.status === 'accepted' ? 'friend' : f.status === 'pending' ? (f.requested_by === uid ? 'sent' : 'received') : r.relation; }; // 친구 목록이 갱신되면 요청 거절·친구 해제도 검색 결과에 반영한다.
   return (
     <section className="msgr-setcard">
       <h2>{t('friends.title')} · {accepted.length}</h2><p>{t('friends.desc')}</p>
@@ -2715,27 +2764,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
           <button type="submit" className="btn sm" disabled={busy || !joinLink.trim()}>{t('friends.link.add')}</button>
         </form>
       </div>
-      <form className="row msgr-friend-search" onSubmit={(e) => { e.preventDefault(); if (!busy && !searching) find(); }}><input className="msgr-input sm" value={qs} disabled={busy} onChange={(e) => { searchRequest.current += 1; setQs(e.target.value); setRes(null); setSearchError(''); setSearching(false); }} placeholder={t('friends.find.ph')} aria-label={t('friends.find.ph')} autoCapitalize="none" autoCorrect="off" spellCheck={false} /><button type="submit" className="btn sm" disabled={busy || searching || qs.trim().replace(/^@/, '').length < 3}>{t('friends.find')}</button></form>
-      {searching && <p className="note" role="status">{t('ui.loading')}</p>}
-      {searchError && <p className="note danger" role="alert">{friendlyErr(searchError, t)}</p>}
-      {res && (<div className="msgr-rows msgr-friend-results" aria-live="polite">
-        {!res.length && <p className="empty">{t('friends.find.none')}</p>}
-        {res.map((r) => { const inOrg = members.some((m) => m.user_id === r.user_id && (!m.expires_at || Date.parse(m.expires_at) > Date.now())); const relation = relOf(r); return (
-          <div key={r.user_id} className="row msgr-friend-result">
-            <Av name={nameOf(r)} size="sm" userId={r.user_id} />
-            <div className="msgr-friend-person"><strong>{nameOf(r)}</strong>{r.handle && <span className="sub">@{r.handle}</span>}{inOrg && <span className="msgr-klabel">{t('friends.state.member')}</span>}</div>
-            <div className="msgr-friend-actions">
-              {relation === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, (result) => result === 'friend' ? t('friends.accepted') : t('friends.sent'))}>{t('friends.request')}</button>}
-              {relation === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
-              {relation === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
-              {relation === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
-              {inOrg && relation !== 'blocked' && <button type="button" className="btn sm" disabled={busy} onClick={() => onDm?.(r.user_id)}><I name="at" size={13} />{t('ui.dm')}</button>}
-              {!inOrg && relation === 'friend' && onPersonalDm && <button type="button" className="btn sm" disabled={busy} onClick={() => onPersonalDm(r.user_id)}><I name="at" size={13} />{t('friends.dm')}</button>}
-              {relation !== 'blocked' && <button type="button" className="btn sm ghost danger" disabled={busy} onClick={() => setConfirmBlock(r)}><I name="block" size={13} />{t('friends.block')}</button>}
-            </div>
-          </div>
-        ); })}
-      </div>)}
+      <FriendFinder uid={uid} friends={friends} members={members} onChanged={onChanged} onDm={onDm} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} onBlock={setConfirmBlock} />
       {received.length > 0 && (<><h3>{t('friends.received')} · {received.length}</h3><div className="msgr-rows">{received.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" userId={f.user_id} /><span className="name">{nameOf(f)}</span><span className="sub">{fmtWhen(f.created_at, lang)}</span>
         <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>
         <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: false }, t('friends.declined'))}>{t('friends.decline')}</button></div>)}</div></>)}
