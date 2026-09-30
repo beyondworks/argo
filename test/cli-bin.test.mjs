@@ -8,7 +8,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { applyCliEnv, publicSupabaseFromDotenv } from '../src/cli/env.mjs';
 
@@ -63,9 +63,9 @@ test('argo status·chat — 로그인 없으면 안내하고, 로그인 뒤엔 �
   assert.match(st0.stderr, /argo login/, '기기 세션이 없으면 로그인 안내');
   // 가짜 기기 세션·회사·크루 — 앱이 쓰는 같은 함수로 시드(자식 프로세스와 같은 ARGO_ROOT)
   const seed = spawnSync(process.execPath, ['--input-type=module', '-e', `
-    const { saveDeviceSession } = await import(${JSON.stringify(join(REPO, 'src/devicesession.mjs'))});
-    const { createCompany, paths } = await import(${JSON.stringify(join(REPO, 'src/workspace.mjs'))});
-    const { saveRunnerCred } = await import(${JSON.stringify(join(REPO, 'src/runners/creds.mjs'))});
+    const { saveDeviceSession } = await import(${JSON.stringify(pathToFileURL(join(REPO, 'src/devicesession.mjs')).href)});
+    const { createCompany, paths } = await import(${JSON.stringify(pathToFileURL(join(REPO, 'src/workspace.mjs')).href)});
+    const { saveRunnerCred } = await import(${JSON.stringify(pathToFileURL(join(REPO, 'src/runners/creds.mjs')).href)});
     const fs = await import('node:fs/promises');
     await saveDeviceSession({ url: 'https://example.invalid', anonKey: 'anon-fake', session: { access_token: 'a', refresh_token: 'r', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-cli', email: 'cli@example.invalid' } } });
     await createCompany('cli-co', 'CLI 회사', 'captain', 'u-cli', 'ko');

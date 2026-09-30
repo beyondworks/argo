@@ -40,5 +40,5 @@ test('cli.json — 이미 느슨한 권한(0644)으로 있던 파일도 쓰면 0
   writeConfig({ lang: 'ko' }, env);
   chmodSync(join(home, 'cli.json'), 0o644);
   writeConfig({ ws: 'x' }, env);
-  assert.equal(statSync(join(home, 'cli.json')).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(join(home, 'cli.json')).mode & 0o777, 0o600); // win32: POSIX 모드 미지원
 });
