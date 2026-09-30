@@ -15,7 +15,7 @@ test('바탕·사이드바·카드를 무엇으로 골라도 그 위 글자는 4
   for (const bg of PICKS) for (const card of PICKS) {
     const { vars, flags } = buildVars(c({}), { bg, card }, LINEN);
     const ink = hex(vars['--fg']);
-    const surfaces = [hex(bg), hex(card), mix(hex(card), hex(bg), 0.62)]; // 캔버스 위 --surface(카드 62% 반투명)가 보이는 색
+    const surfaces = [hex(bg), hex(card), mix(hex(card), hex(bg), 0.85)]; // 캔버스 위 --surface(카드 85% 반투명)가 보이는 색
     const worst = Math.min(...surfaces.map((s) => contrast(ink, s)));
     if (bg === card) assert.ok(worst >= 4.5, `같은 색 ${bg}은 늘 읽혀야 한다: ${worst.toFixed(2)}`);
     if (worst < 4.5) assert.match(flags, /warn/, `${bg}/${card}: ${worst.toFixed(2)}인데 경고 없음`);

@@ -103,7 +103,7 @@ const ALL = [...rulesOf(tokensCss), ...rulesOf(baseCss), ...rulesOf(css)];
 function tokens(theme) {
   const isAuto = !/-(light|dark)$/.test(theme);
   const dark = theme.endsWith('-dark');
-  const out = {};
+  const out = { __dark: dark }; // light-dark()를 고르는 기준(시스템 테마는 라이트로 잰다 — 다크는 -dark 이름으로 따로 잰다)
   for (const r of ALL) {
     const sel = r.sel;
     const fam = theme.replace(/-(light|dark)$/, '');
@@ -118,10 +118,16 @@ function tokens(theme) {
   }
   return out;
 }
-// 값 풀기 — #hex · rgba() · var(--x) · color-mix(in srgb, A N%, B|transparent)(알파를 곱해 섞는다 = 브라우저와 같은 계산)
+// 맨 바깥 쉼표에서 둘로 나눈다(괄호 안 쉼표는 건너뛴다)
+const split2 = (x) => { let d = 0; for (let i = 0; i < x.length; i++) { const ch = x[i]; if (ch === '(') d++; else if (ch === ')') d--; else if (ch === ',' && !d) return [x.slice(0, i), x.slice(i + 1)]; } return null; };
+// 값 풀기 — #hex · rgba() · rgb(r g b / a) · var(--x) · light-dark(라이트, 다크) · color-mix(in srgb, A N%, B|transparent)(알파를 곱해 섞는다 = 브라우저와 같은 계산)
 function resolve(t, v, depth = 0) {
   v = (v ?? '').trim();
   assert.ok(depth < 12, `순환: ${v}`);
+  const ld = v.match(/^light-dark\((.*)\)$/);
+  if (ld) return resolve(t, split2(ld[1])[t.__dark ? 1 : 0], depth + 1);
+  const sp = v.match(/^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)\s*\)$/);
+  if (sp) return { r: +sp[1], g: +sp[2], b: +sp[3], a: +sp[4] };
   const h = v.match(/^#([0-9a-f]{6})$/i);
   if (h) return { r: parseInt(h[1].slice(0, 2), 16), g: parseInt(h[1].slice(2, 4), 16), b: parseInt(h[1].slice(4), 16), a: 1 };
   const r = v.match(/^rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\s*\)$/);
@@ -186,4 +192,46 @@ test('녹는 사이드바 셸: 보정하지 않는 색은 사이드바 글자가
     }
   }
   assert.ok(fix.includes(`'linen'`));
+});
+
+/* ── 면 구분(유건 10/1 "카드·버튼 외곽선 빼고, 모드에 따라 경계 구분 가능하도록") ── */
+// 경계선이 없으니 카드와 밑바탕은 면 색 차이로만 구분된다 — OKLab 명도(L, 0~1) 차이로 잰다. 기준은 눈으로 본 린넨 다크·미스트 라이트 화면에서 잡았다.
+const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+const okL = ({ r, g, b }) => {
+  const [R, G, B] = [lin(r), lin(g), lin(b)];
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B), m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B), s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  return 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+};
+export const EDGE_MIN = { card: 0.025, nested: 0.025, button: 0.025, panelCard: 0.02, laneCard: 0.015, lane: 0.012, float: 0.02 };
+for (const fam of ['linen', 'graphite', ...NEW]) for (const mode of ['light', 'dark']) {
+  const theme = `${fam}-${mode}`;
+  test(`면 구분 — ${theme}: 카드·카드 안 카드·버튼·칸반·떠 있는 층이 선 없이 밑바탕과 갈린다`, () => {
+    const t = tokens(theme);
+    const raw = (name) => { const v = resolve(t, t[name]); assert.ok(v, `${theme}: --${name} = ${t[name]}`); return v; };
+    const bg = raw('bg'), card = over(raw('surface'), bg), main = over(raw('t-main-bg'), bg), lane = over(raw('sunk'), bg);
+    const d = {
+      card: okL(card) - okL(bg),                               // 캔버스 위 카드(모듈·설정 카드·표·목록 카드형 줄)
+      nested: okL(over(raw('lift'), card)) - okL(card),         // 카드 안 카드(현황 카드·거래처 칸)
+      button: okL(over(raw('lift'), bg)) - okL(bg),             // 캔버스 위 버튼·입력(--lift)
+      panelCard: okL(over(raw('surface'), main)) - okL(main),   // 본문 판(panel·pill·window 셸) 위 카드
+      laneCard: okL(over(raw('surface'), lane)) - okL(lane),    // 칸반 칸 위 카드
+      lane: okL(lane) - okL(bg),                                // 칸반 칸
+      float: okL(raw('float')) - okL(bg),                       // 메뉴·모달
+    };
+    const weak = Object.entries(d).filter(([k, v]) => Math.abs(v) < EDGE_MIN[k] && !(k === 'float' && mode === 'light')).map(([k, v]) => `${k} ${v.toFixed(3)}`);
+    assert.deepEqual(weak, [], '라이트의 떠 있는 층은 그림자(--shadow-float)가 가른다');
+    // 다크는 떠 있는 것이 밝다(유건: "다크 모드는 카드가 바탕보다 살짝 밝게")
+    if (mode === 'dark') for (const k of ['card', 'nested', 'button', 'panelCard', 'laneCard', 'float']) assert.ok(d[k] > 0, `${k} ${d[k].toFixed(3)}`);
+  });
+}
+
+// 이유(10/1): 카드·버튼의 외곽선이 돌아오면 면 구분 규칙이 흐려진다 — 버튼은 --lift, 카드는 선 없이. 예외는 바탕이 투명한 테두리형(float 셸 버튼·추가 타일)뿐
+test('카드·버튼에 외곽선(1px 테두리·테두리 그림자)이 없다', () => {
+  const screen = ['../src/base.css', '../src/business/business.css', '../src/views/views.css', '../src/pages/perf.css', '../src/pages/module-library.css'].map((f) => readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
+  const cards = ['.btn', '.module', '.set-card', '.table-wrap', '.stat-card', '.list-row', '.ap-row', '.journal-entry', '.rec-row', '.vw-card', '.deal-card', '.mkt-card', '.mkt-summary', '.card-fields', '.card-empty', '.perf-goal', '.history-preview', '.tpl-item', '.private-block', '.modal', '.menu', '.palette', '.login-card', '.seg-btn.on', '.bizui-line', '.bizui-order-line'];
+  for (const { sel, decl } of rulesOf(screen)) {
+    if (!sel.split(',').some((x) => cards.includes(x.trim().replace(/:hover$/, '')))) continue;
+    assert.doesNotMatch(decl, /(?:inset\s+)?0 0 0 1(?:\.5)?px|border:\s*1px solid/, `${sel.slice(0, 60)} → ${decl.trim().slice(0, 80)}`);
+  }
+  for (const k of ['t-card-edge', 't-tile-edge']) for (const m of strip(css).matchAll(new RegExp(`--${k}:\\s*([^;]+);`, 'g'))) assert.doesNotMatch(m[1], /0 0 0 1px/, `--${k}: ${m[1]}`);
 });

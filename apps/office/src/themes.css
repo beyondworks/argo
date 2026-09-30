@@ -10,7 +10,7 @@
   --frame: color-mix(in srgb, var(--bg) 88%, var(--fg));
   /* 카드 바탕은 base.css --surface(카드색 반투명) 하나로, 본문 판(panel·pill의 .main, window의 페이지 판)은 카드색을 옅게 — 판이 순백이면 그 위 반투명 카드가 묻힌다(유건 9/30 흰색 줄이기) */
   --t-card-bg: var(--surface); --t-top-line: var(--border-soft);
-  --t-main-bg: color-mix(in srgb, var(--card) 35%, transparent); --t-main-edge: 0 0 0 1px var(--border-soft);
+  --t-main-bg: color-mix(in srgb, var(--card) 25%, transparent); --t-main-edge: 0 0 0 1px var(--border-soft);
   --t-win-bg: var(--bg); --t-win-edge: 0 0 0 1px var(--border-soft), 0 20px 48px rgba(0, 0, 0, 0.14); --t-panel-bg: var(--t-main-bg);
   --t-glass: color-mix(in srgb, var(--card) 58%, transparent); --t-glass-strong: color-mix(in srgb, var(--card) 80%, transparent); --t-glass-line: color-mix(in srgb, var(--fg) 12%, transparent);
   --t-badge-bg: var(--fg); --t-badge-fg: var(--bg); --t-primary-shadow: none;
@@ -21,7 +21,7 @@
 :root[data-shell='float'] {
   --rc: 12px; --rs: 24px; --ctl: 34px;
   --r-sm: 10px; --r: 18px; --r-lg: 24px; --r-pill: 999px;
-  --t-nav-r: 14px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 14px; --t-seg-r: 999px; --t-tile-r: 22px; --t-pop-r: 18px;
+  --t-nav-r: 14px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 14px; --t-seg-r: 999px;
   --t-h1-size: 38px; --t-h1-w: 720; --t-h1-ls: -0.035em; --t-num-size: 34px; --t-num-w: 700;
   --t-space-bg: transparent; --t-space-edge: none; --t-active-shadow: none;
   --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
@@ -29,40 +29,40 @@
 :root[data-shell='window'] {
   --rc: 10px; --rs: 16px; --ctl: 34px;
   --r-sm: 8px; --r: 14px; --r-lg: 18px; --r-pill: 999px;
-  --t-nav-r: 10px; --t-btn-r: 10px; --t-icon-r: 10px; --t-chip-r: 999px; --t-input-r: 10px; --t-seg-r: 12px; --t-tile-r: 16px; --t-pop-r: 14px;
+  --t-nav-r: 10px; --t-btn-r: 10px; --t-icon-r: 10px; --t-chip-r: 999px; --t-input-r: 10px; --t-seg-r: 12px;
   --t-h1-size: 26px; --t-h1-w: 660; --t-h1-ls: -0.025em; --t-num-size: 26px; --t-num-w: 650;
-  --t-space-bg: var(--surface); --t-space-edge: 0 0 0 1px var(--border-soft), 0 1px 2px rgba(20, 20, 10, 0.05);
-  --t-active-shadow: 0 1px 2px rgba(20, 20, 10, 0.1), 0 0 0 1px rgba(20, 20, 10, 0.05);
+  --t-space-bg: var(--surface); --t-space-edge: none;
+  --t-active-shadow: 0 1px 2px rgba(20, 20, 10, 0.1);
   --t-win-m: 18px; --t-win-r: 26px;
   --t-top-bg: var(--bg); --t-doc-bg: var(--surface); --t-bar-line: var(--t-top-line);
 }
 :root[data-shell='panel'] {
   --rc: 14px; --rs: 18px; --ctl: 34px;
   --r-sm: 10px; --r: 16px; --r-lg: 20px; --r-pill: 999px;
-  --t-nav-r: 14px; --t-btn-r: 12px; --t-icon-r: 12px; --t-chip-r: 999px; --t-input-r: 14px; --t-seg-r: 12px; --t-tile-r: 16px; --t-pop-r: 16px;
+  --t-nav-r: 14px; --t-btn-r: 12px; --t-icon-r: 12px; --t-chip-r: 999px; --t-input-r: 14px; --t-seg-r: 12px;
   --t-h1-size: 46px; --t-h1-w: 340; --t-h1-ls: -0.04em; --t-num-size: 32px; --t-num-w: 420;
-  --t-space-bg: var(--t-main-bg); --t-space-edge: 0 0 0 1px var(--border-soft);
-  --t-active-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(60, 40, 20, 0.06);
+  --t-space-bg: var(--surface); --t-space-edge: none;
+  --t-active-shadow: 0 1px 3px rgba(60, 40, 20, 0.1);
   --t-win-m: 20px; --t-win-r: 32px; --t-main-r: 24px;
   --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
 }
 :root[data-shell='pill'] {
   --rc: 14px; --rs: 26px; --ctl: 34px;
   --r-sm: 12px; --r: 20px; --r-lg: 26px; --r-pill: 999px;
-  --t-nav-r: 999px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 16px; --t-seg-r: 999px; --t-tile-r: 24px; --t-pop-r: 20px;
+  --t-nav-r: 999px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 16px; --t-seg-r: 999px;
   --t-h1-size: 30px; --t-h1-w: 540; --t-h1-ls: -0.03em; --t-num-size: 30px; --t-num-w: 500;
-  --t-space-bg: var(--t-main-bg); --t-space-edge: 0 0 0 1px var(--border-soft);
-  --t-active-shadow: 0 2px 8px rgba(30, 30, 20, 0.1), 0 0 0 1px rgba(30, 30, 20, 0.04);
+  --t-space-bg: var(--surface); --t-space-edge: none;
+  --t-active-shadow: 0 2px 8px rgba(30, 30, 20, 0.1);
   --t-win-m: 20px; --t-win-r: 34px; --t-main-r: 28px;
   --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
 }
 :root[data-shell='glass'] {
   --rc: 14px; --rs: 28px; --ctl: 34px;
   --r-sm: 12px; --r: 20px; --r-lg: 28px; --r-pill: 999px;
-  --t-nav-r: 16px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 16px; --t-seg-r: 999px; --t-tile-r: 28px; --t-pop-r: 20px;
+  --t-nav-r: 16px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 16px; --t-seg-r: 999px;
   --t-h1-size: 34px; --t-h1-w: 520; --t-h1-ls: -0.035em; --t-num-size: 32px; --t-num-w: 500;
-  --t-space-bg: var(--t-glass-strong); --t-space-edge: inset 0 0 0 1px var(--t-glass-line);
-  --t-active-shadow: 0 2px 10px rgba(120, 70, 40, 0.12), inset 0 0 0 1px var(--t-glass-line);
+  --t-space-bg: var(--t-glass-strong); --t-space-edge: none;
+  --t-active-shadow: 0 2px 10px rgba(120, 70, 40, 0.12);
   --t-win-m: 20px; --t-win-r: 34px;
   --t-win-bg: color-mix(in srgb, var(--bg) 72%, transparent);
   --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
@@ -95,8 +95,8 @@
 :root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.input, .select, .field input, .field select, .compose-body) { border-radius: var(--t-input-r); }
 :root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.seg, .seg-btn) { border-radius: var(--t-seg-r); }
 :root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .progress { border-radius: 999px; }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.menu, .palette) { border-radius: var(--t-pop-r); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.menu-item, .palette-row) { border-radius: calc(var(--t-pop-r) - 6px); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.menu, .palette) { border-radius: var(--rs); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.menu-item, .palette-row) { border-radius: var(--rc); }
 /* 페이지 본문(문서)·메일 화면은 카드 바탕을 쓰지 않는다 — 바탕색만 셸의 문서 바탕으로 */
 :root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .content.view-page { background: var(--t-doc-bg); }
 :root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .main:has(> .content.view-page) .topbar { background: var(--t-doc-bg); }
@@ -122,7 +122,7 @@
 :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .progress span { background: var(--t-bar, var(--primary)); }
 :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .bar i { background: var(--t-bar, var(--fg-2)); }
 @media (hover: hover) {
-  :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) a.stat-card:hover { box-shadow: var(--t-tile-edge-hover); }
+  :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) a.stat-card:hover { background-image: linear-gradient(var(--wash), var(--wash)); }
 }
 
 /* ════════ 4. 창 뼈대 — 데스크톱 폭(768px 이상)에서만. 좁은 폭은 기본 서랍 사이드바를 그대로 쓴다 ════════ */
@@ -166,7 +166,7 @@
 :root[data-shell='float'] .module-head { height: 46px; }
 
 /* window — 알약 칸 안의 흰 탭 (샌드 레퍼런스) */
-:root[data-shell='window'] .tabs { background: var(--bg); padding: 4px; border-radius: 14px; border-bottom: 0; gap: 2px; box-shadow: inset 0 0 0 1px var(--border-soft); }
+:root[data-shell='window'] .tabs { background: var(--lift); padding: 4px; border-radius: 14px; border-bottom: 0; gap: 2px; }
 :root[data-shell='window'] .tab { height: 32px; border-radius: 10px; }
 :root[data-shell='window'] .tab.on { background: var(--surface); box-shadow: var(--t-active-shadow); }
 :root[data-shell='window'] .biz-tabbar { border-bottom: 0; }
@@ -184,7 +184,6 @@
 :root[data-shell='pill'] .tab.on { background: var(--surface); box-shadow: var(--t-active-shadow); }
 :root[data-shell='pill'] .biz-tabbar { border-bottom: 0; }
 :root[data-shell='pill'] .stat-card { padding: 16px 18px; }
-:root[data-shell='pill'] :is(.set-card, .module) { box-shadow: var(--t-card-edge, inset 0 0 0 1px var(--border-soft)); }
 
 /* glass — 반투명 카드·아이콘 (글로우 레퍼런스). 3절 색 공통보다 뒤에 있어야 카드 바탕을 덮는다 */
 :root[data-shell='glass'] :is(.module, .set-card, .table-wrap, .login-card) { background: var(--t-glass); }
@@ -194,7 +193,7 @@
 :root[data-shell='glass'] .biz-tabbar { border-bottom: 0; }
 :root[data-shell='glass'] .stat-card { padding: 18px 20px; }
 :root[data-shell='glass'] .module-head h3 { font-weight: 560; }
-:root[data-shell='glass'] .icon-btn { background: var(--t-glass); box-shadow: inset 0 0 0 1px var(--t-glass-line); }
+:root[data-shell='glass'] .icon-btn { background: var(--t-glass); }
 :root[data-shell='glass'] .topbar .icon-btn { box-shadow: none; background: transparent; }
 @media (hover: hover) {
   :root[data-shell='glass'] .icon-btn:hover { background: var(--t-glass-strong); }
@@ -229,7 +228,7 @@
   --side-line: rgba(246, 239, 226, 0.16); --side-hover: rgba(255, 255, 255, 0.09); --side-active: rgba(255, 255, 255, 0.13); --side-mark: #f4b8dc;
   --tile-1: #f5db6a; --tile-2: #f4b8dc; --tile-3: #c5d49a; --tile-4: #b2c6e9; --tile-5: #f7c9a8; --tile-6: #d9cdf0;
   --tile-ink-2: #2b2519; --tile-ink-3: #453e2f; --t-tile-badge: rgba(255, 255, 255, 0.6);
-  --t-tile-edge: none; --t-tile-edge-hover: 0 0 0 2px var(--fg);
+  --t-tile-edge: none;
   --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(23, 19, 14, 0.1);
   --t-bar: #e58fc0;
 }
@@ -251,7 +250,7 @@
   --side-line: rgba(241, 233, 220, 0.14); --side-hover: rgba(255, 255, 255, 0.08); --side-active: rgba(255, 255, 255, 0.12); --side-mark: #f4b8dc;
   --tile-1: #4a4120; --tile-2: #4d2f43; --tile-3: #34412b; --tile-4: #2b3a56; --tile-5: #4e3625; --tile-6: #3c3457;
   --tile-ink-2: #ece3d1; --tile-ink-3: #cbbfa9; --t-tile-badge: rgba(255, 255, 255, 0.14);
-  --t-tile-edge: none; --t-tile-edge-hover: 0 0 0 2px var(--fg);
+  --t-tile-edge: none;
   --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(244, 236, 223, 0.12);
   --t-bar: #e58fc0;
 }
@@ -275,8 +274,8 @@
   --side-line: rgba(23, 23, 20, 0.09); --side-hover: rgba(23, 23, 20, 0.055); --side-active: var(--surface); --side-mark: #c62d26;
   --tile-1: #f8f8f7; --tile-2: #f8f8f7; --tile-3: #f8f8f7; --tile-4: #f8f8f7; --tile-5: #f8f8f7; --tile-6: #f8f8f7;
   --tile-ink-2: #464643; --tile-ink-3: #656460; --t-tile-badge: #ecebe8;
-  --t-tile-edge: inset 0 0 0 1px rgba(23, 23, 20, 0.1); --t-tile-edge-hover: inset 0 0 0 1px rgba(23, 23, 20, 0.28);
-  --t-card-edge: inset 0 0 0 1px rgba(23, 23, 20, 0.1); --t-head-line: rgba(23, 23, 20, 0.07); --t-top-line: rgba(23, 23, 20, 0.1);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: rgba(23, 23, 20, 0.07); --t-top-line: rgba(23, 23, 20, 0.1);
   --t-win-edge: 0 0 0 1px rgba(60, 50, 20, 0.08), 0 20px 44px rgba(90, 70, 20, 0.16);
 }
 :root[data-theme='sand-dark'], :root[data-theme='sand'].dark-emul {
@@ -297,8 +296,8 @@
   --side-line: rgba(240, 239, 236, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #3a3a38; --side-mark: #f2665d;
   --tile-1: #262625; --tile-2: #262625; --tile-3: #262625; --tile-4: #262625; --tile-5: #262625; --tile-6: #262625;
   --tile-ink-2: #c6c5c0; --tile-ink-3: #a09f99; --t-tile-badge: #34342f;
-  --t-tile-edge: inset 0 0 0 1px rgba(240, 239, 236, 0.12); --t-tile-edge-hover: inset 0 0 0 1px rgba(240, 239, 236, 0.32);
-  --t-card-edge: inset 0 0 0 1px rgba(240, 239, 236, 0.11); --t-head-line: rgba(240, 239, 236, 0.08); --t-top-line: rgba(240, 239, 236, 0.1);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: rgba(240, 239, 236, 0.08); --t-top-line: rgba(240, 239, 236, 0.1);
   --t-win-edge: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 20px 44px rgba(0, 0, 0, 0.5);
 }
 
@@ -321,8 +320,8 @@
   --side-line: rgba(26, 26, 26, 0.09); --side-hover: rgba(26, 26, 26, 0.055); --side-active: var(--surface); --side-mark: #f97723;
   --tile-1: #efeeec; --tile-2: #efeeec; --tile-3: #efeeec; --tile-4: #efeeec; --tile-5: #efeeec; --tile-6: #efeeec;
   --tile-ink-2: #4f4e4a; --tile-ink-3: #67655f; --t-tile-badge: #ffffff;
-  --t-tile-edge: none; --t-tile-edge-hover: inset 0 0 0 1px rgba(26, 26, 26, 0.24);
-  --t-card-edge: inset 0 0 0 1px var(--border-soft); --t-head-line: transparent; --t-top-line: rgba(26, 26, 26, 0.08);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(26, 26, 26, 0.08);
   --t-main-edge: 0 0 0 1px rgba(26, 26, 26, 0.05);
   --t-win-edge: 0 24px 50px rgba(120, 70, 40, 0.14);
 }
@@ -344,8 +343,8 @@
   --side-line: rgba(243, 236, 230, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #3a312c; --side-mark: #f97723;
   --tile-1: #40362f; --tile-2: #40362f; --tile-3: #40362f; --tile-4: #40362f; --tile-5: #40362f; --tile-6: #40362f;
   --tile-ink-2: #d6ccc3; --tile-ink-3: #b3a89e; --t-tile-badge: #4f443c;
-  --t-tile-edge: none; --t-tile-edge-hover: inset 0 0 0 1px rgba(243, 236, 230, 0.3);
-  --t-card-edge: inset 0 0 0 1px var(--border-soft); --t-head-line: transparent; --t-top-line: rgba(243, 236, 230, 0.1);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(243, 236, 230, 0.1);
   --t-main-edge: 0 0 0 1px rgba(243, 236, 230, 0.07);
   --t-win-edge: 0 24px 50px rgba(0, 0, 0, 0.5);
 }
@@ -369,8 +368,8 @@
   --side-line: rgba(27, 27, 27, 0.09); --side-hover: rgba(27, 27, 27, 0.055); --side-active: var(--surface); --side-mark: #6f4fd6;
   --tile-1: #f0ebfb; --tile-2: #fdeee4; --tile-3: #f7f3d9; --tile-4: #e2f4f1; --tile-5: #e6eefb; --tile-6: #fbe6ef;
   --tile-ink-2: #3a3a38; --tile-ink-3: #55554f; --t-tile-badge: rgba(255, 255, 255, 0.75);
-  --t-tile-edge: inset 0 0 0 1px rgba(27, 27, 27, 0.06); --t-tile-edge-hover: inset 0 0 0 1px rgba(27, 27, 27, 0.22);
-  --t-card-edge: inset 0 0 0 1px rgba(27, 27, 27, 0.09); --t-head-line: transparent; --t-top-line: rgba(27, 27, 27, 0.08);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(27, 27, 27, 0.08);
   --t-main-edge: 0 0 0 1px rgba(27, 27, 27, 0.05);
   --t-win-edge: 0 24px 56px rgba(40, 44, 40, 0.16);
   --t-badge-bg: #111111; --t-badge-fg: #ffffff; --t-bar: #8b6be0;
@@ -394,8 +393,8 @@
   --side-line: rgba(239, 239, 236, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #3b3c3b; --side-mark: #b39cf5;
   --tile-1: #37334a; --tile-2: #45372f; --tile-3: #45422c; --tile-4: #2b4442; --tile-5: #2f3d55; --tile-6: #4a3341;
   --tile-ink-2: #e6e6e2; --tile-ink-3: #c3c3be; --t-tile-badge: rgba(255, 255, 255, 0.14);
-  --t-tile-edge: inset 0 0 0 1px rgba(239, 239, 236, 0.08); --t-tile-edge-hover: inset 0 0 0 1px rgba(239, 239, 236, 0.3);
-  --t-card-edge: inset 0 0 0 1px rgba(239, 239, 236, 0.1); --t-head-line: transparent; --t-top-line: rgba(239, 239, 236, 0.09);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(239, 239, 236, 0.09);
   --t-main-edge: 0 0 0 1px rgba(239, 239, 236, 0.07);
   --t-win-edge: 0 24px 56px rgba(0, 0, 0, 0.5);
   --t-badge-bg: #efefec; --t-badge-fg: #171717; --t-bar: #b39cf5;
@@ -421,9 +420,9 @@
   --side-line: rgba(60, 30, 10, 0.1); --side-hover: rgba(255, 255, 255, 0.5); --side-active: var(--surface); --side-mark: #c8a4ee;
   --tile-1: #edd0a4; --tile-2: #a2c1ef; --tile-3: #c8a4ee; --tile-4: #f0b9a4; --tile-5: #eca5df; --tile-6: #eea3ba;
   --tile-ink-2: #2a201a; --tile-ink-3: #43352b; --t-tile-badge: rgba(255, 255, 255, 0.6);
-  --t-tile-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.55); --t-tile-edge-hover: inset 0 0 0 2px rgba(255, 255, 255, 0.95);
+  --t-tile-edge: none;
   --t-glass-line: rgba(255, 255, 255, 0.75);
-  --t-card-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.8), 0 10px 28px rgba(140, 80, 40, 0.1); --t-head-line: rgba(255, 255, 255, 0.7); --t-top-line: rgba(60, 30, 10, 0.1);
+  --t-card-edge: 0 10px 28px rgba(140, 80, 40, 0.1); --t-head-line: rgba(255, 255, 255, 0.7); --t-top-line: rgba(60, 30, 10, 0.1);
   --t-win-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(255, 246, 224, 0.52));
   --t-win-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.8), 0 28px 60px rgba(150, 80, 40, 0.22);
   --t-badge-bg: #16110f; --t-badge-fg: #ffffff; --t-bar: #a67be0;
@@ -447,9 +446,9 @@
   --side-line: rgba(246, 237, 230, 0.12); --side-hover: rgba(255, 255, 255, 0.07); --side-active: rgba(255, 255, 255, 0.15); --side-mark: #d3b3f4;
   --tile-1: #5c4a2c; --tile-2: #2f4670; --tile-3: #4b3b73; --tile-4: #6a4133; --tile-5: #6b3868; --tile-6: #6a3549;
   --tile-ink-2: #f6ede6; --tile-ink-3: #ddd0c5; --t-tile-badge: rgba(255, 255, 255, 0.16);
-  --t-tile-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.12); --t-tile-edge-hover: inset 0 0 0 2px rgba(255, 255, 255, 0.4);
+  --t-tile-edge: none;
   --t-glass: rgba(255, 255, 255, 0.07); --t-glass-strong: rgba(255, 255, 255, 0.13); --t-glass-line: rgba(255, 255, 255, 0.16);
-  --t-card-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.13), 0 10px 28px rgba(0, 0, 0, 0.25); --t-head-line: rgba(255, 255, 255, 0.1); --t-top-line: rgba(246, 237, 230, 0.1);
+  --t-card-edge: 0 10px 28px rgba(0, 0, 0, 0.25); --t-head-line: rgba(255, 255, 255, 0.1); --t-top-line: rgba(246, 237, 230, 0.1);
   --t-win-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.09), rgba(255, 240, 210, 0.05));
   --t-win-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 28px 60px rgba(0, 0, 0, 0.5);
   --t-badge-bg: #f6ede6; --t-badge-fg: #1e1512; --t-bar: #c9a7f2;

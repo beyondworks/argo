@@ -35,7 +35,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 /* 카드 */
 .vw-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
 .vw.compact .vw-cards { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; padding: 2px; }
-.vw-card, .vw-kcard { display: grid; gap: 6px; align-content: start; padding: 10px 12px; border-radius: var(--rc); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); min-width: 0; }
+.vw-card, .vw-kcard { display: grid; gap: 6px; align-content: start; padding: 10px 12px; border-radius: var(--rs); background: var(--surface); min-width: 0; }
 .vw-card-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .vw-card-top .vw-title { flex: 1; }
 .vw-tags { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -52,7 +52,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 /* 칸반 — 칸 높이를 같게 해 가까운 칸 판정이 가로 거리로만 갈리게 한다 */
 .vw-board { display: flex; align-items: stretch; gap: 10px; overflow-x: auto; padding-bottom: 8px; min-height: 240px; }
 .vw.compact .vw-board { gap: 6px; min-height: 160px; }
-.vw-lane { flex: 0 0 264px; display: flex; flex-direction: column; min-width: 0; border-radius: var(--rs); background: color-mix(in srgb, var(--fg) 3%, transparent); transition: opacity 160ms var(--ease-out); }
+.vw-lane { flex: 0 0 264px; display: flex; flex-direction: column; min-width: 0; border-radius: var(--rs); background: var(--sunk); transition: opacity 160ms var(--ease-out); }
 .vw.compact .vw-lane { flex-basis: 200px; }
 .vw-lane.over { background: var(--primary-soft); }
 .vw-lane.no { opacity: 0.55; }
@@ -66,7 +66,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 .vw-kcard.dragging { opacity: 0.35; }
 
 /* 선택 막대 — 아래 가운데에 떠 있다 */
-.vw-selbar { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); z-index: 60; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: calc(100vw - 32px); padding: 6px 6px 6px 14px; border-radius: var(--rs); background: var(--float); box-shadow: var(--shadow-float), inset 0 0 0 1px var(--border-soft); transform: translateX(-50%); animation: vw-rise 200ms var(--ease-out); }
+.vw-selbar { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); z-index: 60; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: calc(100vw - 32px); padding: 6px 6px 6px 14px; border-radius: var(--rs); background: var(--float); box-shadow: var(--shadow-float); transform: translateX(-50%); animation: vw-rise 200ms var(--ease-out); }
 .vw-selbar strong { font-size: 12.5px; font-weight: 600; margin-right: 4px; }
 .vw-selbar .danger-text { color: var(--danger); }
 @keyframes vw-rise { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
@@ -91,7 +91,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 
 @media (hover: hover) {
   .vw-row:hover, .vw-table tbody tr:hover { background: var(--primary-soft); }
-  .vw-card:hover, .vw-kcard:hover { box-shadow: inset 0 0 0 1px var(--border); }
+  .vw-card:hover, .vw-kcard:hover { background-image: linear-gradient(var(--wash), var(--wash)); }
   .vw-check:hover { box-shadow: inset 0 0 0 1.5px var(--fg-2); }
   .vw-check.on:hover { box-shadow: none; }
 }
