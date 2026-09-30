@@ -6,7 +6,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { configured } from '../core/supabase.js';
 import { rpc } from '../core/tasks.js';
 import { kstStart } from './model.js';
-import { SAMPLE_PEOPLE, SAMPLE_CUSTOMERS, SAMPLE_TASKS, sampleList, sampleWrite } from '../data/calendar-sample.js';
+import { SAMPLE_PEOPLE, SAMPLE_CUSTOMERS, sampleList, sampleWrite } from '../data/calendar-sample.js';
 
 const ERRORS = { calendar_forbidden: 'forbidden', calendar_invalid: 'invalid', calendar_not_found: 'missing', calendar_limit: 'limit', task_signin: 'signin' };
 export const calError = (e) => `cal.error.${ERRORS[e?.message] ?? (String(e?.code) === '42501' ? 'forbidden' : 'request')}`;
@@ -45,10 +45,13 @@ export async function writeEvent(action, data, { refresh = true } = {}) {
   let out;
   try { out = configured ? await rpc('office_event_write', { p_action: action, p_data: data }) : sampleWrite(action, data); }
   catch (e) { throw new Error(calError(e)); }
-  if (!refresh) return out;
+  if (refresh) await refreshEvents();
+  return out;
+}
+/** 읽은 창을 비우고 보고 있는 창만 다시 읽는다 — 여러 건을 한꺼번에 쓴 뒤 한 번만(여러 보기의 한꺼번에 바꾸기) */
+export async function refreshEvents() {
   cache = new Map();
   await Promise.all([...active.keys()].map((k) => fetchWindow(k, ...k.split('|'))));
-  return out;
 }
 
 /* ── 조직 사람·거래처(상세 창을 열 때만, 화면 메모리에 한 번) ── */
@@ -59,6 +62,3 @@ export const loadPeople = (org) => remember(`people:${org}`, async () => (config
 export const loadCustomers = (org) => remember(`cust:${org ?? 'me'}`, async () => (configured
   ? ((await rpc('office_business_read', { p_org: org }))?.customers ?? []).map((c) => ({ id: c.id, name: c.name }))
   : SAMPLE_CUSTOMERS[org ?? 'me'] ?? []));
-/** 개인 공간에서 겹쳐 볼 조직 할 일(나에게 맡겨진 것만 쓰는 쪽에서 거른다) — 달력을 열 때 조직마다 한 번 */
-export const loadOrgTasks = (org) => remember(`tasks:${org}`, async () => (configured ? (await rpc('office_task_list', { p_org: org })) ?? [] : SAMPLE_TASKS.filter((x) => x.org === org)));
-export const sampleTasks = (org) => SAMPLE_TASKS.filter((x) => x.org === org);

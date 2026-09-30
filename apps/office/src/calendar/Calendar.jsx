@@ -1,24 +1,29 @@
 // 일정(캘린더) — 구글 캘린더처럼 전체 페이지를 쓰는 달력(유건 9/30 명세 규칙 1~10).
 // 왼쪽 레일(만들기 · 작은 월 달력 · 캘린더 목록), 오른쪽 큰 달력(오늘 · ‹ › · 기간 제목 · 보기 전환 · 색 기준).
-// 같은 일정 행이 개인 달력과 조직 달력에 함께 보인다(저장 행은 하나). 할 일 기한은 읽기 전용으로 겹쳐 보인다.
+// 같은 일정 행이 개인 달력과 조직 달력에 함께 보인다(저장 행은 하나). 할 일 기한은 겹쳐 보인다.
+// 여러 보기(유건 9/30): 목록·카드·칸반·표는 views/Board.jsx가 일정 + 할 일을 합쳐 그리고, 주·월·일은 아래 달력이 그린다.
+// 옛 '거래처' 보기는 칸반의 '거래처로 묶기'로 들어갔다. 보기 설정(보기·묶기·필터·정렬)은 사람마다 따로(views/data.js).
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { t, registerDict, useLang, getLang } from '../core/i18n.js';
-import { ME, SPACES, getMode } from '../core/session.js';
-import { useTasks } from '../core/tasks.js';
+import { ME, SPACES } from '../core/session.js';
 import { baseOf } from '../core/commands.js';
-import { navigate } from '../core/router.jsx';
+import { navigate, useUrl } from '../core/router.jsx';
 import { crewName } from '../core/store.js';
 import { Modal, Sheet, showToast } from '../ui/Overlay.jsx';
+import { openMenu, menuProps } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
 import * as M from './model.js';
-import { useEvents, writeEvent, loadPeople, loadCustomers, loadOrgTasks, sampleTasks } from './api.js';
+import * as V from '../views/model.js';
+import { useEvents, writeEvent, loadPeople, loadCustomers } from './api.js';
 import { orgSpaces, idOf, spaceOfOrg, writableOrgs, inSpace, calOf, colorOf, fmtDay, fmtTime, locale, pref, setPref } from './shared.js';
+import { useViewTasks, usePeople, makeCtx, readCfg, writeCfg } from '../views/data.js';
+import { ItemsView, useItemActions, filterMenu, filterCount } from '../views/Board.jsx';
 import { CAL_DICT, holidayName } from './calendar-i18n.js';
 import './calendar.css';
 
 registerDict(CAL_DICT);
-const VIEWS = ['day', 'week', 'month', 'list', 'customers'];
+const VIEWS = V.VIEWS;
 const HOUR = 48, MAX_LANES = 3;
 const newId = () => crypto.randomUUID();
 const fail = (e) => showToast(t(e.message));
@@ -41,9 +46,8 @@ function periodTitle(view, anchor, phone) {
     const w = M.weekDays(anchor);
     return new Intl.DateTimeFormat(locale(), { year: phone ? undefined : 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).formatRange(new Date(`${w[0]}T00:00:00Z`), new Date(`${w[6]}T00:00:00Z`));
   }
-  if (view === 'customers') return t('cal.custTitle'); // 거래처 보기는 기간이 아니라 거래처로 묶는다 — 날짜 범위 제목은 헷갈린다
-  if (view === 'list') {
-    const [a, b] = M.windowOf(view, anchor);
+  if (V.BOARD.includes(view)) {
+    const [a, b] = M.windowOf('list', anchor);
     return new Intl.DateTimeFormat(locale(), { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }).formatRange(new Date(`${a}T00:00:00Z`), new Date(`${M.addDays(b, -1)}T00:00:00Z`));
   }
   return fmtDay(anchor, { year: 'numeric', month: 'long' });
@@ -51,11 +55,20 @@ function periodTitle(view, anchor, phone) {
 const whenText = (o) => (o.all_day ? t('cal.allDay') : `${fmtTime(o.start)} – ${fmtTime(o.end)}`);
 
 /* ── 화면 ── */
+/** 저장된 보기 설정 — 없으면 예전 달력 설정(보기)을 옮겨 온다('거래처' 보기 → 칸반·거래처로 묶기). 폰은 목록으로 연다 */
+function firstCfg(space, phone) {
+  const saved = readCfg(`cal:${space}`), old = pref('view', 'month');
+  const cfg = V.normalizeCfg(saved ?? (old === 'customers' ? { view: 'kanban', group: 'customer' } : { view: old }), { view: 'month' });
+  return phone ? { ...cfg, view: 'list' } : cfg;
+}
+
 export default function Calendar({ space, day }) {
   useLang();
   const phone = usePhone(), now = useNow();
   const today = M.localDay(now);
-  const [view, setViewState] = useState(() => (phone ? 'list' : pref('view', 'month')));
+  const [cfg, setCfgState] = useState(() => firstCfg(space, phone));
+  const view = cfg.view;
+  const setCfg = (patch) => setCfgState((c) => { const next = V.normalizeCfg({ ...c, ...patch }); writeCfg(`cal:${space}`, next); return next; });
   const [anchor, setAnchor] = useState(() => (/^\d{4}-\d{2}-\d{2}$/.test(day ?? '') ? day : today));
   const [colorBy, setColorBy] = useState(() => pref('color', 'category'));
   const [off, setOff] = useState(() => new Set(pref(`off:${space}`, [])));
@@ -63,29 +76,46 @@ export default function Calendar({ space, day }) {
   const [quick, setQuick] = useState(null), [sheet, setSheet] = useState(null), [ask, setAsk] = useState(null), [dayList, setDayList] = useState(null);
   useEffect(() => { setOff(new Set(pref(`off:${space}`, []))); }, [space]);
   useEffect(() => { if (/^\d{4}-\d{2}-\d{2}$/.test(day ?? '')) setAnchor(day); }, [day]);
-  const setView = (v) => { setViewState(v); if (!phone) setPref('view', v); };
+  const setView = (v) => setCfg({ view: v });
   const toggle = (id) => { const next = new Set(off); if (next.has(id)) next.delete(id); else next.add(id); setOff(next); setPref(`off:${space}`, [...next]); };
 
-  const [from, to] = M.windowOf(view, anchor);
+  const board = V.BOARD.includes(view);
+  const [from, to] = M.windowOf(board ? 'list' : view, anchor);
   const data = useEvents(from, to);
-  const tasks = useTaskDues(space);
+  const tasks = useViewTasks(space), people = usePeople(space);
+  const ctx = useMemo(() => makeCtx(today, people), [today, people]);
+  const occ = useMemo(() => (data.events ? M.expand(inSpace(data.events, space), M.kstStart(from) - 86400e3, M.kstStart(to) + 86400e3).filter((o) => !off.has(calOf(o, space))) : []), [data.events, space, off, from, to]);
   const items = useMemo(() => {
-    const occ = data.events ? M.expand(inSpace(data.events, space), M.kstStart(from) - 86400e3, M.kstStart(to) + 86400e3).filter((o) => !off.has(calOf(o, space))) : [];
-    const dues = off.has('tasks') ? [] : tasks.map((x) => ({ kind: 'task', key: `t:${x.id}`, id: x.id, title: x.title, done: !!x.done_at, space: x.space, all_day: true, start: M.kstStart(x.due_on), end: M.kstStart(M.addDays(x.due_on, 1)) }));
+    const dues = off.has('tasks') ? [] : tasks.filter((x) => x.due_on).map((x) => ({ kind: 'task', key: `t:${x.id}`, id: x.id, title: x.title, done: !!x.done_at, space: x.space, all_day: true, start: M.kstStart(x.due_on), end: M.kstStart(M.addDays(x.due_on, 1)), vi: V.taskItem(x) }));
     return [...dues, ...occ];
-  }, [data.events, tasks, space, off, from, to]);
+  }, [occ, tasks, off]);
+  const boardItems = useMemo(() => (board ? V.mergeItems(occ.filter((o) => o.end > M.kstStart(from) && o.start < M.kstStart(to)), off.has('tasks') ? [] : tasks, { from, to, undated: true, overdue: true }) : []), [board, occ, tasks, off, from, to]);
   const categories = useMemo(() => [...new Set((data.events ?? []).map((e) => e.category).filter(Boolean))].sort(), [data.events]);
   const holidays = !off.has('holidays');
 
-  const open = (o) => { if (o.kind === 'task') navigate(`${baseOf(o.space)}?open=${o.id}`); else setSheet({ occ: o }); };
+  const openTask = (x) => navigate(`${baseOf(x.space)}?open=${x.id}`);
+  const open = (o) => { if (o.kind === 'task') openTask(o); else setSheet({ occ: o }); };
+  const openItem = (it) => (it.kind === 'task' ? openTask(it) : setSheet({ occ: it.src }));
   const create = (at) => {
     const base = at ?? { day: anchor === today ? today : anchor, min: anchor === today ? Math.min(23 * 60, (new Date(now).getHours() + 1) * 60) : 9 * 60 };
     const draft = blankDraft(space, base);
     if (at) setQuick(draft); else setSheet({ draft });
   };
-  const go = (dir) => setAnchor(M.shift(view, anchor, dir));
+  const go = (dir) => setAnchor(M.shift(board ? 'list' : view, anchor, dir));
   const pickDay = (d, v) => { setAnchor(d); if (v) setView(v); setRail(false); };
-  const props = { items, today, now, colorBy, holidays, phone, onOpen: open, onCreate: create };
+  const actions = useItemActions({ space, ctx, people, categories, onOpen: openItem, onNewEvent: () => create() });
+  const onMenu = (o) => actions.single(o.kind === 'task' ? o.vi : V.eventItem(o));
+  const props = { items, today, now, colorBy, holidays, phone, onOpen: open, onCreate: create, onMenu };
+
+  // 주소로 온 요청 — ?view=(커맨더 보기 전환) · ?new=event|task(새 일정·새 할 일) · ?open=회차 키(홈 카드에서 연 일정). 처리하면 주소에서 뺀다
+  const [path, qs] = useUrl().split('?');
+  const q = new URLSearchParams(qs ?? '');
+  const strip = (...keys) => { keys.forEach((k) => q.delete(k)); const rest = q.toString(); navigate(`${path}${rest ? `?${rest}` : ''}`, { replace: true }); };
+  const wantView = q.get('view'), wantNew = q.get('new'), wantOpen = q.get('open');
+  useEffect(() => { if (!wantView && !wantNew) return; if (VIEWS.includes(wantView)) setView(wantView); if (wantNew === 'task') actions.newTask(); else if (wantNew === 'event') create(); strip('view', 'new'); }, [wantView, wantNew]);
+  useEffect(() => { if (!wantOpen || !data.events) return; const o = occ.find((x) => x.key === wantOpen); if (o) setSheet({ occ: o }); strip('open'); }, [wantOpen, data.events]);
+  const whoKeys = useMemo(() => [...new Set(boardItems.map((x) => x.who).filter(Boolean))], [boardItems]);
+  const nf = filterCount(cfg.filter);
 
   return (
     <div className={`cal${phone ? ' phone' : ''}${rail ? ' rail-open' : ''}`}>
@@ -99,54 +129,41 @@ export default function Calendar({ space, day }) {
         <div className="cal-bar">
           {phone && <button type="button" className="icon-btn" aria-label={t('cal.rail')} aria-expanded={rail} onClick={() => setRail(!rail)}><Icon name="sidebar" /></button>}
           <button type="button" className="btn sm" onClick={() => setAnchor(today)}>{t('cal.today')}</button>
-          {view !== 'customers' && <span className="cal-nav">
+          <span className="cal-nav">
             <button type="button" className="icon-btn sm" aria-label={t('cal.prev')} onClick={() => go(-1)}><Icon name="back" size={14} /></button>
             <button type="button" className="icon-btn sm" aria-label={t('cal.next')} onClick={() => go(1)}><Icon name="chevron" size={14} /></button>
-          </span>}
+          </span>
           <h2 className="cal-title" aria-live="polite">{periodTitle(view, anchor, phone)}</h2>
           {data.loading && <span className="dim small" role="status">{t('cal.loading')}</span>}
           {data.error && <span className="cal-err small" role="alert">{t(data.error)}</span>}
           <span className="cal-tools">
             <span className="seg" role="group" aria-label={t('cal.view')}>
-              {VIEWS.map((v) => <button key={v} type="button" className={`seg-btn${view === v ? ' on' : ''}`} aria-pressed={view === v} onClick={() => setView(v)}>{t(`cal.v.${v}`)}</button>)}
+              {VIEWS.map((v) => <button key={v} type="button" className={`seg-btn${view === v ? ' on' : ''}`} aria-pressed={view === v} onClick={() => setView(v)}>{t(`views.v.${v}`)}</button>)}
             </span>
+            {board && <span className="vw-tools">
+              {view === 'kanban' && <select className="input" value={cfg.group} aria-label={t('views.group')} onChange={(e) => setCfg({ group: e.target.value })}>{V.GROUPS.map((g) => <option key={g} value={g}>{t('views.group')}: {t(`views.g.${g}`)}</option>)}</select>}
+              <button type="button" className={`btn sm${nf ? ' primary' : ''}`} aria-haspopup="menu" onClick={(e) => openMenu(e, filterMenu(cfg, setCfg, { whoKeys, categories, people }), { anchor: e.currentTarget })}><Icon name="search" size={13} />{nf ? t('views.filterOn', { n: nf }) : t('views.filter')}</button>
+              <select className="input" value={cfg.sort} aria-label={t('views.sort')} onChange={(e) => setCfg({ sort: e.target.value })}>{V.SORTS.map((x) => <option key={x} value={x}>{t(`views.s.${x}`)}</option>)}</select>
+            </span>}
             <select className="input cal-color" value={colorBy} aria-label={t('cal.colorBy')} onChange={(e) => { setColorBy(e.target.value); setPref('color', e.target.value); }}>
               {['category', 'person', 'agent'].map((k) => <option key={k} value={k}>{t('cal.colorBy')}: {t(`cal.c.${k}`)}</option>)}
             </select>
             {phone && <button type="button" className="icon-btn" aria-label={t('cal.create')} onClick={() => create()}><Icon name="plus" /></button>}
           </span>
         </div>
-        <div className={`cal-body v-${view}`}>
+        <div className={`cal-body v-${board ? 'board' : view}`} onContextMenu={(e) => { if (!e.target.closest('.cal-chip, .cal-block, .cal-row')) openMenu(e, actions.empty(cfg, setCfg, VIEWS)); }}>
           {view === 'month' && <MonthView {...props} anchor={anchor} onDay={(d, v) => (v ? pickDay(d, v) : setDayList(d))} />}
           {(view === 'week' || view === 'day') && <TimeGrid {...props} days={view === 'week' ? M.weekDays(anchor) : [anchor]} onDay={(d) => pickDay(d, 'day')} />}
-          {view === 'list' && <ListView {...props} from={from} to={to} space={space} />}
-          {view === 'customers' && <CustomerView {...props} space={space} />}
+          {board && <ItemsView id={`cal:${space}`} items={boardItems} cfg={cfg} setCfg={setCfg} views={VIEWS} today={today} ctx={ctx} people={people} actions={actions} colorBy={colorBy} onOpen={openItem} />}
         </div>
       </section>
       {dayList && <DayModal day={dayList} {...props} space={space} onClose={() => setDayList(null)} onOpen={(o) => { setDayList(null); open(o); }} />}
       {quick && <QuickCreate draft={quick} space={space} onClose={() => setQuick(null)} onMore={(d) => { setQuick(null); setSheet({ draft: d }); }} />}
       {sheet && <EventSheet key={sheet.occ?.key ?? sheet.draft?.id} init={sheet} space={space} categories={categories} onClose={() => setSheet(null)} onAsk={setAsk} />}
       {ask && <AskScope ask={ask} rows={data.events ?? []} onClose={() => setAsk(null)} onDone={() => { setAsk(null); setSheet(null); }} />}
+      {actions.dialogs}
     </div>
   );
-}
-
-/** 할 일 기한 — 이 공간의 할 일(useTasks). 개인 공간은 속한 조직에서 나에게 맡겨진 할 일도 */
-function useTaskDues(space) {
-  const sample = getMode() === 'sample';
-  const own = useTasks(space).rows;
-  const [extra, setExtra] = useState([]);
-  useEffect(() => {
-    if (space !== 'me') { setExtra([]); return; }
-    let live = true;
-    Promise.all(writableOrgs().map((s) => loadOrgTasks(idOf(s)).then((rows) => rows.filter((x) => x.assignee === ME.id).map((x) => ({ ...x, space: s.key }))).catch(() => [])))
-      .then((all) => { if (live) setExtra(all.flat()); });
-    return () => { live = false; };
-  }, [space]);
-  return useMemo(() => {
-    const here = sample ? sampleTasks(space === 'me' ? null : space) : own ?? [];
-    return [...here.map((x) => ({ ...x, space })), ...extra].filter((x) => x.due_on);
-  }, [sample, own, extra, space]);
 }
 
 /* ── 왼쪽 레일 ── */
@@ -184,12 +201,12 @@ function CalendarList({ space, off, toggle }) {
 }
 
 /* ── 칩 ── */
-function Chip({ o, colorBy, onOpen, bar, compact }) {
+function Chip({ o, colorBy, onOpen, onMenu, bar, compact }) {
   const color = o.kind === 'task' ? undefined : colorOf(o, colorBy);
   const label = o.kind === 'task' ? t('cal.taskDue', { title: o.title }) : `${o.title}, ${whenText(o)}`;
   return (
     <button type="button" className={`cal-chip${bar || o.kind === 'task' ? ' bar' : ''}${o.kind === 'task' ? ' task' : ''}${o.done ? ' done' : ''}${color ? '' : ' neutral'}`}
-      style={color ? { '--ev': color } : undefined} aria-label={label} title={label} onClick={(e) => { e.stopPropagation(); onOpen(o); }}>
+      style={color ? { '--ev': color } : undefined} aria-label={label} title={label} onClick={(e) => { e.stopPropagation(); onOpen(o); }} {...(onMenu ? menuProps(() => onMenu(o)) : {})}>
       {o.kind === 'task' ? <Icon name="check" size={11} /> : !bar && <span className="cal-dot" />}
       {!bar && o.kind !== 'task' && !compact && <span className="cal-chip-time">{fmtTime(o.start)}</span>}
       {o.crew && colorBy === 'agent' && <Face id={o.crew} size={12} />}
@@ -208,7 +225,7 @@ function DateHead({ day, today, holidays, onClick, small }) {
 }
 
 /* ── 월 보기 ── */
-function MonthView({ anchor, items, today, colorBy, holidays, phone, onOpen, onCreate, onDay }) {
+export function MonthView({ anchor, items, today, colorBy, holidays, phone, onOpen, onCreate, onDay, onMenu }) {
   const grid = M.monthGrid(anchor), cur = M.monthOf(anchor);
   const weeks = Array.from({ length: 6 }, (_, i) => grid.slice(i * 7, i * 7 + 7));
   return (
@@ -237,7 +254,7 @@ function MonthView({ anchor, items, today, colorBy, holidays, phone, onOpen, onC
                   {here.map((s) => <span key={s.key} className={`cal-dot${s.o.kind === 'task' ? ' task' : ''}`} style={s.o.kind === 'task' ? undefined : { '--ev': colorOf(s.o, colorBy) }} />)}
                 </span>;
               }) : segs.filter((s) => lanes.get(s.key) < MAX_LANES).map((s) => (
-                <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 1} / ${s.b + 2}`, gridRow: lanes.get(s.key) + 2 }}><Chip o={s.o} bar={s.bar} colorBy={colorBy} onOpen={onOpen} /></div>
+                <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 1} / ${s.b + 2}`, gridRow: lanes.get(s.key) + 2 }}><Chip o={s.o} bar={s.bar} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} /></div>
               ))}
               {!phone && hidden.map((n, i) => n > 0 && <button key={i} type="button" className="cal-more" style={{ gridColumn: i + 1, gridRow: MAX_LANES + 2 }} onClick={() => onDay(week[i])}>{t('cal.more', { n })}</button>)}
             </div>
@@ -249,7 +266,7 @@ function MonthView({ anchor, items, today, colorBy, holidays, phone, onOpen, onC
 }
 
 /* ── 주·일 보기 ── */
-function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, onCreate, onDay }) {
+export function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, onCreate, onDay, onMenu }) {
   const scroll = useRef(null);
   const cols = { gridTemplateColumns: `56px repeat(${days.length}, minmax(0, 1fr))` };
   useEffect(() => { if (scroll.current) scroll.current.scrollTop = Math.max(0, (new Date().getHours() - 1.5) * HOUR); }, [days.length]);
@@ -281,7 +298,7 @@ function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, onCreate
       <div className="cal-tg-all" style={{ ...cols, gridTemplateRows: `repeat(${laneN}, 24px)` }}>
         <small className="cal-tg-label" style={{ gridRow: `1 / ${laneN + 1}` }}>{t('cal.allDay')}</small>
         {days.map((d, i) => <button key={d} type="button" tabIndex={-1} aria-hidden="true" className="cal-cell" style={{ gridColumn: i + 2, gridRow: `1 / ${laneN + 1}` }} onClick={() => onCreate({ day: d, allDay: true })} />)}
-        {bars.map((s) => <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 2} / ${s.b + 3}`, gridRow: lanes.get(s.key) + 1 }}><Chip o={s.o} bar colorBy={colorBy} onOpen={onOpen} /></div>)}
+        {bars.map((s) => <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 2} / ${s.b + 3}`, gridRow: lanes.get(s.key) + 1 }}><Chip o={s.o} bar colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} /></div>)}
       </div>
       <div ref={scroll} className="cal-tg-scroll">
         <div className="cal-tg-grid" style={{ ...cols, height: 24 * HOUR }}>
@@ -292,7 +309,7 @@ function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, onCreate
               {timed[i].map((x) => {
                 const { col, cols: n } = pos.get(x.key), color = colorOf(x.o, colorBy), short = x.end - x.start < 45;
                 return <button key={x.key} type="button" className={`cal-block${color ? '' : ' neutral'}${short ? ' short' : ''}`} style={{ top: (x.start / 60) * HOUR, height: Math.max(18, ((x.end - x.start) / 60) * HOUR - 2), left: `${(col / n) * 100}%`, width: `calc(${100 / n}% - 3px)`, ...(color ? { '--ev': color } : {}) }}
-                  aria-label={`${x.o.title}, ${whenText(x.o)}`} onClick={(e) => { e.stopPropagation(); onOpen(x.o); }}>
+                  aria-label={`${x.o.title}, ${whenText(x.o)}`} onClick={(e) => { e.stopPropagation(); onOpen(x.o); }} {...(onMenu ? menuProps(() => onMenu(x.o)) : {})}>
                   <strong>{x.o.crew && <Face id={x.o.crew} size={12} />}{x.o.title}</strong>
                   <small>{whenText(x.o)}{x.o.location && !short ? ` · ${x.o.location}` : ''}</small>
                 </button>;
@@ -307,12 +324,12 @@ function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, onCreate
 }
 
 /* ── 목록·거래처·하루 목록 ── */
-function Row({ o, colorBy, onOpen, date }) {
+function Row({ o, colorBy, onOpen, onMenu }) {
   const color = o.kind === 'task' ? undefined : colorOf(o, colorBy);
   const where = o.kind === 'task' ? t('cal.taskRow') : [calName(o), o.location, o.customer_name].filter(Boolean).join(' · ');
   return (
-    <button type="button" className={`cal-row${o.done ? ' done' : ''}`} onClick={() => onOpen(o)}>
-      <span className="cal-row-when">{date && <b>{fmtDay(date, { month: 'short', day: 'numeric', weekday: 'short' })}</b>}{o.kind === 'task' ? t('cal.due') : whenText(o)}</span>
+    <button type="button" className={`cal-row${o.done ? ' done' : ''}`} onClick={() => onOpen(o)} {...(onMenu ? menuProps(() => onMenu(o)) : {})}>
+      <span className="cal-row-when">{o.kind === 'task' ? t('cal.due') : whenText(o)}</span>
       {o.kind === 'task' ? <Icon name="check" size={13} className="dim" /> : <span className={`cal-dot${color ? '' : ' neutral'}`} style={color ? { '--ev': color } : undefined} />}
       <span className="cal-row-main"><span className="clamp">{o.title}</span>{where && <small>{where}</small>}</span>
       {o.crew && <Face id={o.crew} size={18} />}
@@ -330,37 +347,13 @@ function byDay(items, from, to) {
   return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-function ListView({ items, from, to, today, holidays, colorBy, onOpen }) {
-  const start = from < today && today < to ? today : from;
-  const days = byDay(items, start, to);
-  if (!days.length) return <p className="cal-empty">{t('cal.listEmpty')}</p>;
-  return <div className="cal-list">{days.map(([d, list]) => {
-    const hs = holidays ? M.holidaysOn(d) : [];
-    return <section key={d} className="cal-list-day">
-      <h3 className={hs.some((h) => h.off) || M.weekday(d) === 6 ? 'red' : ''}>{fmtDay(d, { month: 'long', day: 'numeric', weekday: 'short' })}{d === today && <span className="badge">{t('cal.today')}</span>}{hs.map((h) => <small key={h.name} className={`cal-holi${h.off ? ' off' : ''}`}>{holidayName(h.name, t)}</small>)}</h3>
-      {list.map((o) => <Row key={o.key} o={o} colorBy={colorBy} onOpen={onOpen} />)}
-    </section>;
-  })}</div>;
-}
-
-function CustomerView({ items, colorBy, onOpen }) {
-  const groups = new Map();
-  for (const o of items) if (o.kind !== 'task' && o.customer_id) groups.set(o.customer_id, [...(groups.get(o.customer_id) ?? []), o]);
-  const list = [...groups.values()].sort((a, b) => (a[0].customer_name ?? '').localeCompare(b[0].customer_name ?? ''));
-  if (!list.length) return <p className="cal-empty">{t('cal.custEmpty')}</p>;
-  return <div className="cal-list">{list.map((g) => <section key={g[0].customer_id} className="cal-list-day">
-    <h3><Icon name="person" size={14} className="dim" />{g[0].customer_name ?? t('cal.custUnknown')}<small className="dim">{t('cal.nItems', { n: g.length })}</small></h3>
-    {g.map((o) => <Row key={o.key} o={o} colorBy={colorBy} onOpen={onOpen} date={M.spanOf(o)[0]} />)}
-  </section>)}</div>;
-}
-
-function DayModal({ day, items, colorBy, holidays, onOpen, onCreate, onClose }) {
+function DayModal({ day, items, colorBy, holidays, onOpen, onCreate, onClose, onMenu }) {
   const list = byDay(items, day, M.addDays(day, 1))[0]?.[1] ?? [];
   const hs = holidays ? M.holidaysOn(day) : [];
   return <Modal open width={420} title={fmtDay(day, { month: 'long', day: 'numeric', weekday: 'long' })} onClose={onClose}
     footer={<><button type="button" className="btn" onClick={onClose}>{t('cal.close')}</button><button type="button" className="btn primary" onClick={() => { onClose(); onCreate({ day, allDay: false, min: 9 * 60 }); }}><Icon name="plus" size={13} />{t('cal.create')}</button></>}>
     {hs.length > 0 && <p className="cal-day-holi">{hs.map((h) => <span key={h.name} className={`cal-holi${h.off ? ' off' : ''}`}>{holidayName(h.name, t)}</span>)}</p>}
-    {list.length ? <div className="cal-list tight">{list.map((o) => <Row key={o.key} o={o} colorBy={colorBy} onOpen={onOpen} />)}</div> : <p className="cal-empty">{t('cal.dayEmpty')}</p>}
+    {list.length ? <div className="cal-list tight">{list.map((o) => <Row key={o.key} o={o} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} />)}</div> : <p className="cal-empty">{t('cal.dayEmpty')}</p>}
   </Modal>;
 }
 
