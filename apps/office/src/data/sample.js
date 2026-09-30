@@ -18,6 +18,7 @@ export const CREWS = [
   { id: 'crew-otto', name: '오토', role: '리서치', status: 'idle' },
   { id: 'crew-mio', name: '미오', role: '디자인', status: 'idle' },
   { id: 'crew-hana', name: '하나', role: '고객 응대', status: 'ask' },
+  { id: 'crew-pepper', name: '페퍼', role: '마케팅', status: 'idle' },
 ];
 
 const doc = (...blocks) => ({ type: 'doc', content: blocks });
@@ -90,28 +91,48 @@ export const WORK = [
 ];
 
 export const DECISIONS = [
+  { id: 'd0', space: 'beyondworks', crew: 'crew-pepper', plain: '10월 뉴스레터 초안을 구독자 1,240명에게 예약 발송', result: 'approved', by: '김유건', at: ago(40), risk: 'high' },
   { id: 'd1', space: 'beyondworks', crew: 'crew-luna', plain: 'nextfield에 파트너십 제안서 메일 발송', result: 'approved', by: '김유건', at: ago(60 * 26) },
   { id: 'd2', space: 'beyondworks', crew: 'crew-hana', plain: '문의 #2031 결제 오류 답변 게시', result: 'approved', by: '김유건', at: ago(60 * 30) },
-  { id: 'd3', space: 'beyondworks', crew: 'crew-otto', plain: '유료 데이터베이스 구독(월 $49)', result: 'rejected', by: '김유건', at: ago(60 * 50) },
+  { id: 'd3', space: 'beyondworks', crew: 'crew-otto', plain: '유료 데이터베이스 구독(월 $49)', result: 'rejected', by: '김유건', at: ago(60 * 50), risk: 'high' },
   { id: 'd4', space: 'beyondworks', crew: 'crew-luna', plain: '거래처 12곳에 추석 인사 메일 발송', result: 'approved', by: '최민지', at: ago(60 * 80) },
+  { id: 'd5', space: 'beyondworks', crew: 'crew-pepper', plain: '인스타그램 광고 일 예산을 3만 원에서 5만 원으로 올림', result: 'rejected', by: '김유건', at: ago(60 * 24 * 12), risk: 'high' },
+  { id: 'd6', space: 'beyondworks', crew: 'crew-otto', plain: '업계 보고서 무료판 내려받기', result: 'approved', by: '최민지', at: ago(60 * 24 * 40) },
 ];
 
 export const OUTPUTS = [
   { id: 'f1', space: 'beyondworks', name: 'quote-hanbit-1800.pdf', crew: 'crew-luna', channel: '영업', bytes: 284000, at: ago(15) },
+  { id: 'f0', space: 'beyondworks', name: 'paste-1727688812.png', crew: null, channel: '영업', bytes: 182000, at: ago(50) },
   { id: 'f2', space: 'beyondworks', name: 'competitor-pricing-2026-09.xlsx', crew: 'crew-otto', channel: '리서치', bytes: 91000, at: ago(60 * 2) },
   { id: 'f3', space: 'beyondworks', name: 'cs-inquiry-types-sept.md', crew: 'crew-hana', channel: '고객 응대', bytes: 12400, at: ago(60 * 6) },
-  { id: 'f4', space: 'beyondworks', name: 'partnership-proposal-v3.pdf', crew: 'crew-luna', channel: '영업', bytes: 1840000, at: ago(60 * 27) },
+  { id: 'f6', space: 'beyondworks', name: 'newsletter-oct-draft.md', crew: 'crew-pepper', channel: '마케팅', bytes: 8200, at: ago(60 * 7) },
   { id: 'f5', space: 'lean-studio', name: 'banner-draft-a.png', crew: 'crew-mio', channel: '디자인', bytes: 640000, at: ago(60 * 9) },
+  { id: 'f4', space: 'beyondworks', name: 'partnership-proposal-v3.pdf', crew: 'crew-luna', channel: '영업', bytes: 1840000, at: ago(60 * 27) },
+  { id: 'f7', space: 'beyondworks', name: 'insta-ad-set-b.png', crew: 'crew-pepper', channel: '마케팅', bytes: 420000, at: ago(60 * 24 * 3) },
+  { id: 'f8', space: 'beyondworks', name: 'meeting-recording-0912.m4a', crew: 'crew-otto', channel: '리서치', bytes: 18400000, at: ago(60 * 24 * 18) },
+  { id: 'f9', space: 'beyondworks', name: 'paste-1724990021.png', crew: null, channel: '고객 응대', bytes: 96000, at: ago(60 * 24 * 36) },
 ];
 
+const kday = (n) => new Date(now + 9 * 3600e3 - n * 864e5).toISOString().slice(0, 10); // n일 전 한국 날짜
+const hh = (n) => `${String(n).padStart(2, '0')}:${String((n * 17) % 60).padStart(2, '0')}`;
+const byTime = (list) => list.sort((a, b) => a.time.localeCompare(b.time)); // 서버 모양(board.js)처럼 시각순
+const pepperDay = ['10월 뉴스레터 주제 3개 후보 정리.', '구독자 세그먼트별 오픈율 비교표 작성.', '인스타그램 광고 B안 문구 2종 작성.\n- 짧은 안: 한 줄 혜택 강조\n- 긴 안: 고객 후기 인용으로 시작\n두 안 모두 이미지 시안과 함께 채널에 올림.', '뉴스레터 초안 1차 완성, 발송 결재 올림.', '광고 성과 일일 점검: 클릭률 1.8%, 어제보다 0.3%p 올랐음.'];
 export const JOURNAL = [
-  { date: '2026-09-26', space: 'beyondworks', entries: [
-    { crew: 'crew-luna', text: '한빛코퍼레이션 재견적 요청을 받아 단가표 확인 중. 수정 견적서 발송 결재를 올림.' },
-    { crew: 'crew-otto', text: '경쟁사 5곳 중 4곳 가격 수집 완료. 남은 1곳은 공개 가격표가 없어 문의 메일 필요.' },
-    { crew: 'crew-hana', text: '문의 3건 분류. 환불 요청 1건은 답변 게시 결재 대기.' } ] },
-  { date: '2026-09-25', space: 'beyondworks', entries: [
-    { crew: 'crew-luna', text: 'nextfield 제안서 발송(승인됨). 회신 대기.' },
-    { crew: 'crew-hana', text: '결제 오류 문의 답변 게시(승인됨).' } ] },
+  { date: kday(0), space: 'beyondworks', entries: byTime([
+    ...pepperDay.map((text, i) => ({ time: hh(9 + i), crew: 'crew-pepper', name: '페퍼', text })),
+    { time: '09:40', crew: 'crew-luna', name: '루나', text: '한빛코퍼레이션 재견적 요청을 받아 단가표 확인 중. 수정 견적서 발송 결재를 올림.' },
+    { time: '11:05', crew: 'crew-luna', name: '루나', text: '수정 견적서 PDF 작성 완료.' },
+    { time: '10:20', crew: 'crew-otto', name: '오토', text: '경쟁사 5곳 중 4곳 가격 수집 완료. 남은 1곳은 공개 가격표가 없어 문의 메일 필요.' },
+    { time: '13:30', crew: 'crew-hana', name: '하나', text: '문의 3건 분류. 환불 요청 1건은 답변 게시 결재 대기.' } ]) },
+  { date: kday(1), space: 'beyondworks', entries: [
+    { time: '10:00', crew: 'crew-luna', name: '루나', text: 'nextfield 제안서 발송(승인됨). 회신 대기.' },
+    { time: '15:10', crew: 'crew-hana', name: '하나', text: '결제 오류 문의 답변 게시(승인됨).' },
+    { time: '16:45', crew: 'crew-pepper', name: '페퍼', text: '추석 이벤트 결과 정리 — 참여 312명, 쿠폰 사용 41%.' } ] },
+  { date: kday(4), space: 'beyondworks', entries: [
+    { time: '14:00', crew: 'crew-otto', name: '오토', text: '업계 보고서 요약본 작성.' },
+    { time: '17:20', crew: null, name: '예전 직원', text: '인수인계 메모를 남겼습니다(지금은 없는 에이전트).' } ] },
+  { date: kday(35), space: 'beyondworks', entries: [
+    { time: '11:00', crew: 'crew-pepper', name: '페퍼', text: '8월 캠페인 회고 문서 초안.' } ] },
 ];
 
 // 성과 기록 예시(유건 9/30) — 서버 office_perf_report와 같은 모양. 오늘부터 14개월 전까지 날짜마다 규칙적으로 만든다(거래처는 가상)
