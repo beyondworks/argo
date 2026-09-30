@@ -12,7 +12,7 @@ function useLoad(fn, deps) {
     setState((s) => ({ ...s, loading: true, error: null }));
     try { setState({ data: await fn(), error: null, loading: false }); }
     catch (e) { setState({ data: null, error: perfError(e), loading: false }); }
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  }, deps); // deps는 부르는 쪽이 정한다(fn은 매번 새로 만들어진다)
   useEffect(() => { load(); }, [load]);
   return { ...state, reload: load };
 }
