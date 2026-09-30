@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko" data-theme="linen">
+<html lang="ko" data-theme="linen" data-shell="plain">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
@@ -16,6 +16,9 @@
         try { var v = localStorage.getItem('argo-office-theme'); if (/^(linen|graphite|cream|sand|peach|mist|glow)(-light|-dark)?$/.test(v)) th = v; } catch (e) {}
         var el = document.documentElement; el.dataset.theme = th;
         if (/^(linen|cream|sand|peach|mist|glow)$/.test(th) && window.matchMedia('(prefers-color-scheme: dark)').matches) el.classList.add('dark-emul');
+        var sh = null; try { sh = localStorage.getItem('argo-office-shell'); } catch (e) {}
+        if (!/^(plain|float|window|panel|pill|glass)$/.test(sh)) sh = { cream: 'float', sand: 'window', peach: 'panel', mist: 'pill', glow: 'glass' }[th.replace(/-(light|dark)$/, '')] || 'plain';
+        el.dataset.shell = sh;
       })();
     </script>
   </head>

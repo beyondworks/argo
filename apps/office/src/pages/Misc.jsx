@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../ui/Icon.jsx';
 import { showToast } from '../ui/Overlay.jsx';
 import { t, ago, useLang, getLang, setLang } from '../core/i18n.js';
-import { THEMES, applyTheme, readTheme } from '../core/theme.js';
+import { FAMILIES, MODES, SHELLS, applyTheme, applyShell, readTheme, readShell, familyOf, modeOf } from '../core/theme.js';
 import { useStore, restorePage, resetDraft } from '../core/store.js';
 import { Link } from '../core/router.jsx';
 import { baseOf, mod } from '../core/commands.js';
@@ -11,36 +11,43 @@ import { SPACES, ME, getMode, signOut } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
 import { DocView } from '../ui/DocView.jsx';
 
-/** 테마 미리보기 — 앱을 작게 줄인 모습(사이드바·캔버스·카드·글줄). "시스템"은 라이트와 다크를 대각선으로 반씩 보여 준다. */
-function Mini({ tone }) {
-  return (
-    <span className="mini" data-pv={tone} aria-hidden="true">
-      <span className="mini-side"><i /><i /><i /></span>
-      <span className="mini-main"><span className="mini-card"><i /><i className="short" /></span><span className="mini-card"><i /><i className="mark" /></span></span>
-    </span>
-  );
-}
-function ThemeThumb({ theme }) {
-  const [family, mode] = theme.split('-');
-  if (!mode) return <span className="thumb"><Mini tone={`${family}-light`} /><span className="thumb-dark"><Mini tone={`${family}-dark`} /></span></span>;
-  return <span className="thumb"><Mini tone={theme} /></span>;
+// 색상 견본 — [바탕, 사이드바, 강조] 라이트 값(정본은 tokens.css·themes.css). 표시용이라 다크 값은 두지 않는다.
+const SWATCH = {
+  linen: ['#e9e6df', '#1f1e1b', '#e8e400'], graphite: ['#fafafa', '#f0f0f0', '#1a1a1a'], cream: ['#fbf3e5', '#111111', '#f4b8dc'],
+  sand: ['#e2dac7', '#f1f0ee', '#c62d26'], peach: ['#ede0d7', '#ffffff', '#f97723'], mist: ['#d0d1cc', '#f2f2ef', '#6f4fd6'],
+  glow: ['linear-gradient(135deg, #f2c3b1, #f2e5b0)', '#fff9f1', '#c8a4ee'],
+};
+
+/** 셸 견본 — 지금 고른 색으로 그린 작은 창. 모양만 셸마다 다르다 */
+function ShellMini({ shell }) {
+  return <span className="shell-mini" data-s={shell} aria-hidden="true"><span className="sm-win"><span className="sm-side"><i /><i /><i /></span><span className="sm-main"><i /><i /></span></span></span>;
 }
 
 export function Settings() {
   useLang();
-  const [theme, setTheme] = useState(readTheme());
+  const [theme, setTheme] = useState(readTheme()), [shell, setShell] = useState(readShell());
+  const family = familyOf(theme), mode = modeOf(theme);
   const pick = (th) => { applyTheme(th); setTheme(th); };
+  const pickShell = (sh) => { applyShell(sh); setShell(sh); };
   const keys = [[`${mod}K`, t('nav.search')], [`${mod}\\`, t('cmd.toggleSidebar')], [`${mod}/`, t('cmd.toggleLang')], [`${mod}⌥N`, t('cmd.newPage')], ['J / K', t('nav.mail')], ['E', t('mail.archiveIt')], ['R', t('mail.reply')], ['Shift+F10', t('more')]];
   return (
     <div className="page-wrap">
       <div className="page-title-row"><h1 className="page-h1">{t('settings.title')}</h1></div>
       <section className="set-card">
         <h2>{t('settings.theme')}</h2>
-        <div className="theme-grid" role="radiogroup" aria-label={t('settings.theme')}>{THEMES.map((th) => (
-          <button key={th} type="button" role="radio" aria-checked={theme === th} className={`theme-opt${theme === th ? ' on' : ''}`} onClick={() => pick(th)}>
-            <ThemeThumb theme={th} />
-            <span className="theme-name">{t(`theme.${th}`)}{theme === th && <Icon name="check" size={14} />}</span>
-          </button>))}</div>
+        <div className="theme-rows">
+          <div className="theme-row"><span className="label">{t('settings.mode')}</span>
+            <div className="seg" role="radiogroup" aria-label={t('settings.mode')}>{MODES.map((m) => <button key={m || 'system'} type="button" role="radio" aria-checked={mode === m} className={`seg-btn${mode === m ? ' on' : ''}`} onClick={() => pick(family + m)}>{t(`mode.${m.slice(1) || 'system'}`)}</button>)}</div></div>
+          <div className="theme-row"><span className="label">{t('settings.shell')}</span>
+            <div className="shell-picks" role="radiogroup" aria-label={t('settings.shell')}>{SHELLS.map((sh) => (
+              <button key={sh} type="button" role="radio" aria-checked={shell === sh} className={`shell-opt${shell === sh ? ' on' : ''}`} onClick={() => pickShell(sh)}>
+                <ShellMini shell={sh} /><span>{t(`shell.${sh}`)}</span></button>))}</div></div>
+          <div className="theme-row"><span className="label">{t('settings.color')}</span>
+            <div className="color-picks" role="radiogroup" aria-label={t('settings.color')}>{FAMILIES.map((f) => (
+              <button key={f} type="button" role="radio" aria-checked={family === f} aria-label={t(`color.${f}`)} title={t(`color.${f}`)} className={`swatch${family === f ? ' on' : ''}`} onClick={() => pick(f + mode)}
+                style={{ '--sw-a': SWATCH[f][0], '--sw-b': SWATCH[f][1], '--sw-c': SWATCH[f][2] }}><i /></button>))}</div>
+            <span className="dim small">{t(`color.${family}`)}</span></div>
+        </div>
       </section>
       <section className="set-card">
         <h2>{t('settings.lang')}</h2>

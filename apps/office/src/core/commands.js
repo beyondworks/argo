@@ -1,7 +1,7 @@
 // 명령 등록부 — ⌘K·우클릭·단축키가 같은 정의를 쓴다(이름·단축키·실행을 한곳에). 권한이 없으면 목록에 넣지 않는다.
 import { navigate } from './router.jsx';
 import { t, setLang, getLang } from './i18n.js';
-import { THEMES, applyTheme } from './theme.js';
+import { THEMES, SHELLS, applyTheme, applyShell } from './theme.js';
 import { createPage, duplicatePage, trashPage, archiveMail, setMail, setRestricted, getState } from './store.js';
 import { setUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
@@ -24,6 +24,7 @@ export function globalCommands(space) {
     { id: 'sidebar', label: t('cmd.toggleSidebar'), icon: 'sidebar', shortcut: `${mod}\\`, run: () => document.documentElement.classList.toggle('nav-collapsed') },
     { id: 'lang', label: t('cmd.toggleLang'), icon: 'globe', shortcut: `${mod}/`, run: () => setLang(getLang() === 'ko' ? 'en' : 'ko') },
     ...THEMES.map((th) => ({ id: `theme-${th}`, label: t('cmd.theme', { name: t(`theme.${th}`) }), icon: 'layout', run: () => applyTheme(th) })),
+    ...SHELLS.map((sh) => ({ id: `shell-${sh}`, label: t('cmd.shell', { name: t(`shell.${sh}`) }), icon: 'layout', run: () => applyShell(sh) })),
     { id: 'settings', label: t('cmd.settings'), icon: 'gear', run: () => navigate(`${base}/settings`) },
   ].filter(Boolean);
 }

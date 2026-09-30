@@ -1,8 +1,8 @@
-// 레퍼런스 테마 다섯 가족(cream·sand·peach·mist·glow) — 목록·첫 페인트·사전·글자 대비를 잠근다.
+// 테마 = 앱 셸 × 색상 — 목록·첫 페인트·예전 테마 이어받기·사전·글자 대비를 잠근다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { THEMES, FAMILIES, EMUL } from '../src/core/theme.js';
+import { THEMES, FAMILIES, EMUL, SHELLS, SHELL_OF } from '../src/core/theme.js';
 
 const css = readFileSync(new URL('../src/themes.css', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -29,26 +29,57 @@ test('테마 목록: 일곱 가족 × (시스템·라이트·다크), 첫 페인
   assert.doesNotMatch('cream-mid', re);
   const emul = new RegExp(html.match(/if \(\/(\^\(linen\|cream[^/]*)\/\.test\(th\)/)[1]);
   assert.deepEqual(THEMES.filter((th) => emul.test(th)), EMUL, '첫 페인트의 dark-emul 대상과 theme.js의 EMUL이 같아야 한다');
+  const shellRe = new RegExp(html.match(/if \(!\/(\^\(plain[^/]*)\/\.test\(sh\)\)/)[1]);
+  assert.deepEqual(SHELLS.filter((sh) => shellRe.test(sh)), SHELLS, '첫 페인트가 모든 셸을 받아야 한다');
+  assert.doesNotMatch('flat', shellRe);
 });
 
-test('테마 이름: 모든 테마가 ko·en 사전에 있다', () => {
-  for (const th of THEMES) {
-    const m = i18n.match(new RegExp(`'theme\\.${th}': \\['([^']+)', '([^']+)'\\]`));
-    assert.ok(m, `theme.${th} 사전 항목 없음`);
-    assert.match(m[1], /[가-힣]/, `theme.${th} ko`);
-    assert.doesNotMatch(m[2], /[가-힣]/, `theme.${th} en`);
+// 이유(유건 9/30 "앱쉘 선택 + 컬러 선택"): 셸이 없던 때 크림을 고른 사람은 셸을 따로 고르지 않아도 그때 모양(떠 있는 사이드바)을 그대로 받아야 한다.
+test('예전 테마 이어받기: 셸 저장값이 없으면 색 가족의 옛 짝 셸 — theme.js와 첫 페인트가 같다', () => {
+  assert.deepEqual(Object.keys(SHELL_OF), FAMILIES);
+  for (const f of FAMILIES) assert.ok(SHELLS.includes(SHELL_OF[f]), f);
+  const map = Function(`return ${html.match(/sh = (\{[^}]*\})\[th/)[1]}`)();
+  for (const f of FAMILIES) assert.equal(map[f] ?? 'plain', SHELL_OF[f], f);
+  assert.equal(SHELL_OF.cream, 'float'); assert.equal(SHELL_OF.linen, 'plain');
+});
+
+test('테마 이름: 색상·셸·모드·옛 테마 명령 이름이 모두 ko·en 사전에 있다', () => {
+  const keys = [...THEMES.map((x) => `theme.${x}`), ...FAMILIES.map((x) => `color.${x}`), ...SHELLS.map((x) => `shell.${x}`), 'mode.system', 'mode.light', 'mode.dark'];
+  for (const k of keys) {
+    const m = i18n.match(new RegExp(`'${k.replace('.', '\\.')}': \\['([^']+)', '([^']+)'\\]`));
+    assert.ok(m, `${k} 사전 항목 없음`);
+    assert.match(m[1], /[가-힣]/, `${k} ko`);
+    assert.doesNotMatch(m[2], /[가-힣]/, `${k} en`);
   }
 });
 
-// 이유: linen·graphite 화면은 한 픽셀도 바뀌면 안 된다 — 모든 규칙이 새 가족의 data-theme 아래에만 있어야 한다.
-test('themes.css: 모든 규칙이 새 다섯 가족의 data-theme 아래에만 있다', () => {
-  const rules = rulesOf(css).map((r) => r.sel);
-  assert.ok(rules.length > 100);
-  for (const sel of rules) for (const one of sel.split(/,(?![^()]*\))/)) {
+// 이유: 기본 셸 + linen·graphite 화면은 한 픽셀도 바뀌면 안 된다 — 모양 규칙은 plain이 아닌 셸 아래에만, 색 규칙은 새 다섯 색 아래에만.
+// 맨 앞 :root 기본값 블록은 base.css가 쓰지 않는 새 토큰(--frame·--t-*·--tile-*)만 정한다.
+test('themes.css: 모든 규칙이 plain이 아닌 셸 또는 새 다섯 색 아래에만 있다', () => {
+  // 설정 화면의 셸 견본(.shell-mini·.sm-*)은 고를 셸을 그려 보이는 곳이라 제외한다
+  const baseApp = readFileSync(new URL('../src/base.css', import.meta.url), 'utf8').split('\n').filter((l) => !/^\.(shell-mini|sm-)/.test(l)).join('\n');
+  const rules = rulesOf(css);
+  assert.ok(rules.length > 80);
+  for (const { sel, decl } of rules) for (const one of sel.split(/,(?![^()]*\))/)) {
     const s = one.trim();
-    if (/^\.mini\[data-pv\]|^\[data-pv=/.test(s)) continue; // 설정 화면 미리보기 — data-pv 값으로 가족을 고른다
-    assert.match(s, /^:root(:is\(|\[data-theme)/, `범위 밖 선택자: ${s.slice(0, 90)}`);
-    assert.doesNotMatch(s, /linen|graphite/, s.slice(0, 90));
+    if (s === ':root') {
+      for (const d of decl.matchAll(/--([a-z0-9-]+):/g)) {
+        assert.match(d[1], /^(frame|t-|tile-)/, `기본값 블록의 토큰: --${d[1]}`);
+        assert.doesNotMatch(baseApp, new RegExp(`var\\(--${d[1]}[,)]`), `base.css가 --${d[1]}을 쓰면 기본 화면이 바뀐다`);
+      }
+      continue;
+    }
+    assert.match(s, /^:root(:is\(\[data-(shell|theme)|\[data-(shell|theme))/, `범위 밖 선택자: ${s.slice(0, 90)}`);
+    assert.doesNotMatch(s, /plain|graphite/, s.slice(0, 90));
+    if (/linen/.test(s)) assert.match(s, /data-shell='(panel|pill|glass)'/, `linen은 사이드바가 녹는 셸의 글자 색 보정에만: ${s.slice(0, 90)}`);
+  }
+});
+
+// 이유(유건 9/30): 왼쪽 테두리 막대는 AI 티가 난다 — 활성 표시든 인용이든 쓰지 않는다.
+test('왼쪽 테두리 막대 금지 — themes.css·base.css·페이지 css', () => {
+  for (const f of ['../src/themes.css', '../src/base.css', '../src/business/business.css', '../src/pages/module-library.css']) {
+    const body = strip(readFileSync(new URL(f, import.meta.url), 'utf8'));
+    assert.doesNotMatch(body, /border-left\s*:|border-inline-start\s*:|inset\s+([2-9]|\d{2,})[\d.]*px\s+0\s+0\s/, f); // 1px은 서랍 가장자리 선이라 막대가 아니다
   }
 });
 
@@ -103,7 +134,6 @@ for (const fam of NEW) for (const mode of ['light', 'dark']) {
     on('primary-fg', 'primary'); on('mark-fg', 'mark');
     for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) on(fg, 'side-bg');
     pairs.push(['side-fg on side-active', ratio(c('side-fg'), over(c('side-active'), c('side-bg')))]); // 선택된 메뉴(반투명 배경은 사이드바 위에 올린 색)
-    if (fam === 'cream') on('side-mark', 'side-bg'); // cream은 선택된 메뉴 글자가 side-mark 색
     for (const n of [1, 2, 3, 4, 5, 6]) for (const ink of ['tile-ink-2', 'tile-ink-3']) on(ink, `tile-${n}`);
     // 상태 글자: 반투명 배지 배경을 카드 위에 올린 색 위에서
     for (const base of ['card', 'surface', 'bg']) for (const k of ['ok', 'warn', 'danger']) pairs.push([`${k}/${k}-soft on ${base}`, ratio(c(k), over(c(`${k}-soft`), c(base)))]);
@@ -112,3 +142,18 @@ for (const fam of NEW) for (const mode of ['light', 'dark']) {
     assert.deepEqual(bad.map(([l, r]) => `${l} ${r.toFixed(2)}`), []);
   });
 }
+
+// 이유: 사이드바가 창 바탕에 녹는 셸(panel·pill·glass)은 사이드바 글자를 창 바탕(--bg) 위에 그린다.
+// 보정 목록(linen·cream처럼 어두운 사이드바)에 없는 색은 사이드바 글자가 --bg 위에서도 읽혀야 한다.
+test('녹는 사이드바 셸: 보정하지 않는 색은 사이드바 글자가 --bg 위에서도 4.5:1', () => {
+  const fix = css.match(/:root:is\(\[data-shell='panel'\], \[data-shell='pill'\], \[data-shell='glass'\]\):is\(([^)]*)\) \{/)[1];
+  for (const fam of NEW) for (const mode of ['light', 'dark']) {
+    const t = tokens(`${fam}-${mode}`);
+    if (fix.includes(`'${fam}'`)) continue;
+    for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) {
+      const r = ratio(rgba(t[fg]), rgba(t.bg));
+      assert.ok(r >= 4.5, `${fam}-${mode}: --${fg} ${t[fg]} / --bg ${t.bg} = ${r.toFixed(2)} — 보정 목록에 넣어야 한다`);
+    }
+  }
+  assert.ok(fix.includes(`'linen'`));
+});
