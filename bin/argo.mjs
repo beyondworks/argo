@@ -4,7 +4,7 @@
 //   argo run             상주 — 메신저·루틴·쪽지·동기화(앱의 서버 기동 순서 instrumentation-node.mjs 그대로). 실행 담당 우선
 //   argo chat <크루> [지시] 한 번 실행(지시가 없으면 이어서 대화)
 //   argo login | status | browser | service install|uninstall|status
-// 회사 데이터는 ~/.argo/workspaces(ARGO_ROOT). 같은 계정의 앱과 동기화로 같은 회사·기억을 본다.
+// 회사 데이터는 ~/.argo/cli-workspaces(ARGO_ROOT) — 같은 맥의 상주·앱 폴더와 따로(기기 세션 단일 소유). 같은 계정의 앱과 동기화로 같은 회사·기억을 본다.
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';

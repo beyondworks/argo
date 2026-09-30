@@ -23,7 +23,9 @@ test('설정: .env에서 공개 Supabase 값 두 개만 꺼낸다 — 서비스 
   assert.deepEqual(publicSupabaseFromDotenv(f), { url: 'https://sb.example', anonKey: 'anon' });
   const env = { ARGO_CLI_HOME: join(base, 'cfg-x') };
   applyCliEnv({ repoRoot: join(base, 'no-repo'), env, platform: 'linux' });
-  assert.equal(env.ARGO_ROOT, join(base, 'cfg-x', 'workspaces'), '데이터 기본 위치 ~/.argo/workspaces');
+  // 같은 맥의 상주·앱(~/.argo/workspaces)과 기기 세션 파일을 같이 쓰면 refresh 토큰 이중 회전 → 세션 가족 폐기(#429 계열). 폴더를 나눈다.
+  assert.equal(env.ARGO_ROOT, join(base, 'cfg-x', 'cli-workspaces'), '데이터 기본 위치 ~/.argo/cli-workspaces');
+  assert.notEqual(env.ARGO_ROOT, join(base, 'cfg-x', 'workspaces'), '상주·앱의 데이터 폴더와 겹치지 않는다');
   assert.equal(env.ARGO_BROWSER_HEADLESS, '1', '화면 없는 리눅스 — 크루 브라우저 헤드리스');
   assert.equal(env.SUPABASE_SERVICE_ROLE_KEY, undefined);
   const mac = { ARGO_CLI_HOME: join(base, 'cfg-y') }; applyCliEnv({ repoRoot: base, env: mac, platform: 'darwin' });

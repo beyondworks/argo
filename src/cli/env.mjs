@@ -35,7 +35,9 @@ export function publicSupabaseFromDotenv(file) {
 /** process.env에 CLI 기본값을 채운다. 반환: 설정 파일 내용. repoRoot = 이 CLI가 든 레포(또는 배포물) 루트. */
 export function applyCliEnv({ repoRoot, env = process.env, platform = process.platform } = {}) {
   const cfg = readConfig(env);
-  if (!env.ARGO_ROOT) env.ARGO_ROOT = cfg.root || join(cliHome(env), 'workspaces');
+  // 기본 폴더는 상주·앱(~/.argo/workspaces)과 따로 — 같은 기기 세션 파일을 두 프로세스가 회전하면 GoTrue가 세션 가족째 폐기한다.
+  // 같은 회사·기억은 클라우드 동기화로 공유한다.
+  if (!env.ARGO_ROOT) env.ARGO_ROOT = cfg.root || join(cliHome(env), 'cli-workspaces');
   // 공개 설정 우선순위: 환경변수 > cli.json > 배포물에 구운 argo-public.json > 레포 .env.local(개발)
   if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     const src = [cfg.supabase, readJson(join(repoRoot, 'bin', 'argo-public.json')), publicSupabaseFromDotenv(join(repoRoot, '.env.local'))]
