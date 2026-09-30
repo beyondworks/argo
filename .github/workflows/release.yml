@@ -346,10 +346,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # argo CLI(계정 모드)의 공개 Supabase 설정 — CLI 전용 이름으로만 넘긴다. NEXT_PUBLIC_*로 넘기면 Next 빌드에
+      # 인라인돼 셀프호스트 웹(--local)이 인증 모드가 된다. 값은 앱·메신저 번들과 같은 공개값(anon)이다.
       - name: Stage server tarball
+        env:
+          ARGO_CLI_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          ARGO_CLI_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
         run: node scripts/stage-server.mjs
-      - name: Fresh-home tarball HTTP, auth and local import smoke
+      - name: Fresh-home tarball HTTP, auth, local import and argo CLI smoke
         shell: bash
+        env:
+          EXPECT_CLI_PUBLIC: '1'
         run: |
           node scripts/server-tarball-smoke.mjs "dist-server/argo-server-$(node -p 'require("./package.json").version')-linux-x64.tar.gz"
       - name: Attach install script

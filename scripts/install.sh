@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Argo 셀프호스트 설치 — 리눅스(1차). 사용:
-#   curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash
-# 하는 일: 최신 서버 타르볼 설치 → systemd user 서비스(항상 재시작) → 127.0.0.1:3001 기동 → 신원 검증.
+# Argo 서버 설치 — 리눅스(1차). 사용:
+#   curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash              # 계정 모드(기본): argo 명령
+#   curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash -s -- --local # 로컬 웹 서버(로그인 없음)
+# 계정 모드(2026-09-30 유건 결정 — 새 설치의 기본): 최신 타르볼 설치 → ~/.local/bin/argo 등록 → 실행 확인. 이후 사용자가
+#   `argo`로 로그인(같은 계정·같은 회사) → `argo service install`로 24시간 상주(메신저·루틴 실행 담당).
+# 로컬 모드(--local, 또는 이미 로컬 웹 서버를 설치해 쓰던 서버의 업데이트): 아래 종전 흐름 그대로 —
+#   systemd user 서비스(항상 재시작) → 127.0.0.1:3001 기동 → 신원 검증. 로컬 설치에는 argo 명령을 등록하지 않는다
+#   (CLI가 계정 로그인을 하면 같은 데이터 폴더의 로컬 서버가 그 세션을 동기화에 함께 써 세션이 폐기될 수 있다).
 # 보안 기본값(변경 금지 권장): 루프백 바인딩 + 로컬 모드(무인증 단일 사용자).
 #   외부에서 쓰려면 SSH 터널: ssh -L 3001:127.0.0.1:3001 user@서버   (포트를 공개로 열지 말 것 —
 #   무인증 공개 = 회사 전체 노출. 인증 모드 셀프호스트는 후속 문서 참조)
@@ -14,6 +19,8 @@ APP_DIR="$BASE_DIR/app"
 DATA_DIR="$BASE_DIR/data"
 PORT="${ARGO_PORT:-3001}"
 WORKSPACE_DIR="$DATA_DIR/workspaces"
+LOCAL=0
+for arg in "$@"; do case "$arg" in --local) LOCAL=1 ;; *) printf '[argo] 모르는 옵션: %s (--local만 있습니다)\n' "$arg" >&2; exit 1 ;; esac; done
 
 say() { printf '\033[1m[argo]\033[0m %s\n' "$*"; }
 die() { printf '\033[31m[argo] %s\033[0m\n' "$*" >&2; exit 1; }
@@ -51,6 +58,8 @@ HAD_APP=0; HAD_UNIT=0; WAS_ACTIVE=0; WAS_ENABLED=0; CHANGED=0; SUCCESS=0
 if [ -f "$UNIT" ]; then cp -p "$UNIT" "$TMP/argo.service.old"; HAD_UNIT=1; fi
 systemctl --user is-active --quiet argo.service && WAS_ACTIVE=1
 systemctl --user is-enabled --quiet argo.service && WAS_ENABLED=1
+# 이미 로컬 웹 서버를 쓰던 서버는 그대로 로컬로 업데이트한다 — 업데이트가 기존 사용 방식을 바꾸지 않게
+[ "$HAD_UNIT" = 0 ] || LOCAL=1
 health() {
   curl -fsS --max-time 3 "http://127.0.0.1:$PORT/api/ping" 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",b=>s+=b);process.stdin.on("end",()=>{try{const p=JSON.parse(s);process.exit(p.argo===true&&p.version===process.argv[1]&&p.buildId===process.argv[2]?0:1)}catch{process.exit(1)}})' "$1" "$2"
@@ -97,6 +106,40 @@ CANDIDATE="$TMP/argo-server"
 EXPECTED_VERSION=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1]));if(!p.version)process.exit(1);process.stdout.write(p.version)' "$CANDIDATE/package.json")
 EXPECTED_BUILD=$(cat "$CANDIDATE/.next/BUILD_ID")
 [ -n "$EXPECTED_BUILD" ] || die "타르볼에 BUILD_ID가 없습니다"
+# ─── 계정 모드 — argo 명령만 설치(웹 서버 서비스 없음). 실패하면 아래 cleanup이 이전 앱을 복구한다. ───
+if [ "$LOCAL" = 0 ]; then
+  [ "$NODE_MAJOR" -ge 22 ] || die "argo 명령은 Node.js 22 이상이 필요합니다(기억 색인이 내장 SQLite를 쓴다) — 현재: $(node -v)"
+  [ -f "$CANDIDATE/bin/argo.mjs" ] || die "타르볼에 argo 명령이 없습니다(argo-server/bin/argo.mjs 부재) — 이 릴리스는 --local로만 설치할 수 있습니다"
+  CLI_ACTIVE=0
+  systemctl --user is-active --quiet argo-cli.service && CLI_ACTIVE=1
+  # 상주 중인 CLI가 답하는 중이면 교체하지 않는다(로컬 흐름과 같은 규칙 — 실행 중 턴을 죽이지 않는다)
+  node - "${ARGO_CLI_HOME:-$HOME/.argo}/cli-workspaces" <<'NODE'
+const fs = require('fs'), path = require('path');
+const root = process.argv[2];
+const entries = dir => { try { return fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } };
+for (const company of entries(root).filter(e => e.isDirectory() && !e.name.startsWith('.'))) {
+  for (const file of entries(path.join(root, company.name, 'chats')).filter(e => e.isFile() && e.name.endsWith('.status.json'))) {
+    try { const s = JSON.parse(fs.readFileSync(path.join(root, company.name, 'chats', file.name), 'utf8')); if (s.ts && Date.now() - s.ts < 120000) { console.error('[argo] 크루가 답하는 중입니다 — 끝난 뒤 다시 설치하세요'); process.exit(1); } } catch { /* 잔재 */ }
+  }
+}
+NODE
+  CHANGED=1
+  if [ "$HAD_APP" = 1 ]; then mv "$APP_DIR" "$TMP/previous-app"; fi
+  mv "$CANDIDATE" "$APP_DIR"
+  node "$APP_DIR/bin/argo.mjs" status >/dev/null 2>"$TMP/argo-status.err" || { cat "$TMP/argo-status.err" >&2; die "argo 명령 실행 확인 실패 — 이전 설치로 복구합니다"; }
+  SHIM_DIR="$HOME/.local/bin"; mkdir -p "$SHIM_DIR"
+  printf '#!/bin/sh\nexec "%s" "%s/bin/argo.mjs" "$@"\n' "$(command -v node)" "$APP_DIR" > "$SHIM_DIR/argo"
+  chmod 755 "$SHIM_DIR/argo"
+  SUCCESS=1
+  if [ "$CLI_ACTIVE" = 1 ]; then systemctl --user restart argo-cli.service; say "상주 중인 argo를 새 버전으로 다시 시작했습니다"; fi
+  say "설치 완료 — argo 명령 (버전: $EXPECTED_VERSION)"
+  case ":$PATH:" in *":$SHIM_DIR:"*) ;; *) say "PATH에 $SHIM_DIR 이 없습니다 — ~/.bashrc 등에 추가하세요: export PATH=\"$SHIM_DIR:\$PATH\"" ;; esac
+  say "다음: argo  (로그인 — 서버에 브라우저가 없으면 안내에 나오는 ssh -L 명령을 내 PC에서 먼저 실행)"
+  say "그다음: argo service install  (재부팅에도 켜져 메신저·예약 작업에 크루가 답합니다)"
+  say "로그인 없는 로컬 웹 서버가 필요하면: 이 스크립트를 --local로 실행"
+  exit 0
+fi
+
 # 로컬 런타임 설정은 그대로 복사하며 값은 출력하지 않는다.
 for name in .env .env.local .env.production .env.production.local; do
   if [ -f "$APP_DIR/$name" ]; then cp -p "$APP_DIR/$name" "$CANDIDATE/$name"; fi

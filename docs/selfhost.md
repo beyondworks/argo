@@ -1,17 +1,34 @@
-# Argo 셀프호스트 (리눅스 VPS — 1차)
+# Argo 서버 설치 (리눅스 VPS — 1차)
 
-> 배포 경로(2026-07-23 현행): 데스크톱 앱(dmg·서명·공증, argo-agent Latest)이 정문이고,
-> 이 CLI 설치 트랙은 리눅스 VPS·헤드리스용 병행 경로다.
-> 웹/앱 기능 패리티 절대 원칙 — 셀프호스트 웹은 데스크톱 앱과 기능이 같아야 한다(연결 포함).
+> 배포 경로: 데스크톱 앱(dmg·서명·공증, argo-agent Latest)이 정문이고, 서버 설치는 리눅스 VPS·헤드리스용 병행 경로다.
+> 두 가지 방식이 있다 — **계정 모드(기본)**: 앱과 같은 계정·같은 회사로 크루를 24시간 켜 둔다.
+> **로컬 모드(`--local`)**: 로그인 없이 그 서버 안에서만 쓰는 웹 화면 서버.
 
-## 설치 (리눅스 x64, Node 22+)
+## 계정 모드 설치 (기본 — 리눅스 x64, Node 22+)
+
+앱을 꺼도 메신저·텔레그램·예약 작업에 크루가 답하게 하는 방식이다.
 
 ```bash
 curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash
+argo                    # 처음 한 번 로그인(서버에 브라우저가 없으면 안내에 나오는 ssh -L 명령을 내 PC에서 먼저 실행)
+argo service install    # 재부팅·크래시에도 다시 켜지는 상주 — 이 서버가 실행 담당을 맡는다
+```
+
+- `argo`만 치면 대화 화면이다(크루와 대화, `/help`로 명령 보기, `/quit`·`exit`로 나가기).
+- AI 연결 정보(API 키 등)는 기기마다 따로다 — 서버에서 `/ai`로 한 번 연결한다(클라우드로 보내지 않는다).
+- 여러 기기에서 같은 회사를 쓰는 동기화는 Pro 플랜이다.
+- 업데이트 = 같은 명령 재실행(상주 중이면 새 버전으로 다시 시작한다).
+
+## 로컬 모드 설치 (`--local` — 로그인 없음)
+
+```bash
+curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash -s -- --local
 ```
 
 하는 일: 최신 서버 타르볼 설치(`~/.argo-selfhost/app`) → systemd user 서비스(`Restart=always` + linger) →
 `127.0.0.1:3001` 기동 → `/api/ping` 신원 검증. **업데이트 = 같은 명령 재실행**(데이터는 `~/.argo-selfhost/data` 보존).
+이미 로컬 모드로 쓰던 서버는 `--local` 없이 다시 실행해도 로컬 모드로 업데이트된다. 로컬 모드에는 `argo` 명령을 등록하지 않는다
+(같은 데이터 폴더에서 계정 로그인이 섞이면 로그인이 풀릴 수 있다).
 
 ## 보안 기본값 (install.sh가 강제 — 바꾸기 전에 읽을 것)
 
