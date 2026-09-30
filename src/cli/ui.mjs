@@ -62,3 +62,13 @@ export function fit(s, cols) {
 export const isCoreLog = (first) => typeof first === 'string' && /^\[[a-z][\w-]*\]/i.test(first);
 /** 앱 기준 안내(설정 → AI 연결)를 CLI 명령으로 바꿔 보인다 — 원문(앱·기록)은 그대로. */
 export const cliHintText = (msg) => String(msg ?? '').replace(/설정 → AI 연결/g, '/ai').replace(/Settings → AI connections/g, '/ai');
+
+/** 연결된 AI가 하나도 없을 때 "이 컴퓨터 로그인(host)"으로 자동 연결할 러너 — 키가 아니라 이 기기 로그인을 쓴다는 선택뿐이라
+    기기 밖으로 나가는 것이 없다(연결 정보 기기별 원칙 유지). 이미 하나라도 연결돼 있으면 건드리지 않는다(사용자 선택 존중).
+    hostUsable은 "이 방식을 쓸 수 있는 러너"일 뿐 로그인 여부가 아니다 — 실제 로그인이 확인된 것(detect.authed, 확인 불가 제외)만 고른다.
+    (로그인 없는 서버에서 연결만 걸면 "러너 없음" 대신 인증 실패로 바뀔 뿐이다.) */
+export function hostAutoConnect(status, detect = {}) {
+  const all = Object.entries(status ?? {});
+  if (all.some(([, v]) => v?.company?.connected)) return [];
+  return all.filter(([id, v]) => v?.hostUsable && !v?.hidden && detect[id]?.authed && !detect[id]?.authUnknown).map(([id]) => id);
+}

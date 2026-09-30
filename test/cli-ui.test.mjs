@@ -60,3 +60,13 @@ test('CLI 안내 — 앱 기준 "설정 → AI 연결"은 /ai로, 코어 진단 
   assert.equal(isCoreLog('[1] 목록 번호'), false, '숫자 대괄호는 사용자 문구일 수 있다');
   assert.equal(isCoreLog({}), false);
 });
+
+test('AI 자동 연결 — 연결이 하나도 없을 때만, 이 컴퓨터에 실제로 로그인된(host) 러너를 고른다(실측: 같은 맥 앱은 세 러너 모두 host)', async () => {
+  const { hostAutoConnect } = await import('../src/cli/ui.mjs');
+  const st = { claude: { hostUsable: true }, codex: { hostUsable: true }, antigravity: { hostUsable: true }, gemini: { hostUsable: true, hidden: true }, glm: { hostUsable: false } };
+  const detect = { claude: { authed: true }, codex: { authed: true }, antigravity: { authed: true, authUnknown: true }, gemini: { authed: true }, glm: { authed: true } };
+  assert.deepEqual(hostAutoConnect(st, detect), ['claude', 'codex'], '숨긴 러너·host 불가·로그인 확인 불가(antigravity) 제외');
+  assert.deepEqual(hostAutoConnect(st, { ...detect, codex: { authed: false } }), ['claude'], '로그인 흔적이 없으면 고르지 않는다(서버)');
+  assert.deepEqual(hostAutoConnect({ ...st, glm: { company: { connected: true } } }, detect), [], '이미 연결이 있으면 사용자 선택을 건드리지 않는다');
+  assert.deepEqual(hostAutoConnect(st, {}), [], '감지 결과가 없으면 아무것도 연결하지 않는다');
+});

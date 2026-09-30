@@ -15,7 +15,7 @@ import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { applyCliEnv, writeConfig, cliHome, cliLang } from '../src/cli/env.mjs';
 import { launchdPlist, systemdUnit } from '../src/cli/service.mjs';
-import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText } from '../src/cli/ui.mjs';
+import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect } from '../src/cli/ui.mjs';
 
 // 사용자에게 필요 없는 경고는 숨긴다 — node:sqlite(기억 인덱스)의 ExperimentalWarning, SDK의 canUseTool 안내
 // (Argo는 도구 허용을 PreToolUse 훅으로 처리한다 — #587). 대화 중 진행 줄 사이에 끼어들었다(실측). 다른 경고는 그대로 보인다.
@@ -42,7 +42,7 @@ const T = {
     newDone: '새 대화를 시작했습니다. 이전 대화는 앱의 대화 기록에 보관됩니다.', serveStart: '이 터미널에서 메신저 대기를 시작합니다. 끝내려면 Ctrl+C를 누르세요.',
     noTty: 'argo 대화 화면은 터미널에서 실행하세요. 스크립트에서는 argo chat <크루> "지시"를 쓰세요.',
     noRunner: '이 기기에는 아직 AI가 연결되지 않았습니다. /ai로 연결하세요(연결 정보는 기기마다 따로 두고 클라우드로 보내지 않습니다).',
-    hostAvail: (names) => `이 컴퓨터에 로그인되어 있는 AI(${names})는 /ai에서 "이 컴퓨터 로그인 사용"으로 바로 연결할 수 있습니다.`,
+    hostAuto: (names) => `이 컴퓨터에 로그인된 AI(${names})로 연결했습니다. 바꾸려면 /ai를 쓰세요.`,
     help: [['/crew [이름]', '대화할 크루 바꾸기'], ['/new', '새 대화 시작(지금 대화는 보관)'], ['/hire', '크루 영입'], ['/ai', 'AI 연결'],
       ['/serve', '이 터미널에서 메신저 대기(상주)'], ['/browser', '크루 브라우저 준비'], ['/status', '계정·회사·기기 상태'], ['/quit, exit', '나가기'],
       ['Ctrl+C', '답하는 중이면 멈추기, 입력 중이면 지우기']], failed: (m) => `실패: ${m}`, oneLiner: '크루를 한 줄로 설명하세요(예: 쇼핑몰 광고 카피를 쓰는 마케터): ', crewName: '이름(비우면 자동): ', created: (n) => `영입했습니다: ${n}`,
@@ -71,7 +71,7 @@ const T = {
     newDone: 'Started a new conversation. The previous one is kept in the app\'s history.', serveStart: 'Starting messenger standby in this terminal. Press Ctrl+C to stop.',
     noTty: 'Run the argo chat screen in a terminal. From scripts, use argo chat <crew> "message".',
     noRunner: 'No AI is connected on this device yet. Connect one with /ai (connection details stay on each device and never go to the cloud).',
-    hostAvail: (names) => `${names} is signed in on this computer — in /ai choose "Use this computer's login" to connect right away.`,
+    hostAuto: (names) => `Connected with the AI signed in on this computer (${names}). Use /ai to change.`,
     help: [['/crew [name]', 'switch crew'], ['/new', 'start a new conversation (current one is kept)'], ['/hire', 'hire a crew'], ['/ai', 'AI connections'],
       ['/serve', 'messenger standby in this terminal'], ['/browser', 'prepare the crew browser'], ['/status', 'account, company, device'], ['/quit, exit', 'leave'],
       ['Ctrl+C', 'stop the reply, or clear the line']], failed: (m) => `Failed: ${m}`, oneLiner: 'Describe the crew in one line (e.g. a marketer who writes ad copy): ', crewName: 'Name (blank = auto): ', created: (n) => `Hired: ${n}`,
@@ -263,6 +263,20 @@ async function hireCrew(ws) {
 }
 
 /* ─── AI 연결 ─── */
+/** 이 기기에 연결된 AI가 없으면 이 컴퓨터 로그인(host)으로 연결한다 — 키가 아니라 로그인 사용 선택이라 기기 밖으로 나가는 것이 없다.
+    같은 맥의 앱은 세 러너 모두 host로 연결해 두었는데(실측 2026-09-30) CLI는 연결 정보가 기기별이라 비어 "러너 없음"으로 멈췄다. 반환: 안내 문구 또는 ''. */
+async function ensureRunners(ws) {
+  const { runnerStatus } = await import('../src/runners.mjs');
+  const { detectRunners } = await import('../src/runners/exec.mjs');
+  const st = await runnerStatus(ws);
+  const ids = hostAutoConnect(st, await detectRunners().catch(() => ({})));
+  if (ids.length) {
+    const { saveRunnerCred } = await import('../src/runners/creds.mjs');
+    for (const id of ids) await saveRunnerCred(ws, id, 'host', 'host');
+    return T.hostAuto(ids.map((id) => st[id]?.name ?? id).join('·'));
+  }
+  return Object.values(st).some((v) => v?.company?.connected) ? '' : T.noRunner;
+}
 async function runnersMenu(ws) {
   const { runnerStatus } = await import('../src/runners.mjs');
   const { RUNNER_AUTH, visibleRunnerIds } = await import('../src/runners/catalog.mjs');
@@ -375,16 +389,8 @@ async function interactive() {
   console.log(`\n${banner({ cols: cols(), version, color }).join('\n')}\n`);
   console.log(dim(`  ${s.user.email ?? ''} · ${company?.name ?? ws}`));
   // 이 기기에 연결된 AI가 없으면 먼저 알린다 — 연결 정보는 기기마다 따로(클라우드 미동기, 유건 지시 2026-08-29)
-  try {
-    const { runnerStatus } = await import('../src/runners.mjs');
-    const st = await runnerStatus(ws);
-    if (!Object.values(st).some((v) => v?.company?.connected)) {
-      console.log(`  ${T.noRunner}`);
-      const host = Object.values(st).filter((v) => v?.hostUsable && !v?.hidden).map((v) => v.name).filter(Boolean);
-      if (host.length) console.log(`  ${dim(T.hostAvail(host.join('·')))}`);
-      console.log('');
-    }
-  } catch { /* 안내일 뿐 — 실패해도 대화는 연다 */ }
+  try { const note = await ensureRunners(ws); if (note) console.log(`  ${dim(note)}\n`); }
+  catch { /* 안내일 뿐 — 실패해도 대화는 연다(턴이 /ai를 안내한다) */ }
   let crew = await pickCrew(ws);
   const showCrew = () => console.log(`  ${crew ? T.talkingTo(bold(crew.name)) : T.noCrew}   ${dim(`·  ${T.headHint}`)}\n`);
   showCrew();
@@ -446,6 +452,7 @@ try {
     const { listAgents } = await import('../src/hub.mjs');
     const want = rest[0]; const crew = (await listAgents(ws)).find((c) => c.slug === want || c.name === want);
     if (!crew) { console.error(T.noCrew); process.exit(1); }
+    await ensureRunners(ws).then((n) => n && console.error(n)).catch(() => {});
     await chatLoop(ws, crew, rest.slice(1).join(' '));
     process.exit(0);
   } else { console.log(T.usage); process.exit(cmd === 'help' || cmd === '--help' ? 0 : 1); }
