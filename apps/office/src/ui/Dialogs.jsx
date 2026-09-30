@@ -1,6 +1,7 @@
 // 공유·게시 창과 "크루에게 맡기기" 창.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Sheet, showToast } from './Overlay.jsx';
+import { Modal, showToast } from './Overlay.jsx';
+import { Sheet } from './Panel.jsx';
 import { Icon } from './Icon.jsx';
 import { Face } from './Face.jsx';
 import { t, ago, useLang, registerDict } from '../core/i18n.js';

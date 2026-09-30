@@ -1,24 +1,26 @@
 // 일정(캘린더) — 구글 캘린더처럼 전체 페이지를 쓰는 달력(유건 9/30 명세 규칙 1~10).
-// 왼쪽 레일(만들기 · 작은 월 달력 · 캘린더 목록), 오른쪽 큰 달력(오늘 · ‹ › · 기간 제목 · 보기 전환 · 색 기준).
+// 왼쪽 레일(만들기 · 작은 월 달력 · 캘린더 목록), 오른쪽 큰 달력(오늘 · ‹ ›(월 보기 제외) · 기간 제목 · 보기·묶기·정렬·색 드롭다운).
+// 월 보기는 주 단위로 위아래로 이어진다(유건 9/30 피드백 1번) — 멈추면 주 경계에 붙고, 제목은 가장 많이 보이는 달, '오늘'은 오늘 주를 가운데로.
 // 같은 일정 행이 개인 달력과 조직 달력에 함께 보인다(저장 행은 하나). 할 일 기한은 겹쳐 보인다.
 // 여러 보기(유건 9/30): 목록·카드·칸반·표는 views/Board.jsx가 일정 + 할 일을 합쳐 그리고, 주·월·일은 아래 달력이 그린다.
 // 옛 '거래처' 보기는 칸반의 '거래처로 묶기'로 들어갔다. 보기 설정(보기·묶기·필터·정렬)은 사람마다 따로(views/data.js).
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { t, registerDict, useLang, getLang } from '../core/i18n.js';
 import { ME, SPACES } from '../core/session.js';
 import { baseOf } from '../core/commands.js';
 import { navigate, useUrl } from '../core/router.jsx';
 import { crewName } from '../core/store.js';
-import { Modal, Sheet, showToast } from '../ui/Overlay.jsx';
+import { Modal, showToast } from '../ui/Overlay.jsx';
+import { Sheet } from '../ui/Panel.jsx';
 import { openMenu, menuProps } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
 import * as M from './model.js';
 import * as V from '../views/model.js';
-import { useEvents, writeEvent, loadPeople, loadCustomers } from './api.js';
+import { useEvents, useEventWindows, writeEvent, loadPeople, loadCustomers } from './api.js';
 import { orgSpaces, idOf, spaceOfOrg, writableOrgs, inSpace, calOf, colorOf, fmtDay, fmtTime, locale, pref, setPref } from './shared.js';
 import { useViewTasks, usePeople, makeCtx, readCfg, writeCfg } from '../views/data.js';
-import { ItemsView, useItemActions, filterMenu, filterCount } from '../views/Board.jsx';
+import { ItemsView, useItemActions, filterMenu, filterCount, Dropdown } from '../views/Board.jsx';
 import { CAL_DICT, holidayName } from './calendar-i18n.js';
 import './calendar.css';
 
@@ -74,8 +76,11 @@ export default function Calendar({ space, day }) {
   const [off, setOff] = useState(() => new Set(pref(`off:${space}`, [])));
   const [rail, setRail] = useState(false);
   const [quick, setQuick] = useState(null), [sheet, setSheet] = useState(null), [ask, setAsk] = useState(null), [dayList, setDayList] = useState(null);
+  // 연속 월 보기로 '이 날로 가라'는 신호 — 오늘·작은 달력·주소(?day=)에서만. 스크롤로 바뀐 기준 날짜는 되돌려 스크롤하지 않는다
+  const [jump, setJump] = useState(() => ({ day: anchor, seq: 0 }));
+  const jumpTo = (d) => { if (view !== 'month') setAnchor(d); setJump((j) => ({ day: d, seq: j.seq + 1 })); };
   useEffect(() => { setOff(new Set(pref(`off:${space}`, []))); }, [space]);
-  useEffect(() => { if (/^\d{4}-\d{2}-\d{2}$/.test(day ?? '')) setAnchor(day); }, [day]);
+  useEffect(() => { if (/^\d{4}-\d{2}-\d{2}$/.test(day ?? '')) jumpTo(day); }, [day]);
   const setView = (v) => setCfg({ view: v });
   const toggle = (id) => { const next = new Set(off); if (next.has(id)) next.delete(id); else next.add(id); setOff(next); setPref(`off:${space}`, [...next]); };
 
@@ -102,7 +107,12 @@ export default function Calendar({ space, day }) {
     if (at) setQuick(draft); else setSheet({ draft });
   };
   const go = (dir) => setAnchor(M.shift(board ? 'list' : view, anchor, dir));
-  const pickDay = (d, v) => { setAnchor(d); if (v) setView(v); setRail(false); };
+  const pickDay = (d, v) => { if (v) { setAnchor(d); setView(v); } jumpTo(d); setRail(false); };
+  /** 연속 월 보기가 멈춘 자리 — 제목·작은 달력은 가장 많이 보이는 달(vis), 기준 날짜는 보이는 주 안의 고른 날·오늘·지금 기준(없으면 그 달 1일).
+   *  기준 날짜는 만들기 기본 날짜와 다른 보기로 바꿀 때 쓴다. 월 보기에서는 오늘·작은 달력도 스크롤만 하고 이 값으로 맞춘다 */
+  const [vis, setVis] = useState(null);
+  const onMonth = (m, lo, hi) => { setVis(m); setAnchor((a) => [jump.day, today, a].find((d) => d >= lo && d <= hi) ?? `${m}-01`); };
+  const monthVis = view === 'month' && vis ? `${vis}-01` : null;
   const actions = useItemActions({ space, ctx, people, categories, onOpen: openItem, onNewEvent: () => create() });
   const onMenu = (o) => actions.single(o.kind === 'task' ? o.vi : V.eventItem(o));
   const props = { items, today, now, colorBy, holidays, phone, onOpen: open, onCreate: create, onMenu };
@@ -116,43 +126,40 @@ export default function Calendar({ space, day }) {
   useEffect(() => { if (!wantOpen || !data.events) return; const o = occ.find((x) => x.key === wantOpen); if (o) setSheet({ occ: o }); strip('open'); }, [wantOpen, data.events]);
   const whoKeys = useMemo(() => [...new Set(boardItems.map((x) => x.who).filter(Boolean))], [boardItems]);
   const nf = filterCount(cfg.filter);
+  const opts = (list, key) => list.map((v) => ({ value: v, label: t(`${key}.${v}`) }));
+  const dues = useMemo(() => items.filter((o) => o.kind === 'task'), [items]);
 
   return (
     <div className={`cal${phone ? ' phone' : ''}${rail ? ' rail-open' : ''}`}>
       <aside className="cal-rail" aria-label={t('cal.rail')}>
         <button type="button" className="btn primary cal-create" onClick={() => { setRail(false); create(); }}><Icon name="plus" size={14} />{t('cal.create')}</button>
-        <MiniMonth anchor={anchor} today={today} holidays={holidays} onPick={(d) => pickDay(d)} />
+        <MiniMonth anchor={monthVis ?? anchor} on={view === 'month' ? jump.day : anchor} today={today} holidays={holidays} onPick={(d) => pickDay(d)} />
         <CalendarList space={space} off={off} toggle={toggle} />
       </aside>
       {rail && <div className="cal-scrim" onClick={() => setRail(false)} />}
       <section className="cal-main">
         <div className="cal-bar">
           {phone && <button type="button" className="icon-btn" aria-label={t('cal.rail')} aria-expanded={rail} onClick={() => setRail(!rail)}><Icon name="sidebar" /></button>}
-          <button type="button" className="btn sm" onClick={() => setAnchor(today)}>{t('cal.today')}</button>
-          <span className="cal-nav">
+          <button type="button" className="btn sm" onClick={() => (view === 'month' ? jumpTo(today) : setAnchor(today))}>{t('cal.today')}</button>
+          {view !== 'month' && <span className="cal-nav">
             <button type="button" className="icon-btn sm" aria-label={t('cal.prev')} onClick={() => go(-1)}><Icon name="back" size={14} /></button>
             <button type="button" className="icon-btn sm" aria-label={t('cal.next')} onClick={() => go(1)}><Icon name="chevron" size={14} /></button>
-          </span>
-          <h2 className="cal-title" aria-live="polite">{periodTitle(view, anchor, phone)}</h2>
+          </span>}
+          <h2 className="cal-title" aria-live="polite">{periodTitle(view, monthVis ?? anchor, phone)}</h2>
           {data.loading && <span className="dim small" role="status">{t('cal.loading')}</span>}
           {data.error && <span className="cal-err small" role="alert">{t(data.error)}</span>}
           <span className="cal-tools">
-            <span className="seg" role="group" aria-label={t('cal.view')}>
-              {VIEWS.map((v) => <button key={v} type="button" className={`seg-btn${view === v ? ' on' : ''}`} aria-pressed={view === v} onClick={() => setView(v)}>{t(`views.v.${v}`)}</button>)}
-            </span>
-            {board && <span className="vw-tools">
-              {view === 'kanban' && <select className="input" value={cfg.group} aria-label={t('views.group')} onChange={(e) => setCfg({ group: e.target.value })}>{V.GROUPS.map((g) => <option key={g} value={g}>{t('views.group')}: {t(`views.g.${g}`)}</option>)}</select>}
-              <button type="button" className={`btn sm${nf ? ' primary' : ''}`} aria-haspopup="menu" onClick={(e) => openMenu(e, filterMenu(cfg, setCfg, { whoKeys, categories, people }), { anchor: e.currentTarget })}><Icon name="search" size={13} />{nf ? t('views.filterOn', { n: nf }) : t('views.filter')}</button>
-              <select className="input" value={cfg.sort} aria-label={t('views.sort')} onChange={(e) => setCfg({ sort: e.target.value })}>{V.SORTS.map((x) => <option key={x} value={x}>{t(`views.s.${x}`)}</option>)}</select>
-            </span>}
-            <select className="input cal-color" value={colorBy} aria-label={t('cal.colorBy')} onChange={(e) => { setColorBy(e.target.value); setPref('color', e.target.value); }}>
-              {['category', 'person', 'agent'].map((k) => <option key={k} value={k}>{t('cal.colorBy')}: {t(`cal.c.${k}`)}</option>)}
-            </select>
+            <Dropdown label={t('views.view')} value={view} options={opts(VIEWS, 'views.v')} onChange={setView} />
+            {view === 'kanban' && <Dropdown label={t('views.group')} value={cfg.group} options={opts(V.GROUPS, 'views.g')} onChange={(g) => setCfg({ group: g })} />}
+            {board && <Dropdown label={t('views.sort')} value={cfg.sort} options={opts(V.SORTS, 'views.s')} onChange={(x) => setCfg({ sort: x })} />}
+            {board && <button type="button" className={`btn sm vw-dd${nf ? ' on' : ''}`} aria-haspopup="menu" onClick={(e) => openMenu(e, filterMenu(cfg, setCfg, { whoKeys, categories, people }), { anchor: e.currentTarget })}
+              onKeyDown={(e) => { if (e.key === 'ArrowDown') openMenu(e, filterMenu(cfg, setCfg, { whoKeys, categories, people }), { anchor: e.currentTarget }); }}>{nf ? t('views.filterOn', { n: nf }) : t('views.filter')}<Icon name="caret" size={12} /></button>}
+            <Dropdown label={t('cal.colorBy')} value={colorBy} options={opts(['category', 'person', 'agent'], 'cal.c')} onChange={(k) => { setColorBy(k); setPref('color', k); }} />
             {phone && <button type="button" className="icon-btn" aria-label={t('cal.create')} onClick={() => create()}><Icon name="plus" /></button>}
           </span>
         </div>
         <div className={`cal-body v-${board ? 'board' : view}`} onContextMenu={(e) => { if (!e.target.closest('.cal-chip, .cal-block, .cal-row')) openMenu(e, actions.empty(cfg, setCfg, VIEWS)); }}>
-          {view === 'month' && <MonthView {...props} anchor={anchor} onDay={(d, v) => (v ? pickDay(d, v) : setDayList(d))} />}
+          {view === 'month' && <ScrollMonth {...props} items={dues} space={space} off={off} start={anchor} jump={jump} onMonth={onMonth} onDay={(d, v) => (v ? pickDay(d, v) : (setAnchor(d), setDayList(d)))} />}
           {(view === 'week' || view === 'day') && <TimeGrid {...props} days={view === 'week' ? M.weekDays(anchor) : [anchor]} onDay={(d) => pickDay(d, 'day')} />}
           {board && <ItemsView id={`cal:${space}`} items={boardItems} cfg={cfg} setCfg={setCfg} views={VIEWS} today={today} ctx={ctx} people={people} actions={actions} colorBy={colorBy} onOpen={openItem} />}
         </div>
@@ -167,7 +174,7 @@ export default function Calendar({ space, day }) {
 }
 
 /* ── 왼쪽 레일 ── */
-function MiniMonth({ anchor, today, holidays, onPick }) {
+function MiniMonth({ anchor, on, today, holidays, onPick }) {
   const [month, setMonth] = useState(anchor);
   useEffect(() => { setMonth(anchor); }, [anchor]);
   const grid = M.monthGrid(month), cur = M.monthOf(month);
@@ -182,7 +189,7 @@ function MiniMonth({ anchor, today, holidays, onPick }) {
         {grid.slice(0, 7).map((d) => <span key={d} className="cal-mini-wd" aria-hidden="true">{fmtDay(d, { weekday: 'narrow' })}</span>)}
         {grid.map((d) => {
           const red = holidays && M.holidaysOn(d).some((h) => h.off);
-          return <button key={d} type="button" className={`cal-mini-day${M.monthOf(d) !== cur ? ' out' : ''}${d === today ? ' today' : ''}${d === anchor ? ' on' : ''}${red || M.weekday(d) === 6 ? ' red' : ''}`}
+          return <button key={d} type="button" className={`cal-mini-day${M.monthOf(d) !== cur ? ' out' : ''}${d === today ? ' today' : ''}${d === on ? ' on' : ''}${red || M.weekday(d) === 6 ? ' red' : ''}`}
             aria-label={fmtDay(d, { month: 'long', day: 'numeric', weekday: 'long' })} aria-current={d === today ? 'date' : undefined} onClick={() => onPick(d)}>{Number(d.slice(8))}</button>;
         })}
       </div>
@@ -225,42 +232,120 @@ function DateHead({ day, today, holidays, onClick, small }) {
 }
 
 /* ── 월 보기 ── */
-export function MonthView({ anchor, items, today, colorBy, holidays, phone, onOpen, onCreate, onDay, onMenu }) {
+/** 한 주(7칸) — 배경 칸(누르면 만들기·폰은 하루 목록) + 날짜 머리 + 줄(lane)에 놓은 칩, 넘치면 '+n개 더'. cur: 진하게 보일 달 */
+function WeekRow({ week, cur, items, today, colorBy, holidays, phone, onOpen, onCreate, onDay, onMenu, style, firsts = false }) {
+  const segs = [];
+  for (const o of items) {
+    const [a, b] = M.spanOf(o);
+    if (b < week[0] || a > week[6]) continue;
+    const bar = o.kind === 'task' || M.isBar(o);
+    segs.push({ key: o.key, o, bar, a: Math.max(0, M.dayDiff(week[0], a)), b: bar ? Math.min(6, M.dayDiff(week[0], b)) : Math.max(0, M.dayDiff(week[0], a)) });
+  }
+  const lanes = M.packLanes(segs);
+  const hidden = week.map((_, i) => segs.filter((s) => lanes.get(s.key) >= MAX_LANES && s.a <= i && i <= s.b).length);
+  return (
+    <div className="cal-week" style={style}>
+      <div className="cal-wbg">
+        {week.map((d) => <button key={d} type="button" tabIndex={-1} aria-hidden="true" className={`cal-cell${M.monthOf(d) !== cur ? ' out' : ''}`} onClick={() => (phone ? onDay(d) : onCreate({ day: d, allDay: true }))} />)}
+      </div>
+      <div className="cal-wfg">
+        {week.map((d, i) => <div key={d} className={`cal-mdate${M.monthOf(d) !== cur ? ' out' : ''}`} style={{ gridColumn: i + 1 }}><DateHead day={d} today={today} holidays={holidays && !phone} small={firsts && !phone && d.endsWith('-01') ? fmtDay(d, { month: 'short', day: 'numeric' }) : undefined} onClick={(x) => (phone ? onDay(x) : onDay(x, 'day'))} /></div>)}
+        {phone ? week.map((d, i) => {
+          const here = segs.filter((s) => s.a <= i && i <= s.b).slice(0, 4);
+          return here.length > 0 && <span key={d} className="cal-dots" style={{ gridColumn: i + 1, gridRow: 2 }} aria-label={t('cal.nItems', { n: segs.filter((s) => s.a <= i && i <= s.b).length })}>
+            {here.map((s) => <span key={s.key} className={`cal-dot${s.o.kind === 'task' ? ' task' : ''}`} style={s.o.kind === 'task' ? undefined : { '--ev': colorOf(s.o, colorBy) }} />)}
+          </span>;
+        }) : segs.filter((s) => lanes.get(s.key) < MAX_LANES).map((s) => (
+          <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 1} / ${s.b + 2}`, gridRow: lanes.get(s.key) + 2 }}><Chip o={s.o} bar={s.bar} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} /></div>
+        ))}
+        {!phone && hidden.map((n, i) => n > 0 && <button key={i} type="button" className="cal-more" style={{ gridColumn: i + 1, gridRow: MAX_LANES + 2 }} onClick={() => onDay(week[i])}>{t('cal.more', { n })}</button>)}
+      </div>
+    </div>
+  );
+}
+const weekHead = (week, phone) => <div className="cal-mhead" aria-hidden="true">{week.map((d) => <span key={d} className={M.weekday(d) === 6 ? 'red' : ''}>{fmtDay(d, { weekday: phone ? 'narrow' : 'short' })}</span>)}</div>;
+
+/** 한 달 격자(6주) — 홈 카드용 */
+export function MonthView({ anchor, ...props }) {
   const grid = M.monthGrid(anchor), cur = M.monthOf(anchor);
   const weeks = Array.from({ length: 6 }, (_, i) => grid.slice(i * 7, i * 7 + 7));
+  return <div className="cal-month">{weekHead(weeks[0], props.phone)}{weeks.map((week) => <WeekRow key={week[0]} week={week} cur={cur} {...props} />)}</div>;
+}
+
+/** 연속 월 보기 — 앞뒤 10년(주)을 한 줄로 두고 보이는 주 근처(앞뒤 BUF주)만 그린다. 주 높이는 보이는 높이를 홀수 주로 나눈 값이라
+ *  멈춤(scroll-snap)과 '가운데 주'가 모두 주 경계에 붙는다. 일정은 스크롤이 멈춘 뒤 보이는 주의 달 격자 창만 읽는다(api.js 창 캐시 재사용).
+ *  items: 할 일 기한(부모가 준다), 일정은 여기서 창을 읽어 편다. start: 처음 가운데 둘 날, jump: { day, seq }(오늘·작은 달력). onMonth: 제목 달 */
+const SPAN = 520, BUF = 4, SETTLE = 160;
+function ScrollMonth({ items, space, off, start, jump, onMonth, phone, ...props }) {
+  const ref = useRef(null);
+  const [base, setBase] = useState(() => M.addDays(M.mondayOf(start), -SPAN * 7));
+  const total = SPAN * 2 + 1;
+  const [fit, setFit] = useState(null); // { n, h }
+  const [top, setTop] = useState(SPAN), [settled, setSettled] = useState(null), [month, setMonth] = useState(M.monthOf(start));
+  const pos = useRef(null); // 지금 맨 위 주 번호(소수) — 높이가 바뀌어도 같은 주를 보이게
+  const want = useRef({ day: start, smooth: false }), seen = useRef(jump.seq);
+  const reduce = useMemo(() => matchMedia('(prefers-reduced-motion: reduce)').matches, []);
+
+  // 보이는 높이 → 주 수·주 높이
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const measure = () => setFit((f) => { const next = M.weekFit(el.clientHeight, phone ? 58 : 124); return f && f.n === next.n && f.h === next.h ? f : next; });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [phone]);
+  if (jump.seq !== seen.current) { seen.current = jump.seq; want.current = { day: jump.day, smooth: true }; }
+  // 높이가 바뀌면 보던 주 그대로
+  useLayoutEffect(() => { if (fit && ref.current && pos.current != null && !want.current) ref.current.scrollTop = pos.current * fit.h; }, [fit]);
+  // 가야 할 날이 있으면 그 주를 가운데로 — 범위 밖이면 기준 주를 옮긴 뒤, 멀면(3화면 넘게) 부드럽게 대신 바로.
+  // 멈춤(snap)은 그려져 있는 주에만 붙으므로 도착할 자리의 주를 먼저 그린 다음(goal) 스크롤한다
+  const [goal, setGoal] = useState(null);
+  useLayoutEffect(() => {
+    const el = ref.current, w = want.current;
+    if (!fit || !el || !w) return;
+    const i = M.dayDiff(base, M.mondayOf(w.day)) / 7;
+    if (i < BUF * 2 || i > total - BUF * 2) { setBase(M.addDays(M.mondayOf(w.day), -SPAN * 7)); return; }
+    const ti = i - (fit.n - 1) / 2;
+    w.far ??= reduce || !w.smooth || Math.abs(ti - el.scrollTop / fit.h) > fit.n * 3; // 처음 자리에서 한 번만 정한다(주를 바꿔 그리면 브라우저가 멈춤 자리를 옮긴다)
+    if (goal !== ti || (w.far && top !== ti)) { setGoal(ti); if (w.far) setTop(ti); return; }
+    want.current = null;
+    if (w.far) { el.scrollTop = ti * fit.h; sync(); } else el.scrollTo({ top: ti * fit.h, behavior: 'smooth' });
+  });
+  // 스크롤 → 맨 위 주·제목 달(한 프레임에 한 번), 멈춘 뒤 읽을 창
+  const frame = useRef(0), idle = useRef(0);
+  const sync = () => {
+    const el = ref.current;
+    if (!el || !fit) return;
+    const st = el.scrollTop, i = Math.floor(st / fit.h);
+    pos.current = st / fit.h;
+    setTop(i);
+    setMonth(M.dominantMonth(base, st, fit.h, fit.n * fit.h));
+    clearTimeout(idle.current);
+    idle.current = setTimeout(() => { setSettled(i); if (!want.current) setGoal(null); }, SETTLE);
+  };
+  const onScroll = () => { if (!frame.current) frame.current = requestAnimationFrame(() => { frame.current = 0; sync(); }); };
+  useEffect(() => () => { cancelAnimationFrame(frame.current); clearTimeout(idle.current); }, []);
+
+  const n = fit?.n ?? 5, h = fit?.h ?? 124;
+  useEffect(() => { if (settled != null) onMonth(month, M.addDays(base, settled * 7), M.addDays(base, (settled + n) * 7 - 1)); }, [month, settled, base, n]);
+  const i0 = Math.max(0, Math.min(top, goal ?? top) - BUF), i1 = Math.min(total - 1, Math.max(top, goal ?? top) + n + BUF);
+  const fetchWins = useMemo(() => (settled == null ? [] : M.weekWindows(base, Math.max(0, settled - 1), Math.min(total - 1, settled + n))), [base, settled, n]); // 처음 자리가 정해지기 전에는 읽지 않는다
+  const showWins = useMemo(() => M.weekWindows(base, i0, i1), [base, i0, i1]);
+  const data = useEventWindows(fetchWins, showWins);
+  const lo = M.addDays(base, i0 * 7), hi = M.addDays(base, (i1 + 1) * 7);
+  const occ = useMemo(() => M.expand(inSpace(data.events, space), M.kstStart(lo) - 86400e3, M.kstStart(hi) + 86400e3).filter((o) => !off.has(calOf(o, space))), [data.events, space, off, lo, hi]);
+  const all = useMemo(() => [...items.filter((o) => { const [a, b] = M.spanOf(o); return b >= lo && a < hi; }), ...occ], [items, occ, lo, hi]);
+  const weeks = [];
+  for (let i = i0; i <= i1; i++) { const d0 = M.addDays(base, i * 7); weeks.push([i, Array.from({ length: 7 }, (_, k) => M.addDays(d0, k))]); }
   return (
-    <div className="cal-month">
-      <div className="cal-mhead" aria-hidden="true">{weeks[0].map((d) => <span key={d} className={M.weekday(d) === 6 ? 'red' : ''}>{fmtDay(d, { weekday: phone ? 'narrow' : 'short' })}</span>)}</div>
-      {weeks.map((week) => {
-        const segs = [];
-        for (const o of items) {
-          const [a, b] = M.spanOf(o);
-          if (b < week[0] || a > week[6]) continue;
-          const bar = o.kind === 'task' || M.isBar(o);
-          segs.push({ key: o.key, o, bar, a: Math.max(0, M.dayDiff(week[0], a)), b: bar ? Math.min(6, M.dayDiff(week[0], b)) : Math.max(0, M.dayDiff(week[0], a)) });
-        }
-        const lanes = M.packLanes(segs);
-        const hidden = week.map((_, i) => segs.filter((s) => lanes.get(s.key) >= MAX_LANES && s.a <= i && i <= s.b).length);
-        return (
-          <div key={week[0]} className="cal-week">
-            <div className="cal-wbg">
-              {week.map((d) => <button key={d} type="button" tabIndex={-1} aria-hidden="true" className={`cal-cell${M.monthOf(d) !== cur ? ' out' : ''}`} onClick={() => (phone ? onDay(d) : onCreate({ day: d, allDay: true }))} />)}
-            </div>
-            <div className="cal-wfg">
-              {week.map((d, i) => <div key={d} className={`cal-mdate${M.monthOf(d) !== cur ? ' out' : ''}`} style={{ gridColumn: i + 1 }}><DateHead day={d} today={today} holidays={holidays && !phone} onClick={(x) => (phone ? onDay(x) : onDay(x, 'day'))} /></div>)}
-              {phone ? week.map((d, i) => {
-                const here = segs.filter((s) => s.a <= i && i <= s.b).slice(0, 4);
-                return here.length > 0 && <span key={d} className="cal-dots" style={{ gridColumn: i + 1, gridRow: 2 }} aria-label={t('cal.nItems', { n: segs.filter((s) => s.a <= i && i <= s.b).length })}>
-                  {here.map((s) => <span key={s.key} className={`cal-dot${s.o.kind === 'task' ? ' task' : ''}`} style={s.o.kind === 'task' ? undefined : { '--ev': colorOf(s.o, colorBy) }} />)}
-                </span>;
-              }) : segs.filter((s) => lanes.get(s.key) < MAX_LANES).map((s) => (
-                <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 1} / ${s.b + 2}`, gridRow: lanes.get(s.key) + 2 }}><Chip o={s.o} bar={s.bar} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} /></div>
-              ))}
-              {!phone && hidden.map((n, i) => n > 0 && <button key={i} type="button" className="cal-more" style={{ gridColumn: i + 1, gridRow: MAX_LANES + 2 }} onClick={() => onDay(week[i])}>{t('cal.more', { n })}</button>)}
-            </div>
-          </div>
-        );
-      })}
+    <div className="cal-month scroll">
+      {weekHead(weeks[0][1], phone)}
+      <div ref={ref} className="cal-mscroll" tabIndex={0} aria-label={fmtDay(`${month}-01`, { year: 'numeric', month: 'long' })} onScroll={onScroll}>
+        <div className="cal-mtrack" style={{ height: total * h }}>
+          {weeks.map(([i, week]) => <WeekRow key={week[0]} week={week} cur={month} items={all} phone={phone} {...props} firsts style={{ top: i * h, height: h }} />)}
+        </div>
+      </div>
     </div>
   );
 }

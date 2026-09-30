@@ -4,7 +4,8 @@ import { useDraggable } from '@dnd-kit/core';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
 import { menuProps, mergeHandlers } from '../ui/Menu.jsx';
-import { Sheet, showToast } from '../ui/Overlay.jsx';
+import { showToast } from '../ui/Overlay.jsx';
+import { Sheet } from '../ui/Panel.jsx';
 import { t, ago, useLang } from '../core/i18n.js';
 import { useStore, decide, crewName, approvalsIn } from '../core/store.js';
 import { recordMenu, fileMenu } from '../core/commands.js';
@@ -15,7 +16,7 @@ import { setUi } from '../core/ui-state.js';
 import { navigate } from '../core/router.jsx';
 import { loadDocBody } from '../core/pull.js';
 import { mdToDoc } from '../core/board.js';
-import { folderKey, isoDay, byDate, journalDigest, fileGroup } from '../core/folders.js';
+import { folderKey, isoDay, byDate, journalDigest, fileGroup, canQuickDecide } from '../core/folders.js';
 import { FolderView, DateSections, useFolder, folderName, FolderIcon, openItem, closeItem, pickFolder, when, countText } from '../ui/FolderView.jsx';
 import { kstDay } from '../core/task-model.js';
 import { DocView } from '../ui/DocView.jsx';
@@ -33,15 +34,38 @@ const crewKey = (x) => folderKey(x.crew);
 const atMs = (x) => Date.parse(x.at ?? '') || 0;
 const byDay = (x) => isoDay(x.at);
 
-/** 결재·결정 한 줄 — 내용 한 줄 말줄임 + 배지 + 시각. 전체 폴더에서만 얼굴을 붙인다 */
-function RecRow({ x, all, bucket, active, badges, extra, menu }) {
+/** 결정 한 줄 — 내용 한 줄 말줄임 + 배지 + 시각. 전체 폴더에서만 얼굴을 붙인다 */
+function RecRow({ x, all, bucket, active, badges, extra }) {
   return (
-    <button type="button" className={`rec-row${active ? ' on' : ''}`} onClick={() => openItem(x.id)} {...(menu ? menuProps(menu) : {})}>
+    <button type="button" className={`rec-row${active ? ' on' : ''}`} onClick={() => openItem(x.id)}>
       {all && <FolderIcon id={crewKey(x)} size={20} />}
       <span className="rec-text">{x.plain}</span>
       {badges}
       <small className="rec-when">{[extra, when(atMs(x), bucket)].filter(Boolean).join(' · ')}</small>
     </button>
+  );
+}
+
+/** 위험도 배지 — 결재가 보이는 모든 곳이 같은 문구(risk.*)와 색(가장 높은 등급만 warn) */
+const Risk = ({ risk }) => <span className={`badge ${risk === 'high' ? 'warn' : ''}`}>{t(`risk.${risk}`)}</span>;
+/** 결정 — 카드 버튼과 상세 창이 같은 경로(store.decide → 전송함 approval.decide) */
+const decideAp = (a, result) => { decide(a.id, result, ME.name); showToast(t('ap.decided', { result: t(`status.${result}`) })); };
+
+/** 결재 카드(유건 9/30 #7) — 한 줄 핵심(에이전트가 적은 목적·할 일, 없으면 요청 앞부분) + 바로 승인·거절.
+ *  위험도가 가장 높은 것은 버튼 대신 '열어서 확인'(상세 창에서 명령까지 보고 결정). 결정 권한이 없으면 버튼이 없다 */
+function ApRow({ a, all, bucket, active, extra }) {
+  return (
+    <div className={`rec-row ap-row${active ? ' on' : ''}`} {...menuProps(() => recordMenu(a, a.plain))}>
+      <button type="button" className="ap-open" onClick={() => openItem(a.id)}>
+        {all && <FolderIcon id={crewKey(a)} size={20} />}
+        <span className="rec-text">{a.head || a.plain}</span>
+        <Risk risk={a.risk} />
+        <small className="rec-when">{[extra, when(atMs(a), bucket)].filter(Boolean).join(' · ')}</small>
+      </button>
+      {a.canDecide !== false && <span className="ap-quick">{canQuickDecide(a)
+        ? <><button type="button" className="btn sm" onClick={() => decideAp(a, 'rejected')}>{t('ap.reject')}</button><button type="button" className="btn sm primary" onClick={() => decideAp(a, 'approved')}>{t('ap.approve')}</button></>
+        : <button type="button" className="btn sm" onClick={() => openItem(a.id)}>{t('ap.open')}</button>}</span>}
+    </div>
   );
 }
 
@@ -51,21 +75,21 @@ export function Approvals({ space, openId, folder }) {
   const rows = useMemo(() => list.filter(approvalsIn(space)), [list, space]);
   const { folders, current, visible } = useFolder(rows, crewKey, atMs, folder);
   const cur = rows.find((a) => a.id === openId);
-  const act = (result) => { decide(cur.id, result, ME.name); closeItem(); showToast(t('ap.decided', { result: t(`status.${result}`) })); };
+  const act = (result) => { decideAp(cur, result); closeItem(); };
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.approvals')} />
       {rows.length === 0 ? <div className="empty-state"><Icon name="stamp" size={20} /><p>{t('ap.empty')}</p></div> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people">
           <DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((a) => (
-            <RecRow key={a.id} x={a} all={current === 'all'} bucket={g.key} active={a.id === openId} menu={() => recordMenu(a, a.plain)}
-              extra={space === 'me' ? spaceName(a.space) : ''} badges={<span className={`badge ${a.risk === 'high' ? 'warn' : ''}`}>{t(`risk.${a.risk}`)}</span>} />))} />
+            <ApRow key={a.id} a={a} all={current === 'all'} bucket={g.key} active={a.id === openId} extra={space === 'me' ? spaceName(a.space) : ''} />))} />
         </FolderView>)}
       <Sheet open={!!cur} onClose={closeItem} title={t('nav.approvals')}
         footer={cur && cur.canDecide !== false && <><button type="button" className="btn" onClick={() => act('rejected')}>{t('ap.reject')}</button><button type="button" className="btn primary" onClick={() => act('approved')}><Icon name="check" size={14} />{t('ap.approve')}</button></>}>
         {cur && <div className="ap-detail">
-          <div className="ap-who"><FolderIcon id={crewKey(cur)} size={28} /><div><b>{folderName(crewKey(cur), 'fold.people')}</b><small className="dim">#{cur.channel} · {ago(cur.at)}</small></div><span className={`badge ${cur.risk === 'high' ? 'warn' : ''}`}>{t(`risk.${cur.risk}`)}</span></div>
-          <p className="ap-big">{cur.plain}</p>
+          <div className="ap-who"><FolderIcon id={crewKey(cur)} size={28} /><div><b>{folderName(crewKey(cur), 'fold.people')}</b><small className="dim">#{cur.channel} · {ago(cur.at)}</small></div><Risk risk={cur.risk} /></div>
+          <p className="ap-big">{cur.head || cur.plain}</p>
+          {cur.head && cur.head !== cur.plain && <p><span className="dim small">{t('ap.request')}</span><br />{cur.plain}</p>}
           {cur.need && <p>{cur.need}</p>}
           {cur.command && <details className="ap-cmd"><summary>{t('ap.command')}</summary><pre>{cur.command}</pre></details>}
           <p className="dim small">{cur.canDecide === false ? t('ap.noRight') : cur.risk === 'high' ? t('ap.who') : t('ap.whoLow')}</p>
@@ -130,11 +154,11 @@ export function Decisions({ space, openId, folder }) {
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people">
           <DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((d) => (
             <RecRow key={d.id} x={d} all={current === 'all'} bucket={g.key} active={d.id === openId} extra={space === 'me' ? spaceName(d.space) : ''}
-              badges={<>{d.risk && <span className={`badge ${d.risk === 'high' ? 'warn' : ''}`}>{t(`risk.${d.risk}`)}</span>}<span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span></>} />))} />
+              badges={<>{d.risk && <Risk risk={d.risk} />}<span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span></>} />))} />
         </FolderView>)}
       <Sheet open={!!cur} onClose={closeOpen} title={t('nav.decisions')}>
         {cur && <div className="ap-detail">
-          <div className="ap-who"><FolderIcon id={crewKey(cur)} size={28} /><div><b>{folderName(crewKey(cur), 'fold.people')}</b><small className="dim">{[cur.channel && `#${cur.channel}`, cur.asked && ago(cur.asked)].filter(Boolean).join(' · ')}</small></div>{cur.risk && <span className={`badge ${cur.risk === 'high' ? 'warn' : ''}`}>{t(`risk.${cur.risk}`)}</span>}</div>
+          <div className="ap-who"><FolderIcon id={crewKey(cur)} size={28} /><div><b>{folderName(crewKey(cur), 'fold.people')}</b><small className="dim">{[cur.channel && `#${cur.channel}`, cur.asked && ago(cur.asked)].filter(Boolean).join(' · ')}</small></div>{cur.risk && <Risk risk={cur.risk} />}</div>
           <p className="ap-big">{cur.plain}</p>
           <Fact k="col.result"><span className={`badge ${cur.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${cur.result}`)}</span></Fact>
           <Fact k="col.by">{[cur.by, ago(cur.at)].filter(Boolean).join(' · ')}</Fact>

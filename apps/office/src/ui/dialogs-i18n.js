@@ -1,6 +1,8 @@
 // 공유·맡기기·이력 창 사전 — 창(Dialogs.jsx)과 함께 지연 로드된다(첫 화면 150KB 상한, 9/30 일정 메뉴를 붙이며 core/i18n.js에서 옮김)
 export const DIALOG_DICT = {
-  'crew.set.pick': ['업무 세트(하네스)', 'Work set (harness)'],
+  'crew.set.pick': ['하네스', 'Harness'],
+  // 맡기는 글에 붙는 하네스·플러그인 문단 머리(core/crew-assign.js) — 9/30 이름 변경(유건 #9)과 함께 core/i18n.js에서 옮김(첫 화면 150KB 상한)
+  'crew.set.head': ['하네스', 'Harness'], 'crew.set.knowhow': ['스킬', 'Skill'], 'crew.set.tools': ['쓰는 플러그인', 'Plugins'], 'crew.set.checks': ['끝내기 전에 확인할 것', 'Check before finishing'], 'crew.tools.head': ['쓸 수 있는 플러그인', 'Plugins you can use'],
   'crew.set.none': ['고르지 않음', 'None'],
   'crew.what': ['무엇을 할까요', 'What should they do'],
   'crew.task.summary': ['요약', 'Summarize'],

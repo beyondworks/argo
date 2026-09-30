@@ -53,3 +53,36 @@ export function stageDate(order, activity) {
 
 /** 과세 10% 원 미만 절사(서버 office_business_vat와 같다) */
 export const vatOf = (supply, taxType) => (taxType === 'taxable' ? Math.floor(Number(supply) / 10) : 0);
+
+/** 한국 날짜의 달(YYYY-MM) — 분석과 같은 기준: 계약(확정)일. 아직 계약 전(견적)이면 null */
+export const dealMonth = (order) => (order.confirmed_at ? new Date(Date.parse(order.confirmed_at) + 9 * 3600e3).toISOString().slice(0, 7) : null);
+
+/** 거래 묶기(유건 9/30) — 진행 상황(기본)·거래처·담당자·월. deals: [{ order, amounts, stage }](취소 거래는 빼고 넘긴다).
+ *  진행 상황은 네 칸이 늘 있고, 나머지는 있는 값만 — 거래처·담당자는 이름순, 월은 최근 달부터, 값이 없는 칸('none')은 맨 끝.
+ *  공동 담당 거래는 담당자마다의 칸에 하나씩 놓인다(성과 기록이 공동 담당을 각자에게 남기는 것과 같다). 반환 [{ key, deals }] */
+export const DEAL_GROUPS = ['stage', 'customer', 'owner', 'month'];
+export function groupDeals(deals, by, name = (key) => key) {
+  if (!DEAL_GROUPS.includes(by) || by === 'stage') return STAGES.map((key) => ({ key, deals: deals.filter((d) => d.stage === key) }));
+  const lanes = new Map();
+  const put = (key, deal) => { if (!lanes.has(key)) lanes.set(key, []); lanes.get(key).push(deal); };
+  for (const deal of deals) {
+    if (by === 'customer') put(deal.order.customer_id ?? 'none', deal);
+    else if (by === 'month') put(dealMonth(deal.order) ?? 'none', deal);
+    else if (deal.order.owners?.length) new Set(deal.order.owners).forEach((owner) => put(owner, deal));
+    else put('none', deal);
+  }
+  const order = (a, b) => (a === 'none') - (b === 'none') || (by === 'month' ? b.localeCompare(a) : String(name(a)).localeCompare(String(name(b)), 'ko') || a.localeCompare(b));
+  return [...lanes.keys()].sort(order).map((key) => ({ key, deals: lanes.get(key) }));
+}
+
+/** 거래처 정렬(유건 9/30) — 이름순·거래 건수순(많은 곳부터, 거래처 카드의 '관련 거래' 수와 같다)·최근 등록순(등록일이 없으면 이름순) */
+export const CUSTOMER_SORTS = ['name', 'deals', 'recent'];
+export function sortCustomers(customers, orders, by) {
+  const count = new Map();
+  for (const order of orders) count.set(order.customer_id, (count.get(order.customer_id) ?? 0) + 1);
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), 'ko') || String(a.id).localeCompare(String(b.id));
+  const rows = customers.slice();
+  if (by === 'deals') return rows.sort((a, b) => (count.get(b.id) ?? 0) - (count.get(a.id) ?? 0) || byName(a, b));
+  if (by === 'recent') return rows.sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')) || byName(a, b));
+  return rows.sort(byName);
+}

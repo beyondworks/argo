@@ -1,6 +1,6 @@
 // 거래 칸반(유건 9/29) — 칸 = 단계(견적 → 계약 → 계산서 발행 → 입금 완료), 카드 = 거래. 버튼 하나가 다음 단계로 넘기는 장부 동작 하나다.
 // 카드에는 메모·페이지 연결·단계 기록이 계속 따라다닌다. 취소된 거래는 '취소 거래'에서만 본다.
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { t, getLang } from '../core/i18n.js';
 import { baseOf } from '../core/commands.js';
 import { navigate } from '../core/router.jsx';
@@ -11,7 +11,7 @@ import { Redact } from './Redact.jsx';
 import { OwnerField } from './Owners.jsx';
 import { businessError } from './data.js';
 import { useMarketing, marketingError } from './marketing-data.js';
-import { STAGES, dealAmounts, dealStage, nextStep, revertStep, canCancel, stageDate } from './deal-model.js';
+import { STAGES, DEAL_GROUPS, dealAmounts, dealStage, nextStep, revertStep, canCancel, stageDate, groupDeals } from './deal-model.js';
 
 const label = (key) => t(`bizui.${key}`);
 const money = (amount) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(Number(amount || 0));
@@ -20,27 +20,54 @@ const kstDay = (value) => new Date(Date.parse(value) + 9 * 3600e3).toISOString()
 const today = () => kstDay(new Date().toISOString());
 const orderRedact = (order, field, run, blocked) => ({ on: order.redacted?.includes(field), disabled: blocked, onToggle: () => run('redact.set', { entity: 'order', id: order.id, field, on: !order.redacted?.includes(field) }).catch(() => {}) });
 
-export function DealBoard({ data, blocked, run, openOrder }) {
+// 묶기는 사람마다 이 기기에 기억한다(보기 설정과 같은 성격 — 서버에 쓰지 않는다)
+const GROUP_KEY = 'argo-office-deal-group';
+const readGroup = () => { try { const v = localStorage.getItem(GROUP_KEY); return DEAL_GROUPS.includes(v) ? v : 'stage'; } catch { return 'stage'; } };
+const keepGroup = (v) => { try { localStorage.setItem(GROUP_KEY, v); } catch { /* 사생활 창 — 기억만 못 한다 */ } };
+const monthName = (key) => new Date(`${key}-01T00:00:00`).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: 'long' });
+
+/** 조직 사람 이름 — 담당자로 묶을 때만 한 번 부른다(내 공간은 담당자가 없다) */
+function usePeople(on, call) {
+  const [people, setPeople] = useState(null);
+  useEffect(() => {
+    if (!on || !call || people) return undefined;
+    let live = true;
+    call('office_org_people').then((rows) => { if (live) setPeople(rows ?? []); }).catch(() => { if (live) setPeople([]); });
+    return () => { live = false; };
+  }, [on, call, people]);
+  return people;
+}
+
+export function DealBoard({ data, blocked, run, openOrder, space, call }) {
   const [view, setView] = useState('active');
+  const groups = DEAL_GROUPS.filter((g) => g !== 'owner' || space !== 'me');
+  const [chosen, setChosen] = useState(readGroup);
+  const group = groups.includes(chosen) ? chosen : 'stage';
+  const people = usePeople(group === 'owner', call);
   const [step, setStep] = useState(null);
   const [drag, setDrag] = useState(null); // 끄는 카드 { id, next, back } — 바로 다음 칸은 다음 단계, 바로 앞 칸은 되돌리기(유건 9/29)
   const deals = data.orders.map((order) => { const amounts = dealAmounts(order, data.lines, data.entries); return { order, amounts, stage: dealStage(order, amounts) }; });
   const cancelled = deals.filter((d) => d.stage === 'cancelled');
   const customer = (id) => data.customers.find((c) => c.id === id)?.name ?? '—';
+  const laneName = (key) => group === 'stage' ? label(`stage.${key}`)
+    : group === 'customer' ? customer(key)
+    : group === 'owner' ? (key === 'none' ? label('owners.none') : people ? people.find((p) => p.user_id === key)?.name ?? label('owners.former') : '…')
+    : key === 'none' ? label('group.noMonth') : monthName(key);
+  const lanes = groupDeals(deals.filter((d) => d.stage !== 'cancelled'), group, (key) => (group === 'customer' ? customer(key) : group === 'owner' ? people?.find((p) => p.user_id === key)?.name ?? '' : key));
   const clips = (id) => (data.links ?? []).filter((l) => l.order_id === id).length;
   const card = ({ order, amounts, stage }) => {
     const next = nextStep(order, amounts);
     const when = stageDate(order, data.activity ?? [])[stage];
     const back = revertStep(order, amounts);
     const forward = next && next.to !== next.stage ? next : null; // '남은 금액 청구'처럼 같은 칸에 머무는 동작은 끌기 대상이 아니다
-    const movable = !blocked && !!(forward || back);
+    const movable = group === 'stage' && !blocked && !!(forward || back); // 끌어서 단계 넘기기는 진행 상황 칸에서만
     const startDrag = (event) => {
       event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', order.id);
       setDrag({ id: order.id, title: order.title, min: when ? kstDay(when) : undefined, next: forward, back });
     };
     return <article className={`deal-card${drag?.id === order.id ? ' dragging' : ''}`} key={order.id} draggable={movable} onDragStart={movable ? startDrag : undefined} onDragEnd={() => setDrag(null)}>
       <button type="button" className="bizui-link" onClick={() => openOrder(order.id)}><Redact {...orderRedact(order, 'title', run, blocked)} focusable={false}>{order.title}</Redact></button>
-      <div className="deal-card-meta"><span className="who">{customer(order.customer_id)}</span>{when && <span className="mono">· {day(when)}</span>}</div>
+      <div className="deal-card-meta">{group !== 'stage' && <span className="badge">{label(`stage.${stage}`)}</span>}{group !== 'customer' && <span className="who">{customer(order.customer_id)}</span>}{when && <span className="mono">{group === 'customer' ? '' : '· '}{day(when)}</span>}</div>
       <div className="deal-card-foot">
         <span className="deal-card-amount"><Redact {...orderRedact(order, 'amount', run, blocked)}>{money(amounts.supply)}</Redact></span>
         <span className="spacer" />
@@ -50,13 +77,13 @@ export function DealBoard({ data, blocked, run, openOrder }) {
     </article>;
   };
   return <>
-    <div className="deal-view"><div className="seg" role="tablist">{['active', 'cancelled'].map((key) => <button key={key} type="button" role="tab" aria-selected={view === key} className={`seg-btn${view === key ? ' on' : ''}`} onClick={() => setView(key)}>{label(`view.${key}`)}{key === 'cancelled' && cancelled.length ? ` ${cancelled.length}` : ''}</button>)}</div><span className="dim small">{label('basisSupply')}</span></div>{/* 카드·합계 = 공급가(분석·성과 기록과 같은 기준, 유건 9/30) */}
+    <div className="deal-view"><div className="seg" role="tablist">{['active', 'cancelled'].map((key) => <button key={key} type="button" role="tab" aria-selected={view === key} className={`seg-btn${view === key ? ' on' : ''}`} onClick={() => setView(key)}>{label(`view.${key}`)}{key === 'cancelled' && cancelled.length ? ` ${cancelled.length}` : ''}</button>)}</div>{view === 'active' && <select className="input deal-group" value={group} aria-label={label('group')} onChange={(e) => { setChosen(e.target.value); keepGroup(e.target.value); }}>{groups.map((g) => <option key={g} value={g}>{label('group')}: {label(`group.${g}`)}</option>)}</select>}<span className="dim small">{label('basisSupply')}</span></div>{/* 카드·합계 = 공급가(분석·성과 기록과 같은 기준, 유건 9/30) */}
     {view === 'active'
-      ? <div className="deal-board">{STAGES.map((stage) => { const lane = deals.filter((d) => d.stage === stage);
+      ? <div className={`deal-board by-${group}`} style={{ '--lanes': lanes.length }}>{lanes.map(({ key: stage, deals: lane }) => {
           const drop = drag && (drag.next?.to === stage ? { ...drag.next, title: drag.title, min: drag.min } : drag.back?.to === stage ? { ...drag.back, revert: true, title: drag.title, min: drag.min } : null);
           const dropProps = drag ? { onDragOver: (event) => { if (drop) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }, onDrop: (event) => { event.preventDefault(); if (drop) setStep(drop); setDrag(null); } } : {};
-          return <section className={`deal-lane${drag ? (drop ? ' drop-ok' : ' drop-no') : ''}`} key={stage} aria-label={label(`stage.${stage}`)} {...dropProps}>
-          <header className="deal-lane-head"><h2>{label(`stage.${stage}`)}</h2><span className="count">{lane.length}</span><span className="sum">{money(lane.reduce((n, d) => n + d.amounts.supply, 0))}</span></header>
+          return <section className={`deal-lane${group === 'stage' ? ` stage-${stage}` : ''}${drag ? (drop ? ' drop-ok' : ' drop-no') : ''}`} key={stage} aria-label={laneName(stage)} {...dropProps}>
+          <header className="deal-lane-head"><h2>{laneName(stage)}</h2><span className="count">{lane.length}</span><span className="sum">{money(lane.reduce((n, d) => n + d.amounts.supply, 0))}</span></header>
           {lane.length ? lane.map(card) : <p className="deal-empty">{label('laneEmpty')}</p>}
         </section>; })}</div>
       : cancelled.length ? <div className="table-wrap bizui-table-wrap"><table className="table bizui-table"><thead><tr><th>{label('titleField')}</th><th>{label('customer')}</th><th>{label('cancelledAt')}</th><th className="num">{label('total')}</th></tr></thead>

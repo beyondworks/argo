@@ -8,10 +8,9 @@
 .cal-nav { display: inline-flex; gap: 2px; }
 .cal-title { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; white-space: nowrap; }
 .cal-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
-.cal-color { width: auto; max-width: 150px; }
 .cal-err { color: var(--danger); }
 .cal-body { min-height: 0; overflow: auto; position: relative; }
-.cal-body.v-week, .cal-body.v-day { overflow: hidden; }
+.cal-body.v-week, .cal-body.v-day, .cal-body.v-month { overflow: hidden; }
 .cal-empty { padding: 40px 16px; text-align: center; color: var(--fg-3); }
 
 /* 작은 달력 */
@@ -74,6 +73,12 @@
 .cal-slot { padding: 1px 3px; min-width: 0; }
 .cal-more { justify-self: start; margin-left: 4px; height: 20px; padding: 0 6px; border-radius: 5px; font-size: 11.5px; font-weight: 560; color: var(--fg-2); }
 @media (hover: hover) { .cal-more:hover { background: var(--primary-soft); color: var(--fg); } }
+/* 연속 월 보기 — 주 높이는 화면이 정한다(보이는 높이 ÷ 홀수 주), 보이는 주 근처만 그린 주를 제자리에 놓는다. 멈추면 주 경계에 붙는다 */
+.cal-month.scroll { grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 0; }
+.cal-mscroll { overflow-y: auto; overflow-x: hidden; min-height: 0; scroll-snap-type: y mandatory; overscroll-behavior: contain; }
+.cal-mscroll:focus-visible { outline-offset: -2px; }
+.cal-mtrack { position: relative; }
+.cal-mtrack > .cal-week { position: absolute; left: 0; right: 0; overflow: hidden; scroll-snap-align: start; }
 .cal-dots { display: flex; justify-content: center; gap: 3px; padding-top: 2px; }
 .cal-dots .cal-dot { width: 6px; height: 6px; }
 
@@ -149,9 +154,6 @@
   .cal-bar { padding: 8px 12px; gap: 6px; }
   .cal-title { font-size: 15px; order: 1; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .cal-tools { order: 2; width: 100%; margin-left: 0; }
-  .cal-tools .seg { flex: 1; flex-wrap: nowrap; }
-  .cal-tools .seg-btn { flex: 1; padding: 0 4px; }
-  .cal-color { max-width: 110px; }
   .cal-month { grid-template-rows: auto repeat(6, minmax(58px, 1fr)); }
   .cal-mhead span { text-align: center; padding: 6px 0; }
   .cal-wfg { grid-template-rows: 30px 12px; }

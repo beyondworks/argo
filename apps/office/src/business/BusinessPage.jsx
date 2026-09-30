@@ -16,7 +16,7 @@ import Marketing from './Marketing.jsx';
 import { DealBoard, DealDetail } from './DealBoard.jsx';
 import { Redact } from './Redact.jsx';
 import { cellsInBox, bulkRedact } from './cell-pick.js';
-import { dealAmounts, vatOf } from './deal-model.js';
+import { dealAmounts, vatOf, CUSTOMER_SORTS, sortCustomers } from './deal-model.js';
 import './business.css';
 import { BUSINESS_MODULES } from '../core/module-registry.js';
 import { SortableContext, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable';
@@ -59,8 +59,23 @@ function EntryRows({ entries, orders, openOrder }) {
 const balance = dealAmounts;
 
 const REDACT_FIELDS = ['manager', 'phone', 'email', 'biz_no', 'account'];
+const day = (value) => (value ? new Date(value).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '—');
+const SORT_KEY = 'argo-office-customer-sort';
+const readSort = () => { try { const v = localStorage.getItem(SORT_KEY); return CUSTOMER_SORTS.includes(v) ? v : 'name'; } catch { return 'name'; } };
+/** 거래처 목록 — 정렬 드롭다운(이름순·거래 건수순·최근 등록순)과 등록일 열(유건 9/30). 등록일은 서버가 돌려줄 때만 보인다(created_at) */
+function Customers({ data, blocked, run, launch, openCard }) {
+  const [chosen, setChosen] = useState(readSort);
+  const dated = data.customers.some((row) => row.created_at);
+  const sorts = CUSTOMER_SORTS.filter((key) => key !== 'recent' || dated);
+  const sort = sorts.includes(chosen) ? chosen : 'name';
+  const pick = (value) => { setChosen(value); try { localStorage.setItem(SORT_KEY, value); } catch { /* 기억만 못 한다 */ } };
+  return <>
+    {data.customers.length > 1 && <div className="biz-list-tools"><select className="input" value={sort} aria-label={label('sort')} onChange={(e) => pick(e.target.value)}>{sorts.map((key) => <option key={key} value={key}>{label('sort')}: {label(`sort.${key}`)}</option>)}</select></div>}
+    <CustomerTable key={sort} rows={sortCustomers(data.customers, data.orders, sort)} dated={dated} blocked={blocked} run={run} launch={launch} openCard={openCard} />
+  </>;
+}
 /** 거래처 표 — 민감 칸은 우클릭으로 가리고, 칸을 누른 채 다른 칸까지 끌어 여러 칸을 고르면 우클릭으로 한 번에 가리기·해제(유건 9/29, 노션처럼) */
-function CustomerTable({ rows, blocked, run, launch, openCard }) {
+function CustomerTable({ rows, dated, blocked, run, launch, openCard }) {
   const [pick, setPick] = useState(null), drag = useRef(false);
   const cells = pick ? cellsInBox(pick.a, pick.b) : [], many = cells.length > 1;
   const at = (event) => event.target.closest?.('[data-cell]')?.dataset.cell.split(':').map(Number);
@@ -85,10 +100,17 @@ function CustomerTable({ rows, blocked, run, launch, openCard }) {
   return <div className={`cell-pick${many ? ' picking' : ''}`} onContextMenu={menu}
     onMouseDown={(event) => { if (event.ctrlKey) return; const cell = event.button === 0 && at(event); /* 맥 Ctrl+클릭은 우클릭 */ drag.current = !!cell; if (event.button === 0) setPick(cell ? { a: cell, b: cell } : null); }}
     onMouseOver={(event) => { if (!(event.buttons & 1)) drag.current = false; /* 창 밖에서 버튼을 놓았으면 끌기 끝 */ const cell = drag.current && at(event); if (cell) setPick((old) => old && (old.b[0] === cell[0] && old.b[1] === cell[1] ? old : { ...old, b: cell })); }}>
-    <Table columns={['name', 'manager', 'phone', 'email', 'biz_no', 'account', 'category', 'customerStatus', 'edit']} rows={rows.map((row, r) => {
+    <Table columns={['name', 'manager', 'phone', 'email', 'biz_no', 'account', 'category', 'customerStatus', ...(dated ? ['createdAt'] : []), 'edit']} rows={rows.map((row, r) => {
       const hide = (field) => { const c = REDACT_FIELDS.indexOf(field); return { on: row.redacted?.includes(field), disabled: blocked, cell: `${r}:${c}`, picked: many && cells.some(([x, y]) => x === r && y === c),
         onToggle: () => run('redact.set', { entity: 'customer', id: row.id, field, on: !row.redacted?.includes(field) }).catch(() => {}) }; };
-      return <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => openCard('c', row.id)}>{row.name}</button></td><td><Redact {...hide('manager')}>{row.manager || '—'}</Redact></td><td className="mono"><Redact {...hide('phone')}>{row.phone || '—'}</Redact></td><td><Redact {...hide('email')}>{row.email || '—'}</Redact></td><td className="mono"><Redact {...hide('biz_no')}>{row.biz_no || '—'}</Redact></td><td><Redact {...hide('account')}>{row.account || '—'}</Redact></td><td>{label(`category.${row.category ?? 'customer'}`)}</td><td>{label(`status.${row.status ?? 'active'}`)}</td><td className="act"><EditButton disabled={blocked} onClick={() => launch('customer', row)} /></td></tr>;
+      // 줄 어디를 눌러도 오른쪽 패널에 거래처 카드(유건 9/30) — 버튼·가린 값(누르고 있으면 보기)·여러 칸 끌기·Ctrl+클릭(맥 우클릭)은 제외
+      const open = (event) => {
+        if (many || event.ctrlKey || event.target.closest('button, a, input, select')) return;
+        const cell = at(event);
+        if (cell && row.redacted?.includes(REDACT_FIELDS[cell[1]])) return;
+        openCard('c', row.id);
+      };
+      return <tr key={row.id} className="row-open" onClick={open}><td><button type="button" className="bizui-link" onClick={() => openCard('c', row.id)}>{row.name}</button></td><td><Redact {...hide('manager')}>{row.manager || '—'}</Redact></td><td className="mono"><Redact {...hide('phone')}>{row.phone || '—'}</Redact></td><td><Redact {...hide('email')}>{row.email || '—'}</Redact></td><td className="mono"><Redact {...hide('biz_no')}>{row.biz_no || '—'}</Redact></td><td><Redact {...hide('account')}>{row.account || '—'}</Redact></td><td>{label(`category.${row.category ?? 'customer'}`)}</td><td>{label(`status.${row.status ?? 'active'}`)}</td>{dated && <td className="mono">{day(row.created_at)}</td>}<td className="act"><EditButton disabled={blocked} onClick={() => launch('customer', row)} /></td></tr>;
     })} />
   </div>;
 }
@@ -156,9 +178,9 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
       {!enabled.includes(current) ? <p className="empty-state">{label('disabled')}</p> : <>
         {current === 'analytics' && <BusinessDashboard business={business} space={space} onOpenOrder={openOrder} />}
         {current === 'marketing' && <Marketing space={space} business={business} />}
-        {current === 'customers' && <CustomerTable rows={data.customers} blocked={blocked} run={run} launch={launch} openCard={openCard} />}
+        {current === 'customers' && <Customers data={data} blocked={blocked} run={run} launch={launch} openCard={openCard} />}
         {current === 'catalog' && <Table columns={['name', 'kind', 'sku', 'price', 'edit']} rows={data.items.map((row) => <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => openCard('i', row.id)}>{row.name}</button></td><td>{label(row.kind)}</td><td>{row.sku || '—'}</td><td className="num">{money(row.price)}</td><td className="act"><EditButton disabled={blocked} onClick={() => launch('item', row)} /></td></tr>)} />}
-        {current === 'orders' && <>{(!data.customers.length || !data.items.length) && <p className="bizui-muted">{label('prerequisites')}</p>}<DealBoard data={data} blocked={blocked} run={run} openOrder={openOrder} /></>}
+        {current === 'orders' && <>{(!data.customers.length || !data.items.length) && <p className="bizui-muted">{label('prerequisites')}</p>}<DealBoard data={data} blocked={blocked} run={run} openOrder={openOrder} space={space} call={business.call} /></>}
         {current === 'inventory' && <><Table columns={['name', 'sku', 'stock', 'reserved', 'available', 'receive']} rows={data.items.filter((item) => item.kind === 'product').map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.sku || '—'}</td><td className="num">{row.stock}</td><td className="num">{row.reserved}</td><td className="num">{row.stock - row.reserved}</td><td className="act"><EditButton disabled={blocked} onClick={() => launch('receive', { item_id: row.id, quantity: 1 })}>{label('receive')}</EditButton></td></tr>)} /><div className="biz-section"><h2>{label('movements')}</h2></div><Table columns={['date', 'name', 'kind', 'quantity', 'orders']} rows={data.movements.map((row) => <tr key={row.id}><td>{date(row.at)}</td><td>{data.items.find((i) => i.id === row.item_id)?.name}</td><td>{label(row.kind)}</td><td className="num">{row.quantity}</td><td>{row.order_id && <button className="bizui-link" onClick={() => openOrder(row.order_id)}>{data.orders.find((o) => o.id === row.order_id)?.title}</button>}</td></tr>)} /></>}
         {current === 'payments' && <EntryRows entries={data.entries} orders={data.orders} openOrder={openOrder} />}
       </>}

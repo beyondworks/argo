@@ -162,3 +162,27 @@ export function shift(view, anchor, dir) {
   if (view === 'list') return addDays(anchor, 30 * dir);
   return addMonths(anchor, dir);
 }
+
+/* ── 연속 월 보기(유건 9/30 피드백 1번) — 주 단위로 위아래로 이어지는 월 보기 ── */
+/** 보이는 높이에 딱 맞는 주 수(홀수 — 가운데 주도 주 경계에 붙는다)와 주 높이(px) */
+export function weekFit(viewH, minH) {
+  let n = Math.max(1, Math.floor(viewH / minH));
+  if (n % 2 === 0) n -= 1;
+  return { n, h: Math.max(24, Math.floor(viewH / n)) };
+}
+/** 0번 주 월요일(base)에서 top(px)만큼 내려왔을 때 화면에 가장 많이 보이는 달 'YYYY-MM' — 보이는 높이 × 날짜 수로 센다, 동점이면 앞 달 */
+export function dominantMonth(base, top, h, viewH) {
+  const score = new Map();
+  for (let i = Math.max(0, Math.floor(top / h)); i * h < top + viewH; i++) {
+    const vis = Math.min((i + 1) * h, top + viewH) - Math.max(i * h, top);
+    if (vis <= 0) continue;
+    for (let d = 0; d < 7; d++) { const m = monthOf(addDays(base, i * 7 + d)); score.set(m, (score.get(m) ?? 0) + vis); }
+  }
+  return [...score].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? monthOf(base);
+}
+/** 주 i0~i1(포함)을 덮는 읽기 창 — 주마다 그 주 월요일이 든 달의 월 격자 창. 주·일 보기와 같은 창이라 이미 읽은 창을 다시 쓴다 */
+export function weekWindows(base, i0, i1) {
+  const months = new Set();
+  for (let i = i0; i <= i1; i++) months.add(monthOf(addDays(base, i * 7)));
+  return [...months].map((m) => windowOf('month', `${m}-01`));
+}
