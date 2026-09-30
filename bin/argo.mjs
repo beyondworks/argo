@@ -14,7 +14,7 @@ import { homedir, hostname } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import { Writable, Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { applyCliEnv, writeConfig, cliHome, cliLang } from '../src/cli/env.mjs';
+import { applyCliEnv, writeConfig, cliHome, cliLang, cliMode, appDataRoot, accountRoot } from '../src/cli/env.mjs';
 import { launchdPlist, systemdUnit } from '../src/cli/service.mjs';
 import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect, pasteFilter, unpaste } from '../src/cli/ui.mjs';
 
@@ -25,7 +25,22 @@ process.removeAllListeners('warning');
 process.on('warning', (w) => { if (w?.name !== 'ExperimentalWarning' && !QUIET_WARNINGS.has(w?.code)) console.warn(`${w.name}: ${w.message}`); });
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
-const cfg = applyCliEnv({ repoRoot: REPO }); // src 모듈보다 먼저(WS_ROOT 고정 전)
+const userRoot = !!process.env.ARGO_ROOT; // 사용자가 직접 준 데이터 폴더는 모드와 무관하게 존중
+let cfg = applyCliEnv({ repoRoot: REPO }); // src 모듈보다 먼저(WS_ROOT 고정 전)
+let localMode = cliMode(cfg) === 'local'; // 로그인 없이 이 컴퓨터에서만 — 앱 데이터 폴더를 같이 쓴다(유건 결정 2026-09-30)
+/** 모드를 바꾼다 — src를 불러오기 전에만 부를 수 있다(ARGO_ROOT가 불러오는 순간 고정). */
+function setMode(mode) {
+  cfg = writeConfig({ mode }); localMode = mode === 'local';
+  if (!userRoot) process.env.ARGO_ROOT = localMode ? appDataRoot() : accountRoot();
+  guardLocal();
+}
+/** 로컬 모드는 앱 폴더를 같이 쓴다 — 그 폴더에 앱의 로그인 세션이 있으면(앱이 계정으로 로그인됨) CLI가 같은 refresh 토큰을
+    회전시켜 GoTrue가 세션 가족째 폐기한다(#429 계열). 그때는 로컬을 쓰지 않고 계정 모드로 돌린다. 로컬은 동기화도 끈다(방어). */
+function guardLocal() {
+  if (!localMode) return;
+  if (existsSync(join(process.env.ARGO_ROOT, '.device-session.json'))) { console.log(T.localAppSignedIn); setMode('account'); return; }
+  process.env.ARGO_SYNC = '0';
+}
 const lang = cliLang(cfg);
 const [cmd = '', ...rest] = process.argv.slice(2);
 
@@ -42,6 +57,10 @@ const T = {
     quitHint: '나가려면 /quit 또는 exit를 입력하세요.', unknownCmd: (n) => `모르는 명령입니다: /${n} — /help로 명령을 볼 수 있습니다.`,
     newDone: '새 대화를 시작했습니다. 이전 대화는 앱의 대화 기록에 보관됩니다.', serveStart: '이 터미널에서 메신저 대기를 시작합니다. 끝내려면 Ctrl+C를 누르세요.',
     noTty: 'argo 대화 화면은 터미널에서 실행하세요. 스크립트에서는 argo chat <크루> "지시"를 쓰세요.',
+    modeAsk: 'Argo를 어떻게 쓸까요?', modes: ['계정으로 로그인 — 앱·다른 기기와 회사·크루·대화를 이어서 씁니다', '이 컴퓨터에서만 쓰기 — 로그인 없이, 이 컴퓨터의 Argo 앱과 같은 데이터를 씁니다'],
+    localLabel: '이 컴퓨터에서만(로그인 없음)',
+    localAppSignedIn: '이 컴퓨터의 Argo 앱이 계정으로 로그인돼 있어 계정 모드로 씁니다(같은 로그인을 두 프로그램이 나눠 쓰면 로그인이 풀립니다).',
+    localNoServe: '이 컴퓨터에서만 쓰는 모드에서는 메신저 대기(상주)를 쓸 수 없습니다 — 메신저는 계정이 필요하고, 이 컴퓨터의 예약 작업은 Argo 앱이 맡습니다. 계정으로 쓰려면: argo login',
     noRunner: '이 기기에는 아직 AI가 연결되지 않았습니다. /ai로 연결하세요(연결 정보는 기기마다 따로 두고 클라우드로 보내지 않습니다).',
     hostAuto: (names) => `이 컴퓨터에 로그인된 AI(${names})로 연결했습니다. 바꾸려면 /ai를 쓰세요.`,
     help: [['/crew [이름]', '대화할 크루 바꾸기'], ['/new', '새 대화 시작(지금 대화는 보관)'], ['/hire', '크루 영입'], ['/ai', 'AI 연결'],
@@ -71,6 +90,10 @@ const T = {
     quitHint: 'Type /quit or exit to leave.', unknownCmd: (n) => `Unknown command: /${n} — see /help.`,
     newDone: 'Started a new conversation. The previous one is kept in the app\'s history.', serveStart: 'Starting messenger standby in this terminal. Press Ctrl+C to stop.',
     noTty: 'Run the argo chat screen in a terminal. From scripts, use argo chat <crew> "message".',
+    modeAsk: 'How do you want to use Argo?', modes: ['Sign in with an account — continue companies, crews and chats with the app and other devices', 'This computer only — no sign-in, same data as the Argo app on this computer'],
+    localLabel: 'This computer only (not signed in)',
+    localAppSignedIn: 'The Argo app on this computer is signed in to an account, so using account mode (two programs sharing one sign-in would sign you out).',
+    localNoServe: 'Messenger standby is not available in this-computer-only mode — the messenger needs an account, and the Argo app runs scheduled work on this computer. To use an account: argo login',
     noRunner: 'No AI is connected on this device yet. Connect one with /ai (connection details stay on each device and never go to the cloud).',
     hostAuto: (names) => `Connected with the AI signed in on this computer (${names}). Use /ai to change.`,
     help: [['/crew [name]', 'switch crew'], ['/new', 'start a new conversation (current one is kept)'], ['/hire', 'hire a crew'], ['/ai', 'AI connections'],
@@ -89,6 +112,7 @@ const T = {
     status: (s) => `Account: ${s.email || '(not signed in)'}\nData: ${s.root}\nCompanies: ${s.companies}\nDevice: ${s.device}`,
   },
 }[lang];
+guardLocal(); // src를 불러오기 전 — 로컬인데 앱 폴더에 로그인이 있으면 계정 모드로
 
 /* ─── 입력 ─── */
 let muted = false;
@@ -164,14 +188,22 @@ async function requireSession({ interactive }) {
   if (!s) { const { deviceSessionDead } = await import('../src/devicesession.mjs'); console.error(deviceSessionDead() ? T.dead : T.needLogin); process.exit(1); }
   return s;
 }
+/** 신원 — 로컬 모드는 앱의 로컬 시작과 같은 'local'(표시 파일 .guest-mode.json을 켠다), 계정 모드는 기기 세션. */
+async function identity({ interactive }) {
+  if (!localMode) return requireSession({ interactive });
+  const { guestModeOn, enableGuestMode } = await import('../src/gueststate.mjs');
+  if (!guestModeOn()) await enableGuestMode();
+  return { user: { id: 'local', email: '' } };
+}
 async function ownCompanies(uid) {
   const { listCompanies } = await import('../src/hub.mjs');
-  return (await listCompanies()).filter((c) => c.ownerId === uid);
+  // 'local' = 주인 없는 회사(앱 로컬 모드와 같은 규칙 — app/api/companies)
+  return (await listCompanies()).filter((c) => (uid === 'local' ? !c.ownerId : c.ownerId === uid));
 }
 /** 회사 고르기 — 로컬에 없으면 동기화로 클라우드에서 찾아 온다(최대 40초). 대화형이면 새로 만들 수 있다. */
 async function pickCompany(uid, { interactive }) {
   let list = await ownCompanies(uid);
-  if (!list.length) {
+  if (!list.length && uid !== 'local') { // 로컬은 클라우드가 없다
     const { ensureSync } = await import('../src/sync.mjs'); ensureSync();
     console.log(T.finding);
     for (let i = 0; i < 20 && !list.length; i++) { await new Promise((r) => setTimeout(r, 2000)); list = await ownCompanies(uid); }
@@ -186,7 +218,7 @@ async function pickCompany(uid, { interactive }) {
   const { createCompany } = await import('../src/workspace.mjs');
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); // 앱과 같은 규칙(app/api/companies/route.js)
   const ws = `${base || 'co'}-${Date.now().toString(36).slice(-4)}`;
-  await createCompany(ws, name, 'captain', uid, lang); // 표준 스캐폴드(vault 위키 트리)를 앱과 같은 함수로 만든다
+  await createCompany(ws, name, 'captain', uid === 'local' ? null : uid, lang); // 표준 스캐폴드를 앱과 같은 함수로 — 로컬은 주인 없음(나중에 로그인하면 앱에서 클레임)
   writeConfig({ ws }); return ws;
 }
 
@@ -376,7 +408,7 @@ function service(action) {
 }
 
 async function status() {
-  const s = await currentSession();
+  const s = localMode ? { user: { id: 'local', email: T.localLabel } } : await currentSession();
   const { getDeviceId } = await import('../src/workspace.mjs');
   const companies = s ? (await ownCompanies(s.user.id)).map((c) => `${c.name} (${c.id})`).join(', ') || '-' : '-';
   console.log(T.status({ email: s?.user?.email, root: process.env.ARGO_ROOT, companies, device: await getDeviceId() }).split('\n').map((l) => `  ${l}`).join('\n')); // 대화 화면 줄과 같은 들여쓰기
@@ -385,6 +417,13 @@ async function status() {
 /* ─── 입구 — 대화 화면 ─── */
 async function interactive() {
   if (!rl || !process.stdout.isTTY) { console.error(T.noTty); process.exit(1); }
+  // 처음 실행 — 계정/이 컴퓨터에서만을 고른다(앱 로그인 화면의 "로컬로 시작"과 같은 선택). 공개 설정이 없는 빌드는 로컬뿐.
+  if (!cliMode(cfg)) {
+    const canAccount = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+    let i = canAccount ? -1 : 1;
+    while (i < 0) i = await choose(T.modeAsk, T.modes); // 잘못 친 번호로 모드가 정해지지 않게 다시 묻는다
+    setMode(i === 0 ? 'account' : 'local');
+  }
   process.env.ARGO_NO_LEADER = '1'; // 대화 화면은 동기화만 — 실행 담당(메신저·루틴)은 맡지 않는다(argo run·/serve가 맡는다)
   // 코어 진단 로그("[argo] 동기화 시작…")는 대화 사이에 끼지 않게 ~/.argo/cli.log로(실측: 배너 위에 떴다). 1MB 넘으면 한 번 교체 — 쌓이기만 하지 않게.
   const { appendFileSync, statSync, renameSync, mkdirSync: mk } = await import('node:fs');
@@ -394,14 +433,14 @@ async function interactive() {
     const orig = console[k].bind(console);
     console[k] = (...a) => { if (!isCoreLog(a[0])) return orig(...a); try { appendFileSync(logFile, `${new Date().toISOString()} ${k} ${a.map((x) => (x instanceof Error ? x.message : String(x))).join(' ')}\n`, { mode: 0o600 }); } catch { /* 로그 실패는 무시 */ } };
   }
-  const s = await requireSession({ interactive: true });
+  const s = await identity({ interactive: true });
   const ws = await pickCompany(s.user.id, { interactive: true });
   const { ensureSync } = await import('../src/sync.mjs'); ensureSync(); // 여기서 한 대화가 앱에도 보이게
   const { readFileSync } = await import('node:fs');
   const version = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
   const company = (await ownCompanies(s.user.id)).find((c) => c.id === ws);
   console.log(`\n${banner({ cols: cols(), version, color }).join('\n')}\n`);
-  console.log(dim(`  ${s.user.email ?? ''} · ${company?.name ?? ws}`));
+  console.log(dim(`  ${localMode ? T.localLabel : s.user.email ?? ''} · ${company?.name ?? ws}`));
   // 이 기기에 연결된 AI가 없으면 먼저 알린다 — 연결 정보는 기기마다 따로(클라우드 미동기, 유건 지시 2026-08-29)
   try { const note = await ensureRunners(ws); if (note) console.log(`  ${dim(note)}\n`); }
   catch { /* 안내일 뿐 — 실패해도 대화는 연다(턴이 /ai를 안내한다) */ }
@@ -441,6 +480,7 @@ async function interactive() {
       else if (p.name === 'ai') await runnersMenu(ws);
       else if (p.name === 'browser') await browserMenu({ interactive: true });
       else if (p.name === 'status') await status();
+      else if (p.name === 'serve' && localMode) console.log(`  ${T.localNoServe}\n`);
       else if (p.name === 'serve') { console.log(T.serveStart); onSigint = null; onQueuedLine = null; rl?.close(); rl = null; await runResident(); return; }
       continue;
     }
@@ -454,14 +494,14 @@ async function interactive() {
 
 try {
   if (cmd === '') await interactive();
-  else if (cmd === 'run') { rl?.close(); await runResident({ prefer: !rest.includes('--no-prefer') }); }
-  else if (cmd === 'login') { await login(); process.exit(0); }
+  else if (cmd === 'run') { if (localMode) { console.error(T.localNoServe); process.exit(1); } rl?.close(); await runResident({ prefer: !rest.includes('--no-prefer') }); }
+  else if (cmd === 'login') { if (localMode) setMode('account'); await login(); process.exit(0); } // 로그인은 계정 폴더에 — 앱 폴더에 세션을 쓰지 않는다
   else if (cmd === 'status') { await status(); process.exit(0); }
   else if (cmd === 'browser') { await browserMenu({ interactive: !!rl }); process.exit(0); }
   else if (cmd === 'service') { service(rest[0] ?? 'status'); process.exit(0); }
   else if (cmd === 'chat') {
     process.env.ARGO_NO_LEADER = '1';
-    const s = await requireSession({ interactive: false });
+    const s = await identity({ interactive: false });
     const ws = await pickCompany(s.user.id, { interactive: !!rl });
     const { listAgents } = await import('../src/hub.mjs');
     const want = rest[0]; const crew = (await listAgents(ws)).find((c) => c.slug === want || c.name === want);

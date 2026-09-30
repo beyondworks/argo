@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { applyCliEnv, publicSupabaseFromDotenv, cliLang } from '../src/cli/env.mjs';
+import { applyCliEnv, publicSupabaseFromDotenv, cliLang, appDataRoot, cliMode } from '../src/cli/env.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const base = await mkdtemp(join(tmpdir(), 'argo-cli-bin-'));
@@ -40,6 +40,23 @@ test('언어 — cli.json > LC_ALL > LANG > macOS 언어 설정 순, 비어 있�
   assert.equal(cliLang({}, { LC_ALL: 'ko_KR.UTF-8', LANG: 'en_US.UTF-8' }, { platform: 'linux' }), 'ko', 'LC_ALL이 LANG보다 먼저');
   assert.equal(cliLang({ lang: 'en' }, { LANG: 'ko_KR.UTF-8' }, { platform: 'darwin', appleLocale: ko }), 'en', 'cli.json 선택이 가장 먼저');
   assert.equal(cliLang({}, {}, { platform: 'linux', appleLocale: ko }), 'en', '맥이 아니면 macOS 설정을 보지 않는다');
+});
+
+test('모드별 데이터 폴더 — 로컬은 이 컴퓨터의 Argo 앱 폴더(앱 로컬 모드와 같은 회사), 계정은 CLI 전용 폴더, 선택 전 사용자는 계정', async () => {
+  const h = '/home/u';
+  assert.equal(appDataRoot({ env: {}, platform: 'darwin', home: h }), join(h, 'Library', 'Application Support', 'com.beyondworks.argo', 'workspaces'));
+  assert.equal(appDataRoot({ env: { LOCALAPPDATA: 'C:\\L' }, platform: 'win32', home: h }), join('C:\\L', 'com.beyondworks.argo', 'workspaces'));
+  assert.equal(appDataRoot({ env: {}, platform: 'linux', home: h }), join(h, '.local', 'share', 'com.beyondworks.argo', 'workspaces'));
+  const cli = join(base, 'mode-cli');
+  const local = { ARGO_CLI_HOME: cli, HOME: join(base, 'mode-home') }; applyCliEnv({ repoRoot: base, env: local, platform: 'darwin' });
+  assert.equal(cliMode({}, local), null, '처음 실행 — 미정(묻는다)');
+  const l2 = { ARGO_CLI_HOME: cli, HOME: join(base, 'mode-home') };
+  await mkdir(cli, { recursive: true }); await writeFile(join(cli, 'cli.json'), JSON.stringify({ mode: 'local' }));
+  applyCliEnv({ repoRoot: base, env: l2, platform: 'darwin' });
+  assert.equal(l2.ARGO_ROOT, join(base, 'mode-home', 'Library', 'Application Support', 'com.beyondworks.argo', 'workspaces'));
+  await mkdir(join(cli, 'cli-workspaces'), { recursive: true }); await writeFile(join(cli, 'cli.json'), '{}');
+  await writeFile(join(cli, 'cli-workspaces', '.device-session.json'), '{}');
+  assert.equal(cliMode({}, { ARGO_CLI_HOME: cli }), 'account', '선택 도입 전에 로그인해 쓰던 사용자는 묻지 않고 계정');
 });
 
 // 가짜 Messages 엔드포인트 — 크루 턴이 실제 SDK로 끝까지 돈다(chat-steer-sdk.test.mjs와 같은 방식)
