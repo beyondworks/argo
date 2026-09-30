@@ -2,7 +2,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../ui/Icon.jsx';
 import { showToast } from '../ui/Overlay.jsx';
-import { t, ago, useLang, getLang, setLang } from '../core/i18n.js';
+import { t, ago, useLang, getLang, setLang, registerDict } from '../core/i18n.js';
+import { CUSTOM_DICT } from './custom-i18n.js';
+import { FONTS, COLORS, RADIUS_MAX, ALPHA_MAX, EMPTY, readCustom, saveCustom, refreshCustom, isEmpty } from '../core/custom-theme.js';
 import { FAMILIES, MODES, SHELLS, applyTheme, applyShell, readTheme, readShell, familyOf, modeOf } from '../core/theme.js';
 import { useStore, restorePage, resetDraft } from '../core/store.js';
 import { Link } from '../core/router.jsx';
@@ -23,12 +25,49 @@ function ShellMini({ shell }) {
   return <span className="shell-mini" data-s={shell} aria-hidden="true"><span className="sm-win"><span className="sm-side"><i /><i /><i /></span><span className="sm-main"><i /><i /></span></span></span>;
 }
 
+registerDict(CUSTOM_DICT);
+
+/** 커스텀 테마 — 둥글기·글꼴·투명도는 모드 공통, 색은 지금 보이는 모드에만. 값을 바꿀 때마다 저장·적용한다 */
+function CustomTheme({ dark }) {
+  const [c, setC] = useState(readCustom);
+  const mode = dark ? 'dark' : 'light';
+  const put = (next) => { setC(next); saveCustom(next); };
+  const setColor = (k, v) => put({ ...c, [mode]: { ...c[mode], [k]: v } });
+  let warn = false;
+  try { warn = (JSON.parse(localStorage.getItem('argo-office-custom-css') || '{}')[mode]?.['@flags'] ?? '').includes('warn'); } catch { /* 없음 */ }
+  return (
+    <details className="custom-theme" open={!isEmpty(c) || undefined}>
+      <summary>{t('custom.title')}</summary>
+      <p className="dim small">{t('custom.note', { mode: t(`mode.${mode}`) })}</p>
+      <div className="theme-rows">
+        <label className="theme-row"><span className="label">{t('custom.radius')}</span>
+          <span className="custom-range"><input type="range" min="0" max={RADIUS_MAX} step="1" value={c.radius ?? 12} aria-valuetext={c.radius == null ? t('custom.default') : `${c.radius}px`} onChange={(e) => put({ ...c, radius: +e.target.value })} />
+            <output className="mono">{c.radius == null ? t('custom.default') : `${c.radius}px`}</output>
+            {c.radius != null && <button type="button" className="icon-btn sm" aria-label={t('custom.clear', { name: t('custom.radius') })} onClick={() => put({ ...c, radius: null })}><Icon name="x" size={12} /></button>}</span></label>
+        <label className="theme-row"><span className="label">{t('custom.font')}</span>
+          <select className="select" value={c.font} onChange={(e) => put({ ...c, font: e.target.value })}>{Object.keys(FONTS).map((f) => <option key={f} value={f}>{t(`font.${f}`)}</option>)}</select></label>
+        <label className="theme-row"><span className="label">{t('custom.alpha')}</span>
+          <span className="custom-range"><input type="range" min="0" max={ALPHA_MAX} step="5" value={c.alpha} onChange={(e) => put({ ...c, alpha: +e.target.value })} /><output className="mono">{c.alpha}%</output></span></label>
+        <div className="theme-row"><span className="label">{t(`mode.${mode}`)}</span>
+          <div className="custom-colors">{COLORS.map((k) => (
+            <span key={k} className="custom-color">
+              <label><input type="color" value={c[mode][k] || '#888888'} onChange={(e) => setColor(k, e.target.value)} className={c[mode][k] ? 'set' : ''} /><span>{t(`custom.${k}`)}</span></label>
+              {c[mode][k] && <button type="button" className="icon-btn sm" aria-label={t('custom.clear', { name: t(`custom.${k}`) })} onClick={() => setColor(k, null)}><Icon name="x" size={12} /></button>}
+            </span>))}</div></div>
+      </div>
+      {warn && <p className="small custom-warn" role="status">{t('custom.warn')}</p>}
+      {!isEmpty(c) && <button type="button" className="btn ghost sm" onClick={() => put({ ...EMPTY, light: {}, dark: {} })}>{t('custom.reset')}</button>}
+    </details>
+  );
+}
+
 export function Settings() {
   useLang();
   const [theme, setTheme] = useState(readTheme()), [shell, setShell] = useState(readShell());
   const family = familyOf(theme), mode = modeOf(theme);
-  const pick = (th) => { applyTheme(th); setTheme(th); };
-  const pickShell = (sh) => { applyShell(sh); setShell(sh); };
+  const pick = (th) => { applyTheme(th); refreshCustom(); setTheme(th); };
+  const pickShell = (sh) => { applyShell(sh); refreshCustom(); setShell(sh); };
+  const dark = mode === '-dark' || (mode === '' && matchMedia('(prefers-color-scheme: dark)').matches);
   const keys = [[`${mod}K`, t('nav.search')], [`${mod}\\`, t('cmd.toggleSidebar')], [`${mod}/`, t('cmd.toggleLang')], [`${mod}⌥N`, t('cmd.newPage')], ['J / K', t('nav.mail')], ['E', t('mail.archiveIt')], ['R', t('mail.reply')], ['Shift+F10', t('more')]];
   return (
     <div className="page-wrap">
@@ -48,6 +87,7 @@ export function Settings() {
                 style={{ '--sw-a': SWATCH[f][0], '--sw-b': SWATCH[f][1], '--sw-c': SWATCH[f][2] }}><i /></button>))}</div>
             <span className="dim small">{t(`color.${family}`)}</span></div>
         </div>
+        <CustomTheme key={dark ? 'dark' : 'light'} dark={dark} />
       </section>
       <section className="set-card">
         <h2>{t('settings.lang')}</h2>

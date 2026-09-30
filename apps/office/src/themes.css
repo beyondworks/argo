@@ -205,6 +205,10 @@
 :root:is([data-shell='pill'], [data-shell='glass']) .module-head { height: 52px; padding-left: 12px; }
 :root:is([data-shell='pill'], [data-shell='glass']) .btn.primary { font-weight: 560; }
 
+/* 커스텀 테마(core/custom-theme.js) — 강조색을 고르면 선택된 메뉴 글자는 그 위에서 읽히는 색으로 */
+:root[data-custom~='accent'] :is(.nav-item, .tree-row).active { color: var(--c-active-fg); }
+:root[data-custom~='side'] .side { background: var(--side-bg); }
+
 /* ════════ 6. 색 토큰 ════════ */
 /* ── cream ── */
 :root[data-theme='cream'], :root[data-theme='cream-light'] {

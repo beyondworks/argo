@@ -23,8 +23,8 @@ export function globalCommands(space) {
     space === 'me' ? { id: 'mail', label: t('cmd.goMail'), icon: 'mail', run: () => navigate('/me/mail') } : { id: 'approvals', label: t('cmd.goApprovals'), icon: 'stamp', run: () => navigate(`${base}/approvals`) },
     { id: 'sidebar', label: t('cmd.toggleSidebar'), icon: 'sidebar', shortcut: `${mod}\\`, run: () => document.documentElement.classList.toggle('nav-collapsed') },
     { id: 'lang', label: t('cmd.toggleLang'), icon: 'globe', shortcut: `${mod}/`, run: () => setLang(getLang() === 'ko' ? 'en' : 'ko') },
-    ...THEMES.map((th) => ({ id: `theme-${th}`, label: t('cmd.theme', { name: t(`theme.${th}`) }), icon: 'layout', run: () => applyTheme(th) })),
-    ...SHELLS.map((sh) => ({ id: `shell-${sh}`, label: t('cmd.shell', { name: t(`shell.${sh}`) }), icon: 'layout', run: () => applyShell(sh) })),
+    ...THEMES.map((th) => ({ id: `theme-${th}`, label: t('cmd.theme', { name: t(`theme.${th}`) }), icon: 'layout', run: () => { applyTheme(th); import('./custom-theme.js').then((m) => m.refreshCustom()); } })),
+    ...SHELLS.map((sh) => ({ id: `shell-${sh}`, label: t('cmd.shell', { name: t(`shell.${sh}`) }), icon: 'layout', run: () => { applyShell(sh); import('./custom-theme.js').then((m) => m.refreshCustom()); } })),
     { id: 'settings', label: t('cmd.settings'), icon: 'gear', run: () => navigate(`${base}/settings`) },
   ].filter(Boolean);
 }

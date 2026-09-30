@@ -27,6 +27,7 @@ export function applyTheme(theme) {
   // 시스템 자동(이름만 있는 테마)의 다크는 토큰 파일이 .dark-emul 클래스로 정의한다(메신저와 같은 방식).
   el.classList.toggle('dark-emul', EMUL.includes(theme) && !!mq?.matches);
   save(KEY, theme);
+  globalThis.__argoCustom?.(); // 커스텀 테마는 모드마다 값이 다르다
 }
 
 /** 셸을 입히고 저장한다 — 첫 실행에도 저장해 두어, 나중에 색을 바꿔도 셸이 옛 짝으로 따라 바뀌지 않는다 */

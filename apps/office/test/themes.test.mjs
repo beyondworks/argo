@@ -69,7 +69,7 @@ test('themes.css: 모든 규칙이 plain이 아닌 셸 또는 새 다섯 색 아
       }
       continue;
     }
-    assert.match(s, /^:root(:is\(\[data-(shell|theme)|\[data-(shell|theme))/, `범위 밖 선택자: ${s.slice(0, 90)}`);
+    assert.match(s, /^:root(:is\(\[data-(shell|theme)|\[data-(shell|theme|custom))/, `범위 밖 선택자: ${s.slice(0, 90)}`);
     assert.doesNotMatch(s, /plain|graphite/, s.slice(0, 90));
     if (/linen/.test(s)) assert.match(s, /data-shell='(panel|pill|glass)'/, `linen은 사이드바가 녹는 셸의 글자 색 보정에만: ${s.slice(0, 90)}`);
   }
