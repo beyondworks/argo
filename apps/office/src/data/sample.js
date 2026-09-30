@@ -18,6 +18,7 @@ export const CREWS = [
   { id: 'crew-otto', name: '오토', role: '리서치', status: 'idle' },
   { id: 'crew-mio', name: '미오', role: '디자인', status: 'idle' },
   { id: 'crew-hana', name: '하나', role: '고객 응대', status: 'ask' },
+  { id: 'crew-pepper', name: '페퍼', role: '마케팅', status: 'idle' },
 ];
 
 const doc = (...blocks) => ({ type: 'doc', content: blocks });
@@ -28,16 +29,16 @@ const ul = (items) => ({ type: 'bulletList', content: items.map((text) => ({ typ
 
 export const PAGES = [
   { id: 'pg-note', space: 'me', parent: null, title: '업무 노트', icon: 'doc', updated: ago(12),
-    content: doc(h(1, '업무 노트'), p('이번 주에 챙길 것과 크루에게 맡긴 일을 한곳에 적는다.'), todo([[true, '거래처 3곳 견적 회신 확인'], [false, '10월 캠페인 초안 검토'], [false, '오피스 화면 초안 피드백 정리']])) },
+    content: doc(h(1, '업무 노트'), p('이번 주에 챙길 것과 에이전트에게 맡긴 일을 한곳에 적는다.'), todo([[true, '거래처 3곳 견적 회신 확인'], [false, '10월 캠페인 초안 검토'], [false, '오피스 화면 초안 피드백 정리']])) },
   { id: 'pg-retro', space: 'me', parent: 'pg-note', title: '9월 회고', icon: 'doc', updated: ago(60 * 26),
     content: doc(h(1, '9월 회고'), h(2, '잘 된 것'), ul(['메신저 0.1.39 발행', '결재 카드 문장 개선']), h(2, '아쉬운 것'), ul(['메일 확인이 여전히 손으로 한다'])) },
   { id: 'pg-read', space: 'me', parent: null, title: '읽을거리', icon: 'doc', updated: ago(60 * 50), content: doc(h(1, '읽을거리'), p('')) },
   { id: 'pg-guide', space: 'beyondworks', parent: null, title: '회사 안내', icon: 'doc', updated: ago(60 * 5),
     content: doc(h(1, '회사 안내'), p('비욘드웍스에 오신 것을 환영합니다. 처음 오신 분은 온보딩 가이드부터 읽어 주세요.')) },
   { id: 'pg-onboard', space: 'beyondworks', parent: 'pg-guide', title: '온보딩 가이드', icon: 'doc', updated: ago(60 * 30),
-    content: doc(h(1, '온보딩 가이드'), todo([[false, '메신저 설치하고 조직 초대 수락'], [false, '내 크루 한 명 만들기'], [false, '오피스에 업무 메일 연결']])) },
+    content: doc(h(1, '온보딩 가이드'), todo([[false, '메신저 설치하고 조직 초대 수락'], [false, '내 에이전트 한 명 만들기'], [false, '오피스에 업무 메일 연결']])) },
   { id: 'pg-sales', space: 'beyondworks', parent: null, title: '영업 매뉴얼', icon: 'doc', updated: ago(60 * 3),
-    content: doc(h(1, '영업 매뉴얼'), p('첫 연락부터 계약까지의 흐름과 크루에게 맡길 수 있는 일을 정리했다.')) },
+    content: doc(h(1, '영업 매뉴얼'), p('첫 연락부터 계약까지의 흐름과 에이전트에게 맡길 수 있는 일을 정리했다.')) },
   { id: 'pg-discount', space: 'beyondworks', parent: 'pg-sales', title: '거래처별 할인율', icon: 'lock', restricted: true, updated: ago(60 * 70), content: doc(h(1, '거래처별 할인율'), p('관리자와 영업팀장만 볼 수 있다.')) },
   { id: 'pg-minutes', space: 'beyondworks', parent: null, title: '회의록', icon: 'doc', updated: ago(60 * 24), content: doc(h(1, '회의록'), p('')) },
   { id: 'pg-0925', space: 'beyondworks', parent: 'pg-minutes', title: '9/25 주간 회의', icon: 'doc', updated: ago(60 * 24),
@@ -90,26 +91,93 @@ export const WORK = [
 ];
 
 export const DECISIONS = [
+  { id: 'd0', space: 'beyondworks', crew: 'crew-pepper', plain: '10월 뉴스레터 초안을 구독자 1,240명에게 예약 발송', result: 'approved', by: '김유건', at: ago(40), risk: 'high' },
   { id: 'd1', space: 'beyondworks', crew: 'crew-luna', plain: 'nextfield에 파트너십 제안서 메일 발송', result: 'approved', by: '김유건', at: ago(60 * 26) },
   { id: 'd2', space: 'beyondworks', crew: 'crew-hana', plain: '문의 #2031 결제 오류 답변 게시', result: 'approved', by: '김유건', at: ago(60 * 30) },
-  { id: 'd3', space: 'beyondworks', crew: 'crew-otto', plain: '유료 데이터베이스 구독(월 $49)', result: 'rejected', by: '김유건', at: ago(60 * 50) },
+  { id: 'd3', space: 'beyondworks', crew: 'crew-otto', plain: '유료 데이터베이스 구독(월 $49)', result: 'rejected', by: '김유건', at: ago(60 * 50), risk: 'high' },
   { id: 'd4', space: 'beyondworks', crew: 'crew-luna', plain: '거래처 12곳에 추석 인사 메일 발송', result: 'approved', by: '최민지', at: ago(60 * 80) },
+  { id: 'd5', space: 'beyondworks', crew: 'crew-pepper', plain: '인스타그램 광고 일 예산을 3만 원에서 5만 원으로 올림', result: 'rejected', by: '김유건', at: ago(60 * 24 * 12), risk: 'high' },
+  { id: 'd6', space: 'beyondworks', crew: 'crew-otto', plain: '업계 보고서 무료판 내려받기', result: 'approved', by: '최민지', at: ago(60 * 24 * 40) },
 ];
 
 export const OUTPUTS = [
   { id: 'f1', space: 'beyondworks', name: 'quote-hanbit-1800.pdf', crew: 'crew-luna', channel: '영업', bytes: 284000, at: ago(15) },
+  { id: 'f0', space: 'beyondworks', name: 'paste-1727688812.png', crew: null, channel: '영업', bytes: 182000, at: ago(50) },
   { id: 'f2', space: 'beyondworks', name: 'competitor-pricing-2026-09.xlsx', crew: 'crew-otto', channel: '리서치', bytes: 91000, at: ago(60 * 2) },
   { id: 'f3', space: 'beyondworks', name: 'cs-inquiry-types-sept.md', crew: 'crew-hana', channel: '고객 응대', bytes: 12400, at: ago(60 * 6) },
-  { id: 'f4', space: 'beyondworks', name: 'partnership-proposal-v3.pdf', crew: 'crew-luna', channel: '영업', bytes: 1840000, at: ago(60 * 27) },
+  { id: 'f6', space: 'beyondworks', name: 'newsletter-oct-draft.md', crew: 'crew-pepper', channel: '마케팅', bytes: 8200, at: ago(60 * 7) },
   { id: 'f5', space: 'lean-studio', name: 'banner-draft-a.png', crew: 'crew-mio', channel: '디자인', bytes: 640000, at: ago(60 * 9) },
+  { id: 'f4', space: 'beyondworks', name: 'partnership-proposal-v3.pdf', crew: 'crew-luna', channel: '영업', bytes: 1840000, at: ago(60 * 27) },
+  { id: 'f7', space: 'beyondworks', name: 'insta-ad-set-b.png', crew: 'crew-pepper', channel: '마케팅', bytes: 420000, at: ago(60 * 24 * 3) },
+  { id: 'f8', space: 'beyondworks', name: 'meeting-recording-0912.m4a', crew: 'crew-otto', channel: '리서치', bytes: 18400000, at: ago(60 * 24 * 18) },
+  { id: 'f9', space: 'beyondworks', name: 'paste-1724990021.png', crew: null, channel: '고객 응대', bytes: 96000, at: ago(60 * 24 * 36) },
 ];
 
+const kday = (n) => new Date(now + 9 * 3600e3 - n * 864e5).toISOString().slice(0, 10); // n일 전 한국 날짜
+const hh = (n) => `${String(n).padStart(2, '0')}:${String((n * 17) % 60).padStart(2, '0')}`;
+const byTime = (list) => list.sort((a, b) => a.time.localeCompare(b.time)); // 서버 모양(board.js)처럼 시각순
+const pepperDay = ['10월 뉴스레터 주제 3개 후보 정리.', '구독자 세그먼트별 오픈율 비교표 작성.', '인스타그램 광고 B안 문구 2종 작성.\n- 짧은 안: 한 줄 혜택 강조\n- 긴 안: 고객 후기 인용으로 시작\n두 안 모두 이미지 시안과 함께 채널에 올림.', '뉴스레터 초안 1차 완성, 발송 결재 올림.', '광고 성과 일일 점검: 클릭률 1.8%, 어제보다 0.3%p 올랐음.'];
 export const JOURNAL = [
-  { date: '2026-09-26', space: 'beyondworks', entries: [
-    { crew: 'crew-luna', text: '한빛코퍼레이션 재견적 요청을 받아 단가표 확인 중. 수정 견적서 발송 결재를 올림.' },
-    { crew: 'crew-otto', text: '경쟁사 5곳 중 4곳 가격 수집 완료. 남은 1곳은 공개 가격표가 없어 문의 메일 필요.' },
-    { crew: 'crew-hana', text: '문의 3건 분류. 환불 요청 1건은 답변 게시 결재 대기.' } ] },
-  { date: '2026-09-25', space: 'beyondworks', entries: [
-    { crew: 'crew-luna', text: 'nextfield 제안서 발송(승인됨). 회신 대기.' },
-    { crew: 'crew-hana', text: '결제 오류 문의 답변 게시(승인됨).' } ] },
+  { date: kday(0), space: 'beyondworks', entries: byTime([
+    ...pepperDay.map((text, i) => ({ time: hh(9 + i), crew: 'crew-pepper', name: '페퍼', text })),
+    { time: '09:40', crew: 'crew-luna', name: '루나', text: '한빛코퍼레이션 재견적 요청을 받아 단가표 확인 중. 수정 견적서 발송 결재를 올림.' },
+    { time: '11:05', crew: 'crew-luna', name: '루나', text: '수정 견적서 PDF 작성 완료.' },
+    { time: '10:20', crew: 'crew-otto', name: '오토', text: '경쟁사 5곳 중 4곳 가격 수집 완료. 남은 1곳은 공개 가격표가 없어 문의 메일 필요.' },
+    { time: '13:30', crew: 'crew-hana', name: '하나', text: '문의 3건 분류. 환불 요청 1건은 답변 게시 결재 대기.' } ]) },
+  { date: kday(1), space: 'beyondworks', entries: [
+    { time: '10:00', crew: 'crew-luna', name: '루나', text: 'nextfield 제안서 발송(승인됨). 회신 대기.' },
+    { time: '15:10', crew: 'crew-hana', name: '하나', text: '결제 오류 문의 답변 게시(승인됨).' },
+    { time: '16:45', crew: 'crew-pepper', name: '페퍼', text: '추석 이벤트 결과 정리 — 참여 312명, 쿠폰 사용 41%.' } ] },
+  { date: kday(4), space: 'beyondworks', entries: [
+    { time: '14:00', crew: 'crew-otto', name: '오토', text: '업계 보고서 요약본 작성.' },
+    { time: '17:20', crew: null, name: '예전 직원', text: '인수인계 메모를 남겼습니다(지금은 없는 에이전트).' } ] },
+  { date: kday(35), space: 'beyondworks', entries: [
+    { time: '11:00', crew: 'crew-pepper', name: '페퍼', text: '8월 캠페인 회고 문서 초안.' } ] },
 ];
+
+// 성과 기록 예시(유건 9/30) — 서버 office_perf_report와 같은 모양. 오늘부터 14개월 전까지 날짜마다 규칙적으로 만든다(거래처는 가상)
+const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+const back = (day, n) => { const d = new Date(`${day}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+const CLIENTS = ['한빛코퍼레이션', '넥스트필드', '오름상사', '다온랩', '새봄물산'];
+function perfRows() {
+  const today = kstToday(), r = { deals: [], tasks: [], approvals: [], pages: [], crew: [], notes: [], mail: [], asks: [] };
+  for (let i = 0; i < 430; i++) {
+    const day = back(today, i), dow = new Date(`${day}T00:00:00Z`).getUTCDay(), c = CLIENTS[i % CLIENTS.length];
+    if (dow === 0 || dow === 6) continue; // 주말은 비운다
+    if (i % 9 === 2) r.deals.push({ day, order_id: `o${i}`, title: `${c} 연간 유지보수`, kind: 'contract', amount: 1200000 + (i % 4) * 300000, co: i % 18 === 2 ? 2 : 1 });
+    if (i % 9 === 2 && i % 27 === 2) r.deals.push({ day, order_id: `o${i}`, title: `${c} 연간 유지보수`, kind: 'uncontract', amount: -(1200000 + (i % 4) * 300000), co: 1 });
+    if (i % 8 === 3) r.deals.push({ day, order_id: `o${i - 1}`, title: `${c} 구축 1차`, kind: 'invoice', amount: 800000, co: 1 });
+    if (i % 11 === 4) r.deals.push({ day, order_id: `o${i - 2}`, title: `${c} 구축 1차`, kind: 'payment', amount: 800000, co: 1 });
+    if (i % 3 !== 1) r.tasks.push({ id: `t${i}`, title: ['견적서 보내기', '회의록 정리', '계약서 검토', '제안서 수정'][i % 4], due_on: i % 5 ? day : null, day, done: true, on_time: i % 5 !== 0 && i % 8 !== 0 });
+    if (i % 2 === 0) r.approvals.push({ day, n: 1 + (i % 3) });
+    if (i % 6 === 1) r.pages.push({ day, page_id: `pg${i}`, title: `${c} 미팅 메모` });
+    if (i % 4 === 2) r.crew.push({ day, n: 1 + (i % 2) });
+    if (i % 5 === 0) r.mail.push({ thread_id: `m${i}`, day, grade: ['good', 'normal', 'caution'][i % 3], customer: c, reasons: i % 3 === 2 ? ['pushy', 'late_reply'] : ['thanks', 'quick_reply'], account: null, message_id: null });
+    if (i % 4 === 1) r.asks.push({ id: i, day, minutes: 20 + (i % 5) * 15, unanswered: false, done: i % 8 === 1 });
+    if (i % 10 === 3) r.notes.push({ id: `n${i}`, day, body: `${c} 담당자에게 일정 조율 없이 한 번에 합의받음`, edited: false });
+  }
+  return r;
+}
+let perfDemo = null;
+/** 기간 안 기록과 합계 — 합계 계산은 서버와 같은 기준(계약 = 계약 − 취소, 받은 돈 = 입금 − 환불) */
+export function perfSample(from, to) {
+  perfDemo ??= { ...perfRows(), requests: [] };
+  const inRange = (x) => x.day >= from && x.day <= to;
+  const pick = Object.fromEntries(['deals', 'tasks', 'approvals', 'pages', 'crew', 'notes', 'mail', 'asks'].map((k) => [k, perfDemo[k].filter(inRange)]));
+  const sum = (kinds) => pick.deals.filter((d) => kinds.includes(d.kind)).reduce((a, d) => a + d.amount, 0);
+  const due = pick.tasks.filter((x) => x.due_on), ans = pick.asks.filter((q) => q.minutes != null);
+  return { ...pick, goals: [], reviews: [], requests: perfDemo.requests, totals: {
+    contract: sum(['contract', 'uncontract']), invoiced: sum(['invoice', 'credit']), paid: sum(['payment', 'refund']),
+    tasks_done: pick.tasks.length, tasks_due: due.length, tasks_on_time: due.filter((x) => x.on_time).length, tasks_done_due: due.length,
+    mail_threads: pick.mail.length, mail_good: pick.mail.filter((m) => m.grade === 'good').length, mail_normal: pick.mail.filter((m) => m.grade === 'normal').length, mail_caution: pick.mail.filter((m) => m.grade === 'caution').length,
+    req_count: pick.asks.length, req_minutes: ans.length ? Math.round(ans.reduce((a, q) => a + q.minutes, 0) / ans.length) : null, req_unanswered: pick.asks.filter((q) => q.unanswered).length, req_done: pick.asks.filter((q) => q.done).length,
+    approvals: pick.approvals.reduce((a, x) => a + x.n, 0), pages: pick.pages.length, crew: pick.crew.reduce((a, x) => a + x.n, 0),
+  } };
+}
+/** 예시 모드 쓰기 — 성과 한 줄 추가와 고치기 요청만 화면 메모리에 남긴다(새로고침하면 사라진다) */
+export function perfSampleWrite(action, data) {
+  perfSample('0000-00-00', '0000-00-00');
+  if (action === 'note.add') perfDemo.notes.push({ id: data.id, day: data.day, body: data.body, edited: false });
+  else if (action === 'edit.request') perfDemo.requests.push({ id: data.id, note_id: data.note_id, reason: data.reason, status: 'pending' });
+  return null;
+}

@@ -430,7 +430,7 @@ class Old:
     def register_platform(self, **kw): reg['old'] = kw
 m._PLUGIN_VERSION = ''
 m.register(Old())
-assert m._PLUGIN_VERSION == '0.3.0', '옛 Hermes(manifest·register_tool 없음)도 plugin.yaml에서 버전을 읽고 연결은 된다'
+assert m._PLUGIN_VERSION == '0.3.3', '옛 Hermes(manifest·register_tool 없음)도 plugin.yaml에서 버전을 읽고 연결은 된다'
 `));
 
 test('폴 루프 — 이벤트는 처리하되 offset은 메시지만 올리고, getUpdates는 events=1로 부른다', () => run(String.raw`
@@ -455,4 +455,15 @@ test('D5 — 다른 봇이 전달한 글은 프롬프트 첫 줄에 전달한 �
 base = {'text':'각자 자동화를 확인해 주세요', 'peers':[], 'context':[]}
 assert m.relay_prompt({**base, 'relayed_by':'효원 - v'}).startswith('[Forwarded by colleague @효원 - v')
 assert m.relay_prompt(base).startswith('각자 자동화를 확인해 주세요')
+`));
+
+test('후속 보고 본문 — 넘김 표지는 한 줄이든 줄 끝(백틱 포함)이든 떼고, 코드 블록 안은 그대로(2026-09-30 효원 실측: "…확인했습니다. `MSGR: done`")', () => run(String.raw`
+assert m.followup_text('확인했습니다. ' + chr(96) + 'MSGR: done' + chr(96)) == '확인했습니다.'
+assert m.followup_text('끝\nMSGR: done\n') == '끝'
+fence = chr(96)*3
+assert m.followup_text('코드\n' + fence + '\nMSGR: done\n' + fence) == '코드\n' + fence + '\nMSGR: done\n' + fence
+RESP['sendMessage'] = lambda p: {'message_id': 7}
+a._running = True
+asyncio.run(a._post_followup('ag-m', '했습니다 ' + chr(96) + 'MSGR: done' + chr(96)))
+assert calls[-1] == ('sendMessage', {'approval_id':'ag-m','text':'했습니다'}), calls[-1]
 `));

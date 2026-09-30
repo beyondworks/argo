@@ -2,19 +2,26 @@
   "name": "argo-office",
   "version": "0.0.1",
   "private": true,
-  "description": "Argo Office — 메일·페이지·메신저 업무 기록을 한 화면에 모으고 크루에게 일을 맡기는 웹 사무실(PWA)",
+  "description": "Argo Office — 웹과 데스크톱에서 쓰는 메일·페이지·크루 업무 공간",
   "type": "module",
   "scripts": {
     "tokens": "node scripts/gen-tokens.mjs",
     "dev": "npm run tokens && vite --port 5190 --strictPort",
     "build": "npm run tokens && vite build",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "desktop:dev": "node scripts/desktop.mjs dev",
+    "desktop:build": "node scripts/desktop.mjs build",
+    "desktop:review": "node scripts/desktop.mjs build --review",
+    "dev:desktop": "npm run tokens && vite --port 5192 --strictPort"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@supabase/supabase-js": "^2.117.2",
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-deep-link": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2.5.0",
     "@tiptap/extension-drag-handle-react": "^3.31.3",
     "@tiptap/extension-placeholder": "^3.26.1",
     "@tiptap/extension-task-item": "^3.26.1",
@@ -27,6 +34,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
     "@vitejs/plugin-react": "^5.0.0",
     "vite": "^7.1.0"
   }

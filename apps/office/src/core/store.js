@@ -2,23 +2,38 @@
 // 단계 S: 이 기기(localStorage)에만. P0에서 같은 액션 이름을 유지한 채 보낼 목록 + Supabase로 바꾼다.
 import { useSyncExternalStore } from 'react';
 import * as S from '../data/sample.js';
-import { persist, restore } from './save.js';
+import { persist, restore, scopedStorageKey, getStorageScope, setLegacyRecovery } from './save.js';
 import { t } from './i18n.js';
 import { queue } from './sync.js';
 import { between } from './position.js';
+import { SPACES } from './session.js';
+import { writeNav, readNav } from './nav-model.js';
 
 const KEY = 'argo-office-draft-v1';
 const fresh = () => ({ pages: S.PAGES.map((p, i) => ({ ...p, position: p.position ?? String.fromCharCode(97 + Math.floor(i / 10)) + (i % 10 + 1) })), mails: S.MAILS, mailAccounts: [], approvals: S.APPROVALS, decisions: S.DECISIONS, work: S.WORK, crews: S.CREWS, outputs: S.OUTPUTS, journal: S.JOURNAL, docs: [], layouts: {}, trash: [], todosDone: {} });
-let state = { ...fresh(), ...restore(KEY, {}) };
+const empty = () => ({ pages: [], mails: [], mailAccounts: [], approvals: [], decisions: [], work: [], crews: [], outputs: [], journal: [], docs: [], layouts: {}, trash: [], todosDone: {} });
+let state = fresh();
+let draftScope = null;
 const listeners = new Set();
+
+export function activateDraftScope(uid) {
+  draftScope = uid;
+  setLegacyRecovery({ draft: restore(KEY, null) !== null });
+  state = { ...(uid === 'sample' ? fresh() : empty()), ...(uid ? restore(scopedStorageKey(KEY, uid), {}) : {}) };
+  listeners.forEach((listener) => listener());
+}
 
 export const getState = () => state;
 /** 화면에 먼저 반영하고(한 프레임 안), 서버로 보낼 변경(ops: [key, payload][])을 보낼 목록에 넣는다. */
 export function update(fn, ops = []) {
+  const owner = draftScope;
+  // Auth can switch before the old editor unmounts. Never adopt its draft into the next account.
+  if (!owner || owner !== getStorageScope()) return false;
   state = { ...state, ...fn(state) };
-  listeners.forEach((l) => l());
-  persist(KEY, state);
+  persist(scopedStorageKey(KEY, owner), state);
   for (const [key, payload] of ops) queue(key, payload);
+  listeners.forEach((l) => l());
+  return true;
 }
 /** 선택자는 state의 참조를 그대로 돌려줘야 한다(새 배열을 만들면 매번 다시 그린다) — 파생은 컴포넌트의 useMemo에서 */
 export const useStore = (sel) => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => sel(state), () => sel(state));
@@ -42,7 +57,8 @@ const lastPos = (pages, space, parent) => childrenOf(pages, space, parent).at(-1
 export function createPage(space, parent = null, from = null) {
   const id = uid();
   const s = getState();
-  const page = { id, space, parent, position: between(lastPos(s.pages, space, parent), null), title: from?.title ?? '', icon: 'doc', updated: nowIso(), version: 1, fresh: true, ...(from?.template ? { template: true } : {}),
+  const parentPage = s.pages.find((page) => page.id === parent);
+  const page = { id, space, parent, owner: parentPage?.owner ?? getStorageScope(), access: 'full', orgId: parentPage?.orgId ?? SPACES.find((entry) => entry.key === space && entry.kind === 'org')?.id ?? null, position: between(lastPos(s.pages, space, parent), null), title: from?.title ?? '', icon: 'doc', updated: nowIso(), version: 1, fresh: true, ...(from?.template ? { template: true } : {}),
     content: from?.content ?? { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 } }] } };
   update((st) => ({ pages: [...st.pages, page] }), [[`page-create:${id}`, { type: 'page.create', id }]]);
   return id;
@@ -109,12 +125,27 @@ export function decide(id, result, by) {
 }
 
 /* ── 배치 ── */
-export const saveLayout = (key, items) => update((s) => ({ layouts: { ...s.layouts, [key]: { items } } }), [[`layout:${key}`, { type: 'layout.set', key, items }]]);
-export const toggleTodo = (key) => update((s) => ({ todosDone: { ...s.todosDone, [key]: !s.todosDone[key] } }), [[`todo:${key}`, { type: 'todo.toggle', key, done: !state.todosDone[key] }]]);
+/** 좌측 메뉴 순서·숨김·칸 순서(사람마다, nav-model.js) — 저장할 수 없는 상태면 false */
+export const saveNav = (op, kind) => saveLayout('nav:me', writeNav(readNav(state.layouts['nav:me']?.items, kind), op));
+export const saveTabs = (order) => saveLayout('biztabs:me', order.map((id) => ({ id })));
+export const saveLayout = (key, items) => {
+  const current = state.layouts[key];
+  if (getStorageScope() !== 'sample' && (!Number.isInteger(current?.version) || current?.conflict)) return false;
+  update((s) => ({ layouts: { ...s.layouts, [key]: { ...current, items } } }), [[`layout:${key}`, { type: 'layout.set', key, items }]]);
+  return true;
+};
+// 할 일은 지금 예시 데이터(크루 메모)에만 있다 — 서버 저장은 크루 메모가 생길 때 함께(유건 9/29). 보내지 않을 변경을 전송 목록에 넣지 않는다
+export const toggleTodo = (key) => update((s) => ({ todosDone: { ...s.todosDone, [key]: !s.todosDone[key] } }));
 
-/* ── 크루에게 맡기기(초안: 진행 중인 일에 한 줄 추가) ── */
+/* ── 크루에게 맡기기 ── */
+// 예시 데이터는 화면에서만(진행 중인 일에 한 줄). 로그인 상태는 크루와의 1:1 대화에 글을 보낸다 — 성공 여부는 전송이 끝난 뒤에만 알린다(transport crew.assign).
+// '진행 중인 일'에는 가짜 행을 넣지 않는다 — 크루가 실제로 일을 시작하면 서버 기록(msgr_work_runs)이 거기에 뜬다.
 export function assign({ space, crew, goal }) {
   const row = { id: uid(), space, goal, lead: crew, status: 'running', started: nowIso(), steps: '0/…', channel: 'DM' };
-  update((s) => ({ work: [row, ...s.work] }), [[`assign:${row.id}`, { type: 'crew.assign', row }]]);
+  update((s) => ({ work: [row, ...s.work] }));
 }
-export const resetDraft = () => { state = fresh(); listeners.forEach((l) => l()); persist(KEY, state, 0); };
+export function sendToCrew({ orgId, crewId, crewName, body, meta }) {
+  const clientId = uid();
+  update(() => ({}), [[`assign:${clientId}`, { type: 'crew.assign', orgId, crewId, crewName, body, meta, clientId }]]);
+}
+export const resetDraft = () => { state = getStorageScope() === 'sample' ? fresh() : empty(); listeners.forEach((l) => l()); persist(scopedStorageKey(KEY), state, 0); };

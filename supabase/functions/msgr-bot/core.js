@@ -7,7 +7,9 @@ export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 
   'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval',
   // 1-b(20260929150000) — 어댑터 버전·승인 모드 보고(설정은 강제하지 않고 메신저에 보여 준다). 에이전트 결재는 requestApproval kind='agent',
   // 결정 뒤 후속 보고는 sendMessage + approval_id.
-  'reportStatus'];
+  'reportStatus',
+  // 20260930160000 — 봇이 파일을 올린다. createUpload(서버가 경로 판정 → 서명 업로드 주소) → 봇이 저장소에 직접 PUT → attachFile(등록).
+  'createUpload', 'attachFile'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FILE_URL_TTL_S = 600; // getFile 서명 URL 수명 — 봇은 즉시 내려받는다
 const MAX_WAIT_MS = 25_000; // 텔레그램은 ~50초, 엣지 펑션 벽시계 안에서 여유 있게
@@ -38,8 +40,53 @@ const ERR = {
   msgr_routine_too_many: [400, 'Bad Request: at most 200 routines per snapshot'],
   msgr_approval_invalid: [400, 'Bad Request: approval_id (1-80 of A-Z a-z 0-9 . _ : -) and command (or title) are required'],
   msgr_routine_invalid_channel: [403, 'Forbidden: choose a DM between the owner and this agent, or a channel the agent is in'],
+  msgr_bot_bad_attach_target: [403, 'Forbidden: files attach only to this bot\'s own message'],
+  msgr_bot_attach_expired: [409, 'Conflict: attach files within 1 hour of posting the message'],
+  msgr_bot_bad_file_name: [400, 'Bad Request: file_name must contain 1 to 200 characters'],
+  msgr_bot_bad_file_size: [400, 'Bad Request: file_size must be a positive byte count'],
+  msgr_bot_file_too_large: [413, 'Payload Too Large: files are limited to 25 MB'],
+  msgr_bot_too_many_files: [409, 'Conflict: at most 10 files per message'],
+  msgr_bot_bad_attach_path: [400, 'Bad Request: storage_path must come from createUpload for this message'],
+  msgr_bot_upload_missing: [409, 'Conflict: upload the file to upload_url before attachFile'],
   msgr_approval_conflict: [409, 'Conflict: this approval_id already exists with a different command or source'],
 };
+
+// 넘김 표지(MSGR: done|handoff)는 사람에게 보이면 안 된다 — 옛 연결 도구·모델이 남긴 표지를 서버에서 한 번 더 뗀다(판정은 연결 도구가 이미 보냈다).
+// src/gateway/msgr-handoff.mjs와 같은 규칙(엣지 함수는 따로 배포돼 가져올 수 없다 — test/msgr-bot-facade가 같은 결과를 확인한다).
+// 코드 펜스(``` ~~~)가 열린 채로 끝나는가 — 그 안의 표지는 답변 내용이다.
+function openFence(prefix) {
+  let fence = null;
+  for (const line of prefix.split(/\r?\n/)) {
+    const mark = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!mark) continue;
+    if (fence) {
+      if (mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = null;
+    } else if (mark[1][0] !== '`' || !mark[2].includes('`')) fence = mark[1];
+  }
+  return fence;
+}
+
+// 모델이 표지를 마지막 문장 끝에 붙인 경우(…전달하겠습니다. MSGR: done, …확인했습니다. `MSGR: done`) — 운영 실측 2026-09-30: 페퍼·효원·월터·보스웰 답에
+// 그대로 보였다(유건 "말 끝마다 MSGR Done 왜 붙이는거야?"). 판정으로는 읽지 않고(인라인은 인용일 수 있다) 사람에게 보이지 않게만 뗀다.
+// 인용(>)·들여쓴 코드·열린 코드 펜스 안은 그대로 둔다.
+function hideInlineMarker(value) {
+  const text = String(value ?? '');
+  const body = text.replace(/\s+$/, '');
+  const start = body.lastIndexOf('\n') + 1;
+  const line = body.slice(start);
+  if (/^( {0,3}>|    |\t)/.test(line) || openFence(body.slice(0, start))) return text;
+  const m = /^(.*\S)[ \t]+(`?)MSGR: (?:handoff|done)\2[ \t]*$/.exec(line);
+  return m ? body.slice(0, start) + m[1] : text;
+}
+
+/** 현재 답변의 마지막 독립 줄만 판정한다. 숫자·완료 문구·인용에서 종료를 추론하지 않는다. 문장 끝에 붙은 표지는 판정 없이 본문에서만 뗀다(hideInlineMarker). */
+function parseMessengerDisposition(value) {
+  const text = String(value ?? '');
+  const match = /(?:^|\r?\n)MSGR: (handoff|done)[ \t]*(?:\r?\n[ \t]*)*$/.exec(text);
+  if (!match || openFence(text.slice(0, match.index))) return { text: hideInlineMarker(text), disposition: null };
+  return { text: text.slice(0, match.index).trimEnd(), disposition: match[1] };
+}
+export const displayText = (value) => parseMessengerDisposition(value).text;
 
 export function parseRequest(url, headers = {}, body = null) {
   const u = new URL(url);
@@ -55,7 +102,7 @@ const reply = (status, result) => ({ status, body: { ok: true, result } });
 const fail = (status, description) => ({ status, body: { ok: false, error_code: status, description } });
 
 // rpc(fn, args) → JSON. PostgREST 오류는 {message, code, details}를 throw.
-export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, pollMs = POLL_MS, sign = null } = {}) {
+export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, pollMs = POLL_MS, sign = null, signUpload = null, purgeUploads = null } = {}) {
   if (!token) return fail(401, 'Unauthorized: token missing (use /bot<token>/<method> or Authorization: Bearer)');
   if (!METHODS.includes(method)) return fail(404, `Not Found: method ${method || '(none)'} — supported: ${METHODS.join(', ')}`);
   try {
@@ -88,6 +135,21 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const url = sign ? await sign(f.storage_path, FILE_URL_TTL_S) : null;
       if (!url) return fail(500, 'Internal: file signing unavailable');
       return reply(200, { file_id: f.file_id, file_name: f.file_name, mime_type: f.mime_type, file_size: f.file_size, file_path: url });
+    }
+    if (method === 'createUpload' || method === 'attachFile') { // 봇 파일 보내기 — 붙일 글(봇 자기 글, 1시간 안)·크기(25MB)·개수(10)는 RPC가 판정한다
+      const mid = Number(params.message_id);
+      if (!Number.isSafeInteger(mid) || mid < 1) return fail(400, 'Bad Request: message_id must be this bot\'s message id');
+      if (method === 'createUpload') {
+        const up = await rpc('msgr_bot_attach_prepare', { token, p_message: mid, p_name: String(params.file_name ?? ''), p_bytes: Number(params.file_size) || 0 });
+        // 이 봇이 2시간 넘게 등록하지 않은 업로드(서버가 고른 경로만) — 실패해도 업로드는 막지 않는다(다음 준비 때 다시 온다)
+        if (purgeUploads && Array.isArray(up.purge) && up.purge.length) await purgeUploads(up.purge).catch((e) => console.warn('[msgr-bot] purge skipped:', String(e?.message ?? e).slice(0, 200)));
+        const url = signUpload ? await signUpload(up.storage_path) : null;
+        if (!url) return fail(500, 'Internal: upload signing unavailable');
+        return reply(200, { storage_path: up.storage_path, upload_url: url, method: 'PUT', max_bytes: 26214400 });
+      }
+      const id = await rpc('msgr_bot_attach_commit', { token, p_message: mid, p_path: String(params.storage_path ?? ''), p_name: String(params.file_name ?? ''),
+        p_mime: params.mime_type == null ? null : String(params.mime_type) });
+      return reply(200, { file_id: id, message_id: mid });
     }
     if (method === 'setRoutines') { // 예약 작업 스냅샷 전체. unsupported면 행은 두고 사유만(읽기 실패로 미러를 지우지 않게)
       const unsupported = params.unsupported == null ? null : String(params.unsupported);
@@ -124,7 +186,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       return reply(200, await rpc(method === 'ackApproval' ? 'msgr_bot_ack_approval' : 'msgr_bot_expire_approval', { token, p_approval_id: id }));
     }
     if (method === 'sendMessage' && params.approval_id != null) { // 후속 보고: 결정된 결재 한 건에 한 번만 원문 답글로(서버가 방·원문을 정한다)
-      const body = String(params.text ?? '');
+      const body = displayText(params.text);
       if (!body.trim()) return fail(400, 'Bad Request: text is empty');
       const id = await rpc('msgr_bot_followup', { token, p_approval_id: String(params.approval_id), p_body: body });
       return reply(200, { message_id: Number(id), approval_id: String(params.approval_id), text: body });
@@ -140,7 +202,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       return reply(200, true);
     }
     // sendMessage
-    const text = String(params.text ?? '');
+    const text = displayText(params.text);
     if (!text.trim()) return fail(400, 'Bad Request: text is empty');
     const src = params.reply_to_message_id != null ? Number(params.reply_to_message_id) : null;
     if (src != null && !Number.isInteger(src)) return fail(400, 'Bad Request: reply_to_message_id must be an integer');

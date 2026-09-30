@@ -89,6 +89,24 @@ await scenario(1280, 'notification-body', async (p) => {
   assert.equal(last.body, '스크린샷 붙입니다', '본문이 실린다(종전에는 방송에 본문이 없어 늘 비었다)');
 });
 
+// 4. 늦게 붙은 첨부 — 에이전트는 글을 먼저 쓰고 파일을 0.2~3.6초 뒤에 붙인다(운영 실측 2026-09-30). 글 방송을 받자마자 첨부를 읽으면
+//    그 사이에 붙은 파일은 채널을 다시 열 때까지 안 보였다. 서버의 'attach' 방송(20260930160000)을 받으면 그 글의 첨부를 다시 읽는다.
+await scenario(1280, 'late-attachment', async (p) => {
+  await p.evaluate(() => {
+    const t = window.__ux3Fixture.tables;
+    t.msgr_messages.push({ id: 13, channel_id: 'general', org_id: 'org-fixture', author_kind: 'crew', author_user_id: null, crew_id: 'crew-bot', kind: 'text', body: '보고서를 첨부합니다', created_at: new Date().toISOString(), deleted_at: null, mentions: [], reply_to: null, client_msg_id: 'm13' });
+    // 픽스처는 이벤트 이름으로 모든 토픽(u:·org:·dm:)에 보낸다 — 서버 u: 방송처럼 org_id를 실어야 이 공간 글로 처리된다
+    window.__ux3Broadcast('message', { id: 13, org_id: 'org-fixture', channel_id: 'general', author_kind: 'crew', author_user_id: null, crew_id: 'crew-bot', kind: 'text', mentions: [], reply_to: null });
+  });
+  await p.getByText('보고서를 첨부합니다').waitFor({ timeout: 5000 });
+  await p.waitForTimeout(1500); // 글의 첨부 조회가 끝난 뒤에 파일이 붙는다
+  await p.evaluate(() => {
+    window.__ux3Fixture.tables.msgr_attachments.push({ id: 'att-13', message_id: 13, org_id: 'org-fixture', name: 'report.pdf', mime: 'application/pdf', bytes: 2048, storage_path: 'org-fixture/general/13/bot-0a1b2c3d-report.pdf' });
+    window.__ux3Broadcast('attach', { id: 13, message_id: 13, org_id: 'org-fixture', channel_id: 'general', crew_id: 'crew-bot' }); // 픽스처는 모든 토픽 구독자에게 보낸다 — u: 토픽처럼 org_id를 싣는다
+  });
+  await p.locator('[data-mid="13"]').getByText('report.pdf').waitFor({ timeout: 3000 });
+});
+
 await browser.close();
 console.log(results.join('\n'));
 if (failures.length) { console.log(`${results.length} passed, ${failures.length} failed`); console.log('Failures:', failures); process.exit(1); }

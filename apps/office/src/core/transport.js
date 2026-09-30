@@ -7,33 +7,52 @@ import { getClient, classify } from './supabase.js';
 import { setUi, getUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
 import { t } from './i18n.js';
-import { persist, heldKey } from './save.js';
+import { persist, heldKey, getStorageScope, scopedStorageKey } from './save.js';
+import { apiUrl } from './platform.js';
 
 const hold = (row) => row && persist(heldKey(row.id), { title: row.title ?? '', content: row.content }, 0);
 
 const orgOf = (space) => SPACES.find((s) => s.key === space && s.kind === 'org');
 const findPage = (id) => getState().pages.find((p) => p.id === id) ?? getState().trash.find((p) => p.id === id);
 const patchPage = (id, patch) => update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
-async function rpc(fn, args) {
-  const sb = await getClient();
-  const { data, error } = await sb.rpc(fn, args);
-  if (error) throw classify(error);
-  return data;
-}
-
 async function send(op) {
   const mode = getMode();
-  if (mode === 'sample') return;                                                   // 예시 데이터 모드 — 이 기기에만
+  if (mode === 'sample' && op.payload.ownerUid === 'sample') return;
   if (mode !== 'signedIn') throw Object.assign(new Error('session not ready'), { transient: true }); // 로그인 확인 전 — 목록을 버리지 않고 나중에
   const p = op.payload;
+  const owner = p.ownerUid;
+  const assertOwner = () => {
+    if (!owner || getStorageScope() !== owner || ME.id !== owner || getMode() !== 'signedIn') throw Object.assign(new Error('account changed'), { transient: true });
+  };
+  assertOwner();
+  const sb = await getClient();
+  const { data: auth, error: authError } = await sb.auth.getSession();
+  assertOwner();
+  if (authError || auth?.session?.user?.id !== owner || !auth.session.access_token) throw Object.assign(new Error('session not ready'), { transient: true });
+  const token = auth.session.access_token;
+  const rpc = async (fn, args) => {
+    assertOwner();
+    const { data, error } = await sb.rpc(fn, args).setHeader('Authorization', `Bearer ${token}`);
+    assertOwner();
+    if (error) throw classify(error);
+    return data;
+  };
   switch (p.type) {
     case 'layout.set': {
       const [surface, space] = p.key.split(':');
+      if (p.key !== `${surface}:${space}`) throw Object.assign(new Error('layout_input'), { transient: false });
+      const current = getState().layouts[p.key];
+      if (current?.conflict) throw Object.assign(new Error('layout_version_conflict'), { transient: false, conflict: true });
       const prefs = { items: p.items };
-      if (space === 'me') return rpc('office_layout_save', { p_space: 'me', p_surface: surface, p_prefs: prefs });
-      const org = orgOf(space);
-      if (!org || !['owner', 'admin'].includes(org.role)) return;                    // 조직 구조는 관리자만(화면도 막는다)
-      return rpc('office_space_layout_save', { p_org: org.id, p_surface: surface, p_layout: prefs });
+      let version;
+      if (space === 'me') version = await rpc('office_layout_save_v2', { p_space: 'me', p_surface: surface, p_prefs: prefs, p_base_version: current?.version ?? 0 });
+      else {
+        const org = orgOf(space);
+        if (!org || !['owner', 'admin'].includes(org.role)) throw Object.assign(new Error('org admin only'), { transient: false });
+        version = await rpc('office_space_layout_save_v2', { p_org: org.id, p_surface: surface, p_layout: prefs, p_base_version: current?.version ?? 0 });
+      }
+      update((s) => ({ layouts: { ...s.layouts, [p.key]: { ...s.layouts[p.key], version } } }));
+      return;
     }
     case 'page.create': {
       const row = findPage(p.id);
@@ -61,8 +80,8 @@ async function send(op) {
     case 'page.restore': return rpc('office_page_restore_archived', { p_id: p.id });
     case 'page.restricted': return rpc('office_page_set_restricted', { p_page: p.id, p_on: p.on });
     case 'approval.decide': {                                                      // 메신저 앱과 같은 경로(App.jsx decide) — 권한은 RLS 정책 msgr_approvals_decide가 가른다
-      const sb = await getClient();
-      const { data, error } = await sb.from('msgr_crew_approvals').update({ status: p.result, decided_by: ME.id, decided_at: new Date().toISOString() }).eq('id', p.id).eq('status', 'pending').select('id');
+      const { data, error } = await sb.from('msgr_crew_approvals').update({ status: p.result, decided_by: owner, decided_at: new Date().toISOString() }).eq('id', p.id).eq('status', 'pending').select('id').setHeader('Authorization', `Bearer ${token}`);
+      assertOwner();
       if (error) throw classify(error);
       if (!data?.length) throw Object.assign(new Error('office: not decidable'), { transient: false, decide: true }); // 0행 = 결재권 없음·이미 결정됨
       return;
@@ -71,17 +90,40 @@ async function send(op) {
       const m = getState().mails.find((x) => x.id === p.id);
       if (!m?.account) return;                                                     // 예시 메일
       const inbox = m.folder === 'inbox' ? 'add' : m.folder === 'archive' ? 'remove' : null;
-      const { api } = await import('./mail.js');
-      await api('modify', { account: m.account, id: m.gid, add: [...(m.unread ? ['UNREAD'] : []), ...(inbox === 'add' ? ['INBOX'] : [])], remove: [...(m.unread ? [] : ['UNREAD']), ...(inbox === 'remove' ? ['INBOX'] : [])] });
+      assertOwner();
+      const response = await fetch(apiUrl('/api/mail/modify'), { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ account: m.account, id: m.gid, add: [...(m.unread ? ['UNREAD'] : []), ...(inbox === 'add' ? ['INBOX'] : [])], remove: [...(m.unread ? [] : ['UNREAD']), ...(inbox === 'remove' ? ['INBOX'] : [])] }) });
+      assertOwner();
+      if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 }); }
       return;
     }
-    default: return;                                                                 // ponytail: 배정은 크루 단계(P4)에서 여기에 더한다
+    case 'crew.assign': {                                                          // 크루에게 맡기기 — 메신저 앱과 같은 방(내 크루와의 1:1)에 같은 표로 쓴다(core/crew-assign.js deliverToCrew)
+      const run = async (q) => { const r = await q.setHeader('Authorization', `Bearer ${token}`); assertOwner(); if (r.error) throw classify(r.error); return r.data ?? []; };
+      const { deliverToCrew } = await import('./crew-assign.js'); // 보낼 때만 불러온다(첫 화면 JS 150KB 상한)
+      await deliverToCrew({
+        rpc,
+        myChannels: () => run(sb.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', owner)),
+        members: (ids) => run(sb.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', ids)),
+        insert: (row) => run(sb.from('msgr_messages').insert(row)),
+      }, { owner, orgId: p.orgId, crewId: p.crewId, crewName: p.crewName, body: p.body, meta: p.meta, clientId: p.clientId });
+      showToast(t('crew.sent', { crew: p.crewName ?? '' }));
+      return;
+    }
+    default: return;
   }
 }
 
 function rejected(op, err) {
+  if (op.payload.ownerUid !== getStorageScope()) return;
+  if (op.payload.type === 'layout.set') {
+    const key = op.payload.key;
+    persist(scopedStorageKey(`argo-office-layout-conflict:${key}`), getState().layouts[key], 0);
+    update((s) => ({ layouts: { ...s.layouts, [key]: { ...s.layouts[key], conflict: true } } }));
+    showToast(t(err?.conflict ? 'page.conflict' : 'sync.rejected'));
+    return;
+  }
   if (err?.conflict && op.payload.type === 'page.save') { hold(getState().pages.find((x) => x.id === op.payload.id)); setUi({ conflict: op.payload.id }); return; }
   if (op.payload.type === 'approval.decide') { showToast(t('ap.noRight')); import('./pull.js').then((m) => m.pullBoard()).catch(() => {}); return; }
+  if (op.payload.type === 'crew.assign') { showToast(t(`crew.fail.${err?.assign ?? 'generic'}`)); return; }
   if (op.payload.type === 'mail.flag') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
   showToast(t('sync.rejected'));
   import('./pull.js').then((m) => m.pullPages()).catch(() => {});                  // 서버 상태로 되돌린다

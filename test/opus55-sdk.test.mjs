@@ -44,6 +44,7 @@ await mkdir(p.agents, { recursive: true });
 const card = (slug, model, effort = '') => writeFile(join(p.agents, `${slug}.md`), `---\nname: ${slug}\nrole: 검증\nrunner: claude\nmodel: ${model}\n${effort ? `effort: ${effort}\n` : ''}---\n검증용.\n`);
 await card('a', 'claude-opus-5-5');
 await card('b', 'claude-opus-5-5', 'low');
+await card('c', 'claude-sonnet-5-5');
 await saveRunnerCred(ws, 'claude', 'apikey', `sk-ant-api03-${'x'.repeat(80)}`); // 형식만 맞춘 가짜 — 요청은 로컬 가짜 엔드포인트로만 간다
 
 test('카탈로그: Opus 5.5·Opus 5.5 (1M)가 Opus 5 바로 위에 있고, Claude 기본(models[0])은 Fable 5.1 그대로', () => {
@@ -67,4 +68,18 @@ test('실제 SDK 요청: Opus 5.5 크루(effort 미지정) → output_config.eff
   assert.deepEqual([seen[0].model, seen[0].effort], ['claude-opus-5-5', 'high'], 'effort 미지정 Opus 5.5가 medium 기본으로 돌았다');
   seen = []; await chat(ws, 'b', '안녕', null, {});
   assert.deepEqual([seen[0].model, seen[0].effort], ['claude-opus-5-5', 'low'], '크루가 고른 effort를 덮어썼다');
+});
+
+// Sonnet 5.5(claude-sonnet-5-5) — 유건 2026-09-30 "클로드 Sonnet-5.5도 출시됐더라". 실턴 2026-09-30: SDK 0.3.280에서 5.5·5.5[1m] 모두 응답
+// (응답 model=claude-sonnet-5-5). effort 기본은 끼워 넣지 않는다(Sonnet 5와 같다).
+test('카탈로그: Sonnet 5.5·Sonnet 5.5 (1M)가 Sonnet 5 바로 위에 있고, 실제 SDK 요청이 그 모델 그대로 나간다', async () => {
+  const ids = RUNNERS.claude.models.map((m) => m.id);
+  const i = ids.indexOf('claude-sonnet-5-5'); const im = ids.indexOf('claude-sonnet-5-5[1m]'); const i5 = ids.indexOf('claude-sonnet-5');
+  assert.ok(i >= 0 && im >= 0, 'Sonnet 5.5가 목록에 없다 — 목록 밖 모델은 서버가 기본값으로 바꾼다');
+  assert.ok(i < i5 && im < i5, 'Sonnet 5.5가 Sonnet 5 위에 있지 않다');
+  assert.equal(RUNNERS.claude.models[i].label, 'Sonnet 5.5');
+  assert.equal(ids[0], 'claude-fable-5-1', '러너 전환 기본값이 바뀌었다');
+  assert.equal(defaultClaudeEffort('claude-sonnet-5-5'), '');
+  seen = []; await chat(ws, 'c', '안녕', null, {});
+  assert.equal(seen[0]?.model, 'claude-sonnet-5-5', 'Sonnet 5.5 크루의 요청 모델이 바뀌었다'); // effort는 SDK 기본값(실측 high) — Argo가 넣지 않는다
 });

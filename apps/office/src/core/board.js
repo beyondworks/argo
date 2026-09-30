@@ -32,11 +32,14 @@ export function mdToDoc(md) {
 export function mapBoard(rows, { orgKey, decidable }) {
   const space = (org) => orgKey.get(org) ?? null;
   const ch = new Map((rows.channels ?? []).map((c) => [c.id, c.kind === 'dm' ? 'DM' : c.name]));
+  const who = new Map((rows.members ?? []).map((m) => [`${m.org_id}|${m.user_id}`, m.display_name || '']));
   const leading = new Set((rows.runs ?? []).filter((r) => r.status === 'running').map((r) => r.lead_crew_id));
   const asking = new Set((rows.approvals ?? []).map((a) => a.crew_id));
   const crews = (rows.crews ?? []).map((c) => ({
-    id: c.id, name: c.display_name, role: c.department || c.role_text || '', owner: c.owner_user_id, space: space(c.org_id), face: c.face ?? null,
+    id: c.id, name: c.display_name, role: c.department || c.role_text || '', dept: c.department || '', job: c.role_text || '', owner: c.owner_user_id, space: space(c.org_id), org: c.org_id, face: c.face ?? null,
     status: leading.has(c.id) ? 'work' : asking.has(c.id) ? 'ask' : 'idle',
+    // 좌측 목록 정리(9/30): 주인·쓸 수 있는지(메신저와 같은 판정)·내 고정/순서 — office_crew_list가 없을 때(옛 DB)는 모두 쓸 수 있는 것으로
+    ownerName: c.owner_name ?? null, company: !!c.company, access: c.access ?? 'ok', pinned: !!c.pinned, pinPos: c.pin_pos ?? null, sortPos: c.sort_pos ?? null,
   }));
   const byName = (org, name) => (rows.crews ?? []).find((c) => c.org_id === org && c.display_name === name)?.id ?? null;
   const days = new Map();
@@ -48,10 +51,11 @@ export function mapBoard(rows, { orgKey, decidable }) {
   }
   return {
     crews,
-    work: (rows.runs ?? []).map((r) => ({ id: r.id, space: space(r.org_id), goal: r.goal, lead: r.lead_crew_id, status: r.status, started: r.created_at, channel: ch.get(r.channel_id) ?? '' })),
+    work: (rows.runs ?? []).map((r) => ({ id: r.id, space: space(r.org_id), goal: r.goal, lead: r.lead_crew_id, status: r.status, started: r.created_at, channel: ch.get(r.channel_id) ?? '', done: r.completion_criteria ?? null })),
     approvals: (rows.approvals ?? []).map((a) => ({ id: a.id, space: space(a.org_id), crew: a.crew_id, plain: a.reason || a.action, risk: a.risk, at: a.created_at, channel: ch.get(a.channel_id) ?? '', canDecide: decidable.has(a.id) })),
-    decisions: (rows.decisions ?? []).map((d) => ({ id: d.id, space: space(d.org_id), crew: d.crew_id, plain: d.reason || d.action, result: d.status, by: '', at: d.decided_at })),
-    outputs: (rows.files ?? []).map((f) => ({ id: f.id, space: space(f.org_id), name: f.name, crew: f.msg?.crew_id ?? null, channel: ch.get(f.msg?.channel_id) ?? '', bytes: f.bytes, at: f.created_at })),
+    decisions: (rows.decisions ?? []).map((d) => ({ id: d.id, space: space(d.org_id), crew: d.crew_id, plain: d.reason || d.action, action: d.action, risk: d.risk ?? null, result: d.status,
+      by: who.get(`${d.org_id}|${d.decided_by}`) ?? '', at: d.decided_at, asked: d.created_at ?? null, channel: ch.get(d.channel_id) ?? '' })), // 결정한 사람 = 조직 멤버 이름(9/30: 늘 '—'이던 결함)
+    outputs: (rows.files ?? []).map((f) => ({ id: f.id, space: space(f.org_id), name: f.name, crew: f.msg?.crew_id ?? null, channel: ch.get(f.msg?.channel_id) ?? '', bytes: f.bytes, at: f.created_at, path: f.storage_path ?? null, mime: f.mime ?? '' })),
     docs: (rows.docs ?? []).filter((d) => !d.path.startsWith('journal/')).map((d) => ({ id: d.id, space: space(d.org_id), folder: d.path.split('/')[0], title: d.title, path: d.path, updated: d.updated_at, channel: ch.get(d.channel_id) ?? '' })),
     journal: [...days.values()].map((d) => ({ ...d, entries: d.entries.sort((a, b) => a.time.localeCompare(b.time)) })).sort((a, b) => b.date.localeCompare(a.date)),
   };

@@ -1,6 +1,7 @@
 // 메일(내 공간) — 계정·폴더 | 목록 | 본문. 본문은 메일 서버(Gmail)에 두고 볼 때 가져온다. 크루는 초안까지만 쓴다.
 // 로그인 전(예시 모드)은 예시 메일, 로그인 뒤는 연결한 계정(Gmail·Google Workspace, 여러 개)의 메일.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { desktopMailPending, cancelDesktopMail } from '../core/desktop-auth.js';
 import { useDraggable } from '@dnd-kit/core';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
@@ -17,7 +18,6 @@ import { imeGuardWith } from '../core/ime.js';
 import { MAIL_FOLDERS } from '../data/sample.js';
 import { ME, useSession } from '../core/session.js';
 import { crewName } from './modules.jsx';
-import { translateMail } from '../core/translate.js';
 import {
   loadAccounts, pullMail, readMail, connectGoogle, finishConnect, disconnectAccount, mailConfig, adminNote,
   saveDraft, sendMail, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
@@ -29,7 +29,8 @@ async function copyAdminNote() {
   await navigator.clipboard.writeText(adminNote(t, await mailConfig()));
   showToast(t('mailc.copied'));
 }
-const reconnect = (a) => connectGoogle(a?.address).catch((e) => showToast(t(`mailc.err.${e.code === 'not_configured' ? 'not_configured' : 'other'}`)));
+const reconnect = (a) => connectGoogle(a?.address).catch((e) => { if (e.code !== 'cancelled') showToast(t(`mailc.err.${['not_configured', 'access_denied', 'state'].includes(e.code) ? e.code : e.code === 'expired' ? 'state' : 'other'}`)); });
+const subscribeMailPending = (cb) => { window.addEventListener('office-mail-pending', cb); return () => window.removeEventListener('office-mail-pending', cb); };
 
 function MailRow({ m, active, tag }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: m.subject } });
@@ -81,6 +82,7 @@ function Reader({ m, onBack }) {
     setTr({ busy: true, done: 0, total: 0 }); setShowTr(true);
     try {
       const ac = new AbortController(); stopTr.current = ac;
+      const { translateMail } = await import('../core/translate.js'); // 번역 버튼을 눌렀을 때만(첫 화면 150KB 상한, 유건 9/26)
       const out = await translateMail(m, c, { signal: ac.signal, onProgress: (p) => { if (shown.current === id) setTr((cur) => (cur?.busy ? { ...p, busy: true } : cur)); } });
       if (shown.current !== id) return;
       setTr(out);
@@ -260,6 +262,7 @@ function AccountList({ accounts, pick, setPick }) {
 }
 
 export function Mail({ id }) {
+  const connecting = useSyncExternalStore(subscribeMailPending, desktopMailPending, () => false);
   useLang();
   const real = useSession() === 'signedIn';
   const mails = useStore((s) => s.mails);
@@ -313,6 +316,7 @@ export function Mail({ id }) {
         ))}
       </aside>
       <section className="mail-list" role="listbox" aria-label={t(`mail.${folder}`)}>
+        {connecting && <div className="mail-banner" role="status">{t('desktop.mailWaiting')}<button className="btn sm" type="button" onClick={cancelDesktopMail}>{t('desktop.cancel')}</button></div>}
         {expired.length > 0 && <div className="mail-banner"><span className="dot ask" />{t('mailc.expired')}<button type="button" className="btn sm" onClick={() => reconnect(expired[0])}>{t('mailc.reconnect')}</button></div>}
         {noAccounts ? <ConnectPanel />
           : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)

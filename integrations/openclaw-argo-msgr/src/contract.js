@@ -6,6 +6,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { parseMessengerDisposition } from './api.js';
 
 export const CHANNEL = 'argo-msgr';
 export const ROUTINES_EVERY_MS = 60_000;      // 예약 작업 읽기 주기. 네트워크는 스냅샷이 바뀌었을 때만(+1시간마다 한 번 재확인)
@@ -18,6 +19,11 @@ export const FOLLOWUP_LATE = '결정이 늦게 도착해 명령은 실행되지 
   + '/ The decision arrived after the agent stopped waiting, so the command was not run. Ask again if it is still needed.';
 export const FOLLOWUP_LOST_APPROVED = '결재가 승인됐습니다. 이어서 진행하려면 이 대화에서 다시 말씀해 주세요.\n/ Approved — ask again here to continue.';
 export const FOLLOWUP_LOST_REJECTED = '결재가 반려되어 진행하지 않습니다.\n/ Rejected — not proceeding.';
+/** 후속 보고 본문: 한 줄 표지(MSGR: done|handoff)는 parseMessengerDisposition 규칙으로, 모델이 줄 끝에 붙인 표지(백틱 포함)도 뗀다. */
+export function followupText(value) {
+  const body = parseMessengerDisposition(String(value ?? '')).text.trimEnd();
+  return body.replace(/[ \t]*`?MSGR: (?:handoff|done)`?[ \t]*$/, '').trimEnd() || body;
+}
 export const FOLLOWUP_FAILED = '결재 뒤 작업을 이어서 하지 못했습니다(에이전트 오류). 이어서 진행하려면 다시 말씀해 주세요.\n/ The agent could not continue after the decision (error). Ask again to continue.';
 export const FOLLOWUP_BUSY = '결재 결과를 에이전트에게 전달하지 못했습니다(대화가 계속 바쁩니다). 이어서 진행하려면 다시 말씀해 주세요.\n'
   + '/ Could not hand the decision to the agent (conversation stayed busy). Ask again to continue.';
@@ -485,6 +491,7 @@ export class ApprovalBridge {
    *  실패는 기록만 하고 삼킨다(수신·답장을 막지 않는다). 올리면 그 결재로 재개 중인 세션의 부모 연결을 지운다(검수 3). */
   async followup(approvalId, text) {
     if (this.followed.has(approvalId)) return null;
+    text = followupText(text); // 넘김 표지는 사람에게 보이지 않게(줄 끝에 붙인 표지 포함 — 2026-09-30 효원 실측)
     for (let attempt = 0; ; attempt++) {
       try {
         const res = await this.api.sendFollowup(approvalId, text);
@@ -523,8 +530,12 @@ export class ApprovalBridge {
         this.resuming.set(k, running);
         if (status === 'approved') this.parents.set(k, { approvalId, source: info.source });
       }
-      let answer = '', failed = false;
-      try { answer = String((await this.resume({ approvalId, info, text })) ?? '').trim(); }
+      let answer = '', failed = false, files = null;
+      try { // resume은 문자열(답) 또는 { text, names, attach }(답에 파일이 붙은 경우 — attach(후속 보고 글 id)가 파일을 그 글에 올린다)
+        const out = await this.resume({ approvalId, info, text });
+        if (out && typeof out === 'object') { answer = String(out.text ?? '').trim(); files = out; }
+        else answer = String(out ?? '').trim();
+      }
       catch (e) { failed = true; this.log(`argo-msgr: resumed turn for ${approvalId} failed — ${redact(e?.message ?? e)}`); }
       finally {
         end();
@@ -533,7 +544,12 @@ export class ApprovalBridge {
         // 재검수 MEDIUM: 예외가 나도 부모 연결을 푼다 — 남아 있으면 24시간 동안 같은 세션의 다른 실행이 옛 원문에 카드를 붙인다
         if (this.parents.get(k)?.approvalId === approvalId) this.parents.delete(k);
       }
-      if (answer) await this.followup(approvalId, answer);
+      if (files?.names?.length && typeof files.attach === 'function' && !failed) {
+        // 후속 보고가 아직이면 이제 올린다(글 없이 파일만이면 파일 이름으로) — 그 글에 파일을 붙인다. 후속 보고가 실패하면 파일도 올리지 않는다.
+        const res = await this.followup(approvalId, answer || files.names.join(', '));
+        if (res?.message_id) await files.attach(Number(res.message_id)).catch((e) => this.log(`argo-msgr: follow-up files for ${approvalId} failed — ${redact(e?.message ?? e)}`));
+        else this.log(`argo-msgr: follow-up files for ${approvalId} not sent — no follow-up message`);
+      } else if (answer) await this.followup(approvalId, answer);
       else if (failed) await this.followup(approvalId, FOLLOWUP_FAILED); // 결정한 사람이 아무 안내 없이 기다리지 않게
     });
     return status === 'approved' ? 'resumed' : 'rejected';

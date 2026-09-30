@@ -235,7 +235,7 @@ try {
       await row('Fixture Old Hermes').locator('button.main').click();
       const old=row('Fixture Old Hermes');
       await old.getByText(l['org.agents.detail.adapter.unknown'],{exact:true}).waitFor();
-      await old.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.0'),{exact:true}).waitFor();
+      await old.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.3'),{exact:true}).waitFor();
       await old.getByText(l['org.agents.approvals.ai'].replace('{mode}','smart'),{exact:true}).waitFor();
       assert.ok((await old.innerText()).includes('hermes config set approvals.mode manual'),'고치는 명령');
       assert.equal(await old.locator('input[type=checkbox]').isDisabled(),true,'예전 도구는 스위치 비활성');
@@ -243,9 +243,9 @@ try {
       await old.scrollIntoViewIfNeeded(); await p.screenshot({path:new URL(`ext-agent-card-old-${lang}-${width}-${theme}.png`,artifacts).pathname});
       await row('Fixture New Claw').locator('button.main').click();
       const neu=row('Fixture New Claw');
-      await neu.getByText('0.3.0',{exact:true}).waitFor();
+      await neu.getByText('0.3.2',{exact:true}).waitFor();
       await neu.getByText(l['org.agents.approvals.ask'].replace('{mode}','ask'),{exact:true}).waitFor();
-      assert.equal(await neu.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.0'),{exact:true}).count(),0,'최신이면 업데이트 안내 없음');
+      assert.equal(await neu.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.2'),{exact:true}).count(),0,'최신이면 업데이트 안내 없음');
       assert.equal(await neu.getByText(l['org.agents.approvals.fix'],{exact:false}).count(),0,'결재로 묻는 모드면 고치는 명령 없음');
       await neu.getByText(l['org.agents.mirrorAll.hint'],{exact:true}).waitFor();
       await neu.locator('input[type=checkbox]').check();
