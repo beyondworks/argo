@@ -42,7 +42,7 @@ export function DealBoard({ data, blocked, run, openOrder }) {
       <button type="button" className="bizui-link" onClick={() => openOrder(order.id)}><Redact {...orderRedact(order, 'title', run, blocked)} focusable={false}>{order.title}</Redact></button>
       <div className="deal-card-meta"><span className="who">{customer(order.customer_id)}</span>{when && <span className="mono">· {day(when)}</span>}</div>
       <div className="deal-card-foot">
-        <span className="deal-card-amount"><Redact {...orderRedact(order, 'amount', run, blocked)}>{money(amounts.total)}</Redact></span>
+        <span className="deal-card-amount"><Redact {...orderRedact(order, 'amount', run, blocked)}>{money(amounts.supply)}</Redact></span>
         <span className="spacer" />
         {clips(order.id) > 0 && <span className="clip" title={label('attachments')}><Icon name="doc" size={12} />{clips(order.id)}</span>}
         {next && <button type="button" className="btn sm" disabled={blocked} onClick={() => setStep({ ...next, title: order.title, min: when ? kstDay(when) : undefined })}>{label(`next.${next.to === next.stage ? 'invoiceRest' : next.to}`)}</button>}
@@ -50,17 +50,17 @@ export function DealBoard({ data, blocked, run, openOrder }) {
     </article>;
   };
   return <>
-    <div className="deal-view"><div className="seg" role="tablist">{['active', 'cancelled'].map((key) => <button key={key} type="button" role="tab" aria-selected={view === key} className={`seg-btn${view === key ? ' on' : ''}`} onClick={() => setView(key)}>{label(`view.${key}`)}{key === 'cancelled' && cancelled.length ? ` ${cancelled.length}` : ''}</button>)}</div></div>
+    <div className="deal-view"><div className="seg" role="tablist">{['active', 'cancelled'].map((key) => <button key={key} type="button" role="tab" aria-selected={view === key} className={`seg-btn${view === key ? ' on' : ''}`} onClick={() => setView(key)}>{label(`view.${key}`)}{key === 'cancelled' && cancelled.length ? ` ${cancelled.length}` : ''}</button>)}</div><span className="dim small">{label('basisSupply')}</span></div>{/* 카드·합계 = 공급가(분석·성과 기록과 같은 기준, 유건 9/30) */}
     {view === 'active'
       ? <div className="deal-board">{STAGES.map((stage) => { const lane = deals.filter((d) => d.stage === stage);
           const drop = drag && (drag.next?.to === stage ? { ...drag.next, title: drag.title, min: drag.min } : drag.back?.to === stage ? { ...drag.back, revert: true, title: drag.title, min: drag.min } : null);
           const dropProps = drag ? { onDragOver: (event) => { if (drop) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }, onDrop: (event) => { event.preventDefault(); if (drop) setStep(drop); setDrag(null); } } : {};
           return <section className={`deal-lane${drag ? (drop ? ' drop-ok' : ' drop-no') : ''}`} key={stage} aria-label={label(`stage.${stage}`)} {...dropProps}>
-          <header className="deal-lane-head"><h2>{label(`stage.${stage}`)}</h2><span className="count">{lane.length}</span><span className="sum">{money(lane.reduce((n, d) => n + d.amounts.total, 0))}</span></header>
+          <header className="deal-lane-head"><h2>{label(`stage.${stage}`)}</h2><span className="count">{lane.length}</span><span className="sum">{money(lane.reduce((n, d) => n + d.amounts.supply, 0))}</span></header>
           {lane.length ? lane.map(card) : <p className="deal-empty">{label('laneEmpty')}</p>}
         </section>; })}</div>
       : cancelled.length ? <div className="table-wrap bizui-table-wrap"><table className="table bizui-table"><thead><tr><th>{label('titleField')}</th><th>{label('customer')}</th><th>{label('cancelledAt')}</th><th className="num">{label('total')}</th></tr></thead>
-          <tbody>{cancelled.map(({ order, amounts }) => <tr key={order.id}><td><button className="bizui-link" onClick={() => openOrder(order.id)}>{order.title}</button></td><td>{customer(order.customer_id)}</td><td className="mono">{day(order.cancelled_at)}</td><td className="num">{money(amounts.total)}</td></tr>)}</tbody></table></div>
+          <tbody>{cancelled.map(({ order, amounts }) => <tr key={order.id}><td><button className="bizui-link" onClick={() => openOrder(order.id)}>{order.title}</button></td><td>{customer(order.customer_id)}</td><td className="mono">{day(order.cancelled_at)}</td><td className="num">{money(amounts.supply)}</td></tr>)}</tbody></table></div>
         : <p className="empty-state">{label('noCancelled')}</p>}
     {step && <StepForm step={step} blocked={blocked} dismiss={() => setStep(null)} run={run} />}
   </>;

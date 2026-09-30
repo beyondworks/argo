@@ -8,6 +8,7 @@ import { initDesktopAuth, initMailRelay } from './core/desktop-auth.js';
 import './core/transport.js'; // 보낼 목록의 서버 전송을 등록한다
 import './tokens.css';
 import './base.css';
+import './themes.css'; // cream·sand·peach·mist·glow — base.css 뒤에 둔다(같은 토큰을 덮어쓴다)
 
 applyTheme(readTheme());
 document.documentElement.lang = getLang();

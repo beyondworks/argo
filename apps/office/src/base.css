@@ -650,3 +650,10 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 .peek-resize:focus-visible { outline: none; background: var(--border); }
 @media (hover: hover) { .peek-resize:hover { background: var(--border); } }
 @media (max-width: 700px) { .peek.peek-side { width: 100vw !important; } .peek-resize { display: none; } .peek-scrim.peek-center { padding: 12px; } }
+
+/* 좌측 메뉴 순서·숨김(유건 9/30) — 끄는 중인 줄은 흐리게, 칸 제목은 끌기 손잡이 */
+.side-sec.dragging, .side .dragging { opacity: 0.45; }
+.sec-handle { cursor: grab; }
+.nav-hidden { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 10px; color: var(--side-fg-3); font-size: 12px; border-radius: var(--rc); }
+@media (hover: hover) { .nav-hidden:hover { background: var(--side-hover); color: var(--side-fg-2); } }
+.tabs .tab.dragging { opacity: 0.45; }

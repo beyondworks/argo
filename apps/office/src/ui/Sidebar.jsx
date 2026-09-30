@@ -8,7 +8,8 @@ import { Face } from './Face.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link, navigate } from '../core/router.jsx';
 import { t, useLang } from '../core/i18n.js';
-import { crewsIn, approvalsIn, useStore, childrenOf, createPage } from '../core/store.js';
+import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav } from '../core/store.js';
+import { readNav } from '../core/nav-model.js';
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
@@ -45,6 +46,35 @@ function NavItem({ to, icon, label, count, active }) {
       <Icon name={icon} /><span className="nav-label">{label}</span>{count > 0 && <span className="nav-count">{count}</span>}
     </Link>
   );
+}
+
+const saveFail = () => showToast(t('nav.saveFail'));
+/** 메뉴 한 줄 — 끌어서 순서 바꾸기, 우클릭으로 숨기기(홈은 숨길 수 없다). 사람마다 저장(유건 9/30) */
+function NavRow({ id, kind, def }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `nav:${id}`, data: { kind: 'nav', id, group: 'nav', navKind: kind, label: def.label } });
+  const { onTouchStart, ...mouse } = listeners ?? {}; // 터치는 길게 누르기 = 메뉴
+  const menu = menuProps(() => [
+    id === 'home' ? { heading: t('nav.homeFixed') } : { label: t('nav.hide'), icon: 'x', run: () => { if (saveNav({ hide: id }, kind) === false) saveFail(); } },
+  ]);
+  return <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={isDragging ? 'dragging' : ''} {...attributes} {...mergeHandlers(mouse, menu)} role="none">
+    <NavItem {...def} />
+  </div>;
+}
+
+/** 칸(메뉴·페이지·에이전트) — 제목을 끌거나 우클릭 위·아래로 순서를 바꾼다. 메뉴 칸은 제목이 없어 놓일 자리만 된다 */
+function NavSection({ id, kind, order, children, head }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: `sec:${id}`, data: { kind: 'navsec', id, group: 'navsec', navKind: kind, label: t(`nav.sec.${id}`) } });
+  const i = order.indexOf(id);
+  const move = (to) => { if (saveNav({ section: [id, order[to]] }, kind) === false) saveFail(); };
+  const menu = menuProps(() => [
+    { label: t('nav.secUp'), disabled: i <= 0, run: () => move(i - 1) },
+    { label: t('nav.secDown'), disabled: i >= order.length - 1, run: () => move(i + 1) },
+  ]);
+  const { onTouchStart, ...mouse } = listeners ?? {};
+  return <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={`side-sec${isDragging ? ' dragging' : ''}`}>
+    {head && head({ handle: { ref: setActivatorNodeRef, ...attributes, ...mergeHandlers(mouse, menu) } })}
+    {children}
+  </div>;
 }
 
 function PageRow({ page, depth, path, open, onToggle, hasKids }) {
@@ -121,7 +151,7 @@ const VIEW_KEY = 'argo-office-crew-view', FOLD_KEY = 'argo-office-crew-fold';
 
 /** 좌측 크루 목록(유건 9/30): 고정 → 내 크루 → 회사 크루 → 동료 크루(또는 부서별), 쓸 수 없는 크루는 맨 아래 접힌 칸.
  *  고정·순서는 메신저 레일과 같은 저장소, 묶기 기준·접힘·검색은 이 기기에서만(보기 편의). */
-function CrewSection({ space, crews }) {
+function CrewSection({ space, crews, handle }) {
   const [view, setView] = useState(() => ({ by: 'owner', working: false, ...restore(VIEW_KEY, {}) }));
   const [fold, setFold] = useState(() => restore(FOLD_KEY, { blocked: true }));
   const [query, setQuery] = useState(null); // null = 검색칸 닫힘
@@ -137,7 +167,7 @@ function CrewSection({ space, crews }) {
   const label = (g) => (g.key.startsWith('dept:') ? g.label ?? t('crew.group.noDept') : t(`crew.group.${g.key}`));
   return <>
     <div className="nav-section">
-      <span>{t('nav.crews')}</span>
+      <span className="sec-handle" {...handle}>{t('nav.crews')}</span>
       <button type="button" className="icon-btn sm" aria-label={t('crew.search')} aria-pressed={query != null} onClick={() => setQuery((q) => (q == null ? '' : null))}><Icon name="search" size={14} /></button>
       <button type="button" className="icon-btn sm" aria-label={t('crew.arrange')} onClick={arrange}><Icon name="dots" size={14} /></button>
     </div>
@@ -173,6 +203,39 @@ export function Sidebar({ space, path }) {
   const crews = crewsIn(useStore((s) => s.crews), space, ME.id);
   const unread = mails.filter((m) => m.folder === 'inbox' && m.unread).length;
   const at = (p) => path === p;
+  const kind = isMe ? 'me' : 'org';
+  const nav = readNav(useStore((s) => s.layouts['nav:me']?.items), kind);
+  const DEF = {
+    home: { to: base, icon: 'home', label: t('nav.home'), active: at(base) },
+    business: { to: `${base}/business/analytics`, icon: 'chart', label: t('nav.business'), active: path.startsWith(`${base}/business/`) && !path.startsWith(`${base}/business/library`) },
+    mail: { to: '/me/mail', icon: 'mail', label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
+    work: { to: `${base}/work`, icon: 'run', label: t('nav.work'), active: at(`${base}/work`) },
+    approvals: { to: `${base}/approvals`, icon: 'stamp', label: t('nav.approvals'), count: pendingHere, active: at(`${base}/approvals`) },
+    decisions: { to: `${base}/decisions`, icon: 'check', label: t('nav.decisions'), active: at(`${base}/decisions`) },
+    outputs: { to: `${base}/outputs`, icon: 'file', label: t('nav.outputs'), active: at(`${base}/outputs`) },
+    journal: { to: `${base}/journal`, icon: 'book', label: t('nav.journal'), active: at(`${base}/journal`) },
+    docs: { to: `${base}/docs`, icon: 'doc', label: t('nav.docs'), active: at(`${base}/docs`) },
+    perf: { to: `${base}/perf`, icon: 'target', label: t('nav.perf'), active: at(`${base}/perf`) },
+    shared: { to: '/me/shared', icon: 'share', label: t('nav.shared'), active: at('/me/shared') },
+    knowhow: { to: `${base}/knowhow`, icon: 'book', label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
+    tools: { to: `${base}/tools`, icon: 'box', label: t('nav.tools'), active: at(`${base}/tools`) },
+  };
+  const showHidden = (e) => openMenu(e, [{ heading: t('nav.hiddenHead') }, ...nav.hidden.map((id) => ({ label: DEF[id].label, icon: DEF[id].icon, run: () => { if (saveNav({ show: id }, kind) === false) saveFail(); } }))], { anchor: e.currentTarget });
+  const sections = {
+    menu: <NavSection key="menu" id="menu" kind={kind} order={nav.sections}>
+      <div className="nav-group"><SortableContext items={nav.shown.map((id) => `nav:${id}`)} strategy={verticalListSortingStrategy}>
+        {nav.shown.map((id) => <NavRow key={id} id={id} kind={kind} def={DEF[id]} />)}
+      </SortableContext>
+      {nav.hidden.length > 0 && <button type="button" className="nav-hidden" onClick={showHidden}><Icon name="chevron" size={12} />{t('nav.hiddenN', { n: nav.hidden.length })}</button>}</div>
+    </NavSection>,
+    pages: <NavSection key="pages" id="pages" kind={kind} order={nav.sections} head={({ handle }) => <div className="nav-section">
+      <span className="sec-handle" {...handle}>{isMe ? t('nav.pages') : t('nav.wiki')}</span>
+      {canManage(space) && <button type="button" className="icon-btn sm" aria-label={t('nav.newPage')} onClick={() => navigate(`${base}/p/${createPage(space)}`)}><Icon name="plus" size={14} /></button>}
+    </div>}>
+      <div className="tree" role="tree"><Tree space={space} path={path} openMap={openMap} onToggle={toggle} /></div>
+    </NavSection>,
+    crews: <NavSection key="crews" id="crews" kind={kind} order={nav.sections} head={({ handle }) => <CrewSection space={space} crews={crews} handle={handle} />} />,
+  };
   return (
     <nav className="side" aria-label={t('app.name')}>
       <div className="side-top">
@@ -180,33 +243,7 @@ export function Sidebar({ space, path }) {
         <button type="button" className="search-btn" onClick={() => setUi({ palette: true })}><Icon name="search" /><span>{t('nav.search')}</span><kbd>{mod}K</kbd></button>
       </div>
       <div className="side-scroll">
-        <div className="nav-group">
-          <NavItem to={base} icon="home" label={t('nav.home')} active={at(base)} />
-          <NavItem to={`${base}/business/analytics`} icon="chart" label={t('nav.business')} active={path.startsWith(`${base}/business/`) && !path.startsWith(`${base}/business/library`)} />
-          {isMe ? <>
-            <NavItem to="/me/mail" icon="mail" label={t('nav.mail')} count={unread} active={path.startsWith('/me/mail')} />
-            <NavItem to={`${base}/approvals`} icon="stamp" label={t('nav.approvals')} count={pendingHere} active={at(`${base}/approvals`)} />
-            <NavItem to="/me/shared" icon="share" label={t('nav.shared')} active={at('/me/shared')} />
-            <NavItem to="/me/knowhow" icon="book" label={t('nav.knowhow')} active={at('/me/knowhow')} />
-            <NavItem to="/me/tools" icon="box" label={t('nav.tools')} active={at('/me/tools')} />
-          </> : <>
-            <NavItem to={`${base}/work`} icon="run" label={t('nav.work')} active={at(`${base}/work`)} />
-            <NavItem to={`${base}/approvals`} icon="stamp" label={t('nav.approvals')} count={pendingHere} active={at(`${base}/approvals`)} />
-            <NavItem to={`${base}/decisions`} icon="check" label={t('nav.decisions')} active={at(`${base}/decisions`)} />
-            <NavItem to={`${base}/outputs`} icon="file" label={t('nav.outputs')} active={at(`${base}/outputs`)} />
-            <NavItem to={`${base}/journal`} icon="book" label={t('nav.journal')} active={at(`${base}/journal`)} />
-            <NavItem to={`${base}/docs`} icon="doc" label={t('nav.docs')} active={at(`${base}/docs`)} />
-            <NavItem to={`${base}/perf`} icon="target" label={t('nav.perf')} active={at(`${base}/perf`)} />
-            <NavItem to={`${base}/knowhow`} icon="book" label={t('nav.knowhow')} active={at(`${base}/knowhow`)} />
-            <NavItem to={`${base}/tools`} icon="box" label={t('nav.tools')} active={at(`${base}/tools`)} />
-          </>}
-        </div>
-        <div className="nav-section">
-          <span>{isMe ? t('nav.pages') : t('nav.wiki')}</span>
-          {canManage(space) && <button type="button" className="icon-btn sm" aria-label={t('nav.newPage')} onClick={() => navigate(`${base}/p/${createPage(space)}`)}><Icon name="plus" size={14} /></button>}
-        </div>
-        <div className="tree" role="tree"><Tree space={space} path={path} openMap={openMap} onToggle={toggle} /></div>
-        <CrewSection space={space} crews={crews} />
+        <SortableContext items={nav.sections.map((id) => `sec:${id}`)} strategy={verticalListSortingStrategy}>{nav.sections.map((id) => sections[id])}</SortableContext>
       </div>
       <div className="side-dock">{/* 모듈 보관함은 패널 맨 아래, 휴지통 구분선 바로 위(유건 9/29) */}
         <NavItem to={`${base}/business/library`} icon="layout" label={t('library.title')} active={path.startsWith(`${base}/business/library`)} />

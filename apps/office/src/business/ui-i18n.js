@@ -42,7 +42,7 @@ export const BUSINESS_UI_DICT = {
   'bizui.backHelp.refund': ['입금한 금액만큼 환불 기록을 남기고 계산서 발행 단계로 돌립니다. 기존 기록은 지우지 않습니다.', 'Records a refund for the paid amount and returns to Invoiced. Existing records stay.'],
   'bizui.view.active': ['진행 중', 'In progress'], 'bizui.view.cancelled': ['취소 거래', 'Cancelled deals'],
   'bizui.laneEmpty': ['거래 없음', 'No deals'], 'bizui.noCancelled': ['취소된 거래가 없습니다.', 'No cancelled deals.'], 'bizui.cancelledAt': ['취소일', 'Cancelled on'],
-  'bizui.stepDate': ['날짜', 'Date'], 'bizui.stepDateInvalid': ['앞 단계 날짜보다 이르거나 오늘보다 늦은 날짜는 고를 수 없습니다.', 'The date can’t be before the previous step or after today.'], 'bizui.supply': ['공급가액', 'Supply amount'], 'bizui.vat': ['세액', 'VAT'], 'bizui.taxType': ['과세 구분', 'Tax type'],
+  'bizui.stepDate': ['날짜', 'Date'], 'bizui.stepDateInvalid': ['앞 단계 날짜보다 이르거나 오늘보다 늦은 날짜는 고를 수 없습니다.', 'The date can’t be before the previous step or after today.'], 'bizui.supply': ['공급가액', 'Supply amount'], 'bizui.basisSupply': ['금액은 공급가(부가세 별도)', 'Amounts exclude VAT'], 'bizui.vat': ['세액', 'VAT'], 'bizui.taxType': ['과세 구분', 'Tax type'],
   'bizui.tax.taxable': ['과세 10%', 'Taxable 10%'], 'bizui.tax.zero': ['영세율', 'Zero-rated'], 'bizui.tax.exempt': ['면세', 'Exempt'],
   'bizui.attachments': ['자료', 'Materials'], 'bizui.noAttachments': ['붙은 자료가 없습니다.', 'Nothing attached yet.'],
   'bizui.notePlaceholder': ['이 거래에 남길 메모', 'A note for this deal'], 'bizui.addNote': ['메모 남기기', 'Add note'], 'bizui.linkPage': ['페이지 연결', 'Link a page'],

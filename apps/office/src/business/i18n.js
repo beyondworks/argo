@@ -16,6 +16,7 @@ export const BUSINESS_DICT = {
   'biz.addWidget': ['위젯 추가', 'Add widget'], 'biz.widget.type': ['표현', 'Display'], 'biz.widget.metric': ['보여 줄 숫자', 'Number to show'],
   'biz.widget.remove': ['위젯 삭제', 'Remove widget'], 'biz.widget.previous': ['앞으로 이동', 'Move earlier'], 'biz.widget.next': ['뒤로 이동', 'Move later'],
   'biz.widget.size': ['위젯 너비', 'Widget width'], 'biz.size.m': ['절반', 'Half'], 'biz.size.full': ['전체', 'Full'],
+  'biz.period': ['기간', 'Period'], 'biz.period.month': ['이번 달', 'This month'], 'biz.period.year': ['올해', 'This year'], 'biz.period.all': ['전체', 'All time'],
   'biz.filters.from': ['시작일', 'From'], 'biz.filters.to': ['종료일', 'To'], 'biz.filters.customer': ['거래처', 'Customer'], 'biz.filters.all': ['전체 거래처', 'All customers'], 'biz.filters.apply': ['조건 적용', 'Apply filters'],
   'biz.kind.service': ['서비스', 'Service'], 'biz.kind.product': ['상품', 'Product'],
   'biz.order': ['거래', 'Transaction'], 'biz.noRows': ['조건에 해당하는 기록이 없습니다.', 'No records match these filters.'],

@@ -8,6 +8,7 @@ import { InfoTip } from '../ui/InfoTip.jsx';
 import { openMenu } from '../ui/Menu.jsx';
 import { businessError } from './data.js';
 import { CHARTS, METRICS, chartSeries, periodOrders, configureWidget, defaultDashboard, newWidget, normalizeDashboards, validateFilters, widgetMetrics } from './dashboard-model.js';
+import { PRESETS, firstDay, resolveFilters } from './dashboard-period.js';
 import { ResponsiveChart } from './ResponsiveChart.jsx';
 import { timeSeriesGeometry } from './chart-geometry.js';
 
@@ -79,7 +80,8 @@ export function BusinessDashboard({ business, space, onOpenOrder }) {
   const [reportState, setReport] = useState(null), [loading, setLoading] = useState(false), [error, setError] = useState(null), [revision, setRevision] = useState(0);
   const sequence = useRef(0);
   const current = dashboards.find((d) => d.id === selected) ?? dashboards[0];
-  const filters = active && current && active.id === current.id ? active.filters : current?.filters;
+  const first = useMemo(() => firstDay(business.data), [business.data]); // '전체' = 첫 거래일부터
+  const filters = resolveFilters(active && current && active.id === current.id ? active.filters : current?.filters, new Date(), first);
   const signature = JSON.stringify(filters);
   const reportKey = JSON.stringify([business.scopeKey, current?.id, signature]);
   const report = business.data && reportState?.key === reportKey ? reportState.value : null;
@@ -112,7 +114,9 @@ export function BusinessDashboard({ business, space, onOpenOrder }) {
   };
   const resolveModule = (item) => { const module = CHART_MODULES.find((entry) => entry.id === item.type); return { ...module, title: `${t(`biz.metric.${item.metric}`)} · ${t(module.title)}`, render: ChartModule, actions: [{ label: t('bizui.edit'), run: () => editWidget(item) }] }; };
   const apply = (e) => { e.preventDefault(); try { setActive({ id: current.id, filters: validateFilters(draft) }); setError(null); } catch (err) { setError(businessError(err)); } };
-  const saveFilters = () => { try { update({ filters: validateFilters(draft) }); } catch (err) { setError(businessError(err)); } };
+  const saveFilters = () => { try { update({ filters: validateFilters(PRESETS.includes(draft.preset) ? resolveFilters(draft, new Date(), first) : { ...draft, preset: 'custom' }) }); } catch (err) { setError(businessError(err)); } };
+  const pickPreset = (preset) => { setActive({ id: current.id, filters: { preset, customer: draft?.customer ?? null } }); setError(null); };
+  const setDate = (patch) => setDraft({ ...draft, ...patch, preset: 'custom' }); // 날짜를 직접 고르면 '직접 고른 기간'
   const [renaming, setRenaming] = useState(false);
   const closeRename = useMemo(() => () => setRenaming(false), []); // 창에 매번 새 함수를 주면 입력 포커스가 첫 칸으로 돌아간다
   const dashboardMenu = (event) => openMenu(event, [
@@ -132,9 +136,10 @@ export function BusinessDashboard({ business, space, onOpenOrder }) {
         <button type="button" className="icon-btn" aria-label={t('more')} onClick={dashboardMenu}><Icon name="dots" /></button>
       </div>
       {draft && <form className="biz-bar biz-filter" onSubmit={apply}>
-        <input type="date" className="input" aria-label={t('biz.filters.from')} value={draft.from} onChange={(e) => setDraft({ ...draft, from: e.target.value })} />
+        <div className="seg" role="group" aria-label={t('biz.period')}>{PRESETS.map((p) => <button key={p} type="button" className={`seg-btn${filters?.preset === p ? ' on' : ''}`} aria-pressed={filters?.preset === p} onClick={() => pickPreset(p)}>{t(`biz.period.${p}`)}</button>)}</div>
+        <input type="date" className="input" aria-label={t('biz.filters.from')} value={draft.from} onChange={(e) => setDate({ from: e.target.value })} />
         <span className="dash">–</span>
-        <input type="date" className="input" aria-label={t('biz.filters.to')} value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
+        <input type="date" className="input" aria-label={t('biz.filters.to')} value={draft.to} onChange={(e) => setDate({ to: e.target.value })} />
         <select className="input" aria-label={t('biz.filters.customer')} value={draft.customer ?? ''} onChange={(e) => setDraft({ ...draft, customer: e.target.value || null })}><option value="">{t('biz.filters.all')}</option>{(business.data?.customers ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <button className="btn sm" disabled={loading}>{t('biz.filters.apply')}</button>
         <InfoTip text={t('biz.basis')} />

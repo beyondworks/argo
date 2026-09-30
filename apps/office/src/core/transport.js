@@ -9,7 +9,6 @@ import { showToast } from '../ui/Overlay.jsx';
 import { t } from './i18n.js';
 import { persist, heldKey, getStorageScope, scopedStorageKey } from './save.js';
 import { apiUrl } from './platform.js';
-import { deliverToCrew } from './crew-assign.js';
 
 const hold = (row) => row && persist(heldKey(row.id), { title: row.title ?? '', content: row.content }, 0);
 
@@ -99,6 +98,7 @@ async function send(op) {
     }
     case 'crew.assign': {                                                          // 크루에게 맡기기 — 메신저 앱과 같은 방(내 크루와의 1:1)에 같은 표로 쓴다(core/crew-assign.js deliverToCrew)
       const run = async (q) => { const r = await q.setHeader('Authorization', `Bearer ${token}`); assertOwner(); if (r.error) throw classify(r.error); return r.data ?? []; };
+      const { deliverToCrew } = await import('./crew-assign.js'); // 보낼 때만 불러온다(첫 화면 JS 150KB 상한)
       await deliverToCrew({
         rpc,
         myChannels: () => run(sb.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', owner)),

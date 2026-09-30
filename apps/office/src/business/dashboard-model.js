@@ -13,7 +13,7 @@ export function validateFilters(filters) {
   if (!dateOnly(filters?.from) || !dateOnly(filters?.to) || filters.from > filters.to || Date.parse(filters.to) - Date.parse(filters.from) > 3660 * 86400000) throw Object.assign(new Error('biz.error.dates'), { code: 'dates' });
   const customer = filters.customer || null;
   if (customer !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(customer)) throw new Error('biz.error.customer');
-  return { from: filters.from, to: filters.to, customer };
+  return { ...(filters.preset ? { preset: filters.preset } : {}), from: filters.from, to: filters.to, customer };
 }
 
 export function newWidget(type = 'kpi', metric = 'sales', key = () => crypto.randomUUID()) {
@@ -34,7 +34,7 @@ export function defaultPeriod(today = new Date()) {
 }
 
 export function defaultDashboard(name, today = new Date(), key = () => crypto.randomUUID()) {
-  return { id: key(), name, filters: defaultPeriod(today), widgets: [newWidget('kpi', 'sales', key), newWidget('kpi', 'paid', key), newWidget('kpi', 'receivable', key), { ...newWidget('line', 'paid', key), size: 'full' }, newWidget('table', 'sales', key)] };
+  return { id: key(), name, filters: { preset: 'all', ...defaultPeriod(today) }, widgets: [newWidget('kpi', 'sales', key), newWidget('kpi', 'paid', key), newWidget('kpi', 'receivable', key), { ...newWidget('line', 'paid', key), size: 'full' }, newWidget('table', 'sales', key)] };
 }
 
 export function normalizeDashboards(value) {
@@ -42,7 +42,10 @@ export function normalizeDashboards(value) {
   const ids = new Set();
   return value.filter((d) => d && typeof d.id === 'string' && typeof d.name === 'string' && !ids.has(d.id) && ids.add(d.id)).map((d) => {
     const seen = new Set();
-    return { ...d, widgets: (Array.isArray(d.widgets) ? d.widgets : []).filter((w) => w && typeof w.id === 'string' && !seen.has(w.id) && seen.add(w.id) && CHARTS.includes(w.type) && widgetMetrics(w.type).includes(w.metric)).map((w) => ({ ...w, size: ['s', 'm', 'l', 'full'].includes(w.size) ? w.size : 'full' })) };
+    // 프리셋이 없는 옛 저장값(자동으로 들어간 '이번 달')은 한 번 전체로 — 직접 고른 기간은 'custom'. 날짜는 서버 검사(시작·종료일 필수) 때문에 늘 같이 둔다
+    const f = d.filters;
+    const filters = f && (['month', 'year', 'all', 'custom'].includes(f.preset) ? f : { ...f, preset: 'all' });
+    return { ...d, ...(f ? { filters } : {}), widgets: (Array.isArray(d.widgets) ? d.widgets : []).filter((w) => w && typeof w.id === 'string' && !seen.has(w.id) && seen.add(w.id) && CHARTS.includes(w.type) && widgetMetrics(w.type).includes(w.metric)).map((w) => ({ ...w, size: ['s', 'm', 'l', 'full'].includes(w.size) ? w.size : 'full' })) };
   });
 }
 

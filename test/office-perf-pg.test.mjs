@@ -57,7 +57,7 @@ before(()=>{
  create function realtime.topic() returns text language sql stable as $$select current_setting('realtime.topic',true)$$;
  create function realtime.send(payload jsonb,event text,topic text,private boolean default true) returns void language sql as $$select null::void$$;
  alter table realtime.messages enable row level security; grant select,insert on realtime.messages to authenticated; grant usage on schema realtime to authenticated;`);
- const files=['20260714150000_entitlements.sql','20260724000100_trial_14d.sql','20260728100000_entitlements_ls.sql','20260728113000_billing_hardening.sql','20260728150000_ls_reconcile_cooldown.sql','20260730050000_is_pro_ends_at.sql','20260903120000_msgr.sql','20260909002000_msgr_profiles_friends.sql','20260909003000_msgr_message_meta.sql','20260927144230_office_business.sql','20260927170000_office_pages.sql','20260927171000_office_mail.sql','20260928010000_office_marketing.sql','20260929140000_office_deal_flow.sql','20260929180000_office_tasks_owners.sql','20260929190000_office_perf.sql'];
+ const files=['20260714150000_entitlements.sql','20260724000100_trial_14d.sql','20260728100000_entitlements_ls.sql','20260728113000_billing_hardening.sql','20260728150000_ls_reconcile_cooldown.sql','20260730050000_is_pro_ends_at.sql','20260903120000_msgr.sql','20260909002000_msgr_profiles_friends.sql','20260909003000_msgr_message_meta.sql','20260927144230_office_business.sql','20260927170000_office_pages.sql','20260927171000_office_mail.sql','20260928010000_office_marketing.sql','20260929140000_office_deal_flow.sql','20260929180000_office_tasks_owners.sql','20260929190000_office_perf.sql','20260930150000_office_perf_tie_order.sql'];
  for(const f of files){const r=psqlSpawn(DB,['-f',fileURLToPath(new URL(`../supabase/migrations/${f}`,import.meta.url))]);if(r.status!==0)throw new Error(`${f}: ${r.stderr}`);}
  for(const [k,id] of Object.entries(U))sql(`insert into auth.users(id,email)values(${quote(id)},${quote(k+'@example.test')})`);
  ORG=last(sql(userSql(U.owner,`insert into msgr_orgs(name,slug,owner_user_id)values('Perf','perf',${quote(U.owner)}) returning id`)));
@@ -93,6 +93,20 @@ test('자동 집계: 담당 거래 계약·청구·입금, 계약 뒤 취소는 
  assert.ok(!r.deals.some(d=>d.order_id===F.other)); // 남의 거래는 안 셈
  const other=report(U.member2,`${LAST}-01`,endOf(LAST));
  assert.equal(other.totals.contract,2000000); // 공동 담당자도 같은 금액
+});
+
+// 이유(유건 9/30 운영 제보): 인트라넷 이관처럼 날짜만 있는 기록은 계약과 취소가 같은 시각이 된다 — 이름순 정렬이면
+// 'cancel'이 'contract'보다 먼저 처리돼 취소가 무시됐다(운영 9월 계약 3,120만 = 분석 1,620만 + 취소된 1,500만).
+test('자동 집계: 계약과 취소가 같은 시각이어도 취소가 계약을 되돌린다', {skip}, ()=>{
+ const same=at(`${LAST}-10`,'12');
+ sql(`update office_business_activity set at=${quote(same)} where order_id=${quote(F.lost)} and kind in ('contract','cancel')`);
+ try {
+  const r=report(U.member,`${LAST}-01`,endOf(LAST));
+  assert.equal(r.totals.contract,3000000+2000000); // 수주 + 공동, 취소 거래는 0
+  assert.deepEqual(r.deals.filter(d=>d.order_id===F.lost).map(d=>[d.kind,d.amount]).sort(),[['contract',1000000],['uncontract',-1000000]].sort());
+ } finally {
+  sql(`update office_business_activity set at=(${quote(`${LAST}-10`)}::date + case kind when 'contract' then time '11:00' else time '12:00' end) at time zone 'Asia/Seoul' where order_id=${quote(F.lost)} and kind in ('contract','cancel')`);
+ }
 });
 
 test('자동 집계: 기한 준수율 = 기한 안에 끝낸 일 ÷ 그달 기한인 일, 달성률 = 끝낸 일 ÷ 그달 기한인 일 — 취소·기한 없는 일은 빠진다', {skip}, ()=>{

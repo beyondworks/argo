@@ -1,0 +1,465 @@
+/* Argo Office 레퍼런스 테마 다섯 가족 — cream · sand · peach · mist · glow (가족마다 시스템 자동 · -light · -dark).
+   색만이 아니라 카드 둥글기·테두리·그림자, 사이드바 모양, 버튼·칩 모양, 선택된 메뉴 모양까지 옮긴다.
+   원칙: ① linen·graphite 화면은 한 픽셀도 바뀌지 않는다 — 아래 모든 규칙은 새 가족의 data-theme 아래에만 있다.
+         ② 색은 토큰만 쓴다(글자 대비는 test/themes.test.mjs가 잠근다). ③ hover는 (hover: hover) 안에서만.
+         ④ 글꼴은 Pretendard 그대로 — 굵기·자간·크기로만 느낌을 낸다(데스크톱 CSP가 외부 글꼴을 막는다).
+   구조: 가족마다 [모양 토큰(모드 무관)] + [라이트 색] + [다크 색]. 시스템 자동의 다크는 theme.js가 붙이는 .dark-emul. */
+
+/* ════════ 1. 공통 뼈대 — 새 다섯 가족 모두 ════════ */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) { background: var(--frame); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) body { background: transparent; }
+
+/* 사이드바가 가리는 글자·아이콘 색은 --side-* 토큰이 정한다. 아래는 모양만. */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .nav-item, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .tree-row, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .crew-btn, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .crew-row, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .space-switch, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .search-btn, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .crew-search { border-radius: var(--t-nav-r); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .nav-item.active, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .tree-row.active { background: var(--side-active); box-shadow: var(--t-active-shadow); color: var(--side-fg); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .space-switch { background: var(--t-space-bg); box-shadow: var(--t-space-edge); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .nav-count { border-radius: var(--r-pill); }
+
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .topbar { border-bottom-color: var(--t-bar-line); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .crumb-cur { font-weight: 600; }
+
+/* 제목 — 가족마다 크기·굵기가 다르다(좁은 폭에서는 화면 폭에 맞춰 줄인다) */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .page-h1 { font-size: min(var(--t-h1-size), 8.6vw); font-weight: var(--t-h1-w); letter-spacing: var(--t-h1-ls); line-height: 1.18; }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stat-num { font-size: var(--t-num-size); font-weight: var(--t-num-w); letter-spacing: -0.02em; }
+
+/* 카드 — 모듈·설정 카드·표 바탕·로그인 카드 */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .module, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .set-card, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .table-wrap, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .login-card { background: var(--t-card-bg); box-shadow: var(--t-card-edge); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .module-head { border-bottom-color: var(--t-head-line); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .module-head h3 { font-size: 14px; font-weight: 640; letter-spacing: -0.01em; }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .set-card h2 { font-weight: 660; }
+
+/* 현황 카드 — 파스텔 타일. 타일 위 글자는 어두운(다크에서는 밝은) 전용 색으로 다시 정해 대비를 지킨다 */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stat-card { border-radius: var(--t-tile-r); box-shadow: var(--t-tile-edge); --fg-2: var(--tile-ink-2); --fg-3: var(--tile-ink-3); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stat-card:not(.stat-add) { background: var(--tile-1); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+2) { background: var(--tile-2); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+3) { background: var(--tile-3); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+4) { background: var(--tile-4); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+5) { background: var(--tile-5); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+6) { background: var(--tile-6); }
+/* .badge.badge — 가족별 .badge.ok·.warn 색이 타일 안 배지를 덮지 않게 한 칸 더 높인다 */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stat-card .badge.badge { background: var(--t-tile-badge); color: var(--fg); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stat-add { border-radius: var(--t-tile-r); }
+
+/* 버튼·칩·입력 */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .btn, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .btn.sm { border-radius: var(--t-btn-r); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .btn.primary { box-shadow: var(--t-primary-shadow); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .icon-btn, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .icon-btn.sm { border-radius: var(--t-icon-r); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .badge, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .draft-badge, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .mail-tag, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .chip { border-radius: var(--t-chip-r); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .badge { height: 22px; padding: 0 9px; }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .input, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .select, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .field input, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .field select, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .compose-body { border-radius: var(--t-input-r); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .seg { border-radius: var(--t-seg-r); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .seg-btn { border-radius: var(--t-seg-r); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .tabs { border-bottom-color: var(--t-top-line); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .progress { border-radius: 999px; }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .progress span { background: var(--t-bar, var(--primary)); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .bar i { background: var(--t-bar, var(--fg-2)); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .menu, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .palette { border-radius: var(--t-pop-r); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .menu-item, :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .palette-row { border-radius: calc(var(--t-pop-r) - 6px); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .toast { border-radius: var(--t-btn-r); }
+
+/* 페이지 본문(문서)·메일 화면은 카드 바탕을 쓰지 않는다 — 바탕색만 새 표면으로 */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .content.view-page { background: var(--t-doc-bg); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .main:has(> .content.view-page) .topbar { background: var(--t-doc-bg); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .topbar { background: var(--t-top-bg); }
+
+@media (hover: hover) {
+  :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .btn:not(.primary, .danger, .ghost, .on):hover { background: var(--card-2); }
+  :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) a.stat-card:hover { box-shadow: var(--t-tile-edge-hover); }
+  :root[data-theme^='glow'] .icon-btn:hover { background: var(--t-glass-strong); }
+}
+
+/* ════════ 2. 창 뼈대 — 데스크톱 폭(768px 이상)에서만. 좁은 폭은 기본 서랍 사이드바를 그대로 쓴다 ════════ */
+@media (min-width: 768px) {
+  /* cream — 검은 둥근 사이드바 카드가 크림색 바탕 위에 떠 있다 */
+  :root[data-theme^='cream'] .shell { padding: 16px; column-gap: 16px; }
+  :root[data-theme^='cream'].nav-collapsed .shell { column-gap: 0; }
+  :root[data-theme^='cream'] .side { border-radius: 30px; }
+  
+  /* 창으로 감싸는 네 가족 — 바탕 위에 둥근 창 하나 */
+  :root:is([data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .shell { margin: var(--t-win-m); height: calc(100dvh - 2 * var(--t-win-m)); border-radius: var(--t-win-r); background: var(--t-win-bg); box-shadow: var(--t-win-edge); overflow: hidden; }
+  /* sand — 사이드바는 창과 같은 바탕에 경계선 하나, 본문은 얇은 테두리의 큰 흰 판 */
+  :root[data-theme^='sand'] .side { border-right: 1px solid var(--t-top-line); }
+  :root[data-theme^='sand'] .content:not(.view-mail, .view-page) { padding: 12px; }
+  :root[data-theme^='sand'] .content > .page-wrap { background: var(--t-panel-bg); border-radius: 24px; box-shadow: inset 0 0 0 1px var(--border-soft); margin-block: 0; min-height: 100%; }
+  /* peach · mist — 사이드바는 창 바탕에 녹아 있고 본문이 둥근 흰 판으로 올라온다 */
+  :root:is([data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .side { background: transparent; }
+  :root:is([data-theme^='peach'], [data-theme^='mist']) .main { margin: 12px 12px 12px 0; border-radius: var(--t-main-r); box-shadow: var(--t-main-edge); overflow: hidden; }
+  :root:is([data-theme^='peach'], [data-theme^='mist']).nav-collapsed .main { margin-left: 12px; }
+  :root[data-theme^='glow'] .main { margin: 8px 8px 8px 0; }
+  :root[data-theme^='glow'].nav-collapsed .main { margin-left: 8px; }
+}
+/* 본문 판 색은 좁은 폭에서도 같다 */
+:root:is([data-theme^='peach'], [data-theme^='mist']) .main { background: var(--t-main-bg); }
+:root:is([data-theme^='peach'], [data-theme^='mist']) .content.view-page, :root:is([data-theme^='peach'], [data-theme^='mist']) .main:has(> .content.view-page) .topbar { background: transparent; }
+
+/* mist · glow — 카드 머리 아이콘이 둥근 배지(레퍼런스의 검은 원 아이콘) */
+:root:is([data-theme^='mist'], [data-theme^='glow']) .module-head > .ico { box-sizing: content-box; width: 15px; height: 15px; padding: 7px; border-radius: 50%; background: var(--t-badge-bg); color: var(--t-badge-fg); }
+:root:is([data-theme^='mist'], [data-theme^='glow']) .module-head { height: 52px; padding-left: 12px; }
+:root:is([data-theme^='mist'], [data-theme^='glow']) .btn.primary { font-weight: 560; }
+
+/* ════════ 3. 가족별 모양 ════════ */
+
+/* cream — 차분한 크림 + 굵은 제목 + 검은 알약 버튼 + 점선 칩 */
+:root[data-theme^='cream'] .btn:not(.primary, .danger, .ghost, .on) { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fg); }
+:root[data-theme^='cream'] .btn.on { background: var(--fg); color: var(--bg); }
+:root[data-theme^='cream'] .chip { background: transparent; box-shadow: none; border: 1px dashed var(--fg-3); }
+:root[data-theme^='cream'] .badge { background: var(--tile-1); color: var(--fg); }
+:root[data-theme^='cream'] .badge.ok { background: var(--tile-3); color: var(--fg); }
+:root[data-theme^='cream'] .badge.warn { background: var(--tile-1); color: var(--fg); }
+:root[data-theme^='cream'] .badge.danger { background: var(--danger-soft); color: var(--danger); }
+:root[data-theme^='cream'] .nav-item.active, :root[data-theme^='cream'] .tree-row.active { background: transparent; box-shadow: inset 2px 0 0 var(--side-mark); border-radius: 3px; color: var(--side-mark); }
+:root[data-theme^='cream'] .search-btn { box-shadow: inset 0 0 0 1px var(--side-line); background: transparent; }
+:root[data-theme^='cream'] .space-mark { background: var(--side-mark); color: var(--mark-fg); }
+:root[data-theme^='cream'] .seg { background: transparent; box-shadow: inset 0 0 0 1px var(--fg-3); }
+:root[data-theme^='cream'] .seg-btn.on { background: var(--fg); color: var(--bg); box-shadow: none; }
+:root[data-theme^='cream'] .tab.on { box-shadow: inset 0 -2px 0 var(--fg); }
+:root[data-theme^='cream'] .module-head { height: 46px; }
+
+/* sand — 얇은 테두리 흰 카드 + 흰 알약 선택 메뉴 + 검은 기본 버튼 + 회색 탭 상자 */
+:root[data-theme^='sand'] .tabs { background: var(--bg); padding: 4px; border-radius: 14px; border-bottom: 0; gap: 2px; box-shadow: inset 0 0 0 1px var(--border-soft); }
+:root[data-theme^='sand'] .tab { height: 32px; border-radius: 10px; }
+:root[data-theme^='sand'] .tab.on { background: var(--card); box-shadow: var(--t-active-shadow); }
+:root[data-theme^='sand'] .biz-tabbar { border-bottom: 0; }
+:root[data-theme^='sand'] .badge { font-weight: 560; }
+:root[data-theme^='sand'] .stat-num { font-size: var(--t-num-size); }
+
+/* peach — 복숭아 바탕 + 회색 카드 + 크고 가는 제목 + 흰 테두리 선택 메뉴 */
+:root[data-theme^='peach'] .tab.on { box-shadow: inset 0 -2px 0 var(--fg); }
+:root[data-theme^='peach'] .nav-item, :root[data-theme^='peach'] .tree-row, :root[data-theme^='peach'] .crew-btn { font-size: 14px; }
+:root[data-theme^='peach'] .module-head h3 { font-weight: 560; font-size: 15px; }
+:root[data-theme^='peach'] .btn.primary { font-weight: 560; }
+
+/* mist — 아주 둥근 흰 카드 + 얇은 테두리 + 파스텔 타일 + 그림자 있는 검은 알약 버튼 + 하얀 알약 선택 */
+:root[data-theme^='mist'] .tabs { border-bottom: 0; gap: 4px; }
+:root[data-theme^='mist'] .tab { border-radius: 999px; padding: 0 14px; }
+:root[data-theme^='mist'] .tab.on { background: var(--card); box-shadow: var(--t-active-shadow); }
+:root[data-theme^='mist'] .biz-tabbar { border-bottom: 0; }
+:root[data-theme^='mist'] .stat-card { padding: 16px 18px; }
+:root[data-theme^='mist'] .set-card, :root[data-theme^='mist'] .module { box-shadow: var(--t-card-edge); }
+
+/* glow — 복숭아→노랑 그라데이션 + 유리 판 + 아주 둥근 파스텔 타일 + 둥근 아이콘 버튼 */
+:root[data-theme^='glow'] .tabs { border-bottom: 0; gap: 4px; }
+:root[data-theme^='glow'] .tab { border-radius: 999px; padding: 0 14px; }
+:root[data-theme^='glow'] .tab.on { background: var(--t-glass-strong); box-shadow: var(--t-active-shadow); }
+:root[data-theme^='glow'] .biz-tabbar { border-bottom: 0; }
+:root[data-theme^='glow'] .stat-card { padding: 18px 20px; }
+:root[data-theme^='glow'] .module-head h3 { font-weight: 560; }
+:root[data-theme^='glow'] .icon-btn { background: var(--t-glass); box-shadow: inset 0 0 0 1px var(--t-glass-line); }
+:root[data-theme^='glow'] .topbar .icon-btn { box-shadow: none; background: transparent; }
+
+/* ════════ 4. 색 · 모양 토큰 ════════ */
+
+/* ── cream ── */
+:root[data-theme^='cream'] {
+  --rc: 12px; --rs: 24px; --ctl: 34px;
+  --r-sm: 10px; --r: 18px; --r-lg: 24px; --r-pill: 999px;
+  --t-nav-r: 14px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 14px; --t-seg-r: 999px; --t-tile-r: 22px; --t-pop-r: 18px;
+  --t-h1-size: 38px; --t-h1-w: 720; --t-h1-ls: -0.035em; --t-num-size: 34px; --t-num-w: 700;
+  --t-space-bg: transparent; --t-space-edge: none;
+  --t-active-shadow: none; --t-primary-shadow: none;
+  --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
+}
+:root[data-theme='cream'], :root[data-theme='cream-light'] {
+  color-scheme: light;
+  --frame: #fbf3e5;
+  --bg: #fbf3e5; --card: #f0e7db; --card-2: #e8ddcd; --secondary: #e6dbca; --surface: #f0e7db; --lift: #f8efe0;
+  --fg: #17130e; --fg-2: #463f35; --fg-3: #665e52;
+  --border: rgba(23, 19, 14, 0.2); --border-soft: rgba(23, 19, 14, 0.09);
+  --primary: #111111; --primary-strong: #000000; --primary-fg: #fbf3e5; --primary-soft: rgba(23, 19, 14, 0.07);
+  --accent: #111111;
+  --mark: #f4b8dc; --mark-fg: #111111; --mark-wash: #f6e4d6;
+  --ok: #2f6434; --ok-soft: rgba(47, 100, 52, 0.14); --warn: #7c5106; --warn-soft: rgba(210, 150, 20, 0.2);
+  --danger: #a92f25; --danger-soft: rgba(169, 47, 37, 0.12); --info: #34599b; --info-soft: rgba(52, 89, 155, 0.12);
+  --ring: rgba(17, 17, 17, 0.45); --selection: rgba(244, 184, 220, 0.6); --overlay: rgba(40, 28, 14, 0.42);
+  --shadow-float: 0 12px 32px rgba(60, 40, 10, 0.18);
+  --ink-rgb: 23, 19, 14;
+  --side-bg: #111111; --side-fg: #f6efe2; --side-fg-2: #cbc4b7; --side-fg-3: #a9a295;
+  --side-line: rgba(246, 239, 226, 0.16); --side-hover: rgba(255, 255, 255, 0.09); --side-active: rgba(255, 255, 255, 0.13); --side-mark: #f4b8dc;
+  --tile-1: #f5db6a; --tile-2: #f4b8dc; --tile-3: #c5d49a; --tile-4: #b2c6e9; --tile-5: #f7c9a8; --tile-6: #d9cdf0;
+  --tile-ink-2: #2b2519; --tile-ink-3: #453e2f; --t-tile-badge: rgba(255, 255, 255, 0.6);
+  --t-tile-edge: none; --t-tile-edge-hover: 0 0 0 2px var(--fg);
+  --t-card-bg: #f0e7db; --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(23, 19, 14, 0.1);
+  --t-bar: #e58fc0;
+}
+:root[data-theme='cream-dark'], :root[data-theme='cream'].dark-emul {
+  color-scheme: dark;
+  --frame: #16120e;
+  --bg: #16120e; --card: #241e18; --card-2: #2e2720; --secondary: #382f26; --surface: #241e18; --lift: #1d1813;
+  --fg: #f4ecdf; --fg-2: #cdc4b4; --fg-3: #a99f8e;
+  --border: rgba(244, 236, 223, 0.2); --border-soft: rgba(244, 236, 223, 0.1);
+  --primary: #f4ecdf; --primary-strong: #ffffff; --primary-fg: #16120e; --primary-soft: rgba(244, 236, 223, 0.09);
+  --accent: #f4ecdf;
+  --mark: #f4b8dc; --mark-fg: #16120e; --mark-wash: #2c2226;
+  --ok: #8bc48f; --ok-soft: rgba(139, 196, 143, 0.16); --warn: #e0b25a; --warn-soft: rgba(224, 178, 90, 0.16);
+  --danger: #ee8a7d; --danger-soft: rgba(238, 138, 125, 0.16); --info: #8fb0ea; --info-soft: rgba(143, 176, 234, 0.16);
+  --ring: rgba(244, 236, 223, 0.45); --selection: rgba(244, 184, 220, 0.35); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --ink-rgb: 244, 236, 223;
+  --side-bg: #0a0908; --side-fg: #f1e9dc; --side-fg-2: #c4bcae; --side-fg-3: #a0978a;
+  --side-line: rgba(241, 233, 220, 0.14); --side-hover: rgba(255, 255, 255, 0.08); --side-active: rgba(255, 255, 255, 0.12); --side-mark: #f4b8dc;
+  --tile-1: #4a4120; --tile-2: #4d2f43; --tile-3: #34412b; --tile-4: #2b3a56; --tile-5: #4e3625; --tile-6: #3c3457;
+  --tile-ink-2: #ece3d1; --tile-ink-3: #cbbfa9; --t-tile-badge: rgba(255, 255, 255, 0.14);
+  --t-tile-edge: none; --t-tile-edge-hover: 0 0 0 2px var(--fg);
+  --t-card-bg: #241e18; --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(244, 236, 223, 0.12);
+  --t-bar: #e58fc0;
+}
+
+/* ── sand ── */
+:root[data-theme^='sand'] {
+  --rc: 10px; --rs: 16px; --ctl: 34px;
+  --r-sm: 8px; --r: 14px; --r-lg: 18px; --r-pill: 999px;
+  --t-nav-r: 10px; --t-btn-r: 10px; --t-icon-r: 10px; --t-chip-r: 999px; --t-input-r: 10px; --t-seg-r: 12px; --t-tile-r: 16px; --t-pop-r: 14px;
+  --t-h1-size: 26px; --t-h1-w: 660; --t-h1-ls: -0.025em; --t-num-size: 26px; --t-num-w: 650;
+  --t-space-bg: var(--card); --t-space-edge: 0 0 0 1px var(--border-soft), 0 1px 2px rgba(20, 20, 10, 0.05);
+  --t-active-shadow: 0 1px 2px rgba(20, 20, 10, 0.1), 0 0 0 1px rgba(20, 20, 10, 0.05); --t-primary-shadow: none;
+  --t-win-m: 18px; --t-win-r: 26px; --t-win-bg: var(--bg);
+  --t-top-bg: var(--bg); --t-doc-bg: var(--surface); --t-bar-line: var(--t-top-line);
+}
+:root[data-theme='sand'], :root[data-theme='sand-light'] {
+  color-scheme: light;
+  --frame: #e2dac7;
+  --bg: #f1f0ee; --card: #ffffff; --card-2: #ebeae7; --secondary: #e6e5e1; --surface: #f6f6f4; --lift: #ffffff;
+  --fg: #171717; --fg-2: #464643; --fg-3: #656460;
+  --border: rgba(23, 23, 20, 0.16); --border-soft: rgba(23, 23, 20, 0.09);
+  --primary: #151515; --primary-strong: #000000; --primary-fg: #ffffff; --primary-soft: rgba(23, 23, 20, 0.06);
+  --accent: #151515;
+  --mark: #c62d26; --mark-fg: #ffffff; --mark-wash: #f6efe4;
+  --ok: #136336; --ok-soft: rgba(23, 112, 63, 0.13); --warn: #8a5200; --warn-soft: rgba(200, 130, 10, 0.15);
+  --danger: #ac241e; --danger-soft: rgba(198, 45, 38, 0.12); --info: #2a5db0; --info-soft: rgba(42, 93, 176, 0.11);
+  --ring: rgba(21, 21, 21, 0.4); --selection: rgba(21, 21, 21, 0.12); --overlay: rgba(30, 26, 14, 0.4);
+  --shadow-float: 0 14px 36px rgba(50, 40, 10, 0.16);
+  --ink-rgb: 23, 23, 20;
+  --side-bg: #f1f0ee; --side-fg: #171717; --side-fg-2: #464643; --side-fg-3: #656460;
+  --side-line: rgba(23, 23, 20, 0.09); --side-hover: rgba(23, 23, 20, 0.055); --side-active: #ffffff; --side-mark: #c62d26;
+  --tile-1: #f8f8f7; --tile-2: #f8f8f7; --tile-3: #f8f8f7; --tile-4: #f8f8f7; --tile-5: #f8f8f7; --tile-6: #f8f8f7;
+  --tile-ink-2: #464643; --tile-ink-3: #656460; --t-tile-badge: #ecebe8;
+  --t-tile-edge: inset 0 0 0 1px rgba(23, 23, 20, 0.1); --t-tile-edge-hover: inset 0 0 0 1px rgba(23, 23, 20, 0.28);
+  --t-card-bg: #f6f6f4; --t-card-edge: inset 0 0 0 1px rgba(23, 23, 20, 0.1); --t-head-line: rgba(23, 23, 20, 0.07); --t-top-line: rgba(23, 23, 20, 0.1);
+  --t-panel-bg: #fbfbfa; --t-win-edge: 0 0 0 1px rgba(60, 50, 20, 0.08), 0 20px 44px rgba(90, 70, 20, 0.16);
+}
+:root[data-theme='sand-dark'], :root[data-theme='sand'].dark-emul {
+  color-scheme: dark;
+  --frame: #2a261d;
+  --bg: #1e1e1d; --card: #262625; --card-2: #2e2e2c; --secondary: #383836; --surface: #252524; --lift: #2b2b29;
+  --fg: #f0efec; --fg-2: #c6c5c0; --fg-3: #a09f99;
+  --border: rgba(240, 239, 236, 0.18); --border-soft: rgba(240, 239, 236, 0.1);
+  --primary: #f0efec; --primary-strong: #ffffff; --primary-fg: #151515; --primary-soft: rgba(240, 239, 236, 0.08);
+  --accent: #f0efec;
+  --mark: #f2665d; --mark-fg: #1a0c0b; --mark-wash: #2c2822;
+  --ok: #6fcf97; --ok-soft: rgba(111, 207, 151, 0.15); --warn: #e6b25a; --warn-soft: rgba(230, 178, 90, 0.15);
+  --danger: #f28b82; --danger-soft: rgba(242, 139, 130, 0.15); --info: #8fb2ee; --info-soft: rgba(143, 178, 238, 0.15);
+  --ring: rgba(240, 239, 236, 0.45); --selection: rgba(240, 239, 236, 0.16); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 240, 239, 236;
+  --side-bg: #1e1e1d; --side-fg: #f0efec; --side-fg-2: #c6c5c0; --side-fg-3: #a09f99;
+  --side-line: rgba(240, 239, 236, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #3a3a38; --side-mark: #f2665d;
+  --tile-1: #262625; --tile-2: #262625; --tile-3: #262625; --tile-4: #262625; --tile-5: #262625; --tile-6: #262625;
+  --tile-ink-2: #c6c5c0; --tile-ink-3: #a09f99; --t-tile-badge: #34342f;
+  --t-tile-edge: inset 0 0 0 1px rgba(240, 239, 236, 0.12); --t-tile-edge-hover: inset 0 0 0 1px rgba(240, 239, 236, 0.32);
+  --t-card-bg: #252524; --t-card-edge: inset 0 0 0 1px rgba(240, 239, 236, 0.11); --t-head-line: rgba(240, 239, 236, 0.08); --t-top-line: rgba(240, 239, 236, 0.1);
+  --t-panel-bg: #222221; --t-win-edge: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 20px 44px rgba(0, 0, 0, 0.5);
+}
+
+/* ── peach ── */
+:root[data-theme^='peach'] {
+  --rc: 14px; --rs: 18px; --ctl: 34px;
+  --r-sm: 10px; --r: 16px; --r-lg: 20px; --r-pill: 999px;
+  --t-nav-r: 14px; --t-btn-r: 12px; --t-icon-r: 12px; --t-chip-r: 999px; --t-input-r: 14px; --t-seg-r: 12px; --t-tile-r: 16px; --t-pop-r: 16px;
+  --t-h1-size: 46px; --t-h1-w: 340; --t-h1-ls: -0.04em; --t-num-size: 32px; --t-num-w: 420;
+  --t-space-bg: var(--t-main-bg); --t-space-edge: 0 0 0 1px var(--border-soft);
+  --t-active-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(60, 40, 20, 0.06); --t-primary-shadow: none;
+  --t-win-m: 20px; --t-win-r: 32px; --t-win-bg: var(--bg); --t-main-r: 24px;
+  --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
+}
+:root[data-theme='peach'], :root[data-theme='peach-light'] {
+  color-scheme: light;
+  --frame: #ede0d7;
+  --bg: #f3f2f0; --card: #ffffff; --card-2: #eeedeb; --secondary: #e7e6e2; --surface: #f4f4f2; --lift: #fafaf9;
+  --fg: #1a1a1a; --fg-2: #4f4e4a; --fg-3: #67655f;
+  --border: rgba(26, 26, 26, 0.16); --border-soft: rgba(26, 26, 26, 0.08);
+  --primary: #1a1a1a; --primary-strong: #000000; --primary-fg: #ffffff; --primary-soft: rgba(26, 26, 26, 0.06);
+  --accent: #1a1a1a;
+  --mark: #f97723; --mark-fg: #1a1a1a; --mark-wash: #f8ede4;
+  --ok: #176137; --ok-soft: rgba(29, 116, 67, 0.13); --warn: #8c4f06; --warn-soft: rgba(249, 119, 35, 0.14);
+  --danger: #bb2c23; --danger-soft: rgba(187, 44, 35, 0.11); --info: #2f5fa8; --info-soft: rgba(47, 95, 168, 0.11);
+  --ring: rgba(26, 26, 26, 0.4); --selection: rgba(249, 119, 35, 0.25); --overlay: rgba(40, 24, 14, 0.4);
+  --shadow-float: 0 14px 36px rgba(80, 40, 20, 0.16);
+  --ink-rgb: 26, 26, 26;
+  --side-bg: #f3f2f0; --side-fg: #1a1a1a; --side-fg-2: #4f4e4a; --side-fg-3: #67655f;
+  --side-line: rgba(26, 26, 26, 0.09); --side-hover: rgba(26, 26, 26, 0.055); --side-active: #ffffff; --side-mark: #f97723;
+  --tile-1: #efeeec; --tile-2: #efeeec; --tile-3: #efeeec; --tile-4: #efeeec; --tile-5: #efeeec; --tile-6: #efeeec;
+  --tile-ink-2: #4f4e4a; --tile-ink-3: #67655f; --t-tile-badge: #ffffff;
+  --t-tile-edge: none; --t-tile-edge-hover: inset 0 0 0 1px rgba(26, 26, 26, 0.24);
+  --t-card-bg: #f4f4f2; --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(26, 26, 26, 0.08);
+  --t-main-bg: #ffffff; --t-main-edge: 0 0 0 1px rgba(26, 26, 26, 0.05);
+  --t-win-edge: 0 24px 50px rgba(120, 70, 40, 0.14);
+}
+:root[data-theme='peach-dark'], :root[data-theme='peach'].dark-emul {
+  color-scheme: dark;
+  --frame: #2b211c;
+  --bg: #211b18; --card: #2b2420; --card-2: #352d28; --secondary: #3d342f; --surface: #342c27; --lift: #2f2723;
+  --fg: #f3ece6; --fg-2: #cdc3ba; --fg-3: #a99e94;
+  --border: rgba(243, 236, 230, 0.18); --border-soft: rgba(243, 236, 230, 0.1);
+  --primary: #f3ece6; --primary-strong: #ffffff; --primary-fg: #1f1815; --primary-soft: rgba(243, 236, 230, 0.08);
+  --accent: #f3ece6;
+  --mark: #f97723; --mark-fg: #1a1210; --mark-wash: #37281f;
+  --ok: #7fcf9e; --ok-soft: rgba(127, 207, 158, 0.15); --warn: #f0b060; --warn-soft: rgba(249, 119, 35, 0.18);
+  --danger: #f79b90; --danger-soft: rgba(242, 139, 126, 0.15); --info: #93b4ee; --info-soft: rgba(147, 180, 238, 0.15);
+  --ring: rgba(243, 236, 230, 0.45); --selection: rgba(249, 119, 35, 0.35); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 243, 236, 230;
+  --side-bg: #211b18; --side-fg: #f3ece6; --side-fg-2: #cdc3ba; --side-fg-3: #a99e94;
+  --side-line: rgba(243, 236, 230, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #3a312c; --side-mark: #f97723;
+  --tile-1: #40362f; --tile-2: #40362f; --tile-3: #40362f; --tile-4: #40362f; --tile-5: #40362f; --tile-6: #40362f;
+  --tile-ink-2: #d6ccc3; --tile-ink-3: #b3a89e; --t-tile-badge: #4f443c;
+  --t-tile-edge: none; --t-tile-edge-hover: inset 0 0 0 1px rgba(243, 236, 230, 0.3);
+  --t-card-bg: #342c27; --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(243, 236, 230, 0.1);
+  --t-main-bg: #2b2420; --t-main-edge: 0 0 0 1px rgba(243, 236, 230, 0.07);
+  --t-win-edge: 0 24px 50px rgba(0, 0, 0, 0.5);
+}
+
+/* ── mist ── */
+:root[data-theme^='mist'] {
+  --rc: 14px; --rs: 26px; --ctl: 34px;
+  --r-sm: 12px; --r: 20px; --r-lg: 26px; --r-pill: 999px;
+  --t-nav-r: 999px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 16px; --t-seg-r: 999px; --t-tile-r: 24px; --t-pop-r: 20px;
+  --t-h1-size: 30px; --t-h1-w: 540; --t-h1-ls: -0.03em; --t-num-size: 30px; --t-num-w: 500;
+  --t-space-bg: var(--t-main-bg); --t-space-edge: 0 0 0 1px var(--border-soft);
+  --t-active-shadow: 0 2px 8px rgba(30, 30, 20, 0.1), 0 0 0 1px rgba(30, 30, 20, 0.04);
+  --t-win-m: 20px; --t-win-r: 34px; --t-win-bg: var(--bg); --t-main-r: 28px;
+  --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
+}
+:root[data-theme='mist'], :root[data-theme='mist-light'] {
+  color-scheme: light;
+  --frame: #d0d1cc;
+  --bg: #f2f2ef; --card: #ffffff; --card-2: #f1f1ee; --secondary: #e9e9e6; --surface: #ffffff; --lift: #fbfbfa;
+  --fg: #1b1b1b; --fg-2: #4c4c49; --fg-3: #666663;
+  --border: rgba(27, 27, 27, 0.16); --border-soft: rgba(27, 27, 27, 0.09);
+  --primary: #111111; --primary-strong: #000000; --primary-fg: #ffffff; --primary-soft: rgba(27, 27, 27, 0.06);
+  --accent: #111111;
+  --mark: #6f4fd6; --mark-fg: #ffffff; --mark-wash: #f2eefb;
+  --ok: #155f42; --ok-soft: rgba(26, 116, 82, 0.13); --warn: #85520a; --warn-soft: rgba(230, 160, 20, 0.16);
+  --danger: #aa2530; --danger-soft: rgba(188, 44, 55, 0.11); --info: #2c62b5; --info-soft: rgba(44, 98, 181, 0.11);
+  --ring: rgba(17, 17, 17, 0.4); --selection: rgba(111, 79, 214, 0.2); --overlay: rgba(24, 26, 24, 0.4);
+  --shadow-float: 0 16px 40px rgba(30, 32, 30, 0.16);
+  --ink-rgb: 27, 27, 27;
+  --side-bg: #f2f2ef; --side-fg: #1b1b1b; --side-fg-2: #4c4c49; --side-fg-3: #666663;
+  --side-line: rgba(27, 27, 27, 0.09); --side-hover: rgba(27, 27, 27, 0.055); --side-active: #ffffff; --side-mark: #6f4fd6;
+  --tile-1: #f0ebfb; --tile-2: #fdeee4; --tile-3: #f7f3d9; --tile-4: #e2f4f1; --tile-5: #e6eefb; --tile-6: #fbe6ef;
+  --tile-ink-2: #3a3a38; --tile-ink-3: #55554f; --t-tile-badge: rgba(255, 255, 255, 0.75);
+  --t-tile-edge: inset 0 0 0 1px rgba(27, 27, 27, 0.06); --t-tile-edge-hover: inset 0 0 0 1px rgba(27, 27, 27, 0.22);
+  --t-card-bg: #ffffff; --t-card-edge: inset 0 0 0 1px rgba(27, 27, 27, 0.09); --t-head-line: transparent; --t-top-line: rgba(27, 27, 27, 0.08);
+  --t-main-bg: #ffffff; --t-main-edge: 0 0 0 1px rgba(27, 27, 27, 0.05);
+  --t-win-edge: 0 24px 56px rgba(40, 44, 40, 0.16);
+  --t-badge-bg: #111111; --t-badge-fg: #ffffff; --t-bar: #8b6be0;
+  --t-primary-shadow: 0 6px 14px rgba(17, 17, 17, 0.2);
+}
+:root[data-theme='mist-dark'], :root[data-theme='mist'].dark-emul {
+  color-scheme: dark;
+  --frame: #171817;
+  --bg: #232423; --card: #2c2d2c; --card-2: #343534; --secondary: #3b3c3b; --surface: #303130; --lift: #292a29;
+  --fg: #efefec; --fg-2: #c8c8c4; --fg-3: #a1a19d;
+  --border: rgba(239, 239, 236, 0.18); --border-soft: rgba(239, 239, 236, 0.1);
+  --primary: #efefec; --primary-strong: #ffffff; --primary-fg: #171717; --primary-soft: rgba(239, 239, 236, 0.08);
+  --accent: #efefec;
+  --mark: #b39cf5; --mark-fg: #17131f; --mark-wash: #2f2c3a;
+  --ok: #7ad0ae; --ok-soft: rgba(122, 208, 174, 0.15); --warn: #e4b25e; --warn-soft: rgba(228, 178, 94, 0.15);
+  --danger: #f7a0a8; --danger-soft: rgba(242, 139, 148, 0.15); --info: #90b4ee; --info-soft: rgba(144, 180, 238, 0.15);
+  --ring: rgba(239, 239, 236, 0.45); --selection: rgba(179, 156, 245, 0.3); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 239, 239, 236;
+  --side-bg: #232423; --side-fg: #efefec; --side-fg-2: #c8c8c4; --side-fg-3: #a1a19d;
+  --side-line: rgba(239, 239, 236, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #3b3c3b; --side-mark: #b39cf5;
+  --tile-1: #37334a; --tile-2: #45372f; --tile-3: #45422c; --tile-4: #2b4442; --tile-5: #2f3d55; --tile-6: #4a3341;
+  --tile-ink-2: #e6e6e2; --tile-ink-3: #c3c3be; --t-tile-badge: rgba(255, 255, 255, 0.14);
+  --t-tile-edge: inset 0 0 0 1px rgba(239, 239, 236, 0.08); --t-tile-edge-hover: inset 0 0 0 1px rgba(239, 239, 236, 0.3);
+  --t-card-bg: #303130; --t-card-edge: inset 0 0 0 1px rgba(239, 239, 236, 0.1); --t-head-line: transparent; --t-top-line: rgba(239, 239, 236, 0.09);
+  --t-main-bg: #2c2d2c; --t-main-edge: 0 0 0 1px rgba(239, 239, 236, 0.07);
+  --t-win-edge: 0 24px 56px rgba(0, 0, 0, 0.5);
+  --t-badge-bg: #efefec; --t-badge-fg: #171717; --t-bar: #b39cf5;
+  --t-primary-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
+}
+
+/* ── glow ── */
+:root[data-theme^='glow'] {
+  --rc: 14px; --rs: 28px; --ctl: 34px;
+  --r-sm: 12px; --r: 20px; --r-lg: 28px; --r-pill: 999px;
+  --t-nav-r: 16px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 16px; --t-seg-r: 999px; --t-tile-r: 28px; --t-pop-r: 20px;
+  --t-h1-size: 34px; --t-h1-w: 520; --t-h1-ls: -0.035em; --t-num-size: 32px; --t-num-w: 500;
+  --t-space-bg: var(--t-glass-strong); --t-space-edge: inset 0 0 0 1px var(--t-glass-line);
+  --t-active-shadow: 0 2px 10px rgba(120, 70, 40, 0.12), inset 0 0 0 1px var(--t-glass-line);
+  --t-win-m: 20px; --t-win-r: 34px;
+  --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
+  --t-card-bg: var(--t-glass);
+}
+:root[data-theme='glow'], :root[data-theme='glow-light'] {
+  color-scheme: light;
+  --frame: linear-gradient(135deg, #f2c3b1 0%, #f3d3b4 48%, #f2e5b0 100%) fixed;
+  --bg: #f8eadf; --card: #fff9f1; --card-2: #f5e6d9; --secondary: #efdccd; --surface: #fcf1e6; --lift: #fdf6ee;
+  --fg: #221a16; --fg-2: #4d4038; --fg-3: #67574d;
+  --border: rgba(60, 30, 10, 0.18); --border-soft: rgba(60, 30, 10, 0.09);
+  --primary: #16110f; --primary-strong: #000000; --primary-fg: #fff6ee; --primary-soft: rgba(60, 30, 10, 0.07);
+  --accent: #16110f;
+  --mark: #c8a4ee; --mark-fg: #1d1420; --mark-wash: #f6e6ee;
+  --ok: #24693f; --ok-soft: rgba(36, 105, 63, 0.14); --warn: #81500a; --warn-soft: rgba(210, 140, 20, 0.18);
+  --danger: #a42928; --danger-soft: rgba(178, 48, 47, 0.12); --info: #3a5fa8; --info-soft: rgba(58, 95, 168, 0.12);
+  --ring: rgba(22, 17, 15, 0.4); --selection: rgba(200, 164, 238, 0.45); --overlay: rgba(60, 30, 14, 0.4);
+  --shadow-float: 0 16px 40px rgba(120, 60, 30, 0.2);
+  --ink-rgb: 34, 26, 22;
+  --side-bg: #f7eadf; --side-fg: #221a16; --side-fg-2: #4d4038; --side-fg-3: #67574d;
+  --side-line: rgba(60, 30, 10, 0.1); --side-hover: rgba(255, 255, 255, 0.5); --side-active: rgba(255, 255, 255, 0.9); --side-mark: #c8a4ee;
+  --tile-1: #edd0a4; --tile-2: #a2c1ef; --tile-3: #c8a4ee; --tile-4: #f0b9a4; --tile-5: #eca5df; --tile-6: #eea3ba;
+  --tile-ink-2: #2a201a; --tile-ink-3: #43352b; --t-tile-badge: rgba(255, 255, 255, 0.6);
+  --t-tile-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.55); --t-tile-edge-hover: inset 0 0 0 2px rgba(255, 255, 255, 0.95);
+  --t-glass: rgba(255, 255, 255, 0.5); --t-glass-strong: rgba(255, 255, 255, 0.72); --t-glass-line: rgba(255, 255, 255, 0.75);
+  --t-card-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.8), 0 10px 28px rgba(140, 80, 40, 0.1); --t-head-line: rgba(255, 255, 255, 0.7); --t-top-line: rgba(60, 30, 10, 0.1);
+  --t-win-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(255, 246, 224, 0.52));
+  --t-win-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.8), 0 28px 60px rgba(150, 80, 40, 0.22);
+  --t-badge-bg: #16110f; --t-badge-fg: #ffffff; --t-bar: #a67be0;
+  --t-primary-shadow: 0 6px 16px rgba(22, 17, 15, 0.25);
+}
+:root[data-theme='glow-dark'], :root[data-theme='glow'].dark-emul {
+  color-scheme: dark;
+  --frame: linear-gradient(135deg, #2c1a1c 0%, #2b2018 50%, #2b2712 100%) fixed;
+  --bg: #2a201b; --card: #352a25; --card-2: #40332c; --secondary: #4a3c34; --surface: #31261f; --lift: #382c26;
+  --fg: #f6ede6; --fg-2: #d6c8bc; --fg-3: #b0a094;
+  --border: rgba(246, 237, 230, 0.2); --border-soft: rgba(246, 237, 230, 0.1);
+  --primary: #f6ede6; --primary-strong: #ffffff; --primary-fg: #1e1512; --primary-soft: rgba(246, 237, 230, 0.09);
+  --accent: #f6ede6;
+  --mark: #d3b3f4; --mark-fg: #1d1420; --mark-wash: #3a2c36;
+  --ok: #86d3a2; --ok-soft: rgba(134, 211, 162, 0.16); --warn: #ecb862; --warn-soft: rgba(236, 184, 98, 0.17);
+  --danger: #f4948a; --danger-soft: rgba(244, 148, 138, 0.16); --info: #9bb9f0; --info-soft: rgba(155, 185, 240, 0.16);
+  --ring: rgba(246, 237, 230, 0.45); --selection: rgba(211, 179, 244, 0.32); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 246, 237, 230;
+  --side-bg: #2a201b; --side-fg: #f6ede6; --side-fg-2: #d6c8bc; --side-fg-3: #b0a094;
+  --side-line: rgba(246, 237, 230, 0.12); --side-hover: rgba(255, 255, 255, 0.07); --side-active: rgba(255, 255, 255, 0.15); --side-mark: #d3b3f4;
+  --tile-1: #5c4a2c; --tile-2: #2f4670; --tile-3: #4b3b73; --tile-4: #6a4133; --tile-5: #6b3868; --tile-6: #6a3549;
+  --tile-ink-2: #f6ede6; --tile-ink-3: #ddd0c5; --t-tile-badge: rgba(255, 255, 255, 0.16);
+  --t-tile-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.12); --t-tile-edge-hover: inset 0 0 0 2px rgba(255, 255, 255, 0.4);
+  --t-glass: rgba(255, 255, 255, 0.07); --t-glass-strong: rgba(255, 255, 255, 0.13); --t-glass-line: rgba(255, 255, 255, 0.16);
+  --t-card-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.13), 0 10px 28px rgba(0, 0, 0, 0.25); --t-head-line: rgba(255, 255, 255, 0.1); --t-top-line: rgba(246, 237, 230, 0.1);
+  --t-win-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.09), rgba(255, 240, 210, 0.05));
+  --t-win-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 28px 60px rgba(0, 0, 0, 0.5);
+  --t-badge-bg: #f6ede6; --t-badge-fg: #1e1512; --t-bar: #c9a7f2;
+  --t-primary-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* ════════ 5. 설정 화면 미리보기(ThemeThumb) ════════ */
+.mini[data-pv]:is([data-pv^='cream'], [data-pv^='sand'], [data-pv^='peach'], [data-pv^='mist'], [data-pv^='glow']) { background: var(--pv-frame); padding: var(--pv-pad, 0); }
+.mini[data-pv]:is([data-pv^='cream'], [data-pv^='sand'], [data-pv^='peach'], [data-pv^='mist'], [data-pv^='glow']) .mini-side { background: var(--pv-side); border-radius: var(--pv-sr, 0); }
+.mini[data-pv]:is([data-pv^='cream'], [data-pv^='sand'], [data-pv^='peach'], [data-pv^='mist'], [data-pv^='glow']) .mini-main { background: var(--pv-bg); border-radius: var(--pv-mr, 0); margin: var(--pv-mm, 0); }
+.mini[data-pv]:is([data-pv^='cream'], [data-pv^='sand'], [data-pv^='peach'], [data-pv^='mist'], [data-pv^='glow']) .mini-card { border-radius: var(--pv-cr, 5px); box-shadow: var(--pv-edge, none); }
+.mini[data-pv]:is([data-pv^='cream'], [data-pv^='sand'], [data-pv^='peach'], [data-pv^='mist'], [data-pv^='glow']) .mini-card:nth-child(2) { background: var(--pv-card2, var(--pv-card)); }
+.mini[data-pv]:is([data-pv^='cream'], [data-pv^='sand'], [data-pv^='peach'], [data-pv^='mist'], [data-pv^='glow']) .mini-side i:nth-child(2) { background: var(--pv-mark); }
+
+[data-pv='cream-light'] { --pv-frame: #fbf3e5; --pv-pad: 7% 6%; --pv-side: #111111; --pv-sr: 8px; --pv-sline: rgba(246, 239, 226, 0.4); --pv-bg: transparent; --pv-mm: 0 0 0 7%; --pv-card: #f0e7db; --pv-card2: #f5db6a; --pv-line: rgba(23, 19, 14, 0.25); --pv-mark: #f4b8dc; --pv-cr: 7px; }
+[data-pv='cream-dark'] { --pv-frame: #16120e; --pv-pad: 7% 6%; --pv-side: #0a0908; --pv-sr: 8px; --pv-sline: rgba(241, 233, 220, 0.3); --pv-bg: transparent; --pv-mm: 0 0 0 7%; --pv-card: #241e18; --pv-card2: #4a4120; --pv-line: rgba(244, 236, 223, 0.25); --pv-mark: #f4b8dc; --pv-cr: 7px; }
+[data-pv='sand-light'] { --pv-frame: #e2dac7; --pv-pad: 8%; --pv-side: #f1f0ee; --pv-sr: 8px 0 0 8px; --pv-sline: rgba(23, 23, 20, 0.22); --pv-bg: #f1f0ee; --pv-mr: 0 8px 8px 0; --pv-card: #fbfbfa; --pv-edge: inset 0 0 0 1px rgba(23, 23, 20, 0.12); --pv-line: rgba(23, 23, 20, 0.2); --pv-mark: #c62d26; --pv-cr: 5px; }
+[data-pv='sand-dark'] { --pv-frame: #2a261d; --pv-pad: 8%; --pv-side: #1e1e1d; --pv-sr: 8px 0 0 8px; --pv-sline: rgba(240, 239, 236, 0.22); --pv-bg: #1e1e1d; --pv-mr: 0 8px 8px 0; --pv-card: #262625; --pv-edge: inset 0 0 0 1px rgba(240, 239, 236, 0.14); --pv-line: rgba(240, 239, 236, 0.22); --pv-mark: #f2665d; --pv-cr: 5px; }
+[data-pv='peach-light'] { --pv-frame: #ede0d7; --pv-pad: 8%; --pv-side: #f3f2f0; --pv-sr: 8px 0 0 8px; --pv-sline: rgba(26, 26, 26, 0.2); --pv-bg: #ffffff; --pv-mr: 7px; --pv-mm: 5% 5% 5% 0; --pv-card: #f1f0ee; --pv-line: rgba(26, 26, 26, 0.2); --pv-mark: #f97723; --pv-cr: 5px; }
+[data-pv='peach-dark'] { --pv-frame: #2b211c; --pv-pad: 8%; --pv-side: #211b18; --pv-sr: 8px 0 0 8px; --pv-sline: rgba(243, 236, 230, 0.22); --pv-bg: #2b2420; --pv-mr: 7px; --pv-mm: 5% 5% 5% 0; --pv-card: #342c27; --pv-line: rgba(243, 236, 230, 0.22); --pv-mark: #f97723; --pv-cr: 5px; }
+[data-pv='mist-light'] { --pv-frame: #d0d1cc; --pv-pad: 8%; --pv-side: #f2f2ef; --pv-sr: 9px 0 0 9px; --pv-sline: rgba(27, 27, 27, 0.2); --pv-bg: #ffffff; --pv-mr: 8px; --pv-mm: 5% 5% 5% 0; --pv-card: #f0ebfb; --pv-card2: #fdeee4; --pv-line: rgba(27, 27, 27, 0.2); --pv-mark: #6f4fd6; --pv-cr: 7px; }
+[data-pv='mist-dark'] { --pv-frame: #171817; --pv-pad: 8%; --pv-side: #232423; --pv-sr: 9px 0 0 9px; --pv-sline: rgba(239, 239, 236, 0.22); --pv-bg: #2c2d2c; --pv-mr: 8px; --pv-mm: 5% 5% 5% 0; --pv-card: #37334a; --pv-card2: #45372f; --pv-line: rgba(239, 239, 236, 0.22); --pv-mark: #b39cf5; --pv-cr: 7px; }
+[data-pv='glow-light'] { --pv-frame: linear-gradient(135deg, #f2c3b1, #f3d3b4 50%, #f2e5b0); --pv-pad: 8%; --pv-side: rgba(255, 255, 255, 0.55); --pv-sr: 9px 0 0 9px; --pv-sline: rgba(60, 30, 10, 0.22); --pv-bg: rgba(255, 255, 255, 0.4); --pv-mr: 0 9px 9px 0; --pv-card: #a2c1ef; --pv-card2: #eca5df; --pv-line: rgba(34, 26, 22, 0.28); --pv-mark: #c8a4ee; --pv-cr: 8px; }
+[data-pv='glow-dark'] { --pv-frame: linear-gradient(135deg, #2c1a1c, #2b2018 50%, #2b2712); --pv-pad: 8%; --pv-side: rgba(255, 255, 255, 0.12); --pv-sr: 9px 0 0 9px; --pv-sline: rgba(246, 237, 230, 0.28); --pv-bg: rgba(255, 255, 255, 0.07); --pv-mr: 0 9px 9px 0; --pv-card: #2f4670; --pv-card2: #6b3868; --pv-line: rgba(246, 237, 230, 0.28); --pv-mark: #d3b3f4; --pv-cr: 8px; }
