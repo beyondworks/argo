@@ -2,6 +2,8 @@
 // 부하: 화면을 열거나 기간을 바꿀 때 1회 읽기, 누를 때만 쓰기. 폴링 없음.
 import { useCallback, useEffect, useState } from 'react';
 import { rpc, orgOf } from './tasks.js';
+import { configured } from './supabase.js';
+import { perfSample, perfSampleWrite } from '../data/sample.js';
 
 const ERRORS = { perf_forbidden: 'permission', perf_input: 'input', perf_period: 'period', perf_shared: 'shared', perf_locked: 'locked', perf_review: 'review', perf_request: 'request', perf_conflict: 'conflict', task_signin: 'signin' };
 export const perfError = (e) => `perf.error.${ERRORS[e?.message] ?? (String(e?.code) === '42501' ? 'permission' : 'failed')}`;
@@ -17,10 +19,12 @@ function useLoad(fn, deps) {
   return { ...state, reload: load };
 }
 
-export const usePerfReport = (space, from, to) => useLoad(() => rpc('office_perf_report', { p_org: orgOf(space), p_from: from, p_to: to }), [space, from, to]);
+// 예시 모드(서버 설정 없음)는 예시 기록을 보여 준다 — 서버 호출 없음
+export const usePerfReport = (space, from, to) => useLoad(() => (configured ? rpc('office_perf_report', { p_org: orgOf(space), p_from: from, p_to: to }) : perfSample(from, to)), [space, from, to]);
 export const usePerfTeam = (space, period, enabled) => useLoad(() => (enabled ? rpc('office_perf_team', { p_org: orgOf(space), p_period: period }) : null), [space, period, enabled]);
 
 export async function perfWrite(space, action, data) {
+  if (!configured) return perfSampleWrite(action, data);
   try { return await rpc('office_perf_write', { p_org: orgOf(space), p_action: action, p_data: data }); }
   catch (e) { throw new Error(perfError(e)); }
 }

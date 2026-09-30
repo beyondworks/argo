@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko" data-theme="linen">
+<html lang="ko" data-theme="linen" data-shell="plain">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
@@ -16,6 +16,19 @@
         try { var v = localStorage.getItem('argo-office-theme'); if (/^(linen|graphite|cream|sand|peach|mist|glow)(-light|-dark)?$/.test(v)) th = v; } catch (e) {}
         var el = document.documentElement; el.dataset.theme = th;
         if (/^(linen|cream|sand|peach|mist|glow)$/.test(th) && window.matchMedia('(prefers-color-scheme: dark)').matches) el.classList.add('dark-emul');
+        var sh = null; try { sh = localStorage.getItem('argo-office-shell'); } catch (e) {}
+        if (!/^(plain|float|window|panel|pill|glass)$/.test(sh)) sh = { cream: 'float', sand: 'window', peach: 'panel', mist: 'pill', glow: 'glass' }[th.replace(/-(light|dark)$/, '')] || 'plain';
+        el.dataset.shell = sh;
+        // 커스텀 테마(core/custom-theme.js가 계산해 둔 모드별 변수) — 모드가 바뀔 때도 theme.js가 이 함수를 다시 부른다
+        window.__argoCustom = function () {
+          var c = null; try { c = JSON.parse(localStorage.getItem('argo-office-custom-css') || 'null'); } catch (e) {}
+          (el.__cv || []).forEach(function (k) { el.style.removeProperty(k); }); el.__cv = []; delete el.dataset.custom;
+          if (!c) return;
+          var t = el.dataset.theme, m = c[/-dark$/.test(t) || (!/-light$/.test(t) && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'] || {};
+          for (var k in m) if (k.charAt(0) === '-') { el.style.setProperty(k, m[k]); el.__cv.push(k); }
+          if (m['@flags']) el.dataset.custom = m['@flags'];
+        };
+        window.__argoCustom();
       })();
     </script>
   </head>
