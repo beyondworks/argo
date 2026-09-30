@@ -48,7 +48,7 @@ before(()=>{
  create function realtime.topic() returns text language sql stable as $$select current_setting('realtime.topic',true)$$;
  create function realtime.send(payload jsonb,event text,topic text,private boolean default true) returns void language sql as $$select null::void$$;
  alter table realtime.messages enable row level security; grant select,insert on realtime.messages to authenticated; grant usage on schema realtime to authenticated;`);
- for(const f of ['20260714150000_entitlements.sql','20260724000100_trial_14d.sql','20260728100000_entitlements_ls.sql','20260728113000_billing_hardening.sql','20260728150000_ls_reconcile_cooldown.sql','20260730050000_is_pro_ends_at.sql','20260903120000_msgr.sql','20260909002000_msgr_profiles_friends.sql','20260927144230_office_business.sql','20260928010000_office_marketing.sql']){
+ for(const f of ['20260714150000_entitlements.sql','20260724000100_trial_14d.sql','20260728100000_entitlements_ls.sql','20260728113000_billing_hardening.sql','20260728150000_ls_reconcile_cooldown.sql','20260730050000_is_pro_ends_at.sql','20260903120000_msgr.sql','20260909002000_msgr_profiles_friends.sql','20260927144230_office_business.sql','20260928010000_office_marketing.sql','20260929140000_office_deal_flow.sql']){
   if(f==='20260928010000_office_marketing.sql')sql(`insert into office_business_settings(scope,enabled,version) values(${quote('u:'+U.owner)},'["customers"]',3)`);
   const r=psqlSpawn(DB,['-f',fileURLToPath(new URL(`../supabase/migrations/${f}`,import.meta.url))]);if(r.status!==0)throw new Error(r.stderr);
  }
@@ -135,10 +135,11 @@ test('scope guard protects campaign references, aggregates, direct tables and re
  assert.equal(mr(U.outsider).campaigns.length,0);
 });
 
-test('previous equal-length period and UTC cancellation order-count events', {skip},()=>{
+// 거래 흐름 마이그레이션부터 기간 집계는 한국 날짜 기준(분리 검수 9/29) — 경계는 한국 자정
+test('previous equal-length period and KST cancellation order-count events', {skip},()=>{
  const camp=campaign(),c=customer(),it=item('service'),o=order(c,[line(it)]);
  write('order.confirm',{id:o});mw('attribution.save',{order_id:o,campaign_id:camp,version:0});write('order.cancel',{id:o});
- sql(`update office_business_orders set confirmed_at='2026-08-31 23:59:59+00',cancelled_at='2026-09-01 00:00:00+00' where id=${quote(o)}`);
+ sql(`update office_business_orders set confirmed_at='2026-08-31 23:59:59+09',cancelled_at='2026-09-01 00:00:00+09' where id=${quote(o)}`);
  daily(camp,{date:'2026-08-31',spend:20});daily(camp,{date:'2026-09-01',spend:40});
  const r=mp(camp,'2026-09-01','2026-09-01');
  assert.equal(r.metrics.orders,-1);assert.equal(r.metrics.sales,-100);assert.equal(r.metrics.spend,40);
@@ -146,8 +147,9 @@ test('previous equal-length period and UTC cancellation order-count events', {sk
 });
 
 test('module enablement supports new modules and full campaign rows are never truncated', {skip},()=>{
- let state=read();assert.deepEqual(state.settings.enabled,['customers','marketing','performance']);assert.equal(state.settings.version,4);
- assert.ok(read(U.outsider).settings.enabled.includes('marketing'));
+ // 유건 9/29: 광고 기록이 없는 공간은 마케팅·성과 분석을 끈 채로 시작한다(거래 흐름 마이그레이션이 꺼 둠) — 켜면 그대로 쓴다
+ let state=read();assert.deepEqual(state.settings.enabled,['customers']);assert.equal(state.settings.version,5);
+ assert.equal(read(U.outsider).settings.enabled.includes('marketing'),false);
  write('settings.save',{...state.settings,enabled:['marketing','performance']});assert.deepEqual(read().settings.enabled,['marketing','performance']);
  sql(userSql(U.outsider,`do $$begin for i in 1..105 loop perform office_marketing_write(null,gen_random_uuid(),'campaign.save',${quote(JSON.stringify(campaignData))}::jsonb);end loop;end$$`));
  assert.equal(mr(U.outsider).campaigns.length,105);assert.equal(mp(null,'2026-09-01','2026-09-30',null,U.outsider).campaigns.length,106);

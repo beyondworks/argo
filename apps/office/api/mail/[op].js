@@ -3,6 +3,7 @@
 // 크루는 이 함수로 보내지 않는다(초안까지 — P4/P5). 여기의 send는 사람이 보내기를 누를 때만.
 import { mailKey, seal, unseal, sealState, openState } from '../../server/seal.js';
 import { envelope, content, buildRaw, inlineImages, VIEWABLE, FOLDER_QUERY, SCOPES, missingScopes } from '../../server/gmail.js';
+import { customerMatcher, gmailQuery, threadSignals } from '../../server/mail-signals.js';
 import { createHash, randomBytes } from 'node:crypto';
 
 const env = process.env;
@@ -120,6 +121,36 @@ const OPS = {
     const account = await rpc(jwt, 'office_mail_connect', { p_expect: st.uid, p_provider: 'google', p_address: address, p_name: c.name ?? '', p_hd: c.hd ?? '', p_sealed: seal(key, tok.refresh_token, aad) });
     await rpc(jwt, 'office_mail_token_put', { p_account: account, p_access_sealed: seal(key, tok.access_token, aad), p_expires: new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString() });
     return { account, address };
+  },
+
+  /** 성과 기록 3단계 — 거래처 메일 만족도 신호. 메타데이터(보낸 사람·받는 사람·시각·앞부분 요약)만 읽고, 판정 근거·메일 id만 DB에 넣는다.
+   *  6시간에 한 번(office_perf_mail_claim). 사람마다 계정 × 스레드 최대 50개 = Gmail 호출 최대 51회/계정. */
+  async signals(jwt, { org }) {
+    if (typeof org !== 'string' || !/^[0-9a-f-]{36}$/i.test(org)) throw fail(400, 'input');
+    const r = await fetch(`${env.VITE_SUPABASE_URL}/rest/v1/office_mail_accounts?select=id,address,status&status=eq.ok`, { headers: { apikey: env.VITE_SUPABASE_ANON_KEY, authorization: `Bearer ${jwt}` } });
+    if (!r.ok) throw fail(r.status === 401 ? 401 : 502, r.status === 401 ? 'signed_out' : 'db');
+    const accounts = await r.json();
+    if (!accounts.length) return { rows: 0, reason: 'no_account' };
+    const customers = await rpc(jwt, 'office_perf_customers', { p_org: org });
+    const q = gmailQuery(customers ?? [], 30);
+    if (!q) return { rows: 0, reason: 'no_customer' };
+    if (!(await rpc(jwt, 'office_perf_mail_claim', { p_org: org }))) return { rows: 0, reason: 'recent' };
+    const match = customerMatcher(customers), meta = new URLSearchParams([['format', 'metadata'], ...['From', 'To', 'Date'].map((h) => ['metadataHeaders', h])]);
+    let rows = 0, failed = 0;
+    for (const acc of accounts) {
+      try {
+        const token = await accessToken(jwt, acc.id);
+        const list = await gmail(token, `/threads?${new URLSearchParams({ q, maxResults: '50' })}`);
+        const found = await Promise.all((list.threads ?? []).map((th) => gmail(token, `/threads/${encodeURIComponent(th.id)}?${meta}`).then((x) => {
+          const msgs = (x.messages ?? []).map((m) => { const e = envelope(m, acc.id); return { id: e.gid, from: e.addr, to: e.to, at: e.at, snippet: e.snippet }; });
+          return threadSignals(th.id, msgs, acc.address, match);
+        }).catch(() => null)));
+        const put = found.filter(Boolean);
+        if (put.length) rows += await rpc(jwt, 'office_perf_mail_put', { p_org: org, p_account: acc.id, p_rows: put });
+      } catch (e) { if (e.code === 'signed_out') throw e; failed += 1; } // 한 계정이 만료돼도 다른 계정은 센다
+    }
+    if (failed === accounts.length) { await rpc(jwt, 'office_perf_mail_release', { p_org: org }).catch(() => {}); return { rows: 0, reason: 'error' }; } // 하나도 못 읽었으면 6시간 기다리지 않고 다음에 다시
+    return { rows };
   },
 
   async list(jwt, { account, folder = 'inbox', page }) {

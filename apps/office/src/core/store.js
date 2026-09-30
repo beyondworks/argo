@@ -130,11 +130,18 @@ export const saveLayout = (key, items) => {
   update((s) => ({ layouts: { ...s.layouts, [key]: { ...current, items } } }), [[`layout:${key}`, { type: 'layout.set', key, items }]]);
   return true;
 };
-export const toggleTodo = (key) => update((s) => ({ todosDone: { ...s.todosDone, [key]: !s.todosDone[key] } }), [[`todo:${key}`, { type: 'todo.toggle', key, done: !state.todosDone[key] }]]);
+// 할 일은 지금 예시 데이터(크루 메모)에만 있다 — 서버 저장은 크루 메모가 생길 때 함께(유건 9/29). 보내지 않을 변경을 전송 목록에 넣지 않는다
+export const toggleTodo = (key) => update((s) => ({ todosDone: { ...s.todosDone, [key]: !s.todosDone[key] } }));
 
-/* ── 크루에게 맡기기(초안: 진행 중인 일에 한 줄 추가) ── */
+/* ── 크루에게 맡기기 ── */
+// 예시 데이터는 화면에서만(진행 중인 일에 한 줄). 로그인 상태는 크루와의 1:1 대화에 글을 보낸다 — 성공 여부는 전송이 끝난 뒤에만 알린다(transport crew.assign).
+// '진행 중인 일'에는 가짜 행을 넣지 않는다 — 크루가 실제로 일을 시작하면 서버 기록(msgr_work_runs)이 거기에 뜬다.
 export function assign({ space, crew, goal }) {
   const row = { id: uid(), space, goal, lead: crew, status: 'running', started: nowIso(), steps: '0/…', channel: 'DM' };
-  update((s) => ({ work: [row, ...s.work] }), [[`assign:${row.id}`, { type: 'crew.assign', row }]]);
+  update((s) => ({ work: [row, ...s.work] }));
+}
+export function sendToCrew({ orgId, crewId, crewName, body, meta }) {
+  const clientId = uid();
+  update(() => ({}), [[`assign:${clientId}`, { type: 'crew.assign', orgId, crewId, crewName, body, meta, clientId }]]);
 }
 export const resetDraft = () => { state = getStorageScope() === 'sample' ? fresh() : empty(); listeners.forEach((l) => l()); persist(scopedStorageKey(KEY), state, 0); };

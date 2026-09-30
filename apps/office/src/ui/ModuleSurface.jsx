@@ -27,9 +27,9 @@ export function resolveSurfaceModule(item, space) {
 export default function ModuleSurface({ space, items: rawItems, canEdit, onChange, sourceOwner = ME.id, id = `modules:${space}`, showRestore = true }) {
   const items = useMemo(() => normalizeModuleItems(rawItems), [rawItems]);
   if (!SPACES.some((entry) => entry.key === space) || (space === 'me' && sourceOwner !== ME.id)) return <p className="mod-empty" role="status">{t('library.sourcePermission')}</p>;
-  const hasBusiness = items.some((item) => { const module = moduleDefinition(item); return !item.hidden && module?.businessTab; });
+  const businessTabs = items.filter((item) => !item.hidden).map((item) => moduleDefinition(item)?.businessTab).filter(Boolean);
   const grid = <ModuleGrid id={id} items={items} canEdit={canEdit} onChange={onChange} resolveModule={(item) => resolveSurfaceModule(item, space)} space={space} />;
   const hidden = items.filter((item) => item.hidden).map((item) => ({ id: item.id, title: resolveSurfaceModule(item, space).title, icon: resolveSurfaceModule(item, space).icon,
     run: () => onChange(items.map((entry) => entry.id === item.id ? { ...entry, hidden: false } : entry)) }));
-  return <>{showRestore && canEdit && hidden.length > 0 && <div className="row-actions"><ModuleAddButton items={hidden} /></div>}{hasBusiness ? <BusinessHomeProvider space={space}>{grid}</BusinessHomeProvider> : grid}</>;
+  return <>{showRestore && canEdit && hidden.length > 0 && <div className="row-actions"><ModuleAddButton items={hidden} /></div>}{businessTabs.length ? <BusinessHomeProvider space={space} tabs={businessTabs}>{grid}</BusinessHomeProvider> : grid}</>;
 }

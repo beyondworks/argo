@@ -1,0 +1,20 @@
+// 할 일 화면 사전 — 할 일 모듈과 함께 지연 로드된다(첫 화면 150KB 상한)
+export const TASK_DICT = {
+  'task.add': ['할 일 추가', 'Add a to-do'], 'task.addHint': ['할 일을 적고 Enter', 'Type a to-do and press Enter'],
+  'task.due': ['기한', 'Due'], 'task.noDue': ['기한 없음', 'No due date'], 'task.assignee': ['맡을 사람', 'Assignee'], 'task.me': ['나', 'Me'],
+  'task.g.overdue': ['기한 지남', 'Overdue'], 'task.g.today': ['오늘', 'Today'], 'task.g.week': ['7일 안', 'Next 7 days'], 'task.g.later': ['나중에', 'Later'],
+  'task.g.none': ['기한 없음', 'No due date'], 'task.g.gave': ['내가 맡긴 일', 'Assigned by me'], 'task.g.others': ['팀원 할 일', "Team's to-dos"], 'task.g.done': ['끝낸 일 {n}', 'Done {n}'],
+  'task.d.overdue': ['{n}일 지남', '{n}d overdue'], 'task.d.today': ['오늘까지', 'Due today'], 'task.d.tomorrow': ['내일까지', 'Due tomorrow'], 'task.d.left': ['{n}일 남음', '{n}d left'],
+  'task.by': ['{name}님이 맡김', 'From {name}'], 'task.to': ['{name}님에게', 'To {name}'], 'task.doneAt': ['{date} 끝냄', 'Done {date}'], 'task.late': ['기한 넘겨 끝냄', 'Done late'],
+  'task.empty': ['할 일이 없습니다. 위 칸에 적으면 기한과 함께 저장되고, 끝낸 일은 성과 기록에 쌓입니다.', 'Nothing to do. Add one above — finished to-dos go into your performance record.'],
+  'task.more': ['더 보기', 'More'], 'task.changeDue': ['기한 바꾸기', 'Change due date'], 'task.rename': ['제목 고치기', 'Rename'], 'task.reassign': ['맡을 사람 바꾸기', 'Reassign'],
+  'task.cancel': ['할 일 취소', 'Cancel to-do'], 'task.cancelBody': ['취소한 할 일은 목록과 성과 계산에서 빠집니다. 기록은 남고 되돌릴 수 없습니다.', 'A cancelled to-do leaves the list and the performance numbers. The record stays and this cannot be undone.'],
+  'task.cancelled': ['할 일을 취소했습니다', 'To-do cancelled'], 'task.save': ['저장', 'Save'], 'task.close': ['닫기', 'Close'], 'task.title': ['제목', 'Title'],
+  'task.dueNote': ['기한을 바꾸면 바뀐 기록이 남습니다. 끝낸 일은 기한을 바꿀 수 없습니다.', 'Due date changes are recorded. Finished to-dos keep their due date.'],
+  'task.error.permission': ['이 할 일을 바꿀 권한이 없습니다.', "You can't change this to-do."], 'task.error.assignee': ['맡을 사람은 이 조직의 직원이어야 합니다(손님·나간 사람 제외).', 'The assignee must be a current member (not a guest).'],
+  'task.error.done': ['끝낸 할 일입니다. 다시 열어야 바꿀 수 있습니다.', 'This to-do is done. Reopen it to change it.'], 'task.error.cancelled': ['취소한 할 일입니다.', 'This to-do was cancelled.'],
+  'task.error.conflict': ['같은 할 일이 이미 다른 내용으로 저장되어 있습니다. 새로고침하세요.', 'This to-do was saved with different content. Refresh.'],
+  'task.error.input': ['제목(200자 이내)과 날짜를 확인하세요.', 'Check the title (max 200 chars) and date.'], 'task.error.missing': ['할 일을 찾을 수 없습니다.', 'To-do not found.'],
+  'task.error.limit': ['더 만들거나 바꿀 수 없습니다(한 사람이 1년에 만드는 할 일 5,000개, 할 일 하나의 기한·제목 바꾸기 200번까지).', 'Limit reached (5,000 new to-dos per person per year, 200 date/title changes per to-do).'],
+  'task.error.signin': ['로그인이 필요합니다.', 'Please sign in.'], 'task.error.request': ['저장하지 못했습니다. 잠시 뒤 다시 시도하세요.', "Couldn't save. Try again shortly."],
+};

@@ -7,7 +7,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { InfoTip } from '../ui/InfoTip.jsx';
 import { openMenu } from '../ui/Menu.jsx';
 import { businessError } from './data.js';
-import { CHARTS, METRICS, chartSeries, configureWidget, defaultDashboard, newWidget, normalizeDashboards, validateFilters, widgetMetrics } from './dashboard-model.js';
+import { CHARTS, METRICS, chartSeries, periodOrders, configureWidget, defaultDashboard, newWidget, normalizeDashboards, validateFilters, widgetMetrics } from './dashboard-model.js';
 import { ResponsiveChart } from './ResponsiveChart.jsx';
 import { timeSeriesGeometry } from './chart-geometry.js';
 
@@ -18,9 +18,24 @@ function ChartModule({ item }) {
   return <BusinessChart widget={item} {...context} />;
 }
 
+// 들어온 경로별 매출(유건 9/29: 광고를 안 해도 의미 있는 숫자 — "매출의 60%는 소개"). 경로를 고르지 않은 거래는 '모름'
+function SourceBreakdown({ sources }) {
+  const rows = sources.filter((row) => Number(row.sales) !== 0);
+  const total = rows.reduce((sum, row) => sum + Math.max(0, Number(row.sales)), 0);
+  const known = rows.some((row) => row.source !== 'unknown');
+  return <section className="module biz-source" aria-label={t('biz.sources.title')}>
+    <header className="module-head"><Icon name="target" size={15} /><h3>{t('biz.sources.title')}</h3></header>
+    <div className="biz-source-body">
+      {!rows.length ? <p className="biz-empty">{t('biz.noRows')}</p> : <ul>{rows.map((row) => { const share = total > 0 ? Math.round(Math.max(0, Number(row.sales)) / total * 100) : 0; return <li key={row.source}>
+        <span className="name">{t(`bizui.source.${row.source}`)}</span><span className="bar"><i style={{ width: `${share}%` }} /></span><span className="share">{share}%</span><strong>{money(row.sales)}</strong></li>; })}</ul>}
+      {!known && rows.length > 0 && <p className="dim small">{t('biz.sources.hint')}</p>}
+    </div>
+  </section>;
+}
+
 export function BusinessChart({ widget, report, onOpenOrder, filters }) {
   if (widget.type === 'kpi') return <div className="biz-kpi-wrap"><strong className="biz-kpi metric">{money(report.metrics[widget.metric])}</strong></div>;
-  if (widget.type === 'table') return report.orders.length ? <div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr><th>{t('biz.order')}</th>{METRICS.map((m) => <th key={m} className="num">{t(`biz.metric.${m}`)}</th>)}</tr></thead><tbody>{report.orders.map((row) => <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => onOpenOrder(row.id)}>{row.title}</button></td>{METRICS.map((m) => <td key={m} className="num">{money(row[m])}</td>)}</tr>)}</tbody></table></div> : <p className="biz-empty">{t('biz.noRows')}</p>;
+  if (widget.type === 'table') { const rows = periodOrders(report.orders); return rows.length ? <div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr><th>{t('biz.order')}</th>{METRICS.map((m) => <th key={m} className="num">{t(`biz.metric.${m}`)}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => onOpenOrder(row.id)}>{row.title}</button></td>{METRICS.map((m) => <td key={m} className="num">{money(row[m])}</td>)}</tr>)}</tbody></table></div> : <p className="biz-empty">{t('biz.noRows')}</p>; }
   if (widget.type === 'donut') {
     const parts = report.mix.filter((row) => ['service', 'product'].includes(row.kind));
     if (parts.some((row) => Number(row.amount) < 0)) return <p className="biz-empty">{t('biz.donut.negative')}</p>;
@@ -131,6 +146,7 @@ export function BusinessDashboard({ business, space, onOpenOrder }) {
       {report && <>
         <ChartContext.Provider value={{ report, onOpenOrder, filters }}><ModuleGrid id={`business:${space}:${current.id}`} items={current.widgets} canEdit={canEdit} onChange={(widgets) => update({ widgets })} resolveModule={resolveModule} space={space} bodyClassName="biz-widget-body" /></ChartContext.Provider>
         {!current.widgets.some((widget) => !widget.hidden) && <p className="biz-empty">{t('biz.noWidgets')}</p>}
+        {report.sources && <SourceBreakdown sources={report.sources} />}
       </>}
       <Modal open={renaming} title={t('biz.dashboard.rename')} onClose={closeRename} footer={<><button type="button" className="btn" onClick={closeRename}>{t('biz.cancel')}</button><button type="submit" form={`${addFormId}-name`} className="btn primary" disabled={!canEdit || !name.trim() || name.trim() === current.name}>{t('biz.save')}</button></>}>
         <form id={`${addFormId}-name`} onSubmit={async (e) => { e.preventDefault(); if (name.trim() && await update({ name: name.trim() })) setRenaming(false); }}><label className="field-block"><span className="label">{t('biz.dashboard.name')}</span><input className="input" value={name} maxLength={80} disabled={!canEdit} onChange={(e) => setName(e.target.value)} /></label>{error && <p className="biz-error" role="alert">{t(error)}</p>}</form>

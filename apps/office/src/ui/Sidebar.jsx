@@ -127,6 +127,8 @@ export function Sidebar({ space, path }) {
             <NavItem to="/me/mail" icon="mail" label={t('nav.mail')} count={unread} active={path.startsWith('/me/mail')} />
             <NavItem to={`${base}/approvals`} icon="stamp" label={t('nav.approvals')} count={pendingHere} active={at(`${base}/approvals`)} />
             <NavItem to="/me/shared" icon="share" label={t('nav.shared')} active={at('/me/shared')} />
+            <NavItem to="/me/knowhow" icon="book" label={t('nav.knowhow')} active={at('/me/knowhow')} />
+            <NavItem to="/me/tools" icon="box" label={t('nav.tools')} active={at('/me/tools')} />
           </> : <>
             <NavItem to={`${base}/work`} icon="run" label={t('nav.work')} active={at(`${base}/work`)} />
             <NavItem to={`${base}/approvals`} icon="stamp" label={t('nav.approvals')} count={pendingHere} active={at(`${base}/approvals`)} />
@@ -134,6 +136,9 @@ export function Sidebar({ space, path }) {
             <NavItem to={`${base}/outputs`} icon="file" label={t('nav.outputs')} active={at(`${base}/outputs`)} />
             <NavItem to={`${base}/journal`} icon="book" label={t('nav.journal')} active={at(`${base}/journal`)} />
             <NavItem to={`${base}/docs`} icon="doc" label={t('nav.docs')} active={at(`${base}/docs`)} />
+            <NavItem to={`${base}/perf`} icon="target" label={t('nav.perf')} active={at(`${base}/perf`)} />
+            <NavItem to={`${base}/knowhow`} icon="book" label={t('nav.knowhow')} active={at(`${base}/knowhow`)} />
+            <NavItem to={`${base}/tools`} icon="box" label={t('nav.tools')} active={at(`${base}/tools`)} />
           </>}
         </div>
         <div className="nav-section">

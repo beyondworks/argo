@@ -1,4 +1,6 @@
+// 업무 사전 등록(biz.*/bizui.*/mkt.*) — core/i18n.js는 이걸 정적으로 갖지 않는다(첫 화면 150KB 상한, 유건 9/26).
 import { useEffect, useState } from 'react';
+import './register-i18n.js';
 import { t } from '../core/i18n.js';
 import { baseOf } from '../core/commands.js';
 import { navigate } from '../core/router.jsx';

@@ -1,6 +1,6 @@
 // 앱 셸 서비스 워커 — 화면 파일만 캐시한다(데이터는 앱의 IndexedDB 보낼 목록이 맡는다, P0).
-const CACHE = 'argo-office-shell-v1';
-self.addEventListener('install', (e) => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/icon.svg', '/manifest.webmanifest']))); });
+const CACHE = 'argo-office-shell-v2'; // v2: 앱 아이콘 교체(9/29) — 캐시 먼저라 버전을 올려야 옛 아이콘이 빠진다
+self.addEventListener('install', (e) => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/icon-192.png', '/manifest.webmanifest']))); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', (e) => {
   const req = e.request;

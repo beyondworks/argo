@@ -1739,6 +1739,49 @@ test('손님 턴의 답글은 meta.guest를 싣는다(다음 넘김이 이어받
   assert.equal(isGuestCtx(legacy.ctx), true, '뿌리 없는 넘김 잡은 손님');
 });
 
+// 오피스에서 맡긴 글(meta.source = office_*) — 주인이 직접 보낸 DM이라도 외부 자료를 담으므로 풀 오토를 끈다(유건 9/26 계획 8절·9/29 확정).
+// 표지는 손님 표지처럼 **내리는 방향으로만** 쓴다(위조해도 권한이 오르지 않는다).
+test('오피스 출처: 드레인이 잡에 표지를 싣고, 실행 맥락·답글·넘김·후속 복원까지 이어진다', async () => {
+  const { fullAutoAllowed, isGuestCtx } = await import('../src/gateway/msgr-handoff.mjs');
+  M._autoLogForTest.clear();
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const drainJobs = async (messages, parent = () => null) => { const db = fakeDb({ crews: [crew(), zed], parent, messages }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq); };
+  // 주인이 오피스에서 보낸 글(크루 멘션) → 잡에 office
+  const [direct] = await drainJobs([msg(200, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { source: 'office_mail' } })]);
+  assert.equal(direct.office, true, '오피스 출처 글의 잡');
+  const [plain] = await drainJobs([msg(201, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }] })]);
+  assert.equal(plain.office, undefined, '대조군 — 보통 DM은 표지 없음(잡 모양 불변)');
+  // 오피스 글을 뿌리로 한 넘김(X → Y)도 오피스 사슬
+  const root = msg(210, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: ZED }], meta: { source: 'office_page' } });
+  const [hand] = await drainJobs([msg(211, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 210, reply_to: 210, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: OWNER } })], (id) => (id === 210 ? root : null));
+  assert.equal(hand.office, true, '뿌리가 오피스 글이면 넘김도 오피스 사슬');
+  // 실행 맥락과 답글 표지
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }];
+  const db = fakeDb({ peers }); const seen = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _t, _sid, opts) => { seen.push(opts.mirrorCtx); return { reply: '결과', handover: null, sessionId: null, artifacts: [] }; } })({ ...direct, after: [] });
+  assert.equal(seen[0].office, true, '실행 맥락이 표지를 싣는다');
+  assert.equal(fullAutoAllowed(seen[0]), false, '오피스 턴은 풀 오토 제외');
+  assert.equal(isGuestCtx(seen[0]), false, '손님은 아니다 — 주인의 도구는 그대로 쓴다');
+  assert.equal(db.calls.find((c) => c[0] === 'insertMessage')?.[1]?.meta?.office, true, '답글이 표지를 싣는다(다음 넘김이 이어받는 재료)');
+  // 후속 복원(결재·예약 뒤)도 표지를 되살린다
+  const f = scopedFixture(); const cont = [];
+  const origin = { orgId: ORG, channelId: CH, crewId: f.remote.id, threadRoot: 100, sourceMsgId: 101, uid: 'remote-owner', wsId: WS, origin: OWNER, hop: 1, office: true };
+  await M.runMessengerContinuation(WS, 'feynman', origin, '후속', null, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async (_ws, _slug, _t, _sid, opts) => { cont.push(opts.mirrorCtx); return { reply: 'ok\nMSGR: done', sessionId: null }; } });
+  assert.equal(cont[0].office, true, '저장된 오피스 표지는 후속 실행에서 사라지지 않는다');
+});
+
+// 서버 트리거 msgr_dm_relay는 비멤버 크루 멘션을 새 1:1 방에 사람 명의로 옮겨 적으며 meta를 {relay}로 새로 만든다 — 오피스 표지가 빠진다(분리 검수 HIGH, 9/29).
+test('오피스 출처: 다른 1:1 방으로 전달된 글(meta.relay)도 출처 글을 보고 표지를 잇는다 · 출처를 못 읽으면 내리는 쪽', async () => {
+  M._autoLogForTest.clear();
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const relayed = (sourceId) => msg(300, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { relay: { source_id: sourceId, channel_id: 'other-dm', role: 'to', depth: 1 } } });
+  const jobFor = async (source) => { const db = fakeDb({ crews: [crew(), zed], parent: (id) => (id === 290 ? source : null), messages: [relayed(290)] }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq)[0]; };
+  assert.equal((await jobFor(msg(290, { author_user_id: OWNER, meta: { source: 'office_mail' } }))).office, true, '오피스 글을 전달한 글');
+  assert.equal((await jobFor(msg(290, { author_kind: 'crew', author_user_id: null, crew_id: ZED, meta: { office: true } }))).office, true, '오피스 사슬 크루 답글을 전달한 글');
+  assert.equal((await jobFor(null)).office, true, '출처를 못 읽으면 오피스로 본다(권한을 올리지 않는 쪽)');
+  assert.equal((await jobFor(msg(290, { author_user_id: OWNER }))).office, undefined, '대조군 — 보통 글의 전달은 표지 없음');
+});
+
 test('정책 한 자리: 주인이 승인한 결재의 후속 턴 — 지금은 손님 그대로(OWNER_APPROVAL_LIFTS_GUEST=false, 유건 결정 대기)', async () => {
   const { isGuestCtx, OWNER_APPROVAL_LIFTS_GUEST } = await import('../src/gateway/msgr-handoff.mjs');
   const f = scopedFixture(); const seen = [];

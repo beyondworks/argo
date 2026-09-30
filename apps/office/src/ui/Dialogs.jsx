@@ -5,14 +5,17 @@ import { Icon } from './Icon.jsx';
 import { Face } from './Face.jsx';
 import { t, ago, useLang } from '../core/i18n.js';
 import { useUi, setUi } from '../core/ui-state.js';
-import { useStore, assign, update, crewsIn } from '../core/store.js';
+import { useStore, assign, sendToCrew, update, crewsIn, getState } from '../core/store.js';
 import { imeGuardWith } from '../core/ime.js';
 import { SPACES, ME, getMode } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
 import { baseOf } from '../core/commands.js';
 import { flushNow, outbox } from '../core/sync.js';
 import { loadPageContent } from '../core/pull.js';
-import { DocView } from '../pages/Misc.jsx';
+import { readMail } from '../core/mail.js';
+import { composeAssign, composeSet, composeTools, htmlText, docText } from '../core/crew-assign.js';
+import { rpc } from '../core/tasks.js';
+import { DocView } from './DocView.jsx';
 import { publicWebUrl } from '../core/platform.js';
 
 /** 서버에서 공유 상태를 읽는다 — 사람 목록 RPC가 거절되면 이 사람은 전체 권한이 아니다(서버가 기준). */
@@ -184,29 +187,74 @@ export function AssignSheet() {
   const [crew, setCrew] = useState(null);
   const [task, setTask] = useState('summary');
   const [text, setText] = useState('');
-  useEffect(() => { if (a) { setCrew(a.crew ?? null); setTask(a.items?.some((i) => i.kind === 'mail') ? 'summary' : 'custom'); setText(''); } }, [a]);
+  const [sets, setSets] = useState([]), [setId, setSetId] = useState(''); // 업무 세트(4단계) — 고르면 노하우·도구·점검 목록이 글에 실린다
+  const orgOfSheet = SPACES.find((sp) => sp.kind === 'org' && sp.key === a?.space)?.id;
+  useEffect(() => { if (a) { setCrew(a.crew ?? null); setTask(a.items?.some((i) => i.kind === 'mail') ? 'summary' : 'custom'); setText(''); setSetId(''); } }, [a]);
+  useEffect(() => {
+    let live = true;
+    if (a && orgOfSheet && getMode() === 'signedIn') rpc('office_asset_list', { p_org: orgOfSheet }).then((l) => { if (live) setSets([...l.company, ...l.mine].filter((x) => x.kind === 'set')); }).catch(() => {});
+    return () => { live = false; };
+  }, [a, orgOfSheet]);
   const label = useMemo(() => a?.items?.map((i) => i.label).filter(Boolean).join(', ') ?? '', [a]);
   const allCrews = useStore((s) => s.crews);
-  const crews = crewsIn(allCrews, a?.space ?? 'me', ME.id);
+  const live = getMode() === 'signedIn';
+  // 1:1 방은 내 크루와만 열린다(msgr_create_channel·메신저와 같은 규칙) — 로그인 상태에서는 내 크루만 보인다
+  const crews = crewsIn(allCrews, a?.space ?? 'me', ME.id).filter((c) => !live || c.owner === ME.id);
+  const [busy, setBusy] = useState(false);
   if (!a) return null;
   const hasMail = a.items.some((i) => i.kind === 'mail');
   const close = () => setUi({ assign: null });
-  const go = () => {
+  const go = async () => {
     const c = crews.find((x) => x.id === crew);
-    assign({ space: c.space ?? (a.space === 'me' ? 'beyondworks' : a.space), crew, goal: task === 'custom' ? (text || label) : `${t(`crew.task.${task}`)} · ${label}` });
-    close(); showToast(t('crew.handed', { crew: c.name }));
+    if (!c || busy) return;
+    if (!live) { // 예시 데이터 — 화면에서만
+      assign({ space: c.space ?? a.space, crew, goal: task === 'custom' ? (text || label) : `${t(`crew.task.${task}`)} · ${label}` });
+      close(); showToast(t('crew.handed', { crew: c.name })); return;
+    }
+    const orgId = SPACES.find((sp) => sp.kind === 'org' && sp.key === c.space)?.id;
+    if (!orgId) { showToast(t('crew.fail.not_allowed')); return; }
+    setBusy(true);
+    try {
+      // 자료를 글자로 — 메일은 본문(이 탭에만 있는 것), 페이지는 본문, 파일·기록은 이름만. 못 불러오면 보내지 않는다(빈 자료로 맡기지 않게)
+      const items = await Promise.all(a.items.map(async (i) => {
+        if (i.kind === 'mail') {
+          const m = getState().mails.find((x) => x.id === i.id);
+          if (!m?.account) return { ...i };
+          const full = await readMail(m);
+          return { ...i, from: full.from ?? m.from, text: htmlText(full.html) };
+        }
+        if (i.kind === 'page') {
+          let page = getState().pages.find((x) => x.id === i.id);
+          if (page && page.content === undefined) { await loadPageContent(i.id); page = getState().pages.find((x) => x.id === i.id); }
+          return { ...i, text: docText(page?.content) };
+        }
+        return { ...i };
+      }));
+      const asked = task === 'custom' ? text.trim() || label : t(`crew.ask.${task}`);
+      const used = setId ? await rpc('office_asset_write', { p_org: orgId, p_action: 'asset.use', p_data: { id: setId } }) : null;
+      // 이 크루에게 배정·켜진 도구(5단계) — 세트가 이미 실은 도구는 빼고
+      const mine = await rpc('office_asset_write', { p_org: orgId, p_action: 'crew.tools', p_data: { id: crypto.randomUUID(), crew_id: c.id } }).then((r) => r.tools).catch(() => []);
+      const extra = mine.filter((x) => !used?.tool_list?.some((y) => y.id === x.id));
+      const instruction = [asked, used && composeSet(used, t), composeTools(extra, t)].filter(Boolean).join('\n\n');
+      sendToCrew({ orgId, crewId: c.id, crewName: c.name, ...composeAssign({ instruction, items, t }) });
+      close(); showToast(t('crew.sending', { crew: c.name }));
+    } catch { showToast(t('crew.fail.read')); }
+    finally { setBusy(false); }
   };
   return (
     <Sheet open onClose={close} title={t('crew.assign')}
-      footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={!crew || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
+      footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={busy || !crew || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
       {a.items.length > 0 && <div className="assign-items">{a.items.map((i) => <span key={`${i.kind}-${i.id}`} className="chip"><Icon name={{ mail: 'mail', page: 'doc', file: 'file', record: 'run' }[i.kind]} size={12} />{i.label}</span>)}</div>}
       <div className="field-block"><span className="label">{t('nav.crews')}</span>
+        {!crews.length && <p className="dim small">{t('crew.fail.no_crew')}</p>}
         <div className="crew-pick">{crews.map((c) => <button key={c.id} type="button" className={`crew-opt${crew === c.id ? ' on' : ''}`} aria-pressed={crew === c.id} onClick={() => setCrew(c.id)}><Face id={c.id} size={26} /><b>{c.name}</b><small>{c.role}</small></button>)}</div>
       </div>
       <div className="field-block"><span className="label">{t('crew.what')}</span>
         <div className="seg">{TASKS.filter((k) => hasMail || k !== 'reply').map((k) => <button key={k} type="button" className={`seg-btn${task === k ? ' on' : ''}`} aria-pressed={task === k} onClick={() => setTask(k)}>{t(`crew.task.${k}`)}</button>)}</div>
         {task === 'custom' && <textarea className="input area" rows={4} value={text} placeholder={t('crew.customPh')} onChange={(e) => setText(e.target.value)} />}
       </div>
+      {sets.length > 0 && <label className="field-block"><span className="label">{t('crew.set.pick')}</span>
+        <select className="input" value={setId} onChange={(e) => setSetId(e.target.value)}><option value="">{t('crew.set.none')}</option>{sets.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select></label>}
       <p className="data-note"><Icon name="lock" size={12} />{t('crew.dataNote')}</p>
     </Sheet>
   );
