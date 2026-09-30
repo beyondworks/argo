@@ -9,7 +9,7 @@ import { Peek } from '../ui/Peek.jsx';
 import { CustomerCard, ItemCard } from './Cards.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { InfoTip } from '../ui/InfoTip.jsx';
-import { openMenu } from '../ui/Menu.jsx';
+import { openMenu, menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { useBusiness, businessError } from './data.js';
 import { BusinessDashboard } from './Dashboard.jsx';
 import Marketing from './Marketing.jsx';
@@ -21,14 +21,17 @@ import './business.css';
 import { BUSINESS_MODULES } from '../core/module-registry.js';
 import { SortableContext, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useStore } from '../core/store.js';
-import { orderTabs } from '../core/nav-model.js';
+import { useStore, saveLayout } from '../core/store.js';
+import { readTabs, writeTabs, canHide, pickTab, tabBar, afterHide } from './tab-model.js';
 
-/** 업무 탭 — 끌어서 순서를 바꾼다(사람마다, biztabs:me — 유건 9/30). 켜기·끄기는 조직 설정 그대로 */
-function BizTab({ id, to, on, order, children }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `biztab:${id}`, data: { kind: 'biztab', id, group: 'biztab', order, label: children } });
-  const { onTouchStart, ...mouse } = listeners ?? {};
-  return <Link ref={setNodeRef} to={to} style={{ transform: CSS.Translate.toString(transform), transition }} className={`tab${on ? ' on' : ''}${isDragging ? ' dragging' : ''}`} aria-current={on ? 'page' : undefined} {...attributes} {...mouse} role="link">{children}</Link>;
+/** 업무 탭 — 끌어서 순서를 바꾸고, 우클릭(터치는 길게 누르기)으로 숨긴다(사람마다, biztabs:me — 유건 9/30). 켜기·끄기는 조직 설정 그대로.
+ *  hidden: 숨긴 탭인데 주소로 들어와 보고 있는 탭 — 탭 줄 제자리에 '숨긴 탭'으로 표시한다 */
+function BizTab({ id, to, on, hidden, move, menu, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `biztab:${id}`, data: { kind: 'biztab', id, group: 'biztab', move, label: children } });
+  const { onTouchStart, ...mouse } = listeners ?? {}; // 터치는 길게 누르기 = 메뉴
+  return <Link ref={setNodeRef} to={to} style={{ transform: CSS.Translate.toString(transform), transition }} className={`tab${on ? ' on' : ''}${hidden ? ' tab-hidden' : ''}${isDragging ? ' dragging' : ''}`} aria-current={on ? 'page' : undefined} title={hidden ? label('tabHiddenMark') : undefined} {...attributes} {...mergeHandlers(mouse, menuProps(menu))} role="link">
+    {hidden && <Icon name="eyeOff" size={12} />}{children}
+  </Link>;
 }
 
 // 성과 분석은 마케팅 탭 안으로 합쳤다(유건 9/29) — 예전 주소·홈 카드는 마케팅으로 이어진다
@@ -136,9 +139,21 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
     try { const result = await business.mutate(action, payload); showToast(label('saved')); return result; }
     catch (failure) { if (!quiet) setFormError(businessError(failure)); throw failure; }
   };
-  const enabledTabs = data?.settings?.enabled || MODULES;
-  // 꺼 둔 탭 주소(사이드바 '업무' 포함)로 오면 켜진 첫 탭을 보여 준다
-  const current = MODULES.includes(tab) && enabledTabs.includes(tab) ? tab : (enabledTabs.includes('analytics') ? 'analytics' : MODULES.find((key) => enabledTabs.includes(key)) ?? 'analytics');
+  const enabled = data?.settings?.enabled || MODULES;
+  const tabState = readTabs(MODULES, enabled, savedTabs); // 내 탭 순서·숨김(사람마다)
+  // 꺼 둔 탭 주소로 오면 분석(숨겼으면 보이는 첫 탭)을, 숨긴 탭 주소로 오면 그 탭을 그대로 보여 준다(링크가 깨지지 않게)
+  const current = pickTab(tabState, tab);
+  const saveTabs = (op) => {
+    const items = writeTabs(tabState, op);
+    if (items && saveLayout('biztabs:me', items) === false) { showToast(t('nav.saveFail')); return false; }
+    return !!items;
+  };
+  const hideTab = (key) => { const next = afterHide(tabState, key, current); if (saveTabs({ hide: key }) && next) navigate(`${path}/${next}`); };
+  const tabMenu = (key) => () => [
+    tabState.hidden.includes(key) ? { label: label('tabShow'), icon: 'eye', run: () => saveTabs({ show: key }) }
+      : canHide(tabState, key) ? { label: label('tabHide'), icon: 'eyeOff', run: () => hideTab(key) } : { heading: label('tabLast') },
+  ];
+  const showHidden = (event) => openMenu(event, [{ heading: label('tabHiddenHead') }, ...tabState.hidden.map((key) => ({ label: label(key), icon: 'eye', run: () => saveTabs({ show: key }) }))], { anchor: event.currentTarget });
   const [settings, setSettings] = useState(false);
   useEffect(() => { if (tab === 'modules') setSettings(true); }, [tab]); // 예전 '모듈 관리' 주소는 켜고 끄기 창으로 연다
   const closeSettings = useCallback(() => { setSettings(false); if (tab === 'modules') navigate(`${path}/${current}`); }, [tab, path, current]);
@@ -155,8 +170,7 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
     payments: addButton(() => launch('entry', { kind: 'invoice' }), blocked || !data.orders.some((o) => o.status === 'confirmed')),
     inventory: <InfoTip end text={label('singleStock')} />,
   }[current];
-  const enabled = data?.settings?.enabled || MODULES;
-  const tabs = orderTabs(MODULES, enabled, savedTabs); // 내 탭 순서(사람마다)
+  const tabs = tabBar(tabState, current);
   function enabledNow(d, key) { return (d.settings?.enabled || MODULES).includes(key); }
   const [openKind, openRef] = openId?.includes(':') ? openId.split(':') : ['order', openId];
   const order = openKind === 'order' ? data?.orders.find((row) => row.id === openRef) : null;
@@ -167,7 +181,8 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
   return <section className="page-wrap wide bizui-page">
     <header className="page-title-row"><div><h1 className="page-h1">{label('title')}</h1><p className="dim">{label('subtitle')}</p></div><button type="button" className="icon-btn" aria-label={t('more')} disabled={busy || loading} onClick={pageMenu}><Icon name="dots" /></button></header>
     <div className="biz-tabbar">
-      <nav className="tabs" aria-label={label('title')}><SortableContext items={tabs.map((key) => `biztab:${key}`)} strategy={horizontalListSortingStrategy}>{tabs.map((key) => <BizTab key={key} id={key} order={tabs} to={`${path}/${key}`} on={current === key}>{label(key)}</BizTab>)}</SortableContext></nav>
+      <nav className="tabs" aria-label={label('title')}><SortableContext items={tabs.map((key) => `biztab:${key}`)} strategy={horizontalListSortingStrategy}>{tabs.map((key) => <BizTab key={key} id={key} to={`${path}/${key}`} on={current === key} hidden={tabState.hidden.includes(key)} move={(over) => saveTabs({ move: [key, over] })} menu={tabMenu(key)}>{label(key)}</BizTab>)}</SortableContext>
+        {tabState.hidden.length > 0 && <button type="button" className="biz-tab-more" aria-haspopup="menu" onClick={showHidden}><Icon name="chevron" size={12} />{t('bizui.tabHiddenN', { n: tabState.hidden.length })}</button>}</nav>
       {tabAction && <div className="biz-tab-actions">{tabAction}</div>}
     </div>
     {((!data && error) || (formError && !dialog && !openId)) && <p className="bizui-error" role="alert">{t(!data && error ? error : formError)}</p>}

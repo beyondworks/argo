@@ -127,7 +127,6 @@ export function decide(id, result, by) {
 /* ── 배치 ── */
 /** 좌측 메뉴 순서·숨김·칸 순서(사람마다, nav-model.js) — 저장할 수 없는 상태면 false */
 export const saveNav = (op, kind) => saveLayout('nav:me', writeNav(readNav(state.layouts['nav:me']?.items, kind), op));
-export const saveTabs = (order) => saveLayout('biztabs:me', order.map((id) => ({ id })));
 export const saveLayout = (key, items) => {
   const current = state.layouts[key];
   if (getStorageScope() !== 'sample' && (!Number.isInteger(current?.version) || current?.conflict)) return false;

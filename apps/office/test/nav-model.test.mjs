@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NAV, readNav, writeNav, moveId, orderTabs } from '../src/core/nav-model.js';
+import { NAV, readNav, writeNav, moveId } from '../src/core/nav-model.js';
 
 // 이유(유건 9/30): "좌측 패널 메뉴가 하드코딩이면 모듈식이 아니다" — 사람마다 순서를 바꾸고 숨긴다(기기가 바뀌어도 같게 DB).
 // 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다. 메뉴·페이지(위키)·에이전트 세 칸의 순서도 바꾼다.
@@ -47,12 +47,6 @@ test('moveId: a를 b 자리로, 같은 자리·없는 id면 그대로', () => {
   assert.deepEqual(moveId(['a', 'b', 'c'], 'c', 'a'), ['c', 'a', 'b']);
   assert.deepEqual(moveId(['a', 'b', 'c'], 'a', 'c'), ['b', 'c', 'a']);
   assert.deepEqual(moveId(['a', 'b'], 'a', 'x'), ['a', 'b']);
-});
-
-test('업무 탭: 내 순서대로, 조직이 끈 탭은 빼고, 새로 켠 탭은 기본 순서대로 뒤에', () => {
-  const modules = ['customers', 'catalog', 'orders', 'inventory', 'payments', 'analytics'];
-  assert.deepEqual(orderTabs(modules, ['customers', 'orders', 'payments', 'analytics'], [{ id: 'analytics' }, { id: 'orders' }]), ['analytics', 'orders', 'customers', 'payments']);
-  assert.deepEqual(orderTabs(modules, modules, []), modules);
 });
 
 // 이유(9/30 일정 추가): 메뉴 순서를 저장해 둔 사람에게 새 메뉴가 맨 아래로 붙으면 못 찾는다 — 기본 자리(앞 메뉴 바로 뒤)에 들어가야 한다.

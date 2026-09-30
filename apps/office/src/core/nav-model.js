@@ -56,6 +56,3 @@ export function writeNav(state, op) {
   if (op.section) sections = moveId(sections, ...op.section);
   return [...order.map((id) => (hidden.has(id) ? { id, hidden: true } : { id })), ...sections.map((s) => ({ id: `sec:${s}` }))];
 }
-
-/** 업무 탭: 조직이 켠 탭(enabled)만, 내 순서(saved) 먼저, 새로 켠 탭은 기본 순서(modules)대로 뒤에 */
-export const orderTabs = (modules, enabled, saved = []) => ordered(modules.filter((m) => enabled.includes(m)), (saved ?? []).map((x) => x?.id));

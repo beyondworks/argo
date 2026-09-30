@@ -13,8 +13,7 @@ import { Home } from './pages/Home.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
 import { useSaveStatus, useLegacyRecovery } from './core/save.js';
-import { useStore, reorderPage, createPage, getState, saveNav, saveTabs } from './core/store.js';
-import { moveId } from './core/nav-model.js';
+import { useStore, reorderPage, createPage, getState, saveNav } from './core/store.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
 import { PEOPLE } from './data/sample.js';
@@ -177,7 +176,7 @@ export default function App() {
     } else if (a.kind === 'page' && o.kind === 'page' && a.id !== o.id) reorderPage(a.id, o.id);
     else if (a.kind === 'crew' && o.kind === 'crew' && a.group === o.group && a.id !== o.id) moveCrew(a.order, a.id, o.id, a.mode).catch(() => showToast(t('crew.saveFail')));
     else if ((a.kind === 'nav' || a.kind === 'navsec') && o.kind === a.kind && a.id !== o.id) { if (saveNav(a.kind === 'nav' ? { move: [a.id, o.id] } : { section: [a.id, o.id] }, a.navKind) === false) showToast(t('nav.saveFail')); }
-    else if (a.kind === 'biztab' && o.kind === 'biztab' && a.id !== o.id) { if (saveTabs(moveId(a.order, a.id, o.id)) === false) showToast(t('nav.saveFail')); }
+    else if (a.kind === 'biztab' && o.kind === 'biztab' && a.id !== o.id) a.move(o.id); // 업무 탭 순서 — 저장·실패 안내는 업무 화면(BusinessPage)이 한다
   };
 
   const params = new URLSearchParams(query ?? '');
