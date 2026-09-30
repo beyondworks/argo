@@ -19,6 +19,7 @@
         var sh = null; try { sh = localStorage.getItem('argo-office-shell'); } catch (e) {}
         if (!/^(plain|float|window|panel|pill|glass)$/.test(sh)) sh = { cream: 'float', sand: 'window', peach: 'panel', mist: 'pill', glow: 'glass' }[th.replace(/-(light|dark)$/, '')] || 'plain';
         el.dataset.shell = sh;
+        try { if (localStorage.getItem('argo-office-width') === 'full') el.classList.add('full-width'); } catch (e) {} // 본문 전체 너비 — core/theme.js WIDTH_KEY
         // 커스텀 테마(core/custom-theme.js가 계산해 둔 모드별 변수) — 모드가 바뀔 때도 theme.js가 이 함수를 다시 부른다
         window.__argoCustom = function () {
           var c = null; try { c = JSON.parse(localStorage.getItem('argo-office-custom-css') || 'null'); } catch (e) {}

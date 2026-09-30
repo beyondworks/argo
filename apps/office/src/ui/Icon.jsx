@@ -31,6 +31,7 @@ const PATHS = {
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/>',
   reply: '<path d="M6.5 4 3 7.5 6.5 11M3.5 7.5H10a3 3 0 0 1 3 3V12"/>',
   hand: '<path d="M2.5 8.5h6M6 5.5l3 3-3 3M11 3v11"/>',
+  width: '<path d="M2 8h12M4.5 5.5 2 8l2.5 2.5M11.5 5.5 14 8l-2.5 2.5"/>',
   sidebar: '<rect x="2" y="3" width="12" height="10" rx="1.8"/><path d="M6 3v10"/>',
   menu: '<path d="M3 5h10M3 8h10M3 11h10"/>',
   hash: '<path d="M6.5 2.5 5 13.5M11 2.5 9.5 13.5M2.5 6h11M2 10h11"/>',
