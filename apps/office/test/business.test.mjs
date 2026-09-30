@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { transformSync } from 'esbuild';
 import * as model from '../src/business/dashboard-model.js';
+import * as period from '../src/business/dashboard-period.js';
 import { createContext, createElement, useContext, useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
 import { timeSeriesGeometry, horizontalBarGeometry } from '../src/business/chart-geometry.js';
 import { CHART_MODULES } from '../src/core/module-registry.js';
@@ -34,7 +35,7 @@ test('widget instances remain distinct and reorder without mutating input', () =
   const moved = model.moveWidget(normalized.widgets, normalized.widgets[4].id,-1);
   assert.equal(moved[3].id,normalized.widgets[4].id);
   assert.notDeepEqual(moved,normalized.widgets);
-  assert.deepEqual(dashboard.filters,{from:'2026-09-01',to:'2026-09-27',customer:null});
+  assert.deepEqual(dashboard.filters,{preset:'all',from:'2026-09-01',to:'2026-09-27',customer:null}); // 새 대시보드는 전체 기간(유건 9/30), 날짜는 서버 검사용
 });
 test('date filters reject overflow, reverse ranges and unsupported chart combinations', () => {
   for (const filters of [{from:'2026-02-30',to:'2026-03-01'},{from:'2026-09-30',to:'2026-09-01'},{from:'2000-01-01',to:'2026-09-01'}]) assert.throws(() => model.validateFilters(filters));
@@ -128,7 +129,7 @@ test('daily chart fills absent ledger days with zero within applied range', () =
 const dashboardModule = { exports: {} };
 const dependencies = { require, module: dashboardModule, exports: dashboardModule.exports,
   getLang: () => 'en', t: key => key, useLang: () => {}, createContext, useContext, useEffect, useId, useMemo, useRef, useState,
-  Modal: () => null, ModuleAddButton: () => null, ModuleGrid: () => null, Icon: () => null, InfoTip: () => null, openMenu: () => {}, window: { addEventListener() {}, removeEventListener() {} }, CHART_MODULES, businessError, ...model };
+  Modal: () => null, ModuleAddButton: () => null, ModuleGrid: () => null, Icon: () => null, InfoTip: () => null, openMenu: () => {}, window: { addEventListener() {}, removeEventListener() {} }, CHART_MODULES, businessError, ...model, ...period };
 new Function(...Object.keys(dependencies), chartCompiled)(...Object.values(dependencies));
 for (const populated of [false, true]) {
   test(`whole BusinessDashboard first render with ${populated ? 'existing' : 'zero'} dashboards`, () => {
@@ -192,11 +193,35 @@ test('dashboard keeps same-scope report during refresh, clears failed or changed
   assert.equal(harness.render(business).grid, null);
   requests[3].resolve({ metrics: { sales: 200 } }); await settle();
   assert.equal(harness.render(business).context.report.metrics.sales, 200);
-  const changed = { ...dashboard, filters: { from: '2026-09-01', to: '2026-09-01', customer: null } };
+  const changed = { ...dashboard, filters: { preset: 'custom', from: '2026-09-01', to: '2026-09-01', customer: null } };
   business = { ...business, data: { ...business.data, settings: { dashboards: [changed] } } };
   assert.equal(harness.render(business).grid, null); harness.effects();
   requests[4].resolve({ metrics: { sales: 300 } }); await settle();
   assert.equal(harness.render(business).context.report.metrics.sales, 300);
   business = { ...business, data: null };
   assert.equal(harness.render(business).grid, null); harness.effects();
+});
+
+// 이유(유건 9/30): 분석이 '이번 달'로 저장돼 있어 거래 탭(전체)과 숫자가 달랐다 → 기본은 전체, [이번 달·올해·전체] 버튼, 직접 고른 날짜는 그대로.
+test('분석 기간: 이번 달·올해·전체(첫 거래일부터), 첫 거래일이 없으면 이번 달', () => {
+  const today = new Date(2026, 8, 30);
+  assert.deepEqual(period.presetPeriod('month', today, '2026-07-05'), { from: '2026-09-01', to: '2026-09-30' });
+  assert.deepEqual(period.presetPeriod('year', today, '2026-07-05'), { from: '2026-01-01', to: '2026-09-30' });
+  assert.deepEqual(period.presetPeriod('all', today, '2026-07-05'), { from: '2026-07-05', to: '2026-09-30' });
+  assert.deepEqual(period.presetPeriod('all', today, null), { from: '2026-09-01', to: '2026-09-30' });
+  assert.deepEqual(period.presetPeriod('all', today, '2010-01-01'), { from: '2016-10-02', to: '2026-09-30' }); // 10년(3650일) 상한
+  assert.deepEqual(period.resolveFilters({ preset: 'all', customer: 'c1' }, today, '2026-07-05'), { preset: 'all', customer: 'c1', from: '2026-07-05', to: '2026-09-30' });
+  assert.deepEqual(period.resolveFilters({ preset: 'custom', from: '2026-08-01', to: '2026-08-31', customer: null }, today, '2026-07-05'), { preset: 'custom', from: '2026-08-01', to: '2026-08-31', customer: null });
+});
+
+test('저장된 옛 기간(프리셋 없음)은 한 번 전체로, 직접 고른 기간(custom)은 그대로', () => {
+  const [old] = model.normalizeDashboards([{ id: 'd', name: 'x', widgets: [], filters: { from: '2026-09-01', to: '2026-09-30', customer: 'c1' } }]);
+  assert.deepEqual(old.filters, { from: '2026-09-01', to: '2026-09-30', customer: 'c1', preset: 'all' }); // 날짜는 남긴다(서버가 시작·종료일을 요구)
+  const [custom] = model.normalizeDashboards([{ id: 'd', name: 'x', widgets: [], filters: { preset: 'custom', from: '2026-08-01', to: '2026-08-31', customer: null } }]);
+  assert.deepEqual(custom.filters, { preset: 'custom', from: '2026-08-01', to: '2026-08-31', customer: null });
+});
+
+test('첫 거래일 = 활동·청구입금 기록 중 가장 이른 한국 날짜', () => {
+  assert.equal(period.firstDay({ activity: [{ at: '2026-07-05T03:00:00+00:00' }, { at: '2026-08-13T03:00:00+00:00' }], entries: [{ at: '2026-07-04T16:30:00+00:00' }] }), '2026-07-05');
+  assert.equal(period.firstDay({ activity: [], entries: [] }), null);
 });
