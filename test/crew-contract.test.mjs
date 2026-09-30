@@ -46,6 +46,9 @@ const CONTRACT = {
   // 기억·문서
   msgr_crew_memory: { pending: '3단계 — 크루 기억(VPS argo_memory 플러그인과 맞춘다)' },
   msgr_org_docs: { pending: '3단계 — 조직 문서 읽기·제안' },
+  // 오피스 일정(에이전트 calendar 도구, 2026-09-30) — Argo 크루는 주인의 기기 세션으로 부른다(src/gateway/office-calendar.mjs)
+  office_event_list: { pending: '다음 단계 — 외부 에이전트(봇) 일정 도구. 봇 API 메서드가 아직 없고, 봇 토큰으로 주인 일정을 읽는 범위부터 정해야 한다' },
+  office_event_write: { pending: '다음 단계 — 외부 에이전트(봇) 일정 쓰기. 서버는 p_data.crew가 있으면 주인 일정만 고치게 이미 막는다' },
   // Argo PC 전용
   msgr_create_channel: { argoOnly: '크루 1:1 방은 메신저 앱이 만든다 — 봇 1:1 방도 사람이 앱에서 연다' },
   msgr_crew_requests: { argoOnly: 'Argo PC가 크루를 새로 만드는 영입 요청 — 외부 에이전트는 서버 연결(connect) 절차로 추가한다' },
@@ -56,7 +59,7 @@ const CONTRACT = {
   msgr_notification_finish: { argoOnly: 'Argo 데스크톱 알림 경로' },
 };
 // 다음 단계로 미룬 항목 — 늘리거나 줄일 때 이 목록을 같이 고친다(조용히 늘지 않게).
-const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_work_heartbeat'];
+const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_work_heartbeat', 'office_event_list', 'office_event_write'];
 
 function gatewayCalls() {
   const dir = root('src/gateway');

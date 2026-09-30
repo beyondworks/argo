@@ -1,4 +1,5 @@
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, fullAutoAllowed } from './gateway/msgr-handoff.mjs';
+import { calendarTool, calendarDescription } from './gateway/office-calendar.mjs'; // 에이전트 일정 도구(주인의 오피스 일정 — 명세 2026-09-30 규칙 9·10)
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -913,6 +914,36 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
+  // 주인의 일정(아르고 오피스 달력) — 개인 일정과 조직에 있는 주인 소유 일정만 만들고 고친다. 남의 일정은 읽기만.
+  // 손님 턴은 읽기까지 막는다(주인의 일정이 손님에게 새면 안 된다). 세션 없음·RPC 오류는 처리기가 원인을 한 줄로 돌려준다.
+  const calendar = tool(
+    'calendar',
+    calendarDescription(lang),
+    {
+      action: z.enum(['list', 'create', 'update', 'delete']),
+      from: z.string().optional().describe('list: 시작 날짜 YYYY-MM-DD(한국 날짜)'),
+      to: z.string().optional().describe('list: 끝 날짜 YYYY-MM-DD(포함, from부터 최대 62일)'),
+      id: z.string().optional().describe('update·delete: list가 보여 준 일정 id'),
+      day: z.string().optional().describe('update·delete: list가 보여 준 그 줄의 날짜 YYYY-MM-DD(반복이면 회차 날짜)'),
+      scope: z.enum(['this', 'following', 'all']).optional().describe('반복 일정 update·delete: this=이 회차만, following=이 회차 및 이후, all=모든 회차'),
+      calendar: z.enum(['personal', 'org']).optional().describe('personal=개인(기본), org=지금 메신저 조직'),
+      visibility: z.enum(['org', 'private']).optional().describe('조직 일정의 공개 범위: org=조직 전체(기본), private=나만'),
+      title: z.string().optional(),
+      start: z.string().optional().describe('YYYY-MM-DD(종일) · YYYY-MM-DDTHH:MM(한국 시간) · 시간대 포함 ISO'),
+      end: z.string().optional().describe('종일이면 끝날 YYYY-MM-DD(포함), 시간 일정이면 YYYY-MM-DDTHH:MM·ISO·HH:MM'),
+      all_day: z.boolean().optional(),
+      note: z.string().optional(), location: z.string().optional(), category: z.string().optional(),
+      repeat: z.enum(['none', 'daily', 'weekly', 'monthly']).optional().describe('반복: 매주는 시작 요일, 매월은 시작 날짜'),
+      repeat_interval: z.number().optional().describe('반복 간격 1~99(기본 1)'),
+      repeat_until: z.string().optional().describe('반복 종료일 YYYY-MM-DD(포함)'),
+    },
+    async (args) => {
+      if (guest) return guestNo(lang === 'en' ? 'Reading or changing the owner\'s calendar' : '주인의 일정 보기·고치기');
+      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
+      return text(await calendarTool(args, { ctx: mirrorCtx, crew: fromSlug, lang, ownerId }));
+    },
+  );
+
   // 커넥터 표면 — 실행은 코어의 callConnectorTool 단일 경로다(러너 무관, 설계서 §1·§2-2).
   // 여기서 원격 MCP 클라이언트를 새로 만들지 않는다: SDK 턴 안에서 직결하면 토큰 갱신·OAuth 챌린지가
   // 러너 프로세스에서 터져 코어가 개입할 수 없고, CLI 표면과 능력이 갈린다(중립성 위반).
@@ -931,6 +962,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const tools = [
     requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, listRoutines, cancelRoutine, startLongTask,
     ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
+    calendar, // 주인의 일정 — 항상 등재(세션 없음·손님은 처리기가 한 줄로 알린다)
     ...(handoffColleagues.length ? [delegate, sendToCrew] : []),
     // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
     ...(connectors.length ? [useConnector] : []),
