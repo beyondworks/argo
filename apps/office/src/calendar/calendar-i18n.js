@@ -9,7 +9,7 @@ export const CAL_DICT = {
   'cal.allDay': ['종일', 'All day'], 'cal.more': ['+{n}개 더', '+{n} more'], 'cal.nItems': ['{n}건', '{n} items'],
   'cal.taskDue': ['할 일 기한: {title}', 'To-do due: {title}'], 'cal.taskRow': ['할 일 기한 — 눌러서 할 일 보기', 'To-do due date — open the to-do'], 'cal.due': ['기한', 'Due'],
   'cal.listEmpty': ['이 기간에 일정이 없습니다', 'Nothing scheduled in this period'], 'cal.dayEmpty': ['이날 일정이 없습니다', 'Nothing on this day'],
-  'cal.custEmpty': ['거래처를 연결한 일정이 없습니다. 일정을 열어 거래처를 고르면 여기에 모입니다.', 'No events linked to a customer yet. Pick a customer on an event to see it here.'], 'cal.custUnknown': ['거래처', 'Customer'],
+  'cal.custTitle': ['거래처 일정', 'Client events'], 'cal.custEmpty': ['거래처를 연결한 일정이 없습니다. 일정을 열어 거래처를 고르면 여기에 모입니다.', 'No events linked to a customer yet. Pick a customer on an event to see it here.'], 'cal.custUnknown': ['거래처', 'Customer'],
   'cal.quick': ['새 일정', 'New event'], 'cal.new': ['새 일정', 'New event'], 'cal.edit': ['일정 수정', 'Edit event'], 'cal.view.title': ['일정', 'Event'],
   'cal.details': ['자세히', 'More options'], 'cal.save': ['저장', 'Save'], 'cal.cancel': ['취소', 'Cancel'], 'cal.close': ['닫기', 'Close'], 'cal.delete': ['삭제', 'Delete'],
   'cal.saved': ['일정을 저장했습니다', 'Event saved'], 'cal.deleted': ['일정을 삭제했습니다', 'Event deleted'],

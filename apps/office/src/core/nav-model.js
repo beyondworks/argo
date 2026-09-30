@@ -21,10 +21,21 @@ export function moveId(list, a, b) {
 /** 저장값에 있는 순서 먼저(아는 id·처음 한 번만), 나머지는 기본 순서대로 뒤에 */
 const ordered = (defaults, ids) => [...new Set([...ids.filter((id) => defaults.includes(id)), ...defaults])];
 
+/** 메뉴 순서 — 저장값 순서를 지키고, 저장한 뒤에 새로 생긴 메뉴(예: 일정)는 기본 순서에서 바로 앞 메뉴 뒤에 끼운다(맨 아래로 밀리지 않게) */
+function placeNew(defaults, ids) {
+  const out = [...new Set(ids.filter((id) => defaults.includes(id)))];
+  defaults.forEach((id, i) => {
+    if (out.includes(id)) return;
+    const prev = defaults.slice(0, i).reverse().find((p) => out.includes(p));
+    out.splice(prev ? out.indexOf(prev) + 1 : 0, 0, id);
+  });
+  return out;
+}
+
 /** 저장값(items) → 이 공간(kind: 'me'|'org')에 보일 메뉴·숨긴 메뉴·칸 순서 */
 export function readNav(items = [], kind = 'org') {
   const list = Array.isArray(items) ? items.filter((x) => x && typeof x.id === 'string') : [];
-  const order = ordered(ALL, list.map((x) => x.id));
+  const order = placeNew(ALL, list.map((x) => x.id));
   const hiddenAll = new Set(list.filter((x) => x.hidden && !LOCKED.has(x.id) && ALL.includes(x.id)).map((x) => x.id));
   const here = order.filter((id) => NAV[kind].includes(id));
   return {

@@ -66,9 +66,11 @@ export function sampleWrite(action, d) {
   if (action === 'delete') { for (let i = rows.length - 1; i >= 0; i--) if (rows[i].id === d.id || rows[i].parent_id === d.id) rows.splice(i, 1); return { ok: true }; }
   if (action === 'skip') { if (!cur.exdates.includes(d.day)) cur.exdates = [...cur.exdates, d.day]; return { ok: true }; }
   if (action === 'split') {
+    for (let i = rows.length - 1; i >= 0; i--) if (rows[i].parent_id === cur.id && rows[i].recur_on >= d.day) rows.splice(i, 1); // 그날 뒤의 회차 수정 행
+    cur.exdates = cur.exdates.filter((x) => x < d.day);
     if (d.day <= kstDay(cur.starts_at)) rows.splice(rows.indexOf(cur), 1);
     else cur.rrule = ruleString({ ...parseRule(cur.rrule), until: addDays(d.day, -1) });
-    return { ok: true, event: shape(put(d.next)) };
+    return d.next ? { ok: true, event: shape(put({ ...d.next, owner: cur.owner })) } : { ok: true }; // next 없으면 자르기만
   }
   return fail('calendar_invalid');
 }

@@ -2,7 +2,7 @@
 // 왼쪽 레일(만들기 · 작은 월 달력 · 캘린더 목록), 오른쪽 큰 달력(오늘 · ‹ › · 기간 제목 · 보기 전환 · 색 기준).
 // 같은 일정 행이 개인 달력과 조직 달력에 함께 보인다(저장 행은 하나). 할 일 기한은 읽기 전용으로 겹쳐 보인다.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { t, registerDict, useLang } from '../core/i18n.js';
+import { t, registerDict, useLang, getLang } from '../core/i18n.js';
 import { ME, SPACES, getMode } from '../core/session.js';
 import { useTasks } from '../core/tasks.js';
 import { baseOf } from '../core/commands.js';
@@ -41,7 +41,8 @@ function periodTitle(view, anchor, phone) {
     const w = M.weekDays(anchor);
     return new Intl.DateTimeFormat(locale(), { year: phone ? undefined : 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).formatRange(new Date(`${w[0]}T00:00:00Z`), new Date(`${w[6]}T00:00:00Z`));
   }
-  if (view === 'list' || view === 'customers') {
+  if (view === 'customers') return t('cal.custTitle'); // 거래처 보기는 기간이 아니라 거래처로 묶는다 — 날짜 범위 제목은 헷갈린다
+  if (view === 'list') {
     const [a, b] = M.windowOf(view, anchor);
     return new Intl.DateTimeFormat(locale(), { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }).formatRange(new Date(`${a}T00:00:00Z`), new Date(`${M.addDays(b, -1)}T00:00:00Z`));
   }
@@ -98,10 +99,10 @@ export default function Calendar({ space, day }) {
         <div className="cal-bar">
           {phone && <button type="button" className="icon-btn" aria-label={t('cal.rail')} aria-expanded={rail} onClick={() => setRail(!rail)}><Icon name="sidebar" /></button>}
           <button type="button" className="btn sm" onClick={() => setAnchor(today)}>{t('cal.today')}</button>
-          <span className="cal-nav">
+          {view !== 'customers' && <span className="cal-nav">
             <button type="button" className="icon-btn sm" aria-label={t('cal.prev')} onClick={() => go(-1)}><Icon name="back" size={14} /></button>
             <button type="button" className="icon-btn sm" aria-label={t('cal.next')} onClick={() => go(1)}><Icon name="chevron" size={14} /></button>
-          </span>
+          </span>}
           <h2 className="cal-title" aria-live="polite">{periodTitle(view, anchor, phone)}</h2>
           {data.loading && <span className="dim small" role="status">{t('cal.loading')}</span>}
           {data.error && <span className="cal-err small" role="alert">{t(data.error)}</span>}
@@ -284,7 +285,7 @@ function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, onCreate
       </div>
       <div ref={scroll} className="cal-tg-scroll">
         <div className="cal-tg-grid" style={{ ...cols, height: 24 * HOUR }}>
-          <div className="cal-hours">{Array.from({ length: 23 }, (_, h) => <small key={h} style={{ top: (h + 1) * HOUR }}>{fmtTime(new Date(2000, 0, 1, h + 1).getTime())}</small>)}</div>
+          <div className="cal-hours">{Array.from({ length: 23 }, (_, h) => <small key={h} style={{ top: (h + 1) * HOUR }}>{new Date(2000, 0, 1, h + 1).toLocaleTimeString(getLang() === 'en' ? 'en-US' : 'ko-KR', { hour: 'numeric' })}</small>)}</div>
           {days.map((d, i) => {
             const pos = M.layoutDay(timed[i]);
             return <div key={d} className="cal-tg-col" onClick={(e) => slot(e, d)}>
@@ -497,17 +498,15 @@ function EventSheet({ init, space, categories, onClose, onAsk }) {
 function AskScope({ ask, rows, onClose, onDone }) {
   const { kind, occ, row } = ask, series = occ.series;
   const [scope, setScope] = useState('one'), [busy, setBusy] = useState(false);
-  // '이 일정 및 이후' — 그 날짜부터 뒤의 '이번만 수정'한 회차도 같이 지운다(읽은 창 안에 있는 것만)
-  const dropLater = () => Promise.all(rows.filter((r) => r.parent_id === series.id && r.recur_on >= occ.occ).map((r) => writeEvent('delete', { id: r.id }, { refresh: false })));
+  // '이 일정 및 이후' — 서버 split이 UNTIL을 전날로 자르고 그날 뒤의 '이번만 수정' 회차까지 지운다(읽은 창 밖에 있는 것까지). next가 없으면 자르기만.
   const run = async () => {
     setBusy(true);
     try {
-      if (series && scope === 'following') await dropLater();
       if (kind === 'delete' && !series) await writeEvent('delete', { id: occ.id });
       else if (kind === 'delete') {
         if (scope === 'one') await writeEvent('skip', { id: series.id, day: occ.occ });
-        else if (scope === 'all' || occ.occ <= M.kstDay(series.starts_at)) await writeEvent('delete', { id: series.id });
-        else await writeEvent('save', rowFrom(series, { rrule: M.ruleString({ ...M.parseRule(series.rrule), until: M.addDays(occ.occ, -1) }) }));
+        else if (scope === 'all') await writeEvent('delete', { id: series.id });
+        else await writeEvent('split', { id: series.id, day: occ.occ });
       } else if (scope === 'one') await writeEvent('save', { ...row, id: newId(), rrule: null, parent_id: series.id, recur_on: occ.occ });
       else if (scope === 'following') await writeEvent('split', { id: series.id, day: occ.occ, next: { ...row, id: newId() } });
       else { // 모든 일정 — 이 회차에서 옮긴 만큼 원본 시작을 옮긴다(길이는 새 값)
