@@ -14,13 +14,20 @@ test('저장값이 없으면 공간별 기본 메뉴 순서, 세 칸은 메뉴 �
 
 test('순서·숨김은 한 목록으로 저장하고, 그 공간에 없는 메뉴는 건너뛴다(내 공간의 메일은 조직에 안 보임)', () => {
   let items = writeNav(readNav([], 'org'), { move: ['perf', 'home'] }); // 성과 기록을 맨 위로
-  assert.deepEqual(readNav(items, 'org').shown.slice(0, 3), ['perf', 'home', 'business']);
+  assert.deepEqual(readNav(items, 'org').shown.slice(0, 3), ['perf', 'home', 'calendar']);
   items = writeNav(readNav(items, 'org'), { hide: 'outputs' });
   assert.deepEqual(readNav(items, 'org').hidden, ['outputs']);
   assert.ok(!readNav(items, 'org').shown.includes('outputs'));
   assert.deepEqual(readNav(items, 'me').shown, NAV.me); // 내 공간 목록에는 영향 없음(성과 기록·산출물이 없다)
   items = writeNav(readNav(items, 'org'), { show: 'outputs' });
   assert.ok(readNav(items, 'org').shown.includes('outputs'));
+});
+
+// 이유(유건 9/30 일정 명세): 좌측 메뉴 '일정'은 개인·조직 모두 홈 바로 다음
+test('일정 메뉴는 두 공간 모두 홈 바로 다음', () => {
+  assert.deepEqual(NAV.me.slice(0, 2), ['home', 'calendar']);
+  assert.deepEqual(NAV.org.slice(0, 2), ['home', 'calendar']);
+  assert.deepEqual(readNav([], 'me').shown.slice(0, 2), ['home', 'calendar']);
 });
 
 test('홈은 숨길 수 없고, 모르는 id·중복은 버린다', () => {
@@ -46,4 +53,11 @@ test('업무 탭: 내 순서대로, 조직이 끈 탭은 빼고, 새로 켠 탭�
   const modules = ['customers', 'catalog', 'orders', 'inventory', 'payments', 'analytics'];
   assert.deepEqual(orderTabs(modules, ['customers', 'orders', 'payments', 'analytics'], [{ id: 'analytics' }, { id: 'orders' }]), ['analytics', 'orders', 'customers', 'payments']);
   assert.deepEqual(orderTabs(modules, modules, []), modules);
+});
+
+// 이유(9/30 일정 추가): 메뉴 순서를 저장해 둔 사람에게 새 메뉴가 맨 아래로 붙으면 못 찾는다 — 기본 자리(앞 메뉴 바로 뒤)에 들어가야 한다.
+test('메뉴: 저장한 뒤 새로 생긴 메뉴는 기본 순서의 앞 메뉴 바로 뒤에 들어간다, 저장 순서는 그대로', () => {
+  const saved = ['home', 'tools', 'business', 'mail', 'approvals', 'shared', 'knowhow'].map((id) => ({ id }));
+  assert.deepEqual(readNav(saved, 'me').shown, ['home', 'calendar', 'tools', 'business', 'mail', 'approvals', 'shared', 'knowhow']);
+  assert.deepEqual(readNav([{ id: 'tools' }, { id: 'home' }], 'me').shown.slice(0, 3), ['tools', 'home', 'calendar'], '앞 메뉴를 옮겨 뒀으면 그 뒤를 따라간다');
 });
