@@ -33,6 +33,8 @@ export const BUSINESS_UI_DICT = {
   'bizui.limit': ['처리 가능한 금액', 'Available amount'],
 
   // 거래 흐름(유건 9/29) — 칸반 단계·부가세·거래처 강화·부분 가림
+  'bizui.tabHide': ['탭 숨기기', 'Hide tab'], 'bizui.tabShow': ['탭 다시 보이기', 'Show tab again'], 'bizui.tabLast': ['마지막 탭은 숨길 수 없습니다', 'The last tab can’t be hidden'],
+  'bizui.tabHiddenN': ['숨긴 탭 {n}', '{n} hidden'], 'bizui.tabHiddenHead': ['눌러서 다시 보이기', 'Click to show again'], 'bizui.tabHiddenMark': ['숨긴 탭', 'Hidden tab'],
   'bizui.redactMany': ['고른 칸 가리기 ({n}칸)', 'Hide selected ({n})'], 'bizui.unredactMany': ['고른 칸 가리기 해제 ({n}칸)', 'Unhide selected ({n})'],
   'bizui.stage.quote': ['견적', 'Quote'], 'bizui.stage.contract': ['계약', 'Contract'], 'bizui.stage.invoice': ['계산서 발행', 'Invoiced'], 'bizui.stage.paid': ['입금 완료', 'Paid'],
   'bizui.next.contract': ['계약 완료', 'Mark contracted'], 'bizui.next.invoice': ['계산서 발행', 'Issue invoice'], 'bizui.next.invoiceRest': ['남은 금액 청구', 'Invoice the rest'], 'bizui.next.paid': ['입금 확인', 'Record payment'],

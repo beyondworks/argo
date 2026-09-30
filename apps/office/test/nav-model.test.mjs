@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NAV, readNav, writeNav, moveId, orderTabs } from '../src/core/nav-model.js';
+import { NAV, readNav, writeNav, moveId, readFav, writeFav, FAV_MAX } from '../src/core/nav-model.js';
 
 // 이유(유건 9/30): "좌측 패널 메뉴가 하드코딩이면 모듈식이 아니다" — 사람마다 순서를 바꾸고 숨긴다(기기가 바뀌어도 같게 DB).
 // 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다. 메뉴·페이지(위키)·에이전트 세 칸의 순서도 바꾼다.
@@ -49,15 +49,34 @@ test('moveId: a를 b 자리로, 같은 자리·없는 id면 그대로', () => {
   assert.deepEqual(moveId(['a', 'b'], 'a', 'x'), ['a', 'b']);
 });
 
-test('업무 탭: 내 순서대로, 조직이 끈 탭은 빼고, 새로 켠 탭은 기본 순서대로 뒤에', () => {
-  const modules = ['customers', 'catalog', 'orders', 'inventory', 'payments', 'analytics'];
-  assert.deepEqual(orderTabs(modules, ['customers', 'orders', 'payments', 'analytics'], [{ id: 'analytics' }, { id: 'orders' }]), ['analytics', 'orders', 'customers', 'payments']);
-  assert.deepEqual(orderTabs(modules, modules, []), modules);
-});
-
 // 이유(9/30 일정 추가): 메뉴 순서를 저장해 둔 사람에게 새 메뉴가 맨 아래로 붙으면 못 찾는다 — 기본 자리(앞 메뉴 바로 뒤)에 들어가야 한다.
 test('메뉴: 저장한 뒤 새로 생긴 메뉴는 기본 순서의 앞 메뉴 바로 뒤에 들어간다, 저장 순서는 그대로', () => {
   const saved = ['home', 'tools', 'business', 'mail', 'approvals', 'shared', 'knowhow'].map((id) => ({ id }));
   assert.deepEqual(readNav(saved, 'me').shown, ['home', 'calendar', 'tools', 'business', 'mail', 'approvals', 'shared', 'knowhow']);
   assert.deepEqual(readNav([{ id: 'tools' }, { id: 'home' }], 'me').shown.slice(0, 3), ['tools', 'home', 'calendar'], '앞 메뉴를 옮겨 뒀으면 그 뒤를 따라간다');
+});
+
+// 이유(유건 9/30 #7): 즐겨찾기는 사람마다 계정에 저장 — 지워지거나(휴지통) 권한이 사라진 항목은 조용히 숨기고, 다음 저장 때 저장값에서도 뺀다.
+test('즐겨찾기: 살아 있는 항목만 저장 순서대로, 모르는 종류·중복은 버린다', () => {
+  const alive = (x) => x.id !== 'gone';
+  const items = [{ kind: 'page', id: 'p1' }, { kind: 'crew', id: 'c1' }, { kind: 'page', id: 'gone' }, { kind: 'page', id: 'p1' }, { kind: 'mail', id: 'm1' }, null, { kind: 'page' }];
+  assert.deepEqual(readFav(items, alive), [{ kind: 'page', id: 'p1' }, { kind: 'crew', id: 'c1' }]);
+  assert.deepEqual(readFav(undefined, alive), []);
+});
+
+test('즐겨찾기 쓰기: 추가는 맨 뒤·중복 없음, 제거, 끌어 옮기기 — 숨겨진 항목은 저장값에서 빠진다', () => {
+  const alive = (x) => x.id !== 'gone';
+  const shown = readFav([{ kind: 'page', id: 'p1' }, { kind: 'page', id: 'gone' }, { kind: 'crew', id: 'c1' }], alive);
+  let next = writeFav(shown, { add: { kind: 'page', id: 'p2' } });
+  assert.deepEqual(next, [{ kind: 'page', id: 'p1' }, { kind: 'crew', id: 'c1' }, { kind: 'page', id: 'p2' }]);
+  assert.deepEqual(writeFav(next, { add: { kind: 'page', id: 'p1' } }), next);
+  next = writeFav(next, { move: ['page:p2', 'page:p1'] });
+  assert.deepEqual(next.map((x) => x.id), ['p2', 'p1', 'c1']);
+  assert.deepEqual(writeFav(next, { remove: 'crew:c1' }).map((x) => x.id), ['p2', 'p1']);
+});
+
+test('즐겨찾기는 FAV_MAX개까지(한 행 16KB 한도) — 넘치면 추가하지 않는다', () => {
+  const full = Array.from({ length: FAV_MAX }, (_, i) => ({ kind: 'page', id: `p${i}` }));
+  assert.equal(writeFav(full, { add: { kind: 'page', id: 'extra' } }).length, FAV_MAX);
+  assert.ok(JSON.stringify({ items: full.map((x) => ({ ...x, id: '00000000-0000-0000-0000-000000000000' })) }).length < 16384);
 });

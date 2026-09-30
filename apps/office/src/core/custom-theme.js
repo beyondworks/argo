@@ -52,12 +52,8 @@ export function buildVars(c, m, base) {
     v['--frame'] = toHex(mix(bg, inkFor([bg]), 0.9));
     v['--secondary'] = toHex(mix(bg, inkFor([bg]), 0.92));
   }
-  if (hex(m.card) || a) {
-    const cv = a ? rgba(card, 1 - a) : toHex(card);
-    for (const k of ['--card', '--t-card-bg', '--t-main-bg', '--t-panel-bg']) v[k] = cv;
-    v['--surface'] = toHex(surface);
-    v['--lift'] = toHex(mix(cardSeen, bg, 0.4));
-  }
+  // 카드 위 표면(--surface·--lift·--field·--float)과 본문 판은 base.css·themes.css가 --card에서 섞어 만든다(유건 9/30 흰색 줄이기) — 여기서는 --card만
+  if (hex(m.card) || a) v['--card'] = a ? rgba(card, 1 - a) : toHex(card);
   const surfaces = [bg, cardSeen, surface];
   if (hex(m.bg) || hex(m.card) || a) {
     const ink = inkFor(surfaces, base.fg);
@@ -107,7 +103,7 @@ function probe(theme) {
   el.dataset.theme = theme; el.classList.remove('dark-emul');
   const d = document.createElement('div'); d.style.cssText = 'position:absolute;visibility:hidden'; document.body.append(d);
   const read = (tok, prop = 'backgroundColor') => { d.style.background = ''; d.style.color = ''; d.style[prop === 'color' ? 'color' : 'background'] = `var(${tok})`; return parse(getComputedStyle(d)[prop]); };
-  const out = { bg: read('--bg'), card: read('--card'), side: read('--side-bg'), surface: read('--surface'), fg: read('--fg', 'color'), sideFg: read('--side-fg', 'color') };
+  const out = { bg: read('--bg'), card: read('--card'), side: read('--side-bg'), surface: read('--float'), /* --surface는 반투명 — 캔버스 위에 보이는 색은 불투명한 --float와 같다 */ fg: read('--fg', 'color'), sideFg: read('--side-fg', 'color') };
   d.remove(); el.dataset.theme = keep.th; el.classList.toggle('dark-emul', keep.emul);
   return out;
 }

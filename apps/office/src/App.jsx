@@ -1,6 +1,6 @@
 // 앱 셸 — 사이드바 · 헤더(경로·저장 상태·페이지 동작) · 내용. 끌어다 놓기는 한 DndContext가 전부 받는다
 // (메일을 사이드바 크루에게, 모듈을 격자 안에서, 페이지를 트리 안에서).
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
 import { DndContext, DragOverlay, MeasuringStrategy, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, pointerWithin, closestCenter } from '@dnd-kit/core';
 import { moduleKeyboardCoordinates } from './core/module-keyboard.js';
 import { Sidebar } from './ui/Sidebar.jsx';
@@ -13,10 +13,10 @@ import { Home } from './pages/Home.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
 import { useSaveStatus, useLegacyRecovery } from './core/save.js';
-import { useStore, reorderPage, createPage, getState, saveNav, saveTabs } from './core/store.js';
-import { moveId } from './core/nav-model.js';
+import { useStore, reorderPage, createPage, getState, saveNav, saveFav } from './core/store.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag } from './core/commands.js';
+import { isFullWidth, onWidth, toggleWidth } from './core/theme.js';
 import { PEOPLE } from './data/sample.js';
 import { SPACES, ME, useSession, canManage } from './core/session.js';
 import { pullLayouts, pullPages, pullBoard } from './core/pull.js';
@@ -62,6 +62,7 @@ function route(path) {
   if (!space) return { redirect: '/me' };
   const rest = path.slice(baseOf(space).length) || '/';
   if (rest === '/') return { space, view: 'home' };
+  if (rest === '/business') return { space, view: 'business', tab: null }; // 탭 없이 오면 업무 화면이 보이는 첫 탭을 고른다(분석을 숨긴 사람)
   if ((m = match('/business/:tab', rest))) return { space, view: 'business', tab: m.tab };
   if ((m = match('/p/:id', rest))) return { space, view: 'page', id: m.id };
   if (space === 'me' && rest === '/mail/connect') return { space, view: 'mailConnect' };             // Google 권한 승인 뒤 돌아오는 자리
@@ -76,6 +77,13 @@ function SaveStatus() {
   return <span className={`save-status ${s}`} role="status" aria-live="polite">{(s === 'offline' || s === 'unsaved') && <span className="dot ask" />}{t(`save.${s}`)}</span>;
 }
 
+/** 가운데 보기 ⇄ 전체 너비(유건 9/30) — 폭 제한이 없는 화면(설정·휴지통·모듈 보관함·메일)에서는 숨긴다 */
+function WidthToggle() {
+  const full = useSyncExternalStore(onWidth, isFullWidth);
+  const label = t(full ? 'width.center' : 'width.full');
+  return <button type="button" className="icon-btn width-toggle" aria-pressed={full} aria-label={label} title={label} onClick={toggleWidth}><Icon name="width" /></button>;
+}
+
 function Header({ r, page }) {
   const mode = useSession();
   const sp = SPACES.find((s) => s.key === r.space);
@@ -88,6 +96,7 @@ function Header({ r, page }) {
       <div className="top-right">
         {mode === 'sample' && <span className="draft-badge">{t('draft.badge')}</span>}
         <SaveStatus />
+        {!['settings', 'trash', 'mail', 'mailConnect'].includes(r.view) && r.tab !== 'library' && <WidthToggle />}
         {r.view === 'page' && page && <>
           {mode === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
           <button type="button" className="btn sm" onClick={() => setUi({ share: page.id })}><Icon name="share" size={14} />{t('page.share')}</button>
@@ -106,7 +115,7 @@ function LegacyRecoveryNotice() {
 
 function DragChip({ data }) {
   if (!data) return null;
-  const icon = { mail: 'mail', page: 'doc', file: 'file', record: 'run', module: 'layout', crew: 'hand', nav: 'grip', navsec: 'grip', biztab: 'grip' }[data.kind] ?? 'doc';
+  const icon = { mail: 'mail', page: 'doc', file: 'file', record: 'run', module: 'layout', crew: 'hand', nav: 'grip', navsec: 'grip', biztab: 'grip', fav: 'star' }[data.kind] ?? 'doc';
   return <div className="drag-chip"><Icon name={icon} size={14} /><span>{data.label || t('page.untitled')}</span></div>;
 }
 
@@ -177,7 +186,8 @@ export default function App() {
     } else if (a.kind === 'page' && o.kind === 'page' && a.id !== o.id) reorderPage(a.id, o.id);
     else if (a.kind === 'crew' && o.kind === 'crew' && a.group === o.group && a.id !== o.id) moveCrew(a.order, a.id, o.id, a.mode).catch(() => showToast(t('crew.saveFail')));
     else if ((a.kind === 'nav' || a.kind === 'navsec') && o.kind === a.kind && a.id !== o.id) { if (saveNav(a.kind === 'nav' ? { move: [a.id, o.id] } : { section: [a.id, o.id] }, a.navKind) === false) showToast(t('nav.saveFail')); }
-    else if (a.kind === 'biztab' && o.kind === 'biztab' && a.id !== o.id) { if (saveTabs(moveId(a.order, a.id, o.id)) === false) showToast(t('nav.saveFail')); }
+    else if (a.kind === 'biztab' && o.kind === 'biztab' && a.id !== o.id) a.move(o.id); // 업무 탭 순서 — 저장·실패 안내는 업무 화면(BusinessPage)이 한다
+    else if (a.kind === 'fav' && o.kind === 'fav' && a.id !== o.id) { if (saveFav({ move: [a.id, o.id] }) === false) showToast(t('nav.saveFail')); } // 즐겨찾기 안 순서(키 'page:id'·'crew:id')
   };
 
   const params = new URLSearchParams(query ?? '');

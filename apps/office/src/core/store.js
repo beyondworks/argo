@@ -6,11 +6,12 @@ import { persist, restore, scopedStorageKey, getStorageScope, setLegacyRecovery 
 import { t } from './i18n.js';
 import { queue } from './sync.js';
 import { between } from './position.js';
-import { SPACES } from './session.js';
-import { writeNav, readNav } from './nav-model.js';
+import { SPACES, ME } from './session.js';
+import { writeNav, readNav, readFav, writeFav } from './nav-model.js';
+import { usable, isMine } from './crew-list.js';
 
 const KEY = 'argo-office-draft-v1';
-const fresh = () => ({ pages: S.PAGES.map((p, i) => ({ ...p, position: p.position ?? String.fromCharCode(97 + Math.floor(i / 10)) + (i % 10 + 1) })), mails: S.MAILS, mailAccounts: [], approvals: S.APPROVALS, decisions: S.DECISIONS, work: S.WORK, crews: S.CREWS, outputs: S.OUTPUTS, journal: S.JOURNAL, docs: [], layouts: {}, trash: [], todosDone: {} });
+const fresh = () => ({ pages: S.PAGES.map((p, i) => ({ ...p, position: p.position ?? String.fromCharCode(97 + Math.floor(i / 10)) + (i % 10 + 1) })), mails: S.MAILS, mailAccounts: [], approvals: S.APPROVALS, decisions: S.DECISIONS, work: S.WORK, crews: S.CREWS, outputs: S.OUTPUTS, journal: S.JOURNAL, docs: [], layouts: {}, trash: [], todosDone: {}, pagesReady: true, crewsReady: true });
 const empty = () => ({ pages: [], mails: [], mailAccounts: [], approvals: [], decisions: [], work: [], crews: [], outputs: [], journal: [], docs: [], layouts: {}, trash: [], todosDone: {} });
 let state = fresh();
 let draftScope = null;
@@ -127,7 +128,14 @@ export function decide(id, result, by) {
 /* ── 배치 ── */
 /** 좌측 메뉴 순서·숨김·칸 순서(사람마다, nav-model.js) — 저장할 수 없는 상태면 false */
 export const saveNav = (op, kind) => saveLayout('nav:me', writeNav(readNav(state.layouts['nav:me']?.items, kind), op));
-export const saveTabs = (order) => saveLayout('biztabs:me', order.map((id) => ({ id })));
+/** 즐겨찾기(fav:me) — 보이는 것만: 휴지통·권한 없는 페이지, 꺼졌거나 내 것이 아닌 에이전트는 숨긴다(오피스 크루 목록과 같은 기준) */
+const favAlive = (s) => (x) => (x.kind === 'page' ? s.pages.some((p) => p.id === x.id && !p.template) : s.crews.some((c) => c.id === x.id && usable(c) && isMine(c, ME.id)));
+export const favOf = (s) => readFav(s.layouts['fav:me']?.items, favAlive(s));
+export const isFav = (kind, id) => favOf(state).some((x) => x.kind === kind && x.id === id);
+// 저장은 목록이 도착한 종류만 정리한다 — 로그인 직후 페이지·에이전트 목록이 오기 전에 저장하면 아직 모르는 항목까지 지워졌다(9/30 통합 검수)
+const favKeep = (s) => readFav(s.layouts['fav:me']?.items, (x) => !(x.kind === 'page' ? s.pagesReady : s.crewsReady) || favAlive(s)(x));
+export const saveFav = (op) => saveLayout('fav:me', writeFav(favKeep(state), op));
+export const toggleFav = (kind, id) => saveFav(isFav(kind, id) ? { remove: `${kind}:${id}` } : { add: { kind, id } });
 export const saveLayout = (key, items) => {
   const current = state.layouts[key];
   if (getStorageScope() !== 'sample' && (!Number.isInteger(current?.version) || current?.conflict)) return false;

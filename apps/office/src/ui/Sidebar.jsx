@@ -1,4 +1,4 @@
-// 사이드바 — 공간 전환기 · 검색 · 메뉴 · 페이지 트리(끌어서 순서 바꾸기) · 크루(끌어다 놓으면 맡기기) · 휴지통·설정.
+// 사이드바 — 공간 전환기 · 검색 · 즐겨찾기 · 메뉴 · 페이지 트리(끌어서 순서 바꾸기) · 크루(끌어다 놓으면 맡기기) · 휴지통·설정.
 import { useMemo, useState } from 'react';
 import { useSortable, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useDroppable, useDndContext } from '@dnd-kit/core';
@@ -8,7 +8,7 @@ import { Face } from './Face.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link, navigate } from '../core/router.jsx';
 import { t, useLang } from '../core/i18n.js';
-import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav } from '../core/store.js';
+import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav, favOf } from '../core/store.js';
 import { readNav } from '../core/nav-model.js';
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
@@ -146,36 +146,26 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
   );
 }
 
-const VIEW_KEY = 'argo-office-crew-view', FOLD_KEY = 'argo-office-crew-fold';
+const FOLD_KEY = 'argo-office-crew-fold';
 
-/** 좌측 크루 목록(유건 9/30): 고정 → 내 크루 → 회사 크루 → 동료 크루(또는 부서별). 쓸 수 없는(꺼진) 크루는 보이지 않는다(유건 9/30 #9 — 예전 '꺼진 내 에이전트' 칸).
- *  고정·순서는 메신저 레일과 같은 저장소, 묶기 기준·접힘·검색은 이 기기에서만(보기 편의). */
+/** 좌측 크루 목록(유건 9/30 #6): 고정 → 내 에이전트 두 묶음(고정한 크루는 내 에이전트에서 빠진다). 쓸 수 없는(꺼진) 크루는 보이지 않는다(#9).
+ *  고정·순서는 메신저 레일과 같은 저장소(계정), 접힘·검색은 이 기기에서만. 주인별·부서별·일하는 중만 필터는 뺐다 */
 function CrewSection({ space, crews, handle }) {
-  const [view, setView] = useState(() => ({ by: 'owner', working: false, ...restore(VIEW_KEY, {}) }));
   const [fold, setFold] = useState(() => restore(FOLD_KEY, {}));
   const [query, setQuery] = useState(null); // null = 검색칸 닫힘
-  const { groups } = useMemo(() => groupCrews(crews, { me: ME.id, by: view.by, query: query ?? '', working: view.working }), [crews, view, query]);
-  const setV = (patch) => setView((v) => { const next = { ...v, ...patch }; persist(VIEW_KEY, next); return next; });
+  const { groups } = useMemo(() => groupCrews(crews, { me: ME.id, query: query ?? '' }), [crews, query]);
   const toggle = (key) => setFold((f) => { const next = { ...f, [key]: !f[key] }; persist(FOLD_KEY, next); return next; });
-  const arrange = (e) => openMenu(e, [
-    { label: t('crew.by.owner'), checked: view.by === 'owner', run: () => setV({ by: 'owner' }) },
-    { label: t('crew.by.dept'), checked: view.by === 'dept', run: () => setV({ by: 'dept' }) },
-    { sep: true },
-    { label: t('crew.working'), checked: view.working, run: () => setV({ working: !view.working }) },
-  ], { anchor: e.currentTarget });
-  const label = (g) => (g.key.startsWith('dept:') ? g.label ?? t('crew.group.noDept') : t(`crew.group.${g.key}`));
   return <>
     <div className="nav-section">
       <span className="sec-handle" {...handle}>{t('nav.crews')}</span>
       <button type="button" className="icon-btn sm" aria-label={t('crew.search')} aria-pressed={query != null} onClick={() => setQuery((q) => (q == null ? '' : null))}><Icon name="search" size={14} /></button>
-      <button type="button" className="icon-btn sm" aria-label={t('crew.arrange')} onClick={arrange}><Icon name="dots" size={14} /></button>
     </div>
     {query != null && <input className="crew-search" autoFocus value={query} placeholder={t('crew.search')} aria-label={t('crew.search')} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setQuery(null); }} />}
     <div className="crews">
       {groups.map((g) => {
-        const mode = g.key === 'pinned' ? 'pin' : 'sort', order = g.crews.map((c) => c.id);
-        return <div key={g.key} className="crew-group" role="group" aria-label={label(g)}>
-          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key]} onClick={() => toggle(g.key)}><Icon name={fold[g.key] ? 'chevron' : 'caret'} size={12} /><span>{label(g)}</span><small>{g.crews.length}</small></button>
+        const mode = g.key === 'pinned' ? 'pin' : 'sort', order = g.crews.map((c) => c.id), label = t(`crew.group.${g.key}`);
+        return <div key={g.key} className="crew-group" role="group" aria-label={label}>
+          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key]} onClick={() => toggle(g.key)}><Icon name={fold[g.key] ? 'chevron' : 'caret'} size={12} /><span>{label}</span><small>{g.crews.length}</small></button>
           {!fold[g.key] && <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
             {g.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}`} order={order} mode={mode} movable={g.movable} />)}
           </SortableContext>}
@@ -184,6 +174,37 @@ function CrewSection({ space, crews, handle }) {
       {!groups.length && <p className="crew-empty">{t('crew.none')}</p>}
     </div>
   </>;
+}
+
+/** 즐겨찾기 한 줄 — 끌어서 순서, 우클릭은 그 페이지·에이전트의 메뉴(맨 위에 '즐겨찾기에서 빼기'가 있다) */
+function FavRow({ fav, space, path }) {
+  const key = `${fav.kind}:${fav.id}`;
+  const page = useStore((s) => (fav.kind === 'page' ? s.pages.find((p) => p.id === fav.id) : null));
+  const crew = useStore((s) => (fav.kind === 'crew' ? s.crews.find((c) => c.id === fav.id) : null));
+  const label = page ? page.title || t('page.untitled') : crew?.name;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `fav:${key}`, data: { kind: 'fav', id: key, group: 'fav', label } });
+  const { onTouchStart, ...mouse } = listeners ?? {}; // 터치는 길게 누르기 = 메뉴
+  const menu = menuProps(() => (page ? pageMenu(page) : crewMenu(crew, space)));
+  const to = page && `${baseOf(page.space)}/p/${page.id}`;
+  const inner = page ? <Icon name={page.restricted ? 'lock' : 'doc'} /> : <Face id={crew.id} size={18} />;
+  return <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={isDragging ? 'dragging' : ''} {...attributes} {...mergeHandlers(mouse, menu)} role="none">
+    {page ? <Link to={to} className={`nav-item${path === to ? ' active' : ''}`} aria-current={path === to ? 'page' : undefined} draggable={false}>{inner}<span className="nav-label">{label}</span></Link>
+      : <button type="button" className="nav-item" onClick={() => setUi({ assign: { space, crew: crew.id, items: [] } })}>{inner}<span className="nav-label">{label}</span></button>}
+  </div>;
+}
+
+/** 좌측 패널 맨 위 즐겨찾기(유건 9/30 #7) — 모든 공간에서 같은 목록(계정에 저장). 비어 있으면 칸을 싣지 않는다 */
+function FavSection({ space, path }) {
+  const layouts = useStore((s) => s.layouts), pages = useStore((s) => s.pages), crews = useStore((s) => s.crews);
+  const favs = useMemo(() => favOf({ layouts, pages, crews }), [layouts, pages, crews]);
+  if (!favs.length) return null;
+  const keys = favs.map((x) => `fav:${x.kind}:${x.id}`);
+  return <div className="side-sec">
+    <div className="nav-section"><span>{t('fav.title')}</span></div>
+    <div className="nav-group"><SortableContext items={keys} strategy={verticalListSortingStrategy}>
+      {favs.map((x) => <FavRow key={`${x.kind}:${x.id}`} fav={x} space={space} path={path} />)}
+    </SortableContext></div>
+  </div>;
 }
 
 export function Sidebar({ space, path }) {
@@ -203,7 +224,7 @@ export function Sidebar({ space, path }) {
   const DEF = {
     home: { to: base, icon: 'home', label: t('nav.home'), active: at(base) },
     calendar: { to: `${base}/calendar`, icon: 'calendar', label: t('nav.calendar'), active: at(`${base}/calendar`) },
-    business: { to: `${base}/business/analytics`, icon: 'chart', label: t('nav.business'), active: path.startsWith(`${base}/business/`) && !path.startsWith(`${base}/business/library`) },
+    business: { to: `${base}/business`, icon: 'chart', label: t('nav.business'), active: (path === `${base}/business` || path.startsWith(`${base}/business/`)) && !path.startsWith(`${base}/business/library`) },
     mail: { to: '/me/mail', icon: 'mail', label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
     work: { to: `${base}/work`, icon: 'run', label: t('nav.work'), active: at(`${base}/work`) },
     approvals: { to: `${base}/approvals`, icon: 'stamp', label: t('nav.approvals'), count: pendingHere, active: at(`${base}/approvals`) },
@@ -239,6 +260,7 @@ export function Sidebar({ space, path }) {
         <button type="button" className="search-btn" onClick={() => setUi({ palette: true })}><Icon name="search" /><span>{t('nav.search')}</span><kbd>{mod}K</kbd></button>
       </div>
       <div className="side-scroll">
+        <FavSection space={space} path={path} />
         <SortableContext items={nav.sections.map((id) => `sec:${id}`)} strategy={verticalListSortingStrategy}>{nav.sections.map((id) => sections[id])}</SortableContext>
       </div>
       <div className="side-dock">{/* 모듈 보관함은 패널 맨 아래, 휴지통 구분선 바로 위(유건 9/29) */}

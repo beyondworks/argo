@@ -149,11 +149,12 @@ export default function Calendar({ space, day }) {
           {data.loading && <span className="dim small" role="status">{t('cal.loading')}</span>}
           {data.error && <span className="cal-err small" role="alert">{t(data.error)}</span>}
           <span className="cal-tools">
-            <Dropdown label={t('views.view')} value={view} options={opts(VIEWS, 'views.v')} onChange={setView} />
             {view === 'kanban' && <Dropdown label={t('views.group')} value={cfg.group} options={opts(V.GROUPS, 'views.g')} onChange={(g) => setCfg({ group: g })} />}
             {board && <Dropdown label={t('views.sort')} value={cfg.sort} options={opts(V.SORTS, 'views.s')} onChange={(x) => setCfg({ sort: x })} />}
             {board && <button type="button" className={`btn sm vw-dd${nf ? ' on' : ''}`} aria-haspopup="menu" onClick={(e) => openMenu(e, filterMenu(cfg, setCfg, { whoKeys, categories, people }), { anchor: e.currentTarget })}
               onKeyDown={(e) => { if (e.key === 'ArrowDown') openMenu(e, filterMenu(cfg, setCfg, { whoKeys, categories, people }), { anchor: e.currentTarget }); }}>{nf ? t('views.filterOn', { n: nf }) : t('views.filter')}<Icon name="caret" size={12} /></button>}
+            {/* '보기'는 '색' 바로 옆 오른쪽 끝에 고정 — 묶기·정렬·필터는 그 왼쪽에 생기고 사라진다(유건 9/30 1번) */}
+            <Dropdown label={t('views.view')} value={view} options={opts(VIEWS, 'views.v')} onChange={setView} />
             <Dropdown label={t('cal.colorBy')} value={colorBy} options={opts(['category', 'person', 'agent'], 'cal.c')} onChange={(k) => { setColorBy(k); setPref('color', k); }} />
             {phone && <button type="button" className="icon-btn" aria-label={t('cal.create')} onClick={() => create()}><Icon name="plus" /></button>}
           </span>
