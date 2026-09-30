@@ -234,9 +234,10 @@ export function makeDb(client) {
     async myOrgIds(uid) {
       return (unwrap(await client.from('msgr_org_members').select('org_id').eq('user_id', uid).is('removed_at', null)) ?? []).map((r) => r.org_id);
     },
-    /** 이 계정이 어느 회사·조직에든 크루 행을 가진 적이 있나(상태 무관) — 자동 켜기의 "이미 파견 중인 계정은 손대지 않는다" 게이트. */
+    /** 이 계정이 어느 회사·조직에든 Argo 크루 행을 가진 적이 있나(상태 무관) — 자동 켜기의 "이미 파견 중인 계정은 손대지 않는다" 게이트.
+        외부 봇(Hermes·OpenClaw, hosting='bot')은 세지 않는다 — 봇을 먼저 연결한 계정의 본체 크루가 영영 안 올라갔다(2026-09-30). */
     async hasAnyCrew(uid) {
-      return ((unwrap(await client.from('msgr_crews').select('id').eq('owner_user_id', uid).limit(1))) ?? []).length > 0;
+      return ((unwrap(await client.from('msgr_crews').select('id').eq('owner_user_id', uid).neq('hosting', 'bot').limit(1))) ?? []).length > 0;
     },
     /** 이 회사(ws)의 내 크루 행 전부(상태 무관) — 미러 diff의 기준. */
     async myCrewRows(uid, wsId) {
