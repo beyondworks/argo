@@ -20,7 +20,37 @@ export const SAMPLE_TASKS = [
   { id: 't-s1', org: null, title: '10월 캠페인 초안 검토', due_on: addDays(today, 1), assignee: 'u-me', created_by: 'u-me', done_at: null },
   { id: 't-s2', org: 'beyondworks', title: '3분기 부가세 자료 보내기', due_on: addDays(today, 6), assignee: 'u-me', created_by: 'u-minji', done_at: null },
   { id: 't-s3', org: 'beyondworks', title: '견적 템플릿 정리', due_on: addDays(today, 2), assignee: 'u-jun', created_by: 'u-me', done_at: null },
+  { id: 't-s4', org: null, title: '영수증 정리', due_on: null, assignee: 'u-me', created_by: 'u-me', done_at: null },
+  { id: 't-s5', org: 'lean-studio', title: '촬영 콘티 확인', due_on: addDays(today, 4), assignee: 'u-me', created_by: 'u-sora', done_at: null },
+  { id: 't-s6', org: null, title: '지난주 회의록 올리기', due_on: addDays(today, -2), assignee: 'u-me', created_by: 'u-me', done_at: null },
 ];
+/** 할 일 쓰기(예시 모드) — 서버 office_task_write와 같은 권한·거절 이유로 화면 메모리의 SAMPLE_TASKS만 바꾼다 */
+export function sampleTaskWrite(space, action, d) {
+  const role = SPACES.find((s) => s.key === space)?.role, admin = space !== 'me' && (role === 'owner' || role === 'admin');
+  const org = space === 'me' ? null : space;
+  if (action === 'task.create') {
+    const assignee = d.assignee ?? ME.id;
+    if (!d.title?.trim()) fail('task_input');
+    if (assignee !== ME.id && !admin) fail('task_forbidden');
+    const row = { id: d.id, org, title: d.title.trim(), due_on: d.due_on || null, assignee, created_by: ME.id, done_at: null, created_at: new Date().toISOString() };
+    SAMPLE_TASKS.push(row);
+    return row;
+  }
+  const t = SAMPLE_TASKS.find((x) => x.id === d.id && x.org === org);
+  if (!t) fail('task_not_found');
+  const ok = admin || (['task.done', 'task.reopen'].includes(action) && t.assignee === ME.id) || (['task.title', 'task.due', 'task.cancel'].includes(action) && t.created_by === ME.id && t.assignee === ME.id);
+  if (!ok) fail('task_forbidden');
+  if (t.cancelled_at) fail('task_cancelled');
+  if (action === 'task.done') t.done_at ??= new Date().toISOString();
+  else if (action === 'task.reopen') t.done_at = null;
+  else if (t.done_at) fail('task_done');
+  else if (action === 'task.due') t.due_on = d.due_on || null;
+  else if (action === 'task.title') t.title = d.title.trim();
+  else if (action === 'task.assign') { if (!admin) fail('task_forbidden'); t.assignee = d.assignee; }
+  else if (action === 'task.cancel') t.cancelled_at = new Date().toISOString();
+  else fail('task_input');
+  return t;
+}
 let demo = null;
 function sampleRows() {
   if (demo) return demo;

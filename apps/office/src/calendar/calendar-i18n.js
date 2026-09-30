@@ -1,15 +1,15 @@
-// 일정 화면 사전 — 달력 화면·홈 '다가오는 일정' 모듈과 함께 지연 로드된다(첫 화면 150KB 상한). 메뉴 이름(nav.calendar)·모듈 제목(mod.calendar)만 core/i18n.js에 있다.
+// 일정 화면 사전 — 달력 화면·홈 '다가오는 일정' 모듈(여러 보기)과 함께 지연 로드된다(첫 화면 150KB 상한). 메뉴 이름(nav.calendar)·모듈 제목(mod.calendar)만 core/i18n.js에 있다.
 export const CAL_DICT = {
   'cal.rail': ['캘린더 목록', 'Calendars panel'], 'cal.create': ['만들기', 'Create'], 'cal.today': ['오늘', 'Today'], 'cal.prev': ['이전', 'Previous'], 'cal.next': ['다음', 'Next'],
   'cal.prevMonth': ['이전 달', 'Previous month'], 'cal.nextMonth': ['다음 달', 'Next month'], 'cal.loading': ['불러오는 중…', 'Loading…'],
-  'cal.view': ['보기', 'View'], 'cal.v.day': ['일', 'Day'], 'cal.v.week': ['주', 'Week'], 'cal.v.month': ['월', 'Month'], 'cal.v.list': ['목록', 'List'], 'cal.v.customers': ['거래처', 'Customers'],
+  'cal.view': ['보기', 'View'],
   'cal.colorBy': ['색', 'Color'], 'cal.c.category': ['분류', 'Category'], 'cal.c.person': ['사람', 'Person'], 'cal.c.agent': ['에이전트', 'Agent'],
   'cal.calendars': ['캘린더', 'Calendars'], 'cal.overlays': ['함께 보기', 'Also show'], 'cal.cal.me': ['내 일정', 'My calendar'], 'cal.cal.org': ['조직 일정', 'Team calendar'], 'cal.cal.mine': ['내 일정(주인·참석)', 'Mine (owner or attending)'],
   'cal.tasks': ['할 일 기한', 'To-do due dates'], 'cal.holidays': ['공휴일', 'Holidays'],
   'cal.allDay': ['종일', 'All day'], 'cal.more': ['+{n}개 더', '+{n} more'], 'cal.nItems': ['{n}건', '{n} items'],
   'cal.taskDue': ['할 일 기한: {title}', 'To-do due: {title}'], 'cal.taskRow': ['할 일 기한 — 눌러서 할 일 보기', 'To-do due date — open the to-do'], 'cal.due': ['기한', 'Due'],
-  'cal.listEmpty': ['이 기간에 일정이 없습니다', 'Nothing scheduled in this period'], 'cal.dayEmpty': ['이날 일정이 없습니다', 'Nothing on this day'],
-  'cal.custTitle': ['거래처 일정', 'Client events'], 'cal.custEmpty': ['거래처를 연결한 일정이 없습니다. 일정을 열어 거래처를 고르면 여기에 모입니다.', 'No events linked to a customer yet. Pick a customer on an event to see it here.'], 'cal.custUnknown': ['거래처', 'Customer'],
+  'cal.dayEmpty': ['이날 일정이 없습니다', 'Nothing on this day'],
+  'cal.custUnknown': ['거래처', 'Customer'],
   'cal.quick': ['새 일정', 'New event'], 'cal.new': ['새 일정', 'New event'], 'cal.edit': ['일정 수정', 'Edit event'], 'cal.view.title': ['일정', 'Event'],
   'cal.details': ['자세히', 'More options'], 'cal.save': ['저장', 'Save'], 'cal.cancel': ['취소', 'Cancel'], 'cal.close': ['닫기', 'Close'], 'cal.delete': ['삭제', 'Delete'],
   'cal.saved': ['일정을 저장했습니다', 'Event saved'], 'cal.deleted': ['일정을 삭제했습니다', 'Event deleted'],
@@ -35,7 +35,6 @@ export const CAL_DICT = {
   'holi.현충일': ['현충일', 'Memorial Day'], 'holi.제헌절': ['제헌절', 'Constitution Day'], 'holi.광복절': ['광복절', 'Liberation Day'], 'holi.국군의날': ['국군의날', 'Armed Forces Day'],
   'holi.추석': ['추석', 'Chuseok'], 'holi.추석 연휴': ['추석 연휴', 'Chuseok holiday'], 'holi.개천절': ['개천절', 'National Foundation Day'], 'holi.한글날': ['한글날', 'Hangul Day'],
   'holi.크리스마스 이브': ['크리스마스 이브', 'Christmas Eve'], 'holi.크리스마스': ['크리스마스', 'Christmas'], 'holi.섣달 그믐날': ['섣달 그믐날', 'New Year’s Eve'],
-  'cal.upcomingEmpty': ['7일 안에 잡힌 일정이 없습니다', 'Nothing in the next 7 days'],
 };
 
 const SUB = '쉬는 날 ';

@@ -22,13 +22,21 @@ export async function rpc(fn, args) { // 성과 기록(core/perf.js)도 같은 �
   return data;
 }
 
-export async function loadTasks(space) {
+// 같은 공간을 여러 곳(현황·할 일·일정 카드)이 동시에 열어도 읽기는 한 번 — 30초 안에 받은 것은 다시 받지 않는다. 쓰기 뒤에는 again으로 새로 읽는다
+const busy = new Map();
+export function loadTasks(space, again) {
+  if (!again && (busy.has(space) || Date.now() - (state[space]?.at ?? 0) < 30e3)) return busy.get(space);
+  const p = fetchTasks(space).finally(() => { if (busy.get(space) === p) busy.delete(space); });
+  busy.set(space, p);
+  return p;
+}
+async function fetchTasks(space) {
   const org = orgOf(space);
   if (org === undefined) return;
   set(space, { loading: true, error: null });
   try {
     const [rows, people] = await Promise.all([rpc('office_task_list', { p_org: org }), org ? rpc('office_org_people', { p_org: org }) : []]);
-    set(space, { rows: rows ?? [], people: people ?? [], loading: false });
+    set(space, { rows: rows ?? [], people: people ?? [], loading: false, at: Date.now() });
   } catch (e) { set(space, { loading: false, error: taskError(e) }); }
 }
 
@@ -38,7 +46,7 @@ export async function taskAction(space, action, data, patch) {
   if (patch && before) set(space, { rows: before.map((r) => (r.id === data.id ? { ...r, ...patch } : r)) });
   try { await rpc('office_task_write', { p_org: orgOf(space), p_action: action, p_data: data }); }
   catch (e) { if (before) set(space, { rows: before }); throw new Error(taskError(e)); }
-  await loadTasks(space);
+  await loadTasks(space, true);
 }
 
 export function useTasks(space) {
