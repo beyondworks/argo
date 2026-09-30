@@ -182,8 +182,8 @@ export default function App() {
   const views = {
     business: <Suspense fallback={<div className="boot" aria-busy="true" />}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} />}</Suspense>,
     home: <Home space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
-    work: <Work space={r.space} openId={params.get('open')} />, approvals: <Approvals space={r.space} openId={params.get('open')} />, decisions: <Decisions space={r.space} openId={params.get('open')} />,
-    outputs: <Outputs space={r.space} openId={params.get('open')} />, journal: <Journal space={r.space} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
+    work: <Work space={r.space} openId={params.get('open')} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
+    outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
   return (
     <DndContext sensors={sensors} collisionDetection={collision} measuring={{ droppable: { strategy: dragging?.kind === 'module' ? MeasuringStrategy.Always : MeasuringStrategy.WhileDragging } }} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>

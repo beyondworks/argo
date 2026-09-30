@@ -286,6 +286,43 @@ body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-sel
 .journal-entry p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .journal-more { margin-top: 4px; }
 .table tr.row-link { cursor: pointer; }
+.journal-entry > p { flex: 1; min-width: 0; }
+.journal-entry .rec-when { padding-top: 2px; }
+.fold-rows .journal-entry { margin-bottom: 0; }
+
+/* ── 폴더 보기(유건 9/30) — 산출물·일지·결정·결재 공통. 왼쪽 테두리 막대 금지: 고른 폴더는 배경 채움 + 굵게 ── */
+.fold { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 28px; align-items: start; }
+.fold-nav { position: sticky; top: 12px; display: grid; gap: 2px; }
+.fold-item { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; height: 34px; padding: 0 10px; border-radius: var(--rc); color: var(--fg-2); text-align: left; }
+.fold-item.on { background: var(--secondary); color: var(--fg); font-weight: 650; }
+.fold-item.on .fold-n { color: var(--fg-2); }
+.fold-item .face, .fold-ico { flex: none; }
+.fold-ico { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--bg); color: var(--fg-2); }
+.fold-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fold-n { flex: none; color: var(--fg-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.fold-main { min-width: 0; }
+.fold-kinds { margin-bottom: 16px; }
+.fold-none { padding: 24px 0; }
+.fold-sec { margin-bottom: 22px; }
+.fold-h { font-size: 12px; font-weight: 600; color: var(--fg-2); margin: 0 0 6px 2px; }
+.fold-h .dim { font-weight: 500; }
+.fold-rows { display: grid; gap: 4px; }
+.rec-row { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 44px; padding: 8px 14px; border-radius: var(--rs); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); text-align: left; color: inherit; cursor: pointer; }
+.rec-row.on { background: var(--secondary); }
+.rec-row.ghost { opacity: 0.4; }
+.rec-row .face, .rec-row .badge, .rec-row > .icon, .rec-row > svg { flex: none; }
+.rec-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rec-who { flex: none; max-width: 30%; overflow: hidden; color: var(--fg-2); font-size: 12.5px; }
+.rec-when { flex: none; color: var(--fg-3); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (hover: hover) { .fold-item:not(.on):hover { background: var(--primary-soft); color: var(--fg); } .rec-row:not(.on):hover { background: var(--lift); } }
+@media (max-width: 767px) {
+  .fold { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .fold-nav { position: static; display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px; padding: 0 16px 2px; scrollbar-width: none; }
+  .fold-nav::-webkit-scrollbar { display: none; }
+  .fold-item { flex: none; width: auto; max-width: 180px; height: 34px; border-radius: var(--r-pill, 999px); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); }
+  .fold-item.on { background: var(--secondary); box-shadow: none; }
+  .rec-who { display: none; }
+}
 .fact { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; font-size: 13px; }
 .file-img { display: block; max-width: 100%; height: auto; border-radius: var(--rs); }
 .file-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: var(--bg); padding: 12px; border-radius: var(--rs); max-height: 70vh; overflow: auto; }
