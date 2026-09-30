@@ -27,7 +27,8 @@ test('아이콘만 남아도 탭 이름은 title·aria-label로 남고, 아이�
 });
 
 test('폰 셸은 건드리지 않는다 — 규칙은 모두 데스크톱 셸 한정', () => {
-  const lines = css.split('\n').filter((l) => l.includes('> .msgr-top'));
+  // 폰 규칙(.msgr-phone로 시작)은 폰 머리를 일부러 바꾸는 자리라 대상이 아니다 — 앱 느낌 통일(2026-09-29)의 떠 있는 머리
+  const lines = css.split('\n').filter((l) => l.includes('> .msgr-top') && !/^\s*\.msgr-phone[\s.:]/.test(l));
   assert.ok(lines.length >= 3);
   for (const l of lines) assert.ok(!/(^|[\s,{])\.msgr-main > \.msgr-top/.test(l.replaceAll(TOP, '')), l.slice(0, 80));
 });

@@ -13,7 +13,7 @@ import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../auth.mjs';
 import { getFreshDeviceSession } from '../../../../src/devicesession.mjs'; // 설치본 결제 표면 — 서비스키 없이 RLS로
-import { trialEnd, reconcileUnneeded } from '../../../../src/entitlement.mjs';
+import { reconcileUnneeded } from '../../../../src/entitlement.mjs';
 import { lsGateOpts } from '../../../../src/lsbilling.mjs';
 import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsreconcile.mjs';
 
@@ -28,12 +28,32 @@ import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsrec
 //   'unavailable'     — 조회 실패(예외·수단 없음). **계정은 있을 수 있다** → 기기값으로 메우지 말고
 //                       화면이 "못 불러왔다"고 말해야 한다(무음 소실 금지).
 // reconciling = 이번 요청이 대사를 띄웠는가(비블록 — 클라가 잠시 후 재조회할 신호, F7).
-const pick = (data, trialEndsAt = null, reconciling = false) => Response.json({
-  billing: { plan: data?.plan ?? null, status: data?.ls_status ?? null, hasSub: !!data?.ls_subscription_id, endsAt: data?.ends_at ?? null, trialEndsAt },
+// extras.trialEndsAt·purgeAfter는 서버 RPC my_plan()에서 온다(2026-09-29) — 체험 마감일을 여기서
+// created_at+14일로 다시 계산하지 않는다. T(마이그레이션 20260929110000) 이전 가입자만 남은 체험이
+// 있고, 그 판정은 my_plan()만 안다(R1·R3). purgeAfter는 클라우드 사본 삭제 예정일 안내(R4)의 원천.
+const pick = (data, extras = {}, reconciling = false) => Response.json({
+  billing: {
+    plan: data?.plan ?? null, status: data?.ls_status ?? null, hasSub: !!data?.ls_subscription_id,
+    endsAt: data?.ends_at ?? null, trialEndsAt: extras.trialEndsAt ?? null, purgeAfter: extras.purgeAfter ?? null,
+  },
   reconciling,
 });
 
 const cols = 'plan, ls_status, ls_subscription_id, ls_customer_id, ends_at, ls_reconciled_at, ls_reconcile_empty_at';
+
+/** my_plan() RPC 호출 — trialEndsAt·purgeAfter의 단일 원천(서버 판정, R3). 실패해도 billing 전체를
+    깨지 않는다 — 체험 배지·삭제 예정 안내만 생략(배너 없음이지 화면 고장 아님). uid를 주면 서비스 롤
+    경로(auth.uid() 없음)로 그 사용자를 명시 조회, 생략하면 사용자 스코프(JWT의 auth.uid() 그대로). */
+async function planExtras(sb, uid) {
+  try {
+    const { data, error } = uid ? await sb.rpc('my_plan', { p_uid: uid }) : await sb.rpc('my_plan');
+    if (error) throw new Error(error.message);
+    return { trialEndsAt: data?.trialEndsAt ?? null, purgeAfter: data?.purgeAfter ?? null };
+  } catch (e) {
+    console.warn('[argo] my_plan 조회 실패 — 체험·삭제예정 안내 생략:', e?.message ?? e);
+    return { trialEndsAt: null, purgeAfter: null };
+  }
+}
 
 /** 유실 대사 백그라운드 발사 — pro가 아닌데 결제가 있을 수 있는 상황에서만. 쿨다운은 DB 공유
     (선점은 reconcileEntitlement 안의 원자 claim, 여기의 reconcileDueFromRow는 이미 읽은 행으로
@@ -93,7 +113,8 @@ export async function GET() {
         if (error) throw new Error(error.message);
         // 쿠키 경로 이메일은 검증된 JWT에서 온 값 — 신뢰 가능
         const fired = scheduleReconcileIfLost({ url, serviceKey, user: { id: user.id, email: user.email ?? '' }, cur: data, emailTrusted: true });
-        return pick(data, trialEnd(user.created_at, data?.plan), fired);
+        const extras = await planExtras(sb); // sb는 쿠키 JWT 스코프 — auth.uid()가 이미 이 사용자
+        return pick(data, extras, fired);
       }
     }
     // ② 기기 연동 세션 폴백 — 쿠키 세션이 없는 데스크톱. currentUser()가 기기 파일에서 검증한 id.
@@ -119,21 +140,14 @@ export async function GET() {
     const q = sb.from('entitlements').select(cols);
     const { data, error } = await (userClient ? q.maybeSingle() : q.eq('user_id', user.id).maybeSingle());
     if (error) throw new Error(error.message);
-    // 체험 D-day 배지(#164)의 created_at은 기기 세션 파일에 없어 서버에서 얻는다 — 실패해도 배지만 생략.
-    // 사용자 스코프(설치본)는 GoTrue /user가 자기 created_at을 준다 — 서비스키 불요. 서비스 롤
-    // 경로(워커 등)만 admin 조회. 대사는 비블록(F7). 기기 세션 파일 이메일은 신뢰 금지(F3) →
-    // emailTrusted:false로 넘겨 대사 모듈이 서버 검증본을 직접 조회하게 한다.
-    let created = null;
-    try {
-      if (userClient) {
-        created = (await userClient.auth.getUser())?.data?.user?.created_at ?? null;
-      } else {
-        const r = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(5000) });
-        if (r.ok) created = (await r.json())?.created_at ?? null;
-      }
-    } catch { /* 배지 생략 */ }
+    // 체험 D-day·삭제예정 안내(#164, R4)의 원천은 my_plan() RPC — 실패해도 배지만 생략.
+    // 사용자 스코프(userClient)는 자기 JWT의 auth.uid()로 self 조회, 서비스 롤 경로만 uid를 명시
+    // (auth.uid() 없음 — my_plan()이 authenticated가 아니면 명시된 p_uid를 그대로 쓴다). 대사는
+    // 비블록(F7). 기기 세션 파일 이메일은 신뢰 금지(F3) → emailTrusted:false로 대사 모듈이 서버
+    // 검증본을 직접 조회하게 한다.
+    const extras = await planExtras(sb, userClient ? undefined : user.id);
     const fired = scheduleReconcileIfLost({ url, serviceKey, user, cur: data, emailTrusted: false });
-    return pick(data, trialEnd(created, data?.plan), fired);
+    return pick(data, extras, fired);
   } catch (e) {
     console.error('[argo] me/billing 조회 실패:', e?.message ?? e);
     return Response.json({ billing: null, reason: 'unavailable' }); // 조회 실패로 설정 화면을 깨지 않는다 — 배너만 사라진다

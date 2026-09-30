@@ -55,6 +55,8 @@ export async function sweepOrphanTurns({ now = Date.now(), retryMs = 130_000 } =
             ? 'The server restarted while this turn was running, so it was interrupted. Please resend.'
             : '이 지시를 실행하던 중 서버가 재시작되어 중단됐습니다. 다시 보내 주세요.';
           touched = true; marked += 1;
+          // 이 턴에 끼워 넣은 줄(thread.mjs addSteer)도 같이 — 안 하면 대기 표시가 영영 남아 재전송 버튼도 없고 맥락에서도 빠진다
+          for (const x of cur.messages) if (x.steerOf === m.turnId && x.awaiting) { delete x.awaiting; x.failed = m.failed; }
         }
         if (touched) await writeJsonAtomic(p, cur);
       }).catch(() => {}); // 스위퍼는 베스트에포트 — 한 스레드 실패가 부팅·다른 스레드를 막지 않는다

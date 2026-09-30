@@ -80,7 +80,7 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope }) {
+export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -94,6 +94,15 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
     if (at >= 0) {
       const m = t.messages[at];
       delete m.awaiting;
+      // 이 턴에 끼워 넣은 사장 메시지(addSteer) — 같은 결과로 마무리하고, 답은 그 뒤에 넣는다(질문들 → 답 순서)
+      let end = at;
+      t.messages.forEach((x, i) => {
+        if (x.steerOf !== turnId) return;
+        end = Math.max(end, i); delete x.awaiting;
+        if (failed) Object.assign(x, { failed, ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) });
+        // 턴은 답했지만 이 줄을 실은 이어진 실행이 실패했다(chat.mjs steerFailed) — 이 줄만 실패(재전송 가능). 엔진 글은 첨부 안내가 뒤에 붙어 앞부분으로 맞춘다
+        else if (steerFailed?.texts?.some((t) => String(t).startsWith(x.text))) x.failed = steerFailed.reason || 'failed';
+      });
       if (scope) m.contextScope = scope;
       if (attachments?.length) m.attachments = attachments;
       if (actor) m.actor = actor; // 팀 메신저: 사람 발화자 {uid,name} — who:'user'만으로는 누가 말했는지 구분 불가(MESSENGER-DESIGN.md)
@@ -102,7 +111,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       if (failedOrigin) m.failedOrigin = failedOrigin; // vendor/argo/probe — 출처 판정(유건 기준)
       if (aborted) m.aborted = true;
       if (cancellationIncomplete) m.cancellationIncomplete = true;
-      if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
+      if (!failed) t.messages.splice(end + 1, 0, { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
       await keepSession(t, sessionId, scope);
       await writeJsonAtomic(file(wsId, slug), t);
       return t;
@@ -124,6 +133,29 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
     await keepSession(t, sessionId, scope);
     await writeJsonAtomic(file(wsId, slug), t);
     return t;
+  });
+}
+
+/** 진행 중인 사장 턴에 끼워 넣은 메시지를 저장한다 — 새로고침해도 남게(beginTurn과 같은 이유). 답을 기다리는 사장 턴이
+    없으면(이미 끝남) null — 호출부는 끼워 넣지 않고 대기열에 남긴다. 반환: { steerId(되돌리기용), turnId(실행 표지 — chat/steer가 정확히 그 턴을 고른다) }. */
+export async function addSteer(wsId, slug, { text, attachments } = {}) {
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    const turn = t.messages.findLast((m) => m.who === 'user' && m.awaiting && m.turnId && !m.via && !m.steerOf);
+    if (!turn) return null;
+    const steerId = `s${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    t.messages.push({ who: 'user', text, ts: Date.now(), steerOf: turn.turnId, steerId, awaiting: true, ...(attachments?.length ? { attachments } : {}) });
+    await writeJsonAtomic(file(wsId, slug), t);
+    return { steerId, turnId: turn.turnId };
+  });
+}
+
+/** 전달에 실패한 끼워 넣기를 되돌린다(대기열로 돌아간다). */
+export async function removeSteer(wsId, slug, steerId) {
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    const next = t.messages.filter((m) => m.steerId !== steerId);
+    if (next.length !== t.messages.length) { t.messages = next; await writeJsonAtomic(file(wsId, slug), t); }
   });
 }
 

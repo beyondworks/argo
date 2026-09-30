@@ -87,7 +87,7 @@ export function mapTurnError(errParams) {
 /** app-server 1턴 세션(스트림 지향) — 프로세스와 분리해 가짜 스트림으로 행동 테스트가 가능한 이음매.
     input/output = 서버의 stdin(쓰기)/stdout(읽기) 스트림. judge = makeApprovalJudge 산출.
     반환: { reply }. 실패는 throw(mapTurnError·timedOut). (export: 테스트 이음매) */
-export function runAppServerSession({ input, output, prompt, model = '', effort = '', cwd, timeoutMs, judge, signal = null }) {
+export function runAppServerSession({ input, output, prompt, model = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null }) {
   return new Promise((resolveP, rejectP) => {
     let nextId = 1;
     const pending = new Map();
@@ -95,7 +95,8 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
     let lastAgentText = '';
     let fatal = null; // willRetry:false error 알림 — turn/completed(failed)보다 원문이 정확하다
     const items = new Map(); // itemId → item (fileChange 경로 추적)
-    const finish = (fn, v) => { if (done) return; done = true; clearTimeout(timer); fn(v); };
+    const ended = []; // 턴이 끝나면 풀리는 대기(끼워 넣기 응답을 턴 끝까지만 기다린다)
+    const finish = (fn, v) => { if (done) return; done = true; clearTimeout(timer); onSteerable?.(null); for (const r of ended.splice(0)) r(false); fn(v); };
     const write = (obj) => { try { input.write(JSON.stringify(obj) + '\n'); } catch { /* 스트림 사망 — 아래 close가 정리 */ } };
     const send = (method, params) => new Promise((res, rej) => {
       const id = nextId++;
@@ -180,14 +181,22 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
       const threadId = th?.thread?.id;
       if (!threadId) throw new Error('thread/start가 스레드 id를 주지 않았습니다');
       const eff = codexEffortValue(effort, model);
-      await send('turn/start', { threadId, input: [{ type: 'text', text: prompt }], ...(eff ? { effort: eff } : {}) });
+      const started = await send('turn/start', { threadId, input: [{ type: 'text', text: prompt }], ...(eff ? { effort: eff } : {}) });
+      // 끼워 넣기 — 진행 중 턴에 사장 메시지를 더한다(turn/steer, 0.157.1 스키마: expectedTurnId 필수). 거절되거나 응답 전에 턴이 끝나면
+      // false — 호출부(chat.mjs)가 받아 두었다가 이 실행 뒤 이어 실행한다. 시간 제한으로 끊지 않는다: 늦게 받아들여진 것을 false로 치면 두 번 전달된다(검수 5).
+      const turnId = started?.turn?.id;
+      if (turnId && onSteerable && !done) onSteerable(async (text) => {
+        if (done) return false;
+        const sent = send('turn/steer', { threadId, expectedTurnId: turnId, input: [{ type: 'text', text }] }).then(() => true, () => false);
+        return Promise.race([sent, new Promise((r) => ended.push(r))]);
+      });
     })().catch((e) => finish(rejectP, e));
   });
 }
 
 /** app-server 엔진 1턴 — externalExec의 codex 분기와 같은 인자 계약(홈 격리·auth 반입/회수·MCP 주입
     전부 동일 경로 재사용), 실행 방식만 exec→app-server. ARGO_CODEX_ENGINE=appserver일 때만 탄다. */
-export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko' }) {
+export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko', onSteerable = null }) {
   const dir = await mkdtemp(join(tmpdir(), 'argo-codex-as-'));
   let auth = null, child = null, ownership = null;
   let ownershipUnverified = false;
@@ -226,7 +235,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
-        prompt, model, effort, cwd, timeoutMs, signal,
+        prompt, model, effort, cwd, timeoutMs, signal, onSteerable,
         judge: makeApprovalJudge(cwd, { workRoots, lang }),
       }),
       childFail,

@@ -123,7 +123,7 @@ test('배선: chat.mjs — 402 안내는 success/else 쌍 밖 + costUsd 미기�
   // 3R F1: chat은 엄격판이어야 한다 — 느슨판을 배선하면 402 인용 답변의 일지가 무증상 누락된다
   assert.match(src, /runner === 'openrouter' && isOpenRouterCreditReply\(reply\)/, '402 안내 배선(엄격판)');
   assert.doesNotMatch(src, /isOpenRouterCreditError/, 'chat에 느슨판 유입 금지 — 임계 분리(3R F1)');
-  assert.match(src, /costUsd: runner === 'openrouter' \? null : msg\.total_cost_usd/, '설계 §4 — SDK 금액은 Anthropic 단가라 openrouter에선 오액(미기록)');
+  assert.match(src, /costUsd: runner === 'openrouter' \? null : costDelta/, '설계 §4 — SDK 금액은 Anthropic 단가라 openrouter에선 오액(미기록). costDelta = 이 result의 몫(끼워 넣기로 result가 여러 번일 때 누적값 이중 기록 방지)');
   assert.match(src, /creditTurn \? null : await journalWrite\(reply, meta\.name \|\| agentSlug\)/, '402 턴은 일지 기록 제외 — 오류 원문이 기억으로 정제되지 않게(2R N3). journalWrite = saveHandover 단일 경유(msgr-bridge.test 구간 불변식)');
 });
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { haptic } from './haptics.js';
 
 // 터치에서 메시지 액션을 여는 길게 누르기 — 마우스는 hover·focus가 이미 연다.
 // 스크롤과 구분해야 하므로 손가락이 이 거리를 넘어 움직이면 취소한다.
@@ -13,7 +14,7 @@ export function longPressHandlers(state, onLongPress, ms = 450) {
       if (e.pointerType === 'mouse') return;
       clear();
       state.x = e.clientX; state.y = e.clientY;
-      state.timer = setTimeout(() => { state.timer = null; onLongPress(); }, ms);
+      state.timer = setTimeout(() => { state.timer = null; haptic('medium'); onLongPress(); }, ms); // 길게 누르기·끌어 집기 = 중간 진동
     },
     onPointerMove: (e) => { if (state.timer && Math.hypot(e.clientX - state.x, e.clientY - state.y) > MOVE_TOLERANCE) clear(); },
     onPointerUp: clear,

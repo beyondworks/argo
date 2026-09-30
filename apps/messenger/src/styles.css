@@ -339,6 +339,7 @@
 
 /* 크루 시트 — 본문 우측에 떠오르는 카드(척추 모티프와 같은 6/20 반경). 소유자만 허용 범위 편집 */
 .msgr-avbtn, .msgr-namebtn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.msgr-row > .msgr-avbtn { align-self: start; line-height: 0; } /* grid 기본 stretch로 버튼이 메시지 높이만큼 늘어 아바타 아래 회색 척추선을 눌러도 에이전트 카드가 떴다 — 아바타 크기만 누를 수 있게(유건 2026-09-29) */
 @media (hover: hover) { .msgr-namebtn:hover { text-decoration: underline; text-underline-offset: 3px; } } .msgr-namebtn:active { text-decoration: underline; text-underline-offset: 3px; }
 .msgr-sheetwrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
 .msgr-sheetwrap > * { pointer-events: auto; }
@@ -547,6 +548,8 @@
 .msgr-top .members .n { margin-left: 8px; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; }
 @media (max-width: 720px), (pointer: coarse) and (max-height: 600px) { .msgr-top .members .n { display: none; } .msgr-top .members .msgr-av:nth-child(n+5) { display: none; } } /* 폰 폭: 제목 옆 공간이 좁다 — 아바타 4개만 */
 .msgr-rows { display: grid; gap: 4px; }
+/* 열 크기를 안 정한 grid는 줄바꿈 안 되는 가장 긴 내용(긴 채널 이름·버튼 묶음)이 열 폭을 화면 밖까지 늘린다(유건 제보 2026-09-29: 기억·에이전트와 서버) — 열을 컨테이너 폭에 묶는다 */
+:is(.msgr-rows, .msgr-actlist, .msgr-memlist, .msgr-memlist .folder, .msgr-inbox) { grid-template-columns: minmax(0, 1fr); }
 .msgr-rows .msgr-klabel { margin-top: 6px; }
 .msgr-rows .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; border-radius: 10px; min-width: 0; } /* overflow hidden 금지 — 행의 '…' 메뉴(absolute)가 잘려 안 보이던 결함(유건 제보 2026-09-09). 폭 안전은 .name 상한 + .sub 말줄임 + 시트 overflow-x hidden이 맡는다 */ /* min-width 0 + overflow — 긴 부제(크루 역할·소유자·파견)가 행을 늘려 시트가 창 밖으로 밀리던 결함(유건 실측 2026-09-07, 1100px 창) */
 @media (hover: hover) { .msgr-rows .row:hover { background: var(--card-2); } } .msgr-rows .row:active { background: var(--card-2); }
@@ -790,7 +793,7 @@
 .msgr-memlist .memitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--fg); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
 @media (hover: hover) { .msgr-memlist .memitem:hover { background: var(--card-2); } } .msgr-memlist .memitem:active { background: var(--card-2); }
 .msgr-memlist .memitem .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.msgr-memlist .memitem .meta { color: var(--fg-3); font-size: 11.5px; white-space: nowrap; }
+.msgr-memlist .memitem .meta { min-width: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; color: var(--fg-3); font-size: 11.5px; white-space: nowrap; }
 .msgr-memnew { display: grid; gap: 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 12px; }
 .msgr-memnew .row { display: flex; align-items: center; gap: 10px; }
 .msgr-memdoc header { display: grid; gap: 6px; margin-bottom: 12px; }
@@ -1126,7 +1129,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-auth .msgr-field { width: 100%; min-width: 0; }
   .msgr-auth .msgr-field input { width: 0; max-width: 100%; }
   .msgr-auth .msgr-wait, .msgr-auth .msgr-server .row { flex-wrap: wrap; }
-  .argo-messenger :is(.btn, .msgr-titlebtn, .msgr-menu, .msgr-rail-close, .msgr-hchip, .msgr-sortbtn, .msgr-tools .tb, .msgr-tools .send, .msgr-side .msgr-list .item, .msgr-side .msgr-railrow .more, .msgr-side .msgr-foot .me, .msgr-seg button, .msgr-setnav button, .msgr-acts button, .msgr-reacts button, .msgr-pop button, .msgr-emojipop .grid button, .msgr-rowmenu button, .msgr-menu-pop button, .msgr-file) { min-width: 44px; min-height: 44px; height: auto; }
+  .argo-messenger :is(.btn, .msgr-titlebtn, .msgr-menu, .msgr-rail-close, .msgr-hchip, .msgr-sortbtn, .msgr-tools .tb, .msgr-tools .send, .msgr-side .msgr-list .item, .msgr-side .msgr-railrow .more, .msgr-side .msgr-foot .me, .msgr-seg button, .msgr-setnav button, .msgr-acts button, .msgr-pop button, .msgr-emojipop .grid button, .msgr-rowmenu button, .msgr-menu-pop button, .msgr-file) { min-width: 44px; min-height: 44px; height: auto; }
   .filechip { max-width: 100%; overflow-wrap: anywhere; }
   .filechip button { min-width: 44px; min-height: 44px; }
 }
@@ -1151,7 +1154,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
     /* 셸은 사이드바의 어두운 토큰 스코프 '밖' — 여기서 읽은 값이 루트(본문) 팔레트. 홈 본문에서 다시 선언해 흰 본문으로(테마 하드코딩 없음) */
     --ph-bg: var(--bg); --ph-card: var(--card); --ph-card2: var(--card-2);
     --ph-fg: var(--fg); --ph-fg2: var(--fg-2); --ph-fg3: var(--fg-3);
-    --ph-border: var(--border); --ph-border-soft: var(--border-soft); }
+    --ph-border: var(--border); --ph-border-soft: var(--border-soft);
+    --ph-secondary: var(--secondary); --ph-primary: var(--primary); --ph-primary-strong: var(--primary-strong); --ph-primary-fg: var(--primary-fg); --ph-primary-soft: var(--primary-soft);
+    --ph-ok: var(--ok); --ph-danger: var(--danger); --ph-warn: var(--warn); --ph-info: var(--info); }
   .msgr-phone .msgr-main { padding-bottom: calc(var(--ph-tab) + 12px + max(16px, calc(env(safe-area-inset-bottom) - 18px))); } /* 컴포저 알약 바닥 y786(중심 760), 아일랜드 위 12 */ /* 컴포저 바닥 ↔ 아일랜드 위 8px(슬랙) */
   .msgr-phone .msgr-main .msgr-dock { padding: 0; margin: 0; border: 0; background: transparent; box-shadow: none; }
   .msgr-phone .msgr-main .msgr-dock { position: relative; }
@@ -1229,6 +1234,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard .qlabel { font-size: 13px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard h3 { font-size: 12.5px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard .row { gap: 8px; }
+  .msgr-phone .msgr-botrow .row { justify-content: flex-end; row-gap: 0; }
+  .msgr-phone .msgr-botrow .row .main { flex: 1 1 100%; } /* 폰 폭에선 이름·상태가 한 줄을 다 쓰고 이름 바꾸기·토큰·삭제는 아래 줄 오른쪽 — 한 줄에 몰면 이름이 '월터 - v'로 잘렸다(유건 2026-09-29) */
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard summary { min-height: 32px; font-size: 13px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-klabel { font-size: 11.5px; }
   /* ── 시트(에이전트 상세·채널 상세) — 폰 ── */
@@ -1370,7 +1377,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-actsheet .quick button:active, .msgr-actsheet .tiles button:active { transform: scale(.95); }
   /* 뒤로 스와이프 중: 홈이 밑에 깔리고 현재 화면이 그 위에서 밀린다(iOS 내비게이션). 놓으면 홈이 이미 보이므로 튀어 들어오지 않는다 */
   .msgr-phone.phone-home.swiping-back .msgr-side { position: absolute; inset: 0; z-index: 0; width: 100%; min-height: 0; animation: none; transform: translateX(calc((var(--swipe-p, 0) - 1) * 28%)); } /* 밑 화면은 iOS처럼 뒤에서 따라 들어온다(-28% → 0) */
-  .msgr-phone.phone-home.swiping-back.settling .msgr-side { transition: transform var(--swipe-ms, 200ms) cubic-bezier(.2,.8,.2,1); }
   .msgr-phone.phone-home.swiping-back .msgr-side, .msgr-phone.phone-home.swiping-back .msgr-main { will-change: transform; } /* 두 층 모두 합성 레이어 — 드래그 중 재래스터 없이 이동 */
   .msgr-phone.phone-home.swiping-back .msgr-side::after { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, calc((1 - var(--swipe-p, 0)) * .18)); pointer-events: none; } /* 밑 화면 어둡기 — 당겨 올수록 밝아진다 */
   .msgr-phone.phone-home.swiping-back .msgr-main { display: flex; position: relative; z-index: 1; background: var(--bg); box-shadow: -10px 0 28px rgba(0, 0, 0, .22); }
@@ -1424,17 +1430,13 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 탭 페이지 판정 = '대화로 돌아가기' 알약이 있는 머리(쪽지·기억·검색·설정 전부 해당). 뒤로가기·알약은 아일랜드와 중복이라 숨김 */
   .msgr-phone .msgr-top:has(.msgr-backchat) .msgr-menu, .msgr-phone .msgr-backchat { display: none; }
   .msgr-phone .msgr-top .msgr-readall { grid-column: 3; height: 30px; min-height: 30px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; }
-  :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) .msgr-readall { background: rgba(230, 226, 216, 0.1); border-color: rgba(230, 226, 216, 0.16); color: #e6e2d8; } /* 어두운 머리띠 위 단추 — 옆 .side 스코프와 같은 값 */
   .msgr-phone .msgr-top .msgr-readall:disabled { opacity: .45; }
   .msgr-phone .msgr-top:has(.msgr-backchat) { padding-left: var(--ph-pad); }
   /* 탭 페이지 제목은 슬랙처럼 왼쪽 끝에서 시작 — 숨긴 뒤로가기 자리(44px 열)를 없앤다 */
   .msgr-phone .msgr-top:has(.msgr-backchat) { grid-template-columns: 0 minmax(0, 1fr) auto auto; column-gap: 0; }
   .msgr-phone .msgr-top:has(.msgr-backchat) .title { padding-left: 0; gap: 12px; font-size: 18px; font-weight: 700; }
-  /* 홈·DM의 어두운 머리띠와 같은 룩(높이·글자·색). 색은 globals의 :root[data-theme='linen'] .side 와 같은 값 — 그 스코프가 레일에만 걸려 여기서 되풀이한다 */
+  /* 머리 높이 — 홈·DM 머리와 같다. 색·재질은 맨 아래 '앱 느낌 통일' 절 */
   .msgr-phone .msgr-top:has(.msgr-backchat) { min-height: calc(env(safe-area-inset-top) + 54px); align-items: center; padding: env(safe-area-inset-top) var(--ph-pad) 10px; }
-  :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) { background: #1f1e1b; color: #e6e2d8; border-bottom-color: rgba(230, 226, 216, 0.12); }
-  :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) .title { color: #e6e2d8; }
-  :root[data-theme='linen'] .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) .title .mi { color: #a8a297; }
   /* DM 탭 = 홈 레일에서 1:1 구역만(슬랙 DM 페이지 대응) */
   .msgr-phone.phone-dm .msgr-sec:not([data-sec='dms']):not([data-sec='dmpin']) { display: none; }
   .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] > summary.msgr-group::after { display: none; }
@@ -1445,12 +1447,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* DM 탭(슬랙식, 유건 2026-09-15): 상단 필터 분절 + 두 줄 행(이름·시각 / 마지막 글 한 줄) */
   .msgr-phone.phone-dm .msgr-dmfilter { order: -1; width: auto; margin: 6px var(--ph-pad) 2px; overflow: visible; } /* 폰 전역 .msgr-seg order:9(맨 아래) 되돌림 — 필터는 목록 위 */
   .msgr-phone.phone-dm .msgr-dmfilter button { flex: 1 1 0; min-width: 0; justify-content: center; height: 32px; padding: 0 6px; font-size: 12.5px; white-space: nowrap; }
-  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .item { height: auto; min-height: 68px; padding: 10px 10px; gap: 12px; }
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .item { height: auto; min-height: 68px; padding: 10px calc(var(--ph-pad) - 2px); gap: 12px; } /* 행이 목록 안쪽 2px에서 시작 — 아바타·시간이 다른 페이지와 같은 좌우 선(x=--ph-pad)에 온다(유건 2026-09-29) */
   .msgr-phone.phone-dm .msgr-side .item .msgr-av { width: 44px; height: 44px; font-size: 16px; } /* .msgr-side까지 써야 홈 탭 24px 규칙(.phone-home — DM 탭에도 붙는다)을 이긴다(2026-09-29 실측 24px) */
   .msgr-phone.phone-dm .msgr-side .item .msgr-av.crew:not(.face) { border-radius: 12px; }
   .msgr-phone.phone-dm .msgr-side .item .msgr-av.crew .star { width: 16px; height: 16px; right: -5px; top: -5px; border-width: 2px; }
   .msgr-phone.phone-dm .msgr-side .item .msgr-av.crew .star svg { width: 8px; height: 8px; }
-  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .msgr-railrow .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .msgr-railrow .item { padding-right: 10px; } /* 점 세 개 자리 회수 */
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] .msgr-railrow .item, .msgr-phone.phone-dm .msgr-sec[data-sec='dmpin'] .msgr-railrow .item { padding-right: calc(var(--ph-pad) - 2px); } /* 점 세 개 자리 회수 */
   .msgr-phone.phone-dm .item .dmtext { display: grid; gap: 2px; flex: 1; min-width: 0; text-align: left; }
   .msgr-phone.phone-dm .item .dmline { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .msgr-phone.phone-dm .item .dmline .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
@@ -1535,7 +1537,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 알림함 — 상자가 겹겹이 무거웠다(2026-09-29 점검). 슬랙 활동·카카오 알림처럼 구분선 있는 행, 새 항목은 바탕 옅은 강조 */
   .msgr-phone .msgr-inbox { gap: 0; }
   .msgr-phone .msgr-inboxrow { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 14px 4px; }
-  .msgr-phone .msgr-inboxrow.new { background: color-mix(in srgb, var(--mark) 9%, transparent); border-bottom-color: var(--border); margin: 0 calc(-1 * var(--ph-pad)); padding-inline: calc(var(--ph-pad) + 4px); }
+  .msgr-phone .msgr-inboxrow.new { width: auto; background: color-mix(in srgb, var(--mark) 9%, transparent); border-bottom-color: var(--border); margin: 0 calc(-1 * var(--ph-pad)); padding-inline: calc(var(--ph-pad) + 4px); }
   .msgr-phone .msgr-inboxrow > .msgr-av { width: 36px; height: 36px; font-size: 14px; }
   .msgr-phone .msgr-inbox :is(.msgr-seg, .msgr-inboxcounts, .msgr-inboxtoggle, .empty) { margin-bottom: 8px; }
 
@@ -1568,7 +1570,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-actlist .head .btn { min-height: 30px; height: 30px; margin-left: 0; padding: 0 10px; font-size: 12.5px; }
   .msgr-phone .msgr-actlist .head .btn:first-of-type { margin-left: auto; }
   /* 페이지(설정·검색 등)도 같은 좌우 여백 — 알림함·기억은 위에서 이미 var(--ph-pad) */
-  .msgr-phone .msgr-main .msgr-thread.page { padding: 12px var(--ph-pad) 24px; }
+  .msgr-phone .msgr-main .msgr-thread.page { padding: 12px var(--ph-pad) 24px; scrollbar-gutter: auto; } /* stable은 오른쪽만 8px을 더 비워 좌우 여백이 달랐다(알림함 20/28, 유건 제보 2026-09-29) */
   .msgr-phone .msgr-main .msgr-thread.page .msgr-inbox, .msgr-phone .msgr-main .msgr-thread.page .msgr-settings { padding-left: 0; padding-right: 0; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-settings { padding-top: 12px; } /* 알림함과 같은 머리 아래 간격(12+12) */
   .msgr-phone .msgr-actlist .item { font-size: 14px; }
@@ -1682,11 +1684,11 @@ html { -webkit-tap-highlight-color: transparent; }
   /* 상대 말풍선은 내용 폭 — '좋아요 👍' 한 줄도 화면 폭 전체로 늘어났다(내 말풍선·상용 메신저는 내용 폭) */
   .msgr-phone .msgr-row > div > .msgr-sheet { width: fit-content; max-width: 100%; }
   /* 직접 배치 끌기 — 들어 올린 행은 흐림 대신 그림자·살짝 확대로 손가락을 따라오고, 놓을 자리엔 금색 선 */
-  .msgr-phone .msgr-railrow[data-lift], .msgr-phone .msgr-railrow.dragging[data-lift] { position: relative; z-index: 6; opacity: 1; background: var(--card); border-radius: 14px; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); scale: 1.02; transition: scale 140ms ease-out, box-shadow 140ms ease-out; }
-  .msgr-phone .msgr-railrow[data-drop] { position: relative; }
-  .msgr-phone .msgr-railrow[data-drop]::before { content: ''; position: absolute; left: 14px; right: 14px; height: 3px; border-radius: 3px; background: var(--mark); pointer-events: none; }
-  .msgr-phone .msgr-railrow[data-drop='before']::before { top: -2px; }
-  .msgr-phone .msgr-railrow[data-drop='after']::before { bottom: -2px; }
+  .msgr-phone [data-drag-id][data-lift], .msgr-phone [data-drag-id].dragging[data-lift] { position: relative; z-index: 6; opacity: 1; background: var(--card); border-radius: 14px; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); scale: 1.02; transition: scale 140ms ease-out, box-shadow 140ms ease-out; }
+  .msgr-phone [data-drag-id][data-drop] { position: relative; }
+  .msgr-phone [data-drag-id][data-drop]::before { content: ''; position: absolute; left: 14px; right: 14px; height: 3px; border-radius: 3px; background: var(--mark); pointer-events: none; }
+  .msgr-phone [data-drag-id][data-drop='before']::before { top: -2px; }
+  .msgr-phone [data-drag-id][data-drop='after']::before { bottom: -2px; }
   /* 참여 구성 시트 머리 — 폭이 좁아 제목이 두 줄, 인원 수가 '에이전트 / 12'로 쪼개졌다. 제목·수는 왼쪽 두 줄, 초대 버튼은 오른쪽 */
   .msgr-crewsheet .sec-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; align-items: center; }
   .msgr-crewsheet .sec-head h3 { grid-column: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1695,7 +1697,8 @@ html { -webkit-tap-highlight-color: transparent; }
   /* 채팅 탭 머리 — 새 채팅은 오른쪽 아래 + 버튼이 맡으니 머리의 +는 뺀다. 정렬 아이콘의 오른쪽 끝을 행의 시각 오른쪽 끝(12px 안쪽)에 맞춘다(유건 2026-09-29) */
   .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group .right > .btn { display: none; }
   .msgr-phone.phone-dm .msgr-dmsort .msgr-sortbtn { display: inline-flex; justify-content: flex-end; align-items: center; padding: 0; }
-  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group { padding-right: 12px; } /* 행의 시각 오른쪽 끝(화면 끝에서 12px)과 같은 선 */
+  .msgr-phone.phone-dm .msgr-sec[data-sec='dms'] > summary.msgr-group { padding-right: var(--ph-pad); } /* 행의 시각 오른쪽 끝(화면 끝에서 --ph-pad)과 같은 선 */
+  .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) { column-gap: 0; } /* 같은 명시도의 뒤쪽 간격 8px이 빈 첫 열 뒤에 붙어 페이지 제목이 x=28로 밀렸다 — 홈 머리·본문과 같은 x=--ph-pad(유건 2026-09-29) */
   /* 멘션 후보창 — 기준이 화면 폭 전체 입력 영역이라 입력창(좌우 --ph-pad 안쪽)보다 넓게 펼쳐졌다(유건 2026-09-29). 입력창 폭에 맞춘다 */
   .msgr-phone .msgr-dock .msgr-pop { left: var(--ph-pad); right: var(--ph-pad); width: auto; }
   /* 업무 창·설정 — 주변 글(12~13px)보다 입력칸(16px)·버튼(44px)만 한 단계 커 보였다(유건 2026-09-29). 입력 확대는 뷰포트 maximum-scale=1이 막는다(09-14부터) */
@@ -1720,4 +1723,83 @@ html { -webkit-tap-highlight-color: transparent; }
   /* 알림함 칩 줄 — 오른쪽 칩이 잘려 보였다. 가로로 밀리는 줄임을 가장자리 흐림으로 알린다 */
   .msgr-phone .msgr-inbox .msgr-seg { overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
   .msgr-phone .msgr-inbox .msgr-seg::-webkit-scrollbar { display: none; }
+
+  /* ═══ 앱 느낌 통일(유건 승인 초안 2026-09-29) — 모든 폰 페이지의 머리 = 같은 밝은 반투명 재질, 내용이 그 아래로 지나간다.
+     흐림 반경은 고정이고 스크롤에 따라 바뀌는 것은 겹의 불투명도(--hp)뿐이다(흐림 반경을 매 프레임 바꾸면 끊긴다). ═══ */
+  .msgr-phone { --ph-top-h: calc(env(safe-area-inset-top) + 54px); }
+  /* 홈·DM 레일도 본문 팔레트 — 리넨의 어두운 사이드바 스코프(:root[data-theme='linen'] .side, 명시도 0,3,0)를 폰에서 되돌린다(검은 띠 제거) */
+  :root .msgr-shell.msgr-phone .msgr-side { --bg: var(--ph-bg); --card: var(--ph-card); --card-2: var(--ph-card2); --fg: var(--ph-fg); --fg-2: var(--ph-fg2); --fg-3: var(--ph-fg3); --border: var(--ph-border); --border-soft: var(--ph-border-soft);
+    --secondary: var(--ph-secondary); --primary: var(--ph-primary); --primary-strong: var(--ph-primary-strong); --primary-fg: var(--ph-primary-fg); --primary-soft: var(--ph-primary-soft);
+    --ok: var(--ph-ok); --danger: var(--ph-danger); --warn: var(--ph-warn); --info: var(--ph-info); background: var(--ph-bg); color: var(--ph-fg); }
+  /* 재질 — 머리 뒤 겹(흐림+반투명)과 아래 옅은 그림자. 굵은 선 대신 그림자(경계는 겹칠 때만) */
+  .msgr-phone :is(.msgr-side .msgr-orgwrap, .msgr-main > .msgr-top) { background: transparent; border-bottom: 0; isolation: isolate; }
+  .msgr-phone :is(.msgr-side .msgr-orgwrap, .msgr-main > .msgr-top)::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: var(--hp, 1);
+    background: color-mix(in srgb, var(--ph-bg) 74%, transparent); -webkit-backdrop-filter: saturate(1.8) blur(20px); backdrop-filter: saturate(1.8) blur(20px); }
+  .msgr-phone :is(.msgr-side .msgr-orgwrap, .msgr-main > .msgr-top)::after { content: ''; position: absolute; left: 0; right: 0; bottom: -10px; height: 10px; pointer-events: none; opacity: var(--hp, 1);
+    background: linear-gradient(color-mix(in srgb, var(--ph-fg) 7%, transparent), transparent); }
+  /* 머리를 내용 위에 띄우고 내용은 머리 높이만큼 아래에서 시작 — 스크롤하면 머리 아래로 지나간다 */
+  .msgr-phone.phone-home .msgr-side { position: relative; }
+  .msgr-phone.phone-home .msgr-side .msgr-orgwrap { position: absolute; top: 0; left: 0; right: 0; z-index: 3; height: var(--ph-top-h); padding: env(safe-area-inset-top) calc(var(--ph-pad) + 104px) 0; justify-content: center; }
+  .msgr-phone.phone-home .msgr-side .msgr-foot { top: calc(env(safe-area-inset-top) + 5px); z-index: 4; }
+  .msgr-phone.phone-home .msgr-side .msgr-orgwrap > .msgr-org { display: none; } /* 조직 전환은 큰 제목이 맡는다 */
+  .msgr-phone.phone-home .msgr-railbody { padding-top: var(--ph-top-h); scroll-padding-top: var(--ph-top-h); }
+  .msgr-phone .msgr-main > .msgr-top { position: absolute; top: 0; left: 0; right: 0; z-index: 25; }
+  .msgr-phone .msgr-main > .msgr-top ~ .msgr-thread { padding-top: calc(var(--msgr-top-h, var(--ph-top-h)) + 12px); scroll-padding-top: calc(var(--msgr-top-h, var(--ph-top-h)) + 12px); }
+  .msgr-phone .msgr-main > .msgr-top ~ .msgr-actsplit { padding-top: var(--ph-top-h); }
+  .msgr-phone .msgr-main > .msgr-top ~ .msgr-actsplit :is(.msgr-acttree, .msgr-treescrim) { top: var(--ph-top-h); } /* 기억 서랍은 머리 아래에서 — 머리가 겹친 뒤 inset 0이면 첫 줄이 상태 표시줄 밑에 깔렸다(유건 실기기 2026-09-29) */
+  /* 작은 제목 — 가운데. 큰 제목 페이지(홈·채팅·알림함)는 접힐 때만 드러난다 */
+  .msgr-phone .msgr-side .msgr-smalltitle { min-width: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); opacity: var(--hp, 1); }
+  .msgr-phone .msgr-top:has(.msgr-backchat) { grid-template-columns: 88px minmax(0, 1fr) 88px; column-gap: 0; padding-inline: var(--ph-pad); }
+  .msgr-phone .msgr-top:has(.msgr-backchat) .title { grid-column: 2; justify-content: center; min-width: 0; font-size: 17px; }
+  .msgr-phone .msgr-top:has(.msgr-backchat) .title > svg { display: none; }
+  .msgr-phone .msgr-top:has(.msgr-backchat) .msgr-readall { grid-column: 3; justify-self: end; }
+  .msgr-phone.phone-bt .msgr-main > .msgr-top .title { opacity: var(--hp, 1); }
+  /* 들어가는 페이지(설정·검색) — 왼쪽 뒤로 단추 + 가운데 제목. 탭 페이지(알림함·기억)는 뒤로 단추 없음 */
+  .msgr-phone:not(.phone-root) .msgr-main .msgr-top:has(.msgr-backchat) .msgr-menu { display: grid; place-items: center; grid-column: 1; justify-self: start; }
+  /* 큰 제목 */
+  .msgr-phone .msgr-bigtitle { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; padding: 6px var(--ph-pad) 8px; border: 0; background: none; font: inherit; font-size: 32px; font-weight: 800; letter-spacing: -.03em; line-height: 1.2; color: var(--fg); text-align: left; }
+  .msgr-phone button.msgr-bigtitle .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .msgr-phone button.msgr-bigtitle .caret { flex: none; color: var(--fg-3); }
+  .msgr-phone .msgr-bigtitle .msgr-badge { flex: none; margin: 0; font-size: 12px; } /* 이름 바로 옆(전역 margin-left:auto가 오른쪽 끝으로 밀었다) */
+  .msgr-phone.phone-dm .msgr-railinner > .msgr-bigtitle { order: -2; } /* 필터(order:-1)보다 위 */
+  .msgr-phone button.msgr-bigtitle:active { opacity: .6; }
+  .msgr-phone .msgr-inbox > .msgr-bigtitle { padding-inline: 0; }
+  /* 뒤로 스와이프 중 탭바도 밑 화면과 함께 들어오고, 올라온 화면이 그 위를 덮는다(초안 승인) */
+  .msgr-phone.swiping-back .msgr-tabbar { z-index: 0; transform: translate3d(calc((var(--swipe-p, 0) - 1) * 28vw), 0, 0); will-change: transform; }
+  /* 튕김 — 스크롤 끝에서는 목록만 늘어나고 문서 전체(머리·탭바)는 제자리 */
+  html:has(.msgr-shell.msgr-phone), body:has(.msgr-shell.msgr-phone) { overscroll-behavior: none; }
+  /* 목록 줄 밀기(유건 승인 2026-09-29) — 버튼 칸은 줄 뒤에 깔려 민 만큼(--sw px)만 드러난다. 오른쪽 = 즐겨찾기, 왼쪽 = 알림·읽음 */
+  .msgr-phone .msgr-railrow[data-swipe-id] > .item { position: relative; z-index: 1; }
+  .msgr-phone .msgr-railrow[data-swipe] > .item { background: var(--bg); will-change: transform; }
+  .msgr-phone .msgr-swipeacts { position: absolute; inset: 0; z-index: 0; display: flex; visibility: hidden; pointer-events: none; }
+  .msgr-phone .msgr-railrow[data-swipe] .msgr-swipeacts { visibility: visible; pointer-events: auto; }
+  .msgr-phone .msgr-swipeacts .lead { display: flex; width: max(0px, calc(var(--sw, 0) * 1px)); overflow: hidden; }
+  .msgr-phone .msgr-swipeacts .trail { display: flex; width: max(0px, calc(var(--sw, 0) * -1px)); overflow: hidden; margin-left: auto; }
+  .msgr-phone .msgr-railrow[data-side='lead'] .msgr-swipeacts .trail, .msgr-phone .msgr-railrow[data-side='trail'] .msgr-swipeacts .lead { display: none; }
+  .msgr-phone .msgr-swipeacts button { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0 6px; border: 0; border-radius: 0; font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; }
+  .msgr-phone .msgr-swipeacts .fav { align-items: flex-end; padding-right: 22px; background: var(--mark); color: var(--mark-fg); } /* 아이콘이 줄 가장자리를 따라온다 */
+  .msgr-phone .msgr-swipeacts .mute { background: var(--fg-3); color: var(--bg); }
+  .msgr-phone .msgr-swipeacts .read { background: var(--primary); color: var(--primary-fg); }
+  .msgr-phone .msgr-railrow[data-full] .msgr-swipeacts .read { display: none; } /* 끝까지 밀면 첫 동작(알림 끄기)이 칸 전체 */
+  .msgr-phone .msgr-railrow[data-full][data-side='trail'] .msgr-swipeacts .mute { align-items: flex-start; padding-left: 22px; }
+  /* 반응 칩은 알약(유건 2026-09-29) — 44px 최소 크기에 걸려 원처럼 커졌던 것을 되돌리고, 누르는 범위만 위아래 8px 투명하게 넓힌다. 내가 누른 반응은 테두리 색으로 */
+  .msgr-phone .msgr-reacts { gap: 6px; }
+  .msgr-phone .msgr-reacts button { position: relative; height: 28px; padding: 0 10px; font-size: 13px; border-width: .5px; } /* 레티나 머리카락 선(유건 2026-09-29 "테두리 더 얇게") */
+  .msgr-phone .msgr-reacts button::before { content: ''; position: absolute; inset: -8px -2px; }
+  .msgr-phone .msgr-reacts button.on { box-shadow: none; } /* 바탕은 다른 칩과 같은 카드 색 — --primary-soft(검정 7%)는 베이지 위에서 탁했다(유건 2026-09-29). 내 반응은 테두리 색으로만 구분 */
+  .msgr-phone .msgr-swipeacts .mute svg { --bg: var(--fg-3); } /* 알림 끄기 사선의 테두리(스프라이트의 stroke=var(--bg))를 단추 색으로 — 글자색(var(--bg))과 같아 사선이 4px 굵기로 보였다(유건 실기기 2026-09-29). <use> 안쪽은 선택자가 안 닿아 변수로 넘긴다 */
+  .msgr-phone .msgr-railrow[data-compact] .msgr-swipeacts svg { width: 15px; height: 15px; } /* 홈의 낮은 줄 — 칸도 좁게(row-swipe.js rowWidths) */
+  .msgr-phone .msgr-railrow[data-compact] .msgr-swipeacts .fav { padding-right: 16px; }
+  .msgr-phone .msgr-railrow[data-compact][data-full][data-side='trail'] .msgr-swipeacts .mute { padding-left: 16px; }
+  .msgr-phone .msgr-sortwrap .msgr-rowmenu[data-up] { top: auto; bottom: calc(100% + 4px); } /* 아래 공간이 탭 바·새 대화 단추에 가리면 위로 연다(유건 실기기 2026-09-29) */
+  /* 밀어서 답장 — 말풍선이 왼쪽으로 밀리며 오른쪽에서 답장 화살표가 드러난다(--rp 0→1) */
+  .msgr-phone :is([data-swipe-reply], [data-swiped]) { animation: none; }
+  .msgr-phone [data-swipe-reply] { will-change: transform; animation: none; } /* 등장 애니메이션(msgrRise … both)이 끝난 뒤에도 transform:none을 쥐고 있어 인라인 이동이 안 보였다(2026-09-29 실측) */
+  .msgr-phone [data-swipe-reply]::after { content: ''; position: absolute; top: 50%; right: -42px; width: 24px; height: 24px; margin-top: -12px; pointer-events: none;
+    background: var(--fg-2); opacity: var(--rp, 0); transform: scale(calc(.6 + var(--rp, 0) * .4));
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 14L4 9l5-5'/%3E%3Cpath d='M4 9h10.5a5.5 5.5 0 0 1 0 11H11'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 14L4 9l5-5'/%3E%3Cpath d='M4 9h10.5a5.5 5.5 0 0 1 0 11H11'/%3E%3C/svg%3E") center / contain no-repeat; }
+  @media (prefers-reduced-transparency: reduce) {
+    .msgr-phone :is(.msgr-side .msgr-orgwrap, .msgr-main > .msgr-top)::before { background: var(--ph-bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  }
 }

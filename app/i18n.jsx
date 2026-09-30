@@ -245,6 +245,8 @@ const DICT = {
   'updates.note.effort': ['모델별 추론 강도를 선택하고 저장할 수 있습니다. 다른 모델로 바꾸면 지원하지 않는 강도는 해제됩니다.', 'Choose and save reasoning effort for each model. Switching models clears unsupported effort settings.'],
   'updates.note.background': ['Mac에서 MCP와 크루 보조 프로세스의 Dock 아이콘 억제 적용 범위를 넓혔습니다.', 'Expanded Dock icon suppression for MCP and crew helper processes on Mac.'],
   'updates.note.workflow': ['작업 전 확인할 사항과 결과의 검증 범위를 구분하도록 크루 실행 지침을 정리했습니다.', 'Crew instructions now distinguish open decisions before work from what was actually verified afterward.'],
+  'updates.note.steer': ['크루가 답하는 중에 보낸 메시지를 대기열에서 "바로 보내기"로 답을 멈추지 않고 끼워 넣을 수 있습니다.', 'While a crew is replying, use "Send now" on a queued message to add it to the running turn without stopping the reply.'],
+  'updates.note.firstSend': ['대화를 열자마자 보낸 메시지가 답하는 동안 화면에서 사라지던 문제를 수정했습니다.', 'Fixed messages sent right after opening a chat disappearing from the thread while the crew replied.'],
   'topbar.monthCost': ['이번 달 사용액', 'This month'],
   'topbar.monthSubUse': ['이번 달 사용량 — 구독 연결이라 추가 청구가 없습니다', 'This month — on your subscription, no extra charge'],
   'topbar.monthTurns': ['{n}턴', '{n} turns'],
@@ -322,8 +324,7 @@ const DICT = {
   'split.noCrew': ['옆에 열 다른 크루가 없습니다', 'No other crew to open beside'],
   'split.docMissing': ['문서를 찾을 수 없습니다', 'Document not found'],
   'nav.feedback': ['피드백', 'Feedback'],
-  'feedback.beta': ['베타', 'Beta'],
-  'feedback.title': ['베타 피드백', 'Beta feedback'],
+  'feedback.title': ['피드백', 'Feedback'],
   'feedback.desc': ['불편했던 점·바라는 점 무엇이든 적어주세요. 그대로 전달됩니다.', 'Tell us what felt off or what you wish it did — anything helps.'],
   // 이슈 미러링이 켜진 배포에서만 뜬다 — 공개 저장소에 올라간다는 사실을 안 알리면
   // 사용자는 키·경로를 그대로 적는다(분리 검수 2026-08-03 H1).
@@ -640,6 +641,8 @@ const DICT = {
   'settings.sync.off': ['꺼짐', 'Off'],
   // offHelp 교정(2026-08-29 2차): 자격 3종은 Argo 클라우드로 올라가지 않는다(호스티드=구조적 강제, 셀프호스트=선택). 모드 무관 참.
   'settings.sync.offHelp': ['클라우드 키가 설정되면 자동으로 켜집니다. 회사 폴더가 클라우드에 복제돼 어느 컴퓨터에서 열어도 같은 회사가 이어집니다. 단 자격 증명(러너 로그인·봇 토큰·MCP 키)은 Argo 클라우드로 올라가지 않고 각 기기에만 저장됩니다(셀프호스트는 설정에서 선택).', 'Turns on automatically once cloud keys are configured. Your company folder replicates to the cloud so the same company continues on any computer. Credentials (runner logins, bot tokens, MCP keys), however, never go to Argo cloud — they stay on each device (self-hosting is a choice in settings).'],
+  // free 플랜 동기화 배지(2026-09-29 R3) — "가동 중/꺼짐" 대신 이 사실을 고정 표시. 여러 기기 동기화는 Pro뿐.
+  'settings.sync.freeNote': ['이 기기에만 저장됩니다 · 여러 기기 동기화는 Pro', 'Stored on this device only · multi-device sync is Pro'],
   'settings.sync.credToggle': ['자격 증명 동기화', 'Credential sync'],
   'settings.sync.credOn': ['포함됨', 'Included'],
   'settings.sync.credOff': ['제외됨', 'Excluded'],
@@ -707,6 +710,8 @@ const DICT = {
   'billing.trialEnding': ['무료 체험이 곧 끝납니다. 클라우드 동기화·멀티기기를 계속 쓰려면 Pro로 업그레이드하세요 — 결제하지 않아도 로컬 사용은 그대로이고, 클라우드 데이터도 사라지지 않고 보존됩니다.', "Your free trial ends soon. Upgrade to Pro to keep cloud sync and multi-device — even if you don't, local use continues and your cloud data is safely preserved."],
   'billing.cancelledUntil': ['해지 예약됨 — {date}까지 이용 가능', 'Cancellation scheduled — available until {date}'],
   'billing.cloudPaused': ['구독이 종료돼 클라우드 동기화가 잠자는 중입니다 — 로컬 사용은 그대로이고, 데이터는 안전하게 보존됩니다. 재구독하면 그 자리에서 이어집니다.', 'Your subscription ended, so cloud sync is asleep — local use is unaffected and your data is safely preserved. Resubscribe and it resumes right where it left off.'],
+  // 클라우드 사본 삭제 예정(R4, 2026-09-29) — Pro가 아닌 계정의 클라우드 사본은 30일 보관 후 삭제(운영 스크립트, 이번엔 자동 실행 아님).
+  'billing.purgeNotice': ['Pro가 아니어서 클라우드 사본은 {date}에 삭제됩니다 — 업그레이드하면 삭제되지 않습니다.', "You're not on Pro, so this cloud copy will be deleted on {date} — upgrade to keep it."],
   'settings.conn.token': ['봇 토큰', 'Bot Token'],
   'settings.conn.tokenSaved': ['저장됨', 'saved'],
   'settings.conn.tokenPlaceholder': ['변경할 때만 입력', 'Enter only to change'],
@@ -1172,19 +1177,16 @@ const DICT = {
   'chat.queue.label': ['대기 중 {n}건', '{n} queued'],
   'chat.queue.add': ['대기열에 넣기', 'Add to queue'],
   'chat.queue.remove': ['대기열에서 빼기', 'Remove from queue'],
-  'chat.queue.placeholder': ['답변 중 — 지금 보내면 대기열에 쌓입니다', 'Replying — messages you send now go to the queue'],
+  'chat.queue.placeholder': ['답변 중 — 보내면 대기열에 쌓이고, 대기열에서 바로 보낼 수 있습니다', 'Replying — messages go to the queue, and you can send them right away from there'],
   'chat.queue.held': ['자동 전송이 멈춰 있습니다 — 확인 후 보내세요', 'Automatic sending is paused — review, then send'],
   'chat.queue.sendNow': ['지금 보내기', 'Send now'],
-  // 답변 도중 즉시 보내기(2026-09-23 유건 요청) — 대기열 대신 지금 턴을 멈추고 새 지시를 바로 보낸다
-  'chat.sendNow': ['지금 바로 보내기 — 답변을 멈추고 즉시 보냅니다', 'Send right now — stop the reply and send immediately'],
-  'chat.partialAborted': ['일부만 답변한 상태에서 중단됨', 'Stopped mid-answer'],
-  'chat.sendNowTimeout': ['턴이 제때 멈추지 않아 보내지 못했습니다 — 입력을 복원했어요. 잠시 후 다시 시도해 주세요.', "The reply didn't stop in time, so this wasn't sent — your input was restored. Please try again shortly."],
+  // 대기열에서 바로 보내기(끼워 넣기, 2026-09-29 유건 요청) — 답변을 멈추지 않고 작업 중인 크루에게 전달한다
+  'chat.queue.steer': ['바로 보내기', 'Send now'],
+  'chat.queue.steerHint': ['답변을 멈추지 않고 지금 작업 중인 크루에게 전달합니다', 'Deliver to the crew now, without stopping its reply'],
+  'chat.queue.steerLater': ['지금은 끼워 넣을 수 없어 대기열에 남겼습니다 — 답변이 끝나면 보냅니다', "Couldn't add it to the running reply, so it stays queued — it'll be sent when the reply finishes"],
   'chat.stop': ['중단', 'Stop'],
   'chat.cancelIncomplete': ['자동 재개는 막았지만, 러너가 실행한 일부 작업의 종료를 확인하지 못했습니다. 실행 중인 작업을 확인해 주세요.', 'Automatic resume is blocked, but some tasks started by the runner could not be confirmed stopped. Please check running tasks.'],
   'chat.aborted': ['지시대로 중단했습니다 — 입력을 복원했어요.', 'Stopped as instructed — your input was restored.'],
-  // 지금 바로 보내기로 중단된 경우(총괄 재검수 2026-09-24) — 정지 버튼 문구("입력을 복원했어요")는
-  // 입력창이 이미 비어 있는 이 경로에서 헷갈리므로 사실만 적는다. 재전송 버튼도 숨긴다(아래 렌더).
-  'chat.abortedForSendNow': ['새 지시로 넘어가며 중단했습니다.', 'Stopped to move to a new instruction.'],
   'chat.copy': ['복사', 'Copy'],
   'chat.annotate': ['빨간펜', 'Annotate'],
   'chat.fellBack.auth': ['{from} 인증 오류로 {to}이(가) 대신 답했습니다 — 반복되면 설정 → AI 연결에서 {from}을(를) 다시 연결해 주세요.', '{to} answered instead because {from} hit an authentication error — if this repeats, reconnect {from} in Settings → AI connections.'],

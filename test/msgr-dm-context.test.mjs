@@ -30,7 +30,9 @@ for (const [relative, replacements] of [
 const sdk = import.meta.resolve('@anthropic-ai/claude-agent-sdk');
 wrappers.set('@anthropic-ai/claude-agent-sdk', `data:text/javascript,${encodeURIComponent(`export * from ${JSON.stringify(sdk)};
   export function query(args) { const iterator = (async function* () {
-    globalThis.__dmContextCapture(args);
+    // SDK 입력은 스트림(끼워 넣기 통로, 2026-09-29) — 첫 사용자 메시지를 꺼내 문자열 프롬프트로 검사한다
+    const first = typeof args.prompt === 'string' ? args.prompt : (await args.prompt.next()).value.message.content;
+    globalThis.__dmContextCapture({ ...args, prompt: typeof first === 'string' ? first : first.map((b) => b.text ?? '').join('') });
     yield {type:'system',subtype:'init',session_id:'private-provider-session',mcp_servers:[]};
     yield {type:'assistant',message:{content:[{type:'text',text:'Fixture answer'}]}};
     yield {type:'result',subtype:'success',session_id:'private-provider-session',result:'Fixture answer',usage:{input_tokens:1,output_tokens:1},total_cost_usd:0};

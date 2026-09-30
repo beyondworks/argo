@@ -31,7 +31,7 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /const dmTab = isPhone && \(page === 'dm' \|\| swipeTo === 'dm'\);/);
   assert.match(src, /const dmSorted = \(list\) => sortDms\(list, \{ sort: dmSort, lastAt, unread, nameOf: dmName, sortPos: dmSortPos \}\);/); // sortPos 추가(직접 배치, 2026-09-29)
   assert.match(src, /const dmPinnedTop = dmTab \? channels\.filter\(\(c\) => c\.kind === 'dm' && pinned\.has\(c\.id\)\)\.sort\(\(a, b\) => \(pinPos\.get\(a\.id\) \?\? 1e9\) - \(pinPos\.get\(b\.id\) \?\? 1e9\)\)/, '고정 = 즐겨찾기한 DM, pin_pos 순');
-  assert.match(src, /const dmList = !dmTab \? dms : dmFilter === 'fav' \? dmPinnedTop : dmSorted\(dmPool\.filter\(dmVisible\)\);/, 'DM 탭 목록은 필터를 거친다, 즐겨찾기 탭은 고정 순서 그대로(검수 L-6)');
+  assert.match(src, /const dmList = !dmTab \? \(isPhone && dmSort === 'custom' \? dmSorted\(dms\) : dms\) : dmFilter === 'fav' \? dmPinnedTop : dmSorted\(dmPool\.filter\(dmVisible\)\);/, 'DM 탭 목록은 필터를 거친다, 즐겨찾기 탭은 고정 순서 그대로(검수 L-6). 폰 홈 DM은 직접 배치일 때 그 순서(끌어 옮긴 결과가 홈에도 보이게, 2026-09-29)');
   assert.match(src, /const dmPinnedShown = dmTab && dmFilter === 'all' \? dmPinnedTop : \[\];/, '고정 단락은 전체 탭에서만');
   assert.match(src, /<RailSection id="dmpin" label=\{t\('dm\.pinned'\)\} forceOpen><div className="msgr-list">\{dmPinnedShown\.map\(dmRow\)\}<\/div><\/RailSection>/, '고정 단락');
   assert.match(src, /<RailSection id="dms" label=\{t\('ch\.dms'\)\} forceOpen=\{dmTab\}/, 'DM 탭에서는 홈의 접힘 상태를 따르지 않는다');
@@ -55,11 +55,16 @@ test('배선 — DM 탭에서만 고정 DM을 맨 위에 + 정렬 메뉴, 즐겨
   assert.match(src, /dragging' : ''\}`\} onDragStart=\{dragStart\(c\)\}[^\n]*draggable=\{!isPhone\}/, 'DM 행은 draggable={!isPhone} 하나만(맨 draggable 중복 없음 — 빌드 경고)');
   assert.match(src, /function DmPeekSheet\(/, '미리보기 시트');
   assert.match(src, /function DmGroupSheet\(/, '새 그룹 대화 시트'); assert.match(src, /const createGroupDm = async \(picks\) =>/, '그룹 생성'); assert.match(src, /isPersonal && page === 'home' \? \(setPage\('settings'\), setSettingsTab\('friends'\)\) : page === 'dm' \? setDmGroup\(true\) : setNewCh\(\{ name: '', kind: newChKind \}\)/, 'DM 탭의 +는 그룹 대화 — 개인 공간도 같다(유건 2026-09-17), 개인 홈 +는 친구 추가 — 행동은 personal-space.browser.mjs');
-  assert.match(src, /const dmSwipe = useSwipeTabs\(DM_FILTERS, dmFilter, pickDmFilter, isPhone && \(page === 'dm' \|\| swipeTo === 'dm'\)\)/, 'DM 탭에서 좌우 스와이프 = 상단 거르개 탭 이동(유건 2026-09-15 교정: 하단 탭이 아니다), 탭 누름과 같은 pickDmFilter');
+  assert.doesNotMatch(src, /useSwipeTabs/, '좌우로 밀어 탭(거르개·설정 탭) 옮기기는 뺐다 — 줄 밀기·밀어서 답장과 겹친다(유건 2026-09-29, 종전 2026-09-15 DM 거르개 스와이프)');
   assert.doesNotMatch(src, /useSwipeTabs\(ROOT_ORDER/, '하단 탭 스와이프는 없앤다');
-  assert.match(src, /\{\.\.\.\(isPhone \? rowLongPress\(c, items\) : \{\}\)\}/, '폰 레일 행(채널·즐겨찾기 대상) 길게 누르기 = 점 세 개 메뉴');
-  assert.equal((src.match(/\{\.\.\.\(isPhone \? rowLongPress\(c, items\) : \{\}\)\}/g) || []).length, 2, '채널·대상 행 둘(DM 행은 직접 배치 끌기 분기가 붙어 별도 패턴, 2026-09-29)');
-  assert.match(src, /rowLongPress\(c, items, dmTab && dmSort === 'custom' && dmFilter === 'all' && !pinned\.has\(c\.id\) \? \{ onDrop: reorderDmCustom \} : null\)/, 'DM 행 길게 누르기 — 직접 배치 모드면 메뉴 대신 끌기(2026-09-29). 필터 보기·고정 단락은 끌기 없음(검수 MEDIUM-1: 부분 목록 재번호가 전체 순서를 섞었다)');
+  assert.match(src, /\{\.\.\.\(isPhone \? rowLongPress\(c, items, \{ onDrop: pinned\.has\(c\.id\) \? reorderFav : reorderChannels \}\) : \{\}\)\}/, '폰 채널 행 길게 누르기 = 점 세 개 메뉴, 움직이면 끌기(즐겨찾기면 즐겨찾기 순서, 아니면 채널 순서 — 유건 2026-09-29)');
+  assert.match(src, /openCtx\(\{ preventDefault\(\) \{\}, stopPropagation\(\) \{\}, currentTarget: st\.el, clientX: st\.x, clientY: st\.y \}, items, c\.id\);\n\s+if \(dragCtx\) beginTouchDrag/, '길게 누르면 메뉴가 먼저 — 끌기 대기는 그 뒤');
+  assert.match(src, /setCtx\(null\); \/\/ 길게 눌러 뜬 메뉴는 움직이는 순간 닫고 끌기로/, '움직이면 메뉴를 닫는다');
+  assert.equal((src.match(/rowLongPress\((?:c, items|\{ id: m\.user_id \}, personCtx\(m\)), \{ onDrop:/g) || []).length, 4, '채널·DM·즐겨찾기 대상·멤버 행 모두 끌기 가능(유건 2026-09-29 "어디든"). 에이전트 행은 내 소유만(railCompany 제외 결정)');
+  assert.match(src, /rowLongPress\(c, items, mine \? \{ onDrop: reorderRailCustom \} : null\)/, '에이전트 — 내 소유만');
+  assert.match(src, /rowLongPress\(c, items, \{ onDrop: \(dmTab \? dmFilter === 'fav' \|\| \(dmFilter === 'all' && pinned\.has\(c\.id\)\) : pinned\.has\(c\.id\)\) \? reorderFav : reorderDmCustom \}\)/, 'DM 행 — 어느 보기든 끌기(유건 2026-09-29). 고정 단락·즐겨찾기 보기는 즐겨찾기 순서, 나머지는 DM 순서');
+  assert.match(src, /const reorderDmCustom = \(dragId, beforeId = null, visible = null\) => reorderChannelPos\(dmTab \? dmSorted\(dmPool\) : dmList, dragId, beforeId, visible, \(\) => \{ if \(dmSort !== 'custom'\) pickDmSort\('custom'\); \}\);/, '끌어 순서가 실제로 바뀌면 직접 배치로, 필터 보기는 전체 목록에 반영(reorderVisibleInFull)');
+  assert.match(src, /if \(sameOrder\(ids, base\)\) return; \/\/ 제자리에 놓으면 정렬 전환도 쓰기도 없다/, '제자리 놓기는 전환·쓰기 0(검수 M1)');
   assert.match(src, /setDmGroup\(false\); \/\/ 시트는 어느 경로든 닫는다/, '한 명 경로에서도 시트 닫힘(검수 HIGH-1)');
   assert.match(src, /const dmTab = isPhone && \(page === 'dm' \|\| swipeTo === 'dm'\);/, '스와이프 중 밑 화면 DM 탭 미리 그리기');
   assert.match(src, /\{!dmTab && <button type="button" className="more"/, 'DM 탭에는 점 세 개 없음(길게 누르기 메뉴로 대체)');

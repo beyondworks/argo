@@ -133,7 +133,7 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — gemini 도구 게이팅·agy 반경 인자에 반영
     (codex는 2026-08-21부터 샌드박스 없음 — danger-full-access, 유건 지시 "샌드박스 없이"). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는 oneshot.mjs의
   // noToolHooks가 도구를 전부 거부한다(allowedTools:[]는 자동 허용 목록일 뿐 도구를 끄지 않는다 — 작업 폴더 안 읽기가
@@ -150,7 +150,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
     // 실패 번역은 exec 경로와 **같은 cliTurnFailure**를 태운다(분리 검수 MEDIUM-4: 안내가 러너
     // 경로별로 갈리지 않게). 한도(limitReached)·중단(aborted)은 이미 정직한 오류라 그대로 통과.
     try {
-      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers });
+      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable });
     } catch (e) {
       if (e.limitReached || e.aborted) throw e;
       throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: e.stage ?? 'exec', kind });

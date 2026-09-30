@@ -3,11 +3,17 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 const { chromium, webkit } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const engine = process.env.WORK_ENGINE || 'chromium';
-const browser = await (engine === 'webkit' ? webkit : chromium).launch({ headless: true, ...(engine === 'chromium' ? { channel: 'chrome' } : {}) });
+// PLAYWRIGHT_CHANNEL은 work-memory-layout.browser.mjs와 같은 오버라이드 — 실 Chrome이 없는 환경은 'bundled'로 번들 Chromium을 쓴다.
+const channel = process.env.PLAYWRIGHT_CHANNEL || 'chrome';
+const browser = await (engine === 'webkit' ? webkit : chromium).launch({ headless: true, ...(engine === 'chromium' && channel !== 'bundled' ? { channel } : {}) });
 const artifacts = new URL(`../artifacts/work-panel-${engine}/`, import.meta.url);
 await mkdir(artifacts, { recursive: true });
 const results = [];
-const labels = ['work.result.stalled','work.title','work.start','work.goal','work.completion','work.discussion','work.cancel','work.resume','work.empty','work.tab.automations','automation.new','automation.name','automation.prompt','automation.crew','automation.repeat','automation.timezone','automation.history','automation.edit','automation.pause','automation.resume','automation.run','automation.delete','ui.save','ui.cancel','ui.close','work.retry','work.refresh','work.error.upgrade','work.next','work.previous'];
+const labels = ['work.result.stalled','work.title','work.start','work.goal','work.completion','work.discussion','work.cancel','work.resume','work.empty','work.tab.automations','automation.new','automation.name','automation.prompt','automation.crew','automation.repeat','automation.timezone','automation.history','automation.edit','automation.pause','automation.resume','automation.run','automation.delete','ui.save','ui.cancel','ui.close','work.retry','work.refresh','work.error.upgrade','work.next','work.previous',
+  'automation.source.custom','routine.readonly.external','routine.error.notEditable','routine.status.last','routine.schedule.readonly','routine.pending','routine.pending.ext',
+  'routine.route.badge','routine.route.none','routine.route.pick','routine.route.save','routine.route.dm','routine.error.channel',
+  'ui.settings','set.tab.crews','org.agents.detail.adapter.unknown','org.agents.adapter.outdated','org.agents.approvals.ai','org.agents.approvals.ask','org.agents.approvals.fix',
+  'org.agents.mirrorAll','org.agents.mirrorAll.needUpdate','org.agents.mirrorAll.pending','org.agents.mirrorAll.hint'];
 const button = (p, l, key) => p.getByRole('button', { name: l[key], exact: true });
 const field = (p, l, key) => p.locator('label.work-field').filter({ has: p.page().locator('span').filter({ hasText: new RegExp(`^${l[key].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`) }) }).locator('input,textarea,select');
 async function scenario(lang, width, theme, name, fn) {
@@ -35,6 +41,10 @@ async function scenario(lang, width, theme, name, fn) {
 async function open(p,l) { await button(p,l,'work.title').focus();await p.keyboard.press('Enter'); const dialog=p.getByRole('dialog',{name:l['work.title'],exact:true}); await dialog.waitFor(); return dialog; }
 async function calls(p,name) { return p.evaluate(name=>window.__workFixture.workCalls.filter(call=>call.name===name),name); }
 async function tab(p,l) { await p.getByRole('tab',{name:l['work.tab.automations'],exact:true}).click(); }
+// 외부 에이전트 계약 1-a — 루틴이 심어진 1:1(crew-existing)을 연다. 픽스처 홈 화면엔 데스크톱·폰 모두 채팅 목록에 이미 떠 있다.
+async function openDm(p,l,name) {
+  await p.locator('[data-sec="dms"] .item').filter({hasText:name}).click();
+}
 async function createAutomation(p,l,title='Fixture automation') {
   await button(p,l,'automation.new').click();
   await field(p,l,'automation.name').fill(title); await field(p,l,'automation.prompt').fill('Summarize this channel without sending external messages.');
@@ -152,6 +162,96 @@ try {
       const d=await open(p,l);await p.locator('.work-empty').waitFor();await field(d,l,'work.goal').fill('Fixture unsupported work');
       assert.equal(await button(d,l,'work.start').isDisabled(),true);assert.equal((await calls(p,'msgr_work_create')).length,0);
       await tab(d,l);assert.equal(await button(d,l,'automation.new').isEnabled(),true);
+    });
+    // 폰 폭은 채널 화면이 전체 화면을 덮어(뒤로 버튼 전용) DM 목록으로 못 돌아간다 — 출처 배지·편집 가능 여부 로직 자체는
+    // 폭과 무관하므로 데스크톱에서 검증하고, 패널의 폰 레이아웃은 work-memory-layout.browser.mjs가 이미 따로 본다.
+    if(width>=720) await scenario(lang,width,theme,'ext-agent-contract',async(p,l)=>{
+      await openDm(p,l,'Fixture Existing Agent'); const d=await open(p,l); await tab(d,l);
+      const card=(name)=>d.locator('.work-item').filter({hasText:name});
+      await card('Fixture Hermes cron').waitFor();
+      // 배지 — Hermes/OpenClaw는 고유명사라 언어와 무관하게 같은 표기, custom은 번역된 "외부 에이전트"로 묶인다
+      assert.equal((await card('Fixture Hermes cron').locator('.work-source-badge').innerText()).trim(),'Hermes');
+      assert.equal((await card('Fixture OpenClaw scan').locator('.work-source-badge').innerText()).trim(),'OpenClaw');
+      assert.equal((await card('Fixture custom bot').locator('.work-source-badge').innerText()).trim(),l['automation.source.custom']);
+      // 편집 가능한 외부 루틴(Hermes) — 편집·멈춤/재개·삭제 버튼이 그대로 있고, 마지막 실행 상태 줄이 보인다
+      await card('Fixture Hermes cron').locator('.work-item-top').click();
+      await d.getByText(l['routine.status.last'],{exact:false}).waitFor();
+      assert.ok((await card('Fixture Hermes cron').innerText()).includes('ok'));
+      assert.equal(await button(card('Fixture Hermes cron'),l,'automation.edit').count(),1);
+      assert.equal(await button(card('Fixture Hermes cron'),l,'automation.pause').count(),1);
+      assert.equal(await button(card('Fixture Hermes cron'),l,'automation.delete').count(),1);
+      // 편집 불가(OpenClaw) — 버튼은 전부 숨고 안내 한 줄만, raw 일정은 display 그대로, 오류 상태도 보인다
+      await card('Fixture OpenClaw scan').locator('.work-item-top').click();
+      await card('Fixture OpenClaw scan').getByText(l['routine.readonly.external'],{exact:true}).waitFor();
+      assert.equal(await button(card('Fixture OpenClaw scan'),l,'automation.edit').count(),0);
+      assert.equal(await button(card('Fixture OpenClaw scan'),l,'automation.pause').count(),0);
+      assert.equal(await button(card('Fixture OpenClaw scan'),l,'automation.resume').count(),0);
+      assert.equal(await button(card('Fixture OpenClaw scan'),l,'automation.delete').count(),0);
+      assert.ok((await card('Fixture OpenClaw scan').innerText()).includes('평일 15분마다'));
+      assert.ok((await card('Fixture OpenClaw scan').innerText()).includes('error'));
+      await card('Fixture OpenClaw scan').scrollIntoViewIfNeeded(); await d.screenshot({path:new URL(`ext-agent-list-${lang}-${width}-${theme}.png`,artifacts).pathname}); // 목록 행(편집 불가 안내·raw 일정·상태) 증거
+      // 편집 불가 + 상태 없음(custom) — 상태 줄은 뜨지 않는다(값이 없을 때 빈 줄을 만들지 않는다)
+      await card('Fixture custom bot').locator('.work-item-top').click();
+      await card('Fixture custom bot').getByText(l['routine.readonly.external'],{exact:true}).waitFor();
+      assert.equal(await card('Fixture custom bot').getByText(l['routine.status.last'],{exact:false}).count(),0);
+      // raw 일정 + 편집 가능 — 폼에서 일정은 읽기전용(반복 선택 UI 없음), 제목·지시 수정은 Argo 루틴과 같은 반영 대기로 접수된다
+      await card('Fixture Hermes raw schedule').locator('.work-item-top').click();
+      assert.ok((await card('Fixture Hermes raw schedule').innerText()).includes('3시간마다'));
+      await button(card('Fixture Hermes raw schedule'),l,'automation.edit').click();
+      await d.getByText(l['routine.schedule.readonly'],{exact:false}).waitFor();
+      assert.equal(await d.locator('.work-editor select').count(),0,'raw 일정은 반복 선택 UI가 없다');
+      await field(d,l,'automation.name').fill('Fixture Hermes raw schedule (edited)');
+      await button(d,l,'ui.save').click(); await card('Fixture Hermes raw schedule').getByText(l['routine.pending.ext'],{exact:true}).waitFor(); // 외부 작업은 "Argo가 켜지면"이 아니라 에이전트 기준 문구(검수 L-10)
+      // 서버 오류 msgr_routine_not_editable — 편집 가능하다고 읽은 행이 저장 시점에 막히는 경쟁 상황도 사용자 문장으로 보인다
+      await button(card('Fixture Hermes cron'),l,'automation.edit').click();
+      await p.evaluate(()=>window.__workFixture.fail={name:'msgr_crew_routine_edit',message:'msgr_routine_not_editable'});
+      await field(d,l,'automation.name').fill('Fixture Hermes cron (blocked)');
+      await button(d,l,'ui.save').click();
+      await d.getByText(l['routine.error.notEditable'],{exact:true}).waitFor();
+      await p.screenshot({path:new URL(`ext-agent-${lang}-${width}-${theme}.png`,artifacts).pathname});
+      // 1-b ③ 보낼 곳 없는 작업 — 배지·안내, 고를 수 있는 방은 이 1:1 대화와 그 에이전트가 들어간 채널뿐, 서버 거절은 사용자 문장으로
+      await card('Fixture nightly handover').locator('.work-item-top').click();
+      assert.equal((await card('Fixture nightly handover').locator('.work-source-badge.warn').innerText()).trim(),l['routine.route.badge']);
+      await card('Fixture nightly handover').getByText(l['routine.route.none'],{exact:true}).waitFor();
+      assert.equal(await button(card('Fixture nightly handover'),l,'automation.edit').count(),0,'읽기 전용 작업은 방 지정만');
+      const pick=field(card('Fixture nightly handover'),l,'routine.route.pick');
+      await pick.locator('option').nth(2).waitFor({state:'attached'});
+      assert.deepEqual((await pick.locator('option').allInnerTexts()).slice(1),[l['routine.route.dm'],'# Fixture Private']);
+      assert.equal(await button(card('Fixture nightly handover'),l,'routine.route.save').isDisabled(),true,'방을 고르기 전에는 저장 불가');
+      await p.evaluate(()=>window.__workFixture.fail={name:'msgr_crew_routine_edit',message:'msgr_routine_invalid_channel'});
+      await pick.selectOption('private'); await button(card('Fixture nightly handover'),l,'routine.route.save').click();
+      await d.getByText(l['routine.error.channel'],{exact:true}).waitFor();
+      await button(card('Fixture nightly handover'),l,'routine.route.save').click();
+      await card('Fixture nightly handover').getByText(l['routine.pending.ext'],{exact:true}).waitFor();
+      const edits=(await calls(p,'msgr_crew_routine_edit')).filter((c)=>c.args.p_routine==='routine-noroute');
+      assert.deepEqual(edits.at(-1).args,{p_routine:'routine-noroute',p_op:'update',p_patch:{channel_id:'private'}});
+      await card('Fixture nightly handover').scrollIntoViewIfNeeded(); await d.screenshot({path:new URL(`ext-agent-noroute-${lang}-${width}-${theme}.png`,artifacts).pathname});
+    });
+    // 1-b — 에이전트 카드: 연결 도구 버전(예전이면 업데이트 안내), 위험 명령 승인 방식(스스로 승인하면 고치는 명령), 소유자 스위치(예전 도구는 비활성)
+    if(width>=720) await scenario(lang,width,theme,'ext-agent-card',async(p,l)=>{
+      await p.getByRole('button',{name:l['ui.settings'],exact:true}).first().click();
+      await p.getByRole('button',{name:l['set.tab.crews'],exact:true}).click();
+      const row=(name)=>p.locator('.msgr-botrow').filter({hasText:name});
+      await row('Fixture Old Hermes').locator('button.main').click();
+      const old=row('Fixture Old Hermes');
+      await old.getByText(l['org.agents.detail.adapter.unknown'],{exact:true}).waitFor();
+      await old.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.0'),{exact:true}).waitFor();
+      await old.getByText(l['org.agents.approvals.ai'].replace('{mode}','smart'),{exact:true}).waitFor();
+      assert.ok((await old.innerText()).includes('hermes config set approvals.mode manual'),'고치는 명령');
+      assert.equal(await old.locator('input[type=checkbox]').isDisabled(),true,'예전 도구는 스위치 비활성');
+      await old.getByText(l['org.agents.mirrorAll.needUpdate'],{exact:true}).waitFor();
+      await old.scrollIntoViewIfNeeded(); await p.screenshot({path:new URL(`ext-agent-card-old-${lang}-${width}-${theme}.png`,artifacts).pathname});
+      await row('Fixture New Claw').locator('button.main').click();
+      const neu=row('Fixture New Claw');
+      await neu.getByText('0.3.0',{exact:true}).waitFor();
+      await neu.getByText(l['org.agents.approvals.ask'].replace('{mode}','ask'),{exact:true}).waitFor();
+      assert.equal(await neu.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.0'),{exact:true}).count(),0,'최신이면 업데이트 안내 없음');
+      assert.equal(await neu.getByText(l['org.agents.approvals.fix'],{exact:false}).count(),0,'결재로 묻는 모드면 고치는 명령 없음');
+      await neu.getByText(l['org.agents.mirrorAll.hint'],{exact:true}).waitFor();
+      await neu.locator('input[type=checkbox]').check();
+      await neu.getByText(l['org.agents.mirrorAll.pending'],{exact:true}).waitFor();
+      assert.deepEqual((await p.evaluate(()=>window.__workFixture.workCalls.filter((c)=>c.name==='msgr_bot_set_mirror_all'))).map((c)=>c.args),[{p_bot:'bot-new',p_on:true}]);
+      await neu.scrollIntoViewIfNeeded(); await p.screenshot({path:new URL(`ext-agent-card-new-${lang}-${width}-${theme}.png`,artifacts).pathname});
     });
     if(width<720) await scenario(lang,width,theme,'short-screen-scroll-keyboard',async(p,l)=>{
       const d=await open(p,l); await tab(d,l); await button(d,l,'automation.new').click();

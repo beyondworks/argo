@@ -8,10 +8,28 @@ state.tables.msgr_crews.forEach(crew => { crew.work_protocol = 1; });
 const now = () => new Date().toISOString();
 // 업무 > 자동화 1단계 — 채널(crew-new · general)과 1:1(crew-existing)에 각각 Argo 루틴 시드 + 반영 대기 편집 1건(WORK_FILTER=routine)
 state.tables.msgr_crew_routines.push(
-  { id: 'routine-1', crew_id: 'crew-new', title: 'Fixture morning brief', prompt: 'Summarize overnight updates.', schedule: { type: 'daily', time: '09:00', times: ['09:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now() },
-  { id: 'routine-2', crew_id: 'crew-existing', title: 'Fixture weekly digest', prompt: 'Compile this week’s notes.', schedule: { type: 'weekly', time: '18:00', times: ['18:00'], dows: [1, 3, 5], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now() },
-  { id: 'routine-3', crew_id: 'crew-new', title: 'Fixture stale cleanup', prompt: 'Archive stale threads.', schedule: { type: 'daily', time: '22:00', times: ['22:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now() },
+  { id: 'routine-1', crew_id: 'crew-new', title: 'Fixture morning brief', prompt: 'Summarize overnight updates.', schedule: { type: 'daily', time: '09:00', times: ['09:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now(), source: 'argo', editable: true, status: null },
+  { id: 'routine-2', crew_id: 'crew-existing', title: 'Fixture weekly digest', prompt: 'Compile this week’s notes.', schedule: { type: 'weekly', time: '18:00', times: ['18:00'], dows: [1, 3, 5], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now(), source: 'argo', editable: true, status: null },
+  { id: 'routine-3', crew_id: 'crew-new', title: 'Fixture stale cleanup', prompt: 'Archive stale threads.', schedule: { type: 'daily', time: '22:00', times: ['22:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: 'general', updated_at: now(), source: 'argo', editable: true, status: null },
+  // 외부 에이전트 계약 1-a(WORK_FILTER=ext) — 1:1(crew-existing)에만 얹는다. 'general' 채널 시나리오(페이지네이션 등)의
+  // 루틴 개수를 건드리지 않게 channel_id는 비운다(Argo 루틴과 같은 크루 스코프 규칙). Hermes(편집 가능+상태),
+  // OpenClaw(편집 불가+raw 일정+오류 상태), 미지정 source(외부 에이전트 배지 폴백).
+  { id: 'routine-hermes', crew_id: 'crew-existing', title: 'Fixture Hermes cron', prompt: 'Summarize overnight Hermes runs.', schedule: { type: 'daily', time: '07:30', times: ['07:30'], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now(), source: 'hermes', editable: true, status: { last_run_at: now(), last_status: 'ok' } },
+  // raw 일정 + 편집 가능 — RoutineForm이 once·여러 시각과 같은 취급으로 일정만 읽기전용, 제목·지시는 편집 가능해야 한다.
+  { id: 'routine-hermes-raw', crew_id: 'crew-existing', title: 'Fixture Hermes raw schedule', prompt: 'Compact raw job.', schedule: { type: 'raw', expr: '0 */3 * * *', display: '3시간마다' }, enabled: true, channel_id: null, updated_at: now(), source: 'hermes', editable: true, status: null },
+  { id: 'routine-openclaw', crew_id: 'crew-existing', title: 'Fixture OpenClaw scan', prompt: 'Run local scan.', schedule: { type: 'raw', expr: '*/15 * * * 1-5', display: '평일 15분마다' }, enabled: true, channel_id: null, updated_at: now(), source: 'openclaw', editable: false, status: { last_run_at: now(), last_status: 'error' } },
+  { id: 'routine-custom', crew_id: 'crew-existing', title: 'Fixture custom bot', prompt: 'Ping the custom bot.', schedule: { type: 'daily', time: '06:00', times: ['06:00'], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now(), source: 'custom', editable: false, status: null },
+  // 1-b ③ — 결과를 보낼 곳이 없는 외부 작업(VPS 실측: deliver=origin·출처 없음). 소유자가 방을 고르면 에이전트가 그 방으로 보낸다
+  { id: 'routine-noroute', crew_id: 'crew-existing', title: 'Fixture nightly handover', prompt: 'Write the nightly handover.', schedule: { type: 'daily', time: '23:50', times: ['23:50'], tz: 'Asia/Seoul' }, enabled: true, channel_id: null, updated_at: now(), source: 'hermes', editable: false, status: { delivery: 'none' } },
 );
+// 1-b — 설정 > 에이전트와 서버의 봇 카드: 예전 연결 도구(버전 보고 없음·smart)와 최신(0.3.0·ask). 둘 다 이 사용자가 만든 봇.
+const fixtureUid = state.tables.msgr_org_members[0].user_id, fixtureOrg = state.tables.msgr_org_members[0].org_id;
+state.tables.msgr_bots = [
+  { id: 'bot-old', crew_id: 'crew-existing', kind: 'hermes', name: 'Fixture Old Hermes', token_hint: 'argo_bot_ab12', created_by: fixtureUid, created_at: now(), rotated_at: null, revoked_at: null, last_seen_at: now(), external_id: null, org_id: fixtureOrg },
+  { id: 'bot-new', crew_id: 'crew-new', kind: 'openclaw', name: 'Fixture New Claw', token_hint: 'argo_bot_cd34', created_by: fixtureUid, created_at: now(), rotated_at: null, revoked_at: null, last_seen_at: now(), external_id: null, org_id: fixtureOrg }];
+state.tables.msgr_bot_state = [
+  { bot_id: 'bot-old', adapter_version: null, approval_mode: 'smart', mirror_all: false, mirror_all_applied: null },
+  { bot_id: 'bot-new', adapter_version: '0.3.0', approval_mode: 'ask', mirror_all: false, mirror_all_applied: false }];
 state.tables.msgr_crew_routine_edits.push(
   { id: 'edit-1', routine_id: 'routine-2', status: 'pending', op: 'update', patch: { title: 'Fixture weekly digest (edited)' }, created_at: now() },
   // N6(재검수 3차) — 삭제 대기 시나리오: WORK_FILTER=routine 캡처에서 편집·토글이 숨고 "삭제 취소" 버튼만 남는지 확인용
@@ -22,7 +40,9 @@ async function response(name, args, action) {
   state.workCalls.push({ name, args: structuredClone(args) });
   if (state.hold === name) { state.hold = null; await new Promise(resolve => { state.release = () => { state.release = null; resolve(); }; }); }
   if (state.unavailable) return { data: null, error: { code: 'PGRST205', message: 'Could not find the table in the schema cache' } };
-  if (state.fail === name) { state.fail = null; return { data: null, error: { message: 'Fixture network failure' } }; }
+  // state.fail은 이름 문자열(기존) 또는 {name,message}(외부 에이전트 계약 1-a — msgr_routine_not_editable 같은 특정 오류 문구 주입용).
+  const failTarget = typeof state.fail === 'object' && state.fail ? state.fail.name : state.fail;
+  if (failTarget === name) { const message = typeof state.fail === 'object' ? state.fail.message : 'Fixture network failure'; state.fail = null; return { data: null, error: { message } }; }
   try { return { data: structuredClone(action()), error: null }; }
   catch (error) { return { data: null, error: { message: error.message } }; }
 }
@@ -52,6 +72,7 @@ base.rpc = (name, args = {}) => {
     const latest = new Map(); for (const m of state.tables.msgr_messages) if (dmIds.has(m.channel_id) && !m.deleted_at && (!latest.has(m.channel_id) || latest.get(m.channel_id).id < m.id)) latest.set(m.channel_id, m);
     return Promise.resolve({ data: [...latest.entries()].map(([channel_id, m]) => ({ channel_id, last_id: m.id, last_at: m.created_at })), error: null });
   }
+  if (name === 'msgr_bot_set_mirror_all') return response(name, args, () => { state.tables.msgr_bot_state.find((r) => r.bot_id === args.p_bot).mirror_all = args.p_on; return args.p_on; });
   if (!name.startsWith('msgr_work_') && !name.startsWith('msgr_automation_') && !name.startsWith('msgr_notification_') && !name.startsWith('msgr_crew_routine')) return originalRpc(name, args);
   if (state.missingNotifications && /msgr_notification_|save_with_notifications/.test(name)) return Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } });
   return response(name, args, () => {

@@ -26,8 +26,8 @@ export default function LegalPage() {
           <Link href="/login" style={{ fontSize: 13, color: 'var(--fg-3)' }}>{ko ? '← 로그인' : '← Sign in'}</Link>
         </div>
         <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: '2px 0 8px' }}>
-          {ko ? `최종 업데이트 ${UPDATED} · 무료 베타 기준 안내(초안). 정식 서비스 시 갱신됩니다.`
-              : `Last updated ${UPDATED} · Free-beta notice (draft). Will be updated for general release.`}
+          {ko ? `최종 업데이트 ${UPDATED} · 서비스 안내(초안). 정식 서비스 시 갱신됩니다.`
+              : `Last updated ${UPDATED} · Service notice (draft). Will be updated for general release.`}
         </p>
 
         {ko ? (
@@ -49,7 +49,7 @@ export default function LegalPage() {
               원칙입니다. 동기화·클라우드 기능을 켜면 해당 데이터가 사용자가 지정한 저장소로 이전될 수 있습니다.
             </S>
             <S title="5. 책임의 한계">
-              무료 베타 기간 동안 서비스는 “있는 그대로” 제공되며, 특정 목적 적합성이나 무중단·무오류를 보장하지 않습니다.
+              서비스는 “있는 그대로” 제공되며, 특정 목적 적합성이나 무중단·무오류를 보장하지 않습니다.
               데이터는 정기적으로 백업하시기를 권장합니다.
             </S>
             <S title="6. 문의">
@@ -78,7 +78,7 @@ export default function LegalPage() {
               company content stays local by default. Enabling sync/cloud features may transfer that data to a store you designate.
             </S>
             <S title="5. Limitation of liability">
-              During the free beta the service is provided “as is,” without warranty of fitness for a particular purpose or of
+              The service is provided “as is,” without warranty of fitness for a particular purpose or of
               uninterrupted, error-free operation. Please back up your data regularly.
             </S>
             <S title="6. Contact">
