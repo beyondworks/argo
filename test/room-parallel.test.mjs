@@ -181,7 +181,8 @@ test('R1(검수 미탐): v2 출처 게이트 — 발언 크루의 상태가 sour
   await seed('rp-gate'); stub.state.delayMs = 400;
   const p = runRoomTurn('rp-gate', '@비스트 @울프 검토', [], { rounds: 1 });
   let mid = null;
-  for (let i = 0; i < 80 && !(mid?.speakers?.some((s) => s.state === 'speaking')); i++) { await new Promise((r) => setTimeout(r, 10)); mid = await getRoomTurn('rp-gate'); }
+  // 발언 시작까지 최대 5초 — 0.8초는 동시 실행 부하가 걸린 윈도우 CI에서 모자랐다(발언 전이라 partial이 undefined, 2회 연속 실측)
+  for (let i = 0; i < 500 && !(mid?.speakers?.some((s) => s.state === 'speaking')); i++) { await new Promise((r) => setTimeout(r, 10)); mid = await getRoomTurn('rp-gate'); }
   await setTurnStatus('rp-gate', 'beast', 'write', 'other.md', '남의 개인 채팅 문장', 'chat'); // 같은 크루의 다른 턴
   const t = await getRoomTurn('rp-gate');
   const beast = t.speakers.find((s) => s.slug === 'beast');
