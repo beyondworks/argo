@@ -12,10 +12,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { createInterface } from 'node:readline/promises';
-import { Writable } from 'node:stream';
+import { Writable, Transform } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { applyCliEnv, writeConfig, cliHome, cliLang } from '../src/cli/env.mjs';
 import { launchdPlist, systemdUnit } from '../src/cli/service.mjs';
-import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect } from '../src/cli/ui.mjs';
+import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect, pasteFilter, unpaste } from '../src/cli/ui.mjs';
 
 // 사용자에게 필요 없는 경고는 숨긴다 — node:sqlite(기억 인덱스)의 ExperimentalWarning, SDK의 canUseTool 안내
 // (Argo는 도구 허용을 PreToolUse 훅으로 처리한다 — #587). 대화 중 진행 줄 사이에 끼어들었다(실측). 다른 경고는 그대로 보인다.
@@ -94,9 +95,22 @@ let muted = false;
 const out = new Writable({ write(chunk, _e, cb) { if (!muted) process.stdout.write(chunk); cb(); } });
 let onSigint = null; // 대화 화면이 켜지면 Ctrl+C를 가져간다(나가지 않음). 그 전(로그인·회사 고르기)은 종전대로 종료.
 let onQueuedLine = null; // 답하는 중에 친 줄 — 질문이 떠 있지 않을 때 readline이 'line'으로만 알린다
+// 입력 앞단 — 여러 줄 붙여넣기를 한 메시지로(bracketed paste 안의 줄바꿈 → ⏎). readline은 이 변환기를 입력으로 읽고,
+// 원시 모드 요청은 실제 터미널로 넘긴다. readline을 다시 만들어도(Ctrl+D) 같은 변환기를 쓴다.
+let ttyIn = null;
+function pasteAwareInput() {
+  if (ttyIn) return ttyIn;
+  const dec = new StringDecoder('utf8'); const filter = pasteFilter();
+  ttyIn = new Transform({ transform(chunk, _e, cb) { cb(null, filter(dec.write(chunk))); } });
+  Object.assign(ttyIn, { isTTY: true, setRawMode: (on) => { process.stdin.setRawMode(on); return ttyIn; } });
+  process.stdin.pipe(ttyIn);
+  process.stdout.write('\x1b[?2004h'); // 터미널에 붙여넣기 표지를 요청
+  process.on('exit', () => { try { process.stdout.write('\x1b[?2004l'); process.stdin.setRawMode(false); } catch { /* 이미 닫힘 */ } });
+  return ttyIn;
+}
 const makeRl = () => {
   if (!process.stdin.isTTY) return null;
-  const r = createInterface({ input: process.stdin, output: out, terminal: true });
+  const r = createInterface({ input: pasteAwareInput(), output: out, terminal: true });
   r.on('SIGINT', () => (onSigint ? onSigint() : process.exit(130)));
   r.on('line', (l) => onQueuedLine?.(l));
   return r;
@@ -105,7 +119,7 @@ let rl = makeRl();
 const ask = async (q) => {
   for (;;) {
     if (!rl) return '';
-    try { return (await rl.question(q)).trim(); }
+    try { return unpaste(await rl.question(q)).trim(); }
     catch (e) {
       // Ctrl+D는 입력을 닫는다(실측) — 대화 화면은 /quit·exit로만 닫으므로 입력을 다시 연다. 그 밖(로그인 등)은 종전대로.
       if (!onSigint || e?.code !== 'ABORT_ERR') throw e;
@@ -243,13 +257,13 @@ async function chatLoop(ws, crew, first) {
   }
 }
 /** 대화할 크루 — want(이름·slug) → 이 회사에서 마지막으로 대화한 크루 → 한 명뿐이면 그 크루 → 고르기. 고른 크루는 회사별로 기억한다. */
-async function pickCrew(ws, want = '') {
+async function pickCrew(ws, want = '', { ask: forceList = false } = {}) {
   const { listAgents } = await import('../src/hub.mjs');
   const crews = await listAgents(ws);
   if (!crews.length) { console.log(T.noCrew); return null; }
   const w = want.trim().toLowerCase();
-  let crew = w ? crews.find((c) => c.slug.toLowerCase() === w || String(c.name).toLowerCase() === w) : crews.find((c) => c.slug === cfg.crews?.[ws]);
-  if (!crew && !w && crews.length === 1) crew = crews[0];
+  let crew = w ? crews.find((c) => c.slug.toLowerCase() === w || String(c.name).toLowerCase() === w) : forceList ? null : crews.find((c) => c.slug === cfg.crews?.[ws]);
+  if (!crew && !w && !forceList && crews.length === 1) crew = crews[0];
   if (!crew) { const i = await choose(T.crews, crews.map((c) => `${c.name}${c.role ? ` — ${c.role}` : ''}`)); crew = i >= 0 ? crews[i] : null; }
   if (crew) { cfg.crews = { ...(cfg.crews ?? {}), [ws]: crew.slug }; writeConfig({ crews: cfg.crews }); }
   return crew;
@@ -365,7 +379,7 @@ async function status() {
   const s = await currentSession();
   const { getDeviceId } = await import('../src/workspace.mjs');
   const companies = s ? (await ownCompanies(s.user.id)).map((c) => `${c.name} (${c.id})`).join(', ') || '-' : '-';
-  console.log(T.status({ email: s?.user?.email, root: process.env.ARGO_ROOT, companies, device: await getDeviceId() }));
+  console.log(T.status({ email: s?.user?.email, root: process.env.ARGO_ROOT, companies, device: await getDeviceId() }).split('\n').map((l) => `  ${l}`).join('\n')); // 대화 화면 줄과 같은 들여쓰기
 }
 
 /* ─── 입구 — 대화 화면 ─── */
@@ -407,10 +421,10 @@ async function interactive() {
     }
     process.stdout.write(`\n  ${dim(T.quitHint)}\n`); rl.prompt();
   };
-  onQueuedLine = (l) => { // 입력 대기가 없을 때 친 줄 — 턴 사이 틈 포함(실측: 턴 실행 여부로 거르면 틈에 친 exit가 사라졌다).
+  onQueuedLine = (raw) => { const l = unpaste(raw); // 입력 대기가 없을 때 친 줄 — 턴 사이 틈 포함(실측: 턴 실행 여부로 거르면 틈에 친 exit가 사라졌다).
     // 대기 중(question)일 때는 readline이 'line'을 내지 않는다(실측) — 두 번 처리되지 않는다.
     if (!l.trim()) return;
-    queue.push(l); process.stdout.write(`\r\x1b[2K${dim(fit(`  › ${l.trim()}  (${T.queued})`, cols()))}\n`);
+    queue.push(l); process.stdout.write(`\r\x1b[2K${dim(fit(`  › ${l.trim().replace(/\n/g, ' ⏎ ')}  (${T.queued})`, cols()))}\n`);
   };
   for (;;) {
     muted = false;
@@ -421,7 +435,7 @@ async function interactive() {
     if (p.kind === 'unknown') { console.log(`  ${dim(T.unknownCmd(p.name))}\n`); continue; }
     if (p.kind === 'command') {
       if (p.name === 'help') { console.log(''); for (const [k, d] of T.help) console.log(`  ${k}${' '.repeat(Math.max(1, 15 - termWidth(k)))}${dim(d)}`); console.log(''); }
-      else if (p.name === 'crew') { const c = await pickCrew(ws, p.arg); if (c) { crew = c; sid = (await loadThread(ws, crew.slug)).sessionId ?? null; } showCrew(); }
+      else if (p.name === 'crew') { const c = await pickCrew(ws, p.arg, { ask: !p.arg }); if (c) { crew = c; sid = (await loadThread(ws, crew.slug)).sessionId ?? null; } showCrew(); }
       else if (p.name === 'new') { if (crew) { await resetThread(ws, crew.slug); sid = null; console.log(`  ${dim(T.newDone)}\n`); } }
       else if (p.name === 'hire') await hireCrew(ws);
       else if (p.name === 'ai') await runnersMenu(ws);

@@ -72,3 +72,24 @@ export function hostAutoConnect(status, detect = {}) {
   if (all.some(([, v]) => v?.company?.connected)) return [];
   return all.filter(([id, v]) => v?.hostUsable && !v?.hidden && detect[id]?.authed && !detect[id]?.authUnknown).map(([id]) => id);
 }
+
+// 여러 줄 붙여넣기 — 터미널의 bracketed paste(ESC[200~ … ESC[201~) 안의 줄바꿈을 ⏎로 바꿔 readline이 줄마다 보내지 않게 한다
+// (실측: 붙여넣은 두 줄이 턴 두 번이 됐다. Node readline은 붙여넣기 표지를 켜도 안의 \r을 그대로 제출한다). 보낼 때 ⏎ → \n.
+export const PASTE_NL = '⏎';
+const START = '\x1b[200~'; const END = '\x1b[201~';
+const heldSuffix = (s, marker) => { for (let n = Math.min(marker.length - 1, s.length); n > 0; n--) if (marker.startsWith(s.slice(-n))) return n; return 0; };
+/** 상태 있는 변환기 — push(문자열 조각) → readline에 넘길 문자열. 표지가 조각 경계에 걸리면 다음 조각까지 기다린다. */
+export function pasteFilter() {
+  let inPaste = false; let held = '';
+  return (chunk) => {
+    let s = held + chunk; held = ''; let out = '';
+    for (;;) {
+      const marker = inPaste ? END : START;
+      const i = s.indexOf(marker);
+      if (i < 0) { const keep = heldSuffix(s, marker); const seg = s.slice(0, s.length - keep); out += inPaste ? seg.replace(/\r\n|\r|\n/g, PASTE_NL) : seg; held = s.slice(s.length - keep); return out; }
+      const seg = s.slice(0, i); out += inPaste ? seg.replace(/\r\n|\r|\n/g, PASTE_NL) : seg;
+      s = s.slice(i + marker.length); inPaste = !inPaste;
+    }
+  };
+}
+export const unpaste = (line) => String(line ?? '').split(PASTE_NL).join('\n');

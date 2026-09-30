@@ -76,7 +76,7 @@ except ChildProcessError: pass
 print(json.dumps({'res':res,'alive':alive}))
 `;
 
-test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 답하는 중 Ctrl+C는 턴만 멈추며, exit로 나간다', { skip: !hasPy && 'python3 pty 필요(맥·리눅스)', timeout: 180_000 }, async () => {
+test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 답하는 중 Ctrl+C는 턴만 멈추며, exit로 나간다', { skip: !hasPy && 'python3 pty 필요(맥·리눅스)', timeout: 280_000 }, async () => {
   const seed = spawnSync(process.execPath, ['--input-type=module', '-e', `
     const { saveDeviceSession } = await import(${JSON.stringify(pathToFileURL(join(REPO, 'src/devicesession.mjs')).href)});
     const { createCompany, paths } = await import(${JSON.stringify(pathToFileURL(join(REPO, 'src/workspace.mjs')).href)});
@@ -90,10 +90,13 @@ test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 
   // 매 단계는 입력 줄(›)이 다시 뜰 때까지 기다린다 — 사람은 답이 끝난 걸 보고 다음 줄을 친다.
   const steps = [
     { label: 'help', keys: '/help\r', until: '입력 중이면 지우기' },
+    { label: 'crew-list', keys: '/crew\r', until: '번호' },
+    { label: 'crew-pick', keys: '1\r', until: '대화 상대' },
     { label: 'ctrlc-empty', keys: '\x03' },
     { label: 'ctrlc-typing', keys: 'abc\x03' },
     { label: 'ctrld', keys: '\x04' },
     { label: 'chat', keys: '안녕\r', wait: 60, until: '\n› ' },
+    { label: 'paste', keys: '\x1b[200~붙인 첫 줄\r붙인 둘째 줄\x1b[201~\r', wait: 60, until: '\n› ' },
     { label: 'slow', keys: 'SLOW 오래 걸리는 일\r', wait: 8, until: '작업 중' },
     { label: 'type-during', keys: '두 번째 말\r', wait: 3, until: '답이 끝나면 보냅니다' },
     { label: 'ctrlc-typed-in-turn', keys: '지울 글자\x03', wait: 2 },
@@ -113,6 +116,7 @@ test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 
   assert.match(out.boot, /v\d+\.\d+\.\d+ · CLI/, '버전');
   assert.match(out.boot, /대화 상대: 노바/, '크루가 한 명이면 바로 그 크루와 대화');
   assert.match(out.help, /\/quit, exit/);
+  assert.match(out['crew-list'], /대화할 크루를 고르세요[\s\S]*1\. 노바/, '/crew만 치면 크루 목록(실측: 지금 크루만 다시 보였다)');
   assert.match(out['ctrlc-empty'], /나가려면 \/quit 또는 exit/, '빈 줄 Ctrl+C — 안내만');
   assert.doesNotMatch(out['ctrlc-typing'] + out.ctrld, /나가려면|Aborted/, '입력 중 Ctrl+C·Ctrl+D — 나가지도 오류도 없다');
   assert.match(out.chat, /노바[\s\S]*크루 답입니다/, '크루 답');
@@ -125,6 +129,9 @@ test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 
   const t = JSON.parse(await readFile(join(ROOT, 'repl-co', 'chats', 'nova.json'), 'utf8'));
   assert.ok(t.messages.some((m) => m.who === 'crew' && m.text === '크루 답입니다'), '앱과 같은 대화 기록');
   assert.ok(t.messages.every((m) => !m.awaiting), '멈춘 턴도 대기 표시가 남지 않는다');
+  // 여러 줄 붙여넣기는 한 메시지 한 턴(실측: 줄마다 턴이 됐다)
+  assert.ok(t.messages.some((m) => m.who === 'user' && m.text === '붙인 첫 줄\n붙인 둘째 줄'), '붙여넣은 두 줄이 한 메시지로');
+  assert.ok(!t.messages.some((m) => m.who === 'user' && (m.text === '붙인 첫 줄' || m.text === '붙인 둘째 줄')), '줄마다 따로 가지 않는다');
 });
 
 test('AI 미연결 기기 — 첫 화면에 /ai 안내, 말을 걸면 /ai로 안내(앱 문구 "설정 →" 아님), 코어 로그는 화면 대신 cli.log', { skip: !hasPy && 'python3 pty 필요(맥·리눅스)', timeout: 120_000 }, async () => {

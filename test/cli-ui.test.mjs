@@ -70,3 +70,15 @@ test('AI 자동 연결 — 연결이 하나도 없을 때만, 이 컴퓨터에 �
   assert.deepEqual(hostAutoConnect({ ...st, glm: { company: { connected: true } } }, detect), [], '이미 연결이 있으면 사용자 선택을 건드리지 않는다');
   assert.deepEqual(hostAutoConnect(st, {}), [], '감지 결과가 없으면 아무것도 연결하지 않는다');
 });
+
+test('여러 줄 붙여넣기 — 붙여넣기 안의 줄바꿈은 ⏎로(한 메시지), 밖의 Enter는 그대로 제출, 표지가 조각 경계에 걸려도 된다', async () => {
+  const { pasteFilter, unpaste, PASTE_NL } = await import('../src/cli/ui.mjs');
+  const f = pasteFilter();
+  assert.equal(f('\x1b[200~첫 줄\r둘째 줄\x1b[201~\r'), `첫 줄${PASTE_NL}둘째 줄\r`);
+  assert.equal(unpaste(`첫 줄${PASTE_NL}둘째 줄`), '첫 줄\n둘째 줄');
+  const g = pasteFilter();
+  const out = ['\x1b[20', '0~a\r\nb\x1b', '[201', '~\r'].map(g).join('');
+  assert.equal(out, `a${PASTE_NL}b\r`, '표지가 조각으로 쪼개져도');
+  assert.equal(pasteFilter()('타이핑\r'), '타이핑\r', '붙여넣기가 아니면 그대로');
+  assert.equal(pasteFilter()('\x1b[A'), '\x1b[A', '방향키 같은 다른 ESC 시퀀스는 그대로');
+});
