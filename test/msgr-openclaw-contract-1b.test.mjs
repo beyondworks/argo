@@ -339,7 +339,7 @@ test('도구 등록 — argo-msgr 대화에서만, 처리 중인 메신저 원�
   const manifest = JSON.parse(await readFile(new URL('../integrations/openclaw-argo-msgr/openclaw.plugin.json', import.meta.url), 'utf8'));
   assert.deepEqual(manifest.contracts, { tools: ['argo_request_approval'] }, '매니페스트 contracts.tools 선언(없으면 OpenClaw가 등록을 거절한다)');
   assert.equal(manifest.toolMetadata?.argo_request_approval?.optional, undefined, '선택 도구가 아니다');
-  assert.equal(JSON.parse(await readFile(new URL('../integrations/openclaw-argo-msgr/package.json', import.meta.url), 'utf8')).version, '0.3.1');
+  assert.equal(JSON.parse(await readFile(new URL('../integrations/openclaw-argo-msgr/package.json', import.meta.url), 'utf8')).version, '0.3.2');
   // 승인 모드: 살아 있는 설정(runtime.config.current) → 계정 시작 때 설정 → 없으면 OpenClaw 기본값 full.
   // 이 계정에 묶인 에이전트의 agents.entries.<id>.tools.exec.mode가 있으면 그 값(검수 L2)
   channel.setArgoRuntime({ config: { current: () => ({ tools: { exec: { mode: 'allowlist' } } }) } });

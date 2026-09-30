@@ -8,7 +8,7 @@ import {
 } from "openclaw/plugin-sdk/channel-plugin-common";
 import { buildBaseAccountStatusSnapshot, buildBaseChannelStatusSummary } from "openclaw/plugin-sdk/status-helpers";
 import { createChannelInboundEnvelopeBuilder } from "openclaw/plugin-sdk/channel-inbound";
-import { formatTextWithAttachmentLinks, resolveOutboundMediaUrls } from "openclaw/plugin-sdk/reply-payload";
+import { resolveOutboundMediaUrls } from "openclaw/plugin-sdk/reply-payload";
 // 크루 계약 1-a — 위험 작업 승인을 메신저 결재 카드로(채널 네이티브 승인: approvalCapability.native + nativeRuntime), 결정은 게이트웨이 승인 서비스로.
 import { createChannelApprovalCapability } from "openclaw/plugin-sdk/approval-delivery-runtime";
 import { createChannelApprovalNativeRuntimeAdapter } from "openclaw/plugin-sdk/approval-handler-runtime";
@@ -18,7 +18,7 @@ import { registerChannelRuntimeContext } from "openclaw/plugin-sdk/channel-runti
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { makeApi, MAX_LEN, parseMessengerDisposition, pollLoop, relayPrompt, relayReply, recordCcReceipt } from "./api.js";
+import { ArgoMsgrError, deferTurnFile, deliverFiles, settlePendingFiles, downloadAttachments, findFileTurn, makeApi, MAX_FILE_BYTES, MAX_LEN, openFileTurn, parseMessengerDisposition, pollLoop, relayPrompt, relayReply, recordCcReceipt } from "./api.js";
 import { APPROVAL_TOOL, APPROVAL_TOOL_DESCRIPTION, APPROVAL_TOOL_NEXT, APPROVAL_TOOL_PARAMETERS, ApprovalBridge, RoutineMirror, ROUTINES_EVERY_MS } from "./contract.js";
 
 export const CHANNEL_ID = "argo-msgr" as const;
@@ -156,15 +156,70 @@ async function sendText(account: ResolvedAccount, target: string, text: string, 
   const api = makeApi({ url: account.url, token: account.token });
   const src = replyTo != null && !replied.has(replyTo) ? replyTo : undefined;
   const res = await api.sendMessage(to, text, src);
-  if (src != null) replied.add(src);
+  if (src != null) {
+    replied.add(src);
+    // 턴 도중 이 경로가 요청의 답글을 먼저 만들었다 — 이후 파일(대기 중인 것 포함)은 그 답글에 붙일 수 있게 기억한다
+    const turn = findFileTurn({ accountId: account.accountId, chatId: to, replyToId: src });
+    if (turn && turn.finalId == null) turn.finalId = Number(res?.message_id) || null;
+  }
   core().channel.activity.record({ channel: CHANNEL_ID, accountId: account.accountId, direction: "outbound" });
   return { channel: CHANNEL_ID, messageId: String(res?.message_id ?? ""), target: { kind: "channel" as const, id: to } };
 }
 
+// ── 파일 보내기 (플러그인 0.3.2) ──────────────────────────────────────────────────────────────────────────
+// 에이전트가 파일을 보내는 길은 둘이다. ① 최종 답 페이로드의 mediaUrl(s) — 아래 runTurn의 deliver가 모아 답을 보낸 뒤 붙인다.
+// ② message 도구·예약 작업 — 코어가 outbound.sendMedia(ctx)를 부른다(ctx.mediaUrl = http(s) 주소·절대 경로·file://·작업 폴더 상대 경로 중 하나,
+// 로컬 파일은 ctx.mediaAccess(localRoots·readFile·workspaceDir)로 읽는다). 두 길 모두 코어의 runtime.media.loadWebMedia로 바이트를 읽는다.
+type MediaAccess = { mediaAccess?: { localRoots?: readonly string[]; readFile?: (p: string) => Promise<Buffer>; workspaceDir?: string }; mediaLocalRoots?: readonly string[] | "any"; mediaReadFile?: (p: string) => Promise<Buffer> };
+function mediaFileName(url: string): string {
+  const bare = String(url).replace(/^file:\/\//i, "").split(/[?#]/)[0];
+  try { return decodeURIComponent(bare.split(/[\\/]/).filter(Boolean).pop() ?? "") || "file"; } catch { return bare.split(/[\\/]/).filter(Boolean).pop() || "file"; }
+}
+/** 파일 하나를 바이트로 읽는 지연 함수. 25MB를 넘으면 413으로 돌려 방에 안내가 나가게 한다(넘는 파일은 끝까지 읽지 않는다). */
+function fileFromUrl(url: string, access: MediaAccess & { workspaceDir?: string } = {}) {
+  return { name: mediaFileName(url), load: async () => {
+    const roots = access.mediaAccess?.localRoots ?? access.mediaLocalRoots;
+    const readFile = access.mediaAccess?.readFile ?? access.mediaReadFile;
+    const workspaceDir = access.mediaAccess?.workspaceDir ?? access.workspaceDir;
+    try {
+      const m: any = await (core() as any).media.loadWebMedia(url, {
+        maxBytes: MAX_FILE_BYTES + 1, optimizeImages: false,
+        ...(roots && (roots === "any" || roots.length) ? { localRoots: roots } : {}),
+        ...(readFile ? { readFile, hostReadCapability: true } : {}),
+        ...(workspaceDir ? { workspaceDir } : {}),
+      });
+      return { data: m.buffer as Buffer, mime: m.contentType as string | undefined, name: m.fileName as string | undefined };
+    } catch (e) {
+      if (/exceeds .*limit|exceeds maxBytes|too large/i.test(String((e as any)?.message ?? e))) throw new ArgoMsgrError(413, "files are limited to 25 MB");
+      throw e;
+    }
+  } };
+}
+/** 에이전트가 파일을 만든 작업 폴더까지 읽을 수 있게 그 에이전트의 미디어 루트를 붙인다. 이 SDK 경로가 없는 옛 호스트는 코어 기본 루트로 읽는다. */
+async function agentMediaRoots(cfg: any, agentId: string | undefined, sources: string[]): Promise<readonly string[] | undefined> {
+  try {
+    const mod: any = await import("openclaw/plugin-sdk/media-local-roots");
+    return mod.getAgentScopedMediaLocalRootsForSources({ cfg, agentId, mediaSources: sources });
+  } catch { return undefined; }
+}
+async function sendMediaFile(account: ResolvedAccount, target: string, text: string, mediaUrl: string, access: MediaAccess, replyTo?: number) {
+  const chatId = bareChatId(target);
+  const api = makeApi({ url: account.url, token: account.token });
+  const turn = findFileTurn({ accountId: account.accountId, chatId, replyToId: replyTo ?? null });
+  if (turn && turn.finalId == null) { // 이 요청이 아직 답하지 않았다 — 최종 답이 게시된 뒤 그 답글에 붙도록 대기시킨다(handleInbound가 처리)
+    const d = await deferTurnFile({ api, chatId, turn, text, file: fileFromUrl(mediaUrl, access), log: (s) => console.warn(s) });
+    return { channel: CHANNEL_ID, messageId: String(d.noticeId ?? ""), target: { kind: "channel" as const, id: chatId } };
+  }
+  const res = await deliverFiles({ api, accountId: account.accountId, chatId, turn, text, files: [fileFromUrl(mediaUrl, access)], log: (s) => console.warn(s) });
+  if (turn?.finalId != null && turn.sourceId != null) replied.add(Number(turn.sourceId)); // 파일이 이 요청을 마감했다 — 뒤이은 sendText가 또 답글을 달지 않게
+  core().channel.activity.record({ channel: CHANNEL_ID, accountId: account.accountId, direction: "outbound" });
+  return { channel: CHANNEL_ID, messageId: String(res.messageId ?? ""), target: { kind: "channel" as const, id: chatId } };
+}
+
 type TurnInput = { account: ResolvedAccount; cfg: any; log: (s: string) => void; route: any; isGroup: boolean; chatId: string; chatName: string;
-  senderId: string; senderName: string; messageId: string; timestamp: number; prompt: string; rawBody: string };
+  senderId: string; senderName: string; messageId: string; timestamp: number; prompt: string; rawBody: string; media?: any[] };
 /** OpenClaw 에이전트 턴 하나(받기 → 세션 → 최종 답 모으기). 일반 수신과 결재 결정 뒤 재개 턴이 같이 쓴다. */
-async function runTurn(t: TurnInput): Promise<string[]> {
+async function runTurn(t: TurnInput): Promise<{ chunks: string[]; media: string[] }> {
   const c = core();
   const { cfg, route, isGroup, chatId, chatName, senderId, senderName, log, account } = t;
   // 모델이 읽는 본문은 BodyForAgent다 — 스레드 맥락·넘김 규칙(relayPrompt)을 여기에 싣는다. Body는 사람이 읽는 봉투(기록·표시용).
@@ -179,11 +234,14 @@ async function runTurn(t: TurnInput): Promise<string[]> {
     route: { agentId: route.agentId, dmScope: route.dmScope, accountId: route.accountId, routeSessionKey: route.sessionKey, dispatchSessionKey: route.sessionKey },
     reply: { to: `${CHANNEL_ID}:${chatId}`, originatingTo: `${CHANNEL_ID}:${chatId}` },
     message: { body: envelope, bodyForAgent: t.prompt, rawBody: t.rawBody, commandBody: t.rawBody },
+    // 사람이 올린 첨부 — 내려받은 파일을 순서 있는 미디어 사실(media[])로 넘긴다(코어가 MediaPath 등 옛 필드로 투영한다). 경로는 프롬프트에도 적혀 있다.
+    ...(t.media?.length ? { media: t.media } : {}),
     // 서버가 멘션·DM·답글만 보낸다. 제어 명령(/…)은 아르고 채널에서 받지 않는다.
     access: { mentions: { canDetectMention: true, wasMentioned: true }, commands: { authorized: false } },
     extra: { GroupSubject: isGroup ? chatName : undefined },
   });
   const chunks: string[] = [];
+  const media: string[] = []; // 에이전트가 답에 붙인 파일(mediaUrl) — 답을 보낸 뒤 첨부로 올린다
   // 답은 모아서 한 번에 보낸다(원글당 답글 하나 + 넘김 표지). 운영자가 visibleReplies=message_tool로 바꿔도 이 채널은 자동 전달로 고정한다.
   await c.channel.inbound.dispatch({
     cfg, channel: CHANNEL_ID, accountId: account.accountId,
@@ -193,15 +251,16 @@ async function runTurn(t: TurnInput): Promise<string[]> {
     delivery: {
       deliver: async (payload: any, info: { kind: string }) => {
         if (info.kind !== "final" || payload.isReasoning) return;
-        const text = formatTextWithAttachmentLinks(payload.text, resolveOutboundMediaUrls(payload));
+        const text = String(payload.text ?? "").trim();
         if (text) chunks.push(text);
+        media.push(...resolveOutboundMediaUrls(payload));
       },
       onError: (err: unknown, info: { kind: string }) => log(`argo-msgr ${info?.kind} reply failed: ${String(err)}`),
     },
     replyOptions: { disableBlockStreaming: true, sourceReplyDeliveryMode: "automatic" },
     replyPipeline: {},
   });
-  return chunks;
+  return { chunks, media };
 }
 
 function routeFor(cfg: any, account: ResolvedAccount, isGroup: boolean, chatId: string) {
@@ -211,9 +270,10 @@ function routeFor(cfg: any, account: ResolvedAccount, isGroup: boolean, chatId: 
 async function handleInbound(params: { m: any; account: ResolvedAccount; cfg: any; log: (s: string) => void; statusSink?: (p: any) => void }) {
   const { m, account, cfg, log } = params;
   const c = core();
-  const rawBody = String(m?.text ?? "").trim();
+  let rawBody = String(m?.text ?? "").trim();
   const chatId = String(m?.chat?.id ?? "");
-  if (!rawBody || !chatId) return;
+  const hasAttachments = Array.isArray(m?.attachments) && m.attachments.length > 0;
+  if ((!rawBody && !hasAttachments) || !chatId) return; // 글 없이 파일만 온 메시지도 받는다
   const isGroup = m?.chat?.kind !== "dm";
   const chatName = String(m?.chat?.name ?? chatId);
   const senderName = String(m?.from?.name ?? "");
@@ -228,6 +288,12 @@ async function handleInbound(params: { m: any; account: ResolvedAccount; cfg: an
     return;
   }
 
+  const api = makeApi({ url: account.url, token: account.token });
+  // 사람이 올린 첨부 내려받기(getFile → 25MB 상한 스트리밍 → ~/.argo-msgr/files/<메시지 id>/). 실패해도 본문은 그대로 전달하고 프롬프트에 알린다.
+  const attached = hasAttachments ? await downloadAttachments(api, m, { log }) : { files: [], failed: [] };
+  if (!rawBody) rawBody = [...attached.files, ...attached.failed].map((f) => f.name).join(", ") || "(attachment)";
+  const mediaFacts = attached.files.map((f) => ({ path: f.path, contentType: f.mime ?? undefined, fileName: f.name, sizeBytes: f.size, messageId: String(messageId) }));
+
   const route = routeFor(cfg, account, isGroup, chatId);
   // A server-authorized DM thread must not resume a provider's shared direct-message session.
   if (!isGroup) route.sessionKey = `${route.sessionKey}:argo-dm:${encodeURIComponent(chatId)}:${m.delegated ? m.thread_root || messageId : 'conversation'}`;
@@ -236,16 +302,27 @@ async function handleInbound(params: { m: any; account: ResolvedAccount; cfg: an
   await bridge?.afterResume(route.sessionKey);
   bridge?.track(m, route.sessionKey); // 이 턴 안에서 오는 승인 요청·결재 도구는 이 원문의 실행 시도로 카드를 만든다
   const endTurn = bridge?.beginTurn(route.sessionKey); // 재개 턴은 이 턴이 끝날 때까지 기다린다
+  const turn = openFileTurn({ accountId: account.accountId, chatId, message: m }); // 이 요청 처리 중에 에이전트가 보내는 파일이 붙을 자리
   try {
-    const chunks = await runTurn({ account, cfg, log, route, isGroup, chatId, chatName, senderId, senderName, messageId: String(messageId), timestamp,
-      prompt: relayPrompt(m), rawBody });
-    if (chunks.length) {
-      const answer = relayReply(chunks.join("\n\n"), m);
+    const { chunks, media } = await runTurn({ account, cfg, log, route, isGroup, chatId, chatName, senderId, senderName, messageId: String(messageId), timestamp,
+      prompt: relayPrompt(m, attached), rawBody, media: mediaFacts });
+    // 파일: 턴 도중 sendMedia로 대기시킨 것(turn.pending) + 최종 답에 붙은 mediaUrl. 최종 답이 게시된 뒤 그 답글에 붙인다.
+    const files = [...turn.pending, ...(media.length ? await agentMediaRoots(cfg, route.agentId, media).then((roots) => media.map((url) => fileFromUrl(url, { mediaLocalRoots: roots }))) : [])];
+    const text = chunks.join("\n\n");
+    // 최종 답이 있으면 그 글(넘김·멘션 그대로). 글 없이 파일만이면 그때 도구 설명(caption) 또는 파일 이름으로 마감한다.
+    const closing = text || turn.captions.join("\n") || files.map((f) => f.name).join(", ");
+    if (closing) {
+      const answer = relayReply(closing, m);
       if (answer.text.length > MAX_LEN) throw new Error("Argo Messenger reply exceeds the channel message limit");
-      await makeApi({ url: account.url, token: account.token }).sendMessage(chatId, answer.text, messageId, answer.execution);
+      const sent: any = await api.sendMessage(chatId, answer.text, messageId, answer.execution);
+      turn.finalId = Number(sent?.message_id) || turn.finalId;
+      turn.pending.splice(0); // 마감 전송이 성공했다 — 대기 파일은 아래 deliverFiles가 맡는다(위 files에 담겨 있다)
       params.statusSink?.({ lastOutboundAt: Date.now() });
     }
+    if (files.length) await deliverFiles({ api, accountId: account.accountId, chatId, turn, files, log });
   } finally {
+    await settlePendingFiles({ api, accountId: account.accountId, chatId, turn, log }); // 마감 전에 예외로 끝났으면 대기 파일을 알리거나(답글이 있으면) 붙인다
+    turn.end();
     bridge?.done(m);
     endTurn?.();
   }
@@ -260,10 +337,18 @@ async function resumeAgentTurn(params: { account: ResolvedAccount; cfg: any; log
   const isGroup = chat.kind !== "dm";
   const route = routeFor(cfg, account, isGroup, chatId);
   if (info?.sessionKey) route.sessionKey = String(info.sessionKey); // 결재를 요청한 바로 그 세션(DM 스레드 세션 포함)
-  const chunks = await runTurn({ account, cfg, log, route, isGroup, chatId, chatName: String(chat.name ?? chatId), senderId: String(from.id ?? ""),
+  const { chunks, media } = await runTurn({ account, cfg, log, route, isGroup, chatId, chatName: String(chat.name ?? chatId), senderId: String(from.id ?? ""),
     senderName: String(from.name ?? ""), messageId: `apf:${approvalId}`, timestamp: Date.now(), prompt: text, rawBody: text });
   // 후속 보고는 넘김이 없다(서버가 done으로 저장) — 모델이 습관처럼 붙인 MSGR 표지는 떼고 보낸다
-  return chunks.length ? parseMessengerDisposition(chunks.join("\n\n")).text : null;
+  const answer = chunks.length ? parseMessengerDisposition(chunks.join("\n\n")).text : null;
+  if (!media.length) return answer;
+  // 재개 턴의 파일 — 후속 보고 글에 붙인다. 후속 보고는 결재 다리(ApprovalBridge.followup)가 올리므로, 파일은 그 글 id를 받아 붙이는 함수(attach)로 넘긴다.
+  // 다리가 후속 보고를 올린 뒤(글이 없으면 파일 이름으로 올린 뒤) attach(글 id)를 부른다.
+  const roots = await agentMediaRoots(cfg, route.agentId, media);
+  const files = media.map((url) => fileFromUrl(url, { mediaLocalRoots: roots }));
+  return { text: answer, names: files.map((f) => f.name),
+    attach: (messageId: number) => deliverFiles({ api: makeApi({ url: account.url, token: account.token }), accountId: account.accountId, chatId, log, files,
+      turn: { finalId: messageId, files: 0, sourceId: null, message: {}, pending: [], captions: [] } }) }; // 등록하지 않는 임시 요청 — 이미 정해진 후속 보고 글에 붙이기만 한다
 }
 
 /** 1-b ④: 결재 도구. 이 채널(argo-msgr) 대화에서만 보이고, 다른 채널에서는 null로 숨긴다. index.ts registerFull이 등록한다.
@@ -299,7 +384,7 @@ export const argoMsgrPlugin: ChannelPlugin<ResolvedAccount> = {
   id: CHANNEL_ID,
   meta: { id: CHANNEL_ID, label: "Argo Messenger", selectionLabel: "Argo Messenger (bot API)", docsPath: "/channels/argo-msgr",
     blurb: "Company team messenger with AI crews; OpenClaw joins as an external agent bot.", aliases: ["argo"] },
-  capabilities: { chatTypes: ["direct", "group"], media: false, blockStreaming: false },
+  capabilities: { chatTypes: ["direct", "group"], media: true, blockStreaming: false },
   approvalCapability: createChannelApprovalCapability({
     native: {
       describeDeliveryCapabilities: ({ accountId }: any) => ({ enabled: Boolean(liveFor(accountId)), preferredSurface: "origin", supportsOriginSurface: true, supportsApproverDmSurface: false }),
@@ -327,7 +412,12 @@ export const argoMsgrPlugin: ChannelPlugin<ResolvedAccount> = {
     deliveryMode: "direct", chunkerMode: "markdown", textChunkLimit: MAX_LEN,
     chunker: (text, limit) => core().channel.text.chunkMarkdownText(text, limit),
     sendText: async ({ cfg, to, text, accountId, replyToId }) => sendText(resolveAccount(cfg, accountId ?? undefined), to, text, replyToId ? Number(replyToId) : undefined),
-    sendMedia: async ({ cfg, to, text, mediaUrl, accountId, replyToId }) => sendText(resolveAccount(cfg, accountId ?? undefined), to, mediaUrl ? `${text}\n\n${mediaUrl}` : text, replyToId ? Number(replyToId) : undefined),
+    sendMedia: async (ctx) => {
+      const { cfg, to, text, mediaUrl, accountId, replyToId } = ctx as any;
+      const account = resolveAccount(cfg, accountId ?? undefined), replyTo = replyToId ? Number(replyToId) : undefined;
+      if (!mediaUrl) return sendText(account, to, text, replyTo);
+      return sendMediaFile(account, to, String(text ?? ""), String(mediaUrl), ctx as MediaAccess, replyTo);
+    },
   },
   status: {
     defaultRuntime: { accountId: DEFAULT_ACCOUNT_ID, running: false, lastStartAt: null, lastStopAt: null, lastError: null },

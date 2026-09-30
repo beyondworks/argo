@@ -19,7 +19,7 @@ const CONTRACT = {
   msgr_channel_members: { bot: ['msgr_bot_updates'] },
   msgr_channel_access: { bot: ['msgr_bot_updates'] },
   msgr_crews: { bot: ['msgr_bot_create', 'msgr_bot_me'] },
-  msgr_attachments: { bot: ['msgr_bot_file'], pending: '3단계 — 봇이 파일을 올리는 경로' },
+  msgr_attachments: { bot: ['msgr_bot_file', 'msgr_bot_attach_prepare', 'msgr_bot_attach_commit'] }, // 받기(getFile)·보내기(createUpload·attachFile, 20260930160000)
   msgr_execution_finish: { bot: ['msgr_bot_finish'] },
   msgr_execution_heartbeat: { pending: '2단계 — 긴 실행의 진행 신호(지금 봇은 결재 대기 중에만 msgr_bot_events가 심박을 올린다)' },
   // 자동화(크루 루틴) — 1-a
@@ -56,7 +56,7 @@ const CONTRACT = {
   msgr_notification_finish: { argoOnly: 'Argo 데스크톱 알림 경로' },
 };
 // 다음 단계로 미룬 항목 — 늘리거나 줄일 때 이 목록을 같이 고친다(조용히 늘지 않게).
-const PENDING = ['msgr_attachments', 'msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_work_heartbeat'];
+const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_work_heartbeat'];
 
 function gatewayCalls() {
   const dir = root('src/gateway');
@@ -94,7 +94,7 @@ test('항목마다 분류가 하나 이상이고 이유가 적혀 있으며, 미
 });
 
 test('봇 API 메서드는 모두 레지스트리의 봇 RPC로 이어진다', () => {
-  const byMethod = { getMe: 'msgr_bot_me', getUpdates: 'msgr_bot_updates', sendMessage: 'msgr_bot_send', sendChatAction: 'msgr_bot_typing', getFile: 'msgr_bot_file',
+  const byMethod = { getMe: 'msgr_bot_me', getUpdates: 'msgr_bot_updates', sendMessage: 'msgr_bot_send', sendChatAction: 'msgr_bot_typing', getFile: 'msgr_bot_file', createUpload: 'msgr_bot_attach_prepare', attachFile: 'msgr_bot_attach_commit',
     setRoutines: 'msgr_bot_routines_sync', routineEditDone: 'msgr_bot_routine_edit_done', requestApproval: 'msgr_bot_request_approval',
     ackApproval: 'msgr_bot_ack_approval', expireApproval: 'msgr_bot_expire_approval', reportStatus: 'msgr_bot_report_status' };
   assert.deepEqual([...METHODS].sort(), Object.keys(byMethod).sort(), '새 봇 메서드는 여기와 레지스트리에 같이 등록한다');

@@ -88,20 +88,38 @@ export function renderMessengerHandoffs(ctx, { seenAt = null, now = Date.now, la
   return (ctx.handoffs ?? []).map((h) => `@${h.to.display_name}${away(h.to.id) ? note : ''}\n${h.message}${h.cc.length ? `\n(CC: ${h.cc.map((p) => p.display_name).join(', ')})` : ''}`).join('\n\n');
 }
 
-/** 현재 답변의 마지막 독립 줄만 판정한다. 숫자·완료 문구·인용에서 종료를 추론하지 않는다. */
-export function parseMessengerDisposition(value) {
-  const text = String(value ?? '');
-  const match = /(?:^|\r?\n)MSGR: (handoff|done)[ \t]*(?:\r?\n[ \t]*)*$/.exec(text);
-  if (!match) return { text, disposition: null };
+// 코드 펜스(``` ~~~)가 열린 채로 끝나는가 — 그 안의 표지는 답변 내용이다.
+function openFence(prefix) {
   let fence = null;
-  for (const line of text.slice(0, match.index).split(/\r?\n/)) {
+  for (const line of prefix.split(/\r?\n/)) {
     const mark = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (!mark) continue;
     if (fence) {
       if (mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = null;
     } else if (mark[1][0] !== '`' || !mark[2].includes('`')) fence = mark[1];
   }
-  return fence ? { text, disposition: null } : { text: text.slice(0, match.index).trimEnd(), disposition: match[1] };
+  return fence;
+}
+
+// 모델이 표지를 마지막 문장 끝에 붙인 경우(…전달하겠습니다. MSGR: done, …확인했습니다. `MSGR: done`) — 운영 실측 2026-09-30: 페퍼·효원·월터·보스웰 답에
+// 그대로 보였다(유건 "말 끝마다 MSGR Done 왜 붙이는거야?"). 판정으로는 읽지 않고(인라인은 인용일 수 있다) 사람에게 보이지 않게만 뗀다.
+// 인용(>)·들여쓴 코드·열린 코드 펜스 안은 그대로 둔다.
+export function hideInlineMarker(value) {
+  const text = String(value ?? '');
+  const body = text.replace(/\s+$/, '');
+  const start = body.lastIndexOf('\n') + 1;
+  const line = body.slice(start);
+  if (/^( {0,3}>|    |\t)/.test(line) || openFence(body.slice(0, start))) return text;
+  const m = /^(.*\S)[ \t]+(`?)MSGR: (?:handoff|done)\2[ \t]*$/.exec(line);
+  return m ? body.slice(0, start) + m[1] : text;
+}
+
+/** 현재 답변의 마지막 독립 줄만 판정한다. 숫자·완료 문구·인용에서 종료를 추론하지 않는다. 문장 끝에 붙은 표지는 판정 없이 본문에서만 뗀다(hideInlineMarker). */
+export function parseMessengerDisposition(value) {
+  const text = String(value ?? '');
+  const match = /(?:^|\r?\n)MSGR: (handoff|done)[ \t]*(?:\r?\n[ \t]*)*$/.exec(text);
+  if (!match || openFence(text.slice(0, match.index))) return { text: hideInlineMarker(text), disposition: null };
+  return { text: text.slice(0, match.index).trimEnd(), disposition: match[1] };
 }
 
 export function messengerHandoffHint(lang = 'ko') {

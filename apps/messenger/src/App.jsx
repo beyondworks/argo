@@ -92,7 +92,7 @@ export const externalAgentId = (installation, owner, kind, id) => {
 const AWAY_MS = 90_000;
 // 에이전트가 꺼져 있나(상주·봇 하트비트 90초 끊김, 한 번도 안 켜짐 포함) — 주인만 보던 색 점을 모두가 읽는 글자로 드러낸다(D23·D24)
 // 1-b(2026-09-29): 외부 에이전트 연결 도구의 최신 버전 — 보고가 없거나(0.3.0 이전) 더 낮으면 "업데이트 필요". 설정은 강제하지 않고 보여 준다.
-const ADAPTER_LATEST = { hermes: '0.3.0', openclaw: '0.3.0' };
+const ADAPTER_LATEST = { hermes: '0.3.2', openclaw: '0.3.2' }; // 0.3.2 = 파일 보내기(2026-09-30)
 const semverLess = (a, b) => { const x = String(a).split('.').map((n) => parseInt(n, 10) || 0), y = String(b).split('.').map((n) => parseInt(n, 10) || 0); for (let i = 0; i < 3; i++) { if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0); } return false; };
 const adapterOutdated = (b) => !!ADAPTER_LATEST[b.kind] && (!b.state?.adapter_version || semverLess(b.state.adapter_version, ADAPTER_LATEST[b.kind]));
 // 승인 방식: 사람에게 묻는다(ask) / 보조 AI가 판단해 스스로 승인(ai) / 묻지 않고 실행(none) / 모름(unknown). Hermes manual·smart·off, OpenClaw ask·allowlist·deny·auto·full
@@ -1053,6 +1053,7 @@ function Shell({ session }) {
         .on('broadcast', { event: 'typing' }, active(onTypingEvent))
         .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent(broadcastEvent('reaction', payload))))
         .on('broadcast', { event: 'edit' }, active(({ payload }) => setEvent(broadcastEvent('edit', payload))))
+        .on('broadcast', { event: 'attach' }, active(({ payload }) => setEvent(broadcastEvent('attach', payload)))) // 글보다 늦게 붙은 첨부(서버 20260930160000) — 그 글의 첨부를 다시 읽는다
         .on('broadcast', { event: 'progress' }, active(onProgressEvent))
         .subscribe((status, e) => { if (import.meta.env.DEV) console.log('[rt]', status, e?.message ?? ''); if (RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 끊김을 알면 폴이 바로 10초로 복귀
       rt.current = ch;
@@ -1103,7 +1104,8 @@ function Shell({ session }) {
       // u:<나> — 서버 적용 전에는 거절된다. 거절되면 1분부터 두 배씩 최대 10분 간격으로만 다시 붙는다(Realtime 로그 잡음 방지). 그동안은 합계 재조회로 물러난다.
       stopU = joinWithBackoff(supabase, () => supabase.channel(`u:${uid}`, { config: { private: true } })
         .on('broadcast', { event: 'message' }, ({ payload }) => { const space = payload?.org_id ?? null; if (here(space)) handleMessageRef.current(payload); else crossRef.current(payload, space); })
-        .on('broadcast', { event: 'approval' }, ({ payload }) => { if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); } }));
+        .on('broadcast', { event: 'approval' }, ({ payload }) => { if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); } })
+        .on('broadcast', { event: 'attach' }, ({ payload }) => { if (here(payload?.org_id ?? null)) setEvent(broadcastEvent('attach', payload)); }));
     })();
     return () => { live = false; stopU(); for (const c of chans) supabase.removeChannel(c).catch(() => {}); }; // 조직 전환·재연결·로그아웃 때 이 효과가 연 구독만 걷는다(현재 조직 구독은 따로)
   }, [uid, orgIdsKey, orgId, session.access_token, resumeEpoch, roomReset]); // eslint-disable-line react-hooks/exhaustive-deps — roomReset: 조직 구독 해제 실패의 removeAllChannels가 u:·다른 조직 구독도 뗐다(재검 #690)
@@ -1362,6 +1364,7 @@ function Shell({ session }) {
           .on('broadcast', { event: 'progress' }, onProgressEvent)
           .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent(broadcastEvent('reaction', payload)))
           .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent(broadcastEvent('edit', payload)))
+          .on('broadcast', { event: 'attach' }, ({ payload }) => setEvent(broadcastEvent('attach', payload)))
           .subscribe((status) => { if (isPersonal && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
         subs.set(id, c);
       }
@@ -4297,7 +4300,8 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, start
       q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids)),
       q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids)),
     ]);
-    setAtts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of a) n[r.message_id].push(r); return n; });
+    // 첨부는 지우지 않으므로(보존 규칙) 이미 보이는 첨부를 빈 결과로 덮지 않는다 — 첨부 등록 전에 나간 조회가 attach 방송의 재조회(reloadAtts)보다 늦게 도착하는 경합(검수 LOW)
+    setAtts((cur) => { const n = { ...cur }; const got = {}; for (const r of a) (got[r.message_id] ??= []).push(r); for (const id of ids) n[id] = got[id] ?? (cur[id]?.length ? cur[id] : []); return n; });
     setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
   }, []);
   // 이전 기록(스크롤백) — 가장 오래된 id 앞을 한 페이지씩. 위로 스크롤(120px 안)하거나 맨 위 버튼으로.
@@ -4358,6 +4362,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, start
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reacts, setReacts] = useState({}); const [divider, setDivider] = useState(0); // 반응(메시지별)·새 메시지 구분선(열 때의 읽음 커서)
   const reloadReacts = useCallback(async (id) => { const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').eq('message_id', id)); setReacts((cur) => ({ ...cur, [id]: rx })); }, []);
+  const reloadAtts = useCallback(async (id) => { const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').eq('message_id', id)); setAtts((cur) => ({ ...cur, [id]: a })); }, []);
   const reloadMsg = useCallback(async (id) => { const row = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, thread_root, created_at, edited_at, deleted_at, meta, client_msg_id').eq('id', id).maybeSingle()); if (row) setMsgs((cur) => (cur ?? []).map((m) => (m.id === id ? row : m))); }, []);
   const toggleReact = async (m, emoji) => { try { const mine = (reacts[m.id] ?? []).some((r) => r.user_id === uid && r.emoji === emoji); if (mine) await q(supabase.from('msgr_reactions').delete().eq('message_id', m.id).eq('user_id', uid).eq('emoji', emoji)); else await q(supabase.from('msgr_reactions').insert({ message_id: m.id, user_id: uid, emoji })); await reloadReacts(m.id); broadcast?.('reaction', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const editMsg = async (m, body) => { try { await q(supabase.from('msgr_messages').update({ body, edited_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
@@ -4379,6 +4384,8 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, start
     if (event.kind === 'approval' && event.channel_id === chId) { rtSeen.current = Date.now(); loadApprovals().catch(() => {}); load(lastId).catch(() => {}); }
     if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
     if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
+    // 첨부는 글보다 0.2~3.6초 늦게 등록된다(운영 실측 2026-09-30). 글 방송 때 읽은 빈 첨부가 그대로 남아 채널을 다시 열어야 보이던 결함 — 서버가 첨부마다 보내는 attach로 다시 읽는다.
+    if (event.kind === 'attach' && event.channel_id === chId && (event.message_id ?? event.id)) reloadAtts(event.message_id ?? event.id).catch(() => {});
   }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   const [away, setAway] = useState(false); // 바닥에서 한 화면 넘게 올라가 있으면 [맨 아래로](D22 S85)
   const stick = useRef(true); // 바닥 고정 여부 — 사용자가 바닥에서 40px 넘게 올려두면 false(QA: 열릴 때 30px 모자라게 멈춰 마지막 메시지가 가려졌다)

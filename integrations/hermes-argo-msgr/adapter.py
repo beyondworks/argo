@@ -15,6 +15,8 @@ Wire (Telegram Bot API discipline, JSON): GET  {url}/bot{token}/getMe
                                           POST {url}/bot{token}/requestApproval {kind: agent, execution_attempt, approval_id, title, reason}  (에이전트가 올리는 결재)
                                           POST {url}/bot{token}/sendMessage {approval_id, text}   (결정 뒤 후속 보고 — 한 번만, 원문 답글)
                                           POST {url}/bot{token}/reportStatus {version, approval_mode, mirror_all_applied}   (바뀔 때만)
+                                          POST {url}/bot{token}/createUpload {message_id, file_name, file_size} → PUT upload_url → attachFile {message_id, storage_path, file_name, mime_type}
+                                               (파일 보내기 — 봇 자기 글(답글·새 글)에 붙는다, 파일당 25MB)
 getUpdates?events=1 also returns {event: routine_edit|approval_decided|config, …} items (no update_id; the server leases them for 60s
 and re-sends until closed). Crew contract 1-a/1-b (2026-09-29): the same automation/approval contract Argo crews use.
 Who may instruct the bot, which channels it reads, and channel policies are all decided by the Argo server
@@ -25,6 +27,8 @@ import asyncio
 import contextvars
 import threading
 import hashlib
+import mimetypes
+import time
 from pathlib import Path
 import uuid
 import re
@@ -89,6 +93,36 @@ def _download(url: str, path, limit: int) -> None:
             if total > limit:
                 raise ValueError("attachment over size limit")
             f.write(chunk)
+
+
+def _put_file(url: str, path: str, mime: str, size: int) -> None:
+    """서명 업로드 주소로 파일 바이트를 그대로 PUT(엣지 함수를 거치지 않는다)."""
+    with open(path, "rb") as f:
+        req = urllib.request.Request(url, data=f, method="PUT", headers={
+            "Content-Type": mime, "Content-Length": str(size), "x-upsert": "false", "User-Agent": "argo-msgr-hermes"})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                r.read()
+        except urllib.error.HTTPError as e:
+            raise ArgoMsgrError(e.code, "file upload failed: " + (e.read() or b"").decode("utf-8", "replace")[:200])
+
+
+def _upload_file(base: str, token: str, message_id: int, path: str, name: Optional[str] = None) -> Dict[str, Any]:
+    """파일 하나를 봇 자기 글(message_id)에 첨부 — createUpload(서버가 대상·크기 판정) → PUT → attachFile. 25MB 초과는 413."""
+    name = name or os.path.basename(path)
+    size = os.path.getsize(path)
+    if size > _ATTACH_MAX:
+        raise ArgoMsgrError(413, "files are limited to 25 MB")
+    mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    up = _call(base, token, "createUpload", {"message_id": int(message_id), "file_name": name, "file_size": size}, post=True) or {}
+    _put_file(str(up.get("upload_url") or ""), path, mime, size)
+    return _call(base, token, "attachFile", {"message_id": int(message_id), "storage_path": up.get("storage_path"), "file_name": name, "mime_type": mime}, post=True) or {}
+
+
+def _file_error_text(name: str, e: Exception) -> str:
+    if isinstance(e, ArgoMsgrError) and e.status == 413:
+        return f"파일 {name}은(는) 25MB를 넘어 올리지 못했습니다."
+    return f"파일 {name}을(를) 올리지 못했습니다. ({_redact(str(getattr(e, 'description', '') or e))[:160]})"
 
 
 def _call(base: str, token: str, method: str, params: Optional[Dict[str, Any]] = None, *, post: bool = False,
@@ -352,31 +386,47 @@ def recipient_mentions(text, peers):
     return [p for p in resolve(parts['to']) if p['id'] not in copied] + [dict(p, role='cc') for p in cc]
 
 
+def _open_fence(prefix):
+    """코드 펜스(``` ~~~)가 열린 채로 끝나는가 — 그 안의 표지는 답변 내용이다."""
+    fence = None
+    for line in prefix.splitlines():
+        mark = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+        if not mark:
+            continue
+        if fence:
+            if mark[1][0] == fence[0] and len(mark[1]) >= len(fence) and not mark[2].strip():
+                fence = None
+        elif mark[1][0] != '`' or '`' not in mark[2]:
+            fence = mark[1]
+    return fence
+
+
+def hide_inline_marker(text):
+    """모델이 표지를 마지막 문장 끝에 붙인 경우(…했습니다. MSGR: done) — 판정으로 읽지 않고 사람에게 보이지 않게만 뗀다
+    (유건 2026-09-30 "말 끝마다 MSGR Done 왜 붙이는거야?"). 인용(>)·들여쓴 코드·열린 코드 펜스 안은 그대로. src/gateway/msgr-handoff.mjs와 같은 규칙."""
+    body = str(text or '').rstrip()
+    start = body.rfind('\n') + 1
+    line = body[start:]
+    if re.match(r'^( {0,3}>|    |\t)', line) or _open_fence(body[:start]):
+        return str(text or '')
+    hit = re.match(r'^(.*\S)[ \t]+(`?)MSGR: (?:handoff|done)\2[ \t]*$', line)
+    return body[:start] + hit[1] if hit else str(text or '')
+
+
 def relay_reply(text, m):
     match = re.search(r'(?:^|\r?\n)MSGR: (handoff|done)[ \t]*(?:\r?\n[ \t]*)*$', text)
-    fence = None
-    if match:
-        for line in text[:match.start()].splitlines():
-            mark = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
-            if not mark:
-                continue
-            if fence:
-                if mark[1][0] == fence[0] and len(mark[1]) >= len(fence) and not mark[2].strip():
-                    fence = None
-            elif mark[1][0] != '`' or '`' not in mark[2]:
-                fence = mark[1]
+    fence = _open_fence(text[:match.start()]) if match else None
     disposition = match[1] if match and not fence else 'done'
-    body = text[:match.start()].rstrip() if match and not fence else text
+    body = text[:match.start()].rstrip() if match and not fence else hide_inline_marker(text)
     peers = m.get('peers', [])
     mentions = recipient_mentions(body, peers) if disposition == 'handoff' else []
     return {'text': body, 'execution_attempt': m.get('execution_attempt'), 'disposition': disposition, 'mentions': mentions}
 
 
 def followup_text(text):
-    """후속 보고 본문 — 넘김 표지(MSGR: done|handoff)는 사람에게 보이면 안 된다. 한 줄 표지는 relay_reply 규칙으로, 모델이 줄 끝에 붙인 표지
-    (예: '…확인했습니다. `MSGR: done`', 2026-09-30 효원 실측)도 뗀다. 후속 보고는 넘김이 없다(done)."""
+    """후속 보고 본문 — 넘김 표지(MSGR: done|handoff)는 사람에게 보이면 안 된다(독립 줄·문장 끝 모두). 후속 보고는 넘김이 없다(done)."""
     body = relay_reply(str(text or ''), {})['text'].rstrip()
-    return re.sub(r'[ \t]*`?MSGR: (?:handoff|done)`?[ \t]*$', '', body).rstrip() or body
+    return body
 
 
 class ArgoMsgrAdapter(BasePlatformAdapter):
@@ -416,6 +466,10 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         self._tasks: set = set()                           # 폴 루프 밖에서 도는 재개 작업(참조 유지)
         self._mirror_all = False                           # 소유자가 메신저에서 켠 "모든 예약 작업 보기"(서버 설정)
         self._status_sent = None                           # 마지막으로 보고한 (version, approval_mode, mirror_all_applied)
+        # 파일 보내기가 붙을 글 — Hermes는 최종 답 글을 먼저 보내고 파일을 따로 부른다(base.py _deliver_media_attachments). 그 답 글 id를 기억해 둔다.
+        self._reply_ids: Dict[int, int] = {}               # 원문 id → 봇 답글 id(대화)
+        self._followup_ids: Dict[str, int] = {}            # 결재 id → 후속 보고 글 id(재개 턴)
+        self._posts: Dict[str, Any] = {}                   # chat_id → (글 id, 시각) 원문 없이 쓴 마지막 글(예약 작업 결과)
 
     @property
     def name(self) -> str:
@@ -667,10 +721,128 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=e.description)
         except Exception as e:
             return SendResult(success=False, error=_redact(str(e)))
+        mid = int(res.get("message_id") or 0)
         if src is not None:
             self._replied.add(src)
             self._pending.pop(src, None)
-        return SendResult(success=True, message_id=str(res.get("message_id") or ""))
+            if mid:
+                self._remember(self._reply_ids, src, mid)
+        elif mid:
+            self._remember(self._posts, str(chat_id), (mid, time.monotonic()))
+        return SendResult(success=True, message_id=str(mid or ""))
+
+    @staticmethod
+    def _remember(table, key, value) -> None:
+        table[key] = value
+        while len(table) > 200:   # ponytail: 최근 200개만 — 파일은 답 직후에 붙으므로 오래된 항목은 필요 없다
+            table.pop(next(iter(table)))
+
+    # ── 파일 보내기(20260930160000) — 유건 2026-09-30 "헤르메스 포함 외부 에이전트 … 파일 송수신" ────────────────
+    async def _attach_target(self, chat_id: str, first_line: str, caption: bool = False, final: bool = False) -> int:
+        """파일을 붙일 봇 글 id. 대화 → 그 요청의 답글(없으면 이 줄로 먼저 마감), 결재 재개 턴 → 후속 보고 글,
+        final=False(대화 중 send_message 도구처럼 최종 답 전달이 아닌 호출 — metadata에 notify가 없다)는 원문 없음으로 본다: 그 요청의 답을
+        파일 이름으로 먼저 닫으면 뒤에 오는 진짜 답이 거절된다(검수 M3).
+        원문 없음(예약 작업·send_message) → 2분 안에 이 방에 쓴 봇 글(Hermes가 결과 글을 먼저 보낸 경우), 설명(caption)이 따로 왔거나 없으면 새 글.
+        ponytail: '2분 안의 마지막 글'은 추정이다 — 그 사이 봇이 다른 글을 쓰면 거기 붙는다. Hermes가 결과 글 id를 넘겨주면 그것으로 바꾼다."""
+        inbound = self._inbound.get() or {}
+        same_chat = str((inbound.get('chat') or {}).get('id') or '') == str(chat_id)
+        if same_chat and not final:   # 최종 답 전달이 아닌 호출: 이미 답한 요청이면 그 답글에 붙이기만 하고(대기열 경로의 파일은 notify 없이 온다 — 재검수 M3),
+            src = inbound.get('message_id')   # 아직 답하지 않았으면 답을 닫지 않고 원문 없음으로 간다
+            if src in self._reply_ids and not inbound.get('followup'):
+                return self._reply_ids[src]
+            inbound, same_chat = {}, False
+        fu = str(inbound.get('followup') or '')
+        if same_chat and fu:
+            aid = fu[len(_FOLLOWUP_PREFIX):]
+            if aid not in self._followup_ids:
+                res = await self._post_followup(aid, first_line)
+                if not res.success:
+                    raise ArgoMsgrError(409, res.error or 'follow-up failed')
+            if aid not in self._followup_ids:
+                raise ArgoMsgrError(409, 'follow-up message id unknown')
+            return self._followup_ids[aid]
+        src = inbound.get('message_id') if same_chat else None
+        if src is not None and src not in self._replied:
+            res = await self.send(chat_id, first_line, metadata={'notify': True})
+            if not res.success:
+                raise ArgoMsgrError(409, res.error or 'reply failed')
+        if src is not None and src in self._reply_ids:
+            return self._reply_ids[src]
+        last = self._posts.get(str(chat_id))
+        if last and not caption and time.monotonic() - last[1] < 120:
+            return last[0]
+        res = await self._api('sendMessage', {'chat_id': str(chat_id), 'text': first_line[:_MAX_LEN]}, post=True) or {}
+        mid = int(res.get('message_id') or 0)
+        self._remember(self._posts, str(chat_id), (mid, time.monotonic()))
+        return mid
+
+    async def _notice(self, chat_id: str, text: str, final: bool = False) -> None:
+        """파일 실패 안내 한 줄 — 아직 답하지 않은 대화면 그 답으로, 아니면 방에 봇 새 글로(한 원문에 답은 하나뿐이다)."""
+        inbound = (self._inbound.get() or {}) if final else {}
+        src = inbound.get('message_id') if str((inbound.get('chat') or {}).get('id') or '') == str(chat_id) else None
+        try:
+            if src is not None and src not in self._replied and not inbound.get('followup'):
+                await self.send(chat_id, text, metadata={'notify': True})
+            else:
+                await self._api('sendMessage', {'chat_id': str(chat_id), 'text': text}, post=True)
+        except Exception as e:
+            logger.warning("Argo Messenger: file notice failed — %s", _redact(str(e)))
+
+    async def _send_file(self, chat_id: str, path: str, caption: Optional[str] = None, file_name: Optional[str] = None, metadata=None) -> SendResult:
+        final = bool((metadata or {}).get('notify'))   # Hermes 최종 답 전달(_final_thread_metadata)만 notify=True
+        path = urllib.parse.unquote(path[7:]) if str(path).startswith('file://') else str(path)
+        name = os.path.basename(file_name or path) or 'file'
+        try:
+            if not os.path.isfile(path):
+                raise ArgoMsgrError(404, 'file not found')
+            if os.path.getsize(path) > _ATTACH_MAX:
+                raise ArgoMsgrError(413, 'files are limited to 25 MB')
+            target = await self._attach_target(chat_id, (caption or '').strip() or ('📎 ' + name), bool((caption or '').strip()), final)
+            res = await asyncio.to_thread(_upload_file, self.base_url, self.token, target, path, name)
+        except Exception as e:
+            logger.warning("Argo Messenger: file %s not sent — %s", name, _redact(str(e)))
+            await self._notice(chat_id, _file_error_text(name, e), final)
+            return SendResult(success=False, error=_redact(str(e))[:300])
+        logger.info("Argo Messenger: file %s attached to message %s (%s)", name, target, (res or {}).get('file_id'))
+        return SendResult(success=True, message_id=str(target))
+
+    async def send_document(self, chat_id: str, file_path: str, caption: Optional[str] = None, file_name: Optional[str] = None,
+                            reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None, **kwargs) -> SendResult:
+        return await self._send_file(chat_id, file_path, caption, file_name, metadata=metadata)
+
+    async def send_image_file(self, chat_id: str, image_path: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
+                              metadata: Optional[Dict[str, Any]] = None, **kwargs) -> SendResult:
+        return await self._send_file(chat_id, image_path, caption, metadata=metadata)
+
+    async def send_video(self, chat_id: str, video_path: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
+                         metadata: Optional[Dict[str, Any]] = None, **kwargs) -> SendResult:
+        return await self._send_file(chat_id, video_path, caption, metadata=metadata)
+
+    async def send_voice(self, chat_id: str, audio_path: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
+                         metadata: Optional[Dict[str, Any]] = None, **kwargs) -> SendResult:
+        return await self._send_file(chat_id, audio_path, caption, metadata=metadata)
+
+    async def send_image(self, chat_id: str, image_url: str, caption: Optional[str] = None, reply_to: Optional[str] = None,
+                         metadata: Optional[Dict[str, Any]] = None) -> SendResult:
+        """로컬 이미지(file://)는 첨부로. 웹 주소 이미지는 내려받지 않고 주소를 글로 남긴다 — 어댑터가 받으면 내부 주소(클라우드 메타데이터 등)
+        응답이 방에 올라갈 수 있다(검수 M1, Hermes extract_images의 <img src>는 확장자 조건이 없다)."""
+        if str(image_url).startswith('file://'):
+            return await self._send_file(chat_id, image_url, caption, metadata=metadata)
+        return await self._send_file_link(chat_id, image_url, caption, metadata)
+
+    async def _send_file_link(self, chat_id: str, url: str, caption: Optional[str], metadata=None) -> SendResult:
+        text = (caption + '\n' + url) if caption else url
+        if (metadata or {}).get('notify'):   # 최종 답으로 온 주소 — 아직 답하지 않은 요청이면 이 글이 답이다(Hermes 기본 send_image와 같다, 재검수 M2)
+            res = await self.send(chat_id, text, metadata=metadata)
+            if res.success or 'already has its final reply' not in str(res.error or ''):
+                return res
+        try:   # 주소는 첨부할 파일이 없으니 글 자체를 새로 쓴다(이미 답한 요청의 답글 id로 가면 아무것도 안 남는다)
+            res = await self._api('sendMessage', {'chat_id': str(chat_id), 'text': text[:_MAX_LEN]}, post=True) or {}
+        except Exception as e:
+            return SendResult(success=False, error=_redact(str(e))[:300])
+        mid = int(res.get('message_id') or 0)
+        self._remember(self._posts, str(chat_id), (mid, time.monotonic()))
+        return SendResult(success=True, message_id=str(mid or ''))
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         # 게이트웨이 _keep_typing이 2초마다 부른다(호출당 ~1.5초 상한). 서버가 org 토픽으로 typing을 방송해 앱이 '답변 중'을 그린다
@@ -967,6 +1139,8 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         except Exception as e:
             return SendResult(success=False, error=_redact(str(e)))
         self._followed.add(aid)
+        if res.get('message_id'):
+            self._remember(self._followup_ids, aid, int(res['message_id']))
         for sk, parent in list(self._resume_parent.items()):   # 후속 보고를 올렸으면 그 재개 턴은 끝났다(서버도 더 이상 이어서 받지 않는다)
             if parent == aid:
                 self._resume_parent.pop(sk, None)
@@ -1079,9 +1253,20 @@ async def _standalone_send(pconfig, chat_id, message, *, thread_id=None, media_f
     base, token = _cfg(extra, "ARGO_MSGR_URL", "url"), _cfg(extra, "ARGO_MSGR_BOT_TOKEN", "token")
     if not (base and token):
         return {"error": "ARGO_MSGR_URL and ARGO_MSGR_BOT_TOKEN must be configured"}
+    paths = [str(d[0] if isinstance(d, (list, tuple)) else d) for d in (media_files or [])]
+    text = str(message or '').strip() or ('📎 ' + ', '.join(os.path.basename(p) for p in paths))
     try:
-        res = await asyncio.to_thread(_call, base, token, "sendMessage", {"chat_id": str(chat_id), "text": str(message)[:_MAX_LEN]}, post=True)
-        return {"success": True, "message_id": str((res or {}).get("message_id") or "")}
+        res = await asyncio.to_thread(_call, base, token, "sendMessage", {"chat_id": str(chat_id), "text": text[:_MAX_LEN]}, post=True)
+        mid = int((res or {}).get("message_id") or 0)
+        failed = []
+        for p in paths:   # 예약 작업(게이트웨이 밖 크론)이 만든 파일 — 방금 쓴 결과 글에 붙인다
+            try:
+                await asyncio.to_thread(_upload_file, base, token, mid, p)
+            except Exception as e:
+                failed.append(_file_error_text(os.path.basename(p), e))
+        if failed:
+            await asyncio.to_thread(_call, base, token, "sendMessage", {"chat_id": str(chat_id), "text": '\n'.join(failed)[:_MAX_LEN]}, post=True)
+        return {"success": True, "message_id": str(mid or "")}
     except ArgoMsgrError as e:
         return {"error": e.description}
     except Exception as e:
@@ -1159,4 +1344,6 @@ def register(ctx):
             "Scheduled jobs you create with deliver=argo_msgr appear automatically in the messenger's Automation panel, "
             "where the owner can pause or edit them; dangerous commands you run are shown to the owner as approval cards. "
             "When something needs a person's approval before you act, call argo_request_approval, then end your turn; "
-            "the decision comes back in the same conversation."))
+            "the decision comes back in the same conversation. "
+            "Files people attach are saved locally and listed with their paths. To send a file back, include it in your reply "
+            "the usual way (a MEDIA: path) — it is attached to your reply, up to 25 MB per file."))

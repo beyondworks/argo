@@ -18,6 +18,27 @@ async function sign(path: string, expiresIn: number): Promise<string | null> {
   return j?.signedURL ? `${SUPABASE_URL}/storage/v1${j.signedURL}` : null;
 }
 
+// 봇 파일 보내기 — 서명 업로드 주소(한 경로·한 번, Storage 기본 2시간). 경로는 RPC(msgr_bot_attach_prepare)가 봇 권한을 판정한 뒤에만 나온다.
+// 봇은 이 주소로 파일을 PUT하고(엣지 함수를 거치지 않는다), 크기 상한은 버킷(25MB)이 막는다.
+async function signUpload(path: string): Promise<string | null> {
+  if (!SERVICE) return null;
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/upload/sign/msgr/${path.split('/').map(encodeURIComponent).join('/')}`, {
+    method: 'POST', headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' }, body: '{}',
+  });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return j?.url ? `${SUPABASE_URL}/storage/v1${j.url}` : null;
+}
+
+// 등록하지 않은 업로드 지우기 — 경로는 RPC(msgr_bot_attach_prepare)가 이 봇의 2시간 지난 미등록 객체만 골라 준다. storage.objects는 SQL 삭제가 막혀 있어 Storage API로.
+async function purgeUploads(paths: string[]): Promise<void> {
+  if (!SERVICE || !paths.length) return;
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/msgr`, {
+    method: 'DELETE', headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prefixes: paths }),
+  });
+  if (!r.ok) throw new Error(`purge ${r.status}`);
+}
+
 async function rpc(fn: string, args: Record<string, unknown>) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST', headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args),
@@ -41,6 +62,6 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json' } });
   }
   const parsed = parseRequest(req.url, Object.fromEntries(req.headers), body);
-  const { status, body: out } = await handle(parsed, rpc, { sign });
+  const { status, body: out } = await handle(parsed, rpc, { sign, signUpload, purgeUploads });
   return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json' } });
 });
