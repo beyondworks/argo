@@ -29,6 +29,9 @@ export const RUNNERS = {
       { id: 'claude-opus-4-7', label: 'Opus 4.7' },
       { id: 'claude-opus-4-6', label: 'Opus 4.6' },
       { id: 'claude-opus-4-6[1m]', label: 'Opus 4.6 (1M)' },
+      // Sonnet 5.5(2026-09-30 유건 요청) — 실턴 통과 2026-09-30(SDK 0.3.280, 5.5·5.5[1m] 모두 응답 model=claude-sonnet-5-5). effort 기본은 끼워 넣지 않는다.
+      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
+      { id: 'claude-sonnet-5-5[1m]', label: 'Sonnet 5.5 (1M)' },
       { id: 'claude-sonnet-5', label: 'Sonnet 5' },
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
     ],
