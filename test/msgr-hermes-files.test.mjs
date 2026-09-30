@@ -277,3 +277,27 @@ async def main():
     assert res.success and sent()[-1] == {'chat_id': CH, 'text': 'https://example.com/y.png'}, '이미 답했으면 주소는 새 글'
 asyncio.run(main())
 `));
+
+// 운영 실측(2026-09-30 효원 0.3.2): 답 글이 'MSGR: done'뿐이고 파일을 붙이자, 표지를 뗀 빈 글을 서버가 거절(400)해 Hermes가
+// '(Response formatting failed, plain text:)'를 답으로 올렸다. → 빈 답은 보내지 않고, 파일이 오면 파일 이름으로, 안 오면 5초 뒤 완료 안내로 닫는다.
+test('표지만 있는 답 — 빈 글을 보내지 않고 뒤따르는 파일 이름으로 닫거나, 파일이 없으면 완료 안내로 닫는다', () => run(String.raw`
+async def main():
+    inbound = {'message_id': 5, 'execution_attempt': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'chat': {'id': CH}}
+    a._pending[5] = inbound; a._inbound.set(inbound)
+    r = await a.send(CH, 'MSGR: done', reply_to='5', metadata={'notify': True})
+    assert r.success and sent() == [], '빈 글은 보내지 않는다'
+    await a.send_document(CH, str(pdf), metadata=FINAL)
+    assert sent()[0]['text'] == '📎 report.pdf' and sent()[0]['reply_to_message_id'] == 5 and UP[0][0] == 901, (sent(), UP)
+    await asyncio.gather(*list(a._tasks))
+    assert len(sent()) == 1, '파일로 닫혔으면 완료 안내를 또 보내지 않는다'
+    inbound2 = {'message_id': 6, 'execution_attempt': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'chat': {'id': CH}}
+    a._pending[6] = inbound2; a._inbound.set(inbound2)
+    real_sleep = m.asyncio.sleep
+    async def fast(_s): await real_sleep(0)
+    m.asyncio.sleep = fast
+    await a.send(CH, 'MSGR: done', reply_to='6', metadata={'notify': True})
+    await asyncio.gather(*list(a._tasks))
+    m.asyncio.sleep = real_sleep
+    assert sent()[-1]['text'] == '완료했습니다.' and sent()[-1]['reply_to_message_id'] == 6 and 6 in a._replied, sent()
+asyncio.run(main())
+`));

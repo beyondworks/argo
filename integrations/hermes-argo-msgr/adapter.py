@@ -712,6 +712,15 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
                 if str(context_message.get("chat", {}).get("id")) != str(chat_id):
                     return SendResult(success=False, error="Execution belongs to another channel")
                 params.update(relay_reply(content, context_message))
+        if src is not None and not str(params.get("text") or "").strip():
+            # 넘김 표지만 있는 답(운영 2026-09-30 효원: 'MSGR: done'만 쓰고 파일을 붙임) — 표지를 떼면 빈 글이라 서버가 400을 주고 Hermes가
+            # '(Response formatting failed…)'를 답으로 올렸다. 뒤따르는 파일이 있으면 그 파일 이름으로 답이 닫히고(_attach_target),
+            # 5초 안에 아무것도 없으면 짧은 완료 안내로 닫는다(답 없는 요청으로 남지 않게).
+            params["text"] = "완료했습니다."
+            task = asyncio.create_task(self._close_empty_final(src, params))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+            return SendResult(success=True)
         if len(params["text"]) > _MAX_LEN:
             return SendResult(success=False, error="Reply exceeds the channel message limit")
         try:
@@ -730,6 +739,20 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         elif mid:
             self._remember(self._posts, str(chat_id), (mid, time.monotonic()))
         return SendResult(success=True, message_id=str(mid or ""))
+
+    async def _close_empty_final(self, src: int, params: Dict[str, Any], wait: float = 5.0) -> None:
+        await asyncio.sleep(wait)
+        if src in self._replied:
+            return
+        try:
+            res = await self._send_final(params) or {}
+        except Exception as e:
+            logger.warning("Argo Messenger: empty final %s not closed — %s", src, _redact(str(e)))
+            return
+        self._replied.add(src)
+        self._pending.pop(src, None)
+        if res.get("message_id"):
+            self._remember(self._reply_ids, src, int(res["message_id"]))
 
     @staticmethod
     def _remember(table, key, value) -> None:

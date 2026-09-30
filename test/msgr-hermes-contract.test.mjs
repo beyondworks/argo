@@ -430,7 +430,7 @@ class Old:
     def register_platform(self, **kw): reg['old'] = kw
 m._PLUGIN_VERSION = ''
 m.register(Old())
-assert m._PLUGIN_VERSION == '0.3.2', '옛 Hermes(manifest·register_tool 없음)도 plugin.yaml에서 버전을 읽고 연결은 된다'
+assert m._PLUGIN_VERSION == '0.3.3', '옛 Hermes(manifest·register_tool 없음)도 plugin.yaml에서 버전을 읽고 연결은 된다'
 `));
 
 test('폴 루프 — 이벤트는 처리하되 offset은 메시지만 올리고, getUpdates는 events=1로 부른다', () => run(String.raw`

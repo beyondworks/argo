@@ -235,7 +235,7 @@ try {
       await row('Fixture Old Hermes').locator('button.main').click();
       const old=row('Fixture Old Hermes');
       await old.getByText(l['org.agents.detail.adapter.unknown'],{exact:true}).waitFor();
-      await old.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.2'),{exact:true}).waitFor();
+      await old.getByText(l['org.agents.adapter.outdated'].replace('{latest}','0.3.3'),{exact:true}).waitFor();
       await old.getByText(l['org.agents.approvals.ai'].replace('{mode}','smart'),{exact:true}).waitFor();
       assert.ok((await old.innerText()).includes('hermes config set approvals.mode manual'),'고치는 명령');
       assert.equal(await old.locator('input[type=checkbox]').isDisabled(),true,'예전 도구는 스위치 비활성');
