@@ -36,13 +36,14 @@ create trigger office_business_owner_default after insert on public.office_busin
 update public.office_business_orders o set owners = array[a.actor]
 from (select distinct on (order_id) order_id, actor from public.office_business_activity
       where kind = 'quote' and actor is not null order by order_id, at, id) a
-where o.id = a.order_id and o.scope like 'o:%' and o.owners = '{}';
+where o.id = a.order_id and o.scope like 'o:%' and o.owners = '{}'
+  and not exists (select 1 from public.office_business_owner_history h where h.order_id = o.id); -- 다시 적용해도 관리자가 비운 담당자를 되살리지 않는다
 
 create or replace function public.office_business_owners_set(p_org uuid, p_order uuid, p_owners uuid[], p_reason text) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare sc text; ord public.office_business_orders%rowtype; clean uuid[]; bad uuid; why text := btrim(coalesce(p_reason, ''));
 begin
-  if p_org is null then raise exception 'business_input'; end if; -- 내 공간 거래는 담당자를 두지 않는다
+  if p_org is null or p_owners is null then raise exception 'business_input'; end if; -- 내 공간 거래는 담당자를 두지 않는다. 모두 비우기는 빈 배열로만
   sc := public.office_business_scope(p_org, true);                -- 관리자만
   if length(why) not between 1 and 500 then raise exception 'business_input'; end if;
   select coalesce(array_agg(u order by i), '{}') into clean
@@ -104,7 +105,10 @@ create or replace function public.office_task_input(p_value text, p_kind text) r
 language plpgsql immutable set search_path = public, pg_temp as $$
 begin
   if p_value is null or p_value = '' then return null; end if;
-  if p_kind = 'date' then return p_value::date::text; end if;
+  if p_kind = 'date' then -- YYYY-MM-DD만(infinity·today·다른 형식은 화면이 못 읽는다)
+    if p_value !~ '^\d{4}-\d{2}-\d{2}$' or p_value::date not between date '2000-01-01' and date '2100-12-31' then raise exception 'task_input'; end if;
+    return p_value::date::text;
+  end if;
   return p_value::uuid::text;
 exception when others then raise exception 'task_input';
 end $$;
@@ -133,6 +137,7 @@ begin
       if not exists (select 1 from public.msgr_org_members where org_id = p_org and user_id = target and removed_at is null and role <> 'guest') then raise exception 'task_assignee'; end if;
     end if;
     select * into t from public.office_tasks where id = tid;
+    if not found and (select count(*) from public.office_tasks x where x.scope = sc and x.created_by = who) >= 5000 then raise exception 'task_limit'; end if; -- ponytail: 사람·범위당 상한, 오래된 일 보관 정리가 생기면 끝낸 일은 빼고 센다
     if found then -- 같은 요청이 두 번 온 것만 허용
       if t.scope = sc and t.title = ttl and t.note = body and t.due_on is not distinct from due and t.assignee = target and t.created_by = who then return to_jsonb(t) - 'scope'; end if;
       raise exception 'task_conflict';
@@ -146,7 +151,7 @@ begin
   select * into t from public.office_tasks where id = tid and scope = sc for update;
   if not found then raise exception 'task_not_found'; end if;
   -- 맡은 사람은 끝내기·다시 열기만. 기한·제목·취소는 만든 사람(내가 만든 내 일 포함)과 관리자만 — 남이 맡긴 일의 기한을 늦춰 준수율을 꾸밀 수 없게
-  if not (manager or (p_action in ('task.done', 'task.reopen') and t.assignee = who) or (p_action in ('task.title', 'task.due', 'task.cancel') and t.created_by = who)) then
+  if not (manager or (p_action in ('task.done', 'task.reopen') and t.assignee = who) or (p_action in ('task.title', 'task.due', 'task.cancel') and t.created_by = who and t.assignee = who)) then -- 관리자가 남에게 다시 맡긴 일은 만든 사람도 못 바꾼다
     raise exception 'task_forbidden' using errcode = '42501';
   end if;
   if t.cancelled_at is not null then raise exception 'task_cancelled'; end if;
@@ -191,6 +196,7 @@ begin
     raise exception 'task_input';
   end if;
   return to_jsonb(t) - 'scope';
+exception when unique_violation then raise exception 'task_conflict'; -- 같은 id로 동시에 만들면 원시 오류 대신
 end $$;
 
 -- 보이는 할 일: 담당자·만든 사람·조직 관리자. 끝낸 일은 최근 30일만(화면용 — 성과 계산은 따로 전부 본다), 취소한 일은 뺀다
@@ -202,13 +208,15 @@ begin
     manager := exists (select 1 from public.msgr_org_members where org_id = p_org and user_id = who and removed_at is null and role in ('owner', 'admin'));
   end if;
   return coalesce((select jsonb_agg(to_jsonb(t) - 'scope' order by t.done_at nulls first, t.due_on nulls last, t.created_at)
-    from public.office_tasks t
-    where t.scope = sc and t.cancelled_at is null and (t.done_at is null or t.done_at > now() - interval '30 days')
-      and (manager or t.assignee = who or t.created_by = who)), '[]'::jsonb);
+    from (select * from public.office_tasks t
+      where t.scope = sc and t.cancelled_at is null and (t.done_at is null or t.done_at > now() - interval '30 days')
+        and (manager or t.assignee = who or t.created_by = who)
+      order by t.done_at nulls first, t.due_on nulls last, t.created_at limit 2000) t), '[]'::jsonb); -- ponytail: 화면용 2000건, 넘으면 커서
 end $$;
 
 revoke all on function public.office_business_owners_set(uuid, uuid, uuid[], text), public.office_org_people(uuid),
   public.office_task_write(uuid, text, jsonb), public.office_task_list(uuid), public.office_task_input(text, text),
   public.office_business_owner_default() from public, anon;
+revoke all on function public.office_task_input(text, text), public.office_business_owner_default() from authenticated; -- 내부용(정의자 함수 안에서만)
 grant execute on function public.office_business_owners_set(uuid, uuid, uuid[], text), public.office_org_people(uuid),
   public.office_task_write(uuid, text, jsonb), public.office_task_list(uuid) to authenticated;

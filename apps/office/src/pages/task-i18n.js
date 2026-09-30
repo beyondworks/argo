@@ -15,5 +15,6 @@ export const TASK_DICT = {
   'task.error.done': ['끝낸 할 일입니다. 다시 열어야 바꿀 수 있습니다.', 'This to-do is done. Reopen it to change it.'], 'task.error.cancelled': ['취소한 할 일입니다.', 'This to-do was cancelled.'],
   'task.error.conflict': ['같은 할 일이 이미 다른 내용으로 저장되어 있습니다. 새로고침하세요.', 'This to-do was saved with different content. Refresh.'],
   'task.error.input': ['제목(200자 이내)과 날짜를 확인하세요.', 'Check the title (max 200 chars) and date.'], 'task.error.missing': ['할 일을 찾을 수 없습니다.', 'To-do not found.'],
+  'task.error.limit': ['할 일이 너무 많습니다(한 사람당 5,000개). 끝낸 일을 정리한 뒤 다시 시도하세요.', 'Too many to-dos (5,000 per person). Clear finished ones and try again.'],
   'task.error.signin': ['로그인이 필요합니다.', 'Please sign in.'], 'task.error.request': ['저장하지 못했습니다. 잠시 뒤 다시 시도하세요.', "Couldn't save. Try again shortly."],
 };

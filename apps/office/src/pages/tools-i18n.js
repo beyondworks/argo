@@ -16,5 +16,5 @@ export const TOOL_DICT = {
   'tool.assignHint': ['배정하면 그 크루에게 일을 맡길 때 이 도구의 사용법이 같이 전달됩니다. 크루가 실제로 쓰려면 크루 쪽에도 연결돼 있어야 합니다.', "Assigned crews get this tool's instructions with each request. The crew still needs access on its side."],
   'tool.hint': ['회사 도구는 관리자가 등록하고 고칩니다. 고칠 때마다 이전 버전이 남습니다.', 'Managers add and edit company tools. Every edit keeps the previous version.'],
   'tool.error.permission': ['권한이 없습니다.', "You don't have permission."], 'tool.error.version': ['다른 곳에서 먼저 고쳤습니다. 다시 열어 주세요.', 'Changed elsewhere. Reopen it.'],
-  'tool.error.input': ['입력값을 확인하세요(주소는 http:// 또는 https://).', 'Check your input (links must start with http:// or https://).'], 'tool.error.failed': ['처리하지 못했습니다.', 'Something went wrong.'],
+  'tool.error.input': ['입력값을 확인하세요(주소는 http:// 또는 https://로 시작하는 공개 주소만, 계정 정보·내부 주소는 넣을 수 없습니다).', 'Check your input (public http:// or https:// links only — no credentials or internal addresses).'], 'tool.error.limit': ['더 등록할 수 없습니다(한 사람당 1,000개).', 'Limit reached (1,000 per person).'], 'tool.error.failed': ['처리하지 못했습니다.', 'Something went wrong.'],
 };

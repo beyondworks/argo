@@ -9,7 +9,7 @@ import { ASSET_DICT } from './assets-i18n.js';
 import './perf.css';
 
 registerDict(ASSET_DICT);
-const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_conflict: 'conflict', asset_not_found: 'missing' };
+const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_conflict: 'conflict', asset_not_found: 'missing', asset_limit: 'limit' };
 const errKey = (e) => `asset.error.${ERR[e?.message] ?? 'failed'}`;
 const day = (v) => new Date(v).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { timeZone: 'Asia/Seoul', month: 'short', day: 'numeric' });
 const lines = (s) => String(s ?? '').split('\n').map((x) => x.trim()).filter(Boolean);

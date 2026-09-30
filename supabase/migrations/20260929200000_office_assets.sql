@@ -42,6 +42,8 @@ create table if not exists public.office_asset_promotions (
   created_at timestamptz not null default clock_timestamp()
 );
 create unique index if not exists office_asset_promotions_open on public.office_asset_promotions(org_id, asset_id) where status = 'pending';
+-- 요청한 그 버전을 올린다(요청 뒤 고친 내용이 관리자 확인 없이 회사 노하우가 되지 않게 — 분리 검수 9/30)
+alter table public.office_asset_promotions add column if not exists asset_version integer;
 create table if not exists public.office_asset_dismissed (
   user_id uuid not null, scope text not null, key text not null, at timestamptz not null default clock_timestamp(),
   primary key (user_id, scope, key)
@@ -81,7 +83,7 @@ begin
 end $$;
 
 create or replace function public.office_asset_json(a public.office_assets) returns jsonb
-language sql stable as $$
+language sql stable set search_path = public, pg_temp as $$
   select jsonb_build_object('id', a.id, 'kind', a.kind, 'scope', case when a.scope like 'u:%' then 'me' else 'org' end, 'title', a.title, 'body', a.body, 'spec', a.spec,
     'source_key', a.source_key, 'promoted_from', a.promoted_from, 'version', a.version, 'uses', a.uses, 'owner', a.owner, 'updated_at', a.updated_at)
 $$;
@@ -110,10 +112,15 @@ end $$;
 create or replace function public.office_asset_tool_spec(p_spec jsonb, p_scope text, p_who uuid) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare kind text := coalesce(p_spec->>'tool_kind', 'service'); url text := nullif(btrim(coalesce(p_spec->>'url', '')), ''); crews uuid[];
+  host text := lower(substring(url from '^[A-Za-z]+://([^/:?#]*)'));
 begin
   begin
     select coalesce(array_agg(distinct x::uuid), '{}') into crews from jsonb_array_elements_text(coalesce(p_spec->'crews', '[]')) x;
   exception when others then raise exception 'asset_input'; end;
+  if p_spec ? 'enabled' and jsonb_typeof(p_spec->'enabled') <> 'boolean' then raise exception 'asset_input'; end if;
+  -- 주소: http(s)만, 계정 정보·제어 문자·내부 주소는 거절(크루가 이 주소를 열 수 있다)
+  if url is not null and (url ~ '[[:cntrl:]]' or url ~* '^https?://[^/?#]*@' or host is null or host = ''
+      or host ~ '^(localhost|127\.|10\.|0\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|\[)' or host ~ '\.(local|localhost|internal)$') then raise exception 'asset_input'; end if;
   if kind not in ('service', 'mcp', 'plugin', 'account', 'other') or (url is not null and (url !~* '^https?://[^\s]+$' or length(url) > 500)) or cardinality(crews) > 50
     or exists (select 1 from unnest(crews) i where not exists (select 1 from public.msgr_crews c where c.id = i
       and (case when p_scope like 'o:%' then c.org_id = substr(p_scope, 3)::uuid else c.owner_user_id = p_who end))) then raise exception 'asset_input'; end if;
@@ -125,9 +132,12 @@ language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare c record; sugg jsonb;
 begin
   select * into c from public.office_asset_ctx(p_org);
-  with names as (select coalesce(array_agg(name), '{}') a from public.office_business_customers where scope = c.sc),
-  d as (select t.id, t.title, t.note, t.done_at, public.office_asset_key(t.title, (select a from names)) k from public.office_tasks t
-        where t.scope = c.sc and t.assignee = c.who and t.done_at > now() - interval '180 days'),
+  -- ponytail: 최근 끝낸 일 500건만 보고, 거래처 이름은 그 제목에 실제로 들어 있는 것만 뺀다(할 일 수 × 거래처 수 비용 제한)
+  with recent as (select t.id, t.title, t.note, t.done_at from public.office_tasks t
+        where t.scope = c.sc and t.assignee = c.who and t.done_at > now() - interval '180 days' order by t.done_at desc limit 500),
+  names as (select coalesce(array_agg(b.name), '{}') a from public.office_business_customers b
+        where b.scope = c.sc and length(btrim(b.name)) >= 2 and exists (select 1 from recent r where strpos(lower(r.title), lower(btrim(b.name))) > 0)),
+  d as (select r.id, r.title, r.note, r.done_at, public.office_asset_key(r.title, (select a from names)) k from recent r),
   g as (select k, count(*) n from d where k is not null group by k having count(*) >= 3)
   select coalesce(jsonb_agg(jsonb_build_object('key', g.k, 'count', g.n,
       'tasks', (select jsonb_agg(jsonb_build_object('id', x.id, 'title', x.title, 'note', x.note, 'done_at', x.done_at) order by x.done_at desc)
@@ -136,11 +146,12 @@ begin
   where not exists (select 1 from public.office_assets a where a.owner = c.who and a.source_key = g.k and a.archived_at is null)
     and not exists (select 1 from public.office_asset_dismissed x where x.user_id = c.who and x.scope = c.sc and x.key = g.k);
   return jsonb_build_object(
-    'mine', coalesce((select jsonb_agg(public.office_asset_json(a) order by a.updated_at desc) from public.office_assets a where a.scope = 'u:' || c.who and a.archived_at is null), '[]'::jsonb),
-    'company', case when p_org is null then '[]'::jsonb else coalesce((select jsonb_agg(public.office_asset_json(a) order by a.kind, a.title) from public.office_assets a where a.scope = c.sc and a.archived_at is null), '[]'::jsonb) end,
+    'mine', coalesce((select jsonb_agg(public.office_asset_json(a) order by a.updated_at desc) from (select * from public.office_assets a where a.scope = 'u:' || c.who and a.archived_at is null order by a.updated_at desc limit 300) a), '[]'::jsonb),
+    'company', case when p_org is null then '[]'::jsonb else coalesce((select jsonb_agg(public.office_asset_json(a) order by a.kind, a.title) from (select * from public.office_assets a where a.scope = c.sc and a.archived_at is null order by a.kind, a.title limit 300) a), '[]'::jsonb) end, -- ponytail: 300개씩, 넘으면 검색·커서
     'promotions', case when p_org is null then '[]'::jsonb else coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'asset_id', p.asset_id, 'requested_by', p.requested_by, 'status', p.status,
-        'title', a.title, 'body', a.body, 'created_at', p.created_at) order by p.created_at)
+        'title', v.title, 'body', v.body, 'version', v.version, 'created_at', p.created_at) order by p.created_at)
       from public.office_asset_promotions p join public.office_assets a on a.id = p.asset_id
+        join public.office_asset_versions v on v.asset_id = p.asset_id and v.version = coalesce(p.asset_version, a.version)
       where p.org_id = p_org and p.status = 'pending' and (c.role = 'manager' or p.requested_by = c.who)), '[]'::jsonb) end,
     'suggestions', sugg, 'role', c.role);
 end $$;
@@ -158,20 +169,22 @@ begin
     target := case when p_data->>'scope' = 'org' then c.sc else 'u:' || c.who end;
     if target like 'o:%' and c.role <> 'manager' then raise exception 'asset_forbidden' using errcode = '42501'; end if; -- 회사 노하우를 바로 만드는 것은 관리자만(직원은 올리기 요청)
     ttl := btrim(coalesce(p_data->>'title', '')); bod := coalesce(p_data->>'body', '');
-    if p_data->>'kind' not in ('knowhow', 'set', 'tool') or length(ttl) not between 1 and 200 or length(bod) > 20000 then raise exception 'asset_input'; end if;
+    if coalesce(p_data->>'kind', '') not in ('knowhow', 'set', 'tool') or length(ttl) not between 1 and 200 or length(bod) > 20000 then raise exception 'asset_input'; end if;
     sp := case p_data->>'kind' when 'set' then public.office_asset_spec(coalesce(p_data->'spec', '{}'), target, c.who, p_org)
       when 'tool' then public.office_asset_tool_spec(coalesce(p_data->'spec', '{}'), target, c.who) else '{}'::jsonb end;
     if exists (select 1 from public.office_assets where id = aid) then
-      if exists (select 1 from public.office_assets where id = aid and scope = target and owner = c.who and title = ttl and body = bod) then return jsonb_build_object('id', aid); end if;
+      if exists (select 1 from public.office_assets where id = aid and scope = target and owner = c.who and kind = p_data->>'kind' and title = ttl and body = bod) then return jsonb_build_object('id', aid); end if;
       raise exception 'asset_conflict';
     end if;
+    if (select count(*) from public.office_assets where scope = target and owner = c.who) >= 1000 then raise exception 'asset_limit'; end if; -- 사람·범위당 상한(보관 포함)
     insert into public.office_assets(id, scope, owner, kind, title, body, spec, source_key) values (aid, target, c.who, p_data->>'kind', ttl, bod, sp, nullif(left(p_data->>'source_key', 200), ''));
     insert into public.office_asset_versions(asset_id, version, title, body, spec, author) values (aid, 1, ttl, bod, sp, c.who);
     return jsonb_build_object('id', aid);
   elsif p_action = 'asset.promote' then -- (id = 요청 id, asset_id = 올릴 내 노하우) -- 개인 노하우 → 이 조직 회사 노하우로 올리기 요청
     select * into a from public.office_assets where id = public.office_task_input(p_data->>'asset_id', 'uuid')::uuid and scope = 'u:' || c.who and kind = 'knowhow' and archived_at is null;
     if not found or p_org is null then raise exception 'asset_input'; end if;
-    insert into public.office_asset_promotions(id, org_id, asset_id, requested_by) values (aid, p_org, a.id, c.who);
+    if exists (select 1 from public.office_asset_promotions x where x.org_id = p_org and x.asset_id = a.id and x.status = 'approved' and x.asset_version = a.version) then raise exception 'asset_input'; end if; -- 이미 올라간 버전
+    insert into public.office_asset_promotions(id, org_id, asset_id, requested_by, asset_version) values (aid, p_org, a.id, c.who, a.version);
     return jsonb_build_object('id', aid);
   elsif p_action = 'crew.tools' then -- 크루에게 맡길 때: 그 크루에게 배정되고 켜진, 내가 볼 수 있는 도구와 사용법(쓴 횟수도 올린다)
     select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'title', x.title, 'url', x.spec->>'url', 'guide', x.body, 'tool_kind', x.spec->>'tool_kind') order by x.title), '[]') into out
@@ -181,6 +194,7 @@ begin
     return jsonb_build_object('tools', out);
   elsif p_action = 'suggest.dismiss' then
     if length(coalesce(p_data->>'key', '')) not between 1 and 200 then raise exception 'asset_input'; end if;
+    if (select count(*) from public.office_asset_dismissed where user_id = c.who and scope = c.sc) >= 1000 then raise exception 'asset_limit'; end if;
     insert into public.office_asset_dismissed(user_id, scope, key) values (c.who, c.sc, p_data->>'key') on conflict do nothing;
     return jsonb_build_object('ok', true);
   end if;
@@ -209,6 +223,7 @@ begin
   if not ((a.scope = 'u:' || c.who) or (a.scope like 'o:%' and c.role = 'manager')) then raise exception 'asset_forbidden' using errcode = '42501'; end if;
   if p_action = 'asset.update' then
     if (p_data->>'version')::int is distinct from a.version then raise exception 'asset_version'; end if;
+    if a.version >= 1000 then raise exception 'asset_limit'; end if;
     ttl := btrim(coalesce(p_data->>'title', '')); bod := coalesce(p_data->>'body', '');
     if length(ttl) not between 1 and 200 or length(bod) > 20000 then raise exception 'asset_input'; end if;
     sp := case a.kind when 'set' then public.office_asset_spec(coalesce(p_data->'spec', '{}'), a.scope, c.who, p_org)
@@ -227,7 +242,7 @@ end $$;
 
 create or replace function public.office_asset_manage(p_org uuid, p_action text, p_data jsonb) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare c record; p public.office_asset_promotions%rowtype; a public.office_assets%rowtype; nid uuid := gen_random_uuid();
+declare c record; p public.office_asset_promotions%rowtype; a public.office_assets%rowtype; k public.office_assets%rowtype; v public.office_asset_versions%rowtype; nid uuid := gen_random_uuid();
 begin
   select * into c from public.office_asset_ctx(p_org);
   if p_org is null or c.role <> 'manager' then raise exception 'asset_forbidden' using errcode = '42501'; end if;
@@ -239,8 +254,22 @@ begin
       return jsonb_build_object('id', p.id);
     end if;
     select * into a from public.office_assets where id = p.asset_id;
-    insert into public.office_assets(id, scope, owner, kind, title, body, spec, promoted_from) values (nid, c.sc, a.owner, a.kind, a.title, a.body, '{}'::jsonb, a.id);
-    insert into public.office_asset_versions(asset_id, version, title, body, spec, author) values (nid, 1, a.title, a.body, '{}'::jsonb, c.who);
+    -- 보관한 노하우·나간 사람의 요청은 승인하지 않는다
+    if a.archived_at is not null or not exists (select 1 from public.msgr_org_members m where m.org_id = p_org and m.user_id = p.requested_by and m.removed_at is null and m.role <> 'guest') then
+      raise exception 'asset_input';
+    end if;
+    select * into v from public.office_asset_versions where asset_id = a.id and version = coalesce(p.asset_version, a.version); -- 관리자가 본 그 버전
+    select * into k from public.office_assets where scope = c.sc and promoted_from = a.id and archived_at is null order by created_at limit 1 for update;
+    if found then -- 이미 올라간 사본이 있으면 새 버전으로 고친다(사본이 둘이 되지 않게)
+      nid := k.id;
+      if k.title is distinct from v.title or k.body is distinct from v.body then
+        update public.office_assets set title = v.title, body = v.body, version = version + 1, updated_at = clock_timestamp() where id = k.id;
+        insert into public.office_asset_versions(asset_id, version, title, body, spec, author) values (k.id, k.version + 1, v.title, v.body, '{}'::jsonb, c.who);
+      end if;
+    else
+      insert into public.office_assets(id, scope, owner, kind, title, body, spec, promoted_from) values (nid, c.sc, a.owner, a.kind, v.title, v.body, '{}'::jsonb, a.id);
+      insert into public.office_asset_versions(asset_id, version, title, body, spec, author) values (nid, 1, v.title, v.body, '{}'::jsonb, c.who);
+    end if;
     update public.office_asset_promotions set status = 'approved', decided_by = c.who, decided_at = clock_timestamp(), result_id = nid where id = p.id;
     return jsonb_build_object('id', p.id, 'asset_id', nid);
   end if;

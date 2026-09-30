@@ -170,3 +170,35 @@ test('할 일: 관리자가 맡긴 일은 직원이 기한·제목·취소를 �
  task('task.due',{id,due_on:'2026-10-15'},{u:U.admin}); // 맡긴 관리자는 바꾼다
  assert.equal(row(id).due_on,'2026-10-15');
 });
+
+test('할 일: 관리자가 다른 사람에게 다시 맡긴 일은 처음 만든 직원도 기한·제목·취소를 못 한다', {skip}, ()=>{
+ const id=newTask();
+ task('task.assign',{id,assignee:U.member2},{u:U.admin});
+ assert.match(tfail('task.due',{id,due_on:'2027-01-01'}),/task_forbidden/);
+ assert.match(tfail('task.cancel',{id}),/task_forbidden/);
+ task('task.done',{id},{u:U.member2});
+});
+
+test('할 일: 기한은 YYYY-MM-DD 형식·2000~2100년만 — infinity·today·다른 형식은 거절', {skip}, ()=>{
+ for(const due_on of ['infinity','-infinity','today','10/11/2026','5874897-12-31','1999-12-31'])assert.match(tfail('task.create',{id:randomUUID(),title:'기한',due_on}),/task_input/,due_on);
+});
+
+test('할 일: 사람마다 한 범위에 5000개까지 — 넘으면 task_limit', {skip}, ()=>{
+ const who=U.member2;
+ sql(`insert into office_tasks(id,scope,title,assignee,created_by) select gen_random_uuid(),'o:${ORG}','x',${quote(who)},${quote(who)} from generate_series(1,5000)`);
+ assert.match(tfail('task.create',{id:randomUUID(),title:'하나 더',due_on:null},{u:who}),/task_limit/);
+ sql(`delete from office_tasks where created_by=${quote(who)} and title='x'`);
+});
+
+test('거래 담당자: 담당자 목록이 null이면 거절(모두 지우기는 빈 배열로만)', {skip}, ()=>{
+ const o=ORDERS.before;
+ const r=raw(userSql(U.owner,`select office_business_owners_set(${quote(ORG)},${quote(o)},null,'실수')`));
+ assert.notEqual(r.status,0); assert.match(r.stderr,/business_input/);
+});
+
+test('거래 담당자: 마이그레이션을 다시 적용해도 관리자가 비운 담당자를 되살리지 않는다', {skip}, ()=>{
+ const o=ORDERS.before;
+ sql(setOwners(o,[],{reason:'담당 없음으로'}));
+ const r=psqlSpawn(DB,['-f',fileURLToPath(new URL('../supabase/migrations/20260929180000_office_tasks_owners.sql',import.meta.url))]); if(r.status!==0)throw new Error(r.stderr);
+ assert.equal(sql(`select cardinality(owners) from office_business_orders where id=${quote(o)}`),'0');
+});

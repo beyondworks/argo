@@ -13,7 +13,7 @@ import { TOOL_DICT } from './tools-i18n.js';
 import './perf.css';
 
 registerDict(TOOL_DICT);
-const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input' };
+const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_limit: 'limit' };
 const errKey = (e) => `tool.error.${ERR[e?.message] ?? 'failed'}`;
 const KINDS = ['service', 'mcp', 'plugin', 'account', 'other'];
 

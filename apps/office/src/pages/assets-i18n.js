@@ -22,5 +22,6 @@ export const ASSET_DICT = {
   'asset.checks': ['끝나기 전 점검 목록(한 줄에 하나)', 'Checklist before finishing (one per line)'], 'asset.checksHint': ['예: 부가세 표기 확인\n보낸 뒤 할 일 등록', 'e.g. Check VAT\nAdd a follow-up to-do'],
   'asset.error.permission': ['권한이 없습니다.', "You don't have permission."], 'asset.error.version': ['다른 곳에서 먼저 고쳤습니다. 다시 열어 주세요.', 'Changed elsewhere. Reopen it.'],
   'asset.error.input': ['입력값을 확인하세요.', 'Check your input.'], 'asset.error.conflict': ['이미 같은 요청이 있습니다.', 'Already requested.'],
+  'asset.error.limit': ['더 만들 수 없습니다(한 사람당 1,000개·고치기 1,000번). 쓰지 않는 것을 보관하세요.', 'Limit reached (1,000 items or 1,000 edits per person). Archive unused ones.'],
   'asset.error.missing': ['찾을 수 없습니다.', 'Not found.'], 'asset.error.failed': ['처리하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Something went wrong. Try again.'],
 };

@@ -161,3 +161,44 @@ test('도구: 회사 도구는 관리자가 등록하고, 배정 크루는 같�
  assert.deepEqual(used.tool_list.map(x=>x.title),['볼타 세금계산서']);
  assert.ok(list(U.member).company.find(a=>a.id===tool).uses>=2);
 });
+
+test('올리기 승인은 요청한 그 버전 — 요청 뒤 고쳐도 관리자가 본 내용이 올라가고, 다시 요청하면 회사 사본을 새 버전으로 고친다', {skip}, ()=>{
+ const mine=randomUUID(); write(U.member2,'asset.create',{id:mine,kind:'knowhow',scope:'me',title:'검수 요령',body:'BEFORE'});
+ const req=randomUUID(); write(U.member2,'asset.promote',{id:req,asset_id:mine});
+ write(U.member2,'asset.update',{id:mine,version:1,title:'검수 요령',body:'AFTER-EDIT'});
+ assert.equal(list(U.admin).promotions.find(p=>p.id===req).body,'BEFORE'); // 관리자 화면은 요청한 버전
+ const r=manage(U.admin,'promotion.decide',{id:req,approve:true});
+ assert.equal(list(U.member).company.find(a=>a.id===r.asset_id).body,'BEFORE');
+ // 고친 버전(2)을 다시 올리면 회사 사본을 새 버전으로 고친다(사본이 둘이 되지 않는다)
+ const req2=randomUUID(); write(U.member2,'asset.promote',{id:req2,asset_id:mine});
+ assert.equal(manage(U.admin,'promotion.decide',{id:req2,approve:true}).asset_id,r.asset_id);
+ const copies=list(U.member).company.filter(a=>a.promoted_from===mine);
+ assert.deepEqual(copies.map(a=>[a.body,a.version]),[['AFTER-EDIT',2]]);
+ assert.match(writeFail(U.member2,'asset.promote',{id:randomUUID(),asset_id:mine}),/asset_input/); // 이미 올라간 버전은 다시 요청하지 않는다
+});
+
+test('올리기: 보관한 노하우·나간 사람의 요청은 승인되지 않는다', {skip}, ()=>{
+ const a=randomUUID(); write(U.member,'asset.create',{id:a,kind:'knowhow',scope:'me',title:'보관할 것',body:'x'});
+ const req=randomUUID(); write(U.member,'asset.promote',{id:req,asset_id:a});
+ write(U.member,'asset.archive',{id:a});
+ assert.match(manageFail(U.admin,'promotion.decide',{id:req,approve:true}),/asset_input/);
+ const who=randomUUID(); sql(`insert into auth.users(id,email)values(${quote(who)},'leaver@example.test'); insert into msgr_org_members(org_id,user_id,role)values(${quote(ORG)},${quote(who)},'member')`);
+ const b=randomUUID(); write(who,'asset.create',{id:b,kind:'knowhow',scope:'me',title:'떠나는 사람',body:'y'});
+ const req2=randomUUID(); write(who,'asset.promote',{id:req2,asset_id:b});
+ sql(`update msgr_org_members set removed_at=now() where org_id=${quote(ORG)} and user_id=${quote(who)}`);
+ assert.match(manageFail(U.admin,'promotion.decide',{id:req2,approve:true}),/asset_input/);
+});
+
+test('입력 검사: 종류 없음·켜짐이 참거짓이 아님·주소에 계정 정보·제어 문자·내부 주소는 asset_input', {skip}, ()=>{
+ assert.match(writeFail(U.member,'asset.create',{id:randomUUID(),scope:'me',title:'종류 없음',body:''}),/asset_input/);
+ const tool=(spec)=>writeFail(U.member,'asset.create',{id:randomUUID(),kind:'tool',scope:'me',title:'도구',body:'',spec:{tool_kind:'service',crews:[],...spec}});
+ assert.match(tool({enabled:'maybe'}),/asset_input/);
+ for(const url of ['https://user:pw@evil.example/','https://a.example/\u0007','http://127.0.0.1:5432/','http://169.254.169.254/latest','http://localhost:3001/','http://10.0.0.5/','http://192.168.0.1/'])assert.match(tool({url}),/asset_input/,url);
+ write(U.member,'asset.create',{id:randomUUID(),kind:'tool',scope:'me',title:'괜찮은 주소',body:'',spec:{tool_kind:'service',url:'https://app.bolta.io/path?x=1',crews:[]}});
+});
+
+test('상한: 사람마다 한 범위에 자산 1000개까지(보관 포함) — 넘으면 asset_limit', {skip}, ()=>{
+ const who=randomUUID(); sql(`insert into auth.users(id,email)values(${quote(who)},'many@example.test')`);
+ sql(`insert into office_assets(id,scope,owner,kind,title) select gen_random_uuid(),'u:${who}',${quote(who)},'knowhow','x'||g from generate_series(1,1000) g`);
+ assert.match(writeFail(who,'asset.create',{id:randomUUID(),kind:'knowhow',scope:'me',title:'하나 더',body:''},null),/asset_limit/);
+});

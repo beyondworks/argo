@@ -5,7 +5,7 @@ import { getClient } from './supabase.js';
 import { ME, SPACES, useSession } from './session.js';
 
 export const orgOf = (space) => (space === 'me' ? null : SPACES.find((s) => s.key === space && s.kind === 'org')?.id);
-const ERRORS = { task_forbidden: 'permission', task_assignee: 'assignee', task_done: 'done', task_cancelled: 'cancelled', task_conflict: 'conflict', task_input: 'input', task_not_found: 'missing', task_signin: 'signin' };
+const ERRORS = { task_forbidden: 'permission', task_assignee: 'assignee', task_done: 'done', task_cancelled: 'cancelled', task_conflict: 'conflict', task_input: 'input', task_not_found: 'missing', task_signin: 'signin', task_limit: 'limit' };
 export const taskError = (e) => `task.error.${ERRORS[e?.message] ?? (String(e?.code) === '42501' ? 'permission' : 'request')}`;
 
 let state = {};
