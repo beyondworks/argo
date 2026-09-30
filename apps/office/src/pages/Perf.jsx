@@ -7,7 +7,7 @@ import { ME, canManage } from '../core/session.js';
 import { useTasks } from '../core/tasks.js';
 import { kstDay, groupTasks, dueInfo } from '../core/task-model.js';
 import { usePerfReport, usePerfTeam, perfWrite, perfManage } from '../core/perf.js';
-import { periodRange, shiftAnchor, groupByDay, rate, canShare } from '../core/perf-model.js';
+import { periodRange, shiftAnchor, groupByDay, groupByMonth, daySummary, rate, canShare } from '../core/perf-model.js';
 import { api as mailApi } from '../core/mail.js';
 import { orgOf } from '../core/tasks.js';
 import { Link } from '../core/router.jsx';
@@ -76,7 +76,7 @@ function Mine({ space }) {
       <Numbers totals={r.totals} />
       <Goals space={space} goals={r.goals} year={Number(p.to.slice(0, 4))} reload={report.reload} />
       {p.key && <Review space={space} period={p.key} review={r.reviews?.find((x) => x.period === p.key)} today={today} reload={report.reload} />}
-      <Log report={r} space={space} requests={r.requests ?? []} goals={r.goals} reload={report.reload} day={unit === 'day' ? p.from : today} canAdd={p.from <= today && today <= p.to} />
+      <Log report={r} space={space} requests={r.requests ?? []} goals={r.goals} reload={report.reload} day={unit === 'day' ? p.from : today} canAdd={p.from <= today && today <= p.to} unit={unit} />
     </>}
   </>;
 }
@@ -155,17 +155,23 @@ function Goals({ space, goals, year, reload, readOnly }) {
   </section>;
 }
 
-/** 날짜별 기록 — 자동 기록과 성과 한 줄. canAdd면 성과 한 줄 추가·고치기 요청 */
-function Log({ report, space, requests = [], goals = [], reload, day, canAdd }) {
+/** 날짜별 기록 — 자동 기록과 성과 한 줄. canAdd면 성과 한 줄 추가·고치기 요청.
+ *  일간은 다 펼치고, 주간·월간은 날짜마다 한 줄 요약, 연간은 월 한 줄 → 날짜 한 줄 → 세부 항목(유건 9/30) */
+function Log({ report, space, requests = [], goals = [], reload, day, canAdd, unit = 'day' }) {
   const days = useMemo(() => groupByDay(report), [report]);
+  const months = useMemo(() => (unit === 'year' ? groupByMonth(days) : null), [days, unit]);
   const [text, setText] = useState(''), [goal, setGoal] = useState(''), [busy, setBusy] = useState(false), [ask, setAsk] = useState(null);
-  const formId = useId();
+  const [open, setOpen] = useState(() => new Set());
+  const formId = useId(), foldId = useId();
+  const toggle = (key) => setOpen((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const add = async (e) => {
     e.preventDefault();
     if (!text.trim() || busy) return;
     setBusy(true);
-    try { await perfWrite(space, 'note.add', { id: newId(), body: text.trim(), day, goal_id: goal || null }); setText(''); setGoal(''); reload(); }
-    catch (err) { fail(err); } finally { setBusy(false); }
+    try {
+      await perfWrite(space, 'note.add', { id: newId(), body: text.trim(), day, goal_id: goal || null });
+      setText(''); setGoal(''); setOpen((s) => new Set(s).add(day).add(day.slice(0, 7))); reload(); // 방금 남긴 날(과 그 달)은 펼쳐 둔다
+    } catch (err) { fail(err); } finally { setBusy(false); }
   };
   const submitAsk = async (e) => {
     e.preventDefault();
@@ -186,6 +192,35 @@ function Log({ report, space, requests = [], goals = [], reload, day, canAdd }) 
       {items.length > 0 && <button type="button" className="icon-btn perf-more" aria-label={t('perf.req.ask')} onClick={(e) => openMenu(e, items, { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>}
     </li>;
   };
+  const dayItems = (d) => <ul>
+    {d.deals.map((x, i) => <li key={`d${i}`} className="perf-item"><span className={`badge k-${x.kind}`}>{t(`perf.k.${x.kind}`)}</span><span className="perf-item-main">{x.title}{x.co > 1 && <small className="dim"> · {t('perf.co', { n: x.co })}</small>}</span><strong className="mono">{money(x.amount)}</strong></li>)}
+    {d.tasks.map((x) => <li key={x.id} className="perf-item"><span className="badge">{t('perf.taskDone')}</span><span className="perf-item-main">{x.title}</span><small className={x.due_on ? (x.on_time ? 'ok' : 'late') : 'dim'}>{x.due_on ? t(x.on_time ? 'perf.onTime' : 'perf.late') : t('perf.noDue')}</small></li>)}
+    {d.approvals > 0 && <li className="perf-item"><span className="badge">{t('perf.approvals', { n: d.approvals })}</span></li>}
+    {d.pages.length > 0 && <li className="perf-item"><span className="badge">{t('perf.pages')}</span><span className="perf-item-main">{d.pages.map((x) => x.title || '—').join(', ')}</span></li>}
+    {d.crew > 0 && <li className="perf-item"><span className="badge">{t('perf.crew', { n: d.crew })}</span></li>}
+    {d.mail.map((m) => <li key={m.thread_id} className="perf-item"><span className={`badge mail-${m.grade}`}>{t(`perf.g.${m.grade}`)}</span>
+      <span className="perf-item-main">{m.customer ?? '—'} <small className="dim">· {m.reasons.map((x) => t(`perf.r.${x}`)).join(' · ')}</small></span>
+      {canAdd && m.account && <Link className="btn ghost sm" to={`/me/mail/${m.account}.${m.message_id}`}>{t('perf.mailOpen')}</Link>}</li>)}
+    {d.asks.length > 0 && <li className="perf-item"><span className="badge">{t('perf.asks', { n: d.asks.length })}</span>
+      <span className="perf-item-main dim">{[d.asks.some((q) => q.minutes != null) && t('perf.asksAvg', { t: minutes(Math.round(d.asks.filter((q) => q.minutes != null).reduce((a, q) => a + q.minutes, 0) / d.asks.filter((q) => q.minutes != null).length)) }),
+        d.asks.some((q) => q.unanswered) && t('perf.asksLate', { n: d.asks.filter((q) => q.unanswered).length }), d.asks.some((q) => q.done) && t('perf.asksDone', { n: d.asks.filter((q) => q.done).length })].filter(Boolean).join(' · ')}</span></li>}
+    {d.notes.map(noteRow)}
+  </ul>;
+  // 접힌 한 줄 — 날짜(또는 월) · 칩 · 계약 금액. 세부는 늘 그려 두고 hidden으로 접는다(인쇄 때 모두 펼치려고)
+  const fold = (key, label, s, body) => {
+    const on = open.has(key), id = `${foldId}-${key}`;
+    return <li key={key} className="perf-fold">
+      <button type="button" className="perf-fold-row" aria-expanded={on} aria-controls={id} onClick={() => toggle(key)}>
+        <Icon name="chevron" size={12} className="perf-fold-chev" />
+        <span className="perf-fold-label">{label}</span>
+        <span className="perf-fold-chips">{s.chips.map((c) => `${t(`perf.s.${c.key}`)} ${c.n}`).join(' · ')}</span>
+        {s.amount != null && <strong className="mono perf-fold-amount">{money(s.amount)}</strong>}
+      </button>
+      <div id={id} className="perf-fold-body" hidden={!on}>{body}</div>
+    </li>;
+  };
+  const dayLabel = (d) => dayText(d, { month: 'long', day: 'numeric', weekday: 'short' });
+  const dayFolds = (list) => <ol className="perf-folds">{list.map((d) => fold(d.day, dayLabel(d.day), daySummary(d), dayItems(d)))}</ol>;
   return <section className="module perf-log" aria-label={t('perf.log')}>
     <header className="module-head"><Icon name="history" size={15} /><h3>{t('perf.log')}</h3></header>
     {canAdd && <form className="perf-note-add" onSubmit={add}>
@@ -194,23 +229,10 @@ function Log({ report, space, requests = [], goals = [], reload, day, canAdd }) 
       <button className="btn sm" disabled={busy || !text.trim()}>{t('perf.note.add')}</button>
     </form>}
     {canAdd && <p className="dim small perf-lock-hint">{t('perf.note.locked')}</p>}
-    {!days.length ? <p className="mod-empty">{t('perf.log.empty')}</p> : <ol className="perf-days">{days.map((d) => <li key={d.day} className="perf-day">
-      <h4>{dayText(d.day, { month: 'long', day: 'numeric', weekday: 'short' })}</h4>
-      <ul>
-        {d.deals.map((x, i) => <li key={`d${i}`} className="perf-item"><span className={`badge k-${x.kind}`}>{t(`perf.k.${x.kind}`)}</span><span className="perf-item-main">{x.title}{x.co > 1 && <small className="dim"> · {t('perf.co', { n: x.co })}</small>}</span><strong className="mono">{money(x.amount)}</strong></li>)}
-        {d.tasks.map((x) => <li key={x.id} className="perf-item"><span className="badge">{t('perf.taskDone')}</span><span className="perf-item-main">{x.title}</span><small className={x.due_on ? (x.on_time ? 'ok' : 'late') : 'dim'}>{x.due_on ? t(x.on_time ? 'perf.onTime' : 'perf.late') : t('perf.noDue')}</small></li>)}
-        {d.approvals > 0 && <li className="perf-item"><span className="badge">{t('perf.approvals', { n: d.approvals })}</span></li>}
-        {d.pages.length > 0 && <li className="perf-item"><span className="badge">{t('perf.pages')}</span><span className="perf-item-main">{d.pages.map((x) => x.title || '—').join(', ')}</span></li>}
-        {d.crew > 0 && <li className="perf-item"><span className="badge">{t('perf.crew', { n: d.crew })}</span></li>}
-        {d.mail.map((m) => <li key={m.thread_id} className="perf-item"><span className={`badge mail-${m.grade}`}>{t(`perf.g.${m.grade}`)}</span>
-          <span className="perf-item-main">{m.customer ?? '—'} <small className="dim">· {m.reasons.map((x) => t(`perf.r.${x}`)).join(' · ')}</small></span>
-          {canAdd && m.account && <Link className="btn ghost sm" to={`/me/mail/${m.account}.${m.message_id}`}>{t('perf.mailOpen')}</Link>}</li>)}
-        {d.asks.length > 0 && <li className="perf-item"><span className="badge">{t('perf.asks', { n: d.asks.length })}</span>
-          <span className="perf-item-main dim">{[d.asks.some((q) => q.minutes != null) && t('perf.asksAvg', { t: minutes(Math.round(d.asks.filter((q) => q.minutes != null).reduce((a, q) => a + q.minutes, 0) / d.asks.filter((q) => q.minutes != null).length)) }),
-            d.asks.some((q) => q.unanswered) && t('perf.asksLate', { n: d.asks.filter((q) => q.unanswered).length }), d.asks.some((q) => q.done) && t('perf.asksDone', { n: d.asks.filter((q) => q.done).length })].filter(Boolean).join(' · ')}</span></li>}
-        {d.notes.map(noteRow)}
-      </ul>
-    </li>)}</ol>}
+    {!days.length ? <p className="mod-empty">{t('perf.log.empty')}</p>
+      : unit === 'day' ? <ol className="perf-days">{days.map((d) => <li key={d.day} className="perf-day"><h4>{dayLabel(d.day)}</h4>{dayItems(d)}</li>)}</ol>
+      : unit === 'year' ? <ol className="perf-folds perf-months">{months.map((m) => fold(m.month, dayText(`${m.month}-01`, { year: 'numeric', month: 'long' }), m, dayFolds(m.days)))}</ol>
+      : dayFolds(days)}
     {ask && <Modal open title={t(ask.mode === 'request' ? 'perf.req.ask' : 'perf.req.edit')} onClose={() => setAsk(null)} footer={<>
       <button type="button" className="btn" onClick={() => setAsk(null)}>{t('perf.close')}</button>
       <button type="submit" form={formId} className="btn primary" disabled={!ask.value.trim()}>{t(ask.mode === 'request' ? 'perf.req.send' : 'perf.save')}</button></>}>
@@ -291,7 +313,7 @@ function Team({ space }) {
         <p className="dim small">{t(review.status === 'done' ? 'perf.review.done' : 'perf.review.shared', { date: stamp(review.done_at ?? review.shared_at) })}</p>
         <Numbers totals={review.snapshot.totals} />
         {review.snapshot.goals?.length > 0 && <Goals goals={review.snapshot.goals} year={Number(review.period.slice(0, 4))} readOnly />}
-        <Log report={review.snapshot} />
+        <Log report={review.snapshot} unit={review.period.length === 4 ? 'year' : 'month'} />
         <Thread comments={review.comments} />
         {review.status === 'shared' && <form className="perf-comment" onSubmit={(e) => { e.preventDefault(); if (memo.trim()) act('comment.add', { review_id: review.id, body: memo.trim() }, () => setMemo('')); }}>
           <input className="input" maxLength={4000} value={memo} placeholder={t('perf.c.memoWrite')} onChange={(e) => setMemo(e.target.value)} />

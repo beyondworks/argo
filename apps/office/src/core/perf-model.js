@@ -40,3 +40,37 @@ export function groupByDay(report) {
   for (const q of report.asks ?? []) at(q.day).asks.push(q);   // 메신저 요청(3단계)
   return [...days.values()].sort((a, b) => (a.day < b.day ? 1 : -1));
 }
+
+// 주간·월간·연간 기록 접기(유건 9/30) — 날짜·월마다 한 줄 요약. 칩 순서는 펼친 항목 배지 순서와 같다
+export const SUMMARY_KEYS = ['contract', 'uncontract', 'invoice', 'credit', 'payment', 'refund', 'task', 'approval', 'page', 'crew', 'mail_good', 'mail_normal', 'mail_caution', 'ask', 'note'];
+const CONTRACT_KINDS = new Set(['contract', 'uncontract']); // 서버 totals.contract와 같은 기준(취소는 이미 음수 금액)
+
+const counts = (d) => {
+  const c = Object.fromEntries(SUMMARY_KEYS.map((k) => [k, 0]));
+  for (const x of d.deals) if (x.kind in c) c[x.kind] += 1;
+  c.task = d.tasks.length; c.approval = d.approvals; c.page = d.pages.length; c.crew = d.crew;
+  for (const m of d.mail) if (`mail_${m.grade}` in c) c[`mail_${m.grade}`] += 1;
+  c.ask = d.asks.length; c.note = d.notes.length;
+  return c;
+};
+const chipsOf = (c) => SUMMARY_KEYS.filter((k) => c[k] > 0).map((k) => ({ key: k, n: c[k] }));
+
+/** 하루 요약 — 칩(0건 제외)과 계약 금액(계약·취소가 없는 날은 null, 같은 날 계약+취소면 차감한 값) */
+export function daySummary(d) {
+  const contract = d.deals.filter((x) => CONTRACT_KINDS.has(x.kind));
+  return { day: d.day, chips: chipsOf(counts(d)), amount: contract.length ? contract.reduce((a, x) => a + Number(x.amount || 0), 0) : null };
+}
+
+/** groupByDay 결과를 월(YYYY-MM)로 — 최근 달이 먼저, 달 안의 날짜 순서는 그대로 */
+export function groupByMonth(days) {
+  const months = new Map();
+  for (const d of days) {
+    const key = d.day.slice(0, 7);
+    if (!months.has(key)) months.set(key, { month: key, days: [], c: Object.fromEntries(SUMMARY_KEYS.map((k) => [k, 0])), amount: null });
+    const m = months.get(key), s = daySummary(d), c = counts(d);
+    m.days.push(d);
+    for (const k of SUMMARY_KEYS) m.c[k] += c[k];
+    if (s.amount != null) m.amount = (m.amount ?? 0) + s.amount;
+  }
+  return [...months.values()].sort((a, b) => (a.month < b.month ? 1 : -1)).map(({ month, days: ds, c, amount }) => ({ month, days: ds, chips: chipsOf(c), amount }));
+}

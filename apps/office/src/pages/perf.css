@@ -21,6 +21,21 @@
 .perf-lock-hint { padding: 4px 16px 0; margin: 0; }
 .perf-days { list-style: none; margin: 0; padding: 6px 8px 12px; display: grid; gap: 6px; }
 .perf-day h4 { margin: 10px 8px 4px; font-size: 12px; font-weight: 600; color: var(--fg-3); }
+/* 주간·월간·연간 — 날짜(월)마다 한 줄로 접고 누르면 펼친다(유건 9/30). 줄 사이는 구분선, 왼쪽 막대 없음 */
+.perf-folds { list-style: none; margin: 0; padding: 4px 8px 10px; display: grid; grid-template-columns: minmax(0, 1fr); } /* 긴 칩 줄이 칸을 넓히지 않게 */
+.perf-fold { min-width: 0; }
+.perf-fold + .perf-fold { border-top: 1px solid var(--border-soft); }
+.perf-fold-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 8px; border: 0; border-radius: var(--rc); background: none; color: inherit; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+@media (hover: hover) { .perf-fold-row:hover { background: var(--card-2); } }
+.perf-fold-chev { flex: none; color: var(--fg-3); transition: transform .15s ease; }
+.perf-fold-row[aria-expanded='true'] .perf-fold-chev { transform: rotate(90deg); }
+.perf-fold-label { flex: none; font-weight: 600; white-space: nowrap; }
+.perf-fold-chips { flex: 1; min-width: 0; color: var(--fg-3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.perf-fold-amount { flex: none; font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.perf-fold-body { padding: 0 0 8px 22px; }
+.perf-fold-body > ul { list-style: none; margin: 0; padding: 0; display: grid; }
+.perf-fold-body > .perf-folds { padding: 0; }
+.perf-months > .perf-fold > .perf-fold-row .perf-fold-label { font-size: 14px; }
 .perf-day ul, .perf-brief ul, .perf-requests ul { list-style: none; margin: 0; padding: 0; display: grid; }
 .perf-brief ul { padding: 6px 8px 10px; }
 .perf-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--rc); min-width: 0; font-size: 13.5px; }
@@ -46,10 +61,14 @@
 .perf-snapshot .perf-comment { grid-template-columns: minmax(0, 1fr) auto; }
 .perf-snapshot { display: flex; flex-direction: column; gap: var(--module-gap); }
 .perf-form { display: grid; gap: 12px; }
-.perf-quote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--border); color: var(--fg-2); white-space: pre-wrap; }
+.perf-quote { margin: 0; padding: 10px 12px; border-radius: var(--rc); background: var(--card-2); color: var(--fg-2); white-space: pre-wrap; }
 .perf-requests ul { padding: 6px 8px 10px; }
 .perf-team td.num { text-align: right; }
 @media (max-width: 560px) {
+  .perf-fold-row { flex-wrap: wrap; row-gap: 2px; }
+  .perf-fold-chips { order: 3; flex-basis: 100%; padding-left: 22px; white-space: normal; }
+  .perf-fold-amount { margin-left: auto; }
+  .perf-fold-body { padding-left: 8px; }
   .perf-note-add { grid-template-columns: minmax(0, 1fr) auto; }
   .perf-note-add select.input { grid-column: 1 / -1; max-width: none; grid-row: 2; }
   .perf-comment { grid-template-columns: minmax(0, 1fr) auto; }
@@ -59,6 +78,10 @@
 @media print {
   .sidebar, .topbar, header.top, .perf-bar, .perf-note-add, .perf-lock-hint, .perf-more, .perf-comment, .perf-review-row .btn, .perf-goal.empty { display: none !important; }
   .perf .module { break-inside: avoid; box-shadow: none; border: 1px solid #ccc; }
+  .perf .perf-log { break-inside: auto; } /* 긴 기록은 여러 쪽으로 나뉘어야 한다 */
+  .perf-fold-body[hidden] { display: block !important; } /* 인쇄하면 접힌 줄도 모두 펼친다 */
+  .perf-fold-chev { display: none; }
+  .perf-fold-row { min-height: 0; padding: 6px 8px; }
 }
 /* 노하우 목록 — 제목 줄을 눌러 연다 */
 .asset-open { text-align: left; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
