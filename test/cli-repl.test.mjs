@@ -50,7 +50,7 @@ for (const k of ['SUPABASE_SERVICE_ROLE_KEY', 'ARGO_TENANT_OWNER', 'ARGO_PREFER_
 
 // pty 운전기 — 단계마다 키를 보내고 그 뒤 출력을 모은다. 결과는 JSON 한 줄.
 const DRIVER = `
-import pty, os, sys, time, select, json
+import pty, os, sys, time, select, json, re
 steps = json.loads(sys.argv[2]); pid, fd = pty.fork()
 if pid == 0: os.execvp(sys.argv[1], sys.argv[1:2] + [sys.argv[3]])
 def rd(t, until=None):
@@ -60,7 +60,7 @@ def rd(t, until=None):
         if r:
             try: out+=os.read(fd,65536)
             except OSError: break
-        if until and until.encode() in out: break
+        if until and until in re.sub(r'\\x1b\\[[0-9;]*[A-Za-z]', '', out.decode(errors='replace')).replace('\\r', ''): break  # 화면 제어 문자를 지운 뒤 찾는다(프롬프트 앞에 \\x1b[1G\\x1b[0J가 낀다)
     return out.decode(errors='replace')
 res=[{'label':'boot','out':rd(40,'\\u203a ')}]
 for s in steps:
