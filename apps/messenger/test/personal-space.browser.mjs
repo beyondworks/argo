@@ -12,14 +12,15 @@ const PORT = process.env.PS_TEST_PORT || 5199;
 
 async function scenario(lang, width, name, fn) {
   if (process.env.PS_TEST_FILTER && !`${lang}/${width}/${name}`.match(process.env.PS_TEST_FILTER)) return;
-  const page = await browser.newPage({ viewport: { width, height: 900 } }); const errors = []; page.setDefaultTimeout(8000);
+  const phone = width < 768; // 폰 폭은 모바일 기기로 연다(personal-space-mark.browser.mjs와 같다 — 폭만 줄이면 전환기가 숨는다)
+  const page = await browser.newPage({ viewport: { width, height: phone ? 844 : 900 }, isMobile: phone, hasTouch: phone }); const errors = []; page.setDefaultTimeout(8000);
   page.on('pageerror', e => errors.push(e.message));
   await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
   await page.addInitScript(lang => localStorage.setItem('argo-lang', lang), lang);
   try {
     await page.goto(`http://127.0.0.1:${PORT}/test/personal-space.fixture.html`);
     // Wait for the app to render (org loaded)
-    await page.locator('.msgr-org').waitFor();
+    await page.locator('.msgr-org').waitFor({ state: phone ? 'attached' : 'visible' });
     await fn(page);
     assert.deepEqual(errors, []);
     results.push({ lang, width, name, passed: true }); console.log('PASS', lang, width, name);
@@ -36,6 +37,25 @@ async function rpcCalls(p, name) { return (await calls(p)).filter(c => c.rpc ===
 
 try {
   for (const [lang, width] of [['ko', 1280], ['en', 1280], ['ko', 390], ['en', 390]]) {
+
+    // 0. 친구 추가 팝업(유건 2026-09-30) — 개인 공간 친구 옆 +(폰은 홈 +)로 설정에 가지 않고 팝업에서 이메일·아이디로 찾아 요청
+    await scenario(lang, width, 'friend-add-popup', async (p) => {
+      await p.locator(width < 768 ? '.msgr-bigtitle' : '.msgr-org').click(); await p.locator('.msgr-menu-pop').waitFor(); // 폰은 홈 큰 제목이 전환기
+      await p.locator('.msgr-menu-pop button').first().click();
+      if (width < 768) await p.locator('.msgr-fab').click();
+      else await p.locator('[data-sec="friends"] summary .right button').click();
+      const sheet = p.locator('.msgr-friendadd'); await sheet.waitFor();
+      assert.equal(await p.locator('.msgr-setcard').count(), 0, '설정 화면으로 가지 않는다');
+      await sheet.locator('input').fill('newbie@example.com');
+      await sheet.locator('button[type=submit]').click();
+      await sheet.locator('.msgr-friend-result', { hasText: 'New Person' }).waitFor();
+      await p.screenshot({ path: new URL(`friend-add-popup-${lang}-${width}.png`, artifacts).pathname });
+      await sheet.locator('.msgr-friend-result .btn-primary').click();
+      await p.waitForFunction(() => window.__psFixture.calls.some((c) => c.rpc === 'msgr_friend_request' && c.args?.target === 'user-newbie'));
+      const found = (await rpcCalls(p, 'msgr_find_user')).map((c) => c.args?.q); assert.ok(found.length >= 1 && found.every((v) => v === 'newbie@example.com'), '입력한 이메일로 찾는다(요청 뒤 결과를 한 번 다시 읽는다): ' + JSON.stringify(found));
+      await p.keyboard.press('Escape');
+      await sheet.waitFor({ state: 'detached' });
+    });
 
     // 1. Switch to personal space and see friend DM list
     await scenario(lang, width, 'switch-to-personal', async (p) => {
