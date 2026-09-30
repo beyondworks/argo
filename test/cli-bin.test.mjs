@@ -21,7 +21,7 @@ test('설정: .env에서 공개 Supabase 값 두 개만 꺼낸다 — 서비스 
   const f = join(base, '.env.test');
   await writeFile(f, 'SUPABASE_SERVICE_ROLE_KEY=never-read\nNEXT_PUBLIC_SUPABASE_URL=https://sb.example\nNEXT_PUBLIC_SUPABASE_ANON_KEY="anon"\n');
   assert.deepEqual(publicSupabaseFromDotenv(f), { url: 'https://sb.example', anonKey: 'anon' });
-  const env = { ARGO_CLI_HOME: join(base, 'cfg-x') };
+const env = { ARGO_CLI_HOME: join(base, 'cfg-x') };
   applyCliEnv({ repoRoot: join(base, 'no-repo'), env, platform: 'linux' });
   // 같은 맥의 상주·앱(~/.argo/workspaces)과 기기 세션 파일을 같이 쓰면 refresh 토큰 이중 회전 → 세션 가족 폐기(#429 계열). 폴더를 나눈다.
   assert.equal(env.ARGO_ROOT, join(base, 'cfg-x', 'cli-workspaces'), '데이터 기본 위치 ~/.argo/cli-workspaces');
@@ -59,7 +59,8 @@ const srv = http.createServer((req, res) => {
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 after(() => srv.close());
 
-const env = { ...process.env, HOME, USERPROFILE: HOME, ARGO_CLI_HOME: CLIH, ARGO_ROOT: ROOT, LANG: 'ko_KR.UTF-8', ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off', CLAUDE_CODE_MAX_RETRIES: '0',
+// LC_ALL도 고정 — CI 러너는 LC_ALL=en_US가 설정돼 있고 cliLang은 LC_ALL을 LANG보다 먼저 본다(CI 실측)
+const env = { ...process.env, HOME, USERPROFILE: HOME, ARGO_CLI_HOME: CLIH, ARGO_ROOT: ROOT, LANG: 'ko_KR.UTF-8', LC_ALL: 'ko_KR.UTF-8', ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off', CLAUDE_CODE_MAX_RETRIES: '0',
   NEXT_PUBLIC_SUPABASE_URL: 'https://example.invalid', NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fake', ARGO_CLAUDE_BASE_URL: `http://127.0.0.1:${srv.address().port}` };
 for (const k of ['SUPABASE_SERVICE_ROLE_KEY', 'ARGO_TENANT_OWNER', 'ARGO_PREFER_LEADER', 'ARGO_NO_LEADER']) delete env[k];
 // 비동기 실행 필수 — spawnSync는 이 프로세스의 이벤트 루프를 막아 같은 프로세스의 가짜 모델 서버가 응답하지 못한다(교착)

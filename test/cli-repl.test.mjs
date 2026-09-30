@@ -44,7 +44,8 @@ const srv = http.createServer((req, res) => {
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 after(() => srv.close());
 
-const env = { ...process.env, HOME, USERPROFILE: HOME, ARGO_CLI_HOME: CLIH, ARGO_ROOT: ROOT, LANG: 'ko_KR.UTF-8', ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off', ARGO_SYNC: '0', CLAUDE_CODE_MAX_RETRIES: '0', NO_COLOR: '1',
+// LC_ALL도 고정 — CI 러너는 LC_ALL=en_US가 설정돼 있고 cliLang은 LC_ALL을 LANG보다 먼저 본다(CI 실측)
+const env = { ...process.env, HOME, USERPROFILE: HOME, ARGO_CLI_HOME: CLIH, ARGO_ROOT: ROOT, LANG: 'ko_KR.UTF-8', LC_ALL: 'ko_KR.UTF-8', ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off', ARGO_SYNC: '0', CLAUDE_CODE_MAX_RETRIES: '0', NO_COLOR: '1',
   NEXT_PUBLIC_SUPABASE_URL: 'https://example.invalid', NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fake', ARGO_CLAUDE_BASE_URL: `http://127.0.0.1:${srv.address().port}` };
 for (const k of ['SUPABASE_SERVICE_ROLE_KEY', 'ARGO_TENANT_OWNER', 'ARGO_PREFER_LEADER', 'ARGO_NO_LEADER']) delete env[k];
 
