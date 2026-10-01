@@ -59,7 +59,7 @@ export async function sweepOrphanTurns({ now = Date.now(), retryMs = 130_000 } =
           for (const x of cur.messages) if (x.steerOf === m.turnId && x.awaiting) { delete x.awaiting; x.failed = m.failed; }
         }
         if (touched) await writeJsonAtomic(p, cur);
-      }).catch(() => {}); // 스위퍼는 베스트에포트 — 한 스레드 실패가 부팅·다른 스레드를 막지 않는다
+      }, { file: p }).catch(() => {}); // 스위퍼는 베스트에포트 — 한 스레드 실패가 부팅·다른 스레드를 막지 않는다
     }
   }
   if (marked) console.warn(`[argo] 고아 턴 ${marked}건 표시 전환 — 이전 프로세스가 턴 도중 종료됨`);

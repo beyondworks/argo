@@ -3,7 +3,7 @@
 // 설정 파일 ~/.argo/cli.json: { root, lang, ws, supabase: { url, anonKey }, chromePath }.
 // Supabase는 공개 설정(URL·anon 키)만 읽는다 — 서비스 키 등 비밀값은 읽지도 넣지도 않는다(CLI는 사용자 기기 세션으로만 동작).
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, basename, resolve } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
@@ -19,6 +19,26 @@ export function appDataRoot({ env = process.env, platform = process.platform, ho
   if (platform === 'win32') return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), id, 'workspaces');
   return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), id, 'workspaces');
 }
+/** 이 CLI가 설치된 Argo 앱 안에서 실행되는가(앱 모드). 맥 shim·윈도우 argo.cmd가 ARGO_CLI_APP=1을 넘긴다. 번들 server 폴더에서 직접 실행해도 앱이다.
+    서버 타르볼(install.sh)·저장소의 CLI는 아니다 — 그쪽은 별도 폴더·동기화 그대로. */
+export function appInstalled({ repoRoot, env = process.env, platform = process.platform, execPath = process.execPath } = {}) {
+  if (env.ARGO_CLI_APP === '1') return true;
+  if (env.ARGO_CLI_APP === '0') return false;
+  const r = resolve(repoRoot ?? '');
+  if (platform === 'darwin') return /\.app\/Contents\/Resources\/server$/.test(r.split('\\').join('/'));
+  if (platform === 'win32') return basename(r) === 'server' && dirname(resolve(execPath)) === dirname(r) && existsSync(join(dirname(r), 'node.exe'));
+  return false;
+}
+const samePath = (a, b, platform = process.platform) => { const x = resolve(a), y = resolve(b); return platform === 'win32' || platform === 'darwin' ? x.toLowerCase() === y.toLowerCase() : x === y; };
+/** 앱 모드이고 데이터 폴더가 앱 폴더인가 — 앱과 폴더를 **같이** 쓰는 경우. 사용자가 다른 폴더(ARGO_ROOT·cli.json root)를 줬으면 아니다. */
+export function isAppShared({ repoRoot, env = process.env, platform = process.platform, execPath = process.execPath } = {}) {
+  return appInstalled({ repoRoot, env, platform, execPath }) && !!env.ARGO_ROOT && samePath(env.ARGO_ROOT, appDataRoot({ env, platform }), platform);
+}
+/** 앱(번들 server 폴더)의 package.json 버전 — 없거나 읽을 수 없으면 null. 앱이 업데이트로 파일을 바꿨는지 보는 데 쓴다. */
+export function readAppVersion(repoRoot) { return readJson(join(repoRoot, 'package.json'))?.version ?? null; }
+/** 시작 때 읽은 버전과 지금 디스크의 버전이 다른가 — 둘 다 읽을 수 있을 때만 참(읽기 실패는 종료 사유가 아니다). */
+export function appVersionChanged(repoRoot, startVersion) { const now = readAppVersion(repoRoot); return !!(now && startVersion && now !== startVersion); }
+
 /** 모드 — cli.json의 선택. 없으면: 계정 폴더에 기기 세션이 있으면 계정(선택 도입 전 사용자), 아니면 미정(처음 실행에서 묻는다). */
 export const cliMode = (cfg = {}, env = process.env) => cfg.mode === 'local' || cfg.mode === 'account' ? cfg.mode
   : [env.ARGO_ROOT, accountRoot(env)].some((r) => r && existsSync(join(r, '.device-session.json'))) ? 'account' : null; // 지정 폴더(ARGO_ROOT)에 로그인이 있어도 계정
@@ -48,11 +68,16 @@ export function publicSupabaseFromDotenv(file) {
 }
 
 /** process.env에 CLI 기본값을 채운다. 반환: 설정 파일 내용. repoRoot = 이 CLI가 든 레포(또는 배포물) 루트. */
-export function applyCliEnv({ repoRoot, env = process.env, platform = process.platform } = {}) {
+export function applyCliEnv({ repoRoot, env = process.env, platform = process.platform, execPath = process.execPath } = {}) {
   const cfg = readConfig(env);
+  const app = appInstalled({ repoRoot, env, platform, execPath });
   // 기본 폴더는 상주·앱(~/.argo/workspaces)과 따로 — 같은 기기 세션 파일을 두 프로세스가 회전하면 GoTrue가 세션 가족째 폐기한다.
   // 같은 회사·기억은 클라우드 동기화로 공유한다.
-  if (!env.ARGO_ROOT) env.ARGO_ROOT = cfg.root || (cliMode(cfg, env) === 'local' ? appDataRoot({ env, platform }) : accountRoot(env));
+  // 앱 모드는 계정·로컬 모두 앱 데이터 폴더를 같이 쓴다(설계 2-2) — 무료 사용자도 앱과 같은 회사를 보고, 주기 호출이 늘지 않으며, 기기 id·E2EE 키가 앱과 같다.
+  // 기기 세션 회전은 프로세스 간 잠금(#791)이 지킨다. 서버 타르볼·저장소 CLI는 종전대로 모드에 따라 갈린다.
+  if (!env.ARGO_ROOT) env.ARGO_ROOT = cfg.root || (app || cliMode(cfg, env) === 'local' ? appDataRoot({ env, platform }) : accountRoot(env));
+  if (app) env.ARGO_STANDALONE ||= '1'; // 같은 번들·같은 폴더인 앱 사이드카와 러너 판정을 맞춘다(검토 M-a) — 아니면 CLI가 claude를 "이 컴퓨터 로그인"으로 저장해 앱이 잘못된 연결로 본다
+  if (isAppShared({ repoRoot, env, platform, execPath })) env.ARGO_SYNC = '0'; // 앱 CLI는 동기화하지 않는다 — CLI가 동기화 락을 가지면 앱이 리더 판정에서 밀린다. 앱이 꺼진 사이의 대화는 앱을 켤 때 올라간다
   // 공개 설정 우선순위: 환경변수 > cli.json > 배포물에 구운 argo-public.json > 레포 .env.local(개발)
   if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     const src = [cfg.supabase, readJson(join(repoRoot, 'bin', 'argo-public.json')), publicSupabaseFromDotenv(join(repoRoot, '.env.local'))]

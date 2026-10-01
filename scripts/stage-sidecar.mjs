@@ -7,6 +7,7 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, rmSync, existsSync, copyFileSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { SHIM_SRC } from '../src/no-dock.mjs';
+import { stageCli } from './stage-cli.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -76,6 +77,13 @@ await import('./server-next.mjs');
     process.exit(1);
   }
   console.log(`[stage] SDK 네이티브 CLI 포함: ${native}`);
+}
+
+// 3.45) argo CLI — 앱을 설치하면 터미널 명령 argo가 따라온다(맥은 사이드카가 ~/.local/bin/argo를 등록, 윈도우는 설치 프로그램이 PATH 등록 — src/cli-install.mjs·hooks.nsh).
+//       서버 타르볼과 같은 함수(scripts/stage-cli.mjs). 공개 Supabase 설정은 앱 빌드가 이미 쓰는 NEXT_PUBLIC_*에서(URL·anon 키 — 서비스 키 아님). 아래 유출 가드가 이 뒤에 그대로 돈다.
+{
+  const r = stageCli({ root: ROOT, tree: serverDest, env: process.env, publicEnv: ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'] });
+  console.log(`[stage] argo CLI 포함 — 의존성 ${r.deps}개${r.publicConfig ? ', 공개 설정(계정 로그인 가능)' : ', 공개 설정 없음(로컬 모드만)'}`);
 }
 
 // 3.5) 시크릿·개발자 데이터·런타임 잔재 제거 (배포 아티팩트 유출 차단 — 가장 중요)

@@ -34,6 +34,7 @@ import { appendEvent } from './events.mjs';
    기기 로컬이라 수명 규칙이 다르다 — 한 파일에 섞으면 sync 경계가 파일 단위로 갈라지지 않는다. */
 export const CONNECTOR_SECRETS_BASE = '.connector-secrets.json';
 const storeFile = (wsId) => join(paths(wsId).root, CONNECTOR_SECRETS_BASE);
+const lockStore = (wsId, fn) => withLock(`connector:${wsId}`, fn, { file: storeFile(wsId) }); // OAuth 토큰 회전 저장 — 프로세스 간 잠금 포함(M-b)
 
 async function loadStore(wsId) {
   // 손상 시 readJson이 .corrupt 백업 후 throw — 조용한 폴백 없이 1회 명시 실패, 다음 로드는 빈 상태로
@@ -45,7 +46,7 @@ async function loadStore(wsId) {
 
 /** 서버 레코드 부분 갱신(원자·직렬화). patch 값 null = 필드 삭제(토큰 무효화용). */
 function patchServer(wsId, serverId, patch) {
-  return withLock(`connector:${wsId}`, async () => {
+  return lockStore(wsId, async () => {
     const s = await loadStore(wsId);
     const next = { ...(s.servers[serverId] ?? {}), ...patch, updatedAt: new Date().toISOString() };
     for (const k of Object.keys(next)) if (next[k] === null) delete next[k];
@@ -556,7 +557,7 @@ export async function listConnectorTools(wsId, serverId) {
  * 사용자에겐 이 기기에서 자격이 사라지는 것으로 정직하게 표기한다(재연결하면 다시 동의 화면).
  */
 export async function disconnectConnector(wsId, serverId) {
-  const existed = await withLock(`connector:${wsId}`, async () => {
+  const existed = await lockStore(wsId, async () => {
     const s = await loadStore(wsId);
     // hasOwn — `in`은 프로토타입 체인을 타서 'toString'·'__proto__' 같은 이름에 "지웠다"는 거짓 성공과
     // 불필요한 0600 파일 재기록을 만든다(분리 검수 F1 실측, DELETE 쿼리로 도달 가능).

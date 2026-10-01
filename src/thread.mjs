@@ -11,6 +11,8 @@ import { sanitizeFileSlug } from './slug.mjs'; // 파일 이름 세척의 단일
 const file = (wsId, slug) => join(paths(wsId).chats, `${sanitizeFileSlug(slug)}.json`);
 // 같은 크루 스레드의 read-modify-write를 직렬화 — 웹·텔레그램 동시 턴의 lost-update 방지
 const lockKey = (wsId, slug) => `thread:${wsId}:${sanitizeFileSlug(slug)}`;
+// 앱 사이드카·argo CLI가 같은 폴더를 쓰면 프로세스 간 잠금도 필요하다(M-b) — 파일 단위(<chat>.json.lockd). 보관·휴지통 편집도 활성 스레드 잠금 하나로 직렬화한다.
+const lockThread = (wsId, slug, fn) => withLock(lockKey(wsId, slug), fn, { file: file(wsId, slug) });
 
 /** 스레드 파일 mtime(ms) — 폴링 dedup용. 파일이 없으면 0. */
 export async function threadMtime(wsId, slug) {
@@ -66,7 +68,7 @@ export async function loadThread(wsId, slug) {
     반환한 turnId로 나중에 같은 줄을 찾아 답변을 붙인다 — 새 줄을 밀어 넣지 않으므로 중복이 없다. */
 export async function beginTurn(wsId, slug, { userMsg, attachments, via, contextScope } = {}) {
   const turnId = `t${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  await withLock(lockKey(wsId, slug), async () => {
+  await lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     t.messages.push({
       who: 'user', text: userMsg, ts: Date.now(), turnId,
@@ -81,7 +83,7 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
 }
 
 export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
     // beginTurn이 이미 써 둔 줄이 있으면 그 줄을 마무리한다(새로 밀어 넣으면 같은 지시가 두 줄이 된다).
@@ -139,7 +141,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
 /** 진행 중인 사장 턴에 끼워 넣은 메시지를 저장한다 — 새로고침해도 남게(beginTurn과 같은 이유). 답을 기다리는 사장 턴이
     없으면(이미 끝남) null — 호출부는 끼워 넣지 않고 대기열에 남긴다. 반환: { steerId(되돌리기용), turnId(실행 표지 — chat/steer가 정확히 그 턴을 고른다) }. */
 export async function addSteer(wsId, slug, { text, attachments } = {}) {
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     const turn = t.messages.findLast((m) => m.who === 'user' && m.awaiting && m.turnId && !m.via && !m.steerOf);
     if (!turn) return null;
@@ -152,7 +154,7 @@ export async function addSteer(wsId, slug, { text, attachments } = {}) {
 
 /** 전달에 실패한 끼워 넣기를 되돌린다(대기열로 돌아간다). */
 export async function removeSteer(wsId, slug, steerId) {
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     const next = t.messages.filter((m) => m.steerId !== steerId);
     if (next.length !== t.messages.length) { t.messages = next; await writeJsonAtomic(file(wsId, slug), t); }
@@ -161,7 +163,7 @@ export async function removeSteer(wsId, slug, steerId) {
 
 /** 참조(cc) 공유 — 대상 크루 스레드에 노트를 남긴다. pending 표시는 "아직 그 크루가 못 본 맥락"이라는 뜻. */
 export async function appendSharedNote(wsId, slug, text) {
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     t.messages.push({ who: 'user', shared: true, pending: true, text, ts: Date.now() });
     await writeJsonAtomic(file(wsId, slug), t);
@@ -170,7 +172,7 @@ export async function appendSharedNote(wsId, slug, text) {
 
 /** 미소비 공유 노트 회수 — 다음 턴 프롬프트에 1회만 주입되도록 pending을 해제하며 반환한다. */
 export async function takeSharedNotes(wsId, slug) {
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     const notes = t.messages.filter((m) => !m.contextScope && m.shared && m.pending);
     if (!notes.length) return [];
@@ -184,7 +186,7 @@ export async function takeSharedNotes(wsId, slug) {
     (소비가 러너 실행 전이라, 복원 없이는 실패한 턴이 cc 맥락을 영구 소실시켰다 — 검증 2026-07-19) */
 export async function restoreSharedNotes(wsId, slug, texts) {
   if (!texts?.length) return;
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     const want = new Set(texts);
     for (const m of t.messages) {
@@ -234,7 +236,7 @@ export async function readArchivedSession(wsId, slug, id) {
 
 /** 새 대화 — 삭제가 아니라 적재. 이전 대화는 chats/.archive/에 보관되고, vault 기억은 그대로다(그게 제품의 핵심). */
 export async function resetThread(wsId, slug) {
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     if (t.messages?.length) {
       const dir = join(paths(wsId).chats, '.archive');
@@ -253,7 +255,7 @@ export async function resetThread(wsId, slug) {
 export async function resumeSession(wsId, slug, id) {
   const safe = slug.replace(/[^a-z0-9-]/g, '');
   if (!new RegExp(`^${safe}-\\d+\\.json$`).test(id)) throw new Error('잘못된 세션 id');
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const dir = join(paths(wsId).chats, '.archive');
     const restored = JSON.parse(await readFile(join(dir, id), 'utf8'));
     // 현재 활성 대화가 있으면 먼저 보관(유실 방지) — 새 타임스탬프로 적재
@@ -283,7 +285,7 @@ const ANY_ARCH_ID = /^[a-z0-9-]+-\d+\.json$/; // 보관함은 회사 전체(여�
 /** 현재(활성) 대화명 편집 — 활성 스레드 파일에 title 기록. '새 대화'로 적재되면 보관본에 그대로 승계된다
     (resetThread가 t 통째 보관 — 이름 붙인 대화가 레일에서도 그 이름으로 남는 것이 자연스러운 기대). */
 export async function renameActiveThread(wsId, slug, title) {
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     const clean = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
     if (clean) t.title = clean; else delete t.title;
@@ -296,7 +298,7 @@ export async function renameActiveThread(wsId, slug, title) {
 export async function renameSession(wsId, slug, id, title) {
   const safe = slug.replace(/[^a-z0-9-]/g, '');
   if (!ARCH_ID(safe).test(id)) throw new Error('잘못된 세션 id');
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const f = join(paths(wsId).chats, '.archive', id);
     const t = JSON.parse(await readFile(f, 'utf8'));
     const clean = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -311,7 +313,7 @@ export async function renameSession(wsId, slug, id, title) {
 export async function setPinned(wsId, slug, id, pinned) {
   const safe = slug.replace(/[^a-z0-9-]/g, '');
   if (!ARCH_ID(safe).test(id)) throw new Error('잘못된 세션 id');
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const f = join(paths(wsId).chats, '.archive', id);
     const t = JSON.parse(await readFile(f, 'utf8'));
     if (pinned) t.pinned = true; else delete t.pinned;
@@ -324,7 +326,7 @@ export async function setPinned(wsId, slug, id, pinned) {
 export async function trashSession(wsId, slug, id) {
   const safe = slug.replace(/[^a-z0-9-]/g, '');
   if (!ARCH_ID(safe).test(id)) throw new Error('잘못된 세션 id');
-  return withLock(lockKey(wsId, slug), async () => {
+  return lockThread(wsId, slug, async () => {
     const from = join(paths(wsId).chats, '.archive', id);
     const data = JSON.parse(await readFile(from, 'utf8')); // 존재 검증 겸 읽기
     await mkdir(trashDir(wsId), { recursive: true });

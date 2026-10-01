@@ -50,7 +50,8 @@ test('hooks.nsh — Tauri 후속 이름 기반 종료도 제거하고 파일 잠
   assert.match(replacement[1], /ARGO_ENSURE_FILE_UNLOCKED \"\$INSTDIR\\node\.exe\"/);
   assert.match(s, /FileOpen \$1 \"\$0\" a/);
   assert.match(s, /FileClose \$1/);
-  assert.doesNotMatch(s, /FileWrite/);
+  // 파일 잠금 확인(종료 훅)은 쓰지 않는다 — argo 등록(ARGO_CLI_*, 2026-10-01)은 자기 파일을 쓰는 것이 일이라 이 단언 범위에서 뺀다
+  assert.doesNotMatch(s.slice(0, s.indexOf('; 터미널 명령 argo — 앱을 설치하면')), /FileWrite/);
   assert.match(s, /MessageBox MB_RETRYCANCEL[^\n]*\/SD IDCANCEL/);
   assert.match(s, /SetErrorLevel 2\s+Abort/);
   assert.doesNotMatch(s, /SetOverwrite off|SetErrorLevel 0/);

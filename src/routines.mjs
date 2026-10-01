@@ -15,10 +15,11 @@ import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.m
 export { normalizeTz, zonedParts, onceSpent, onceExpired } from './routine-time.mjs';
 
 const lockKey = (wsId) => `routines:${wsId}`;
+const lockRoutines = (wsId, fn) => withLock(lockKey(wsId), fn, { file: paths(wsId).routines }); // 프로세스 간 잠금 포함(M-b)
 
 /** 락 안에서 목록 재로드 → 해당 id만 patch → 저장. 실행 중 삭제/비활성이 되돌려지는 것을 막는다. */
 async function patchRoutine(wsId, id, patch) {
-  return withLock(lockKey(wsId), async () => {
+  return lockRoutines(wsId, async () => {
     const routines = await loadRoutines(wsId);
     const r = routines.find((x) => x.id === id);
     if (!r) return null; // 실행 중 삭제됐으면 조용히 포기(부활 금지)
@@ -47,7 +48,7 @@ export async function recordRoutineNotificationDelivery(wsId, id, runAt, results
   const reasons = ['invalid_destinations', 'not_connected', 'destination_unavailable', 'delivery_uncertain', 'delivery_failed'];
   const safe = results.filter((r) => ['telegram', 'slack', 'msgr'].includes(r.kind) && statuses.includes(r.status))
     .map((r) => ({ kind: r.kind, status: r.status, ...(reasons.includes(r.reason) ? { reason: r.reason } : {}) }));
-  return withLock(lockKey(wsId), async () => {
+  return lockRoutines(wsId, async () => {
     const routines = await loadRoutines(wsId);
     const routine = routines.find((r) => r.id === id);
     if (!routine || !runAt || routine.lastRun !== runAt) return false;
@@ -275,7 +276,7 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
     ...(ver ? { verify: ver } : {}),
     ...(msgr ? { msgr: (await import('./gateway/msgr-handoff.mjs')).messengerOrigin({ ...msgr, kind: 'msgr' }) } : {}),
   };
-  return withLock(lockKey(wsId), async () => {
+  return lockRoutines(wsId, async () => {
     const routines = await loadRoutines(wsId);
     routines.push(routine);
     await saveRoutines(wsId, routines);
@@ -345,7 +346,7 @@ export async function updateRoutine(wsId, id, patch) {
 }
 
 export async function removeRoutine(wsId, id) {
-  return withLock(lockKey(wsId), async () => {
+  return lockRoutines(wsId, async () => {
     const routines = await loadRoutines(wsId);
     await saveRoutines(wsId, routines.filter((x) => x.id !== id));
   });

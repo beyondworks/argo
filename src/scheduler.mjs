@@ -118,7 +118,7 @@ async function claimRoutine(wsId, routineId, now) {
     r.lastRun = now.toISOString(); // 선점 마킹 — 경쟁 워커가 이 파일을 다시 읽으면 isDue=false로 걸러진다
     await writeJsonAtomic(file, routines);
     return true;
-  });
+  }, { file: paths(wsId).routines }); // 프로세스 간 잠금 — routines.mjs(addRoutine·patchRoutine…)와 같은 `<routines.json>.lockd`. 없으면 앱 스케줄러의 선점 쓰기가 CLI가 추가한 루틴을 낡은 목록으로 덮었다(독립 검수 #800 MEDIUM-1)
 }
 
 // 진행 중인 기억 정리 — SDK 경로엔 타임아웃이 없어 실행이 백오프(5분)를 넘길 수 있고, 그러면

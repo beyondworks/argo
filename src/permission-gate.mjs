@@ -267,6 +267,7 @@ const WS_DOT_FILES = new Set([
   '.device-e2ee.json', '.tmp-e2ee-', // E2EE 기기 개인키·DEK + 원자적 쓰기 임시본 — cat 한 줄이 "본인만 여는 열쇠" 유출(세션 파일과 동급 최악)
   '.e2ee-reseal.json', // E2EE 재봉인 마커(wsId 목록뿐 — 시크릿 아님) — 루트 직속 제어 파일 일관 방어(크루 조작 시 재봉인 누락·유발)
   '.sync-credentials.json',
+  '.server-presence.json', // 앱 사이드카 실행 표식(pid, 2026-10-01) — 크루가 심으면 argo login이 영구 거절되거나 앱 실행 중 판정이 위조된다
   // `.account-secrets` 접두 하나로 3형태를 덮는다 — 로컬(`-local.json`)·사용자 스코프
   // (`-{uid}.json`, runners/creds.mjs 템플릿 리터럴)·레거시(`.account-secrets.json`).
   // 이름만 등재했다가 **로그인하면 파일명이 uid로 바뀌어** 러너 API 키·OAuth 토큰이 셸에
