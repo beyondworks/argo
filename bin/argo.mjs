@@ -44,6 +44,8 @@ function guardLocal() {
 const lang = cliLang(cfg);
 const [cmd = '', ...rest] = process.argv.slice(2);
 
+// 데스크톱 앱은 맥·Windows만 배포한다(release.yml) — 리눅스(서버)에는 로컬 모드 폴더를 같이 쓰는 앱이 없으니 안내에서 앱을 말하지 않는다
+const desktopApp = process.platform === 'darwin' || process.platform === 'win32';
 const T = {
   ko: {
     noConfig: 'Supabase 공개 설정이 없습니다. ~/.argo/cli.json에 {"supabase":{"url":"…","anonKey":"…"}}를 넣거나 NEXT_PUBLIC_SUPABASE_URL·NEXT_PUBLIC_SUPABASE_ANON_KEY를 설정하세요.',
@@ -57,10 +59,11 @@ const T = {
     quitHint: '나가려면 /quit 또는 exit를 입력하세요.', unknownCmd: (n) => `모르는 명령입니다: /${n} — /help로 명령을 볼 수 있습니다.`,
     newDone: '새 대화를 시작했습니다. 이전 대화는 앱의 대화 기록에 보관됩니다.', serveStart: '이 터미널에서 메신저 대기를 시작합니다. 끝내려면 Ctrl+C를 누르세요.',
     noTty: 'argo 대화 화면은 터미널에서 실행하세요. 스크립트에서는 argo chat <크루> "지시"를 쓰세요.',
-    modeAsk: 'Argo를 어떻게 쓸까요?', modes: ['계정으로 로그인 — 앱·다른 기기와 회사·크루·대화를 이어서 씁니다', '이 컴퓨터에서만 쓰기 — 로그인 없이, 이 컴퓨터의 Argo 앱과 같은 데이터를 씁니다'],
+    modeAsk: 'Argo를 어떻게 쓸까요?', modes: ['계정으로 로그인 — 앱·다른 기기와 회사·크루·대화를 이어서 씁니다', desktopApp ? '이 컴퓨터에서만 쓰기 — 로그인 없이, 이 컴퓨터의 Argo 앱과 같은 데이터를 씁니다' : '이 컴퓨터에서만 쓰기 — 로그인 없이, 이 컴퓨터에만 저장합니다'],
     localLabel: '이 컴퓨터에서만(로그인 없음)',
     localAppSignedIn: '이 컴퓨터의 Argo 앱이 계정으로 로그인돼 있어 계정 모드로 씁니다(같은 로그인을 두 프로그램이 나눠 쓰면 로그인이 풀립니다).',
-    localNoServe: '이 컴퓨터에서만 쓰는 모드에서는 메신저 대기(상주)를 쓸 수 없습니다 — 메신저는 계정이 필요하고, 이 컴퓨터의 예약 작업은 Argo 앱이 맡습니다. 계정으로 쓰려면: argo login',
+    localNoServe: desktopApp ? '이 컴퓨터에서만 쓰는 모드에서는 메신저 대기(상주)를 쓸 수 없습니다 — 메신저는 계정이 필요하고, 이 컴퓨터의 예약 작업은 Argo 앱이 맡습니다. 계정으로 쓰려면: argo login'
+      : '이 컴퓨터에서만 쓰는 모드에서는 메신저 대기(상주)를 쓸 수 없습니다 — 메신저와 예약 작업 실행에는 계정이 필요합니다. 계정으로 쓰려면: argo login',
     noRunner: '이 기기에는 아직 AI가 연결되지 않았습니다. /ai로 연결하세요(연결 정보는 기기마다 따로 두고 클라우드로 보내지 않습니다).',
     hostAuto: (names) => `이 컴퓨터에 로그인된 AI(${names})로 연결했습니다. 바꾸려면 /ai를 쓰세요.`,
     help: [['/crew [이름]', '대화할 크루 바꾸기'], ['/new', '새 대화 시작(지금 대화는 보관)'], ['/hire', '크루 영입'], ['/ai', 'AI 연결'],
@@ -90,10 +93,11 @@ const T = {
     quitHint: 'Type /quit or exit to leave.', unknownCmd: (n) => `Unknown command: /${n} — see /help.`,
     newDone: 'Started a new conversation. The previous one is kept in the app\'s history.', serveStart: 'Starting messenger standby in this terminal. Press Ctrl+C to stop.',
     noTty: 'Run the argo chat screen in a terminal. From scripts, use argo chat <crew> "message".',
-    modeAsk: 'How do you want to use Argo?', modes: ['Sign in with an account — continue companies, crews and chats with the app and other devices', 'This computer only — no sign-in, same data as the Argo app on this computer'],
+    modeAsk: 'How do you want to use Argo?', modes: ['Sign in with an account — continue companies, crews and chats with the app and other devices', desktopApp ? 'This computer only — no sign-in, same data as the Argo app on this computer' : 'This computer only — no sign-in, stored only on this computer'],
     localLabel: 'This computer only (not signed in)',
     localAppSignedIn: 'The Argo app on this computer is signed in to an account, so using account mode (two programs sharing one sign-in would sign you out).',
-    localNoServe: 'Messenger standby is not available in this-computer-only mode — the messenger needs an account, and the Argo app runs scheduled work on this computer. To use an account: argo login',
+    localNoServe: desktopApp ? 'Messenger standby is not available in this-computer-only mode — the messenger needs an account, and the Argo app runs scheduled work on this computer. To use an account: argo login'
+      : 'Messenger standby is not available in this-computer-only mode — the messenger and scheduled work need an account. To use an account: argo login',
     noRunner: 'No AI is connected on this device yet. Connect one with /ai (connection details stay on each device and never go to the cloud).',
     hostAuto: (names) => `Connected with the AI signed in on this computer (${names}). Use /ai to change.`,
     help: [['/crew [name]', 'switch crew'], ['/new', 'start a new conversation (current one is kept)'], ['/hire', 'hire a crew'], ['/ai', 'AI connections'],

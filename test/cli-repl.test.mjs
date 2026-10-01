@@ -217,3 +217,26 @@ test('로컬 모드인데 이 컴퓨터의 앱이 계정으로 로그인돼 있�
   assert.equal(JSON.parse(await readFile(join(env4.ARGO_CLI_HOME, 'cli.json'), 'utf8')).mode, 'account');
   assert.equal((await stat(join(appRoot, '.device-session.json'))).mtimeMs, before, '앱 세션 파일은 건드리지 않는다');
 });
+
+test('데스크톱 앱이 없는 리눅스(서버) — 로컬 모드 안내가 "Argo 앱과 같은 데이터"라고 하지 않는다(그 폴더를 쓰는 앱이 없다)', { timeout: 60_000 }, async () => {
+  const b5 = await mkdtemp(join(tmpdir(), 'argo-cli-linux-'));
+  const { writeFile } = await import('node:fs/promises');
+  // 플랫폼만 리눅스로 — 리눅스 데스크톱 앱은 배포하지 않는다(release.yml: 맥 2종·Windows)
+  const preload = join(b5, 'linux.mjs'); await writeFile(preload, "Object.defineProperty(process, 'platform', { value: 'linux' });\n");
+  const env5 = { ...env, HOME: join(b5, 'home'), USERPROFILE: join(b5, 'home'), ARGO_CLI_HOME: join(b5, 'cli'), XDG_DATA_HOME: join(b5, 'xdg'), NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` };
+  delete env5.ARGO_ROOT;
+  await mkdir(env5.HOME, { recursive: true });
+  if (hasPy) { // 처음 실행의 선택지
+    const r = await new Promise((resolve) => {
+      const c = spawn('python3', ['-c', DRIVER, process.execPath, '[]', join(REPO, 'bin', 'argo.mjs'), '번호'], { env: env5 });
+      let o = ''; c.stdout.on('data', (d) => (o += d)); c.on('close', () => resolve(o));
+    });
+    const boot = JSON.parse(r.trim().split('\n').pop()).res[0].out;
+    assert.match(boot, /이 컴퓨터에서만 쓰기 — 로그인 없이, 이 컴퓨터에만 저장합니다/);
+    assert.doesNotMatch(boot, /Argo 앱/);
+  }
+  await mkdir(env5.ARGO_CLI_HOME, { recursive: true }); await writeFile(join(env5.ARGO_CLI_HOME, 'cli.json'), JSON.stringify({ mode: 'local' }));
+  const run = spawnSync(process.execPath, [join(REPO, 'bin', 'argo.mjs'), 'run'], { env: env5, encoding: 'utf8' });
+  assert.notEqual(run.status, 0); assert.match(run.stderr, /메신저 대기\(상주\)를 쓸 수 없습니다/);
+  assert.doesNotMatch(run.stderr, /Argo 앱/, '예약 작업을 맡을 앱이 없다');
+});

@@ -11,7 +11,8 @@ export const cliHome = (env = process.env) => env.ARGO_CLI_HOME || join(homedir(
 /** 계정 모드 데이터 — 같은 맥의 상주·앱과 따로(기기 세션 단일 소유). */
 export const accountRoot = (env = process.env) => join(cliHome(env), 'cli-workspaces');
 /** 로컬 모드 데이터 = 이 컴퓨터의 Argo 앱 데이터 폴더(Tauri app_local_data_dir/workspaces, 식별자 com.beyondworks.argo).
-    로그인 세션이 없으니 폴더를 같이 써도 세션 이중 회전 문제가 없고, 앱에서 로컬로 만든 회사·크루·일지가 그대로 보인다. */
+    로그인 세션이 없으니 폴더를 같이 써도 세션 이중 회전 문제가 없고, 앱에서 로컬로 만든 회사·크루·일지가 그대로 보인다.
+    리눅스는 데스크톱 앱을 배포하지 않아 이 폴더를 쓰는 앱이 없다 — CLI 전용 저장소다(`--local` 웹 서버는 ~/.argo-selfhost/data를 쓴다). */
 export function appDataRoot({ env = process.env, platform = process.platform, home = env.HOME || homedir() } = {}) {
   const id = 'com.beyondworks.argo';
   if (platform === 'darwin') return join(home, 'Library', 'Application Support', id, 'workspaces');
