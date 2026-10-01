@@ -31,6 +31,7 @@ import { activitySentence } from './activity-sentence.mjs';
 import { dmEmptyKey, roomTabEmptyKey } from './empty-state.mjs';
 import { nodeIndicator } from './node-indicator.mjs';
 import { duplicateNameHints } from './crew-hints.mjs';
+import { pendingCrewLabel } from './crew-label.mjs';
 import { UpdateBar } from './update.jsx';
 import { MobileUpdateBar } from './mobile-update.jsx';
 import { useLongPress, longPressHandlers } from './long-press.js';
@@ -2410,7 +2411,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     const res = await supabase.rpc('msgr_crew_join_decide', { req: r.id, approve: ok });
     setBusy(false);
     if (res.error) return onError(friendlyErr(res.error.message, t));
-    onNote(t(ok ? 'ch.crew.join.approved' : 'ch.crew.join.rejected', { name: crews.find((c) => c.id === r.crew_id)?.display_name ?? '' }));
+    onNote(koJosa(t(ok ? 'ch.crew.join.approved' : 'ch.crew.join.rejected', { name: pendingCrewLabel({ crewId: r.crew_id, crews, requesterName: nameOfUser(r.requested_by), t }) }))); // 조사는 이름에 맞춰(영문 문장엔 바꿀 조사가 없다)
     await loadJoinReqs(); await onChanged();
   };
   // 규칙 14: 사람이 빠지면 그 사람의 에이전트도 같이 빠진다. 서버(20260918130000)가 최종 강제하고, 앱은 그 마이그레이션이 없는
@@ -2589,9 +2590,9 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 </span>
               </div>
             ); })}
-            {joinReqs.map((r) => { const c = crews.find((x) => x.id === r.crew_id); const mine = r.requested_by === uid; return (
+            {joinReqs.map((r) => { const label = pendingCrewLabel({ crewId: r.crew_id, crews, requesterName: nameOfUser(r.requested_by), t }); const mine = r.requested_by === uid; return (
               <div key={`req:${r.id}`} className="row req">
-                <Av name={c?.display_name ?? '?'} crew size="sm" crewId={r.crew_id} /><span className="name">{c?.display_name ?? r.crew_id.slice(0, 8)}</span>
+                <Av name={label} crew size="sm" crewId={r.crew_id} /><span className="name">{label}</span>{/* 친구의 에이전트는 방에 들기 전엔 이름을 못 읽는다 — id 조각 대신 "○○님의 에이전트"(crew-label.mjs) */}
                 <span className="sub">{mine ? t('ch.crew.join.waiting') : t('ch.crew.join.by', { name: nameOfUser(r.requested_by) })}</span>
                 {isApprover && !mine && <span className="acts"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => decideJoin(r, true)}>{t('ch.crew.join.approve')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => decideJoin(r, false)}>{t('ch.crew.join.reject')}</button></span>}
               </div>
@@ -4436,11 +4437,16 @@ function PersonalRoomBar({ chId, uid, hasCrews, event, nameOfUser, crewName = ()
   const { t, lang } = useT();
   const { aiConsented, aiConsentKnown, setAiConsent } = useContext(SafetyCtx);
   const [reqs, setReqs] = useState([]); const [busy, setBusy] = useState(false);
+  const nameAsked = useRef(new Set()); // 이름을 다시 읽어 본 요청 id — 옛 서버(대기 크루 이름을 안 주는 정의)에서 방송마다 다시 읽지 않게 요청당 한 번
   useEffect(() => { let live = true; (async () => {
     const approver = (await supabase.rpc('msgr_dm_approver', { ch: chId }))?.data;
     if (approver !== uid) { if (live) setReqs([]); return; }
     const rows = await q(supabase.from('msgr_channel_crew_requests').select('id, crew_id, requested_by').eq('channel_id', chId).eq('status', 'pending')).catch(() => []);
-    if (live) setReqs((rows ?? []).filter((r) => r.requested_by !== uid));
+    if (!live) return;
+    const mine = (rows ?? []).filter((r) => r.requested_by !== uid); setReqs(mine);
+    // 방금 온 요청의 에이전트가 목록에 없으면 한 번 다시 읽는다 — 서버(20261001160000)가 대기 크루 이름을 방 구성원에게 준다. 주기 재조회(30초)를 기다리면 그동안 이름 없이 보였다
+    const fresh = mine.filter((r) => !crewName(r.crew_id) && !nameAsked.current.has(r.id));
+    if (fresh.length) { fresh.forEach((r) => nameAsked.current.add(r.id)); onChanged?.(); }
   })().catch(() => {}); return () => { live = false; }; }, [chId, uid, event?.at]); // eslint-disable-line react-hooks/exhaustive-deps
   const decide = async (r, ok) => { setBusy(true); try { await q(supabase.rpc('msgr_crew_join_decide', { req: r.id, approve: ok })); setReqs((xs) => xs.filter((x) => x.id !== r.id)); onChanged?.(); } catch (e) { onError?.(friendlyErr(e.message, t)); } finally { setBusy(false); } };
   const agree = async () => { setBusy(true); try { await setAiConsent(true); } catch { onError?.(t('consent.ai.failed')); } finally { setBusy(false); } };
