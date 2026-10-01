@@ -1931,7 +1931,11 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-hbtn.on { background: var(--card-2); }
   .msgr-phone .ph-hbtn:active { background: var(--card-2); }
   .msgr-phone .ph-hbtn svg { stroke-width: 1.6; }
-  .msgr-phone .ph-orgbtn { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; min-height: 44px; padding: 0; border: 0; background: none; color: var(--fg); font: inherit; font-size: 22px; font-weight: 800; letter-spacing: -.02em; cursor: pointer; }
+  .msgr-phone .ph-head-l { gap: 8px; }
+  .msgr-phone .ph-head-l .ph-title { flex: none; }
+  /* 채널 탭 — 큰 제목 '채널' 옆 조직 알약(누르면 조직 메뉴). 제목이 어느 탭인지 말하고, 알약이 어느 조직인지 말한다 */
+  .msgr-phone .ph-orgbtn { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; max-width: 100%; min-height: 44px; padding: 0 10px 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--card-2); color: var(--fg); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .msgr-phone .ph-orgbtn:active { background: var(--border-soft); }
   .msgr-phone .ph-orgbtn .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .msgr-phone .ph-orgbtn .caret { flex: none; color: var(--fg-2); }
   .msgr-phone .ph-orgbtn .msgr-badge { flex: none; margin: 0; }
@@ -1954,7 +1958,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-searchfoot .ph-searchall { justify-content: center; min-height: 44px; width: 100%; border-radius: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .msgr-phone .ph-sechead { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 12px var(--ph-pad) 4px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
   .msgr-phone .ph-sechead .ph-secbtn, .msgr-phone .ph-sechead .ph-secx { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; justify-content: center; padding: 0 4px; border: 0; background: none; color: var(--fg-2); font-size: 13px; font-weight: 600; }
-  .msgr-phone .ph-empty { padding: 18px var(--ph-pad); font-size: 14px; line-height: 1.5; color: var(--fg-2); }
+  .msgr-phone .ph-empty, .msgr-phone.phone-home .msgr-side .ph-root .ph-empty { padding: 18px var(--ph-pad); font-size: 14px; line-height: 1.5; color: var(--fg-2); }
   .msgr-phone .ph-inline, .msgr-phone .ph-browse { margin: 4px var(--ph-pad) 8px; }
   .msgr-phone .ph-browse > .ph-sechead { padding: 0 0 4px; min-height: 44px; }
   /* ── 카톡식 줄: 사진 48 · 이름·인원·고정·알림 끔 · 시각 / 마지막 글 두 줄 · @ · 안 읽은 수 ── */
@@ -2040,8 +2044,15 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-noorg-acts .btn { justify-content: center; min-height: 48px; font-size: 15px; border-radius: 14px; }
   /* ── 에이전트 탭 ── */
   .msgr-phone .ph-apcard-wrap { padding: 6px var(--ph-pad) 4px; }
-  .msgr-phone .ph-apcard { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); text-align: left; }
-  .msgr-phone .ph-apcard:disabled { opacity: 1; cursor: default; }
+  .msgr-phone .ph-apcard { display: grid; border-radius: 16px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); overflow: hidden; }
+  .msgr-phone .ph-aphead, .msgr-phone .ph-aprow { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 12px 14px; border: 0; background: none; color: var(--fg); text-align: left; }
+  .msgr-phone .ph-aphead:disabled { opacity: 1; cursor: default; }
+  .msgr-phone .ph-aphead .name { font-size: 16px; font-weight: 700; }
+  .msgr-phone .ph-aprow { min-height: 56px; padding: 8px 14px; border-top: 1px solid var(--border-soft); }
+  .msgr-phone .ph-aprow:active, .msgr-phone .ph-aphead:not(:disabled):active { background: var(--border-soft); }
+  .msgr-phone .ph-aprow .snip { -webkit-line-clamp: 2; color: var(--fg); }
+  .msgr-phone .ph-apmeta { font-size: 12px; color: var(--fg-2); }
+  .msgr-phone .ph-apmore { margin: 0; padding: 8px 14px 12px; font-size: 13px; color: var(--fg-2); border-top: 1px solid var(--border-soft); }
   .msgr-phone .ph-apcard.on { border-color: var(--fg); }
   .msgr-phone .ph-apic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 14px; background: var(--bg); border: 1px solid var(--border); flex: none; }
   .msgr-phone .ph-apcard.on .ph-apic { background: var(--fg); color: var(--bg); border-color: var(--fg); }
@@ -2070,36 +2081,27 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-audit .day { display: grid; gap: 2px; margin-top: 6px; }
   .msgr-phone .ph-audit .row { align-items: baseline; gap: 8px; }
   .msgr-phone .ph-audit .row .text { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 1.45; }
-  /* ── 아래 탭 바: 떠 있는 알약(테마 표면색 반투명 + 흐림) · 원형 아이콘 · 선택된 탭만 강조색 원이 늘어나 이름 ── */
+  /* ── 아래 탭 바: 떠 있는 알약(테마 표면색 반투명 + 흐림) · 다섯 탭 모두 같은 크기의 아이콘 원 · 선택된 탭은 강조색으로 채운 원(유건 결정 10/1 밤 — 이름 글자 없음, 바 폭은 언어와 무관) ── */
   .msgr-phone .msgr-tabbar { left: 12px; right: 12px; bottom: var(--ph-bar-gap); display: flex; justify-content: center; gap: 0; }
   .msgr-phone .msgr-tabbar::before { display: none; } /* 옛 바탕 그라데이션 — 바 자체가 흐림 재질이라 필요 없다 */
-  .msgr-phone .msgr-island { flex: 0 1 440px; width: 100%; height: var(--ph-bar); display: flex; align-items: center; justify-content: space-between; gap: 2px; padding: 0 8px; border-radius: 999px;
+  .msgr-phone .msgr-island { flex: 0 1 360px; width: 100%; height: var(--ph-bar); display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 8px; border-radius: 999px;
     background: color-mix(in srgb, var(--card) 76%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
     border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); box-shadow: 0 8px 28px rgba(0, 0, 0, .18), 0 1px 2px rgba(0, 0, 0, .08); }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .msgr-phone .msgr-island { background: var(--card); } }
-  .msgr-phone .msgr-island button { flex: 0 0 auto; display: inline-flex; flex-direction: row; align-items: center; justify-content: center; gap: 0; min-width: 44px; height: 44px; padding: 0 12px; border-radius: 999px;
-    background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg-2); font-size: 14px; font-weight: 700; line-height: 1; }
-  .msgr-phone .msgr-island button .ic { width: 20px; height: 20px; }
-  .msgr-phone .msgr-island button .ic svg { width: 20px; height: 20px; stroke-width: 1.7; }
-  .msgr-phone .msgr-island button .lb { max-width: 0; overflow: hidden; opacity: 0; white-space: nowrap; margin-left: 0; }
-  .msgr-phone .msgr-island button.on { background: var(--mark); color: var(--mark-fg); padding: 0 16px 0 13px; }
-  .msgr-phone .msgr-island button.on .lb { max-width: 8em; opacity: 1; margin-left: 7px; }
+  .msgr-phone .msgr-island button { position: relative; flex: 0 0 48px; display: grid; place-items: center; width: 48px; min-width: 48px; height: 48px; min-height: 48px; padding: 0; border-radius: 50%;
+    background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg-2); }
+  .msgr-phone .msgr-island button .ic { display: grid; place-items: center; width: 22px; height: 22px; }
+  .msgr-phone .msgr-island button .ic svg { width: 22px; height: 22px; stroke-width: 1.7; }
+  .msgr-phone .msgr-island button.on { background: var(--mark); color: var(--mark-fg); }
   .msgr-phone .msgr-island button:active { background: color-mix(in srgb, var(--fg) 14%, transparent); }
   .msgr-phone .msgr-island button.on:active { background: var(--mark); }
   @media (prefers-reduced-motion: no-preference) {
-    .msgr-phone .msgr-island button { transition: padding 220ms cubic-bezier(.2, .8, .2, 1), background-color 180ms ease-out, color 180ms ease-out, transform 120ms ease-out; }
-    .msgr-phone .msgr-island button .lb { transition: max-width 220ms cubic-bezier(.2, .8, .2, 1), opacity 160ms ease-out, margin-left 220ms cubic-bezier(.2, .8, .2, 1); }
+    .msgr-phone .msgr-island button { transition: background-color 160ms ease-out, color 160ms ease-out, transform 120ms ease-out; }
   }
   /* 안 읽은 수 — 원 오른쪽 위 작은 잉크 알약(.msgr-badge와 같은 잉크: --fg 바탕·--bg 숫자). 바깥 고리(바 표면색)로 원·강조색과 경계를 둔다 */
-  .msgr-phone .msgr-island button { position: relative; }
-  .msgr-phone .msgr-island .msgr-tabn { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center;
+  .msgr-phone .msgr-island .msgr-tabn { position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center;
     background: var(--fg); color: var(--bg); font-size: 11px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px var(--card); }
   /* 아래에서 올라오는 창(새 채팅·친구 추가·에이전트 카드)은 뒤를 어둡게 덮는다 — 투명 스크림이라 창 양옆으로 탭 바·목록이 비쳐 창이 떠 보였다 */
   .msgr-phone .msgr-sheetwrap > .msgr-scrim.clear { position: fixed; inset: 0; background: rgba(0, 0, 0, .38); }
-  /* 360 폭 — 이름은 줄이지 않고 원 사이 간격을 줄인다 */
-  @media (max-width: 374px) {
-    .msgr-phone .msgr-tabbar { left: 8px; right: 8px; }
-    .msgr-phone .msgr-island { padding: 0 5px; gap: 0; }
-    .msgr-phone .msgr-island button.on { padding: 0 13px 0 11px; }
-  }
+
 }
