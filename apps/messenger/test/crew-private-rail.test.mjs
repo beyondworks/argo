@@ -36,5 +36,5 @@ test('검색 결과·활동(기억) 화면의 에이전트 목록도 같은 규�
   assert.match(line('setSearchRes({ q: qs'), /agents: crews\.filter\(\(c\) => \(c\.owner_user_id === uid \|\| crewTier\(c, org\) === 'company'\) &&/, '검색');
   const own = new Function('crews', 'uid', 'org', 'crewTier', `${line('const ownCrews =')}\nreturn ownCrews;`)(crews, 'me', org, crewTier);
   assert.deepEqual(own.map((c) => c.id), ['my-bot', 'company'], '활동 트리의 에이전트 목록');
-  assert.match(app, /id="crews" label=\{t\('act\.tree\.crews'\)\} sub=\{ownCrews\.length\} depth=\{1\} kids=\{ownCrews\.map/, '트리는 ownCrews를 그린다');
+  assert.match(app, /id="crews" label=\{t\('act\.tree\.crews'\)\} \{\.\.\.nItems\(ownCrews\.length\)\} depth=\{1\} kids=\{ownCrews\.map/, '트리는 ownCrews를 그린다');
 });
