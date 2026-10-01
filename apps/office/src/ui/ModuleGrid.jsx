@@ -5,7 +5,7 @@ import { Icon } from './Icon.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link } from '../core/router.jsx';
 import { t } from '../core/i18n.js';
-import { spanOf, spanRange, heightOf, rowHeights } from '../core/layout.js';
+import { spanOf, spanRange, heightOf, rowInfo } from '../core/layout.js';
 import { moduleDrag, sideOf } from '../core/module-drag.js';
 import { flipPrepare } from '../core/motion.js';
 
@@ -15,14 +15,14 @@ const EDGES = ['l', 'r', 't', 'b'];
 let resizer;
 const loadResizer = () => (resizer ??= import('./module-resize.js').catch((error) => { resizer = null; throw error; })); // 실패하면 다음에 다시 받는다(배포 뒤 옛 탭)
 
-function ModuleCard({ item, space, items, rh, canEdit, editable, scope, commit, resolveModule, bodyClassName }) {
-  const mod = resolveModule(item);
+function ModuleCard({ item, space, items, row, canEdit, editable, scope, commit, resolveModule, bodyClassName }) {
+  const mod = resolveModule(item), rh = row.h;
   const keyboardTarget = useRef(null);
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useSortable({ id: JSON.stringify([scope, item.id]), disabled: !canEdit, data: { kind: 'module', id: item.id, group: scope, label: mod.title, keyboardTarget } });
   const card = useRef(null);
   const set = (patch) => commit(items.map((x) => (x.id === item.id ? { ...x, ...patch } : x)));
   // 끄기·키보드·두 번 누르기는 module-resize.js가 맡는다 — 지금 자리(DOM)와 항목을 넘긴다
-  const edge = (kind, e, side) => loadResizer().then((m) => card.current && m[kind]?.({ el: card.current, items, modOf: resolveModule, commit }, e, side), () => {});
+  const edge = (kind, e, side) => loadResizer().then((m) => card.current && m[kind]?.({ el: card.current, items, modOf: resolveModule, commit, canEdit }, e, side), () => {});
   const own = useRef(null); // 카드 본문이 더하는 메뉴(예: 여러 보기의 보기 고르기)
   const menu = () => !canEdit ? [...(own.current?.() ?? []), { heading: t('home.readOnly') }] : [
     ...(own.current?.() ?? []),
@@ -41,13 +41,15 @@ function ModuleCard({ item, space, items, rh, canEdit, editable, scope, commit, 
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
       </header>
       <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
-      {editable && EDGES.map((side) => { // 저장 중에도 그대로 둔다 — 키보드 초점이 손잡이에 남는다
+      {editable && EDGES.map((side) => { // 저장 중(canEdit 꺼짐)에도 그대로 둔다 — 키보드 초점이 손잡이에 남는다. 그동안은 aria-disabled
+        if (row.first && side === 'l') return null; // 줄 첫 모듈의 왼쪽은 잡은 선이 손을 따라오지 않는다(반대편이 움직인다, 검수 10/1 2차) — 그리지 않는다
         const x = side === 'l' || side === 'r'; // 좌우 = 폭, 위아래 = 높이
         return <span key={side} className={`edge edge-${side} edge-${x ? 'x' : 'y'}`} role="separator" aria-orientation={x ? 'vertical' : 'horizontal'} aria-label={t(x ? 'mod.resize.w' : 'mod.resize.h')}
-          aria-valuenow={x ? span : rh || undefined} aria-valuemin={x ? lo : 120} aria-valuemax={x ? hi : 1200} tabIndex={side === 'r' || side === 'b' ? 0 : -1}
+          aria-valuenow={x ? span : rh || undefined} aria-valuemin={x ? lo : row.min} aria-valuemax={x ? hi : 1200} aria-disabled={!canEdit || undefined} tabIndex={side === 'r' || side === 'b' ? 0 : -1}
           onPointerEnter={() => edge()} onDoubleClick={() => edge('reset', null, side)} onBlur={() => edge('blur')}
-          onFocus={(e) => { if (!x && !rh) e.currentTarget.setAttribute('aria-valuenow', Math.round(card.current.offsetHeight / 8) * 8); }} // 정하지 않은 높이는 지금 높이를 알린다
+          onFocus={(e) => !x && edge('focus', e.currentTarget, side)} // 높이는 지금 보이는 높이·최소를 화면에서 다시 잰다(좁은 폭은 넓은 화면의 줄이 아니라 자기 것)
           onKeyDown={(e) => { if (!e.key.startsWith('Arrow')) return; e.preventDefault(); e.stopPropagation(); edge('key', { key: e.key }, side); }}
+          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }} // 터치 길게 누르기·오른쪽 클릭이 모듈 ⋯ 메뉴를 열지 않게(pointerdown을 막아도 contextmenu는 따로 온다)
           onPointerDown={(e) => { // 길게 누르기 메뉴·끌어 옮기기·글 선택이 같이 시작되지 않게
             e.stopPropagation(); if (e.button) return; e.preventDefault();
             const target = e.currentTarget; target.setPointerCapture(e.pointerId);
@@ -59,7 +61,8 @@ function ModuleCard({ item, space, items, rh, canEdit, editable, scope, commit, 
 }
 
 
-export function ModuleGrid({ id, items, canEdit, onChange, resolveModule, space, bodyClassName }) {
+// locked = 바깥에서 다른 저장이 진행 중(업무 대시보드 business.busy) — 편집 권한(canEdit)과 따로 받아 그동안 손잡이를 빼지 않는다(검수 10/1: 키보드 초점이 사라졌다)
+export function ModuleGrid({ id, items, canEdit, locked = false, onChange, resolveModule, space, bodyClassName }) {
   const grid = useRef(null), lock = useRef(null), latest = useRef(null), mounted = useRef(true);
   const [optimistic, setOptimistic] = useState(null), [pendingScope, setPendingScope] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -68,7 +71,7 @@ export function ModuleGrid({ id, items, canEdit, onChange, resolveModule, space,
   const drag = useRef(null), settle = useRef(0), anchor = useRef(null), last = useRef(null), recheck = useRef(0);
   useEffect(() => () => clearTimeout(recheck.current), []);
   const pending = pendingScope === id;
-  latest.current = { id, items, canEdit, onChange };
+  latest.current = { id, items, canEdit, locked, onChange };
   const base = optimistic?.id === id ? optimistic.items : items;
   const displayed = preview?.scope === id && preview.source === items && canEdit ? preview.items : base;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -83,7 +86,7 @@ export function ModuleGrid({ id, items, canEdit, onChange, resolveModule, space,
   const animate = (write) => { if (grid.current) flip.current = flipPrepare(grid.current); write(); };
   useLayoutEffect(() => { const run = flip.current; flip.current = null; run?.(); });
   const commit = async (next) => {
-    if (lock.current?.id === id || !latest.current.canEdit || latest.current.id !== id || !mounted.current) return false;
+    if (lock.current?.id === id || !latest.current.canEdit || latest.current.locked || latest.current.id !== id || !mounted.current) return false;
     const request = { id }, source = latest.current.items, write = latest.current.onChange;
     lock.current = request;
     animate(() => { setOptimistic({ id, source, items: next }); setPendingScope(id); });
@@ -127,7 +130,7 @@ export function ModuleGrid({ id, items, canEdit, onChange, resolveModule, space,
     if (type !== 'over') { clearTimeout(recheck.current); last.current = null; }
     if (type === 'over' && (Date.now() < settle.current || (anchor.current && over?.point && Math.hypot(over.point.x - anchor.current.x, over.point.y - anchor.current.y) < 16))) return;
     const result = moduleDrag(drag.current, { type, scope: id, source: latest.current.items, items: base,
-      canEdit: latest.current.canEdit && lock.current?.id !== id, active: event.active.data.current, over });
+      canEdit: latest.current.canEdit && !latest.current.locked && lock.current?.id !== id, active: event.active.data.current, over });
     const moved = type === 'over' && result.drag && result.drag !== drag.current;
     drag.current = result.drag;
     if (moved) {
@@ -155,9 +158,9 @@ export function ModuleGrid({ id, items, canEdit, onChange, resolveModule, space,
     onDragEnd: (event) => dragEvent('end', event),
   });
   const visible = displayed.filter((item) => !item.hidden);
-  const rows = rowHeights(visible);
+  const rows = rowInfo(visible, resolveModule);
   return <SortableContext items={visible.map((item) => JSON.stringify([id, item.id]))} strategy={gridStrategy}>
-    <div className="grid" ref={grid} aria-busy={pending}>{visible.map((item) => <ModuleCard key={item.id} item={item} space={space} items={displayed} scope={id} commit={commit} canEdit={canEdit && !pending} editable={canEdit} resolveModule={resolveModule} bodyClassName={bodyClassName} rh={rows.get(item.id)} />)}</div>
+    <div className="grid" ref={grid} aria-busy={pending}>{visible.map((item) => <ModuleCard key={item.id} item={item} space={space} items={displayed} scope={id} commit={commit} canEdit={canEdit && !pending && !locked} editable={canEdit} resolveModule={resolveModule} bodyClassName={bodyClassName} row={rows.get(item.id)} />)}</div>
   </SortableContext>;
 }
 

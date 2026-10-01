@@ -280,9 +280,12 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 /* 끄는 동안: 커서를 고정하고 글 선택을 막는다. 폭을 끌 때는 12열 눈금이 은은히 보인다 */
 body.edge-drag-x, body.edge-drag-x * { cursor: ew-resize !important; user-select: none; }
 body.edge-drag-y, body.edge-drag-y * { cursor: ns-resize !important; user-select: none; }
-.grid::before { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease-out); border-radius: var(--rs);
-  background: repeating-linear-gradient(90deg, transparent 0 calc((100% - 11 * var(--module-gap)) / 12), var(--primary-soft) 0 calc((100% + var(--module-gap)) / 12)); } /* 모듈 가장자리가 붙을 수 있는 열 사이 틈만 옅게 — 카드 뒤에 깔려 빈 열과 카드 사이 틈에서만 보인다(카드 글을 가리지 않게) */
-.grid.cols-on::before { opacity: 0.6; }
+/* 열 눈금 — 끄는 줄의 위·아래 틈(줄 사이 12px)에만 짧은 눈금을 긋는다. 카드 위에는 그리지 않는다(반투명 카드 셸에서 글 위로 비치던 결함, 검수 10/1).
+   눈금 = 모듈 가장자리가 붙을 수 있는 열 사이 틈의 가운데. 줄 위치(--ruler-top·--ruler-h)는 끄는 코드(module-resize.js)가 정한다 */
+.grid::before { --tick: repeating-linear-gradient(90deg, transparent 0 calc((100% - 11 * var(--module-gap)) / 12 + var(--module-gap) / 2 - 1px), var(--fg-3) 0 calc((100% - 11 * var(--module-gap)) / 12 + var(--module-gap) / 2 + 1px), transparent 0 calc((100% + var(--module-gap)) / 12));
+  content: ''; position: absolute; left: 0; right: 0; top: calc(var(--ruler-top, 0px) - var(--module-gap) / 2 - 3px); height: calc(var(--ruler-h, 0px) + var(--module-gap) + 6px);
+  pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease-out); background: var(--tick) top / 100% 6px no-repeat, var(--tick) bottom / 100% 6px no-repeat; }
+.grid.cols-on::before { opacity: 0.7; }
 .module.resizing { z-index: 1; }
 /* 터치: 폭은 바꾸지 않고(좁은 화면과 같게), 높이는 아래 가장자리 하나 — 잡을 자리가 보이게 작은 막대를 늘 둔다 */
 @media (pointer: coarse) {

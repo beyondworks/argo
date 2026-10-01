@@ -2,11 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mergeLayout, rowsOf, rowHeights, spanOf, heightOf, spanRange } from '../src/core/layout.js';
-import { dragSpans, snapH, applySizes, resetSize } from '../src/core/module-size.js';
+import { mergeLayout, rowsOf, rowInfo, spanOf, heightOf, spanRange, sizeForSpan, minHeight } from '../src/core/layout.js';
+import { dragSpans, snapH, applySizes, resetSize, resetPatch } from '../src/core/module-size.js';
 import { normalizeModuleItems } from '../src/core/module-items.js';
 import { normalizeDashboards, defaultDashboard } from '../src/business/dashboard-model.js';
-import { OFFICE_MODULES } from '../src/core/module-registry.js';
+import { OFFICE_MODULES, CHART_MODULES } from '../src/core/module-registry.js';
 
 const ALL = ['s', 'm', 'l', 'full'];
 const mod = (sizes = ALL, defaultSize = 'm') => ({ sizes, defaultSize });
@@ -99,17 +99,17 @@ test('⋯ 크기 되돌리기: 그 줄에서 바꾼 폭(경계를 같이 끈 옆
 
 // 이유: 줄 구성은 CSS 격자 자동 배치와 같은 규칙 — 이제 열 수(span)로 센다. 줄 높이는 그 줄에 정해진 높이 중 가장 큰 값.
 test('줄 나누기·줄 높이: span 기준, 같은 줄은 가장 큰 높이를 같이 쓴다', () => {
-  const items = [{ id: 'a', size: 'm', span: 7 }, { id: 'b', size: 'm', span: 5, h: 320 }, { id: 'c', size: 's', span: 9 }, { id: 'd', size: 's' }, { id: 'e', size: 'm' }];
+  const items = [{ id: 'a', size: 'm', span: 7 }, { id: 'b', size: 's', span: 5, h: 320 }, { id: 'c', size: 'l', span: 9 }, { id: 'd', size: 's' }, { id: 'e', size: 'm' }];
   assert.deepEqual(rowsOf(items).map((r) => r.map((i) => i.id)), [['a', 'b'], ['c'], ['d', 'e']]);
-  assert.deepEqual([...rowHeights(items)], [['a', 320], ['b', 320], ['c', 0], ['d', 0], ['e', 0]]);
+  assert.deepEqual([...rowInfo(items, () => ({}))].map(([id, r]) => [id, r.h]), [['a', 320], ['b', 320], ['c', 0], ['d', 0], ['e', 0]]);
 });
 
 // 이유: 홈 배치 병합은 아는 필드만 다시 조립한다 — 새 필드(span·h)를 빠뜨리면 저장한 크기가 새로고침에 사라진다.
 test('배치 병합·페이지 모듈·대시보드 정규화가 span·h를 지킨다(잘못된 값은 버림)', () => {
   const reg = [{ id: 'a', sizes: ALL, defaultSize: 'm', spaces: ['me'] }, { id: 'st', sizes: ['l', 'full'], defaultSize: 'full', spaces: ['me'] }];
-  const saved = { items: [{ id: 'a', size: 'l', span: 7, baseSize: 'm', h: 360 }, { id: 'st', size: 'full', span: 4, baseSize: 'm', h: 9 }, { id: 'b', moduleId: 'a', size: 'm', span: 5, baseSize: 'zz' }] };
-  assert.deepEqual(mergeLayout(saved, reg, 'me', []), [{ id: 'a', size: 'l', span: 7, baseSize: 'm', h: 360, hidden: false }, { id: 'st', size: 'full', hidden: false }, { id: 'b', moduleId: 'a', size: 'm', span: 5, hidden: false }]);
-  assert.deepEqual(normalizeModuleItems([{ id: 'calendar', size: 'm', span: 5, h: 480 }])[0], { id: 'calendar', moduleId: 'calendar', size: 'm', span: 5, h: 480, hidden: false });
+  const saved = { items: [{ id: 'a', size: 'm', span: 7, baseSize: 'l', h: 360 }, { id: 'st', size: 'full', span: 4, baseSize: 'm', h: 9 }, { id: 'b', moduleId: 'a', size: 's', span: 5, baseSize: 'zz' }] };
+  assert.deepEqual(mergeLayout(saved, reg, 'me', []), [{ id: 'a', size: 'm', span: 7, baseSize: 'l', h: 360, hidden: false }, { id: 'st', size: 'full', hidden: false }, { id: 'b', moduleId: 'a', size: 's', span: 5, hidden: false }]);
+  assert.deepEqual(normalizeModuleItems([{ id: 'calendar', size: 's', span: 5, h: 480 }])[0], { id: 'calendar', moduleId: 'calendar', size: 's', span: 5, h: 480, hidden: false });
   const [d] = normalizeDashboards([{ id: 'd', name: 'D', widgets: [{ id: 'w', type: 'kpi', metric: 'sales', size: 's', span: 3, h: 200 }] }]);
   assert.deepEqual(d.widgets[0], { id: 'w', type: 'kpi', metric: 'sales', size: 's', span: 3, h: 200 });
 });
@@ -119,4 +119,60 @@ test('⋯ 메뉴에 크기 단계 항목이 없다', () => {
   const src = readFileSync(new URL('../src/ui/ModuleGrid.jsx', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /mod\.size\.\$\{|'mod\.size'\)/);
   assert.match(src, /mod\.size\.reset/);
+});
+
+// 이유(검수 10/1): 배포 전 코드가 열린 옛 탭의 '크기' 메뉴는 size만 바꾸고 span·baseSize를 그대로 남긴다 — 그 변경이 새 화면에서 무시되면 안 된다.
+test('옛 탭이 size만 바꾸면 남은 span보다 size가 이기고, 다음 끌기의 끌기 전 단계도 그 size', () => {
+  const stale = { id: 'a', size: 'full', span: 5, baseSize: 'm' }; // 새 화면에서 5열(s)로 끈 뒤 옛 탭에서 '전체 폭'
+  assert.equal(spanOf(stale), 12);
+  assert.deepEqual(rowsOf([stale, { id: 'b', size: 's' }]).map((r) => r.map((x) => x.id)), [['a'], ['b']]);
+  assert.deepEqual(applySizes([stale], { a: { span: 9 } }, modOf)[0], { id: 'a', size: 'l', span: 9, baseSize: 'full' });
+  assert.deepEqual(applySizes([stale], { a: { span: null } }, modOf)[0], { id: 'a', size: 'full' });
+  assert.equal(spanOf({ id: 'a', size: 's', span: 5, baseSize: 'm' }), 5); // 새 화면이 쓴 것(가장 가까운 단계)은 그대로
+});
+
+// 이유: span과 같이 쓰는 size는 '가장 가까운 단계'(sizeForSpan) — 그 모듈이 허용하는 열 범위 안이면 늘 허용 단계여야 옛 화면이 읽는다.
+test('허용 열 범위 안의 가장 가까운 단계는 늘 그 모듈의 허용 단계', () => {
+  for (const m of [...OFFICE_MODULES, ...CHART_MODULES, { sizes: ALL }]) {
+    const [lo, hi] = spanRange(m.sizes);
+    for (let span = lo; span <= hi; span += 1) assert.ok(m.sizes.includes(sizeForSpan(span)), `${m.id} ${span}`);
+  }
+});
+
+// 이유(유건 10/1 C.2·검수): 높이 최소 120px, 본문 최소가 있는 모듈(달력·그래프)은 머리 + 본문 최소 — 카드 120px까지 줄면 달력 본문이 60px만 남았다.
+test('모듈 최소 높이: 기본 120, 본문 최소가 있으면 머리 + 본문(8px 올림)', () => {
+  assert.equal(minHeight({}), 120);
+  const cal = OFFICE_MODULES.find((m) => m.id === 'calendar');
+  assert.equal(minHeight(cal), 248); assert.equal(minHeight(cal, 0), 200); // 머리를 숨긴 모양이면 본문만
+  assert.equal(minHeight(CHART_MODULES.find((m) => m.id === 'line'), 52), 224);
+  assert.equal(minHeight(CHART_MODULES.find((m) => m.id === 'kpi')), 120);
+  assert.equal(snapH(130, minHeight(cal)), 248);
+});
+
+// 이유(검수 10/1 2차 재현): 두 번 눌러 폭을 되돌릴 때 그 모듈만 되돌리면, 경계를 같이 끈 앞 모듈은 늘어난 채라 줄 합이 12를 넘어 모듈이 다음 줄로 떨어졌다.
+// 폭 되돌리기는 그 줄의 바꾼 폭을 모두 끌기 전으로 — 끌기 전 줄 구성이 그대로 돌아온다. 높이는 건드리지 않는다.
+test('두 번 눌러 폭 되돌리기: 그 줄 전체를 끌기 전으로, 줄 구성 유지', () => {
+  const start = [{ id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'cal', size: 'm' }, { id: 'work', size: 'm' }];
+  const dragged = applySizes(start, { todos: { span: 9, h: 400 }, pages: { span: 3, h: 400 } }, modOf); // 할 일|최근 페이지 경계를 끈 뒤
+  const row = rowsOf(dragged)[0];
+  assert.deepEqual(resetPatch(row, 'span'), { todos: { span: null }, pages: { span: null } }); // 줄 끝(최근 페이지)을 두 번 눌러도 앞 모듈까지
+  const back = applySizes(dragged, resetPatch(row, 'span'), modOf);
+  assert.deepEqual(rowsOf(back).map((r) => r.map((x) => x.id)), rowsOf(start).map((r) => r.map((x) => x.id)));
+  assert.deepEqual(back.slice(0, 2).map((x) => [x.size, x.span, x.h]), [['l', undefined, 400], ['s', undefined, 400]]);
+  // A|B|C에서 A|B를 끈 뒤 B|C 경계를 두 번 눌러도 C가 떨어지지 않는다
+  const abc = applySizes([{ id: 'a', size: 's' }, { id: 'b', size: 's' }, { id: 'c', size: 's' }], { a: { span: 5 }, b: { span: 3 } }, modOf);
+  const reset = applySizes(abc, resetPatch(rowsOf(abc)[0], 'span'), modOf);
+  assert.deepEqual(rowsOf(reset).map((r) => r.map((x) => x.id)), [['a', 'b', 'c']]);
+  assert.ok(rowsOf(reset).every((r) => r.reduce((sum, x) => sum + spanOf(x), 0) <= 12));
+  assert.deepEqual(resetPatch([{ id: 'x', size: 'm' }], 'span'), {}); // 바꾼 게 없으면 저장하지 않는다
+  assert.deepEqual(resetPatch(row, 'h'), { todos: { h: 0 }, pages: { h: 0 } });
+});
+
+// 이유(검수 10/1 2차): 줄 첫 모듈의 왼쪽 가장자리는 잡은 선이 손을 따라오지 않는다(반대편이 움직인다) — 그 손잡이는 그리지 않는다(first).
+// 높이 손잡이가 알리는 최소는 그 줄 모듈 최소 중 가장 큰 값 — 줄 높이를 같이 쓰므로 실제로 그 밑으로 줄지 않는다(min).
+test('줄 정보: 줄 높이·줄 최소 높이·줄 첫 모듈', () => {
+  const cal = OFFICE_MODULES.find((m) => m.id === 'calendar');
+  const items = [{ id: 'cal', size: 'm', h: 320 }, { id: 'work', size: 'm' }, { id: 'c', size: 'full' }];
+  const info = rowInfo(items, (item) => (item.id === 'cal' ? cal : {}));
+  assert.deepEqual([...info], [['cal', { h: 320, min: 248, first: true }], ['work', { h: 320, min: 248, first: false }], ['c', { h: 0, min: 120, first: true }]]);
 });

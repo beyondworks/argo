@@ -3,9 +3,12 @@
 export const SIZES = ['s', 'm', 'l', 'full'];
 export const SPAN = { s: 4, m: 6, l: 8, full: 12 };
 // 가장자리 끌기(유건 10/1): 폭은 열 수(span 1~12, 끌기 전 단계는 baseSize), 높이는 px(h, 120~1200) — 없으면 크기 단계·내용대로
-export const spanOf = (it) => (Number.isInteger(it.span) && it.span > 0 && it.span < 13 ? it.span : SPAN[it.size] ?? 6);
+// span은 같이 쓴 size(가장 가까운 단계)와 맞을 때만 — 옛 탭의 '크기' 메뉴가 size만 바꾸면 남은 span보다 그 size가 이긴다(검수 10/1)
+export const spanOf = (it) => (Number.isInteger(it.span) && it.span > 0 && it.span < 13 && it.size === sizeForSpan(it.span) ? it.span : SPAN[it.size] ?? 6);
 export const heightOf = (it) => (Number.isInteger(it.h) && it.h >= 120 && it.h <= 1200 ? it.h : 0);
 /** 모듈이 허용하는 열 범위 — 1/3을 허용하면 3열부터, 아니면 가장 작은 단계부터(현황 8열) */
+/** 모듈 최소 높이(카드 전체, px) — 120, 등록부에 본문 최소(minBody)가 있으면 머리 높이 + 그 값(8px 단위 올림) */
+export const minHeight = (mod, head = 42) => Math.max(120, Math.ceil((head + (mod?.minBody ?? 0)) / 8) * 8);
 export const spanRange = (sizes) => [Math.min(...sizes.map((s) => (s === 's' ? 3 : SPAN[s]))), Math.max(...sizes.map((s) => SPAN[s]))];
 
 /** 열 수 → 가장 가까운 크기 단계 */
@@ -81,8 +84,11 @@ export function rowsOf(items) {
   return rows;
 }
 
-/** 같은 줄은 높이를 같이 쓴다 — 그 줄에 정해진 높이 중 가장 큰 값(0 = 내용대로) */
-export const rowHeights = (items) => new Map(rowsOf(items).flatMap((row) => row.map((it) => [it.id, Math.max(...row.map(heightOf))])));
+/** 모듈마다 줄 정보 — h: 같은 줄이 같이 쓰는 높이(정해진 것 중 가장 큰 값, 0 = 내용대로), min: 줄 최소 높이(줄 모듈 최소 중 가장 큰 값), first: 줄 첫 모듈 */
+export const rowInfo = (items, modOf) => new Map(rowsOf(items).flatMap((row) => {
+  const h = Math.max(...row.map(heightOf)), min = Math.max(...row.map((it) => minHeight(modOf(it))));
+  return row.map((it, i) => [it.id, { h, min, first: !i }]);
+}));
 
 /**
  * 서버 페이지 목록(본문 제외) + 이 기기 목록 → 화면 목록.
