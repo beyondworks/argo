@@ -8,7 +8,7 @@ import { t, useLang } from '../core/i18n.js';
 import { ME } from '../core/session.js';
 import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
-import { openMenu, menuProps } from '../ui/Menu.jsx';
+import { openMenu, menuProps, fromInside } from '../ui/Menu.jsx';
 import { Modal } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
@@ -52,8 +52,9 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
   const view = cfg.view, design = w.design, bare = W.isBare(view, design), board = V.BOARD.includes(view);
   const [anchor, setAnchor] = useState(today);
   const [dir, setDir] = useState(0); // 옮긴 방향(미끄러지는 쪽)
+  const [picked, setSel] = useState(today); // 미니 달력에서 누른 날
   const go = (d) => { setDir(d); setAnchor((a) => W.navShift(view, a, d)); };
-  const goToday = () => { setDir(anchor < today ? 1 : anchor > today ? -1 : 0); setAnchor(today); };
+  const goToday = () => { setDir(anchor < today ? 1 : anchor > today ? -1 : 0); setAnchor(today); setSel(today); }; // 미니 달력은 고른 날도 오늘로(목록이 오늘 항목을 보이게)
   const [from, to] = W.readWindow(view, anchor, today);
   const fresh = useEvents(from, to);
   // ‹ ›로 옮기는 동안 새 창을 읽는 사이에는 보던 일정을 그대로 둔다(달력이 '불러오는 중'으로 깜빡이지 않게). 읽기에 실패하면 옛 일정으로 가리지 않고 오류를 보인다.
@@ -91,7 +92,6 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
   };
   const actions = useItemActions({ space, ctx, people, categories, onOpen: openItem, onNewEvent: () => create() });
   const onMenu = (o) => actions.single(o.kind === 'task' ? o.vi : V.eventItem(o));
-  const [picked, setSel] = useState(today); // 미니 달력에서 누른 날
   const sel = W.miniSel(picked, anchor, today); // 달을 옮기면 보이는 달 안으로(오늘이 든 달은 오늘, 아니면 1일) — 목록·'+'가 읽기 창 밖 날짜를 가리키지 않게
   const addDay = view === 'mini' ? sel : today; // '+' — 미니에서 날짜를 골랐으면 그 날짜로(B-6)
 
@@ -136,7 +136,7 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
 
   return (
     <div ref={root} className={`calw d-${design} v-${view}${bare ? ' bare' : ''}`}
-      onContextMenu={(e) => { if (!board && !e.target.closest('button, a, .cal-block, .cal-chip')) openMenu(e, actions.empty(cfg, setView, W.WIDGET_VIEWS, label)); }}>
+      onContextMenu={(e) => { if (!board && fromInside(e) && !e.target.closest('button, a, .cal-block, .cal-chip')) openMenu(e, actions.empty(cfg, setView, W.WIDGET_VIEWS, label)); }}>
       {hero && <Hero today={today}>{add}</Hero>}
       <div className="calw-top">
         <h4 className="calw-cap" aria-live="polite">{caption(view, anchor, today)}</h4>
@@ -283,7 +283,7 @@ function Card({ o, colorBy, onOpen, onMenu }) {
   const c = o.kind === 'task' ? undefined : colorOf(o, colorBy);
   return <button type="button" className={`calw-card${o.kind === 'task' ? ' task' : ''}${o.done ? ' done' : ''}${c ? '' : ' neutral'}`} style={c ? { '--ev': c } : undefined}
     title={`${o.title} · ${timeOf(o)}`} onClick={() => onOpen(o)} {...menuProps(() => onMenu(o))}>
-    <span className="calw-card-when">{o.kind === 'task' ? <Icon name="check" size={11} /> : <span className={`cal-dot${c ? '' : ' neutral'}`} />}{timeOf(o)}</span>
+    <span className="calw-card-when">{o.kind === 'task' ? <Icon name="check" size={11} /> : <span className={`cal-dot${c ? '' : ' neutral'}`} />}<span className="calw-ell">{timeOf(o)}</span></span>
     <span className="calw-card-title">{o.crew && colorBy === 'agent' && <Face id={o.crew} size={12} />}<span className="calw-ell">{o.title}</span></span>
   </button>;
 }

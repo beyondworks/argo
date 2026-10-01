@@ -3,7 +3,7 @@
 // 배치를 바꿀 수 없는 사람(조직 홈의 직원)은 이번 화면에서만 바뀐다 — 조직 홈 배치는 관리자가 정한다.
 import { useMemo, useState } from 'react';
 import { useLang } from '../core/i18n.js';
-import { openMenu } from '../ui/Menu.jsx';
+import { openMenu, fromInside } from '../ui/Menu.jsx';
 import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
 import * as M from '../calendar/model.js';
@@ -54,7 +54,7 @@ function Card({ space, item, cfg, set, views, from, to, today }) {
     const cal = items.map((it) => ({ kind: 'task', key: it.key, id: it.id, title: it.title, done: it.done, space: it.space, all_day: true, start: M.kstStart(it.day), end: M.kstStart(M.addDays(it.day, 1)), vi: it })).filter((o) => o.vi.day);
     const props = { items: cal, today, now: Date.now(), colorBy: pref('color', 'category'), holidays: true, phone: true,
       onOpen: (o) => openItem(o.vi), onMenu: (o) => actions.single(o.vi), onCreate: ({ day }) => navigate(`${base}/calendar?day=${day}&new=event`), onDay: (d) => navigate(`${base}/calendar?day=${d}`) };
-    return <div className="cal-emb" onContextMenu={(e) => { if (!e.target.closest('.cal-chip, .cal-block')) openMenu(e, actions.empty(cfg, set, views)); }}>
+    return <div className="cal-emb" onContextMenu={(e) => { if (fromInside(e) && !e.target.closest('.cal-chip, .cal-block')) openMenu(e, actions.empty(cfg, set, views)); }}>
       {cfg.view === 'month' ? <MonthView {...props} anchor={today} /> : <TimeGrid {...props} days={M.weekDays(today)} />}
       {actions.dialogs}
     </div>;

@@ -223,6 +223,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 .calw-card:active { transform: scale(0.97); }
 .calw-card-when { display: flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--fg-2); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
 .calw-card-when .cal-dot { width: 6px; height: 6px; }
+.calw-card-when > :first-child { flex: none; } /* 글자가 줄어도 점·체크는 그대로 */
 .calw-card-title { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 560; line-height: 1.3; min-width: 0; overflow: hidden; white-space: nowrap; }
 .calw-ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* flex 줄 안의 글자는 말줄임을 이 칸에서 */
 .calw-card-title .face { flex: none; }
@@ -235,7 +236,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
   .calw-week { grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; gap: 0; overflow-y: auto; } /* 날짜 줄은 내용 높이 그대로 — 넘치면 목록 전체가 스크롤(카드가 다음 날 줄에 겹치지 않게) */
   .calw-wcol { grid-template-rows: none; grid-template-columns: 58px minmax(0, 1fr); align-items: start; gap: 6px; padding: 3px 0; min-height: auto; }
   .calw-wcol + .calw-wcol { box-shadow: inset 0 1px 0 var(--border-soft); }
-  .calw.d-basic .calw-wcol + .calw-wcol { padding-left: 0; }
+  .calw.d-basic .calw-wcol + .calw-wcol { padding-left: 0; box-shadow: inset 0 1px 0 var(--border-soft); } /* 넓은 폭의 세로 칸 구분선(0,3,0)을 같은 무게로 덮는다 */
   .calw-whead { grid-auto-flow: column; justify-content: start; align-items: center; gap: 4px; padding: 2px 0 2px 4px; }
   .calw-wlist { overflow: visible; padding: 2px 0; }
   .calw-wlist:empty { min-height: 30px; }
