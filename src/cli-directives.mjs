@@ -13,6 +13,7 @@ import { stageMessengerHandoff, messengerOrigin } from './gateway/msgr-handoff.m
 // 지운다 — 사장이 JSON을 볼 이유가 없다.
 import { addRoutine, normalizeSchedule } from './routines.mjs';
 import { sendCrewMail } from './crewmail.mjs';
+import { limitsFor } from './delegation-limits.mjs'; // 위임 제한 표(쪽지 블록의 단계 상한)
 import { addApproval } from './approvals.mjs'; // CLI 결재 경로 — SDK request_approval과 같은 원장
 import { approvalScope } from './thread.mjs'; // 범위 턴의 결재 — 후속이 그 범위로(SDK 결재와 같은 각인)
 import { listAgents } from './hub.mjs';
@@ -109,8 +110,9 @@ export const handledByTool = (d, calls) => { const f = SAME_AS_TOOL[String(d?.ac
     실패도 줄로 남긴다: 조용한 실패는 크루의 거짓말이 된다.
     `results`는 호출측이 건네는 수집함이다(커넥터 도구에 실제로 닿은 호출만 담긴다) — 채워지면
     호출측이 runToolFollowUp으로 후속 턴 1회를 돌린다. `toolHop`은 그 후속 턴 카운터. */
-export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null } = {}) {
+export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null, delegationRelaxed = false } = {}) {
   const en = lang === 'en';
+  const lim = limitsFor(delegationRelaxed, mirrorCtx); // 위임 제한 표 — SDK 도구(chat.mjs)와 같은 값(러너 패리티). 메신저 맥락은 항상 켜짐
   const notes = [];
   let budget = TOOL_RESULT_BUDGET_BYTES; // 턴 전체 주입 예산 — 블록이 여럿이면 앞에서부터 소진된다
   const agents = await listAgents(wsId).catch(() => []);
@@ -153,7 +155,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
       } else if (action === 'mail') {
         // SDK 경로는 hop>=2면 쪽지 도구 자체가 등록되지 않는다(chat.mjs colleagues). 러너 패리티 —
         // 같은 지점에서 같은 상한을 건다. 조용히 무시하지 않고 사유 줄로 남긴다(이 파일의 계약).
-        if (mirrorCtx?.kind !== 'msgr' && hop >= 2) throw new Error(en ? 'note relay limit reached (2 hops)' : '쪽지 연쇄 상한(2단계)에 도달했다');
+        if (mirrorCtx?.kind !== 'msgr' && hop >= lim.hop) throw new Error(en ? `note relay limit reached (${lim.hop} hops)` : `쪽지 연쇄 상한(${lim.hop}단계)에 도달했다`);
         if (stageMessengerHandoff(mirrorCtx, { to: d.to, cc: Array.isArray(d.cc) ? d.cc : [], message: d.message })) continue; // authorized remote peers may not exist in this local workspace
         // 자기수신 사유는 **find 실패 후**에만 — 앞에 두면 동명이인(표시 이름이 같은 다른 크루)에게
         // 보내는 정상 쪽지가 "자기 자신"으로 오차단된다(재검수 MEDIUM: 이름 유일성은 강제되지 않는다).
@@ -172,7 +174,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // colleagues가 빈 배열이 되어 왕복이 끝난다. 이 경로가 hop을 안 실으면 배달된 크루가 지시
         // 블록 하나로 hop을 0으로 되돌려 그 상한을 통째로 무력화한다(격리 재현 2026-07-30: hop=2로
         // 배달된 턴이 낸 블록의 메시지가 hop=0·chain=[]). 실효 바운드가 hop 단독이라 여기서 샌다.
-        await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug] });
+        await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug], relaxed: lim.relaxed }); // 풀림도 배달 턴으로 잇는다 — 안 실으면 배달된 크루가 켜짐으로 돌아가 풀린 단계 상한이 한 번 더 못 간다
         notes.push(en ? `✓ Note sent to ${to.name}${cc.length ? ` (cc ${cc.length})` : ''}` : `✓ ${to.name}에게 쪽지 보냄${cc.length ? ` (참조 ${cc.length}명)` : ''}`);
       } else if (action === 'approval') {
         // CLI 러너의 결재 경로(러너 중립성 — 실사용 스크린샷 2026-07-30: 결재 도구가 없는 크루가

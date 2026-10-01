@@ -204,7 +204,7 @@ export async function crewmailTurn(cid, slug, msg, opts) {
   // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
   const mirrorCtx = crewmailMirrorCtx(cid, slug, msg); // 요청자 사슬(손님 판정 재료)을 잇는다 — crewmailMirrorCtx 주석
   if (mirrorCtx) { const mem = await crewMemoryForMail(mirrorCtx.crewId, mirrorCtx.channelId).catch(() => undefined); if (mem !== undefined) mirrorCtx.orgMemory = mem; } // 서버 기억(규칙) — 쪽지 턴도(검수 #691 M1)
-  const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))) }); // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
+  const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))), ...(opts.relaxed === true && !msg.msgr ? { delegationRelaxed: true } : {}) }); // 위임 제한을 푼 대화방에서 시작된 쪽지의 배달 턴은 같은 상한을 이어 받는다(메신저발 제외) // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
   // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
   await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts, contextScope: t.contextScope })
     .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));

@@ -17,6 +17,7 @@ import { paths, loadCompany } from './workspace.mjs';
 import { monthCost } from './billing.mjs'; // 동시 배달 착수 전 예산 게이트(2R 검수 MEDIUM-2 — 회의실 room.mjs 라운드 경계 게이트와 같은 규칙)
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { runLimited } from './run-limited.mjs';
+import { DELEGATION_LIMITS } from './delegation-limits.mjs'; // 위임 제한 표 — 쪽지 회신 안내의 단계 상한
 
 /** 회사별 동시 배달 상한 — 회의실 동시 발언(ROOM_CONCURRENCY)과 같은 규칙: 기본 8, ARGO_MAIL_CONCURRENCY로 1~16 클램프.
     2026-09-08까지는 한 패스에서 최대 3건을 **순차**로 배달해(쪽지 1건 = LLM 턴 1개) 앞 턴(v0.1.65부터 최대 30분 × 재시도 3회)이
@@ -68,7 +69,7 @@ const inFlight = new Set();
     kind: 주 수신자에게 붙일 종류. 기본 'to'(회신 기대). 회의실에서 사장이 "cc @이름"으로 참조만
     돌릴 때는 'cc'를 넘긴다 — 수신자가 하나여도 의미는 참조다(회신 의무 없음).
     fromRole: 'captain'이면 동료가 아니라 사장이 보낸 것으로 문구가 갈린다(room.mjs 경유). */
-export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to', msgr = null }) {
+export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to', msgr = null, relaxed = false }) {
   if (!to || !String(message ?? '').trim()) throw new Error('수신 크루와 내용이 필요합니다');
   // 자기 자신에게는 보낼 수 없다 — 배달 턴이 또 쪽지를 내면 hop 상한(왕복 방어)이 무의미해진다.
   // cc는 이미 `s === from`으로 걸러내는데(아래) 주 수신자만 무방비였다. 호출부(cli-directives)에서도
@@ -84,6 +85,7 @@ export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, 
   const base = {
     id, from, fromName: fromName || from, ...(fromRole ? { fromRole } : {}), message: String(message).trim(),
     hop, chain, ts: new Date().toISOString(), attempts: 0,
+    ...(relaxed === true && !msgr ? { relaxed: true } : {}), // 사용자가 푼 대화방에서 시작된 쪽지 — 배달 턴이 같은 상한(단계 4)을 이어 받는다. 켜짐은 필드 없음(종전 모양 그대로). 메신저발은 스위치 밖
     ...(msgr?.channelId ? { msgr } : {}), // 메신저 채널 문맥(orgId·channelId·crewId(발신)·threadRoot) — 배달 턴과 회신이 그 채널로 간다
   };
   const seen = new Set([String(to)]);
@@ -237,12 +239,12 @@ export async function deleteDead(wsId, file) {
 
 /** 배달 프롬프트 — 수신 크루 턴의 사용자 메시지. delegate 프리픽스와 같은 문법(스레드에 그대로 보임).
     회신 안내는 **회신이 실제로 가능한 턴에만**(kind=to && hop<2 — hop≥2 배달 턴은 도구가 없다,
-    분리 검수 HIGH-2: 존재하지 않는 도구를 지시하던 프롬프트).
+    분리 검수 HIGH-2: 존재하지 않는 도구를 지시하던 프롬프트). 상한은 delegation-limits 표(켜짐 2·풀린 쪽지 4).
     hasTools=false(수신 크루가 외부 CLI 러너 — send_to_crew가 표면에 없다)도 같은 이유로 회신 지시를
     뺀다(분리 검수 MEDIUM 2026-07-28, HIGH-2와 동일 사고). 판정은 호출자(scheduler)가 수신 크루의
     유효 러너로 내린다. */
 export function mailPrompt(msg, lang = 'ko', { hasTools = true } = {}) {
-  const canReply = msg.kind === 'to' && (msg.hop ?? 0) < 2 && hasTools;
+  const canReply = msg.kind === 'to' && (msg.hop ?? 0) < (msg.relaxed === true ? DELEGATION_LIMITS.off.hop : DELEGATION_LIMITS.on.hop) && hasTools; // 풀린 쪽지는 단계 상한이 4라 hop 2·3에서도 회신 도구가 있다(chat.mjs turnColleagues와 같은 표)
   const ccNote = msg.kind === 'cc'
     ? (lang === 'en' ? ' (CC — for your awareness; no reply expected)' : ' (참조 — 알아두라고 보낸 사본이다. 회신 의무는 없다)')
     : '';
@@ -364,7 +366,7 @@ async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb, claimBy }
   }
   await writeJsonAtomic(claimedPath, { ...msg, claimBy, claimedAt: new Date().toISOString() }).catch(() => {}); // claimBy(선점 신원)는 유지
   try {
-    await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [] });
+    await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [], relaxed: msg.relaxed === true });
     await rm(claimedPath, { force: true }).catch(() => {});
     await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: true, attempts: (msg.attempts ?? 0) + 1 });
   } catch (e) {

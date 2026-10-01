@@ -6,6 +6,7 @@ import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
+import { isRelaxedStored, resetDelegationLimit } from './delegation-limits.mjs'; // 위임 제한 스위치 — 대화방(스레드)마다 저장
 import { sanitizeFileSlug } from './slug.mjs'; // 파일 이름 세척의 단일 원천 — 회의록 충돌 판정(sync 반입 문)과 같은 규칙
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${sanitizeFileSlug(slug)}.json`);
@@ -244,7 +245,7 @@ export async function resetThread(wsId, slug) {
     // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
     // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
     // resetAt = 비움 각인(tombstone) — 근거·산식은 src/reset-stamp.mjs에 있다(벽시계 미사용 이유 포함).
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t) });
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t), ...resetDelegationLimit(t) }); // 새 대화 = 위임 제한 켜짐(기본값) — 이전이 풀림이었으면 명시적 true(동기화 병합에서 옛 꺼짐이 되살아나지 않게)
   });
 }
 
@@ -289,6 +290,24 @@ export async function renameActiveThread(wsId, slug, title) {
     if (clean) t.title = clean; else delete t.title;
     await writeJsonAtomic(file(wsId, slug), t);
     return { id: null, title: t.title ?? null };
+  });
+}
+
+/** 위임 제한 스위치 — true = 켜짐(기본, 크루 간 위임 2회·2단계), false = 사용자가 이 대화에서 푼 상태(안전 상한까지).
+    활성 스레드 파일 안에 한 필드(delegationLimit)로 둔다 — 대화명(title)과 같은 방식이라 appendTurn(스레드 통째 재기록)이 값을 보존하고,
+    '새 대화'로 보관되면 보관본이 값을 들고 가며(이어가기 때 되돌아온다), 동기화 병합(mergeThread의 스칼라 필드 우선순위)을 그대로 탄다.
+    읽기 실패(손상 등)는 켜짐 — 풀림은 사용자의 명시 선택이 읽힌 때만 효력이 있다(fail-closed). */
+export async function getDelegationLimit(wsId, slug) {
+  try { return !isRelaxedStored(await readJson(file(wsId, slug), {})); } catch { return true; }
+}
+export async function setDelegationLimit(wsId, slug, on) {
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    const want = on !== false;
+    if (want === !isRelaxedStored(t)) return { limit: want }; // 이미 그 상태면 쓰지 않는다(필드 부재 = 켜짐) — 불필요한 동기화 업로드·mtime 갱신 방지
+    t.delegationLimit = want; // 끌 때 false, 다시 켤 때도 **명시적 true**(필드 삭제 금지 — 동기화 병합이 다른 기기의 옛 false를 되살린다)
+    await writeJsonAtomic(file(wsId, slug), t);
+    return { limit: want };
   });
 }
 
