@@ -34,3 +34,16 @@ test('다시 연결 필요인 쌍둥이는 접속 점을 끈다(조직 봇 행 �
   assert.equal(crewSeenAt({ hosting: 'bot', ready: null, last_seen_at: now }), now, '친구 행은 ready가 없다 — 그대로');
   assert.equal(crewSeenAt({ hosting: 'local' }), null);
 });
+
+test('조직을 나가 사용할 수 없는 쌍둥이(유건 결정 10/1): 다시 연결 필요와 구분, 후보에서 빼고 점을 끈다', async () => {
+  const m = await import('../src/personal-bots.mjs');
+  const left = { hosting: 'bot', ready: false, paused: 'left_org', last_seen_at: '2026-10-01T00:00:00Z' };
+  assert.equal(m.twinLeftOrg(left), true);
+  assert.equal(m.twinRelink(left), false, '다시 연결로는 풀리지 않는다');
+  assert.equal(m.crewAddable(left), false);
+  assert.equal(m.crewSeenAt(left), null);
+  assert.equal(m.twinRelink({ hosting: 'bot', ready: false, paused: 'relink' }), true);
+  assert.equal(m.twinRelink({ hosting: 'bot', ready: false }), true, 'paused 열이 없는 옛 서버는 다시 연결 필요로');
+  assert.equal(m.twinLeftOrg({ hosting: 'bot', ready: true, paused: null }), false);
+  assert.equal(m.twinLeftOrg({ hosting: 'local', paused: 'left_org' }), false);
+});

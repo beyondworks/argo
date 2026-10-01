@@ -716,6 +716,7 @@
 .msgr-railrow.nomore .item { padding-right: 0; } /* '더보기' 점 버튼이 없는 행(레일 '내 에이전트') — 오른쪽 여백을 남기지 않는다 */
 .msgr-railrow .msgr-orglabel, .msgr-railrow .msgr-relink { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--fg-3); } /* 개인 공간 봇 쌍둥이: 조직 이름(같은 에이전트가 둘 이상일 때) · 다시 연결 필요 */
 .msgr-railrow .msgr-relink { color: var(--fg-2); }
+.msgr-railrow.paused .name { color: var(--fg-3); } /* 대화할 수 없는 봇 쌍둥이(다시 연결 필요·조직을 나감) — 흐리게 */
 .msgr-railrow .more { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--fg-3); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background 120ms ease; }
 .msgr-railrow.open .more, .msgr-railrow .more:focus-visible { opacity: 1; } @media (hover: hover) { .msgr-railrow:hover .more { opacity: 1; } }
 @media (hover: hover) { .msgr-railrow .more:hover { background: var(--card-2); color: var(--fg); } } .msgr-railrow .more:active { background: var(--card-2); color: var(--fg); }

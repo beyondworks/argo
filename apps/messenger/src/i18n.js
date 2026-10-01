@@ -1304,6 +1304,8 @@ export const DICT = {
   'rail.relink': ['다시 연결 필요', 'Reconnect needed'],
   'rail.relink.title': ['개인 공간에서 답하지 않습니다 — 조직에서 연결 명령을 다시 실행하거나 토큰을 새로 받으세요', 'Not answering in your personal space — run the connect command again or get a new token in the organization'],
   'rail.twin.org': ['{org}에 연결한 외부 에이전트', 'External agent connected to {org}'],
+  'rail.leftorg': ['조직을 나가 사용할 수 없음', 'Unavailable — left the organization'],
+  'rail.leftorg.title': ['연결한 조직을 나갔거나 조직이 삭제되어 개인 공간에서도 대화할 수 없습니다', 'You left the organization this agent is connected to, or it was deleted, so you can no longer chat with it in your personal space'],
   'rail.mine.on': ['이 조직에 파견 중 — 눌러서 허용 범위·상태 보기', 'Dispatched to this organization — click for access & status'],
   'rail.mine.dispatch': ['파견', 'Dispatch'],
   'rail.mine.dispatching': ['파견 중…', 'Dispatching…'],
