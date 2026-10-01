@@ -66,6 +66,7 @@ export default function Nav() {
           <a className="nav-link" {...anchorProps('contact')}>
             {t('nav.contact')}
           </a>
+          <Link className="nav-link" href="/refund">{t('legal.refund')}</Link>
         </span>
 
         <button className="nav-lang" onClick={toggle} title="cmd+/">

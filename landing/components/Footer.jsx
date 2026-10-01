@@ -22,6 +22,7 @@ export default function Footer() {
         <a href="/#contact">{t('nav.contact')}</a>
         <Link href="/terms">{t('legal.terms')}</Link>
         <Link href="/privacy">{t('legal.privacy')}</Link>
+        <Link href="/refund">{t('legal.refund')}</Link>
       </nav>
 
       <span className="mono-label footer-copy">{t('footer.copy')}</span>
