@@ -42,7 +42,8 @@ import { useTheme, THEMES } from '@argo/theme';
 import { Markdown, imeGuardWith, ConfirmModal, DangerModal } from '@argo/ui';
 import { EMOJI_GROUPS, bumpEmoji, topEmoji, searchEmoji } from './emoji.js';
 import { Sprite, I, STAR_D } from './icons.jsx';
-import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri, isIos } from './platform.js';
+import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri, isIos, isAndroid } from './platform.js';
+import { createIconBadge, unreadSignature } from './app-badge.mjs'; // 폰 아이콘 숫자 = 서버 배지(msgr_my_badge)
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack, headerCollapse } from './use-phone.js';
@@ -71,7 +72,7 @@ import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './
 import { loadSpaceTotals, readableForNotify, seenOnce, badgeTotal, spaceKey, joinWithBackoff } from './cross-space.mjs'; // 다른 공간의 새 글 — 안 읽음 합계·알림 판단
 import { splitAwayNote, plainPreview } from './msg-text.mjs';
 import { containsProfanity, readProfanityFilterOn, writeProfanityFilterOn, PROFANITY_FILTER_EVENT } from './profanity-filter.mjs';
-import { notifyPermission, requestNotifyPermission, askNotifyOnce, sendNotify, setBadge, SOUNDS, getSound, setSound, playChime } from './notify.js';
+import { notifyPermission, requestNotifyPermission, askNotifyOnce, sendNotify, setBadge, clearTray, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
@@ -733,8 +734,20 @@ function Shell({ session }) {
   const [resumeEpoch, setResumeEpoch] = useState(0);
   // 아이콘 배지 재동기화(유건 제보 2026-09-15: 다 읽어도 폰 배지가 남음) — 배지는 서버가 읽음 커서 변경 때만 푸시로 내려보내는데, 토큰이 바뀌거나(앱 재설치)
   // 푸시를 놓치면 폰 숫자가 굳는다. 앱이 앞으로 올 때·알림함을 열거나 다 읽을 때 서버에 재계산·재전송을 요청한다(iOS 토큰 없는 사용자는 서버가 no-op). 3초 한 번.
+  // 폰(2026-10-01, 유건 제보 "다 읽어도 아이콘 '1'이 남는다"): iOS는 앱이 앞에 있을 때 받은 푸시의 배지를 적용하지 않는다(플러그인 willPresent → [],
+  // 시뮬레이터 실측). 그래서 위 재전송 푸시는 앞에 있는 폰에서 버려지고, 아이콘에는 앱이 쓴 숫자(예전엔 모든 채널 합계 — 서버와 다른 셈법)가 남았다.
+  // → 폰은 서버 배지(msgr_my_badge, 푸시와 같은 정의)를 읽어 앱이 직접 쓴다. 읽기 RPC뿐 — 서버 쓰기·pg_net·APNs 호출이 없다(재전송 RPC는 데스크톱만).
+  // Android는 아이콘 숫자가 트레이 알림 수라서 읽은 채널의 알림을 지운다.
+  const legacyBadge = useRef(null); // 서버 함수가 아직 없을 때(라이브 적용 전) 쓸 예전 숫자 — 아래 렌더에서 갱신
+  const iconBadge = useMemo(() => (isMobileNative ? createIconBadge({
+    fetchRows: async () => { const { data, error } = await supabase.rpc('msgr_my_badge'); if (error) throw error; return data ?? []; },
+    setIcon: (n) => { setBadge(n); },
+    clearTray: isAndroid ? ({ keep }) => { clearTray(keep); } : null,
+    fallback: () => legacyBadge.current,
+  }) : null), [uid]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => iconBadge?.stop(), [iconBadge]);
   const badgeSyncAt = useRef(0);
-  const resyncBadge = useCallback(() => { const now = Date.now(); if (now - badgeSyncAt.current < 3000) return; badgeSyncAt.current = now; supabase.rpc('msgr_push_badge_resync').then(() => {}, () => {}); }, []);
+  const resyncBadge = useCallback(() => { if (iconBadge) { iconBadge.resume(); return; } const now = Date.now(); if (now - badgeSyncAt.current < 3000) return; badgeSyncAt.current = now; supabase.rpc('msgr_push_badge_resync').then(() => {}, () => {}); }, [iconBadge]);
   // 지금 이 화면을 보고 있는 기기를 서버에 알린다 — PC를 보는 동안에는 폰 푸시를 건너뛴다(유건 2026-09-16).
   // 판정은 서버의 msgr_push_recipients가 한다. 창을 떠나면 심박이 멎어 2분 안에 폰 알림이 되살아난다.
   useEffect(() => {
@@ -1087,7 +1100,7 @@ function Shell({ session }) {
     finally { favoriteLock.current = false; setFavoriteBusy(false); setTick((x) => x + 1); }
   };
   const toggleMemory = async (c) => { const r = await supabase.from('msgr_channels').update({ crew_memory: c.crew_memory === false }).eq('id', c.id).select('id'); if (r.error) return setErr(friendlyErr(r.error.message, t)); if (!r.data?.length) return setErr(t('err.denied')); setNote(t(c.crew_memory === false ? 'ch.memory.nowOn' : 'ch.memory.nowOff')); loadOrg(orgId).catch(() => {}); }; // 권한 최종 판정은 RLS(msgr_can_manage_channel)·정책 트리거
-  const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { /* 커서 저장 실패는 다음 조회에서 다시 */ } }, [uid]);
+  const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { /* 커서 저장 실패는 다음 조회에서 다시 */ } iconBadge?.request(); }, [uid, iconBadge]); // 폰 아이콘은 커서가 저장된 뒤 서버 숫자로
   // event.kind는 '무슨 방송인가'(message·approval·reaction·edit)다. 서버 payload에도 kind가 있는데
   // 그건 '글 종류'(text·system)다. 전개를 뒤에 두면 후자가 전자를 덮어 방송이 통째로 버려진다 —
   // 그래서 구분자는 항상 전개 **뒤**에 놓고, 글 종류는 msgKind로 따로 싣는다.
@@ -1297,7 +1310,10 @@ function Shell({ session }) {
   const spaceCount = (key) => (key === hereKey ? hereCount : spaceTotals[key]) ?? { n: 0, mention: 0 }; // 조직 전환기·개인 공간 입구의 숫자
   const elsewhere = Object.entries(spaceTotals).reduce((a, [k, u]) => (k === hereKey ? a : { n: a.n + (u?.n || 0), mention: a.mention + (u?.mention || 0) }), { n: 0, mention: 0 }); // 전환 버튼 — 보고 있지 않은 공간의 합
   const SpaceBadge = ({ c }) => (c?.n > 0 ? <span className={`msgr-badge${c.mention ? ' mark' : ''}`}>{c.n > 99 ? '99+' : c.n}</span> : null);
-  useEffect(() => { setBadge(badgeTotal({ current: unread, currentKey: spaceKey(isPersonal ? null : orgId), muted, totals: spaceTotals })); }, [unread, muted, spaceTotals, orgId, isPersonal]); // 독 아이콘 숫자 = 모든 공간의 안 읽은 합계(음소거 채널 제외 — 레일 배지와 같은 규칙). 보고 있는 공간은 채널별 셈이 최신
+  legacyBadge.current = badgeTotal({ current: unread, currentKey: spaceKey(isPersonal ? null : orgId), muted, totals: spaceTotals });
+  useEffect(() => { if (!iconBadge) setBadge(legacyBadge.current); }, [unread, muted, spaceTotals, orgId, isPersonal, iconBadge]); // 독 아이콘 숫자 = 모든 공간의 안 읽은 합계(음소거 채널 제외 — 레일 배지와 같은 규칙). 보고 있는 공간은 채널별 셈이 최신. 폰은 아래 서버 배지
+  const badgeSig = iconBadge ? unreadSignature({ unread, totals: spaceTotals, muted }) : '';
+  useEffect(() => { iconBadge?.request(); }, [badgeSig, iconBadge]); // 폰: 안 읽음 값이 바뀔 때만(15초 재조회로 같은 값이 다시 와도 안 부른다)
   useEffect(() => { if (uid) askNotifyOnce().catch(() => {}); }, [uid]); // 로그인 뒤 한 번 OS 권한 요청(미결정일 때만) — 종전엔 설정 버튼을 눌러야만 물었고, 맥 플러그인은 늘 '허용'이라 버튼조차 안 보였다
   const osNotify = (title, body, tag, channelId) => { sendNotify(title, body, tag, channelId); }; // Tauri 플러그인·웹 Notification 분기는 notify.js
   const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return !document.hasFocus() || r.page !== 'chat' || r.chId !== channelId; }; // 초점 기준 — 다른 창 뒤에 있어도 visibilityState는 'visible'이라 같은 채널을 띄워 두면 알림이 전부 억제됐다(유건 제보 2026-09-12) // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
