@@ -2053,6 +2053,23 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-arow .ph-kl2 { align-items: center; }
   .msgr-phone .ph-arow .ph-kl2 .snip { -webkit-line-clamp: 1; }
 
+  /* ── 내 설정(톱니) — 카톡 설정처럼 줄 목록 → 하위 화면 ── */
+  .msgr-phone .ph-setlist { display: grid; gap: 14px; }
+  .msgr-phone .ph-setme, .msgr-phone .ph-setrow { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: none; color: var(--fg); text-align: left; cursor: pointer; }
+  .msgr-phone .ph-setme { min-height: 72px; padding: 10px 14px; border-radius: 16px; background: var(--card-2); }
+  .msgr-phone .ph-setme .name { font-size: 16px; font-weight: 600; }
+  .msgr-phone .ph-setme .snip { font-size: 13px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-setgroup { display: grid; border-radius: 16px; background: var(--card-2); overflow: hidden; }
+  .msgr-phone .ph-setrow { min-height: 52px; padding: 4px 14px; font-size: 15px; }
+  .msgr-phone .ph-setrow + .ph-setrow { border-top: 1px solid var(--border-soft); }
+  .msgr-phone .ph-setrow .name { flex: 1 1 auto; min-width: 0; }
+  .msgr-phone .ph-setrow:active, .msgr-phone .ph-setme:active { background: var(--border-soft); }
+  .msgr-phone .ph-setrow.danger { color: var(--danger); }
+  .msgr-phone .ph-setic { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--bg); color: var(--fg-2); flex: none; }
+  .msgr-phone .ph-setrow.danger .ph-setic { color: var(--danger); }
+  .msgr-phone .ph-audit .day { display: grid; gap: 2px; margin-top: 6px; }
+  .msgr-phone .ph-audit .row { align-items: baseline; gap: 8px; }
+  .msgr-phone .ph-audit .row .text { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 1.45; }
   /* ── 아래 탭 바: 떠 있는 알약(테마 표면색 반투명 + 흐림) · 원형 아이콘 · 선택된 탭만 강조색 원이 늘어나 이름 ── */
   .msgr-phone .msgr-tabbar { left: 12px; right: 12px; bottom: var(--ph-bar-gap); display: flex; justify-content: center; gap: 0; }
   .msgr-phone .msgr-tabbar::before { display: none; } /* 옛 바탕 그라데이션 — 바 자체가 흐림 재질이라 필요 없다 */
