@@ -21,8 +21,11 @@
 --      '다시 연결 필요'로 둔다 — 주인이 회전하거나 연결 명령을 다시 실행하면 살아난다.
 --   M4 친구에게는 쌍둥이의 역할 문구(조직이 쓴 것)를 보이지 않는다. 쌍둥이에게 주는 문맥은 주인 글과 주인의 크루 글뿐(친구 글은 넣지 않는다).
 --   M5 멈춘 쌍둥이를 부르면 서버가 그 방에 안내를 한 번 남긴다(옛 앱에서도 보인다).
---   M6 기본값(유건 확인 필요): 개인 사용은 "주인이 그 조직의 유효 멤버 + 조직이 연체 잠금(msgr_org_locked)이 아님"에 묶는다. 조직 무료 기간 자격은
---      #786으로 항상 참이라 따로 보지 않는다.
+--   M6 조직 상태: #779 개인 크루와 똑같이 개인 사용은 조직 상태(주인의 조직 탈퇴·연체 잠금·조직 소프트 삭제)에 묶지 않는다(유건 승인 원칙
+--      "규칙은 #779와 같다"). 근거 — #779 개인 크루는 조직 행이 오프보딩으로 detached가 돼도(20260924100000:36은 org_id = 그 조직 행만) 개인 행은
+--      그대로이고, 배달 판정의 잠금은 채널 조직 기준이라 개인 방은 잠기지 않으며(20260930210000:211 msgr_org_locked(ch.org_id), :292), 개인 방 분기는
+--      조직 멤버십 대신 방 사람을 본다(:213-216, :175-181 지시 판정, :253 받은 글). 조직의 통제는 그대로 남는다: 관리자 폐기(쌍둥이 detached)·
+--      다른 관리자의 회전(핀 불일치로 개인만 멈춤)·조직 완전 삭제(봇 연쇄 삭제 → 쌍둥이 detached).
 --   LOW 쌍둥이 제약은 NOT VALID → VALIDATE, lock_timeout. org_sent_id 갱신은 greatest() 원자 갱신.
 --
 -- 오프셋(텔레그램 규율 offset = 마지막 update_id + 1 = ack): update_id는 메시지 id라 조직 글과 개인 글이 한 수열에 섞인다.
@@ -78,20 +81,16 @@ create trigger msgr_bot_twin_lock before update on public.msgr_crews
   for each row when (old.hosting = 'bot' and old.org_id is null) execute function public.msgr_bot_twin_lock();
 
 -- 3) 내부 함수
--- 쓸 수 있는 쌍둥이(없으면 NULL): 핀 = 지금 토큰, 봇 살아 있음, 조직 봇 크루 active, 주인 = 조직 봇 크루 주인이 그 조직의 유효 멤버,
--- 조직이 지워지지 않았고 연체 잠금이 아님, 쌍둥이 active.
+-- 쓸 수 있는 쌍둥이(없으면 NULL): 핀 = 지금 토큰, 봇 폐기 안 됨, 쌍둥이 active, 쌍둥이 주인 = 조직 봇 크루 주인.
+-- 조직 상태(주인 탈퇴로 조직 행 detached·연체 잠금·소프트 삭제)는 보지 않는다 — #779 개인 크루와 같다(머리 주석 M6 근거).
 create or replace function public._msgr_bot_twin(p_bot uuid) returns uuid
   language sql stable security definer set search_path = public, pg_temp as $$
   select t.id
     from public.msgr_bots b
     join public.msgr_bot_personal p on p.bot_id = b.id and p.pin_hash = b.token_hash
-    join public.msgr_crews oc on oc.id = b.crew_id and oc.status = 'active' and oc.hosting = 'bot'
+    join public.msgr_crews oc on oc.id = b.crew_id and oc.hosting = 'bot'
     join public.msgr_crews t on t.id = p.crew_id and t.status = 'active' and t.org_id is null and t.hosting = 'bot' and t.owner_user_id = oc.owner_user_id
-    join public.msgr_orgs o on o.id = b.org_id and o.deleted_at is null
    where b.id = p_bot and b.revoked_at is null
-     and not public.msgr_org_locked(b.org_id)
-     and exists (select 1 from public.msgr_org_members m where m.org_id = b.org_id and m.user_id = oc.owner_user_id
-                  and m.removed_at is null and (m.expires_at is null or m.expires_at > now()))
 $$;
 revoke all on function public._msgr_bot_twin(uuid) from public, anon, authenticated;
 
@@ -680,7 +679,7 @@ $$;
 revoke all on function public.msgr_personal_room_crews() from public, anon;
 grant execute on function public.msgr_personal_room_crews() to authenticated;
 
--- 7) 기존 봇 백필(M3) — 살아 있는 봇(폐기 안 됨·조직 봇 크루 active·주인 = 만든 사람·주인이 유효 멤버·조직 살아 있음)마다 쌍둥이 하나.
+-- 7) 기존 봇 백필(M3) — 폐기 안 된 봇(주인 = 만든 사람)마다 쌍둥이 하나. 조직 상태는 보지 않는다(#779와 같다, M6).
 --    핀은 근거가 있을 때만: 마지막 회전 행위자가 주인(또는 회전 없음)이고, 그 회전이 서버 연결이면 그 연결을 만든 사람이 주인,
 --    서버 연결로 만든 봇(external_id 'vps:%')은 연결 기록(approved에 이 봇)의 만든 사람이 주인. 아니면 '다시 연결 필요'(핀 'unpinned').
 --    적용 전 운영 읽기 전용 대상 수 쿼리는 PR 본문에 있다. 다시 실행해도 같다(on conflict do nothing).
@@ -692,11 +691,9 @@ begin
   perform set_config('msgr.bot_twin', '1', true);
   for r in select b.id as bot_id, b.token_hash, b.external_id, b.org_id, oc.owner_user_id, oc.slug, oc.display_name, oc.role_text, oc.avatar_url, oc.face
              from public.msgr_bots b
-             join public.msgr_crews oc on oc.id = b.crew_id and oc.status = 'active' and oc.hosting = 'bot' and oc.owner_user_id = b.created_by
-             join public.msgr_orgs o on o.id = b.org_id and o.deleted_at is null
+             join public.msgr_crews oc on oc.id = b.crew_id and oc.hosting = 'bot' and oc.owner_user_id = b.created_by
             where b.revoked_at is null
-              and not exists (select 1 from public.msgr_bot_personal p where p.bot_id = b.id)
-              and exists (select 1 from public.msgr_org_members m where m.org_id = b.org_id and m.user_id = oc.owner_user_id and m.removed_at is null and (m.expires_at is null or m.expires_at > now())) loop
+              and not exists (select 1 from public.msgr_bot_personal p where p.bot_id = b.id) loop
     select a.actor_user_id, a.meta into last_rot from public.msgr_audit_log a
      where a.org_id = r.org_id and a.target_kind = 'bot' and a.target_id = r.bot_id::text and a.action = 'bot.rotate' order by a.at desc, a.id desc limit 1;
     pin := case

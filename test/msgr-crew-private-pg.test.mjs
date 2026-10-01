@@ -20,7 +20,7 @@ const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
 const asUser = (uid, q) => sql(`set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`);
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';
 const applyNew = () => psql(['-c', readFileSync(mig(NEW), 'utf8')]);
-// NEW 뒤에 msgr_bot_create를 다시 정의하는 마이그레이션(20261001120000 개인 쌍둥이 등)은 옛 정의 재현을 덮는다 — NEW 다음에 순서대로 적용한다.
+// NEW 뒤에 msgr_bot_create를 다시 정의하는 마이그레이션(20261001140000 개인 쌍둥이 등)은 옛 정의 재현을 덮는다 — NEW 다음에 순서대로 적용한다.
 const MSGR_FILES = () => readdirSync(fileURLToPath(new URL('../supabase/migrations/', import.meta.url))).filter((f) => /^\d+_msgr.*\.sql$/.test(f)).sort();
 const redefinesBotCreate = (f) => f > NEW && /function\s+public\.msgr_bot_create\s*\(/i.test(readFileSync(mig(f), 'utf8'));
 

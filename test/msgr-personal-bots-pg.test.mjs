@@ -1,4 +1,4 @@
-// 개인 공간에 내 외부 에이전트(20261001120000_msgr_personal_bots.sql) — 조직에 연결한 내 봇이 개인 공간에 쌍둥이 크루로 보이고 대화된다.
+// 개인 공간에 내 외부 에이전트(20261001140000_msgr_personal_bots.sql) — 조직에 연결한 내 봇이 개인 공간에 쌍둥이 크루로 보이고 대화된다.
 // 규칙은 개인 Argo 크루(#779)와 같다: 지시는 주인만 / 크루 1:1은 모든 글 / 친구 방은 @로만 / 무료 방 4명 / 개인 방 AI 동의는 명시적 동의만.
 // 반대 검토 H1~H4·M1·M3~M5 경계 사례를 여기서 잠근다. 실행: bash scripts/billing-pg-drill.sh test/msgr-personal-bots-pg.test.mjs
 import test, { before } from 'node:test';
@@ -256,16 +256,30 @@ test('서버 연결(H4): 다른 관리자가 자기 연결을 자기가 승인�
   assert.equal(roomCrews(U.c).find((r) => r.id === twinOf(out4[0].bot_id))?.ready, false, '다시 연결 필요');
 });
 
-test('수명 주기: 주인이 조직에서 빠지면 멈추고 돌아오면 다시 · 폐기하면 쌍둥이 detached·방에서 빠짐(쓴 글은 남음) · 봇이 지워지면 detached', { skip }, () => {
+test('수명 주기: 조직 상태(주인 탈퇴·연체 잠금)에는 #779 개인 크루와 똑같이 묶이지 않는다 · 폐기하면 쌍둥이 detached·방에서 빠짐(쓴 글은 남음) · 봇이 지워지면 detached', { skip }, () => {
   const cb = mkBot(U.c, ORG, 'CBot');
   const ctw = twinOf(cb.bot_id);
-  assert.equal(roomCrews(U.c).find((r) => r.id === ctw)?.ready, true);
+  const local = personalCrew(U.c, 'c779'); // 대조군: #779 개인 Argo 크루
+  const lch = last(asUser(U.c, `select public.msgr_dm_personal_crew('${local}')`));
+  const tch = last(asUser(U.c, `select public.msgr_dm_personal_crew('${ctw}')`));
+  const same = (label) => {
+    const lm = post(U.c, lch, `${label} — 개인 크루`); const tm = post(U.c, tch, `${label} — 쌍둥이`);
+    const l = sql(`select public.msgr_delivery_allowed('${local}', ${lm})`); const t = sql(`select public.msgr_delivery_allowed('${ctw}', ${tm})`);
+    assert.equal(t, l, `${label}: 쌍둥이 배달 판정 = #779 개인 크루`);
+    assert.equal(t, 't', `${label}: 둘 다 계속 된다`);
+    assert.equal(roomCrews(U.c).find((r) => r.id === ctw)?.ready, true, `${label}: 다시 연결 필요 아님`);
+    assert.match(last(asAnon(`select public.msgr_bot_send('${cb.token}', '${tch}', '${label} 보내기')`)), /^\d+$/, `${label}: 개인 방 보내기 됨`);
+  };
+  same('평소');
   sql(`update public.msgr_org_members set removed_at = now() where org_id='${ORG}' and user_id='${U.c}'`);
-  assert.equal(roomCrews(U.c).find((r) => r.id === ctw)?.ready, false, '조직을 떠나면 개인 사용도 멈춘다');
+  assert.equal(sql(`select status from public.msgr_crews where id='${cb.crew_id}'`), 'detached', '조직 쪽 봇 크루는 오프보딩으로 detached');
+  same('주인 조직 탈퇴');
   sql(`update public.msgr_org_members set removed_at = null where org_id='${ORG}' and user_id='${U.c}'`);
-  assert.equal(roomCrews(U.c).find((r) => r.id === ctw)?.ready, true, '돌아오면 다시');
-  const cch = last(asUser(U.c, `select public.msgr_dm_personal_crew('${ctw}')`));
-  const said = last(asAnon(`select public.msgr_bot_send('${cb.token}', '${cch}', '쌍둥이가 쓴 글')`));
+  sql(`update public.msgr_org_entitlements set ls_status = 'past_due' where org_id='${ORG}'`);
+  assert.equal(sql(`select public.msgr_org_locked('${ORG}')`), 't');
+  same('조직 연체 잠금');
+  sql(`update public.msgr_org_entitlements set ls_status = null where org_id='${ORG}'`);
+  const said = last(asAnon(`select public.msgr_bot_send('${cb.token}', '${tch}', '쌍둥이가 쓴 글')`));
   asUser(U.a, `select public.msgr_bot_revoke('${cb.bot_id}')`);
   assert.equal(sql(`select status from public.msgr_crews where id='${ctw}'`), 'detached');
   assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind='crew' and member_id='${ctw}'`), '0', '방에서 빠진다');
@@ -399,7 +413,7 @@ test('백필(M3): 근거가 있는 봇만 핀, 다른 관리자가 마지막으�
   const ok = mkBot(U.a, ORG, 'BfOk'); const rot = mkBot(U.a, ORG, 'BfRot'); const vps = mkBot(U.a, ORG, 'BfVps', 'vps:gone:hermes:x');
   asUser(U.c, `select public.msgr_bot_rotate('${rot.bot_id}')`); // 다른 관리자가 마지막 회전
   sql(`delete from public.msgr_crews where id in (select crew_id from public.msgr_bot_personal where bot_id in ('${ok.bot_id}', '${rot.bot_id}', '${vps.bot_id}'))`); // 마이그레이션 전 상태로(쌍둥이·매핑 없음)
-  const body = readFileSync(mig('20261001120000_msgr_personal_bots.sql'), 'utf8');
+  const body = readFileSync(mig('20261001140000_msgr_personal_bots.sql'), 'utf8');
   psql(['-c', body.slice(body.indexOf('do $$\ndeclare r record;'), body.lastIndexOf('notify pgrst'))]);
   const pinned = (id) => sql(`select p.pin_hash = b.token_hash from public.msgr_bot_personal p join public.msgr_bots b on b.id = p.bot_id where p.bot_id='${id}'`);
   assert.equal(pinned(ok.bot_id), 't', '회전 없음 → 핀');

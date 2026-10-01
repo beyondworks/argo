@@ -57,7 +57,7 @@ test('엣지 ERR 표와 봇 RPC 목록을 읽었다(비면 아래 테스트가 �
 
 test('봇 RPC(전이 포함)와 봇 글 삽입 트리거가 raise하는 이름은 모두 엣지 ERR에 있다', () => {
   const fns = reach([...rpcs, ...TRIGGERS]);
-  assert.ok(fns.has('_msgr_bot_twin') && fns.has('_msgr_bot_personal_updates'), '개인 공간 봇 경로(20261001120000)가 범위에 든다');
+  assert.ok(fns.has('_msgr_bot_twin') && fns.has('_msgr_bot_personal_updates'), '개인 공간 봇 경로(20261001140000)가 범위에 든다');
   const missing = [];
   for (const fn of fns) {
     for (const m of latest.get(fn).body.matchAll(/raise\s+exception\s+'(msgr_[a-z_]+)'/gi)) if (!ERR.has(m[1]) && !UNREACHABLE.has(m[1])) missing.push(`${m[1]} ← ${fn} (${latest.get(fn).f})`);
