@@ -866,7 +866,7 @@ function Shell({ session }) {
     // 조직이 없고 마지막 공간 기록도 없는 사용자 — 개인 공간에 대화·친구가 있으면 거기서 시작한다(점검 A·B #1: 빈 조직 화면이 첫 화면이었다).
     // 그 확인 조회는 이 한 경우에만 한다. 아무 기록도 없는 새 사용자는 종전처럼 "새 조직·초대 코드" 안내(null)를 본다.
     const orgIds = list.map((o) => o.id);
-    const personalHasContent = needsPersonalProbe({ cur: activeOrg.current, orgIds, last: readLastOrg() })
+    const personalHasContent = needsPersonalProbe({ personal: PERSONAL, cur: activeOrg.current, orgIds, last: readLastOrg() })
       && (await Promise.all([q(supabase.rpc('msgr_dm_personal_list', { include_groups: true })), q(supabase.rpc('msgr_my_friends'))]).then(([rows, fr]) => rows.length > 0 || fr.some((f) => f.status === 'accepted'), () => false));
     setOrgId((cur) => pickStartSpace({ personal: PERSONAL, cur, orgIds, last: readLastOrg(), personalHasContent }));
     setJoinable(await q(supabase.rpc('msgr_joinable_orgs')).catch(() => [])); // J-3: 내 이메일 도메인으로 들어갈 수 있는 조직(서버가 판정)
@@ -1276,18 +1276,24 @@ function Shell({ session }) {
   // 조직 구성원 목록에 없는 사람(조직을 나간 사람의 옛 글·활동 기록의 작성자)은 이름을 따로 조회한다 — 화면에 그려지며 모인 id를 한 번에 묻고,
   // 같은 id는 다시 묻지 않는다. 조직이 바뀌면 비운다(조직 안 이름이 조직마다 다르다). 끝내 모르면 id 앞 8자리가 아니라 "나간 사용자"(점검 A·B #3).
   const [resolvedNames, setResolvedNames] = useState({});
-  const nameWanted = useRef(new Set()); const nameAsked = useRef(new Set());
-  useEffect(() => { setResolvedNames({}); nameAsked.current = new Set(); nameWanted.current = new Set(); }, [orgId]);
-  useEffect(() => { // 렌더마다 도는 가벼운 검사 — 새로 모인 id가 없으면 아무 호출도 하지 않는다
-    const ids = [...nameWanted.current].filter((id) => !nameAsked.current.has(id)); if (!ids.length) return undefined;
-    ids.forEach((id) => nameAsked.current.add(id)); nameWanted.current.clear();
-    const asked = orgId; // 응답이 오기 전에 조직이 바뀌었으면 버린다 — 다시 렌더돼도 이 요청을 끊지 않는다(정리 함수 없음)
+  const nameWanted = useRef(new Set()); const nameAsked = useRef(new Set()); const nameTimer = useRef(null);
+  const flushNames = () => { // 모인 id를 한 번에 묻는다 — 같은 id는 다시 묻지 않는다
+    nameTimer.current = null;
+    const ids = [...nameWanted.current].filter((id) => !nameAsked.current.has(id)); nameWanted.current.clear(); if (!ids.length) return;
+    ids.forEach((id) => nameAsked.current.add(id));
+    const asked = activeOrg.current; // 응답이 오기 전에 조직이 바뀌었으면 버린다
     resolvePeopleNames(supabase, { orgId: asked === PERSONAL ? null : asked, ids }).then((got) => { if (activeOrg.current === asked && Object.keys(got).length) setResolvedNames((cur) => ({ ...cur, ...got })); }).catch(() => {});
-    return undefined;
-  });
+  };
+  useEffect(() => { // 조직이 바뀌면 비운다(조직 안 이름이 조직마다 다르다) — 예약된 조회도 취소
+    clearTimeout(nameTimer.current); nameTimer.current = null; nameAsked.current = new Set(); nameWanted.current = new Set(); setResolvedNames({});
+    return () => { clearTimeout(nameTimer.current); nameTimer.current = null; };
+  }, [orgId]);
   const nameOfUser = (id) => { // 작성자 id null = 계정 삭제(FK set null) — 글은 남고 이름만 사라진다
-    if (needsNameLookup({ id, members, otherNames, resolved: resolvedNames }) && !nameAsked.current.has(id)) nameWanted.current.add(id);
-    return nameForUser({ id, members, otherNames, resolved: resolvedNames, left: t('user.left'), deleted: t('user.deleted') });
+    if (needsNameLookup({ id, members, otherNames, resolved: resolvedNames }) && !nameAsked.current.has(id)) { // 처음 보는 id — 다음 렌더를 기다리지 않고 곧 한 번에 묻는다(15초 틱을 기다리면 그동안 "나간 사용자"로 보였다)
+      nameWanted.current.add(id);
+      if (!nameTimer.current) nameTimer.current = setTimeout(flushNames, 0);
+    }
+    return nameForUser({ id, members, otherNames, resolved: resolvedNames, left: t('user.left'), deleted: t('user.deleted'), unnamed: t('user.unnamed') });
   };
   const loadAvatars = useCallback(async () => { const ids = [...new Set([uid, ...members.map((m) => m.user_id)].filter(Boolean))]; if (!ids.length) return; const rows = await q(supabase.rpc('msgr_avatars', { ids })).catch(() => []); setAvatars(Object.fromEntries(rows.map((r) => [r.user_id, r.avatar_url]))); }, [uid, members]);
   useEffect(() => { loadAvatars(); }, [loadAvatars, tick]);
@@ -2001,7 +2007,7 @@ function Shell({ session }) {
           <button type="button" className="btn" onClick={() => setDmGroup(true)} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
         </span>}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
-          {!dmList.length && <div className="msgr-hint">{t(dmEmptyKey({ filter: dmFilter, total: channels.filter((c) => c.kind === 'dm').length }))}</div>}{/* 필터 결과가 비었을 때 대화가 사라진 것처럼 "아직 채팅이 없습니다"라고 하지 않는다(점검 A·B #6) */}
+          {!dmList.length && dmEmptyKey({ filter: dmTab ? dmFilter : 'all', total: channels.filter((c) => c.kind === 'dm').length }) && <div className="msgr-hint">{t(dmEmptyKey({ filter: dmTab ? dmFilter : 'all', total: channels.filter((c) => c.kind === 'dm').length }))}</div>}{/* 필터 결과가 비었을 때 대화가 사라진 것처럼 "아직 채팅이 없습니다"라고 하지 않는다(점검 A·B #6) */}
         </RailSection>)}
         {isPersonal && !dmTab && (<RailSection id="friends" label={`${t('rail.friends')} · ${members.length}`} forceOpen right={<button type="button" className="btn" onClick={() => setFriendAdd(true)} title={t('friends.add')} aria-label={t('friends.add')}><I name="plus" size={14} /></button>}>{/* 채팅 → 친구 순서(유건 2026-09-18 — 대화가 먼저, 조직의 채널/채팅 → 멤버와 같은 순서). 개인 공간 홈 = 친구 목록, 채팅 탭 = 채팅 목록(카톡식, 유건 2026-09-17). 개인 공간의 members는 수락된 친구다(loadPersonal) */}
           <div className="msgr-list dir">

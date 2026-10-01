@@ -15,7 +15,7 @@ test('채팅 탭: 대화가 있는데 필터 결과가 비면 그 필터의 문�
   assert.equal(dmEmptyKey({ filter: 'group', total: 3 }), 'phone.dm.empty.group');
   assert.equal(dmEmptyKey({ filter: 'unread', total: 3 }), 'phone.dm.empty.unread');
   assert.equal(dmEmptyKey({ filter: 'fav', total: 3 }), 'phone.dm.empty.fav');
-  assert.equal(dmEmptyKey({ filter: 'all', total: 3 }), 'phone.dm.empty', '전체인데 비어 있는 일은 없지만 안전하게 종전 문구');
+  assert.equal(dmEmptyKey({ filter: 'all', total: 3 }), null, '전체 필터에서 대화가 전부 고정돼 있으면(고정 구역이 보인다) "아직 채팅이 없습니다"를 하지 않는다');
 });
 
 test('방 탭: 글은 있는데 이 탭에 해당하는 글이 없으면 탭별 문구, 전체 탭은 문구 없음(원래 방 안내가 있다)', () => {

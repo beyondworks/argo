@@ -64,11 +64,18 @@ test('빈 목록은 호출하지 않고, 같은 id는 한 번만 묻고, 200명�
 
 test('nameForUser — 멤버 → 개인 그룹 이름표 → 조회한 이름 → "나간 사용자", id 앞 8자리는 절대 보이지 않는다', () => {
   const members = [{ user_id: 'm1', display_name: '유건' }];
-  const base = { members, otherNames: { o1: '하나' }, resolved: { r1: '민준' }, left: '나간 사용자', deleted: '삭제된 사용자' };
+  const base = { members, otherNames: { o1: '하나' }, resolved: { r1: '민준' }, left: '나간 사용자', deleted: '삭제된 사용자', unnamed: '이름 없는 멤버' };
   assert.equal(nameForUser({ ...base, id: 'm1' }), '유건');
   assert.equal(nameForUser({ ...base, id: 'o1' }), '하나');
   assert.equal(nameForUser({ ...base, id: 'r1' }), '민준');
   assert.equal(nameForUser({ ...base, id: 'b84c0107-aaaa-bbbb-cccc-000000000000' }), '나간 사용자');
   assert.equal(nameForUser({ ...base, id: null }), '삭제된 사용자', '계정 삭제(작성자 id null)는 종전 문구');
   assert.equal(nameForUser({ ...base, id: 'm1', members: [{ user_id: 'm1', display_name: '' }], resolved: { m1: '이메일앞' } }), '이메일앞', '멤버 행에 이름이 비면 다음 규칙');
+});
+
+test('nameForUser — 지금 멤버인데 이름이 비면 "나간 사용자"가 아니라 "이름 없는 멤버"', () => {
+  const base = { members: [{ user_id: 'm2', display_name: '  ' }, { user_id: 'm3', display_name: null }], otherNames: {}, resolved: {}, left: '나간 사용자', deleted: '삭제된 사용자', unnamed: '이름 없는 멤버' };
+  assert.equal(nameForUser({ ...base, id: 'm2' }), '이름 없는 멤버');
+  assert.equal(nameForUser({ ...base, id: 'm3' }), '이름 없는 멤버');
+  assert.equal(nameForUser({ ...base, id: 'someone-else' }), '나간 사용자', '멤버가 아니면 종전처럼');
 });

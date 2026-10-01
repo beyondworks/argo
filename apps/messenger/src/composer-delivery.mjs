@@ -48,41 +48,32 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
     if (disposed || state.busy) return false;
     patch({ busy: true, uploading: '', job: { ...job, error: '', errorKey: '' } });
     try {
-      // 첨부만 보내는 글(본문 없음)은 파일이 전부 올라간 뒤에 글을 올린다 — 먼저 올리면 업로드가 실패했을 때 글자 없는 빈 말풍선이
-      // 모두에게 남고 새로고침해도 사라지지 않았다(점검 A·B #4). 본문이 있는 글은 종전대로 글 먼저(글은 바로 보이고 첨부가 뒤따른다).
-      const uploadFirst = !job.body;
-      if (!uploadFirst) job.messageId ??= await transport.message(job);
+      job.messageId ??= await transport.message(job);
       if (disposed) return false;
-      const settle = async (item) => { // 올리고(안 올렸으면) → 글이 있으면 첨부 행
+      for (const item of job.files) {
+        if (disposed) return false;
+        if (item.done) continue;
         patch({ uploading: item.file.name });
         try {
           if (!item.uploaded) {
             await transport.upload(job, item);
             item.uploaded = true;
           }
-          if (disposed) return;
-          if (job.messageId != null) {
-            await transport.attachment(job, item);
-            item.done = true;
-          }
+          if (disposed) return false;
+          await transport.attachment(job, item);
+          item.done = true;
           item.error = '';
         } catch (error) { item.error = error.message; }
-      };
-      for (const item of job.files) {
-        if (disposed) return false;
-        if (!item.done) await settle(item);
-      }
-      if (disposed) return false;
-      if (uploadFirst && job.messageId == null && job.files.every((item) => item.uploaded)) {
-        job.messageId = await transport.message(job);
-        if (disposed) return false;
-        for (const item of job.files) {
-          if (disposed) return false;
-          if (!item.done) await settle(item);
-        }
       }
       const failed = job.files.filter((item) => !item.done);
       if (failed.length) {
+        // 첨부만 보낸 글(본문 없음)인데 파일이 하나도 올라가지 못했다 — 글자 없는 빈 말풍선이 모두에게 남지 않게 그 글을 지운다(점검 A·B #4).
+        // 글 번호가 있어야 저장 경로를 만들 수 있어(서버 함수 msgr_bot_file·msgr_can_read_dm_attachment가 경로 3번째 칸 = 글 번호를 본다)
+        // 글을 먼저 올리고 업로드하는 순서는 그대로 두고, 전부 실패했을 때만 지운다. 지우면 재시도는 새 글(새 고정 ID)로 처음부터 올린다.
+        // 일부라도 올라갔으면 글은 남는다(첨부가 보이므로 빈 말풍선이 아니다) — 재시도가 나머지를 붙인다.
+        if (!disposed && !job.body && transport.discard && job.files.every((item) => !item.uploaded)) {
+          try { await transport.discard(job); job.messageId = null; job.clientId = uuid(); } catch { /* 지우지 못하면 글을 그대로 둔다 — 재시도가 이어서 올린다 */ }
+        }
         patch({ job: { ...job, error: failed.filter((item) => item.error).map((item) => `${item.file.name}: ${item.error}`).join('\n') } });
         return false;
       }
@@ -118,8 +109,7 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
 // Stable IDs cover ambiguous network failures: a committed message/attachment is looked up, never
 // posted again with a fresh ID. Storage paths also stay fixed when only metadata needs a retry.
 export function composerTransport(client, { orgId, chId, uid }) {
-  // 3번째 칸은 글 번호가 아니라 이 전송의 고정 ID(clientId) — 첨부만 보내는 글은 글이 생기기 전에 파일부터 올린다. 버킷 정책은 1·2번째 칸(조직·채널)만 본다
-  const pathFor = (job, item) => `${orgId}/${chId}/${job.clientId}/${item.id}-${item.key}`;
+  const pathFor = (job, item) => `${orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`; // 3번째 칸 = 글 번호 — 서버 msgr_bot_file(봇 첨부)·msgr_can_read_dm_attachment(위임 1:1 첨부 읽기)가 이 칸을 본다
   return {
     async message(job) {
       const insert = () => client.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid,
@@ -153,6 +143,12 @@ export function composerTransport(client, { orgId, chId, uid }) {
       const found = await bucket.list(path.slice(0, slash), { search: name });
       if (!found.error && found.data?.some((entry) => entry.name === name)) return;
       throw new Error(result.error.message);
+    },
+    // 첨부만 보낸 글이 전부 실패했을 때 그 빈 글을 지운다 — 직접 지우기 정책은 없고(DELETE 정책 없음) 작성자의 삭제 표시(deleted_at)만 허용된다. 앱의 삭제와 같은 갱신
+    async discard(job) {
+      const result = await client.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', job.messageId).eq('author_user_id', uid).select('id');
+      if (result.error) throw new Error(result.error.message);
+      if (!result.data?.length) throw new Error('discard: no row'); // RLS가 0행으로 거절한 경우도 실패
     },
     async attachment(job, item) {
       const result = await client.from('msgr_attachments').insert({ id: item.id, message_id: job.messageId,

@@ -17,56 +17,87 @@ test('delayed send owns its snapshot and cannot clear the next draft; double cli
   assert.equal(session.snapshot().files[0].name, 'next.txt');
 });
 
-test('partial upload failure keeps failed File and retries only it; attachment-only posts the message only after every upload', async () => {
-  const log = []; let offline = true;
+test('partial upload failure keeps failed File and retries only it on the original message', async () => {
+  let messages = 0; const uploaded = []; const attached = []; let offline = true;
   const session = createComposerDelivery(transport({
-    message: async () => { log.push('message'); return 7; },
-    upload: async (_job, item) => { log.push(`upload:${item.file.name}`); if (item.file.name === 'b.txt' && offline) throw Error('offline'); },
-    attachment: async (job, item) => { log.push(`attach:${job.messageId}:${item.file.name}`); },
+    message: async () => { messages++; return 7; },
+    upload: async (_job, item) => { uploaded.push(item.file.name); if (item.file.name === 'b.txt' && offline) throw Error('offline'); },
+    attachment: async (job, item) => { attached.push([job.messageId, item.file.name]); },
+    discard: async () => assert.fail('일부라도 올라갔으면 글을 지우지 않는다(첨부가 보이므로 빈 말풍선이 아니다)'),
   }));
   session.setFiles([file('a.txt'), file('b.txt')]);
-  assert.equal(await session.send([]), false, 'b.txt upload failed');
-  assert.equal(session.snapshot().job.messageId, null, '점검 A·B #4: 업로드가 끝나기 전에는 글(빈 말풍선)을 올리지 않는다');
+  assert.equal(await session.send([]), false, 'attachment-only message accepted');
+  assert.equal(session.snapshot().job.messageId, 7);
   assert.match(session.snapshot().job.error, /b.txt: offline/);
-  assert.deepEqual(log, ['upload:a.txt', 'upload:b.txt'], '실패한 동안 글도 첨부 행도 없다');
   session.setText('next draft'); offline = false;
   assert.equal(await session.retry(), true);
-  assert.deepEqual(log, ['upload:a.txt', 'upload:b.txt', 'upload:b.txt', 'message', 'attach:7:a.txt', 'attach:7:b.txt'], '실패한 파일만 다시 올리고, 다 올라간 뒤 글 → 첨부 행 순서');
+  assert.equal(messages, 1); assert.deepEqual(uploaded, ['a.txt', 'b.txt', 'b.txt']);
+  assert.deepEqual(attached, [[7, 'a.txt'], [7, 'b.txt']]);
   assert.equal(session.snapshot().text, 'next draft');
 });
 
-test('attachment-only: a message that fails to post leaves the finished uploads in place and retries only the message and metadata', async () => {
-  const log = []; let failMessage = true;
+// 점검 A·B #4 — 첨부만 보내다 업로드가 전부 실패하면 빈 말풍선이 모두에게 남던 결함. 글을 먼저 올려야 저장 경로(3번째 칸 = 글 번호)를 만들 수 있어
+// 순서는 두고, 전부 실패하면 그 빈 글을 지우고(discard) 재시도는 새 글로 처음부터 한다.
+test('attachment-only: every upload failed → the empty message is discarded, the retry posts a fresh message (new client id) and uploads again', async () => {
+  const log = []; const clientIds = []; let offline = true; let n = 0;
   const session = createComposerDelivery(transport({
-    message: async () => { log.push('message'); if (failMessage) throw Error('lost response'); return 5; },
-    upload: async (_job, item) => { log.push(`upload:${item.file.name}`); },
-    attachment: async (_job, item) => { log.push(`attach:${item.file.name}`); },
-  }));
-  session.setFiles([file('a.txt')]);
+    message: async (job) => { clientIds.push(job.clientId); log.push('message'); return 10 + n++; },
+    upload: async (job, item) => { log.push(`upload:${item.file.name}@${job.messageId}`); if (offline) throw Error('Bucket not found'); },
+    attachment: async (job, item) => { log.push(`attach:${item.file.name}@${job.messageId}`); },
+    discard: async (job) => { log.push(`discard@${job.messageId}`); },
+  }), () => `uuid-${log.length}-${clientIds.length}`);
+  session.setFiles([file('a.png'), file('b.png')]);
   assert.equal(await session.send([]), false);
-  failMessage = false;
+  assert.deepEqual(log, ['message', 'upload:a.png@10', 'upload:b.png@10', 'discard@10']);
+  assert.equal(session.snapshot().job.messageId, null, '지운 글 번호를 들고 있지 않는다');
+  assert.match(session.snapshot().job.error, /a\.png: Bucket not found/);
+  offline = false;
   assert.equal(await session.retry(), true);
-  assert.deepEqual(log, ['upload:a.txt', 'message', 'message', 'attach:a.txt'], '이미 올라간 파일은 다시 올리지 않는다');
+  assert.notEqual(clientIds[0], clientIds[1], '지운 글의 고정 ID를 다시 쓰면 서버가 지운 글을 돌려준다 — 새 ID');
+  assert.deepEqual(log.slice(4), ['message', 'upload:a.png@11', 'attach:a.png@11', 'upload:b.png@11', 'attach:b.png@11'], '새 글 번호로 다시 올린다(경로 3번째 칸이 새 글 번호)');
 });
 
-test('text + attachment keeps the original order: message first (the text is not an empty bubble), then uploads', async () => {
-  const log = [];
+test('discard is attachment-only and all-failed only: text + files keep the text, and a failed discard keeps the message for the retry', async () => {
+  const discards = [];
+  const text = createComposerDelivery(transport({ upload: async () => { throw Error('offline'); }, discard: async () => { discards.push('text'); } }));
+  text.setText('사진 보냅니다'); text.setFiles([file('x.png')]);
+  assert.equal(await text.send([]), false);
+  assert.deepEqual(discards, [], '본문이 있는 글은 지우지 않는다');
+  assert.equal(text.snapshot().job.messageId, 7);
+  const stuck = createComposerDelivery(transport({ upload: async () => { throw Error('offline'); }, discard: async () => { throw Error('rls'); } }));
+  stuck.setFiles([file('y.png')]);
+  assert.equal(await stuck.send([]), false);
+  assert.equal(stuck.snapshot().job.messageId, 7, '못 지웠으면 글 번호를 남겨 재시도가 이어서 올린다');
+});
+
+test('attachment-only: files uploaded but the attachment rows failed keeps the message (nothing to re-upload under a new path)', async () => {
+  let fail = true; const log = [];
   const session = createComposerDelivery(transport({
-    message: async () => { log.push('message'); return 3; },
-    upload: async () => { log.push('upload'); throw Error('offline'); },
+    upload: async () => { log.push('upload'); }, attachment: async () => { log.push('attach'); if (fail) throw Error('metadata offline'); },
+    discard: async () => assert.fail('올라간 파일이 있으면 지우지 않는다 — 새 경로로 다시 올려야 하게 된다'),
   }));
-  session.setText('사진 보냅니다'); session.setFiles([file('x.png')]);
-  assert.equal(await session.send([]), false);
-  assert.deepEqual(log, ['message', 'upload']);
-  assert.equal(session.snapshot().job.messageId, 3);
+  session.setFiles([file('z.png')]);
+  assert.equal(await session.send([]), false); fail = false;
+  assert.equal(await session.retry(), true);
+  assert.deepEqual(log, ['upload', 'attach', 'attach'], '업로드는 한 번, 첨부 행만 다시');
 });
 
-test('storage path does not need the message id (attachment-only uploads before the message exists)', async () => {
+test('storage path 3rd segment is the message id — server functions msgr_bot_file and msgr_can_read_dm_attachment read it', async () => {
   const paths = [];
   const client = { storage: { from: () => ({ upload: async (path) => { paths.push(path); return { error: null }; } }) } };
   const io = composerTransport(client, { orgId: 'org', chId: 'ch', uid: 'user' });
-  await io.upload({ clientId: 'cid-1', messageId: null }, { id: 'att', key: '0-a.png', file: file('a.png') });
-  assert.deepEqual(paths, ['org/ch/cid-1/att-0-a.png']);
+  await io.upload({ clientId: 'cid-1', messageId: 42 }, { id: 'att', key: '0-a.png', file: file('a.png') });
+  assert.deepEqual(paths, ['org/ch/42/att-0-a.png']);
+});
+
+test('transport.discard soft-deletes only my message (update body/deleted_at, author filter) and fails loudly when RLS returns no row', async () => {
+  const calls = [];
+  const mk = (data, error = null) => ({ from(table) { const q = { update(v) { calls.push(['update', table, v]); return q; }, eq(k, v) { calls.push(['eq', k, v]); return q; }, select() { return q; }, then(res, rej) { return Promise.resolve({ data, error }).then(res, rej); } }; return q; } });
+  await composerTransport(mk([{ id: 9 }]), { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 });
+  assert.equal(calls[0][1], 'msgr_messages'); assert.equal(calls[0][2].body, ''); assert.ok(calls[0][2].deleted_at);
+  assert.deepEqual(calls.filter((c) => c[0] === 'eq'), [['eq', 'id', 9], ['eq', 'author_user_id', 'me']]);
+  await assert.rejects(composerTransport(mk([]), { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 }), /no row/);
+  await assert.rejects(composerTransport(mk(null, { message: 'denied' }), { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 }), /denied/);
 });
 
 test('metadata retry retains upload and stable attachment ID; unknown message result retains client ID', async () => {
@@ -104,12 +135,12 @@ test('logout during message request stops attachment requests and late state del
   assert.equal(uploads, 0); assert.equal(session.snapshot().job, null);
 });
 
-test('logout during an attachment-only upload never posts the message afterwards', async () => {
-  const wait = deferred(); let messages = 0;
-  const session = createComposerDelivery(transport({ message: async () => { messages++; return 8; }, upload: () => wait.promise }));
+test('logout while an attachment-only upload is failing never deletes or re-posts afterwards', async () => {
+  const wait = deferred(); let discards = 0;
+  const session = createComposerDelivery(transport({ upload: async () => { await wait.promise; throw Error('offline'); }, discard: async () => { discards++; } }));
   session.setFiles([file('private.txt')]); const sending = session.send([]);
   session.dispose(); wait.resolve(); await sending;
-  assert.equal(messages, 0); assert.equal(session.snapshot().job, null);
+  assert.equal(discards, 0); assert.equal(session.snapshot().job, null);
 });
 
 test('transport recovers committed responses and uses scoped message lookup and fixed storage path', async () => {

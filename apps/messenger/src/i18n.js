@@ -223,6 +223,7 @@ export const DICT = {
   'acct.delete': ['계정 삭제', 'Delete account'],
   'user.deleted': ['탈퇴한 사용자', 'Deleted user'],
   'user.left': ['나간 사용자', 'Former member'],
+  'user.unnamed': ['이름 없는 멤버', 'Unnamed member'],
   'acct.delete.desc': ['이 계정과 개인 정보(프로필·프로필 사진·친구·알림 설정·기기 등록)를 지우고 모든 조직에서 나갑니다. 내 에이전트(개인 크루)와 그 설정, 아직 안 쓴 초대 코드도 지워지며, 나만 있는 소유 조직은 첨부 파일과 함께 삭제됩니다. 채널과 1:1 대화에 남긴 글은 팀의 기록이라 남지만 이름 없이 표시되고, 감사 기록에는 식별자만 남습니다. 되돌릴 수 없습니다.', 'Deletes this account and your personal data (profile, avatar, friends, notification settings, device registrations) and leaves every organization. Your personal agents and their settings and unused invite codes are deleted too; organizations where you are the only member are removed with their attachments. Messages you posted in channels and DMs stay as team records without your name; audit logs keep only an identifier. This cannot be undone.'],
   'acct.delete.start': ['계정 삭제…', 'Delete account…'],
   'acct.delete.word': ['삭제', 'DELETE'],

@@ -27,11 +27,13 @@ export async function resolvePeopleNames(sb, { orgId, ids }) {
   return out;
 }
 
-/** 화면에 쓸 사람 이름 — id 앞 8자리는 보이지 않는다. 끝내 모르면 left(나간 사용자), 작성자 id가 없으면(계정 삭제) deleted. */
-export function nameForUser({ id, members, otherNames, resolved, left, deleted }) {
+/** 화면에 쓸 사람 이름 — id 앞 8자리는 보이지 않는다. 작성자 id가 없으면(계정 삭제) deleted.
+    지금 조직 멤버인데 이름이 비면 unnamed(이름 없는 멤버), 멤버가 아닌데 끝내 모르면 left(나간 사용자). */
+export function nameForUser({ id, members, otherNames, resolved, left, deleted, unnamed }) {
   if (!id) return deleted;
-  const m = members.find((x) => x.user_id === id)?.display_name;
-  return (present(m) ? m : null) ?? (present(otherNames[id]) ? otherNames[id] : null) ?? (present(resolved[id]) ? resolved[id] : null) ?? left;
+  const row = members.find((x) => x.user_id === id);
+  const m = row?.display_name;
+  return (present(m) ? m : null) ?? (present(otherNames[id]) ? otherNames[id] : null) ?? (present(resolved[id]) ? resolved[id] : null) ?? (row ? unnamed : left);
 }
 
 /** 이 id는 지금 가진 이름(멤버·이름표·조회 결과)으로 못 풀리는가 — 풀리지 않을 때만 서버에 묻는다. */

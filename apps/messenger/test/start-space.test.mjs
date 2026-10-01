@@ -41,3 +41,11 @@ test('개인 공간 내용 조회는 정말 필요할 때만 — 조직이 없�
   assert.equal(needsPersonalProbe({ cur: null, orgIds: ['a'], last: null }), false, '조직이 있다');
   assert.equal(needsPersonalProbe({ cur: null, orgIds: [], last: P }), false, '마지막 공간이 있다');
 });
+
+test('마지막 공간이 나간(지금 목록에 없는) 조직이면 기록이 없는 것으로 본다 — 개인 공간 확인 조회를 하고 개인 공간으로 시작한다', () => {
+  assert.equal(needsPersonalProbe({ cur: null, orgIds: [], last: 'left-org' }), true);
+  assert.equal(pick({ orgIds: [], last: 'left-org', personalHasContent: true }), P);
+  assert.equal(pick({ orgIds: [], last: 'left-org', personalHasContent: false }), null, '아무 것도 없으면 새 사용자 안내');
+  assert.equal(needsPersonalProbe({ cur: null, orgIds: ['a'], last: 'left-org' }), false, '조직이 있으면 조회 없이 첫 조직');
+  assert.equal(pick({ orgIds: ['a'], last: 'left-org' }), 'a');
+});
