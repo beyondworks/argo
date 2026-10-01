@@ -211,6 +211,7 @@ function Settings({ params }) {
       <UpdateCard />
       <SystemPermissionsCard />
       </div>
+      <div className="cardrow"><TerminalCommandCard /></div>
       <div className="cardrow">
       <ExportCard ws={ws} />
       <TrashCard ws={ws} />
@@ -1938,6 +1939,95 @@ function UpdateCard() {
       )}
       {phase === 'ready' && <p style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('settings.update.restarting')}</p>}
       {phase === 'error' && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p>}
+    </div>
+  );
+}
+
+function CliCmd({ text, done, onCopy }) {
+  const { t } = useLang();
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', overflowWrap: 'anywhere', minWidth: 0 }}>{text}</span>
+      <button type="button" className="btn sm" onClick={onCopy} style={{ flexShrink: 0 }}>{done ? t('common.copied') : t('settings.cli.copy')}</button>
+    </div>
+  );
+}
+
+// 터미널 명령 argo — 앱을 설치하면 따라온다(맥은 사이드카가 ~/.local/bin/argo를 등록, 윈도우는 설치 프로그램이 PATH 등록). 데스크톱 앱에서만 보인다.
+// 셸 설정 파일은 이 카드의 [PATH에 추가] 버튼을 눌렀을 때만 고친다. 남의 argo가 있으면 덮어쓰지 않고 위치와 직접 실행 방법을 보여 준다.
+function TerminalCommandCard() {
+  const { t } = useLang();
+  const [st, setSt] = useState(null); // null = 확인 중, 'hidden' = 이 환경엔 카드 없음
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [copied, setCopied] = useState('');
+  const load = useCallback(() => api('/api/cli-install').then(setSt).catch(() => setSt('hidden')), []);
+  useEffect(() => { if (isTauriApp()) load(); else setSt('hidden'); }, [load]);
+  if (!st || st === 'hidden' || st.status === 'unsupported') return null;
+
+  const act = async (action) => {
+    setBusy(true); setErr('');
+    try { setSt(await api('/api/cli-install', { action })); }
+    catch { setErr(t('settings.cli.error')); }
+    setBusy(false);
+  };
+  const copy = (key, text) => { navigator.clipboard?.writeText(text).catch(() => {}); setCopied(key); setTimeout(() => setCopied(''), 1500); };
+  const cmd = (id, text) => <CliCmd key={id} text={text} done={copied === id} onCopy={() => copy(id, text)} />; // 요소를 만드는 일반 함수 — 컴포넌트는 모듈 수준 CliCmd(컴포넌트 안 컴포넌트 정의 금지)
+  const small = { fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 };
+  const win = st.platform === 'win32';
+  const others = st.others ?? [];
+  const pathLabel = (o) => o.path;
+
+  let body;
+  if (st.status === 'installed') {
+    body = (
+      <>
+        {!(st.pathResult === 'added' || st.pathResult === 'already') && <p style={small}>{win ? t('settings.cli.winOk') : st.pathReady ? t('settings.cli.ok') : t('settings.cli.needPath')}</p>}
+        {!win && !st.pathReady && (
+          <button type="button" className="btn btn-primary sm" onClick={() => act('path')} disabled={busy} style={{ alignSelf: 'flex-start' }}>
+            {busy ? <Spinner size={12} /> : null}{t('settings.cli.addPath')}
+          </button>
+        )}
+        {st.pathResult === 'added' && <p style={small}>{t('settings.cli.pathAdded', { file: st.pathFile })}</p>}
+        {st.pathResult === 'already' && <p style={small}>{t('settings.cli.pathAlready')}</p>}
+        {st.pathResult === 'manual' && (<><p style={small}>{t('settings.cli.pathManual')}</p>{cmd('line', st.pathLine)}</>)}
+        {others.length > 0 && <p style={{ ...small, fontSize: 12 }}>{t('settings.cli.others', { list: others.map(pathLabel).join(', ') })}</p>}
+        <p style={{ ...small, fontSize: 12 }}>{t('settings.cli.runDirect')}</p>
+        {cmd('run', st.run)}
+      </>
+    );
+  } else if (st.status === 'conflict' || st.status === 'path-skipped') {
+    body = (
+      <>
+        <p style={small}>{st.status === 'path-skipped' ? t('settings.cli.winLong') : t(win ? 'settings.cli.winConflict' : 'settings.cli.conflict')}</p>
+        {others.map((o) => cmd(`o-${o.path}`, o.path))}
+        <p style={{ ...small, fontSize: 12 }}>{t('settings.cli.conflictRun')}</p>
+        {cmd('run', st.run)}
+      </>
+    );
+  } else if (st.status === 'translocated') {
+    body = <p style={small}>{t('settings.cli.translocated')}</p>;
+  } else if (st.status === 'removed' || st.status === 'missing' || st.status === 'unknown') {
+    body = (
+      <>
+        <p style={small}>{st.status === 'removed' ? t('settings.cli.removed') : st.status === 'missing' ? t('settings.cli.missing') : t('settings.cli.desc')}</p>
+        <button type="button" className="btn btn-primary sm" onClick={() => act('install')} disabled={busy} style={{ alignSelf: 'flex-start' }}>
+          {busy ? <Spinner size={12} /> : null}{t('settings.cli.install')}
+        </button>
+      </>
+    );
+  } else {
+    body = <p style={small}>{t('settings.cli.unavailable')}</p>;
+  }
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.cli.title')}</span>
+      {st.status !== 'removed' && st.status !== 'missing' && st.status !== 'unknown' && <p style={small}>{t('settings.cli.desc')}</p>}
+      {body}
+      {!win && st.status === 'installed' && (
+        <button type="button" className="btn sm" onClick={() => act('remove')} disabled={busy} style={{ alignSelf: 'flex-start' }}>{t('settings.cli.remove')}</button>
+      )}
+      {err && <p style={{ fontSize: 12, color: 'var(--danger)', margin: 0 }}>{err}</p>}
     </div>
   );
 }
