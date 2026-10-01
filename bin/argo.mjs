@@ -6,6 +6,8 @@
 //   argo chat <크루> [지시] 한 번 실행(지시가 없으면 이어서 대화)
 //   argo login | status | browser | service install|uninstall|status
 // 회사 데이터는 ~/.argo/cli-workspaces(ARGO_ROOT) — 같은 맥의 상주·앱 폴더와 따로(기기 세션 단일 소유). 같은 계정의 앱과 동기화로 같은 회사·기억을 본다.
+// 단 **Argo 앱에 들어 있는 argo**(앱 모드 — ARGO_CLI_APP=1 또는 앱 번들에서 실행)는 앱 데이터 폴더를 같이 쓴다(설계 2-2, 2026-10-01): 동기화·상주·서비스 등록은 앱이 맡고 CLI는 하지 않는다,
+// 앱이 실행 중이면 로그인은 앱에서 한다. 대화·결재·카드 파일은 프로세스 간 잠금(src/mutex.mjs withLock file)이 지킨다.
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -14,7 +16,8 @@ import { homedir, hostname } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import { Writable, Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { applyCliEnv, writeConfig, cliHome, cliLang, cliMode, appDataRoot, accountRoot } from '../src/cli/env.mjs';
+import { applyCliEnv, writeConfig, cliHome, cliLang, cliMode, appDataRoot, accountRoot, isAppShared, readAppVersion, appVersionChanged } from '../src/cli/env.mjs';
+import { serverRunning } from '../src/server-presence.mjs';
 import { launchdPlist, systemdUnit } from '../src/cli/service.mjs';
 import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect, pasteFilter, unpaste } from '../src/cli/ui.mjs';
 
@@ -27,17 +30,26 @@ process.on('warning', (w) => { if (w?.name !== 'ExperimentalWarning' && !QUIET_W
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const userRoot = !!process.env.ARGO_ROOT; // 사용자가 직접 준 데이터 폴더는 모드와 무관하게 존중
 let cfg = applyCliEnv({ repoRoot: REPO }); // src 모듈보다 먼저(WS_ROOT 고정 전)
+const appShared = isAppShared({ repoRoot: REPO }); // 앱 모드이고 데이터 폴더가 앱 폴더 — 앱과 같은 폴더를 같이 쓴다
+const startVersion = appShared ? readAppVersion(REPO) : null;
+// macOS Dock — 번들 node로 실행하면 MCP·npx 자식이 번들 node라 제목을 설정할 때 Dock 아이콘이 생긴다(#539). shim이 NODE_OPTIONS를 넣어 주지만 번들 server에서 직접 실행했거나 심 파일이 아직 없었다면 여기서 건다.
+if (appShared && process.platform === 'darwin') {
+  const { setupNoDock, withNoDock, noDockShimPath } = await import('../src/no-dock.mjs');
+  if (withNoDock(process.env.NODE_OPTIONS, noDockShimPath()) !== String(process.env.NODE_OPTIONS ?? '').trim()) await setupNoDock();
+}
 let localMode = cliMode(cfg) === 'local'; // 로그인 없이 이 컴퓨터에서만 — 앱 데이터 폴더를 같이 쓴다(유건 결정 2026-09-30)
 /** 모드를 바꾼다 — src를 불러오기 전에만 부를 수 있다(ARGO_ROOT가 불러오는 순간 고정). */
 function setMode(mode) {
   cfg = writeConfig({ mode }); localMode = mode === 'local';
-  if (!userRoot) process.env.ARGO_ROOT = localMode ? appDataRoot() : accountRoot();
+  if (!userRoot && !appShared) process.env.ARGO_ROOT = localMode ? appDataRoot() : accountRoot(); // 앱 모드는 폴더가 이미 앱 폴더로 고정
   guardLocal();
 }
 /** 로컬 모드는 앱 폴더를 같이 쓴다 — 그 폴더에 앱의 로그인 세션이 있으면(앱이 계정으로 로그인됨) CLI가 같은 refresh 토큰을
     회전시켜 GoTrue가 세션 가족째 폐기한다(#429 계열). 그때는 로컬을 쓰지 않고 계정 모드로 돌린다. 로컬은 동기화도 끈다(방어). */
 function guardLocal() {
   if (!localMode) return;
+  // 앱 모드 — 같은 폴더의 로그인 세션을 CLI가 같이 쓰는 것이 설계다(기기 세션 회전은 프로세스 간 잠금이 지킨다, 동기화는 꺼져 있다). 세션이 있으면 계정으로 쓴다(저장하지 않는다 — 앱에서 로그아웃하면 다시 로컬).
+  if (appShared) { if (existsSync(join(process.env.ARGO_ROOT, '.device-session.json'))) localMode = false; return; }
   if (existsSync(join(process.env.ARGO_ROOT, '.device-session.json'))) { console.log(T.localAppSignedIn); setMode('account'); return; }
   process.env.ARGO_SYNC = '0';
 }
@@ -78,6 +90,13 @@ const T = {
     asideSeen: 'Aside 감지됨 — 크루별 로그인 격리가 보장되지 않아 크루 브라우저로 쓰지 않습니다.',
     headless: '화면이 없는 환경이라 크루 브라우저는 헤드리스로 돕니다(사람이 대신 로그인해 주는 기능은 쓸 수 없습니다).',
     svcDone: (f) => `등록했습니다: ${f} — 재부팅·크래시에도 자동으로 다시 켜집니다.`, svcRemoved: '등록을 해제했습니다.', svcNone: '등록된 서비스가 없습니다.', svcWin: 'Windows 서비스 등록은 아직 지원하지 않습니다 — argo run을 직접 실행하세요.',
+    appNoRun: 'Argo 앱이 이미 이 컴퓨터에서 실행을 맡습니다(메신저·루틴·쪽지·동기화). 같은 데이터 폴더에서 상주를 하나 더 켜면 둘 다 실행 담당이 됩니다. 서버에서 상주하려면 서버 설치(install.sh)의 argo를 쓰세요.',
+    appRunningLogin: (f) => `Argo 앱이 실행 중입니다. 앱을 켜 둔 채 터미널에서 로그인하면 계정이 섞입니다 — 앱에서 로그인하세요.\n(앱이 꺼져 있는데 이 안내가 나오면 ${f} 파일을 지우고 다시 시도하세요.)`,
+    appSignedIn: (e) => `앱 계정으로 로그인돼 있습니다: ${e} — 계정을 바꾸려면 Argo 앱에서 로그아웃하세요.`,
+    appNoCompany: '이 계정의 회사가 아직 이 컴퓨터에 없습니다. Argo 앱을 열어 회사를 받아 온 뒤 다시 실행하세요.',
+    appBusy: (n) => `앱에서 이 크루가 답하는 중입니다(${n}). 끝난 뒤 다시 보내세요.`,
+    appUpdated: '앱이 업데이트됐습니다. argo를 다시 실행하세요.',
+    interrupted: '터미널이 닫혀 이 지시가 중단됐습니다. 다시 보내 주세요.',
     usage: '사용법: argo [run|chat <크루> [지시]|login|status|browser|service install|uninstall|status]',
     status: (s) => `계정: ${s.email || '(로그인 안 됨)'}\n데이터: ${s.root}\n회사: ${s.companies}\n기기: ${s.device}`,
   },
@@ -112,6 +131,13 @@ const T = {
     asideSeen: 'Aside detected — not used for crews because per-crew login isolation is not guaranteed.',
     headless: 'No display here, so the crew browser runs headless (handing a login to a person is unavailable).',
     svcDone: (f) => `Registered: ${f} — restarts automatically after reboots and crashes.`, svcRemoved: 'Unregistered.', svcNone: 'No service registered.', svcWin: 'Windows service registration is not supported yet — run argo run directly.',
+    appNoRun: 'The Argo app already handles background work on this computer (messenger, routines, crew mail, sync). A second resident on the same data folder would make both think they own the work. To run a resident on a server, use the argo from the server install (install.sh).',
+    appRunningLogin: (f) => `The Argo app is running. Signing in from the terminal while the app is open would mix accounts — sign in from the app.\n(If the app is closed but you still see this, delete ${f} and try again.)`,
+    appSignedIn: (e) => `Signed in with the app's account: ${e} — to change accounts, sign out in the Argo app.`,
+    appNoCompany: "This account's company isn't on this computer yet. Open the Argo app so it can fetch your company, then run again.",
+    appBusy: (n) => `The app is answering this crew right now (${n}). Send again when it finishes.`,
+    appUpdated: 'The app was updated. Run argo again.',
+    interrupted: 'The terminal closed, so this message was interrupted. Please send it again.',
     usage: 'Usage: argo [run|chat <crew> [message]|login|status|browser|service install|uninstall|status]',
     status: (s) => `Account: ${s.email || '(not signed in)'}\nData: ${s.root}\nCompanies: ${s.companies}\nDevice: ${s.device}`,
   },
@@ -163,6 +189,7 @@ async function choose(title, items) {
 const hasDisplay = () => process.platform !== 'linux' || !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
 function openUrl(url) {
   if (!hasDisplay()) return;
+  if (process.env.ARGO_NO_OPEN === '1') return; // 시험·자동화: 실제 브라우저를 열지 않는다(주소는 이미 화면에 출력됨) — 테스트가 사용자 기본 브라우저에 창을 띄우던 사고(2026-10-01)
   const [bin, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
   try { spawn(bin, args, { stdio: 'ignore', detached: true }).unref(); } catch { /* 주소는 이미 화면에 있다 */ }
 }
@@ -176,6 +203,12 @@ async function currentSession() {
 async function login() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL; const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) { console.error(T.noConfig); process.exit(1); }
+  if (appShared) { // 앱 폴더에 쓴다 — 앱이 실행 중이면(로그인 세션이 생겨도 앱의 동기화 루프는 부팅 때 한 번만 판단해 시작되지 않는다, 검토 M-c) 어느 경우든 거절
+    const running = serverRunning(process.env.ARGO_ROOT);
+    if (running) { console.error(T.appRunningLogin(running.file)); process.exit(1); }
+    const live = await currentSession(); // 앱 폴더에 유효한 세션이 있으면 다른 계정으로 덮지 않는다
+    if (live) { console.error(T.appSignedIn(live.user?.email || live.user?.id)); process.exit(1); }
+  }
   const { startLoginServer } = await import('../src/cli/login.mjs');
   // 저장 전 터미널 확인(검수 L1) — 같은 컴퓨터의 다른 프로세스가 자기 계정을 밀어 넣어도 사람이 거절한다. 입력 장치가 없으면(파이프) 확인을 건너뛴다 —
   // 그때도 첫 주소의 비밀값·같은 출처 검사는 그대로다.
@@ -187,6 +220,12 @@ async function login() {
   const timer = setTimeout(() => { console.error(T.loginTimeout); process.exit(1); }, 10 * 60_000);
   const user = await srv.done; clearTimeout(timer); await srv.close();
   console.log(T.loginDone(user.email || user.id));
+  if (appShared) { // 앱의 로그인 경로(app/api/device/login)와 같은 이어짐 — 로컬(게스트)로 쓰던 회사·계정 자격을 이 계정으로 귀속한다(주인 없는 회사가 목록에서 빠지지 않게, 검토 M-c)
+    try {
+      const { guestModeOn } = await import('../src/gueststate.mjs');
+      if (guestModeOn()) { const { claimLocalToAccount } = await import('../src/accountclaim.mjs'); await claimLocalToAccount(user.id); }
+    } catch (e) { console.error(T.failed(String(e?.message || e).slice(0, 300))); }
+  }
   return user;
 }
 async function requireSession({ interactive }) {
@@ -210,6 +249,7 @@ async function ownCompanies(uid) {
 /** 회사 고르기 — 로컬에 없으면 동기화로 클라우드에서 찾아 온다(최대 40초). 대화형이면 새로 만들 수 있다. */
 async function pickCompany(uid, { interactive }) {
   let list = await ownCompanies(uid);
+  if (!list.length && uid !== 'local' && appShared) { console.error(T.appNoCompany); process.exit(1); } // 앱 CLI는 동기화를 하지 않는다 — 40초를 기다리거나 새 회사를 권하면 회사가 중복된다(검토 L-h)
   if (!list.length && uid !== 'local') { // 로컬은 클라우드가 없다
     const { ensureSync } = await import('../src/sync.mjs'); ensureSync();
     console.log(T.finding);
@@ -235,11 +275,17 @@ const { bold, dim } = style(color);
 const cols = () => process.stdout.columns || 80;
 let current = null; // 답하는 중인 턴 { ws, slug, turnId, stopping }
 /** 크루 답을 문단 단위로 흘려 보인다 — 턴 상태의 partial(크루가 이미 말한 텍스트)을 따라가고, 끝나면 남은 부분만 붙인다. */
+function checkAppUpdated() { // 앱 업데이트로 번들 파일이 바뀌었는데 이 프로세스는 옛 모듈로 돈다 — 지연 import가 새 버전 파일을 읽어 두 버전이 섞이기 전에 멈춘다
+  if (appShared && appVersionChanged(REPO, startVersion)) { console.error(T.appUpdated); process.exit(1); }
+}
 async function turn(ws, crew, message, sessionId) {
+  checkAppUpdated();
   const { chat } = await import('../src/chat.mjs');
   const { beginTurn, appendTurn } = await import('../src/thread.mjs');
   const { getTurnStatus } = await import('../src/turn-status.mjs');
   const { paths } = await import('../src/workspace.mjs');
+  // 앱 폴더를 같이 쓴다 — 앱이 같은 크루의 턴을 진행 중이면(신선한 상태 파일) 같은 sessionId를 동시에 이어 쓰지 않도록 시작하지 않는다(검토 M-b ③, 시작 때 한 번 확인)
+  if (appShared && await getTurnStatus(ws, crew.slug).catch(() => null)) throw Object.assign(new Error(T.appBusy(crew.name)), { appBusy: true });
   const turnId = await beginTurn(ws, crew.slug, { userMsg: message }).catch(() => null);
   const tty = !!process.stdout.isTTY; const t0 = Date.now();
   let printed = ''; let statusShown = false;
@@ -249,7 +295,7 @@ async function turn(ws, crew, message, sessionId) {
     if (!printed) process.stdout.write(`\n  ${bold(crew.name)}\n`);
     process.stdout.write(text.split('\n').map((l) => `  ${l}`).join('\n'));
   };
-  current = { ws, slug: crew.slug, turnId, stopping: false };
+  current = { ws, slug: crew.slug, turnId, userMsg: message, stopping: false };
   const draw = (detail) => {
     if (!tty) return;
     const sec = Math.round((Date.now() - t0) / 1000);
@@ -280,6 +326,17 @@ async function turn(ws, crew, message, sessionId) {
     throw e;
   } finally { clearInterval(tick); current = null; }
 }
+/** 터미널이 닫히거나(SIGHUP) 종료 신호(SIGTERM)를 받으면 진행 중이던 턴을 중단 기록으로 마무리한다 — 앱은 실행 중에 이런 고아 턴을 정리하지 않는다
+    (고아 턴 정리는 앱 부팅 때와 130초 뒤 한 번뿐, 이 프로세스가 뜬 뒤 받은 지시는 건너뛴다 — 검토 L-a). 앱 화면에 "답 대기"가 앱을 재시작할 때까지 남는 것을 막는다.
+    Ctrl+C와 같은 경로(interruptTurn → turn()의 catch가 aborted로 기록)를 타고, 3초 안에 안 끝나면 직접 기록한다. */
+async function abandonTurn() {
+  const c = current; if (!c) return;
+  c.stopping = true;
+  try { const { interruptTurn } = await import('../src/turn-abort.mjs'); interruptTurn(c.ws, c.slug, { tag: c.turnId }).catch(() => {}); } catch { /* 아래 직접 기록 */ }
+  for (let i = 0; i < 60 && current === c; i++) await new Promise((r) => setTimeout(r, 50));
+  if (current === c) { try { const { appendTurn } = await import('../src/thread.mjs'); await appendTurn(c.ws, c.slug, { turnId: c.turnId, userMsg: c.userMsg, failed: T.interrupted, aborted: true }); } catch { /* 베스트에포트 */ } }
+}
+for (const [sig, code] of [['SIGHUP', 129], ['SIGTERM', 143]]) process.on(sig, () => { process.exitCode = code; abandonTurn().finally(() => process.exit(code)); }); // exitCode를 먼저 — 턴이 끝나며 한 번 실행 경로가 먼저 process.exit(exitCode ?? 0)을 부른다
 /** argo chat <크루> [지시] — 한 번 실행하거나(지시 있음) 간단히 이어서 대화 */
 async function chatLoop(ws, crew, first) {
   const { loadThread } = await import('../src/thread.mjs');
@@ -290,7 +347,7 @@ async function chatLoop(ws, crew, first) {
     if (!msg) msg = await ask('› ');
     if (!msg || parseInput(msg).kind === 'quit') return;
     try { const t = await turn(ws, crew, msg, sid); sid = t.sessionId ?? sid; }
-    catch (e) { console.error(e?.aborted ? T.stopped : T.failed(String(e?.message || e).slice(0, 400))); }
+    catch (e) { console.error(e?.aborted ? T.stopped : T.failed(String(e?.message || e).slice(0, 400))); if (first && e?.appBusy) process.exitCode = 1; }
     if (first) return;
     msg = '';
   }
@@ -385,6 +442,7 @@ async function runResident({ prefer = true } = {}) {
 
 /* ─── 서비스 등록(argo run 상주) — 사용자 권한만. 로그 위치는 기존 상주와 따로 ─── */
 function service(action) {
+  if (appShared && action === 'install') { console.error(T.appNoRun); process.exit(1); } // 앱이 이미 상주한다 — 같은 기기 id로 둘이 뜨면 리스 판정이 양쪽 다 내 것이 된다
   const node = process.execPath; const bin = fileURLToPath(import.meta.url);
   const env = { ARGO_ROOT: process.env.ARGO_ROOT ?? '', ...(cfg.lang ? { LANG: cfg.lang === 'en' ? 'en_US.UTF-8' : 'ko_KR.UTF-8' } : {}) };
   if (process.platform === 'linux') {
@@ -479,6 +537,7 @@ async function interactive() {
     if (p.kind === 'empty') continue;
     if (p.kind === 'quit') { rl?.close(); process.exit(0); }
     if (p.kind === 'unknown') { console.log(`  ${dim(T.unknownCmd(p.name))}\n`); continue; }
+    checkAppUpdated();
     if (p.kind === 'command') {
       if (p.name === 'help') { console.log(''); for (const [k, d] of T.help) console.log(`  ${k}${' '.repeat(Math.max(1, 15 - termWidth(k)))}${dim(d)}`); console.log(''); }
       else if (p.name === 'crew') { const c = await pickCrew(ws, p.arg, { ask: !p.arg }); if (c) { crew = c; sid = (await loadThread(ws, crew.slug)).sessionId ?? null; } showCrew(); }
@@ -487,6 +546,7 @@ async function interactive() {
       else if (p.name === 'ai') await runnersMenu(ws);
       else if (p.name === 'browser') await browserMenu({ interactive: true });
       else if (p.name === 'status') await status();
+      else if (p.name === 'serve' && appShared) console.log(`  ${T.appNoRun}\n`);
       else if (p.name === 'serve' && localMode) console.log(`  ${T.localNoServe}\n`);
       else if (p.name === 'serve') { console.log(T.serveStart); onSigint = null; onQueuedLine = null; rl?.close(); rl = null; await runResident(); return; }
       continue;
@@ -501,7 +561,7 @@ async function interactive() {
 
 try {
   if (cmd === '') await interactive();
-  else if (cmd === 'run') { if (localMode) { console.error(T.localNoServe); process.exit(1); } rl?.close(); await runResident({ prefer: !rest.includes('--no-prefer') }); }
+  else if (cmd === 'run') { if (appShared) { console.error(T.appNoRun); process.exit(1); } if (localMode) { console.error(T.localNoServe); process.exit(1); } rl?.close(); await runResident({ prefer: !rest.includes('--no-prefer') }); }
   else if (cmd === 'login') { if (localMode) setMode('account'); await login(); process.exit(0); } // 로그인은 계정 폴더에 — 앱 폴더에 세션을 쓰지 않는다
   else if (cmd === 'status') { await status(); process.exit(0); }
   else if (cmd === 'browser') { await browserMenu({ interactive: !!rl }); process.exit(0); }
@@ -515,7 +575,7 @@ try {
     if (!crew) { console.error(T.noCrew); process.exit(1); }
     await ensureRunners(ws).then((n) => n && console.error(n)).catch(() => {});
     await chatLoop(ws, crew, rest.slice(1).join(' '));
-    process.exit(0);
+    process.exit(process.exitCode ?? 0);
   } else { console.log(T.usage); process.exit(cmd === 'help' || cmd === '--help' ? 0 : 1); }
 } catch (e) {
   console.error(T.failed(String(e?.message || e)));

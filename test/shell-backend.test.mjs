@@ -31,13 +31,21 @@ test('라우터 — bash 문법은 sh, cmd 고유 문법은 cmd, 동사-명사�
 
 test('사다리 — ARGO_SHELL → 동봉(cwd·실행 파일 bin/) → Git Bash → cmd.exe, spawn 인자·cmd 그대로 전달', () => {
   const c = shellCandidates({ env: { ARGO_SHELL: 'D:\\x\\busybox64u.exe', ProgramFiles: 'C:\\Program Files', LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' }, cwd: 'D:\\app\\server', argv1: 'D:\\app\\server\\server.js' });
-  assert.deepEqual(c.map((x) => x.kind), ['busybox', 'busybox', 'busybox', 'gitbash', 'gitbash', 'cmd']);
-  assert.equal(c[0].file, 'D:\\x\\busybox64u.exe'); assert.ok(c[1].file.endsWith(join('server', 'bin', BUSYBOX_FILE))); assert.ok(c[3].file.endsWith(join('Git', 'bin', 'bash.exe')));
+  assert.deepEqual(c.map((x) => x.kind), ['busybox', 'busybox', 'busybox', 'busybox', 'gitbash', 'gitbash', 'cmd']);
+  assert.equal(c[0].file, 'D:\\x\\busybox64u.exe'); assert.ok(c[1].file.endsWith(join('server', 'bin', BUSYBOX_FILE))); assert.ok(c[4].file.endsWith(join('Git', 'bin', 'bash.exe')));
   assert.equal(shellCandidates({ env: {}, cwd: '/x', argv1: null }).at(-1).kind, 'cmd', 'cmd.exe는 항상 마지막');
   assert.deepEqual(shellSpawn('busybox', 'echo "a b"'), { args: ['sh', '-c', 'echo "a b"'], verbatim: false });
   assert.deepEqual(shellSpawn('cmd', 'echo "a b"'), { args: ['/d', '/s', '/c', '"echo "a b""'], verbatim: true }, 'cmd는 따옴표로 감싸 그대로(Node의 \\" 이스케이프를 cmd가 못 푼다)');
   assert.deepEqual(shellSpawn('powershell', 'Get-Date').args, ['-NoProfile', '-NonInteractive', '-Command', 'Get-Date']);
   assert.deepEqual(shellSpawn('sh', 'ls').args, ['-c', 'ls']);
+});
+
+test('앱에 든 argo(argo.cmd)는 사용자 터미널 폴더에서 server\\bin\\argo.mjs로 실행된다 — 동봉 busybox가 실행 파일과 같은 폴더(검토 H1)', () => {
+  // 사이드카는 cwd=server 폴더·argv1=server.js라 <cwd>/bin/busybox를 찾지만, CLI는 cwd가 터미널 폴더이고 argv1이 server/bin/argo.mjs라 두 후보가 모두 빗나갔다
+  const c = shellCandidates({ env: {}, cwd: '/home/u/work', argv1: '/opt/argo/server/bin/argo.mjs' });
+  assert.ok(c.some((x) => x.kind === 'busybox' && x.file === join('/opt/argo/server/bin', BUSYBOX_FILE)), `CLI 배치 후보 없음: ${c.map((x) => x.file).join(' | ')}`);
+  const sidecar = shellCandidates({ env: {}, cwd: '/opt/argo/server', argv1: '/opt/argo/server/server.js' });
+  assert.ok(sidecar.some((x) => x.kind === 'busybox' && x.file === join('/opt/argo/server/bin', BUSYBOX_FILE)), '사이드카 배치는 종전대로');
 });
 
 test('MSYS 경로 정규화 — /c/Users/x → C:/Users/x, URL·상대 경로는 그대로', () => {
