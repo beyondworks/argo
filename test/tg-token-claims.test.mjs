@@ -216,7 +216,8 @@ test('③ 배선 — 텔레그램 폴러는 토큰 소유(tokenOwnership)로, �
   assert.match(gw, /const own = tgOwned\(bot\.token\);\s*\n\s*if \(!own\.mine\) \{[^\n]*\n\s*if \(own\.holder\) beatGateway\(c\.id, `tg-\$\{slug\}`, false, `다른 기기\(\$\{deviceLabel\(own\.holder\)\}\)에서 수신 중`, \{ holder: 'other', holderDevice: deviceLabel\(own\.holder\) \}\)[^\n]*\n\s*else beatGateway\(c\.id, `tg-\$\{slug\}`, false, '[^']*판정 중[^']*', \{ holder: 'pending' \}\)[^\n]*\n\s*continue;/, '크루 직통 봇: 남의 토큰이면 물러나고 holder 표지, 판정 전엔 pending 사유(재검수 L-2)');
   assert.match(gw, /else if \(own && !own\.mine\) \{[^\n]*\n[^\n]*\n\s*else beatGateway\(c\.id, 'telegram', false, '[^']*판정 중[^']*', \{ holder: 'pending' \}\)/, '회사 봇도 판정 전엔 pending 사유');
   const syncSrc = await load('../src/sync.mjs');
-  assert.match(syncSrc, /if \(localOwners\[0\]\) await renewTokenClaims\(localOwners\[0\]\)/, 'cycle()이 리스 갱신 직후 토큰 클레임을 갱신');
+  // 2026-10-01 #791: 클레임은 게이트웨이 리스 주인(폴러가 실제로 도는 프로세스)이 리스 갱신 직후에 한다 — 동기화 락 주인과 갈려도 한 프로세스만 쓴다
+  assert.match(syncSrc, /await renewLease\(owner, [^\n]*\n\s*if \(holdsDaemonLease\('gateway'\)\) await renewTokenClaims\(owner\)/, 'cycle()의 리스 중재가 리스 갱신 직후 토큰 클레임을 갱신');
 });
 
 test('④ gatewayStatus — 하트비트의 holder 표지가 응답에 실린다(40초 창 안에서만)', async () => {
