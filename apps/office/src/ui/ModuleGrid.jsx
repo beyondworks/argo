@@ -28,6 +28,7 @@ function ModuleCard({ item, space, items, place, canEdit, editable, commit, reso
   const run = (load, kind, ...args) => load().then((m) => card.current && m[kind]?.({ el: card.current, items, modOf: resolveModule, commit, canEdit, title: mod.title }, ...args), () => {});
   const edge = (kind, e, side) => run(resizer, kind, e, side);
   const own = useRef(null); // 카드 본문이 더하는 메뉴(예: 여러 보기의 보기 고르기)
+  const [sub, setSub] = useState(''); // 카드 본문이 머리에 붙이는 작은 이름(예: 지금 보기 — "캘린더 · 월") — 같은 모듈을 여러 개 놓았을 때 구분(유건 10/1 5차)
   const menu = () => !canEdit ? [...(own.current?.() ?? []), { heading: t('home.readOnly') }] : [
     ...(own.current?.() ?? []),
     ...(mod.actions?.length ? [...mod.actions, { sep: true }] : []),
@@ -38,17 +39,17 @@ function ModuleCard({ item, space, items, place, canEdit, editable, commit, reso
   const at = 'top' in place ? { '--x': place.x, '--y': `${place.top}px`, '--o': place.o } : {};
   return (
     <section ref={card} data-mod={item.id} className={`module size-${item.size}${rh ? ' sized-h' : ''}${heightOf(item) ? ' own-h' : ''}`}
-      style={{ '--span': span, ...at, ...(rh ? { '--rh': `${rh}px`, '--mh': heightOf(item) ? `${item.h}px` : 'auto' } : {}) }} aria-label={mod.title} {...menuProps(menu)}>
+      style={{ '--span': span, ...at, ...(rh ? { '--rh': `${rh}px`, '--mh': heightOf(item) ? `${item.h}px` : 'auto' } : {}) }} aria-label={sub ? `${mod.title} · ${sub}` : mod.title} {...menuProps(menu)}>
       <header className="module-head">
         {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}
-        <h3>{mod.link ? <Link to={mod.link} className="module-title">{mod.title}</Link> : mod.title}</h3>{/* 제목을 누르면 그 화면으로(유건 9/30 — '모두 보기' 대신) */}
+        <h3>{mod.link ? <Link to={mod.link} className="module-title">{mod.title}</Link> : mod.title}{sub && <span className="module-sub">{sub}</span>}</h3>{/* 제목을 누르면 그 화면으로(유건 9/30 — '모두 보기' 대신) */}
         {/* 옮기기(유건 10/1 저녁): 끄는 동안 다른 모듈은 그대로, 놓을 자리 윤곽만 따라오고 손을 떼면 놓인다. 키보드 = Space/Enter로 들고 화살표·Enter·Esc. 저장 중에도 그대로 둔다(초점 유지) */}
         {editable && <button type="button" className="grip" aria-label={t('mod.drag')} aria-disabled={!canEdit || undefined} onPointerEnter={() => mover().catch(() => {})}
           onPointerDown={(e) => { e.stopPropagation(); if (e.button) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); run(mover, 'drag', { x: e.clientX, y: e.clientY, id: e.pointerId, target: e.currentTarget }); }}
           onKeyDown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); e.stopPropagation(); run(mover, 'pick', e.currentTarget); } }}><Icon name="grip" size={14} /></button>}
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
       </header>
-      <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
+      <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} onSub={setSub} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
       {editable && EDGES.map((side) => { // 저장 중(canEdit 꺼짐)에도 그대로 둔다 — 키보드 초점이 손잡이에 남는다. 그동안은 aria-disabled
         if (place.first && side === 'l') return null; // 0열에 붙은 모듈의 왼쪽은 잡은 선이 손을 따라오지 않는다(반대편이 움직인다) — 그리지 않는다(유건 10/1 확정)
         const x = side === 'l' || side === 'r'; // 좌우 = 폭, 위아래 = 높이

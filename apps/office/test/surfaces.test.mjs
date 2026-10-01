@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { WIDTH_KEY } from '../src/core/theme.js';
+import { WIDTH_KEY, SHELLS } from '../src/core/theme.js';
 
 const read = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
 const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -52,10 +52,13 @@ const radiusOf = (cls) => {
 const CARDS = ['.module', '.set-card', '.table-wrap', '.stat-card', '.vw-lane', '.vw-card', '.vw-kcard', '.deal-lane', '.deal-card', '.mkt-card', '.mkt-summary', '.card-fields', '.card-empty',
   '.list-row', '.ap-row', '.journal-entry', '.rec-row', '.perf-goal', '.perf-thread li', '.history-preview', '.tpl-item', '.private-block', '.conflict', '.bizui-line', '.bizui-order-line', '.bizui-balances',
   '.modal', '.menu', '.palette', '.info-pop', '.mention-list', '.vw-selbar', '.login-card'];
-const CONTROLS = ['.btn', '.icon-btn', '.input', '.nav-item', '.tree-row', '.crew-btn', '.seg', '.menu-item', '.palette-row', '.fold-item', '.cal-row', '.vw-row', '.mod-row'];
+// 이유(유건 10/1 5차 "둥글기 통일"): 사이드바 줄(선택된 메뉴 줄 배경)은 셸·카드와 같은 곡선 — 작은 조작 요소(--rc)가 아니라 카드 둥글기 --rs를 쓴다.
+const SIDE_ROWS = ['.space-switch', '.search-btn', '.nav-item', '.tree-row', '.crew-search', '.crew-row', '.crew-btn'];
+const CONTROLS = ['.btn', '.icon-btn', '.input', '.seg', '.menu-item', '.palette-row', '.fold-item', '.cal-row', '.vw-row', '.mod-row'];
 test('카드류는 --rs 하나, --rc는 작은 조작 요소만', () => {
   for (const c of CARDS) assert.equal(radiusOf(c), 'var(--rs)', c);
   for (const c of CONTROLS.filter((x) => x !== '.fold-item')) assert.equal(radiusOf(c), 'var(--rc)', c);
+  for (const c of SIDE_ROWS) assert.equal(radiusOf(c), 'var(--rs)', c);
   // 카드류 규칙 어디에도(여러 선택자를 묶은 규칙 포함) --rc가 없다
   for (const f of SCREEN) for (const { sel, decl } of rules(screen(f))) {
     if (sel.split(',').some((s) => CARDS.includes(s.trim()))) assert.doesNotMatch(decl, /border-radius\s*:[^;]*--rc/, `${f} ${sel}`);
@@ -65,6 +68,19 @@ test('카드류는 --rs 하나, --rc는 작은 조작 요소만', () => {
   assert.doesNotMatch(themes, /\.stat-card[^{]*\{[^}]*border-radius/);
   assert.doesNotMatch(themes, /--t-(tile|pop)-r/);
   assert.match(themes, /:is\(\.menu, \.palette\) \{ border-radius: var\(--rs\); \}/);
+});
+
+// 이유(유건 10/1 5차): 어느 셸이든 선택된 메뉴 줄 둥글기 = 그 셸의 카드 둥글기. 셸 블록이 --rs를 정하고 --t-nav-r를 그 값으로 두는지(화면에서 getComputedStyle로도 쟀다).
+test('셸마다 사이드바 줄 둥글기(--t-nav-r)는 그 셸의 --rs', () => {
+  const themes = rules(strip(read('../src/themes.css')));
+  const shells = SHELLS.filter((x) => x !== 'plain');
+  assert.equal(shells.length, 7);
+  for (const shell of shells) {
+    const block = themes.find((r) => r.sel === `:root[data-shell='${shell}']`);
+    assert.ok(block, shell);
+    assert.match(block.decl, /--rs:\s*\d+px/, `${shell} --rs`);
+    assert.match(block.decl, /--t-nav-r:\s*var\(--rs\)\s*;/, `${shell} --t-nav-r`);
+  }
 });
 
 // 이유(4번): 전체 너비는 사람마다 한 번 정하면 모든 페이지에 — 첫 페인트와 전환 버튼이 같은 키를 봐야 새로고침에 깜빡이지 않는다.
