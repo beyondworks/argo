@@ -255,6 +255,8 @@ export const DICT = {
   'auth.password': ['비밀번호(개발용)', 'Password (dev only)'],
   'auth.signOut': ['로그아웃', 'Sign out'],
   'push.logout.detachFailed': ['이 기기의 푸시 알림 연결을 해제하지 못했습니다. 로그아웃 후에도 이전 계정의 알림이 올 수 있습니다. 다시 로그인해 로그아웃을 시도하거나 기기 설정에서 Argo 메신저 알림을 꺼 주세요.', 'Could not disconnect push notifications on this device. Notifications for the previous account may still arrive after sign-out. Sign in and try signing out again, or turn off Argo Messenger notifications in device settings.'],
+  'push.nav.unavailable': ['알림의 대화를 열지 못했습니다. 삭제됐거나 더 이상 볼 수 없는 대화일 수 있습니다.', "Couldn't open the conversation from that notification. It may have been deleted, or you may no longer have access."],
+  'push.nav.offline': ['연결이 불안정해 알림의 대화를 열지 못했습니다. 잠시 뒤 다시 시도해 주세요.', "Couldn't open the conversation from that notification because the connection is unstable. Try again in a moment."],
   'push.logout.failed': ['로그아웃하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.', 'Could not sign out. Check your connection and try again.'],
   'push.logout.restoreFailed': ['로그아웃하지 못했고 푸시 알림도 다시 연결하지 못했습니다. 연결을 확인한 뒤 앱을 다시 열거나 로그아웃을 다시 시도해 주세요.', 'Could not sign out or reconnect push notifications. Check your connection, then reopen the app or try signing out again.'],
   'auth.notConfigured': ['서버 설정이 없습니다 — .env.local에 VITE_SUPABASE_URL과 VITE_SUPABASE_ANON_KEY를 넣으세요.', 'No server configured — set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.local.'],

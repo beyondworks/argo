@@ -243,9 +243,10 @@ test('native notification tap consumes cold-start pending tap and live event onc
   assert.equal(unlistened, 1);
 });
 
-test('Shell wires native notification taps into the existing channel navigation request', () => {
+test('App wires native notification taps into the app-level navigation inbox (survives Shell remounts)', () => {
   // Given
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  // When / Then
-  assert.match(app, /mountNativeNotificationTaps\([\s\S]+onTap: \(\{ channelId \}\) => \{ if \(!disposed\) setNavTo\(channelId\); \}/);
+  // When / Then — 탭은 셸 밖 대기함(navInbox)으로 들어가고 셸이 decideNav로 연다(2026-10-01). 판단 행동은 test/notif-nav.test.mjs
+  assert.match(app, /mountNativeNotificationTaps\([\s\S]+onTap: \(\{ channelId \}\) => \{ if \(!disposed\) offer\(channelId, 'mac'\); \}/);
+  assert.match(app, /navInbox\.offer\(\{ channelId, source, owner:/);
 });
