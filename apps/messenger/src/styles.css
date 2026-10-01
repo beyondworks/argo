@@ -1936,6 +1936,7 @@ html { -webkit-tap-highlight-color: transparent; }
   /* 채널 탭 — 큰 제목 '채널' 옆 조직 알약(누르면 조직 메뉴). 제목이 어느 탭인지 말하고, 알약이 어느 조직인지 말한다 */
   .msgr-phone .ph-orgbtn { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; max-width: 100%; min-height: 44px; padding: 0 10px 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--card-2); color: var(--fg); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
   .msgr-phone .ph-orgbtn:active { background: var(--border-soft); }
+  @media (max-width: 374px) { .msgr-phone .ph-title { font-size: 21px; } .msgr-phone .ph-head-l { gap: 6px; } .msgr-phone .ph-orgbtn { padding: 0 8px 0 10px; } } /* 360 폭 영어 — 'Channels' 옆 조직 알약이 한 글자로 줄었다 */
   .msgr-phone .ph-orgbtn .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .msgr-phone .ph-orgbtn .caret { flex: none; color: var(--fg-2); }
   .msgr-phone .ph-orgbtn .msgr-badge { flex: none; margin: 0; }
@@ -2034,7 +2035,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-fa-paste { display: flex; gap: 8px; }
   .msgr-phone .ph-fa-paste .msgr-input { flex: 1 1 auto; min-width: 0; min-height: 44px; font-size: 16px; }
   /* 키보드가 올라오면 아래에서 올라온 창을 키보드 바로 위로 — 바닥(0)에 붙어 있으면 입력칸·결과가 키보드 뒤에 깔린다 */
-  html.msgr-kb .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek { bottom: calc(100dvh - var(--msgr-viewport-top, 0px) - var(--msgr-viewport-height, 100dvh)); max-height: calc(var(--msgr-viewport-height, 100dvh) - env(safe-area-inset-top) - 16px); border-radius: 20px; }
+  html.msgr-kb .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek { bottom: calc(100% - var(--msgr-viewport-top, 0px) - var(--msgr-viewport-height, 100%)); max-height: calc(var(--msgr-viewport-height, 100%) - env(safe-area-inset-top) - 16px); border-radius: 20px; } /* 100% = 창(레이아웃) 높이 — 그 바닥에서 보이는 영역 바닥까지만큼 띄운다 */
   html.msgr-kb .msgr-phone .msgr-dmpeek .peek { padding-bottom: 12px; }
   /* ── 채널 탭: 조직이 없을 때 ── */
   .msgr-phone .ph-noorg { padding: 48px var(--ph-pad) 24px; text-align: center; }
