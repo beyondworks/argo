@@ -3,19 +3,19 @@
 // 줄 구성은 지금 화면에서 읽는다 — 좁은 폭(한 줄에 하나)과 넓은 폭이 같은 코드로 맞는다.
 import { flipGrid } from '../core/motion.js';
 import { spanOf, spanRange, minHeight } from '../core/layout.js';
-import { dragSpans, snapH, applySizes, resetSize, resetPatch, STEP_H } from '../core/module-size.js';
+import { dragSpans, snapH, stepH, edgePair, applySizes, resetSize, resetPatch, STEP_H } from '../core/module-size.js';
 
 const isX = (side) => side === 'l' || side === 'r';
 const itemOf = (ctx, el) => ctx.items.find((item) => item.id === el.dataset.mod);
 /** 화면에서 같은 줄(같은 높이에서 시작)인 모듈. 미끄러지는 중(transform)에도 흔들리지 않게 offsetTop으로 잰다 */
 const rowOf = (el) => [...el.parentElement.children].filter((node) => node.dataset.mod && Math.abs(node.offsetTop - el.offsetTop) < 2);
 
-/** 폭: 맞닿은 옆 모듈이 있으면 그 경계(두 모듈), 줄 끝 바깥 가장자리면 이 모듈만 */
+/** 폭: 맞닿은 옆 모듈이 있으면 그 경계(두 모듈), 줄 처음·끝 바깥 가장자리면 이 모듈만 */
 function widthPlan(ctx, side) {
-  const row = rowOf(ctx.el), index = row.indexOf(ctx.el), near = row[side === 'r' ? index + 1 : index - 1];
-  const [a, b] = side === 'l' && near ? [near, ctx.el] : [ctx.el, near]; // 왼쪽 경계는 앞 모듈의 오른쪽 경계와 같다
+  const row = rowOf(ctx.el), pair = edgePair(row.indexOf(ctx.el), row.length, side);
+  const a = row[pair.a], b = pair.b == null ? undefined : row[pair.b]; // 왼쪽 경계는 앞 모듈의 오른쪽 경계와 같다
   const A = itemOf(ctx, a), B = b && itemOf(ctx, b);
-  return { x: true, a, b, A, B, sign: side === 'l' && !near ? -1 : 1, from: [spanOf(A), B ? spanOf(B) : null],
+  return { x: true, a, b, A, B, sign: pair.sign, from: [spanOf(A), B ? spanOf(B) : null],
     room: 12 - row.reduce((sum, node) => sum + (node === a ? 0 : spanOf(itemOf(ctx, node))), 0),
     ra: spanRange(ctx.modOf(A).sizes), rb: B && spanRange(ctx.modOf(B).sizes) };
 }
@@ -108,7 +108,7 @@ export function key(ctx, { key: name }, side) {
   if (!typing) { const plan = x ? widthPlan(ctx, side) : heightPlan(ctx, side); typing = { plan, side, cur: plan.from, saved: snapshot(els(plan)) }; }
   const k = typing, { plan } = k;
   k.ctx = ctx;
-  const next = x ? nextSpans(plan, k.cur, dir) : snapH(k.cur + plan.sign * dir * 16, plan.min);
+  const next = x ? nextSpans(plan, k.cur, dir) : stepH(k.cur, plan.sign * dir, plan.min);
   if (x ? next[0] !== k.cur[0] || next[1] !== k.cur[1] : next !== k.cur) { k.cur = next; show(plan, next); }
   clearTimeout(k.timer);
   k.timer = setTimeout(flush, 400);

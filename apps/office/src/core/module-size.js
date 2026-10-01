@@ -15,6 +15,16 @@ export function dragSpans({ a, b, d, ra, rb, room = 12 }) {
 
 /** 높이 눈금: 8px 단위, 최소(기본 120)~1200 */
 export const snapH = (px, min = MIN_H) => Math.min(MAX_H, Math.max(min, Math.round(px / STEP_H) * STEP_H));
+/** 키보드 한 번(↑/↓) = 16px — 지금 높이를 먼저 눈금에 맞춘 뒤 더한다. 내용대로인 줄(예: 418px)에서 바로 더하고 맞추면 +14가 되었다(통합 검수 10/1) */
+export const stepH = (px, d, min = MIN_H) => snapH(Math.round(px / STEP_H) * STEP_H + d * 16, min);
+
+/** 폭 가장자리가 움직이는 모듈 — index = 줄 안 자리, n = 줄 모듈 수. 맞닿은 옆 모듈이 있으면 그 경계(a = 앞, b = 뒤),
+ *  줄 바깥 가장자리면 이 모듈만(b = null). 왼쪽 바깥 가장자리는 끄는 방향과 폭이 반대다(sign -1: 오른쪽으로 끌면 준다) */
+export function edgePair(index, n, side) {
+  const near = side === 'r' ? index + 1 : index - 1;
+  if (near < 0 || near >= n) return { a: index, b: null, sign: side === 'l' ? -1 : 1 };
+  return side === 'l' ? { a: near, b: index, sign: 1 } : { a: index, b: near, sign: 1 };
+}
 
 /**
  * patch = { [id]: { span?, h? } } — span null이면 폭을 지운다, h가 0이면 높이를 지운다.

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mergeLayout, rowsOf, rowInfo, spanOf, heightOf, spanRange, sizeForSpan, minHeight } from '../src/core/layout.js';
-import { dragSpans, snapH, applySizes, resetSize, resetPatch } from '../src/core/module-size.js';
+import { dragSpans, snapH, stepH, edgePair, applySizes, resetSize, resetPatch } from '../src/core/module-size.js';
 import { normalizeModuleItems } from '../src/core/module-items.js';
 import { normalizeDashboards, defaultDashboard } from '../src/business/dashboard-model.js';
 import { OFFICE_MODULES, CHART_MODULES } from '../src/core/module-registry.js';
@@ -168,11 +168,44 @@ test('두 번 눌러 폭 되돌리기: 그 줄 전체를 끌기 전으로, 줄 �
   assert.deepEqual(resetPatch(row, 'h'), { todos: { h: 0 }, pages: { h: 0 } });
 });
 
-// 이유(검수 10/1 2차): 줄 첫 모듈의 왼쪽 가장자리는 잡은 선이 손을 따라오지 않는다(반대편이 움직인다) — 그 손잡이는 그리지 않는다(first).
-// 높이 손잡이가 알리는 최소는 그 줄 모듈 최소 중 가장 큰 값 — 줄 높이를 같이 쓰므로 실제로 그 밑으로 줄지 않는다(min).
-test('줄 정보: 줄 높이·줄 최소 높이·줄 첫 모듈', () => {
+// 이유: 높이 손잡이가 알리는 최소는 그 줄 모듈 최소 중 가장 큰 값 — 줄 높이를 같이 쓰므로 실제로 그 밑으로 줄지 않는다(min).
+test('줄 정보: 줄 높이·줄 최소 높이', () => {
   const cal = OFFICE_MODULES.find((m) => m.id === 'calendar');
   const items = [{ id: 'cal', size: 'm', h: 320 }, { id: 'work', size: 'm' }, { id: 'c', size: 'full' }];
   const info = rowInfo(items, (item) => (item.id === 'cal' ? cal : {}));
-  assert.deepEqual([...info], [['cal', { h: 320, min: 248, first: true }], ['work', { h: 320, min: 248, first: false }], ['c', { h: 0, min: 120, first: true }]]);
+  assert.deepEqual([...info], [['cal', { h: 320, min: 248 }], ['work', { h: 320, min: 248 }], ['c', { h: 0, min: 120 }]]);
+});
+
+// 이유(유건 10/1 C2 "모듈 상하좌우 가장자리", 통합 검수 10/1): 줄 첫 모듈도 왼쪽 가장자리를 잡을 수 있다 — 줄 바깥 가장자리라 그 모듈 폭만 바뀐다.
+// 맞닿은 경계는 지금처럼 두 모듈(앞 모듈 = a)이 같이 바뀐다.
+test('폭 가장자리: 줄 처음·끝 바깥은 그 모듈만, 맞닿은 경계는 두 모듈', () => {
+  assert.deepEqual(edgePair(0, 3, 'l'), { a: 0, b: null, sign: -1 }); // 줄 첫 모듈 왼쪽 — 오른쪽으로 끌면 준다
+  assert.deepEqual(edgePair(2, 3, 'r'), { a: 2, b: null, sign: 1 }); // 줄 끝 모듈 오른쪽
+  assert.deepEqual(edgePair(1, 3, 'l'), { a: 0, b: 1, sign: 1 }); // 왼쪽 경계 = 앞 모듈의 오른쪽 경계
+  assert.deepEqual(edgePair(0, 3, 'r'), { a: 0, b: 1, sign: 1 });
+  assert.deepEqual(edgePair(0, 1, 'l'), { a: 0, b: null, sign: -1 }); // 한 줄에 하나
+  // 줄 첫 모듈(6열, 옆에 3열) 왼쪽을 오른쪽으로 2열 끌면 4열, 왼쪽으로 끌면 남은 폭(room)까지만 는다
+  const { sign } = edgePair(0, 2, 'l'), ra = [3, 12];
+  assert.deepEqual(dragSpans({ a: 6, b: null, d: sign * 2, ra, room: 9 }), [4, null]);
+  assert.deepEqual(dragSpans({ a: 6, b: null, d: sign * -5, ra, room: 9 }), [9, null]);
+  assert.deepEqual(dragSpans({ a: 3, b: null, d: sign * 4, ra, room: 9 }), [3, null]); // 최소 3열
+});
+
+// 이유(유건 10/1 C4 "↑/↓ = 16px", 통합 검수 10/1): 정한 적 없는 줄의 높이는 내용대로(8의 배수가 아님)다. 거기서 바로 16을 더하고 맞추면 418→432(+14)가 됐다.
+// 먼저 눈금(손잡이가 알리는 값 416)에 맞춘 뒤 더해 알리는 값 기준으로 늘 정확히 16씩 움직인다.
+test('키보드 높이: 한 번에 정확히 16px(알리는 값 기준)', () => {
+  assert.equal(stepH(418, 1), 432); assert.equal(stepH(418, -1), 400); // 알리는 값 416 기준 ±16
+  assert.equal(stepH(422, 1), 440); // 알리는 값 424 기준
+  let h = stepH(418, 1);
+  for (let i = 0; i < 5; i++) { const next = stepH(h, 1); assert.equal(next - h, 16); h = next; }
+  for (let i = 0; i < 5; i++) { const next = stepH(h, -1); assert.equal(h - next, 16); h = next; }
+  assert.equal(stepH(130, -1), 120); assert.equal(stepH(1196, 1), 1200); // 최소·최대에서 멈춘다
+  assert.equal(stepH(260, -1, 248), 248);
+});
+
+// 이유(유건 10/1 C4 "aria-valuenow"): 높이 손잡이도 지금 높이를 알린다 — 정한 적 없는 줄은 그릴 때 값이 없어 화면에서 잰다(ResizeObserver).
+test('높이 손잡이: 지금 높이를 알린다, 줄 첫 모듈도 왼쪽 손잡이', () => {
+  const src = readFileSync(new URL('../src/ui/ModuleGrid.jsx', import.meta.url), 'utf8');
+  assert.match(src, /new ResizeObserver[\s\S]{0,160}\.edge-y[\s\S]{0,80}'aria-valuenow'/);
+  assert.doesNotMatch(src, /side === 'l'\) return null/);
 });

@@ -20,6 +20,14 @@ function ModuleCard({ item, space, items, row, canEdit, editable, scope, commit,
   const keyboardTarget = useRef(null);
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useSortable({ id: JSON.stringify([scope, item.id]), disabled: !canEdit, data: { kind: 'module', id: item.id, group: scope, label: mod.title, keyboardTarget } });
   const card = useRef(null);
+  // 높이 손잡이가 알리는 값 = 지금 카드 높이(8px 눈금) — 정한 적 없는 줄은 내용대로라 그릴 때 값이 없다. 크기가 바뀔 때마다(내용·끌기·좁은 폭) 다시 잰다
+  useEffect(() => {
+    const el = card.current;
+    if (!editable || !el) return;
+    const ro = new ResizeObserver(() => el.querySelectorAll(':scope > .edge-y').forEach((node) => node.setAttribute('aria-valuenow', Math.round(el.offsetHeight / 8) * 8)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [editable]);
   const set = (patch) => commit(items.map((x) => (x.id === item.id ? { ...x, ...patch } : x)));
   // 끄기·키보드·두 번 누르기는 module-resize.js가 맡는다 — 지금 자리(DOM)와 항목을 넘긴다
   const edge = (kind, e, side) => loadResizer().then((m) => card.current && m[kind]?.({ el: card.current, items, modOf: resolveModule, commit, canEdit }, e, side), () => {});
@@ -42,10 +50,9 @@ function ModuleCard({ item, space, items, row, canEdit, editable, scope, commit,
       </header>
       <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
       {editable && EDGES.map((side) => { // 저장 중(canEdit 꺼짐)에도 그대로 둔다 — 키보드 초점이 손잡이에 남는다. 그동안은 aria-disabled
-        if (row.first && side === 'l') return null; // 줄 첫 모듈의 왼쪽은 잡은 선이 손을 따라오지 않는다(반대편이 움직인다, 검수 10/1 2차) — 그리지 않는다
         const x = side === 'l' || side === 'r'; // 좌우 = 폭, 위아래 = 높이
         return <span key={side} className={`edge edge-${side} edge-${x ? 'x' : 'y'}`} role="separator" aria-orientation={x ? 'vertical' : 'horizontal'} aria-label={t(x ? 'mod.resize.w' : 'mod.resize.h')}
-          aria-valuenow={x ? span : rh || undefined} aria-valuemin={x ? lo : row.min} aria-valuemax={x ? hi : 1200} aria-disabled={!canEdit || undefined} tabIndex={side === 'r' || side === 'b' ? 0 : -1}
+          aria-valuenow={x ? span : undefined} aria-valuemin={x ? lo : row.min} aria-valuemax={x ? hi : 1200} aria-disabled={!canEdit || undefined} tabIndex={side === 'r' || side === 'b' ? 0 : -1}
           onPointerEnter={() => edge()} onDoubleClick={() => edge('reset', null, side)} onBlur={() => edge('blur')}
           onFocus={(e) => !x && edge('focus', e.currentTarget, side)} // 높이는 지금 보이는 높이·최소를 화면에서 다시 잰다(좁은 폭은 넓은 화면의 줄이 아니라 자기 것)
           onKeyDown={(e) => { if (!e.key.startsWith('Arrow')) return; e.preventDefault(); e.stopPropagation(); edge('key', { key: e.key }, side); }}

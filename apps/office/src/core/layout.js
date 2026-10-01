@@ -84,10 +84,10 @@ export function rowsOf(items) {
   return rows;
 }
 
-/** 모듈마다 줄 정보 — h: 같은 줄이 같이 쓰는 높이(정해진 것 중 가장 큰 값, 0 = 내용대로), min: 줄 최소 높이(줄 모듈 최소 중 가장 큰 값), first: 줄 첫 모듈 */
+/** 모듈마다 줄 정보 — h: 같은 줄이 같이 쓰는 높이(정해진 것 중 가장 큰 값, 0 = 내용대로), min: 줄 최소 높이(줄 모듈 최소 중 가장 큰 값) */
 export const rowInfo = (items, modOf) => new Map(rowsOf(items).flatMap((row) => {
   const h = Math.max(...row.map(heightOf)), min = Math.max(...row.map((it) => minHeight(modOf(it))));
-  return row.map((it, i) => [it.id, { h, min, first: !i }]);
+  return row.map((it) => [it.id, { h, min }]);
 }));
 
 /**
