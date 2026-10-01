@@ -58,6 +58,7 @@ import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
 import { createNativeSessionApplier, mountNativeRealtime, mountNativeNotificationTaps, updateNativeRealtimeContext } from './native-realtime.mjs';
 import { createSessionRecovery } from './session-recovery.mjs';
+import { createNavInbox, decideNav } from './notif-nav.mjs';
 import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
@@ -68,7 +69,8 @@ import { markAppReady } from './splash.js';
 import { dropBeforeIdAtY, reorderVisibleInFull } from './drag-reorder.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 import { twinRelink, twinOrgLabel, crewAddable } from './personal-bots.mjs';
-import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, faceToStore } from './crew-face.mjs';
+import { faceOf, faceFromStored, faceInner, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedCrewsInFetch, FACE_COLORS, FACE_SHAPES, faceToStore } from './crew-face.mjs';
+import { faceGestures } from './face-gestures.mjs';
 const realtimeScope = createRealtimeScope();
 const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/download', contact: 'mailto:lean8kim@gmail.com' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관. download = 가격·결제 버튼 없는 전용 페이지(총괄 지시 2026-09-26, 랜딩 배포 전이라 지금은 404 — 배포는 총괄이 앱 발행 전에 함). contact = 1.5 지원 이메일 직행(검수 M5 — 결제 링크가 있는 홈 #contact 대신, 라이브 curl로 확인한 실주소)
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
@@ -102,6 +104,10 @@ const APPROVAL_FIX = { hermes: 'hermes config set approvals.mode manual', opencl
 const crewAway = (c) => !c?.last_seen_at || Date.now() - Date.parse(c.last_seen_at) >= AWAY_MS;
 /** 개인 공간을 뜻하는 orgId 상수. null은 "조직 없음(EmptyOrg)"이므로 센티넬로 구분한다. */
 export const PERSONAL = '__personal__';
+// 알림 탭·카드·초대에서 온 "이 채널 열기" 요청 — 셸 밖(앱 수준)에 둔다. 셸이 연결 대기 화면 등으로 내려갔다 올라와도 요청이 남고,
+// 셸이 실제로 열었거나 일부러 버릴 때만 비운다(notif-nav.mjs, 유건 요청 2026-10-01). shellLink = 앱 수준 리스너가 보는 지금 셸(탭 진단의 page·org, 전경 푸시 카드).
+const navInbox = createNavInbox();
+const shellLink = { mounted: false, page: null, orgId: null, onForeground: null };
 /** 크루 등급(부록 I·K) — 서버 함수 msgr_crew_tier와 같은 규칙: 조직 서비스 계정이 소유하고 상주 노드에서 돌면 회사 크루, 그 외는 개인(파견) 크루. 화면 표시용이며 판정 정본은 서버. */
 // 이 채널이 개인 에이전트의 지시를 막는가 — 보기만(read_only)뿐(서버 msgr_instruct_check와 같다). 방장 승인·못 데려옴은 들어오는 방식만 정하고,
 // 이미 있는 에이전트는 그대로 일한다(유건 2026-09-16: 못 데려옴으로 바꿔도 퇴장시키지 않는다).
@@ -140,42 +146,23 @@ function useProfanityFilterOn() {
   return on;
 }
 const AvatarCtx = createContext({ users: {}, crews: {}, faceState: () => 'idle', faceOverride: () => null }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url) — Av가 userId/crewId로 찾는다. faceState = 사진 없는 크루의 얼굴 표정, faceOverride = 소유자가 저장한 모양·색(msgr_crews.face)
-/** 눈 하나(dot·stroke·bean) — 얼굴(CrewFace)과 얼굴 고르기 미리보기(FacePicker)가 함께 쓴다. */
-function FaceEye({ eyes, x, y }) {
-  return eyes === 'stroke' ? <path d={`M${x - 0.6} ${y - 5}q1.2 5 .4 10`} className="stroke" />
-    : eyes === 'bean' ? <ellipse cx={x} cy={y} rx="3.5" ry="5.4" />
-    : <circle cx={x} cy={y} r="4.2" />;
+/** 얼굴 그림 하나(유건 확정 시안 2026-10-01) — 그림은 crew-face.mjs faceInner(상수로만 만든 SVG 문자열, 오피스와 같은 함수).
+ *  motionKey가 있으면 앱 전체 몸짓 스케줄러(face-gestures.mjs — 타이머 하나, 화면에 보이는 얼굴만)에 등록해 쉴 때 2~5초마다 몸짓을 한다. px = 그릴 크기(작은 배치·선 굵기 결정). */
+function FaceSvg({ face, state = 'idle', px, motionKey = null, className = '' }) {
+  const ref = useRef(null);
+  useEffect(() => { const el = ref.current; const g = motionKey != null ? faceGestures() : null; if (!el || !g) return; g.watch(el, motionKey); return () => g.unwatch(el); }, [motionKey]);
+  return <svg ref={ref} className={`msgr-face s-${state}${className ? ` ${className}` : ''}`} viewBox="0 0 100 100" aria-hidden="true" dangerouslySetInnerHTML={{ __html: faceInner(face, { state, px }) }} />;
 }
-/** 눈 한 쌍(좌우 대칭) */
-function FaceEyes({ eyes, L, R, cy }) { return <><FaceEye eyes={eyes} x={L} y={cy} /><FaceEye eyes={eyes} x={R} y={cy} /></>; }
-/** 에이전트 얼굴(유건 확정 2026-09-24) — 평면 단색 도형 + 작은 눈, 입 없음. 상태 = 쉼(움직임 있음)·준비 중·결재 대기·놀람(멘션·수신)·완료·오프라인(졸음)(crew-face.mjs).
- *  대기 중 움직임(깜빡임·두리번·고개 갸웃·하품)은 CSS 애니메이션뿐 — 박자·시작 위치는 faceMotion(id)이 크루마다 다르게 정한다. */
-function CrewFace({ id, name, ctx }) {
+/** 에이전트 얼굴 — 도형 12종·색 12색·표정(입 있음). 상태 = 쉼(몸짓)·답변 준비 중·결재 대기·놀람(멘션·수신 1초)·오류·완료·오프라인(crew-face.mjs crewFaceState). */
+function CrewFace({ id, name, ctx, px }) {
   const key = id ?? name ?? '?';
-  const g = faceGeometry(faceOf(key, ctx.faceOverride?.(id)));
-  const st = id ? ctx.faceState(id) : 'idle';
-  const motion = faceMotion(key);
-  const eye = (x, y) => <FaceEye eyes={g.eyes} x={x} y={y} />;
-  const { L, R, cy } = g;
-  return (
-    <svg className={`msgr-face s-${st}${st === 'idle' ? ` idle-${motion.variant}` : ''}`} viewBox="0 0 100 100" aria-hidden="true" style={{ '--face-dur': motion.duration, '--face-delay': motion.delay }}>
-      <g className="rig"><path className="body" d={g.d} fill={g.color} />
-        <g className="face">
-          {st === 'idle' && <g className="blink"><FaceEyes eyes={g.eyes} L={L} R={R} cy={cy} /></g>}
-          {st === 'work' && <g>{eye(L - 2, cy)}{eye(R - 2, cy)}</g>}
-          {st === 'ask' && <g>{eye(L, cy + 2)}{eye(R, cy - 2)}</g>}
-          {st === 'surprise' && <g className="surprise"><FaceEyes eyes={g.eyes} L={L} R={R} cy={cy} /></g>}
-          {st === 'done' && <g className="line"><path d={`M${L - 4.5} ${cy + 2}q4.5-7 9 0`} /><path d={`M${R - 4.5} ${cy + 2}q4.5-7 9 0`} /></g>}
-          {st === 'off' && <g className="line sleep"><path d={`M${L - 4.5} ${cy}q4.5 3.5 9 0`} /><path d={`M${R - 4.5} ${cy}q4.5 3.5 9 0`} /><text className="zzz" x={R + 6} y={cy - 14}>z</text></g>}
-        </g>
-      </g>
-    </svg>
-  );
+  return <FaceSvg face={faceOf(key, ctx.faceOverride?.(id))} state={id ? ctx.faceState(id) : 'idle'} px={px} motionKey={key} />;
 }
+const AV_PX = { xs: 20, sm: 22, lg: 40 }; // .msgr-av 크기 클래스의 px(기본 28) — 얼굴의 작은 배치·선 굵기를 고른다. 폰 화면이 24~44px로 키워도 44px 이하라 같은 배치다
 function Av({ name, crew, size, company = false, userId = null, crewId = null, src = null }) { // company: 회사 크루(조직 배지 — 별 대신 각진 해시), 그 외 크루는 별 배지(부록 I·K 등급 표시)
   const ctx = useContext(AvatarCtx);
   const url = src ?? (userId ? ctx.users[userId] : crewId ? ctx.crews[crewId] : null);
-  return <span className={`msgr-av${crew ? ' crew' : ''}${company ? ' company' : ''}${size ? ` ${size}` : ''}${url ? ' img' : crew ? ' face' : ''}`}>{url ? <img src={url} alt="" draggable={false} /> : crew ? <CrewFace id={crewId} name={name} ctx={ctx} /> : (name || '?').slice(0, 1)}{crew && <span className="star">{company ? <I name="hash" size={8} /> : <svg viewBox="0 0 16 16"><path d={STAR_D} /></svg>}</span>}</span>;
+  return <span className={`msgr-av${crew ? ' crew' : ''}${company ? ' company' : ''}${size ? ` ${size}` : ''}${url ? ' img' : crew ? ' face' : ''}`}>{url ? <img src={url} alt="" draggable={false} /> : crew ? <CrewFace id={crewId} name={name} ctx={ctx} px={AV_PX[size] ?? 28} /> : (name || '?').slice(0, 1)}{crew && <span className="star">{company ? <I name="hash" size={8} /> : <svg viewBox="0 0 16 16"><path d={STAR_D} /></svg>}</span>}</span>;
 }
 /** 프로필 이미지 정규화 — 가운데 정사각형으로 잘라 256px JPEG로(업로드 전 클라이언트에서). */
 async function squareImage(file, size = 256) {
@@ -207,42 +194,33 @@ function AvatarEdit({ name, crew = false, crewId = null, url, onUpload, onRemove
     </div>
   );
 }
-const faceEq = (a, b) => !!a && !!b && a.shape === b.shape && a.color === b.color && a.eyes === b.eyes;
+const faceEq = (a, b) => !!a && !!b && a.shape === b.shape && a.color === b.color;
 const faceCol = { missingAt: 0 }; // msgr_crews.face 열이 없다고 판정한 시각(옛 서버 폴백). 10분만 기억 — 앱이 라이브 적용보다 먼저 켜져도 재시작 없이 face를 다시 읽는다(재검수 #704)
-/** 에이전트 얼굴 고르기(유건 확정 2026-09-24) — 소유자만. 도형 6·색 10·눈 3 중에서 고르면 msgr_crews.face에 저장돼 조직 전원이 같은 얼굴을 본다.
- *  사진이 있으면 목록·대화에는 사진이 우선(Av)이지만, 사진을 지우면 바로 이 얼굴이 나오도록 고르기는 항상 켜져 있다. */
+/** 에이전트 얼굴 고르기 — 소유자만. 도형 12·색 12 중에서 고르면 msgr_crews.face에 {v:2, shape, color}로 저장돼 조직 전원이 같은 얼굴을 본다(유건 확정 시안 2026-10-01).
+ *  옛 저장값(키 v 없음)은 대응표로 바꿔 보여 준다 — 바꾸지 않으면 다시 쓰지 않는다. 사진이 있으면 목록·대화에는 사진이 우선(Av)이지만, 사진을 지우면 바로 이 얼굴이 나오도록 고르기는 항상 켜져 있다. */
 function FacePicker({ crew, onSave, busy, t }) {
-  const stored = crew.face && Number.isInteger(crew.face.shape) && Number.isInteger(crew.face.color) && Number.isInteger(crew.face.eyes) ? crew.face : null;
-  const rand = faceOf(crew.id, stored); // 목록과 같은 계산 — 서버 저장값에는 spot(얼굴 자리)이 없어 그대로 쓰면 faceGeometry가 멈춘다(화면 확인 중 발견)
+  const stored = faceFromStored(crew.face);
+  const rand = faceOf(crew.id, crew.face); // 목록과 같은 계산(저장값 → 없으면 id 무작위)
   const [draft, setDraft] = useState(rand);
-  const storedKey = stored ? `${stored.shape},${stored.color},${stored.eyes}` : '';
+  const storedKey = stored ? `${stored.shape},${stored.color}` : '';
   useEffect(() => { setDraft(rand); }, [crew.id, storedKey]); // eslint-disable-line react-hooks/exhaustive-deps -- 저장·되돌리기 뒤 새로 읽은 값으로 미리보기를 맞춘다(검수 #704 L-1)
-  const g = faceGeometry(draft);
   const pick = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
   const dirty = !faceEq(rand, draft); // rand = 저장값(없으면 id 무작위) — 되돌린 직후 저장 버튼이 켜진 채 남지 않게(검수 #704 L-1)
   return (
     <div className="msgr-facepicker">
-      <svg className="msgr-face preview" viewBox="0 0 100 100" aria-hidden="true"><path d={g.d} fill={g.color} /><g className="face"><FaceEyes eyes={g.eyes} L={g.L} R={g.R} cy={g.cy} /></g></svg>
+      <FaceSvg face={draft} px={64} motionKey={`picker:${crew.id}`} className="preview" />
       <div className="row" role="group" aria-label={t('crew.face.shape')}>
         <span className="msgr-klabel">{t('crew.face.shape')}</span>
         <div className="chips">{FACE_SHAPES.map((s, i) => (
-          <button key={i} type="button" className="chip" aria-pressed={draft.shape === i} disabled={busy} onClick={() => pick('shape', i)} aria-label={t('crew.face.shape.n', { n: i + 1 })}>
-            <svg className="msgr-face" viewBox="0 0 100 100" aria-hidden="true"><path d={s.d} fill={FACE_COLORS[draft.color]} /></svg>
+          <button key={s.k} type="button" className="chip" aria-pressed={draft.shape === i} disabled={busy} onClick={() => pick('shape', i)} aria-label={t('crew.face.shape.n', { n: i + 1 })}>
+            <FaceSvg face={{ shape: i, color: draft.color }} px={30} />
           </button>
         ))}</div>
       </div>
       <div className="row" role="group" aria-label={t('crew.face.color')}>
         <span className="msgr-klabel">{t('crew.face.color')}</span>
         <div className="chips">{FACE_COLORS.map((c, i) => (
-          <button key={i} type="button" className="chip swatch" aria-pressed={draft.color === i} disabled={busy} style={{ background: c }} onClick={() => pick('color', i)} aria-label={t('crew.face.color.n', { n: i + 1 })} />
-        ))}</div>
-      </div>
-      <div className="row" role="group" aria-label={t('crew.face.eyes')}>
-        <span className="msgr-klabel">{t('crew.face.eyes')}</span>
-        <div className="chips">{FACE_EYES.map((e, i) => (
-          <button key={i} type="button" className="chip" aria-pressed={draft.eyes === i} disabled={busy} onClick={() => pick('eyes', i)} aria-label={t('crew.face.eyes.n', { n: i + 1 })}>
-            <svg className="msgr-face" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="42" fill="#dcdcdc" /><g className="face"><FaceEyes eyes={e} L="42" R="58" cy="50" /></g></svg>
-          </button>
+          <button key={c} type="button" className="chip swatch" aria-pressed={draft.color === i} disabled={busy} style={{ background: c }} onClick={() => pick('color', i)} aria-label={t('crew.face.color.n', { n: i + 1 })} />
         ))}</div>
       </div>
       <div className="acts">
@@ -274,6 +252,7 @@ export default function App() {
   const cleanupCommitWaiters = useRef([]);
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
+    if (!uid || (sessionOwner.current && sessionOwner.current !== uid)) navInbox.clear(); // 로그아웃·계정 전환 — 앞 계정의 알림 탭 요청을 다음 계정 셸이 열지 않게(반대 검토 2026-10-01)
     if (sessionOwner.current !== uid) {
       clearComposerSessions(undefined, sessionOwner.current ? {} : { keepUser: uid }); // 첫 적용(앱 시작·새로고침)은 지금 계정의 저장 초안만 남기고, 로그아웃·계정 전환은 전부 지운다
       if (sessionOwner.current) deactivatePush(supabase, sessionOwner.current);
@@ -317,6 +296,22 @@ export default function App() {
   };
   useMobileViewport();
   useEffect(() => mountMobileAuth(), []);
+  // 알림 탭은 셸 밖(앱 수준)에서 받는다 — 셸이 연결 대기 화면 등으로 내려가 있는 동안 온 탭도 대기함에 남는다(유건 요청 2026-10-01).
+  // 푸시 플러그인은 첫 리스너가 붙을 때 보관하던 탭을 한 번 다시 보내고 그 뒤로는 보관하지 않아, 셸 안 리스너가 떨어진 사이의 탭이 사라졌다.
+  // 기기 토큰 등록(registerPush)은 계정이 정해진 셸에 그대로 둔다 — 여기서는 듣기만 한다(등록이 두 번 돌지 않는다).
+  const sessionRef = useRef(session); sessionRef.current = session;
+  useEffect(() => {
+    let disposed = false; let detachMac = () => {};
+    const offer = (channelId, source) => {
+      const signedOut = sessionRef.current === null; // 로그인 화면에서 누른 옛 알림은 다음에 들어오는 계정이 열지 않는다
+      pushDiag('tap', `channel ${channelId ?? '-'}`, `src=${source} page=${shellLink.page ?? '-'} org=${shellLink.orgId ?? '-'} shell=${shellLink.mounted ? 'on' : 'off'}${signedOut ? ' signed-out' : ''}`);
+      if (channelId && !signedOut) navInbox.offer({ channelId, source, owner: sessionRef.current?.user?.id ?? null });
+    };
+    const offPush = isMobilePlatform ? mountPush({ onTap: ({ channel_id }) => offer(channel_id, 'push'), onForeground: (p) => shellLink.onForeground?.(p) }) : () => {};
+    mountNativeNotificationTaps({ enabled: import.meta.env.TAURI_ENV_PLATFORM === 'darwin' && isDesktopTauri(), onTap: ({ channelId }) => { if (!disposed) offer(channelId, 'mac'); } })
+      .then((stop) => { if (disposed) stop(); else detachMac = stop; }).catch(() => {});
+    return () => { disposed = true; offPush(); detachMac(); };
+  }, []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
     const native = mountNativeRealtime({ enabled: import.meta.env.TAURI_ENV_PLATFORM === 'darwin' && isDesktopTauri(), auth: supabase.auth, supabaseUrl: SB_URL, anonKey: SB_ANON, lang }).catch(() => null);
@@ -638,38 +633,51 @@ function Shell({ session }) {
   const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   const [pushCard, setPushCard] = useState(null); // 전경 푸시 카드(폰) — 다른 채널 메시지만, 탭하면 그 채널로(유건 2026-09-12)
-  const [navTo, setNavTo] = useState(null); // 알림 탭·카드에서 온 "이 채널 열기" 요청 — 목록에 있으면 열고, 다른 조직이면 조직을 바꾼 뒤 연다. 콜드 스타트 때 chId만 세우면 channel이 없어 Channel이 죽었다(시뮬 재현 2026-09-12: 'undefined is not an object (evaluating channel.id)')
+  // "이 채널 열기" 요청(알림 탭·전경 카드·초대) — 대기함(navInbox)은 셸 밖에 있어 셸이 다시 마운트돼도 남는다. 다음 한 걸음은 decideNav가 정하고
+  // 여기서는 그 걸음만 실행한다: 열기 / 공간 전환 / 채널 조회 / 같은 공간 목록 한 번 다시 읽기 / 버리기. 콜드 스타트 때 chId만 세우면 channel이 없어
+  // Channel이 죽었다(시뮬 재현 2026-09-12) — 그래서 목록에 실제로 있을 때만 연다. 조회는 요청 하나당 1회(실패하면 최대 3회), 다시 읽기도 1회.
+  const [navReq, setNavReq] = useState(() => navInbox.get());
+  useEffect(() => { const off = navInbox.subscribe(setNavReq); setNavReq(navInbox.get()); return off; }, []); // 구독 직후 한 번 더 읽는다 — 첫 렌더와 구독 사이에 들어온 탭을 놓치지 않게(#788 검수 LOW-1)
+  const requestNav = useCallback((channelId, source) => { navInbox.offer({ channelId, source, owner: uid }); }, [uid]);
+  const navProg = useRef(null); // 지금 요청의 진행 { seq, row, fails, refreshed, orgsRefreshed, busy } — 이 셸 안에서만(셸이 바뀌면 처음부터 다시 판단)
+  const [navStep, setNavStep] = useState(0); // 조회·다시 읽기가 끝나면 판단을 다시 돌린다
   useEffect(() => {
-    let disposed = false; let detach = () => {};
-    mountNativeNotificationTaps({ enabled: import.meta.env.TAURI_ENV_PLATFORM === 'darwin' && isDesktopTauri(), onTap: ({ channelId }) => { if (!disposed) setNavTo(channelId); } })
-      .then((stop) => { if (disposed) stop(); else detach = stop; }).catch(() => {});
-    return () => { disposed = true; detach(); };
+    if (!navReq) return;
+    if (navProg.current?.seq !== navReq.seq) navProg.current = { seq: navReq.seq, row: undefined, fails: 0, refreshed: false, orgsRefreshed: false, switched: false, busy: false };
+    const prog = navProg.current;
+    if (prog.busy) return;
+    const act = decideNav({ target: navReq.channelId, owner: navReq.owner, uid, orgs, orgId, personalId: PERSONAL, loaded: loadedOrg.current === orgId, channels, previewChannels, row: prog.row, fails: prog.fails, refreshed: prog.refreshed, orgsRefreshed: prog.orgsRefreshed, switched: prog.switched });
+    const diag = (step) => pushDiag('nav', `${step} ${String(navReq.channelId).slice(0, 8)}`, `src=${navReq.source} page=${pageRef.current ?? '-'} org=${orgId ?? '-'}`);
+    const run = (work) => { // 비동기 한 걸음 — 끝날 때까지 같은 요청에 다른 걸음을 겹쳐 보내지 않는다(15초 재조회로 효과가 다시 돌아도 조회가 늘지 않게)
+      prog.busy = true; diag(act.do);
+      Promise.resolve().then(work).catch(async () => { prog.fails += 1; await new Promise((r) => setTimeout(r, 1500 * prog.fails)); })
+        .finally(() => { prog.busy = false; if (navProg.current === prog) setNavStep((x) => x + 1); });
+    };
+    if (act.do === 'wait') return;
+    if (act.do === 'report') { diag('report'); setSettingsTab('me'); setPage('settings'); setRail(false); setSheet(null); navInbox.done(navReq); return; } // 신고 접수 알림(msgr-push reportPush) → 운영 신고함
+    if (act.do === 'open') { diag('open'); setChId(navReq.channelId); setPage('chat'); setRail(false); setSheet(null); navInbox.done(navReq); return; }
+    if (act.do === 'drop') { diag(`drop:${act.reason}`); navInbox.done(navReq); if (act.tell) setNote(t(act.tell === 'offline' ? 'push.nav.offline' : 'push.nav.unavailable')); return; }
+    if (act.do === 'switch') { diag(`switch:${act.orgId === PERSONAL ? 'personal' : String(act.orgId).slice(0, 8)}`); prog.switched = true; setOrgId(act.orgId); return; } // 목록이 바뀌면 다시 판단해 연다
+    if (act.do === 'lookup') run(async () => { prog.row = (await q(supabase.from('msgr_channels').select('org_id').eq('id', navReq.channelId).maybeSingle())) ?? null; });
+    else if (act.do === 'refresh') run(async () => { const list = await (orgId === PERSONAL ? loadPersonal() : loadOrg(orgId)); if (!Array.isArray(list)) throw new Error('superseded'); prog.refreshed = true; }); // 다른 재조회에 밀려 이번 결과가 버려졌으면 다시 읽은 것으로 치지 않는다
+    else if (act.do === 'refresh-orgs') run(async () => { await loadOrgs(); prog.orgsRefreshed = true; });
+  }, [navReq, navStep, channels, previewChannels, orgs, orgId, uid]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 앱 수준 리스너(App)가 보는 지금 셸 — 전경 푸시 카드(폰: 다른 채널 메시지만, 탭하면 그 채널로 — 유건 2026-09-12). page·org는 page 선언 아래에서 적는다
+  useEffect(() => {
+    const onForeground = ({ title, body, data }) => { if (!title && !body) return; if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); };
+    shellLink.mounted = true; shellLink.onForeground = onForeground;
+    return () => { if (shellLink.onForeground === onForeground) { shellLink.mounted = false; shellLink.onForeground = null; } }; // page·org는 마지막 값을 남긴다(진단의 shell=off와 같이 읽는다)
   }, []);
-  useEffect(() => {
-    if (!navTo) return;
-    if (navTo === 'report') { setSettingsTab('me'); setPage('settings'); setRail(false); setSheet(null); setNavTo(null); return; } // 신고 접수 알림(msgr-push reportPush) → 운영 신고함
-    if (loadedOrg.current === orgId && channels.some((c) => c.id === navTo)) { setChId(navTo); setPage('chat'); setRail(false); setSheet(null); setNavTo(null); return; }
-    if (!orgs || !orgId) return; // 조직·목록 로드 전 — 기다린다
-    let on = true;
-    q(supabase.from('msgr_channels').select('org_id').eq('id', navTo).maybeSingle()).then((row) => {
-      if (!on) return;
-      if (row && !row.org_id && orgId !== PERSONAL) setOrgId(PERSONAL); // 개인 1:1 → 개인 공간으로 전환
-      else if (row?.org_id && row.org_id !== orgId && orgs.some((o) => o.id === row.org_id)) setOrgId(row.org_id); // 다른 조직 → 전환(목록이 바뀌면 위 분기가 연다)
-      else if (!row || loadedOrg.current === orgId) setNavTo(null); // 목록이 실제 도착한 뒤에만 없는 채널 요청을 버린다
-    }).catch(() => { if (on) setNavTo(null); });
-    return () => { on = false; };
-  }, [navTo, channels, orgs, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
   const [tick, setTick] = useState(0);
-  useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록, 알림 탭 → 채널 이동, 전경 수신 → 토스트(시스템은 전경 알림을 안 띄운다)
+  useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록. 알림 탭·전경 수신은 앱 수준 리스너(App)가 받아 대기함·shellLink로 넘긴다(2026-10-01)
     if (!isMobilePlatform) return;
     activatePush(supabase, uid);
     const reg = () => registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
     reg(); const stopResume = observeMobileResume(reg); // 토큰은 회전한다 — 앱 재개마다 다시 등록
-    const off = mountPush({ onTap: ({ channel_id }) => { pushDiag('tap', `channel ${channel_id ?? '-'}`, `page=${notifyRef.current.page} org=${notifyRef.current.orgId ?? '-'}`); if (channel_id) setNavTo(channel_id); }, onForeground: ({ title, body, data }) => { if (!title && !body) return; if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } });
-    return () => { deactivatePush(supabase, uid); off(); stopResume(); };
+    return () => { deactivatePush(supabase, uid); stopResume(); };
   }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   // 아이콘 배지 재동기화(유건 제보 2026-09-15: 다 읽어도 폰 배지가 남음) — 배지는 서버가 읽음 커서 변경 때만 푸시로 내려보내는데, 토큰이 바뀌거나(앱 재설치)
@@ -686,6 +694,7 @@ function Shell({ session }) {
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState(() => (isPhone && PULL_RESTORE_PAGES.has(initialSnap?.page) ? initialSnap.page : (isPhone ? 'home' : 'chat')));
   pageRef.current = page; // saveScreenSnapshot(위)이 최신 page를 보게 — page state 선언이 그 콜백보다 늦어 ref로 연결
+  shellLink.page = page; shellLink.orgId = orgId; // 탭 진단(App의 앱 수준 리스너)이 지금 화면·공간을 적게 — 종전 tap 줄의 org는 늘 '-'였다
   useEffect(() => { pushDiag('shell', `page=${page} chId=${chId ?? '-'} org=${orgId ?? '-'}`); }, [page, chId, orgId]); // 진단(설정 → 진단) — 화면 이동만 기록 // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   // ── 폰 화면 스택 = 브라우저 history(유건 제보 2026-09-15: DM 탭에서 대화를 열고 뒤로 가면 홈으로 갔다) ──
   // 루트(홈·DM·알림함·기억 탭)는 replaceState, 그 위에 여는 화면(대화·설정·검색)은 pushState. 상단 뒤로 버튼·iOS 가장자리 스와이프·
@@ -1268,6 +1277,9 @@ function Shell({ session }) {
   useEffect(() => { const ms = nextDoneIn(doneAt); if (ms == null) { if (Object.keys(doneAt).length) setDoneAt({}); return; } const tm = setTimeout(() => setDoneAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextDoneIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [doneAt]); // 크루마다 정확히 2초
   const [surprisedAt, setSurprisedAt] = useState({}); // crew_id → 멘션·수신 글이 온 시각(얼굴 '놀람' 1초, doneAt과 같은 모양·같은 만료 로직)
   useEffect(() => { const ms = nextSurpriseIn(surprisedAt); if (ms == null) { if (Object.keys(surprisedAt).length) setSurprisedAt({}); return; } const tm = setTimeout(() => setSurprisedAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextSurpriseIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [surprisedAt]); // 크루마다 정확히 1초
+  const [erroredAt, setErroredAt] = useState({}); // crew_id → 실패한 답(meta.failed)이 온 시각(얼굴 '오류' 8초, doneAt과 같은 모양·같은 만료 로직). 방송에는 meta가 없어 대화창이 새 글을 읽을 때 알린다(onCrewFailed)
+  useEffect(() => { const ms = nextErrorIn(erroredAt); if (ms == null) { if (Object.keys(erroredAt).length) setErroredAt({}); return; } const tm = setTimeout(() => setErroredAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextErrorIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [erroredAt]); // 크루마다 정확히 8초
+  const noteCrewFailed = useCallback((crewId) => { if (crewId) setErroredAt((m) => ({ ...m, [crewId]: Date.now() })); }, []);
   const avatarCtx = useMemo(() => {
     const now = Date.now();
     const working = new Set(Object.entries(typing).filter(([, at]) => now - at < TYPING_WINDOW_MS).map(([k]) => k.split(':')[1]));
@@ -1275,21 +1287,21 @@ function Shell({ session }) {
     const byId = new Map([...crews, ...myAvailable].map((c) => [c.id, c]));
     return { users: avatars, crews: Object.fromEntries(crews.filter((c) => c.avatar_url).map((c) => [c.id, c.avatar_url])),
       faceOverride: (id) => byId.get(id)?.face ?? null,
-      faceState: (id) => crewFaceState({ crew: byId.get(id) ?? null, working: working.has(id), asking: asking.has(id), surprisedAt: surprisedAt[id] ?? 0, doneAt: doneAt[id] ?? 0, now }) };
-  }, [avatars, crews, myAvailable, typing, inbox, doneAt, surprisedAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+      faceState: (id) => crewFaceState({ crew: byId.get(id) ?? null, working: working.has(id), asking: asking.has(id), surprisedAt: surprisedAt[id] ?? 0, erroredAt: erroredAt[id] ?? 0, doneAt: doneAt[id] ?? 0, now }) };
+  }, [avatars, crews, myAvailable, typing, inbox, doneAt, surprisedAt, erroredAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const crewOf = (id) => crews.find((c) => c.id === id) ?? myAvailable.find((c) => c.id === id);
   const [newOrg, setNewOrg] = useState(null);
   const [joinCode, setJoinCode] = useState(null); // 초대 코드로 가입 — 앱에는 링크가 열릴 오리진이 없어 코드를 직접 붙여 넣는다(invite.mjs)
   const inviteErr = (e) => { const k = inviteErrorKey(e?.message); return k ? t(k) : friendlyErr(e?.message ?? String(e), t); };
   const [joinPreview, setJoinPreview] = useState(null); // { code, ...msgr_invite_preview } — 받는 쪽 미리보기 카드(설계서 2-2)
   const [joinBusy, setJoinBusy] = useState(false); const [joinErr, setJoinErr] = useState(null);
-  const acceptCode = async (code, preview = null) => { // 참여 → 조직 전환 → 첫 채널(v2 channel_id, 옛 서버면 미리보기의 첫 채널) — navTo가 조직을 바꾼 뒤 연다
+  const acceptCode = async (code, preview = null) => { // 참여 → 조직 전환 → 첫 채널(v2 channel_id, 옛 서버면 미리보기의 첫 채널) — 열기 요청(requestNav)이 조직을 바꾼 뒤 연다
     const r = await acceptInvite(supabase, code);
     setJoinCode(null); setOrgMenu(false); setJoinPreview(null);
     await loadJoined(); await loadOrgs();
     if (r.orgId) setOrgId(r.orgId);
     const first = r.channelId ?? (r.legacy ? preview?.channels?.[0]?.id : null) ?? null;
-    if (first) setNavTo(first);
+    if (first) requestNav(first, 'invite');
     const name = preview?.channels?.find((c) => c.id === first)?.name;
     setNote([name ? t('inv.joined.ch', { name }) : t('org.joined'), r.skipped.length ? t('inv.joined.skipped', { n: r.skipped.length }) : ''].filter(Boolean).join(' '));
   };
@@ -2033,9 +2045,9 @@ function Shell({ session }) {
         {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} />}
         {chSheet && channel && !orgBlocked && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${tick}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} discard={(id) => discardInvite(supabase, id)} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
-        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) setNavTo(p.channels[0].id); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
+        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
-        {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) setNavTo(pushCard.channel_id); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
+        {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
           <button type="button" className={`msgr-toast${err ? ' err' : ''}`} onClick={() => { setErr(''); setNote(''); }} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${err}`) : note}</button>,
           document.body,
@@ -2058,7 +2070,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} onPersonalChanged={() => loadPersonal().catch(() => {})} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} onCrewFailed={noteCrewFailed} onPersonalChanged={() => loadPersonal().catch(() => {})} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
@@ -4340,7 +4352,7 @@ function PersonalRoomBar({ chId, uid, hasCrews, event, nameOfUser, onChanged, on
   </>);
 }
 
-function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, onPersonalChanged = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
+function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, onPersonalChanged = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
@@ -4388,6 +4400,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, onPer
   // 그 뒤 늦게 오는 첨부·반응·이미지 로드(척추 ResizeObserver)에서 같은 앵커로 계속 되맞춘다(검수 #531 HIGH-1: 첨부 착지에 3,759px 튐). 델타 가산이라 사용자 스크롤과 충돌하지 않는다.
   const [hasMore, setHasMore] = useState(true); const [older, setOlder] = useState(false); const olderRef = useRef(false); const anchor = useRef(null);
   const live = useRef({}); live.current = { msgs, atts }; // 폴·재개가 최신 목록을 보되 effect 재구독은 피한다
+  const failRef = useRef(onCrewFailed); failRef.current = onCrewFailed; // load(useCallback)의 의존을 늘리지 않게 ref로
   const yOf = (el, node) => node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
   const keepAnchor = useCallback(() => { const a = anchor.current; const el = feed.current; if (!a || !el || !el.contains(a.node)) return; const y = yOf(el, a.node); if (y !== a.y) { el.scrollTop += y - a.y; a.y = y; } }, []);
   const loadOlder = useCallback(async () => {
@@ -4422,6 +4435,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, onPer
       fetchPage: (cursor, until, limit) => q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, thread_root, created_at, edited_at, deleted_at, meta, client_msg_id')
         .eq('channel_id', chId).gt('id', cursor).lte('id', until).order('id', { ascending: true }).limit(limit)),
     }) : afterId ? rows : rows.reverse();
+    for (const id of failedCrewsInFetch(list, { afterId, preserve })) failRef.current?.(id); // 새로 도착한 실패 답 → 그 크루 얼굴 '오류'(채널을 열 때 읽은 글·재조회·오래 묵은 글은 제외)
     setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); if (preserve) return mergeRefreshedMessages(base, list, firstId, throughId); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
     setPending((cur) => reconcilePending(cur, list)); // 조회로 도착한 내 글도 낙관적 자리를 비운다
     if (!afterId && !preserve) setHasMore(rows.length >= PAGE);

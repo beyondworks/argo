@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Test the extracted Linux distribution, not the checkout or developer HOME.
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -52,7 +52,23 @@ try {
     req.on('error', reject); req.end();
   });
   assert.equal(foreignHostStatus, 421, 'Local mode must reject a foreign Host');
-  console.log(`Server tarball smoke OK: ${version}; clean HOME; HTTP 200; local identity; foreign Host 421; empty local import discovery`);
+  // argo CLI — 배포본 그대로 깨끗한 HOME에서. standalone 추적이 CLI 전용 모듈을 빠뜨리면 여기서 모듈 없음으로 깨진다.
+  const cliHome = join(temporary, 'cli'); const cliData = join(temporary, 'cli-data');
+  const cliEnv = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ARGO_CLI_HOME: cliHome, XDG_DATA_HOME: cliData, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', ARGO_MODEL_CATALOG: 'off' };
+  const cli = (...args) => spawnSync(process.execPath, [join(server, 'bin', 'argo.mjs'), ...args], { env: cliEnv, encoding: 'utf8', timeout: 90_000 });
+  const noModuleError = (r) => assert.doesNotMatch(r.stdout + r.stderr, /ERR_MODULE_NOT_FOUND|Cannot find (module|package)/, `CLI 모듈 누락: ${r.stderr}`);
+  const st = cli('status'); noModuleError(st); assert.equal(st.status, 0, st.stderr);
+  if (process.env.EXPECT_CLI_PUBLIC === '1') await access(join(server, 'bin', 'argo-public.json')); // 발행본은 계정 모드가 가능해야 한다
+  // 로컬 모드 한 턴 — 대화 코어·러너·동기화 모듈을 전부 불러온다(깨끗한 HOME이라 AI 미연결 안내로 끝난다)
+  await mkdir(cliHome, { recursive: true }); await writeFile(join(cliHome, 'cli.json'), JSON.stringify({ mode: 'local' }));
+  const { appDataRoot } = await import(`file://${join(server, 'src', 'cli', 'env.mjs')}`); // 플랫폼별 앱 폴더 — CLI와 같은 함수
+  const appRoot = appDataRoot({ env: cliEnv, home });
+  const seed = spawnSync(process.execPath, ['--input-type=module', '-e', `const { createCompany, paths } = await import(${JSON.stringify(`file://${join(server, 'src', 'workspace.mjs')}`)}); await createCompany('smoke-co', 'Smoke', 'captain', null, 'en'); (await import('node:fs')).writeFileSync(paths('smoke-co').agents + '/nova.md', '---\\nname: Nova\\nrunner: claude\\n---\\nsmoke\\n');`], { env: { ...cliEnv, ARGO_ROOT: appRoot }, encoding: 'utf8' });
+  assert.equal(seed.status, 0, seed.stderr);
+  const turn = cli('chat', 'nova', 'hello'); noModuleError(turn);
+  // 이 문구는 대화 코어(chat.mjs)만 낸다 — 시작 안내(ensureRunners)의 /ai 문구와 구분해 코어까지 불러왔는지 본다
+  assert.match(turn.stdout + turn.stderr, /No AI runner is connected/, `CLI 턴이 코어까지 가지 못했다: ${turn.stdout}${turn.stderr}`);
+  console.log(`Server tarball smoke OK: ${version}; clean HOME; HTTP 200; local identity; foreign Host 421; empty local import discovery; argo CLI status + local-mode turn`);
 } finally {
   if (child && child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }
   await rm(temporary, { recursive: true, force: true });

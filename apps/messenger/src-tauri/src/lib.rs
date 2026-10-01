@@ -19,7 +19,12 @@ mod pair;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_notification::init());
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    // OS 알림 플러그인은 데스크톱만(윈도우·리눅스 알림, 맥은 번들 밖 개발 실행의 물러남 경로). 모바일은 JS가 이 플러그인을 쓰지 않고(notify.js),
+    // iOS에서는 플러그인을 만드는 순간 UNUserNotificationCenter delegate를 가져가 원격 푸시 탭(UNPushNotificationTrigger)을 버린다 —
+    // 씬 생명주기(0.1.27~)에서는 푸시 플러그인이 웹뷰 생성 때에야 delegate를 되찾아, 꺼진 앱을 연 배너 탭이 채팅으로 가지 않았다(유건 요청 2026-10-01).
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_notification::init());
     // 창 위치·크기 기억(D53, 설치본 T8: 옮긴 창이 재실행 때 기본 자리로 돌아갔다). 표시 여부(VISIBLE)는 저장하지 않는다 —
     // 닫기가 가리기라 숨긴 채 ⌘Q하면 다음 실행에 창이 안 보이는 채로 뜬다. 빌더에 달아야 설정 파일로 만든 main 창에도 복원이 걸린다.
     #[cfg(desktop)]
