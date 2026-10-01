@@ -24,7 +24,7 @@ test('배선 — 세 메뉴가 같은 닫기를 쓰고, / 목록은 Esc로 닫�
   assert.match(src, /className="msgr-sortwrap msgr-railsort"/, '레일 정렬 감싸개에 선택자');
   assert.match(src, /if \(e\.key === 'Escape'\) \{ e\.preventDefault\(\); setSlashOff\(text\); return; \}/, '/ 목록 Esc — 글은 그대로');
   assert.match(src, /rolePick \|\| text === slashOff \? null :/, '닫은 그 글자에서는 다시 안 뜬다');
-  assert.match(src, /const leaveSearch = \(\) => \{ setSearchQ\(''\); setSearchRes\(null\); if \(page === 'search'\) setPage\('chat'\); \};/);
+  assert.match(src, /const leaveSearch = \(\) => \{ setSearchQ\(''\); setSearchRes\(null\); setSearchBusy\(false\); searchSeq\.current\+\+; if \(page === 'search'\) setPage\('chat'\); \};/);
   assert.match(src, /if \(e\.key === 'Escape'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); leaveSearch\(\); e\.currentTarget\.blur\(\); \}/, '검색 칸 Esc = 지우기 버튼');
   assert.match(src, /className="clear" onClick=\{leaveSearch\}/);
 });
