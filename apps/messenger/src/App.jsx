@@ -2109,6 +2109,7 @@ function Shell({ session }) {
             <button type="button" role="menuitem" className="danger" disabled={signingOut} onClick={() => { setMeMenu(false); signOut(); }}><I name="out" size={13} />{t('auth.signOut')}</button>
           </div>)}
           {org && !orgBlocked && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
+          {org && isPersonal && !orgBlocked && !isPhone && <span className="btn ghost msgr-foot-slot" aria-hidden="true" />}{/* 개인 공간엔 기억이 없다 — 자리는 비워 둬 알림·설정 아이콘이 조직 공간과 같은 x에 있게(공간을 오갈 때 45px씩 움직이지 않는다, LA-22). 폰은 이 줄이 머리 오른쪽 원이라 해당 없음 */}
           {org && !isPersonal && !orgBlocked && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
         </div>
