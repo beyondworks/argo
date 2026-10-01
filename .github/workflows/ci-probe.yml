@@ -1,4 +1,4 @@
-# TEMP probe (fix/windows-ci-flakes) — Windows 러너 부하 관찰용. 병합 전에 삭제한다.
+# TEMP stress (fix/windows-ci-flakes) — 안정화한 테스트를 Windows CI 조건(예열·TEMP=D:)에서 반복 실행한다. 병합 전에 삭제한다.
 name: CI probe
 on:
   push:
@@ -6,52 +6,17 @@ on:
 permissions:
   contents: read
 jobs:
-  probe:
+  stress:
     strategy:
       fail-fast: false
       matrix:
         n: [1, 2, 3]
-        tmp: [c, d]
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - name: prewarm (background)
-        shell: pwsh
-        run: |
-          $s = @'
-          $log = "$env:RUNNER_TEMP\prewarm.log"
-          $ps32 = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
-          $chrome = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
-          $t = Measure-Command { & $ps32 -NoProfile -NonInteractive -Command 'exit 0' }; "ps32 $([int]$t.TotalMilliseconds)ms" | Add-Content $log
-          $t = Measure-Command { & $chrome --headless=new --user-data-dir="$env:RUNNER_TEMP\prewarm-chrome" --no-first-run --dump-dom about:blank | Out-Null }; "chrome $([int]$t.TotalMilliseconds)ms" | Add-Content $log
-          'done' | Add-Content $log
-          '@
-          Set-Content "$env:RUNNER_TEMP\prewarm.ps1" $s
-          Start-Process pwsh -ArgumentList '-NoProfile','-File',"$env:RUNNER_TEMP\prewarm.ps1" -WindowStyle Hidden
       - uses: actions/checkout@v4
-      - name: disks
-        shell: pwsh
-        run: |
-          "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP"
-          Get-Volume | Where-Object DriveLetter | Format-Table DriveLetter,FileSystemLabel,Size,SizeRemaining -AutoSize
-          Get-PhysicalDisk | Format-Table DeviceId,FriendlyName,MediaType,BusType,Size -AutoSize
-          foreach ($dir in @("$env:TEMP\bench", "$env:RUNNER_TEMP\bench")) {
-            New-Item -ItemType Directory -Force $dir | Out-Null
-            $t = Measure-Command { 1..1500 | ForEach-Object { [IO.File]::WriteAllText("$dir\f$_.txt", 'x' * 2048) }; 1..1500 | ForEach-Object { [IO.File]::ReadAllText("$dir\f$_.txt") | Out-Null }; Remove-Item -Recurse -Force $dir }
-            "smallfiles $dir $([int]$t.TotalMilliseconds)ms"
-          }
-      - name: start sampler
-        shell: pwsh
-        run: |
-          $s = @'
-          while ($true) {
-            $cnt = (Get-Counter '\Processor(_Total)\% Processor Time','\PhysicalDisk(*)\% Disk Time' -ErrorAction SilentlyContinue).CounterSamples | ForEach-Object { "$($_.InstanceName)=$([math]::Round($_.CookedValue))" }
-            "$((Get-Date).ToString('HH:mm:ss')) $($cnt -join ' ')" | Add-Content "$env:RUNNER_TEMP\cpu.log"
-            Start-Sleep 3
-          }
-          '@
-          Set-Content "$env:RUNNER_TEMP\sampler.ps1" $s
-          Start-Process pwsh -ArgumentList '-NoProfile','-File',"$env:RUNNER_TEMP\sampler.ps1" -WindowStyle Hidden
+      - shell: pwsh
+        run: Start-Process pwsh -WindowStyle Hidden -ArgumentList '-NoProfile', '-File', 'scripts/ci-windows-prewarm.ps1'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -61,19 +26,22 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node scripts/fetch-busybox.mjs bin
-      - name: wait prewarm
-        shell: pwsh
+      - shell: pwsh
         run: |
-          for ($i = 0; $i -lt 300 -and -not (Select-String -Quiet -Path "$env:RUNNER_TEMP\prewarm.log" -Pattern '^done' -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
-          "waited ${i}s"; Get-Content "$env:RUNNER_TEMP\prewarm.log"
-      - name: npm test (tmp=${{ matrix.tmp }})
-        shell: pwsh
-        run: |
-          if ('${{ matrix.tmp }}' -eq 'd') { $env:TEMP = $env:RUNNER_TEMP; $env:TMP = $env:RUNNER_TEMP }
-          "TEMP=$env:TEMP"
-          npm test
+          $log = Join-Path $env:RUNNER_TEMP 'prewarm.log'
+          for ($i = 0; $i -lt 300 -and -not (Select-String -Quiet -Path $log -Pattern '^done' -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
+          "prewarm waited ${i}s"; Get-Content $log -ErrorAction SilentlyContinue
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+      - name: full suite once
+        run: npm test
         continue-on-error: true
-      - name: sampler log
-        if: always()
-        shell: pwsh
-        run: Get-Content "$env:RUNNER_TEMP\cpu.log"
+      - name: targeted x8 (with load)
+        shell: bash
+        run: |
+          T="test/nsis-hooks.test.mjs test/browser-command-recover.test.mjs test/browser-isolation.test.mjs test/local-asset-import.test.mjs test/room-parallel.test.mjs test/mutex-reclaim-race.test.mjs"
+          for i in 1 2 3 4 5 6 7 8; do
+            node --test $T > "$RUNNER_TEMP/iter$i.txt" 2>&1; code=$?
+            echo "iter $i exit=$code $(grep -E '^# (pass|fail|cancelled) ' "$RUNNER_TEMP/iter$i.txt" | tr '\n' ' ')"
+            grep -E '^not ok|^# (powershell-warm|isolated)' "$RUNNER_TEMP/iter$i.txt" || true
+          done
