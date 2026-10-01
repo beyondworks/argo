@@ -147,6 +147,7 @@ guardLocal(); // src를 불러오기 전 — 로컬인데 앱 폴더에 로그�
 /* ─── 입력 ─── */
 let muted = false;
 const out = new Writable({ write(chunk, _e, cb) { if (!muted) process.stdout.write(chunk); cb(); } });
+let current = null; // 답하는 중인 턴 { ws, slug, turnId, stopping } — 신호 처리기(아래 makeRl·abandonTurn)가 쓰므로 입력 구획 맨 위에 둔다(선언 전 접근 방지)
 let onSigint = null; // 대화 화면이 켜지면 Ctrl+C를 가져간다(나가지 않음). 그 전(로그인·회사 고르기)은 종전대로 종료.
 let onQueuedLine = null; // 답하는 중에 친 줄 — 질문이 떠 있지 않을 때 readline이 'line'으로만 알린다
 // 입력 앞단 — 여러 줄 붙여넣기를 한 메시지로(bracketed paste 안의 줄바꿈 → ⏎). readline은 이 변환기를 입력으로 읽고,
@@ -162,10 +163,14 @@ function pasteAwareInput() {
   process.on('exit', () => { try { process.stdout.write('\x1b[?2004l'); process.stdin.setRawMode(false); } catch { /* 이미 닫힘 */ } });
   return ttyIn;
 }
+/** 대화 화면 밖(한 번 실행·로그인·회사 고르기)의 Ctrl+C·SIGINT — 진행 중이던 턴이 있으면 중단 기록으로 마무리한 뒤 130으로 끝낸다("답 대기"가 앱에 남지 않게, 독립 검수 #800 LOW-1).
+    대화 화면은 onSigint가 가져간다(턴만 멈춤). 아래 abandonTurn은 함수 선언이라 호이스팅된다. */
+function interruptExit() { process.exitCode = 130; abandonTurn().finally(() => process.exit(130)); }
+process.on('SIGINT', () => { if (!onSigint) interruptExit(); });
 const makeRl = () => {
   if (!process.stdin.isTTY) return null;
   const r = createInterface({ input: pasteAwareInput(), output: out, terminal: true });
-  r.on('SIGINT', () => (onSigint ? onSigint() : process.exit(130)));
+  r.on('SIGINT', () => (onSigint ? onSigint() : interruptExit()));
   r.on('line', (l) => onQueuedLine?.(l));
   return r;
 };
@@ -213,7 +218,13 @@ async function login() {
   // 저장 전 터미널 확인(검수 L1) — 같은 컴퓨터의 다른 프로세스가 자기 계정을 밀어 넣어도 사람이 거절한다. 입력 장치가 없으면(파이프) 확인을 건너뛴다 —
   // 그때도 첫 주소의 비밀값·같은 출처 검사는 그대로다.
   const confirm = rl ? async (u) => { const ok = /^y/i.test(await ask(`\n${T.loginConfirm(u.email || u.id)}`)); if (!ok) console.log(T.loginDeclined); return ok; } : undefined;
-  const srv = await startLoginServer({ supabaseUrl: url, anonKey, lang, port: Number(process.env.ARGO_LOGIN_PORT) || undefined, confirm });
+  // 앱 모드 — 로그인을 기다리는 동안 앱이 켜질 수 있다. 저장 직전에 다시 확인해 거절한다(앱이 켜진 채 세션이 써지면 앱의 동기화 루프가 시작되지 않는다, 독립 검수 #800 LOW-3)
+  const save = appShared ? async (session) => {
+    const running = serverRunning(process.env.ARGO_ROOT);
+    if (running) { console.error(`\n${T.appRunningLogin(running.file)}`); process.exit(1); }
+    return (await import('../src/devicesession.mjs')).saveDeviceSession({ url, anonKey, session });
+  } : undefined;
+  const srv = await startLoginServer({ supabaseUrl: url, anonKey, lang, port: Number(process.env.ARGO_LOGIN_PORT) || undefined, confirm, save });
   console.log(`${T.loginOpen}\n\n  ${srv.url}\n`);
   if (!hasDisplay()) console.log(`${T.loginSsh(srv.port, `${process.env.USER ?? 'user'}@${hostname()}`)}\n`);
   openUrl(srv.url); console.log(T.loginWait);
@@ -273,7 +284,6 @@ async function pickCompany(uid, { interactive }) {
 const color = !!process.stdout.isTTY && !process.env.NO_COLOR;
 const { bold, dim } = style(color);
 const cols = () => process.stdout.columns || 80;
-let current = null; // 답하는 중인 턴 { ws, slug, turnId, stopping }
 /** 크루 답을 문단 단위로 흘려 보인다 — 턴 상태의 partial(크루가 이미 말한 텍스트)을 따라가고, 끝나면 남은 부분만 붙인다. */
 function checkAppUpdated() { // 앱 업데이트로 번들 파일이 바뀌었는데 이 프로세스는 옛 모듈로 돈다 — 지연 import가 새 버전 파일을 읽어 두 버전이 섞이기 전에 멈춘다
   if (appShared && appVersionChanged(REPO, startVersion)) { console.error(T.appUpdated); process.exit(1); }
@@ -481,13 +491,15 @@ async function status() {
 
 /* ─── 입구 — 대화 화면 ─── */
 async function interactive() {
+  let chosenAccount = false;
   if (!rl || !process.stdout.isTTY) { console.error(T.noTty); process.exit(1); }
   // 처음 실행 — 계정/이 컴퓨터에서만을 고른다(앱 로그인 화면의 "로컬로 시작"과 같은 선택). 공개 설정이 없는 빌드는 로컬뿐.
   if (!cliMode(cfg)) {
     const canAccount = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
     let i = canAccount ? -1 : 1;
     while (i < 0) i = await choose(T.modeAsk, T.modes); // 잘못 친 번호로 모드가 정해지지 않게 다시 묻는다
-    setMode(i === 0 ? 'account' : 'local');
+    // 앱 모드의 "계정"은 로그인에 성공한 뒤에만 저장한다(거절당하면 다음 실행에서 다시 고른다, MEDIUM-2). 폴더는 이미 앱 폴더라 먼저 저장할 이유가 없다.
+    if (appShared && i === 0) chosenAccount = true; else setMode(i === 0 ? 'account' : 'local');
   }
   process.env.ARGO_NO_LEADER = '1'; // 대화 화면은 동기화만 — 실행 담당(메신저·루틴)은 맡지 않는다(argo run·/serve가 맡는다)
   // 코어 진단 로그("[argo] 동기화 시작…")는 대화 사이에 끼지 않게 ~/.argo/cli.log로(실측: 배너 위에 떴다). 1MB 넘으면 한 번 교체 — 쌓이기만 하지 않게.
@@ -499,6 +511,7 @@ async function interactive() {
     console[k] = (...a) => { if (!isCoreLog(a[0])) return orig(...a); try { appendFileSync(logFile, `${new Date().toISOString()} ${k} ${a.map((x) => (x instanceof Error ? x.message : String(x))).join(' ')}\n`, { mode: 0o600 }); } catch { /* 로그 실패는 무시 */ } };
   }
   const s = await identity({ interactive: true });
+  if (chosenAccount) setMode('account'); // 로그인(또는 앱 계정 세션)에 성공했다
   const ws = await pickCompany(s.user.id, { interactive: true });
   const { ensureSync } = await import('../src/sync.mjs'); ensureSync(); // 여기서 한 대화가 앱에도 보이게
   const { readFileSync } = await import('node:fs');
@@ -562,7 +575,14 @@ async function interactive() {
 try {
   if (cmd === '') await interactive();
   else if (cmd === 'run') { if (appShared) { console.error(T.appNoRun); process.exit(1); } if (localMode) { console.error(T.localNoServe); process.exit(1); } rl?.close(); await runResident({ prefer: !rest.includes('--no-prefer') }); }
-  else if (cmd === 'login') { if (localMode) setMode('account'); await login(); process.exit(0); } // 로그인은 계정 폴더에 — 앱 폴더에 세션을 쓰지 않는다
+  else if (cmd === 'login') {
+    // 로그인은 계정 폴더에 — 앱 폴더에 세션을 쓰지 않는다. 앱 모드는 폴더가 이미 앱 폴더라 로그인 **성공 뒤에만** 모드를 저장한다:
+    // 앞서 저장하면 앱이 실행 중이라 거절당한 게스트 사용자가 status·chat·login 모두 막혀 빠져나갈 길이 없다(독립 검수 #800 MEDIUM-2).
+    if (localMode && !appShared) setMode('account');
+    await login();
+    if (appShared && cfg.mode !== 'account') setMode('account');
+    process.exit(0);
+  }
   else if (cmd === 'status') { await status(); process.exit(0); }
   else if (cmd === 'browser') { await browserMenu({ interactive: !!rl }); process.exit(0); }
   else if (cmd === 'service') { service(rest[0] ?? 'status'); process.exit(0); }

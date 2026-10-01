@@ -249,11 +249,12 @@ test('앱이 꺼진 상태에서 세션 없는 앱 폴더에 argo login — 저�
   assert.equal(JSON.parse(readFileSync(join(root, '.device-session.json'), 'utf8')).user.id, 'u-login', '세션은 앱 폴더에 저장');
 });
 
-test('터미널이 닫혀도(SIGHUP·SIGTERM) 진행 중이던 턴이 "답 대기"로 남지 않는다 — 중단 기록으로 마무리하고 끝낸다(검토 L-a: 앱은 실행 중에 이런 고아 턴을 정리하지 않는다)', { timeout: 120_000, skip: process.platform === 'win32' && '윈도우는 SIGHUP을 전달할 수 없다' }, async () => {
+for (const [sig, code] of [['SIGHUP', 129], ['SIGINT', 130]]) {
+test(`터미널이 닫혀도(${sig}) 진행 중이던 턴이 "답 대기"로 남지 않는다 — 중단 기록으로 마무리하고 끝낸다(검토 L-a: 앱은 실행 중에 이런 고아 턴을 정리하지 않는다)`, { timeout: 120_000, skip: process.platform === 'win32' && '윈도우는 POSIX 신호를 전달할 수 없다' }, async () => {
   // 모델 응답이 오지 않는 서버 — 턴이 진행 중인 채로 신호를 보낸다
   const hang = http.createServer((req) => { req.on('data', () => {}); req.on('end', () => { /* 응답하지 않는다 */ }); });
   await new Promise((r) => hang.listen(0, '127.0.0.1', r));
-  const home = join(base, 'home-hup'); mkdirSync(home, { recursive: true });
+  const home = join(base, `home-hup-${sig}`); mkdirSync(home, { recursive: true });
   const root = appDataRoot({ env: { HOME: home }, platform: process.platform, home });
   const over = { HOME: home, USERPROFILE: home, LOCALAPPDATA: join(home, 'AppData', 'Local'), ARGO_CLAUDE_BASE_URL: `http://127.0.0.1:${hang.address().port}` };
   const r0 = spawnSync(process.execPath, ['--input-type=module', '-e', `
@@ -263,25 +264,26 @@ test('터미널이 닫혀도(SIGHUP·SIGTERM) 진행 중이던 턴이 "답 대�
     const fs = await import('node:fs/promises');
     await createCompany('hup-co', 'HUP 회사', 'captain', null, 'ko'); await enableGuestMode();
     await fs.writeFile(paths('hup-co').agents + '/nova.md', '---\\nname: 노바\\nrole: 확인\\nrunner: claude\\n---\\n확인용.\\n');
-    await saveRunnerCred('hup-co', 'claude', 'apikey', 'sk-ant-api03-' + 'x'.repeat(80));`], { env: { ...env, ...over, ARGO_ROOT: root }, encoding: 'utf8' });
+    await saveRunnerCred('hup-co', 'claude', 'apikey', 'sk-ant-api03-' + 'x'.repeat(80));`], { env: { ...env, ...over, ARGO_ROOT: root, ARGO_CLI_HOME: join(base, `cli-hup-${sig}`) }, encoding: 'utf8' });
   assert.equal(r0.status, 0, r0.stderr);
-  mkdirSync(CLIH, { recursive: true }); writeFileSync(join(CLIH, 'cli.json'), JSON.stringify({ mode: 'local' }));
+  const cliHome = join(base, `cli-hup-${sig}`); mkdirSync(cliHome, { recursive: true }); writeFileSync(join(cliHome, 'cli.json'), JSON.stringify({ mode: 'local' }));
   const f = join(root, 'hup-co', 'chats', 'nova.json');
-  const child = spawn(process.execPath, [join(REPO, 'bin', 'argo.mjs'), 'chat', 'nova', '끝나지 않는 지시'], { env: { ...env, ...over } });
+  const child = spawn(process.execPath, [join(REPO, 'bin', 'argo.mjs'), 'chat', 'nova', '끝나지 않는 지시'], { env: { ...env, ...over, ARGO_CLI_HOME: cliHome } });
   let err = ''; child.stderr.on('data', (d) => (err += d));
   const closed = new Promise((res) => child.on('close', (code, sig) => res({ code, sig })));
   try {
     for (let i = 0; i < 200 && !(existsSync(f) && JSON.parse(readFileSync(f, 'utf8')).messages?.some((m) => m.awaiting)); i++) await new Promise((r) => setTimeout(r, 100));
     assert.ok(JSON.parse(readFileSync(f, 'utf8')).messages.some((m) => m.awaiting), `턴이 시작돼 대기 표시가 있어야 한다\n${err}`);
-    child.kill('SIGHUP');
+    child.kill(sig);
     const end = await Promise.race([closed, new Promise((r) => setTimeout(() => r('timeout'), 30_000))]);
     assert.notEqual(end, 'timeout', '신호를 받으면 곧 끝난다');
-    assert.equal(end.code, 129, `SIGHUP 종료 코드 — ${JSON.stringify(end)}\n${err}`);
+    assert.equal(end.code, code, `${sig} 종료 코드 — ${JSON.stringify(end)}\n${err}`);
     const msgs = JSON.parse(readFileSync(f, 'utf8')).messages;
     assert.ok(msgs.every((m) => !m.awaiting), '답 대기 표시가 남으면 앱 화면에 앱을 재시작할 때까지 "답 대기"가 남는다');
     assert.ok(msgs.some((m) => m.who === 'user' && (m.aborted || m.failed)), '중단 기록으로 마무리');
   } finally { child.kill('SIGKILL'); hang.close(); }
 });
+}
 
 // ARGO_NO_OPEN=1이면 argo login이 브라우저를 열지 않는다 — 가짜 open이 불린 기록으로 본다(진짜 브라우저는 PATH에 없다). 없으면 종전대로 연다(대조군).
 for (const noOpen of [true, false]) {
@@ -300,3 +302,139 @@ for (const noOpen of [true, false]) {
     } finally { child.kill('SIGKILL'); }
   });
 }
+
+/* ─── 독립 검수 #800 MEDIUM-2·LOW-1·LOW-3 ─── */
+const guestSeed = (home, root, cliHome, mode = 'local') => {
+  mkdirSync(cliHome, { recursive: true }); if (mode) writeFileSync(join(cliHome, 'cli.json'), JSON.stringify({ mode }));
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    const { createCompany, paths } = await import(${JSON.stringify(seedModule('workspace.mjs'))});
+    const { saveRunnerCred } = await import(${JSON.stringify(seedModule('runners/creds.mjs'))});
+    const { enableGuestMode } = await import(${JSON.stringify(seedModule('gueststate.mjs'))});
+    const fs = await import('node:fs/promises');
+    await createCompany('g-co', '게스트 회사', 'captain', null, 'ko'); await enableGuestMode();
+    await fs.writeFile(paths('g-co').agents + '/nova.md', '---\\nname: 노바\\nrole: 확인\\nrunner: claude\\n---\\n확인용.\\n');
+    await saveRunnerCred('g-co', 'claude', 'apikey', 'sk-ant-api03-' + 'x'.repeat(80));`], { env: { ...env, HOME: home, USERPROFILE: home, LOCALAPPDATA: join(home, 'AppData', 'Local'), ARGO_ROOT: root, ARGO_CLI_HOME: cliHome }, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+};
+
+test('앱이 실행 중이라 login을 거절당한 게스트 사용자는 CLI를 계속 쓸 수 있다 — 거절 전에 모드가 계정으로 저장되면 status·chat·login 모두 막혀 빠져나갈 길이 없다(MEDIUM-2)', { timeout: 180_000 }, async () => {
+  const home = join(base, 'home-m2'); mkdirSync(home, { recursive: true });
+  const cliHome = join(base, 'cli-m2');
+  const root = appDataRoot({ env: { HOME: home }, platform: process.platform, home });
+  guestSeed(home, root, cliHome);
+  const over = { HOME: home, USERPROFILE: home, LOCALAPPDATA: join(home, 'AppData', 'Local'), ARGO_CLI_HOME: cliHome };
+  writePresence(root, { pid: process.pid }); // 앱 실행 중
+  try {
+    const login = await argo(['login'], over);
+    assert.equal(login.status, 1); assert.match(login.stderr + login.stdout, /Argo 앱이 실행 중입니다/);
+    assert.equal(JSON.parse(readFileSync(join(cliHome, 'cli.json'), 'utf8')).mode, 'local', '거절됐으니 모드는 그대로(로그인에 성공했을 때만 계정으로 저장)');
+    const st = await argo(['status'], over);
+    assert.match(st.stdout, /이 컴퓨터에서만\(로그인 없음\)/, `status가 여전히 로컬 — ${st.stdout}${st.stderr}`);
+    assert.doesNotMatch(st.stdout, /로그인 안 됨/);
+    const chat = await argo(['chat', 'nova', '게스트로 계속'], over);
+    assert.equal(chat.status, 0, chat.stderr); assert.match(chat.stdout, /앱 폴더 답/);
+    assert.equal((await argo(['login'], over)).status, 1, '다시 login해도 같은 거절(상태가 망가지지 않았다)');
+  } finally { clearPresence(root, { pid: process.pid }); }
+});
+
+const PTY = process.platform !== 'win32' && spawnSync('python3', ['-c', 'import pty'], { stdio: 'ignore' }).status === 0;
+// 진짜 터미널 운전기(test/cli-repl.test.mjs와 같은 방식, 인자를 JSON으로 받는다) — 결과는 JSON 한 줄
+const PTY_DRIVER = `
+import pty, os, sys, time, select, json, re
+cfg = json.loads(sys.argv[1]); pid, fd = pty.fork()
+if pid == 0: os.execvp(cfg['argv'][0], cfg['argv'])
+def rd(t, until=None):
+    out=b''; end=time.time()+t
+    while time.time()<end:
+        r,_,_=select.select([fd],[],[],0.1)
+        if r:
+            try: out+=os.read(fd,65536)
+            except OSError: break
+        if until and until in re.sub(r'\\x1b\\[[0-9;]*[A-Za-z]', '', out.decode(errors='replace')).replace('\\r', ''): break
+    return out.decode(errors='replace')
+res=[{'label':'boot','out':rd(cfg.get('bootWait',40), cfg.get('bootUntil'))}]
+for s in cfg['steps']:
+    try: os.write(fd, s['keys'].encode())
+    except OSError: res.append({'label':s['label'],'out':'<<process gone>>'}); continue
+    res.append({'label':s['label'],'out':rd(s.get('wait',1.5), s.get('until'))})
+alive = True; end = time.time() + cfg.get('settle', 10)  # 끝날 때까지 기다린다(부하가 큰 전체 시험에서도 흔들리지 않게) — 시간이 다 되도록 안 끝나면 살아 있는 것
+tail = b''
+while time.time() < end:
+    if os.waitpid(pid, os.WNOHANG)[0] != 0: alive = False; break
+    r,_,_ = select.select([fd],[],[],0.1)  # 끝나는 동안에도 출력을 비운다 — 안 읽으면 맥 pty는 슬레이브가 닫히길 기다리며 종료가 멈춘다
+    if r:
+        try: tail += os.read(fd, 65536)
+        except OSError: pass
+res[-1]['out'] += tail.decode(errors='replace')
+if alive: os.kill(pid, 9); os.waitpid(pid, 0)
+print(json.dumps({'res':res,'alive':alive}))
+`;
+const runPty = (cfg, envOver) => new Promise((resolve) => {
+  const c = spawn('python3', ['-c', PTY_DRIVER, JSON.stringify({ argv: [process.execPath, join(REPO, 'bin', 'argo.mjs'), ...(cfg.args ?? [])], ...cfg })], { env: { ...env, ...envOver } });
+  let o = ''; let e = ''; c.stdout.on('data', (d) => (o += d)); c.stderr.on('data', (d) => (e += d));
+  c.on('close', () => { try { resolve(JSON.parse(o.trim().split('\n').pop())); } catch { resolve({ res: [], alive: null, err: e.slice(-600) + o.slice(-300) }); } });
+});
+const ptyOut = (r) => r.res.map((x) => x.out).join('\n').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+
+test('대화형 첫 실행에서 "계정"을 골랐다가 앱 실행 중이라 거절당해도 모드가 저장되지 않아 다음 실행에서 다시 고를 수 있다(MEDIUM-2)', { skip: !PTY && 'python3 pty 필요(맥·리눅스)', timeout: 180_000 }, async () => {
+  const home = join(base, 'home-m2i'); mkdirSync(home, { recursive: true });
+  const cliHome = join(base, 'cli-m2i');
+  const root = appDataRoot({ env: { HOME: home }, platform: process.platform, home });
+  guestSeed(home, root, cliHome, null); // cli.json 없음 = 처음 실행
+  const over = { HOME: home, USERPROFILE: home, LOCALAPPDATA: join(home, 'AppData', 'Local'), ARGO_CLI_HOME: cliHome };
+  writePresence(root, { pid: process.pid });
+  try {
+    const first = await runPty({ bootUntil: '번호: ', steps: [{ label: 'account', keys: '1\r', wait: 20, until: '앱에서 로그인하세요' }] }, over);
+    assert.match(ptyOut(first), /Argo 앱이 실행 중입니다/, first.err ?? ptyOut(first));
+    assert.equal(first.alive, false, '거절하고 끝난다');
+    const saved = existsSync(join(cliHome, 'cli.json')) ? JSON.parse(readFileSync(join(cliHome, 'cli.json'), 'utf8')).mode : null;
+    assert.notEqual(saved, 'account', '로그인에 성공하지 못했으니 계정 모드로 저장하면 안 된다');
+    const second = await runPty({ bootUntil: '번호: ', steps: [{ label: 'local', keys: '2\r', wait: 60, until: '대화 상대' }, { label: 'bye', keys: 'exit\r', wait: 5 }] }, over);
+    assert.match(ptyOut(second), /Argo를 어떻게 쓸까요\?/, '다음 실행에서 다시 묻는다');
+    assert.match(ptyOut(second), /대화 상대: 노바/, '이 컴퓨터에서만을 골라 게스트로 계속 쓴다');
+  } finally { clearPresence(root, { pid: process.pid }); }
+});
+
+test('한 번 실행 argo chat 중 Ctrl+C(진짜 터미널)도 진행 중이던 턴을 중단 기록으로 마무리하고 130으로 끝난다 — "답 대기"가 남지 않는다(LOW-1)', { skip: !PTY && 'python3 pty 필요(맥·리눅스)', timeout: 180_000 }, async () => {
+  const hang = http.createServer((req) => { req.on('data', () => {}); req.on('end', () => {}); });
+  await new Promise((r) => hang.listen(0, '127.0.0.1', r));
+  const home = join(base, 'home-c1'); mkdirSync(home, { recursive: true });
+  const cliHome = join(base, 'cli-c1');
+  const root = appDataRoot({ env: { HOME: home }, platform: process.platform, home });
+  guestSeed(home, root, cliHome);
+  const over = { HOME: home, USERPROFILE: home, LOCALAPPDATA: join(home, 'AppData', 'Local'), ARGO_CLI_HOME: cliHome, ARGO_CLAUDE_BASE_URL: `http://127.0.0.1:${hang.address().port}` };
+  try {
+    const r = await runPty({ args: ['chat', 'nova', '끝나지 않는 지시'], bootUntil: '작업 중', bootWait: 60, steps: [{ label: 'ctrlc', keys: '\x03', wait: 20 }], settle: 20 }, over);
+    assert.equal(r.alive, false, `Ctrl+C로 끝난다\n${r.err ?? ptyOut(r)}`);
+    const msgs = JSON.parse(readFileSync(join(root, 'g-co', 'chats', 'nova.json'), 'utf8')).messages;
+    assert.ok(msgs.some((m) => m.who === 'user'), '턴이 시작됐다');
+    assert.ok(msgs.every((m) => !m.awaiting), '"답 대기"가 남으면 앱 화면에 앱을 재시작할 때까지 남는다');
+    assert.ok(msgs.some((m) => m.aborted || m.failed), '중단 기록');
+  } finally { hang.close(); }
+});
+
+test('앱이 꺼진 상태에서 시작한 로그인을 기다리는 동안 앱이 켜지면 저장 직전에 다시 확인해 거절한다 — 앱 폴더에 세션을 쓰지 않는다(LOW-3)', { timeout: 120_000 }, async () => {
+  const { startFakeSupabase } = await import('./helpers/fake-supabase-http.mjs');
+  const fake = await startFakeSupabase({ userId: 'u-late' });
+  const home = join(base, 'home-l3'); mkdirSync(home, { recursive: true });
+  const root = appDataRoot({ env: { HOME: home }, platform: process.platform, home });
+  const over = { HOME: home, USERPROFILE: home, LOCALAPPDATA: join(home, 'AppData', 'Local'), NEXT_PUBLIC_SUPABASE_URL: fake.url, NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-fake', ARGO_LOGIN_PORT: '0', ARGO_CLI_HOME: join(base, 'cli-l3'), ...noRealBrowser(join(base, 'fakebin-l3')) };
+  const child = spawn(process.execPath, [join(REPO, 'bin', 'argo.mjs'), 'login'], { env: { ...env, ...over } });
+  let out = ''; let err = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (err += d));
+  const exited = new Promise((res) => child.on('close', res));
+  try {
+    let url; for (let i = 0; i < 100 && !url; i++) { url = out.match(/http:\/\/127\.0\.0\.1:\d+\/\?k=[0-9a-f]+/)?.[0]; if (!url) await new Promise((r) => setTimeout(r, 100)); }
+    assert.ok(url, `로그인 주소\n${out}${err}`);
+    const get = (u) => new Promise((resolve, reject) => http.get(u, (res) => { let b = ''; res.on('data', (c) => (b += c)); res.on('end', () => resolve(b)); }).on('error', reject));
+    const nonce = decodeURIComponent((await get(url)).match(/redirect_to=([^"&]+)/)[1]).match(/cli=([0-9a-f]+)/)[1];
+    writePresence(root, { pid: process.pid }); // 기다리는 사이 앱이 켜졌다
+    const status = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: new URL(url).port, path: '/bind', method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      req.on('error', () => resolve(0)); req.end(JSON.stringify({ cli: nonce, access_token: 'tok', refresh_token: 'rt-late' })); // 거절하고 끝나면 연결이 끊긴다 — 0으로 본다
+    });
+    assert.notEqual(status, 200, '앱이 켜진 뒤에는 저장하지 않는다');
+    assert.equal(await exited, 1, `거절하고 끝난다\n${out}${err}`);
+    assert.match(out + err, /Argo 앱이 실행 중입니다/);
+    assert.equal(existsSync(join(root, '.device-session.json')), false, '앱 폴더에 세션이 쓰이면 앱의 동기화 루프가 시작되지 않는다(M-c)');
+  } finally { child.kill('SIGKILL'); await fake.close(); clearPresence(root, { pid: process.pid }); }
+});
