@@ -30,7 +30,8 @@
 .msgr-av.crew { border-radius: 9px; background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 .msgr-av.crew .star { position: absolute; right: -6px; top: -6px; width: 15px; height: 15px; border-radius: 999px; background: var(--mark); border: 2px solid var(--bg); display: grid; place-items: center; z-index: 1; }
 .msgr-av.crew .star svg { width: 8px; height: 8px; fill: var(--mark-fg); }
-.msgr-av.crew.company .star { border-radius: 4px; background: var(--primary); border-color: var(--mark); color: var(--mark); }
+.msgr-av.crew.company .star { border-radius: 4px; background: var(--primary); border-color: var(--mark); color: var(--primary-fg); box-shadow: 0 0 0 1.5px var(--bg); }
+/* 글자(해시)는 배경(--primary)과 짝인 --primary-fg — 종전 color: var(--mark)는 graphite에서 mark = primary라 배경과 같은 색(해시가 안 보이고 검은 네모만 남음, 대비 1:1)이었고 argo 테마도 1.2:1이었다(LA-03). 바깥 --bg 고리는 같은 색인 아바타 타일과 배지가 한 덩이로 보이지 않게 */
 .msgr-av.crew.company .star svg { width: 9px; height: 9px; }
 .msgr-tier { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); color: var(--fg-2); }
 .msgr-tier.company { border-color: var(--mark); color: var(--fg); }
@@ -621,11 +622,11 @@
 .msgr-setcard .msgr-tag.on { color: var(--ok); border-color: currentColor; }
 .msgr-node-cmd { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); margin: 4px 0 8px; }
 .msgr-node-cmd code { display: block; font: 12px/1.6 var(--mono); word-break: break-all; user-select: all; white-space: pre-wrap; } /* 에이전트 설정은 두 줄(URL·토큰) */
-.msgr-node-cmd .acts { display: flex; gap: 6px; }
+.msgr-node-cmd .acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; } /* 기본 stretch면 만료 안내 글자가 단추 위쪽에 붙어 중심이 6px 높았다(LA-26) */
 .msgr-node-cmd code.inl, .msgr-auto code.inl { display: inline; padding: 1px 5px; border-radius: 5px; background: var(--card); border: 1px solid var(--border-soft, var(--border)); font: 12px var(--mono); white-space: normal; } /* 문장 속 명령·경로 — 위의 블록 코드(설정 두 줄)와 달리 글 사이에 이어진다(UX 점검 D) */
 .msgr-node-cmd .note { margin: 0; }
-.msgr-remote-add { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.msgr-remote-add .msgr-input.inline { flex: 1 1 190px; min-width: 160px; }
+.msgr-remote-add { display: flex; flex: 1 1 100%; min-width: 0; align-items: center; flex-wrap: wrap; gap: 6px; } /* inline-flex는 상위 .row 안에서 내용 폭으로 계산돼 입력칸 옆에 자리가 350px 남아도 버튼이 아래 줄로 내려갔다 — 줄 전체 폭을 쓰고 정말 모자랄 때만 접는다(LA-25) */
+.msgr-remote-add .msgr-input.inline { flex: 1 1 190px; min-width: 160px; max-width: 320px; }
 .msgr-localimport { display: grid; gap: 12px; padding: 14px; margin: 10px 0; border: 1px solid var(--border); border-radius: 14px; background: var(--card-2); }
 .msgr-localimport-head { display: grid; gap: 3px; font-size: 13px; line-height: 1.5; }
 .msgr-localimport-head > span:last-child { color: var(--fg-2); }
@@ -732,7 +733,10 @@
 .msgr-railrow.nomore .item { padding-right: 0; } /* '더보기' 점 버튼이 없는 행(레일 '내 에이전트') — 오른쪽 여백을 남기지 않는다 */
 .msgr-railrow .msgr-orglabel, .msgr-railrow .msgr-relink { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--fg-3); } /* 개인 공간 봇 쌍둥이: 조직 이름(같은 에이전트가 둘 이상일 때) · 다시 연결 필요 */
 .msgr-railrow .msgr-relink { color: var(--fg-2); }
-.msgr-railrow.paused .name { color: var(--fg-3); } /* 대화할 수 없는 봇 쌍둥이(다시 연결 필요·조직을 나감) — 흐리게 */
+.msgr-railrow.paused .name { font-style: italic; } /* 대화할 수 없는 봇 쌍둥이(다시 연결 필요·조직을 나감). 글자색을 --fg-2 → --fg-3로 흐리는 종전 방식은 graphite 라이트 레일에서 대비가 4.16:1(기준 4.5 미달)인데도 다른 행과 구분이 안 됐다(LA-29) — 글자 색은 그대로 두고(5.69:1) 기울임·흐린 아바타·빈 상태 점·테두리 있는 이유 표시로 한눈에 구분한다 */
+.msgr-railrow.paused .msgr-av { opacity: .42; filter: grayscale(1); }
+.msgr-railrow.paused .msgr-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fg-3); }
+.msgr-railrow.paused .msgr-relink { color: var(--fg); font-weight: 600; padding: 0 7px; border: 1px solid var(--border); border-radius: 999px; line-height: 16px; }
 .msgr-railrow .more { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--fg-3); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background 120ms ease; }
 .msgr-railrow.open .more, .msgr-railrow .more:focus-visible { opacity: 1; } @media (hover: hover) { .msgr-railrow:hover .more { opacity: 1; } }
 @media (hover: hover) { .msgr-railrow .more:hover { background: var(--card-2); color: var(--fg); } } .msgr-railrow .more:active { background: var(--card-2); color: var(--fg); }
@@ -1288,7 +1292,13 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard .qlabel { font-size: 13px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard h3 { font-size: 12.5px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard .row { gap: 8px; }
-  .msgr-phone .msgr-botrow .row { justify-content: flex-end; row-gap: 0; }
+  .msgr-phone .msgr-botrow .row { justify-content: flex-start; row-gap: 0; }
+  .msgr-phone .msgr-botrow .row .main { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; row-gap: 2px; align-items: center; } /* 이름 아래 줄에 상태가 전부 보인다 — 한 줄에 말줄임이면 '아직 접…'·'책임…'으로 잘렸다(LA-13) */
+  .msgr-phone .msgr-botrow .row .main .msgr-av { grid-row: 1 / span 2; align-self: start; margin-top: 2px; }
+  .msgr-phone .msgr-botrow .row .main .name { grid-column: 2; max-width: none; }
+  .msgr-phone .msgr-botrow .row .main .sub { grid-column: 2; white-space: normal; overflow: visible; text-overflow: clip; }
+  .msgr-phone .msgr-botrow .row .main + .btn { margin-left: 20px; } /* 아래 줄 단추는 이름 열(아바타 22 + 간격 8)에서 시작 — 단추 안쪽 여백 10을 빼면 글자가 이름과 같은 x다(LA-13) */
+  .msgr-phone .msgr-botrow .row .main + .confirm-inline { margin-left: 30px; }
   .msgr-phone .msgr-botrow .row .main { flex: 1 1 100%; } /* 폰 폭에선 이름·상태가 한 줄을 다 쓰고 이름 바꾸기·토큰·삭제는 아래 줄 오른쪽 — 한 줄에 몰면 이름이 '월터 - v'로 잘렸다(유건 2026-09-29) */
   .msgr-phone .msgr-main .msgr-thread.page .msgr-setcard summary { min-height: 32px; font-size: 13px; }
   .msgr-phone .msgr-main .msgr-thread.page .msgr-klabel { font-size: 11.5px; }
