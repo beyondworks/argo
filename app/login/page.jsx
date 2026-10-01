@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
 import { Logo, Spinner } from '../ui';
 import { useLang } from '../i18n';
+import { markSplashReady } from '../splash-continue';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -27,6 +28,7 @@ export default function Login() {
 
   const supabase = URL_ENV && KEY_ENV ? createBrowserClient(URL_ENV, KEY_ENV) : null;
 
+  useEffect(() => { markSplashReady(); }, []); // 데스크톱 시작 스플래시(북극성 2단계) — 로그인 카드는 바로 그릴 수 있다
   useEffect(() => {
     setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri'));
     setIsLoopback(LOOPBACK_RE.test(window.location.hostname));
