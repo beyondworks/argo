@@ -11,36 +11,43 @@ jobs:
       fail-fast: false
       matrix:
         n: [1, 2, 3]
+        tmp: [c, d]
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - name: machine
-        shell: pwsh
-        run: |
-          "cpus=$env:NUMBER_OF_PROCESSORS"
-          Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Format-List
-          Get-MpComputerStatus | Select-Object AMRunningMode,RealTimeProtectionEnabled,OnAccessProtectionEnabled,BehaviorMonitorEnabled | Format-List
-          (Get-MpPreference).ExclusionPath
-      - name: cold launches (idle)
-        shell: pwsh
-        run: |
-          $ps32 = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
-          $chrome = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
-          foreach ($i in 1..3) { $t = Measure-Command { & $ps32 -NoProfile -NonInteractive -Command 'exit 0' }; "ps32 #$i $([int]$t.TotalMilliseconds)ms" }
-          foreach ($i in 1..3) { $d = Join-Path $env:RUNNER_TEMP "cp$i"; $t = Measure-Command { & $chrome --headless=new --user-data-dir=$d --no-first-run --dump-dom about:blank | Out-Null }; "chrome #$i $([int]$t.TotalMilliseconds)ms" }
-      - name: start samplers
+      - name: prewarm (background)
         shell: pwsh
         run: |
           $s = @'
-          $prev = @{}
+          $log = "$env:RUNNER_TEMP\prewarm.log"
+          $ps32 = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+          $chrome = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
+          $t = Measure-Command { & $ps32 -NoProfile -NonInteractive -Command 'exit 0' }; "ps32 $([int]$t.TotalMilliseconds)ms" | Add-Content $log
+          $t = Measure-Command { & $chrome --headless=new --user-data-dir="$env:RUNNER_TEMP\prewarm-chrome" --no-first-run --dump-dom about:blank | Out-Null }; "chrome $([int]$t.TotalMilliseconds)ms" | Add-Content $log
+          'done' | Add-Content $log
+          '@
+          Set-Content "$env:RUNNER_TEMP\prewarm.ps1" $s
+          Start-Process pwsh -ArgumentList '-NoProfile','-File',"$env:RUNNER_TEMP\prewarm.ps1" -WindowStyle Hidden
+      - uses: actions/checkout@v4
+      - name: disks
+        shell: pwsh
+        run: |
+          "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP"
+          Get-Volume | Where-Object DriveLetter | Format-Table DriveLetter,FileSystemLabel,Size,SizeRemaining -AutoSize
+          Get-PhysicalDisk | Format-Table DeviceId,FriendlyName,MediaType,BusType,Size -AutoSize
+          foreach ($dir in @("$env:TEMP\bench", "$env:RUNNER_TEMP\bench")) {
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            $t = Measure-Command { 1..1500 | ForEach-Object { [IO.File]::WriteAllText("$dir\f$_.txt", 'x' * 2048) }; 1..1500 | ForEach-Object { [IO.File]::ReadAllText("$dir\f$_.txt") | Out-Null }; Remove-Item -Recurse -Force $dir }
+            "smallfiles $dir $([int]$t.TotalMilliseconds)ms"
+          }
+      - name: start sampler
+        shell: pwsh
+        run: |
+          $s = @'
           while ($true) {
-            $now = Get-Date
-            $rows = foreach ($p in Get-Process) { $c = [double]$p.CPU; $d = if ($prev.ContainsKey($p.Id)) { $c - $prev[$p.Id] } else { 0 }; $prev[$p.Id] = $c; [pscustomobject]@{ n = $p.ProcessName; d = $d } }
-            $g = $rows | Group-Object n | ForEach-Object { [pscustomobject]@{ n = $_.Name; c = $_.Count; d = [math]::Round(($_.Group | Measure-Object d -Sum).Sum, 1) } } | Sort-Object d -Descending | Select-Object -First 6
-            $cnt = (Get-Counter '\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\% Disk Time','\Memory\Available MBytes' -ErrorAction SilentlyContinue).CounterSamples | ForEach-Object { [math]::Round($_.CookedValue) }
-            "$($now.ToString('HH:mm:ss')) cpu/disk/memMB=$($cnt -join '/') " + (($g | ForEach-Object { "$($_.n)x$($_.c)=$($_.d)" }) -join ' ') | Add-Content "$env:RUNNER_TEMP\cpu.log"
-            Start-Sleep 4
+            $cnt = (Get-Counter '\Processor(_Total)\% Processor Time','\PhysicalDisk(*)\% Disk Time' -ErrorAction SilentlyContinue).CounterSamples | ForEach-Object { "$($_.InstanceName)=$([math]::Round($_.CookedValue))" }
+            "$((Get-Date).ToString('HH:mm:ss')) $($cnt -join ' ')" | Add-Content "$env:RUNNER_TEMP\cpu.log"
+            Start-Sleep 3
           }
           '@
           Set-Content "$env:RUNNER_TEMP\sampler.ps1" $s
@@ -54,8 +61,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node scripts/fetch-busybox.mjs bin
-      - name: npm test
-        run: npm test
+      - name: wait prewarm
+        shell: pwsh
+        run: |
+          for ($i = 0; $i -lt 300 -and -not (Select-String -Quiet -Path "$env:RUNNER_TEMP\prewarm.log" -Pattern '^done' -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
+          "waited ${i}s"; Get-Content "$env:RUNNER_TEMP\prewarm.log"
+      - name: npm test (tmp=${{ matrix.tmp }})
+        shell: pwsh
+        run: |
+          if ('${{ matrix.tmp }}' -eq 'd') { $env:TEMP = $env:RUNNER_TEMP; $env:TMP = $env:RUNNER_TEMP }
+          "TEMP=$env:TEMP"
+          npm test
         continue-on-error: true
       - name: sampler log
         if: always()
