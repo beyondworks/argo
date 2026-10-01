@@ -835,7 +835,8 @@ function Shell({ session }) {
   useEffect(() => { if (!edgeEnabled) setSwipeTo(null); }, [edgeEnabled]); // 제스처 도중 핸들러가 떨어지면 onEnd가 안 오므로 여기서 해제(검수 L-5)
   const edgeBack = useEdgeSwipeBack(goBack, edgeEnabled, { underlay: () => lastRoot.current, onStart: (to) => setSwipeTo(to), onEnd: () => setSwipeTo(null) }); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(그 전 화면)
   const [orgMenu, setOrgMenu] = useState(false);
-  const [chPlus, setChPlus] = useState(false); // 폰 채널 탭 머리의 + 메뉴(새 채널 만들기 / 채널 찾아보기)
+  const [chPlus, setChPlus] = useState(false);
+  const [reqOpen, setReqOpen] = useState(false); // 폰 친구 탭 '받은 친구 요청 N' 펼침 // 폰 채널 탭 머리의 + 메뉴(새 채널 만들기 / 채널 찾아보기)
   const [chCount, setChCount] = useState({}); // 채널 id → 참여 인원(폰 채널 줄의 인원 수)
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
@@ -2052,6 +2053,7 @@ function Shell({ session }) {
   const approvalItems = inbox.filter((it) => it.kind === 'approval'); // 결재 대기(단계 1: 지금 공간 — 알림함과 같은 자료)
   const tabBadgeN = tabBadges({ hereKey, here: hereCount, hereReady: unreadSpace === orgId, totals: spaceTotals, orgIds: orgIdList, approvals: approvalItems.length, friendRequests: friendReqs.length });
   const tabQText = tabQ ?? '';
+  const decideFriend = async (f, accept) => { try { await q(supabase.rpc('msgr_friend_decide', { other: f.user_id, accept })); setNote(t(accept ? 'friends.accepted' : 'friends.declined')); await onFriendsChanged(); } catch (e) { setErr(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : e.message); } };
   const openSettings = (tab = null) => { setTabQ(null); setSettingsTab(tab); setPage('settings'); };
   const gearAct = { key: 'gear', icon: 'gear', label: t('ui.settings'), run: () => openSettings() };
   const searchAct = { key: 'search', icon: 'search', label: t('phone.hdr.search'), on: tabQ !== null, run: () => setTabQ((v) => (v === null ? '' : null)) };
@@ -2148,7 +2150,12 @@ function Shell({ session }) {
         {rootTab === 'friends' && (<>
           {(() => { const label = me?.display_name || session.user.email; return !tabQText.trim() && (
             <button type="button" className="item ph-me" onClick={() => openSettings('me')}><Av name={label} size="kk" userId={uid} /><span className="ph-kbody"><span className="name">{label}</span><span className="snip">{t('phone.friends.meSub')}</span></span></button>); })()}
-          {friendReqs.length > 0 && !tabQText.trim() && <button type="button" className="item ph-reqrow" onClick={() => openSettings('friends')}><span className="ph-reqic"><I name="personplus" size={18} /></span><span className="name">{t('phone.friends.requests', { n: friendReqs.length })}</span><I name="caret" size={14} className="ph-chev" /></button>}
+          {friendReqs.length > 0 && !tabQText.trim() && (<>
+            <button type="button" className="item ph-reqrow" aria-expanded={reqOpen} onClick={() => setReqOpen((v) => !v)}><span className="ph-reqic"><I name="personplus" size={18} /></span><span className="name">{t('phone.friends.requests', { n: friendReqs.length })}</span><I name="caret" size={14} className={`ph-chev${reqOpen ? ' open' : ''}`} /></button>
+            {reqOpen && <div className="ph-reqs">{friendReqs.map((f) => (
+              <div key={f.user_id} className="ph-req"><Av name={f.display_name || f.handle || '?'} size="lg" userId={f.user_id} /><span className="name">{f.display_name || f.handle || f.user_id.slice(0, 8)}</span>
+                <button type="button" className="btn btn-primary" onClick={() => decideFriend(f, true)}>{t('phone.friends.accept')}</button><button type="button" className="btn" onClick={() => decideFriend(f, false)}>{t('phone.friends.decline')}</button></div>))}</div>}
+          </>)}
           <div className="ph-sechead">{t('phone.friends.count', { n: friendList.length })}</div>
           {(() => { const shown = tabSearch(friendList, tabQText, (f) => [f.display_name, f.handle]); return (<>
             <div className="msgr-list ph-friends">{shown.map((f) => (
@@ -3043,7 +3050,9 @@ function FriendFinder({ uid, friends, members, onChanged, onDm, onPersonalDm, on
 
 function FriendAddSheet({ onClose, ...finder }) {
   const { t } = useT();
+  const phone = useIsPhone();
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  if (phone) return <PhoneFriendAdd onClose={onClose} {...finder} />; // 폰: 찾기 · 내 링크·코드 공유 · 받은 링크·코드 넣기 한 화면(유건 확정 2026-10-01). 데스크톱은 아래 그대로
   return (
     <div className="msgr-sheetwrap">
       <div className="msgr-scrim clear" onClick={onClose} />
@@ -3054,7 +3063,53 @@ function FriendAddSheet({ onClose, ...finder }) {
     </div>
   );
 }
-
+/* 폰 친구 추가 한 화면(유건 확정 2026-10-01, 요청·수락 방식 유지): ① 아이디·이메일로 찾기 → 요청 → 상대 수락 ② 내 친구 링크·코드 공유 — 받은 사람이 넣으면 바로 친구(링크를 준 것이 허락)
+   ③ 받은 링크·코드 넣기. 링크 읽기는 열 때 한 번(만들기 RPC는 없으면 만드니 누를 때만 부른다 — 설정 친구 카드와 같은 규칙). */
+function PhoneFriendAdd({ onClose, uid, onChanged, onNote, onError, ...finder }) {
+  const { t } = useT();
+  const [link, setLink] = useState(null); const [busy, setBusy] = useState(false); const [paste, setPaste] = useState('');
+  useEffect(() => {
+    let live = true;
+    q(supabase.from('msgr_friend_links').select('code, expires_at').eq('owner_user_id', uid).is('revoked_at', null).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(1))
+      .then((rows) => { if (live && rows?.[0]) setLink((cur) => cur ?? rows[0]); }).catch(() => {});
+    return () => { live = false; };
+  }, [uid]);
+  const make = async () => { setBusy(true); try { const [row] = await q(supabase.rpc('msgr_friend_link_mine')); setLink(row ?? null); } catch (e) { onError(e.message); } finally { setBusy(false); } };
+  const text = link ? t('friends.link.textInstall', { code: link.code }) : '';
+  const copy = async () => { try { await navigator.clipboard.writeText(text); onNote(t('friends.link.copied')); } catch { onError(t('friends.link.copyFail')); } };
+  const share = async () => { if (!navigator.share) return copy(); try { await navigator.share({ text }); } catch (e) { if (e?.name !== 'AbortError') copy(); } }; // 공유 창을 닫은 것은 오류가 아니다
+  const accept = async () => {
+    const code = parseInviteCode(paste); if (!code) return onError(t('friends.link.bad'));
+    setBusy(true);
+    try { const r = await q(supabase.rpc('msgr_friend_link_accept', { code })); onNote(t(r === 'already' ? 'friends.link.already' : r === 'self' ? 'friends.link.self' : 'friends.link.done')); setPaste(''); await onChanged?.(); }
+    catch (e) { onError(/msgr_link_invalid/.test(e.message) ? t('friends.link.invalid') : /blocked/.test(e.message) ? t('friends.link.blocked') : e.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup msgr-friendadd ph-friendadd" role="dialog" aria-label={t('friends.add')}>
+        <header className="head"><strong>{t('friends.add')}</strong><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+        <div className="peek">
+          <h3 className="ph-fa-h">{t('friends.add.step.find')}</h3>
+          <p className="ph-fa-sub">{t('friends.add.step.find.sub')}</p>
+          <FriendFinder uid={uid} onChanged={onChanged} onNote={onNote} onError={onError} {...finder} />
+          <h3 className="ph-fa-h">{t('friends.add.step.mine')}</h3>
+          <p className="ph-fa-sub">{t('friends.add.step.mine.sub')}</p>
+          {link ? (<div className="ph-fa-link">
+            <code className="msgr-code" aria-label={t('friends.add.code')}>{link.code}</code>
+            <div className="ph-fa-acts"><button type="button" className="btn" disabled={busy} onClick={copy}><I name="copy" size={14} />{t('friends.link.copy')}</button><button type="button" className="btn btn-primary" disabled={busy} onClick={share}><I name="up" size={14} />{t('friends.add.share')}</button></div>
+          </div>) : <button type="button" className="btn ph-fa-make" disabled={busy} onClick={make}><I name="plus" size={14} />{t('friends.link.make')}</button>}
+          <h3 className="ph-fa-h">{t('friends.add.step.paste')}</h3>
+          <form className="ph-fa-paste" onSubmit={(e) => { e.preventDefault(); if (!busy) accept(); }}>
+            <input className="msgr-input" value={paste} disabled={busy} onChange={(e) => setPaste(e.target.value)} placeholder={t('friends.link.ph')} aria-label={t('friends.link.ph')} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+            <button type="submit" className="btn" disabled={busy || !paste.trim()}>{t('friends.link.add')}</button>
+          </form>
+        </div>
+      </section>
+    </div>
+  );
+}
 function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onNote, onError, isPersonal = false }) {
   const { t, lang } = useT();
   const { mutedCrewIds, unmuteCrew } = useContext(SafetyCtx);
