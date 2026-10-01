@@ -5,3 +5,8 @@ export const GRID_DICT = {
   'grid.drop': ['{name} 자리를 옮겼습니다.', 'Moved {name}.'],
   'grid.cancel': ['옮기기를 취소했습니다.', 'Move cancelled.'],
 };
+// 모듈 맞춤 알림(유건 10/1 밤 6차) — 맞춤 코드(module-fit.js)와 함께 지연 로드된다
+export const FIT_DICT = {
+  'home.fitDone': ['모듈 높이를 맞췄습니다', 'Module heights fitted'],
+  'home.fitSame': ['이미 맞춰져 있습니다', 'Already fitted'],
+};
