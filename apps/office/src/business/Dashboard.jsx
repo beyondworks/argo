@@ -104,6 +104,7 @@ export function BusinessDashboard({ business, space, onOpenOrder }) {
   const reportKey = JSON.stringify([business.scopeKey, current?.id, signature]);
   const report = business.data && reportState?.key === reportKey ? reportState.value : null;
   const canEdit = !!business.data?.can_manage && !business.busy && !business.uncertain;
+  const gridEdit = !!business.data?.can_manage && !business.uncertain; // 격자는 저장 중(busy)을 locked로 따로 받는다 — 손잡이·키보드 초점이 저장마다 사라지지 않게
   useEffect(() => { setSelected(null); setActive(null); setReport(null); setError(null); setAdding(false); }, [space]);
   useEffect(() => { setDraft(filters ?? null); setName(current?.name ?? ''); }, [current?.id, current?.name, signature]);
   useEffect(() => { setAdding(false); setEditing(null); }, [space, current?.id]);
@@ -167,7 +168,7 @@ export function BusinessDashboard({ business, space, onOpenOrder }) {
     {!current ? <div className="empty-state"><p>{t('biz.dashboard.empty')}</p><button type="button" className="btn primary" disabled={!canEdit} onClick={create}>{t('biz.dashboard.create')}</button></div> : <>
       {loading && !report && <p className="dim small" role="status">{t('biz.loading')}</p>}
       {report && <>
-        <ChartContext.Provider value={{ report, onOpenOrder, filters }}><ModuleGrid id={`business:${space}:${current.id}`} items={current.widgets} canEdit={canEdit} onChange={(widgets) => update({ widgets })} resolveModule={resolveModule} space={space} bodyClassName="biz-widget-body" /></ChartContext.Provider>
+        <ChartContext.Provider value={{ report, onOpenOrder, filters }}><ModuleGrid id={`business:${space}:${current.id}`} items={current.widgets} canEdit={gridEdit} locked={business.busy} onChange={(widgets) => update({ widgets })} resolveModule={resolveModule} space={space} bodyClassName="biz-widget-body" /></ChartContext.Provider>
         {!current.widgets.some((widget) => !widget.hidden) && <p className="biz-empty">{t('biz.noWidgets')}</p>}
         {report.sources && <SourceBreakdown sources={report.sources} />}
       </>}

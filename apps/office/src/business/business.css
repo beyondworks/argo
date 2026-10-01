@@ -102,6 +102,12 @@
 .biz-chart-bar { fill: var(--fg-2); }
 .biz-chart-axis { stroke: var(--border-soft); fill: none; }
 .biz-chart-frame { position: relative; }
+/* 높이를 정한 카드(유건 10/1): 본문을 세로로 쌓고 그래프 칸이 남는 높이를 채운다 — 그래프는 칸에 겹쳐 그려 칸 높이를 밀어 올리지 않는다 */
+.module.sized-h .module-body:has(> .biz-chart-frame) { display: flex; flex-direction: column; }
+.module.sized-h .module-body > .biz-chart-frame { flex: 1 1 0; min-height: 120px; }
+.module.sized-h .biz-chart-frame > .biz-chart { position: absolute; inset: 0; }
+/* 좁은 화면(한 줄에 하나)에서 자기 높이가 없는 카드는 넓은 화면의 옆 모듈 높이를 따르지 않는다 — 그래프는 평소 높이로 */
+@container (max-width: 720px) { .module.sized-h:not(.own-h) .module-body > .biz-chart-frame { flex: none; min-height: 0; } .module.sized-h:not(.own-h) .biz-chart-frame > .biz-chart { position: relative; } }
 /* 마우스를 올린 날짜(유건 9/30) — 세로선·점 + 위쪽 값 풍선. 풍선은 마우스를 가로막지 않는다 */
 .biz-chart-hover line { stroke: var(--fg-3); stroke-width: 1; stroke-dasharray: 3 3; }
 .biz-chart-hover circle { fill: var(--fg); stroke: var(--float); stroke-width: 2; }

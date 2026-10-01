@@ -105,7 +105,7 @@ const DICT = {
   'mod.approvals': ['결재 대기', 'Waiting for approval'], 'mod.work': ['에이전트 작업', 'Agent work'], 'mod.mail': ['안 읽은 메일', 'Unread mail'],
   'mod.todos': ['할 일', 'To-dos'], 'mod.calendar': ['캘린더', 'Calendar'], 'mod.pages': ['최근 페이지', 'Recent pages'], 'mod.outputs': ['최근 산출물', 'Recent deliverables'],
   'mod.journal': ['에이전트 일지', 'Agent journal'], 'mod.decisions': ['결정 기록', 'Decisions'],
-  'mod.size': ['크기', 'Size'], 'mod.size.s': ['1/3 폭', 'One third'], 'mod.size.m': ['1/2 폭', 'Half'], 'mod.size.l': ['2/3 폭', 'Two thirds'], 'mod.size.full': ['전체 폭', 'Full width'],
+  'mod.size.reset': ['크기 되돌리기', 'Reset size'], 'mod.resize.w': ['폭 조절 — 끌거나 ←/→', 'Resize width — drag or ←/→'], 'mod.resize.h': ['높이 조절 — 끌거나 ↑/↓', 'Resize height — drag or ↑/↓'],
   'mod.hide': ['숨기기', 'Hide'], 'mod.empty': ['비어 있습니다', 'Nothing here'], 'mod.drag': ['끌어서 옮기기', 'Drag to move'], 'mod.resize': ['끌어서 크기 바꾸기', 'Drag to resize'],
   'status.running': ['진행 중', 'Running'], 'status.blocked': ['멈춤', 'Blocked'], 'status.approved': ['승인', 'Approved'], 'status.rejected': ['거절', 'Rejected'],
   'risk.high': ['꼭 확인', 'Review closely'], 'risk.medium': ['확인', 'Review'], 'risk.low': ['가벼운 일', 'Light task'], // 위험도 문구(유건 9/30 #7) — 결재가 보이는 모든 곳이 이 셋만 쓴다

@@ -33,11 +33,11 @@ export function Panel({ onClose, title, children, footer }) {
     event.preventDefault();
     const el = event.currentTarget;
     el.setPointerCapture?.(event.pointerId);
-    document.body.classList.add('col-resizing');
+    document.body.classList.add('edge-drag-x');
     const move = (e) => setPref((old) => ({ ...old, width: clampWidth(window.innerWidth - e.clientX, window.innerWidth) }));
     const up = () => {
       el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up);
-      document.body.classList.remove('col-resizing');
+      document.body.classList.remove('edge-drag-x');
       setPref((old) => { keep(old); return old; });
     };
     el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
