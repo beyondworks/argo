@@ -73,22 +73,24 @@ export function routeInfo(path) {
   if (tab) return tab === 'library' || BUSINESS_MODULES.some((x) => x.businessTab === tab) ? { space, view: 'business', tab } : null;
   return VIEWS.includes(rest.slice(1)) ? { space, view: rest.slice(1) } : null;
 }
-/** 지금 보고 있는 화면의 즐겨찾기 대상 — 위키 페이지는 'page'(원래 종류), 그 밖의 화면은 'route'(주소). 이름은 저장하지 않고 그릴 때 사전으로 만든다 */
+/** 즐겨찾기에 넣을 수 없는 화면(유건 10/1 5차) — 홈·설정·휴지통·모듈 보관함은 늘 같은 자리(맨 위·맨 아래 고정 칸)에 있어 즐겨찾기 대상이 아니다 */
+export const favable = (r) => !!r && r.view !== 'home' && r.view !== 'settings' && r.view !== 'trash' && !(r.view === 'business' && r.tab === 'library');
+/** 지금 보고 있는 화면의 즐겨찾기 대상 — 위키 페이지는 'page'(원래 종류), 그 밖의 화면은 'route'(주소). 이름은 저장하지 않고 그릴 때 사전으로 만든다. 넣을 수 없는 화면은 null(☆·우클릭 메뉴가 안 나온다) */
 export function favTarget(path) {
   const page = /^\/(?:me|o\/[^/]+)\/p\/([^/?#]+)$/.exec(path ?? '')?.[1];
-  return page ? { kind: 'page', id: page } : routeInfo(path) ? { kind: 'route', id: path } : null;
+  return page ? { kind: 'page', id: page } : favable(routeInfo(path)) ? { kind: 'route', id: path } : null;
 }
 /** 화면 즐겨찾기의 이름 사전 키·아이콘 */
 export const routeLabelKey = (r) => (r.tab ? (r.tab === 'library' ? 'library.title' : `bizui.${r.tab}`) : `nav.${r.view}`);
 export const routeIcon = (r) => (r.tab ? (r.tab === 'library' ? 'layout' : BUSINESS_MODULES.find((x) => x.businessTab === r.tab).icon) : NAV_ICON[r.view]);
 
 /** 즐겨찾기(유건 9/30 #7) — 페이지·에이전트·화면(route, 10/1)을 사람마다 한 목록(office_user_layouts fav:me). alive(x)가 아닌 항목(휴지통·권한 없음)은 숨기고,
- *  writeFav는 보이는 목록에서 새로 쓰므로 다음 저장 때 저장값에서도 빠진다. 16KB 행 한도 안에 들게 FAV_MAX개까지 */
+ *  writeFav는 보이는 목록에서 새로 쓰므로 다음 저장 때 저장값에서도 빠진다(넣을 수 없는 화면 — 홈·설정·휴지통·모듈 보관함 — 도 같은 길로 빠진다). 16KB 행 한도 안에 들게 FAV_MAX개까지 */
 export const FAV_MAX = 100;
 export const favKey = (x) => `${x.kind}:${x.id}`;
 export function readFav(items, alive) {
   const seen = new Set();
-  return (Array.isArray(items) ? items : []).filter((x) => x && ['page', 'crew', 'route'].includes(x.kind) && typeof x.id === 'string' && (x.kind !== 'route' || routeInfo(x.id)) && !seen.has(favKey(x)) && seen.add(favKey(x)) && alive(x)).map(({ kind, id }) => ({ kind, id }));
+  return (Array.isArray(items) ? items : []).filter((x) => x && ['page', 'crew', 'route'].includes(x.kind) && typeof x.id === 'string' && (x.kind !== 'route' || favable(routeInfo(x.id))) && !seen.has(favKey(x)) && seen.add(favKey(x)) && alive(x)).map(({ kind, id }) => ({ kind, id }));
 }
 /** op: { add: {kind, id} } | { remove: key } | { move: [key, key] } */
 export function writeFav(list, op) {

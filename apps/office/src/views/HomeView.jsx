@@ -1,8 +1,8 @@
 // 홈 모듈 카드의 여러 보기 — '할 일'(기본은 기존 할 일 목록) 카드. '캘린더' 카드는 CalendarWidget.jsx(유건 10/1 4차 B절)가 그린다.
 // 카드 오른쪽 위 ⋯ 메뉴에서 보기를 고르고, 고른 보기는 그 카드 배치 저장값(모듈 설정 cfg.views)에 같이 저장된다(유건 9/30 명세 규칙 3·4).
 // 배치를 바꿀 수 없는 사람(조직 홈의 직원)은 이번 화면에서만 바뀐다 — 조직 홈 배치는 관리자가 정한다.
-import { useMemo, useState } from 'react';
-import { useLang } from '../core/i18n.js';
+import { useLayoutEffect, useMemo, useState } from 'react';
+import { t, useLang } from '../core/i18n.js';
 import { openMenu, fromInside } from '../ui/Menu.jsx';
 import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
@@ -20,7 +20,7 @@ export default function HomeView(props) {
   return props.mode === 'calendar' ? <CalendarWidget {...props} /> : <TodosView {...props} />;
 }
 
-function TodosView({ space, item, canEdit, setCfg, menu, Default }) {
+function TodosView({ space, item, canEdit, setCfg, menu, Default, onSub }) {
   useLang();
   const views = ['tasks', ...CARD_VIEWS];
   const base = { view: 'tasks', filter: { kind: 'task' } };
@@ -30,6 +30,7 @@ function TodosView({ space, item, canEdit, setCfg, menu, Default }) {
     const next = V.normalizeCfg({ ...cfg, ...patch }, base, views);
     if (canEdit && setCfg) { setLocal(null); setCfg({ views: next }); } else setLocal(next);
   };
+  useLayoutEffect(() => { onSub?.(cfg.view === 'tasks' ? t('views.v.tasksShort') : t(`views.v.${cfg.view}`)); }); // 머리에 지금 보기 이름("할 일 · 월") — 같은 모듈을 여러 개 놓았을 때 구분(유건 10/1 5차)
   if (menu) menu.current = () => [...viewMenu(cfg, set, views), { sep: true }];
   if (cfg.view === 'tasks') return <Default space={space} />;
   const calView = cfg.view === 'week' || cfg.view === 'month';

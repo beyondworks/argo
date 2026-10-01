@@ -1,11 +1,12 @@
 // Shared module metadata. Rendering belongs to each surface.
+// repeatable = 여러 번 놓을 수 있다(사본마다 자기 cfg — 보기·디자인·필터). anchor = 그래도 원본 한 개(id = 모듈 id)는 배치에 늘 있다(없으면 숨김으로 붙는다). 그래프는 원본 없이 사본만.
 const BUSINESS_ICONS = { customers: 'person', catalog: 'tag', orders: 'deal', inventory: 'box', payments: 'receipt', analytics: 'chart', marketing: 'megaphone', performance: 'target' };
 export const OFFICE_MODULES = [
   { id: 'stats', title: 'mod.stats', icon: 'layout', sizes: ['l', 'full'], defaultSize: 'full', spaces: ['me', 'org'], intro: 'top' },
   { id: 'approvals', title: 'mod.approvals', icon: 'stamp', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/approvals' },
   { id: 'mail', title: 'mod.mail', icon: 'mail', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me'], link: '/mail' },
-  { id: 'calendar', title: 'mod.calendar', icon: 'calendar', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/calendar', minBody: 200 }, // minBody = 높이를 줄일 때 본문 최소(px) — 달력·그래프가 알아볼 수 있게
-  { id: 'todos', title: 'mod.todos', icon: 'check', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'] },
+  { id: 'calendar', title: 'mod.calendar', icon: 'calendar', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/calendar', minBody: 200, repeatable: true, anchor: true }, // minBody = 높이를 줄일 때 본문 최소(px) — 달력·그래프가 알아볼 수 있게
+  { id: 'todos', title: 'mod.todos', icon: 'check', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], repeatable: true, anchor: true },
   { id: 'pages', title: 'mod.pages', icon: 'doc', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'] },
   { id: 'work', title: 'mod.work', icon: 'run', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/work' },
   { id: 'outputs', title: 'mod.outputs', icon: 'file', sizes: ['m', 'l', 'full'], defaultSize: 'l', spaces: ['org'], link: '/outputs' },
