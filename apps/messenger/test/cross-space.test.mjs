@@ -66,6 +66,29 @@ test('알림 전 확인: 읽히는 글은 본문·채널 이름·작성자 이�
   assert.equal(crew.author_name, '서윤');
 });
 
+// 유건 제보(2026-10-01) '배너 알림에 친구 이름이 ?'의 같은 계열 — 프로필 행이 없는 사람은 이름을 못 찾았다. 서버 이름 규칙(msgr_people_names)을 쓴다.
+test('알림 전 확인: 개인 공간 작성자는 서버 이름 규칙(프로필 → 이메일 앞부분)으로, 프로필 행이 없어도 이름이 나온다', async () => {
+  const rows = { msgr_messages: [{ id: 2, body: '안녕', channel_id: 'p1', deleted_at: null, msgr_channels: { name: 'DM', kind: 'dm' } }], msgr_profiles: [] };
+  const sb = fakeSb({ rows, rpcs: { msgr_people_names: ({ ids }) => ({ data: ids.map((id) => ({ user_id: id, name: 'jaewan.kim' })) }) } });
+  const personal = await readableForNotify(sb, { id: 2, author_kind: 'user', author_user_id: 'B' }, null);
+  assert.equal(personal.author_name, 'jaewan.kim');
+  assert.deepEqual(sb.calls.find((c) => c[1] === 'msgr_people_names')?.[2], { ids: ['B'] }, '작성자 한 명만 묻는다');
+});
+
+test('알림 전 확인: 조직 안 이름이 비어 있으면 서버 이름 규칙으로 채운다', async () => {
+  const rows = { msgr_messages: [{ id: 1, body: 'x', channel_id: 'c1', deleted_at: null, msgr_channels: { name: 'general', kind: 'public' } }], msgr_org_members: [{ org_id: 'o1', user_id: 'B', display_name: null }] };
+  const sb = fakeSb({ rows, rpcs: { msgr_people_names: () => ({ data: [{ user_id: 'B', name: 'bee' }] }) } });
+  assert.equal((await readableForNotify(sb, { id: 1, author_kind: 'user', author_user_id: 'B' }, 'o1')).author_name, 'bee');
+  const named = fakeSb({ rows: { ...rows, msgr_org_members: [{ org_id: 'o1', user_id: 'B', display_name: '비(조직)' }] } });
+  assert.equal((await readableForNotify(named, { id: 1, author_kind: 'user', author_user_id: 'B' }, 'o1')).author_name, '비(조직)');
+  assert.equal(named.calls.filter((c) => c[1] === 'msgr_people_names').length, 0, '조직 이름이 있으면 더 묻지 않는다');
+});
+
+test('알림 전 확인: 이름 함수가 없는 옛 서버면 종전처럼 프로필로 물러난다', async () => {
+  const rows = { msgr_messages: [{ id: 2, body: 'x', channel_id: 'p1', deleted_at: null, msgr_channels: { name: 'DM', kind: 'dm' } }], msgr_profiles: [{ user_id: 'B', display_name: '비(프로필)' }] };
+  assert.equal((await readableForNotify(fakeSb({ rows }), { id: 2, author_kind: 'user', author_user_id: 'B' }, null)).author_name, '비(프로필)');
+});
+
 test('중복 제거: 같은 글이 두 토픽(dm:·u:)으로 와도 한 번만', () => {
   const seen = new Set();
   assert.equal(seenOnce(seen, 7), true); assert.equal(seenOnce(seen, 7), false); assert.equal(seenOnce(seen, 8), true);
