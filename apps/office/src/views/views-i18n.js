@@ -32,5 +32,17 @@ export const VIEWS_DICT = {
   'views.why.taskCustomer': ['할 일에는 거래처가 없어 옮길 수 없습니다', 'To-dos have no customer'], 'views.why.taskPerm': ['이 할 일을 바꿀 권한이 없습니다', 'You can’t change this to-do'],
   'views.why.personal': ['개인 할 일은 다른 사람에게 맡길 수 없습니다', 'Personal to-dos can’t be assigned'], 'views.why.assignAdmin': ['맡기기는 조직 관리자만 할 수 있습니다', 'Only team admins can assign'],
   'views.why.done': ['끝낸 할 일입니다. 먼저 완료를 되돌려 주세요', 'This to-do is done — mark it not done first'], 'views.why.member': ['그 사람은 이 조직 직원이 아닙니다', 'That person isn’t on this team'],
-  'views.cmd.newEvent': ['새 일정 만들기', 'Create an event'], 'views.cmd.newTask': ['새 할 일 만들기', 'Create a to-do'], 'views.cmd.view': ['일정 보기: {name}', 'Schedule view: {name}'],
+  'views.cmd.newEvent': ['새 일정 만들기', 'Create an event'], 'views.cmd.newTask': ['새 할 일 만들기', 'Create a to-do'], 'views.cmd.view': ['캘린더 보기: {name}', 'Calendar view: {name}'],
+  // 홈 캘린더 모듈(유건 10/1 4차 B절) — 모듈에서만 쓰는 보기 이름·디자인·설정 창·다음 일정 글자
+  'calw.v.mini': ['미니 달력', 'Mini calendar'], 'calw.v.day': ['오늘 시간표', 'Today’s schedule'], 'calw.v.next': ['다음 일정', 'Up next'],
+  'calw.design': ['모양', 'Style'], 'calw.d.minimal': ['미니멀', 'Minimal'], 'calw.d.accent': ['강조', 'Bold date'], 'calw.d.basic': ['기본', 'Classic'],
+  'calw.settings': ['색·보여 줄 것…', 'Colors & what to show…'], 'calw.settingsTitle': ['이 캘린더 모듈 설정', 'This calendar module'],
+  'calw.colorBy': ['색 기준', 'Color by'], 'calw.show': ['보여 줄 것', 'Show'], 'calw.settingsNote': ['이 모듈에만 적용됩니다. 처음 값은 캘린더 화면 설정과 같습니다.', 'Applies to this module only. It starts from your Calendar page settings.'],
+  'calw.add': ['새 일정', 'New event'], 'calw.today': ['오늘', 'Today'], 'calw.prevWeek': ['지난주', 'Previous week'], 'calw.nextWeek': ['다음 주', 'Next week'],
+  'calw.prevMonth': ['지난달', 'Previous month'], 'calw.nextMonth': ['다음 달', 'Next month'], 'calw.next7': ['앞으로 7일', 'Next 7 days'],
+  'calw.todayIs': ['오늘 · {date}', 'Today · {date}'], 'calw.openDay': ['캘린더에서 열기', 'Open in Calendar'], 'calw.openDayOf': ['{date} 캘린더에서 열기', 'Open {date} in Calendar'],
+  'calw.noNext': ['다가오는 일정이 없습니다', 'Nothing coming up'], 'calw.then': ['그다음', 'After that'], 'calw.live': ['진행 중', 'Now'],
+  'calw.in.min': ['{n}분 뒤', 'in {n} min'], 'calw.in.hour': ['{n}시간 뒤', 'in {n} hr'], 'calw.in.tomorrow': ['내일', 'tomorrow'], 'calw.in.day': ['{n}일 뒤', 'in {n} days'],
+  'calw.left.min': ['{n}분 남음', '{n} min left'], 'calw.left.hour': ['{n}시간 남음', '{n} hr left'], 'calw.tomorrow': ['내일', 'Tomorrow'],
+  'calw.progress': ['이번 달 {n}주째', 'Week {n} of this month'], 'calw.dayItems': ['{date} 항목', 'Items on {date}'],
 };

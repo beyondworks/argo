@@ -1,4 +1,4 @@
-// 일정 화면 사전 — 달력 화면·홈 '다가오는 일정' 모듈(여러 보기)과 함께 지연 로드된다(첫 화면 150KB 상한). 메뉴 이름(nav.calendar)·모듈 제목(mod.calendar)만 core/i18n.js에 있다.
+// 일정 화면 사전 — 달력 화면·홈 '캘린더' 모듈(여러 보기)과 함께 지연 로드된다(첫 화면 150KB 상한). 메뉴 이름(nav.calendar)·모듈 제목(mod.calendar)만 core/i18n.js에 있다.
 export const CAL_DICT = {
   'cal.rail': ['캘린더 목록', 'Calendars panel'], 'cal.create': ['만들기', 'Create'], 'cal.today': ['오늘', 'Today'], 'cal.prev': ['이전', 'Previous'], 'cal.next': ['다음', 'Next'],
   'cal.prevMonth': ['이전 달', 'Previous month'], 'cal.nextMonth': ['다음 달', 'Next month'], 'cal.loading': ['불러오는 중…', 'Loading…'],
