@@ -20,6 +20,9 @@ const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
 const asUser = (uid, q) => sql(`set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`);
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';
 const applyNew = () => psql(['-c', readFileSync(mig(NEW), 'utf8')]);
+// NEW 뒤에 msgr_bot_create를 다시 정의하는 마이그레이션(20261001120000 개인 쌍둥이 등)은 옛 정의 재현을 덮는다 — NEW 다음에 순서대로 적용한다.
+const MSGR_FILES = () => readdirSync(fileURLToPath(new URL('../supabase/migrations/', import.meta.url))).filter((f) => /^\d+_msgr.*\.sql$/.test(f)).sort();
+const redefinesBotCreate = (f) => f > NEW && /function\s+public\.msgr_bot_create\s*\(/i.test(readFileSync(mig(f), 'utf8'));
 
 let ORG, LOCKED_ORG, BOT, LEGACY_BOT, LOCKED_BOT, LOCAL, MEMBER_DM, LEAK_DM;
 before(() => {
@@ -56,7 +59,7 @@ before(() => {
     create function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ select 1::bigint $$;`);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql']) psql(['-f', mig(f)]);
-  for (const f of readdirSync(fileURLToPath(new URL('../supabase/migrations/', import.meta.url))).filter((f) => /^\d+_msgr.*\.sql$/.test(f) && f !== NEW).sort())
+  for (const f of MSGR_FILES().filter((f) => f !== NEW && !redefinesBotCreate(f)))
     psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -76,6 +79,7 @@ before(() => {
   sql(`update msgr_org_policies set allow_default='list', allow_locked=true where org_id='${LOCKED_ORG}'`);
   sql(`update msgr_crews set allow='list' where id='${LOCKED_BOT}'`); // 잠금 시 정책 트리거가 이미 맞춰 두는 값
   applyNew();
+  for (const f of MSGR_FILES().filter(redefinesBotCreate)) psql(['-c', readFileSync(mig(f), 'utf8')]);
   LOCAL = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, allow, last_seen_at) values ('${ORG}', '${U.owner}', 'lean', 'mine', 'Mine', 'owner', now()) returning id`));
 });
 
