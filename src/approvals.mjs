@@ -7,6 +7,7 @@ import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 
 const lockKey = (wsId) => `approvals:${wsId}`;
+const lockApprovals = (wsId, fn) => withLock(lockKey(wsId), fn, { file: paths(wsId).approvals }); // 프로세스 간 잠금 포함(M-b)
 
 // 결재 카드 문구 조작(개행·제어문자·양방향 제어문자 주입) 방어 — request_tool_install의 cleanId와 같은
 // 살균(단일 지점). \x7f(DEL)·U+2028/2029(줄/문단 구분자)·U+202A-202E·U+2066-2069(양방향 재정렬 제어문자 —
@@ -40,7 +41,7 @@ async function save(wsId, list) {
     선택 항목). 하나도 안 채웠으면 undefined/null이 되어 카드가 원래 action/reason을 그대로 보여준다(폴백). */
 export async function addApproval(wsId, { slug, from, action, reason, kind = 'action', cap, payload, msgr, scope, plain }) {
   // 락 안에서 read-modify-write — 두 크루가 동시에 결재를 등록해도 유실 없음
-  const item = await withLock(lockKey(wsId), async () => {
+  const item = await lockApprovals(wsId, async () => {
     const list = await loadApprovals(wsId);
     const cleanPlain = sanitizePlain(plain);
     const it = {
@@ -88,7 +89,7 @@ export const approvalCommandLabel = (lang) => (lang === 'en' ? 'Command' : '명�
 /** 메신저 셸 결재(D28) — 이 크루·이 채널에서 승인됐고 아직 쓰지 않은 같은 명령이 있으면 한 번 쓰고 true.
     승인 한 번 = 실행 한 번(같은 명령을 다시 하려면 다시 결재). 락 안에서 표시하므로 동시 턴이 같은 승인을 두 번 쓰지 못한다. */
 export async function consumeShellApproval(wsId, { slug, shell, channelId = null }) {
-  return withLock(lockKey(wsId), async () => {
+  return lockApprovals(wsId, async () => {
     const list = await loadApprovals(wsId);
     const it = list.find((a) => a.status === 'approved' && a.slug === slug && a.payload?.shell === shell && !a.payload?.consumedAt
       && (a.msgr?.channelId ?? null) === (channelId ?? null));
@@ -103,7 +104,7 @@ export async function consumeShellApproval(wsId, { slug, shell, channelId = null
     락 안에서 상태를 재확인하므로, 같은 결재에 두 요청(데크 카드+채팅 카드, 웹+메신저)이
     동시에 와도 두 번째는 'approved'를 보고 막힌다 — 되돌릴 수 없는 후속 턴 이중 실행 차단. */
 export async function resolveApproval(wsId, id, approve, { resolvedBy = null } = {}) {
-  const item = await withLock(lockKey(wsId), async () => {
+  const item = await lockApprovals(wsId, async () => {
     const list = await loadApprovals(wsId);
     const it = list.find((a) => a.id === id);
     if (!it) throw new Error('존재하지 않는 결재입니다');
@@ -126,7 +127,7 @@ export async function resolveApproval(wsId, id, approve, { resolvedBy = null } =
 /** 결재 항목에 메타 필드 병합(락 안) — 푸시 시 메신저 메시지 참조(tg:{chatId,messageId})를 심어
     나중에 어느 창구에서 승인하든 그 카드의 버튼을 정리할 수 있게 한다. */
 export async function setApprovalMeta(wsId, id, patch) {
-  return withLock(lockKey(wsId), async () => {
+  return lockApprovals(wsId, async () => {
     const list = await loadApprovals(wsId);
     const it = list.find((a) => a.id === id);
     if (!it) return null;
@@ -139,7 +140,7 @@ export async function setApprovalMeta(wsId, id, patch) {
 /** 만료 — 대기 자리를 떠난 tool 결재를 'expired'로 내린다(승인해도 아무 일 없는 죽은 버튼 제거).
     이미 처리(승인/거절)된 건 건드리지 않는다. 반환: 만료시켰으면 item, 아니면 null. */
 export async function expireApproval(wsId, id) {
-  const item = await withLock(lockKey(wsId), async () => {
+  const item = await lockApprovals(wsId, async () => {
     const list = await loadApprovals(wsId);
     const it = list.find((a) => a.id === id);
     if (!it || it.status !== 'pending') return null;

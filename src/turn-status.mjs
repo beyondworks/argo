@@ -59,9 +59,15 @@ export function _setHeartbeatMsForTest(ms) { HEARTBEAT_MS = ms; }
 const live = new Map(); // key → { chain, timer, queued }
 const keyOf = (wsId, slug) => `${wsId}/${sanitizeFileSlug(slug)}`;
 const enqueue = (e, job) => { e.chain = e.chain.then(job, job); return e.chain; }; // 앞 작업 실패에도 이어간다
+/* 상태 파일 소유 — 앱 사이드카와 argo CLI가 같은 폴더를 쓰면 두 프로세스의 턴이 크루당 하나뿐인 이 파일을 같이 쓰고 지운다(반대 검토 M-b ②).
+   turnGroups는 이 프로세스의 등록부라 다른 프로세스의 턴을 모른다 — 그래서 파일에 쓴 프로세스의 pid를 남기고, **다른 살아 있는 프로세스가 쓴 신선한 파일**은
+   지우지도(clear) 갱신하지도(심박) 않으며 그 내용(partial·steps)을 이어받지도 않는다. pid 없는 옛 파일·죽은 pid·낡은 파일은 종전대로 내 것으로 본다. */
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === 'EPERM'; } };
+const foreign = (s) => !!s?.pid && s.pid !== process.pid && !!s.ts && Date.now() - s.ts < 120_000 && pidAlive(s.pid);
 async function touch(wsId, slug) {
   const s = await readJsonLenient(file(wsId, slug), null);
   if (!s || !s.ts) return; // 지워졌거나 아직 없음 — 되살리지 않는다
+  if (foreign(s)) return; // 다른 프로세스의 턴이 쓴 파일 — 그 프로세스가 자기 심박으로 갱신한다
   await writeJsonAtomic(file(wsId, slug), { ...s, ts: Date.now() });
 }
 
@@ -85,7 +91,7 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
       // 낡은 파일(120초 무갱신 = 죽은 턴의 잔재 — 크래시·kill로 clear가 못 돈 경우)은 새 턴의 전 상태가 아니다. 그대로 이어받으면
       // startedAt이 몇 십 분 전으로 잡혀 경과가 "31:54"로 뜨고, 옛 partial·thought·source가 새 발언에 섞인다(격리 실측 2026-09-07).
       const prev0 = await readJsonLenient(file(wsId, slug), {});
-      const prev = prev0?.ts && Date.now() - prev0.ts < 120_000 ? prev0 : {}; // 120초 = getTurnStatus의 만료 창과 같은 값 — 심박(30초)이 이 창을 덮어야 정상 턴이 잔재로 오인되지 않는다(HEARTBEAT_MS ≪ 120초 결합)
+      const prev = prev0?.ts && Date.now() - prev0.ts < 120_000 && !foreign(prev0) ? prev0 : {}; // 120초 = getTurnStatus의 만료 창과 같은 값 — 심박(30초)이 이 창을 덮어야 정상 턴이 잔재로 오인되지 않는다(HEARTBEAT_MS ≪ 120초 결합)
       await writeJsonAtomic(file(wsId, slug), {
         stage, detail,
         // partial — 완료 전 크루가 이미 말한 텍스트(스트리밍 체감). 미전달 시 이전 값 유지, 뒤 4000자만
@@ -99,7 +105,7 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
         thought: String(thought ?? prev.thought ?? '').slice(-1500),
         // steps — 단계 궤적(도구 하나 = 단계 하나, chat.mjs step). 메신저 실행 카드가 클로드코드식 드롭다운으로 실시간 표시(유건 요청 2026-09-09). 미전달이면 이전 값 유지.
         steps: Array.isArray(steps) ? steps.slice(-40) : (prev.steps ?? []),
-        startedAt: prev.startedAt ?? Date.now(), ts: Date.now(),
+        startedAt: prev.startedAt ?? Date.now(), ts: Date.now(), pid: process.pid,
       });
     } catch { /* 상태 표시는 베스트에포트 */ }
   });
@@ -117,7 +123,10 @@ export async function clearTurnStatus(wsId, slug) {
   const e = live.get(k);
   if (turnGroups(wsId, slug) > 1) { if (e) e.deferred = true; return; }
   if (e) { clearInterval(e.timer); live.delete(k); await e.chain.catch(() => {}); }
-  try { await rm(file(wsId, slug), { force: true }); } catch { /* 없으면 그만 */ }
+  try {
+    if (foreign(await readJsonLenient(file(wsId, slug), null))) return; // 다른 프로세스의 진행 중 턴 표시 — 지우면 그 턴의 "작성 중"이 사라진다
+    await rm(file(wsId, slug), { force: true });
+  } catch { /* 없으면 그만 */ }
 }
 
 /** 2분 넘게 갱신이 없으면 죽은 상태로 보고 무시한다. 반환: { stage, detail, partial, startedAt } | null */

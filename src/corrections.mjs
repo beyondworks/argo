@@ -16,6 +16,7 @@ import { loadCompany } from './workspace.mjs';
 
 const FILE = (wsId) => join(paths(wsId).root, 'corrections.json');
 const lockKey = (wsId) => `corrections:${wsId}`;
+const lockLedger = (wsId, fn) => withLock(lockKey(wsId), fn, { file: FILE(wsId) }); // 프로세스 간 잠금 포함(M-b)
 export const RULES_SKILL = 'captain-rules.md'; // 채택 규칙이 쌓이는 회사 스킬(자동 주입 채널 — 파일명은 언어 중립, 검수 M6)
 export const SUGGEST_AT = 2;   // 같은 계열 교정 N회째에 제안(에스컬레이션 표: 두 번 틀리면 규칙)
 const oneLine = (t) => String(t ?? '').replace(/\s+/g, ' ').trim(); // 한 줄 불변식 — 감지 저장·채택 조립 양쪽에 건다(H2: 동기화로 들어온 옛 대장도 탈출 불가)
@@ -88,7 +89,7 @@ export async function detectAndTrack(wsId, { userMsg, lang = 'ko', oneshotFn = n
   // "칩에 보이는 것 ≠ 적립되는 것"이 된다(사장 승인이 유일한 방어라 이 등식이 성립해야 한다).
   const rule = oneLine(parsed.rule).slice(0, 200);
   if (!rule) return null;
-  return withLock(lockKey(wsId), async () => {
+  return lockLedger(wsId, async () => {
     const cur = await loadLedger(wsId);
     const matched = parsed.matches ? cur.items.find((c) => c.id === String(parsed.matches) && c.status === 'candidate') : null;
     if (matched) {
@@ -116,7 +117,7 @@ export async function listSuggestions(wsId) {
 
 /** 채택 — skills/사장-지침.md에 불릿 적립(파일 없으면 생성). 스킬 자동 주입 채널이 곧 반영 경로다. */
 export async function adoptCorrection(wsId, id, { lang = 'ko' } = {}) {
-  return withLock(lockKey(wsId), async () => {
+  return lockLedger(wsId, async () => {
     const cur = await loadLedger(wsId);
     const item = cur.items.find((c) => c.id === id && c.status === 'candidate');
     if (!item) throw new Error('제안을 찾을 수 없습니다');
@@ -147,7 +148,7 @@ export async function adoptCorrection(wsId, id, { lang = 'ko' } = {}) {
 /** 거절 — 이 후보(계열)는 다시 제안하지 않는다. 단 같은 취지가 **새 후보**로 다시 쌓이면
     문턱 도달 시 다시 물을 수 있다(대장은 문구 유사도를 모른다 — 검수 L2 사실화). */
 export async function dismissCorrection(wsId, id) {
-  return withLock(lockKey(wsId), async () => {
+  return lockLedger(wsId, async () => {
     const cur = await loadLedger(wsId);
     const item = cur.items.find((c) => c.id === id && c.status === 'candidate');
     if (!item) return;

@@ -102,7 +102,7 @@ export async function updateCompany(wsId, patch) {
     const company = { ...cur, ...p, id: wsId };
     await writeJsonAtomic(paths(wsId).company, company);
     return company;
-  });
+  }, { file: paths(wsId).company, mkParent: false }); // 프로세스 간 잠금(M-b) — 앱·CLI가 같은 폴더를 쓴다. 없는 회사엔 폴더를 만들지 않는다
 }
 
 /** 회사 보관 — 삭제 대신 .archive/로 폴더째 이동(복구 가능). */
