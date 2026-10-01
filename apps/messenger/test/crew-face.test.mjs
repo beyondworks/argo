@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   faceOf, faceFromStored, faceToStore, faceInner, faceStill, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedReplyCrew,
-  gestureAt, gesturePhase, GESTURES, GESTURE_MS, GESTURE_GAP, FACE_COLORS, FACE_SHAPES, FACE_STATES, FACE_VERSION,
-  LEGACY_SHAPE, LEGACY_COLOR, DONE_MS, SURPRISE_MS, ERROR_MS, FAILED_FRESH_MS,
+  FACE_COLORS, FACE_SHAPES, FACE_STATES, FACE_VERSION,
+  LEGACY_SHAPE, LEGACY_COLOR, DONE_MS, SURPRISE_MS, ERROR_MS, FAILED_FRESH_MS, failedCrewsInFetch, CALENDAR_COLORS, calendarColorIndex,
 } from '../src/crew-face.mjs';
+import { gestureAt, gesturePhase, GESTURES, GESTURE_MS, GESTURE_GAP } from '../src/face-gestures.mjs';
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
@@ -67,6 +68,7 @@ test('서버 check 범위 = 클라이언트 배열 길이(20261001130000) — �
   assert.match(v2, /face - 'v' - 'shape' - 'color'\) = '\{\}'::jsonb/, 'v2 잉여 키 금지');
   assert.match(sql, /face - 'shape' - 'color' - 'eyes'\) = '\{\}'::jsonb/, '옛 형태 잉여 키 금지');
   assert.doesNotMatch(sql, /update\s+public\.msgr_crews\s+set/i, '운영 행을 고쳐 쓰지 않는다');
+  assert.match(sql, /set local lock_timeout = '5s';/, '제약 교체 잠금 대기 상한(검수 #789)');
 });
 
 test('상태 우선순위 — 준비 중 > 결재 대기 > 놀람(1초) > 오류(8초) > 완료(2초) > 오프라인 > 쉼', () => {
@@ -191,6 +193,33 @@ test('오피스 — 같은 그림의 정지 얼굴(faceStill), 몸짓·상태 �
     assert.doesNotMatch(still, /class="(grin|yawn)"/);
   }
   const face = read('../../office/src/ui/Face.jsx');
-  assert.match(face, /faceStill\(face, \{ px: size \}\)/, '쉼 표정 하나');
+  assert.match(face, /m\.faceStill\(m\.faceOf\(id, .*\{ px: size \}\)/, '쉼 표정 하나');
+  assert.match(face, /import\('@msgr\/crew-face'\)/, '그림 정의는 첫 화면 묶음 밖에서 받는다(150KB 상한, 검수 #789)');
+  assert.doesNotMatch(face, /^import [^;]*'@msgr\/crew-face'/m, '정적 import 금지 — 첫 화면 묶음에 다시 들어간다');
   assert.doesNotMatch(face, /face-gestures|faceGestures|state:/, '몸짓·상태 표정 없음');
+});
+
+test('오류 알림 대상(failedCrewsInFetch) — 이어 받은 새 글만, 채널을 처음 열 때 읽은 글·재조회 덮어쓰기는 제외, 같은 크루는 한 번', () => {
+  const now = Date.parse('2026-10-01T05:00:00Z');
+  const fresh = (crew, extra = {}) => ({ author_kind: 'crew', crew_id: crew, meta: { failed: true }, created_at: new Date(now - 500).toISOString(), ...extra });
+  const rows = [fresh('c1'), fresh('c2'), fresh('c1'), { author_kind: 'user', author_user_id: 'u', meta: { failed: true }, created_at: new Date(now).toISOString() }, fresh('c3', { meta: { stopped: true } })];
+  assert.deepEqual(failedCrewsInFetch(rows, { afterId: 41, now }), ['c1', 'c2'], '이어 받은 새 글');
+  assert.deepEqual(failedCrewsInFetch(rows, { afterId: null, now }), [], '채널을 처음 열 때 읽은 글(afterId 없음)은 지금 일어난 실패가 아니다');
+  assert.deepEqual(failedCrewsInFetch(rows, { afterId: 0, now }), [], 'afterId 0도 처음 읽기');
+  assert.deepEqual(failedCrewsInFetch(rows, { afterId: 41, preserve: true, now }), [], '재조회 덮어쓰기');
+  assert.deepEqual(failedCrewsInFetch(null, { afterId: 41, now }), []);
+  assert.deepEqual(failedCrewsInFetch([fresh('c9', { created_at: new Date(now - FAILED_FRESH_MS).toISOString() })], { afterId: 41, now }), [], '묵은 글');
+  assert.match(read('../src/App.jsx'), /failedCrewsInFetch\(list, \{ afterId, preserve \}\)/, '대화창 조회가 이 함수를 거친다');
+});
+
+test('오피스 달력 색은 얼굴 v2 전과 같다 — main(b58553d0)의 옛 faceOf 색 번호·옛 10색(검수 #789)', () => {
+  // 기대값은 v2 직전 main의 crew-face.mjs로 뽑아 고정했다(CI 얕은 체크아웃에서도 돌게 git show 대신 값으로)
+  assert.deepEqual(CALENDAR_COLORS, ['#0E9A55', '#F4A3C4', '#F45A1B', '#F6C443', '#0B6FB8', '#46C7F4', '#7B5CFA', '#14C4CC', '#FFA412', '#FF5E9C']);
+  assert.deepEqual(Array.from({ length: 24 }, (_, i) => calendarColorIndex(`crew-${i}`)), [3, 6, 5, 8, 2, 8, 3, 2, 7, 7, 7, 6, 9, 4, 0, 9, 3, 2, 3, 3, 3, 1, 3, 8]);
+  assert.equal(calendarColorIndex('crew-1', { shape: 3, color: 7, eyes: 1 }), 7, '옛 형태 저장값의 색');
+  assert.equal(calendarColorIndex('crew-1', { v: 2, shape: 3, color: 4 }), 6, 'v2 저장값은 옛 앱처럼 해시 색');
+  assert.equal(calendarColorIndex('crew-1', { shape: 6, color: 1, eyes: 0 }), 6, '옛 범위 밖은 해시 색');
+  const cal = read('../../office/src/calendar/shared.js');
+  assert.match(cal, /CALENDAR_COLORS\[calendarColorIndex\(/);
+  assert.doesNotMatch(cal, /FACE_COLORS/, '달력은 새 얼굴 색을 쓰지 않는다');
 });

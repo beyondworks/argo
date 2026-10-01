@@ -2,8 +2,7 @@
 // 시계·타이머·문서·IntersectionObserver를 주입해 브라우저 없이 행동을 잠근다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGestureScheduler, faceGestures } from '../src/face-gestures.mjs';
-import { gestureAt, gesturePhase, GESTURE_MS } from '../src/crew-face.mjs';
+import { createGestureScheduler, faceGestures, gestureAt, gesturePhase, GESTURE_MS } from '../src/face-gestures.mjs';
 
 function harness() {
   let t = 0, seq = 0;

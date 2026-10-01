@@ -1,8 +1,33 @@
 // 쉼(idle) 몸짓 스케줄러 — 앱 전체에 타이머 하나(setTimeout 1개)와 IntersectionObserver 하나(유건 확정 2026-10-01).
 // 화면에 보이는 얼굴만 <svg data-g="…">를 붙였다 뗀다 — styles.css가 data-g가 붙은 동안 그 몸짓을 한 번 재생한다(transform·opacity만).
 // 탭이 숨겨지거나 '동작 줄이기'면 새 몸짓을 시작하지 않는다(진행 중인 것만 제때 뗀다). 네트워크·저장소 호출 없음.
-// 몸짓 순서·간격(2~5초)·첫 시작은 crew-face.mjs gestureAt/gesturePhase(크루 id 해시)라 크루마다 박자가 다르다.
-import { gestureAt, gesturePhase, GESTURE_MS } from './crew-face.mjs';
+// 몸짓 순서·간격(2~5초)·첫 시작은 크루 id 해시(gestureAt/gesturePhase)라 크루마다 박자가 다르다.
+// 몸짓 정의는 메신저 전용이라 여기 둔다 — crew-face.mjs(오피스와 공유)에 두면 오피스 첫 화면 묶음에 끌려 들어간다(150KB 상한).
+import { hash } from './crew-face.mjs';
+
+/** 몸짓 8종(길이 ms, 뽑힐 가중치). 이름은 styles.css의 .msgr-face[data-g="…"] 와 같다 */
+export const GESTURES = [
+  { k: 'blink', ms: 360, w: 3 },
+  { k: 'look', ms: 1600, w: 2 },
+  { k: 'tilt', ms: 1400, w: 1.2 },
+  { k: 'bounce', ms: 900, w: 1.2 },
+  { k: 'wiggle', ms: 900, w: 1 },
+  { k: 'yawn', ms: 1900, w: 0.8 },
+  { k: 'roll', ms: 1400, w: 1 },
+  { k: 'smile', ms: 1600, w: 1.5 },
+];
+export const GESTURE_MS = Object.fromEntries(GESTURES.map((g) => [g.k, g.ms]));
+export const GESTURE_GAP = [2000, 5000]; // 다음 몸짓까지 간격(시작~시작) 하한·상한
+const G_TOTAL = GESTURES.reduce((a, g) => a + g.w, 0);
+function pickGesture(h) { let r = (h % 10000) / 10000 * G_TOTAL; for (const g of GESTURES) { r -= g.w; if (r < 0) return g.k; } return GESTURES[0].k; }
+/** n번째 몸짓과 다음 몸짓까지 간격(2~5초) — id·n·직전 몸짓만으로 정해진다. 직전과 같으면 다른 몸짓으로 바꾼다(같은 몸짓 연속 없음) */
+export function gestureAt(id, n, prev = null) {
+  let g = pickGesture(hash(`${id}|g|${n}`));
+  if (g === prev) g = GESTURES[(GESTURES.findIndex((x) => x.k === g) + 1 + hash(`${id}|g2|${n}`) % (GESTURES.length - 1)) % GESTURES.length].k;
+  return { g, gap: GESTURE_GAP[0] + hash(`${id}|gap|${n}`) % (GESTURE_GAP[1] - GESTURE_GAP[0] + 1) };
+}
+/** 첫 몸짓까지 기다림(0.4~3.4초) — 화면에 들어온 크루들이 같은 박자로 움직이지 않게 */
+export const gesturePhase = (id) => 400 + hash(`${id}|phase`) % 3000;
 
 /** env는 테스트용 주입(시계·타이머·문서·관찰자·동작 줄이기 미디어 쿼리) — 앱에서는 기본값(브라우저 전역)을 쓴다 */
 export function createGestureScheduler(env = {}) {

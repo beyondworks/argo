@@ -50,7 +50,8 @@ export const SURPRISE_MS = 1000;
 export const ERROR_MS = 8000; // 오류 얼굴 — 흔들림(2.2초 주기)이 서너 번 보일 만큼. 그 사이 다시 일을 시작하면 '준비 중'이 앞선다
 const AWAY_MS = 90_000; // App.jsx AWAY_MS와 같은 부재 판정
 
-const hash = (s) => { let h = 2166136261; for (const c of String(s)) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; } h ^= h >>> 16; h = Math.imul(h, 2246822507); h ^= h >>> 13; h = Math.imul(h, 3266489909); return (h ^ h >>> 16) >>> 0; };
+/** 크루 id 해시 — 얼굴 모양·색과 몸짓 계획(face-gestures.mjs)이 같이 쓴다 */
+export const hash = (s) => { let h = 2166136261; for (const c of String(s)) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; } h ^= h >>> 16; h = Math.imul(h, 2246822507); h ^= h >>> 13; h = Math.imul(h, 3266489909); return (h ^ h >>> 16) >>> 0; };
 const inRange = (n, max) => Number.isInteger(n) && n >= 0 && n < max;
 
 /** 저장값(msgr_crews.face) → {shape, color}. v2는 그대로, 옛 형태(키 v 없음)는 대응표로 바꾼다. 알 수 없는 모양·범위 밖이면 null(무작위 고정값을 쓴다) */
@@ -64,6 +65,14 @@ export function faceFromStored(raw) {
  *  override는 소유자가 저장한 값(faceFromStored가 읽는다) — 못 읽으면 무시하고 무작위 고정값을 쓴다. 모양과 색은 따로 뽑는다(같은 조직에서 겹칠 수 있다). */
 export function faceOf(id, override = null) {
   return faceFromStored(override) ?? { shape: hash(`${id}|shape`) % FACE_SHAPES.length, color: hash(`${id}|color`) % FACE_COLORS.length };
+}
+
+/** 오피스 달력 색 — 얼굴 v2 전(main 2026-10-01)의 10색과 같은 계산을 그대로 둔다(얼굴이 바뀌어도 사람들의 달력 색은 바꾸지 않는다, 검수 #789).
+ *  에이전트 색 번호 = 옛 형태로 저장된 색, 아니면 id 해시 % 10(옛 faceOf와 같은 값). v2로 다시 고른 크루도 해시 색이다 */
+export const CALENDAR_COLORS = ['#0E9A55', '#F4A3C4', '#F45A1B', '#F6C443', '#0B6FB8', '#46C7F4', '#7B5CFA', '#14C4CC', '#FFA412', '#FF5E9C'];
+export function calendarColorIndex(id, stored = null) {
+  const old = stored && typeof stored === 'object' && !('v' in stored) && inRange(stored.shape, 6) && inRange(stored.color, 10) && inRange(stored.eyes, 3);
+  return old ? stored.color : hash(`${id}|color`) % CALENDAR_COLORS.length;
 }
 
 /** 저장할 모양 — 서버 check(20261001130000)가 허용하는 v2 형태 세 키만 */
@@ -87,6 +96,13 @@ export function failedReplyCrew(row, now = Date.now()) {
   if (!row || row.author_kind !== 'crew' || !row.crew_id || row.meta?.failed !== true) return null;
   const at = Date.parse(row.created_at);
   return Number.isFinite(at) && now - at < FAILED_FRESH_MS ? row.crew_id : null;
+}
+
+/** 대화창 조회 한 번에서 '오류' 얼굴로 알릴 크루 id들. 새로 도착한 글(afterId 이후 이어 받기)만 본다 —
+ *  채널을 처음 열 때 읽은 글(afterId 없음)과 재조회 덮어쓰기(preserve)는 지금 일어난 실패가 아니라 제외한다 */
+export function failedCrewsInFetch(rows, { afterId = null, preserve = false, now = Date.now() } = {}) {
+  if (!afterId || preserve) return [];
+  return [...new Set((rows ?? []).map((r) => failedReplyCrew(r, now)).filter(Boolean))];
 }
 
 /** 얼굴 상태 — 준비 중 > 결재 대기 > 놀람(멘션·수신 1초) > 오류(실패한 답 뒤 8초) > 완료(답 뒤 2초) > 오프라인 > 쉼 */
@@ -115,25 +131,40 @@ const openMouth = (w, y, h) => `<path ${INK} d="M${-w} ${y}H${w}A${w} ${h} 0 0 1
 const label = (cls, x, y, ch, small) => `<text class="${cls}" x="${x}" y="${y}" ${INK}${cls === 'zzz' ? ' opacity="0"' : ''} font-size="${small ? 20 : 15}" font-weight="800" font-family="-apple-system, system-ui, sans-serif">${ch}</text>`;
 const SWIRL = 'M0 0A1.2 1.2 0 0 1 2.4 0A2.4 2.4 0 0 1 -2.4 0A3.6 3.6 0 0 1 4.8 0A4.8 4.8 0 0 1 -4.8 0A6 6 0 0 1 7.2 0';
 
-/** 쉼(idle) 기본 표정 11종 — grin = 웃음 짓기 몸짓 때 나오는 입, yawnY = 하품 입 자리. sm = 44px 이하 배치(감은 눈과 입 사이를 띄우고 부품을 키운다) */
+/** 쉼(idle) 기본 표정 11종 — 눈·입. sm = 44px 이하 배치(감은 눈과 입 사이를 띄우고 부품을 키운다).
+ *  몸짓 부품(웃음 짓기 입·하품 입 자리)은 아래 MOTION에 따로 둔다 — 정지 얼굴(오피스)은 MOTION을 참조하지 않아 묶음에서 빠진다(첫 화면 150KB 상한) */
 const EXPR = {
-  smile: { eyes: [closedEye(-8, -4, 10, 3.6), closedEye(8, -4, 10, 3.6)], mouth: P(arcD(-26, -5, 26, -5, 11)), grin: openMouth(13, 2, 11), yawnY: 6,
-    sm: { eyes: [closedEye(-11, -6, 13, 4.6), closedEye(11, -6, 13, 4.6)], mouth: P(arcD(-17, 3, 17, 3, 8)), grin: openMouth(12, 3, 10), yawnY: 8 } },
-  grin: { eyes: [closedEye(-8, -5, 10, 3.6), closedEye(8, -5, 10, 3.6)], mouth: P(arcD(-22, -6, 22, -6, 17)), grin: openMouth(15, 1, 13), yawnY: 6,
-    sm: { eyes: [closedEye(-11, -8, 13, 4.6), closedEye(11, -8, 13, 4.6)], mouth: P(arcD(-15, 1, 15, 1, 12)), grin: openMouth(14, 1, 13), yawnY: 7 } },
-  soft: { eyes: [closedEye(-8, -5, 11, 3.8), closedEye(8, -5, 11, 3.8)], mouth: P(arcD(-17, 4, 17, 4, 5.5)), grin: openMouth(11, 3, 9), yawnY: 7,
-    sm: { eyes: [closedEye(-11, -7, 13, 4.6), closedEye(11, -7, 13, 4.6)], mouth: P(arcD(-16, 5, 16, 5, 6)), grin: openMouth(12, 4, 10), yawnY: 8 } },
-  calm: { eyes: [closedEye(-11, -4, 13, 4.2), closedEye(11, -4, 13, 4.2)], mouth: P(arcD(-4.5, 5, 4.5, 5, 3.6)), grin: openMouth(7, 4, 6), yawnY: 7,
-    sm: { eyes: [closedEye(-12, -6, 14, 5), closedEye(12, -6, 14, 5)], mouth: P(arcD(-5.5, 6, 5.5, 6, 4.6)), grin: openMouth(9, 5, 8), yawnY: 9 } },
-  rest: { eyes: [closedEye(-9, -4, 11, 3.8), closedEye(9, -4, 11, 3.8)], mouth: P('M-4.5 7H4.5'), grin: P(arcD(-6, 6, 6, 6, 4)), yawnY: 8,
-    sm: { eyes: [closedEye(-11, -6, 13, 4.6), closedEye(11, -6, 13, 4.6)], mouth: P('M-6 8H6'), grin: P(arcD(-8, 7, 8, 7, 5)), yawnY: 10 } },
-  happy: { eyes: [happyEye(-10, -1, 11, 4.2), happyEye(10, -1, 11, 4.2)], mouth: P(arcD(-4, 7, 4, 7, 3)), grin: openMouth(7, 5, 6), yawnY: 8,
-    sm: { eyes: [happyEye(-11, -3, 13, 5), happyEye(11, -3, 13, 5)], mouth: P(arcD(-5.5, 8, 5.5, 8, 4.6)), grin: openMouth(9, 6, 8), yawnY: 10 } },
-  front: { eyes: [whiteEye(-11, 0, 10.5, 1.5, 0, 4.8), whiteEye(11, 0, 10.5, 1.5, 0, 4.8)], mouth: '', grin: P(arcD(-8, 15, 8, 15, 6)), yawnY: 17 },
-  up: { eyes: [whiteEye(-13, 0, 13, -1, -6, 6.6), whiteEye(13, 0, 13, -1, -6, 6.6)], mouth: '', grin: P(arcD(-8, 18, 8, 18, 6)), yawnY: 19 },
-  side: { eyes: [`<g transform="rotate(-12)">${whiteEye(-11, 0, 10.5, -3.6, -2.4, 5, 8.6)}${whiteEye(11, -1, 10.5, -3.6, -2.4, 5, 8.6)}</g>`], mouth: '', grin: P(arcD(-7, 13, 7, 13, 5.5)), yawnY: 15 },
-  peek: { eyes: [whiteEye(-12, 0, 10, -4.6, 0, 5), peekEye()], mouth: '', grin: P(arcD(-8, 14, 8, 14, 6)), yawnY: 16 },
-  half: { eyes: [halfEye(-12), halfEye(12)], mouth: P('M-11 11H11'), grin: P(arcD(-9, 10, 9, 10, 5)), yawnY: 12 },
+  smile: { eyes: [closedEye(-8, -4, 10, 3.6), closedEye(8, -4, 10, 3.6)], mouth: P(arcD(-26, -5, 26, -5, 11)),
+    sm: { eyes: [closedEye(-11, -6, 13, 4.6), closedEye(11, -6, 13, 4.6)], mouth: P(arcD(-17, 3, 17, 3, 8)) } },
+  grin: { eyes: [closedEye(-8, -5, 10, 3.6), closedEye(8, -5, 10, 3.6)], mouth: P(arcD(-22, -6, 22, -6, 17)),
+    sm: { eyes: [closedEye(-11, -8, 13, 4.6), closedEye(11, -8, 13, 4.6)], mouth: P(arcD(-15, 1, 15, 1, 12)) } },
+  soft: { eyes: [closedEye(-8, -5, 11, 3.8), closedEye(8, -5, 11, 3.8)], mouth: P(arcD(-17, 4, 17, 4, 5.5)),
+    sm: { eyes: [closedEye(-11, -7, 13, 4.6), closedEye(11, -7, 13, 4.6)], mouth: P(arcD(-16, 5, 16, 5, 6)) } },
+  calm: { eyes: [closedEye(-11, -4, 13, 4.2), closedEye(11, -4, 13, 4.2)], mouth: P(arcD(-4.5, 5, 4.5, 5, 3.6)),
+    sm: { eyes: [closedEye(-12, -6, 14, 5), closedEye(12, -6, 14, 5)], mouth: P(arcD(-5.5, 6, 5.5, 6, 4.6)) } },
+  rest: { eyes: [closedEye(-9, -4, 11, 3.8), closedEye(9, -4, 11, 3.8)], mouth: P('M-4.5 7H4.5'),
+    sm: { eyes: [closedEye(-11, -6, 13, 4.6), closedEye(11, -6, 13, 4.6)], mouth: P('M-6 8H6') } },
+  happy: { eyes: [happyEye(-10, -1, 11, 4.2), happyEye(10, -1, 11, 4.2)], mouth: P(arcD(-4, 7, 4, 7, 3)),
+    sm: { eyes: [happyEye(-11, -3, 13, 5), happyEye(11, -3, 13, 5)], mouth: P(arcD(-5.5, 8, 5.5, 8, 4.6)) } },
+  front: { eyes: [whiteEye(-11, 0, 10.5, 1.5, 0, 4.8), whiteEye(11, 0, 10.5, 1.5, 0, 4.8)], mouth: '' },
+  up: { eyes: [whiteEye(-13, 0, 13, -1, -6, 6.6), whiteEye(13, 0, 13, -1, -6, 6.6)], mouth: '' },
+  side: { eyes: [`<g transform="rotate(-12)">${whiteEye(-11, 0, 10.5, -3.6, -2.4, 5, 8.6)}${whiteEye(11, -1, 10.5, -3.6, -2.4, 5, 8.6)}</g>`], mouth: '' },
+  peek: { eyes: [whiteEye(-12, 0, 10, -4.6, 0, 5), peekEye()], mouth: '' },
+  half: { eyes: [halfEye(-12), halfEye(12)], mouth: P('M-11 11H11') },
+};
+/** 쉼 얼굴의 몸짓 부품 — grin = 웃음 짓기 몸짓 때 나오는 입, yawnY = 하품 입 자리. sm = 44px 이하 배치 (메신저 faceInner만 쓴다) */
+const MOTION = {
+  smile: { grin: () => openMouth(13, 2, 11), yawnY: 6, sm: { grin: () => openMouth(12, 3, 10), yawnY: 8 } },
+  grin: { grin: () => openMouth(15, 1, 13), yawnY: 6, sm: { grin: () => openMouth(14, 1, 13), yawnY: 7 } },
+  soft: { grin: () => openMouth(11, 3, 9), yawnY: 7, sm: { grin: () => openMouth(12, 4, 10), yawnY: 8 } },
+  calm: { grin: () => openMouth(7, 4, 6), yawnY: 7, sm: { grin: () => openMouth(9, 5, 8), yawnY: 9 } },
+  rest: { grin: () => P(arcD(-6, 6, 6, 6, 4)), yawnY: 8, sm: { grin: () => P(arcD(-8, 7, 8, 7, 5)), yawnY: 10 } },
+  happy: { grin: () => openMouth(7, 5, 6), yawnY: 8, sm: { grin: () => openMouth(9, 6, 8), yawnY: 10 } },
+  front: { grin: () => P(arcD(-8, 15, 8, 15, 6)), yawnY: 17 },
+  up: { grin: () => P(arcD(-8, 18, 8, 18, 6)), yawnY: 19 },
+  side: { grin: () => P(arcD(-7, 13, 7, 13, 5.5)), yawnY: 15 },
+  peek: { grin: () => P(arcD(-8, 14, 8, 14, 6)), yawnY: 16 },
+  half: { grin: () => P(arcD(-9, 10, 9, 10, 5)), yawnY: 12 },
 };
 /** 상태 표정 — 쉼(idle)은 크루의 기본 표정, 나머지는 모든 크루가 같은 얼굴. small = 44px 이하(소용돌이 선·글자를 키운다) */
 const STATE_FACE = {
@@ -153,7 +184,7 @@ const sizeTune = (px) => px >= 64 ? { sw: 3.4, k: 1 } : px > SMALL_PX ? { sw: 4.
 
 const memo = /* @__PURE__ */ new Map(); // 모양 12 × 색 12 × 상태 7(+정지) × 크기 4단 — 목록이 다시 그려질 때마다 새로 만들지 않는다
 /** 그리기 본체. stateFace = 상태 표정 표(메신저만 넘긴다 — 오피스는 faceStill로 넘기지 않아 상태 표정 코드가 오피스 첫 화면 묶음에서 빠진다).
- *  motion = 몸짓 부품(웃음 짓기·하품 입, 평소 투명)을 넣을지 — 정지 얼굴에는 필요 없다 */
+ *  motion = 몸짓 부품 표(MOTION — 웃음 짓기·하품 입, 평소 투명). 정지 얼굴은 null */
 function draw(face, st, px, stateFace, motion) {
   const shape = inRange(face?.shape, FACE_SHAPES.length) ? face.shape : 0;
   const c = FACE_SHAPES[shape];
@@ -166,7 +197,8 @@ function draw(face, st, px, stateFace, motion) {
   const base = st === 'idle' ? EXPR[c.expr] : stateFace[st](small);
   const e = small && base.sm ? { ...base, ...base.sm } : base;
   const k = small && base.sm ? 1 : t.k; // 작은 배치가 있는 표정은 배치 자체가 이미 크다
-  const idleParts = st === 'idle' && motion ? `<g class="grin" opacity="0">${e.grin}</g><ellipse class="yawn" ${INK} opacity="0" cx="0" cy="${e.yawnY}" rx="6" ry="8"/>` : '';
+  const mo = st === 'idle' && motion ? (small && motion[c.expr].sm) || motion[c.expr] : null;
+  const idleParts = mo ? `<g class="grin" opacity="0">${mo.grin()}</g><ellipse class="yawn" ${INK} opacity="0" cx="0" cy="${mo.yawnY}" rx="6" ry="8"/>` : '';
   const out = `<g class="rig"><path class="body" d="${c.d}" fill="${FACE_COLORS[color]}"/>`
     + `<g class="ft" transform="translate(${c.cx} ${c.cy}) scale(${f2(c.s * k)})" fill="none" stroke="${FEAT}" stroke-width="${t.sw}" stroke-linecap="round" stroke-linejoin="round"><g class="look">`
     + `<g class="eyes">${e.eyes.join('')}</g><g class="mouth">${e.mouth || ''}</g>${idleParts}${e.extra || ''}`
@@ -177,34 +209,9 @@ function draw(face, st, px, stateFace, motion) {
 /** 얼굴 SVG의 안쪽(viewBox 0 0 100 100 기준, 메신저) — 상태 표정 + 몸짓 부품. 바깥 <svg>는 쓰는 쪽이 만든다.
  *  값은 전부 상수에서 오고 face는 정수 인덱스로만 읽는다(사용자 입력이 문자열에 들어가지 않는다) */
 export function faceInner(face, { state = 'idle', px = 28 } = {}) {
-  return draw(face, STATE_FACE[state] ? state : 'idle', px, STATE_FACE, true);
+  return draw(face, STATE_FACE[state] ? state : 'idle', px, STATE_FACE, MOTION);
 }
 /** 정지 얼굴(오피스) — 쉼 표정 하나, 몸짓 부품 없음. faceInner와 같은 그림이다 */
 export function faceStill(face, { px = 28 } = {}) {
-  return draw(face, 'idle', px, null, false);
+  return draw(face, 'idle', px, null, null);
 }
-
-/* ───────── 쉼(idle) 몸짓 계획 — 크루 id 해시로 순서·간격·첫 시작이 정해져 크루마다 박자가 다르다 ───────── */
-/** 몸짓 8종(길이 ms, 뽑힐 가중치). 이름은 styles.css의 .msgr-face[data-g="…"] 와 같다 */
-export const GESTURES = [
-  { k: 'blink', ms: 360, w: 3 },
-  { k: 'look', ms: 1600, w: 2 },
-  { k: 'tilt', ms: 1400, w: 1.2 },
-  { k: 'bounce', ms: 900, w: 1.2 },
-  { k: 'wiggle', ms: 900, w: 1 },
-  { k: 'yawn', ms: 1900, w: 0.8 },
-  { k: 'roll', ms: 1400, w: 1 },
-  { k: 'smile', ms: 1600, w: 1.5 },
-];
-export const GESTURE_MS = /* @__PURE__ */ Object.fromEntries(GESTURES.map((g) => [g.k, g.ms])); // PURE 표시 = 쓰지 않는 묶음(오피스)에서 몸짓 정의를 걷어낼 수 있게
-export const GESTURE_GAP = [2000, 5000]; // 다음 몸짓까지 간격(시작~시작) 하한·상한
-const G_TOTAL = /* @__PURE__ */ GESTURES.reduce((a, g) => a + g.w, 0);
-function pickGesture(h) { let r = (h % 10000) / 10000 * G_TOTAL; for (const g of GESTURES) { r -= g.w; if (r < 0) return g.k; } return GESTURES[0].k; }
-/** n번째 몸짓과 다음 몸짓까지 간격(2~5초) — id·n·직전 몸짓만으로 정해진다. 직전과 같으면 다른 몸짓으로 바꾼다(같은 몸짓 연속 없음) */
-export function gestureAt(id, n, prev = null) {
-  let g = pickGesture(hash(`${id}|g|${n}`));
-  if (g === prev) g = GESTURES[(GESTURES.findIndex((x) => x.k === g) + 1 + hash(`${id}|g2|${n}`) % (GESTURES.length - 1)) % GESTURES.length].k;
-  return { g, gap: GESTURE_GAP[0] + hash(`${id}|gap|${n}`) % (GESTURE_GAP[1] - GESTURE_GAP[0] + 1) };
-}
-/** 첫 몸짓까지 기다림(0.4~3.4초) — 화면에 들어온 크루들이 같은 박자로 움직이지 않게 */
-export const gesturePhase = (id) => 400 + hash(`${id}|phase`) % 3000;
