@@ -35,6 +35,9 @@ ARGO_CLI_APP=1 exec "$N" "$C" "$@"
 `;
 }
 
+/** 화면에 보이는 "직접 실행" 명령용 인용 — 그대로 복사해 붙여 넣으면 실행돼야 한다(공백·$·따옴표가 든 경로, 독립 검수 #800 LOW-6). 안전한 문자만이면 그대로. */
+const shq = (p) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(p) ? p : sq(p));
+const winq = (p) => (/[\s&^()%!;,=]/.test(p) ? `"${p}"` : p);
 const defaultCandidates = (home) => [join(home, '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', join(home, 'bin'), join(home, 'go', 'bin'), join(home, '.npm-global', 'bin'), '/usr/bin'];
 const head = (f, n = 512) => { // 파일 앞 n바이트 — 표식 확인용(전체를 읽지 않는다)
   let fd; try { fd = openSync(f, 'r'); const b = Buffer.alloc(n); const len = readSync(fd, b, 0, n, 0); return b.subarray(0, len).toString('utf8'); } catch { return ''; } finally { if (fd !== undefined) try { closeSync(fd); } catch { /* 무해 */ } }
@@ -119,7 +122,7 @@ export async function cliInstallStatus(o = {}) {
     const cmd = join(dirname(c.execPath), 'cli', 'argo.cmd');
     // 설치 프로그램은 상태(installed|conflict|path-skipped)만 ASCII로 남긴다(NSIS는 ANSI로 써서 한글 경로가 깨진다). 다른 argo의 경로는 여기서 PATH를 직접 훑어 찾는다.
     const others = findArgos({ env: c.env, home: c.home, candidates: [], platform: 'win32' }).filter((a) => a.kind !== 'ours').map(({ path, kind }) => ({ path, kind }));
-    return { platform: 'win32', status: existsSync(cmd) ? (st.status ?? 'installed') : 'unavailable', shim: cmd, run: cmd, others, pathReady: (st.status ?? 'installed') === 'installed' };
+    return { platform: 'win32', status: existsSync(cmd) ? (st.status ?? 'installed') : 'unavailable', shim: cmd, run: winq(cmd), others, pathReady: (st.status ?? 'installed') === 'installed' };
   }
   if (c.platform !== 'darwin') return { platform: c.platform, status: 'unsupported', others: [] };
   const state = readJson(c.stateFile) ?? {};
@@ -131,7 +134,7 @@ export async function cliInstallStatus(o = {}) {
   else if (state.status === 'removed') status = 'removed';
   else if (mine || others.length) status = 'conflict';
   else if (status === 'installed') status = 'missing'; // 우리가 만들었는데 사라짐(사용자가 지움 등)
-  return { platform: 'darwin', status, shim, run: mine?.kind === 'ours' ? shim : `${c.execPath} ${cliPath(c)}`, others, pathReady: pathReady({ env: c.env, home: c.home, dir: dirname(shim) }), pathLine: PATH_LINE };
+  return { platform: 'darwin', status, shim, run: mine?.kind === 'ours' ? shq(shim) : `${shq(c.execPath)} ${shq(cliPath(c))}`, others, pathReady: pathReady({ env: c.env, home: c.home, dir: dirname(shim) }), pathLine: PATH_LINE };
 }
 
 /** 앱 시작 때 1회·멱등 — 맥에서만. 사용자 제거는 존중하고, 남의 argo는 건드리지 않으며, 같은 상태면 쓰지 않는다. */
@@ -196,10 +199,10 @@ export async function addPathToShell(o = {}) {
   else if (sh === 'bash') file = ['.bash_profile', '.bash_login', '.profile'].map((n) => join(c.home, n)).find((f) => existsSync(f)) ?? join(c.home, '.bash_profile');
   else return { result: 'manual', line: PATH_LINE };
   let text = ''; try { text = readFileSync(file, 'utf8'); } catch { /* 새 파일 */ }
-  if (text.includes(PATH_MARK)) { // 이미 우리가 넣었다 — 지운 줄이 아니라 남아 있는 줄
-    return { result: 'already', file };
-  }
-  appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}${PATH_MARK}\n${PATH_LINE}\n`);
+  // 표식 주석만 남고 export 줄이 없으면(사용자가 줄만 지움) 줄만 다시 넣는다 — 주석만 보고 "이미 있다"고 하지 않는다(독립 검수 #800 LOW-5).
+  // 두 줄이 다 있는데 pathReady가 거짓인 경우(예: 줄이 주석 처리됨)는 사용자가 일부러 끈 것이라 건드리지 않는다.
+  if (text.includes(PATH_MARK) && text.includes(PATH_LINE)) return { result: 'already', file };
+  appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}${text.includes(PATH_MARK) ? '' : `${PATH_MARK}\n`}${PATH_LINE}\n`);
   const state = readJson(c.stateFile) ?? {};
   saveState(c.stateFile, { ...state, pathLine: { file } });
   return { result: 'added', file };

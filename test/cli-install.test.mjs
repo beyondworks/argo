@@ -303,3 +303,28 @@ test('윈도우 상태 — 설치 프로그램이 남긴 결과 파일과 실제
   rmSync(join(win, 'cli', 'argo.cmd'));
   assert.equal((await cliInstallStatus(common)).status, 'unavailable', 'argo.cmd가 없으면 결과 파일이 installed여도 등록됨이라 하지 않는다');
 });
+
+test('표식 주석만 남고 export 줄이 없으면(사용자가 줄만 지움) PATH 버튼은 그 한 줄만 다시 넣는다 — 이미 있다고 하지 않는다(독립 검수 #800 LOW-5)', async () => {
+  const w = await world();
+  writeFileSync(join(w.home, '.zprofile'), 'export A=1\n# Argo — 터미널 명령 argo (Argo 앱이 추가, 지워도 됩니다)\n');
+  const r = await addPathToShell(w.common);
+  assert.equal(r.result, 'added');
+  const text = readFileSync(join(w.home, '.zprofile'), 'utf8');
+  assert.equal(text, 'export A=1\n# Argo — 터미널 명령 argo (Argo 앱이 추가, 지워도 됩니다)\nexport PATH="$PATH:$HOME/.local/bin"\n', '주석은 두 번 쓰지 않고 export 줄만');
+  assert.equal((await addPathToShell(w.common)).result, 'already');
+});
+
+test('설정 카드의 "직접 실행" 명령은 공백·특수 문자가 든 경로에서도 그대로 붙여 넣어 실행된다(따옴표, 독립 검수 #800 LOW-6)', async () => {
+  const w = await world({ appDir: 'My Apps $x' });
+  foreignScript(join(w.base, 'fake-brew', 'argo')); // conflict — 직접 실행 명령이 node + argo.mjs
+  const s = await cliInstallStatus(w.common);
+  assert.equal(s.status, 'conflict');
+  const r = spawnSync('/bin/sh', ['-c', s.run], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: w.home } });
+  assert.equal(r.status, 0, `${s.run}\n${r.stderr}`);
+  assert.match(r.stdout, /NODE:.*argo\.mjs/);
+  // 윈도우 — 공백이 든 argo.cmd 경로는 큰따옴표로
+  const win = join(w.base, 'Program Files', 'Argo'); mkdirSync(join(win, 'cli'), { recursive: true }); writeFileSync(join(win, 'node.exe'), ''); writeFileSync(join(win, 'cli', 'argo.cmd'), `rem ${SHIM_MARK}\r\n`);
+  const ws = await cliInstallStatus({ ...w.common, platform: 'win32', execPath: join(win, 'node.exe'), stateFile: join(w.base, 'ws.json') });
+  assert.equal(ws.run, `"${join(win, 'cli', 'argo.cmd')}"`);
+  assert.equal(ws.shim, join(win, 'cli', 'argo.cmd'), 'shim 값 자체는 경로 그대로');
+});
