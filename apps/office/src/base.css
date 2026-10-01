@@ -440,6 +440,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .prose pre code { font-size: inherit; background: none; padding: 0; border-radius: 0; } /* 코드 블록 안 글자는 인라인 코드 칩이 아니다 — 첫 줄만 안쪽으로 밀리고 바탕이 겹쳐 보였다 */
 /* 구분선 = 글 한 줄 높이의 띠, 선은 그 가운데(유건 10/1) — 테두리 1px로 그리면 상자가 1px이라 손잡이가 선 아래에 매달리고 마우스도 1px에서만 잡혔다 */
 .prose hr { height: 26px; margin: 6px 0; border: 0; border-radius: 4px; background: linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat; cursor: default; }
+@media (forced-colors: active) { .prose hr { background: none; border-top: 1px solid CanvasText; height: 0; margin: 18px 0; } } /* 고대비 모드는 배경 그림을 지운다 — 선이 통째로 사라졌다(분리 검수 10/1) */
 .prose .is-empty::before { content: attr(data-placeholder); color: var(--fg-3); float: left; height: 0; pointer-events: none; }
 .block-handle { display: grid; place-items: center; width: 20px; height: 24px; border-radius: 5px; color: var(--fg-3); cursor: grab; transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
 @media (hover: hover) { .block-handle:hover { background: var(--wash); color: var(--fg); } }
@@ -448,9 +449,10 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 :where(.ProseMirror > .block-hover) { border-radius: 4px; }
 .ProseMirror > .block-hover { --hover-wash: color-mix(in srgb, var(--fg) 6%, transparent); box-shadow: inset 0 0 0 100vmax var(--hover-wash), 0 0 0 4px var(--hover-wash); animation: block-hover-in 140ms var(--ease-out); }
 @keyframes block-hover-in { from { box-shadow: inset 0 0 0 100vmax transparent, 0 0 0 4px transparent; } }
-/* 원자 블록(구분선·모듈·비공개)을 골랐을 때 — 고른 블록과 같은 옅은 파랑 면과 링. 편집기 기본 CSS를 불러오지 않아 아무 표시가 없었다 */
-.ProseMirror .ProseMirror-selectednode { outline: none; box-shadow: inset 0 0 0 100vmax var(--pick-wash), 0 0 0 3px var(--pick-wash); }
-:where(.ProseMirror .ProseMirror-selectednode) { border-radius: 4px; }
+/* 원자 블록(구분선·모듈·비공개)을 골랐을 때 — 고른 블록과 같은 옅은 파랑 면과 링. 편집기 기본 CSS를 불러오지 않아 아무 표시가 없었다.
+   편집 중일 때만 — 읽기 전용으로 보는 사람이 모듈 글자를 눌러도 할 수 있는 일이 없는 파란 틀이 생겼다(분리 검수 10/1) */
+.ProseMirror[contenteditable='true'] .ProseMirror-selectednode { outline: none; box-shadow: inset 0 0 0 100vmax var(--pick-wash), 0 0 0 3px var(--pick-wash); }
+:where(.ProseMirror[contenteditable='true'] .ProseMirror-selectednode) { border-radius: 4px; }
 .ProseMirror-hideselection { caret-color: transparent; }
 .ProseMirror-hideselection *::selection { background: transparent; }
 .menu.slash { max-height: 320px; overflow: auto; }
@@ -725,7 +727,7 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 @media (prefers-reduced-motion: reduce) { .redact-text { animation: none !important; } }
 /* 노션식 블록 고르기 — 여백에서 끈 사각형과 고른 블록 */
 .pick-box { position: fixed; z-index: 60; pointer-events: none; border: 1px solid var(--pick-line); background: rgb(35 131 226 / .1); border-radius: 2px; }
-.ProseMirror .block-picked { background: var(--pick-wash); border-radius: 4px; box-shadow: 0 0 0 3px var(--pick-wash); } /* 노션과 같은 파란 고르기 색 — 차콜 강조색은 회색으로 묻힌다 */
+.ProseMirror .block-picked { background-color: var(--pick-wash); border-radius: 4px; box-shadow: 0 0 0 3px var(--pick-wash); } /* 노션과 같은 파란 고르기 색 — 차콜 강조색은 회색으로 묻힌다 */
 .ProseMirror.picking { caret-color: transparent; }
 .ProseMirror.picking ::selection { background: transparent; }
 /* 할 일(성과 기록 1단계) */

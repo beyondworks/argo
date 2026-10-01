@@ -100,3 +100,17 @@ test('unpick clears the pick and collapses the text selection behind it', () => 
   assert.equal(state.selection.empty, true);
   assert.deepEqual(redactStatus(state.doc, range.from, range.to), { any: true, all: true });
 });
+
+// 고른 범위가 구분선 같은 원자 블록으로 끝나도 풀고 나면 아무것도 골라져 있지 않다 — 원자 블록이 NodeSelection으로 다시 잡혀 파란 띠가 남았다(분리 검수 10/1)
+test('unpick never leaves a node selection on a trailing atom block', () => {
+  const hr = { type: 'horizontalRule' };
+  for (const d of [doc(p('문단'), hr), doc(hr, p('뒤 문단')), doc(p('앞'), hr, hr)]) {
+    let state = EditorState.create({ schema, doc: d, plugins: [pickPlugin()] });
+    const range = { from: 0, to: d.content.size };
+    state = state.apply(state.tr.setMeta(pickKey, range));
+    state = state.apply(unpick(state.tr, range.to));
+    assert.equal(pickKey.getState(state), null);
+    assert.ok(state.selection instanceof TextSelection, `${JSON.stringify(d.toJSON().content.map((n) => n.type))}: ${state.selection.constructor.name}`);
+    assert.equal(state.selection.empty, true);
+  }
+});

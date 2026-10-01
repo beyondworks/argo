@@ -2,7 +2,7 @@
 // 가림은 문서의 표시(mark)로 저장된다 — 공유받은 사람도 가려진 채로 보고, 누르고 있는 동안만 보인다(CSS :active).
 // 화면에서 덮는 것이지 접근을 막는 것이 아니다. 내용 자체를 숨기려면 블록 메뉴의 '비공개'를 쓴다.
 import { Mark, Extension } from '@tiptap/react'; // 코어는 react 패키지가 다시 내보낸다(따로 의존성을 늘리지 않는다)
-import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
+import { Plugin, PluginKey, Selection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
 export const RedactMark = Mark.create({
@@ -36,8 +36,12 @@ export const setRedact = (tr, from, to, on) => {
 };
 
 export const pickKey = new PluginKey('blockPick');
-/** 고르기를 풀고 글자 선택도 at(고른 범위 끝) 자리로 접는다 — 파란 칸이 사라진 뒤 글자 선택 하이라이트가 남지 않게(유건 9/29) */
-export const unpick = (tr, at) => tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(tr.mapping.map(at), tr.doc.content.size)), -1)).setMeta(pickKey, null);
+/** 고르기를 풀고 글자 선택도 at(고른 범위 끝) 자리로 접는다 — 파란 칸이 사라진 뒤 글자 선택 하이라이트가 남지 않게(유건 9/29).
+ *  글자 자리만 찾는다(textOnly) — TextSelection.near는 바로 앞 구분선·모듈 같은 원자 블록을 NodeSelection으로 다시 골라 파란 띠가 남았다 */
+export const unpick = (tr, at) => {
+  const $at = tr.doc.resolve(Math.min(tr.mapping.map(at), tr.doc.content.size));
+  return tr.setSelection(Selection.findFrom($at, -1, true) ?? Selection.findFrom($at, 1, true) ?? Selection.atStart(tr.doc)).setMeta(pickKey, null);
+};
 export const pickPlugin = () => new Plugin({
   key: pickKey,
   state: {
