@@ -3174,8 +3174,8 @@ function SearchPage({ res, busy = false, channels, crews, nameOfUser, dmName, on
       <span className="title"><I name="search" size={18} />{t('search.title')}{res && <span className="msgr-klabel">“{res.q}” · {t(res.more ? 'search.countMore' : 'search.count', { n: total })}</span>}</span>
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    {phone && phoneQ && <form className="ph-search ph-search-page" role="search" onSubmit={(e) => { e.preventDefault(); phoneQ.run(phoneQ.q); e.currentTarget.querySelector('input')?.blur(); }}><I name="search" size={16} className="fill" /><input value={phoneQ.q} onChange={(e) => phoneQ.set(e.target.value)} placeholder={t('search.ph.phone')} aria-label={t('search.title')} enterKeyHint="search" /></form>}{/* 폰: 떠 있던 검색 칸(아래 탭 바 안)을 없애 결과 화면 위에 둔다 */}
     <div className="msgr-thread page"><div className="msgr-inbox msgr-searchres">
+      {phone && phoneQ && <form className="ph-search ph-search-page" role="search" onSubmit={(e) => { e.preventDefault(); phoneQ.run(phoneQ.q); e.currentTarget.querySelector('input')?.blur(); }}><I name="search" size={16} className="fill" /><input value={phoneQ.q} onChange={(e) => phoneQ.set(e.target.value)} placeholder={t('search.ph.phone')} aria-label={t('search.title')} enterKeyHint="search" /></form>}{/* 폰: 떠 있던 검색 칸(아래 탭 바 안)을 없애 결과 맨 위에 둔다 */}
       {view.loading && <p className="empty" role="status">{t('ui.loading')}</p>}
       {view.hintKey && <p className="empty">{t(view.hintKey)}</p>}
       {view.noticeKey && <p className="note danger" role="alert">{t(view.noticeKey)}</p>}

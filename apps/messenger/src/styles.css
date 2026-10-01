@@ -1948,7 +1948,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-search { display: flex; align-items: center; gap: 8px; height: 44px; margin: 2px var(--ph-pad) 8px; padding: 0 2px 0 12px; border-radius: 12px; background: var(--card-2); color: var(--fg-3); flex: none; }
   .msgr-phone .ph-search input { flex: 1 1 auto; min-width: 0; height: 40px; border: 0; background: none; color: var(--fg); font-size: 16px; outline: none; }
   .msgr-phone .ph-search .ph-searchx { flex: none; min-height: 44px; min-width: 44px; padding: 0 10px; border: 0; background: none; color: var(--fg-2); font-size: 15px; }
-  .msgr-phone .ph-search-page { margin-top: 4px; }
+  .msgr-phone .msgr-searchres > .ph-search-page { margin: 0 0 12px; }
   .msgr-phone .ph-searchfoot { display: grid; gap: 4px; padding: 10px var(--ph-pad) 4px; }
   .msgr-phone .ph-searchfoot .msgr-hint { padding: 0 0 4px; }
   .msgr-phone .ph-searchfoot .ph-searchall { justify-content: center; min-height: 44px; width: 100%; border-radius: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1976,8 +1976,12 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-chav { flex: none; width: 48px; height: 48px; display: grid; place-items: center; border-radius: 16px; background: var(--card-2); color: var(--fg-2); border: 1px solid var(--border-soft); }
   .msgr-phone .ph-chav svg { width: 20px; height: 20px; }
   .msgr-phone .ph-gav { flex: none; width: 48px; height: 48px; display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 2px; place-items: center; }
-  .msgr-phone .ph-gav.n1, .msgr-phone .ph-gav.n2 { grid-template-rows: 1fr; }
-  .msgr-phone .ph-gav.n1 { grid-template-columns: 1fr; }
+  .msgr-phone .ph-gav.n1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  /* 둘이면 대각선으로 겹친 큰 사진 두 장(카톡) — 2×2의 작은 칸 두 개는 너무 작았다 */
+  .msgr-phone .ph-gav.n2 { display: block; position: relative; }
+  .msgr-phone.phone-home .msgr-side .ph-root .ph-gav.n2 .msgr-av { position: absolute; width: 32px; height: 32px; font-size: 13px; border-radius: 12px; }
+  .msgr-phone.phone-home .msgr-side .ph-root .ph-gav.n2 .msgr-av:first-child { left: 0; top: 0; }
+  .msgr-phone.phone-home .msgr-side .ph-root .ph-gav.n2 .msgr-av:last-child { right: 0; bottom: 0; box-shadow: 0 0 0 2px var(--bg); }
   .msgr-phone .ph-gav.n3 > :first-child { grid-column: 1 / span 2; }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-gav .msgr-av { width: 23px; height: 23px; font-size: 10px; border-radius: 8px; }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-gav .msgr-av.crew .star { display: none; }
@@ -2046,6 +2050,8 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-island button { position: relative; }
   .msgr-phone .msgr-island .msgr-tabn { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center;
     background: var(--fg); color: var(--bg); font-size: 11px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px var(--card); }
+  /* 아래에서 올라오는 창(새 채팅·친구 추가·에이전트 카드)은 뒤를 어둡게 덮는다 — 투명 스크림이라 창 양옆으로 탭 바·목록이 비쳐 창이 떠 보였다 */
+  .msgr-phone .msgr-sheetwrap > .msgr-scrim.clear { position: fixed; inset: 0; background: rgba(0, 0, 0, .38); }
   /* 360 폭 — 이름은 줄이지 않고 원 사이 간격을 줄인다 */
   @media (max-width: 374px) {
     .msgr-phone .msgr-tabbar { left: 8px; right: 8px; }
