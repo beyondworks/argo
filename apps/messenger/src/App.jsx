@@ -16,7 +16,7 @@ import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from '.
 import { handoff, fetchProviderSettings, providerShown, noProviders } from './oauth-handoff.mjs';
 import { parseInviteCode, inviteShareText, inviteLink, friendShareText, checkJoinInput, canSubmitJoin } from './invite.mjs';
 import { inviteListSync } from './invite-list-sync.mjs';
-import { findReusableBot, canReconnect } from './bot-reuse.mjs';
+import { findReusableBot, canReconnect, botDefaultNames } from './bot-reuse.mjs';
 import { NODE_ENV_PREFIX } from './node-cmd.mjs';
 import { splitInlineCode } from './inline-code.mjs';
 import { crewAvailability } from './crew-status.mjs';
@@ -133,6 +133,7 @@ const stopErr = (msg, t) => /msgr_not_allowed/.test(msg) ? t('err.denied') : /Co
 /** 오늘이면 시각만, 아니면 날짜+시각 — 초대 만료(7일 뒤)·노드 마지막 응답·기록처럼 며칠 전후일 수 있는 시각용(시간만 보이면 "오늘 02:31"로 읽힌다 — I-4 실측) */
 const fmtWhen = (iso, lang) => { const d = new Date(iso); const time = fmtTs(iso, lang); if (d.toDateString() === new Date().toDateString()) return time;
   return `${d.toLocaleDateString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric' })} ${time}`; };
+const fmtDate = (iso, lang) => new Date(iso).toLocaleDateString(lang === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: 'short', day: 'numeric' }); // 항상 날짜(오늘이어도 시각만 보이지 않게)
 const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
   ? [d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), d.toLocaleDateString('en-US', { weekday: 'long' })]
   : [d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }), d.toLocaleDateString('ko-KR', { weekday: 'long' })]; };
@@ -3766,14 +3767,14 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
   const [remoteAgentName, setRemoteAgentName] = useState('');
   const [setups, setSetups] = useState([]); // 이번에 만든/회전한 봇들의 설정(이름·두 줄) — 토큰은 화면 상태로만
   // "다시 연결"이 재사용할 수 있는 기본 이름 — 화면 언어가 바뀌어도 같은 봇을 찾도록 두 언어 모두(bot-reuse.mjs)
-  const defaultBotNames = (kind) => ['ko', 'en'].map((l) => tm('org.agents.name.mine', l, { who: nameOfUser(uid), kind: tm(`org.agents.kind.${kind}`, l) }));
+  const defaultBotNames = (kind) => botDefaultNames(tm, { who: nameOfUser(uid), kind });
   const hasMine = (kind) => bots.some((b) => !b.revoked_at && b.kind === kind && b.created_by === uid); // "하나 더 추가"의 오픈클로 버튼 표시 조건(전과 같음) — 라벨 판정(reconnect)과 별개
   const reconnect = (kind) => canReconnect(bots, { kind, uid, names: defaultBotNames(kind), desktop: isDesktopTauri() }); // 버튼 라벨도 실제 재사용 판정과 같은 함수
   const botUrl = `${SB_URL}/functions/v1/msgr-bot`;
   const botSetup = (token) => `ARGO_MSGR_URL=${botUrl}\nARGO_MSGR_BOT_TOKEN=${token}`; // 다른 컴퓨터용 두 줄(설정 복사)
   const mkOrRotate = async (kind, name, extId, reuseNames = null) => { // 다시 쓸 내 봇이 있으면 회전, 없으면 생성(찾는 규칙은 bot-reuse.mjs: external_id가 같거나, reuseNames를 준 "다시 연결"에서만 같은 기본 이름의 수동 봇) — 둘 다 토큰 원문은 지금만
     const cur = findReusableBot(bots, { kind, uid, extId, names: reuseNames });
-    if (cur) { const r = await supabase.rpc('msgr_bot_rotate', { bot: cur.id }); if (r.error) throw new Error(r.error.message); return { id: cur.id, crewId: cur.crew_id, token: r.data, name: cur.name, rotated: true }; }
+    if (cur) { const r = await supabase.rpc('msgr_bot_rotate', { bot: cur.id }); if (r.error) throw new Error(r.error.message); return { id: cur.id, crewId: cur.crew_id, token: r.data, name: cur.name, rotated: true, createdAt: cur.created_at }; }
     const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name, external_id: extId ?? null }); if (r.error) throw new Error(r.error.message);
     return { id: r.data.bot_id, crewId: r.data.crew_id, token: r.data.token, name };
   };
@@ -3874,7 +3875,7 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
       }
       if (!agents) { // 수동: 이 컴퓨터에 에이전트가 없거나 앱 밖 — 봇 하나(다른 컴퓨터용)
         const made = await mkOrRotate(kind, kind === 'custom' ? t('org.agents.kind.custom') : t('org.agents.name.mine', { who: nameOfUser(uid), kind: t(`org.agents.kind.${kind}`) }), null, kind === 'custom' ? null : defaultBotNames(kind)); // custom("다른 에이전트")은 늘 새로 만든다(이름 목록 없음)
-        setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); onNote(t(made.rotated ? 'org.agents.rotated.again' : 'org.agents.made')); loadBots().catch(() => {}); onChanged?.();
+        setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); onNote(t(made.rotated ? 'org.agents.rotated.again' : 'org.agents.made', made.rotated ? { name: made.name, when: fmtDate(made.createdAt, lang) } : undefined)); loadBots().catch(() => {}); onChanged?.();
         return;
       }
       const made = [];
@@ -3983,7 +3984,7 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
       <h2>{t('org.agents')}</h2><p>{t(isMobilePlatform ? 'org.agents.mobile' : 'org.agents.desc')}</p>
       <div className="row">
         <button type="button" className="btn btn-primary sm" disabled={busy || isMobilePlatform} onClick={() => addBot('hermes')}><I name="plus" size={13} />{t(isDesktopTauri() ? 'org.agents.local.open' : 'org.agents.add.hermes')}</button>
-        <button type="button" className="btn sm" disabled={busy || isMobilePlatform} onClick={() => addBot('openclaw')} title={reconnect('openclaw') ? t('org.agents.reconnect.title') : undefined}>{reconnect('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
+        <button type="button" className="btn sm" disabled={busy || isMobilePlatform} onClick={() => addBot('openclaw')} title={reconnect('openclaw') ? t(isDesktopTauri() ? 'org.agents.reconnect.title.desktop' : 'org.agents.reconnect.title') : undefined}>{reconnect('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
         <button type="button" className="btn sm" disabled={busy} onClick={openVps}><I name="plus" size={13} />{t('org.agents.vps.open')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
         <span className="msgr-remote-add"><label className="msgr-klabel" htmlFor="remote-agent-name">{t('org.agents.another')}</label><input id="remote-agent-name" className="msgr-input inline" value={remoteAgentName} maxLength={80} placeholder={t('org.agents.remote.name.placeholder')} onChange={(event) => setRemoteAgentName(event.target.value)} /><button type="button" className="btn sm ghost text" disabled={busy || !remoteAgentName.trim()} onClick={() => addAnother('hermes')}>{t('org.agents.kind.hermes')}</button>{hasMine('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy || !remoteAgentName.trim()} onClick={() => addAnother('openclaw')}>{t('org.agents.kind.openclaw')}</button>}</span>

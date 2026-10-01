@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { findReusableBot, canReconnect } from '../src/bot-reuse.mjs';
+import { findReusableBot, canReconnect, botDefaultNames } from '../src/bot-reuse.mjs';
 import { t } from '../src/i18n.js';
 
 const ME = 'u-me'; const OTHER = 'u-other';
@@ -64,13 +64,53 @@ test('회전했을 때의 안내는 "만들었습니다"가 아니라 토큰 재
   assert.match(t('org.agents.rotated.again', 'en'), /reissued/i); assert.match(t('org.agents.rotated.again', 'en'), /no longer work/i);
 });
 
+// 재검수 #797 LOW-A — 두 언어 이름을 모두 넘긴다는 것을 잠근다(['ko','en'] → ['ko'] 변이가 살아남던 것)
+test('botDefaultNames — 화면 언어와 무관하게 한국어·영어 기본 이름을 둘 다 돌려준다', () => {
+  const names = botDefaultNames(t, { who: '유건', kind: 'openclaw' });
+  assert.equal(names.length, 2);
+  assert.equal(names[0], t('org.agents.name.mine', 'ko', { who: '유건', kind: '오픈클로' }));
+  assert.equal(names[1], t('org.agents.name.mine', 'en', { who: '유건', kind: 'OpenClaw' }));
+  assert.notEqual(names[0], names[1]);
+  assert.match(names[0], /유건의 오픈클로/); assert.match(names[1], /OpenClaw/);
+  assert.match(botDefaultNames(t, { who: '민수', kind: 'hermes' })[1], /Hermes/);
+});
+
+test('botDefaultNames로 만든 영어 이름의 봇도 영어로 바꾼 뒤 다시 연결에서 찾는다', () => {
+  const names = botDefaultNames(t, { who: '유건', kind: 'openclaw' });
+  assert.equal(findReusableBot([bot({ id: 'en', name: names[1] })], { kind: 'openclaw', uid: ME, extId: null, names })?.id, 'en');
+});
+
+// 재검수 #797 LOW-B·C
+test('데스크톱 "다시 연결" 툴팁은 중복 생성이 없다고 단정하지 않고, 브라우저 툴팁은 그대로(재사용이 확실한 경우)', () => {
+  for (const lang of ['ko', 'en']) {
+    const d = t('org.agents.reconnect.title.desktop', lang); const w = t('org.agents.reconnect.title', lang);
+    assert.ok(d.length > 10 && d !== w, lang);
+    assert.doesNotMatch(d, /중복 생성 없음|no duplicate/i, `${lang}: ${d}`);
+  }
+  assert.match(t('org.agents.reconnect.title.desktop', 'ko'), /이 컴퓨터의 에이전트/); assert.match(t('org.agents.reconnect.title.desktop', 'ko'), /토큰만 새로 발급/);
+  assert.match(t('org.agents.reconnect.title.desktop', 'en'), /this computer/i);
+  assert.match(t('org.agents.reconnect.title', 'ko'), /중복 생성 없음/);
+});
+
+test('회전 안내에 대상 봇의 이름과 만든 날짜가 들어간다(ko·en)', () => {
+  const vars = { name: '유건의 오픈클로', when: '9월 30일 오후 3:20' };
+  for (const lang of ['ko', 'en']) { const m = t('org.agents.rotated.again', lang, vars); assert.ok(m.includes(vars.name), m); assert.ok(m.includes(vars.when), m); assert.doesNotMatch(m, /\{name\}|\{when\}/); }
+});
+
+test('앱: 기본 이름은 순수 함수에서, 툴팁은 데스크톱 문구 분기, 회전 안내는 봇 이름·만든 날짜를 넘긴다', () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /const defaultBotNames = \(kind\) => botDefaultNames\(tm, \{ who: nameOfUser\(uid\), kind \}\);/);
+  assert.match(app, /title=\{reconnect\('openclaw'\) \? t\(isDesktopTauri\(\) \? 'org\.agents\.reconnect\.title\.desktop' : 'org\.agents\.reconnect\.title'\) : undefined\}/);
+  assert.match(app, /rotated: true, createdAt: cur\.created_at \};/);
+  assert.match(app, /t\(made\.rotated \? 'org\.agents\.rotated\.again' : 'org\.agents\.made', made\.rotated \? \{ name: made\.name, when: fmtDate\(made\.createdAt, lang\) \} : undefined\)/);
+});
+
 test('앱: 재사용은 hermes·openclaw 수동 경로에서만 켜고, custom·하나 더 추가는 늘 새로 만들며, 회전하면 재발급 안내를 낸다', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /const mkOrRotate = async \(kind, name, extId, reuseNames = null\) =>/);
   assert.match(app, /const cur = findReusableBot\(bots, \{ kind, uid, extId, names: reuseNames \}\);/);
-  assert.match(app, /return \{ id: cur\.id, crewId: cur\.crew_id, token: r\.data, name: cur\.name, rotated: true \};/);
+  assert.match(app, /return \{ id: cur\.id, crewId: cur\.crew_id, token: r\.data, name: cur\.name, rotated: true, createdAt: cur\.created_at \};/);
   assert.match(app, /await mkOrRotate\(kind, [^\n]*, null, kind === 'custom' \? null : defaultBotNames\(kind\)\)/, '수동 연결: custom은 이름 목록 없음');
-  assert.match(app, /onNote\(t\(made\.rotated \? 'org\.agents\.rotated\.again' : 'org\.agents\.made'\)\)/);
   assert.match(app, /const made = await mkOrRotate\(kind, name, null\);/, '"하나 더 추가"는 4번째 인자 없음 — 늘 새로 만든다');
   assert.match(app, /const reconnect = \(kind\) => canReconnect\(bots, \{ kind, uid, names: defaultBotNames\(kind\), desktop: isDesktopTauri\(\) \}\);/);
   assert.match(app, /\{reconnect\('openclaw'\) \? t\('org\.agents\.reconnect'/);

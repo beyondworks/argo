@@ -20,3 +20,8 @@ export function canReconnect(bots, { kind, uid, names, desktop = false }) {
   if (desktop) return (bots ?? []).some((b) => !b.revoked_at && b.kind === kind && b.created_by === uid);
   return !!findReusableBot(bots, { kind, uid, extId: null, names });
 }
+
+// "다시 연결"이 찾는 기본 이름 — 화면 언어를 바꿔도 같은 봇을 찾도록 한국어·영어 이름을 모두 돌려준다(tm = 사전 t(키, 언어, 변수)).
+export function botDefaultNames(tm, { who, kind }) {
+  return ['ko', 'en'].map((l) => tm('org.agents.name.mine', l, { who, kind: tm(`org.agents.kind.${kind}`, l) }));
+}
