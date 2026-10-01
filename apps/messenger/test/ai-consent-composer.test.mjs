@@ -97,7 +97,7 @@ test('안내 문구는 사실만 — 채널의 최근 대화 포함·제공자 �
 test('설정에서 동의를 철회·재동의할 수 있다(AiConsentRow, 조직 진입 게이트와 같은 SafetyCtx 상태 공유)', () => {
   assert.match(app, /function AiConsentRow\(/);
   assert.match(app, /const \{ aiConsented, setAiConsent \} = useContext\(SafetyCtx\);/);
-  assert.match(app, /<AiConsentRow t=\{t\} onError=\{onError\} \/>/, '설정 "내 정보" 탭에 실제로 걸려 있다');
+  assert.match(app, /<AiConsentRow t=\{t\} onError=\{onError\} hasOrg=\{!!org \|\| orgs\.length > 0\} \/>/, '설정 "내 정보" 탭에 실제로 걸려 있다(조직 유무로 문구를 고른다 — UX 점검 C·D)');
 });
 
 // 3차 검수 L-2(2026-09-27) — msgr_my_ai_consent·msgr_my_muted_crews를 공용 15초 tick(다른 화면 새로고침용
