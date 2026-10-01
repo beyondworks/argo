@@ -1116,7 +1116,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 /* 가로 폭: left:50% + translateX(-50%)는 shrink-to-fit 폭이 (화면 폭 − 50%)로 제한돼 폰 390에서 195px·3줄로 접혔다(LA-04) — width: max-content + max-width. 기본은 left/right 0 + margin auto(로그인 화면 등 셸이 없는 곳), 셸에서는 App.jsx가 toast-place.mjs로 아래쪽 받침(탭 바·새 대화 단추·입력창) 바로 위·입력창 열 가운데로 left/bottom을 직접 준다 — 위쪽 고정은 화면마다 머리 높이가 달라 머리·제목·시트를 가렸다 */
 .msgr-inboxtoggle { margin: 4px auto 8px; display: inline-flex; }
 .msgr-toast { overflow-wrap: anywhere; word-break: break-word; text-align: left; } /* 긴 파일명·경로가 상자 밖으로 흐르던 결함(2026-09-11 밤) */
-.msgr-toast.err { color: var(--danger, #d05a5a); border-color: color-mix(in srgb, var(--danger, #d05a5a) 40%, var(--border)); }
+.msgr-toast.err { color: color-mix(in srgb, var(--danger, #d05a5a) 60%, var(--fg)); border-color: color-mix(in srgb, var(--danger, #d05a5a) 40%, var(--border)); background: color-mix(in srgb, var(--danger, #d05a5a) 12%, var(--card)); } /* 오류만 붉은 기가 도는 바탕 — 다크에서 --card 바탕이 말풍선·카드와 비슷해 묻혔다(대비 1.4). 경고 계열 토큰 --danger 재사용. 글자는 --danger를 --fg 쪽으로 섞어 붉은 바탕 위에서도 4.5:1 이상 */
 @keyframes msgrToastIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
 

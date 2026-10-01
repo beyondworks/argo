@@ -703,14 +703,24 @@ function Shell({ session }) {
   // 토스트 자리 — 아래쪽에 깔린 것(탭 바·새 대화 단추·입력창 받침)의 윗선 바로 위, 가로는 입력창 열(폰은 화면) 가운데. 화면마다 머리 높이가 달라 위쪽 고정은 머리·제목·시트를 가렸다(#801 재검수)
   const toastRef = useRef(null);
   useLayoutEffect(() => {
-    const el = toastRef.current; if (!el) return;
+    const el = toastRef.current; if (!el) return undefined;
     const boxes = (q) => [...document.querySelectorAll(q)].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
-    const low = boxes('.msgr-tabbar, .msgr-fab, .msgr-dock'); const viewW = document.documentElement.clientWidth; const viewH = window.innerHeight;
-    const col = isPhoneRef.current ? null : (boxes('.msgr-dock > div')[0] ?? boxes('.msgr-main')[0]);
-    const colLeft = col?.left ?? 0; const colRight = col?.right ?? viewW;
-    el.style.maxWidth = `${toastMaxWidth({ viewW, colLeft, colRight })}px`; // 열이 좁으면(시트 열림) 상자도 그 안에서 줄바꿈 — 시트 쪽으로 삐져나가지 않는다
-    const p = toastPlace({ viewW, viewH, boxW: el.offsetWidth, anchorTop: low.length ? Math.min(...low.map((r) => r.top)) : viewH, colLeft, colRight });
-    Object.assign(el.style, { left: `${p.left}px`, right: 'auto', marginInline: '0', top: 'auto', bottom: `${p.bottom}px` });
+    const place = () => {
+      // 토스트 아래·옆에 있으면 눌러야 할 것들 — 탭 바·새 대화 단추·입력창 받침·'맨 아래로'·열린 팝업(멘션·슬래시·역할·이모지). 이 중 가장 높은 윗선 바로 위에 놓는다
+      const low = boxes('.msgr-tabbar, .msgr-fab, .msgr-dock, .msgr-tobottom .btn, .msgr-pop, .msgr-emojipop'); const viewW = document.documentElement.clientWidth; const viewH = window.innerHeight;
+      const col = isPhoneRef.current ? null : (boxes('.msgr-dock > div')[0] ?? boxes('.msgr-main')[0]);
+      const colLeft = col?.left ?? 0; const colRight = col?.right ?? viewW;
+      el.style.maxWidth = `${toastMaxWidth({ viewW, colLeft, colRight })}px`; // 열이 좁으면(시트 열림) 상자도 그 안에서 줄바꿈 — 시트 쪽으로 삐져나가지 않는다
+      const p = toastPlace({ viewW, viewH, boxW: el.offsetWidth, anchorTop: low.length ? Math.min(...low.map((r) => r.top)) : viewH, colLeft, colRight });
+      Object.assign(el.style, { left: `${p.left}px`, right: 'auto', marginInline: '0', top: 'auto', bottom: `${p.bottom}px` });
+    };
+    place();
+    // 떠 있는 동안 자리가 바뀌는 것 — 입력창이 여러 줄로 커짐(받침 크기), 키보드, 창 크기, '맨 아래로'·팝업의 등장/사라짐. 토스트가 닫히면 전부 해제한다
+    let raf = 0; const again = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); };
+    const dock = document.querySelector('.msgr-dock'); const ro = dock && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(again) : null; if (dock) ro?.observe(dock);
+    const mo = typeof MutationObserver !== 'undefined' ? new MutationObserver(again) : null; mo?.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    const vv = window.visualViewport; window.addEventListener('resize', again); vv?.addEventListener('resize', again); vv?.addEventListener('scroll', again);
+    return () => { cancelAnimationFrame(raf); ro?.disconnect(); mo?.disconnect(); window.removeEventListener('resize', again); vv?.removeEventListener('resize', again); vv?.removeEventListener('scroll', again); };
   }, [err, note]);
   const [tick, setTick] = useState(0);
   useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록. 알림 탭·전경 수신은 앱 수준 리스너(App)가 받아 대기함·shellLink로 넘긴다(2026-10-01)

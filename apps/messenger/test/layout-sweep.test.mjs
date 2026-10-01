@@ -111,7 +111,25 @@ test('LA-04 토스트 폭: left/right 0 + margin auto + max-content — left:50%
     assert.deepEqual(declOf(r, 'width').filter((v) => v !== 'max-content'), [], `${r.sel}의 width가 max-content가 아니다`);
   }
   assert.doesNotMatch(css.match(/@keyframes msgrToastIn \{[^\n]*\}/)?.[0] ?? '', /-50%/);
+  const err = rules.find((r) => /\.msgr-toast\.err$/.test(r.sel)); // 오류 토스트: 붉은 기 바탕(다크에서 --card 바탕이 말풍선에 묻혔다) + 글자는 --fg 쪽으로 섞어 대비 유지
+  assert.match(declOf(err, 'background')[0] ?? '', /color-mix\(in srgb, var\(--danger[^)]*\) \d+%, var\(--card\)\)/);
+  assert.match(declOf(err, 'color')[0] ?? '', /color-mix\(in srgb, var\(--danger[^)]*\) \d+%, var\(--fg\)\)/);
   assert.match(app, /<button type="button" ref=\{toastRef\} className=\{`msgr-toast/, '셸 토스트는 자리를 직접 준다(toast-place.mjs)');
+});
+
+test('LA-04 토스트 자리 적용: 계산 결과를 style에 쓰는 줄·기준 요소·다시 재기·해제가 전부 App.jsx에 있다 — 한 줄만 지워도 실패', () => {
+  const i = app.indexOf('const toastRef = useRef(null);'); assert.ok(i > 0);
+  const block = app.slice(i, app.indexOf('}, [err, note]);', i));
+  // 결과를 쓰는 자리: left·bottom이 계산값(p.left·p.bottom)이고 top은 auto
+  assert.match(block, /Object\.assign\(el\.style, \{ left: `\$\{p\.left\}px`, right: 'auto', marginInline: '0', top: 'auto', bottom: `\$\{p\.bottom\}px` \}\)/);
+  assert.match(block, /const p = toastPlace\(\{[^}]*boxW: el\.offsetWidth[^}]*anchorTop:[^}]*colLeft, colRight \}\)/);
+  assert.match(block, /el\.style\.maxWidth = `\$\{toastMaxWidth\(\{ viewW, colLeft, colRight \}\)\}px`/);
+  // 기준 요소: 탭 바·새 대화 단추·입력창 받침·맨 아래로·열린 팝업(멘션·슬래시·역할 = .msgr-pop, 이모지)
+  const anchors = block.match(/boxes\('([^']*\.msgr-tabbar[^']*)'\)/)?.[1] ?? '';
+  for (const sel of ['.msgr-tabbar', '.msgr-fab', '.msgr-dock', '.msgr-tobottom .btn', '.msgr-pop', '.msgr-emojipop']) assert.ok(anchors.split(',').map((x) => x.trim()).includes(sel), `기준 요소 ${sel}`);
+  // 떠 있는 동안 다시 재기 + 닫히면 해제(누수 없게)
+  assert.match(block, /place\(\);\s*\n/);
+  for (const re of [/new ResizeObserver\(again\)/, /new MutationObserver\(again\)/, /addEventListener\('resize', again\)/, /vv\?\.addEventListener\('resize', again\)/, /ro\?\.disconnect\(\)/, /mo\?\.disconnect\(\)/, /removeEventListener\('resize', again\)/, /vv\?\.removeEventListener\('resize', again\)/, /cancelAnimationFrame\(raf\)/]) assert.match(block, re);
 });
 
 test('LA-04 토스트 자리: 아래쪽 받침(탭 바·새 대화 단추·입력창) 바로 위, 입력창 열 가운데 — 머리·제목·시트를 가리지 않는다', () => {
@@ -149,9 +167,12 @@ test('LA-08·12 전역 .row 패딩 누수: 메신저 전체에서 되돌린다(.
 
 test('LA-01 폰 홈 목록 아래 여백은 탭 바 + FAB를 넘는다 · FAB는 탭 바(70)보다 위·스크림(72)보다 아래', () => {
   assert.match(css, /\.msgr-phone\.phone-home \.msgr-railbody \{[^}]*padding: 12px 0 calc\(var\(--ph-tab\) \+ 14px \+ 56px \+ 16px /);
-  const z = (re) => Number(css.match(re)?.[1]);
-  const fab = z(/\.msgr-fab \{ position: fixed;[^}]*z-index: (\d+);/); const tabbar = z(/\.msgr-tabbar \{ position: fixed;[^}]*?z-index: (\d+);/); const scrim = z(/\.msgr-phone\.phone-home \.msgr-side \.msgr-scrim\.clear \{[^}]*z-index: (\d+);/);
-  assert.ok(fab > tabbar && fab < scrim, `FAB ${fab} 탭 바 ${tabbar} 스크림 ${scrim} — FAB가 DOM에서 탭 바보다 앞이라 동률(70)이면 탭 바 ::before 그라데이션이 + 아래 반을 덮는다`);
+  // 같은 선택자(마지막 클래스가 .msgr-tabbar / .msgr-fab)의 모든 규칙을 본다 — 뒤 규칙이 z를 바꿔도 잡힌다
+  const zs = (cls) => rules.filter((r) => r.sel.split(',').some((x) => new RegExp(`(^|\\s)\\.${cls}$`).test(x.trim()))).flatMap((r) => declOf(r, 'z-index').map(Number));
+  const scrimZs = rules.filter((r) => /\.msgr-scrim\.clear$/.test(r.sel.split(',')[0].trim()) && /phone-home/.test(r.sel)).flatMap((r) => declOf(r, 'z-index').map(Number));
+  const fab = zs('msgr-fab'); const tabbar = zs('msgr-tabbar');
+  assert.ok(fab.length >= 1 && tabbar.length >= 1 && scrimZs.length >= 1);
+  assert.ok(Math.min(...fab) > Math.max(...tabbar) && Math.max(...fab) < Math.min(...scrimZs), `FAB ${fab} 탭 바 ${tabbar} 스크림 ${scrimZs} — FAB가 DOM에서 탭 바보다 앞이라 동률(70)이면 탭 바 ::before 그라데이션이 + 아래 반을 덮는다`);
 });
 
 test('LA-02 폰 하위 페이지 머리: 오른쪽 단추 칸이 단추 폭만큼 늘고, 제목은 단추와 같은 중심선', () => {
