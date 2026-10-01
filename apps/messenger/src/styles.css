@@ -18,6 +18,7 @@
 /* 본체 app/globals.css의 전역 '.row'(목록 행: padding 12px 18px · 윗선 · width 100%)가 메신저의 모든 .row로 샌다 — 부모마다 따로 되돌리던 자리(.msgr-setcard 등) 밖에서는 버튼·입력이 18px 안쪽에서 시작하고 행마다 윗선이 그어졌다
    (LA-08 로그인 서버 칸, LA-12 채널 시트 설정). 한 번에 되돌린다 — 부모별 규칙(.msgr-rows .row 등 명시도 같거나 높음, 뒤에 있음)은 그대로 이긴다. */
 .argo-messenger .row { padding: 0; border-top: 0; width: auto; text-align: inherit; }
+.argo-messenger .row.act-more { margin-top: 8px; } /* 기억 > 활동 기록 '더 보기' — 전역 .row 패딩(12px)이 빠지며 마지막 줄에 간격 0으로 붙었다(#801 재검수) */
 .mi { flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .mi.fill { fill: currentColor; stroke: none; }
 .msgr-klabel { font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--fg-3); }
@@ -1111,12 +1112,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 @media (hover: hover) { .msgr-hchip.off:hover { background: color-mix(in srgb, var(--danger, #d05a5a) 12%, transparent); } } .msgr-hchip.off:active { background: color-mix(in srgb, var(--danger, #d05a5a) 12%, transparent); }
 
 /* 토스트(2026-09-09): 상단 안내 바 대체 — 레이아웃 불변, 자동 소멸, 클릭 시 즉시 */
-.msgr-toast { position: fixed; z-index: 80; top: 72px; left: 0; right: 0; margin-inline: auto; width: max-content; max-width: min(560px, calc(100vw - 32px)); box-sizing: border-box; padding: 9px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; box-shadow: 0 10px 28px rgba(0,0,0,0.22); cursor: pointer; text-align: left; animation: msgrToastIn 160ms ease; }
-/* 가운데 맞춤은 left:50% + translateX(-50%) 대신 left/right 0 + margin auto — 앞의 방식은 shrink-to-fit 폭이 (화면 폭 − 50%)로 제한돼 폰 390에서 195px·3줄로 접히고 머리 제목을 가렸다(LA-04). 위치는 머리 줄(데스크톱 63px·폰 44px+안전 영역) 아래 — 머리의 제목·단추를 가리지 않는다 */
+.msgr-toast { position: fixed; z-index: 80; top: auto; bottom: 24px; left: 0; right: 0; margin-inline: auto; width: max-content; max-width: min(560px, calc(100vw - 32px)); box-sizing: border-box; padding: 9px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; box-shadow: 0 10px 28px rgba(0,0,0,0.22); cursor: pointer; text-align: left; animation: msgrToastIn 160ms ease; }
+/* 가로 폭: left:50% + translateX(-50%)는 shrink-to-fit 폭이 (화면 폭 − 50%)로 제한돼 폰 390에서 195px·3줄로 접혔다(LA-04) — width: max-content + max-width. 기본은 left/right 0 + margin auto(로그인 화면 등 셸이 없는 곳), 셸에서는 App.jsx가 toast-place.mjs로 아래쪽 받침(탭 바·새 대화 단추·입력창) 바로 위·입력창 열 가운데로 left/bottom을 직접 준다 — 위쪽 고정은 화면마다 머리 높이가 달라 머리·제목·시트를 가렸다 */
 .msgr-inboxtoggle { margin: 4px auto 8px; display: inline-flex; }
 .msgr-toast { overflow-wrap: anywhere; word-break: break-word; text-align: left; } /* 긴 파일명·경로가 상자 밖으로 흐르던 결함(2026-09-11 밤) */
 .msgr-toast.err { color: var(--danger, #d05a5a); border-color: color-mix(in srgb, var(--danger, #d05a5a) 40%, var(--border)); }
-@keyframes msgrToastIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes msgrToastIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
 
 /* Narrow screens and short touch viewports (phone landscape/keyboard) keep one conversation pane. */
@@ -1185,7 +1186,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-emojipop.phone .grid button { width: 100%; height: 40px; font-size: 24px; border-radius: 9px; }
   .msgr-emojipop.phone .msgr-klabel { margin: 4px 2px 0; }
   .msgr-emojipop .grid { grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); }
-  .msgr-toast { top: calc(env(safe-area-inset-top, 0px) + 52px); }
   .msgr-auth { min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
   /* Implicit auto grid tracks inherited native input widths and clipped the card's right edge. */
   .msgr-auth, .msgr-auth .msgr-card, .msgr-auth .body, .msgr-auth .msgr-server, .msgr-auth .msgr-server-body { grid-template-columns: minmax(0, 1fr); min-width: 0; }
@@ -1382,7 +1382,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-list { padding-bottom: 6px; }
   .msgr-phone.phone-home .msgr-side .msgr-folderhead { padding: 10px 20px 4px calc(var(--ph-pad) - 3px); font-size: var(--ph-sub); } /* 묶음 머리(내 에이전트 등)의 셰브론을 절 제목 아이콘 왼쪽 선(x=--ph-pad)에 맞춘다 — 목록 패딩 2px·셰브론 여백 1px을 뺀다(유건 2026-09-17) */
   /* FAB(슬랙 +) — 아일랜드 위 오른쪽 */
-  .msgr-fab { position: fixed; right: 24px; bottom: max(72px, calc(env(safe-area-inset-bottom) + 54px)); z-index: 70; width: 56px; height: 56px; border-radius: 50%; /* 슬랙 실측: 바닥 100(인셋 34+66) */ /* z 70 = 탭 바와 같은 층(DOM 뒤라 위) — 69면 탭 바의 바탕 그라데이션(::before)이 +의 아래 반을 덮어 번져 보였다 */
+  .msgr-fab { position: fixed; right: 24px; bottom: max(72px, calc(env(safe-area-inset-bottom) + 54px)); z-index: 71; width: 56px; height: 56px; border-radius: 50%; /* 슬랙 실측: 바닥 100(인셋 34+66) */ /* z 71 = 탭 바(70)보다 위 — FAB가 DOM에서 탭 바보다 앞이라 70 동률이면 탭 바 바탕 그라데이션(::before)이 +의 아래 반을 덮어 번졌다(실측). 스크림(72)보다는 아래 */
     border: 0; background: var(--mark); color: var(--mark-fg); display: grid; place-items: center; box-shadow: var(--shadow-float); cursor: pointer; } /* 보내기 단추와 같은 골드 — 아르고의 주 동작색 */
 
   /* ── 채팅 머리(슬랙 겹침 기준): [뒤로 36원] [제목 16/700 위 · 부제 12 아래] [36원 2개]. 탭 줄은 슬랙에 없다 → 숨김(부제가 탭 수를 말한다) ── */
@@ -1551,10 +1551,10 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   body:has(.msgr-shell.msgr-phone) img, .msgr-phone img { -webkit-touch-callout: default; } /* 첨부 이미지 길게 눌러 저장은 살린다(검수 M-3). 링크는 제외 — 본문 링크 콜아웃이 앱 액션 시트를 가로챈다(재검수 LOW-A) */
   /* iOS가 탭한 자리에 hover를 붙여 두던 잔상(유건 캡처 2026-09-15)은 공용 hover를 @media (hover: hover)로 감싸 뿌리에서 막는다 — 폰 블록에서 하나씩 끄던 방어는 걷었다 */
   .msgr-ctxmenu button:focus-visible { outline: none; } /* 폰 블록 안 — 터치에선 포커스를 안 옮기지만 옛 WebView 대비 링도 끈다 */
-  .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek, .msgr-dmpeek { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); left: var(--ph-pad); right: var(--ph-pad); width: auto; height: auto; max-width: none; max-height: 60vh; border-radius: 20px; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; } /* 아래에서 올라오는 시트 — 폰 크루 시트(위 고정·전체 높이) 규칙보다 우선. 좌우는 다른 시트와 같은 --ph-pad 안쪽·모서리 20 전부(전체 폭이던 새 채팅 시트만 가장자리 선이 달랐다, LA-27) */
+  .msgr-phone .msgr-sheetwrap .msgr-crewsheet.msgr-dmpeek, .msgr-dmpeek { top: auto; bottom: 0; left: var(--ph-pad); right: var(--ph-pad); width: auto; height: auto; max-width: none; max-height: 60vh; border-radius: 20px 20px 0 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; } /* 아래에서 올라오는 시트 — 폰 크루 시트(위 고정·전체 높이) 규칙보다 우선. 좌우만 다른 시트와 같은 --ph-pad 안쪽(전체 폭이던 새 채팅 시트만 가장자리 선이 달랐다, LA-27). 바닥은 0 그대로 — 아래 안전 영역은 시트 안쪽 패딩(.peek·.foot)이 한 번만 더한다(바닥을 띄우면 두 번 더해져 노치 기기에서 버튼이 97px 떴다) */
   .msgr-dmpeek .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
   .msgr-dmpeek .head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .msgr-dmpeek .peek { overflow-y: auto; padding: 8px 16px 12px; display: grid; gap: 8px; align-content: start; }
+  .msgr-dmpeek .peek { overflow-y: auto; padding: 8px 16px calc(env(safe-area-inset-bottom) + 12px); display: grid; gap: 8px; align-content: start; }
   .msgr-dmpeek .pk { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; font-size: 13px; line-height: 1.4; }
   .msgr-dmpeek .pk .who { color: var(--fg-3); font-size: 12px; white-space: nowrap; }
   .msgr-dmpeek .pk.me .who { color: var(--fg); font-weight: 600; }
@@ -1833,7 +1833,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-main > .msgr-top ~ .msgr-actsplit :is(.msgr-acttree, .msgr-treescrim) { top: var(--ph-top-h); } /* 기억 서랍은 머리 아래에서 — 머리가 겹친 뒤 inset 0이면 첫 줄이 상태 표시줄 밑에 깔렸다(유건 실기기 2026-09-29) */
   /* 작은 제목 — 가운데. 큰 제목 페이지(홈·채팅·알림함)는 접힐 때만 드러난다 */
   .msgr-phone .msgr-side .msgr-smalltitle { min-width: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); opacity: var(--hp, 1); }
-  .msgr-phone .msgr-top:has(.msgr-backchat) { grid-template-columns: minmax(88px, max-content) minmax(0, 1fr) minmax(88px, max-content); column-gap: 0; padding-inline: var(--ph-pad); } /* 양쪽 88px 고정이면 영어 360px에서 'Mark all read'(120px)가 칸 밖으로 12px 나가 화면 오른쪽에서 잘렸다 — 단추가 더 넓으면 그 칸만 늘어난다(LA-02) */
+  .msgr-phone .msgr-top:has(.msgr-backchat) { grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr); column-gap: 0; padding-inline: var(--ph-pad); } /* 양쪽 88px 고정이면 영어 360px에서 'Mark all read'(120px)가 칸 밖으로 12px 나갔다 — 양쪽 칸은 내용(뒤로 44·단추 120) 중 큰 쪽으로 같은 폭, 제목은 그 사이 가운데(LA-02) */
   .msgr-phone .msgr-main .msgr-top:has(.msgr-backchat) .title { align-self: center; padding-top: 0; } /* 홈·방 머리의 '제목 줄 상단 정렬'(padding-top 6)이 남아 제목 중심이 44px 단추 중심보다 7px 위였다(LA-02) */
   .msgr-phone .msgr-top:has(.msgr-backchat) .title { grid-column: 2; justify-content: center; min-width: 0; font-size: 17px; }
   .msgr-phone .msgr-top:has(.msgr-backchat) .title > svg { display: none; }

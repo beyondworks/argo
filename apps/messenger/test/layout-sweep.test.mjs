@@ -6,10 +6,29 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { placeLabels, graphLabelVisible } from '../src/graph-labels.mjs';
 import { scrollLeftToCenter } from '../src/nav-scroll.mjs';
+import { toastPlace, toastMaxWidth } from '../src/toast-place.mjs';
 
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const globals = readFileSync(new URL('../../../app/globals.css', import.meta.url), 'utf8');
+// CSS를 {sel, body, at} 규칙 목록으로(중괄호 깊이) — 뒤 규칙이 앞 규칙을 다시 쓰는 회귀를 잡는 데 쓴다
+function cssRules(text) {
+  const out = []; const ctx = []; let depth = 0; let buf = '';
+  const src = text.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') {
+      const head = buf.trim().replace(/\s+/g, ' '); buf = '';
+      if (head.startsWith('@')) { ctx.push({ head, depth }); depth++; continue; }
+      let d = 1; let j = i + 1; while (d > 0 && j < src.length) { if (src[j] === '{') d++; else if (src[j] === '}') d--; j++; }
+      out.push({ sel: head, body: src.slice(i + 1, j - 1), at: ctx.map((x) => x.head) }); i = j - 1;
+    } else if (c === '}') { depth--; while (ctx.length && ctx.at(-1).depth >= depth) ctx.pop(); buf = ''; }
+    else buf += c;
+  }
+  return out;
+}
+const rules = cssRules(css);
+const declOf = (r, prop) => [...r.body.matchAll(new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+)`, 'g'))].map((m) => m[1].trim());
 const at = (re) => { const m = css.match(re); assert.ok(m, `찾지 못함: ${re}`); return m.index; };
 
 // ── 행동 ──────────────────────────────────────────────────────────────
@@ -56,6 +75,15 @@ test('LA-05 설정 본문 그리드는 열을 명시한다(minmax(0,1fr)) — �
   assert.match(css, /\.msgr-setbody \{ display: grid; grid-template-columns: minmax\(0, 1fr\);/);
 });
 
+test('LA-05 .msgr-setbody의 열 정의를 뒤 규칙이 다시 쓰지 않는다 — 쓰면 카드가 버튼 줄 폭으로 고정돼 오른쪽 밖으로 잘린다(HIGH)', () => {
+  const hit = rules.filter((r) => r.sel.split(',').some((x) => /(^|\s)\.msgr-setbody$/.test(x.trim())));
+  assert.ok(hit.length >= 2, '기본 규칙과 폰 규칙');
+  for (const r of hit) for (const v of declOf(r, 'grid-template-columns')) assert.match(v, /^(minmax\(0, 1fr\)|1fr)$/, `${r.sel} 열 정의 ${v}`);
+  assert.ok(hit.some((r) => !r.at.length && declOf(r, 'grid-template-columns').length), '미디어 밖 기본 규칙이 열을 정한다');
+  const last = [...hit].reverse().find((r) => !r.at.length);
+  assert.ok(declOf(last, 'grid-template-columns').length, '미디어 밖 마지막 규칙이 열을 안 정하면 그 규칙이 이긴다 해도 위 단언이 못 본다');
+});
+
 test('LA-05 데스크톱 721~900px: 설정 탭이 위 가로 줄로 올라간다 — 데스크톱 열 정의(200px) 뒤에 있어야 이긴다', () => {
   const base = at(/\.msgr-thread\.page \.msgr-settings\.tabs \{ max-width: 1240px; margin: 0; grid-template-columns: 200px minmax\(0, 1fr\)/);
   const narrow = at(/@media \(min-width: 721px\) and \(max-width: 900px\) \{\s*\n\s*\.msgr-thread\.page \.msgr-settings\.tabs \{ grid-template-columns: minmax\(0, 1fr\)/);
@@ -72,12 +100,38 @@ test('LA-06·23 입력창 받침과 안내 띠는 같은 열 변수(--col-l/--co
   assert.doesNotMatch(css, /^\.msgr-shell:not\(\.msgr-phone\) \.msgr-main:has\(> \.msgr-sheetwrap > \.msgr-crewsheet:not\(\.msgr-dmpeek\)\) > \.msgr-dock \{ padding-left/m, '732px 미만에서도 입력창을 패널 밑 280px로 줄이던 최상위 규칙이 되살아나면 안 된다');
 });
 
-test('LA-04 토스트: 가운데 맞춤은 left/right 0 + margin auto + max-content — left:50% + translateX(-50%)는 폭이 화면의 절반으로 접힌다', () => {
-  const rule = css.match(/\.msgr-toast \{ position: fixed;[^}]*\}/)?.[0] ?? '';
-  assert.match(rule, /left: 0; right: 0; margin-inline: auto; width: max-content;/);
-  assert.doesNotMatch(rule, /left: 50%/);
-  assert.doesNotMatch(css.match(/@keyframes msgrToastIn \{[^\n]*\}/)?.[0] ?? '', /-50%/, '키프레임이 translateX(-50%)를 되살리면 가운데 맞춤이 어긋난다');
-  assert.match(css, /\.msgr-toast \{ top: calc\(env\(safe-area-inset-top, 0px\) \+ 52px\); \}/, '폰: 머리 줄(44px) 아래 — 머리의 제목·단추를 가리지 않는다');
+test('LA-04 토스트 폭: left/right 0 + margin auto + max-content — left:50% + translateX(-50%)는 폭이 화면의 절반으로 접힌다. 뒤 규칙이 되살려도 잡는다', () => {
+  const toast = rules.filter((r) => r.sel.split(',').some((x) => /(^|\s)\.msgr-toast(\.err)?$/.test(x.trim())));
+  assert.ok(toast.length >= 2);
+  const base = toast.find((r) => /position: fixed/.test(r.body));
+  assert.match(base.body, /left: 0; right: 0; margin-inline: auto; width: max-content;/);
+  for (const r of toast) {
+    assert.deepEqual(declOf(r, 'left').filter((v) => /%/.test(v)), [], `${r.sel}의 left가 %면 shrink-to-fit 폭이 절반으로 접힌다`);
+    assert.deepEqual(declOf(r, 'transform').filter((v) => /-50%/.test(v)), [], `${r.sel}의 translateX(-50%)`);
+    assert.deepEqual(declOf(r, 'width').filter((v) => v !== 'max-content'), [], `${r.sel}의 width가 max-content가 아니다`);
+  }
+  assert.doesNotMatch(css.match(/@keyframes msgrToastIn \{[^\n]*\}/)?.[0] ?? '', /-50%/);
+  assert.match(app, /<button type="button" ref=\{toastRef\} className=\{`msgr-toast/, '셸 토스트는 자리를 직접 준다(toast-place.mjs)');
+});
+
+test('LA-04 토스트 자리: 아래쪽 받침(탭 바·새 대화 단추·입력창) 바로 위, 입력창 열 가운데 — 머리·제목·시트를 가리지 않는다', () => {
+  // 폰 390x844: 새 대화 단추(FAB) 윗선 698, 화면 전체 열, 상자 358
+  assert.deepEqual(toastPlace({ viewW: 390, viewH: 844, boxW: 358, anchorTop: 698, colLeft: 0, colRight: 390 }), { left: 16, bottom: 158 });
+  // 폰 방: 입력창 받침 윗선 784 → 상자는 그 위 12px
+  assert.equal(toastPlace({ viewW: 390, viewH: 844, boxW: 200, anchorTop: 784, colLeft: 0, colRight: 390 }).bottom, 72);
+  // 데스크톱 1440: 입력창 열 502~1206 가운데, 받침 윗선 737
+  assert.deepEqual(toastPlace({ viewW: 1440, viewH: 900, boxW: 407, anchorTop: 737, colLeft: 502, colRight: 1206 }), { left: 651, bottom: 175 });
+  // 시트가 열려 입력창이 300~1004로 비키면 토스트도 같이 — 시트 쪽으로 가지 않는다
+  assert.equal(toastPlace({ viewW: 1440, viewH: 900, boxW: 407, anchorTop: 737, colLeft: 300, colRight: 1004 }).left, 449);
+  // 받침이 없는 화면(설정·알림함)은 바닥에서 12(최소 16) · 가장자리에서 16 안쪽
+  assert.deepEqual(toastPlace({ viewW: 1440, viewH: 900, boxW: 300, anchorTop: 900, colLeft: 268, colRight: 1440 }), { left: 704, bottom: 16 });
+  assert.equal(toastPlace({ viewW: 390, viewH: 844, boxW: 600, anchorTop: 844, colLeft: 0, colRight: 390 }).left, 16, '상자가 화면보다 커도 왼쪽 16에서 시작(max-width가 따로 줄인다)');
+  assert.equal(toastPlace({ viewW: 390, viewH: 844, boxW: 200, anchorTop: 844, colLeft: 300, colRight: 400 }).left, 174, '열이 화면 밖으로 나가도 오른쪽 가장자리 16 안쪽에 둔다');
+  // 상자 최대 폭: 시트가 열려 입력창 열이 300~588(288)로 좁아지면 그 안에서 줄바꿈(시트 620~ 쪽으로 안 나감) · 열이 넓으면 기존 상한 560
+  assert.equal(toastMaxWidth({ viewW: 1024, colLeft: 300, colRight: 588 }), 288);
+  assert.equal(toastMaxWidth({ viewW: 1440, colLeft: 502, colRight: 1206 }), 560);
+  assert.equal(toastMaxWidth({ viewW: 390, colLeft: 0, colRight: 390 }), 358, '폰: 화면 − 32');
+  assert.equal(toastMaxWidth({ viewW: 800, colLeft: 300, colRight: 400 }), 240, '하한 240');
 });
 
 test('LA-09 조직 메뉴 항목 규칙은 .btn에 걸지 않는다 — 안의 폼 버튼 배경·테두리가 지워진다', () => {
@@ -93,13 +147,15 @@ test('LA-08·12 전역 .row 패딩 누수: 메신저 전체에서 되돌린다(.
   assert.match(app, /<div className="msgr-server-body">/);
 });
 
-test('LA-01 폰 홈 목록 아래 여백은 탭 바 + FAB를 넘는다 · FAB는 탭 바와 같은 층(70)', () => {
+test('LA-01 폰 홈 목록 아래 여백은 탭 바 + FAB를 넘는다 · FAB는 탭 바(70)보다 위·스크림(72)보다 아래', () => {
   assert.match(css, /\.msgr-phone\.phone-home \.msgr-railbody \{[^}]*padding: 12px 0 calc\(var\(--ph-tab\) \+ 14px \+ 56px \+ 16px /);
-  assert.match(css, /\.msgr-fab \{ position: fixed; right: 24px; bottom: [^;]*; z-index: 70;/);
+  const z = (re) => Number(css.match(re)?.[1]);
+  const fab = z(/\.msgr-fab \{ position: fixed;[^}]*z-index: (\d+);/); const tabbar = z(/\.msgr-tabbar \{ position: fixed;[^}]*?z-index: (\d+);/); const scrim = z(/\.msgr-phone\.phone-home \.msgr-side \.msgr-scrim\.clear \{[^}]*z-index: (\d+);/);
+  assert.ok(fab > tabbar && fab < scrim, `FAB ${fab} 탭 바 ${tabbar} 스크림 ${scrim} — FAB가 DOM에서 탭 바보다 앞이라 동률(70)이면 탭 바 ::before 그라데이션이 + 아래 반을 덮는다`);
 });
 
 test('LA-02 폰 하위 페이지 머리: 오른쪽 단추 칸이 단추 폭만큼 늘고, 제목은 단추와 같은 중심선', () => {
-  assert.match(css, /\.msgr-phone \.msgr-top:has\(\.msgr-backchat\) \{ grid-template-columns: minmax\(88px, max-content\) minmax\(0, 1fr\) minmax\(88px, max-content\);/);
+  assert.match(css, /\.msgr-phone \.msgr-top:has\(\.msgr-backchat\) \{ grid-template-columns: minmax\(max-content, 1fr\) minmax\(0, auto\) minmax\(max-content, 1fr\);/);
   assert.match(css, /\.msgr-phone \.msgr-main \.msgr-top:has\(\.msgr-backchat\) \.title \{ align-self: center; padding-top: 0; \}/);
 });
 
@@ -125,6 +181,11 @@ test('LA-21·07 데스크톱 머리: 모든 화면이 높이 63 이상 · 제목
   assert.match(css, /\.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-top \.title \{ min-height: 36px; \}/);
 });
 
+test('#801 재검수: 전역 .row 되돌림의 의도 밖 변화 — 활동 기록 \'더 보기\'는 윗간격 8px', () => {
+  assert.match(css, /\.argo-messenger \.row\.act-more \{ margin-top: 8px; \}/);
+  assert.match(app, /className="row act-more"><button type="button" className="btn sm" onClick=\{\(\) => setLimits/);
+});
+
 test('LA-22 개인 공간 레일 푸터는 기억 자리를 비워 둔다(아이콘이 공간마다 움직이지 않게)', () => {
   assert.match(app, /org && isPersonal && !orgBlocked && !isPhone && <span className="btn ghost msgr-foot-slot" aria-hidden="true" \/>/);
   assert.match(css, /\.msgr-foot \.msgr-foot-slot \{ visibility: hidden;/);
@@ -136,8 +197,13 @@ test('LA-25·26 서버 연결 줄: 원격 추가 줄은 줄 전체 폭, 코드 �
   assert.doesNotMatch(app, /\{nodeInvite && <div className="acts"><button type="button" className="btn sm ghost" disabled=\{busy\} onClick=\{makeNodeInvite\}>/, '둘째 줄 acts를 되살리면 자리가 남아도 아래로 내려간다');
 });
 
-test('LA-27 폰 새 채팅 시트: 다른 시트와 같은 좌우 선(--ph-pad)', () => {
-  assert.match(css, /\.msgr-dmpeek \{ top: auto; bottom: max\(8px, env\(safe-area-inset-bottom\)\); left: var\(--ph-pad\); right: var\(--ph-pad\); width: auto;/);
+test('LA-27 폰 하단 시트: 좌우만 다른 시트와 같은 선(--ph-pad), 바닥은 0 — 아래 안전 영역은 시트 안쪽 패딩 한 곳에서만 더한다', () => {
+  assert.match(css, /\.msgr-dmpeek \{ top: auto; bottom: 0; left: var\(--ph-pad\); right: var\(--ph-pad\); width: auto;[^}]*border-radius: 20px 20px 0 0;/);
+  assert.match(css, /\.msgr-dmpeek \.peek \{ overflow-y: auto; padding: 8px 16px calc\(env\(safe-area-inset-bottom\) \+ 12px\);/);
+  assert.match(css, /\.msgr-dmgroup \.foot \{ padding: 10px 16px calc\(env\(safe-area-inset-bottom\) \+ 12px\);/);
+  // 바닥을 안전 영역만큼 띄우면(bottom: …safe-area…) 안쪽 패딩과 두 번 더해진다 — 노치 기기에서 버튼이 63 → 97px 떴다
+  const peek = rules.filter((r) => /(^|,\s*)(\.msgr-phone \.msgr-sheetwrap \.msgr-crewsheet)?\.msgr-dmpeek\b/.test(r.sel) && !/\.(peek|head|pk|foot)\b/.test(r.sel));
+  for (const r of peek) for (const b of declOf(r, 'bottom')) assert.doesNotMatch(b, /safe-area/, `${r.sel.slice(0, 50)} bottom: ${b}`);
 });
 
 test('LA-29 멈춘 봇 행: 글자 대비는 지키고(--fg-2 그대로) 기울임·흐린 아바타·빈 점·테두리 라벨로 구분', () => {

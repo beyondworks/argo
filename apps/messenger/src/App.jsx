@@ -94,6 +94,7 @@ import { dropBeforeIdAtY, reorderVisibleInFull } from './drag-reorder.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 import { twinRelink, twinLeftOrg, twinPaused, twinOrgLabel, crewAddable, crewSeenAt } from './personal-bots.mjs';
 import { scrollLeftToCenter } from './nav-scroll.mjs';
+import { toastPlace, toastMaxWidth } from './toast-place.mjs';
 import { faceOf, faceFromStored, faceInner, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedCrewsInFetch, FACE_COLORS, FACE_SHAPES, faceToStore } from './crew-face.mjs';
 import { faceGestures } from './face-gestures.mjs';
 const realtimeScope = createRealtimeScope();
@@ -699,6 +700,18 @@ function Shell({ session }) {
   useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
+  // 토스트 자리 — 아래쪽에 깔린 것(탭 바·새 대화 단추·입력창 받침)의 윗선 바로 위, 가로는 입력창 열(폰은 화면) 가운데. 화면마다 머리 높이가 달라 위쪽 고정은 머리·제목·시트를 가렸다(#801 재검수)
+  const toastRef = useRef(null);
+  useLayoutEffect(() => {
+    const el = toastRef.current; if (!el) return;
+    const boxes = (q) => [...document.querySelectorAll(q)].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+    const low = boxes('.msgr-tabbar, .msgr-fab, .msgr-dock'); const viewW = document.documentElement.clientWidth; const viewH = window.innerHeight;
+    const col = isPhoneRef.current ? null : (boxes('.msgr-dock > div')[0] ?? boxes('.msgr-main')[0]);
+    const colLeft = col?.left ?? 0; const colRight = col?.right ?? viewW;
+    el.style.maxWidth = `${toastMaxWidth({ viewW, colLeft, colRight })}px`; // 열이 좁으면(시트 열림) 상자도 그 안에서 줄바꿈 — 시트 쪽으로 삐져나가지 않는다
+    const p = toastPlace({ viewW, viewH, boxW: el.offsetWidth, anchorTop: low.length ? Math.min(...low.map((r) => r.top)) : viewH, colLeft, colRight });
+    Object.assign(el.style, { left: `${p.left}px`, right: 'auto', marginInline: '0', top: 'auto', bottom: `${p.bottom}px` });
+  }, [err, note]);
   const [tick, setTick] = useState(0);
   useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록. 알림 탭·전경 수신은 앱 수준 리스너(App)가 받아 대기함·shellLink로 넘긴다(2026-10-01)
     if (!isMobilePlatform) return;
@@ -2122,7 +2135,7 @@ function Shell({ session }) {
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
-          <button type="button" className={`msgr-toast${err ? ' err' : ''}`} onClick={() => { setErr(''); setNote(''); }} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${err}`) : note}</button>,
+          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClick={() => { setErr(''); setNote(''); }} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${err}`) : note}</button>,
           document.body,
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
@@ -3441,7 +3454,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
                                 {g.rows.map((r) => <div key={r.id} className="item"><span className="when">{fmtTs(r.at, lang)}</span><span className="text">{sentence(r)}</span></div>)}
                               </div>
                             ))}
-                            {ev.list.length > ev.shown.length && <div className="row"><button type="button" className="btn sm" onClick={() => setLimits((m) => ({ ...m, [sel]: limitOf(sel) + 60 }))}>{t('act.more')}</button></div>}
+                            {ev.list.length > ev.shown.length && <div className="row act-more"><button type="button" className="btn sm" onClick={() => setLimits((m) => ({ ...m, [sel]: limitOf(sel) + 60 }))}>{t('act.more')}</button></div>}
                           </details>
                         )}
                       </>);
