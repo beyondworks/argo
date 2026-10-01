@@ -8,6 +8,8 @@ import BrandMark from '@/components/BrandMark';
 import Icon from '@/components/family/Icon';
 
 const TONE = { argo: 'gold', messenger: 'signal', office: 'pencil' };
+// 입체 그림 — 경로는 고정 문자열로(빌드 전 자산 검사가 public에 있는지 확인한다)
+const ART = { argo: '/assets/office-art/argo.webp', messenger: '/assets/office-art/messenger.webp', office: '/assets/office-art/office.webp' };
 
 /** 스크롤로 들어오는 .rise 요소에 한 번만 .in을 붙인다(패밀리 페이지 공용). */
 export function useRise() {
@@ -39,7 +41,7 @@ export default function FamilyCards({ here }) {
           const inner = (
             <>
               {/* 입체 그림 — 오피스 히어로와 같은 종이 디오라마 세계(블렌더) */}
-              <img className="fc-art" src={`/assets/office-art/${p.id}.webp`} alt="" loading="lazy" />
+              <img className="fc-art" src={ART[p.id]} alt="" loading="lazy" />
               <div className="fc-top">
                 <span className="fc-name">{p.name}</span>
                 <BrandMark tone={TONE[p.id]} size={22} />

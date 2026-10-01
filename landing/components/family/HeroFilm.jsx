@@ -5,10 +5,17 @@ import { prefersReducedMotion } from '@/lib/gsap';
 
 // 메신저 히어로 필름(블렌더 렌더, 10초) — 두 회사의 판 → 주노의 카드가 건너감 → 아틀라스의 답 → 한 채널로 합쳐짐.
 // 한 번 재생하고 마지막 장면(합쳐진 채널)에서 멈춘다. 위로 벗어났다 돌아오면 다시 재생. 움직임을 줄인 환경에선 마지막 장면 사진만.
+// 경로는 고정 문자열로 — 빌드 전 자산 검사(scripts/check-assets.mjs)가 public에 파일이 있는지 확인한다
+const FILMS = {
+  'messenger-hero': { en: { mp4: '/assets/messenger-hero-en.mp4', jpg: '/assets/messenger-hero-en.jpg', end: '/assets/messenger-hero-en-end.jpg' }, ko: { mp4: '/assets/messenger-hero-ko.mp4', jpg: '/assets/messenger-hero-ko.jpg', end: '/assets/messenger-hero-ko-end.jpg' } },
+  'office-hero': { en: { mp4: '/assets/office-hero-en.mp4', jpg: '/assets/office-hero-en.jpg', end: '/assets/office-hero-en-end.jpg' }, ko: { mp4: '/assets/office-hero-ko.mp4', jpg: '/assets/office-hero-ko.jpg', end: '/assets/office-hero-ko-end.jpg' } },
+};
+
 export default function HeroFilm({ lang, base = 'messenger-hero', className = 'hero-film' }) {
   const ref = useRef(null);
   const [still, setStill] = useState(false);
-  const src = `/assets/${base}-${lang}.mp4`;
+  const film = FILMS[base][lang] || FILMS[base].en;
+  const src = film.mp4;
 
   useEffect(() => {
     if (prefersReducedMotion()) { setStill(true); return undefined; }
@@ -22,14 +29,14 @@ export default function HeroFilm({ lang, base = 'messenger-hero', className = 'h
     return () => io.disconnect();
   }, [lang]);
 
-  if (still) return <img className={className} src={`/assets/${base}-${lang}-end.jpg`} alt="" />;
+  if (still) return <img className={className} src={film.end} alt="" />;
   return (
     <video
       key={lang}
       ref={ref}
       className={className}
       src={src}
-      poster={`/assets/${base}-${lang}.jpg`}
+      poster={film.jpg}
       muted
       playsInline
       preload="auto"

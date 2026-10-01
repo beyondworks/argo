@@ -29,7 +29,7 @@ export default function AgentTalk() {
   const [lit, setLit] = useState(0);
   const [still, setStill] = useState(false);
   // 언어가 바뀔 때만 새로 만든다 — 렌더마다 새 객체면 재생기가 받은 프레임을 버리고 처음부터 다시 받는다(첫 프레임이 끼어 보임)
-  const manifest = useMemo(() => ({ basePath: `/assets/talk-${lang}`, count: FRAMES, ext: 'webp', pad: 4 }), [lang]);
+  const manifest = useMemo(() => ({ basePath: lang === 'ko' ? '/assets/talk-ko' : '/assets/talk-en', count: FRAMES, ext: 'webp', pad: 4 }), [lang]);
 
   useEffect(() => {
     if (prefersReducedMotion()) { progress.current = 1; setLit(3); setStill(true); return undefined; }
