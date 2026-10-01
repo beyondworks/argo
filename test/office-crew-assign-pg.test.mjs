@@ -90,9 +90,10 @@ test('남의 크루와는 1:1 방을 만들 수 없다(P0001) — 오피스는 �
   assert.notEqual(last(asUser(U.me, `select public.msgr_instruct_check('${THEIRS}', '${U.me}', null)`)), '', '판정 값은 돌려준다');
 });
 
-test('체험이 끝난 조직은 msgr_org_entitled = false — 오피스는 보내기 전에 거절한다', { skip }, () => {
-  assert.equal(last(asUser(U.late, `select public.msgr_org_entitled('${EXPIRED}')`)), 'f');
-  assert.equal(last(asUser(U.late, `select public.msgr_instruct_check('${EXPIRED_CREW}', '${U.late}', null)`)), 'ok', '권한은 있어도 자격이 없으면 멈춘다(별개 판정)');
+// 2026-10-01 유건 승인(9/30 요금 개편 — 무료는 조직·개인 구분 없음): 무료 기간이 지난 무료 조직도 크루에게 일을 맡길 수 있다(20261001100000).
+test('무료 기간이 지난 무료 조직도 msgr_org_entitled = true — 오피스는 그대로 보낸다', { skip }, () => {
+  assert.equal(last(asUser(U.late, `select public.msgr_org_entitled('${EXPIRED}')`)), 't');
+  assert.equal(last(asUser(U.late, `select public.msgr_instruct_check('${EXPIRED_CREW}', '${U.late}', null)`)), 'ok');
 });
 
 test('동의를 거두면 msgr_my_ai_consent가 비어 오피스는 보내기 전에 거절한다', { skip }, () => {
