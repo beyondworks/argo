@@ -93,25 +93,29 @@ m.textContent=r===200?${JSON.stringify(tx.done)}:r===409?${JSON.stringify(tx.dec
       for await (const c of req) { body += c; if (body.length > 64_000) return send(413, 'too large', 'text/plain'); }
       let j = {}; try { j = JSON.parse(body); } catch { /* 아래에서 거절 */ }
       if (settled || j.cli !== nonce || !j.access_token || !j.refresh_token) return fail(400);
-      if (confirming) return fail(429); // 터미널 확인이 하나 진행 중 — 두 번째 계정을 끼워 넣지 못한다
-      let user;
-      try { user = await verifyToken(j.access_token); } catch { return fail(401); }
-      if (confirm) {
-        confirming = true;
-        let ok = false;
-        try { ok = await confirm({ id: user.id, email: user.email ?? '' }); } catch { ok = false; } finally { confirming = false; }
-        if (!ok) return fail(409); // 터미널에서 거절 — 저장하지 않고 계속 기다린다(브라우저에서 다시 시도할 수 있다)
-      }
-      if (settled) return fail(400);
+      // 승인 처리는 한 번에 하나 — 검증(verify)보다 **먼저** 표시한다. 뒤에 두면 검증이 느린 동안 두 번째 요청이 검사를 지나
+      // 터미널 확인에 같이 들어간다(#791 독립 검수 LOW-6). 검증 실패·거절이면 풀어 브라우저에서 다시 시도할 수 있게 한다.
+      if (confirming) return fail(429);
+      confirming = true;
       try {
-        await saveSession({ access_token: j.access_token, refresh_token: j.refresh_token, expires_at: 0, user }); // 0 = 첫 사용 때 바로 회전
-        settled = true;
-        send(200, JSON.stringify({ ok: true }), 'application/json');
-        resolveDone({ id: user.id, email: user.email ?? '' });
-      } catch {
-        fail(401);
-      }
-      return;
+        let user;
+        try { user = await verifyToken(j.access_token); } catch { return fail(401); }
+        if (confirm) {
+          let ok = false;
+          try { ok = await confirm({ id: user.id, email: user.email ?? '' }); } catch { ok = false; }
+          if (!ok) return fail(409); // 터미널에서 거절 — 저장하지 않고 계속 기다린다
+        }
+        if (settled) return fail(400);
+        try {
+          await saveSession({ access_token: j.access_token, refresh_token: j.refresh_token, expires_at: 0, user }); // 0 = 첫 사용 때 바로 회전
+          settled = true;
+          send(200, JSON.stringify({ ok: true }), 'application/json');
+          resolveDone({ id: user.id, email: user.email ?? '' });
+        } catch {
+          fail(401);
+        }
+        return;
+      } finally { confirming = false; }
     }
     send(404, 'not found', 'text/plain');
   });

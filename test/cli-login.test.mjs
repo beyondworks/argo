@@ -169,3 +169,21 @@ test('같은 출처 판정(순수)', () => {
   assert.equal(sameOriginBind({}, base), false);
   assert.equal(sameOriginBind({ origin: '' }, ''), false);
 });
+
+test('#791 LOW-6 — 검증(verify)이 느려도 동시 승인 요청 둘이 터미널 확인에 같이 들어가지 않는다(확인 1번, 나머지 429)', async () => {
+  let asked = 0;
+  const { srv, saved } = await boot({
+    verify: async () => { await new Promise((r) => setTimeout(r, 150)); return { id: 'u1', email: 'u@x.io' }; },
+    confirm: async () => { asked++; await new Promise((r) => setTimeout(r, 50)); return true; },
+  });
+  try {
+    const body = (rt) => ({ cli: srv._nonce, access_token: 'good-access', refresh_token: rt });
+    const [r1, r2] = await Promise.all([
+      call(srv.port, { method: 'POST', path: '/bind', body: body('r1') }),
+      call(srv.port, { method: 'POST', path: '/bind', body: body('r2') }),
+    ]);
+    assert.deepEqual([r1.status, r2.status].sort(), [200, 429]);
+    assert.equal(asked, 1, '터미널에 확인을 두 번 묻지 않는다');
+    assert.equal(saved.length, 1);
+  } finally { await srv.close(); }
+});
