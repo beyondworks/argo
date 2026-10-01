@@ -457,6 +457,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .prose ul[data-type='taskList'] { list-style: none; padding-left: 0; }
 .prose ul[data-type='taskList'] li { display: flex; gap: 8px; align-items: flex-start; }
 .prose ul[data-type='taskList'] li > label { margin-top: 5px; }
+.prose ul[data-type='taskList'] li > div { flex: 1; min-width: 0; } /* 글 칸이 남은 폭을 다 쓴다 — 내용 폭만 잡으면 그 안의 구분선(hr)이 폭 0이 되었다(통합 검수 10/1) */
 .prose ul[data-type='taskList'] input { width: 15px; height: 15px; accent-color: var(--primary); margin: 0; }
 .prose ul[data-type='taskList'] li[data-checked='true'] > div { color: var(--fg-3); text-decoration: line-through; }
 .prose blockquote { margin: 8px 0; padding: 8px 12px; border-radius: var(--rc); background: var(--card-2); color: var(--fg-2); } /* 왼쪽 막대 금지(유건 9/30) — 연한 배경 상자 */
