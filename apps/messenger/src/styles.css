@@ -968,57 +968,79 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 /* 에이전트 얼굴(2026-09-24) — 타일 배경·테두리를 걷고 도형 자체가 아바타. 배지(.star)는 그대로 위에 */
 .msgr-av.crew.face { background: transparent; border-color: transparent; border-radius: 0; padding: 0; }
 .msgr-row > .msgr-av.face, .msgr-row > .msgr-avbtn > .msgr-av.face { background: var(--bg); border-radius: 8px; box-shadow: 0 0 0 4px var(--bg); } /* 대화 척추선이 도형 빈 곳으로 비치지 않게 — 바탕색 판 + 4px 테두리. 목록 안 크루 글은 버튼으로 감싸여 있다(재검수 N-2) */
+/* 에이전트 얼굴 v2(유건 확정 시안 2026-10-01) — 도형·색·눈·입·선 굵기는 crew-face.mjs faceInner가 SVG 속성으로 넣는다(오피스와 같은 그림).
+   여기는 움직임(transform·opacity만)과 오프라인 채도뿐. 몸짓은 face-gestures.mjs가 화면에 보이는 쉼 얼굴에만 data-g를 붙였다 뗀다(타이머 하나). */
 .msgr-face { width: 100%; height: 100%; display: block; overflow: visible; }
-.msgr-face .face { fill: #111113; stroke: #111113; stroke-linecap: round; stroke-linejoin: round; }
-.msgr-face .face circle, .msgr-face .face ellipse { stroke: none; }
-.msgr-face .face .stroke { fill: none; stroke-width: 5; }
-.msgr-face .face .line path { fill: none; stroke-width: 3.8; }
+.msgr-face .body { transition: filter .4s; }
 .msgr-face .rig { transform-box: view-box; transform-origin: 50px 92px; }
-.msgr-face .body { transition: filter .4s, opacity .4s; }
-.msgr-face .blink { transform-box: fill-box; transform-origin: center; }
-.msgr-face.s-work .face { animation: msgr-face-wander 2.8s ease-in-out infinite; }
-@keyframes msgr-face-wander { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-7px, -3px); } 50% { transform: translate(0, -6px); } 75% { transform: translate(7px, -3px); } }
-.msgr-face.s-ask .rig { animation: msgr-face-tilt 3s cubic-bezier(.3, 1.4, .5, 1) infinite; }
-@keyframes msgr-face-tilt { 0%, 100% { transform: rotate(0); } 20%, 70% { transform: rotate(-7deg); } }
-.msgr-face.s-done .rig { animation: msgr-face-hop 1s cubic-bezier(.3, 1.5, .5, 1) 2; }
-@keyframes msgr-face-hop { 0%, 100% { transform: translateY(0) scale(1); } 20% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-9px) scale(.96, 1.05); } 75% { transform: translateY(0) scale(1.04, .96); } }
-/* 놀람(멘션·수신 1초, 유건 확정 2026-09-24) — 눈이 커지고 살짝 튄다. infinite가 아니라 1회(surprisedAt이 1초만 살아 있어 그새 unmount된다) */
-.msgr-face.s-surprise .face .surprise { transform-box: fill-box; transform-origin: center; animation: msgr-face-surprise-eyes 1s cubic-bezier(.2, 1.6, .4, 1) 1; }
-@keyframes msgr-face-surprise-eyes { 0% { transform: scale(1); } 25% { transform: scale(1.45); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
-.msgr-face.s-surprise .rig { animation: msgr-face-surprise-hop 1s cubic-bezier(.2, 1.6, .4, 1) 1; }
-@keyframes msgr-face-surprise-hop { 0% { transform: translateY(0); } 20% { transform: translateY(-4px); } 55% { transform: translateY(2px); } 100% { transform: translateY(0); } }
-/* 대기(idle, 유건 확정 2026-09-24) — 깜빡임·두리번·고개 갸웃·가끔 하품을 섞은 keyframes 세 벌. 크루마다 다른 --face-dur(4~12s)·--face-delay(음수)로 박자·시작 위치가 갈린다(faceMotion, JS 타이머 없음). */
-.msgr-face.s-idle.idle-a .blink { animation: msgr-face-eyes-a var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-@keyframes msgr-face-eyes-a {
-  0%, 4%, 43%, 96%, 100% { transform: scaleY(1) translateX(0); }
-  2% { transform: scaleY(.12); } /* 깜빡임 */
-  46% { transform: scaleY(.12); } /* 가끔 두 번 */
-  62% { transform: translateX(2.5px); } 70% { transform: translateX(-2.5px); } 78% { transform: translateX(0); } /* 두리번 */
+.msgr-face .eye, .msgr-face .eyes, .msgr-face .grin, .msgr-face .yawn, .msgr-face .swirl, .msgr-face .mouth, .msgr-face .q { transform-box: fill-box; transform-origin: center; }
+/* 쉼(idle) 몸짓 8종 — data-g가 붙은 동안 1회. 감은 눈 얼굴은 눈동자가 없어 두리번·눈 굴리기 때 얼굴 전체(.look)가 움직인다 */
+.msgr-face.s-idle[data-g="blink"] .eye { animation: msgr-face-g-blink .36s ease-in-out; }
+@keyframes msgr-face-g-blink { 0%, 100% { transform: scaleY(1); } 42%, 58% { transform: scaleY(.1); } }
+.msgr-face.s-idle[data-g="look"] .look { animation: msgr-face-g-look 1.6s ease-in-out; }
+.msgr-face.s-idle[data-g="look"] .pupil { animation: msgr-face-g-look-pupil 1.6s ease-in-out; }
+@keyframes msgr-face-g-look { 0%, 100% { transform: translate(0, 0); } 18%, 42% { transform: translate(-3.5px, 0); } 58%, 84% { transform: translate(3.5px, 0); } }
+@keyframes msgr-face-g-look-pupil { 0%, 100% { transform: translate(0, 0); } 18%, 42% { transform: translate(-2.6px, 0); } 58%, 84% { transform: translate(2.6px, 0); } }
+.msgr-face.s-idle[data-g="tilt"] .rig { animation: msgr-face-g-tilt 1.4s cubic-bezier(.3, 1.3, .5, 1); }
+.msgr-face.s-idle[data-g="tilt"] .look { animation: msgr-face-g-tilt-look 1.4s ease-in-out; }
+@keyframes msgr-face-g-tilt { 0%, 100% { transform: rotate(0); } 24%, 62% { transform: rotate(9deg); } 82% { transform: rotate(-2deg); } }
+@keyframes msgr-face-g-tilt-look { 0%, 100% { transform: translate(0, 0); } 24%, 62% { transform: translate(2px, -1px); } }
+.msgr-face.s-idle[data-g="bounce"] .rig { animation: msgr-face-g-bounce .9s ease-in-out; }
+@keyframes msgr-face-g-bounce {
+  0%, 100% { transform: translateY(0) scale(1, 1); } 14% { transform: translateY(0) scale(1.1, .88); } 40% { transform: translateY(-12px) scale(.94, 1.07); }
+  62% { transform: translateY(0) scale(1.08, .9); } 78% { transform: translateY(-3px) scale(.98, 1.02); }
 }
-.msgr-face.s-idle.idle-b .blink { animation: msgr-face-eyes-b var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-.msgr-face.s-idle.idle-b .rig { animation: msgr-face-tilt-b var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-@keyframes msgr-face-eyes-b {
-  0%, 30%, 70%, 100% { transform: scaleY(1) translateX(0); }
-  38% { transform: translateX(3px); } 48% { transform: translateX(-3px); } 58% { transform: translateX(0); } /* 두리번 */
-  86% { transform: scaleY(.12); } /* 깜빡임 */
+.msgr-face.s-idle[data-g="wiggle"] .rig { animation: msgr-face-g-wiggle .9s ease-in-out; }
+@keyframes msgr-face-g-wiggle {
+  0%, 100% { transform: skewX(0) scale(1, 1); } 15% { transform: skewX(-9deg) scale(1.02, .98); } 35% { transform: skewX(8deg) scale(.98, 1.03); }
+  55% { transform: skewX(-5deg) scale(1.01, .99); } 75% { transform: skewX(3deg); }
 }
-@keyframes msgr-face-tilt-b { 0%, 22%, 78%, 100% { transform: rotate(0); } 40% { transform: rotate(6deg); } 60% { transform: rotate(-3deg); } } /* 고개 갸웃 */
-.msgr-face.s-idle.idle-c .blink { animation: msgr-face-eyes-c var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-.msgr-face.s-idle.idle-c .rig { animation: msgr-face-tilt-c var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-@keyframes msgr-face-eyes-c {
-  0%, 20%, 62%, 100% { transform: scaleY(1); }
-  10% { transform: scaleY(.12); } /* 깜빡임 */
-  76%, 90% { transform: scaleY(.35); } /* 하품 중 눈 찡그림 */
-}
-@keyframes msgr-face-tilt-c { 0%, 66%, 100% { transform: rotate(0) scaleY(1); } 16% { transform: rotate(-5deg); } 30% { transform: rotate(0); } 80%, 88% { transform: scaleY(1.08) translateY(-2px); } } /* 고개 돌리기 + 하품(몸이 세로로 늘어남) */
-/* 졸기(off, 유건 확정 2026-09-24) — 채도 낮추고, 천천히 숨 쉬고(몸 스케일), z가 떠올랐다 사라진다 */
-.msgr-face.s-off .body { filter: saturate(0); opacity: .55; } /* 다크 바탕에서도 검은 눈이 보이는 회색 */
-.msgr-face.s-off .rig { animation: msgr-face-breathe 4.6s ease-in-out infinite; }
-@keyframes msgr-face-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.015); } }
-.msgr-face .zzz { font-size: 11px; font-weight: 700; fill: #111113; opacity: 0; }
-.msgr-face.s-off .zzz { animation: msgr-face-zzz 4.6s ease-in-out infinite; }
-@keyframes msgr-face-zzz { 0%, 70%, 100% { opacity: 0; transform: translateY(0); } 15% { opacity: .5; transform: translateY(-2px); } 45% { opacity: .25; transform: translateY(-10px); } }
-@media (prefers-reduced-motion: reduce) { .msgr-face *, .msgr-face { animation: none !important; transition: none !important; } }
+.msgr-face.s-idle[data-g="yawn"] .rig { animation: msgr-face-g-yawn-body 1.9s ease-in-out; }
+.msgr-face.s-idle[data-g="yawn"] .eyes { animation: msgr-face-g-yawn-eyes 1.9s ease-in-out; }
+.msgr-face.s-idle[data-g="yawn"] .mouth { animation: msgr-face-g-hide 1.9s ease-in-out; }
+.msgr-face.s-idle[data-g="yawn"] .yawn { animation: msgr-face-g-yawn-mouth 1.9s ease-in-out; }
+@keyframes msgr-face-g-yawn-body { 0%, 100% { transform: scale(1, 1); } 30%, 66% { transform: scale(.97, 1.07); } }
+@keyframes msgr-face-g-yawn-eyes { 0%, 100% { transform: scaleY(1); } 26%, 70% { transform: scaleY(.35); } }
+@keyframes msgr-face-g-yawn-mouth { 0%, 14%, 86%, 100% { opacity: 0; transform: scale(.3); } 30%, 66% { opacity: 1; transform: scale(1); } }
+@keyframes msgr-face-g-hide { 0%, 14%, 86%, 100% { opacity: 1; } 24%, 76% { opacity: 0; } }
+.msgr-face.s-idle[data-g="roll"] .pupil { animation: msgr-face-g-roll-pupil 1.4s ease-in-out; }
+.msgr-face.s-idle[data-g="roll"] .look { animation: msgr-face-g-roll-look 1.4s ease-in-out; }
+@keyframes msgr-face-g-roll-pupil { 0%, 100% { transform: translate(0, 0); } 20% { transform: translate(-3px, -1px); } 40% { transform: translate(-1px, -3.6px); } 60% { transform: translate(2.6px, -2.6px); } 78% { transform: translate(3px, 0); } }
+@keyframes msgr-face-g-roll-look { 0%, 100% { transform: translate(0, 0); } 20% { transform: translate(-2px, 0); } 40% { transform: translate(0, -2.2px); } 60% { transform: translate(2px, -1px); } 80% { transform: translate(1px, 1px); } }
+.msgr-face.s-idle[data-g="smile"] .mouth { animation: msgr-face-g-hide 1.6s ease-in-out; }
+.msgr-face.s-idle[data-g="smile"] .grin { animation: msgr-face-g-grin 1.6s cubic-bezier(.3, 1.4, .5, 1); }
+.msgr-face.s-idle[data-g="smile"] .eye { animation: msgr-face-g-squint 1.6s ease-in-out; }
+.msgr-face.s-idle[data-g="smile"] .rig { animation: msgr-face-g-lift 1.6s ease-in-out; }
+@keyframes msgr-face-g-grin { 0%, 12%, 88%, 100% { opacity: 0; transform: scale(.6); } 26%, 74% { opacity: 1; transform: scale(1); } }
+@keyframes msgr-face-g-squint { 0%, 100% { transform: scaleY(1) translateY(0); } 24%, 76% { transform: scaleY(.62) translateY(-1px); } }
+@keyframes msgr-face-g-lift { 0%, 100% { transform: translateY(0); } 26%, 74% { transform: translateY(-2px); } }
+/* 상태 — 상태가 이어지는 동안 반복(완료·놀람은 정해진 횟수) */
+.msgr-face.s-work .pupil { animation: msgr-face-s-work-pupil 2.4s ease-in-out infinite; } /* 답변 준비 중 — 두리번 + 가끔 깜빡임 */
+.msgr-face.s-work .look { animation: msgr-face-s-work-look 2.4s ease-in-out infinite; }
+.msgr-face.s-work .eye { animation: msgr-face-s-work-blink 2.4s ease-in-out infinite; }
+@keyframes msgr-face-s-work-pupil { 0%, 100% { transform: translate(0, 0); } 14%, 34% { transform: translate(-3.2px, -1px); } 50% { transform: translate(0, -2.4px); } 64%, 84% { transform: translate(3.2px, -1px); } }
+@keyframes msgr-face-s-work-look { 0%, 100% { transform: translate(0, 0); } 14%, 34% { transform: translate(-1.6px, 0); } 64%, 84% { transform: translate(1.6px, 0); } }
+@keyframes msgr-face-s-work-blink { 0%, 90%, 100% { transform: scaleY(1); } 94% { transform: scaleY(.12); } }
+.msgr-face.s-ask .swirl { animation: msgr-face-s-spin 1.6s linear infinite; } /* 결재 대기 — 소용돌이 눈 + ? + 갸웃 */
+.msgr-face.s-ask .q { animation: msgr-face-s-q 1.8s ease-in-out infinite; }
+.msgr-face.s-ask .rig { animation: msgr-face-s-ask-tilt 3.2s cubic-bezier(.3, 1.3, .5, 1) infinite; }
+@keyframes msgr-face-s-spin { to { transform: rotate(360deg); } }
+@keyframes msgr-face-s-q { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-3px) rotate(8deg); } }
+@keyframes msgr-face-s-ask-tilt { 0%, 100% { transform: rotate(0); } 20%, 70% { transform: rotate(-6deg); } }
+.msgr-face.s-done .rig { animation: msgr-face-s-hop 1s cubic-bezier(.3, 1.5, .5, 1) 2; } /* 완료(답 뒤 2초) — 통통 두 번 */
+@keyframes msgr-face-s-hop { 0%, 100% { transform: translateY(0) scale(1); } 20% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-10px) scale(.96, 1.05); } 75% { transform: translateY(0) scale(1.04, .96); } }
+.msgr-face.s-surprise .eye { animation: msgr-face-s-pop 1s cubic-bezier(.2, 1.6, .4, 1) 1; } /* 놀람(멘션·수신 1초) — 흰 눈이 커지고 살짝 튄다 */
+.msgr-face.s-surprise .rig { animation: msgr-face-s-jump 1s cubic-bezier(.2, 1.6, .4, 1) 1; }
+@keyframes msgr-face-s-pop { 0% { transform: scale(.8); } 25% { transform: scale(1.18); } 60% { transform: scale(1.04); } 100% { transform: scale(1); } }
+@keyframes msgr-face-s-jump { 0% { transform: translateY(0); } 20% { transform: translateY(-5px); } 55% { transform: translateY(2px); } 100% { transform: translateY(0); } }
+.msgr-face.s-error .rig { animation: msgr-face-s-shake 2.2s ease-in-out infinite; } /* 오류 — 2.2초마다 짧게 흔들림 */
+@keyframes msgr-face-s-shake { 0%, 24%, 100% { transform: translateX(0); } 4% { transform: translateX(-3px); } 8% { transform: translateX(3px); } 12% { transform: translateX(-2.5px); } 16% { transform: translateX(2px); } 20% { transform: translateX(-1px); } }
+.msgr-face.s-off .body { filter: saturate(.22) brightness(.98); } /* 오프라인 — 채도 낮춤 + 숨쉬기 + z */
+.msgr-face.s-off .rig { animation: msgr-face-s-breathe 4.6s ease-in-out infinite; }
+.msgr-face.s-off .zzz { animation: msgr-face-s-zzz 4.6s ease-in-out infinite; }
+@keyframes msgr-face-s-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.015, 1.03); } }
+@keyframes msgr-face-s-zzz { 0%, 70%, 100% { opacity: 0; transform: translate(0, 0); } 15% { opacity: .9; transform: translate(0, -2px); } 45% { opacity: .35; transform: translate(3px, -10px); } }
+@media (prefers-reduced-motion: reduce) { .msgr-face, .msgr-face * { animation: none !important; transition: none !important; } }
 /* 에이전트 얼굴 고르기(2026-09-24) — 크루 카드, 소유자만 */
 .msgr-facepicker { display: grid; gap: 10px; }
 .msgr-facepicker > svg.preview { width: 64px; height: 64px; justify-self: start; }

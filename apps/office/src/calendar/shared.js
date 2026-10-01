@@ -1,5 +1,5 @@
 // 달력 화면과 홈 '다가오는 일정' 모듈이 같이 쓰는 것 — 공간별 거르기·캘린더 구분·색·날짜 글자.
-import { FACE_COLORS, faceOf } from '@msgr/crew-face';
+import { CALENDAR_COLORS, calendarColorIndex } from '@msgr/crew-face';
 import { ME, SPACES } from '../core/session.js';
 import { getState } from '../core/store.js';
 import { getLang } from '../core/i18n.js';
@@ -25,8 +25,8 @@ export const calOf = (e, space) => (space === 'me' ? e.org_id ?? 'me' : e.owner 
 export function colorOf(o, by) {
   const key = colorKey(o, by);
   if (!key) return undefined;
-  if (key.agent) return FACE_COLORS[faceOf(key.agent, getState().crews?.find((c) => c.id === key.agent)?.face ?? null).color];
-  return FACE_COLORS[hashIndex(key.hash, FACE_COLORS.length)];
+  if (key.agent) return CALENDAR_COLORS[calendarColorIndex(key.agent, getState().crews?.find((c) => c.id === key.agent)?.face ?? null)]; // 얼굴 v2와 별개로 예전 달력 색 그대로(검수 #789)
+  return CALENDAR_COLORS[hashIndex(key.hash, CALENDAR_COLORS.length)];
 }
 
 export const locale = () => (getLang() === 'en' ? 'en-US' : 'ko-KR');
