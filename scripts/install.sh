@@ -124,7 +124,7 @@ for (const company of entries(root).filter(e => e.isDirectory() && !e.name.start
 }
 NODE
   # 교체 전에 멈춘다 — 실행 중인 argo가 바뀌는 중인 앱 폴더에서 새·옛 모듈을 섞어 읽지 않게(#773 검수 L1). 실패하면 cleanup이 다시 시작한다.
-  if [ "$CLI_ACTIVE" = 1 ]; then systemctl --user stop argo-cli.service; fi
+  if [ "$CLI_ACTIVE" = 1 ]; then systemctl --user stop argo-cli.service || { systemctl --user start argo-cli.service || true; die "상주 argo를 멈추지 못해 교체하지 않습니다 — journalctl --user -u argo-cli"; }; fi
   CHANGED=1
   if [ "$HAD_APP" = 1 ]; then mv "$APP_DIR" "$TMP/previous-app"; fi
   mv "$CANDIDATE" "$APP_DIR"
