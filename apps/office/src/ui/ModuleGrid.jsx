@@ -38,7 +38,7 @@ function ModuleCard({ item, space, items, place, canEdit, editable, commit, reso
   const Body = mod.render, span = spanOf(item), [lo, hi] = spanRange(mod.sizes);
   const at = 'top' in place ? { '--x': place.x, '--y': `${place.top}px`, '--o': place.o } : {};
   return (
-    <section ref={card} data-mod={item.id} className={`module size-${item.size}${rh ? ' sized-h' : ''}${heightOf(item) ? ' own-h' : ''}`}
+    <section ref={card} data-mod={item.id} className={`module size-${item.size}${rh ? ' sized-h' : ''}${heightOf(item) ? ' own-h' : ''}${!rh && mod.stack ? ' fixed-h' : ''}`}
       style={{ '--span': span, ...at, ...(rh ? { '--rh': `${rh}px`, '--mh': heightOf(item) ? `${item.h}px` : 'auto' } : {}) }} aria-label={sub ? `${mod.title} · ${sub}` : mod.title} {...menuProps(menu)}>
       <header className="module-head">
         {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}

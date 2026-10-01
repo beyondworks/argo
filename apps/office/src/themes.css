@@ -203,6 +203,8 @@
   /* #root가 창 바깥 여백을 품는다 — 여백이 #root 밖으로 겹쳐 나가면 문서가 그만큼 스크롤돼 창이 위로 밀렸다(scrollIntoView·초점 이동 때) */
   :root:is([data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid']) #root { display: flow-root; }
   :root:is([data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .shell { margin: var(--t-win-m); height: calc(100dvh - 2 * var(--t-win-m)); border-radius: var(--t-win-r); background: var(--t-win-bg); box-shadow: var(--t-win-edge); overflow: hidden; }
+  /* 본문 스크롤 막대는 창(본문 판) 아래 둥근 모서리가 시작하기 전에 끝난다(유건 10/1 밤 6차) — 창 둥글기가 본문 판 둥글기보다 크거나 같다 */
+  :root:is([data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid']) .content::-webkit-scrollbar-track { margin-bottom: var(--t-win-r); }
   /* window — 사이드바는 창과 같은 바탕에 경계선 하나, 본문은 얇은 테두리의 큰 판 */
   :root[data-shell='window'] .side { border-right: 1px solid var(--t-top-line); }
   :root[data-shell='window'] .content:not(.view-mail, .view-page) { padding: 12px; }
