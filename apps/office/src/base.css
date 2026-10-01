@@ -24,6 +24,8 @@
   --side-w: 15rem; --top-h: 3rem; --ctl: 32px; --rc: 8px; --rs: 12px;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --module-gap: 12px; /* 모듈 사이 간격 — 격자·현황 카드·업무 대시보드 공용 */
+  /* 블록 고르기 색 — 노션과 같은 파랑(차콜 강조색은 회색으로 묻힌다). 고른 블록 바탕과 원자 블록 선택 링 */
+  --pick-wash: rgb(35 131 226 / .14); --pick-line: rgb(35 131 226 / .55);
 }
 /* 다크 표면 — light-dark()는 macOS 14.5 이전 웹뷰(데스크톱 앱)에서 무효라 값이 통째로 빠진다(메뉴 바탕이 투명해짐). 모드별로 나눠 적는다 */
 :root:is([data-theme$='-dark'], .dark-emul) { --wash: color-mix(in srgb, var(--fg) 4%, transparent); --float: color-mix(in srgb, var(--fg) 4%, color-mix(in srgb, var(--card) 85%, var(--bg))); --sunk: rgb(0 0 0 / 0.16); }
@@ -435,10 +437,22 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .prose blockquote { margin: 8px 0; padding: 8px 12px; border-radius: var(--rc); background: var(--card-2); color: var(--fg-2); } /* 왼쪽 막대 금지(유건 9/30) — 연한 배경 상자 */
 .prose pre { background: var(--bg); border-radius: var(--rc); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; overflow: auto; }
 .prose code { font-family: var(--mono); font-size: 0.88em; background: var(--bg); padding: 1px 5px; border-radius: 5px; }
-.prose hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+.prose pre code { font-size: inherit; background: none; padding: 0; border-radius: 0; } /* 코드 블록 안 글자는 인라인 코드 칩이 아니다 — 첫 줄만 안쪽으로 밀리고 바탕이 겹쳐 보였다 */
+/* 구분선 = 글 한 줄 높이의 띠, 선은 그 가운데(유건 10/1) — 테두리 1px로 그리면 상자가 1px이라 손잡이가 선 아래에 매달리고 마우스도 1px에서만 잡혔다 */
+.prose hr { height: 26px; margin: 6px 0; border: 0; border-radius: 4px; background: linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat; cursor: default; }
 .prose .is-empty::before { content: attr(data-placeholder); color: var(--fg-3); float: left; height: 0; pointer-events: none; }
-.block-handle { display: grid; place-items: center; width: 20px; height: 24px; border-radius: 5px; color: var(--fg-3); cursor: grab; }
-@media (hover: hover) { .block-handle:hover { background: var(--primary-soft); color: var(--fg); } }
+.block-handle { display: grid; place-items: center; width: 20px; height: 24px; border-radius: 5px; color: var(--fg-3); cursor: grab; transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
+@media (hover: hover) { .block-handle:hover { background: var(--wash); color: var(--fg); } }
+.block-handle:active { cursor: grabbing; }
+/* 손잡이에 마우스를 올린 동안 움직일 블록을 옅게 칠한다(유건 10/1). 안쪽 그림자로 칠해 인용·코드·비공개처럼 바탕이 있는 블록 위에도 보이고, 바깥 4px로 글자에 여유를 준다 */
+:where(.ProseMirror > .block-hover) { border-radius: 4px; }
+.ProseMirror > .block-hover { --hover-wash: color-mix(in srgb, var(--fg) 6%, transparent); box-shadow: inset 0 0 0 100vmax var(--hover-wash), 0 0 0 4px var(--hover-wash); animation: block-hover-in 140ms var(--ease-out); }
+@keyframes block-hover-in { from { box-shadow: inset 0 0 0 100vmax transparent, 0 0 0 4px transparent; } }
+/* 원자 블록(구분선·모듈·비공개)을 골랐을 때 — 고른 블록과 같은 옅은 파랑 면과 링. 편집기 기본 CSS를 불러오지 않아 아무 표시가 없었다 */
+.ProseMirror .ProseMirror-selectednode { outline: none; box-shadow: inset 0 0 0 100vmax var(--pick-wash), 0 0 0 3px var(--pick-wash); }
+:where(.ProseMirror .ProseMirror-selectednode) { border-radius: 4px; }
+.ProseMirror-hideselection { caret-color: transparent; }
+.ProseMirror-hideselection *::selection { background: transparent; }
 .menu.slash { max-height: 320px; overflow: auto; }
 /* 슬래시 메뉴 블록 아이콘 — 22×22 한 줄 고정(.menu-ico 16px이 덮어 '[ ]'가 두 줄로 꺾였다), 외곽선 없이 옅은 면으로(유건 9/30·10/1) */
 .menu .block-ico { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 6px; background: var(--wash); color: var(--fg-2); font-family: var(--mono); font-size: 10.5px; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; }
@@ -710,8 +724,8 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 @keyframes redact-text { to { mask-position: 110px 0; } }
 @media (prefers-reduced-motion: reduce) { .redact-text { animation: none !important; } }
 /* 노션식 블록 고르기 — 여백에서 끈 사각형과 고른 블록 */
-.pick-box { position: fixed; z-index: 60; pointer-events: none; border: 1px solid rgba(35, 131, 226, .55); background: rgba(35, 131, 226, .1); border-radius: 2px; }
-.ProseMirror .block-picked { background: rgba(35, 131, 226, .14); border-radius: 4px; box-shadow: 0 0 0 3px rgba(35, 131, 226, .14); } /* 노션과 같은 파란 고르기 색 — 차콜 강조색은 회색으로 묻힌다 */
+.pick-box { position: fixed; z-index: 60; pointer-events: none; border: 1px solid var(--pick-line); background: rgb(35 131 226 / .1); border-radius: 2px; }
+.ProseMirror .block-picked { background: var(--pick-wash); border-radius: 4px; box-shadow: 0 0 0 3px var(--pick-wash); } /* 노션과 같은 파란 고르기 색 — 차콜 강조색은 회색으로 묻힌다 */
 .ProseMirror.picking { caret-color: transparent; }
 .ProseMirror.picking ::selection { background: transparent; }
 /* 할 일(성과 기록 1단계) */

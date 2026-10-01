@@ -22,6 +22,7 @@ import { PageModuleNode } from '../ui/PageModuleNode.jsx';
 import { getStorageScope } from '../core/save.js';
 import { RedactMark, BlockPick, pickKey, pickRange, blockRects, redactStatus, setRedact, menuRange, unpick } from './block-pick.js';
 import { EDITOR_DICT } from './editor-i18n.js';
+import { BlockHover, HANDLE_POSITION, measureAnchor, setHover } from './block-handle.js';
 
 registerDict(EDITOR_DICT);
 // 여백에서 끌기를 시작하지 않는 자리 — 누를 수 있는 것, 창, 블록 손잡이
@@ -131,7 +132,7 @@ export default function Editor({ page, canEdit = false }) {
     extensions: [
       StarterKit.configure({ link: false }),
       Placeholder.configure({ placeholder: ({ node }) => (node.type.name === 'heading' && node.attrs.level === 1 ? t('page.titlePh') : t('page.placeholder')) }),
-      TaskList, TaskItem.configure({ nested: true }), RedactMark, BlockPick,
+      TaskList, TaskItem.configure({ nested: true }), RedactMark, BlockPick, BlockHover,
       PrivateBlock.configure({ pageId: page.id, canEdit: canPrivate }),
       PageModuleNode.configure({ space: page.space, sourceOwner: page.owner ?? null }),
     ],
@@ -190,6 +191,12 @@ export default function Editor({ page, canEdit = false }) {
     if (at == null) editor.state.doc.descendants((n, p) => { if (at == null && n === node) at = p; return at == null; });
     if (at == null) { await sb.from('office_private_blocks').delete().eq('page_id', page.id).eq('block_id', id); showToast(t('block.privateFailed')); return; }
     editor.chain().focus().insertContentAt({ from: at, to: at + node.nodeSize }, { type: 'privateBlock', attrs: { id } }).run();
+  };
+  /** 손잡이 기준 상자 — 지금 가리킨 블록의 첫 줄(block-handle.js). 플러그인이 대상을 바꾼 직후에 부른다 */
+  const handleAnchor = () => {
+    const h = handle.current, view = h?.editor?.view;
+    const dom = h?.node && view && !view.isDestroyed ? view.nodeDOM(h.pos) : null;
+    return dom instanceof Element ? { getBoundingClientRect: () => measureAnchor(view, h.node, h.pos, dom), contextElement: dom } : null;
   };
   const blockMenu = (e) => {
     const h = handle.current;
@@ -271,7 +278,14 @@ export default function Editor({ page, canEdit = false }) {
 
   return (
     <div className="editor" onContextMenu={rangeMenu} onMouseDown={keepRange}>
-      {editor && canEdit && <DragHandle editor={editor} className="block-handle" onNodeChange={(d) => { handle.current = d; }}><span className="block-grip" role="button" tabIndex={-1} aria-label={t('block.menu')} onClick={blockMenu}><Icon name="grip" size={14} /></span></DragHandle>}
+      {editor && canEdit && (
+        <DragHandle editor={editor} className="block-handle" computePositionConfig={HANDLE_POSITION} getReferencedVirtualElement={handleAnchor}
+          onNodeChange={(d) => { handle.current = d; setHover(editor.view, null); }} onElementDragStart={() => setHover(editor.view, null)}>
+          <span className="block-grip" role="button" tabIndex={-1} aria-label={t('block.menu')} onClick={blockMenu}
+            onPointerEnter={(e) => { if (e.pointerType === 'mouse' && handle.current?.node) setHover(editor.view, handle.current.pos); }}
+            onPointerLeave={() => setHover(editor.view, null)}><Icon name="grip" size={14} /></span>
+        </DragHandle>
+      )}
       <EditorContent editor={editor} />
       {slash && (
         <div className="menu slash" role="listbox" style={{ left: Math.min(slash.x, innerWidth - 240), top: Math.min(slash.y, innerHeight - 320) }}>
