@@ -1841,5 +1841,6 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-offline-bar { position: fixed; z-index: 75; top: 0; left: 0; right: 0; height: calc(env(safe-area-inset-top, 0px) + 22px); box-sizing: border-box; display: flex; align-items: flex-end; justify-content: center; padding: 0 12px 3px; background: var(--fg); color: var(--bg); font-size: 12px; line-height: 16px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .shell.msgr-shell.is-offline { padding-top: 22px; box-sizing: border-box; }
 .shell.msgr-shell.is-offline:not(.msgr-phone) .msgr-main, .shell.msgr-shell.is-offline:not(.msgr-phone) .msgr-side { height: calc(100vh / var(--z, 1) - 22px); } /* 데스크톱 높이는 100vh 기준이라 패딩만으로는 줄지 않는다 — 아래가 22px 잘리던 것(실측) */
+@media (pointer: coarse) { .shell.msgr-shell.is-offline:not(.msgr-phone) .msgr-main, .shell.msgr-shell.is-offline:not(.msgr-phone) .msgr-side { height: 100%; } } /* 터치 데스크톱 폭(아이패드)은 셸이 키보드를 뺀 높이(--msgr-viewport-height)에 고정돼 있다 — 위 100vh 규칙이 그걸 덮어 키보드를 연 채 끊기면 입력창이 화면 밖으로 밀렸다(#793 검수 MEDIUM-1, 1024×768 실측) */
 .msgr-searchres .note.danger { margin: 6px 2px; font-size: 13px; color: var(--danger, #d05a5a); } /* 연결이 끊겨 일부만 보일 때 결과 위 안내(검수 E) */
 .msgr-phone .msgr-main > .msgr-top .msgr-scope-badge { display: none; } /* 폰 머리는 격자라 '개인' 표식이 오른쪽 맨 위 구석(y≈0)에 떠 잘려 보였다 — 부제 앞('개인 · 1명 · 에이전트 1')으로 옮겼다(검수 F, 2026-10-01) */
