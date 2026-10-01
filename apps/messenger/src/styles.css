@@ -380,6 +380,7 @@
 .msgr-crewsheet .facts { display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
 .msgr-crewsheet .facts > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12.5px; }
 .msgr-crewsheet .facts > div > span:last-child { display: inline-flex; align-items: center; gap: 6px; }
+.msgr-crewsheet .facts > div.state > span:last-child { flex-wrap: wrap; align-items: flex-start; } .msgr-crewsheet .facts .state .msgr-dot { margin-top: 5px; } .msgr-crewsheet .facts .state .state-text { flex: 1 1 11em; min-width: 0; line-height: 1.45; } /* 상태 한 줄 — 긴 문장은 줄바꿈하고 파견 해제·파견하기 버튼은 자리가 모자라면 아래로(UX 점검 C) */
 .msgr-crewsheet section { display: grid; gap: 10px; }
 .msgr-crewsheet h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
 .msgr-crewsheet p { margin: 0; font-size: 12px; color: var(--fg-2); line-height: 1.55; }
@@ -525,6 +526,7 @@
 .msgr-inline { display: grid; gap: 8px; padding: 8px 6px 10px; }
 .msgr-inline .msgr-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; outline: 0; }
 .msgr-inline .msgr-input:focus { box-shadow: 0 0 0 2px var(--msgr-focus); }
+.msgr-inline-err { margin: 0; padding: 0 4px; font-size: 12px; line-height: 1.45; color: var(--danger, #d05a5a); } /* 입력 아래 이유 — 버튼을 막는 대신 눌렀을 때(UX 점검 C) */
 .msgr-inline .msgr-input::placeholder { color: var(--fg-3); }
 .msgr-inline .msgr-seg { width: max-content; max-width: 100%; }
 .msgr-inline .msgr-seg button { height: 26px; padding: 0 10px; font-size: 12px; }
@@ -604,6 +606,7 @@
 .msgr-node-cmd { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); margin: 4px 0 8px; }
 .msgr-node-cmd code { display: block; font: 12px/1.6 var(--mono); word-break: break-all; user-select: all; white-space: pre-wrap; } /* 에이전트 설정은 두 줄(URL·토큰) */
 .msgr-node-cmd .acts { display: flex; gap: 6px; }
+.msgr-node-cmd code.inl, .msgr-auto code.inl { display: inline; padding: 1px 5px; border-radius: 5px; background: var(--card); border: 1px solid var(--border-soft, var(--border)); font: 12px var(--mono); white-space: normal; } /* 문장 속 명령·경로 — 위의 블록 코드(설정 두 줄)와 달리 글 사이에 이어진다(UX 점검 D) */
 .msgr-node-cmd .note { margin: 0; }
 .msgr-remote-add { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .msgr-remote-add .msgr-input.inline { flex: 1 1 190px; min-width: 160px; }
@@ -1286,6 +1289,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   /* 목록 행 */
   .msgr-phone.phone-home .msgr-side .item { min-height: 44px; padding: 0 var(--ph-pad); gap: 16px; font-size: var(--ph-txt); color: var(--fg-2); border-radius: 0; background: none; }
   .msgr-phone.phone-home .msgr-side .item.active { background: none; color: var(--fg); font-weight: 500; }   /* 띠 대신 잉크 — 굵기는 그대로(행마다 굵기가 바뀌면 흔들려 보인다) */
+  .msgr-phone.phone-home .msgr-side .item.active.unread .name { color: var(--fg); } /* 폰은 활성 행을 색으로 채우지 않는다 — 데스크톱의 .active.unread .name(primary-fg)이 남으면 글자가 바탕색이 된다(UX 점검 C, 2026-10-01 라이트 1.04:1·다크 1.1:1) */
+  .msgr-phone.phone-home .msgr-side .item.active .msgr-badge { background: var(--fg); color: var(--bg); } /* 같은 이유 — 배지도 안 읽음 행과 같게 */
+  .msgr-phone.phone-home .msgr-side .item.active .msgr-badge.mark { background: var(--mark); color: var(--mark-fg); } /* 멘션 배지는 그대로 */
   .msgr-phone.phone-home .msgr-side .item { font-weight: 500; }
   .msgr-phone.phone-home .msgr-side .item > .mi, .msgr-phone.phone-home .msgr-side .item > svg { color: var(--fg-2); opacity: 1; } /* #·자물쇠가 어두운 테마에서 안 보이던 것 */
   .msgr-phone.phone-home .msgr-side .item:active, .msgr-phone.phone-home .msgr-sec > summary:active { background: var(--card-2); }
