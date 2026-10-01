@@ -3,7 +3,7 @@
 // 모양·색은 크루 id에서 무작위로 정해지고 유지된다(id만 입력 — 보는 사람·크루 목록·해고와 무관하게 늘 같은 얼굴).
 // 소유자가 고르면 msgr_crews.face에 {v:2, shape, color}로 저장돼 조직 전원이 같은 얼굴을 본다.
 // 옛 저장값({shape 0~5, color 0~9, eyes 0~2}, 키 v 없음)은 운영 행을 고쳐 쓰지 않고 그릴 때 대응표(LEGACY_*)로 바꾼다 — 옛 눈은 버리고 새 도형의 기본 표정.
-// 그림은 SVG 문자열(faceInner) — 메신저(움직임)와 오피스(정지 얼굴)가 같은 함수를 쓴다. 색·선 굵기는 속성으로 넣어 CSS 없이도 같은 얼굴이 나오고,
+// 그림은 SVG 문자열 — 메신저(faceInner: 상태·몸짓)와 오피스(faceStill: 정지 얼굴)가 같은 그리기 함수를 쓴다. 색·선 굵기는 속성으로 넣어 CSS 없이도 같은 얼굴이 나오고,
 // 메신저 styles.css는 움직임(transform·opacity 애니메이션)과 오프라인 채도만 더한다.
 
 /** 색 12종 — 레퍼런스 이미지 도형 안쪽 픽셀(시안 6절). 오피스 달력(calendar/shared.js)도 이 배열로 색을 고른다 */
@@ -145,34 +145,43 @@ const STATE_FACE = {
   error: () => ({ eyes: [`<g class="eye">${P('M-15 -7L-6 -2L-15 3')}</g>`, `<g class="eye">${P('M15 -7L6 -2L15 3')}</g>`], mouth: P('M-6 10H6') }),
   off: (small) => ({ eyes: [closedEye(-10, 1, 11, 2.4), closedEye(10, 1, 11, 2.4)], mouth: P('M-3 10H3'), extra: label('zzz', 15, -12, 'z', small) }),
 };
-export const FACE_STATES = ['idle', ...Object.keys(STATE_FACE)];
+export const FACE_STATES = ['idle', 'work', 'ask', 'surprise', 'done', 'error', 'off']; // 글자 그대로 둔다 — Object.keys(STATE_FACE)로 만들면 쓰지 않는 오피스 묶음에도 상태 표정이 끌려 들어간다(첫 화면 150KB 상한)
 
 /** 크기별 선 굵기·부품 배율 — 24~44px 목록에서도 표정이 읽히게(시안 '크기별 조정' 표) */
 const SMALL_PX = 44; // 이하(메신저 목록·대화 20~44px, 오피스 12~32px)는 작은 배치
 const sizeTune = (px) => px >= 64 ? { sw: 3.4, k: 1 } : px > SMALL_PX ? { sw: 4.4, k: 1.04 } : px > 28 ? { sw: 5, k: 1.1 } : { sw: 5.8, k: 1.12 };
 
-const memo = new Map(); // 모양 12 × 색 12 × 상태 7 × 크기 4단 = 최대 4,032개 짧은 문자열 — 목록이 다시 그려질 때마다 새로 만들지 않는다
-/** 얼굴 SVG의 안쪽(viewBox 0 0 100 100 기준) — 바깥 <svg>는 쓰는 쪽이 만든다. 값은 전부 상수에서 오고 face는 정수 인덱스로만 읽는다(사용자 입력이 문자열에 들어가지 않는다) */
-export function faceInner(face, { state = 'idle', px = 28 } = {}) {
+const memo = /* @__PURE__ */ new Map(); // 모양 12 × 색 12 × 상태 7(+정지) × 크기 4단 — 목록이 다시 그려질 때마다 새로 만들지 않는다
+/** 그리기 본체. stateFace = 상태 표정 표(메신저만 넘긴다 — 오피스는 faceStill로 넘기지 않아 상태 표정 코드가 오피스 첫 화면 묶음에서 빠진다).
+ *  motion = 몸짓 부품(웃음 짓기·하품 입, 평소 투명)을 넣을지 — 정지 얼굴에는 필요 없다 */
+function draw(face, st, px, stateFace, motion) {
   const shape = inRange(face?.shape, FACE_SHAPES.length) ? face.shape : 0;
   const c = FACE_SHAPES[shape];
   const color = inRange(face?.color, FACE_COLORS.length) ? face.color : c.color;
-  const st = STATE_FACE[state] ? state : 'idle';
   const small = px <= SMALL_PX;
   const t = sizeTune(px);
-  const key = `${shape}|${color}|${st}|${t.sw}`;
+  const key = `${shape}|${color}|${st}|${t.sw}|${motion ? 1 : 0}`;
   const hit = memo.get(key);
   if (hit) return hit;
-  const base = st === 'idle' ? EXPR[c.expr] : STATE_FACE[st](small);
+  const base = st === 'idle' ? EXPR[c.expr] : stateFace[st](small);
   const e = small && base.sm ? { ...base, ...base.sm } : base;
   const k = small && base.sm ? 1 : t.k; // 작은 배치가 있는 표정은 배치 자체가 이미 크다
-  const idleParts = st === 'idle' ? `<g class="grin" opacity="0">${e.grin}</g><ellipse class="yawn" ${INK} opacity="0" cx="0" cy="${e.yawnY}" rx="6" ry="8"/>` : '';
+  const idleParts = st === 'idle' && motion ? `<g class="grin" opacity="0">${e.grin}</g><ellipse class="yawn" ${INK} opacity="0" cx="0" cy="${e.yawnY}" rx="6" ry="8"/>` : '';
   const out = `<g class="rig"><path class="body" d="${c.d}" fill="${FACE_COLORS[color]}"/>`
     + `<g class="ft" transform="translate(${c.cx} ${c.cy}) scale(${f2(c.s * k)})" fill="none" stroke="${FEAT}" stroke-width="${t.sw}" stroke-linecap="round" stroke-linejoin="round"><g class="look">`
     + `<g class="eyes">${e.eyes.join('')}</g><g class="mouth">${e.mouth || ''}</g>${idleParts}${e.extra || ''}`
     + '</g></g></g>';
   memo.set(key, out);
   return out;
+}
+/** 얼굴 SVG의 안쪽(viewBox 0 0 100 100 기준, 메신저) — 상태 표정 + 몸짓 부품. 바깥 <svg>는 쓰는 쪽이 만든다.
+ *  값은 전부 상수에서 오고 face는 정수 인덱스로만 읽는다(사용자 입력이 문자열에 들어가지 않는다) */
+export function faceInner(face, { state = 'idle', px = 28 } = {}) {
+  return draw(face, STATE_FACE[state] ? state : 'idle', px, STATE_FACE, true);
+}
+/** 정지 얼굴(오피스) — 쉼 표정 하나, 몸짓 부품 없음. faceInner와 같은 그림이다 */
+export function faceStill(face, { px = 28 } = {}) {
+  return draw(face, 'idle', px, null, false);
 }
 
 /* ───────── 쉼(idle) 몸짓 계획 — 크루 id 해시로 순서·간격·첫 시작이 정해져 크루마다 박자가 다르다 ───────── */
@@ -187,9 +196,9 @@ export const GESTURES = [
   { k: 'roll', ms: 1400, w: 1 },
   { k: 'smile', ms: 1600, w: 1.5 },
 ];
-export const GESTURE_MS = Object.fromEntries(GESTURES.map((g) => [g.k, g.ms]));
+export const GESTURE_MS = /* @__PURE__ */ Object.fromEntries(GESTURES.map((g) => [g.k, g.ms])); // PURE 표시 = 쓰지 않는 묶음(오피스)에서 몸짓 정의를 걷어낼 수 있게
 export const GESTURE_GAP = [2000, 5000]; // 다음 몸짓까지 간격(시작~시작) 하한·상한
-const G_TOTAL = GESTURES.reduce((a, g) => a + g.w, 0);
+const G_TOTAL = /* @__PURE__ */ GESTURES.reduce((a, g) => a + g.w, 0);
 function pickGesture(h) { let r = (h % 10000) / 10000 * G_TOTAL; for (const g of GESTURES) { r -= g.w; if (r < 0) return g.k; } return GESTURES[0].k; }
 /** n번째 몸짓과 다음 몸짓까지 간격(2~5초) — id·n·직전 몸짓만으로 정해진다. 직전과 같으면 다른 몸짓으로 바꾼다(같은 몸짓 연속 없음) */
 export function gestureAt(id, n, prev = null) {

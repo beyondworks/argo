@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  faceOf, faceFromStored, faceToStore, faceInner, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedReplyCrew,
+  faceOf, faceFromStored, faceToStore, faceInner, faceStill, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedReplyCrew,
   gestureAt, gesturePhase, GESTURES, GESTURE_MS, GESTURE_GAP, FACE_COLORS, FACE_SHAPES, FACE_STATES, FACE_VERSION,
   LEGACY_SHAPE, LEGACY_COLOR, DONE_MS, SURPRISE_MS, ERROR_MS, FAILED_FRESH_MS,
 } from '../src/crew-face.mjs';
@@ -184,8 +184,13 @@ test('배선 — 사진 → 얼굴 → 첫 글자, 배지 유지, 크루 id로, 
   assert.doesNotMatch(i18n, /'crew\.face\.eyes/, '눈 고르기 문구 제거');
 });
 
-test('오피스 — 같은 그림(faceInner)의 정지 얼굴, 몸짓·상태 없음', () => {
+test('오피스 — 같은 그림의 정지 얼굴(faceStill), 몸짓·상태 없음', () => {
+  for (let shape = 0; shape < 12; shape++) for (const px of [12, 20, 32, 56]) {
+    const still = faceStill({ shape, color: shape }, { px });
+    assert.equal(still, faceInner({ shape, color: shape }, { px }).replace(/<g class="grin".*?<\/g><ellipse class="yawn"[^>]*\/>/, ''), `몸짓 부품만 뺀 같은 그림 ${shape}/${px}`);
+    assert.doesNotMatch(still, /class="(grin|yawn)"/);
+  }
   const face = read('../../office/src/ui/Face.jsx');
-  assert.match(face, /faceInner\(face, \{ px: size \}\)/, '쉼 표정 하나');
+  assert.match(face, /faceStill\(face, \{ px: size \}\)/, '쉼 표정 하나');
   assert.doesNotMatch(face, /face-gestures|faceGestures|state:/, '몸짓·상태 표정 없음');
 });
