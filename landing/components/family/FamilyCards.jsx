@@ -38,6 +38,8 @@ export default function FamilyCards({ here }) {
         {PRODUCTS.map((p, i) => {
           const inner = (
             <>
+              {/* 입체 그림 — 오피스 히어로와 같은 종이 디오라마 세계(블렌더) */}
+              <img className="fc-art" src={`/assets/office-art/${p.id}.webp`} alt="" loading="lazy" />
               <div className="fc-top">
                 <span className="fc-name">{p.name}</span>
                 <BrandMark tone={TONE[p.id]} size={22} />

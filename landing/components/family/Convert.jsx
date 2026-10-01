@@ -15,7 +15,7 @@ function Head({ kicker, meta }) {
   );
 }
 
-export function CardGrid({ ns, part, ids, id, meta, numbered = false, variant }) {
+export function CardGrid({ ns, part, ids, id, meta, numbered = false, variant, art }) {
   const { t } = useLang();
   return (
     <section className={`fam-section${variant ? ` cv-v-${variant}` : ''}`} id={id}>
@@ -24,6 +24,7 @@ export function CardGrid({ ns, part, ids, id, meta, numbered = false, variant })
       <ol className={`cv-grid n${ids.length}${numbered ? ' numbered' : ''}`}>
         {ids.map((k, i) => (
           <li key={k} className="cv-card rise" style={{ '--d': `${i * 70}ms` }}>
+            {art && <img className="cv-art" src={art[k]} alt="" loading="lazy" />}
             <span className="mono-label mono-dim cv-no">{String(i + 1).padStart(2, '0')}</span>
             <h3 className="cv-card-t">{t(`${ns}.${part}.${k}.t`)}</h3>
             <p className="cv-card-b">{t(`${ns}.${part}.${k}.b`)}</p>

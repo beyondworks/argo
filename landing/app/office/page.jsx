@@ -4,30 +4,15 @@ import { useState } from 'react';
 import Nav from '@/components/Nav';
 import Footer from '@/components/Footer';
 import Accent from '@/components/Accent';
-import Icon from '@/components/family/Icon';
-import FilmLoop from '@/components/family/FilmLoop';
 import { CardGrid } from '@/components/family/Convert';
-import ProblemScroll from '@/components/family/ProblemScroll';
-import { MergedDesk, RoleBoard, CrewDraft } from '@/components/family/OfficeScenes';
+import { RoleBoard, FeatureBento } from '@/components/family/OfficeScenes';
+import HeroFilm from '@/components/family/HeroFilm';
 import FamilyCards, { useRise } from '@/components/family/FamilyCards';
 import { useLang } from '@/lib/i18n';
 
 const TO = 'lean8kim@gmail.com';
-// 티저 영상 — 언어별 파일(에셋 검사가 볼 수 있게 경로를 고정 문자열로 둔다)
-const FILM = {
-  ko: { src: '/assets/office-film-ko.mp4', poster: '/assets/office-film-ko.jpg' },
-  en: { src: '/assets/office-film-en.mp4', poster: '/assets/office-film-en.jpg' },
-};
-
-// 메일 · 문서 · 메신저 · 번역기 창이 흩어져 있다 → 스크롤하면 오피스 한 화면으로 모인다. [x, y, 기울기] → [x, y]
-const PROB_WINDOWS = [
-  { id: 'a', lines: 2, from: [-170, -135, -4], to: [0, -40] },
-  { id: 'b', lines: 2, from: [165, -95, 3], to: [0, -14] },
-  { id: 'c', lines: 2, from: [-150, 110, 2], to: [0, 14] },
-  { id: 'd', lines: 2, from: [175, 140, -3], to: [0, 40] },
-];
-const TRAITS = ['save', 'history', 'command'];
-const AX_POINTS = ['p1', 'p2', 'p3'];
+// "세 가지" 칸 그림(블렌더, 히어로와 같은 종이 사무실 세계)
+const ART = { data: '/assets/office-art/data.webp', ai: '/assets/office-art/ai.webp', team: '/assets/office-art/team.webp' };
 
 export default function OfficePage() {
   const { t, lang } = useLang();
@@ -58,19 +43,11 @@ export default function OfficePage() {
           <a className="fam-btn primary" href="#waitlist">{t('office.nav.cta')}</a>
           <a className="fam-btn" href="#roles">{t('office.cta.look')}</a>
         </div>
-        <span className="mono-label mono-dim m-platforms">{t('office.trust')}</span>
+        {/* 히어로 필름(블렌더) — 흩어진 앱 창 다섯 개가 오피스 한 화면의 칸으로 모인다 */}
+        <HeroFilm lang={lang} base="office-hero" className="o-hero-film" />
       </section>
 
-      {/* 티저 영상 — 모듈 조립·직무별 화면·크루 결재를 30초에 */}
-      <section className="m-film" aria-label={t('office.demo.label')}>
-        <FilmLoop key={lang} {...FILM[lang]} />
-      </section>
-
-      <CardGrid ns="office" part="pillar" ids={['data', 'ai', 'team']} id="pillars" />
-
-      <ProblemScroll ns="office" windows={PROB_WINDOWS}>
-        <MergedDesk />
-      </ProblemScroll>
+      <CardGrid ns="office" part="pillar" ids={['data', 'ai', 'team']} id="pillars" art={ART} />
 
       <section className="fam-section" id="roles">
         <div className="fam-head">
@@ -84,34 +61,14 @@ export default function OfficePage() {
         <RoleBoard />
       </section>
 
-      <section className="fam-section" id="ax">
+      <section className="fam-section" id="features">
         <div className="fam-head">
-          <span className="mono-label">{t('office.ax.kicker')}</span>
-          <span className="mono-label mono-dim">Office × Messenger</span>
+          <span className="mono-label">{t('office.feat.kicker')}</span>
         </div>
-        <div className="o-ax">
-          <div className="o-ax-copy">
-            <h2 className="fam-title rise"><Accent text={t('office.ax.title')} /></h2>
-            <p className="fam-lede rise" style={{ '--d': '60ms' }}>{t('office.ax.lede')}</p>
-            <ul className="o-ax-points">
-              {AX_POINTS.map((k, i) => (
-                <li key={k} className="rise" style={{ '--d': `${120 + i * 60}ms` }}>
-                  <Icon name="check" size={14} />
-                  <span>{t(`office.ax.${k}`)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <CrewDraft />
+        <div className="sec-intro">
+          <h2 className="fam-title rise">{t('office.feat.title')}</h2>
         </div>
-        <ul className="o-traits">
-          {TRAITS.map((k, i) => (
-            <li key={k} className="rise" style={{ '--d': `${i * 60}ms` }}>
-              <b>{t(`office.trait.${k}.t`)}</b>
-              <span>{t(`office.trait.${k}.b`)}</span>
-            </li>
-          ))}
-        </ul>
+        <FeatureBento />
       </section>
 
       <FamilyCards here="office" />
@@ -121,6 +78,7 @@ export default function OfficePage() {
           <span className="mono-label">{t('office.wait.kicker')}</span>
           <span className="mono-label mono-dim">{t('office.kicker')}</span>
         </div>
+        <img className="o-wait-art rise" src="/assets/office-art/wait.webp" alt="" loading="lazy" />
         <h2 className="m-get-title rise">
           <Accent text={t('office.wait.title')} />
         </h2>
