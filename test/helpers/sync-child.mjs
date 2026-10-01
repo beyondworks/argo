@@ -23,6 +23,8 @@ export function seedRoot(root, { url, userId = 'u1', wsId = 'co-1234', expiresAt
   writeFileSync(join(root, '.device-session.json'), JSON.stringify({
     url, anonKey: 'anon-fixture', access_token: 'h.p.s', refresh_token: 'rt-0', expires_at: expiresAt, user: { id: userId, email: '' },
   }), { mode: 0o600 });
+  // 기기 id를 미리 둔다 — 실제 기기는 이미 갖고 있다. 없으면 동시에 처음 켜진 두 자식이 서로 다른 id를 만들어 같은 기기가 아니게 된다.
+  writeFileSync(join(root, '.device-id'), 'fixture-mac-0001');
 }
 
 /** 자식에서 ensureSync()를 켜고 waitMs 뒤 syncStatus()를 JSON으로 돌려받는다.
@@ -54,3 +56,44 @@ process.exit(0);`;
 
 export const srcUrl = SRC;
 export const repoPath = (rel) => fileURLToPath(new URL(`../../${rel}`, import.meta.url));
+
+/** 오래 도는 자식 — 동기화 루프 + (선택) 실행 리스(daemonLease: 게이트웨이·스케줄러가 쓰는 프로세스 단위 리스)를 켜고,
+    intervalMs마다 { t, proc(게이트웨이 리스), sched, cloud(isCloudLeader) }를 내보낸다. 게이트웨이 폴러가 실제로 도는 조건은
+    proc && cloud다(gateway.mjs ensureGateway). 테스트는 이 표본으로 "그 조건이 참인 프로세스가 정확히 하나"를 본다.
+    kill()은 SIGKILL — 크래시·강제 종료(락·리스 파일이 그대로 남는다)를 흉내 낸다. */
+export function spawnLeaseChild({ root, env = {}, leases = ['gateway', 'scheduler'], runnerUsable = true, intervalMs = 300, name = '' }) {
+  const script = `
+globalThis.__argoRunnerProbe = { ts: Date.now(), ok: ${runnerUsable ? 'true' : 'false'} };
+const { daemonLease } = await import(${JSON.stringify(SRC('lock.mjs'))});
+const sync = await import(${JSON.stringify(SRC('sync.mjs'))});
+const held = Object.fromEntries(${JSON.stringify(leases)}.map((n) => [n, daemonLease(n)]));
+sync.ensureSync();
+setInterval(() => {
+  process.stdout.write('\\n@@' + JSON.stringify({ t: Date.now(), proc: !!held.gateway?.isLeader(), sched: !!held.scheduler?.isLeader(), cloud: sync.isCloudLeader() }) + '\\n');
+}, ${Number(intervalMs)});`;
+  const p = spawn(process.execPath, ['--input-type=module', '-e', script], { env: childEnv(root, env), stdio: ['ignore', 'pipe', 'pipe'] });
+  const samples = []; let buf = ''; let err = ''; let exited = false;
+  p.stdout.on('data', (c) => {
+    buf += c; const lines = buf.split('\n'); buf = lines.pop();
+    for (const l of lines) if (l.startsWith('@@')) { try { samples.push(JSON.parse(l.slice(2))); } catch { /* 잘린 줄 */ } }
+  });
+  p.stderr.on('data', (c) => { err += c; });
+  const done = new Promise((r) => p.on('exit', () => { exited = true; r(); }));
+  return {
+    name, samples, pid: p.pid,
+    get err() { return err; },
+    alive: () => !exited,
+    last: () => samples[samples.length - 1] ?? null,
+    kill: async () => { if (!exited) { p.kill('SIGKILL'); await done; } },
+  };
+}
+
+/** 시각 t에 살아 있던 자식들의 직전 표본(1초 이내)으로 "게이트웨이가 도는 프로세스 수"(proc && cloud)를 센다. */
+export function runnersAt(children, t, { field = 'proc' } = {}) {
+  let n = 0;
+  for (const c of children) {
+    const s = [...c.samples].reverse().find((x) => x.t <= t);
+    if (s && t - s.t <= 1000 && (c.diedAt == null || t < c.diedAt) && s[field] && s.cloud) n++;
+  }
+  return n;
+}

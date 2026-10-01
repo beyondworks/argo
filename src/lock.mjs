@@ -6,6 +6,11 @@ import { join } from 'node:path';
 import { WS_ROOT } from './workspace.mjs';
 
 const OWNER = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+// 이 프로세스가 켠 리스 등록부 — 동기화(sync.mjs)가 "이 프로세스가 실행 주인인가"를 묻는다(holdsDaemonLease). globalThis: Next 번들 사본이 갈려도 하나.
+const REG = (globalThis.__argoDaemonLeases ??= {});
+
+/** 이 프로세스가 이름 중 하나의 데몬 리스를 지금 쥐고 있는가. 켠 적 없는 이름은 거짓. */
+export const holdsDaemonLease = (...names) => names.some((n) => REG[n]?.isLeader() === true);
 
 export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
   const file = join(WS_ROOT, `.${name}.lock`);
@@ -26,5 +31,7 @@ export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
   tick();
   const timer = setInterval(tick, beat);
   timer.unref?.();
-  return { isLeader: () => mine };
+  const handle = { isLeader: () => mine };
+  REG[name] = handle;
+  return handle;
 }

@@ -34,6 +34,7 @@ import { syncEntitled } from './entitlement.mjs';
 import { cachedPlan, rememberPlan, invalidatePlanCache } from './plan-cache.mjs';
 import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 기기에서 턴을 돌릴 러너가 있는가
 import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수신 쓰기의 캐시 무효화
+import { holdsDaemonLease } from './lock.mjs'; // 실행 리스(게이트웨이·스케줄러) 주인만 클라우드 리스에 참여 — arbitrateLease
 
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
@@ -213,20 +214,17 @@ const skey = (...segs) => segs.flatMap((s) => s.split('/')).map(encSeg).join('/'
 /* ─── 크로스 프로세스 단일 동기화 락 ───
    같은 데이터 루트에 두 서버가 뜨면(실수로 dev + 상주 동시 기동 등) 서로의 로컬·원격·.sync-state를
    두고 레이스하며 삭제 피드백 루프를 만든다(실측 대형 유실). 한 root당 한 프로세스만 동기화하도록
-   pidfile로 막는다. .lock은 EXCLUDE라 동기화 대상 아님.
-   반환 { held } — 못 얻었으면 holderNoLeader(락 주인이 관찰 전용 프로세스 = argo 대화 화면인가)를 같이 준다.
-   락 파일에 noLeader를 남기는 이유는 cycle()의 "락 없음" 분기 주석 참조(리스 판정은 같은 루트끼리 구분하지 못한다). */
+   pidfile로 막는다. .lock은 EXCLUDE라 동기화 대상 아님. */
 async function holdSyncLock() {
   const f = join(WS_ROOT, '.sync-process.lock');
   try {
     const cur = JSON.parse(await readFile(f, 'utf8'));
     if (cur.pid !== process.pid && Date.now() - cur.ts < LOCK_STALE_MS) {
-      try { process.kill(cur.pid, 0); return { held: false, holderNoLeader: cur.noLeader === true }; } catch { /* 죽은 pid → 탈취 */ }
+      try { process.kill(cur.pid, 0); return false; } catch { /* 죽은 pid → 탈취 */ }
     }
   } catch { /* 없음/손상 → 획득 */ }
-  const noLeader = process.env.ARGO_NO_LEADER === '1'; // 매 주기 다시 쓴다 — 대화 화면의 /serve 전환(같은 프로세스)도 다음 주기에 반영된다
-  try { await mkdir(WS_ROOT, { recursive: true }); await writeFile(f, JSON.stringify({ pid: process.pid, ts: Date.now(), ...(noLeader ? { noLeader: true } : {}) })); } catch { /* 쓰기 실패 시에도 진행 */ }
-  return { held: true };
+  try { await mkdir(WS_ROOT, { recursive: true }); await writeFile(f, JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch { /* 쓰기 실패 시에도 진행 */ }
+  return true;
 }
 
 /* ─── 클라우드 리스 (C-2 최소형) — 실행(폴러·루틴) 주체는 한 기기만 ───
@@ -1346,39 +1344,39 @@ async function probeRunnerUsable(targets) {
   return probe.ok;
 }
 
-/** 동기화 락을 못 얻은 프로세스의 실행 담당(리더) 판정 — 파일 동기화는 하지 않는다.
-    왜 갈래가 둘인가(검수 M2 + 반대 검토 M-d, 2026-10-01):
-    - 리스는 **기기 단위**다. deviceId는 데이터 루트의 .device-id 하나라서(workspace.mjs getDeviceId) 같은 루트를 쓰는
-      두 프로세스는 리스에서 같은 기기로 보인다. 그래서 락 주인이 실행 담당을 맡을 수 있는 프로세스(앱 사이드카·상주)인데
-      이쪽도 renewLease를 돌리면, 원격 리스가 "내 기기"라 둘 다 리더가 된다(같은 기기 이중 실행). 이때는 강등이 맞다 —
-      그 기기의 담당은 락 주인이 리스로 판정한다.
-    - 락 주인이 관찰 전용(ARGO_NO_LEADER — argo 대화 화면)이면 그 프로세스는 리스를 읽지도 쓰지도 않는다(renewLease 첫 줄).
-      여기서 강등만 하면 대화 화면을 열어 둔 서버에서 argo run이 재시작될 때(업데이트·크래시) 아무도 메신저·루틴을 돌리지
-      않는다. 이때는 락과 관계없이 renewLease를 돌려 다른 기기와 정상 중재한다. 리스 읽기는 원래 매 주기 하던 것이라 호출 수는 같다.
-    - 옛 버전 락 파일(noLeader 표기 없음)은 실행 담당 가능 프로세스로 본다(이중 실행보다 일시 정지가 낫다 — 옛 대화 화면은 곧 교체된다). */
-async function leaseWithoutSyncLock(holderNoLeader) {
-  if (holderNoLeader) {
-    const { targets } = await collectLocalTargets(currentSessionUid());
-    const owner = [...new Set(targets.values())][0];
-    if (owner) {
-      await renewLease(owner, { runnerUsable: await probeRunnerUsable(targets) });
-      // 텔레그램 토큰 클레임은 게이트웨이를 돌리는 이 프로세스의 몫이다 — 관찰 전용 락 주인은 토큰을 등록하지 않는다(setClaimTokens 없음).
-      await renewTokenClaims(owner).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80)));
-      return;
-    }
+/** 실행 담당(클라우드 리더) 중재 — **실행 리스(daemonLease: 게이트웨이·스케줄러)를 쥔 프로세스만** 참여한다. 동기화 락과는 무관하다.
+    왜(검수 M2 → 반대 검토 M-d → #791 독립 검수 HIGH-1, 2026-10-01):
+    - 실제 실행 조건은 procLeader && isCloudLeader()다(gateway.mjs ensureGateway, scheduler.mjs ensureScheduler). procLeader는
+      daemonLease(.gateway.lock·.scheduler.lock)이고, 동기화 락(.sync-process.lock) 주인과 다른 프로세스로 갈릴 수 있다.
+    - 리스는 기기 단위다 — deviceId는 데이터 루트의 .device-id 하나라(workspace.mjs getDeviceId) 같은 루트의 프로세스들은 리스에서
+      같은 기기로 보인다. 그래서 같은 루트에서 여럿이 renewLease를 돌리면 원격 리스가 "내 것"이라 둘 다 리더가 되고, 아무도 안 돌리면
+      그 기기는 실행 담당을 잃는다. 참여자는 "그 기기에서 실제로 실행할 프로세스"여야 한다.
+    - 동기화 락 기준(1차 수정)은 락 주인과 게이트웨이 리스 주인이 갈리면 아무도 실행하지 않았다(재시작 경쟁 재현: B proc:true cloud:false,
+      A' proc:false cloud:true). 수정 전(원래 결함)은 락을 못 얻으면 기본값 리더(true)로 남아 이중 실행이었다.
+    - 대화 화면(argo)은 게이트웨이·스케줄러를 켜지 않으니 자연히 빠진다(따로 표시가 필요 없다).
+    - 게이트웨이와 스케줄러 리스가 다른 프로세스로 갈리면(재시작 경쟁) 둘 다 참여해 둘 다 리더가 된다. 각자 자기 데몬만 실행하므로
+      이중 실행은 아니고, 리스 쓰기만 그동안 두 배(보유자당 30초에 1회)가 된다. 한쪽만 참여시키면 다른 쪽 데몬이 영영 멈춘다.
+    텔레그램 토큰 클레임도 같은 기준이다 — 폴러는 게이트웨이 리스 주인에서만 돈다(gateway.mjs의 procLeader 게이트). */
+async function arbitrateLease(targets) {
+  const owner = [...new Set(targets.values())][0];
+  if (!holdsDaemonLease('gateway', 'scheduler')) {
+    leaseState.leader = false;
+    leaseState.ownedAt = 0;
+    leaseState.checkedAt = Date.now();
+    return;
   }
-  leaseState.leader = false;
-  leaseState.ownedAt = 0;
-  leaseState.checkedAt = Date.now();
+  if (!owner) return; // 로컬 회사 0개 — 이 기기에서 돌릴 루틴·폴러 자체가 없다(아래 cycle 주석)
+  await renewLease(owner, { runnerUsable: await probeRunnerUsable(targets) });
+  if (holdsDaemonLease('gateway')) await renewTokenClaims(owner).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80))); // 토큰 단위 소유 — 리더와 별개
 }
 
 async function cycle() {
   if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
   // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 파일 동기화는 대기(이중 동기화=대형 유실 차단)
-  const lock = await holdSyncLock();
-  if (!lock.held) {
+  if (!(await holdSyncLock())) {
     status.lastError = '같은 데이터 루트를 다른 프로세스가 동기화 중 — 이 인스턴스는 대기';
-    await leaseWithoutSyncLock(lock.holderNoLeader);
+    // 파일 동기화는 대기하지만 실행 담당 판정은 한다 — 이 프로세스가 실행 리스 주인이면 리스를 중재해야 한다(arbitrateLease 주석)
+    await arbitrateLease((await collectLocalTargets(currentSessionUid())).targets);
     return;
   }
   // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
@@ -1409,9 +1407,7 @@ async function cycle() {
   // stale로 남아 UI가 잘못된 페이월을 표시한다(architect 지적 2026-07-23).
   status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
   // 리더 양보 판단 — 이 기기에 쓸 러너가 있는가(probeRunnerUsable 주석)
-  const runnerUsable = await probeRunnerUsable(targets);
-  if (localOwners[0]) await renewLease(localOwners[0], { runnerUsable }); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
-  if (localOwners[0]) await renewTokenClaims(localOwners[0]).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80))); // 토큰 단위 소유 — 리더와 별개
+  await arbitrateLease(targets); // 실행 리스 주인만 클라우드 리스·토큰 클레임에 참여(아래 함수 주석) — 단일 오너 전제(자가 호스팅), 다중 오너는 P2
   // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
   // 판정은 ensureClient()의 실효 모드와 동일 조건(자격 존재 && serviceCredsAllowed) — 자격만 보면

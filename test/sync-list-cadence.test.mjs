@@ -56,9 +56,12 @@ test('free 스킵 판정식 — 변이 방어(분리 검수 M4: === \'free\'를 
     'free 목록 스킵에 복구 예외(targets 0개)가 빠졌다');
 });
 
-test('리스 오너 배선 — renewLease(localOwners[0]) (분리 검수: owners[0]로 되돌리면 TDZ 런타임 오류)', () => {
-  assert.match(SRC, /renewLease\(localOwners\[0\]/,
-    'renewLease가 localOwners[0]이 아니다 — 게이트 이동 후 owners는 이 시점에 아직 선언 전(TDZ)이다');
+test('리스 오너 배선 — 로컬 수집 targets에서 오너를 뽑는다 (분리 검수: owners[0]로 되돌리면 TDZ 런타임 오류)', () => {
+  // 2026-10-01 #791: 리스 중재는 arbitrateLease(targets)로 옮겼다(실행 리스 주인만 참여). 오너는 targets의 첫 오너 = 종전 localOwners[0].
+  const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'));
+  assert.match(cycleBody, /await arbitrateLease\(targets\);/, 'cycle이 로컬 수집 targets로 리스를 중재하지 않는다 — owners는 이 시점에 아직 선언 전(TDZ)이다');
+  assert.match(SRC, /async function arbitrateLease\(targets\) \{\n\s*const owner = \[\.\.\.new Set\(targets\.values\(\)\)\]\[0\];/);
+  assert.match(SRC, /await renewLease\(owner, \{ runnerUsable: await probeRunnerUsable\(targets\) \}\);/);
 });
 
 // ── 2026-07-27 DB 응답 불능 사후 — 게이트 순서·free 목록 스킵 배선 ──
@@ -77,7 +80,7 @@ test('요금제 게이트가 원격 목록 조회(tombstone·discover)보다 앞
 
 test('리스 갱신은 요금제 게이트보다 앞이다(architect 2026-07-23 권고)', () => {
   const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'));
-  const lease = cycleBody.indexOf('renewLease(');
+  const lease = cycleBody.indexOf('await arbitrateLease(targets);'); // 리스 중재(renewLease)는 arbitrateLease 안 — 2026-10-01 #791
   const gate = cycleBody.indexOf('syncEntitled(');
   assert.ok(lease > 0 && lease < gate,
     '무료 계정도 리더 중재는 해야 한다 — 게이트 return이 리스보다 먼저면 무료 단일 기기의 루틴·메신저가 죽는다');
