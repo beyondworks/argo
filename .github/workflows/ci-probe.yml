@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        n: [1, 2, 3]
+        n: [1, 2, 3, 4]
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -39,9 +39,11 @@ jobs:
       - name: targeted x8 (with load)
         shell: bash
         run: |
+          set +e
           T="test/nsis-hooks.test.mjs test/browser-command-recover.test.mjs test/browser-isolation.test.mjs test/local-asset-import.test.mjs test/room-parallel.test.mjs test/mutex-reclaim-race.test.mjs"
           for i in 1 2 3 4 5 6 7 8; do
             node --test $T > "$RUNNER_TEMP/iter$i.txt" 2>&1; code=$?
             echo "iter $i exit=$code $(grep -E '^# (pass|fail|cancelled) ' "$RUNNER_TEMP/iter$i.txt" | tr '\n' ' ')"
-            grep -E '^not ok|^# (powershell-warm|isolated)' "$RUNNER_TEMP/iter$i.txt" || true
+            grep -E '^# (powershell-warm|isolated)' "$RUNNER_TEMP/iter$i.txt"
+            awk '/^not ok/{p=1} p{print; n++} n>30{p=0; n=0}' "$RUNNER_TEMP/iter$i.txt" | grep -v '^    at '
           done
