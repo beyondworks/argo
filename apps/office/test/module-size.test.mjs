@@ -168,16 +168,17 @@ test('두 번 눌러 폭 되돌리기: 그 줄 전체를 끌기 전으로, 줄 �
   assert.deepEqual(resetPatch(row, 'h'), { todos: { h: 0 }, pages: { h: 0 } });
 });
 
-// 이유: 높이 손잡이가 알리는 최소는 그 줄 모듈 최소 중 가장 큰 값 — 줄 높이를 같이 쓰므로 실제로 그 밑으로 줄지 않는다(min).
-test('줄 정보: 줄 높이·줄 최소 높이', () => {
+// 이유(검수 10/1 2차, 유건 10/1 확정): 줄 첫 모듈의 왼쪽 가장자리는 잡은 선이 손을 따라오지 않는다(반대편이 움직인다) — 그 손잡이는 그리지 않는다(first).
+// 높이 손잡이가 알리는 최소는 그 줄 모듈 최소 중 가장 큰 값 — 줄 높이를 같이 쓰므로 실제로 그 밑으로 줄지 않는다(min).
+test('줄 정보: 줄 높이·줄 최소 높이·줄 첫 모듈', () => {
   const cal = OFFICE_MODULES.find((m) => m.id === 'calendar');
   const items = [{ id: 'cal', size: 'm', h: 320 }, { id: 'work', size: 'm' }, { id: 'c', size: 'full' }];
   const info = rowInfo(items, (item) => (item.id === 'cal' ? cal : {}));
-  assert.deepEqual([...info], [['cal', { h: 320, min: 248 }], ['work', { h: 320, min: 248 }], ['c', { h: 0, min: 120 }]]);
+  assert.deepEqual([...info], [['cal', { h: 320, min: 248, first: true }], ['work', { h: 320, min: 248, first: false }], ['c', { h: 0, min: 120, first: true }]]);
 });
 
-// 이유(유건 10/1 C2 "모듈 상하좌우 가장자리", 통합 검수 10/1): 줄 첫 모듈도 왼쪽 가장자리를 잡을 수 있다 — 줄 바깥 가장자리라 그 모듈 폭만 바뀐다.
-// 맞닿은 경계는 지금처럼 두 모듈(앞 모듈 = a)이 같이 바뀐다.
+// 이유(유건 10/1 C2 "모듈 상하좌우 가장자리"): 맞닿은 경계는 두 모듈(앞 모듈 = a)이 같이 바뀌고, 줄 끝 바깥은 그 모듈만 바뀐다.
+// 줄 첫 모듈 왼쪽은 화면에 그리지 않지만(위 first), 불려도 방향이 뒤집히지 않게 sign -1을 지킨다.
 test('폭 가장자리: 줄 처음·끝 바깥은 그 모듈만, 맞닿은 경계는 두 모듈', () => {
   assert.deepEqual(edgePair(0, 3, 'l'), { a: 0, b: null, sign: -1 }); // 줄 첫 모듈 왼쪽 — 오른쪽으로 끌면 준다
   assert.deepEqual(edgePair(2, 3, 'r'), { a: 2, b: null, sign: 1 }); // 줄 끝 모듈 오른쪽
@@ -204,8 +205,8 @@ test('키보드 높이: 한 번에 정확히 16px(알리는 값 기준)', () => 
 });
 
 // 이유(유건 10/1 C4 "aria-valuenow"): 높이 손잡이도 지금 높이를 알린다 — 정한 적 없는 줄은 그릴 때 값이 없어 화면에서 잰다(ResizeObserver).
-test('높이 손잡이: 지금 높이를 알린다, 줄 첫 모듈도 왼쪽 손잡이', () => {
+test('높이 손잡이: 지금 높이를 알린다, 줄 첫 모듈은 왼쪽 손잡이 없음', () => {
   const src = readFileSync(new URL('../src/ui/ModuleGrid.jsx', import.meta.url), 'utf8');
   assert.match(src, /new ResizeObserver[\s\S]{0,160}\.edge-y[\s\S]{0,80}'aria-valuenow'/);
-  assert.doesNotMatch(src, /side === 'l'\) return null/);
+  assert.match(src, /row\.first && side === 'l'\) return null/);
 });

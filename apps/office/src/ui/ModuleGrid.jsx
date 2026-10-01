@@ -50,6 +50,7 @@ function ModuleCard({ item, space, items, row, canEdit, editable, scope, commit,
       </header>
       <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
       {editable && EDGES.map((side) => { // 저장 중(canEdit 꺼짐)에도 그대로 둔다 — 키보드 초점이 손잡이에 남는다. 그동안은 aria-disabled
+        if (row.first && side === 'l') return null; // 줄 첫 모듈의 왼쪽은 잡은 선이 손을 따라오지 않는다(반대편이 움직인다) — 그리지 않는다(유건 10/1 확정)
         const x = side === 'l' || side === 'r'; // 좌우 = 폭, 위아래 = 높이
         return <span key={side} className={`edge edge-${side} edge-${x ? 'x' : 'y'}`} role="separator" aria-orientation={x ? 'vertical' : 'horizontal'} aria-label={t(x ? 'mod.resize.w' : 'mod.resize.h')}
           aria-valuenow={x ? span : undefined} aria-valuemin={x ? lo : row.min} aria-valuemax={x ? hi : 1200} aria-disabled={!canEdit || undefined} tabIndex={side === 'r' || side === 'b' ? 0 : -1}
