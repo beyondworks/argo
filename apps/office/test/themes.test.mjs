@@ -64,7 +64,7 @@ test('themes.css: 모든 규칙이 plain이 아닌 셸 또는 새 다섯 색 아
   assert.ok(rules.length > 80);
   for (const { sel, decl } of rules) for (const one of sel.split(/,(?![^()]*\))/)) {
     const s = one.trim();
-    if (s === ':root') {
+    if (s === ':root' || s.startsWith(':root:where(')) { // :where()는 특이도 0 — :root 기본값 블록과 같은 대접(새 토큰만)
       for (const d of decl.matchAll(/--([a-z0-9-]+):/g)) {
         assert.match(d[1], /^(frame|t-|tile-)/, `기본값 블록의 토큰: --${d[1]}`);
         assert.doesNotMatch(baseApp, new RegExp(`var\\(--${d[1]}[,)]`), `base.css가 --${d[1]}을 쓰면 기본 화면이 바뀐다`);
@@ -326,8 +326,53 @@ test('뉴모피즘: 카드·버튼은 솟고, 활성 탭·선택 항목·입력�
   const neu = rulesOf(css).filter((r) => r.sel.includes("[data-shell='neu']"));
   const declOf = (cls) => neu.filter((r) => r.sel.split(/,(?![^()]*\))/).some((x) => x.includes(cls))).map((r) => r.decl).join(';');
   for (const c of ['.module', '.set-card', '.btn', '.side', '.menu']) assert.match(declOf(c), /var\(--t-neu-(up|up-sm|pop)\)/, `솟음: ${c}`);
-  for (const c of ['.tab.on', '.nav-item.active', '.seg-btn.on', '.input', "input[role='switch']", '.rec-row.on']) assert.match(declOf(c), /var\(--t-neu-in(-sm)?\)/, `파임: ${c}`);
+  for (const c of ['.tab.on', '.nav-item.active', '.seg-btn.on', '.shell-opt.on', '.input', "input[role='switch']", '.rec-row.on']) assert.match(declOf(c), /var\(--t-neu-in(-sm)?\)/, `파임: ${c}`);
   assert.match(css, /--t-neu-in:\s*inset/); assert.match(css, /--t-neu-in-sm:\s*inset/);
   for (const r of neu) assert.doesNotMatch(r.decl, /0 0 0 1px|border:\s*1px solid/, r.sel.slice(0, 60));
   assert.match(declOf('[data-theme]'), /--ring:\s*var\(--primary\)/);
+});
+
+// 선택자 특이도 [id, class·속성·가상 클래스, 태그] — :where()는 0, :is()·:not()은 안쪽 최댓값
+function spec(sel) {
+  const inner = (x) => x.split(/,(?![^()]*\))/).map(spec).reduce((a, b) => (cmp(a, b) >= 0 ? a : b), [0, 0, 0]);
+  const out = [0, 0, 0];
+  let s = sel.replace(/:where\((?:[^()]|\([^()]*\))*\)/g, '');
+  s = s.replace(/:(is|not|has)\(((?:[^()]|\([^()]*\))*)\)/g, (_, __, x) => { const v = inner(x); for (let i = 0; i < 3; i++) out[i] += v[i]; return ''; });
+  out[0] += (s.match(/#[\w-]+/g) || []).length;
+  out[1] += (s.match(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g) || []).length;
+  out[2] += (s.match(/(^|[\s>+~])[a-z][\w-]*|::[\w-]+/g) || []).length;
+  return out;
+}
+const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+// 이유(검수 10/1): 뉴모피즘이 선택 메뉴 바탕을 var(--bg)로 박으면, 커스텀 강조색을 고른 사람은 바탕은 그대로인데 글자만 강조색 위 글자색(--c-active-fg)이 돼 안 보인다.
+// 뉴모피즘 기본값은 --side-active 토큰으로만 정하고, 선택 메뉴 바탕은 그 토큰을 쓴다 — 커스텀 강조색(인라인 --side-active)이 바탕이 된다.
+test('뉴모피즘: 선택 메뉴 바탕은 --side-active — 커스텀 강조색과 글자색이 짝을 이룬다', () => {
+  const neu = rulesOf(css).filter((r) => !r.nested && r.sel.includes("[data-shell='neu']"));
+  for (const cls of ['.nav-item.active', '.tree-row.active']) {
+    const bgs = neu.filter((r) => r.sel.includes(cls)).flatMap((r) => [...r.decl.matchAll(/(?:^|;)\s*background(?:-color)?:\s*([^;]+)/g)].map((m) => m[1].trim()));
+    assert.ok(bgs.length, cls);
+    assert.deepEqual([...new Set(bgs)], ['var(--side-active)'], `${cls} 바탕`);
+  }
+  assert.match(neu.find((r) => r.sel.trim() === ":root[data-shell='neu'][data-theme]").decl, /--side-active:\s*var\(--bg\)/);
+  assert.match(css, /:root\[data-custom~='accent'\] :is\(\.nav-item, \.tree-row\)\.active \{ color: var\(--c-active-fg\); \}/);
+});
+
+// 이유(검수 10/1): 입력칸은 outline:none이라 초점 표시는 box-shadow뿐이다. 리퀴드의 안쪽 그림자 규칙이 base의 :focus 링보다 특이도가 높아 링을 지운다.
+test('리퀴드 글래스: 입력칸 초점 링이 남는다', () => {
+  const lq = rulesOf(css).filter((r) => !r.nested && r.sel.includes("[data-shell='liquid']"));
+  for (const cls of ['.input', '.select', '.field input', '.compose-body']) {
+    const f = lq.find((r) => r.sel.includes(':focus') && r.sel.includes(cls));
+    assert.ok(f, `초점 규칙 ${cls}`);
+    assert.match(f.decl, /box-shadow:[^;]*0 0 0 [23]px var\(--(ring|primary-soft)\)/, cls);
+  }
+});
+
+// 이유(검수 10/1): OS 다크용 공통 빛·그늘 블록이 색 가족 다크 블록보다 특이도가 높으면, '-dark'로 고정한 사람도 OS가 다크일 때만 가족 빛 덩어리를 잃는다.
+test('OS 다크 공통 블록은 색 가족 다크 블록(:root[data-theme=\'x-dark\'])보다 약하다', () => {
+  const body = css.match(/@media \(prefers-color-scheme: dark\) \{([\s\S]*?)\n\}/)[1];
+  const fam = spec(":root[data-theme='sage-dark']");
+  for (const r of rulesOf(body)) assert.ok(cmp(spec(r.sel), fam) < 0, `${r.sel} ${spec(r.sel)}`);
+  assert.deepEqual(spec(":root[data-shell='neu'] :is(.nav-item.active, .tree-row.active)"), [0, 4, 0]);
+  assert.deepEqual(spec(":root:where([data-theme]:not([data-theme$='-light']))"), [0, 1, 0]);
 });

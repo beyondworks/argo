@@ -78,12 +78,11 @@ export function Settings() {
           <div className="theme-row"><span className="label">{t('settings.color')}</span>
             <div className="color-groups" role="radiogroup" aria-label={t('settings.color')}>{COLOR_GROUPS.map(([g, fams]) => (
               <div key={g} className="color-group" role="group" aria-label={t(`colorgroup.${g}`)}>
-                <span className="color-group-name" aria-hidden="true">{t(`colorgroup.${g}`)}</span>
+                <span className="color-group-name" aria-hidden="true">{t(`colorgroup.${g}`)}{fams.includes(family) && <b> · {t(`color.${family}`)}</b>}</span>
                 <div className="color-picks">{fams.map((f) => (
                   <button key={f} type="button" role="radio" aria-checked={family === f} aria-label={t(`color.${f}`)} title={t(`color.${f}`)} className={`swatch${family === f ? ' on' : ''}`} onClick={() => pick(f + mode)}
                     style={{ '--sw-a': SWATCH[f][0], '--sw-b': SWATCH[f][1], '--sw-c': SWATCH[f][2] }}><i /></button>))}</div>
-              </div>))}</div>
-            <span className="dim small">{t(`color.${family}`)}</span></div>
+              </div>))}</div></div>
         </div>
         <CustomTheme key={dark ? 'dark' : 'light'} dark={dark} />
       </section>

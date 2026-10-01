@@ -26,13 +26,14 @@
 }
 :root[data-theme$='-dark'] {
   --t-shine: rgba(255, 255, 255, 0.24); --t-shine-lo: rgba(255, 255, 255, 0.07); --t-shade: rgba(0, 0, 0, 0.32);
-  --t-neu-hi: color-mix(in srgb, var(--bg) 96.5%, #ffffff); --t-neu-lo: color-mix(in srgb, var(--bg) 40%, #000000);
+  --t-neu-hi: color-mix(in srgb, var(--bg) 96.5%, #ffffff); --t-neu-lo: color-mix(in srgb, var(--bg) 22%, #000000);
   --t-glow-1: color-mix(in srgb, var(--info) 13%, transparent); --t-glow-2: color-mix(in srgb, var(--mark) 7%, transparent); --t-glow-3: color-mix(in srgb, var(--ok) 8%, transparent);
 }
+/* 특이도는 :root 하나(0,1,0) — 색 가족의 다크 블록(:root[data-theme='x-dark'], 0,2,0)이 정한 빛 덩어리가 OS 설정과 상관없이 이긴다 */
 @media (prefers-color-scheme: dark) {
-  :root[data-theme]:not([data-theme$='-light']) {
+  :root:where([data-theme]:not([data-theme$='-light'])) {
     --t-shine: rgba(255, 255, 255, 0.24); --t-shine-lo: rgba(255, 255, 255, 0.07); --t-shade: rgba(0, 0, 0, 0.32);
-    --t-neu-hi: color-mix(in srgb, var(--bg) 96.5%, #ffffff); --t-neu-lo: color-mix(in srgb, var(--bg) 40%, #000000);
+    --t-neu-hi: color-mix(in srgb, var(--bg) 96.5%, #ffffff); --t-neu-lo: color-mix(in srgb, var(--bg) 22%, #000000);
     --t-glow-1: color-mix(in srgb, var(--info) 13%, transparent); --t-glow-2: color-mix(in srgb, var(--mark) 7%, transparent); --t-glow-3: color-mix(in srgb, var(--ok) 8%, transparent);
   }
 }
@@ -310,6 +311,7 @@
 :root[data-shell='liquid'] .btn.on { background: var(--t-lq-pill); box-shadow: inset 0 1px 0 var(--t-shine), 0 2px 8px var(--t-shade); }
 :root[data-shell='liquid'] :is(.btn.primary, .btn.danger) { box-shadow: inset 0 1px 0 var(--t-shine-lo), 0 6px 16px var(--t-shade); }
 :root[data-shell='liquid'] :is(.input, .select, .field input, .field select, .compose-body, .crew-search) { background: var(--t-lq-chip); box-shadow: inset 0 1px 2px var(--t-shade); }
+:root[data-shell='liquid'] :is(.input, .select, .field input, .compose-body):focus { box-shadow: inset 0 1px 2px var(--t-shade), 0 0 0 2px var(--ring); }
 :root[data-shell='liquid'] .search-btn { background: var(--t-lq-chip); box-shadow: inset 0 1px 0 var(--t-shine-lo); color: var(--side-fg-2); }
 :root[data-shell='liquid'] :is(.seg, .tabs) { background: var(--t-lq-chip); box-shadow: inset 0 1px 2px var(--t-shade); }
 :root[data-shell='liquid'] .tabs { width: max-content; max-width: 100%; padding: 3px; gap: 2px; border-bottom: 0; border-radius: 999px; }
@@ -353,7 +355,9 @@
 :root[data-shell='neu'] .stats > .stat-card.stat-card:not(.stat-add):nth-child(n) { background: var(--bg); }
 :root[data-shell='neu'] :is(.vw-lane, .deal-lane, .stat-add) { background: var(--bg); box-shadow: var(--t-neu-in); }
 /* 눌린 상태 — 선택된 메뉴·폴더·줄·탭·세그먼트 */
-:root[data-shell='neu'] :is(.nav-item.active, .tree-row.active, .fold-item.on, .rec-row.on, .menu-item.on, .palette-row.on, .tab.on, .seg-btn.on, .mail-row.active, .btn.on, .history .list-row.on, .doc-group .list-row.on) { background: var(--bg); box-shadow: var(--t-neu-in-sm); }
+:root[data-shell='neu'] :is(.fold-item.on, .rec-row.on, .menu-item.on, .palette-row.on, .tab.on, .seg-btn.on, .shell-opt.on, .mail-row.active, .btn.on, .history .list-row.on, .doc-group .list-row.on) { background: var(--bg); box-shadow: var(--t-neu-in-sm); }
+/* 선택된 메뉴 바탕은 --side-active(뉴모피즘 기본값은 위에서 var(--bg)) — 커스텀 강조색을 고르면 그 색이 바탕이 되고, 글자는 그 위에서 읽히는 --c-active-fg(5절 끝 커스텀 규칙) */
+:root[data-shell='neu'] :is(.nav-item.active, .tree-row.active) { background: var(--side-active); box-shadow: var(--t-neu-in-sm); }
 :root[data-shell='neu'] .btn:not(.primary, .danger, .ghost, .on) { background: var(--bg); box-shadow: var(--t-neu-up-sm); }
 :root[data-shell='neu'] :is(.btn.primary, .btn.danger) { box-shadow: 3px 3px 8px var(--t-neu-lo), -3px -3px 8px var(--t-neu-hi); }
 :root[data-shell='neu'] .btn:not(.ghost, :disabled):active { box-shadow: var(--t-neu-in-sm); }
