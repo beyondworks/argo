@@ -58,6 +58,7 @@ import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
 import { createNativeSessionApplier, mountNativeRealtime, mountNativeNotificationTaps, updateNativeRealtimeContext } from './native-realtime.mjs';
 import { createSessionRecovery } from './session-recovery.mjs';
+import { createNavInbox, decideNav } from './notif-nav.mjs';
 import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from './rail-state.mjs';
@@ -101,6 +102,10 @@ const APPROVAL_FIX = { hermes: 'hermes config set approvals.mode manual', opencl
 const crewAway = (c) => !c?.last_seen_at || Date.now() - Date.parse(c.last_seen_at) >= AWAY_MS;
 /** 개인 공간을 뜻하는 orgId 상수. null은 "조직 없음(EmptyOrg)"이므로 센티넬로 구분한다. */
 export const PERSONAL = '__personal__';
+// 알림 탭·카드·초대에서 온 "이 채널 열기" 요청 — 셸 밖(앱 수준)에 둔다. 셸이 연결 대기 화면 등으로 내려갔다 올라와도 요청이 남고,
+// 셸이 실제로 열었거나 일부러 버릴 때만 비운다(notif-nav.mjs, 유건 요청 2026-10-01). shellLink = 앱 수준 리스너가 보는 지금 셸(탭 진단의 page·org, 전경 푸시 카드).
+const navInbox = createNavInbox();
+const shellLink = { mounted: false, page: null, orgId: null, onForeground: null };
 /** 크루 등급(부록 I·K) — 서버 함수 msgr_crew_tier와 같은 규칙: 조직 서비스 계정이 소유하고 상주 노드에서 돌면 회사 크루, 그 외는 개인(파견) 크루. 화면 표시용이며 판정 정본은 서버. */
 // 이 채널이 개인 에이전트의 지시를 막는가 — 보기만(read_only)뿐(서버 msgr_instruct_check와 같다). 방장 승인·못 데려옴은 들어오는 방식만 정하고,
 // 이미 있는 에이전트는 그대로 일한다(유건 2026-09-16: 못 데려옴으로 바꿔도 퇴장시키지 않는다).
@@ -273,6 +278,7 @@ export default function App() {
   const cleanupCommitWaiters = useRef([]);
   const applySession = useCallback((next) => {
     const uid = next?.user?.id ?? null;
+    if (!uid || (sessionOwner.current && sessionOwner.current !== uid)) navInbox.clear(); // 로그아웃·계정 전환 — 앞 계정의 알림 탭 요청을 다음 계정 셸이 열지 않게(반대 검토 2026-10-01)
     if (sessionOwner.current !== uid) {
       clearComposerSessions(undefined, sessionOwner.current ? {} : { keepUser: uid }); // 첫 적용(앱 시작·새로고침)은 지금 계정의 저장 초안만 남기고, 로그아웃·계정 전환은 전부 지운다
       if (sessionOwner.current) deactivatePush(supabase, sessionOwner.current);
@@ -316,6 +322,22 @@ export default function App() {
   };
   useMobileViewport();
   useEffect(() => mountMobileAuth(), []);
+  // 알림 탭은 셸 밖(앱 수준)에서 받는다 — 셸이 연결 대기 화면 등으로 내려가 있는 동안 온 탭도 대기함에 남는다(유건 요청 2026-10-01).
+  // 푸시 플러그인은 첫 리스너가 붙을 때 보관하던 탭을 한 번 다시 보내고 그 뒤로는 보관하지 않아, 셸 안 리스너가 떨어진 사이의 탭이 사라졌다.
+  // 기기 토큰 등록(registerPush)은 계정이 정해진 셸에 그대로 둔다 — 여기서는 듣기만 한다(등록이 두 번 돌지 않는다).
+  const sessionRef = useRef(session); sessionRef.current = session;
+  useEffect(() => {
+    let disposed = false; let detachMac = () => {};
+    const offer = (channelId, source) => {
+      const signedOut = sessionRef.current === null; // 로그인 화면에서 누른 옛 알림은 다음에 들어오는 계정이 열지 않는다
+      pushDiag('tap', `channel ${channelId ?? '-'}`, `src=${source} page=${shellLink.page ?? '-'} org=${shellLink.orgId ?? '-'} shell=${shellLink.mounted ? 'on' : 'off'}${signedOut ? ' signed-out' : ''}`);
+      if (channelId && !signedOut) navInbox.offer({ channelId, source, owner: sessionRef.current?.user?.id ?? null });
+    };
+    const offPush = isMobilePlatform ? mountPush({ onTap: ({ channel_id }) => offer(channel_id, 'push'), onForeground: (p) => shellLink.onForeground?.(p) }) : () => {};
+    mountNativeNotificationTaps({ enabled: import.meta.env.TAURI_ENV_PLATFORM === 'darwin' && isDesktopTauri(), onTap: ({ channelId }) => { if (!disposed) offer(channelId, 'mac'); } })
+      .then((stop) => { if (disposed) stop(); else detachMac = stop; }).catch(() => {});
+    return () => { disposed = true; offPush(); detachMac(); };
+  }, []);
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
     const native = mountNativeRealtime({ enabled: import.meta.env.TAURI_ENV_PLATFORM === 'darwin' && isDesktopTauri(), auth: supabase.auth, supabaseUrl: SB_URL, anonKey: SB_ANON, lang }).catch(() => null);
@@ -637,38 +659,51 @@ function Shell({ session }) {
   const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   const [pushCard, setPushCard] = useState(null); // 전경 푸시 카드(폰) — 다른 채널 메시지만, 탭하면 그 채널로(유건 2026-09-12)
-  const [navTo, setNavTo] = useState(null); // 알림 탭·카드에서 온 "이 채널 열기" 요청 — 목록에 있으면 열고, 다른 조직이면 조직을 바꾼 뒤 연다. 콜드 스타트 때 chId만 세우면 channel이 없어 Channel이 죽었다(시뮬 재현 2026-09-12: 'undefined is not an object (evaluating channel.id)')
+  // "이 채널 열기" 요청(알림 탭·전경 카드·초대) — 대기함(navInbox)은 셸 밖에 있어 셸이 다시 마운트돼도 남는다. 다음 한 걸음은 decideNav가 정하고
+  // 여기서는 그 걸음만 실행한다: 열기 / 공간 전환 / 채널 조회 / 같은 공간 목록 한 번 다시 읽기 / 버리기. 콜드 스타트 때 chId만 세우면 channel이 없어
+  // Channel이 죽었다(시뮬 재현 2026-09-12) — 그래서 목록에 실제로 있을 때만 연다. 조회는 요청 하나당 1회(실패하면 최대 3회), 다시 읽기도 1회.
+  const [navReq, setNavReq] = useState(() => navInbox.get());
+  useEffect(() => navInbox.subscribe(setNavReq), []);
+  const requestNav = useCallback((channelId, source) => { navInbox.offer({ channelId, source, owner: uid }); }, [uid]);
+  const navProg = useRef(null); // 지금 요청의 진행 { seq, row, fails, refreshed, orgsRefreshed, busy } — 이 셸 안에서만(셸이 바뀌면 처음부터 다시 판단)
+  const [navStep, setNavStep] = useState(0); // 조회·다시 읽기가 끝나면 판단을 다시 돌린다
   useEffect(() => {
-    let disposed = false; let detach = () => {};
-    mountNativeNotificationTaps({ enabled: import.meta.env.TAURI_ENV_PLATFORM === 'darwin' && isDesktopTauri(), onTap: ({ channelId }) => { if (!disposed) setNavTo(channelId); } })
-      .then((stop) => { if (disposed) stop(); else detach = stop; }).catch(() => {});
-    return () => { disposed = true; detach(); };
+    if (!navReq) return;
+    if (navProg.current?.seq !== navReq.seq) navProg.current = { seq: navReq.seq, row: undefined, fails: 0, refreshed: false, orgsRefreshed: false, busy: false };
+    const prog = navProg.current;
+    if (prog.busy) return;
+    const act = decideNav({ target: navReq.channelId, owner: navReq.owner, uid, orgs, orgId, personalId: PERSONAL, loaded: loadedOrg.current === orgId, channels, previewChannels, row: prog.row, fails: prog.fails, refreshed: prog.refreshed, orgsRefreshed: prog.orgsRefreshed });
+    const diag = (step) => pushDiag('nav', `${step} ${String(navReq.channelId).slice(0, 8)}`, `src=${navReq.source} page=${pageRef.current ?? '-'} org=${orgId ?? '-'}`);
+    const run = (work) => { // 비동기 한 걸음 — 끝날 때까지 같은 요청에 다른 걸음을 겹쳐 보내지 않는다(15초 재조회로 효과가 다시 돌아도 조회가 늘지 않게)
+      prog.busy = true; diag(act.do);
+      Promise.resolve().then(work).catch(async () => { prog.fails += 1; await new Promise((r) => setTimeout(r, 1500 * prog.fails)); })
+        .finally(() => { prog.busy = false; if (navProg.current === prog) setNavStep((x) => x + 1); });
+    };
+    if (act.do === 'wait') return;
+    if (act.do === 'report') { diag('report'); setSettingsTab('me'); setPage('settings'); setRail(false); setSheet(null); navInbox.done(navReq); return; } // 신고 접수 알림(msgr-push reportPush) → 운영 신고함
+    if (act.do === 'open') { diag('open'); setChId(navReq.channelId); setPage('chat'); setRail(false); setSheet(null); navInbox.done(navReq); return; }
+    if (act.do === 'drop') { diag(`drop:${act.reason}`); navInbox.done(navReq); if (act.tell) setNote(t(act.tell === 'offline' ? 'push.nav.offline' : 'push.nav.unavailable')); return; }
+    if (act.do === 'switch') { diag(`switch:${act.orgId === PERSONAL ? 'personal' : String(act.orgId).slice(0, 8)}`); setOrgId(act.orgId); return; } // 목록이 바뀌면 다시 판단해 연다
+    if (act.do === 'lookup') run(async () => { prog.row = (await q(supabase.from('msgr_channels').select('org_id').eq('id', navReq.channelId).maybeSingle())) ?? null; });
+    else if (act.do === 'refresh') run(async () => { const list = await (orgId === PERSONAL ? loadPersonal() : loadOrg(orgId)); if (!Array.isArray(list)) throw new Error('superseded'); prog.refreshed = true; }); // 다른 재조회에 밀려 이번 결과가 버려졌으면 다시 읽은 것으로 치지 않는다
+    else if (act.do === 'refresh-orgs') run(async () => { await loadOrgs(); prog.orgsRefreshed = true; });
+  }, [navReq, navStep, channels, previewChannels, orgs, orgId, uid]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 앱 수준 리스너(App)가 보는 지금 셸 — 전경 푸시 카드(폰: 다른 채널 메시지만, 탭하면 그 채널로 — 유건 2026-09-12). page·org는 page 선언 아래에서 적는다
+  useEffect(() => {
+    const onForeground = ({ title, body, data }) => { if (!title && !body) return; if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); };
+    shellLink.mounted = true; shellLink.onForeground = onForeground;
+    return () => { if (shellLink.onForeground === onForeground) { shellLink.mounted = false; shellLink.onForeground = null; } }; // page·org는 마지막 값을 남긴다(진단의 shell=off와 같이 읽는다)
   }, []);
-  useEffect(() => {
-    if (!navTo) return;
-    if (navTo === 'report') { setSettingsTab('me'); setPage('settings'); setRail(false); setSheet(null); setNavTo(null); return; } // 신고 접수 알림(msgr-push reportPush) → 운영 신고함
-    if (loadedOrg.current === orgId && channels.some((c) => c.id === navTo)) { setChId(navTo); setPage('chat'); setRail(false); setSheet(null); setNavTo(null); return; }
-    if (!orgs || !orgId) return; // 조직·목록 로드 전 — 기다린다
-    let on = true;
-    q(supabase.from('msgr_channels').select('org_id').eq('id', navTo).maybeSingle()).then((row) => {
-      if (!on) return;
-      if (row && !row.org_id && orgId !== PERSONAL) setOrgId(PERSONAL); // 개인 1:1 → 개인 공간으로 전환
-      else if (row?.org_id && row.org_id !== orgId && orgs.some((o) => o.id === row.org_id)) setOrgId(row.org_id); // 다른 조직 → 전환(목록이 바뀌면 위 분기가 연다)
-      else if (!row || loadedOrg.current === orgId) setNavTo(null); // 목록이 실제 도착한 뒤에만 없는 채널 요청을 버린다
-    }).catch(() => { if (on) setNavTo(null); });
-    return () => { on = false; };
-  }, [navTo, channels, orgs, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
   const [tick, setTick] = useState(0);
-  useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록, 알림 탭 → 채널 이동, 전경 수신 → 토스트(시스템은 전경 알림을 안 띄운다)
+  useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록. 알림 탭·전경 수신은 앱 수준 리스너(App)가 받아 대기함·shellLink로 넘긴다(2026-10-01)
     if (!isMobilePlatform) return;
     activatePush(supabase, uid);
     const reg = () => registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
     reg(); const stopResume = observeMobileResume(reg); // 토큰은 회전한다 — 앱 재개마다 다시 등록
-    const off = mountPush({ onTap: ({ channel_id }) => { pushDiag('tap', `channel ${channel_id ?? '-'}`, `page=${notifyRef.current.page} org=${notifyRef.current.orgId ?? '-'}`); if (channel_id) setNavTo(channel_id); }, onForeground: ({ title, body, data }) => { if (!title && !body) return; if (data?.channel_id && data.channel_id === notifyRef.current.chId && notifyRef.current.page === 'chat') return; setPushCard({ title, body, channel_id: data?.channel_id, at: Date.now() }); } });
-    return () => { deactivatePush(supabase, uid); off(); stopResume(); };
+    return () => { deactivatePush(supabase, uid); stopResume(); };
   }, [uid]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   // 아이콘 배지 재동기화(유건 제보 2026-09-15: 다 읽어도 폰 배지가 남음) — 배지는 서버가 읽음 커서 변경 때만 푸시로 내려보내는데, 토큰이 바뀌거나(앱 재설치)
@@ -685,6 +720,7 @@ function Shell({ session }) {
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [page, setPage] = useState(() => (isPhone && PULL_RESTORE_PAGES.has(initialSnap?.page) ? initialSnap.page : (isPhone ? 'home' : 'chat')));
   pageRef.current = page; // saveScreenSnapshot(위)이 최신 page를 보게 — page state 선언이 그 콜백보다 늦어 ref로 연결
+  shellLink.page = page; shellLink.orgId = orgId; // 탭 진단(App의 앱 수준 리스너)이 지금 화면·공간을 적게 — 종전 tap 줄의 org는 늘 '-'였다
   useEffect(() => { pushDiag('shell', `page=${page} chId=${chId ?? '-'} org=${orgId ?? '-'}`); }, [page, chId, orgId]); // 진단(설정 → 진단) — 화면 이동만 기록 // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   // ── 폰 화면 스택 = 브라우저 history(유건 제보 2026-09-15: DM 탭에서 대화를 열고 뒤로 가면 홈으로 갔다) ──
   // 루트(홈·DM·알림함·기억 탭)는 replaceState, 그 위에 여는 화면(대화·설정·검색)은 pushState. 상단 뒤로 버튼·iOS 가장자리 스와이프·
@@ -1282,13 +1318,13 @@ function Shell({ session }) {
   const inviteErr = (e) => { const k = inviteErrorKey(e?.message); return k ? t(k) : friendlyErr(e?.message ?? String(e), t); };
   const [joinPreview, setJoinPreview] = useState(null); // { code, ...msgr_invite_preview } — 받는 쪽 미리보기 카드(설계서 2-2)
   const [joinBusy, setJoinBusy] = useState(false); const [joinErr, setJoinErr] = useState(null);
-  const acceptCode = async (code, preview = null) => { // 참여 → 조직 전환 → 첫 채널(v2 channel_id, 옛 서버면 미리보기의 첫 채널) — navTo가 조직을 바꾼 뒤 연다
+  const acceptCode = async (code, preview = null) => { // 참여 → 조직 전환 → 첫 채널(v2 channel_id, 옛 서버면 미리보기의 첫 채널) — 열기 요청(requestNav)이 조직을 바꾼 뒤 연다
     const r = await acceptInvite(supabase, code);
     setJoinCode(null); setOrgMenu(false); setJoinPreview(null);
     await loadJoined(); await loadOrgs();
     if (r.orgId) setOrgId(r.orgId);
     const first = r.channelId ?? (r.legacy ? preview?.channels?.[0]?.id : null) ?? null;
-    if (first) setNavTo(first);
+    if (first) requestNav(first, 'invite');
     const name = preview?.channels?.find((c) => c.id === first)?.name;
     setNote([name ? t('inv.joined.ch', { name }) : t('org.joined'), r.skipped.length ? t('inv.joined.skipped', { n: r.skipped.length }) : ''].filter(Boolean).join(' '));
   };
@@ -2032,9 +2068,9 @@ function Shell({ session }) {
         {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} />}
         {chSheet && channel && !orgBlocked && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${tick}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} discard={(id) => discardInvite(supabase, id)} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
-        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) setNavTo(p.channels[0].id); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
+        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
-        {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) setNavTo(pushCard.channel_id); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
+        {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
           <button type="button" className={`msgr-toast${err ? ' err' : ''}`} onClick={() => { setErr(''); setNote(''); }} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${err}`) : note}</button>,
           document.body,
