@@ -1956,6 +1956,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-sechead .ph-secbtn, .msgr-phone .ph-sechead .ph-secx { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; justify-content: center; padding: 0 4px; border: 0; background: none; color: var(--fg-2); font-size: 13px; font-weight: 600; }
   .msgr-phone .ph-empty { padding: 18px var(--ph-pad); font-size: 14px; line-height: 1.5; color: var(--fg-2); }
   .msgr-phone .ph-inline, .msgr-phone .ph-browse { margin: 4px var(--ph-pad) 8px; }
+  .msgr-phone .ph-browse > .ph-sechead { padding: 0 0 4px; min-height: 44px; }
   /* ── 카톡식 줄: 사진 48 · 이름·인원·고정·알림 끔 · 시각 / 마지막 글 두 줄 · @ · 안 읽은 수 ── */
   .msgr-phone.phone-home .msgr-side .ph-root .ph-krow > .item, .msgr-phone.phone-home .msgr-side .ph-root .ph-arow, .msgr-phone.phone-home .msgr-side .ph-root .ph-me { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 72px; padding: 8px var(--ph-pad); border: 0; border-radius: 0; background: var(--bg); color: var(--fg); text-align: left; font-weight: 400; }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-krow > .item:active, .msgr-phone.phone-home .msgr-side .ph-root .ph-arow:active, .msgr-phone.phone-home .msgr-side .ph-root .ph-me:active, .msgr-phone.phone-home .msgr-side .ph-root .ph-frow:active, .msgr-phone.phone-home .msgr-side .ph-root .ph-reqrow:active { background: var(--card-2); }
