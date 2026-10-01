@@ -7,9 +7,15 @@ import './styles.css';
 import { startSplash } from './splash.js'; // 시작 스플래시(북극성) — 앱 본체보다 먼저 첫 화면에
 import { pushDiag } from './diag.jsx'; // 빈 화면 대신 오류 문구 + 다시 열기(유건 제보 2026-09-12 알림 탭 → 빈 화면) — 전역 오류 기록을 먼저 건다
 import { followThemeBackground } from './webview-bg.js';
+import { bootMessenger, renderChunkError } from './boot-entry.mjs';
 
 pushDiag('boot', `start ${location.href.slice(0, 80)}`, navigator.userAgent.slice(0, 80));
-// 모바일 웹뷰 바탕은 창 설정에서 스플래시 색으로 시작한다 — 스플래시가 닫히면 지금 테마 바탕으로 바꾼다(webview-bg.js)
-const mobile = ['ios', 'android'].includes(import.meta.env.TAURI_ENV_PLATFORM);
-startSplash({ onClosed: mobile ? () => followThemeBackground() : undefined });
-import('./app-root.jsx').catch((e) => pushDiag('boot', `app chunk failed: ${e?.message || e}`, String(e?.stack || '').slice(0, 600)));
+// 스플래시 → (모바일) 닫히면 웹뷰 바탕을 테마 색으로 → 앱 본체 청크. 실패하면 빈 화면 대신 안내 + 다시 열기(boot-entry.mjs)
+bootMessenger({
+  platform: import.meta.env.TAURI_ENV_PLATFORM,
+  startSplash,
+  followThemeBackground,
+  loadApp: () => import('./app-root.jsx'),
+  diag: (e) => pushDiag('boot', `app chunk failed: ${e?.message || e}`, String(e?.stack || '').slice(0, 600)),
+  onChunkError: () => renderChunkError(),
+});
