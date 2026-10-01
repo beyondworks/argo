@@ -15,4 +15,18 @@ export const filesFromTransfer = (dt) => {
 };
 
 export const MAX_FILE = 50 * 1024 * 1024; // 1차 상한 50MB(유건 확정 2026-09-26)
+// 산출물 열기(유건 9/30) — 그림·문서는 그 자리에서 보이고 나머지는 받기. 메신저 첨부는 mime이 빈 경우가 많아 확장자로도 본다.
+// svg는 스크립트를 품을 수 있어 받기만 한다.
+const EXT = { image: /\.(png|jpe?g|gif|webp|avif|bmp)$/i, md: /\.(md|markdown)$/i, text: /\.(txt|csv|tsv|json|log|ya?ml)$/i, pdf: /\.pdf$/i };
+export function fileKind(name = '', mime = '') {
+  const m = (mime ?? '').toLowerCase();
+  if (m && m !== 'application/octet-stream') {
+    if (m.startsWith('image/') && m !== 'image/svg+xml') return 'image';
+    if (m === 'text/markdown') return 'md';
+    if (m.startsWith('text/') || m === 'application/json') return EXT.md.test(name) ? 'md' : 'text';
+    if (m === 'application/pdf') return 'pdf';
+    return 'other';
+  }
+  return Object.keys(EXT).find((k) => EXT[k].test(name)) ?? 'other';
+}
 export const fmtBytes = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`;

@@ -3,6 +3,7 @@
 // 크루는 이 함수로 보내지 않는다(초안까지 — P4/P5). 여기의 send는 사람이 보내기를 누를 때만.
 import { mailKey, seal, unseal, sealState, openState } from '../../server/seal.js';
 import { envelope, content, buildRaw, inlineImages, VIEWABLE, FOLDER_QUERY, SCOPES, missingScopes } from '../../server/gmail.js';
+import { customerMatcher, gmailQuery, threadSignals } from '../../server/mail-signals.js';
 import { createHash, randomBytes } from 'node:crypto';
 
 const env = process.env;
@@ -81,14 +82,23 @@ const OPS = {
   // 화면이 연결 버튼·관리자 안내문을 그릴 때 — 클라이언트 ID는 공개값
   async config() { return { google: env.OFFICE_GOOGLE_CLIENT_ID ? { clientId: env.OFFICE_GOOGLE_CLIENT_ID, scopes: SCOPES } : null }; },
 
-  async start(jwt, { hint } = {}) {
+  async relay(_jwt, { state, code, error } = {}) {
+    const st = openState(mailKey(), state);
+    if (!st) throw fail(400, 'state');
+    if (st.desktop !== true) return { desktop: false };
+    if ((!code && !error) || (code && error)) throw fail(400, 'state');
+    const q = new URLSearchParams({ state, ...(error ? { error: String(error) } : { code: String(code) }) });
+    return { desktop: true, url: `argo-office://mail/callback?${q}` };
+  },
+
+  async start(jwt, { hint, desktop } = {}) {
     const { client_id } = client();
     const uid = await me(jwt);
     const verifier = randomBytes(32).toString('base64url');
     const q = new URLSearchParams({
       client_id, redirect_uri: redirectUri(), response_type: 'code', scope: ['openid', 'email', 'profile', ...SCOPES].join(' '),
       access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true',               // consent: 다시 연결해도 갱신 토큰을 받는다
-      state: sealState(mailKey(), { uid, v: verifier }), code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
+      state: sealState(mailKey(), { uid, v: verifier, ...(desktop === true ? { desktop: true } : {}) }), code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
     });
     if (hint) q.set('login_hint', hint);
     return { url: `${G.auth()}?${q}` };
@@ -97,6 +107,7 @@ const OPS = {
   async finish(jwt, { code, state }) {
     const st = openState(mailKey(), state);
     if (!st) throw fail(400, 'state');
+    if (!code || await me(jwt) !== st.uid) throw fail(400, 'state');
     const tok = await tokenCall({ grant_type: 'authorization_code', code, redirect_uri: redirectUri(), code_verifier: st.v });
     const missing = missingScopes(tok.scope);
     if (missing.length) {                                                                    // 동의 화면에서 권한을 끈 경우 — 받은 토큰은 돌려준다
@@ -110,6 +121,36 @@ const OPS = {
     const account = await rpc(jwt, 'office_mail_connect', { p_expect: st.uid, p_provider: 'google', p_address: address, p_name: c.name ?? '', p_hd: c.hd ?? '', p_sealed: seal(key, tok.refresh_token, aad) });
     await rpc(jwt, 'office_mail_token_put', { p_account: account, p_access_sealed: seal(key, tok.access_token, aad), p_expires: new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString() });
     return { account, address };
+  },
+
+  /** 성과 기록 3단계 — 거래처 메일 만족도 신호. 메타데이터(보낸 사람·받는 사람·시각·앞부분 요약)만 읽고, 판정 근거·메일 id만 DB에 넣는다.
+   *  6시간에 한 번(office_perf_mail_claim). 사람마다 계정 × 스레드 최대 50개 = Gmail 호출 최대 51회/계정. */
+  async signals(jwt, { org }) {
+    if (typeof org !== 'string' || !/^[0-9a-f-]{36}$/i.test(org)) throw fail(400, 'input');
+    const r = await fetch(`${env.VITE_SUPABASE_URL}/rest/v1/office_mail_accounts?select=id,address,status&status=eq.ok`, { headers: { apikey: env.VITE_SUPABASE_ANON_KEY, authorization: `Bearer ${jwt}` } });
+    if (!r.ok) throw fail(r.status === 401 ? 401 : 502, r.status === 401 ? 'signed_out' : 'db');
+    const accounts = await r.json();
+    if (!accounts.length) return { rows: 0, reason: 'no_account' };
+    const customers = await rpc(jwt, 'office_perf_customers', { p_org: org });
+    const q = gmailQuery(customers ?? [], 30);
+    if (!q) return { rows: 0, reason: 'no_customer' };
+    if (!(await rpc(jwt, 'office_perf_mail_claim', { p_org: org }))) return { rows: 0, reason: 'recent' };
+    const match = customerMatcher(customers), meta = new URLSearchParams([['format', 'metadata'], ...['From', 'To', 'Date'].map((h) => ['metadataHeaders', h])]);
+    let rows = 0, failed = 0;
+    for (const acc of accounts) {
+      try {
+        const token = await accessToken(jwt, acc.id);
+        const list = await gmail(token, `/threads?${new URLSearchParams({ q, maxResults: '50' })}`);
+        const found = await Promise.all((list.threads ?? []).map((th) => gmail(token, `/threads/${encodeURIComponent(th.id)}?${meta}`).then((x) => {
+          const msgs = (x.messages ?? []).map((m) => { const e = envelope(m, acc.id); return { id: e.gid, from: e.addr, to: e.to, at: e.at, snippet: e.snippet }; });
+          return threadSignals(th.id, msgs, acc.address, match);
+        }).catch(() => null)));
+        const put = found.filter(Boolean);
+        if (put.length) rows += await rpc(jwt, 'office_perf_mail_put', { p_org: org, p_account: acc.id, p_rows: put });
+      } catch (e) { if (e.code === 'signed_out') throw e; failed += 1; } // 한 계정이 만료돼도 다른 계정은 센다
+    }
+    if (failed === accounts.length) { await rpc(jwt, 'office_perf_mail_release', { p_org: org }).catch(() => {}); return { rows: 0, reason: 'error' }; } // 하나도 못 읽었으면 6시간 기다리지 않고 다음에 다시
+    return { rows };
   },
 
   async list(jwt, { account, folder = 'inbox', page }) {
@@ -173,6 +214,7 @@ async function handle(request, op, args) {
   try {
     if (!Object.hasOwn(OPS, op)) throw fail(404, 'op');
     if (op === 'config') return json(await OPS.config());
+    if (op === 'relay') return json(await OPS.relay(null, args));
     const jwt = /^Bearer (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1];
     if (!jwt) throw fail(401, 'signed_out');
     return json(await OPS[op](jwt, args));
@@ -195,12 +237,27 @@ async function attachment(request, q) {
   } catch (e) { return json({ error: e.code ?? 'server' }, e.status ?? 500); }
 }
 
-export async function GET(request) {
+async function get(request) {
   const q = Object.fromEntries(new URL(request.url).searchParams);
   const op = opOf(request);
   if (op === 'attachment') return attachment(request, q);
   return ['config', 'list', 'read'].includes(op) ? handle(request, op, q) : json({ error: 'method' }, 405); // 바꾸는 동작은 POST로만
 }
-export async function POST(request) {
+async function post(request) {
   return handle(request, opOf(request), await request.json().catch(() => ({})));
 }
+
+const DESKTOP_ORIGINS = new Set(['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost']);
+function cors(request, response) {
+  const source = request.headers.get('origin');
+  response.headers.set('vary', 'Origin');
+  if (DESKTOP_ORIGINS.has(source)) {
+    response.headers.set('access-control-allow-origin', source);
+    response.headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
+    response.headers.set('access-control-allow-headers', 'Authorization, Content-Type');
+  }
+  return response;
+}
+export async function GET(request) { return cors(request, await get(request)); }
+export async function POST(request) { return cors(request, await post(request)); }
+export async function OPTIONS(request) { return cors(request, new Response(null, { status: DESKTOP_ORIGINS.has(request.headers.get('origin')) ? 204 : 403 })); }

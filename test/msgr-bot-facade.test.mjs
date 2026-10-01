@@ -40,7 +40,7 @@ test('parseRequest: /bot<token>/<method> 경로 · Bearer 헤더 폴백 · 쿼�
 });
 
 test('토큰 없음 401 · 모르는 메서드 404 · 지원 메서드 5종', async () => {
-  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile']);
+  assert.deepEqual(METHODS, ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile', 'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval', 'reportStatus', 'createUpload', 'attachFile']);
   assert.equal((await handle({ token: null, method: 'getMe' }, fakeRpc({}))).status, 401);
   const r = await handle({ token: T, method: 'setWebhook' }, fakeRpc({}));
   assert.equal(r.status, 404); assert.equal(r.body.ok, false); assert.match(r.body.description, /setWebhook/);
@@ -135,4 +135,138 @@ test('getFile: file_id 검증 → msgr_bot_file → 서명 URL을 file_path로(�
   assert.equal((await handle({ token: T, method: 'getFile', params: { file_id: FID } }, rpc)).status, 500, 'sign 없음 → 500(경로를 노출하지 않는다)');
   assert.equal((await handle({ token: T, method: 'getFile', params: { file_id: '00000000-0000-4000-8000-00000000dead' } }, rpc, { sign })).status, 403);
   assert.equal((await handle({ token: T, method: 'getFile', params: { file_id: '00000000-0000-4000-8000-000000000000' } }, rpc, { sign })).status, 400);
+});
+
+// ── 외부 에이전트 크루 계약 1-a(20260929130000) ──
+test('getUpdates events=1 — 이벤트는 요청당 한 번 조회해 메시지 앞에 붙이고, 이벤트가 있으면 롱폴 없이 바로 돌려준다', async () => {
+  const ev = { event: 'routine_edit', edit_id: 'e1' };
+  const rpc = fakeRpc({ msgr_bot_events: [ev], msgr_bot_updates: [] });
+  let slept = 0;
+  const r = await handle({ token: T, method: 'getUpdates', params: { events: '1', timeout: 20 } }, rpc, { sleep: async () => { slept++; } });
+  assert.deepEqual(r.body.result, [ev]);
+  assert.equal(slept, 0, '이벤트가 있으면 기다리지 않는다');
+  assert.deepEqual(rpc.calls.map(([n]) => n), ['msgr_bot_events', 'msgr_bot_updates']);
+});
+
+test('getUpdates — events를 요청하지 않은 옛 어댑터에는 이벤트 조회 자체가 없다', async () => {
+  const rpc = fakeRpc({ msgr_bot_events: [{ event: 'x' }], msgr_bot_updates: [] });
+  await handle({ token: T, method: 'getUpdates', params: {} }, rpc);
+  assert.deepEqual(rpc.calls.map(([n]) => n), ['msgr_bot_updates']);
+});
+
+test('getUpdates events=1 — 이벤트 조회가 어떤 이유로 실패해도 메시지는 받는다(옛 서버·시간 초과·교착), 토큰 오류는 메시지 조회가 401로', async () => {
+  const warn = console.warn; console.warn = () => {};
+  try {
+    for (const err of [Object.assign(new Error('Could not find the function public.msgr_bot_events'), { code: 'PGRST202' }),
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }), Object.assign(new Error('deadlock detected'), { code: '40P01' })]) {
+      const r = await handle({ token: T, method: 'getUpdates', params: { events: 1 } }, fakeRpc({ msgr_bot_events: err, msgr_bot_updates: [{ update_id: 3 }] }));
+      assert.deepEqual(r.body.result, [{ update_id: 3 }], err.code);
+    }
+    const u = await handle({ token: T, method: 'getUpdates', params: { events: 1 } }, fakeRpc({ msgr_bot_events: pgErr('msgr_bot_unauthorized'), msgr_bot_updates: pgErr('msgr_bot_unauthorized') }));
+    assert.equal(u.status, 401);
+  } finally { console.warn = warn; }
+});
+
+test('setRoutines·routineEditDone — 입력 모양 검사 후 RPC 인자 이름 그대로 전달', async () => {
+  const rpc = fakeRpc({ msgr_bot_routines_sync: { kept: 1 }, msgr_bot_routine_edit_done: true });
+  assert.equal((await handle({ token: T, method: 'setRoutines', params: { rows: 'x' } }, rpc)).status, 400);
+  assert.equal((await handle({ token: T, method: 'setRoutines', params: { rows: [{ ext_id: 'a' }] } }, rpc)).status, 200);
+  assert.equal((await handle({ token: T, method: 'setRoutines', params: { unsupported: 'no cron api' } }, rpc)).status, 200);
+  assert.equal((await handle({ token: T, method: 'routineEditDone', params: { edit_id: 'bad', status: 'applied' } }, rpc)).status, 400);
+  assert.equal((await handle({ token: T, method: 'routineEditDone', params: { edit_id: CH, status: 'replaced' } }, rpc)).status, 400, 'replaced는 메신저 쪽 전용');
+  assert.equal((await handle({ token: T, method: 'routineEditDone', params: { edit_id: CH, status: 'failed', error: 'job gone' } }, rpc)).status, 200);
+  assert.deepEqual(rpc.calls, [
+    ['msgr_bot_routines_sync', { token: T, p_rows: [{ ext_id: 'a' }], p_unsupported: null }],
+    ['msgr_bot_routines_sync', { token: T, p_rows: [], p_unsupported: 'no cron api' }],
+    ['msgr_bot_routine_edit_done', { token: T, p_id: CH, p_status: 'failed', p_error: 'job gone' }],
+  ]);
+});
+
+test('requestApproval·ackApproval·expireApproval — 위험 등급·원문은 보내지도 않는다(서버가 정함), 충돌은 409', async () => {
+  const attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const rpc = fakeRpc({ msgr_bot_request_approval: { id: 'x', risk: 'high' }, msgr_bot_ack_approval: { claimed: true }, msgr_bot_expire_approval: { status: 'expired' } });
+  assert.equal((await handle({ token: T, method: 'requestApproval', params: { approval_id: 'ap-1', command: 'rm' } }, rpc)).status, 400, '실행 시도 없음');
+  await handle({ token: T, method: 'requestApproval', params: { execution_attempt: attempt, approval_id: 'ap-1', command: 'rm -rf x', risk: 'low', kind: 'org_doc', source_message_id: 9 } }, rpc);
+  assert.deepEqual(rpc.calls[0], ['msgr_bot_request_approval', { token: T, p_attempt: attempt, p_approval_id: 'ap-1', p_command: 'rm -rf x', p_reason: null }], 'risk·kind·원문 id는 버린다');
+  assert.equal((await handle({ token: T, method: 'ackApproval', params: {} }, rpc)).status, 400);
+  assert.deepEqual((await handle({ token: T, method: 'ackApproval', params: { approval_id: 'ap-1' } }, rpc)).body.result, { claimed: true });
+  assert.deepEqual((await handle({ token: T, method: 'expireApproval', params: { approval_id: 'ap-1' } }, rpc)).body.result, { status: 'expired' });
+  const c = await handle({ token: T, method: 'requestApproval', params: { execution_attempt: attempt, approval_id: 'ap-1', command: 'rm /' } }, fakeRpc({ msgr_bot_request_approval: pgErr('msgr_approval_conflict') }));
+  assert.equal(c.status, 409);
+});
+
+// 1-b(2026-09-29) — 누가 연결하든 같은 계약: 버전·모드 보고, 에이전트 결재, 후속 보고
+test('reportStatus — 문자열·불리언으로 번역해 전달하고, 응답(mirror_all)을 그대로 돌려준다', async () => {
+  const rpc = fakeRpc({ msgr_bot_report_status: { mirror_all: true } });
+  const r = await handle({ token: T, method: 'reportStatus', params: { version: '0.3.0', approval_mode: 'smart', mirror_all_applied: 'true' } }, rpc);
+  assert.deepEqual(r.body.result, { mirror_all: true });
+  assert.deepEqual(rpc.calls[0], ['msgr_bot_report_status', { token: T, p_version: '0.3.0', p_approval_mode: 'smart', p_mirror_all_applied: true }]);
+  await handle({ token: T, method: 'reportStatus', params: {} }, rpc);
+  assert.deepEqual(rpc.calls[1][1], { token: T, p_version: null, p_approval_mode: null, p_mirror_all_applied: null }, '빠진 값은 null(서버가 기존 값 유지)');
+});
+
+test('requestApproval kind=agent — 제목·사유로 에이전트 결재 RPC, 명령 RPC는 부르지 않는다', async () => {
+  const attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const rpc = fakeRpc({ msgr_bot_request_agent_approval: { id: 'x', status: 'pending', risk: 'high' } });
+  await handle({ token: T, method: 'requestApproval', params: { kind: 'agent', execution_attempt: attempt, approval_id: 'ag-1', title: '광고비', reason: '캠페인', risk: 'low' } }, rpc);
+  assert.deepEqual(rpc.calls, [['msgr_bot_request_agent_approval', { token: T, p_attempt: attempt, p_approval_id: 'ag-1', p_title: '광고비', p_reason: '캠페인' }]]);
+  assert.equal((await handle({ token: T, method: 'requestApproval', params: { kind: 'agent', approval_id: 'ag-1', title: 't' } }, rpc)).status, 400, '실행 시도 없음');
+});
+
+test('sendMessage + approval_id — 후속 보고 RPC(방·원문은 서버가 정함), chat_id 없이도 된다, 결정 전이면 403', async () => {
+  const rpc = fakeRpc({ msgr_bot_followup: 501 });
+  const r = await handle({ token: T, method: 'sendMessage', params: { approval_id: 'ag-1', text: '집행했습니다.' } }, rpc);
+  assert.equal(r.status, 200); assert.equal(r.body.result.message_id, 501);
+  assert.deepEqual(rpc.calls, [['msgr_bot_followup', { token: T, p_approval_id: 'ag-1', p_body: '집행했습니다.' }]]);
+  assert.equal((await handle({ token: T, method: 'sendMessage', params: { approval_id: 'ag-1', text: ' ' } }, rpc)).status, 400);
+  const denied = await handle({ token: T, method: 'sendMessage', params: { approval_id: 'ag-1', text: 'x' } }, fakeRpc({ msgr_bot_followup: pgErr('msgr_not_allowed') }));
+  assert.equal(denied.status, 403);
+});
+
+test('requestApproval + parent_approval_id — 재개 턴 카드는 이어서 올리는 RPC로(실행 시도 없이), 셸·에이전트 구분은 kind', async () => {
+  const rpc = fakeRpc({ msgr_bot_request_followup_approval: { id: 'x', status: 'pending' } });
+  await handle({ token: T, method: 'requestApproval', params: { parent_approval_id: 'ag-1', approval_id: 'hx-2', command: 'rm -rf /tmp/a', reason: 'r' } }, rpc);
+  await handle({ token: T, method: 'requestApproval', params: { parent_approval_id: 'ag-1', approval_id: 'ag-2', kind: 'agent', title: '메일 발송' } }, rpc);
+  assert.deepEqual(rpc.calls, [
+    ['msgr_bot_request_followup_approval', { token: T, p_parent: 'ag-1', p_approval_id: 'hx-2', p_kind: 'shell', p_text: 'rm -rf /tmp/a', p_reason: 'r' }],
+    ['msgr_bot_request_followup_approval', { token: T, p_parent: 'ag-1', p_approval_id: 'ag-2', p_kind: 'agent', p_text: '메일 발송', p_reason: null }]]);
+});
+
+// 봇 파일 보내기(20260930160000) — 유건 2026-09-30 "외부 에이전트랑 내부 에이전트 모두 파일 송수신". 파일 바이트는 엣지를 거치지 않는다(서명 업로드 주소로 직접 PUT).
+test('createUpload: 서버 판정 경로 → 서명 업로드 주소, 서명 불가 500. attachFile: 등록 → file_id. 판정 오류는 의미 있는 상태로', async () => {
+  const PATH = 'org/ch/7/bot-0a1b2c3d-report.pdf';
+  const rpc = fakeRpc({ msgr_bot_attach_prepare: { storage_path: PATH }, msgr_bot_attach_commit: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
+  const signed = []; const signUpload = async (path) => { signed.push(path); return `https://x.supabase.co/storage/v1/object/upload/sign/msgr/${path}?token=t`; };
+  const r = await handle({ token: T, method: 'createUpload', params: { message_id: '7', file_name: '보고서.pdf', file_size: 1234 } }, rpc, { signUpload });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.result, { storage_path: PATH, upload_url: `https://x.supabase.co/storage/v1/object/upload/sign/msgr/${PATH}?token=t`, method: 'PUT', max_bytes: 26214400 });
+  assert.deepEqual(rpc.calls[0], ['msgr_bot_attach_prepare', { token: T, p_message: 7, p_name: '보고서.pdf', p_bytes: 1234 }]);
+  assert.deepEqual(signed, [PATH], '서버가 정한 경로만 서명한다');
+  assert.equal((await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, rpc)).status, 500, '서명 불가 → 500');
+  const purged = []; const rpc2 = fakeRpc({ msgr_bot_attach_prepare: { storage_path: PATH, purge: ['o/c/5/bot-11111111-old.pdf'] } });
+  const r2 = await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, rpc2, { signUpload, purgeUploads: async (p) => { purged.push(...p); } });
+  assert.deepEqual(purged, ['o/c/5/bot-11111111-old.pdf'], '서버가 고른 미등록 업로드를 지운다');
+  assert.equal(r2.body.result.purge, undefined, '지울 목록은 봇에게 돌려주지 않는다');
+  const r3 = await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, rpc2, { signUpload, purgeUploads: async () => { throw new Error('storage down'); } });
+  assert.equal(r3.status, 200, '정리 실패가 업로드를 막지 않는다');
+  const a = await handle({ token: T, method: 'attachFile', params: { message_id: 7, storage_path: PATH, file_name: '보고서.pdf', mime_type: 'application/pdf' } }, rpc);
+  assert.deepEqual(a.body.result, { file_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', message_id: 7 });
+  assert.deepEqual(rpc.calls.at(-1), ['msgr_bot_attach_commit', { token: T, p_message: 7, p_path: PATH, p_name: '보고서.pdf', p_mime: 'application/pdf' }]);
+  for (const bad of [undefined, 0, -1, 'x', 1.5]) assert.equal((await handle({ token: T, method: 'attachFile', params: { message_id: bad } }, rpc)).status, 400, `message_id ${bad}`);
+  for (const [name, status] of [['msgr_bot_file_too_large', 413], ['msgr_bot_bad_attach_target', 403], ['msgr_bot_upload_missing', 409], ['msgr_bot_too_many_files', 409], ['msgr_bot_attach_expired', 409], ['msgr_bot_not_member', 403]]) {
+    const out = await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, fakeRpc({ msgr_bot_attach_prepare: pgErr(name) }), { signUpload });
+    assert.equal(out.status, status, name);
+  }
+});
+
+// 유건 2026-09-30 "말 끝마다 MSGR Done 왜 붙이는거야?" — 옛 연결 도구도 서버에서 한 번 더 뗀다(엣지 배포만으로 모든 봇에 적용).
+test('sendMessage 본문의 넘김 표지는 서버가 뗀다 — 문장 끝·독립 줄 모두, 인용·코드는 그대로', async () => {
+  const rpc = fakeRpc({ msgr_bot_send: 5, msgr_bot_followup: 6 });
+  for (const [text, want] of [['전달하겠습니다. MSGR: done', '전달하겠습니다.'], ['확인했습니다. `MSGR: done`', '확인했습니다.'], ['결과입니다.\n\nMSGR: handoff', '결과입니다.'], ['> 인용 MSGR: done', '> 인용 MSGR: done'], ['```\n코드 MSGR: done', '```\n코드 MSGR: done']]) {
+    await handle({ token: T, method: 'sendMessage', params: { chat_id: CH, text } }, rpc);
+    assert.equal(rpc.calls.at(-1)[1].body, want, text);
+  }
+  await handle({ token: T, method: 'sendMessage', params: { approval_id: 'ap1', text: '집행했습니다. MSGR: done' } }, rpc);
+  assert.equal(rpc.calls.at(-1)[1].p_body, '집행했습니다.');
+  assert.equal((await handle({ token: T, method: 'sendMessage', params: { chat_id: CH, text: 'MSGR: done' } }, rpc)).status, 400, '표지뿐이면 빈 글');
 });

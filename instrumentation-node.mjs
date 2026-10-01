@@ -4,6 +4,8 @@ import { setupNoDock } from './src/no-dock.mjs';
 import { ensureScheduler } from './src/scheduler.mjs';
 import { ensureGateway } from './src/gateway.mjs';
 import { ensureSync } from './src/sync.mjs';
+import { WS_ROOT } from './src/workspace.mjs';
+import { writePresence, clearPresence } from './src/server-presence.mjs';
 
 // 부모(데스크톱 셸) 감시 — 앱이 넘긴 ARGO_PARENT_PID가 사라지면 서버도 종료한다.
 // Tauri 사이드카는 부모가 죽어도 자동 종료되지 않아(실측: macOS·Windows 공통) 고아 node가
@@ -14,6 +16,17 @@ if (parentPid > 0) {
     try { process.kill(parentPid, 0); } // signal 0 = 존재 확인만
     catch { process.exit(0); }          // 부모 없음 → 스스로 종료
   }, 2000).unref();
+}
+
+// 앱 사이드카 전용(ARGO_PARENT_PID는 Tauri 셸이 직접 띄운 서버에만 있다 — 상주·argo run·개발 서버는 자동으로 빠진다) ─────────────────────────────
+if (parentPid > 0) {
+  // 실행 표식 — 같은 폴더를 쓰는 argo CLI가 "앱이 실행 중인가"를 본다(login 거절, src/server-presence.mjs). 종료 때 지우고, 못 지워도 죽은 pid라 CLI가 무시한다.
+  try { writePresence(WS_ROOT); process.on('exit', () => clearPresence(WS_ROOT)); } catch (e) { console.warn('[argo] 실행 표식을 쓰지 못함:', e?.message ?? e); }
+  // 터미널 명령 argo 등록(맥) — 1회·멱등·실패는 기록만(src/cli-install.mjs). 셸 파일은 고치지 않고(설정 화면 버튼만), 남의 argo는 덮어쓰지도 가리지도 않는다.
+  // 윈도우는 설치 프로그램(NSIS)이 등록한다. 몇 초 늦춰 부팅 경로를 막지 않는다.
+  if (process.platform === 'darwin' && process.env.ARGO_STANDALONE === '1') {
+    setTimeout(() => { import('./src/cli-install.mjs').then((m) => m.ensureCliInstalled()).catch((e) => console.warn('[argo] 터미널 명령 등록 실패:', e?.message ?? e)); }, 5000).unref();
+  }
 }
 
 // macOS Dock 아이콘 억제 — 크루 턴이 띄우는 자식(CLI 러너·stdio MCP 서버)이 상속할 NODE_OPTIONS에

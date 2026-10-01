@@ -1,5 +1,6 @@
 // 모듈 등록부 — 홈 격자에 놓이는 것은 전부 여기 한 줄씩. 직무별 템플릿(2차)·크루가 만드는 모듈(3차)도 여기에 항목을 더하는 것으로 끝난다.
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
+import { OFFICE_MODULES } from '../core/module-registry.js';
 import { Face } from '../ui/Face.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { menuProps, openMenu } from '../ui/Menu.jsx';
@@ -7,7 +8,9 @@ import { Link } from '../core/router.jsx';
 import { t, ago } from '../core/i18n.js';
 import { useStore, toggleTodo, crewName, crewsIn, approvalsIn } from '../core/store.js';
 import { baseOf, mailMenu, pageMenu, fileMenu, recordMenu } from '../core/commands.js';
-import { SPACES, ME } from '../core/session.js';
+import { SPACES, ME, useSession } from '../core/session.js';
+import { useTasks } from '../core/tasks.js';
+import { kstDay, groupTasks } from '../core/task-model.js';
 import { fmtBytes } from '../core/files.js';
 import { pickCards, statsFor, MAX_CARDS } from '../core/stats.js';
 
@@ -24,7 +27,7 @@ function Approvals({ space }) {
   return rows.slice(0, 4).map((a) => (
     <Link key={a.id} to={`${baseOf(space)}/approvals?open=${a.id}`} className="mod-row" {...menuProps(() => recordMenu(a, a.plain))}>
       <Face id={a.crew} size={18} />
-      <span className="mod-main"><span className="clamp">{a.plain}</span><small>{[crewName(a.crew), space === 'me' ? spaceName(a.space) : `#${a.channel}`, ago(a.at)].filter(Boolean).join(' · ')}</small></span>
+      <span className="mod-main"><span className="clamp">{a.head || a.plain}</span><small>{[crewName(a.crew), space === 'me' ? spaceName(a.space) : `#${a.channel}`, ago(a.at)].filter(Boolean).join(' · ')}</small></span>
       {a.risk === 'high' && <span className="badge warn">{t('risk.high')}</span>}
     </Link>
   ));
@@ -35,11 +38,11 @@ function Work({ space }) {
   const rows = useMemo(() => list.filter(inSpace(space)), [list, space]);
   if (!rows.length) return <Empty />;
   return rows.slice(0, 5).map((w) => (
-    <div key={w.id} className="mod-row" {...menuProps(() => recordMenu(w, w.goal))}>
+    <Link key={w.id} to={`${baseOf(space)}/work?open=${w.id}`} className="mod-row" {...menuProps(() => recordMenu(w, w.goal))}>
       <span className={`dot ${w.status === 'blocked' ? 'ask' : 'work'}`} />
       <span className="mod-main"><span className="clamp">{w.goal}</span><small>{[crewName(w.lead), w.status === 'blocked' ? t('status.blocked') : t('status.running'), w.status === 'blocked' && w.blockedBy].filter(Boolean).join(' · ')}</small></span>
       <span className="mono dim">{w.steps ?? ago(w.started)}</span>
-    </div>
+    </Link>
   ));
 }
 
@@ -55,7 +58,17 @@ function Mail() {
   ));
 }
 
-function Todos() {
+// 로그인하면 서버에 저장되는 실제 할 일(성과 기록 1단계), 예시 화면은 메일에서 뽑은 할 일. 카드 ⋯ 메뉴에서 여러 보기로 바꿀 수 있다(views/HomeView.jsx)
+const TaskList = lazy(() => import('./TaskList.jsx'));
+const HomeView = lazy(() => import('../views/HomeView.jsx')); // 여러 보기(유건 9/30) — 보기 코드·사전은 카드를 그릴 때만 받는다
+const wait = <div className="mod-empty" role="status">…</div>;
+const Todos = (props) => <Suspense fallback={wait}><HomeView {...props} mode="todos" Default={TodoList} /></Suspense>;
+function TodoList({ space }) {
+  const mode = useSession();
+  if (mode === 'signedIn') return <Suspense fallback={<div className="mod-empty" role="status">…</div>}><TaskList space={space} /></Suspense>;
+  return <SampleTodos />;
+}
+function SampleTodos() {
   const mails = useStore((s) => s.mails);
   const done = useStore((s) => s.todosDone);
   const rows = useMemo(() => mails.flatMap((m) => (m.note?.todos ?? []).map((text, i) => ({ key: `${m.id}:${i}`, text, crew: m.note.crew, from: m.subject }))), [mails]);
@@ -86,22 +99,23 @@ function Outputs({ space }) {
   const rows = useMemo(() => all.filter(inSpace(space)), [all, space]);
   if (!rows.length) return <Empty />;
   return rows.slice(0, 5).map((f) => (
-    <div key={f.id} className="mod-row" {...menuProps(() => fileMenu(f))}>
+    <Link key={f.id} to={`${baseOf(space)}/outputs?open=${f.id}`} className="mod-row" {...menuProps(() => fileMenu(f))}>
       <Icon name="file" size={14} className="dim" />
       <span className="mod-main"><span className="clamp mono-name">{f.name}</span><small>{[crewName(f.crew), f.channel && `#${f.channel}`].filter(Boolean).join(' · ')}</small></span>
       <small className="dim mono">{fmtBytes(f.bytes)}</small>
-    </div>
+    </Link>
   ));
 }
 
+// 홈에는 최근 5건만, 두 줄까지(유건 9/30: 125건이 끝없이 이어져 피곤했다). 전체는 일지 화면에서.
 function Journal({ space }) {
   const days = useStore((s) => s.journal);
   const day = days.find(inSpace(space));
   if (!day) return <Empty />;
   return <>
     <div className="mod-date mono">{day.date}</div>
-    {day.entries.map((e, i) => (
-      <div key={i} className="mod-row top"><Face id={e.crew} size={18} /><span className="mod-main"><span>{e.text}</span><small>{[crewName(e.crew) || e.name, e.time].filter(Boolean).join(' · ')}</small></span></div>
+    {day.entries.slice(-5).reverse().map((e, i) => (
+      <Link key={i} to={`${baseOf(space)}/journal`} className="mod-row top"><Face id={e.crew} size={18} /><span className="mod-main"><span className="clamp two">{e.text}</span><small>{[crewName(e.crew) || e.name, e.time].filter(Boolean).join(' · ')}</small></span></Link>
     ))}
   </>;
 }
@@ -111,10 +125,10 @@ function Decisions({ space }) {
   const rows = useMemo(() => list.filter(inSpace(space)).slice(0, 5), [list, space]);
   if (!rows.length) return <Empty />;
   return rows.map((d) => (
-    <div key={d.id} className="mod-row">
+    <Link key={d.id} to={`${baseOf(space)}/decisions?open=${d.id}`} className="mod-row">
       <span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span>
       <span className="mod-main"><span className="clamp">{d.plain}</span><small>{[d.by, ago(d.at)].filter(Boolean).join(' · ')}</small></span>
-    </div>
+    </Link>
   ));
 }
 
@@ -126,6 +140,7 @@ function useStatValues(space) {
   const approvals = useStore((s) => s.approvals), work = useStore((s) => s.work), mails = useStore((s) => s.mails);
   const decisions = useStore((s) => s.decisions), pages = useStore((s) => s.pages), done = useStore((s) => s.todosDone);
   const crewList = useStore((s) => s.crews), outputs = useStore((s) => s.outputs);
+  const mode = useSession(), tasks = useTasks(space).rows; // 로그인하면 서버에 저장된 실제 할 일로 센다(성과 기록 1단계)
   return useMemo(() => {
     const base = baseOf(space), ok = (text, icon) => ({ tone: 'ok', text, icon }), warn = (text, icon) => ({ tone: 'warn', text, icon });
     const ap = approvals.filter(approvalsIn(space)), high = ap.filter((a) => a.risk === 'high').length;
@@ -141,12 +156,15 @@ function useStatValues(space) {
       work: { n: wk.length, badge: blocked ? warn(t('stat.b.blocked'), 'run') : ok(t('stat.b.normal'), 'run'), main: t('stat.blocked', { n: blocked }), sub: t('stat.workSub'), to: `${base}/work` },
       mail: { n: unread, badge: unread ? warn(t('stat.b.unread'), 'mail') : ok(t('stat.b.none'), 'mail'), main: unread ? t('stat.mailCheck') : t('stat.mailDone'), sub: t('stat.mailSub'), to: '/me/mail' },
       crews: { n: working, total: cs.length, badge: asking ? warn(t('stat.b.check'), 'person') : ok(t('stat.b.normal'), 'person'), main: t('stat.crewWorking'), sub: t('stat.crewAsk', { n: asking }) },
-      todos: { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
+      todos: mode === 'signedIn' && tasks ? (() => {
+        const g = groupTasks(tasks, kstDay(), ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
+        return { n: open, badge: g.overdue.length ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: g.overdue.length, today: g.today.length }), sub: t('stat.tasksSub') };
+      })() : { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
       decisions: { n: dec.length, badge: ok(t('stat.b.week'), 'check'), main: t('stat.decided', { a: approved, r: dec.length - approved }), sub: t('stat.weekSub'), to: `${base}/decisions` },
       outputs: { n: out.length, badge: ok(t('stat.b.week'), 'file'), main: fmtBytes(out.reduce((s, f) => s + f.bytes, 0)), sub: t('stat.weekSub'), to: `${base}/outputs` },
       pages: { n: pg.length, badge: ok(t('stat.b.wiki'), 'doc'), main: t('stat.pagesRecent', { n: pgRecent }), sub: t(space === 'me' ? 'stat.pagesMe' : 'stat.pagesOrg') },
     };
-  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space]);
+  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks]);
 }
 
 /** 현황 카드(유건 9/27) — 카드마다 지표를 고른다. 1~5장, 조직 홈은 관리자만 바꾼다(구조는 공유). */
@@ -183,19 +201,18 @@ function Stats({ space, item, canEdit, setCfg }) {
 }
 
 // sizes: s=1/3, m=1/2, l=2/3, full=전체. spaces: 이 모듈을 쓸 수 있는 공간 종류.
-export const MODULES = [
-  { id: 'stats', title: 'mod.stats', icon: 'layout', sizes: ['l', 'full'], defaultSize: 'full', spaces: ['me', 'org'], intro: 'top', render: Stats },
-  { id: 'approvals', title: 'mod.approvals', icon: 'stamp', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/approvals', render: Approvals },
-  { id: 'mail', title: 'mod.mail', icon: 'mail', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me'], link: '/mail', render: Mail },
-  { id: 'todos', title: 'mod.todos', icon: 'check', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me'], render: Todos },
-  { id: 'pages', title: 'mod.pages', icon: 'doc', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], render: Pages },
-  { id: 'work', title: 'mod.work', icon: 'run', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/work', render: Work },
-  { id: 'outputs', title: 'mod.outputs', icon: 'file', sizes: ['m', 'l', 'full'], defaultSize: 'l', spaces: ['org'], link: '/outputs', render: Outputs },
-  { id: 'journal', title: 'mod.journal', icon: 'book', sizes: ['s', 'm', 'l', 'full'], defaultSize: 's', spaces: ['org'], link: '/journal', render: Journal },
-  { id: 'decisions', title: 'mod.decisions', icon: 'check', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'full', spaces: ['org'], link: '/decisions', render: Decisions },
-];
+const Calendar = (props) => <Suspense fallback={wait}><HomeView {...props} mode="calendar" /></Suspense>; // 캘린더 — 보기 9가지·디자인 3가지(views/CalendarWidget.jsx, 유건 10/1)
+const renderers = { stats: Stats, calendar: Calendar, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
+const BusinessHomeCard = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeCard })));
+const LazyBusinessHomeProvider = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeProvider })));
+export function BusinessHomeProvider(props) {
+  return <Suspense fallback={<div className="mod-empty" role="status">{t('biz.loading')}</div>}><LazyBusinessHomeProvider {...props} /></Suspense>;
+}
+export const MODULES = OFFICE_MODULES.map((module) => ({ ...module, render: renderers[module.id] ?? function BusinessModule(props) {
+  return <Suspense fallback={<div className="mod-empty" role="status">{t('biz.loading')}</div>}><BusinessHomeCard {...props} tab={module.businessTab} /></Suspense>;
+} }));
 
 export const DEFAULTS = {
-  me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'work', size: 'full' }],
-  org: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }],
+  me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'calendar', size: 'm' }, { id: 'work', size: 'm' }],
+  org: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'calendar', size: 'm' }, { id: 'todos', size: 'm' }],
 };

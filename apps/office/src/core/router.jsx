@@ -1,5 +1,6 @@
 // History API 라우터 — 라이브러리 없이 수십 줄. 주소가 곧 상태다(새로고침·새 탭·뒤로 가기가 그대로 동작).
 import { useSyncExternalStore } from 'react';
+import { isDesktop, openExternal, publicWebUrl } from './platform.js';
 
 const listeners = new Set();
 const emit = () => listeners.forEach((l) => l());
@@ -30,6 +31,9 @@ export function match(pattern, path) {
 export function Link({ to, onClick, ...rest }) {
   return <a href={to} {...rest} onClick={(e) => {
     onClick?.(e);
+    if (isDesktop() && !e.defaultPrevented && (e.metaKey || e.ctrlKey || e.shiftKey)) {
+      e.preventDefault(); openExternal(publicWebUrl(to)).catch(() => {}); return;
+    }
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault(); navigate(to);
   }} />;

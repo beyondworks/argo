@@ -19,7 +19,7 @@ test('loadPersonal 함수가 msgr_dm_personal_list RPC를 호출한다', () => {
 });
 
 test('loadOrgs가 개인 공간(PERSONAL)을 유지한다', () => {
-  assert.match(src, /if \(cur === PERSONAL \|\| \(cur && list\.some\(\(o\) => o\.id === cur\)\)\) return cur;/, '지금 공간이 개인이면 그대로(마지막 공간 복원보다 먼저)');
+  assert.match(src, /setOrgId\(\(cur\) => pickStartSpace\(\{ personal: PERSONAL, cur, orgIds, last: readLastOrg\(\), personalHasContent \}\)\);/, '시작 공간 규칙은 pickStartSpace(순수 함수, test/start-space.test.mjs가 행동을 잠근다)');
 });
 
 test('조직 전환 메뉴에 개인 항목이 맨 위에 있다', () => {
@@ -58,10 +58,10 @@ test('개인 공간에서 실시간은 dm:<채널> 토픽을 구독한다', () =
   assert.match(src, /roomTopicIds\(channels, chId, isPersonal, 50, lastAt\)/);
 });
 
-test('개인 공간에서 채널 절·멤버 절·크루 절이 감춰진다', () => {
+test('개인 공간에서 채널 절·멤버 절은 감춰지고, 내 에이전트 절은 보인다(2026-09-30 개인 공간 에이전트)', () => {
   assert.match(src, /\{!isPersonal && !orgBlocked && <RailSection id=\{orgId \? 'channels' : 'start'\}/, '조직 없으면 시작하기 절(D46) — 검수 M-5·3차 L-3으로 동의 게이트·로딩 조건도 같이 본다(orgBlocked)');
   assert.match(src, /\{!isPersonal && !orgBlocked && org && members\.length > 0/);
-  assert.match(src, /\{!isPersonal && !orgBlocked && org && \(myAvailable\.length > 0/);
+  assert.match(src, /\{\(isPersonal \? railVisible\.length > 0 : !orgBlocked && org && \(myAvailable\.length > 0/, '개인 공간은 내 개인 크루가 있으면 보인다');
 });
 
 test('개인 공간에서 업무 버튼·첨부 버튼이 감춰진다', () => {

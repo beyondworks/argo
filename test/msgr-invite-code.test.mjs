@@ -40,7 +40,8 @@ test('배선 — App.jsx의 초대가 링크가 아니라 안내문을 복사하
   assert.equal((app.match(/inviteShareText\(/g) ?? []).length, 3, '초대 창·관리자 초대·목록 복사 3곳(0.1.30 초대 창으로 통일)');
   assert.doesNotMatch(app, /\$\{location\.origin\}\$\{location\.pathname\}\?invite=/, '앱 오리진 링크 회귀');
   assert.match(app, /acceptInvite\(supabase, code\)/, '수락은 invite-flow(v2 → v1 폴백) 한 곳으로');
-  assert.match(app, /parseInviteCode\(joinCode\)/, '가입 버튼은 코드가 뽑힐 때만');
+  assert.match(app, /checkJoinInput\(raw\)/, '입력 확인은 checkJoinInput 한 곳 — 코드가 아니면 입력 아래에 이유(버튼만 회색으로 두지 않는다, UX 점검 C)');
+  assert.match(app, /disabled=\{!canSubmitJoin\(joinCode\)\}/, '버튼은 입력이 비었을 때만 막힌다');
   const i18n = await readFile(new URL('../apps/messenger/src/i18n.js', import.meta.url), 'utf8');
   for (const k of ['inv.share.head', 'inv.share.headMore', 'inv.share.headOrg', 'inv.share.how', 'inv.share.days', 'org.join.code', 'org.join.code.ph', 'org.join.code.go', 'org.join.code.bad']) {
     const line = i18n.split('\n').find((l) => l.startsWith(`  '${k}': [`));

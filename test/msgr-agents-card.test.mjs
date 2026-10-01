@@ -44,7 +44,7 @@ test('봇 = 개인 등급(클라이언트 crewTier, 2026-09-24 — Argo 에이�
 test('카드: 생성·회전은 RPC(토큰은 응답에서 setup 상태로만) · 설정 두 줄 = URL+토큰 · 해제는 인라인 확인 · 표는 폐기 제외', () => {
   const card = app.slice(app.indexOf('// ── 부록 N: 외부 에이전트'), app.indexOf("if (part === 'node') return ("));
   assert.match(card, /supabase\.rpc\('msgr_bot_create', \{ org: org\.id, kind, name, external_id: extId \?\? null \}\)/, '봇에 원본 에이전트 id');
-  assert.match(card, /const cur = extId \? botOf\(kind, extId\) : null;\n\s*if \(cur\) \{ const r = await supabase\.rpc\('msgr_bot_rotate'/, '같은 에이전트의 봇이 있으면 회전(중복 없음)');
+  assert.match(card, /const cur = findReusableBot\(bots, \{ kind, uid, extId, names: reuseNames \}\);\n\s*if \(cur\) \{ const r = await supabase\.rpc\('msgr_bot_rotate'/, '다시 쓸 봇이 있으면 회전(중복 없음) — 찾는 규칙은 bot-reuse.mjs(external_id가 같거나, 없으면 같은 기본 이름의 수동 봇)');
   assert.match(card, /await invoke\('agent_list', \{ kind \}\)/, '이 컴퓨터의 에이전트 전원 읽기');
   assert.match(card, /for \(const a of agents\) made\.push\(\{ \.\.\.\(await mkOrRotate\(kind, a\.name, externalAgentId\(installation, uid, kind, a\.id\)\)\)/, '에이전트마다 봇, 이름 = 에이전트 이름(종류 라벨 하드코딩 아님)');
   assert.match(card, /const \[remoteAgentName, setRemoteAgentName\] = useState\(''\)/, '다른 컴퓨터 에이전트는 표시 이름을 별도로 받는다');
@@ -56,7 +56,7 @@ test('카드: 생성·회전은 RPC(토큰은 응답에서 setup 상태로만) �
   assert.match(card, /setRenamingBot\(b\.id\); setRenameName\(b\.name\);/, '기존 이름을 편집값으로 연다');
   assert.match(card, /supabase\.rpc\('msgr_bot_revoke', \{ bot: b\.id \}\)/);
   assert.match(card, /setSetups\(made\); setSetup\(\{ id: made\[0\]\.id, token: made\[0\]\.token, kind \}\)/, '생성 토큰은 화면 상태로만');
-  assert.match(card, /<li>\{t\(`org\.agents\.setup\.\$\{setup\.kind \?\? 'custom'\}\.1`\)\}<\/li>/, '종류별 3단계 안내(유건 질문: 두 줄을 어디에 넣나)');
+  assert.match(card, /<li><InlineCode text=\{t\(`org\.agents\.setup\.\$\{setup\.kind \?\? 'custom'\}\.1`\)\} \/><\/li>/, '종류별 3단계 안내(유건 질문: 두 줄을 어디에 넣나) — 문구 속 `백틱`은 코드 표시로(UX 점검 D)');
   assert.match(card, /const botSetup = \(token\) => `ARGO_MSGR_URL=\$\{botUrl\}\\nARGO_MSGR_BOT_TOKEN=\$\{token\}`;/, '설정 덩어리 두 줄');
   assert.doesNotMatch(card, /localStorage|console\.log|token_hash/, '토큰 저장·로그 금지');
   assert.match(card, /from\('msgr_bots'\)\.select\('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at, external_id'\)/, '봇 표 열(해시 없음)');
@@ -70,7 +70,8 @@ test('원클릭 연결(유건 지시 "이렇게 어려우면 안 돼"): 앱 안�
   assert.match(card, /invoke\('agent_connect', \{ kind, url: botUrl, agents: made\.map/, '앱 커맨드 호출(에이전트 전원)');
   assert.match(card, /autoConnect\(b\.kind, r\.data, b\);/, '회전 직후 자동 연결');
   assert.match(card, /if \(!isDesktopTauri\(\) \|\| !\['hermes', 'openclaw'\]\.includes\(kind\) \|\| !bot\?\.external_id\) \{ setAuto\(null\); return; \}/, '앱 밖·기타 종류·다른 컴퓨터 봇은 수동');
-  assert.match(card, /r\?\.reason === 'cli_missing' \? 'missing' : 'failed'/, 'CLI 없음 분기');
+  assert.match(card, /r\?\.reason === 'cli_missing' \? 'missing' : r\?\.reason === 'openclaw_outdated' \? 'outdated' : 'failed'/, 'CLI 없음·OpenClaw 버전 부족 분기');
+  assert.match(card, /auto\?\.status === 'outdated' && <p className="msgr-auto failed"><InlineCode text=\{t\('org\.agents\.openclaw\.outdated'/, 'OpenClaw 버전 부족은 사전 문구로 안내(2026-09-29)');
   const rs = read('apps/messenger/src-tauri/src/agents.rs');
   assert.match(rs, /pub fn agent_connect\(app: tauri::AppHandle, kind: String, url: String, agents: Vec<AgentSetup>\)/, 'Rust 커맨드(에이전트 배열)');
   assert.match(rs, /pub fn agent_list\(app: tauri::AppHandle, kind: String\)/, '에이전트 목록 커맨드'); assert.match(rs, /\("HERMES_HOME", hh\.display\(\)\.to_string\(\)\)/, '헤르메스 프로필 홈 격리');
@@ -134,7 +135,9 @@ test('external IDs cannot auto-adopt another owner, installation, or legacy agen
   assert.notEqual(a, 'openclaw:main');
   assert.notEqual(id('a:b', 'c', 'hermes', 'default'), id('a', 'b:c', 'hermes', 'default'));
   assert.throws(() => id(null, 'owner', 'hermes', 'default'));
-  assert.match(app, /b\.created_by === uid && b\.external_id === extId/);
+  const reuse = read('apps/messenger/src/bot-reuse.mjs'); // 봇 찾기 규칙은 bot-reuse.mjs 한 곳(UX 점검 D) — 행동은 apps/messenger/test/bot-reuse.test.mjs가 잠근다
+  assert.match(reuse, /b\.created_by === uid/);
+  assert.match(reuse, /if \(extId\) return mine\.find\(\(b\) => b\.external_id === extId\)/);
   assert.match(app, /externalAgentId\(l\.installationId, uid, kind, a\.id\) === bot\.external_id/);
   assert.doesNotMatch(app, /external_id\.split/);
 });

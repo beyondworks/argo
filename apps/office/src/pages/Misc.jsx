@@ -2,44 +2,89 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../ui/Icon.jsx';
 import { showToast } from '../ui/Overlay.jsx';
-import { t, ago, useLang, getLang, setLang } from '../core/i18n.js';
-import { THEMES, applyTheme, readTheme } from '../core/theme.js';
+import { t, ago, useLang, getLang, setLang, registerDict } from '../core/i18n.js';
+import { CUSTOM_DICT } from './custom-i18n.js';
+import { FONTS, COLORS, RADIUS_MAX, ALPHA_MAX, EMPTY, readCustom, saveCustom, refreshCustom, isEmpty } from '../core/custom-theme.js';
+import { MODES, SHELLS, applyTheme, applyShell, readTheme, readShell, familyOf, modeOf } from '../core/theme.js';
 import { useStore, restorePage, resetDraft } from '../core/store.js';
 import { Link } from '../core/router.jsx';
 import { baseOf, mod } from '../core/commands.js';
 import { SPACES, ME, getMode, signOut } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
+import { DocView } from '../ui/DocView.jsx';
+import { SWATCH, COLOR_GROUPS } from './theme-picks.js';
 
-/** 테마 미리보기 — 앱을 작게 줄인 모습(사이드바·캔버스·카드·글줄). "시스템"은 라이트와 다크를 대각선으로 반씩 보여 준다. */
-function Mini({ tone }) {
-  return (
-    <span className="mini" data-pv={tone} aria-hidden="true">
-      <span className="mini-side"><i /><i /><i /></span>
-      <span className="mini-main"><span className="mini-card"><i /><i className="short" /></span><span className="mini-card"><i /><i className="mark" /></span></span>
-    </span>
-  );
+/** 셸 견본 — 지금 고른 색으로 그린 작은 창. 모양만 셸마다 다르다 */
+function ShellMini({ shell }) {
+  return <span className="shell-mini" data-s={shell} aria-hidden="true"><span className="sm-win"><span className="sm-side"><i /><i /><i /></span><span className="sm-main"><i /><i /></span></span></span>;
 }
-function ThemeThumb({ theme }) {
-  const [family, mode] = theme.split('-');
-  if (!mode) return <span className="thumb"><Mini tone={`${family}-light`} /><span className="thumb-dark"><Mini tone={`${family}-dark`} /></span></span>;
-  return <span className="thumb"><Mini tone={theme} /></span>;
+
+registerDict(CUSTOM_DICT);
+
+/** 커스텀 테마 — 둥글기·글꼴·투명도는 모드 공통, 색은 지금 보이는 모드에만. 값을 바꿀 때마다 저장·적용한다 */
+function CustomTheme({ dark }) {
+  const [c, setC] = useState(readCustom);
+  const mode = dark ? 'dark' : 'light';
+  const put = (next) => { setC(next); saveCustom(next); };
+  const setColor = (k, v) => put({ ...c, [mode]: { ...c[mode], [k]: v } });
+  let warn = false;
+  try { warn = (JSON.parse(localStorage.getItem('argo-office-custom-css') || '{}')[mode]?.['@flags'] ?? '').includes('warn'); } catch { /* 없음 */ }
+  return (
+    <details className="custom-theme" open={!isEmpty(c) || undefined}>
+      <summary>{t('custom.title')}</summary>
+      <p className="dim small">{t('custom.note', { mode: t(`mode.${mode}`) })}</p>
+      <div className="theme-rows">
+        <label className="theme-row"><span className="label">{t('custom.radius')}</span>
+          <span className="custom-range"><input type="range" min="0" max={RADIUS_MAX} step="1" value={c.radius ?? 12} aria-valuetext={c.radius == null ? t('custom.default') : `${c.radius}px`} onChange={(e) => put({ ...c, radius: +e.target.value })} />
+            <output className="mono">{c.radius == null ? t('custom.default') : `${c.radius}px`}</output>
+            {c.radius != null && <button type="button" className="icon-btn sm" aria-label={t('custom.clear', { name: t('custom.radius') })} onClick={() => put({ ...c, radius: null })}><Icon name="x" size={12} /></button>}</span></label>
+        <label className="theme-row"><span className="label">{t('custom.font')}</span>
+          <select className="select" value={c.font} onChange={(e) => put({ ...c, font: e.target.value })}>{Object.keys(FONTS).map((f) => <option key={f} value={f}>{t(`font.${f}`)}</option>)}</select></label>
+        <label className="theme-row"><span className="label">{t('custom.alpha')}</span>
+          <span className="custom-range"><input type="range" min="0" max={ALPHA_MAX} step="5" value={c.alpha} onChange={(e) => put({ ...c, alpha: +e.target.value })} /><output className="mono">{c.alpha}%</output></span></label>
+        <div className="theme-row"><span className="label">{t(`mode.${mode}`)}</span>
+          <div className="custom-colors">{COLORS.map((k) => (
+            <span key={k} className="custom-color">
+              <label><input type="color" value={c[mode][k] || '#888888'} onChange={(e) => setColor(k, e.target.value)} className={c[mode][k] ? 'set' : ''} /><span>{t(`custom.${k}`)}</span></label>
+              {c[mode][k] && <button type="button" className="icon-btn sm" aria-label={t('custom.clear', { name: t(`custom.${k}`) })} onClick={() => setColor(k, null)}><Icon name="x" size={12} /></button>}
+            </span>))}</div></div>
+      </div>
+      {warn && <p className="small custom-warn" role="status">{t('custom.warn')}</p>}
+      {!isEmpty(c) && <button type="button" className="btn ghost sm" onClick={() => put({ ...EMPTY, light: {}, dark: {} })}>{t('custom.reset')}</button>}
+    </details>
+  );
 }
 
 export function Settings() {
   useLang();
-  const [theme, setTheme] = useState(readTheme());
-  const pick = (th) => { applyTheme(th); setTheme(th); };
+  const [theme, setTheme] = useState(readTheme()), [shell, setShell] = useState(readShell());
+  const family = familyOf(theme), mode = modeOf(theme);
+  const pick = (th) => { applyTheme(th); refreshCustom(); setTheme(th); };
+  const pickShell = (sh) => { applyShell(sh); refreshCustom(); setShell(sh); };
+  const dark = mode === '-dark' || (mode === '' && matchMedia('(prefers-color-scheme: dark)').matches);
   const keys = [[`${mod}K`, t('nav.search')], [`${mod}\\`, t('cmd.toggleSidebar')], [`${mod}/`, t('cmd.toggleLang')], [`${mod}⌥N`, t('cmd.newPage')], ['J / K', t('nav.mail')], ['E', t('mail.archiveIt')], ['R', t('mail.reply')], ['Shift+F10', t('more')]];
   return (
     <div className="page-wrap">
       <div className="page-title-row"><h1 className="page-h1">{t('settings.title')}</h1></div>
       <section className="set-card">
         <h2>{t('settings.theme')}</h2>
-        <div className="theme-grid" role="radiogroup" aria-label={t('settings.theme')}>{THEMES.map((th) => (
-          <button key={th} type="button" role="radio" aria-checked={theme === th} className={`theme-opt${theme === th ? ' on' : ''}`} onClick={() => pick(th)}>
-            <ThemeThumb theme={th} />
-            <span className="theme-name">{t(`theme.${th}`)}{theme === th && <Icon name="check" size={14} />}</span>
-          </button>))}</div>
+        <div className="theme-rows">
+          <div className="theme-row"><span className="label">{t('settings.mode')}</span>
+            <div className="seg" role="radiogroup" aria-label={t('settings.mode')}>{MODES.map((m) => <button key={m || 'system'} type="button" role="radio" aria-checked={mode === m} className={`seg-btn${mode === m ? ' on' : ''}`} onClick={() => pick(family + m)}>{t(`mode.${m.slice(1) || 'system'}`)}</button>)}</div></div>
+          <div className="theme-row"><span className="label">{t('settings.shell')}</span>
+            <div className="shell-picks" role="radiogroup" aria-label={t('settings.shell')}>{SHELLS.map((sh) => (
+              <button key={sh} type="button" role="radio" aria-checked={shell === sh} className={`shell-opt${shell === sh ? ' on' : ''}`} onClick={() => pickShell(sh)}>
+                <ShellMini shell={sh} /><span>{t(`shell.${sh}`)}</span></button>))}</div></div>
+          <div className="theme-row"><span className="label">{t('settings.color')}</span>
+            <div className="color-groups" role="radiogroup" aria-label={t('settings.color')}>{COLOR_GROUPS.map(([g, fams]) => (
+              <div key={g} className="color-group" role="group" aria-label={t(`colorgroup.${g}`)}>
+                <span className="color-group-name" aria-hidden="true">{t(`colorgroup.${g}`)}{fams.includes(family) && <b> · {t(`color.${family}`)}</b>}</span>
+                <div className="color-picks">{fams.map((f) => (
+                  <button key={f} type="button" role="radio" aria-checked={family === f} aria-label={t(`color.${f}`)} title={t(`color.${f}`)} className={`swatch${family === f ? ' on' : ''}`} onClick={() => pick(f + mode)}
+                    style={{ '--sw-a': SWATCH[f][0], '--sw-b': SWATCH[f][1], '--sw-c': SWATCH[f][2] }}><i /></button>))}</div>
+              </div>))}</div></div>
+        </div>
+        <CustomTheme key={dark ? 'dark' : 'light'} dark={dark} />
       </section>
       <section className="set-card">
         <h2>{t('settings.lang')}</h2>
@@ -89,30 +134,6 @@ export function Shared() {
 }
 
 /** 공개 게시 화면 — 조직 로고가 위에, 하단에 작은 "Argo Office로 만듦". 결재·메일 참조와 비공개 블록은 빠진다. */
-const TAG = { paragraph: 'p', bulletList: 'ul', orderedList: 'ol', taskList: 'ul', listItem: 'li', taskItem: 'li', blockquote: 'blockquote', codeBlock: 'pre' };
-/** 공개 본문 그리기 — HTML 문자열을 쓰지 않고 노드를 React 요소로만 만든다. 링크는 http(s)만. */
-function Node({ n }) {
-  if (n.type === 'text') {
-    let el = n.text;
-    for (const m of n.marks ?? []) {
-      if (m.type === 'bold') el = <strong>{el}</strong>;
-      else if (m.type === 'italic') el = <em>{el}</em>;
-      else if (m.type === 'code') el = <code>{el}</code>;
-      else if (m.type === 'link' && /^https?:\/\//.test(m.attrs?.href ?? '')) el = <a href={m.attrs.href} rel="noopener nofollow" target="_blank">{el}</a>;
-    }
-    return el;
-  }
-  if (n.type === 'hardBreak') return <br />;
-  if (n.type === 'horizontalRule') return <hr />;
-  const kids = (n.content ?? []).map((c, i) => <Node key={i} n={c} />);
-  if (n.type === 'heading') { const H = `h${Math.min(3, Math.max(1, n.attrs?.level ?? 1))}`; return <H>{kids}</H>; }
-  const Tag = TAG[n.type];
-  return Tag ? <Tag>{kids}</Tag> : <>{kids}</>;
-}
-
-/** 문서 본문을 읽기 전용으로 — 공개 화면·버전 미리 보기 공용 */
-export const DocView = ({ doc }) => (doc?.content ?? []).map((n, i) => <Node key={i} n={n} />);
-
 export function PublicPage({ id: token }) {
   useLang();
   const local = useStore((s) => s.pages.find((p) => p.id === token));   // 예시 데이터 모드(서버 없음)에서는 페이지 id로 연다

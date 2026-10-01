@@ -161,7 +161,10 @@ const WS_LEDGER_FILES = new Set([
    발화를 써 넣으면 결재 없는 동료 지시 주입 + 사장이 보는 이력 위조가 성립한다 — agents/와 같은
    계열이다(분리 검수 MEDIUM). 크루가 이 파일을 직접 만질 정당한 흐름은 없다(이력은 프롬프트로
    주입되고 파일은 thread.mjs가 서버측에서 관리한다). */
-const WS_CONTROL_DIRS = new Set(['agents', 'chats']);
+/* mail/도 같은 이유로 금고다. `mail/<slug>/*.json`은 쪽지 정본이고 스케줄러가 그대로 읽어 배달 턴을 만든다 — 그 안의 relaxed·tree·hop·chain은
+   위임 제한(풀림 여부·합계 예산·단계)을 정하는 값이라, 크루가 파일을 직접 써 넣으면 제한 없는 배달 턴이 성립한다(검수 2026-10-01 LOW-1).
+   크루가 쪽지를 보내는 정당한 길은 send_to_crew 도구뿐이다(crewmail.mjs가 서버측에서 적재). */
+const WS_CONTROL_DIRS = new Set(['agents', 'chats', 'mail']);
 
 /* 비교용 이름 정규화 — 파일시스템이 이름을 "손질해서" 같은 파일에 쓰는 경로를 막는다.
    ① Win32는 후행 점·공백을 잘라내므로 `capabilities.json.` / `capabilities.json `이 본체를 그대로
@@ -263,9 +266,11 @@ const WS_DOT_FILES = new Set([
   // WS_ROOT 직속(<ws>/../.x) — 전 회사 공용 기기 상태·계정 자격
   '.device-session.json', '.tmp-devsess-', // 세션 본체 + 원자적 쓰기 임시본(토큰 평문)
   '.device-session.log', // 회전·거절 진단 JSONL(+`.1` 회전본 — 접두) — 사유는 마스킹돼 있으나 도구별 판정 불일치 금지(검수 MEDIUM-3)
+  '.device-session.lock', // 회전 프로세스 간 잠금(디렉터리, 2026-10-01) — 크루가 만들어 두면 만료 직전 회전이 잠금 대기로 막혀 동기화·크루 턴이 멈춘다
   '.device-e2ee.json', '.tmp-e2ee-', // E2EE 기기 개인키·DEK + 원자적 쓰기 임시본 — cat 한 줄이 "본인만 여는 열쇠" 유출(세션 파일과 동급 최악)
   '.e2ee-reseal.json', // E2EE 재봉인 마커(wsId 목록뿐 — 시크릿 아님) — 루트 직속 제어 파일 일관 방어(크루 조작 시 재봉인 누락·유발)
   '.sync-credentials.json',
+  '.server-presence.json', // 앱 사이드카 실행 표식(pid, 2026-10-01) — 크루가 심으면 argo login이 영구 거절되거나 앱 실행 중 판정이 위조된다
   // `.account-secrets` 접두 하나로 3형태를 덮는다 — 로컬(`-local.json`)·사용자 스코프
   // (`-{uid}.json`, runners/creds.mjs 템플릿 리터럴)·레거시(`.account-secrets.json`).
   // 이름만 등재했다가 **로그인하면 파일명이 uid로 바뀌어** 러너 API 키·OAuth 토큰이 셸에

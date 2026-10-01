@@ -1,5 +1,5 @@
-// 모달·시트·토스트 — portal로 body에 붙인다(transform 조상이 fixed를 깨뜨리는 문제 회피, 본체 규칙).
-// 스크롤 잠금은 참조 카운트(겹친 모달이 서로의 잠금을 풀지 않게).
+// 모달·토스트 — portal로 body에 붙인다(transform 조상이 fixed를 깨뜨리는 문제 회피, 본체 규칙).
+// 스크롤 잠금은 참조 카운트(겹친 모달이 서로의 잠금을 풀지 않게). 오른쪽 패널(Sheet)은 ui/Panel.jsx — 쓰는 화면이 모두 지연 로드라 첫 화면 묶음에서 뺐다(9/30).
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon.jsx';
@@ -14,16 +14,18 @@ function useScrollLock(on) {
   }, [on]);
 }
 
-function useDialog(open, onClose) {
+export function useDialog(open, onClose) {
   const ref = useRef(null);
+  const close = useRef(onClose);
+  close.current = onClose; // 여는 쪽이 onClose를 매번 새로 만든다 — 의존성에 두면 글자를 칠 때마다 포커스가 첫 칸으로 되돌아갔다(9/30)
   useScrollLock(open);
   useEffect(() => {
     if (!open) return;
     const back = document.activeElement;
     // autoFocus 대신 마운트 뒤 포커스 — 폰에서는 키보드가 튀어나오지 않게 생략
-    if (!matchMedia('(pointer: coarse)').matches) ref.current?.querySelector('input, textarea, select, button:not(.x)')?.focus({ preventScroll: true });
+    if (!matchMedia('(pointer: coarse)').matches) (ref.current?.querySelector('[data-autofocus]') ?? ref.current?.querySelector('input, textarea, select, button:not(.x)'))?.focus({ preventScroll: true }); // data-autofocus: 첫 칸이 이미 정해진 창(예: 캠페인이 고정된 광고비 기록)
     const onKey = (e) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
+      if (e.key === 'Escape') { e.stopPropagation(); close.current(); }
       if (e.key === 'Tab' && ref.current) { // 포커스를 대화상자 안에 가둔다
         const f = [...ref.current.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')].filter((el) => !el.disabled);
         if (!f.length) return;
@@ -33,7 +35,7 @@ function useDialog(open, onClose) {
     };
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('keydown', onKey); back?.focus?.({ preventScroll: true }); };
-  }, [open, onClose]);
+  }, [open]);
   return ref;
 }
 
@@ -47,21 +49,6 @@ export function Modal({ open, onClose, title, children, width = 480, footer }) {
         <div className="modal-body">{children}</div>
         {footer && <footer className="modal-foot">{footer}</footer>}
       </div>
-    </div>,
-    document.body,
-  );
-}
-
-export function Sheet({ open, onClose, title, children, footer }) {
-  const ref = useDialog(open, onClose);
-  if (!open) return null;
-  return createPortal(
-    <div className="scrim scrim-sheet" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <aside ref={ref} className="sheet" role="dialog" aria-modal="true" aria-label={title}>
-        <header className="modal-head"><h2>{title}</h2><button type="button" className="icon-btn x" aria-label={t('close')} onClick={onClose}><Icon name="x" /></button></header>
-        <div className="sheet-body">{children}</div>
-        {footer && <footer className="modal-foot">{footer}</footer>}
-      </aside>
     </div>,
     document.body,
   );

@@ -4,6 +4,7 @@
 // 정지 상태에서도 노드가 미세하게 부유하고, 호버하면 이웃이 서서히 밝아지며 연결선을 따라 점이 흐른다. 동작 축소 설정이면 전부 멈춘다.
 import { useEffect, useRef } from 'react';
 import { buildGraph2D, stem } from '@argo/graph2d-core';
+import { graphLabelVisible, placeLabels } from './graph-labels.mjs';
 
 const rgbOf = (st, name, fb) => { const a = st.getPropertyValue(name).trim().split(',').map(Number); return a.length === 3 && !a.some(Number.isNaN) ? a : fb; };
 const NO_AGENTS = []; // 기본값을 호출마다 새 배열로 만들면 의존 배열이 매 렌더 바뀌어 그래프가 통째로 재구축된다(검수 H-1)
@@ -112,9 +113,15 @@ export function Graph3D({ docs, agents = NO_AGENTS, focusRel = null, onSelectDoc
         if (i === hover || i === fi) { ctx.beginPath(); ctx.arc(q.x, q.y, r + 2.5, 0, TAU); ctx.strokeStyle = `rgba(${PAPER.join(',')}, ${0.9 * intro})`; ctx.lineWidth = 1.5; ctx.stroke(); }
       }
       // 라벨 — 허브·집중·호버·이웃(호버 중)만
+      const cands = [];
       for (const i of order) {
-        const q = proj[i]; if (q.behind) continue; const show = i === hover || i === fi || (hover >= 0 && adj[hover].has(i)) || (hover < 0 && (near ? near.has(i) : nodes[i].deg >= 3));
+        const q = proj[i]; if (q.behind) continue; const show = graphLabelVisible({ i, hover, focus: fi, hoverNeighbor: hover >= 0 && adj[hover].has(i), near, deg: nodes[i].deg, n });
         if (!show) continue;
+        const force = i === hover || i === fi; cands.push({ i, x: q.x + nodeR(i, q.s) + 6, y: q.y - 8, w: ctx.measureText(nodes[i].label).width, h: 16, pri: nodes[i].deg, z: q.z, force });
+      }
+      const drawn = placeLabels(cands); // 이름이 서로 겹치면 우선순위 낮은 쪽을 거른다(LA-24)
+      for (const i of order) {
+        const q = proj[i]; if (q.behind || !drawn.has(i)) continue;
         const r = nodeR(i, q.s); const al = depthA(q.z) * (i === hover || i === fi ? 1 : 0.8) * glow[i];
         ctx.fillStyle = `rgba(${(i === hover || i === fi || nodes[i].deg >= 4 ? LAB : INK).join(',')}, ${al})`; ctx.textBaseline = 'middle';
         ctx.fillText(nodes[i].label, q.x + r + 6, q.y);

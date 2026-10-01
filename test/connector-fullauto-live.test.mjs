@@ -97,6 +97,20 @@ test('풀 오토 켜짐 + 조직 채널 넘김 뿌리가 주인이 아닌 턴도
   assert.equal(r.error, 'guest_blocked', '뿌리가 주인이 아닌 넘김 턴인데 풀 오토가 실행을 허용했다');
 });
 
+test('풀 오토 켜짐 + 오피스에서 맡긴 주인 턴(office) — 쓰기는 결재로 간다(메일발 턴 풀 오토 제외, 유건 9/26·9/29)', async () => {
+  // 주인이 직접 시킨 턴이라 손님은 아니다(guest_blocked가 아니라 결재). 외부 자료(메일 본문 등)를 담은 턴이 결재 없이 발송하지 않게.
+  await updateCompany(WS, { fullAuto: true });
+  const ownerCtx = { kind: 'msgr', orgId: 'org-1', channelId: 'ch-1', crewId: 'crew-1', uid: 'owner-uid', wsId: WS, origin: 'owner-uid', hop: 0 };
+  // 대조군 — 같은 주인 메신저 턴에 표지만 없으면 풀 오토로 바로 나간다(이 테스트가 풀 오토 켜짐 상태를 실제로 재는지 확인)
+  const control = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'f@example.com', body: 'owner' }, { slug: 'captain', mirrorCtx: ownerCtx });
+  assert.equal(control.ok, true, '전제: 주인의 메신저 직접 턴은 풀 오토로 나간다');
+  const officeCtx = { ...ownerCtx, office: true };
+  const sent = s.counters.toolCalls.send_mail_demo ?? 0;
+  const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'e@example.com', body: 'office' }, { slug: 'captain', mirrorCtx: officeCtx });
+  assert.equal(r.error, 'approval_pending', '오피스에서 맡긴 턴인데 풀 오토가 결재 없이 보냈다');
+  assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, sent, '결재 전에 발송이 서버에 닿았다');
+});
+
 test('읽기 전용 도구는 이름에 sensitive 단어가 있어도 영향 없음 — 결재 자체가 애초에 없다(분리 검수 MEDIUM 반영)', async () => {
   // 이 시점 회사 상태는 fullAuto:true(위 테스트가 켰다) — 단어 보강이 조회까지 결재로 밀어붙이지 않는지
   // 가장 엄격한 조건(풀 오토 켜짐)에서 잰다. 결재가 전혀 등록되지 않고 그대로 실행돼야 한다.

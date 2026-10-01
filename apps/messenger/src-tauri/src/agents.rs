@@ -185,17 +185,162 @@ pub fn parse_hermes_profiles(out: &str) -> Vec<(String, bool)> {
     v
 }
 
-/// `openclaw agents list` 출력의 "- <id> (default)" 줄에서 에이전트 id를 뽑는다.
+/// `openclaw agents list` 텍스트의 에이전트 줄("- <id> (default)", 들여쓰기 없음). 들여쓴 "- " 줄은 채널·공급자 항목이다
+/// (예: "    - Argo Messenger main: configured") — 에이전트로 읽지 않는다. `--json`이 없는 CLI에서만 쓰는 대체 경로.
 pub fn parse_openclaw_agents(out: &str) -> Vec<(String, bool)> {
     let mut v = Vec::new();
     for line in out.lines() {
-        let t = line.trim();
-        let Some(rest) = t.strip_prefix("- ") else { continue };
+        let Some(rest) = line.strip_prefix("- ") else { continue };
+        let rest = rest.trim();
         let is_default = rest.contains("(default)");
         let id = rest.split_whitespace().next().unwrap_or("").to_string();
         if !id.is_empty() && id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') { v.push((id, is_default)); }
     }
     v
+}
+
+// 2026.8.1에서 루트 `openclaw/plugin-sdk`가 없어졌다 — 그보다 낮은 버전에는 앱이 싣는 새 플러그인이 올라가지 않는다(connect.py OPENCLAW_MIN과 같은 값).
+const OPENCLAW_MIN: (u32, u32, u32) = (2026, 8, 1);
+const OPENCLAW_PLUGIN_ID: &str = "openclaw-argo-msgr";
+
+/// CLI 출력에서 JSON 본문만 읽는다 — 앞에 경고 줄이 섞여 나와도 된다. 없거나 깨졌으면 None.
+fn json_part(out: &str) -> Option<serde_json::Value> {
+    let mut offset = 0;
+    for line in out.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with('{') || t.starts_with('[') { return serde_json::from_str(&out[offset..]).ok(); }
+        offset += line.len();
+    }
+    None
+}
+
+/// `openclaw agents list --json` → [(id, 기본 여부)]. 형식이 다르면 None(텍스트 목록으로 대체).
+fn parse_openclaw_agents_json(out: &str) -> Option<Vec<(String, bool)>> {
+    let data = json_part(out)?;
+    Some(data.as_array()?.iter().filter_map(|a| {
+        let id = a.get("id")?.as_str()?;
+        (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')).then(|| (id.to_string(), a.get("isDefault") == Some(&serde_json::Value::Bool(true))))
+    }).collect())
+}
+
+/// `openclaw --version`("OpenClaw 2026.9.6 (eb377ac)") → ((2026, 9, 6), 베타 여부). 못 읽으면 None.
+fn parse_openclaw_version(out: &str) -> Option<((u32, u32, u32), bool)> {
+    let b = out.as_bytes();
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let digits = |i: usize| b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+    for i in 0..b.len() {
+        if !b[i].is_ascii_digit() || (i > 0 && word(b[i - 1])) || digits(i) != 4 { continue; }
+        let j = i + 5; if b.get(i + 4) != Some(&b'.') { continue; }
+        let n2 = digits(j); if !(1..=2).contains(&n2) || b.get(j + n2) != Some(&b'.') { continue; }
+        let k = j + n2 + 1; let n3 = digits(k); if !(1..=3).contains(&n3) { continue; }
+        let end = k + n3;
+        let suffix = if b.get(end) == Some(&b'-') { let n = b[end + 1..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'.').count(); &out[end + 1..end + 1 + n] } else { "" };
+        if suffix.is_empty() && b.get(end).is_some_and(|c| word(*c)) { continue; }
+        let num = |s: &str| s.parse::<u32>().ok();
+        return Some(((num(&out[i..i + 4])?, num(&out[j..j + n2])?, num(&out[k..end])?), suffix.contains("beta")));
+    }
+    None
+}
+
+/// 오픈클로가 새 플러그인을 올릴 수 있는 버전인지(`openclaw --version`의 결과). 괜찮으면 None, 아니면 Some(감지한 버전 — 읽지 못했으면 빈 문자열).
+/// 사용자 문구는 화면이 reason "openclaw_outdated"를 사전(i18n.js org.agents.openclaw.outdated)으로 번역한다 — 여기서는 문장을 만들지 않는다.
+fn openclaw_version_problem(ok: bool, out: &str) -> Option<String> {
+    let Some((ver, beta)) = parse_openclaw_version(out).filter(|_| ok) else { return Some(String::new()); };
+    if ver > OPENCLAW_MIN || (ver == OPENCLAW_MIN && !beta) { return None; }
+    Some(format!("{}.{}.{}{}", ver.0, ver.1, ver.2, if beta { "-beta" } else { "" }))
+}
+
+/// `openclaw config get bindings --json` → 바인딩 목록. 아직 없으면 빈 목록, 읽을 수 없으면 None.
+/// 없을 때 예전 CLI는 "Config path not found: bindings", 2026.8.x+는 rc=1과 {"ok":false,"error":{"message":"Config path is valid but unset: bindings…"}}.
+fn openclaw_bindings(ok: bool, out: &str) -> Option<Vec<serde_json::Value>> {
+    if !ok {
+        let unset = ["Config path not found: bindings", "Config path is valid but unset: bindings"].iter().any(|m| out.match_indices(m).any(|(i, _)| !out[i + m.len()..].chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_')));
+        return unset.then(Vec::new);
+    }
+    match json_part(out) {
+        Some(serde_json::Value::Array(v)) => Some(v),
+        None if matches!(out.trim(), "" | "null") => Some(Vec::new()),
+        _ => None,
+    }
+}
+
+/// `plugins inspect <id> --runtime --json`의 plugin.status로 실제 로드를 판정한다. `plugins enable`은 로드에 실패해도 rc=0이고
+/// `plugins list --json`도 깨진 플러그인을 loaded로 보여 판정에 못 쓴다(실측). 정상이면 None, 아니면 오류 내용(끝 300자).
+fn openclaw_plugin_load_error(ok: bool, out: &str) -> Option<String> {
+    let tail = |s: &str| { let n = s.chars().count(); s.chars().skip(n.saturating_sub(300)).collect::<String>() };
+    let data = if ok { json_part(out) } else { None };
+    let Some(plugin) = data.as_ref().and_then(|d| d.get("plugin")).filter(|p| p.is_object()) else {
+        return Some(tail(if out.trim().is_empty() { "plugins inspect failed" } else { out.trim() }));
+    };
+    let error = plugin.get("error").filter(|e| !e.is_null() && *e != "" && *e != false);
+    if plugin.get("status").and_then(|s| s.as_str()) == Some("loaded") && error.is_none() { return None; }
+    let diags: Vec<&str> = data.as_ref().and_then(|d| d.get("diagnostics")).and_then(|d| d.as_array()).map(|d| d.iter().filter(|x| x.get("level").and_then(|l| l.as_str()) == Some("error")).filter_map(|x| x.get("message").and_then(|m| m.as_str())).collect()).unwrap_or_default();
+    let status = plugin.get("status").map(|s| s.as_str().map(str::to_string).unwrap_or_else(|| s.to_string())).unwrap_or_else(|| "None".into());
+    Some(tail(&match error { Some(e) => e.as_str().map(str::to_string).unwrap_or_else(|| e.to_string()), None if !diags.is_empty() => diags.join("; "), None => format!("status={status}") }))
+}
+
+/// 오픈클로 목록 실패 — 버전이 모자람(감지한 버전) 또는 CLI 오류 원문.
+#[derive(Debug, PartialEq)]
+enum OpenclawListError { Outdated(String), Cli(String) }
+
+/// 에이전트 목록: 버전이 모자라면 목록을 읽지 않는다. `--json`을 먼저 쓰고, 그 옵션이 없는 CLI만 텍스트로 읽는다.
+fn openclaw_agents(mut run: impl FnMut(&[&str]) -> (bool, String)) -> Result<Vec<(String, bool)>, OpenclawListError> {
+    let (ok, out) = run(&["--version"]);
+    if let Some(have) = openclaw_version_problem(ok, &out) { return Err(OpenclawListError::Outdated(have)); }
+    let (ok, out) = run(&["agents", "list", "--json"]);
+    if let Some(found) = parse_openclaw_agents_json(&out).filter(|_| ok) { return Ok(found); }
+    let (ok, out) = run(&["agents", "list"]); if !ok { return Err(OpenclawListError::Cli(out)); }
+    Ok(parse_openclaw_agents(&out))
+}
+
+/// 플러그인 켜기: 게이트웨이가 돌고 있으면 `plugins enable`은 게이트웨이에 요청하는데, 게이트웨이는 저장된 플러그인 목록만 알아서 방금 복사한
+/// 폴더를 "plugin not installed"로 거절한다(2026.9.6 실측) — 목록을 먼저 다시 만든다. 켠 뒤에는 실제로 불러와 보고, 안 되면 계정·바인딩을 쓰기 전에 멈춘다.
+fn openclaw_enable_plugin(run: &mut impl FnMut(&[&str]) -> (bool, String), steps: &mut Vec<serde_json::Value>) -> bool {
+    let (ok, out) = run(&["plugins", "registry", "--refresh"]);
+    if !ok { steps.push(step("enable", false, out)); return false; }
+    let (ok, out) = run(&["plugins", "enable", OPENCLAW_PLUGIN_ID]);
+    if !ok { steps.push(step("enable", false, out)); return false; }
+    let (i_ok, i_out) = run(&["plugins", "inspect", OPENCLAW_PLUGIN_ID, "--runtime", "--json"]);
+    if let Some(err) = openclaw_plugin_load_error(i_ok, &i_out) {
+        steps.push(step("enable", false, err)); // CLI 진단 원문(다른 단계 실패와 같은 방식) — 안내 문장은 화면의 사전이 붙인다
+        return false;
+    }
+    steps.push(step("enable", true, out)); true
+}
+
+fn openclaw_connect(mut run: impl FnMut(&[&str]) -> (bool, String), install: impl FnOnce() -> Result<usize, String>, url: &str, agents: &[AgentSetup]) -> (bool, &'static str, Vec<serde_json::Value>) {
+    let (v_ok, v_out) = run(&["--version"]);
+    if let Some(have) = openclaw_version_problem(v_ok, &v_out) {
+        return (false, "openclaw_outdated", agents.iter().map(|a| serde_json::json!({ "id": a.id, "ok": false, "version": have, "steps": [step("plugin", false, have.clone())] })).collect());
+    }
+    let mut common = Vec::new();
+    let plugin_ok = match install() { Ok(n) => { common.push(step("plugin", true, format!("{n} files"))); true }, Err(e) => { common.push(step("plugin", false, e)); false } };
+    let plugin_ok = plugin_ok && openclaw_enable_plugin(&mut run, &mut common);
+    let mut results = Vec::new();
+    let mut all_ok = true;
+    for a in agents {
+        let mut steps = common.clone();
+        let ok = plugin_ok && (|| -> bool {
+            let base = format!("channels.argo-msgr.accounts[{}]", a.id);
+            for (k, v) in [("url", url), ("token", a.token.as_str()), ("enabled", "true")] {
+                let (ok, out) = run(&["config", "set", &format!("{base}.{k}"), v]);
+                if !ok { steps.push(step("env", false, out)); return false; }
+            }
+            steps.push(step("env", true, format!("openclaw.json {base}")));
+            let (b_ok, b_out) = run(&["config", "get", "bindings", "--json"]);
+            let Some(bindings) = openclaw_bindings(b_ok, &b_out) else { steps.push(step("enable", false, if b_out.trim().is_empty() { "Invalid bindings config".to_string() } else { b_out })); return false; };
+            let json = serde_json::to_string(&merge_binding(bindings, &a.id)).unwrap();
+            let (b_ok, b_out) = run(&["config", "set", "bindings", &json]);
+            steps.push(step("enable", b_ok, b_out)); b_ok
+        })();
+        all_ok &= ok;
+        results.push(serde_json::json!({ "id": a.id, "ok": ok, "steps": steps }));
+    }
+    let (g_ok, g_out) = if all_ok { run(&["gateway", "restart"]) } else { (false, "Configuration failed; gateway unchanged".into()) };
+    let (g_ok, g_out) = if g_ok || !all_ok { (g_ok, g_out) } else { let (i_ok, i_out) = run(&["gateway", "install"]); if i_ok { run(&["gateway", "start"]) } else { (false, format!("{g_out}\n{i_out}")) } };
+    all_ok &= g_ok;
+    for r in results.iter_mut() { if !g_ok { r["ok"] = false.into(); } if let Some(arr) = r.get_mut("steps").and_then(|s| s.as_array_mut()) { arr.push(step("gateway", g_ok, g_out.clone())); } }
+    (all_ok, if all_ok { "" } else { "gateway" }, results)
 }
 
 fn hermes_profile_path(cli: &Path, name: &str, h: &Path) -> PathBuf {
@@ -225,8 +370,11 @@ pub fn agent_list(app: tauri::AppHandle, kind: String) -> Result<serde_json::Val
             serde_json::json!({ "id": name, "name": if name == "default" { "Hermes".to_string() } else { name.clone() }, "default": def, "home": path.display().to_string() })
         }).collect()
     } else {
-        let (ok, out) = run(&cli, &["agents", "list"]); if !ok { return Err(out); }
-        parse_openclaw_agents(&out).into_iter().map(|(id, def)| serde_json::json!({ "id": id, "name": if id == "main" { "OpenClaw".to_string() } else { id.clone() }, "default": def })).collect()
+        match openclaw_agents(|args| run(&cli, args)) {
+            Ok(found) => found.into_iter().map(|(id, def)| serde_json::json!({ "id": id, "name": if id == "main" { "OpenClaw".to_string() } else { id.clone() }, "default": def })).collect(),
+            Err(OpenclawListError::Outdated(have)) => return Ok(serde_json::json!({ "ok": false, "reason": "openclaw_outdated", "version": have, "agents": [] })),
+            Err(OpenclawListError::Cli(out)) => return Err(out),
+        }
     };
     Ok(serde_json::json!({ "ok": true, "cli": cli.display().to_string(), "agents": agents, "installationId": installation_id(&app.path().app_local_data_dir().map_err(|e| e.to_string())?)? }))
 }
@@ -250,6 +398,7 @@ pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, agents: V
     let res_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     let mut results = Vec::new();
     let mut all_ok = true;
+    let mut reason = "";
     if kind == "hermes" {
         for a in &agents {
             let hh = if a.home.is_empty() { h.join(".hermes") } else { PathBuf::from(&a.home) };
@@ -271,41 +420,17 @@ pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, agents: V
             results.push(serde_json::json!({ "id": a.id, "ok": ok, "steps": steps }));
         }
     } else {
-        let mut common = Vec::new();
-        let plugin_ok = match copy_dir(&res_dir.join("agents/openclaw-argo-msgr"), &h.join(".openclaw/extensions/openclaw-argo-msgr")) { Ok(n) => { common.push(step("plugin", true, format!("{n} files"))); true }, Err(e) => { common.push(step("plugin", false, e)); false } };
-        let plugin_ok = plugin_ok && { let (ok, out) = run(&cli, &["plugins", "enable", "openclaw-argo-msgr"]); common.push(step("enable", ok, out)); ok };
-        for a in &agents {
-            let mut steps = common.clone();
-            let ok = plugin_ok && (|| -> bool {
-                let base = format!("channels.argo-msgr.accounts[{}]", a.id);
-                for (k, v) in [("url", url.as_str()), ("token", a.token.as_str()), ("enabled", "true")] {
-                    let (ok, out) = run(&cli, &["config", "set", &format!("{base}.{k}"), v]);
-                    if !ok { steps.push(step("env", false, out)); return false; }
-                }
-                steps.push(step("env", true, format!("openclaw.json {base}")));
-                let (b_ok, b_out) = run(&cli, &["config", "get", "bindings", "--json"]);
-                let bindings = if b_ok {
-                    match serde_json::from_str::<Vec<serde_json::Value>>(&b_out) { Ok(v) => v, Err(_) => { steps.push(step("enable", false, "Invalid bindings config")); return false; } }
-                } else if b_out.trim() == "Config path not found: bindings" { Vec::new() }
-                else { steps.push(step("enable", false, b_out)); return false; };
-                let json = serde_json::to_string(&merge_binding(bindings, &a.id)).unwrap();
-                let (b_ok, b_out) = run(&cli, &["config", "set", "bindings", &json]);
-                steps.push(step("enable", b_ok, b_out)); b_ok
-            })();
-            all_ok &= ok;
-            results.push(serde_json::json!({ "id": a.id, "ok": ok, "steps": steps }));
-        }
-        let (g_ok, g_out) = if all_ok { run(&cli, &["gateway", "restart"]) } else { (false, "Configuration failed; gateway unchanged".into()) };
-        let (g_ok, g_out) = if g_ok || !all_ok { (g_ok, g_out) } else { let (i_ok, i_out) = run(&cli, &["gateway", "install"]); if i_ok { run(&cli, &["gateway", "start"]) } else { (false, format!("{g_out}\n{i_out}")) } };
-        all_ok &= g_ok;
-        for r in results.iter_mut() { if !g_ok { r["ok"] = false.into(); } if let Some(arr) = r.get_mut("steps").and_then(|s| s.as_array_mut()) { arr.push(step("gateway", g_ok, g_out.clone())); } }
+        let (ok, why, r) = openclaw_connect(|args| run(&cli, args), || copy_dir(&res_dir.join("agents/openclaw-argo-msgr"), &h.join(".openclaw/extensions").join(OPENCLAW_PLUGIN_ID)), &url, &agents);
+        all_ok = ok; reason = why; results = r;
     }
-    Ok(serde_json::json!({ "ok": all_ok, "reason": if all_ok { "" } else { "gateway" }, "cli": cli.display().to_string(), "results": results }))
+    if reason.is_empty() && !all_ok { reason = "gateway"; }
+    Ok(serde_json::json!({ "ok": all_ok, "reason": reason, "cli": cli.display().to_string(), "results": results }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{upsert_env, parse_hermes_profiles, parse_openclaw_agents, merge_binding, batch_command_line, installation_id, redact, hermes_gateway_running};
+    use super::{openclaw_agents, openclaw_bindings, openclaw_connect, openclaw_version_problem, AgentSetup};
     #[cfg(target_os = "macos")]
     #[test]
     fn agent_commands_preserve_environment_and_suppress_node_title() {
@@ -391,6 +516,110 @@ mod tests {
         assert!(hermes_gateway_running("✓ User gateway service is running"));
         assert!(hermes_gateway_running("✓ Gateway process running (PID: 98041)"));
         assert!(!hermes_gateway_running("Gateway is not installed"));
+    }
+    // ── 오픈클로(2026-09-29): server-connect/connect.py와 같은 판정. 가짜 CLI는 test/server-connect.test.mjs의 fakeOpenclaw와 같은 출력을 낸다
+    // (실측 근거: 격리 설치 openclaw@2026.9.6). 실제 openclaw는 실행하지 않는다.
+    const OC_AGENTS_TEXT: &str = "Agents:\n- main (default)\n  Workspace: ~/.openclaw/workspace\n  Routing rules: 1\n  Providers:\n    - Argo Messenger main: configured\n    - Telegram default: configured\n- support\n  Workspace: ~/.openclaw/workspace-support\nRouting rules map channel/account/peer to an agent.\n";
+    const OC_AGENTS_JSON: &str = r#"[{"id":"main","workspace":"/w","bindings":1,"isDefault":true},{"id":"support","workspace":"/w2","bindings":0,"isDefault":false}]"#;
+    const OC_UNSET: &str = "{\n  \"ok\": false,\n  \"error\": {\n    \"type\": \"cli_error\",\n    \"message\": \"Config path is valid but unset: bindings. The runtime default applies until you set an authored value with openclaw config set bindings <value>.\"\n  }\n}";
+    const OC_LOADED: &str = r#"{"plugin":{"id":"openclaw-argo-msgr","status":"loaded","error":null},"diagnostics":[]}"#;
+    const OC_LOAD_FAILED: &str = r#"{"plugin":{"id":"openclaw-argo-msgr","status":"error","error":"Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath './plugin-sdk' is not defined by \"exports\""},"diagnostics":[{"level":"error","message":"plugin failed during load"}]}"#;
+
+    struct FakeOpenclaw { version: String, agents_json: Option<String>, inspect: String, calls: Vec<String>, refreshed: bool, bindings: Option<String> }
+    impl FakeOpenclaw {
+        fn new() -> Self { FakeOpenclaw { version: "OpenClaw 2026.9.6 (eb377ac)".into(), agents_json: Some(OC_AGENTS_JSON.into()), inspect: OC_LOADED.into(), calls: Vec::new(), refreshed: false, bindings: None } }
+        fn call(&mut self, args: &[&str]) -> (bool, String) {
+            self.calls.push(args.join(" "));
+            match args {
+                ["--version"] => (true, self.version.clone()),
+                ["agents", "list", "--json"] => match &self.agents_json { Some(j) => (true, j.clone()), None => (false, "error: unknown option '--json'".into()) },
+                ["agents", "list"] => (true, OC_AGENTS_TEXT.into()),
+                ["config", "get", "bindings", "--json"] => match &self.bindings { Some(b) => (true, b.clone()), None => (false, OC_UNSET.into()) },
+                ["config", "set", "bindings", v] => { self.bindings = Some(v.to_string()); (true, String::new()) },
+                ["config", "set", ..] => (true, String::new()),
+                ["plugins", "registry", "--refresh"] => { self.refreshed = true; (true, String::new()) },
+                // 게이트웨이가 돌고 있으면 enable은 게이트웨이의 저장된 플러그인 목록으로 판정한다 — 목록을 다시 만들기 전에는 방금 복사한 폴더를 모른다
+                ["plugins", "enable", _] => if self.refreshed { (true, "Enabled plugin".into()) } else { (false, "[openclaw] Reason: plugin not installed: openclaw-argo-msgr".into()) },
+                ["plugins", "inspect", "openclaw-argo-msgr", "--runtime", "--json"] => (true, self.inspect.clone()),
+                ["gateway", _] => (true, String::new()),
+                _ => (false, format!("unexpected: {}", args.join(" "))),
+            }
+        }
+    }
+    fn oc_agent(id: &str) -> AgentSetup { AgentSetup { id: id.into(), token: format!("argo_bot_{}", "a".repeat(48)), home: String::new() } }
+    fn step_details(results: &[serde_json::Value]) -> String { results.iter().flat_map(|r| r["steps"].as_array().cloned().unwrap_or_default()).map(|s| s["detail"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>().join("\n") }
+
+    #[test]
+    fn openclaw_first_install_without_bindings_connects() {
+        // 최신 CLI는 바인딩이 없을 때 rc=1 + {"ok":false,"error":{"message":"Config path is valid but unset: bindings…"}}, 예전 CLI는 "Config path not found: bindings"
+        assert_eq!(openclaw_bindings(false, OC_UNSET), Some(vec![]));
+        assert_eq!(openclaw_bindings(false, "Config path not found: bindings"), Some(vec![]));
+        assert_eq!(openclaw_bindings(false, "Config path not found: bindingsX"), None);
+        assert_eq!(openclaw_bindings(false, "EACCES: permission denied, open '~/.openclaw/openclaw.json'"), None);
+        assert_eq!(openclaw_bindings(true, "null"), Some(vec![]));
+        assert_eq!(openclaw_bindings(true, "Warning: config has unknown keys\n[{\"agentId\":\"x\"}]"), Some(vec![serde_json::json!({"agentId":"x"})]));
+        assert_eq!(openclaw_bindings(true, "{\"not\":\"a list\"}"), None);
+        let mut fake = FakeOpenclaw::new();
+        let (ok, reason, results) = openclaw_connect(|a| fake.call(a), || Ok(3), "https://x/functions/v1/msgr-bot", &[oc_agent("main")]);
+        assert!(ok, "{}\n{}", fake.calls.join("\n"), step_details(&results)); assert_eq!(reason, "");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(fake.bindings.as_deref().unwrap()).unwrap(), serde_json::json!([{ "match": { "channel": "argo-msgr", "accountId": "main" }, "agentId": "main" }]));
+        assert!(fake.calls.contains(&"gateway restart".to_string()));
+    }
+    #[test]
+    fn openclaw_agents_read_json_first_and_skip_indented_channel_lines() {
+        assert_eq!(parse_openclaw_agents(OC_AGENTS_TEXT), vec![("main".to_string(), true), ("support".to_string(), false)], "\"Argo\"·\"Telegram\" 채널 줄은 에이전트가 아니다");
+        let mut fake = FakeOpenclaw::new();
+        assert_eq!(openclaw_agents(|a| fake.call(a)).unwrap(), vec![("main".to_string(), true), ("support".to_string(), false)]);
+        assert!(fake.calls.contains(&"agents list --json".to_string()), "{:?}", fake.calls);
+        assert!(!fake.calls.contains(&"agents list".to_string()), "JSON이 되면 텍스트 목록을 읽지 않는다");
+        let mut old = FakeOpenclaw::new(); old.agents_json = None;
+        assert_eq!(openclaw_agents(|a| old.call(a)).unwrap(), vec![("main".to_string(), true), ("support".to_string(), false)]);
+        assert_eq!(old.calls.last().map(String::as_str), Some("agents list"));
+    }
+    #[test]
+    fn openclaw_plugin_registry_is_refreshed_before_enable_and_load_is_checked_after() {
+        let mut fake = FakeOpenclaw::new();
+        let (ok, _, results) = openclaw_connect(|a| fake.call(a), || Ok(3), "https://x", &[oc_agent("main")]);
+        assert!(ok, "{}\n{}", fake.calls.join("\n"), step_details(&results));
+        let at = |c: &str| fake.calls.iter().position(|x| x == c).unwrap_or_else(|| panic!("missing {c}: {:?}", fake.calls));
+        assert!(at("plugins registry --refresh") < at("plugins enable openclaw-argo-msgr"));
+        assert!(at("plugins enable openclaw-argo-msgr") < at("plugins inspect openclaw-argo-msgr --runtime --json"), "켠 뒤에 실제 로드를 확인한다");
+        let first_write = fake.calls.iter().position(|c| c.starts_with("config set")).expect("config set");
+        assert!(at("plugins inspect openclaw-argo-msgr --runtime --json") < first_write, "로드 확인 뒤에 계정을 쓴다");
+        assert!(!fake.calls.iter().any(|c| c.starts_with("plugins list")), "plugins list는 깨진 플러그인도 loaded로 보여 판정에 쓰지 않는다");
+    }
+    #[test]
+    fn openclaw_plugin_that_does_not_load_fails_without_writing_accounts() {
+        let mut fake = FakeOpenclaw::new(); fake.inspect = OC_LOAD_FAILED.into();
+        let (ok, _, results) = openclaw_connect(|a| fake.call(a), || Ok(3), "https://x", &[oc_agent("main"), oc_agent("support")]);
+        assert!(!ok);
+        assert!(results.iter().all(|r| r["ok"] == false), "{results:?}");
+        let details = step_details(&results);
+        assert!(details.contains("ERR_PACKAGE_PATH_NOT_EXPORTED"), "{details}");
+        assert!(!fake.calls.iter().any(|c| c.starts_with("config set") || c.starts_with("gateway")), "계정·바인딩을 쓰지 않고 게이트웨이도 건드리지 않는다: {:?}", fake.calls);
+        let mut broken = FakeOpenclaw::new(); broken.inspect = "Plugin not found: openclaw-argo-msgr".into();
+        let (ok, _, _) = openclaw_connect(|a| broken.call(a), || Ok(3), "https://x", &[oc_agent("main")]);
+        assert!(!ok, "inspect 결과를 읽을 수 없으면 실패로 본다");
+    }
+    #[test]
+    fn openclaw_older_than_2026_8_1_is_not_installed() {
+        for (version, have) in [("OpenClaw 2026.2.23 (1a2b3c4)", "2026.2.23"), ("OpenClaw 2026.8.1-beta.3 (1a2b3c4)", "2026.8.1-beta"), ("openclaw: command output without a version", ""), ("OpenClaw 2025.12.9", "2025.12.9")] {
+            assert_eq!(openclaw_version_problem(true, version).as_deref(), Some(have), "{version} must be rejected with the detected version");
+            let mut fake = FakeOpenclaw::new(); fake.version = version.into();
+            assert_eq!(openclaw_agents(|a| fake.call(a)).unwrap_err(), super::OpenclawListError::Outdated(have.into()));
+            assert_eq!(fake.calls, ["--version"], "목록도 읽지 않는다");
+            let mut fake = FakeOpenclaw::new(); fake.version = version.into(); let mut installed = false;
+            let (ok, reason, results) = openclaw_connect(|a| fake.call(a), || { installed = true; Ok(3) }, "https://x", &[oc_agent("main")]);
+            assert!(!ok); assert_eq!(reason, "openclaw_outdated", "화면이 사전 문구로 번역하는 사유 코드");
+            assert!(!installed, "플러그인을 복사하지 않는다"); assert_eq!(fake.calls, ["--version"]);
+            assert_eq!(results[0]["version"], have);
+        }
+        assert!(openclaw_version_problem(false, "OpenClaw 2026.9.6").is_some(), "--version이 실패하면 읽을 수 없는 것으로 본다");
+        for version in ["OpenClaw 2026.8.1 (1a2b3c4)", "OpenClaw 2026.9.6 (eb377ac)", "2026.10.2", "OpenClaw 2027.1.1-rc.1"] {
+            assert_eq!(openclaw_version_problem(true, version), None, "{version}");
+        }
+        let mut fake = FakeOpenclaw::new(); fake.version = "OpenClaw 2026.8.1 (1a2b3c4)".into();
+        assert!(openclaw_connect(|a| fake.call(a), || Ok(3), "https://x", &[oc_agent("main")]).0);
     }
     #[test]
     fn upsert_replaces_only_matching_keys() {

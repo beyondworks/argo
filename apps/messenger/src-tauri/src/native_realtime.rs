@@ -945,31 +945,58 @@ async fn fetch_author_name(
     tokens: &Tokens,
     message: &NativeMessageRow,
 ) -> Option<String> {
-    let (table, filters) = if message.author_kind == "crew" {
-        (
+    if message.author_kind == "crew" {
+        let crew = message.crew_id.as_ref()?;
+        return fetch_display_name(
+            client,
+            config,
+            tokens,
             "msgr_crews",
-            vec![("id", format!("eq.{}", message.crew_id.as_ref()?))],
+            &[("id", format!("eq.{crew}"))],
         )
-    } else if let Some(org_id) = message.org_id.as_ref() {
-        (
+        .await;
+    }
+    let user = message.author_user_id.as_ref()?;
+    if let Some(org_id) = message.org_id.as_ref() {
+        let member = fetch_display_name(
+            client,
+            config,
+            tokens,
             "msgr_org_members",
-            vec![
+            &[
                 ("org_id", format!("eq.{org_id}")),
-                (
-                    "user_id",
-                    format!("eq.{}", message.author_user_id.as_ref()?),
-                ),
+                ("user_id", format!("eq.{user}")),
             ],
         )
-    } else {
-        (
-            "msgr_profiles",
-            vec![(
-                "user_id",
-                format!("eq.{}", message.author_user_id.as_ref()?),
-            )],
-        )
-    };
+        .await;
+        if member.is_some() {
+            return member;
+        }
+    }
+    // 조직 이름이 없거나 개인 공간이면 서버 이름 규칙(프로필 이름 → 이메일 앞부분). 프로필만 읽으면 프로필 행이 없는 사람이
+    // 'Argo'로 떴다(유건 제보 2026-10-01 '알림 이름 ?'의 같은 계열). 이름 함수가 없는 옛 서버면 종전처럼 프로필로 물러난다.
+    match fetch_people_name(client, config, tokens, user).await {
+        Ok(name) => name,
+        Err(()) => {
+            fetch_display_name(
+                client,
+                config,
+                tokens,
+                "msgr_profiles",
+                &[("user_id", format!("eq.{user}"))],
+            )
+            .await
+        }
+    }
+}
+
+async fn fetch_display_name(
+    client: &reqwest::Client,
+    config: &WorkerConfig,
+    tokens: &Tokens,
+    table: &str,
+    filters: &[(&str, String)],
+) -> Option<String> {
     let url = format!("{}/rest/v1/{table}", config.supabase_url);
     let mut request = client
         .get(url)
@@ -977,19 +1004,59 @@ async fn fetch_author_name(
         .header("apikey", &config.anon_key)
         .header(AUTHORIZATION, bearer(&tokens.access_token));
     for (key, value) in filters {
-        request = request.query(&[(key, value)]);
+        request = request.query(&[(*key, value.as_str())]);
     }
     let response = request.send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
-    response
-        .json::<Vec<Value>>()
+    non_empty_name(
+        response
+            .json::<Vec<Value>>()
+            .await
+            .ok()?
+            .first()
+            .and_then(|row| row.get("display_name")),
+    )
+}
+
+/// msgr_people_names — Err는 함수가 없거나 호출이 실패한 경우(옛 서버로 보고 프로필로 물러난다), Ok(None)은 이름이 없는 경우.
+async fn fetch_people_name(
+    client: &reqwest::Client,
+    config: &WorkerConfig,
+    tokens: &Tokens,
+    user: &str,
+) -> Result<Option<String>, ()> {
+    let response = client
+        .post(format!(
+            "{}/rest/v1/rpc/msgr_people_names",
+            config.supabase_url
+        ))
+        .header("apikey", &config.anon_key)
+        .header(AUTHORIZATION, bearer(&tokens.access_token))
+        .header(CONTENT_TYPE, "application/json")
+        .json(&json!({ "ids": [user] }))
+        .send()
         .await
-        .ok()?
-        .first()
-        .and_then(|row| row.get("display_name"))
+        .map_err(|_| ())?;
+    if !response.status().is_success() {
+        return Err(());
+    }
+    let rows = response.json::<Vec<Value>>().await.map_err(|_| ())?;
+    Ok(people_name_from(&rows, user))
+}
+
+fn people_name_from(rows: &[Value], user: &str) -> Option<String> {
+    rows.iter()
+        .find(|row| row.get("user_id").and_then(Value::as_str) == Some(user))
+        .and_then(|row| non_empty_name(row.get("name")))
+}
+
+fn non_empty_name(value: Option<&Value>) -> Option<String> {
+    value
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
         .map(str::to_string)
 }
 
@@ -1033,6 +1100,24 @@ async fn sync_badge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn people_name_picks_the_asked_user_and_skips_blank_names() {
+        let rows = vec![
+            json!({"user_id": "other", "name": "남"}),
+            json!({"user_id": "me", "name": "jaewan.kim"}),
+        ];
+        assert_eq!(people_name_from(&rows, "me").as_deref(), Some("jaewan.kim"));
+        assert_eq!(people_name_from(&rows, "nobody"), None);
+        assert_eq!(
+            people_name_from(&[json!({"user_id": "me", "name": "   "})], "me"),
+            None
+        );
+        assert_eq!(
+            people_name_from(&[json!({"user_id": "me", "name": null})], "me"),
+            None
+        );
+    }
 
     #[test]
     fn parses_supabase_broadcast_message() {

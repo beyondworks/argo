@@ -4,6 +4,9 @@ export const UPDATE_NOTES_STORAGE_KEY = 'argo-update-notes-version';
 export const UPDATE_NOTES = Object.freeze({
   '0.1.89': Object.freeze(['updates.note.models', 'updates.note.effort', 'updates.note.background', 'updates.note.workflow']),
   '0.1.90': Object.freeze(['updates.note.steer', 'updates.note.firstSend']),
+  '0.1.91': Object.freeze(['updates.note.sonnet55', 'updates.note.msgrMarker']),
+  '0.1.92': Object.freeze(['updates.note.personalCrews', 'updates.note.crewCalendar', 'updates.note.msgrAutoConnect']),
+  '0.1.93': Object.freeze(['updates.note.cliBundled', 'updates.note.delegationSwitch', 'updates.note.splash']),
 });
 
 export function stableVersion(value) {

@@ -92,6 +92,23 @@ test('isGuestCtx: 주인이 시키면 주인 턴, 남이 시키거나 모르면 
   assert.equal(isGuestCtx(null), false);
 });
 
+test('fullAutoAllowed: 주인이 직접 시킨 턴만 — 손님·오피스에서 맡긴 턴은 풀 오토 제외(권한을 낮추기만 한다)', async () => {
+  const { fullAutoAllowed } = await import('../src/gateway/msgr-handoff.mjs');
+  assert.equal(fullAutoAllowed(ctxOf('w', OWNER)), true, '주인 직접');
+  assert.equal(fullAutoAllowed(ctxOf('w', OWNER, { office: true })), false, '오피스에서 맡긴 턴(외부 자료)');
+  assert.equal(fullAutoAllowed(ctxOf('w', GUEST)), false, '손님');
+  assert.equal(fullAutoAllowed({ kind: 'deck' }), true, '메신저 밖 턴은 해당 없음');
+  assert.equal(fullAutoAllowed(null), true);
+  // 오피스 표지는 손님으로 만들지 않는다 — 주인의 몸(파일·셸·커넥터)은 쓰되 쓰기는 결재로
+  const { isGuestCtx } = await import('../src/gateway/msgr-handoff.mjs');
+  assert.equal(isGuestCtx(ctxOf('w', OWNER, { office: true })), false);
+  // 쪽지로 옮겨 타도 표지가 남는다
+  const rec = messengerOrigin(ctxOf('w', OWNER, { office: true }));
+  assert.equal(rec.office, true, '기록이 오피스 표지를 싣는다');
+  assert.equal(fullAutoAllowed(mirrorCtxFromOrigin(rec, { crewId: 'crew-z' })), false, '쪽지 수신 턴도 풀 오토 제외');
+  assert.equal(messengerOrigin(ctxOf('w', OWNER)).office, undefined, '표지 없는 기록 모양은 그대로');
+});
+
 test('요청자 사슬이 쪽지로 옮겨 타도 유지된다 — messengerOrigin → mirrorCtxFromOrigin', () => {
   // 손님 B → A의 크루 X → (넘김) A의 크루 Y: Y 턴은 origin=A, rootAuthor=B → 손님. Y가 쪽지를 보내면 기록에는 rootAuthor·guest가 실려야 한다
   const y = ctxOf('w', OWNER, { rootAuthor: GUEST });

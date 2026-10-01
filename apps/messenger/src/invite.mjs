@@ -9,6 +9,11 @@ export function parseInviteCode(s) {
   return m ? m[1] ?? m[0] : null;
 }
 
+/** 참여 입력의 확인 버튼은 입력이 있으면 켜 둔다 — 코드가 아닌 값의 이유는 누른 뒤 입력 아래에 보인다(버튼만 회색이면 이유를 알 수 없었다). */
+export const canSubmitJoin = (raw) => String(raw ?? '').trim().length > 0;
+/** 붙여 넣은 값 확인 — 코드가 있으면 { code }, 없으면 입력 아래에 보일 이유 문구 키 { hint }. */
+export function checkJoinInput(raw) { const code = parseInviteCode(raw); return code ? { code } : { hint: 'org.join.code.bad' }; }
+
 /** 공유 안내문 — 브라우저 세션(http 오리진)에서만 링크를 덧붙인다(앱의 tauri://·file: 오리진은 뺀다). */
 // 3줄 평문(유건 2026-09-18): 누가 어디로 초대했나 / 링크(브라우저) 또는 코드 한 줄 / 어디에 붙여 넣나 · 며칠 안에.
 // 마크다운 기호·곁가지 안내 없음. 메뉴 이름은 화면 문구(org.join.code)를 그대로 끼워 넣어 어긋나지 않게 한다.

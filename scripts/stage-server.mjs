@@ -7,6 +7,7 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { SHIM_SRC } from '../src/no-dock.mjs';
+import { stageCli } from './stage-cli.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,6 +61,14 @@ await import('./server-next.mjs');
     process.exit(1);
   }
   console.log(`[stage-server] SDK 네이티브 CLI 포함: ${native} (타르볼은 이 플랫폼 전용)`);
+}
+
+// 3.5) argo CLI — scripts/stage-cli.mjs(앱 사이드카와 같은 함수). standalone 추적은 서버가 쓰는 파일만 싣는다 — CLI 전용(src/cli 등)은 빠지고 패키지는 일부만 실린다.
+//      공개 Supabase 설정은 CLI 전용 이름으로만 받는다 — NEXT_PUBLIC_*로 넘기면 Next 빌드에 인라인돼 셀프호스트 웹이 인증 모드가 된다.
+{
+  const r = stageCli({ root: ROOT, tree, env: process.env, publicEnv: ['ARGO_CLI_SUPABASE_URL', 'ARGO_CLI_SUPABASE_ANON_KEY'] });
+  console.log(`[stage-server] argo CLI 의존성 ${r.deps}개 확인`);
+  console.log(r.publicConfig ? '[stage-server] argo CLI 공개 설정 포함(계정 모드 가능)' : '[stage-server] argo CLI 공개 설정 없음 — 이 배포본의 CLI는 로컬 모드만 가능');
 }
 
 // 4) 시크릿·개발자 데이터 제거 + 유출 가드(stage-sidecar 3.5와 동일 — 배포 차단이 최우선)

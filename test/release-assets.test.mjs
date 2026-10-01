@@ -46,3 +46,14 @@ test('per-platform collection requires its signed updater, without other platfor
   assert.deepEqual(Object.keys(releaseManifest(dir, 'argo', '1.2.3', 'x86_64-apple-darwin').platforms), ['darwin-x86_64']);
   assert.throws(() => releaseManifest(dir, 'argo', '1.2.3'));
 });
+
+// 설정 핀: 수동 실행의 server_only는 데스크톱 빌드만 건너뛰고, 발행(release 잡)은 태그 실행이면서 build·server가 성공했을 때만 한다(#773 검수 L7)
+test('release.yml: server_only가 태그 발행 흐름을 바꾸지 않는다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const y = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+  const job = name => y.split(/\n  (?=[a-z-]+:\n)/).find(b => b.startsWith(`${name}:\n`)); // 최상위 잡 단위로 자른다
+  assert.match(job('build'), /\n    if: github\.event_name != 'workflow_dispatch' \|\| !inputs\.server_only\n/);
+  const release = job('release');
+  assert.match(release, /\n    needs: \[build, server\]\n/);
+  assert.match(release, /\n    if: success\(\) && startsWith\(github\.ref, 'refs\/tags\/v'\)\n/);
+});

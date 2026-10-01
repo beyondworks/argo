@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="paper" x2="0.8" y2="1">
+      <stop stop-color="#faf7ee"/><stop offset="0.65" stop-color="#efe9dc"/><stop offset="1" stop-color="#e3daca"/>
+    </linearGradient>
+    <linearGradient id="graphite" x2="0.7" y2="1">
+      <stop stop-color="#373936"/><stop offset="1" stop-color="#292b29"/>
+    </linearGradient>
+    <linearGradient id="copper" x2="0.6" y2="1">
+      <stop stop-color="#c95416"/><stop offset="1" stop-color="#b53d0b"/>
+    </linearGradient>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.72" numOctaves="3" seed="17" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.055"/></feComponentTransfer>
+      <feBlend in="SourceGraphic" mode="multiply"/>
+    </filter>
+    <linearGradient id="floor" x2="0.4" y2="1">
+      <stop stop-color="#c9bfae" stop-opacity="0.28"/><stop offset="1" stop-color="#e8dfcf" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#grain)">
+    <path fill="url(#paper)" d="M0 0H1024V1024H0Z"/>
+    <path fill="url(#floor)" d="M388 664L656 726L844 788L1024 849V1024H0V838L176 767Z"/>
+    <g fill="url(#graphite)">
+      <path d="M268 308L643 179Q665 171 665 194V351Q665 360 655 364L470 418Q460 421 450 417L264 329Q246 320 268 308Z"/>
+      <path d="M176 332Q176 324 192 331L378 414Q388 419 388 430V662Q388 670 377 675L192 772Q176 780 176 763Z"/>
+      <path d="M666 414L829 332Q848 323 848 344V782Q848 798 833 790L669 727Q656 722 656 711V431Q656 420 666 414Z"/>
+    </g>
+  </g>
+  <!-- Original Argo_app.svg star path, uniformly scaled and centered at (512, 512). -->
+  <path fill="url(#copper)" transform="translate(512 512) scale(0.465) translate(-440.789 -591.804)" d="M477.056 628.071L440.789 770.352L404.56 628.224L262.241 591.804L404.408 555.423L440.789 413.256L477.209 555.575L619.337 591.804L477.056 628.071Z"/>
+</svg>

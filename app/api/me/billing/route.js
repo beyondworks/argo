@@ -16,6 +16,7 @@ import { getFreshDeviceSession } from '../../../../src/devicesession.mjs'; // �
 import { reconcileUnneeded } from '../../../../src/entitlement.mjs';
 import { lsGateOpts } from '../../../../src/lsbilling.mjs';
 import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsreconcile.mjs';
+import { invalidatePlanCache } from '../../../../src/plan-cache.mjs';
 
 // 무행이어도 billing 객체를 반환한다 — 체험 배지(trialEndsAt)의 원천이라 null이면 대다수 체험자의
 // 배지가 사라진다(#164). if (billing) 스타일 소비 금지(필드 단위로 읽을 것).
@@ -96,6 +97,9 @@ function scheduleReconcileIfLost({ url, serviceKey, user, cur, emailTrusted }) {
 }
 
 export async function GET() {
+  // 결제 화면 조회 = 결제·요금제 변경 뒤 돌아온 탭(설정 카드가 탭 복귀마다 부른다). 동기화의 요금제 캐시(10분)를 지워
+  // 다음 주기가 새 판정을 쓰게 한다 — 안 지우면 결제한 뒤 최대 10분 동안 동기화가 페이월에 머문다(반대 검토 L-f).
+  invalidatePlanCache();
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

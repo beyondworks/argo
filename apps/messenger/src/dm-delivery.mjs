@@ -59,3 +59,10 @@ export function relayToLabel(entry, ccLabel) {
 export function relayToNames(sent, ccLabel) {
   return (Array.isArray(sent) ? sent : []).map((e) => relayToLabel(e, ccLabel)).filter(Boolean).join(', ');
 }
+
+// "전달했습니다" 안내(system 글)를 누구에게 어떻게 그리나 — 글쓴이(부른 사람)만 그 에이전트 1:1을 열 수 있다. 다른 사람은 그 방에 권한이 없어
+// 버튼을 눌러도 아무 일도 없었다(점검 A·B #9). 'sender' = 문장 + 대화 열기 버튼, 'other' = 누가 불렀는지만(버튼 없음).
+// 작성자를 모르면(null) 'other' — 눌러도 안 되는 버튼을 보이느니 감춘다.
+export function relayNoticeView(m, uid) {
+  return { audience: m?.author_user_id && m.author_user_id === uid ? 'sender' : 'other' };
+}

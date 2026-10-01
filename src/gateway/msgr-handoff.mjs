@@ -3,6 +3,7 @@
 export function messengerOrigin(ctx, targetSlug = null) {
   if (ctx?.kind === 'msgr-rules') throw new Error('메신저 위임의 예약·작업·결재는 요청한 동료에게 돌려주세요. 그 동료가 같은 채널에서 처리합니다');
   if (ctx?.kind !== 'msgr') return null;
+  if (ctx.channelId && ctx.crewId && !ctx.orgId) throw new Error('개인 공간에서는 아직 결재·예약·긴 작업·다른 크루에게 맡기기를 쓸 수 없습니다. 조직 채널에서 요청해 주세요'); // 2026-09-30 개인 공간 1단계
   if (!ctx.orgId || !ctx.channelId || !ctx.crewId || !ctx.uid || !ctx.wsId) throw new Error('메신저 실행 문맥이 없습니다');
   const target = targetSlug ? ctx.peers?.find((p) => p.slug === targetSlug && p.owner_user_id === ctx.uid && p.ws_id === ctx.wsId) : null;
   if (targetSlug && !target) throw new Error('같은 메신저 조직에 파견된 동료만 실행할 수 있습니다');
@@ -10,7 +11,7 @@ export function messengerOrigin(ctx, targetSlug = null) {
     threadRoot: ctx.threadRoot ?? null, sourceMsgId: ctx.sourceMsgId ?? ctx.threadRoot ?? null,
     uid: ctx.uid, wsId: ctx.wsId, origin: ctx.origin ?? null, hop: ctx.hop ?? 0,
     // 손님 표지는 사슬을 따라간다 — 쪽지·예약·결재로 옮겨 탄 뒤에도 "주인이 시킨 일"로 되살아나지 않게(넘김 뒤 쪽지는 rootAuthor를 잃는다).
-    ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}) };
+    ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}) };
 }
 
 /** messengerOrigin 기록 → 턴 맥락(kind:'msgr')의 역방향. 요청자 사슬(uid·origin·rootAuthor·guest)을 **그대로** 옮긴다 —
@@ -19,7 +20,18 @@ export function messengerOrigin(ctx, targetSlug = null) {
 export function mirrorCtxFromOrigin(o, extra = {}) {
   return { kind: 'msgr', orgId: o.orgId, channelId: o.channelId, threadRoot: o.threadRoot ?? null,
     uid: o.uid ?? null, wsId: o.wsId ?? null, origin: o.origin ?? null,
-    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...extra };
+    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...(o.office === true ? { office: true } : {}), ...extra };
+}
+
+/** 오피스에서 맡긴 글인가 — 메시지 meta.source가 office_로 시작한다(아르고 오피스 '크루에게 맡기기'). 멤버가 쓸 수 있는 값이지만
+    풀 오토를 **끄는** 데만 쓰므로 위조해도 권한이 오르지 않는다(meta.guest와 같은 방향). */
+export const isOfficeSource = (message) => typeof message?.meta?.source === 'string' && message.meta.source.startsWith('office_');
+
+/** 풀 오토를 켤 수 있는 턴인가 — 주인이 직접 시킨 턴만. 손님 턴과 오피스에서 맡긴 턴(메일·페이지 같은 외부 자료를 담는다)은 제외한다
+    (유건 9/26 오피스 계획 8절 "메일발 턴은 풀 오토 제외", 9/29 확정). 오피스 턴은 손님이 아니다 — 주인의 도구는 쓰되 쓰기는 결재로 간다.
+    풀 오토를 정하는 곳(chat.mjs·connectors.mjs)은 전부 이 한 함수만 본다. */
+export function fullAutoAllowed(ctx) {
+  return !isGuestCtx(ctx) && ctx?.office !== true;
 }
 
 /** 손님 턴 판정 — 이 메신저 턴을 크루 주인이 아닌 사람이 시켰는가(규칙 7·9: 주인의 몸은 주인만, 주인의 개인 기억은 공유한 것만).
@@ -77,20 +89,38 @@ export function renderMessengerHandoffs(ctx, { seenAt = null, now = Date.now, la
   return (ctx.handoffs ?? []).map((h) => `@${h.to.display_name}${away(h.to.id) ? note : ''}\n${h.message}${h.cc.length ? `\n(CC: ${h.cc.map((p) => p.display_name).join(', ')})` : ''}`).join('\n\n');
 }
 
-/** 현재 답변의 마지막 독립 줄만 판정한다. 숫자·완료 문구·인용에서 종료를 추론하지 않는다. */
-export function parseMessengerDisposition(value) {
-  const text = String(value ?? '');
-  const match = /(?:^|\r?\n)MSGR: (handoff|done)[ \t]*(?:\r?\n[ \t]*)*$/.exec(text);
-  if (!match) return { text, disposition: null };
+// 코드 펜스(``` ~~~)가 열린 채로 끝나는가 — 그 안의 표지는 답변 내용이다.
+function openFence(prefix) {
   let fence = null;
-  for (const line of text.slice(0, match.index).split(/\r?\n/)) {
+  for (const line of prefix.split(/\r?\n/)) {
     const mark = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (!mark) continue;
     if (fence) {
       if (mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = null;
     } else if (mark[1][0] !== '`' || !mark[2].includes('`')) fence = mark[1];
   }
-  return fence ? { text, disposition: null } : { text: text.slice(0, match.index).trimEnd(), disposition: match[1] };
+  return fence;
+}
+
+// 모델이 표지를 마지막 문장 끝에 붙인 경우(…전달하겠습니다. MSGR: done, …확인했습니다. `MSGR: done`) — 운영 실측 2026-09-30: 페퍼·효원·월터·보스웰 답에
+// 그대로 보였다(유건 "말 끝마다 MSGR Done 왜 붙이는거야?"). 판정으로는 읽지 않고(인라인은 인용일 수 있다) 사람에게 보이지 않게만 뗀다.
+// 인용(>)·들여쓴 코드·열린 코드 펜스 안은 그대로 둔다.
+export function hideInlineMarker(value) {
+  const text = String(value ?? '');
+  const body = text.replace(/\s+$/, '');
+  const start = body.lastIndexOf('\n') + 1;
+  const line = body.slice(start);
+  if (/^( {0,3}>|    |\t)/.test(line) || openFence(body.slice(0, start))) return text;
+  const m = /^(.*\S)[ \t]+(`?)MSGR: (?:handoff|done)\2[ \t]*$/.exec(line);
+  return m ? body.slice(0, start) + m[1] : text;
+}
+
+/** 현재 답변의 마지막 독립 줄만 판정한다. 숫자·완료 문구·인용에서 종료를 추론하지 않는다. 문장 끝에 붙은 표지는 판정 없이 본문에서만 뗀다(hideInlineMarker). */
+export function parseMessengerDisposition(value) {
+  const text = String(value ?? '');
+  const match = /(?:^|\r?\n)MSGR: (handoff|done)[ \t]*(?:\r?\n[ \t]*)*$/.exec(text);
+  if (!match || openFence(text.slice(0, match.index))) return { text: hideInlineMarker(text), disposition: null };
+  return { text: text.slice(0, match.index).trimEnd(), disposition: match[1] };
 }
 
 export function messengerHandoffHint(lang = 'ko') {

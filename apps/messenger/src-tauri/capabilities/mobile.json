@@ -10,9 +10,9 @@
   ],
   "permissions": [
     "deep-link:default",
-    "notification:default",
     "push-notifications:default",
     "core:window:allow-set-badge-count",
-    "haptics:default"
+    "haptics:default",
+    "core:webview:allow-set-webview-background-color"
   ]
 }

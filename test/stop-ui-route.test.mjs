@@ -45,7 +45,7 @@ test('actual authenticated chat route executes standalone stop without invoking 
 test('actual route retains incomplete cancellation in response and stored conversation',async()=>{
  const saved=[];
  const ctx=vm.createContext({Response,console,isStopCommand,guardCompany:async()=>null,
-  beginTurn:async()=> 'turn-id',nudgeSync:()=>{},loadCompany:async()=>({lang:'ko'}),
+  beginTurn:async()=> 'turn-id',nudgeSync:()=>{},loadCompany:async()=>({lang:'ko'}),getDelegationLimit:async()=>true /* 위임 제한 스위치 저장값(켜짐) — 라우트가 턴 시작에 읽는다 */,
   chat:async()=>{throw Object.assign(new Error('중단됨'),{aborted:true,cancellationIncomplete:true});},
   appendTurn:async(...args)=>saved.push(args)});
  vm.runInContext(findFunction(route,'POST'),ctx);
@@ -58,7 +58,7 @@ test('actual route retains incomplete cancellation in response and stored conver
 test('actual directive batch stops before its second side effect',async()=>{
  const source=await readFile(new URL('../src/cli-directives.mjs',import.meta.url),'utf8');
  const executed=[];
- const ctx=vm.createContext({TOOL_RESULT_BUDGET_BYTES:24000,handledByTool:()=>false /* K94 이중 실행 판정 — 다리 없는 턴 */,listAgents:async()=>[],normalizeSchedule:x=>x,toSchedule:()=>({type:'daily',time:'09:00'}),messengerOrigin:()=>null,
+ const ctx=vm.createContext({TOOL_RESULT_BUDGET_BYTES:24000,handledByTool:()=>false /* K94 이중 실행 판정 — 다리 없는 턴 */,listAgents:async()=>[],limitsFor:()=>({relaxed:false,hop:2}) /* 위임 제한 표 — 쪽지 블록의 단계 상한(이 테스트는 schedule 지시만) */,normalizeSchedule:x=>x,toSchedule:()=>({type:'daily',time:'09:00'}),messengerOrigin:()=>null,
   addRoutine:async(_ws,data)=>{executed.push(data.title);await interruptTurn('batch','alpha',{source:'chat'});return {id:'one',schedule:{type:'daily',time:'09:00'}};}});
  vm.runInContext(findFunction(source,'runDirectives'),ctx);
  await assert.rejects(withTurnControl('batch','alpha',null,control=>ctx.runDirectives('batch','alpha',[

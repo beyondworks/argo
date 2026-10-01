@@ -21,7 +21,7 @@
 - 배포처: 로컬 dev(현 단계) → Fly.io/Railway 워커 (P1)
 - 외부 통합: Claude Agent SDK(BYOK — API 키/구독 OAuth 환경변수), MCP(후속)
 - 주의사항: 워크스페이스 루트 env `ARGO_ROOT`(구 `CREWBASE_ROOT` 병행 수용). `workspaces/`는 gitignore — 사용자 데이터 커밋 금지
-- 네이밍: **Argo** = 아르고호(전문 영웅들이 한 배로 황금양털 항해). 디자인 모티프 = 밤바다 네이비 + 황금양털 골드
+- 네이밍: **Argo** = 아르고호(전문 영웅들이 한 배로 항해). 디자인: 기본 테마 **graphite** — 중성 회색, 색 없이 표면 단계로 위계, 액션 색은 primary 하나(`#1a1a1a`, 다크는 `#ededed`), 시스템 다크 자동. 정본 = `app/globals.css`의 `:root[data-theme='graphite']` 토큰 — 새 화면·페이지(CLI 로그인 페이지 포함)는 이 값을 쓴다. 옛 "밤바다 네이비 + 황금양털 골드" 모티프는 폐기(2026-09-29 유건 지시)
 
 ## 검증
 

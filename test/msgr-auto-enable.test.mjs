@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { autoEnableMsgr, MSGR_AUTO_ENABLE_PROBE_MS, MSGR_AUTO_ENABLE_NO_SESSION_MS } from '../src/gateway/msgr.mjs';
+import { autoEnableMsgr, makeDb, MSGR_AUTO_ENABLE_PROBE_MS, MSGR_AUTO_ENABLE_NO_SESSION_MS } from '../src/gateway/msgr.mjs';
 
 const mk = ({ orgs = ['org-1'], uid = 'u1', session = true, fail = false, hang = false, fresh = null, hasCrew = false, latest = null } = {}) => {
   const calls = { probes: 0, updates: [], loads: 0 };
@@ -98,4 +98,13 @@ test('배선 — 게이트웨이 sync가 큐 조립 전에 autoEnableMsgr를 부
   assert.ok(call > 0 && q > call, '자동 켜기가 큐 조립보다 앞에 있어야 같은 sync에서 드레인·브리지가 뜬다');
   assert.match(src, /c\.msgr = \{ \.\.\.\(c\.msgr \?\? \{\}\), enabled: true \}/, '켜진 결과를 c.msgr에 반영');
   assert.ok(src.indexOf('if (!procLeader) {') < call, '리더 게이트 뒤에서만(기기당 한 프로세스)');
+});
+
+// 실사고 2026-09-30(kimjaewan777): Hermes 봇을 먼저 연결한 계정은 봇 크루 행 때문에 "이미 파견 중"으로 판정돼 본체 크루가 영영 안 올라갔다.
+// 게이트가 묻는 것은 "이 계정의 Argo 크루가 메신저에 있었나"다 — 외부 봇(hosting='bot')은 세지 않는다.
+test('hasAnyCrew — 외부 봇 크루만 있는 계정은 본체 크루 없음으로 본다', async () => {
+  const rowsOf = (rows) => ({ from: () => { const f = []; const q = { select: () => q, eq: (k, v) => (f.push((r) => r[k] === v), q), neq: (k, v) => (f.push((r) => r[k] !== v), q), limit: (n) => Promise.resolve({ data: rows.filter((r) => f.every((fn) => fn(r))).slice(0, n), error: null }) }; return q; } });
+  assert.equal(await makeDb(rowsOf([{ id: 'b1', owner_user_id: 'u1', hosting: 'bot' }])).hasAnyCrew('u1'), false, '봇 크루만 → 자동 켜기 대상');
+  assert.equal(await makeDb(rowsOf([{ id: 'b1', owner_user_id: 'u1', hosting: 'bot' }, { id: 'c1', owner_user_id: 'u1', hosting: 'local' }])).hasAnyCrew('u1'), true, '본체 크루가 있으면 손대지 않는다');
+  assert.equal(await makeDb(rowsOf([{ id: 'c2', owner_user_id: 'u2', hosting: 'local' }])).hasAnyCrew('u1'), false, '남의 크루는 세지 않는다');
 });

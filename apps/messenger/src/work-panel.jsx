@@ -10,6 +10,8 @@ import './work-panel.css';
 // errors back off to two minutes and old servers stop until focus/manual refresh.
 const POLL_MS = 15_000;
 const TERMINAL = new Set(['completed', 'cancelled']);
+// 외부 에이전트 계약 1-a — 루틴 출처 배지 키. 미지정·미지원 source(custom 포함)는 고유명사가 아니므로 "외부 에이전트"로 묶는다.
+const ROUTINE_SOURCE_LABEL = { argo: 'automation.source.argo', hermes: 'automation.source.hermes', openclaw: 'automation.source.openclaw' };
 const stamp = (value, lang) => value ? new Date(value).toLocaleString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const checked = async (request) => { const { data, error } = await request; if (error) throw error; return data; };
 export const missingSchema = (error) => /PGRST20[245]|42P01|42703|42883/.test(error?.code ?? '') || /schema cache|does not exist|Could not find the (table|function)/i.test(error?.message ?? '');
@@ -19,6 +21,8 @@ const errorText = (error, t) => {
   if (/no_available_lead/i.test(message)) return t('work.error.offline');
   if (/no_eligible|invalid_crew|crew_not|lead_not/i.test(message)) return t('work.error.crew');
   if (/permission_revoked/i.test(message)) return t('automation.error.revoked');
+  if (/not_editable/i.test(message)) return t('routine.error.notEditable');
+  if (/invalid_channel/i.test(message)) return t('routine.error.channel');
   if (/denied|forbidden|permission|not_allowed|row.level security|not_member/i.test(message)) return t('work.error.denied');
   if (/bad_goal|bad_instruction|request_conflict/i.test(message)) return t('work.error.input');
   if (/timezone|schedule|invalid_time|weekdays|interval/i.test(message)) return t('work.error.schedule');
@@ -84,7 +88,7 @@ function useCrewRoutines(channel, crews, enabled) {
     if (!enabled || (isDm && !dmCrewId)) { setState({ rows: [], error: null }); return; }
     const request = ++revision.current;
     try {
-      let query = supabase.from('msgr_crew_routines').select('id,crew_id,title,prompt,schedule,enabled,channel_id,updated_at').order('title', { ascending: true });
+      let query = supabase.from('msgr_crew_routines').select('id,crew_id,title,prompt,schedule,enabled,channel_id,updated_at,source,editable,status').order('title', { ascending: true });
       query = isDm ? query.eq('crew_id', dmCrewId) : query.eq('channel_id', channel.id);
       const rows = await checked(query);
       const ids = (rows ?? []).map((r) => r.id);
@@ -283,22 +287,30 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
       const pendingPatch = pending && routine.pendingEdit.op === 'update' ? routine.pendingEdit.patch : null;
       const effectiveEnabled = pendingPatch && 'enabled' in pendingPatch ? pendingPatch.enabled : routine.enabled;
       const open = expanded.has(routine.id); const bodyId = `work-body-argo-${routine.id}`;
+      const editable = routine.editable !== false; // 열 자체가 없는(구서버) 응답은 undefined — 기존 Argo 동작대로 편집 가능
+      const noRoute = !editable && routine.status?.delivery === 'none'; // 1-b ③: 결과를 보낼 곳이 없는 외부 작업 — 소유자가 방을 고른다
       return <article className="work-item" key={routine.id}>
       <button type="button" className="work-item-top work-item-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => toggleCard(routine.id)}>
-        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong title={routine.title}>{routine.title}</strong><span className="work-source-badge">{t('automation.source.argo')}</span></span>
+        <span className="work-item-title"><I name="caret" size={14} className={`work-caret${open ? ' open' : ''}`} /><strong title={routine.title}>{routine.title}</strong><span className="work-source-badge">{t(ROUTINE_SOURCE_LABEL[routine.source] ?? 'automation.source.custom')}</span>{noRoute && <span className="work-source-badge warn">{t('routine.route.badge')}</span>}</span>
         <span className={`work-status ${pendingDelete ? 'blocked' : effectiveEnabled ? 'running' : 'cancelled'}`}>{t(pendingDelete ? 'routine.delete.badge' : effectiveEnabled ? 'automation.enabled' : 'automation.paused')}</span>
       </button>
       {open && <div className="work-item-body" id={bodyId}>
       <p className="work-text">{routine.prompt}</p>
       <p className="work-note">{crews.find((crew) => crew.id === routine.crew_id)?.display_name ?? t('work.crew.unavailable')} · <RoutineSchedule schedule={routine.schedule} t={t} /></p>
-      {pendingDelete ? <>
+      {routine.status?.last_run_at && <p className="work-note">{t('routine.status.last')} · {stamp(routine.status.last_run_at, lang)}{routine.status.last_status ? ` · ${routine.status.last_status}` : ''}</p>}
+      {noRoute ? <>
+        <p className="work-notice">{t('routine.route.none')}</p>
+        {pending && <p className="work-notice">{t('routine.pending.ext')}</p>}
+        {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
+        <RouteChooser routine={routine} channel={channel} t={t} disabled={disabled} act={act} onSaved={() => { routines.refresh(); setNotice(t('automation.saved')); }} />
+      </> : !editable ? <p className="work-note">{t('routine.readonly.external')}</p> : pendingDelete ? <>
         <p className="work-notice error" role="alert">{t('routine.delete.pending')}</p>
         <div className="work-actions"><button className="btn sm" disabled={disabled} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: {} })), () => routines.refresh())}>{t('routine.delete.cancel')}</button></div>
       </> : <>
-        {pending && <p className="work-notice">{t('routine.pending')}</p>}
+        {pending && <p className="work-notice">{t(routine.source && routine.source !== 'argo' ? 'routine.pending.ext' : 'routine.pending')}</p>}
         {/* replaced = 메신저 쪽 자동 폴드(더 새 메신저 편집이 이걸 흡수, H3) — superseded = PC가 "로컬이 이 편집보다 나중"으로 판단해 버림(H1/H4). 원인이 다르므로 문구도 다르다(M3). */}
         {routine.pendingEdit?.status === 'replaced' && <p className="work-notice">{t('routine.replaced')}</p>}
-        {routine.pendingEdit?.status === 'superseded' && <p className="work-notice">{t('routine.superseded')}</p>}
+        {routine.pendingEdit?.status === 'superseded' && <p className="work-notice">{t(routine.source && routine.source !== 'argo' ? 'routine.superseded.ext' : 'routine.superseded')}</p>}
         {routine.pendingEdit?.status === 'failed' && <p className="work-notice error" role="alert">{t('routine.failed')}{routine.pendingEdit.error ? ` — ${routine.pendingEdit.error}` : ''}</p>}
         <div className="work-actions">
           {/* H3: 편집 폼의 초기값은 아직 반영 전인 대기 patch를 덮어써서 보여준다 — 소유자가 두 번째 수정을 시작할 때 낡은(적용 전) 값에서 출발하지 않게 */}
@@ -314,12 +326,40 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
   </>;
 }
 
+/** 1-b ③ 보낼 방 고르기 — 이 1:1 대화(소유자와 그 에이전트) 또는 그 에이전트가 들어간 채널만. 서버(_msgr_routine_channel_ok)가 다시 판정한다. */
+function RouteChooser({ routine, channel, t, disabled, act, onSaved }) {
+  const [options, setOptions] = useState(null);
+  const [value, setValue] = useState('');
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const members = await checked(supabase.from('msgr_channel_members').select('channel_id').eq('member_kind', 'crew').eq('member_id', routine.crew_id));
+      const ids = [...new Set((members ?? []).map((m) => m.channel_id))]; // 지금 연 채널도 그 에이전트가 들어가 있으면 선택지(검수 LOW) — 1:1 방은 아래에서 따로
+      const rooms = ids.length ? await checked(supabase.from('msgr_channels').select('id,kind,name').in('id', ids).neq('kind', 'dm').is('archived_at', null).order('name')) : [];
+      if (live) setOptions([...(channel.kind === 'dm' ? [{ id: channel.id, label: t('routine.route.dm') }] : []), ...(rooms ?? []).map((r) => ({ id: r.id, label: `# ${r.name}` }))]);
+    })().catch(() => { if (live) setOptions([]); });
+    return () => { live = false; };
+  }, [routine.crew_id, channel.id, channel.kind, t]);
+  if (options === null) return <p className="work-note" role="status">{t('ui.loading')}</p>;
+  return <div className="work-actions">
+    <label className="work-field"><span>{t('routine.route.pick')}</span>
+      <select className="msgr-select" value={value} onChange={(event) => setValue(event.target.value)} disabled={disabled}>
+        <option value="">{t('routine.route.choose')}</option>
+        {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+      </select>
+    </label>
+    <button className="btn sm" disabled={disabled || !value} onClick={() => act(() => checked(supabase.rpc('msgr_crew_routine_edit', { p_routine: routine.id, p_op: 'update', p_patch: { channel_id: value } })), onSaved)}>{t('routine.route.save')}</button>
+  </div>;
+}
+
 function Schedule({ schedule = {}, t }) {
   return <>{schedule.kind === 'interval' ? t('automation.every', { n: schedule.minutes }) : <>{t(`automation.kind.${schedule.kind}`)} {schedule.kind === 'weekly' ? (schedule.weekdays ?? []).map((day) => t(`automation.day.${day}`)).join(' · ') : ''} {schedule.time}</>} · {schedule.timezone}</>;
 }
 
 /** Argo 루틴 스케줄 표시 — 필드명이 자동화(kind/weekdays)와 다르다(type/dows, 0=일~6=토). times[]가 여럿이면 전부 보여준다. */
 function RoutineSchedule({ schedule = {}, t }) {
+  // 외부 에이전트 계약 1-a: 메신저 형식으로 못 바꾼 일정은 raw — 어댑터가 만든 표시 문구(display)를 그대로, 없으면 원본 식(expr)을 보여준다.
+  if (schedule.type === 'raw') return <>{schedule.display || schedule.expr}</>;
   if (schedule.type === 'interval') return <>{t('automation.every', { n: schedule.everyMinutes })}</>;
   if (schedule.type === 'once') return <>{t('routine.kind.once')} {schedule.date} {schedule.time}</>;
   // L1: 옛 형식(dow 단수만 있고 dows 배열이 없는 아주 오래된 루틴)도 요일 하나로 보여준다.
@@ -392,7 +432,9 @@ function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSa
     스케줄은 읽기전용으로 둔다(첫 시각만 고쳐 나머지 시각을 지우는 사고를 원천 차단 — 유건 지시). */
 function RoutineForm({ value, t, disabled, act, onClose, onSaved }) {
   const schedule = value.schedule ?? {};
-  const editableSchedule = schedule.type === 'interval' || ((schedule.type ?? 'daily') !== 'once' && (schedule.times?.length ?? 1) <= 1);
+  // raw(메신저 형식으로 못 바꾼 외부 일정)도 once·여러 시각과 같은 취급 — 제목·지시만 편집, 일정은 읽기전용.
+  const intervalInRange = Number(schedule.everyMinutes) >= 10 && Number(schedule.everyMinutes) <= 1440; // 외부 에이전트는 10분 미만 간격도 가진다 — 폼 범위 밖이면 일정은 읽기 전용(검수 L-10)
+  const editableSchedule = schedule.type !== 'raw' && (schedule.type === 'interval' ? intervalInRange : ((schedule.type ?? 'daily') !== 'once' && (schedule.times?.length ?? 1) <= 1));
   const [title, setTitle] = useState(value.title ?? '');
   const [prompt, setPrompt] = useState(value.prompt ?? '');
   const [type, setType] = useState(schedule.type === 'weekly' ? 'weekly' : schedule.type === 'interval' ? 'interval' : 'daily');

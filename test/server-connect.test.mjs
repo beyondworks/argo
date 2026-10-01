@@ -51,11 +51,14 @@ case "$1 $2" in
 esac
 exit 0
 `);
+  // 예전 CLI 형식(텍스트 목록만, 바인딩이 없으면 "Config path not found") — 최신 형식은 아래 오픈클로 전용 테스트가 본다
   await writeFile(join(bin, 'openclaw'), `#!/bin/sh
 echo "openclaw $*" >> "$ARGO_TEST_LOG"
 case "$1 $2" in
-"agents list") printf 'Agents:\\n- main (default)\\n  Workspace: ~/.openclaw/workspace\\n' ;;
+"--version ") echo "OpenClaw 2026.8.1 (abc1234)" ;;
+"agents list") [ "$3" = "--json" ] && { echo "error: unknown option '--json'" >&2; exit 1; }; printf 'Agents:\\n- main (default)\\n  Workspace: ~/.openclaw/workspace\\n' ;;
 "config get") echo "Config path not found: bindings"; exit 1 ;;
+"plugins inspect") echo '{"plugin":{"id":"openclaw-argo-msgr","status":"loaded","error":null},"diagnostics":[]}' ;;
 esac
 exit 0
 `);
@@ -103,7 +106,7 @@ exit 0
 
     const calls = (await readFile(log, 'utf8')).trim().split('\n');
     const hh = `HH=${join(home, '.hermes')}`;
-    for (const c of ['plugins enable argo-msgr-platform --no-allow-tool-override', 'gateway install', 'gateway start']) assert.ok(calls.includes(`hermes ${c} ${hh}`), `hermes ${c}`);
+    for (const c of ['plugins enable argo-msgr-platform --no-allow-tool-override', 'config set approvals.mode manual', 'gateway install', 'gateway start']) assert.ok(calls.includes(`hermes ${c} ${hh}`), `hermes ${c}`);
     assert.ok(!calls.some((c) => c.includes('research') && !c.startsWith('hermes profile show')), 'research에는 설치 명령이 없다');
 
     // 오픈클로 main: 플러그인·계정(해시 일치 토큰)·바인딩·게이트웨이 재시작
@@ -112,6 +115,7 @@ exit 0
     assert.equal(set('url'), base); assert.equal(set('enabled'), 'true'); assert.equal(sha(set('token')), hashOf('openclaw', 'main'));
     assert.ok(calls.includes('openclaw config set bindings [{"match": {"channel": "argo-msgr", "accountId": "main"}, "agentId": "main"}]'));
     assert.ok(calls.includes('openclaw gateway restart'));
+    assert.ok(calls.indexOf('openclaw config set tools.exec.mode ask') >= 0 && calls.indexOf('openclaw config set tools.exec.mode ask') < calls.indexOf('openclaw gateway restart'), '실행 승인 기본값 ask는 재시작 전에');
 
     assert.deepEqual(st.results.map((r) => `${r.kind}:${r.id}:${r.ok}`), ['hermes:default:true', 'openclaw:main:true']);
     assert.equal(st.host.length > 0, true);
@@ -230,4 +234,144 @@ print(json.dumps({"rc": rc, "calls": calls, "posted": posted}))
   assert.ok(j.calls.some((c) => c.join(' ') === 'systemctl restart com.ai-native.hermes-gateway@aesop.service'), 'root가 서비스 재시작');
   assert.deepEqual(j.posted.map((p) => p[0]), ['link/done']);
   assert.equal(j.posted[0][1].results[0].ok, true); assert.equal('unit' in j.posted[0][1].results[0], false);
+});
+
+// ── 오픈클로 전용(2026-09-29): 최신 CLI(2026.8.1+)에서 처음 설치하는 서버, 채널 줄 오인, 로드 실패, 오래된 버전 ──
+// 실측 근거(격리 설치 openclaw@2026.9.6): 바인딩이 없으면 `config get bindings --json`이 rc=1 + {"ok":false,"error":{"message":"Config path is valid but unset: bindings…"}},
+// `agents list` 텍스트에는 들여쓴 채널 줄("    - Argo Messenger main: configured")이 섞이고, `plugins enable`은 로드 실패여도 rc=0이다.
+const OC_AGENTS_TEXT = 'Agents:\n- main (default)\n  Workspace: ~/.openclaw/workspace\n  Routing rules: 1\n  Providers:\n    - Argo Messenger main: configured\n    - Telegram default: configured\n- support\n  Workspace: ~/.openclaw/workspace-support\nRouting rules map channel/account/peer to an agent.\n';
+const OC_AGENTS_JSON = '[{"id":"main","workspace":"/w","bindings":1,"isDefault":true},{"id":"support","workspace":"/w2","bindings":0,"isDefault":false}]';
+const OC_UNSET = '{\n  "ok": false,\n  "error": {\n    "type": "cli_error",\n    "message": "Config path is valid but unset: bindings. The runtime default applies until you set an authored value with openclaw config set bindings <value>."\n  }\n}';
+const OC_LOADED = '{"plugin":{"id":"openclaw-argo-msgr","status":"loaded","error":null},"diagnostics":[]}';
+const OC_LOAD_FAILED = '{"plugin":{"id":"openclaw-argo-msgr","status":"error","error":"Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath \'./plugin-sdk\' is not defined by \\"exports\\""},"diagnostics":[{"level":"error","message":"plugin failed during load"}]}';
+
+function fakeOpenclaw({ version = 'OpenClaw 2026.9.6 (eb377ac)', agentsJson = OC_AGENTS_JSON, inspect = OC_LOADED } = {}) {
+  const block = (tag, text) => `cat <<'${tag}'\n${text}\n${tag}\n`;
+  return `#!/bin/sh
+echo "openclaw $*" >> "$ARGO_TEST_LOG"
+case "$1 $2" in
+"--version ") echo "${version}" ;;
+"agents list") if [ "$3" = "--json" ]; then
+${agentsJson == null ? 'echo "error: unknown option --json" >&2; exit 1\n' : block('AJ', agentsJson)}else
+${block('AT', OC_AGENTS_TEXT)}fi ;;
+"config get") if [ -f "$HOME/bindings.json" ]; then cat "$HOME/bindings.json"; else
+${block('UNSET', OC_UNSET)}exit 1; fi ;;
+"config set") [ "$3" = bindings ] && printf '%s' "$4" > "$HOME/bindings.json" ;;
+"plugins inspect")
+${block('PI', inspect)};;
+"plugins registry") [ "$3" = "--refresh" ] && : > "$HOME/registry-refreshed" ;;
+"plugins enable") [ -f "$HOME/registry-refreshed" ] || { echo "[openclaw] Reason: plugin not installed: openclaw-argo-msgr" >&2; exit 1; } ;;
+esac
+exit 0
+`;
+}
+
+async function runOpenclawOnly({ openclaw, approve = pickAll, script = CONNECT_PY }) {
+  const dir = await mkdtemp(join(tmpdir(), 'argo-vps-oc-'));
+  const home = join(dir, 'home'); const bin = join(dir, 'bin'); const log = join(dir, 'cli.log');
+  await mkdir(home, { recursive: true }); await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, 'openclaw'), openclaw); await chmod(join(bin, 'openclaw'), 0o755);
+  await writeFile(log, '');
+  const st = { agents: null, results: null };
+  const rpc = async (fn, a) => {
+    if (fn === 'msgr_server_link_report') { st.agents = a.agents; st.approved = approve(a.agents); return null; }
+    if (fn === 'msgr_server_link_status') return { status: 'approved', approved: st.approved };
+    if (fn === 'msgr_server_link_done') { st.results = a.results; return null; }
+  };
+  const srv = createServer(async (req, res) => { let raw = ''; for await (const c of req) raw += c;
+    const { status, body } = await handleLink(parseLinkPath(`http://x${req.url}`), JSON.parse(raw || '{}'), rpc);
+    res.writeHead(status); res.end(JSON.stringify(body)); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}/functions/v1/msgr-bot`;
+  try {
+    const out = await new Promise((resolve) => {
+      const p = spawn('python3', ['-', CODE, base], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, ARGO_TEST_LOG: log, LANG: 'C.UTF-8' } });
+      let so = ''; p.stdout.on('data', (d) => { so += d; }); p.stderr.on('data', (d) => { so += d; });
+      p.on('close', (c) => resolve({ code: c, so })); p.stdin.end(script);
+    });
+    const bindings = existsSync(join(home, 'bindings.json')) ? JSON.parse(await readFile(join(home, 'bindings.json'), 'utf8')) : null;
+    return { ...out, home, calls: (await readFile(log, 'utf8')).trim().split('\n').filter(Boolean), st, bindings };
+  } finally { srv.close(); }
+}
+
+test('connect.py(오픈클로 최신): 바인딩이 아직 없는 서버에서도 연결된다 — "valid but unset" JSON 오류를 빈 목록으로 읽는다', { skip }, async () => {
+  const r = await runOpenclawOnly({ openclaw: fakeOpenclaw(), approve: (agents) => agents.filter((a) => a.id === 'main').map(({ kind, id }) => ({ kind, id })) });
+  assert.equal(r.code, 0, r.so);
+  assert.deepEqual(r.st.results.map((x) => `${x.kind}:${x.id}:${x.ok}`), ['openclaw:main:true'], r.so);
+  assert.deepEqual(r.bindings, [{ match: { channel: 'argo-msgr', accountId: 'main' }, agentId: 'main' }]);
+  assert.ok(r.calls.includes('openclaw gateway restart'));
+});
+
+test('connect.py(오픈클로): 게이트웨이가 돌고 있어도 방금 복사한 플러그인을 켠다 — enable 전에 플러그인 목록을 다시 만든다', { skip }, async () => {
+  const r = await runOpenclawOnly({ openclaw: fakeOpenclaw() });
+  assert.equal(r.code, 0, r.so);
+  const at = (c) => r.calls.indexOf(c);
+  assert.ok(at('openclaw plugins registry --refresh') >= 0 && at('openclaw plugins registry --refresh') < at('openclaw plugins enable openclaw-argo-msgr'), r.calls.join('\n'));
+  assert.ok(at('openclaw plugins enable openclaw-argo-msgr') < at('openclaw plugins inspect openclaw-argo-msgr --runtime --json'), '켠 뒤에 실제 로드를 확인한다');
+});
+
+test('connect.py(오픈클로): 에이전트 목록은 --json으로 읽고, 채널·공급자 줄("    - Argo Messenger main: configured")은 에이전트가 아니다', { skip }, async () => {
+  const r = await runOpenclawOnly({ openclaw: fakeOpenclaw() });
+  assert.deepEqual(r.st.agents.map((a) => `${a.id}:${a.default}`), ['main:true', 'support:false']);
+  assert.ok(r.calls.includes('openclaw agents list --json'));
+  assert.equal(r.code, 0, r.so);
+});
+
+test('connect.py(오픈클로): --json이 없는 CLI의 텍스트 목록에서도 들여쓴 채널 줄은 건너뛴다', { skip }, async () => {
+  const r = await runOpenclawOnly({ openclaw: fakeOpenclaw({ agentsJson: null }) });
+  assert.deepEqual(r.st.agents.map((a) => `${a.id}:${a.default}`), ['main:true', 'support:false'], '"Argo"·"Telegram"을 에이전트로 보고하지 않는다');
+  assert.equal(r.code, 0, r.so);
+});
+
+test('connect.py(오픈클로): 플러그인이 실제로 로드되지 않으면(enable은 rc=0) 설정·재시작 없이 실패로 보고한다', { skip }, async () => {
+  const r = await runOpenclawOnly({ openclaw: fakeOpenclaw({ inspect: OC_LOAD_FAILED }) });
+  assert.equal(r.code, 7, r.so);
+  assert.ok(r.calls.includes('openclaw plugins inspect openclaw-argo-msgr --runtime --json'));
+  assert.ok(r.st.results.every((x) => x.ok === false && /ERR_PACKAGE_PATH_NOT_EXPORTED/.test(x.detail) && /업데이트/.test(x.detail)), JSON.stringify(r.st.results));
+  assert.ok(!r.calls.some((c) => c.startsWith('openclaw config set') || c.startsWith('openclaw gateway')), '계정·바인딩을 쓰지 않고 게이트웨이도 건드리지 않는다');
+});
+
+test('connect.py(오픈클로): 최소 버전(2026.8.1) 미만이면 설치하지 않고 "OpenClaw를 업데이트하세요"로 끝난다', { skip }, async () => {
+  for (const version of ['OpenClaw 2026.2.23 (1a2b3c4)', 'OpenClaw 2026.8.1-beta.3 (1a2b3c4)', 'openclaw: command output without a version']) {
+    const r = await runOpenclawOnly({ openclaw: fakeOpenclaw({ version }) });
+    assert.equal(r.code, 8, `${version}\n${r.so}`);
+    assert.match(r.so, /OpenClaw를 (업데이트하세요|2026\.8\.1 이상으로 업데이트)/);
+    assert.equal(r.st.agents, null, '서버에 보고하지 않는다(연결 코드도 쓰지 않는다)');
+    assert.equal(existsSync(join(r.home, '.openclaw/extensions/openclaw-argo-msgr')), false, '플러그인을 깔지 않는다');
+    assert.deepEqual(r.calls, ['openclaw --version']);
+  }
+  const ok = await runOpenclawOnly({ openclaw: fakeOpenclaw({ version: 'OpenClaw 2026.8.1 (1a2b3c4)' }) });
+  assert.equal(ok.code, 0, ok.so);
+});
+
+// 1-b(2026-09-29 유건 결정) — 연결할 때 위험 명령은 사람에게 묻는 모드를 기본값으로, 이미 명시한 값은 덮어쓰지 않는다(카드에 실제 모드 안내)
+test('connect.py: 승인 모드 기본값 — 명시한 값이 없을 때만 Hermes manual·OpenClaw ask, 있으면 그대로(블록·한 줄 YAML 둘 다)', { skip }, async () => {
+  const py = String.raw`
+import importlib.util, sys, os, tempfile
+spec = importlib.util.spec_from_file_location('connect', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+assert m.yaml_sets('approvals:\n  mode: smart\n', 'approvals', 'mode')
+assert m.yaml_sets('approvals: {mode: off, timeout: 60}\n', 'approvals', 'mode')
+assert m.yaml_sets('model: x\napprovals:\n  # 주석\n\n  timeout: 60\n  mode: manual\nother: 1\n', 'approvals', 'mode')
+assert not m.yaml_sets('approvals:\n  timeout: 60\nmode: smart\n', 'approvals', 'mode'), '다른 최상위 키의 mode는 아니다'
+assert not m.yaml_sets('auxiliary:\n  approvals:\n    mode: smart\n', 'approvals', 'mode'), '중첩된 같은 이름은 아니다'
+assert not m.yaml_sets('approvals:\n  gateway:\n    mode: strict\n  timeout: 60\n', 'approvals', 'mode'), 'approvals 아래 더 깊은 mode는 아니다(검수 LOW)'
+assert not m.yaml_sets('', 'approvals', 'mode')
+calls = []
+m.run = lambda cli, args, env=None: calls.append(args) or (True, '')
+d = tempfile.mkdtemp()
+assert m.default_manual_approvals_hermes('hermes', d, {}) == 'manual' and calls[-1] == ['config', 'set', 'approvals.mode', 'manual']
+open(os.path.join(d, 'config.yaml'), 'w').write('approvals:\n  mode: smart\n')
+n = len(calls)
+assert m.default_manual_approvals_hermes('hermes', d, {}) == 'kept' and len(calls) == n, '명시한 smart는 덮어쓰지 않는다'
+m.run = lambda cli, args, env=None: calls.append(args) or ((False, 'Config path not found') if args[:2] == ['config', 'get'] else (True, ''))
+assert m.default_ask_exec_openclaw('openclaw') == 'ask' and calls[-1] == ['config', 'set', 'tools.exec.mode', 'ask']
+m.run = lambda cli, args, env=None: calls.append(args) or ((True, '"full"\n') if args[:2] == ['config', 'get'] else (True, ''))
+n = len(calls)
+assert m.default_ask_exec_openclaw('openclaw') == 'kept' and len(calls) == n + 1, '명시한 full은 덮어쓰지 않는다'
+m.run = lambda cli, args, env=None: (False, 'boom')
+assert m.default_manual_approvals_hermes('hermes', tempfile.mkdtemp(), {}) == 'failed', '설정 실패는 연결을 막지 않고 보고만'
+`;
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync('python3', ['-c', py, new URL('../integrations/server-connect/connect.py', import.meta.url).pathname], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
 });

@@ -36,6 +36,7 @@
 .work-item-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
 .work-item-title strong { flex: 1 1 auto; }
 .work-source-badge { flex: none; white-space: nowrap; font-size: 10px; font-weight: 650; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-3); }
+.work-source-badge.warn { color: var(--danger); border-color: currentColor; }
 .work-status { flex: none; white-space: nowrap; font-size: 11px; padding: 4px 8px; border-radius: 8px; background: var(--card-2); }
 .work-status.blocked { color: var(--danger); }
 .work-status.completed { font-weight: 650; }

@@ -3,6 +3,15 @@
 // persist/restore는 이 기기 화면 캐시(첫 화면을 바로 그리기 위한 사본)다 — 저장 상태 표시와 무관하다.
 import { useSyncExternalStore } from 'react';
 
+let storageScope = null;
+let legacyRecovery = { draft: false, pending: 0 };
+const recoveryListeners = new Set();
+export const getStorageScope = () => storageScope;
+export const setStorageScope = (uid) => { flushAll(); storageScope = uid; };
+export const scopedStorageKey = (key, uid = storageScope) => `${key}:${uid ?? 'signed-out'}`;
+export const setLegacyRecovery = (patch) => { legacyRecovery = { ...legacyRecovery, ...patch }; recoveryListeners.forEach((listener) => listener()); };
+export const useLegacyRecovery = () => useSyncExternalStore((listener) => { recoveryListeners.add(listener); return () => recoveryListeners.delete(listener); }, () => legacyRecovery, () => legacyRecovery);
+
 let status = typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'saved';
 const listeners = new Set();
 const set = (s) => { if (s !== status) { status = s; listeners.forEach((l) => l()); } };
@@ -46,7 +55,7 @@ export function forget(key) {
 }
 
 /** 충돌로 못 보낸 내 변경 — 새로고침·탭 닫기 뒤에도 사람이 고를 때까지(사본 저장·새로 불러오기) 이 기기에 남긴다 */
-export const heldKey = (id) => `argo-office-conflict:${id}`;
+export const heldKey = (id) => scopedStorageKey(`argo-office-conflict:${id}`);
 
 export function restore(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }

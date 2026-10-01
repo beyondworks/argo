@@ -209,10 +209,10 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(ch, /\['allowed', 'approval', 'blocked', \.\.\.\(channel\.personal_crews === 'read_only' \? \['read_only'\] : \[\]\)\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(channel\.personal_crews \?\? 'approval'\) === v\}[^\n]*disabled=\{!canEdit \|\| busy\} onClick=\{\(\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\}/, '세그먼트');
   assert.match(ch, /\/msgr_channel_personal_blocked\/\.test\(res\.error\.message\) \? t\('err\.channelPersonalBlocked'\)/, '멤버 추가 거절 문구');
   assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && !pendingCrews\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'approval'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼) · 승인 대기 중인 에이전트는 후보에서 뺀다');
-  assert.match(ch, /&& \(isDmRoom \? c\.owner_user_id === uid : \(c\.owner_user_id === uid \|\| \(!!org\?\.service_user_id && c\.owner_user_id === org\.service_user_id\)\)\)\);/, '후보: 채팅=내 에이전트만(들어온 에이전트는 참여자 누구나 부르므로 넣는 것은 주인만 — 2026-09-18, 서버 msgr_crew_join이 같은 규칙), 그 밖=방장이어도 내 에이전트와 조직 서비스 계정의 회사 에이전트만(유건 2026-09-17 — 남이 연결한 봇 포함 제외). 행동은 apps/messenger/test/dminvite.browser.mjs host-adds-and-approves');
+  assert.match(ch, /&& \(isDmRoom \? c\.owner_user_id === uid : \(c\.owner_user_id === uid \|\| \(!!org\?\.service_user_id && c\.owner_user_id === org\.service_user_id\)\)\) && crewAddable\(c\)\);/, '후보(+ 개인 공간에서 답하지 못하는 봇 쌍둥이 제외, 2026-10-01): 채팅=내 에이전트만(들어온 에이전트는 참여자 누구나 부르므로 넣는 것은 주인만 — 2026-09-18, 서버 msgr_crew_join이 같은 규칙), 그 밖=방장이어도 내 에이전트와 조직 서비스 계정의 회사 에이전트만(유건 2026-09-17 — 남이 연결한 봇 포함 제외). 행동은 apps/messenger/test/dminvite.browser.mjs host-adds-and-approves');
   const comp = app.slice(app.indexOf('function Composer('));
   assert.match(comp, /const usable = \(limitsPersonal\(channel\) \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews\)\.filter\(\(c\) => !\(channel\?\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\)/, '멘션 후보 필터'); assert.match(app, /export const limitsPersonal = \(channel\) => channel\?\.personal_crews === 'read_only';/, '개인 에이전트 지시를 막는 정책 = 보기만뿐 — 못 데려옴은 새로 들어오는 것만 막고 이미 있는 에이전트는 일한다(유건 2026-09-16, 서버 msgr_instruct_check와 같다)');
-  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: mentionPopupCrews\(\{ isDm, roomCrews: scopeCrews, usable \}\), members: scopePeople \?\? members, uid, exclude, all: !isDm \|\| allByName\.some\(\(c\) => c\.kind === 'crew' \|\| c\.id !== uid\) \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외·본문 중복 제외·@all은 mention-candidates.mjs, 2026-09-12). DM 팝업은 방 안 에이전트만 — 행동은 apps/messenger/test/dm-delivery.test.mjs mentionPopupCrews');
+  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: mentionPopupCrews\(\{ isDm, roomCrews, usable \}\), members: scopePeople \?\? members, uid, exclude, all: !isDm \|\| allByName\.some\(\(c\) => c\.kind === 'crew' \|\| c\.id !== uid\) \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외·본문 중복 제외·@all은 mention-candidates.mjs, 2026-09-12). DM 팝업은 방 안 에이전트만 — 행동은 apps/messenger/test/dm-delivery.test.mjs mentionPopupCrews');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /let why = envelope \? 'ok' : await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
   assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
@@ -280,7 +280,7 @@ test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목�
   assert.match(app, /\{isAdmin && <button type="button" role="menuitem" onClick=\{\(\) => \{ setOrgMenu\(false\); orgInvite\(\); \}\}>/, '초대가 조직 메뉴에 없다(0.1.30: 초대 창을 연다)');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /<div className="sec-head"><h3>\{t\(isDmRoom \? 'dm\.who' : 'ch\.who'\)\}<\/h3>/, '구성 섹션이 첫 절 — 1:1·그룹 대화에서는 "이 대화방"으로 부른다(2026-09-16)');
-  assert.ok(ch.indexOf("t('ch.who')") < ch.indexOf("t('ch.settings')"), '구성이 채널 설정보다 앞');
+  assert.ok(ch.indexOf("'ch.who'") > 0 && ch.indexOf("'ch.who'") < ch.indexOf("'ch.settings'"), '구성이 채널 설정보다 앞(설정 제목은 개인 공간이면 대화방 설정 키로 갈린다 — 두 키 모두 구성 뒤)'); assert.ok(ch.indexOf("'ch.who'") < ch.indexOf("'personal.sheet.settings'"), '개인 공간 설정 제목도 구성보다 뒤');
   assert.match(ch, /canKick && \{ icon: 'x', label: t\('ch\.remove'\), danger: true, disabled: busy, run: \(\) => kickUser\(m\) \}/, '비공개 채널 사람 내보내기(행 … 메뉴) — 살아 있는 초대가 있으면 먼저 알린다(invite-flow.browser.mjs)'); assert.match(ch, /\{rowMenu && <CtxMenu at=\{rowMenu\.at\} items=\{rowMenu\.items\} onClose=\{\(\) => setRowMenu\(null\)\} \/>\}/, '행 메뉴는 시트 밖(화면 기준)에 띄운다 — 시트 스크롤 영역 안에서 잘렸다(유건 제보 2026-09-16)');
   for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
@@ -537,7 +537,7 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
   // (20260918130000)가 최종 강제이고, 앱은 그 마이그레이션이 없는 서버를 위해 먼저 이 방에서 뺀 뒤 나간다.
   // 빼는 함수가 없는 서버에서만 옛 차단으로 돌아간다(그래야 크루가 주인 없이 죽은 채 남지 않는다).
   assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?for \(const s of stuck\) \{\s*const r = await supabase\.rpc\('msgr_crew_leave_channel', \{ ch: c\.id, crew: s\.member_id \}\);\s*if \(r\.error\) throw new Error\(missingSchema\(r\.error\) \? t\('ch\.leave\.blocked'\) : [^\n]*\n\s*\}[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 크루를 이 방에서 먼저 빼고 내 멤버 행 삭제(빼는 함수가 없는 서버면 차단)');
-  assert.match(app, /canManage && \{ icon: 'x', label: t\('ch\.archive'\), run: \(\) => confirmVia\('archive'\)/, '보관은 관리 권한만, 2단계');
+  assert.match(app, /canManage && \{ icon: 'archive', label: t\('ch\.archive'\), run: \(\) => confirmVia\('archive'\)/, '보관은 관리 권한만, 2단계(아이콘만 x → archive로 바뀌었다 — 권한 조건·2단계 확인은 그대로)');
   // D16(2026-09-19): 공개 채널도 참여제(20260916190000 — 찾아보기로 스스로 들어간다)라 참여한 사람은 나갈 수 있어야 한다.
   // 종전 핀 "나가기는 비공개 채널만(공개는 전원 자동)"은 9/16 이전 설계(조직원 전원 자동 참여)를 고정하고 있었다.
   assert.match(app, /\n\s*\{ icon: 'out', label: t\('ch\.leave'\), run: \(\) => confirmVia\('leave'\) \}, \/\/ 공개 채널도 나간다/, '나가기는 채널 종류와 무관(공개는 찾아보기로 다시 참여)');
@@ -575,7 +575,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(app, /const openTab = \(tab, opts\) => setSt\(\(s\) => Panes\.openTab\(s\.panes, s\.focus, tab, opts\)\);/, 'Activity는 전이를 위임하고 상태 하나(setSt)만 쓴다 — 업데이터 안 다른 setState 없음');
   assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /setPanes\(|setFocusPane\] = useState/, '옛 이중 상태 없음');
   assert.match(app, /className="vault-tab-x" onClick=\{\(e\) => \{ e\.stopPropagation\(\); closeTab\(pane\.id, tb\.id\); \}\}/, '탭 닫기(창 단위)');
-  assert.match(app, /^function ActRow\(\{ c, id, label, sub, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
+  assert.match(app, /^function ActRow\(\{ c, id, label, sub, tip = undefined, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
   assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /const Row = \(/, 'Activity 안에 행 컴포넌트를 정의하지 않는다');
   assert.match(app, /const chKey = channels\.map\(\(c\) => c\.id\)\.join\(','\);\n\s*const load = useCallback\(/, '재조회는 채널 id 목록 키(배열 정체 아님) + 저장 뒤 재사용');
   assert.match(app, /onAuxClick=\{\(e\) => \{ if \(e\.button === 1\) \{ e\.preventDefault\(\); closeTab\(pane\.id, tb\.id\); \} \}\}/, '가운데 클릭 닫기(창 단위)');
@@ -597,7 +597,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(g3b, /glow\[i\] \+= \(want\(i\) - glow\[i\]\) \* 0\.16;/, '호버 강조는 이징(툭 끊기지 않게)');
   assert.doesNotMatch(g3b, /기하학적 지평/, '지평선 장식 제거(미니멀)');
   assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
-  assert.match(app, /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리');
+  assert.match(read('apps/messenger/src/activity-sentence.mjs'), /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리 — 활동 문장은 순수 함수 모듈(test/activity-sentence.test.mjs가 행동을 잠근다, 점검 A·B #5)');
   const dict = read('apps/messenger/src/i18n.js');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   const actions = new Set([...sql.matchAll(/msgr_audit\([^,]*, '([a-z_.]+)'/g)].map((m) => m[1]));

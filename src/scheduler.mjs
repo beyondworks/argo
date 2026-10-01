@@ -12,6 +12,7 @@ const briefingCtx = async (...a) => (await import('./gateway.mjs')).briefingCtx(
 import { readAgentCard } from './persona.mjs';
 import { resolveRunner, isCliTurn, runnerCredType } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
+import { DELEGATION_LIMITS, getTree, isRelaxedStored } from './delegation-limits.mjs'; // 풀린 쪽지의 합계 예산·시작 대화방 스위치(배달 직전 재판정)
 import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
 import { runFailureDigest } from './failure-digest.mjs';
@@ -118,7 +119,7 @@ async function claimRoutine(wsId, routineId, now) {
     r.lastRun = now.toISOString(); // 선점 마킹 — 경쟁 워커가 이 파일을 다시 읽으면 isDue=false로 걸러진다
     await writeJsonAtomic(file, routines);
     return true;
-  });
+  }, { file: paths(wsId).routines }); // 프로세스 간 잠금 — routines.mjs(addRoutine·patchRoutine…)와 같은 `<routines.json>.lockd`. 없으면 앱 스케줄러의 선점 쓰기가 CLI가 추가한 루틴을 낡은 목록으로 덮었다(독립 검수 #800 MEDIUM-1)
 }
 
 // 진행 중인 기억 정리 — SDK 경로엔 타임아웃이 없어 실행이 백오프(5분)를 넘길 수 있고, 그러면
@@ -186,6 +187,15 @@ export function tickFailureDigest(cid, { runFn = runFailureDigest, now = Date.no
   return true;
 }
 
+/** 풀린 쪽지의 시작 대화방이 지금도 풀려 있는가 — 읽기 실패·모르는 시작점은 false(제한). origin은 합계 예산이 들고 있다({kind:'chat', slug} | {kind:'room'}). */
+async function treeOriginRelaxed(cid, origin) {
+  try {
+    if (origin?.kind === 'room') { const { loadRoom } = await import('./room.mjs'); return isRelaxedStored(await loadRoom(cid)); }
+    if (origin?.kind === 'chat' && origin.slug) { const { getDelegationLimit } = await import('./thread.mjs'); return !(await getDelegationLimit(cid, origin.slug)); }
+  } catch { /* 읽기 실패 — 제한으로 */ }
+  return false;
+}
+
 /** 쪽지 배달 턴 한 통 — 스케줄러가 deliverCrewMail에 넘기는 실행기. 메신저발이면 그 채널 문맥, 메신저 밖이면 배달 브리핑의 목적지 범위(briefingCtx)로 돈다.
     (export: 목적지 기준 붙여넣기 행동 테스트 — test/shared-dest-context.test.mjs) */
 export async function crewmailTurn(cid, slug, msg, opts) {
@@ -200,11 +210,21 @@ export async function crewmailTurn(cid, slug, msg, opts) {
     const resolved = await resolveRunner(cid, (meta.runner ?? '').toLowerCase() || null);
     hasTools = !isCliTurn(resolved.runner, await runnerCredType(cid, resolved.runner)); // gemini API 키(네이티브)는 도구 있음
   } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
-  const prompt = mailPrompt(msg, 'ko', { hasTools });
+  // 풀린 쪽지 — 배달 **직전에** 다시 판정한다: ① 합계 예산(tree)을 이 프로세스가 아는가(모르면 제한 — fail-closed) ② 이 풀림을 켠 대화방(시작 대화·회의)이
+  // 아직 풀려 있는가(사용자가 그 사이 다시 걸었으면 이미 쌓인 풀린 쪽지도 제한 상태로 배달한다 — 유건 2026-10-01). 메신저발은 스위치 밖.
+  const tree = msg.relaxed === true && !msg.msgr ? getTree(msg.tree) : null;
+  const relaxed = !!tree && await treeOriginRelaxed(cid, tree.origin);
+  // 풀린 쪽지가 재판정에서 제한으로 떨어졌다면(다시 걸었거나 예산 id를 모름) 켜짐 규칙으로 도는데, hop 1·2 쪽지는 켜짐에서도 위임·쪽지 도구가 남아
+  // 합계 예산 밖에서 턴을 더 만든다(재검수 2026-10-01 LOW-1: 최대 12턴). 그래서 켜짐 단계 상한까지 hop을 올려 배달한다 — 도구 없음·회신 안내 없음, 더 퍼지지 않는다.
+  if (msg.relaxed === true && !msg.msgr && !relaxed) {
+    const hop = Math.max(opts.hop ?? msg.hop ?? 0, DELEGATION_LIMITS.on.hop);
+    opts = { ...opts, hop }; msg = { ...msg, hop };
+  }
+  const prompt = mailPrompt(msg, 'ko', { hasTools, relaxed });
   // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
   const mirrorCtx = crewmailMirrorCtx(cid, slug, msg); // 요청자 사슬(손님 판정 재료)을 잇는다 — crewmailMirrorCtx 주석
   if (mirrorCtx) { const mem = await crewMemoryForMail(mirrorCtx.crewId, mirrorCtx.channelId).catch(() => undefined); if (mem !== undefined) mirrorCtx.orgMemory = mem; } // 서버 기억(규칙) — 쪽지 턴도(검수 #691 M1)
-  const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))) }); // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
+  const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))), ...(relaxed ? { delegationRelaxed: true, delegationTree: tree } : {}) }); // 위임 제한을 푼 대화방에서 시작된 쪽지의 배달 턴은 같은 상한을 이어 받는다(메신저발 제외) // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
   // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
   await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts, contextScope: t.contextScope })
     .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));

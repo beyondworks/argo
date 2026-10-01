@@ -789,6 +789,51 @@ const DICT = {
   'legal.privacy': ['개인정보처리방침', 'Privacy Policy'],
   'terms.title': ['이용약관', 'Terms of Service'],
   'privacy.title': ['개인정보처리방침', 'Privacy Policy'],
+  'legal.refund': ['환불 정책', 'Refund policy'],
+  'terms.updated': ['시행일 2026-07-15 · 개정 2026-10-01', 'Effective 2026-07-15 · Revised 2026-10-01'],
+  'terms.paymentScopeTitle': ['결제 제공자별 적용 안내', 'Terms by payment provider'],
+  'terms.paymentScope': [
+    '아래 Lemon Squeezy 관련 결제·해지·환불 조건은 Lemon Squeezy를 통해 구매한 구독에 적용됩니다. 2026년 10월 1일 이후 Paddle를 통해 결제한 Argo Messenger와 Argo Office 유료 구독에는 별도의 환불 및 구독 취소 정책이 적용됩니다. 이는 현재 모든 결제를 Paddle로 처리한다는 뜻이 아니며, 기존 Lemon Squeezy 구매에는 소급 적용하지 않습니다.',
+    'The payment, cancellation and refund terms referring to Lemon Squeezy below apply to subscriptions purchased through Lemon Squeezy. Paid Argo Messenger and Argo Office subscriptions purchased through Paddle on or after October 1, 2026 are covered by the separate Refund and Subscription Cancellation Policy. This does not mean that all payments are currently processed through Paddle, and it does not apply retroactively to existing Lemon Squeezy purchases.',
+  ],
+  'refund.title': ['환불 및 구독 취소 정책', 'Refund and Subscription Cancellation Policy'],
+  'refund.effective': ['시행일 2026년 10월 1일', 'Effective October 1, 2026'],
+  'refund.operator': [
+    '서비스 제공 사업자: 에이아이(AI)개발단 · 대표자: 고승현 · 고객지원: lean8kim@gmail.com',
+    'Service provider: 에이아이(AI)개발단 · Representative: 고승현 · Customer support: lean8kim@gmail.com',
+  ],
+  'refund.1.title': ['1. 적용 범위', '1. Scope'],
+  'refund.1.body': [
+    '이 정책은 시행일 이후 Paddle를 통해 결제한 Argo Messenger와 Argo Office의 유료 구독에 적용됩니다. Paddle는 해당 거래의 판매자(Merchant of Record)이며, Argo는 서비스와 고객지원을 제공합니다. 이 정책은 현재 모든 결제를 Paddle로 처리한다는 뜻이 아닙니다. 기존 Lemon Squeezy 등 다른 결제 제공자를 통한 구매에는 소급 적용하지 않으며, 해당 구매 당시의 조건이 유지됩니다.',
+    'This policy applies to paid subscriptions to Argo Messenger and Argo Office purchased through Paddle on or after the effective date. Paddle is the Merchant of Record for those transactions, while Argo provides the service and customer support. This policy does not mean that all payments are currently processed through Paddle. It does not apply retroactively to existing purchases through Lemon Squeezy or other payment providers; the terms in effect at the time of those purchases remain unchanged.',
+  ],
+  'refund.2.title': ['2. 결제 후 14일 이내 전액 환불', '2. Full refund within 14 days of payment'],
+  'refund.2.body': [
+    '월간·연간 구독 모두 최초 결제일 또는 갱신 결제일부터 14일 이내에 환불을 요청하면 해당 결제 금액 전액을 환불합니다. 이는 Argo가 제공하는 환불 보장입니다. 무료 체험을 제공하는 경우에는 체험 시작일이 아니라 실제 유료 결제일부터 14일을 계산합니다.',
+    'For both monthly and annual subscriptions, we provide a full refund of the relevant payment when you request it within 14 days of the initial payment or a renewal payment. This is a refund guarantee provided by Argo. If a free trial is offered, the 14-day period starts on the date of the actual paid charge, not on the date the trial begins.',
+  ],
+  'refund.3.title': ['3. 구독 취소와 이용 기간', '3. Subscription cancellation and access'],
+  'refund.3.body': [
+    '구독은 결제 시 안내된 주기로 자동 갱신됩니다. 다음 결제 전에 Paddle 영수증의 구독 관리 링크 또는 Paddle 고객지원에서 취소할 수 있습니다. 일반적인 구독 취소는 다음 갱신 결제를 중단하며, 이미 결제한 기간이 끝날 때까지 유료 기능을 이용할 수 있습니다. 전액 환불이 처리되면 해당 유료 구독 및 이용권은 종료됩니다.',
+    'Subscriptions renew automatically at the billing interval disclosed at checkout. You can cancel before the next payment through the subscription management link in your Paddle receipt or through Paddle customer support. Ordinary cancellation stops the next renewal payment, and you retain paid access until the end of the period already paid for. When a full refund is processed, the corresponding paid subscription and access end.',
+  ],
+  'refund.4.title': ['4. 14일 이후의 환불과 예외', '4. Refunds after 14 days and exceptions'],
+  'refund.4.body': [
+    '14일이 지난 뒤에는 단순 미사용이나 일반적인 구독 취소만을 이유로 한 자발적 일할 환불을 기본적으로 제공하지 않습니다. 다만 법정 청약철회·중도해지·환급 권리, 중복 결제나 무단 결제, 서비스 미제공이나 중대한 결함에 따른 권리, Paddle 정책이 보장하는 권리를 제한하지 않습니다. 한국의 계속거래 관련 규정을 포함하여 적용되는 법규를 따릅니다.',
+    'After 14 days, we do not ordinarily offer voluntary prorated refunds solely for non-use or ordinary subscription cancellation. This does not limit statutory rights to withdraw, terminate early or receive a refund; rights concerning duplicate or unauthorized charges, non-delivery of the service or material defects; or rights provided by Paddle policies. Applicable laws, including Korean rules on continuing transactions where applicable, will be followed.',
+  ],
+  'refund.5.title': ['5. 환불 요청과 처리', '5. Requesting and processing a refund'],
+  'refund.5.body': [
+    '구매 시 사용한 이메일 주소와 주문번호를 포함하여 lean8kim@gmail.com 또는 Paddle 고객지원(paddle.net)으로 요청해 주세요. 비밀번호나 카드 전체 번호는 보내지 마세요. 환불은 원칙적으로 Paddle를 통해 원래 결제 수단으로 처리합니다. 법정 처리 기한이 우선 적용되며, 한국 전자상거래법상 청약철회가 적용되는 경우에는 법에서 정한 기산점에 따른 3영업일 이내 환급 기준을 따릅니다. 그 밖의 승인된 환불은 Paddle의 처리 기준을 따릅니다. 환불이 카드나 계좌 명세서에 반영되는 시점은 금융기관에 따라 다를 수 있습니다.',
+    'Please include the email address used for the purchase and your order number when contacting lean8kim@gmail.com or Paddle customer support at paddle.net. Do not send passwords or full card numbers. Refunds are normally processed through Paddle to the original payment method. Statutory processing deadlines take precedence. Where withdrawal under Korea’s Electronic Commerce Act applies, we follow the statutory three-business-day refund requirement measured from the starting point specified by law. Other approved refunds follow Paddle’s processing standards. The time it takes for a refund to appear on your card or bank statement may vary by financial institution.',
+  ],
+  'refund.6.title': ['6. 소비자 권리', '6. Consumer rights'],
+  'refund.6.body': [
+    '이 정책은 강행법규 또는 Paddle의 환불 정책이 보장하는 권리를 축소하지 않습니다. 적용되는 법률, 이 정책, Paddle 정책 중 구매자에게 더 유리한 보호가 있다면 그 보호가 우선합니다.',
+    'This policy does not reduce rights guaranteed by mandatory law or Paddle’s Refund Policy. Where applicable law, this policy or Paddle’s policy provides more favorable protection to the buyer, that protection takes precedence.',
+  ],
+  'refund.paddleSupport': ['Paddle 고객지원 및 환불 요청', 'Paddle customer support and refund requests'],
+  'refund.paddlePolicy': ['Paddle 환불 정책', 'Paddle Refund Policy'],
 };
 
 const LangContext = createContext(null);

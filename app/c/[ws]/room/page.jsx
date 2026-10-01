@@ -11,6 +11,8 @@ import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
 import { keepSide, sideParam, withSide } from '../split.mjs';
 import { useSplitAlive } from '../split-alive';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../work-folder';
+import { DelegationToggle } from '../delegation-toggle';
+import { DELEGATION_LIMITS } from '../../../../src/delegation-limits.mjs'; // 풀린 방 반응 라운드 힌트의 최대 라운드 수(표에서)
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -23,6 +25,9 @@ export default function Room({ params }) {
   const router = useRouter();
   const [agents, setAgents] = useState([]);
   const [messages, setMessages] = useState(null);
+  // 위임 제한 스위치 — 이 회의의 값. true = 켜짐(기본), false = 푼 상태, null = 읽는 중. 정본은 서버(방 파일 delegationLimit) — 마치기·새 회의는 켜짐으로 시작, 보관 회의를 열면 그 회의의 값.
+  const [delegLimited, setDelegLimited] = useState(null);
+  const delegSavedAt = useRef(0); // 방금 바꾼 값을 직전에 시작한 폴링 응답(옛 값)이 되돌리지 않게 — 저장 직후 4초는 폴링 값을 무시한다
   const [input, setInput] = useState('');
   // 입력 보존 — 페이지 이동·새로고침에도 쓰던 안건이 남는다(유건 요청 2026-09-02). 크루 채팅(crew/[slug])의
   // argo-draft 패턴(마운트 복원·입력 따라 저장/제거): input 상태를 따라가므로 전송(setInput(''))이면 자동 삭제.
@@ -113,7 +118,7 @@ export default function Room({ params }) {
     // 신고(2026-07-25 "크루들의 대화 내용이 사라지는 경우가 많습니다, 특히 회의실에서")의 원인.
     // 디스크의 회의록은 멀쩡한데 화면만 비는 케이스라, 실패는 에러로 드러내고 기존 표시를 유지한다.
     api(`/api/companies/${ws}/room`)
-      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setTurn(d.turn ?? null); setError(''); })
+      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setTurn(d.turn ?? null); setError(''); setDelegLimited(d.delegationLimit !== false); })
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }
@@ -150,6 +155,7 @@ export default function Room({ params }) {
         setTurn(d.turn ?? null); setServerBusy(!!d.turn?.active);
         const srv = d.messages ?? [];
         setMessages((cur) => (!busy || srv.length >= (cur?.length ?? 0)) ? srv : cur);
+        if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(d.delegationLimit !== false); // 다른 탭·기기에서 바꾼 값도 따라간다
       }).catch(() => {});
     }, live ? 2500 : 8000);
     return () => clearInterval(iv);
@@ -266,6 +272,14 @@ export default function Room({ params }) {
     }
   }
 
+  // 위임 제한 스위치 저장 — 화면은 먼저 바꾸고(낙관), 실패하면 되돌려 사유를 배너로
+  async function changeDeleg(next) {
+    const prev = delegLimited;
+    setDelegLimited(next); delegSavedAt.current = Date.now();
+    try { await api(`/api/companies/${ws}/room/delegation`, { limit: next }); }
+    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: String(e.message) })); }
+  }
+
   async function endMeeting() {
     if (busy || serverBusy) return; // 서버 턴 중 마치기 = 도는 발언이 방·개인 스레드 어디에도 안 남는다(검수 MEDIUM-2)
     // 회의록은 서버(endMeeting)가 journal + .archive로 남기므로 비파괴 — 확인창 없이 바로 마친다.
@@ -274,7 +288,7 @@ export default function Room({ params }) {
       const r = await fetch(`/api/companies/${ws}/room`, { method: 'DELETE' });
       const d = await r.json();
       if (!r.ok) throw routeError(d);
-      setMessages([]); setError('');
+      setMessages([]); setError(''); setDelegLimited(true); // 새 회의 = 위임 제한 켜짐(서버 endMeeting과 같은 규칙)
       atBottomRef.current = true; setUnseen(false); // 빈 방 = 초기 상태(검수 D4 — 우연한 클램프 의존 제거)
       loadSessions(); // 방금 마친 회의가 좌측 레일에 적재된다
       window.dispatchEvent(new Event('argo:refresh')); // 항해일지에 회의록이 바로 잡힌다
@@ -290,7 +304,7 @@ export default function Room({ params }) {
       const r = await fetch(`/api/companies/${ws}/room/sessions`, { method: 'POST' });
       const d = await r.json();
       if (!r.ok) throw routeError(d);
-      setMessages([]); setError('');
+      setMessages([]); setError(''); setDelegLimited(true); // 새 회의 = 위임 제한 켜짐(서버 parkMeeting과 같은 규칙)
       atBottomRef.current = true; setUnseen(false);
       loadSessions(); // 방금 넘긴 회의가 '진행 중'으로 레일에 적재된다
     } catch (e2) { setError(String(e2.message)); }
@@ -545,7 +559,7 @@ export default function Room({ params }) {
                       <button type="button" className="room-speaker name" onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })}>{nameOf(m.who)}</button>
                     ) : nameOf(m.who)}
                     {/* 반응 라운드 발언 — 1라운드 답을 읽고 낸 반응임을 표시(room.mjs round:2) */}
-                    {m.round === 2 && (
+                    {m.round >= 2 && (
                       <span style={{ fontSize: 10, fontWeight: 650, color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 999, padding: '0 6px' }}>{t('room.round2')}</span>
                     )}
                     {/* 위임으로 들어온 발언 — 누가 무엇을 맡겨 나온 답인지 방 안에서 드러낸다(다른 창으로 새지 않는다) */}
@@ -576,7 +590,7 @@ export default function Room({ params }) {
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                           {nameOf(sp.slug)}
-                          {turn.round === 2 && <span style={{ fontSize: 10, fontWeight: 650, color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 999, padding: '0 6px' }}>{t('room.round2')}</span>}
+                          {turn.round >= 2 && <span style={{ fontSize: 10, fontWeight: 650, color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 999, padding: '0 6px' }}>{t('room.round2')}</span>}
                           <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                             <ArgoSpinner size={11} />
                             {sp.stage ? t('chat.stageEllipsis', { stage: stageLabel(t, sp.stage, sp.detail) }) : t('room.speaking')}
@@ -777,7 +791,7 @@ export default function Room({ params }) {
             </div>
             {/* 입력창 아래 슬림 줄 — 왼쪽 폴더·클립, 오른쪽 새 회의·마치기(크루 채팅의 모델 버튼 자리). 크루 채팅 입력바와
                 같은 골격(유건 지시 2026-09-02: 대화 세션과 룩 통일). 폴더·클립 26px 폭·폴더 -0.18px 보정은 크루 정본 그대로. */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '0 6px', minHeight: 18, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, rowGap: 4, padding: '0 6px', minHeight: 18, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 'none' }}>
                 {/* 작업 폴더(work-folder.jsx 공용) — 순서는 폴더 → 클립(유건 지시 2026-07-28, 크루 채팅과 동일) */}
                 <WorkFolderButton wf={wf} disabled={busy} hint={t('room.workFolder.hint')} style={{ width: 26 }} iconStyle={{ transform: 'translateY(-0.18px)' }} />
@@ -785,6 +799,8 @@ export default function Room({ params }) {
                   onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                   <Icon name="clip" size={14} />
                 </button>
+                {/* 위임 제한 스위치(크루 채팅과 같은 컴포넌트) — 빈 방에서도 보인다(첫 안건을 올리기 전에 정할 수 있게) */}
+                <span style={{ marginLeft: 6, display: 'inline-flex' }}><DelegationToggle limited={delegLimited} onChange={changeDeleg} scope="room" /></span>
               </div>
               {/* 새 회의·마치기 — 회의 상태를 바꾸는 행동이라 알약(.btn sm)으로(유건 2026-09-02: 텍스트형은 링크처럼 읽힘). 같은 잠금.
                   좁은 폭 처방은 헤더 시절 그대로: 행 wrap + 라벨 줄바꿈·세로 자람(.btn.sm 고정 height 28은 en 2줄 라벨이 알약 밖으로). 회의 없으면 숨김. */}
@@ -792,7 +808,7 @@ export default function Room({ params }) {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
                   <button type="button" className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={newMeeting}>{t('room.new')}</button>
                   <button type="button" className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
-                  <button type="button" className="btn sm" title={t('room.roundsHint')} aria-pressed={rounds === 2}
+                  <button type="button" className="btn sm" title={delegLimited === false ? t('room.roundsHintOff', { n: DELEGATION_LIMITS.off.rounds }) : t('room.roundsHint')} aria-pressed={rounds === 2}
                     style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px', ...(rounds === 2 ? { borderColor: 'var(--primary)', color: 'var(--primary)' } : {}) }}
                     disabled={busy || serverBusy} onClick={toggleRounds}>{rounds === 2 ? t('room.roundsOn') : t('room.roundsOff')}</button>
                 </div>

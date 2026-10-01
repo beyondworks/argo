@@ -1,0 +1,25 @@
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { loadEnv } from 'vite';
+import { webOrigin } from '../src/core/desktop-urls.js';
+
+const root = fileURLToPath(new URL('../', import.meta.url));
+const mode = process.argv[2];
+const review = process.argv.includes('--review');
+if (!['build', 'dev'].includes(mode)) throw new Error('Use desktop.mjs build [--review] or dev');
+const env = { ...process.env, ...loadEnv(review ? 'desktop-review' : 'production', root, 'VITE_') };
+for (const key of Object.keys(process.env)) if (key.startsWith('VITE_')) env[key] = process.env[key];
+env.VITE_OFFICE_REVIEW = review ? '1' : '0';
+env.VITE_OFFICE_WEB_ORIGIN = webOrigin(env.VITE_OFFICE_WEB_ORIGIN, { allowLocal: review || mode === 'dev' });
+if (review && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(env.VITE_OFFICE_WEB_ORIGIN).hostname)) throw new Error('Review builds require a loopback Office API');
+if (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_ANON_KEY) throw new Error('VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are required');
+const db = new URL(env.VITE_SUPABASE_URL);
+if (review && !['localhost', '127.0.0.1', '[::1]'].includes(db.hostname)) throw new Error('Review builds require a loopback Supabase');
+if (!review && mode === 'build' && (db.protocol !== 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(db.hostname))) throw new Error('Production builds require HTTPS Supabase');
+env.VITE_OFFICE_DESKTOP = '1';
+const args = [mode, ...(mode === 'build' ? ['--bundles', 'app', ...(review ? ['--debug'] : [])] : [])];
+const cli = fileURLToPath(new URL('../node_modules/@tauri-apps/cli/tauri.js', import.meta.url));
+const child = spawn(process.execPath, [cli, ...args], { cwd: root, env, stdio: 'inherit' });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
+child.on('error', (e) => { console.error(e.message); process.exitCode = 1; });
+child.on('exit', (code) => { process.exitCode = code ?? 1; });

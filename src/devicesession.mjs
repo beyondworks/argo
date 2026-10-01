@@ -10,7 +10,7 @@ import { mkdir, writeFile, rename, rm, appendFile, chmod } from 'node:fs/promise
 import { join } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT } from './workspace.mjs';
-import { withLock } from './mutex.mjs';
+import { withLock, withDirLock } from './mutex.mjs';
 import { createHash } from 'node:crypto';
 
 const FILE = '.device-session.json';
@@ -20,6 +20,22 @@ let cache = null; // { root, sess, stamp } — stamp = 디스크 mtime+size. 다
 let epoch = 0;
 export const deviceEpoch = () => epoch;
 const fileOf = (root) => join(root, FILE);
+// 프로세스 간 회전 잠금(디렉터리 — mkdir은 모든 OS에서 배타적). withLock(devsess:root)은 한 프로세스 안의 순서만 맞춘다(mutex.mjs) —
+// 앱 사이드카·CLI·상주가 같은 데이터 루트를 쓰면 둘이 같은 refresh 토큰으로 동시에 회전해, GoTrue가 재사용으로 보고 세션 가족을 폐기한다.
+// 평소(만료 60초 전이 아님)에는 잡지 않는다 — 읽기 경로에 파일 I/O를 늘리지 않는다.
+// 시간의 관계(#791 독립 검수 HIGH-2·LOW-4):
+// - 잠금을 쥔 동안 10초마다 잠금 폴더 시각을 갱신한다(refreshMs). 그래서 30초 회수는 갱신이 멈춘 주인(크래시)에게만 일어난다 —
+//   느린 회전 중인 살아 있는 주인의 잠금을 다른 프로세스가 회수해 같은 옛 토큰을 보내는 일이 없다.
+// - 회전 요청에는 시간 제한을 두지 않는다. 제한에 걸려 끊기면 서버는 이미 회전했을 수 있는데 이쪽은 옛 토큰을 쥔 채 남아, 재시도
+//   (auth-js 자동 재시도 — 시작 후 30초 안의 AuthRetryableFetchError — 또는 다음 동기화 주기)가 같은 토큰을 다시 보내 "Already Used" →
+//   사망 마커 → 재로그인이 된다(#791 검수 재현: 20초 제한 + 21초 응답, 45초 제한 + 50초 응답). 잠금 안전은 시각 갱신이 맡으므로
+//   이 제한이 필요 없다. 대가: 서버가 끝내 응답하지 않으면 그 회전은 끝나지 않고, 다른 프로세스는 40초마다 null을 받는다(종전 코드와 같은 무기한 대기).
+// - 대기 상한 40초 > 회수 30초 — 주인 없는(크래시가 남긴) 잠금은 기다리는 동안 회수되므로 저장·삭제가 ELOCKTIMEOUT으로 실패하지 않는다.
+const lockOf = (root) => join(root, '.device-session.lock');
+const LOCK_STALE_MS = 30_000;
+const LOCK_BEAT_MS = 10_000;
+const LOCK_WAIT_MS = 40_000; // 살아 있는 다른 프로세스의 회전을 기다리는 한도 — 넘으면 이번엔 null(호출부 계약), 다음 주기 재시도
+const DIR_LOCK = { staleMs: LOCK_STALE_MS, timeoutMs: LOCK_WAIT_MS, refreshMs: LOCK_BEAT_MS };
 const deadMarkerOf = (root) => `${fileOf(root)}.dead`;
 
 /** 디스크 원본 — 캐시를 거치지 않는다. 손상은 경고(경로만) 후 null — 시크릿 값은 절대 출력하지 않는다. */
@@ -69,22 +85,24 @@ export async function saveDeviceSession({ url, anonKey, session }, { root = WS_R
     if (!url || !anonKey || !session?.access_token || !session?.refresh_token || !session?.user?.id) {
       throw new Error('기기 세션 저장에 필요한 값 누락 (url/anonKey/session)');
     }
-    await persist({
+    await mkdir(root, { recursive: true });
+    // 프로세스 간 잠금도 잡는다 — 다른 프로세스가 회전하는 중에 로그인을 저장하면, 그 회전이 끝나며 옛 세션으로 덮어 로그인이 사라진다.
+    await withDirLock(lockOf(root), () => persist({
       url, anonKey,
       user: { id: session.user.id, email: session.user.email ?? '' },
       access_token: session.access_token,
       refresh_token: session.refresh_token,
       expires_at: session.expires_at ?? 0,
-    }, root);
+    }, root), DIR_LOCK);
   });
 }
 
-/** 같은 락(devsess:root)으로 직렬화 — 회전 중 삭제가 끼어들어도 순서 보장. */
+/** 같은 락(devsess:root + 프로세스 간 잠금)으로 직렬화 — 회전 중 삭제가 끼어들어도 순서 보장. */
 export async function clearDeviceSession({ root = WS_ROOT } = {}) {
   return withLock(`devsess:${root}`, async () => {
-    await rm(fileOf(root), { force: true });
-    cache = null;
-    epoch++;
+    const drop = async () => { await rm(fileOf(root), { force: true }); cache = null; epoch++; };
+    if (existsSync(root)) await withDirLock(lockOf(root), drop, DIR_LOCK);
+    else await drop();
   });
 }
 
@@ -177,78 +195,97 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
     // (윈도우 CI 실패 실측 2026-09-05). 그때 옛 토큰으로 갱신을 보내면 GoTrue가 가족을 폐기한다 —
     // 이 함수는 락 안에서 사이클당 1회만 도니 파일 1회 읽기가 훨씬 싸다. loadDeviceSession의 도장 캐시는
     // user.id만 읽는 잦은 호출부(sync·market·auth)를 위해 그대로 둔다(그쪽 낡음은 무해).
-    let sess = readDisk(root);
-    cache = { root, sess, stamp: diskStamp(root) };
-    let retried = false;
-    for (;;) {
-      if (!sess) return null;
-      if ((sess.expires_at ?? 0) * 1000 - Date.now() > 60_000) return sess;
-      // 사망 게이트 — 마커가 "바로 이 토큰"의 거절이면 다시 보내지 않는다. 8초 동기화 루프가 죽은 토큰을
-      // 계속 보내 기기당 하루 1만 회(24기기 11만 회/일)의 "Possible abuse attempt"를 만들었다(2026-09-04 인증 로그 실측).
-      // 게이트는 모든 사본에 걸리므로 자동 회생은 두 가지뿐이다: 재로그인(persist가 마커 제거·토큰 교체)과
-      // 아래 탈출 밸브 — 종결 kind(reused·revoked·expired)만 막고, 마지막 시도가 1시간 지났으면 1회 다시 보낸다
-      // (오분류·서버 측 복구를 하루 24회로 자가 치유, 난사는 1/450). 그 외 kind는 게이트 없이 종전처럼 재시도.
-      const dead = deviceSessionDeadInfo({ root });
-      if (dead?.tokenTag && dead.tokenTag === tokenTag(sess.refresh_token) && DEAD_GATE_KINDS.has(dead.kind)
-        && Date.now() - (Date.parse(dead.lastAt) || 0) < DEAD_RETRY_MS) {
-        await logLine(root, { ev: 'skipped', reason: mask(dead.reason) });
-        return null;
-      }
-      // 마커가 이 토큰을 말하지 않을 때(쓰기 실패·구형 마커)만 프로세스 기억으로 막는다 — 마커가 있으면 위 게이트·탈출 밸브가 정본
-      const tag = tokenTag(sess.refresh_token);
-      const mem = MEM.rejects.get(`${root}|${tag}`);
-      if (mem && dead?.tokenTag !== tag && DEAD_GATE_KINDS.has(mem.kind) && Date.now() - mem.at < DEAD_RETRY_MS) {
-        await logLine(root, { ev: 'skipped', reason: 'memory' });
-        return null;
-      }
-      const bo = MEM.backoff.get(root);
-      if (bo && bo.tag === tag && Date.now() < bo.until) { await logLine(root, { ev: 'skipped', reason: 'backoff' }); return null; }
-      const sb = _mkClient(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-      const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });
-      if (!error && data?.session) {
-        const s = data.session;
-        const next = {
-          ...sess,
-          access_token: s.access_token,
-          refresh_token: s.refresh_token, // 회전된 토큰 즉시 영속 — 유실 시 세션 일가족 폐기
-          expires_at: s.expires_at ?? 0,
-          user: { id: s.user?.id ?? sess.user.id, email: s.user?.email ?? sess.user.email },
-        };
-        MEM.backoff.delete(root);
-        await persist(next, root);
-        await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제(persist의 해제와 같은 계약: '새/살아난 세션을 디스크에 쓰면 옛 사망 판정은 무효'. 한쪽만 고치지 말 것 — 검수 LOW-1)
-        await logLine(root, { ev: 'rotated', retried, expires_at: next.expires_at });
-        return next;
-      }
-      console.warn('[argo] 기기 세션 갱신 실패 — 재로그인 필요:', mask(error?.message ?? 'no session')); // stderr 로그(0644)에도 토큰 모양은 안 싣는다
-      // 사망 마커 — **리프레시 토큰이 서버에서 거절된 경우만**(Invalid Refresh Token 계열 = 가족 폐기,
-      // 재시도 무의미). 네트워크 실패·5xx는 마커를 남기지 않는다 — 오프라인을 "재로그인 필요"로
-      // 오진하면 사용자가 기기 재바인딩(다른 계정이면 이전 주인 로그아웃)까지 가는 과잉 처방이 된다
-      // (분리 검수 M3). /api/me가 이 마커만 읽어 회전 없이 판정한다(M4 — UI 마운트발 이중 회전 금지).
-      if (!isRejection(error)) {
-        const delay = Math.min(bo?.tag === tag ? bo.delay * 2 : BACKOFF_MIN_MS, BACKOFF_MAX_MS); // 8초 → 16 → … → 2분, 토큰이 바뀌면 처음부터
-        MEM.backoff.set(root, { tag, delay, until: Date.now() + delay });
-        await logLine(root, { ev: 'error', reason: mask(error?.message ?? 'no session'), status: error?.status ?? null, backoffMs: delay });
-        return null;
-      }
-      // 거절 = 이 프로세스가 든 토큰이 서버에서 무효. 다른 프로세스(사이드카·재로그인)가 먼저 회전해
-      // 디스크가 바뀌었을 수 있다 — 캐시를 무시하고 디스크를 재독해 토큰이 다르면 그 세션으로 딱 한 번
-      // 다시 간다(자가 치유). 디스크도 같은 토큰(=진짜 사망)이거나 재시도까지 거절될 때만 마커를 남긴다.
-      if (!retried) {
-        const stamp = diskStamp(root); // 도장은 읽기보다 먼저 — 뒤집으면 "새 도장 + 옛 내용"이 영구 캐시
-        const disk = readDisk(root);
-        cache = { root, sess: disk, stamp };
-        if (!disk || disk.refresh_token !== sess.refresh_token) {
-          await logLine(root, { ev: 'reread', disk: disk ? 'changed' : 'gone' });
-          retried = true;
-          sess = disk;
-          continue;
-        }
-      }
-      const info = await markDead(root, error, retried, sess);
-      MEM.rejects.set(`${root}|${tokenTag(sess.refresh_token)}`, { kind: info.kind, at: Date.now() });
-      await logLine(root, { ev: 'rejected', kind: info.kind, reason: info.reason, status: info.status, code: info.code, retried, count: info.count, ...(info.written ? {} : { marker: 'write-failed' }) });
-      return null;
+    const first = readDisk(root);
+    cache = { root, sess: first, stamp: diskStamp(root) };
+    if (!first) return null;
+    if ((first.expires_at ?? 0) * 1000 - Date.now() > 60_000) return first; // 평소 — 잠금 없음
+    // 회전 필요 — 프로세스 간 잠금을 잡고 디스크를 다시 읽는다. 기다리는 동안 다른 프로세스가 회전했으면 그 결과를 그대로 쓴다.
+    try {
+      return await withDirLock(lockOf(root), () => rotateLocked(root, _mkClient), DIR_LOCK);
+    } catch (e) {
+      if (e?.code !== 'ELOCKTIMEOUT') throw e;
+      // 잠금 대기 초과 — 다른 프로세스가 아직 회전 중. 옛 토큰을 보내지 않고, 그사이 디스크가 새 세션이면 그것을 쓴다.
+      const disk = readDisk(root);
+      cache = { root, sess: disk, stamp: diskStamp(root) };
+      await logLine(root, { ev: 'skipped', reason: 'lock-timeout' });
+      return disk && (disk.expires_at ?? 0) * 1000 - Date.now() > 60_000 ? disk : null;
     }
   });
+}
+
+/** 회전 본체 — getFreshDeviceSession이 두 잠금(프로세스 안·프로세스 간)을 모두 잡은 뒤에만 부른다. */
+async function rotateLocked(root, _mkClient) {
+  let sess = readDisk(root); // 잠금 안에서 다시 읽는다 — 잠금을 기다리는 동안 다른 프로세스가 회전했을 수 있다
+  cache = { root, sess, stamp: diskStamp(root) };
+  let retried = false;
+  for (;;) {
+    if (!sess) return null;
+    if ((sess.expires_at ?? 0) * 1000 - Date.now() > 60_000) return sess;
+    // 사망 게이트 — 마커가 "바로 이 토큰"의 거절이면 다시 보내지 않는다. 8초 동기화 루프가 죽은 토큰을
+    // 계속 보내 기기당 하루 1만 회(24기기 11만 회/일)의 "Possible abuse attempt"를 만들었다(2026-09-04 인증 로그 실측).
+    // 게이트는 모든 사본에 걸리므로 자동 회생은 두 가지뿐이다: 재로그인(persist가 마커 제거·토큰 교체)과
+    // 아래 탈출 밸브 — 종결 kind(reused·revoked·expired)만 막고, 마지막 시도가 1시간 지났으면 1회 다시 보낸다
+    // (오분류·서버 측 복구를 하루 24회로 자가 치유, 난사는 1/450). 그 외 kind는 게이트 없이 종전처럼 재시도.
+    const dead = deviceSessionDeadInfo({ root });
+    if (dead?.tokenTag && dead.tokenTag === tokenTag(sess.refresh_token) && DEAD_GATE_KINDS.has(dead.kind)
+      && Date.now() - (Date.parse(dead.lastAt) || 0) < DEAD_RETRY_MS) {
+      await logLine(root, { ev: 'skipped', reason: mask(dead.reason) });
+      return null;
+    }
+    // 마커가 이 토큰을 말하지 않을 때(쓰기 실패·구형 마커)만 프로세스 기억으로 막는다 — 마커가 있으면 위 게이트·탈출 밸브가 정본
+    const tag = tokenTag(sess.refresh_token);
+    const mem = MEM.rejects.get(`${root}|${tag}`);
+    if (mem && dead?.tokenTag !== tag && DEAD_GATE_KINDS.has(mem.kind) && Date.now() - mem.at < DEAD_RETRY_MS) {
+      await logLine(root, { ev: 'skipped', reason: 'memory' });
+      return null;
+    }
+    const bo = MEM.backoff.get(root);
+    if (bo && bo.tag === tag && Date.now() < bo.until) { await logLine(root, { ev: 'skipped', reason: 'backoff' }); return null; }
+    const sb = _mkClient(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false } }); // 시간 제한 없음 — 위 상수 주석
+    const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });
+    if (!error && data?.session) {
+      const s = data.session;
+      const next = {
+        ...sess,
+        access_token: s.access_token,
+        refresh_token: s.refresh_token, // 회전된 토큰 즉시 영속 — 유실 시 세션 일가족 폐기
+        expires_at: s.expires_at ?? 0,
+        user: { id: s.user?.id ?? sess.user.id, email: s.user?.email ?? sess.user.email },
+      };
+      MEM.backoff.delete(root);
+      await persist(next, root);
+      await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제(persist의 해제와 같은 계약: '새/살아난 세션을 디스크에 쓰면 옛 사망 판정은 무효'. 한쪽만 고치지 말 것 — 검수 LOW-1)
+      await logLine(root, { ev: 'rotated', retried, expires_at: next.expires_at });
+      return next;
+    }
+    console.warn('[argo] 기기 세션 갱신 실패 — 재로그인 필요:', mask(error?.message ?? 'no session')); // stderr 로그(0644)에도 토큰 모양은 안 싣는다
+    // 사망 마커 — **리프레시 토큰이 서버에서 거절된 경우만**(Invalid Refresh Token 계열 = 가족 폐기,
+    // 재시도 무의미). 네트워크 실패·5xx는 마커를 남기지 않는다 — 오프라인을 "재로그인 필요"로
+    // 오진하면 사용자가 기기 재바인딩(다른 계정이면 이전 주인 로그아웃)까지 가는 과잉 처방이 된다
+    // (분리 검수 M3). /api/me가 이 마커만 읽어 회전 없이 판정한다(M4 — UI 마운트발 이중 회전 금지).
+    if (!isRejection(error)) {
+      const delay = Math.min(bo?.tag === tag ? bo.delay * 2 : BACKOFF_MIN_MS, BACKOFF_MAX_MS); // 8초 → 16 → … → 2분, 토큰이 바뀌면 처음부터
+      MEM.backoff.set(root, { tag, delay, until: Date.now() + delay });
+      await logLine(root, { ev: 'error', reason: mask(error?.message ?? 'no session'), status: error?.status ?? null, backoffMs: delay });
+      return null;
+    }
+    // 거절 = 이 프로세스가 든 토큰이 서버에서 무효. 다른 프로세스(사이드카·재로그인)가 먼저 회전해
+    // 디스크가 바뀌었을 수 있다 — 캐시를 무시하고 디스크를 재독해 토큰이 다르면 그 세션으로 딱 한 번
+    // 다시 간다(자가 치유). 디스크도 같은 토큰(=진짜 사망)이거나 재시도까지 거절될 때만 마커를 남긴다.
+    if (!retried) {
+      const stamp = diskStamp(root); // 도장은 읽기보다 먼저 — 뒤집으면 "새 도장 + 옛 내용"이 영구 캐시
+      const disk = readDisk(root);
+      cache = { root, sess: disk, stamp };
+      if (!disk || disk.refresh_token !== sess.refresh_token) {
+        await logLine(root, { ev: 'reread', disk: disk ? 'changed' : 'gone' });
+        retried = true;
+        sess = disk;
+        continue;
+      }
+    }
+    const info = await markDead(root, error, retried, sess);
+    MEM.rejects.set(`${root}|${tokenTag(sess.refresh_token)}`, { kind: info.kind, at: Date.now() });
+    await logLine(root, { ev: 'rejected', kind: info.kind, reason: info.reason, status: info.status, code: info.code, retried, count: info.count, ...(info.written ? {} : { marker: 'write-failed' }) });
+    return null;
+  }
 }

@@ -1,0 +1,14 @@
+/* 시작 스플래시 정적 바탕 — 첫 페인트부터 네이티브 시작 화면(iOS LaunchScreen·Android windowBackground)과 같은 #1F1E1B를 이어 간다.
+   index.html의 style 속성·<style> 요소로 두지 않는다: Tauri는 HTML의 <style>에 nonce를 붙이고, 그러면 style-src의 'unsafe-inline'이
+   무시돼 style 속성이 전부 막힌다(반대 검토 2026-10-01 WKWebView 재현 — 설치본에서 바탕도 로고도 안 그려졌다). head의 <link>로 읽는다.
+   src/splash.js(엔진)가 이어받으면 이 애니메이션을 끄고 직접 닫는다. 스크립트가 끝내 안 돌면 8초 뒤 CSS만으로 사라져 앱을 가리지 않는다. */
+#argo-splash { position: fixed; inset: 0; z-index: 2147483000; background: #1F1E1B; animation: argoSplashGone .3s 8s forwards; }
+@keyframes argoSplashGone { to { opacity: 0; visibility: hidden; } }
+
+/* 앱 청크를 못 불러왔을 때의 안내(boot-entry.mjs renderChunkError) — 테마 CSS가 이미 읽혀 있어 토큰을 쓰되 폴백 값을 둔다 */
+.argo-chunk-error { position: fixed; inset: 0; display: grid; place-content: center; gap: 8px; padding: max(24px, env(safe-area-inset-top)) 24px 24px;
+  text-align: center; font-family: system-ui, sans-serif; background: var(--bg, #f4f1ea); color: var(--fg, #1a1a1a); }
+.argo-chunk-error-title { margin: 0; font-size: 16px; font-weight: 700; }
+.argo-chunk-error-hint { margin: 0 0 8px; font-size: 13px; color: var(--fg-3, #666); }
+.argo-chunk-error button { justify-self: center; font: inherit; padding: 10px 18px; border-radius: 999px; border: 1px solid var(--border, #ccc);
+  background: var(--card, #fff); color: inherit; cursor: pointer; }

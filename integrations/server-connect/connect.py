@@ -16,6 +16,11 @@ ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 POLL_S, WAIT_S, CMD_TIMEOUT = 3, 60 * 60, 90
 DEFER = os.environ.get("ARGO_CONNECT_DEFER", "")  # root가 에이전트 계정으로 넘겨 돌릴 때: 시스템 서비스 재시작은 root가 맡는다(결과 파일로 넘김)
 DEFERRED = {}  # 프로필 id → 재시작을 root에게 넘긴 systemd 서비스 이름
+# 오픈클로 플러그인이 쓰는 SDK 하위 경로(channel-core·channel-inbound…)와 runtime.channel.inbound.dispatch가 모두 있는 첫 정식 버전.
+# 2026.8.1에서 루트 `openclaw/plugin-sdk`가 없어졌다 — 그보다 낮은 버전에는 새 플러그인이 올라가지 않는다(npm 레지스트리 exports·타입 대조).
+OPENCLAW_MIN = (2026, 8, 1)
+OPENCLAW_PLUGIN_ID = "openclaw-argo-msgr"
+BLOCKED = []   # 찾았지만 연결할 수 없는 에이전트 런타임의 안내(예: 오래된 오픈클로)
 
 
 def say(ko, en):
@@ -65,18 +70,86 @@ def parse_hermes_profiles(out):
     return v
 
 
+def json_part(out):
+    """CLI 출력에서 JSON 본문만 읽는다 — 앞에 경고 줄이 섞여 나와도 된다. 없거나 깨졌으면 None."""
+    lines = (out or "").splitlines()
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(("{", "[")):
+            try:
+                return json.loads("\n".join(lines[i:]))
+            except ValueError:
+                return None
+    return None
+
+
+def parse_openclaw_agents_json(out):
+    """`openclaw agents list --json` → [(id, 기본 여부)]. 형식이 다르면 None(텍스트 목록으로 대체)."""
+    data = json_part(out)
+    if not isinstance(data, list):
+        return None
+    return [(a["id"], a.get("isDefault") is True) for a in data if isinstance(a, dict) and isinstance(a.get("id"), str) and re.fullmatch(r"[A-Za-z0-9._-]+", a["id"])]
+
+
 def parse_openclaw_agents(out):
-    """`openclaw agents list`의 "- <id> (default)" 줄. agents.rs parse_openclaw_agents와 같은 규칙."""
+    """`openclaw agents list` 텍스트의 에이전트 줄("- <id> (default)", 들여쓰기 없음). 들여쓴 "- " 줄은 채널·공급자 항목이다
+    (예: "    - Argo Messenger main: configured") — 에이전트로 읽지 않는다."""
     v = []
     for line in out.splitlines():
-        t = line.strip()
-        if not t.startswith("- "):
+        if not line.startswith("- "):
             continue
-        rest = t[2:]
+        rest = line[2:].strip()
         aid = (rest.split() or [""])[0]
         if aid and re.fullmatch(r"[A-Za-z0-9._-]+", aid):
             v.append((aid, "(default)" in rest))
     return v
+
+
+def parse_version(out):
+    """`openclaw --version`("OpenClaw 2026.9.6 (eb377ac)") → ((2026, 9, 6), 프리릴리스 여부). 못 읽으면 (None, False)."""
+    m = re.search(r"\b(\d{4})\.(\d{1,2})\.(\d{1,3})(-[0-9A-Za-z.]+)?\b", out or "")
+    if not m:
+        return None, False
+    return tuple(int(x) for x in m.groups()[:3]), bool(m.group(4) and "beta" in m.group(4))
+
+
+def openclaw_version_problem(cli):
+    """오픈클로가 새 플러그인을 올릴 수 있는 버전인지. 괜찮으면 None, 아니면 사람이 읽을 안내."""
+    ok, out = run(cli, ["--version"])
+    ver, pre = parse_version(out) if ok else (None, False)
+    need = ".".join(map(str, OPENCLAW_MIN))
+    if ver is None:
+        return (f"OpenClaw 버전을 확인하지 못했습니다(`openclaw --version`). OpenClaw를 {need} 이상으로 업데이트한 뒤 다시 실행해 주세요.",
+                f"Could not read the OpenClaw version. Update OpenClaw to {need} or later and run this again.")
+    if ver < OPENCLAW_MIN or (ver == OPENCLAW_MIN and pre):
+        have = ".".join(map(str, ver)) + ("-beta" if pre else "")
+        return (f"OpenClaw {have}은(는) 아르고 메신저 플러그인을 불러올 수 없습니다. OpenClaw를 업데이트하세요({need} 이상, `npm i -g openclaw@latest`) — 그 뒤 다시 실행해 주세요.",
+                f"OpenClaw {have} cannot load the Argo Messenger plugin. Update OpenClaw to {need} or later (`npm i -g openclaw@latest`) and run this again.")
+    return None
+
+
+def bindings_value(ok, out):
+    """`openclaw config get bindings --json` → 바인딩 목록. 아직 없으면 []. 읽을 수 없으면 None.
+    없을 때 예전 CLI는 "Config path not found: bindings", 2026.8.x+는 rc=1과 {"ok":false,"error":{"message":"Config path is valid but unset: bindings…"}}."""
+    if not ok:
+        return [] if re.search(r"Config path (?:not found|is valid but unset): bindings\b", out or "") else None
+    data = json_part(out)
+    if data is None and (out or "").strip() in ("", "null"):
+        return []
+    return data if isinstance(data, list) else None
+
+
+def openclaw_plugin_load_error(cli):
+    """플러그인을 실제로 불러와 본다. `plugins enable`은 로드에 실패해도 rc=0이고 `plugins list`도 enabled로 보이므로
+    `plugins inspect <id> --runtime --json`의 plugin.status로 판정한다. 정상이면 None, 아니면 오류 내용."""
+    ok, out = run(cli, ["plugins", "inspect", OPENCLAW_PLUGIN_ID, "--runtime", "--json"])
+    data = json_part(out) if ok else None
+    plugin = data.get("plugin") if isinstance(data, dict) else None
+    if not isinstance(plugin, dict):
+        return (out or "plugins inspect failed").strip()[-300:]
+    if plugin.get("status") == "loaded" and not plugin.get("error"):
+        return None
+    diags = [d.get("message", "") for d in data.get("diagnostics") or [] if isinstance(d, dict) and d.get("level") == "error"]
+    return str(plugin.get("error") or "; ".join(diags) or f"status={plugin.get('status')}")[-300:]
 
 
 def hermes_home(cli, name):
@@ -103,11 +176,19 @@ def list_agents():
             for name, d in parse_hermes_profiles(out):
                 agents.append({"kind": "hermes", "id": name, "name": "Hermes" if name == "default" else name, "default": d, "home": hermes_home(cli, name)})
     cli = find_cli("openclaw")
-    if cli:
-        ok, out = run(cli, ["agents", "list"])
-        if ok:
+    problem = openclaw_version_problem(cli) if cli else None
+    if problem:  # 오래된 오픈클로에 플러그인을 조용히 깔고 안 도는 상태를 만들지 않는다 — 보고하지 않고 업데이트를 안내한다
+        BLOCKED.append(problem)
+        say(*problem)
+    elif cli:
+        ok, out = run(cli, ["agents", "list", "--json"])
+        found = parse_openclaw_agents_json(out) if ok else None
+        if found is None:
+            ok, out = run(cli, ["agents", "list"])
+            found = parse_openclaw_agents(out) if ok else None
+        if found is not None:
             clis["openclaw"] = cli
-            for aid, d in parse_openclaw_agents(out):
+            for aid, d in found:
                 agents.append({"kind": "openclaw", "id": aid, "name": "OpenClaw" if aid == "main" else aid, "default": d})
     return [a for a in agents if ID_RE.match(a["id"])][:50], clis
 
@@ -184,6 +265,49 @@ def restart_unit(unit, aid):
     return False, f"{unit} 재시작에는 관리자 권한이 필요합니다 — 서버 터미널을 연 그대로(root) 다시 실행하면 자동으로 재시작합니다 / needs root: run again as root"
 
 
+def yaml_sets(text, top, sub):
+    """원본 YAML에 top.sub가 명시돼 있는가(기본값과 구분) — PyYAML 없이 두 형태만: 블록(`top:` 아래 들여쓴 `sub:`)과 한 줄(`top: {sub: …}`)."""
+    lines = (text or "").splitlines()
+    for i, line in enumerate(lines):
+        if re.match(rf"^{re.escape(top)}\s*:\s*\{{[^}}]*\b{re.escape(sub)}\s*:", line):
+            return True
+        if re.match(rf"^{re.escape(top)}\s*:\s*(#.*)?$", line):
+            indent = None   # 바로 아래 한 단계만(approvals.gateway.mode 같은 더 깊은 mode는 아니다 — 검수 LOW)
+            for nxt in lines[i + 1:]:
+                if not nxt.strip() or nxt.lstrip().startswith("#"):
+                    continue
+                if not nxt[:1].isspace():
+                    break
+                lead = len(nxt) - len(nxt.lstrip())
+                indent = lead if indent is None else indent
+                if lead == indent and re.match(rf"^\s+{re.escape(sub)}\s*:", nxt):
+                    return True
+    return False
+
+
+def default_manual_approvals_hermes(cli, home, env):
+    """1-b(2026-09-29 유건 결정): 연결할 때 위험 명령은 사람에게 묻는 manual을 기본값으로. 이미 명시한 값(smart 등)은 덮어쓰지 않는다 —
+    그 경우 메신저 에이전트 카드가 실제 모드를 보여 준다. Hermes 기본값 smart는 보조 AI가 괜찮다고 보면 카드 없이 실행한다."""
+    try:
+        text = open(os.path.join(home, "config.yaml"), encoding="utf-8").read()
+    except OSError:
+        text = ""
+    if yaml_sets(text, "approvals", "mode"):
+        return "kept"
+    ok, _ = run(cli, ["config", "set", "approvals.mode", "manual"], env)
+    return "manual" if ok else "failed"
+
+
+def default_ask_exec_openclaw(cli):
+    """OpenClaw 기본값 full은 사람 승인 없이 모든 명령을 실행한다(결재 카드가 한 번도 뜨지 않는다). 명시한 값이 없을 때만 ask로."""
+    ok, out = run(cli, ["config", "get", "tools.exec.mode"])
+    val = (out or "").strip().strip('"') if ok else ""
+    if val and val.lower() not in ("undefined", "null", "none"):
+        return "kept"
+    ok, _ = run(cli, ["config", "set", "tools.exec.mode", "ask"])
+    return "ask" if ok else "failed"
+
+
 def install_hermes(cli, a, token):
     home = a.get("home") or os.path.expanduser("~/.hermes")
     write_plugin("hermes", os.path.join(home, "plugins/argo-msgr"))
@@ -192,6 +316,11 @@ def install_hermes(cli, a, token):
     ok, out = run(cli, ["plugins", "enable", "argo-msgr-platform", "--no-allow-tool-override"], env)
     if not ok:
         return False, out
+    mode = default_manual_approvals_hermes(cli, home, env)
+    if mode == "manual":
+        say(f"  {a['id']}: 위험 명령은 메신저 결재로 묻도록 설정했습니다(approvals.mode=manual)", f"  {a['id']}: dangerous commands now ask for approval in the messenger (approvals.mode=manual)")
+    elif mode == "failed":
+        say(f"  {a['id']}: 승인 모드를 설정하지 못했습니다 — 연결은 계속합니다", f"  {a['id']}: could not set the approval mode — continuing")
     _, st = run(cli, ["gateway", "status"], env)
     unit = gateway_unit(st)
     if unit:  # systemd 서비스가 띄운 게이트웨이 — 서비스를 재시작해야 새 .env(EnvironmentFile)를 읽는다. `hermes gateway install`을 부르면 게이트웨이가 둘이 된다
@@ -204,10 +333,18 @@ def install_hermes(cli, a, token):
 
 def install_openclaw(cli, agents, tokens):
     results = {}
-    write_plugin("openclaw", os.path.expanduser("~/.openclaw/extensions/openclaw-argo-msgr"))
-    ok, out = run(cli, ["plugins", "enable", "openclaw-argo-msgr"])
+    write_plugin("openclaw", os.path.expanduser(f"~/.openclaw/extensions/{OPENCLAW_PLUGIN_ID}"))
+    # 게이트웨이가 돌고 있으면 `plugins enable`은 게이트웨이에 요청하는데, 게이트웨이는 저장된 플러그인 목록만 알아서 방금 복사한 폴더를
+    # "plugin not installed"로 거절한다(2026.9.6 실측). 목록을 먼저 다시 만든다.
+    ok, out = run(cli, ["plugins", "registry", "--refresh"])
+    if ok:
+        ok, out = run(cli, ["plugins", "enable", OPENCLAW_PLUGIN_ID])
     if not ok:
         return {a["id"]: (False, out) for a in agents}
+    err = openclaw_plugin_load_error(cli)  # enable은 로드 실패여도 성공으로 끝난다 — 설정·재시작 전에 실제로 불러와 본다
+    if err is not None:
+        msg = f"오픈클로가 아르고 플러그인을 불러오지 못했습니다 — OpenClaw를 최신으로 업데이트한 뒤 다시 실행해 주세요 / OpenClaw could not load the plugin: {err}"
+        return {a["id"]: (False, msg) for a in agents}
     for a in agents:
         base = f"channels.argo-msgr.accounts[{a['id']}]"
         err = None
@@ -218,14 +355,16 @@ def install_openclaw(cli, agents, tokens):
         if err is not None:
             results[a["id"]] = (False, err); continue
         ok, out = run(cli, ["config", "get", "bindings", "--json"])
-        try:
-            bindings = json.loads(out) if ok else ([] if out.strip() == "Config path not found: bindings" else None)
-        except ValueError:
-            bindings = None
+        bindings = bindings_value(ok, out)
         if bindings is None:
             results[a["id"]] = (False, out or "Invalid bindings config"); continue
         results[a["id"]] = run(cli, ["config", "set", "bindings", json.dumps(merge_binding(bindings, a["id"]))])
     if all(ok for ok, _ in results.values()):
+        mode = default_ask_exec_openclaw(cli)
+        if mode == "ask":
+            say("  위험 명령은 메신저 결재로 묻도록 설정했습니다(tools.exec.mode=ask)", "  dangerous commands now ask for approval in the messenger (tools.exec.mode=ask)")
+        elif mode == "failed":
+            say("  실행 승인 모드를 설정하지 못했습니다 — 연결은 계속합니다", "  could not set the exec approval mode — continuing")
         g = run(cli, ["gateway", "restart"])
         if not g[0]:
             i = run(cli, ["gateway", "install"])
@@ -302,6 +441,8 @@ def main(argv):
             say("에이전트가 있는 계정이 여럿입니다: " + ", ".join(u.pw_name for u in users) + " — `sudo -iu <계정>`으로 바꾼 뒤 다시 실행해 주세요.",
                 "Several accounts have agents: " + ", ".join(u.pw_name for u in users) + " — switch with `sudo -iu <user>` and run again."); return 3
     agents, clis = list_agents()
+    if not agents and BLOCKED:
+        return 8  # 안내는 list_agents가 이미 했다(업데이트하세요)
     if not agents:
         say("헤르메스·오픈클로 에이전트를 찾지 못했습니다. 게이트웨이를 실행하는 사용자 계정으로 다시 실행해 주세요.",
             "No Hermes or OpenClaw agents found. Run this again as the user that runs the gateway."); return 3

@@ -23,7 +23,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
-import { withLock, withDirLock } from './mutex.mjs';
+import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
@@ -31,8 +31,10 @@ import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { accountKeyError, ensureAccountKey } from './accountkey.mjs';
 import { ensureDeviceKeyRegistered } from './e2ee.mjs';
 import { syncEntitled } from './entitlement.mjs';
+import { cachedPlan, rememberPlan, invalidatePlanCache } from './plan-cache.mjs';
 import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 기기에서 턴을 돌릴 러너가 있는가
 import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수신 쓰기의 캐시 무효화
+import { holdsDaemonLease, daemonLeasesSettled } from './lock.mjs'; // 실행 리스(게이트웨이·스케줄러) 주인만 클라우드 리스에 참여 — arbitrateLease
 
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
@@ -130,7 +132,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
     base.startsWith('.gw-queue') ||
-    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' ||
+    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' || base === '.server-presence.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
     base === '.workroots.json' || // 외부 작업 폴더 — 기기 고유 경로라 타 기기로 넘기면 무의미하거나 의도 안 한 접근 허용이 된다
     base === '.connector-secrets.json' || // 커넥터 OAuth 토큰 — 기기·회사 스코프(다른 기기는 재연결, workroots와 같은 원칙 — mcp-oauth-design §2-1)
@@ -253,6 +255,9 @@ export const holdsLeaseOnWriteFailure = (state, now = Date.now()) =>
 
 // (export: 회귀 테스트용 — 판정식이 아닌 **배선**을 잠그기 위해. 프로덕션 호출부는 cycle() 하나다.)
 export async function renewLease(owner, { runnerUsable = true } = {}) {
+  // 관찰 전용 프로세스(argo 대화 화면 — 동기화만 하고 게이트웨이·스케줄러는 안 돈다)는 담당을 맡지 않는다. 맡으면 다른 기기가 양보한 채
+  // 아무도 메신저·루틴을 돌리지 않는다(2026-09-29 argo CLI). 리스를 읽지도 쓰지도 않는다 — 호출·쓰기 0.
+  if (process.env.ARGO_NO_LEADER === '1') { leaseState.leader = false; leaseState.ownedAt = 0; leaseState.checkedAt = Date.now(); return; }
   const me = await getDeviceId();
   const key = skey(owner, '_device-lease.json');
   let cur = null;
@@ -261,7 +266,10 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     if (data) cur = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
   } catch { /* 최초 */ }
   const fresh = cur && Date.now() - cur.ts < LEASE_TTL_MS;
-  if (fresh && cur.deviceId !== me) {
+  // 실행 담당 우선 기기(ARGO_PREFER_LEADER=1 — 항상 켜진 서버의 argo CLI 상주, 2026-09-29): 다른 **일반** 기기가 잡은 새 리스는
+  // 양보하지 않고 가져온다. 우선 기기끼리는 먼저 잡은 쪽을 존중(요동 금지). 러너 없는 우선 기기는 아래 양보 판정이 그대로 막는다.
+  const preferred = process.env.ARGO_PREFER_LEADER === '1';
+  if (fresh && cur.deviceId !== me && !(preferred && !cur.preferred)) {
     if (leaseState.leader) console.log(`[argo] 동기화: 실행 리더 양보 → ${cur.deviceId}`);
     leaseState.leader = false;
     leaseState.ownedAt = 0; // 남에게 넘겼으니 보유 이력 소멸
@@ -292,7 +300,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 이중 리더 창을 좁힌다: 내 토큰을 쓰고, 잠깐 뒤 다시 읽어 최종 승자가 나인지 확인.
   const token = randomUUID();
   const { error: upErr } = await client().storage.from(BUCKET).upload(
-    key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now() })]),
+    key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now(), ...(preferred ? { preferred: true } : {}) })]),
     { upsert: true, contentType: 'application/json' },
   );
   // 쓰기 실패(네트워크·RLS 거부 등) = 판정 불가. **확인된 보유자이고 TTL 내일 때만** 유지하고,
@@ -472,6 +480,8 @@ async function walk(dir, base = dir, out = {}, failed = null) {
 export const isLedger = (rel) => rel.endsWith('.jsonl'); // usage.jsonl, events.jsonl — append-only 원장(행 병합)
 export const isText = (rel) => rel.endsWith('.md');       // 노트·일지 — 충돌 시 양쪽 보존
 export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중 턴과 레이스 → 스레드 락
+/** 코어 모듈이 `<file>.lockd` 프로세스 간 잠금 안에서 읽고-고쳐-쓰는 파일(스레드 제외 — 스레드는 isThread). 동기화가 이 파일들을 쓸 때도 같은 잠금을 잡는다. (export: 회귀 테스트용) */
+export const isFileLockedRel = (rel) => /^(company|approvals|corrections|routines|connections)\.json$/.test(rel) || /^agents\/[^/]+\.md$/.test(rel);
 // 아카이브(.archive)·휴지통(.trash)은 content 삭제가 아니라 이동(비파괴) — 대량삭제 브레이크 집계에서 제외한다.
 // 세션 여러 개 삭제(=.archive→.trash 이동)가 브레이크를 걸어 소규모 회사 동기화를 영구 정지시키던 문제 방지(리뷰 M2). 동기화 push/pull 자체는 정상 진행.
 export const isArchival = (rel) => /(^|\/)\.(archive|trash)\//.test(rel);
@@ -656,7 +666,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     const result = await syncCompanyOnce(wsId, owner, isRestore, opts);
     if (result.failed > 0) { deferFailure(); return result; }
     companyRetry.delete(key);
-    if (canIdle && !result.failed && !result.held) {
+    if (canIdle && !result.failed && !result.held && !result.deferred) {
       const stamp = await fingerprint();
       if (stamp !== null && stamp === beforeFingerprint) companyIdle.set(key, { at: Date.now(), fingerprint: stamp, revision });
       else companyIdle.delete(key);
@@ -705,6 +715,10 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     for (const k of Object.keys(remote.files)) if (!safeRel(k)) { delete remote.files[k]; dropped++; }
     if (dropped) console.warn(`[sync] 안전하지 않은 원격 매니페스트 키 ${dropped}개 무시(경로 탈출 차단) — ws=${wsId}`);
   }
+  // 새 기기 복원(원격에서만 발견) — 회사 폴더가 아직 없으면 먼저 만든다. 부재를 walk 실패('' = 루트)로 기록하면
+  // 원격 전 파일이 "로컬 unknown"으로 보류돼 첫 사이클이 0개를 받고, 다음 발견 주기(5분)까지 회사가 없는 것처럼 보였다
+  // (실측 2026-09-30 argo CLI 첫 로그인). 복원이 아닌 회사의 walk 실패 보류는 그대로다(대량 유실 방어).
+  if (isRestore) await mkdir(root, { recursive: true });
   const failedDirs = new Set();
   const local = await walk(root, root, {}, failedDirs); // 자격 3종은 diff 루프의 불가시 가드가 단일 게이트(walk 중복 게이트 금지 — 등가 변이 실증)
   const state = (await loadState(wsId)).files ?? {};
@@ -718,7 +732,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     console.warn(`[argo] 동기화(${wsId}): 원격에서 발견된 빈 회사 — 신규 복원으로 간주, base 리셋`);
     for (const k of Object.keys(state)) delete state[k];
   }
-  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0, withdrawn = 0;
+  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0, withdrawn = 0, deferred = 0;
   let uploadDenied = 0; // 쓰기 시도에서 난 실패 수(플랜 무관) — cycle이 전부 거절이면 회사 단위 백오프
   let held = 0; // 계정 키 미확보로 이번 사이클 불가시 보류된 암호화 대상 파일 수
   const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
@@ -770,7 +784,22 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   });
   // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지). 원자쓰기(tmp→fsync→rename)로
   // 크래시 시 파일이 잘려 '손상→삭제 오전파'로 번지는 것을 차단(.tmp-는 EXCLUDE라 원격에 안 샌다).
-  const writeLocal = async (rel, buf, mtime) => {
+  // basedOn — 이 쓰기가 근거로 삼은 **로컬 파일의 해시**(없었다면 null, 확인을 끄려면 생략). 앱과 같은 폴더를 쓰는 argo CLI가 사이클 도중 같은 파일을
+  // 고칠 수 있다(M-b ①) — 판정(매니페스트)은 낡았는데 원격본으로 덮으면 그 변경이 사라진다. 잠금 안에서 해시를 다시 비교해 달라졌으면 deferred로
+  // 던진다(실패가 아니라 미룸: 다음 사이클이 양쪽 변경으로 보고 병합). 같은 폴더의 모듈 쓰기와 같은 `<file>.lockd`로 직렬화한다.
+  const recheck = async (rel, basedOn) => {
+    if (basedOn === undefined) return;
+    let cur = null;
+    try { cur = hashBuf(await readFile(relFull(rel))); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (cur !== basedOn) throw Object.assign(new Error(`로컬 파일이 사이클 도중 바뀌었다 — 이번엔 건너뜀(다음 사이클 병합): ${rel}`), { deferred: true });
+  };
+  const guarded = (rel, basedOn, fn) => {
+    const run = async () => { await recheck(rel, basedOn); return fn(); };
+    if (isThread(rel)) return withLock(threadLockKey(wsId, rel), run, { file: relFull(rel), mkParent: false });
+    if (isFileLockedRel(rel)) return withFileLock(relFull(rel), run, { mkParent: false });
+    return fn(); // 그 밖의 파일(원장 .jsonl·노트 등)은 종전대로 — **basedOn을 넘겨도 무시한다**(잠금·재확인은 스레드와 isFileLockedRel 파일뿐, 독립 검수 #800 LOW-7)
+  };
+  const writeLocal = async (rel, buf, mtime, basedOn) => {
     const doWrite = async () => {
       const full = relFull(rel);
       // 복호화된 시크릿(.secrets.json·connections)이 신규 기기 복원 시 0644로 생기지 않게 0600 강제(P1-8).
@@ -785,13 +814,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       }
     };
     if (rel === 'mcp.json') await withMcpSnapshot(rel, doWrite);
-    else if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);
-    else await doWrite();
+    else await guarded(rel, basedOn, doWrite);
   };
-  const rmLocal = async (rel) => {
+  const rmLocal = async (rel, basedOn) => {
     if (rel === 'mcp.json') await withMcpSnapshot(rel, () => rm(relFull(rel), { force: true }));
-    else if (isThread(rel)) await withLock(threadLockKey(wsId, rel), () => rm(relFull(rel), { force: true }));
-    else await rm(relFull(rel), { force: true });
+    else await guarded(rel, basedOn, () => rm(relFull(rel), { force: true }));
   };
   // 로컬 파일이 사라졌지만 같은 자리에 .corrupt- 백업이 있으면 — 사용자 삭제가 아니라 로컬 손상(readJson이 치워둠).
   // 삭제 전파 대신 원격 정상본으로 self-heal 하고, 소비한 백업은 정리한다(잔존 시 이후 정당한 삭제를 손상으로 오인 — 재검수 지적).
@@ -890,7 +917,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         let revived = false;
         if (base && !remoteChg) { // 삭제로 보임 — 단 로컬 손상(.corrupt-)이면 삭제가 아니라 복구
           if (corruptHeal.has(rel)) { // 로컬 손상 → 원격 정상본을 받아 self-heal
-            await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; conflicts++; revived = true;
+            await writeLocal(rel, await pullBuf(rel), r.m, null); local[rel] = r; pulled++; conflicts++; revived = true;
           } else { // 진짜 삭제 → 원격도 삭제. remove 실패면 항목을 유지하고 보류 — 항목만 지우고 blob이
             // 살아남으면 blob 실존 검사가 이 삭제를 '매니페스트 유실'로 오판해 부활시킨다(검수 HIGH).
             const { error: rmErr } = await client().storage.from(BUCKET).remove([remoteKey(rel)]);
@@ -898,9 +925,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
             delete remote.files[rel]; deletedR++; deletedRels.add(rel); // 매니페스트 병합에서 재추가 금지
           }
         } else if (!base) { // 원격 신규 → 받기
-          await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; revived = true;
+          await writeLocal(rel, await pullBuf(rel), r.m, null); local[rel] = r; pulled++; revived = true;
         } else { // 내가 지웠지만 원격도 바뀜 = 충돌 → 원격 부활본을 받아 유실 방지
-          await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; conflicts++; revived = true;
+          await writeLocal(rel, await pullBuf(rel), r.m, null); local[rel] = r; pulled++; conflicts++; revived = true;
         }
         // 원격에서 로컬을 복원한 경우 — 이 자리에 남아있던 손상 백업은 잉여. 어느 복원 경로(self-heal·신규·충돌복구)든
         // 청소해, 잔존 백업이 이후 정당한 삭제/리셋을 손상으로 오인해 되살리는 것을 막는다(재검수 잔여 지적).
@@ -913,7 +940,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
           // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
           if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
-          else { await rmLocal(rel); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
+          else { await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
         }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
         continue;
@@ -927,7 +954,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         continue;
       }
       if (remoteChg && !localChg) { // 원격만 변경 → 받기
-        await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; continue;
+        await writeLocal(rel, await pullBuf(rel), r.m, l.h); local[rel] = r; pulled++; continue;
       }
       if (localChg && !remoteChg) { // 로컬만 변경 → 밀기
         await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; continue;
@@ -940,13 +967,13 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       const remoteBuf = await pullBuf(rel);
       if (isLedger(rel)) { // 원장 — 행 합집합 병합 후 양쪽 수렴
         const mBuf = mergeLedger(localBuf, remoteBuf);
-        await writeLocal(rel, mBuf);
+        await writeLocal(rel, mBuf, undefined, hashBuf(localBuf)); // 원장은 재확인 대상이 아니라 이 인자는 무시된다(guarded 주석) — 형식을 맞춰 둘 뿐
         await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
       } else if (isThread(rel)) { // 스레드 blob — 메시지 배열 union 병합(양쪽 turn 보존), 스칼라는 최근 편집 쪽
         const mBuf = mergeThread(localBuf, remoteBuf, (r.m ?? 0) >= (l.m ?? 0) ? 'remote' : 'local');
-        await writeLocal(rel, mBuf);
+        await writeLocal(rel, mBuf, undefined, hashBuf(localBuf));
         await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
@@ -959,17 +986,18 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         // 잃는 것이 없다 — 실패 시 사본은 base에 없는 로컬 전용 파일로 남아 다음 기회에 신규로 push된다.
         const cRel = rel.replace(/\.md$/, `.conflict-${me}-${Date.now()}.md`);
         await writeLocal(cRel, localBuf);
-        await writeLocal(rel, remoteBuf, r.m);
+        await writeLocal(rel, remoteBuf, r.m, hashBuf(localBuf));
         local[rel] = r; local[cRel] = { m: Date.now(), s: localBuf.length, h: hashBuf(localBuf) };
         pulled++; conflicts++;
         await upload(remoteKey(cRel), sealFor(cRel, localBuf));
         remote.files[cRel] = local[cRel];
       } else { // 기타(json 등) — 최근 mtime 승(LWW), 단 카운트해 관측 가능하게
-        if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m); local[rel] = r; pulled++; }
+        if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m, hashBuf(localBuf)); local[rel] = r; pulled++; }
         else { await upload(remoteKey(rel), sealFor(rel, localBuf)); remote.files[rel] = l; pushed++; }
         conflicts++;
       }
     } catch (e) {
+      if (e?.deferred) { deferred++; continue; } // 로컬이 사이클 도중 바뀜 — 실패가 아니라 미룸(base 그대로라 다음 사이클이 양쪽 변경으로 병합·재판정)
       // free의 **쓰기 실패는 실패가 아니라 이 플랜의 정상 결과**다(클라우드 쓰기 자체가 금지) — 분리 집계한다.
       // 뭉뚱그리면(전부 failed) 한 번도 성공 동기화한 적 없는 free 회사(체험 만료 후 첫 동기화·state
       // 유실·손상)가 영구 미완에 고착한다: 로컬 전용 파일 하나만 있어도 failed>0 → 아래 매니페스트
@@ -1067,7 +1095,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     else if (state[rel]) nextFiles[rel] = state[rel];
   }
   await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
@@ -1278,26 +1306,15 @@ export function syncStatus() {
   return { ...status, on: syncOn(), leader: isCloudLeader(), companies: { ...status.companies } };
 }
 
-async function cycle() {
-  if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
-  // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 대기(이중 동기화=대형 유실 차단)
-  if (!(await holdSyncLock())) { status.lastError = '같은 데이터 루트를 다른 프로세스가 동기화 중 — 이 인스턴스는 대기'; return; }
-  // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
-  const keyOwner = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
-  await ensureAccountKey(client(), keyOwner);
-  // E2EE 단계 0 — 기기 공개키 등록부 구축(내부 1회 가드·실패 무해). 켜기 전까지 다른 동작 없음.
-  const myDeviceId = await getDeviceId();
-  ensureDeviceKeyRegistered(client(), keyOwner, myDeviceId).catch(() => {});
-  // E2EE P1 — DEK 미보유면 자기 랩 회수 시도(승인·복구가 서버에 넣어준 랩, 60초 간격 own-RLS 1행).
-  // 성공 순간부터 sealFor가 v3로 전환되고, 이 기기의 "잠김"이 풀린다.
-  if (!dek()) await tryClaimDek(client(), myDeviceId).catch(() => {});
-  const resealSet = dek() ? await loadReseal() : {};
-  // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
-  // 세션(JWT) 모드는 현재 계정 소유가 아닌 회사를 제외한다 — 다른 계정 소유의 로컬 사본(계정 전환·
-  // 기기 공유 흔적)을 매 사이클 남의 폴더로 밀다 스토리지 격리(RLS)에 막혀 "row-level security"
-  // 에러를 무한 반복하던 실사고(2026-07-25, lean-ax-zl5j). 격리 정책이 맞고, 남의 회사를 밀지 않는
-  // 것이 동기화의 몫이다. 서비스 모드(셀프호스트·워커)는 다중 오너가 정당하므로 게이트 없음.
-  const sessionUid = (loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null);
+/** 세션(JWT) 모드면 세션 사용자 id, 서비스 모드(셀프호스트·워커)면 null — 회사 소유자 게이트와 요금제 캐시 키가 같이 쓴다. */
+const currentSessionUid = () => ((loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null));
+
+/** 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
+    세션(JWT) 모드는 현재 계정 소유가 아닌 회사를 제외한다 — 다른 계정 소유의 로컬 사본(계정 전환·
+    기기 공유 흔적)을 매 사이클 남의 폴더로 밀다 스토리지 격리(RLS)에 막혀 "row-level security"
+    에러를 무한 반복하던 실사고(2026-07-25, lean-ax-zl5j). 격리 정책이 맞고, 남의 회사를 밀지 않는
+    것이 동기화의 몫이다. 서비스 모드(셀프호스트·워커)는 다중 오너가 정당하므로 게이트 없음. */
+async function collectLocalTargets(sessionUid) {
   const targets = new Map(); // wsId → owner
   const noSecretsWs = new Set(); // credSync:false 회사 — 자격 3종 불가시 + 클라우드 사본 회수(syncCompany opts)
   let entries = [];
@@ -1320,6 +1337,78 @@ async function cycle() {
       if (meta.credSync === false) noSecretsWs.add(meta.id);
     } catch { /* 회사 아님 */ }
   }
+  return { targets, noSecretsWs };
+}
+
+/** 리더 양보 판단 — 이 기기에 쓸 러너가 있는가(60s 캐시 — resolveRunner는 파일·호스트 프로브라 매 8s는 과함).
+    전 회사 OR(사후 검수 M-2: 첫 회사만 보면 자격 있는 다른 회사가 있어도 오판) + 5s 상한(M-3: CLI 프로브가
+    행 걸리면 사이클 전체 정지 — 리스 갱신·파일 동기화까지 조용히 죽는다). 실패·초과는 양보하지 않는 쪽(true). */
+async function probeRunnerUsable(targets) {
+  const probe = (globalThis.__argoRunnerProbe ??= { ts: 0, ok: true });
+  if (targets.size && Date.now() - probe.ts > 60_000) {
+    probe.ok = await Promise.race([
+      (async () => {
+        for (const ws of targets.keys()) {
+          if ((await resolveRunner(ws, null).catch(() => ({ available: false }))).available) return true;
+        }
+        return false;
+      })(),
+      new Promise((r) => setTimeout(r, 5_000, true)),
+    ]);
+    probe.ts = Date.now();
+  }
+  return probe.ok;
+}
+
+/** 실행 담당(클라우드 리더) 중재 — **실행 리스(daemonLease: 게이트웨이·스케줄러)를 쥔 프로세스만** 참여한다. 동기화 락과는 무관하다.
+    왜(검수 M2 → 반대 검토 M-d → #791 독립 검수 HIGH-1, 2026-10-01):
+    - 실제 실행 조건은 procLeader && isCloudLeader()다(gateway.mjs ensureGateway, scheduler.mjs ensureScheduler). procLeader는
+      daemonLease(.gateway.lock·.scheduler.lock)이고, 동기화 락(.sync-process.lock) 주인과 다른 프로세스로 갈릴 수 있다.
+    - 리스는 기기 단위다 — deviceId는 데이터 루트의 .device-id 하나라(workspace.mjs getDeviceId) 같은 루트의 프로세스들은 리스에서
+      같은 기기로 보인다. 그래서 같은 루트에서 여럿이 renewLease를 돌리면 원격 리스가 "내 것"이라 둘 다 리더가 되고, 아무도 안 돌리면
+      그 기기는 실행 담당을 잃는다. 참여자는 "그 기기에서 실제로 실행할 프로세스"여야 한다.
+    - 동기화 락 기준(1차 수정)은 락 주인과 게이트웨이 리스 주인이 갈리면 아무도 실행하지 않았다(재시작 경쟁 재현: B proc:true cloud:false,
+      A' proc:false cloud:true). 수정 전(원래 결함)은 락을 못 얻으면 기본값 리더(true)로 남아 이중 실행이었다.
+    - 대화 화면(argo)은 게이트웨이·스케줄러를 켜지 않으니 자연히 빠진다(따로 표시가 필요 없다).
+    - 게이트웨이와 스케줄러 리스가 다른 프로세스로 갈리면(재시작 경쟁) 둘 다 참여해 둘 다 리더가 된다. 각자 자기 데몬만 실행하므로
+      이중 실행은 아니고, 리스 쓰기만 그동안 두 배(보유자당 30초에 1회)가 된다. 한쪽만 참여시키면 다른 쪽 데몬이 영영 멈춘다.
+    텔레그램 토큰 클레임도 같은 기준이다 — 폴러는 게이트웨이 리스 주인에서만 돈다(gateway.mjs의 procLeader 게이트). */
+async function arbitrateLease(targets) {
+  const owner = [...new Set(targets.values())][0];
+  await daemonLeasesSettled(['gateway', 'scheduler']); // 기동 직후 첫 판정 전이면 기다린다(첫 주기 강등 → 8초 공백 방지)
+  if (!holdsDaemonLease('gateway', 'scheduler')) {
+    leaseState.leader = false;
+    leaseState.ownedAt = 0;
+    leaseState.checkedAt = Date.now();
+    return;
+  }
+  if (!owner) return; // 로컬 회사 0개 — 이 기기에서 돌릴 루틴·폴러 자체가 없다(아래 cycle 주석)
+  await renewLease(owner, { runnerUsable: await probeRunnerUsable(targets) });
+  if (holdsDaemonLease('gateway')) await renewTokenClaims(owner).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80))); // 토큰 단위 소유 — 리더와 별개
+}
+
+async function cycle() {
+  if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
+  // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 파일 동기화는 대기(이중 동기화=대형 유실 차단)
+  if (!(await holdSyncLock())) {
+    status.lastError = '같은 데이터 루트를 다른 프로세스가 동기화 중 — 이 인스턴스는 대기';
+    // 파일 동기화는 대기하지만 실행 담당 판정은 한다 — 이 프로세스가 실행 리스 주인이면 리스를 중재해야 한다(arbitrateLease 주석)
+    await arbitrateLease((await collectLocalTargets(currentSessionUid())).targets);
+    return;
+  }
+  // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
+  const keyOwner = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
+  await ensureAccountKey(client(), keyOwner);
+  // E2EE 단계 0 — 기기 공개키 등록부 구축(내부 1회 가드·실패 무해). 켜기 전까지 다른 동작 없음.
+  const myDeviceId = await getDeviceId();
+  ensureDeviceKeyRegistered(client(), keyOwner, myDeviceId).catch(() => {});
+  // E2EE P1 — DEK 미보유면 자기 랩 회수 시도(승인·복구가 서버에 넣어준 랩, 60초 간격 own-RLS 1행).
+  // 성공 순간부터 sealFor가 v3로 전환되고, 이 기기의 "잠김"이 풀린다.
+  if (!dek()) await tryClaimDek(client(), myDeviceId).catch(() => {});
+  const resealSet = dek() ? await loadReseal() : {};
+  // 로컬 회사 수집 — 소유자 게이트 규칙은 collectLocalTargets 주석
+  const sessionUid = currentSessionUid();
+  const { targets, noSecretsWs } = await collectLocalTargets(sessionUid);
   const localOwners = [...new Set(targets.values())];
   // 리스 중재는 요금제 게이트보다 **먼저** 한다(architect 권고 2026-07-23). 리더 선출은 과금 대상이 아니라
   // 이중 실행 방지용 조정이고, 무료 계정도 단일 기기에서 루틴·메신저가 돌아야 한다(PRODUCT-SPEC: Free=로컬
@@ -1334,24 +1423,8 @@ async function cycle() {
   // 리셋은 renewLease보다 **앞**에 둔다 — 뒤에 두면 renewLease가 throw할 때 직전 사이클의 paywalled가
   // stale로 남아 UI가 잘못된 페이월을 표시한다(architect 지적 2026-07-23).
   status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
-  // 리더 양보 판단 — 이 기기에 쓸 러너가 있는가(60s 캐시 — resolveRunner는 파일·호스트 프로브라 매 8s는 과함).
-  // 전 회사 OR(사후 검수 M-2: 첫 회사만 보면 자격 있는 다른 회사가 있어도 오판) + 5s 상한(M-3: CLI 프로브가
-  // 행 걸리면 사이클 전체 정지 — 리스 갱신·파일 동기화까지 조용히 죽는다). 실패·초과는 양보하지 않는 쪽(true).
-  const probe = (globalThis.__argoRunnerProbe ??= { ts: 0, ok: true });
-  if (targets.size && Date.now() - probe.ts > 60_000) {
-    probe.ok = await Promise.race([
-      (async () => {
-        for (const ws of targets.keys()) {
-          if ((await resolveRunner(ws, null).catch(() => ({ available: false }))).available) return true;
-        }
-        return false;
-      })(),
-      new Promise((r) => setTimeout(r, 5_000, true)),
-    ]);
-    probe.ts = Date.now();
-  }
-  if (localOwners[0]) await renewLease(localOwners[0], { runnerUsable: probe.ok }); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
-  if (localOwners[0]) await renewTokenClaims(localOwners[0]).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80))); // 토큰 단위 소유 — 리더와 별개
+  // 리더 양보 판단 — 이 기기에 쓸 러너가 있는가(probeRunnerUsable 주석)
+  await arbitrateLease(targets); // 실행 리스 주인만 클라우드 리스·토큰 클레임에 참여(아래 함수 주석) — 단일 오너 전제(자가 호스팅), 다중 오너는 P2
   // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
   // 판정은 ensureClient()의 실효 모드와 동일 조건(자격 존재 && serviceCredsAllowed) — 자격만 보면
@@ -1372,7 +1445,12 @@ async function cycle() {
   let freePlan = false;
   if (!(loadSyncCreds() && serviceCredsAllowed())) {
     try {
-      const ent = await syncEntitled(client(), keyOwner || localOwners[0] || null);
+      // 계정별 10분 캐시(src/plan-cache.mjs) — 매 주기 /auth/v1/user + rpc/my_plan 2건이던 것(프로세스당 분당 15건)을 10분에 2건으로.
+      // 키에 세션 사용자를 넣어 계정이 바뀌면 바로 빗나가고, 업로드 거절(아래)·결제 화면 조회(me/billing)가 캐시를 지운다.
+      const planOwner = keyOwner || localOwners[0] || null;
+      const planKey = `${sessionUid ?? ''}|${planOwner ?? ''}`;
+      let ent = cachedPlan(planKey);
+      if (!ent) { ent = await syncEntitled(client(), planOwner); rememberPlan(planKey, ent); }
       status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
       if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
       freePlan = ent.plan === 'free';
@@ -1439,6 +1517,8 @@ async function cycle() {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal });
       if (r.skipped === 'retry-backoff') { status.companies[wsId] = { ts: Date.now(), ...r }; companyFailed++; continue; }
+      // 업로드 거절 = 요금제가 바뀌었을 수 있다(pro 만료 등) — 캐시한 판정을 버리고 다음 주기에 다시 묻는다(확정 free는 위에서 스킵돼 여기 안 온다)
+      if (!freePlan && (r.uploadDenied ?? 0) > 0) invalidatePlanCache();
       if (!freePlan && (r.uploadDenied ?? 0) > 0 && (r.pushed ?? 0) === 0) { // 확정 free는 이미 스킵 경로 — 여기는 미확인·무자격이 거절당하는 경우
         uploadBackoff.set(wsId, Date.now() + UPLOAD_BACKOFF_MS);
         console.warn(`[argo] 동기화(${wsId}): 업로드 ${r.uploadDenied}건 전부 거절 — ${UPLOAD_BACKOFF_MS / 60_000}분 보류(플랜 미확인·무자격 재시도 폭풍 차단)`);
@@ -1452,6 +1532,8 @@ async function cycle() {
       // 키 미확보 보류는 "성공"이 아니다 — 무증상이면 셀프호스트의 account_keys 미적용 같은 영구 무동작이 정상으로 보인다(#436 검수 HIGH-2)
       if (r.held) { status.lastError = `${wsId}: 계정 키 미확보 — 파일 ${r.held}개 동기화 보류(재시도 중)${accountKeyError() ? ` — ${accountKeyError()}` : ''}`; companyFailed++; }
     } catch (e) {
+      // 매니페스트 업로드 거절은 여기로 온다(pro·미확인 경로는 관용 없이 throw) — 파일 거절과 같이 요금제 캐시를 버린다
+      if (!freePlan && e?.uploadFailed) invalidatePlanCache();
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;
       console.error(`[argo] 동기화 실패(${wsId}):`, e.message);
       companyFailed++;

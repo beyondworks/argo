@@ -44,6 +44,13 @@ export function badgeTotal({ current = {}, currentKey, muted = new Set(), totals
 /** 알림 전 확인 — 그 글을 **내 권한(RLS)으로 읽을 수 있을 때만** 알린다. 조직 토픽은 조직 전원이 들어서, 내가 없는 방의 방송에도
     "사진·파일을 보냈습니다" 알림이 뜨던 결함(실측 2026-09-18)을 여기서 닫는다. 알림 제목에 쓸 채널·작성자 이름과 본문도 이 조회로 채운다
     (다른 공간 글은 지금 불러 둔 목록에 없다). 못 읽으면 null. */
+/** 사람 이름 하나 — 서버 msgr_people_names(나·친구·같은 방 사람만), 없는 서버면 프로필. 못 찾으면 null. */
+export async function personName(sb, userId) {
+  const r = await sb.rpc('msgr_people_names', { ids: [userId] }).then((x) => x, () => ({ error: true }));
+  if (!r.error) return (r.data ?? []).find((x) => x.user_id === userId)?.name || null;
+  return (await sb.from('msgr_profiles').select('display_name').eq('user_id', userId).maybeSingle().then((x) => x, () => ({ data: null }))).data?.display_name || null;
+}
+
 export async function readableForNotify(sb, payload, orgId) {
   if (!payload?.id) return null;
   const { data: m } = await sb.from('msgr_messages').select('id, body, channel_id, msgr_channels(name, kind)')
@@ -53,10 +60,10 @@ export async function readableForNotify(sb, payload, orgId) {
   if (payload.author_kind === 'crew' && payload.crew_id) {
     author = (await sb.from('msgr_crews').select('display_name').eq('id', payload.crew_id).maybeSingle().then((r) => r, () => ({ data: null }))).data?.display_name ?? null;
   } else if (payload.author_user_id) {
-    const q = orgId
-      ? sb.from('msgr_org_members').select('display_name').eq('org_id', orgId).eq('user_id', payload.author_user_id)
-      : sb.from('msgr_profiles').select('display_name').eq('user_id', payload.author_user_id);
-    author = (await q.maybeSingle().then((r) => r, () => ({ data: null }))).data?.display_name ?? null;
+    if (orgId) author = (await sb.from('msgr_org_members').select('display_name').eq('org_id', orgId).eq('user_id', payload.author_user_id).maybeSingle().then((r) => r, () => ({ data: null }))).data?.display_name || null;
+    // 조직 이름이 없거나 개인 공간이면 서버 이름 규칙(프로필 이름 → 이메일 앞부분, msgr_people_names). 프로필만 읽으면 프로필 행이 없는
+    // 사람(운영 2026-10-01: 글 쓴 사용자 9명)이 '?'로 떴다. 옛 서버(함수 없음)는 종전처럼 프로필로 물러난다.
+    if (!author) author = await personName(sb, payload.author_user_id);
   }
   return { ...payload, body: m.body ?? '', channel_name: m.msgr_channels?.name ?? '', channel_kind: m.msgr_channels?.kind ?? null, author_name: author };
 }

@@ -34,6 +34,7 @@ import { appendEvent } from './events.mjs';
    기기 로컬이라 수명 규칙이 다르다 — 한 파일에 섞으면 sync 경계가 파일 단위로 갈라지지 않는다. */
 export const CONNECTOR_SECRETS_BASE = '.connector-secrets.json';
 const storeFile = (wsId) => join(paths(wsId).root, CONNECTOR_SECRETS_BASE);
+const lockStore = (wsId, fn) => withLock(`connector:${wsId}`, fn, { file: storeFile(wsId) }); // OAuth 토큰 회전 저장 — 프로세스 간 잠금 포함(M-b)
 
 async function loadStore(wsId) {
   // 손상 시 readJson이 .corrupt 백업 후 throw — 조용한 폴백 없이 1회 명시 실패, 다음 로드는 빈 상태로
@@ -45,7 +46,7 @@ async function loadStore(wsId) {
 
 /** 서버 레코드 부분 갱신(원자·직렬화). patch 값 null = 필드 삭제(토큰 무효화용). */
 function patchServer(wsId, serverId, patch) {
-  return withLock(`connector:${wsId}`, async () => {
+  return lockStore(wsId, async () => {
     const s = await loadStore(wsId);
     const next = { ...(s.servers[serverId] ?? {}), ...patch, updatedAt: new Date().toISOString() };
     for (const k of Object.keys(next)) if (next[k] === null) delete next[k];
@@ -460,13 +461,13 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
   try {
     let result;
     const rec = (await loadStore(wsId).catch(() => ({ servers: {} }))).servers[serverId];
-    const { isGuestCtx } = await import('./gateway/msgr-handoff.mjs'); // 동적 — 다른 msgr-handoff 사용처와 같은 순환 방지
+    const { isGuestCtx, fullAutoAllowed } = await import('./gateway/msgr-handoff.mjs'); // 동적 — 다른 msgr-handoff 사용처와 같은 순환 방지
     const isGuest = isGuestCtx(mirrorCtx);
     // 풀 오토(회사 단위 스위치, 유건 확정 2026-09-26) — **주인이 직접 지시한 턴에만**(요구사항 2).
     // isGuest는 손님·조직 채널 타인·뿌리가 주인이 아닌 넘김을 이미 전부 걸러 준다(isGuestCtx 단일 판정,
     // src/gateway/msgr-handoff.mjs). 웹 채팅·주인의 텔레그램·슬랙은 mirrorCtx가 'msgr'이 아니라
     // isGuestCtx가 애초에 false를 준다 — 즉 이 한 줄이 요구사항 2의 적용 범위 그대로다.
-    const fullAuto = !isGuest && (await loadCompany(wsId).catch(() => ({}))).fullAuto === true;
+    const fullAuto = fullAutoAllowed(mirrorCtx) && (await loadCompany(wsId).catch(() => ({}))).fullAuto === true; // 손님·오피스에서 맡긴 턴 제외
     if (isGuest) {
       // 러너 무관 단일 지점(설계서 §1) — SDK use_connector·CLI 지시 블록이 전부 여기로 모인다. approved(결재 완결 재진입)여도 막지 않는다:
       // 손님 턴이 만든 커넥터 결재는 없다(위 문구가 결재를 '주인에게' 올리라고 하고, 그 결재 완결은 주인의 컨텍스트에서 돈다).
@@ -556,7 +557,7 @@ export async function listConnectorTools(wsId, serverId) {
  * 사용자에겐 이 기기에서 자격이 사라지는 것으로 정직하게 표기한다(재연결하면 다시 동의 화면).
  */
 export async function disconnectConnector(wsId, serverId) {
-  const existed = await withLock(`connector:${wsId}`, async () => {
+  const existed = await lockStore(wsId, async () => {
     const s = await loadStore(wsId);
     // hasOwn — `in`은 프로토타입 체인을 타서 'toString'·'__proto__' 같은 이름에 "지웠다"는 거짓 성공과
     // 불필요한 0600 파일 재기록을 만든다(분리 검수 F1 실측, DELETE 쿼리로 도달 가능).

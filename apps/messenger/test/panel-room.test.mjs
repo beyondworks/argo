@@ -11,9 +11,10 @@ const num = (re) => Number(css.match(re)?.[1]);
 
 test('패널 폭과 비킴 폭이 같다 — 패널 규칙이 바뀌면 비킴 수치도 같이 바뀌어야 한다', () => {
   assert.match(css, /\.msgr-crewsheet \{ position: absolute; top: calc\(var\(--msgr-top-h, 63px\) \+ 9px\); right: 24px; width: min\(380px,/, '패널 폭 380 + 오른쪽 24, 위는 상단 바 실제 높이 아래(#603)');
-  assert.equal(num(/@container msgr-main \(min-width: (\d+)px\)/), 640 + PANEL, '둘 다 비키는 경계 = 글 폭 640 + 패널');
+  assert.equal(num(/@container msgr-main \(min-width: (\d+)px\)/), 280 + PANEL + 24 + 24, '스레드·입력창이 둘 다 비키는 경계 = 입력창 하한 280 + 패널 비킴 428 + 왼쪽 24 (점검 A·B #10: 종전엔 글 폭 640 + 패널 = 1044에서만 스레드가 비켜 그보다 좁은 창에서 말풍선이 패널 밑으로 들어갔다)');
+  assert.match(css, new RegExp(`@container msgr-main \\(min-width: ${640 + PANEL}px\\)`), '글 폭 640 + 패널 이상이면 입력창도 가운데 정렬 기준에 맞춘다');
   assert.equal(num(/calc\(\(100% - (\d+)px\) \/ 2\)\) \+ 404px\)/), 720 + PANEL, '가운데 정렬 기준 = 스레드 최대 720 + 패널');
-  assert.ok(css.includes(`${OPEN} > .msgr-dock { padding-left: calc(24px + var(--sbw, 0px)); padding-right: calc(${PANEL + 24}px + var(--sbw, 0px)); }`), '좁을 때는 입력창만 패널 왼쪽까지');
+  assert.ok(css.includes(`${OPEN} > :is(.msgr-dock, .msgr-joinbar) { --col-l: calc(24px + var(--sbw, 0px)); --col-r: calc(${PANEL + 24}px + var(--sbw, 0px)); }`), '비킬 수 있는 폭에서는 입력창·안내 띠가 같은 열(--col-l/--col-r)로 패널 왼쪽까지(LA-23: 종전엔 입력창만 비켜 띠가 열 밖으로 나갔다)');
   assert.ok(css.includes(`${OPEN} > .msgr-dock > div { min-width: 280px; }`), '입력창 하한 280');
 });
 

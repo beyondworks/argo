@@ -33,6 +33,7 @@ export function MenuHost() {
   const [pos, setPos] = useState(null);
   const [idx, setIdx] = useState(-1);
 
+  // 자리를 재기 전에는 opacity 0 — visibility:hidden이면 처음 여는 메뉴에 초점이 안 가 키보드(↓·Enter)로 못 골랐다
   useLayoutEffect(() => {
     setPos(null);
     if (!m || !ref.current) return;
@@ -71,10 +72,10 @@ export function MenuHost() {
   };
   return createPortal(
     <div ref={ref} className="menu" role="menu" tabIndex={-1} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}
-      style={{ left: pos?.x ?? m.x, top: pos?.y ?? m.y, visibility: pos ? 'visible' : 'hidden' }}>
+      style={{ left: pos?.x ?? m.x, top: pos?.y ?? m.y, opacity: pos ? 1 : 0 }}>
       {m.items.map((it, i) => it.sep ? <div key={i} className="menu-sep" role="separator" />
         : it.heading ? <div key={i} className="menu-heading">{it.heading}</div>
-          : <button key={i} type="button" role={it.checked != null ? 'menuitemradio' : 'menuitem'} aria-checked={it.checked ?? undefined} disabled={it.disabled}
+          : <button key={i} type="button" role={it.checked != null ? 'menuitemradio' : 'menuitem'} aria-checked={it.checked} disabled={it.disabled}
             className={`menu-item${i === idx ? ' on' : ''}${it.danger ? ' danger' : ''}`} onPointerMove={() => setIdx(i)} onClick={() => run(it)}>
             <span className="menu-ico">{it.face ?? (it.icon && <Icon name={it.icon} size={14} />)}</span>
             <span className="menu-label">{it.label}</span>
@@ -86,15 +87,18 @@ export function MenuHost() {
   );
 }
 
+/** 이벤트가 실제 DOM 안에서 났는가 — 포털(body에 붙은 패널·대화창)의 React 이벤트는 트리를 따라 부모까지 올라오므로, 그 부모의 메뉴가 열리지 않게 거른다. */
+export const fromInside = (e) => e.currentTarget.contains(e.target);
+
 /** 대상 하나에 우클릭·길게 누르기(터치 450ms, 10px 움직이면 취소)·Shift+F10·메뉴 키를 한 번에 붙인다. */
 export function menuProps(build) {
   let timer = null, start = null, fired = false;
   const cancel = () => { clearTimeout(timer); timer = null; };
   return {
-    onContextMenu: (e) => openMenu(e, build()),
-    onKeyDown: (e) => { if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') openMenu({ preventDefault: () => e.preventDefault(), stopPropagation() {}, currentTarget: e.currentTarget }, build()); },
+    onContextMenu: (e) => { if (fromInside(e)) openMenu(e, build()); },
+    onKeyDown: (e) => { if (fromInside(e) && ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu')) openMenu({ preventDefault: () => e.preventDefault(), stopPropagation() {}, currentTarget: e.currentTarget }, build()); },
     onPointerDown: (e) => {
-      if (e.pointerType !== 'touch') return;
+      if (e.pointerType !== 'touch' || !fromInside(e)) return;
       fired = false; start = { x: e.clientX, y: e.clientY };
       const target = e.currentTarget;
       timer = setTimeout(() => { fired = true; openMenu({ clientX: start.x, clientY: start.y, currentTarget: target }, build()); }, 450);
