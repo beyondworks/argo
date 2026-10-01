@@ -154,3 +154,11 @@ test('저장할 항목: x·y를 더하고 y→x 순, 숨긴 모듈·옛 필드 �
   assert.deepEqual(settle(items, [box('todos', 0, 12, 0, 232), box('cal', 0, 12, 244, 480), box('work', 0, 12, 736, 232)], new Map([['todos', 6], ['cal', 0], ['work', 6]])).map((it) => [it.id, it.x, it.y]),
     [['todos', 6, 0], ['cal', 0, 1], ['work', 6, 2], ['hid', 3, 9]]);
 });
+
+// 랜딩 체험판(유건 10/1 화면 구성) — 기본 배치가 준 자리·폭·높이·보기 설정을 그대로 쓴다. 운영 기본값(id·size만)은 그대로.
+test('기본 배치의 자리·폭·높이·보기 설정을 저장값 없이도 그대로 쓴다', () => {
+  const defaults = [{ id: 'a', size: 's', span: 5, x: 0, y: 1, h: 520, cfg: { views: { view: 'month' } } }, { id: 'b', size: 'full' }];
+  const out = mergeLayout(null, REG, 'me', defaults);
+  assert.deepEqual(out[0], { id: 'a', size: 's', span: 5, h: 520, x: 0, y: 1, hidden: false, cfg: { views: { view: 'month' } } });
+  assert.deepEqual(out[1], { id: 'b', size: 'full', hidden: false }); // id·size만 준 기본값은 예전 모양 그대로
+});

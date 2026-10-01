@@ -1,3 +1,4 @@
+import { DEMO } from './core/demo.js'; // 첫 import — 체험판은 저장소를 비우고 시작
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import { applyTheme, applyShell, readTheme, readShell } from './core/theme.js';
@@ -22,4 +23,4 @@ async function boot() {
 boot().catch((e) => console.warn('[office] session init failed', e?.message));
 
 // PWA — 앱 셸만 캐시한다(오프라인에서 마지막 화면 열기). 개발 서버에서는 등록하지 않는다.
-if (!isDesktop() && 'serviceWorker' in navigator && import.meta.env.PROD) navigator.serviceWorker.register('/sw.js');
+if (!DEMO && !isDesktop() && 'serviceWorker' in navigator && import.meta.env.PROD) navigator.serviceWorker.register('/sw.js');

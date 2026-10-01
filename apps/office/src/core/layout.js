@@ -32,7 +32,8 @@ export function sizeForSpan(cols) {
 export function mergeLayout(saved, registry, space, defaults) {
   const usable = new Map(registry.filter((m) => m.spaces.includes(space)).map((m) => [m.id, m]));
   if (!saved?.items?.length) {
-    const visible = defaults.filter((d) => usable.has(d.id)).map((d) => ({ id: d.id, size: d.size, hidden: false }));
+    // 기본 배치가 자리(x·y)·폭·높이를 주면 그대로 쓴다(체험판 기본 배치) — 운영 기본값은 id·size만 준다
+    const visible = defaults.filter((d) => usable.has(d.id)).map(({ id, size, span, h, x, y, cfg }) => ({ id, size, ...(span ? { span } : {}), ...(h ? { h } : {}), ...(hasXY({ x, y }) ? { x, y } : {}), hidden: false, ...(cfg ? { cfg } : {}) }));
     const included = new Set(visible.map((item) => item.id));
     return [...visible, ...[...usable.values()].filter((mod) => (!mod.repeatable || mod.anchor) && !included.has(mod.id)).map((mod) => ({ id: mod.id, size: mod.defaultSize, hidden: true }))];
   }
