@@ -2052,3 +2052,28 @@ test('메신저 큐 동시 턴 = 회의실 폭(기본 8) — 한 기기에서 �
   const Q = await import('../src/gateway/queue.mjs');
   assert.equal(Q.MSGR_MAX_INFLIGHT, 8);
 });
+
+// 2026-10-01 라이브 실사고: 개인 방(조직 없음)에서 내 크루를 @로 불러도 답이 없었다. 문맥(envelope)의 org가 null인데
+// 워커가 db.org(null)을 불러 PostgREST가 `id=eq.null` → uuid 오류, 큐가 1초마다 재시도했다. 가짜 db는 실제처럼 null uuid를 거절한다.
+test('handler: 개인 방 턴(orgId null)은 조직 조회 없이 답한다 — db.org(null) uuid 오류로 무응답·무한 재시도하던 결함', async () => {
+  const db = fakeDb({ crews: [crew({ org_id: null })] });
+  const strict = (k) => (id) => { if (id == null) throw new Error('msgr db: invalid input syntax for type uuid: "null"'); rec(k, id); };
+  const rec = (...a) => db.calls.push(a);
+  const orgOf = strict('org'), crewsOf = strict('orgCrews');
+  db.org = async (id) => { orgOf(id); return { id, slug: 'x', name: 'x' }; };
+  db.orgCrews = async (id) => { crewsOf(id); return []; };
+  const PCH = 'dddddddd-0000-4000-8000-000000000001';
+  db.crewContext = async (_ws, crewId, msgId, channelId) => ({
+    source: { id: msgId, author_kind: 'user', author_user_id: OWNER, crew_id: null, body: '@서윤 야', reply_to: null, meta: {} },
+    root: { id: msgId, author_kind: 'user', author_user_id: OWNER }, delivery_role: 'to', actor: OWNER,
+    channel: { id: channelId, org_id: null, kind: 'dm', name: '', crew_memory: true, archived_at: null, excluded_crew_ids: [] },
+    org: null, peers: [{ id: crewId, slug: 'seoyun', display_name: '서윤', owner_user_id: OWNER, ws_id: WS }],
+    settled_predecessors: [], settled_source: false, context: [],
+  });
+  let turns = 0;
+  const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async () => { turns++; return { reply: '네, 듣고 있어요.', sessionId: null, artifacts: [] }; } });
+  await h({ msgId: 2028, orgId: null, channelId: PCH, crewId: CREW, slug: 'seoyun', text: '@서윤 야', authorId: OWNER, threadRoot: 2028, hop: 0, origin: OWNER, createdAt: new Date().toISOString() });
+  assert.equal(turns, 1, '개인 방 턴이 실행되지 않았다');
+  assert.ok(db.calls.some((x) => x[0] === 'insertMessage' && x[1].body === '네, 듣고 있어요.' && x[1].channel_id === PCH), '개인 방에 답이 올라가지 않았다');
+  assert.equal(db.calls.some((x) => x[0] === 'org'), false, '조직이 없는 방에서 조직을 조회했다');
+});
