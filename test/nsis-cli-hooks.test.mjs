@@ -41,7 +41,11 @@ test('설치 훅 — 값이 없는 사용자는 등록하고, 읽을 수 없거�
   const m = section('ARGO_CLI_POSTINSTALL');
   assert.match(m, /RegQueryValueExW/, '값 없음(2)과 읽기 실패를 구분하려고 크기부터 본다');
   assert.match(m, /\$\{ElseIf\} \$2 != 2\s+StrCpy \$R8 "path-skipped"/, '값 없음(2)만 빈 PATH로 보고, 그 밖의 오류는 건드리지 않는다');
-  assert.match(m, /\$\{If\} \$4 <= 2000/, 'NSIS 문자열 한도(1024자)를 넘는 값은 잘려 쓰이므로 건드리지 않는다');
+  // 길이 기준 = 읽은 값 + 덧붙일 ";$INSTDIR\cli" + 여유 3이 컴파일 때 정해지는 NSIS 문자열 한도(${NSIS_MAX_STRLEN})에 들어가는가 — 값 길이만 보면 덧붙인 결과가 한도를 넘어 잘려 쓰인다(독립 검수 #800 LOW-2)
+  assert.match(m, /StrLen \$R5 "\$INSTDIR\\cli"/, '덧붙일 항목의 길이를 잰다');
+  assert.match(m, /IntOp \$R4 \$4 \/ 2[^\n]*\n\s*IntOp \$R4 \$R4 - 1/, '바이트 → 문자 수(끝 NUL 제외)');
+  assert.match(m, /IntOp \$R5 \$R5 \+ 3\s+IntOp \$R4 \$R4 \+ \$R5\s+\$\{If\} \$R4 <= \$\{NSIS_MAX_STRLEN\}/, '읽은 값 + 항목 + 여유 3 <= NSIS_MAX_STRLEN');
+  assert.doesNotMatch(m, /<= 2000/, '고정 상수로 비교하지 않는다');
   assert.match(m, /ReadRegStr \$R9 HKCU "Environment" "Path"\s+\$\{If\} \$\{Errors\}\s+StrCpy \$R8 "path-skipped"/);
 });
 
@@ -59,6 +63,13 @@ test('설치 훅 — 결과는 ASCII 한 줄로 %LOCALAPPDATA%\\<번들 id>\\cli
   assert.match(m, /cli-install\.json" w/);
   assert.ok(m.includes(`'{"status":"$R8"}`));
   assert.ok(section('ARGO_CLI_POSTINSTALL').includes('ARGO_CLI_STATE_VAR'));
+});
+
+test('제거 훅 — PATH 값이 NSIS 문자열 한도에 가까우면 잘린 값을 되써서 사용자 PATH를 망가뜨리지 않도록 건드리지 않는다(독립 검수 #800 LOW-2)', () => {
+  const m = section('ARGO_CLI_POSTUNINSTALL');
+  assert.match(m, /RegQueryValueExW\(i r1, w "Path"/, '크기부터 본다');
+  assert.match(m, /IntOp \$R4 \$R4 \+ 3[^\n]*\n\s*\$\{If\} \$R4 <= \$\{NSIS_MAX_STRLEN\}/, '";" 감싸기(+2)와 여유를 더해도 한도 안일 때만 읽고 되쓴다');
+  assert.match(m, /\$\{If\} \$2 == 0[\s\S]*ReadRegStr \$R9 HKCU "Environment" "Path"/, '크기 확인을 통과한 값만 읽는다');
 });
 
 test('제거 훅 — 정확히 같은 PATH 항목만 지우고(앞뒤 ; 정리) cli 폴더·결과 파일을 지운다, 값이 바뀔 때만 쓴다', () => {

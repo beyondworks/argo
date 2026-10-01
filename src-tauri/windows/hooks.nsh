@@ -130,6 +130,8 @@
   Push $2
   Push $3
   Push $4
+  Push $R4
+  Push $R5
   Push $R6
   Push $R7
   Push $R8
@@ -170,7 +172,14 @@
       ${EndIf}
       StrCpy $R9 ""
       ${If} $2 == 0
-        ${If} $4 <= 2000 ; 문자 1000개 이하(UTF-16) — NSIS 문자열 한도(1024)에 맞는다
+        ; 길이 기준 = 읽은 값 + 덧붙일 ";$INSTDIR\cli" + 여유 3이 NSIS 문자열 한도에 들어가는가. 값 길이만 보면 덧붙인 결과가 한도를 넘어 잘려 쓰인다(독립 검수 #800 LOW-2).
+        ; 한도는 컴파일 때 정해진다(${NSIS_MAX_STRLEN}) — 공식 NSIS 3.x 기본 빌드는 1024다. Tauri 번들러가 받는 NSIS가 특수 빌드(8192)인지는 확인하지 못했고, 이 식은 그 값에 자동으로 맞는다.
+        StrLen $R5 "$INSTDIR\cli"
+        IntOp $R4 $4 / 2 ; 바이트 → 문자(UTF-16)
+        IntOp $R4 $R4 - 1 ; 끝 NUL 제외
+        IntOp $R5 $R5 + 3
+        IntOp $R4 $R4 + $R5
+        ${If} $R4 <= ${NSIS_MAX_STRLEN}
           ReadRegStr $R9 HKCU "Environment" "Path"
           ${If} ${Errors}
             StrCpy $R8 "path-skipped"
@@ -202,6 +211,8 @@
   Pop $R8
   Pop $R7
   Pop $R6
+  Pop $R5
+  Pop $R4
   Pop $4
   Pop $3
   Pop $2
@@ -211,24 +222,44 @@
 
 !macro ARGO_CLI_POSTUNINSTALL
   Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  Push $R4
   Push $R6
   Push $R7
   Push $R9
-  ReadRegStr $R9 HKCU "Environment" "Path"
-  ${IfNot} ${Errors}
-    ; ;로 감싸 정확히 같은 항목만 지운다 — 앞뒤 ;를 정리해 다른 항목은 바이트 그대로 둔다
-    ${un.WordReplace} ";$R9;" ";$INSTDIR\cli;" ";" "+*" $R6
-    ${If} $R6 != ";$R9;"
-      StrCpy $0 $R6 1
-      ${If} $0 == ";"
-        StrCpy $R6 $R6 "" 1
+  ; 값의 크기부터 본다 — 한도에 가까운 값은 ReadRegStr이 잘라 읽고, 그것을 되쓰면 사용자 PATH가 망가진다. 못 읽거나 한도를 넘으면 PATH 항목은 그대로 둔다(남은 항목은 무해, 독립 검수 #800 LOW-2).
+  System::Call 'advapi32::RegOpenKeyExW(i ${ARGO_HKCU_ENV}, w "Environment", i 0, i ${ARGO_KEY_READ}, *i .r1) i .r2'
+  ${If} $2 == 0
+    System::Call 'advapi32::RegQueryValueExW(i r1, w "Path", i 0, *i .r3, i 0, *i .r4) i .r2'
+    System::Call 'advapi32::RegCloseKey(i r1)'
+  ${Else}
+    StrCpy $2 "-1"
+  ${EndIf}
+  ${If} $2 == 0
+    IntOp $R4 $4 / 2
+    IntOp $R4 $R4 - 1
+    IntOp $R4 $R4 + 3 ; ";"로 감싸기(+2)와 여유
+    ${If} $R4 <= ${NSIS_MAX_STRLEN}
+      ReadRegStr $R9 HKCU "Environment" "Path"
+      ${IfNot} ${Errors}
+        ; ;로 감싸 정확히 같은 항목만 지운다 — 앞뒤 ;를 정리해 다른 항목은 바이트 그대로 둔다
+        ${un.WordReplace} ";$R9;" ";$INSTDIR\cli;" ";" "+*" $R6
+        ${If} $R6 != ";$R9;"
+          StrCpy $0 $R6 1
+          ${If} $0 == ";"
+            StrCpy $R6 $R6 "" 1
+          ${EndIf}
+          StrCpy $0 $R6 1 -1
+          ${If} $0 == ";"
+            StrCpy $R6 $R6 -1
+          ${EndIf}
+          WriteRegExpandStr HKCU "Environment" "Path" "$R6"
+          !insertmacro ARGO_CLI_BROADCAST
+        ${EndIf}
       ${EndIf}
-      StrCpy $0 $R6 1 -1
-      ${If} $0 == ";"
-        StrCpy $R6 $R6 -1
-      ${EndIf}
-      WriteRegExpandStr HKCU "Environment" "Path" "$R6"
-      !insertmacro ARGO_CLI_BROADCAST
     ${EndIf}
   ${EndIf}
   Delete "$INSTDIR\cli\argo.cmd"
@@ -240,6 +271,11 @@
   Pop $R9
   Pop $R7
   Pop $R6
+  Pop $R4
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
   Pop $0
 !macroend
 
