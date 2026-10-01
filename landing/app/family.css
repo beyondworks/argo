@@ -1510,6 +1510,15 @@ html[lang='ko'] .fam-page :is(.ph-name em, .ph-head span, .ph figcaption) { lett
 .rb-mod .o-module-title { white-space: nowrap; font-size: 12.5px; }
 .rb-mod .o-module-all { font-size: 11.5px; }
 .rb-mod .o-module-body { padding: 8px 14px 12px; gap: 0; min-height: 0; overflow: hidden; }
+/* 칸에 다 들어가지 않는 줄은 반쯤 잘려 보이지 않게 통째로 다음 열(칸 밖)로 넘긴다 */
+.rb-mod .o-module-body > .rb-doc, .rb-mod .o-module-body > .rb-ap { flex: 1 1 0; }
+.rb-mod .o-module-body ul, .rb-ch { flex: 1 1 0; flex-wrap: wrap; align-content: flex-start; overflow: hidden; }
+.rb-mod .o-module-body ul > li, .rb-ch > * { width: 100%; flex: none; }
+/* 좁은 칸(폰의 반 칸) — 부가 표시는 접고, 남는 글자는 말줄임으로 */
+@container (max-width: 220px) {
+  .rb-ap .btn, .rb-mail .l1 .meta, .rb .due { display: none; }
+  .rb .tx > .meta { display: block; overflow: hidden; text-overflow: ellipsis; }
+}
 .rb .main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rb .meta { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; }
 .rb .tx { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
@@ -1521,7 +1530,7 @@ html[lang='ko'] .fam-page :is(.ph-name em, .ph-head span, .ph figcaption) { lett
 .rb-mail li:first-child { border-top: 0; }
 .rb-mail .rb-av { width: 28px; height: 28px; font-size: 11px; margin-top: 1px; }
 .rb-mail .l1 { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--fg-2); }
-.rb-mail .l1 b { font-weight: 600; }
+.rb-mail .l1 b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rb-mail .l1 .meta { margin-left: auto; }
 .rb-mail li.unread .l1 b { color: var(--fg); font-weight: 700; }
 .rb-mail li.unread .l1::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #2f6fe0; order: -1; margin-left: -1px; }
@@ -1574,6 +1583,7 @@ html[lang='ko'] .fam-page :is(.ph-name em, .ph-head span, .ph figcaption) { lett
 .rb-doc .stack { display: inline-flex; }
 .rb-doc .stack .rb-av { width: 18px; height: 18px; font-size: 8.5px; box-shadow: 0 0 0 1.5px #fbfaf7; }
 .rb-doc .stack .rb-av + .rb-av { margin-left: -5px; }
+@container (max-height: 170px) { .rb-doc .cover, .rb-doc > .meta { display: none; } } /* 낮은 칸(1100px 이하)은 제목과 첫 줄만 */
 .rb-doc li, .rb-td li { display: flex; align-items: center; gap: 9px; padding: 6px 0; font-size: 13px; color: var(--fg); border-top: 1px solid var(--rb-line); }
 .rb-doc li.on .main, .rb-td li.on .main { color: var(--fg-3); text-decoration: line-through; text-decoration-color: rgba(38, 36, 31, 0.3); }
 .rb-doc .box, .rb-td .box { width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid #c9c4b9; display: grid; place-items: center; flex: none; color: var(--bg); }
@@ -1582,7 +1592,7 @@ html[lang='ko'] .fam-page :is(.ph-name em, .ph-head span, .ph figcaption) { lett
 .rb .due.today { background: #fbe4d8; color: #8a3b12; }
 .rb-td li:first-child { border-top: 0; }
 .rb-td .rb-av { width: 18px; height: 18px; font-size: 8.5px; }
-@container (max-height: 230px) { .rb-doc .cover { display: none; } .rb-doc .ttl { font-size: 15px; margin-top: 4px; } }
+@container (max-height: 230px) { .rb-doc .cover { display: none; } .rb-doc .ttl { font-size: 15px; margin-top: 4px; } .rb-doc li { padding: 5px 0; } }
 /* 지표 — KPI 셋 + 면적 그래프 */
 .rb-kpi { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1; }
 .rb-kpi .kpis { display: flex; gap: 22px; padding-top: 4px; }
