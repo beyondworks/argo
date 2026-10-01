@@ -92,6 +92,7 @@ import { fmtDmWhen } from './list-when.mjs';
 import { markAppReady } from './splash.js';
 import { dropBeforeIdAtY, reorderVisibleInFull } from './drag-reorder.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
+import { twinRelink, twinLeftOrg, twinPaused, twinOrgLabel, crewAddable, crewSeenAt } from './personal-bots.mjs';
 import { faceOf, faceFromStored, faceInner, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedCrewsInFetch, FACE_COLORS, FACE_SHAPES, faceToStore } from './crew-face.mjs';
 import { faceGestures } from './face-gestures.mjs';
 const realtimeScope = createRealtimeScope();
@@ -1831,7 +1832,7 @@ function Shell({ session }) {
     { icon: 'star', label: t('rail.order.down'), disabled: favoriteBusy || at === favs.length - 1, run: () => reorderFav(c.id, favs[at + 2]?.id ?? null) },
   ]; };
   // '내 에이전트' = 세 출처 한 목록(유건 지시 2026-09-08): 아르고 에이전트 + 내가 연결한 헤르메스·오픈클로(봇). 출처 표시는 msgr_bots.kind.
-  const sourceOf = (c) => c.hosting !== 'bot' ? 'argo' : (botKinds.find((b) => b.crew_id === c.id)?.kind ?? 'custom');
+  const sourceOf = (c) => c.hosting !== 'bot' ? 'argo' : (botKinds.find((b) => b.crew_id === c.id)?.kind ?? c.bot_kind ?? 'custom'); // 개인 공간 봇 쌍둥이는 서버가 bot_kind를 준다(2026-10-01)
   const railSortPos = Object.fromEntries(targetPrefs.filter((p) => p.target_kind === 'crew' && p.sort_pos != null).map((p) => [p.target_id, p.sort_pos])); // '내 에이전트' 직접 배치 순서(유건 확정 2026-09-29)
   const sortCrews = (list) => railSort === 'custom' ? sortByCustomOrder(list, railSortPos, (c) => c.display_name) : [...list].sort((a, b) => railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0) : a.display_name.localeCompare(b.display_name, 'ko'));
   const myCrews = sortCrews(crews.filter((c) => c.owner_user_id === uid));
@@ -1950,8 +1951,8 @@ function Shell({ session }) {
   const railActionKey = railAction && (railAction.channel.kind === 'dm' ? `dm.${railAction.kind === 'end' ? 'end' : railAction.kind}` : `ch.${railAction.kind}`);
   // '내 에이전트' 직접 배치 드래그는 내 소유 크루만(railCompany는 대상 밖, 유건 확정 2026-09-29 #7) — mine 여부로 드래그 속성 자체를 끈다.
   const railRow = (c) => { const mine = c.owner_user_id === uid; const items = crewCtx(c); return (
-    <div key={c.id} data-drag-id={c.id} className={`msgr-railrow nomore${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={mine ? dragStart(c) : undefined} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && mine && railSort === 'custom'} {...(isPhone ? rowLongPress(c, items, mine ? { onDrop: reorderRailCustom } : null) : {})}>
-      <button type="button" className="item" onClick={() => { if (isPersonal) dmWithCrew(c.id); else setSheet(c.id); setRail(false); }} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}`}><Av name={c.display_name} crew size="xs" company={crewTier(c, org) === 'company'} crewId={c.id} /><span className="name">{c.display_name}{crewHints.get(c.id) && <small className="msgr-namehint">{crewHints.get(c.id)}</small>}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>
+    <div key={c.id} data-drag-id={c.id} className={`msgr-railrow nomore${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}${twinPaused(c) ? ' paused' : ''}`} onDragStart={mine ? dragStart(c) : undefined} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && mine && railSort === 'custom'} {...(isPhone ? rowLongPress(c, items, mine ? { onDrop: reorderRailCustom } : null) : {})}>
+      <button type="button" className="item" onClick={() => { if (isPersonal) dmWithCrew(c.id); else setSheet(c.id); setRail(false); }} title={`${c.display_name}${twinOrgLabel(c) ? ` · ${t('rail.twin.org', { org: twinOrgLabel(c) })}` : ` · ${t(`rail.src.${sourceOf(c)}`)}`}${c.role_text ? ` · ${c.role_text}` : ''}${twinRelink(c) ? ` · ${t('rail.relink.title')}` : ''}${twinLeftOrg(c) ? ` · ${t('rail.leftorg.title')}` : ''}`}><Av name={c.display_name} crew size="xs" company={crewTier(c, org) === 'company'} crewId={c.id} /><span className="name">{c.display_name}{!twinOrgLabel(c) && crewHints.get(c.id) && <small className="msgr-namehint">{crewHints.get(c.id)}</small>}</span>{twinOrgLabel(c) && <span className="msgr-orglabel">{twinOrgLabel(c)}</span>}{twinRelink(c) && <span className="msgr-relink">{t('rail.relink')}</span>}{twinLeftOrg(c) && <span className="msgr-relink">{t('rail.leftorg')}</span>}<span className={`msgr-dot${crewSeenAt(c) && Date.now() - Date.parse(crewSeenAt(c)) < AWAY_MS ? ' mark' : ''}`} /></button>
     </div>
   ); };
   // 평평한 목록(유건 결정 2026-09-09). 외부 에이전트(헤르메스·오픈클로 봇)가 있을 때만 '외부' 소제목 하나로 아래에 구분한다.
@@ -2187,7 +2188,7 @@ function DmGroupSheet({ members, crews, uid, nameOfUser, onCreate, onClose, pers
   const key = (kind, id) => `${kind}:${id}`;
   const toggle = (kind, id) => setPicks((m) => { const n = new Map(m); const k = key(kind, id); if (n.has(k)) n.delete(k); else n.set(k, { kind, id }); return n; });
   const needle = qs.trim().toLowerCase();
-  const rows = [...members.map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) })), ...crews.filter((c) => c.status === 'active').map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, crew: true, own: c.owner_user_id === uid, owner: c.owner_user_id }))]
+  const rows = [...members.map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) })), ...crews.filter((c) => c.status === 'active' && crewAddable(c)).map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, crew: true, own: c.owner_user_id === uid, owner: c.owner_user_id }))]
     .filter((r) => !needle || r.name.toLowerCase().includes(needle));
   // 남의 크루를 고르면 그 소유자가 함께 들어온다(소유자 동반 규칙) — 고른 수와 실제 들어오는 사람이 다르므로 알린다(검수 M-4)
   const joiners = [...new Set([...picks.values()].filter((p) => p.kind === 'crew').map((p) => crews.find((c) => c.id === p.id)?.owner_user_id).filter((o) => o && o !== uid && !picks.has(`user:${o}`)))];
@@ -2469,7 +2470,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const isHost = canEdit && !isDmRoom;
   const pendingCrews = new Set(joinReqs.map((r) => r.crew_id));
   const addableCrews = crews.filter((c) => !crewIds.has(c.id) && !pendingCrews.has(c.id) && ((channel.personal_crews ?? 'approval') !== 'blocked' || crewTier(c, org) === 'company')
-    && (isDmRoom ? c.owner_user_id === uid : (c.owner_user_id === uid || (!!org?.service_user_id && c.owner_user_id === org.service_user_id)))); // 봇은 등급이 회사여도 주인은 연결한 멤버다 — 남이 연결한 봇도 빠진다
+    && (isDmRoom ? c.owner_user_id === uid : (c.owner_user_id === uid || (!!org?.service_user_id && c.owner_user_id === org.service_user_id))) && crewAddable(c)); // 개인 공간에서 답하지 못하는 봇 쌍둥이는 후보에서 뺀다(2026-10-01) // 봇은 등급이 회사여도 주인은 연결한 멤버다 — 남이 연결한 봇도 빠진다
   const isApprover = isDmRoom ? dmSt.isApprover : isHost; // 참여 요청을 결정하는 사람 — 최종 강제는 서버(msgr_can_decide_crew_join)
   const needsApproval = (c) => (isDmRoom ? dmNeedsApproval(dmSt) : !isHost && (crewTier(c, org) === 'company' || (channel.personal_crews ?? 'approval') === 'approval')); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
@@ -2551,7 +2552,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
               <button type="button" className="btn sm" disabled={busy} onClick={() => { const id = kickAsk.id; setKickAsk(null); kick('user', id); }}>{t('ch.kick.anyway')}</button>
               {onManageInvites && <button type="button" className="btn sm" onClick={() => { setKickAsk(null); onManageInvites(); }}>{t('inv.manage')}</button>}
               <button type="button" className="btn sm" onClick={() => setKickAsk(null)}>{t('ui.cancel')}</button></div></div>}
-            {chCrews.map((c) => { const on = c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS; const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
+            {chCrews.map((c) => { const on = crewSeenAt(c) && Date.now() - Date.parse(crewSeenAt(c)) < AWAY_MS; const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
               <div key={key} className="row">
                 <Av name={c.display_name} crew size="sm" company={company} crewId={c.id} /><span className="name">{c.display_name}</span>
                 <span className="sub">{company ? t('crew.tier.company.sub', { org: org?.name ?? '', role: c.role_text ?? '' }) : t('crew.tier.personal.sub', { name: nameOfUser(c.owner_user_id), role: c.role_text ?? '' })}</span>{!on && <span className="msgr-offline">{t('crew.offline')}</span>}
