@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-notif-tray"
+version = "0.1.0"
+description = "Android 전용 — 읽은 채널의 트레이 알림(태그 ch-<채널>)을 지운다. 런처 아이콘 숫자·점이 트레이 알림에서 나오기 때문"
+edition = "2021"
+rust-version = "1.77.2"
+links = "tauri-plugin-notif-tray"
+publish = false
+
+[dependencies]
+tauri = { version = "2", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri = { version = "2", default-features = false, features = ["wry"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

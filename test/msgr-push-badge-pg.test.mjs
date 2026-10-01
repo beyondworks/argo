@@ -102,3 +102,28 @@ test('msgr_push_badge_resync — 익명·iOS 토큰 없음은 no-op, iOS 토큰�
   const r1 = psqlRaw(['-A', '-t', '-c', `set role anon; select public.msgr_push_badge_resync()`]);
   assert.notEqual(r1.status, 0, 'anon 역할은 실행 권한 없음');
 });
+
+// 앱 아이콘 = 서버 배지와 같은 숫자(유건 제보 2026-10-01 — 다 읽어도 폰 아이콘 '1'이 남음). 앱은 msgr_my_badge로 자기 숫자를 읽고,
+// 푸시(msgr_push_unread_total)와 같은 정의를 쓴다. 음소거 채널은 푸시 수신자·앱 안 배지처럼 배지에서도 빠진다.
+test('msgr_my_badge — 내 채널별 배지(합 = msgr_push_unread_total), 음소거 채널은 빠지고 익명·anon은 못 본다', { skip }, () => {
+  // 앞 테스트가 남긴 안읽음을 비운다
+  for (const ch of [PUB, DM]) asUser(U.b, `insert into public.msgr_reads (channel_id, user_id, last_read_id) values ('${ch}', '${U.b}', (select max(id) from public.msgr_messages)) on conflict (channel_id, user_id) do update set last_read_id = excluded.last_read_id`);
+  assert.equal(total(U.b), 0);
+  assert.equal(last(asUser(U.b, `select count(*) from public.msgr_my_badge()`)), '0', '다 읽으면 행 없음');
+  post(U.a, DM, 'dm 3'); post(U.a, DM, 'dm 4');
+  post(U.a, PUB, '@b 다시', `[{"kind":"user","id":"${U.b}"}]`);
+  assert.equal(last(asUser(U.b, `select string_agg(channel_id::text || '=' || n, ',' order by n) from public.msgr_my_badge()`)), `${PUB}=1,${DM}=2`, '채널별 셈');
+  assert.equal(total(U.b), 3, '합계 함수 = 채널별 합');
+  assert.equal(last(asUser(U.a, `select count(*) from public.msgr_my_badge()`)), '0', '남의 배지는 안 보인다(auth.uid 기준)');
+  asUser(U.b, `insert into public.msgr_channel_prefs (channel_id, user_id, muted) values ('${DM}', '${U.b}', true) on conflict (channel_id, user_id) do update set muted = true`);
+  assert.equal(total(U.b), 1, '음소거한 DM은 배지에서 빠진다(푸시도 안 오는 채널)');
+  assert.equal(last(asUser(U.b, `select string_agg(channel_id::text || '=' || n, ',') from public.msgr_my_badge()`)), `${PUB}=1`);
+  asUser(U.b, `update public.msgr_channel_prefs set muted = false where channel_id = '${DM}' and user_id = '${U.b}'`);
+  assert.equal(total(U.b), 3, '음소거를 풀면 다시 센다');
+  const anonRow = psqlRaw(['-A', '-t', '-c', `set role authenticated; select count(*) from public.msgr_my_badge()`]);
+  assert.equal(anonRow.status, 0); assert.equal(anonRow.stdout.trim().split('\n').pop(), '0', '로그인 안 한 호출은 빈 결과');
+  const r = psqlRaw(['-A', '-t', '-c', `set role anon; select * from public.msgr_my_badge()`]);
+  assert.notEqual(r.status, 0, 'anon 역할은 실행 권한 없음');
+  const r2 = psqlRaw(['-A', '-t', '-c', `set role authenticated; select * from public.msgr_push_unread_by_channel('${U.b}')`]);
+  assert.notEqual(r2.status, 0, '임의 uid 셈 함수는 로그인 사용자에게 닫혀 있다');
+});

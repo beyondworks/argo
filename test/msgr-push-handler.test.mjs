@@ -190,3 +190,11 @@ test('이메일까지 못 찾으면 종전처럼 ?', async () => {
   await app.send();
   assert.equal(app.sentText[0].title, '?');
 });
+
+test('메시지 알림 칸(apns-collapse-id·FCM tag) = 앱이 트레이를 정리할 때 쓰는 태그(app-badge trayTagOf) — 어긋나면 Android가 읽은 알림을 못 지운다', async () => {
+  const { trayTagOf } = await import('../apps/messenger/src/app-badge.mjs');
+  const app = edge();
+  await app.send();
+  assert.deepEqual([...new Set(app.collapse)], [trayTagOf('channel')]);
+  assert.equal(core.fcmMessage({ token: 't', title: 'a', body: 'b', channelId: 'channel', messageId: 1, tag: app.collapse[0] }).message.android.notification.tag, trayTagOf('channel'));
+});

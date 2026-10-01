@@ -40,6 +40,8 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_web_auth::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_apk_installer::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_notif_tray::init()); // 읽은 채널의 트레이 알림 지우기(app-badge.mjs)
     #[cfg(target_os = "macos")]
     let builder = builder
         .manage(native_realtime::NativeRealtimeState::default())

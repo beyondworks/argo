@@ -91,6 +91,12 @@ export async function sendNotify(title, body = '', tag = '', channelId = null) {
     playChime(); return { ok: true };
   } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
 }
+/** Android 트레이 — keep(태그 목록)에 없는 메시지 알림(태그 ch-<채널>)을 지운다. 런처 아이콘 숫자·점은 트레이 알림에서 나온다.
+    플러그인은 Android에만 있다(src-tauri/plugins/notif-tray). */
+export async function clearTray(keep) {
+  if (!inTauri()) return;
+  try { const { invoke } = await import('@tauri-apps/api/core'); await invoke('plugin:notif-tray|clear_read', { keep: [...keep] }); } catch { /* 무해 */ }
+}
 export async function setBadge(n) { // 앱 아이콘 숫자(맥 독·iOS 홈 화면) — 안 읽은 합계. Tauri 런타임은 macOS·iOS·리눅스만 지원(Android·Windows는 조용히 지나간다)
   if (!inTauri()) return;
   try { const { getCurrentWindow } = await import('@tauri-apps/api/window'); await getCurrentWindow().setBadgeCount(n > 0 ? n : undefined); } catch { /* 무해 */ }
