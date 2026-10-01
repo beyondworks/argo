@@ -1,4 +1,4 @@
-// 달력 화면과 홈 '다가오는 일정' 모듈이 같이 쓰는 것 — 공간별 거르기·캘린더 구분·색·날짜 글자.
+// 달력 화면과 홈 '캘린더' 모듈이 같이 쓰는 것 — 공간별 거르기·캘린더 구분·색·날짜 글자.
 import { FACE_COLORS, faceOf } from '@msgr/crew-face';
 import { ME, SPACES } from '../core/session.js';
 import { getState } from '../core/store.js';
