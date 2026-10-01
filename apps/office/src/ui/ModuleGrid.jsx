@@ -42,7 +42,7 @@ function ModuleCard({ item, space, items, place, canEdit, editable, commit, reso
       style={{ '--span': span, ...at, ...(rh ? { '--rh': `${rh}px`, '--mh': heightOf(item) ? `${item.h}px` : 'auto' } : {}) }} aria-label={sub ? `${mod.title} · ${sub}` : mod.title} {...menuProps(menu)}>
       <header className="module-head">
         {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}
-        <h3>{mod.link ? <Link to={mod.link} className="module-title">{mod.title}</Link> : mod.title}{sub && <span className="module-sub">{sub}</span>}</h3>{/* 제목을 누르면 그 화면으로(유건 9/30 — '모두 보기' 대신) */}
+        <h3>{mod.link ? <Link to={mod.link} className="module-title">{mod.title}{sub && <span className="module-sub">{sub}</span>}</Link> : <>{mod.title}{sub && <span className="module-sub">{sub}</span>}</>}</h3>{/* 제목을 누르면 그 화면으로(유건 9/30 — '모두 보기' 대신) */}
         {/* 옮기기(유건 10/1 저녁): 끄는 동안 다른 모듈은 그대로, 놓을 자리 윤곽만 따라오고 손을 떼면 놓인다. 키보드 = Space/Enter로 들고 화살표·Enter·Esc. 저장 중에도 그대로 둔다(초점 유지) */}
         {editable && <button type="button" className="grip" aria-label={t('mod.drag')} aria-disabled={!canEdit || undefined} onPointerEnter={() => mover().catch(() => {})}
           onPointerDown={(e) => { e.stopPropagation(); if (e.button) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); run(mover, 'drag', { x: e.clientX, y: e.clientY, id: e.pointerId, target: e.currentTarget }); }}

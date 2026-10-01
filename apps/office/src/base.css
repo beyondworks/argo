@@ -231,6 +231,7 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 /* 자유 격자(유건 10/1 저녁) — 자리(x·y)가 저장된 배치. 모듈마다 시작 열(--x)·폭(--span)·위치(--y, 세로 중력으로 쌓은 결과)에 놓는다.
    높이는 자기 것(--rh) 또는 내용대로 — 같은 줄 높이 공유는 없다. 자리가 없는 옛 배치는 위 CSS 격자 그대로 */
 .grid.free { display: block; height: var(--gh); }
+.grid.move-on { align-content: start; } /* 끄는 동안 격자 min-height(윤곽 자리)가 옛 CSS 격자의 줄마다 나눠 붙어 다른 모듈이 커지던 결함(검수 10/1 5차) */
 .grid.free > .module { position: absolute; top: var(--y); left: calc(var(--x) * (100% + var(--module-gap)) / 12); width: calc(var(--span) * (100% + var(--module-gap)) / 12 - var(--module-gap)); }
 @container (max-width: 720px) { .module { grid-column: span 12; } .module.sized-h { height: var(--mh); } .module.sized-h:not(.own-h) .module-body { overflow: visible; } .edge-x { display: none; }
   .grid.free { display: grid; height: auto; } .grid.free > .module { position: relative; top: auto; left: auto; width: auto; order: var(--o); } } /* 좁으면 한 줄에 하나(자유 격자는 y→x 순서) — 폭 손잡이 없이 높이만, 높이는 자기 것(넓은 화면의 옆 모듈 높이는 따르지 않는다) */
