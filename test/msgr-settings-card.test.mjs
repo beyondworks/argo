@@ -597,7 +597,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(g3b, /glow\[i\] \+= \(want\(i\) - glow\[i\]\) \* 0\.16;/, '호버 강조는 이징(툭 끊기지 않게)');
   assert.doesNotMatch(g3b, /기하학적 지평/, '지평선 장식 제거(미니멀)');
   assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
-  assert.match(app, /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리');
+  assert.match(read('apps/messenger/src/activity-sentence.mjs'), /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리 — 활동 문장은 순수 함수 모듈(test/activity-sentence.test.mjs가 행동을 잠근다, 점검 A·B #5)');
   const dict = read('apps/messenger/src/i18n.js');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   const actions = new Set([...sql.matchAll(/msgr_audit\([^,]*, '([a-z_.]+)'/g)].map((m) => m[1]));

@@ -24,3 +24,13 @@ test('방 추가 후보에서 답할 수 없는 쌍둥이만 뺀다', () => {
   assert.equal(crewAddable({ hosting: 'bot', ready: true }), true);
   assert.equal(crewAddable({ hosting: 'local' }), true);
 });
+
+test('다시 연결 필요인 쌍둥이는 접속 점을 끈다(조직 봇 행 시각을 빌려도) — 검수 #794 LOW-6', async () => {
+  const { crewSeenAt } = await import('../src/personal-bots.mjs');
+  const now = '2026-10-01T00:00:00Z';
+  assert.equal(crewSeenAt({ hosting: 'bot', ready: false, last_seen_at: now }), null);
+  assert.equal(crewSeenAt({ hosting: 'bot', ready: true, last_seen_at: now }), now);
+  assert.equal(crewSeenAt({ hosting: 'local', last_seen_at: now }), now);
+  assert.equal(crewSeenAt({ hosting: 'bot', ready: null, last_seen_at: now }), now, '친구 행은 ready가 없다 — 그대로');
+  assert.equal(crewSeenAt({ hosting: 'local' }), null);
+});

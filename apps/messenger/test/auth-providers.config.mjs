@@ -19,6 +19,7 @@ export default defineConfig({
     '@argo/ui': shared('app/ui.jsx'),
     '@argo/i18n': shared('app/i18n.jsx'),
     '@argo/graph2d-core': shared('app/c/[ws]/graph2d-core.mjs'),
+    '@argo/splash': shared('public/splash/north-star.mjs'),
   } },
   server: { host: '127.0.0.1', port: 5229, strictPort: true, fs: { allow: [shared('.')] } },
 });
