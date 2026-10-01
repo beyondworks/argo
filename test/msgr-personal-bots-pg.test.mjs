@@ -256,7 +256,7 @@ test('서버 연결(H4): 다른 관리자가 자기 연결을 자기가 승인�
   assert.equal(roomCrews(U.c).find((r) => r.id === twinOf(out4[0].bot_id))?.ready, false, '다시 연결 필요');
 });
 
-test('수명 주기: 조직 상태(주인 탈퇴·연체 잠금)에는 #779 개인 크루와 똑같이 묶이지 않는다 · 폐기하면 쌍둥이 detached·방에서 빠짐(쓴 글은 남음) · 봇이 지워지면 detached', { skip }, () => {
+test('수명 주기(유건 결정 10/1): 주인 조직 탈퇴·조직 소프트 삭제면 개인에서도 멈춤(조직을 나가 사용할 수 없음), 연체 잠금은 #779처럼 계속 · 폐기하면 쌍둥이 detached·방에서 빠짐(쓴 글은 남음) · 봇이 지워지면 detached', { skip }, () => {
   const cb = mkBot(U.c, ORG, 'CBot');
   const ctw = twinOf(cb.bot_id);
   const local = personalCrew(U.c, 'c779'); // 대조군: #779 개인 Argo 크루
@@ -270,11 +270,36 @@ test('수명 주기: 조직 상태(주인 탈퇴·연체 잠금)에는 #779 개�
     assert.equal(roomCrews(U.c).find((r) => r.id === ctw)?.ready, true, `${label}: 다시 연결 필요 아님`);
     assert.match(last(asAnon(`select public.msgr_bot_send('${cb.token}', '${tch}', '${label} 보내기')`)), /^\d+$/, `${label}: 개인 방 보내기 됨`);
   };
+  const stopped = (label, token, ch, tw) => {
+    const row = roomCrews(U.c).find((r) => r.id === tw);
+    assert.equal(row?.ready, false, `${label}: 쓸 수 없음`);
+    assert.equal(row?.paused, 'left_org', `${label}: 이유 = 조직을 나감(다시 연결 필요 아님)`);
+    fails(asAnonRaw(`select public.msgr_bot_send('${token}', '${ch}', '${label} 보내기')`), /msgr_not_allowed/, `${label}: 개인 방 보내기 거부(엣지 ERR의 403)`);
+    const m = post(U.c, ch, `${label} — 불러 봄`);
+    assert.equal(ups(token, 0, 50).filter((u) => u.message.personal).length, 0, `${label}: 개인 배달 없음`);
+    assert.equal(sql(`select count(*) from public.msgr_messages where channel_id='${ch}' and client_msg_id like 'leftorg:${tw}:%'`), '1', `${label}: 방에 안내 한 번`);
+    post(U.c, ch, `${label} — 또`);
+    assert.equal(sql(`select count(*) from public.msgr_messages where channel_id='${ch}' and client_msg_id like 'leftorg:${tw}:%'`), '1', `${label}: 안내는 한 번만`);
+    assert.equal(sql(`select count(*) from public.msgr_messages where channel_id='${ch}' and client_msg_id like 'paused:${tw}:%'`), '0', `${label}: 다시 연결 안내는 아님`);
+    assert.ok(Number(m) > 0);
+  };
   same('평소');
   sql(`update public.msgr_org_members set removed_at = now() where org_id='${ORG}' and user_id='${U.c}'`);
   assert.equal(sql(`select status from public.msgr_crews where id='${cb.crew_id}'`), 'detached', '조직 쪽 봇 크루는 오프보딩으로 detached');
-  same('주인 조직 탈퇴');
+  stopped('주인 조직 탈퇴', cb.token, tch, ctw);
+  const lm = post(U.c, lch, '탈퇴 뒤 개인 크루');
+  assert.equal(sql(`select public.msgr_delivery_allowed('${local}', ${lm})`), 't', '#779 개인 Argo 크루(조직 봇이 아님)는 그대로 된다 — 멈추는 것은 조직에 연결한 외부 봇뿐');
   sql(`update public.msgr_org_members set removed_at = null where org_id='${ORG}' and user_id='${U.c}'`);
+  same('조직으로 돌아옴');
+  // 조직 소프트 삭제(복구 가능 기간) — c가 주인인 별도 조직으로(공용 ORG를 지우지 않게)
+  const corg = last(asUser(U.c, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('C', 'c-org', '${U.c}') returning id`));
+  const db = mkBot(U.c, corg, 'DBot'); const dtw = twinOf(db.bot_id);
+  const dch = last(asUser(U.c, `select public.msgr_dm_personal_crew('${dtw}')`));
+  assert.equal(roomCrews(U.c).find((r) => r.id === dtw)?.ready, true);
+  sql(`update public.msgr_orgs set deleted_at = now() where id='${corg}'`);
+  stopped('조직 소프트 삭제', db.token, dch, dtw);
+  sql(`update public.msgr_orgs set deleted_at = null where id='${corg}'`);
+  assert.equal(roomCrews(U.c).find((r) => r.id === dtw)?.ready, true, '복구하면 다시');
   sql(`update public.msgr_org_entitlements set ls_status = 'past_due' where org_id='${ORG}'`);
   assert.equal(sql(`select public.msgr_org_locked('${ORG}')`), 't');
   same('조직 연체 잠금');
@@ -439,14 +464,18 @@ test('계정 삭제: 쌍둥이도 사라진다', { skip }, () => {
 
 test('백필(M3): 근거가 있는 봇만 핀, 다른 관리자가 마지막으로 회전한 봇·연결 기록 없는 서버 봇은 다시 연결 필요', { skip }, () => {
   const ok = mkBot(U.a, ORG, 'BfOk'); const rot = mkBot(U.a, ORG, 'BfRot'); const vps = mkBot(U.a, ORG, 'BfVps', 'vps:gone:hermes:x');
+  const left = mkBot(U.c, ORG, 'BfLeft'); // 주인이 조직을 떠난 봇 — 쌍둥이를 만들지 않는다(유건 결정 10/1)
   asUser(U.c, `select public.msgr_bot_rotate('${rot.bot_id}')`); // 다른 관리자가 마지막 회전
-  sql(`delete from public.msgr_crews where id in (select crew_id from public.msgr_bot_personal where bot_id in ('${ok.bot_id}', '${rot.bot_id}', '${vps.bot_id}'))`); // 마이그레이션 전 상태로(쌍둥이·매핑 없음)
+  sql(`delete from public.msgr_crews where id in (select crew_id from public.msgr_bot_personal where bot_id in ('${ok.bot_id}', '${rot.bot_id}', '${vps.bot_id}', '${left.bot_id}'))`); // 마이그레이션 전 상태로(쌍둥이·매핑 없음)
+  sql(`update public.msgr_org_members set removed_at = now() where org_id='${ORG}' and user_id='${U.c}'`);
   const body = readFileSync(mig('20261001140000_msgr_personal_bots.sql'), 'utf8');
   psql(['-c', body.slice(body.indexOf('do $$\ndeclare r record;'), body.lastIndexOf('notify pgrst'))]);
   const pinned = (id) => sql(`select p.pin_hash = b.token_hash from public.msgr_bot_personal p join public.msgr_bots b on b.id = p.bot_id where p.bot_id='${id}'`);
   assert.equal(pinned(ok.bot_id), 't', '회전 없음 → 핀');
   assert.equal(pinned(rot.bot_id), 'f', '다른 관리자가 회전 → 핀 안 함');
   assert.equal(pinned(vps.bot_id), 'f', '연결 기록 없는 서버 봇 → 핀 안 함');
+  assert.equal(sql(`select count(*) from public.msgr_bot_personal where bot_id='${left.bot_id}'`), '0', '주인이 떠난 조직의 봇은 쌍둥이를 만들지 않는다');
+  sql(`update public.msgr_org_members set removed_at = null where org_id='${ORG}' and user_id='${U.c}'`);
   psql(['-c', body.slice(body.indexOf('do $$\ndeclare r record;'), body.lastIndexOf('notify pgrst'))]);
   assert.equal(sql(`select count(*) from public.msgr_bot_personal where bot_id in ('${ok.bot_id}', '${rot.bot_id}', '${vps.bot_id}')`), '3', '다시 실행해도 같다');
 });

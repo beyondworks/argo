@@ -21,11 +21,9 @@
 --      '다시 연결 필요'로 둔다 — 주인이 회전하거나 연결 명령을 다시 실행하면 살아난다.
 --   M4 친구에게는 쌍둥이의 역할 문구(조직이 쓴 것)를 보이지 않는다. 쌍둥이에게 주는 문맥은 주인 글과 주인의 크루 글뿐(친구 글은 넣지 않는다).
 --   M5 멈춘 쌍둥이를 부르면 서버가 그 방에 안내를 한 번 남긴다(옛 앱에서도 보인다).
---   M6 조직 상태: #779 개인 크루와 똑같이 개인 사용은 조직 상태(주인의 조직 탈퇴·연체 잠금·조직 소프트 삭제)에 묶지 않는다(유건 승인 원칙
---      "규칙은 #779와 같다"). 근거 — #779 개인 크루는 조직 행이 오프보딩으로 detached가 돼도(20260924100000:36은 org_id = 그 조직 행만) 개인 행은
---      그대로이고, 배달 판정의 잠금은 채널 조직 기준이라 개인 방은 잠기지 않으며(20260930210000:211 msgr_org_locked(ch.org_id), :292), 개인 방 분기는
---      조직 멤버십 대신 방 사람을 본다(:213-216, :175-181 지시 판정, :253 받은 글). 조직의 통제는 그대로 남는다: 관리자 폐기(쌍둥이 detached)·
---      다른 관리자의 회전(핀 불일치로 개인만 멈춤)·조직 완전 삭제(봇 연쇄 삭제 → 쌍둥이 detached).
+--   M6 조직 상태(유건 결정 2026-10-01): 주인이 그 조직을 나가거나(removed_at·만료) 조직이 삭제(소프트 삭제 포함)되면 그 조직에 연결된 외부 봇은
+--      개인 공간에서도 멈춘다('조직을 나가 사용할 수 없음'). 연체 잠금(msgr_org_locked)으로는 멈추지 않는다 — #779 개인 크루와 같다
+--      (배달 판정의 잠금은 채널 조직 기준, 20260930210000:211·:292). 조직 완전 삭제는 봇 연쇄 삭제로 쌍둥이 detached.
 --   LOW 쌍둥이 제약은 NOT VALID → VALIDATE, lock_timeout. org_sent_id 갱신은 greatest() 원자 갱신.
 --
 -- 오프셋(텔레그램 규율 offset = 마지막 update_id + 1 = ack): update_id는 메시지 id라 조직 글과 개인 글이 한 수열에 섞인다.
@@ -81,16 +79,31 @@ create trigger msgr_bot_twin_lock before update on public.msgr_crews
   for each row when (old.hosting = 'bot' and old.org_id is null) execute function public.msgr_bot_twin_lock();
 
 -- 3) 내부 함수
--- 쓸 수 있는 쌍둥이(없으면 NULL): 핀 = 지금 토큰, 봇 폐기 안 됨, 쌍둥이 active, 쌍둥이 주인 = 조직 봇 크루 주인.
--- 조직 상태(주인 탈퇴로 조직 행 detached·연체 잠금·소프트 삭제)는 보지 않는다 — #779 개인 크루와 같다(머리 주석 M6 근거).
-create or replace function public._msgr_bot_twin(p_bot uuid) returns uuid
+-- 쌍둥이 상태(쌍둥이가 없거나 폐기·detached면 NULL):
+--   'left_org' — 주인이 그 조직의 유효 멤버가 아니거나 조직이 삭제(소프트 포함)됨. 다시 연결해도 풀리지 않으므로 먼저 본다.
+--   'relink'   — 개인 쪽 토큰 고정(핀)이 지금 토큰과 다름(주인 아닌 관리자의 회전 등).
+--   'ready'    — 개인 공간에서 쓸 수 있음. 연체 잠금은 보지 않는다(#779와 같다, 머리 주석 M6).
+create or replace function public._msgr_bot_twin_state(p_bot uuid) returns text
   language sql stable security definer set search_path = public, pg_temp as $$
-  select t.id
+  select case
+      when o.id is null or o.deleted_at is not null
+        or not exists (select 1 from public.msgr_org_members m where m.org_id = b.org_id and m.user_id = oc.owner_user_id
+                        and m.removed_at is null and (m.expires_at is null or m.expires_at > now())) then 'left_org'
+      when p.pin_hash is distinct from b.token_hash then 'relink'
+      else 'ready' end
     from public.msgr_bots b
-    join public.msgr_bot_personal p on p.bot_id = b.id and p.pin_hash = b.token_hash
+    join public.msgr_bot_personal p on p.bot_id = b.id
     join public.msgr_crews oc on oc.id = b.crew_id and oc.hosting = 'bot'
     join public.msgr_crews t on t.id = p.crew_id and t.status = 'active' and t.org_id is null and t.hosting = 'bot' and t.owner_user_id = oc.owner_user_id
+    left join public.msgr_orgs o on o.id = b.org_id
    where b.id = p_bot and b.revoked_at is null
+$$;
+revoke all on function public._msgr_bot_twin_state(uuid) from public, anon, authenticated;
+
+-- 쓸 수 있는 쌍둥이(없으면 NULL) — 상태가 'ready'일 때만.
+create or replace function public._msgr_bot_twin(p_bot uuid) returns uuid
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select p.crew_id from public.msgr_bot_personal p where p.bot_id = p_bot and public._msgr_bot_twin_state(p_bot) = 'ready'
 $$;
 revoke all on function public._msgr_bot_twin(uuid) from public, anon, authenticated;
 
@@ -296,22 +309,34 @@ begin
 end $$;
 revoke all on function public._msgr_bot_personal_updates(uuid, uuid, bigint, int) from public, anon, authenticated;
 
--- 멈춘 쌍둥이를 부르면 그 방에 안내를 한 번(M5) — 봇이 폴링하지 않아도(폐기 전 회전·주인 탈퇴) 사람 글 저장 시점에 남긴다.
--- 개인 방 사람 글에만 돈다(WHEN 절 — 조직 글은 함수를 부르지 않는다). 토큰이 바뀔 때마다(회전 시각) 새 안내 한 번.
+-- 멈춘 쌍둥이를 부르면 그 방에 안내를 한 번(M5) — 봇이 폴링하지 않아도(다른 관리자 회전·주인 탈퇴·조직 삭제) 사람 글 저장 시점에 남긴다.
+-- 개인 방 사람 글에만 돈다(WHEN 절 — 조직 글은 함수를 부르지 않는다). 이유별 문구:
+--   다시 연결 필요 — 토큰이 바뀔 때마다(회전 시각) 새 안내 한 번
+--   조직을 나감·조직 삭제 — 탈퇴·삭제 시각마다 새 안내 한 번
 create or replace function public.msgr_bot_twin_paused_notice() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare t record; k text;
+declare t record; k text; st text; at_ts timestamptz;
 begin
-  for t in select p.bot_id, p.crew_id, b.rotated_at, b.created_at
-             from public.msgr_channel_members cm join public.msgr_bot_personal p on p.crew_id = cm.member_id join public.msgr_bots b on b.id = p.bot_id
+  for t in select p.bot_id, p.crew_id, b.rotated_at, b.created_at, b.org_id, oc.owner_user_id
+             from public.msgr_channel_members cm join public.msgr_bot_personal p on p.crew_id = cm.member_id
+             join public.msgr_bots b on b.id = p.bot_id join public.msgr_crews oc on oc.id = b.crew_id
             where cm.channel_id = new.channel_id and cm.member_kind = 'crew' loop
-    if public._msgr_bot_twin(t.bot_id) is not null then continue; end if;
+    st := public._msgr_bot_twin_state(t.bot_id);
+    if st is null or st = 'ready' then continue; end if;
     if not coalesce(public.msgr_delivery_target(t.crew_id, new.id), false) then continue; end if;
-    k := 'paused:' || t.crew_id || ':' || new.channel_id || ':' || extract(epoch from coalesce(t.rotated_at, t.created_at))::bigint;
+    if st = 'left_org' then
+      at_ts := coalesce((select o.deleted_at from public.msgr_orgs o where o.id = t.org_id),
+                        (select max(coalesce(m.removed_at, m.expires_at)) from public.msgr_org_members m where m.org_id = t.org_id and m.user_id = t.owner_user_id));
+      k := 'leftorg:' || t.crew_id || ':' || new.channel_id || ':' || coalesce(extract(epoch from at_ts)::bigint, 0);
+    else
+      k := 'paused:' || t.crew_id || ':' || new.channel_id || ':' || extract(epoch from coalesce(t.rotated_at, t.created_at))::bigint;
+    end if;
     if exists (select 1 from public.msgr_messages x where x.channel_id = new.channel_id and x.client_msg_id = k) then continue; end if;
     insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, client_msg_id, body, meta)
       values (new.channel_id, 'crew', t.crew_id, 'system', k,
-        '이 외부 에이전트는 개인 공간에서 쓰려면 다시 연결해야 합니다. 조직에서 연결 명령을 다시 실행하거나 토큰을 새로 받으세요. / This external agent needs to be reconnected before it can answer in your personal space. Run the connect command again or get a new token in the organization.',
+        case when st = 'left_org'
+          then '이 외부 에이전트는 연결한 조직을 나갔거나 조직이 삭제되어 개인 공간에서도 쓸 수 없습니다. / This external agent can''t be used in your personal space because you left the organization it is connected to, or the organization was deleted.'
+          else '이 외부 에이전트는 개인 공간에서 쓰려면 다시 연결해야 합니다. 조직에서 연결 명령을 다시 실행하거나 토큰을 새로 받으세요. / This external agent needs to be reconnected before it can answer in your personal space. Run the connect command again or get a new token in the organization.' end,
         jsonb_build_object('disposition', 'done')) on conflict do nothing; -- 사람 글 두 개가 동시에 들어오면 유일 제약으로 사람 글 저장까지 실패하던 것(검수 #794 LOW-3)
   end loop;
   return null;
@@ -650,12 +675,12 @@ begin
 end $$;
 
 -- 6) 개인 공간 목록 — 20260930210000 정의 + bot_kind·org_label·ready(주인에게만). 친구에게는 쌍둥이 역할 문구를 숨긴다(M4).
---    org_label: 주인의 살아 있는 쌍둥이 중 같은 이름(대소문자 무시) 또는 같은 external_id가 둘 이상이면 조직 이름.
+--    paused: 쓸 수 없는 이유(주인에게만, 'relink' | 'left_org'). org_label: 주인의 살아 있는 쌍둥이 중 같은 이름(대소문자 무시) 또는 같은 external_id가 둘 이상이면 조직 이름.
 --    반환 열이 바뀌므로 drop 후 다시 만들고 권한을 다시 건다.
 drop function if exists public.msgr_personal_room_crews();
 create function public.msgr_personal_room_crews()
 returns table(id uuid, org_id uuid, slug text, display_name text, role_text text, owner_user_id uuid, hosting text, status text,
-              avatar_url text, face jsonb, department text, last_seen_at timestamptz, commands jsonb, bot_kind text, org_label text, ready boolean)
+              avatar_url text, face jsonb, department text, last_seen_at timestamptz, commands jsonb, bot_kind text, org_label text, ready boolean, paused text)
 language sql stable security definer set search_path = public, pg_temp as $$
   select c.id, c.org_id, c.slug, c.display_name,
          case when c.hosting = 'bot' and c.owner_user_id is distinct from auth.uid() then null else c.role_text end,
@@ -669,7 +694,9 @@ language sql stable security definer set search_path = public, pg_temp as $$
                  where c2.owner_user_id = c.owner_user_id and c2.status = 'active' and p2.bot_id <> bb.id
                    and (lower(c2.display_name) = lower(c.display_name) or (b2.external_id is not null and b2.external_id = bb.external_id)))
               then (select o.name from public.msgr_orgs o where o.id = bb.org_id) end,
-         case when c.owner_user_id = auth.uid() and bp.bot_id is not null then public._msgr_bot_twin(bp.bot_id) is not distinct from c.id end
+         case when c.owner_user_id = auth.uid() and bp.bot_id is not null then public._msgr_bot_twin(bp.bot_id) is not distinct from c.id end,
+         -- 쓸 수 없는 이유(주인에게만): 'relink' 다시 연결 필요 / 'left_org' 조직을 나가(또는 조직 삭제) 사용할 수 없음. 쓸 수 있으면 NULL.
+         case when c.owner_user_id = auth.uid() and bp.bot_id is not null then nullif(coalesce(public._msgr_bot_twin_state(bp.bot_id), 'relink'), 'ready') end
     from public.msgr_crews c
     left join public.msgr_bot_personal bp on bp.crew_id = c.id
     left join public.msgr_bots bb on bb.id = bp.bot_id
@@ -682,7 +709,7 @@ $$;
 revoke all on function public.msgr_personal_room_crews() from public, anon;
 grant execute on function public.msgr_personal_room_crews() to authenticated;
 
--- 7) 기존 봇 백필(M3) — 폐기 안 된 봇(주인 = 만든 사람)마다 쌍둥이 하나. 조직 상태는 보지 않는다(#779와 같다, M6).
+-- 7) 기존 봇 백필(M3) — 폐기 안 된 봇(주인 = 만든 사람)이고 주인이 그 조직의 유효 멤버·조직이 삭제되지 않았을 때 쌍둥이 하나(사용 조건과 같은 기준, M6).
 --    핀은 근거가 있을 때만: 마지막 회전 행위자가 주인(또는 회전 없음)이고, 그 회전이 서버 연결이면 그 연결을 만든 사람이 주인,
 --    서버 연결로 만든 봇(external_id 'vps:%')은 연결 기록(approved에 이 봇)의 만든 사람이 주인. 아니면 '다시 연결 필요'(핀 'unpinned').
 --    적용 전 운영 읽기 전용 대상 수 쿼리는 PR 본문에 있다. 다시 실행해도 같다(on conflict do nothing).
@@ -695,8 +722,11 @@ begin
   for r in select b.id as bot_id, b.token_hash, b.external_id, b.org_id, oc.owner_user_id, oc.slug, oc.display_name, oc.role_text, oc.avatar_url, oc.face
              from public.msgr_bots b
              join public.msgr_crews oc on oc.id = b.crew_id and oc.hosting = 'bot' and oc.owner_user_id = b.created_by
+             join public.msgr_orgs o on o.id = b.org_id and o.deleted_at is null
             where b.revoked_at is null
-              and not exists (select 1 from public.msgr_bot_personal p where p.bot_id = b.id) loop
+              and not exists (select 1 from public.msgr_bot_personal p where p.bot_id = b.id)
+              and exists (select 1 from public.msgr_org_members m where m.org_id = b.org_id and m.user_id = oc.owner_user_id
+                           and m.removed_at is null and (m.expires_at is null or m.expires_at > now())) loop
     select a.actor_user_id, a.meta into last_rot from public.msgr_audit_log a
      where a.org_id = r.org_id and a.target_kind = 'bot' and a.target_id = r.bot_id::text and a.action = 'bot.rotate' order by a.at desc, a.id desc limit 1;
     pin := case
