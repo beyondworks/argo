@@ -8,8 +8,8 @@ import { Face } from './Face.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link, navigate } from '../core/router.jsx';
 import { t, useLang } from '../core/i18n.js';
-import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav, favOf, saveFav } from '../core/store.js';
-import { readNav, routeInfo, routeLabelKey, routeIcon, favKey, NAV_ICON } from '../core/nav-model.js';
+import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav, favOf, saveFav, isFav, toggleFav } from '../core/store.js';
+import { readNav, routeInfo, favTarget, routeLabelKey, routeIcon, favKey, NAV_ICON } from '../core/nav-model.js';
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
@@ -49,13 +49,14 @@ function NavItem({ to, icon, label, count, active }) {
 }
 
 const saveFail = () => showToast(t('nav.saveFail'));
-/** 메뉴 한 줄 — 끌어서 순서 바꾸기, 우클릭으로 숨기기(홈은 숨길 수 없다). 사람마다 저장(유건 9/30) */
+/** 메뉴 한 줄 — 끌어서 순서 바꾸기, 우클릭으로 즐겨찾기·숨기기(홈은 숨길 수 없다). 사람마다 저장(유건 9/30·10/1) */
 function NavRow({ id, kind, def }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `nav:${id}`, data: { kind: 'nav', id, group: 'nav', navKind: kind, label: def.label } });
   const { onTouchStart, ...mouse } = listeners ?? {}; // 터치는 길게 누르기 = 메뉴
-  const menu = menuProps(() => [
+  const menu = menuProps(() => { const f = favTarget(def.to); return [
+    f && { label: t(isFav(f.kind, f.id) ? 'fav.remove' : 'fav.add'), icon: 'star', run: () => { if (toggleFav(f.kind, f.id) === false) saveFail(); } },
     id === 'home' ? { heading: t('nav.homeFixed') } : { label: t('nav.hide'), icon: 'x', run: () => { if (saveNav({ hide: id }, kind) === false) saveFail(); } },
-  ]);
+  ].filter(Boolean); });
   return <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={isDragging ? 'dragging' : ''} {...attributes} {...mergeHandlers(mouse, menu)} role="none">
     <NavItem {...def} />
   </div>;
