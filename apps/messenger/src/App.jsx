@@ -4078,25 +4078,19 @@ function OrgCard({ org, orgs = [], uid, members, channels = [], onInvite = null,
     </section>
   );
   const nomineeName = transfer && transfer !== 'pick' ? (members.find((m) => m.user_id === transfer)?.display_name || transfer.slice(0, 8)) : '';
-  // 무료 기간·결제 기간(2026-09-26 유건 결정) — 가격·구매 경로 없이 상태만. 앱 안에는 결제 화면이 없다(웹 결제는 이번 범위 밖).
-  // team 플랜(기존에 좌석을 산 조직)은 무료 기간·결제 기간과 무관하게 "이용 중"만 보여 준다(서버 msgr_org_entitled와 같은 규칙 — 2026-09-27 M1).
+  // 이용 상태(2026-10-01 유건 승인 — 9/30 요금 개편): 무료 기간 개념이 없어져 무료 조직도 계속 쓴다(서버 msgr_org_entitled = 멤버면 true).
+  // team 플랜(좌석을 산 조직)은 "Team", 결제 기간이 있으면 그 날짜, 나머지는 "무료". 앱 안에는 가격·구매 경로가 없다.
   const isTeamPlan = ent?.plan === 'team';
-  const trialActive = !isTeamPlan && !!ent?.trial_ends_at && Date.parse(ent.trial_ends_at) > Date.now();
   const paidActive = !isTeamPlan && !!ent?.paid_until && Date.parse(ent.paid_until) > Date.now();
-  const periodUntil = trialActive ? ent?.trial_ends_at : ent?.paid_until;
   return (
     <section className="msgr-setcard">
       <h2>{t('set.org')}</h2><p>{t('set.org.desc')}</p>
-      {ent && (<>
+      {ent && (
         <div className="row">
           <span className="msgr-klabel">{t('org.trial.label')}</span>
-          <span className="sub">{isTeamPlan ? t('org.period.active')
-            : trialActive ? t('org.trial.active', { date: fmtDay(periodUntil, lang)[0] })
-            : paidActive ? t('org.period.paid', { date: fmtDay(periodUntil, lang)[0] })
-            : t('org.trial.ended')}</span>
+          <span className="sub">{isTeamPlan ? t('org.plan.team') : paidActive ? t('org.period.paid', { date: fmtDay(ent.paid_until, lang)[0] }) : t('org.plan.free')}</span>
         </div>
-        {!isTeamPlan && !trialActive && !paidActive && <p className="note">{t('org.trial.endedNote')}</p>}
-      </>)}
+      )}
       {iAmNominee && (
         <div className="msgr-node-cmd">
           <span className="msgr-klabel">{t('org.owner')}</span>

@@ -43,6 +43,17 @@ const trialEndsAt = (org) => sql(`select trial_ends_at from public.msgr_org_enti
 const activeCount = (org) => Number(sql(`select count(*) from public.msgr_org_members where org_id = '${org}' and removed_at is null`));
 const ageScan = (crewId) => sql(`update public.msgr_bots set scan_at = now() - interval '1 minute' where crew_id = '${crewId}'`); // 유휴 게이트(30초)를 넘겨 강제로 다시 스캔시킨다
 
+// 20260926115000의 판정(무료 기간 OR 결제 OR team). 20261001100000이 '무료도 자격'으로 바꿔 라이브에서는 false가 나오지 않지만,
+// 게이트 장치(트리거·자동화·알림 미러 예외)는 남아 있어 유료 판정이 다시 생길 때를 위해 이 정의를 깔고 계속 검사한다.
+const TRIAL_GATE = `create or replace function public.msgr_org_entitled(org uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select case when auth.uid() is not null and not public.msgr_is_member(org) then null
+      else public.msgr_org_trial_active(org)
+          or coalesce((select e.paid_until > now() from public.msgr_org_entitlements e where e.org_id = org), false)
+          or public.msgr_org_plan(org) = 'team'
+      end
+$$`;
+const installTrialGate = () => sql(TRIAL_GATE);
 let ORG1, ORG2, ORG3, UNORG, UNCH, UNCREW;
 before(() => {
   if (!DB) return;
@@ -74,6 +85,7 @@ before(() => {
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql']) psql(['-c', readFileSync(mig(f), 'utf8')]);
   const dir = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
   for (const f of readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x)).sort()) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  installTrialGate(); // 장치 검사용 — 아래 테스트는 '유료 판정이 다시 생기면' 게이트가 제대로 막는지 본다. 지금 정의(무료도 자격)는 맨 아래 묶음이 검사한다
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG1 = last(asUser(U.o1, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Trial1', 'trial1', '${U.o1}') returning id`));
   ORG2 = last(asUser(U.o2, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Trial2', 'trial2', '${U.o2}') returning id`));
@@ -231,13 +243,8 @@ test('변이(team 절 제거)는 team 플랜 조직의 크루 턴을 거부로 �
   const r = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body) values ('${ch}', 'crew', '${crew}', 'text', 'team 절 없으면 거부돼야 한다')`);
   assert.notEqual(r.status, 0, 'team 절을 뺀 뒤집힌 버전은 정상 코드라면 통과할 team 플랜 크루 텍스트를 거부한다 — 변이가 잡힌다');
   assert.match(r.stderr, /msgr_org_unentitled/);
-  // 원래 정의로 복구 — 이 파일의 나머지 테스트(특히 다음 트리얼 비교 변이 테스트)에 영향을 남기지 않는다
-  sql(`create or replace function public.msgr_org_entitled(org uuid) returns boolean
-    language sql stable security definer set search_path = public, pg_temp as $$
-      select public.msgr_org_trial_active(org)
-          or coalesce((select e.paid_until > now() from public.msgr_org_entitlements e where e.org_id = org), false)
-          or public.msgr_org_plan(org) = 'team'
-    $$`);
+  // 장치 검사용 정의로 복구 — 이 파일의 나머지 테스트에 영향을 남기지 않는다
+  installTrialGate();
 });
 
 test('L3: 비회원 authenticated는 msgr_org_entitled·trial_active에서 null을 받는다', { skip }, () => {
@@ -625,4 +632,35 @@ test('변이: 거부 글에서 커서를 무조건 전진시키는(되돌린) L-
   assert.equal(got, false, 'L-1을 되살리면 커서가 대기 글을 앞질러 초대해도 영구히 배달되지 않아야 한다(변이가 잡힘)');
   sql(orig); // 원래(되돌린) 정의로 복구
   asUser(U.a2, `select public.msgr_set_ai_consent(true)`);
+});
+
+// ── 지금 정의(20261001100000, 2026-10-01 유건 승인 — 9/30 요금 개편 "무료는 조직·개인 구분 없음"): 무료 기간이 지난 무료 조직도 자격이 있다.
+//    라이브 free 조직 21곳이 2026-10-27 10:26 KST부터 크루 작업이 멈출 예정이었다. 마이그레이션 파일을 그대로 다시 적용해 그 파일을 검사한다.
+test('지금 정의 — 무료 기간이 지나고 결제가 없어도 조직 멤버·서비스 경로는 자격이 있다', { skip }, () => {
+  psql(['-c', readFileSync(mig('20261001100000_msgr_free_entitled.sql'), 'utf8')]);
+  expireTrial(UNORG);
+  assert.equal(sql(`select public.msgr_org_entitled('${UNORG}')`), 't', '서비스·내부 경로');
+  assert.equal(asUser(U.o3, `select public.msgr_org_entitled('${UNORG}')`), 't', '조직 소유자');
+  assert.equal(asUser(U.o2, `select public.msgr_org_entitled('${UNORG}')`), '', 'L3 그대로 — 비회원 authenticated는 null');
+});
+
+test('지금 정의 — 무료 기간이 지난 무료 조직의 크루 텍스트·결재 카드가 들어간다(DB 2차 방어가 막지 않는다)', { skip }, () => {
+  psql(['-c', readFileSync(mig('20261001100000_msgr_free_entitled.sql'), 'utf8')]);
+  expireTrial(UNORG);
+  const text = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body) values ('${UNCH}', 'crew', '${UNCREW}', 'text', '무료 조직도 계속 답한다')`);
+  assert.equal(text.status, 0, text.stderr);
+  const card = raw(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body) values ('${UNCH}', 'crew', '${UNCREW}', 'approval_card', 'x')`);
+  assert.equal(card.status, 0, card.stderr);
+});
+
+test('지금 정의 — 무료 기간이 지난 무료 조직의 자동화도 발송된다', { skip }, () => {
+  psql(['-c', readFileSync(mig('20261001100000_msgr_free_entitled.sql'), 'utf8')]);
+  const org = last(asUser(U.o3, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('FreeAuto', 'freeauto1', '${U.o3}') returning id`));
+  const ch = last(asUser(U.o3, `select public.msgr_create_channel('${org}','public','general')`));
+  const crew = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${org}', '${U.o3}', 'ws-freeauto', 'bot', '봇') returning id`));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'crew', '${crew}', '${U.o3}')`);
+  expireTrial(org);
+  const a = JSON.parse(asUser(U.o3, `select public.msgr_automation_save(null, '${ch}', '${crew}', '제목', '지시', '{"kind":"daily","time":"09:00","timezone":"Asia/Seoul"}')`)).id;
+  const r = JSON.parse(asUser(U.o3, `select public.msgr_automation_run_now('${a}', gen_random_uuid())`));
+  assert.equal(r.status, 'queued'); assert.ok(r.message_id, '무료 기간이 지나도 지시 글이 올라간다');
 });
