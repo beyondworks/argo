@@ -4455,6 +4455,7 @@ function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOu
   const setFeed = useCallback((node) => { feed.current = node; pullThread.setRef(node); }, [pullThread.setRef]);
   const [sbw, setSbw] = useState(0); // 스레드 스크롤바 폭의 절반 — 독 좌우를 대화 열과 맞춘다(오버레이 스크롤바면 0)
   useEffect(() => { const el = feed.current; if (!el) return; const m = () => setSbw((el.offsetWidth - el.clientWidth) / 2); m(); window.addEventListener('resize', m); return () => window.removeEventListener('resize', m); }, []);
+  useLayoutEffect(() => { const main = topRef.current?.parentElement; if (!main) return undefined; main.style.setProperty('--sbw', `${sbw}px`); return () => main.style.removeProperty('--sbw'); }, [sbw]); // 입력창 받침(.msgr-dock)과 안내 띠(.msgr-joinbar)가 같은 좌우 열(--col-l/--col-r)을 쓰도록 본문에도 스크롤바 보정을 둔다(LA-23)
   const chId = channel.id;
   const hydrate = useCallback(async (ids) => { // 메시지 묶음의 첨부·반응 — 첫 로드·새 메시지·이전 기록 공용
     if (!ids.length) return;
