@@ -280,7 +280,7 @@ test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목�
   assert.match(app, /\{isAdmin && <button type="button" role="menuitem" onClick=\{\(\) => \{ setOrgMenu\(false\); orgInvite\(\); \}\}>/, '초대가 조직 메뉴에 없다(0.1.30: 초대 창을 연다)');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /<div className="sec-head"><h3>\{t\(isDmRoom \? 'dm\.who' : 'ch\.who'\)\}<\/h3>/, '구성 섹션이 첫 절 — 1:1·그룹 대화에서는 "이 대화방"으로 부른다(2026-09-16)');
-  assert.ok(ch.indexOf("t('ch.who')") < ch.indexOf("t('ch.settings')"), '구성이 채널 설정보다 앞');
+  assert.ok(ch.indexOf("'ch.who'") > 0 && ch.indexOf("'ch.who'") < ch.indexOf("'ch.settings'"), '구성이 채널 설정보다 앞(설정 제목은 개인 공간이면 대화방 설정 키로 갈린다 — 두 키 모두 구성 뒤)'); assert.ok(ch.indexOf("'ch.who'") < ch.indexOf("'personal.sheet.settings'"), '개인 공간 설정 제목도 구성보다 뒤');
   assert.match(ch, /canKick && \{ icon: 'x', label: t\('ch\.remove'\), danger: true, disabled: busy, run: \(\) => kickUser\(m\) \}/, '비공개 채널 사람 내보내기(행 … 메뉴) — 살아 있는 초대가 있으면 먼저 알린다(invite-flow.browser.mjs)'); assert.match(ch, /\{rowMenu && <CtxMenu at=\{rowMenu\.at\} items=\{rowMenu\.items\} onClose=\{\(\) => setRowMenu\(null\)\} \/>\}/, '행 메뉴는 시트 밖(화면 기준)에 띄운다 — 시트 스크롤 영역 안에서 잘렸다(유건 제보 2026-09-16)');
   for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
@@ -537,7 +537,7 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
   // (20260918130000)가 최종 강제이고, 앱은 그 마이그레이션이 없는 서버를 위해 먼저 이 방에서 뺀 뒤 나간다.
   // 빼는 함수가 없는 서버에서만 옛 차단으로 돌아간다(그래야 크루가 주인 없이 죽은 채 남지 않는다).
   assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?for \(const s of stuck\) \{\s*const r = await supabase\.rpc\('msgr_crew_leave_channel', \{ ch: c\.id, crew: s\.member_id \}\);\s*if \(r\.error\) throw new Error\(missingSchema\(r\.error\) \? t\('ch\.leave\.blocked'\) : [^\n]*\n\s*\}[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 크루를 이 방에서 먼저 빼고 내 멤버 행 삭제(빼는 함수가 없는 서버면 차단)');
-  assert.match(app, /canManage && \{ icon: 'x', label: t\('ch\.archive'\), run: \(\) => confirmVia\('archive'\)/, '보관은 관리 권한만, 2단계');
+  assert.match(app, /canManage && \{ icon: 'archive', label: t\('ch\.archive'\), run: \(\) => confirmVia\('archive'\)/, '보관은 관리 권한만, 2단계(아이콘만 x → archive로 바뀌었다 — 권한 조건·2단계 확인은 그대로)');
   // D16(2026-09-19): 공개 채널도 참여제(20260916190000 — 찾아보기로 스스로 들어간다)라 참여한 사람은 나갈 수 있어야 한다.
   // 종전 핀 "나가기는 비공개 채널만(공개는 전원 자동)"은 9/16 이전 설계(조직원 전원 자동 참여)를 고정하고 있었다.
   assert.match(app, /\n\s*\{ icon: 'out', label: t\('ch\.leave'\), run: \(\) => confirmVia\('leave'\) \}, \/\/ 공개 채널도 나간다/, '나가기는 채널 종류와 무관(공개는 찾아보기로 다시 참여)');
@@ -575,7 +575,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(app, /const openTab = \(tab, opts\) => setSt\(\(s\) => Panes\.openTab\(s\.panes, s\.focus, tab, opts\)\);/, 'Activity는 전이를 위임하고 상태 하나(setSt)만 쓴다 — 업데이터 안 다른 setState 없음');
   assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /setPanes\(|setFocusPane\] = useState/, '옛 이중 상태 없음');
   assert.match(app, /className="vault-tab-x" onClick=\{\(e\) => \{ e\.stopPropagation\(\); closeTab\(pane\.id, tb\.id\); \}\}/, '탭 닫기(창 단위)');
-  assert.match(app, /^function ActRow\(\{ c, id, label, sub, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
+  assert.match(app, /^function ActRow\(\{ c, id, label, sub, tip = undefined, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
   assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /const Row = \(/, 'Activity 안에 행 컴포넌트를 정의하지 않는다');
   assert.match(app, /const chKey = channels\.map\(\(c\) => c\.id\)\.join\(','\);\n\s*const load = useCallback\(/, '재조회는 채널 id 목록 키(배열 정체 아님) + 저장 뒤 재사용');
   assert.match(app, /onAuxClick=\{\(e\) => \{ if \(e\.button === 1\) \{ e\.preventDefault\(\); closeTab\(pane\.id, tb\.id\); \} \}\}/, '가운데 클릭 닫기(창 단위)');
