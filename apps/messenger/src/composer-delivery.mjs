@@ -147,8 +147,13 @@ export function composerTransport(client, { orgId, chId, uid, onDiscard = null }
     // 첨부만 보낸 글이 전부 실패했을 때 그 빈 글을 지운다 — 직접 지우기 정책은 없고(DELETE 정책 없음) 작성자의 삭제 표시(deleted_at)만 허용된다. 앱의 삭제와 같은 갱신
     async discard(job) {
       const result = await client.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', job.messageId).eq('author_user_id', uid).select('id');
-      if (result.error) throw new Error(result.error.message);
-      if (!result.data?.length) throw new Error('discard: no row'); // RLS가 0행으로 거절한 경우도 실패
+      let failure = result.error ? new Error(result.error.message) : !result.data?.length ? new Error('discard: no row') : null; // RLS가 0행으로 거절한 경우도 실패
+      if (failure) {
+        // 응답이 유실됐을 수 있다(서버엔 적용, 앱은 실패로 봄) — 그대로 실패로 두면 재시도가 지운 글에 첨부를 붙여 파일이 안 보인다. 한 번 다시 읽어 이미 지워졌으면 성공으로 본다
+        const again = await Promise.resolve().then(() => client.from('msgr_messages').select('deleted_at').eq('id', job.messageId).maybeSingle()).catch(() => ({ data: null }));
+        if (!again?.data?.deleted_at) throw failure;
+        failure = null;
+      }
       try { onDiscard?.(job.messageId); } catch { /* 방송은 최선 — 이미 받은 사람의 화면은 다음 보정 조회에서도 바로잡힌다 */ } // 이미 이 글을 받은 다른 사람의 화면이 빈 말풍선을 바로 지우도록(앱의 삭제와 같은 'edit' 방송)
     },
     async attachment(job, item) {

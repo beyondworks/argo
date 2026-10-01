@@ -18,12 +18,12 @@ test('delayed send owns its snapshot and cannot clear the next draft; double cli
 });
 
 test('partial upload failure keeps failed File and retries only it on the original message', async () => {
-  let messages = 0; const uploaded = []; const attached = []; let offline = true;
+  const discards = []; let messages = 0; const uploaded = []; const attached = []; let offline = true;
   const session = createComposerDelivery(transport({
     message: async () => { messages++; return 7; },
     upload: async (_job, item) => { uploaded.push(item.file.name); if (item.file.name === 'b.txt' && offline) throw Error('offline'); },
     attachment: async (job, item) => { attached.push([job.messageId, item.file.name]); },
-    discard: async () => assert.fail('일부라도 올라갔으면 글을 지우지 않는다(첨부가 보이므로 빈 말풍선이 아니다)'),
+    discard: async (job) => { discards.push(job.messageId); }, // 호출을 기록해 마지막에 확인한다 — 본 코드가 discard 오류를 삼키므로 여기서 assert.fail은 효과가 없다
   }));
   session.setFiles([file('a.txt'), file('b.txt')]);
   assert.equal(await session.send([]), false, 'attachment-only message accepted');
@@ -34,6 +34,7 @@ test('partial upload failure keeps failed File and retries only it on the origin
   assert.equal(messages, 1); assert.deepEqual(uploaded, ['a.txt', 'b.txt', 'b.txt']);
   assert.deepEqual(attached, [[7, 'a.txt'], [7, 'b.txt']]);
   assert.equal(session.snapshot().text, 'next draft');
+  assert.deepEqual(discards, [], '일부라도 올라갔으면 글을 지우지 않는다(첨부가 보이므로 빈 말풍선이 아니다)');
 });
 
 // 점검 A·B #4 — 첨부만 보내다 업로드가 전부 실패하면 빈 말풍선이 모두에게 남던 결함. 글을 먼저 올려야 저장 경로(3번째 칸 = 글 번호)를 만들 수 있어
@@ -71,15 +72,16 @@ test('discard is attachment-only and all-failed only: text + files keep the text
 });
 
 test('attachment-only: files uploaded but the attachment rows failed keeps the message (nothing to re-upload under a new path)', async () => {
-  let fail = true; const log = [];
+  let fail = true; const log = []; const discards = [];
   const session = createComposerDelivery(transport({
     upload: async () => { log.push('upload'); }, attachment: async () => { log.push('attach'); if (fail) throw Error('metadata offline'); },
-    discard: async () => assert.fail('올라간 파일이 있으면 지우지 않는다 — 새 경로로 다시 올려야 하게 된다'),
+    discard: async () => { discards.push('discard'); },
   }));
   session.setFiles([file('z.png')]);
   assert.equal(await session.send([]), false); fail = false;
   assert.equal(await session.retry(), true);
   assert.deepEqual(log, ['upload', 'attach', 'attach'], '업로드는 한 번, 첨부 행만 다시');
+  assert.deepEqual(discards, [], '올라간 파일이 있으면 지우지 않는다 — 새 경로로 다시 올려야 하게 된다');
 });
 
 test('storage path 3rd segment is the message id — server functions msgr_bot_file and msgr_can_read_dm_attachment read it', async () => {
@@ -138,12 +140,13 @@ test('logout during message request stops attachment requests and late state del
   assert.equal(uploads, 0); assert.equal(session.snapshot().job, null);
 });
 
-test('logout while an attachment-only upload is failing never deletes or re-posts afterwards', async () => {
-  const wait = deferred(); let discards = 0;
-  const session = createComposerDelivery(transport({ upload: async () => { await wait.promise; throw Error('offline'); }, discard: async () => { discards++; } }));
+test('logout while an attachment-only upload is in flight: the upload fails afterwards but the message is never deleted (disposed guard)', async () => {
+  const release = deferred(); const started = deferred(); const discards = [];
+  const session = createComposerDelivery(transport({ message: async () => 7, upload: async () => { started.resolve(); await release.promise; throw Error('offline'); }, discard: async (job) => { discards.push(job.messageId); } }));
   session.setFiles([file('private.txt')]); const sending = session.send([]);
-  session.dispose(); wait.resolve(); await sending;
-  assert.equal(discards, 0); assert.equal(session.snapshot().job, null);
+  await started.promise; // 글은 이미 돌려줬고 업로드가 진행 중인 순간(종전 시험은 글 응답 중에 dispose해 업로드까지 가지 못했다)
+  session.dispose(); release.resolve(); await sending;
+  assert.deepEqual(discards, [], '로그아웃한 세션은 지우기 요청도 보내지 않는다'); assert.equal(session.snapshot().job, null);
 });
 
 test('transport recovers committed responses and uses scoped message lookup and fixed storage path', async () => {
@@ -290,4 +293,33 @@ test('first application keeps only the signing-in user\'s drafts; recipients-onl
   assert.equal(keys.length, 2); assert.ok(keys.includes('unrelated')); assert.ok(keys.some((k) => k.includes('userB')));
   clearComposerSessions(storage, { keepUser: null });
   assert.deepEqual([...storage.m.keys()], ['unrelated']);
+});
+
+// 점검 A·B 재검수 LOW-A — 지우기 응답이 유실되면(서버엔 적용, 앱은 실패로 봄) 재시도가 지운 글에 첨부를 붙여 파일이 안 보이게 된다.
+// 지우기가 실패하면 그 글의 deleted_at을 한 번 다시 읽어, 이미 지워져 있으면 지우기 성공으로 본다.
+function discardClient({ updateError = null, updateData = [{ id: 9 }], reread = { data: { deleted_at: null }, error: null } } = {}) {
+  const calls = [];
+  return { calls, from() { const q = { _op: null, update() { this._op = 'update'; return q; }, select(cols) { if (this._op !== 'update') { this._op = 'select'; calls.push(['reread', cols]); } return q; }, eq() { return q; }, maybeSingle: async () => reread,
+    then(res, rej) { return Promise.resolve(this._op === 'update' ? { data: updateData, error: updateError } : reread).then(res, rej); } }; return q; } };
+}
+test('discard: the response was lost but the server applied it (reread shows deleted_at) → success, so the job drops the dead message id', async () => {
+  const c = discardClient({ updateError: { message: 'Failed to fetch' }, reread: { data: { deleted_at: '2026-10-01T00:00:00Z' }, error: null } });
+  const told = []; await composerTransport(c, { orgId: 'o', chId: 'c', uid: 'me', onDiscard: (id) => told.push(id) }).discard({ messageId: 9 });
+  assert.deepEqual(told, [9]); assert.equal(c.calls.length, 1, '다시 읽기는 한 번');
+  // 전체 흐름: 응답 유실 → 지워진 것으로 처리 → 글 번호를 버리고 재시도는 새 글
+  const log = []; let offline = true; let n = 0;
+  const session = createComposerDelivery({ message: async () => { log.push('message'); return 20 + n++; }, upload: async () => { if (offline) throw Error('offline'); log.push('upload'); }, attachment: async (job) => { log.push(`attach@${job.messageId}`); },
+    discard: async () => { log.push('discard(response lost, but applied)'); } });
+  session.setFiles([file('a.png')]); await session.send([]); offline = false;
+  assert.equal(session.snapshot().job.messageId, null);
+  assert.equal(await session.retry(), true);
+  assert.deepEqual(log, ['message', 'discard(response lost, but applied)', 'message', 'upload', 'attach@21'], '첨부는 지운 글(20)이 아니라 새 글(21)에 붙는다');
+});
+test('discard: when the reread shows the message still alive (or the reread fails) the discard still fails — the retry continues on the same message', async () => {
+  for (const reread of [{ data: { deleted_at: null }, error: null }, { data: null, error: { message: 'offline' } }, { data: null, error: null }]) {
+    const c = discardClient({ updateError: { message: 'Failed to fetch' }, reread });
+    await assert.rejects(composerTransport(c, { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 }), /Failed to fetch/);
+  }
+  const c = discardClient({ updateData: [], reread: { data: { deleted_at: null }, error: null } });
+  await assert.rejects(composerTransport(c, { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 }), /no row/);
 });
