@@ -21,7 +21,7 @@ export function withLock(key, fn) {
     "cross-process flock + atomic write" 두 원시 연산으로만 하는 것과 같은 불변식(2026-09-05 러너 견고화).
     잔재 락(프로세스 크래시)은 staleMs가 지나면 회수한다. 락 획득 실패는 timeoutMs 뒤 ELOCKTIMEOUT로 던진다
     — 조용히 진행하면 이 함수가 존재할 이유가 없다. 락 디렉터리의 부모는 있어야 한다(자격 파일 옆에 둔다). */
-export async function withDirLock(lockDir, fn, { staleMs = 30_000, retryMs = 25, timeoutMs = 10_000, refreshMs = 0 } = {}) {
+export async function withDirLock(lockDir, fn, { staleMs = 30_000, retryMs = 25, timeoutMs = 10_000, refreshMs = 0, _hooks = null } = {}) {
   const { mkdir, rm, stat, utimes } = await import('node:fs/promises');
   const { dirname } = await import('node:path');
   // 부모가 없으면 만든다(분리 검수 MEDIUM-4): 회사 디렉터리가 아직 없는 wsId의 첫 저장(writeJsonAtomic은 mkdir -p)이
@@ -35,7 +35,7 @@ export async function withDirLock(lockDir, fn, { staleMs = 30_000, retryMs = 25,
       if (e?.code !== 'EEXIST' && !(process.platform === 'win32' && e?.code === 'EPERM')) throw e;
       let reclaimed = false;
       try {
-        if (e.code === 'EEXIST' && Date.now() - (await stat(lockDir)).mtimeMs > staleMs) reclaimed = await reclaimStale(lockDir, staleMs, { mkdir, rm, stat });
+        if (e.code === 'EEXIST' && Date.now() - (await stat(lockDir)).mtimeMs > staleMs) reclaimed = await reclaimStale(lockDir, staleMs, { mkdir, rm, stat }, _hooks);
       } catch { /* 방금 사라짐 — 다음 루프가 다시 시도 */ }
       if (reclaimed) continue;
       if (Date.now() - t0 > timeoutMs) throw Object.assign(new Error(`lock timeout: ${lockDir}`), { code: 'ELOCKTIMEOUT' });
@@ -55,8 +55,11 @@ export async function withDirLock(lockDir, fn, { staleMs = 30_000, retryMs = 25,
 /** 오래된 잠금 회수 — 회수 전용 2차 잠금(<lock>.reclaim) 안에서 **다시** stat하고 여전히 오래됐을 때만 지운다.
     없으면 두 프로세스가 같은 오래된 잠금을 보고 각자 stat → rm 하다가, 늦게 rm한 쪽이 먼저 회수해 새로 잡은 잠금까지 지워
     둘이 동시에 잠금 안에 들어갔다(#791 독립 검수 MEDIUM-3 — 2개 60회 중 7회 겹침). 2차 잠금 자체가 크래시로 남으면 같은 기준으로 치운다.
-    반환: 회수했는가(true면 호출부가 곧바로 다시 mkdir을 시도). */
-async function reclaimStale(lockDir, staleMs, { mkdir, rm, stat }) {
+    반환: 회수했는가(true면 호출부가 곧바로 다시 mkdir을 시도).
+    _hooks.beforeGuard: 테스트 전용 — "오래됐다고 본 뒤 2차 잠금을 잡기 전"에 멈춰, 다른 프로세스가 회수·재획득을 끝낸 뒤에
+    2차 잠금을 늦게 얻는 순서를 결정적으로 만든다(test/mutex-reclaim-race.test.mjs). 프로덕션 호출부는 넘기지 않는다. */
+async function reclaimStale(lockDir, staleMs, { mkdir, rm, stat }, _hooks = null) {
+  if (_hooks?.beforeGuard) await _hooks.beforeGuard();
   const guard = `${lockDir}.reclaim`;
   try { await mkdir(guard); } catch (e) {
     if (e?.code === 'EEXIST') {
