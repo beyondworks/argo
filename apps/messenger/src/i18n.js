@@ -425,8 +425,6 @@ export const DICT = {
   'crew.face.shape.n': ['모양 {n}', 'Shape {n}'],
   'crew.face.color': ['색', 'Color'],
   'crew.face.color.n': ['색 {n}', 'Color {n}'],
-  'crew.face.eyes': ['눈', 'Eyes'],
-  'crew.face.eyes.n': ['눈 모양 {n}', 'Eyes {n}'],
   'crew.face.save': ['얼굴 저장', 'Save face'],
   'crew.face.reset': ['무작위로 되돌리기', 'Reset to random'],
   'crew.role': ['직무·역할', 'Job and role'],

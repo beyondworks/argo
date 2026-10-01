@@ -67,7 +67,8 @@ import { fmtDmWhen } from './list-when.mjs';
 import { markAppReady } from './splash.js';
 import { dropBeforeIdAtY, reorderVisibleInFull } from './drag-reorder.mjs';
 import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
-import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, faceToStore } from './crew-face.mjs';
+import { faceOf, faceFromStored, faceInner, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedReplyCrew, FACE_COLORS, FACE_SHAPES, faceToStore } from './crew-face.mjs';
+import { faceGestures } from './face-gestures.mjs';
 const realtimeScope = createRealtimeScope();
 const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/download', contact: 'mailto:lean8kim@gmail.com' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관. download = 가격·결제 버튼 없는 전용 페이지(총괄 지시 2026-09-26, 랜딩 배포 전이라 지금은 404 — 배포는 총괄이 앱 발행 전에 함). contact = 1.5 지원 이메일 직행(검수 M5 — 결제 링크가 있는 홈 #contact 대신, 라이브 curl로 확인한 실주소)
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
@@ -139,42 +140,23 @@ function useProfanityFilterOn() {
   return on;
 }
 const AvatarCtx = createContext({ users: {}, crews: {}, faceState: () => 'idle', faceOverride: () => null }); // 프로필 이미지 조회(사람 = msgr_avatars RPC, 에이전트 = msgr_crews.avatar_url) — Av가 userId/crewId로 찾는다. faceState = 사진 없는 크루의 얼굴 표정, faceOverride = 소유자가 저장한 모양·색(msgr_crews.face)
-/** 눈 하나(dot·stroke·bean) — 얼굴(CrewFace)과 얼굴 고르기 미리보기(FacePicker)가 함께 쓴다. */
-function FaceEye({ eyes, x, y }) {
-  return eyes === 'stroke' ? <path d={`M${x - 0.6} ${y - 5}q1.2 5 .4 10`} className="stroke" />
-    : eyes === 'bean' ? <ellipse cx={x} cy={y} rx="3.5" ry="5.4" />
-    : <circle cx={x} cy={y} r="4.2" />;
+/** 얼굴 그림 하나(유건 확정 시안 2026-10-01) — 그림은 crew-face.mjs faceInner(상수로만 만든 SVG 문자열, 오피스와 같은 함수).
+ *  motionKey가 있으면 앱 전체 몸짓 스케줄러(face-gestures.mjs — 타이머 하나, 화면에 보이는 얼굴만)에 등록해 쉴 때 2~5초마다 몸짓을 한다. px = 그릴 크기(작은 배치·선 굵기 결정). */
+function FaceSvg({ face, state = 'idle', px, motionKey = null, className = '' }) {
+  const ref = useRef(null);
+  useEffect(() => { const el = ref.current; const g = motionKey != null ? faceGestures() : null; if (!el || !g) return; g.watch(el, motionKey); return () => g.unwatch(el); }, [motionKey]);
+  return <svg ref={ref} className={`msgr-face s-${state}${className ? ` ${className}` : ''}`} viewBox="0 0 100 100" aria-hidden="true" dangerouslySetInnerHTML={{ __html: faceInner(face, { state, px }) }} />;
 }
-/** 눈 한 쌍(좌우 대칭) */
-function FaceEyes({ eyes, L, R, cy }) { return <><FaceEye eyes={eyes} x={L} y={cy} /><FaceEye eyes={eyes} x={R} y={cy} /></>; }
-/** 에이전트 얼굴(유건 확정 2026-09-24) — 평면 단색 도형 + 작은 눈, 입 없음. 상태 = 쉼(움직임 있음)·준비 중·결재 대기·놀람(멘션·수신)·완료·오프라인(졸음)(crew-face.mjs).
- *  대기 중 움직임(깜빡임·두리번·고개 갸웃·하품)은 CSS 애니메이션뿐 — 박자·시작 위치는 faceMotion(id)이 크루마다 다르게 정한다. */
-function CrewFace({ id, name, ctx }) {
+/** 에이전트 얼굴 — 도형 12종·색 12색·표정(입 있음). 상태 = 쉼(몸짓)·답변 준비 중·결재 대기·놀람(멘션·수신 1초)·오류·완료·오프라인(crew-face.mjs crewFaceState). */
+function CrewFace({ id, name, ctx, px }) {
   const key = id ?? name ?? '?';
-  const g = faceGeometry(faceOf(key, ctx.faceOverride?.(id)));
-  const st = id ? ctx.faceState(id) : 'idle';
-  const motion = faceMotion(key);
-  const eye = (x, y) => <FaceEye eyes={g.eyes} x={x} y={y} />;
-  const { L, R, cy } = g;
-  return (
-    <svg className={`msgr-face s-${st}${st === 'idle' ? ` idle-${motion.variant}` : ''}`} viewBox="0 0 100 100" aria-hidden="true" style={{ '--face-dur': motion.duration, '--face-delay': motion.delay }}>
-      <g className="rig"><path className="body" d={g.d} fill={g.color} />
-        <g className="face">
-          {st === 'idle' && <g className="blink"><FaceEyes eyes={g.eyes} L={L} R={R} cy={cy} /></g>}
-          {st === 'work' && <g>{eye(L - 2, cy)}{eye(R - 2, cy)}</g>}
-          {st === 'ask' && <g>{eye(L, cy + 2)}{eye(R, cy - 2)}</g>}
-          {st === 'surprise' && <g className="surprise"><FaceEyes eyes={g.eyes} L={L} R={R} cy={cy} /></g>}
-          {st === 'done' && <g className="line"><path d={`M${L - 4.5} ${cy + 2}q4.5-7 9 0`} /><path d={`M${R - 4.5} ${cy + 2}q4.5-7 9 0`} /></g>}
-          {st === 'off' && <g className="line sleep"><path d={`M${L - 4.5} ${cy}q4.5 3.5 9 0`} /><path d={`M${R - 4.5} ${cy}q4.5 3.5 9 0`} /><text className="zzz" x={R + 6} y={cy - 14}>z</text></g>}
-        </g>
-      </g>
-    </svg>
-  );
+  return <FaceSvg face={faceOf(key, ctx.faceOverride?.(id))} state={id ? ctx.faceState(id) : 'idle'} px={px} motionKey={key} />;
 }
+const AV_PX = { xs: 20, sm: 22, lg: 40 }; // .msgr-av 크기 클래스의 px(기본 28) — 얼굴의 작은 배치·선 굵기를 고른다. 폰 화면이 24~44px로 키워도 44px 이하라 같은 배치다
 function Av({ name, crew, size, company = false, userId = null, crewId = null, src = null }) { // company: 회사 크루(조직 배지 — 별 대신 각진 해시), 그 외 크루는 별 배지(부록 I·K 등급 표시)
   const ctx = useContext(AvatarCtx);
   const url = src ?? (userId ? ctx.users[userId] : crewId ? ctx.crews[crewId] : null);
-  return <span className={`msgr-av${crew ? ' crew' : ''}${company ? ' company' : ''}${size ? ` ${size}` : ''}${url ? ' img' : crew ? ' face' : ''}`}>{url ? <img src={url} alt="" draggable={false} /> : crew ? <CrewFace id={crewId} name={name} ctx={ctx} /> : (name || '?').slice(0, 1)}{crew && <span className="star">{company ? <I name="hash" size={8} /> : <svg viewBox="0 0 16 16"><path d={STAR_D} /></svg>}</span>}</span>;
+  return <span className={`msgr-av${crew ? ' crew' : ''}${company ? ' company' : ''}${size ? ` ${size}` : ''}${url ? ' img' : crew ? ' face' : ''}`}>{url ? <img src={url} alt="" draggable={false} /> : crew ? <CrewFace id={crewId} name={name} ctx={ctx} px={AV_PX[size] ?? 28} /> : (name || '?').slice(0, 1)}{crew && <span className="star">{company ? <I name="hash" size={8} /> : <svg viewBox="0 0 16 16"><path d={STAR_D} /></svg>}</span>}</span>;
 }
 /** 프로필 이미지 정규화 — 가운데 정사각형으로 잘라 256px JPEG로(업로드 전 클라이언트에서). */
 async function squareImage(file, size = 256) {
@@ -206,42 +188,33 @@ function AvatarEdit({ name, crew = false, crewId = null, url, onUpload, onRemove
     </div>
   );
 }
-const faceEq = (a, b) => !!a && !!b && a.shape === b.shape && a.color === b.color && a.eyes === b.eyes;
+const faceEq = (a, b) => !!a && !!b && a.shape === b.shape && a.color === b.color;
 const faceCol = { missingAt: 0 }; // msgr_crews.face 열이 없다고 판정한 시각(옛 서버 폴백). 10분만 기억 — 앱이 라이브 적용보다 먼저 켜져도 재시작 없이 face를 다시 읽는다(재검수 #704)
-/** 에이전트 얼굴 고르기(유건 확정 2026-09-24) — 소유자만. 도형 6·색 10·눈 3 중에서 고르면 msgr_crews.face에 저장돼 조직 전원이 같은 얼굴을 본다.
- *  사진이 있으면 목록·대화에는 사진이 우선(Av)이지만, 사진을 지우면 바로 이 얼굴이 나오도록 고르기는 항상 켜져 있다. */
+/** 에이전트 얼굴 고르기 — 소유자만. 도형 12·색 12 중에서 고르면 msgr_crews.face에 {v:2, shape, color}로 저장돼 조직 전원이 같은 얼굴을 본다(유건 확정 시안 2026-10-01).
+ *  옛 저장값(키 v 없음)은 대응표로 바꿔 보여 준다 — 바꾸지 않으면 다시 쓰지 않는다. 사진이 있으면 목록·대화에는 사진이 우선(Av)이지만, 사진을 지우면 바로 이 얼굴이 나오도록 고르기는 항상 켜져 있다. */
 function FacePicker({ crew, onSave, busy, t }) {
-  const stored = crew.face && Number.isInteger(crew.face.shape) && Number.isInteger(crew.face.color) && Number.isInteger(crew.face.eyes) ? crew.face : null;
-  const rand = faceOf(crew.id, stored); // 목록과 같은 계산 — 서버 저장값에는 spot(얼굴 자리)이 없어 그대로 쓰면 faceGeometry가 멈춘다(화면 확인 중 발견)
+  const stored = faceFromStored(crew.face);
+  const rand = faceOf(crew.id, crew.face); // 목록과 같은 계산(저장값 → 없으면 id 무작위)
   const [draft, setDraft] = useState(rand);
-  const storedKey = stored ? `${stored.shape},${stored.color},${stored.eyes}` : '';
+  const storedKey = stored ? `${stored.shape},${stored.color}` : '';
   useEffect(() => { setDraft(rand); }, [crew.id, storedKey]); // eslint-disable-line react-hooks/exhaustive-deps -- 저장·되돌리기 뒤 새로 읽은 값으로 미리보기를 맞춘다(검수 #704 L-1)
-  const g = faceGeometry(draft);
   const pick = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
   const dirty = !faceEq(rand, draft); // rand = 저장값(없으면 id 무작위) — 되돌린 직후 저장 버튼이 켜진 채 남지 않게(검수 #704 L-1)
   return (
     <div className="msgr-facepicker">
-      <svg className="msgr-face preview" viewBox="0 0 100 100" aria-hidden="true"><path d={g.d} fill={g.color} /><g className="face"><FaceEyes eyes={g.eyes} L={g.L} R={g.R} cy={g.cy} /></g></svg>
+      <FaceSvg face={draft} px={64} motionKey={`picker:${crew.id}`} className="preview" />
       <div className="row" role="group" aria-label={t('crew.face.shape')}>
         <span className="msgr-klabel">{t('crew.face.shape')}</span>
         <div className="chips">{FACE_SHAPES.map((s, i) => (
-          <button key={i} type="button" className="chip" aria-pressed={draft.shape === i} disabled={busy} onClick={() => pick('shape', i)} aria-label={t('crew.face.shape.n', { n: i + 1 })}>
-            <svg className="msgr-face" viewBox="0 0 100 100" aria-hidden="true"><path d={s.d} fill={FACE_COLORS[draft.color]} /></svg>
+          <button key={s.k} type="button" className="chip" aria-pressed={draft.shape === i} disabled={busy} onClick={() => pick('shape', i)} aria-label={t('crew.face.shape.n', { n: i + 1 })}>
+            <FaceSvg face={{ shape: i, color: draft.color }} px={30} />
           </button>
         ))}</div>
       </div>
       <div className="row" role="group" aria-label={t('crew.face.color')}>
         <span className="msgr-klabel">{t('crew.face.color')}</span>
         <div className="chips">{FACE_COLORS.map((c, i) => (
-          <button key={i} type="button" className="chip swatch" aria-pressed={draft.color === i} disabled={busy} style={{ background: c }} onClick={() => pick('color', i)} aria-label={t('crew.face.color.n', { n: i + 1 })} />
-        ))}</div>
-      </div>
-      <div className="row" role="group" aria-label={t('crew.face.eyes')}>
-        <span className="msgr-klabel">{t('crew.face.eyes')}</span>
-        <div className="chips">{FACE_EYES.map((e, i) => (
-          <button key={i} type="button" className="chip" aria-pressed={draft.eyes === i} disabled={busy} onClick={() => pick('eyes', i)} aria-label={t('crew.face.eyes.n', { n: i + 1 })}>
-            <svg className="msgr-face" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="42" fill="#dcdcdc" /><g className="face"><FaceEyes eyes={e} L="42" R="58" cy="50" /></g></svg>
-          </button>
+          <button key={c} type="button" className="chip swatch" aria-pressed={draft.color === i} disabled={busy} style={{ background: c }} onClick={() => pick('color', i)} aria-label={t('crew.face.color.n', { n: i + 1 })} />
         ))}</div>
       </div>
       <div className="acts">
@@ -1267,6 +1240,9 @@ function Shell({ session }) {
   useEffect(() => { const ms = nextDoneIn(doneAt); if (ms == null) { if (Object.keys(doneAt).length) setDoneAt({}); return; } const tm = setTimeout(() => setDoneAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextDoneIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [doneAt]); // 크루마다 정확히 2초
   const [surprisedAt, setSurprisedAt] = useState({}); // crew_id → 멘션·수신 글이 온 시각(얼굴 '놀람' 1초, doneAt과 같은 모양·같은 만료 로직)
   useEffect(() => { const ms = nextSurpriseIn(surprisedAt); if (ms == null) { if (Object.keys(surprisedAt).length) setSurprisedAt({}); return; } const tm = setTimeout(() => setSurprisedAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextSurpriseIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [surprisedAt]); // 크루마다 정확히 1초
+  const [erroredAt, setErroredAt] = useState({}); // crew_id → 실패한 답(meta.failed)이 온 시각(얼굴 '오류' 8초, doneAt과 같은 모양·같은 만료 로직). 방송에는 meta가 없어 대화창이 새 글을 읽을 때 알린다(onCrewFailed)
+  useEffect(() => { const ms = nextErrorIn(erroredAt); if (ms == null) { if (Object.keys(erroredAt).length) setErroredAt({}); return; } const tm = setTimeout(() => setErroredAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextErrorIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [erroredAt]); // 크루마다 정확히 8초
+  const noteCrewFailed = useCallback((crewId) => { if (crewId) setErroredAt((m) => ({ ...m, [crewId]: Date.now() })); }, []);
   const avatarCtx = useMemo(() => {
     const now = Date.now();
     const working = new Set(Object.entries(typing).filter(([, at]) => now - at < TYPING_WINDOW_MS).map(([k]) => k.split(':')[1]));
@@ -1274,8 +1250,8 @@ function Shell({ session }) {
     const byId = new Map([...crews, ...myAvailable].map((c) => [c.id, c]));
     return { users: avatars, crews: Object.fromEntries(crews.filter((c) => c.avatar_url).map((c) => [c.id, c.avatar_url])),
       faceOverride: (id) => byId.get(id)?.face ?? null,
-      faceState: (id) => crewFaceState({ crew: byId.get(id) ?? null, working: working.has(id), asking: asking.has(id), surprisedAt: surprisedAt[id] ?? 0, doneAt: doneAt[id] ?? 0, now }) };
-  }, [avatars, crews, myAvailable, typing, inbox, doneAt, surprisedAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+      faceState: (id) => crewFaceState({ crew: byId.get(id) ?? null, working: working.has(id), asking: asking.has(id), surprisedAt: surprisedAt[id] ?? 0, erroredAt: erroredAt[id] ?? 0, doneAt: doneAt[id] ?? 0, now }) };
+  }, [avatars, crews, myAvailable, typing, inbox, doneAt, surprisedAt, erroredAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const crewOf = (id) => crews.find((c) => c.id === id) ?? myAvailable.find((c) => c.id === id);
   const [newOrg, setNewOrg] = useState(null);
   const [joinCode, setJoinCode] = useState(null); // 초대 코드로 가입 — 앱에는 링크가 열릴 오리진이 없어 코드를 직접 붙여 넣는다(invite.mjs)
@@ -2057,7 +2033,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} onAvatar={loadAvatars} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : channel ? (
-          <Channel key={chId} onPersonalChanged={() => loadPersonal().catch(() => {})} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} onCrewFailed={noteCrewFailed} onPersonalChanged={() => loadPersonal().catch(() => {})} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
@@ -4345,7 +4321,7 @@ function PersonalRoomBar({ chId, uid, hasCrews, event, nameOfUser, onChanged, on
   </>);
 }
 
-function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, onPersonalChanged = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
+function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, onPersonalChanged = null, startCard = null, jumpTo = null, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
@@ -4393,6 +4369,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, onPer
   // 그 뒤 늦게 오는 첨부·반응·이미지 로드(척추 ResizeObserver)에서 같은 앵커로 계속 되맞춘다(검수 #531 HIGH-1: 첨부 착지에 3,759px 튐). 델타 가산이라 사용자 스크롤과 충돌하지 않는다.
   const [hasMore, setHasMore] = useState(true); const [older, setOlder] = useState(false); const olderRef = useRef(false); const anchor = useRef(null);
   const live = useRef({}); live.current = { msgs, atts }; // 폴·재개가 최신 목록을 보되 effect 재구독은 피한다
+  const failRef = useRef(onCrewFailed); failRef.current = onCrewFailed; // load(useCallback)의 의존을 늘리지 않게 ref로
   const yOf = (el, node) => node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
   const keepAnchor = useCallback(() => { const a = anchor.current; const el = feed.current; if (!a || !el || !el.contains(a.node)) return; const y = yOf(el, a.node); if (y !== a.y) { el.scrollTop += y - a.y; a.y = y; } }, []);
   const loadOlder = useCallback(async () => {
@@ -4427,6 +4404,7 @@ function Channel({ onScreen = true, namePrompt = null, onOutsideDm = null, onPer
       fetchPage: (cursor, until, limit) => q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, thread_root, created_at, edited_at, deleted_at, meta, client_msg_id')
         .eq('channel_id', chId).gt('id', cursor).lte('id', until).order('id', { ascending: true }).limit(limit)),
     }) : afterId ? rows : rows.reverse();
+    if (afterId && !preserve) { const at = Date.now(); for (const r of list) { const failed = failedReplyCrew(r, at); if (failed) failRef.current?.(failed); } } // 새로 도착한 실패 답 → 그 크루 얼굴 '오류'(채널을 열 때 읽은 글·오래 묵은 글은 제외)
     setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); if (preserve) return mergeRefreshedMessages(base, list, firstId, throughId); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
     setPending((cur) => reconcilePending(cur, list)); // 조회로 도착한 내 글도 낙관적 자리를 비운다
     if (!afterId && !preserve) setHasMore(rows.length >= PAGE);

@@ -1,18 +1,13 @@
-// 크루 얼굴 — 메신저와 같은 규칙(평면 단색 도형 + 작은 눈, 입 없음). 모양·색 계산은 메신저 crew-face.mjs를 그대로 쓴다.
-// 오피스는 공식적인 화면이라 대기 애니메이션은 넣지 않는다(정지 얼굴).
-import { faceOf, faceGeometry } from '@msgr/crew-face';
+// 크루 얼굴 — 메신저와 같은 그림(유건 확정 시안 2026-10-01: 도형 12종·색 12색·표정). 모양·색·표정은 메신저 crew-face.mjs를 그대로 쓴다
+// (faceInner = 상수로만 만든 SVG 문자열 — 색·선이 속성에 들어 있어 오피스 CSS가 따로 필요 없다).
+// 오피스는 공식적인 화면이라 몸짓·상태 표정은 넣지 않는다(쉼 표정의 정지 얼굴).
+import { faceOf, faceInner } from '@msgr/crew-face';
 import { getState } from '../core/store.js';
 
 export function Face({ id, size = 20, dim = false }) {
-  const g = faceGeometry(faceOf(id, getState().crews?.find((c) => c.id === id)?.face ?? null));
-  const eye = g.eyes === 'stroke'
-    ? <><path d={`M${g.L - 3} ${g.cy}h6M${g.R - 3} ${g.cy}h6`} stroke="#1f1e1b" strokeWidth="4" strokeLinecap="round" /></>
-    : g.eyes === 'bean'
-      ? <><ellipse cx={g.L} cy={g.cy} rx="3.4" ry="5.2" fill="#1f1e1b" /><ellipse cx={g.R} cy={g.cy} rx="3.4" ry="5.2" fill="#1f1e1b" /></>
-      : <><circle cx={g.L} cy={g.cy} r="4.4" fill="#1f1e1b" /><circle cx={g.R} cy={g.cy} r="4.4" fill="#1f1e1b" /></>;
+  const face = faceOf(id, getState().crews?.find((c) => c.id === id)?.face ?? null);
   return (
-    <svg className="face" width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" style={dim ? { opacity: 0.45 } : undefined}>
-      <path d={g.d} fill={g.color} />{eye}
-    </svg>
+    <svg className="face" width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" style={dim ? { opacity: 0.45 } : undefined}
+      dangerouslySetInnerHTML={{ __html: faceInner(face, { px: size }) }} />
   );
 }
