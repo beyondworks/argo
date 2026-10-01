@@ -6,10 +6,11 @@ import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { SHIM_SRC } from '../src/no-dock.mjs';
+import { stageCli } from '../scripts/stage-cli.mjs';
 
 // Run the full staging scripts against disposable trees; build/archive/service
 // commands and the runtime copy never touch the host installation.
-function stage(kind, { esm = true, type = 'module' } = {}) {
+function stage(kind, { esm = true, type = 'module', env = {} } = {}) {
   const root = fs.mkdtempSync(join(tmpdir(), 'argo-stage-no-dock-'));
   const put = (path, text) => { fs.mkdirSync(dirname(path), { recursive: true }); fs.writeFileSync(path, text); };
   const original = esm ? "import './fixture.mjs';\nprocess.title = 'next-server fixture';\nglobalThis.nextStarted = true;\n" : 'require("next");';
@@ -28,8 +29,8 @@ function stage(kind, { esm = true, type = 'module' } = {}) {
   const source = fs.readFileSync(new URL(`../scripts/stage-${kind}.mjs`, import.meta.url), 'utf8')
     .replace(/^#!.*\n/, '').replace(/^import .* from .*;\n/gm, '').replaceAll('import.meta.url', "'file:///fixture'");
   const sandbox = {
-    ...fs, SHIM_SRC, dirname, join, fileURLToPath: () => join(root, 'scripts', `stage-${kind}.mjs`),
-    process: { platform: 'darwin', arch: 'arm64', execPath: '/fixture/node', env: {}, exit(code) { throw new Error(`exit:${code}`); } },
+    ...fs, SHIM_SRC, stageCli, dirname, join, fileURLToPath: () => join(root, 'scripts', `stage-${kind}.mjs`),
+    process: { platform: 'darwin', arch: 'arm64', execPath: '/fixture/node', env, exit(code) { throw new Error(`exit:${code}`); } },
     copyFileSync: (from, to) => from === '/fixture/node' ? put(to, 'runtime fixture') : fs.copyFileSync(from, to),
     execFileSync: (file, args) => { commands.push([file, ...args]); if (file === 'rustc') return 'host: aarch64-apple-darwin\n'; if (file !== 'tar') throw new Error(`unexpected command: ${file}`); return ''; },
     console: { log() {}, error() {} },
@@ -86,7 +87,8 @@ for (const kind of ['server', 'sidecar']) {
     assert.equal(fs.existsSync(join(result.tree, 'node_modules/@anthropic-ai/claude-agent-sdk-fixture/cli')), true);
     assert.equal(fs.existsSync(join(result.tree, 'docs/internal.md')), false);
     assert.equal(fs.existsSync(join(result.tree, 'docs/selfhost.md')), kind === 'server');
-    assert.equal(fs.existsSync(join(result.tree, 'bin/argo.mjs')) && fs.existsSync(join(result.tree, 'src/cli/env.mjs')), kind === 'server', '서버 타르볼에만 argo CLI가 실린다');
+    assert.equal(fs.existsSync(join(result.tree, 'bin/argo.mjs')) && fs.existsSync(join(result.tree, 'src/cli/env.mjs')), true, '서버 타르볼과 앱 사이드카 모두 argo CLI가 실린다(앱을 설치하면 argo가 따라온다)');
+    assert.equal(fs.existsSync(join(result.tree, 'bin/argo-public.json')), false, 'Supabase 공개 설정이 없으면 만들지 않는다');
     assert.deepEqual(result.commands.map(command => command[0]), [kind === 'server' ? 'tar' : 'rustc']);
   });
 
@@ -99,4 +101,16 @@ for (const kind of ['server', 'sidecar']) {
       assert.equal(result.commands.some(command => command[0] === 'tar'), false);
     });
   }
+}
+
+// 공개 Supabase 설정(URL·anon 키)을 구워 두면 계정 로그인이 된다. 서버 타르볼은 CLI 전용 이름만 받는다(NEXT_PUBLIC_*는 Next 빌드에 인라인돼 셀프호스트 웹이 인증 모드가 된다), 사이드카는 이미 앱 빌드에 쓰는 NEXT_PUBLIC_* 값을 쓴다.
+for (const [kind, names, other] of [['server', ['ARGO_CLI_SUPABASE_URL', 'ARGO_CLI_SUPABASE_ANON_KEY'], ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY']], ['sidecar', ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'], ['ARGO_CLI_SUPABASE_URL', 'ARGO_CLI_SUPABASE_ANON_KEY']]]) {
+  test(`${kind}: argo-public.json은 ${names[0]}로만 만든다`, async t => {
+    const mine = stage(kind, { env: { [names[0]]: 'https://sb.example', [names[1]]: 'anon-public' } });
+    const foreign = stage(kind, { env: { [other[0]]: 'https://sb.example', [other[1]]: 'anon-public' } });
+    t.after(() => { fs.rmSync(mine.root, { recursive: true, force: true }); fs.rmSync(foreign.root, { recursive: true, force: true }); });
+    await mine.run; await foreign.run;
+    assert.deepEqual(JSON.parse(fs.readFileSync(join(mine.tree, 'bin/argo-public.json'), 'utf8')), { url: 'https://sb.example', anonKey: 'anon-public' });
+    assert.equal(fs.existsSync(join(foreign.tree, 'bin/argo-public.json')), false);
+  });
 }

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mergeLayout, rowsOf, rowInfo, spanOf, heightOf, spanRange, sizeForSpan, minHeight } from '../src/core/layout.js';
-import { dragSpans, snapH, stepH, edgePair, applySizes, resetSize, resetPatch } from '../src/core/module-size.js';
+import { snapH, stepH, applySizes, resetSize, resetPatch } from '../src/core/module-size.js';
 import { normalizeModuleItems } from '../src/core/module-items.js';
 import { normalizeDashboards, defaultDashboard } from '../src/business/dashboard-model.js';
 import { OFFICE_MODULES, CHART_MODULES } from '../src/core/module-registry.js';
@@ -27,25 +27,6 @@ test('열 수·높이 읽기: span이 있으면 span, 없거나 잘못되면 단
   for (const span of [0, 13, 6.5, '7', null]) assert.equal(spanOf({ size: 'l', span }), 8);
   assert.equal(heightOf({ h: 360 }), 360);
   for (const h of [undefined, 119, 1201, 300.5, '300']) assert.equal(heightOf({ h }), 0);
-});
-
-// 이유: 같은 줄 옆 모듈과 맞닿은 경계는 두 모듈을 같이 바꿔 줄 폭 합을 유지한다(노션 열 방식) — 끝까지 당겨도 옆을 밀어내지 않는다.
-test('경계 끌기: 합은 유지, 양쪽 최소 열에서 멈춘다', () => {
-  const r = [3, 12];
-  assert.deepEqual(dragSpans({ a: 6, b: 6, d: 1, ra: r, rb: r }), [7, 5]);
-  assert.deepEqual(dragSpans({ a: 6, b: 6, d: -2, ra: r, rb: r }), [4, 8]);
-  assert.deepEqual(dragSpans({ a: 6, b: 6, d: 9, ra: r, rb: r }), [9, 3]);  // 옆은 3열에서 멈춘다
-  assert.deepEqual(dragSpans({ a: 6, b: 6, d: -9, ra: r, rb: r }), [3, 9]);
-  assert.deepEqual(dragSpans({ a: 4, b: 8, d: -3, ra: r, rb: [8, 12] }), [3, 9]);
-  assert.deepEqual(dragSpans({ a: 4, b: 8, d: 2, ra: r, rb: [8, 12] }), [4, 8]); // 옆(현황)이 8열 밑으로 못 줄면 그대로
-});
-
-// 이유: 줄 끝 바깥 가장자리는 그 모듈만 바뀐다 — 같은 줄에 남은 폭 안에서만(넘치면 다음 줄로 떨어져 엉뚱한 곳이 바뀐다).
-test('줄 끝 끌기: 혼자 바뀌고, 남은 폭·최소·최대에서 멈춘다', () => {
-  assert.deepEqual(dragSpans({ a: 6, b: null, d: 3, ra: [3, 12], room: 12 }), [9, null]);
-  assert.deepEqual(dragSpans({ a: 6, b: null, d: 3, ra: [3, 12], room: 8 }), [8, null]);
-  assert.deepEqual(dragSpans({ a: 6, b: null, d: -9, ra: [3, 12], room: 12 }), [3, null]);
-  assert.deepEqual(dragSpans({ a: 12, b: null, d: -9, ra: [8, 12], room: 12 }), [8, null]);
 });
 
 // 이유: 높이는 8px 단위로 붙고 120~1200px — 너무 작으면 제목만 남고, 끝없이 늘면 화면을 다 덮는다.
@@ -80,7 +61,7 @@ test('끌기 전 열 수로 돌아오면 span·baseSize를 지운다', () => {
 // 이유(검수 10/1): 높이만 바꾼 모듈을 되돌리면 높이만 — 폭을 등록부 기본값으로 바꾸면 홈 기본 배치(할 일 8열)가 6열이 되어 줄에 빈칸이 생겼다.
 test('⋯ 크기 되돌리기: 높이만 바꿨으면 폭은 그대로', () => {
   const items = [{ id: 'todos', size: 'l', h: 400 }, { id: 'pages', size: 's', h: 400 }];
-  assert.deepEqual(resetSize(items, 'todos', modOf), [{ id: 'todos', size: 'l' }, { id: 'pages', size: 's' }]);
+  assert.deepEqual(resetSize(items, 'todos', modOf), [{ id: 'todos', size: 'l' }, { id: 'pages', size: 's', h: 400 }]); // 그 모듈만(유건 10/1 저녁)
   const [dash] = normalizeDashboards([defaultDashboard('D', new Date('2026-10-01T12:00:00+09:00'), (() => { let n = 0; return () => `w${n++}`; })())]);
   const line = dash.widgets.find((w) => w.type === 'line');
   const tall = applySizes(dash.widgets, { [line.id]: { h: 480 } }, modOf);
@@ -88,15 +69,15 @@ test('⋯ 크기 되돌리기: 높이만 바꿨으면 폭은 그대로', () => {
   assert.deepEqual([reset.size, 'span' in reset, 'h' in reset], ['full', false, false]);
 });
 
-// 이유(검수 10/1): 경계를 같이 끈 두 모듈은 같이 끌기 전으로 — 8|4를 9|3으로 끈 뒤 되돌리면 6|6이 아니라 8|4.
-test('⋯ 크기 되돌리기: 그 줄에서 바꾼 폭(경계를 같이 끈 옆 모듈 포함)과 줄 높이를 끌기 전으로', () => {
+// 이유(유건 10/1 저녁 자유 격자): 크기 되돌리기는 그 모듈만 — 경계를 같이 끄는 일이 없어졌으므로 옆 모듈의 폭·높이는 그대로 둔다.
+test('⋯ 크기 되돌리기: 그 모듈의 폭·높이만 끌기 전으로', () => {
   const dragged = applySizes([{ id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'c', size: 'm', h: 200 }], { todos: { span: 9, h: 400 }, pages: { span: 3, h: 400 } }, modOf);
   assert.deepEqual(dragged.map((x) => [x.id, x.size, x.span]), [['todos', 'l', 9], ['pages', 's', 3], ['c', 'm', undefined]]);
-  const next = resetSize(dragged, 'todos', modOf);
-  assert.deepEqual(next, [{ id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'c', size: 'm', h: 200 }]);
-  assert.deepEqual(rowsOf(next).map((r) => r.map((x) => x.id)), [['todos', 'pages'], ['c']]);
+  assert.deepEqual(resetSize(dragged, 'todos', modOf), [{ id: 'todos', size: 'l' }, dragged[1], dragged[2]]);
+  assert.deepEqual(resetPatch(dragged, 'pages', 'span'), { pages: { span: null } }); // 두 번 누르기 = 그 방향만
+  assert.deepEqual(resetPatch(dragged, 'pages', 'h'), { pages: { h: 0 } });
+  assert.deepEqual(resetPatch([{ id: 'x', size: 'm' }], 'x', 'span'), {}); // 바꾼 게 없으면 저장하지 않는다
 });
-
 // 이유: 줄 구성은 CSS 격자 자동 배치와 같은 규칙 — 이제 열 수(span)로 센다. 줄 높이는 그 줄에 정해진 높이 중 가장 큰 값.
 test('줄 나누기·줄 높이: span 기준, 같은 줄은 가장 큰 높이를 같이 쓴다', () => {
   const items = [{ id: 'a', size: 'm', span: 7 }, { id: 'b', size: 's', span: 5, h: 320 }, { id: 'c', size: 'l', span: 9 }, { id: 'd', size: 's' }, { id: 'e', size: 'm' }];
@@ -149,25 +130,6 @@ test('모듈 최소 높이: 기본 120, 본문 최소가 있으면 머리 + 본�
   assert.equal(snapH(130, minHeight(cal)), 248);
 });
 
-// 이유(검수 10/1 2차 재현): 두 번 눌러 폭을 되돌릴 때 그 모듈만 되돌리면, 경계를 같이 끈 앞 모듈은 늘어난 채라 줄 합이 12를 넘어 모듈이 다음 줄로 떨어졌다.
-// 폭 되돌리기는 그 줄의 바꾼 폭을 모두 끌기 전으로 — 끌기 전 줄 구성이 그대로 돌아온다. 높이는 건드리지 않는다.
-test('두 번 눌러 폭 되돌리기: 그 줄 전체를 끌기 전으로, 줄 구성 유지', () => {
-  const start = [{ id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'cal', size: 'm' }, { id: 'work', size: 'm' }];
-  const dragged = applySizes(start, { todos: { span: 9, h: 400 }, pages: { span: 3, h: 400 } }, modOf); // 할 일|최근 페이지 경계를 끈 뒤
-  const row = rowsOf(dragged)[0];
-  assert.deepEqual(resetPatch(row, 'span'), { todos: { span: null }, pages: { span: null } }); // 줄 끝(최근 페이지)을 두 번 눌러도 앞 모듈까지
-  const back = applySizes(dragged, resetPatch(row, 'span'), modOf);
-  assert.deepEqual(rowsOf(back).map((r) => r.map((x) => x.id)), rowsOf(start).map((r) => r.map((x) => x.id)));
-  assert.deepEqual(back.slice(0, 2).map((x) => [x.size, x.span, x.h]), [['l', undefined, 400], ['s', undefined, 400]]);
-  // A|B|C에서 A|B를 끈 뒤 B|C 경계를 두 번 눌러도 C가 떨어지지 않는다
-  const abc = applySizes([{ id: 'a', size: 's' }, { id: 'b', size: 's' }, { id: 'c', size: 's' }], { a: { span: 5 }, b: { span: 3 } }, modOf);
-  const reset = applySizes(abc, resetPatch(rowsOf(abc)[0], 'span'), modOf);
-  assert.deepEqual(rowsOf(reset).map((r) => r.map((x) => x.id)), [['a', 'b', 'c']]);
-  assert.ok(rowsOf(reset).every((r) => r.reduce((sum, x) => sum + spanOf(x), 0) <= 12));
-  assert.deepEqual(resetPatch([{ id: 'x', size: 'm' }], 'span'), {}); // 바꾼 게 없으면 저장하지 않는다
-  assert.deepEqual(resetPatch(row, 'h'), { todos: { h: 0 }, pages: { h: 0 } });
-});
-
 // 이유(검수 10/1 2차, 유건 10/1 확정): 줄 첫 모듈의 왼쪽 가장자리는 잡은 선이 손을 따라오지 않는다(반대편이 움직인다) — 그 손잡이는 그리지 않는다(first).
 // 높이 손잡이가 알리는 최소는 그 줄 모듈 최소 중 가장 큰 값 — 줄 높이를 같이 쓰므로 실제로 그 밑으로 줄지 않는다(min).
 test('줄 정보: 줄 높이·줄 최소 높이·줄 첫 모듈', () => {
@@ -175,21 +137,6 @@ test('줄 정보: 줄 높이·줄 최소 높이·줄 첫 모듈', () => {
   const items = [{ id: 'cal', size: 'm', h: 320 }, { id: 'work', size: 'm' }, { id: 'c', size: 'full' }];
   const info = rowInfo(items, (item) => (item.id === 'cal' ? cal : {}));
   assert.deepEqual([...info], [['cal', { h: 320, min: 248, first: true }], ['work', { h: 320, min: 248, first: false }], ['c', { h: 0, min: 120, first: true }]]);
-});
-
-// 이유(유건 10/1 C2 "모듈 상하좌우 가장자리"): 맞닿은 경계는 두 모듈(앞 모듈 = a)이 같이 바뀌고, 줄 끝 바깥은 그 모듈만 바뀐다.
-// 줄 첫 모듈 왼쪽은 화면에 그리지 않지만(위 first), 불려도 방향이 뒤집히지 않게 sign -1을 지킨다.
-test('폭 가장자리: 줄 처음·끝 바깥은 그 모듈만, 맞닿은 경계는 두 모듈', () => {
-  assert.deepEqual(edgePair(0, 3, 'l'), { a: 0, b: null, sign: -1 }); // 줄 첫 모듈 왼쪽 — 오른쪽으로 끌면 준다
-  assert.deepEqual(edgePair(2, 3, 'r'), { a: 2, b: null, sign: 1 }); // 줄 끝 모듈 오른쪽
-  assert.deepEqual(edgePair(1, 3, 'l'), { a: 0, b: 1, sign: 1 }); // 왼쪽 경계 = 앞 모듈의 오른쪽 경계
-  assert.deepEqual(edgePair(0, 3, 'r'), { a: 0, b: 1, sign: 1 });
-  assert.deepEqual(edgePair(0, 1, 'l'), { a: 0, b: null, sign: -1 }); // 한 줄에 하나
-  // 줄 첫 모듈(6열, 옆에 3열) 왼쪽을 오른쪽으로 2열 끌면 4열, 왼쪽으로 끌면 남은 폭(room)까지만 는다
-  const { sign } = edgePair(0, 2, 'l'), ra = [3, 12];
-  assert.deepEqual(dragSpans({ a: 6, b: null, d: sign * 2, ra, room: 9 }), [4, null]);
-  assert.deepEqual(dragSpans({ a: 6, b: null, d: sign * -5, ra, room: 9 }), [9, null]);
-  assert.deepEqual(dragSpans({ a: 3, b: null, d: sign * 4, ra, room: 9 }), [3, null]); // 최소 3열
 });
 
 // 이유(유건 10/1 C4 "↑/↓ = 16px", 통합 검수 10/1): 정한 적 없는 줄의 높이는 내용대로(8의 배수가 아님)다. 거기서 바로 16을 더하고 맞추면 418→432(+14)가 됐다.
@@ -208,5 +155,5 @@ test('키보드 높이: 한 번에 정확히 16px(알리는 값 기준)', () => 
 test('높이 손잡이: 지금 높이를 알린다, 줄 첫 모듈은 왼쪽 손잡이 없음', () => {
   const src = readFileSync(new URL('../src/ui/ModuleGrid.jsx', import.meta.url), 'utf8');
   assert.match(src, /new ResizeObserver[\s\S]{0,160}\.edge-y[\s\S]{0,80}'aria-valuenow'/);
-  assert.match(src, /row\.first && side === 'l'\) return null/);
+  assert.match(src, /place\.first && side === 'l'\) return null/);
 });

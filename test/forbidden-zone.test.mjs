@@ -478,6 +478,7 @@ const DOT_ITEMS = [
   ['root', '.local-assets/key'], ['ws', '.local-assets/staging/file'],
   ['root', '.sync-process.lock'], ['root', '.tombstones/my-co.json'],
   ['root', '.scheduler.lock'], ['root', '.gateway.lock'],
+  ['root', '.server-presence.json'], // 앱 사이드카 실행 표식(2026-10-01) — 크루가 심으면 argo login이 영구 거절되거나 앱 실행 중 판정이 위조된다
 ];
 
 test('Bash 리터럴: 직속 도트 항목은 파일 도구와 같은 판정 — 도구별로 갈리지 않는다', async (tc) => {

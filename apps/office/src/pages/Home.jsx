@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ModuleAddButton } from '../ui/ModuleGrid.jsx';
 import ModuleSurface, { resolveSurfaceModule } from '../ui/ModuleSurface.jsx';
 import { LIBRARY_MODULES } from '../core/module-registry.js';
+import { createModuleItem, addModuleItem } from '../core/module-placement-model.js';
 import { navigate } from '../core/router.jsx';
 import { t, useLang } from '../core/i18n.js';
 import { useStore, saveLayout } from '../core/store.js';
@@ -39,7 +40,11 @@ export function Home({ space }) {
     finally { setReloading(false); }
   };
   const resolveModule = (item) => resolveSurfaceModule(item, space);
-  const hidden = items.filter((item) => item.hidden).map((item) => ({ id: item.id, title: resolveModule(item).title, icon: resolveModule(item).icon, run: () => save([...items.filter((entry) => entry.id !== item.id), { ...item, hidden: false }]) }));
+  const seen = new Map(); // 숨긴 사본은 이름이 같다 — 두 번째부터 번호를 붙여 구분(검수 10/1 5차)
+  const hidden = items.filter((item) => item.hidden).map((item) => { const { title, icon } = resolveModule(item), n = (seen.get(title) ?? 0) + 1; seen.set(title, n);
+    return { id: item.id, title: n > 1 ? `${title} ${n}` : title, icon, run: () => save([...items.filter((entry) => entry.id !== item.id), { ...item, hidden: false }]) }; });
+  // 여러 번 놓는 모듈(캘린더·할 일)은 '모듈 추가'에서 바로 하나 더(유건 10/1 5차 추가사항 3) — 새 사본은 맨 아래에 붙는다
+  for (const m of LIBRARY_MODULES) if (m.anchor && m.spaces.includes(kindOf(space))) hidden.push({ id: `new:${m.id}`, title: t('home.addCopy', { name: t(m.title) }), icon: m.icon, run: () => save(addModuleItem(items, createModuleItem(m.id))) });
   hidden.push({ id: 'library', title: t('library.browse'), icon: 'plus', run: () => navigate(`${baseOf(space)}/business/library?target=home`) });
   const grid = <ModuleSurface id={layoutKey(space)} items={items} canEdit={canEdit} onChange={save} space={space} showRestore={false} />;
   const today = new Intl.DateTimeFormat(document.documentElement.lang === 'en' ? 'en-US' : 'ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());

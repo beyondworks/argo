@@ -203,7 +203,7 @@ function FavSection({ space, path }) {
   const favs = useMemo(() => favOf({ layouts, pages, crews }), [layouts, pages, crews]);
   const [fold, setFold] = useState(() => restore(scopedStorageKey(FAV_FOLD), false));
   const flip = () => setFold((f) => { persist(scopedStorageKey(FAV_FOLD), !f); return !f; });
-  return <div className="side-sec">
+  return <div className="side-sec fav-sec">
     <div className="nav-section"><button type="button" className="sec-fold" aria-expanded={!fold} onClick={flip}>{t('fav.title')}<Icon name={fold ? 'chevron' : 'caret'} size={12} /></button></div>
     {!fold && (favs.length ? <div className="nav-group"><SortableContext items={favs.map((x) => `fav:${favKey(x)}`)} strategy={verticalListSortingStrategy}>
       {favs.map((x) => <FavRow key={favKey(x)} fav={x} space={space} path={path} />)}

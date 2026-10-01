@@ -9,6 +9,7 @@ import { withLock } from './mutex.mjs';
 import { normalizeMuted } from './channel-events.mjs';
 
 const lockKey = (wsId) => `connections:${wsId}`;
+const lockConnections = (wsId, fn) => withLock(lockKey(wsId), fn, { file: paths(wsId).connections }); // 프로세스 간 잠금 포함(M-b)
 
 // 페어링 코드 — 봇에 먼저 말건 사람이 주인이 되는 TOFU를 막는다. 사장이 설정에 표시된 이 코드를
 // 봇에 보내야만 소유자로 고정된다. 헷갈리는 글자(0/O/1/I) 제외한 6자.
@@ -123,7 +124,7 @@ export async function updateAgentBot(wsId, slug, patch) {
   // 이미 정제하므로 저장값도 같은 정제를 거쳐야 검증-저장 값이 일치한다.
   if (patch && typeof patch.token === 'string' && patch.token !== '') patch = { ...patch, token: sanitizeToken(patch.token) };
   // 락 안에서 read-modify-write — 폴러 자동 페어링과 UI 설정 변경이 같은 파일을 경쟁해도 유실 없음
-  return withLock(lockKey(wsId), async () => {
+  return lockConnections(wsId, async () => {
     const all = await loadConnections(wsId);
     const agents = { ...all.telegram.agents };
     if (!patch) {
@@ -184,7 +185,7 @@ export async function updateConnection(wsId, kind, patch) {
   // 저장 단일 관문에서 토큰 정제 — 검증(validateConnection)과 저장이 항상 같은 깨끗한 값을 쓰게 한다.
   // (빈 문자열은 "기존 유지" 신호라 그대로 두고, 아래에서 처리한다)
   if (patch && typeof patch.token === 'string' && patch.token !== '') patch = { ...patch, token: sanitizeToken(patch.token) };
-  return withLock(lockKey(wsId), async () => {
+  return lockConnections(wsId, async () => {
     const all = await loadConnections(wsId);
     const next = { ...all[kind], ...patch };
     if (patch.token === '') next.token = all[kind].token; // 빈 토큰 = 기존 유지(토글만 바꿀 때)

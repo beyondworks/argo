@@ -53,11 +53,13 @@ export function classifyCommand(command) {
   return 'sh';
 }
 
-/** 후보 사다리(순수) — ARGO_SHELL(개발자 지정) → 동봉 busybox(서버 디렉터리 bin/ — cwd·실행 파일 기준) → Git Bash(설치돼 있으면) → cmd.exe(마지막). */
+/** 후보 사다리(순수) — ARGO_SHELL(개발자 지정) → 동봉 busybox(서버 디렉터리 bin/ — cwd·실행 파일 기준, 실행 파일과 같은 폴더 포함) → Git Bash(설치돼 있으면) → cmd.exe(마지막). */
 export function shellCandidates({ env = process.env, cwd = process.cwd(), argv1 = process.argv[1] } = {}) {
   const out = [];
   if (env.ARGO_SHELL) out.push({ kind: /busybox/i.test(env.ARGO_SHELL) ? 'busybox' : 'gitbash', file: env.ARGO_SHELL });
   for (const base of [cwd, argv1 ? dirname(argv1) : null].filter(Boolean)) out.push({ kind: 'busybox', file: resolve(base, 'bin', BUSYBOX_FILE) });
+  // 앱에 든 argo(argo.cmd)는 cwd가 사용자 터미널 폴더이고 argv1이 server\bin\argo.mjs라 위 두 후보가 빗나간다 — 동봉 busybox는 그 실행 파일과 같은 폴더(검토 H1, 2026-10-01).
+  if (argv1) out.push({ kind: 'busybox', file: resolve(dirname(argv1), BUSYBOX_FILE) });
   for (const p of [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs') : null].filter(Boolean)) out.push({ kind: 'gitbash', file: join(p, 'Git', 'bin', 'bash.exe') });
   out.push({ kind: 'cmd', file: 'cmd.exe' });
   return out;

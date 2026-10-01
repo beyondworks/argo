@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NAV, readNav, writeNav, moveId, readFav, writeFav, FAV_MAX, routeInfo, favTarget, routeLabelKey, routeIcon, VIEWS, NAV_ICON } from '../src/core/nav-model.js';
+import { NAV, readNav, writeNav, moveId, readFav, writeFav, FAV_MAX, routeInfo, favTarget, favable, routeLabelKey, routeIcon, VIEWS, NAV_ICON } from '../src/core/nav-model.js';
 
 // 이유(유건 9/30): "좌측 패널 메뉴가 하드코딩이면 모듈식이 아니다" — 사람마다 순서를 바꾸고 숨긴다(기기가 바뀌어도 같게 DB).
 // 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다. 메뉴·페이지(위키)·에이전트 세 칸의 순서도 바꾼다.
@@ -88,7 +88,6 @@ test('즐겨찾기 대상: 페이지는 page, 화면은 route, 메일 한 통·�
   assert.deepEqual(favTarget('/me/p/abc'), { kind: 'page', id: 'abc' });
   assert.deepEqual(favTarget('/o/lean-ax/calendar'), { kind: 'route', id: '/o/lean-ax/calendar' });
   assert.deepEqual(favTarget('/o/lean-ax/business/customers'), { kind: 'route', id: '/o/lean-ax/business/customers' });
-  assert.deepEqual(favTarget('/me'), { kind: 'route', id: '/me' });
   for (const bad of ['/me/mail/m1', '/o/x/business/nope', '/o/x/zzz', '/s/abc', '/', '', undefined]) assert.equal(favTarget(bad), null, String(bad));
 });
 
@@ -111,4 +110,22 @@ test('즐겨찾기 읽기: route는 모양이 맞는 주소만 — 페이지·�
   assert.deepEqual(writeFav(shown, { remove: 'route:/o/a/calendar' }), [{ kind: 'page', id: 'p1' }]);
   const long = Array.from({ length: FAV_MAX }, () => ({ kind: 'route', id: `/o/${'x'.repeat(40)}/business/performance` }));
   assert.ok(JSON.stringify({ items: long }).length < 16384, '긴 주소 100개도 한 행 16KB 안');
+});
+
+// 이유(유건 10/1 5차): 홈·설정·휴지통·모듈 보관함은 사이드바 맨 위·맨 아래 고정 칸이라 즐겨찾기에 넣을 수 없다 — ☆·우클릭·⌘K 어디서도 대상이 없고,
+// 이미 저장돼 있던 값은 읽을 때 걸러(다음 저장 때 자연히 빠진다). 페이지·에이전트·다른 화면은 그대로 넣을 수 있다.
+test('즐겨찾기 제외: 홈·설정·휴지통·모듈 보관함은 대상이 없고 저장돼 있어도 읽을 때 걸러진다', () => {
+  for (const base of ['/me', '/o/lean-ax']) {
+    for (const rest of ['', '/settings', '/trash', '/business/library']) assert.equal(favTarget(base + rest), null, base + rest);
+    for (const rest of ['/calendar', '/approvals', '/business', '/business/customers', '/knowhow']) assert.deepEqual(favTarget(base + rest), { kind: 'route', id: base + rest }, base + rest);
+  }
+  assert.deepEqual(favTarget('/me/mail'), { kind: 'route', id: '/me/mail' }, '메일은 넣을 수 있다');
+  assert.deepEqual(favTarget('/o/lean-ax/p/abc'), { kind: 'page', id: 'abc' }, '페이지는 그대로');
+  assert.equal(favable(routeInfo('/me/calendar')), true);
+  assert.equal(favable(null), false);
+  const saved = [{ kind: 'route', id: '/me' }, { kind: 'route', id: '/o/a/settings' }, { kind: 'route', id: '/o/a/trash' }, { kind: 'route', id: '/o/a/business/library' }, { kind: 'route', id: '/o/a/calendar' }, { kind: 'page', id: 'p1' }, { kind: 'crew', id: 'c1' }];
+  const shown = readFav(saved, () => true);
+  assert.deepEqual(shown, [{ kind: 'route', id: '/o/a/calendar' }, { kind: 'page', id: 'p1' }, { kind: 'crew', id: 'c1' }]);
+  assert.deepEqual(writeFav(shown, { add: { kind: 'page', id: 'p2' } }).map((x) => x.id), ['/o/a/calendar', 'p1', 'c1', 'p2'], '다음 저장에는 제외 항목이 빠진다');
+  assert.equal(saved.length, 7, '저장값은 건드리지 않는다');
 });

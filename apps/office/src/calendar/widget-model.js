@@ -64,9 +64,6 @@ export function keepEvent(e, { space, me, own = {}, off = [], calKey }) {
   return typeof own[src] === 'boolean' ? own[src] : !off.includes(calKey);
 }
 
-/** 제목 줄을 숨기는 위젯 — 미니멀·강조 디자인의 주·월·미니 보기 */
-export const isBare = (view, design) => DESIGNED.includes(view) && design !== 'basic';
-
 /** 보기별로 서버에서 읽을 한국 날짜 창 [from, to) — 보이는 범위를 덮는다. 주·월·미니는 그달 격자 창(캘린더 페이지와 같은 창이라 다시 받지 않는다) */
 export function readWindow(view, anchor, today) {
   if (DESIGNED.includes(view)) return M.windowOf('month', anchor);

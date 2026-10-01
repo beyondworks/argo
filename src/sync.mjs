@@ -23,7 +23,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
-import { withLock, withDirLock } from './mutex.mjs';
+import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
@@ -132,7 +132,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
     base.startsWith('.gw-queue') ||
-    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' ||
+    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' || base === '.server-presence.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
     base === '.workroots.json' || // 외부 작업 폴더 — 기기 고유 경로라 타 기기로 넘기면 무의미하거나 의도 안 한 접근 허용이 된다
     base === '.connector-secrets.json' || // 커넥터 OAuth 토큰 — 기기·회사 스코프(다른 기기는 재연결, workroots와 같은 원칙 — mcp-oauth-design §2-1)
@@ -480,6 +480,8 @@ async function walk(dir, base = dir, out = {}, failed = null) {
 export const isLedger = (rel) => rel.endsWith('.jsonl'); // usage.jsonl, events.jsonl — append-only 원장(행 병합)
 export const isText = (rel) => rel.endsWith('.md');       // 노트·일지 — 충돌 시 양쪽 보존
 export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중 턴과 레이스 → 스레드 락
+/** 코어 모듈이 `<file>.lockd` 프로세스 간 잠금 안에서 읽고-고쳐-쓰는 파일(스레드 제외 — 스레드는 isThread). 동기화가 이 파일들을 쓸 때도 같은 잠금을 잡는다. (export: 회귀 테스트용) */
+export const isFileLockedRel = (rel) => /^(company|approvals|corrections|routines|connections)\.json$/.test(rel) || /^agents\/[^/]+\.md$/.test(rel);
 // 아카이브(.archive)·휴지통(.trash)은 content 삭제가 아니라 이동(비파괴) — 대량삭제 브레이크 집계에서 제외한다.
 // 세션 여러 개 삭제(=.archive→.trash 이동)가 브레이크를 걸어 소규모 회사 동기화를 영구 정지시키던 문제 방지(리뷰 M2). 동기화 push/pull 자체는 정상 진행.
 export const isArchival = (rel) => /(^|\/)\.(archive|trash)\//.test(rel);
@@ -664,7 +666,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     const result = await syncCompanyOnce(wsId, owner, isRestore, opts);
     if (result.failed > 0) { deferFailure(); return result; }
     companyRetry.delete(key);
-    if (canIdle && !result.failed && !result.held) {
+    if (canIdle && !result.failed && !result.held && !result.deferred) {
       const stamp = await fingerprint();
       if (stamp !== null && stamp === beforeFingerprint) companyIdle.set(key, { at: Date.now(), fingerprint: stamp, revision });
       else companyIdle.delete(key);
@@ -730,7 +732,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     console.warn(`[argo] 동기화(${wsId}): 원격에서 발견된 빈 회사 — 신규 복원으로 간주, base 리셋`);
     for (const k of Object.keys(state)) delete state[k];
   }
-  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0, withdrawn = 0;
+  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0, withdrawn = 0, deferred = 0;
   let uploadDenied = 0; // 쓰기 시도에서 난 실패 수(플랜 무관) — cycle이 전부 거절이면 회사 단위 백오프
   let held = 0; // 계정 키 미확보로 이번 사이클 불가시 보류된 암호화 대상 파일 수
   const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
@@ -782,7 +784,22 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   });
   // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지). 원자쓰기(tmp→fsync→rename)로
   // 크래시 시 파일이 잘려 '손상→삭제 오전파'로 번지는 것을 차단(.tmp-는 EXCLUDE라 원격에 안 샌다).
-  const writeLocal = async (rel, buf, mtime) => {
+  // basedOn — 이 쓰기가 근거로 삼은 **로컬 파일의 해시**(없었다면 null, 확인을 끄려면 생략). 앱과 같은 폴더를 쓰는 argo CLI가 사이클 도중 같은 파일을
+  // 고칠 수 있다(M-b ①) — 판정(매니페스트)은 낡았는데 원격본으로 덮으면 그 변경이 사라진다. 잠금 안에서 해시를 다시 비교해 달라졌으면 deferred로
+  // 던진다(실패가 아니라 미룸: 다음 사이클이 양쪽 변경으로 보고 병합). 같은 폴더의 모듈 쓰기와 같은 `<file>.lockd`로 직렬화한다.
+  const recheck = async (rel, basedOn) => {
+    if (basedOn === undefined) return;
+    let cur = null;
+    try { cur = hashBuf(await readFile(relFull(rel))); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (cur !== basedOn) throw Object.assign(new Error(`로컬 파일이 사이클 도중 바뀌었다 — 이번엔 건너뜀(다음 사이클 병합): ${rel}`), { deferred: true });
+  };
+  const guarded = (rel, basedOn, fn) => {
+    const run = async () => { await recheck(rel, basedOn); return fn(); };
+    if (isThread(rel)) return withLock(threadLockKey(wsId, rel), run, { file: relFull(rel), mkParent: false });
+    if (isFileLockedRel(rel)) return withFileLock(relFull(rel), run, { mkParent: false });
+    return fn(); // 그 밖의 파일(원장 .jsonl·노트 등)은 종전대로 — **basedOn을 넘겨도 무시한다**(잠금·재확인은 스레드와 isFileLockedRel 파일뿐, 독립 검수 #800 LOW-7)
+  };
+  const writeLocal = async (rel, buf, mtime, basedOn) => {
     const doWrite = async () => {
       const full = relFull(rel);
       // 복호화된 시크릿(.secrets.json·connections)이 신규 기기 복원 시 0644로 생기지 않게 0600 강제(P1-8).
@@ -797,13 +814,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       }
     };
     if (rel === 'mcp.json') await withMcpSnapshot(rel, doWrite);
-    else if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);
-    else await doWrite();
+    else await guarded(rel, basedOn, doWrite);
   };
-  const rmLocal = async (rel) => {
+  const rmLocal = async (rel, basedOn) => {
     if (rel === 'mcp.json') await withMcpSnapshot(rel, () => rm(relFull(rel), { force: true }));
-    else if (isThread(rel)) await withLock(threadLockKey(wsId, rel), () => rm(relFull(rel), { force: true }));
-    else await rm(relFull(rel), { force: true });
+    else await guarded(rel, basedOn, () => rm(relFull(rel), { force: true }));
   };
   // 로컬 파일이 사라졌지만 같은 자리에 .corrupt- 백업이 있으면 — 사용자 삭제가 아니라 로컬 손상(readJson이 치워둠).
   // 삭제 전파 대신 원격 정상본으로 self-heal 하고, 소비한 백업은 정리한다(잔존 시 이후 정당한 삭제를 손상으로 오인 — 재검수 지적).
@@ -902,7 +917,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         let revived = false;
         if (base && !remoteChg) { // 삭제로 보임 — 단 로컬 손상(.corrupt-)이면 삭제가 아니라 복구
           if (corruptHeal.has(rel)) { // 로컬 손상 → 원격 정상본을 받아 self-heal
-            await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; conflicts++; revived = true;
+            await writeLocal(rel, await pullBuf(rel), r.m, null); local[rel] = r; pulled++; conflicts++; revived = true;
           } else { // 진짜 삭제 → 원격도 삭제. remove 실패면 항목을 유지하고 보류 — 항목만 지우고 blob이
             // 살아남으면 blob 실존 검사가 이 삭제를 '매니페스트 유실'로 오판해 부활시킨다(검수 HIGH).
             const { error: rmErr } = await client().storage.from(BUCKET).remove([remoteKey(rel)]);
@@ -910,9 +925,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
             delete remote.files[rel]; deletedR++; deletedRels.add(rel); // 매니페스트 병합에서 재추가 금지
           }
         } else if (!base) { // 원격 신규 → 받기
-          await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; revived = true;
+          await writeLocal(rel, await pullBuf(rel), r.m, null); local[rel] = r; pulled++; revived = true;
         } else { // 내가 지웠지만 원격도 바뀜 = 충돌 → 원격 부활본을 받아 유실 방지
-          await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; conflicts++; revived = true;
+          await writeLocal(rel, await pullBuf(rel), r.m, null); local[rel] = r; pulled++; conflicts++; revived = true;
         }
         // 원격에서 로컬을 복원한 경우 — 이 자리에 남아있던 손상 백업은 잉여. 어느 복원 경로(self-heal·신규·충돌복구)든
         // 청소해, 잔존 백업이 이후 정당한 삭제/리셋을 손상으로 오인해 되살리는 것을 막는다(재검수 잔여 지적).
@@ -925,7 +940,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
           // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
           if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
-          else { await rmLocal(rel); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
+          else { await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
         }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
         continue;
@@ -939,7 +954,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         continue;
       }
       if (remoteChg && !localChg) { // 원격만 변경 → 받기
-        await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; continue;
+        await writeLocal(rel, await pullBuf(rel), r.m, l.h); local[rel] = r; pulled++; continue;
       }
       if (localChg && !remoteChg) { // 로컬만 변경 → 밀기
         await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; continue;
@@ -952,13 +967,13 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       const remoteBuf = await pullBuf(rel);
       if (isLedger(rel)) { // 원장 — 행 합집합 병합 후 양쪽 수렴
         const mBuf = mergeLedger(localBuf, remoteBuf);
-        await writeLocal(rel, mBuf);
+        await writeLocal(rel, mBuf, undefined, hashBuf(localBuf)); // 원장은 재확인 대상이 아니라 이 인자는 무시된다(guarded 주석) — 형식을 맞춰 둘 뿐
         await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
       } else if (isThread(rel)) { // 스레드 blob — 메시지 배열 union 병합(양쪽 turn 보존), 스칼라는 최근 편집 쪽
         const mBuf = mergeThread(localBuf, remoteBuf, (r.m ?? 0) >= (l.m ?? 0) ? 'remote' : 'local');
-        await writeLocal(rel, mBuf);
+        await writeLocal(rel, mBuf, undefined, hashBuf(localBuf));
         await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
@@ -971,17 +986,18 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         // 잃는 것이 없다 — 실패 시 사본은 base에 없는 로컬 전용 파일로 남아 다음 기회에 신규로 push된다.
         const cRel = rel.replace(/\.md$/, `.conflict-${me}-${Date.now()}.md`);
         await writeLocal(cRel, localBuf);
-        await writeLocal(rel, remoteBuf, r.m);
+        await writeLocal(rel, remoteBuf, r.m, hashBuf(localBuf));
         local[rel] = r; local[cRel] = { m: Date.now(), s: localBuf.length, h: hashBuf(localBuf) };
         pulled++; conflicts++;
         await upload(remoteKey(cRel), sealFor(cRel, localBuf));
         remote.files[cRel] = local[cRel];
       } else { // 기타(json 등) — 최근 mtime 승(LWW), 단 카운트해 관측 가능하게
-        if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m); local[rel] = r; pulled++; }
+        if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m, hashBuf(localBuf)); local[rel] = r; pulled++; }
         else { await upload(remoteKey(rel), sealFor(rel, localBuf)); remote.files[rel] = l; pushed++; }
         conflicts++;
       }
     } catch (e) {
+      if (e?.deferred) { deferred++; continue; } // 로컬이 사이클 도중 바뀜 — 실패가 아니라 미룸(base 그대로라 다음 사이클이 양쪽 변경으로 병합·재판정)
       // free의 **쓰기 실패는 실패가 아니라 이 플랜의 정상 결과**다(클라우드 쓰기 자체가 금지) — 분리 집계한다.
       // 뭉뚱그리면(전부 failed) 한 번도 성공 동기화한 적 없는 free 회사(체험 만료 후 첫 동기화·state
       // 유실·손상)가 영구 미완에 고착한다: 로컬 전용 파일 하나만 있어도 failed>0 → 아래 매니페스트
@@ -1079,7 +1095,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     else if (state[rel]) nextFiles[rel] = state[rel];
   }
   await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.

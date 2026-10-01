@@ -91,7 +91,7 @@ const DICT = {
   'nav.collapse': ['사이드바 접기', 'Collapse sidebar'], 'nav.open': ['메뉴 열기', 'Open menu'],
   'width.full': ['전체 너비로 보기', 'Full width'], 'width.center': ['가운데로 보기', 'Centered width'],
   'save.saved': ['저장됨', 'Saved'], 'save.saving': ['저장 중…', 'Saving…'], 'save.unsaved': ['저장 안 됨', 'Not saved'], 'save.offline': ['오프라인 — 연결되면 저장', 'Offline — saves when back online'],
-  'home.title': ['오늘', 'Today'], 'home.addModule': ['모듈 추가', 'Add module'], 'home.noHidden': ['추가할 모듈이 없습니다', 'All modules are on the board'],
+  'home.title': ['오늘', 'Today'], 'home.addModule': ['모듈 추가', 'Add module'], 'home.noHidden': ['추가할 모듈이 없습니다', 'All modules are on the board'], 'home.addCopy': ['{name} 하나 더', 'Another {name}'],
   'home.reset': ['기본 배치로 되돌리기', 'Reset to default layout'],
   'mod.stats': ['현황', 'Overview'], 'stat.pick': ['이 카드에 보일 지표', 'Show on this card'], 'stat.add': ['카드 추가', 'Add card'], 'stat.remove': ['카드 빼기', 'Remove card'],
   'stat.approvals': ['결재 대기', 'Pending approvals'], 'stat.work': ['에이전트 작업', 'Agent work'], 'stat.mail': ['안 읽은 메일', 'Unread mail'], 'stat.crews': ['에이전트 가동', 'Agents working'],

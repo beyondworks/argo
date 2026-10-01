@@ -100,6 +100,7 @@ function cardPath(wsId, slug) {
 // 이 락으로 직렬화한다(다른 락 키(workroots·connections)와 이름공간이 겹치지 않아 락 순서 교착 없음 —
 // removeAgentCard가 이 락 안에서 setPin/updateAgentBot을 부르지만 그건 각자 자기 키로 잠근다).
 const cardLockKey = (wsId, slug) => `persona-card:${wsId}:${slug}`;
+const lockCard = (wsId, slug, fn) => withLock(cardLockKey(wsId, slug), fn, { file: cardPath(wsId, slug), mkParent: false }); // 프로세스 간 잠금 포함(M-b) — 없는 크루·회사엔 폴더를 만들지 않는다
 
 function parseFrontmatter(md) {
   const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -280,7 +281,7 @@ const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export async function saveAgentCard(wsId, slug, md) {
   const meta = parseFrontmatter(md);
   if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
-  return withLock(cardLockKey(wsId, slug), async () => {
+  return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
     if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
     // 엔진(runner/model)은 PATCH 경로가 소유한다 — 본문/규칙 저장(PUT)이 통째로 덮어써 엔진 선택을
@@ -342,7 +343,7 @@ export function scopeServers(servers, scope) {
 export const EFFORT_LEVELS = CLAUDE_EFFORTS;
 
 export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, effort, skills, mcp }) {
-  return withLock(cardLockKey(wsId, slug), async () => {
+  return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
     if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
     let md = await readFile(file, 'utf8');
@@ -388,7 +389,7 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
 
 /** 카드 "## 일하는 방식"에 규칙 한 줄 추가 — CardPanel의 addRule과 동일 규약(서버측). */
 export async function appendAgentRule(wsId, slug, text) {
-  return withLock(cardLockKey(wsId, slug), async () => {
+  return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
     if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
     const md = await readFile(file, 'utf8');
@@ -440,7 +441,7 @@ export async function listAgentSections(wsId, slug) {
 /** "## 일하는 방식" 규칙을 통째로 바꾼다(수정·삭제·순서 변경의 단일 원시 연산). 빈 배열이면 섹션은 남기고 규칙만 비운다.
     화면의 규칙 편집기와 크루 도구(update_profile rules)가 같은 함수를 쓴다 — 유건 지시 2026-09-07 "카드 편집에 자유도". */
 export async function setAgentRules(wsId, slug, rules) {
-  return withLock(cardLockKey(wsId, slug), async () => {
+  return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
     if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
     const list = (Array.isArray(rules) ? rules : []).map((r) => String(r).replace(/\s+/g, ' ').trim()).filter(Boolean);
@@ -463,7 +464,7 @@ export async function setAgentRules(wsId, slug, rules) {
 export async function setAgentSection(wsId, slug, title, body) {
   const name = String(title ?? '').replace(/^#+\s*/, '').trim();
   if (!name) throw new Error('섹션 제목이 필요합니다');
-  return withLock(cardLockKey(wsId, slug), async () => {
+  return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
     if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
     const text = String(body ?? '').replace(/\r\n/g, '\n').trim();
@@ -490,7 +491,7 @@ export async function renameTeam(wsId, from, to) {
     const slug = f.slice(0, -3);
     // 카드 하나씩 자기 락으로 직렬화 — 같은 턴에 다른 필드를 고치는 updateAgentMeta 등과 경쟁해도
     // read-modify-write가 끼어들지 않는다(파일마다 독립 키라 이 반복 자체는 서로 막지 않는다).
-    const did = await withLock(cardLockKey(wsId, slug), async () => {
+    const did = await lockCard(wsId, slug, async () => {
       const md = await readFile(file, 'utf8');
       if (parseFrontmatter(md).team !== from) return false;
       await writeJsonAtomic(file, setFrontmatterKey(md, 'team', to.trim()));
@@ -510,7 +511,7 @@ export async function removeAgentCard(wsId, slug) {
   // 카드 락 — 해고(rename to .archive)가 진행 중인 updateAgentMeta 등의 read-modify-write와
   // 경합하면 "고친 내용이 사라진 채 해고"나 "이미 해고된 파일에 다시 쓰기"가 날 수 있다.
   // setPin·updateAgentBot은 각자 자기 락 키(workroots·connections)라 여기서 기다려도 교착 없음.
-  await withLock(cardLockKey(wsId, slug), async () => {
+  await lockCard(wsId, slug, async () => {
     if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
     const archive = join(dir, '.archive');
     await mkdir(archive, { recursive: true });
