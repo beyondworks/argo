@@ -108,7 +108,7 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
 
 // Stable IDs cover ambiguous network failures: a committed message/attachment is looked up, never
 // posted again with a fresh ID. Storage paths also stay fixed when only metadata needs a retry.
-export function composerTransport(client, { orgId, chId, uid }) {
+export function composerTransport(client, { orgId, chId, uid, onDiscard = null }) {
   const pathFor = (job, item) => `${orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`; // 3번째 칸 = 글 번호 — 서버 msgr_bot_file(봇 첨부)·msgr_can_read_dm_attachment(위임 1:1 첨부 읽기)가 이 칸을 본다
   return {
     async message(job) {
@@ -149,6 +149,7 @@ export function composerTransport(client, { orgId, chId, uid }) {
       const result = await client.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', job.messageId).eq('author_user_id', uid).select('id');
       if (result.error) throw new Error(result.error.message);
       if (!result.data?.length) throw new Error('discard: no row'); // RLS가 0행으로 거절한 경우도 실패
+      try { onDiscard?.(job.messageId); } catch { /* 방송은 최선 — 이미 받은 사람의 화면은 다음 보정 조회에서도 바로잡힌다 */ } // 이미 이 글을 받은 다른 사람의 화면이 빈 말풍선을 바로 지우도록(앱의 삭제와 같은 'edit' 방송)
     },
     async attachment(job, item) {
       const result = await client.from('msgr_attachments').insert({ id: item.id, message_id: job.messageId,

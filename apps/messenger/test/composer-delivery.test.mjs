@@ -96,7 +96,10 @@ test('transport.discard soft-deletes only my message (update body/deleted_at, au
   await composerTransport(mk([{ id: 9 }]), { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 });
   assert.equal(calls[0][1], 'msgr_messages'); assert.equal(calls[0][2].body, ''); assert.ok(calls[0][2].deleted_at);
   assert.deepEqual(calls.filter((c) => c[0] === 'eq'), [['eq', 'id', 9], ['eq', 'author_user_id', 'me']]);
-  await assert.rejects(composerTransport(mk([]), { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 }), /no row/);
+  const told = []; await composerTransport(mk([{ id: 9 }]), { orgId: 'o', chId: 'c', uid: 'me', onDiscard: (id) => told.push(id) }).discard({ messageId: 9 });
+  assert.deepEqual(told, [9], '지운 뒤 방송 훅 — 이미 받은 다른 사람의 화면 갱신');
+  await composerTransport(mk([{ id: 9 }]), { orgId: 'o', chId: 'c', uid: 'me', onDiscard: () => { throw Error('rt down'); } }).discard({ messageId: 9 }); // 방송 실패는 삭제 성공을 뒤집지 않는다
+  const none = []; await assert.rejects(composerTransport(mk([]), { orgId: 'o', chId: 'c', uid: 'me', onDiscard: (id) => none.push(id) }).discard({ messageId: 9 }), /no row/); assert.deepEqual(none, [], '못 지웠으면 방송하지 않는다');
   await assert.rejects(composerTransport(mk(null, { message: 'denied' }), { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 }), /denied/);
 });
 
