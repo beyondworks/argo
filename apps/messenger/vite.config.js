@@ -21,6 +21,7 @@ export default defineConfig(({ command, mode }) => {
     '@argo/ui': shared('app/ui.jsx'),                // Icon·Avatar·Markdown·DropUp·imeGuardWith
     '@argo/i18n': shared('app/i18n.jsx'),            // LangProvider(ui.jsx가 요구) + 테마 라벨
     '@argo/graph2d-core': shared('app/c/[ws]/graph2d-core.mjs'), // 그래프 구성(순수) — 3D 기억 그래프(graph3d.jsx)가 같은 구성을 쓴다(본체 2D 렌더러는 쓰지 않는다)
+    '@argo/splash': shared('public/splash/north-star.mjs'), // 북극성 시작 스플래시 엔진 — 본체 부트 화면이 번들러 없이 읽어야 해서 정본이 public/에 있다
   } },
   server: { host: process.env.TAURI_DEV_HOST || false, strictPort: true, fs: { allow: [shared('.')] } },
   clearScreen: false,

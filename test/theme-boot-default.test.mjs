@@ -1,5 +1,5 @@
 // 첫 페인트 기본 테마 — 인라인 부트 스크립트(플래시 방지)와 ThemeProvider 기본값이 갈리면 첫 프레임과 두 번째 프레임이
-// 다른 테마로 그려진다(번쩍임). 앱마다 한 쌍씩 잠근다: Argo(layout.jsx ↔ DEFAULT_THEME), 메신저(index.html ↔ main.jsx).
+// 다른 테마로 그려진다(번쩍임). 앱마다 한 쌍씩 잠근다: Argo(layout.jsx ↔ DEFAULT_THEME), 메신저(index.html ↔ app-root.jsx — 2026-10-01 진입 청크 분리로 Provider가 main.jsx에서 옮겨 갔다).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -18,11 +18,11 @@ test('Argo 앱: layout.jsx 부트 폴백 == DEFAULT_THEME, 그리고 THEMES 안'
   assert.ok(THEMES.includes(DEFAULT), `DEFAULT_THEME(${DEFAULT})이 THEMES에 없다`);
 });
 
-test('메신저: index.html 부트 폴백 == main.jsx defaultTheme, 그리고 THEMES 안', () => {
+test('메신저: index.html 부트 폴백 == app-root.jsx defaultTheme, 그리고 THEMES 안', () => {
   const boot = bootOf(read('apps/messenger/index.html'));
-  const prop = /<ThemeProvider defaultTheme="([a-z0-9-]+)">/.exec(read('apps/messenger/src/main.jsx'))?.[1];
+  const prop = /<ThemeProvider defaultTheme="([a-z0-9-]+)">/.exec(read('apps/messenger/src/app-root.jsx'))?.[1];
   assert.ok(boot && prop, `부트(${boot}) 또는 defaultTheme(${prop})을 못 읽었다`);
-  assert.equal(boot, prop, 'index.html 폴백과 main.jsx defaultTheme이 다르다 — 메신저 첫 페인트가 번쩍인다');
+  assert.equal(boot, prop, 'index.html 폴백과 app-root.jsx defaultTheme이 다르다 — 메신저 첫 페인트가 번쩍인다');
   assert.ok(THEMES.includes(prop), `메신저 기본 테마(${prop})가 THEMES에 없다`);
   assert.equal(prop, 'linen', '메신저 기본 테마는 linen(유건 승인 2026-09-03)');
 });

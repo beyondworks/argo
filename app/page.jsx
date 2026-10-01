@@ -7,6 +7,7 @@ import { Logo, Icon, Avatar, Spinner, Skeleton, ConfirmModal, api, imeGuard, tim
 import { AiConnectionCard, ACCOUNT_WS, anyRunnerUsable, runnerNeedsReconnect } from './runner-connect';
 import { useLang } from './i18n';
 import { LocalAssetOffer } from './components/LocalAssetImport';
+import { markSplashReady, homeSplashReady } from './splash-continue-core.mjs';
 
 export default function Home() {
   const { t, lang } = useLang();
@@ -46,6 +47,9 @@ export default function Home() {
     api('/api/me').then((d) => { if (!alive) return; setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
     return () => { alive = false; };
   }, [lang]);
+
+  // 데스크톱 시작 스플래시(북극성 2단계)는 회사 목록이 오면(또는 실패하면) 닫는다 — 빈 목록 위로 걷히지 않게. 스플래시가 없으면 아무 일도 없다
+  useEffect(() => { if (homeSplashReady(companies, error)) markSplashReady(); }, [companies, error]);
 
   // 온보딩 러너 상태 — 카드가 연결/제거 시 쏘는 argo:refresh로 즉시 재판정(연결되면 3단계가 풀린다)
   useEffect(() => {

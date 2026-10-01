@@ -1,48 +1,46 @@
-/* 데스크톱 셸 부트 화면 — 파도 위를 항해하는 배 + 실시간 단계/진행률. 배경 #212121 고정. */
-html, body { margin: 0; height: 100%; background: #212121; color: #f2ecdd;
-  font-family: -apple-system, "Pretendard", system-ui, sans-serif;
-  display: flex; align-items: center; justify-content: center; overflow: hidden; }
-
-.box { text-align: center; width: min(480px, calc(100vw - 48px)); }
-
-/* 장면 — 배(뒤) 위로 파도(앞)가 겹쳐 선체가 물에 잠겨 보이게 */
-.scene { position: relative; height: 210px; margin-bottom: 6px; }
-/* 에셋이 검은 배경 위 그림이라 screen 블렌드로 검정을 녹인다 — #212121 위에서 검정 = 배경색 */
-.ship { position: absolute; left: 50%; bottom: 58px; width: 210px; margin-left: -105px;
-  z-index: 1; mix-blend-mode: screen; animation: sail 7s ease-in-out infinite alternate; will-change: transform; }
-.wave { position: absolute; left: 50%; bottom: 0; width: 480px; margin-left: -240px;
-  z-index: 2; mix-blend-mode: screen; animation: sway 5.5s ease-in-out infinite alternate; will-change: transform; }
-
-@keyframes sail {
-  0%   { transform: translateX(-34px) translateY(2px) rotate(-2.4deg); }
-  50%  { transform: translateX(0)     translateY(-4px) rotate(0.6deg); }
-  100% { transform: translateX(34px)  translateY(1px) rotate(2.4deg); }
+/* 데스크톱 셸 부트 화면 — 화면 정중앙의 북극성 스플래시(boot-splash.mjs) 아래에 단계 문구·진행률·로그·오류를 얹는다.
+   색은 graphite(시스템 밝기를 따름, 2026-10-01 유건 결정 — 옛 #212121 바탕·금색 진행 막대는 폐기된 모티프).
+   값은 public/splash/north-star.mjs GRAPHITE와 app/globals.css :root[data-theme='graphite'] 토큰(--bg·--primary·--fg·--fg-3·--danger)과
+   같아야 한다 — test/north-star-splash.test.mjs가 잠근다. */
+:root {
+  color-scheme: light dark;
+  --boot-bg: #fafafa; --boot-mark: #1a1a1a; --boot-fg: #393939; --boot-fg-3: #737373;
+  --boot-track: rgba(26, 26, 26, 0.1); --boot-danger: #b3392f; --boot-danger-soft: rgba(179, 57, 47, 0.09); --boot-danger-line: rgba(179, 57, 47, 0.3);
 }
-@keyframes sway {
-  0%   { transform: translateX(-10px) translateY(0); }
-  100% { transform: translateX(10px)  translateY(-3px); }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --boot-bg: #202020; --boot-mark: #ededed; --boot-fg: #cfcfcf; --boot-fg-3: #8c8c8c;
+    --boot-track: rgba(237, 237, 237, 0.12); --boot-danger: #e0655a; --boot-danger-soft: rgba(224, 101, 90, 0.13); --boot-danger-line: rgba(224, 101, 90, 0.35);
+  }
 }
-@media (prefers-reduced-motion: reduce) {
-  .ship, .wave { animation: none; }
-}
+html, body { margin: 0; height: 100%; background: var(--boot-bg); color: var(--boot-fg);
+  font-family: -apple-system, "Pretendard", system-ui, sans-serif; overflow: hidden; }
 
-.msg { margin-top: 10px; font-size: 15px; letter-spacing: .2px; opacity: .92; }
-.sub { margin-top: 7px; font-size: 12.5px; opacity: .6; min-height: 16px; }
+/* 문구 상자 — 로고(가운데 112px) 아래. 스플래시 층(z 2147483000) 위에 둔다 */
+.box { position: fixed; z-index: 2147483001; left: 50%; transform: translateX(-50%); top: calc(50% + 96px); bottom: 16px;
+  width: min(480px, calc(100vw - 48px)); overflow-y: auto; text-align: center; }
 
-/* 진행률 바 — 골드 */
-.bar { margin: 16px auto 0; width: 260px; height: 3px; border-radius: 2px;
-  background: rgba(242, 236, 221, 0.14); overflow: hidden; }
-.fill { height: 100%; width: 4%; border-radius: 2px; background: #d9b23a;
-  transition: width .45s ease; }
+/* 1.2초 안에 준비되면 문구 없이 로고만 보이고 바로 다음 화면으로 넘어간다. 늦어질 때만 드러낸다 —
+   스크립트가 아니라 CSS 지연이라 스크립트가 늦거나 죽어도 보인다(반대 검토 #3). 오류(.err)와 로그(.logtail)는 지연 없이 바로 */
+.msg, .sub, .bar { opacity: 0; animation: bootReveal .3s ease 1.2s forwards; }
+@keyframes bootReveal { to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .msg, .sub, .bar { animation-duration: .01s; } }
+
+.msg { font-size: 15px; letter-spacing: .2px; }
+.sub { margin-top: 7px; font-size: 12.5px; color: var(--boot-fg-3); min-height: 16px; }
+
+/* 진행률 바 — graphite 액션 색(primary) */
+.bar { margin: 16px auto 0; width: 260px; height: 3px; border-radius: 2px; background: var(--boot-track); overflow: hidden; }
+.fill { height: 100%; width: 4%; border-radius: 2px; background: var(--boot-mark); transition: width .45s ease; }
 
 /* 느릴 때 서버 로그 테일 — 무슨 일이 벌어지는지 보여준다 */
 .logtail { margin: 14px auto 0; width: min(420px, 90vw); font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 10.5px; line-height: 1.6; color: rgba(242, 236, 221, 0.38); text-align: left;
+  font-size: 10.5px; line-height: 1.6; color: var(--boot-fg-3); text-align: left;
   white-space: pre-wrap; word-break: break-all; max-height: 52px; overflow: hidden; }
 
 /* 실패 — 숨기지 않는다 */
-.err { margin: 14px auto 0; width: min(420px, 90vw); padding: 10px 12px; border-radius: 8px;
-  background: rgba(224, 92, 92, 0.12); border: 1px solid rgba(224, 92, 92, 0.35);
-  color: #e8a0a0; font-size: 12px; line-height: 1.6; text-align: left; white-space: pre-wrap; }
+.err { margin: 14px auto 0; width: min(420px, 90vw); padding: 10px 12px; border-radius: 8px; box-sizing: border-box;
+  background: var(--boot-danger-soft); border: 1px solid var(--boot-danger-line);
+  color: var(--boot-danger); font-size: 12px; line-height: 1.6; text-align: left; white-space: pre-wrap; }
 
-a { color: #d9b23a; }
+a { color: var(--boot-mark); }
