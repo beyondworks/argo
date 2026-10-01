@@ -1,7 +1,8 @@
 /* Argo Office 테마 = 앱 셸(data-shell: 배치·둥글기·버튼·탭 모양) × 색상(data-theme: 가족 × 시스템·-light·-dark). 유건 9/30: "테마는 앱쉘 선택 + 컬러 선택으로".
-   셸: plain(기본 — base.css 그대로) · float(떠 있는 사이드바, 크림 레퍼런스) · window(창, 샌드) · panel(떠 있는 본문, 피치) · pill(알약, 미스트) · glass(유리, 글로우).
-   색: linen·graphite(tokens.css) + cream·sand·peach·mist·glow(아래 6절). 어느 셸이든 어느 색과도 섞인다.
-   원칙: ① plain 셸 + linen·graphite 색 화면은 한 픽셀도 바뀌지 않는다 — 모양 규칙은 plain이 아닌 셸 아래에만, 색 규칙은 새 다섯 색 아래에만 있다.
+   셸: plain(기본 — base.css 그대로) · float(떠 있는 사이드바, 크림 레퍼런스) · window(창, 샌드) · panel(떠 있는 본문, 피치) · pill(알약, 미스트) · glass(유리, 글로우)
+       · liquid(리퀴드 글래스 — 진짜 흐림 유리, 10/1) · neu(뉴모피즘 — 같은 색 면이 빛과 그늘로 솟고 파임, 10/1).
+   색: linen·graphite(tokens.css) + cream·sand·peach·mist·glow + sage·ocean·rose·lavender·slate·ember(아래 6절). 어느 셸이든 어느 색과도 섞인다.
+   원칙: ① plain 셸 + linen·graphite 색 화면은 한 픽셀도 바뀌지 않는다 — 모양 규칙은 plain이 아닌 셸 아래에만, 색 규칙은 새 색(cream 이후) 아래에만 있다.
          ② 색은 토큰만 쓴다(글자 대비는 test/themes.test.mjs가 잠근다). ③ hover는 (hover: hover) 안에서만. ④ 왼쪽 테두리 막대는 쓰지 않는다(유건 9/30).
          ⑤ 글꼴은 Pretendard 그대로 — 굵기·자간·크기로만 느낌을 낸다(데스크톱 CSP가 외부 글꼴을 막는다). */
 
@@ -15,6 +16,25 @@
   --t-glass: color-mix(in srgb, var(--card) 58%, transparent); --t-glass-strong: color-mix(in srgb, var(--card) 80%, transparent); --t-glass-line: color-mix(in srgb, var(--fg) 12%, transparent);
   --t-badge-bg: var(--fg); --t-badge-fg: var(--bg); --t-primary-shadow: none;
   --tile-1: var(--secondary); --tile-3: var(--secondary);
+}
+/* 셸이 쓰는 빛·그늘(모드마다 다르다) — 리퀴드 글래스의 반사광·그림자와 뉴모피즘의 빛(왼쪽 위)·그늘(오른쪽 아래). 바탕 색에서 섞어 만들어 어느 색 가족과도 맞는다.
+   빛 덩어리(--t-glow-*)는 유리가 비칠 바탕 — 색 가족이 정하지 않으면 강조·정보 색에서 만든다 */
+:root {
+  --t-glow-1: color-mix(in srgb, var(--info) 20%, #ffffff); --t-glow-2: color-mix(in srgb, var(--selection) 70%, #ffffff); --t-glow-3: color-mix(in srgb, var(--ok) 15%, #ffffff);
+  --t-shine: rgba(255, 255, 255, 0.95); --t-shine-lo: rgba(255, 255, 255, 0.4); --t-shade: rgba(20, 22, 30, 0.09);
+  --t-neu-hi: color-mix(in srgb, var(--bg) 22%, #ffffff); --t-neu-lo: color-mix(in srgb, var(--bg) 82%, #000000);
+}
+:root[data-theme$='-dark'] {
+  --t-shine: rgba(255, 255, 255, 0.24); --t-shine-lo: rgba(255, 255, 255, 0.07); --t-shade: rgba(0, 0, 0, 0.32);
+  --t-neu-hi: color-mix(in srgb, var(--bg) 96.5%, #ffffff); --t-neu-lo: color-mix(in srgb, var(--bg) 40%, #000000);
+  --t-glow-1: color-mix(in srgb, var(--info) 13%, transparent); --t-glow-2: color-mix(in srgb, var(--mark) 7%, transparent); --t-glow-3: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme]:not([data-theme$='-light']) {
+    --t-shine: rgba(255, 255, 255, 0.24); --t-shine-lo: rgba(255, 255, 255, 0.07); --t-shade: rgba(0, 0, 0, 0.32);
+    --t-neu-hi: color-mix(in srgb, var(--bg) 96.5%, #ffffff); --t-neu-lo: color-mix(in srgb, var(--bg) 40%, #000000);
+    --t-glow-1: color-mix(in srgb, var(--info) 13%, transparent); --t-glow-2: color-mix(in srgb, var(--mark) 7%, transparent); --t-glow-3: color-mix(in srgb, var(--ok) 8%, transparent);
+  }
 }
 
 /* ════════ 1. 셸 모양 토큰 ════════ */
@@ -67,62 +87,97 @@
   --t-win-bg: color-mix(in srgb, var(--bg) 72%, transparent);
   --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
 }
-/* 사이드바가 창 바탕에 녹는 셸(panel·pill·glass)에 어두운 사이드바 색(linen·cream)이 오면 메뉴 글자가 밝은 바탕 위에 놓인다 — 본문 글자 색으로 바꾼다 */
-:root:is([data-shell='panel'], [data-shell='pill'], [data-shell='glass']):is([data-theme^='linen'], [data-theme^='cream']) {
+/* liquid — 리퀴드 글래스(유건 10/1 레퍼런스): 반투명 유리(흐림 + 채도) · 위쪽 반사광 · 부드러운 그림자 · 색 가족의 빛 덩어리 바탕.
+   유리 색은 셸 전용 토큰(--float는 그대로 불투명). 투명도 줄이기 설정이면 아래 @media가 불투명으로 바꾼다 */
+:root[data-shell='liquid'] {
+  --rc: 12px; --rs: 22px; --ctl: 34px;
+  --r-sm: 10px; --r: 16px; --r-lg: 22px; --r-pill: 999px;
+  --t-nav-r: 999px; --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 14px; --t-seg-r: 999px;
+  --t-h1-size: 32px; --t-h1-w: 560; --t-h1-ls: -0.03em; --t-num-size: 30px; --t-num-w: 540;
+  --t-space-bg: var(--t-lq-chip); --t-space-edge: inset 0 1px 0 var(--t-shine-lo); --t-active-shadow: inset 0 1px 0 var(--t-shine), 0 2px 10px var(--t-shade);
+  --t-win-m: 14px; --t-win-r: 30px;
+  --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
+  --t-lq-win: color-mix(in srgb, var(--card) 22%, transparent);
+  --t-lq-side: color-mix(in srgb, var(--card) 34%, transparent);
+  --t-lq-card: color-mix(in srgb, var(--card) 40%, transparent); --t-lq-card-hi: color-mix(in srgb, var(--card) 64%, transparent);
+  --t-lq-chip: color-mix(in srgb, var(--card) 50%, transparent);
+  --t-lq-pill: color-mix(in srgb, var(--card) 86%, transparent);
+  --t-lq-pop: color-mix(in srgb, var(--card) 70%, transparent);
+  --t-lq-toast: color-mix(in srgb, var(--primary) 84%, transparent);
+  --t-lq-blur: blur(24px) saturate(170%);
+  --t-lq-blur-lg: blur(36px) saturate(180%);
+}
+/* neu — 뉴모피즘(유건 10/1 레퍼런스): 바탕과 같은 색의 면이 빛(왼쪽 위)·그늘(오른쪽 아래)로 솟고, 눌린 것(활성 탭·선택·입력칸·켜진 토글)은 안쪽 그림자로 파인다. 외곽선 없음 */
+:root[data-shell='neu'] {
+  --rc: 12px; --rs: 22px; --ctl: 36px;
+  --r-sm: 10px; --r: 16px; --r-lg: 22px; --r-pill: 999px;
+  --t-nav-r: 12px; --t-btn-r: 12px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 12px; --t-seg-r: 14px;
+  --t-h1-size: 30px; --t-h1-w: 620; --t-h1-ls: -0.03em; --t-num-size: 30px; --t-num-w: 560;
+  --t-space-bg: var(--bg); --t-space-edge: var(--t-neu-up-sm); --t-active-shadow: var(--t-neu-in-sm);
+  --t-win-r: 30px;
+  --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
+  --t-neu-up: -6px -6px 16px var(--t-neu-hi), 7px 7px 18px var(--t-neu-lo);
+  --t-neu-up-sm: -3px -3px 8px var(--t-neu-hi), 3px 3px 8px var(--t-neu-lo);
+  --t-neu-pop: -8px -8px 22px var(--t-neu-hi), 12px 14px 34px var(--t-neu-lo);
+  --t-neu-in: inset 4px 4px 9px var(--t-neu-lo), inset -4px -4px 9px var(--t-neu-hi);
+  --t-neu-in-sm: inset 2px 2px 5px var(--t-neu-lo), inset -2px -2px 5px var(--t-neu-hi);
+}
+/* 사이드바가 창 바탕에 녹는 셸(panel·pill·glass·liquid·neu)에 어두운 사이드바 색(linen·cream·ember)이 오면 메뉴 글자가 밝은 바탕 위에 놓인다 — 본문 글자 색으로 바꾼다 */
+:root:is([data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']):is([data-theme^='linen'], [data-theme^='cream'], [data-theme^='ember']) {
   --side-bg: var(--bg); --side-fg: var(--fg); --side-fg-2: var(--fg-2); --side-fg-3: var(--fg-3);
   --side-line: var(--border-soft); --side-hover: color-mix(in srgb, var(--fg) 6%, transparent); --side-active: var(--surface); --side-mark: var(--mark);
 }
 
 /* ════════ 2. 셸 공통 모양 — plain이 아닌 모든 셸 ════════ */
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) { background: var(--frame); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) body { background: transparent; }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.nav-item, .tree-row, .crew-btn, .crew-row, .space-switch, .search-btn, .crew-search) { border-radius: var(--t-nav-r); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.nav-item, .tree-row).active { box-shadow: var(--t-active-shadow); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .space-switch { background: var(--t-space-bg); box-shadow: var(--t-space-edge); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .nav-count { border-radius: var(--r-pill); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .topbar { border-bottom-color: var(--t-bar-line); background: var(--t-top-bg); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .crumb-cur { font-weight: 600; }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) { background: var(--frame); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) body { background: transparent; }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.nav-item, .tree-row, .crew-btn, .crew-row, .space-switch, .search-btn, .crew-search) { border-radius: var(--t-nav-r); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.nav-item, .tree-row).active { box-shadow: var(--t-active-shadow); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .space-switch { background: var(--t-space-bg); box-shadow: var(--t-space-edge); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .nav-count { border-radius: var(--r-pill); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .topbar { border-bottom-color: var(--t-bar-line); background: var(--t-top-bg); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .crumb-cur { font-weight: 600; }
 /* 제목 — 셸마다 크기·굵기가 다르다(좁은 폭에서는 화면 폭에 맞춰 줄인다) */
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .page-h1 { font-size: min(var(--t-h1-size), 8.6vw); font-weight: var(--t-h1-w); letter-spacing: var(--t-h1-ls); line-height: 1.18; }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .stat-num { font-size: var(--t-num-size); font-weight: var(--t-num-w); letter-spacing: -0.02em; }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .module-head h3 { font-size: 14px; font-weight: 640; letter-spacing: -0.01em; }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .set-card h2 { font-weight: 660; }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .page-h1 { font-size: min(var(--t-h1-size), 8.6vw); font-weight: var(--t-h1-w); letter-spacing: var(--t-h1-ls); line-height: 1.18; }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .stat-num { font-size: var(--t-num-size); font-weight: var(--t-num-w); letter-spacing: -0.02em; }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .module-head h3 { font-size: 14px; font-weight: 640; letter-spacing: -0.01em; }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .set-card h2 { font-weight: 660; }
 /* 버튼·칩·입력·팝업 둥글기 */
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.btn, .btn.sm, .toast) { border-radius: var(--t-btn-r); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.icon-btn, .icon-btn.sm) { border-radius: var(--t-icon-r); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.badge, .draft-badge, .mail-tag, .chip) { border-radius: var(--t-chip-r); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .badge { height: 22px; padding: 0 9px; }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.input, .select, .field input, .field select, .compose-body) { border-radius: var(--t-input-r); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.seg, .seg-btn) { border-radius: var(--t-seg-r); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .progress { border-radius: 999px; }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.menu, .palette) { border-radius: var(--rs); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) :is(.menu-item, .palette-row) { border-radius: var(--rc); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.btn, .btn.sm, .toast) { border-radius: var(--t-btn-r); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.icon-btn, .icon-btn.sm) { border-radius: var(--t-icon-r); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.badge, .draft-badge, .mail-tag, .chip) { border-radius: var(--t-chip-r); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .badge { height: 22px; padding: 0 9px; }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.input, .select, .field input, .field select, .compose-body) { border-radius: var(--t-input-r); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.seg, .seg-btn) { border-radius: var(--t-seg-r); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .progress { border-radius: 999px; }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.menu, .palette) { border-radius: var(--rs); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) :is(.menu-item, .palette-row) { border-radius: var(--rc); }
 /* 페이지 본문(문서)·메일 화면은 카드 바탕을 쓰지 않는다 — 바탕색만 셸의 문서 바탕으로 */
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .content.view-page { background: var(--t-doc-bg); }
-:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .main:has(> .content.view-page) .topbar { background: var(--t-doc-bg); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .content.view-page { background: var(--t-doc-bg); }
+:root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .main:has(> .content.view-page) .topbar { background: var(--t-doc-bg); }
 @media (hover: hover) {
-  :root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .btn:not(.primary, .danger, .ghost, .on):hover { background: var(--card-2); }
+  :root:is([data-shell='float'], [data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .btn:not(.primary, .danger, .ghost, .on):hover { background: var(--card-2); }
 }
 
-/* ════════ 3. 색 공통 — 새 다섯 색(cream·sand·peach·mist·glow) ════════ */
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) :is(.module, .set-card, .table-wrap, .login-card) { background: var(--t-card-bg); box-shadow: var(--t-card-edge); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .module-head { border-bottom-color: var(--t-head-line); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .tabs { border-bottom-color: var(--t-top-line); }
+/* ════════ 3. 색 공통 — 새 색(cream·sand·peach·mist·glow·sage·ocean·rose·lavender·slate·ember) ════════ */
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) :is(.module, .set-card, .table-wrap, .login-card) { background: var(--t-card-bg); box-shadow: var(--t-card-edge); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .module-head { border-bottom-color: var(--t-head-line); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .tabs { border-bottom-color: var(--t-top-line); }
 /* 현황 카드 — 파스텔 타일. 타일 위 글자는 어두운(다크에서는 밝은) 전용 색으로 다시 정해 대비를 지킨다 */
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stat-card { box-shadow: var(--t-tile-edge); --fg-2: var(--tile-ink-2); --fg-3: var(--tile-ink-3); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stat-card:not(.stat-add) { background: var(--tile-1); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+2) { background: var(--tile-2); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+3) { background: var(--tile-3); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+4) { background: var(--tile-4); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+5) { background: var(--tile-5); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stats > .stat-card:not(.stat-add):nth-child(6n+6) { background: var(--tile-6); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .stat-card { box-shadow: var(--t-tile-edge); --fg-2: var(--tile-ink-2); --fg-3: var(--tile-ink-3); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .stat-card:not(.stat-add) { background: var(--tile-1); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .stats > .stat-card:not(.stat-add):nth-child(6n+2) { background: var(--tile-2); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .stats > .stat-card:not(.stat-add):nth-child(6n+3) { background: var(--tile-3); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .stats > .stat-card:not(.stat-add):nth-child(6n+4) { background: var(--tile-4); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .stats > .stat-card:not(.stat-add):nth-child(6n+5) { background: var(--tile-5); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .stats > .stat-card:not(.stat-add):nth-child(6n+6) { background: var(--tile-6); }
 /* .badge.badge — 셸별 .badge.ok·.warn 색이 타일 안 배지를 덮지 않게 한 칸 더 높인다 */
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .stat-card .badge.badge { background: var(--t-tile-badge); color: var(--fg); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .btn.primary { box-shadow: var(--t-primary-shadow); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .progress span { background: var(--t-bar, var(--primary)); }
-:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) .bar i { background: var(--t-bar, var(--fg-2)); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .stat-card .badge.badge { background: var(--t-tile-badge); color: var(--fg); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .btn.primary { box-shadow: var(--t-primary-shadow); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .progress span { background: var(--t-bar, var(--primary)); }
+:root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) .bar i { background: var(--t-bar, var(--fg-2)); }
 @media (hover: hover) {
-  :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow']) a.stat-card:hover { background-image: linear-gradient(var(--wash), var(--wash)); }
+  :root:is([data-theme^='cream'], [data-theme^='sand'], [data-theme^='peach'], [data-theme^='mist'], [data-theme^='glow'], [data-theme^='sage'], [data-theme^='ocean'], [data-theme^='rose'], [data-theme^='lavender'], [data-theme^='slate'], [data-theme^='ember']) a.stat-card:hover { background-image: linear-gradient(var(--wash), var(--wash)); }
 }
 
 /* ════════ 4. 창 뼈대 — 데스크톱 폭(768px 이상)에서만. 좁은 폭은 기본 서랍 사이드바를 그대로 쓴다 ════════ */
@@ -132,6 +187,8 @@
   :root[data-shell='float'].nav-collapsed .shell { column-gap: 0; }
   :root[data-shell='float'] .side { border-radius: 30px; }
   /* 창으로 감싸는 네 셸 — 바탕 위에 둥근 창 하나 */
+  /* #root가 창 바깥 여백을 품는다 — 여백이 #root 밖으로 겹쳐 나가면 문서가 그만큼 스크롤돼 창이 위로 밀렸다(scrollIntoView·초점 이동 때) */
+  :root:is([data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid']) #root { display: flow-root; }
   :root:is([data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .shell { margin: var(--t-win-m); height: calc(100dvh - 2 * var(--t-win-m)); border-radius: var(--t-win-r); background: var(--t-win-bg); box-shadow: var(--t-win-edge); overflow: hidden; }
   /* window — 사이드바는 창과 같은 바탕에 경계선 하나, 본문은 얇은 테두리의 큰 판 */
   :root[data-shell='window'] .side { border-right: 1px solid var(--t-top-line); }
@@ -143,6 +200,14 @@
   :root:is([data-shell='panel'], [data-shell='pill']).nav-collapsed .main { margin-left: 12px; }
   :root[data-shell='glass'] .main { margin: 8px 8px 8px 0; }
   :root[data-shell='glass'].nav-collapsed .main { margin-left: 8px; }
+  /* liquid — 바탕 위 유리 창 하나, 그 안에 유리 사이드바가 한 겹 더 떠 있다(레퍼런스) */
+  :root[data-shell='liquid'] .shell { margin: var(--t-win-m); height: calc(100dvh - 2 * var(--t-win-m)); border-radius: var(--t-win-r); padding: 8px; column-gap: 8px; overflow: hidden; box-shadow: 0 2px 6px var(--t-shade), 0 30px 80px var(--t-shade); }
+  :root[data-shell='liquid'].nav-collapsed .shell { column-gap: 0; }
+  :root[data-shell='liquid'] .side { position: relative; border-radius: calc(var(--t-win-r) - 8px); box-shadow: 0 1px 2px var(--t-shade), 0 10px 30px var(--t-shade); }
+  /* neu — 같은 색 바탕 위에 사이드바 판이 솟아 있다 */
+  :root[data-shell='neu'] .shell { padding: 18px; column-gap: 18px; }
+  :root[data-shell='neu'].nav-collapsed .shell { column-gap: 0; }
+  :root[data-shell='neu'] .side { border-radius: var(--t-win-r); }
 }
 /* 본문 판 색은 좁은 폭에서도 같다 */
 :root:is([data-shell='panel'], [data-shell='pill']) .main { background: var(--t-main-bg); }
@@ -204,6 +269,111 @@
 :root:is([data-shell='pill'], [data-shell='glass']) .module-head { height: 52px; padding-left: 12px; }
 :root:is([data-shell='pill'], [data-shell='glass']) .btn.primary { font-weight: 560; }
 
+/* liquid — 리퀴드 글래스(유건 10/1). 유리 = 반투명 색 + 흐림·채도(뒤가 비친다) + 위쪽 반사광(::after 그라데이션 테두리) + 부드러운 그림자.
+   흐림은 포털 층(메뉴·모달·시트·팔레트·토스트·고르기 막대)엔 직접, 틀(.shell·.side·.module·설정 카드)엔 ::before에만 — 틀에 직접 주면
+   그 안의 position:fixed 층(.vw-selbar·.vw-band·.drop-hint.page·.nav-scrim)이 화면 대신 그 틀을 기준으로 놓인다. ::before(z-index -1)는 .shell(isolation)의 맨 아래 칸에 그려진다 */
+:root[data-shell='liquid'] { background: radial-gradient(56% 52% at 8% 6%, var(--t-glow-1), transparent 72%), radial-gradient(44% 48% at 94% 10%, var(--t-glow-2), transparent 72%), radial-gradient(52% 56% at 78% 98%, var(--t-glow-3), transparent 72%), radial-gradient(36% 40% at 24% 78%, var(--t-glow-2), transparent 72%), var(--bg); }
+:root[data-shell='liquid'][data-theme] { --side-active: var(--t-lq-pill); --side-hover: color-mix(in srgb, var(--card) 40%, transparent); }
+:root[data-shell='liquid'] .shell { position: relative; isolation: isolate; }
+:root[data-shell='liquid'] :is(.set-card, .login-card, .palette, .modal) { position: relative; } /* .side는 데스크톱만(4절) — 폰 폭에서는 fixed 서랍이라 이미 기준 상자다 */
+:root[data-shell='liquid'] .side { background: transparent; }
+:root[data-shell='liquid'] :is(.shell, .side, .module, .set-card, .login-card)::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, var(--t-lq-card-hi), var(--t-lq-card) 60%); -webkit-backdrop-filter: var(--t-lq-blur); backdrop-filter: var(--t-lq-blur);
+}
+:root[data-shell='liquid'] .shell::before { background: var(--t-lq-win); -webkit-backdrop-filter: var(--t-lq-blur-lg); backdrop-filter: var(--t-lq-blur-lg); }
+:root[data-shell='liquid'] .side::before { background: linear-gradient(180deg, var(--t-lq-card-hi), var(--t-lq-side) 45%); }
+/* 반사광 — 위 가장자리가 가장 밝고 옆으로 사라진다. 1px 띠만 남기는 마스크라 테두리선이 아니라 빛이 맺힌 모서리로 보인다 */
+:root[data-shell='liquid'] :is(.shell, .side, .module, .set-card, .login-card, .menu, .modal, .palette, .sheet, .toast, .vw-selbar)::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+  background: linear-gradient(172deg, var(--t-shine), var(--t-shine-lo) 22%, transparent 48%, transparent 78%, var(--t-shine-lo));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+}
+:root[data-shell='liquid'] :is(.module, .set-card, .login-card) { background: transparent; box-shadow: 0 1px 2px var(--t-shade), 0 16px 40px var(--t-shade); }
+:root[data-shell='liquid'] .table-wrap { background: var(--t-lq-card); box-shadow: inset 0 1px 0 var(--t-shine-lo), 0 12px 32px var(--t-shade); }
+:root[data-shell='liquid'] .module-body > .table-wrap, :root[data-shell='liquid'] .module-body details > .table-wrap { background: transparent; box-shadow: none; }
+:root[data-shell='liquid'] .module-head { border-bottom-color: transparent; }
+:root[data-shell='liquid'] .module-head > .ico { color: var(--fg-2); }
+/* 유리 위 작은 칸 — 흐림 없이 옅은 유리 + 위쪽 빛 한 줄 */
+:root[data-shell='liquid'] :is(.rec-row, .list-row, .journal-entry, .ap-row, .vw-card, .vw-kcard, .tpl-item, .private-block, .history-preview, .stat-card) { background-color: var(--t-lq-chip); box-shadow: inset 0 1px 0 var(--t-shine-lo), 0 1px 3px var(--t-shade); }
+:root[data-shell='liquid'] .stats > .stat-card.stat-card:not(.stat-add):nth-child(n) { background-image: linear-gradient(color-mix(in srgb, var(--card) 22%, transparent), transparent); }
+:root[data-shell='liquid'] :is(.rec-row.on, .history .list-row.on, .doc-group .list-row.on) { background-color: var(--t-lq-pill); }
+:root[data-shell='liquid'] :is(.vw-lane, .deal-lane) { background: color-mix(in srgb, var(--card) 24%, transparent); box-shadow: inset 0 1px 0 var(--t-shine-lo); }
+/* 조작 요소 — 알약 유리 */
+:root[data-shell='liquid'] .btn:not(.primary, .danger, .ghost, .on) { background: var(--t-lq-chip); box-shadow: inset 0 1px 0 var(--t-shine-lo), 0 1px 3px var(--t-shade); }
+:root[data-shell='liquid'] .btn.on { background: var(--t-lq-pill); box-shadow: inset 0 1px 0 var(--t-shine), 0 2px 8px var(--t-shade); }
+:root[data-shell='liquid'] :is(.btn.primary, .btn.danger) { box-shadow: inset 0 1px 0 var(--t-shine-lo), 0 6px 16px var(--t-shade); }
+:root[data-shell='liquid'] :is(.input, .select, .field input, .field select, .compose-body, .crew-search) { background: var(--t-lq-chip); box-shadow: inset 0 1px 2px var(--t-shade); }
+:root[data-shell='liquid'] .search-btn { background: var(--t-lq-chip); box-shadow: inset 0 1px 0 var(--t-shine-lo); color: var(--side-fg-2); }
+:root[data-shell='liquid'] :is(.seg, .tabs) { background: var(--t-lq-chip); box-shadow: inset 0 1px 2px var(--t-shade); }
+:root[data-shell='liquid'] .tabs { width: max-content; max-width: 100%; padding: 3px; gap: 2px; border-bottom: 0; border-radius: 999px; }
+:root[data-shell='liquid'] .tab { height: 30px; padding: 0 14px; border-radius: 999px; }
+:root[data-shell='liquid'] :is(.seg-btn.on, .tab.on) { background: var(--t-lq-pill); box-shadow: inset 0 1px 0 var(--t-shine), 0 2px 8px var(--t-shade); }
+:root[data-shell='liquid'] .biz-tabbar { border-bottom: 0; }
+:root[data-shell='liquid'] .fold-item.on { background: var(--t-lq-pill); box-shadow: inset 0 1px 0 var(--t-shine), 0 2px 8px var(--t-shade); }
+:root[data-shell='liquid'] :is(.menu-item.on, .palette-row.on) { background: color-mix(in srgb, var(--card) 70%, transparent); box-shadow: inset 0 1px 0 var(--t-shine-lo); }
+:root[data-shell='liquid'] input[role='switch'] { box-shadow: inset 0 1px 2px var(--t-shade); }
+/* 떠 있는 층 — 본문 위에 뜨는 포털이라 흐림을 직접 준다. 뒤 화면이 더 보이게 가림막을 옅게 */
+:root[data-shell='liquid'] :is(.menu, .modal, .palette, .sheet, .vw-selbar, .mention-list) {
+  background: var(--t-lq-pop); -webkit-backdrop-filter: var(--t-lq-blur-lg); backdrop-filter: var(--t-lq-blur-lg);
+  box-shadow: 0 2px 6px var(--t-shade), 0 24px 64px var(--t-shade);
+}
+:root[data-shell='liquid'] .sheet { position: relative; }
+:root[data-shell='liquid'] .toast { background: var(--t-lq-toast); -webkit-backdrop-filter: var(--t-lq-blur); backdrop-filter: var(--t-lq-blur); box-shadow: 0 10px 30px var(--t-shade); }
+:root[data-shell='liquid'] .scrim { background: color-mix(in srgb, var(--overlay) 55%, transparent); }
+:root[data-shell='liquid'] :is(.modal-head, .modal-foot, .palette-input) { border-color: color-mix(in srgb, var(--fg) 8%, transparent); }
+@media (hover: hover) {
+  :root[data-shell='liquid'] .btn:not(.primary, .danger, .ghost, .on):hover { background: var(--t-lq-pill); }
+  :root[data-shell='liquid'] :is(.rec-row:not(.on), .ap-row, .tpl-item):hover { background-color: color-mix(in srgb, var(--card) 76%, transparent); }
+}
+/* 투명도 줄이기(접근성 설정)·흐림을 못 그리는 환경 — 같은 자리에 불투명 면 */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-shell='liquid'] { --t-lq-blur: none; --t-lq-blur-lg: none; --t-lq-win: var(--bg); --t-lq-side: var(--bg); --t-lq-card: var(--float); --t-lq-card-hi: var(--float); --t-lq-chip: var(--surface); --t-lq-pill: var(--float); --t-lq-pop: var(--float); --t-lq-toast: var(--primary); }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-shell='liquid'] { --t-lq-win: var(--bg); --t-lq-side: var(--bg); --t-lq-card: var(--float); --t-lq-card-hi: var(--float); --t-lq-chip: var(--surface); --t-lq-pop: var(--float); --t-lq-toast: var(--primary); }
+}
+
+/* neu — 뉴모피즘(유건 10/1). 모든 면이 바탕과 같은 색 — 솟은 것(카드·버튼·사이드바·떠 있는 층)은 빛+그늘, 눌린 것(활성 탭·선택 항목·입력칸·켜진 토글)은 안쪽 그림자 */
+:root[data-shell='neu'] { background: var(--bg); }
+:root[data-shell='neu'][data-theme] { --side-active: var(--bg); --side-hover: color-mix(in srgb, var(--fg) 4%, transparent); --ring: var(--primary); }
+:root[data-shell='neu'] .side { background: var(--bg); box-shadow: var(--t-neu-up); }
+:root[data-shell='neu'] :is(.module, .set-card, .table-wrap, .login-card) { background: var(--bg); box-shadow: var(--t-neu-up); }
+:root[data-shell='neu'] .module-body > .table-wrap, :root[data-shell='neu'] .module-body details > .table-wrap { box-shadow: none; }
+:root[data-shell='neu'] .module-head { border-bottom-color: transparent; }
+:root[data-shell='neu'] :is(.rec-row, .list-row, .journal-entry, .ap-row, .vw-card, .vw-kcard, .tpl-item, .private-block, .history-preview, .stat-card) { background: var(--bg); box-shadow: var(--t-neu-up-sm); }
+:root[data-shell='neu'] .stats > .stat-card.stat-card:not(.stat-add):nth-child(n) { background: var(--bg); }
+:root[data-shell='neu'] :is(.vw-lane, .deal-lane, .stat-add) { background: var(--bg); box-shadow: var(--t-neu-in); }
+/* 눌린 상태 — 선택된 메뉴·폴더·줄·탭·세그먼트 */
+:root[data-shell='neu'] :is(.nav-item.active, .tree-row.active, .fold-item.on, .rec-row.on, .menu-item.on, .palette-row.on, .tab.on, .seg-btn.on, .mail-row.active, .btn.on, .history .list-row.on, .doc-group .list-row.on) { background: var(--bg); box-shadow: var(--t-neu-in-sm); }
+:root[data-shell='neu'] .btn:not(.primary, .danger, .ghost, .on) { background: var(--bg); box-shadow: var(--t-neu-up-sm); }
+:root[data-shell='neu'] :is(.btn.primary, .btn.danger) { box-shadow: 3px 3px 8px var(--t-neu-lo), -3px -3px 8px var(--t-neu-hi); }
+:root[data-shell='neu'] .btn:not(.ghost, :disabled):active { box-shadow: var(--t-neu-in-sm); }
+:root[data-shell='neu'] :is(.topbar, .module-head) .icon-btn:active { box-shadow: var(--t-neu-in-sm); }
+:root[data-shell='neu'] .topbar .icon-btn { box-shadow: var(--t-neu-up-sm); }
+:root[data-shell='neu'] .topbar .icon-btn[aria-pressed='true'] { box-shadow: var(--t-neu-in-sm); }
+/* 입력칸 — 파인 홈 */
+:root[data-shell='neu'] :is(.input, .select, .field input, .field select, .compose-body, .search-btn, .crew-search, .palette-input) { background: var(--bg); box-shadow: var(--t-neu-in-sm); border-color: transparent; }
+:root[data-shell='neu'] :is(.input, .select, .field input, .compose-body):focus { border-color: transparent; box-shadow: var(--t-neu-in-sm), 0 0 0 2px var(--ring); }
+:root[data-shell='neu'] .palette-input { margin: 10px 10px 4px; height: 44px; border-radius: var(--rc); border-bottom: 0; }
+:root[data-shell='neu'] :is(.seg, .tabs) { background: transparent; box-shadow: none; border-bottom: 0; gap: 6px; padding: 4px; }
+:root[data-shell='neu'] .tab { border-radius: var(--rc); padding: 0 14px; }
+:root[data-shell='neu'] .biz-tabbar { border-bottom: 0; }
+/* 토글 — 홈이 파이고 손잡이가 솟는다. 켜지면 홈에 강조색이 고인다 */
+:root[data-shell='neu'] input[role='switch'] { width: 40px; height: 22px; background: var(--bg); box-shadow: var(--t-neu-in-sm); }
+:root[data-shell='neu'] input[role='switch']::after { top: 3px; left: 3px; background: var(--bg); box-shadow: 1px 1px 3px var(--t-neu-lo), -1px -1px 2px var(--t-neu-hi); }
+:root[data-shell='neu'] input[role='switch']:checked { background: var(--primary); box-shadow: inset 2px 2px 5px color-mix(in srgb, var(--primary) 55%, #000000), inset -1px -1px 3px color-mix(in srgb, var(--primary) 70%, #ffffff); }
+:root[data-shell='neu'] input[role='switch']:checked::after { transform: translateX(18px); background: var(--primary-fg); }
+/* 떠 있는 층 — 같은 색, 더 높이 솟음 */
+:root[data-shell='neu'] :is(.menu, .modal, .palette, .sheet, .vw-selbar, .mention-list) { background: var(--bg); box-shadow: var(--t-neu-pop); }
+:root[data-shell='neu'] .toast { box-shadow: 6px 8px 22px var(--t-neu-lo); }
+:root[data-shell='neu'] :is(.modal-head, .modal-foot) { border-color: transparent; }
+@media (hover: hover) {
+  :root[data-shell='neu'] .btn:not(.primary, .danger, .ghost, .on):hover { background: var(--bg); color: var(--fg); }
+  :root[data-shell='neu'] :is(.nav-item, .tree-row, .crew-btn):not(.active):hover { background: transparent; box-shadow: var(--t-neu-up-sm); }
+  :root[data-shell='neu'] :is(.rec-row:not(.on), .ap-row, .tpl-item):hover { background-image: linear-gradient(var(--wash), var(--wash)); }
+}
+
 /* 커스텀 테마(core/custom-theme.js) — 강조색을 고르면 선택된 메뉴 글자는 그 위에서 읽히는 색으로 */
 :root[data-custom~='accent'] :is(.nav-item, .tree-row).active { color: var(--c-active-fg); }
 :root[data-custom~='side'] .side { background: var(--side-bg); }
@@ -231,6 +401,7 @@
   --t-tile-edge: none;
   --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(23, 19, 14, 0.1);
   --t-bar: #e58fc0;
+  --t-glow-1: #f8cfe5; --t-glow-2: #f7e48f; --t-glow-3: #d5e2b0;
 }
 :root[data-theme='cream-dark'], :root[data-theme='cream'].dark-emul {
   color-scheme: dark;
@@ -253,6 +424,7 @@
   --t-tile-edge: none;
   --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(244, 236, 223, 0.12);
   --t-bar: #e58fc0;
+  --t-glow-1: rgba(150, 70, 110, 0.3); --t-glow-2: rgba(130, 110, 40, 0.26); --t-glow-3: rgba(80, 100, 50, 0.24);
 }
 
 /* ── sand ── */
@@ -277,6 +449,7 @@
   --t-tile-edge: none;
   --t-card-edge: none; --t-head-line: rgba(23, 23, 20, 0.07); --t-top-line: rgba(23, 23, 20, 0.1);
   --t-win-edge: 0 0 0 1px rgba(60, 50, 20, 0.08), 0 20px 44px rgba(90, 70, 20, 0.16);
+  --t-glow-1: #ead6b4; --t-glow-2: #e0d9cc; --t-glow-3: #f3d4c6;
 }
 :root[data-theme='sand-dark'], :root[data-theme='sand'].dark-emul {
   color-scheme: dark;
@@ -299,6 +472,7 @@
   --t-tile-edge: none;
   --t-card-edge: none; --t-head-line: rgba(240, 239, 236, 0.08); --t-top-line: rgba(240, 239, 236, 0.1);
   --t-win-edge: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 20px 44px rgba(0, 0, 0, 0.5);
+  --t-glow-1: rgba(120, 95, 55, 0.3); --t-glow-2: rgba(90, 85, 75, 0.3); --t-glow-3: rgba(120, 60, 50, 0.22);
 }
 
 /* ── peach ── */
@@ -324,6 +498,7 @@
   --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(26, 26, 26, 0.08);
   --t-main-edge: 0 0 0 1px rgba(26, 26, 26, 0.05);
   --t-win-edge: 0 24px 50px rgba(120, 70, 40, 0.14);
+  --t-glow-1: #fdd8bd; --t-glow-2: #f6d6c2; --t-glow-3: #fad6cb;
 }
 :root[data-theme='peach-dark'], :root[data-theme='peach'].dark-emul {
   color-scheme: dark;
@@ -347,6 +522,7 @@
   --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(243, 236, 230, 0.1);
   --t-main-edge: 0 0 0 1px rgba(243, 236, 230, 0.07);
   --t-win-edge: 0 24px 50px rgba(0, 0, 0, 0.5);
+  --t-glow-1: rgba(170, 80, 30, 0.3); --t-glow-2: rgba(120, 80, 60, 0.28); --t-glow-3: rgba(140, 50, 40, 0.22);
 }
 
 /* ── mist ── */
@@ -374,6 +550,7 @@
   --t-win-edge: 0 24px 56px rgba(40, 44, 40, 0.16);
   --t-badge-bg: #111111; --t-badge-fg: #ffffff; --t-bar: #8b6be0;
   --t-primary-shadow: 0 6px 14px rgba(17, 17, 17, 0.2);
+  --t-glow-1: #e2d9fc; --t-glow-2: #bfe3ea; --t-glow-3: #f8dccf;
 }
 :root[data-theme='mist-dark'], :root[data-theme='mist'].dark-emul {
   color-scheme: dark;
@@ -399,6 +576,7 @@
   --t-win-edge: 0 24px 56px rgba(0, 0, 0, 0.5);
   --t-badge-bg: #efefec; --t-badge-fg: #171717; --t-bar: #b39cf5;
   --t-primary-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
+  --t-glow-1: rgba(100, 75, 180, 0.3); --t-glow-2: rgba(50, 110, 120, 0.26); --t-glow-3: rgba(140, 80, 60, 0.2);
 }
 
 /* ── glow ── */
@@ -427,6 +605,7 @@
   --t-win-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.8), 0 28px 60px rgba(150, 80, 40, 0.22);
   --t-badge-bg: #16110f; --t-badge-fg: #ffffff; --t-bar: #a67be0;
   --t-primary-shadow: 0 6px 16px rgba(22, 17, 15, 0.25);
+  --t-glow-1: #f6bfae; --t-glow-2: #dcc4f5; --t-glow-3: #f5e3ab;
 }
 :root[data-theme='glow-dark'], :root[data-theme='glow'].dark-emul {
   color-scheme: dark;
@@ -453,4 +632,293 @@
   --t-win-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 28px 60px rgba(0, 0, 0, 0.5);
   --t-badge-bg: #f6ede6; --t-badge-fg: #1e1512; --t-bar: #c9a7f2;
   --t-primary-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  --t-glow-1: rgba(150, 60, 60, 0.32); --t-glow-2: rgba(100, 70, 160, 0.3); --t-glow-3: rgba(130, 105, 40, 0.26);
+}
+
+/* ── sage(차분한 녹색, 10/1) ── */
+:root[data-theme='sage'], :root[data-theme='sage-light'] {
+  color-scheme: light;
+  --frame: #dde4d8;
+  --bg: #e9eee6; --card: #fbfcf9; --card-2: #e1e7dd; --secondary: #dbe2d6;
+  --fg: #1b231d; --fg-2: #434f46; --fg-3: #59655c;
+  --border: rgba(27, 35, 29, 0.16); --border-soft: rgba(27, 35, 29, 0.09);
+  --primary: #2c5a43; --primary-strong: #1f4532; --primary-fg: #ffffff; --primary-soft: rgba(44, 90, 67, 0.09);
+  --accent: #2c5a43;
+  --mark: #3f7a59; --mark-fg: #ffffff; --mark-wash: #e0eae1;
+  --ok: #1d653b; --ok-soft: rgba(29, 101, 59, 0.13); --warn: #7f4f08; --warn-soft: rgba(200, 140, 20, 0.16);
+  --danger: #a3302b; --danger-soft: rgba(163, 48, 43, 0.11); --info: #2c5d97; --info-soft: rgba(44, 93, 151, 0.11);
+  --ring: rgba(44, 90, 67, 0.5); --selection: rgba(63, 122, 89, 0.22); --overlay: rgba(18, 28, 21, 0.4);
+  --shadow-float: 0 14px 36px rgba(28, 48, 34, 0.16);
+  --ink-rgb: 27, 35, 29;
+  --side-bg: #dde4d8; --side-fg: #1b231d; --side-fg-2: #3f4b42; --side-fg-3: #515d54;
+  --side-line: rgba(27, 35, 29, 0.09); --side-hover: rgba(27, 35, 29, 0.06); --side-active: var(--surface); --side-mark: #3f7a59;
+  --tile-1: #dce9d8; --tile-2: #e8edd5; --tile-3: #d5e7e2; --tile-4: #e8e3d4; --tile-5: #dbe5ec; --tile-6: #ece2da;
+  --tile-ink-2: #374238; --tile-ink-3: #4b574e; --t-tile-badge: rgba(255, 255, 255, 0.65);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(27, 35, 29, 0.09);
+  --t-bar: #4f8a68;
+  --t-glow-1: #bfe0c7; --t-glow-2: #e3e5bd; --t-glow-3: #bfdcdd;
+}
+:root[data-theme='sage-dark'], :root[data-theme='sage'].dark-emul {
+  color-scheme: dark;
+  --frame: #111612;
+  --bg: #151b16; --card: #1f2820; --card-2: #283229; --secondary: #2e3a30;
+  --fg: #e7ede7; --fg-2: #c0cac1; --fg-3: #9ba79d;
+  --border: rgba(231, 237, 231, 0.18); --border-soft: rgba(231, 237, 231, 0.1);
+  --primary: #a3d3b4; --primary-strong: #c3e6cf; --primary-fg: #0f1d14; --primary-soft: rgba(163, 211, 180, 0.1);
+  --accent: #a3d3b4;
+  --mark: #7cc79a; --mark-fg: #0f1d14; --mark-wash: #22302a;
+  --ok: #80d0a1; --ok-soft: rgba(128, 208, 161, 0.15); --warn: #e3b562; --warn-soft: rgba(227, 181, 98, 0.15);
+  --danger: #f2978d; --danger-soft: rgba(242, 151, 141, 0.15); --info: #92b6ec; --info-soft: rgba(146, 182, 236, 0.15);
+  --ring: rgba(163, 211, 180, 0.5); --selection: rgba(124, 199, 154, 0.28); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 231, 237, 231;
+  --side-bg: #151b16; --side-fg: #e7ede7; --side-fg-2: #c0cac1; --side-fg-3: #9ba79d;
+  --side-line: rgba(231, 237, 231, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #2a342b; --side-mark: #7cc79a;
+  --tile-1: #243a2b; --tile-2: #333827; --tile-3: #223a37; --tile-4: #3a3427; --tile-5: #263345; --tile-6: #3b2e2c;
+  --tile-ink-2: #e2e9e2; --tile-ink-3: #c1ccc2; --t-tile-badge: rgba(255, 255, 255, 0.14);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(231, 237, 231, 0.1);
+  --t-bar: #7cc79a;
+  --t-glow-1: rgba(70, 140, 95, 0.32); --t-glow-2: rgba(120, 120, 60, 0.26); --t-glow-3: rgba(50, 110, 115, 0.3);
+}
+
+/* ── ocean(깊은 청색, 10/1) ── */
+:root[data-theme='ocean'], :root[data-theme='ocean-light'] {
+  color-scheme: light;
+  --frame: #d8e0ea;
+  --bg: #e9eef4; --card: #fbfcfe; --card-2: #e0e7ef; --secondary: #d9e1eb;
+  --fg: #132031; --fg-2: #3b4a5d; --fg-3: #516175;
+  --border: rgba(19, 32, 49, 0.16); --border-soft: rgba(19, 32, 49, 0.09);
+  --primary: #1b4a85; --primary-strong: #123766; --primary-fg: #ffffff; --primary-soft: rgba(27, 74, 133, 0.09);
+  --accent: #1b4a85;
+  --mark: #2a64c4; --mark-fg: #ffffff; --mark-wash: #dfe8f6;
+  --ok: #17633e; --ok-soft: rgba(23, 99, 62, 0.13); --warn: #7f4f08; --warn-soft: rgba(200, 140, 20, 0.16);
+  --danger: #a52d33; --danger-soft: rgba(165, 45, 51, 0.11); --info: #1f58a2; --info-soft: rgba(31, 88, 162, 0.11);
+  --ring: rgba(27, 74, 133, 0.5); --selection: rgba(42, 100, 196, 0.2); --overlay: rgba(12, 22, 38, 0.42);
+  --shadow-float: 0 14px 36px rgba(18, 38, 70, 0.16);
+  --ink-rgb: 19, 32, 49;
+  --side-bg: #dce4ee; --side-fg: #132031; --side-fg-2: #38475a; --side-fg-3: #4b5b6e;
+  --side-line: rgba(19, 32, 49, 0.09); --side-hover: rgba(19, 32, 49, 0.06); --side-active: var(--surface); --side-mark: #2a64c4;
+  --tile-1: #d9e6f6; --tile-2: #d4ebee; --tile-3: #e3dff3; --tile-4: #e6ebf1; --tile-5: #d8ece3; --tile-6: #f0e4da;
+  --tile-ink-2: #31404f; --tile-ink-3: #465566; --t-tile-badge: rgba(255, 255, 255, 0.65);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(19, 32, 49, 0.09);
+  --t-bar: #3b7fd9;
+  --t-glow-1: #b9d3f7; --t-glow-2: #b7e5ea; --t-glow-3: #d8d3f6;
+}
+:root[data-theme='ocean-dark'], :root[data-theme='ocean'].dark-emul {
+  color-scheme: dark;
+  --frame: #0a121c;
+  --bg: #0e1723; --card: #172334; --card-2: #1e2c40; --secondary: #24344a;
+  --fg: #e5ecf5; --fg-2: #bccadb; --fg-3: #97a7ba;
+  --border: rgba(229, 236, 245, 0.18); --border-soft: rgba(229, 236, 245, 0.1);
+  --primary: #8cb9f1; --primary-strong: #b6d3f7; --primary-fg: #0a1526; --primary-soft: rgba(140, 185, 241, 0.1);
+  --accent: #8cb9f1;
+  --mark: #6aa4f2; --mark-fg: #0a1526; --mark-wash: #1b2a3e;
+  --ok: #7ccfa2; --ok-soft: rgba(124, 207, 162, 0.15); --warn: #e5b563; --warn-soft: rgba(229, 181, 99, 0.15);
+  --danger: #f2979c; --danger-soft: rgba(242, 151, 156, 0.15); --info: #91b8f1; --info-soft: rgba(145, 184, 241, 0.15);
+  --ring: rgba(140, 185, 241, 0.5); --selection: rgba(106, 164, 242, 0.3); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 229, 236, 245;
+  --side-bg: #0e1723; --side-fg: #e5ecf5; --side-fg-2: #bccadb; --side-fg-3: #97a7ba;
+  --side-line: rgba(229, 236, 245, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #1f2d41; --side-mark: #6aa4f2;
+  --tile-1: #1c3150; --tile-2: #163a40; --tile-3: #2b2a4c; --tile-4: #223040; --tile-5: #183a30; --tile-6: #3c2e25;
+  --tile-ink-2: #e2eaf3; --tile-ink-3: #c0cddc; --t-tile-badge: rgba(255, 255, 255, 0.14);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(229, 236, 245, 0.1);
+  --t-bar: #6aa4f2;
+  --t-glow-1: rgba(40, 95, 190, 0.36); --t-glow-2: rgba(30, 120, 135, 0.3); --t-glow-3: rgba(80, 70, 170, 0.28);
+}
+
+/* ── rose(먼지 낀 분홍, 10/1) ── */
+:root[data-theme='rose'], :root[data-theme='rose-light'] {
+  color-scheme: light;
+  --frame: #ecdfe0;
+  --bg: #f5ecec; --card: #fffbfb; --card-2: #eee3e4; --secondary: #e9dcdd;
+  --fg: #2a1b20; --fg-2: #553f47; --fg-3: #6b555d;
+  --border: rgba(42, 27, 32, 0.16); --border-soft: rgba(42, 27, 32, 0.09);
+  --primary: #7a3350; --primary-strong: #5e253c; --primary-fg: #ffffff; --primary-soft: rgba(122, 51, 80, 0.08);
+  --accent: #7a3350;
+  --mark: #e3a0b6; --mark-fg: #2a1b20; --mark-wash: #f6e3e8;
+  --ok: #24653d; --ok-soft: rgba(36, 101, 61, 0.13); --warn: #7f4d08; --warn-soft: rgba(200, 140, 20, 0.16);
+  --danger: #a32c36; --danger-soft: rgba(163, 44, 54, 0.11); --info: #355b9a; --info-soft: rgba(53, 91, 154, 0.11);
+  --ring: rgba(122, 51, 80, 0.48); --selection: rgba(227, 160, 182, 0.4); --overlay: rgba(40, 20, 28, 0.4);
+  --shadow-float: 0 14px 36px rgba(80, 30, 45, 0.15);
+  --ink-rgb: 42, 27, 32;
+  --side-bg: #eee3e4; --side-fg: #2a1b20; --side-fg-2: #513c44; --side-fg-3: #654e57;
+  --side-line: rgba(42, 27, 32, 0.09); --side-hover: rgba(42, 27, 32, 0.055); --side-active: var(--surface); --side-mark: #c25a7c;
+  --tile-1: #f3dbe2; --tile-2: #f2e3d6; --tile-3: #e7dded; --tile-4: #f5e8e1; --tile-5: #e0e6ee; --tile-6: #ebe6d7;
+  --tile-ink-2: #48373d; --tile-ink-3: #5c4950; --t-tile-badge: rgba(255, 255, 255, 0.65);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(42, 27, 32, 0.09);
+  --t-bar: #c25a7c;
+  --t-glow-1: #f2bccd; --t-glow-2: #f6d3bd; --t-glow-3: #dccdf0;
+}
+:root[data-theme='rose-dark'], :root[data-theme='rose'].dark-emul {
+  color-scheme: dark;
+  --frame: #181114;
+  --bg: #1d1518; --card: #291f23; --card-2: #33272c; --secondary: #3b2e34;
+  --fg: #f3e8eb; --fg-2: #d1bfc5; --fg-3: #ac989f;
+  --border: rgba(243, 232, 235, 0.18); --border-soft: rgba(243, 232, 235, 0.1);
+  --primary: #f0b4c7; --primary-strong: #f8d1dd; --primary-fg: #2a1018; --primary-soft: rgba(240, 180, 199, 0.1);
+  --accent: #f0b4c7;
+  --mark: #e895b0; --mark-fg: #2a1018; --mark-wash: #38262e;
+  --ok: #82cf9e; --ok-soft: rgba(130, 207, 158, 0.15); --warn: #e8b764; --warn-soft: rgba(232, 183, 100, 0.15);
+  --danger: #f6998f; --danger-soft: rgba(246, 153, 143, 0.15); --info: #98b8ef; --info-soft: rgba(152, 184, 239, 0.15);
+  --ring: rgba(240, 180, 199, 0.5); --selection: rgba(232, 149, 176, 0.32); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 243, 232, 235;
+  --side-bg: #1d1518; --side-fg: #f3e8eb; --side-fg-2: #d1bfc5; --side-fg-3: #ac989f;
+  --side-line: rgba(243, 232, 235, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #362a2f; --side-mark: #e895b0;
+  --tile-1: #46283a; --tile-2: #463226; --tile-3: #372d4a; --tile-4: #40302c; --tile-5: #283445; --tile-6: #3c3829;
+  --tile-ink-2: #f0e4e8; --tile-ink-3: #cdbcc2; --t-tile-badge: rgba(255, 255, 255, 0.14);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(243, 232, 235, 0.1);
+  --t-bar: #e895b0;
+  --t-glow-1: rgba(170, 70, 110, 0.32); --t-glow-2: rgba(160, 95, 60, 0.26); --t-glow-3: rgba(110, 80, 160, 0.26);
+}
+
+/* ── lavender(연보라, 10/1) ── */
+:root[data-theme='lavender'], :root[data-theme='lavender-light'] {
+  color-scheme: light;
+  --frame: #e2def0;
+  --bg: #efedf8; --card: #fdfcff; --card-2: #e6e2f3; --secondary: #e0dbef;
+  --fg: #1e1930; --fg-2: #48425e; --fg-3: #5e5776;
+  --border: rgba(30, 25, 48, 0.16); --border-soft: rgba(30, 25, 48, 0.09);
+  --primary: #4a3a98; --primary-strong: #382b7b; --primary-fg: #ffffff; --primary-soft: rgba(74, 58, 152, 0.09);
+  --accent: #4a3a98;
+  --mark: #6a52cc; --mark-fg: #ffffff; --mark-wash: #e9e4f8;
+  --ok: #1d643d; --ok-soft: rgba(29, 100, 61, 0.13); --warn: #7f4d08; --warn-soft: rgba(200, 140, 20, 0.16);
+  --danger: #a42b3c; --danger-soft: rgba(164, 43, 60, 0.11); --info: #2f5aa3; --info-soft: rgba(47, 90, 163, 0.11);
+  --ring: rgba(74, 58, 152, 0.5); --selection: rgba(106, 82, 204, 0.2); --overlay: rgba(24, 18, 40, 0.4);
+  --shadow-float: 0 14px 36px rgba(40, 30, 80, 0.16);
+  --ink-rgb: 30, 25, 48;
+  --side-bg: #e3dff2; --side-fg: #1e1930; --side-fg-2: #443e5a; --side-fg-3: #575070;
+  --side-line: rgba(30, 25, 48, 0.09); --side-hover: rgba(30, 25, 48, 0.06); --side-active: var(--surface); --side-mark: #6a52cc;
+  --tile-1: #e4def6; --tile-2: #f1e0ee; --tile-3: #dde6f6; --tile-4: #ede7da; --tile-5: #dcefea; --tile-6: #f5e3de;
+  --tile-ink-2: #3c3650; --tile-ink-3: #504966; --t-tile-badge: rgba(255, 255, 255, 0.65);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(30, 25, 48, 0.09);
+  --t-bar: #7d66da;
+  --t-glow-1: #cfc0f7; --t-glow-2: #c4d9f7; --t-glow-3: #f3c9e3;
+}
+:root[data-theme='lavender-dark'], :root[data-theme='lavender'].dark-emul {
+  color-scheme: dark;
+  --frame: #12101b;
+  --bg: #171421; --card: #211d2f; --card-2: #2a253b; --secondary: #322c45;
+  --fg: #ece9f6; --fg-2: #c7c1da; --fg-3: #a29bb9;
+  --border: rgba(236, 233, 246, 0.18); --border-soft: rgba(236, 233, 246, 0.1);
+  --primary: #c4b5f6; --primary-strong: #ddd3fa; --primary-fg: #19132d; --primary-soft: rgba(196, 181, 246, 0.1);
+  --accent: #c4b5f6;
+  --mark: #a995ec; --mark-fg: #19132d; --mark-wash: #2a243b;
+  --ok: #80cfa0; --ok-soft: rgba(128, 207, 160, 0.15); --warn: #e6b663; --warn-soft: rgba(230, 182, 99, 0.15);
+  --danger: #f69aa2; --danger-soft: rgba(246, 154, 162, 0.15); --info: #94b6f0; --info-soft: rgba(148, 182, 240, 0.15);
+  --ring: rgba(196, 181, 246, 0.5); --selection: rgba(169, 149, 236, 0.3); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 236, 233, 246;
+  --side-bg: #171421; --side-fg: #ece9f6; --side-fg-2: #c7c1da; --side-fg-3: #a29bb9;
+  --side-line: rgba(236, 233, 246, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #2c2740; --side-mark: #a995ec;
+  --tile-1: #332b52; --tile-2: #432b44; --tile-3: #24324f; --tile-4: #3b3428; --tile-5: #1f3b38; --tile-6: #442e2d;
+  --tile-ink-2: #ebe7f6; --tile-ink-3: #c8c1dc; --t-tile-badge: rgba(255, 255, 255, 0.14);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(236, 233, 246, 0.1);
+  --t-bar: #a995ec;
+  --t-glow-1: rgba(110, 80, 200, 0.34); --t-glow-2: rgba(60, 95, 170, 0.28); --t-glow-3: rgba(150, 70, 140, 0.26);
+}
+
+/* ── slate(푸른 회색, 10/1) ── */
+:root[data-theme='slate'], :root[data-theme='slate-light'] {
+  color-scheme: light;
+  --frame: #d8dde3;
+  --bg: #e9ecf0; --card: #fbfcfd; --card-2: #e0e4e9; --secondary: #dadfe5;
+  --fg: #19202a; --fg-2: #414a56; --fg-3: #56606c;
+  --border: rgba(25, 32, 42, 0.16); --border-soft: rgba(25, 32, 42, 0.09);
+  --primary: #2c3846; --primary-strong: #1d2631; --primary-fg: #ffffff; --primary-soft: rgba(44, 56, 70, 0.08);
+  --accent: #2c3846;
+  --mark: #4b6d90; --mark-fg: #ffffff; --mark-wash: #e1e7ee;
+  --ok: #1d633c; --ok-soft: rgba(29, 99, 60, 0.13); --warn: #7d4d08; --warn-soft: rgba(200, 140, 20, 0.16);
+  --danger: #a32e33; --danger-soft: rgba(163, 46, 51, 0.11); --info: #2d5995; --info-soft: rgba(45, 89, 149, 0.11);
+  --ring: rgba(44, 56, 70, 0.48); --selection: rgba(75, 109, 144, 0.2); --overlay: rgba(16, 22, 30, 0.42);
+  --shadow-float: 0 14px 36px rgba(20, 30, 45, 0.16);
+  --ink-rgb: 25, 32, 42;
+  --side-bg: #dde2e8; --side-fg: #19202a; --side-fg-2: #3e4753; --side-fg-3: #515b67;
+  --side-line: rgba(25, 32, 42, 0.09); --side-hover: rgba(25, 32, 42, 0.06); --side-active: var(--surface); --side-mark: #4b6d90;
+  --tile-1: #dde4ec; --tile-2: #e2e7df; --tile-3: #e4e1eb; --tile-4: #e9e4dd; --tile-5: #dae8e9; --tile-6: #eae0e2;
+  --tile-ink-2: #37404b; --tile-ink-3: #4b5560; --t-tile-badge: rgba(255, 255, 255, 0.65);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(25, 32, 42, 0.09);
+  --t-bar: #5d7fa3;
+  --t-glow-1: #c3d2e3; --t-glow-2: #d3dbe4; --t-glow-3: #c9d9d6;
+}
+:root[data-theme='slate-dark'], :root[data-theme='slate'].dark-emul {
+  color-scheme: dark;
+  --frame: #0f1317;
+  --bg: #13181d; --card: #1c232a; --card-2: #242c34; --secondary: #2b343e;
+  --fg: #e6eaef; --fg-2: #bec6cf; --fg-3: #99a2ad;
+  --border: rgba(230, 234, 239, 0.18); --border-soft: rgba(230, 234, 239, 0.1);
+  --primary: #c5d1dd; --primary-strong: #e1e8ef; --primary-fg: #11171e; --primary-soft: rgba(197, 209, 221, 0.09);
+  --accent: #c5d1dd;
+  --mark: #8fb0d1; --mark-fg: #11171e; --mark-wash: #212a33;
+  --ok: #7fcf9f; --ok-soft: rgba(127, 207, 159, 0.15); --warn: #e4b563; --warn-soft: rgba(228, 181, 99, 0.15);
+  --danger: #f2979a; --danger-soft: rgba(242, 151, 154, 0.15); --info: #92b6ec; --info-soft: rgba(146, 182, 236, 0.15);
+  --ring: rgba(197, 209, 221, 0.5); --selection: rgba(143, 176, 209, 0.28); --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.55);
+  --ink-rgb: 230, 234, 239;
+  --side-bg: #13181d; --side-fg: #e6eaef; --side-fg-2: #bec6cf; --side-fg-3: #99a2ad;
+  --side-line: rgba(230, 234, 239, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #26303a; --side-mark: #8fb0d1;
+  --tile-1: #223142; --tile-2: #2a3329; --tile-3: #2d2b3b; --tile-4: #37322a; --tile-5: #1f3638; --tile-6: #382b2e;
+  --tile-ink-2: #e3e8ee; --tile-ink-3: #c0c9d2; --t-tile-badge: rgba(255, 255, 255, 0.14);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(230, 234, 239, 0.1);
+  --t-bar: #8fb0d1;
+  --t-glow-1: rgba(60, 95, 135, 0.34); --t-glow-2: rgba(90, 105, 120, 0.3); --t-glow-3: rgba(55, 95, 95, 0.26);
+}
+
+/* ── ember(따뜻한 주황 강조 + 거의 검정 다크, 10/1) — 라이트도 사이드바는 숯색 ── */
+:root[data-theme='ember'], :root[data-theme='ember-light'] {
+  color-scheme: light;
+  --frame: #ede3da;
+  --bg: #f6f0eb; --card: #fffdfb; --card-2: #eee5de; --secondary: #e9dfd6;
+  --fg: #221811; --fg-2: #4f4037; --fg-3: #67574c;
+  --border: rgba(34, 24, 17, 0.16); --border-soft: rgba(34, 24, 17, 0.09);
+  --primary: #ad390a; --primary-strong: #8f2e06; --primary-fg: #ffffff; --primary-soft: rgba(173, 57, 10, 0.08);
+  --accent: #ad390a;
+  --mark: #f97316; --mark-fg: #1c0f08; --mark-wash: #fbe7d8;
+  --ok: #22643a; --ok-soft: rgba(34, 100, 58, 0.13); --warn: #7c4c07; --warn-soft: rgba(210, 140, 20, 0.17);
+  --danger: #a82a24; --danger-soft: rgba(168, 42, 36, 0.11); --info: #335b9c; --info-soft: rgba(51, 91, 156, 0.11);
+  --ring: rgba(173, 57, 10, 0.5); --selection: rgba(249, 115, 22, 0.22); --overlay: rgba(30, 18, 10, 0.42);
+  --shadow-float: 0 14px 36px rgba(70, 35, 10, 0.16);
+  --ink-rgb: 34, 24, 17;
+  --side-bg: #1c1612; --side-fg: #f4ebe3; --side-fg-2: #cbbfb4; --side-fg-3: #a99c90;
+  --side-line: rgba(244, 235, 227, 0.14); --side-hover: rgba(255, 255, 255, 0.08); --side-active: rgba(255, 255, 255, 0.12); --side-mark: #f97316;
+  --tile-1: #fbdcc8; --tile-2: #f6e6cd; --tile-3: #f2d9d3; --tile-4: #ebe3d9; --tile-5: #e0e5d8; --tile-6: #f7e8c4;
+  --tile-ink-2: #46362b; --tile-ink-3: #5c4a3e; --t-tile-badge: rgba(255, 255, 255, 0.65);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(34, 24, 17, 0.09);
+  --t-bar: #f97316; --t-primary-shadow: 0 6px 16px rgba(173, 57, 10, 0.25);
+  --t-glow-1: #fbc59c; --t-glow-2: #f8dcae; --t-glow-3: #f5c2b3;
+}
+:root[data-theme='ember-dark'], :root[data-theme='ember'].dark-emul {
+  color-scheme: dark;
+  --frame: #0d0b0a;
+  --bg: #141211; --card: #1f1b19; --card-2: #282320; --secondary: #302a26;
+  --fg: #f5ede6; --fg-2: #d0c4ba; --fg-3: #aa9c91;
+  --border: rgba(245, 237, 230, 0.18); --border-soft: rgba(245, 237, 230, 0.1);
+  --primary: #f97316; --primary-strong: #fb8b3d; --primary-fg: #1c0f08; --primary-soft: rgba(249, 115, 22, 0.12);
+  --accent: #f97316;
+  --mark: #f97316; --mark-fg: #1c0f08; --mark-wash: #2a1b12;
+  --ok: #80cf9d; --ok-soft: rgba(128, 207, 157, 0.15); --warn: #ebb862; --warn-soft: rgba(235, 184, 98, 0.15);
+  --danger: #f6978c; --danger-soft: rgba(246, 151, 140, 0.15); --info: #96b7ef; --info-soft: rgba(150, 183, 239, 0.15);
+  --ring: rgba(249, 115, 22, 0.6); --selection: rgba(249, 115, 22, 0.3); --overlay: rgba(0, 0, 0, 0.65);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.6);
+  --ink-rgb: 245, 237, 230;
+  --side-bg: #141211; --side-fg: #f5ede6; --side-fg-2: #d0c4ba; --side-fg-3: #aa9c91;
+  --side-line: rgba(245, 237, 230, 0.1); --side-hover: rgba(255, 255, 255, 0.06); --side-active: #262120; --side-mark: #f97316;
+  --tile-1: #3d2414; --tile-2: #3a2e1a; --tile-3: #3a221f; --tile-4: #2c2621; --tile-5: #24291f; --tile-6: #3b3014;
+  --tile-ink-2: #f1e6dc; --tile-ink-3: #cfc1b5; --t-tile-badge: rgba(255, 255, 255, 0.14);
+  --t-tile-edge: none;
+  --t-card-edge: none; --t-head-line: transparent; --t-top-line: rgba(245, 237, 230, 0.1);
+  --t-bar: #f97316; --t-primary-shadow: 0 6px 16px rgba(249, 115, 22, 0.25);
+  --t-glow-1: rgba(200, 80, 20, 0.3); --t-glow-2: rgba(150, 95, 30, 0.24); --t-glow-3: rgba(120, 40, 30, 0.24);
 }

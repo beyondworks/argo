@@ -5,5 +5,6 @@ export const CUSTOM_DICT = {
   'custom.bg': ['배경', 'Background'], 'custom.side': ['사이드바', 'Sidebar'], 'custom.card': ['카드', 'Cards'], 'custom.accent': ['선택·호버', 'Selected & hover'], 'custom.badge': ['배지', 'Badges'],
   'custom.default': ['기본', 'Default'], 'custom.clear': ['{name} 기본값으로', 'Reset {name}'], 'custom.reset': ['커스텀 모두 되돌리기', 'Reset all customization'],
   'custom.warn': ['배경과 카드의 밝기 차이가 커서 모든 곳에서 글자를 또렷하게 맞출 수 없습니다.', 'Background and cards differ too much in brightness for text to stay readable everywhere.'],
+  'colorgroup.neutral': ['중성', 'Neutral'], 'colorgroup.warm': ['따뜻함', 'Warm'], 'colorgroup.cool': ['차가움', 'Cool'],
   'font.pretendard': ['프리텐다드', 'Pretendard'], 'font.system': ['시스템 글꼴', 'System'], 'font.serif': ['명조', 'Serif'], 'font.mono': ['고정폭', 'Monospace'],
 };
