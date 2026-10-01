@@ -308,6 +308,33 @@ for (const fam of FAMILIES) for (const mode of ['light', 'dark']) {
   });
 }
 
+// 이유(통합 검수 10/1, 레퍼런스 theme-liquid-glass.jpg): 리퀴드 바탕의 빛 덩어리는 거의 무채색 유리에 따뜻함·차가움만 살짝 — ocean 라이트에서 하늘·청록·보라가 진했다.
+// 바탕(--bg) 위에 깐 빛이 바탕에서 색 방향(OKLab a·b)으로 얼마나 벗어나는지 잰다. 원래 빛(--t-glow-*)을 그대로 깔면 넘는다(기준이 실제로 갈린다).
+const okAB = ({ r, g, b }) => {
+  const [R, G, B] = [lin(r), lin(g), lin(b)];
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B), m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B), s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  return [1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+};
+const tint = (top, bg) => { const [a1, b1] = okAB(over(top, bg)), [a0, b0] = okAB(bg); return Math.hypot(a1 - a0, b1 - b0); };
+const LQ_TINT = 0.018;
+test('리퀴드 글래스 바탕: 빛 덩어리는 옅게(색 방향 차이 0.018 이하)', () => {
+  const rule = rulesOf(css).find((r) => !r.nested && r.sel.trim() === ":root[data-shell='liquid']" && /background:/.test(r.decl));
+  assert.ok(rule, '바탕 규칙');
+  assert.doesNotMatch(rule.decl, /var\(--t-glow-\d\)/, '원래 빛을 그대로 깔지 않는다');
+  let rawMax = 0;
+  for (const fam of FAMILIES) for (const mode of ['light', 'dark']) {
+    const t = shellTokens(`${fam}-${mode}`, 'liquid');
+    const raw = (n) => { const v = resolve(t, t[n]); assert.ok(v, `${fam}-${mode}: --${n} = ${t[n]}`); return v; };
+    const bg = raw('bg');
+    for (const n of [1, 2, 3]) {
+      const d = tint(raw(`t-lq-glow-${n}`), bg);
+      assert.ok(d <= LQ_TINT, `${fam}-${mode} 빛 ${n}: ${d.toFixed(4)}`);
+      rawMax = Math.max(rawMax, tint(raw(`t-glow-${n}`), bg));
+    }
+  }
+  assert.ok(rawMax > LQ_TINT, `원래 빛은 기준을 넘어야 한다(기준이 갈리는지): ${rawMax.toFixed(4)}`);
+});
+
 // 이유(유건 10/1 "바탕과 같은 색의 면이 빛과 그늘로 솟아오름, 다크는 밝은 그림자 아주 약하게"): 빛·그늘이 바탕과 구분되지 않으면 그냥 평평한 화면이 된다.
 for (const fam of FAMILIES) for (const mode of ['light', 'dark']) {
   const theme = `${fam}-${mode}`;

@@ -21,6 +21,8 @@
    빛 덩어리(--t-glow-*)는 유리가 비칠 바탕 — 색 가족이 정하지 않으면 강조·정보 색에서 만든다 */
 :root {
   --t-glow-1: color-mix(in srgb, var(--info) 20%, #ffffff); --t-glow-2: color-mix(in srgb, var(--selection) 70%, #ffffff); --t-glow-3: color-mix(in srgb, var(--ok) 15%, #ffffff);
+  /* 리퀴드 바탕에 실제로 까는 빛 — 색 가족의 빛을 옅게(유건 레퍼런스는 거의 무채색 유리에 따뜻함·차가움만 살짝. 통합 검수 10/1: ocean 라이트가 하늘·청록·보라로 진했다) */
+  --t-lq-glow-1: color-mix(in srgb, var(--t-glow-1) 18%, transparent); --t-lq-glow-2: color-mix(in srgb, var(--t-glow-2) 18%, transparent); --t-lq-glow-3: color-mix(in srgb, var(--t-glow-3) 18%, transparent);
   --t-shine: rgba(255, 255, 255, 0.95); --t-shine-lo: rgba(255, 255, 255, 0.4); --t-shade: rgba(20, 22, 30, 0.09);
   --t-neu-hi: color-mix(in srgb, var(--bg) 22%, #ffffff); --t-neu-lo: color-mix(in srgb, var(--bg) 82%, #000000);
 }
@@ -275,7 +277,7 @@
 /* liquid — 리퀴드 글래스(유건 10/1). 유리 = 반투명 색 + 흐림·채도(뒤가 비친다) + 위쪽 반사광(::after 그라데이션 테두리) + 부드러운 그림자.
    흐림은 포털 층(메뉴·모달·시트·팔레트·토스트·고르기 막대)엔 직접, 틀(.shell·.side·.module·설정 카드)엔 ::before에만 — 틀에 직접 주면
    그 안의 position:fixed 층(.vw-selbar·.vw-band·.drop-hint.page·.nav-scrim)이 화면 대신 그 틀을 기준으로 놓인다. ::before(z-index -1)는 .shell(isolation)의 맨 아래 칸에 그려진다 */
-:root[data-shell='liquid'] { background: radial-gradient(56% 52% at 8% 6%, var(--t-glow-1), transparent 72%), radial-gradient(44% 48% at 94% 10%, var(--t-glow-2), transparent 72%), radial-gradient(52% 56% at 78% 98%, var(--t-glow-3), transparent 72%), radial-gradient(36% 40% at 24% 78%, var(--t-glow-2), transparent 72%), var(--bg); }
+:root[data-shell='liquid'] { background: radial-gradient(56% 52% at 8% 6%, var(--t-lq-glow-1), transparent 72%), radial-gradient(44% 48% at 94% 10%, var(--t-lq-glow-2), transparent 72%), radial-gradient(52% 56% at 78% 98%, var(--t-lq-glow-3), transparent 72%), radial-gradient(36% 40% at 24% 78%, var(--t-lq-glow-2), transparent 72%), var(--bg); }
 :root[data-shell='liquid'][data-theme] { --side-active: var(--t-lq-pill); --side-hover: color-mix(in srgb, var(--card) 40%, transparent); }
 :root[data-shell='liquid'] .shell { position: relative; isolation: isolate; }
 :root[data-shell='liquid'] :is(.set-card, .login-card, .palette, .modal) { position: relative; } /* .side는 데스크톱만(4절) — 폰 폭에서는 fixed 서랍이라 이미 기준 상자다 */
