@@ -1,0 +1,63 @@
+# TEMP probe (fix/windows-ci-flakes) — Windows 러너 부하 관찰용. 병합 전에 삭제한다.
+name: CI probe
+on:
+  push:
+    branches: [fix/windows-ci-flakes]
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: machine
+        shell: pwsh
+        run: |
+          "cpus=$env:NUMBER_OF_PROCESSORS"
+          Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory | Format-List
+          Get-MpComputerStatus | Select-Object AMRunningMode,RealTimeProtectionEnabled,OnAccessProtectionEnabled,BehaviorMonitorEnabled | Format-List
+          (Get-MpPreference).ExclusionPath
+      - name: cold launches (idle)
+        shell: pwsh
+        run: |
+          $ps32 = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+          $chrome = "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe"
+          foreach ($i in 1..3) { $t = Measure-Command { & $ps32 -NoProfile -NonInteractive -Command 'exit 0' }; "ps32 #$i $([int]$t.TotalMilliseconds)ms" }
+          foreach ($i in 1..3) { $d = Join-Path $env:RUNNER_TEMP "cp$i"; $t = Measure-Command { & $chrome --headless=new --user-data-dir=$d --no-first-run --dump-dom about:blank | Out-Null }; "chrome #$i $([int]$t.TotalMilliseconds)ms" }
+      - name: start samplers
+        shell: pwsh
+        run: |
+          $s = @'
+          $prev = @{}
+          while ($true) {
+            $now = Get-Date
+            $rows = foreach ($p in Get-Process) { $c = [double]$p.CPU; $d = if ($prev.ContainsKey($p.Id)) { $c - $prev[$p.Id] } else { 0 }; $prev[$p.Id] = $c; [pscustomobject]@{ n = $p.ProcessName; d = $d } }
+            $g = $rows | Group-Object n | ForEach-Object { [pscustomobject]@{ n = $_.Name; c = $_.Count; d = [math]::Round(($_.Group | Measure-Object d -Sum).Sum, 1) } } | Sort-Object d -Descending | Select-Object -First 6
+            $cnt = (Get-Counter '\Processor(_Total)\% Processor Time','\PhysicalDisk(_Total)\% Disk Time','\Memory\Available MBytes' -ErrorAction SilentlyContinue).CounterSamples | ForEach-Object { [math]::Round($_.CookedValue) }
+            "$($now.ToString('HH:mm:ss')) cpu/disk/memMB=$($cnt -join '/') " + (($g | ForEach-Object { "$($_.n)x$($_.c)=$($_.d)" }) -join ' ') | Add-Content "$env:RUNNER_TEMP\cpu.log"
+            Start-Sleep 4
+          }
+          '@
+          Set-Content "$env:RUNNER_TEMP\sampler.ps1" $s
+          Start-Process pwsh -ArgumentList '-NoProfile','-File',"$env:RUNNER_TEMP\sampler.ps1" -WindowStyle Hidden
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/fetch-busybox.mjs bin
+      - name: npm test
+        run: npm test
+        continue-on-error: true
+      - name: sampler log
+        if: always()
+        shell: pwsh
+        run: Get-Content "$env:RUNNER_TEMP\cpu.log"
