@@ -30,7 +30,7 @@ function runPair(root, body) {
   const one = (id) => new Promise((resolve, reject) => {
     const script = `
 const m = {};
-for (const n of ['thread','approvals','workspace','persona','corrections','routines','connections']) m[n] = await import(${JSON.stringify(srcUrl(''))} + n + '.mjs');
+for (const n of ['thread','approvals','workspace','persona','corrections','routines','connections','scheduler','room']) m[n] = await import(${JSON.stringify(srcUrl(''))} + n + '.mjs');
 await new Promise((r) => setTimeout(r, Math.max(0, ${startAt} - Date.now())));
 const id = ${JSON.stringify(id)}; const WS = ${JSON.stringify(WS)}; const N = ${N};
 ${body}
@@ -115,4 +115,43 @@ test('없는 회사에 대한 company.json 수정은 폴더를 만들지 않는�
   const root = await seed();
   await runPair(root, `await m.workspace.updateCompany('co-ghost', { x: 1 }).catch(() => {});`);
   assert.equal(existsSync(join(root, 'co-ghost')), false, '존재하지 않는 회사 폴더가 생기면 목록·동기화가 유령 회사를 본다');
+});
+
+test('스케줄러 선점(claimRoutine) 대 CLI addRoutine — 두 프로세스가 같은 routines.json을 고쳐도 CLI 루틴이 사라지지 않고 선점(lastRun)도 덮이지 않는다(독립 검수 #800 MEDIUM-1)', { timeout: 120_000 }, async () => {
+  const root = await seed();
+  const base = Date.UTC(2026, 9, 1, 0, 0, 0);
+  writeFileSync(join(root, WS, 'routines.json'), JSON.stringify(['s1', 's2', 's3'].map((id) => ({ id, agentSlug: 'pepper', title: id, prompt: 'p', enabled: true, schedule: { type: 'interval', everyMinutes: 10 }, lastRun: null }))));
+  // a = 앱 스케줄러: 매 반복마다 11분씩 지난 시각으로 runDueRoutines(세 루틴이 매번 due → 선점 쓰기 3회) / b = CLI: 루틴 추가
+  await runPair(root, `
+if (id === 'a') {
+  for (let i = 0; i < N; i++) await m.scheduler.runDueRoutines(WS, new Date(${base} + (i + 1) * 11 * 60_000), { runFn: async () => {} });
+} else {
+  for (let i = 0; i < N; i++) await m.routines.addRoutine(WS, { agentSlug: 'pepper', title: 'cli' + i, prompt: 'p' + i, schedule: { type: 'daily', time: '09:00' } });
+}`);
+  const list = readJson(join(root, WS, 'routines.json'));
+  const cli = list.filter((r) => r.title.startsWith('cli'));
+  assert.equal(cli.length, N, `CLI 루틴 ${N}개가 모두 남아야 한다 — 실제 ${cli.length}(선점 쓰기가 낡은 목록으로 덮으면 사라진다)`);
+  const last = new Date(base + N * 11 * 60_000).toISOString();
+  for (const id of ['s1', 's2', 's3']) assert.equal(list.find((r) => r.id === id)?.lastRun, last, `${id}의 마지막 선점이 CLI 쓰기에 덮이면 같은 루틴이 두 번 실행된다`);
+  assert.deepEqual(lockDirs(join(root, WS)), []);
+});
+
+test('회의실(room-main.json)의 변경도 같은 파일 잠금을 지킨다 — 동기화가 쥔 `<file>.lockd`가 풀릴 때까지 기다린다', { timeout: 60_000 }, async () => {
+  const root = await seed();
+  process.env.ARGO_ROOT = root;
+  const { renameMeeting } = await import('../src/room.mjs');
+  const { withFileLock } = await import('../src/mutex.mjs');
+  mkdirSync(join(root, WS, 'chats', '.archive'), { recursive: true });
+  writeFileSync(join(root, WS, 'chats', '.archive', '_room-123.json'), JSON.stringify({ messages: [{ who: 'user', text: 'x' }] }));
+  const roomFile = join(root, WS, 'chats', 'room-main.json');
+  let release; const held = new Promise((r) => { release = r; });
+  let entered; const inside = new Promise((r) => { entered = r; });
+  const holder = withFileLock(roomFile, async () => { entered(); await held; });
+  await inside;
+  let done = false;
+  const op = renameMeeting(WS, '_room-123.json', '새 이름').then((v) => { done = true; return v; });
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(done, false, '다른 프로세스(동기화)가 방 파일 잠금을 쥔 동안 방 변경이 끼어들면 안 된다');
+  release(); await holder;
+  assert.equal((await op).title, '새 이름');
 });

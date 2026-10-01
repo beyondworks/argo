@@ -797,7 +797,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     const run = async () => { await recheck(rel, basedOn); return fn(); };
     if (isThread(rel)) return withLock(threadLockKey(wsId, rel), run, { file: relFull(rel), mkParent: false });
     if (isFileLockedRel(rel)) return withFileLock(relFull(rel), run, { mkParent: false });
-    return fn(); // 그 밖의 파일은 종전대로(잠금·재확인 없음)
+    return fn(); // 그 밖의 파일(원장 .jsonl·노트 등)은 종전대로 — **basedOn을 넘겨도 무시한다**(잠금·재확인은 스레드와 isFileLockedRel 파일뿐, 독립 검수 #800 LOW-7)
   };
   const writeLocal = async (rel, buf, mtime, basedOn) => {
     const doWrite = async () => {
@@ -967,7 +967,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       const remoteBuf = await pullBuf(rel);
       if (isLedger(rel)) { // 원장 — 행 합집합 병합 후 양쪽 수렴
         const mBuf = mergeLedger(localBuf, remoteBuf);
-        await writeLocal(rel, mBuf, undefined, hashBuf(localBuf));
+        await writeLocal(rel, mBuf, undefined, hashBuf(localBuf)); // 원장은 재확인 대상이 아니라 이 인자는 무시된다(guarded 주석) — 형식을 맞춰 둘 뿐
         await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
