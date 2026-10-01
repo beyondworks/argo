@@ -33,7 +33,7 @@ const T = {
   ko: {
     noConfig: 'Supabase 공개 설정이 없습니다. ~/.argo/cli.json에 {"supabase":{"url":"…","anonKey":"…"}}를 넣거나 NEXT_PUBLIC_SUPABASE_URL·NEXT_PUBLIC_SUPABASE_ANON_KEY를 설정하세요.',
     loginOpen: '브라우저에서 아래 주소를 열어 로그인하고 "이 터미널 로그인"을 누르세요:', loginSsh: (p, h) => `브라우저가 없는 서버라면 내 PC에서 먼저 실행하세요: ssh -L ${p}:127.0.0.1:${p} ${h}`,
-    loginWait: '로그인을 기다리는 중… (Ctrl+C로 취소)', loginDone: (e) => `로그인했습니다: ${e}`, loginTimeout: '10분 안에 로그인하지 않아 취소했습니다.',
+    loginWait: '로그인을 기다리는 중… (Ctrl+C로 취소)', loginDone: (e) => `로그인했습니다: ${e}`, loginTimeout: '10분 안에 로그인하지 않아 취소했습니다.', loginConfirm: (e) => `이 계정으로 이 터미널을 로그인할까요? ${e} [y/N] `, loginDeclined: '취소했습니다. 브라우저에서 다시 시도하거나 Ctrl+C로 끝내세요.',
     needLogin: '먼저 로그인해야 합니다 — argo login', dead: '기기 세션이 만료·폐기됐습니다. 다시 로그인하세요 — argo login',
     finding: '클라우드에서 회사를 찾는 중…', noCompany: '이 계정의 회사가 없습니다.', newCompany: '새 회사 이름: ', pickCompany: '회사를 고르세요',
     pick: '번호: ', crews: '대화할 크루를 고르세요', noCrew: '크루가 없습니다. /hire로 크루를 영입하세요.', chatHint: '(빈 줄이나 /quit로 끝냅니다)',
@@ -62,7 +62,7 @@ const T = {
   en: {
     noConfig: 'Missing Supabase public config. Put {"supabase":{"url":"…","anonKey":"…"}} in ~/.argo/cli.json or set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.',
     loginOpen: 'Open this address in a browser, sign in, and press "Sign in this terminal":', loginSsh: (p, h) => `On a server without a browser, run this on your PC first: ssh -L ${p}:127.0.0.1:${p} ${h}`,
-    loginWait: 'Waiting for sign-in… (Ctrl+C to cancel)', loginDone: (e) => `Signed in: ${e}`, loginTimeout: 'Cancelled — no sign-in within 10 minutes.',
+    loginWait: 'Waiting for sign-in… (Ctrl+C to cancel)', loginDone: (e) => `Signed in: ${e}`, loginTimeout: 'Cancelled — no sign-in within 10 minutes.', loginConfirm: (e) => `Sign this terminal in as this account? ${e} [y/N] `, loginDeclined: 'Cancelled. Try again in the browser, or press Ctrl+C to quit.',
     needLogin: 'Sign in first — argo login', dead: 'This device session expired or was revoked. Sign in again — argo login',
     finding: 'Looking for your companies in the cloud…', noCompany: 'No company for this account yet.', newCompany: 'New company name: ', pickCompany: 'Choose a company',
     pick: 'Number: ', crews: 'Choose a crew to talk to', noCrew: 'No crews yet. Hire one with /hire.', chatHint: '(empty line or /quit to leave)',
@@ -149,7 +149,10 @@ async function login() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL; const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) { console.error(T.noConfig); process.exit(1); }
   const { startLoginServer } = await import('../src/cli/login.mjs');
-  const srv = await startLoginServer({ supabaseUrl: url, anonKey, lang, port: Number(process.env.ARGO_LOGIN_PORT) || undefined });
+  // 저장 전 터미널 확인(검수 L1) — 같은 컴퓨터의 다른 프로세스가 자기 계정을 밀어 넣어도 사람이 거절한다. 입력 장치가 없으면(파이프) 확인을 건너뛴다 —
+  // 그때도 첫 주소의 비밀값·같은 출처 검사는 그대로다.
+  const confirm = rl ? async (u) => { const ok = /^y/i.test(await ask(`\n${T.loginConfirm(u.email || u.id)}`)); if (!ok) console.log(T.loginDeclined); return ok; } : undefined;
+  const srv = await startLoginServer({ supabaseUrl: url, anonKey, lang, port: Number(process.env.ARGO_LOGIN_PORT) || undefined, confirm });
   console.log(`${T.loginOpen}\n\n  ${srv.url}\n`);
   if (!hasDisplay()) console.log(`${T.loginSsh(srv.port, `${process.env.USER ?? 'user'}@${hostname()}`)}\n`);
   openUrl(srv.url); console.log(T.loginWait);
