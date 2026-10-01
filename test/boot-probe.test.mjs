@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 const BOOT = join(dirname(dirname(fileURLToPath(import.meta.url))), 'public', 'boot.js');
 
-function load({ fetchImpl, hasAC = true }) {
+// introDone — 북극성 등장(boot-splash.mjs) 끝 신호를 미리 켜 둘지. 기본 켬: 프로브 핀들은 이동 URL만 본다(등장 대기는 아래 별도 핀).
+function load({ fetchImpl, hasAC = true, introDone = true }) {
   const el = () => ({ textContent: '', hidden: true, style: {} });
   const els = { status: el(), fill: el(), logtail: el(), err: el() };
   const listeners = {};
@@ -18,7 +19,7 @@ function load({ fetchImpl, hasAC = true }) {
   const ctx = {
     console,
     document: { getElementById: (id) => els[id] },
-    location: { search: '', replace: (u) => { ctx.__navigated = u; } },
+    location: { search: '', replace: (u) => { ctx.__navigated = u; ctx.__navCount = (ctx.__navCount || 0) + 1; } },
     // 타이머 핸들은 1부터(0이면 boot.js의 `if (timer)` 진위 검사가 거짓 실패 — 검수 하네스 교훈)
     setTimeout: (fn, ms) => { const t = { fn, ms, id: timers.length + 1, cleared: false }; timers.push(t); return t.id; },
     clearTimeout: (id) => { const t = timers.find((x) => x.id === id); if (t) t.cleared = true; },
@@ -34,6 +35,9 @@ function load({ fetchImpl, hasAC = true }) {
     };
   }
   ctx.window = ctx;
+  ctx.__winListeners = {};
+  ctx.addEventListener = (n, cb) => { (ctx.__winListeners[n] ||= []).push(cb); };
+  if (introDone) ctx.__argoIntroDone = true;
   ctx.window.__TAURI__ = { event: { listen: (n, cb) => { listeners[n] = cb; } } };
   vm.createContext(ctx);
   vm.runInContext(readFileSync(BOOT, 'utf8'), ctx);
@@ -100,10 +104,7 @@ test('정상 즉답: 신원·버전 일치 서버로 이동하고 상한 타이�
     fetchImpl: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ argo: true, version: '0.0.0', dockProtocol: 1 }) }),
   });
   await drain(); await drain(); await drain();
-  const goDelay = timers.find((t) => t.ms === 350);
-  assert.ok(goDelay, 'goto 지연 예약');
-  goDelay.fn();
-  assert.equal(ctx.__navigated, 'http://localhost:3001');
+  assert.equal(ctx.__navigated, 'http://localhost:3001/#argo-splash', '등장이 끝나 있으면 바로 이동 — #argo-splash로 Next 첫 화면이 로고를 이어 그린다');
   assert.ok(timers.filter((t) => t.ms === 1500).every((t) => t.cleared), '정착 시 프로브 상한 타이머 해제');
 });
 
@@ -130,9 +131,8 @@ test('신원 게이트: argo 마커 없는 응답(타 앱)으로는 이동하지
       json: () => Promise.resolve(String(url).includes('3001') ? { hello: 'imposter' } : { argo: true, version: '0.0.0', dockProtocol: 1 }),
     }),
   });
-  for (let n = 0; n < 6 && !timers.find((t) => t.ms === 350); n++) await drain();
-  timers.find((t) => t.ms === 350)?.fn();
-  assert.equal(ctx.__navigated, 'http://localhost:3011', '선점 타 앱(3001)을 건너뛰고 진짜 Argo(3011)로');
+  for (let n = 0; n < 6 && !ctx.__navigated; n++) await drain();
+  assert.equal(ctx.__navigated, 'http://localhost:3011/#argo-splash', '선점 타 앱(3001)을 건너뛰고 진짜 Argo(3011)로');
 });
 
 test('버전 게이트: 셸 버전을 알면 다른 버전의 Argo는 건너뛴다 (v0.1.20 앱-v0.1.22 화면 어긋남 핀)', async () => {
@@ -143,9 +143,8 @@ test('버전 게이트: 셸 버전을 알면 다른 버전의 Argo는 건너뛴�
     }),
   });
   listeners.boot({ payload: { version: '9.9.9' } }); // port 없이 버전만 — 목록은 그대로
-  for (let n = 0; n < 6 && !timers.find((t) => t.ms === 350); n++) await drain();
-  timers.find((t) => t.ms === 350)?.fn();
-  assert.equal(ctx.__navigated, 'http://localhost:3011', '버전 불일치 상주(3001)를 건너뛰고 같은 버전(3011)으로');
+  for (let n = 0; n < 6 && !ctx.__navigated; n++) await drain();
+  assert.equal(ctx.__navigated, 'http://localhost:3011/#argo-splash', '버전 불일치 상주(3001)를 건너뛰고 같은 버전(3011)으로');
 });
 
 test('AbortController 부재 웹뷰: 예외 없이 구 동작으로 강등 (사문화 폴백 핀)', async () => {
@@ -161,8 +160,39 @@ for (const stale of [undefined, 0, 10]) {
     const { ctx, timers } = load({ fetchImpl: url => Promise.resolve({ ok: true,
       json: () => Promise.resolve({ argo: true, version: '9.9.9', dockProtocol: String(url).includes('3001') ? stale : 1 }),
     }) });
-    for (let n = 0; n < 8 && !timers.find(t => t.ms === 350); n++) await drain();
-    timers.find(t => t.ms === 350)?.fn();
-    assert.equal(ctx.__navigated, 'http://localhost:3011');
+    for (let n = 0; n < 8 && !ctx.__navigated; n++) await drain();
+    assert.equal(ctx.__navigated, 'http://localhost:3011/#argo-splash');
   });
 }
+
+// 북극성 등장 대기(2026-10-01) — 별이 떨어지다 만 장면에서 Next 화면으로 튀지 않게 등장 끝을 기다리되,
+// boot-splash.mjs(module)는 이 classic 스크립트보다 늦게 돌거나 아예 실패할 수 있어 상한이 있어야 한다(반대 검토 #2·#4).
+const okFetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ argo: true, version: '0.0.0', dockProtocol: 1 }) });
+
+test('등장 대기: 서버가 먼저 준비돼도 등장 끝 신호(argo-intro-done) 전에는 이동하지 않고, 신호에 한 번만 이동한다', async () => {
+  const { ctx, timers } = load({ fetchImpl: okFetch, introDone: false });
+  await drain(); await drain(); await drain();
+  assert.equal(ctx.__navigated, null, '등장 중에는 이동 보류');
+  const cap = timers.find((t) => t.ms === 600 && !t.cleared);
+  assert.ok(cap, '신호가 안 와도 가는 상한 타이머 — 서버 준비 뒤 0.6초(검수 #792 결정: 빠른 경로에서 첫 화면을 늦추지 않는다)');
+  for (const cb of ctx.__winListeners['argo-intro-done'] || []) cb();
+  assert.equal(ctx.__navigated, 'http://localhost:3001/#argo-splash');
+  cap.fn(); // 상한이 뒤늦게 발화해도
+  assert.equal(ctx.__navCount, 1, '두 번 이동하지 않는다');
+});
+
+test('등장 대기 상한: 스플래시 모듈이 끝내 신호를 안 보내도(로드 실패) 상한에 이동한다 — 영구 대기 없음', async () => {
+  const { ctx, timers } = load({ fetchImpl: okFetch, introDone: false });
+  await drain(); await drain(); await drain();
+  const cap = timers.find((t) => t.ms === 600 && !t.cleared);
+  assert.ok(cap);
+  cap.fn();
+  assert.equal(ctx.__navigated, 'http://localhost:3001/#argo-splash');
+});
+
+test('등장이 이미 끝난 뒤 서버가 준비되면 기다리지 않고 바로 이동한다(이동 지연 0)', async () => {
+  const { ctx } = load({ fetchImpl: okFetch, introDone: false });
+  ctx.__argoIntroDone = true; // 모듈이 먼저 끝난 경우
+  await drain(); await drain(); await drain();
+  assert.equal(ctx.__navigated, 'http://localhost:3001/#argo-splash');
+});

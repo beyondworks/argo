@@ -148,7 +148,8 @@
 .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top { flex-wrap: wrap; row-gap: 8px; }
 .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .topic { flex: 1 1 0; } /* 주제는 남는 자리만 — 줄바꿈을 일으키지 않고 말줄임 */
 @container msgr-main (max-width: 939px) {
-  .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .topic, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .members .n, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .msgr-seg .lbl { display: none; }
+  .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .topic, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .members .n { display: none; }
+  .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-top .msgr-seg { flex: none; } /* 탭 글자는 숨기지 않는다 — 자리가 모자라면 탭 줄이 아래로 내려간다(위 flex-wrap). 721px에서 '@'·'✓1'·별 아이콘만 남아 무엇인지 알 수 없던 것(검수 E, 2026-10-01) */
 }
 .msgr-seg { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border-soft); }
 .msgr-seg button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--fg-2); border: 0; background: none; cursor: pointer; white-space: nowrap; transition: background 120ms ease, color 120ms ease; }
@@ -251,7 +252,6 @@
 .msgr-slip { max-width: 640px; border-radius: 6px 20px 20px 20px; overflow: hidden; border: 1px solid var(--border); background: var(--card); }
 .msgr-slip .band { display: flex; align-items: center; gap: 10px; padding: 9px 14px 9px 12px; background: var(--primary); color: var(--primary-fg); font-size: 11.5px; font-weight: 600; }
 .msgr-slip .band .risk { margin-left: 8px; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; opacity: .9; }
-.msgr-slip .band .id { margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 500; opacity: .7; }
 .msgr-slip.pending .band { background: var(--mark); color: var(--mark-fg); }
 .msgr-slip.pending.wait .band { background: var(--card-2); color: var(--fg-2); box-shadow: inset 0 -1px 0 var(--mark); }
 .msgr-slip.pending.wait .band .mi { color: var(--mark-fg); background: var(--mark); border-radius: 999px; padding: 2px; }
@@ -344,7 +344,7 @@
 .msgr-sheetwrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
 .msgr-sheetwrap > * { pointer-events: auto; }
 /* 우측 패널이 열리면 본문이 패널 왼쪽 공간만 쓴다 — 패널이 입력창·전송 버튼을 덮던 것(유건 제보 2026-09-18, 0.1.28부터).
-   본문(.msgr-main) 폭 1044px(글 폭 640 + 패널 380 + 여백 24) 이상이면 스레드·입력창 모두, 그보다 좁으면 입력창만 비킨다(하한 280px — 더 좁으면 겹침 허용).
+   본문(.msgr-main) 폭 732px 이상이면 스레드·입력창 모두 비키고(점검 A·B #10 — 종전엔 스레드는 1044px 이상), 1044px 이상이면 글 폭 640 + 패널 380 + 여백 24를 가운데 맞춘다. 그보다 좁으면(731 이하) 겹침 허용(입력창 하한 280px).
    바닥 유지는 스레드 척추의 ResizeObserver(App.jsx Channel)가 한다. 폰 셸은 시트라 제외 */
 .msgr-shell:not(.msgr-phone) .msgr-main { container: msgr-main / inline-size; }
 .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-thread, .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-dock { transition: padding 180ms cubic-bezier(.23,1,.32,1); } /* 패널 등장(msgrPopIn)과 같은 곡선 — ease-out이면 패널이 먼저 불투명해져 전송 버튼이 약 0.1초 가려졌다(검수 #600 LOW-1) */
@@ -354,8 +354,11 @@
 @container msgr-main (max-width: 731px) { /* 입력창 하한(280) + 패널 비킴(428) + 왼쪽 24보다 좁으면 입력창이 패널 옆에 못 선다 → 패널을 받침 위에서 끝낸다 */
   .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek) { max-height: calc(100% - var(--msgr-top-h, 63px) - 9px - var(--msgr-dock-h, 0px) - 8px); }
 }
-@container msgr-main (min-width: 1044px) {
+/* 스레드도 입력창이 비킬 수 있는 폭(732px)부터 비킨다 — 1044px 이상에서만 비키던 때는 본문 1012px(창 1280)에서 말풍선·시각이 패널 밑으로 250px 들어가 덮였다(점검 A·B #10, ego 측정). 글 폭이 줄어도(640 하한 없음) 가린 채 두지 않는다 */
+@container msgr-main (min-width: 732px) {
   .msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-thread { padding-left: max(24px, calc((100% - 1124px) / 2)); padding-right: calc(max(24px, calc((100% - 1124px) / 2)) + 404px); }
+}
+@container msgr-main (min-width: 1044px) {
   .msgr-shell:not(.msgr-phone) .msgr-main:has(> .msgr-sheetwrap > .msgr-crewsheet:not(.msgr-dmpeek)) > .msgr-dock { padding-left: calc(max(24px, (100% - 1124px) / 2) + var(--sbw, 0px)); padding-right: calc(max(24px, (100% - 1124px) / 2) + var(--sbw, 0px) + 404px); }
 }
 .msgr-sheetwrap .msgr-crewsheet { z-index: 66; } /* 투명 스크림(.msgr-scrim.clear, z 65)보다 위 — 아니면 시트 위의 휠이 스크림에 먹혀 뒤의 스레드가 스크롤된다(유건 실측 2026-09-04) */
@@ -541,6 +544,7 @@
 .msgr-list .item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 10px; border: 0; background: none; color: var(--fg-2); font: inherit; font-size: 13px; text-align: left; cursor: pointer; min-width: 0; }
 .msgr-list .item .mi { color: var(--fg-3); flex: none; }
 .msgr-list .item .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-namehint { display: block; font-size: 11px; line-height: 1.3; font-weight: 400; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* 같은 이름의 에이전트를 구별하는 보조 줄(점검 A·B #12) — 이름 아래 한 줄이라 이름을 깎지 않는다 */
 @media (hover: hover) { .msgr-list .item:hover { background: var(--card-2); color: var(--fg); } } .msgr-list .item:active { background: var(--card-2); color: var(--fg); }
 .msgr-list .item.active { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
 .msgr-list .item.active .mi { color: var(--primary-fg); }
@@ -971,57 +975,79 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 /* 에이전트 얼굴(2026-09-24) — 타일 배경·테두리를 걷고 도형 자체가 아바타. 배지(.star)는 그대로 위에 */
 .msgr-av.crew.face { background: transparent; border-color: transparent; border-radius: 0; padding: 0; }
 .msgr-row > .msgr-av.face, .msgr-row > .msgr-avbtn > .msgr-av.face { background: var(--bg); border-radius: 8px; box-shadow: 0 0 0 4px var(--bg); } /* 대화 척추선이 도형 빈 곳으로 비치지 않게 — 바탕색 판 + 4px 테두리. 목록 안 크루 글은 버튼으로 감싸여 있다(재검수 N-2) */
+/* 에이전트 얼굴 v2(유건 확정 시안 2026-10-01) — 도형·색·눈·입·선 굵기는 crew-face.mjs faceInner가 SVG 속성으로 넣는다(오피스와 같은 그림).
+   여기는 움직임(transform·opacity만)과 오프라인 채도뿐. 몸짓은 face-gestures.mjs가 화면에 보이는 쉼 얼굴에만 data-g를 붙였다 뗀다(타이머 하나). */
 .msgr-face { width: 100%; height: 100%; display: block; overflow: visible; }
-.msgr-face .face { fill: #111113; stroke: #111113; stroke-linecap: round; stroke-linejoin: round; }
-.msgr-face .face circle, .msgr-face .face ellipse { stroke: none; }
-.msgr-face .face .stroke { fill: none; stroke-width: 5; }
-.msgr-face .face .line path { fill: none; stroke-width: 3.8; }
+.msgr-face .body { transition: filter .4s; }
 .msgr-face .rig { transform-box: view-box; transform-origin: 50px 92px; }
-.msgr-face .body { transition: filter .4s, opacity .4s; }
-.msgr-face .blink { transform-box: fill-box; transform-origin: center; }
-.msgr-face.s-work .face { animation: msgr-face-wander 2.8s ease-in-out infinite; }
-@keyframes msgr-face-wander { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-7px, -3px); } 50% { transform: translate(0, -6px); } 75% { transform: translate(7px, -3px); } }
-.msgr-face.s-ask .rig { animation: msgr-face-tilt 3s cubic-bezier(.3, 1.4, .5, 1) infinite; }
-@keyframes msgr-face-tilt { 0%, 100% { transform: rotate(0); } 20%, 70% { transform: rotate(-7deg); } }
-.msgr-face.s-done .rig { animation: msgr-face-hop 1s cubic-bezier(.3, 1.5, .5, 1) 2; }
-@keyframes msgr-face-hop { 0%, 100% { transform: translateY(0) scale(1); } 20% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-9px) scale(.96, 1.05); } 75% { transform: translateY(0) scale(1.04, .96); } }
-/* 놀람(멘션·수신 1초, 유건 확정 2026-09-24) — 눈이 커지고 살짝 튄다. infinite가 아니라 1회(surprisedAt이 1초만 살아 있어 그새 unmount된다) */
-.msgr-face.s-surprise .face .surprise { transform-box: fill-box; transform-origin: center; animation: msgr-face-surprise-eyes 1s cubic-bezier(.2, 1.6, .4, 1) 1; }
-@keyframes msgr-face-surprise-eyes { 0% { transform: scale(1); } 25% { transform: scale(1.45); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
-.msgr-face.s-surprise .rig { animation: msgr-face-surprise-hop 1s cubic-bezier(.2, 1.6, .4, 1) 1; }
-@keyframes msgr-face-surprise-hop { 0% { transform: translateY(0); } 20% { transform: translateY(-4px); } 55% { transform: translateY(2px); } 100% { transform: translateY(0); } }
-/* 대기(idle, 유건 확정 2026-09-24) — 깜빡임·두리번·고개 갸웃·가끔 하품을 섞은 keyframes 세 벌. 크루마다 다른 --face-dur(4~12s)·--face-delay(음수)로 박자·시작 위치가 갈린다(faceMotion, JS 타이머 없음). */
-.msgr-face.s-idle.idle-a .blink { animation: msgr-face-eyes-a var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-@keyframes msgr-face-eyes-a {
-  0%, 4%, 43%, 96%, 100% { transform: scaleY(1) translateX(0); }
-  2% { transform: scaleY(.12); } /* 깜빡임 */
-  46% { transform: scaleY(.12); } /* 가끔 두 번 */
-  62% { transform: translateX(2.5px); } 70% { transform: translateX(-2.5px); } 78% { transform: translateX(0); } /* 두리번 */
+.msgr-face .eye, .msgr-face .eyes, .msgr-face .grin, .msgr-face .yawn, .msgr-face .swirl, .msgr-face .mouth, .msgr-face .q { transform-box: fill-box; transform-origin: center; }
+/* 쉼(idle) 몸짓 8종 — data-g가 붙은 동안 1회. 감은 눈 얼굴은 눈동자가 없어 두리번·눈 굴리기 때 얼굴 전체(.look)가 움직인다 */
+.msgr-face.s-idle[data-g="blink"] .eye { animation: msgr-face-g-blink .36s ease-in-out; }
+@keyframes msgr-face-g-blink { 0%, 100% { transform: scaleY(1); } 42%, 58% { transform: scaleY(.1); } }
+.msgr-face.s-idle[data-g="look"] .look { animation: msgr-face-g-look 1.6s ease-in-out; }
+.msgr-face.s-idle[data-g="look"] .pupil { animation: msgr-face-g-look-pupil 1.6s ease-in-out; }
+@keyframes msgr-face-g-look { 0%, 100% { transform: translate(0, 0); } 18%, 42% { transform: translate(-3.5px, 0); } 58%, 84% { transform: translate(3.5px, 0); } }
+@keyframes msgr-face-g-look-pupil { 0%, 100% { transform: translate(0, 0); } 18%, 42% { transform: translate(-2.6px, 0); } 58%, 84% { transform: translate(2.6px, 0); } }
+.msgr-face.s-idle[data-g="tilt"] .rig { animation: msgr-face-g-tilt 1.4s cubic-bezier(.3, 1.3, .5, 1); }
+.msgr-face.s-idle[data-g="tilt"] .look { animation: msgr-face-g-tilt-look 1.4s ease-in-out; }
+@keyframes msgr-face-g-tilt { 0%, 100% { transform: rotate(0); } 24%, 62% { transform: rotate(9deg); } 82% { transform: rotate(-2deg); } }
+@keyframes msgr-face-g-tilt-look { 0%, 100% { transform: translate(0, 0); } 24%, 62% { transform: translate(2px, -1px); } }
+.msgr-face.s-idle[data-g="bounce"] .rig { animation: msgr-face-g-bounce .9s ease-in-out; }
+@keyframes msgr-face-g-bounce {
+  0%, 100% { transform: translateY(0) scale(1, 1); } 14% { transform: translateY(0) scale(1.1, .88); } 40% { transform: translateY(-12px) scale(.94, 1.07); }
+  62% { transform: translateY(0) scale(1.08, .9); } 78% { transform: translateY(-3px) scale(.98, 1.02); }
 }
-.msgr-face.s-idle.idle-b .blink { animation: msgr-face-eyes-b var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-.msgr-face.s-idle.idle-b .rig { animation: msgr-face-tilt-b var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-@keyframes msgr-face-eyes-b {
-  0%, 30%, 70%, 100% { transform: scaleY(1) translateX(0); }
-  38% { transform: translateX(3px); } 48% { transform: translateX(-3px); } 58% { transform: translateX(0); } /* 두리번 */
-  86% { transform: scaleY(.12); } /* 깜빡임 */
+.msgr-face.s-idle[data-g="wiggle"] .rig { animation: msgr-face-g-wiggle .9s ease-in-out; }
+@keyframes msgr-face-g-wiggle {
+  0%, 100% { transform: skewX(0) scale(1, 1); } 15% { transform: skewX(-9deg) scale(1.02, .98); } 35% { transform: skewX(8deg) scale(.98, 1.03); }
+  55% { transform: skewX(-5deg) scale(1.01, .99); } 75% { transform: skewX(3deg); }
 }
-@keyframes msgr-face-tilt-b { 0%, 22%, 78%, 100% { transform: rotate(0); } 40% { transform: rotate(6deg); } 60% { transform: rotate(-3deg); } } /* 고개 갸웃 */
-.msgr-face.s-idle.idle-c .blink { animation: msgr-face-eyes-c var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-.msgr-face.s-idle.idle-c .rig { animation: msgr-face-tilt-c var(--face-dur, 8s) ease-in-out var(--face-delay, 0s) infinite; }
-@keyframes msgr-face-eyes-c {
-  0%, 20%, 62%, 100% { transform: scaleY(1); }
-  10% { transform: scaleY(.12); } /* 깜빡임 */
-  76%, 90% { transform: scaleY(.35); } /* 하품 중 눈 찡그림 */
-}
-@keyframes msgr-face-tilt-c { 0%, 66%, 100% { transform: rotate(0) scaleY(1); } 16% { transform: rotate(-5deg); } 30% { transform: rotate(0); } 80%, 88% { transform: scaleY(1.08) translateY(-2px); } } /* 고개 돌리기 + 하품(몸이 세로로 늘어남) */
-/* 졸기(off, 유건 확정 2026-09-24) — 채도 낮추고, 천천히 숨 쉬고(몸 스케일), z가 떠올랐다 사라진다 */
-.msgr-face.s-off .body { filter: saturate(0); opacity: .55; } /* 다크 바탕에서도 검은 눈이 보이는 회색 */
-.msgr-face.s-off .rig { animation: msgr-face-breathe 4.6s ease-in-out infinite; }
-@keyframes msgr-face-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.015); } }
-.msgr-face .zzz { font-size: 11px; font-weight: 700; fill: #111113; opacity: 0; }
-.msgr-face.s-off .zzz { animation: msgr-face-zzz 4.6s ease-in-out infinite; }
-@keyframes msgr-face-zzz { 0%, 70%, 100% { opacity: 0; transform: translateY(0); } 15% { opacity: .5; transform: translateY(-2px); } 45% { opacity: .25; transform: translateY(-10px); } }
-@media (prefers-reduced-motion: reduce) { .msgr-face *, .msgr-face { animation: none !important; transition: none !important; } }
+.msgr-face.s-idle[data-g="yawn"] .rig { animation: msgr-face-g-yawn-body 1.9s ease-in-out; }
+.msgr-face.s-idle[data-g="yawn"] .eyes { animation: msgr-face-g-yawn-eyes 1.9s ease-in-out; }
+.msgr-face.s-idle[data-g="yawn"] .mouth { animation: msgr-face-g-hide 1.9s ease-in-out; }
+.msgr-face.s-idle[data-g="yawn"] .yawn { animation: msgr-face-g-yawn-mouth 1.9s ease-in-out; }
+@keyframes msgr-face-g-yawn-body { 0%, 100% { transform: scale(1, 1); } 30%, 66% { transform: scale(.97, 1.07); } }
+@keyframes msgr-face-g-yawn-eyes { 0%, 100% { transform: scaleY(1); } 26%, 70% { transform: scaleY(.35); } }
+@keyframes msgr-face-g-yawn-mouth { 0%, 14%, 86%, 100% { opacity: 0; transform: scale(.3); } 30%, 66% { opacity: 1; transform: scale(1); } }
+@keyframes msgr-face-g-hide { 0%, 14%, 86%, 100% { opacity: 1; } 24%, 76% { opacity: 0; } }
+.msgr-face.s-idle[data-g="roll"] .pupil { animation: msgr-face-g-roll-pupil 1.4s ease-in-out; }
+.msgr-face.s-idle[data-g="roll"] .look { animation: msgr-face-g-roll-look 1.4s ease-in-out; }
+@keyframes msgr-face-g-roll-pupil { 0%, 100% { transform: translate(0, 0); } 20% { transform: translate(-3px, -1px); } 40% { transform: translate(-1px, -3.6px); } 60% { transform: translate(2.6px, -2.6px); } 78% { transform: translate(3px, 0); } }
+@keyframes msgr-face-g-roll-look { 0%, 100% { transform: translate(0, 0); } 20% { transform: translate(-2px, 0); } 40% { transform: translate(0, -2.2px); } 60% { transform: translate(2px, -1px); } 80% { transform: translate(1px, 1px); } }
+.msgr-face.s-idle[data-g="smile"] .mouth { animation: msgr-face-g-hide 1.6s ease-in-out; }
+.msgr-face.s-idle[data-g="smile"] .grin { animation: msgr-face-g-grin 1.6s cubic-bezier(.3, 1.4, .5, 1); }
+.msgr-face.s-idle[data-g="smile"] .eye { animation: msgr-face-g-squint 1.6s ease-in-out; }
+.msgr-face.s-idle[data-g="smile"] .rig { animation: msgr-face-g-lift 1.6s ease-in-out; }
+@keyframes msgr-face-g-grin { 0%, 12%, 88%, 100% { opacity: 0; transform: scale(.6); } 26%, 74% { opacity: 1; transform: scale(1); } }
+@keyframes msgr-face-g-squint { 0%, 100% { transform: scaleY(1) translateY(0); } 24%, 76% { transform: scaleY(.62) translateY(-1px); } }
+@keyframes msgr-face-g-lift { 0%, 100% { transform: translateY(0); } 26%, 74% { transform: translateY(-2px); } }
+/* 상태 — 상태가 이어지는 동안 반복(완료·놀람은 정해진 횟수) */
+.msgr-face.s-work .pupil { animation: msgr-face-s-work-pupil 2.4s ease-in-out infinite; } /* 답변 준비 중 — 두리번 + 가끔 깜빡임 */
+.msgr-face.s-work .look { animation: msgr-face-s-work-look 2.4s ease-in-out infinite; }
+.msgr-face.s-work .eye { animation: msgr-face-s-work-blink 2.4s ease-in-out infinite; }
+@keyframes msgr-face-s-work-pupil { 0%, 100% { transform: translate(0, 0); } 14%, 34% { transform: translate(-3.2px, -1px); } 50% { transform: translate(0, -2.4px); } 64%, 84% { transform: translate(3.2px, -1px); } }
+@keyframes msgr-face-s-work-look { 0%, 100% { transform: translate(0, 0); } 14%, 34% { transform: translate(-1.6px, 0); } 64%, 84% { transform: translate(1.6px, 0); } }
+@keyframes msgr-face-s-work-blink { 0%, 90%, 100% { transform: scaleY(1); } 94% { transform: scaleY(.12); } }
+.msgr-face.s-ask .swirl { animation: msgr-face-s-spin 1.6s linear infinite; } /* 결재 대기 — 소용돌이 눈 + ? + 갸웃 */
+.msgr-face.s-ask .q { animation: msgr-face-s-q 1.8s ease-in-out infinite; }
+.msgr-face.s-ask .rig { animation: msgr-face-s-ask-tilt 3.2s cubic-bezier(.3, 1.3, .5, 1) infinite; }
+@keyframes msgr-face-s-spin { to { transform: rotate(360deg); } }
+@keyframes msgr-face-s-q { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-3px) rotate(8deg); } }
+@keyframes msgr-face-s-ask-tilt { 0%, 100% { transform: rotate(0); } 20%, 70% { transform: rotate(-6deg); } }
+.msgr-face.s-done .rig { animation: msgr-face-s-hop 1s cubic-bezier(.3, 1.5, .5, 1) 2; } /* 완료(답 뒤 2초) — 통통 두 번 */
+@keyframes msgr-face-s-hop { 0%, 100% { transform: translateY(0) scale(1); } 20% { transform: translateY(0) scale(1.08, .9); } 50% { transform: translateY(-10px) scale(.96, 1.05); } 75% { transform: translateY(0) scale(1.04, .96); } }
+.msgr-face.s-surprise .eye { animation: msgr-face-s-pop 1s cubic-bezier(.2, 1.6, .4, 1) 1; } /* 놀람(멘션·수신 1초) — 흰 눈이 커지고 살짝 튄다 */
+.msgr-face.s-surprise .rig { animation: msgr-face-s-jump 1s cubic-bezier(.2, 1.6, .4, 1) 1; }
+@keyframes msgr-face-s-pop { 0% { transform: scale(.8); } 25% { transform: scale(1.18); } 60% { transform: scale(1.04); } 100% { transform: scale(1); } }
+@keyframes msgr-face-s-jump { 0% { transform: translateY(0); } 20% { transform: translateY(-5px); } 55% { transform: translateY(2px); } 100% { transform: translateY(0); } }
+.msgr-face.s-error .rig { animation: msgr-face-s-shake 2.2s ease-in-out infinite; } /* 오류 — 2.2초마다 짧게 흔들림 */
+@keyframes msgr-face-s-shake { 0%, 24%, 100% { transform: translateX(0); } 4% { transform: translateX(-3px); } 8% { transform: translateX(3px); } 12% { transform: translateX(-2.5px); } 16% { transform: translateX(2px); } 20% { transform: translateX(-1px); } }
+.msgr-face.s-off .body { filter: saturate(.22) brightness(.98); } /* 오프라인 — 채도 낮춤 + 숨쉬기 + z */
+.msgr-face.s-off .rig { animation: msgr-face-s-breathe 4.6s ease-in-out infinite; }
+.msgr-face.s-off .zzz { animation: msgr-face-s-zzz 4.6s ease-in-out infinite; }
+@keyframes msgr-face-s-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.015, 1.03); } }
+@keyframes msgr-face-s-zzz { 0%, 70%, 100% { opacity: 0; transform: translate(0, 0); } 15% { opacity: .9; transform: translate(0, -2px); } 45% { opacity: .35; transform: translate(3px, -10px); } }
+@media (prefers-reduced-motion: reduce) { .msgr-face, .msgr-face * { animation: none !important; transition: none !important; } }
 /* 에이전트 얼굴 고르기(2026-09-24) — 크루 카드, 소유자만 */
 .msgr-facepicker { display: grid; gap: 10px; }
 .msgr-facepicker > svg.preview { width: 64px; height: 64px; justify-self: start; }
@@ -1195,7 +1221,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-foot .me .msgr-av { width: 36px; height: 36px; }
   /* 알약 왼쪽 자리 = 상주 노드 연결 상태(프로필과 같은 원형 칩) */
   .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node { position: relative; display: grid; place-items: center; width: 36px; height: 36px; min-width: 36px; min-height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--card-2); border: 1px solid var(--border); color: var(--fg-3); cursor: pointer; } /* 테두리까지 프로필 원과 같은 결 */
-  .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node { color: var(--danger); }  /* 연결 전 — 붉은 취소선 아이콘 */
+  .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node.down { color: var(--danger); }  /* 붙었다가 끊김 — 붉은 취소선(점검 A·B #11: 서버가 없는 상태는 오류가 아니라 중립 회색) */
   .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node.on { color: var(--ok); }   /* 연결됨 */
   .msgr-phone.phone-home .msgr-side .msgr-foot .ph-node:active { background: var(--border-soft); }
   /* 조직 창: 머리 아래 화면 폭 전체로 붙이고(좌우 여백 0, 아래 모서리만 둥글게) 뒤는 어둡게 덮는다 — 뒤 목록이 비치던 것(유건 2026-09-11) */
@@ -1300,6 +1326,11 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .more { display: grid; opacity: 1; width: 44px; height: 44px; right: 8px; }
   .msgr-phone.phone-home .msgr-railrow > .item { padding-right: 56px; } /* 터치에서도 그룹·즐겨찾기 순서에 접근 */
   .msgr-phone.phone-home .msgr-side .item.msgr-addrow { display: flex; align-items: center; justify-content: flex-start; width: 100%; text-align: left; color: var(--fg-2); } /* .msgr-list 밖이라 버튼 기본(inline-block·center)이 붙는다 → 슬랙 '+ 채널 추가' x52 */
+  /* 채널 둘러보기 목록(폰) — 이름은 왼쪽에 늘어나고 인원·참여 단추는 오른쪽에 모인다. 종전엔 폰에서 여는 길이 없어 손본 적이 없었다(점검 A·B #2) */
+  .msgr-phone.phone-home .msgr-browse .row { display: flex; align-items: center; gap: 12px; padding: 6px var(--ph-pad); min-height: 56px; border-bottom: 1px solid var(--border-soft); }
+  .msgr-phone.phone-home .msgr-browse .row .name { flex: 1 1 auto; min-width: 0; font-size: var(--ph-txt); overflow-wrap: anywhere; }
+  .msgr-phone.phone-home .msgr-browse .row .btn { flex: 0 0 auto; min-width: 64px; height: 36px; padding: 0 16px; border-radius: 999px; }
+  .msgr-phone.phone-home .msgr-browse .empty { padding: 12px var(--ph-pad); color: var(--fg-3); }
   .msgr-phone.phone-home .msgr-side .item .name { font-size: var(--ph-txt); }
   .msgr-phone.phone-home .msgr-side .item .msgr-av { width: 24px; height: 24px; }
   .msgr-phone.phone-home .msgr-side .msgr-klabel { font-size: var(--ph-sub); }
@@ -1818,3 +1849,12 @@ html { -webkit-tap-highlight-color: transparent; }
 
 /* 개인 방 에이전트 참여 요청 줄(2026-09-30) — 허락·거절을 한 묶음으로 오른쪽에 */
 .msgr-joinbar-acts { display: inline-flex; gap: 6px; flex: none; }
+
+/* 연결 끊김 막대(검수 E, 2026-10-01) — 맨 위에 붙고, 끊긴 동안 셸이 막대 높이만큼 내려간다(토스트처럼 위에 덮지 않는다). 높이 = 노치 영역 + 22px:
+   폰 머리가 노치 영역만큼 이미 위 여백을 두므로 막대가 그 여백까지 덮고 글자는 아래 22px에 앉는다. 맥·윈도우는 노치 영역이 0이라 22px 막대. */
+.msgr-offline-bar { position: fixed; z-index: 75; top: 0; left: 0; right: 0; height: calc(env(safe-area-inset-top, 0px) + 22px); box-sizing: border-box; display: flex; align-items: flex-end; justify-content: center; padding: 0 12px 3px; background: var(--fg); color: var(--bg); font-size: 12px; line-height: 16px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shell.msgr-shell.is-offline { padding-top: 22px; box-sizing: border-box; }
+.shell.msgr-shell.is-offline:not(.msgr-phone) .msgr-main, .shell.msgr-shell.is-offline:not(.msgr-phone) .msgr-side { height: calc(100vh / var(--z, 1) - 22px); } /* 데스크톱 높이는 100vh 기준이라 패딩만으로는 줄지 않는다 — 아래가 22px 잘리던 것(실측) */
+@media (pointer: coarse) { .shell.msgr-shell.is-offline:not(.msgr-phone) .msgr-main, .shell.msgr-shell.is-offline:not(.msgr-phone) .msgr-side { height: 100%; } } /* 터치 데스크톱 폭(아이패드)은 셸이 키보드를 뺀 높이(--msgr-viewport-height)에 고정돼 있다 — 위 100vh 규칙이 그걸 덮어 키보드를 연 채 끊기면 입력창이 화면 밖으로 밀렸다(#793 검수 MEDIUM-1, 1024×768 실측) */
+.msgr-searchres .note.danger { margin: 6px 2px; font-size: 13px; color: var(--danger, #d05a5a); } /* 연결이 끊겨 일부만 보일 때 결과 위 안내(검수 E) */
+.msgr-phone .msgr-main > .msgr-top .msgr-scope-badge { display: none; } /* 폰 머리는 격자라 '개인' 표식이 오른쪽 맨 위 구석(y≈0)에 떠 잘려 보였다 — 부제 앞('개인 · 1명 · 에이전트 1')으로 옮겼다(검수 F, 2026-10-01) */

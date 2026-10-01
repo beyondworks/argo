@@ -13,11 +13,14 @@ test('안전망 — 상단 바는 줄바꿈하고, 주제는 남는 자리만 �
   assert.ok(css.includes(`${TOP} .topic { flex: 1 1 0; }`));
 });
 
-test('좁을 때 주제 숨김 · 인원 칩과 탭은 아이콘만 — 경계는 한 줄 전체 표시 실측 최대(영어 922px)보다 크다', () => {
-  const m = css.match(/@container msgr-main \(max-width: (\d+)px\) \{\n([^}]*)\}/);
+test('좁을 때 주제와 인원 글자는 숨기되 탭 글자는 숨기지 않는다(자리가 모자라면 탭 줄이 내려간다) — 경계는 한 줄 전체 표시 실측 최대(영어 922px)보다 크다', () => {
+  const m = css.match(/@container msgr-main \(max-width: (\d+)px\) \{\n([^]*?)\n\}/);
   assert.ok(m, '줄인 표시 컨테이너 쿼리');
   assert.ok(Number(m[1]) + 1 > 922);
-  for (const sel of ['.topic', '.members .n', '.msgr-seg .lbl']) assert.ok(m[2].includes(`${TOP} ${sel}`), sel);
+  for (const sel of ['.topic', '.members .n']) assert.ok(m[2].includes(`${TOP} ${sel}`), sel);
+  // 검수 E(2026-10-01): 721px에서 탭이 '@'·'✓1'·별 아이콘만 남아 무엇인지 알 수 없었다 — 글자(.lbl)를 숨기는 규칙이 다시 생기면 안 된다
+  assert.ok(!/\.msgr-seg \.lbl[^{]*\{[^}]*display: none/.test(m[2]), '탭 글자를 숨기지 않는다');
+  assert.ok(m[2].includes(`${TOP} .msgr-seg { flex: none; }`), '탭 묶음은 줄어들지 않고 통째로 아래 줄로 내려간다');
 });
 
 test('아이콘만 남아도 탭 이름은 title·aria-label로 남고, 아이콘 없는 탭(전체)은 글자를 숨기지 않는다', () => {
