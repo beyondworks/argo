@@ -27,7 +27,7 @@ function Approvals({ space }) {
   return rows.slice(0, 4).map((a) => (
     <Link key={a.id} to={`${baseOf(space)}/approvals?open=${a.id}`} className="mod-row" {...menuProps(() => recordMenu(a, a.plain))}>
       <Face id={a.crew} size={18} />
-      <span className="mod-main"><span className="clamp">{a.plain}</span><small>{[crewName(a.crew), space === 'me' ? spaceName(a.space) : `#${a.channel}`, ago(a.at)].filter(Boolean).join(' · ')}</small></span>
+      <span className="mod-main"><span className="clamp">{a.head || a.plain}</span><small>{[crewName(a.crew), space === 'me' ? spaceName(a.space) : `#${a.channel}`, ago(a.at)].filter(Boolean).join(' · ')}</small></span>
       {a.risk === 'high' && <span className="badge warn">{t('risk.high')}</span>}
     </Link>
   ));
@@ -58,9 +58,12 @@ function Mail() {
   ));
 }
 
-// 로그인하면 서버에 저장되는 실제 할 일(성과 기록 1단계), 예시 화면은 메일에서 뽑은 할 일
+// 로그인하면 서버에 저장되는 실제 할 일(성과 기록 1단계), 예시 화면은 메일에서 뽑은 할 일. 카드 ⋯ 메뉴에서 여러 보기로 바꿀 수 있다(views/HomeView.jsx)
 const TaskList = lazy(() => import('./TaskList.jsx'));
-function Todos({ space }) {
+const HomeView = lazy(() => import('../views/HomeView.jsx')); // 여러 보기(유건 9/30) — 보기 코드·사전은 카드를 그릴 때만 받는다
+const wait = <div className="mod-empty" role="status">…</div>;
+const Todos = (props) => <Suspense fallback={wait}><HomeView {...props} mode="todos" Default={TodoList} /></Suspense>;
+function TodoList({ space }) {
   const mode = useSession();
   if (mode === 'signedIn') return <Suspense fallback={<div className="mod-empty" role="status">…</div>}><TaskList space={space} /></Suspense>;
   return <SampleTodos />;
@@ -198,7 +201,8 @@ function Stats({ space, item, canEdit, setCfg }) {
 }
 
 // sizes: s=1/3, m=1/2, l=2/3, full=전체. spaces: 이 모듈을 쓸 수 있는 공간 종류.
-const renderers = { stats: Stats, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
+const Calendar = (props) => <Suspense fallback={wait}><HomeView {...props} mode="calendar" /></Suspense>; // 다가오는 일정 — 일정 + 할 일 기한 7일, 기본 목록
+const renderers = { stats: Stats, calendar: Calendar, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
 const BusinessHomeCard = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeCard })));
 const LazyBusinessHomeProvider = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeProvider })));
 export function BusinessHomeProvider(props) {
@@ -209,6 +213,6 @@ export const MODULES = OFFICE_MODULES.map((module) => ({ ...module, render: rend
 } }));
 
 export const DEFAULTS = {
-  me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'work', size: 'full' }],
-  org: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'todos', size: 'full' }],
+  me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'calendar', size: 'm' }, { id: 'work', size: 'm' }],
+  org: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'calendar', size: 'm' }, { id: 'todos', size: 'm' }],
 };

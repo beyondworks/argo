@@ -20,7 +20,7 @@ export async function pullLayouts({ recoverKey = null } = {}) {
   if (getStorageScope() !== owner) return;
   if (mine.error || shared.error) throw mine.error ?? shared.error;
   const next = Object.fromEntries(['me', ...orgs.map((o) => o.key)].map((space) => [`home:${space}`, { items: [], version: 0 }]));
-  next['nav:me'] = { items: [], version: 0 }; next['biztabs:me'] = { items: [], version: 0 }; // 좌측 메뉴·업무 탭 순서(사람마다, 9/30)
+  next['nav:me'] = { items: [], version: 0 }; next['biztabs:me'] = { items: [], version: 0 }; next['fav:me'] = { items: [], version: 0 }; // 좌측 메뉴·업무 탭 순서·즐겨찾기(사람마다, 9/30)
   for (const r of mine.data ?? []) next[`${r.surface}:me`] = { ...r.prefs, version: r.version };
   for (const r of shared.data ?? []) { const o = orgs.find((x) => x.id === r.org_id); if (o) next[`${r.surface}:${o.key}`] = { ...r.layout, version: r.version }; }
   const keep = Object.entries(next).filter(([k]) => !busy.has(k) && !outbox.has(`layout:${k}`) && (!getState().layouts[k]?.conflict || k === recoverKey));
@@ -45,7 +45,7 @@ export async function pullPages() {
   const spaceOf = (r) => (r.space_kind === 'me' ? (r.owner_user_id === ME.id ? 'me' : 'shared') : orgKey.get(r.org_id));
   const local = all();
   const { pages, trash } = mergePages(data ?? [], local, { before, pendingNow: new Set(local.map((p) => p.id).filter(pendingFor)), spaceOf });
-  update(() => ({ pages, trash }));
+  update(() => ({ pages, trash, pagesReady: true }));
 }
 
 /** 페이지 본문을 불러온다. force면 이 기기의 아직 안 보낸 저장을 버리고 서버 값으로(충돌 뒤 "새로 불러오기") */
@@ -73,7 +73,7 @@ export async function pullBoard() {
   const sb = await getClient();
   if (!sb || owner !== ME.id || getStorageScope() !== owner) return;
   const orgs = SPACES.filter((s) => s.kind === 'org');
-  const empty = { crews: [], work: [], approvals: [], decisions: [], outputs: [], journal: [], docs: [] };
+  const empty = { crews: [], work: [], approvals: [], decisions: [], outputs: [], journal: [], docs: [], crewsReady: true };
   if (!orgs.length) { update(() => empty); return; }
   const ids = orgs.map((o) => o.id);
   const since = new Date(Date.now() - 30 * 864e5).toISOString();
@@ -81,7 +81,7 @@ export async function pullBoard() {
     // 크루는 주인·쓸 수 있는지·내 고정/순서까지 한 번에(9/30). 함수가 없는 옛 DB면 예전처럼 표에서 읽는다
     sb.rpc('office_crew_list', { p_orgs: ids }).then((r) => (r.error?.code === 'PGRST202' ? sb.from('msgr_crews').select('id, org_id, owner_user_id, display_name, department, role_text, face').in('org_id', ids) : r)),
     sb.from('msgr_work_runs').select('id, org_id, channel_id, goal, completion_criteria, lead_crew_id, status, created_at').in('org_id', ids).in('status', ['running', 'blocked']).order('created_at', { ascending: false }).limit(100),
-    sb.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, risk, created_at').in('org_id', ids).eq('status', 'pending').order('created_at', { ascending: false }).limit(100),
+    sb.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, risk, created_at, pl:payload->plain').in('org_id', ids).eq('status', 'pending').order('created_at', { ascending: false }).limit(100),
     sb.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, risk, status, decided_by, decided_at, created_at').in('org_id', ids).in('status', ['approved', 'rejected']).gte('decided_at', since).order('decided_at', { ascending: false }).limit(100),
     sb.from('msgr_attachments').select('id, org_id, name, bytes, mime, storage_path, created_at, msg:msgr_messages(channel_id, crew_id)').in('org_id', ids).order('created_at', { ascending: false }).limit(100),
     sb.from('msgr_channels').select('id, name, kind').in('org_id', ids),
@@ -97,7 +97,7 @@ export async function pullBoard() {
     deciders.length ? sb.from('msgr_org_members').select('org_id, user_id, display_name').in('org_id', ids).in('user_id', deciders).then((r) => r.data ?? []) : [],
   ]);
   if (getStorageScope() !== owner) return;
-  update(() => mapBoard({ crews, runs, approvals, decisions, files, channels, journals, docs, members }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)) }));
+  update(() => ({ ...mapBoard({ crews, runs, approvals, decisions, files, channels, journals, docs, members }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)) }), crewsReady: true }));
 }
 
 /** 공용 문서 본문 — 목록에는 싣지 않고 열 때만 읽는다(문서당 최대 64KB) */

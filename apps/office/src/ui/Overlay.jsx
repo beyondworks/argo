@@ -1,5 +1,5 @@
-// 모달·시트·토스트 — portal로 body에 붙인다(transform 조상이 fixed를 깨뜨리는 문제 회피, 본체 규칙).
-// 스크롤 잠금은 참조 카운트(겹친 모달이 서로의 잠금을 풀지 않게).
+// 모달·토스트 — portal로 body에 붙인다(transform 조상이 fixed를 깨뜨리는 문제 회피, 본체 규칙).
+// 스크롤 잠금은 참조 카운트(겹친 모달이 서로의 잠금을 풀지 않게). 오른쪽 패널(Sheet)은 ui/Panel.jsx — 쓰는 화면이 모두 지연 로드라 첫 화면 묶음에서 뺐다(9/30).
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon.jsx';
@@ -49,21 +49,6 @@ export function Modal({ open, onClose, title, children, width = 480, footer }) {
         <div className="modal-body">{children}</div>
         {footer && <footer className="modal-foot">{footer}</footer>}
       </div>
-    </div>,
-    document.body,
-  );
-}
-
-export function Sheet({ open, onClose, title, children, footer }) {
-  const ref = useDialog(open, onClose);
-  if (!open) return null;
-  return createPortal(
-    <div className="scrim scrim-sheet" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <aside ref={ref} className="sheet" role="dialog" aria-modal="true" aria-label={title}>
-        <header className="modal-head"><h2>{title}</h2><button type="button" className="icon-btn x" aria-label={t('close')} onClick={onClose}><Icon name="x" /></button></header>
-        <div className="sheet-body">{children}</div>
-        {footer && <footer className="modal-foot">{footer}</footer>}
-      </aside>
     </div>,
     document.body,
   );

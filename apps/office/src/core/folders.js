@@ -65,3 +65,7 @@ export function fileGroup(name = '', mime = '') {
   if (k === 'image') return 'image';
   return k === 'md' || k === 'text' || k === 'pdf' || OFFICE_DOC.test(name) ? 'doc' : 'other';
 }
+
+/** 결재 카드에서 바로 승인·거절할 수 있는지(유건 9/30 #7) — 결정 권한이 있고 위험도가 가장 높은 등급('high', DB 값은 low·high 둘)이 아닐 때만.
+ *  가장 높은 등급은 카드 버튼 대신 '열어서 확인' — 상세 창에서 명령까지 보고 결정한다 */
+export const canQuickDecide = (a) => a?.canDecide !== false && a?.risk !== 'high';

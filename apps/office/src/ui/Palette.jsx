@@ -15,18 +15,20 @@ export function Palette({ open, onClose, space }) {
   const pages = useStore((s) => s.pages);
   const mails = useStore((s) => s.mails);
   useEffect(() => { if (open) { setQ(''); setIdx(0); requestAnimationFrame(() => input.current?.focus()); } }, [open]);
+  const [more, setMore] = useState([]); // 일정·할 일·보기 명령 — 창을 열 때 따로 받는다(첫 화면 150KB 상한)
+  useEffect(() => { if (open) import('../views/commands.js').then((m) => setMore(m.viewCommands(space))).catch(() => {}); }, [open, space]);
 
   const rows = useMemo(() => {
     if (!open) return [];
     const needle = q.trim().toLowerCase();
     const hit = (s) => !needle || s.toLowerCase().includes(needle);
-    const cmds = globalCommands(space).filter((c) => hit(c.label)).slice(0, needle ? 8 : 6).map((c) => ({ ...c, group: 'commands' }));
+    const cmds = [...globalCommands(space), ...more].filter((c) => hit(c.label)).slice(0, needle ? 8 : 6).map((c) => ({ ...c, group: 'commands' }));
     const pg = pages.filter((p) => !p.template && (p.space === space || space === 'me') && hit(p.title || t('page.untitled'))).slice(0, 6)
       .map((p) => ({ id: p.id, label: p.title || t('page.untitled'), icon: p.restricted ? 'lock' : 'doc', group: 'pages', run: () => navigate(`${baseOf(p.space)}/p/${p.id}`) }));
     const ml = space === 'me' && needle ? mails.filter((m) => hit(m.subject) || hit(m.from)).slice(0, 4)
       .map((m) => ({ id: m.id, label: m.subject, hint: m.from, icon: 'mail', group: 'mail', run: () => navigate(`/me/mail/${m.id}`) })) : [];
     return [...pg, ...ml, ...cmds];
-  }, [open, q, space, pages, mails]);
+  }, [open, q, space, pages, mails, more]);
 
   if (!open) return null;
   const run = (r) => { onClose(); r?.run(); };

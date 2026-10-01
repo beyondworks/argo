@@ -9,26 +9,29 @@ import { Peek } from '../ui/Peek.jsx';
 import { CustomerCard, ItemCard } from './Cards.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { InfoTip } from '../ui/InfoTip.jsx';
-import { openMenu } from '../ui/Menu.jsx';
+import { openMenu, menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { useBusiness, businessError } from './data.js';
 import { BusinessDashboard } from './Dashboard.jsx';
 import Marketing from './Marketing.jsx';
 import { DealBoard, DealDetail } from './DealBoard.jsx';
 import { Redact } from './Redact.jsx';
 import { cellsInBox, bulkRedact } from './cell-pick.js';
-import { dealAmounts, vatOf } from './deal-model.js';
+import { dealAmounts, vatOf, CUSTOMER_SORTS, sortCustomers } from './deal-model.js';
 import './business.css';
 import { BUSINESS_MODULES } from '../core/module-registry.js';
 import { SortableContext, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useStore } from '../core/store.js';
-import { orderTabs } from '../core/nav-model.js';
+import { useStore, saveLayout } from '../core/store.js';
+import { readTabs, writeTabs, canHide, pickTab, tabBar, afterHide } from './tab-model.js';
 
-/** 업무 탭 — 끌어서 순서를 바꾼다(사람마다, biztabs:me — 유건 9/30). 켜기·끄기는 조직 설정 그대로 */
-function BizTab({ id, to, on, order, children }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `biztab:${id}`, data: { kind: 'biztab', id, group: 'biztab', order, label: children } });
-  const { onTouchStart, ...mouse } = listeners ?? {};
-  return <Link ref={setNodeRef} to={to} style={{ transform: CSS.Translate.toString(transform), transition }} className={`tab${on ? ' on' : ''}${isDragging ? ' dragging' : ''}`} aria-current={on ? 'page' : undefined} {...attributes} {...mouse} role="link">{children}</Link>;
+/** 업무 탭 — 끌어서 순서를 바꾸고, 우클릭(터치는 길게 누르기)으로 숨긴다(사람마다, biztabs:me — 유건 9/30). 켜기·끄기는 조직 설정 그대로.
+ *  hidden: 숨긴 탭인데 주소로 들어와 보고 있는 탭 — 탭 줄 제자리에 '숨긴 탭'으로 표시한다 */
+function BizTab({ id, to, on, hidden, move, menu, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `biztab:${id}`, data: { kind: 'biztab', id, group: 'biztab', move, label: children } });
+  const { onTouchStart, ...mouse } = listeners ?? {}; // 터치는 길게 누르기 = 메뉴
+  return <Link ref={setNodeRef} to={to} style={{ transform: CSS.Translate.toString(transform), transition }} className={`tab${on ? ' on' : ''}${hidden ? ' tab-hidden' : ''}${isDragging ? ' dragging' : ''}`} aria-current={on ? 'page' : undefined} title={hidden ? label('tabHiddenMark') : undefined} {...attributes} {...mergeHandlers(mouse, menuProps(menu))} role="link">
+    {hidden && <Icon name="eyeOff" size={12} />}{children}
+  </Link>;
 }
 
 // 성과 분석은 마케팅 탭 안으로 합쳤다(유건 9/29) — 예전 주소·홈 카드는 마케팅으로 이어진다
@@ -59,8 +62,23 @@ function EntryRows({ entries, orders, openOrder }) {
 const balance = dealAmounts;
 
 const REDACT_FIELDS = ['manager', 'phone', 'email', 'biz_no', 'account'];
+const day = (value) => (value ? new Date(value).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '—');
+const SORT_KEY = 'argo-office-customer-sort';
+const readSort = () => { try { const v = localStorage.getItem(SORT_KEY); return CUSTOMER_SORTS.includes(v) ? v : 'name'; } catch { return 'name'; } };
+/** 거래처 목록 — 정렬 드롭다운(이름순·거래 건수순·최근 등록순)과 등록일 열(유건 9/30). 등록일은 서버가 돌려줄 때만 보인다(created_at) */
+function Customers({ data, blocked, run, launch, openCard }) {
+  const [chosen, setChosen] = useState(readSort);
+  const dated = data.customers.some((row) => row.created_at);
+  const sorts = CUSTOMER_SORTS.filter((key) => key !== 'recent' || dated);
+  const sort = sorts.includes(chosen) ? chosen : 'name';
+  const pick = (value) => { setChosen(value); try { localStorage.setItem(SORT_KEY, value); } catch { /* 기억만 못 한다 */ } };
+  return <>
+    {data.customers.length > 1 && <div className="biz-list-tools"><select className="input" value={sort} aria-label={label('sort')} onChange={(e) => pick(e.target.value)}>{sorts.map((key) => <option key={key} value={key}>{label('sort')}: {label(`sort.${key}`)}</option>)}</select></div>}
+    <CustomerTable key={sort} rows={sortCustomers(data.customers, data.orders, sort)} dated={dated} blocked={blocked} run={run} launch={launch} openCard={openCard} />
+  </>;
+}
 /** 거래처 표 — 민감 칸은 우클릭으로 가리고, 칸을 누른 채 다른 칸까지 끌어 여러 칸을 고르면 우클릭으로 한 번에 가리기·해제(유건 9/29, 노션처럼) */
-function CustomerTable({ rows, blocked, run, launch, openCard }) {
+function CustomerTable({ rows, dated, blocked, run, launch, openCard }) {
   const [pick, setPick] = useState(null), drag = useRef(false);
   const cells = pick ? cellsInBox(pick.a, pick.b) : [], many = cells.length > 1;
   const at = (event) => event.target.closest?.('[data-cell]')?.dataset.cell.split(':').map(Number);
@@ -85,15 +103,22 @@ function CustomerTable({ rows, blocked, run, launch, openCard }) {
   return <div className={`cell-pick${many ? ' picking' : ''}`} onContextMenu={menu}
     onMouseDown={(event) => { if (event.ctrlKey) return; const cell = event.button === 0 && at(event); /* 맥 Ctrl+클릭은 우클릭 */ drag.current = !!cell; if (event.button === 0) setPick(cell ? { a: cell, b: cell } : null); }}
     onMouseOver={(event) => { if (!(event.buttons & 1)) drag.current = false; /* 창 밖에서 버튼을 놓았으면 끌기 끝 */ const cell = drag.current && at(event); if (cell) setPick((old) => old && (old.b[0] === cell[0] && old.b[1] === cell[1] ? old : { ...old, b: cell })); }}>
-    <Table columns={['name', 'manager', 'phone', 'email', 'biz_no', 'account', 'category', 'customerStatus', 'edit']} rows={rows.map((row, r) => {
+    <Table columns={['name', 'manager', 'phone', 'email', 'biz_no', 'account', 'category', 'customerStatus', ...(dated ? ['createdAt'] : []), 'edit']} rows={rows.map((row, r) => {
       const hide = (field) => { const c = REDACT_FIELDS.indexOf(field); return { on: row.redacted?.includes(field), disabled: blocked, cell: `${r}:${c}`, picked: many && cells.some(([x, y]) => x === r && y === c),
         onToggle: () => run('redact.set', { entity: 'customer', id: row.id, field, on: !row.redacted?.includes(field) }).catch(() => {}) }; };
-      return <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => openCard('c', row.id)}>{row.name}</button></td><td><Redact {...hide('manager')}>{row.manager || '—'}</Redact></td><td className="mono"><Redact {...hide('phone')}>{row.phone || '—'}</Redact></td><td><Redact {...hide('email')}>{row.email || '—'}</Redact></td><td className="mono"><Redact {...hide('biz_no')}>{row.biz_no || '—'}</Redact></td><td><Redact {...hide('account')}>{row.account || '—'}</Redact></td><td>{label(`category.${row.category ?? 'customer'}`)}</td><td>{label(`status.${row.status ?? 'active'}`)}</td><td className="act"><EditButton disabled={blocked} onClick={() => launch('customer', row)} /></td></tr>;
+      // 줄 어디를 눌러도 오른쪽 패널에 거래처 카드(유건 9/30) — 버튼·가린 값(누르고 있으면 보기)·여러 칸 끌기·Ctrl+클릭(맥 우클릭)은 제외
+      const open = (event) => {
+        if (many || event.ctrlKey || event.target.closest('button, a, input, select')) return;
+        const cell = at(event);
+        if (cell && row.redacted?.includes(REDACT_FIELDS[cell[1]])) return;
+        openCard('c', row.id);
+      };
+      return <tr key={row.id} className="row-open" onClick={open}><td><button type="button" className="bizui-link" onClick={() => openCard('c', row.id)}>{row.name}</button></td><td><Redact {...hide('manager')}>{row.manager || '—'}</Redact></td><td className="mono"><Redact {...hide('phone')}>{row.phone || '—'}</Redact></td><td><Redact {...hide('email')}>{row.email || '—'}</Redact></td><td className="mono"><Redact {...hide('biz_no')}>{row.biz_no || '—'}</Redact></td><td><Redact {...hide('account')}>{row.account || '—'}</Redact></td><td>{label(`category.${row.category ?? 'customer'}`)}</td><td>{label(`status.${row.status ?? 'active'}`)}</td>{dated && <td className="mono">{day(row.created_at)}</td>}<td className="act"><EditButton disabled={blocked} onClick={() => launch('customer', row)} /></td></tr>;
     })} />
   </div>;
 }
 
-export default function BusinessPage({ space, tab: requested = 'analytics', openId }) {
+export default function BusinessPage({ space, tab: requested = null, openId }) {
   const savedTabs = useStore((st) => st.layouts['biztabs:me']?.items);
   const tab = requested === 'performance' ? 'marketing' : requested;
   useLang();
@@ -114,9 +139,21 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
     try { const result = await business.mutate(action, payload); showToast(label('saved')); return result; }
     catch (failure) { if (!quiet) setFormError(businessError(failure)); throw failure; }
   };
-  const enabledTabs = data?.settings?.enabled || MODULES;
-  // 꺼 둔 탭 주소(사이드바 '업무' 포함)로 오면 켜진 첫 탭을 보여 준다
-  const current = MODULES.includes(tab) && enabledTabs.includes(tab) ? tab : (enabledTabs.includes('analytics') ? 'analytics' : MODULES.find((key) => enabledTabs.includes(key)) ?? 'analytics');
+  const enabled = data?.settings?.enabled || MODULES;
+  const tabState = readTabs(MODULES, enabled, savedTabs); // 내 탭 순서·숨김(사람마다)
+  // 꺼 둔 탭 주소로 오면 분석(숨겼으면 보이는 첫 탭)을, 숨긴 탭 주소로 오면 그 탭을 그대로 보여 준다(링크가 깨지지 않게)
+  const current = pickTab(tabState, tab);
+  const saveTabs = (op) => {
+    const items = writeTabs(tabState, op);
+    if (items && saveLayout('biztabs:me', items) === false) { showToast(t('nav.saveFail')); return false; }
+    return !!items;
+  };
+  const hideTab = (key) => { const next = afterHide(tabState, key, current); if (saveTabs({ hide: key }) && next) navigate(`${path}/${next}`); };
+  const tabMenu = (key) => () => [
+    tabState.hidden.includes(key) ? { label: label('tabShow'), icon: 'eye', run: () => saveTabs({ show: key }) }
+      : canHide(tabState, key) ? { label: label('tabHide'), icon: 'eyeOff', run: () => hideTab(key) } : { heading: label('tabLast') },
+  ];
+  const showHidden = (event) => openMenu(event, [{ heading: label('tabHiddenHead') }, ...tabState.hidden.map((key) => ({ label: label(key), icon: 'eye', run: () => saveTabs({ show: key }) }))], { anchor: event.currentTarget });
   const [settings, setSettings] = useState(false);
   useEffect(() => { if (tab === 'modules') setSettings(true); }, [tab]); // 예전 '모듈 관리' 주소는 켜고 끄기 창으로 연다
   const closeSettings = useCallback(() => { setSettings(false); if (tab === 'modules') navigate(`${path}/${current}`); }, [tab, path, current]);
@@ -133,8 +170,7 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
     payments: addButton(() => launch('entry', { kind: 'invoice' }), blocked || !data.orders.some((o) => o.status === 'confirmed')),
     inventory: <InfoTip end text={label('singleStock')} />,
   }[current];
-  const enabled = data?.settings?.enabled || MODULES;
-  const tabs = orderTabs(MODULES, enabled, savedTabs); // 내 탭 순서(사람마다)
+  const tabs = tabBar(tabState, current);
   function enabledNow(d, key) { return (d.settings?.enabled || MODULES).includes(key); }
   const [openKind, openRef] = openId?.includes(':') ? openId.split(':') : ['order', openId];
   const order = openKind === 'order' ? data?.orders.find((row) => row.id === openRef) : null;
@@ -145,7 +181,8 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
   return <section className="page-wrap wide bizui-page">
     <header className="page-title-row"><div><h1 className="page-h1">{label('title')}</h1><p className="dim">{label('subtitle')}</p></div><button type="button" className="icon-btn" aria-label={t('more')} disabled={busy || loading} onClick={pageMenu}><Icon name="dots" /></button></header>
     <div className="biz-tabbar">
-      <nav className="tabs" aria-label={label('title')}><SortableContext items={tabs.map((key) => `biztab:${key}`)} strategy={horizontalListSortingStrategy}>{tabs.map((key) => <BizTab key={key} id={key} order={tabs} to={`${path}/${key}`} on={current === key}>{label(key)}</BizTab>)}</SortableContext></nav>
+      <nav className="tabs" aria-label={label('title')}><SortableContext items={tabs.map((key) => `biztab:${key}`)} strategy={horizontalListSortingStrategy}>{tabs.map((key) => <BizTab key={key} id={key} to={`${path}/${key}`} on={current === key} hidden={tabState.hidden.includes(key)} move={(over) => saveTabs({ move: [key, over] })} menu={tabMenu(key)}>{label(key)}</BizTab>)}</SortableContext>
+        {tabState.hidden.length > 0 && <button type="button" className="biz-tab-more" aria-haspopup="menu" onClick={showHidden}><Icon name="chevron" size={12} />{t('bizui.tabHiddenN', { n: tabState.hidden.length })}</button>}</nav>
       {tabAction && <div className="biz-tab-actions">{tabAction}</div>}
     </div>
     {((!data && error) || (formError && !dialog && !openId)) && <p className="bizui-error" role="alert">{t(!data && error ? error : formError)}</p>}
@@ -156,9 +193,9 @@ export default function BusinessPage({ space, tab: requested = 'analytics', open
       {!enabled.includes(current) ? <p className="empty-state">{label('disabled')}</p> : <>
         {current === 'analytics' && <BusinessDashboard business={business} space={space} onOpenOrder={openOrder} />}
         {current === 'marketing' && <Marketing space={space} business={business} />}
-        {current === 'customers' && <CustomerTable rows={data.customers} blocked={blocked} run={run} launch={launch} openCard={openCard} />}
+        {current === 'customers' && <Customers data={data} blocked={blocked} run={run} launch={launch} openCard={openCard} />}
         {current === 'catalog' && <Table columns={['name', 'kind', 'sku', 'price', 'edit']} rows={data.items.map((row) => <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => openCard('i', row.id)}>{row.name}</button></td><td>{label(row.kind)}</td><td>{row.sku || '—'}</td><td className="num">{money(row.price)}</td><td className="act"><EditButton disabled={blocked} onClick={() => launch('item', row)} /></td></tr>)} />}
-        {current === 'orders' && <>{(!data.customers.length || !data.items.length) && <p className="bizui-muted">{label('prerequisites')}</p>}<DealBoard data={data} blocked={blocked} run={run} openOrder={openOrder} /></>}
+        {current === 'orders' && <>{(!data.customers.length || !data.items.length) && <p className="bizui-muted">{label('prerequisites')}</p>}<DealBoard data={data} blocked={blocked} run={run} openOrder={openOrder} space={space} call={business.call} /></>}
         {current === 'inventory' && <><Table columns={['name', 'sku', 'stock', 'reserved', 'available', 'receive']} rows={data.items.filter((item) => item.kind === 'product').map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.sku || '—'}</td><td className="num">{row.stock}</td><td className="num">{row.reserved}</td><td className="num">{row.stock - row.reserved}</td><td className="act"><EditButton disabled={blocked} onClick={() => launch('receive', { item_id: row.id, quantity: 1 })}>{label('receive')}</EditButton></td></tr>)} /><div className="biz-section"><h2>{label('movements')}</h2></div><Table columns={['date', 'name', 'kind', 'quantity', 'orders']} rows={data.movements.map((row) => <tr key={row.id}><td>{date(row.at)}</td><td>{data.items.find((i) => i.id === row.item_id)?.name}</td><td>{label(row.kind)}</td><td className="num">{row.quantity}</td><td>{row.order_id && <button className="bizui-link" onClick={() => openOrder(row.order_id)}>{data.orders.find((o) => o.id === row.order_id)?.title}</button>}</td></tr>)} /></>}
         {current === 'payments' && <EntryRows entries={data.entries} orders={data.orders} openOrder={openOrder} />}
       </>}

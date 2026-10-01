@@ -31,6 +31,7 @@ const PATHS = {
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/>',
   reply: '<path d="M6.5 4 3 7.5 6.5 11M3.5 7.5H10a3 3 0 0 1 3 3V12"/>',
   hand: '<path d="M2.5 8.5h6M6 5.5l3 3-3 3M11 3v11"/>',
+  width: '<path d="M2 8h12M4.5 5.5 2 8l2.5 2.5M11.5 5.5 14 8l-2.5 2.5"/>',
   sidebar: '<rect x="2" y="3" width="12" height="10" rx="1.8"/><path d="M6 3v10"/>',
   menu: '<path d="M3 5h10M3 8h10M3 11h10"/>',
   hash: '<path d="M6.5 2.5 5 13.5M11 2.5 9.5 13.5M2.5 6h11M2 10h11"/>',
@@ -47,6 +48,8 @@ const PATHS = {
   receipt: '<path d="M3.5 2h9v12l-1.8-1.2-1.8 1.2L7.1 12.8 5.3 14l-1.8-1.2z"/><path d="M6 5.5h4M6 8h4"/>',
   deal: '<path d="M2.5 5.5h9l-2.3-2.3M13.5 10.5h-9l2.3 2.3"/>',
   megaphone: '<path d="M2.5 6.5v3h2.2l5.3 3v-9l-5.3 3zM12 6.2a2.5 2.5 0 0 1 0 3.6M5 9.5l.8 3.5"/>',
+  calendar: '<rect x="2.5" y="3.5" width="11" height="10" rx="1.8"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>',
+  star: '<path d="m8 2.3 1.8 3.6 4 .6-2.9 2.8.7 4L8 11.4l-3.6 1.9.7-4L2.2 6.5l4-.6z"/>',
   target: '<circle cx="8" cy="8" r="5.8"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r="0.6"/>',
 };
 

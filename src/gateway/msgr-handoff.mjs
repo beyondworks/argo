@@ -3,6 +3,7 @@
 export function messengerOrigin(ctx, targetSlug = null) {
   if (ctx?.kind === 'msgr-rules') throw new Error('메신저 위임의 예약·작업·결재는 요청한 동료에게 돌려주세요. 그 동료가 같은 채널에서 처리합니다');
   if (ctx?.kind !== 'msgr') return null;
+  if (ctx.channelId && ctx.crewId && !ctx.orgId) throw new Error('개인 공간에서는 아직 결재·예약·긴 작업·다른 크루에게 맡기기를 쓸 수 없습니다. 조직 채널에서 요청해 주세요'); // 2026-09-30 개인 공간 1단계
   if (!ctx.orgId || !ctx.channelId || !ctx.crewId || !ctx.uid || !ctx.wsId) throw new Error('메신저 실행 문맥이 없습니다');
   const target = targetSlug ? ctx.peers?.find((p) => p.slug === targetSlug && p.owner_user_id === ctx.uid && p.ws_id === ctx.wsId) : null;
   if (targetSlug && !target) throw new Error('같은 메신저 조직에 파견된 동료만 실행할 수 있습니다');

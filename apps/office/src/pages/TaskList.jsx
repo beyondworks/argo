@@ -1,6 +1,6 @@
 // 할 일 모듈(로그인 화면) — 성과 기록 1단계(유건 9/29). 기한이 있는 할 일을 서버에 저장하고,
 // 끝낸 날짜로 기한 준수율·달성률을 계산한다. 지우기는 없고 취소만 있다(기록은 남는다).
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { t, getLang, registerDict, useLang } from '../core/i18n.js';
 import { ME, canManage } from '../core/session.js';
 import { useTasks, taskAction, orgOf } from '../core/tasks.js';
@@ -8,6 +8,7 @@ import { kstDay, groupTasks, dueInfo } from '../core/task-model.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { openMenu, menuProps } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
+import { useUrl } from '../core/router.jsx';
 import { TASK_DICT } from './task-i18n.js';
 
 registerDict(TASK_DICT);
@@ -22,6 +23,8 @@ export default function TaskList({ space }) {
   const [busy, setBusy] = useState(false), [edit, setEdit] = useState(null), [showDone, setShowDone] = useState(false);
   const name = (id) => (id === ME.id ? t('task.me') : people.find((p) => p.user_id === id)?.name ?? '?');
   const today = kstDay();
+  const focus = new URLSearchParams(useUrl().split('?')[1] ?? '').get('open'); // 달력의 할 일 기한 칩에서 왔을 때(?open=id) 그 줄로
+  useEffect(() => { if (focus && rows) document.querySelector(`[data-task="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: 'center' }); }, [focus, !!rows]);
   const run = (action, data, patch) => taskAction(space, action, data, patch).catch((e) => showToast(t(e.message)));
   const add = async (event) => {
     event.preventDefault();
@@ -53,7 +56,7 @@ export default function TaskList({ space }) {
       row.assignee === ME.id && row.created_by !== ME.id && t('task.by', { name: name(row.created_by) }),
     ].filter(Boolean).join(' · ');
     const items = menu(row);
-    return <div key={row.id} className={`mod-row todo task-row${row.done_at ? ' done' : ''}${info?.key === 'overdue' && !row.done_at ? ' overdue' : ''}`} {...(items.length ? menuProps(() => items) : {})}>
+    return <div key={row.id} data-task={row.id} className={`mod-row todo task-row${row.done_at ? ' done' : ''}${info?.key === 'overdue' && !row.done_at ? ' overdue' : ''}${row.id === focus ? ' focus' : ''}`} {...(items.length ? menuProps(() => items) : {})}>
       <input type="checkbox" aria-label={row.title} checked={!!row.done_at} onChange={() => run(row.done_at ? 'task.reopen' : 'task.done', { id: row.id }, { done_at: row.done_at ? null : new Date().toISOString() })} />
       <span className="mod-main"><span className="clamp">{row.title}</span>{meta && <small>{meta}</small>}</span>
       {items.length > 0 && <button type="button" className="icon-btn task-more" aria-label={t('task.more')} onClick={(e) => openMenu(e, items, { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>}

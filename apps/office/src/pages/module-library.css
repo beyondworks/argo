@@ -1,7 +1,7 @@
 /* 모듈 보관함 — 세 묶음이 같은 열 폭을 써서 '열기'·'추가'가 한 줄로 선다(유건 9/28) */
 .library-search { position: relative; display: flex; align-items: center; margin-bottom: 20px; }
 .library-search > .ico { position: absolute; left: 11px; color: var(--fg-3); pointer-events: none; }
-.library-search .input { width: 100%; padding-left: 32px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.library-search .input { width: 100%; padding-left: 32px; background: var(--lift); }
 .library-group + .library-group { margin-top: 24px; }
 .library-group-title { font-size: 12px; font-weight: 600; color: var(--fg-3); margin: 0 0 8px 2px; }
 .module-library-table { table-layout: fixed; }

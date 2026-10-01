@@ -92,7 +92,7 @@ test('C1. Grep glob 우회 봉쇄 — 금고·타사 워크스페이스·홈 자
 test('H1. 크루 도구 노출 집합 = SDK 최종 등재 배열 — 동료 0·커넥터 0이면 delegate·send_to_crew·use_connector 부재, 동료 있으면 등재', async () => {
   await company('rv-h1');
   const sink0 = []; makeCrewServer('rv-h1', 'seoyun', '서윤', [], 0, [], null, 'ko', [], '', sink0);
-  assert.deepEqual(sink0.map((d) => d.name).sort(), ['cancel_routine', 'hire_crew', 'list_routines', 'request_approval', 'request_tool_install', 'schedule_task', 'start_long_task', 'update_profile'], '기본 8종만(예약 조회·취소 포함)');
+  assert.deepEqual(sink0.map((d) => d.name).sort(), ['calendar', 'cancel_routine', 'hire_crew', 'list_routines', 'request_approval', 'request_tool_install', 'schedule_task', 'start_long_task', 'update_profile'], '기본 9종만(예약 조회·취소·주인 일정 포함)');
   const sink1 = []; makeCrewServer('rv-h1', 'seoyun', '서윤', [{ slug: 'jun', name: '준', role: 'dev' }], 0, [], null, 'ko', [], '', sink1);
   assert.ok(sink1.some((d) => d.name === 'delegate') && sink1.some((d) => d.name === 'send_to_crew'), '동료가 있으면 위임·쪽지 등재');
   assert.ok(!sink1.some((d) => d.name === 'use_connector'), '커넥터 0이면 use_connector 부재');

@@ -20,9 +20,9 @@ for (const mode of ['sample', 'signedIn']) {
       calls += 1;
       return useSyncExternalStore(() => () => {}, () => mode, () => mode);
     };
-    const Header = new Function('require', 'useSession', 'SPACES', 'ME', 'PEOPLE', 't', 'baseOf', 'Link', 'Icon', 'SaveStatus', `${compiled}\nreturn Header;`)(
+    const Header = new Function('require', 'useSession', 'SPACES', 'ME', 'PEOPLE', 't', 'baseOf', 'Link', 'Icon', 'SaveStatus', 'WidthToggle', 'FavToggle', `${compiled}\nreturn Header;`)(
       require, useSession, [{ key: 'me', kind: 'me', name: 'Office' }], { name: 'User' }, [{ name: 'Crew' }],
-      (key) => key, () => '/me', ({ to, children }) => createElement('a', { href: to }, children), () => null, () => null,
+      (key) => key, () => '/me', ({ to, children }) => createElement('a', { href: to }, children), () => null, () => null, () => createElement('i', { className: 'width-toggle' }), () => createElement('i', { className: 'fav-toggle' }),
     );
     const counts = [];
     for (const view of ['home', 'page', 'home']) {
@@ -34,6 +34,13 @@ for (const mode of ['sample', 'signedIn']) {
       assert.equal(html.includes('page.share'), view === 'page');
       assert.equal(html.includes('draft.badge'), mode === 'sample');
       assert.equal(html.includes('class="presence"'), view === 'page' && mode === 'sample');
+      assert.ok(html.includes('width-toggle'), `${view}: 전체 너비 버튼`);
+      assert.ok(html.includes('fav-toggle'), `${view}: 즐겨찾기 ☆(유건 10/1 — 저장됨 옆)`);
+    }
+    // 이유(유건 9/30): 폭 제한이 없는 화면에서는 눌러도 바뀌는 게 없다 — 설정·휴지통·모듈 보관함·메일에서는 숨긴다
+    for (const r of [{ view: 'settings' }, { view: 'trash' }, { view: 'mail' }, { view: 'business', tab: 'library' }]) {
+      const html = renderToStaticMarkup(createElement(Header, { r: { space: 'me', ...r } }));
+      assert.ok(!html.includes('width-toggle'), `${r.view}/${r.tab ?? ''}`);
     }
     assert.deepEqual(counts, [1, 1, 1]);
   });

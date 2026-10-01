@@ -1,9 +1,10 @@
 // 공유·게시 창과 "크루에게 맡기기" 창.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Sheet, showToast } from './Overlay.jsx';
+import { Modal, showToast } from './Overlay.jsx';
+import { Sheet } from './Panel.jsx';
 import { Icon } from './Icon.jsx';
 import { Face } from './Face.jsx';
-import { t, ago, useLang } from '../core/i18n.js';
+import { t, ago, useLang, registerDict } from '../core/i18n.js';
 import { useUi, setUi } from '../core/ui-state.js';
 import { useStore, assign, sendToCrew, update, crewsIn, getState } from '../core/store.js';
 import { imeGuardWith } from '../core/ime.js';
@@ -17,6 +18,9 @@ import { composeAssign, composeSet, composeTools, htmlText, docText, mentionAt, 
 import { rpc } from '../core/tasks.js';
 import { DocView } from './DocView.jsx';
 import { publicWebUrl } from '../core/platform.js';
+import { DIALOG_DICT } from './dialogs-i18n.js';
+
+registerDict(DIALOG_DICT);
 
 /** 서버에서 공유 상태를 읽는다 — 사람 목록 RPC가 거절되면 이 사람은 전체 권한이 아니다(서버가 기준). */
 async function loadShare(id) {

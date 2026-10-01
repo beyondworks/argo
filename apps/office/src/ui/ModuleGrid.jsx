@@ -22,7 +22,9 @@ function ModuleCard({ item, space, items, partner, canResize, canEdit, scope, co
   useLayoutEffect(() => { if (card.current) card.current.style.gridColumn = ''; }, [item.size]);
   const save = (sizes) => commit(items.map((x) => (sizes[x.id] ? { ...x, size: sizes[x.id] } : x)));
   const set = (patch) => commit(items.map((x) => (x.id === item.id ? { ...x, ...patch } : x)));
-  const menu = () => !canEdit ? [{ heading: t('home.readOnly') }] : [
+  const own = useRef(null); // 카드 본문이 더하는 메뉴(예: 여러 보기의 보기 고르기)
+  const menu = () => !canEdit ? [...(own.current?.() ?? []), { heading: t('home.readOnly') }] : [
+    ...(own.current?.() ?? []),
     ...(mod.actions?.length ? [...mod.actions, { sep: true }] : []),
     { heading: t('mod.size') },
     ...mod.sizes.map((s) => ({ label: t(`mod.size.${s}`), checked: item.size === s, run: () => set({ size: s }) })),
@@ -72,12 +74,11 @@ function ModuleCard({ item, space, items, partner, canResize, canEdit, scope, co
       aria-label={mod.title} {...menuProps(menu)}>
       <header className="module-head">
         {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}
-        <h3>{mod.title}</h3>
-        {mod.link && <Link to={mod.link} className="module-link">{t('mod.more')}</Link>}
+        <h3>{mod.link ? <Link to={mod.link} className="module-title">{mod.title}</Link> : mod.title}</h3>{/* 제목을 누르면 그 화면으로(유건 9/30 — '모두 보기' 대신) */}
         {canEdit && <button type="button" ref={setActivatorNodeRef} className="grip" aria-label={t('mod.drag')} {...mergeHandlers(attributes, listeners)}><Icon name="grip" size={14} /></button>}
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
       </header>
-      <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
+      <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
       {canEdit && canResize && <span className="col-handle" role="separator" aria-orientation="vertical" aria-label={t('mod.resize')} tabIndex={0} onPointerDown={onResize} onKeyDown={onResizeKey} />}
     </section>
   );
