@@ -193,7 +193,7 @@ function NewTask({ space, people, onClose }) {
 const PAGE = { list: V.LIST_PAGE, card: V.LIST_PAGE, table: V.LIST_PAGE };
 
 /** items: model.js 보기 항목(거르기 전). cfg: { view, group, sort, filter }. actions: useItemActions 결과 */
-export function ItemsView({ id, items, cfg, setCfg, views, today, ctx, people, actions, colorBy = 'category', compact = false, onOpen }) {
+export function ItemsView({ id, items, cfg, setCfg, views, label, today, ctx, people, actions, colorBy = 'category', compact = false, onOpen }) {
   useLang();
   const shown = useMemo(() => V.sortItems(V.filterItems(items, cfg.filter, today), cfg.sort), [items, cfg.filter, cfg.sort, today]);
   const [sel, setSel] = useState(() => new Set());
@@ -233,7 +233,8 @@ export function ItemsView({ id, items, cfg, setCfg, views, today, ctx, people, a
     };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   };
-  const onEmptyMenu = (e) => { if (!e.target.closest('[data-vkey]')) openMenu(e, actions.empty(cfg, setCfg, views)); };
+  // label: 보기 이름(캘린더 모듈은 자기 보기 이름 — 미니·오늘 시간표·다음 일정 — 을 넘긴다)
+  const onEmptyMenu = (e) => { if (!e.target.closest('[data-vkey]')) openMenu(e, actions.empty(cfg, setCfg, views, label)); };
 
   const itemProps = (it) => ({
     'data-vkey': it.key,

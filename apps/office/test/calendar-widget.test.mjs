@@ -73,6 +73,21 @@ test('‹ › 이동: 주는 7일, 월·미니는 한 달', () => {
   assert.equal(W.navShift('mini', '2026-01-15', -1), '2025-12-01');
 });
 
+// 이유(B-3 미니 · 리뷰 1차): 달을 옮겨도 고른 날이 옛 달에 남으면 읽기 창 밖이라 '이날 일정이 없습니다'로 거짓 표시되고 '+'도 안 보이는 날로 만든다.
+test('미니 달력: 고른 날은 보이는 격자 안으로', () => {
+  const today = '2026-10-01';
+  assert.equal(W.miniSel('2026-10-01', '2026-10-01', today), '2026-10-01', '보이는 달 안이면 그대로');
+  assert.equal(W.miniSel('2026-10-01', '2026-11-01', today), '2026-11-01', '다음 달로 옮기면 그달 1일');
+  assert.equal(W.miniSel('2026-10-01', '2027-01-01', today), '2027-01-01');
+  assert.equal(W.miniSel('2026-11-01', '2026-10-01', today), '2026-11-01', '10월 격자 끝(11-01)은 보이는 칸이라 그대로');
+  assert.equal(W.miniSel('2026-12-15', '2026-10-01', today), today, '오늘이 든 달로 돌아오면 오늘');
+  assert.equal(W.miniSel('2026-09-28', '2026-10-01', today), '2026-09-28', '앞 달 칸(격자 안)을 누른 것도 그대로');
+  for (const anchor of ['2026-11-01', '2027-02-01', '2026-08-01']) {
+    const [from, to] = W.readWindow('mini', anchor, today), s = W.miniSel(today, anchor, today);
+    assert.ok(from <= s && s < to, `고른 날은 읽기 창 안 ${anchor}`);
+  }
+});
+
 // 이유(B-4 강조): 진행 막대는 주 단위 칸, 지난 주는 채움 — 그달 날짜가 있는 주만 센다(빈 6번째 주 없음).
 test('그달의 주·진행 막대', () => {
   const weeks = W.monthWeeks('2026-10-15');

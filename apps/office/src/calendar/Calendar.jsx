@@ -186,7 +186,7 @@ function MiniMonth({ anchor, on, today, holidays, onPick }) {
         <button type="button" className="icon-btn sm" aria-label={t('cal.prevMonth')} onClick={() => setMonth(M.addMonths(month, -1))}><Icon name="back" size={12} /></button>
         <button type="button" className="icon-btn sm" aria-label={t('cal.nextMonth')} onClick={() => setMonth(M.addMonths(month, 1))}><Icon name="chevron" size={12} /></button>
       </div>
-      <div className="cal-mini-grid" role="grid">
+      <div className="cal-mini-grid">
         {grid.slice(0, 7).map((d) => <span key={d} className="cal-mini-wd" aria-hidden="true">{fmtDay(d, { weekday: 'narrow' })}</span>)}
         {grid.map((d) => {
           const red = holidays && M.holidaysOn(d).some((h) => h.off);

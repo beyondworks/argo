@@ -88,6 +88,13 @@ export function monthWeeks(anchor) {
   return out;
 }
 
+/** 미니 달력에서 고른 날 — 보이는 격자 안이면 그대로, 밖이면(‹ ›로 달을 옮겼거나 보기를 바꿨을 때) 오늘이 든 달은 오늘, 아니면 그달 1일.
+ *  고른 날은 늘 읽기 창(그달 격자) 안에 있어 목록·'+'가 보이는 달과 맞는다. */
+export function miniSel(sel, anchor, today) {
+  if (sel && monthWeeks(anchor).some((w) => w.includes(sel))) return sel;
+  return M.monthOf(anchor) === M.monthOf(today) ? today : `${M.monthOf(anchor)}-01`;
+}
+
 /** 이번 달 진행 막대(강조 디자인) — 주마다 채운 비율. 지난 주는 1, 오늘이 든 주는 지난 날 수/7(오늘 포함), 올 주는 0 */
 export function monthProgress(today) {
   return monthWeeks(today).map((w) => (today > w[6] ? 1 : today < w[0] ? 0 : (M.dayDiff(w[0], today) + 1) / 7));

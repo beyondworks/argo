@@ -56,10 +56,10 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
   const goToday = () => { setDir(anchor < today ? 1 : anchor > today ? -1 : 0); setAnchor(today); };
   const [from, to] = W.readWindow(view, anchor, today);
   const fresh = useEvents(from, to);
-  // ‹ ›로 옮기는 동안 새 창을 읽는 사이에는 보던 일정을 그대로 둔다(달력이 '불러오는 중'으로 깜빡이지 않게)
+  // ‹ ›로 옮기는 동안 새 창을 읽는 사이에는 보던 일정을 그대로 둔다(달력이 '불러오는 중'으로 깜빡이지 않게). 읽기에 실패하면 옛 일정으로 가리지 않고 오류를 보인다.
   const last = useRef(null);
   if (fresh.events) last.current = fresh.events;
-  const data = fresh.events || !last.current ? fresh : { ...fresh, events: last.current };
+  const data = fresh.events || fresh.error || !last.current ? fresh : { ...fresh, events: last.current };
   const allTasks = useViewTasks(space), people = usePeople(space);
   const tasks = w.show.tasks ? allTasks : NONE;
   const ctx = useMemo(() => makeCtx(today, people), [today, people]);
@@ -91,7 +91,8 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
   };
   const actions = useItemActions({ space, ctx, people, categories, onOpen: openItem, onNewEvent: () => create() });
   const onMenu = (o) => actions.single(o.kind === 'task' ? o.vi : V.eventItem(o));
-  const [sel, setSel] = useState(today); // 미니 달력에서 고른 날
+  const [picked, setSel] = useState(today); // 미니 달력에서 누른 날
+  const sel = W.miniSel(picked, anchor, today); // 달을 옮기면 보이는 달 안으로(오늘이 든 달은 오늘, 아니면 1일) — 목록·'+'가 읽기 창 밖 날짜를 가리키지 않게
   const addDay = view === 'mini' ? sel : today; // '+' — 미니에서 날짜를 골랐으면 그 날짜로(B-6)
 
   if (menu) menu.current = () => [
@@ -126,7 +127,7 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
   let body;
   if (loading && data.error) body = <p className="mod-empty" role="alert">{t(data.error)}</p>;
   else if (loading) body = <p className="mod-empty" role="status">{t('cal.loading')}</p>;
-  else if (board) body = <div className="calw-scroll"><ItemsView id={`home:${space}:${item?.id ?? 'x'}`} items={boardItems} cfg={cfg} setCfg={setView} views={W.WIDGET_VIEWS} today={today} ctx={ctx} people={people} actions={actions} colorBy={colorBy} compact onOpen={openItem} /></div>;
+  else if (board) body = <div className="calw-scroll"><ItemsView id={`home:${space}:${item?.id ?? 'x'}`} items={boardItems} cfg={cfg} setCfg={setView} views={W.WIDGET_VIEWS} label={label} today={today} ctx={ctx} people={people} actions={actions} colorBy={colorBy} compact onOpen={openItem} /></div>;
   else if (view === 'week') body = <WeekCards key={period} days={M.weekDays(anchor)} dir={dir} {...common} />;
   else if (view === 'month') body = <MonthDots key={period} anchor={anchor} dir={dir} {...common} />;
   else if (view === 'mini') body = <MiniCal key={period} anchor={anchor} dir={dir} sel={sel} onPick={setSel} {...common} />;
@@ -207,7 +208,7 @@ function MonthDots({ anchor, dir, items, today, colorBy, holidays, onDay }) {
   const buckets = useMemo(() => W.dayBuckets(weeks.flat(), items), [anchor, items]);
   return <div className="calw-month">
     <Weekdays days={weeks[0]} />
-    <div className="calw-mgrid calw-slide" style={{ '--dx': `${dir * 8}px`, gridTemplateRows: `repeat(${weeks.length}, minmax(0, 1fr))` }}>
+    <div className="calw-mgrid calw-slide" style={{ '--dx': `${dir * 8}px`, gridTemplateRows: `repeat(${weeks.length}, minmax(var(--row-min), 1fr))` }}>
       {weeks.flat().map((d) => {
         const list = buckets.get(d);
         return <button key={d} type="button" className={`calw-cell${M.monthOf(d) !== cur ? ' out' : ''}${d === today ? ' today' : ''}${isRed(d, holidays) ? ' red' : ''}`}
@@ -224,13 +225,13 @@ function MonthDots({ anchor, dir, items, today, colorBy, holidays, onDay }) {
 function MiniCal({ anchor, dir, sel, onPick, items, today, colorBy, holidays, onOpen, onMenu, onDay }) {
   const weeks = W.monthWeeks(anchor), cur = M.monthOf(anchor);
   const days = weeks.flat();
-  const buckets = useMemo(() => W.dayBuckets(days.includes(sel) ? days : [...days, sel], items), [anchor, sel, items]);
+  const buckets = useMemo(() => W.dayBuckets(days, items), [anchor, items]); // 고른 날은 늘 이 격자 안(W.miniSel)
   const list = buckets.get(sel) ?? [];
   const date = fmtDay(sel, { month: 'long', day: 'numeric', weekday: 'short' });
   return <div className="calw-mini">
     <div className="calw-month">
       <Weekdays days={weeks[0]} style="narrow" />
-      <div className="calw-mgrid calw-slide" role="grid" style={{ '--dx': `${dir * 8}px` }}>
+      <div className="calw-mgrid calw-slide" style={{ '--dx': `${dir * 8}px` }}>
         {days.map((d) => <button key={d} type="button" className={`calw-cell${M.monthOf(d) !== cur ? ' out' : ''}${d === today ? ' today' : ''}${d === sel ? ' on' : ''}${isRed(d, holidays) ? ' red' : ''}`}
           aria-label={dayLabel(d, holidays, buckets.get(d)?.length)} aria-pressed={d === sel} aria-current={d === today ? 'date' : undefined} onClick={() => onPick(d)}>
           <span className="calw-num">{Number(d.slice(8))}</span>
@@ -283,7 +284,7 @@ function Card({ o, colorBy, onOpen, onMenu }) {
   return <button type="button" className={`calw-card${o.kind === 'task' ? ' task' : ''}${o.done ? ' done' : ''}${c ? '' : ' neutral'}`} style={c ? { '--ev': c } : undefined}
     title={`${o.title} · ${timeOf(o)}`} onClick={() => onOpen(o)} {...menuProps(() => onMenu(o))}>
     <span className="calw-card-when">{o.kind === 'task' ? <Icon name="check" size={11} /> : <span className={`cal-dot${c ? '' : ' neutral'}`} />}{timeOf(o)}</span>
-    <span className="calw-card-title">{o.crew && colorBy === 'agent' && <Face id={o.crew} size={12} />}{o.title}</span>
+    <span className="calw-card-title">{o.crew && colorBy === 'agent' && <Face id={o.crew} size={12} />}<span className="calw-ell">{o.title}</span></span>
   </button>;
 }
 
@@ -302,8 +303,8 @@ function NextUp({ items, today, now, colorBy, onOpen, onMenu }) {
   return <div className="calw-next">
     <button type="button" className={`calw-up${live ? ' live' : ''}${c ? '' : ' neutral'}`} style={c ? { '--ev': c } : undefined} onClick={() => onOpen(main)} {...menuProps(() => onMenu(main))}>
       <span className="calw-up-when"><b>{when(main)}</b><span className="calw-badge">{relText}</span></span>
-      <strong className="calw-up-title">{main.crew && colorBy === 'agent' && <Face id={main.crew} size={16} />}{main.title}</strong>
-      {(main.location || main.category) && <small className="calw-up-meta">{main.category && <><span className="cal-dot" />{main.category}</>}{main.category && main.location && ' · '}{main.location}</small>}
+      <strong className="calw-up-title">{main.crew && colorBy === 'agent' && <Face id={main.crew} size={16} />}<span className="calw-ell">{main.title}</span></strong>
+      {(main.location || main.category) && <small className="calw-up-meta">{main.category && <span className="cal-dot" />}<span className="calw-ell">{[main.category, main.location].filter(Boolean).join(' · ')}</span></small>}
     </button>
     {rest.length > 0 && <section className="calw-then"><h5>{t('calw.then')}</h5>{rest.map((o) => <Row key={o.key} o={o} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} when={when(o)} />)}</section>}
   </div>;
