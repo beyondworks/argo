@@ -47,10 +47,10 @@ export function Dropdown({ label, value, options, onChange }) {
 }
 
 /* ── 보기 설정 메뉴(카드 ⋯ 메뉴·빈 곳 우클릭·도구 막대가 같이 쓴다) ── */
-export function viewMenu(cfg, set, views) {
+export function viewMenu(cfg, set, views, label = (v) => t(`views.v.${v}`)) {
   return [
     { heading: t('views.view') },
-    ...views.map((v) => ({ label: t(`views.v.${v}`), checked: cfg.view === v, run: () => set({ view: v }) })),
+    ...views.map((v) => ({ label: label(v), checked: cfg.view === v, run: () => set({ view: v }) })),
     ...(cfg.view === 'kanban' ? [{ heading: t('views.group') }, ...V.GROUPS.map((g) => ({ label: t(`views.g.${g}`), checked: cfg.group === g, run: () => set({ group: g }) }))] : []),
     ...(V.BOARD.includes(cfg.view) ? [{ heading: t('views.sort') }, ...V.SORTS.map((s) => ({ label: t(`views.s.${s}`), checked: cfg.sort === s, run: () => set({ sort: s }) }))] : []),
   ];
@@ -105,10 +105,10 @@ export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categor
       clear && { label: t('views.clear'), icon: 'x', run: clear },
     ].filter(Boolean);
   };
-  const empty = (cfg, set, views) => [
+  const empty = (cfg, set, views, label) => [
     { label: t('views.newEvent'), icon: 'calendar', run: onNewEvent },
     { label: t('views.newTask'), icon: 'check', run: () => setAsk({ kind: 'task' }) },
-    ...(cfg && set ? [{ sep: true }, ...viewMenu(cfg, set, views)] : []),
+    ...(cfg && set ? [{ sep: true }, ...viewMenu(cfg, set, views, label)] : []),
   ];
   const close = () => setAsk(null);
   const done = (ok) => { if (ok) { ask?.clear?.(); close(); } };
