@@ -1,0 +1,36 @@
+/* 첫 사용 안내(guide.jsx) — 밝힌 영역 + 어두운 바깥 + 설명 카드. 색·그림자·모서리는 디자인 토큰 그대로(테마 6종이 따라온다).
+   z 130 = 작업 창(115)·확인 창(120)보다 위 — 안내가 떠 있는 동안 아래 화면은 눌리지 않는다. 등장 180ms ease-out, 움직임 줄이기면 즉시. */
+.msgr-guide { position: fixed; inset: 0; z-index: 130; pointer-events: auto; --guide-dim: rgba(0, 0, 0, .5); } /* 테마 스크림(--overlay)은 라이트에서 .3이라 어두운 레일 위 강조가 묻혔다(실측) — 안내만 한 단계 진하게 */
+.msgr-guide-safe { position: fixed; inset: 0; visibility: hidden; pointer-events: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.msgr-guide-dim { position: absolute; inset: 0; background: var(--guide-dim); animation: msgrGuideFade 180ms cubic-bezier(.23, 1, .32, 1) both; }
+.msgr-guide-spot { position: absolute; border-radius: 12px; pointer-events: none;
+  box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--primary), 0 0 0 9999px var(--guide-dim); /* 안쪽 카드색·바깥 기본색 두 겹 — 어두운 레일·밝은 본문 어디서나 테두리가 보인다 */
+  transition: left 220ms cubic-bezier(.23, 1, .32, 1), top 220ms cubic-bezier(.23, 1, .32, 1), width 220ms cubic-bezier(.23, 1, .32, 1), height 220ms cubic-bezier(.23, 1, .32, 1);
+  animation: msgrGuideFade 180ms cubic-bezier(.23, 1, .32, 1) both; }
+.msgr-guide-card { position: absolute; box-sizing: border-box; width: min(320px, calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 10px; padding: 16px 16px 12px;
+  background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-float);
+  animation: msgrGuidePop 180ms cubic-bezier(.23, 1, .32, 1) both; }
+.msgr-guide.phone .msgr-guide-card { width: min(360px, calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right))); }
+.msgr-guide-text { display: grid; gap: 6px; }
+.msgr-guide-count { margin: 0; font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.msgr-guide-card h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35; }
+.msgr-guide-card p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--fg-2); overflow-wrap: anywhere; }
+.msgr-guide-card .msgr-guide-note { font-size: 12px; color: var(--fg-3); }
+.msgr-guide-sr { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.msgr-guide-dots { display: flex; gap: 5px; }
+.msgr-guide-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--border); transition: background 150ms ease; }
+.msgr-guide-dots span.on { background: var(--primary); }
+.msgr-guide-acts { display: flex; align-items: center; gap: 8px; }
+.msgr-guide-acts .sp { flex: 1; }
+.msgr-guide-acts .btn { min-height: 34px; }
+.msgr-guide.phone .msgr-guide-acts .btn { min-height: 40px; padding: 0 14px; }
+.msgr-guide-skip { color: var(--fg-3); }
+@keyframes msgrGuideFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes msgrGuidePop { from { opacity: 0; transform: scale(.97) translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .msgr-guide-dim, .msgr-guide-spot, .msgr-guide-card { animation: none; }
+  .msgr-guide-spot, .msgr-guide-dots span { transition: none; }
+}
