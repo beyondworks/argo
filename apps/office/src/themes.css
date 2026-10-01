@@ -121,6 +121,8 @@
   --t-neu-pop: -8px -8px 22px var(--t-neu-hi), 12px 14px 34px var(--t-neu-lo);
   --t-neu-in: inset 4px 4px 9px var(--t-neu-lo), inset -4px -4px 9px var(--t-neu-hi);
   --t-neu-in-sm: inset 2px 2px 5px var(--t-neu-lo), inset -2px -2px 5px var(--t-neu-hi);
+  --t-neu-primary-lo: color-mix(in srgb, var(--primary) 55%, #000000); --t-neu-primary-hi: color-mix(in srgb, var(--primary) 70%, #ffffff); /* 켜진 토글 홈의 그늘·빛 */
+  --t-neu-pop-dim: 0 2px 6px var(--t-shade), 0 12px 28px var(--t-shade), 0 28px 64px var(--t-shade); /* 덮개 위에 뜨는 층 — 덮개가 바탕보다 어두워 빛 그림자(--t-neu-hi)는 물론 라이트의 그늘(--t-neu-lo)도 흰 번짐이 된다. 덮개보다 어두운 그림자만 */
 }
 /* 사이드바가 창 바탕에 녹는 셸(panel·pill·glass·liquid·neu)에 어두운 사이드바 색(linen·cream·ember)이 오면 메뉴 글자가 밝은 바탕 위에 놓인다 — 본문 글자 색으로 바꾼다 */
 :root:is([data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']):is([data-theme^='linen'], [data-theme^='cream'], [data-theme^='ember']) {
@@ -207,7 +209,7 @@
   /* neu — 같은 색 바탕 위에 사이드바 판이 솟아 있다 */
   :root[data-shell='neu'] .shell { padding: 18px; column-gap: 18px; }
   :root[data-shell='neu'].nav-collapsed .shell { column-gap: 0; }
-  :root[data-shell='neu'] .side { border-radius: var(--t-win-r); }
+  :root[data-shell='neu'] .side { border-radius: var(--t-win-r); box-shadow: var(--t-neu-up); }
 }
 /* 본문 판 색은 좁은 폭에서도 같다 */
 :root:is([data-shell='panel'], [data-shell='pill']) .main { background: var(--t-main-bg); }
@@ -276,6 +278,10 @@
 :root[data-shell='liquid'][data-theme] { --side-active: var(--t-lq-pill); --side-hover: color-mix(in srgb, var(--card) 40%, transparent); }
 :root[data-shell='liquid'] .shell { position: relative; isolation: isolate; }
 :root[data-shell='liquid'] :is(.set-card, .login-card, .palette, .modal) { position: relative; } /* .side는 데스크톱만(4절) — 폰 폭에서는 fixed 서랍이라 이미 기준 상자다 */
+/* 로그인 카드는 .shell 밖이라 스스로 쌓임 맥락을 만든다 — 없으면 ::before가 루트로 올라가 불투명한 .login 바탕 밑에 깔려 면이 사라진다(리뷰 10/1).
+   .login·지연 로드 자리(.boot)는 바탕을 비워 빛 덩어리가 보이게 한다 — 불투명하면 유리창 안에 평평한 판이 떠 보인다 */
+:root[data-shell='liquid'] .login-card { isolation: isolate; }
+:root[data-shell='liquid'] :is(.login, .boot) { background: transparent; }
 :root[data-shell='liquid'] .side { background: transparent; }
 :root[data-shell='liquid'] :is(.shell, .side, .module, .set-card, .login-card)::before {
   content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
@@ -337,7 +343,9 @@
 /* neu — 뉴모피즘(유건 10/1). 모든 면이 바탕과 같은 색 — 솟은 것(카드·버튼·사이드바·떠 있는 층)은 빛+그늘, 눌린 것(활성 탭·선택 항목·입력칸·켜진 토글)은 안쪽 그림자 */
 :root[data-shell='neu'] { background: var(--bg); }
 :root[data-shell='neu'][data-theme] { --side-active: var(--bg); --side-hover: color-mix(in srgb, var(--fg) 4%, transparent); --ring: var(--primary); }
-:root[data-shell='neu'] .side { background: var(--bg); box-shadow: var(--t-neu-up); }
+:root[data-shell='neu'] .side { background: var(--bg); }
+/* 폰 폭에서 닫힌 서랍은 화면 왼쪽 밖(오른쪽 모서리가 x=0)이라 그늘이 본문 가장자리로 샌다 — 열렸을 때만 솟는다(데스크톱은 4절) */
+:root[data-shell='neu'] .shell.nav-open .side { box-shadow: var(--t-neu-up); }
 :root[data-shell='neu'] :is(.module, .set-card, .table-wrap, .login-card) { background: var(--bg); box-shadow: var(--t-neu-up); }
 :root[data-shell='neu'] .module-body > .table-wrap, :root[data-shell='neu'] .module-body details > .table-wrap { box-shadow: none; }
 :root[data-shell='neu'] .module-head { border-bottom-color: transparent; }
@@ -362,10 +370,11 @@
 /* 토글 — 홈이 파이고 손잡이가 솟는다. 켜지면 홈에 강조색이 고인다 */
 :root[data-shell='neu'] input[role='switch'] { width: 40px; height: 22px; background: var(--bg); box-shadow: var(--t-neu-in-sm); }
 :root[data-shell='neu'] input[role='switch']::after { top: 3px; left: 3px; background: var(--bg); box-shadow: 1px 1px 3px var(--t-neu-lo), -1px -1px 2px var(--t-neu-hi); }
-:root[data-shell='neu'] input[role='switch']:checked { background: var(--primary); box-shadow: inset 2px 2px 5px color-mix(in srgb, var(--primary) 55%, #000000), inset -1px -1px 3px color-mix(in srgb, var(--primary) 70%, #ffffff); }
+:root[data-shell='neu'] input[role='switch']:checked { background: var(--primary); box-shadow: inset 2px 2px 5px var(--t-neu-primary-lo), inset -1px -1px 3px var(--t-neu-primary-hi); }
 :root[data-shell='neu'] input[role='switch']:checked::after { transform: translateX(18px); background: var(--primary-fg); }
 /* 떠 있는 층 — 같은 색, 더 높이 솟음 */
 :root[data-shell='neu'] :is(.menu, .modal, .palette, .sheet, .vw-selbar, .mention-list) { background: var(--bg); box-shadow: var(--t-neu-pop); }
+:root[data-shell='neu'] :is(.modal, .palette, .sheet) { box-shadow: var(--t-neu-pop-dim); }
 :root[data-shell='neu'] .toast { box-shadow: 6px 8px 22px var(--t-neu-lo); }
 :root[data-shell='neu'] :is(.modal-head, .modal-foot) { border-color: transparent; }
 @media (hover: hover) {
@@ -747,7 +756,7 @@
   --shadow-float: 0 14px 36px rgba(80, 30, 45, 0.15);
   --ink-rgb: 42, 27, 32;
   --side-bg: #eee3e4; --side-fg: #2a1b20; --side-fg-2: #513c44; --side-fg-3: #654e57;
-  --side-line: rgba(42, 27, 32, 0.09); --side-hover: rgba(42, 27, 32, 0.055); --side-active: var(--surface); --side-mark: #c25a7c;
+  --side-line: rgba(42, 27, 32, 0.09); --side-hover: rgba(42, 27, 32, 0.055); --side-active: var(--surface); --side-mark: #cc6b8a;
   --tile-1: #f3dbe2; --tile-2: #f2e3d6; --tile-3: #e7dded; --tile-4: #f5e8e1; --tile-5: #e0e6ee; --tile-6: #ebe6d7;
   --tile-ink-2: #48373d; --tile-ink-3: #5c4950; --t-tile-badge: rgba(255, 255, 255, 0.65);
   --t-tile-edge: none;

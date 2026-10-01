@@ -173,6 +173,7 @@ for (const fam of ['linen', 'graphite', ...NEW]) for (const mode of ['light', 'd
     pairs.push(['primary-fg/primary', ratio(c('primary-fg'), c('primary'))]);
     if (NEW.includes(fam)) {
       pairs.push(['mark-fg/mark', ratio(c('mark-fg'), c('mark'))]);
+      pairs.push(['mark-fg/side-mark', ratio(c('mark-fg'), c('side-mark'))]); // 사이드바 개수 배지(.nav-count)·float 공간 표시 — rose 라이트 3.96이 빠졌던 자리(리뷰 10/1)
       for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) pairs.push([`${fg}/side-bg`, ratio(c(fg), c('side-bg'))]);
       pairs.push(['side-fg on side-active', ratio(c('side-fg'), over(raw('side-active'), c('side-bg')))]); // 선택된 메뉴(반투명 배경은 사이드바 위에 올린 색)
       for (const n of [1, 2, 3, 4, 5, 6]) for (const ink of ['tile-ink-2', 'tile-ink-3']) pairs.push([`${ink}/tile-${n}`, ratio(c(ink), c(`tile-${n}`))]);
