@@ -71,6 +71,7 @@ sync.ensureSync();
 setInterval(() => {
   process.stdout.write('\\n@@' + JSON.stringify({ t: Date.now(), proc: !!held.gateway?.isLeader(), sched: !!held.scheduler?.isLeader(), cloud: sync.isCloudLeader() }) + '\\n');
 }, ${Number(intervalMs)});`;
+  const startedAt = Date.now();
   const p = spawn(process.execPath, ['--input-type=module', '-e', script], { env: childEnv(root, env), stdio: ['ignore', 'pipe', 'pipe'] });
   const samples = []; let buf = ''; let err = ''; let exited = false;
   p.stdout.on('data', (c) => {
@@ -80,7 +81,7 @@ setInterval(() => {
   p.stderr.on('data', (c) => { err += c; });
   const done = new Promise((r) => p.on('exit', () => { exited = true; r(); }));
   return {
-    name, samples, pid: p.pid,
+    name, samples, pid: p.pid, startedAt,
     get err() { return err; },
     alive: () => !exited,
     last: () => samples[samples.length - 1] ?? null,

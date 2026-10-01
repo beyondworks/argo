@@ -123,3 +123,13 @@ test('게이트웨이 리스와 스케줄러 리스가 다른 프로세스로 �
   assert.equal(runnersAt([G, S], t, { field: 'proc' }), 1, `게이트웨이 G=${JSON.stringify(G.last())} S=${JSON.stringify(S.last())} ${G.err.slice(-800)}`);
   assert.equal(runnersAt([G, S], t, { field: 'sched' }), 1, '스케줄러 — 한쪽만 참여시키면 다른 쪽 데몬이 멈춘다');
 });
+
+test('#791 재검수 LOW-b — 혼자 켜진 실행 프로세스는 첫 동기화 주기에 바로 클라우드 리더가 된다(실행 리스 첫 판정을 기다림 — 기본 8초 주기를 한 번 더 기다리지 않음)', { timeout: 60_000 }, async () => {
+  const { fake, root } = await setup();
+  const k = child({ root, name: 'solo' }); // 기본 동기화 주기(8초)
+  await sleep(6000);
+  const first = k.samples.find((x) => x.proc && x.cloud);
+  assert.ok(first, `6초 안에 실행 담당이 되지 못했다 — 첫 주기가 리스 첫 판정(150ms)보다 먼저 와서 강등됐다: ${JSON.stringify(k.last())}`);
+  assert.ok(first.t - k.startedAt < 4000, `기동 후 ${first.t - k.startedAt}ms`);
+  assert.ok(fake.count(LEASE_PUT) >= 1);
+});

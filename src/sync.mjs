@@ -34,7 +34,7 @@ import { syncEntitled } from './entitlement.mjs';
 import { cachedPlan, rememberPlan, invalidatePlanCache } from './plan-cache.mjs';
 import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 기기에서 턴을 돌릴 러너가 있는가
 import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수신 쓰기의 캐시 무효화
-import { holdsDaemonLease } from './lock.mjs'; // 실행 리스(게이트웨이·스케줄러) 주인만 클라우드 리스에 참여 — arbitrateLease
+import { holdsDaemonLease, daemonLeasesSettled } from './lock.mjs'; // 실행 리스(게이트웨이·스케줄러) 주인만 클라우드 리스에 참여 — arbitrateLease
 
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
@@ -1359,6 +1359,7 @@ async function probeRunnerUsable(targets) {
     텔레그램 토큰 클레임도 같은 기준이다 — 폴러는 게이트웨이 리스 주인에서만 돈다(gateway.mjs의 procLeader 게이트). */
 async function arbitrateLease(targets) {
   const owner = [...new Set(targets.values())][0];
+  await daemonLeasesSettled(['gateway', 'scheduler']); // 기동 직후 첫 판정 전이면 기다린다(첫 주기 강등 → 8초 공백 방지)
   if (!holdsDaemonLease('gateway', 'scheduler')) {
     leaseState.leader = false;
     leaseState.ownedAt = 0;

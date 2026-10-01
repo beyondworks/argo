@@ -12,6 +12,15 @@ const REG = (globalThis.__argoDaemonLeases ??= {});
 /** 이 프로세스가 이름 중 하나의 데몬 리스를 지금 쥐고 있는가. 켠 적 없는 이름은 거짓. */
 export const holdsDaemonLease = (...names) => names.some((n) => REG[n]?.isLeader() === true);
 
+/** 켠 리스들의 첫 판정이 끝날 때까지 기다린다(최대 timeoutMs). 첫 판정 전에는 isLeader가 늘 거짓이라, 기동 직후 첫 동기화 주기가
+    이 프로세스를 실행 주인이 아니라고 보고 강등한 뒤 다음 주기(기본 8초)까지 리더가 비었다(#791 재검수 LOW-b). 켠 적 없는 이름은 바로 끝난다. */
+export async function daemonLeasesSettled(names, timeoutMs = 2_000) {
+  const pending = names.map((n) => REG[n]?.ready).filter(Boolean);
+  if (!pending.length) return;
+  let t; await Promise.race([Promise.all(pending), new Promise((r) => { t = setTimeout(r, timeoutMs); t.unref?.(); })]);
+  clearTimeout(t);
+}
+
 export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
   const file = join(WS_ROOT, `.${name}.lock`);
   let mine = false;
@@ -28,10 +37,10 @@ export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
       mine = false;
     }
   };
-  tick();
+  const ready = tick(); // 첫 판정(쓰기 + 150ms 재확인) — daemonLeasesSettled가 기다린다
   const timer = setInterval(tick, beat);
   timer.unref?.();
-  const handle = { isLeader: () => mine };
+  const handle = { isLeader: () => mine, ready };
   REG[name] = handle;
   return handle;
 }
