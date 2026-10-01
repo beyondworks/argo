@@ -445,14 +445,23 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .block-handle { display: grid; place-items: center; width: 20px; height: 24px; border-radius: 5px; color: var(--fg-3); cursor: grab; transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
 @media (hover: hover) { .block-handle:hover { background: var(--wash); color: var(--fg); } }
 .block-handle:active { cursor: grabbing; }
-/* 손잡이에 마우스를 올린 동안 움직일 블록을 옅게 칠한다(유건 10/1). 안쪽 그림자로 칠해 인용·코드·비공개처럼 바탕이 있는 블록 위에도 보이고, 바깥 4px로 글자에 여유를 준다 */
+/* 손잡이에 마우스를 올린 동안 움직일 블록을 옅게 칠한다(유건 10/1). 안쪽 그림자로 칠해 인용·코드처럼 바탕이 있는 블록 위에도 보이고, 바깥 4px로 글자에 여유를 준다 */
 :where(.ProseMirror > .block-hover) { border-radius: 4px; }
 .ProseMirror > .block-hover { --hover-wash: color-mix(in srgb, var(--fg) 6%, transparent); box-shadow: inset 0 0 0 100vmax var(--hover-wash), 0 0 0 4px var(--hover-wash); animation: block-hover-in 140ms var(--ease-out); }
 @keyframes block-hover-in { from { box-shadow: inset 0 0 0 100vmax transparent, 0 0 0 4px transparent; } }
+/* 비공개·모듈처럼 React로 그리는 블록은 안쪽 카드 바탕이 칠(그림자·배경)을 덮어 테두리만 보였다(분리 검수 10/1) — 맨 위에 옅은 막을 한 장 덮는다.
+   손잡이 올림은 회색, 고름·선택은 파랑(뒤 규칙이 이긴다) */
+.ProseMirror > .react-renderer:is(.block-hover, .block-picked, .ProseMirror-selectednode) { position: relative; }
+.ProseMirror > .react-renderer.block-hover::after, .ProseMirror > .react-renderer.block-picked::after, .ProseMirror-focused[contenteditable='true'] > .react-renderer.ProseMirror-selectednode::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--hover-wash); pointer-events: none; }
+.ProseMirror > .react-renderer.block-hover::after { animation: block-hover-veil 140ms var(--ease-out); }
+.ProseMirror > .react-renderer.block-picked::after, .ProseMirror-focused[contenteditable='true'] > .react-renderer.ProseMirror-selectednode::after { background: var(--pick-wash); animation: none; }
+@keyframes block-hover-veil { from { opacity: 0; } }
 /* 원자 블록(구분선·모듈·비공개)을 골랐을 때 — 고른 블록과 같은 옅은 파랑 면과 링. 편집기 기본 CSS를 불러오지 않아 아무 표시가 없었다.
-   편집 중일 때만 — 읽기 전용으로 보는 사람이 모듈 글자를 눌러도 할 수 있는 일이 없는 파란 틀이 생겼다(분리 검수 10/1) */
-.ProseMirror[contenteditable='true'] .ProseMirror-selectednode { outline: none; box-shadow: inset 0 0 0 100vmax var(--pick-wash), 0 0 0 3px var(--pick-wash); }
-:where(.ProseMirror[contenteditable='true'] .ProseMirror-selectednode) { border-radius: 4px; }
+   편집 중이고 초점이 편집기에 있을 때만 — 읽기 전용으로 보는 사람에게 파란 틀이 생겼고, 편집기는 초점을 잃어도 블록 선택을 지우지 않아 밖을 눌러도 파란 띠가 남았다(분리 검수 10/1).
+   여백 끌기로 고른 블록(.block-picked)은 그쪽 칠이 이미 있어 겹쳐 진해지지 않게 뺀다 */
+.ProseMirror-focused[contenteditable='true'] .ProseMirror-selectednode:not(.block-picked) { outline: none; box-shadow: inset 0 0 0 100vmax var(--pick-wash), 0 0 0 3px var(--pick-wash); }
+:where(.ProseMirror-focused[contenteditable='true'] .ProseMirror-selectednode) { border-radius: 4px; }
 .ProseMirror-hideselection { caret-color: transparent; }
 .ProseMirror-hideselection *::selection { background: transparent; }
 .menu.slash { max-height: 320px; overflow: auto; }
