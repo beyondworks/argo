@@ -1,4 +1,10 @@
 import { storageKey } from './attach-files.mjs';
+import { isNetworkFailure } from './net-errors.mjs';
+
+// 전송 실패의 영어 원문은 카드에 보이지 않는다(검수 E: 'TypeError: Failed to fetch'가 빨간 글씨로 나왔다). 앱이 진단 기록(설정 > 진단)으로 보내는 통로.
+let reporter = null;
+export const setDeliveryReporter = (fn) => { reporter = fn; };
+const OFFLINE_KEY = 'msg.delivery.offline';
 
 // Drafts and retry state live only for this signed-in app session, separately per server/user/channel.
 // Keeping the File objects in memory lets navigation preserve attachments without copying them to disk.
@@ -74,13 +80,18 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
         if (!disposed && !job.body && transport.discard && job.files.every((item) => !item.uploaded)) {
           try { await transport.discard(job); job.messageId = null; job.clientId = uuid(); } catch { /* 지우지 못하면 글을 그대로 둔다 — 재시도가 이어서 올린다 */ }
         }
-        patch({ job: { ...job, error: failed.filter((item) => item.error).map((item) => `${item.file.name}: ${item.error}`).join('\n') } });
+        const errors = failed.filter((item) => item.error); // 오류가 기록된 파일만(시도하지 않은 파일은 이유가 없다)
+        const error = errors.map((item) => `${item.file.name}: ${item.error}`).join('\n');
+        if (errors.some((item) => isNetworkFailure(item.error))) reporter?.('send', error);
+        patch({ job: { ...job, error, errorKey: errors.length && errors.every((item) => isNetworkFailure(item.error)) ? OFFLINE_KEY : '' } }); // 일부만 네트워크 오류면 원문 줄을 그대로 — 다른 원인을 연결 탓으로 덮지 않는다(#793). 전부 실패해 글을 지웠으면 messageId=null이라 카드는 '전송 실패' 제목
         return false;
       }
       patch({ job: null, lastDeliveredId: job.messageId });
       return true;
     } catch (error) {
-      patch({ job: { ...job, error: error.message, errorKey: error.uiKey ?? '' } }); // errorKey가 있으면 카드는 원문 대신 그 문구를 쓴다(D50)
+      const offline = !error.uiKey && isNetworkFailure(error.message);
+      if (offline) reporter?.('send', String(error)); // 'TypeError: Failed to fetch' — 화면에는 문구만, 원문은 진단 기록에
+      patch({ job: { ...job, error: error.message, errorKey: error.uiKey ?? (offline ? OFFLINE_KEY : '') } }); // errorKey가 있으면 카드는 원문 대신 그 문구를 쓴다(D50)
       return false;
     } finally { patch({ busy: false, uploading: '' }); }
   }

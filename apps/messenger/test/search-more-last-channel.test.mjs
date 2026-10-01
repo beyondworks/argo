@@ -8,8 +8,8 @@ import { t } from '../src/i18n.js';
 const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 test('검색 결과가 상한에서 잘렸으면 이상으로 적는다', () => {
   assert.match(src, /\.limit\(SEARCH_LIMIT \+ 1\)/);
-  assert.match(src, /const msgs = found\.slice\(0, SEARCH_LIMIT\);/);
-  assert.match(src, /more: found\.length > SEARCH_LIMIT,/);
+  assert.match(src, /const \{ msgs, more, failed \} = await fetchSearchRows\(/); // 자르기·'더 있음' 판정은 search-rows.mjs(행동은 ef-offline.test.mjs가 잠근다)
+  assert.match(src, /setSearchRes\(\{ q: qs, msgs, more, failed,/);
   assert.match(src, /t\(res\.more \? 'search\.countMore' : 'search\.count', \{ n: total \}\)/);
   assert.equal(t('search.countMore', 'ko', { n: 60 }), '60건 이상');
   assert.equal(t('search.countMore', 'en', { n: 60 }), '60+ results');
