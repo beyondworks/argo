@@ -221,6 +221,7 @@ const DICT = {
   'page.conflictHint': ['새로 불러오면 내 변경은 사라집니다. 내 변경을 지키려면 사본으로 저장하세요.', 'Reloading discards your changes. Save them as a copy to keep them.'],
   'page.conflictReload': ['새로 불러오기', 'Reload'], 'page.conflictCopy': ['내 변경을 사본으로 저장', 'Save my changes as a copy'], 'page.copySaved': ['사본으로 저장했습니다', 'Saved as a copy'],
   'draft.badge': ['화면 초안 · 예시 데이터', 'Screen draft · sample data'],
+  'load.fail': ['화면을 불러오지 못했습니다. 새 버전이 있을 수 있어요.', 'Couldn’t load this screen. A new version may be available.'], 'load.retry': ['다시 불러오기', 'Reload'],
   'time.now': ['방금', 'just now'], 'time.min': ['{n}분 전', '{n}m ago'], 'time.hour': ['{n}시간 전', '{n}h ago'], 'time.day': ['{n}일 전', '{n}d ago'],
 };
 
