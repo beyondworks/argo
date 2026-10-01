@@ -2,7 +2,7 @@
 // 좁은 폭에서는 같은 순서로 한 줄이 된다. 저장된 배치와 등록부를 합치는 규칙은 순수 함수로 두고 테스트로 잠근다.
 export const SIZES = ['s', 'm', 'l', 'full'];
 export const SPAN = { s: 4, m: 6, l: 8, full: 12 };
-// 가장자리 끌기(유건 10/1): 폭은 열 수(span 1~12), 높이는 px(h, 120~1200) — 없으면 크기 단계·내용대로
+// 가장자리 끌기(유건 10/1): 폭은 열 수(span 1~12, 끌기 전 단계는 baseSize), 높이는 px(h, 120~1200) — 없으면 크기 단계·내용대로
 export const spanOf = (it) => (Number.isInteger(it.span) && it.span > 0 && it.span < 13 ? it.span : SPAN[it.size] ?? 6);
 export const heightOf = (it) => (Number.isInteger(it.h) && it.h >= 120 && it.h <= 1200 ? it.h : 0);
 /** 모듈이 허용하는 열 범위 — 1/3을 허용하면 3열부터, 아니면 가장 작은 단계부터(현황 8열) */
@@ -37,7 +37,7 @@ export function mergeLayout(saved, registry, space, defaults) {
     if (!mod || seen.has(it.id)) continue;
     seen.add(it.id);
     const [lo, hi] = spanRange(mod.sizes), { span } = it;
-    items.push({ id: it.id, ...(it.moduleId ? { moduleId: it.moduleId } : {}), size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, ...(Number.isInteger(span) && span >= lo && span <= hi ? { span } : {}), ...(heightOf(it) ? { h: it.h } : {}), hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
+    items.push({ id: it.id, ...(it.moduleId ? { moduleId: it.moduleId } : {}), size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, ...(Number.isInteger(span) && span >= lo && span <= hi ? { span, ...(mod.sizes.includes(it.baseSize) ? { baseSize: it.baseSize } : {}) } : {}), ...(heightOf(it) ? { h: it.h } : {}), hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
   }
   // 새로 생긴 모듈은 숨긴 채 뒤에 — intro: 'top'인 것만 맨 위에 보이게(유건 9/27: 현황 카드). 한 번 저장된 뒤엔 사용자 선택을 따른다.
   for (const [id, mod] of usable) if (!mod.repeatable && !items.some((item) => (item.moduleId ?? item.id) === id)) {

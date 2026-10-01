@@ -13,7 +13,7 @@ const gridStrategy = () => null;
 // 가장자리 끌기(유건 10/1) — 손잡이는 늘 그리고, 끄는 코드는 처음 다가갈 때 불러온다(첫 화면 150KB 상한)
 const EDGES = ['l', 'r', 't', 'b'];
 let resizer;
-const loadResizer = () => (resizer ??= import('./module-resize.js'));
+const loadResizer = () => (resizer ??= import('./module-resize.js').catch((error) => { resizer = null; throw error; })); // 실패하면 다음에 다시 받는다(배포 뒤 옛 탭)
 
 function ModuleCard({ item, space, items, rh, canEdit, editable, scope, commit, resolveModule, bodyClassName }) {
   const mod = resolveModule(item);
@@ -22,17 +22,17 @@ function ModuleCard({ item, space, items, rh, canEdit, editable, scope, commit, 
   const card = useRef(null);
   const set = (patch) => commit(items.map((x) => (x.id === item.id ? { ...x, ...patch } : x)));
   // 끄기·키보드·두 번 누르기는 module-resize.js가 맡는다 — 지금 자리(DOM)와 항목을 넘긴다
-  const edge = (kind, e, side) => loadResizer().then((m) => card.current && m[kind]({ el: card.current, items, modOf: resolveModule, commit }, e, side));
+  const edge = (kind, e, side) => loadResizer().then((m) => card.current && m[kind]?.({ el: card.current, items, modOf: resolveModule, commit }, e, side), () => {});
   const own = useRef(null); // 카드 본문이 더하는 메뉴(예: 여러 보기의 보기 고르기)
   const menu = () => !canEdit ? [...(own.current?.() ?? []), { heading: t('home.readOnly') }] : [
     ...(own.current?.() ?? []),
     ...(mod.actions?.length ? [...mod.actions, { sep: true }] : []),
-    ...('span' in item || 'h' in item ? [{ label: t('mod.size.reset'), icon: 'resize', run: () => edge('resetAll') }] : []),
+    ...('span' in item || rh ? [{ label: t('mod.size.reset'), icon: 'resize', run: () => edge('resetAll') }] : []),
     { label: t('mod.hide'), icon: 'x', run: () => set({ hidden: true }) },
   ];
   const Body = mod.render, span = spanOf(item), [lo, hi] = spanRange(mod.sizes);
   return (
-    <section ref={(el) => { setNodeRef(el); card.current = el; }} data-mod={item.id} className={`module size-${item.size}${rh ? ' sized-h' : ''}${isDragging ? ' dragging' : ''}`}
+    <section ref={(el) => { setNodeRef(el); card.current = el; }} data-mod={item.id} className={`module size-${item.size}${rh ? ' sized-h' : ''}${heightOf(item) ? ' own-h' : ''}${isDragging ? ' dragging' : ''}`}
       style={{ '--span': span, ...(rh ? { '--rh': `${rh}px`, '--mh': heightOf(item) ? `${item.h}px` : 'auto' } : {}) }} aria-label={mod.title} {...menuProps(menu)}>
       <header className="module-head">
         {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}
@@ -45,7 +45,8 @@ function ModuleCard({ item, space, items, rh, canEdit, editable, scope, commit, 
         const x = side === 'l' || side === 'r'; // 좌우 = 폭, 위아래 = 높이
         return <span key={side} className={`edge edge-${side} edge-${x ? 'x' : 'y'}`} role="separator" aria-orientation={x ? 'vertical' : 'horizontal'} aria-label={t(x ? 'mod.resize.w' : 'mod.resize.h')}
           aria-valuenow={x ? span : rh || undefined} aria-valuemin={x ? lo : 120} aria-valuemax={x ? hi : 1200} tabIndex={side === 'r' || side === 'b' ? 0 : -1}
-          onPointerEnter={loadResizer} onDoubleClick={() => edge('reset', null, side)}
+          onPointerEnter={() => edge()} onDoubleClick={() => edge('reset', null, side)} onBlur={() => edge('blur')}
+          onFocus={(e) => { if (!x && !rh) e.currentTarget.setAttribute('aria-valuenow', Math.round(card.current.offsetHeight / 8) * 8); }} // 정하지 않은 높이는 지금 높이를 알린다
           onKeyDown={(e) => { if (!e.key.startsWith('Arrow')) return; e.preventDefault(); e.stopPropagation(); edge('key', { key: e.key }, side); }}
           onPointerDown={(e) => { // 길게 누르기 메뉴·끌어 옮기기·글 선택이 같이 시작되지 않게
             e.stopPropagation(); if (e.button) return; e.preventDefault();

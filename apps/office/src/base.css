@@ -226,7 +226,7 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 .module.sized-h { height: var(--rh); }
 .module.sized-h .module-body { flex: 1; min-height: 0; overflow: auto; }
 .module.dragging { opacity: 0.35; outline: 1px dashed var(--fg-3); outline-offset: -1px; } /* 끄는 동안 원래 자리는 빈 틀로 — 실제 격자가 미리 자리를 바꿔 보여 준다 */
-@container (max-width: 720px) { .module { grid-column: span 12; } .module.sized-h { height: var(--mh); } .edge-x { display: none; } } /* 좁으면 한 줄에 하나 — 폭 손잡이 없이 높이만, 높이는 자기 것 */
+@container (max-width: 720px) { .module { grid-column: span 12; } .module.sized-h { height: var(--mh); } .module.sized-h:not(.own-h) .module-body { overflow: visible; } .edge-x { display: none; } } /* 좁으면 한 줄에 하나 — 폭 손잡이 없이 높이만, 높이는 자기 것(넓은 화면의 옆 모듈 높이는 따르지 않는다) */
 .module-head { position: relative; display: flex; align-items: center; gap: 8px; height: 42px; flex: none; padding: 0 8px 0 16px; border-bottom: 1px solid var(--border-soft); }
 .module-head > .ico { flex: none; }
 .module-head h3 { font-size: 13px; font-weight: 620; flex: 1; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -269,8 +269,8 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 /* 가장자리 손잡이(유건 10/1) — 카드 안팎 4px씩 8px 띠. 올리면 그 가장자리를 따라 2px 선, 끄는 중·키보드 초점이면 진하게.
    모서리는 비워 둔다(둥근 모서리 + 두 방향이 겹치지 않게). 옆 카드와의 틈(12px) 안에서 서로 겹치지 않는다 */
 .edge { position: absolute; z-index: 2; touch-action: none; outline: none; }
-.edge-l, .edge-r { top: 12px; bottom: 12px; width: 8px; cursor: ew-resize; }
-.edge-t, .edge-b { left: 12px; right: 12px; height: 8px; cursor: ns-resize; }
+.edge-l, .edge-r { top: var(--rs); bottom: var(--rs); width: 8px; cursor: ew-resize; }
+.edge-t, .edge-b { left: var(--rs); right: var(--rs); height: 8px; cursor: ns-resize; } /* 둥근 모서리가 끝나는 곳부터(셸마다 둥글기가 다르다) */
 .edge-l { left: -4px; } .edge-r { right: -4px; } .edge-t { top: -4px; } .edge-b { bottom: -4px; }
 .edge::after { content: ''; position: absolute; border-radius: 1px; background: var(--fg-3); opacity: 0; transform: scale(0.6); transition: opacity 120ms var(--ease-out), transform 160ms var(--ease-out); }
 .edge-x::after { top: 0; bottom: 0; left: 3px; width: 2px; transform: scaleY(0.6); }
@@ -280,9 +280,9 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 /* 끄는 동안: 커서를 고정하고 글 선택을 막는다. 폭을 끌 때는 12열 눈금이 은은히 보인다 */
 body.edge-drag-x, body.edge-drag-x * { cursor: ew-resize !important; user-select: none; }
 body.edge-drag-y, body.edge-drag-y * { cursor: ns-resize !important; user-select: none; }
-.grid::before { content: ''; position: absolute; inset: 0; z-index: 3; pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease-out); border-radius: var(--rs);
-  background: repeating-linear-gradient(90deg, transparent 0 calc((100% - 11 * var(--module-gap)) / 12), var(--primary-soft) 0 calc((100% + var(--module-gap)) / 12)); } /* 모듈 가장자리가 붙을 수 있는 열 사이 틈만 옅게 */
-.grid.cols-on::before { opacity: 0.7; }
+.grid::before { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease-out); border-radius: var(--rs);
+  background: repeating-linear-gradient(90deg, transparent 0 calc((100% - 11 * var(--module-gap)) / 12), var(--primary-soft) 0 calc((100% + var(--module-gap)) / 12)); } /* 모듈 가장자리가 붙을 수 있는 열 사이 틈만 옅게 — 카드 뒤에 깔려 빈 열과 카드 사이 틈에서만 보인다(카드 글을 가리지 않게) */
+.grid.cols-on::before { opacity: 0.6; }
 .module.resizing { z-index: 1; }
 /* 터치: 폭은 바꾸지 않고(좁은 화면과 같게), 높이는 아래 가장자리 하나 — 잡을 자리가 보이게 작은 막대를 늘 둔다 */
 @media (pointer: coarse) {

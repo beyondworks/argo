@@ -19,30 +19,27 @@ export const snapH = (px, min = MIN_H) => Math.min(MAX_H, Math.max(min, Math.rou
 const nearest = (sizes, span) => sizes.reduce((best, s) => (Math.abs(SPAN[s] - span) < Math.abs(SPAN[best] - span) ? s : best), sizes[0]);
 
 /**
- * patch = { [id]: { span?, h? } } — span null이면 폭을 지우고 기본 단계, h가 0이면 높이를 지운다.
- * 옛 앱·옛 화면은 size만 읽으므로 span을 쓰면 size도 가장 가까운 허용 단계로 같이 쓴다.
+ * patch = { [id]: { span?, h? } } — span null이면 폭을 지운다, h가 0이면 높이를 지운다.
+ * 옛 앱·옛 화면은 size만 읽으므로 span을 쓰면 size도 가장 가까운 허용 단계로 같이 쓰고, 끌기 전 단계는 baseSize에 남긴다.
+ * 폭을 지우거나 끌기 전 열 수로 돌아오면 끌기 전 단계로 돌아간다(등록부 기본값이 아니라 — 홈 기본 배치·대시보드 기본값이 다르다).
  */
 export function applySizes(items, patch, modOf) {
   return items.map((item) => {
     const p = patch[item.id];
     if (!p) return item;
-    const next = { ...item }, mod = modOf(item);
+    const next = { ...item }, base = modOf(item).sizes.includes(item.baseSize) ? item.baseSize : item.size;
     if ('span' in p) {
-      if (p.span == null) { delete next.span; next.size = mod.sizes.includes(mod.defaultSize) ? mod.defaultSize : nearest(mod.sizes, 6); }
-      else { next.span = p.span; next.size = nearest(mod.sizes, p.span); }
+      delete next.baseSize; delete next.span; next.size = base;
+      if (p.span != null && p.span !== SPAN[base]) Object.assign(next, { span: p.span, baseSize: base, size: nearest(modOf(item).sizes, p.span) });
     }
     if ('h' in p) { if (p.h) next.h = p.h; else delete next.h; }
     return next;
   });
 }
 
-/** 사용자가 크기를 바꾼 모듈인가(⋯ '크기 되돌리기'를 보일지) */
-export const sized = (item) => 'span' in item || 'h' in item;
-
-/** ⋯ 크기 되돌리기 — 그 모듈의 폭, 그리고 그 줄의 높이(같은 줄이 높이를 같이 쓰므로 하나만 지우면 그대로 보인다) */
+/** ⋯ 크기 되돌리기 — 그 줄에서 사용자가 바꾼 것만 지운다: 바꾼 폭은 끌기 전 단계로(경계를 같이 끈 옆 모듈도), 줄 높이는 같이 쓰므로 줄 전체. 바꾸지 않은 폭은 그대로 */
 export function resetSize(items, id, modOf) {
   const row = rowsOf(items.filter((item) => !item.hidden)).find((r) => r.some((item) => item.id === id)) ?? [];
-  const patch = Object.fromEntries(row.filter((item) => 'h' in item).map((item) => [item.id, { h: 0 }]));
-  patch[id] = { span: null, h: 0 };
+  const patch = Object.fromEntries(row.map((item) => [item.id, { ...('span' in item ? { span: null } : {}), ...('h' in item ? { h: 0 } : {}) }]));
   return applySizes(items, patch, modOf);
 }

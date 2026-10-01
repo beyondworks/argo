@@ -3,9 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mergeLayout, rowsOf, rowHeights, spanOf, heightOf, spanRange } from '../src/core/layout.js';
-import { dragSpans, snapH, applySizes, resetSize, sized } from '../src/core/module-size.js';
+import { dragSpans, snapH, applySizes, resetSize } from '../src/core/module-size.js';
 import { normalizeModuleItems } from '../src/core/module-items.js';
-import { normalizeDashboards } from '../src/business/dashboard-model.js';
+import { normalizeDashboards, defaultDashboard } from '../src/business/dashboard-model.js';
 import { OFFICE_MODULES } from '../src/core/module-registry.js';
 
 const ALL = ['s', 'm', 'l', 'full'];
@@ -55,25 +55,46 @@ test('높이 눈금: 8px 단위, 최소 120(모듈 최소가 크면 그 값), �
   assert.equal(snapH(150, 200), 200);
 });
 
-// 이유: 옛 앱·옛 화면은 size만 읽는다 — 열 수를 바꾸면 size도 가장 가까운 허용 단계로 같이 쓴다. 되돌리면 기본 크기.
-test('크기 쓰기: span과 함께 가장 가까운 size, 되돌리면 span·높이를 지우고 기본 단계', () => {
+// 이유: 옛 앱·옛 화면은 size만 읽는다 — 열 수를 바꾸면 size도 가장 가까운 허용 단계로 같이 쓴다. 끌기 전 단계는 baseSize로 남긴다.
+test('크기 쓰기: span과 함께 가장 가까운 size, 끌기 전 단계는 baseSize, 폭을 지우면 끌기 전 단계로', () => {
   const items = [{ id: 'a', size: 'm', hidden: false, cfg: { x: 1 } }, { id: 'stats', size: 'full', hidden: false }, { id: 'h', size: 's', hidden: true }];
   const next = applySizes(items, { a: { span: 9 }, stats: { span: 9 } }, modOf);
-  assert.deepEqual(next[0], { id: 'a', size: 'l', hidden: false, cfg: { x: 1 }, span: 9 });
-  assert.deepEqual(next[1], { id: 'stats', size: 'l', hidden: false, span: 9 });
+  assert.deepEqual(next[0], { id: 'a', size: 'l', hidden: false, cfg: { x: 1 }, span: 9, baseSize: 'm' });
+  assert.deepEqual(next[1], { id: 'stats', size: 'l', hidden: false, span: 9, baseSize: 'full' });
   assert.strictEqual(next[2], items[2]);
-  const tall = applySizes(next, { a: { h: 400 }, stats: { h: 400 } }, modOf);
+  const again = applySizes(next, { a: { span: 11 } }, modOf); // 두 번 끌어도 끌기 전 단계는 처음 것
+  assert.deepEqual([again[0].size, again[0].baseSize, again[0].span], ['full', 'm', 11]);
+  const tall = applySizes(again, { a: { h: 400 }, stats: { h: 400 } }, modOf);
   assert.equal(tall[0].h, 400);
   const back = applySizes(tall, { a: { span: null, h: 0 } }, modOf);
   assert.deepEqual(back[0], { id: 'a', size: 'm', hidden: false, cfg: { x: 1 } });
-  assert.equal(sized(back[0]), false); assert.equal(sized(tall[1]), true);
 });
 
-// 이유: 같은 줄은 높이를 같이 쓴다 — 한 모듈만 높이를 지우면 옆 모듈 높이가 줄을 계속 붙잡아 '되돌리기'가 안 된 것처럼 보인다.
-test('⋯ 크기 되돌리기: 그 모듈의 폭과 그 줄의 높이를 함께 지운다', () => {
-  const items = [{ id: 'a', size: 'l', span: 7, h: 400 }, { id: 'b', size: 's', span: 5, h: 400 }, { id: 'c', size: 'm', h: 200 }];
-  const next = resetSize(items, 'a', modOf);
-  assert.deepEqual(next.map((x) => [x.id, x.size, x.span, x.h]), [['a', 'm', undefined, undefined], ['b', 's', 5, undefined], ['c', 'm', undefined, 200]]);
+// 이유(검수 10/1): 끌기 전 열 수로 되돌려 놓으면 바꾼 게 없다 — span이 남으면 ⋯에 '크기 되돌리기'가 계속 보인다.
+test('끌기 전 열 수로 돌아오면 span·baseSize를 지운다', () => {
+  const dragged = applySizes([{ id: 'stats', size: 'full' }], { stats: { span: 8 } }, modOf);
+  assert.deepEqual(applySizes(dragged, { stats: { span: 12 } }, modOf), [{ id: 'stats', size: 'full' }]);
+  assert.deepEqual(applySizes([{ id: 'a', size: 'l' }], { a: { span: 8 } }, modOf), [{ id: 'a', size: 'l' }]);
+});
+
+// 이유(검수 10/1): 높이만 바꾼 모듈을 되돌리면 높이만 — 폭을 등록부 기본값으로 바꾸면 홈 기본 배치(할 일 8열)가 6열이 되어 줄에 빈칸이 생겼다.
+test('⋯ 크기 되돌리기: 높이만 바꿨으면 폭은 그대로', () => {
+  const items = [{ id: 'todos', size: 'l', h: 400 }, { id: 'pages', size: 's', h: 400 }];
+  assert.deepEqual(resetSize(items, 'todos', modOf), [{ id: 'todos', size: 'l' }, { id: 'pages', size: 's' }]);
+  const [dash] = normalizeDashboards([defaultDashboard('D', new Date('2026-10-01T12:00:00+09:00'), (() => { let n = 0; return () => `w${n++}`; })())]);
+  const line = dash.widgets.find((w) => w.type === 'line');
+  const tall = applySizes(dash.widgets, { [line.id]: { h: 480 } }, modOf);
+  const reset = resetSize(tall, line.id, modOf).find((w) => w.id === line.id);
+  assert.deepEqual([reset.size, 'span' in reset, 'h' in reset], ['full', false, false]);
+});
+
+// 이유(검수 10/1): 경계를 같이 끈 두 모듈은 같이 끌기 전으로 — 8|4를 9|3으로 끈 뒤 되돌리면 6|6이 아니라 8|4.
+test('⋯ 크기 되돌리기: 그 줄에서 바꾼 폭(경계를 같이 끈 옆 모듈 포함)과 줄 높이를 끌기 전으로', () => {
+  const dragged = applySizes([{ id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'c', size: 'm', h: 200 }], { todos: { span: 9, h: 400 }, pages: { span: 3, h: 400 } }, modOf);
+  assert.deepEqual(dragged.map((x) => [x.id, x.size, x.span]), [['todos', 'l', 9], ['pages', 's', 3], ['c', 'm', undefined]]);
+  const next = resetSize(dragged, 'todos', modOf);
+  assert.deepEqual(next, [{ id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'c', size: 'm', h: 200 }]);
+  assert.deepEqual(rowsOf(next).map((r) => r.map((x) => x.id)), [['todos', 'pages'], ['c']]);
 });
 
 // 이유: 줄 구성은 CSS 격자 자동 배치와 같은 규칙 — 이제 열 수(span)로 센다. 줄 높이는 그 줄에 정해진 높이 중 가장 큰 값.
@@ -86,8 +107,8 @@ test('줄 나누기·줄 높이: span 기준, 같은 줄은 가장 큰 높이를
 // 이유: 홈 배치 병합은 아는 필드만 다시 조립한다 — 새 필드(span·h)를 빠뜨리면 저장한 크기가 새로고침에 사라진다.
 test('배치 병합·페이지 모듈·대시보드 정규화가 span·h를 지킨다(잘못된 값은 버림)', () => {
   const reg = [{ id: 'a', sizes: ALL, defaultSize: 'm', spaces: ['me'] }, { id: 'st', sizes: ['l', 'full'], defaultSize: 'full', spaces: ['me'] }];
-  const saved = { items: [{ id: 'a', size: 'l', span: 7, h: 360 }, { id: 'st', size: 'full', span: 4, h: 9 }] };
-  assert.deepEqual(mergeLayout(saved, reg, 'me', []), [{ id: 'a', size: 'l', span: 7, h: 360, hidden: false }, { id: 'st', size: 'full', hidden: false }]);
+  const saved = { items: [{ id: 'a', size: 'l', span: 7, baseSize: 'm', h: 360 }, { id: 'st', size: 'full', span: 4, baseSize: 'm', h: 9 }, { id: 'b', moduleId: 'a', size: 'm', span: 5, baseSize: 'zz' }] };
+  assert.deepEqual(mergeLayout(saved, reg, 'me', []), [{ id: 'a', size: 'l', span: 7, baseSize: 'm', h: 360, hidden: false }, { id: 'st', size: 'full', hidden: false }, { id: 'b', moduleId: 'a', size: 'm', span: 5, hidden: false }]);
   assert.deepEqual(normalizeModuleItems([{ id: 'calendar', size: 'm', span: 5, h: 480 }])[0], { id: 'calendar', moduleId: 'calendar', size: 'm', span: 5, h: 480, hidden: false });
   const [d] = normalizeDashboards([{ id: 'd', name: 'D', widgets: [{ id: 'w', type: 'kpi', metric: 'sales', size: 's', span: 3, h: 200 }] }]);
   assert.deepEqual(d.widgets[0], { id: 'w', type: 'kpi', metric: 'sales', size: 's', span: 3, h: 200 });
