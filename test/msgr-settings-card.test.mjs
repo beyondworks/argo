@@ -272,7 +272,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
 
 test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 사람=참여한 사람(공개 포함) · 크루=초대된 에이전트(공개 포함), 조직 초대는 조직 메뉴', () => {
   assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
-  assert.match(app, /const chRow = \(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{sortedCh\.map\(chRow\)\}/, '채널은 한 목록 — 채널 그룹은 뺐다(유건 2026-09-16, 라이브 사용 0명)');
+  assert.match(app, /const chItemsOf = \(c\) => \{ const canManage[\s\S]{0,2000}const chRow = \(c\) => \{ const items = chItemsOf\(c\);/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{sortedCh\.map\(chRow\)\}/, '채널은 한 목록 — 채널 그룹은 뺐다(유건 2026-09-16, 라이브 사용 0명)');
   assert.match(app, /const chPeople = !channel \? \[\] : isPersonal \? \(dmMembers\[channel\.id\] \?\? \[\]\)[^\n]*? : members\.filter\(\(m\) => chMembers\.some\(\(x\) => x\.member_kind === 'user' && x\.member_id === m\.user_id\) && !\(channel\.kind === 'public' && \(channel\.excluded_user_ids \?\? \[\]\)\.includes\(m\.user_id\)\)\);/, '사람 구성 = 참여한 사람(공개 채널도 — #555 이후, 유건 제보 2026-09-16)'); assert.match(app, /const mentionPeople = channel\?\.kind === 'public' \? members\.filter/, '멘션 후보는 공개 채널이면 조직원 전원(멘션하면 채널 밖 사람에게도 알림)');
   assert.match(app, /const chCrews = !channel \? \[\] : usableCrews\.filter\(\(c\) => chMembers\.some\(\(x\) => x\.member_kind === 'crew' && x\.member_id === c\.id\) && !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\);/, '크루 구성 = 초대된 에이전트(공개 채널도 — 2026-09-16, 종전에는 파견된 에이전트 전원)');
   assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
@@ -552,8 +552,8 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
 test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→크루·문서/사람/크루/전사 문서)+아르고 기억 그래프(별칭)+문장 목록, 감사 19종 문장 사전, 한국어 조사, 설정의 기록 탭 제거', () => {
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /import \{ Graph3D \} from '\.\/graph3d\.jsx';/, '활동 그래프는 3D 컴포넌트(구성은 아르고 코어 재사용)');
-  assert.match(app, /page === 'activity' && isPersonal \? \(/, '활동 페이지 — 개인 공간은 조직 활동 대신 안내'); // 2026-09-27: 앞에 AI 동의 게이트 분기가 더 붙어 여는 토큰이 '{'가 아니라 ')'다
-  assert.match(app, /\) : page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기(조직)');
+  assert.match(app, /\(page === 'activity' \|\| page === 'memory'\) && isPersonal \? \(/, '활동 페이지 — 개인 공간은 조직 활동 대신 안내'); // 2026-09-27: 앞에 AI 동의 게이트 분기가 더 붙어 여는 토큰이 '{'가 아니라 ')'다
+  assert.match(app, /\) : \(page === 'activity' \|\| page === 'memory'\) && org \? \(\n\s*<Activity /, '활동 페이지 분기(조직)');
   assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\(phone \? 'act\.graph\.hint\.phone' : 'act\.graph\.hint'\)\} labels=\{\{ zoomIn: t\('act\.graph\.zoomIn'\)/, '그래프 탭: 3D 기억 그래프 + 줌 버튼 라벨(폰은 휠·더블클릭 없는 안내문)');
   assert.doesNotMatch(app, /msgr-actlocal|<Graph3D key=\{sel\}/, '대상 탭엔 작은 그래프를 넣지 않는다 — 그래프는 그래프 탭 전담(유건 지시 2026-09-04)');
   assert.doesNotMatch(app, /Graph2D/, '메신저 활동 페이지는 2D 그래프를 쓰지 않는다');

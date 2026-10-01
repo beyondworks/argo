@@ -47,9 +47,9 @@ import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri, isIos, isAnd
 import { createIconBadge, unreadSignature } from './app-badge.mjs'; // 폰 아이콘 숫자 = 서버 배지(msgr_my_badge)
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
 import { useMobileViewport } from './mobile-viewport.js';
-import { useIsPhone, useEdgeSwipeBack, headerCollapse } from './use-phone.js';
+import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
-const BIG_TITLE_PAGES = new Set(['home', 'dm', 'inbox']); // 폰에서 큰 제목을 쓰는 탭 페이지 — 기억은 탭 줄·폴더 서랍이 머리 아래에 있어 작은 제목만(2026-09-29)
+import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
@@ -187,7 +187,7 @@ function CrewFace({ id, name, ctx, px }) {
   const key = id ?? name ?? '?';
   return <FaceSvg face={faceOf(key, ctx.faceOverride?.(id))} state={id ? ctx.faceState(id) : 'idle'} px={px} motionKey={key} />;
 }
-const AV_PX = { xs: 20, sm: 22, lg: 40 }; // .msgr-av 크기 클래스의 px(기본 28) — 얼굴의 작은 배치·선 굵기를 고른다. 폰 화면이 24~44px로 키워도 44px 이하라 같은 배치다
+const AV_PX = { xs: 20, sm: 22, lg: 40, kk: 48 }; // .msgr-av 크기 클래스의 px(기본 28) — 얼굴의 작은 배치·선 굵기를 고른다. 폰 화면이 24~44px로 키워도 44px 이하라 같은 배치다
 function Av({ name, crew, size, company = false, userId = null, crewId = null, src = null }) { // company: 회사 크루(조직 배지 — 별 대신 각진 해시), 그 외 크루는 별 배지(부록 I·K 등급 표시)
   const ctx = useContext(AvatarCtx);
   const url = src ?? (userId ? ctx.users[userId] : crewId ? ctx.crews[crewId] : null);
@@ -483,6 +483,7 @@ function useDismiss(open, close, inside, trigger, swallow = false) { // swallow(
 const SEARCH_LIMIT = 60; // 메시지 검색 한 번에 가져오는 수 — 이만큼 오면 더 있을 수 있다(S22)
 const LAST_CH_KEY = 'argo-msgr-last-ch';
 const readLastCh = (org) => { try { return JSON.parse(localStorage.getItem(LAST_CH_KEY) || '{}')[org] ?? null; } catch { return null; } };
+const PHONE_ORG_KEY = 'argo-msgr-phone-org'; // 폰 채널·기억 탭이 고른 조직(개인 공간은 채팅 탭이라 따로 기억한다)
 const LAST_ORG_KEY = 'argo-msgr-last-org'; // 마지막 공간(조직·개인) — 앱을 다시 켜도 거기서 연다(#654 총괄: 설치본 재실행 때 다른 조직 첫 채널로 열림)
 const readLastOrg = () => { try { return localStorage.getItem(LAST_ORG_KEY); } catch { return null; } };
 const writeLastOrg = (org) => { try { if (localStorage.getItem(LAST_ORG_KEY) !== org) localStorage.setItem(LAST_ORG_KEY, org); } catch { /* 저장 못 해도 이번 세션은 그대로 */ } };
@@ -494,33 +495,37 @@ function NavButton({ onMenu }) {
   return <button type="button" className="msgr-menu" onClick={onMenu} aria-controls={phone ? undefined : 'msgr-navigation'} aria-label={t(phone ? 'phone.back' : 'ui.menu')}><I name={phone ? 'back' : 'menu'} /></button>;
 }
 
-/* ─── 폰 하단 탭 바(슬랙 레이아웃 참고, 유건 지시 2026-09-10) — 폰 폭에서만 렌더한다.
-   데스크톱은 이 컴포넌트를 아예 그리지 않으므로 기존 트리가 그대로다. 검색은 슬랙처럼 오른쪽 원형 버튼. ─── */
-function PhoneTabs({ page, onPick, activity, search, goingTo = null, personal = false }) {
+/* ─── 폰 아래 탭 바(유건 확정 2026-10-01, 카카오톡 기준): 친구 / 채팅 / 채널 / 에이전트 / 기억. 폰 폭에서만 그린다(데스크톱 트리는 그대로).
+   떠 있던 검색 원·+ 버튼과 알림함 탭은 없앴다 — 검색·추가는 각 탭 머리 오른쪽 아이콘으로, 안 읽음은 탭 아이콘 위 숫자로. ─── */
+const PHONE_TAB_ICONS = { friends: 'person', chats: 'chat', channels: 'hash', agents: 'memory', memory: 'folder' }; // 에이전트 = 반짝이 별(지금 쓰는 표지), 기억 = 폴더(유건 지시)
+function PhoneTabs({ active, onPick, badges = {} }) {
   const { t } = useT();
-  // 채널을 열어도 '홈' 탭이 활성 — 슬랙과 같다(채팅은 홈에서 들어간 화면이지 별 탭이 아니다).
-  const active = goingTo ?? (page === 'chat' ? 'home' : page); // 뒤로 스와이프 중엔 목적지(DM/홈)를 미리 활성으로 — 도착 순간 튀지 않게(검수 #549 M-4)
-  // 슬랙 4탭 대응(유건 2026-09-10): 홈 / DM(홈의 1:1 구역만) / 내 활동(= inbox 알림함) / 기억(= activity 페이지, 제목이 '기억')
-  const items = [['home', 'home'], ['dm', 'at'], ['inbox', 'bell'], ...(personal ? [] : [['activity', 'memory']])]; // 개인 공간엔 기억이 없다 — 막다른 탭 대신 탭을 뺀다(S18, 데스크톱은 이미 숨김)
   return (
     <nav className="msgr-tabbar" aria-label={t('phone.tabs')}>
-      {page === 'search' ? (
-        <form className="msgr-island msgr-island-search" onSubmit={(e) => { e.preventDefault(); search.run(search.q); }}>
-          <I name="search" size={16} /><input autoFocus value={search.q} onChange={(e) => search.set(e.target.value)} placeholder={t('search.ph.phone')} aria-label={t('search.title')} enterKeyHint="search" />
-          <button type="button" className="msgr-tabclose" onClick={() => { search.set(''); onPick('home'); }} aria-label={t('ui.close')}><I name="x" size={16} /></button>
-        </form>
-      ) : (
       <div className="msgr-island" role="tablist">
-        {items.map(([k, ic]) => (
-          <button key={k} type="button" role="tab" aria-selected={active === k} className={active === k ? 'on' : ''} onClick={() => onPick(k)}>
-            <span className="ic"><I name={ic} size={20} />{k === 'inbox' && activity > 0 && <span className="n" />}</span>
-            <span className="lb">{t(`phone.tab.${k}`)}</span>
+        {PHONE_TABS.map((k) => { const n = badges[k] || 0; const label = t(`phone.tab.${k}`); return (
+          <button key={k} type="button" role="tab" data-tour={`tab-${k}`} aria-selected={active === k} className={active === k ? 'on' : ''} onClick={() => onPick(k)} aria-label={n > 0 ? t(`phone.tab.badge.${k}`, { tab: label, n: badgeText(n) }) : label}>
+            <span className="ic"><I name={PHONE_TAB_ICONS[k]} size={20} /></span>
+            <span className="lb" aria-hidden="true">{label}</span>{n > 0 && <span className="msgr-tabn" aria-hidden="true">{badgeText(n)}</span>}
           </button>
+        ); })}
+      </div>
+    </nav>
+  );
+}
+
+/* 폰 탭 머리 — 왼쪽 제목(또는 채널·기억 탭의 '조직 이름 ▾'), 오른쪽 아이콘(카톡처럼 탭마다 그 탭의 일만). 아이콘마다 이름(aria-label)이 있다 */
+function PhoneHead({ title, left = null, actions = [], children = null }) {
+  return (
+    <header className="ph-head">
+      <div className="ph-head-l">{left ?? <h1 className="ph-title">{title}</h1>}</div>
+      <div className="ph-head-r">
+        {actions.filter(Boolean).map((a) => (
+          <button key={a.key} type="button" className={`ph-hbtn${a.on ? ' on' : ''}`} onClick={a.run} aria-label={a.label} title={a.label} data-tour={a.tour} aria-haspopup={a.menu ? 'menu' : undefined} aria-expanded={a.menu ? !!a.on : undefined}><I name={a.icon} size={22} className={a.icon === 'search' ? 'fill' : ''} /></button>
         ))}
       </div>
-      )}
-      {page !== 'search' && <button type="button" className="msgr-tabsearch" onClick={() => onPick('search')} aria-label={t('search.title')}><I name="search" size={18} /></button>}
-    </nav>
+      {children}
+    </header>
   );
 }
 
@@ -624,7 +629,7 @@ function CtxMenu({ at, items, onClose }) {
     <div ref={ref} className="msgr-rowmenu msgr-ctxmenu" role="menu" onKeyDown={navigate} style={pos}>{list.map((it, i) => <button key={i} type="button" role="menuitem" tabIndex={-1} className={it.danger ? 'danger' : ''} disabled={it.disabled} onClick={(e) => { e.stopPropagation(); onClose(); it.run(); }}><I name={it.icon} size={13} />{it.label}</button>)}</div></>, document.body);
 }
 // 당겨서 새로고침이 실제로 발동할 수 있는 화면만(그 외 화면엔 당김 손잡이 자체가 없다) — 복원 스냅샷의 page 값을 이 범위로만 신뢰한다.
-const PULL_RESTORE_PAGES = new Set(['home', 'dm', 'chat']);
+const PULL_RESTORE_PAGES = new Set([...PHONE_TABS, 'chat']);
 function Shell({ session }) {
   const { signOut, signingOut } = useContext(SignOutContext);
   const { t, lang } = useT();
@@ -757,15 +762,15 @@ function Shell({ session }) {
   }, [uid]);
   useEffect(() => { if (!uid) return; resyncBadge(); const onVis = () => { if (document.visibilityState === 'visible') resyncBadge(); }; document.addEventListener('visibilitychange', onVis); return () => document.removeEventListener('visibilitychange', onVis); }, [uid, resyncBadge]); // 콜드 스타트(푸시 탭 포함)에도 1회 — 검수 M-2
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
-  const [page, setPage] = useState(() => (isPhone && PULL_RESTORE_PAGES.has(initialSnap?.page) ? initialSnap.page : (isPhone ? 'home' : 'chat')));
+  const [page, setPage] = useState(() => (isPhone && PULL_RESTORE_PAGES.has(initialSnap?.page) ? initialSnap.page : (isPhone ? startTab({ last: readLastOrg(), personal: PERSONAL, orgIds: [readLastOrg()].filter(Boolean) }) : 'chat'))); // 폰 첫 화면: 마지막 공간이 조직이면 채널 탭, 아니면 채팅 탭(조직이 사라졌으면 아래 공간 맞추기가 바로잡는다)
   pageRef.current = page; // saveScreenSnapshot(위)이 최신 page를 보게 — page state 선언이 그 콜백보다 늦어 ref로 연결
   shellLink.page = page; shellLink.orgId = orgId; // 탭 진단(App의 앱 수준 리스너)이 지금 화면·공간을 적게 — 종전 tap 줄의 org는 늘 '-'였다
   useEffect(() => { pushDiag('shell', `page=${page} chId=${chId ?? '-'} org=${orgId ?? '-'}`); }, [page, chId, orgId]); // 진단(설정 → 진단) — 화면 이동만 기록 // 폰은 홈에서 시작(유건 2026-09-10) · 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   // ── 폰 화면 스택 = 브라우저 history(유건 제보 2026-09-15: DM 탭에서 대화를 열고 뒤로 가면 홈으로 갔다) ──
-  // 루트(홈·DM·알림함·기억 탭)는 replaceState, 그 위에 여는 화면(대화·설정·검색)은 pushState. 상단 뒤로 버튼·iOS 가장자리 스와이프·
+  // 루트(아래 탭 5개 — phone-shell.mjs PHONE_TABS)는 replaceState, 그 위에 여는 화면(대화·설정·검색)은 pushState. 상단 뒤로 버튼·iOS 가장자리 스와이프·
   // Android 하드웨어 뒤로(WryActivity가 webView.goBack → popstate)가 전부 같은 스택을 타서 "그 전 화면"으로 돌아간다. 데스크톱은 무관.
-  const ROOT_PAGES = useMemo(() => new Set(['home', 'dm', 'inbox', 'activity']), []);
-  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); const navBackPending = useRef(false); const navBackTicket = useRef(0); const lastRoot = useRef('home'); // lastRoot = 스와이프 뒤로가기 밑에 깔 실제 이전 루트 탭 // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
+  const ROOT_PAGES = useMemo(() => new Set(PHONE_TABS), []);
+  const navPrev = useRef(page); const navPopping = useRef(false); const navCollapse = useRef(null); const navBackPending = useRef(false); const navBackTicket = useRef(0); const lastRoot = useRef(isPhoneRoot(page) ? page : 'chats'); // lastRoot = 스와이프 뒤로가기 밑에 깔 실제 이전 루트 탭 // navCollapse = 루트 탭으로 갈 때 접는 중인 목적지
   useEffect(() => { // popstate 구독은 폰일 때 한 번. 루트 항목 시딩은 state가 없을 때만(폭 전환으로 다시 돌아도 깊이를 지우지 않는다 — 검수 M-4)
     if (!isPhone) return;
     const onPop = (e) => {
@@ -800,7 +805,7 @@ function Shell({ session }) {
     } catch { /* 위와 같음 */ }
   }, [page, chId, isPhone, ROOT_PAGES]); // eslint-disable-line react-hooks/exhaustive-deps
   const goBack = useCallback(() => {
-    if (!isPhone || (history.state?.depth ?? 0) === 0) { setPage('home'); return; }
+    if (!isPhone || (history.state?.depth ?? 0) === 0) { setPage(isPhone ? lastRoot.current : 'chat'); return; } // 루트(깊이 0)에서는 history.back을 부르지 않는다 — 마지막 탭으로
     // popstate가 오기 전 연타하면 history가 두 칸 이상 이동해 앱 밖으로 나갈 수 있다. 한 번의 뒤로 이동이 도착할 때까지만 막는다.
     if (navBackPending.current) return;
     navBackPending.current = true;
@@ -822,32 +827,16 @@ function Shell({ session }) {
   }, [goBack]);
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
-  const ROOT_ORDER = ['home', 'dm', 'inbox', 'activity']; // 하단 탭 순서 — 전환 애니메이션 방향의 기준(좌우 스와이프는 DM 상단 탭에만 있다)
-  const pickRoot = (k) => { // 하단 탭 선택 — 탭 누름·좌우 스와이프가 같은 경로(검수 M-1: 스와이프로 알림함에 들어가면 읽음·배지가 안 갱신되던 것)
-    if (k === 'search') { setPage('search'); return; }
-    if (k === 'inbox') { setInboxKind('all'); if (org) { openInbox(); return; } } // 벨 버튼과 같은 경로(읽음 시각 + 배지 재동기화 — 검수 M-1); 조직이 없으면 빈 알림함 화면만(N-4)
-    setPage(k);
-  };
+  const ROOT_ORDER = PHONE_TABS; // 아래 탭 순서 — 전환 애니메이션 방향의 기준
+  const pickRoot = (k) => { setTabQ(null); setPage(k); }; // 아래 탭 선택 — 탭 안 검색은 탭을 옮기면 닫는다. 공간(개인·조직)은 아래 '탭별 공간 맞추기'가 맞춘다
   const [pageAnim, setPageAnim] = useState(null); const animSeq = useRef(0); const animTimer = useRef(null); // 연속 전환마다 새 값·a/b 변형으로 CSS 애니메이션이 재시작(검수 M-2) // 폰 화면 전환 애니메이션 종류(push·pop·tab, 260ms 뒤 해제 — 유건 2026-09-15 "탭 이동도 부드럽게")
   const [swipeTo, setSwipeTo] = useState(null); // 스와이프 뒤로가기 중 밑에 깔 루트 — DM이면 레일을 미리 DM 탭 모양으로 그린다(깜빡임 제보 2026-09-15)
-  const edgeEnabled = isPhone && page !== 'home' && page !== 'dm';
+  const edgeEnabled = isPhone && !isPhoneRoot(page);
   useEffect(() => { if (!edgeEnabled) setSwipeTo(null); }, [edgeEnabled]); // 제스처 도중 핸들러가 떨어지면 onEnd가 안 오므로 여기서 해제(검수 L-5)
   const edgeBack = useEdgeSwipeBack(goBack, edgeEnabled, { underlay: () => lastRoot.current, onStart: (to) => setSwipeTo(to), onEnd: () => setSwipeTo(null) }); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(그 전 화면)
-  // 폰 큰 제목 접기(유건 승인 초안 2026-09-29): 스크롤 위치 → 머리의 --hp(0=큰 제목, 1=작은 제목·반투명 재질). 한 프레임에 한 번만 쓴다.
-  // 떠날 때 --hp를 지우지 않는다 — 뒤로 스와이프 밑 화면이 떠날 때 모양 그대로 보여야 도착 순간 튀지 않는다.
-  useLayoutEffect(() => {
-    if (!isPhone || !BIG_TITLE_PAGES.has(page)) return undefined;
-    const inbox = page === 'inbox';
-    const sc = document.querySelector(inbox ? '.msgr-main > .msgr-thread.page' : '.msgr-side .msgr-railbody');
-    const hd = document.querySelector(inbox ? '.msgr-main > .msgr-top' : '.msgr-side .msgr-orgwrap');
-    if (!sc || !hd) return undefined;
-    let raf = 0;
-    const update = () => { raf = 0; const p = headerCollapse(sc.scrollTop); hd.style.setProperty('--hp', p.toFixed(3)); hd.toggleAttribute('data-collapsed', p > 0.5); };
-    const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
-    update(); sc.addEventListener('scroll', onScroll, { passive: true });
-    return () => { sc.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); };
-  }, [isPhone, page, orgId]);
   const [orgMenu, setOrgMenu] = useState(false);
+  const [chPlus, setChPlus] = useState(false); // 폰 채널 탭 머리의 + 메뉴(새 채널 만들기 / 채널 찾아보기)
+  const [chCount, setChCount] = useState({}); // 채널 id → 참여 인원(폰 채널 줄의 인원 수)
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
   const [chSheetAdd, setChSheetAdd] = useState(null); // 시트를 열 때 바로 펼칠 패널('crew') — 상단 "크루" 버튼(유건 지적 2026-09-08: 크루를 채널에 넣는 UI가 안 보임)
@@ -1059,9 +1048,10 @@ function Shell({ session }) {
   const sheetAfterNav = useRef(false); // 알림함의 에이전트 참여 요청 → 그 채널로 가서 설정을 연다
   useEffect(() => { setChSheet(sheetAfterNav.current); sheetAfterNav.current = false; }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
   const [unread, setUnread] = useState({}); const [muted, setMuted] = useState(() => new Set()); const [pinned, setPinned] = useState(() => new Set()); /* 즐겨찾기(고정) — msgr_channel_prefs.pinned(유건 2026-09-12) */ const [pinPos, setPinPos] = useState(() => new Map()); /* 즐겨찾기 순서(pin_pos, 2026-09-12). 채널 그룹(folder)은 뺐다 — 유건 2026-09-16, 라이브 사용 0명 */ const [quiet, setQuiet] = useState(null); // P0(2026-09-09): 채널별 안 읽음·음소거·조용한 시간
+  const [unreadSpace, setUnreadSpace] = useState(null); // unread가 어느 공간의 셈인가 — 공간을 막 바꿔 아직 못 읽었으면 탭 뱃지는 서버 합계로(phone-shell.mjs tabBadges)
   const [dmSortPos, setDmSortPos] = useState(() => ({})); // DM 탭 '직접 배치' 순서(msgr_channel_prefs.sort_pos, 유건 확정 2026-09-29) — 즐겨찾기 pin_pos와 별개
   // 안 읽음 — org=null이면 개인 공간(조직 밖 1:1)을 센다(검수 L-1)
-  const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); }, [orgId]);
+  const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) { setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); setUnreadSpace(orgId); } }, [orgId]);
   useEffect(() => { loadUnread(); }, [loadUnread, tick]);
   useEffect(() => { if (!uid) return; let live = true; const revision = prefQueue.current.revision; q(supabase.from('msgr_channel_prefs').select('channel_id, muted, pinned, pin_pos, sort_pos').eq('user_id', uid)).then((rows) => { if (!live || prefQueue.current.busy || revision !== prefQueue.current.revision) return; setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id))); setPinned(new Set(rows.filter((r) => r.pinned).map((r) => r.channel_id))); setPinPos(new Map(rows.filter((r) => r.pin_pos != null).map((r) => [r.channel_id, r.pin_pos]))); setDmSortPos(Object.fromEntries(rows.filter((r) => r.sort_pos != null).map((r) => [r.channel_id, r.sort_pos]))); }).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => { if (live) setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null); }).catch(() => {}); return () => { live = false; }; }, [uid, tick]);
   const savePrefs = async (patches) => {
@@ -1213,6 +1203,23 @@ function Shell({ session }) {
   useEffect(() => { if (tick % 2 === 0 && orgId) (orgId === PERSONAL ? loadPersonal() : loadOrg(orgId)).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const personalOrg = useMemo(() => ({ id: PERSONAL, name: t('personal'), slug: 'personal', role: 'owner' }), [t]); // 개인 공간용 가상 조직 객체
   const org = isPersonal ? personalOrg : orgs?.find((o) => o.id === orgId);
+  // ── 폰 셸 v2: 채팅 탭 = 개인 공간, 채널·기억 탭 = 고른 조직(chOrg). 공간 전환 버튼은 없다(유건 확정 2026-10-01) ──
+  // 고른 조직은 이 기기에 기억한다. 어떤 길로든(알림·초대·조직 메뉴) 조직 공간에 들어가면 그 조직이 채널 탭의 조직이 된다.
+  const [chOrgSaved, setChOrgSaved] = useState(() => { try { return localStorage.getItem(PHONE_ORG_KEY); } catch { return null; } });
+  const orgIdList = useMemo(() => (orgs ?? []).map((o) => o.id), [orgs]);
+  const chOrg = pickChannelOrg({ saved: chOrgSaved, last: readLastOrg(), orgIds: orgIdList });
+  useEffect(() => { if (!orgId || orgId === PERSONAL || orgId === chOrgSaved) return; setChOrgSaved(orgId); try { localStorage.setItem(PHONE_ORG_KEY, orgId); } catch { /* 저장 못 해도 이번 세션은 그대로 */ } }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 탭별 공간 맞추기 — 탭에 들어갈 때(그리고 조직 목록을 처음 받았을 때) 한 번만 본다. 공간이 바뀌어도 다시 보지 않는다:
+  // 알림을 눌러 다른 공간의 대화를 여는 길(decideNav 'switch')이 채팅 탭 위에서 조직으로 바꿔도 되돌리지 않게.
+  const spaceCheck = useRef('');
+  useEffect(() => {
+    if (!isPhone) return;
+    const key = `${page}|${orgs ? 'ready' : 'wait'}`; if (spaceCheck.current === key) return; spaceCheck.current = key;
+    if (!orgs) return;
+    const want = spaceForTab(page, { personal: PERSONAL, chOrg });
+    if (want && want !== orgId) setOrgId(want);
+  }, [page, isPhone, orgs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [tabQ, setTabQ] = useState(null); // 탭 안 검색어 — null이면 검색 칸을 닫은 상태(유건 확정: 돋보기 = 그 탭 안에서 먼저 찾기 → '전체에서 찾기')
   const [personalConsentAsk, setPersonalConsentAsk] = useState(false); // 개인 공간에서 에이전트를 쓰려는데 AI 이용 동의 전(2026-09-30)
   useEffect(() => { if (aiConsented || !isPersonal) setPersonalConsentAsk(false); if (!isPersonal) afterConsent.current = null; }, [aiConsented, isPersonal]);
   const afterConsent = useRef(null); // 동의하면 이어서 할 일(크루 1:1 열기 등 — 분리 검수 L6)
@@ -1443,7 +1450,7 @@ function Shell({ session }) {
   // 폰 DM 탭 정렬(유건 요청 2026-09-15: 최근 메시지·안읽은 메시지·고정) — 기기에 기억. 고정 = 즐겨찾기한 DM을 DM 탭 맨 위에도 둔다(홈 즐겨찾기와 동시에).
   const [dmSort, setDmSort] = useState(() => { try { const v = localStorage.getItem('argo-msgr-dm-sort'); return DM_SORTS.includes(v) ? v : 'recent'; } catch { return 'recent'; } });
   const [dmSortMenu, setDmSortMenu] = useState(false);
-  const DM_FILTERS = ['all', 'fav', 'unread', 'group'];
+  const DM_FILTERS = CHAT_FILTERS; // 폰 채팅 탭 칩: 전체 / 안읽음 N / 에이전트 / 그룹(유건 확정 2026-10-01 — 즐겨찾기 칩은 빼고 고정한 방을 맨 위에)
   const [dmFilter, setDmFilter] = useState(() => (isPhone && DM_FILTERS.includes(initialSnap?.dmFilter) ? initialSnap.dmFilter : 'all'));
   dmFilterRef.current = dmFilter; // saveScreenSnapshot(위)이 최신 dmFilter를 보게
   const [dmAnim, setDmAnim] = useState(null); const dmAnimSeq = useRef(0); const dmAnimTimer = useRef(null);
@@ -1697,11 +1704,11 @@ function Shell({ session }) {
   // 새 채널 기본 종류(D1): 조직에 공개 채널이 없으면 공개(#general), 있으면 비공개(안내 문구 ch.step1.sub*도 같은 판단) — 채널 수 한도는 없다(2026-09-27)
   const hasPublic = hasPublicChannel(channels, previewChannels);
   const newChKind = newChannelKind(channels, previewChannels);
-  const openNewCh = () => { setNewCh({ name: '', kind: newChKind }); setRail(true); };
+  const openNewCh = () => { setNewCh({ name: '', kind: newChKind }); if (!isPhone) setRail(true); }; // 폰은 채널 탭 목록 맨 위에 칸이 열린다(서랍 없음)
   // 조직 시작 단계 재료(D1·D3·D6) — 빈 조직 안내와 첫 채널 뒤 남은 단계 카드가 같이 쓴다
   const onboard = { hasPublic, invited: members.length > 1, hasCrew: crews.length > 0, isAdmin: !!isAdmin, adminName: orgAdmins[0]?.display_name || null,
     openAgents: () => { setSettingsTab('crews'); setPage('settings'); setRail(false); } };
-  const joinWithCode = () => { setRail(true); setOrgMenu(true); setJoinCode(''); setJoinHint(null); setNewOrg(null); }; // D4: 안내 문구가 가리키는 그 메뉴를 바로 연다
+  const joinWithCode = () => { if (!isPhone) setRail(true); setOrgMenu(true); setJoinCode(''); setJoinHint(null); setNewOrg(null); }; // D4: 안내 문구가 가리키는 그 메뉴를 바로 연다
   // 채널 찾아보기(유건 2026-09-16) — 조직의 공개 채널 중 아직 안 들어간 것. 들어가야 목록·알림에 뜬다.
   const [browse, setBrowse] = useState(null); // null = 닫힘, [] = 없음, [..] = 목록
   // 폰: 새 채널 칸·채널 찾아보기가 열린 채 바깥을 누르면 먼저 닫는다 — 그 누름이 아래 대화로 들어가던 제보(유건 2026-09-29)
@@ -1709,7 +1716,7 @@ function Shell({ session }) {
   useDismiss(isPhone && !!browse, () => setBrowse(null), '.msgr-browse, .msgr-chbrowse', '.msgr-chbrowse', true);
   const openBrowse = async () => {
     if (!orgId || isPersonal) return;
-    setRail(true);
+    if (!isPhone) setRail(true);
     try { setBrowse(await q(supabase.rpc('msgr_browse_channels', { org: orgId })) ?? []); } catch (e) { setErr(e.message); }
   };
   const joinChannel = async (c) => {
@@ -1727,15 +1734,15 @@ function Shell({ session }) {
   const [drag, setDrag] = useState(null); // 즐겨찾기 안에서 끌어 정렬 중인 id
   useLayoutEffect(() => {
     loadedOrg.current = null;
-    setChannels([]); setPreviewChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setLastMsg({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setBotKinds([]);
+    setChannels([]); setPreviewChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setLastMsg({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setUnreadSpace(null); setBotKinds([]);
     setCtx(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null); setDmGroup(false); // 그룹 대화 시트는 공간을 넘기지 않는다(개인 공간에서 여러 명 생성이 __personal__로 가던 길)
   }, [orgId]);
   const openCtx = (e, items, trigger = null) => { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const returnFocus = e.currentTarget.closest('.msgr-railrow')?.querySelector('button.item') ?? e.currentTarget; setCtx({ x: e.clientX || r.left, y: e.clientY || r.bottom, items, trigger, returnFocus }); };
   useEffect(() => { const h = (e) => { if (!e.target.closest?.('input, textarea, [contenteditable="true"], a[href]')) e.preventDefault(); }; document.addEventListener('contextmenu', h); return () => document.removeEventListener('contextmenu', h); }, []); // 웹뷰 기본 메뉴(다시 로드 등)는 입력창 밖에서는 띄우지 않는다
   // 훅은 전부 위 조기 return 앞에(실측 2026-09-12: 뒤에 두면 'Rendered more hooks')
   const swipeLive = useRef({}); swipeLive.current = { channels, togglePin: (c) => togglePin(c), toggleMute: (c) => toggleMute(c) };
-  useEffect(() => { // 폰 홈·채팅 탭 목록 줄 밀기 — 끝까지 민 동작: 오른쪽 즐겨찾기, 왼쪽 알림 끄기
-    if (!isPhone || !(page === 'home' || page === 'dm')) return undefined;
+  useEffect(() => { // 폰 채팅·채널 탭 목록 줄 밀기 — 끝까지 민 동작: 오른쪽 고정(즐겨찾기), 왼쪽 알림 끄기
+    if (!isPhone || !(page === 'chats' || page === 'channels')) return undefined;
     const el = document.querySelector('.msgr-side .msgr-railbody'); if (!el) return undefined;
     return bindRowSwipe(el, { blocked: () => !!touchDrag.current, onFull: (id, dir) => { const c = swipeLive.current.channels.find((x) => x.id === id); if (!c) return; if (dir === 'lead') swipeLive.current.togglePin(c); else swipeLive.current.toggleMute(c); } });
   }, [isPhone, page, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1767,10 +1774,8 @@ function Shell({ session }) {
   // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
   // DM 라벨 = 나 아닌 참가자(검수 MEDIUM-2: 저장된 이름은 생성자 시점). 크루 DM에 다른 사람도 있으면(소유자 동반) '서윤 · 민수'처럼 병기
   // 그룹 판정 정본(검수 HIGH-2): 나를 뺀 참가자(사람+크루)가 2 이상이면 그룹. 단 "사람 1 + 크루 1이고 그 사람이 그 크루의 소유자"는 남의 크루 1:1(소유자 동반 규칙)
-  const dmIsGroup = (c) => { if (c._personal_group) return true; const ms = dmMembers[c.id] ?? []; const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
-    if (people.length + crewsIn.length < 2) return false;
-    if (people.length === 1 && crewsIn.length === 1 && crewOf(crewsIn[0].member_id)?.owner_user_id === people[0].member_id) return false;
-    return true; };
+  const traitsOf = (c) => roomTraits({ c, members: dmMembers[c.id] ?? [], uid, ownerOf: (id) => crewOf(id)?.owner_user_id ?? null }); // 그룹·에이전트 방 판정 정본(phone-shell.mjs — 단위 테스트 대상)
+  const dmIsGroup = (c) => traitsOf(c).group;
   const dmName = (c) => dmBaseName(c);
   const dmBaseName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
     const people = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid); const crewsIn = ms.filter((m) => m.member_kind === 'crew');
@@ -1919,7 +1924,7 @@ function Shell({ session }) {
       </div>
     </div>
   );
-  const chRow = (c) => { const canManage = isAdmin || c.created_by === uid || (c.admin_user_ids ?? []).includes(uid); const confirmVia = (kind) => { setActionError(''); setRailAction({ channel: c, kind }); }; const items = [
+  const chItemsOf = (c) => { const canManage = isAdmin || c.created_by === uid || (c.admin_user_ids ?? []).includes(uid); const confirmVia = (kind) => { setActionError(''); setRailAction({ channel: c, kind }); }; return [ // 채널 줄 메뉴 — 데스크톱 레일 줄과 폰 채널 탭 줄이 같은 항목
                 { icon: 'gear', label: t('ch.menu.settings'), run: () => { setChId(c.id); setPage('chat'); setRail(false); setChSheet(true); } },
                 { icon: 'star', label: t(pinned.has(c.id) ? 'ch.unpin' : 'ch.pin'), run: () => togglePin(c) },
                 { icon: muted.has(c.id) ? 'bell' : 'belloff', label: t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute'), run: () => toggleMute(c) },
@@ -1927,7 +1932,8 @@ function Shell({ session }) {
                 canManage && { icon: 'archive', label: t('ch.archive'), run: () => confirmVia('archive') },
                 ...orderItems(c),
                 canManage && { icon: 'trash', label: t('ch.delete'), danger: true, run: () => confirmVia('delete') },
-              ]; return (
+              ]; };
+  const chRow = (c) => { const items = chItemsOf(c); return (
               <div key={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && pinned.has(c.id)} data-drag-id={c.id} data-swipe-id={isPhone ? c.id : undefined} {...(isPhone ? rowLongPress(c, items, { onDrop: pinned.has(c.id) ? reorderFav : reorderChannels }) : {})}>{isPhone && swipeActs(c)}
                 <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}>
                   <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
@@ -1955,8 +1961,8 @@ function Shell({ session }) {
       },
       onPointerCancel: (e) => { lp.onPointerCancel(e); if (touchDrag.current?.id === c.id) cancelTouchDrag(); }, // 브라우저가 제스처를 가져가면 들어 올린 행·흐림이 남지 않게
     }; };
-  const dmRow = (c) => { const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const isGroupRow = dmIsGroup(c); const withCrew = !!dmCrew && !isGroupRow && !(c.org_id == null && c._personal_other && !c._personal_group && !c._personal_crew); /* 개인 1:1은 에이전트가 들어와도 친구 아바타(2026-09-30) */ const confirmVia = (kind) => { setActionError(''); setRailAction({ channel: c, kind }); }; const items = [
-                ...(dmTab ? [{ icon: 'doc', label: t('dm.preview'), run: () => setDmPeek(c) }] : []),
+  const dmItemsOf = (c, preview = false) => { const confirmVia = (kind) => { setActionError(''); setRailAction({ channel: c, kind }); }; return [ // 대화 줄 메뉴 — 폰은 '대화 미리보기'를 맨 위에
+                ...(preview ? [{ icon: 'doc', label: t('dm.preview'), run: () => setDmPeek(c) }] : []),
                 { icon: 'star', label: t(pinned.has(c.id) ? 'ch.unpin' : 'ch.pin'), run: () => togglePin(c) },
                 { icon: muted.has(c.id) ? 'bell' : 'belloff', label: t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute'), run: () => toggleMute(c) },
                 ...orderItems(c),
@@ -1965,7 +1971,8 @@ function Shell({ session }) {
                   { icon: 'archive', label: t('dm.end'), run: () => confirmVia('end') },
                   { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
                 ]),
-              ]; return (
+              ]; };
+  const dmRow = (c) => { const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const isGroupRow = dmIsGroup(c); const withCrew = !!dmCrew && !isGroupRow && !(c.org_id == null && c._personal_other && !c._personal_group && !c._personal_crew); /* 개인 1:1은 에이전트가 들어와도 친구 아바타(2026-09-30) */ const items = dmItemsOf(c, dmTab); return (
             <div key={c.id} data-drag-id={c.id} className={`msgr-railrow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onDragStart={dragStart(c)} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone} data-swipe-id={isPhone ? c.id : undefined} {...(isPhone ? rowLongPress(c, items, { onDrop: (dmTab ? dmFilter === 'fav' || (dmFilter === 'all' && pinned.has(c.id)) : pinned.has(c.id)) ? reorderFav : reorderDmCustom }) : {})}>{isPhone && swipeActs(c)}
               <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); if (isPhone) setPage('chat'); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={isGroupRow ? null : (dmCrew?.member_id ?? null)} userId={isGroupRow || dmCrew ? null : (dmOther?.member_id ?? null)} />{/* 여럿이 있는 방은 누구 한 사람의 얼굴이 아니라 이름 묶음으로 — 첫 한 명만 뜨던 것(검수 2026-09-16) */}{dmTab ? <span className="dmtext"><span className="dmline"><span className="name">{dmBaseName(c)}</span>{lastMsg[c.id]?.at > 0 && <span className="when">{fmtDmWhen(t('time.yesterday'), lastMsg[c.id].at, lang)}</span>}{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</span>{lastMsg[c.id]?.body && !mutedCrewIds.has(lastMsg[c.id].crewId) && <span className="snip">{dmSnipWho(c, lastMsg[c.id])}{lastMsg[c.id].body}</span>}</span> : <><span className="name">{dmBaseName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}</>}{typingIn(c.id) && <span className="msgr-busy" role="img" aria-label={t('side.typing')} title={t('side.typing')} />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               {!dmTab && <button type="button" className="more" onClick={(e) => { openCtx(e, items, c.id); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-haspopup="menu" aria-expanded={ctx?.trigger === c.id}><I name="dots" size={13} /></button>}{/* 폰 DM 탭: 점 세 개 없음 — 같은 메뉴가 길게 누르기로 뜬다(유건 2026-09-15) */}
@@ -2004,14 +2011,202 @@ function Shell({ session }) {
   // 조직 명부에는 그대로 있다 — 목록에서 빼는 것은 화면 규칙이고, 지시는 서버가 허용 범위로 막는다. 회사 크루만 남는다.
   const railVisible = crews.filter((c) => c.owner_user_id === uid || crewTier(c, org) === 'company');
   const openers = crewOpeners({ isPersonal, openSheet: setSheet, openDm: dmWithCrew }); // 개인 공간은 에이전트 시트를 그리지 않는다 — 메시지의 에이전트 버튼 없음, 검색 결과는 1:1로
+  const orgJoinForms = (phone = false) => (<>{/* 조직 메뉴의 '초대 코드로 참여'·'조직 만들기' — 데스크톱 조직 창과 폰 채널 탭 조직 메뉴·빈 화면이 같은 폼 */}
+              {joinCode === null
+                ? <button type="button" role="menuitem" onClick={() => { setJoinCode(''); setJoinHint(null); setNewOrg(null); }}><span className="msgr-av sm ghost"><I name="at" size={13} /></span><span className="label">{t(phone ? 'phone.org.join' : 'org.join.code')}</span></button>
+                : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); joinByCode(joinCode); }}>
+                    <input className="msgr-input" placeholder={t('org.join.code.ph')} value={joinCode} onChange={(e) => { setJoinCode(e.target.value); setJoinHint(null); }} aria-invalid={!!joinHint} autoFocus />
+                    {joinHint && <p className="msgr-inline-err" role="alert">{t(joinHint)}</p>}
+                    <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!canSubmitJoin(joinCode)}><I name="check" size={13} />{t('org.join.code.go')}</button><button type="button" className="btn sm" onClick={() => setJoinCode(null)}>{t('ui.cancel')}</button></div>
+                  </form>}
+              {newOrg === null
+                ? <button type="button" role="menuitem" onClick={() => setNewOrg('')}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t(phone ? 'phone.org.create' : 'org.new')}</span></button>
+                : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createOrg(newOrg); }}>
+                    <input className="msgr-input" placeholder={t('org.name')} value={newOrg} onChange={(e) => setNewOrg(e.target.value)} autoFocus maxLength={80} />
+                    <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!newOrg.trim()}><I name="check" size={13} />{t('ui.create')}</button><button type="button" className="btn sm" onClick={() => setNewOrg(null)}>{t('ui.cancel')}</button></div>
+                  </form>}
+  </>);
   const crewHints = duplicateNameHints(railVisible, { lang, sourceLabel: (c) => t(`rail.src.${sourceOf(c)}`) }); // 같은 이름이 겹칠 때만 종류·만든 날을 덧붙인다(점검 A·B #12)
+
+  // ════ 폰 루트 화면(아래 탭 5개 — 유건 확정 2026-10-01). 데스크톱은 이 블록을 그리지 않는다 ════
+  const rootTab = isPhoneRoot(page) ? page : (swipeTo ?? lastRoot.current); // 대화방·설정을 열어도 밑에는 마지막 탭이 깔린다(뒤로 스와이프 밑 화면)
+  const spaceReady = loadedOrg.current === orgId;
+  const friendReqs = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
+  const friendList = friends.filter((f) => f.status === 'accepted').sort((a, b) => String(a.display_name || a.handle || '').localeCompare(String(b.display_name || b.handle || ''), 'ko'));
+  const approvalItems = inbox.filter((it) => it.kind === 'approval'); // 결재 대기(단계 1: 지금 공간 — 알림함과 같은 자료)
+  const tabBadgeN = tabBadges({ hereKey, here: hereCount, hereReady: unreadSpace === orgId, totals: spaceTotals, orgIds: orgIdList, approvals: approvalItems.length, friendRequests: friendReqs.length });
+  const tabQText = tabQ ?? '';
+  const openSettings = (tab = null) => { setTabQ(null); setSettingsTab(tab); setPage('settings'); };
+  const gearAct = { key: 'gear', icon: 'gear', label: t('ui.settings'), run: () => openSettings() };
+  const searchAct = { key: 'search', icon: 'search', label: t('phone.hdr.search'), on: tabQ !== null, run: () => setTabQ((v) => (v === null ? '' : null)) };
+  const searchAll = () => { const qv = tabQText.trim(); if (!qv) return; setSearchQ(qv); runSearch(qv); }; // '전체에서 찾기' — 지금 공간의 통합 검색(메시지·사람·에이전트·채널)
+  const rowOf = (c) => roomRow({ c, lastMsg: lastMsg[c.id], lastAt: lastAt[c.id], unread: unread[c.id], muted: muted.has(c.id), pinned: pinned.has(c.id) });
+  const openRoom = (c) => { setTabQ(null); setChId(c.id); setRail(false); setPage('chat'); };
+  const roomAvatar = (c, tr) => {
+    if (c.kind !== 'dm') return <span className={`ph-chav${c.kind === 'private' ? ' lock' : ''}`} aria-hidden="true"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={20} /></span>;
+    const ms = dmMembers[c.id] ?? [];
+    if (tr.group) { const others = ms.filter((m) => !(m.member_kind === 'user' && m.member_id === uid)).slice(0, 4); return <span className={`ph-gav n${others.length}`} aria-hidden="true">{others.map((m) => m.member_kind === 'crew' ? <Av key={`c${m.member_id}`} name={crewOf(m.member_id)?.display_name} crew size="xs" crewId={m.member_id} /> : <Av key={`u${m.member_id}`} name={nameOfUser(m.member_id)} size="xs" userId={m.member_id} />)}</span>; }
+    const personal1to1 = c.org_id == null && c._personal_other && !c._personal_group && !c._personal_crew; // 개인 1:1은 에이전트가 들어와도 친구 얼굴(2026-09-30)
+    const crew = ms.find((m) => m.member_kind === 'crew') ?? (c._personal_crew ? { member_id: c._personal_crew } : null); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid);
+    if (crew && !personal1to1) return <Av name={crewOf(crew.member_id)?.display_name ?? dmBaseName(c)} crew size="kk" crewId={crew.member_id} />;
+    return <Av name={dmBaseName(c)} size="kk" userId={other?.member_id ?? c._personal_other ?? null} />;
+  };
+  // 카톡 줄 — 왼쪽 사진(그룹 2×2·에이전트 얼굴·채널 타일), 이름 + 인원 수 + 고정·알림 끔, 마지막 글 두 줄, 오른쪽 위 시각, 그 아래 @·안 읽은 수
+  const kRow = (c, dragCtx = null) => {
+    const isDm = c.kind === 'dm'; const tr = isDm ? traitsOf(c) : { group: false, agent: false, size: 0 };
+    const r = rowOf(c); const lm = lastMsg[c.id];
+    const name = isDm ? dmBaseName(c) : c.name;
+    const count = isDm ? (tr.group ? tr.size : 0) : (chCount[c.id] ?? 0);
+    const items = isDm ? dmItemsOf(c, true) : chItemsOf(c);
+    const hidden = !!lm?.crewId && mutedCrewIds.has(lm.crewId); // 숨긴 에이전트의 글은 미리보기에도 없다
+    const prefix = lm && r.preview === lm.body ? (isDm ? dmSnipWho(c, lm) : (lm.mine ? t('dm.snip.me') : `${dmWho(c, lm)}: `)) : '';
+    return (
+      <div key={c.id} data-drag-id={c.id} data-swipe-id={c.id} className={`msgr-railrow ph-krow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} {...rowLongPress(c, items, dragCtx)}>{swipeActs(c)}
+        <button type="button" className={`item ph-kitem${r.unreadN && !r.muted ? ' unread' : ''}`} onClick={() => openRoom(c)}>
+          {roomAvatar(c, tr)}
+          <span className="ph-kbody">
+            <span className="ph-kl1"><span className="name">{name}</span>{count > 0 && <span className="ph-kcount" aria-label={t('phone.row.members', { n: count })}>{count}</span>}{r.pinned && <I name="pin" size={13} className="ph-kic" />}{r.muted && <I name="belloff" size={13} className="ph-kic" />}<span className="when">{r.at > 0 ? fmtDmWhen(t('time.yesterday'), r.at, lang) : ''}</span></span>
+            <span className="ph-kl2"><span className="snip">{typingIn(c.id) ? <span className="ph-typing">{t('side.typing')}</span> : hidden ? '' : `${prefix}${r.preview}`}</span><span className="ph-kbadges">{r.mention && <span className="ph-at" role="img" aria-label={t('phone.row.mention')}>@</span>}{r.unreadN > 0 && <span className={`msgr-badge${r.muted ? ' dim' : ''}`}>{badgeText(r.unreadN)}</span>}</span></span>
+          </span>
+        </button>
+      </div>
+    );
+  };
+  const searchBar = tabQ !== null && (
+    <form className="ph-search" role="search" onSubmit={(e) => { e.preventDefault(); e.currentTarget.querySelector('input')?.blur(); }}>
+      <I name="search" size={16} className="fill" /><input autoFocus value={tabQText} onChange={(e) => setTabQ(e.target.value)} placeholder={t(`phone.search.ph.${rootTab}`)} aria-label={t(`phone.search.ph.${rootTab}`)} enterKeyHint="search" />
+      <button type="button" className="ph-searchx" onClick={() => setTabQ(null)}>{t('ui.cancel')}</button>
+    </form>
+  );
+  const searchFoot = (found) => tabQText.trim() ? (<div className="ph-searchfoot">{!found && <p className="msgr-hint">{t('phone.search.none')}</p>}<button type="button" className="btn ph-searchall" onClick={searchAll}><I name="search" size={14} className="fill" />{t('phone.search.all', { q: tabQText.trim() })}</button></div>) : null;
+  // ── 채팅 탭(개인 공간) ──
+  const chatsAll = isPersonal && spaceReady ? channels.filter((c) => c.kind === 'dm') : [];
+  const chatSorted = sortRooms(chatsAll, { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos });
+  const chatFiltered = chatSorted.filter((c) => chatVisible(dmFilter, { ...rowOf(c), ...traitsOf(c) }));
+  const chatShown = tabSearch(chatFiltered, tabQText, (c) => [dmBaseName(c), rowOf(c).preview]);
+  const chatDrop = (c) => ({ onDrop: pinned.has(c.id) ? reorderFav : (id, before, visible) => reorderChannelPos(chatSorted.filter((x) => !pinned.has(x.id)), id, before, visible, () => { if (dmSort !== 'custom') pickDmSort('custom'); }) });
+  // ── 채널 탭(고른 조직) ──
+  const orgRow = orgs?.find((o) => o.id === chOrg) ?? null;
+  const onOrgTab = !!orgRow && orgId === orgRow.id && spaceReady;
+  const chChannels = onOrgTab ? sortRooms(channels.filter((c) => c.kind !== 'dm'), { sort: chBase.some((c) => dmSortPos[c.id] != null) ? 'custom' : 'recent', atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: (c) => c.name, sortPos: dmSortPos }) : [];
+  const chTalks = onOrgTab ? sortRooms(channels.filter((c) => c.kind === 'dm'), { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos }) : [];
+  const chChannelsShown = tabSearch(chChannels, tabQText, (c) => [c.name, c.topic, rowOf(c).preview]);
+  const chTalksShown = tabSearch(chTalks, tabQText, (c) => [dmBaseName(c), rowOf(c).preview]);
+  const otherOrgsUnread = (orgs ?? []).filter((o) => o.id !== chOrg).reduce((a, o) => ({ n: a.n + (spaceCount(o.id)?.n || 0), mention: a.mention + (spaceCount(o.id)?.mention || 0) }), { n: 0, mention: 0 });
+  const orgMenuPop = orgMenu && (<>
+    <div className="msgr-scrim clear ph-scrim" onClick={() => setOrgMenu(false)} role="presentation" />
+    <div className="msgr-menu-pop ph-pop ph-orgpop" role="menu" aria-label={t('phone.org.switch')}>
+      {(orgs ?? []).map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === chOrg} className={o.id === chOrg ? 'on' : ''} onClick={() => { setOrgMenu(false); setTabQ(null); if (o.id !== orgId) setOrgId(o.id); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span><SpaceBadge c={spaceCount(o.id)} /></button>)}
+      {joinable.map((o) => <button key={`j-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); joinDomain(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}
+      {deletedOrgs.map((o) => <button key={`d-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); restoreOrg(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}
+      {(orgs ?? []).length > 0 && <div className="sep" />}
+      {orgJoinForms(true)}
+      {onOrgTab && isAdmin && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); orgInvite(); }}><span className="msgr-av sm ghost"><I name="personplus" size={13} /></span><span className="label">{t('phone.org.invite')}</span></button>}
+      {onOrgTab && isAdmin && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); openSettings('org'); }}><span className="msgr-av sm ghost"><I name="gear" size={13} /></span><span className="label">{t('phone.org.settings')}</span></button>}
+    </div>
+  </>);
+  const chPlusPop = chPlus && (<>
+    <div className="msgr-scrim clear ph-scrim" onClick={() => setChPlus(false)} role="presentation" />
+    <div className="msgr-menu-pop ph-pop ph-pluspop" role="menu" aria-label={t('phone.ch.add')}>
+      <button type="button" role="menuitem" onClick={() => { setChPlus(false); setBrowse(null); openNewCh(); }}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('phone.ch.new')}</span></button>
+      <button type="button" role="menuitem" onClick={() => { setChPlus(false); setNewCh(null); openBrowse(); }}><span className="msgr-av sm ghost"><I name="hash" size={13} /></span><span className="label">{t('ch.browse')}</span></button>
+    </div>
+  </>);
+  // ── 에이전트 탭 ──
+  const agentsMine = railArgo; const agentsExt = railExt;
+  const agentShown = (list) => tabSearch(list, tabQText, (c) => [c.display_name, c.role_text]);
+  const agentState = (c) => (twinPaused(c) ? 'relink' : (typing && Object.entries(typing).some(([k, at]) => k.endsWith(`:${c.id}`) && Date.now() - at < TYPING_WINDOW_MS) ? 'working' : 'idle'));
+  const agentRow = (c) => { const st = agentState(c); const on = !!crewSeenAt(c) && Date.now() - Date.parse(crewSeenAt(c)) < AWAY_MS; return (
+    <button key={c.id} type="button" className="item ph-arow" onClick={() => { setTabQ(null); dmWithCrew(c.id); }}>
+      <Av name={c.display_name} crew size="kk" company={crewTier(c, org) === 'company'} crewId={c.id} />
+      <span className="ph-kbody"><span className="ph-kl1"><span className="name">{c.display_name}</span></span><span className="ph-kl2"><span className={`ph-astate ${st}`}><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} />{t(`phone.agent.${st}`)}</span>{c.role_text && <span className="snip">{c.role_text}</span>}</span></span>
+    </button>); };
+  const phoneRoot = (
+    <div className="ph-root" data-tab={rootTab}>
+      {rootTab === 'friends' && (<PhoneHead title={t('phone.tab.friends')} actions={[searchAct, { key: 'add', icon: 'personplus', label: t('friends.add'), tour: 'hdr-add-friend', run: () => { setTabQ(null); setFriendAdd(true); } }, gearAct]} />)}
+      {rootTab === 'chats' && (<PhoneHead title={t('phone.tab.chats')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), tour: 'hdr-new-chat', run: () => { if (!isPersonal) return; setTabQ(null); setDmGroup(true); } }, gearAct]} />)}
+      {rootTab === 'channels' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgbtn" data-tour="org-switch" onClick={() => { setChPlus(false); setOrgMenu((v) => !v); }} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><span className="name">{orgRow.name}</span><SpaceBadge c={otherOrgsUnread} /><I name="caret" size={16} className="caret" /></button> : null} title={t('phone.tab.channels')} actions={[onOrgTab && !orgBlocked && searchAct, onOrgTab && !orgBlocked && { key: 'plus', icon: 'plus', label: t('phone.ch.add'), menu: true, on: chPlus, run: () => { setOrgMenu(false); setChPlus((v) => !v); } }, gearAct]}>{orgMenuPop}{chPlusPop}</PhoneHead>)}
+      {rootTab === 'agents' && (<PhoneHead title={t('phone.tab.agents')} actions={[searchAct, gearAct]} />)}
+      {searchBar}
+      <div className="msgr-railbody ph-body" ref={pullList.setRef}><PullIndicator phase={pullList.phase} pulse={pullList.pulse} t={t} /><div className="msgr-railinner">
+        {rootTab === 'friends' && (<>
+          {(() => { const label = me?.display_name || session.user.email; return !tabQText.trim() && (
+            <button type="button" className="item ph-me" onClick={() => openSettings('me')}><Av name={label} size="kk" userId={uid} /><span className="ph-kbody"><span className="name">{label}</span><span className="snip">{t('phone.friends.meSub')}</span></span></button>); })()}
+          {friendReqs.length > 0 && !tabQText.trim() && <button type="button" className="item ph-reqrow" onClick={() => openSettings('friends')}><span className="ph-reqic"><I name="personplus" size={18} /></span><span className="name">{t('phone.friends.requests', { n: friendReqs.length })}</span><I name="caret" size={14} className="ph-chev" /></button>}
+          <div className="ph-sechead">{t('phone.friends.count', { n: friendList.length })}</div>
+          {(() => { const shown = tabSearch(friendList, tabQText, (f) => [f.display_name, f.handle]); return (<>
+            <div className="msgr-list ph-friends">{shown.map((f) => (
+              <button key={f.user_id} type="button" className="item ph-frow" onClick={() => { setTabQ(null); openPersonalDm(f.user_id); }}><Av name={f.display_name || f.handle || '?'} size="lg" userId={f.user_id} /><span className="name">{f.display_name || f.handle || f.user_id.slice(0, 8)}</span></button>))}</div>
+            {!friendList.length && <div className="msgr-hint">{t('friends.none')} {t('phone.friends.add.hint')}</div>}
+            {searchFoot(shown.length > 0)}
+          </>); })()}
+        </>)}
+        {rootTab === 'chats' && (<>
+          <div className="ph-chiprow">
+            <div className="ph-chips" role="radiogroup" aria-label={t('dm.filter')}>{CHAT_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{k === 'unread' ? t('phone.chip.unread', { n: chatUnreadTotal(chatsAll, unread, muted) }) : t(`phone.chip.${k}`)}</button>)}</div>
+            <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={16} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu">{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>
+          </div>
+          <div className={`msgr-list ph-rooms${dmAnim ? ` anim-list-${dmAnim}` : ''}`}>{chatShown.map((c) => kRow(c, chatDrop(c)))}</div>
+          {isPersonal && spaceReady && !chatShown.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t(chatsAll.length ? `phone.chats.empty.${dmFilter}` : 'phone.chats.empty')}</div>}
+          {(!isPersonal || !spaceReady) && <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>}
+          {searchFoot(chatShown.length > 0)}
+        </>)}
+        {rootTab === 'channels' && (!orgs?.length ? (
+          <div className="ph-noorg">
+            <h2>{t('phone.ch.noOrg.title')}</h2><p>{t('phone.ch.noOrg.body')}</p>
+            <div className="ph-noorg-acts">
+              <button type="button" className="btn btn-primary" onClick={() => { setOrgMenu(true); setJoinCode(null); setNewOrg(''); }}><I name="plus" size={14} />{t('phone.org.create')}</button>
+              <button type="button" className="btn" onClick={() => { setOrgMenu(true); setNewOrg(null); setJoinCode(''); setJoinHint(null); }}><I name="at" size={14} />{t('phone.org.join')}</button>
+            </div>
+          </div>
+        ) : !onOrgTab ? <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>
+          : orgGateActive ? <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setPage('chats')} bare />
+          : aiConsentLoading ? <OrgGateLoading t={t} bare />
+          : (<>
+          {newCh && (
+            <form className="msgr-inline ph-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
+              <input className="msgr-input" placeholder={t('ch.name')} value={newCh.name} onChange={(e) => setNewCh((c) => ({ ...c, name: e.target.value }))} autoFocus maxLength={80} />
+              <div className="msgr-seg" role="radiogroup" aria-label={t('ch.new.kind')}>
+                {[['public', t('ch.new.public')], ['private', t('ch.new.private')]].map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={newCh.kind === v} className={newCh.kind === v ? 'active' : ''} onClick={() => setNewCh((c) => ({ ...c, kind: v }))}><I name={v === 'private' ? 'lock' : 'hash'} size={12} />{l}</button>)}
+              </div>
+              <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!newCh.name.trim()}><I name="check" size={13} />{t('ui.create')}</button><button type="button" className="btn sm" onClick={() => setNewCh(null)}>{t('ui.cancel')}</button></div>
+            </form>
+          )}
+          {browse && (<div className="msgr-browse ph-browse">
+            <div className="ph-sechead">{t('ch.browse')}<button type="button" className="ph-secx" onClick={() => setBrowse(null)} aria-label={t('ui.close')}><I name="x" size={14} /></button></div>
+            {browse.length === 0 ? <p className="empty">{t('ch.browse.none')}</p>
+              : browse.map((c) => (<div key={c.id} className="row"><span className="name"><I name="hash" size={13} />{c.name}</span><span className="msgr-klabel">{t('ch.browse.members', { n: c.members })}</span><button type="button" className="btn btn-primary sm" onClick={() => joinChannel(c)}>{t('ch.browse.join')}</button></div>))}
+          </div>)}
+          <div className="ph-sechead">{t('phone.sec.channels')}</div>
+          <div className="msgr-list ph-rooms">{chChannelsShown.map((c) => kRow(c, { onDrop: pinned.has(c.id) ? reorderFav : reorderChannels }))}</div>
+          {!chChannels.length && !tabQText.trim() && (isAdmin && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: openNewCh, invite: orgInvite })} /></div>
+            : <div className="msgr-hint ph-empty">{t(previewChannels.length ? 'inv.empty.title' : 'ch.noneYet')} {previewChannels.length > 0 && <button type="button" className="btn sm" onClick={openBrowse}><I name="hash" size={13} />{t('inv.empty.browse')}</button>}</div>)}
+          {(chTalks.length > 0 || !tabQText.trim()) && <div className="ph-sechead">{t('phone.sec.talks')}<button type="button" className="ph-secbtn" onClick={() => { setTabQ(null); setDmGroup(true); }}><I name="chatplus" size={15} />{t('dm.new')}</button></div>}
+          <div className="msgr-list ph-rooms">{chTalksShown.map((c) => kRow(c, { onDrop: pinned.has(c.id) ? reorderFav : (id, before, visible) => reorderChannelPos(chTalks.filter((x) => !pinned.has(x.id)), id, before, visible) }))}</div>
+          {!chTalks.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t('phone.talks.empty')}</div>}
+          {searchFoot(chChannelsShown.length + chTalksShown.length > 0)}
+        </>))}
+        {rootTab === 'agents' && (<>
+          <div className="ph-apcard-wrap">
+            <button type="button" className={`ph-apcard${approvalItems.length ? ' on' : ''}`} data-tour="approvals-card" onClick={() => { const it = approvalItems[0]; if (it?.channel_id) { if (it.joinReq) sheetAfterNav.current = true; setChId(it.channel_id); setPage('chat'); } }} disabled={!approvalItems.length}>
+              <span className="ph-apic"><I name="stamp" size={18} /></span><span className="ph-kbody"><span className="name">{t('phone.agents.approvals', { n: approvalItems.length })}</span><span className="snip">{approvalItems.length ? approvalItems[0].text : t('phone.agents.approvals.none')}</span></span>
+            </button>
+          </div>
+          {[['mine', agentsMine], ['ext', agentsExt]].map(([k, list]) => { const shown = agentShown(list); return shown.length > 0 && (<div key={k}><div className="ph-sechead">{t(`phone.agents.${k}`)}</div><div className="msgr-list ph-agents">{shown.map(agentRow)}</div></div>); })}
+          {!agentsMine.length && !agentsExt.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t('phone.agents.none')}</div>}
+          {searchFoot(agentShown(agentsMine).length + agentShown(agentsExt).length > 0)}
+        </>)}
+      </div></div>
+    </div>
+  );
   return (
     <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}>
-    <div className={`shell msgr-shell${online ? '' : ' is-offline'}${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && (page === 'home' || page === 'dm') ? ' phone-home' : ''}${isPhone && page === 'dm' ? ' phone-dm' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && ROOT_PAGES.has(page) ? ' phone-root' : ''}${isPhone && BIG_TITLE_PAGES.has(page) ? ' phone-bt' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
+    <div className={`shell msgr-shell${online ? '' : ' is-offline'}${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && isPhoneRoot(page) && page !== 'memory' ? ' phone-home' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && ROOT_PAGES.has(page) ? ' phone-root' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {!online && <div className="msgr-offline-bar" role="status">{t('net.offline')}</div>}
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
       <aside id="msgr-navigation" className={`side msgr-side${orgMenu ? ' menu-open' : ''}`}>
+        {isPhone ? phoneRoot : (<>
         <button type="button" className="msgr-rail-close" onClick={() => setRail(false)} aria-label={t('ui.close')}><I name="x" /></button>
         <div className="msgr-brand"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO</div>
         <div className="msgr-orgwrap">
@@ -2030,19 +2225,7 @@ function Shell({ session }) {
               {deletedOrgs.map((o) => <button key={`d-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); restoreOrg(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}
               <div className="sep" />
               {isAdmin && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); orgInvite(); }}><span className="msgr-av sm ghost"><I name="copy" size={13} /></span><span className="label">{t('inv.org')}</span></button>}
-              {joinCode === null
-                ? <button type="button" role="menuitem" onClick={() => { setJoinCode(''); setJoinHint(null); setNewOrg(null); }}><span className="msgr-av sm ghost"><I name="at" size={13} /></span><span className="label">{t('org.join.code')}</span></button>
-                : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); joinByCode(joinCode); }}>
-                    <input className="msgr-input" placeholder={t('org.join.code.ph')} value={joinCode} onChange={(e) => { setJoinCode(e.target.value); setJoinHint(null); }} aria-invalid={!!joinHint} autoFocus />
-                    {joinHint && <p className="msgr-inline-err" role="alert">{t(joinHint)}</p>}
-                    <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!canSubmitJoin(joinCode)}><I name="check" size={13} />{t('org.join.code.go')}</button><button type="button" className="btn sm" onClick={() => setJoinCode(null)}>{t('ui.cancel')}</button></div>
-                  </form>}
-              {newOrg === null
-                ? <button type="button" role="menuitem" onClick={() => setNewOrg('')}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('org.new')}</span></button>
-                : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createOrg(newOrg); }}>
-                    <input className="msgr-input" placeholder={t('org.name')} value={newOrg} onChange={(e) => setNewOrg(e.target.value)} autoFocus maxLength={80} />
-                    <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!newOrg.trim()}><I name="check" size={13} />{t('ui.create')}</button><button type="button" className="btn sm" onClick={() => setNewOrg(null)}>{t('ui.cancel')}</button></div>
-                  </form>}
+              {orgJoinForms()}
             </div>
           </>)}
         </div>
@@ -2133,13 +2316,14 @@ function Shell({ session }) {
         </RailSection>)}
 
         </div></div>
+        </>)}
         {ctx && <CtxMenu at={ctx} items={ctx.items} onClose={() => setCtx(null)} />}
         {railAction && createPortal(<div ref={actionDialog} onKeyDown={trapActionFocus} className="shell msgr-action-dialog" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(railActionKey)}>
           {railAction.kind === 'delete'
             ? <DangerModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} requireText={railAction.channel.kind === 'dm' ? dmName(railAction.channel) : railAction.channel.name} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />
             : <ConfirmModal title={t(railActionKey)} description={<>{t(railActionKey === 'ch.leave' && railAction.channel.kind === 'public' ? 'ch.leave.confirm.note.public' : `${railActionKey}.confirm.note`)}{actionError && <span role="alert" style={{ display: 'block', color: 'var(--danger)', marginTop: 8 }}>{actionError}</span>}</>} confirmLabel={t(railActionKey)} busy={actionBusy} onConfirm={confirmRailAction} onClose={() => { if (!actionLock.current) setRailAction(null); }} />}
         </div>, document.body)}
-        <div className="msgr-foot">
+        {!isPhone && <div className="msgr-foot">
           {isPhone && !orgBlocked && nodeInd && <button type="button" className={`ph-node${nodeInd.state === 'on' ? ' on' : nodeInd.state === 'down' ? ' down' : ''}`} onClick={() => { setSettingsTab('crews'); setPage('settings'); setRail(false); }} title={nodeLabel} aria-label={nodeLabel}><I name={nodeInd.state === 'on' ? 'node' : 'nodeoff'} size={18} /></button>}{/* 서버를 연결하는 사람(관리자)에게만, 없음은 중립색·끊김만 경고색(점검 A·B #11) */}
           <button type="button" className="me" onClick={() => { if (isPhone) { setSettingsTab('me'); setPage('settings'); setRail(false); } else setMeMenu((v) => !v); }} aria-haspopup={isPhone ? undefined : 'menu'} aria-expanded={isPhone ? undefined : meMenu} title={t(isPhone ? 'ui.settings' : 'ui.me.menu')}>
             <Av name={me?.display_name || session.user.email} size="sm" userId={uid} /><span className="name">{me?.display_name || session.user.email}</span>
@@ -2152,7 +2336,7 @@ function Shell({ session }) {
           {org && isPersonal && !orgBlocked && !isPhone && <span className="btn ghost msgr-foot-slot" aria-hidden="true" />}{/* 개인 공간엔 기억이 없다 — 자리는 비워 둬 알림·설정 아이콘이 조직 공간과 같은 x에 있게(공간을 오갈 때 45px씩 움직이지 않는다, LA-22). 폰은 이 줄이 머리 오른쪽 원이라 해당 없음 */}
           {org && !isPersonal && !orgBlocked && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
-        </div>
+        </div>}
       </aside>
       <main className="msgr-main" {...edgeBack}>
         {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} />}
@@ -2172,12 +2356,12 @@ function Shell({ session }) {
           <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setOrgId(PERSONAL)} />
         ) : personalConsentAsk && isPersonal && page !== 'settings' ? ( // 개인 공간은 에이전트를 부르려는 순간에만 묻는다 — 거부하면 사람끼리 대화는 그대로
           <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setPersonalConsentAsk(false)} personal />
-        ) : page === 'activity' && isPersonal ? (
-          <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.noActivity')}</p></div></div></>
-        ) : page === 'activity' && org ? (
+        ) : (page === 'activity' || page === 'memory') && isPersonal ? (
+          <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t(page === 'memory' ? 'act.title' : 'personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t(page === 'memory' ? (orgs?.length ? 'ui.loading' : 'phone.memory.noOrg') : 'personal.noActivity')}</p></div></div></>
+        ) : (page === 'activity' || page === 'memory') && org ? (
           <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} previewChannels={previewChannels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
-          <SearchPage res={searchRes} busy={searchBusy} channels={[...channels, ...previewChannels]} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, mid) => { setChId(id); setPage('chat'); setJump(mid ? { ch: id, mid } : null); }} onCrew={openers.search} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} />
+          <SearchPage res={searchRes} busy={searchBusy} channels={[...channels, ...previewChannels]} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, mid) => { setChId(id); setPage('chat'); setJump(mid ? { ch: id, mid } : null); }} onCrew={openers.search} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} phoneQ={isPhone ? { q: searchQ, set: setSearchQ, run: runSearch } : null} />
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' ? (
@@ -2191,11 +2375,10 @@ function Shell({ session }) {
         )}
         </PageBoundary>
       </main>
-      {isPhone && (page === 'dm' || page === 'home') && org && !orgBlocked && <button type="button" className="msgr-fab" onClick={() => isPersonal && page === 'home' ? setFriendAdd(true) : page === 'dm' ? setDmGroup(true) : setNewCh({ name: '', kind: newChKind })} aria-label={t(page === 'dm' ? 'dm.group.new' : isPersonal ? 'friends.add' : 'ch.new')}><I name="plus" size={22} /></button>}
       {friendAdd && <FriendAddSheet onClose={() => setFriendAdd(false)} uid={uid} friends={friends} members={isPersonal ? [] : members} onChanged={onFriendsChanged}
         onDm={(id) => { setFriendAdd(false); openDm('user', id); }} onPersonalDm={(id) => { setFriendAdd(false); openPersonalDm(id); setRail(false); }} onNote={setNote} onError={setErr} />}
       {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setFriendAdd(true); }} members={members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now()))} crews={railVisible} hints={crewHints} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
-      {isPhone && <PhoneTabs personal={isPersonal} page={page} goingTo={swipeTo} activity={inboxUnread} search={{ q: searchQ, set: setSearchQ, run: runSearch }} onPick={pickRoot} />}
+      {isPhone && <PhoneTabs active={rootTab} badges={tabBadgeN} onPick={pickRoot} />}
     </div>
     </SafetyCtx.Provider></AvatarCtx.Provider>
   );
@@ -2975,7 +3158,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
 }
 
 /* ─── 검색 결과 페이지 — 메시지(본문 부분 일치, 이 조직·읽을 수 있는 채널만)·사람·에이전트·채널. 전문 검색(tsvector)은 규모가 커지면 v2. ─── */
-function SearchPage({ res, busy = false, channels, crews, nameOfUser, dmName, onOpen, onCrew, onDm, onBack, onMenu }) {
+function SearchPage({ res, busy = false, channels, crews, nameOfUser, dmName, onOpen, onCrew, onDm, onBack, onMenu, phoneQ = null }) {
   const { t, lang } = useT();
   const phone = useIsPhone();
   const { blocked, mutedCrewIds } = useContext(SafetyCtx); // 차단한 사람·숨긴 크루의 글은 검색 결과에서 뺀다(검수 M4)
@@ -2991,6 +3174,7 @@ function SearchPage({ res, busy = false, channels, crews, nameOfUser, dmName, on
       <span className="title"><I name="search" size={18} />{t('search.title')}{res && <span className="msgr-klabel">“{res.q}” · {t(res.more ? 'search.countMore' : 'search.count', { n: total })}</span>}</span>
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
+    {phone && phoneQ && <form className="ph-search ph-search-page" role="search" onSubmit={(e) => { e.preventDefault(); phoneQ.run(phoneQ.q); e.currentTarget.querySelector('input')?.blur(); }}><I name="search" size={16} className="fill" /><input value={phoneQ.q} onChange={(e) => phoneQ.set(e.target.value)} placeholder={t('search.ph.phone')} aria-label={t('search.title')} enterKeyHint="search" /></form>}{/* 폰: 떠 있던 검색 칸(아래 탭 바 안)을 없애 결과 화면 위에 둔다 */}
     <div className="msgr-thread page"><div className="msgr-inbox msgr-searchres">
       {view.loading && <p className="empty" role="status">{t('ui.loading')}</p>}
       {view.hintKey && <p className="empty">{t(view.hintKey)}</p>}

@@ -1,0 +1,108 @@
+// 폰 셸 v2 — 아래 탭 5개(친구 / 채팅 / 채널 / 에이전트 / 기억, 유건 확정 2026-10-01)의 판단을 한 곳에 둔다.
+// 순수 함수만(DOM·React·supabase 없음) — 행동은 test/phone-shell.test.mjs가 고정한다. 화면 배선은 App.jsx.
+import { sortDms } from './dm-sort.mjs';
+import { plainPreview } from './msg-text.mjs';
+
+export const PHONE_TABS = ['friends', 'chats', 'channels', 'agents', 'memory'];
+const ROOTS = new Set(PHONE_TABS);
+/** 아래 탭이 있는 루트 화면인가 — 대화방·설정·검색은 그 위에 여는 화면 */
+export const isPhoneRoot = (page) => ROOTS.has(page);
+/** 채팅 탭 칩(전체 / 안읽음 N / 에이전트 / 그룹) */
+export const CHAT_FILTERS = ['all', 'unread', 'agent', 'group'];
+
+/** 탭이 보여 줄 공간. 채팅 = 개인 공간, 채널·기억 = 고른 조직(없으면 null — 공간을 바꾸지 않고 빈 안내), 친구·에이전트 = null(지금 공간 그대로) */
+export function spaceForTab(tab, { personal, chOrg = null } = {}) {
+  if (tab === 'chats') return personal;
+  if (tab === 'channels' || tab === 'memory') return chOrg ?? null;
+  return null;
+}
+
+/** 채널 탭이 고를 조직 — 고른 적 있는 조직이 아직 목록에 있으면 그것, 아니면 마지막 공간이 조직이면 그것, 아니면 첫 조직 */
+export function pickChannelOrg({ saved = null, last = null, orgIds = [] } = {}) {
+  if (saved && orgIds.includes(saved)) return saved;
+  if (last && orgIds.includes(last)) return last;
+  return orgIds[0] ?? null;
+}
+
+/** 처음 여는 탭 — 마지막 공간이 (아직 있는) 조직이면 채널, 개인 공간이거나 처음이면 채팅 */
+export function startTab({ last = null, personal, orgIds = [] } = {}) {
+  return last && last !== personal && orgIds.includes(last) ? 'channels' : 'chats';
+}
+
+/** 아래 탭 숫자. here = 보고 있는 공간의 채널별 최신 셈(음소거 제외), totals = 공간별 서버 합계({ personal|orgId: { n } }).
+    hereReady가 거짓이면(공간을 막 바꿔 채널별 셈이 아직 없음) 그 공간도 서버 합계로 센다 — 숫자가 0으로 깜빡이지 않게. */
+export function tabBadges({ hereKey = null, here = null, hereReady = false, totals = {}, orgIds = [], personalKey = 'personal', approvals = 0, friendRequests = 0 } = {}) {
+  const n = (key) => (key === hereKey && hereReady ? here?.n : totals?.[key]?.n) || 0;
+  return {
+    friends: friendRequests || 0,
+    chats: n(personalKey),
+    channels: orgIds.reduce((sum, id) => sum + n(id), 0),
+    agents: approvals || 0,
+    memory: 0,
+  };
+}
+
+/** 뱃지 글자 — 0 이하면 빈 문자열(그리지 않는다), 100부터 '99+' */
+export const badgeText = (n) => (n > 99 ? '99+' : n > 0 ? String(n) : '');
+
+/** 방의 성격. 그룹 = 나 말고 둘 이상(단 "사람 1 + 그 사람의 에이전트 1"은 남의 에이전트 1:1), 에이전트 방 = 에이전트가 들어 있음. size = 인원(나 포함) */
+export function roomTraits({ c = {}, members = [], uid = null, ownerOf = () => null } = {}) {
+  const people = members.filter((m) => m.member_kind === 'user' && m.member_id !== uid);
+  const crews = members.filter((m) => m.member_kind === 'crew');
+  const others = people.length + crews.length;
+  const ownersPair = people.length === 1 && crews.length === 1 && ownerOf(crews[0].member_id) === people[0].member_id;
+  return {
+    group: !!c._personal_group || (others >= 2 && !ownersPair),
+    agent: crews.length > 0 || !!c._personal_crew,
+    size: others + 1,
+  };
+}
+
+/** 칩에 보일 방인가 — r: roomRow 결과 + roomTraits */
+export function chatVisible(filter, r) {
+  if (filter === 'unread') return r.unreadN > 0 && !r.muted;
+  if (filter === 'agent') return !!r.agent;
+  if (filter === 'group') return !!r.group;
+  return true;
+}
+
+/** '안읽음 N' 칩 숫자 — 목록에 있는 방의 안 읽은 글 합(알림 끈 방 제외). 채팅 탭 뱃지와 같은 규칙 */
+export function chatUnreadTotal(list, unread = {}, muted = new Set()) {
+  let n = 0;
+  for (const c of list) if (!muted.has(c.id)) n += unread[c.id]?.n || 0;
+  return n;
+}
+
+/** 목록 한 줄의 정보 — 마지막 글(미리보기는 마크다운을 벗긴 한 줄, 두 줄 자르기는 CSS)·시각·안 읽음·@·고정·알림 끔.
+    개인 방은 목록 조회(msgr_dm_personal_list)가 준 마지막 글로 시작하고, 실시간으로 받은 글이 더 새것이면 그것을 쓴다. */
+export function roomRow({ c, lastMsg = null, lastAt = 0, unread = null, muted = false, pinned = false }) {
+  const listAt = Date.parse(c?._personal_last_at ?? '') || 0;
+  const live = lastMsg && (lastMsg.at || 0) >= listAt ? lastMsg : null;
+  const preview = live ? (live.body ?? '') : (c?._personal_last_body != null ? plainPreview(c._personal_last_body) : (lastMsg?.body ?? ''));
+  return {
+    at: Math.max(live?.at || 0, listAt, lastAt || 0, lastMsg?.at || 0),
+    preview,
+    mine: !!live?.mine,
+    userId: live?.userId ?? null,
+    crewId: live?.crewId ?? null,
+    unreadN: unread?.n || 0,
+    mention: (unread?.mention || 0) > 0,
+    pinned: !!pinned,
+    muted: !!muted,
+  };
+}
+
+/** 채팅·채널 목록 순서 — 고정한 방이 위(고정 순서 pin_pos), 나머지는 고른 정렬(기본 최근 글 순, dm-sort.mjs와 같은 규칙) */
+export function sortRooms(list, { sort = 'recent', atOf = () => 0, unread = {}, pinned = new Set(), pinPos = new Map(), nameOf = (c) => c.name ?? '', sortPos = {} } = {}) {
+  const top = list.filter((c) => pinned.has(c.id)).sort((a, b) => (pinPos.get(a.id) ?? 1e9) - (pinPos.get(b.id) ?? 1e9) || nameOf(a).localeCompare(nameOf(b), 'ko'));
+  const rest = list.filter((c) => !pinned.has(c.id));
+  const lastAt = Object.fromEntries(rest.map((c) => [c.id, atOf(c)]));
+  return [...top, ...sortDms(rest, { sort, lastAt, unread, nameOf, sortPos })];
+}
+
+/** 탭 안 검색 — fields(item)가 돌려준 글자들에서 대소문자 없이 찾는다. 빈 검색어는 전부 */
+export function tabSearch(items, query, fields) {
+  const q = String(query ?? '').trim().toLowerCase();
+  if (!q) return items;
+  return items.filter((x) => fields(x).some((v) => String(v ?? '').toLowerCase().includes(q)));
+}
