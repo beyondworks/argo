@@ -15,6 +15,9 @@
   :root[data-theme='graphite'] { --msgr-focus: #9a9a9a; }
 }
 .argo-messenger :focus-visible { outline-color: var(--msgr-focus); } /* 본체 전역 :focus-visible(반투명 --ring) 위에 — 버튼·링크·탭 등 메신저 전체(포털 포함, body 클래스) */
+/* 본체 app/globals.css의 전역 '.row'(목록 행: padding 12px 18px · 윗선 · width 100%)가 메신저의 모든 .row로 샌다 — 부모마다 따로 되돌리던 자리(.msgr-setcard 등) 밖에서는 버튼·입력이 18px 안쪽에서 시작하고 행마다 윗선이 그어졌다
+   (LA-08 로그인 서버 칸, LA-12 채널 시트 설정). 한 번에 되돌린다 — 부모별 규칙(.msgr-rows .row 등 명시도 같거나 높음, 뒤에 있음)은 그대로 이긴다. */
+.argo-messenger .row { padding: 0; border-top: 0; width: auto; text-align: inherit; }
 .mi { flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .mi.fill { fill: currentColor; stroke: none; }
 .msgr-klabel { font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--fg-3); }
@@ -80,8 +83,9 @@
 .msgr-org .caret { color: var(--fg-3); transition: transform 160ms cubic-bezier(.23,1,.32,1); }
 .msgr-org.open .caret { transform: rotate(180deg); }
 .msgr-menu-pop { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 70; padding: 6px; border-radius: 16px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow-float); display: grid; gap: 2px; animation: msgrPopIn 160ms cubic-bezier(0.23,1,0.32,1) both; }
-.msgr-menu-pop button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 7px 8px; font: inherit; font-size: 12.5px; color: var(--fg); background: none; cursor: pointer; }
-.msgr-menu-pop button.on { background: var(--card-2); } @media (hover: hover) { .msgr-menu-pop button:hover { background: var(--card-2); } } .msgr-menu-pop button:active { background: var(--card-2); }
+/* 메뉴 항목 모양은 .btn(조직 메뉴 안 '새 조직'·'참여' 폼의 만들기·취소)에는 걸지 않는다 — 걸리면 단추의 배경·테두리가 지워져 글자만 남고 위치도 입력칸 가장자리와 어긋났다(LA-09) */
+.msgr-menu-pop button:not(.btn) { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 7px 8px; font: inherit; font-size: 12.5px; color: var(--fg); background: none; cursor: pointer; }
+.msgr-menu-pop button.on { background: var(--card-2); } @media (hover: hover) { .msgr-menu-pop button:not(.btn):hover { background: var(--card-2); } } .msgr-menu-pop button:not(.btn):active { background: var(--card-2); }
 .msgr-menu-pop button.on .label { font-weight: 600; }
 .msgr-menu-pop .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-menu-pop .sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
@@ -828,6 +832,7 @@
 
 /* ── 서버 선택(로그인 카드 안 접힘 행) — 기본 Argo 클라우드, 회사 서버는 펼쳐서 입력 ── */
 .msgr-server { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
+.msgr-server-body { display: grid; gap: 10px; min-width: 0; }
 .msgr-server summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12.5px; color: var(--fg-2); list-style: none; }
 .msgr-server summary::-webkit-details-marker { display: none; }
 .msgr-server summary .msgr-klabel { margin-left: auto; }
@@ -1155,7 +1160,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-toast { top: max(12px, env(safe-area-inset-top)); }
   .msgr-auth { min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
   /* Implicit auto grid tracks inherited native input widths and clipped the card's right edge. */
-  .msgr-auth, .msgr-auth .msgr-card, .msgr-auth .body, .msgr-auth .msgr-server { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+  .msgr-auth, .msgr-auth .msgr-card, .msgr-auth .body, .msgr-auth .msgr-server, .msgr-auth .msgr-server-body { grid-template-columns: minmax(0, 1fr); min-width: 0; }
   .msgr-auth .body { padding: 18px; }
   .msgr-auth .body > *, .msgr-auth .band, .msgr-auth .foot > span { min-width: 0; }
   .msgr-auth .msgr-field { width: 100%; min-width: 0; }
@@ -1231,7 +1236,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop { left: 10px; right: 10px; top: calc(100% + 6px); border-radius: 18px; padding: 6px 8px 10px; } /* 여백 20→10(줄이되 없애지 않는다 — 유건 2026-09-11) */
   .msgr-phone.phone-home .msgr-side .msgr-scrim.clear { background: rgba(0, 0, 0, .38); z-index: 72; } /* 아일랜드(70)·+(69)까지 덮는다 */
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop { z-index: 73; }
-  .msgr-phone.phone-home .msgr-side .msgr-menu-pop button { padding: 8px 6px; font-size: 13px; }
+  .msgr-phone.phone-home .msgr-side .msgr-menu-pop button:not(.btn) { padding: 8px 6px; font-size: 13px; }
   .msgr-phone.phone-home .msgr-side .msgr-menu-pop .sep { margin: 4px 2px; }
   /* 안내 줄도 목록과 같은 좌우 여백 */
   .msgr-phone.phone-home .msgr-side .msgr-hint { padding: 6px var(--ph-pad) 14px; font-size: 13px; }

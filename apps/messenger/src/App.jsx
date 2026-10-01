@@ -394,11 +394,13 @@ function ServerRow({ t, open = false }) {
   return (
     <details className="msgr-server" open={edit} onToggle={(e) => setEdit(e.currentTarget.open)}>
       <summary><I name="hash" size={12} />{customServer ? t('auth.server.custom', { host: hostOf(SB_URL) }) : t('auth.server.cloud')}<span className="msgr-klabel">{t('auth.server')}</span></summary>
-      <p>{t('auth.server.desc')}</p>
-      <label className="msgr-field"><I name="at" /><input placeholder="https://supabase.company.com" value={url} onChange={(e) => { setUrl(e.target.value); setBad(false); }} spellCheck={false} /></label>
-      <label className="msgr-field"><I name="lock" /><input placeholder={t('auth.server.key')} value={anon} onChange={(e) => { setAnon(e.target.value); setBad(false); }} spellCheck={false} /></label>
-      {bad && <p style={{ color: 'var(--danger)' }}>{t('auth.server.bad')}</p>}
-      <div className="row"><button type="button" className="btn sm btn-primary" onClick={save} disabled={!url || !anon}>{t('auth.server.save')}</button>{customServer && <button type="button" className="btn sm ghost" onClick={reset}>{t('auth.server.reset')}</button>}</div>
+      <div className="msgr-server-body">{/* details의 내용은 슬롯(블록)으로 들어가 details의 grid·gap이 안 닿는다 — 간격은 이 상자가 준다(LA-08) */}
+        <p>{t('auth.server.desc')}</p>
+        <label className="msgr-field"><I name="at" /><input placeholder="https://supabase.company.com" value={url} onChange={(e) => { setUrl(e.target.value); setBad(false); }} spellCheck={false} /></label>
+        <label className="msgr-field"><I name="lock" /><input placeholder={t('auth.server.key')} value={anon} onChange={(e) => { setAnon(e.target.value); setBad(false); }} spellCheck={false} /></label>
+        {bad && <p style={{ color: 'var(--danger)' }}>{t('auth.server.bad')}</p>}
+        <div className="row"><button type="button" className="btn sm btn-primary" onClick={save} disabled={!url || !anon}>{t('auth.server.save')}</button>{customServer && <button type="button" className="btn sm ghost" onClick={reset}>{t('auth.server.reset')}</button>}</div>
+      </div>
     </details>
   );
 }
