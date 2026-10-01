@@ -1936,7 +1936,14 @@ html { -webkit-tap-highlight-color: transparent; }
   /* 채널 탭 — 큰 제목 '채널' 옆 조직 알약(누르면 조직 메뉴). 제목이 어느 탭인지 말하고, 알약이 어느 조직인지 말한다 */
   .msgr-phone .ph-orgbtn { display: inline-flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; max-width: 100%; min-height: 44px; padding: 0 10px 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--card-2); color: var(--fg); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
   .msgr-phone .ph-orgbtn:active { background: var(--border-soft); }
-  @media (max-width: 374px) { .msgr-phone .ph-title { font-size: 21px; } .msgr-phone .ph-head-l { gap: 6px; } .msgr-phone .ph-orgbtn { padding: 0 8px 0 10px; } } /* 360 폭 영어 — 'Channels' 옆 조직 알약이 한 글자로 줄었다 */
+  /* 채널·기억 탭 큰 제목 = 표지(# · 폴더) + 조직 이름 ▾(유건 10/1) — 누르면 조직 메뉴. 긴 이름은 말줄임, 오른쪽 아이콘과 겹치지 않는다 */
+  .msgr-phone .ph-orgtitle { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 100%; min-height: 44px; padding: 0; border: 0; background: none; color: var(--fg); font: inherit; font-size: 24px; font-weight: 800; letter-spacing: -.02em; line-height: 1.2; cursor: pointer; }
+  .msgr-phone .ph-orgtitle .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .msgr-phone .ph-orgtitle .ph-orgmark { flex: none; color: var(--fg-2); stroke-width: 1.8; }
+  .msgr-phone .ph-orgtitle .caret { flex: none; color: var(--fg-2); }
+  .msgr-phone .ph-orgtitle .msgr-badge { flex: none; margin: 0; }
+  .msgr-phone .ph-orgtitle:active { opacity: .6; }
+  @media (max-width: 374px) { .msgr-phone .ph-title, .msgr-phone .ph-orgtitle { font-size: 21px; } .msgr-phone .ph-head-l { gap: 6px; } .msgr-phone .ph-orgbtn { padding: 0 8px 0 10px; } } /* 360 폭 영어 — 'Channels' 옆 조직 알약이 한 글자로 줄었다 */
   .msgr-phone .ph-orgbtn .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .msgr-phone .ph-orgbtn .caret { flex: none; color: var(--fg-2); }
   .msgr-phone .ph-orgbtn .msgr-badge { flex: none; margin: 0; }
@@ -1947,7 +1954,6 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-pop .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .msgr-phone .ph-pop .sep { height: 1px; margin: 4px 2px; background: var(--border-soft); }
   .msgr-phone .ph-pop .msgr-badge { margin: 0; }
-  .msgr-phone .ph-pluspop { left: auto; right: 10px; width: min(260px, calc(100vw - 20px)); }
   /* 목록 — 아래 여백 = 떠 있는 바 높이 + 바 아래 간격 + 16(마지막 줄이 바에 가리지 않게) */
   .msgr-phone.phone-home .msgr-side .ph-root .ph-body { flex: 1 1 auto; min-height: 0; padding: 2px 0 calc(var(--ph-bar) + var(--ph-bar-gap) + 16px); scroll-padding-block: 2px calc(var(--ph-bar) + var(--ph-bar-gap) + 16px); background: var(--bg); }
   .msgr-phone .ph-search { display: flex; align-items: center; gap: 8px; height: 44px; margin: 2px var(--ph-pad) 8px; padding: 0 2px 0 12px; border-radius: 12px; background: var(--card-2); color: var(--fg-3); flex: none; }
@@ -2007,13 +2013,14 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-me .snip { -webkit-line-clamp: 1; font-size: 13px; color: var(--fg-3); }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-frow { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 60px; padding: 6px var(--ph-pad); border: 0; background: var(--bg); color: var(--fg); text-align: left; }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-frow .name { font-size: 16px; font-weight: 500; color: var(--fg); }
-  .msgr-phone.phone-home .msgr-side .ph-root .ph-reqrow { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 6px var(--ph-pad); border: 0; border-bottom: 1px solid var(--border-soft); background: var(--bg); color: var(--fg); text-align: left; }
+  .msgr-phone.phone-home .msgr-side .ph-root .ph-reqrow { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 66px; padding: 11px var(--ph-pad); border: 0; border-bottom: 1px solid var(--border-soft); background: var(--bg); color: var(--fg); text-align: left; } /* 위아래 여백을 늘린다(유건 10/1) — 펼친 요청 행과 같은 리듬 */
   .msgr-phone .ph-reqrow .name { flex: 1 1 auto; font-size: 15px; font-weight: 600; }
   .msgr-phone .ph-reqic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 15px; background: var(--fg); color: var(--bg); flex: none; }
   .msgr-phone .ph-chev { transform: rotate(-90deg); color: var(--fg-3); flex: none; }
   .msgr-phone .ph-chev.open { transform: none; }
   .msgr-phone .ph-reqs { border-bottom: 1px solid var(--border-soft); }
-  .msgr-phone .ph-req { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 6px var(--ph-pad); }
+  .msgr-phone .ph-req { display: flex; align-items: center; gap: 12px; min-height: 66px; padding: 11px var(--ph-pad); }
+  .msgr-phone .ph-req + .ph-req { border-top: 1px solid var(--border-soft); }
   .msgr-phone .ph-req .name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 500; color: var(--fg); }
   .msgr-phone .ph-req .btn { flex: none; min-height: 44px; padding: 0 14px; border-radius: 12px; font-size: 14px; }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-req .msgr-av.lg { width: 40px; height: 40px; }
@@ -2067,7 +2074,11 @@ html { -webkit-tap-highlight-color: transparent; }
 
   /* ── 기억 탭: 폴더 묶음 · 문서 줄 · 읽기 전용 문서 ── */
   .msgr-phone .ph-memgroup { padding-bottom: 4px; }
-  .msgr-phone .ph-memfolder { display: flex; align-items: center; gap: 6px; padding: 8px var(--ph-pad) 2px; font-size: 13px; font-weight: 600; color: var(--fg); }
+  .msgr-phone .ph-memfolder { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; padding: 4px var(--ph-pad); border: 0; background: none; font-size: 13.5px; font-weight: 600; color: var(--fg); text-align: left; cursor: pointer; }
+  .msgr-phone .ph-memfolder:active { background: var(--card-2); }
+  .msgr-phone .ph-memcaret { color: var(--fg-2); transition: transform 150ms ease; }
+  .msgr-phone .ph-memcaret.shut { transform: rotate(-90deg); }
+  @media (prefers-reduced-motion: reduce) { .msgr-phone .ph-memcaret { transition: none; } }
   .msgr-phone .ph-memfolder .ph-kcount { font-weight: 500; }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-memrow { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 6px var(--ph-pad); border: 0; background: var(--bg); color: var(--fg); text-align: left; }
   .msgr-phone.phone-home .msgr-side .ph-root .ph-memrow:active { background: var(--card-2); }
@@ -2108,8 +2119,11 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-island button.on { background: var(--mark); color: var(--mark-fg); }
   .msgr-phone .msgr-island button:active { background: color-mix(in srgb, var(--fg) 14%, transparent); }
   .msgr-phone .msgr-island button.on:active { background: var(--mark); }
+  /* 선택 색은 즉시 바꾼다 — 색 전환은 프레임이 멈춘 화면(가려진 창 등)에서 중간에 서서 선택 표시와 화면이 어긋나 보였다(10/1 밤 실측). 움직임은 새로 고른 원의 짧은 크기 변화만 */
   @media (prefers-reduced-motion: no-preference) {
-    .msgr-phone .msgr-island button { transition: background-color 160ms ease-out, color 160ms ease-out, transform 120ms ease-out; }
+    @keyframes msgrTabPick { from { transform: scale(.86); } to { transform: none; } }
+    .msgr-phone .msgr-island button.on { animation: msgrTabPick 180ms cubic-bezier(.2, .8, .2, 1); }
+    .msgr-phone .msgr-island button { transition: transform 120ms ease-out; }
   }
   /* 안 읽은 수 — 원 오른쪽 위 작은 잉크 알약(.msgr-badge와 같은 잉크: --fg 바탕·--bg 숫자). 바깥 고리(바 표면색)로 원·강조색과 경계를 둔다 */
   .msgr-phone .msgr-island .msgr-tabn { position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center;

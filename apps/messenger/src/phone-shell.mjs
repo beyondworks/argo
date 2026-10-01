@@ -107,19 +107,23 @@ export function tabSearch(items, query, fields) {
   return items.filter((x) => fields(x).some((v) => String(v ?? '').toLowerCase().includes(q)));
 }
 
-/** 기억 탭 폴더 — 조직 전체 기억(규칙·용어·프로젝트 순, 안에서는 제목순) / 채널별 기억(문서 먼저 제목순, 일지는 최신이 위; 채널 묶음은 최근에 바뀐 순).
+/** 기억 탭 폴더 — 조직 전체 기억(규칙·용어·프로젝트 순) / 채널별 기억(문서 먼저, 일지는 늘 최신이 위).
+    sort: 'recent'(기본 — 문서·채널 묶음 모두 최근에 바뀐 것이 위) | 'name'(문서 제목·채널 이름순). 설정 > 기억에서 고른다(이 기기에 기억).
     query가 있으면 제목·본문에서 먼저 거른다(탭 안 검색). 문서는 서버 msgr_org_docs(조직 단위 — 개인 공간 기억은 서버에 없다). */
 export const MEM_FOLDERS = ['rules', 'glossary', 'projects'];
-export function memoryGroups(docs, { query = '', channelLabel = (id) => id } = {}) {
+export const MEM_SORTS = ['name', 'recent'];
+export function memoryGroups(docs, { query = '', channelLabel = (id) => id, sort = 'recent' } = {}) {
   const shown = tabSearch(docs, query, (d) => [d.title, d.body]);
   const byTitle = (a, b) => String(a.title).localeCompare(String(b.title), 'ko');
-  const org = MEM_FOLDERS.map((f) => ({ key: f, docs: shown.filter((d) => !d.channel_id && d.path.startsWith(`${f}/`)).sort(byTitle) })).filter((g) => g.docs.length);
+  const byRecent = (a, b) => String(b.updated_at).localeCompare(String(a.updated_at)) || byTitle(a, b);
+  const order = sort === 'name' ? byTitle : byRecent;
+  const org = MEM_FOLDERS.map((f) => ({ key: f, docs: shown.filter((d) => !d.channel_id && d.path.startsWith(`${f}/`)).sort(order) })).filter((g) => g.docs.length);
   const byCh = new Map();
   for (const d of shown) if (d.channel_id) { if (!byCh.has(d.channel_id)) byCh.set(d.channel_id, []); byCh.get(d.channel_id).push(d); }
   const journal = (d) => d.path.startsWith('journal/');
   const channels = [...byCh.entries()].map(([key, ds]) => ({ key, label: channelLabel(key), latest: ds.reduce((m, d) => (String(d.updated_at) > m ? String(d.updated_at) : m), ''),
-    docs: [...ds.filter((d) => !journal(d)).sort(byTitle), ...ds.filter(journal).sort((a, b) => b.path.localeCompare(a.path))] }))
-    .sort((a, b) => b.latest.localeCompare(a.latest)).map(({ latest, ...g }) => g); // eslint-disable-line no-unused-vars
+    docs: [...ds.filter((d) => !journal(d)).sort(order), ...ds.filter(journal).sort((a, b) => b.path.localeCompare(a.path))] }))
+    .sort((a, b) => (sort === 'name' ? String(a.label).localeCompare(String(b.label), 'ko') : b.latest.localeCompare(a.latest))).map(({ latest, ...g }) => g); // eslint-disable-line no-unused-vars
   return { org, channels, total: shown.length };
 }
 

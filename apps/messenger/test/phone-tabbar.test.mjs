@@ -33,7 +33,10 @@ test('바는 떠 있는 알약 — 폭은 화면에서 정하고(언어 무관) 
   assert.match(isl, /flex: 0 1 360px;/); assert.match(isl, /justify-content: space-between;/); assert.match(isl, /border-radius: 999px;/);
   assert.match(isl, /backdrop-filter: blur\(18px\)/, '표면색 반투명 + 흐림');
   assert.match(v2, /@supports not \(\(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\)\) \{ \.msgr-phone \.msgr-island \{ background: var\(--card\); \} \}/, '흐림을 못 쓰면 불투명');
-  assert.match(v2, /@media \(prefers-reduced-motion: no-preference\) \{\n\s+\.msgr-phone \.msgr-island button \{ transition: background-color/, '전환은 동작 줄이기가 아닐 때만');
+  const motion = v2.slice(v2.indexOf('@keyframes msgrTabPick') - 200, v2.indexOf('@keyframes msgrTabPick') + 400);
+  assert.match(motion, /@media \(prefers-reduced-motion: no-preference\) \{/, '움직임은 동작 줄이기가 아닐 때만');
+  assert.match(motion, /\.msgr-island button\.on \{ animation: msgrTabPick 180ms/, '새로 고른 원만 짧게');
+  assert.doesNotMatch(v2, /msgr-island button[^}]*transition:[^;]*(background|color)/, '선택 색은 전환하지 않는다 — 프레임이 멈추면 선택 표시가 옛 탭에 남았다(10/1 밤 실측)');
   assert.match(rule('.msgr-phone .msgr-tabbar'), /bottom: var\(--ph-bar-gap\);/, '아래 안전 영역 위에 띄운다');
   assert.match(v2, /--ph-bar-gap: max\(10px, env\(safe-area-inset-bottom\)\)/);
 });
