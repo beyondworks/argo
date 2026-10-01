@@ -10,7 +10,7 @@ test('검색: 레일 검색 칸·⌘K·ilike 이스케이프·결과 페이지(�
   assert.match(app, /const scoped = isPersonal \? base\.is\('org_id', null\) : base\.eq\('org_id', org\.id\);/, '검색 범위 — 조직에서는 그 조직, 개인 공간에서는 조직 없는 내 방(가상 org id로 조회하면 늘 빈다)');
   assert.match(app, /scoped\.is\('deleted_at', null\)\.ilike\('body', like\)/, '본문 부분 일치·삭제 글 제외(RLS가 읽을 수 있는 채널만)');
   assert.match(app, /const like = `%\$\{qs\.replace\(\/\[%_\\\\\]\/g/, 'ilike 와일드카드 이스케이프');
-  assert.match(app, /\) : page === 'search' && org \? \(\n\s*<SearchPage res=\{searchRes\}/, '페이지 분기'); assert.match(app, /function SearchPage\(\{ res, channels, crews/, '결과 페이지');
+  assert.match(app, /\) : page === 'search' && org \? \(\n\s*<SearchPage res=\{searchRes\}/, '페이지 분기'); assert.match(app, /function SearchPage\(\{ res, busy = false, channels, crews/, '결과 페이지(busy = 조회 중 "불러오는 중")');
 });
 test('레일은 이동만(검색·채널·1:1·내 에이전트): 멤버·친구 절 없음, 행은 아바타·이름·상태점, 소속별은 소제목; 친구는 설정 탭; 프로필 메뉴는 배경 명시', () => {
   assert.doesNotMatch(app, /t\('rail\.members'\)|msgr-railhint/, '레일에 멤버 절·안내문 없음(유건 지적: 복잡)');
