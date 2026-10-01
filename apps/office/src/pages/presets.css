@@ -1,0 +1,11 @@
+/* 설정 저장본 펼침 목록·창(Presets.jsx) — 모양은 공용 메뉴(.menu)를 그대로 쓰고, 줄 끝 지우기 단추와 저장 시각만 더한다 */
+.preset-menu { width: 300px; max-height: min(420px, calc(100vh - 80px)); overflow: auto; }
+.preset-row { display: flex; align-items: center; gap: 2px; }
+.preset-row .menu-item { flex: 1; min-width: 0; }
+.preset-row .icon-btn { color: var(--fg-3); }
+.preset-row .icon-btn:hover, .preset-row .icon-btn:focus-visible { color: var(--danger); background: var(--card-2); }
+.preset-menu .menu-item:focus-visible { background: var(--card-2); outline: none; }
+.preset-when { flex: none; font-size: 11.5px; color: var(--fg-3); }
+.preset-empty { padding: 4px 8px 8px; }
+.preset-form { display: grid; gap: 10px; }
+.preset-err { color: var(--danger); }

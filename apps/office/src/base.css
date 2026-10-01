@@ -149,7 +149,10 @@ html.nav-collapsed .side { visibility: hidden; }
 .search-btn { display: flex; align-items: center; gap: 8px; height: var(--ctl); padding: 0 10px; border-radius: var(--rs); background: var(--side-hover); color: var(--side-fg-2); text-align: left; }
 .search-btn span { flex: 1; }
 .search-btn kbd { color: var(--side-fg-3); box-shadow: inset 0 0 0 1px var(--side-line); }
-.side-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 4px 8px 8px; overscroll-behavior: contain; } /* 가로 스크롤 금지(9/30) — 긴 이름은 줄임표 */
+.side-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 4px 0 8px 8px; overscroll-behavior: contain; scrollbar-gutter: stable; } /* 가로 스크롤 금지(9/30) — 긴 이름은 줄임표 */
+/* 오른쪽 여백 = 스크롤 막대 자리(8px)를 늘 비워 둔다 — 막대가 생겨도 없어도 메뉴 줄 오른쪽 끝이 같다(유건 10/1 밤 6차). 막대가 겹쳐 뜨는 터치 기기는 여백 8px */
+.side-scroll::-webkit-scrollbar { width: 8px; } .side-scroll::-webkit-scrollbar-thumb { border-width: 2px; }
+@media (hover: none) { .side-scroll { padding-right: 8px; scrollbar-gutter: auto; } }
 .nav-group { display: grid; gap: 1px; }
 .nav-item { display: flex; align-items: center; gap: 9px; height: var(--ctl); padding: 0 9px; border-radius: var(--rs); color: var(--side-fg-2); width: 100%; text-align: left; }
 .nav-item.active { background: var(--side-active); color: var(--side-fg); font-weight: 560; }
@@ -171,7 +174,7 @@ html.nav-collapsed .side { visibility: hidden; }
 .crew-group + .crew-group { margin-top: 6px; }
 .crew-group-head { display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: var(--rc); color: var(--side-fg-3); font-size: 11.5px; text-align: left; min-width: 0; }
 .crew-group-head span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.crew-group-head small { font-family: var(--mono); font-size: 11px; }
+.crew-group-head small { font-family: var(--mono); font-size: 11px; min-width: 26px; margin-right: 2px; text-align: center; } /* 숫자 가운데 = 위 머리 돋보기(.icon-btn.sm 26px, 머리 오른쪽 여백 9px = 7 + 2) 가운데(유건 10/1 밤 6차) */
 .crew-search { margin: 2px 2px 6px; height: 28px; padding: 0 9px; border-radius: var(--rs); border: 0; background: var(--side-hover); color: var(--side-fg); font: inherit; font-size: 12.5px; min-width: 0; }
 .crew-search::placeholder { color: var(--side-fg-3); }
 .crew-row { min-width: 0; touch-action: manipulation; user-select: none; -webkit-touch-callout: none; }
@@ -227,6 +230,9 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 /* 폭 = 열 수(--span, 1~12), 높이 = 줄 높이(--rh, 같은 줄이 같이 쓴다) — 유건 10/1 가장자리 끌기. 정한 높이보다 내용이 길면 본문이 스크롤된다 */
 .module.sized-h { height: var(--rh); }
 .module.sized-h .module-body { flex: 1; min-height: 0; overflow: auto; }
+.module.fixed-h:not(.sized-h) { min-height: 320px; } /* 쌓이는 모듈(등록부 stack)은 정한 높이가 없으면 고정 높이 320px — 본문은 크기를 내지 않고(contain) 안에서 스크롤, 비면 빈 공간(유건 10/1 밤 6차) */
+.module.fixed-h > .module-body { flex: 1; min-height: 0; overflow: auto; contain: size; }
+.module-body::-webkit-scrollbar-track { margin-bottom: var(--rs); } /* 본문 스크롤 막대는 카드 아래 둥근 모서리가 시작하기 전에 끝난다 — 셸마다 둥글기(--rs)가 달라도(유건 10/1 밤 6차) */
 .module.dragging { opacity: 0.35; outline: 1px dashed var(--fg-3); outline-offset: -1px; } /* 옮기는 동안 원래 모듈은 제자리에 흐리게 — 놓일 자리는 윤곽(.grid-slot)으로 */
 /* 자유 격자(유건 10/1 저녁) — 자리(x·y)가 저장된 배치. 모듈마다 시작 열(--x)·폭(--span)·위치(--y, 세로 중력으로 쌓은 결과)에 놓는다.
    높이는 자기 것(--rh) 또는 내용대로 — 같은 줄 높이 공유는 없다. 자리가 없는 옛 배치는 위 CSS 격자 그대로 */
