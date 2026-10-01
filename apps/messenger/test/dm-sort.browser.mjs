@@ -85,7 +85,7 @@ await p.touchscreen.tap(200, 600); await p.waitForTimeout(300); ok('바깥을 �
     ok('한 명 경로도 대화 열림·시트 닫힘', await p2.evaluate(() => history.state?.page === 'chat' && !document.querySelector('.msgr-dmgroup')));
     await p2.evaluate(() => history.back()); await p2.waitForTimeout(500);
     // 크루만 둘 고른 그룹(검수 HIGH-2): 이름은 두 크루를 나열하고 '그룹' 필터에 잡힌다
-    await p2.locator('.msgr-fab').click(); await p2.waitForTimeout(300); const crewRows = p2.locator('.msgr-dmgroup .pickrow', { hasText: '내 크루' }); ok('내 크루 행 2개', (await crewRows.count()) >= 2);
+    await p2.locator('.msgr-fab').click(); await p2.waitForTimeout(300); const crewRows = p2.locator('.msgr-dmgroup .pickrow', { hasText: '내 에이전트' }); ok('내 에이전트 행 2개', (await crewRows.count()) >= 2);
     await crewRows.nth(0).click(); await crewRows.nth(1).click(); await p2.waitForTimeout(100); await p2.locator('.msgr-dmgroup .foot .btn').click(); await p2.waitForTimeout(1200);
     const gTitle = (await p2.locator('.msgr-top .title').innerText()).trim(); ok('크루 둘 그룹의 이름은 두 이름 나열', /Existing/.test(gTitle) && /New/.test(gTitle) && /,/.test(gTitle), gTitle);
     await p2.evaluate(() => history.back()); await p2.waitForTimeout(500); await filt.nth(3).click(); await p2.waitForTimeout(250);
