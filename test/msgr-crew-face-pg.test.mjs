@@ -1,5 +1,6 @@
-// 에이전트 얼굴 모양·색(20260924170000_msgr_crew_face.sql) — 소유자만 바꾼다(기존 msgr_crews_update_owner 재사용),
-// 관리자도 못 바꾼다(admin 정책 with check에 face), 범위 밖 값은 거절. 하네스는 msgr-server-link-pg.test.mjs와 같다
+// 에이전트 얼굴 모양·색(20260924170000_msgr_crew_face.sql + v2 20261001130000_msgr_crew_face_v2.sql) — 소유자만 바꾼다(기존 msgr_crews_update_owner 재사용),
+// 관리자도 못 바꾼다(admin 정책 with check에 face), 범위 밖 값은 거절. v2: 옛 형태 행은 그대로 남고(고쳐 쓰지 않음) 새 저장은 {v:2, shape 0~11, color 0~11}.
+// 하네스는 msgr-server-link-pg.test.mjs와 같다
 // (auth.uid() 스텁 + set role). 실행: `npm run test:pg` 또는 `bash scripts/billing-pg-drill.sh test/msgr-crew-face-pg.test.mjs`
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +20,7 @@ const asUserRaw = (uid, q) => psqlRaw(['-A', '-t', '-c', `set role authenticated
 const denied = (uid, q, re = /row-level security policy|permission denied for/i) => { const r = asUserRaw(uid, q); assert.notEqual(r.status, 0, `허용됨: ${q.slice(0, 80)}`); assert.match(r.stderr, re); };
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';
 
-let ORG, CREW;
+let ORG, CREW, LEGACY, LEGACY_XMIN;
 before(() => {
   if (!DB) return;
   psql(['-c', `
@@ -53,6 +54,10 @@ before(() => {
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'face-org', '${U.owner}') returning id`));
   sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${U.other}', 'member'), ('${ORG}', '${U.admin}', 'admin')`);
   CREW = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.owner}', 'lean-ax-face', 'mine', '내 크루') returning id`));
+  // v2 적용 전에 옛 형태로 저장된 운영 행을 흉내 낸다 — 운영 12행처럼 v2 마이그레이션이 이 행을 고쳐 쓰지도, 제약 검증에서 막히지도 않아야 한다
+  LEGACY = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, face) values ('${ORG}', '${U.owner}', 'lean-ax-face', 'legacy', '옛 얼굴 크루', '{"shape":5,"color":9,"eyes":2}'::jsonb) returning id`));
+  LEGACY_XMIN = sql(`select xmin from public.msgr_crews where id = '${LEGACY}'`);
+  psql(['-f', mig('20261001130000_msgr_crew_face_v2.sql')]);
 });
 
 test('소유자만 얼굴을 바꾼다 — 다른 멤버는 0행(RLS의 using이 UPDATE 대상에서 걸러 오류 없이 조용히 막는다), 소유자는 됨', { skip }, () => {
@@ -82,4 +87,57 @@ test('관리자도 남의 크루 얼굴은 못 바꾼다 — "소유자만"(검�
   asUser(U.owner, `update public.msgr_crews set face = null where id = '${CREW}'`);
   assert.equal(last(asUser(U.admin, `update public.msgr_crews set status = 'detached' where id = '${CREW}' returning status`)), 'detached', 'face null 크루의 detach'); // = 비교였다면 null = null이 NULL이 되어 여기서 막힌다
   asUser(U.owner, `update public.msgr_crews set status = 'active' where id = '${CREW}'`);
+});
+
+test('v2 마이그레이션은 옛 형태 운영 행을 고쳐 쓰지 않는다 — 값·행 버전(xmin) 그대로, 제약 검증 통과', { skip }, () => {
+  assert.equal(sql(`select face = '{"shape":5,"color":9,"eyes":2}'::jsonb from public.msgr_crews where id = '${LEGACY}'`), 't', '옛 값 그대로');
+  assert.equal(sql(`select xmin from public.msgr_crews where id = '${LEGACY}'`), LEGACY_XMIN, '행을 다시 쓰지 않았다(xmin 불변)');
+  assert.equal(sql(`select convalidated from pg_constraint where conname = 'msgr_crews_face_shape'`), 't', '제약은 기존 행까지 검증된 상태(NOT VALID 아님)');
+});
+
+test('v2 형태 허용 — {v:2, shape 0~11, color 0~11}, 옛 형태도 계속 저장된다(옛 앱 호환)', { skip }, () => {
+  const ok = (payload) => { asUser(U.owner, `update public.msgr_crews set face = '${payload}'::jsonb where id = '${CREW}'`); assert.equal(sql(`select face = '${payload}'::jsonb from public.msgr_crews where id = '${CREW}'`), 't', payload); };
+  ok('{"v":2,"shape":0,"color":0}');
+  ok('{"v":2,"shape":11,"color":11}');
+  ok('{"v":2,"shape":7,"color":10}');
+  ok('{"shape":5,"color":9,"eyes":2}'); // 옛 앱이 저장해도 된다 — 새 앱은 대응표로 그린다
+  ok('{"shape":0,"color":0,"eyes":0}');
+  asUser(U.owner, `update public.msgr_crews set face = null where id = '${CREW}'`);
+});
+
+test('v2 형태 거절 — 범위 밖·버전 틀림·숫자 아님·정수 아님·잉여 키·키 누락, 두 형태 섞기', { skip }, () => {
+  const bad = (payload, label) => { const r = asUserRaw(U.owner, `update public.msgr_crews set face = '${payload}'::jsonb where id = '${CREW}'`); assert.notEqual(r.status, 0, `허용됨: ${label}`); assert.match(r.stderr, /msgr_crews_face_shape/, `제약 위반으로 거절(형변환 오류 아님): ${label} — ${r.stderr.trim()}`); };
+  bad('{"v":2,"shape":12,"color":0}', 'shape 12');
+  bad('{"v":2,"shape":0,"color":12}', 'color 12');
+  bad('{"v":2,"shape":-1,"color":0}', 'shape 음수');
+  bad('{"v":2,"shape":0,"color":-1}', 'color 음수');
+  bad('{"v":1,"shape":0,"color":0}', 'v 1');
+  bad('{"v":3,"shape":0,"color":0}', 'v 3');
+  bad('{"v":"2","shape":0,"color":0}', 'v 문자열');
+  bad('{"v":2,"shape":"1","color":0}', 'shape 문자열');
+  bad('{"v":2,"shape":1.5,"color":0}', 'shape 소수');
+  bad('{"v":2,"shape":1.0,"color":0}', 'shape 1.0(정수 글자 아님)');
+  bad('{"v":2,"shape":1e20,"color":0}', 'shape 아주 큰 수');
+  bad('{"v":2,"shape":0}', 'color 누락');
+  bad('{"v":2,"color":0}', 'shape 누락');
+  bad('{"shape":0,"color":0}', 'v도 eyes도 없음');
+  bad('{"v":2,"shape":1,"color":1,"eyes":0}', 'v2에 eyes(잉여 키)');
+  bad('{"v":2,"shape":1,"color":1,"spot":3}', 'v2 잉여 키');
+  bad('{"shape":1,"color":1,"eyes":1,"extra":true}', '옛 형태 잉여 키');
+  bad('{"shape":1.5,"color":1,"eyes":1}', '옛 형태 소수');
+  bad('{"shape":6,"color":1,"eyes":1}', '옛 형태 shape 6(v2 범위 안이어도 v 없으면 옛 범위)');
+  bad('[1,2,3]', '배열');
+  bad('"face"', '문자열'); // 스칼라 — face - 'shape'가 'cannot delete from scalar'로 터지지 않고 제약으로 거절(CASE 가드)
+  bad('5', '숫자 스칼라');
+  bad('true', '불리언 스칼라');
+  bad('null', 'JSON null(SQL NULL과 다름)');
+  assert.equal(sql(`select face is null from public.msgr_crews where id = '${CREW}'`), 't', '거절된 갱신은 남지 않는다');
+});
+
+test('관리자는 v2 얼굴도 못 바꾼다 — 보호 정책은 형태와 무관', { skip }, () => {
+  asUser(U.owner, `update public.msgr_crews set face = '{"v":2,"shape":3,"color":4}'::jsonb where id = '${CREW}'`);
+  denied(U.admin, `update public.msgr_crews set face = '{"v":2,"shape":9,"color":9}'::jsonb where id = '${CREW}'`);
+  assert.equal(last(asUserRaw(U.other, `update public.msgr_crews set face = '{"v":2,"shape":9,"color":9}'::jsonb where id = '${CREW}' returning id`).stdout), '', '다른 멤버는 0행');
+  assert.equal(sql(`select face = '{"v":2,"shape":3,"color":4}'::jsonb from public.msgr_crews where id = '${CREW}'`), 't');
+  asUser(U.owner, `update public.msgr_crews set face = null where id = '${CREW}'`);
 });
