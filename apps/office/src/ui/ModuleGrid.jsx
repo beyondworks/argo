@@ -5,73 +5,35 @@ import { Icon } from './Icon.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link } from '../core/router.jsx';
 import { t } from '../core/i18n.js';
-import { SPAN, linkedResize, rowsOf } from '../core/layout.js';
+import { spanOf, spanRange, heightOf, rowHeights } from '../core/layout.js';
 import { moduleDrag, sideOf } from '../core/module-drag.js';
-import { flipGrid, flipPrepare } from '../core/motion.js';
+import { flipPrepare } from '../core/motion.js';
 
-const nearest = (sizes, span) => sizes.reduce((b, s) => (Math.abs(SPAN[s] - span) < Math.abs(SPAN[b] - span) ? s : b), sizes[0]);
 const gridStrategy = () => null;
+// 가장자리 끌기(유건 10/1) — 손잡이는 늘 그리고, 끄는 코드는 처음 다가갈 때 불러온다(첫 화면 150KB 상한)
+const EDGES = ['l', 'r', 't', 'b'];
+let resizer;
+const loadResizer = () => (resizer ??= import('./module-resize.js'));
 
-function ModuleCard({ item, space, items, partner, canResize, canEdit, scope, commit, resolveModule, bodyClassName }) {
+function ModuleCard({ item, space, items, rh, canEdit, editable, scope, commit, resolveModule, bodyClassName }) {
   const mod = resolveModule(item);
-  const pmod = partner && resolveModule(partner);
   const keyboardTarget = useRef(null);
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useSortable({ id: JSON.stringify([scope, item.id]), disabled: !canEdit, data: { kind: 'module', id: item.id, group: scope, label: mod.title, keyboardTarget } });
-  const card = useRef(null), cleanup = useRef(null);
-  useEffect(() => () => cleanup.current?.(), []);
-  useLayoutEffect(() => { if (card.current) card.current.style.gridColumn = ''; }, [item.size]);
-  const save = (sizes) => commit(items.map((x) => (sizes[x.id] ? { ...x, size: sizes[x.id] } : x)));
+  const card = useRef(null);
   const set = (patch) => commit(items.map((x) => (x.id === item.id ? { ...x, ...patch } : x)));
+  // 끄기·키보드·두 번 누르기는 module-resize.js가 맡는다 — 지금 자리(DOM)와 항목을 넘긴다
+  const edge = (kind, e, side) => loadResizer().then((m) => card.current && m[kind]({ el: card.current, items, modOf: resolveModule, commit }, e, side));
   const own = useRef(null); // 카드 본문이 더하는 메뉴(예: 여러 보기의 보기 고르기)
   const menu = () => !canEdit ? [...(own.current?.() ?? []), { heading: t('home.readOnly') }] : [
     ...(own.current?.() ?? []),
     ...(mod.actions?.length ? [...mod.actions, { sep: true }] : []),
-    { heading: t('mod.size') },
-    ...mod.sizes.map((s) => ({ label: t(`mod.size.${s}`), checked: item.size === s, run: () => set({ size: s }) })),
-    { sep: true },
+    ...('span' in item || 'h' in item ? [{ label: t('mod.size.reset'), icon: 'resize', run: () => edge('resetAll') }] : []),
     { label: t('mod.hide'), icon: 'x', run: () => set({ hidden: true }) },
   ];
-  const nextSizes = (target) => (partner ? linkedResize(item.size, partner.size, target, mod.sizes, pmod.sizes) : [nearest(mod.sizes, target), null]);
-  const onResize = (e) => {
-    if (!canEdit) return;
-    e.preventDefault(); e.stopPropagation();
-    const el = card.current, grid = el.parentElement, gr = grid.getBoundingClientRect(), cr = el.getBoundingClientRect();
-    const gap = parseFloat(getComputedStyle(grid).columnGap) || 0;
-    const colW = (gr.width + gap) / 12;
-    const partnerEl = partner && [...grid.children].find((node) => node.dataset.mod === partner.id);
-    el.classList.add('resizing'); document.body.classList.add('col-resizing');
-    e.currentTarget.setPointerCapture(e.pointerId);
-    let cur = [item.size, partner?.size ?? null];
-    const move = (ev) => {
-      const next = nextSizes(Math.max(0.5, (ev.clientX - cr.left + gap / 2) / colW));
-      if (next[0] === cur[0] && next[1] === cur[1]) return;
-      cur = next;
-      flipGrid(grid, () => { el.style.gridColumn = `span ${SPAN[next[0]]}`; if (partnerEl) partnerEl.style.gridColumn = `span ${SPAN[next[1]]}`; });
-    };
-    const clean = () => {
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
-      el.classList.remove('resizing'); document.body.classList.remove('col-resizing');
-      el.style.gridColumn = ''; if (partnerEl) partnerEl.style.gridColumn = '';
-      cleanup.current = null;
-    };
-    const up = (event) => {
-      clean();
-      if (event.type !== 'pointercancel' && (cur[0] !== item.size || (partner && cur[1] !== partner.size))) save({ [item.id]: cur[0], ...(partner ? { [partner.id]: cur[1] } : {}) });
-    };
-    cleanup.current = clean;
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
-  };
-  const onResizeKey = (e) => {
-    if (!canEdit) return;
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    e.preventDefault();
-    const next = nextSizes(SPAN[item.size] + (e.key === 'ArrowRight' ? 2 : -2));
-    if (next[0] !== item.size) save({ [item.id]: next[0], ...(partner ? { [partner.id]: next[1] } : {}) });
-  };
-  const Body = mod.render;
+  const Body = mod.render, span = spanOf(item), [lo, hi] = spanRange(mod.sizes);
   return (
-    <section ref={(el) => { setNodeRef(el); card.current = el; }} data-mod={item.id} className={`module size-${item.size}${isDragging ? ' dragging' : ''}`}
-      aria-label={mod.title} {...menuProps(menu)}>
+    <section ref={(el) => { setNodeRef(el); card.current = el; }} data-mod={item.id} className={`module size-${item.size}${rh ? ' sized-h' : ''}${isDragging ? ' dragging' : ''}`}
+      style={{ '--span': span, ...(rh ? { '--rh': `${rh}px`, '--mh': heightOf(item) ? `${item.h}px` : 'auto' } : {}) }} aria-label={mod.title} {...menuProps(menu)}>
       <header className="module-head">
         {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}
         <h3>{mod.link ? <Link to={mod.link} className="module-title">{mod.title}</Link> : mod.title}</h3>{/* 제목을 누르면 그 화면으로(유건 9/30 — '모두 보기' 대신) */}
@@ -79,7 +41,18 @@ function ModuleCard({ item, space, items, partner, canResize, canEdit, scope, co
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
       </header>
       <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
-      {canEdit && canResize && <span className="col-handle" role="separator" aria-orientation="vertical" aria-label={t('mod.resize')} tabIndex={0} onPointerDown={onResize} onKeyDown={onResizeKey} />}
+      {editable && EDGES.map((side) => { // 저장 중에도 그대로 둔다 — 키보드 초점이 손잡이에 남는다
+        const x = side === 'l' || side === 'r'; // 좌우 = 폭, 위아래 = 높이
+        return <span key={side} className={`edge edge-${side} edge-${x ? 'x' : 'y'}`} role="separator" aria-orientation={x ? 'vertical' : 'horizontal'} aria-label={t(x ? 'mod.resize.w' : 'mod.resize.h')}
+          aria-valuenow={x ? span : rh || undefined} aria-valuemin={x ? lo : 120} aria-valuemax={x ? hi : 1200} tabIndex={side === 'r' || side === 'b' ? 0 : -1}
+          onPointerEnter={loadResizer} onDoubleClick={() => edge('reset', null, side)}
+          onKeyDown={(e) => { if (!e.key.startsWith('Arrow')) return; e.preventDefault(); e.stopPropagation(); edge('key', { key: e.key }, side); }}
+          onPointerDown={(e) => { // 길게 누르기 메뉴·끌어 옮기기·글 선택이 같이 시작되지 않게
+            e.stopPropagation(); if (e.button) return; e.preventDefault();
+            const target = e.currentTarget; target.setPointerCapture(e.pointerId);
+            edge('drag', { x: e.clientX, y: e.clientY, id: e.pointerId, target }, side);
+          }} />;
+      })}
     </section>
   );
 }
@@ -143,8 +116,8 @@ export function ModuleGrid({ id, items, canEdit, onChange, resolveModule, space,
     if (!under) return null;
     const over = { kind: 'module', group: id, id: under.dataset.mod };
     const el = [...(grid.current?.children ?? [])].find((node) => node.dataset.mod === over.id);
-    const size = drag.current?.items.find((item) => item.id === over.id)?.size;
-    return el ? { ...over, side: sideOf(el.getBoundingClientRect(), point, size), point } : over;
+    const target = drag.current?.items.find((item) => item.id === over.id);
+    return el ? { ...over, side: sideOf(el.getBoundingClientRect(), point, target && spanOf(target) > 11 ? 'full' : 'm'), point } : over;
   };
   const dragEvent = (type, event, over = event.over?.data.current) => {
     if (event.active.data.current?.group !== id) return;
@@ -181,9 +154,9 @@ export function ModuleGrid({ id, items, canEdit, onChange, resolveModule, space,
     onDragEnd: (event) => dragEvent('end', event),
   });
   const visible = displayed.filter((item) => !item.hidden);
-  const links = new Map(rowsOf(visible).flatMap((row) => row.map((item, index) => [item.id, { partner: row[index + 1] ?? null, canResize: row.length === 1 || index < row.length - 1 }])));
+  const rows = rowHeights(visible);
   return <SortableContext items={visible.map((item) => JSON.stringify([id, item.id]))} strategy={gridStrategy}>
-    <div className="grid" ref={grid} aria-busy={pending}>{visible.map((item) => <ModuleCard key={item.id} item={item} space={space} items={displayed} scope={id} commit={commit} canEdit={canEdit && !pending} resolveModule={resolveModule} bodyClassName={bodyClassName} {...links.get(item.id)} />)}</div>
+    <div className="grid" ref={grid} aria-busy={pending}>{visible.map((item) => <ModuleCard key={item.id} item={item} space={space} items={displayed} scope={id} commit={commit} canEdit={canEdit && !pending} editable={canEdit} resolveModule={resolveModule} bodyClassName={bodyClassName} rh={rows.get(item.id)} />)}</div>
   </SortableContext>;
 }
 
