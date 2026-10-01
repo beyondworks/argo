@@ -6,7 +6,7 @@ import { createComposerDelivery, setDeliveryReporter } from '../src/composer-del
 import { fetchSearchRows } from '../src/search-rows.mjs';
 import { searchView } from '../src/search-view.mjs';
 import { deliveryCardView } from '../src/delivery-card.mjs';
-import { fetchSelfName } from '../src/self-member.mjs';
+import { resolvePeopleNames } from '../src/person-names.mjs';
 import { watchOnline } from '../src/connection.mjs';
 import { crewOpeners, creatorTagVisible } from '../src/crew-row-menu.mjs';
 import { t } from '../src/i18n.js';
@@ -75,13 +75,13 @@ test('deliveryCardView: 카드 제목과 오류 줄 — 보내는 중 / 연결 �
   assert.deepEqual([other.titleKey, other.errorLine], ['msg.delivery.failed', { key: null, raw: 'new row violates row-level security policy', files: [] }]);
 });
 
-test('fetchSelfName: 내 이름은 msgr_people_names([나]) 한 번 — 못 읽으면 빈 문자열(호출한 쪽이 다른 근거로 물러난다)', async () => {
+test('개인 공간 내 이름: 사람 이름 한 길(resolvePeopleNames, 조직 없음) — msgr_people_names를 한 번에 묻고, 나만 묻는 호출을 따로 두지 않는다', async () => {
   const calls = [];
-  const rpc = async (fn, args) => { calls.push([fn, args]); return [{ user_id: 'other', name: '남' }, { user_id: 'me', name: ' 유건 ' }]; };
-  assert.equal(await fetchSelfName(rpc, 'me'), '유건');
-  assert.deepEqual(calls, [['msgr_people_names', { ids: ['me'] }]]);
-  assert.equal(await fetchSelfName(async () => { throw new Error('Could not find the function'); }, 'me'), '');
-  assert.equal(await fetchSelfName(async () => [], 'me'), '');
+  const sb = { rpc: async (fn, args) => { calls.push([fn, args]); return { data: [{ user_id: 'me', name: '유건' }, { user_id: 'f1', name: '하나' }], error: null }; } };
+  assert.deepEqual(await resolvePeopleNames(sb, { orgId: null, ids: ['me', 'f1', 'me'] }), { me: '유건', f1: '하나' });
+  assert.deepEqual(calls, [['msgr_people_names', { ids: ['me', 'f1'] }]], '같은 id는 한 번, 다른 id와 한 번에');
+  const old = { rpc: async () => ({ error: { message: 'Could not find the function' } }), from: () => ({ select: () => ({ in: async () => ({ data: [{ user_id: 'me', display_name: '유건' }] }) }) }) };
+  assert.deepEqual(await resolvePeopleNames(old, { orgId: null, ids: ['me'] }), { me: '유건' }, '옛 서버는 프로필 이름으로');
 });
 
 test('watchOnline: 앱이 다시 보일 때(visibilitychange) 연결 상태를 다시 읽는다 — 백그라운드 중 놓친 online/offline 이벤트', () => {
@@ -101,6 +101,34 @@ test('crewOpeners·creatorTagVisible: 개인 공간 규칙', () => {
   assert.equal(creatorTagVisible({ isCreator: true, isPersonal: true, isGroup: true }), true);
   assert.equal(creatorTagVisible({ isCreator: true, isPersonal: false, isGroup: false }), true);
   assert.equal(creatorTagVisible({ isCreator: false, isPersonal: false, isGroup: false }), false);
+});
+
+test('#795 첨부 순서(글 먼저·전부 실패하면 삭제)와 #793 카드(원인별 문구·파일 이름)가 함께 동작한다', async () => {
+  const reported = []; setDeliveryReporter((...a) => reported.push(a));
+  try {
+    const discarded = [];
+    const mk = (over) => transport({ discard: async (job) => { discarded.push(job.messageId); }, ...over });
+    // 첨부만 보낸 글이 전부 네트워크 오류로 실패 → 글은 지워지고(messageId null, 새 고정 ID), 카드는 '연결이 끊겨 보내지 못했습니다'(제목만, 줄 없음)
+    const off = createComposerDelivery(mk({ upload: async () => { throw new TypeError('Failed to fetch'); } }), (() => { let n = 0; return () => `id${n++}`; })());
+    off.setFiles([file('a.txt'), file('b.txt')]); assert.equal(await off.send([]), false);
+    let job = off.snapshot().job;
+    assert.deepEqual(discarded, [7], '빈 글을 지웠다');
+    assert.equal(job.messageId, null); assert.equal(job.errorKey, 'msg.delivery.offline');
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.offline', errorLine: null });
+    assert.equal(reported.length, 1);
+    // 글을 지우지 못하면 글은 남고 → 카드는 '일부 첨부 실패' + 이유 + 실패한 파일 이름
+    const keep = createComposerDelivery(mk({ discard: async () => { throw new Error('no'); }, upload: async () => { throw new TypeError('Load failed'); } }));
+    keep.setFiles([file('a.txt')]); await keep.send([]);
+    job = keep.snapshot().job;
+    assert.equal(job.messageId, 7);
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.attachFailed', errorLine: { key: 'msg.delivery.offline', raw: null, files: ['a.txt'] } });
+    // 네트워크가 아닌 실패(서버 거절)는 원문 줄 + 지운 글이므로 '전송 실패' 제목
+    const srv = createComposerDelivery(mk({ upload: async () => { throw new Error('new row violates row-level security policy'); } }));
+    srv.setFiles([file('c.txt')]); await srv.send([]);
+    job = srv.snapshot().job;
+    assert.deepEqual([job.messageId, job.errorKey], [null, '']);
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.failed', errorLine: { key: null, raw: 'c.txt: new row violates row-level security policy', files: [] } });
+  } finally { setDeliveryReporter(null); }
 });
 
 // 화면 배선 — 순수 함수를 App이 실제로 부르고 그 결과를 화면에 쓰는지(소스 확인은 보조일 뿐, 규칙 자체의 행동은 위 테스트가 잠근다).
@@ -130,10 +158,13 @@ test('App 배선 — 개인 공간: 에이전트 카드 열기·방장 표식·�
   has(/isCrew && crew && onCrew \? <button type="button" className="msgr-namebtn" onClick=\{\(\) => onCrew\(crew\.id\)\}>/, 'onCrew가 없으면 이름 버튼을 그리지 않는다');
   has(/const isCreator = creatorTagVisible\(\{ isCreator: channel\.created_by === m\.user_id, isPersonal, isGroup: !!channel\._personal_group \}\);/, '방장 표식 규칙');
   has(/\{\(isChAdmin \|\| isCreator\) && <span className="msgr-tag">\{isCreator \? t\('ch\.admin\.creator'\) : t\('ch\.admin'\)\}<\/span>\}/, '표식은 isCreator로 그린다');
-  has(/const loadSelfName = useCallback\(async \(\) => \{ if \(uid\) setSelfName\(await fetchSelfName\(\(fn, args\) => q\(supabase\.rpc\(fn, args\)\), uid\)\); \}, \[uid\]\);/, '내 이름 조회');
-  has(/useEffect\(\(\) => \{ if \(isPersonal\) loadSelfName\(\); \}, \[isPersonal, loadSelfName\]\);/, '개인 공간에 들어갈 때 한 번(주기 호출 아님)');
-  has(/personalName: selfName \|\| personalSelfName\(otherNames, uid\)/, '조회한 이름이 우선, 방 목록 이름이 대체');
-  has(/<Settings session=\{session\} me=\{me\} uid=\{uid\} onAvatar=\{loadAvatars\} onProfileSaved=\{loadSelfName\}/, '프로필 저장 뒤 다시 읽기 연결');
+  has(/const askName = \(id, force = false\) => \{/, '이름은 한 묶음 조회 길(askName → flushNames)로만 묻는다');
+  has(/useEffect\(\(\) => \{ if \(isPersonal && uid\) askName\(uid\); \}, \[orgId, isPersonal, uid\]\);/, '개인 공간에 들어갈 때 내 id를 같은 묶음에 얹는다(주기 호출 아님)');
+  assert.ok(app.indexOf('askName(uid); }, [orgId, isPersonal, uid]') > app.indexOf('nameAsked.current = new Set(); nameWanted.current = new Set(); setResolvedNames({});'), '조직 전환 비우기 효과 뒤에 선언해야 비운 뒤 다시 묻는다');
+  has(/personalName: resolvedNames\[uid\] \|\| personalSelfName\(otherNames, uid\)/, '조회한 이름이 우선, 방 목록 이름이 대체');
+  assert.doesNotMatch(app, /fetchSelfName|loadSelfName/, '내 이름만 따로 묻는 길은 없다(같은 RPC 두 번 방지)');
+  has(/onProfileSaved=\{\(\) => askName\(uid, true\)\}/, '프로필 저장 뒤 지우고 다시 묻는다');
+  has(/<Settings session=\{session\} me=\{me\} uid=\{uid\} onAvatar=\{loadAvatars\} onProfileSaved=/, '프로필 저장 뒤 다시 읽기 연결');
   has(/<ProfileCard uid=\{uid\} onNote=\{onNote\} onError=\{onError\} onAvatar=\{onAvatar\} onSaved=\{onProfileSaved\} \/>/, 'ProfileCard에 전달');
   has(/setP\(res\.data\); onNote\(t\('profile\.saved'\)\); onSaved\?\.\(\);/, '저장 성공 뒤 호출');
 });

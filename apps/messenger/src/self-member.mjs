@@ -9,9 +9,3 @@ export function selfMember({ members, uid, isPersonal, personalName = '', email 
   if (found || !isPersonal) return found;
   return { user_id: uid, role: null, display_name: pick(personalName) || emailLocal(email) };
 }
-
-// 개인 공간 내 이름 — 서버 이름 규칙(msgr_people_names, 자기 자신 허용) 한 번 읽기. 개인 방이 없어도·프로필을 방금 바꿔도 맞다(방 목록의 이름은 최대 30초 늦다, #793 검수 LOW-2).
-// rpc = (함수 이름, 인자) => 행 배열. 못 읽으면(옛 서버·오류) 빈 문자열 — 호출한 쪽이 방 목록 이름·이메일 앞부분으로 물러난다.
-export async function fetchSelfName(rpc, uid) {
-  try { return pick((await rpc('msgr_people_names', { ids: [uid] })).find((r) => r.user_id === uid)?.name); } catch { return ''; }
-}

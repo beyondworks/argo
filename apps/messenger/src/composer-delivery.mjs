@@ -73,9 +73,17 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
       }
       const failed = job.files.filter((item) => !item.done);
       if (failed.length) {
-        const error = failed.map((item) => `${item.file.name}: ${item.error}`).join('\n');
-        if (failed.some((item) => isNetworkFailure(item.error))) reporter?.('send', error);
-        patch({ job: { ...job, error, errorKey: failed.every((item) => isNetworkFailure(item.error)) ? OFFLINE_KEY : '' } }); // 일부만 네트워크 오류면 원문 줄을 그대로 — 다른 원인을 연결 탓으로 덮지 않는다
+        // 첨부만 보낸 글(본문 없음)인데 파일이 하나도 올라가지 못했다 — 글자 없는 빈 말풍선이 모두에게 남지 않게 그 글을 지운다(점검 A·B #4).
+        // 글 번호가 있어야 저장 경로를 만들 수 있어(서버 함수 msgr_bot_file·msgr_can_read_dm_attachment가 경로 3번째 칸 = 글 번호를 본다)
+        // 글을 먼저 올리고 업로드하는 순서는 그대로 두고, 전부 실패했을 때만 지운다. 지우면 재시도는 새 글(새 고정 ID)로 처음부터 올린다.
+        // 일부라도 올라갔으면 글은 남는다(첨부가 보이므로 빈 말풍선이 아니다) — 재시도가 나머지를 붙인다.
+        if (!disposed && !job.body && transport.discard && job.files.every((item) => !item.uploaded)) {
+          try { await transport.discard(job); job.messageId = null; job.clientId = uuid(); } catch { /* 지우지 못하면 글을 그대로 둔다 — 재시도가 이어서 올린다 */ }
+        }
+        const errors = failed.filter((item) => item.error); // 오류가 기록된 파일만(시도하지 않은 파일은 이유가 없다)
+        const error = errors.map((item) => `${item.file.name}: ${item.error}`).join('\n');
+        if (errors.some((item) => isNetworkFailure(item.error))) reporter?.('send', error);
+        patch({ job: { ...job, error, errorKey: errors.length && errors.every((item) => isNetworkFailure(item.error)) ? OFFLINE_KEY : '' } }); // 일부만 네트워크 오류면 원문 줄을 그대로 — 다른 원인을 연결 탓으로 덮지 않는다(#793). 전부 실패해 글을 지웠으면 messageId=null이라 카드는 '전송 실패' 제목
         return false;
       }
       patch({ job: null, lastDeliveredId: job.messageId });
@@ -111,8 +119,8 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
 
 // Stable IDs cover ambiguous network failures: a committed message/attachment is looked up, never
 // posted again with a fresh ID. Storage paths also stay fixed when only metadata needs a retry.
-export function composerTransport(client, { orgId, chId, uid }) {
-  const pathFor = (job, item) => `${orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`;
+export function composerTransport(client, { orgId, chId, uid, onDiscard = null }) {
+  const pathFor = (job, item) => `${orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`; // 3번째 칸 = 글 번호 — 서버 msgr_bot_file(봇 첨부)·msgr_can_read_dm_attachment(위임 1:1 첨부 읽기)가 이 칸을 본다
   return {
     async message(job) {
       const insert = () => client.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid,
@@ -146,6 +154,18 @@ export function composerTransport(client, { orgId, chId, uid }) {
       const found = await bucket.list(path.slice(0, slash), { search: name });
       if (!found.error && found.data?.some((entry) => entry.name === name)) return;
       throw new Error(result.error.message);
+    },
+    // 첨부만 보낸 글이 전부 실패했을 때 그 빈 글을 지운다 — 직접 지우기 정책은 없고(DELETE 정책 없음) 작성자의 삭제 표시(deleted_at)만 허용된다. 앱의 삭제와 같은 갱신
+    async discard(job) {
+      const result = await client.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', job.messageId).eq('author_user_id', uid).select('id');
+      let failure = result.error ? new Error(result.error.message) : !result.data?.length ? new Error('discard: no row') : null; // RLS가 0행으로 거절한 경우도 실패
+      if (failure) {
+        // 응답이 유실됐을 수 있다(서버엔 적용, 앱은 실패로 봄) — 그대로 실패로 두면 재시도가 지운 글에 첨부를 붙여 파일이 안 보인다. 한 번 다시 읽어 이미 지워졌으면 성공으로 본다
+        const again = await Promise.resolve().then(() => client.from('msgr_messages').select('deleted_at').eq('id', job.messageId).maybeSingle()).catch(() => ({ data: null }));
+        if (!again?.data?.deleted_at) throw failure;
+        failure = null;
+      }
+      try { onDiscard?.(job.messageId); } catch { /* 방송은 최선 — 이미 받은 사람의 화면은 다음 보정 조회에서도 바로잡힌다 */ } // 이미 이 글을 받은 다른 사람의 화면이 빈 말풍선을 바로 지우도록(앱의 삭제와 같은 'edit' 방송)
     },
     async attachment(job, item) {
       const result = await client.from('msgr_attachments').insert({ id: item.id, message_id: job.messageId,

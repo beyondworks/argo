@@ -22,5 +22,5 @@ test('마지막 채널 — 지금 조직의 채널일 때만 적고, 불러올 �
 
 test('마지막 공간(조직·개인)도 기억해 앱을 다시 켜면 거기서 연다 — 지금 공간이 없을 때만, 목록에 남아 있을 때만', () => {
   assert.match(src, /useEffect\(\(\) => \{ if \(orgId\) writeLastOrg\(orgId\); \}, \[orgId\]\);/);
-  assert.match(src, /const last = readLastOrg\(\); return last === PERSONAL \|\| list\.some\(\(o\) => o\.id === last\) \? last : \(list\[0\]\?\.id \?\? null\);/);
+  assert.match(src, /setOrgId\(\(cur\) => pickStartSpace\(\{ personal: PERSONAL, cur, orgIds, last: readLastOrg\(\), personalHasContent \}\)\);/, '규칙 자체(지금 공간 → 마지막 공간 → 첫 조직)는 pickStartSpace — test/start-space.test.mjs가 행동으로 잠근다');
 });

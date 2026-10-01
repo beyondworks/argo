@@ -79,9 +79,9 @@ export function Icon({ name, size = 16, strokeWidth = 1.8, ...rest }) {
 }
 
 /** 브랜드 별 마크 — 채워진 4포인트 스타. */
-export function StarMark({ size = 16 }) {
+export function StarMark({ size = 16, ...rest }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...rest}>
       <path d="M12 2.5 L14.3 9.7 L21.5 12 L14.3 14.3 L12 21.5 L9.7 14.3 L2.5 12 L9.7 9.7 Z" fill="currentColor" />
     </svg>
   );
@@ -90,7 +90,8 @@ export function StarMark({ size = 16 }) {
 export function Logo({ size = 14 }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--fg)' }}>
-      <StarMark size={size + 1} />
+      {/* data-splash-target — 데스크톱 시작 스플래시가 끝날 때 로고의 별이 이 별 자리로 날아가 앉는다(app/splash-continue.jsx) */}
+      <StarMark size={size + 1} data-splash-target="" />
       <span className="mono" style={{ fontWeight: 600, fontSize: size, letterSpacing: '0.16em' }}>ARGO</span>
     </span>
   );
