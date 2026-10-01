@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { classifyCommand, stripDataText, shellCandidates, shellSpawn, normalizeMsysPaths, resolveShell, resetShellCache, isShellFallback, planShellRun, FALLBACK_RECHECK_MS, BUSYBOX_FILE } from '../src/engine/shell-backend.mjs';
 
 test('라우터 — bash 문법은 sh, cmd 고유 문법은 cmd, 동사-명사는 powershell (2026-09-06 윈도우 시뮬 59건 기준)', () => {
@@ -43,9 +43,9 @@ test('사다리 — ARGO_SHELL → 동봉(cwd·실행 파일 bin/) → Git Bash 
 test('앱에 든 argo(argo.cmd)는 사용자 터미널 폴더에서 server\\bin\\argo.mjs로 실행된다 — 동봉 busybox가 실행 파일과 같은 폴더(검토 H1)', () => {
   // 사이드카는 cwd=server 폴더·argv1=server.js라 <cwd>/bin/busybox를 찾지만, CLI는 cwd가 터미널 폴더이고 argv1이 server/bin/argo.mjs라 두 후보가 모두 빗나갔다
   const c = shellCandidates({ env: {}, cwd: '/home/u/work', argv1: '/opt/argo/server/bin/argo.mjs' });
-  assert.ok(c.some((x) => x.kind === 'busybox' && x.file === join('/opt/argo/server/bin', BUSYBOX_FILE)), `CLI 배치 후보 없음: ${c.map((x) => x.file).join(' | ')}`);
+  assert.ok(c.some((x) => x.kind === 'busybox' && x.file === resolve('/opt/argo/server/bin', BUSYBOX_FILE)), `CLI 배치 후보 없음: ${c.map((x) => x.file).join(' | ')}`); // resolve — 윈도우는 드라이브 문자가 붙는다(CI 실측)
   const sidecar = shellCandidates({ env: {}, cwd: '/opt/argo/server', argv1: '/opt/argo/server/server.js' });
-  assert.ok(sidecar.some((x) => x.kind === 'busybox' && x.file === join('/opt/argo/server/bin', BUSYBOX_FILE)), '사이드카 배치는 종전대로');
+  assert.ok(sidecar.some((x) => x.kind === 'busybox' && x.file === resolve('/opt/argo/server/bin', BUSYBOX_FILE)), '사이드카 배치는 종전대로');
 });
 
 test('MSYS 경로 정규화 — /c/Users/x → C:/Users/x, URL·상대 경로는 그대로', () => {
