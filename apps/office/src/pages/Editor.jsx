@@ -22,6 +22,7 @@ import { PageModuleNode } from '../ui/PageModuleNode.jsx';
 import { getStorageScope } from '../core/save.js';
 import { RedactMark, BlockPick, pickKey, pickRange, blockRects, redactStatus, setRedact, menuRange, unpick } from './block-pick.js';
 import { EDITOR_DICT } from './editor-i18n.js';
+import { BlockHover, HANDLE_POSITION, measureAnchor, setHover } from './block-handle.js';
 
 registerDict(EDITOR_DICT);
 // 여백에서 끌기를 시작하지 않는 자리 — 누를 수 있는 것, 창, 블록 손잡이
@@ -81,16 +82,16 @@ const PrivateBlock = Node.create({
 
 // 검색은 영문 별칭(words) + 현재 언어의 블록 이름(t) 둘 다로 맞춘다.
 const BLOCKS = [
-  { id: 'text', key: 'block.text', words: 'text p', run: (c) => c.setParagraph() },
-  { id: 'h1', key: 'block.h1', words: 'h1 heading', run: (c) => c.setHeading({ level: 1 }) },
-  { id: 'h2', key: 'block.h2', words: 'h2 heading', run: (c) => c.setHeading({ level: 2 }) },
-  { id: 'h3', key: 'block.h3', words: 'h3 heading', run: (c) => c.setHeading({ level: 3 }) },
-  { id: 'bullet', key: 'block.bullet', words: 'bullet list', run: (c) => c.toggleBulletList() },
-  { id: 'ordered', key: 'block.ordered', words: 'ordered number', run: (c) => c.toggleOrderedList() },
-  { id: 'todo', key: 'block.todo', words: 'todo task', run: (c) => c.toggleTaskList() },
-  { id: 'quote', key: 'block.quote', words: 'quote', run: (c) => c.toggleBlockquote() },
-  { id: 'code', key: 'block.code', words: 'code', run: (c) => c.toggleCodeBlock() },
-  { id: 'divider', key: 'block.divider', words: 'divider hr', run: (c) => c.setHorizontalRule() },
+  { id: 'text', face: 'T', key: 'block.text', words: 'text p', run: (c) => c.setParagraph() },
+  { id: 'h1', face: 'H1', key: 'block.h1', words: 'h1 heading', run: (c) => c.setHeading({ level: 1 }) },
+  { id: 'h2', face: 'H2', key: 'block.h2', words: 'h2 heading', run: (c) => c.setHeading({ level: 2 }) },
+  { id: 'h3', face: 'H3', key: 'block.h3', words: 'h3 heading', run: (c) => c.setHeading({ level: 3 }) },
+  { id: 'bullet', face: '•', key: 'block.bullet', words: 'bullet list', run: (c) => c.toggleBulletList() },
+  { id: 'ordered', face: '1.', key: 'block.ordered', words: 'ordered number', run: (c) => c.toggleOrderedList() },
+  { id: 'todo', face: '[ ]', key: 'block.todo', words: 'todo task', run: (c) => c.toggleTaskList() },
+  { id: 'quote', face: '"', key: 'block.quote', words: 'quote', run: (c) => c.toggleBlockquote() },
+  { id: 'code', face: '<>', key: 'block.code', words: 'code', run: (c) => c.toggleCodeBlock() },
+  { id: 'divider', face: '—', key: 'block.divider', words: 'divider hr', run: (c) => c.setHorizontalRule() },
 ];
 
 /** 커서 앞 문단 글자가 '/검색어' 꼴이면 메뉴를 연다 — 입력한 글자가 문서에 그대로 남아 IME(한글)와 충돌하지 않는다. */
@@ -131,7 +132,7 @@ export default function Editor({ page, canEdit = false }) {
     extensions: [
       StarterKit.configure({ link: false }),
       Placeholder.configure({ placeholder: ({ node }) => (node.type.name === 'heading' && node.attrs.level === 1 ? t('page.titlePh') : t('page.placeholder')) }),
-      TaskList, TaskItem.configure({ nested: true }), RedactMark, BlockPick,
+      TaskList, TaskItem.configure({ nested: true }), RedactMark, BlockPick, BlockHover,
       PrivateBlock.configure({ pageId: page.id, canEdit: canPrivate }),
       PageModuleNode.configure({ space: page.space, sourceOwner: page.owner ?? null }),
     ],
@@ -190,6 +191,12 @@ export default function Editor({ page, canEdit = false }) {
     if (at == null) editor.state.doc.descendants((n, p) => { if (at == null && n === node) at = p; return at == null; });
     if (at == null) { await sb.from('office_private_blocks').delete().eq('page_id', page.id).eq('block_id', id); showToast(t('block.privateFailed')); return; }
     editor.chain().focus().insertContentAt({ from: at, to: at + node.nodeSize }, { type: 'privateBlock', attrs: { id } }).run();
+  };
+  /** 손잡이 기준 상자 — 지금 가리킨 블록의 첫 줄(block-handle.js). 플러그인이 대상을 바꾼 직후에 부른다 */
+  const handleAnchor = () => {
+    const h = handle.current, view = h?.editor?.view;
+    const dom = h?.node && view && !view.isDestroyed ? view.nodeDOM(h.pos) : null;
+    return dom instanceof Element ? { getBoundingClientRect: () => measureAnchor(view, h.node, h.pos, dom), contextElement: dom } : null;
   };
   const blockMenu = (e) => {
     const h = handle.current;
@@ -271,7 +278,14 @@ export default function Editor({ page, canEdit = false }) {
 
   return (
     <div className="editor" onContextMenu={rangeMenu} onMouseDown={keepRange}>
-      {editor && canEdit && <DragHandle editor={editor} className="block-handle" onNodeChange={(d) => { handle.current = d; }}><span className="block-grip" role="button" tabIndex={-1} aria-label={t('block.menu')} onClick={blockMenu}><Icon name="grip" size={14} /></span></DragHandle>}
+      {editor && canEdit && (
+        <DragHandle editor={editor} className="block-handle" computePositionConfig={HANDLE_POSITION} getReferencedVirtualElement={handleAnchor}
+          onNodeChange={(d) => { handle.current = d; setHover(editor.view, null); }} onElementDragStart={() => setHover(editor.view, null)}>
+          <span className="block-grip" role="button" tabIndex={-1} aria-label={t('block.menu')} onClick={blockMenu}
+            onPointerEnter={(e) => { if (e.pointerType === 'mouse' && handle.current?.node) setHover(editor.view, handle.current.pos); }}
+            onPointerLeave={() => setHover(editor.view, null)}><Icon name="grip" size={14} /></span>
+        </DragHandle>
+      )}
       <EditorContent editor={editor} />
       {slash && (
         <div className="menu slash" role="listbox" style={{ left: Math.min(slash.x, innerWidth - 240), top: Math.min(slash.y, innerHeight - 320) }}>
@@ -279,7 +293,7 @@ export default function Editor({ page, canEdit = false }) {
           {items.map((b, i) => (
             <button key={b.id} type="button" role="option" aria-selected={i === slash.idx} className={`menu-item${i === slash.idx ? ' on' : ''}`}
               onMouseDown={(e) => { e.preventDefault(); apply(editor, b); }} onPointerMove={() => setSlash({ ...slash, idx: i })}>
-              <span className="menu-ico block-ico">{b.id === 'text' ? 'T' : b.id.startsWith('h') && b.id.length === 2 ? `H${b.id[1]}` : b.id === 'bullet' ? '•' : b.id === 'ordered' ? '1.' : b.id === 'todo' ? '[ ]' : b.id === 'quote' ? '"' : b.id === 'code' ? '<>' : '—'}</span>
+              <span className="menu-ico block-ico" aria-hidden="true">{b.face}</span>
               <span className="menu-label">{t(b.key)}</span>
             </button>
           ))}
