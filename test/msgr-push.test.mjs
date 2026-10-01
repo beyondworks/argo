@@ -2,7 +2,7 @@
 // JWT는 임시 키를 만들어 서명하고 같은 공개키로 검증한다(Web Crypto만 사용하므로 Deno와 Node 양쪽에서 같은 코드가 돈다).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { apnsJwt, apnsPayload, fcmMessage, googleAssertion, pushText, shouldDropToken, b64url } from '../supabase/functions/msgr-push/core.js';
+import { apnsJwt, apnsPayload, fcmMessage, googleAssertion, personName, pushText, shouldDropToken, b64url } from '../supabase/functions/msgr-push/core.js';
 
 const toPem = (buf, label) => `-----BEGIN ${label}-----\n${Buffer.from(buf).toString('base64').match(/.{1,64}/g).join('\n')}\n-----END ${label}-----\n`;
 const dec = (s) => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
@@ -54,4 +54,12 @@ test('shouldDropToken — 죽은 토큰만 지운다(일시 오류·서버 오�
   assert.equal(shouldDropToken('android', 404, '{"error":{"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}'), true);
   assert.equal(shouldDropToken('android', 503, 'UNAVAILABLE'), false);
   assert.equal(b64url(new Uint8Array([251, 255]).buffer), '-_8');
+});
+
+test('personName — 조직 안 이름 → 프로필 이름 → 이메일 앞부분, 빈 값·공백은 건너뛴다', () => {
+  assert.equal(personName({ memberName: '재완', profileName: '김재완', email: 'jw@x.com' }), '재완');
+  assert.equal(personName({ memberName: ' ', profileName: '김재완', email: 'jw@x.com' }), '김재완');
+  assert.equal(personName({ profileName: null, email: 'jw@x.com' }), 'jw');
+  assert.equal(personName({ email: '' }), null);
+  assert.equal(personName(), null);
 });

@@ -3,7 +3,7 @@
 // 재생·위조 호출이 추가 알림을 만들지 못한다(verify_jwt=false, 배포: config.toml [functions.msgr-push]).
 // 비밀은 전부 엣지 시크릿: APNS_KEY_P8(.p8 PEM 본문)·APNS_KEY_ID·APNS_TEAM_ID·APNS_TOPIC(번들 id)·APNS_SANDBOX('1'이면 개발 서버)
 //   ·FCM_SERVICE_ACCOUNT(서비스 계정 JSON 문자열). 없는 플랫폼은 건너뛴다.
-import { apnsJwt, apnsPayload, fcmMessage, googleAssertion, pushText, reportPushText, shouldDropToken } from './core.js';
+import { apnsJwt, apnsPayload, fcmMessage, googleAssertion, personName, pushText, reportPushText, shouldDropToken } from './core.js';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -13,6 +13,20 @@ const rest = async (path: string, init: RequestInit = {}) => {
   if (!r.ok) throw new Error(`rest ${path} ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return r.status === 204 ? null : r.json();
 };
+
+// 사람 작성자 이름(personName 순서). 개인 공간(조직 밖) 1:1은 org가 없다 — 조직 멤버 조회를 그대로 쏘면 `eq.null`로 나가
+// 이 핸들러가 통째로 실패하고, 선점(msgr_push_sent)이 끝난 뒤라 그 메시지 알림은 재시도로도 안 간다 → org가 있을 때만 조회한다.
+// 프로필 이름도 없을 때만 인증 관리 API로 이메일을 읽는다(그런 작성자의 글 하나당 요청 1번).
+async function userName(uid: string | null, orgId: string | null) {
+  if (!uid) return null;
+  const memberName = orgId ? (await rest(`msgr_org_members?org_id=eq.${orgId}&user_id=eq.${uid}&select=display_name`))?.[0]?.display_name : null;
+  const profileName = personName({ memberName }) ? null : (await rest(`msgr_profiles?user_id=eq.${uid}&select=display_name`))?.[0]?.display_name;
+  const known = personName({ memberName, profileName });
+  if (known) return known;
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${uid}`, { headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}` } }).catch(() => null);
+  const email = r?.ok ? (await r.json().catch(() => null))?.email : null;
+  return personName({ email });
+}
 
 let apnsTok: { jwt: string; at: number } | null = null;
 let apnsPending: Promise<string> | null = null;
@@ -129,11 +143,7 @@ Deno.serve(async (req: Request) => {
   const [ch] = await rest(`msgr_channels?id=eq.${m.channel_id}&select=name,kind,org_id`);
   const authorName = m.author_kind === 'crew'
     ? (await rest(`msgr_crews?id=eq.${m.crew_id}&select=display_name`))?.[0]?.display_name
-    // 개인 공간(조직 밖) 1:1은 org가 없다 — 조직 멤버 조회를 그대로 쏘면 `eq.null`로 나가 이 핸들러가 통째로 실패하고,
-    // 선점(msgr_push_sent)이 이미 끝난 뒤라 그 메시지 알림은 재시도로도 안 간다. 이름은 계정 프로필에서 읽는다.
-    : ch?.org_id
-      ? (await rest(`msgr_org_members?org_id=eq.${ch.org_id}&user_id=eq.${m.author_user_id}&select=display_name`))?.[0]?.display_name
-      : (await rest(`msgr_profiles?user_id=eq.${m.author_user_id}&select=display_name`))?.[0]?.display_name;
+    : await userName(m.author_user_id, ch?.org_id);
   const text = pushText({ body: m.body, authorName, channelName: ch?.name, channelKind: ch?.kind });
   // 아이콘 배지 = 수신자별 안읽음 총계(iOS aps.badge) — 앱이 닫혀 있어도 숫자가 쌓인다(유건 제보 2026-09-12)
   const badges = new Map<string, number>();
