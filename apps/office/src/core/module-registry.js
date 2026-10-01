@@ -4,7 +4,7 @@ export const OFFICE_MODULES = [
   { id: 'stats', title: 'mod.stats', icon: 'layout', sizes: ['l', 'full'], defaultSize: 'full', spaces: ['me', 'org'], intro: 'top' },
   { id: 'approvals', title: 'mod.approvals', icon: 'stamp', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/approvals' },
   { id: 'mail', title: 'mod.mail', icon: 'mail', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me'], link: '/mail' },
-  { id: 'calendar', title: 'mod.calendar', icon: 'calendar', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/calendar' },
+  { id: 'calendar', title: 'mod.calendar', icon: 'calendar', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/calendar', minBody: 200 }, // minBody = 높이를 줄일 때 본문 최소(px) — 달력·그래프가 알아볼 수 있게
   { id: 'todos', title: 'mod.todos', icon: 'check', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'] },
   { id: 'pages', title: 'mod.pages', icon: 'doc', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'] },
   { id: 'work', title: 'mod.work', icon: 'run', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/work' },
@@ -20,6 +20,7 @@ export const OFFICE_MODULES = [
 export const BUSINESS_MODULES = OFFICE_MODULES.filter((module) => module.businessTab);
 export const CHART_MODULES = ['kpi', 'line', 'bar', 'donut', 'table'].map((id) => ({
   id, title: `biz.chart.${id}`, sizes: ['s', 'm', 'l', 'full'], defaultSize: id === 'table' ? 'full' : ['kpi', 'donut'].includes(id) ? 's' : 'l', icon: 'chart',
+  ...({ line: { minBody: 168 }, bar: { minBody: 168 }, donut: { minBody: 176 } })[id], // 그래프 120px + 데이터 표 줄 + 여백
 }));
 
 export const LIBRARY_MODULES = [...OFFICE_MODULES, ...CHART_MODULES.map((chart) => ({

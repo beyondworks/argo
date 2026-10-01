@@ -1,6 +1,6 @@
 // 앱 셸 — 사이드바 · 헤더(경로·저장 상태·페이지 동작) · 내용. 끌어다 놓기는 한 DndContext가 전부 받는다
 // (메일을 사이드바 크루에게, 모듈을 격자 안에서, 페이지를 트리 안에서).
-import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
+import { Component, lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
 import { DndContext, DragOverlay, MeasuringStrategy, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, pointerWithin, closestCenter } from '@dnd-kit/core';
 import { moduleKeyboardCoordinates } from './core/module-keyboard.js';
 import { Sidebar } from './ui/Sidebar.jsx';
@@ -24,6 +24,7 @@ import { pullLayouts, pullPages, pullBoard } from './core/pull.js';
 import { flushNow } from './core/sync.js';
 import { Login } from './pages/Login.jsx';
 import { loadAccounts, pullMail } from './core/mail.js';
+import { reloadOnce } from './core/chunk-reload.js';
 
 const BusinessPage = lazy(() => import('./business/BusinessPage.jsx'));
 // ⌘K 창은 열 때만 받는다(첫 화면 150KB 상한 — 9/30 오른쪽 패널·결재 카드 버튼을 붙이며 옮김)
@@ -53,6 +54,20 @@ const Settings = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m
 const Trash = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.Trash })));
 const Shared = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.Shared })));
 const PublicPage = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.PublicPage })));
+
+/** 지연 로드 자리 — 화면 파일을 못 받아도(배포 뒤 옛 탭·개발 서버 504) 앱 전체가 하얘지지 않는다. 파일 실패면 한 번 새로 불러오고,
+ *  그래도 안 되면 안내를 둔다(quiet = 창처럼 안 보여도 되는 자리는 비운다). reset이 바뀌면(다른 화면으로 가면) 다시 그려 본다 */
+class Boundary extends Component {
+  state = { error: null };
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error) { let s; try { s = sessionStorage; } catch {} if (reloadOnce(error, s)) location.reload(); }
+  componentDidUpdate(prev) { if (prev.reset !== this.props.reset && this.state.error) this.setState({ error: null }); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return this.props.quiet ? null : <div className="empty-state" role="alert"><p>{t('load.fail')}</p><button type="button" className="btn" onClick={() => location.reload()}>{t('load.retry')}</button></div>;
+  }
+}
+const Lazy = ({ fallback = <div className="boot" aria-busy="true" />, quiet, reset, children }) => <Boundary quiet={quiet} reset={reset}><Suspense fallback={fallback}>{children}</Suspense></Boundary>;
 
 function route(path) {
   let m;
@@ -181,7 +196,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [r.space]);
 
-  if (r.view === 'public') return <><Suspense fallback={<div className="public" aria-busy="true" />}><PublicPage id={r.id} /></Suspense><ToastHost /></>;
+  if (r.view === 'public') return <><Lazy fallback={<div className="public" aria-busy="true" />}><PublicPage id={r.id} /></Lazy><ToastHost /></>;
   if (mode === 'loading') return <div className="boot" aria-busy="true" />;
   if (mode === 'signedOut') return <Login />;
   if (r.redirect) return null;
@@ -202,7 +217,7 @@ export default function App() {
 
   const params = new URLSearchParams(query ?? '');
   const views = {
-    business: <Suspense fallback={<div className="boot" aria-busy="true" />}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} />}</Suspense>,
+    business: <Lazy reset={path}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} />}</Lazy>,
     home: <Home space={r.space} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
     work: <Work space={r.space} openId={params.get('open')} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
     outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
@@ -214,13 +229,13 @@ export default function App() {
         <div className="nav-scrim" onClick={() => setUi({ navOpen: false })} />
         <main className="main">
           <Header r={r} page={page} path={path} />
-          <div className={`content view-${r.view}`}><LegacyRecoveryNotice /><Suspense fallback={<div className="boot" aria-busy="true" />}>{views[r.view]}</Suspense></div>
+          <div className={`content view-${r.view}`}><LegacyRecoveryNotice /><Lazy reset={path}>{views[r.view]}</Lazy></div>
         </main>
       </div>
       <DragOverlay dropAnimation={null}>{dragging ? <DragChip data={dragging} /> : null}</DragOverlay>
-      {ui.palette && <Suspense fallback={null}><Palette open onClose={() => setUi({ palette: false })} space={r.space} /></Suspense>}
-      <Suspense fallback={null}><ShareDialog /><AssignSheet /><HistorySheet /></Suspense>
-      <Suspense fallback={null}><Compose /></Suspense>
+      {ui.palette && <Lazy fallback={null} quiet><Palette open onClose={() => setUi({ palette: false })} space={r.space} /></Lazy>}
+      <Lazy fallback={null} quiet><ShareDialog /><AssignSheet /><HistorySheet /></Lazy>
+      <Lazy fallback={null} quiet><Compose /></Lazy>
       <MenuHost />
       <ToastHost />
     </DndContext>

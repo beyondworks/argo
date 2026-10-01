@@ -87,15 +87,18 @@ export function MenuHost() {
   );
 }
 
+/** 이벤트가 실제 DOM 안에서 났는가 — 포털(body에 붙은 패널·대화창)의 React 이벤트는 트리를 따라 부모까지 올라오므로, 그 부모의 메뉴가 열리지 않게 거른다. */
+export const fromInside = (e) => e.currentTarget.contains(e.target);
+
 /** 대상 하나에 우클릭·길게 누르기(터치 450ms, 10px 움직이면 취소)·Shift+F10·메뉴 키를 한 번에 붙인다. */
 export function menuProps(build) {
   let timer = null, start = null, fired = false;
   const cancel = () => { clearTimeout(timer); timer = null; };
   return {
-    onContextMenu: (e) => openMenu(e, build()),
-    onKeyDown: (e) => { if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') openMenu({ preventDefault: () => e.preventDefault(), stopPropagation() {}, currentTarget: e.currentTarget }, build()); },
+    onContextMenu: (e) => { if (fromInside(e)) openMenu(e, build()); },
+    onKeyDown: (e) => { if (fromInside(e) && ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu')) openMenu({ preventDefault: () => e.preventDefault(), stopPropagation() {}, currentTarget: e.currentTarget }, build()); },
     onPointerDown: (e) => {
-      if (e.pointerType !== 'touch') return;
+      if (e.pointerType !== 'touch' || !fromInside(e)) return;
       fired = false; start = { x: e.clientX, y: e.clientY };
       const target = e.currentTarget;
       timer = setTimeout(() => { fired = true; openMenu({ clientX: start.x, clientY: start.y, currentTarget: target }, build()); }, 450);

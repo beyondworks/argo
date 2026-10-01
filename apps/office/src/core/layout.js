@@ -2,6 +2,14 @@
 // 좁은 폭에서는 같은 순서로 한 줄이 된다. 저장된 배치와 등록부를 합치는 규칙은 순수 함수로 두고 테스트로 잠근다.
 export const SIZES = ['s', 'm', 'l', 'full'];
 export const SPAN = { s: 4, m: 6, l: 8, full: 12 };
+// 가장자리 끌기(유건 10/1): 폭은 열 수(span 1~12, 끌기 전 단계는 baseSize), 높이는 px(h, 120~1200) — 없으면 크기 단계·내용대로
+// span은 같이 쓴 size(가장 가까운 단계)와 맞을 때만 — 옛 탭의 '크기' 메뉴가 size만 바꾸면 남은 span보다 그 size가 이긴다(검수 10/1)
+export const spanOf = (it) => (Number.isInteger(it.span) && it.span > 0 && it.span < 13 && it.size === sizeForSpan(it.span) ? it.span : SPAN[it.size] ?? 6);
+export const heightOf = (it) => (Number.isInteger(it.h) && it.h >= 120 && it.h <= 1200 ? it.h : 0);
+/** 모듈이 허용하는 열 범위 — 1/3을 허용하면 3열부터, 아니면 가장 작은 단계부터(현황 8열) */
+/** 모듈 최소 높이(카드 전체, px) — 120, 등록부에 본문 최소(minBody)가 있으면 머리 높이 + 그 값(8px 단위 올림) */
+export const minHeight = (mod, head = 42) => Math.max(120, Math.ceil((head + (mod?.minBody ?? 0)) / 8) * 8);
+export const spanRange = (sizes) => [Math.min(...sizes.map((s) => (s === 's' ? 3 : SPAN[s]))), Math.max(...sizes.map((s) => SPAN[s]))];
 
 /** 열 수 → 가장 가까운 크기 단계 */
 export function sizeForSpan(cols) {
@@ -31,7 +39,8 @@ export function mergeLayout(saved, registry, space, defaults) {
     const mod = usable.get(it.moduleId ?? it.id);
     if (!mod || seen.has(it.id)) continue;
     seen.add(it.id);
-    items.push({ id: it.id, ...(it.moduleId ? { moduleId: it.moduleId } : {}), size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
+    const [lo, hi] = spanRange(mod.sizes), { span } = it;
+    items.push({ id: it.id, ...(it.moduleId ? { moduleId: it.moduleId } : {}), size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, ...(Number.isInteger(span) && span >= lo && span <= hi ? { span, ...(mod.sizes.includes(it.baseSize) ? { baseSize: it.baseSize } : {}) } : {}), ...(heightOf(it) ? { h: it.h } : {}), hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
   }
   // 새로 생긴 모듈은 숨긴 채 뒤에 — intro: 'top'인 것만 맨 위에 보이게(유건 9/27: 현황 카드). 한 번 저장된 뒤엔 사용자 선택을 따른다.
   for (const [id, mod] of usable) if (!mod.repeatable && !items.some((item) => (item.moduleId ?? item.id) === id)) {
@@ -63,32 +72,23 @@ export function reorderModules(items, scope, active, over) {
   return [...move(visible, from, to), ...items.filter((item) => item.hidden)];
 }
 
-/**
- * 한 줄에 붙은 두 모듈의 경계를 함께 움직인다(노션 열 방식). 두 폭의 합은 유지하고, 둘 다 허용된 크기 단계인
- * 조합 중 끄는 위치(targetSpan 열)에 가장 가까운 것을 고른다 — 끝까지 당겨도 옆 모듈을 밀어내지 않는다(유건 2026-09-26).
- */
-export function linkedResize(size, partner, targetSpan, sizes, partnerSizes) {
-  const total = SPAN[size] + SPAN[partner];
-  let best = [size, partner];
-  for (const s of sizes) {
-    const p = SIZES.find((x) => SPAN[x] === total - SPAN[s]);
-    if (!p || !partnerSizes.includes(p)) continue;
-    if (Math.abs(SPAN[s] - targetSpan) < Math.abs(SPAN[best[0]] - targetSpan)) best = [s, p];
-  }
-  return best;
-}
-
 /** 보이는 모듈을 줄로 나눈다 — CSS 격자 자동 배치(dense 없음)와 같은 규칙: 남은 열에 안 들어가면 다음 줄. */
 export function rowsOf(items) {
   const rows = [];
   let used = 12;
   for (const it of items) {
-    const span = SPAN[it.size];
+    const span = spanOf(it);
     if (used + span > 12) { rows.push([]); used = 0; }
     rows.at(-1).push(it); used += span;
   }
   return rows;
 }
+
+/** 모듈마다 줄 정보 — h: 같은 줄이 같이 쓰는 높이(정해진 것 중 가장 큰 값, 0 = 내용대로), min: 줄 최소 높이(줄 모듈 최소 중 가장 큰 값), first: 줄 첫 모듈 */
+export const rowInfo = (items, modOf) => new Map(rowsOf(items).flatMap((row) => {
+  const h = Math.max(...row.map(heightOf)), min = Math.max(...row.map((it) => minHeight(modOf(it))));
+  return row.map((it, i) => [it.id, { h, min, first: !i }]);
+}));
 
 /**
  * 서버 페이지 목록(본문 제외) + 이 기기 목록 → 화면 목록.

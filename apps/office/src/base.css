@@ -24,6 +24,8 @@
   --side-w: 15rem; --top-h: 3rem; --ctl: 32px; --rc: 8px; --rs: 12px;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --module-gap: 12px; /* 모듈 사이 간격 — 격자·현황 카드·업무 대시보드 공용 */
+  /* 블록 고르기 색 — 노션과 같은 파랑(차콜 강조색은 회색으로 묻힌다). 고른 블록 바탕과 원자 블록 선택 링 */
+  --pick-wash: rgb(35 131 226 / .14); --pick-line: rgb(35 131 226 / .55);
 }
 /* 다크 표면 — light-dark()는 macOS 14.5 이전 웹뷰(데스크톱 앱)에서 무효라 값이 통째로 빠진다(메뉴 바탕이 투명해짐). 모드별로 나눠 적는다 */
 :root:is([data-theme$='-dark'], .dark-emul) { --wash: color-mix(in srgb, var(--fg) 4%, transparent); --float: color-mix(in srgb, var(--fg) 4%, color-mix(in srgb, var(--card) 85%, var(--bg))); --sunk: rgb(0 0 0 / 0.16); }
@@ -221,10 +223,12 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 /* 카드 해부(유건 9/29 확정, 9/30 '모두 보기' 대신 제목이 링크): 머리 42px · 아이콘+13px 제목, 오른쪽은 옮기기 손잡이 · ⋯. 머리 아이콘·목록 첫 요소·숫자·표 첫 글자는 모두 카드 왼쪽 16px 한 선에서 시작한다.
    본문은 8px 여백 + 행 안쪽 8px — 행 배경(hover)은 8px부터 칠해지고 글자는 16px에 선다 */
 .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--module-gap); align-items: stretch; } /* 같은 줄은 가장 긴 모듈 높이로(유건 2026-09-26) */
-.module { grid-column: span 6; background: var(--surface); border-radius: var(--rs); position: relative; min-width: 0; display: flex; flex-direction: column; }
-.module.size-s { grid-column: span 4; } .module.size-m { grid-column: span 6; } .module.size-l { grid-column: span 8; } .module.size-full { grid-column: span 12; }
+.module { grid-column: span var(--span, 6); background: var(--surface); border-radius: var(--rs); position: relative; min-width: 0; display: flex; flex-direction: column; }
+/* 폭 = 열 수(--span, 1~12), 높이 = 줄 높이(--rh, 같은 줄이 같이 쓴다) — 유건 10/1 가장자리 끌기. 정한 높이보다 내용이 길면 본문이 스크롤된다 */
+.module.sized-h { height: var(--rh); }
+.module.sized-h .module-body { flex: 1; min-height: 0; overflow: auto; }
 .module.dragging { opacity: 0.35; outline: 1px dashed var(--fg-3); outline-offset: -1px; } /* 끄는 동안 원래 자리는 빈 틀로 — 실제 격자가 미리 자리를 바꿔 보여 준다 */
-@container (max-width: 720px) { .module.size-s, .module.size-m, .module.size-l { grid-column: span 12; } .col-handle { display: none; } }
+@container (max-width: 720px) { .module { grid-column: span 12; } .module.sized-h { height: var(--mh); } .module.sized-h:not(.own-h) .module-body { overflow: visible; } .edge-x { display: none; } } /* 좁으면 한 줄에 하나 — 폭 손잡이 없이 높이만, 높이는 자기 것(넓은 화면의 옆 모듈 높이는 따르지 않는다) */
 .module-head { position: relative; display: flex; align-items: center; gap: 8px; height: 42px; flex: none; padding: 0 8px 0 16px; border-bottom: 1px solid var(--border-soft); }
 .module-head > .ico { flex: none; }
 .module-head h3 { font-size: 13px; font-weight: 620; flex: 1; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -263,17 +267,40 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 .table td.num { font-family: var(--mono); font-size: 13.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mod-row strong.mono { font-size: 13.5px; font-weight: 600; }
 .mod-period { display: flex; align-items: center; gap: 4px; color: var(--fg-3); padding-block: 2px; }
-.col-handle { position: absolute; top: 10px; bottom: 10px; right: -9px; width: 6px; cursor: col-resize; touch-action: none; z-index: 2; border-radius: 3px; outline: none; }
-.col-handle::after { content: ''; position: absolute; left: 2px; top: 0; bottom: 0; width: 2px; border-radius: 1px; background: transparent; transition: background-color 120ms ease; }
-.module.resizing .col-handle::after, .col-handle:focus-visible::after { background: var(--fg-2); }
 .grid { position: relative; }
-body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none; }
+/* 가장자리 손잡이(유건 10/1) — 카드 안팎 4px씩 8px 띠. 올리면 그 가장자리를 따라 2px 선, 끄는 중·키보드 초점이면 진하게.
+   모서리는 비워 둔다(둥근 모서리 + 두 방향이 겹치지 않게). 옆 카드와의 틈(12px) 안에서 서로 겹치지 않는다 */
+.edge { position: absolute; z-index: 2; touch-action: none; outline: none; }
+.edge-l, .edge-r { top: var(--rs); bottom: var(--rs); width: 8px; cursor: ew-resize; }
+.edge-t, .edge-b { left: var(--rs); right: var(--rs); height: 8px; cursor: ns-resize; } /* 둥근 모서리가 끝나는 곳부터(셸마다 둥글기가 다르다) */
+.edge-l { left: -4px; } .edge-r { right: -4px; } .edge-t { top: -4px; } .edge-b { bottom: -4px; }
+.edge::after { content: ''; position: absolute; border-radius: 1px; background: var(--fg-3); opacity: 0; transform: scale(0.6); transition: opacity 120ms var(--ease-out), transform 160ms var(--ease-out); }
+.edge-x::after { top: 0; bottom: 0; left: 3px; width: 2px; transform: scaleY(0.6); }
+.edge-y::after { left: 0; right: 0; top: 3px; height: 2px; transform: scaleX(0.6); }
+.edge.on::after, .edge:focus-visible::after { opacity: 1; transform: none; background: var(--primary); }
+.edge:focus-visible::after { box-shadow: 0 0 0 2px var(--primary-soft); }
+/* 끄는 동안: 커서를 고정하고 글 선택을 막는다. 폭을 끌 때는 12열 눈금이 은은히 보인다 */
+body.edge-drag-x, body.edge-drag-x * { cursor: ew-resize !important; user-select: none; }
+body.edge-drag-y, body.edge-drag-y * { cursor: ns-resize !important; user-select: none; }
+/* 열 눈금 — 끄는 줄의 위·아래 틈(줄 사이 12px)에만 짧은 눈금을 긋는다. 카드 위에는 그리지 않는다(반투명 카드 셸에서 글 위로 비치던 결함, 검수 10/1).
+   눈금 = 모듈 가장자리가 붙을 수 있는 열 사이 틈의 가운데. 줄 위치(--ruler-top·--ruler-h)는 끄는 코드(module-resize.js)가 정한다 */
+.grid::before { --tick: repeating-linear-gradient(90deg, transparent 0 calc((100% - 11 * var(--module-gap)) / 12 + var(--module-gap) / 2 - 1px), var(--fg-3) 0 calc((100% - 11 * var(--module-gap)) / 12 + var(--module-gap) / 2 + 1px), transparent 0 calc((100% + var(--module-gap)) / 12));
+  content: ''; position: absolute; left: 0; right: 0; top: calc(var(--ruler-top, 0px) - var(--module-gap) / 2 - 3px); height: calc(var(--ruler-h, 0px) + var(--module-gap) + 6px);
+  pointer-events: none; opacity: 0; transition: opacity 160ms var(--ease-out); background: var(--tick) top / 100% 6px no-repeat, var(--tick) bottom / 100% 6px no-repeat; }
+.grid.cols-on::before { opacity: 0.7; }
+.module.resizing { z-index: 1; }
+/* 터치: 폭은 바꾸지 않고(좁은 화면과 같게), 높이는 아래 가장자리 하나 — 잡을 자리가 보이게 작은 막대를 늘 둔다 */
+@media (pointer: coarse) {
+  .edge-x, .edge-t { display: none; }
+  .edge-b { left: 50%; right: auto; width: 56px; height: 20px; bottom: -10px; transform: translateX(-50%); }
+  .edge-b::after { left: 14px; right: 14px; top: 8px; height: 4px; border-radius: 2px; opacity: 0.45; transform: none; }
+}
 /* 손잡이 — 마우스 기기는 카드에 올리거나 키보드로 닿았을 때만, 터치 기기는 늘 보인다 */
 @media (hover: hover) {
   .grip { opacity: 0; }
   .module:hover .grip, .grip:focus-visible { opacity: 1; }
   .grip:hover { background: var(--primary-soft); color: var(--fg); }
-  .col-handle:hover::after { background: var(--border); }
+  .edge:hover::after { opacity: 1; transform: none; }
   a.mod-row:hover, .mod-row.todo:hover { background: var(--primary-soft); }
   .module-title:hover { text-decoration: underline; } .module-title:hover::after { opacity: 1; }
 }
@@ -430,17 +457,42 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .prose ul[data-type='taskList'] { list-style: none; padding-left: 0; }
 .prose ul[data-type='taskList'] li { display: flex; gap: 8px; align-items: flex-start; }
 .prose ul[data-type='taskList'] li > label { margin-top: 5px; }
+.prose ul[data-type='taskList'] li > div { flex: 1; min-width: 0; } /* 글 칸이 남은 폭을 다 쓴다 — 내용 폭만 잡으면 그 안의 구분선(hr)이 폭 0이 되었다(통합 검수 10/1) */
 .prose ul[data-type='taskList'] input { width: 15px; height: 15px; accent-color: var(--primary); margin: 0; }
 .prose ul[data-type='taskList'] li[data-checked='true'] > div { color: var(--fg-3); text-decoration: line-through; }
 .prose blockquote { margin: 8px 0; padding: 8px 12px; border-radius: var(--rc); background: var(--card-2); color: var(--fg-2); } /* 왼쪽 막대 금지(유건 9/30) — 연한 배경 상자 */
 .prose pre { background: var(--bg); border-radius: var(--rc); padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; overflow: auto; }
 .prose code { font-family: var(--mono); font-size: 0.88em; background: var(--bg); padding: 1px 5px; border-radius: 5px; }
-.prose hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+.prose pre code { font-size: inherit; background: none; padding: 0; border-radius: 0; } /* 코드 블록 안 글자는 인라인 코드 칩이 아니다 — 첫 줄만 안쪽으로 밀리고 바탕이 겹쳐 보였다 */
+/* 구분선 = 글 한 줄 높이의 띠, 선은 그 가운데(유건 10/1) — 테두리 1px로 그리면 상자가 1px이라 손잡이가 선 아래에 매달리고 마우스도 1px에서만 잡혔다 */
+.prose hr { height: 26px; margin: 6px 0; border: 0; border-radius: 4px; background: linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat; cursor: default; }
+@media (forced-colors: active) { .prose hr { background: none; border-top: 1px solid CanvasText; height: 0; margin: 18px 0; } } /* 고대비 모드는 배경 그림을 지운다 — 선이 통째로 사라졌다(분리 검수 10/1) */
 .prose .is-empty::before { content: attr(data-placeholder); color: var(--fg-3); float: left; height: 0; pointer-events: none; }
-.block-handle { display: grid; place-items: center; width: 20px; height: 24px; border-radius: 5px; color: var(--fg-3); cursor: grab; }
-@media (hover: hover) { .block-handle:hover { background: var(--primary-soft); color: var(--fg); } }
+.block-handle { display: grid; place-items: center; width: 20px; height: 24px; border-radius: 5px; color: var(--fg-3); cursor: grab; transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
+@media (hover: hover) { .block-handle:hover { background: var(--wash); color: var(--fg); } }
+.block-handle:active { cursor: grabbing; }
+/* 손잡이에 마우스를 올린 동안 움직일 블록을 옅게 칠한다(유건 10/1). 안쪽 그림자로 칠해 인용·코드처럼 바탕이 있는 블록 위에도 보이고, 바깥 4px로 글자에 여유를 준다 */
+:where(.ProseMirror > .block-hover) { border-radius: 4px; }
+.ProseMirror > .block-hover { --hover-wash: color-mix(in srgb, var(--fg) 6%, transparent); box-shadow: inset 0 0 0 100vmax var(--hover-wash), 0 0 0 4px var(--hover-wash); animation: block-hover-in 140ms var(--ease-out); }
+@keyframes block-hover-in { from { box-shadow: inset 0 0 0 100vmax transparent, 0 0 0 4px transparent; } }
+/* 비공개·모듈처럼 React로 그리는 블록은 안쪽 카드 바탕이 칠(그림자·배경)을 덮어 테두리만 보였다(분리 검수 10/1) — 맨 위에 옅은 막을 한 장 덮는다.
+   손잡이 올림은 회색, 고름·선택은 파랑(뒤 규칙이 이긴다) */
+.ProseMirror > .react-renderer:is(.block-hover, .block-picked, .ProseMirror-selectednode) { position: relative; }
+.ProseMirror > .react-renderer.block-hover::after, .ProseMirror > .react-renderer.block-picked::after, .ProseMirror-focused[contenteditable='true'] > .react-renderer.ProseMirror-selectednode::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--hover-wash); pointer-events: none; }
+.ProseMirror > .react-renderer.block-hover::after { animation: block-hover-veil 140ms var(--ease-out); }
+.ProseMirror > .react-renderer.block-picked::after, .ProseMirror-focused[contenteditable='true'] > .react-renderer.ProseMirror-selectednode::after { background: var(--pick-wash); animation: none; }
+@keyframes block-hover-veil { from { opacity: 0; } }
+/* 원자 블록(구분선·모듈·비공개)을 골랐을 때 — 고른 블록과 같은 옅은 파랑 면과 링. 편집기 기본 CSS를 불러오지 않아 아무 표시가 없었다.
+   편집 중이고 초점이 편집기에 있을 때만 — 읽기 전용으로 보는 사람에게 파란 틀이 생겼고, 편집기는 초점을 잃어도 블록 선택을 지우지 않아 밖을 눌러도 파란 띠가 남았다(분리 검수 10/1).
+   여백 끌기로 고른 블록(.block-picked)은 그쪽 칠이 이미 있어 겹쳐 진해지지 않게 뺀다 */
+.ProseMirror-focused[contenteditable='true'] .ProseMirror-selectednode:not(.block-picked) { outline: none; box-shadow: inset 0 0 0 100vmax var(--pick-wash), 0 0 0 3px var(--pick-wash); }
+:where(.ProseMirror-focused[contenteditable='true'] .ProseMirror-selectednode) { border-radius: 4px; }
+.ProseMirror-hideselection { caret-color: transparent; }
+.ProseMirror-hideselection *::selection { background: transparent; }
 .menu.slash { max-height: 320px; overflow: auto; }
-.block-ico { font-family: var(--mono); font-size: 11px; color: var(--fg-2); width: 22px; height: 22px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--border); display: grid !important; place-items: center; }
+/* 슬래시 메뉴 블록 아이콘 — 22×22 한 줄 고정(.menu-ico 16px이 덮어 '[ ]'가 두 줄로 꺾였다), 외곽선 없이 옅은 면으로(유건 9/30·10/1) */
+.menu .block-ico { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 6px; background: var(--wash); color: var(--fg-2); font-family: var(--mono); font-size: 10.5px; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; }
 .skeleton-lines { display: grid; gap: 10px; }
 .skeleton-lines span { height: 14px; border-radius: 6px; background: var(--secondary); }
 .skeleton-lines span:first-child { height: 30px; width: 50%; }
@@ -576,6 +628,23 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
 .shell-mini[data-s='pill'] .sm-main i, .shell-mini[data-s='pill'] .sm-side i { border-radius: 999px; }
 .shell-mini[data-s='glass'] .sm-win { background: color-mix(in srgb, var(--bg) 60%, transparent); }
 .shell-mini[data-s='glass'] .sm-main i { background: color-mix(in srgb, var(--card) 55%, transparent); }
+.shell-mini[data-s='liquid'] { padding: 5px; background: radial-gradient(70% 80% at 10% 10%, var(--t-lq-glow-1), transparent 70%), radial-gradient(70% 80% at 95% 95%, var(--t-lq-glow-2), transparent 70%), var(--bg); }
+.shell-mini[data-s='liquid'] .sm-win { gap: 2px; padding: 2px; border-radius: 6px; background: color-mix(in srgb, var(--card) 46%, transparent); box-shadow: inset 0 1px 0 var(--t-shine), 0 2px 6px var(--t-shade); }
+.shell-mini[data-s='liquid'] .sm-side { border-radius: 4px; background: color-mix(in srgb, var(--card) 50%, transparent); }
+.shell-mini[data-s='liquid'] .sm-side i { background: color-mix(in srgb, var(--fg) 30%, transparent); }
+.shell-mini[data-s='liquid'] .sm-main i { border-radius: 4px; background: color-mix(in srgb, var(--card) 60%, transparent); box-shadow: inset 0 1px 0 var(--t-shine); }
+.shell-mini[data-s='neu'] { padding: 5px; background: var(--bg); }
+.shell-mini[data-s='neu'] .sm-win { gap: 4px; background: transparent; }
+.shell-mini[data-s='neu'] .sm-side { border-radius: 5px; background: var(--bg); box-shadow: -1px -1px 2px var(--t-neu-hi), 1px 1px 3px var(--t-neu-lo); }
+.shell-mini[data-s='neu'] .sm-side i { background: color-mix(in srgb, var(--fg) 26%, transparent); }
+.shell-mini[data-s='neu'] .sm-main { padding: 3px 2px; }
+.shell-mini[data-s='neu'] .sm-main i { border-radius: 4px; background: var(--bg); box-shadow: -1px -1px 2px var(--t-neu-hi), 1px 1px 3px var(--t-neu-lo); }
+/* 색 견본 13개(10/1) — 중성·따뜻함·차가움 묶음마다 작은 이름 */
+.color-groups { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.color-group { display: grid; gap: 6px; }
+.color-group-name { font-size: 11px; color: var(--fg-3); line-height: 1; }
+.color-group-name b { font-weight: 600; color: var(--fg); } /* 고른 색 이름은 그 색이 든 묶음 이름 옆에 */
+.theme-row:has(> .color-groups) { align-items: end; } .theme-row:has(> .color-groups) > .label { line-height: 28px; } /* 이름은 견본 줄과 같은 높이에 */
 .color-picks { display: flex; flex-wrap: wrap; gap: 8px; }
 .swatch { position: relative; width: 28px; height: 28px; border-radius: 50%; background: var(--sw-a); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12); overflow: hidden; transition: transform 140ms var(--ease-out); }
 .swatch::before { content: ''; position: absolute; inset: 0 0 0 50%; background: var(--sw-b); }
@@ -709,8 +778,8 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 @keyframes redact-text { to { mask-position: 110px 0; } }
 @media (prefers-reduced-motion: reduce) { .redact-text { animation: none !important; } }
 /* 노션식 블록 고르기 — 여백에서 끈 사각형과 고른 블록 */
-.pick-box { position: fixed; z-index: 60; pointer-events: none; border: 1px solid rgba(35, 131, 226, .55); background: rgba(35, 131, 226, .1); border-radius: 2px; }
-.ProseMirror .block-picked { background: rgba(35, 131, 226, .14); border-radius: 4px; box-shadow: 0 0 0 3px rgba(35, 131, 226, .14); } /* 노션과 같은 파란 고르기 색 — 차콜 강조색은 회색으로 묻힌다 */
+.pick-box { position: fixed; z-index: 60; pointer-events: none; border: 1px solid var(--pick-line); background: rgb(35 131 226 / .1); border-radius: 2px; }
+.ProseMirror .block-picked { background-color: var(--pick-wash); border-radius: 4px; box-shadow: 0 0 0 3px var(--pick-wash); } /* 노션과 같은 파란 고르기 색 — 차콜 강조색은 회색으로 묻힌다 */
 .ProseMirror.picking { caret-color: transparent; }
 .ProseMirror.picking ::selection { background: transparent; }
 /* 할 일(성과 기록 1단계) */

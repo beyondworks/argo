@@ -13,11 +13,11 @@
       // 첫 페인트 전에 테마를 입힌다(깜빡임 방지) — core/theme.js와 같은 규칙.
       (function () {
         var th = 'linen';
-        try { var v = localStorage.getItem('argo-office-theme'); if (/^(linen|graphite|cream|sand|peach|mist|glow)(-light|-dark)?$/.test(v)) th = v; } catch (e) {}
+        try { var v = localStorage.getItem('argo-office-theme'); if (/^(linen|graphite|cream|sand|peach|mist|glow|sage|ocean|rose|lavender|slate|ember)(-light|-dark)?$/.test(v)) th = v; } catch (e) {}
         var el = document.documentElement; el.dataset.theme = th;
-        if (/^(linen|cream|sand|peach|mist|glow)$/.test(th) && window.matchMedia('(prefers-color-scheme: dark)').matches) el.classList.add('dark-emul');
+        if (/^(linen|cream|sand|peach|mist|glow|sage|ocean|rose|lavender|slate|ember)$/.test(th) && window.matchMedia('(prefers-color-scheme: dark)').matches) el.classList.add('dark-emul');
         var sh = null; try { sh = localStorage.getItem('argo-office-shell'); } catch (e) {}
-        if (!/^(plain|float|window|panel|pill|glass)$/.test(sh)) sh = { cream: 'float', sand: 'window', peach: 'panel', mist: 'pill', glow: 'glass' }[th.replace(/-(light|dark)$/, '')] || 'plain';
+        if (!/^(plain|float|window|panel|pill|glass|liquid|neu)$/.test(sh)) sh = { cream: 'float', sand: 'window', peach: 'panel', mist: 'pill', glow: 'glass' }[th.replace(/-(light|dark)$/, '')] || 'plain';
         el.dataset.shell = sh;
         try { if (localStorage.getItem('argo-office-width') === 'full') el.classList.add('full-width'); } catch (e) {} // 본문 전체 너비 — core/theme.js WIDTH_KEY
         // 커스텀 테마(core/custom-theme.js가 계산해 둔 모드별 변수) — 모드가 바뀔 때도 theme.js가 이 함수를 다시 부른다

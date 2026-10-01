@@ -201,7 +201,7 @@ function Stats({ space, item, canEdit, setCfg }) {
 }
 
 // sizes: s=1/3, m=1/2, l=2/3, full=전체. spaces: 이 모듈을 쓸 수 있는 공간 종류.
-const Calendar = (props) => <Suspense fallback={wait}><HomeView {...props} mode="calendar" /></Suspense>; // 다가오는 일정 — 일정 + 할 일 기한 7일, 기본 목록
+const Calendar = (props) => <Suspense fallback={wait}><HomeView {...props} mode="calendar" /></Suspense>; // 캘린더 — 보기 9가지·디자인 3가지(views/CalendarWidget.jsx, 유건 10/1)
 const renderers = { stats: Stats, calendar: Calendar, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
 const BusinessHomeCard = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeCard })));
 const LazyBusinessHomeProvider = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeProvider })));

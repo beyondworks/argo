@@ -186,7 +186,7 @@ function MiniMonth({ anchor, on, today, holidays, onPick }) {
         <button type="button" className="icon-btn sm" aria-label={t('cal.prevMonth')} onClick={() => setMonth(M.addMonths(month, -1))}><Icon name="back" size={12} /></button>
         <button type="button" className="icon-btn sm" aria-label={t('cal.nextMonth')} onClick={() => setMonth(M.addMonths(month, 1))}><Icon name="chevron" size={12} /></button>
       </div>
-      <div className="cal-mini-grid" role="grid">
+      <div className="cal-mini-grid">
         {grid.slice(0, 7).map((d) => <span key={d} className="cal-mini-wd" aria-hidden="true">{fmtDay(d, { weekday: 'narrow' })}</span>)}
         {grid.map((d) => {
           const red = holidays && M.holidaysOn(d).some((h) => h.off);
@@ -444,7 +444,7 @@ function DayModal({ day, items, colorBy, holidays, onOpen, onCreate, onClose, on
 }
 
 /* ── 만들기·상세 ── */
-function blankDraft(space, { day, min = 9 * 60, allDay = false }) {
+export function blankDraft(space, { day, min = 9 * 60, allDay = false }) {
   const cal = space === 'me' ? 'me' : idOf(SPACES.find((s) => s.key === space) ?? {});
   const hm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
   const end = Math.min(min + 60, 23 * 60 + 59);
@@ -502,7 +502,8 @@ function QuickCreate({ draft, onClose, onMore }) {
   </Modal>;
 }
 
-function EventSheet({ init, space, categories, onClose, onAsk }) {
+/** 일정 상세·만들기 오른쪽 패널 — 캘린더 페이지와 홈 캘린더 모듈(그 자리에서 열기, 유건 10/1 B-6)이 같이 쓴다 */
+export function EventSheet({ init, space, categories, onClose, onAsk }) {
   const o = init.occ ?? null, series = o?.series ?? null;
   const [d, setD] = useState(() => (o ? draftOf(o) : init.draft));
   const [people, setPeople] = useState([]), [customers, setCustomers] = useState([]), [busy, setBusy] = useState(false);
@@ -574,7 +575,7 @@ function EventSheet({ init, space, categories, onClose, onAsk }) {
 }
 
 /** 반복 일정 수정·삭제 범위 묻기 / 한 건 삭제 확인 — 확인 창은 모달(window.confirm 금지) */
-function AskScope({ ask, rows, onClose, onDone }) {
+export function AskScope({ ask, rows, onClose, onDone }) {
   const { kind, occ, row } = ask, series = occ.series;
   const [scope, setScope] = useState('one'), [busy, setBusy] = useState(false);
   // '이 일정 및 이후' — 서버 split이 UNTIL을 전날로 자르고 그날 뒤의 '이번만 수정' 회차까지 지운다(읽은 창 밖에 있는 것까지). next가 없으면 자르기만.
