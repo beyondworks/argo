@@ -50,7 +50,7 @@ test('fetchSearchRows: 성공이면 한도 안의 글과 더 있음 표시, 실�
   assert.deepEqual(await fetchSearchRows(async () => [1], 2), { msgs: [1], more: false, failed: false });
   const seen = [];
   const r = await fetchSearchRows(async () => { throw new TypeError('Failed to fetch'); }, 2, (e) => seen.push(e.message));
-  assert.deepEqual(r, { msgs: [], more: false, failed: true });
+  assert.deepEqual(r, { msgs: [], more: false, failed: 'offline' });
   assert.deepEqual(seen, ['Failed to fetch']);
 });
 

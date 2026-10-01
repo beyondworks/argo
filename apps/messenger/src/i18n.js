@@ -1233,6 +1233,9 @@ export const DICT = {
   'phone.meta': ['{n}명 · 에이전트 {c}', '{n} {n|member|members} · {c} {c|agent|agents}'],
   'search.ph': ['검색 ({key})', 'Search ({key})'], // {key} = 맥은 ⌘K, 그 밖은 Ctrl+K(shortcut.mjs)
   'search.partial': ['연결이 끊겨 일부만 보입니다. 연결을 확인하고 다시 검색해 주세요.', 'Connection lost — only some results are shown. Check your connection and search again.'],
+  'search.partial.error': ['검색을 마치지 못해 일부만 보입니다. 잠시 뒤 다시 검색해 주세요.', 'The search did not finish, so only some results are shown. Please search again in a moment.'],
+  'search.failed': ['연결이 끊겨 검색하지 못했습니다. 연결을 확인하고 다시 검색해 주세요.', 'Connection lost — the search could not run. Check your connection and search again.'],
+  'search.failed.error': ['검색하지 못했습니다. 잠시 뒤 다시 검색해 주세요.', 'The search could not run. Please search again in a moment.'],
   'net.offline': ['연결이 끊겨 있습니다. 연결되면 다시 쓸 수 있습니다.', 'You are offline. Everything works again once you reconnect.'],
   'search.hint': ['메시지 본문, 사람, 에이전트, 채널을 한 번에 찾습니다. 위 검색 칸에 입력하고 Enter.', 'Searches message text, people, agents and channels. Type in the box above and press Enter.'],
   'search.ph.phone': ['메시지·사람·채널 검색', 'Search messages, people, channels'],

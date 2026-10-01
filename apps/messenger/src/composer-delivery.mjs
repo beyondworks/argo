@@ -74,9 +74,8 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
       const failed = job.files.filter((item) => !item.done);
       if (failed.length) {
         const error = failed.map((item) => `${item.file.name}: ${item.error}`).join('\n');
-        const offline = failed.some((item) => isNetworkFailure(item.error));
-        if (offline) reporter?.('send', error);
-        patch({ job: { ...job, error, errorKey: offline ? OFFLINE_KEY : '' } });
+        if (failed.some((item) => isNetworkFailure(item.error))) reporter?.('send', error);
+        patch({ job: { ...job, error, errorKey: failed.every((item) => isNetworkFailure(item.error)) ? OFFLINE_KEY : '' } }); // 일부만 네트워크 오류면 원문 줄을 그대로 — 다른 원인을 연결 탓으로 덮지 않는다
         return false;
       }
       patch({ job: null, lastDeliveredId: job.messageId });

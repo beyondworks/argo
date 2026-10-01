@@ -11,3 +11,8 @@ export function crewRowMenuKeys({ isPersonal, isDm, canKickCrew, ownedByMe }) {
     viaLeave && 'leave',
   ].filter(Boolean);
 }
+
+// 에이전트 카드(시트)를 여는 길 — 개인 공간은 시트를 그리지 않으므로 메시지의 에이전트 버튼은 없고, 검색 결과는 그 에이전트와의 1:1로 간다.
+export const crewOpeners = ({ isPersonal, openSheet, openDm }) => ({ channel: isPersonal ? null : openSheet, search: isPersonal ? openDm : openSheet });
+// 시트 사람 행의 '방장' 표식 — 개인 1:1은 만든 사람이 따로 없다(양쪽이 서로를 방장으로 보던 것).
+export const creatorTagVisible = ({ isCreator, isPersonal, isGroup }) => isCreator && !(isPersonal && !isGroup);

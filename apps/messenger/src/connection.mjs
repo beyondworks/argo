@@ -4,6 +4,7 @@ export function watchOnline(cb, win = globalThis.window) {
   const now = () => win?.navigator?.onLine !== false;
   const on = () => cb(now());
   cb(now());
-  win?.addEventListener?.('online', on); win?.addEventListener?.('offline', on);
-  return () => { win?.removeEventListener?.('online', on); win?.removeEventListener?.('offline', on); };
+  const doc = win?.document; // 백그라운드 중 놓친 online/offline 이벤트 — 다시 보일 때 한 번 더 읽는다(#793 검수 LOW-4)
+  win?.addEventListener?.('online', on); win?.addEventListener?.('offline', on); doc?.addEventListener?.('visibilitychange', on);
+  return () => { win?.removeEventListener?.('online', on); win?.removeEventListener?.('offline', on); doc?.removeEventListener?.('visibilitychange', on); };
 }
