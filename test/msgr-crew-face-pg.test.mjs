@@ -57,7 +57,7 @@ before(() => {
   // v2 적용 전에 옛 형태로 저장된 운영 행을 흉내 낸다 — 운영 12행처럼 v2 마이그레이션이 이 행을 고쳐 쓰지도, 제약 검증에서 막히지도 않아야 한다
   LEGACY = last(asUser(U.owner, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, face) values ('${ORG}', '${U.owner}', 'lean-ax-face', 'legacy', '옛 얼굴 크루', '{"shape":5,"color":9,"eyes":2}'::jsonb) returning id`));
   LEGACY_XMIN = sql(`select xmin from public.msgr_crews where id = '${LEGACY}'`);
-  psql(['-f', mig('20261001130000_msgr_crew_face_v2.sql')]);
+  psql(['-1', '-f', mig('20261001130000_msgr_crew_face_v2.sql')]); // msgr-live-apply.sh와 같이 한 트랜잭션(-1) — set local lock_timeout이 유효한 경로
 });
 
 test('소유자만 얼굴을 바꾼다 — 다른 멤버는 0행(RLS의 using이 UPDATE 대상에서 걸러 오류 없이 조용히 막는다), 소유자는 됨', { skip }, () => {

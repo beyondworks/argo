@@ -6,6 +6,10 @@
 -- 쓰기 경로·권한은 바뀌지 않는다: 소유자 update 정책(msgr_crews_update_owner)과 관리자 정책의 face 보호(20260924170000)는 손대지 않는다.
 -- 잠금 트리거(msgr_lock_crews)의 WHEN 절은 face를 보지 않으므로 이 제약 교체가 트리거·하트비트 쓰기량을 늘리지 않는다.
 
+-- 제약 교체는 ACCESS EXCLUSIVE 잠금이다 — 하트비트·폴링이 잡고 있으면 5초 안에 포기하고 실패한다(대기열에 쌓여 msgr_crews 전체를 막지 않게, 검수 #789).
+-- msgr-live-apply.sh는 psql -1(한 트랜잭션)로 적용하므로 set local이 이 파일 안에서만 유효하다. 실패하면 한가할 때 다시 적용한다.
+set local lock_timeout = '5s';
+
 alter table public.msgr_crews drop constraint if exists msgr_crews_face_shape;
 alter table public.msgr_crews add constraint msgr_crews_face_shape check (
   face is null or case when jsonb_typeof(face) <> 'object' then false else coalesce( -- 객체가 아니면 먼저 거절 — CASE가 순서를 보장한다(그냥 and로 묶으면 '"face"' 같은 스칼라에서 face - 'shape'가 제약 위반 대신 'cannot delete from scalar' 오류를 냈다, PG 드릴 실측).
