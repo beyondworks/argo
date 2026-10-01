@@ -91,7 +91,7 @@ function PresetMenu({ anchor, list, onClose, onSave, onPick, onDelete }) {
   }, [anchor]);
   useEffect(() => {
     const outside = (e) => { if (!ref.current?.contains(e.target) && !anchor.contains(e.target)) shut(false); };
-    const away = () => shut(false);
+    const away = (e) => { if (!ref.current?.contains(e.target)) shut(false); }; // 메뉴 안 스크롤(목록이 길 때·화살표 이동)로는 닫지 않는다(검수 6차)
     document.addEventListener('pointerdown', outside, true); window.addEventListener('resize', away); document.addEventListener('scroll', away, true);
     return () => { document.removeEventListener('pointerdown', outside, true); window.removeEventListener('resize', away); document.removeEventListener('scroll', away, true); };
   });

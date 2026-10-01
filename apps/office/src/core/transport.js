@@ -116,6 +116,8 @@ function rejected(op, err) {
   if (op.payload.ownerUid !== getStorageScope()) return;
   if (op.payload.type === 'layout.set') {
     const key = op.payload.key;
+    // 저장본 줄은 화면 배치가 아니라 목록이다 — 다른 기기가 먼저 썼으면 잠그지 않고 서버 목록을 바로 다시 불러온다(거절된 저장본이 남아 보이지 않게, 검수 6차)
+    if (key === 'presets:me') { import('./pull.js').then((m) => m.reloadLayout(key)).catch(() => {}); showToast(t('presets.reloaded')); return; }
     persist(scopedStorageKey(`argo-office-layout-conflict:${key}`), getState().layouts[key], 0);
     update((s) => ({ layouts: { ...s.layouts, [key]: { ...s.layouts[key], conflict: true } } }));
     showToast(t(err?.conflict ? 'page.conflict' : 'sync.rejected'));

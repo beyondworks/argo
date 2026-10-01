@@ -230,7 +230,7 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 /* 폭 = 열 수(--span, 1~12), 높이 = 줄 높이(--rh, 같은 줄이 같이 쓴다) — 유건 10/1 가장자리 끌기. 정한 높이보다 내용이 길면 본문이 스크롤된다 */
 .module.sized-h { height: var(--rh); }
 .module.sized-h .module-body { flex: 1; min-height: 0; overflow: auto; }
-.module.fixed-h { min-height: 320px; } /* 쌓이는 모듈(등록부 stack)은 정한 높이가 없으면 고정 높이 320px — 본문은 크기를 내지 않고(contain) 안에서 스크롤, 비면 빈 공간(유건 10/1 밤 6차) */
+.module.fixed-h:not(.sized-h) { min-height: 320px; } /* 쌓이는 모듈(등록부 stack)은 정한 높이가 없으면 고정 높이 320px — 본문은 크기를 내지 않고(contain) 안에서 스크롤, 비면 빈 공간(유건 10/1 밤 6차) */
 .module.fixed-h > .module-body { flex: 1; min-height: 0; overflow: auto; contain: size; }
 .module-body::-webkit-scrollbar-track { margin-bottom: var(--rs); } /* 본문 스크롤 막대는 카드 아래 둥근 모서리가 시작하기 전에 끝난다 — 셸마다 둥글기(--rs)가 달라도(유건 10/1 밤 6차) */
 .module.dragging { opacity: 0.35; outline: 1px dashed var(--fg-3); outline-offset: -1px; } /* 옮기는 동안 원래 모듈은 제자리에 흐리게 — 놓일 자리는 윤곽(.grid-slot)으로 */
