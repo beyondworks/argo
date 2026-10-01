@@ -1,4 +1,10 @@
 import { storageKey } from './attach-files.mjs';
+import { isNetworkFailure } from './net-errors.mjs';
+
+// 전송 실패의 영어 원문은 카드에 보이지 않는다(검수 E: 'TypeError: Failed to fetch'가 빨간 글씨로 나왔다). 앱이 진단 기록(설정 > 진단)으로 보내는 통로.
+let reporter = null;
+export const setDeliveryReporter = (fn) => { reporter = fn; };
+const OFFLINE_KEY = 'msg.delivery.offline';
 
 // Drafts and retry state live only for this signed-in app session, separately per server/user/channel.
 // Keeping the File objects in memory lets navigation preserve attachments without copying them to disk.
@@ -67,13 +73,18 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
       }
       const failed = job.files.filter((item) => !item.done);
       if (failed.length) {
-        patch({ job: { ...job, error: failed.map((item) => `${item.file.name}: ${item.error}`).join('\n') } });
+        const error = failed.map((item) => `${item.file.name}: ${item.error}`).join('\n');
+        const offline = failed.some((item) => isNetworkFailure(item.error));
+        if (offline) reporter?.('send', error);
+        patch({ job: { ...job, error, errorKey: offline ? OFFLINE_KEY : '' } });
         return false;
       }
       patch({ job: null, lastDeliveredId: job.messageId });
       return true;
     } catch (error) {
-      patch({ job: { ...job, error: error.message, errorKey: error.uiKey ?? '' } }); // errorKey가 있으면 카드는 원문 대신 그 문구를 쓴다(D50)
+      const offline = !error.uiKey && isNetworkFailure(error.message);
+      if (offline) reporter?.('send', String(error)); // 'TypeError: Failed to fetch' — 화면에는 문구만, 원문은 진단 기록에
+      patch({ job: { ...job, error: error.message, errorKey: error.uiKey ?? (offline ? OFFLINE_KEY : '') } }); // errorKey가 있으면 카드는 원문 대신 그 문구를 쓴다(D50)
       return false;
     } finally { patch({ busy: false, uploading: '' }); }
   }
