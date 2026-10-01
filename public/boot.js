@@ -95,15 +95,16 @@ try {
 
 // 북극성 등장이 끝난 뒤에 이동한다(중간에 끊기면 별이 떨어지다 만 장면에서 Next 화면으로 튄다).
 // 신호는 boot-splash.mjs(module)가 준다: window.__argoIntroDone + 'argo-intro-done' 이벤트. 모듈은 문서 파싱 뒤에 돌아 이 classic
-// 스크립트보다 늦을 수 있고, 로드에 실패할 수도 있다 — 그래서 신호를 기다리되 앱 시작 기준 상한(INTRO_WAIT_MS)이 지나면 신호 없이 간다.
+// 스크립트보다 늦을 수 있고, 로드에 실패할 수도 있다 — 그래서 신호를 기다리되 서버 준비 시점부터 상한(INTRO_WAIT_MS)이 지나면 신호 없이 간다.
+// 상한은 0.6초 — 서버가 이미 준비된 빠른 경로에서 첫 화면을 늦추지 않는다(검수 #792 결정 2026-10-01: 등장이 덜 끝났어도 간다).
 // 창이 가려져 애니메이션이 멈춘 경우는 모듈 쪽 타이머 상한(INTRO_CAP_MS 1.4초)이 신호를 낸다(반대 검토 #2·#4).
-var INTRO_WAIT_MS = 1800;
+var INTRO_WAIT_MS = 600;
 function afterIntro(fn) {
   var done = false;
   function go() { if (done) return; done = true; fn(); }
   if (window.__argoIntroDone) { go(); return; }
   if (window.addEventListener) window.addEventListener('argo-intro-done', go);
-  setTimeout(go, Math.max(0, INTRO_WAIT_MS - (Date.now() - startedAt)));
+  setTimeout(go, INTRO_WAIT_MS);
 }
 
 function goto(url) {

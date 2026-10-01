@@ -173,8 +173,8 @@ test('등장 대기: 서버가 먼저 준비돼도 등장 끝 신호(argo-intro-
   const { ctx, timers } = load({ fetchImpl: okFetch, introDone: false });
   await drain(); await drain(); await drain();
   assert.equal(ctx.__navigated, null, '등장 중에는 이동 보류');
-  const cap = timers.find((t) => t.ms > 0 && t.ms <= 1800 && !t.cleared && t.ms !== 1500);
-  assert.ok(cap, '신호가 안 와도 가는 상한 타이머(앱 시작 기준 1.8초 이내)');
+  const cap = timers.find((t) => t.ms === 600 && !t.cleared);
+  assert.ok(cap, '신호가 안 와도 가는 상한 타이머 — 서버 준비 뒤 0.6초(검수 #792 결정: 빠른 경로에서 첫 화면을 늦추지 않는다)');
   for (const cb of ctx.__winListeners['argo-intro-done'] || []) cb();
   assert.equal(ctx.__navigated, 'http://localhost:3001/#argo-splash');
   cap.fn(); // 상한이 뒤늦게 발화해도
@@ -184,7 +184,7 @@ test('등장 대기: 서버가 먼저 준비돼도 등장 끝 신호(argo-intro-
 test('등장 대기 상한: 스플래시 모듈이 끝내 신호를 안 보내도(로드 실패) 상한에 이동한다 — 영구 대기 없음', async () => {
   const { ctx, timers } = load({ fetchImpl: okFetch, introDone: false });
   await drain(); await drain(); await drain();
-  const cap = timers.find((t) => t.ms > 0 && t.ms <= 1800 && !t.cleared && t.ms !== 1500);
+  const cap = timers.find((t) => t.ms === 600 && !t.cleared);
   assert.ok(cap);
   cap.fn();
   assert.equal(ctx.__navigated, 'http://localhost:3001/#argo-splash');

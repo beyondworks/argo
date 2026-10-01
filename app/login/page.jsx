@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
 import { Logo, Spinner } from '../ui';
 import { useLang } from '../i18n';
-import { markSplashReady } from '../splash-continue';
+import { markSplashReady } from '../splash-continue-core.mjs';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;

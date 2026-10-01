@@ -28,12 +28,13 @@ const desktopLinkBridge = `document.addEventListener('click',function(e){try{var
 // 북극성 스플래시 2단계 — 데스크톱 부트 화면(public/boot.js)은 등장 모션을 끝낸 뒤 `#argo-splash`를 붙여 이리로 온다.
 // 첫 페인트 전에 표시(html[data-argo-splash])를 붙이고 해시는 바로 지운다 — 남겨 두면 BuildWatch의 새로고침 때 스플래시가 다시 뜬다.
 // 표시가 있을 때만 body의 정적 오버레이(#argo-splash-ssr)가 보이고, SplashContinue가 같은 자리의 엔진 오버레이로 바꿔 들었다가 닫는다.
-// 스크립트가 끝내 안 돌면(하이드레이션 실패 등) 8초 뒤 CSS만으로 사라지고, 그동안도 클릭은 통과시킨다(반대 검토 #3).
+// 스플래시가 보이는 동안은 클릭을 막고(엔진 오버레이와 같게, 검수 #792 LOW-1), 스크립트가 끝내 안 돌면(하이드레이션 실패 등) 8초 뒤
+// CSS만으로 visibility:hidden이 돼 클릭도 풀린다(반대 검토 #3).
 // 색은 graphite — 시스템 밝기를 따른다(부트 화면 boot.css와 같은 값, 정본 public/splash/north-star.mjs GRAPHITE).
 // 로고 크기는 표시 배율(--z)로 나눠 부트 화면과 같은 실제 크기를 유지한다(반대 검토 #6).
 const splashBoot = `try{if(location.hash==='#argo-splash'){document.documentElement.dataset.argoSplash='1';history.replaceState(history.state,'',location.pathname+location.search)}}catch(e){}`;
 const splashCss = `#argo-splash-ssr{display:none}`
-  + `html[data-argo-splash] #argo-splash-ssr{display:grid;place-items:center;position:fixed;inset:0;z-index:2147483000;background:${GRAPHITE.light.bg};color:${GRAPHITE.light.mark};pointer-events:none;animation:argoSplashGone .3s 8s forwards}`
+  + `html[data-argo-splash] #argo-splash-ssr{display:grid;place-items:center;position:fixed;inset:0;z-index:2147483000;background:${GRAPHITE.light.bg};color:${GRAPHITE.light.mark};pointer-events:auto;animation:argoSplashGone .3s 8s forwards}`
   // 가로 100vw — 고전 스크롤바 화면에서도 가운데가 부트 화면과 같은 자리. 표시 배율(zoomBoot가 html style에 zoom을 쓴다)이 걸리면 vw에도 배율이 곱해지므로 뺀다
   + `html[data-argo-splash]:not([style*="zoom"]) #argo-splash-ssr{right:auto;width:100vw}`
   + `@media (prefers-color-scheme:dark){html[data-argo-splash] #argo-splash-ssr{background:${GRAPHITE.dark.bg};color:${GRAPHITE.dark.mark}}}`
