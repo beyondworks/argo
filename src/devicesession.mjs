@@ -26,13 +26,12 @@ const fileOf = (root) => join(root, FILE);
 // 시간의 관계(#791 독립 검수 HIGH-2·LOW-4):
 // - 잠금을 쥔 동안 10초마다 잠금 폴더 시각을 갱신한다(refreshMs). 그래서 30초 회수는 갱신이 멈춘 주인(크래시)에게만 일어난다 —
 //   느린 회전 중인 살아 있는 주인의 잠금을 다른 프로세스가 회수해 같은 옛 토큰을 보내는 일이 없다.
-// - 회전 요청 상한(45초)은 auth-js의 자동 재시도 창(AUTO_REFRESH_TICK_DURATION_MS 30초 — _refreshAccessToken은 그 안에서만
-//   AuthRetryableFetchError를 다시 보낸다)보다 길어야 한다. 20초였을 때 21초 응답에서 20.2초에 같은 토큰을 다시 보내 "Already Used" →
-//   사망 마커 → 재로그인이 났다(검수 재현). 45초면 시간 초과 뒤 재시도 조건(시작 후 30초 안)이 거짓이라 다시 보내지 않고, 응답 없는
-//   서버에 잠금을 영원히 쥐고 있지도 않는다.
+// - 회전 요청에는 시간 제한을 두지 않는다. 제한에 걸려 끊기면 서버는 이미 회전했을 수 있는데 이쪽은 옛 토큰을 쥔 채 남아, 재시도
+//   (auth-js 자동 재시도 — 시작 후 30초 안의 AuthRetryableFetchError — 또는 다음 동기화 주기)가 같은 토큰을 다시 보내 "Already Used" →
+//   사망 마커 → 재로그인이 된다(#791 검수 재현: 20초 제한 + 21초 응답, 45초 제한 + 50초 응답). 잠금 안전은 시각 갱신이 맡으므로
+//   이 제한이 필요 없다. 대가: 서버가 끝내 응답하지 않으면 그 회전은 끝나지 않고, 다른 프로세스는 40초마다 null을 받는다(종전 코드와 같은 무기한 대기).
 // - 대기 상한 40초 > 회수 30초 — 주인 없는(크래시가 남긴) 잠금은 기다리는 동안 회수되므로 저장·삭제가 ELOCKTIMEOUT으로 실패하지 않는다.
 const lockOf = (root) => join(root, '.device-session.lock');
-const REFRESH_TIMEOUT_MS = 45_000;
 const LOCK_STALE_MS = 30_000;
 const LOCK_BEAT_MS = 10_000;
 const LOCK_WAIT_MS = 40_000; // 살아 있는 다른 프로세스의 회전을 기다리는 한도 — 넘으면 이번엔 null(호출부 계약), 다음 주기 재시도
@@ -242,11 +241,7 @@ async function rotateLocked(root, _mkClient) {
     }
     const bo = MEM.backoff.get(root);
     if (bo && bo.tag === tag && Date.now() < bo.until) { await logLine(root, { ev: 'skipped', reason: 'backoff' }); return null; }
-    const sb = _mkClient(sess.url, sess.anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      // 시간 상한 45초 — auth-js 자동 재시도 창(30초)보다 길게(위 상수 주석). 초과는 네트워크 실패와 같이 백오프로 간다.
-      global: { fetch: (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) }) },
-    });
+    const sb = _mkClient(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false } }); // 시간 제한 없음 — 위 상수 주석
     const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });
     if (!error && data?.session) {
       const s = data.session;

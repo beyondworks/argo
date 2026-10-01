@@ -16,18 +16,23 @@ const fakes = [];
 after(async () => { for (const f of fakes) await f.close(); });
 
 /** 자식 하나 — startAt(epoch ms)까지 기다렸다가 getFreshDeviceSession()을 부르고 받은 access token을 돌려준다. */
-function rotateChild(root, startAt) {
+/** attempts > 1이면 null을 받을 때마다 gapMs 쉬고 다시 부른다 — 동기화 주기가 다음 회전을 시도하는 것과 같다(백오프 8초보다 길게). */
+function rotateChild(root, startAt, { attempts = 1, gapMs = 9_000 } = {}) {
   const script = `
 const { getFreshDeviceSession } = await import(${JSON.stringify(srcUrl('devicesession.mjs'))});
 await new Promise((r) => setTimeout(r, Math.max(0, ${startAt} - Date.now())));
-const s = await getFreshDeviceSession();
+let s = null;
+for (let i = 0; i < ${attempts} && !s; i++) {
+  if (i) await new Promise((r) => setTimeout(r, ${gapMs}));
+  s = await getFreshDeviceSession();
+}
 process.stdout.write('\\n@@' + JSON.stringify({ at: s?.access_token ?? null }) + '\\n');
 process.exit(0);`;
   return new Promise((resolve, reject) => {
     const p = spawn(process.execPath, ['--input-type=module', '-e', script], { env: childEnv(root), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = ''; let err = '';
     p.stdout.on('data', (c) => { out += c; }); p.stderr.on('data', (c) => { err += c; });
-    const t = setTimeout(() => { p.kill("SIGKILL"); reject(new Error(`rotate child timeout\n${err}`)); }, 80_000);
+    const t = setTimeout(() => { p.kill("SIGKILL"); reject(new Error(`rotate child timeout\n${err}`)); }, 110_000);
     p.on('exit', () => {
       clearTimeout(t);
       const line = out.split('\n').find((l) => l.startsWith('@@'));
@@ -106,4 +111,22 @@ test('#791 LOW-4 — 크래시가 남긴 주인 없는 잠금이 있어도 로�
   assert.ok(took >= 4_000 && took < 15_000, `회수까지 기다린 시간 ${took}ms`);
   assert.equal(loadDeviceSession({ root }).user.id, 'u9');
   assert.equal(existsSync(lock), false);
+});
+
+test('#791 재검수 LOW-a — 회전 응답이 50초 걸려도 끊지 않는다: /token 1회·정상 회전, 기다린 다른 프로세스는 40초 뒤 null(옛 토큰을 보내지 않음)', { timeout: 150_000 }, async () => {
+  // 45초 상한이었을 때: 45초에 끊김 → 백오프 → 다음 시도가 이미 서버에서 회전된 rt-0을 다시 보냄 → Already Used → 사망 마커 → 재로그인
+  const fake = await startFakeSupabase({ refreshDelayMs: 50_000 }); fakes.push(fake);
+  const root = await mkdtemp(join(tmpdir(), 'argo-devsess-50s-'));
+  seedRoot(root, { url: fake.url, expiresAt: 0 });
+  const startAt = Date.now() + 1500;
+  const [a, b] = await Promise.all([
+    rotateChild(root, startAt, { attempts: 2 }), // 회전하는 쪽 — 끊겼으면 9초 뒤 다시 시도(동기화 주기)
+    rotateChild(root, startAt + 300), // 기다리는 쪽 — 한 번만
+  ]);
+  assert.equal(fake.count('POST /auth/v1/token'), 1, '회전 요청은 한 번');
+  assert.deepEqual(fake.reused, []);
+  assert.equal(a, 'at-1');
+  assert.equal(b, null, '잠금 대기 40초가 지나면 이번엔 null — 옛 토큰을 보내지 않는다');
+  assert.equal(JSON.parse(readFileSync(join(root, '.device-session.json'), 'utf8')).refresh_token, 'rt-1');
+  assert.equal(existsSync(join(root, '.device-session.json.dead')), false, '사망 마커 없음');
 });
