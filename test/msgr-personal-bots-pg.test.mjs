@@ -358,6 +358,34 @@ test('DB 위생: 유휴 호출은 봇·조직 크루·쌍둥이·매핑 어디�
   }
 });
 
+test('검수 #794 M-1: 배달 뒤 실행이 끝나기 전에 그 글이 지워져도 보류가 끝나 유휴 쓰기 0(30초마다 갱신하지 않는다)', { skip }, () => {
+  drain(T1);
+  const P = post(U.a, CH1, '곧 지울 글');
+  const got = ups(T1, 0, 10);
+  assert.deepEqual(got.map((u) => u.update_id), [Number(P)]);
+  asUser(U.a, `update public.msgr_messages set deleted_at = now() where id = ${P}`); // 방 보관·나가기·차단도 같은 모양(배달 판정이 거짓)
+  fails(finishRaw(T1, CH1, '답', P, got[0].message.execution_attempt), /msgr_not_allowed/, '지운 글에는 답이 저장되지 않는다');
+  ups(T1, 0, 10); ups(T1, 0, 10); // 지문을 남기는 스캔
+  assert.equal(sql(`select scan_pending from public.msgr_bot_personal where bot_id='${BOT1}'`), 'f', '끝난 실행을 기다리지 않는다');
+  const xmin = () => sql(`select xmin::text from public.msgr_bot_personal where bot_id='${BOT1}'`);
+  const before = xmin();
+  sql(`update public.msgr_bot_personal set scan_at = now() - interval '31 seconds' where bot_id='${BOT1}'`); // 30초가 지난 것처럼
+  const aged = xmin();
+  for (let i = 0; i < 3; i++) assert.equal(ups(T1, 0, 10).length, 0);
+  assert.equal(xmin(), aged, '30초가 지나도 다시 쓰지 않는다(보류 없음)');
+  assert.notEqual(before, '', 'xmin 읽음');
+  // 결과를 기다리는 실행도 11분이 지나면(안내가 막혀도) 보류를 끝낸다
+  const Q = post(U.a, CH1, '오래된 실행');
+  const g2 = ups(T1, 0, 10);
+  assert.deepEqual(g2.map((u) => u.update_id), [Number(Q)]);
+  sql(`update public.msgr_executions set heartbeat_at = now() - interval '12 minutes' where crew_id='${TW1}' and source_msg_id=${Q}`);
+  sql(`insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, client_msg_id, body, meta) values ('${CH1}', 'crew', '${TW1}', 'system', 'unknown:${TW1}:${Q}', 'x', '{"disposition":"done"}')`);
+  sql(`update public.msgr_bot_personal set scan_key = null where bot_id='${BOT1}'`);
+  ups(T1, 0, 10); ups(T1, 0, 10);
+  assert.equal(sql(`select scan_pending from public.msgr_bot_personal where bot_id='${BOT1}'`), 'f');
+  sql(`update public.msgr_executions set state = 'completed' where crew_id='${TW1}' and source_msg_id in (${P}, ${Q})`);
+});
+
 test('결과 미도착 안내(10분)는 쌍둥이 기준으로 한 번만', { skip }, () => {
   drain(T1);
   const P = post(U.a, CH1, '오래 걸리는 일');

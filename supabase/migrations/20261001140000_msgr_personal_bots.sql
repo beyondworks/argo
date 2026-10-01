@@ -183,7 +183,7 @@ begin
     insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, thread_root, client_msg_id, body, meta)
       values (s.channel_id, 'crew', p_twin, 'system', s.id, coalesce(s.thread_root, s.id), 'unknown:' || p_twin || ':' || s.id,
         '외부 에이전트의 실행 결과가 아직 도착하지 않았습니다. 실행 상태를 확인해 주세요. / The external agent has not returned a result. Check its status.',
-        '{"execution_status":"unknown","disposition":"done"}');
+        '{"execution_status":"unknown","disposition":"done"}') on conflict do nothing; -- 동시 두 호출(검수 #794 LOW-3)
   end loop;
 
   -- 후보: 쌍둥이가 든 개인 방(참여 행 기반 — org IS NULL 전역 스캔 금지)의 커서 뒤, 24시간 안, 쌍둥이를 겨냥한 글(to 멘션 또는 크루 1:1의 사람 글)
@@ -207,7 +207,7 @@ begin
         insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, client_msg_id, body, meta)
           values (s.channel_id, 'crew', p_twin, 'system', 'aiconsent:' || p_twin || ':' || s.channel_id,
             '앱을 업데이트하고 AI 이용에 동의하면 크루에게 맡길 수 있습니다. / Update the app and agree to AI use to hand this to a crew.',
-            jsonb_build_object('disposition', 'done'));
+            jsonb_build_object('disposition', 'done')) on conflict do nothing; -- 동시 두 호출(검수 #794 LOW-3)
       end if;
       continue;
     end if;
@@ -266,10 +266,13 @@ begin
       where p.bot_id = p_bot;
     return;
   end if;
-  -- 보류: 결과를 기다리는 실행(안내 전)이 있으면 30초마다 다시 본다
+  -- 보류: 결과를 기다리는 실행(안내 전)이 있으면 30초마다 다시 본다. 안내를 실제로 남길 수 있는 실행만 — 배달 판정이 거짓이 된 실행(글 삭제·방 보관·
+  -- 나가기·차단)은 안내도 답도 못 남겨 running으로 남는다. 그런 실행이나 11분(안내 기한 10분 + 한 번 더 볼 여유)이 지난 실행은 기다리지 않는다
+  -- (검수 #794 M-1 — 끝나지 않는 보류가 30초마다 msgr_bot_personal을 다시 썼다).
   pending := pending or exists (select 1 from public.msgr_executions e join public.msgr_messages m on m.id = e.source_msg_id
-     where e.crew_id = p_twin and e.state = 'running'
-       and not exists (select 1 from public.msgr_messages x where x.channel_id = m.channel_id and x.client_msg_id = 'unknown:' || p_twin || ':' || m.id));
+     where e.crew_id = p_twin and e.state = 'running' and e.heartbeat_at > now() - interval '11 minutes'
+       and not exists (select 1 from public.msgr_messages x where x.channel_id = m.channel_id and x.client_msg_id = 'unknown:' || p_twin || ':' || m.id)
+       and public.msgr_delivery_allowed(p_twin, m.id));
   if not waited then
     -- 아무것도 못 준 스캔 — 커서를 당긴다. 10분 안의 글과 24시간 안의 겨냥 글(아직 실행 기록 없음) 앞에서 멈춘다.
     -- least()는 NULL을 무시한다 — 넘길 끝(10분 넘은 글의 최댓값)이 없으면 움직이지 않는다(case).
@@ -309,7 +312,7 @@ begin
     insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, client_msg_id, body, meta)
       values (new.channel_id, 'crew', t.crew_id, 'system', k,
         '이 외부 에이전트는 개인 공간에서 쓰려면 다시 연결해야 합니다. 조직에서 연결 명령을 다시 실행하거나 토큰을 새로 받으세요. / This external agent needs to be reconnected before it can answer in your personal space. Run the connect command again or get a new token in the organization.',
-        jsonb_build_object('disposition', 'done'));
+        jsonb_build_object('disposition', 'done')) on conflict do nothing; -- 사람 글 두 개가 동시에 들어오면 유일 제약으로 사람 글 저장까지 실패하던 것(검수 #794 LOW-3)
   end loop;
   return null;
 end $$;
