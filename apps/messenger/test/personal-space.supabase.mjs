@@ -29,6 +29,9 @@ const state = window.__psFixture = { calls: [], failNext: null, aiConsent: local
   msgr_personal_room_crews: [
     { id: 'pcrew-mine', org_id: null, slug: 'mine', display_name: 'My Agent', owner_user_id: uid, hosting: 'local', status: 'active', last_seen_at: now },
     { id: 'pcrew-alice', org_id: null, slug: 'alice-agent', display_name: "Alice's Agent", owner_user_id: 'user-alice', hosting: 'local', status: 'active', last_seen_at: now },
+    // 개인 공간 봇 쌍둥이(2026-10-01) — 같은 에이전트를 두 조직에 연결(조직 이름 라벨), 하나는 다른 관리자가 토큰을 바꿔 '다시 연결 필요'
+    { id: 'ptwin-lean', org_id: null, slug: 'bot-aaaaaaaaaaaa', display_name: 'Hermes', owner_user_id: uid, hosting: 'bot', status: 'active', last_seen_at: now, bot_kind: 'hermes', org_label: 'Lean', ready: true },
+    { id: 'ptwin-lean2', org_id: null, slug: 'bot-bbbbbbbbbbbb', display_name: 'Hermes', owner_user_id: uid, hosting: 'bot', status: 'active', last_seen_at: now, bot_kind: 'hermes', org_label: 'Lean2', ready: false },
   ],
   msgr_personal_channels: [channel('pdm-alice', 'dm', 'dm:Alice Friend', null)],
   msgr_personal_members: [
