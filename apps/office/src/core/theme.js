@@ -1,15 +1,15 @@
 // 테마 = 앱 셸(data-shell) × 색상(data-theme). 유건 9/30: "테마는 앱쉘 선택 + 컬러 선택으로".
-// 색상: linen(기본, 메신저 기본값)·graphite·cream·sand·peach·mist·glow — 가족마다 시스템 자동(이름만)·라이트 고정(-light)·다크 고정(-dark).
-// 셸: plain(기본)·float·window·panel·pill·glass — 모양은 themes.css. 둘은 자유롭게 섞인다.
+// 색상: linen(기본, 메신저 기본값)·graphite·cream·sand·peach·mist·glow + sage·ocean·rose·lavender·slate·ember(10/1) — 가족마다 시스템 자동(이름만)·라이트 고정(-light)·다크 고정(-dark).
+// 셸: plain(기본)·float·window·panel·pill·glass·liquid(리퀴드 글래스)·neu(뉴모피즘) — 모양은 themes.css. 둘은 자유롭게 섞인다.
 // 첫 페인트 전 적용은 index.html 인라인 스크립트가 하고, 여기서는 바꿀 때와 시스템 변경만 처리한다.
-export const FAMILIES = ['linen', 'graphite', 'cream', 'sand', 'peach', 'mist', 'glow'];
+export const FAMILIES = ['linen', 'graphite', 'cream', 'sand', 'peach', 'mist', 'glow', 'sage', 'ocean', 'rose', 'lavender', 'slate', 'ember'];
 export const MODES = ['', '-light', '-dark']; // 시스템 · 라이트 · 다크
 export const THEMES = FAMILIES.flatMap((f) => MODES.map((m) => f + m));
 // 시스템 자동의 다크를 .dark-emul 클래스로 입히는 가족(graphite만 tokens.css의 @media로 처리한다).
 export const EMUL = FAMILIES.filter((f) => f !== 'graphite');
-export const SHELLS = ['plain', 'float', 'window', 'panel', 'pill', 'glass'];
+export const SHELLS = ['plain', 'float', 'window', 'panel', 'pill', 'glass', 'liquid', 'neu'];
 // 셸이 따로 없던 때(색마다 모양이 붙어 있던 9/30 이전)에 고른 테마는 그때 모양을 그대로 받는다
-export const SHELL_OF = { linen: 'plain', graphite: 'plain', cream: 'float', sand: 'window', peach: 'panel', mist: 'pill', glow: 'glass' };
+export const SHELL_OF = { linen: 'plain', graphite: 'plain', cream: 'float', sand: 'window', peach: 'panel', mist: 'pill', glow: 'glass', sage: 'plain', ocean: 'plain', rose: 'plain', lavender: 'plain', slate: 'plain', ember: 'plain' };
 const KEY = 'argo-office-theme', SHELL_KEY = 'argo-office-shell';
 const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 사생활 보호 모드 — 이번 세션만 */ } };

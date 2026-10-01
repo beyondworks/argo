@@ -3,25 +3,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { THEMES, FAMILIES, EMUL, SHELLS, SHELL_OF } from '../src/core/theme.js';
+import { SWATCH, COLOR_GROUPS } from '../src/pages/theme-picks.js';
 
 const css = readFileSync(new URL('../src/themes.css', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const i18n = readFileSync(new URL('../src/core/i18n.js', import.meta.url), 'utf8');
-const NEW = ['cream', 'sand', 'peach', 'mist', 'glow'];
+const NEW = ['cream', 'sand', 'peach', 'mist', 'glow', 'sage', 'ocean', 'rose', 'lavender', 'slate', 'ember'];
 const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
 // 중첩(@media) 안의 규칙까지 모두 — [{ sel, decl }]
 function rulesOf(src) {
   const out = []; const stack = []; let buf = '';
   for (const ch of strip(src)) {
     if (ch === '{') { const pre = buf.trim(); stack.push(pre.startsWith('@') ? null : { sel: pre, decl: '' }); buf = ''; continue; }
-    if (ch === '}') { const top = stack.pop(); if (top) out.push({ sel: top.sel, decl: buf }); buf = ''; continue; }
+    if (ch === '}') { const top = stack.pop(); if (top) out.push({ sel: top.sel, decl: buf, nested: stack.includes(null) }); buf = ''; continue; }
     buf += ch;
   }
   return out;
 }
 
 // 이유: 이름이 한 곳에만 있으면 첫 페인트 스크립트가 모르는 테마로 보고 기본 테마로 깜빡인다.
-test('테마 목록: 일곱 가족 × (시스템·라이트·다크), 첫 페인트 정규식이 모두 받는다', () => {
+test('테마 목록: 열세 가족 × (시스템·라이트·다크), 첫 페인트 정규식이 모두 받는다', () => {
+  assert.equal(FAMILIES.length, 13);
   assert.equal(THEMES.length, FAMILIES.length * 3);
   for (const f of NEW) for (const s of ['', '-light', '-dark']) assert.ok(THEMES.includes(f + s), f + s);
   const re = new RegExp(html.match(/if \(\/(\^\(linen\|graphite[^/]*)\/\.test\(v\)\)/)[1]);
@@ -62,7 +64,7 @@ test('themes.css: 모든 규칙이 plain이 아닌 셸 또는 새 다섯 색 아
   assert.ok(rules.length > 80);
   for (const { sel, decl } of rules) for (const one of sel.split(/,(?![^()]*\))/)) {
     const s = one.trim();
-    if (s === ':root') {
+    if (s === ':root' || s.startsWith(':root:where(')) { // :where()는 특이도 0 — :root 기본값 블록과 같은 대접(새 토큰만)
       for (const d of decl.matchAll(/--([a-z0-9-]+):/g)) {
         assert.match(d[1], /^(frame|t-|tile-)/, `기본값 블록의 토큰: --${d[1]}`);
         assert.doesNotMatch(baseApp, new RegExp(`var\\(--${d[1]}[,)]`), `base.css가 --${d[1]}을 쓰면 기본 화면이 바뀐다`);
@@ -171,6 +173,7 @@ for (const fam of ['linen', 'graphite', ...NEW]) for (const mode of ['light', 'd
     pairs.push(['primary-fg/primary', ratio(c('primary-fg'), c('primary'))]);
     if (NEW.includes(fam)) {
       pairs.push(['mark-fg/mark', ratio(c('mark-fg'), c('mark'))]);
+      pairs.push(['mark-fg/side-mark', ratio(c('mark-fg'), c('side-mark'))]); // 사이드바 개수 배지(.nav-count)·float 공간 표시 — rose 라이트 3.96이 빠졌던 자리(리뷰 10/1)
       for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) pairs.push([`${fg}/side-bg`, ratio(c(fg), c('side-bg'))]);
       pairs.push(['side-fg on side-active', ratio(c('side-fg'), over(raw('side-active'), c('side-bg')))]); // 선택된 메뉴(반투명 배경은 사이드바 위에 올린 색)
       for (const n of [1, 2, 3, 4, 5, 6]) for (const ink of ['tile-ink-2', 'tile-ink-3']) pairs.push([`${ink}/tile-${n}`, ratio(c(ink), c(`tile-${n}`))]);
@@ -183,7 +186,8 @@ for (const fam of ['linen', 'graphite', ...NEW]) for (const mode of ['light', 'd
 // 이유: 사이드바가 창 바탕에 녹는 셸(panel·pill·glass)은 사이드바 글자를 창 바탕(--bg) 위에 그린다.
 // 보정 목록(linen·cream처럼 어두운 사이드바)에 없는 색은 사이드바 글자가 --bg 위에서도 읽혀야 한다.
 test('녹는 사이드바 셸: 보정하지 않는 색은 사이드바 글자가 --bg 위에서도 4.5:1', () => {
-  const fix = css.match(/:root:is\(\[data-shell='panel'\], \[data-shell='pill'\], \[data-shell='glass'\]\):is\(([^)]*)\) \{/)[1];
+  const [, shells, fix] = css.match(/:root:is\(((?:\[data-shell='[a-z]+'\](?:, )?)+)\):is\(([^)]*)\) \{\s*--side-bg: var\(--bg\)/);
+  for (const sh of ['panel', 'pill', 'glass', 'liquid', 'neu']) assert.ok(shells.includes(`'${sh}'`), `사이드바가 바탕에 녹는 셸: ${sh}`);
   for (const fam of NEW) for (const mode of ['light', 'dark']) {
     const t = tokens(`${fam}-${mode}`);
     if (fix.includes(`'${fam}'`)) continue;
@@ -235,4 +239,140 @@ test('카드·버튼에 외곽선(1px 테두리·테두리 그림자)이 없다'
     assert.doesNotMatch(decl, /(?:inset\s+)?0 0 0 1(?:\.5)?px|border:\s*1px solid/, `${sel.slice(0, 60)} → ${decl.trim().slice(0, 80)}`);
   }
   for (const k of ['t-card-edge', 't-tile-edge']) for (const m of strip(css).matchAll(new RegExp(`--${k}:\\s*([^;]+);`, 'g'))) assert.doesNotMatch(m[1], /0 0 0 1px/, `--${k}: ${m[1]}`);
+});
+
+/* ── 새 셸(유건 10/1): 리퀴드 글래스(liquid)·뉴모피즘(neu) ── */
+// 그 셸의 토큰 — 색 토큰 위에 셸 블록(:root[data-shell='x'], 다크면 [data-theme$='-dark'] 블록)과 어두운 사이드바 보정을 얹는다. @media 안(투명도 줄이기 등)은 뺀다
+function shellTokens(theme, shell) {
+  const t = tokens(theme), dark = theme.endsWith('-dark'), fam = theme.replace(/-(light|dark)$/, '');
+  for (const r of rulesOf(css)) {
+    if (r.nested) continue;
+    const sel = r.sel.trim();
+    const mine = sel === `:root[data-shell='${shell}']` || sel === `:root[data-shell='${shell}'][data-theme]` || (dark && sel === `:root[data-shell='${shell}'][data-theme$='-dark']`);
+    const fix = sel.startsWith(':root:is([data-shell=') && sel.includes(`'${shell}'`) && sel.includes(`[data-theme^='${fam}']`);
+    if (mine || fix) for (const d of r.decl.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) t[d[1]] = d[2].trim();
+  }
+  return t;
+}
+
+test('새 셸 두 개와 새 색 여섯 개: 목록·짝 셸(plain)·견본·묶음', () => {
+  for (const sh of ['liquid', 'neu']) assert.ok(SHELLS.includes(sh), sh);
+  for (const f of ['sage', 'ocean', 'rose', 'lavender', 'slate', 'ember']) assert.equal(SHELL_OF[f], 'plain', f);
+  // 이유(유건 10/1 "색 원 13개가 깔끔하게 — 필요하면 중성·따뜻함·차가움으로 묶음"): 묶음에 빠지거나 두 번 나오는 색이 없어야 한다
+  assert.deepEqual(COLOR_GROUPS.flatMap(([, f]) => f).sort(), [...FAMILIES].sort());
+  for (const f of FAMILIES) assert.equal(SWATCH[f]?.length, 3, `견본 ${f}`);
+  const dict = readFileSync(new URL('../src/pages/custom-i18n.js', import.meta.url), 'utf8');
+  for (const [g] of COLOR_GROUPS) assert.match(dict, new RegExp(`'colorgroup\\.${g}': \\['[^']*[가-힣][^']*', '[^가-힣']+'\\]`), g);
+});
+
+// 이유(유건 10/1 "레퍼런스 수준의 진짜 유리"): 흐림은 사파리·데스크톱 웹뷰를 위해 -webkit-와 함께. 흐림을 틀(.shell·.main·.content·.module·.side)에 직접 주면
+// 그 안의 position:fixed 층(.vw-selbar·.vw-band·.drop-hint.page·.nav-scrim)이 화면 대신 그 틀을 기준으로 놓인다 — 틀은 ::before에만 준다(본문 위에 뜨는 포털 층은 직접 줘도 된다).
+test('리퀴드 글래스: 흐림은 -webkit-와 함께, 틀에는 ::before에만, 투명도 줄이기는 불투명', () => {
+  let n = 0;
+  for (const r of rulesOf(css)) {
+    if (!/(^|[^-])backdrop-filter\s*:/.test(r.decl)) continue;
+    n++;
+    assert.match(r.decl, /-webkit-backdrop-filter\s*:/, `-webkit- 없음: ${r.sel.slice(0, 80)}`);
+    for (const one of r.sel.split(/,(?![^()]*\))/)) {
+      const last = one.trim().split(/\s+(?![^()]*\))/).at(-1);
+      if (!last.endsWith('::before')) assert.doesNotMatch(last, /\.(shell|main|content|module|side|grid|page-wrap)\b/, `틀에 직접 흐림: ${one.trim()}`);
+    }
+  }
+  assert.ok(n >= 2, '흐림 규칙');
+  const rt = css.match(/@media \(prefers-reduced-transparency: reduce\) \{([\s\S]*?)\n\}/);
+  assert.ok(rt, '투명도 줄이기 대체');
+  assert.match(rt[1], /--t-lq-blur:\s*none/);
+  for (const k of ['t-lq-win', 't-lq-side', 't-lq-card', 't-lq-card-hi', 't-lq-chip', 't-lq-pop']) assert.match(rt[1], new RegExp(`--${k}:\\s*var\\(--(bg|float|surface|card)\\)`), k);
+});
+
+// 이유(유건 10/1 "글자 대비 4.5:1 유지 — 흐린 배경 위 최악 경우 기준"): 유리는 뒤가 비친다. 뒤에 깔리는 큰 면은 바탕과 빛 덩어리(색 가족의 색) 셋이다 —
+// 빛 덩어리 한가운데 위 창 유리, 그 위 카드·작은 칸·선택 알약·떠 있는 층, 사이드바 유리 위 메뉴 글자, 토스트까지 모든 색 × 라이트·다크로 잰다.
+// (버튼처럼 작은 면은 흐림 반경보다 작아 뒤에서는 주변 색과 섞여 보인다 — 큰 면만 최악 경우로 본다)
+for (const fam of FAMILIES) for (const mode of ['light', 'dark']) {
+  const theme = `${fam}-${mode}`;
+  test(`리퀴드 글래스 대비 4.5:1 — ${theme}`, () => {
+    const t = shellTokens(theme, 'liquid');
+    const raw = (n) => { const v = resolve(t, t[n]); assert.ok(v, `${theme}: --${n} = ${t[n]}`); return v; };
+    const bg = raw('bg'), bad = [];
+    const backs = { bg, ...Object.fromEntries(['t-glow-1', 't-glow-2', 't-glow-3'].map((g) => [g, over(raw(g), bg)])) };
+    for (const [where, back] of Object.entries(backs)) {
+      const win = over(raw('t-lq-win'), back), card = over(raw('t-lq-card'), win);
+      const layers = { window: win, card, chip: over(raw('t-lq-chip'), card), pill: over(raw('t-lq-pill'), win), pop: over(raw('t-lq-pop'), win), 'pop on card': over(raw('t-lq-pop'), card) };
+      for (const [k, b] of Object.entries(layers)) for (const fg of ['fg', 'fg-2', 'fg-3']) bad.push([`${fg} on ${k} @${where}`, ratio(raw(fg), b)]);
+      const side = over(raw('t-lq-side'), win);
+      for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) bad.push([`${fg} on side @${where}`, ratio(raw(fg), side)]);
+      bad.push([`side-fg on side-active @${where}`, ratio(raw('side-fg'), over(raw('side-active'), side))]);
+      bad.push([`primary-fg on toast @${where}`, ratio(raw('primary-fg'), over(raw('t-lq-toast'), win))]);
+    }
+    assert.deepEqual(bad.filter(([, r]) => r < 4.5).map(([l, r]) => `${l} ${r.toFixed(2)}`), []);
+  });
+}
+
+// 이유(유건 10/1 "바탕과 같은 색의 면이 빛과 그늘로 솟아오름, 다크는 밝은 그림자 아주 약하게"): 빛·그늘이 바탕과 구분되지 않으면 그냥 평평한 화면이 된다.
+for (const fam of FAMILIES) for (const mode of ['light', 'dark']) {
+  const theme = `${fam}-${mode}`;
+  test(`뉴모피즘 빛·그늘 — ${theme}: 같은 색 면이 솟고 파인 게 보인다`, () => {
+    const t = shellTokens(theme, 'neu');
+    const raw = (n) => { const v = resolve(t, t[n]); assert.ok(v, `${theme}: --${n} = ${t[n]}`); return v; };
+    const bg = okL(raw('bg')), hi = okL(raw('t-neu-hi')) - bg, lo = bg - okL(raw('t-neu-lo'));
+    if (mode === 'light') { assert.ok(hi >= 0.01, `빛 ${hi.toFixed(3)}`); assert.ok(lo >= 0.07, `그늘 ${lo.toFixed(3)}`); }
+    else { assert.ok(hi > 0 && hi <= 0.05, `다크 빛은 아주 약하게 ${hi.toFixed(3)}`); assert.ok(lo >= 0.04, `그늘 ${lo.toFixed(3)}`); }
+    // 사이드바 글자 — 뉴모피즘 사이드바는 바탕과 같은 색이다
+    for (const fg of ['side-fg', 'side-fg-2', 'side-fg-3']) assert.ok(ratio(raw(fg), raw('bg')) >= 4.5, `${fg} on bg`);
+  });
+}
+
+test('뉴모피즘: 카드·버튼은 솟고, 활성 탭·선택 항목·입력칸·켜진 토글은 파이고, 외곽선 없이, 초점 링은 강조색', () => {
+  const neu = rulesOf(css).filter((r) => r.sel.includes("[data-shell='neu']"));
+  const declOf = (cls) => neu.filter((r) => r.sel.split(/,(?![^()]*\))/).some((x) => x.includes(cls))).map((r) => r.decl).join(';');
+  for (const c of ['.module', '.set-card', '.btn', '.side', '.menu']) assert.match(declOf(c), /var\(--t-neu-(up|up-sm|pop)\)/, `솟음: ${c}`);
+  for (const c of ['.tab.on', '.nav-item.active', '.seg-btn.on', '.shell-opt.on', '.input', "input[role='switch']", '.rec-row.on']) assert.match(declOf(c), /var\(--t-neu-in(-sm)?\)/, `파임: ${c}`);
+  assert.match(css, /--t-neu-in:\s*inset/); assert.match(css, /--t-neu-in-sm:\s*inset/);
+  for (const r of neu) assert.doesNotMatch(r.decl, /0 0 0 1px|border:\s*1px solid/, r.sel.slice(0, 60));
+  assert.match(declOf('[data-theme]'), /--ring:\s*var\(--primary\)/);
+});
+
+// 선택자 특이도 [id, class·속성·가상 클래스, 태그] — :where()는 0, :is()·:not()은 안쪽 최댓값
+function spec(sel) {
+  const inner = (x) => x.split(/,(?![^()]*\))/).map(spec).reduce((a, b) => (cmp(a, b) >= 0 ? a : b), [0, 0, 0]);
+  const out = [0, 0, 0];
+  let s = sel.replace(/:where\((?:[^()]|\([^()]*\))*\)/g, '');
+  s = s.replace(/:(is|not|has)\(((?:[^()]|\([^()]*\))*)\)/g, (_, __, x) => { const v = inner(x); for (let i = 0; i < 3; i++) out[i] += v[i]; return ''; });
+  out[0] += (s.match(/#[\w-]+/g) || []).length;
+  out[1] += (s.match(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g) || []).length;
+  out[2] += (s.match(/(^|[\s>+~])[a-z][\w-]*|::[\w-]+/g) || []).length;
+  return out;
+}
+const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+// 이유(검수 10/1): 뉴모피즘이 선택 메뉴 바탕을 var(--bg)로 박으면, 커스텀 강조색을 고른 사람은 바탕은 그대로인데 글자만 강조색 위 글자색(--c-active-fg)이 돼 안 보인다.
+// 뉴모피즘 기본값은 --side-active 토큰으로만 정하고, 선택 메뉴 바탕은 그 토큰을 쓴다 — 커스텀 강조색(인라인 --side-active)이 바탕이 된다.
+test('뉴모피즘: 선택 메뉴 바탕은 --side-active — 커스텀 강조색과 글자색이 짝을 이룬다', () => {
+  const neu = rulesOf(css).filter((r) => !r.nested && r.sel.includes("[data-shell='neu']"));
+  for (const cls of ['.nav-item.active', '.tree-row.active']) {
+    const bgs = neu.filter((r) => r.sel.includes(cls)).flatMap((r) => [...r.decl.matchAll(/(?:^|;)\s*background(?:-color)?:\s*([^;]+)/g)].map((m) => m[1].trim()));
+    assert.ok(bgs.length, cls);
+    assert.deepEqual([...new Set(bgs)], ['var(--side-active)'], `${cls} 바탕`);
+  }
+  assert.match(neu.find((r) => r.sel.trim() === ":root[data-shell='neu'][data-theme]").decl, /--side-active:\s*var\(--bg\)/);
+  assert.match(css, /:root\[data-custom~='accent'\] :is\(\.nav-item, \.tree-row\)\.active \{ color: var\(--c-active-fg\); \}/);
+});
+
+// 이유(검수 10/1): 입력칸은 outline:none이라 초점 표시는 box-shadow뿐이다. 리퀴드의 안쪽 그림자 규칙이 base의 :focus 링보다 특이도가 높아 링을 지운다.
+test('리퀴드 글래스: 입력칸 초점 링이 남는다', () => {
+  const lq = rulesOf(css).filter((r) => !r.nested && r.sel.includes("[data-shell='liquid']"));
+  for (const cls of ['.input', '.select', '.field input', '.compose-body']) {
+    const f = lq.find((r) => r.sel.includes(':focus') && r.sel.includes(cls));
+    assert.ok(f, `초점 규칙 ${cls}`);
+    assert.match(f.decl, /box-shadow:[^;]*0 0 0 [23]px var\(--(ring|primary-soft)\)/, cls);
+  }
+});
+
+// 이유(검수 10/1): OS 다크용 공통 빛·그늘 블록이 색 가족 다크 블록보다 특이도가 높으면, '-dark'로 고정한 사람도 OS가 다크일 때만 가족 빛 덩어리를 잃는다.
+test('OS 다크 공통 블록은 색 가족 다크 블록(:root[data-theme=\'x-dark\'])보다 약하다', () => {
+  const body = css.match(/@media \(prefers-color-scheme: dark\) \{([\s\S]*?)\n\}/)[1];
+  const fam = spec(":root[data-theme='sage-dark']");
+  for (const r of rulesOf(body)) assert.ok(cmp(spec(r.sel), fam) < 0, `${r.sel} ${spec(r.sel)}`);
+  assert.deepEqual(spec(":root[data-shell='neu'] :is(.nav-item.active, .tree-row.active)"), [0, 4, 0]);
+  assert.deepEqual(spec(":root:where([data-theme]:not([data-theme$='-light']))"), [0, 1, 0]);
 });
