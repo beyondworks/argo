@@ -17,13 +17,15 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-tauri-plugin-notification = "2" # OS 알림 — 웹뷰엔 Notification API가 없어 데스크톱 알림이 한 번도 울린 적 없었다(2026-09-11 밤)
 getrandom = "0.2" # pair.rs 페어링 code·verifier — OS CSPRNG
 # 인앱 업데이터(릴리스 latest.json 대조)·설치 뒤 재시작 — 데스크톱만(Argo 앱과 같은 서명 키)
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-window-state = "2" # 창 위치·크기 기억(D53, T8) — 표시 여부는 빼고 저장·복원(닫기=가리기라 숨긴 채 뜨지 않게)
+# OS 알림 — 웹뷰엔 Notification API가 없어 데스크톱 알림이 한 번도 울린 적 없었다(2026-09-11 밤). 데스크톱만: 모바일은 APNs·FCM 푸시 플러그인이 알림을 맡는데,
+# 이 플러그인이 iOS에서 앱 시작 전에 알림 delegate를 먼저 가져가 원격 푸시 탭을 버렸다(배너를 눌러도 채팅으로 안 감 — 유건 요청 2026-10-01).
+tauri-plugin-notification = "2"
 
 # macOS OS 알림 — UNUserNotificationCenter(notify_mac.rs). 세 크레이트 모두 이미 잠금 파일에 있던 판(wry·tao 경유)
 [target.'cfg(target_os = "macos")'.dependencies]
