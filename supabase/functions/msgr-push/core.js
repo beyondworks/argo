@@ -9,6 +9,13 @@ export function pemToDer(pem) {
   return out.buffer;
 }
 
+/** 사람 작성자 이름 — 앱 화면(msgr_my_friends)과 같은 순서: 조직 안 이름 → 계정 프로필 이름 → 이메일 앞부분.
+ *  프로필 행이 없는 사용자가 많아(운영 2026-10-01: 프로필 5개, 글 쓴 사용자 9명은 행 없음) 프로필만 보면 알림 제목이 '?'가 됐다. */
+export function personName({ memberName, profileName, email } = {}) {
+  const pick = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+  return pick(memberName) || pick(profileName) || pick(String(email ?? '').split('@')[0]) || null;
+}
+
 /** 알림 문구 — 데스크톱(notify.reply)과 같은 모양: 제목 "이름 · #채널", 본문 140자 발췌. */
 export function pushText({ body, authorName, channelName, channelKind }) {
   const where = channelKind === 'dm' ? '' : (channelName ? ` · #${channelName}` : '');
