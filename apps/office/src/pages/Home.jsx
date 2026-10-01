@@ -12,6 +12,7 @@ import { DEFAULTS } from './modules.jsx';
 import { SPACES, ME, canManage, getMode } from '../core/session.js';
 import { reloadLayout } from '../core/pull.js';
 import { showToast } from '../ui/Overlay.jsx';
+import { PresetButton } from './PresetButton.jsx';
 
 export const layoutKey = (space) => `home:${space}`;
 export const kindOf = (space) => (space === 'me' ? 'me' : 'org');
@@ -54,7 +55,7 @@ export function Home({ space }) {
   return <div className="page-wrap wide" ref={wrap}>
     <div className="page-title-row">
       <div><p className="eyebrow">{today}</p><h1 className="page-h1">{sp.kind === 'me' ? `${t('home.title')} · ${ME.name}` : sp.name}</h1></div>
-      {canManage(space) ? <div className="row-actions"><button type="button" className="btn ghost" disabled={!canEdit} onClick={fit}>{t('home.fit')}</button><ModuleAddButton items={hidden} disabled={!canEdit} /></div> : <p className="dim small">{t('home.readOnly')}</p>}
+      {canManage(space) ? <div className="row-actions"><button type="button" className="btn ghost" disabled={!canEdit} onClick={fit}>{t('home.fit')}</button><PresetButton space={space} items={items} disabled={!canEdit} /><ModuleAddButton items={hidden} disabled={!canEdit} /></div> : <p className="dim small">{t('home.readOnly')}</p>}
     </div>
     {blocked && canManage(space) && <div className="conflict" role="status"><p className="small">{t(saved?.conflict ? 'home.layoutConflict' : 'home.layoutLoading')}</p><button type="button" className="btn sm" disabled={reloading} onClick={reload}>{t('page.conflictReload')}</button></div>}
     {grid}

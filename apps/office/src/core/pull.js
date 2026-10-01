@@ -20,7 +20,7 @@ export async function pullLayouts({ recoverKey = null } = {}) {
   if (getStorageScope() !== owner) return;
   if (mine.error || shared.error) throw mine.error ?? shared.error;
   const next = Object.fromEntries(['me', ...orgs.map((o) => o.key)].map((space) => [`home:${space}`, { items: [], version: 0 }]));
-  next['nav:me'] = { items: [], version: 0 }; next['biztabs:me'] = { items: [], version: 0 }; next['fav:me'] = { items: [], version: 0 }; // 좌측 메뉴·업무 탭 순서·즐겨찾기(사람마다, 9/30)
+  next['nav:me'] = { items: [], version: 0 }; next['biztabs:me'] = { items: [], version: 0 }; next['fav:me'] = { items: [], version: 0 }; next['presets:me'] = { items: [], version: 0 }; // 좌측 메뉴·업무 탭 순서·즐겨찾기(사람마다, 9/30)·설정 저장본(10/1)
   for (const r of mine.data ?? []) next[`${r.surface}:me`] = { ...r.prefs, version: r.version };
   for (const r of shared.data ?? []) { const o = orgs.find((x) => x.id === r.org_id); if (o) next[`${r.surface}:${o.key}`] = { ...r.layout, version: r.version }; }
   const keep = Object.entries(next).filter(([k]) => !busy.has(k) && !outbox.has(`layout:${k}`) && (!getState().layouts[k]?.conflict || k === recoverKey));
