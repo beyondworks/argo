@@ -467,6 +467,8 @@ export const DICT = {
   'crew.away': ['부재중', 'Away'],
   'crew.online': ['대기 중', 'Online'],
   'crew.offline': ['꺼져 있음', 'Offline'],
+  'crew.req.ownerAgent': ['{name}님의 에이전트', "{name}'s agent"], // 참여 요청 — 친구의 에이전트 이름을 아직 읽을 수 없을 때(id 조각 대신)
+  'crew.req.unknown': ['이름을 모르는 에이전트', 'An agent'],
   'mention.away': ['{name}은(는) 지금 꺼져 있어요 — 다시 켜지면 이 글에 답합니다.', '{name} is offline — it will answer this when it’s back.'],
   'ap.approve': ['승인', 'Approve'],
   'ap.reject': ['거절', 'Reject'],
