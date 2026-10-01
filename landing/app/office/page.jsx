@@ -5,7 +5,8 @@ import Nav from '@/components/Nav';
 import Footer from '@/components/Footer';
 import Accent from '@/components/Accent';
 import { CardGrid } from '@/components/family/Convert';
-import { RoleBoard, FeatureBento } from '@/components/family/OfficeScenes';
+import { FeatureBento } from '@/components/family/OfficeScenes';
+import OfficeTry from '@/components/family/OfficeTry';
 import HeroFilm from '@/components/family/HeroFilm';
 import FamilyCards, { useRise } from '@/components/family/FamilyCards';
 import { useLang } from '@/lib/i18n';
@@ -41,7 +42,7 @@ export default function OfficePage() {
         <p className="fam-lede">{t('office.lede')}</p>
         <div className="m-actions">
           <a className="fam-btn primary" href="#waitlist">{t('office.nav.cta')}</a>
-          <a className="fam-btn" href="#roles">{t('office.cta.look')}</a>
+          <a className="fam-btn" href="#try">{t('office.cta.look')}</a>
         </div>
         {/* 히어로 필름(블렌더) — 흩어진 앱 창 다섯 개가 오피스 한 화면의 칸으로 모인다 */}
         <HeroFilm lang={lang} base="office-hero" className="o-hero-film" />
@@ -49,16 +50,17 @@ export default function OfficePage() {
 
       <CardGrid ns="office" part="pillar" ids={['data', 'ai', 'team']} id="pillars" art={ART} />
 
-      <section className="fam-section" id="roles">
+      {/* 직접 체험 — 실제 오피스 앱(예시 데이터)을 창으로(유건 10/1: 직무판 연출 대신 실제 화면을 직접 만져 보게) */}
+      <section className="fam-section" id="try">
         <div className="fam-head">
-          <span className="mono-label">{t('office.role.kicker')}</span>
+          <span className="mono-label">{t('office.try.kicker')}</span>
           <span className="mono-label mono-dim">PWA · macOS</span>
         </div>
         <div className="sec-intro">
-          <h2 className="fam-title rise">{t('office.role.title')}</h2>
-          <p className="fam-lede rise" style={{ '--d': '60ms' }}>{t('office.role.lede')}</p>
+          <h2 className="fam-title rise">{t('office.try.title')}</h2>
+          <p className="fam-lede rise" style={{ '--d': '60ms' }}>{t('office.try.lede')}</p>
         </div>
-        <RoleBoard />
+        <OfficeTry />
       </section>
 
       <section className="fam-section" id="features">

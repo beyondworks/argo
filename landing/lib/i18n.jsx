@@ -595,6 +595,16 @@ const DICT = {
   'office.prob.today': ['오늘', 'Today'],
 
   // 오피스 — 직무에 맞게(RoleBoard). 조합은 예시이고, 앱에서는 모듈을 켜고 끈다.
+  'office.try.kicker': ['직접 체험', 'Try it'],
+  'office.try.title': ['직접 체험해 보세요', 'Try it yourself'],
+  'office.try.lede': [
+    '아래는 실제 Argo Office 화면입니다. 모듈을 끌어 옮기고, 가장자리를 끌어 크기를 바꾸고, 설정에서 테마도 바꿔 보세요. 예시 데이터라 무엇을 눌러도 괜찮습니다.',
+    'This is the real Argo Office. Drag modules around, pull an edge to resize, and switch themes in Settings. It runs on sample data, so click anything.',
+  ],
+  'office.try.badge': ['Argo Office — 체험판 · 예시 데이터', 'Argo Office — demo · sample data'],
+  'office.try.reset': ['처음 배치로', 'Start over'],
+  'office.try.frame': ['Argo Office 체험판', 'Argo Office demo'],
+  'office.try.phone': ['직접 체험은 데스크톱 화면에서 할 수 있습니다.', 'Open this page on a desktop to try it yourself.'],
   'office.role.kicker': ['직무에 맞게', 'Set up by role'],
   'office.role.title': ['직무에 맞게,\n필요한 것만.', 'Set up by role,\nonly what you need.'],
   'office.role.lede': [
