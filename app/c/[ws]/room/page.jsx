@@ -12,6 +12,7 @@ import { keepSide, sideParam, withSide } from '../split.mjs';
 import { useSplitAlive } from '../split-alive';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../work-folder';
 import { DelegationToggle } from '../delegation-toggle';
+import { DELEGATION_LIMITS } from '../../../../src/delegation-limits.mjs'; // 풀린 방 반응 라운드 힌트의 최대 라운드 수(표에서)
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -807,7 +808,7 @@ export default function Room({ params }) {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
                   <button type="button" className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={newMeeting}>{t('room.new')}</button>
                   <button type="button" className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
-                  <button type="button" className="btn sm" title={t('room.roundsHint')} aria-pressed={rounds === 2}
+                  <button type="button" className="btn sm" title={delegLimited === false ? t('room.roundsHintOff', { n: DELEGATION_LIMITS.off.rounds }) : t('room.roundsHint')} aria-pressed={rounds === 2}
                     style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px', ...(rounds === 2 ? { borderColor: 'var(--primary)', color: 'var(--primary)' } : {}) }}
                     disabled={busy || serverBusy} onClick={toggleRounds}>{rounds === 2 ? t('room.roundsOn') : t('room.roundsOff')}</button>
                 </div>

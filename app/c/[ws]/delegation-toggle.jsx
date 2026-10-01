@@ -17,7 +17,10 @@ export function DelegationToggle({ limited, onChange, scope = 'chat', disabled =
   const [ask, setAsk] = useState(false);
   const [busy, setBusy] = useState(false);
   const { on, off } = DELEGATION_LIMITS;
-  const vars = { n: off.delegate, hop: off.hop, on: on.delegate, relay: off.relay, rounds: off.rounds };
+  const released = limited === false;
+  const vars = { n: off.delegate, hop: off.hop, on: on.delegate, relay: off.relay, rounds: off.rounds, tree: off.tree };
+  const hint = released ? t(`deleg.hintOff.${scope}`, vars) : t(`deleg.hintOn.${scope}`, { ...vars, n: on.delegate, hop: on.hop, relay: on.relay, rounds: on.rounds });
+  const descId = `deleg-hint-${scope}`; // 한 화면에 칩이 하나(1:1 또는 회의실)라 scope로 충분
   const flip = async (next) => { setBusy(true); try { await onChange(next); } finally { setBusy(false); } };
   const click = () => {
     if (busy) return;
@@ -27,17 +30,19 @@ export function DelegationToggle({ limited, onChange, scope = 'chat', disabled =
     if (acked) flip(false); else setAsk(true);
   };
   if (limited === null) return null; // 읽는 중에는 그리지 않는다 — 자리표시로 '2회'를 먼저 보이면 이미 풀린 대화가 잠깐 제한된 것처럼 보인다
-  const released = limited === false;
   return (
     <>
-      <button type="button" className="btn sm" data-testid="deleg-toggle" aria-pressed={released}
-        title={released ? t(`deleg.hintOff.${scope}`, vars) : t(`deleg.hintOn.${scope}`, { ...vars, n: on.delegate, hop: on.hop, relay: on.relay, rounds: on.rounds })}
+      {/* 접근성 — 이름은 고정("위임 제한"), 상태는 role=switch + aria-checked(켜짐=제한 걸림), 설명은 aria-describedby가 가리키는 텍스트.
+          라벨이 상태마다 바뀌고 aria-pressed까지 있으면 스크린리더가 같은 상태를 두 번 읽는다(검수 2026-10-01 LOW-3). 보이는 칩 글자(2회/풀림)는 그대로. */}
+      <button type="button" className="btn sm" data-testid="deleg-toggle" role="switch" aria-checked={!released}
+        aria-label={t('deleg.label')} aria-describedby={descId} title={hint}
         disabled={disabled || busy} onClick={click}
         style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', minHeight: 24, height: 24, padding: '0 10px', fontSize: 11.5,
           ...(released ? { borderColor: 'var(--warn)', color: 'var(--warn)' } : { color: 'var(--fg-3)' }) }}>
         <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: released ? 'var(--warn)' : 'var(--fg-3)' }} />
         {released ? t('deleg.off') : t('deleg.on', { n: on.delegate })}
       </button>
+      <span id={descId} style={{ position: 'absolute', width: 1, height: 1, margin: -1, padding: 0, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 }}>{hint}</span>
       {ask && (
         <ConfirmModal tone="primary" title={t('deleg.confirmTitle')} description={t(`deleg.confirmBody.${scope}`, vars)}
           confirmLabel={t('deleg.confirmDo')} busy={busy}
