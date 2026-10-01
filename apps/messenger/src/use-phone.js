@@ -62,7 +62,7 @@ export function springStep(x, v, target, dt, response = 0.35) {
 }
 /** 폰 큰 제목 접힘 정도 — 스크롤 8px부터 28px 동안 0→1(머리의 재질·작은 제목이 드러난다) */
 export const headerCollapse = (y) => Math.min(1, Math.max(0, (y - 8) / 28));
-export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'home', onStart = null, onEnd = null } = {}) {
+export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'chats', onStart = null, onEnd = null } = {}) {
   const ref = useRef({ x: 0, y: 0, base: 0, armed: false, dir: null, dx: 0, el: null, underlayEl: null, tabbarEl: null, classes: [], samples: [], raf: 0 }); const st = ref.current;
   const cb = useRef({}); cb.current = { onBack, underlay, onStart, onEnd };
   const [node, setNode] = useState(null);
@@ -72,7 +72,7 @@ export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'hom
   const setP = (p) => { const v = String(Math.max(0, Math.min(1, p))); st.underlayEl?.style.setProperty('--swipe-p', v); st.tabbarEl?.style.setProperty('--swipe-p', v); }; // 탭바도 밑 화면과 함께 들어온다(초안 승인)
   const underlay_ = () => cb.current.underlay();
   const onEnd_ = () => cb.current.onEnd?.();
-  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay_() : null; const keep = new Set(to === 'dm' ? ['phone-home', 'phone-dm'] : to === 'home' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); } if (st.underlayEl) { st.underlayEl.style.removeProperty('--swipe-p'); st.underlayEl.style.removeProperty('--swipe-ms'); } st.tabbarEl?.style.removeProperty('--swipe-p'); st.underlayEl = null; st.tabbarEl = null; st.classes = []; if (st.el) st.el.style.willChange = ''; onEnd_(); };
+  const cleanup = (arrived = false) => { const sh = shell(); if (sh) { const to = arrived ? underlay_() : null; const keep = new Set(to && to !== 'memory' ? ['phone-home'] : []); /* 취소(제자리)면 전부 뗀다. 기억 탭은 본문 화면이라 밑 화면 모양이 아니다 */ sh.classList.remove('swiping-back', 'settling', ...st.classes.filter((k) => !keep.has(k))); } if (st.underlayEl) { st.underlayEl.style.removeProperty('--swipe-p'); st.underlayEl.style.removeProperty('--swipe-ms'); } st.tabbarEl?.style.removeProperty('--swipe-p'); st.underlayEl = null; st.tabbarEl = null; st.classes = []; if (st.el) st.el.style.willChange = ''; onEnd_(); };
   const paint = (el, x) => { el.style.transform = `translateX(${x}px)`; setP(x / (el.clientWidth || 1)); };
   // 놓은 뒤 마무리 — 스프링이 손을 뗀 속도(px/s)에서 출발한다. 끝나기 전에 다시 잡으면 start()가 멈추고 그 자리부터 따라간다
   const settle = (el, target, v0, then) => {
@@ -112,7 +112,7 @@ export function useEdgeSwipeBack(onBack, enabled = true, { underlay = () => 'hom
         st.dir = dx > 0 && dx > Math.abs(dy) * 1.2 ? 'x' : 'y';
         if (st.dir === 'y') { st.armed = false; return; }
         st.base = t.clientX; // 잠긴 지점부터 따라간다(튐 방지)
-        const to = underlay_(); st.classes = to === 'dm' ? ['phone-home', 'phone-dm'] : ['phone-home'];
+        const to = underlay_(); st.classes = ['phone-home']; // 밑 화면 = 마지막 아래 탭(폰 셸 v2 — 탭마다 같은 루트 화면 틀)
         const sh = shell(); sh?.classList.add('swiping-back', ...st.classes); st.underlayEl = sh?.querySelector('.msgr-side') ?? null; st.tabbarEl = sh?.querySelector('.msgr-tabbar') ?? null; cb.current.onStart?.(to);
         st.el.style.willChange = 'transform'; st.el.style.transition = '';
       }

@@ -19,15 +19,17 @@ test('단계 표지 — 지금 할 일은 하나, 첫 채널 뒤에도 초대·�
   assert.deepEqual(stepMarks({ hasChannel: true, isAdmin: false, invited: false, hasCrew: false }), { channel: 'done', agent: 'mark' }, '관리자 아니면 초대 단계 없음, 에이전트가 할 일');
 });
 
-test('배선 — 새 채널을 여는 세 입구(데스크톱 +·폰 목록 +·폰 FAB)가 모두 같은 기본값을 쓴다, 시작 단계는 빈 조직·첫 채널 뒤·폰 홈 세 곳', async () => {
+test('배선 — 새 채널을 여는 입구(데스크톱 +·폰 채널 탭 + 메뉴)가 모두 같은 기본값을 쓴다, 시작 단계는 빈 조직·첫 채널 뒤·폰 채널 탭 세 곳', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /setNewCh\(\{ name: '', kind: '(public|private)' \}\)/, '입구마다 다른 글자 기본값 없음');
-  assert.equal(src.match(/setNewCh\(\{ name: '', kind: newChKind \}\)/g)?.length, 3);
+  assert.ok((src.match(/setNewCh\(\{ name: '', kind: newChKind \}\)/g)?.length ?? 0) >= 1, '기본값은 newChKind 하나');
+  assert.match(src, /const openNewCh = \(\) => \{ setNewCh\(\{ name: '', kind: newChKind \}\);/, '데스크톱 +와 폰 + 메뉴가 같은 openNewCh');
+  assert.match(src, /onClick=\{\(\) => \{ setChPlus\(false\); setBrowse\(null\); openNewCh\(\); \}\}/, '폰 채널 탭 + 메뉴 → 새 채널 만들기');
   assert.match(src, /const steps = org \? orgSteps\(\{ t, \.\.\.onboard, hasChannel: false/, '빈 조직 안내');
   assert.match(src, /startCard=\{org && !isPersonal && org\.role !== 'guest' && channel\.kind !== 'dm' \? <OnboardCard/, '첫 채널 뒤 남은 단계 — 조직 채널에서만(DM 제외, #626 검수)');
   assert.match(src, /if \(!priv\) \{ await q\(supabase\.rpc\('msgr_join_channel', \{ ch: id \}\)\);/, '공개 채널을 만들면 만든 사람이 참여(서버는 참여 행을 안 넣는다 — 행동은 onboarding.browser.mjs)');
-  assert.match(src, /<div className="msgr-phsteps"><OrgStepList steps=\{orgSteps\(\{ t, \.\.\.onboard, hasChannel: false/, '폰 홈(본문 안내가 안 보이는 자리)');
+  assert.match(src, /<div className="msgr-phsteps"><OrgStepList steps=\{orgSteps\(\{ t, \.\.\.onboard, hasChannel: false/, '폰 채널 탭(본문 안내가 안 보이는 자리)');
 });
 
 test('iOS는 "Argo 앱 받기" 버튼을 숨긴다(3.1.1/3.1.3 — 앱에는 가격·결제로 이어지는 링크를 두지 않는다), 다른 플랫폼은 그대로', async () => {

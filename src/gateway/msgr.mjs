@@ -1150,7 +1150,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       } catch (e) { text += `\n${pick('(첨부 수신 실패', '(Attachment failed', lang)}: ${safeName(a.name)} — ${String(e.message).slice(0, 80)})`; }
     }
     text += workPrompt(work, peers, job.crewId, lang);
-    const orgRow = envelope?.org ?? await db.org(job.orgId); // G-3 규칙 주입 키(미러 폴더 = org slug)·채널 이름(채널 범위 규칙)
+    const orgRow = envelope?.org ?? (job.orgId ? await db.org(job.orgId) : null); // 개인 방은 조직이 없다 — org(null)은 uuid 오류로 잡을 영구 재시도시켰다(2026-10-01 라이브). G-3 규칙 주입 키(미러 폴더 = org slug)·채널 이름(채널 범위 규칙)
     // delegated — 죽은 경로(restoreMessengerContext의 ctx.delegated 주석 참고, msgr_dm_relay 도입 뒤 서버가 더 이상 true를 주지 않는다)
     const ctx = { chatType: 'group', ...authority, channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, wsId, hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}) };
     const orgMemory = await crewMemoryCached(db, job.crewId, job.channelId); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널, 유건 결정 2026-09-24)
