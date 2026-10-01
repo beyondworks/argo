@@ -440,7 +440,8 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .block-handle { display: grid; place-items: center; width: 20px; height: 24px; border-radius: 5px; color: var(--fg-3); cursor: grab; }
 @media (hover: hover) { .block-handle:hover { background: var(--primary-soft); color: var(--fg); } }
 .menu.slash { max-height: 320px; overflow: auto; }
-.block-ico { font-family: var(--mono); font-size: 11px; color: var(--fg-2); width: 22px; height: 22px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--border); display: grid !important; place-items: center; }
+/* 슬래시 메뉴 블록 아이콘 — 22×22 한 줄 고정(.menu-ico 16px이 덮어 '[ ]'가 두 줄로 꺾였다), 외곽선 없이 옅은 면으로(유건 9/30·10/1) */
+.menu .block-ico { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 6px; background: var(--wash); color: var(--fg-2); font-family: var(--mono); font-size: 10.5px; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; overflow: hidden; }
 .skeleton-lines { display: grid; gap: 10px; }
 .skeleton-lines span { height: 14px; border-radius: 6px; background: var(--secondary); }
 .skeleton-lines span:first-child { height: 30px; width: 50%; }
