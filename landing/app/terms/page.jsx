@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import DocShell from '@/components/DocShell';
 import { useLang } from '@/lib/i18n';
 
@@ -132,7 +133,12 @@ export default function TermsPage() {
   const { lang, t } = useLang();
   const ko = lang === 'ko';
   return (
-    <DocShell kicker={t('legal.kicker')} title={t('terms.title')} updated={t('legal.updated')}>
+    <DocShell kicker={t('legal.kicker')} title={t('terms.title')} updated={t('terms.updated')}>
+      <section className="doc-section">
+        <h2>{t('terms.paymentScopeTitle')}</h2>
+        <p>{t('terms.paymentScope')}</p>
+        <p><Link href="/refund">{t('refund.title')}</Link></p>
+      </section>
       {SECTIONS.map((s, i) => (
         <section className="doc-section" key={i}>
           <h2>{ko ? s.h.ko : s.h.en}</h2>
