@@ -163,7 +163,7 @@ test('App 배선 — 개인 공간: 에이전트 카드 열기·방장 표식·�
   assert.ok(app.indexOf('askName(uid); }, [orgId, isPersonal, uid]') > app.indexOf('nameAsked.current = new Set(); nameWanted.current = new Set(); setResolvedNames({});'), '조직 전환 비우기 효과 뒤에 선언해야 비운 뒤 다시 묻는다');
   has(/personalName: resolvedNames\[uid\] \|\| personalSelfName\(otherNames, uid\)/, '조회한 이름이 우선, 방 목록 이름이 대체');
   assert.doesNotMatch(app, /fetchSelfName|loadSelfName/, '내 이름만 따로 묻는 길은 없다(같은 RPC 두 번 방지)');
-  has(/onProfileSaved=\{\(\) => askName\(uid, true\)\}/, '프로필 저장 뒤 지우고 다시 묻는다');
+  has(/onProfileSaved=\{\(\) => \{ askName\(uid, true\); setProfileTick\(\(x\) => x \+ 1\); \}\}/, '프로필 저장 뒤 지우고 다시 묻는다(폰 설정 \'개인\' 줄 이름도 다시 읽는다)');
   has(/<Settings [^\n]*?session=\{session\} me=\{me\} uid=\{uid\} onAvatar=\{loadAvatars\} onProfileSaved=/, '프로필 저장 뒤 다시 읽기 연결');
   has(/<ProfileCard uid=\{uid\} onNote=\{onNote\} onError=\{onError\} onAvatar=\{onAvatar\} onSaved=\{onProfileSaved\} \/>/, 'ProfileCard에 전달');
   has(/setP\(res\.data\); onNote\(t\('profile\.saved'\)\); onSaved\?\.\(\);/, '저장 성공 뒤 호출');

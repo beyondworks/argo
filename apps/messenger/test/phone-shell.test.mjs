@@ -122,10 +122,10 @@ test('탭 안 검색 — 이름·본문에서 대소문자 없이 찾는다, 빈
 });
 
 import { memoryGroups, memSnippet } from '../src/phone-shell.mjs';
-test('기억 폴더 — 조직 전체(규칙·용어·프로젝트) / 채널별(문서 먼저, 일지는 최신이 위), 채널 묶음은 최근에 바뀐 순', () => {
+test('기억 폴더 — 조직 전체(규칙·용어·프로젝트) / 채널별(문서 먼저, 일지는 최신이 위), 기본 최근순', () => {
   const d = (id, path, ch = null, at = '2026-10-01T00:00:00Z', title = path, body = '') => ({ id, path, channel_id: ch, updated_at: at, title, body });
   const docs = [d(1, 'rules/b.md', null, '2026-09-01', '보안 규칙'), d(2, 'rules/a.md', null, '2026-09-02', '가입 규칙'), d(3, 'glossary/x.md'), d(4, 'journal/2026-09-30.md', 'c1', '2026-09-30'), d(5, 'journal/2026-10-01.md', 'c1', '2026-10-01'), d(6, 'projects/p.md', 'c1', '2026-08-01', '캠페인'), d(7, 'journal/2026-09-29.md', 'c2', '2026-10-02')];
-  const g = memoryGroups(docs, { channelLabel: (id) => `#${id}` });
+  const g = memoryGroups(docs, { channelLabel: (id) => `#${id}` }); // 기본 = 최근순
   assert.deepEqual(g.org.map((x) => [x.key, x.docs.map((y) => y.id)]), [['rules', [2, 1]], ['glossary', [3]]], '폴더 순서 고정, 안에서는 제목순, 빈 폴더(projects)는 없다');
   assert.deepEqual(g.channels.map((x) => [x.key, x.label, x.docs.map((y) => y.id)]), [['c2', '#c2', [7]], ['c1', '#c1', [6, 5, 4]]]);
   assert.equal(g.total, 7);
@@ -139,4 +139,17 @@ test('기억 검색 — 제목·본문에서 찾고, 발췌는 찾은 자리 앞
   const long = `${'가'.repeat(200)}목표${'나'.repeat(200)}`;
   const s = memSnippet(long, '목표', 40); assert.ok(s.includes('목표') && s.startsWith('…') && s.endsWith('…'), s);
   assert.equal(memSnippet('', 'x'), '');
+});
+test('기억 폴더 정렬 — 이름순(문서 제목·채널 이름) / 최근순(문서·채널 모두 최근에 바뀐 것이 위)', () => {
+  const d = (id, path, ch, at, title) => ({ id, path, channel_id: ch, updated_at: at, title, body: '' });
+  const docs = [d(1, 'rules/a.md', null, '2026-09-01', '가'), d(2, 'rules/b.md', null, '2026-09-05', '나'), d(3, 'projects/x.md', 'c-b', '2026-09-02', '나 문서'), d(4, 'projects/y.md', 'c-a', '2026-09-03', '가 문서'), d(5, 'projects/z.md', 'c-b', '2026-09-09', '다 문서')];
+  const label = (id) => ({ 'c-a': '#가람', 'c-b': '#나래' })[id];
+  const byName = memoryGroups(docs, { channelLabel: label, sort: 'name' });
+  assert.deepEqual(byName.org[0].docs.map((x) => x.id), [1, 2]);
+  assert.deepEqual(byName.channels.map((x) => x.key), ['c-a', 'c-b'], '채널 이름순');
+  assert.deepEqual(byName.channels[1].docs.map((x) => x.id), [3, 5], '문서 제목순');
+  const recent = memoryGroups(docs, { channelLabel: label, sort: 'recent' });
+  assert.deepEqual(recent.org[0].docs.map((x) => x.id), [2, 1]);
+  assert.deepEqual(recent.channels.map((x) => x.key), ['c-b', 'c-a'], '최근에 바뀐 채널이 위');
+  assert.deepEqual(recent.channels[0].docs.map((x) => x.id), [5, 3]);
 });
