@@ -3,7 +3,7 @@
 // 켜짐(기본) = "위임 제한 2회"(종전 제한), 풀림 = "위임 제한 풀림"(안전 상한까지: 위임 10·단계 4·회의실 이어받기 6명·반응 4라운드).
 // 값은 대화방마다 서버가 저장한다(1:1 = 스레드 파일, 회의실 = 방 파일 — src/thread.mjs·room.mjs). 이 컴포넌트는 표시와 첫 해제 안내만 맡는다.
 // 처음 풀 때만 확인 모달(사용량 증가 안내) — 이후 같은 기기에서는 바로 토글. 다시 거는 쪽은 언제나 바로(되돌리기가 안전한 방향).
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { ConfirmModal } from '../../ui';
 import { useLang } from '../../i18n';
 import { DELEGATION_LIMITS } from '../../../src/delegation-limits.mjs';
@@ -20,7 +20,7 @@ export function DelegationToggle({ limited, onChange, scope = 'chat', disabled =
   const released = limited === false;
   const vars = { n: off.delegate, hop: off.hop, on: on.delegate, relay: off.relay, rounds: off.rounds, tree: off.tree };
   const hint = released ? t(`deleg.hintOff.${scope}`, vars) : t(`deleg.hintOn.${scope}`, { ...vars, n: on.delegate, hop: on.hop, relay: on.relay, rounds: on.rounds });
-  const descId = `deleg-hint-${scope}`; // 한 화면에 칩이 하나(1:1 또는 회의실)라 scope로 충분
+  const descId = useId(); // 메인 대화와 분할 창(split-pane)이 함께 그려져도 칩마다 id가 다르다(재검수 LOW-3 — scope로는 겹쳤다)
   const flip = async (next) => { setBusy(true); try { await onChange(next); } finally { setBusy(false); } };
   const click = () => {
     if (busy) return;

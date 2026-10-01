@@ -428,10 +428,10 @@ test('쪽지 배달 직전 — 시작 대화의 스위치를 다시 읽어 다�
   await seed('dl-relock', { budget: true });
   const { crewmailTurn } = await import('../src/scheduler.mjs');
   const lastUser = async () => (await thread.loadThread('dl-relock', 'beta')).messages.filter((m) => m.who === 'user').at(-1).text;
-  const deliver = async (treeId) => {
-    const chain = ['alpha', 'x', 'y'];
-    const msg = { id: 'm1', kind: 'to', from: 'y', fromName: '와이', message: '검수해 줘', hop: 3, chain, relaxed: true, tree: treeId };
-    await crewmailTurn('dl-relock', 'beta', msg, { from: 'y', hop: 3, chain, relaxed: true, tree: treeId });
+  const deliver = async (treeId, hop = 3, relaxedField = true) => {
+    const chain = ['alpha', 'x', 'y'].slice(0, hop);
+    const msg = { id: 'm1', kind: 'to', from: 'y', fromName: '와이', message: '검수해 줘', hop, chain, ...(relaxedField ? { relaxed: true, tree: treeId } : {}) };
+    await crewmailTurn('dl-relock', 'beta', msg, { from: 'y', hop, chain, relaxed: relaxedField, tree: relaxedField ? treeId : null });
     return lastUser();
   };
   const tree = newTree({ kind: 'chat', slug: 'alpha' });
@@ -447,6 +447,16 @@ test('쪽지 배달 직전 — 시작 대화의 스위치를 다시 읽어 다�
   assert.match(await deliver(rtree.id), /회신이 필요하면/);
   await setRoomDelegationLimit('dl-relock', true);
   assert.doesNotMatch(await deliver(rtree.id), /회신이 필요하면/);
+  // 재검수 LOW-1: 제한으로 떨어진 hop 1·2 쪽지는 켜짐 규칙(hop 2 미만이면 도구·회신 안내가 남는다)으로 돌면 합계 예산 밖에서 턴을 더 만든다
+  // → 켜짐 단계 상한까지 hop을 올려 배달한다(도구도 회신 안내도 없다). 풀림 유지·애초에 켜짐인 쪽지는 그대로.
+  await thread.setDelegationLimit('dl-relock', 'alpha', false);
+  const t1 = newTree({ kind: 'chat', slug: 'alpha' });
+  assert.match(await deliver(t1.id, 1), /회신이 필요하면/, '풀림 유지 — hop 1 그대로');
+  await thread.setDelegationLimit('dl-relock', 'alpha', true);
+  assert.doesNotMatch(await deliver(t1.id, 1), /회신이 필요하면/, '다시 걸었다 — hop 1 쪽지가 hop 2로 올라 더 퍼지지 않는다');
+  await thread.setDelegationLimit('dl-relock', 'alpha', false);
+  assert.doesNotMatch(await deliver('unknown-id', 2), /회신이 필요하면/, '예산 id를 모르는 hop 2 쪽지도 제한 + 더 퍼지지 않음');
+  assert.match(await deliver(null, 1, false), /회신이 필요하면/, '애초에 켜짐인 hop 1 쪽지는 종전 그대로(회신 가능)');
 });
 
 test('회의실 — 한 회의 턴의 모든 발언자·모든 라운드가 같은 합계 예산 객체를 받는다(켜짐은 없음)', async () => {
@@ -525,7 +535,8 @@ test('스위치 접근성 — 이름은 고정, 상태는 aria-checked, 설명�
   assert.equal(on.btn['aria-pressed'], undefined);
   assert.ok(on.desc && off.desc, 'aria-describedby가 가리키는 요소가 있다');
   assert.match(String(on.desc.props.children), /deleg\.hintOn\.chat/); assert.match(String(off.desc.props.children), /deleg\.hintOff\.chat/);
-  assert.notEqual(on.btn['aria-describedby'], (await info(true, 'room')).btn['aria-describedby'], '채팅·회의실 칩의 설명 id는 겹치지 않는다');
+  assert.notEqual(on.btn['aria-describedby'], (await info(true, 'chat')).btn['aria-describedby'], '같은 scope의 칩 둘(메인 대화 + 분할 창)도 설명 id가 겹치지 않는다 — useId');
+  assert.notEqual(on.btn['aria-describedby'], (await info(true, 'room')).btn['aria-describedby']);
   assert.equal(await render(null, 'chat'), null, '읽는 중에는 그리지 않는다');
 });
 

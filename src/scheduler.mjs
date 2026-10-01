@@ -12,7 +12,7 @@ const briefingCtx = async (...a) => (await import('./gateway.mjs')).briefingCtx(
 import { readAgentCard } from './persona.mjs';
 import { resolveRunner, isCliTurn, runnerCredType } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
-import { getTree, isRelaxedStored } from './delegation-limits.mjs'; // 풀린 쪽지의 합계 예산·시작 대화방 스위치(배달 직전 재판정)
+import { DELEGATION_LIMITS, getTree, isRelaxedStored } from './delegation-limits.mjs'; // 풀린 쪽지의 합계 예산·시작 대화방 스위치(배달 직전 재판정)
 import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
 import { runFailureDigest } from './failure-digest.mjs';
@@ -214,6 +214,12 @@ export async function crewmailTurn(cid, slug, msg, opts) {
   // 아직 풀려 있는가(사용자가 그 사이 다시 걸었으면 이미 쌓인 풀린 쪽지도 제한 상태로 배달한다 — 유건 2026-10-01). 메신저발은 스위치 밖.
   const tree = msg.relaxed === true && !msg.msgr ? getTree(msg.tree) : null;
   const relaxed = !!tree && await treeOriginRelaxed(cid, tree.origin);
+  // 풀린 쪽지가 재판정에서 제한으로 떨어졌다면(다시 걸었거나 예산 id를 모름) 켜짐 규칙으로 도는데, hop 1·2 쪽지는 켜짐에서도 위임·쪽지 도구가 남아
+  // 합계 예산 밖에서 턴을 더 만든다(재검수 2026-10-01 LOW-1: 최대 12턴). 그래서 켜짐 단계 상한까지 hop을 올려 배달한다 — 도구 없음·회신 안내 없음, 더 퍼지지 않는다.
+  if (msg.relaxed === true && !msg.msgr && !relaxed) {
+    const hop = Math.max(opts.hop ?? msg.hop ?? 0, DELEGATION_LIMITS.on.hop);
+    opts = { ...opts, hop }; msg = { ...msg, hop };
+  }
   const prompt = mailPrompt(msg, 'ko', { hasTools, relaxed });
   // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
   const mirrorCtx = crewmailMirrorCtx(cid, slug, msg); // 요청자 사슬(손님 판정 재료)을 잇는다 — crewmailMirrorCtx 주석
