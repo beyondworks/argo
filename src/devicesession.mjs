@@ -23,13 +23,20 @@ const fileOf = (root) => join(root, FILE);
 // 프로세스 간 회전 잠금(디렉터리 — mkdir은 모든 OS에서 배타적). withLock(devsess:root)은 한 프로세스 안의 순서만 맞춘다(mutex.mjs) —
 // 앱 사이드카·CLI·상주가 같은 데이터 루트를 쓰면 둘이 같은 refresh 토큰으로 동시에 회전해, GoTrue가 재사용으로 보고 세션 가족을 폐기한다.
 // 평소(만료 60초 전이 아님)에는 잡지 않는다 — 읽기 경로에 파일 I/O를 늘리지 않는다.
-// 시간 상한의 관계: 회전 요청 상한(REFRESH_TIMEOUT_MS) < 잠금 회수(LOCK_STALE_MS). 살아 있는 회전 중에 다른 프로세스가 잠금을
-// 회수하지 못하게 해서(withDirLock은 회수 뒤 주인 표시 없이 지운다 — 반대 검토 L-d) 같은 옛 토큰이 두 번 나가지 않게 한다.
+// 시간의 관계(#791 독립 검수 HIGH-2·LOW-4):
+// - 잠금을 쥔 동안 10초마다 잠금 폴더 시각을 갱신한다(refreshMs). 그래서 30초 회수는 갱신이 멈춘 주인(크래시)에게만 일어난다 —
+//   느린 회전 중인 살아 있는 주인의 잠금을 다른 프로세스가 회수해 같은 옛 토큰을 보내는 일이 없다.
+// - 회전 요청 상한(45초)은 auth-js의 자동 재시도 창(AUTO_REFRESH_TICK_DURATION_MS 30초 — _refreshAccessToken은 그 안에서만
+//   AuthRetryableFetchError를 다시 보낸다)보다 길어야 한다. 20초였을 때 21초 응답에서 20.2초에 같은 토큰을 다시 보내 "Already Used" →
+//   사망 마커 → 재로그인이 났다(검수 재현). 45초면 시간 초과 뒤 재시도 조건(시작 후 30초 안)이 거짓이라 다시 보내지 않고, 응답 없는
+//   서버에 잠금을 영원히 쥐고 있지도 않는다.
+// - 대기 상한 40초 > 회수 30초 — 주인 없는(크래시가 남긴) 잠금은 기다리는 동안 회수되므로 저장·삭제가 ELOCKTIMEOUT으로 실패하지 않는다.
 const lockOf = (root) => join(root, '.device-session.lock');
-const REFRESH_TIMEOUT_MS = 20_000;
-const LOCK_STALE_MS = 60_000;
-const LOCK_WAIT_MS = 30_000; // 다른 프로세스의 회전(최대 20초)을 기다리는 한도 — 넘으면 이번엔 null(호출부 계약), 다음 주기 재시도
-const DIR_LOCK = { staleMs: LOCK_STALE_MS, timeoutMs: LOCK_WAIT_MS };
+const REFRESH_TIMEOUT_MS = 45_000;
+const LOCK_STALE_MS = 30_000;
+const LOCK_BEAT_MS = 10_000;
+const LOCK_WAIT_MS = 40_000; // 살아 있는 다른 프로세스의 회전을 기다리는 한도 — 넘으면 이번엔 null(호출부 계약), 다음 주기 재시도
+const DIR_LOCK = { staleMs: LOCK_STALE_MS, timeoutMs: LOCK_WAIT_MS, refreshMs: LOCK_BEAT_MS };
 const deadMarkerOf = (root) => `${fileOf(root)}.dead`;
 
 /** 디스크 원본 — 캐시를 거치지 않는다. 손상은 경고(경로만) 후 null — 시크릿 값은 절대 출력하지 않는다. */
@@ -237,7 +244,7 @@ async function rotateLocked(root, _mkClient) {
     if (bo && bo.tag === tag && Date.now() < bo.until) { await logLine(root, { ev: 'skipped', reason: 'backoff' }); return null; }
     const sb = _mkClient(sess.url, sess.anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
-      // 시간 상한 — 무한 대기면 잠금 회수(60초) 뒤 다른 프로세스가 같은 옛 토큰을 보낸다. 초과는 네트워크 실패와 같이 백오프로 간다.
+      // 시간 상한 45초 — auth-js 자동 재시도 창(30초)보다 길게(위 상수 주석). 초과는 네트워크 실패와 같이 백오프로 간다.
       global: { fetch: (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) }) },
     });
     const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });

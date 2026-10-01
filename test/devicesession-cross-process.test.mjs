@@ -27,7 +27,7 @@ process.exit(0);`;
     const p = spawn(process.execPath, ['--input-type=module', '-e', script], { env: childEnv(root), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = ''; let err = '';
     p.stdout.on('data', (c) => { out += c; }); p.stderr.on('data', (c) => { err += c; });
-    const t = setTimeout(() => { p.kill('SIGKILL'); reject(new Error(`rotate child timeout\n${err}`)); }, 45_000);
+    const t = setTimeout(() => { p.kill("SIGKILL"); reject(new Error(`rotate child timeout\n${err}`)); }, 80_000);
     p.on('exit', () => {
       clearTimeout(t);
       const line = out.split('\n').find((l) => l.startsWith('@@'));
@@ -67,4 +67,43 @@ test('평소(만료 60초 전이 아님)에는 프로세스 간 잠금을 만들
   assert.equal(s.access_token, 'h.p.s');
   assert.ok(Date.now() - t0 < 1000, '평소 경로는 잠금을 기다리지 않는다');
   assert.equal(fake.count('POST /auth/v1/token'), 0);
+});
+
+test('#791 HIGH-2 — 회전 응답이 21초 걸려도 같은 refresh 토큰을 다시 보내지 않는다(요청 시간 제한 + auth-js 자동 재시도가 겹치면 "Already Used" → 재로그인)', { timeout: 90_000 }, async () => {
+  const fake = await startFakeSupabase({ refreshDelayMs: 21_000 }); fakes.push(fake);
+  const root = await mkdtemp(join(tmpdir(), 'argo-devsess-slow-'));
+  seedRoot(root, { url: fake.url, expiresAt: 0 });
+  const at = await rotateChild(root, Date.now() + 500);
+  assert.equal(fake.count('POST /auth/v1/token'), 1, '회전 요청은 한 번');
+  assert.deepEqual(fake.reused, []);
+  assert.equal(at, 'at-1');
+  assert.equal(JSON.parse(readFileSync(join(root, '.device-session.json'), 'utf8')).refresh_token, 'rt-1');
+  assert.equal(existsSync(join(root, '.device-session.json.dead')), false, '사망 마커 없음');
+});
+
+test('#791 HIGH-2 — 느린 회전(21초) 동안 다른 프로세스가 기다리다 잠금을 회수하지 않는다(살아 있는 주인은 잠금 시각을 갱신)', { timeout: 120_000 }, async () => {
+  const fake = await startFakeSupabase({ refreshDelayMs: 21_000 }); fakes.push(fake);
+  const root = await mkdtemp(join(tmpdir(), 'argo-devsess-slow2-'));
+  seedRoot(root, { url: fake.url, expiresAt: 0 });
+  const startAt = Date.now() + 1500;
+  const [a, b] = await Promise.all([rotateChild(root, startAt), rotateChild(root, startAt + 300)]);
+  assert.equal(fake.count('POST /auth/v1/token'), 1);
+  assert.deepEqual(fake.reused, []);
+  assert.equal(a, 'at-1');
+  assert.ok(b === 'at-1' || b === null, `기다린 쪽은 새 세션을 받거나(잠금 해제 뒤) 이번엔 null — 옛 토큰을 보내면 안 된다: ${b}`);
+});
+
+test('#791 LOW-4 — 크래시가 남긴 주인 없는 잠금이 있어도 로그인 저장은 실패하지 않는다(회수 30초 < 대기 40초)', { timeout: 60_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-devsess-orphan-'));
+  const { mkdir, utimes } = await import('node:fs/promises');
+  const { saveDeviceSession, loadDeviceSession } = await import('../src/devicesession.mjs');
+  const lock = join(root, '.device-session.lock');
+  await mkdir(lock, { recursive: true });
+  const past = new Date(Date.now() - 25_000); await utimes(lock, past, past); // 25초 전 크래시 — 5초 뒤 회수 대상
+  const t0 = Date.now();
+  await saveDeviceSession({ url: 'http://127.0.0.1:9', anonKey: 'anon', session: { access_token: 'a', refresh_token: 'r', expires_at: 0, user: { id: 'u9', email: '' } } }, { root });
+  const took = Date.now() - t0;
+  assert.ok(took >= 4_000 && took < 15_000, `회수까지 기다린 시간 ${took}ms`);
+  assert.equal(loadDeviceSession({ root }).user.id, 'u9');
+  assert.equal(existsSync(lock), false);
 });
