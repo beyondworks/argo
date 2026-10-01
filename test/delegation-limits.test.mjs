@@ -2,6 +2,7 @@
 // 켜짐 = 지금 제한 그대로, 꺼짐 = 안전 상한(위임 10·쪽지 10·단계 4·이어받기 6명·반응 4라운드)까지.
 // 메신저(팀 메신저) 크루 턴은 이 스위치의 범위가 아니라 어떤 경로로도 풀리지 않는다.
 // 모델은 부르지 않는다 — 위임 대상 턴은 월 예산 초과 안내(비용 0)로, 회의실은 chat 스텁(helpers/room-chat-stub.mjs)으로 격리.
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
@@ -520,7 +521,7 @@ test('스위치 접근성 — 이름은 고정, 상태는 aria-checked, 설명�
   const { loadComponent } = await import('./helpers/load-component.mjs');
   const { mount } = await import('./helpers/mini-react.mjs');
   const stubs = { '../../ui': 'export const ConfirmModal = () => null;', '../../i18n': "export const useLang = () => ({ t: (k, v) => k + (v && v.n ? ':' + v.n : '') });" };
-  const { DelegationToggle } = await loadComponent(new URL('../app/c/[ws]/delegation-toggle.jsx', import.meta.url).pathname, { stubs, real: [new URL('../src/delegation-limits.mjs', import.meta.url).pathname] });
+  const { DelegationToggle } = await loadComponent(fileURLToPath(new URL('../app/c/[ws]/delegation-toggle.jsx', import.meta.url)), { stubs, real: [fileURLToPath(new URL('../src/delegation-limits.mjs', import.meta.url))] }); // .pathname은 Windows에서 'D:\\D:\\…'가 된다(CI 실측)
   const find = (node, pred, out = []) => { if (!node || typeof node !== 'object') return out; if (Array.isArray(node)) { node.forEach((n) => find(n, pred, out)); return out; } if (node.props && pred(node)) out.push(node); if (node.props) find(node.props.children, pred, out); return out; };
   const render = async (limited, scope) => { const m = mount(DelegationToggle, { limited, onChange: async () => {}, scope }); const st = await m.flush(); return st.out; };
   const info = async (limited, scope = 'chat') => {
