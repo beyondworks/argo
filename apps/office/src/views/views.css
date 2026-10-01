@@ -108,10 +108,8 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 
 /* ── 홈 '캘린더' 모듈(유건 10/1 4차 B절) ──
    높이: 사용자가 높이를 정하지 않은 모듈은 모든 보기에서 본문 360px(보기를 바꿔도 모듈 높이가 같다), 내용은 안에서 스크롤.
-   제목 줄을 숨긴 위젯(.bare — 미니멀·강조의 주·월·미니)은 그 줄 높이(--calw-head, 위젯이 잰다)만큼 본문이 길어 모듈 전체 높이가 같다.
    사용자가 높이를 정하면(.module.sized-h) 본문을 끝까지 채운다. 폭은 컨테이너 쿼리(calw)로 — 좁으면 주 보기가 날짜별 세로 목록이 된다. */
 .calw { --calw-h: 360px; --ev: var(--fg-3); container: calw / inline-size; display: flex; flex-direction: column; gap: 6px; height: var(--calw-h); min-width: 0; min-height: 0; }
-.calw.bare { height: calc(var(--calw-h) + var(--calw-head, 42px)); }
 .module.sized-h > .module-body:has(> .calw) { align-content: stretch; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
 .module.sized-h .calw { min-height: 100%; max-height: 100%; } /* 높이가 정해지면 본문을 꼭 채운다. 좁은 화면에서 자기 높이 없이 줄 높이만 받은 경우(--mh: auto)는 %가 풀리지 않아 기본 360px 그대로 */
 .calw-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; animation: calw-in 180ms var(--ease-out); } /* 아주 낮게 정한 높이에서는 달력 칸이 최소 높이를 지키고 본문이 스크롤된다 */
@@ -128,31 +126,10 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 /* 위쪽 줄 — 기간 이름 · ‹ 오늘 › · + */
 .calw-top { display: flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 0 0 8px; flex: none; min-width: 0; }
 .calw-cap { margin: 0 6px 0 0; font-size: 13px; font-weight: 620; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.calw.bare .calw-cap { font-size: 15px; font-weight: 650; }
 .calw-nav { display: inline-flex; align-items: center; gap: 0; flex: none; }
 .calw-nav .icon-btn { color: var(--fg-3); }
 .calw-today { height: 24px; padding: 0 7px; font-size: 12px; color: var(--fg-2); }
 .calw-add { color: var(--fg-2); }
-/* 제목 줄을 숨긴 위젯 — 오른쪽 위는 떠 있는 손잡이·⋯ 자리로 비워 둔다 */
-.calw.bare > :first-child { padding-right: 68px; }
-
-/* 제목 줄 숨김(.bare) — 손잡이·⋯는 오른쪽 위에 떠서: 마우스를 올리거나 키보드 초점이 오면 나타나고, 터치 기기는 늘 보인다(사라져 조작 못 하는 일이 없게) */
-.module:has(> .module-body .calw.bare) > .module-head { position: absolute; top: 0; right: 0; z-index: 3; gap: 2px; padding: 0 12px; border-bottom: 0; background: none; pointer-events: none; isolation: isolate; opacity: 0; transform: translateY(-2px); transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out); }
-.module:has(> .module-body .calw.bare) > .module-head::before { content: ''; position: absolute; z-index: -1; left: 7px; right: 7px; top: 50%; height: 34px; transform: translateY(-50%); border-radius: var(--rc); background: var(--float); box-shadow: var(--shadow-float); }
-.module:has(> .module-body .calw.bare) > .module-head > :is(.ico, h3) { display: none; }
-.module:has(> .module-body .calw.bare) > .module-head > .grip { opacity: 1; }
-.module:has(> .module-body .calw.bare) > .module-head > .grip + .icon-btn { margin-left: 0; }
-.module:has(> .module-body .calw.bare):focus-within > .module-head { opacity: 1; transform: none; }
-.module:has(> .module-body .calw.bare):focus-within > .module-head > * { pointer-events: auto; }
-@media (hover: hover) {
-  .module:has(> .module-body .calw.bare):hover > .module-head { opacity: 1; transform: none; }
-  .module:has(> .module-body .calw.bare):hover > .module-head > * { pointer-events: auto; }
-}
-@media (pointer: coarse) {
-  .module:has(> .module-body .calw.bare) > .module-head { opacity: 1; transform: none; }
-  .module:has(> .module-body .calw.bare) > .module-head > * { pointer-events: auto; }
-}
-
 /* 강조 — 오늘 날짜 크게 + 달·요일, 이번 달 진행 막대(주 단위, 지난 주는 채움) */
 .calw-hero { display: flex; align-items: flex-start; gap: 10px; padding: 2px 0 0 8px; flex: none; min-width: 0; }
 .calw-big { font-size: 40px; font-weight: 700; line-height: 0.95; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
@@ -284,5 +261,5 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 }
 @media (prefers-reduced-motion: reduce) {
   .calw-body, .calw-slide, .calw-ag-list { animation: none; }
-  .calw-num, .calw-card, .calw-up, .calw-prog i::after, .module:has(> .module-body .calw.bare) > .module-head { transition: none; }
+  .calw-num, .calw-card, .calw-up, .calw-prog i::after { transition: none; }
 }

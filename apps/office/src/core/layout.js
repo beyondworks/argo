@@ -31,7 +31,7 @@ export function mergeLayout(saved, registry, space, defaults) {
   if (!saved?.items?.length) {
     const visible = defaults.filter((d) => usable.has(d.id)).map((d) => ({ id: d.id, size: d.size, hidden: false }));
     const included = new Set(visible.map((item) => item.id));
-    return [...visible, ...[...usable.values()].filter((mod) => !mod.repeatable && !included.has(mod.id)).map((mod) => ({ id: mod.id, size: mod.defaultSize, hidden: true }))];
+    return [...visible, ...[...usable.values()].filter((mod) => (!mod.repeatable || mod.anchor) && !included.has(mod.id)).map((mod) => ({ id: mod.id, size: mod.defaultSize, hidden: true }))];
   }
   const seen = new Set();
   const items = [];
@@ -43,7 +43,7 @@ export function mergeLayout(saved, registry, space, defaults) {
     items.push({ id: it.id, ...(it.moduleId ? { moduleId: it.moduleId } : {}), size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, ...(Number.isInteger(span) && span >= lo && span <= hi ? { span, ...(mod.sizes.includes(it.baseSize) ? { baseSize: it.baseSize } : {}) } : {}), ...(heightOf(it) ? { h: it.h } : {}), hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
   }
   // 새로 생긴 모듈은 숨긴 채 뒤에 — intro: 'top'인 것만 맨 위에 보이게(유건 9/27: 현황 카드). 한 번 저장된 뒤엔 사용자 선택을 따른다.
-  for (const [id, mod] of usable) if (!mod.repeatable && !items.some((item) => (item.moduleId ?? item.id) === id)) {
+  for (const [id, mod] of usable) if ((!mod.repeatable || mod.anchor) && !items.some((item) => (item.moduleId ?? item.id) === id)) {
     if (mod.intro === 'top') items.unshift({ id, size: mod.defaultSize, hidden: false });
     else items.push({ id, size: mod.defaultSize, hidden: true });
   }

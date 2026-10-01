@@ -1,6 +1,6 @@
 // 홈 '캘린더' 모듈(위젯) — 유건 10/1 4차 명세 B절.
 // 보기 9가지: 목록·카드·칸반·표(views/Board.jsx 그대로) · 주(노션식 한 주 카드) · 월 · 미니 달력 · 오늘 시간표 · 다음 일정.
-// 디자인 3가지(⋯ 메뉴, 기본 미니멀): 미니멀·강조는 주·월·미니에서 모듈 제목 줄을 숨기고(손잡이·⋯는 오른쪽 위에 떠서), 기본은 제목 줄 유지.
+// 디자인 3가지(⋯ 메뉴, 기본 미니멀). 모듈 머리(제목 줄·손잡이·⋯)는 다른 모듈과 같다 — 제목은 늘 '캘린더', 지금 보기 이름은 머리에 작게(onSub, 유건 10/1 5차).
 // 위젯마다 따로: 색 기준·보여 줄 것(모듈 cfg.cal, 고르지 않은 값은 캘린더 페이지 설정). 높이는 보기를 바꿔도 같다(본문 360px, 사용자가 높이를 정하면 그 높이를 채운다).
 // 일정을 누르면 그 자리에서 오른쪽 패널(EventSheet), 날짜를 누르면 그날로 맞춘 캘린더 페이지, '+'는 그 자리에서 만들기. ‹ 오늘 › 이동은 저장하지 않는다.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -33,7 +33,7 @@ function useNow(ms = 30_000) {
   return now;
 }
 
-export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
+export default function CalendarWidget({ space, item, canEdit, setCfg, menu, onSub }) {
   useLang();
   const now = useNow(), today = M.localDay(now);
   const [local, setLocal] = useState(null); // 배치를 바꿀 수 없는 사람(조직 홈의 직원) — 이번 화면에서만
@@ -49,7 +49,8 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
   };
   const saveCal = (next) => { if (JSON.stringify(next) !== JSON.stringify(W.normalizeWidget(rawCal))) save({ cal: next }); }; // 바뀐 것이 없으면 쓰지 않는다
 
-  const view = cfg.view, design = w.design, bare = W.isBare(view, design), board = V.BOARD.includes(view);
+  const view = cfg.view, design = w.design, board = V.BOARD.includes(view);
+  useLayoutEffect(() => { onSub?.(label(view)); }); // 머리에 지금 보기 이름("캘린더 · 월") — 같은 모듈을 여러 개 놓았을 때 구분. 같은 값이면 다시 그리지 않는다
   const [anchor, setAnchor] = useState(today);
   const [dir, setDir] = useState(0); // 옮긴 방향(미끄러지는 쪽)
   const [picked, setSel] = useState(today); // 미니 달력에서 누른 날
@@ -104,18 +105,6 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
     { sep: true },
   ];
 
-  // 제목 줄을 숨긴 위젯은 그 줄 높이만큼 본문이 길다 — 보기를 바꿔도 모듈 높이가 같게(셸마다 제목 줄 높이가 달라 직접 잰다)
-  const root = useRef(null);
-  useLayoutEffect(() => {
-    const el = root.current, head = el?.closest('.module')?.querySelector(':scope > .module-head');
-    if (!bare || !head) return undefined;
-    const put = () => el.style.setProperty('--calw-head', `${head.offsetHeight}px`);
-    put();
-    const ro = new ResizeObserver(put);
-    ro.observe(head);
-    return () => ro.disconnect();
-  }, [bare]);
-
   const loading = !data.events;
   const colorBy = w.color, holidays = w.show.holidays;
   const common = { items, today, now, colorBy, holidays, onOpen: open, onMenu, onDay: openDay };
@@ -135,7 +124,7 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu }) {
   else body = <NextUp {...common} />;
 
   return (
-    <div ref={root} className={`calw d-${design} v-${view}${bare ? ' bare' : ''}`}
+    <div className={`calw d-${design} v-${view}`}
       onContextMenu={(e) => { if (!board && fromInside(e) && !e.target.closest('button, a, .cal-block, .cal-chip')) openMenu(e, actions.empty(cfg, setView, W.WIDGET_VIEWS, label)); }}>
       {hero && <Hero today={today}>{add}</Hero>}
       <div className="calw-top">

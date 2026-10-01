@@ -1,7 +1,7 @@
 // 여러 보기 사전 — 보기 화면과 함께 지연 로드된다(첫 화면 150KB 상한). 이유 문구(views.why.*)는 model.js whyNot·bucketTarget의 이유 키와 짝이다.
 export const VIEWS_DICT = {
   'views.view': ['보기', 'View'], 'views.v.list': ['목록', 'List'], 'views.v.card': ['카드', 'Cards'], 'views.v.kanban': ['칸반', 'Board'], 'views.v.table': ['표', 'Table'],
-  'views.v.week': ['주', 'Week'], 'views.v.month': ['월', 'Month'], 'views.v.day': ['일', 'Day'], 'views.v.tasks': ['할 일 목록(기본)', 'To-do list (default)'],
+  'views.v.week': ['주', 'Week'], 'views.v.month': ['월', 'Month'], 'views.v.day': ['일', 'Day'], 'views.v.tasks': ['할 일 목록(기본)', 'To-do list (default)'], 'views.v.tasksShort': ['기본', 'Default'],
   'views.group': ['묶기', 'Group by'], 'views.g.status': ['상태', 'Status'], 'views.g.who': ['담당자', 'Assignee'], 'views.g.category': ['분류', 'Category'], 'views.g.customer': ['거래처', 'Customer'], 'views.g.date': ['날짜', 'Date'],
   'views.sort': ['정렬', 'Sort'], 'views.s.date': ['날짜순', 'By date'], 'views.s.title': ['제목순', 'By title'], 'views.s.created': ['만든 순', 'By created'],
   'views.filter': ['필터', 'Filter'], 'views.filterOn': ['필터 {n}', 'Filter {n}'], 'views.filterReset': ['필터 모두 끄기', 'Clear filters'], 'views.all': ['전체', 'All'],

@@ -44,12 +44,6 @@ test('일정 거르기: 내 일정·조직 일정', () => {
   assert.equal(W.keepEvent(mine, { space: 'me', me: ME, own: { me: false }, off: [], calKey: 'me' }), false);
 });
 
-// 이유(B-4): 미니멀·강조는 주·월·미니에서만 제목 줄을 숨긴다 — 목록 계열은 기존 모양, 기본 디자인은 제목 줄 유지.
-test('제목 줄 숨김은 디자인이 적용되는 보기에서만', () => {
-  for (const v of ['week', 'month', 'mini']) { assert.ok(W.isBare(v, 'minimal')); assert.ok(W.isBare(v, 'accent')); assert.ok(!W.isBare(v, 'basic')); }
-  for (const v of ['list', 'card', 'kanban', 'table', 'day', 'next']) assert.ok(!W.isBare(v, 'minimal'), v);
-});
-
 // 이유(B-3): 데이터 읽기 기간은 보이는 범위를 덮어야 한다 — ‹ ›로 옮긴 주·달도. 주가 두 달에 걸쳐도 그달 격자 창 안에 든다.
 test('보기별 읽기 창은 보이는 범위를 덮는다', () => {
   const today = '2026-10-01';
