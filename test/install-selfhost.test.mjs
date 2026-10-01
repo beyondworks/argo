@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,10 +8,11 @@ import { localAssetRequestDenied } from '../src/local-asset-access.mjs';
 
 const installer = new URL('../scripts/install.sh', import.meta.url);
 const available = process.platform !== 'win32';
-async function fixture(t, { existing = false, mismatch = '', busy = false, customRoot = false, cli = true, oldApp = false, cliActive = false, cliBusy = false } = {}) {
+// shim: 미리 있는 ~/.local/bin/argo 내용, foreignInPath: PATH에 다른 프로그램의 argo, nodeDir: node가 있는 폴더 이름(따옴표·$·공백 확인용), homeName: HOME 폴더 이름
+async function fixture(t, { existing = false, mismatch = '', busy = false, customRoot = false, cli = true, oldApp = false, cliActive = false, cliBusy = false, shim = null, foreignInPath = false, nodeDir = 'bin', homeName = 'home' } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'argo-installer-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const home = join(root, 'home'), base = join(home, '.argo-selfhost'), bin = join(root, 'bin');
+  const home = join(root, homeName), base = join(home, '.argo-selfhost'), bin = join(root, 'bin');
   const unit = join(home, '.config/systemd/user/argo.service');
   const workspaces = customRoot ? join(root, 'custom-workspaces') : join(base, 'data/workspaces');
   const put = async (file, text, mode) => { await mkdir(dirname(file), { recursive: true }); await writeFile(file, text, { mode }); };
@@ -35,6 +36,11 @@ async function fixture(t, { existing = false, mismatch = '', busy = false, custo
   await put(join(base, 'data/workspaces/company/company.json'), '{"name":"Preserve my company"}');
   if (busy) await put(join(workspaces, 'company/chats/crew.status.json'), JSON.stringify({ ts: Date.now(), stage: 'work' }));
   await put(join(root, 'state.json'), JSON.stringify({ active: existing, enabled: existing, cliActive }));
+  if (shim != null) await put(join(home, '.local/bin/argo'), shim, 0o755);
+  const other = join(root, 'other');
+  if (foreignInPath) await put(join(other, 'argo'), '#!/bin/sh\necho argo-workflows-cli\n', 0o755);
+  // PATH는 격리한다 — 개발 PC의 PATH에는 진짜 argo(npm link 등)가 있을 수 있다(이 맥 실측: ~/.npm-global/bin/argo)
+  await mkdir(join(root, nodeDir), { recursive: true }); await symlink(process.execPath, join(root, nodeDir, 'node'));
   const runner = `#!${process.execPath}\n`;
   await put(join(bin, 'uname'), runner + `console.log(process.argv.includes('-m')?'x86_64':'Linux');`, 0o755);
   await put(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', 0o755);
@@ -63,8 +69,9 @@ if(args.some(a=>a.includes('api.github.com')))console.log(JSON.stringify({assets
 else if(args.includes('-o'))fs.copyFileSync(path.join(root,'server.tar.gz'),args[args.indexOf('-o')+1]);
 else{const s=JSON.parse(fs.readFileSync(path.join(root,'state.json')));if(!s.active||!s.ping)process.exit(7);console.log(JSON.stringify(s.ping));}
 `, 0o755);
-  const run = (args = [], extra = {}) => spawnSync('bash', [installer.pathname, ...args], { env: { ...process.env, ...extra, PATH: `${bin}:${dirname(process.execPath)}:${process.env.PATH}`, HOME: home, ARGO_HOME: base, FIXTURE_ROOT: root, MISMATCH: mismatch }, encoding: 'utf8', timeout: 30_000 });
-  return { root, base, home, unit, run, state: async () => JSON.parse(await readFile(join(root, 'state.json'))), calls: () => readFile(join(root, 'calls.log'), 'utf8') };
+  const PATH = [join(root, nodeDir), bin, ...(foreignInPath ? [other] : []), '/usr/bin', '/bin'].join(':');
+  const run = (args = [], extra = {}) => spawnSync('bash', [installer.pathname, ...args], { env: { ...process.env, ...extra, PATH, HOME: home, ARGO_HOME: base, FIXTURE_ROOT: root, MISMATCH: mismatch }, encoding: 'utf8', timeout: 30_000 });
+  return { root, base, home, unit, run, other, nodeDir: join(root, nodeDir), state: async () => JSON.parse(await readFile(join(root, 'state.json'))), calls: () => readFile(join(root, 'calls.log'), 'utf8') };
 }
 
 test('fresh --local install grants local import capability and starts exact release', { skip: !available }, async t => {
@@ -113,7 +120,7 @@ test('계정 모드 새 설치 — argo 명령 등록·실행 확인, 웹 서버
   const f = await fixture(t), r = f.run();
   assert.equal(r.status, 0, r.stderr + r.stdout);
   const shim = join(f.home, '.local/bin/argo');
-  assert.match(await readFile(shim, 'utf8'), /bin\/argo\.mjs" "\$@"/);
+  assert.match(await readFile(shim, 'utf8'), /argo-cli-shim/, '우리가 만든 파일이라는 표식 — 다음 설치가 이 파일만 갱신한다');
   const out = spawnSync(shim, ['status'], { encoding: 'utf8' });
   assert.equal(out.stdout.trim(), 'fixture status', '등록한 argo가 설치된 앱의 CLI를 실행한다');
   assert.ok(!(await f.calls().catch(() => '')).includes('enable argo.service'), '웹 서버 서비스 없음');
@@ -147,4 +154,36 @@ test('계정 모드 — argo 명령이 없는 옛 타르볼은 --local을 안내
 test('모르는 옵션은 거절한다', { skip: !available }, async t => {
   const f = await fixture(t), r = f.run(['--lcoal']);
   assert.equal(r.status, 1); assert.match(r.stderr, /모르는 옵션/);
+});
+
+// ─── argo 명령 등록은 우리 파일만 — 다른 프로그램의 argo(예: Argo Workflows CLI)를 덮거나 가리지 않는다(검수 M1) ───
+const FOREIGN = '#!/bin/sh\necho argo-workflows-cli\n';
+test('계정 모드 — 다른 프로그램의 ~/.local/bin/argo는 덮어쓰지 않고 건너뛴 뒤 직접 실행 방법을 안내한다', { skip: !available }, async t => {
+  const f = await fixture(t, { shim: FOREIGN }), r = f.run(), shim = join(f.home, '.local/bin/argo');
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.equal(await readFile(shim, 'utf8'), FOREIGN, '남의 파일은 바이트 그대로');
+  assert.match(r.stdout, /다른 프로그램의 argo/); assert.ok(r.stdout.includes(shim), '어느 파일인지 보여 준다');
+  assert.ok(r.stdout.includes(join(f.base, 'app/bin/argo.mjs')), '대신 실행할 명령을 알려 준다');
+  assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '2.0.0', '앱 설치 자체는 끝난다');
+});
+test('계정 모드 — PATH에 다른 프로그램의 argo가 있으면 argo 명령을 새로 만들지 않는다(그 명령을 가리지 않게)', { skip: !available }, async t => {
+  const f = await fixture(t, { foreignInPath: true }), r = f.run();
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  await assert.rejects(readFile(join(f.home, '.local/bin/argo')), { code: 'ENOENT' });
+  assert.match(r.stdout, /다른 프로그램의 argo/); assert.ok(r.stdout.includes(join(f.other, 'argo')));
+  assert.equal(await readFile(join(f.other, 'argo'), 'utf8'), FOREIGN);
+});
+test('계정 모드 — 우리가 만든 argo는 갱신하고, node·HOME 경로에 따옴표·$·공백이 있어도 실행되며, 설치 때의 node가 없어지면 PATH의 node로 실행한다', { skip: !available }, async t => {
+  const weird = `n o'd$e "q"`;
+  const f = await fixture(t, { shim: '#!/bin/sh\n# argo-cli-shim v1 argo-selfhost (옛 설치)\nexec /nonexistent "$@"\n', nodeDir: weird, homeName: `h o'm$e "q"` });
+  const r = f.run(), shim = join(f.home, '.local/bin/argo');
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.doesNotMatch(await readFile(shim, 'utf8'), /nonexistent/, '옛 경로를 새 설치로 갱신');
+  assert.equal((await stat(shim)).mode & 0o777, 0o755);
+  const ok = (env) => { const o = spawnSync(shim, ['status'], { encoding: 'utf8', env: { ...process.env, ...env } }); assert.equal(o.stdout.trim(), 'fixture status', o.stderr); };
+  ok({});
+  await rm(f.nodeDir, { recursive: true, force: true }); // nvm 버전 삭제 등으로 설치 때의 node가 사라짐
+  ok({ PATH: `${dirname(process.execPath)}:/usr/bin:/bin` });
+  const none = spawnSync(shim, ['status'], { encoding: 'utf8', env: { ...process.env, PATH: join(f.root, 'no-node') } }); // sh 내장 명령만으로 판정한다
+  assert.equal(none.status, 127); assert.match(none.stderr, /Node\.js/, 'node가 없으면 무엇이 없는지 알려 준다');
 });

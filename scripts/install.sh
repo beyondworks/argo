@@ -127,15 +127,41 @@ NODE
   if [ "$HAD_APP" = 1 ]; then mv "$APP_DIR" "$TMP/previous-app"; fi
   mv "$CANDIDATE" "$APP_DIR"
   node "$APP_DIR/bin/argo.mjs" status >/dev/null 2>"$TMP/argo-status.err" || { cat "$TMP/argo-status.err" >&2; die "argo 명령 실행 확인 실패 — 이전 설치로 복구합니다"; }
-  SHIM_DIR="$HOME/.local/bin"; mkdir -p "$SHIM_DIR"
-  printf '#!/bin/sh\nexec "%s" "%s/bin/argo.mjs" "$@"\n' "$(command -v node)" "$APP_DIR" > "$SHIM_DIR/argo"
-  chmod 755 "$SHIM_DIR/argo"
+  # argo 명령 등록 — 표식(argo-cli-shim)이 있는 우리 파일만 만들고 갱신한다. 다른 프로그램의 argo(예: Argo Workflows CLI)가
+  # 이 자리에 있으면 덮어쓰지 않고, PATH에 있으면 새로 만들어 가리지 않는다 — 건너뛰고 직접 실행하는 방법을 안내한다(검수 M1).
+  SHIM_DIR="$HOME/.local/bin"; SHIM="$SHIM_DIR/argo"; NODE_BIN=$(command -v node)
+  ours() { head -c 512 "$1" 2>/dev/null | grep -q 'argo-cli-shim'; }
+  shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; } # sh 작은따옴표 인용 — 경로의 " \$ \` 공백이 그대로 남는다(검수 L3)
+  IN_PATH=''; SKIP=''
+  while IFS= read -r found; do ours "$found" || { IN_PATH="$found"; break; }; done < <(type -aP argo || true)
+  if [ -e "$SHIM" ] || [ -L "$SHIM" ]; then ours "$SHIM" || SKIP="$SHIM"; else SKIP="$IN_PATH"; fi
+  RUN_CMD="$(shq "$NODE_BIN") $(shq "$APP_DIR/bin/argo.mjs")"
+  if [ -z "$SKIP" ]; then
+    mkdir -p "$SHIM_DIR"
+    # 설치 때 확인한 node(22+)를 먼저 쓰고, 그 node가 없어지면(nvm 버전 삭제 등) PATH의 node로 실행한다(검수 L3)
+    { printf '#!/bin/sh\n# argo-cli-shim v1 argo-selfhost — Argo 설치 스크립트(install.sh)가 만든 파일입니다. 다시 설치하면 갱신되고, 지워도 됩니다.\n'
+      printf 'N=%s; C=%s\n' "$(shq "$NODE_BIN")" "$(shq "$APP_DIR/bin/argo.mjs")"
+      cat <<'SHIM'
+[ -x "$N" ] || N=$(command -v node) || { echo "argo: Node.js를 찾을 수 없습니다 — Node.js 22 이상을 설치하세요 / Node.js not found — install Node.js 22+" >&2; exit 127; }
+[ -f "$C" ] || { echo "argo: Argo 설치를 찾을 수 없습니다 — install.sh를 다시 실행하세요 / Argo install not found — run install.sh again: $C" >&2; exit 127; }
+exec "$N" "$C" "$@"
+SHIM
+    } > "$SHIM.tmp.$$"
+    chmod 755 "$SHIM.tmp.$$"; mv -f "$SHIM.tmp.$$" "$SHIM" # 통째로 바꾼다 — 실행을 시작하는 argo가 반쯤 쓴 파일을 읽지 않게
+    RUN_CMD=argo
+  fi
   SUCCESS=1
   if [ "$CLI_ACTIVE" = 1 ]; then systemctl --user restart argo-cli.service; say "상주 중인 argo를 새 버전으로 다시 시작했습니다"; fi
   say "설치 완료 — argo 명령 (버전: $EXPECTED_VERSION)"
-  case ":$PATH:" in *":$SHIM_DIR:"*) ;; *) say "PATH에 $SHIM_DIR 이 없습니다 — ~/.bashrc 등에 추가하세요: export PATH=\"$SHIM_DIR:\$PATH\"" ;; esac
-  say "다음: argo  (로그인 — 서버에 브라우저가 없으면 안내에 나오는 ssh -L 명령을 내 PC에서 먼저 실행)"
-  say "그다음: argo service install  (재부팅에도 켜져 메신저·예약 작업에 크루가 답합니다)"
+  if [ -n "$SKIP" ]; then
+    say "다른 프로그램의 argo 명령이 있어 argo 명령을 등록하지 않았습니다(그 파일은 그대로 둡니다): $SKIP"
+    say "Argo는 이렇게 실행합니다: $RUN_CMD   (자주 쓰면 다른 이름으로 alias를 만들어 두세요)"
+  else
+    [ -z "$IN_PATH" ] || say "PATH에 다른 프로그램의 argo도 있습니다: $IN_PATH — PATH에서 먼저 나오는 쪽이 실행됩니다"
+    case ":$PATH:" in *":$SHIM_DIR:"*) ;; *) say "PATH에 $SHIM_DIR 이 없습니다 — ~/.bashrc 등에 추가하세요: export PATH=\"\$PATH:\$HOME/.local/bin\"" ;; esac
+  fi
+  say "다음: $RUN_CMD  (로그인 — 서버에 브라우저가 없으면 안내에 나오는 ssh -L 명령을 내 PC에서 먼저 실행)"
+  say "그다음: $RUN_CMD service install  (재부팅에도 켜져 메신저·예약 작업에 크루가 답합니다)"
   say "로그인 없는 로컬 웹 서버가 필요하면: 이 스크립트를 --local로 실행"
   exit 0
 fi
