@@ -2064,6 +2064,18 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-arow .ph-kl2 { align-items: center; }
   .msgr-phone .ph-arow .ph-kl2 .snip { -webkit-line-clamp: 1; }
 
+  /* ── 기억 탭: 폴더 묶음 · 문서 줄 · 읽기 전용 문서 ── */
+  .msgr-phone .ph-memgroup { padding-bottom: 4px; }
+  .msgr-phone .ph-memfolder { display: flex; align-items: center; gap: 6px; padding: 8px var(--ph-pad) 2px; font-size: 13px; font-weight: 600; color: var(--fg); }
+  .msgr-phone .ph-memfolder .ph-kcount { font-weight: 500; }
+  .msgr-phone.phone-home .msgr-side .ph-root .ph-memrow { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 6px var(--ph-pad); border: 0; background: var(--bg); color: var(--fg); text-align: left; }
+  .msgr-phone.phone-home .msgr-side .ph-root .ph-memrow:active { background: var(--card-2); }
+  .msgr-phone.phone-home .msgr-side .ph-root .ph-memrow .name { font-size: 15px; font-weight: 500; }
+  .msgr-phone .ph-memrow .snip { -webkit-line-clamp: 2; font-size: 13px; }
+  .msgr-phone .ph-memic { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: var(--card-2); color: var(--fg-2); border: 1px solid var(--border-soft); flex: none; }
+  .msgr-phone .ph-memdoc { padding: 0 2px; }
+  .msgr-phone .ph-memdoc header h2 { margin: 4px 0; font-size: 20px; }
+  .msgr-phone .ph-memdoc .note { margin-top: 16px; font-size: 12.5px; color: var(--fg-2); }
   /* ── 내 설정(톱니) — 카톡 설정처럼 줄 목록 → 하위 화면 ── */
   .msgr-phone .ph-setlist { display: grid; gap: 14px; }
   .msgr-phone .ph-setme, .msgr-phone .ph-setrow { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: none; color: var(--fg); text-align: left; cursor: pointer; }

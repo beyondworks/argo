@@ -49,7 +49,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
-import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
@@ -837,7 +837,8 @@ function Shell({ session }) {
   const edgeBack = useEdgeSwipeBack(goBack, edgeEnabled, { underlay: () => lastRoot.current, onStart: (to) => setSwipeTo(to), onEnd: () => setSwipeTo(null) }); // 폰: 왼쪽 가장자리 스와이프 = 뒤로(그 전 화면)
   const [orgMenu, setOrgMenu] = useState(false);
   const [chPlus, setChPlus] = useState(false);
-  const [reqOpen, setReqOpen] = useState(false); // 폰 친구 탭 '받은 친구 요청 N' 펼침 // 폰 채널 탭 머리의 + 메뉴(새 채널 만들기 / 채널 찾아보기)
+  const [reqOpen, setReqOpen] = useState(false);
+  const [memDoc, setMemDoc] = useState(null); // 폰 기억 탭에서 연 문서 { doc, label } — 읽기 전용 보기(page 'memdoc') // 폰 친구 탭 '받은 친구 요청 N' 펼침 // 폰 채널 탭 머리의 + 메뉴(새 채널 만들기 / 채널 찾아보기)
   const [chCount, setChCount] = useState({}); // 채널 id → 참여 인원(폰 채널 줄의 인원 수)
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
@@ -2190,6 +2191,7 @@ function Shell({ session }) {
       {rootTab === 'chats' && (<PhoneHead title={t('phone.tab.chats')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), tour: 'hdr-new-chat', run: () => { if (!isPersonal) return; setTabQ(null); setDmGroup(true); } }, gearAct]} />)}
       {rootTab === 'channels' && (<PhoneHead left={<><h1 className="ph-title">{t('phone.tab.channels')}</h1>{orgRow && <button type="button" className="ph-orgbtn" data-tour="org-switch" onClick={() => { setChPlus(false); setOrgMenu((v) => !v); }} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><span className="name">{orgRow.name}</span><SpaceBadge c={otherOrgsUnread} /><I name="caret" size={14} className="caret" /></button>}</>} title={t('phone.tab.channels')} actions={[onOrgTab && !orgBlocked && searchAct, onOrgTab && !orgBlocked && { key: 'plus', icon: 'plus', label: t('phone.ch.add'), menu: true, on: chPlus, run: () => { setOrgMenu(false); setChPlus((v) => !v); } }, gearAct]}>{orgMenuPop}{chPlusPop}</PhoneHead>)}
       {rootTab === 'agents' && (<PhoneHead title={t('phone.tab.agents')} actions={[searchAct, gearAct]} />)}
+      {rootTab === 'memory' && (<PhoneHead left={<><h1 className="ph-title">{t('phone.tab.memory')}</h1>{orgRow && <button type="button" className="ph-orgbtn" onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><span className="name">{orgRow.name}</span><I name="caret" size={14} className="caret" /></button>}</>} title={t('phone.tab.memory')} actions={[onOrgTab && !orgBlocked && searchAct, gearAct]}>{orgMenuPop}</PhoneHead>)}
       {searchBar}
       <div className="msgr-railbody ph-body" ref={pullList.setRef}><PullIndicator phase={pullList.phase} pulse={pullList.pulse} t={t} /><div className="msgr-railinner">
         {rootTab === 'friends' && (<>
@@ -2254,6 +2256,11 @@ function Shell({ session }) {
           {!chTalks.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t('phone.talks.empty')}</div>}
           {searchFoot(chChannelsShown.length + chTalksShown.length > 0)}
         </>))}
+        {rootTab === 'memory' && (!orgs?.length ? <div className="msgr-hint ph-empty">{t('phone.memory.noOrg')}</div>
+          : !onOrgTab ? <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>
+          : orgGateActive ? <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setPage('chats')} bare />
+          : aiConsentLoading ? <OrgGateLoading t={t} bare />
+          : <PhoneMemory key={orgRow.id} org={orgRow} channels={channels} previewChannels={previewChannels} dmName={dmName} nameOfUser={nameOfUser} query={tabQText} onError={setErr} searchFoot={searchFoot} onOpen={(doc, label) => { setMemDoc({ doc, label }); setPage('memdoc'); }} />)}
         {rootTab === 'agents' && (<>
           {!tabQText.trim() && <div className="ph-apcard-wrap">
             <div className={`ph-apcard${approvalItems.length ? ' on' : ''}`}>
@@ -2278,7 +2285,7 @@ function Shell({ session }) {
   );
   return (
     <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}>
-    <div className={`shell msgr-shell${online ? '' : ' is-offline'}${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && isPhoneRoot(page) && page !== 'memory' ? ' phone-home' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && ROOT_PAGES.has(page) ? ' phone-root' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
+    <div className={`shell msgr-shell${online ? '' : ' is-offline'}${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && isPhoneRoot(page) ? ' phone-home' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && ROOT_PAGES.has(page) ? ' phone-root' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {!online && <div className="msgr-offline-bar" role="status">{t('net.offline')}</div>}
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
@@ -2433,9 +2440,11 @@ function Shell({ session }) {
           <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setOrgId(PERSONAL)} />
         ) : personalConsentAsk && isPersonal && page !== 'settings' ? ( // 개인 공간은 에이전트를 부르려는 순간에만 묻는다 — 거부하면 사람끼리 대화는 그대로
           <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setPersonalConsentAsk(false)} personal />
-        ) : (page === 'activity' || page === 'memory') && isPersonal ? (
-          <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t(page === 'memory' ? 'act.title' : 'personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t(page === 'memory' ? (orgs?.length ? 'ui.loading' : 'phone.memory.noOrg') : 'personal.noActivity')}</p></div></div></>
-        ) : (page === 'activity' || page === 'memory') && org ? (
+        ) : page === 'activity' && isPersonal ? (
+          <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.noActivity')}</p></div></div></>
+        ) : isPhone && page === 'memdoc' && memDoc ? (
+          <PhoneMemDoc doc={memDoc.doc} label={memDoc.label} nameOfUser={nameOfUser} onBack={backFromPage} onMenu={openNav} />
+        ) : page === 'activity' && org ? (
           <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} previewChannels={previewChannels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
           <SearchPage res={searchRes} busy={searchBusy} channels={[...channels, ...previewChannels]} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, mid) => { setChId(id); setPage('chat'); setJump(mid ? { ch: id, mid } : null); }} onCrew={openers.search} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} phoneQ={isPhone ? { q: searchQ, set: setSearchQ, run: runSearch } : null} />
@@ -3879,6 +3888,53 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
         })}
       </div>
     </div>
+  </>);
+}
+
+/* ─── 폰 기억 탭(유건 확정 2026-10-01): 폴더별 기억 보기·검색 — 읽기 전용. 자료 = 조직 문서(msgr_org_docs)와 장 열람 RPC(msgr_chief_docs) — 기억 페이지(Activity)와 같은 조회.
+   개인 공간 기억은 서버에 없다(msgr_org_docs.org_id NOT NULL, 일지 트리거는 개인 방을 건너뛴다). 탭에 들어올 때(조직이 바뀔 때) 한 번 읽는다 — 주기 호출 없음. ─── */
+function PhoneMemory({ org, channels = [], previewChannels = [], dmName, nameOfUser, query = '', onOpen, onError, searchFoot }) {
+  const { t, lang } = useT();
+  const [docs, setDocs] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const cols = 'id, channel_id, path, title, body, version, updated_by, updated_at';
+    Promise.all([
+      q(supabase.from('msgr_org_docs').select(cols).eq('org_id', org.id).not('path', 'like', 'journal/%').order('path').limit(400)).catch(() => []),
+      q(supabase.from('msgr_org_docs').select(cols).eq('org_id', org.id).like('path', 'journal/%').order('updated_at', { ascending: false }).limit(30)).catch(() => []),
+      q(supabase.rpc('msgr_chief_docs', { org: org.id, journal: false, lim: 400 })).catch(() => []),
+      q(supabase.rpc('msgr_chief_docs', { org: org.id, journal: true, lim: 30 })).catch(() => []),
+    ]).then(([a, b, c, e]) => { const seen = new Set(); if (live) setDocs([...a, ...b, ...(c ?? []), ...(e ?? [])].filter((d) => d?.id && !seen.has(d.id) && seen.add(d.id))); })
+      .catch((err) => { if (live) { setDocs([]); onError(err.message); } });
+    return () => { live = false; };
+  }, [org.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const findCh = (id) => channels.find((c) => c.id === id) ?? previewChannels.find((c) => c.id === id) ?? (() => { const d = (docs ?? []).find((x) => x.channel_id === id && x.channel_name); return d ? { id, name: d.channel_name, kind: d.channel_kind } : null; })();
+  const chLabel = (id) => { const c = findCh(id); return !c ? t('act.deletedChannel') : c.kind === 'dm' ? (dmName?.(c) || t('ui.dm')) : `#${c.name}`; };
+  if (docs === null) return <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>;
+  const g = memoryGroups(docs, { query, channelLabel: chLabel });
+  const row = (d, label) => (
+    <button key={d.id} type="button" className="item ph-memrow" onClick={() => onOpen(d, label)}>
+      <span className="ph-memic" aria-hidden="true"><I name="doc" size={16} /></span>
+      <span className="ph-kbody"><span className="name">{d.title}</span><span className="snip">{query.trim() ? memSnippet(d.body, query) : t('docs.meta', { v: d.version ?? 1, name: nameOfUser(d.updated_by), when: fmtWhen(d.updated_at, lang) })}</span></span>
+    </button>);
+  return (<>
+    {!g.total && !query.trim() && <div className="msgr-hint ph-empty">{t('mem.none')}</div>}
+    {g.org.length > 0 && <div className="ph-sechead">{t('phone.mem.org')}</div>}
+    {g.org.map((f) => (<div key={f.key} className="ph-memgroup"><div className="ph-memfolder"><I name="folder" size={14} />{t(`docs.folder.${f.key}`)}<span className="ph-kcount">{f.docs.length}</span></div><div className="msgr-list">{f.docs.map((d) => row(d, t(`docs.folder.${f.key}`)))}</div></div>))}
+    {g.channels.length > 0 && <div className="ph-sechead">{t('phone.mem.channels')}</div>}
+    {g.channels.map((c) => (<div key={c.key} className="ph-memgroup"><div className="ph-memfolder"><I name="folder" size={14} />{c.label}<span className="ph-kcount">{c.docs.length}</span></div><div className="msgr-list">{c.docs.map((d) => row(d, c.label))}</div></div>))}
+    {searchFoot(g.total > 0)}
+  </>);
+}
+function PhoneMemDoc({ doc, label, nameOfUser, onBack, onMenu }) {
+  const { t, lang } = useT();
+  return (<>
+    <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{doc.title}</span><button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button></div>
+    <div className="msgr-thread page"><article className="msgr-memdoc ph-memdoc">
+      <header><span className="msgr-klabel">{label} · {doc.path}</span><h2>{doc.title}</h2><div className="meta">{t('docs.meta', { v: doc.version ?? 1, name: nameOfUser(doc.updated_by), when: fmtTs(doc.updated_at, lang) })}</div></header>
+      {doc.body ? <div className="msgr-sheet"><Markdown text={doc.body} /></div> : <p className="empty">{t('docs.blank')}</p>}
+      <p className="note">{t('phone.mem.readonly')}</p>
+    </article></div>
   </>);
 }
 

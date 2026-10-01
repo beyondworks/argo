@@ -23,7 +23,7 @@ test('폰 뒤로 = history.back(): 루트 탭은 replaceState, 하위 화면은 
   assert.doesNotMatch(src, /history\.length > 1/, 'history.length 판단 잔재 없음');
   assert.match(src, /const openNav = \(\) => \{ if \(isPhone\) goBack\(\); else setRail\(true\); \}/, '상단 뒤로 버튼(NavButton onMenu)이 스택을 탄다');
   assert.match(src, /const edgeEnabled = isPhone && !isPhoneRoot\(page\);[\s\S]{0,400}?useEdgeSwipeBack\(goBack, edgeEnabled/, 'iOS 가장자리 스와이프도 같은 스택(enabled는 edgeEnabled — 꺼질 때 swipeTo 해제, 검수 L-5)');
-  assert.equal((src.match(/onBack=\{backFromPage\}/g) ?? []).length, 4, '설정·검색·알림함·기억 화면의 뒤로 4곳');
+  assert.equal((src.match(/onBack=\{backFromPage\}/g) ?? []).length, 5, '설정·검색·알림함·기억(데스크톱)·기억 문서(폰) 화면의 뒤로 5곳');
   assert.doesNotMatch(src, /onBack=\{\(\) => setPage\('chat'\)\}/, '옛 "무조건 대화로" 뒤로 잔재 없음');
 });
 

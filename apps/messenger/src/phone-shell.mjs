@@ -106,3 +106,30 @@ export function tabSearch(items, query, fields) {
   if (!q) return items;
   return items.filter((x) => fields(x).some((v) => String(v ?? '').toLowerCase().includes(q)));
 }
+
+/** 기억 탭 폴더 — 조직 전체 기억(규칙·용어·프로젝트 순, 안에서는 제목순) / 채널별 기억(문서 먼저 제목순, 일지는 최신이 위; 채널 묶음은 최근에 바뀐 순).
+    query가 있으면 제목·본문에서 먼저 거른다(탭 안 검색). 문서는 서버 msgr_org_docs(조직 단위 — 개인 공간 기억은 서버에 없다). */
+export const MEM_FOLDERS = ['rules', 'glossary', 'projects'];
+export function memoryGroups(docs, { query = '', channelLabel = (id) => id } = {}) {
+  const shown = tabSearch(docs, query, (d) => [d.title, d.body]);
+  const byTitle = (a, b) => String(a.title).localeCompare(String(b.title), 'ko');
+  const org = MEM_FOLDERS.map((f) => ({ key: f, docs: shown.filter((d) => !d.channel_id && d.path.startsWith(`${f}/`)).sort(byTitle) })).filter((g) => g.docs.length);
+  const byCh = new Map();
+  for (const d of shown) if (d.channel_id) { if (!byCh.has(d.channel_id)) byCh.set(d.channel_id, []); byCh.get(d.channel_id).push(d); }
+  const journal = (d) => d.path.startsWith('journal/');
+  const channels = [...byCh.entries()].map(([key, ds]) => ({ key, label: channelLabel(key), latest: ds.reduce((m, d) => (String(d.updated_at) > m ? String(d.updated_at) : m), ''),
+    docs: [...ds.filter((d) => !journal(d)).sort(byTitle), ...ds.filter(journal).sort((a, b) => b.path.localeCompare(a.path))] }))
+    .sort((a, b) => b.latest.localeCompare(a.latest)).map(({ latest, ...g }) => g); // eslint-disable-line no-unused-vars
+  return { org, channels, total: shown.length };
+}
+
+/** 기억 검색 결과 발췌 — 마크다운을 벗긴 한 줄에서 찾은 자리 앞뒤(max자), 못 찾으면 앞부분 */
+export function memSnippet(body, query, max = 90) {
+  const text = plainPreview(body ?? '', 4000);
+  if (!text) return '';
+  const q = String(query ?? '').trim().toLowerCase();
+  const i = q ? text.toLowerCase().indexOf(q) : -1;
+  if (i < 0 || text.length <= max) return text.slice(0, max) + (text.length > max ? '…' : '');
+  const start = Math.max(0, i - Math.floor((max - q.length) / 2)); const end = Math.min(text.length, start + max);
+  return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
+}

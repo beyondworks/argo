@@ -120,3 +120,23 @@ test('탭 안 검색 — 이름·본문에서 대소문자 없이 찾는다, 빈
   assert.deepEqual(tabSearch(items, '일정', fields).map((x) => x.id), [1]);
   assert.deepEqual(tabSearch(items, '없음', fields), []);
 });
+
+import { memoryGroups, memSnippet } from '../src/phone-shell.mjs';
+test('기억 폴더 — 조직 전체(규칙·용어·프로젝트) / 채널별(문서 먼저, 일지는 최신이 위), 채널 묶음은 최근에 바뀐 순', () => {
+  const d = (id, path, ch = null, at = '2026-10-01T00:00:00Z', title = path, body = '') => ({ id, path, channel_id: ch, updated_at: at, title, body });
+  const docs = [d(1, 'rules/b.md', null, '2026-09-01', '보안 규칙'), d(2, 'rules/a.md', null, '2026-09-02', '가입 규칙'), d(3, 'glossary/x.md'), d(4, 'journal/2026-09-30.md', 'c1', '2026-09-30'), d(5, 'journal/2026-10-01.md', 'c1', '2026-10-01'), d(6, 'projects/p.md', 'c1', '2026-08-01', '캠페인'), d(7, 'journal/2026-09-29.md', 'c2', '2026-10-02')];
+  const g = memoryGroups(docs, { channelLabel: (id) => `#${id}` });
+  assert.deepEqual(g.org.map((x) => [x.key, x.docs.map((y) => y.id)]), [['rules', [2, 1]], ['glossary', [3]]], '폴더 순서 고정, 안에서는 제목순, 빈 폴더(projects)는 없다');
+  assert.deepEqual(g.channels.map((x) => [x.key, x.label, x.docs.map((y) => y.id)]), [['c2', '#c2', [7]], ['c1', '#c1', [6, 5, 4]]]);
+  assert.equal(g.total, 7);
+});
+test('기억 검색 — 제목·본문에서 찾고, 발췌는 찾은 자리 앞뒤', () => {
+  const docs = [{ id: 1, path: 'rules/a.md', channel_id: null, title: '휴가 규칙', body: '연차는 미리 알린다', updated_at: '' }, { id: 2, path: 'journal/2026-10-01.md', channel_id: 'c', title: '2026-10-01', body: '- 10:00 · **서윤** → 뉴스레터 초안을 보냈습니다', updated_at: '' }];
+  assert.deepEqual(memoryGroups(docs, { query: '뉴스레터' }).channels.map((x) => x.docs.map((y) => y.id)), [[2]]);
+  assert.equal(memoryGroups(docs, { query: '휴가' }).org[0].docs[0].id, 1);
+  assert.equal(memoryGroups(docs, { query: '없는말' }).total, 0);
+  assert.equal(memSnippet('- 10:00 · **서윤** → 뉴스레터 초안을 보냈습니다', '뉴스레터'), '10:00 · 서윤 → 뉴스레터 초안을 보냈습니다');
+  const long = `${'가'.repeat(200)}목표${'나'.repeat(200)}`;
+  const s = memSnippet(long, '목표', 40); assert.ok(s.includes('목표') && s.startsWith('…') && s.endsWith('…'), s);
+  assert.equal(memSnippet('', 'x'), '');
+});
