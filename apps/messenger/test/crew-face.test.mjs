@@ -1,99 +1,225 @@
-// 에이전트 얼굴(유건 확정 2026-09-24: 평면 단색 도형 + 작은 눈, 입 없음, 모양·색은 무작위로 한 번 정해 유지, 메신저에만.
-// 살아 있는 얼굴 — 대기 중 움직임(CSS만, faceMotion), 졸음, 놀람(멘션·수신 1초), 소유자가 고른 모양·색 저장(override)).
+// 에이전트 얼굴 v2(유건 확정 시안 2026-10-01: 도형 12종·색 12색·표정 · 상태 6종 + 놀람 · 쉼 몸짓 8종).
+// 모양·색은 크루 id에서 무작위로 정해 유지, 소유자가 고르면 msgr_crews.face에 {v:2, shape, color}로 저장.
+// 옛 저장값({shape 0~5, color 0~9, eyes 0~2})은 운영 행을 고쳐 쓰지 않고 대응표로 그린다(시안 5절).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { faceOf, faceGeometry, crewFaceState, nextDoneIn, nextSurpriseIn, faceMotion, FACE_COLORS, FACE_SHAPES, FACE_EYES, DONE_MS, SURPRISE_MS, faceToStore } from '../src/crew-face.mjs';
+import {
+  faceOf, faceFromStored, faceToStore, faceInner, faceStill, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedReplyCrew,
+  FACE_COLORS, FACE_SHAPES, FACE_STATES, FACE_VERSION,
+  LEGACY_SHAPE, LEGACY_COLOR, DONE_MS, SURPRISE_MS, ERROR_MS, FAILED_FRESH_MS, failedCrewsInFetch, CALENDAR_COLORS, calendarColorIndex,
+} from '../src/crew-face.mjs';
+import { gestureAt, gesturePhase, GESTURES, GESTURE_MS, GESTURE_GAP } from '../src/face-gestures.mjs';
 
-test('무작위지만 고정 — 얼굴은 크루 id만으로 정해진다(보는 사람·목록·파견·해고와 무관, 검수 #698 H-1)', () => {
+const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+
+test('시안 정의 그대로 — 도형 12종·색 12색(레퍼런스 픽셀 값)', () => {
+  assert.equal(FACE_SHAPES.length, 12);
+  assert.deepEqual(FACE_COLORS, ['#FEA1CD', '#FE76B8', '#9F66C7', '#AE85D3', '#02A3FE', '#0061F0', '#02883F', '#02A552', '#FB5501', '#FD7400', '#FF9A00', '#FDB602']);
+  assert.deepEqual(FACE_SHAPES.map((s) => s.color), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], '캐릭터 n의 기본 색 = 색 n');
+  assert.deepEqual(FACE_SHAPES.map((s) => s.expr), ['smile', 'grin', 'soft', 'calm', 'calm', 'front', 'up', 'happy', 'half', 'peek', 'rest', 'side']);
+  assert.deepEqual(FACE_STATES.sort(), ['ask', 'done', 'error', 'idle', 'off', 'surprise', 'work'], '상태 6종 + 놀람');
+});
+
+test('무작위지만 고정 — 얼굴은 크루 id만으로 정해지고 12도형·12색이 모두 나온다(검수 #698 H-1)', () => {
   assert.deepEqual(faceOf('crew-a'), faceOf('crew-a'));
-  const ids = Array.from({ length: 400 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
-  assert.equal(new Set(ids.map((id) => faceOf(id).color)).size, FACE_COLORS.length, '색 10가지가 모두 나온다(무작위 분포)');
-  assert.equal(new Set(ids.map((id) => faceOf(id).shape)).size, FACE_SHAPES.length, '도형 6가지가 모두 나온다');
+  const ids = Array.from({ length: 600 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+  assert.equal(new Set(ids.map((id) => faceOf(id).color)).size, FACE_COLORS.length, '색 12가지');
+  assert.equal(new Set(ids.map((id) => faceOf(id).shape)).size, FACE_SHAPES.length, '도형 12가지');
+  for (const id of ids.slice(0, 50)) assert.deepEqual(Object.keys(faceOf(id)).sort(), ['color', 'shape']);
 });
 
-test('소유자가 고른 얼굴(override) — 저장값이 있으면 쓰고 없으면 id 무작위, 범위 밖은 무시', () => {
-  const id = 'crew-picked';
-  const rand = faceOf(id);
-  assert.deepEqual(faceOf(id, null), rand, 'override 없음 → 무작위 고정값');
-  assert.deepEqual(faceOf(id, { shape: 3, color: 7, eyes: 1 }), { ...rand, shape: 3, color: 7, eyes: 1 }, '자리(spot)는 그대로, 모양·색·눈만 override');
-  for (const bad of [{ shape: -1, color: 0, eyes: 0 }, { shape: 6, color: 0, eyes: 0 }, { shape: 0, color: 10, eyes: 0 }, { shape: 0, color: 0, eyes: 3 }, { shape: 1.5, color: 0, eyes: 0 }, { shape: '1', color: 0, eyes: 0 }])
-    assert.deepEqual(faceOf(id, bad), rand, `범위 밖 override는 무시: ${JSON.stringify(bad)}`);
+test('옛 저장값 대응표 — 시안 5절(shape 0→0,1→2,2→4,3→10,4→8,5→3 / color 0→6,1→0,2→8,3→11,4→5,5→4,6→2,7→4,8→10,9→1), 옛 눈은 버린다', () => {
+  assert.deepEqual(LEGACY_SHAPE, [0, 2, 4, 10, 8, 3]);
+  assert.deepEqual(LEGACY_COLOR, [6, 0, 8, 11, 5, 4, 2, 4, 10, 1]);
+  for (let s = 0; s < 6; s++) for (let c = 0; c < 10; c++) for (let e = 0; e < 3; e++)
+    assert.deepEqual(faceFromStored({ shape: s, color: c, eyes: e }), { shape: LEGACY_SHAPE[s], color: LEGACY_COLOR[c] }, `옛 ${s}/${c}/${e}`);
+  assert.ok(LEGACY_SHAPE.every((n) => n < FACE_SHAPES.length) && LEGACY_COLOR.every((n) => n < FACE_COLORS.length), '대응 결과는 새 범위 안');
+  // 운영 12행 같은 옛 값은 그릴 때만 바뀐다 — faceOf가 같은 결과
+  assert.deepEqual(faceOf('crew-old', { shape: 5, color: 9, eyes: 2 }), { shape: 3, color: 1 });
 });
 
-test('얼굴 자리는 모든 조합에서 도형 안 — 알약·말풍선·캡슐 제한', () => {
-  for (let shape = 0; shape < FACE_SHAPES.length; shape++) for (let spot = 0; spot < 6; spot++) {
-    const g = faceGeometry({ color: 0, shape, eyes: 0, spot });
-    assert.ok(g.L - 5 >= 6 && g.R + 5 <= 94, `가로 ${shape}/${spot}: ${g.L}~${g.R}`);
-    if (shape === 3) assert.ok(g.cy >= 44 && g.cy <= 72, `알약 세로 ${spot}: ${g.cy}`);
-    if (shape === 5) assert.ok(g.cy <= 60, `말풍선 꼬리 위 ${spot}: ${g.cy}`);
-    if (shape === 1) assert.ok(g.L >= 30 && g.R <= 70, `캡슐 폭 ${spot}: ${g.L}~${g.R}`);
+test('v2 저장값 — {v:2, shape 0~11, color 0~11}만 읽고, 못 읽으면 id 무작위로', () => {
+  assert.deepEqual(faceFromStored({ v: 2, shape: 11, color: 0 }), { shape: 11, color: 0 });
+  assert.deepEqual(faceFromStored({ v: 2, shape: 0, color: 11 }), { shape: 0, color: 11 });
+  const id = 'crew-picked', rand = faceOf(id);
+  for (const bad of [null, undefined, 'x', [], [1, 2], { v: 2, shape: 12, color: 0 }, { v: 2, shape: 0, color: 12 }, { v: 2, shape: -1, color: 0 }, { v: 2, shape: 1.5, color: 0 },
+    { v: 2, shape: '1', color: 0 }, { v: 1, shape: 0, color: 0 }, { v: '2', shape: 0, color: 0 }, { v: 2, shape: 0 }, { shape: 6, color: 0, eyes: 0 }, { shape: 0, color: 10, eyes: 0 }]) {
+    assert.equal(faceFromStored(bad), null, `못 읽는 값: ${JSON.stringify(bad)}`);
+    assert.deepEqual(faceOf(id, bad), rand, `무작위 고정값으로: ${JSON.stringify(bad)}`);
   }
 });
 
-test('상태 우선순위 — 준비 중 > 결재 대기 > 놀람(멘션·수신 1초) > 완료(답 뒤 2초) > 오프라인 > 쉼', () => {
+test('저장 모양 = v2 세 키 — 고르기 저장은 faceToStore를 거친다', () => {
+  assert.deepEqual(faceToStore({ shape: 7, color: 3, eyes: 1, extra: 1 }), { v: FACE_VERSION, shape: 7, color: 3 });
+  assert.equal(FACE_VERSION, 2);
+  assert.match(read('../src/App.jsx'), /onSave\(faceToStore\(draft\)\)/);
+});
+
+test('서버 check 범위 = 클라이언트 배열 길이(20261001130000) — 도형·색을 늘리거나 줄이면 마이그레이션도 같이', () => {
+  const sql = read('../../../supabase/migrations/20261001130000_msgr_crew_face_v2.sql');
+  const v2 = sql.slice(sql.indexOf(') or ( -- v2'));
+  const pat = (k, src) => new RegExp(src.match(new RegExp(`\\(face ->> '${k}'\\) ~ '([^']+)'`))[1]);
+  const accepted = (re) => Array.from({ length: 30 }, (_, n) => n).filter((n) => re.test(String(n)));
+  assert.deepEqual(accepted(pat('shape', v2)), [...FACE_SHAPES.keys()], 'v2 shape');
+  assert.deepEqual(accepted(pat('color', v2)), [...FACE_COLORS.keys()], 'v2 color');
+  assert.deepEqual(accepted(pat('shape', sql)), [...LEGACY_SHAPE.keys()], '옛 shape');
+  assert.deepEqual(accepted(pat('color', sql)), [...LEGACY_COLOR.keys()], '옛 color');
+  assert.match(v2, /face - 'v' - 'shape' - 'color'\) = '\{\}'::jsonb/, 'v2 잉여 키 금지');
+  assert.match(sql, /face - 'shape' - 'color' - 'eyes'\) = '\{\}'::jsonb/, '옛 형태 잉여 키 금지');
+  assert.doesNotMatch(sql, /update\s+public\.msgr_crews\s+set/i, '운영 행을 고쳐 쓰지 않는다');
+  assert.match(sql, /set local lock_timeout = '5s';/, '제약 교체 잠금 대기 상한(검수 #789)');
+});
+
+test('상태 우선순위 — 준비 중 > 결재 대기 > 놀람(1초) > 오류(8초) > 완료(2초) > 오프라인 > 쉼', () => {
   const now = 1_000_000, live = { last_seen_at: new Date(now - 10_000).toISOString() }, away = { last_seen_at: new Date(now - 200_000).toISOString() };
   assert.equal(crewFaceState({ crew: live, now }), 'idle');
   assert.equal(crewFaceState({ crew: away, now }), 'off');
   assert.equal(crewFaceState({ crew: null, now }), 'idle', '크루 정보가 없으면 오프라인으로 단정하지 않는다');
-  assert.equal(crewFaceState({ crew: away, working: true, now }), 'work', '일하는 중이면 하트비트가 늦어도 준비 중');
+  assert.equal(crewFaceState({ crew: away, working: true, erroredAt: now, now }), 'work', '다시 일을 시작하면 오류보다 준비 중');
   assert.equal(crewFaceState({ crew: live, asking: true, working: true, now }), 'work');
-  assert.equal(crewFaceState({ crew: live, asking: true, surprisedAt: now, now }), 'ask', '결재 대기가 놀람보다 앞선다');
-  assert.equal(crewFaceState({ crew: live, surprisedAt: now, doneAt: now, now }), 'surprise', '놀람이 완료보다 앞선다');
-  assert.equal(crewFaceState({ crew: away, surprisedAt: now - SURPRISE_MS + 1, now }), 'surprise', '1초가 지나기 전');
-  assert.equal(crewFaceState({ crew: away, surprisedAt: now - SURPRISE_MS, now }), 'off', '정확히 1초면 끝');
-  assert.equal(crewFaceState({ crew: live, asking: true, doneAt: now, now }), 'ask');
+  assert.equal(crewFaceState({ crew: live, asking: true, surprisedAt: now, now }), 'ask');
+  assert.equal(crewFaceState({ crew: live, surprisedAt: now, erroredAt: now, now }), 'surprise', '놀람이 오류보다 앞선다');
+  assert.equal(crewFaceState({ crew: live, erroredAt: now, doneAt: now, now }), 'error', '오류가 완료보다 앞선다(실패한 답도 답이라 doneAt이 같이 찍힌다)');
+  assert.equal(crewFaceState({ crew: away, erroredAt: now - ERROR_MS + 1, now }), 'error');
+  assert.equal(crewFaceState({ crew: away, erroredAt: now - ERROR_MS, now }), 'off', '정확히 8초면 끝');
+  assert.equal(crewFaceState({ crew: away, surprisedAt: now - SURPRISE_MS, now }), 'off');
   assert.equal(crewFaceState({ crew: away, doneAt: now - DONE_MS + 1, now }), 'done');
-  assert.equal(crewFaceState({ crew: live, doneAt: now - DONE_MS, now }), 'idle', '2초가 지나면 쉼');
+  assert.equal(crewFaceState({ crew: live, doneAt: now - DONE_MS, now }), 'idle');
 });
 
-test('완료 타이머 — 가장 먼저 끝나는 크루 기준이라 뒤에 답한 크루가 앞 크루의 완료를 늘리지 않는다(검수 L-2)', () => {
+test('완료·놀람·오류 타이머 — 가장 먼저 끝나는 크루 기준(검수 L-2), 같은 모양', () => {
   assert.equal(nextDoneIn({}, 5000), null);
-  assert.equal(nextDoneIn({ a: 0, b: 1900 }, 1000), 1000, 'a는 1초 남음 — b(2.9초)를 기다리지 않는다');
-  assert.equal(nextDoneIn({ a: 0 }, DONE_MS), null, '정확히 2초면 끝');
+  assert.equal(nextDoneIn({ a: 0, b: 1900 }, 1000), 1000);
+  assert.equal(nextDoneIn({ a: 0 }, DONE_MS), null);
+  assert.equal(nextSurpriseIn({ a: 0, b: 900 }, 500), 500);
+  assert.equal(nextSurpriseIn({ a: 0 }, SURPRISE_MS), null);
+  assert.equal(nextErrorIn({}, 1), null);
+  assert.equal(nextErrorIn({ a: 0, b: 5000 }, 6000), ERROR_MS - 6000);
+  assert.equal(nextErrorIn({ a: 0 }, ERROR_MS), null);
 });
 
-test('놀람 타이머 — doneAt과 같은 모양·같은 만료 로직(App.jsx가 같은 effect를 재사용)', () => {
-  assert.equal(nextSurpriseIn({}, 5000), null);
-  assert.equal(nextSurpriseIn({ a: 0, b: 900 }, 500), 500, 'a가 먼저 끝난다');
-  assert.equal(nextSurpriseIn({ a: 0 }, SURPRISE_MS), null, '정확히 1초면 끝');
+test('오류 판정 — 크루의 실패한 답(meta.failed)만, 사람이 누른 중단(stopped)·사람 글·묵은 글은 아님', () => {
+  const now = Date.parse('2026-10-01T05:00:00Z');
+  const at = (ms) => new Date(now - ms).toISOString();
+  const row = { author_kind: 'crew', crew_id: 'c1', meta: { failed: true }, created_at: at(1000) };
+  assert.equal(failedReplyCrew(row, now), 'c1');
+  assert.equal(failedReplyCrew({ ...row, meta: { stopped: true } }, now), null, '중단');
+  assert.equal(failedReplyCrew({ ...row, meta: { failed: 'true' } }, now), null, '불리언만');
+  assert.equal(failedReplyCrew({ ...row, author_kind: 'user' }, now), null);
+  assert.equal(failedReplyCrew({ ...row, crew_id: null }, now), null);
+  assert.equal(failedReplyCrew({ ...row, meta: null }, now), null);
+  assert.equal(failedReplyCrew({ ...row, created_at: at(FAILED_FRESH_MS) }, now), null, '1분 지난 글');
+  assert.equal(failedReplyCrew({ ...row, created_at: 'x' }, now), null);
+  assert.equal(failedReplyCrew(null, now), null);
+  // 게이트웨이가 실제로 이 표지를 남긴다 — 표지 이름이 바뀌면 오류 얼굴이 조용히 사라진다
+  assert.match(read('../../../src/gateway/msgr.mjs'), /failed \? \{ failed: true \}/);
 });
 
-test('대기 애니메이션 변수 — 크루마다 결정적이고, 대체로 서로 달라 동시에 움직이지 않는다(faceMotion)', () => {
-  const ids = Array.from({ length: 60 }, (_, i) => `crew-motion-${i}`);
-  const motions = ids.map((id) => faceMotion(id));
-  assert.deepEqual(faceMotion('crew-motion-0'), faceMotion('crew-motion-0'), '같은 id는 같은 박자');
-  for (const m of motions) {
-    const dur = Number.parseFloat(m.duration); assert.ok(dur >= 4 && dur <= 12, `주기는 4~12초: ${m.duration}`);
-    const delay = Number.parseFloat(m.delay); assert.ok(delay <= 0 && delay >= -dur, `시작 위치는 음수 delay(0~-주기): ${m.delay}`);
-    assert.ok(['a', 'b', 'c'].includes(m.variant), `keyframes 세 벌 중 하나: ${m.variant}`);
+test('그림(faceInner) — 모든 도형·상태·크기에서 상수로만 만든 SVG, 몸짓 부품은 쉼에만', () => {
+  for (let shape = 0; shape < 12; shape++) for (const state of FACE_STATES) for (const px of [20, 28, 40, 56, 96]) {
+    const s = faceInner({ shape, color: (shape + 3) % 12 }, { state, px });
+    assert.ok(s.startsWith('<g class="rig"><path class="body" d="') && s.endsWith('</g></g></g>'), `${shape}/${state}/${px}`);
+    assert.ok(s.includes(`fill="${FACE_COLORS[(shape + 3) % 12]}"`), '몸 색');
+    assert.doesNotMatch(s, /undefined|NaN|null/, `${shape}/${state}/${px}`);
+    assert.equal(s.includes('class="grin"') && s.includes('class="yawn"'), state === 'idle', '웃음 짓기·하품 입은 쉼 얼굴에만');
   }
-  assert.ok(new Set(motions.map((m) => m.duration)).size > 1, '크루마다 주기가 갈린다');
-  assert.ok(new Set(motions.map((m) => m.variant)).size > 1, '크루마다 keyframes 묶음도 갈린다');
+  assert.match(faceInner({ shape: 1, color: 1 }, { state: 'ask', px: 96 }), /class="swirl".*stroke="#FF6A13".*class="q"/, '결재 대기 = 소용돌이 + ?');
+  assert.match(faceInner({ shape: 1, color: 1 }, { state: 'off', px: 32 }), /class="zzz"[^>]*opacity="0"[^>]*font-size="20"/, '오프라인 z, 작은 크기에서 글자 20');
+  assert.match(faceInner({ shape: 0, color: 0 }, { px: 96 }), /stroke-width="3\.4"/);
+  assert.match(faceInner({ shape: 0, color: 0 }, { px: 40 }), /stroke-width="5"/, '29~44px');
+  assert.match(faceInner({ shape: 0, color: 0 }, { px: 22 }), /stroke-width="5\.8"/, '28px 이하');
+  assert.equal(faceInner({ shape: 4, color: 2 }, { px: 28 }), faceInner({ shape: 4, color: 2 }, { px: 28 }), '같은 입력은 같은 문자열(메모)');
+  assert.equal(faceInner({ shape: 99, color: 'x' }), faceInner({ shape: 0, color: 0 }), '범위 밖은 0번 캐릭터 기본값');
 });
 
-test('배선 — 사진이 있으면 사진, 없으면 얼굴 / 배지 유지 / 크루 id가 있는 자리는 모두 id로', () => {
-  const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+test('몸짓 계획 — 결정적, 간격 2~5초, 같은 몸짓 연속 없음, 8종 모두 나옴, 첫 시작 0.4~3.4초', () => {
+  assert.deepEqual(GESTURES.map((g) => g.k), ['blink', 'look', 'tilt', 'bounce', 'wiggle', 'yawn', 'roll', 'smile']);
+  assert.deepEqual(GESTURE_GAP, [2000, 5000]);
+  const seen = new Set();
+  let gaps = 0, minGap = Infinity, maxGap = 0;
+  for (let c = 0; c < 80; c++) {
+    const id = `crew-${c}`;
+    assert.deepEqual(gestureAt(id, 3, 'blink'), gestureAt(id, 3, 'blink'), '같은 id·n·직전 → 같은 계획');
+    const ph = gesturePhase(id); assert.ok(ph >= 400 && ph < 3400, `첫 시작 ${ph}`);
+    let prev = null;
+    for (let n = 0; n < 200; n++) {
+      const { g, gap } = gestureAt(id, n, prev);
+      assert.ok(g in GESTURE_MS, g);
+      assert.notEqual(g, prev, `${id} n=${n} 같은 몸짓 연속`);
+      assert.ok(gap >= 2000 && gap <= 5000, `간격 ${gap}`);
+      assert.ok(gap > GESTURE_MS[g], '다음 몸짓 전에 지금 몸짓이 끝난다');
+      minGap = Math.min(minGap, gap); maxGap = Math.max(maxGap, gap); gaps++;
+      seen.add(g); prev = g;
+    }
+  }
+  assert.equal(seen.size, 8, '8종 모두');
+  assert.ok(minGap < 2100 && maxGap > 4900, `간격이 범위 전체에 퍼진다(${minGap}~${maxGap}, ${gaps}회)`);
+  assert.notDeepEqual([0, 1, 2, 3, 4].map((n) => gestureAt('crew-a', n).g), [0, 1, 2, 3, 4].map((n) => gestureAt('crew-b', n).g), '크루마다 순서가 다르다');
+});
+
+test('CSS — 몸짓 8종 규칙이 모두 있고, 얼굴 애니메이션은 transform·opacity만, 동작 줄이기면 정지', () => {
+  const css = read('../src/styles.css');
+  for (const g of GESTURES) assert.match(css, new RegExp(`\\.msgr-face\\.s-idle\\[data-g="${g.k}"\\]`), g.k);
+  const frames = [...css.matchAll(/@keyframes (msgr-face-[\w-]+) \{([\s\S]*?)\}\s*\}/g)];
+  assert.ok(frames.length >= 20, `얼굴 keyframes ${frames.length}개`);
+  for (const [, name, body] of frames) {
+    const props = new Set([...body.matchAll(/([a-z-]+)\s*:/g)].map((m) => m[1]));
+    for (const p of props) assert.ok(p === 'transform' || p === 'opacity', `${name}: ${p}`);
+  }
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{ \.msgr-face, \.msgr-face \* \{ animation: none !important;/);
+  assert.doesNotMatch(css, /\.msgr-face\.s-idle[^{]*\{[^}]*infinite/, '쉼 얼굴에 무한 반복 애니메이션 없음(몸짓은 data-g 동안 1회)');
+  assert.doesNotMatch(css, /\.msgr-face(?:\.s-idle)?(?:\.idle-[abc])? \.[\w-]+ \{[^}]*var\(--face-dur/, '옛 CSS만의 상시 대기 애니메이션 제거');
+});
+
+test('배선 — 사진 → 얼굴 → 첫 글자, 배지 유지, 크루 id로, 몸짓은 앱 전체 스케줄러 하나', () => {
+  const src = read('../src/App.jsx');
   const av = src.slice(src.indexOf('function Av('), src.indexOf('/** 프로필 이미지 정규화'));
   assert.match(av, /url \? <img[^:]*: crew \? <CrewFace/, '사진 → 얼굴 → 첫 글자 순서');
   assert.match(av, /className="star"/, '등급 배지 유지');
-  assert.match(src, /<AvatarEdit name=\{crew\.display_name\} crew crewId=\{crew\.id\}/, '크루 카드 편집 줄(id 없이 그리면 이름 해시로 다른 색이 나왔다 — 실측)');
+  assert.match(src, /<AvatarEdit name=\{crew\.display_name\} crew crewId=\{crew\.id\}/);
   assert.match(src, /crew=\{isCrew\} crewId=\{isCrew \? m\.crew_id : null\}/, '목록 밖 크루의 옛 글도 id로(검수 L-1)');
-  assert.doesNotMatch(src, /assignFaces/, '목록 기반 배정은 없앴다');
+  assert.doesNotMatch(src, /assignFaces|faceGeometry|faceMotion|FACE_EYES|crew\.face\.eyes/, '옛 API·눈 고르기 제거');
+  assert.match(src, /faceGestures\(\)/, '공유 스케줄러');
+  assert.doesNotMatch(src, /createGestureScheduler|new IntersectionObserver\([^)]*face/i, '얼굴마다 관찰자·타이머를 만들지 않는다');
+  const i18n = read('../src/i18n.js');
+  assert.doesNotMatch(i18n, /'crew\.face\.eyes/, '눈 고르기 문구 제거');
 });
 
-test('저장값은 서버 check가 허용하는 세 키뿐 — 얼굴 자리(spot)를 보내면 라이브 DB가 거절한다(화면 확인 중 발견)', () => {
-  assert.deepEqual(Object.keys(faceToStore(faceOf('crew-x'))).sort(), ['color', 'eyes', 'shape']);
-  const mig = readFileSync(new URL('../../../supabase/migrations/20260924170000_msgr_crew_face.sql', import.meta.url), 'utf8');
-  assert.match(mig, /face - 'shape' - 'color' - 'eyes'/, '서버가 세 키 외에는 거절한다는 전제');
-  const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  assert.match(src, /onSave\(faceToStore\(draft\)\)/, '고르기 저장은 faceToStore를 거친다');
+test('오피스 — 같은 그림의 정지 얼굴(faceStill), 몸짓·상태 없음', () => {
+  for (let shape = 0; shape < 12; shape++) for (const px of [12, 20, 32, 56]) {
+    const still = faceStill({ shape, color: shape }, { px });
+    assert.equal(still, faceInner({ shape, color: shape }, { px }).replace(/<g class="grin".*?<\/g><ellipse class="yawn"[^>]*\/>/, ''), `몸짓 부품만 뺀 같은 그림 ${shape}/${px}`);
+    assert.doesNotMatch(still, /class="(grin|yawn)"/);
+  }
+  const face = read('../../office/src/ui/Face.jsx');
+  assert.match(face, /m\.faceStill\(m\.faceOf\(id, .*\{ px: size \}\)/, '쉼 표정 하나');
+  assert.match(face, /import\('@msgr\/crew-face'\)/, '그림 정의는 첫 화면 묶음 밖에서 받는다(150KB 상한, 검수 #789)');
+  assert.doesNotMatch(face, /^import [^;]*'@msgr\/crew-face'/m, '정적 import 금지 — 첫 화면 묶음에 다시 들어간다');
+  assert.doesNotMatch(face, /face-gestures|faceGestures|state:/, '몸짓·상태 표정 없음');
 });
 
-test('서버 check 범위 = 클라이언트 배열 길이 — 도형·색·눈을 늘리거나 줄이면 마이그레이션도 같이 바꿔야 한다(검수 #704)', () => {
-  const sql = readFileSync(new URL('../../../supabase/migrations/20260924170000_msgr_crew_face.sql', import.meta.url), 'utf8');
-  const upper = (k) => Number(sql.match(new RegExp(`'${k}'\\)::int between 0 and (\\d+)`))?.[1]);
-  assert.equal(upper('shape'), FACE_SHAPES.length - 1);
-  assert.equal(upper('color'), FACE_COLORS.length - 1);
-  assert.equal(upper('eyes'), FACE_EYES.length - 1);
+test('오류 알림 대상(failedCrewsInFetch) — 이어 받은 새 글만, 채널을 처음 열 때 읽은 글·재조회 덮어쓰기는 제외, 같은 크루는 한 번', () => {
+  const now = Date.parse('2026-10-01T05:00:00Z');
+  const fresh = (crew, extra = {}) => ({ author_kind: 'crew', crew_id: crew, meta: { failed: true }, created_at: new Date(now - 500).toISOString(), ...extra });
+  const rows = [fresh('c1'), fresh('c2'), fresh('c1'), { author_kind: 'user', author_user_id: 'u', meta: { failed: true }, created_at: new Date(now).toISOString() }, fresh('c3', { meta: { stopped: true } })];
+  assert.deepEqual(failedCrewsInFetch(rows, { afterId: 41, now }), ['c1', 'c2'], '이어 받은 새 글');
+  assert.deepEqual(failedCrewsInFetch(rows, { afterId: null, now }), [], '채널을 처음 열 때 읽은 글(afterId 없음)은 지금 일어난 실패가 아니다');
+  assert.deepEqual(failedCrewsInFetch(rows, { afterId: 0, now }), [], 'afterId 0도 처음 읽기');
+  assert.deepEqual(failedCrewsInFetch(rows, { afterId: 41, preserve: true, now }), [], '재조회 덮어쓰기');
+  assert.deepEqual(failedCrewsInFetch(null, { afterId: 41, now }), []);
+  assert.deepEqual(failedCrewsInFetch([fresh('c9', { created_at: new Date(now - FAILED_FRESH_MS).toISOString() })], { afterId: 41, now }), [], '묵은 글');
+  assert.match(read('../src/App.jsx'), /failedCrewsInFetch\(list, \{ afterId, preserve \}\)/, '대화창 조회가 이 함수를 거친다');
+});
+
+test('오피스 달력 색은 얼굴 v2 전과 같다 — main(b58553d0)의 옛 faceOf 색 번호·옛 10색(검수 #789)', () => {
+  // 기대값은 v2 직전 main의 crew-face.mjs로 뽑아 고정했다(CI 얕은 체크아웃에서도 돌게 git show 대신 값으로)
+  assert.deepEqual(CALENDAR_COLORS, ['#0E9A55', '#F4A3C4', '#F45A1B', '#F6C443', '#0B6FB8', '#46C7F4', '#7B5CFA', '#14C4CC', '#FFA412', '#FF5E9C']);
+  assert.deepEqual(Array.from({ length: 24 }, (_, i) => calendarColorIndex(`crew-${i}`)), [3, 6, 5, 8, 2, 8, 3, 2, 7, 7, 7, 6, 9, 4, 0, 9, 3, 2, 3, 3, 3, 1, 3, 8]);
+  assert.equal(calendarColorIndex('crew-1', { shape: 3, color: 7, eyes: 1 }), 7, '옛 형태 저장값의 색');
+  assert.equal(calendarColorIndex('crew-1', { v: 2, shape: 3, color: 4 }), 6, 'v2 저장값은 옛 앱처럼 해시 색');
+  assert.equal(calendarColorIndex('crew-1', { shape: 6, color: 1, eyes: 0 }), 6, '옛 범위 밖은 해시 색');
+  const cal = read('../../office/src/calendar/shared.js');
+  assert.match(cal, /CALENDAR_COLORS\[calendarColorIndex\(/);
+  assert.doesNotMatch(cal, /FACE_COLORS/, '달력은 새 얼굴 색을 쓰지 않는다');
 });

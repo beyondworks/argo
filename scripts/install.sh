@@ -53,13 +53,13 @@ chmod 700 "$BASE_DIR"
 TMP=$(mktemp -d "$BASE_DIR/.install.XXXXXX")
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT="$UNIT_DIR/argo.service"
-HAD_APP=0; HAD_UNIT=0; WAS_ACTIVE=0; WAS_ENABLED=0; CHANGED=0; SUCCESS=0
+HAD_APP=0; HAD_UNIT=0; WAS_ACTIVE=0; WAS_ENABLED=0; CHANGED=0; SUCCESS=0; CLI_ACTIVE=0
 [ ! -d "$APP_DIR" ] || HAD_APP=1
 if [ -f "$UNIT" ]; then cp -p "$UNIT" "$TMP/argo.service.old"; HAD_UNIT=1; fi
 systemctl --user is-active --quiet argo.service && WAS_ACTIVE=1
 systemctl --user is-enabled --quiet argo.service && WAS_ENABLED=1
 # 이미 로컬 웹 서버를 쓰던 서버는 그대로 로컬로 업데이트한다 — 업데이트가 기존 사용 방식을 바꾸지 않게
-[ "$HAD_UNIT" = 0 ] || LOCAL=1
+if [ "$HAD_UNIT" = 1 ] && [ "$LOCAL" = 0 ]; then LOCAL=1; say "기존 로컬 웹 서버가 있어 로컬 모드로 업데이트합니다(argo 명령 계정 모드는 설치하지 않습니다)"; fi
 health() {
   curl -fsS --max-time 3 "http://127.0.0.1:$PORT/api/ping" 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",b=>s+=b);process.stdin.on("end",()=>{try{const p=JSON.parse(s);process.exit(p.argo===true&&p.version===process.argv[1]&&p.buildId===process.argv[2]?0:1)}catch{process.exit(1)}})' "$1" "$2"
@@ -75,6 +75,7 @@ cleanup() {
       if [ -d "$APP_DIR" ]; then mv "$APP_DIR" "$TMP/failed-app"; fi
       if [ "$HAD_APP" = 1 ]; then mv "$TMP/previous-app" "$APP_DIR"; fi
     fi
+    if [ "$CLI_ACTIVE" = 1 ]; then systemctl --user start argo-cli.service || true; fi # 계정 모드 교체 전에 멈춘 상주 argo를 이전 앱으로 되살린다
     if [ "$HAD_UNIT" = 1 ]; then cp -p "$TMP/argo.service.old" "$UNIT"; else rm -f "$UNIT"; fi
     if [ "$WAS_ENABLED" = 0 ]; then systemctl --user disable argo.service >/dev/null 2>&1 || true; fi
     systemctl --user daemon-reload || true
@@ -110,7 +111,6 @@ EXPECTED_BUILD=$(cat "$CANDIDATE/.next/BUILD_ID")
 if [ "$LOCAL" = 0 ]; then
   [ "$NODE_MAJOR" -ge 22 ] || die "argo 명령은 Node.js 22 이상이 필요합니다(기억 색인이 내장 SQLite를 쓴다) — 현재: $(node -v)"
   [ -f "$CANDIDATE/bin/argo.mjs" ] || die "타르볼에 argo 명령이 없습니다(argo-server/bin/argo.mjs 부재) — 이 릴리스는 --local로만 설치할 수 있습니다"
-  CLI_ACTIVE=0
   systemctl --user is-active --quiet argo-cli.service && CLI_ACTIVE=1
   # 상주 중인 CLI가 답하는 중이면 교체하지 않는다(로컬 흐름과 같은 규칙 — 실행 중 턴을 죽이지 않는다)
   node - "${ARGO_CLI_HOME:-$HOME/.argo}/cli-workspaces" <<'NODE'
@@ -123,6 +123,8 @@ for (const company of entries(root).filter(e => e.isDirectory() && !e.name.start
   }
 }
 NODE
+  # 교체 전에 멈춘다 — 실행 중인 argo가 바뀌는 중인 앱 폴더에서 새·옛 모듈을 섞어 읽지 않게(#773 검수 L1). 실패하면 cleanup이 다시 시작한다.
+  if [ "$CLI_ACTIVE" = 1 ]; then systemctl --user stop argo-cli.service || { systemctl --user start argo-cli.service || true; die "상주 argo를 멈추지 못해 교체하지 않습니다 — journalctl --user -u argo-cli"; }; fi
   CHANGED=1
   if [ "$HAD_APP" = 1 ]; then mv "$APP_DIR" "$TMP/previous-app"; fi
   mv "$CANDIDATE" "$APP_DIR"
@@ -151,7 +153,11 @@ SHIM
     RUN_CMD=argo
   fi
   SUCCESS=1
-  if [ "$CLI_ACTIVE" = 1 ]; then systemctl --user restart argo-cli.service; say "상주 중인 argo를 새 버전으로 다시 시작했습니다"; fi
+  # 설치는 이미 끝났다 — 시작 실패로 스크립트를 끝내면 cleanup이 백업만 지운 채 오류로 남는다(#773 검수 L3). 안내하고 넘어간다.
+  if [ "$CLI_ACTIVE" = 1 ]; then
+    if systemctl --user start argo-cli.service; then say "상주 중인 argo를 새 버전으로 다시 시작했습니다"
+    else say "상주 argo를 다시 시작하지 못했습니다 — 원인: journalctl --user -u argo-cli   다시 시작: systemctl --user start argo-cli.service"; fi
+  fi
   say "설치 완료 — argo 명령 (버전: $EXPECTED_VERSION)"
   if [ -n "$SKIP" ]; then
     say "다른 프로그램의 argo 명령이 있어 argo 명령을 등록하지 않았습니다(그 파일은 그대로 둡니다): $SKIP"

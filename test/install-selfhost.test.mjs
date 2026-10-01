@@ -52,6 +52,7 @@ const stateFile=path.join(root,'state.json'),s=JSON.parse(fs.readFileSync(stateF
 fs.appendFileSync(path.join(root,'calls.log'),args.join(' ')+'\\n');
 if(args[0]==='is-active')process.exit((args[1]==='argo-cli.service'?s.cliActive:s.active)?0:3);
 if(args[0]==='is-enabled')process.exit(s.enabled?0:1);
+if(args[1]==='argo-cli.service'){if(args[0]==='stop'){if(process.env.CLI_STOP_FAIL)process.exit(1);s.cliActive=false;try{s.appAtCliStop=JSON.parse(fs.readFileSync(path.join(base,'app/package.json'))).version}catch{s.appAtCliStop=null}}if(args[0]==='start'){if(process.env.CLI_START_FAIL)process.exit(1);s.cliActive=true;}fs.writeFileSync(stateFile,JSON.stringify(s));process.exit(0);}
 if(args[0]==='stop')s.active=false;
 if(args[0]==='enable')s.enabled=true;
 if(args[0]==='disable')s.enabled=false;
@@ -87,6 +88,7 @@ test('running update stops then starts new build and preserves company/config/cu
   const f = await fixture(t, { existing: true }), r = f.run();
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.match(await f.calls(), /stop argo.service\ndaemon-reload\nenable argo.service\nstart argo.service/);
+  assert.match(r.stdout, /로컬 모드로 업데이트/, '플래그 없이 실행한 사용자에게 계정 모드가 아니라 기존 로컬 방식으로 업데이트한다고 알린다(#773 검수 L4)');
   assert.equal((await f.state()).ping.buildId, 'new-build');
   assert.equal(await readFile(join(f.base, 'app/.env.local'), 'utf8'), 'CUSTOM_FLAG=preserved');
   assert.match(await readFile(f.unit, 'utf8'), /CUSTOM_SETTING=preserved/);
@@ -130,20 +132,44 @@ test('계정 모드 새 설치 — argo 명령 등록·실행 확인, 웹 서버
 test('계정 모드 업데이트 — 상주 중인 argo-cli 서비스를 새 버전으로 다시 시작한다', { skip: !available }, async t => {
   const f = await fixture(t, { oldApp: true, cliActive: true }), r = f.run();
   assert.equal(r.status, 0, r.stderr + r.stdout);
-  assert.match(await f.calls(), /restart argo-cli\.service/);
+  // 교체 전에 멈추고 교체 뒤에 시작한다 — 실행 중인 argo가 반쯤 바뀐 앱 폴더에서 새·옛 모듈을 섞어 읽지 않게(#773 검수 L1)
+  assert.match(await f.calls(), /stop argo-cli\.service\n(?:.*\n)*start argo-cli\.service/);
+  assert.equal((await f.state()).cliActive, true);
+  assert.equal((await f.state()).appAtCliStop, '1.0.0', '멈춘 순간의 앱은 아직 옛 버전이어야 한다(교체 전 정지)');
+  assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '2.0.0');
+});
+test('계정 모드 — 상주 argo를 멈추지 못하면 교체하지 않고 다시 켜 둔 채 안내한다', { skip: !available }, async t => {
+  const f = await fixture(t, { oldApp: true, cliActive: true }), r = f.run([], { CLI_STOP_FAIL: '1' });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr + r.stdout, /journalctl --user -u argo-cli/);
+  assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '1.0.0');
+  assert.match(await f.calls(), /stop argo-cli\.service\nstart argo-cli\.service/);
+});
+test('계정 모드 — 실행 확인이 실패해 이전 앱으로 되돌리면 멈췄던 argo-cli도 다시 시작한다', { skip: !available }, async t => {
+  const f = await fixture(t, { oldApp: true, cliActive: true }), r = f.run([], { CLI_STATUS_FAIL: '1' });
+  assert.equal(r.status, 1);
+  assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '1.0.0');
+  assert.equal((await f.state()).cliActive, true, '설치 실패가 상주 argo를 꺼진 채로 두지 않는다');
+});
+test('계정 모드 — 새 앱 설치 뒤 argo-cli 시작이 실패해도 설치는 성공으로 끝내고 로그 보는 법을 안내한다', { skip: !available }, async t => {
+  // 설치가 끝난 뒤 실패로 종료하면 cleanup이 백업을 지운 채 오류만 남는다(#773 검수 L3)
+  const f = await fixture(t, { oldApp: true, cliActive: true }), r = f.run([], { CLI_START_FAIL: '1' });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.match(r.stdout, /journalctl --user -u argo-cli/);
   assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '2.0.0');
 });
 test('계정 모드 — 크루가 답하는 중이면 교체하지 않는다', { skip: !available }, async t => {
   const f = await fixture(t, { oldApp: true, cliActive: true, cliBusy: true }), r = f.run();
   assert.equal(r.status, 1);
   assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '1.0.0');
-  assert.ok(!(await f.calls().catch(() => '')).includes('restart'));
+  assert.ok(!/(start|stop) argo-cli/.test(await f.calls().catch(() => '')), '답하는 중이면 상주 argo를 건드리지 않는다');
 });
 test('계정 모드 — argo 실행 확인이 실패하면 이전 설치로 되돌린다', { skip: !available }, async t => {
   const f = await fixture(t, { oldApp: true }), r = f.run([], { CLI_STATUS_FAIL: '1' });
   assert.equal(r.status, 1);
   assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '1.0.0', '이전 앱 복구');
   await assert.rejects(readFile(join(f.home, '.local/bin/argo')), { code: 'ENOENT' });
+  assert.ok(!/start argo-cli/.test(await f.calls().catch(() => '')), '꺼져 있던 상주 argo를 복구하면서 켜지 않는다');
 });
 test('계정 모드 — argo 명령이 없는 옛 타르볼은 --local을 안내하고 설치하지 않는다', { skip: !available }, async t => {
   const f = await fixture(t, { cli: false }), r = f.run();

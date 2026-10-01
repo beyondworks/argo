@@ -1,16 +1,13 @@
 // 앱 최상위 오류 표시(유건 제보 2026-09-12: 알림 배너를 눌러 들어가니 빈 화면). 빈 베이지 화면 대신 무엇이 죽었는지 보여 주고
 // 다시 열기를 준다. 전역 오류·거부된 프라미스는 localStorage 'msgr-diag'에 최근 20건을 남긴다(설정 → 진단에서 본다).
+// 알림 탭·이동('tap'·'nav')은 따로 'msgr-diag-nav'에 20건 — 'notify' 줄에 밀려나지 않게(diag-store.mjs).
 import { Component } from 'react';
+import { createDiagStore } from './diag-store.mjs';
 
-const KEY = 'msgr-diag';
-export function readDiag() { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; } }
-export function pushDiag(kind, message, extra = '') {
-  try {
-    const list = readDiag(); list.unshift({ at: new Date().toISOString(), kind, message: String(message).slice(0, 400), extra: String(extra).slice(0, 600) });
-    localStorage.setItem(KEY, JSON.stringify(list.slice(0, 20)));
-  } catch { /* 저장 불가 환경 */ }
-}
-export function clearDiag() { try { localStorage.removeItem(KEY); } catch { /* 무해 */ } }
+const store = createDiagStore(() => globalThis.localStorage);
+export function readDiag() { return store.read(); }
+export function pushDiag(kind, message, extra = '') { store.push(kind, message, extra); }
+export function clearDiag() { store.clear(); }
 if (typeof window !== 'undefined' && !window.__msgrDiag) {
   window.__msgrDiag = true;
   window.addEventListener('error', (e) => pushDiag('error', e?.message || e?.error?.message || 'error', e?.error?.stack || `${e?.filename ?? ''}:${e?.lineno ?? ''}`));

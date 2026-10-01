@@ -149,9 +149,11 @@ test('빌드 결함 핀(v0.1.0 실사고): React 사본 dedupe, 설치파일은 
 
 test('데스크톱 첨부 드롭·OS 알림 배선(유건 제보 2026-09-11 밤): 웹뷰 드롭 가로채기 해제 · 알림 플러그인(Rust·capability·npm) · notify.js 한 곳', () => {
   assert.equal(JSON.parse(read('apps/messenger/src-tauri/tauri.conf.json')).app.windows[0].dragDropEnabled, false, 'Tauri가 파일 드롭을 가로채면 HTML5 drop이 안 온다');
+  // 알림 플러그인은 데스크톱만(2026-10-01) — iOS에서 이 플러그인이 알림 delegate를 먼저 가져가 원격 푸시 탭을 버렸다. 모바일 핀: apps/messenger/test/notif-plugin-desktop.test.mjs
   assert.match(read('apps/messenger/src-tauri/Cargo.toml'), /tauri-plugin-notification = "2"/);
-  assert.match(read('apps/messenger/src-tauri/src/lib.rs'), /\.plugin\(tauri_plugin_notification::init\(\)\)/);
-  for (const cap of ['desktop.json', 'mobile.json']) assert.ok(JSON.parse(read(`apps/messenger/src-tauri/capabilities/${cap}`)).permissions.includes('notification:default'), cap);
+  assert.match(read('apps/messenger/src-tauri/src/lib.rs'), /#\[cfg\(desktop\)\]\n\s*let builder = builder\.plugin\(tauri_plugin_notification::init\(\)\);/);
+  assert.ok(JSON.parse(read('apps/messenger/src-tauri/capabilities/desktop.json')).permissions.includes('notification:default'), 'desktop.json');
+  assert.ok(!JSON.parse(read('apps/messenger/src-tauri/capabilities/mobile.json')).permissions.includes('notification:default'), 'mobile.json');
   assert.match(read('apps/messenger/package.json'), /"@tauri-apps\/plugin-notification"/);
   const app = read('apps/messenger/src/App.jsx');
   assert.doesNotMatch(app, /new Notification\(/, '웹 Notification 직접 호출 금지 — notify.js가 Tauri·브라우저를 가른다');

@@ -23,9 +23,9 @@ test('배선: 네이티브 대리자가 클릭을 받아 창을 되살리고 구
   assert.match(rs, /pub fn native_notification_pending_tap\(\) -> Option<NotificationTap>/, '가져가면 비운다');
   assert.match(read('../src-tauri/src/lib.rs'), /notify_mac::native_notification_pending_tap/, '명령 등록');
 });
-test('배선: 앱이 클릭 이벤트를 navTo(조직 전환 포함)로 잇고, 모든 OS 알림이 채널을 싣는다', () => {
+test('배선: 앱이 클릭 이벤트를 열기 대기함(조직 전환 포함 — notif-nav.mjs)으로 잇고, 모든 OS 알림이 채널을 싣는다', () => {
   const app = read('../src/App.jsx');
-  assert.match(app, /mountNativeNotificationTaps\(\{[^}]*onTap: \(\{ channelId \}\) => \{ if \(!disposed\) setNavTo\(channelId\); \}/);
+  assert.match(app, /mountNativeNotificationTaps\(\{[^}]*onTap: \(\{ channelId \}\) => \{ if \(!disposed\) offer\(channelId, 'mac'\); \}/);
   const calls = [...app.matchAll(/osNotify\([^;]*?(`[amr]:\$\{payload\.id\}`), payload\.channel_id/g)].map((m) => m[1]);
   assert.ok(calls.length >= 5, `osNotify 호출 ${calls.length}`);
   assert.ok(calls.every((c) => c.startsWith('`')), '메시지 claim 식별자와 채널을 분리하지 않은 알림이 남았다');
