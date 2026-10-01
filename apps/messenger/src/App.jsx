@@ -663,16 +663,16 @@ function Shell({ session }) {
   // 여기서는 그 걸음만 실행한다: 열기 / 공간 전환 / 채널 조회 / 같은 공간 목록 한 번 다시 읽기 / 버리기. 콜드 스타트 때 chId만 세우면 channel이 없어
   // Channel이 죽었다(시뮬 재현 2026-09-12) — 그래서 목록에 실제로 있을 때만 연다. 조회는 요청 하나당 1회(실패하면 최대 3회), 다시 읽기도 1회.
   const [navReq, setNavReq] = useState(() => navInbox.get());
-  useEffect(() => navInbox.subscribe(setNavReq), []);
+  useEffect(() => { const off = navInbox.subscribe(setNavReq); setNavReq(navInbox.get()); return off; }, []); // 구독 직후 한 번 더 읽는다 — 첫 렌더와 구독 사이에 들어온 탭을 놓치지 않게(#788 검수 LOW-1)
   const requestNav = useCallback((channelId, source) => { navInbox.offer({ channelId, source, owner: uid }); }, [uid]);
   const navProg = useRef(null); // 지금 요청의 진행 { seq, row, fails, refreshed, orgsRefreshed, busy } — 이 셸 안에서만(셸이 바뀌면 처음부터 다시 판단)
   const [navStep, setNavStep] = useState(0); // 조회·다시 읽기가 끝나면 판단을 다시 돌린다
   useEffect(() => {
     if (!navReq) return;
-    if (navProg.current?.seq !== navReq.seq) navProg.current = { seq: navReq.seq, row: undefined, fails: 0, refreshed: false, orgsRefreshed: false, busy: false };
+    if (navProg.current?.seq !== navReq.seq) navProg.current = { seq: navReq.seq, row: undefined, fails: 0, refreshed: false, orgsRefreshed: false, switched: false, busy: false };
     const prog = navProg.current;
     if (prog.busy) return;
-    const act = decideNav({ target: navReq.channelId, owner: navReq.owner, uid, orgs, orgId, personalId: PERSONAL, loaded: loadedOrg.current === orgId, channels, previewChannels, row: prog.row, fails: prog.fails, refreshed: prog.refreshed, orgsRefreshed: prog.orgsRefreshed });
+    const act = decideNav({ target: navReq.channelId, owner: navReq.owner, uid, orgs, orgId, personalId: PERSONAL, loaded: loadedOrg.current === orgId, channels, previewChannels, row: prog.row, fails: prog.fails, refreshed: prog.refreshed, orgsRefreshed: prog.orgsRefreshed, switched: prog.switched });
     const diag = (step) => pushDiag('nav', `${step} ${String(navReq.channelId).slice(0, 8)}`, `src=${navReq.source} page=${pageRef.current ?? '-'} org=${orgId ?? '-'}`);
     const run = (work) => { // 비동기 한 걸음 — 끝날 때까지 같은 요청에 다른 걸음을 겹쳐 보내지 않는다(15초 재조회로 효과가 다시 돌아도 조회가 늘지 않게)
       prog.busy = true; diag(act.do);
@@ -683,7 +683,7 @@ function Shell({ session }) {
     if (act.do === 'report') { diag('report'); setSettingsTab('me'); setPage('settings'); setRail(false); setSheet(null); navInbox.done(navReq); return; } // 신고 접수 알림(msgr-push reportPush) → 운영 신고함
     if (act.do === 'open') { diag('open'); setChId(navReq.channelId); setPage('chat'); setRail(false); setSheet(null); navInbox.done(navReq); return; }
     if (act.do === 'drop') { diag(`drop:${act.reason}`); navInbox.done(navReq); if (act.tell) setNote(t(act.tell === 'offline' ? 'push.nav.offline' : 'push.nav.unavailable')); return; }
-    if (act.do === 'switch') { diag(`switch:${act.orgId === PERSONAL ? 'personal' : String(act.orgId).slice(0, 8)}`); setOrgId(act.orgId); return; } // 목록이 바뀌면 다시 판단해 연다
+    if (act.do === 'switch') { diag(`switch:${act.orgId === PERSONAL ? 'personal' : String(act.orgId).slice(0, 8)}`); prog.switched = true; setOrgId(act.orgId); return; } // 목록이 바뀌면 다시 판단해 연다
     if (act.do === 'lookup') run(async () => { prog.row = (await q(supabase.from('msgr_channels').select('org_id').eq('id', navReq.channelId).maybeSingle())) ?? null; });
     else if (act.do === 'refresh') run(async () => { const list = await (orgId === PERSONAL ? loadPersonal() : loadOrg(orgId)); if (!Array.isArray(list)) throw new Error('superseded'); prog.refreshed = true; }); // 다른 재조회에 밀려 이번 결과가 버려졌으면 다시 읽은 것으로 치지 않는다
     else if (act.do === 'refresh-orgs') run(async () => { await loadOrgs(); prog.orgsRefreshed = true; });

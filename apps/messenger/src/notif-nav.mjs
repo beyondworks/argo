@@ -35,7 +35,7 @@ export function createNavInbox(now = () => Date.now()) {
 }
 
 // tell = 사용자에게 알릴 문구 종류(i18n push.nav.<tell>). 잘못된 데이터·앞 계정 요청은 조용히 버린다
-const drop = (reason) => ({ do: 'drop', reason, tell: reason === 'invalid' || reason === 'account' ? null : reason === 'offline' ? 'offline' : 'unavailable' });
+const drop = (reason) => ({ do: 'drop', reason, tell: reason === 'invalid' || reason === 'account' || reason === 'moved' ? null : reason === 'offline' ? 'offline' : 'unavailable' });
 
 /**
  * @param {object} s
@@ -47,6 +47,7 @@ const drop = (reason) => ({ do: 'drop', reason, tell: reason === 'invalid' || re
  * @param {Array} s.channels      참여한 채널, s.previewChannels = 참여 전 공개 채널(조직 공간만)
  * @param {undefined|null|{org_id: string|null}} s.row  채널 조회 결과 — undefined 아직 안 물음, null 안 보임(권한 없음·없음)
  * @param {number} s.fails  실패 횟수, s.refreshed = 같은 공간 목록을 다시 읽었나, s.orgsRefreshed = 조직 목록을 다시 읽었나
+ * @param {boolean} s.switched  이 요청으로 이미 공간을 한 번 옮겼나
  * @returns {{do: 'report'|'open'|'wait'|'lookup'|'switch'|'refresh'|'refresh-orgs'|'drop', orgId?: string, reason?: string, tell?: 'unavailable'|'offline'|null}}
  */
 export function decideNav(s) {
@@ -62,6 +63,7 @@ export function decideNav(s) {
   if (s.row === null) return drop('unreadable'); // RLS가 안 보여 준다(참여하지 않은 비공개·나간 방·게스트의 공개 채널) 또는 지워짐
   const space = s.row.org_id ?? s.personalId;
   if (space !== s.orgId) {
+    if (s.switched) return drop('moved'); // 옮긴 뒤 사용자가 직접 다른 공간으로 갔다 — 다시 끌고 가지 않는다(#788 검수 LOW-2)
     if (space === s.personalId || s.orgs.some((o) => o.id === space)) return { do: 'switch', orgId: space };
     return s.orgsRefreshed ? drop('not-member') : { do: 'refresh-orgs' }; // 다른 기기에서 막 들어간 조직일 수 있다 — 조직 목록을 한 번 다시 읽는다
   }

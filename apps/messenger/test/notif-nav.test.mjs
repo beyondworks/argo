@@ -90,6 +90,12 @@ test('(d) 다른 조직 채널 — 그 조직으로 옮겨 목록이 오면 연�
   assert.deepEqual(decideNav(base({ orgId: B, loaded: false, channels: [], row: { org_id: B } })), { do: 'wait' }, '옮긴 직후 목록 도착 전');
 });
 
+test('한 번 옮긴 뒤 사용자가 다른 공간으로 가면 다시 끌고 가지 않고 조용히 버린다(#788 검수 LOW-2)', () => {
+  // 옮긴 공간의 목록 로드가 계속 실패하는 사이 사용자가 직접 다른 공간으로 갔다 — 배너 하나가 화면을 계속 빼앗으면 안 된다
+  assert.deepEqual(decideNav(base({ orgId: A, row: { org_id: B }, switched: true })), { do: 'drop', reason: 'moved', tell: null });
+  assert.deepEqual(decideNav(base({ orgId: A, row: { org_id: B } })), { do: 'switch', orgId: B }, '처음 한 번은 옮긴다');
+  assert.deepEqual(decideNav(base({ orgId: B, loaded: true, channels: [{ id: CH }], row: { org_id: B }, switched: true })), { do: 'open' }, '옮긴 공간에 있으면 연다');
+});
 test('(d) 내 조직 목록에 없는 조직 — 조직 목록을 한 번 다시 읽고, 그래도 없으면 버린다', () => {
   const joinedElsewhere = drive(base(), {
     lookup: () => ({ row: { org_id: C } }), orgs: () => [...orgs, { id: C }],
