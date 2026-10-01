@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { mergeLayout, sizeForSpan, move, mergePages, reorderModules } from '../src/core/layout.js';
+import { mergeLayout, sizeForSpan, move, mergePages } from '../src/core/layout.js';
 import { pickCards, STAT_DEFAULTS } from '../src/core/stats.js';
 import { BUILTINS, builtin } from '../src/data/templates.js';
 import { dragHasFiles, filesFromTransfer } from '../src/core/files.js';
@@ -19,21 +19,6 @@ const REG = [
 // 이유: 저장된 배치가 없으면 기본 배치 — 처음 들어온 사람에게 빈 화면을 보이지 않는다.
 test('배치 없음 → 기본 배치(이 공간에서 못 쓰는 모듈 제외)', () => {
   assert.deepEqual(mergeLayout(null, REG, 'me', [{ id: 'a', size: 's' }, { id: 'c', size: 's' }]), [{ id: 'a', size: 's', hidden: false }, { id: 'b', size: 'full', hidden: true }]);
-});
-
-test('module reorder scopes identical IDs and preserves hidden entries and configuration', () => {
-  const items = [{ id: 'a', size: 's', cfg: { metric: 'sales' } }, { id: 'hidden', hidden: true, size: 'm' }, { id: 'b', size: 'l' }];
-  const active = { kind: 'module', group: 'home:me', id: 'a' };
-  const over = { kind: 'module', group: 'home:me', id: 'b' };
-  assert.strictEqual(reorderModules(items, 'business:me', active, over), items);
-  assert.strictEqual(reorderModules(items, 'home:me', active, { ...over, group: 'business:me' }), items);
-  assert.strictEqual(reorderModules(items, 'home:me', active, { ...over, id: 'missing' }), items);
-  assert.strictEqual(reorderModules(items, 'home:me', active, { ...over, id: 'hidden' }), items);
-  assert.strictEqual(reorderModules(items, 'home:me', active, null), items);
-  const moved = reorderModules(items, 'home:me', active, over);
-  assert.deepEqual(moved.map((item) => item.id), ['b', 'a', 'hidden']);
-  assert.strictEqual(moved[1], items[0]);
-  assert.deepEqual(items.map((item) => item.id), ['a', 'hidden', 'b']);
 });
 
 // 이유: 사용자가 고른 화면을 새 모듈이 밀어내면 안 된다 → 새 모듈은 끝에 숨김으로.

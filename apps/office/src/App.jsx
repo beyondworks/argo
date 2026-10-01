@@ -1,8 +1,8 @@
 // 앱 셸 — 사이드바 · 헤더(경로·저장 상태·페이지 동작) · 내용. 끌어다 놓기는 한 DndContext가 전부 받는다
-// (메일을 사이드바 크루에게, 모듈을 격자 안에서, 페이지를 트리 안에서).
+// (메일을 사이드바 크루에게, 페이지를 트리 안에서). 모듈 옮기기는 격자가 따로 맡는다(ui/module-move.js — 손을 뗄 때 놓기).
 import { Component, lazy, Suspense, useEffect, useState, useSyncExternalStore } from 'react';
-import { DndContext, DragOverlay, MeasuringStrategy, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, pointerWithin, closestCenter } from '@dnd-kit/core';
-import { moduleKeyboardCoordinates } from './core/module-keyboard.js';
+import { DndContext, DragOverlay, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, pointerWithin, closestCenter } from '@dnd-kit/core';
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { Sidebar } from './ui/Sidebar.jsx';
 import { Icon } from './ui/Icon.jsx';
 import { Face } from './ui/Face.jsx';
@@ -140,7 +140,7 @@ function LegacyRecoveryNotice() {
 
 function DragChip({ data }) {
   if (!data) return null;
-  const icon = { mail: 'mail', page: 'doc', file: 'file', record: 'run', module: 'layout', crew: 'hand', nav: 'grip', navsec: 'grip', biztab: 'grip', fav: 'star' }[data.kind] ?? 'doc';
+  const icon = { mail: 'mail', page: 'doc', file: 'file', record: 'run', crew: 'hand', nav: 'grip', navsec: 'grip', biztab: 'grip', fav: 'star' }[data.kind] ?? 'doc';
   return <div className="drag-chip"><Icon name={icon} size={14} /><span>{data.label || t('page.untitled')}</span></div>;
 }
 
@@ -148,7 +148,7 @@ function DragChip({ data }) {
 const collision = (args) => {
   const a = args.active.data.current ?? {};
   const targets = args.droppableContainers.filter((c) => { const d = c.data.current ?? {}; return d.accepts ? d.accepts.includes(a.kind) : d.kind === a.kind && d.group === a.group; });
-  const within = pointerWithin({ ...args, droppableContainers: targets.filter((c) => a.kind === 'module' || c.data.current?.accepts) });
+  const within = pointerWithin({ ...args, droppableContainers: targets.filter((c) => c.data.current?.accepts) });
   if (within.length) return within;
   return closestCenter({ ...args, droppableContainers: targets.filter((c) => !c.data.current?.accepts) });
 };
@@ -165,7 +165,7 @@ export default function App() {
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: moduleKeyboardCoordinates }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   useEffect(() => { if (r.redirect && mode !== 'loading') navigate(r.redirect, { replace: true }); }, [r.redirect, mode]);
@@ -223,7 +223,7 @@ export default function App() {
     outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
   return (
-    <DndContext sensors={sensors} collisionDetection={collision} measuring={{ droppable: { strategy: dragging?.kind === 'module' ? MeasuringStrategy.Always : MeasuringStrategy.WhileDragging } }} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
+    <DndContext sensors={sensors} collisionDetection={collision} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
       <div className={`shell${ui.navOpen ? ' nav-open' : ''}${dragging ? ` is-dragging drag-${dragging.kind}` : ''}`}>
         <Sidebar space={r.space} path={path} />
         <div className="nav-scrim" onClick={() => setUi({ navOpen: false })} />

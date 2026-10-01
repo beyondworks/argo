@@ -1,11 +1,14 @@
-// 모듈 배치 — "순서 + 크기 단계" 격자(유건 확정 2026-09-26). 자유 좌표를 쓰지 않아 빈칸·겹침이 원천적으로 없고,
-// 좁은 폭에서는 같은 순서로 한 줄이 된다. 저장된 배치와 등록부를 합치는 규칙은 순수 함수로 두고 테스트로 잠근다.
+// 모듈 배치 — 12열 자유 격자(유건 10/1 저녁 확정, iOS 위젯·Grafana 방식). 모듈마다 시작 열 x·폭(열 수)·높이(px 또는 내용대로)·
+// 순서 y를 따로 갖고, 빈 곳이 있으면 위로 붙는다(세로 중력, 겹침 없음). 자리(x·y)가 없는 옛 저장값은 예전 그대로 "순서 + 열 수 + 줄 높이 공유"로 그린다.
+// 좁은 폭에서는 y→x 순서로 한 줄이 된다. 저장된 배치와 등록부를 합치는 규칙은 순수 함수로 두고 테스트로 잠근다.
 export const SIZES = ['s', 'm', 'l', 'full'];
 export const SPAN = { s: 4, m: 6, l: 8, full: 12 };
 // 가장자리 끌기(유건 10/1): 폭은 열 수(span 1~12, 끌기 전 단계는 baseSize), 높이는 px(h, 120~1200) — 없으면 크기 단계·내용대로
 // span은 같이 쓴 size(가장 가까운 단계)와 맞을 때만 — 옛 탭의 '크기' 메뉴가 size만 바꾸면 남은 span보다 그 size가 이긴다(검수 10/1)
 export const spanOf = (it) => (Number.isInteger(it.span) && it.span > 0 && it.span < 13 && it.size === sizeForSpan(it.span) ? it.span : SPAN[it.size] ?? 6);
 export const heightOf = (it) => (Number.isInteger(it.h) && it.h >= 120 && it.h <= 1200 ? it.h : 0);
+/** 자유 격자 자리 — x = 시작 열(0~11), y = 위에서부터 순서. 둘 다 있어야 자리로 읽는다(옛 앱이 저장한 값에는 없다) */
+export const hasXY = (it) => Number.isInteger(it.x) && it.x >= 0 && it.x < 12 && Number.isInteger(it.y) && it.y >= 0;
 /** 모듈이 허용하는 열 범위 — 1/3을 허용하면 3열부터, 아니면 가장 작은 단계부터(현황 8열) */
 /** 모듈 최소 높이(카드 전체, px) — 120, 등록부에 본문 최소(minBody)가 있으면 머리 높이 + 그 값(8px 단위 올림) */
 export const minHeight = (mod, head = 42) => Math.max(120, Math.ceil((head + (mod?.minBody ?? 0)) / 8) * 8);
@@ -40,7 +43,7 @@ export function mergeLayout(saved, registry, space, defaults) {
     if (!mod || seen.has(it.id)) continue;
     seen.add(it.id);
     const [lo, hi] = spanRange(mod.sizes), { span } = it;
-    items.push({ id: it.id, ...(it.moduleId ? { moduleId: it.moduleId } : {}), size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, ...(Number.isInteger(span) && span >= lo && span <= hi ? { span, ...(mod.sizes.includes(it.baseSize) ? { baseSize: it.baseSize } : {}) } : {}), ...(heightOf(it) ? { h: it.h } : {}), hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
+    items.push({ id: it.id, ...(it.moduleId ? { moduleId: it.moduleId } : {}), size: mod.sizes.includes(it.size) ? it.size : mod.defaultSize, ...(Number.isInteger(span) && span >= lo && span <= hi ? { span, ...(mod.sizes.includes(it.baseSize) ? { baseSize: it.baseSize } : {}) } : {}), ...(heightOf(it) ? { h: it.h } : {}), ...(hasXY(it) ? { x: it.x, y: it.y } : {}), hidden: !!it.hidden, ...(it.cfg ? { cfg: it.cfg } : {}) });
   }
   // 새로 생긴 모듈은 숨긴 채 뒤에 — intro: 'top'인 것만 맨 위에 보이게(유건 9/27: 현황 카드). 한 번 저장된 뒤엔 사용자 선택을 따른다.
   for (const [id, mod] of usable) if (!mod.repeatable && !items.some((item) => (item.moduleId ?? item.id) === id)) {
@@ -55,21 +58,6 @@ export function move(list, from, to) {
   const [x] = next.splice(from, 1);
   next.splice(to, 0, x);
   return next;
-}
-
-export function reorderModules(items, scope, active, over) {
-  if (active?.kind !== 'module' || over?.kind !== 'module' || active.group !== scope || over.group !== scope || active.id === over.id) return items;
-  const visible = items.filter((item) => !item.hidden);
-  const from = visible.findIndex((item) => item.id === active.id), to = visible.findIndex((item) => item.id === over.id);
-  if (from < 0 || to < 0) return items;
-  if (over.side) { // 포인터가 대상의 앞·뒤 어느 절반에 있는지로 넣는다(9/30) — 옮긴 뒤 다시 재도 같은 결과라 떨리지 않는다
-    const rest = visible.filter((item) => item.id !== active.id);
-    const at = rest.findIndex((item) => item.id === over.id) + (over.side === 'after' ? 1 : 0);
-    if (at === from) return items;
-    rest.splice(at, 0, visible[from]);
-    return [...rest, ...items.filter((item) => item.hidden)];
-  }
-  return [...move(visible, from, to), ...items.filter((item) => item.hidden)];
 }
 
 /** 보이는 모듈을 줄로 나눈다 — CSS 격자 자동 배치(dense 없음)와 같은 규칙: 남은 열에 안 들어가면 다음 줄. */
@@ -89,6 +77,23 @@ export const rowInfo = (items, modOf) => new Map(rowsOf(items).flatMap((row) => 
   const h = Math.max(...row.map(heightOf)), min = Math.max(...row.map((it) => minHeight(modOf(it))));
   return row.map((it, i) => [it.id, { h, min, first: !i }]);
 }));
+
+/** 자유 격자 그리는 순서 — 자리(x·y)가 있는 모듈은 y→x, 없는 모듈(새로 넣은 것·옛 앱이 저장한 것)은 그 뒤에 옛 규칙(남은 열에 안 들어가면 다음 줄)으로 열을 정한다 */
+export function freeOrder(items) {
+  let used = 12;
+  return [...items.filter(hasXY).sort((a, b) => a.y - b.y || a.x - b.x).map((it) => ({ it, x: it.x })),
+    ...items.filter((it) => !hasXY(it)).map((it) => { const w = spanOf(it); if (used + w > 12) used = 0; used += w; return { it, x: used - w }; })];
+}
+
+/** 세로 중력 — 순서대로 상자({ x, w, h })를 자기 열(x~x+w) 위 가장 낮은 바닥에 붙인다. 겹치지 않고, 위가 비면 올라간다. 상자마다 top을 붙여 돌려준다 */
+export function pack(list, gap) {
+  const floor = Array(12).fill(0);
+  return list.map((b) => {
+    const x = Math.max(0, Math.min(b.x, 12 - b.w)), top = Math.max(...floor.slice(x, x + b.w));
+    floor.fill(top + b.h + gap, x, x + b.w);
+    return { ...b, x, top };
+  });
+}
 
 /**
  * 서버 페이지 목록(본문 제외) + 이 기기 목록 → 화면 목록.
