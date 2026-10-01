@@ -2154,3 +2154,18 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .msgr-sheetwrap > .msgr-scrim.clear { position: fixed; inset: 0; background: rgba(0, 0, 0, .38); }
 
 }
+
+/* ── 프로필 사진 자르기(유건 피드백 4, 2026-10-01 밤) — 폰·데스크톱 같은 화면. 정사각형 틀 안 끌기·확대, 저장은 256 JPEG ── */
+.msgr-crop-scrim { position: fixed; inset: 0; z-index: 120; background: rgba(0, 0, 0, .5); }
+.msgr-crop { position: fixed; z-index: 121; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow-y: auto; display: grid; justify-items: center; gap: 12px; padding: 18px 16px 16px; border-radius: 20px; background: var(--card); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--shadow-float); }
+.msgr-crop h2 { margin: 0; font-size: 16px; font-weight: 700; justify-self: start; }
+.msgr-crop > .note { margin: 0; font-size: 13px; line-height: 1.45; color: var(--fg-2); justify-self: start; }
+.msgr-crop-frame { position: relative; overflow: hidden; border-radius: 16px; background: var(--card-2); touch-action: none; cursor: grab; user-select: none; display: grid; place-items: center; }
+.msgr-crop-frame:active { cursor: grabbing; }
+.msgr-crop-frame img { position: absolute; max-width: none; pointer-events: none; -webkit-user-drag: none; }
+.msgr-crop-frame::after { content: ''; position: absolute; inset: 0; border-radius: 16px; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--fg) 30%, transparent); pointer-events: none; }
+.msgr-crop-zoom { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; color: var(--fg-2); }
+.msgr-crop-zoom input { flex: 1 1 auto; min-width: 0; height: 44px; accent-color: var(--fg); }
+.msgr-crop-zoom .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.msgr-crop .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+.msgr-crop .acts .btn { justify-content: center; min-height: 44px; border-radius: 12px; }

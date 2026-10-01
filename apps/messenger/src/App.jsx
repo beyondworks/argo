@@ -99,6 +99,7 @@ import { scrollLeftToCenter } from './nav-scroll.mjs';
 import { toastPlace, toastMaxWidth } from './toast-place.mjs';
 import { faceOf, faceFromStored, faceInner, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedCrewsInFetch, FACE_COLORS, FACE_SHAPES, faceToStore } from './crew-face.mjs';
 import { faceGestures } from './face-gestures.mjs';
+import { coverScale, clampOffset, cropRect, clampZoom, ZOOM_MAX } from './avatar-crop.mjs';
 const realtimeScope = createRealtimeScope();
 const LEGAL = { privacy: 'https://argo.ceo/privacy', terms: 'https://argo.ceo/terms', download: 'https://argo.ceo/download', contact: 'mailto:lean8kim@gmail.com' }; // App Store 5.1.1(i): 앱 안에서 닿는 개인정보처리방침·약관. download = 가격·결제 버튼 없는 전용 페이지(총괄 지시 2026-09-26, 랜딩 배포 전이라 지금은 404 — 배포는 총괄이 앱 발행 전에 함). contact = 1.5 지원 이메일 직행(검수 M5 — 결제 링크가 있는 홈 #contact 대신, 라이브 curl로 확인한 실주소)
 const openExternal = async (url) => { try { if (inTauri()) await (await import('@tauri-apps/plugin-opener')).openUrl(url); else window.open(url, '_blank', 'noopener'); } catch { /* 브라우저가 막으면 조용히 */ } };
@@ -196,6 +197,7 @@ function Av({ name, crew, size, company = false, userId = null, crewId = null, s
 /** 프로필 이미지 정규화 — 가운데 정사각형으로 잘라 256px JPEG로(업로드 전 클라이언트에서). */
 async function squareImage(file, size = 256) {
   const bmp = await createImageBitmap(file);
+  if (bmp.width === size && bmp.height === size && file.type === 'image/jpeg') return file; // 자르기 화면이 이미 256 정사각 JPEG로 만들었다 — 다시 압축하지 않는다
   const s = Math.min(bmp.width, bmp.height); const c = document.createElement('canvas'); c.width = size; c.height = size;
   c.getContext('2d').drawImage(bmp, (bmp.width - s) / 2, (bmp.height - s) / 2, s, s, 0, 0, size, size);
   return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), 'image/jpeg', 0.88));
@@ -208,20 +210,66 @@ async function uploadAvatar(uid, key, file) {
   if (up.error) throw new Error(up.error.message);
   return supabase.storage.from('msgr-avatars').getPublicUrl(path).data.publicUrl;
 }
-/** 아바타 편집 줄 — 현재 이미지 + 올리기·지우기(내 계정·에이전트 시트 공용). */
+/** 아바타 편집 줄 — 현재 이미지 + 올리기·지우기(내 계정·에이전트 시트 공용). 사진을 고르면 자르기 화면(AvatarCrop)이 열린다(유건 피드백 4 — 폰·데스크톱 같은 화면). */
 function AvatarEdit({ name, crew = false, crewId = null, url, onUpload, onRemove, busy, t }) {
   const ref = useRef(null);
+  const [pick, setPick] = useState(null); // 고른 원본 파일 — 자르기 화면이 떠 있는 동안
   return (
     <div className="msgr-avatar-edit">
       <Av name={name} crew={crew} crewId={crewId} size="lg" src={url} />
       <div className="acts">
-        <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onUpload(f); }} />
+        <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) setPick(f); }} />
         <button type="button" className="btn sm" disabled={busy} onClick={() => ref.current?.click()}><I name="plus" size={13} />{t(url ? 'profile.avatar.change' : 'profile.avatar.upload')}</button>
         {url && <button type="button" className="btn sm" disabled={busy} onClick={onRemove}><I name="x" size={13} />{t('profile.avatar.remove')}</button>}
-        <span className="note">{t('profile.avatar.note')}</span>
       </div>
+      {pick && <AvatarCrop file={pick} t={t} onCancel={() => setPick(null)} onSave={(blob) => { setPick(null); onUpload(blob); }} onError={() => { setPick(null); onUpload(pick); }} />}
     </div>
   );
+}
+/* 사진 자르기 — 정사각형 틀 안에서 끌어 위치를 옮기고, 두 손가락(핀치)·휠·슬라이더로 확대·축소한 뒤 저장. 새 라이브러리 없이 canvas.
+   저장 결과는 지금과 같은 256×256 JPEG(품질 0.88). 계산은 avatar-crop.mjs. 사진을 못 읽으면 종전처럼 가운데 자르기로 올린다(onError). */
+function AvatarCrop({ file, t, onCancel, onSave, onError }) {
+  const [img, setImg] = useState(null); const [zoom, setZoom] = useState(1); const [off, setOff] = useState({ x: 0, y: 0 }); const [busy, setBusy] = useState(false);
+  const frame = Math.max(200, Math.min(300, (typeof window !== 'undefined' ? window.innerWidth : 360) - 72));
+  const pts = useRef(new Map()); const pinch = useRef(null); const live = useRef({}); live.current = { img, zoom, off };
+  useEffect(() => { const u = URL.createObjectURL(file); const im = new Image(); im.onload = () => setImg({ url: u, w: im.naturalWidth, h: im.naturalHeight, el: im }); im.onerror = () => onError?.(); im.src = u; return () => URL.revokeObjectURL(u); }, [file]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onCancel(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onCancel]);
+  const apply = (z, x, y) => { const cur = live.current.img; if (!cur) return; const nz = clampZoom(z); setZoom(nz); setOff(clampOffset({ w: cur.w, h: cur.h, frame, zoom: nz, x, y })); };
+  const down = (e) => { e.currentTarget.setPointerCapture?.(e.pointerId); pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (pts.current.size === 2) { const [a, b] = [...pts.current.values()]; pinch.current = { d: Math.hypot(a.x - b.x, a.y - b.y), z: live.current.zoom }; } };
+  const move = (e) => {
+    const p = pts.current.get(e.pointerId); if (!p) return;
+    const nx = e.clientX; const ny = e.clientY; const dx = nx - p.x; const dy = ny - p.y; pts.current.set(e.pointerId, { x: nx, y: ny });
+    const { zoom: z, off: o } = live.current;
+    if (pts.current.size >= 2 && pinch.current) { const [a, b] = [...pts.current.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); apply(pinch.current.z * (d / Math.max(1, pinch.current.d)), o.x, o.y); return; }
+    apply(z, o.x + dx, o.y + dy);
+  };
+  const up = (e) => { pts.current.delete(e.pointerId); if (pts.current.size < 2) pinch.current = null; };
+  const wheel = (e) => { e.preventDefault(); const { zoom: z, off: o } = live.current; apply(z * Math.exp(-e.deltaY * 0.002), o.x, o.y); };
+  const frameRef = useRef(null);
+  useEffect(() => { const el = frameRef.current; if (!el) return undefined; el.addEventListener('wheel', wheel, { passive: false }); return () => el.removeEventListener('wheel', wheel); }); // 휠은 페이지 스크롤을 막아야 해 passive:false로 직접 단다
+  const save = async () => {
+    if (!img) return; setBusy(true);
+    try {
+      const r = cropRect({ w: img.w, h: img.h, frame, zoom, x: off.x, y: off.y });
+      const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+      c.getContext('2d').drawImage(img.el, r.sx, r.sy, r.size, r.size, 0, 0, 256, 256);
+      const blob = await new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('image'))), 'image/jpeg', 0.88));
+      onSave(blob);
+    } catch { onError?.(); } finally { setBusy(false); }
+  };
+  const s = img ? coverScale(img.w, img.h, frame) * zoom : 1;
+  return createPortal(<div className="shell msgr-crop-layer" style={{ display: 'contents' }}>
+    <div className="msgr-crop-scrim" onClick={onCancel} role="presentation" />
+    <section className="msgr-crop" role="dialog" aria-modal="true" aria-label={t('avatar.crop.title')}>
+      <h2>{t('avatar.crop.title')}</h2>
+      <p className="note">{t('avatar.crop.hint')}</p>
+      <div ref={frameRef} className="msgr-crop-frame" style={{ width: frame, height: frame }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-label={t('avatar.crop.frame')} role="img">
+        {img ? <img src={img.url} alt="" draggable={false} style={{ width: img.w * s, height: img.h * s, left: frame / 2 + off.x - (img.w * s) / 2, top: frame / 2 + off.y - (img.h * s) / 2 }} /> : <span className="note" role="status">{t('ui.loading')}</span>}
+      </div>
+      <label className="msgr-crop-zoom"><I name="search" size={14} className="fill" /><span className="sr">{t('avatar.crop.zoom')}</span><input type="range" min="1" max={ZOOM_MAX} step="0.01" value={zoom} disabled={!img} onChange={(e) => apply(Number(e.target.value), off.x, off.y)} aria-label={t('avatar.crop.zoom')} /></label>
+      <div className="acts"><button type="button" className="btn" onClick={onCancel} disabled={busy}>{t('ui.cancel')}</button><button type="button" className="btn btn-primary" onClick={save} disabled={!img || busy}><I name="check" size={14} />{t('ui.save')}</button></div>
+    </section>
+  </div>, document.body);
 }
 const faceEq = (a, b) => !!a && !!b && a.shape === b.shape && a.color === b.color;
 const faceCol = { missingAt: 0 }; // msgr_crews.face 열이 없다고 판정한 시각(옛 서버 폴백). 10분만 기억 — 앱이 라이브 적용보다 먼저 켜져도 재시작 없이 face를 다시 읽는다(재검수 #704)
