@@ -3,7 +3,7 @@ import { interruptTurn } from '../../../../../src/turn-abort.mjs';
 import { relative } from 'node:path';
 import { chat } from '../../../../../src/chat.mjs';
 import { paths, loadCompany } from '../../../../../src/workspace.mjs';
-import { threadMtime, loadThread, appendTurn, beginTurn, resetThread } from '../../../../../src/thread.mjs';
+import { threadMtime, loadThread, appendTurn, beginTurn, resetThread, getDelegationLimit } from '../../../../../src/thread.mjs';
 import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 import { nudgeSync } from '../../../../../src/sync.mjs';
 import { guardCompany } from '../../../../auth.mjs';
@@ -54,7 +54,11 @@ export async function POST(req, { params }) {
         t = { reply: lang === 'en'
           ? (interrupted ? 'Stopping the current execution.' : 'There is no active execution to stop.')
           : (interrupted ? '현재 실행을 중단하고 있습니다.' : '중단할 실행 중인 작업이 없습니다.'), sessionId: sessionId || null };
-      } else t = await chat(ws, slug, message.trim(), sessionId || null, { attachments, ...(turnId ? { abortTag: turnId } : {}) }); // abortTag — 바로 보내기(chat/steer)가 정확히 이 턴을 고른다
+      } else {
+        // 위임 제한 스위치 — 이 대화(스레드)에서 사용자가 푼 상태를 서버가 저장값에서 읽는다(화면이 보내는 값을 믿지 않는다 — 켜짐이 기본이고 fail-closed).
+        const relaxed = !(await getDelegationLimit(ws, slug));
+        t = await chat(ws, slug, message.trim(), sessionId || null, { attachments, ...(relaxed ? { delegationRelaxed: true } : {}), ...(turnId ? { abortTag: turnId } : {}) }); // abortTag — 바로 보내기(chat/steer)가 정확히 이 턴을 고른다
+      }
     } catch (e) {
       // 실패·중단 턴도 스레드에 남긴다 — 성공 뒤에만 저장하면 지시문이 새로고침에 증발하고 비용만
       // 남는다(전수리뷰 2026-07-30 #1). UI는 m.failed로 사유+재전송을 그린다(기존 낙관 사본 패턴).

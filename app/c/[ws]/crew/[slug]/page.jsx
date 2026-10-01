@@ -15,6 +15,7 @@ import { useLang, stageLabel, fmtMsgTime } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
 import { ArtifactChips } from '../../artifact-chips';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../../work-folder';
+import { DelegationToggle } from '../../delegation-toggle';
 import { useSplitAlive } from '../../split-alive';
 import { keepSide, keepSideExcept, sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
@@ -251,6 +252,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const [archMsgs, setArchMsgs] = useState(null);
   const [renameSess, setRenameSess] = useState(null); // 대화명 편집 모달 대상 세션
   const [threadTitle, setThreadTitle] = useState(null); // 현재(활성) 대화의 사용자 지정 이름
+  // 위임 제한 스위치 — 이 대화(활성 스레드)의 값. true = 켜짐(기본), false = 푼 상태, null = 읽는 중. 정본은 서버(스레드 파일 delegationLimit) — 크루를 바꾸면 그 크루 것을 다시 읽는다.
+  const [delegLimited, setDelegLimited] = useState(null);
+  const delegSavedAt = useRef(0); // 방금 바꾼 값을 직전에 시작한 폴링 응답(옛 값)이 되돌리지 않게 — 저장 직후 4초는 폴링 값을 무시한다
   const [trashSess, setTrashSess] = useState(null);   // 삭제(보관) 확인 모달 대상 세션
   // 우측 드로어 — 백그라운드 작업 / 파일 탭. 채팅 폭은 유지하고 우측에서 덮으며 내려온다.
   const [panelOpen, setPanelOpen] = useState(false);
@@ -298,6 +302,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       setThread(r.thread?.messages ?? []);
       sessionRef.current = r.thread?.sessionId ?? null;
       setThreadTitle(r.thread?.title ?? null);
+      setDelegLimited(r.thread?.delegationLimit !== false); // 이어가는 대화가 가졌던 값
       setViewing(null); setArchMsgs(null); setError(''); resetAnnot();
       loadSessions();
       window.dispatchEvent(new Event('argo:refresh'));
@@ -382,7 +387,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // 통째로 덮어쓴다(setThread는 병합이 아니라 교체). 총괄팀장처럼 스레드가 크고 위임으로 턴이 긴
     // 크루는 in-flight 창이 넓어 "다른 크루 다녀오니 대화가 사라짐"으로 나타났다(실사용 신고 2026-07-20).
     let alive = true;
-    setThread(null); setError(''); sessionRef.current = null; setShown(THREAD_WINDOW);
+    setThread(null); setDelegLimited(null); setError(''); sessionRef.current = null; setShown(THREAD_WINDOW);
     pinMidRef.current = null; spacerHRef.current = 0; // 대화(크루) 전환 — 이전 대화의 핀·여백을 끌고 오지 않는다
     api(`/api/companies/${ws}?light=1`)
       .then((d) => {
@@ -400,7 +405,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
       // 교체가 아니라 병합 — 이 응답보다 먼저 보낸 글(낙관 사본, 첫 로드 전이라 cur엔 그것뿐)이 있으면 지우지 않는다. 늦게 온 응답이
       // 통째로 덮어 보낸 지시가 답변 내내 화면에서 사라졌다(2026-09-29 격리 서버 실측, main도 같음). 서버가 이미 받아 둔 같은 글(awaiting)은 겹치지 않게 뺀다.
-      .then((t) => { if (!alive) return; mtimeRef.current = t.mtime ?? 0; setThread((cur) => { const server = t.messages ?? []; const local = cur ?? []; return local.length ? [...server.filter((s) => !(s.awaiting && local.some((l) => l.who === 'user' && l.text === s.text))), ...local] : server; }); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
+      .then((t) => { if (!alive) return; mtimeRef.current = t.mtime ?? 0; setThread((cur) => { const server = t.messages ?? []; const local = cur ?? []; return local.length ? [...server.filter((s) => !(s.awaiting && local.some((l) => l.who === 'user' && l.text === s.text))), ...local] : server; }); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); setDelegLimited(t.delegationLimit !== false); })
       .catch(() => { if (alive) setThread([]); });
     return () => { alive = false; };
   }, [ws, slug]);
@@ -490,6 +495,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           if (r.sessionId) sessionRef.current = r.sessionId;
           setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
           setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
+          if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(r.delegationLimit !== false); // 다른 기기에서 바꾼 위임 제한도 같은 방식으로
         })
         .catch(() => {});
     }, 3000); // 준실시간 — 동기화(≈8s)로 당겨온 다른 기기의 대화를 더 빨리 표시(기존 8s)
@@ -739,12 +745,20 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     await sendMessage(message);
   }
 
+  // 위임 제한 스위치 저장 — 화면은 먼저 바꾸고(낙관), 실패하면 되돌려 사유를 배너로
+  async function changeDeleg(next) {
+    const prev = delegLimited;
+    setDelegLimited(next); delegSavedAt.current = Date.now();
+    try { await api(`/api/companies/${ws}/chat/delegation`, { slug, limit: next }); }
+    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: String(e.message) })); }
+  }
+
   async function newChat() {
     if (busy) return;
     // 현재 대화는 서버(resetThread)가 .archive로 적재한 뒤 비우므로 비파괴 — 확인창 없이 바로 새 대화.
     // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
-    setThread([]); sessionRef.current = null; setError(''); setThreadTitle(null);
+    setThread([]); sessionRef.current = null; setError(''); setThreadTitle(null); setDelegLimited(true); // 새 대화 = 위임 제한 켜짐(서버 resetThread와 같은 규칙)
     setViewing(null); setArchMsgs(null); resetAnnot(); pinMidRef.current = null; spacerHRef.current = 0;
     loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
   }
@@ -1340,7 +1354,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         </div>
         {/* 입력창 아래 슬림 줄 — 우측 텍스트형 모델 버튼(클릭 시 위로 팝오버). 레퍼런스: Claude Code 입력바 */}
         {/* 입력창 아래 슬림 줄 — 왼쪽 폴더·클립, 오른쪽 모델 버튼(유건 2026-08-23: 아이콘을 내려 모델명과 한 줄, 입력은 맨 왼쪽부터) */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px', minHeight: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 4, padding: '0 6px', minHeight: 18 }}>
             {/* 폴더·클립 한 묶음(유건 지시 2026-07-28). 순서는 폴더 → 클립.
                 간격의 지배 변수는 gap이 아니라 **버튼 폭**이다(.btn.btn-icon 34px에 아이콘 14px라
                 gap 0이어도 글리프 사이 20px). 그래서 이 둘만 26px로 좁힌다 → 글리프 간격 12px.
@@ -1353,6 +1367,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                 <Icon name="clip" size={14} />
               </button>
+              {/* 위임 제한 스위치(회의실과 같은 컴포넌트) — 이 대화에서 크루 간 위임을 풀고 다시 건다 */}
+              <span style={{ marginLeft: 6, display: 'inline-flex' }}><DelegationToggle limited={delegLimited} onChange={changeDeleg} scope="chat" /></span>
             </div>
           {/* 오른쪽 — 잔여 한도 게이지(이 크루가 쓰는 러너의 구독 한도가 있을 때만, K92) + 모델 버튼 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>

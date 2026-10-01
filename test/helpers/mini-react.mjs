@@ -28,6 +28,8 @@ export function useEffect(fn, deps) {
   st.pending.push(() => { h.cleanup?.(); const c = fn(); h.cleanup = typeof c === 'function' ? c : null; });
 }
 export const useLayoutEffect = useEffect;
+let idSeq = 0;
+export function useId() { return slot(() => `:r${(idSeq += 1)}:`).h; } // React useId 대역 — 마운트마다 유일
 export function useRef(v) { return slot(() => ({ current: v })).h; }
 export function useMemo(f, deps) {
   const { h } = slot(() => ({ deps: undefined, v: undefined }));
@@ -39,7 +41,7 @@ export const Fragment = Symbol('Fragment');
 export const jsx = (type, props) => ({ type, props });
 export const jsxs = jsx;
 export const createElement = (type, props, ...children) => ({ type, props: { ...props, children } });
-export default { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, Fragment, createElement };
+export default { useId, useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, Fragment, createElement };
 
 /** 컴포넌트를 마운트한다. flush()는 예약된 다시 렌더·effect·마이크로태스크가 잦아들 때까지 돈다. */
 export function mount(Component, props = {}) {

@@ -155,3 +155,49 @@ test('회의실(room-main.json)의 변경도 같은 파일 잠금을 지킨다 �
   release(); await holder;
   assert.equal((await op).title, '새 이름');
 });
+
+// ── 위임 제한 스위치(#799)의 쓰기도 같은 파일 잠금 — 스위치는 스레드·방 파일 안의 한 필드라 앱의 토글과 CLI의 beginTurn/appendTurn이 같은 파일을 고친다.
+test('위임 제한 스위치 — 한 프로세스가 토글하는 동안 다른 프로세스가 턴을 쌓아도 한 줄도 사라지지 않는다', { timeout: 120_000 }, async () => {
+  const root = await seed();
+  await Promise.all([
+    runPair(root, `
+if (id === 'a') { for (let i = 0; i < N; i++) await m.thread.setDelegationLimit(WS, 'pepper', i % 2 === 1); await m.thread.setDelegationLimit(WS, 'pepper', false); }
+else { for (let i = 0; i < N; i++) { const turnId = await m.thread.beginTurn(WS, 'pepper', { userMsg: 'b' + i }); await m.thread.appendTurn(WS, 'pepper', { turnId, userMsg: 'b' + i, reply: 'r-b' + i }); } }`),
+  ]);
+  const t = readJson(join(root, WS, 'chats', 'pepper.json'));
+  assert.equal(t.messages.length, N * 2, `b가 쌓은 ${N}턴(지시+답)이 모두 남아야 한다 — 실제 ${t.messages.length}`);
+  assert.equal(t.delegationLimit, false, 'a의 마지막 토글도 남아야 한다(b의 재기록이 덮지 않는다)');
+  assert.deepEqual(lockDirs(join(root, WS, 'chats')), []);
+});
+
+test('위임 제한 스위치 쓰기도 동기화가 쥔 `<file>.lockd`가 풀릴 때까지 기다린다(스레드·회의실)', { timeout: 60_000 }, async () => {
+  process.env.ARGO_ROOT ??= await seed(); // 앞 테스트가 이미 모듈을 같은 루트로 불러왔으면 그 루트를 쓴다(경로는 모듈이 정한다)
+  const { setDelegationLimit } = await import('../src/thread.mjs');
+  const { setRoomDelegationLimit } = await import('../src/room.mjs');
+  const { withFileLock } = await import('../src/mutex.mjs');
+  const { paths } = await import('../src/workspace.mjs');
+  mkdirSync(paths(WS).chats, { recursive: true });
+  for (const [file, run] of [[join(paths(WS).chats, 'pepper.json'), () => setDelegationLimit(WS, 'pepper', false)], [join(paths(WS).chats, 'room-main.json'), () => setRoomDelegationLimit(WS, false)]]) {
+    let release; const held = new Promise((r) => { release = r; });
+    let entered; const inside = new Promise((r) => { entered = r; });
+    const holder = withFileLock(file, async () => { entered(); await held; });
+    await inside;
+    let done = false;
+    const op = run().then((v) => { done = true; return v; });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(done, false, `${file.split('/').pop()}: 다른 프로세스가 파일 잠금을 쥔 동안 스위치 쓰기가 끼어들면 안 된다`);
+    release(); await holder;
+    assert.deepEqual(await op, { limit: false });
+  }
+});
+
+// ── 재발 방지(정적): 대화·회의실 파일을 고치는 쓰기는 파일 잠금 래퍼(lockThread·lockRoom)만 쓴다. 맨 withLock(lockKey(…)) / withLock(rkey(…))은
+// 프로세스 안 순서만 맞추고 앱·CLI 프로세스 간 경쟁을 막지 못한다 — #799의 스위치 쓰기가 병합 때 정확히 이 모양으로 새로 들어왔다.
+test('정적 — thread.mjs·room.mjs는 withLock(lockKey( / withLock(rkey( 를 래퍼 정의 한 줄 밖에서 쓰지 않는다', () => {
+  for (const [name, re, wrapper] of [['thread.mjs', /withLock\(lockKey\(/g, 'const lockThread ='], ['room.mjs', /withLock\(rkey\(/g, 'const lockRoom =']]) {
+    const src = readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8');
+    const bad = src.split('\n').map((l, i) => [i + 1, l]).filter(([, l]) => (l.match(re) ?? []).length && !l.includes(wrapper)).map(([n, l]) => `${name}:${n} ${l.trim().slice(0, 90)}`);
+    assert.deepEqual(bad, [], `파일 잠금 없는 withLock이 있다 — lockThread/lockRoom을 쓰라:\n${bad.join('\n')}`);
+    assert.ok(src.includes(wrapper), `${name}: 래퍼 정의가 사라졌다`);
+  }
+});
