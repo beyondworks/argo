@@ -15,7 +15,7 @@ import { CC_MAX, sendCrewMail } from './crewmail.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
 import { loadPins, activePin } from './workroots.mjs';
 import { monthCost } from './billing.mjs'; // 반응 라운드 착수 전 예산 게이트(검수 MEDIUM-1)
-import { DELEGATION_LIMITS, limitsFor, isRelaxedStored, resetDelegationLimit } from './delegation-limits.mjs'; // 위임 제한 표 — 이어받기 인원·반응 라운드 상한(켜짐 3명·2라운드, 풀림 6명·4라운드)
+import { DELEGATION_LIMITS, limitsFor, isRelaxedStored, resetDelegationLimit, newTree } from './delegation-limits.mjs'; // 위임 제한 표 — 이어받기 인원·반응 라운드 상한(켜짐 3명·2라운드, 풀림 6명·4라운드)
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -215,7 +215,7 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   // resetAt — 크루 채팅의 '새 대화'와 같은 tombstone(검수 MEDIUM-2: 회의실도 isThread라 같은
   // union 병합을 타는데 각인이 없어, '회의 마치기'가 동기화로 되살아났다 — 실측 재현).
   // 산식은 src/reset-stamp.mjs(벽시계 미사용 — 시계 앞선 기기가 남의 메시지를 자르는 것 방지).
-  await saveRoom(wsId, { messages: [], ...resetStamp(room), ...resetDelegationLimit(room), sid: (room.sid ?? 0) + 1 });
+  await saveRoom(wsId, { messages: [], ...resetStamp(room), ...resetDelegationLimit(), sid: (room.sid ?? 0) + 1 });
   return { archived: true, journal: `journal/${journalName}` };
 }
 
@@ -230,7 +230,7 @@ export async function parkMeeting(wsId) {
     const room = await loadRoom(wsId);
     if (!room.messages?.length) return { parked: false };
     await archiveRoomFile(wsId, room, { open: true });
-    await saveRoom(wsId, { messages: [], ...resetStamp(room), ...resetDelegationLimit(room), sid: (room.sid ?? 0) + 1 });
+    await saveRoom(wsId, { messages: [], ...resetStamp(room), ...resetDelegationLimit(), sid: (room.sid ?? 0) + 1 });
     return { parked: true };
   });
 }
@@ -530,7 +530,8 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   });
   state.saved = true; // 여기서부터의 실패는 "안건은 저장됨" — 화면이 입력을 되돌리지 않게(runRoomTurn 주석)
 
-  const lim = limitsFor(relaxed, { room: true }); // 회의실 문맥 — 켜짐 3명·2라운드, 풀림 6명·4라운드(+ 발언 크루의 위임 상한은 chat이 같은 표로)
+  const lim = limitsFor(relaxed, { room: true });
+  const roomTree = lim.relaxed ? newTree({ kind: 'room' }) : null; // 이 회의 턴(사용자 메시지 하나)의 합계 예산 — 모든 발언자·모든 라운드가 같은 객체를 쓴다(위임 동료 턴·쪽지 배달 턴 합계 30) // 회의실 문맥 — 켜짐 3명·2라운드, 풀림 6명·4라운드(+ 발언 크루의 위임 상한은 chat이 같은 표로)
   const dir = parseRoomDirectives(text, agents, { relayMax: lim.relay });
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
   const en = lang === 'en';
@@ -743,7 +744,7 @@ ${transcript}${folderLine}
       // 반응 라운드는 첨부를 다시 보내지 않는다 — 1라운드 트랜스크립트에 `(첨부, Read로 열람: vault/…)` 경로가 이미 실려 있고,
       // 이미지를 또 임베드하면 이미지 토큰이 인원×2로 곱해진다(검수 MEDIUM-2 실측).
       const att = round >= 2 ? [] : attFor(i);
-      r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx, workFolder: folder, delegationRelaxed: lim.relaxed }); // 풀린 회의는 발언 크루의 위임 도구·안내문·위임받은 동료 턴까지 같은 상한을 쓴다
+      r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx, workFolder: folder, delegationRelaxed: lim.relaxed, delegationTree: roomTree }); // 풀린 회의는 발언 크루의 위임 도구·안내문·위임받은 동료 턴까지 같은 상한을 쓴다
     } finally {
       // emitNotify는 마이크로태스크로 핸들러를 돌린다 — 턴 종료 직후 한 틱 양보해야 마지막 위임을 놓치지 않는다
       await new Promise((res) => setTimeout(res, 0));

@@ -161,7 +161,10 @@ const WS_LEDGER_FILES = new Set([
    발화를 써 넣으면 결재 없는 동료 지시 주입 + 사장이 보는 이력 위조가 성립한다 — agents/와 같은
    계열이다(분리 검수 MEDIUM). 크루가 이 파일을 직접 만질 정당한 흐름은 없다(이력은 프롬프트로
    주입되고 파일은 thread.mjs가 서버측에서 관리한다). */
-const WS_CONTROL_DIRS = new Set(['agents', 'chats']);
+/* mail/도 같은 이유로 금고다. `mail/<slug>/*.json`은 쪽지 정본이고 스케줄러가 그대로 읽어 배달 턴을 만든다 — 그 안의 relaxed·tree·hop·chain은
+   위임 제한(풀림 여부·합계 예산·단계)을 정하는 값이라, 크루가 파일을 직접 써 넣으면 제한 없는 배달 턴이 성립한다(검수 2026-10-01 LOW-1).
+   크루가 쪽지를 보내는 정당한 길은 send_to_crew 도구뿐이다(crewmail.mjs가 서버측에서 적재). */
+const WS_CONTROL_DIRS = new Set(['agents', 'chats', 'mail']);
 
 /* 비교용 이름 정규화 — 파일시스템이 이름을 "손질해서" 같은 파일에 쓰는 경로를 막는다.
    ① Win32는 후행 점·공백을 잘라내므로 `capabilities.json.` / `capabilities.json `이 본체를 그대로

@@ -245,7 +245,7 @@ export async function resetThread(wsId, slug) {
     // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
     // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
     // resetAt = 비움 각인(tombstone) — 근거·산식은 src/reset-stamp.mjs에 있다(벽시계 미사용 이유 포함).
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t), ...resetDelegationLimit(t) }); // 새 대화 = 위임 제한 켜짐(기본값) — 이전이 풀림이었으면 명시적 true(동기화 병합에서 옛 꺼짐이 되살아나지 않게)
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t), ...resetDelegationLimit() }); // 새 대화 = 위임 제한 켜짐(기본값) — 이전이 풀림이었으면 명시적 true(동기화 병합에서 옛 꺼짐이 되살아나지 않게)
   });
 }
 

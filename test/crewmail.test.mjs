@@ -195,7 +195,7 @@ test('배선 — 스케줄러가 수신 크루 러너를 판정해 mailPrompt에
   // 판정 없이 mailPrompt(msg)만 부르면 CLI 러너 수신 크루가 없는 send_to_crew 지시를 받는다(검수 MEDIUM 2026-07-28)
   const s = read('src/scheduler.mjs');
   assert.match(s, /isCliTurn\(resolved\.runner, await runnerCredType\(cid, resolved\.runner\)\)/, '수신 러너 CLI 판정(자격 축)이 없다');
-  assert.match(s, /mailPrompt\(msg, 'ko', \{ hasTools \}\)/, 'mailPrompt에 hasTools 미전달');
+  assert.match(s, /mailPrompt\(msg, 'ko', \{ hasTools, relaxed \}\)/, 'mailPrompt에 hasTools 미전달');
 });
 
 test('send_to_crew and delegate share the eligible colleague gate for local and Messenger turns', async () => {

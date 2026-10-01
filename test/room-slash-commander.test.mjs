@@ -142,5 +142,5 @@ test('chat(): 회사 스킬 주입(loadSkills)은 source 분기 앞에서 1회 �
   assert.match(body, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\)/, 'SDK 경로');
   assert.match(body, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: cliTools/, 'CLI 경로'); // K94: 도구 여부는 크루 다리 유무
   const room = await load('../src/room.mjs');
-  assert.match(room, /r = await chat\(wsId, a\.slug, prompt, null, \{ source: 'room', attachments: att, mirrorCtx, workFolder: folder, delegationRelaxed: lim\.relaxed \}\);/, '회의실 발언 = 같은 chat() 진입점(회의 작업 폴더 #400 포함)');
+  assert.match(room, /r = await chat\(wsId, a\.slug, prompt, null, \{ source: 'room', attachments: att, mirrorCtx, workFolder: folder, delegationRelaxed: lim\.relaxed, delegationTree: roomTree \}\);/, '회의실 발언 = 같은 chat() 진입점(회의 작업 폴더 #400 포함)');
 });
