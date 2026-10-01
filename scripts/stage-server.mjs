@@ -7,6 +7,7 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { SHIM_SRC } from '../src/no-dock.mjs';
+import { stageCli } from './stage-cli.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,31 +63,12 @@ await import('./server-next.mjs');
   console.log(`[stage-server] SDK 네이티브 CLI 포함: ${native} (타르볼은 이 플랫폼 전용)`);
 }
 
-// 3.5) argo CLI — bin/argo.mjs + src 전체. standalone 추적은 **서버가 쓰는** 파일만 싣는다 — CLI 전용(src/cli 등)은 빠진다.
-//      src는 코드뿐이라(데이터·자격 없음) 통째로 싣고, 모듈 누락은 server-tarball-smoke의 CLI 실행이 잡는다.
+// 3.5) argo CLI — scripts/stage-cli.mjs(앱 사이드카와 같은 함수). standalone 추적은 서버가 쓰는 파일만 싣는다 — CLI 전용(src/cli 등)은 빠지고 패키지는 일부만 실린다.
+//      공개 Supabase 설정은 CLI 전용 이름으로만 받는다 — NEXT_PUBLIC_*로 넘기면 Next 빌드에 인라인돼 셀프호스트 웹이 인증 모드가 된다.
 {
-  cpSync(join(ROOT, 'src'), join(tree, 'src'), { recursive: true });
-  mkdirSync(join(tree, 'bin'), { recursive: true });
-  cpSync(join(ROOT, 'bin', 'argo.mjs'), join(tree, 'bin', 'argo.mjs'));
-  if (!existsSync(join(tree, 'instrumentation-node.mjs'))) cpSync(join(ROOT, 'instrumentation-node.mjs'), join(tree, 'instrumentation-node.mjs'));
-  // CLI가 bare import하는 패키지 — Next는 서버가 쓰는 라이브러리를 청크에 번들해 standalone node_modules에 없을 수 있다
-  // (실측: 스모크에서 @supabase/supabase-js를 못 찾았다). 루트 목록의 의존성 폐포(dependencies·optional·peer 중 설치된 것)를 복사한다.
-  // 목록은 `src`·`bin`의 bare import 전수(2026-09-30) — 새 패키지를 import하면 여기에 더한다(스모크의 CLI 턴이 누락을 잡는다).
-  const CLI_DEPS = ['@supabase/supabase-js', '@modelcontextprotocol/sdk', 'zod', 'yaml', 'smol-toml', 'json5'];
-  const seen = new Set(); const queue = [...CLI_DEPS];
-  while (queue.length) {
-    const name = queue.shift(); if (seen.has(name)) continue; seen.add(name);
-    const src = join(ROOT, 'node_modules', name); if (!existsSync(join(src, 'package.json'))) continue; // 선택 의존성이 설치 안 된 경우
-    const dest = join(tree, 'node_modules', name);
-    if (!existsSync(join(dest, 'package.json'))) { mkdirSync(dirname(dest), { recursive: true }); cpSync(src, dest, { recursive: true, dereference: true }); }
-    const pkg = JSON.parse(readFileSync(join(src, 'package.json'), 'utf8'));
-    queue.push(...Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies, ...pkg.peerDependencies }));
-  }
-  console.log(`[stage-server] argo CLI 의존성 ${seen.size}개 확인`);
-  // 공개 Supabase 설정(URL·anon 키) — CLI 전용 이름으로만 받는다. NEXT_PUBLIC_*로 넘기면 Next 빌드에 인라인돼 셀프호스트 웹이 인증 모드가 된다.
-  const url = process.env.ARGO_CLI_SUPABASE_URL?.trim(); const anonKey = process.env.ARGO_CLI_SUPABASE_ANON_KEY?.trim();
-  if (url && anonKey) { writeFileSync(join(tree, 'bin', 'argo-public.json'), `${JSON.stringify({ url, anonKey })}\n`); console.log('[stage-server] argo CLI 공개 설정 포함(계정 모드 가능)'); }
-  else console.log('[stage-server] argo CLI 공개 설정 없음 — 이 배포본의 CLI는 로컬 모드만 가능');
+  const r = stageCli({ root: ROOT, tree, env: process.env, publicEnv: ['ARGO_CLI_SUPABASE_URL', 'ARGO_CLI_SUPABASE_ANON_KEY'] });
+  console.log(`[stage-server] argo CLI 의존성 ${r.deps}개 확인`);
+  console.log(r.publicConfig ? '[stage-server] argo CLI 공개 설정 포함(계정 모드 가능)' : '[stage-server] argo CLI 공개 설정 없음 — 이 배포본의 CLI는 로컬 모드만 가능');
 }
 
 // 4) 시크릿·개발자 데이터 제거 + 유출 가드(stage-sidecar 3.5와 동일 — 배포 차단이 최우선)
