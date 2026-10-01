@@ -4,10 +4,24 @@
 // Supabase는 공개 설정(URL·anon 키)만 읽는다 — 서비스 키 등 비밀값은 읽지도 넣지도 않는다(CLI는 사용자 기기 세션으로만 동작).
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 export const cliHome = (env = process.env) => env.ARGO_CLI_HOME || join(homedir(), '.argo');
+/** 계정 모드 데이터 — 같은 맥의 상주·앱과 따로(기기 세션 단일 소유). */
+export const accountRoot = (env = process.env) => join(cliHome(env), 'cli-workspaces');
+/** 로컬 모드 데이터 = 이 컴퓨터의 Argo 앱 데이터 폴더(Tauri app_local_data_dir/workspaces, 식별자 com.beyondworks.argo).
+    로그인 세션이 없으니 폴더를 같이 써도 세션 이중 회전 문제가 없고, 앱에서 로컬로 만든 회사·크루·일지가 그대로 보인다.
+    리눅스는 데스크톱 앱을 배포하지 않아 이 폴더를 쓰는 앱이 없다 — CLI 전용 저장소다(`--local` 웹 서버는 ~/.argo-selfhost/data를 쓴다). */
+export function appDataRoot({ env = process.env, platform = process.platform, home = env.HOME || homedir() } = {}) {
+  const id = 'com.beyondworks.argo';
+  if (platform === 'darwin') return join(home, 'Library', 'Application Support', id, 'workspaces');
+  if (platform === 'win32') return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), id, 'workspaces');
+  return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), id, 'workspaces');
+}
+/** 모드 — cli.json의 선택. 없으면: 계정 폴더에 기기 세션이 있으면 계정(선택 도입 전 사용자), 아니면 미정(처음 실행에서 묻는다). */
+export const cliMode = (cfg = {}, env = process.env) => cfg.mode === 'local' || cfg.mode === 'account' ? cfg.mode
+  : [env.ARGO_ROOT, accountRoot(env)].some((r) => r && existsSync(join(r, '.device-session.json'))) ? 'account' : null; // 지정 폴더(ARGO_ROOT)에 로그인이 있어도 계정
 export const configFile = (env = process.env) => join(cliHome(env), 'cli.json');
 
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; } };
@@ -38,7 +52,7 @@ export function applyCliEnv({ repoRoot, env = process.env, platform = process.pl
   const cfg = readConfig(env);
   // 기본 폴더는 상주·앱(~/.argo/workspaces)과 따로 — 같은 기기 세션 파일을 두 프로세스가 회전하면 GoTrue가 세션 가족째 폐기한다.
   // 같은 회사·기억은 클라우드 동기화로 공유한다.
-  if (!env.ARGO_ROOT) env.ARGO_ROOT = cfg.root || join(cliHome(env), 'cli-workspaces');
+  if (!env.ARGO_ROOT) env.ARGO_ROOT = cfg.root || (cliMode(cfg, env) === 'local' ? appDataRoot({ env, platform }) : accountRoot(env));
   // 공개 설정 우선순위: 환경변수 > cli.json > 배포물에 구운 argo-public.json > 레포 .env.local(개발)
   if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     const src = [cfg.supabase, readJson(join(repoRoot, 'bin', 'argo-public.json')), publicSupabaseFromDotenv(join(repoRoot, '.env.local'))]

@@ -21,6 +21,8 @@ function stage(kind, { esm = true, type = 'module' } = {}) {
   put(join(root, 'public/asset.txt'), 'public fixture');
   put(join(root, 'node_modules/@anthropic-ai/claude-agent-sdk-fixture/cli'), 'fixture');
   put(join(root, 'docs/selfhost.md'), 'public installation guide');
+  // argo CLI(서버 타르볼 3.5) — 실제 저장소처럼 src·bin·instrumentation-node가 있다
+  put(join(root, 'src/cli/env.mjs'), 'export {};'); put(join(root, 'bin/argo.mjs'), '// cli fixture'); put(join(root, 'instrumentation-node.mjs'), 'export {};');
   put(join(root, '.next/standalone/docs/internal.md'), 'internal fixture');
   const commands = [];
   const source = fs.readFileSync(new URL(`../scripts/stage-${kind}.mjs`, import.meta.url), 'utf8')
@@ -84,6 +86,7 @@ for (const kind of ['server', 'sidecar']) {
     assert.equal(fs.existsSync(join(result.tree, 'node_modules/@anthropic-ai/claude-agent-sdk-fixture/cli')), true);
     assert.equal(fs.existsSync(join(result.tree, 'docs/internal.md')), false);
     assert.equal(fs.existsSync(join(result.tree, 'docs/selfhost.md')), kind === 'server');
+    assert.equal(fs.existsSync(join(result.tree, 'bin/argo.mjs')) && fs.existsSync(join(result.tree, 'src/cli/env.mjs')), kind === 'server', '서버 타르볼에만 argo CLI가 실린다');
     assert.deepEqual(result.commands.map(command => command[0]), [kind === 'server' ? 'tar' : 'rustc']);
   });
 
