@@ -2102,6 +2102,28 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-setrow.danger { color: var(--danger); }
   .msgr-phone .ph-setic { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--bg); color: var(--fg-2); flex: none; }
   .msgr-phone .ph-setrow.danger .ph-setic { color: var(--danger); }
+  .msgr-phone .ph-setlist, .msgr-phone .ph-setsec, .msgr-phone .ph-setgroup { grid-template-columns: minmax(0, 1fr); min-width: 0; } /* 긴 이메일·이름이 묶음 폭을 밀지 않게 */
+  .msgr-phone :is(.ph-setme, .ph-setrow) .ph-kbody > * { min-width: 0; max-width: 100%; }
+  .msgr-phone .ph-setme .snip { display: block; }
+  .msgr-phone .ph-setsec { display: grid; gap: 6px; scroll-margin-top: 8px; }
+  .msgr-phone .ph-setgh { margin: 0; padding: 0 4px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+  .msgr-phone .ph-setnote { margin: 0; padding: 12px 14px; font-size: 13.5px; line-height: 1.5; color: var(--fg-2); }
+  .msgr-phone .ph-setrow .ph-kbody { flex: 1 1 auto; min-width: 0; gap: 1px; }
+  .msgr-phone .ph-setrow .ph-kbody .snip { font-size: 12.5px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .msgr-phone .ph-setrow.static { cursor: default; flex-wrap: wrap; row-gap: 6px; padding-block: 8px; }
+  .msgr-phone .ph-setrow.static:active { background: none; }
+  .msgr-phone .ph-setseg { margin-left: auto; padding: 2px; }
+  .msgr-phone .ph-setseg button { min-height: 36px; height: 36px; padding: 0 14px; font-size: 13.5px; }
+  .msgr-phone .ph-rolepill { display: inline-flex; align-items: center; min-height: 26px; padding: 0 10px; border-radius: 999px; background: var(--fg); color: var(--bg); font-size: 12.5px; font-weight: 700; }
+  .msgr-phone .ph-deptrow { flex-wrap: wrap; }
+  .msgr-phone .ph-deptrow .msgr-profile { display: flex; gap: 8px; flex: 1 1 100%; }
+  .msgr-phone .ph-deptrow .msgr-profile .msgr-input { flex: 1 1 0; min-width: 0; min-height: 44px; font-size: 16px; }
+  .msgr-phone .ph-memtoggles { display: grid; }
+  .msgr-phone .ph-memtoggle { display: flex; align-items: center; gap: 10px; min-height: 48px; border-top: 1px solid var(--border-soft); }
+  .msgr-phone .ph-memtoggle .name { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-memtoggle input { width: 20px; height: 20px; min-width: 20px; }
+  .msgr-phone .ph-memtoggle.ro .name { color: var(--fg-2); }
+  .msgr-phone .ph-locknote { display: flex; align-items: center; gap: 6px; }
   .msgr-phone .ph-audit .day { display: grid; gap: 2px; margin-top: 6px; }
   .msgr-phone .ph-audit .row { align-items: baseline; gap: 8px; }
   .msgr-phone .ph-audit .row .text { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 1.45; }

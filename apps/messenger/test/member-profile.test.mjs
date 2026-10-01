@@ -14,7 +14,8 @@ test('한 컴포넌트가 정한다 — 남은 글자, 나만 입력칸, 저장�
 });
 
 test('관리자·비관리자 멤버 탭 모두 같은 컴포넌트(재검수 #699 H1 — 비관리자 갈래엔 칸이 없었다)', () => {
-  assert.equal(src.match(/<MemberProfile /g)?.length, 2, 'OrgCard 멤버 행 + MemberListCard');
+  assert.equal(src.match(/<MemberProfile /g)?.length, 3, 'OrgCard 멤버 행 + MemberListCard + 폰 조직 프로필(OrgProfileCard) — 모두 같은 컴포넌트(본인만 칸, 남은 글자)');
+  assert.match(src, /<MemberProfile org=\{org\} m=\{\{ user_id: uid \}\} uid=\{uid\}/, '폰 조직 프로필은 내 칸만');
   assert.match(src, /: <MemberListCard org=\{org\}/, '비관리자 갈래');
   assert.doesNotMatch(src, /orgAdmin && profiles/);
 });
