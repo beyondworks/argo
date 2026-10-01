@@ -44,7 +44,7 @@ test('봇 = 개인 등급(클라이언트 crewTier, 2026-09-24 — Argo 에이�
 test('카드: 생성·회전은 RPC(토큰은 응답에서 setup 상태로만) · 설정 두 줄 = URL+토큰 · 해제는 인라인 확인 · 표는 폐기 제외', () => {
   const card = app.slice(app.indexOf('// ── 부록 N: 외부 에이전트'), app.indexOf("if (part === 'node') return ("));
   assert.match(card, /supabase\.rpc\('msgr_bot_create', \{ org: org\.id, kind, name, external_id: extId \?\? null \}\)/, '봇에 원본 에이전트 id');
-  assert.match(card, /const cur = findReusableBot\(bots, \{ kind, uid, name, extId \}\);\n\s*if \(cur\) \{ const r = await supabase\.rpc\('msgr_bot_rotate'/, '다시 쓸 봇이 있으면 회전(중복 없음) — 찾는 규칙은 bot-reuse.mjs(external_id가 같거나, 없으면 같은 기본 이름의 수동 봇)');
+  assert.match(card, /const cur = findReusableBot\(bots, \{ kind, uid, extId, names: reuseNames \}\);\n\s*if \(cur\) \{ const r = await supabase\.rpc\('msgr_bot_rotate'/, '다시 쓸 봇이 있으면 회전(중복 없음) — 찾는 규칙은 bot-reuse.mjs(external_id가 같거나, 없으면 같은 기본 이름의 수동 봇)');
   assert.match(card, /await invoke\('agent_list', \{ kind \}\)/, '이 컴퓨터의 에이전트 전원 읽기');
   assert.match(card, /for \(const a of agents\) made\.push\(\{ \.\.\.\(await mkOrRotate\(kind, a\.name, externalAgentId\(installation, uid, kind, a\.id\)\)\)/, '에이전트마다 봇, 이름 = 에이전트 이름(종류 라벨 하드코딩 아님)');
   assert.match(card, /const \[remoteAgentName, setRemoteAgentName\] = useState\(''\)/, '다른 컴퓨터 에이전트는 표시 이름을 별도로 받는다');
@@ -137,7 +137,7 @@ test('external IDs cannot auto-adopt another owner, installation, or legacy agen
   assert.throws(() => id(null, 'owner', 'hermes', 'default'));
   const reuse = read('apps/messenger/src/bot-reuse.mjs'); // 봇 찾기 규칙은 bot-reuse.mjs 한 곳(UX 점검 D) — 행동은 apps/messenger/test/bot-reuse.test.mjs가 잠근다
   assert.match(reuse, /b\.created_by === uid/);
-  assert.match(reuse, /extId \? b\.external_id === extId :/);
+  assert.match(reuse, /if \(extId\) return mine\.find\(\(b\) => b\.external_id === extId\)/);
   assert.match(app, /externalAgentId\(l\.installationId, uid, kind, a\.id\) === bot\.external_id/);
   assert.doesNotMatch(app, /external_id\.split/);
 });

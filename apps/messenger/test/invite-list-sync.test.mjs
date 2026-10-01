@@ -46,13 +46,26 @@ test('삭제 요청이 실패하면(링크가 남는다) 그래도 읽어 남은
   assert.deepEqual(log, ['read']);
 });
 
-test('닫는 도중 끝난 만들기 요청 — 창이 그 링크를 곧바로 버려도, 버리기가 끝난 뒤 다시 한 번 읽는다', () => {
+test('닫는 도중 끝난 만들기 요청 — 창의 버리기가 먼저 시작되고 만들기 끝(+1)은 한 박자 늦게 오면, 읽지 않는다(검수 #797 LOW-1: 같은 링크를 두 번 읽던 것)', () => {
   const { s, log } = make(); s.opened();
   s.start();                        // 만들기 요청이 가는 중에
   s.closed();                       // 사용자가 닫음(요청이 남아 있어 아직 안 읽음)
-  assert.deepEqual(log, []);
-  s.finish(+1); assert.deepEqual(log, ['read']); // 만들기 끝 — 목록에 그 링크가 보임
-  discard(s); assert.deepEqual(log, ['read', 'read']); // 늦게 도착한 링크를 창이 버림 → 목록에서 빠지도록 한 번 더
+  s.start();                        // 응답이 오자 창이 보여 준 적 없는 링크를 바로 버림(버리기 시작)
+  s.finish(+1);                     // 만들기 끝 — 앱이 이 호출을 setTimeout으로 미뤄 버리기 시작 뒤에 부른다
+  assert.deepEqual(log, [], '버리기가 진행 중이라 읽지 않는다');
+  s.finish(-1); assert.deepEqual(log, [], '만들기+버리기 = 순변화 0 — 읽을 이유가 없다');
+});
+
+test('같은 일이 반대 순서(만들기 끝이 먼저)로 오면 읽기가 두 번이었다 — 그래서 앱이 만들기 끝을 미룬다', () => {
+  const { s, log } = make(); s.opened();
+  s.start(); s.closed();
+  s.finish(+1); assert.deepEqual(log, ['read']);   // 버리기 시작 전에 끝나면 곧 지워질 링크를 읽는다
+  s.start(); s.finish(-1); assert.deepEqual(log, ['read', 'read']);
+});
+
+test('닫힌 뒤 도착한 링크를 창이 버리지 않으면(남는다) 한 번 읽어 목록에 보인다', () => {
+  const { s, log } = make(); s.opened(); s.start(); s.closed(); s.finish(+1);
+  assert.deepEqual(log, ['read']);
 });
 
 test('다음 창은 새로 센다', () => {
@@ -67,7 +80,7 @@ test('다음 창은 새로 센다', () => {
 test('앱: 만들기(+1)·버리기(-1)를 start/finish로 감싸고, 창이 열리고 사라진 뒤(효과) opened/closed를 부르며, 멤버 카드는 신호가 바뀔 때만(마운트 직후 제외) 다시 읽는다', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /const inviteSync = useRef\(null\); if \(!inviteSync\.current\) inviteSync\.current = inviteListSync\(\(\) => setInvitesTick\(\(n\) => n \+ 1\)\);/);
-  assert.match(app, /const createInviteCode = async \(opts\) => \{ inviteSync\.current\.start\(\); let made = 0; try \{ const r = await createInvite\(supabase, \{ orgId, uid, \.\.\.opts \}\); made = 1; return r; \} finally \{ inviteSync\.current\.finish\(made\); \} \};/);
+  assert.match(app, /const createInviteCode = async \(opts\) => \{ inviteSync\.current\.start\(\); let made = 0; try \{ const r = await createInvite\(supabase, \{ orgId, uid, \.\.\.opts \}\); made = 1; return r; \} finally \{ setTimeout\(\(\) => inviteSync\.current\.finish\(made\), 0\); \} \};/, '만들기 끝은 한 박자 늦게 — 창이 늦은 링크를 버리는 start가 먼저 잡힌다');
   assert.match(app, /discard=\{async \(id\) => \{ inviteSync\.current\.start\(\); let gone = 0; try \{ const r = await discardInvite\(supabase, id\); gone = r \? -1 : 0; return r; \} finally \{ inviteSync\.current\.finish\(gone\); \} \}\}/);
   assert.match(app, /useEffect\(\(\) => \{ if \(inviteFor\) inviteSync\.current\.opened\(\); else inviteSync\.current\.closed\(\); \}, \[inviteFor\]\);/, '창 언마운트 정리(버리기 start)가 끝난 같은 커밋의 효과에서 closed');
   assert.doesNotMatch(app, /onClose=\{\(\) => \{ setInviteFor\(null\); inviteSync/, '닫기 핸들러에서 곧바로 읽지 않는다(버리기가 아직 시작도 안 했다)');
