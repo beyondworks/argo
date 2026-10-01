@@ -48,26 +48,42 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
     if (disposed || state.busy) return false;
     patch({ busy: true, uploading: '', job: { ...job, error: '', errorKey: '' } });
     try {
-      job.messageId ??= await transport.message(job);
+      // 첨부만 보내는 글(본문 없음)은 파일이 전부 올라간 뒤에 글을 올린다 — 먼저 올리면 업로드가 실패했을 때 글자 없는 빈 말풍선이
+      // 모두에게 남고 새로고침해도 사라지지 않았다(점검 A·B #4). 본문이 있는 글은 종전대로 글 먼저(글은 바로 보이고 첨부가 뒤따른다).
+      const uploadFirst = !job.body;
+      if (!uploadFirst) job.messageId ??= await transport.message(job);
       if (disposed) return false;
-      for (const item of job.files) {
-        if (disposed) return false;
-        if (item.done) continue;
+      const settle = async (item) => { // 올리고(안 올렸으면) → 글이 있으면 첨부 행
         patch({ uploading: item.file.name });
         try {
           if (!item.uploaded) {
             await transport.upload(job, item);
             item.uploaded = true;
           }
-          if (disposed) return false;
-          await transport.attachment(job, item);
-          item.done = true;
+          if (disposed) return;
+          if (job.messageId != null) {
+            await transport.attachment(job, item);
+            item.done = true;
+          }
           item.error = '';
         } catch (error) { item.error = error.message; }
+      };
+      for (const item of job.files) {
+        if (disposed) return false;
+        if (!item.done) await settle(item);
+      }
+      if (disposed) return false;
+      if (uploadFirst && job.messageId == null && job.files.every((item) => item.uploaded)) {
+        job.messageId = await transport.message(job);
+        if (disposed) return false;
+        for (const item of job.files) {
+          if (disposed) return false;
+          if (!item.done) await settle(item);
+        }
       }
       const failed = job.files.filter((item) => !item.done);
       if (failed.length) {
-        patch({ job: { ...job, error: failed.map((item) => `${item.file.name}: ${item.error}`).join('\n') } });
+        patch({ job: { ...job, error: failed.filter((item) => item.error).map((item) => `${item.file.name}: ${item.error}`).join('\n') } });
         return false;
       }
       patch({ job: null, lastDeliveredId: job.messageId });
@@ -102,7 +118,8 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
 // Stable IDs cover ambiguous network failures: a committed message/attachment is looked up, never
 // posted again with a fresh ID. Storage paths also stay fixed when only metadata needs a retry.
 export function composerTransport(client, { orgId, chId, uid }) {
-  const pathFor = (job, item) => `${orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`;
+  // 3번째 칸은 글 번호가 아니라 이 전송의 고정 ID(clientId) — 첨부만 보내는 글은 글이 생기기 전에 파일부터 올린다. 버킷 정책은 1·2번째 칸(조직·채널)만 본다
+  const pathFor = (job, item) => `${orgId}/${chId}/${job.clientId}/${item.id}-${item.key}`;
   return {
     async message(job) {
       const insert = () => client.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid,
