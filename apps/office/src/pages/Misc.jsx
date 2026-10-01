@@ -5,20 +5,14 @@ import { showToast } from '../ui/Overlay.jsx';
 import { t, ago, useLang, getLang, setLang, registerDict } from '../core/i18n.js';
 import { CUSTOM_DICT } from './custom-i18n.js';
 import { FONTS, COLORS, RADIUS_MAX, ALPHA_MAX, EMPTY, readCustom, saveCustom, refreshCustom, isEmpty } from '../core/custom-theme.js';
-import { FAMILIES, MODES, SHELLS, applyTheme, applyShell, readTheme, readShell, familyOf, modeOf } from '../core/theme.js';
+import { MODES, SHELLS, applyTheme, applyShell, readTheme, readShell, familyOf, modeOf } from '../core/theme.js';
 import { useStore, restorePage, resetDraft } from '../core/store.js';
 import { Link } from '../core/router.jsx';
 import { baseOf, mod } from '../core/commands.js';
 import { SPACES, ME, getMode, signOut } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
 import { DocView } from '../ui/DocView.jsx';
-
-// 색상 견본 — [바탕, 사이드바, 강조] 라이트 값(정본은 tokens.css·themes.css). 표시용이라 다크 값은 두지 않는다.
-const SWATCH = {
-  linen: ['#e9e6df', '#1f1e1b', '#e8e400'], graphite: ['#fafafa', '#f0f0f0', '#1a1a1a'], cream: ['#fbf3e5', '#111111', '#f4b8dc'],
-  sand: ['#e2dac7', '#f1f0ee', '#c62d26'], peach: ['#ede0d7', '#ffffff', '#f97723'], mist: ['#d0d1cc', '#f2f2ef', '#6f4fd6'],
-  glow: ['linear-gradient(135deg, #f2c3b1, #f2e5b0)', '#fff9f1', '#c8a4ee'],
-};
+import { SWATCH, COLOR_GROUPS } from './theme-picks.js';
 
 /** 셸 견본 — 지금 고른 색으로 그린 작은 창. 모양만 셸마다 다르다 */
 function ShellMini({ shell }) {
@@ -82,9 +76,13 @@ export function Settings() {
               <button key={sh} type="button" role="radio" aria-checked={shell === sh} className={`shell-opt${shell === sh ? ' on' : ''}`} onClick={() => pickShell(sh)}>
                 <ShellMini shell={sh} /><span>{t(`shell.${sh}`)}</span></button>))}</div></div>
           <div className="theme-row"><span className="label">{t('settings.color')}</span>
-            <div className="color-picks" role="radiogroup" aria-label={t('settings.color')}>{FAMILIES.map((f) => (
-              <button key={f} type="button" role="radio" aria-checked={family === f} aria-label={t(`color.${f}`)} title={t(`color.${f}`)} className={`swatch${family === f ? ' on' : ''}`} onClick={() => pick(f + mode)}
-                style={{ '--sw-a': SWATCH[f][0], '--sw-b': SWATCH[f][1], '--sw-c': SWATCH[f][2] }}><i /></button>))}</div>
+            <div className="color-groups" role="radiogroup" aria-label={t('settings.color')}>{COLOR_GROUPS.map(([g, fams]) => (
+              <div key={g} className="color-group" role="group" aria-label={t(`colorgroup.${g}`)}>
+                <span className="color-group-name" aria-hidden="true">{t(`colorgroup.${g}`)}</span>
+                <div className="color-picks">{fams.map((f) => (
+                  <button key={f} type="button" role="radio" aria-checked={family === f} aria-label={t(`color.${f}`)} title={t(`color.${f}`)} className={`swatch${family === f ? ' on' : ''}`} onClick={() => pick(f + mode)}
+                    style={{ '--sw-a': SWATCH[f][0], '--sw-b': SWATCH[f][1], '--sw-c': SWATCH[f][2] }}><i /></button>))}</div>
+              </div>))}</div>
             <span className="dim small">{t(`color.${family}`)}</span></div>
         </div>
         <CustomTheme key={dark ? 'dark' : 'light'} dark={dark} />
