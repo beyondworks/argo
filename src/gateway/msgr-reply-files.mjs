@@ -18,7 +18,7 @@
 // 코드 블록·인라인 코드 안은 손대지 않는다(예시 코드를 망가뜨리지 않게).
 import { open, realpath, stat } from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { paths, WS_ROOT } from '../workspace.mjs';
@@ -59,7 +59,7 @@ function localTarget(dest, vault) {
   if (d.startsWith('<') && d.endsWith('>')) d = d.slice(1, -1).trim();
   if (!d) return null;
   if (/^file:/i.test(d)) { try { return fileURLToPath(d); } catch { return null; } }
-  if (/^[A-Za-z]:[\\/]/.test(d)) return isAbsolute(d) ? d : null; // 윈도우 드라이브 경로 — 이 OS에서 절대 경로일 때만
+  if (DRIVE.test(d)) return d; // 윈도우 드라이브 경로 — 어느 OS에서든 로컬 경로(MEDIUM-4). 윈도우가 아니면 judge가 풀지 않고 '밖'으로 본다
   if (/^[a-z][a-z0-9+.-]*:/i.test(d) || d.startsWith('#')) return null; // https:·mailto:·앵커
   d = safeDecode(d);
   if (d === '~' || d.startsWith('~/')) return join(homedir(), d.slice(1));
@@ -69,10 +69,21 @@ function localTarget(dest, vault) {
 }
 
 // 구역 밖 절대 경로 중 지우는 자리 — 홈·작업 루트·임시 폴더 아래(사용자 이름·폴더 구조가 드러나는 자리). macOS·윈도우는 대소문자를 무시한다(/users/X도 홈).
+const DRIVE = /^[A-Za-z]:[\\/]/;
 const FOLD = process.platform === 'darwin' || process.platform === 'win32' ? (p) => p.toLowerCase() : (p) => p;
 const PRIVATE_ROOTS = [...new Set([homedir(), WS_ROOT, tmpdir(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].filter(Boolean).map((r) => FOLD(resolve(r))))];
 const within = (p, root) => { const rel = relative(root, p); return rel === '' || (!!rel && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
-const privatePath = (abs) => PRIVATE_ROOTS.some((r) => within(FOLD(resolve(abs)), r));
+// 첫 칸이 이 목록이면 로컬 위치(외장 볼륨·공유 사용자 폴더·리눅스 홈·마운트·/opt 등) — 고객사 폴더 이름이 드러나는 자리(통합본 재검수 MEDIUM-4).
+// 첫 칸이 정확히 같을 때만(`/optional`·`/homepage` 같은 웹 경로는 아님). 드라이브 문자 경로(C:\·D:/)도 항상 로컬.
+const LOCAL_FIRST = new Set(['Volumes', 'Users', 'home', 'mnt', 'media', 'opt', 'private'].map(FOLD));
+const privatePath = (abs) => {
+  if (DRIVE.test(abs)) return true;
+  const p = FOLD(resolve(abs));
+  const segs = p.split(sep).filter(Boolean);
+  if (segs.length && LOCAL_FIRST.has(segs[0])) return true;
+  if (segs[0] === FOLD('var') && segs[1] === 'folders') return true;
+  return PRIVATE_ROOTS.some((r) => within(p, r));
+};
 
 /** 존재하는 가장 가까운 부모 폴더의 realpath가 첨부 구역(루트 포함) 안인가. */
 async function parentInZone(abs, roots) {
@@ -120,17 +131,22 @@ const reasonText = (kind, lang, max = REPLY_FILES_MAX) => ({
     풀지 못한 경로(없는 파일)는 글자 그대로 구역 안이면 '없음', 구역 밖이면 후보가 아니다 — `/login`·`/api/v1/users` 같은 웹 경로 링크를
     로컬 파일로 보고 본문에서 지우고 '작업 폴더 밖' 안내를 붙이던 것(분리 검수 L-2). 있는 구역 밖 파일은 그대로 '밖'으로 막는다. */
 async function judge(abs, roots, literals) {
-  const shown = basename(abs) || 'file';
+  const foreignDrive = DRIVE.test(abs) && process.platform !== 'win32'; // 이 OS에서는 풀 수 없는 드라이브 문자 경로
+  const shown = (foreignDrive ? win32.basename(abs) : basename(abs)) || 'file'; // 안내에는 마지막 이름만(폴더 이름이 드러나지 않게)
   // 경로 중간 조각은 realpath 기준 구역 상대 경로로 본다 — 실제 루트가 ~/.argo/workspaces라 절대 경로 전체의 숨김 조각을 보면 정상 파일까지 막힌다.
   // realpath는 파일 내용을 읽지 않는다(.env가 구역 안 다른 파일을 가리키는 심링크여도 아래 이름 판정으로 거부).
   let real = null; let gone = false;
-  try { real = await realpath(abs); } catch (e) { gone = e?.code === 'ENOENT' || e?.code === 'ENOTDIR'; }
+  // 윈도우가 아닌 OS의 드라이브 문자 경로는 풀지 않는다 — 상대 경로로 풀려 작업 폴더의 엉뚱한 파일을 가리킬 수 있다
+  if (!foreignDrive) {
+    try { real = await realpath(abs); } catch (e) { gone = e?.code === 'ENOENT' || e?.code === 'ENOTDIR'; }
+  }
   if (!real || !zoneRel(real, roots)) {
     // 글자 그대로 구역 안인데 없는 파일은 '없음' — 단, 존재하는 가장 가까운 부모의 realpath도 구역 안일 때만(F-2: 구역 안 심링크 폴더를 거쳐
     // 밖을 가리키면 있는 파일은 '밖', 없는 파일은 '없음'으로 갈려 존재 여부가 드러났다).
-    const lexical = zoneRel(resolve(abs), [...literals, ...roots]);
+    const lexical = foreignDrive ? null : zoneRel(resolve(abs), [...literals, ...roots]);
     if (!real && gone && lexical && await parentInZone(resolve(abs), roots)) return { ok: false, name: shown, kind: 'missing' };
-    // 그 밖(없음·밖·권한 오류)은 존재와 무관하게 위치로만 가른다 — 구역 글자·홈·작업 루트·임시 폴더 아래면 지우고 안내 하나, 아니면 그대로(N-5·F-3)
+    // 그 밖(없음·밖·권한 오류)은 존재와 무관하게 위치로만 가른다 — 구역 글자·홈·작업 루트·임시 폴더·로컬 위치 첫 칸·드라이브 문자 아래면
+    // 지우고 안내 하나, 아니면(웹 경로) 그대로(N-5·F-3·MEDIUM-4)
     if (!lexical && !privatePath(abs)) return { skip: true };
     return { ok: false, name: shown, kind: secretName(shown) ? 'secret' : 'outside' }; // 이름 판정은 존재와 무관(쓴 이름만 본다)
   }

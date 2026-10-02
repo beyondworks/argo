@@ -342,8 +342,10 @@ test('N-5: 구역 밖 경로는 있는 파일과 없는 파일의 결과가 같�
     [homedir(), join(homedir(), 'nobody-xyz-argo', 'Desktop', 'plan')],              // 홈 아래(확장자 없음)
     ['/usr', '/usrx-argo-nope'],                                                     // 홈·임시 밖 → 둘 다 손대지 않는다
     ['/etc/hosts', '/etc/argo-nope-hosts.pdf'],                                      // 홈·임시 밖은 확장자가 있어도 손대지 않는다(F-3)
+    ['/Volumes', '/Volumes/argo-nope-vol/계약서.pdf'],                                  // 로컬 위치 첫 칸(MEDIUM-4) — 둘 다 지운다
+    ['/Users/Shared', '/Users/Shared/argo-nope/draft.png'],
   ];
-  const shape = (r) => ({ body: r.body.replace(/\S*(nope|exists|nobody|usr|report|hosts)\S*/g, 'X'), files: r.files.length, fails: r.fails.map((f) => f.reason) });
+  const shape = (r) => ({ body: r.body.replace(/\S*(nope|exists|nobody|usr|report|hosts|Volumes|Shared)\S*/g, 'X'), files: r.files.length, fails: r.fails.map((f) => f.reason) });
   for (const [there, absent] of pairs) {
     const a = await planReplyFiles(WS, `[링크](${there})`);
     const b = await planReplyFiles(WS, `[링크](${absent})`);
@@ -398,6 +400,30 @@ test('F-2: 구역 안 심링크 폴더를 거친 경로는 있든 없든 같은 
   assert.match(deeper.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
   const real = await planReplyFiles(WS, `[a](${join(PROJ, 'nope.pdf')}) [b](${join(p.vault, 'projects', 'no-such-dir', 'x.pdf')})`);
   assert.deepEqual(real.fails.map((f) => f.reason), ['파일이 없습니다', '파일이 없습니다'], '구역 안 진짜 폴더(없는 하위 폴더 포함)는 그대로 "없음"');
+});
+
+// 통합본 재검수 MEDIUM-4: 홈·작업 루트 밖이라도 로컬 위치(외장 볼륨·공유 사용자 폴더·/opt 등)나 드라이브 문자 경로가 본문에 그대로 남아
+// 고객사 폴더 이름이 손님에게 보이고, 크루는 보냈다고 믿는데 사용자는 깨진 링크만 받았다.
+test('MEDIUM-4: 로컬 위치 첫 칸(/Volumes·/Users·/home·/mnt·/media·/opt·/private·/var/folders)과 드라이브 문자 경로는 지우고 안내 하나 — 웹 경로는 그대로', async () => {
+  const { planReplyFiles } = await import('../src/gateway/msgr-reply-files.mjs');
+  const local = [
+    ['[계약서](/Volumes/고객사A/계약/계약서.pdf)', '계약서'], ['![시안](/Users/Shared/고객B/draft.png)', '시안'], ['[x](/opt/acme-client/report.pdf)', 'x'],
+    ['[a](/home/kim/고객C/a.pdf)', 'a'], ['[b](/mnt/nas/고객D/b.png)', 'b'], ['[c](/media/usb/고객E/c.pdf)', 'c'], ['[d](/private/etc/고객F.pdf)', 'd'],
+    ['[e](/var/folders/zz/고객G.pdf)', 'e'], ['[윈](C:\\Users\\kim\\고객H\\견적.pdf)', '윈'], ['[윈2](D:/고객I/시안.png)', '윈2'], ['[윈3](c:/x.pdf)', '윈3'],
+  ];
+  for (const [src, text] of local) {
+    const r = await planReplyFiles(WS, src);
+    assert.equal(r.body, text, `경로를 지운다: ${src}`);
+    assert.doesNotMatch(r.body, /고객/);
+    assert.equal(r.fails.length, 1, `안내 하나: ${src}`);
+    assert.match(r.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
+    assert.equal(r.fails[0].name, src.match(/\(([^)]*)\)/)[1].split(/[\\/]/).pop(), `안내에는 마지막 이름만(폴더 이름 없이): ${r.fails[0].name}`);
+    assert.deepEqual(r.files, []);
+  }
+  const web = '[가이드](/docs/guide.pdf) [로그인](/login) [옵션](/optional/x.pdf) [볼륨](/volumes-info) [홈](/homepage)';
+  const w = await planReplyFiles(WS, web);
+  assert.equal(w.body, web, '첫 칸이 목록과 정확히 같을 때만 로컬 위치(접두 글자만 같은 웹 경로는 그대로)');
+  assert.deepEqual(w.fails, []);
 });
 
 // 3차 검수 F-3: 확장자만으로 지우다 보니 `[가이드](/docs/guide.pdf)` 같은 웹 다운로드 링크가 사라졌다.
