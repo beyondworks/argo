@@ -251,3 +251,20 @@ test('긴 악성 입력도 선형 시간 — 게이트웨이를 멈추지 않는
     assert.ok(Date.now() - t < 1500, `입력 ${JSON.stringify(s.slice(0, 8))}… 처리에 ${Date.now() - t}ms`);
   }
 });
+
+test('크루 프롬프트(chat.mjs 메신저 턴 안내)의 예시 꼴이 실제로 첨부된다 — 아르고 메신저 planReplyFiles·텔레그램 extractFileRefs 둘 다', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { planReplyFiles, REPLY_FILES_MAX } = await import('../src/gateway/msgr-reply-files.mjs');
+  const { extractFileRefs } = await import('../src/tg-format.mjs');
+  const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  for (const [lang, re] of [['ko', /\(예: (!\[시안\]\(([^)]+)\)), (\[보고서\.pdf\]\(([^)]+)\))\)/], ['en', /\(e\.g\. (!\[draft\]\(([^)]+)\)), (\[report\.pdf\]\(([^)]+)\))\)/]]) {
+    const m = chat.match(re);
+    assert.ok(m, `프롬프트 예시(${lang})를 찾지 못했다`);
+    for (const rel of [m[2], m[4]]) { await mkdir(join(p.vault, rel, '..'), { recursive: true }); await writeFile(join(p.vault, rel), 'X'); }
+    const r = await planReplyFiles(WS, `완성: ${m[1]} ${m[3]}`, { lang });
+    assert.equal(r.files.length, 2, `메신저(${lang}): 예시 두 파일 모두 첨부`);
+    assert.doesNotMatch(r.body, /projects\//, '본문에서 경로가 지워진다');
+    assert.deepEqual(extractFileRefs(`완성: ${m[1]} ${m[3]}`), [m[2], m[4]], `텔레그램(${lang}): 같은 꼴을 잡는다`);
+  }
+  assert.match(chat, new RegExp(`답변당 최대 ${REPLY_FILES_MAX}개`), '프롬프트 상한 = 코드 상한');
+});

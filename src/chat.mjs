@@ -1271,13 +1271,14 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
           ? `\n## Runner substitution — you MUST tell the captain\n- This crew's assigned runner (${rn(wantRunner)}) is not available on this device, so you are running on ${rn(runner)} instead. End your reply with one line telling the captain that ${rn(wantRunner)} isn't set up on this device, so you answered with ${rn(runner)}.`
           : `\n## 러너 대체 안내 — 반드시 사장에게 알려라\n- 이 크루의 지정 러너(${rn(wantRunner)})가 이 기기에 연결돼 있지 않아, 지금은 ${rn(runner)}(으)로 대신 실행 중이다. 답변 끝에 한 줄로 "지정 러너 ${rn(wantRunner)}가 이 기기에 없어 ${rn(runner)}로 대신 답했다"고 사장에게 알려라.`))
     : '';
-  // 메신저 턴 파일 규약 — extractFileRefs(게이트웨이 발신 첨부)의 존재를 크루가 알아야 쓴다
+  // 메신저 턴 파일 규약 — 게이트웨이 발신 첨부(아르고 메신저 planReplyFiles, 텔레그램 extractFileRefs)의 존재와 경계를 크루가 알아야 쓴다
   // (실사용 제보 2026-07-30: 규약이 프롬프트 어디에도 없어 "파일을 안 보내준다"가 됐다).
-  // 텔레그램만 자동 첨부(슬랙은 텍스트 전용)라 채널 조건을 정직하게 갈라 말한다. SDK·CLI 공통 주입.
+  // source:'messenger'는 아르고 메신저·텔레그램·슬랙 공통이라 채널 조건을 정직하게 갈라 말한다 — 아르고 메신저: 마크다운 이미지·링크(절대·상대 경로)
+  // 최대 10개, 텔레그램: vault 상대 경로만 최대 3개, 슬랙: 텍스트 전용. 셋 다 통하는 꼴(vault 상대 경로 마크다운)을 권한다. SDK·CLI 공통 주입.
   const messengerNote = (source === 'messenger'
     ? (lang === 'en'
-        ? `\n## Messenger turn — sending files to the captain\n- To hand the captain a file, save it under vault/files/ or vault/projects/ and write its path verbatim in your reply (e.g. files/report.pptx, projects/20260730_x/deck.pptx). On Telegram it is attached automatically (up to 3 per reply); on other channels the captain downloads it from the web/app chat chips. Replying to the captain is NOT an external send — no approval needed.`
-        : `\n## 메신저 턴 — 사장에게 파일 보내기\n- 사장에게 파일을 건네려면 vault/files/ 또는 vault/projects/에 저장하고, 답변 본문에 경로를 그대로 적어라(예: files/보고서.pptx, projects/20260730_x/제안서.pptx). 텔레그램이면 자동 첨부되고(답변당 최대 3개), 다른 채널이면 사장이 웹·앱 채팅의 다운로드 칩으로 받는다. **사장에게 답하는 것은 외부 발송이 아니다 — 결재 불필요.**`)
+        ? `\n## Messenger turn — sending files to the captain\n- To hand over a file, save it inside the company work folder under vault/projects/, vault/files/ or vault/_imported/, and reference it in your reply as a markdown image or link with that vault-relative path (e.g. ![draft](projects/20261002_x/draft.png), [report.pdf](projects/20261002_x/report.pdf)).\n- Argo Messenger attaches those files automatically (up to 10 per reply): images appear in the message bubble and other files as download cards, and the local path is removed from the message. On Telegram, vault-relative paths are attached automatically (up to 3 per reply); on other channels the captain downloads them from the web/app chat chips.\n- Files outside those folders — other folders on this computer, other companies, settings, journal/notes, hidden files and .env — are never attached. Save deliverables in those folders.\n- Replying to the captain is NOT an external send — no approval needed.`
+        : `\n## 메신저 턴 — 사장에게 파일 보내기\n- 파일을 건네려면 회사 작업 폴더의 vault/projects/·vault/files/·vault/_imported/ 안에 저장하고, 답변 본문에 그 vault 기준 경로로 마크다운 이미지·링크를 적어라(예: ![시안](projects/20261002_x/시안.png), [보고서.pdf](projects/20261002_x/보고서.pdf)).\n- 아르고 메신저에서는 그 파일이 자동 첨부된다(답변당 최대 10개) — 이미지는 말풍선에 바로 보이고 다른 파일은 내려받기 카드로 나오며, 본문의 로컬 경로는 지워진다. 텔레그램이면 vault 기준 경로가 자동 첨부되고(답변당 최대 3개), 다른 채널이면 사장이 웹·앱 채팅의 다운로드 칩으로 받는다.\n- 그 구역 밖 파일(이 컴퓨터의 다른 폴더·다른 회사·설정·일지/노트·숨김 파일·.env)은 붙지 않는다. 결과물은 반드시 그 구역에 저장하라.\n- **사장에게 답하는 것은 외부 발송이 아니다 — 결재 불필요.**`)
     : '') + (mirrorCtx?.kind === 'msgr' ? messengerHandoffHint(lang) : '');
   // 대체 실행이 '실패'하면 위 자가 고지가 나올 수 없다 — 에러 메시지 자체에 대체 사실을 붙인다
   // (턴 실패 표시·이벤트 기록·메신저 회신 전 표면 공통).
