@@ -60,7 +60,7 @@ import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, 
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
-import { getComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
+import { getComposerSession, bindComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
 import { fetchSearchRows } from './search-rows.mjs';
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
@@ -1735,7 +1735,7 @@ function Shell({ session }) {
   const dmWithCrew = async (crewId, body = '') => {
     const c = crewOf(crewId); const cid = await openDm('crew', crewId);
     const draft = body || (c && c.owner_user_id !== uid ? `@${c.display_name} ` : '');
-    if (cid && draft) getComposerSession(JSON.stringify([SB_URL, uid, orgId, cid]), null).setText(draft); // 초안만 — 통로는 그 방 입력창이 넘긴다(personal·삭제 방송, composer-delivery getComposerSession)
+    if (cid && draft) getComposerSession(JSON.stringify([SB_URL, uid, orgId, cid]), composerTransport(supabase, { orgId, chId: cid, uid })).setText(draft);
   };
   const openDm = async (kind, id) => {
     if (isPersonal && kind === 'crew') return openPersonalCrewDm(id);
@@ -5941,7 +5941,7 @@ function Composer({ broadcast = null, chId, orgId, org, uid, members, crews, cha
   const { t } = useT();
   const phone = useIsPhone(); // 폰은 짧은 안내문(슬랙)
   const broadcastRef = useRef(broadcast); broadcastRef.current = broadcast;
-  const delivery = useMemo(() => getComposerSession(JSON.stringify([SB_URL, uid, orgId, chId]), composerTransport(supabase, { orgId, chId, uid, personal: isPersonal, onDiscard: (id) => broadcastRef.current?.('edit', { channel_id: chId, message_id: id }) })), [uid, orgId, chId]);
+  const delivery = useMemo(() => bindComposerSession(JSON.stringify([SB_URL, uid, orgId, chId]), composerTransport(supabase, { orgId, chId, uid, personal: isPersonal, onDiscard: (id) => broadcastRef.current?.('edit', { channel_id: chId, message_id: id }) })), [uid, orgId, chId]);
   const { text, busy, files, mentions, recipients, uploading, job, replyTo } = useSyncExternalStore(delivery.subscribe, delivery.snapshot);
   useEffect(() => { if (!replyReq) return; delivery.setReplyTo(replyReq); onReplyDone?.(); ta.current?.focus(); }, [replyReq]); // eslint-disable-line react-hooks/exhaustive-deps
   const { setText, setFiles, setMentions, setRecipients } = delivery;

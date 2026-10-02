@@ -11,12 +11,16 @@ const OFFLINE_KEY = 'msg.delivery.offline';
 // Keeping the File objects in memory lets navigation preserve attachments without copying them to disk.
 const sessions = new Map();
 const tabStorage = () => { try { return globalThis.sessionStorage; } catch { return undefined; } };
-// transport를 넘기면 그 세션의 통로가 된다(마지막에 넘긴 쪽 = 방 입력창). null이면 초안만 다루고 지금 통로는 그대로 둔다.
-// 검수(2026-10-02): 개인 공간 대화 열기가 personal 없는 통로로 세션을 먼저 만들면 그 통로가 남아 방 입력창 첨부가 Storage에서 거절됐다.
+// 세션이 없을 때만 넘긴 통로로 만든다 — 대화 열기(초안 넣기)·첫 글 보내기처럼 방 입력창 밖에서 부르는 곳.
 export function getComposerSession(key, transport, storage = tabStorage()) {
   if (!sessions.has(key)) sessions.set(key, createComposerDelivery(transport, undefined, draftStore(storage, key)));
-  const session = sessions.get(key);
-  if (transport) session.useTransport(transport);
+  return sessions.get(key);
+}
+// 방 입력창 전용 — 그 방의 통로(personal·onDiscard 삭제 방송)를 세션에 묶는다. 먼저 만든 쪽이 누구든, 나중에 누가 getComposerSession을 부르든 이 통로가 쓰인다.
+// 검수(2026-10-02): 개인 공간 대화 열기가 personal 없는 통로로 세션을 먼저 만들면 그 통로가 남아 방 입력창 첨부가 Storage에서 거절됐다(앱을 다시 켤 때까지).
+export function bindComposerSession(key, transport, storage = tabStorage()) {
+  const session = getComposerSession(key, transport, storage);
+  session.useTransport(transport);
   return session;
 }
 export function clearComposerSessions(storage = tabStorage(), { keepUser } = {}) {
