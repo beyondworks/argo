@@ -103,7 +103,12 @@ export default function DocsPage({ space, params }) {
     }
     if (fromId && data) {
       const src = data.docs.find((d) => d.id === fromId);
-      if (src?.input) return src.kind === newKind ? { ...emptyDoc(newKind), ...src.input, date: isoDay() } : quoteToContract(src.input);
+      if (src?.input) {
+        if (src.kind === newKind) return { ...emptyDoc(newKind), ...src.input, date: isoDay() };
+        const c = quoteToContract(src.input);
+        const cust = bd?.customers.find((x) => x.id === c.customerId); // 견적서의 거래처가 원장에 있으면 갑 칸(대표자·사업자번호·주소·연락처)도 채운다
+        return cust ? { ...c, party: fromCustomer('contract', cust).party } : c;
+      }
     }
     const customerId = params.get('customer');
     if (customerId && bd) { const c = bd.customers.find((x) => x.id === customerId); if (c) return fromCustomer(newKind, c); }
