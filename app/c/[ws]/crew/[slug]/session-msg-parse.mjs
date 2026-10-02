@@ -2,8 +2,8 @@
 // 모르는 이름·자기 자신·내용 없음은 null → 평소처럼 이 크루에게 보낸다(예전에 쓰던 '@' 문장이 갑자기 다른 데로 가지 않게).
 const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase().trim();
 
-/** 자동 완성에 넣을 이름 — 공백이 있는 이름은 한 토큰이 아니라서 slug를 넣는다. */
-export const mentionToken = (a) => (/\s/.test(a.name ?? '') ? a.slug : a.name);
+/** 자동 완성에 넣을 이름 — 공백이 있거나 다른 크루와 겹치는 이름은 한 크루를 가리키지 못해 slug를 넣는다. */
+export const mentionToken = (a, crew = []) => (/\s/.test(a.name ?? '') || crew.some((x) => x.slug !== a.slug && norm(x.name) === norm(a.name)) ? a.slug : a.name);
 
 /** 입력 끝의 `@부분`에 맞는 후보(자기 자신·외부 에이전트 제외). 입력 맨 앞의 토큰일 때만 연다 — 세션 메시지는 `@이름`으로 시작하는 글이다. */
 export function sessionCandidates(input, crew, selfSlug, max = 12) {
@@ -16,12 +16,18 @@ export function sessionCandidates(input, crew, selfSlug, max = 12) {
     .slice(0, max);
 }
 
-/** `@이름 내용` → { to, toName, message } 또는 null. */
+/** `@이름 내용` → { to, toName, message } | { ambiguous: true, name }(이름이 겹침 — 보내지 않고 안내) | null. slug 정확히 일치가 먼저(서버와 같은 규칙). */
 export function parseSessionTarget(text, crew, selfSlug) {
   const m = /^@(\S+)\s+([\s\S]*\S[\s\S]*)$/.exec(String(text ?? '').trim());
   if (!m) return null;
   const key = norm(m[1]);
-  const a = (crew ?? []).find((x) => norm(x.slug) === key || norm(x.name) === key);
+  const others = (crew ?? []).filter((x) => x.slug !== selfSlug && norm(x.runner) !== 'http');
+  let a = (crew ?? []).find((x) => norm(x.slug) === key);
+  if (!a) {
+    const named = others.filter((x) => norm(x.name) === key);
+    if (named.length > 1) return { ambiguous: true, name: m[1] };
+    a = named[0];
+  }
   if (!a || a.slug === selfSlug || norm(a.runner) === 'http') return null;
   return { to: a.slug, toName: a.name, message: m[2].trim() };
 }

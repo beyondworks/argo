@@ -3,6 +3,7 @@
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp } from './helpers/tmp.mjs';
@@ -39,7 +40,7 @@ before(async () => {
     await mkdir(paths(ws).root, { recursive: true });
     await writeFile(paths(ws).company, JSON.stringify({ id: ws, name: ws, lang: 'ko' }));
   }
-  await seedCrew(WS, 'a', '알파'); await seedCrew(WS, 'b', '브라보'); await seedCrew(WS, 'c', '찰리');
+  await seedCrew(WS, 'a', '알파'); await seedCrew(WS, 'b', '브라보'); await seedCrew(WS, 'c', '찰리'); await seedCrew(WS, 'd', '델타');
   await seedCrew(WS, 'ext', '외부봇', 'runner: http\n');
   await seedCrew(WS2, 'z', '줄루');
   mod._setRunTurnForTest(fakeTurn);
@@ -48,7 +49,7 @@ after(async () => { await rm(process.env.ARGO_ROOT, { recursive: true, force: tr
 beforeEach(async () => {
   calls.length = 0; gate = null;
   await mod._resetForTest();
-  for (const s of ['a', 'b', 'c']) await seedThread(WS, s, `sess-${s}-0`);
+  for (const s of ['a', 'b', 'c', 'd']) await seedThread(WS, s, `sess-${s}-0`);
   await seedThread(WS2, 'z', 'sess-z-0');
 });
 
@@ -232,17 +233,17 @@ test('화면 본문 — 받은 줄·깨움 알림은 모델용 머리말을 떼�
 test('위임 제한 스위치 — 사장이 보낸 사슬은 보낸 방의 스위치를 읽어 B 턴과 A 깨움 턴에 그대로 싣는다', async () => {
   await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'b', message: '켜짐 방에서' });
   await mod._drainForTest();
-  assert.equal(calls[0].opts.sessionRelaxed, false, '켜짐(기본) 방에서 시작한 사슬');
+  assert.equal(calls[0].opts.sessionChain.relaxed, false, '켜짐(기본) 방에서 시작한 사슬');
   calls.length = 0;
   await thread.setDelegationLimit(WS, 'a', false); // A 방 위임 제한 풀기
   await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'b', message: '풀린 방에서' });
   await mod._drainForTest();
-  assert.equal(calls[0].opts.sessionRelaxed, true, '풀린 방에서 시작한 사슬');
+  assert.equal(calls[0].opts.sessionChain.relaxed, true, '풀린 방에서 시작한 사슬');
   calls.length = 0;
   // 크루가 보낸 사슬 — 넘겨받은 값을 B 턴과 깨움 턴 모두에 잇는다(B·A 방 스위치와 무관)
   await mod.sendSessionMessage(WS, { room: 'c', sender: { slug: 'c' }, to: 'b', message: '이어서', hop: 1, chain: ['a'], relaxed: true });
   await mod._drainForTest();
-  assert.deepEqual(calls.map((c) => [c.slug, c.opts.sessionRelaxed]), [['b', true], ['c', true]]);
+  assert.deepEqual(calls.map((c) => [c.slug, c.opts.sessionChain.relaxed]), [['b', true], ['c', true]]);
 });
 
 test('사슬 상한 — 켜짐은 2단계, 풀림은 4단계에서 멈추고 안내에 그 숫자를 적는다', async () => {
@@ -259,3 +260,100 @@ test('사슬 상한 — 켜짐은 2단계, 풀림은 4단계에서 멈추고 안
   assert.equal(caps.length, 2);
   assert.match(caps[0], /2단계/); assert.match(caps[1], /4단계/);
 });
+
+// ── 0.1.94 분리 검수 지적(2026-10-03) ──
+
+test('합계 예산(MEDIUM-1) — 크루 4명이 매 턴 한도껏 보내도 사장 메시지 1건의 세션 메시지 턴은 위임 합계 상한 안', async () => {
+  const { DELEGATION_LIMITS } = await import('../src/delegation-limits.mjs');
+  const crews = ['a', 'b', 'c', 'd'];
+  try { for (const relaxed of [false, true]) {
+    await mod._resetForTest();
+    for (const s of crews) await seedThread(WS, s, `sess-${s}-0`);
+    let turns = 0;
+    mod._setRunTurnForTest(async (ws, slug, prompt, sid, opts) => { // 최악: 모델이 매 턴 보낼 수 있는 만큼 보낸다(턴당 쪽지 한도)
+      turns += 1;
+      const per = opts.sessionChain?.relaxed ? DELEGATION_LIMITS.off.mail : DELEGATION_LIMITS.on.mail;
+      let sent = 0;
+      for (const to of crews) {
+        if (to === slug || sent >= per) continue;
+        try { await mod.sendSessionMessage(ws, { room: slug, sender: { slug }, to, message: `m${turns}`, hop: opts.hop, chain: opts.chain, relaxed: opts.sessionChain?.relaxed, tree: opts.sessionChain?.tree }); sent += 1; } catch { /* DUP·CAP·예산 */ }
+      }
+      return { reply: `r${turns}`, sessionId: sid };
+    });
+    // 사장 직접 턴(A, hop 0)의 전송 — 실제 턴처럼 한 예산을 이어 쓴다(chat.mjs가 턴마다 하나 만든다)
+    let root = null;
+    for (const to of ['b', 'c', 'd']) { const r = await mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to, message: 'start', hop: 0, chain: [], relaxed, tree: root }).catch(() => null); root = r?.tree ?? root; }
+    await mod._drainForTest();
+    assert.ok(turns <= DELEGATION_LIMITS.off.tree, `relaxed=${relaxed}: 세션 메시지가 만든 턴 ${turns}개 ≤ ${DELEGATION_LIMITS.off.tree}`);
+    if (relaxed) {
+      const notices = [];
+      for (const c of crews) notices.push(...(await msgs(WS, c)).filter((m) => m.src?.code === 'budget'));
+      assert.ok(notices.length >= 1, '예산이 모자라 못 보낸 쪽 방에 안내');
+    }
+  } } finally { mod._setRunTurnForTest(fakeTurn); }
+});
+
+test('세션 이어가기(MEDIUM-2) — 깨움 턴은 직전 턴이 기록한 세션으로 돈다(실행 등록이 풀린 뒤 기록이 늦어도)', async () => {
+  await seedThread(WS, 'a', null);
+  const turnId = await thread.beginTurn(WS, 'a', { userMsg: '사장 지시' });
+  await abort.withTurnControl(WS, 'a', null, async () => {
+    await mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: 'b', message: '물어볼게', hop: 0, chain: [] });
+    await new Promise((r) => setTimeout(r, 40)); // B가 A 턴보다 먼저 끝난다
+  }, { source: 'chat' });
+  await new Promise((r) => setTimeout(r, 30)); // 채팅 라우트의 appendTurn은 실행 등록이 풀린 뒤에 온다
+  await thread.appendTurn(WS, 'a', { turnId, userMsg: '사장 지시', reply: 'A 답', sessionId: 'a-turn1-session' });
+  await mod._drainForTest();
+  const wake = calls.find((c) => c.slug === 'a');
+  assert.equal(wake?.sessionId, 'a-turn1-session', 'A 깨움 턴이 A의 직전 세션을 잇는다');
+});
+
+test('세션 이어가기(MEDIUM-2) — B 쪽도: 사장 직접 턴 직후의 세션 메시지 턴은 그 턴이 기록한 세션으로 돈다', async () => {
+  const turnId = await thread.beginTurn(WS, 'b', { userMsg: 'B에게 직접' });
+  await abort.withTurnControl(WS, 'b', null, async () => {
+    await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'b', message: '끝나면 봐 줘' });
+    await new Promise((r) => setTimeout(r, 20));
+  }, { source: 'chat' });
+  await new Promise((r) => setTimeout(r, 30));
+  await thread.appendTurn(WS, 'b', { turnId, userMsg: 'B에게 직접', reply: 'B 답', sessionId: 'b-direct-session' });
+  await mod._drainForTest();
+  assert.equal(calls.find((c) => c.slug === 'b')?.sessionId, 'b-direct-session');
+});
+
+test('부팅 정리(MEDIUM-3) — 다른 살아 있는 프로세스의 기다림은 지우지 않고, 그 프로세스가 끝난 뒤에만 지운다', async () => {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  await new Promise((r) => child.once('spawn', r));
+  const file = join(paths(WS).root, 'sessmsg', 'pending.json');
+  await mkdir(join(paths(WS).root, 'sessmsg'), { recursive: true });
+  await writeFile(file, JSON.stringify({ live1: { id: 'live1', room: 'a', roomName: '알파', from: 'a', fromName: '알파', to: 'b', toName: '브라보', owner: `${child.pid}-1`, pid: child.pid, createdAt: Date.now() - 3600_000, deadline: Date.now() + 3600_000 } }));
+  try {
+    assert.equal(await mod.sweepSessionMessages(), 0, '살아 있는 다른 프로세스(앱 등)의 기다림');
+    assert.ok('live1' in JSON.parse(await readFile(file, 'utf8')));
+  } finally { child.kill(); await new Promise((r) => child.once('exit', r)); }
+  assert.equal(await mod.sweepSessionMessages(), 1, '그 프로세스가 끝났으면 정리');
+});
+
+test('사슬 끝 안내(L1) — 상한 단계에서 도는 턴이 생기면 그 방에 한 번만 안내하고, 프롬프트에 더 보낼 수 없다고 적는다', async () => {
+  await mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: 'b', message: '마지막', hop: 1, chain: ['c'] });
+  await mod._drainForTest();
+  const bt = calls.find((c) => c.slug === 'b');
+  assert.equal(bt.opts.hop, 2);
+  assert.match(bt.prompt, /더 보낼 수 없다/);
+  const all = [...await msgs(WS, 'a'), ...await msgs(WS, 'b')].filter((m) => m.src?.code === 'capReached');
+  assert.equal(all.length, 1, '사슬당 한 번');
+});
+
+test('이름 매칭(L7) — slug 정확히 일치가 먼저, 이름이 겹치면 보내지 않는다', async () => {
+  await seedCrew(WS, 'dup1', '중복'); await seedCrew(WS, 'dup2', '중복'); await seedCrew(WS, 'x9', 'c');
+  try {
+    await assert.rejects(mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: '중복', message: 'x' }), (e) => e.code === 'AMBIGUOUS');
+    await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'c', message: 'slug c가 이름 c보다 먼저' });
+    await mod._drainForTest();
+    assert.equal(calls[0].slug, 'c');
+    const { parseSessionTarget, mentionToken } = await import('../app/c/[ws]/crew/[slug]/session-msg-parse.mjs');
+    const crew = [{ slug: 'a', name: '알파' }, { slug: 'dup1', name: '중복' }, { slug: 'dup2', name: '중복' }, { slug: 'c', name: '찰리' }, { slug: 'x9', name: 'c' }];
+    assert.deepEqual(parseSessionTarget('@중복 hi', crew, 'a'), { ambiguous: true, name: '중복' });
+    assert.equal(parseSessionTarget('@c hi', crew, 'a')?.to, 'c');
+    assert.equal(mentionToken(crew[1], crew), 'dup1', '이름이 겹치면 자동 완성은 slug를 넣는다');
+  } finally { for (const s of ['dup1', 'dup2', 'x9']) await rm(join(paths(WS).agents, `${s}.md`), { force: true }); }
+});
+

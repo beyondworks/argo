@@ -19,7 +19,7 @@ export function useSessionMention({ input, setInput, crew, selfSlug, disabled = 
   const [idx, setIdx] = useState(0);
   useEffect(() => { setIdx(0); }, [input]);
   const sel = open ? Math.min(idx, list.length - 1) : 0;
-  const pick = (a) => { setInput(`@${mentionToken(a)} `); onPicked?.(); };
+  const pick = (a) => { setInput(`@${mentionToken(a, crew)} `); onPicked?.(); };
   const onKeyDown = (e) => {
     if (!open || e.nativeEvent?.isComposing) return false;
     if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { e.preventDefault(); pick(list[sel]); return true; }
@@ -74,7 +74,7 @@ export function SessionMsgCard({ m, t, ws }) {
   if (s.dir === 'notice') {
     return (
       <div className="fade-up" data-session-msg="notice" style={{ alignSelf: 'flex-start', maxWidth: '85%', fontSize: 12, color: 'var(--fg-2)', padding: '6px 12px', borderRadius: 10, background: 'var(--card-2)' }}>
-        {t(`chat.session.notice.${['cap', 'expired', 'restart'].includes(s.code) ? s.code : 'failed'}`, { name: s.fromName ?? s.from })}
+        {t(`chat.session.notice.${['cap', 'expired', 'restart', 'capReached', 'budget'].includes(s.code) ? s.code : 'failed'}`, { name: s.fromName ?? s.from ?? '', cap: s.cap ?? '' })}
       </div>
     );
   }
