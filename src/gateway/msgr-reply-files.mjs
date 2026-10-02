@@ -12,13 +12,16 @@
 //
 // 본문: 첨부 대상 후보(로컬 파일을 가리키는 마크다운 이미지·링크)는 성공·실패와 무관하게 본문에서 경로를 지운다 — 방에는 손님도 있고
 // 절대 경로에는 OS 사용자 이름·폴더 구조가 들어 있다(D26과 같은 이유). 이미지는 첨부로 대신하고(실패면 대체 글자), 링크는 글자만 남긴다.
+// 구역 밖 절대 경로가 후보인지는 **파일이 있는지가 아니라 경로 모양**으로 정한다(2차 검수 N-5): 마지막 조각에 확장자가 있거나 홈·작업 루트·
+// 임시 폴더 아래면 후보(경로를 지우고 '밖이거나 없는 파일' 안내 하나), 아니면(`/login`·`/api/v1/users` 같은 웹 경로 링크) 손대지 않는다.
+// 있는 파일과 없는 파일이 같은 결과라 링크 하나로 남의 경로에 파일이 있는지 알아낼 수 없다.
 // 코드 블록·인라인 코드 안은 손대지 않는다(예시 코드를 망가뜨리지 않게).
 import { open, realpath, stat } from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { paths } from '../workspace.mjs';
+import { paths, WS_ROOT } from '../workspace.mjs';
 import { SERVE_PREFIXES } from '../artifact-zones.mjs';
 import { ATTACH_EXT, extractFileRefs } from '../tg-format.mjs';
 import { pick } from './protocol.mjs';
@@ -33,10 +36,12 @@ const MD_LINK = /(!?)\[([^[\]\n]*)\]\(([^()\n]*(?:\([^()\n]*\)[^()\n]*)*)\)/g;
 const CODE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 const ZONES = SERVE_PREFIXES.map((z) => z.replace(/\/$/, ''));
 const SECRET_NAME = /(^|\.)env(\.|$)|^id_(rsa|dsa|ecdsa|ed25519)|\.(pem|p12|pfx|key|kdbx|sqlite3?|db)$/i; // 경로의 모든 조각
-const SECRET_WORD = /(^|[^a-z0-9])(credentials?|secrets?|tokens?|auth)([^a-z0-9]|$)/i;  // 파일 이름(마지막 조각) 안의 낱말
-const SECRET_DIR = /^(credentials?|secrets?|tokens?|auth)$/i;                           // 폴더 조각은 이름 전체가 그 낱말일 때만(auth-flow 같은 프로젝트 폴더는 통과)
+const WORDS = 'credentials?|secrets?|tokens?|auth|passwords?|passwd|api[_-]?keys?|private[_-]?keys?|service[_-]?accounts?';
+const SECRET_WORD = new RegExp(`(^|[^a-z0-9])(${WORDS})([^a-z0-9]|$)`, 'i');         // 파일 이름(마지막 조각) 안의 낱말
+const SECRET_CAMEL = /[a-z0-9](Tokens?|Secrets?|Credentials?|Passwords?|ApiKeys?|PrivateKeys?)(?![a-z])/; // accessToken.md·clientSecret.json 같은 camelCase(대소문자 구분)
+const SECRET_DIR = new RegExp(`^(${WORDS})$`, 'i');                                     // 폴더 조각은 이름 전체가 그 낱말일 때만(auth-flow 같은 프로젝트 폴더는 통과)
 const UNSORTED = 'unsorted';                                                            // _imported/unsorted/ — 첨부 구역에서 뺀다
-const secretName = (name) => name.startsWith('.') || SECRET_NAME.test(name) || SECRET_WORD.test(name);
+const secretName = (name) => name.startsWith('.') || SECRET_NAME.test(name) || SECRET_WORD.test(name) || SECRET_CAMEL.test(name);
 const secretDir = (seg) => seg.startsWith('.') || SECRET_NAME.test(seg) || SECRET_DIR.test(seg);
 
 const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
@@ -63,6 +68,12 @@ function localTarget(dest, vault) {
   return ZONES.some((z) => rel.startsWith(`${z}/`)) ? join(vault, rel) : null;
 }
 
+// 구역 밖 절대 경로 중 첨부 후보로 보는 모양 — 마지막 조각에 확장자가 있거나, 홈·작업 루트·임시 폴더 아래(사용자 이름·폴더 구조가 드러나는 자리)
+const FILE_EXT = /\.[A-Za-z0-9]{1,10}$/;
+const PRIVATE_ROOTS = [...new Set([homedir(), WS_ROOT, tmpdir(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].filter(Boolean).map((r) => resolve(r)))];
+const underRoot = (p, root) => { const rel = relative(root, p); return rel === '' || (!!rel && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
+const fileShaped = (abs) => FILE_EXT.test(basename(abs)) || PRIVATE_ROOTS.some((r) => underRoot(resolve(abs), r));
+
 async function zoneRoots(vault) { // [{ zone, root }] — 구역 이름은 _imported/unsorted 제외 판정용
   const roots = await Promise.all(ZONES.map(async (zone) => ({ zone, root: await realpath(join(vault, zone)).catch(() => null) })));
   return roots.filter((r) => r.root);
@@ -88,7 +99,7 @@ function inZone(real, roots) {
 
 const reasonText = (kind, lang, max = REPLY_FILES_MAX) => ({
   missing: pick('파일이 없습니다', 'file not found', lang),
-  outside: pick('작업 폴더 밖 파일이라 첨부하지 않았습니다', 'outside the company work folder — not attached', lang),
+  outside: pick('작업 폴더 밖이거나 없는 파일이라 첨부하지 않았습니다', 'outside the company work folder or not found — not attached', lang), // 밖·없음을 한 사유로(N-5)
   secret: pick('설정·비밀 파일로 보여 첨부하지 않았습니다', 'looks like a settings or secret file — not attached', lang),
   type: pick('첨부하지 않는 파일 형식입니다', 'file type not attached', lang),
   big: pick('25MB 초과', 'over 25MB', lang),
@@ -104,18 +115,19 @@ async function judge(abs, roots, literals) {
   // 낱말 규칙(auth·token 등)은 풀어 본 뒤에만 쓴다 — `/auth`·`/api/token` 같은 웹 경로 링크를 막지 않게(L-2).
   // 경로 중간 조각은 아래 realpath 기준 구역 상대 경로로 본다 — 실제 루트가 ~/.argo/workspaces라 절대 경로 전체의 숨김 조각을 보면 정상 파일까지 막힌다.
   if (shown.startsWith('.') || SECRET_NAME.test(shown)) return { ok: false, name: shown, kind: 'secret' };
-  let real;
-  try { real = await realpath(abs); } catch (e) {
-    const gone = e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
-    if (zoneRel(resolve(abs), [...literals, ...roots])) return { ok: false, name: shown, kind: gone ? 'missing' : 'outside' };
-    return gone ? { skip: true } : { ok: false, name: shown, kind: 'outside' };
+  let real = null; let gone = false;
+  try { real = await realpath(abs); } catch (e) { gone = e?.code === 'ENOENT' || e?.code === 'ENOTDIR'; }
+  if (!real || !zoneRel(real, roots)) {
+    // 글자 그대로 구역 안인데 없는 파일만 '없음'(구역은 방에 보여도 되는 곳). 그 밖(없음·밖·권한 오류)은 존재와 무관하게 경로 모양으로만 가른다(N-5).
+    if (!real && gone && zoneRel(resolve(abs), [...literals, ...roots])) return { ok: false, name: shown, kind: 'missing' };
+    return fileShaped(abs) ? { ok: false, name: shown, kind: 'outside' } : { skip: true };
   }
-  if (!zoneRel(real, roots)) return { ok: false, name: shown, kind: 'outside' };
   if (secretName(shown) || secretName(basename(real))) return { ok: false, name: shown, kind: 'secret' };
   if (!inZone(real, roots)) return { ok: false, name: shown, kind: 'outside' }; // _imported/unsorted·비밀 이름 폴더
   if (!ATTACH_EXT.test(basename(real))) return { ok: false, name: basename(real), kind: 'type' }; // 실제 파일 이름 기준(심링크 이름을 .pdf로 붙여도 소용없다)
   const st = await stat(real).catch(() => null);
   if (!st?.isFile()) return { ok: false, name: shown, kind: 'missing' };
+  if (st.nlink > 1) return { ok: false, name: shown, kind: 'outside' }; // 하드 링크 — 구역 밖 파일과 같은 내용일 수 있다(realpath로 못 가른다, N-4)
   if (st.size > ATTACH_MAX) return { ok: false, name: basename(real), kind: 'big' };
   return { ok: true, abs: real, name: basename(real), bytes: st.size };
 }
@@ -187,7 +199,7 @@ export async function readReplyFile(wsId, file, lang = 'ko', io = { open, realpa
     const st = await fh.stat();
     await resolveIn(); // 연 뒤 경로가 그대로인가
     const again = await io.stat(real).catch(() => null);
-    if (!st.isFile() || !again || again.ino !== st.ino || again.dev !== st.dev) throw fail('outside');
+    if (!st.isFile() || st.nlink > 1 || !again || again.ino !== st.ino || again.dev !== st.dev) throw fail('outside');
     if (st.size > ATTACH_MAX) throw fail('big');
     const buf = await fh.readFile();
     if (buf.length > ATTACH_MAX) throw fail('big');

@@ -901,7 +901,11 @@ export const storageKey = (name, index = 0) => { // export: 앱 규칙과의 교
 // 같은 방에 이미 올린 같은 내용(sha256) → 그 저장 경로. 루틴 결과 글·대화 중 같은 시안을 다시 말할 때마다 새 경로로 다시 올리던 것(분리 검수 M-5)을
 // 첨부 행만 새로 만들어 기존 객체를 가리키게 한다. 조직 방만 — 첨부 행 정책(msgr_attachments_insert)은 경로를 묻지 않고, 객체 읽기는 경로의 방(2번째 칸)으로
 // 판정하니 같은 방이면 같은 사람이 읽는다. 개인 방(p/)은 정책(msgr_personal_attachment_ok)이 그 글 자신의 경로만 받아 재사용할 수 없다.
+// DM 방(kind='dm')도 재사용하지 않는다 — 위임 주인의 읽기 판정(msgr_can_read_dm_attachment)이 경로 3번째 칸의 글을 본다(2차 검수 N-2).
+// 방 종류를 모르면(옛 잡 파일 등) 재사용하지 않는다. 외부 봇 받기(msgr_bot_file)는 20261002231000부터 같은 방 원본 경로를 받는다(N-1).
 // 객체가 지워지는 경로는 방 영구 삭제(App deleteChannel)·조직 정리·계정 삭제뿐이고 모두 방·조직째라, 방이 남아 있으면 객체도 있다 → DB 조회 없이 기억만으로 판정.
+// ⚠ 전제(N-3): 글 단위 객체 삭제(글 지우기에 Storage 정리를 붙이기 등)나 첨부 보존 기간 정리를 추가하면 이 전제가 깨진다 —
+//   그때는 이 기억(uploadedOnce)을 무효화하거나, 재사용 전에 원본 객체가 있는지 확인하는 단계를 같이 넣어야 한다(아니면 재사용 첨부가 깨진 파일을 가리킨다).
 // 기억은 이 프로세스 안(재시작하면 한 번 다시 올린다). 상한 REUSE_MAX — 오래된 것부터 버린다.
 const uploadedOnce = new Map();
 export const _uploadedOnceForTest = uploadedOnce;
@@ -910,7 +914,7 @@ const rememberUpload = (key, path) => { uploadedOnce.delete(key); uploadedOnce.s
 /** 크루 답에 계획한 파일(planReplyFiles)을 첨부 — Storage 업로드 + 첨부 행. 실패·경계 밖은 같은 스레드에 안내(침묵 금지, 로컬 경로 없음).
     저장 경로: 조직 방 <org>/<방>/<글>/<키>, 개인 방(org 없음) p/<방>/<글>/<키> — 20261002100000 정책이 개인 경로를 받는다(앱 업로드와 같은 규칙).
     부하: 파일 하나당 업로드 1 + 첨부 행 1(같은 방·같은 내용이면 업로드 0 + 첨부 행 1), 한 답 최대 REPLY_FILES_MAX개(루틴 ROUTINE_FILES_MAX). 재사용 판정에 DB 조회 없음. 주기 호출 없음. */
-async function deliverReplyFiles(wsId, db, { orgId, channelId, crewId, threadRoot, failKey }, row, plan, lang) {
+async function deliverReplyFiles(wsId, db, { orgId, channelId, channelKind = null, crewId, threadRoot, failKey }, row, plan, lang) {
   const fails = [...(plan?.fails ?? [])];
   for (const [i, f] of (plan?.files ?? []).entries()) {
     try {
@@ -918,7 +922,8 @@ async function deliverReplyFiles(wsId, db, { orgId, channelId, crewId, threadRoo
       // mime은 확장자로 — 예전에는 png·jpg·webp·gif만 image/*를 붙이고 나머지는 빈 값이라 앱이 파일 종류를 몰랐다(운영 2026-10-02: 크루 첨부 21건 전부 빈 mime)
       const mime = mimeOf(f.name, '');
       const att = { message_id: row.id, org_id: orgId ?? null, name: safeName(f.name), mime, bytes: buf.length };
-      const reuseKey = orgId ? `${orgId}/${channelId}/${createHash('sha256').update(buf).digest('hex')}` : null;
+      const reusable = !!orgId && !!channelKind && channelKind !== 'dm';
+      const reuseKey = reusable ? `${orgId}/${channelId}/${createHash('sha256').update(buf).digest('hex')}` : null;
       const prior = reuseKey && uploadedOnce.get(reuseKey);
       if (prior) {
         try { await db.insertAttachment({ ...att, storage_path: prior }); continue; }
@@ -1054,7 +1059,7 @@ async function noteJobDenied(wsId, job, { db, uid, lang }) {
 }
 export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now, linkPreview = replyLinkPreview } = {}) {
   // 크루 답 속 파일 → 첨부(공통 deliverReplyFiles). plan = planReplyFiles 결과(게시 전에 만들어 잡에 보존 — job.msgrAttach).
-  const deliverAttachments = (db, job, row, plan, lang) => deliverReplyFiles(wsId, db, { orgId: job.orgId, channelId: job.channelId, crewId: job.crewId,
+  const deliverAttachments = (db, job, row, plan, lang) => deliverReplyFiles(wsId, db, { orgId: job.orgId, channelId: job.channelId, channelKind: job.channelKind ?? null, crewId: job.crewId,
     threadRoot: job.threadRoot ?? job.msgId, failKey: `attfail:${job.crewId}:${job.msgId}` }, row, plan, lang);
   const run = async (job, executionMeta = {}) => {
     const c = await session();
@@ -1080,6 +1085,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     if (job.msgrExecution?.replyRow) {
       const { row } = await beginMessengerExecution(wsId, db, job, executionMeta);
+      if (!job.channelKind && envelope?.channel?.kind) job.channelKind = envelope.channel.kind;
       // 본문에서 경로를 지운 뒤라 저장해 둔 계획(job.msgrAttach)으로 붙인다. 이전 버전이 남긴 잡 파일(계획 없음)은 본문에 경로가 그대로라 본문으로 계획한다.
       if (!job.msgrExecution.replyRow.meta?.failed) await deliverAttachments(db, job, row, job.msgrAttach ?? await planOrRaw(wsId, job.msgrExecution.replyRow.body, lang), lang);
       return;
@@ -1254,7 +1260,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     let row = null;
     // 답 속 로컬 파일 — 게시 전에 경계 판정·본문 정리(경로 제거). 계획은 잡에 실어 아래 체크포인트(finishMessengerExecution)가 잡 파일에 같이 저장한다.
     const plan = failed || aborted ? null : await planOrRaw(wsId, reply, lang);
-    if (plan) job.msgrAttach = plan;
+    if (plan) { job.msgrAttach = plan; job.channelKind = ch.kind ?? null; } // 방 종류 — DM이면 첨부 재사용 안 함(N-2). 잡 파일에 같이 저장돼 게시 재시도에도 쓰인다
     const replyRow = {
       channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId, // 명시 — 트리거는 null일 때 reply_to(크루 글)로 채워 스레드가 끊긴다(검수 2R C-2)
       client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(plan?.body ?? reply ?? '').slice(0, MSG_MAX),
@@ -1410,7 +1416,8 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
       body: pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${plan.body}`,
         `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${plan.body}`, company.lang).slice(0, MSG_MAX),
       mentions: [], meta: { disposition: 'done', notification: 'routine', routine_id: event.routine.id } });
-    if (posted) await deliverReplyFiles(event.wsId, c.db, { orgId: target.orgId, channelId: target.channelId, crewId: crew.id, threadRoot: null, failKey: `attfail:rn:${crew.id}:${digest}` }, posted, plan, company.lang);
+    const targetKind = available.find((r) => r.orgId === target.orgId && r.channelId === target.channelId)?.kind ?? null;
+    if (posted) await deliverReplyFiles(event.wsId, c.db, { orgId: target.orgId, channelId: target.channelId, channelKind: targetKind, crewId: crew.id, threadRoot: null, failKey: `attfail:rn:${crew.id}:${digest}` }, posted, plan, company.lang);
     return true;
   }
   if (event.type === 'approval') {
@@ -1497,7 +1504,7 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
       await db.postThreadFollowup(event.wsId, ctx.crewId, ctx.sourceMsgId, ctx.channelId, row, event.type === 'approval_followup' ? it.msgr.rowId : null);
     } else {
       const posted = await db.insertMessage(row);
-      if (posted && plan) await deliverReplyFiles(event.wsId, db, { orgId: ctx.orgId, channelId: ctx.channelId, crewId: ctx.crewId, threadRoot: ctx.threadRoot, failKey: `attfail:${row.client_msg_id}` }, posted, plan, lang);
+      if (posted && plan) await deliverReplyFiles(event.wsId, db, { orgId: ctx.orgId, channelId: ctx.channelId, channelKind: ctx.channelKind ?? null, crewId: ctx.crewId, threadRoot: ctx.threadRoot, failKey: `attfail:${row.client_msg_id}` }, posted, plan, lang);
     }
     return true;
   }

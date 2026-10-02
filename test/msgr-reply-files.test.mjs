@@ -46,6 +46,7 @@ await truncate(join(PROJ, 'big.pdf'), 25 * 1024 * 1024 + 1); // 25MB 초과(희�
 const AVATAR = join(PROJ, '페퍼-아바타.png');
 beforeEach(() => M._uploadedOnceForTest.clear()); // 같은 방·같은 내용 재사용 기억(M-5)은 시험마다 비운다 — 시험끼리 업로드 수가 섞이지 않게
 
+const KIND_OF = { 'bbbbbbbb-0000-4000-8000-000000000002': 'public', 'bbbbbbbb-0000-4000-8000-000000000003': 'public', 'bbbbbbbb-0000-4000-8000-000000000004': 'private' }; // 첨부 재사용 시험 방(CH2~4)
 let nextId = 900; // 글 id는 가짜 db 사이에서도 겹치지 않게(저장 경로 <org>/<방>/<글>/… 비교용)
 function fakeDb({ finishThrows = 0 } = {}) {
   const calls = [];
@@ -57,7 +58,7 @@ function fakeDb({ finishThrows = 0 } = {}) {
     async orgEntitled() { return true; },
     async orgConsentOk() { return true; },
     async crewBySlug(uid, ws, slug) { return slug === 'pepper' ? { id: CREW, org_id: ORG, slug, display_name: '페퍼' } : null; },
-    async channel(id) { return { id, org_id: ORG, kind: 'dm', name: 'dm:페퍼', crew_memory: true }; },
+    async channel(id) { return { id, org_id: ORG, kind: KIND_OF[id] ?? 'dm', name: 'dm:페퍼', crew_memory: true }; },
     async memberName() { return '유건'; },
     async contextOf() { return []; },
     async orgCrews() { return [{ id: CREW, slug: 'pepper', display_name: '페퍼', owner_user_id: OWNER, ws_id: WS }]; },
@@ -159,12 +160,12 @@ test('크기 초과(25MB) 거부·구역 안 없는 파일은 "파일이 없습�
   assert.match(r.note.body, /big\.pdf.*25MB 초과/s);
   assert.match(r.note.body, /none\.png.*파일이 없습니다/s);
   noLocalPath(r.reply.body); noLocalPath(r.note.body);
-  // 있는 밖 파일은 '밖'으로 막고, 없는 밖 경로는 첨부 후보가 아니다(웹 경로 링크 — 분리 검수 L-2): 본문 그대로·안내 없음
+  // 구역 밖은 있든 없든 같은 사유 하나 — 존재 여부를 방에 흘리지 않는다(N-5)
   const outside = await runTurn(`[a](${join(OUTSIDE, 'report.pdf')}) [b](${join(OUTSIDE, 'nope.pdf')})`, { j: job({ msgId: 91, threadRoot: 91 }) });
-  assert.match(outside.note.body, /report\.pdf: 작업 폴더 밖/);
-  assert.doesNotMatch(outside.note.body, /nope\.pdf/);
+  assert.match(outside.note.body, /report\.pdf: 작업 폴더 밖이거나 없는 파일/);
+  assert.match(outside.note.body, /nope\.pdf: 작업 폴더 밖이거나 없는 파일/);
   assert.doesNotMatch(outside.note.body, /파일이 없습니다/);
-  assert.match(outside.reply.body, /^a \[b\]\(.*nope\.pdf\)$/);
+  assert.equal(outside.reply.body, 'a b');
 });
 
 test('한 답 첨부 상한 10개 — 넘는 것은 안내', async () => {
@@ -322,18 +323,62 @@ test('M-1: 결과물 확장자 허용 목록은 한 곳 — 텔레그램 extract
 });
 
 // L-2: `/login`·`/api/v1/users` 같은 웹 경로 링크를 로컬 파일로 판정해 본문에서 지우고 '작업 폴더 밖' 안내를 따로 붙였다.
-test('L-2: 없는 구역 밖 절대 경로(웹 경로 링크)는 본문 그대로, 실패 안내 없음 — 있는 구역 밖 파일은 그대로 막는다', async () => {
-  const body = '로그인은 [로그인 화면](/login)에서, 목록은 [사용자 API](/api/v1/users)로 받습니다.';
+// N-5(2차): 존재 여부로 가르면 없는 파일 경로가 본문에 남고(D26 위반) 링크 하나로 파일이 있는지 알아낼 수 있다 → 경로 모양으로만 가른다.
+test('L-2: 확장자 없고 홈·작업 루트·임시 폴더 밖인 절대 경로(웹 경로 링크)는 본문 그대로, 실패 안내 없음', async () => {
+  const body = '로그인은 [로그인 화면](/login)에서, 목록은 [사용자 API](/api/v1/users)로 받습니다. [인증](/auth) [토큰](/api/token)';
   const r = await runTurn(body, { j: job({ msgId: 111, threadRoot: 111 }) });
-  assert.equal(r.reply.body, body, '웹 경로 링크는 손대지 않는다');
+  assert.equal(r.reply.body, body, '웹 경로 링크는 손대지 않는다(비밀 낱말 auth·token으로 끝나도)');
   assert.equal(r.note, undefined, '실패 안내를 붙이지 않는다');
   assert.equal(r.uploads.length, 0);
-  const blocked = await runTurn(`[밖 보고서](${join(OUTSIDE, 'report.pdf')}) [인증](/auth) [토큰](/api/token)`, { j: job({ msgId: 112, threadRoot: 112 }) });
-  assert.equal(blocked.uploads.length, 0, '있는 구역 밖 파일은 계속 막는다');
-  assert.match(blocked.note.body, /report\.pdf: 작업 폴더 밖/);
-  assert.match(blocked.reply.body, /\[인증\]\(\/auth\) \[토큰\]\(\/api\/token\)$/, '비밀 낱말(auth·token)로 끝나는 웹 경로도 그대로');
-  assert.doesNotMatch(blocked.note.body, /auth|token/);
-  noLocalPath(blocked.reply.body);
+});
+
+test('N-5: 구역 밖 경로는 있는 파일과 없는 파일의 결과가 같다 — 확장자 있거나 홈·임시 폴더 아래면 지우고 같은 안내, 아니면 둘 다 그대로', async () => {
+  const { planReplyFiles } = await import('../src/gateway/msgr-reply-files.mjs');
+  const { homedir } = await import('node:os');
+  await mkdir(join(OUTSIDE, 'dir-exists'), { recursive: true });
+  const pairs = [ // [있는 것, 없는 것]
+    [join(OUTSIDE, 'report.pdf'), join(OUTSIDE, 'nope.pdf')],                       // 확장자
+    [join(OUTSIDE, 'dir-exists'), join(OUTSIDE, 'dir-nope')],                        // 임시 폴더 아래(확장자 없음)
+    [homedir(), join(homedir(), 'nobody-xyz-argo', 'Desktop', 'plan')],              // 홈 아래(확장자 없음)
+    ['/usr', '/usrx-argo-nope'],                                                     // 홈·임시 밖, 확장자 없음 → 둘 다 손대지 않는다
+  ];
+  const shape = (r) => ({ body: r.body.replace(/\S*(nope|exists|nobody|usr|report)\S*/g, 'X'), files: r.files.length, fails: r.fails.map((f) => f.reason) });
+  for (const [there, absent] of pairs) {
+    const a = await planReplyFiles(WS, `[링크](${there})`);
+    const b = await planReplyFiles(WS, `[링크](${absent})`);
+    assert.deepEqual(shape(a), shape(b), `있음/없음 결과가 같아야 한다: ${there} / ${absent}`);
+  }
+  const home = await planReplyFiles(WS, `[계획](${join(homedir(), 'nobody-xyz-argo', 'Desktop', 'plan.pdf')})`);
+  assert.equal(home.body, '계획', '홈 아래 없는 파일 경로도 본문에서 지운다(D26)');
+  assert.match(home.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
+  const web = await planReplyFiles(WS, '[x](/usr) [y](/usrx-argo-nope)');
+  assert.equal(web.body, '[x](/usr) [y](/usrx-argo-nope)');
+  assert.deepEqual(web.fails, []);
+});
+
+test('N-4: 비밀 낱말(password·api key·private key·service account·camelCase Token)과 하드 링크는 첨부하지 않는다', async () => {
+  const { planReplyFiles, readReplyFile } = await import('../src/gateway/msgr-reply-files.mjs');
+  const { link } = await import('node:fs/promises');
+  const names = ['passwords.csv', 'api_keys.csv', 'accessToken.md', 'private-key.md', 'service-account.md', 'passwd.md', 'apiKey.md'];
+  for (const n of names) await writeFile(join(PROJ, n), 'SENSITIVE');
+  const r = await planReplyFiles(WS, names.map((n) => `[x](${join(PROJ, n)})`).join(' '));
+  assert.deepEqual(r.files.map((f) => f.name), []);
+  assert.deepEqual(r.fails.map((f) => f.name).sort(), [...names].sort());
+  // 낱말 경계 — 평범한 이름은 그대로(tokenizer·passage·keynote·author)
+  for (const n of ['tokenizer-diagram.png', 'passage.md', 'keynote.pdf', 'author.pdf', 'monkey.png']) await writeFile(join(PROJ, n), 'OK');
+  const ok = await planReplyFiles(WS, ['tokenizer-diagram.png', 'passage.md', 'keynote.pdf', 'author.pdf', 'monkey.png'].map((n) => `[x](${join(PROJ, n)})`).join(' '));
+  assert.equal(ok.files.length, 5, ok.fails.map((f) => f.name).join(','));
+  // 하드 링크: 밖 파일과 같은 inode를 구역 안 이름으로 가리킨다 — realpath로는 못 가른다
+  await link(join(OUTSIDE, 'report.pdf'), join(PROJ, 'hard.pdf'));
+  const h = await planReplyFiles(WS, `[h](${join(PROJ, 'hard.pdf')})`);
+  assert.deepEqual(h.files, []);
+  assert.match(h.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
+  // 계획 뒤에 하드 링크가 생겨도 읽을 때 다시 막는다
+  await writeFile(join(PROJ, 'later.pdf'), 'LEGIT');
+  const plan = await planReplyFiles(WS, `[l](${join(PROJ, 'later.pdf')})`);
+  assert.equal(plan.files.length, 1);
+  await link(join(PROJ, 'later.pdf'), join(OUTSIDE, 'later-copy.pdf'));
+  await assert.rejects(readReplyFile(WS, plan.files[0]), (e) => e.roomSafe === true);
 });
 
 // M-5: 같은 파일을 답마다 새 경로로 다시 올렸다(루틴 결과 글·대화 중 같은 시안 재언급). 같은 방에 이미 올린 같은 내용이면 기존 객체를 재사용한다.
@@ -383,6 +428,14 @@ test('M-5: 재사용 첨부 행이 거부되면 예전처럼 새로 올린다 ·
   assert.deepEqual([p1.uploads.length, p2.uploads.length], [1, 1], '개인 방은 매번 자기 글 경로로');
   assert.match(p2.atts[0].storage_path, /^p\//);
   assert.notEqual(p2.atts[0].storage_path, p1.atts[0].storage_path);
+});
+
+test('N-2: DM 방은 첨부를 재사용하지 않는다(위임 주인 읽기 판정이 경로의 글을 본다) · 방 종류를 모르면 재사용하지 않는다', async () => {
+  const DM = 'bbbbbbbb-0000-4000-8000-000000000005'; // KIND_OF에 없음 → fakeDb.channel이 dm
+  const a = await runTurn(`![a](${AVATAR})`, { j: job({ channelId: DM, msgId: 141, threadRoot: 141 }) });
+  const b = await runTurn(`![a](${AVATAR})`, { j: job({ channelId: DM, msgId: 142, threadRoot: 142 }) });
+  assert.deepEqual([a.uploads.length, b.uploads.length], [1, 1], 'DM은 매번 자기 글 경로로');
+  assert.notEqual(b.atts[0].storage_path, a.atts[0].storage_path);
 });
 
 test('M-5: 루틴 결과 글은 한 답 첨부 상한 3개', async () => {
