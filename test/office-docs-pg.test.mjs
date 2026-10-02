@@ -334,6 +334,6 @@ test('LOW-B 사용량 표시 = 판정: 문서함 목록의 usage는 판정 함�
   const before = sql(`select string_agg(key||':'||xmin::text,',' order by key) from r2_objects where seg=${quote(s)}`);
   usage(); usage();
   assert.equal(sql(`select string_agg(key||':'||xmin::text,',' order by key) from r2_objects where seg=${quote(s)}`), before, '읽기 쓰기 0');
-  assert.equal(sql(`select string_agg(proname||'='||provolatile,',' order by proname) from pg_proc where proname in ('office_file_list','office_storage_taken')`), 'office_file_list=s,office_storage_taken=s');
+  assert.equal(sql(`select string_agg(proname||'='||provolatile::text,',' order by proname) from pg_proc where proname in ('office_file_list','office_storage_taken')`), 'office_file_list=s,office_storage_taken=s');
   sql(`delete from r2_objects where seg=${quote(s)}`);
 });

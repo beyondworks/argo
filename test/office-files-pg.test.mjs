@@ -280,7 +280,7 @@ test('쓰기 0(총괄 결정 6): 목록·한 건·열기 판정·자리 판정�
  const before=snap();
  for(let i=0;i<3;i++){ list(U.member); call(U.member,`office_file_get(${org(ORG)},${quote(f.id)})`); grant(U.member,[f.path]); grant(U.admin,[f.path,p.key]); pending(U.member,p.key); }
  assert.equal(snap(),before);
- assert.equal(sql(`select string_agg(proname||'='||provolatile,',' order by proname) from pg_proc where proname in ('r2_object_read_grant','r2_object_pending_mine','r2_object_deleting')`),
+ assert.equal(sql(`select string_agg(proname||'='||provolatile::text,',' order by proname) from pg_proc where proname in ('r2_object_read_grant','r2_object_pending_mine','r2_object_deleting')`),
   'r2_object_deleting=s,r2_object_pending_mine=s,r2_object_read_grant=s','stable 함수는 쓰기 문장을 실행하지 못한다(측정을 몰래 켜면 오류로 드러난다)');
  assert.equal(sql(`select count(*) from pg_class where relname='office_storage_usage'`),'0','다운로드 측정 표는 만들지 않았다(설계 주석만)');
  const lim=JSON.parse(sql(`select office_storage_limits()`));
