@@ -61,6 +61,7 @@ import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from '
 import { getComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
 import { fetchSearchRows } from './search-rows.mjs';
 import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
+import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
 import { watchOnline } from './connection.mjs';
@@ -2513,9 +2514,7 @@ function Shell({ session }) {
           {newCh && (
             <form className="msgr-inline ph-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
               <input className="msgr-input" placeholder={t('ch.name')} value={newCh.name} onChange={(e) => setNewCh((c) => ({ ...c, name: e.target.value }))} autoFocus maxLength={80} />
-              <div className="msgr-seg" role="radiogroup" aria-label={t('ch.new.kind')}>
-                {[['public', t('ch.new.public')], ['private', t('ch.new.private')]].map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={newCh.kind === v} className={newCh.kind === v ? 'active' : ''} onClick={() => setNewCh((c) => ({ ...c, kind: v }))}><I name={v === 'private' ? 'lock' : 'hash'} size={12} />{l}</button>)}
-              </div>
+              <Seg label={t('ch.new.kind')} value={newCh.kind} onPick={(v) => setNewCh((c) => ({ ...c, kind: v }))} options={[['public', t('ch.new.public')], ['private', t('ch.new.private')]].map(([v, l]) => ({ v, label: l, icon: <I name={v === 'private' ? 'lock' : 'hash'} size={12} /> }))} />
               <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!newCh.name.trim()}><I name="check" size={13} />{t('ui.create')}</button><button type="button" className="btn sm" onClick={() => setNewCh(null)}>{t('ui.cancel')}</button></div>
             </form>
           )}
@@ -2617,9 +2616,7 @@ function Shell({ session }) {
         {newCh && (
           <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
             <input className="msgr-input" placeholder={t('ch.name')} value={newCh.name} onChange={(e) => setNewCh((c) => ({ ...c, name: e.target.value }))} autoFocus maxLength={80} />
-            <div className="msgr-seg" role="radiogroup" aria-label={t('ch.new.kind')}>
-              {[['public', t('ch.new.public')], ['private', t('ch.new.private')]].map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={newCh.kind === v} className={newCh.kind === v ? 'active' : ''} onClick={() => setNewCh((c) => ({ ...c, kind: v }))}><I name={v === 'private' ? 'lock' : 'hash'} size={12} />{l}</button>)}
-            </div>
+            <Seg label={t('ch.new.kind')} value={newCh.kind} onPick={(v) => setNewCh((c) => ({ ...c, kind: v }))} options={[['public', t('ch.new.public')], ['private', t('ch.new.private')]].map(([v, l]) => ({ v, label: l, icon: <I name={v === 'private' ? 'lock' : 'hash'} size={12} /> }))} />
             <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!newCh.name.trim()}><I name="check" size={13} />{t('ui.create')}</button><button type="button" className="btn sm" onClick={() => setNewCh(null)}>{t('ui.cancel')}</button></div>
           </form>
         )}
@@ -2634,7 +2631,7 @@ function Shell({ session }) {
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: newChKind })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
                   {isPhone && org && previewChannels.length > 0 && <button type="button" className="item msgr-addrow msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} aria-expanded={!!browse}><I name="hash" size={18} /><span className="name">{t('ch.browse.row')}</span></button>}{/* 폰은 구역 머리의 둘러보기 단추가 숨는다(.right display:none) — 참여할 수 있는 공개 채널이 있으면 새 채널 옆 행으로(점검 A·B #2) */}
 </RailSection>}
-        {dmTab && (<div className="msgr-seg msgr-dmfilter" role="radiogroup" aria-label={t('dm.filter')}>{DM_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{t(`dm.filter.${k}`)}</button>)}</div>)}
+        {dmTab && <Seg className="msgr-dmfilter" label={t('dm.filter')} value={dmFilter} onPick={pickDmFilter} options={DM_FILTERS.map((k) => ({ v: k, label: t(`dm.filter.${k}`) }))} />}
         {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
         {!orgBlocked && (dms.length > 0 || dmTab || !!orgId) && !(isPhone && isPersonal && !dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
           <button type="button" className="btn" onClick={() => setDmGroup(true)} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
@@ -2885,9 +2882,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
         <section>
           <h3>{t('crew.allow')}</h3>
           <p>{t('crew.allow.desc')}</p>
-          <div className="msgr-seg" role="radiogroup" aria-label={t('crew.allow')}>
-            {['all', 'list', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={allow === v} className={allow === v ? 'active' : ''} disabled={!owner || busy || locked} onClick={() => pickAllow(v)}>{t(`crew.allow.${v}`)}</button>)}
-          </div>
+          <Seg label={t('crew.allow')} value={allow} onPick={pickAllow} disabled={!owner || busy || locked} options={['all', 'list', 'owner'].map((v) => ({ v, label: t(`crew.allow.${v}`) }))} />
           {allow === 'list' && (
             <div className="picks">
               <span className="msgr-klabel">{t('crew.allow.pick')}</span>
@@ -3247,9 +3242,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
             {channel.kind !== 'dm' && (<>
               <div className="row wrap">
                 <span className="msgr-klabel">{t('ch.personal')}</span>
-                <div className="msgr-seg" role="radiogroup" aria-label={t('ch.personal')}>
-                  {['allowed', 'approval', 'blocked', ...(channel.personal_crews === 'read_only' ? ['read_only'] : [])].map((v) => <button key={v} type="button" role="radio" aria-checked={(channel.personal_crews ?? 'approval') === v} className={(channel.personal_crews ?? 'approval') === v ? 'active' : ''} disabled={!canEdit || busy} onClick={() => upd({ personal_crews: v }, t('ch.personal.saved'))}>{personalLabel(v)}</button>)}
-                </div>
+                <Seg label={t('ch.personal')} value={channel.personal_crews ?? 'approval'} onPick={(v) => upd({ personal_crews: v }, t('ch.personal.saved'))} disabled={!canEdit || busy} options={['allowed', 'approval', 'blocked', ...(channel.personal_crews === 'read_only' ? ['read_only'] : [])].map((v) => ({ v, label: personalLabel(v) }))} />
               </div>
               <p className="note">{t('ch.personal.desc')}</p>{(channel.personal_crews ?? 'approval') === 'blocked' && <p className="note">{t('ch.personal.blocked.note')}</p>}
               {canEdit && (!confirmArchive
@@ -3679,7 +3672,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
     </div>
     <div className="msgr-thread page"><div className="msgr-inbox">
       {phone && <h1 className="msgr-bigtitle">{t('inbox.title')}</h1>}
-      <div className="msgr-seg" role="tablist">{INBOX_KINDS.map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>{t(`inbox.kind.${k}`)}{!phone && k !== 'all' && unreadOf(k) > 0 && <span className="n">{unreadOf(k)}</span>}</button>)}</div>
+      <Seg kind="tab" label={t('inbox.title')} value={kind} onPick={setKind} options={INBOX_KINDS.map((k) => ({ v: k, label: t(`inbox.kind.${k}`), n: !phone && k !== 'all' && unreadOf(k) > 0 ? unreadOf(k) : null }))} />
       {phone && <p className="msgr-inboxcounts">{t('inbox.count', { kind: t(`inbox.kind.${kind}`), n: shown.length })}</p>} {/* 폰: 탭 속 숫자 대신 탭 아래 한 줄 — 고른 탭의 개수(유건 2026-09-11) */}
       {!shown.length && <p className="empty">{unreadOnly && readCount ? t('inbox.allRead') : t('inbox.empty')}</p>}
       {readCount > 0 && <button type="button" className="btn sm msgr-inboxtoggle" onClick={() => setUnreadOnly((v) => !v)}>{unreadOnly ? t('inbox.showRead', { n: readCount }) : t('inbox.unreadOnly')}</button>}
@@ -3711,27 +3704,21 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
   const phone = useIsPhone();
   const setNavRef = useRef(null);
   // 폰 폭의 탭 줄은 가로 스크롤 — 들어오자마자(또는 탭이 바뀔 때) 활성 탭이 줄 밖이면 가운데로 가져온다. 영어 360px에서 '내 계정'이 줄 오른쪽 밖에 있어 어느 탭인지 안 보였다(LA-11). 줄 안에서만 움직인다(페이지 세로 스크롤은 건드리지 않는다)
-  useLayoutEffect(() => { const nav = setNavRef.current; const on = nav?.querySelector('button.on'); if (!nav || !on) return; const n = nav.getBoundingClientRect(); const b = on.getBoundingClientRect(); nav.scrollLeft = scrollLeftToCenter({ navLeft: n.left, navWidth: n.width, btnLeft: b.left, btnWidth: b.width, scrollLeft: nav.scrollLeft, scrollWidth: nav.scrollWidth }); }, [tab, tabs.length, phone]);
+  useLayoutEffect(() => { const nav = setNavRef.current; const on = nav?.querySelector('button.on, button.active'); if (!nav || !on) return; const n = nav.getBoundingClientRect(); const b = on.getBoundingClientRect(); nav.scrollLeft = scrollLeftToCenter({ navLeft: n.left, navWidth: n.width, btnLeft: b.left, btnWidth: b.width, scrollLeft: nav.scrollLeft, scrollWidth: nav.scrollWidth }); }, [tab, tabs.length, phone]);
   useLayoutEffect(() => { if (!phone || phoneView !== 'list' || !focusGroup) return; document.querySelector(`.ph-setlist [data-group="${focusGroup}"]`)?.scrollIntoView({ block: 'start' }); onFocusUsed?.(); }, [phone, phoneView, focusGroup]); // eslint-disable-line react-hooks/exhaustive-deps
   const langCard = (<section className="msgr-setcard">
             <h2>{t('set.lang')}</h2>
-            <div className="msgr-seg" role="radiogroup" aria-label={t('set.lang')}>
-              {[['ko', '한국어'], ['en', 'English']].map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={lang === v} className={lang === v ? 'active' : ''} onClick={() => setLang(v)}>{l}</button>)}
-            </div>
+            <Seg label={t('set.lang')} value={lang} onPick={setLang} options={[{ v: 'ko', label: '한국어' }, { v: 'en', label: 'English' }]} />
           </section>);
   const themeCard = (<section className="msgr-setcard">
             <h2>{t('set.theme')}</h2>
             <div className="row">
               <span className="msgr-klabel">{t('set.family')}</span>
-              <div className="msgr-seg" role="radiogroup" aria-label={t('set.family')}>
-                {FAMILIES.map(([f, label]) => <button key={f} type="button" role="radio" aria-checked={family === f} className={family === f ? 'active' : ''} onClick={() => setTheme(`${f}${mode ?? ''}`)}>{ta(label)}</button>)}
-              </div>
+              <Seg label={t('set.family')} value={family} onPick={(f) => setTheme(`${f}${mode ?? ''}`)} options={FAMILIES.map(([f, label]) => ({ v: f, label: ta(label) }))} />
             </div>
             <div className="row">
               <span className="msgr-klabel">{t('set.mode')}</span>
-              <div className="msgr-seg" role="radiogroup" aria-label={t('set.mode')}>
-                {MODES.map(([sfx, label]) => <button key={sfx} type="button" role="radio" aria-checked={family != null && mode === sfx} className={family != null && mode === sfx ? 'active' : ''} onClick={() => setTheme(`${family ?? 'linen'}${sfx}`)}>{t(label)}</button>)}
-              </div>
+              <Seg label={t('set.mode')} value={family != null ? mode : null} onPick={(sfx) => setTheme(`${family ?? 'linen'}${sfx}`)} options={MODES.map(([sfx, label]) => ({ v: sfx, label: t(label) }))} />
             </div>
             <div className="row">
               <span className="msgr-klabel">{t('set.skins')}</span>
@@ -3757,7 +3744,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
       const otabs = [['org', 'set.tab.org'], ['members', 'set.tab.members'], ['policy', 'set.policy'], isAdmin && ['log', 'set.tab.audit']].filter(Boolean);
       const ot = otabs.some(([k]) => k === tab) ? tab : 'org';
       return body(t('phone.org.settings'), !org || gated ? <>{pick}<section className="msgr-setcard"><p>{t('org.noEdit')}</p></section></> : (<>{pick}
-        <nav className="msgr-setnav" ref={setNavRef} aria-label={t('phone.org.settings')}>{otabs.map(([k, label]) => <button key={k} type="button" className={ot === k ? 'on' : ''} aria-current={ot === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}</nav>
+        <Seg kind="tab" className="ph-settabs" ref={setNavRef} label={t('phone.org.settings')} value={ot} onPick={setTab} options={otabs.map(([k, label]) => ({ v: k, label: t(label) }))} />
         <div className="msgr-setbody">
           {ot === 'members' && (isAdmin
             ? <OrgCard part="members" invitesTick={invitesTick} org={org} uid={uid} members={members} channels={channels} onInvite={onInvite} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
@@ -3944,7 +3931,7 @@ function MemNew({ org, channelId, uid, onCreated, onNote, onError, onCancel }) {
   return (
     <div className="msgr-memnew">
       <div className="row"><span className="msgr-klabel">{t('docs.folder')}</span>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('docs.folder')}>{DOC_FOLDERS.filter((f) => f !== 'journal').map((f) => <button key={f} type="button" role="radio" aria-checked={creating.folder === f} className={creating.folder === f ? 'active' : ''} onClick={() => setCreating((c) => ({ ...c, folder: f }))}>{t(`docs.folder.${f}`)}</button>)}</div></div>
+        <Seg label={t('docs.folder')} value={creating.folder} onPick={(f) => setCreating((c) => ({ ...c, folder: f }))} options={DOC_FOLDERS.filter((f) => f !== 'journal').map((f) => ({ v: f, label: t(`docs.folder.${f}`) }))} /></div>
       <input className="msgr-input" placeholder={t('docs.new.placeholder')} value={creating.title} onChange={(e) => setCreating((c) => ({ ...c, title: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} autoFocus />
       <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !creating.title.trim()} onClick={create}><I name="check" size={13} />{t('docs.create')}</button><button type="button" className="btn sm" onClick={onCancel}>{t('ui.cancel')}</button></div>
     </div>
@@ -4322,7 +4309,7 @@ function PhoneFriendsManage({ uid, friends = [], onChanged, onPersonalDm, onNote
   const empty = (k) => <p className="ph-mempty">{t(k)}</p>;
   return (<div className="ph-fmanage">
     <p className="ph-fm-hint">{t('fm.hint')}</p>
-    <div className="msgr-seg ph-fm-tabs" role="tablist" aria-label={t('phone.set.friends')}>{['friends', 'blocked', 'hidden'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{t(`fm.tab.${k}`)}</button>)}</div>
+    <Seg kind="tab" className="ph-fm-tabs" label={t('phone.set.friends')} value={tab} onPick={setTab} options={['friends', 'blocked', 'hidden'].map((k) => ({ v: k, label: t(`fm.tab.${k}`) }))} />
     {tab === 'friends' && (<>
       {received.length > 0 && (<>
         <button type="button" className="ph-reqrow ph-mreq" aria-expanded={reqOpen} onClick={() => setReqOpen((v) => !v)}><span className="ph-reqic"><I name="personplus" size={18} /></span><span className="name">{t('phone.friends.requests', { n: received.length })}</span><I name="caret" size={14} className={`ph-chev${reqOpen ? ' open' : ''}`} /></button>
@@ -4404,9 +4391,7 @@ function PersonalAgentCard({ crewId, uid, onClose, onNote, onError, onChanged })
           <section>
             <h3>{t('crew.allow')}</h3>
             <p>{t('agentcard.allow.desc')}</p>
-            <div className="msgr-seg" role="radiogroup" aria-label={t('crew.allow')}>
-              {['owner', 'all'].map((v) => <button key={v} type="button" role="radio" aria-checked={(crew.allow === 'all' ? 'all' : 'owner') === v} className={(crew.allow === 'all' ? 'all' : 'owner') === v ? 'active' : ''} disabled={busy || !!locks.allow} onClick={() => save({ allow: v, allow_users: [] }, 'crew.allow.saved')}>{t(`agentcard.allow.${v}`)}</button>)}
-            </div>
+            <Seg label={t('crew.allow')} value={crew.allow === 'all' ? 'all' : 'owner'} onPick={(v) => save({ allow: v, allow_users: [] }, 'crew.allow.saved')} disabled={busy || !!locks.allow} options={['owner', 'all'].map((v) => ({ v, label: t(`agentcard.allow.${v}`) }))} />
             {locks.allow && lockNote(locks.allow)}
           </section>
         </>)}
@@ -4686,7 +4671,7 @@ function PhoneMembers({ org, uid, members, onRole = null, onRemove = null, busy 
             <div><dt>{t('org.member.title')}</dt><dd>{cur.title || '—'}</dd></div>
             {cur.expires_at && <div><dt>{t('role.guest')}</dt><dd>{Date.parse(cur.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(cur.expires_at, lang) })}</dd></div>}
           </dl>
-          {perms.canRole && onRole && <><h3>{t('org.member.role')}</h3><div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={cur.role === r} className={cur.role === r ? 'active' : ''} disabled={busy} onClick={() => onRole(cur, r)}>{t(`role.${r}`)}</button>)}</div></>}
+          {perms.canRole && onRole && <><h3>{t('org.member.role')}</h3><Seg label={t('org.member.role')} value={cur.role} onPick={(r) => onRole(cur, r)} disabled={busy} options={ROLES_ASSIGNABLE.map((r) => ({ v: r, label: t(`role.${r}`) }))} /></>}
           {cur.role === 'owner' && <p className="note">{t('phone.mem.ownerLocked')}</p>}
           {perms.canRemove && onRemove && <button type="button" className="btn danger ph-memremove" disabled={busy} onClick={() => setConfirm(true)}>{t('phone.mem.remove')}</button>}
         </div>
@@ -4737,13 +4722,15 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
     if (okMsg) onNote(okMsg); onOrgsChanged(); onChanged();
   };
   useEffect(() => { setName(org.name); }, [org.id, org.name]);
+  const invSeq = useRef(0); // 늦게 끝난 옛 읽기가 새 목록을 덮지 않게 — 초대 창을 닫을 때의 다시 읽기와 '관리자로 초대' 뒤 다시 읽기가 겹쳤다(실측: 만든 관리자 링크가 안 보이고 다음 누름이 또 만들었다)
   const loadInvites = useCallback(async () => {
+    const my = ++invSeq.current;
     const base = 'id, code, role, email, for_node, expires_at, accepted_by, accepted_at, created_at';
     const pick = (cols) => supabase.from('msgr_invites').select(cols).eq('org_id', org.id).order('created_at', { ascending: false });
     let res = await pick(`${base}, created_by, channel_ids, max_uses, use_count, revoked_at`);
     if (res.error && missingFn(res.error)) res = await pick(base); // 옛 서버(채널·사용 한도 열 없음) — 목록 상태는 inviteStatus가 accepted_at으로 판정
     if (res.error) throw new Error(res.error.message);
-    setInvites(res.data ?? []);
+    if (my === invSeq.current) setInvites(res.data ?? []);
   }, [org.id]);
   useEffect(() => { loadInvites().catch((e) => onError(e.message)); }, [loadInvites]); // eslint-disable-line react-hooks/exhaustive-deps
   const seenTick = useRef(invitesTick); useEffect(() => { if (part !== 'members' || seenTick.current === invitesTick) return; seenTick.current = invitesTick; loadInvites().catch((e) => onError(e.message)); }, [invitesTick]); // eslint-disable-line react-hooks/exhaustive-deps -- 초대 창에서 링크를 만들거나 버린 뒤 닫았을 때만(마운트 직후는 위 효과가 이미 읽는다)
@@ -4779,8 +4766,9 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
     setBusy(false);
     if (res.error) return onError(res.error.message);
     const share = inviteShareText(res.data.code, { origin: location.origin, pathname: location.pathname, t, inviter: nameOfUser(uid), org: org.name, days: daysLeft(res.data) });
-    await navigator.clipboard?.writeText(share).catch(() => {});
-    onNote(`${t('org.inviteMade')} ${share}`); loadInvites().catch(() => {});
+    loadInvites().catch(() => {}); // 목록 먼저 — 클립보드 약속이 끝나지 않으면(권한 대기) 만든 링크가 목록에 안 보이고 다음 누름이 또 만들었다(실측)
+    navigator.clipboard?.writeText(share).catch(() => {});
+    onNote(`${t('org.inviteMade')} ${share}`);
   };
   const revoke = async (inv) => {
     setBusy(true);
@@ -4825,7 +4813,7 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
             <Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
             {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
             {isSvc ? <span className="sub">{t('org.node')}</span> : m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
-              : <div className="msgr-seg right" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
+              : <Seg className="right" label={t('org.member.role')} value={m.role} onPick={(r) => setRole(m, r)} disabled={busy} options={ROLES_ASSIGNABLE.map((r) => ({ v: r, label: t(`role.${r}`) }))} />}
             <MemberProfile org={org} m={m} uid={uid} profiles={profiles} reload={loadProfiles} onNote={onNote} onError={onError} t={t} />
             {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
             {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
@@ -5322,17 +5310,13 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
       <h2>{t('set.policy')}</h2><p>{t('set.policy.desc')}</p>
       <div className="q">
         <span className="qlabel">{t('set.policy.q.allow')}</span>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.q.allow')}>
-          {['all', 'list', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={draft.allow_default === v} className={draft.allow_default === v ? 'active' : ''} disabled={ro} onClick={() => set({ allow_default: v })}>{t(`crew.allow.${v}`)}</button>)}
-        </div>
+        <Seg label={t('set.policy.q.allow')} value={draft.allow_default} onPick={(v) => set({ allow_default: v })} disabled={ro} options={['all', 'list', 'owner'].map((v) => ({ v, label: t(`crew.allow.${v}`) }))} />
         {draft.allow_default === 'list' && <span className="note">{t('set.policy.allow.listNote')}</span>}
         <label className="switchrow"><input type="checkbox" checked={!!draft.allow_locked} disabled={ro} onChange={(e) => set({ allow_locked: e.target.checked })} /><span>{t('set.policy.lock2')}</span></label>
       </div>
       <div className="q">
         <span className="qlabel">{t('set.policy.q.approval')}</span>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.q.approval')}>
-          {['admin', 'approvers', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={(draft.approval_high_by ?? 'admin') === v} className={(draft.approval_high_by ?? 'admin') === v ? 'active' : ''} disabled={ro} onClick={() => set({ approval_high_by: v })}>{t(`set.policy.approval.${v}`)}</button>)}
-        </div>
+        <Seg label={t('set.policy.q.approval')} value={draft.approval_high_by ?? 'admin'} onPick={(v) => set({ approval_high_by: v })} disabled={ro} options={['admin', 'approvers', 'owner'].map((v) => ({ v, label: t(`set.policy.approval.${v}`) }))} />
         {(draft.approval_high_by === 'approvers') && (
           <div className="picks">{members.filter((m) => m.role !== 'owner' && m.role !== 'guest' && m.user_id !== org.service_user_id).map((m) => { const on = (draft.approver_user_ids ?? []).includes(m.user_id); /* 게스트 제외: 공개 채널을 못 읽어 결재를 확정할 수 없다 */ return <button key={m.user_id} type="button" className={`msgr-chan${on ? ' active' : ''}`} aria-pressed={on} disabled={ro} onClick={() => set({ approver_user_ids: on ? (draft.approver_user_ids ?? []).filter((x) => x !== m.user_id) : [...(draft.approver_user_ids ?? []), m.user_id] })}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>; })}</div>
         )}
@@ -5340,9 +5324,7 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
       </div>
       <div className="q">
         <span className="qlabel">{t('set.policy.q.crewCreate')}</span>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.q.crewCreate')}>
-          {['admin', 'channel_admin', 'member'].map((v) => <button key={v} type="button" role="radio" aria-checked={(draft.crew_create ?? 'channel_admin') === v} className={(draft.crew_create ?? 'channel_admin') === v ? 'active' : ''} disabled={ro} onClick={() => set({ crew_create: v })}>{t(`set.policy.crewCreate.${v}`)}</button>)}
-        </div>
+        <Seg label={t('set.policy.q.crewCreate')} value={draft.crew_create ?? 'channel_admin'} onPick={(v) => set({ crew_create: v })} disabled={ro} options={['admin', 'channel_admin', 'member'].map((v) => ({ v, label: t(`set.policy.crewCreate.${v}`) }))} />
       </div>
       <div className="msgr-fold">
         <button type="button" className="fold-head" onClick={() => setAdv((v) => !v)} aria-expanded={adv}><h3>{t('set.policy.advanced')}</h3><I name="caret" size={14} className={adv ? 'open' : ''} /></button>
@@ -5784,7 +5766,7 @@ function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOu
       {!isPersonal && <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false} aria-label={t('ch.memoryOff')}><I name={channel.crew_memory === false ? 'memoff' : 'folder'} size={14} /></button>}</span>
       <button type="button" className="members" onClick={onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{phone && <I name="dots" size={20} className="ph-dots" />}{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" userId={m.user_id} />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} crewId={c.id} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
       {!isPersonal && <button type="button" className="btn sm msgr-work-button" onClick={() => setWorkOpen((v) => !v)} aria-pressed={workOpen} aria-label={t('work.title')}>{t('work.button')}</button>}
-      <div className="msgr-seg" role="tablist">{tabs.map(([k, ic, n]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)} title={t(`tab.${k}`)} aria-label={n > 0 ? `${t(`tab.${k}`)} ${n}` : t(`tab.${k}`)}>{ic && <I name={ic} size={13} />}<span className={ic ? 'lbl' : undefined}>{t(`tab.${k}`)}</span>{n > 0 && <span className="n">{n}</span>}</button>)}</div>{/* .lbl = 좁은 폭에서 숨기는 글자(아이콘 있는 탭만). 이름은 title·aria-label로 남는다 */}
+      <Seg kind="tab" label={t('ch.tabs')} value={tab} onPick={setTab} options={tabs.map(([k, ic, n]) => ({ v: k, title: t(`tab.${k}`), aria: n > 0 ? `${t(`tab.${k}`)} ${n}` : t(`tab.${k}`), icon: ic ? <I name={ic} size={13} /> : null, label: <span className={ic ? 'lbl' : undefined}>{t(`tab.${k}`)}</span>, n: n > 0 ? n : null }))} />{/* .lbl = 좁은 폭에서 숨기는 글자(아이콘 있는 탭만). 이름은 title·aria-label로 남는다 */}
     </div>
     <div className="msgr-thread" ref={setFeed}>
       <PullIndicator phase={pullThread.phase} pulse={pullThread.pulse} t={t} />

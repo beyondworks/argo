@@ -5,13 +5,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { I } from './icons.jsx';
+import { Seg } from './seg.mjs';
 import './invite-dialog.css';
 import { EXPIRY_DAYS, MAX_USES, GUEST_DAYS, invitePerms, channelPick, settingsSummary } from './invite-flow.mjs';
 
-// 선택지가 적은 설정은 한 번에 누르는 알약(네이티브 select는 클릭이 는다 — 총괄 결정)
-function Seg({ label, value, options, onPick }) {
-  return <span className="msgr-seg" role="radiogroup" aria-label={label}>{options.map(([v, text]) => <button key={String(v)} type="button" role="radio" aria-checked={value === v} className={value === v ? 'active' : ''} onClick={() => onPick(v)}>{text}</button>)}</span>;
-}
+// 선택지가 적은 설정은 한 번에 누르는 알약(네이티브 select는 클릭이 는다 — 총괄 결정). 앱 공통 세그먼트(seg.mjs)를 쓴다.
+const pairs = (options) => options.map(([v, text]) => ({ v, label: text }));
 
 export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initialChannelIds = [], initialRole, create, discard = null, loadCurrent = null, confirmReplace = null, shareText, linkOf, onClose, onManage, errorText, t, phone = false }) {
   const perm = invitePerms({ isAdmin, hostOf });
@@ -118,18 +117,15 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
           </button>
           {open && <div className="inv-settings">
             <div className="inv-row"><span>{t('inv.role')}</span>
-              <span className="msgr-seg" role="radiogroup" aria-label={t('inv.role')}>
-                <button type="button" role="radio" aria-checked={s.role === 'member'} className={s.role === 'member' ? 'active' : ''} disabled={!perm.member} title={perm.member ? undefined : t('inv.role.memberLocked')} onClick={() => setRole('member')}>{t('inv.role.member')}</button>
-                <button type="button" role="radio" aria-checked={s.role === 'guest'} className={s.role === 'guest' ? 'active' : ''} disabled={!perm.guest} onClick={() => setRole('guest')}>{t('inv.role.guest')}</button>
-              </span></div>
+              <Seg label={t('inv.role')} value={s.role} onPick={setRole} options={[{ v: 'member', label: t('inv.role.member'), disabled: !perm.member, title: perm.member ? undefined : t('inv.role.memberLocked') }, { v: 'guest', label: t('inv.role.guest'), disabled: !perm.guest }]} /></div>
             {!perm.member && <p className="inv-note">{t('inv.role.memberLocked')}</p>}
             {!locked && <><div className="inv-row"><span>{t('inv.expiry')}</span>
-              <Seg label={t('inv.expiry')} value={s.expiryDays} options={EXPIRY_DAYS.map((d) => [d, d == null ? t('inv.expiry.none') : t('inv.days', { n: d })])} onPick={(v) => setS((x) => ({ ...x, expiryDays: v }))} /></div>
+              <Seg label={t('inv.expiry')} value={s.expiryDays} options={pairs(EXPIRY_DAYS.map((d) => [d, d == null ? t('inv.expiry.none') : t('inv.days', { n: d })]))} onPick={(v) => setS((x) => ({ ...x, expiryDays: v }))} /></div>
             {s.role === 'member'
               ? <div className="inv-row"><span>{t('inv.uses')}</span>
-                  <Seg label={t('inv.uses')} value={s.maxUses} options={MAX_USES.map((n) => [n, n == null ? t('inv.uses.unlimitedShort') : t('inv.uses.n', { n })])} onPick={(v) => setS((x) => ({ ...x, maxUses: v }))} /></div>
+                  <Seg label={t('inv.uses')} value={s.maxUses} options={pairs(MAX_USES.map((n) => [n, n == null ? t('inv.uses.unlimitedShort') : t('inv.uses.n', { n })]))} onPick={(v) => setS((x) => ({ ...x, maxUses: v }))} /></div>
               : <div className="inv-row"><span>{t('inv.guest.days')}</span>
-                  <Seg label={t('inv.guest.days')} value={s.guestDays} options={GUEST_DAYS.map((d) => [d, t('inv.days', { n: d })])} onPick={(v) => setS((x) => ({ ...x, guestDays: v }))} /></div>}</>}
+                  <Seg label={t('inv.guest.days')} value={s.guestDays} options={pairs(GUEST_DAYS.map((d) => [d, t('inv.days', { n: d })]))} onPick={(v) => setS((x) => ({ ...x, guestDays: v }))} /></div>}</>}
           </div>}
         </div>
 
