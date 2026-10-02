@@ -20,7 +20,7 @@ async function fakeSupabase(over = {}) {
   const orig = await (async () => { const d = await PDFDocument.create(); d.addPage([595.28, 841.89]); return d.save(); })();
   R2.objects.clear();
   R2.objects.set(ORIG, { bytes: Buffer.from(over.origBytes ?? orig), type: 'application/pdf', etag: 'o' }); // 사람이 올린 원본(서명 기록이 가진 객체)
-  const calls = [], removed = [];
+  const calls = [], removed = [], abandoned = [];
   const uploads = { has: (k) => R2.objects.has(k), get: (k) => R2.objects.get(k) && new Uint8Array(R2.objects.get(k).bytes), keys: () => R2.objects.keys(), get size() { return [...R2.objects.keys()].filter((k) => k !== ORIG).length; } };
   const reply = (body, status = 200) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   globalThis.fetch = async (url, init = {}) => {
@@ -38,7 +38,8 @@ async function fakeSupabase(over = {}) {
       if (rpc === 'office_esign_public_bundle') return reply({ id: 'e1', title: '용역 계약서', doc_hash: sha(orig), orig_path: 'o-org/esign/e1/orig.pdf', seg: 'o-org', status: 'sent', mail_account: null, signers: [{ id: 's1', ord: 0, name: '한빛', email: 'p@h.example', signed_at: '2026-10-02T03:00:00Z', ip: '9.9.9.9', placements: JSON.parse(calls.find((c) => c.path.endsWith('office_esign_public_submit'))?.body ?? '{"p_placements":[]}').p_placements }] });
       if (rpc === 'office_esign_public_finalize') return reply({ order_sync: 'confirmed', final_path: args.p_final_path });
       if (rpc === 'r2_object_server_put') return reply('');
-      if (rpc === 'r2_object_fail') { removed.push(...args.p_keys.filter((k) => !R2.objects.has(k))); return reply(args.p_keys.length); }
+      if (rpc === 'r2_object_abandon') { abandoned.push(...args.p_keys.filter((k) => R2.objects.has(k))); return reply(args.p_keys); }
+      if (rpc === 'r2_object_forget') { removed.push(...args.p_keys.filter((k) => !R2.objects.has(k))); return reply(args.p_keys.length); }
       return reply('{"message":"unknown"}', 404);
     }
     if (u.pathname.startsWith('/fonts/')) return reply({}, 404);
@@ -47,7 +48,7 @@ async function fakeSupabase(over = {}) {
   process.env.VITE_SUPABASE_URL = 'https://sb.test';
   process.env.OFFICE_SUPABASE_SERVICE_KEY = 'service-test';
   Object.assign(process.env, R2.env);
-  return { calls, uploads, removed, orig };
+  return { calls, uploads, removed, abandoned, orig };
 }
 const req = (op, body, headers = {}) => new Request(`http://localhost/api/esign/${op}`, body ? { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) } : { headers });
 const rpcArgs = (calls, fn) => calls.filter((c) => c.path.endsWith(fn)).map((c) => JSON.parse(c.body));
@@ -150,7 +151,7 @@ test('이메일이 틀리면 그림을 하나도 올리지 않고, 제출이 DB�
   assert.equal(f.uploads.size, 0);
   f = await fakeSupabase({ office_esign_public_submit: (_a, reply) => reply('{"message":"docs_cancelled"}', 400) });
   assert.equal((await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [{ page: 0, kind: 'signature', imgDataUrl: `data:image/png;base64,${PNG}` }] }))).status, 403);
-  assert.equal(f.removed.length, 1, 'R2에서 지운 뒤 등록 전 행도 지운다'); assert.match(f.removed[0], /\/s-s1-0-[0-9a-f]{12}\.png$/);
+  assert.equal(f.removed.length, 1, '등록 전 행을 deleting으로 → R2 삭제 → 행 잊기(재검수 LOW-A)'); assert.match(f.removed[0], /\/s-s1-0-[0-9a-f]{12}\.png$/);
   assert.equal(f.uploads.size, 0);
 });
 

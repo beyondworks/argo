@@ -112,3 +112,14 @@ test('휴지통 30일, 정리는 하루 한 번, 태그 입력, 올리기 결과
   assert.deepEqual(uploadSummary(['a', 'b'], [true, true]), { key: 'files.uploadedN', vars: { n: 2 } });
   assert.deepEqual(uploadSummary(['a', 'b'], [true, 'tooBig']), { key: 'files.uploadedMixed', vars: { ok: 1, failed: 1 } });
 });
+
+test('재검수 LOW-D: 서버·DB 오류 코드마다 화면 문구(ko/en)가 있다 — 올리기 시간이 지난 자리(file_expired)도 일반 오류로 뭉개지지 않는다', async () => {
+  const { FILE_ERRORS } = await import('../src/files/model.js');
+  const { FILES_DICT } = await import('../src/files/files-i18n.js');
+  assert.equal(FILE_ERRORS.file_expired, 'uploadExpired');
+  for (const [code, reason] of Object.entries(FILE_ERRORS)) {
+    const v = FILES_DICT[`files.err.${reason}`];
+    assert.ok(Array.isArray(v) && v[0] && v[1], `${code} → files.err.${reason} ko/en 문구`);
+  }
+  assert.match(FILES_DICT['files.err.uploadExpired'][0], /다시 올려/);
+});

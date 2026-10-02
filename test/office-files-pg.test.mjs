@@ -411,3 +411,12 @@ test('검수 9: 열기 판정은 형식도 준다(서버가 미리보기 대상�
  const f=newFile(U.member,{title:'공용2.pdf'});
  assert.deepEqual(grantRows(U.member,[f.path]),[{key:f.path,mime:'application/pdf'}]);
 });
+
+test('재검수 LOW-A: 서버 실패 정리는 등록 전 행을 deleting으로 바꾼다(r2_object_abandon) — R2 삭제가 실패해도 크론이 다시 지운다, 등록된 행은 그대로', {skip}, ()=>{
+ const a=upload(U.member), p=reserve(U.member), f=newFile(U.member,{title:'남길 것.pdf'});
+ assert.deepEqual(JSON.parse(svc(`array_to_json(r2_object_abandon(${arr([a.key,p.key,f.path,'nope'])}))`)).sort(),[a.key,p.key].sort());
+ assert.equal(row(a.key).state,'deleting'); assert.equal(row(p.key).state,'deleting'); assert.equal(row(f.path).state,'claimed');
+ assert.ok(JSON.parse(svc(`office_storage_sweep(1000)`)).keys.includes(a.key),'R2 삭제가 실패해 남은 행은 다음 크론 목록에 든다');
+ assert.match(fails(U.member,`r2_object_abandon(${arr([a.key])})`),/permission denied/);
+ svc(`r2_object_forget(${arr([a.key,p.key])})`);
+});

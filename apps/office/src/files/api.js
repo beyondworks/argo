@@ -7,11 +7,10 @@ import { configured, getClient } from '../core/supabase.js';
 import { rpc, orgOf } from '../core/tasks.js';
 import { ME } from '../core/session.js';
 import { apiUrl, isDesktop, saveAttachment } from '../core/platform.js';
-import { matches, uploadCheck, storagePath, segOf, classify, findCustomer, matchCustomer, clip, kindOf, ocrable, purgeDue } from './model.js';
+import { FILE_ERRORS, matches, uploadCheck, storagePath, segOf, classify, findCustomer, matchCustomer, clip, kindOf, ocrable, purgeDue } from './model.js';
 import * as S from './sample.js';
 
-const ERR = { file_forbidden: 'permission', file_input: 'input', file_not_found: 'missing', file_missing: 'missing', file_conflict: 'conflict', file_limit: 'limit', file_quota: 'quota', file_folder_not_empty: 'notEmpty', task_signin: 'signin',
-  file_daily_limit: 'daily', file_too_big: 'too_big', uploads_paused: 'paused', file_size_mismatch: 'request', r2_not_configured: 'storage', storage: 'storage' };
+const ERR = FILE_ERRORS;
 const r2 = () => import('../core/r2.js'); // 로그인 모드에서만 받는다(첫 화면 묶음에 넣지 않는다)
 const why = (e) => (/^files\.err\.[a-zA-Z_]+$/.test(e?.message ?? '') ? e.message.slice(10) : 'request'); // write()가 던진 사전 키 → 올리기 실패 이유
 export const fileError = (e) => `files.err.${ERR[e?.code] ?? ERR[e?.message] ?? (String(e?.code) === '42501' ? 'permission' : 'request')}`;

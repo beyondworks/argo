@@ -236,6 +236,14 @@ begin
   where t.state in ('pending', 'uploaded')
     and (t.bytes, t.mime, t.state, t.ref_kind, t.ref_id, t.etag) is distinct from (excluded.bytes, excluded.mime, excluded.state, excluded.ref_kind, excluded.ref_id, excluded.etag);
 end $$;
+/** 서버 실패 정리(재검수 LOW-A): 아직 기록이 가져가지 않은 행(pending·uploaded)을 deleting으로 — 돌려준 키만 서버가 R2에서 지우고 forget한다.
+ *  R2 삭제가 실패해도 행이 deleting으로 남아 정리 크론이 다시 지운다(행 없는 객체가 생기지 않는다 — 문서함 영구 삭제와 같은 순서) */
+create or replace function public.r2_object_abandon(p_keys text[]) returns text[]
+language sql security definer set search_path = public, pg_temp as $$
+  with u as (update public.r2_objects set state = 'deleting', updated_at = clock_timestamp()
+    where bucket = 'argo-office' and key = any(coalesce(p_keys, '{}')) and state in ('pending', 'uploaded') returning key)
+  select coalesce(array_agg(key order by key), '{}') from u
+$$;
 /** 요청한 키 중 지우기로 정한 것만(flush가 R2에서 지울 목록) */
 create or replace function public.r2_object_deleting(p_keys text[]) returns text[]
 language sql stable security definer set search_path = public, pg_temp as $$
@@ -251,10 +259,10 @@ begin
   return n;
 end $$;
 revoke all on function public.r2_object_pending_mine(text), public.r2_object_read_grant(text[]), public.r2_object_commit(text, bigint, text), public.r2_object_fail(text[]),
-  public.r2_object_server_put(text, text, bigint, text, text, text, uuid, text), public.r2_object_deleting(text[]), public.r2_object_forget(text[]) from public, anon, authenticated;
+  public.r2_object_server_put(text, text, bigint, text, text, text, uuid, text), public.r2_object_deleting(text[]), public.r2_object_forget(text[]), public.r2_object_abandon(text[]) from public, anon, authenticated;
 grant execute on function public.r2_object_pending_mine(text), public.r2_object_read_grant(text[]) to authenticated;
 grant execute on function public.r2_object_commit(text, bigint, text), public.r2_object_fail(text[]), public.r2_object_server_put(text, text, bigint, text, text, text, uuid, text),
-  public.r2_object_deleting(text[]), public.r2_object_forget(text[]) to service_role;
+  public.r2_object_deleting(text[]), public.r2_object_forget(text[]), public.r2_object_abandon(text[]) to service_role;
 
 -- ── 다운로드 측정(꺼 둠 — 총괄 결정 6, 10/2) ──
 -- 열 때마다 DB에 쓰지 않는다(r2_object_read_grant는 stable이라 쓰기를 넣으면 실행 오류로 드러난다 — test/office-files-pg.test.mjs가 잠근다).

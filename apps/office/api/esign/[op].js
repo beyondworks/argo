@@ -16,7 +16,7 @@ import { normalizePlacements, tokenOk, signedFilename } from '../../src/docs/esi
 import { signCompletedMail } from '../../src/docs/esign-mail.js';
 import { completionRecipients } from '../../src/docs/esign-model.js';
 import { composeSignedPdf } from '../../src/docs/pdf/compose.js';
-import { r2FromEnv } from '../../server/r2.js';
+import { r2FromEnv, eachLimited } from '../../server/r2.js';
 
 const env = process.env;
 const fail = (status, code) => Object.assign(new Error(code), { status, code });
@@ -52,11 +52,14 @@ async function put(key, seg, bytes, type, state, ref) {
   try { ({ etag } = await r2().put(key, bytes, { contentType: type, ifNoneMatch: true })); } catch (e) { throw fail(e.status === 503 ? 503 : 502, e.status === 503 ? e.code : 'storage'); } // 키가 시도마다 달라 덮어쓰지 않는다
   await rpc('r2_object_server_put', { ...row, p_state: state, p_ref_kind: 'esign', p_ref_id: ref, p_etag: etag });
 }
-/** 실패한 제출의 그림 — R2에서 지우고 등록 전 행을 지운다(못 지우면 정리 크론이 1시간 뒤 다시) */
+/** 실패한 제출의 그림 — 등록 전 행을 deleting으로 → R2 삭제 → 지운 키만 forget(재검수 LOW-A). R2가 실패한 키는 행이 남아 정리 크론이 다시 지운다 */
 async function removeFiles(keys) {
   if (!keys.length) return;
-  for (const k of keys) await r2().del(k).catch(() => {});
-  await rpc('r2_object_fail', { p_keys: keys }).catch(() => {});
+  const doomed = await rpc('r2_object_abandon', { p_keys: keys }).catch(() => []);
+  if (!Array.isArray(doomed) || !doomed.length) return;
+  const done = await eachLimited(doomed, 8, (k) => r2().del(k));
+  const gone = doomed.filter((k) => done.get(k));
+  if (gone.length) await rpc('r2_object_forget', { p_keys: gone }).catch(() => {});
 }
 async function get(key) {
   try { return await r2().get(key); } catch (e) { throw fail(e.status === 503 ? 503 : 502, e.status === 503 ? e.code : 'storage'); }

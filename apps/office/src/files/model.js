@@ -10,6 +10,10 @@ export const CUSTOMER_TYPES = ['bizcert', 'bankbook', 'contract', 'card', 'gener
 export const MAX_BYTES = 50 * 1024 * 1024; // 오피스 파일 상한(core/files.js MAX_FILE, 버킷 file_size_limit과 같다)
 export const TRASH_DAYS = 30;              // 휴지통 보존(페이지 휴지통과 같은 값 — 유건 승인 2026-09-26)
 export const SUMMARY_MAX = 1900, TEXT_MAX = 100_000;
+/** 서버·DB 오류 코드 → 화면 문구 키(files.err.<값>) — 모든 값에 ko/en 문구가 있어야 한다(test/files-model.test.mjs) */
+export const FILE_ERRORS = { file_forbidden: 'permission', file_input: 'input', file_not_found: 'missing', file_missing: 'missing', file_conflict: 'conflict', file_limit: 'limit', file_quota: 'quota',
+  file_folder_not_empty: 'notEmpty', task_signin: 'signin', file_daily_limit: 'daily', file_too_big: 'too_big', uploads_paused: 'paused', file_size_mismatch: 'request',
+  file_expired: 'uploadExpired', r2_not_configured: 'storage', storage: 'storage' };
 
 const OFFICE_DOC = /\.(docx?|xlsx?|pptx?|hwpx?|hwp|odt|ods|odp|rtf|csv|txt|md|pages|numbers|key|json|xml)$/i;
 /** 유형(인트라넷 4종): pdf · image · doc(문서) · other. svg는 그림으로 보이지 않는다(받기만) */

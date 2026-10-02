@@ -35,7 +35,7 @@ async function rpc(jwt, fn, args) {
   const t = await r.text();
   return t ? JSON.parse(t) : null;
 }
-/** 서비스 키로 상태만 바꾸기(r2_object_commit·r2_object_fail) — 판정은 그 전에 사용자 JWT 자리 받기가 했다 */
+/** 서비스 키로 상태만 바꾸기(r2_object_commit·r2_object_abandon·r2_object_forget) — 판정은 그 전에 사용자 JWT 자리 받기가 했다 */
 async function svc(fn, args) {
   const key = env.OFFICE_SUPABASE_SERVICE_KEY;
   if (!key) throw fail(503, 'not_configured');
@@ -161,9 +161,10 @@ const OPS = {
       await svc('r2_object_commit', { p_key: key, p_bytes: bytes.length, p_etag: etag });
       await rpc(jwt, 'office_file_write', { p_org: org, p_action: 'file.create', p_data: { id: fid, title: name, filename: name, mime, size: bytes.length, storage_path: key, source: 'drive', drive_id: meta.id,
         category: classify({ name, mime }), folder_id: folderId, customer_id: customerId } });
-    } catch (e) { // 확인·등록 실패 → 등록 전 행을 먼저 지우고, 지웠을 때만 R2를 지운다(이미 기록이 가져간 객체를 지우지 않게, 검수 5). 못 하면 정리 크론이 1시간 뒤
-      const rows = await svc('r2_object_fail', { p_keys: [key] }).catch(() => 0);
-      if (Number(rows) > 0) await store.del(key).catch(() => {});
+    } catch (e) { // 확인·등록 실패 → 등록 전 행을 deleting으로 → R2 삭제 → forget(문서함 영구 삭제와 같은 순서, 재검수 LOW-A).
+      // 이미 기록이 가져간 객체는 abandon이 돌려주지 않아 지우지 않는다(검수 5). R2 삭제가 실패하면 행이 deleting으로 남아 정리 크론이 다시 지운다
+      const doomed = await svc('r2_object_abandon', { p_keys: [key] }).catch(() => []);
+      if (Array.isArray(doomed) && doomed.length) { try { await store.del(key); await svc('r2_object_forget', { p_keys: doomed }); } catch { /* 크론이 다시 */ } }
       throw e;
     }
     return { id: fid, title: name, mime, size: bytes.length };
