@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { inboundKind, inboundCard, plainPreview, sourceLine } from '../app/c/[ws]/crew/[slug]/inbound-card.mjs';
-import { msgrHead, MSGR_NOW, routineHead, loopHead, delegateHead, jobHead, APPROVAL_TAG } from '../src/inbound-marks.mjs';
+import { msgrHead, MSGR_NOW, routineHead, loopHead, delegateHead, jobHead, APPROVAL_TAG, approvalMsg } from '../src/inbound-marks.mjs';
 import { mailPrompt } from '../src/crewmail.mjs';
 import { verifyRetryPrompt } from '../src/routines.mjs';
 
@@ -95,10 +95,10 @@ test('위임·장시간 작업·회의실 — 출처 줄과 본문', () => {
 });
 
 test('결재 결과 — via가 없어도 결재 머리말로 카드, 메신저 범위가 붙어 있어도 결재로', () => {
-  const owner = { who: 'user', text: `${APPROVAL_TAG.owner} 요청한 "보고서 발송" 이(가) 승인되었다. 이제 실행하고 결과를 보고하라.` };
+  const owner = { who: 'user', text: approvalMsg('owner', '요청한 "보고서 발송" 이(가) 승인되었다.', 'approved') };
   assert.equal(inboundKind(owner), 'approval');
   assert.equal(sourceLine(inboundCard(owner), ko), '결재 결과');
-  assert.equal(plainPreview(inboundCard(owner).body).text, '요청한 "보고서 발송" 이(가) 승인되었다. 이제 실행하고 결과를 보고하라.');
+  assert.equal(plainPreview(inboundCard(owner).body).text, '요청한 "보고서 발송" 이(가) 승인되었다.'); // 크루용 지시문 꼬리는 뗀다(L5)
   const admin = { who: 'user', text: `${APPROVAL_TAG.admin} 조직 문서 제안 "규칙" 이(가) 거절되었다.`, contextScope: { kind: 'msgr', channelId: 'c1' } };
   assert.equal(inboundKind(admin), 'approval');
 });

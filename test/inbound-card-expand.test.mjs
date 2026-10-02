@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { inboundCard } from '../app/c/[ws]/crew/[slug]/inbound-card.mjs';
-import { msgrHead, MSGR_NOW, routineHead, loopHead, delegateHead, jobHead, APPROVAL_TAG } from '../src/inbound-marks.mjs';
+import { msgrHead, MSGR_NOW, routineHead, loopHead, delegateHead, jobHead, approvalMsg } from '../src/inbound-marks.mjs';
 import { mailPrompt } from '../src/crewmail.mjs';
 import { verifyRetryPrompt } from '../src/routines.mjs';
 
@@ -74,9 +74,9 @@ test('쪽지·위임 펼친 본문 — 머리말과 회신 안내 줄 없이 본
   assert.equal(inboundCard({ who: 'user', via: 'job', text: `${jobHead('en')}Quarterly report` }).body, 'Quarterly report');
 });
 
-test('결재 결과 펼친 본문 — 결재 머리말 뒤 문장 그대로', () => {
-  const s = '요청한 "메일 발송" 이(가) 승인되었다. 이제 실행하고 결과를 보고하라.';
-  assert.equal(inboundCard({ who: 'user', text: `${APPROVAL_TAG.owner} ${s}` }).body, s);
+test('결재 결과 펼친 본문 — 머리말·크루용 지시문 꼬리 없이 사실 문장만(분리 검수 L5)', () => {
+  const s = '요청한 "메일 발송" 이(가) 승인되었다.';
+  assert.equal(inboundCard({ who: 'user', text: approvalMsg('owner', s, 'approved') }).body, s);
 });
 
 test('머리말을 못 알아보면 원문 그대로(아무것도 숨기지 않는다)', () => {

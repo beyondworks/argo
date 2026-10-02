@@ -122,8 +122,26 @@ export function parseJob(text) {
 }
 
 // ── 결재 결과 — approval-actions.mjs 후속 턴. 이 기록만 via가 없어 머리말로 판정한다 ──
+// 메시지 = 머리말 + 사실 문장(사용자에게 보여 줄 것) + 크루에게 하는 지시문 꼬리(화면에서는 뗀다, 분리 검수 L5).
 export const APPROVAL_TAG = { owner: '(사장 결재)', admin: '(관리자 결재)' };
+export const APPROVAL_ORDER = {
+  applied: '\n결과를 사용자에게 한두 줄로 보고하라. 다시 실행하려 하지 마라(이미 처리됨).', // 서버가 payload를 적용함(profile·hire·mcp·connector)
+  docApplied: ' 사용자에게 한두 줄로 보고하라. 문서를 다시 쓰거나 제안하지 마라(이미 반영됨).',
+  docRejected: ' — 대안이 있으면 한두 줄로 정리하라.',
+  capOn: ' 직전에 받은 요청을 이어서 실행하고 결과를 보고하라.',
+  capOff: ' 그 능력 없이 가능한 대안을 한두 줄로 정리하라.',
+  approved: ' 이제 실행하고 결과를 보고하라.',
+  rejected: ' 실행하지 말고, 대안이 있으면 한두 줄로 정리하라.',
+};
+/** 결재 후속 메시지 — by: owner|admin, fact: 사실 문장, order: APPROVAL_ORDER 키 */
+export const approvalMsg = (by, fact, order) => `${APPROVAL_TAG[by]} ${fact}${APPROVAL_ORDER[order]}`;
+/** → { by, body } — body는 사실 문장(지시문 꼬리를 뗀다). 꼬리를 못 알아보면 머리말 뒤 문장 그대로 */
 export function parseApproval(text) {
-  for (const by of ['owner', 'admin']) if (text.startsWith(`${APPROVAL_TAG[by]} `)) return { by, body: text.slice(APPROVAL_TAG[by].length + 1) };
+  for (const by of ['owner', 'admin']) {
+    if (!text.startsWith(`${APPROVAL_TAG[by]} `)) continue;
+    const rest = text.slice(APPROVAL_TAG[by].length + 1);
+    const order = Object.values(APPROVAL_ORDER).find((o) => rest.endsWith(o));
+    return { by, body: order ? rest.slice(0, -order.length) : rest };
+  }
   return null;
 }
