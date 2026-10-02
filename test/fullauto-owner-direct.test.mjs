@@ -201,7 +201,9 @@ test('LOW-5 — 풀 오토 표지는 모델에게 가는 글을 바꾸지 않는
   const { resetThread } = await import('../src/thread.mjs');
   await updateCompany(ws, { fullAuto: false });
   try {
-    const capture = async (fn) => { await resetThread(ws, 'b'); reset({}); await fn(); const b = reqs.filter((x) => x.who === 'b'); return b.map((x) => [x.sys, x.messages]); };
+    // 시스템 프롬프트에는 턴 시작 시각(분 단위)이 들어간다 — 두 번 잡는 사이 분이 바뀌면 다르게 보인다(전체 실행 부하에서 실측). 그 한 줄만 가린다
+    const clock = (t) => String(t).replace(/오늘은 \d{4}-\d{2}-\d{2}, 지금은 \([^)]*\) \d{2}:\d{2}/g, '오늘은 D, 지금은 T');
+    const capture = async (fn) => { await resetThread(ws, 'b'); reset({}); await fn(); const b = reqs.filter((x) => x.who === 'b'); return b.map((x) => [clock(x.sys), clock(x.messages)]); };
     const pairs = [
       [() => _followUpForTest(ws, { id: 'cmp1', slug: 'b', from: 'a', kind: 'action', action: '메일 발송', status: 'approved' }, true), () => _followUpForTest(ws, { id: 'cmp1', slug: 'b', kind: 'action', action: '메일 발송', status: 'approved' }, true)],
       [() => _makeJobHandlerForTest(ws)({ id: 'cj', slug: 'b', title: '긴 일', prompt: '같은 지시', tries: 0, from: 'a' }), () => _makeJobHandlerForTest(ws)({ id: 'cj', slug: 'b', title: '긴 일', prompt: '같은 지시', tries: 0 })],
