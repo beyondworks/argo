@@ -968,7 +968,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         if (!before) return text(`그런 예약이 없다: ${id}. list_routines로 id를 다시 확인하라.`);
         if (action === 'delete') { await removeRoutine(wsId, id); return text(`예약 "${before.title}"을(를) 지웠다.`); }
         // 사장 직접 턴이 아닌 턴이 다시 켜면 출처를 그 크루로 바꾼다 — 사장이 꺼 둔 예약을 위임 턴이 풀 오토로 되살리지 못하게(통합본 재검수 MEDIUM-1). 끄기는 위험을 늘리지 않아 출처를 건드리지 않는다
-        const r = await updateRoutine(wsId, id, { enabled: action === 'on' }, action === 'on' && delegatedBy ? { from: delegatedBy } : {});
+        const reFrom = action === 'on' ? originFor(before.agentSlug) : null; // 예약·작업과 같은 규칙 — 다른 크루의 예약을 켜면 이 크루의 위임, 자기 예약이면 사장 직접(재검수 3차 LOW-1)
+        const r = await updateRoutine(wsId, id, { enabled: action === 'on' }, reFrom ? { from: reFrom } : {});
         return text(`예약 "${(r ?? before).title}"을(를) ${action === 'on' ? '켰다' : '껐다'}.`);
       } catch (e) {
         return text(`예약 변경 실패: ${String(e.message || e)}. 사장에게 알려라.`);
@@ -1314,7 +1315,10 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   //   from이 있는 턴 — 위임받은 동료 턴·쪽지 배달 턴·크루가 보낸 세션 메시지의 받는 턴·깨움 턴
   //   notOwnerDirect가 있는 턴 — 그런 턴에서 시작된 장시간 작업·루틴·결재 후속, 메신저에서 크루가 넘긴 턴. from과 달리 출처(turnSource)·프롬프트·공유 노트를
   //   바꾸지 않고 풀 오토만 끄는 표지다(통합본 재검수 LOW-5). 이 값은 커넥터 쓰기 게이트까지 그대로 넘어간다(callConnectorTool fullAuto).
-  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx) && !from && !notOwnerDirect; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
+  // from === 'captain' — 사장이 보낸 쪽지(쪽지 API·회의실 참조)의 배달 턴은 사장 직접 턴이다(풀 오토 판정에서만 — 출처·프롬프트는 그대로, 재검수 3차 LOW-2).
+  // 세션 메시지가 사장이 보낸 @B를 from 없이 돌리는 것과 같은 판정이다.
+  const crewFrom = from && from !== 'captain' ? from : null;
+  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx) && !crewFrom && !notOwnerDirect; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -1831,7 +1835,7 @@ ${lang === 'en'
   const fileAtt = attachments.filter((a) => !a.isImage);
   // 이어 가는 세션은 SDK가 첫 턴의 시스템 프롬프트를 그대로 쓴다(실측) — 첫 턴이 풀 오토였으면 이 턴이 풀 오토가 아니어도 그 문구가 남는다.
   // 그래서 글 앞에 바로잡는 줄을 둔다(세션 메시지 턴은 글에 이미 있다). 실제 강제는 커넥터 쓰기 게이트(fullAuto 전달)다.
-  const faNote = resumeId && companyFullAuto === true && (from || notOwnerDirect) && source !== 'session' // 표지가 켜진 턴에만 — 메신저 손님·오피스 턴의 글은 바꾸지 않는다(LOW-6)
+  const faNote = resumeId && companyFullAuto === true && (crewFrom || notOwnerDirect) && source !== 'session' // 표지가 켜진 턴에만 — 메신저 손님·오피스 턴의 글은 바꾸지 않는다(LOW-6)
     ? (lang === 'en' ? '(Even if this company has full auto mode on, it does not apply to this turn — file request_approval before any action that leaves the company.)\n\n'
       : '(이 회사에 풀 오토 모드가 켜져 있어도 이 턴에는 적용되지 않는다 — 회사 밖으로 나가는 행동은 request_approval로 결재를 먼저 올려라.)\n\n')
     : '';

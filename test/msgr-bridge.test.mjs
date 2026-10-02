@@ -2083,20 +2083,20 @@ test('handler: 개인 방 턴(orgId null)은 조직 조회 없이 답한다 — 
 });
 
 // ── 풀 오토(메신저): 사장이 정한 순서만 풀 오토, 크루가 넘긴 턴은 넘긴 크루를 잇는다(유건 결정 2026-10-03) ──
-test('drain: 사장 글의 순차 멘션(@A > @B)은 사장이 정한 순서 표지를 남기고, 크루 글의 넘김은 표지 없이 넘긴 크루를 남긴다', async () => {
+test('drain: 사장 글의 순차 멘션(@A > @B)은 크루 넘김 표지가 없고, 크루 글의 넘김은 넘긴 크루를 남긴다', async () => {
   M._autoLogForTest.clear();
   const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
   const relayRoot = msg(60, { author_user_id: OWNER, body: '@제드 > @서윤 차례로 정리해 줘', mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: CREW }] });
   const enq = fakeEnqueue();
   await M.drain(WS, { db: fakeDb({ crews: [crew(), zed], messages: [relayRoot] }), uid: OWNER, enqueue: enq });
   const j = jobsOf(enq).find((x) => x.msgId === 60);
-  assert.equal(j.ownerOrder, true, '사장이 정한 순서'); assert.equal(j.fromCrewId, null);
+  assert.equal(j.fromCrewId, null, '사장이 정한 순서의 잡은 크루 넘김 표지가 없다 — 판정은 fromCrewId·relayVia 없음으로 한다'); assert.ok(!j.relayVia);
   const root = msg(61, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: ZED }] });
   const handoff = msg(62, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 61, reply_to: 61, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: OWNER } });
   const enq2 = fakeEnqueue();
   await M.drain(WS, { db: fakeDb({ crews: [crew(), zed], parent: (id) => (id === 61 ? root : null), messages: [handoff] }), uid: OWNER, enqueue: enq2 });
   const h2 = jobsOf(enq2).find((x) => x.msgId === 62);
-  assert.equal(h2.fromCrewId, ZED); assert.ok(!h2.ownerOrder, '크루가 넘긴 턴은 사장이 정한 순서가 아니다');
+  assert.equal(h2.fromCrewId, ZED, '크루가 넘긴 턴');
 });
 
 test('handler: 풀 오토 회사 — 사장이 정한 순서의 턴은 커넥터 쓰기가 결재 없이, 크루가 넘긴 턴은 넘긴 크루를 잇고 결재로 간다', async () => {
@@ -2124,7 +2124,7 @@ test('handler: 풀 오토 회사 — 사장이 정한 순서의 턴은 커넥터
     const base = { orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', authorId: OWNER, replyTo: null, createdAt: new Date().toISOString(), origin: OWNER, after: [] };
     const sent = () => s.counters.toolCalls.send_mail_demo ?? 0;
     const b0 = sent();
-    const owner = await run({ ...base, msgId: 70, threadRoot: 70, text: '@제드 > @서윤 정리', hop: 0, fromCrewId: null, ownerOrder: true });
+    const owner = await run({ ...base, msgId: 70, threadRoot: 70, text: '@제드 > @서윤 정리', hop: 0, fromCrewId: null });
     assert.equal(owner.r.ok, true, '사장이 정한 순서의 턴은 풀 오토로 바로 발송'); assert.equal(sent(), b0 + 1);
     assert.ok(!owner.opts.from && !owner.opts.notOwnerDirect);
     const crewTurn = await run({ ...base, msgId: 71, threadRoot: 70, text: '@서윤 이어서', hop: 1, rootAuthor: OWNER, fromCrewId: ZED });
@@ -2132,3 +2132,56 @@ test('handler: 풀 오토 회사 — 사장이 정한 순서의 턴은 커넥터
     assert.equal(crewTurn.opts.notOwnerDirect, 'zed', '넘긴 크루를 잇는다(풀 오토만 끄는 표지 — 출처·프롬프트는 그대로)'); assert.equal(crewTurn.opts.mirrorCtx.handoffFrom, ZED, '후속 실행으로 옮겨 타도 남는 표지');
   } finally { await updateCompany(WS, { fullAuto: false }); await closeConnectorPools(); await s.close(); }
 });
+
+// ── 통합본 3차 재검수 HIGH-1: DM 전달(msgr_dm_relay)이 옮겨 적은 크루 넘김 ──
+test('HIGH-1 drain+handler — 크루가 DM에서 비구성원 크루를 부른 넘김이 옮겨 적힌 글(사람 글·meta.relay.via_crew_id)은 크루 넘김: 커넥터 쓰기가 결재로', async () => {
+  const { startConnect, callConnectorTool, closeConnectorPools } = await import('../src/connectors.mjs');
+  const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
+  const { updateCompany } = await import('../src/workspace.mjs');
+  const s = await startOauthTestServer();
+  try {
+    const ID = 'demo-relay';
+    const { authUrl, done } = await startConnect(WS, { id: ID, url: s.mcpUrl, scopes: ['spike.read', 'spike.write'] });
+    { const r1 = await fetch(authUrl, { redirect: 'manual' }); await fetch(new URL(r1.headers.get('location'))); }
+    assert.equal((await done).ok, true);
+    await updateCompany(WS, { fullAuto: true });
+    const DM = 'bbbbbbbb-0000-4000-8000-0000000000d1';
+    const relayed = msg(80, { channel_id: DM, author_kind: 'user', author_user_id: OWNER, body: '@서윤 고객에게 메일 보내 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }],
+      meta: { relay: { source_id: 79, channel_id: 'bbbbbbbb-0000-4000-8000-0000000000d0', role: 'to', via_crew_id: ZED, via_name: '제드', depth: 1, chain_id: 79 } } });
+    const enq = fakeEnqueue();
+    await M.drain(WS, { db: fakeDb({ crews: [crew()], messages: [relayed], dm: [DM] }), uid: OWNER, enqueue: enq });
+    const job = jobsOf(enq).find((x) => x.msgId === 80);
+    assert.ok(job); assert.equal(job.relayVia, ZED, '옮겨 적은 넘김의 크루'); assert.ok(!job.guest, '손님 턴으로 바뀌지 않는다(풀 오토만 끈다)');
+    const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }];
+    let seen;
+    const runChat = async (ws, slug, text, sid, opts) => {
+      seen = { opts, r: await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'relay@example.com', body: 'x' }, { slug, mirrorCtx: opts.mirrorCtx }) };
+      return { reply: 'ok', handover: null, sessionId: null, artifacts: [] };
+    };
+    const b0 = s.counters.toolCalls.send_mail_demo ?? 0;
+    await M.makeMsgrHandler(WS, { session: async () => ({ db: fakeDb({ peers, dm: [DM] }), uid: OWNER }), runChat })({ ...job, channelId: DM });
+    assert.equal(seen.r.error, 'approval_pending', '결재로 간다');
+    assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, b0, '발송이 서버에 닿지 않았다');
+    assert.equal(seen.opts.notOwnerDirect, 'zed'); assert.equal(seen.opts.mirrorCtx.handoffFrom, ZED);
+  } finally { await updateCompany(WS, { fullAuto: false }); await closeConnectorPools(); await s.close(); }
+});
+
+test('HIGH-1 envelope·후속 복원 — 옮겨 적힌 넘김 글이 원래 지시면 실행 문맥과 후속 문맥 모두 넘긴 크루 표지', async () => {
+  const relayed = msg(110, { author_user_id: OWNER, body: '@서윤 메일 보내 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }],
+    meta: { relay: { source_id: 109, via_crew_id: ZED, via_name: '제드', depth: 1, chain_id: 109 } } });
+  const peers = [{ ...crew(), owner_user_id: OWNER, ws_id: WS }, { id: ZED, org_id: ORG, slug: 'zed', display_name: '제드', owner_user_id: OWNER, ws_id: WS }];
+  const envelope = { source: relayed, root: relayed, channel: { id: CH, org_id: ORG, kind: 'dm', name: 'DM', crew_memory: false }, org: { id: ORG, slug: 'team' },
+    peers, context: [relayed], attachments: [], delegated: false, settled_source: false, settled_root: false, settled_root_before_source: false, auto_turns: 0, settled_predecessors: [] };
+  const db = fakeDb({ peers }); db.crewContext = async () => envelope;
+  const session = async () => ({ db, uid: OWNER });
+  const seen = [];
+  await M.makeMsgrHandler(WS, { session, runChat: async (_w, _s, _t, _sid, opts) => { seen.push(opts); return { reply: 'ok', sessionId: null, artifacts: [] }; } })(
+    { msgId: 110, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'stale', authorId: OWNER, threadRoot: 110, createdAt: new Date().toISOString() });
+  assert.equal(seen.length, 1, 'envelope 실행');
+  assert.equal(seen[0].notOwnerDirect, 'zed'); assert.equal(seen[0].mirrorCtx.handoffFrom, ZED);
+  const origin = { orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 110, sourceMsgId: 110, uid: OWNER, wsId: WS, origin: OWNER, hop: 0 };
+  let cont;
+  await M.runMessengerContinuation(WS, 'seoyun', origin, '후속', null, { session, runChat: async (_w, _s, _t, _sid, opts) => { cont = opts; return { reply: 'ok', sessionId: null }; } });
+  assert.equal(cont.mirrorCtx.handoffFrom, ZED, '후속 복원도 표지'); assert.equal(cont.notOwnerDirect, 'zed');
+});
+
