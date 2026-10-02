@@ -1943,6 +1943,9 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-orgtitle .caret { flex: none; color: var(--fg-2); }
   .msgr-phone .ph-orgtitle .msgr-badge { flex: none; margin: 0; }
   .msgr-phone .ph-orgtitle:active { opacity: .6; }
+  .msgr-phone .ph-setorg { position: relative; display: flex; min-width: 0; padding: 2px 4px 6px; } /* 설정 조직 화면 맨 위 '조직 이름 ▾'(4차 피드백) — 메뉴 카드(.ph-pop)가 이 줄 아래로 열린다 */
+  .msgr-phone .ph-setorg .ph-orgtitle { font-size: 22px; }
+  .msgr-phone .ph-setorg .ph-pop { left: -10px; right: -10px; } /* 설정 본문 여백(20px)을 넘어 채널·기억 탭 메뉴와 같은 폭(화면 양옆 10px) */
   @media (max-width: 374px) { .msgr-phone .ph-title, .msgr-phone .ph-orgtitle { font-size: 21px; } .msgr-phone .ph-head-l { gap: 6px; } .msgr-phone .ph-orgbtn { padding: 0 8px 0 10px; } } /* 360 폭 영어 — 'Channels' 옆 조직 알약이 한 글자로 줄었다 */
   .msgr-phone .ph-orgbtn .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .msgr-phone .ph-orgbtn .caret { flex: none; color: var(--fg-2); }

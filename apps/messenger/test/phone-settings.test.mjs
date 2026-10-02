@@ -6,11 +6,13 @@ import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const list = src.slice(src.indexOf("if (!sub) return body(t('ui.settings')"), src.indexOf("return body(t(`phone.set.${sub}`)"));
 
-test('설정 묶음 순서 — 개인 · 조직(조직마다 한 줄) · 에이전트 · 서버(관리자 조직이 있을 때) · 기억 · 공통', () => {
+test('설정 묶음 순서 — 개인 · 조직 · 에이전트 · 서버(관리자 조직이 있을 때) · 기억 · 공통, 조직 줄은 조직 수와 무관하게 한 줄(4차 피드백)', () => {
   const order = [...list.matchAll(/group\('(\w+)'/g)].map((m) => m[1]);
   assert.deepEqual(order, ['me', 'orgs', 'agents', 'server', 'memory', 'common']);
-  assert.match(list, /orgs\.map\(\(o\) => row\(o\.id, <Av name=\{o\.name\} size="sm" \/>, o\.name, \(\) => onOrgSub\?\.\('org', o\.id\)/, '조직마다 조직 프로필·계정 한 줄');
-  assert.match(list, /adminOrgs\.length > 0 && group\('server'/, '서버 묶음은 조직 관리자에게만');
+  assert.doesNotMatch(list, /orgs\.map\(|adminOrgs\.map\(|memOrgs/, '조직마다 쌓이는 줄 없음');
+  for (const k of ['org', 'ext', 'server', 'memory']) assert.match(list, new RegExp(`onSub\\?\\.\\('${k}'\\)|onOrgSub\\?\\.\\('${k}'\\)`), `${k} 한 줄`);
+  assert.match(list, /orow\.server && group\('server'/, '서버 묶음은 조직 관리자에게만');
+  assert.doesNotMatch(list, /name: o\.name|o\.name\)/, '줄 설명에 조직 이름 없음');
   assert.equal((list.match(/onSub\?\.\('profile'\)/g) ?? []).length, 1, "맨 위 '나' 카드와 '내 프로필·계정' 줄은 하나");
 });
 
@@ -19,8 +21,12 @@ test('톱니는 탭마다 같은 화면 — 에이전트·기억 탭은 그 묶�
   assert.match(src, /actions=\{\[searchAct, \{ \.\.\.gearAct, run: \(\) => openSettings\(null, 'agents'\) \}\]\}/);
   assert.match(src, /\{ \.\.\.gearAct, run: \(\) => openSettings\(null, 'memory'\) \}/);
   assert.match(src, /document\.querySelector\(`\.ph-setlist \[data-group="\$\{focusGroup\}"\]`\)\?\.scrollIntoView\(\{ block: 'start' \}\)/);
-  assert.match(src, /const openOrgSub = \(kind, id\) => \{ if \(orgId !== id\) setOrgId\(id\); setPage\(`set-\$\{kind\}:\$\{id\}`\); \};/, '조직 범위 화면은 그 조직 공간으로');
-  assert.match(src, /const scoped = !!scopeId; const ready = !scoped \|\| \(org\?\.id === scopeId && spaceReady && !gated\);/, '공간이 바뀌어 목록이 올 때까지는 기다림 표시');
+  assert.match(src, /const openOrgSub = \(kind\) => \{ if \(chOrg && orgId !== chOrg\) setOrgId\(chOrg\); setPage\(`set-\$\{kind\}`\); \};/, '조직 화면은 고른 조직(채널·기억 탭과 같은 값) 공간으로');
+  assert.match(src, /const pickSettingsOrg = \(id\) => \{ if \(id && id !== orgId\) setOrgId\(id\); \};/, '화면 안 드롭다운은 앱 전체 공간을 바꾼다');
+  assert.match(src, /const ready = !!os\.org && spaceReady && !gated;/, '공간이 바뀌어 목록이 올 때까지는 기다림 표시');
+  for (const v of ['org', 'server', 'ext', 'memory']) assert.match(src, new RegExp(`if \\(view === '${v}'\\) return body\\(t\\('[\\w.]+'\\), <>\\{pick\\}`), `${v} 화면 맨 위 '조직 이름 ▾', 제목에 조직 이름 없음`);
+  assert.match(src, /return body\(t\('phone\.org\.settings'\), !org \|\| gated \? <>\{pick\}/, '조직 설정(관리자)도 같은 드롭다운');
+  assert.match(src, /os\.locked \? lockedWhy/, '관리자 전용 화면에서 관리자가 아닌 조직이면 이유 한 줄');
 });
 
 test('조직 프로필 — 역할 표시와 본인 부서·직급(남의 것은 글자로만), 관리자에게만 조직 설정 진입', () => {
@@ -48,6 +54,7 @@ test('2차 피드백 — 친구 관리: 가로 탭(친구·차단·숨긴 에이
   const fm = src.slice(src.indexOf('function PhoneFriendsManage('), src.indexOf('/* ─── 개인 에이전트 카드'));
   assert.match(fm, /\['friends', 'blocked', 'hidden'\]\.map/);
   assert.match(fm, /className="ph-mmore"/);
+  assert.match(fm, /hideUser && \{ icon: 'eyeoff', label: t\('fm\.hide'\)/, '⋯ 메뉴에 숨김(대화하기 / 숨김 / 차단 / 삭제)');
   assert.match(fm, /run: \(\) => setConfirm\(\{ kind: 'block', f: menu\.f \}\)/); assert.match(fm, /run: \(\) => setConfirm\(\{ kind: 'remove', f: menu\.f \}\)/);
   assert.match(fm, /<ConfirmModal /);
   assert.doesNotMatch(fm, /msgr-rows|className="empty"/, '카드 안 목록·점선 빈 상자 없음');

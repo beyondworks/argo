@@ -23,7 +23,7 @@ test('loadOrgs가 개인 공간(PERSONAL)을 유지한다', () => {
 });
 
 test('조직 전환 메뉴에 개인 항목이 맨 위에 있다', () => {
-  const menuStart = src.indexOf('msgr-menu-pop');
+  const menuStart = src.indexOf('msgr-menu-pop', src.indexOf('className={`msgr-org${orgMenu')); // 데스크톱 레일 조직 메뉴(폰 OrgMenuCard 부품은 앞쪽에 정의돼 있다)
   const personalBtn = src.indexOf("setOrgId(PERSONAL)", menuStart);
   const orgMap = src.indexOf("orgs.map", menuStart);
   assert.ok(personalBtn > 0 && orgMap > 0 && personalBtn < orgMap, '개인 버튼이 조직 목록보다 앞');

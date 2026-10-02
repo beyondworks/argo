@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText,
   roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch,
-  orgMenuItems, savedOrgAfter,
+  orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen,
 } from '../src/phone-shell.mjs';
 
 const P = '__personal__';
@@ -196,4 +196,39 @@ test('고른 조직은 채널·기억 탭이 같이 쓴다 — 기억 탭에서 
   assert.equal(spaceForTab('channels', { personal: P, chOrg }), 'B');
   assert.equal(savedOrgAfter('B', P, P), 'B'); // 채팅 탭(개인 공간)에 가도 고른 조직은 그대로
   assert.equal(savedOrgAfter('B', null, P), 'B');
+});
+
+// 4차 피드백(유건 2026-10-02) — 숨김 = 내 목록에서만 뺀다(친구 관계·대화·알림은 그대로). 차단은 따로.
+test('숨김 판정 — 숨긴 친구는 친구 목록·새 채팅·초대 후보에서 빠지고, 다시 보이기 하면 돌아온다', () => {
+  const friends = [{ user_id: 'u1', status: 'accepted' }, { user_id: 'u2', status: 'accepted' }, { user_id: 'u3', status: 'pending' }];
+  assert.deepEqual(withoutHidden(friends, new Set(['u2'])).map((f) => f.user_id), ['u1', 'u3']);
+  assert.deepEqual(withoutHidden(friends, new Set()).map((f) => f.user_id), ['u1', 'u2', 'u3']);
+  assert.deepEqual(withoutHidden(friends, null).map((f) => f.user_id), ['u1', 'u2', 'u3'], '숨김을 아직 못 불러왔으면 그대로');
+  const crews = [{ id: 'c1' }, { id: 'c2' }];
+  assert.deepEqual(withoutHidden(crews, new Set(['c1']), (c) => c.id).map((c) => c.id), ['c2']);
+});
+
+test('숨김 탭 — 숨긴 친구(친구 행 이름 그대로)와 숨긴 에이전트를 한 목록에, 친구가 아닌 숨김 행은 보이지 않는다', () => {
+  const friends = [{ user_id: 'u1', display_name: '민지', status: 'accepted' }, { user_id: 'u2', display_name: '도윤', status: 'accepted' }];
+  const g = hiddenGroups({ friends, hiddenUserIds: new Set(['u2', 'gone']), mutedCrews: [{ crew_id: 'c1', display_name: '봇' }] });
+  assert.deepEqual(g.friends.map((f) => f.display_name), ['도윤']);
+  assert.deepEqual(g.agents.map((c) => c.crew_id), ['c1']);
+  assert.deepEqual(hiddenGroups({ friends, hiddenUserIds: new Set(), mutedCrews: [] }), { friends: [], agents: [] });
+});
+
+test('설정 조직 줄 — 조직이 몇 개든 네 가지는 각각 한 줄(관리자 조직이 있어야 에이전트 연결·서버 연결)', () => {
+  const two = [{ id: 'o1', role: 'owner' }, { id: 'o2', role: 'member' }];
+  assert.deepEqual(settingsOrgRows(two), { org: true, ext: true, server: true, memory: true });
+  assert.deepEqual(settingsOrgRows([{ id: 'o2', role: 'member' }]), { org: true, ext: false, server: false, memory: true });
+  assert.deepEqual(settingsOrgRows([]), { org: false, ext: false, server: false, memory: false });
+});
+
+test('설정 조직 화면 — 처음엔 고른 조직, 하나뿐이면 고르기 없음, 관리자 화면에서 관리자 아닌 조직은 잠금', () => {
+  const orgs = [{ id: 'o1', name: '린', role: 'owner' }, { id: 'o2', name: '디자인', role: 'member' }];
+  assert.deepEqual(orgScreen('server', { orgs, orgId: 'o1' }), { org: orgs[0], multi: true, locked: false });
+  assert.deepEqual(orgScreen('server', { orgs, orgId: 'o2' }), { org: orgs[1], multi: true, locked: true });
+  assert.deepEqual(orgScreen('ext', { orgs, orgId: 'o2' }), { org: orgs[1], multi: true, locked: true });
+  assert.deepEqual(orgScreen('memory', { orgs, orgId: 'o2' }), { org: orgs[1], multi: true, locked: false }, '기억은 멤버도 본다(바꾸기는 정책이 정한다)');
+  assert.deepEqual(orgScreen('org', { orgs: [orgs[1]], orgId: 'o2' }), { org: orgs[1], multi: false, locked: false });
+  assert.deepEqual(orgScreen('org', { orgs, orgId: 'gone' }), { org: null, multi: true, locked: false });
 });

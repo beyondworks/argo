@@ -168,3 +168,30 @@ export function personalCardLocks(c) {
   const twin = c?.hosting === 'bot';
   return { name: twin ? 'twin' : 'argo', role: twin ? 'twin' : null, allow: twin ? 'twin' : null, face: null, bio: null };
 }
+
+/** 숨김(유건 4차 피드백 2026-10-02) — 내 목록에서만 뺀다. 친구 관계·대화·알림은 그대로라 목록·후보를 그리는 자리에서만 거른다.
+    hidden이 없으면(아직 못 불러옴) 그대로 둔다 — 숨긴 사람이 잠깐 보이는 쪽이 친구가 통째로 사라지는 쪽보다 낫다. */
+export function withoutHidden(list, hidden, idOf = (x) => x.user_id) {
+  if (!hidden?.size) return list;
+  return list.filter((x) => !hidden.has(idOf(x)));
+}
+
+/** 숨김 탭 — 숨긴 친구(친구 행 그대로: 사진·이름·아이디)와 숨긴 에이전트. 친구가 아닌 숨김 행(친구 삭제 뒤 남은 것)은 보이지 않는다 */
+export function hiddenGroups({ friends = [], hiddenUserIds = null, mutedCrews = [] } = {}) {
+  return { friends: hiddenUserIds?.size ? friends.filter((f) => f.status === 'accepted' && hiddenUserIds.has(f.user_id)) : [], agents: mutedCrews };
+}
+
+const isOrgAdmin = (o) => o?.role === 'owner' || o?.role === 'admin';
+const ADMIN_ONLY = new Set(['server', 'ext']);
+
+/** 설정 목록의 조직 줄 — 조직이 몇 개든 각각 한 줄. 에이전트 연결·서버 연결은 관리하는 조직이 하나라도 있을 때만 */
+export function settingsOrgRows(orgs = []) {
+  const any = orgs.length > 0; const admin = orgs.some(isOrgAdmin);
+  return { org: any, ext: admin, server: admin, memory: any };
+}
+
+/** 설정 조직 화면 맨 위 '조직 이름 ▾' — 지금 고른 조직, 둘 이상일 때만 고르기, 관리자 전용 화면에서 관리자가 아닌 조직이면 잠금 */
+export function orgScreen(view, { orgs = [], orgId = null } = {}) {
+  const org = orgs.find((o) => o.id === orgId) ?? null;
+  return { org, multi: orgs.length > 1, locked: !!org && ADMIN_ONLY.has(view) && !isOrgAdmin(org) };
+}
