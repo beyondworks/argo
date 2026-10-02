@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText,
   roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch,
+  orgMenuItems, savedOrgAfter,
 } from '../src/phone-shell.mjs';
 
 const P = '__personal__';
@@ -176,4 +177,23 @@ test('설정 > 내 에이전트 — 어떤 에이전트를 눌러도 카드가 �
 test('개인 에이전트 카드 잠금 — 서버가 허용하는 것만 바꾼다(이름은 Argo 앱, 쌍둥이는 이름·직무·지시 범위가 조직을 따른다)', () => {
   assert.deepEqual(personalCardLocks({ hosting: 'local' }), { name: 'argo', role: null, allow: null, face: null, bio: null });
   assert.deepEqual(personalCardLocks({ hosting: 'bot' }), { name: 'twin', role: 'twin', allow: 'twin', face: null, bio: null });
+});
+
+// 3차 피드백(유건 2026-10-02): 기억 탭 조직 메뉴는 목적이 달라 채널 탭 메뉴와 나눈다 — 조직 고르기 + 기억 설정만.
+test('조직 메뉴 항목 — 채널 탭은 그대로(참여·만들기·초대·조직 설정), 기억 탭은 내 조직 목록과 기억 설정뿐', () => {
+  assert.deepEqual(orgMenuItems('channels', { admin: true }), ['orgs', 'joinable', 'deleted', 'join', 'invite', 'org-settings']);
+  assert.deepEqual(orgMenuItems('channels', { admin: false }), ['orgs', 'joinable', 'deleted', 'join']);
+  assert.deepEqual(orgMenuItems('memory', { admin: true }), ['orgs', 'memory-settings']);
+  assert.deepEqual(orgMenuItems('memory', { admin: false }), ['orgs', 'memory-settings']);
+});
+
+test('고른 조직은 채널·기억 탭이 같이 쓴다 — 기억 탭에서 조직 B로 바꾸면 채널 탭도 B', () => {
+  const ids = ['A', 'B'];
+  let saved = 'A';
+  saved = savedOrgAfter(saved, 'B', P); // 기억 탭 메뉴에서 B를 고름 → 공간이 B로 바뀜
+  const chOrg = pickChannelOrg({ saved, last: 'A', orgIds: ids });
+  assert.equal(spaceForTab('memory', { personal: P, chOrg }), 'B');
+  assert.equal(spaceForTab('channels', { personal: P, chOrg }), 'B');
+  assert.equal(savedOrgAfter('B', P, P), 'B'); // 채팅 탭(개인 공간)에 가도 고른 조직은 그대로
+  assert.equal(savedOrgAfter('B', null, P), 'B');
 });

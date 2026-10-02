@@ -33,7 +33,7 @@ test('배지 재동기화 — 앱 전면 복귀·알림함 열기·다 읽음에
   assert.match(src, /document\.visibilityState === 'visible'\) resyncBadge\(\)/, '전면 복귀');
   assert.match(src, /\(isPersonal \? loadPersonal\(\) : loadOrg\(orgId\)\)\.catch\(\(e\) => setErr\(e\.message\)\); resyncBadge\(\); \}\);/, '모바일 resume 관찰자(개인 공간 분기)');
   assert.match(src, /setPage\('inbox'\); setRail\(false\); resyncBadge\(\); \};/, '알림함 열기');
-  assert.match(src, /const pickRoot = \(k\) => \{ setTabQ\(null\); setPage\(k\); \};/, '폰 아래 탭에는 알림함이 없다(폰 셸 v2) — 안 읽음은 탭 뱃지, 결재는 에이전트 탭. 알림함 열기(데스크톱 벨)의 배지 재동기화는 위 openInbox가 그대로');
+  assert.match(src, /const pickRoot = \(k\) => \{ setTabQ\(null\); setOrgMenu\(false\); setChPlus\(false\); setPage\(k\); \};/, '폰 아래 탭에는 알림함이 없다(폰 셸 v2) — 안 읽음은 탭 뱃지, 결재는 에이전트 탭. 알림함 열기(데스크톱 벨)의 배지 재동기화는 위 openInbox가 그대로');
   assert.match(src, /if \(!uid\) return; resyncBadge\(\); const onVis/, '콜드 스타트 1회(검수 M-2)');
   assert.match(src, /for \(const \[cid, mid\] of top\) markRead\(cid, mid\); resyncBadge\(\);/, '모두 읽음이 알림 채널의 읽음 커서를 올린다(검수 M-6)');
   assert.match(src, /dmIds\.has\(it\.channel_id\) && it\.kind !== 'approval'/, '커서 승격은 DM 채널만(공개 채널의 앞선 글을 읽음 처리하지 않는다, N-1)');
