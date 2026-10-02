@@ -2336,4 +2336,4 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-crewsheet .msgr-input:not(.inline):not(.sm) { display: block; width: 100%; box-sizing: border-box; min-height: 36px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; line-height: 1.5; outline: 0; }
 .msgr-crewsheet textarea.msgr-input:not(.inline):not(.sm) { min-height: 64px; resize: vertical; }
 .msgr-crewsheet .msgr-input:not(.inline):not(.sm):focus { box-shadow: 0 0 0 2px var(--msgr-focus); }
-.msgr-phone .msgr-crewsheet .msgr-input:not(.inline):not(.sm) { min-height: 44px; font-size: 16px; } /* 폰은 16px 아래면 입력할 때 화면이 확대된다 — 두 칸 모두 16px로 같게 */
+.msgr-phone .msgr-crewsheet .msgr-input:not(.inline):not(.sm) { min-height: 44px; } /* 글자는 데스크톱과 같은 13px(유건 2026-10-02) — index.html 뷰포트가 maximum-scale=1이라 입력할 때 확대되지 않는다 */
