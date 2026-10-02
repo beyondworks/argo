@@ -25,9 +25,17 @@ test('personalSelfName: 개인 방 목록이 준 이름 표에서 내 이름을 
 test('crewRowMenuKeys: 개인 공간에는 에이전트 관리(시트) 항목이 없다 — 시트를 그리지 않는 화면에서 눌러도 안 열리던 메뉴', () => {
   assert.deepEqual(crewRowMenuKeys({ isPersonal: false, isDm: false, canKickCrew: true, ownedByMe: true }), ['manage', 'call', 'remove']);
   assert.deepEqual(crewRowMenuKeys({ isPersonal: true, isDm: true, canKickCrew: true, ownedByMe: true }), ['leave'], '개인 방의 내 에이전트는 주인 전용 빼기 함수로(행 삭제는 친구가 만든 방에서 거절됐다)');
-  assert.deepEqual(crewRowMenuKeys({ isPersonal: true, isDm: true, canKickCrew: true, ownedByMe: false }), ['remove'], '남의 에이전트는 방에서 권한이 있을 때만');
   assert.deepEqual(crewRowMenuKeys({ isPersonal: true, isDm: false, canKickCrew: false, ownedByMe: true }), ['call', 'leave']);
-  assert.deepEqual(crewRowMenuKeys({ isPersonal: false, isDm: true, canKickCrew: false, ownedByMe: false }), ['manage']);
+});
+
+// 유건 결정(2026-10-02, 기능 점검 D8): 에이전트를 빼는 것은 그 에이전트의 주인만 — 방장이라도 남의 에이전트는 못 뺀다(서버 20261002120000).
+// 남에게는 '내보내기' 대신 '숨기기'(글 접힘 — 스스로 가린다). 회사 에이전트(사람 주인 없음)는 방장이 종전대로 뺀다.
+test('crewRowMenuKeys: 남의 개인 에이전트는 방장이어도 내보내기 없음 → 숨기기, 회사 에이전트는 방장이 내보낸다, 내 에이전트는 그대로', () => {
+  assert.deepEqual(crewRowMenuKeys({ isPersonal: true, isDm: true, canKickCrew: true, ownedByMe: false, canHide: true }), ['hide'], '친구 방의 방장이어도 남의 에이전트는 숨기기만');
+  assert.deepEqual(crewRowMenuKeys({ isPersonal: false, isDm: false, canKickCrew: true, ownedByMe: false, canHide: true }), ['manage', 'call', 'hide'], '조직 채널 방장도 남의 개인 에이전트는 숨기기만');
+  assert.deepEqual(crewRowMenuKeys({ isPersonal: false, isDm: false, canKickCrew: true, ownedByMe: false, company: true, canHide: true }), ['manage', 'call', 'remove', 'hide'], '회사 에이전트는 방장이 내보낼 수 있다');
+  assert.deepEqual(crewRowMenuKeys({ isPersonal: false, isDm: true, canKickCrew: false, ownedByMe: false, canHide: false }), ['manage'], '이미 숨긴 에이전트면 숨기기도 없다');
+  assert.deepEqual(crewRowMenuKeys({ isPersonal: false, isDm: false, canKickCrew: true, ownedByMe: true, canHide: true }), ['manage', 'call', 'remove'], '내 에이전트는 숨기기 없음(내보내기는 주인이니까)');
 });
 
 test('crewAwayNotice: 에이전트와의 1:1에서 에이전트가 꺼져 있을 때만 안내한다', () => {

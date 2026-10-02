@@ -34,7 +34,9 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace를 반환(데�
 });
 
 test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 줄(사고·도구 단계·작성 중 본문·궤적 없음 — 유건 결정 2026-09-24) · 점 세 개는 progress 없는 크루만', () => {
-  assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, active\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 active() 안에서');
+  assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, mine\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 on() 안에서(보는 조직만 — 기능 점검 D3)');
+  assert.match(app, /const on = \(fn\) => \(e\) => \{ if \(!isDisposed\(\)\) fn\(e\); \};/, 'on()은 해제 뒤 콜백을 막는다');
+  assert.match(app, /const mine = \(fn\) => on\(\(e\) => \{ if \(here\(o\.id\)\) fn\(e\); \}\);/, 'mine()은 on() 안에서 보는 조직만');
   assert.match(app, /const onProgressEvent = \(\{ payload \}\) => \{ if \(acceptTyping\(settledRef\.current, payload\)\) setProgress\(/, 'progress 처리기 = 답글 직후 늦은 방송 거름 + setProgress(2026-09-23 유령 표시)');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
   assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');
@@ -59,8 +61,8 @@ test('P0: 안 읽음 RPC → 레일 배지(멘션은 mark·음소거는 dim)·�
   assert.match(app, /afterId \? null : q\(supabase\.from\('msgr_reads'\)[\s\S]{0,200}\n    if \(!afterId && !preserve\) setDivider\(rd\?\.last_read_id \?\? 0\);/, '구분선 기준은 열 때 한 번, 글보다 먼저, 보존 새로고침에서는 변경하지 않는다(D15 순서는 apps/messenger/test/newline-divider.test.mjs)');
   assert.match(app, /onRead\?\.\(chId, lastId\)/, '보는 채널은 커서 갱신');
   assert.match(app, /supabase\.from\('msgr_reads'\)\.upsert\(\{ channel_id: channelId, user_id: uid, last_read_id: lastId/, '커서 upsert');
-  assert.match(app, /\{mine && m\.kind === 'text' && <button type="button" tabIndex=\{tabStop\} onClick=\{\(\) => \{ setDraft\(m\.body\); setEditing\(true\); \}\}>/, '편집은 내 글만(숨은 hover 동작은 탭 순서 밖 — D11)');
-  assert.match(app, /\{mine && \(confirmDel \? <button type="button" tabIndex=\{tabStop\} className="danger"/, '삭제는 2단계 확인');
+  assert.match(app, /\{mine && m\.kind === 'text' && <button type="button" onClick=\{\(\) => \{ setActsOpen\(false\); setDraft\(m\.body\); setEditing\(true\); \}\}>/, '편집은 내 글만 — 데스크톱은 ⋯·우클릭 메뉴 안(아이콘 줄 버튼은 탭 순서 밖 — D11, 2026-10-02 아이콘 줄)');
+  assert.match(app, /\{mine && \(confirmDel \? <button type="button" className="danger"/, '삭제는 2단계 확인');
   assert.match(app, /update\(\{ body: '', deleted_at: new Date\(\)\.toISOString\(\) \}\)/, '삭제 = deleted_at + 본문 비움');
   assert.doesNotMatch(app, /const quick = topEmoji\(3\);/, 'hover 추천 없음(유건 지시)'); assert.match(app, /className="msgr-actsheet"[\s\S]*?<div className="quick">[\s\S]*?topEmoji\(5\)/, '빠른 반응은 폰의 길게 누른 시트 안에서만(슬랙식, 2026-09-11)'); assert.match(app, /grid\(topEmoji\(COLS\), 'freq'\)/, '자주 사용은 피커 상단 한 줄(열 수만큼)'); assert.match(app, /function EmojiPicker\(\{ t, anchor, onPick, onClose \}\)[\s\S]*?searchEmoji\(q\)[\s\S]*?EMOJI_GROUPS\.map/, '슬랙식 피커: 검색·자주 사용·분류'); assert.match(app, /className=\{`msgr-emojipop\$\{phone \? ' phone' : ''\}`\} ref=\{ref\}[^\n]*style=\{phone \? undefined : \{ left, top, width: W, maxHeight: H \}\}/, '피커는 화면 고정(스크롤 무관) — 폰은 앵커 대신 아래 시트(CSS)'); assert.match(read('apps/messenger/src/styles.css'), /^\.msgr-emojipop \{ position: fixed;/m, 'fixed'); assert.match(app, /document\.body\.classList\.add\('msgr-lock'\)/, '열린 동안 스크롤 잠금'); assert.match(read('apps/messenger/src/styles.css'), /^body\.msgr-lock \.msgr-thread \{ pointer-events: none; \}/m, '잠금 CSS');
   assert.match(app, /broadcast\?\.\('reaction', \{ channel_id: chId, message_id: m\.id \}\)/, '반응 방송');

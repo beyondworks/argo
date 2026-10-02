@@ -37,7 +37,7 @@ test('문구 — 상태 세 가지가 ko·en 모두 있고 서로 다르며, 낱
 });
 
 test('"256px" 같은 내부 수치는 사용자 문구에 없다', () => {
-  assert.doesNotMatch(t('profile.avatar.note', 'ko'), /\d+px/); assert.doesNotMatch(t('profile.avatar.note', 'en'), /\d+px/);
+  assert.doesNotMatch(t('avatar.crop.hint', 'ko'), /\d+px/); assert.doesNotMatch(t('avatar.crop.hint', 'en'), /\d+px/); // '가운데를 잘라 저장' 문구는 자르기 화면으로 바뀌었다(유건 피드백 4)
 });
 
 test('앱: 시트에 상태 줄은 하나(파견 줄·부재중 줄을 따로 두지 않는다), 해제·파견 버튼은 그 줄에', () => {

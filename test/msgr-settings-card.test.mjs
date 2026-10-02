@@ -46,7 +46,7 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍으로 있다', () => {
 test('채널 시트 닫기 효과의 의존성은 [chId]뿐 — tick이 섞이면 15초마다 시트가 닫힌다(HIGH-1 재발 방지)', () => {
   const app = stripComments(read('apps/messenger/src/App.jsx'));
   assert.match(app, /useEffect\(\(\) => \{ setChSheet\(sheetAfterNav\.current\); sheetAfterNav\.current = false; \}, \[chId\]\);/, '닫기 효과가 [chId] 단독 의존이 아니다(알림함의 참여 요청은 이동 뒤 한 번만 연다 — 2026-09-16)');
-  const reload = /useEffect\(\(\) => \{ loadChMembers\(chId\)[^\n]*\}, \[chId, loadChMembers, tick\]\);/.exec(app);
+  const reload = /useEffect\(\(\) => \{ if \(!chMembersWanted\) return; loadChMembers\(chId\)[^\n]*\}, \[chId, loadChMembers, syncEpoch, membersEpoch, chMembersWanted\]\);/.exec(app); // tick은 빠졌다(기능 점검 D2) — 시트 닫기가 섞이지 않는지만 본다
   assert.ok(reload && !/setChSheet/.test(reload[0]), '멤버 재조회 효과 안에 setChSheet가 있다 — tick마다 시트가 닫힌다');
 });
 
@@ -110,7 +110,7 @@ test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 
   assert.match(app, /setEnt\(e\); setPolicy\(pol\);/, '정책이 상태에 실리지 않는다');
   const crew = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
   assert.match(crew, /const locked = !!policy\?\.allow_locked;/, '크루 시트 잠금 판정');
-  assert.match(crew, /disabled=\{!owner \|\| busy \|\| locked\} onClick=\{\(\) => pickAllow\(v\)\}/, '허용 범위 세그먼트가 잠금에 비활성화되지 않는다');
+  assert.match(crew, /<Seg label=\{t\('crew\.allow'\)\} value=\{allow\} onPick=\{pickAllow\} disabled=\{!owner \|\| busy \|\| locked\}/, '허용 범위 세그먼트가 잠금에 비활성화되지 않는다(공통 Seg, 5차 피드백 3)');
   assert.match(crew, /locked \? <p className="note">\{t\('crew\.allow\.locked'\)\}<\/p>/, '잠금 안내가 없다');
   assert.match(crew, /\/msgr_policy_locked\/\.test\(res\.error\.message\) \? t\('err\.policyLocked'\)/, '서버 거절이 정직한 문구로 안 바뀐다');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
@@ -159,7 +159,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(app, /onError\(t\(ap\.risk === 'high' \? 'ap\.approverOnly' : 'ap\.ownerOnly'\)\)/, 'RLS 0행 문구가 등급별이 아니다');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
   assert.match(pc, /approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)/, '정책 저장에 approval_high_by·approver_user_ids가 없다');
-  assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
+  assert.match(pc, /value=\{draft\.approval_high_by \?\? 'admin'\} onPick=\{\(v\) => set\(\{ approval_high_by: v \}\)\} disabled=\{ro\} options=\{\['admin', 'approvers', 'owner'\]/, '고위험 결재권 세그먼트');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
   assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \(it\.plain \? \{ payload: \{ plain: it\.plain \} \} : \{\}\)\) \};/, '미러 행에 risk·(org_doc이면 kind·payload, plain이면 payload.plain)가 없다');
@@ -206,7 +206,7 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids'\)/, '채널 조회에 personal_crews가 없다');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /\{channel\.kind !== 'dm' && \(<>\s*<div className="row wrap">\s*<span className="msgr-klabel">\{t\('ch\.personal'\)\}/, '개인 크루 정책은 채널 설정 안(dm 제외)');
-  assert.match(ch, /\['allowed', 'approval', 'blocked', \.\.\.\(channel\.personal_crews === 'read_only' \? \['read_only'\] : \[\]\)\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(channel\.personal_crews \?\? 'approval'\) === v\}[^\n]*disabled=\{!canEdit \|\| busy\} onClick=\{\(\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\}/, '세그먼트');
+  assert.match(ch, /<Seg label=\{t\('ch\.personal'\)\} value=\{channel\.personal_crews \?\? 'approval'\} onPick=\{\(v\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\} disabled=\{!canEdit \|\| busy\} options=\{\['allowed', 'approval', 'blocked', \.\.\.\(channel\.personal_crews === 'read_only' \? \['read_only'\] : \[\]\)\]/, '세그먼트');
   assert.match(ch, /\/msgr_channel_personal_blocked\/\.test\(res\.error\.message\) \? t\('err\.channelPersonalBlocked'\)/, '멤버 추가 거절 문구');
   assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && !pendingCrews\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'approval'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼) · 승인 대기 중인 에이전트는 후보에서 뺀다');
   assert.match(ch, /&& \(isDmRoom \? c\.owner_user_id === uid : \(c\.owner_user_id === uid \|\| \(!!org\?\.service_user_id && c\.owner_user_id === org\.service_user_id\)\)\) && crewAddable\(c\)\);/, '후보(+ 개인 공간에서 답하지 못하는 봇 쌍둥이 제외, 2026-10-01): 채팅=내 에이전트만(들어온 에이전트는 참여자 누구나 부르므로 넣는 것은 주인만 — 2026-09-18, 서버 msgr_crew_join이 같은 규칙), 그 밖=방장이어도 내 에이전트와 조직 서비스 계정의 회사 에이전트만(유건 2026-09-17 — 남이 연결한 봇 포함 제외). 행동은 apps/messenger/test/dminvite.browser.mjs host-adds-and-approves');
@@ -258,7 +258,10 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
   assert.match(app, /<form className="msgr-inline" onSubmit=\{\(e\) => \{ e\.preventDefault\(\); createOrg\(newOrg\); \}\}>/, '새 조직 인라인 폼');
   assert.match(app, /const \[confirmArchive, setConfirmArchive\] = useState\(false\);/, '보관 2단계 상태');
   assert.match(app, /: <div className="confirm"><p>\{t\('ch\.archive\.confirm'\)\}<\/p>/, '보관 확인 문구');
-  assert.match(app, /if \(error\) return onError\?\.\(error\.message\);/, '첨부 오류 토스트');
+  { const media = read('apps/messenger/src/media.jsx'); // 2026-10-02 첨부 말풍선 — 첨부 오류는 말풍선(받지 못함 · 다시 시도)·크게 보기 안내로 보인다(조용히 삼키지 않는다)
+    assert.match(media, /catch \{ setSt\(\{ phase: 'fail', p: null, path: null \}\); \}/, '파일 받기 실패 → 실패 상태');
+    assert.match(media, /st\.phase === 'fail' \? t\('file\.failed'\)/, '실패 문구(다시 시도)');
+    assert.match(media, /setNote\(\{ text: t\(kind === 'save' \? 'media\.saveFail'/, '크게 보기 저장·공유 실패 안내'); }
   assert.match(app, /<span className="q">\{parentBlockedUser \? t\('msg\.blockedUser'\) : parentMutedCrew \? t\('msg\.mutedCrew'\) : <>\{parent\.author_kind === 'user'/, '인용 말줄임 span(차단한 사람·숨긴 크루의 글이면 가림 문구, 2026-09-26)');
   assert.match(app, /crs\.sort\(\(a, b\) => \(crewTier\(b, orgRow\) === 'company'\) - \(crewTier\(a, orgRow\) === 'company'\) \|\| a\.display_name\.localeCompare\(b\.display_name, 'ko'\)\);/, '크루 순서 고정');
   assert.match(app, /\{\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(<>/, '개발용 로그인은 DEV 또는 검수용 번들 플래그(VITE_DEV_LOGIN=1)에서만 — 발행 빌드 env엔 이 플래그가 없다');
@@ -272,7 +275,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
 
 test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 사람=참여한 사람(공개 포함) · 크루=초대된 에이전트(공개 포함), 조직 초대는 조직 메뉴', () => {
   assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
-  assert.match(app, /const chRow = \(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{sortedCh\.map\(chRow\)\}/, '채널은 한 목록 — 채널 그룹은 뺐다(유건 2026-09-16, 라이브 사용 0명)');
+  assert.match(app, /const chItemsOf = \(c\) => \{ const canManage[\s\S]{0,2000}const chRow = \(c\) => \{ const items = chItemsOf\(c\);/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{sortedCh\.map\(chRow\)\}/, '채널은 한 목록 — 채널 그룹은 뺐다(유건 2026-09-16, 라이브 사용 0명)');
   assert.match(app, /const chPeople = !channel \? \[\] : isPersonal \? \(dmMembers\[channel\.id\] \?\? \[\]\)[^\n]*? : members\.filter\(\(m\) => chMembers\.some\(\(x\) => x\.member_kind === 'user' && x\.member_id === m\.user_id\) && !\(channel\.kind === 'public' && \(channel\.excluded_user_ids \?\? \[\]\)\.includes\(m\.user_id\)\)\);/, '사람 구성 = 참여한 사람(공개 채널도 — #555 이후, 유건 제보 2026-09-16)'); assert.match(app, /const mentionPeople = channel\?\.kind === 'public' \? members\.filter/, '멘션 후보는 공개 채널이면 조직원 전원(멘션하면 채널 밖 사람에게도 알림)');
   assert.match(app, /const chCrews = !channel \? \[\] : usableCrews\.filter\(\(c\) => chMembers\.some\(\(x\) => x\.member_kind === 'crew' && x\.member_id === c\.id\) && !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\);/, '크루 구성 = 초대된 에이전트(공개 채널도 — 2026-09-16, 종전에는 파견된 에이전트 전원)');
   assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
@@ -356,7 +359,7 @@ test('I-4 회사 노드 — 조직 행에 하트비트, 노드용 초대는 memb
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
   assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info\)/, '조직 행에 node_seen_at');
   assert.match(oc, /insert\(\{ org_id: org\.id, role: 'member', for_node: true, created_by: uid \}\)/, '노드용 초대 = member + for_node');
-  assert.match(oc, /const open = live\.filter\(\(i\) => !i\.for_node\); const nodeInvite = live\.find\(\(i\) => i\.for_node\) \?\? null;/, '노드 코드는 사람 초대 목록에서 제외');
+  assert.match(oc, /const open = shownInvites\(invites\); const nodeInvite = live\.find\(\(i\) => i\.for_node\) \?\? null;/, '노드 코드는 사람 초대 목록에서 제외(shownInvites가 for_node를 뺀다 — apps/messenger/test/invite-flow.test.mjs)');
   assert.match(oc, /const nodeAlive = !!org\.service_user_id && nodeSeen > 0 && Date\.now\(\) - nodeSeen < AWAY_MS;/, '연결됨 판정 = 서비스 계정 있음 ∧ 90초 이내 하트비트');
   assert.match(oc, /<code>\{nodeCmd\}<\/code>/, '명령 블록');
   assert.ok(!/fmtTs\(/.test(oc) && /fmtWhen\(nodeInvite\.expires_at, lang\)/.test(oc) && /fmtWhen\(org\.node_seen_at, lang\)/.test(oc), '조직 카드 시각은 날짜 포함형(fmtWhen) — 7일 뒤 만료·며칠 전 응답을 시간만으로 보이지 않게');
@@ -370,7 +373,7 @@ test('I-5 회사 크루 만들기 — 정책 crew_create 세그먼트·저장, �
   assert.match(app, /approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)\.eq\('org_id', id\)/, '정책 조회에 crew_create');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
   assert.match(pc, /crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)\.eq\('org_id', org\.id\)/, '정책 저장에 crew_create');
-  assert.match(pc, /\['admin', 'channel_admin', 'member'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.crew_create \?\? 'channel_admin'\) === v\}/, '3옵션 세그먼트');
+  assert.match(pc, /value=\{draft\.crew_create \?\? 'channel_admin'\} onPick=\{\(v\) => set\(\{ crew_create: v \}\)\} disabled=\{ro\} options=\{\['admin', 'channel_admin', 'member'\]/, '3옵션 세그먼트');
   const cs = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(cs, /const canCreateCrew = channel\.kind !== 'dm' && nodeOn && myRole !== 'guest' && \(isAdmin \|\| crewCreate === 'member' \|\| \(crewCreate === 'channel_admin' && canEdit\)\);/, '권한 행렬(서버 msgr_can_create_crew와 같은 규칙, 게스트 제외)');
   assert.match(cs, /const nodeOn = nodeSet && !!org\?\.node_seen_at && Date\.now\(\) - Date\.parse\(org\.node_seen_at\) < AWAY_MS;/, '검수 M-4: 살아 있는 노드만');
@@ -499,9 +502,10 @@ test('J-5 조직 삭제 유예·복구 — 이름 입력 2단계 삭제(네이�
 test('검수 반영(코드) — 삭제 조직 목록 제외, 오류 문구 매핑, 조직 전체 초대는 게스트 제외, 카드 값 개행 세척, 서버 가드', () => {
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /rows\.filter\(\(r\) => r\.msgr_orgs && !r\.msgr_orgs\.deleted_at\)/, 'M-3');
-  assert.match(app, /const friendlyErr = \(msg, t\) => \/msgr_session_refreshing\/\.test\(msg\) \? t\('err\.sessionRefreshing'\) : \/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑(D50: 세션 갱신 중이 RLS보다 먼저)');
+  assert.match(app, /const friendlyErr = \(msg, t\) => \/msgr_session_refreshing\/\.test\(msg\) \? t\('err\.sessionRefreshing'\) : [^\n]*?\/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑(D50: 세션 갱신 중이 RLS보다 먼저 — 사이에 더 좁은 매핑(D8 msgr_crew_remove_owner_only)은 들어올 수 있다)');
   assert.ok((app.match(/onError\(friendlyErr\(res\.error\.message, t\)\)/g) || []).length >= 4, 'M-5 적용 4곳 이상');
-  assert.match(app, /onClick=\{\(\) => makeInvite\('admin'\)\}/, 'L-3 초대는 멤버·관리자 두 버튼');
+  assert.match(app, /const adminInvite = \(\) => \(adminLink \? copyLink\(adminLink\) : makeInvite\('admin'\)\);/, 'L-3 초대는 멤버·관리자 두 버튼(관리자 링크는 있으면 복사, 없으면 만든다 — 5차 피드백 2)');
+  assert.match(app, /onClick=\{adminInvite\}/);
   assert.ok(!/makeInvite\('guest'\)/.test(app), 'L-3 조직 전체 게스트 초대 없음');
   assert.ok(!/&& false\)\}/.test(app), 'L-5 죽은 조건 제거');
   const persona = read('src/persona.mjs');
@@ -544,7 +548,7 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
   assert.doesNotMatch(app, /c\.kind === 'private' && \{ icon: 'out', label: t\('ch\.leave'\)/, '비공개 한정 조건이 되살아나지 않는다');
   assert.match(app, /railActionKey === 'ch\.leave' && railAction\.channel\.kind === 'public' \? 'ch\.leave\.confirm\.note\.public'/, '공개 채널 확인 문구는 찾아보기 재참여 안내');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
-  assert.ok(oc.indexOf("t('org.guest.until'") < oc.indexOf('<div className="msgr-seg right"'), '게스트 만료 문구는 세그먼트보다 앞(세그먼트 오른쪽 고정)');
+  assert.ok(oc.indexOf("t('org.guest.until'") < oc.indexOf('<Seg className="right"'), '게스트 만료 문구는 세그먼트보다 앞(세그먼트 오른쪽 고정)');
   const dict = read('apps/messenger/src/i18n.js');
   for (const k of ['org.invite.kind.guest', 'ch.leave', 'ch.leave.blocked', 'ch.archive.confirm.short', 'ch.leave.confirm.note', 'ch.leave.confirm.note.public', 'ch.archive.confirm.note', 'dm.leave.confirm.note', 'dm.leave', 'ch.menu.settings']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });
@@ -616,8 +620,8 @@ test('i18n 전수 스윕 — App.jsx·graph3d.jsx의 정적 t(\'키\')는 전부
 
 test('컴포저 첨부: 드래그앤드롭 수용·칩마다 취소 단추·선택창과 같은 수용 규칙(유건 제보 2026-09-11 밤)', () => {
   const comp = read('apps/messenger/src/App.jsx');
-  assert.match(comp, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragging\(false\); if \(!busy && !isPersonal\) addFiles\(e\.dataTransfer\?\.files\); \}\}/, '드롭 → addFiles(개인 공간 제외 — 행동은 apps/messenger/test/personal-space.browser.mjs)');
-  assert.match(comp, /onDragOver=\{\(e\) => \{ if \(!isPersonal && e\.dataTransfer\?\.types\?\.includes\('Files'\)\) \{ e\.preventDefault\(\); setDragging\(true\); \}/, '파일 드래그만 강조(텍스트 드래그는 무시)');
+  assert.match(comp, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragging\(false\); if \(!busy\) addFiles\(e\.dataTransfer\?\.files\); \}\}/, '드롭 → addFiles(2026-10-02부터 개인 공간도 — 저장 경로 p/<방>/<글>/<파일>)');
+  assert.match(comp, /onDragOver=\{\(e\) => \{ if \(e\.dataTransfer\?\.types\?\.includes\('Files'\)\) \{ e\.preventDefault\(\); setDragging\(true\); \}/, '파일 드래그만 강조(텍스트 드래그는 무시)');
   assert.match(comp, /onChange=\{\(e\) => \{ addFiles\(e\.target\.files\); e\.target\.value = ''; \}\}/, '선택창도 같은 addFiles');
   assert.match(comp, /setFiles\(\(cur\) => acceptFiles\(cur, incoming, ATTACH_MAX\)\.files\)/, '누적·중복 제거·상한은 acceptFiles 한 곳');
   assert.match(comp, /uploading !== f\.name && <button type="button" className="x"[\s\S]{0,140}?onClick=\{\(\) => setFiles\(\(cur\) => withoutFile\(cur, f\)\)\}/, '칩 취소 단추(업로드 중엔 없음)');
@@ -644,7 +648,7 @@ test('사이드바: 열린 채널이 안 읽음이어도 이름이 보인다(활
 
 test('컴포저: 클립보드 이미지 붙여넣기 → 같은 addFiles 수용 규칙, 이름 없는 캡처는 paste-시각(유건 2026-09-11 밤)', () => {
   const comp = read('apps/messenger/src/App.jsx');
-  assert.match(comp, /onPaste=\{\(e\) => \{ const pasted = \[\.\.\.\(e\.clipboardData\?\.files \?\? \[\]\)\]; if \(!pasted\.length \|\| busy \|\| isPersonal\) return;[^\n]*addFiles\(/, '붙여넣기 → addFiles(개인 공간은 첨부 저장 경로가 없어 막는다)');
+  assert.match(comp, /onPaste=\{\(e\) => \{ const pasted = \[\.\.\.\(e\.clipboardData\?\.files \?\? \[\]\)\]; if \(!pasted\.length \|\| busy\) return;[^\n]*addFiles\(/, '붙여넣기 → addFiles(2026-10-02부터 개인 공간도)');
   assert.match(comp, /new File\(\[f\], `paste-\$\{new Date\(\)\.toISOString\(\)/, '이름 없는 캡처 이름');
 });
 
@@ -653,9 +657,12 @@ test('점검 2026-09-12 소형 결함 4건: 읽음은 초점 있을 때만 · �
   assert.match(app, /if \(document\.visibilityState !== 'hidden' && document\.hasFocus\(\)\) onRead\?\.\(chId, lastId\);/, '초점 판정');
   assert.match(app, /window\.addEventListener\('focus', mark\);/, '초점 복귀 시 읽음');
   assert.match(app, /if \(!payload \|\| payload\.kind !== 'text' \|\| \(payload\.author_user_id && payload\.author_user_id === r\.uid\)\) return;/, '사람 발신도 알림(내 글 제외)');
-  assert.match(app, /setBadge\(badgeTotal\(\{ current: unread, currentKey: [^,]+, muted, totals: spaceTotals \}\)\)/, '독 배지 음소거 제외 — 모든 공간 합(badgeTotal, 음소거 제외 행동은 apps/messenger/test/cross-space.test.mjs)');
-  assert.match(app, /<button type="button" ref=\{imgBtn\} tabIndex=\{tab\} className="msgr-imgbtn" aria-label=\{a\.name\} onClick=\{\(\) => setZoom\(true\)\}><img className="msgr-imgprev" src=\{src\} alt="" loading="lazy" onError=\{\(\) => setImgFail\(true\)\} \/><\/button>/, '이미지 인라인 — 누르면(키보드 포함, K10) 그 자리에서 확대(유건 2026-09-16), 못 그리면 파일 칩으로(D21)');
-  assert.match(app, /\{\(!isImg \|\| imgFail\) && <button type="button" tabIndex=\{tab\} className="msgr-file"/, '이미지는 미리보기가 곧 파일 — 칩 중복 없음(D21)');
-  assert.match(app, /className="msgr-lightbox"[\s\S]{0,400}onClick=\{\(\) => setZoom\(false\)\}/, '덮개를 누르면 닫힌다');
-  assert.match(app, /if \(e\.key === 'Escape'\) setZoom\(false\);/, 'Esc로도 닫힌다');
+  assert.match(app, /legacyBadge\.current = badgeTotal\(\{ current: unread, currentKey: [^,]+, muted, totals: spaceTotals \}\);\n\s+useEffect\(\(\) => \{ if \(!iconBadge\) setBadge\(legacyBadge\.current\); \}/, '독 배지 음소거 제외 — 모든 공간 합(badgeTotal, 음소거 제외 행동은 apps/messenger/test/cross-space.test.mjs)');
+  // 이미지 첨부 인라인 — 2026-10-02부터 media.jsx(사람·에이전트 같은 부품). 행동은 apps/messenger/test/media-viewer.test.mjs·ux3.browser.mjs
+  const media = read('apps/messenger/src/media.jsx');
+  assert.match(app, /const attRow = atts\.length > 0 && <MediaAttachments atts=\{atts\}/, '메시지 첨부 줄은 MediaAttachments 하나');
+  assert.match(media, /<button type="button" className=\{`msgr-thumb[^`]*`\} tabIndex=\{tab\} aria-label=\{t\('media\.view', \{ name: a\.name \}\)\} onClick=\{onOpen\}>/, '이미지 인라인 — 누르면(키보드 포함, K10) 그 자리에서 크게 보기');
+  assert.match(media, /const \{ images, files \} = useMemo\(\(\) => splitAttachments\(atts, failed\)/, '못 그린 그림은 파일 말풍선으로(D21) — 칩 중복 없음');
+  assert.match(media, /tapTimer\.current = setTimeout\(\(\) => \{ if \(mouse && !onPhoto\) onClose\(\);/, '바탕을 누르면 닫힌다');
+  assert.match(media, /if \(k === 'Escape'\) onClose\(\);/, 'Esc로도 닫힌다');
 });

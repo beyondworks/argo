@@ -55,6 +55,22 @@ const state = window.__instant = {
   if (sp.get('noorg')) state.tables.msgr_org_members = [];
   if (sp.get('nocrews')) state.tables.msgr_crews = [];
   if (sp.get('noname')) state.tables.msgr_org_members[0].display_name = sp.get('noname') === 'empty' ? null : 'fixture'; // &noname=1 표시 이름 = 이메일 앞부분(가입 기본값, D5) · =empty 비어 있음
+  if (sp.get('gap')) { const T = state.tables; const msg = (id, who, body) => ({ id, org_id: org, channel_id: 'general', author_kind: 'user', author_user_id: who, kind: 'text', body, created_at: new Date(Date.parse(now) + (id - 100) * 1000).toISOString(), edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null });
+    // 글 시각은 1초씩 — 같은 시각이면 폰 조회 순서가 뒤집힌다
+    // &gap=1 간격 장면(2026-10-02 유건 제보 재현): 같은 사람이 이어 보낸 글 9개 + 그 사이 '새 메시지' 구분선(읽음 커서 114) + 내 글 3개
+    for (let i = 1; i <= 9; i++) T.msgr_messages.push(msg(109 + i, 'user-crystal', `마케팅 뱃지 점검 ${i}`));
+    for (let i = 1; i <= 3; i++) T.msgr_messages.push(msg(118 + i, uid, `확인했어요 ${i}`));
+    T.msgr_reads.push({ channel_id: 'general', user_id: uid, last_read_id: 114 }); state.aiConsentAt = now; } // 동의 창 없이 바로 대화
+  // &mix=1(gap=1과 함께) 섞인 방(2026-10-02 상대 말풍선·턴 끝 동작 줄 확인): 에이전트 카드 · 사진+글 → 사진만(같은 턴) · 다른 사람 한 줄 · 내 글 → 내 사진만(같은 턴)
+  if (sp.get('gap') && sp.get('mix')) { const T = state.tables; const at = (id) => new Date(Date.parse(now) + (id - 100) * 1000).toISOString();
+    const row = (id, extra) => ({ id, org_id: org, channel_id: 'general', kind: 'text', created_at: at(id), edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null, ...extra });
+    T.msgr_messages.push(row(122, { author_kind: 'crew', crew_id: 'crew-davinci', body: '시안 두 개 정리했어요.\n\n- A안: 뱃지를 카드 오른쪽 위로\n- B안: 제목 옆 작은 점으로' }),
+      row(123, { author_kind: 'user', author_user_id: 'user-crystal', body: '현장 사진 공유드려요' }), row(124, { author_kind: 'user', author_user_id: 'user-crystal', body: '' }),
+      row(125, { author_kind: 'user', author_user_id: 'user-other', body: '좋네요 👍' }),
+      row(126, { author_kind: 'user', author_user_id: uid, body: 'A안으로 가죠' }), row(127, { author_kind: 'user', author_user_id: uid, body: '' }));
+    T.msgr_attachments.push({ id: 'att-123', message_id: 123, storage_path: 'fixture/photo-a.svg', name: 'site-a.svg', mime: 'image/svg+xml', bytes: 2048 },
+      { id: 'att-124', message_id: 124, storage_path: 'fixture/photo-b.svg', name: 'site-b.svg', mime: 'image/svg+xml', bytes: 2048 },
+      { id: 'att-127', message_id: 127, storage_path: 'fixture/photo-c.svg', name: 'mine-c.svg', mime: 'image/svg+xml', bytes: 2048 }); }
   state.loggedOut = !!sp.get('loggedout'); } // &loggedout=1 세션 없음 — 로그인 화면(3차 검수 M-2 시각 확인용, 2026-09-27)
  // &noorg=1 조직 없는 첫 화면(D4)
 // 구독을 놓으면 그 채널이 걸어 둔 핸들러도 실제로 걷어낸다(실제 전송처럼).
@@ -178,11 +194,14 @@ state.post = ({ body, author = 'user-other', withChannelTopic = true }) => {
 // 구독이 끊겼다고 알린다(CHANNEL_ERROR·TIMED_OUT·CLOSED) — 실제 전송이 끊길 때 supabase-js가 부르는 것과 같은 자리.
 state.status = (topic, status) => (state.statusCbs[topic] ?? []).forEach((cb) => cb?.(status));
 
+// 가짜 사진 — 경로마다 다른 색의 4:3 그림(data URL). 외부 요청이 없다
+const fixturePhoto = (path) => { const hue = [...String(path)].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 360, 7);
+  return `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360"><rect width="480" height="360" fill="hsl(${hue} 45% 62%)"/><circle cx="360" cy="110" r="46" fill="hsl(${hue} 60% 85%)"/><path d="M0 300 L150 170 L260 260 L340 200 L480 320 L480 360 L0 360 Z" fill="hsl(${hue} 35% 38%)"/></svg>`)}`; };
 export const supabase = {
   from: query,
   auth: { getSession: async () => ({ data: { session: state.loggedOut ? null : { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } } }),
           onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
-  rpc: async (name, args) => settle({ rpc: name }, () => name === 'msgr_accept_invite' ? state.acceptInvite(args?.code)
+  rpc: async (name, args) => settle({ rpc: name }, () => (state.rpcs ??= []).push({ name, args }) && name === 'msgr_accept_invite' ? state.acceptInvite(args?.code)
     : name === 'msgr_invite_preview' ? state.invitePreview(args?.code) : name === 'msgr_accept_invite_v2' ? state.acceptInviteV2(args?.code) : name === 'msgr_invite_revoke' ? state.inviteRevoke(args?.invite)
     : name === 'msgr_create_channel' ? (() => { const id = `ch-${state.nextId++}`; // 서버와 같은 모양 — 만든 사람 참여 행은 비공개·DM만(20260903120000: kind <> 'public')
       state.tables.msgr_channels.push({ ...channelRow(id, args.kind, args.name), created_by: uid });
@@ -209,6 +228,7 @@ export const supabase = {
     state.live.add(c); return c; },
   removeChannel: async (c) => { drop(c); return 'ok'; },
   removeAllChannels: async () => { state.topics = {}; state.live.clear(); },
-  storage: { from: () => ({ remove: async () => ({ data: [], error: null }), upload: async () => ({ error: null }), list: async () => ({ data: [], error: null }) }) },
+  storage: { from: () => ({ remove: async () => ({ data: [], error: null }), upload: async () => ({ error: null }), list: async () => ({ data: [], error: null }),
+    createSignedUrl: async (path) => ({ data: { signedUrl: fixturePhoto(path) }, error: null }) }) }, // 사진 첨부 장면(&mix=1) — 네트워크 없이 그리는 그림 주소
 };
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }

@@ -6,13 +6,13 @@ import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 
 test('폰 뒤로 = history.back(): 루트 탭은 replaceState, 하위 화면은 pushState, popstate가 page·chId를 되돌린다', () => {
-  assert.match(src, /new Set\(\['home', 'dm', 'inbox', 'activity'\]\)/, '루트 페이지 집합');
+  assert.match(src, /const ROOT_PAGES = useMemo\(\(\) => new Set\(PHONE_TABS\), \[\]\);/, '루트 페이지 집합 = 아래 탭 5개(폰 셸 v2 — phone-shell.mjs)');
   assert.match(src, /window\.addEventListener\('popstate', onPop\)/);
   assert.match(src, /if \(st\.chId\) setChId\(st\.chId\); setPage\(st\.page\);/, 'popstate → 화면 복원(대화면 채널까지)');
   assert.match(src, /history\.replaceState\(\{ page, chId, depth: 0 \}, ''\);\s*\} else if \(same\) history\.replaceState\(\{ page, chId, depth \}, ''\);/, '루트는 depth 0, 같은 화면 전환은 replace');
   assert.match(src, /else history\.pushState\(\{ page, chId, depth: depth \+ 1 \}, ''\);/, '하위 화면은 push(depth+1)');
   assert.match(src, /const navBackPending = useRef\(false\); const navBackTicket = useRef\(0\);/, '뒤로가기는 popstate 전까지 한 번만 보낸다');
-  assert.match(src, /if \(!isPhone \|\| \(history\.state\?\.depth \?\? 0\) === 0\) \{ setPage\('home'\); return; \}/, '루트(깊이 0)에서는 history.back을 부르지 않는다 — 앱 밖 이전 문서로 나가지 않게');
+  assert.match(src, /if \(!isPhone \|\| \(history\.state\?\.depth \?\? 0\) === 0\) \{ setPage\(isPhone \? lastRoot\.current : 'chat'\); return; \}/, '루트(깊이 0)에서는 history.back을 부르지 않는다 — 앱 밖 이전 문서로 나가지 않게, 마지막 아래 탭으로');
   assert.match(src, /if \(navBackPending\.current\) return;[\s\S]{0,180}history\.back\(\);[\s\S]{0,180}navBackPending\.current = false/, 'popstate 대기 중 뒤로 연타는 같은 history 이동을 중복 호출하지 않는다');
   assert.match(src, /if \(\(history\.state\?\.depth \?\? 0\) > 0\) \{ goBack\(\); return; \}/, 'Android 물리 뒤로도 내부 화면에서는 goBack 직렬화 경로를 탄다');
   assert.match(src, /invoke\('plugin:app\|exit'\)/, 'Android 루트 물리 뒤로는 앱 종료 명령으로 기본 동작을 보존한다');
@@ -22,8 +22,8 @@ test('폰 뒤로 = history.back(): 루트 탭은 replaceState, 하위 화면은 
   assert.match(src, /history\.replaceState\(history\.state, '', location\.pathname\)/, '초대 링크 정리가 state를 지우지 않는다(L-2)');
   assert.doesNotMatch(src, /history\.length > 1/, 'history.length 판단 잔재 없음');
   assert.match(src, /const openNav = \(\) => \{ if \(isPhone\) goBack\(\); else setRail\(true\); \}/, '상단 뒤로 버튼(NavButton onMenu)이 스택을 탄다');
-  assert.match(src, /const edgeEnabled = isPhone && page !== 'home' && page !== 'dm';[\s\S]{0,400}?useEdgeSwipeBack\(goBack, edgeEnabled/, 'iOS 가장자리 스와이프도 같은 스택(enabled는 edgeEnabled — 꺼질 때 swipeTo 해제, 검수 L-5)');
-  assert.equal((src.match(/onBack=\{backFromPage\}/g) ?? []).length, 4, '설정·검색·알림함·기억 화면의 뒤로 4곳');
+  assert.match(src, /const edgeEnabled = isPhone && !isPhoneRoot\(page\);[\s\S]{0,400}?useEdgeSwipeBack\(goBack, edgeEnabled/, 'iOS 가장자리 스와이프도 같은 스택(enabled는 edgeEnabled — 꺼질 때 swipeTo 해제, 검수 L-5)');
+  assert.equal((src.match(/onBack=\{backFromPage\}/g) ?? []).length, 5, '설정·검색·알림함·기억(데스크톱)·기억 문서(폰) 화면의 뒤로 5곳');
   assert.doesNotMatch(src, /onBack=\{\(\) => setPage\('chat'\)\}/, '옛 "무조건 대화로" 뒤로 잔재 없음');
 });
 
@@ -31,9 +31,10 @@ test('배지 재동기화 — 앱 전면 복귀·알림함 열기·다 읽음에
   assert.match(src, /supabase\.rpc\('msgr_push_badge_resync'\)/);
   assert.match(src, /if \(now - badgeSyncAt\.current < 3000\) return;/, '3초 스로틀');
   assert.match(src, /document\.visibilityState === 'visible'\) resyncBadge\(\)/, '전면 복귀');
-  assert.match(src, /\(isPersonal \? loadPersonal\(\) : loadOrg\(orgId\)\)\.catch\(\(e\) => setErr\(e\.message\)\); resyncBadge\(\); \}\);/, '모바일 resume 관찰자(개인 공간 분기)');
+  assert.match(src, /setResumeEpoch\(\(x\) => x \+ 1\); bumpSync\(\); setTick\(\(x\) => x \+ 1\); resyncBadge\(\); \}\);/, '모바일 resume 관찰자 — 배지 재동기화');
+  assert.match(src, /useEffect\(\(\) => \{ if \(syncEpoch\) \(isPersonal \? loadPersonal\(\) : loadOrg\(orgId\)\)\.catch\(\(e\) => setErr\(e\.message\)\); \}, \[syncEpoch\]\);/, '복귀 때 지금 공간 목록 한 번(개인 공간 분기 포함 — syncEpoch)');
   assert.match(src, /setPage\('inbox'\); setRail\(false\); resyncBadge\(\); \};/, '알림함 열기');
-  assert.match(src, /if \(k === 'inbox'\) \{ setInboxKind\('all'\); if \(org\) \{ openInbox\(\); return; \} \}/, '폰 탭으로 알림함 진입도 같은 경로(검수 M-1), 조직 없으면 빈 알림함(N-4)');
+  assert.match(src, /const pickRoot = \(k\) => \{ setTabQ\(null\); setOrgMenu\(false\); setChPlus\(false\); setPage\(k\); \};/, '폰 아래 탭에는 알림함이 없다(폰 셸 v2) — 안 읽음은 탭 뱃지, 결재는 에이전트 탭. 알림함 열기(데스크톱 벨)의 배지 재동기화는 위 openInbox가 그대로');
   assert.match(src, /if \(!uid\) return; resyncBadge\(\); const onVis/, '콜드 스타트 1회(검수 M-2)');
   assert.match(src, /for \(const \[cid, mid\] of top\) markRead\(cid, mid\); resyncBadge\(\);/, '모두 읽음이 알림 채널의 읽음 커서를 올린다(검수 M-6)');
   assert.match(src, /dmIds\.has\(it\.channel_id\) && it\.kind !== 'approval'/, '커서 승격은 DM 채널만(공개 채널의 앞선 글을 읽음 처리하지 않는다, N-1)');
