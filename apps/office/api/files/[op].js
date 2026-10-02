@@ -2,10 +2,11 @@
 // 요청자의 Supabase JWT로만 움직인다(서비스 키 없음): 파일은 그 사람 권한으로 Storage에서 받고, 결과도 그 사람 권한으로 office_file_write에 쓴다.
 // OCR 전에 반드시 ① Supabase로 로그인을 확인하고(가짜 토큰은 401) ② 사람마다 시간당 한도(office_ocr_take, 60회)를 센다(넘으면 429) — 두 경로(바이트·문서함 파일) 모두.
 // env: OFFICE_OCR_URL + OFFICE_OCR_KEY(PaddleOCR 사이드카 — server/ocr.js 규칙) · VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY
-//      정리(sweep): OFFICE_SUPABASE_SERVICE_KEY · CRON_SECRET(Vercel 크론이 Authorization: Bearer로 보낸다)
+//      정리(sweep): OFFICE_SUPABASE_SERVICE_KEY · CRON_SECRET(Vercel 크론이 Authorization: Bearer로 보낸다) · R2_*(server/r2.js r2FromEnv)
 import { ocrBytes, ocrProvider, OCR_MAX } from '../../server/ocr.js';
 import { clip } from '../../src/files/model.js';
 import { sweepStorage } from '../../server/sweep.js';
+import { r2FromEnv } from '../../server/r2.js';
 import { timingSafeEqual } from 'node:crypto';
 
 const env = process.env;
@@ -73,8 +74,8 @@ async function sweep(request) {
     if (secret.length < 16 || !env.OFFICE_SUPABASE_SERVICE_KEY || !env.VITE_SUPABASE_URL) throw fail(503, 'not_configured');
     const got = Buffer.from(/^Bearer (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1] ?? ''), want = Buffer.from(secret);
     if (got.length !== want.length || !timingSafeEqual(got, want)) throw fail(401, 'unauthorized');
-    const out = await sweepStorage({ url: env.VITE_SUPABASE_URL, key: env.OFFICE_SUPABASE_SERVICE_KEY });
-    console.log('[office files] sweep', out.objects, 'objects', out.rows, 'rows'); // 개수만
+    const out = await sweepStorage({ url: env.VITE_SUPABASE_URL, key: env.OFFICE_SUPABASE_SERVICE_KEY, r2: r2FromEnv(env) });
+    console.log('[office files] sweep', out.objects, 'objects', out.left, 'left', out.rows, 'rows'); // 개수만
     return json(out);
   } catch (e) {
     if (!e.status) console.error('[office files] sweep', e?.code ?? e?.message);
