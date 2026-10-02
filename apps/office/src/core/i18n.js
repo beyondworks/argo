@@ -52,7 +52,7 @@ const DICT = {
   'nav.search': ['검색 및 명령', 'Search and commands'],
   'nav.home': ['홈', 'Home'], 'nav.calendar': ['캘린더', 'Calendar'], 'nav.mail': ['메일', 'Mail'], 'nav.shared': ['공유받은 항목', 'Shared with me'],
   'nav.work': ['에이전트 작업', 'Agent work'], 'nav.approvals': ['결재함', 'Approvals'], 'nav.decisions': ['결정 기록', 'Decisions'],
-  'nav.outputs': ['산출물', 'Deliverables'], 'nav.journal': ['에이전트 일지', 'Agent journal'], 'nav.docs': ['공용 문서', 'Shared docs'], 'nav.perf': ['성과 기록', 'Performance record'], 'nav.knowhow': ['스킬', 'Skills'],
+  'nav.outputs': ['산출물', 'Deliverables'], 'nav.journal': ['에이전트 일지', 'Agent journal'], 'nav.docs': ['공용 문서', 'Shared docs'], 'nav.perf': ['성과 기록', 'Performance record'], 'nav.people': ['직원', 'People'], 'nav.company': ['회사 정보', 'Company info'], 'nav.knowhow': ['스킬', 'Skills'],
   'nav.hide': ['메뉴에서 숨기기', 'Hide from menu'], 'nav.homeFixed': ['홈은 숨길 수 없습니다', 'Home can’t be hidden'], 'nav.hiddenN': ['숨긴 메뉴 {n}', '{n} hidden'], 'nav.hiddenHead': ['눌러서 다시 보이기', 'Click to show again'],
   'nav.saveFail': ['순서를 저장하지 못했습니다. 잠시 뒤 다시 해 주세요.', 'Could not save the order. Try again shortly.'],
   'nav.sec.menu': ['메뉴', 'Menu'], 'nav.sec.pages': ['페이지', 'Pages'], 'nav.sec.crews': ['에이전트', 'Agents'], 'nav.secUp': ['칸을 위로', 'Move section up'], 'nav.secDown': ['칸을 아래로', 'Move section down'],

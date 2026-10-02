@@ -38,6 +38,8 @@ const Perf = lazy(() => import('./pages/Perf.jsx')); // 성과 기록(유건 9/2
 const Assets = lazy(() => import('./pages/Assets.jsx')); // 노하우·업무 세트(유건 9/29)
 const Tools = lazy(() => import('./pages/Tools.jsx')); // 도구함(유건 9/29)
 const Calendar = lazy(() => import('./calendar/Calendar.jsx')); // 일정(유건 9/30)
+const Company = lazy(() => import('./pages/Company.jsx')); // 회사 정보(유건 10/2 트랙 C)
+const People = lazy(() => import('./pages/People.jsx')); // 직원 명부(유건 10/2 트랙 C)
 // 메일 화면은 메일을 열 때만 필요하다 — 첫 화면 JS 150KB 상한(할 일 화면을 붙이며 넘은 0.1KB를 여기서 되찾는다)
 const Mail = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.Mail })));
 const MailConnect = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.MailConnect })));
@@ -220,7 +222,7 @@ export default function App() {
     business: <Lazy reset={path}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} />}</Lazy>,
     home: <Home space={r.space} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
     work: <Work space={r.space} openId={params.get('open')} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
-    outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
+    outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} tab={params.get('tab')} />, people: <People key={r.space} space={r.space} />, company: <Company key={r.space} space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
   return (
     <DndContext sensors={sensors} collisionDetection={collision} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>

@@ -3,7 +3,7 @@ export const PERF_DICT = {
   'perf.title': ['성과 기록', 'Performance record'],
   'perf.subtitle': ['내 일과 성과가 매일 자동으로 쌓입니다. 나만 볼 수 있고, 월말·연말에 공유하면 관리자가 봅니다.', 'Your work and results are recorded every day. Only you can see them until you share a month or year with your manager.'],
   'perf.orgOnly': ['성과 기록은 조직 공간에서 쌓입니다. 왼쪽 위에서 조직을 고르세요.', 'Performance records live in organization spaces. Pick an organization at the top left.'],
-  'perf.tab.mine': ['내 기록', 'My record'], 'perf.tab.team': ['팀 평가', 'Team reviews'],
+  'perf.tab.mine': ['내 기록', 'My record'], 'perf.tab.evals': ['평가 레포트', 'Evaluations'], 'perf.tab.team': ['팀 평가', 'Team reviews'],
   'perf.unit.day': ['일간', 'Day'], 'perf.unit.week': ['주간', 'Week'], 'perf.unit.month': ['월간', 'Month'], 'perf.unit.year': ['연간', 'Year'],
   'perf.prev': ['이전', 'Previous'], 'perf.next': ['다음', 'Next'], 'perf.today': ['오늘', 'Today'],
   'perf.n.contract': ['계약한 금액', 'Contracted'], 'perf.n.contractSub': ['담당 거래 공급가액', 'Supply value of my deals'],

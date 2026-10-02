@@ -3,8 +3,12 @@
 // 잠깐 보기는 왼쪽 버튼만 — 우클릭의 누름에 반응하면 가림이 풀리며 칸이 줄어 우클릭 신호가 표 칸으로 빠져 메뉴가 안 떴다(유건 제보 9/29).
 // 키보드: 값에 초점을 두고 메뉴 키(Shift+F10)로 메뉴, 가린 값은 Enter로 잠깐 보기(초점이 떠나면 다시 가림). 버튼 안에 있을 때는 focusable={false}.
 import { useState } from 'react';
-import { t } from '../core/i18n.js';
+import { t, registerDict } from '../core/i18n.js';
 import { openMenu } from '../ui/Menu.jsx';
+import './redact.css';
+import { REDACT_DICT } from './redact-i18n.js';
+
+registerDict(REDACT_DICT); // 업무 화면 밖(회사 정보·직원 명부)에서도 쓰므로 쓰는 말은 여기서 등록한다
 
 export function Redact({ on, onToggle, disabled, focusable = true, cell, picked, children }) {
   const [peek, setPeek] = useState(false);
