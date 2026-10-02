@@ -15,7 +15,7 @@ test('탭 버튼에는 아이콘과 뱃지만 — 이름 글자는 바에 없고
   assert.doesNotMatch(tabs, /className="lb"/, '이름 글자 칸 없음');
   assert.match(tabs, /aria-selected=\{active === k\}/);
   assert.match(tabs, /aria-label=\{n > 0 \? t\(`phone\.tab\.badge\.\$\{k\}`, \{ tab: label, n: badgeText\(n\) \}\) : label\}/, '뱃지가 있으면 이름 + 숫자를 읽는다');
-  assert.match(tabs, /data-tour=\{`tab-\$\{k\}`\}/, '튜토리얼 표지(tab-friends 등)');
+  assert.doesNotMatch(app, /data-tour|\btour: '/, '튜토리얼을 되돌린 뒤 남은 표지가 없다(분리 검수 LOW 2026-10-02)');
 });
 
 test('원은 다섯 개 모두 같은 크기(48) — 선택된 탭도 폭·여백을 바꾸지 않고 색만 바꾼다', () => {

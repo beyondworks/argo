@@ -576,7 +576,7 @@ function PhoneTabs({ active, onPick, badges = {} }) {
     <nav className="msgr-tabbar" aria-label={t('phone.tabs')}>
       <div className="msgr-island" role="tablist">
         {PHONE_TABS.map((k) => { const n = badges[k] || 0; const label = t(`phone.tab.${k}`); return (
-          <button key={k} type="button" role="tab" data-tour={`tab-${k}`} aria-selected={active === k} className={active === k ? 'on' : ''} onClick={() => onPick(k)} aria-label={n > 0 ? t(`phone.tab.badge.${k}`, { tab: label, n: badgeText(n) }) : label}>
+          <button key={k} type="button" role="tab" aria-selected={active === k} className={active === k ? 'on' : ''} onClick={() => onPick(k)} aria-label={n > 0 ? t(`phone.tab.badge.${k}`, { tab: label, n: badgeText(n) }) : label}>
             <span className="ic"><I name={PHONE_TAB_ICONS[k]} size={22} filled={active === k} /></span>{n > 0 && <span className="msgr-tabn" aria-hidden="true">{badgeText(n)}</span>}
           </button>
         ); })}
@@ -618,7 +618,7 @@ function PhoneHead({ title, left = null, actions = [], children = null }) {
       <div className="ph-head-l">{left ?? <h1 className="ph-title">{title}</h1>}</div>
       <div className="ph-head-r">
         {actions.filter(Boolean).map((a) => (
-          <button key={a.key} type="button" className={`ph-hbtn${a.on ? ' on' : ''}`} onClick={a.run} aria-label={a.label} title={a.label} data-tour={a.tour} aria-haspopup={a.menu ? 'menu' : undefined} aria-expanded={a.menu ? !!a.on : undefined}><I name={a.icon} size={22} /></button>
+          <button key={a.key} type="button" className={`ph-hbtn${a.on ? ' on' : ''}`} onClick={a.run} aria-label={a.label} title={a.label} aria-haspopup={a.menu ? 'menu' : undefined} aria-expanded={a.menu ? !!a.on : undefined}><I name={a.icon} size={22} /></button>
         ))}
       </div>
       {children}
@@ -2462,9 +2462,9 @@ function Shell({ session }) {
   }; // 다른 조직이면 알림 탭과 같은 길(decideNav)이 공간을 바꿔 연다. 참여 요청은 그 방 설정창까지
   const phoneRoot = (
     <div className="ph-root" data-tab={rootTab}>
-      {rootTab === 'friends' && (<PhoneHead title={t('phone.tab.friends')} actions={[searchAct, { key: 'add', icon: 'personplus', label: t('friends.add'), tour: 'hdr-add-friend', run: () => { setTabQ(null); setFriendAdd(true); } }, gearAct]} />)}
-      {rootTab === 'chats' && (<PhoneHead title={t('phone.tab.chats')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), tour: 'hdr-new-chat', run: () => { if (!isPersonal) return; setTabQ(null); setDmGroup(true); } }, gearAct]} />)}
-      {rootTab === 'channels' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgtitle" data-tour="org-switch" onClick={() => { setChPlus(false); setOrgMenu((v) => !v); }} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><I name="hash" size={22} className="ph-orgmark" /><span className="name">{orgRow.name}</span><SpaceBadge c={otherOrgsUnread} /><I name="caret" size={18} className="caret" /></button> : null} title={t('phone.tab.channels')} actions={[onOrgTab && !orgBlocked && searchAct, onOrgTab && !orgBlocked && { key: 'plus', icon: 'plus', label: t('phone.ch.add'), menu: true, on: chPlus, run: () => { setOrgMenu(false); setChPlus((v) => !v); } }, gearAct]}>{orgMenuPop}{chPlusPop}</PhoneHead>)}
+      {rootTab === 'friends' && (<PhoneHead title={t('phone.tab.friends')} actions={[searchAct, { key: 'add', icon: 'personplus', label: t('friends.add'), run: () => { setTabQ(null); setFriendAdd(true); } }, gearAct]} />)}
+      {rootTab === 'chats' && (<PhoneHead title={t('phone.tab.chats')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), run: () => { if (!isPersonal) return; setTabQ(null); setDmGroup(true); } }, gearAct]} />)}
+      {rootTab === 'channels' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgtitle" onClick={() => { setChPlus(false); setOrgMenu((v) => !v); }} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><I name="hash" size={22} className="ph-orgmark" /><span className="name">{orgRow.name}</span><SpaceBadge c={otherOrgsUnread} /><I name="caret" size={18} className="caret" /></button> : null} title={t('phone.tab.channels')} actions={[onOrgTab && !orgBlocked && searchAct, onOrgTab && !orgBlocked && { key: 'plus', icon: 'plus', label: t('phone.ch.add'), menu: true, on: chPlus, run: () => { setOrgMenu(false); setChPlus((v) => !v); } }, gearAct]}>{orgMenuPop}{chPlusPop}</PhoneHead>)}
       {rootTab === 'agents' && (<PhoneHead title={t('phone.tab.agents')} actions={[searchAct, { ...gearAct, run: () => openSettings(null, 'agents') }]} />)}
       {rootTab === 'memory' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgtitle" onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><I name="folder" size={22} className="ph-orgmark" /><span className="name">{orgRow.name}</span><I name="caret" size={18} className="caret" /></button> : null} title={t('phone.tab.memory')} actions={[onOrgTab && !orgBlocked && searchAct, { ...gearAct, run: () => openSettings(null, 'memory') }]}>{orgMenuPop}</PhoneHead>)}
       {searchBar}
@@ -2537,7 +2537,7 @@ function Shell({ session }) {
         {rootTab === 'agents' && (<>
           {!tabQText.trim() && <div className="ph-apcard-wrap">
             <div className={`ph-apcard${approvalItems.length ? ' on' : ''}`}>
-              <button type="button" className="ph-aphead" data-tour="approvals-card" onClick={() => openApproval(approvalItems[0])} disabled={!approvalItems.length}>
+              <button type="button" className="ph-aphead" onClick={() => openApproval(approvalItems[0])} disabled={!approvalItems.length}>
                 <span className="ph-apic"><I name="stamp" size={18} /></span><span className="ph-kbody"><span className="name">{t('phone.agents.approvals', { n: approvalItems.length })}</span><span className="snip">{approvalItems.length ? t('phone.agents.approvals.tap') : t('phone.agents.approvals.none')}</span></span>
               </button>
               {approvalItems.slice(0, 3).map((it) => (
