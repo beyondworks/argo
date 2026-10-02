@@ -216,8 +216,8 @@
 /* 상대(사람) 말풍선(유건 2026-10-02) — 맨 글자였다. 내 말풍선(.msgr-mine .bubble)과 같은 모양 규칙(패딩·글자 크기·줄 높이·최대 폭)에 색만 옅은 회색,
    모서리는 왼쪽 위만 작게(내 것은 오른쪽 위 — 거울). 회색은 본문 글자색을 바탕에 섞어 만든다 — 테마(라이트·다크·계열)마다 바탕보다 한 단계 진하거나 밝다.
    에이전트 답은 카드(.msgr-sheet) 그대로 */
-.msgr-shell { --msgr-bubble-other: color-mix(in srgb, var(--fg) 9%, var(--bg)); }
-.msgr-row > .msgr-col > .text { align-self: flex-start; max-width: min(88%, 620px); background: var(--msgr-bubble-other); color: var(--fg); border-radius: 6px 20px 20px 20px; padding: 10px 15px; line-height: 1.55; }
+.msgr-shell { --msgr-bubble-other: var(--card); } /* 상대 말풍선 = 안내 띠(.msgr-joinbar)와 같은 카드 바탕·테두리(유건 2026-10-02) */
+.msgr-row > .msgr-col > .text { align-self: flex-start; max-width: min(88%, 620px); background: var(--msgr-bubble-other); border: 1px solid var(--border); color: var(--fg); border-radius: 6px 20px 20px 20px; padding: 9px 14px; line-height: 1.55; }
 .msgr-sheet { background: var(--card); border: 1px solid var(--border); border-radius: 6px 20px 20px 20px; padding: 13px 16px; font-size: 13.5px; line-height: 1.6; max-width: 640px; min-width: 0; }
 .msgr-quote .q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-quote { display: flex; gap: 8px; align-items: center; min-width: 0; color: var(--fg-3); font-size: 12px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1800,7 +1800,7 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 @media (prefers-reduced-motion: reduce) { .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-joinbar { transition: none; } }
 
 /* 보낸 직후, 서버 행이 도착하기 전의 내 글. 자리를 먼저 잡아 두고 옅게 보인다. */
-.msgr-mine .meta .sent { display: inline-flex; color: var(--ok); transition: opacity 180ms ease; }
+.msgr-mine .meta .sent { display: inline-flex; color: var(--fg-3); transition: opacity 180ms ease; }
 .msgr-mine .meta .sent.pending { opacity: .35; }
 .msgr-acts.pending { visibility: hidden; } /* 보내는 중 — 자리만 차지(hover·포커스에도 안 보임). 누르기는 inert가 막는다 */ /* 보내는 중 — 말풍선은 최종 모양 그대로, 체크만 흐리게 */
 
