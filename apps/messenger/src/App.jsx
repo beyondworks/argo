@@ -5720,8 +5720,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   : <div className="msgr-sys">{body}</div>);
   const copyText = (text) => { navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const copy = () => copyText(body); // 이 글 하나(폰 시트·우클릭 메뉴)
-  const turnText = turn ? turnCopyText(turn) : ''; // 턴 마지막 글만 받는다 — 본문이 하나도 없으면 버튼을 그리지 않는다
-  const turnCopy = turnText && !editing && <div className="msgr-turncopy"><button type="button" tabIndex={rowTab === 0 ? undefined : -1} onClick={() => copyText(turnText)} title={copied ? t('ui.copied') : t('msg.copyTurn')} aria-label={copied ? t('ui.copied') : t('msg.copyTurn')}><I name={copied ? 'check' : 'copy'} size={16} /></button></div>;
+  const turnText = turn ? turnCopyText(turn) : ''; // 턴 마지막 글만 받는다 — 본문이 하나도 없으면 복사 버튼만 뺀다
   const report = async () => {
     setSafetyBusy(true);
     try {
@@ -5747,13 +5746,15 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const attRow = atts.length > 0 && <MediaAttachments atts={atts} onError={onError} rowTab={rowTab} mine={mine} />; // 사람·에이전트 첨부 같은 말풍선(사진 묶음·파일)
   const linkCard = !m.deleted_at && m.kind !== 'system' && <LinkCard m={m} tab={rowTab === 0 ? undefined : -1} />; // 보낼 때 한 번 저장한 미리보기만 그린다
   const bareOther = !m.deleted_at && m.kind !== 'system' && !(shown ?? '').trim() && !quote && !relay && !(deliveryRecipients?.length > 0) && !handoffNote && !awayNote && atts.length > 0; // 상대·에이전트가 파일만 보낸 글 — 빈 말풍선 대신 첨부 줄만(내 글의 bareAttach와 같은 규칙)
-  // 데스크톱 도구 막대 — 올린 글 위에 겹쳐 뜨는 답글·반응·더보기(복사는 턴 아래 버튼·우클릭 메뉴, 유건 2026-10-02). 절대 위치라 레이아웃이 밀리지 않는다.
-  // 내 글은 말풍선 바깥 왼쪽·윗선(말풍선 안 오른쪽 위는 짧은 내 글 본문을 통째로 가렸고, 위로 걸치면 윗글을 덮었다), 남의 글은 행 오른쪽 위
-  const hovbar = !phone && !ap && !m.deleted_at && !editing && !m.pending && (<div className="msgr-hovbar" role="toolbar" aria-label={t('msg.actions')}>
-    {onReply && <button type="button" tabIndex={-1} onClick={() => onReply(m)} title={t('msg.reply')} aria-label={t('msg.reply')}><I name="reply" size={16} /></button>}
-    <button type="button" tabIndex={-1} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick} title={t('msg.react')} aria-label={t('msg.react')}><I name="react" size={16} /></button>
-    {hasMore && <button type="button" tabIndex={-1} aria-haspopup="menu" aria-expanded={!!(ctxAt && actsOpen && ctxMore)} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setCtxMore(true); setCtxAt({ x: r.left, y: r.bottom + 4 }); setActsOpen(true); }} title={t('msg.more')} aria-label={t('msg.more')}><I name="dots" size={16} /></button>}
-    {!(ctxAt && actsOpen) && picker}{/* 메뉴가 열려 있으면 피커는 메뉴 쪽이 그린다 — 두 벌이 뜨지 않게 */}
+  // 턴 끝 동작 줄(유건 2026-10-02) — 턴(같은 사람이 이어 보낸 묶음)의 마지막 글 아래에 복사·답글·반응·더보기 아이콘 한 줄, 폰·데스크톱 같고 늘 보인다.
+  // 이 줄은 턴의 마지막 글(turn을 받은 이 Message)이 그린다 — 복사는 턴 전체, 답글·반응·더보기는 이 글(m). 턴 중간 글은 우클릭(데스크톱)·길게 누르기(폰).
+  // 더보기: 데스크톱은 나머지 동작 메뉴(신고·차단·숨기기·편집·삭제), 폰은 길게 누르기와 같은 시트. 보내는 중인 글은 자리는 두고 누를 수만 없게(서버 행으로 바뀔 때 아이콘이 밀리지 않게)
+  const barTab = rowTab === 0 ? undefined : -1;
+  const turnActs = turn && !editing && !ap && !m.deleted_at && m.kind !== 'system' && (<div className="msgr-turnacts" role="toolbar" aria-label={t('msg.actions')}>
+    {turnText && <button type="button" data-act="copy" tabIndex={barTab} onClick={() => copyText(turnText)} title={copied ? t('ui.copied') : t('msg.copyTurn')} aria-label={copied ? t('ui.copied') : t('msg.copyTurn')}><I name={copied ? 'check' : 'copy'} size={16} /></button>}
+    {onReply && <button type="button" data-act="reply" tabIndex={barTab} disabled={m.pending} onClick={() => onReply(m)} title={t('msg.reply')} aria-label={t('msg.reply')}><I name="reply" size={16} /></button>}
+    <button type="button" data-act="react" tabIndex={barTab} disabled={m.pending} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick} title={t('msg.react')} aria-label={t('msg.react')}><I name="react" size={16} /></button>
+    {(phone || hasMore) && <button type="button" data-act="more" tabIndex={barTab} disabled={m.pending} aria-haspopup={phone ? 'dialog' : 'menu'} aria-expanded={!!(actsOpen && (phone || ctxMore))} onClick={(e) => { if (phone) { openedAt.current = Date.now(); setActsOpen(true); return; } const r = e.currentTarget.getBoundingClientRect(); setCtxMore(true); setCtxAt({ x: r.left, y: r.bottom + 4 }); setActsOpen(true); }} title={t('msg.more')} aria-label={t('msg.more')}><I name="dots" size={16} /></button>}
   </div>);
   const acts = !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
     phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)
@@ -5775,7 +5776,6 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
           {mine && (confirmDel
             ? <button type="button" className="row danger" onClick={() => { setConfirmDel(false); setActsOpen(false); onDelete?.(m); }}><I name="x" size={16} />{t('msg.delete.confirm')}</button>
             : <button type="button" className="row danger" onClick={() => setConfirmDel(true)}><I name="x" size={16} />{t('ui.delete')}</button>)}
-          {picker}
         </div>
       </div>, document.body,
     ) : !phone && (<>
@@ -5789,7 +5789,6 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
           {!ctxMore && <button type="button" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>}
           {mine && m.kind === 'text' && <button type="button" onClick={() => { setActsOpen(false); setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
           {mine && (confirmDel ? <button type="button" className="danger" onClick={() => { setConfirmDel(false); setActsOpen(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
-          {!ctxMore && picker}
         </div>, document.body)}
     </>)
   );
@@ -5810,14 +5809,14 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   if (!mine && !ap && m.author_kind === 'crew' && safety.mutedCrewIds.has(m.crew_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.mutedCrew')}</div>; // 숨긴 크루·봇의 글(App Store 1.2, 2026-09-26) — 본문·첨부·반응을 그리지 않는다. 결재 카드(ap)는 예외(검수 L5 — 숨겨도 나에게 온 결재는 항상 보여야 한다)
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className={`msgr-mine${cont ? ' cont' : ''}${tail ? '' : ' notail'}`} ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxMore(false); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
-      {editing ? editor : bareAttach ? null : <div className="bubble" onClick={onLinkClick}>{hovbar}{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : relay ? <Markdown text={shown} /> : <Body text={body} />}</div>}
+      {editing ? editor : bareAttach ? null : <div className="bubble" onClick={onLinkClick}>{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : relay ? <Markdown text={shown} /> : <Body text={body} />}</div>}
       {attRow}
       {linkCard}
       {chips}
       <div className="meta">{edited}<span className={m.pending ? 'sent pending' : 'sent'} title={m.pending ? t('msg.sending') : undefined} aria-label={m.pending ? t('msg.sending') : undefined}><I name="check" size={12} /></span><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
-      {turnCopy}
-      {bareAttach && hovbar}
+      {turnActs}
       {acts}
+      {picker}
       {reportModal}
     </div>
   );
@@ -5836,9 +5835,9 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
         {attRow}
         {linkCard}
         {chips}
-        {turnCopy}
-        {hovbar}
+        {turnActs}
         {acts}
+        {picker}
         {reportModal}
       </div>
     </div>

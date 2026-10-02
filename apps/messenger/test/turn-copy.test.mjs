@@ -33,3 +33,21 @@ test("'새 메시지' 줄에서 끊긴 묶음은 따로 복사된다", () => {
   const turns = tailTurns(list, groupFlags(list, (i) => i === 2));
   assert.deepEqual(turns.map((t) => t && t.map((m) => m.id)), [null, [1, 2], [3]]);
 });
+
+// 턴 끝 동작 줄(유건 2026-10-02) — 복사·답글·반응·더보기 줄은 tailTurns가 턴을 넘긴 글(턴의 마지막 글)의 행이 그리고, 답글·반응·더보기는 그 행의 글에 걸린다.
+// 그래서 '줄을 그리는 글 = 턴의 마지막 글'이 대상 규칙이다. 화면에서 누른 결과(답글 미리보기·반응 행·메뉴 행)는 test/msg-gap.browser.mjs checkTurnBar가 잰다.
+test('경계 예시 — 상대가 글 3개를 연달아 보내면 줄은 세 번째 글에만, 대상은 세 번째 글', () => {
+  const list = [msg(1, '첫째', { author_user_id: 'u2' }), msg(2, '둘째', { author_user_id: 'u2' }), msg(3, '셋째', { author_user_id: 'u2' }), msg(4, '내 답')];
+  const turns = tailTurns(list, groupFlags(list));
+  const owners = turns.flatMap((t, i) => (t ? [list[i].id] : []));
+  assert.deepEqual(owners, [3, 4], '줄을 그리는 글 = 각 턴의 마지막 글');
+  assert.equal(turns[2].at(-1), list[2], '세 번째 글의 턴에서 마지막 글이 바로 그 글(답글·반응·더보기 대상)');
+  assert.equal(turnCopyText(turns[2]), '첫째\n\n둘째\n\n셋째', '복사는 턴 전체');
+});
+
+test('보내는 중인 내 글이 턴에 붙으면 줄은 그 글로 옮겨 간다(턴 끝이 바뀐다)', () => {
+  const list = [msg(1, '하나'), msg(2, '둘'), { ...msg(3, '셋'), id: 'pending:x', pending: true }];
+  const turns = tailTurns(list, groupFlags(list));
+  assert.deepEqual(turns.map((t) => !!t), [false, false, true]);
+  assert.equal(turns[2].at(-1).id, 'pending:x');
+});
