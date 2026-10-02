@@ -57,6 +57,17 @@ test('가짜 R2(실측과 같은 규칙): 같은 크기 200 → 다른 크기·�
   assert.equal((await fetch(old)).status, 403, '만료 주소');
 });
 
+// 이유(운영 결함 10/3): Node fetch는 기본으로 accept-encoding: gzip을 보내고, R2는 text/*·json을 gzip으로 답하며 Content-Length를 뺀다.
+// 그러면 HEAD 크기가 NaN이 되어 commit이 file_size_mismatch로 거절된다(운영 문서함에서 .txt 올리기 실패). PDF만 쓴 시험은 이 경우를 못 봤다.
+test('HEAD 크기는 압축 대상 형식(text·json)에서도 정확하다 — 서버는 accept-encoding: identity로 묻는다', async () => {
+  const r2 = r2Client(fake.config);
+  for (const [k, type] of [['g/a.txt', 'text/plain'], ['g/b.json', 'application/json'], ['g/c.csv', 'text/csv'], ['g/d.pdf', 'application/pdf']]) {
+    await r2.put(k, new TextEncoder().encode('x'.repeat(73)), { contentType: type });
+    assert.equal((await r2.head(k)).bytes, 73, type);
+    await r2.del(k);
+  }
+});
+
 test('서버 전용 요청(헤더 서명): put·head·get·del·list, 없는 키 HEAD는 null·DELETE는 성공', async () => {
   const r2 = r2Client(fake.config);
   const { etag } = await r2.put('s/x.png', new Uint8Array([1, 2, 3]), { contentType: 'image/png' });

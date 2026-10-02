@@ -71,6 +71,10 @@ export async function startFakeR2({ accessKeyId = 'AKFAKER2', secretAccessKey = 
     const o = objects.get(key);
     if (!o) return req.method === 'HEAD' ? (res.writeHead(404, cors), res.end()) : xmlError(res, 404, 'NoSuchKey', cors);
     const q = url.searchParams; // 실제 R2처럼 응답 헤더 덮어쓰기 쿼리를 따른다(실측 10/2: response-content-disposition·response-content-type)
+    // 실제 R2(실측 10/3 운영 결함): 요청이 gzip을 받겠다고 하고 형식이 압축 대상(text/*·json 등)이면 content-encoding: gzip으로 답하며 Content-Length를 뺀다.
+    // HEAD는 몸체가 없으니 크기를 알 수 없게 된다 — PDF·그림은 압축 대상이 아니라 그대로. 그래서 서버는 HEAD에 accept-encoding: identity를 보내야 한다
+    const gz = /gzip/.test(req.headers['accept-encoding'] ?? '') && /^(text\/|application\/(json|javascript|xml))/.test(o.type);
+    if (gz && req.method === 'HEAD') { res.writeHead(200, { 'content-type': o.type, 'content-encoding': 'gzip', etag: `"${o.etag}"`, ...cors }); return res.end(); }
     res.writeHead(200, { 'content-type': q.get('response-content-type') ?? o.type, 'content-length': String(o.bytes.length), etag: `"${o.etag}"`,
       ...(q.get('response-content-disposition') ? { 'content-disposition': q.get('response-content-disposition') } : {}), ...cors });
     return res.end(req.method === 'HEAD' ? undefined : o.bytes);
