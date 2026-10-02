@@ -15,7 +15,7 @@
 //
 // 지키는 규칙:
 //   - 같은 회사 크루끼리만(listAgents — 해고된 크루는 카드가 없어 자동 제외). 외부 에이전트 크루(runner: http)는 제외.
-//   - 사슬 단계 상한 SESSION_HOP_CAP(위임 켜짐 상한과 같은 값 — delegation-limits.mjs). hop은 delegate·쪽지와 같은 값이라
+//   - 사슬 단계 상한 sessionHopCap — 사슬을 시작한 대화방의 위임 제한 스위치(켜짐 2·풀림 4, delegation-limits.mjs). hop은 delegate·쪽지와 같은 값이라
 //     B 턴 안의 위임·쪽지도 같은 상한을 공유한다. 상한에 닿으면 보내지 않고 보낸 쪽 방에 안내를 남긴다.
 //   - 같은 방 → 같은 상대로 답을 기다리는 중이면 다시 보내지 않는다(DUP).
 //   - 기다림에는 기한(SESSION_TTL_MS)이 있다. 프로세스가 죽어 대기 기록이 남으면 다음 부팅 정리(sweepSessionMessages)가 안내와 함께 지운다.
@@ -27,14 +27,17 @@ import { mkdir, rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { listAgents, listCompanyIds } from './hub.mjs';
-import { beginTurn, appendTurn, appendLine, loadThread } from './thread.mjs';
+import { beginTurn, appendTurn, appendLine, loadThread, getDelegationLimit } from './thread.mjs';
 import { crewBusy, whenCrewIdle } from './turn-abort.mjs';
 import { readJsonLenient, writeJsonAtomic } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { DELEGATION_LIMITS } from './delegation-limits.mjs';
 
-/** 사슬 단계 상한 — 사장 → A(0) → B(1) → … 한 사슬에서 세션 메시지로 이어지는 단계. 위임 켜짐 상한과 같은 값. */
-export const SESSION_HOP_CAP = DELEGATION_LIMITS.on.hop;
+/** 사슬 단계 상한 — 사장 → A(0) → B(1) → … 한 사슬에서 세션 메시지로 이어지는 단계. 위임 제한 스위치를 따른다(유건 2026-10-03):
+    사슬을 **시작한 대화방**이 켜짐이면 2단계, 풀림이면 4단계. 값은 사슬에 실려(rec.relaxed → chat opts sessionRelaxed → 도구) 끝까지 가고,
+    중간 크루의 방 설정으로 바뀌지 않는다. SESSION_HOP_CAP = 켜짐 값(옛 소비자·테스트 호환). */
+export const sessionHopCap = (relaxed) => (relaxed === true ? DELEGATION_LIMITS.off.hop : DELEGATION_LIMITS.on.hop);
+export const SESSION_HOP_CAP = sessionHopCap(false);
 /** 답을 기다리는 기한 — B 턴(CLI 최대 30분·재시도)과 앞 턴 대기를 넉넉히 덮는다. */
 export const SESSION_TTL_MS = 2 * 3600_000;
 const MAX_MESSAGE = 8000;
@@ -151,10 +154,12 @@ async function settle(rec) {
 /**
  * 세션 메시지 보내기.
  * sender: 'captain'(사장이 A 방 입력창에서 @B) | { slug }(크루 A가 도구로 — slug는 room과 같아야 한다)
- * hop·chain: 보낸 턴의 단계·사슬(사장은 0·[]). 반환: { id, line(사장이 보낸 경우 A 방에 남긴 줄) }
+ * hop·chain: 보낸 턴의 단계·사슬(사장은 0·[]). relaxed: 크루가 보낼 때 이 사슬의 위임 제한 풀림 여부(도구가 이어받은 값 — 엄격한 true만 풀림).
+ *   사장이 보내면 이 값은 무시하고 보낸 방(room)의 스위치를 읽는다 — 그 방이 사슬의 시작이다.
+ * 반환: { id, line(사장이 보낸 경우 A 방에 남긴 줄) }
  * 오류 code: EMPTY·TOO_LONG·NOT_FOUND·SELF·SENDER·CHAIN_CAP·DUP
  */
-export async function sendSessionMessage(ws, { room, sender, to, message, hop = 0, chain = [] }) {
+export async function sendSessionMessage(ws, { room, sender, to, message, hop = 0, chain = [], relaxed = false }) {
   const text = String(message ?? '').trim();
   if (!text) throw fail('EMPTY', '보낼 내용이 없습니다');
   if (text.length > MAX_MESSAGE) throw fail('TOO_LONG', `세션 메시지는 ${MAX_MESSAGE}자까지입니다`);
@@ -170,9 +175,11 @@ export async function sendSessionMessage(ws, { room, sender, to, message, hop = 
   if (!captain && sender?.slug !== roomCrew.slug) throw fail('SENDER', '크루는 자기 채팅방에서만 보낼 수 있습니다');
   const lang = await companyLang(ws);
   const h = Math.max(0, Math.floor(Number(hop) || 0));
-  if (h >= SESSION_HOP_CAP) {
-    await notice(ws, roomCrew.slug, 'cap', { to: target.slug, toName: target.name, cap: SESSION_HOP_CAP }, lang);
-    throw fail('CHAIN_CAP', `사슬 상한(${SESSION_HOP_CAP}단계)에 닿았습니다`);
+  const chainRelaxed = captain ? !(await getDelegationLimit(ws, roomCrew.slug)) : relaxed === true; // 읽기 실패는 켜짐(getDelegationLimit fail-closed)
+  const cap = sessionHopCap(chainRelaxed);
+  if (h >= cap) {
+    await notice(ws, roomCrew.slug, 'cap', { to: target.slug, toName: target.name, cap }, lang);
+    throw fail('CHAIN_CAP', `사슬 상한(${cap}단계)에 닿았습니다`);
   }
   await sweepWorkspace(ws).catch(() => 0); // 부팅 정리 전에 보내도 죽은 프로세스의 기록이 중복 판정을 막지 않게
   const key = pairKey(ws, roomCrew.slug, target.slug);
@@ -182,7 +189,7 @@ export async function sendSessionMessage(ws, { room, sender, to, message, hop = 
     id: `sm${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`, ws,
     room: roomCrew.slug, roomName: roomCrew.name,
     from: captain ? 'captain' : roomCrew.slug, fromName: captain ? (lang === 'en' ? 'Captain' : '사장') : roomCrew.name,
-    to: target.slug, toName: target.name, message: text, hop: h, chain: Array.isArray(chain) ? chain.map(String) : [],
+    to: target.slug, toName: target.name, message: text, hop: h, chain: Array.isArray(chain) ? chain.map(String) : [], relaxed: chainRelaxed,
     owner: S.owner, createdAt: now, deadline: now + ttl(), turnId: null, expired: false,
   };
   S.pending.set(key, rec); // 확인과 등록 사이에 await가 없다 — 동시에 두 번 눌러도 하나만 지난다
@@ -213,7 +220,7 @@ async function runIncoming(rec, prompt, lang) {
   try {
     t = await runTurn(rec.ws, rec.to, prompt, sid, {
       source: 'session', from: rec.from === 'captain' ? null : rec.from,
-      hop: rec.hop + 1, chain: [...rec.chain, rec.room], abortTag: rec.turnId,
+      hop: rec.hop + 1, chain: [...rec.chain, rec.room], abortTag: rec.turnId, sessionRelaxed: rec.relaxed,
     });
   } catch (e) {
     const failed = String(e?.message || e);
@@ -243,7 +250,7 @@ async function deliverReply(rec, reply, lang) {
   enqueue(rec.ws, rec.room, async () => {
     const sid = await idleSession(rec.ws, rec.room);
     try {
-      const t = await runTurn(rec.ws, rec.room, prompt, sid, { source: 'session', from: rec.to, hop: rec.hop + 1, chain: [...rec.chain, rec.to], abortTag: turnId });
+      const t = await runTurn(rec.ws, rec.room, prompt, sid, { source: 'session', from: rec.to, hop: rec.hop + 1, chain: [...rec.chain, rec.to], abortTag: turnId, sessionRelaxed: rec.relaxed });
       await appendTurn(rec.ws, rec.room, { turnId, userMsg: prompt, reply: t.reply, handover: handoverRel(rec.ws, t.handover), sessionId: t.sessionId,
         artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback, steerFailed: t.steerFailed });
     } catch (e) {

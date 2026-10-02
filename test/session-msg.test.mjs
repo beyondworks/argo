@@ -146,12 +146,15 @@ test('대기열 — B가 다른 턴을 실행 중이면 끝날 때까지 기다�
 });
 
 test('기한 — 답이 기한 안에 오지 않으면 기다림을 끝내고 A 방에 안내를 남긴다', async () => {
-  mod._setTtlForTest(40);
+  mod._setTtlForTest(300);
   gate = deferred();
   await mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: 'b', message: '오래 걸리는 일', hop: 0, chain: [] });
-  await new Promise((r) => setTimeout(r, 120));
-  const a = await msgs(WS, 'a');
-  const notice = a.find((m) => m.src?.dir === 'notice');
+  // 이 경우는 "B 턴이 도는 중에 기한이 지남"이다 — B 턴이 시작된 것을 먼저 본다(시작 전에 기한이 지나면 B는 아예 돌지 않는 다른 갈래)
+  for (let i = 0; i < 100 && !calls.length; i += 1) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(calls.length, 1, 'B 턴이 기한 전에 시작됐다');
+  // 기한 타이머 뒤 안내가 기록될 때까지 기다린다(테스트 쪽 대기 — 제품 경로는 타이머 1개)
+  let notice = null;
+  for (let i = 0; i < 100 && !notice; i += 1) { await new Promise((r) => setTimeout(r, 50)); notice = (await msgs(WS, 'a')).find((m) => m.src?.dir === 'notice'); }
   assert.ok(notice, 'A 방에 안내'); assert.equal(notice.src.code, 'expired');
   // 기다림이 끝났으니 같은 상대에게 다시 보낼 수 있다
   gate.resolve(); await mod._drainForTest();
@@ -225,3 +228,34 @@ test('화면 본문 — 받은 줄·깨움 알림은 모델용 머리말을 떼�
   assert.equal(sessionBody(wake), 'b의 답 #1');
 });
 
+
+test('위임 제한 스위치 — 사장이 보낸 사슬은 보낸 방의 스위치를 읽어 B 턴과 A 깨움 턴에 그대로 싣는다', async () => {
+  await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'b', message: '켜짐 방에서' });
+  await mod._drainForTest();
+  assert.equal(calls[0].opts.sessionRelaxed, false, '켜짐(기본) 방에서 시작한 사슬');
+  calls.length = 0;
+  await thread.setDelegationLimit(WS, 'a', false); // A 방 위임 제한 풀기
+  await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'b', message: '풀린 방에서' });
+  await mod._drainForTest();
+  assert.equal(calls[0].opts.sessionRelaxed, true, '풀린 방에서 시작한 사슬');
+  calls.length = 0;
+  // 크루가 보낸 사슬 — 넘겨받은 값을 B 턴과 깨움 턴 모두에 잇는다(B·A 방 스위치와 무관)
+  await mod.sendSessionMessage(WS, { room: 'c', sender: { slug: 'c' }, to: 'b', message: '이어서', hop: 1, chain: ['a'], relaxed: true });
+  await mod._drainForTest();
+  assert.deepEqual(calls.map((c) => [c.slug, c.opts.sessionRelaxed]), [['b', true], ['c', true]]);
+});
+
+test('사슬 상한 — 켜짐은 2단계, 풀림은 4단계에서 멈추고 안내에 그 숫자를 적는다', async () => {
+  // 켜짐: hop 2에서 거부
+  await assert.rejects(mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: 'b', message: 'x', hop: 2, chain: ['c', 'a'], relaxed: false }), (e) => e.code === 'CHAIN_CAP');
+  // 풀림: hop 2·3은 보내지고 hop 4에서 거부
+  await mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: 'b', message: 'hop2', hop: 2, chain: ['c', 'a'], relaxed: true });
+  await mod._drainForTest();
+  await mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: 'c', message: 'hop3', hop: 3, chain: ['c', 'a', 'b'], relaxed: true });
+  await mod._drainForTest();
+  assert.deepEqual(calls.filter((c) => c.slug !== 'a').map((c) => c.opts.hop), [3, 4], '풀린 사슬의 B 턴은 hop 3·4까지 돈다');
+  await assert.rejects(mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: 'b', message: 'hop4', hop: 4, chain: [], relaxed: true }), (e) => e.code === 'CHAIN_CAP');
+  const caps = (await msgs(WS, 'a')).filter((m) => m.src?.code === 'cap').map((m) => m.text);
+  assert.equal(caps.length, 2);
+  assert.match(caps[0], /2단계/); assert.match(caps[1], /4단계/);
+});
