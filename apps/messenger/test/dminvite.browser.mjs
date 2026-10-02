@@ -194,7 +194,7 @@ await scenario(1280, 'dm-has-no-vacated-label', async (p) => {
 
 await scenario(1280, 'own-attachment-right-aligns-with-bubble', async (p) => {
   await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click();
-  const attachment = p.locator('.msgr-mine .msgr-attachments').first(); await attachment.waitFor({ state: 'visible', timeout: 5000 });
+  const attachment = p.locator('.msgr-mine .msgr-media').first(); await attachment.waitFor({ state: 'visible', timeout: 5000 });
   const geometry = await attachment.evaluate((el) => { const row = el.closest('.msgr-mine'); const bubble = row?.querySelector('.bubble'); const a = el.getBoundingClientRect(); const b = bubble?.getBoundingClientRect(); return { attachmentRight: a.right, bubbleRight: b?.right }; });
   assert.ok(geometry.bubbleRight, `내 말풍선이 있다 (${JSON.stringify(geometry)})`);
   assert.ok(Math.abs(geometry.attachmentRight - geometry.bubbleRight) <= 1, `이미지 첨부와 말풍선의 우측선이 맞는다 (${JSON.stringify(geometry)})`);

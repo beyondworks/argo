@@ -42,40 +42,42 @@ await scenario(1280, 'hide-other-member-agents', async (p) => {
 
 // 2. 이미지를 누르면 그 자리에서 확대되고 Esc로 닫힌다
 await scenario(1280, 'image-lightbox', async (p) => {
-  await p.locator('.msgr-imgprev').first().waitFor({ timeout: 8000 });
-  assert.equal(await p.locator('.msgr-lightbox').count(), 0, '처음에는 확대가 없다');
-  await p.locator('.msgr-imgprev').first().click();
-  await p.locator('.msgr-lightbox img').waitFor({ timeout: 5000 });
+  await p.locator('.msgr-thumb img').first().waitFor({ timeout: 8000 });
+  assert.equal(await p.locator('.msgr-viewer').count(), 0, '처음에는 크게 보기가 없다');
+  await p.locator('.msgr-thumb').first().click();
+  await p.locator('.msgr-viewer .lb-stage img').waitFor({ timeout: 5000 });
   // 스텁 이미지는 1×1이라 크기 비교로는 확대를 못 본다 — 덮개가 화면을 덮는지로 판정한다.
-  const over = await p.locator('.msgr-lightbox').boundingBox();
+  const over = await p.locator('.msgr-viewer').boundingBox();
   const view = p.viewportSize();
   assert.ok(over.width >= view.width * 0.9 && over.height >= view.height * 0.9, `덮개가 화면을 덮는다(${Math.round(over.width)}×${Math.round(over.height)})`);
-  assert.equal(await p.locator('.msgr-lightbox .acts button').count(), 2, '원본 열기·닫기 버튼이 있다');
+  assert.equal(await p.locator('.msgr-viewer .lb-top .lb-icon').first().getAttribute('aria-label') !== null, true, '닫기 버튼이 있다');
+  assert.ok(await p.locator('.msgr-viewer .lb-bottom .lb-act').count() >= 1, '저장 버튼이 있다(되는 버튼만 보인다)');
   await p.keyboard.press('Escape');
   await p.waitForTimeout(200);
-  assert.equal(await p.locator('.msgr-lightbox').count(), 0, 'Esc로 닫힌다');
-  await p.locator('.msgr-imgprev').first().click();
-  await p.locator('.msgr-lightbox').waitFor({ timeout: 5000 });
-  await p.locator('.msgr-lightbox').click({ position: { x: 5, y: 5 } }); // 바깥을 눌러도 닫힌다
-  await p.waitForTimeout(200);
-  assert.equal(await p.locator('.msgr-lightbox').count(), 0, '바깥을 눌러도 닫힌다');
+  assert.equal(await p.locator('.msgr-viewer').count(), 0, 'Esc로 닫힌다');
+  await p.locator('.msgr-thumb').first().click();
+  await p.locator('.msgr-viewer').waitFor({ timeout: 5000 });
+  const stage = await p.locator('.msgr-viewer .lb-stage').boundingBox();
+  await p.mouse.click(stage.x + 5, stage.y + stage.height / 2); // 사진 밖 바탕을 눌러도 닫힌다(두 번 누름과 가르려고 260ms 뒤)
+  await p.waitForTimeout(500);
+  assert.equal(await p.locator('.msgr-viewer').count(), 0, '바깥을 눌러도 닫힌다');
 });
 
 // 2b. 이미지 버튼도 로빙 규칙을 따른다(검수 K10) — 서명 URL 뒤 늦게 붙어도 현재 행이 아니면 탭 순서 밖, 현재 행이 되면 Tab → Enter로 연다
 await scenario(1280, 'image-roving', async (p) => {
-  await p.locator('.msgr-imgbtn').first().waitFor({ timeout: 8000 });
+  await p.locator('.msgr-thumb').first().waitFor({ timeout: 8000 });
   await p.waitForTimeout(300);
-  assert.equal(await p.locator('.msgr-imgbtn').first().evaluate((b) => b.tabIndex), -1, '현재 행(마지막 글)이 아니면 이미지 버튼은 -1');
+  assert.equal(await p.locator('.msgr-thumb').first().evaluate((b) => b.tabIndex), -1, '현재 행(마지막 글)이 아니면 이미지 버튼은 -1');
   await p.evaluate(() => [...document.querySelectorAll('.msgr-row, .msgr-mine')].find((x) => x.tabIndex === 0).focus());
   await p.keyboard.press('ArrowUp');
   assert.equal(await p.evaluate(() => document.activeElement?.dataset?.mid), '11', '↑로 이미지 행이 현재 행');
   await p.keyboard.press('Tab');
-  assert.ok(await p.evaluate(() => document.activeElement?.classList.contains('msgr-imgbtn')), 'Tab으로 이미지 버튼');
+  assert.ok(await p.evaluate(() => document.activeElement?.classList.contains('msgr-thumb')), 'Tab으로 이미지 버튼');
   await p.keyboard.press('Enter');
-  await p.locator('.msgr-lightbox').waitFor({ timeout: 5000 });
+  await p.locator('.msgr-viewer').waitFor({ timeout: 5000 });
   await p.keyboard.press('Escape');
   await p.waitForTimeout(200);
-  assert.ok(await p.evaluate(() => document.activeElement?.classList.contains('msgr-imgbtn')), '닫으면 초점이 이미지로 돌아온다');
+  assert.ok(await p.evaluate(() => document.activeElement?.classList.contains('msgr-thumb')), '닫으면 초점이 이미지로 돌아온다');
 });
 
 // 3. 배너 알림에 본문이 실린다 — 방송에는 본문이 없으니 앱이 그 글을 읽어 채운다
