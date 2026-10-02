@@ -409,6 +409,7 @@ export const DICT = {
   'composer.replyTo': ['{name}에게 답글', 'Replying to {name}'],
   'composer.replyCancel': ['답글 취소(Esc)', 'Cancel reply (Esc)'],
   'msg.react': ['반응', 'React'],
+  'msg.more': ['더보기', 'More'],
   'emoji.search': ['이모티콘 검색', 'Search emoji'],
   'emoji.none': ['맞는 이모티콘이 없습니다', 'No matching emoji'],
   'emoji.frequent': ['자주 사용', 'Frequently used'],
