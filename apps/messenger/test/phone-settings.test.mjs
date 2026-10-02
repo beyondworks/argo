@@ -31,3 +31,25 @@ test('조직 프로필 — 역할 표시와 본인 부서·직급(남의 것은 
   const mem = src.slice(src.indexOf('function MemoryChannelsCard('), src.indexOf("/* ─── 폰 조직 설정 '기록'"));
   assert.match(mem, /const can = !locked && \(isAdmin \|\| c\.created_by === uid \|\| \(c\.admin_user_ids \?\? \[\]\)\.includes\(uid\)\);/, '채널 관리자만, 정책 고정이면 잠금');
 });
+
+test('2차 피드백 — 이름(에이전트 연결·서버 연결), 결재 알림 줄 없음·알림 하나, 기억 정렬은 기억 탭으로', () => {
+  const dict = readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8');
+  assert.match(dict, /'phone\.set\.ext': \['에이전트 연결', 'Connect agents'\]/);
+  assert.match(dict, /'phone\.set\.server': \['서버 연결', 'Connect server'\]/);
+  assert.doesNotMatch(list, /approvalNotify|'approvals'/, '에이전트 묶음의 결재 알림 줄 없음');
+  assert.doesNotMatch(list, /memSort|onMemSort/, '설정 목록에 기억 정렬 없음');
+  assert.match(src, /<p className="note">\{t\('phone\.set\.notify\.scope'\)\}<\/p>/, '알림 화면 안 한 줄');
+  const mem = src.slice(src.indexOf('function PhoneMemory('), src.indexOf('function PhoneMemDoc('));
+  assert.match(mem, /\{g\.org\.length > 0 && <div className="ph-sechead">\{t\('phone\.mem\.org'\)\}\{sortCtl\}<\/div>\}/, "'조직 전체 기억' 줄 오른쪽 정렬");
+  assert.match(mem, /onSort\?\.\(v\)/);
+});
+
+test('2차 피드백 — 친구 관리: 가로 탭(친구·차단·숨긴 에이전트), 친구 줄 끝 ⋯ 메뉴(대화하기·차단·삭제, 삭제·차단은 확인)', () => {
+  const fm = src.slice(src.indexOf('function PhoneFriendsManage('), src.indexOf('/* ─── 개인 에이전트 카드'));
+  assert.match(fm, /\['friends', 'blocked', 'hidden'\]\.map/);
+  assert.match(fm, /className="ph-mmore"/);
+  assert.match(fm, /run: \(\) => setConfirm\(\{ kind: 'block', f: menu\.f \}\)/); assert.match(fm, /run: \(\) => setConfirm\(\{ kind: 'remove', f: menu\.f \}\)/);
+  assert.match(fm, /<ConfirmModal /);
+  assert.doesNotMatch(fm, /msgr-rows|className="empty"/, '카드 안 목록·점선 빈 상자 없음');
+  assert.match(src, /\{sub === 'friends' && <PhoneFriendsManage /);
+});

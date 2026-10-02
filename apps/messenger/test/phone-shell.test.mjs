@@ -153,3 +153,27 @@ test('기억 폴더 정렬 — 이름순(문서 제목·채널 이름) / 최근�
   assert.deepEqual(recent.channels.map((x) => x.key), ['c-b', 'c-a'], '최근에 바뀐 채널이 위');
   assert.deepEqual(recent.channels[0].docs.map((x) => x.id), [5, 3]);
 });
+
+import { agentCardAction, orgCardStep, personalCardLocks } from '../src/phone-shell.mjs';
+test('설정 > 내 에이전트 — 어떤 에이전트를 눌러도 카드가 열리거나 이유가 뜬다(아무 일도 없는 줄 0)', () => {
+  const shapes = [
+    { id: 'a', org_id: 'o1', hosting: 'local', status: 'active' },      // 조직 크루
+    { id: 'b', org_id: 'o1', hosting: 'bot', status: 'active' },        // 조직 외부 에이전트
+    { id: 'c', org_id: 'o1', hosting: 'local', status: 'available' },   // 꺼 둔 조직 크루
+    { id: 'd', org_id: null, hosting: 'local', status: 'active' },      // 개인 크루
+    { id: 'e', org_id: null, hosting: 'bot', status: 'active', paused: 'relink', ready: false }, // 개인 쪽 외부 에이전트(쌍둥이)
+  ];
+  for (const c of shapes) { const a = agentCardAction(c); assert.ok(['org-card', 'personal-card'].includes(a.do), `${c.id}: ${a.do}`); }
+  assert.deepEqual(agentCardAction(shapes[0]), { do: 'org-card', space: 'o1' });
+  assert.deepEqual(agentCardAction(shapes[3]), { do: 'personal-card' }, '개인 크루는 대화로 넘기지 않고 카드');
+  assert.deepEqual(agentCardAction(null), { do: 'note', why: 'missing' });
+  // 조직 카드: 공간을 바꾼 뒤 — 열 수 없으면 이유를 알린다(조용히 끝나지 않는다)
+  assert.deepEqual(orgCardStep({ found: true, blocked: false }), { do: 'open' });
+  assert.deepEqual(orgCardStep({ found: true, blocked: true }), { do: 'note', why: 'blocked' });
+  assert.deepEqual(orgCardStep({ found: false, blocked: false }), { do: 'note', why: 'missing' });
+  assert.deepEqual(orgCardStep({ timedOut: true }), { do: 'note', why: 'slow' });
+});
+test('개인 에이전트 카드 잠금 — 서버가 허용하는 것만 바꾼다(이름은 Argo 앱, 쌍둥이는 이름·직무·지시 범위가 조직을 따른다)', () => {
+  assert.deepEqual(personalCardLocks({ hosting: 'local' }), { name: 'argo', role: null, allow: null, face: null, bio: null });
+  assert.deepEqual(personalCardLocks({ hosting: 'bot' }), { name: 'twin', role: 'twin', allow: 'twin', face: null, bio: null });
+});

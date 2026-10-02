@@ -137,3 +137,23 @@ export function memSnippet(body, query, max = 90) {
   const start = Math.max(0, i - Math.floor((max - q.length) / 2)); const end = Math.min(text.length, start + max);
   return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
 }
+
+/** 설정 > 내 에이전트 줄을 눌렀을 때(유건 2차 피드백 1): 조직 에이전트 = 그 조직 공간으로 바꿔 에이전트 카드, 개인 에이전트 = 개인 에이전트 카드.
+    대화로 넘기지 않는다(문구가 '카드가 열립니다'). 알 수 없는 줄은 이유를 알린다 — 눌러도 아무 일도 없는 줄을 만들지 않는다. */
+export function agentCardAction(c) {
+  if (!c?.id) return { do: 'note', why: 'missing' };
+  if (c.org_id) return { do: 'org-card', space: c.org_id };
+  return { do: 'personal-card' };
+}
+/** 조직 카드 — 공간을 바꾼 뒤 한 걸음. 동의 전(조직 화면 잠김)·크루 없음·늦음은 이유를 알린다 */
+export function orgCardStep({ found = false, blocked = false, timedOut = false } = {}) {
+  if (timedOut) return { do: 'note', why: 'slow' };
+  if (blocked) return { do: 'note', why: 'blocked' };
+  return found ? { do: 'open' } : { do: 'note', why: 'missing' };
+}
+/** 개인 에이전트 카드에서 잠글 칸과 이유 — 서버 규칙 그대로: 이름은 Argo 앱(이름표·연결 열은 msgr_lock_crews),
+    개인 쪽 외부 에이전트(조직 봇의 쌍둥이)는 이름·직무·지시 범위가 조직을 따른다(msgr_bot_twin_lock). 얼굴·사진·소개는 주인이 바꾼다 */
+export function personalCardLocks(c) {
+  const twin = c?.hosting === 'bot';
+  return { name: twin ? 'twin' : 'argo', role: twin ? 'twin' : null, allow: twin ? 'twin' : null, face: null, bio: null };
+}

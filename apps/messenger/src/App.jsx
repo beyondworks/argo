@@ -49,7 +49,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
-import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
@@ -887,6 +887,7 @@ function Shell({ session }) {
   const [chPlus, setChPlus] = useState(false);
   const [reqOpen, setReqOpen] = useState(false);
   const [settingsFocus, setSettingsFocus] = useState(null);
+  const [personalCard, setPersonalCard] = useState(null); // 개인 에이전트 카드(크루 id)
   const [profileName, setProfileName] = useState(null); const [profileTick, setProfileTick] = useState(0); // 폰 설정 '개인' 줄의 내 이름 — 설정 목록을 열 때만 1건 읽는다(프로필 저장 뒤 다시) // 폰 설정을 열 때 바로 보일 묶음('agents'|'memory')
   const [memSort, setMemSort] = useState(readMemSort); // 기억 폴더 정렬(설정 > 기억)
   const pickMemSort = (v) => { setMemSort(v); try { localStorage.setItem(MEM_SORT_KEY, v); } catch { /* 이번 세션만 */ } };
@@ -1749,8 +1750,8 @@ function Shell({ session }) {
   useEffect(() => { if (isPhone && page === 'agents') { loadMyAgents().catch(() => {}); loadApprovals().catch(() => {}); } if (isPhone && page === 'set-agents') loadMyAgents().catch(() => {}); }, [isPhone, page, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   // 다른 공간의 에이전트·대화를 열 때 — 공간을 바꾸고, 그 공간 목록이 도착하면 그때의 최신 함수로 연다(옛 렌더의 함수는 옛 공간 목록을 본다)
   const afterSpace = useRef(null); const latestOpen = useRef({});
-  latestOpen.current = { dmWithCrew, openPersonalCrewDm, setSheet };
-  const runInSpace = (space, run) => { if (orgId === space && loadedOrg.current === space) { run(latestOpen.current); return; } afterSpace.current = { space, run }; setOrgId(space); };
+  latestOpen.current = { dmWithCrew, openPersonalCrewDm, setSheet, crewOf, note: setNote, orgBlocked }; // orgBlocked: 동의 전 조직이면 카드 대신 이유(openAgentCard)
+  const runInSpace = (space, run, tag = null) => { if (orgId === space && loadedOrg.current === space) { run(latestOpen.current); return; } afterSpace.current = { space, run, tag }; setOrgId(space); };
   useEffect(() => { const a = afterSpace.current; if (!a || a.space !== orgId || loadedOrg.current !== orgId) return; afterSpace.current = null; a.run(latestOpen.current); }, [orgId, channels, crews]); // eslint-disable-line react-hooks/exhaustive-deps
   // 그룹 대화 만들기(유건 2026-09-15): 사람·크루를 여럿 골라 dm 채널 하나로. 서버 msgr_create_channel은 others 여러 명을 받는다(크루는 소유자 동반 규칙 그대로).
   const createGroupDm = async (picks) => { // picks: [{ kind: 'user'|'crew', id }]
@@ -2150,7 +2151,14 @@ function Shell({ session }) {
   const decideFriend = async (f, accept) => { try { await q(supabase.rpc('msgr_friend_decide', { other: f.user_id, accept })); setNote(t(accept ? 'friends.accepted' : 'friends.declined')); await onFriendsChanged(); } catch (e) { setErr(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : e.message); } };
   const openSettings = (tab = null, focus = null) => { setTabQ(null); const m = phoneSettingsPage(tab); if (m === 'orgsettings') setSettingsTab(tab); setSettingsFocus(focus); setPage(m); }; // 톱니 = 어느 탭에서든 같은 설정 화면(focus = 그 묶음으로 바로 스크롤)
   const openOrgSub = (kind, id) => { if (orgId !== id) setOrgId(id); setPage(`set-${kind}:${id}`); }; // 조직 범위 설정 화면 — 그 조직 공간으로 바꿔 그린다
-  const openAgentCard = (c) => { const space = c.org_id ?? PERSONAL; runInSpace(space, (fn) => (space === PERSONAL ? fn.openPersonalCrewDm(c.id) : fn.setSheet(c.id))); }; // 에이전트별 설정 = 에이전트 카드(이름·얼굴·소개·지시 범위). 개인 에이전트는 카드가 없어 1:1로
+  // 에이전트별 설정 = 에이전트 카드(유건 2차 피드백 1) — 조직 에이전트는 그 조직 공간에서 조직 카드, 개인 에이전트는 개인 카드. 열 수 없으면 이유를 띄운다(아무 일도 없는 줄 0)
+  const openAgentCard = (c) => {
+    const a = agentCardAction(c);
+    if (a.do === 'personal-card') { setPersonalCard(c.id); return; }
+    if (a.do !== 'org-card') { setNote(t('agentcard.why.missing')); return; }
+    const timer = setTimeout(() => { if (afterSpace.current?.tag === c.id) { afterSpace.current = null; setNote(t(`agentcard.why.${orgCardStep({ timedOut: true }).why}`)); } }, 8000);
+    runInSpace(a.space, (fn) => { clearTimeout(timer); const step = orgCardStep({ found: !!fn.crewOf(c.id), blocked: fn.orgBlocked }); if (step.do === 'open') fn.setSheet(c.id); else fn.note(t(`agentcard.why.${step.why}`)); }, c.id);
+  };
   const gearAct = { key: 'gear', icon: 'gear', label: t('ui.settings'), run: () => openSettings() };
   const searchAct = { key: 'search', icon: 'search', label: t('phone.hdr.search'), on: tabQ !== null, run: () => setTabQ((v) => (v === null ? '' : null)) };
   const searchAll = () => { const qv = tabQText.trim(); if (!qv) return; setSearchQ(qv); runSearch(qv); }; // '전체에서 찾기' — 지금 공간의 통합 검색(메시지·사람·에이전트·채널)
@@ -2315,7 +2323,7 @@ function Shell({ session }) {
           : !onOrgTab ? <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>
           : orgGateActive ? <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setPage('chats')} bare />
           : aiConsentLoading ? <OrgGateLoading t={t} bare />
-          : <PhoneMemory key={orgRow.id} org={orgRow} channels={channels} previewChannels={previewChannels} dmName={dmName} nameOfUser={nameOfUser} query={tabQText} sort={memSort} onError={setErr} searchFoot={searchFoot} onOpen={(doc, label) => { setMemDoc({ doc, label }); setPage('memdoc'); }} />)}
+          : <PhoneMemory key={orgRow.id} org={orgRow} channels={channels} previewChannels={previewChannels} dmName={dmName} nameOfUser={nameOfUser} query={tabQText} sort={memSort} onSort={pickMemSort} onError={setErr} searchFoot={searchFoot} onOpen={(doc, label) => { setMemDoc({ doc, label }); setPage('memdoc'); }} />)}
         {rootTab === 'agents' && (<>
           {!tabQText.trim() && <div className="ph-apcard-wrap">
             <div className={`ph-apcard${approvalItems.length ? ' on' : ''}`}>
@@ -2478,6 +2486,7 @@ function Shell({ session }) {
         </div>}
       </aside>
       <main className="msgr-main" {...edgeBack}>
+        {personalCard && <PersonalAgentCard crewId={personalCard} uid={uid} onClose={() => setPersonalCard(null)} onNote={setNote} onError={setErr} onChanged={() => { loadMyAgents().catch(() => {}); if (isPersonal) loadPersonal().catch(() => {}); }} />}
         {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} />}
         {chSheet && channel && !orgBlocked && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${tick}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
@@ -3518,7 +3527,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
     if (view === 'agents') return body(t('phone.set.myAgents'), (<div className="msgr-setbody">
       <section className="msgr-setcard"><p>{t('phone.set.myAgents.desc')}</p>
         {myAgents === null ? <p className="note" role="status">{t('ui.loading')}</p> : !myAgents.length ? <p className="empty">{t('phone.agents.none')}</p> : (
-          <div className="ph-setgroup">{myAgents.map((c) => (<button key={c.id} type="button" className="ph-setrow" onClick={() => onOpenAgent?.(c)}><Av name={c.display_name} crew size="sm" crewId={c.id} src={c.avatar_url ?? null} /><span className="ph-kbody"><span className="name">{c.display_name}</span><span className="snip">{[c.org_id ? (orgs.find((o) => o.id === c.org_id)?.name ?? '') : t('personal.space'), c.hosting === 'bot' ? t('phone.agents.ext') : null, c.org_id ? null : t('phone.set.agent.personalHint')].filter(Boolean).join(' · ')}</span></span>{chev}</button>))}</div>)}
+          <div className="ph-setgroup">{myAgents.map((c) => (<button key={c.id} type="button" className="ph-setrow" onClick={() => onOpenAgent?.(c)}><Av name={c.display_name} crew size="sm" crewId={c.id} src={c.avatar_url ?? null} /><span className="ph-kbody"><span className="name">{c.display_name}</span><span className="snip">{[c.org_id ? (orgs.find((o) => o.id === c.org_id)?.name ?? '') : t('personal.space'), c.hosting === 'bot' ? t('agentcard.ext') : null].filter(Boolean).join(' · ')}</span></span>{chev}</button>))}</div>)}
       </section>
     </div>));
     const sub = view === 'list' ? null : view;
@@ -3531,14 +3540,11 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
       {group('orgs', t('phone.set.g.orgs'), orgs.length ? orgs.map((o) => row(o.id, <Av name={o.name} size="sm" />, o.name, () => onOrgSub?.('org', o.id), t('phone.set.orgProfile', { role: t(`role.${o.role}`) }))) : <p className="ph-setnote">{t('phone.set.noOrg')}</p>)}
       {group('agents', t('phone.set.g.agents'), <>
         {row('mine', ic('memory'), t('phone.set.myAgents'), () => onSub?.('agents'), t('phone.set.myAgents.sub'))}
-        {row('approvals', ic('stamp'), t('phone.set.approvalNotify'), () => onSub?.('notify'), t('phone.set.approvalNotify.sub'))}
-        {adminOrgs.map((o) => row(`ext-${o.id}`, ic('node'), t('phone.set.ext'), () => onOrgSub?.('ext', o.id), o.name))}
+        {adminOrgs.map((o) => row(`ext-${o.id}`, ic('node'), t('phone.set.ext'), () => onOrgSub?.('ext', o.id), t('phone.set.ext.sub', { name: o.name })))}
       </>)}
-      {adminOrgs.length > 0 && group('server', t('phone.set.g.server'), adminOrgs.map((o) => row(`srv-${o.id}`, ic('node'), t('set.tab.crews'), () => onOrgSub?.('server', o.id), o.name)))}
+      {adminOrgs.length > 0 && group('server', t('phone.set.g.server'), adminOrgs.map((o) => row(`srv-${o.id}`, ic('node'), t('phone.set.server'), () => onOrgSub?.('server', o.id), t('phone.set.server.sub', { name: o.name }))))}
       {group('memory', t('phone.set.g.memory'), <>
         {memOrgs.map((o) => row(`mem-${o.id}`, ic('folder'), t('phone.set.agentMemory'), () => onOrgSub?.('memory', o.id), o.name))}
-        <div className="ph-setrow static"><span className="ph-setic">{ic('sort')}</span><span className="ph-kbody"><span className="name">{t('phone.set.memSort')}</span></span>
-          <div className="msgr-seg ph-setseg" role="radiogroup" aria-label={t('phone.set.memSort')}>{['name', 'recent'].map((v) => <button key={v} type="button" role="radio" aria-checked={memSort === v} className={memSort === v ? 'active' : ''} onClick={() => onMemSort?.(v)}>{t(`phone.set.memSort.${v}`)}</button>)}</div></div>
       </>)}
       {group('common', t('phone.set.g.common'), <>
         {[['display', 'gear'], ['notify', 'bell'], ['friends', 'person'], ['privacy', 'lock'], ['about', 'doc']].map(([k, i]) => row(k, ic(i), t(`phone.set.${k}`), () => onSub?.(k)))}
@@ -3552,11 +3558,11 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
           <AccountDeleteCard session={session} onDeleted={accountDeleted} />
         </div>)}
         {sub === 'notify' && (<div className="msgr-setbody">
-          <section className="msgr-setcard"><h2>{t('phone.set.notify')}</h2><div className="row"><NotifyRow /><SoundRow /></div><p className="note">{t('phone.set.approvalNotify.note')}</p></section>
+          <section className="msgr-setcard"><h2>{t('phone.set.notify')}</h2><div className="row"><NotifyRow /><SoundRow /></div><p className="note">{t('phone.set.notify.scope')}</p></section>
           <ProfileCard part="quiet" uid={uid} onNote={onNote} onError={onError} />
         </div>)}
         {sub === 'display' && <div className="msgr-setbody">{themeCard}{langCard}</div>}
-        {sub === 'friends' && <div className="msgr-setbody"><FriendsCard manage isPersonal uid={uid} friends={friends} members={[]} onChanged={onFriendsChanged} onDm={onDm} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} /></div>}
+        {sub === 'friends' && <PhoneFriendsManage uid={uid} friends={friends} onChanged={onFriendsChanged} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} />}
         {sub === 'privacy' && (<div className="msgr-setbody">
           <ProfileCard part="privacy" uid={uid} onNote={onNote} onError={onError} />
           <section className="msgr-setcard"><h2>{t('set.profanityFilter')}</h2><p>{t('set.profanityFilter.desc')}</p><ProfanityFilterRow /></section>
@@ -3981,12 +3987,14 @@ const MEM_FOLD_KEY = 'argo-msgr-mem-fold'; // 접은 기억 폴더(조직 id:폴
 const readMemFold = () => { try { const v = JSON.parse(localStorage.getItem(MEM_FOLD_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
 const MEM_SORT_KEY = 'argo-msgr-mem-sort'; // 기억 폴더 정렬(설정 > 기억) — 이 기기에만
 const readMemSort = () => { try { const v = localStorage.getItem(MEM_SORT_KEY); return v === 'name' ? 'name' : 'recent'; } catch { return 'recent'; } };
-function PhoneMemory({ org, channels = [], previewChannels = [], dmName, nameOfUser, query = '', onOpen, onError, searchFoot, sort = 'recent' }) {
+function PhoneMemory({ org, channels = [], previewChannels = [], dmName, nameOfUser, query = '', onOpen, onError, searchFoot, sort = 'recent', onSort = null }) {
   const { t, lang } = useT();
   const [docs, setDocs] = useState(null);
   const [fold, setFold] = useState(readMemFold);
   const toggleFold = (key) => setFold((cur) => { const k = `${org.id}:${key}`; const next = { ...cur }; if (next[k]) delete next[k]; else next[k] = true; try { localStorage.setItem(MEM_FOLD_KEY, JSON.stringify(next)); } catch { /* 저장 못 해도 이번 화면은 접힌다 */ } return next; });
   const folded = (key) => !query.trim() && !!fold[`${org.id}:${key}`]; // 검색 중엔 찾은 문서가 접힌 폴더에 숨지 않게 다 편다
+  const [sortMenu, setSortMenu] = useState(false); // 정렬 메뉴(유건 2차 피드백 3 — 설정이 아니라 기억 탭 소제목 줄 오른쪽)
+  useDismiss(sortMenu, () => setSortMenu(false), '.ph-memsort', '.ph-memsort > button', true);
   useEffect(() => {
     let live = true;
     const cols = 'id, channel_id, path, title, body, version, updated_by, updated_at';
@@ -4014,9 +4022,11 @@ function PhoneMemory({ org, channels = [], previewChannels = [], dmName, nameOfU
     </button>);
   return (<>
     {!g.total && !query.trim() && <div className="msgr-hint ph-empty">{t('mem.none')}</div>}
-    {g.org.length > 0 && <div className="ph-sechead">{t('phone.mem.org')}</div>}
-    {g.org.map((f) => folder(`org:${f.key}`, t(`docs.folder.${f.key}`), f.docs, t(`docs.folder.${f.key}`)))}
-    {g.channels.length > 0 && <div className="ph-sechead">{t('phone.mem.channels')}</div>}
+    {(() => { const sortCtl = (<span className="msgr-sortwrap ph-memsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} aria-label={t('phone.mem.sort')} title={t('phone.mem.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={16} /></button>
+      {sortMenu && <div className="msgr-rowmenu" role="menu">{['name', 'recent'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={sort === v} onClick={() => { onSort?.(v); setSortMenu(false); }}>{sort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`phone.mem.sort.${v}`)}</button>)}</div>}</span>);
+      return (<>{g.org.length > 0 && <div className="ph-sechead">{t('phone.mem.org')}{sortCtl}</div>}
+        {g.org.map((f) => folder(`org:${f.key}`, t(`docs.folder.${f.key}`), f.docs, t(`docs.folder.${f.key}`)))}
+        {g.channels.length > 0 && <div className="ph-sechead">{t('phone.mem.channels')}{!g.org.length && sortCtl}</div>}</>); })()}
     {g.channels.map((c) => folder(`ch:${c.key}`, c.label, c.docs, c.label))}
     {searchFoot(g.total > 0)}
   </>);
@@ -4031,6 +4041,110 @@ function PhoneMemDoc({ doc, label, nameOfUser, onBack, onMenu }) {
       <p className="note">{t('phone.mem.readonly')}</p>
     </article></div>
   </>);
+}
+
+/* ─── 폰 설정 > 친구 관리(유건 2차 피드백 5) — 친구 탭과 같은 줄 모양, 위 가로 탭(친구 / 차단 / 숨긴 에이전트).
+   친구 줄의 대화하기·차단·삭제는 줄 끝 '⋯' 메뉴로(버튼 세 개를 줄에 늘어놓지 않는다). 삭제·차단은 확인을 받는다. 차단·숨긴 목록은 그 탭을 열 때 한 번 읽는다. ─── */
+function PhoneFriendsManage({ uid, friends = [], onChanged, onPersonalDm, onNote, onError }) {
+  const { t } = useT();
+  const { unmuteCrew } = useContext(SafetyCtx);
+  const [tab, setTab] = useState('friends'); const [busy, setBusy] = useState(false); const [menu, setMenu] = useState(null); const [confirm, setConfirm] = useState(null); const [reqOpen, setReqOpen] = useState(true);
+  const [blocked, setBlocked] = useState(null); const [muted, setMuted] = useState(null);
+  const loadBlocked = useCallback(async () => { try { setBlocked(await q(supabase.rpc('msgr_my_blocked')) ?? []); } catch { setBlocked([]); } }, []);
+  const loadMuted = useCallback(async () => { try { setMuted(await q(supabase.rpc('msgr_my_muted_crews')) ?? []); } catch { setMuted([]); } }, []);
+  useEffect(() => { if (tab === 'blocked' && blocked === null) loadBlocked(); if (tab === 'hidden' && muted === null) loadMuted(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  const nameOf = (f) => f.display_name || f.handle || f.user_id.slice(0, 8);
+  const call = async (fn, args, okKey) => { setBusy(true); try { await q(supabase.rpc(fn, args)); onNote(t(okKey)); await onChanged?.(); return true; } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : e.message); return false; } finally { setBusy(false); } };
+  const received = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
+  const accepted = friends.filter((f) => f.status === 'accepted').sort((a, b) => nameOf(a).localeCompare(nameOf(b), 'ko'));
+  const person = (f, right) => (<div key={f.user_id ?? f.crew_id} className="ph-mrow"><Av name={f.crew_id ? (f.display_name || t('agentcard.title')) : nameOf(f)} size="lg" crew={!!f.crew_id} crewId={f.crew_id ?? null} userId={f.crew_id ? null : f.user_id} /><span className="ph-kbody"><span className="name">{f.crew_id ? (f.display_name || t('agentcard.title')) : nameOf(f)}</span>{f.handle && <span className="snip">@{f.handle}</span>}</span>{right}</div>);
+  const empty = (k) => <p className="ph-mempty">{t(k)}</p>;
+  return (<div className="ph-fmanage">
+    <p className="ph-fm-hint">{t('fm.hint')}</p>
+    <div className="msgr-seg ph-fm-tabs" role="tablist" aria-label={t('phone.set.friends')}>{['friends', 'blocked', 'hidden'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{t(`fm.tab.${k}`)}</button>)}</div>
+    {tab === 'friends' && (<>
+      {received.length > 0 && (<>
+        <button type="button" className="ph-reqrow ph-mreq" aria-expanded={reqOpen} onClick={() => setReqOpen((v) => !v)}><span className="ph-reqic"><I name="personplus" size={18} /></span><span className="name">{t('phone.friends.requests', { n: received.length })}</span><I name="caret" size={14} className={`ph-chev${reqOpen ? ' open' : ''}`} /></button>
+        {reqOpen && received.map((f) => person(f, <span className="ph-macts"><button type="button" className="btn btn-primary" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: true }, 'friends.accepted')}>{t('phone.friends.accept')}</button><button type="button" className="btn" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: false }, 'friends.declined')}>{t('phone.friends.decline')}</button></span>))}
+      </>)}
+      <div className="ph-mhead">{t('phone.friends.count', { n: accepted.length })}</div>
+      {accepted.map((f) => person(f, <button type="button" className="ph-mmore" aria-label={t('fm.more', { name: nameOf(f) })} aria-haspopup="menu" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ f, at: { x: r.right - 200, y: r.bottom + 4 } }); }}><I name="dots" size={18} /></button>))}
+      {!accepted.length && empty('friends.none')}
+    </>)}
+    {tab === 'blocked' && (blocked === null ? <p className="ph-mempty" role="status">{t('ui.loading')}</p> : (<>
+      {blocked.map((f) => person(f, <button type="button" className="btn" disabled={busy} onClick={async () => { setBusy(true); try { await q(supabase.rpc('msgr_friend_unblock', { other: f.user_id })); onNote(t('friends.unblocked')); await loadBlocked(); await onChanged?.(); } catch { onError(t('friends.unblock.failed')); } finally { setBusy(false); } }}>{t('friends.unblock')}</button>))}
+      {!blocked.length && empty('friends.blocked.none')}
+    </>))}
+    {tab === 'hidden' && (muted === null ? <p className="ph-mempty" role="status">{t('ui.loading')}</p> : (<>
+      {muted.map((c) => person(c, <button type="button" className="btn" disabled={busy} onClick={async () => { setBusy(true); try { await unmuteCrew(c.crew_id); await loadMuted(); } catch { onError(t('fm.unhide.failed')); } finally { setBusy(false); } }}>{t('fm.unhide')}</button>))}
+      {!muted.length && empty('fm.hidden.none')}
+    </>))}
+    {menu && <CtxMenu at={menu.at} onClose={() => setMenu(null)} items={[
+      { icon: 'at', label: t('friends.dm'), run: () => onPersonalDm?.(menu.f.user_id) },
+      { icon: 'block', label: t('friends.block'), danger: true, run: () => setConfirm({ kind: 'block', f: menu.f }) },
+      { icon: 'trash', label: t('friends.remove'), danger: true, run: () => setConfirm({ kind: 'remove', f: menu.f }) },
+    ]} />}
+    {confirm && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(confirm.kind === 'block' ? 'friends.block' : 'friends.remove')}>
+      <ConfirmModal title={t(confirm.kind === 'block' ? 'friends.block' : 'friends.remove')} description={t(confirm.kind === 'block' ? 'friends.block.confirm' : 'friends.remove.confirm', { name: nameOf(confirm.f) })} confirmLabel={t(confirm.kind === 'block' ? 'friends.block' : 'friends.remove')} busy={busy}
+        onConfirm={async () => { const c = confirm; const ok = await call('msgr_friend_remove', { other: c.f.user_id, block: c.kind === 'block' }, c.kind === 'block' ? 'friends.blocked' : 'friends.removed.friend'); if (ok) { setConfirm(null); if (c.kind === 'block') setBlocked(null); } }} onClose={() => { if (!busy) setConfirm(null); }} />
+    </div>, document.body)}
+  </div>);
+}
+
+/* ─── 개인 에이전트 카드(유건 2차 피드백 1) — 개인 공간 에이전트는 조직 카드가 없어 '대화에서 설정'으로 보내던 것을 카드로.
+   바꿀 수 있는 것만 바꾼다(서버 규칙 그대로 — phone-shell.mjs personalCardLocks): 얼굴·사진·소개는 주인, 직무·지시 범위는 Argo 에이전트만(외부 에이전트 쌍둥이는 조직을 따른다), 이름은 Argo 앱에서 정한다.
+   열 때 그 행 1건을 읽는다(주인만 보이는 열 — 소개·지시 범위). 잠긴 칸은 자물쇠와 이유를 보인다. ─── */
+function PersonalAgentCard({ crewId, uid, onClose, onNote, onError, onChanged }) {
+  const { t } = useT();
+  const [crew, setCrew] = useState(null); const [busy, setBusy] = useState(false); const [failed, setFailed] = useState(false);
+  const load = useCallback(async () => { try { const row = await q(supabase.from('msgr_crews').select('id, display_name, role_text, bio, avatar_url, face, allow, allow_users, hosting, org_id, owner_user_id, status').eq('id', crewId).maybeSingle()); if (!row) setFailed(true); else setCrew(row); } catch (e) { setFailed(true); onError(friendlyErr(e.message, t)); } }, [crewId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  const save = async (patch, okKey = 'crew.profile.saved') => {
+    setBusy(true);
+    const r = await supabase.from('msgr_crews').update(patch).eq('id', crewId).select('id');
+    setBusy(false);
+    if (r.error) return onError(/msgr_not_allowed/.test(r.error.message) ? t('agentcard.lock.twin') : friendlyErr(r.error.message, t));
+    if (!r.data?.length) return onError(t('agentcard.notOwner'));
+    onNote(t(okKey)); await load(); onChanged?.();
+  };
+  const locks = personalCardLocks(crew);
+  const lockNote = (why) => <span className="ph-lockwhy"><I name="lock" size={12} />{t(why === 'twin' ? 'agentcard.lock.twin' : 'agentcard.lock.argo')}</span>;
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <aside className="msgr-crewsheet ph-agentcard" role="dialog" aria-label={t('agentcard.title')}>
+        <div className="head">
+          {crew ? <Av name={crew.display_name} crew size="lg" crewId={crew.id} src={crew.avatar_url ?? null} /> : <span className="msgr-av lg crew" />}
+          <div style={{ minWidth: 0 }}><div className="name">{crew?.display_name ?? ''}</div><div className="msgr-klabel">{t('agentcard.personal')}{crew?.hosting === 'bot' ? ` · ${t('agentcard.ext')}` : ''}</div></div>
+          <button type="button" className="btn ghost" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={15} /></button>
+        </div>
+        {!crew ? <p className="note" role="status">{failed ? t('agentcard.notOwner') : t('ui.loading')}</p> : (<>
+          <section className="msgr-crewprofile">
+            <h3>{t('crew.profile')}</h3>
+            <label className="msgr-klabel">{t('agentcard.name')}</label>
+            <div className="ph-lockedfield"><span>{crew.display_name}</span>{lockNote(locks.name)}</div>
+            <AvatarEdit name={crew.display_name} crew crewId={crew.id} url={crew.avatar_url ?? null} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); const url = await uploadAvatar(uid, `crew-${crew.id}`, f); setBusy(false); await save({ avatar_url: url }); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={() => save({ avatar_url: null })} />
+            <label className="msgr-klabel">{t('crew.face')}</label>
+            <FacePicker crew={crew} busy={busy} t={t} onSave={(face) => save({ face })} />
+            <label className="msgr-klabel" htmlFor={`prole-${crew.id}`}>{t('crew.role')}</label>
+            {locks.role ? <div className="ph-lockedfield"><span>{crew.role_text || '—'}</span>{lockNote(locks.role)}</div>
+              : <input id={`prole-${crew.id}`} className="msgr-input" maxLength={60} defaultValue={crew.role_text ?? ''} placeholder={t('crew.role.ph')} onBlur={(e) => { const v = e.target.value.trim() || null; if (v !== (crew.role_text ?? null)) save({ role_text: v }); }} />}
+            <label className="msgr-klabel" htmlFor={`pbio-${crew.id}`}>{t('crew.bio')}</label>
+            <textarea id={`pbio-${crew.id}`} className="msgr-input" rows={2} maxLength={300} defaultValue={crew.bio ?? ''} placeholder={t('crew.bio.ph')} onBlur={(e) => { const v = e.target.value.trim() || null; if (v !== (crew.bio ?? null)) save({ bio: v }); }} />
+          </section>
+          <section>
+            <h3>{t('crew.allow')}</h3>
+            <p>{t('agentcard.allow.desc')}</p>
+            <div className="msgr-seg" role="radiogroup" aria-label={t('crew.allow')}>
+              {['owner', 'all'].map((v) => <button key={v} type="button" role="radio" aria-checked={(crew.allow === 'all' ? 'all' : 'owner') === v} className={(crew.allow === 'all' ? 'all' : 'owner') === v ? 'active' : ''} disabled={busy || !!locks.allow} onClick={() => save({ allow: v, allow_users: [] }, 'crew.allow.saved')}>{t(`agentcard.allow.${v}`)}</button>)}
+            </div>
+            {locks.allow && lockNote(locks.allow)}
+          </section>
+        </>)}
+      </aside>
+    </div>
+  );
 }
 
 /* ─── 폰 설정 > 조직 프로필·계정(조직마다): 그 조직에서의 내 역할·표시명·부서·직급. 부서·직급은 본인만 정한다(서버 msgr_set_member_profile — 20260924150000, 관리자도 남의 것은 못 바꾼다) ─── */
