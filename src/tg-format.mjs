@@ -98,7 +98,7 @@ export function splitForTelegram(text, max = 3900) {
     폴더까지 연다(칩 수집·서빙과 같은 구역 — artifacts.mjs SERVE_PREFIXES와 동일 목록).
     `/`를 문자클래스에 열면서 `..`·빈 세그먼트는 명시 거부 — 이 rel은 files API가 아니라
     게이트웨이가 직접 readFile 하므로 탈출이 곧 vault 밖 읽기다. */
-export function extractFileRefs(text) {
+export function extractFileRefs(text, { max = 3 } = {}) { // max — 텔레그램 3(기본), 메신저는 msgr-reply-files REPLY_FILES_MAX
   // 수량자는 lazy(+?) — 클래스에 공백·`/`가 함께 열려 있어 탐욕이면 "files/a.pdf files/b.pdf"가
   // 한 덩어리로 흡수된다(신설 테스트가 잡음). 확장자 뒤 (?![\w.])는 부분 매칭 방지(a.pdfx).
   // 좌측 경계 — https://x.com/files/a.pdf 같은 외부 URL 조각을 로컬 경로로 오인하면, 비침묵
@@ -109,7 +109,7 @@ export function extractFileRefs(text) {
     if (m[1].split('/').some((seg) => seg === '..' || seg === '')) continue;
     seen.add(m[1]);
   }
-  return [...seen].slice(0, 3);
+  return [...seen].slice(0, max);
 }
 
 /** 첨부 실패 안내(순수) — 침묵 실패 금지: 사용자는 "보내줬다는데 안 온다"를 이걸로 구분한다. */
