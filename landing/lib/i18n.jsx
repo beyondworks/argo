@@ -324,7 +324,8 @@ const DICT = {
   'office.nav.cta': ['대기자 신청', 'Join waitlist'],
   'family.switch.label': ['Argo 제품', 'Argo products'],
   'family.kicker': ['패밀리', 'Family'],
-  'family.title': ['세 앱, 한 크루.', 'Three apps. One crew.'],
+  'family.title.3': ['세 앱, 한 크루.', 'Three apps. One crew.'],
+  'family.title.2': ['두 앱, 한 크루.', 'Two apps. One crew.'],
   'family.argo': [
     '프롬프트 한 줄로 AI 직원 회사를 만들고, 폴더째 기억하며 일을 맡기는 데스크톱 앱입니다.',
     'The desktop app. One prompt builds an AI crew that remembers whole folders and does the work.',

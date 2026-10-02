@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect } from 'react';
 import { useLang } from '@/lib/i18n';
-import { PRODUCTS } from '@/lib/products';
+import { LIVE } from '@/lib/products';
 import BrandMark from '@/components/BrandMark';
 import Icon from '@/components/family/Icon';
 
@@ -33,11 +33,11 @@ export default function FamilyCards({ here }) {
     <section className="fam-section" id="family">
       <div className="fam-head">
         <span className="mono-label">{t('family.kicker')}</span>
-        <span className="mono-label mono-dim">ARGO · MESSENGER · OFFICE</span>
+        <span className="mono-label mono-dim">{LIVE.map((p) => p.name.toUpperCase()).join(' · ')}</span>
       </div>
-      <h2 className="fam-title rise" style={{ marginBottom: 'clamp(28px, 5svh, 56px)' }}>{t('family.title')}</h2>
-      <div className="family-grid">
-        {PRODUCTS.map((p, i) => {
+      <h2 className="fam-title rise" style={{ marginBottom: 'clamp(28px, 5svh, 56px)' }}>{t(`family.title.${LIVE.length}`)}</h2>
+      <div className="family-grid" style={{ '--n': LIVE.length }}>
+        {LIVE.map((p, i) => {
           const inner = (
             <>
               {/* 입체 그림 — 오피스 히어로와 같은 종이 디오라마 세계(블렌더) */}

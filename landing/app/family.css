@@ -209,7 +209,7 @@ html:has(.p-office) ::selection {
 /* ── 패밀리 카드(세 제품이 어떻게 이어지는가) ── */
 .family-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr));
   border: 1px solid var(--rule);
 }
 .family-card {

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { PRODUCTS, productOf } from '@/lib/products';
+import { LIVE, productOf } from '@/lib/products';
 import { useLang } from '@/lib/i18n';
 
 // 상단 가운데 패밀리 스위처 — 세 제품은 각자의 페이지(/, /messenger, /office)를 가진다.
@@ -12,7 +12,7 @@ export default function FamilySwitch() {
   const { t } = useLang();
   return (
     <nav className="family-switch" aria-label={t('family.switch.label')}>
-      {PRODUCTS.map((p) => (
+      {LIVE.map((p) => (
         <Link
           key={p.id}
           href={p.href}

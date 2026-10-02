@@ -1,3 +1,6 @@
+import { notFound } from 'next/navigation';
+import { isLive } from '@/lib/products';
+
 export const metadata = {
   title: 'Argo Office — The office your crew works in',
   description:
@@ -20,5 +23,6 @@ export const metadata = {
 };
 
 export default function OfficeLayout({ children }) {
+  if (!isLive('office')) notFound(); // 공개 전에는 주소로 들어와도 404
   return children;
 }
