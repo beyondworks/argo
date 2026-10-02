@@ -5,6 +5,7 @@
 // · 문서 전체가 이 기기 밖으로 나가지 않는다(언어 데이터만 받아 온다).
 // 트랙 A(견적·계약 사업자등록증 OCR)와 같이 쓴다 — readTextInBrowser(blob, name) → { status: 'done'|'failed'|'unsupported', text }.
 import { kindOf } from '../files/model.js';
+import { withPdf } from './pdf-open.js';
 
 const PDF_PAGES = 10;   // 스캔 PDF는 앞 10쪽까지(브라우저에서 수십 쪽을 그리면 멈춘 것처럼 보인다)
 const CMAPS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.3.289/cmaps/';
@@ -56,8 +57,7 @@ function layoutText(items) {
 
 async function readPdf(blob) {
   const lib = await pdf();
-  const doc = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), cMapUrl: CMAPS, cMapPacked: true, isEvalSupported: false }).promise;
-  try {
+  return withPdf(lib, new Uint8Array(await blob.arrayBuffer()), async (doc) => {
     const n = Math.min(doc.numPages, 200);
     const parts = [];
     for (let i = 1; i <= n; i++) parts.push(layoutText((await (await doc.getPage(i)).getTextContent()).items));
@@ -73,7 +73,7 @@ async function readPdf(blob) {
       out.push(await ocrImage(canvas));
     }
     return out.join('\n\n').trim();
-  } finally { doc.destroy(); }
+  }, { cMapUrl: CMAPS, cMapPacked: true, isEvalSupported: false });
 }
 
 /** blob(파일) → { status, text } — 실패해도 던지지 않는다(문서함은 메타만 저장하고 '실패'로 표시) */
