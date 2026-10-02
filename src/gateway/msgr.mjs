@@ -765,9 +765,11 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       // DM 전달(msgr_dm_relay 트리거): 크루가 DM에서 비구성원 크루를 부르면 그 글을 받는 크루의 1:1 방에 사람 글(작성자 = 사장)로 옮겨 적고 meta.relay.via_crew_id에
       // 넘긴 크루를 남긴다. 사람 글처럼 보여도 크루 넘김이다 — 풀 오토에서 뺀다(통합본 3차 재검수 HIGH-1). 이 표지는 트리거만 쓰고, 위조돼도 풀 오토를 끄는 쪽뿐이다.
       // 손님·정책 판정(origin·rootAuthor)은 바꾸지 않는다 — fromCrewId로 처리하면 rootAuthor 없는 크루 글이 되어 손님 턴(도구 차단)이 된다.
-      // 전달 표지는 DM(이 크루의 1:1 방)에서만 인정한다 — 트리거는 DM에만 쓰고, 공개 채널 글의 meta는 멤버가 쓸 수 있다. 공개 채널에서 위조한 표지가
+      // 전달 표지는 DM에서만 인정한다 — 트리거는 DM에만 쓰고, 공개 채널 글의 meta는 멤버가 쓸 수 있다. 공개 채널에서 위조한 표지가
       // 조회 오류로 이 크루의 커서를 영영 멈추거나(마지막 확인 검수 MEDIUM-1) 위조 이름이 결재 카드에 나가지 않게.
-      const relayMeta = !fromCrew && dm.has(m.channel_id) && m.meta?.relay && typeof m.meta.relay === 'object' ? m.meta.relay : null;
+      // DM 판정은 이 글의 채널 종류(ch — 봉투의 채널 또는 이 틱의 채널 조회)로 한다. 미리 받은 DM 목록(dm)은 조회 실패 때 빈 목록이 되어
+      // 다른 주인 크루의 전달이 주인 지시로 둔갑했다(확인 검수 feb2e230 MEDIUM). 채널 조회가 실패하면 위 channelOf가 던져 커서가 보류된다.
+      const relayMeta = !fromCrew && ch?.kind === 'dm' && m.meta?.relay && typeof m.meta.relay === 'object' && !Array.isArray(m.meta.relay) ? m.meta.relay : null;
       const relayVia = relayMeta && typeof relayMeta.via_crew_id === 'string' && relayMeta.via_crew_id ? relayMeta.via_crew_id : null;
       const relayViaName = relayVia && typeof relayMeta.via_name === 'string' ? relayMeta.via_name.slice(0, 40) : null; // 넘긴 크루가 받는 쪽 조직 목록에 없을 때의 표시 이름(LOW-1)
       let hop = 0; let origin = m.author_user_id; let rootAuthor = null; let guestChain = false; let officeChain = isOfficeSource(m);
@@ -775,7 +777,9 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       // 못 읽으면(다른 주인의 방) 오피스로 본다: 내리는 방향이고, 그 경우는 손님 판정이 이미 풀 오토를 끈다. 조회 순단은 던져서 재시도.
       if (relayMeta && relayMeta.source_id != null && !officeChain) {
         // 정수 id가 아니면 조회하지 않는다(형식 오류를 순단으로 보고 커서를 멈추지 않게) — 출처를 못 읽은 것과 같게 내리는 쪽(오피스)
-        const src = /^\d+$/.test(String(relayMeta.source_id)) ? await db.message(relayMeta.source_id) : null;
+        const sid = relayMeta.source_id;
+        const validId = (typeof sid === 'number' && Number.isSafeInteger(sid) && sid > 0) || (typeof sid === 'string' && /^[1-9]\d{0,17}$/.test(sid)); // 배열·공백·음수·소수·지수 표기 거름
+        const src = validId ? await db.message(sid) : null;
         officeChain = !src || isOfficeSource(src) || src.meta?.office === true;
       }
       // DM 전달 손님 판정 — 같은 채널 넘김과 같은 규칙: 넘긴 크루의 주인이 이 DM의 사람(origin)과 다르면 손님 턴(남의 크루가 시킨 일).

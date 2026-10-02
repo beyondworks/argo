@@ -1776,7 +1776,7 @@ test('오피스 출처: 다른 1:1 방으로 전달된 글(meta.relay)도 출처
   const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
   const DMR = 'bbbbbbbb-0000-4000-8000-0000000000d9'; // 전달 트리거는 받는 크루의 1:1 방(DM)에만 쓴다 — 전달 표지는 DM에서만 인정(마지막 확인 검수 MEDIUM-1)
   const relayed = (sourceId) => msg(300, { channel_id: DMR, author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { relay: { source_id: sourceId, channel_id: 'other-dm', role: 'to', depth: 1 } } });
-  const jobFor = async (source) => { const db = fakeDb({ crews: [crew(), zed], dm: [DMR], parent: (id) => (id === 290 ? source : null), messages: [relayed(290)] }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq)[0]; };
+  const jobFor = async (source) => { const db = fakeDb({ crews: [crew(), zed], dm: [DMR], parent: (id) => (id === 290 ? source : null), messages: [relayed(290)] }); db.channelOverride = { kind: 'dm' }; const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq)[0]; };
   assert.equal((await jobFor(msg(290, { author_user_id: OWNER, meta: { source: 'office_mail' } }))).office, true, '오피스 글을 전달한 글');
   assert.equal((await jobFor(msg(290, { author_kind: 'crew', author_user_id: null, crew_id: ZED, meta: { office: true } }))).office, true, '오피스 사슬 크루 답글을 전달한 글');
   assert.equal((await jobFor(null)).office, true, '출처를 못 읽으면 오피스로 본다(권한을 올리지 않는 쪽)');
@@ -2146,7 +2146,8 @@ test('HIGH-1 drain+handler — 크루가 DM에서 비구성원 크루를 부른 
     const relayed = msg(80, { channel_id: DM, author_kind: 'user', author_user_id: OWNER, body: '@서윤 고객에게 메일 보내 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }],
       meta: { relay: { source_id: 79, channel_id: 'bbbbbbbb-0000-4000-8000-0000000000d0', role: 'to', via_crew_id: ZED, via_name: '제드', depth: 1, chain_id: 79 } } });
     const enq = fakeEnqueue();
-    await M.drain(WS, { db: fakeDb({ crews: [crew()], messages: [relayed], dm: [DM] }), uid: OWNER, enqueue: enq });
+    const relayDb = fakeDb({ crews: [crew()], messages: [relayed], dm: [DM] }); relayDb.channelOverride = { kind: 'dm' }; // 전달 표지는 DM 채널 종류에서만
+    await M.drain(WS, { db: relayDb, uid: OWNER, enqueue: enq });
     const job = jobsOf(enq).find((x) => x.msgId === 80);
     assert.ok(job); assert.equal(job.relayVia, ZED, '옮겨 적은 넘김의 크루'); assert.ok(!job.guest, '손님 턴으로 바뀌지 않는다(풀 오토만 끈다)');
     const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }];
@@ -2191,7 +2192,8 @@ test('DM 전달 손님 판정 — 넘긴 크루의 주인이 그 DM의 사람과
   for (const [owner, guest] of [[OTHER, true], [OWNER, false]]) {
     M._autoLogForTest.clear();
     const enq = fakeEnqueue();
-    await M.drain(WS, { db: fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드', owner_user_id: owner })], messages: [relayed(owner === OTHER ? 90 : 91)], dm: [DM] }), uid: OWNER, enqueue: enq });
+    const gdb = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드', owner_user_id: owner })], messages: [relayed(owner === OTHER ? 90 : 91)], dm: [DM] }); gdb.channelOverride = { kind: 'dm' };
+    await M.drain(WS, { db: gdb, uid: OWNER, enqueue: enq });
     const job = jobsOf(enq)[0];
     assert.ok(job, '적재');
     assert.equal(job.guest === true, guest, guest ? '다른 주인의 크루가 넘긴 전달은 손님 턴' : '같은 주인의 크루가 넘긴 전달은 주인 턴(풀 오토만 아님)');
@@ -2235,7 +2237,7 @@ test('독 글 — DM의 전달 표지라도 via_crew_id가 UUID가 아니면 조
   const DM = 'bbbbbbbb-0000-4000-8000-0000000000d4';
   M._autoLogForTest.clear();
   const m1 = msg(72, { channel_id: DM, author_user_id: OWNER, body: '@서윤 해 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }], meta: { relay: { source_id: 'abc', via_crew_id: 'not-a-uuid', via_name: '이상한' } } });
-  const db = fakeDb({ crews: [crew()], messages: [m1], dm: [DM] });
+  const db = fakeDb({ crews: [crew()], messages: [m1], dm: [DM] }); db.channelOverride = { kind: 'dm' };
   const before = db.crewOwner; db.crewOwner = async (id) => { if (!/^[0-9a-f-]{36}$/.test(String(id))) throw new Error('msgr db: invalid input syntax for type uuid'); return before.call(db, id); };
   const enq = fakeEnqueue();
   await M.drain(WS, { db, uid: OWNER, enqueue: enq });
@@ -2244,3 +2246,35 @@ test('독 글 — DM의 전달 표지라도 via_crew_id가 UUID가 아니면 조
   assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor').map((c) => c[2]), [72]);
 });
 
+
+// ── 확인 검수(feb2e230) MEDIUM: DM 판정은 미리 받은 DM 목록이 아니라 그 글의 채널 종류로 ──
+test('DM 판정 — 크루 DM 목록 조회(crewChannels)가 실패해도 다른 주인 크루의 전달 글은 손님 턴으로 남는다', async () => {
+  const OTHER = '55555555-5555-4555-8555-555555555555';
+  const DM = 'bbbbbbbb-0000-4000-8000-0000000000d5';
+  M._autoLogForTest.clear();
+  const relayed = msg(97, { channel_id: DM, author_user_id: OWNER, body: '@서윤 메일 보내 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }],
+    meta: { relay: { source_id: 96, role: 'to', via_crew_id: ZED, via_name: '제드', depth: 1, chain_id: 96 } } });
+  // 구성원 범위(crewScope)에는 DM이 있고, DM 목록(crewChannels) 조회만 실패한 상태
+  const db = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드', owner_user_id: OTHER })], messages: [relayed], dm: [DM] });
+  db.channelOverride = { kind: 'dm' };
+  db.crewChannels = async () => { throw new Error('network blip'); };
+  const errs = []; const ce = console.error; console.error = (...a) => errs.push(a.join(' '));
+  const enq = fakeEnqueue();
+  try { await M.drain(WS, { db, uid: OWNER, enqueue: enq }); } finally { console.error = ce; }
+  const j = jobsOf(enq)[0];
+  assert.ok(j, '적재');
+  assert.equal(j.relayVia, ZED, 'DM 목록 없이도 채널 종류로 전달 표지를 인정한다');
+  assert.equal(j.guest, true, '다른 주인 크루의 전달 = 손님');
+});
+
+test('DM 판정 — 글의 채널을 조회하지 못하면(순단) 커서를 올리지 않고 다음 틱에 다시 본다', async () => {
+  M._autoLogForTest.clear();
+  const m1 = msg(98, { author_user_id: OWNER, body: '@서윤 해 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }], meta: { relay: { via_crew_id: ZED } } });
+  const db = fakeDb({ crews: [crew()], messages: [m1] });
+  db.channel = async () => { throw new Error('network blip'); };
+  const errs = []; const ce = console.error; console.error = (...a) => errs.push(a.join(' '));
+  const enq = fakeEnqueue();
+  try { await M.drain(WS, { db, uid: OWNER, enqueue: enq }); } finally { console.error = ce; }
+  assert.equal(jobsOf(enq).length, 0, '확인되지 않은 채로 진행하지 않는다');
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor').map((c) => c[2]), [], '커서 보류');
+});
