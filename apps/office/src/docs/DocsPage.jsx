@@ -14,11 +14,11 @@ import { openMenu } from '../ui/Menu.jsx';
 import { useBusiness } from '../business/data.js';
 import { getCompanyInfo } from './company-info.js';
 import { backend } from './backend.js';
-import { emptyDoc, fromDeal, quoteToContract, won, isoDay } from './model.js';
+import { emptyDoc, fromDeal, fromCustomer, quoteToContract, won, isoDay } from './model.js';
 import { partyLabel, draftSigners, signedFilename, signedCount } from './esign-model.js';
 import { DocEditor } from './DocEditor.jsx';
 import { EsignSetup } from './EsignSetup.jsx';
-import { fileToDocStore } from './doc-store-bridge.js';
+import { fileToDocStore, hasDocStore } from './doc-store-bridge.js';
 import { mailAccounts, resendLink, sendCompletedNotice } from './esign-flow.js';
 import { DOC } from './doc-text.js';
 
@@ -45,7 +45,15 @@ export function useDocs(space) {
     try { const be = await backend(); setState({ data: await be.load(space), error: null }); }
     catch (e) { console.warn('[office docs] load', e); setState((s) => ({ data: s.data, error: e?.code === 'schema' ? 'docs.err.schema' : 'docs.err.load' })); }
   }, [space]);
-  useEffect(() => { reload(); const on = () => reload(); window.addEventListener('focus', on); window.addEventListener('office:docs-refresh', on); return () => { window.removeEventListener('focus', on); window.removeEventListener('office:docs-refresh', on); }; }, [reload]);
+  useEffect(() => {
+    reload();
+    // 다른 탭에서 서명이 끝났을 수 있어 창으로 돌아오면 다시 읽는다 — 30초에 한 번까지(읽기만, 폴링 없음)
+    let at = Date.now();
+    const onFocus = () => { if (Date.now() - at < 30_000) return; at = Date.now(); reload(); };
+    const onRefresh = () => reload();
+    window.addEventListener('focus', onFocus); window.addEventListener('office:docs-refresh', onRefresh);
+    return () => { window.removeEventListener('focus', onFocus); window.removeEventListener('office:docs-refresh', onRefresh); };
+  }, [reload]);
   return { ...state, reload };
 }
 
@@ -68,7 +76,7 @@ export default function DocsPage({ space, params }) {
 
   // 서명 완료를 처음 본 화면이 서명본을 문서함에 한 번 넣는다(트랙 B 문서함이 있을 때만 — markFiled로 한 번만)
   useEffect(() => {
-    if (!data || !canWrite) return;
+    if (!data || !canWrite || !hasDocStore()) return; // 문서함이 없는 판에서는 표시만 해 두지 않는다(병합 뒤 처음 보는 화면이 넣게)
     const todo = data.esign.filter((e) => e.status === 'completed' && !e.filed_at && e.final_path);
     if (!todo.length) return;
     (async () => {
@@ -97,7 +105,9 @@ export default function DocsPage({ space, params }) {
       const src = data.docs.find((d) => d.id === fromId);
       if (src?.input) return src.kind === newKind ? { ...emptyDoc(newKind), ...src.input, date: isoDay() } : quoteToContract(src.input);
     }
-    if (orderId && !bd) return undefined; // 업무 원장을 읽는 중
+    const customerId = params.get('customer');
+    if (customerId && bd) { const c = bd.customers.find((x) => x.id === customerId); if (c) return fromCustomer(newKind, c); }
+    if ((orderId || customerId) && !bd) return undefined; // 업무 원장을 읽는 중
     return emptyDoc(newKind);
   }, [newKind, params, business.data, data]);
 
@@ -161,7 +171,7 @@ export default function DocsPage({ space, params }) {
   // ── 작성 화면 ──
   if (newKind) return <section className="page-wrap wide docs-page">
     <header className="page-title-row"><div><button type="button" className="btn sm ghost docs-back" onClick={() => go(null)}><Icon name="back" size={13} />{t('docs.title')}</button><h1 className="page-h1">{t(newKind === 'contract' ? 'docs.new.contract' : 'docs.new.quote')}</h1></div></header>
-    {initial ? <DocEditor key={`${newKind}:${params.get('order') ?? ''}:${params.get('from') ?? ''}`} space={space} kind={newKind} initial={initial} business={business}
+    {initial ? <DocEditor key={`${newKind}:${params.get('order') ?? ''}:${params.get('from') ?? ''}:${params.get('customer') ?? ''}`} space={space} kind={newKind} initial={initial} business={business}
       onCancel={() => go(null)} onDone={(row, extra) => { setResult({ row, bytes: extra.bytes }); docs.reload(); business.refresh?.().catch?.(() => {}); go(null); }} /> : <p role="status">{t('biz.loading')}</p>}
   </section>;
 

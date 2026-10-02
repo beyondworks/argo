@@ -143,3 +143,4 @@
 .docs-form .input, .esign-side .input { background: var(--lift); }
 .docs-card .input, .docs-option[open] .input { background: var(--bg); }
 .esign-side .field-block > .btn, .esign-side .field-block > .chip { justify-self: start; }
+.esign-side > .docs-back { justify-self: start; }

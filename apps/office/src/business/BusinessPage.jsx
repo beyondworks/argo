@@ -203,7 +203,7 @@ export default function BusinessPage({ space, tab: requested = null, openId }) {
         {formError && <p className="bizui-error" role="alert">{t(formError)}</p>}
         {uncertain && <div className="bizui-error" role="alert"><p>{label('pending')}</p><button className="btn" disabled={busy} onClick={() => { setFormError(null); business.retryPending().catch(() => {}); }}>{label('retry')}</button></div>}
         {order && <DealDetail order={order} data={data} blocked={blocked} launch={launch} run={run} space={space} refresh={() => business.refresh().catch(() => {})} call={business.call} />}
-        {customer && <CustomerCard customer={customer} data={data} blocked={blocked} run={run} launch={launch} openOrder={openOrder} />}
+        {customer && <CustomerCard customer={customer} data={data} blocked={blocked} run={run} launch={launch} openOrder={openOrder} space={space} />}
         {item && <ItemCard item={item} data={data} blocked={blocked} launch={launch} openOrder={openOrder} />}
       </Peek>}
       {settings && <Modal open title={label('modules')} onClose={closeSettings} footer={<button type="button" className="btn" onClick={closeSettings}>{label('cancel')}</button>}>

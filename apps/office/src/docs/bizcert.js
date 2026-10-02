@@ -19,7 +19,8 @@ function grab(text, labelRe) {
 export function parseBizCert(text) {
   const t = String(text || '').replace(/\r/g, '');
   const bizNo = t.match(/\b\d{3}-\d{2}-\d{5}\b/)?.[0] ?? (() => { const d = t.match(/(?:등록\s*번호|사업자\s*번호)[\s:：]*(\d{3})\s*(\d{2})\s*(\d{5})/); return d ? `${d[1]}-${d[2]}-${d[3]}` : undefined; })();
-  const company = grab(t, /상\s*호\s*\(?\s*법?\s*인?\s*명?\s*\)?/);
+  // 개인사업자는 '상호', 법인사업자는 '법인명(단체명)'(오피스 추가 — 인트라넷은 법인 등록증의 상호를 못 읽었다)
+  const company = grab(t, /상\s*호\s*\(?\s*법?\s*인?\s*명?\s*\)?/) ?? grab(t, /법\s*인\s*명\s*(?:\(\s*단\s*체\s*명\s*\))?/);
   const ceo = grab(t, /성\s*명\s*\(?\s*대?\s*표?\s*자?\s*\)?|대\s*표\s*자/);
   const address = grab(t, /사업장\s*소?재?지?|사업장의?\s*소재지|소\s*재\s*지/);
   return {

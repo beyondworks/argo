@@ -127,6 +127,14 @@ export function fromDeal(kind, { order, customer, lines: orderLines = [] }, toda
   return doc;
 }
 
+/** 거래처에서 바로(거래처 카드) — 고객사·갑 칸을 거래처 정보로 */
+export function fromCustomer(kind, customer, today = isoDay()) {
+  const doc = emptyDoc(kind, today);
+  doc.customer = customer?.name ?? ''; doc.customerId = customer?.id ?? '';
+  if (kind === 'contract') doc.party = { company: customer?.name ?? '', bizNo: customer?.biz_no ?? '', ceo: customer?.ceo ?? '', address: customer?.address ?? '', contact: [customer?.manager, customer?.phone].filter(Boolean).join(' / '), email: customer?.email ?? '' };
+  return doc;
+}
+
 /** 다른 문서에서 이어 쓰기(견적서 → 계약서): 거래처·거래·항목·옵션을 그대로 */
 export function quoteToContract(quote, today = isoDay()) {
   const doc = emptyDoc('contract', today);

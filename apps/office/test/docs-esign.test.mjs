@@ -94,6 +94,7 @@ test('사업자등록증 글자 → 갑 칸(인트라넷 bizcert.ts): 번호·�
   const pdfLine = '등록번호 000 00 10002 상호 오름테크 성명 정오름 생년월일 1980-01-01\n사업장소재지 경기도 성남시 예시로 20 업태 정보통신업';
   const r = parseBizCert(pdfLine);
   assert.equal(r.company, '오름테크'); assert.equal(r.ceo, '정오름'); assert.equal(r.bizNo, '000-00-10002'); assert.equal(r.address, '경기도 성남시 예시로 20');
+  assert.equal(parseBizCert('등록번호 : 000-00-20001\n법인명(단체명) : 주식회사 새벽마켓\n대 표 자 : 최새벽').company, '주식회사 새벽마켓', '법인 등록증');
   assert.deepEqual(parseBizCert('상호\n' + '가'.repeat(41)), { company: undefined, bizNo: undefined, ceo: undefined, address: undefined });
 });
 
