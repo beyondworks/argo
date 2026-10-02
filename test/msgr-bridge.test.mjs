@@ -2081,3 +2081,54 @@ test('handler: 개인 방 턴(orgId null)은 조직 조회 없이 답한다 — 
   assert.ok(db.calls.some((x) => x[0] === 'insertMessage' && x[1].body === '네, 듣고 있어요.' && x[1].channel_id === PCH), '개인 방에 답이 올라가지 않았다');
   assert.equal(db.calls.some((x) => x[0] === 'org'), false, '조직이 없는 방에서 조직을 조회했다');
 });
+
+// ── 풀 오토(메신저): 사장이 정한 순서만 풀 오토, 크루가 넘긴 턴은 넘긴 크루를 잇는다(유건 결정 2026-10-03) ──
+test('drain: 사장 글의 순차 멘션(@A > @B)은 사장이 정한 순서 표지를 남기고, 크루 글의 넘김은 표지 없이 넘긴 크루를 남긴다', async () => {
+  M._autoLogForTest.clear();
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const relayRoot = msg(60, { author_user_id: OWNER, body: '@제드 > @서윤 차례로 정리해 줘', mentions: [{ kind: 'crew', id: ZED }, { kind: 'crew', id: CREW }] });
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db: fakeDb({ crews: [crew(), zed], messages: [relayRoot] }), uid: OWNER, enqueue: enq });
+  const j = jobsOf(enq).find((x) => x.msgId === 60);
+  assert.equal(j.ownerOrder, true, '사장이 정한 순서'); assert.equal(j.fromCrewId, null);
+  const root = msg(61, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: ZED }] });
+  const handoff = msg(62, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 61, reply_to: 61, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: OWNER } });
+  const enq2 = fakeEnqueue();
+  await M.drain(WS, { db: fakeDb({ crews: [crew(), zed], parent: (id) => (id === 61 ? root : null), messages: [handoff] }), uid: OWNER, enqueue: enq2 });
+  const h2 = jobsOf(enq2).find((x) => x.msgId === 62);
+  assert.equal(h2.fromCrewId, ZED); assert.ok(!h2.ownerOrder, '크루가 넘긴 턴은 사장이 정한 순서가 아니다');
+});
+
+test('handler: 풀 오토 회사 — 사장이 정한 순서의 턴은 커넥터 쓰기가 결재 없이, 크루가 넘긴 턴은 넘긴 크루를 잇고 결재로 간다', async () => {
+  const { startConnect, callConnectorTool, closeConnectorPools } = await import('../src/connectors.mjs');
+  const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
+  const { updateCompany } = await import('../src/workspace.mjs');
+  const s = await startOauthTestServer();
+  try {
+    const ID = 'demo-msgr-fa';
+    const { authUrl, done } = await startConnect(WS, { id: ID, url: s.mcpUrl, scopes: ['spike.read', 'spike.write'] });
+    { const r1 = await fetch(authUrl, { redirect: 'manual' }); await fetch(new URL(r1.headers.get('location'))); }
+    assert.equal((await done).ok, true, '사전 조건: 커넥터 연결');
+    await updateCompany(WS, { fullAuto: true });
+    const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }];
+    const run = async (job) => {
+      const seen = [];
+      const runChat = async (ws, slug, text, sid, opts) => {
+        // 크루가 커넥터로 쓰기를 시도한다 — 게이트는 핸들러가 만든 턴 문맥(mirrorCtx)만 보고 판정한다(실제 게이트)
+        const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: `${job.msgId}@example.com`, body: 'x' }, { slug, mirrorCtx: opts.mirrorCtx });
+        seen.push({ opts, r }); return { reply: 'ok', handover: null, sessionId: null, artifacts: [] };
+      };
+      await M.makeMsgrHandler(WS, { session: async () => ({ db: fakeDb({ peers }), uid: OWNER }), runChat })(job);
+      return seen[0];
+    };
+    const base = { orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', authorId: OWNER, replyTo: null, createdAt: new Date().toISOString(), origin: OWNER, after: [] };
+    const sent = () => s.counters.toolCalls.send_mail_demo ?? 0;
+    const b0 = sent();
+    const owner = await run({ ...base, msgId: 70, threadRoot: 70, text: '@제드 > @서윤 정리', hop: 0, fromCrewId: null, ownerOrder: true });
+    assert.equal(owner.r.ok, true, '사장이 정한 순서의 턴은 풀 오토로 바로 발송'); assert.equal(sent(), b0 + 1);
+    assert.ok(!owner.opts.from && !owner.opts.notOwnerDirect);
+    const crewTurn = await run({ ...base, msgId: 71, threadRoot: 70, text: '@서윤 이어서', hop: 1, rootAuthor: OWNER, fromCrewId: ZED });
+    assert.equal(crewTurn.r.error, 'approval_pending', '크루가 넘긴 턴은 결재로'); assert.equal(sent(), b0 + 1, '발송이 서버에 닿지 않았다');
+    assert.equal(crewTurn.opts.notOwnerDirect, 'zed', '넘긴 크루를 잇는다(풀 오토만 끄는 표지 — 출처·프롬프트는 그대로)'); assert.equal(crewTurn.opts.mirrorCtx.handoffFrom, ZED, '후속 실행으로 옮겨 타도 남는 표지');
+  } finally { await updateCompany(WS, { fullAuto: false }); await closeConnectorPools(); await s.close(); }
+});

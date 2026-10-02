@@ -28,7 +28,7 @@ const srv = http.createServer((req, res) => {
     const system = typeof body.system === 'string' ? body.system : JSON.stringify(body.system ?? '');
     if (!(body.tools ?? []).length) return textReply(res, 'title');
     const who = (/페르소나-([A-D])-마커/.exec(system)?.[1] ?? '?').toLowerCase();
-    reqs.push({ who, messages: JSON.stringify(body.messages ?? []) });
+    reqs.push({ who, sys: system, messages: JSON.stringify(body.messages ?? []) });
     const fire = plan[who] && !firedBy.has(who) ? plan[who] : null;
     if (fire) {
       firedBy.add(who);
@@ -113,7 +113,7 @@ test('장시간 작업 — 위임 턴에서 건 작업은 시작한 크루를 fr
   const seen = [];
   const handler = _makeJobHandlerForTest(ws, { runChat: async (w, slug, prompt, sid, opts) => { seen.push(opts); return { reply: 'ok', sessionId: null }; } });
   await handler({ ...fromDeleg, tries: 0 }); await handler({ ...direct, tries: 0 });
-  assert.equal(seen[0].from, 'a'); assert.ok(!seen[1].from);
+  assert.equal(seen[0].notOwnerDirect, 'a'); assert.ok(!seen[0].from, '작업 턴의 출처(turnSource·프롬프트)는 그대로 — 풀 오토만 끈다(LOW-5)'); assert.ok(!seen[1].notOwnerDirect);
 });
 
 test('결재 후속 턴 — 사장 직접 턴이 아닌 턴에서 올린 결재의 후속은 그 크루를 from·chain으로 이어받는다', async () => {
@@ -121,6 +121,96 @@ test('결재 후속 턴 — 사장 직접 턴이 아닌 턴에서 올린 결재�
   const runChat = async (w, slug, msg, sid, opts) => { seen.push(opts); return { reply: 'ok', sessionId: null }; };
   await _followUpForTest(ws, { id: 'ap1', slug: 'b', from: 'a', kind: 'action', action: '메일 발송', status: 'approved' }, true, { runChat });
   await _followUpForTest(ws, { id: 'ap2', slug: 'b', kind: 'action', action: '메일 발송', status: 'approved' }, true, { runChat });
-  assert.equal(seen[0].from, 'a'); assert.deepEqual(seen[0].chain, ['a']);
-  assert.ok(!seen[1].from, '사장 직접 턴에서 올린 결재의 후속은 그대로');
+  assert.equal(seen[0].notOwnerDirect, 'a'); assert.ok(!seen[0].from && !seen[0].chain, '후속 턴의 출처(turnSource·프롬프트)는 그대로 — 풀 오토만 끈다(LOW-5)');
+  assert.ok(!seen[1].notOwnerDirect, '사장 직접 턴에서 올린 결재의 후속은 그대로');
 });
+
+// ── 루틴: 사장 직접 턴에서 만든 것만 풀 오토(유건 결정 2026-10-03) ──
+const routinesMod = await import('../src/routines.mjs');
+const { addRoutine, runRoutine, loadRoutines, updateRoutine } = routinesMod;
+
+test('루틴 — 사장이 만든 루틴은 결재 없이, 출처(from)가 있는 루틴은 결재로, 출처 필드가 없는 옛 루틴은 종전대로 결재 없이', async () => {
+  const owner = await addRoutine(ws, { agentSlug: 'a', title: '사장 루틴', prompt: '메일 보내', schedule: { type: 'daily', time: '09:00' } });
+  const crewMade = await addRoutine(ws, { agentSlug: 'a', title: '크루 루틴', prompt: '메일 보내', schedule: { type: 'daily', time: '09:00' }, from: 'b' });
+  assert.equal(crewMade.from, 'b', '출처를 기록한다');
+  // 옛 루틴 — from 필드 자체가 없는 기록(이 변경 전 버전이 쓴 파일 그대로)
+  const { writeFile: wf } = await import('node:fs/promises');
+  const all = await loadRoutines(ws);
+  const legacy = { ...all.find((r) => r.id === owner.id), id: 'rlegacy', title: '옛 루틴' };
+  delete legacy.from;
+  await wf(p.routines, JSON.stringify([...all, legacy], null, 2));
+  for (const [id, expectSent] of [[owner.id, true], [crewMade.id, false], ['rlegacy', true]]) {
+    reset({ a: SEND(`${id}@example.com`) });
+    const before = sent(); const apBefore = (await loadApprovals(ws)).length;
+    await runRoutine(ws, id);
+    assert.equal(sent() - before, expectSent ? 1 : 0, `${id}: 발송 여부`);
+    assert.equal((await loadApprovals(ws)).length - apBefore, expectSent ? 0 : 1, `${id}: 결재 여부`);
+  }
+});
+
+test('루틴 — schedule_task: 위임 턴에서 만들면 위임한 크루를, 사장 직접 턴이면 출처 없음을 기록한다', async () => {
+  const SCHED = (title) => ({ name: 'mcp__crew__schedule_task', input: { title, prompt: '나중에 메일', type: 'daily', time: '10:00' } });
+  reset({ a: { name: 'mcp__crew__delegate', input: { to: 'b', task: '예약 걸어 줘' } }, b: SCHED('위임 예약') });
+  await chat(ws, 'a', '맡겨', null, {});
+  reset({ a: SCHED('직접 예약') });
+  await chat(ws, 'a', '예약해', null, {});
+  const rs = await loadRoutines(ws);
+  assert.equal(rs.find((r) => r.title === '위임 예약')?.from, 'a');
+  assert.ok(rs.find((r) => r.title === '직접 예약') && !rs.find((r) => r.title === '직접 예약').from);
+});
+
+test('루틴 — 고쳐 써도(사람 편집) 출처가 지워지지 않고, 사장 직접 턴이 아닌 턴이 다시 켜면 출처가 그 크루로 바뀐다', async () => {
+  const r = await addRoutine(ws, { agentSlug: 'a', title: '편집 대상', prompt: 'x', schedule: { type: 'daily', time: '09:00' }, from: 'b' });
+  const edited = await updateRoutine(ws, r.id, { title: '편집됨', from: null, enabled: false });
+  assert.equal(edited.from, 'b', '편집(API·화면)으로 출처를 지울 수 없다');
+  const o = await addRoutine(ws, { agentSlug: 'a', title: '사장 것', prompt: 'x', schedule: { type: 'daily', time: '09:00' }, enabled: false });
+  reset({ b: { name: 'mcp__crew__cancel_routine', input: { id: o.id, action: 'on' } } });
+  await crewmailTurn(ws, 'b', { id: 'm2', from: 'a', fromName: '알파', kind: 'to', message: '예약 켜 줘', hop: 1, chain: ['a'] }, { from: 'a', hop: 1, chain: ['a'] });
+  const after = (await loadRoutines(ws)).find((x) => x.id === o.id);
+  assert.equal(after.enabled, true);
+  assert.equal(after.from, 'a', '쪽지 턴(위임 사슬 a)에서 켠 루틴은 출처가 a가 된다 — 풀 오토로 돌지 않는다');
+});
+
+// ── 통합본 재검수(rev3) ──
+test('LOW-7 — 사장 직접 턴의 A가 B에게 장시간 작업·예약을 걸면 A의 위임(from=a), 자기 자신이면 사장 직접', async () => {
+  const jobs = async () => { try { return await Promise.all((await readdir(queueDir(ws, JOBS_QUEUE))).filter((n) => n.endsWith('.json')).map(async (n) => JSON.parse(await readFile(join(queueDir(ws, JOBS_QUEUE), n), 'utf8')))); } catch { return []; } };
+  reset({ a: { name: 'mcp__crew__start_long_task', input: { title: 'B에게 긴 일', prompt: '메일 보내', agentSlug: 'b' } } });
+  await chat(ws, 'a', 'B에게 긴 일 걸어', null, {});
+  assert.equal((await jobs()).find((j) => j.title === 'B에게 긴 일')?.from, 'a');
+  reset({ a: { name: 'mcp__crew__schedule_task', input: { title: 'B에게 예약', prompt: 'x', type: 'daily', time: '11:00', agentSlug: 'b' } } });
+  await chat(ws, 'a', 'B에게 예약 걸어', null, {});
+  assert.equal((await loadRoutines(ws)).find((r) => r.title === 'B에게 예약')?.from, 'a');
+});
+
+test('MEDIUM-2 — CLI 지시 블록의 결재와 커넥터 결재도 출처(위임 사슬의 크루)를 남긴다', async () => {
+  const { runDirectives } = await import('../src/cli-directives.mjs');
+  const before = (await loadApprovals(ws)).length;
+  await runDirectives(ws, 'b', [{ action: 'approval', request: '메일 발송', reason: '보고' }], { chain: ['a'], hop: 1 });
+  const { callConnectorTool } = await import('../src/connectors.mjs');
+  const r = await callConnectorTool(ws, ID, 'send_mail_demo', { to: 'x@example.com', body: 'x' }, { slug: 'b', fullAuto: false, from: 'a' });
+  assert.equal(r.error, 'approval_pending');
+  const added = (await loadApprovals(ws)).slice(before);
+  assert.equal(added.length, 2);
+  assert.deepEqual(added.map((x) => x.from), ['a', 'a'], 'CLI 지시 블록·커넥터 결재 모두 from=a');
+});
+
+test('LOW-5 — 풀 오토 표지는 모델에게 가는 글을 바꾸지 않는다(풀 오토 꺼진 회사에서 표지 있음/없음 비교: 결재 후속·장시간 작업·루틴)', async () => {
+  const { resetThread } = await import('../src/thread.mjs');
+  await updateCompany(ws, { fullAuto: false });
+  try {
+    const capture = async (fn) => { await resetThread(ws, 'b'); reset({}); await fn(); const b = reqs.filter((x) => x.who === 'b'); return b.map((x) => [x.sys, x.messages]); };
+    const pairs = [
+      [() => _followUpForTest(ws, { id: 'cmp1', slug: 'b', from: 'a', kind: 'action', action: '메일 발송', status: 'approved' }, true), () => _followUpForTest(ws, { id: 'cmp1', slug: 'b', kind: 'action', action: '메일 발송', status: 'approved' }, true)],
+      [() => _makeJobHandlerForTest(ws)({ id: 'cj', slug: 'b', title: '긴 일', prompt: '같은 지시', tries: 0, from: 'a' }), () => _makeJobHandlerForTest(ws)({ id: 'cj', slug: 'b', title: '긴 일', prompt: '같은 지시', tries: 0 })],
+    ];
+    const rt = await addRoutine(ws, { agentSlug: 'b', title: '비교 루틴', prompt: '같은 지시', schedule: { type: 'daily', time: '08:00' }, from: 'a' });
+    const rt2 = await addRoutine(ws, { agentSlug: 'b', title: '비교 루틴', prompt: '같은 지시', schedule: { type: 'daily', time: '08:00' } });
+    pairs.push([() => runRoutine(ws, rt.id), () => runRoutine(ws, rt2.id)]);
+    for (const [withFlag, without] of pairs) {
+      const x = await capture(withFlag); const y = await capture(without);
+      assert.ok(x.length && y.length, '턴이 돌았다');
+      assert.deepEqual(x, y, '표지가 있어도 시스템 프롬프트·메시지가 같다');
+    }
+  } finally { await updateCompany(ws, { fullAuto: true }); }
+});
+

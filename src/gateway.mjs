@@ -66,8 +66,8 @@ function makeJobHandler(wsId, { runChat = chat, session } = {}) {
     try {
       const prompt = `[장시간 작업: ${title}] ${job.prompt}`;
       const t = job.msgr
-        ? await runMessengerContinuation(wsId, slug, job.msgr, prompt, null, { runChat, session })
-        : await runChat(wsId, slug, prompt, null, { source: 'job', ...(job.from ? { from: job.from, chain: [job.from] } : {}), ...await briefingCtx(wsId, 'job', slug).then((c) => (c ? { mirrorCtx: c } : {})) }); // 결과가 공유 목적지로 나가면 그 범위 맥락만. from = 사장 직접 턴이 아닌 턴에서 건 작업(풀 오토 아님)
+        ? await runMessengerContinuation(wsId, slug, job.msgr, prompt, null, { runChat, session, ...(job.from ? { notOwnerDirect: job.from } : {}) }) // 메신저 작업도 같은 규칙(통합본 재검수 LOW-7)
+        : await runChat(wsId, slug, prompt, null, { source: 'job', ...(job.from ? { notOwnerDirect: job.from } : {}), ...await briefingCtx(wsId, 'job', slug).then((c) => (c ? { mirrorCtx: c } : {})) }); // 결과가 공유 목적지로 나가면 그 범위 맥락만. from = 사장 직접 턴이 아닌 턴에서 건 작업(풀 오토 아님)
       await appendTurn(wsId, slug, {
         userMsg: `${jobHead(lang)}${title}`,
         reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job', artifacts: t.artifacts, contextScope: t.contextScope,

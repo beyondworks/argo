@@ -242,7 +242,7 @@ export async function resumeLoop(wsId, id) {
     곧 사용자의 시간대다(한국 사용자면 Asia/Seoul). 클라이언트가 tz를 보내면 그쪽이 우선. */
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
-export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null, notifications }) {
+export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null, notifications, from = null }) { // from = 사장 직접 턴이 아닌 턴(또는 다른 크루에게 건 예약)의 시작점 크루 — 실행 턴이 풀 오토가 아니다
   if (!agentSlug || !title?.trim() || !prompt?.trim()) throw new Error('크루·제목·지시가 필요합니다');
   if (msgr && msgr.wsId !== wsId) throw new Error('메신저 예약 회사 불일치');
   const destinations = await validateRoutineNotifications(wsId, agentSlug, notifications);
@@ -265,6 +265,8 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
     ...(sched.type === 'interval' && loop ? { loop: normalizeLoop(loop) } : {}),
     ...(ver ? { verify: ver } : {}),
     ...(msgr ? { msgr: (await import('./gateway/msgr-handoff.mjs')).messengerOrigin({ ...msgr, kind: 'msgr' }) } : {}),
+    // 출처 — 있으면 실행 때 notOwnerDirect로 잇는다(풀 오토 아님). 없으면(사장이 만든 것·사장 직접 턴에서 자기 일로 만든 것·이 필드 전의 옛 루틴) 종전대로
+    ...(typeof from === 'string' && from ? { from } : {}),
   };
   return lockRoutines(wsId, async () => {
     const routines = await loadRoutines(wsId);
@@ -300,7 +302,8 @@ export function sanitizeRoutinePatch(patch = {}) {
   return out;
 }
 
-export async function updateRoutine(wsId, id, patch) {
+/** opts.from — 사장 직접 턴이 아닌 턴이 고칠 때(cancel_routine의 다시 켜기) 그 크루로 출처를 바꾼다. 사람 편집(API·화면)은 출처를 지우거나 바꾸지 않는다(화이트리스트 밖). */
+export async function updateRoutine(wsId, id, patch, { from = null } = {}) {
   const clean = sanitizeRoutinePatch(patch);
   if ('notifications' in clean || 'agentSlug' in clean) {
     const before = (await loadRoutines(wsId)).find((r) => r.id === id);
@@ -312,7 +315,7 @@ export async function updateRoutine(wsId, id, patch) {
     if (changed) await validateRoutineNotifications(wsId, clean.agentSlug ?? before.agentSlug, next);
   }
   const r = await patchRoutine(wsId, id, (cur) => {
-    const out = { ...clean, editedAt: new Date().toISOString() }; // 사람 편집 경로(H1) — patchRoutine 자체는 더 이상 이 값을 안 찍는다
+    const out = { ...clean, editedAt: new Date().toISOString(), ...(typeof from === 'string' && from ? { from } : {}) }; // 사람 편집 경로(H1) — patchRoutine 자체는 더 이상 이 값을 안 찍는다
     const nextSched = out.schedule ?? cur.schedule;
     if ('verify' in out) out.verify = nextSched?.type === 'interval' ? null : normalizeVerify(out.verify);
     else if (nextSched?.type === 'interval' && cur.verify) out.verify = null; // interval로 바꾸면 기존 조건도 비운다
@@ -375,11 +378,11 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
   try {
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
     const run = r0.msgr
-      ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session, loopTurn: loop }) // loopTurn — 채널 글에서 판정 표지를 넘김 줄 앞에서 뺀다
+      ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session, loopTurn: loop, ...(r0.from ? { notOwnerDirect: r0.from } : {}) }) // loopTurn — 채널 글에서 판정 표지를 넘김 줄 앞에서 뺀다
       : async (message) => {
         // 결과가 공유 목적지(슬랙 채널·텔레그램 그룹·메신저 채널)로 나가면 그 범위 맥락만 — 주인 대화를 붙이지 않는다(gateway briefingCtx, 동적 임포트 = 순환 차단)
         const destCtx = await (await import('./gateway.mjs')).briefingCtx(wsId, 'routine', r0.agentSlug, { notifications: r0.notifications });
-        return chat(wsId, r0.agentSlug, message, null, { source: 'routine', ...(destCtx ? { mirrorCtx: destCtx } : {}) });
+        return chat(wsId, r0.agentSlug, message, null, { source: 'routine', ...(destCtx ? { mirrorCtx: destCtx } : {}), ...(r0.from ? { notOwnerDirect: r0.from } : {}) }); // 출처 있는 루틴 = 풀 오토 아님(출처·프롬프트는 그대로)
       };
     // 완료 조건 저장값 정규화는 chat **전** — 오염된 저장값이면 LLM 비용을 쓰기 전에 실패하고,
     // 사유에 루틴 제목을 붙여 어느 설정 문제인지 드러낸다(검수 LOW-2).
