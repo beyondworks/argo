@@ -1371,6 +1371,7 @@ export const DICT = {
   'phone.set.server.sub': ['{name} · 에이전트가 일하는 서버', '{name} · the server your agents run on'],
   'phone.set.notify.scope': ['메시지·멘션·결재 알림이 여기 설정을 따릅니다.', 'Message, mention and approval notifications follow these settings.'],
   'phone.mem.sort': ['기억 폴더 정렬', 'Sort memory folders'],
+  'phone.mem.settings': ['기억 설정', 'Memory settings'],
   'phone.mem.sort.name': ['이름순', 'By name'],
   'phone.mem.sort.recent': ['최근순', 'Recent'],
   'agentcard.title': ['에이전트 카드', 'Agent card'],

@@ -24,6 +24,17 @@ export function pickChannelOrg({ saved = null, last = null, orgIds = [] } = {}) 
   return orgIds[0] ?? null;
 }
 
+/** 공간이 바뀐 뒤 기억할 채널·기억 탭 조직 — 조직 공간에 들어가면 그 조직, 개인 공간·없음이면 그대로(두 탭이 같은 값을 쓴다) */
+export function savedOrgAfter(saved, orgId, personal) {
+  return orgId && orgId !== personal ? orgId : saved;
+}
+
+/** 머리 조직 메뉴 항목(유건 3차 피드백 2026-10-02) — 채널 탭은 조직 일 전체, 기억 탭은 조직 고르기 + 기억 설정만 */
+export function orgMenuItems(tab, { admin = false } = {}) {
+  if (tab === 'memory') return ['orgs', 'memory-settings'];
+  return ['orgs', 'joinable', 'deleted', 'join', ...(admin ? ['invite', 'org-settings'] : [])];
+}
+
 /** 처음 여는 탭 — 마지막 공간이 (아직 있는) 조직이면 채널, 개인 공간이거나 처음이면 채팅 */
 export function startTab({ last = null, personal, orgIds = [] } = {}) {
   return last && last !== personal && orgIds.includes(last) ? 'channels' : 'chats';

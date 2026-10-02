@@ -49,7 +49,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
-import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
@@ -877,7 +877,7 @@ function Shell({ session }) {
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
   const ROOT_ORDER = PHONE_TABS; // 아래 탭 순서 — 전환 애니메이션 방향의 기준
-  const pickRoot = (k) => { setTabQ(null); setPage(k); }; // 아래 탭 선택 — 탭 안 검색은 탭을 옮기면 닫는다. 공간(개인·조직)은 아래 '탭별 공간 맞추기'가 맞춘다
+  const pickRoot = (k) => { setTabQ(null); setOrgMenu(false); setChPlus(false); setPage(k); }; // 아래 탭 선택 — 탭 안 검색·머리 메뉴는 탭을 옮기면 닫는다(기억 탭 메뉴가 채널 탭 메뉴로 바뀌어 남지 않게). 공간(개인·조직)은 아래 '탭별 공간 맞추기'가 맞춘다
   const [pageAnim, setPageAnim] = useState(null); const animSeq = useRef(0); const animTimer = useRef(null); // 연속 전환마다 새 값·a/b 변형으로 CSS 애니메이션이 재시작(검수 M-2) // 폰 화면 전환 애니메이션 종류(push·pop·tab, 260ms 뒤 해제 — 유건 2026-09-15 "탭 이동도 부드럽게")
   const [swipeTo, setSwipeTo] = useState(null); // 스와이프 뒤로가기 중 밑에 깔 루트 — DM이면 레일을 미리 DM 탭 모양으로 그린다(깜빡임 제보 2026-09-15)
   const edgeEnabled = isPhone && !isPhoneRoot(page);
@@ -1304,7 +1304,7 @@ function Shell({ session }) {
   const [chOrgSaved, setChOrgSaved] = useState(() => { try { return localStorage.getItem(PHONE_ORG_KEY); } catch { return null; } });
   const orgIdList = useMemo(() => (orgs ?? []).map((o) => o.id), [orgs]);
   const chOrg = pickChannelOrg({ saved: chOrgSaved, last: readLastOrg(), orgIds: orgIdList });
-  useEffect(() => { if (!orgId || orgId === PERSONAL || orgId === chOrgSaved) return; setChOrgSaved(orgId); try { localStorage.setItem(PHONE_ORG_KEY, orgId); } catch { /* 저장 못 해도 이번 세션은 그대로 */ } }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (savedOrgAfter(chOrgSaved, orgId, PERSONAL) === chOrgSaved) return; setChOrgSaved(orgId); try { localStorage.setItem(PHONE_ORG_KEY, orgId); } catch { /* 저장 못 해도 이번 세션은 그대로 */ } }, [orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   // 탭별 공간 맞추기 — 탭에 들어갈 때(그리고 조직 목록을 처음 받았을 때) 한 번만 본다. 공간이 바뀌어도 다시 보지 않는다:
   // 알림을 눌러 다른 공간의 대화를 여는 길(decideNav 'switch')이 채팅 탭 위에서 조직으로 바꿔도 되돌리지 않게.
   const spaceCheck = useRef('');
@@ -2215,18 +2215,19 @@ function Shell({ session }) {
   const chChannelsShown = tabSearch(chChannels, tabQText, (c) => [c.name, c.topic, rowOf(c).preview]);
   const chTalksShown = tabSearch(chTalks, tabQText, (c) => [dmBaseName(c), rowOf(c).preview]);
   const otherOrgsUnread = (orgs ?? []).filter((o) => o.id !== chOrg).reduce((a, o) => ({ n: a.n + (spaceCount(o.id)?.n || 0), mention: a.mention + (spaceCount(o.id)?.mention || 0) }), { n: 0, mention: 0 });
-  const orgMenuPop = orgMenu && (<>
+  const orgMenuPop = orgMenu && ((items) => (<>
     <div className="msgr-scrim clear ph-scrim" onClick={() => setOrgMenu(false)} role="presentation" />
     <div className="msgr-menu-pop ph-pop ph-orgpop" role="menu" aria-label={t('phone.org.switch')}>
-      {(orgs ?? []).map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === chOrg} className={o.id === chOrg ? 'on' : ''} onClick={() => { setOrgMenu(false); setTabQ(null); if (o.id !== orgId) setOrgId(o.id); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span><SpaceBadge c={spaceCount(o.id)} /></button>)}
-      {joinable.map((o) => <button key={`j-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); joinDomain(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}
-      {deletedOrgs.map((o) => <button key={`d-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); restoreOrg(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}
+      {(orgs ?? []).map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === chOrg} className={o.id === chOrg ? 'on' : ''} onClick={() => { setOrgMenu(false); setTabQ(null); if (o.id !== orgId) setOrgId(o.id); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span>{items.includes('joinable') && <SpaceBadge c={spaceCount(o.id)} />}</button>)}
+      {items.includes('joinable') && joinable.map((o) => <button key={`j-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); joinDomain(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}
+      {items.includes('deleted') && deletedOrgs.map((o) => <button key={`d-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); restoreOrg(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}
       {(orgs ?? []).length > 0 && <div className="sep" />}
-      {orgJoinForms(true)}
-      {onOrgTab && isAdmin && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); orgInvite(); }}><span className="msgr-av sm ghost"><I name="personplus" size={13} /></span><span className="label">{t('phone.org.invite')}</span></button>}
-      {onOrgTab && isAdmin && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); openSettings('org'); }}><span className="msgr-av sm ghost"><I name="gear" size={13} /></span><span className="label">{t('phone.org.settings')}</span></button>}
+      {items.includes('join') && orgJoinForms(true)}
+      {items.includes('invite') && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); orgInvite(); }}><span className="msgr-av sm ghost"><I name="personplus" size={13} /></span><span className="label">{t('phone.org.invite')}</span></button>}
+      {items.includes('org-settings') && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); openSettings('org'); }}><span className="msgr-av sm ghost"><I name="gear" size={13} /></span><span className="label">{t('phone.org.settings')}</span></button>}
+      {items.includes('memory-settings') && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); openSettings(null, 'memory'); }}><span className="msgr-av sm ghost"><I name="gear" size={13} /></span><span className="label">{t('phone.mem.settings')}</span></button>}
     </div>
-  </>);
+  </>))(orgMenuItems(rootTab, { admin: onOrgTab && !!isAdmin }));
   const chPlusPop = chPlus && (<>
     <div className="msgr-scrim clear ph-scrim" onClick={() => setChPlus(false)} role="presentation" />
     <div className="msgr-menu-pop ph-pop ph-pluspop" role="menu" aria-label={t('phone.ch.add')}>
