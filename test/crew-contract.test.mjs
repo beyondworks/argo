@@ -58,6 +58,10 @@ const CONTRACT = {
   office_people_read: { pending: '다음 단계 — 외부 에이전트(봇) 직원 명부 읽기. 메모는 관리자만이라 봇 응답 범위를 정해야 한다' },
   office_perf_eval_list: { pending: '다음 단계 — 외부 에이전트(봇) 평가 레포트 읽기. 사람 대상은 본인·관리자만이라 봇 권한 범위부터' },
   office_perf_eval_write: { pending: '다음 단계 — 외부 에이전트(봇) 평가 쓰기(헤르메스 페퍼 루틴 이관). 관리자 판정과 crew 표시를 봇 토큰에 맞춘다' },
+  // 오피스 문서함·드라이브(에이전트 office_files 도구, 분리 검수 MEDIUM 4) — Argo 크루는 주인의 기기 세션으로 부른다(src/gateway/office-files.mjs)
+  office_file_list: { pending: '다음 단계 — 외부 에이전트(봇) 문서함 검색. 봇 토큰으로 조직 문서함을 읽는 범위(손님 방·통장사본 가림)부터 정한다' },
+  office_file_get: { pending: '다음 단계 — 외부 에이전트(봇) 문서함 한 건 읽기. 통장사본 글자는 주인 1:1에서만이라 봇 응답 범위를 정해야 한다' },
+  office_file_write: { pending: '다음 단계 — 외부 에이전트(봇) 문서함 올리기(자리 → Storage → 등록). 봇은 주인 JWT가 없어 Storage 올리기 경로부터 정한다' },
   // Argo PC 전용
   msgr_create_channel: { argoOnly: '크루 1:1 방은 메신저 앱이 만든다 — 봇 1:1 방도 사람이 앱에서 연다' },
   msgr_crew_requests: { argoOnly: 'Argo PC가 크루를 새로 만드는 영입 요청 — 외부 에이전트는 서버 연결(connect) 절차로 추가한다' },
@@ -68,7 +72,7 @@ const CONTRACT = {
   msgr_notification_finish: { argoOnly: 'Argo 데스크톱 알림 경로' },
 };
 // 다음 단계로 미룬 항목 — 늘리거나 줄일 때 이 목록을 같이 고친다(조용히 늘지 않게).
-const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write'];
+const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_file_get', 'office_file_list', 'office_file_write', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write'];
 
 function gatewayCalls() {
   const dir = root('src/gateway');

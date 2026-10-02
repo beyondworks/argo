@@ -20,9 +20,22 @@ const real = { ...companyDeps };
 after(() => Object.assign(companyDeps, real));
 const msgrCtx = (extra = {}) => ({ kind: 'msgr', chatType: 'group', channelKind: 'public', orgId: ORG, channelId: 'ch-1', crewId: 'crew-1', uid: ME, wsId: 'w', origin: ME, ...extra });
 const items = [{ id: 'i1', category: 'basic', label: '상호', value: '(주)A', key: 'name', notes: '', position: 0, redacted: false }, { id: 'i2', category: 'bank', label: '계좌', value: '국민 1', key: null, notes: '견적용', position: 0, redacted: true }];
-function fake({ error = null, uid = ME } = {}) {
+// 채널 참여자(사람)·조직 역할 — 대화를 누가 보는지 판정(MEDIUM 3). members: 채널 사람 id, roles: { id: 역할 }
+const DM = (extra = {}) => msgrCtx({ channelKind: 'dm', channelId: 'dm-1', ...extra });
+const PRIV = (extra = {}) => msgrCtx({ channelKind: 'private', channelId: 'pv-1', ...extra });
+function table(rows) {
+  const q = { filters: [], select() { return q; }, eq(k, v) { q.filters.push((r) => r[k] === v); return q; }, in(k, vs) { q.filters.push((r) => vs.includes(r[k])); return q; }, is(k, v) { q.filters.push((r) => (r[k] ?? null) === v); return q; },
+    then(ok, no) { return Promise.resolve({ data: rows.filter((r) => q.filters.every((f) => f(r))), error: null }).then(ok, no); } };
+  return q;
+}
+function fake({ error = null, uid = ME, members = { 'dm-1': [ME], 'pv-1': [ME, 'm2'] }, roles = { [ME]: 'owner', m2: 'member' } } = {}) {
   const calls = [];
-  const client = { rpc: async (name, args) => {
+  const client = { from: (t) => {
+    calls.push({ name: `from:${t}` });
+    if (t === 'msgr_channel_members') return table(Object.entries(members).flatMap(([ch, ids]) => ids.map((id) => ({ channel_id: ch, member_kind: 'user', member_id: id }))));
+    if (t === 'msgr_org_members') return table(Object.entries(roles).map(([id, role]) => ({ org_id: ORG, user_id: id, role, removed_at: null })));
+    return table([]);
+  }, rpc: async (name, args) => {
     calls.push({ name, args });
     if (error) return { data: null, error: { message: error } };
     if (name === 'office_company_read') return { data: { role: 'manager', items, deleted: [] }, error: null };
@@ -49,8 +62,8 @@ test('O1. 메신저 조직 채널이 아니거나·위임 턴·주인 아닌 로
 test('O2. company는 그 조직 회사 정보를 id와 함께, company_set은 id로 고치거나 새로 추가(서식 칸·분류 검사)', async () => {
   const calls = fake();
   const out = await run({ action: 'company' });
-  assert.match(out, /상호 = \(주\)A · key=name · id=i1/); assert.equal(calls[0].args.p_org, ORG);
-  const upd = await run({ action: 'company_set', id: 'i2', value: '신한 2' });
+  assert.match(out, /상호 = \(주\)A · key=name · id=i1/); assert.equal(calls.find((c) => c.name === 'office_company_read').args.p_org, ORG);
+  const upd = await run({ action: 'company_set', id: 'i2', value: '신한 2' }, { ctx: DM() });
   assert.match(upd, /고쳤다/);
   const w = calls.find((c) => c.name === 'office_company_write').args.p_data;
   assert.deepEqual([w.id, w.label, w.value, w.category, w.notes, w.redacted], ['i2', '계좌', '신한 2', 'bank', '견적용', true], '안 준 칸은 기존 값 유지');
@@ -68,10 +81,10 @@ test('O3. people은 메모를 싣지 않고, 기본은 재직자만', async () =
 
 test('O4. evals는 지금 판만, eval_add는 정해진 기간 모양·crew 표시로 쓴다', async () => {
   const calls = fake();
-  const list = await run({ action: 'evals', scope: 'month' });
+  const list = await run({ action: 'evals', scope: 'month' }, { ctx: DM() });
   assert.match(list, /월간 · 종합 81/); assert.doesNotMatch(list, /옛 판/);
-  assert.match(await run({ action: 'eval_add', scope: 'month', subject_kind: 'person' }), /subject_user/);
-  const ok = await run({ action: 'eval_add', scope: 'week', period_day: '2026-09-10', subject_kind: 'person', subject_user: 'u1', title: '주간', performance: 90 });
+  assert.match(await run({ action: 'eval_add', scope: 'month', subject_kind: 'person' }, { ctx: DM() }), /subject_user/);
+  const ok = await run({ action: 'eval_add', scope: 'week', period_day: '2026-09-10', subject_kind: 'person', subject_user: 'u1', title: '주간', performance: 90 }, { ctx: DM() });
   assert.match(ok, /2026-09-07~2026-09-13/);
   const d = calls.find((c) => c.name === 'office_perf_eval_write').args.p_data;
   assert.deepEqual([d.from, d.to, d.crew, d.subject_kind, d.performance, d.quality], ['2026-09-07', '2026-09-13', 'pepper', 'person', 90, null]);
@@ -83,7 +96,39 @@ test('O5. 서버 거절은 원인을 한 줄로(삼키지 않는다)', async () 
   fake({ error: 'company_forbidden' });
   assert.match(await run({ action: 'company_set', label: '팩스' }), /조직 관리자만/);
   fake({ error: 'perf_period' });
-  assert.match(await run({ action: 'eval_add', scope: 'year', subject_kind: 'crew', subject_name: '루나', title: 't' }), /기간 모양/);
+  assert.match(await run({ action: 'eval_add', scope: 'year', subject_kind: 'crew', subject_name: '루나', title: 't' }, { ctx: DM() }), /기간 모양/);
+});
+
+test('MEDIUM 3: 여럿이 보는 채널에서는 평가 점수·총평을 싣지 않고, 평가 쓰기는 주인과의 1:1에서만', async () => {
+  const calls = fake();
+  const pub = await run({ action: 'evals', scope: 'month' });
+  assert.match(pub, /월간/); assert.doesNotMatch(pub, /81|80|좋음/, '점수·총평 없음'); assert.match(pub, /1:1/);
+  const before = calls.length;
+  assert.match(await run({ action: 'eval_add', scope: 'week', subject_kind: 'crew', subject_name: '루나', title: 't', performance: 90 }), /1:1/);
+  assert.ok(!calls.slice(before).some((c) => c.name === 'office_perf_eval_write'), '공개 채널에서는 쓰지 않는다');
+  assert.match(await run({ action: 'evals', scope: 'month' }, { ctx: PRIV() }), /^(?![\s\S]*81)/, '사람이 둘인 비공개 방도 여럿이 본다');
+  assert.match(await run({ action: 'evals', scope: 'month' }, { ctx: DM() }), /종합 81/, '주인 혼자인 1:1에서는 전체');
+});
+
+test('MEDIUM 3: 계좌·세무·가림 항목 값은 여럿이 보는 채널에 내지 않고, 고치기도 1:1에서만', async () => {
+  const calls = fake();
+  const pub = await run({ action: 'company' });
+  assert.match(pub, /상호 = \(주\)A/); assert.doesNotMatch(pub, /국민 1/); assert.doesNotMatch(pub, /견적용/); assert.match(pub, /계좌 = \(가림/);
+  const before = calls.length;
+  assert.match(await run({ action: 'company_set', id: 'i2', value: '신한 2' }), /1:1/);
+  assert.match(await run({ action: 'company_set', label: '세금계산서 메일', value: 'tax@x', category: 'tax' }), /1:1/);
+  assert.ok(!calls.slice(before).some((c) => c.name === 'office_company_write'));
+  assert.match(await run({ action: 'company' }, { ctx: DM() }), /국민 1/);
+  // DM이라도 사람이 둘이면 여럿이 본다
+  fake({ members: { 'dm-1': [ME, 'm2'] } });
+  assert.doesNotMatch(await run({ action: 'company' }, { ctx: DM() }), /국민 1/);
+});
+
+test('MEDIUM 3: 손님(또는 조직 밖 사람)이 있는 방에서는 회사 기록을 다루지 않는다', async () => {
+  const calls = fake({ members: { 'pv-1': [ME, 'g1'] }, roles: { [ME]: 'owner', g1: 'guest' } });
+  assert.match(await run({ action: 'company' }, { ctx: PRIV() }), /손님/);
+  assert.match(await run({ action: 'people' }, { ctx: PRIV() }), /손님/);
+  assert.ok(!calls.some((c) => c.name === 'office_company_read' || c.name === 'office_people_read'));
 });
 
 const WS = 'co-wire';
