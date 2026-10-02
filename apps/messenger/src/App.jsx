@@ -21,7 +21,7 @@ import { NODE_ENV_PREFIX } from './node-cmd.mjs';
 import { splitInlineCode } from './inline-code.mjs';
 import { crewAvailability } from './crew-status.mjs';
 import { aiConsentCopy } from './consent-copy.mjs';
-import { createInvite, previewInvite, acceptInvite, revokeInvite, discardInvite, inviteStatus, daysLeft, inviteErrorKey, missingFn } from './invite-flow.mjs';
+import { createInvite, previewInvite, acceptInvite, revokeInvite, discardInvite, inviteStatus, daysLeft, inviteErrorKey, missingFn, currentLink, shownInvites, chipPreview } from './invite-flow.mjs';
 import { InviteDialog, InvitePreview } from './invite-dialog.jsx';
 import { sortDms, DM_SORTS, sortByCustomOrder } from './dm-sort.mjs';
 import { pickStartSpace, needsPersonalProbe } from './start-space.mjs';
@@ -1830,6 +1830,11 @@ function Shell({ session }) {
   useEffect(() => { if (inviteFor) inviteSync.current.opened(); else inviteSync.current.closed(); }, [inviteFor]); // 창이 사라질 때 보내는 버리기 요청이 끝난 뒤 목록을 다시 읽는다(invite-list-sync.mjs) // { id, code } — 창이 버린 링크는 discardInvite로 정리
   const inviteShare = (code, { channels: chs = [], days = null } = {}) => inviteShareText(code, { origin: location.origin, pathname: location.pathname, t, inviter: nameOfUser(uid), org: org?.name ?? '', channels: chs, days }); // 초대 창이 지금 고른 채널·만료를 넘긴다
   const inviteLinkOf = (code) => inviteLink(code, { origin: location.origin, pathname: location.pathname }) ?? code; // 앱(tauri://)은 열 링크가 없어 코드만
+  // 조직 멤버 링크 하나(5차 피드백) — 초대 창이 열릴 때 지금 쓸 수 있는 멤버 링크를 한 번 읽는다(관리자만 읽힌다 — RLS. 못 읽으면 종전처럼 새로 만든다)
+  const currentMemberLink = async () => { const r = await supabase.from('msgr_invites').select('id, code, role, channel_ids, expires_at, max_uses, use_count, revoked_at, accepted_at, for_node, created_at').eq('org_id', orgId).eq('role', 'member').is('revoked_at', null).order('created_at', { ascending: false }).limit(20); return r.error ? null : currentLink(r.data ?? [], 'member'); };
+  const confirmReplace = ({ onConfirm, onClose }) => createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t('inv.replace')}>
+    <ConfirmModal tone="primary" title={t('inv.replace.title')} description={t('inv.replace.note')} confirmLabel={t('inv.replace')} onConfirm={onConfirm} onClose={onClose} />
+  </div>, document.body);
   const manageInvites = () => { setInviteFor(null); setChSheet(false); setSettingsTab('members'); setPage('settings'); setRail(false); }; // 설정 → 멤버의 초대 관리 목록(관리자만 보인다)
   const orgAdmins = members.filter((m) => ['owner', 'admin'].includes(m.role) && m.user_id !== org?.service_user_id);
   const askAdmin = orgAdmins.length ? t(orgAdmins.length > 1 ? 'inv.askAdmin.more' : 'inv.askAdmin', { name: orgAdmins[0].display_name || orgAdmins[0].user_id.slice(0, 8), n: orgAdmins.length - 1 }) : null; // 멤버에게는 초대 버튼 대신 누구에게 말할지(총괄 결정 B)
@@ -2698,7 +2703,7 @@ function Shell({ session }) {
         {personalCard && <PersonalAgentCard crewId={personalCard} uid={uid} onClose={() => setPersonalCard(null)} onNote={setNote} onError={setErr} onChanged={() => { loadMyAgents().catch(() => {}); if (isPersonal) loadPersonal().catch(() => {}); }} />}
         {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} />}
         {chSheet && channel && !orgBlocked && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${membersEpoch}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
-        {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
+        {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} loadCurrent={isAdmin ? currentMemberLink : null} confirmReplace={confirmReplace} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
         {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
@@ -4607,13 +4612,14 @@ function InviteRow({ inv, channels, nameOfUser, busy = false, onCopy = null, onR
   const { t } = useT();
   const st = inviteStatus(inv); const left = daysLeft(inv);
   const chs = (inv.channel_ids ?? (inv.channel_id ? [inv.channel_id] : [])).map((id) => channels.find((c) => c.id === id)).filter(Boolean);
-  const uses = inv.max_uses === undefined ? null : inv.max_uses == null ? t('inv.m.usesFree', { used: inv.use_count ?? 0 }) : t('inv.m.uses', { used: inv.use_count ?? 0, max: inv.max_uses });
+  const uses = inv.max_uses === undefined ? null : t('inv.m.used', { n: inv.use_count ?? 0 }); // 5차 피드백: '사용 n회 · m일 남음'
   const when = st !== 'live' ? t(`inv.m.state.${st}`) : left == null ? t('inv.expiry.never') : left === 0 ? t('inv.m.leftToday') : t('inv.m.left', { n: left });
+  const chip = chipPreview(chs); // 채널 칩은 둘까지, 나머지 +N
   return (
     <div className="row inv-row-m">
       <span className="name">{t(`org.invite.kind.${inv.role}`)}</span>
-      <span className="inv-chips">{chs.length ? chs.map((c) => <span key={c.id} className="inv-chip sm"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={11} /><span>{c.name}</span></span>) : <span className="msgr-klabel">{t('inv.m.orgOnly')}</span>}</span>
-      <span className="sub">{[uses, when, inv.created_by && t('inv.m.by', { name: nameOfUser(inv.created_by) })].filter(Boolean).join(' · ')}</span>
+      <span className="inv-chips">{chs.length ? <>{chip.shown.map((c) => <span key={c.id} className="inv-chip sm"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={11} /><span>{c.name}</span></span>)}{chip.more > 0 && <span className="inv-chip sm more" title={chs.slice(2).map((c) => c.name).join(', ')}>+{chip.more}</span>}</> : <span className="msgr-klabel">{t('inv.m.orgOnly')}</span>}</span>
+      <span className="sub">{[uses, when].filter(Boolean).join(' · ')}</span>
       {onCopy && <button type="button" className="btn sm ghost" onClick={onCopy} title={t('org.invite.copy')} aria-label={t('org.invite.copy')}><I name="copy" size={13} /></button>}
       {onRevoke && <button type="button" className="btn sm ghost" disabled={busy} onClick={onRevoke} title={t('org.invite.revoke')} aria-label={t('org.invite.revoke')}><I name="x" size={13} /></button>}
     </div>
@@ -4788,8 +4794,9 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
   };
   const copyLink = async (inv) => { const share = inviteShareText(inv.code, { origin: location.origin, pathname: location.pathname, t, inviter: nameOfUser(inv.created_by ?? uid), org: org.name, channels: (inv.channel_ids ?? (inv.channel_id ? [inv.channel_id] : [])).map((id) => channels.find((c) => c.id === id)?.name).filter(Boolean), days: daysLeft(inv) }); await navigator.clipboard?.writeText(share).catch(() => {}); onNote(`${t('org.invite.copied')} ${share}`); };
   const live = invites.filter((i) => inviteStatus(i) === 'live');
-  const past = invites.filter((i) => !i.for_node && inviteStatus(i) !== 'live'); // 만료·소진·취소는 접힌 "지난 초대"로(설계서 2-3)
-  const open = live.filter((i) => !i.for_node); const nodeInvite = live.find((i) => i.for_node) ?? null; // I-4: 노드용 코드는 사람 초대 목록에 섞지 않는다(노드 섹션에서 명령으로)
+  const open = shownInvites(invites); const nodeInvite = live.find((i) => i.for_node) ?? null; // 멤버·관리자는 지금 링크 하나씩, 만료·취소·소진·이전 링크는 숨긴다(5차 피드백 — 지우지 않는다, 서버가 30일 뒤 정리). 노드용 코드는 사람 초대 목록에 섞지 않는다(I-4)
+  const memberLink = currentLink(invites, 'member'); const adminLink = currentLink(invites, 'admin');
+  const adminInvite = () => (adminLink ? copyLink(adminLink) : makeInvite('admin')); // 관리자 링크도 하나 — 있으면 그 링크를 복사한다
   const nodeCmd = nodeInvite ? `ARGO_NODE_CODE=${nodeInvite.code} node scripts/msgr-node-bootstrap.mjs` : '';
   const nodeSeen = org.node_seen_at ? Date.parse(org.node_seen_at) : 0; const nodeAlive = !!org.service_user_id && nodeSeen > 0 && Date.now() - nodeSeen < AWAY_MS;
   const nodeStatus = !org.service_user_id ? t('org.node.none') : !nodeSeen ? t('org.node.never') : t(nodeAlive ? 'org.node.on' : 'org.node.off', { when: fmtWhen(org.node_seen_at, lang) });
@@ -4830,12 +4837,11 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
       <h3>{t('org.invites.h')}</h3>
       <p>{t('org.invites.desc2')}</p>
       <div className="row">
-        {onInvite ? <button type="button" className="btn btn-primary sm" onClick={onInvite}><I name="copy" size={13} />{t('inv.m.new')}</button>
-          : <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => makeInvite('member')}><I name="copy" size={13} />{t('org.invite.member')}</button>}
-        <button type="button" className="btn sm" disabled={busy} onClick={() => makeInvite('admin')}>{t('org.invite.admin')}</button>
+        {onInvite ? <button type="button" className="btn btn-primary sm" onClick={onInvite}><I name="copy" size={13} />{t(memberLink ? 'inv.m.member' : 'inv.m.new')}</button>
+          : <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => (memberLink ? copyLink(memberLink) : makeInvite('member'))}><I name="copy" size={13} />{t('org.invite.member')}</button>}
+        <button type="button" className="btn sm" disabled={busy} onClick={adminInvite}>{t(adminLink ? 'inv.m.adminCopy' : 'org.invite.admin')}</button>
       </div>
       {open.length > 0 && <div className="msgr-rows">{open.map((inv) => <InviteRow key={inv.id} inv={inv} channels={channels} nameOfUser={nameOfUser} busy={busy} onCopy={() => copyLink(inv)} onRevoke={() => revoke(inv)} />)}</div>}
-      {past.length > 0 && <details className="inv-past"><summary>{t('inv.m.past', { n: past.length })}</summary><div className="msgr-rows">{past.map((inv) => <InviteRow key={inv.id} inv={inv} channels={channels} nameOfUser={nameOfUser} />)}</div></details>}
     </section></>
   ); }
 

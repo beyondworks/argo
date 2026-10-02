@@ -114,3 +114,17 @@ export function settingsSummary(s, t) {
   return [exp, uses, role].join(' · ');
 }
 
+
+// 조직 링크는 멤버 하나·관리자 하나(5차 피드백, 서버 20261002130000이 새로 만들면 이전 것을 취소한다).
+// 지금 링크 = 그 종류에서 쓸 수 있는(live) 것 중 가장 최근. 노드 코드는 따로 관리하므로 뺀다.
+export function currentLink(invites, role, now = Date.now()) {
+  return (invites ?? []).filter((i) => i.role === role && !i.for_node && inviteStatus(i, now) === 'live')
+    .sort((a, b) => Date.parse(b.created_at ?? 0) - Date.parse(a.created_at ?? 0))[0] ?? null;
+}
+// 관리 목록 — 멤버·관리자는 지금 링크 하나씩, 게스트(채널 하나·사람마다)는 살아 있는 것 모두. 만료·취소·소진·이전 링크는 숨긴다(지우지 않는다).
+export function shownInvites(invites, now = Date.now()) {
+  return [currentLink(invites, 'member', now), currentLink(invites, 'admin', now),
+    ...(invites ?? []).filter((i) => i.role === 'guest' && !i.for_node && inviteStatus(i, now) === 'live')].filter(Boolean);
+}
+// 채널 칩은 둘까지, 나머지는 '+N'
+export const chipPreview = (items, max = 2) => ({ shown: (items ?? []).slice(0, max), more: Math.max(0, (items ?? []).length - max) });

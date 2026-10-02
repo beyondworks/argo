@@ -113,3 +113,28 @@ test('창이 버린 링크 정리 — 안 쓰였으면 삭제(새 서버는 use_
   assert.equal(await discardInvite(fakeSb({ row: { data: null, error: { code: '42501', message: 'denied' } } }), 'i'), false);
   assert.equal(await discardInvite(fakeSb(), null), false);
 });
+
+// 5차 피드백(유건 2026-10-02): 조직마다 멤버 링크 하나·관리자 링크 하나. 쓸 수 있는 링크가 있으면 다시 쓰고, 여러 개면 가장 최근 것만 보인다.
+// 만료·취소·소진된 링크는 목록에서 숨긴다(지우지 않는다 — 서버 보존 기간이 30일 뒤 지운다). 채널 칩은 둘까지, 나머지는 +N.
+import { currentLink, shownInvites, chipPreview } from '../src/invite-flow.mjs';
+test('지금 링크 — 종류별로 쓸 수 있는 것 중 가장 최근(노드 코드 제외), 없으면 null', () => {
+  const now = Date.parse('2026-10-02T00:00:00Z');
+  const inv = (id, role, created, o = {}) => ({ id, role, created_at: created, expires_at: null, max_uses: null, use_count: 0, revoked_at: null, for_node: false, ...o });
+  const rows = [
+    inv('m-old', 'member', '2026-09-30T00:00:00Z'),
+    inv('m-new', 'member', '2026-10-01T00:00:00Z'),
+    inv('m-rev', 'member', '2026-10-01T12:00:00Z', { revoked_at: '2026-10-01T13:00:00Z' }),
+    inv('m-exp', 'member', '2026-10-01T18:00:00Z', { expires_at: '2026-10-01T19:00:00Z' }),
+    inv('m-node', 'member', '2026-10-01T20:00:00Z', { for_node: true }),
+    inv('a-used', 'admin', '2026-10-01T00:00:00Z', { max_uses: 1, use_count: 1 }),
+    inv('g1', 'guest', '2026-10-01T00:00:00Z', { channel_ids: ['c1'], max_uses: 1 }),
+  ];
+  assert.equal(currentLink(rows, 'member', now)?.id, 'm-new');
+  assert.equal(currentLink(rows, 'admin', now), null, '소진된 관리자 링크는 쓸 수 없다');
+  assert.deepEqual(shownInvites(rows, now).map((i) => i.id), ['m-new', 'g1'], '멤버 하나 + 살아 있는 게스트 링크, 나머지 숨김');
+});
+test("채널 칩 — 둘까지 보이고 나머지는 '+N'", () => {
+  assert.deepEqual(chipPreview(['a', 'b']), { shown: ['a', 'b'], more: 0 });
+  assert.deepEqual(chipPreview(['a', 'b', 'c', 'd', 'e']), { shown: ['a', 'b'], more: 3 });
+  assert.deepEqual(chipPreview([]), { shown: [], more: 0 });
+});
