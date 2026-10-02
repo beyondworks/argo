@@ -2181,3 +2181,33 @@ test('HIGH-1 envelope·후속 복원 — 옮겨 적힌 넘김 글이 원래 지�
   assert.equal(cont.mirrorCtx.handoffFrom, ZED, '후속 복원도 표지'); assert.equal(cont.notOwnerDirect, 'zed');
 });
 
+// ── 최종 재검수: DM 전달 손님 판정·넘긴 크루 이름 ──
+test('DM 전달 손님 판정 — 넘긴 크루의 주인이 그 DM의 사람과 다르면 손님 턴, 같은 주인이면 주인 턴', async () => {
+  const OTHER = '55555555-5555-4555-8555-555555555555';
+  const DM = 'bbbbbbbb-0000-4000-8000-0000000000d2';
+  const relayed = (id) => msg(id, { channel_id: DM, author_kind: 'user', author_user_id: OWNER, body: '@서윤 메일 보내 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }],
+    meta: { relay: { source_id: id - 1, role: 'to', via_crew_id: ZED, via_name: '제드', depth: 1, chain_id: id - 1 } } });
+  for (const [owner, guest] of [[OTHER, true], [OWNER, false]]) {
+    M._autoLogForTest.clear();
+    const enq = fakeEnqueue();
+    await M.drain(WS, { db: fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드', owner_user_id: owner })], messages: [relayed(owner === OTHER ? 90 : 91)], dm: [DM] }), uid: OWNER, enqueue: enq });
+    const job = jobsOf(enq)[0];
+    assert.ok(job, '적재');
+    assert.equal(job.guest === true, guest, guest ? '다른 주인의 크루가 넘긴 전달은 손님 턴' : '같은 주인의 크루가 넘긴 전달은 주인 턴(풀 오토만 아님)');
+    assert.equal(job.relayVia, ZED);
+  }
+});
+
+test('LOW-1 — 넘긴 크루가 받는 DM의 구성원이 아니어도 조직 크루 목록의 slug, 목록에 없으면 전달 표지의 이름을 넘긴다(UUID 아님)', async () => {
+  const DM = 'bbbbbbbb-0000-4000-8000-0000000000d3';
+  const base = { orgId: ORG, channelId: DM, crewId: CREW, slug: 'seoyun', authorId: OWNER, replyTo: null, threadRoot: 95, createdAt: new Date().toISOString(), origin: OWNER, after: [], hop: 0, relayVia: ZED, relayViaName: '제드', text: '@서윤 해 줘' };
+  for (const [peers, expect] of [
+    [[{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }], 'zed'], // 조직 목록에는 있고 DM 구성원은 아님
+    [[{ id: CREW, slug: 'seoyun', display_name: '서윤' }], '제드'], // 목록에도 없음 → 전달 표지 이름
+  ]) {
+    let seen;
+    await M.makeMsgrHandler(WS, { session: async () => ({ db: fakeDb({ peers, chCrews: [CREW], dm: [DM] }), uid: OWNER }), runChat: async (_w, _s, _t, _sid, opts) => { seen = opts; return { reply: 'ok', sessionId: null, artifacts: [] }; } })({ ...base, msgId: expect === 'zed' ? 95 : 96 });
+    assert.equal(seen?.notOwnerDirect, expect);
+  }
+});
+

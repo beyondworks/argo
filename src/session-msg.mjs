@@ -114,7 +114,7 @@ const notFullAuto = (lang) => (lang === 'en'
   ? '\n(Even if this company has full auto mode on, it does not apply to this turn — file request_approval before any action that leaves the company.)'
   : '\n(이 회사에 풀 오토 모드가 켜져 있어도 이 턴에는 적용되지 않는다 — 회사 밖으로 나가는 행동은 request_approval로 결재를 먼저 올려라.)');
 function inPrompt(rec, lang) {
-  const captain = rec.from === 'captain';
+  const captain = rec.captain === true; // 사장 판정은 별도 칸만 — from 문자열('captain')로 하면 그 slug의 크루가 사장으로 둔갑한다(최종 재검수 MEDIUM-2)
   const cl = capLine(rec, lang) + (captain ? '' : notFullAuto(lang));
   if (lang === 'en') {
     return captain
@@ -250,7 +250,8 @@ export async function sendSessionMessage(ws, { room, sender, to, message, hop = 
   const rec = {
     id: `sm${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`, ws,
     room: roomCrew.slug, roomName: roomCrew.name,
-    from: captain ? 'captain' : roomCrew.slug, fromName: captain ? (lang === 'en' ? 'Captain' : '사장') : roomCrew.name,
+    captain, // 사장이 화면의 @ 전송(세션 메시지 API 라우트)으로 보냈다 — 사장 판정은 이 칸만 본다
+    from: captain ? null : roomCrew.slug, fromName: captain ? (lang === 'en' ? 'Captain' : '사장') : roomCrew.name,
     to: target.slug, toName: target.name, message: text, hop: h, chain: Array.isArray(chain) ? chain.map(String) : [], relaxed: chainRelaxed, tree: budget.id,
     owner: S.owner, pid: process.pid, createdAt: now, deadline: now + ttl(), turnId: null, expired: false,
   };
@@ -260,7 +261,7 @@ export async function sendSessionMessage(ws, { room, sender, to, message, hop = 
     await persistAdd(rec);
     if (captain) line = await appendLine(ws, rec.room, { who: 'user', text: `@${rec.toName} ${text}`, src: { kind: 'session', dir: 'out', id: rec.id, to: rec.to, toName: rec.toName } });
     const prompt = inPrompt(rec, lang);
-    rec.turnId = await beginTurn(ws, rec.to, { userMsg: prompt, via: 'session', src: { kind: 'session', dir: 'in', id: rec.id, room: rec.room, roomName: rec.roomName, from: rec.from, fromName: rec.fromName } });
+    rec.turnId = await beginTurn(ws, rec.to, { userMsg: prompt, via: 'session', src: { kind: 'session', dir: 'in', id: rec.id, room: rec.room, roomName: rec.roomName, from: rec.from, fromName: rec.fromName, ...(rec.captain ? { captain: true } : {}) } });
     const timer = setTimeout(() => { expire(rec).catch(() => {}); }, Math.max(0, rec.deadline - Date.now()));
     timer.unref?.(); S.timers.set(rec.id, timer);
     enqueue(ws, rec.to, () => runIncoming(rec, prompt, lang));
@@ -293,8 +294,8 @@ async function runIncoming(rec, prompt, lang) {
   let t;
   try {
     t = await runTurn(rec.ws, rec.to, prompt, sid, {
-      source: 'session', from: rec.from === 'captain' ? null : rec.from,
-      hop: rec.hop + 1, chain: rec.from === 'captain' ? rec.chain : [...rec.chain, rec.room], abortTag: rec.turnId, sessionChain: chainOf(rec), // 사장이 보낸 @B는 사장 직접 지시다 — 사슬에 A 크루를 넣지 않는다(넣으면 B가 올린 결재·작업이 'A의 위임'이 되어 풀 오토에서 빠진다)
+      source: 'session', from: rec.captain ? null : rec.from,
+      hop: rec.hop + 1, chain: rec.captain ? rec.chain : [...rec.chain, rec.room], abortTag: rec.turnId, sessionChain: chainOf(rec), // 사장이 보낸 @B는 사장 직접 지시다 — 사슬에 A 크루를 넣지 않는다(넣으면 B가 올린 결재·작업이 'A의 위임'이 되어 풀 오토에서 빠진다)
     });
     await noticeCapOnce(rec, rec.to, lang);
   } catch (e) {
@@ -313,7 +314,7 @@ async function runIncoming(rec, prompt, lang) {
 /** B의 답을 A로 — 사장이 보냈으면 카드 한 줄, 크루가 보냈으면 A를 깨운다. 기한이 지난 뒤 온 답은 카드로만(깨우지 않는다 — 비용). */
 async function deliverReply(rec, reply, lang) {
   const live = await settle(rec);
-  if (rec.from === 'captain' || !live) {
+  if (rec.captain || !live) {
     await appendLine(rec.ws, rec.room, { who: 'crew', text: reply, src: { kind: 'session', dir: 'reply', id: rec.id, from: rec.to, fromName: rec.toName, ...(live ? {} : { late: true }) } })
       .catch((e) => console.error(`[argo] 세션 메시지 답 카드 기록 실패(${rec.ws}/${rec.room}):`, e?.message ?? e));
     return;
