@@ -4,7 +4,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { psqlSpawn } from './helpers/pg.mjs';
 
-// 견적·계약·전자서명(20261002150000_office_docs.sql, spec8 트랙 A) — 조직 권한(멤버 읽기·관리자 쓰기), 저장소 경로 권한,
+// 견적·계약·전자서명(20261002201900_office_docs.sql, spec8 트랙 A) — 조직 권한(멤버 읽기·관리자 쓰기), 저장소 경로 권한,
 // 토큰 해시만으로 여는 공개 서명 함수(service_role 전용), 서명 기록 보호, 완료 시 거래 '계약'(보낸 사람 권한으로 office_business_write).
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'Run scripts/billing-pg-drill.sh test/office-docs-pg.test.mjs';
@@ -55,7 +55,7 @@ before(() => {
  create function realtime.topic() returns text language sql stable as $$select current_setting('realtime.topic',true)$$;
  create function realtime.send(payload jsonb,event text,topic text,private boolean default true) returns void language sql as $$select null::void$$;
  alter table realtime.messages enable row level security; grant select,insert on realtime.messages to authenticated; grant usage on schema realtime to authenticated;`);
-  for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql', '20260903120000_msgr.sql', '20260909002000_msgr_profiles_friends.sql', '20260927144230_office_business.sql', '20260927171000_office_mail.sql', '20260928010000_office_marketing.sql', '20260929140000_office_deal_flow.sql', '20260929180000_office_tasks_owners.sql', '20261002100000_office_files.sql', '20261002150000_office_docs.sql']) {
+  for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql', '20260903120000_msgr.sql', '20260909002000_msgr_profiles_friends.sql', '20260927144230_office_business.sql', '20260927171000_office_mail.sql', '20260928010000_office_marketing.sql', '20260929140000_office_deal_flow.sql', '20260929180000_office_tasks_owners.sql', '20261002201700_office_files.sql', '20261002201900_office_docs.sql']) {
     const r = psqlSpawn(DB, ['-f', fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url))]); if (r.status !== 0) throw new Error(`${f}: ${r.stderr}`);
   }
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users(id,email)values(${quote(id)},${quote(k + '@example.test')})`);

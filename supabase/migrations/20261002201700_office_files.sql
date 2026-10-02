@@ -5,7 +5,7 @@
 --   표는 함수로만 읽고 쓴다(정책 없음 — office_assets와 같은 방식). 검색은 제목·파일명·추출 본문(OCR·문서 글자).
 -- · 보존: 휴지통 30일 뒤 정리 대상(유건 승인 값 2026-09-26 — 페이지 휴지통과 같다). Storage 객체는 SQL로 지우면 안 되므로
 --   (Supabase는 Storage API로만 지운다) 서버 정리(api/files sweep — Vercel 크론 하루 1회, 또는 scripts/files-sweep.mjs, 서비스 키)가
---   office_storage_sweep(20261002150000_office_docs.sql — 두 버킷을 함께 본다) 목록을 받아 Storage API로 지운 뒤 office_storage_sweep_done으로 행을 지운다.
+--   office_storage_sweep(20261002201900_office_docs.sql — 두 버킷을 함께 본다) 목록을 받아 Storage API로 지운 뒤 office_storage_sweep_done으로 행을 지운다.
 --   화면을 아무도 열지 않아도 돈다(분리 검수 MEDIUM 1). 화면도 문서함을 열 때 하루 한 번 같은 일을 한다(office_file_expired — 자기 범위만).
 --   객체가 남아 있으면 행을 지우지 않는다(파일을 잃지 않게). 올리다 실패해 행이 없는 객체(하루 지난 것, 열린 자리 없는 것)도 정리 대상이다.
 --   OCR 글자는 행 안에만 둔다(따로 쌓이는 표 없음).
@@ -46,7 +46,7 @@ grant execute on function public.office_file_path_ok(text, boolean) to authentic
 drop policy if exists office_files_read on storage.objects;
 create policy office_files_read on storage.objects for select to authenticated
   using (bucket_id = 'office-files' and public.office_file_path_ok(name));
--- ── 올리기 자리·용량(두 버킷 공용 — office-docs도 20261002150000에서 같은 자리를 쓴다) ──
+-- ── 올리기 자리·용량(두 버킷 공용 — office-docs도 20261002201900에서 같은 자리를 쓴다) ──
 create table if not exists public.office_storage_slots (
   bucket text not null check (bucket in ('office-files', 'office-docs')),
   path text not null check (length(path) <= 600),
