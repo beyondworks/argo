@@ -3,16 +3,16 @@ import { BUSINESS_MODULES } from './module-registry.js';
 // 좌측 메뉴·업무 탭 순서(유건 9/30: "메뉴가 하드코딩이면 모듈식이 아니다") — 사람마다 저장한다(office_user_layouts nav:me · biztabs:me).
 // 메뉴는 내 공간·조직 공간 목록이 달라도 순서·숨김은 한 목록으로 둔다. 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다.
 export const NAV = {
-  me: ['home', 'calendar', 'business', 'contracts', 'mail', 'approvals', 'shared', 'knowhow', 'tools'],
-  org: ['home', 'calendar', 'business', 'contracts', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'knowhow', 'tools'],
+  me: ['home', 'calendar', 'business', 'contracts', 'files', 'mail', 'approvals', 'shared', 'knowhow', 'tools'],
+  org: ['home', 'calendar', 'business', 'contracts', 'files', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'knowhow', 'tools'],
 };
 export const SECTIONS = ['menu', 'pages', 'crews'];
 // 공간 주소 뒤에 붙는 화면(App.jsx route가 같은 목록을 쓴다) — 메뉴 이름 사전은 nav.<화면>, 아이콘은 NAV_ICON
-export const VIEWS = ['calendar', 'contracts', 'mail', 'shared', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'knowhow', 'tools', 'trash', 'settings'];
-export const NAV_ICON = { home: 'home', calendar: 'calendar', business: 'chart', contracts: 'sign', mail: 'mail', work: 'run', approvals: 'stamp', decisions: 'check', outputs: 'file', journal: 'book', docs: 'doc', perf: 'target', shared: 'share', knowhow: 'book', tools: 'box', trash: 'trash', settings: 'gear' };
+export const VIEWS = ['calendar', 'contracts', 'files', 'mail', 'shared', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'knowhow', 'tools', 'trash', 'settings'];
+export const NAV_ICON = { home: 'home', calendar: 'calendar', business: 'chart', contracts: 'sign', files: 'folder', mail: 'mail', work: 'run', approvals: 'stamp', decisions: 'check', outputs: 'file', journal: 'book', docs: 'doc', perf: 'target', shared: 'share', knowhow: 'book', tools: 'box', trash: 'trash', settings: 'gear' };
 const LOCKED = new Set(['home']);
 // 두 목록을 합친 기본 순서 — 어느 공간에서 걸러 내도 그 공간의 기본 순서가 나온다(테스트가 잠근다)
-const ALL = ['home', 'calendar', 'business', 'contracts', 'mail', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'shared', 'knowhow', 'tools'];
+const ALL = ['home', 'calendar', 'business', 'contracts', 'files', 'mail', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'perf', 'shared', 'knowhow', 'tools'];
 
 /** a를 b 자리로 옮긴 새 배열 — 같은 자리·없는 id면 그대로 */
 export function moveId(list, a, b) {
