@@ -19,6 +19,7 @@ import { openMenu } from '../ui/Menu.jsx';
 import { showToast } from '../ui/Overlay.jsx';
 import { DocView } from '../ui/DocView.jsx';
 import { PageModuleNode } from '../ui/PageModuleNode.jsx';
+import { FileRefNode, FilePickModal } from '../files/FileRef.jsx'; // '/파일' 블록 — 문서함 파일을 본문에(유건 10/2)
 import { getStorageScope } from '../core/save.js';
 import { RedactMark, BlockPick, pickKey, pickRange, blockRects, redactStatus, setRedact, menuRange, unpick } from './block-pick.js';
 import { EDITOR_DICT } from './editor-i18n.js';
@@ -93,6 +94,7 @@ const BLOCKS = [
   { id: 'quote', face: '"', key: 'block.quote', words: 'quote', run: (c) => c.toggleBlockquote() },
   { id: 'code', face: '<>', key: 'block.code', words: 'code', run: (c) => c.toggleCodeBlock() },
   { id: 'divider', face: '—', key: 'block.divider', words: 'divider hr', run: (c) => c.setHorizontalRule() },
+  { id: 'file', face: '⎘', key: 'files.block', words: 'file attach image upload pdf', pick: true }, // 고르는 창을 띄운 뒤 넣는다
 ];
 
 /** 커서 앞 문단 글자가 '/검색어' 꼴이면 메뉴를 연다 — 입력한 글자가 문서에 그대로 남아 IME(한글)와 충돌하지 않는다. */
@@ -119,12 +121,15 @@ export default function Editor({ page, canEdit = false }) {
     const current = next && getState().pages.find((entry) => entry.id === next.id);
     if (current && getStorageScope() === next.owner && current.loadedAt === next.loadedAt) savePage(next.id, next.patch);
   };
-  const items = useMemo(() => (slash ? BLOCKS.filter((b) => !slash.q || b.words.includes(slash.q) || t(b.key).toLowerCase().includes(slash.q)) : []), [slash]);
+  const [pick, setPick] = useState(false); // '/파일' 창
+  const blocks = page.space === 'shared' ? BLOCKS.filter((b) => !b.pick) : BLOCKS; // 공유받은 페이지는 남의 문서함이라 파일 블록을 넣지 않는다
+  const items = useMemo(() => (slash ? blocks.filter((b) => !slash.q || b.words.includes(slash.q) || t(b.key).toLowerCase().includes(slash.q)) : []), [slash]);
   const itemsRef = useRef(items); itemsRef.current = items;
 
   const apply = (editor, b) => {
     const s = slashRef.current;
     const chain = editor.chain().focus().deleteRange({ from: s.from, to: s.to });
+    if (b.pick) { chain.run(); setSlash(null); setPick(true); return; }
     b.run(chain); chain.run();
     setSlash(null);
   };
@@ -136,6 +141,7 @@ export default function Editor({ page, canEdit = false }) {
       TaskList, TaskItem.configure({ nested: true }), RedactMark, BlockPick, BlockHover,
       PrivateBlock.configure({ pageId: page.id, canEdit: canPrivate }),
       PageModuleNode.configure({ space: page.space, sourceOwner: page.owner ?? null }),
+      FileRefNode,
     ],
     content: page.content,
     editable: canEdit,
@@ -300,6 +306,8 @@ export default function Editor({ page, canEdit = false }) {
           ))}
         </div>
       )}
+      {pick && editor && <FilePickModal space={page.space} onClose={() => setPick(false)}
+        onPick={({ id, title }) => { setPick(false); editor.chain().focus().insertContent({ type: 'fileRef', attrs: { id, space: page.space, title } }).run(); }} />}
     </div>
   );
 }

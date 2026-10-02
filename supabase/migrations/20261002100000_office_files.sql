@@ -354,6 +354,18 @@ language sql security definer set search_path = public, pg_temp as $$
   delete from office_drive_accounts where user_id = auth.uid()   -- 가져온 파일·링크(office_files)는 지우지 않는다(기억 데이터)
 $$;
 
+-- ── 공개 페이지에서 '/파일' 블록(fileRef) 빼기 — 조직 파일 이름·id가 공개 링크로 새지 않게(20260928000915 정의 + fileRef) ──
+create or replace function public.office_strip(n jsonb) returns jsonb
+language sql immutable set search_path=public,pg_temp as $$
+ select case
+  when n->>'type'='moduleGrid' then '{}'::jsonb
+  when jsonb_typeof(n)<>'object' or not(n?'content') or jsonb_typeof(n->'content')<>'array' then n
+  else jsonb_set(n,'{content}',coalesce((select jsonb_agg(public.office_strip(c.value) order by c.ord)
+   from jsonb_array_elements(n->'content') with ordinality as c(value,ord)
+   where coalesce(c.value->>'type','') not in ('recordCard','mailRef','privateBlock','moduleGrid','fileRef')),'[]'::jsonb))
+ end
+$$;
+
 -- ── 실행 권한 ──
 revoke all on function public.office_file_uuid(text), public.office_file_ctx(uuid), public.office_file_json(public.office_files, boolean),
   public.office_file_refs(text, uuid, uuid, uuid), public.office_file_tags(jsonb) from public, anon, authenticated; -- 내부용

@@ -191,3 +191,9 @@ test('표는 직접 못 읽고, 드라이브 토큰은 본인 것만', {skip}, (
  sql(userSql(U.member,`select office_drive_disconnect()`));
  assert.equal(sql(`select count(*) from office_drive_secrets where user_id=${quote(U.member)}`),'0');
 });
+
+test('공개 페이지 본문에서 /파일 블록(fileRef)은 빠진다 — 조직 파일 이름이 공개 링크로 새지 않게', {skip}, ()=>{
+ const doc={type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'안내'}]},{type:'fileRef',attrs:{id:'x',title:'비밀 계약서.pdf'}}]};
+ const out=JSON.parse(sql(`select office_strip(${j(doc)})`));
+ assert.deepEqual(out.content.map(n=>n.type),['paragraph']);
+});
