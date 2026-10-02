@@ -2,11 +2,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon.jsx';
-import { t } from '../core/i18n.js';
+import { t, registerDict } from '../core/i18n.js';
+import { PALETTE_DICT } from './palette-i18n.js';
 import { globalCommands, baseOf } from '../core/commands.js';
 import { navigate } from '../core/router.jsx';
 import { useStore } from '../core/store.js';
 import { imeGuardWith } from '../core/ime.js';
+
+registerDict(PALETTE_DICT);
 
 export function Palette({ open, onClose, space }) {
   const [q, setQ] = useState('');

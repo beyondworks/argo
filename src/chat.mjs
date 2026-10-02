@@ -1,5 +1,7 @@
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, fullAutoAllowed } from './gateway/msgr-handoff.mjs';
 import { calendarTool, calendarDescription } from './gateway/office-calendar.mjs'; // 에이전트 일정 도구(주인의 오피스 일정 — 명세 2026-09-30 규칙 9·10)
+import { companyTool, companyDescription } from './gateway/office-company.mjs'; // 에이전트 회사 도구(오피스 회사 정보·직원·평가 — 트랙 C 2026-10-02)
+import { filesTool, filesDescription } from './gateway/office-files.mjs'; // 에이전트 문서함·드라이브 도구(오피스 문서함 검색·읽기·거래처 첨부·드라이브 — 분리 검수 MEDIUM 4)
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -979,6 +981,54 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
+  // 오피스 회사 기록(인트라넷 company_*·employees_list·report_* 도구를 옮김) — 메신저 조직 채널의 그 조직만. 손님 턴은 읽기까지 막는다
+  const office = tool(
+    'office',
+    companyDescription(lang),
+    {
+      action: z.enum(['company', 'company_set', 'people', 'evals', 'eval_add']),
+      id: z.string().optional().describe('company_set: 고칠 항목 id(company가 보여 준 것)'),
+      label: z.string().optional(), value: z.string().optional(), notes: z.string().optional(),
+      category: z.enum(['basic', 'bank', 'contact', 'tax', 'other']).optional(),
+      key: z.string().optional().describe('서식 칸: name·reg_name·ceo·biz_no·corp_no·open_date·address·biz_type·biz_item·manager·phone·fax·email·tax_email·website'),
+      status: z.enum(['active', 'left', 'all']).optional().describe('people: 재직(기본)·퇴사·전체'),
+      scope: z.enum(['week', 'month', 'year']).optional(), subject: z.string().optional().describe('evals: 대상 이름으로 거르기'),
+      period_day: z.string().optional().describe('eval_add: 그 기간 안의 아무 날 YYYY-MM-DD(비우면 오늘)'),
+      subject_kind: z.enum(['person', 'crew']).optional(), subject_user: z.string().optional(), subject_name: z.string().optional(), subject_type: z.enum(['ceo', 'staff']).optional(),
+      title: z.string().optional(), performance: z.number().optional(), quality: z.number().optional(), productivity: z.number().optional(), expertise: z.number().optional(), collaboration: z.number().optional(), total: z.number().optional(),
+      review: z.string().optional(), work: z.string().optional(), achievements: z.string().optional(),
+    },
+    async (args) => {
+      if (guest) return guestNo(lang === 'en' ? 'Reading or changing company records' : '회사 기록 보기·고치기');
+      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
+      return text(await companyTool(args, { ctx: mirrorCtx, crew: fromSlug, lang, ownerId }));
+    },
+  );
+
+  // 오피스 문서함·드라이브(인트라넷 docs_*·customers_attach·drive_* 도구를 옮김) — 메신저 조직 채널의 그 조직만. 손님 턴은 읽기까지 막는다
+  const officeFiles = tool(
+    'office_files',
+    filesDescription(lang),
+    {
+      action: z.enum(['files', 'file_read', 'attach', 'drive', 'drive_import', 'drive_mkdir', 'drive_export']),
+      q: z.string().optional().describe('files: 제목·파일명·읽은 글자·태그 검색 / drive: 드라이브 이름 검색'),
+      id: z.string().optional().describe('file_read·drive_export: 문서함 파일 id(files가 보여 준 것)'),
+      customer_id: z.string().optional().describe('files: 그 거래처 파일만 / attach·drive_import: 붙일 거래처 id(업무 › 거래처)'),
+      path: z.string().optional().describe('attach: 올릴 파일 경로(작업 공간 안 — 예: vault/files/명함.png)'),
+      title: z.string().optional().describe('attach: 문서함에 보일 이름(비우면 파일 이름)'),
+      category: z.enum(['quote', 'contract', 'bizcert', 'card', 'bankbook', 'evidence', 'archive', 'general']).optional(),
+      drive_id: z.string().optional().describe('drive_import: drive가 보여 준 드라이브 파일 id'),
+      folder: z.string().optional().describe('drive: 볼 드라이브 폴더 id / drive_mkdir: 부모 폴더 id / drive_export: 보낼 드라이브 폴더 id'),
+      view: z.enum(['home', 'mydrive', 'shared', 'drives', 'starred']).optional(),
+      name: z.string().optional().describe('drive_mkdir: 새 폴더 이름'),
+    },
+    async (args) => {
+      if (guest) return guestNo(lang === 'en' ? 'Reading or changing Office files' : '오피스 문서함 보기·올리기');
+      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
+      return text(await filesTool(args, { ctx: mirrorCtx, crew: fromSlug, lang, ownerId }));
+    },
+  );
+
   // 커넥터 표면 — 실행은 코어의 callConnectorTool 단일 경로다(러너 무관, 설계서 §1·§2-2).
   // 여기서 원격 MCP 클라이언트를 새로 만들지 않는다: SDK 턴 안에서 직결하면 토큰 갱신·OAuth 챌린지가
   // 러너 프로세스에서 터져 코어가 개입할 수 없고, CLI 표면과 능력이 갈린다(중립성 위반).
@@ -998,6 +1048,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, listRoutines, cancelRoutine, startLongTask,
     ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
     calendar, // 주인의 일정 — 항상 등재(세션 없음·손님은 처리기가 한 줄로 알린다)
+    ...(mirrorCtx?.kind === 'msgr' ? [office, officeFiles] : []), // 오피스 회사 기록·문서함·드라이브 — 메신저 조직 채널 턴에만(그 조직)
     ...(handoffColleagues.length ? [delegate, sendToCrew] : []),
     // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
     ...(connectors.length ? [useConnector] : []),

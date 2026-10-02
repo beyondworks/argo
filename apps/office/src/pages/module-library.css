@@ -1,7 +1,6 @@
 /* 모듈 보관함 — 세 묶음이 같은 열 폭을 써서 '열기'·'추가'가 한 줄로 선다(유건 9/28) */
-.library-search { position: relative; display: flex; align-items: center; margin-bottom: 20px; }
-.library-search > .ico { position: absolute; left: 11px; color: var(--fg-3); pointer-events: none; }
-.library-search .input { width: 100%; padding-left: 32px; background: var(--lift); }
+.library-search { margin-bottom: 20px; } /* 돋보기·글자 자리는 공용 .search-field */
+.library-search .input { background: var(--lift); }
 .library-group + .library-group { margin-top: 24px; }
 .library-group-title { font-size: 12px; font-weight: 600; color: var(--fg-3); margin: 0 0 8px 2px; }
 .module-library-table { table-layout: fixed; }
@@ -13,4 +12,4 @@
 .module-library-table td:last-child { padding-left: 6px; padding-right: 12px; text-align: right; }
 .library-module-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .library-module-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.library-module-name > svg { flex: none; }
+.library-module-name > .ico { flex: none; }

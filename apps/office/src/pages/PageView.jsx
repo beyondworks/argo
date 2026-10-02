@@ -2,7 +2,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Icon } from '../ui/Icon.jsx';
 import { showToast } from '../ui/Overlay.jsx';
-import { t, ago, useLang, getLang } from '../core/i18n.js';
+import { t, ago, useLang, getLang, registerDict } from '../core/i18n.js';
+import { PAGEVIEW_DICT } from './pageview-i18n.js';
 import { useStore, createPage, savePage, trashPage, getState } from '../core/store.js';
 import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
@@ -13,6 +14,8 @@ import { outbox } from '../core/sync.js';
 import { canManage, getMode } from '../core/session.js';
 import { restore, forget, heldKey } from '../core/save.js';
 import { dragHasFiles, filesFromTransfer, fmtBytes, MAX_FILE } from '../core/files.js';
+
+registerDict(PAGEVIEW_DICT);
 
 const Editor = lazy(() => import('./Editor.jsx'));
 

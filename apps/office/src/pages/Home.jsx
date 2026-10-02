@@ -13,6 +13,7 @@ import { SPACES, ME, canManage, getMode } from '../core/session.js';
 import { reloadLayout } from '../core/pull.js';
 import { showToast } from '../ui/Overlay.jsx';
 import { PresetButton } from './PresetButton.jsx';
+import { record } from '../core/history.js';
 
 export const layoutKey = (space) => `home:${space}`;
 export const kindOf = (space) => (space === 'me' ? 'me' : 'org');
@@ -40,15 +41,17 @@ export function Home({ space }) {
     try { if (await reloadLayout(layoutKey(space)) === false && ME.id === owner) showToast(t('home.reloadFailed')); } catch { if (ME.id === owner) showToast(t('home.reloadFailed')); }
     finally { setReloading(false); }
   };
+  // 격자 밖 배치 바꾸기(맞춤·추가·되살리기) — 저장에 성공하면 되돌리기에 쌓는다. 격자 안 동작(옮기기·크기·숨기기)은 격자가 쌓는다(7차)
+  const change = (next) => { const ok = save(next); if (ok) record(layoutKey(space), items); return ok; };
   const resolveModule = (item) => resolveSurfaceModule(item, space);
   // 모듈 맞춤(유건 10/1 밤 6차) — 높이만, 스크롤바가 생기지 않게·옆 모듈과 아래 끝이 맞게. 재고 계산하는 코드는 누를 때 받는다. 이미 맞으면 저장하지 않는다
   const wrap = useRef(null);
-  const fit = () => import('../ui/module-fit.js').then((m) => m.run(wrap.current, items, resolveModule, save), () => {});
+  const fit = () => import('../ui/module-fit.js').then((m) => m.run(wrap.current, items, resolveModule, change), () => {});
   const seen = new Map(); // 숨긴 사본은 이름이 같다 — 두 번째부터 번호를 붙여 구분(검수 10/1 5차)
   const hidden = items.filter((item) => item.hidden).map((item) => { const { title, icon } = resolveModule(item), n = (seen.get(title) ?? 0) + 1; seen.set(title, n);
-    return { id: item.id, title: n > 1 ? `${title} ${n}` : title, icon, run: () => save([...items.filter((entry) => entry.id !== item.id), { ...item, hidden: false }]) }; });
+    return { id: item.id, title: n > 1 ? `${title} ${n}` : title, icon, run: () => change([...items.filter((entry) => entry.id !== item.id), { ...item, hidden: false }]) }; });
   // 여러 번 놓는 모듈(캘린더·할 일)은 '모듈 추가'에서 바로 하나 더(유건 10/1 5차 추가사항 3) — 새 사본은 맨 아래에 붙는다
-  for (const m of LIBRARY_MODULES) if (m.anchor && m.spaces.includes(kindOf(space))) hidden.push({ id: `new:${m.id}`, title: t('home.addCopy', { name: t(m.title) }), icon: m.icon, run: () => save(addModuleItem(items, createModuleItem(m.id))) });
+  for (const m of LIBRARY_MODULES) if (m.anchor && m.spaces.includes(kindOf(space))) hidden.push({ id: `new:${m.id}`, title: t('home.addCopy', { name: t(m.title) }), icon: m.icon, run: () => change(addModuleItem(items, createModuleItem(m.id))) });
   hidden.push({ id: 'library', title: t('library.browse'), icon: 'plus', run: () => navigate(`${baseOf(space)}/business/library?target=home`) });
   const grid = <ModuleSurface id={layoutKey(space)} items={items} canEdit={canEdit} onChange={save} space={space} showRestore={false} />;
   const today = new Intl.DateTimeFormat(document.documentElement.lang === 'en' ? 'en-US' : 'ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());

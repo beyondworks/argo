@@ -7,6 +7,7 @@ import { baseOf } from '../core/commands.js';
 import { moduleDefinition } from '../core/module-placement-model.js';
 import { normalizeModuleItems, moduleAllowedInSpace } from '../core/module-items.js';
 import { widgetMetrics } from '../business/dashboard-model.js';
+import { record } from '../core/history.js';
 
 // 그래프 모듈은 업무 데이터 계층 전체를 끌고 오므로 쓸 때만 불러온다(첫 화면 150KB 상한, 유건 9/26)
 const LazyChartModule = lazy(() => import('../business/HomeChart.jsx'));
@@ -30,6 +31,6 @@ export default function ModuleSurface({ space, items: rawItems, canEdit, onChang
   const businessTabs = items.filter((item) => !item.hidden).map((item) => moduleDefinition(item)?.businessTab).filter(Boolean);
   const grid = <ModuleGrid id={id} items={items} canEdit={canEdit} onChange={onChange} resolveModule={(item) => resolveSurfaceModule(item, space)} space={space} />;
   const hidden = items.filter((item) => item.hidden).map((item) => ({ id: item.id, title: resolveSurfaceModule(item, space).title, icon: resolveSurfaceModule(item, space).icon,
-    run: () => onChange(items.map((entry) => entry.id === item.id ? { ...entry, hidden: false } : entry)) }));
+    run: () => { const ok = onChange(items.map((entry) => entry.id === item.id ? { ...entry, hidden: false } : entry)); if (ok !== false) record(id, items); return ok; } })); // 되살리기도 ⌘Z로 되돌린다(7차)
   return <>{showRestore && canEdit && hidden.length > 0 && <div className="row-actions"><ModuleAddButton items={hidden} /></div>}{businessTabs.length ? <BusinessHomeProvider space={space} tabs={businessTabs}>{grid}</BusinessHomeProvider> : grid}</>;
 }

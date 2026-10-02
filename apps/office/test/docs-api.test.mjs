@@ -1,0 +1,186 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { PDFDocument } from 'pdf-lib';
+import { GET, POST } from '../api/esign/[op].js';
+import { startFakeR2 } from './helpers/fake-r2.mjs';
+
+// 이유(spec8 트랙 A): 로그인 없는 서명자 길(api/esign)이 인트라넷 sign route와 같은 규칙으로 DB 함수·저장소를 부르는지 — 가짜 Supabase로 잠근다.
+// (실제 DB 함수의 권한·잠금은 supabase 마이그레이션 + pg 드릴 몫. 여기서는 서버 함수가 넘기는 값과 순서·오류 모양)
+
+const sha = (s) => createHash('sha256').update(s).digest('hex');
+const TOKEN = 'T'.repeat(43);
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+const realFetch = globalThis.fetch;
+const R2 = await startFakeR2();
+test.after(() => R2.close());
+const ORIG = 'o-org/esign/e1/orig.pdf';
+async function fakeSupabase(over = {}) {
+  const orig = await (async () => { const d = await PDFDocument.create(); d.addPage([595.28, 841.89]); return d.save(); })();
+  R2.objects.clear();
+  R2.objects.set(ORIG, { bytes: Buffer.from(over.origBytes ?? orig), type: 'application/pdf', etag: 'o' }); // 사람이 올린 원본(서명 기록이 가진 객체)
+  const calls = [], removed = [], abandoned = [];
+  const uploads = { has: (k) => R2.objects.has(k), get: (k) => R2.objects.get(k) && new Uint8Array(R2.objects.get(k).bytes), keys: () => R2.objects.keys(), get size() { return [...R2.objects.keys()].filter((k) => k !== ORIG).length; } };
+  const reply = (body, status = 200) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).startsWith(R2.endpoint)) return realFetch(url, init); // 가짜 R2(서명 검증)
+    const u = new URL(url), method = init.method ?? 'GET';
+    calls.push({ path: u.pathname, method, body: init.body, auth: init.headers?.authorization });
+    const rpc = /\/rest\/v1\/rpc\/(\w+)/.exec(u.pathname)?.[1];
+    if (rpc) {
+      const args = JSON.parse(init.body);
+      if (over[rpc]) return over[rpc](args, reply);
+      if (rpc === 'office_esign_public_state') return reply({ status: 'pending', maskedEmail: 'p**@h.example' });
+      if (rpc === 'office_esign_public_open') return reply({ alreadySigned: false, signer: { name: '한빛', ord: 0 }, contract: { title: '계약' }, fields: [], orig_path: 'o-org/esign/e1/orig.pdf', pages: 1 });
+      if (rpc === 'office_esign_public_who') return reply({ esign_id: 'e1', signer_id: 's1', seg: 'o-org', pages: 1, status: 'sent', signer_status: 'pending', all_signed: false });
+      if (rpc === 'office_esign_public_submit') return reply({ done: true, esign_id: 'e1', signer_id: 's1' });
+      if (rpc === 'office_esign_public_bundle') return reply({ id: 'e1', title: '용역 계약서', doc_hash: sha(orig), orig_path: 'o-org/esign/e1/orig.pdf', seg: 'o-org', status: 'sent', mail_account: null, signers: [{ id: 's1', ord: 0, name: '한빛', email: 'p@h.example', signed_at: '2026-10-02T03:00:00Z', ip: '9.9.9.9', placements: JSON.parse(calls.find((c) => c.path.endsWith('office_esign_public_submit'))?.body ?? '{"p_placements":[]}').p_placements }] });
+      if (rpc === 'office_esign_public_finalize') return reply({ order_sync: 'confirmed', final_path: args.p_final_path });
+      if (rpc === 'r2_object_server_put') return reply('');
+      if (rpc === 'r2_object_abandon') { abandoned.push(...args.p_keys.filter((k) => R2.objects.has(k))); return reply(args.p_keys); }
+      if (rpc === 'r2_object_forget') { removed.push(...args.p_keys.filter((k) => !R2.objects.has(k))); return reply(args.p_keys.length); }
+      return reply('{"message":"unknown"}', 404);
+    }
+    if (u.pathname.startsWith('/fonts/')) return reply({}, 404);
+    return reply({}, 404);
+  };
+  process.env.VITE_SUPABASE_URL = 'https://sb.test';
+  process.env.OFFICE_SUPABASE_SERVICE_KEY = 'service-test';
+  Object.assign(process.env, R2.env);
+  return { calls, uploads, removed, abandoned, orig };
+}
+const req = (op, body, headers = {}) => new Request(`http://localhost/api/esign/${op}`, body ? { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) } : { headers });
+const rpcArgs = (calls, fn) => calls.filter((c) => c.path.endsWith(fn)).map((c) => JSON.parse(c.body));
+
+test('설정이 없으면 503, 모양이 틀린 토큰은 DB를 부르지 않고 404', async () => {
+  delete process.env.OFFICE_SUPABASE_SERVICE_KEY;
+  let called = 0; globalThis.fetch = async () => { called++; return new Response('{}'); };
+  assert.equal((await POST(req('state', { token: TOKEN }))).status, 503);
+  process.env.OFFICE_SUPABASE_SERVICE_KEY = 'k';
+  const r = await POST(req('state', { token: 'short' }));
+  assert.equal(r.status, 404); assert.deepEqual(await r.json(), { error: 'invalid' }); assert.equal(called, 0);
+  assert.equal((await GET(req(`state?token=${TOKEN}`))).status, 405, '토큰이 주소·접근 기록에 남지 않게 GET은 받지 않는다');
+});
+
+test('링크 확인·열기: DB에는 토큰 해시만, 서명자 IP·브라우저를 넘기고, 원본 경로 대신 10분 서명 주소를 돌려준다', async () => {
+  const { calls } = await fakeSupabase();
+  const s = await (await POST(req('state', { token: TOKEN }))).json();
+  assert.deepEqual(s, { status: 'pending', maskedEmail: 'p**@h.example' });
+  assert.equal(JSON.parse(calls[0].body).p_hash, sha(TOKEN));
+  assert.ok(!calls.some((c) => String(c.body).includes(TOKEN)), '토큰 원문은 DB로 가지 않는다');
+  const o = await (await POST(req('open', { token: TOKEN, email: 'p@h.example' }, { 'x-forwarded-for': '6.6.6.6, 10.0.0.1', 'x-vercel-forwarded-for': '1.2.3.4', 'user-agent': 'UA' }))).json();
+  const openArgs = JSON.parse(calls.find((c) => c.path.endsWith('office_esign_public_open')).body);
+  assert.deepEqual({ ip: openArgs.p_ip, ua: openArgs.p_ua }, { ip: '1.2.3.4', ua: 'UA' }, 'Vercel이 채운 IP 헤더가 먼저');
+  assert.equal(o.orig_path, undefined);
+  const pu = new URL(o.pdfUrl);
+  assert.equal(`${pu.origin}${pu.pathname}`, `${R2.endpoint}/${R2.bucket}/${ORIG}`, 'DB가 준 원본 키로만 만든 R2 서명 주소');
+  assert.equal(pu.searchParams.get('X-Amz-Expires'), '600');
+  assert.equal((await realFetch(o.pdfUrl)).status, 200, '서명자 브라우저가 R2에서 직접 받는다');
+});
+
+test('DB 함수 오류는 화면 코드로(이메일 불일치 403·완료 403·이미 제출 409), 원문은 내보내지 않는다', async () => {
+  await fakeSupabase({ office_esign_public_open: (_a, reply) => reply('{"code":"P0001","message":"docs_email"}', 400) });
+  const r = await POST(req('open', { token: TOKEN, email: 'x@x.x' }));
+  assert.equal(r.status, 403); assert.deepEqual(await r.json(), { error: 'email' });
+  await fakeSupabase({ office_esign_public_who: (_a, reply) => reply({ esign_id: 'e1', signer_id: 's1', seg: 'o-org', status: 'sent', signer_status: 'signed' }) });
+  assert.equal((await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [{ page: 0, kind: 'text', text: 'x' }] }))).status, 409);
+  await fakeSupabase({ office_esign_public_who: (_a, reply) => reply({ status: 'completed' }) });
+  assert.deepEqual(await (await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [] }))).json(), { error: 'completed' });
+});
+
+test('제출 → 전원 완료: 서명 그림은 저장소(s-<서명자>-n.png)로 DB에는 경로만, 서명본을 크롬 없이 합성·보관하고 해시와 함께 완료', async () => {
+  const { calls, uploads } = await fakeSupabase();
+  calls.length = 0;
+  const r = await (await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [
+    { page: 0, kind: 'signature', imgDataUrl: `data:image/png;base64,${PNG}`, xr: 0.5, yr: 0.5, wr: 0.2 },
+    { page: 0, kind: 'text', text: '2026-10-02', xr: 0.1, yr: 0.1, wr: 0.2, sizeR: 0.02 },
+    { page: 5, kind: 'text', text: '없는 쪽' },
+  ] }))).json();
+  assert.equal(r.done, true);
+  const finalKey = [...uploads.keys()].find((k) => /\/final-/.test(k));
+  assert.match(finalKey, /^o-org\/esign\/e1\/final-[0-9a-f]{12}\.pdf$/, '검수 1: 마무리 시도마다 다른 서명본 키');
+  assert.equal(new URL(r.finalUrl).pathname, `/${R2.bucket}/${finalKey}`);
+  const img = [...uploads.keys()].find((k) => k.includes('/s-'));
+  assert.match(img, /^o-org\/esign\/e1\/s-s1-0-[0-9a-f]{12}\.png$/, '그림 경로는 서명 한 건·서명자 아래, 시도마다 다른 이름');
+  assert.deepEqual(rpcArgs(calls, 'office_esign_public_who')[0], { p_hash: sha(TOKEN), p_email: 'p@h.example' }, '본인 이메일 확인이 그림 올리기보다 먼저');
+  const puts = rpcArgs(calls, 'r2_object_server_put');
+  assert.deepEqual(puts.filter((p) => p.p_key === img).map((p) => p.p_state), ['pending', 'uploaded'], '그림: 행 먼저 → R2 → 등록 전(제출이 가져간다)');
+  assert.equal(puts.find((p) => p.p_key === img && p.p_state === 'uploaded').p_ref_id, 'e1');
+  assert.ok(calls.findIndex((c) => c.path.endsWith('office_esign_public_who')) < calls.findIndex((c) => c.path.endsWith('r2_object_server_put')), '본인 확인이 먼저');
+  const sub = rpcArgs(calls, 'office_esign_public_submit')[0];
+  assert.equal(sub.p_placements.length, 2, '없는 쪽 칸은 버린다');
+  assert.equal(sub.p_placements[0].img_path, img); assert.equal(sub.p_placements[0].img, undefined, 'DB에는 그림 자체를 넣지 않는다');
+  const fin0 = puts.filter((p) => p.p_key === finalKey);
+  assert.deepEqual(fin0.map((p) => [p.p_state, p.p_seg, p.p_mime]), [['pending', 'o-org', 'application/pdf'], ['uploaded', 'o-org', 'application/pdf']], '서명본은 서버 등록 전(완료가 가져간다), 용량에 들되 막지 않는다');
+  assert.ok(R2.log.some((l) => l.method === 'PUT' && l.key === finalKey));
+  const final = uploads.get(finalKey);
+  assert.equal(fin0[1].p_bytes, final.length);
+  assert.equal((await PDFDocument.load(final)).getPageCount(), 2, '원본 + 감사 증명');
+  const fin = JSON.parse(calls.find((c) => c.path.endsWith('office_esign_public_finalize')).body);
+  assert.deepEqual(fin, { p_esign: 'e1', p_final_path: finalKey, p_final_hash: sha(final) });
+  assert.ok(calls.filter((c) => c.path.includes('/rest/v1/')).every((c) => c.auth === 'Bearer service-test'));
+  assert.ok(R2.log.every((l) => l.status === 'ok'), 'R2 요청은 모두 서명 검증 통과');
+  assert.ok(!calls.some((c) => c.path.endsWith('office_esign_public_notified')), '보낸 메일 계정이 없으면 완료 알림은 화면이 보낸다');
+});
+
+// 이유(분리 검수 HIGH·MEDIUM, 10/2): 원본 바꿔치기, 끊긴 마무리, 남이 먼저 올린 그림, 실패 시 고아 파일.
+test('원본이 만들 때 해시와 다르면 서명본을 만들지 않는다(409 tampered)', async () => {
+  const { calls, uploads } = await fakeSupabase({ origBytes: new Uint8Array([37, 80, 68, 70, 1, 2, 3]) });
+  const r = await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [{ page: 0, kind: 'text', text: 'x' }] }));
+  assert.equal(r.status, 409); assert.deepEqual(await r.json(), { error: 'tampered' });
+  assert.ok(![...uploads.keys()].some((k) => /\/final/.test(k))); assert.equal(rpcArgs(calls, 'office_esign_public_finalize').length, 0);
+});
+
+test('이미 냈고 전원 서명인데 완료가 아니면(마무리가 끊김) 다시 낼 때 마무리만 이어서 한다 — 그림을 새로 올리지 않는다', async () => {
+  const { calls } = await fakeSupabase({
+    office_esign_public_who: (_a, reply) => reply({ esign_id: 'e1', signer_id: 's1', seg: 'o-org', pages: 1, status: 'sent', signer_status: 'signed', all_signed: true }),
+    office_esign_public_bundle: (_a, reply) => reply({ id: 'e1', title: '계약', doc_hash: sha(globalThis.__orig), orig_path: 'o-org/esign/e1/orig.pdf', seg: 'o-org', status: 'sent', mail_account: null, signers: [{ id: 's1', ord: 0, name: 'A', email: 'p@h.example', signed_at: '2026-10-02T03:00:00Z', ip: '1.1.1.1', placements: [{ page: 0, kind: 'text', text: 'A', xr: 0.1, yr: 0.1, wr: 0.2, sizeR: 0.02 }] }] }),
+  });
+  globalThis.__orig = new Uint8Array(R2.objects.get(ORIG).bytes);
+  calls.length = 0;
+  const r = await (await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [] }))).json();
+  assert.equal(r.done, true);
+  assert.equal(rpcArgs(calls, 'office_esign_public_submit').length, 0); assert.equal(rpcArgs(calls, 'office_esign_public_finalize').length, 1);
+  assert.ok(![...R2.objects.keys()].some((k) => k.includes('/s-')));
+});
+
+test('이메일이 틀리면 그림을 하나도 올리지 않고, 제출이 DB에 안 남으면 올린 그림을 지운다', async () => {
+  let f = await fakeSupabase({ office_esign_public_who: (_a, reply) => reply('{"message":"docs_email"}', 400) });
+  assert.equal((await POST(req('submit', { token: TOKEN, email: 'x@x.example', placements: [{ page: 0, kind: 'signature', imgDataUrl: `data:image/png;base64,${PNG}` }] }))).status, 403);
+  assert.equal(f.uploads.size, 0);
+  f = await fakeSupabase({ office_esign_public_submit: (_a, reply) => reply('{"message":"docs_cancelled"}', 400) });
+  assert.equal((await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [{ page: 0, kind: 'signature', imgDataUrl: `data:image/png;base64,${PNG}` }] }))).status, 403);
+  assert.equal(f.removed.length, 1, '등록 전 행을 deleting으로 → R2 삭제 → 행 잊기(재검수 LOW-A)'); assert.match(f.removed[0], /\/s-s1-0-[0-9a-f]{12}\.png$/);
+  assert.equal(f.uploads.size, 0);
+});
+
+test('완료 다시 시도(finish): 로그인 토큰으로 DB가 권한·상태를 본 뒤에만 서비스 키로 마무리한다', async () => {
+  process.env.VITE_SUPABASE_ANON_KEY = 'anon-test';
+  const { calls } = await fakeSupabase({ office_docs_write: (a, reply) => (a.p_action === 'esign.finishable' && a.p_data.id === 'e1' ? reply({ id: 'e1', status: 'sent' }) : reply('{"message":"docs_state"}', 400)) });
+  assert.equal((await POST(req('finish', { org: 'org', id: 'e1' }))).status, 401, '로그인 없이는 안 된다');
+  const r = await (await POST(req('finish', { org: 'org', id: 'e1' }, { authorization: 'Bearer user-jwt' }))).json();
+  assert.equal(r.done, true);
+  const chk = calls.find((c) => c.path.endsWith('office_docs_write'));
+  assert.equal(chk.auth, 'Bearer user-jwt', '권한 확인은 사용자 토큰으로');
+  assert.equal(rpcArgs(calls, 'office_esign_public_finalize').length, 1);
+  const bad = await POST(req('finish', { org: 'org', id: 'e2' }, { authorization: 'Bearer user-jwt' }));
+  assert.equal(bad.status, 409);
+});
+
+test('검수 1: 겹친 마무리에서 진 쪽은 이긴 쪽 서명본 주소를 돌려준다(자기 객체는 등록 전으로 남아 정리 대상)', async () => {
+  const won = 'o-org/esign/e1/final-aaaaaaaaaaaa.pdf';
+  const { calls } = await fakeSupabase({ office_esign_public_finalize: (_a, reply) => reply({ already: true, order_sync: 'confirmed', final_path: won }) });
+  const r = await (await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [{ page: 0, kind: 'text', text: 'x' }] }))).json();
+  assert.equal(r.done, true); assert.equal(new URL(r.finalUrl).pathname, `/${R2.bucket}/${won}`);
+  assert.ok(!rpcArgs(calls, 'r2_object_server_put').some((p) => p.p_state === 'claimed'), '서버는 claimed로 쓰지 않는다(완료만 가져간다)');
+});
+
+test('검수 8: 긴급 차단(R2_OFFICE_UPLOADS_OFF=1)에도 서명자의 그림·서명본은 막지 않는다', async () => {
+  await fakeSupabase();
+  process.env.R2_OFFICE_UPLOADS_OFF = '1';
+  try {
+    const r = await (await POST(req('submit', { token: TOKEN, email: 'p@h.example', placements: [{ page: 0, kind: 'signature', imgDataUrl: `data:image/png;base64,${PNG}` }] }))).json();
+    assert.equal(r.done, true);
+  } finally { delete process.env.R2_OFFICE_UPLOADS_OFF; }
+});

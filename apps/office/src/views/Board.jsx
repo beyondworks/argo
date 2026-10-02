@@ -10,6 +10,7 @@ import { openMenu, menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
 import { canManage } from '../core/session.js';
+import { useSelection, selProps } from '../core/selection.js';
 import * as V from './model.js';
 import { runWrites } from './data.js';
 import { colorOf, fmtDay, fmtTime } from '../calendar/shared.js';
@@ -197,51 +198,24 @@ export function ItemsView({ id, items, cfg, setCfg, views, label, today, ctx, pe
   useLang();
   const shown = useMemo(() => V.sortItems(V.filterItems(items, cfg.filter, today), cfg.sort), [items, cfg.filter, cfg.sort, today]);
   const [sel, setSel] = useState(() => new Set());
-  const [band, setBand] = useState(null);
   const [limit, setLimit] = useState(PAGE.list);
   const wrap = useRef(null);
   const byKey = useMemo(() => new Map(shown.map((x) => [x.key, x])), [shown]);
   const selected = [...sel].map((k) => byKey.get(k)).filter(Boolean);
   const clear = () => setSel(new Set());
   useEffect(() => { setLimit(PAGE.list); }, [cfg.view, cfg.filter, cfg.sort]);
-  useEffect(() => {
-    if (!sel.size) return;
-    const onKey = (e) => { if (e.key === 'Escape' && !document.querySelector('[role="dialog"], .menu')) clear(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [sel.size]);
+  // 여러 개 고르기는 오피스 공용(11차, core/selection.js) — 끌어 감싸기·⇧/⌘ 클릭·⌘A·Esc·선택 막대가 모든 화면과 같다. 고른 상태는 이 목록의 것을 그대로 쓴다
+  const scope = `vw:${useId()}`;
+  useSelection(scope, { value: sel, onChange: setSel, keys: shown.map((x) => x.key), actions: (keys, done) => actions.many(shown.filter((x) => keys.includes(x.key)), done).filter((x) => x.label && x.icon !== 'x') });
 
-  // 빈 곳에서 끌어 여러 개 고르기(마우스·펜) — 항목·버튼 위에서 누르면 그 항목의 동작이 먼저다
-  const onPointerDown = (e) => {
-    if (e.button !== 0 || e.pointerType === 'touch' || e.target.closest('[data-vkey], button, a, input, select, textarea, label')) return;
-    const x0 = e.clientX, y0 = e.clientY, add = e.shiftKey || e.metaKey || e.ctrlKey, base = add ? new Set(sel) : new Set();
-    const els = [...wrap.current.querySelectorAll('[data-vkey]')].map((el) => [el.dataset.vkey, el.getBoundingClientRect()]);
-    let moved = false;
-    const move = (ev) => {
-      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
-      if (!moved) { moved = true; document.body.classList.add('vw-banding'); }
-      const r = { l: Math.min(x0, ev.clientX), t: Math.min(y0, ev.clientY), r: Math.max(x0, ev.clientX), b: Math.max(y0, ev.clientY) };
-      setBand(r);
-      const next = new Set(base);
-      for (const [k, b] of els) if (b.left < r.r && b.right > r.l && b.top < r.b && b.bottom > r.t) next.add(k);
-      setSel(next);
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
-      document.body.classList.remove('vw-banding'); setBand(null);
-      if (!moved && !add) clear();
-    };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
-  };
   // label: 보기 이름(캘린더 모듈은 자기 보기 이름 — 미니·오늘 시간표·다음 일정 — 을 넘긴다)
   const onEmptyMenu = (e) => { if (!e.target.closest('[data-vkey]')) openMenu(e, actions.empty(cfg, setCfg, views, label)); };
 
   const itemProps = (it) => ({
-    'data-vkey': it.key,
+    'data-vkey': it.key, ...selProps(sel, it.key),
     'aria-selected': sel.has(it.key) || undefined,
-    onClick: (e) => {
-      if (e.target.closest('.vw-check')) return;
-      if (e.shiftKey || e.metaKey || e.ctrlKey) { e.preventDefault(); const next = new Set(sel); if (next.has(it.key)) next.delete(it.key); else next.add(it.key); setSel(next); return; }
+    onClick: (e) => { // ⇧/⌘ 클릭은 공용 감지 코드가 먼저 받는다(하나 더하기·빼기)
+      if (e.target.closest('.vw-check') || e.shiftKey || e.metaKey || e.ctrlKey) return;
       clear(); onOpen(it);
     },
     ...menuProps(() => (sel.has(it.key) && sel.size > 1 ? actions.many(selected, clear) : actions.single(it))),
@@ -277,14 +251,8 @@ export function ItemsView({ id, items, cfg, setCfg, views, label, today, ctx, pe
       </div>)}
     </section>)}{more(shown.length - limit)}</div>;
   }
-  return <div ref={wrap} key={cfg.view} className={`vw is-${cfg.view}${compact ? ' compact' : ''}`} onPointerDown={onPointerDown} onContextMenu={onEmptyMenu}>
+  return <div ref={wrap} key={cfg.view} className={`vw is-${cfg.view}${compact ? ' compact' : ''}`} data-sel-scope={scope} onContextMenu={onEmptyMenu}>
     {body}
-    {band && <div className="vw-band" style={{ left: band.l, top: band.t, width: band.r - band.l, height: band.b - band.t }} aria-hidden="true" />}
-    {selected.length > 0 && <div className="vw-selbar" role="toolbar" aria-label={t('views.selected', { n: selected.length })}>
-      <strong>{t('views.selected', { n: selected.length })}</strong>
-      {actions.many(selected, clear).filter((x) => x.label && x.icon !== 'x').map((x) => <button key={x.label} type="button" className={`btn sm${x.danger ? ' danger-text' : ''}`} onClick={x.run}><Icon name={x.icon} size={13} />{x.label}</button>)}
-      <button type="button" className="icon-btn sm" aria-label={t('views.clear')} onClick={clear}><Icon name="x" size={14} /></button>
-    </div>}
   </div>;
 }
 

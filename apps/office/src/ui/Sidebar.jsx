@@ -166,7 +166,7 @@ function CrewSection({ space, crews, handle }) {
       {groups.map((g) => {
         const mode = g.key === 'pinned' ? 'pin' : 'sort', order = g.crews.map((c) => c.id), label = t(`crew.group.${g.key}`);
         return <div key={g.key} className="crew-group" role="group" aria-label={label}>
-          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><span>{label}</span><small>{g.crews.length}</small></button>
+          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><span>{label}</span><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><small>{g.crews.length}</small></button>
           {(!fold[g.key] || query) && <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
             {g.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}`} order={order} mode={mode} movable={g.movable} />)}
           </SortableContext>}
@@ -229,6 +229,8 @@ export function Sidebar({ space, path }) {
     home: { to: base, icon: NAV_ICON.home, label: t('nav.home'), active: at(base) },
     calendar: { to: `${base}/calendar`, icon: NAV_ICON.calendar, label: t('nav.calendar'), active: at(`${base}/calendar`) },
     business: { to: `${base}/business`, icon: NAV_ICON.business, label: t('nav.business'), active: (path === `${base}/business` || path.startsWith(`${base}/business/`)) && !path.startsWith(`${base}/business/library`) },
+    contracts: { to: `${base}/contracts`, icon: NAV_ICON.contracts, label: t('nav.contracts'), active: at(`${base}/contracts`) },
+    files: { to: `${base}/files`, icon: NAV_ICON.files, label: t('nav.files'), active: path === `${base}/files` || path.startsWith(`${base}/files/`) },
     mail: { to: '/me/mail', icon: NAV_ICON.mail, label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
     work: { to: `${base}/work`, icon: NAV_ICON.work, label: t('nav.work'), active: at(`${base}/work`) },
     approvals: { to: `${base}/approvals`, icon: NAV_ICON.approvals, label: t('nav.approvals'), count: pendingHere, active: at(`${base}/approvals`) },
@@ -237,6 +239,7 @@ export function Sidebar({ space, path }) {
     journal: { to: `${base}/journal`, icon: NAV_ICON.journal, label: t('nav.journal'), active: at(`${base}/journal`) },
     docs: { to: `${base}/docs`, icon: NAV_ICON.docs, label: t('nav.docs'), active: at(`${base}/docs`) },
     perf: { to: `${base}/perf`, icon: NAV_ICON.perf, label: t('nav.perf'), active: at(`${base}/perf`) },
+    ...Object.fromEntries(['people', 'company'].map((v) => [v, { to: `${base}/${v}`, icon: NAV_ICON[v], label: t(`nav.${v}`), active: at(`${base}/${v}`) }])),
     shared: { to: '/me/shared', icon: NAV_ICON.shared, label: t('nav.shared'), active: at('/me/shared') },
     knowhow: { to: `${base}/knowhow`, icon: NAV_ICON.knowhow, label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
     tools: { to: `${base}/tools`, icon: NAV_ICON.tools, label: t('nav.tools'), active: at(`${base}/tools`) },

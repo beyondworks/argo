@@ -52,7 +52,7 @@ function Card({ space, item, cfg, set, views, from, to, today }) {
   const openItem = (it) => navigate(`${baseOf(it.space)}?open=${it.id}`);
   const actions = useItemActions({ space, ctx, people, categories: [], onOpen: openItem, onNewEvent: () => navigate(`${base}/calendar?new=event`) });
   if (calView) {
-    const cal = items.map((it) => ({ kind: 'task', key: it.key, id: it.id, title: it.title, done: it.done, space: it.space, all_day: true, start: M.kstStart(it.day), end: M.kstStart(M.addDays(it.day, 1)), vi: it })).filter((o) => o.vi.day);
+    const cal = items.filter((it) => it.day).map((it) => ({ kind: 'task', key: it.key, id: it.id, title: it.title, done: it.done, space: it.space, all_day: true, start: M.kstStart(it.day), end: M.kstStart(M.addDays(it.day, 1)), vi: it })); // 기한 없는 할 일은 먼저 거른다 — 날짜 계산(addDays)이 오류를 내 홈 전체가 멈췄다(유건 10/2)
     const props = { items: cal, today, now: Date.now(), colorBy: pref('color', 'category'), holidays: true, phone: true,
       onOpen: (o) => openItem(o.vi), onMenu: (o) => actions.single(o.vi), onCreate: ({ day }) => navigate(`${base}/calendar?day=${day}&new=event`), onDay: (d) => navigate(`${base}/calendar?day=${d}`) };
     return <div className="cal-emb" onContextMenu={(e) => { if (fromInside(e) && !e.target.closest('.cal-chip, .cal-block')) openMenu(e, actions.empty(cfg, set, views)); }}>
