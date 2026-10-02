@@ -10,6 +10,7 @@ import { runOneShot } from './oneshot.mjs'; // 자연어 → 루틴 초안(러�
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { routineHead, loopHead } from './inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드와 같은 함수
+import { LOOP_VERDICT_RE, parseLoopVerdict, loopVerdictLine } from './loop-verdict.mjs'; // 표지 = 엔진 판정·화면 제거와 같은 모듈
 // 시각 판정(순수)은 routine-time.mjs가 원천 — 목록 화면(클라이언트)이 '만료' 표시에 같은 판정을
 // 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
 import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.mjs';
@@ -127,21 +128,9 @@ export function normalizeLoop(loop = {}, prev = null) {
   };
 }
 
-/** 회차 판정 마커 — 답변 **마지막 줄**. `LOOP: continue` / `LOOP: done <이유>` / `LOOP: blocked <필요한 결정>`.
-    (export: 테스트·프롬프트 문구 앵커) */
-export const LOOP_VERDICT_RE = /^\s*`?\s*LOOP\s*:\s*(continue|done|blocked)\b[\s.:\-—]*(.*?)\s*`?\s*[.。]?\s*$/i;
+// 회차 판정 표지(정규식·판정)는 src/loop-verdict.mjs — 1:1 화면의 표시용 제거와 같은 규칙을 쓴다. 예전 경로 그대로 다시 내보낸다.
+export { LOOP_VERDICT_RE, parseLoopVerdict };
 const LOOP_MISSING_LIMIT = 3; // 마커 연속 누락 허용 — CLI 러너가 형식을 못 지켜도 조용히 죽지 않되, 영영 헛돌지도 않게
-
-/** 답변에서 판정 추출 — 마지막 비어있지 않은 줄만 본다. 마커가 없으면 { verdict:'continue', missing:true } —
-    형식을 안 지킨 러너를 곧바로 정지시키지 않는다(연속 누락 상한은 runRoutine이 센다).
-    (export: 단위 테스트용 — 순수 함수) */
-export function parseLoopVerdict(reply) {
-  const lines = String(reply ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const last = lines[lines.length - 1] ?? '';
-  const m = last.match(LOOP_VERDICT_RE);
-  if (!m) return { verdict: 'continue', reason: '', missing: true };
-  return { verdict: m[1].toLowerCase(), reason: (m[2] ?? '').trim().slice(0, 300), missing: false };
-}
 
 const isLoopRoutine = (r) => r?.schedule?.type === 'interval' && !!r.loop;
 
@@ -224,9 +213,9 @@ function loopProtocol(r, lang) {
   const last = String(r.lastResult ?? '').trim();
   const budget = r.loop.maxUsd != null ? (lang === 'en' ? ` Loop budget: $${r.loop.spentUsd.toFixed(2)} of $${r.loop.maxUsd} used.` : ` 루프 예산: $${r.loop.maxUsd} 중 $${r.loop.spentUsd.toFixed(2)} 사용.`) : '';
   if (lang === 'en') {
-    return `${loopHead('en')} This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`LOOP: continue\` — more to do next run\n\`LOOP: done <one-line reason>\` — the goal is reached, stop the loop\n\`LOOP: blocked <the decision you need from the boss>\` — you cannot proceed without a human decision`;
+    return `${loopHead('en')} This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`${loopVerdictLine('continue')}\` — more to do next run\n\`${loopVerdictLine('done', ' <one-line reason>')}\` — the goal is reached, stop the loop\n\`${loopVerdictLine('blocked', ' <the decision you need from the boss>')}\` — you cannot proceed without a human decision`;
   }
-  return `${loopHead('ko')} 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`LOOP: continue\` — 다음 회차에 할 일이 남음\n\`LOOP: done <한 줄 이유>\` — 목표 달성, 루프 종료\n\`LOOP: blocked <사장에게 필요한 결정>\` — 사람 결정 없이는 진행 불가`;
+  return `${loopHead('ko')} 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`${loopVerdictLine('continue')}\` — 다음 회차에 할 일이 남음\n\`${loopVerdictLine('done', ' <한 줄 이유>')}\` — 목표 달성, 루프 종료\n\`${loopVerdictLine('blocked', ' <사장에게 필요한 결정>')}\` — 사람 결정 없이는 진행 불가`;
 }
 
 /** 정지 사유 문장 — 알림(emitNotify)에 그대로 실린다. */

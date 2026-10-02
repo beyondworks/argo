@@ -4,7 +4,7 @@ import { isStopCommand } from '../../../../../src/stop-command.mjs';
 import { effortLevels, normalizeCrewEffort } from '../../../../../src/model-effort.mjs';
 import { approvalExpandDefault } from '../../../../lib/approval-display.mjs';
 import { splitEnvelope } from './envelope.mjs';
-import { inboundKind } from './inbound-card.mjs';
+import { inboundKind, crewReplyText } from './inbound-card.mjs';
 import { InboundCard } from './inbound-card.jsx';
 import { use, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -1030,7 +1030,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     const sel = window.getSelection()?.toString();
                     if (sel) { e.clipboardData.setData('text/plain', sel); e.preventDefault(); }
                   }}>
-                  <Markdown text={m.text} wsId={ws} />
+                  {/* 루프 회차 답 끝의 판정 표지(LOOP: …)는 엔진용 — 화면에서만 뺀다(저장·판정 그대로) */}
+                  <Markdown text={crewReplyText(all[i - 1], m)} wsId={ws} />
                   {m.handover && (
                     <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
                       <Icon name="memory" size={12} />

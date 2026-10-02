@@ -5,6 +5,7 @@
 // 머리말에서 읽고, 머리말은 기록을 만드는 쪽과 같은 함수(src/inbound-marks.mjs)로 맞춰 본다.
 import { parseMsgr, parseRoutine, parseMail, parseDelegate, parseJob, parseApproval } from '../../../../../src/inbound-marks.mjs';
 import { viaSummary } from './via-summary.mjs';
+import { stripLoopVerdict } from '../../../../../src/loop-verdict.mjs';
 
 const VIA_KINDS = new Set(['crewmail', 'delegate', 'routine', 'job', 'room']);
 const MSGR_SCOPES = new Set(['msgr', 'msgr-dm']);
@@ -120,4 +121,11 @@ export function plainPreview(text, { max = PREVIEW_CHARS, lines = PREVIEW_LINES 
     truncated = true;
   }
   return { text: truncated && out ? `${out}…` : out, truncated };
+}
+
+/** 크루 답의 표시 문장 — 루프 루틴 지시 바로 뒤의 답이면 끝의 판정 표지(LOOP: …)를 뺀다(엔진이 읽는 내부 표지).
+    루프 회차가 아닌 답은 그대로 — 일반 대화에서 표지 형식을 설명한 답까지 지우지 않는다. 저장 기록은 바꾸지 않는다. */
+export function crewReplyText(prev, m) {
+  const text = String(m?.text ?? '');
+  return inboundCard(prev)?.kind === 'loop' ? stripLoopVerdict(text) : text;
 }
