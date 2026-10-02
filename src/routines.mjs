@@ -10,7 +10,7 @@ import { runOneShot } from './oneshot.mjs'; // 자연어 → 루틴 초안(러�
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { routineHead, loopHead } from './inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드와 같은 함수
-import { LOOP_VERDICT_RE, parseLoopVerdict, loopVerdictLine } from './loop-verdict.mjs'; // 표지 = 엔진 판정·화면 제거와 같은 모듈
+import { LOOP_VERDICT_RE, parseLoopVerdict, loopVerdictLine, stripLoopVerdict } from './loop-verdict.mjs'; // 표지 = 엔진 판정·화면 제거와 같은 모듈
 // 시각 판정(순수)은 routine-time.mjs가 원천 — 목록 화면(클라이언트)이 '만료' 표시에 같은 판정을
 // 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
 import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.mjs';
@@ -375,7 +375,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
   try {
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
     const run = r0.msgr
-      ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session })
+      ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session, loopTurn: loop }) // loopTurn — 채널 글에서 판정 표지를 넘김 줄 앞에서 뺀다
       : async (message) => {
         // 결과가 공유 목적지(슬랙 채널·텔레그램 그룹·메신저 채널)로 나가면 그 범위 맥락만 — 주인 대화를 붙이지 않는다(gateway briefingCtx, 동적 임포트 = 순환 차단)
         const destCtx = await (await import('./gateway.mjs')).briefingCtx(wsId, 'routine', r0.agentSlug, { notifications: r0.notifications });
@@ -421,7 +421,11 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
           : `완료 조건 미충족(${tried}회 시도): ${res.failures.join(' · ')}`);
       }
     }
-    const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
+    // 사용자에게 나가는 답(알림 이벤트 → 텔레그램·슬랙·메신저, 마지막 결과 요약, 지금 실행 응답) — 루프 회차 답 끝의 판정 표지(LOOP: …)는
+    // 엔진용이라 여기서 한 번만 뺀다. 판정(아래 parseLoopVerdict)과 1:1 대화 기록은 원문 그대로. 메신저발 루프는
+    // runMessengerContinuation(loopTurn)이 넘김 줄을 붙이기 전에 이미 뺐다 — 두 번 빼지 않는다.
+    const shown = loop && !r0.msgr ? stripLoopVerdict(t.reply) : t.reply;
+    const summary = shown.replace(/\s+/g, ' ').slice(0, 160);
     // 1회 예약은 **성공하면** 스스로 꺼진다 — 산출이 이미 나갔으니 예약 시각에 또 보내지 않는다
     // (미래 예약을 미리 시험해 성공한 경우도 동일 — 이중 발송 방지). 실패는 catch가 다르게 다룬다.
     // 당일 자동 재시도는 없다: 시작 시 lastRun을 각인하므로 isDue가 같은 슬롯을 다시 due로 만들지
@@ -448,8 +452,8 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 잘못 끄지 않는다(검수 LOW-1: catch와 기준 통일). enabled:false 덮어쓰기라 루프 정지와 무충돌.
     const r = await patchRoutine(wsId, id, (cur) => ({ ...patch, ...(cur.schedule?.type === 'once' ? { enabled: false } : {}) }));
     if (stop) await announceStop(r, stop, t.msgr);
-    emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: true, reply: t.reply, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
-    return { ok: true, reply: t.reply, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
+    emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: true, reply: shown, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
+    return { ok: true, reply: shown, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);
     // 1회 예약은 **예약 시각이 지난 실패**면 끈다 — 같은 슬롯은 lastRun 각인으로 재발화하지 않아,

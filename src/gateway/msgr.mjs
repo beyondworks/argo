@@ -27,7 +27,8 @@ import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요�
 import { paths, loadCompany, updateCompany } from '../workspace.mjs';
 import { enqueueJob, DEFER } from './queue.mjs';
 import { pick } from './protocol.mjs';
-import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine } from '../inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드(채널 이름·본문 판정)와 같은 함수
+import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine } from '../inbound-marks.mjs';
+import { stripLoopVerdict } from '../loop-verdict.mjs'; // 루프 회차 채널 글에서 판정 표지만 뺀다(판정은 replyForChecks 원문) // 머리말 = 1:1 화면 출처 카드(채널 이름·본문 판정)와 같은 함수
 import { beatGateway } from './persist.mjs';
 import { chat } from '../chat.mjs';
 import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
@@ -900,7 +901,7 @@ export const storageKey = (name, index = 0) => { // export: 앱 규칙과의 교
   return `${index}-${stem}${ext ? `.${ext}` : ''}`;
 };
 
-async function messengerReply(ctx, text, { db = null, lang = 'ko' } = {}) {
+async function messengerReply(ctx, text, { db = null, lang = 'ko', loopTurn = false } = {}) {
   const workReply = parseWorkReply(ctx.work, ctx.crewId, text);
   const parsed = parseMessengerDisposition(workReply.text);
   const handoffs = parsed.disposition === 'done' ? [] : ctx.handoffs;
@@ -908,7 +909,9 @@ async function messengerReply(ctx, text, { db = null, lang = 'ko' } = {}) {
   const seenAt = handoffs.length && db?.crewSeen ? await db.crewSeen(handoffs.map((h) => h.to.id)).catch(() => null) : null;
   const handoff = renderMessengerHandoffs({ handoffs }, { seenAt, lang });
   if (handoff.length > MSG_MAX) throw new Error('메신저 넘김 내용이 메시지 길이 제한을 넘었습니다');
-  const visible = parsed.text.slice(0, handoff ? Math.max(0, MSG_MAX - handoff.length - 2) : MSG_MAX);
+  // 루프 회차면 판정 표지(엔진용)를 넘김 줄을 붙이기 전에 뺀다 — 붙인 뒤엔 마지막 줄이 아니라 못 뺀다. replyForChecks(판정 재료)는 원문 그대로.
+  const shownText = loopTurn ? stripLoopVerdict(parsed.text) : parsed.text;
+  const visible = shownText.slice(0, handoff ? Math.max(0, MSG_MAX - handoff.length - 2) : MSG_MAX);
   const recipientText = messengerRecipientText(visible);
   let mentions = parsed.disposition === 'handoff' ? mentionsIn(recipientText.to, ctx.peers, ctx.crewId) : [];
   const copies = parsed.disposition === 'handoff' ? mentionsIn(recipientText.cc, ctx.peers, ctx.crewId) : [];
@@ -961,7 +964,7 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
 }
 
 /** 결재·예약·장시간 실행은 매번 새 수집함으로 같은 채널의 최신 문맥과 기억 설정을 복원한다. */
-export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false } = {}) {
+export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false, loopTurn = false } = {}) {
   return withLock(`msgr-turn:${wsId}:${slug}`, async () => {
     const { db, ctx, ch, source, envelope } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
     // 조직 자격(2026-09-27 M5) — 결재 확정 후속도 실행(유료 LLM 호출) 직전에 다시 확인한다. 채널 안내는 drain()의 다음 폴이 낸다
@@ -983,7 +986,7 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
       // 호출자가 넘기는 전역 세션(_globalSessionId — 주인의 데스크톱 대화)은 쓰지 않는다: 후속 실행도 그 채널 세션만 잇는다
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, slug), ctx.channelId).sessionId;
       const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false) });
-      return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang })), msgr: messengerOrigin(ctx) };
+      return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang, loopTurn })), msgr: messengerOrigin(ctx) };
     } finally {
       if (activeCtx.get(key) === ctx) activeCtx.delete(key);
       busyCrew.delete(key);

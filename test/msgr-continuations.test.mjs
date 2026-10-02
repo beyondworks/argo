@@ -550,3 +550,27 @@ test('workPrompt hides the goal/completion criteria when the person who started 
   assert.match(seenText, /\(원문 비공개/, 'a placeholder replaces the hidden goal');
   f.stop();
 });
+
+// 메신저에서 시작된 루프 — 채널 글은 넘김 줄을 붙이기 **전** 본문에서 표지를 뺀다(뒤에 넘김 줄이 붙으면 표지가 마지막 줄이 아니게 된다).
+// 판정은 원문(replyForChecks)으로 — 표지를 뺀 글로 판정하면 매 회차 '표지 누락'이 쌓여 3회째 멈춘다.
+test('a Messenger-started loop posts its result without the LOOP marker even with handoff lines, while the verdict still counts', async () => {
+  const f = await setup();
+  try {
+    const loop = await addRoutine(f.ws, { agentSlug: 'alpha', title: '계속', prompt: '이어서', schedule: { type: 'interval', everyMinutes: 10 }, loop: {}, msgr: f.origin });
+    const out = await runRoutine(f.ws, loop.id, { session: f.session, chatFn: async (...args) => ({
+      ...(await f.runChat('SDK')(...args)), reply: '1단계 정리 끝\nLOOP: continue',
+    }) });
+    assert.equal(out.stopped, null);
+    const cur = (await loadRoutines(f.ws)).find((r) => r.id === loop.id);
+    assert.equal(cur.loop.lastVerdict, 'continue');
+    assert.equal(cur.loop.missingVerdicts, 0);
+    const event = f.events.find((e) => e.type === 'routine' && e.reply?.includes('1단계 정리 끝'));
+    assert.ok(event);
+    assert.ok(event.msgrReply.mentions.some((m) => m.id === 'b'), 'handoff line is still attached');
+    assert.doesNotMatch(event.reply, /LOOP/);
+    await msgrPush(event, { session: f.session });
+    const row = f.rows.find((x) => x.body?.includes('1단계 정리 끝'));
+    assert.ok(row);
+    assert.doesNotMatch(row.body, /LOOP/);
+  } finally { f.stop(); }
+});
