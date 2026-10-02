@@ -24,6 +24,12 @@ const write = (u, a, d) => call(u, 'office_docs_write', `${quote(ORG)},${quote(a
 const writeFail = (u, a, d) => fails(u, 'office_docs_write', `${quote(ORG)},${quote(a)},${j(d)}`);
 const bwrite = (a, d) => call(U.owner, 'office_business_write', `${quote(ORG)},${quote(randomUUID())},${quote(a)},${j(d)}`).id;
 const sha = (s) => createHash('sha256').update(s).digest('hex');
+const fwrite = (u, a, d, o = ORG) => call(u, 'office_file_write', `${o ? quote(o) + '::uuid' : 'null'},${quote(a)},${j(d)}`);
+const fwriteFail = (u, a, d, o = ORG) => fails(u, 'office_file_write', `${o ? quote(o) + '::uuid' : 'null'},${quote(a)},${j(d)}`);
+const putObj = (u, bucket, name, size) => sql(as(u, `insert into storage.objects(bucket_id,name,owner,metadata) values(${quote(bucket)},${quote(name)},${quote(u)},${j({ size })})`));
+const putObjFails = (u, bucket, name) => assert.notEqual(raw(as(u, `insert into storage.objects(bucket_id,name,owner) values(${quote(bucket)},${quote(name)},${quote(u)})`)).status, 0, `insert should fail: ${name}`);
+/** 문서함에 서명본·생성 문서 사본 넣기(자리 → 올리기 → 등록) */
+const fileCopy = (u, size, extra) => { const id = randomUUID(), path = `${SEG}/${id}/copy.pdf`; fwrite(u, 'file.reserve', { id, storage_path: path, size }); putObj(u, 'office-files', path, size); return { id, path, out: () => fwrite(u, 'file.create', { id, title: 'copy.pdf', storage_path: path, size, ...extra }), fail: () => fwriteFail(u, 'file.create', { id, title: 'copy.pdf', storage_path: path, size, ...extra }) }; };
 let SEG, ORDER, CUSTOMER;
 
 before(() => {
@@ -39,7 +45,7 @@ before(() => {
  -- 실제 Supabase auth.uid()처럼 요청 클레임(request.jwt.claim.sub)도 읽는다 — 완료 함수가 보낸 사람으로 업무 원장을 부르는 길을 시험
  create function auth.uid() returns uuid language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claim.sub',true),''),nullif(current_setting('argo.uid',true),''))::uuid$$;
  create schema storage;
- create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,owner uuid);
+ create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,owner uuid,created_at timestamptz default now(),metadata jsonb);
  create table storage.buckets(id text primary key,name text,public boolean default false);
  create function storage.foldername(name text) returns text[] language sql immutable as $$select (string_to_array(name,'/'))[1:array_length(string_to_array(name,'/'),1)-1]$$;
  alter table storage.objects enable row level security;
@@ -49,7 +55,7 @@ before(() => {
  create function realtime.topic() returns text language sql stable as $$select current_setting('realtime.topic',true)$$;
  create function realtime.send(payload jsonb,event text,topic text,private boolean default true) returns void language sql as $$select null::void$$;
  alter table realtime.messages enable row level security; grant select,insert on realtime.messages to authenticated; grant usage on schema realtime to authenticated;`);
-  for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql', '20260903120000_msgr.sql', '20260909002000_msgr_profiles_friends.sql', '20260927144230_office_business.sql', '20260927171000_office_mail.sql', '20260928010000_office_marketing.sql', '20260929140000_office_deal_flow.sql', '20260929180000_office_tasks_owners.sql', '20261002150000_office_docs.sql']) {
+  for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql', '20260903120000_msgr.sql', '20260909002000_msgr_profiles_friends.sql', '20260927144230_office_business.sql', '20260927171000_office_mail.sql', '20260928010000_office_marketing.sql', '20260929140000_office_deal_flow.sql', '20260929180000_office_tasks_owners.sql', '20261002100000_office_files.sql', '20261002150000_office_docs.sql']) {
     const r = psqlSpawn(DB, ['-f', fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url))]); if (r.status !== 0) throw new Error(`${f}: ${r.stderr}`);
   }
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users(id,email)values(${quote(id)},${quote(k + '@example.test')})`);
@@ -187,4 +193,68 @@ test('거래가 이미 계약 이후면 넘기지 않고 사유를 남긴다, �
   write(U.admin, 'esign.cancel', { id: c });
   assert.equal(sql(`select string_agg(action||':'||n, ',' order by action) from (select action, count(*) n from office_esign_events where esign_id=${quote(c)} and action in ('renamed','cancelled') group by action) q`), 'cancelled:1', '이름 바꿈은 상한에 걸리고 취소는 남는다');
   assert.match(svcFail('office_esign_public_state', quote(sha(tc))), /docs_invalid/);
+});
+
+test('MEDIUM 1 문서 저장소: 내 공간도 아무 경로에나 못 올리고, 받은 자리(문서 PDF·서명 원본 모양)로만', { skip }, () => {
+  putObjFails(U.outsider, 'office-docs', `u-${U.outsider}/anything/x.pdf`);
+  const id = randomUUID();
+  putObjFails(U.outsider, 'office-docs', `u-${U.outsider}/docs/${id}.pdf`);
+  assert.equal(call(U.outsider, 'office_docs_write', `null,'doc.reserve',${j({ id, size: 100 })}`).path, `u-${U.outsider}/docs/${id}.pdf`);
+  putObj(U.outsider, 'office-docs', `u-${U.outsider}/docs/${id}.pdf`, 100);
+  call(U.outsider, 'office_docs_write', `null,'doc.save',${j({ id, kind: 'quote', title: '내 견적', pdf_path: `u-${U.outsider}/docs/${id}.pdf`, pdf_size: 1 })}`);
+  assert.equal(sql(`select count(*) from office_storage_slots where path=${quote(`u-${U.outsider}/docs/${id}.pdf`)}`), '0', '저장하면 자리는 없어진다');
+  assert.equal(sql(`select pdf_size from office_docs where id=${quote(id)}`), '100', '문서 크기도 실제 객체 크기');
+  const e = randomUUID();
+  assert.equal(write(U.admin, 'esign.reserve', { id: e, size: 10 }).path, `${SEG}/esign/${e}/orig.pdf`);
+  assert.match(writeFail(U.member, 'esign.reserve', { id: randomUUID(), size: 10 }), /business_forbidden/);
+  putObj(U.admin, 'office-docs', `${SEG}/esign/${e}/orig.pdf`, 10);
+  putObjFails(U.admin, 'office-docs', `${SEG}/esign/${e}/final.pdf`);
+});
+
+let FINAL_SIZE = 5000;
+test('LOW 4·6 서명본 → 문서함: 완료된 서명만 출처 esign, 같은 서명은 한 번만(두 관리자가 동시에 넣어도), 크기는 서명본과 같아야', { skip }, () => {
+  putObjFails(U.admin, 'office-docs', `${SEG}/esign/${E}/final.pdf`); // 서명본 자리는 사람이 못 올린다
+  sql(`insert into storage.objects(bucket_id,name,owner,metadata) values('office-docs',${quote(`${SEG}/esign/${E}/final.pdf`)},null,${j({ size: FINAL_SIZE })})`); // 서버(서비스 키)가 올린 서명본
+  const first = fileCopy(U.admin, FINAL_SIZE, { ref_esign: E, source: 'esign' });
+  first.out();
+  assert.equal(sql(`select source||','||ref_id||','||size from office_files where id=${quote(first.id)}`), `esign,${E},${FINAL_SIZE}`);
+  const second = fileCopy(U.owner, FINAL_SIZE, { ref_esign: E, source: 'esign' });
+  assert.match(second.fail(), /file_conflict/, '두 번째 관리자는 같은 서명본을 또 넣지 못한다');
+  const wrong = fileCopy(U.admin, FINAL_SIZE - 1, { ref_esign: E });
+  assert.match(wrong.fail(), /file_input/, '서명본과 크기가 다르면 서명본이 아니다');
+  const draft = randomUUID();
+  write(U.admin, 'esign.create', { id: draft, title: '초안', orig_path: `${SEG}/esign/${draft}/orig.pdf`, doc_hash: 'd'.repeat(64) });
+  assert.match(fileCopy(U.admin, 10, { ref_esign: draft }).fail(), /file_input/, '완료 안 된 서명은 서명본이 없다');
+  const doc = randomUUID();
+  write(U.admin, 'doc.reserve', { id: doc, size: 300 });
+  putObj(U.admin, 'office-docs', `${SEG}/docs/${doc}.pdf`, 300);
+  write(U.admin, 'doc.save', { id: doc, kind: 'quote', title: '견적', pdf_path: `${SEG}/docs/${doc}.pdf`, pdf_size: 1 });
+  const gen = fileCopy(U.admin, 300, { ref_doc: doc, source: 'upload' });
+  gen.out();
+  assert.equal(sql(`select source from office_files where id=${quote(gen.id)}`), 'generated');
+  assert.match(fileCopy(U.member, 300, { ref_doc: randomUUID() }).fail(), /file_input/);
+  write(U.admin, 'esign.filed', { id: E });
+});
+
+test('MEDIUM 1 서버 정리(service_role만, 화면 없이): 휴지통 30일·행 없는 객체(두 버킷)·지난 자리·OCR 기록, 객체가 지워진 행만 지운다', { skip }, () => {
+  assert.match(fails(U.owner, 'office_storage_sweep', '100'), /permission denied/);
+  const orphanF = `${SEG}/${randomUUID()}/orphan.pdf`, orphanD = `${SEG}/docs/${randomUUID()}.pdf`, orphanE = `${SEG}/esign/${randomUUID()}/orig.pdf`, legacy = `u-${U.outsider}/old/x.pdf`;
+  for (const [b, n] of [['office-files', orphanF], ['office-docs', orphanD], ['office-docs', orphanE], ['office-docs', legacy]]) sql(`insert into storage.objects(bucket_id,name,owner,created_at) values(${quote(b)},${quote(n)},${quote(U.admin)},now()-interval '2 days')`);
+  const fresh = `${SEG}/docs/${randomUUID()}.pdf`; sql(`insert into storage.objects(bucket_id,name,owner) values('office-docs',${quote(fresh)},${quote(U.admin)})`);
+  const keepE = sql(`select final_path from office_esign where id=${quote(E)}`);
+  sql(`update storage.objects set created_at=now()-interval '2 days' where name=${quote(keepE)}`);
+  const t = fileCopy(U.admin, 10, {}); t.out();
+  fwrite(U.admin, 'file.trash', { ids: [t.id] });
+  sql(`update office_files set deleted_at=now()-interval '31 days' where id=${quote(t.id)}`);
+  sql(`insert into office_storage_slots(bucket,path,seg,bytes,created_by,expires_at) values('office-files','x/old','x',1,${quote(U.admin)},now()-interval '2 days')`);
+  sql(`insert into office_ocr_usage(user_id,hour,n) values(${quote(U.admin)},now()-interval '3 days',1)`);
+  const got = svc('office_storage_sweep', '500').objects.map((o) => `${o.bucket}:${o.name}`);
+  for (const x of [`office-files:${orphanF}`, `office-docs:${orphanD}`, `office-docs:${orphanE}`, `office-docs:${legacy}`, `office-files:${t.path}`]) assert.ok(got.includes(x), `정리 대상: ${x}`);
+  for (const x of [`office-docs:${fresh}`, `office-docs:${keepE}`]) assert.ok(!got.includes(x), `남길 것: ${x}`);
+  assert.equal(sql(`select count(*) from office_storage_slots where path='x/old'`), '0');
+  assert.equal(sql(`select count(*) from office_ocr_usage where hour < now()-interval '1 day'`), '0');
+  assert.equal(svc('office_storage_sweep_done', '').rows, 0, '객체가 남아 있으면 행을 지우지 않는다');
+  sql(`delete from storage.objects where name=${quote(t.path)}`);
+  assert.equal(svc('office_storage_sweep_done', '').rows, 1);
+  assert.equal(sql(`select count(*) from office_files where id=${quote(t.id)}`), '0');
 });

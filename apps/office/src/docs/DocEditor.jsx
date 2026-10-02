@@ -171,13 +171,13 @@ export function DocEditor({ space, kind, initial, business, onDone, onCancel }) 
       }
       setBusy('docs.step.file');
       const customer = customers.find((c) => c.id === (row.customer_id ?? doc.customerId)) ?? matchCustomer(input.customer, customers);
-      await fileToDocStore(space, { file: new Blob([bytes], { type: 'application/pdf' }), filename: docFilename(doc), title: row.title, category: kind, customerId: customer?.id, customerName: input.customer, dealId: orderId || undefined, tags: [DOC.kind[kind], input.customer].filter(Boolean), summary: docSummary(doc), source: 'generated' });
+      await fileToDocStore(space, { file: new Blob([bytes], { type: 'application/pdf' }), filename: docFilename(doc), title: row.title, category: kind, customerId: customer?.id, customerName: input.customer, dealId: orderId || undefined, tags: [DOC.kind[kind], input.customer].filter(Boolean), summary: docSummary(doc), refDoc: row.id });
       showToast(t(kind === 'contract' ? 'docs.made.contract' : 'docs.made.quote'));
       if (dealError) showToast(t('docs.err.deal'));
       onDone(row, { bytes, orderId, dealError });
     } catch (err) {
       console.warn('[office docs] make failed', err);
-      setErrors(['docs.err.make']);
+      setErrors([err?.code === 'quota' ? 'docs.err.quota' : 'docs.err.make']);
     } finally { setBusy(null); }
   };
 

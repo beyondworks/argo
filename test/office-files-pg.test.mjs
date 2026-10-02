@@ -23,8 +23,12 @@ const write=(u,a,d,o=ORG)=>call(u,`office_file_write(${org(o)},${quote(a)},${j(d
 const writeFail=(u,a,d,o=ORG)=>fails(u,`office_file_write(${org(o)},${quote(a)},${j(d)})`);
 const list=(u,o=ORG,extra='')=>call(u,`office_file_list(${org(o)}${extra})`);
 const seg=o=>o?`o-${o}`:null;
-/** 사용자 권한으로 Storage에 올린다(정책이 막으면 실패) */
-const upload=(u,name)=>sql(userSql(u,`insert into storage.objects(bucket_id,name,owner) values('office-files',${quote(name)},${quote(u)})`));
+// 올리기 = 자리 받기(file.reserve) → 사용자 권한으로 Storage에 넣기(정책이 자리를 본다). metadata.size = 실제 크기(Supabase Storage가 채우는 값)
+const scopeOf=name=>{const s=name.split('/')[0]; return s.startsWith('o-')?s.slice(2):null;};
+const reserve=(u,name,size=1234)=>write(u,'file.reserve',{id:name.split('/')[1],storage_path:name,size},scopeOf(name));
+const put=(u,name,size=1234)=>sql(userSql(u,`insert into storage.objects(bucket_id,name,owner,metadata) values('office-files',${quote(name)},${quote(u)},${j({size})})`));
+const putFails=(u,name)=>assert.notEqual(raw(userSql(u,`insert into storage.objects(bucket_id,name,owner) values('office-files',${quote(name)},${quote(u)})`)).status,0,`insert should fail: ${name}`);
+const upload=(u,name,size=1234)=>{reserve(u,name,size); put(u,name,size);};
 const newFile=(u,{o=ORG,title='견적서.pdf',...rest}={})=>{
   const id=randomUUID(), path=`${o?seg(o):`u-${u}`}/${id}/${title}`;
   upload(u,path);
@@ -44,7 +48,7 @@ before(()=>{
  create table auth.users(id uuid primary key,created_at timestamptz default now(),email text);
  create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('argo.uid',true),'')::uuid$$;
  create schema storage;
- create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,owner uuid,created_at timestamptz default now());
+ create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,owner uuid,created_at timestamptz default now(),metadata jsonb);
  create table storage.buckets(id text primary key,name text,public boolean default false,file_size_limit bigint);
  create function storage.foldername(name text) returns text[] language sql immutable as $$select (string_to_array(name,'/'))[1:array_length(string_to_array(name,'/'),1)-1]$$;
  alter table storage.objects enable row level security;
@@ -148,6 +152,8 @@ test('정리 대상: 30일 지난 휴지통 파일과 하루 지난 행 없는 �
  sql(`update office_files set deleted_at=now()-interval '31 days' where id=${quote(id)}`);
  const orphan=`${seg(ORG)}/${randomUUID()}/orphan.pdf`; upload(U.member,orphan);
  sql(`update storage.objects set created_at=now()-interval '2 days' where name=${quote(orphan)}`);
+ assert.ok(!call(U.admin,`office_file_expired(${org(ORG)})`).orphans.includes(orphan),'열린 올리기 자리가 있는 동안은 정리 대상이 아니다');
+ sql(`update office_storage_slots set expires_at=now()-interval '1 minute' where path=${quote(orphan)}`);
  const ex=call(U.admin,`office_file_expired(${org(ORG)})`);
  assert.ok(ex.files.some(x=>x.id===id&&x.path===path));
  assert.ok(ex.orphans.includes(orphan));
@@ -196,4 +202,74 @@ test('공개 페이지 본문에서 /파일 블록(fileRef)은 빠진다 — 조
  const doc={type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'안내'}]},{type:'fileRef',attrs:{id:'x',title:'비밀 계약서.pdf'}}]};
  const out=JSON.parse(sql(`select office_strip(${j(doc)})`));
  assert.deepEqual(out.content.map(n=>n.type),['paragraph']);
+});
+
+test('MEDIUM 1 올리기 자리: 자리 없이는 내 범위에도 못 올리고, 남의 자리·지난 자리로도 못 올린다, 등록하면 자리는 없어진다', {skip}, ()=>{
+ const p=`${seg(ORG)}/${randomUUID()}/a.pdf`;
+ putFails(U.member,p); // 경로만 맞는다고 올릴 수 없다
+ reserve(U.admin,p); putFails(U.member,p); // 남의 자리
+ const p2=`${seg(ORG)}/${randomUUID()}/b.pdf`; reserve(U.member,p2);
+ sql(`update office_storage_slots set expires_at=now()-interval '1 second' where path=${quote(p2)}`); putFails(U.member,p2); // 지난 자리
+ const p3=`u-${U.member}/${randomUUID()}/c.pdf`; putFails(U.member,p3); // 내 공간도 같다
+ reserve(U.member,p3); put(U.member,p3);
+ assert.match(writeFail(U.member,'file.reserve',{id:randomUUID(),storage_path:`${seg(ORG)}/${randomUUID()}/x.pdf`,size:1}),/file_input/); // id 자리가 다르다
+ assert.match(writeFail(U.guest,'file.reserve',{id:randomUUID(),storage_path:`${seg(ORG)}/${randomUUID()}/x.pdf`,size:1}),/file_forbidden/);
+ const id=p3.split('/')[1];
+ write(U.member,'file.create',{id,title:'c.pdf',storage_path:p3,size:1},null);
+ assert.equal(sql(`select count(*) from office_storage_slots where path=${quote(p3)}`),'0');
+ assert.notEqual(raw(userSql(U.member,`select * from office_storage_slots`)).status,0,'자리 표는 직접 못 읽는다');
+});
+
+test('MEDIUM 1 사람당 열린 자리 50개 상한(행 없는 객체가 무한히 쌓이지 않게)', {skip}, ()=>{
+ const u=U.admin;
+ sql(`delete from office_storage_slots where created_by=${quote(u)}`); // 앞 테스트가 남긴 열린 자리
+ sql(userSql(u,`do $x$ begin for i in 1..50 loop perform office_file_write(null,'file.reserve',jsonb_build_object('id',g,'storage_path','u-'||${quote(u)}||'/'||g||'/a.pdf','size',1)) from (select gen_random_uuid() g) s; end loop; end $x$;`));
+ const id=randomUUID();
+ assert.match(writeFail(u,'file.reserve',{id,storage_path:`u-${u}/${id}/a.pdf`,size:1},null),/file_limit/);
+ sql(`delete from office_storage_slots where created_by=${quote(u)}`);
+});
+
+test('MEDIUM 1 용량: 범위(두 버킷) 실제 객체 크기 합 + 열린 자리 + 이번 크기가 상한(내 공간 1GiB)을 넘으면 거절', {skip}, ()=>{
+ const u=U.owner, big=`u-${u}/${randomUUID()}/big.bin`, id=randomUUID(), path=`u-${u}/${id}/a.pdf`;
+ sql(`insert into storage.objects(bucket_id,name,owner,metadata) values('office-files',${quote(big)},${quote(u)},'{"size":1073740000}')`);
+ assert.match(writeFail(u,'file.reserve',{id,storage_path:path,size:5000},null),/file_quota/);
+ sql(`delete from storage.objects where name=${quote(big)}`);
+ sql(`insert into storage.objects(bucket_id,name,owner,metadata) values('office-docs',${quote(`u-${u}/docs/${randomUUID()}.pdf`)},${quote(u)},'{"size":1073740000}')`);
+ assert.match(writeFail(u,'file.reserve',{id,storage_path:path,size:5000},null),/file_quota/,'문서 버킷도 같은 범위 합에 든다');
+ sql(`delete from storage.objects where bucket_id='office-docs' and name like ${quote(`u-${u}/%`)}`);
+ write(u,'file.reserve',{id,storage_path:path,size:5000},null);
+ // 등록 때는 실제 크기로 다시 센다 — 자리를 받은 뒤 범위가 찼으면(다른 경로로 들어온 객체 포함) 등록을 거절한다
+ put(u,path,5000);
+ const filler=`u-${u}/docs/${randomUUID()}.pdf`;
+ sql(`insert into storage.objects(bucket_id,name,owner,metadata) values('office-docs',${quote(filler)},${quote(u)},'{"size":1073740000}')`);
+ assert.match(writeFail(u,'file.create',{id,title:'a.pdf',storage_path:path,size:5000},null),/file_quota/);
+ sql(`delete from storage.objects where name in (${quote(path)},${quote(filler)})`);
+ // 50MB를 넘는 실제 객체는 등록하지 않는다(버킷 상한과 같은 값)
+ const id2=randomUUID(), p2=`u-${u}/${id2}/b.pdf`; reserve(u,p2,10); put(u,p2,52428801);
+ assert.match(writeFail(u,'file.create',{id:id2,title:'b.pdf',storage_path:p2,size:10},null),/file_input/);
+});
+
+test('LOW 6 크기·출처는 서버가 정한다: 크기는 실제 객체 크기, esign·generated는 클라이언트가 붙일 수 없다', {skip}, ()=>{
+ const id=randomUUID(), p=`${seg(ORG)}/${id}/real.pdf`;
+ reserve(U.member,p,10); put(U.member,p,777);
+ write(U.member,'file.create',{id,title:'real.pdf',storage_path:p,size:1,source:'esign'});
+ assert.equal(sql(`select size||','||source from office_files where id=${quote(id)}`),'777,upload');
+ const g=newFile(U.member,{title:'g.pdf',source:'generated'});
+ assert.equal(sql(`select source from office_files where id=${quote(g.id)}`),'upload');
+ const a=newFile(U.member,{title:'a.pdf',source:'agent'});
+ assert.equal(sql(`select source from office_files where id=${quote(a.id)}`),'agent','크루가 올린 것은 agent');
+});
+
+test('HIGH 1 서버 OCR 한도: 사람마다 시간당 60회, 넘으면 false(행을 다시 쓰지 않는다), 다른 사람은 따로, 하루 지난 기록은 정리', {skip}, ()=>{
+ const take=u=>last(sql(userSql(u,'select office_ocr_take()')));
+ assert.equal(sql(userSql(U.member,`select count(*) from (select office_ocr_take() t from generate_series(1,60)) s where t`)).split('\n').at(-1),'60');
+ const x1=sql(`select xmin from office_ocr_usage where user_id=${quote(U.member)}`);
+ assert.equal(take(U.member),'f');
+ assert.equal(sql(`select xmin from office_ocr_usage where user_id=${quote(U.member)}`),x1,'한도를 넘은 호출은 쓰지 않는다');
+ assert.equal(take(U.admin),'t');
+ sql(`insert into office_ocr_usage(user_id,hour,n) values(${quote(U.admin)},date_trunc('hour',now())-interval '2 days',5)`);
+ take(U.admin);
+ assert.equal(sql(`select count(*) from office_ocr_usage where user_id=${quote(U.admin)}`),'1');
+ assert.notEqual(raw(`set role anon; select office_ocr_take()`).status,0);
+ assert.notEqual(raw(userSql(U.member,'select * from office_ocr_usage')).status,0);
 });

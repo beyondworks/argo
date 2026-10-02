@@ -7,9 +7,11 @@ import { baseOf } from './commands.js';
  * 문서함에 저장 — 반환 { id, title, category, customer_id }. 실패하면 사전 키(files.err.*)를 담은 오류를 던진다.
  * @param {string} space 공간 키('me' 또는 조직 slug)
  * @param {{ file: Blob, filename: string, title: string, category?: 'quote'|'contract'|'bizcert'|'card'|'bankbook'|'evidence'|'archive'|'general',
- *   customerId?: string, customerName?: string, dealId?: string, tags?: string[], summary?: string, source?: 'generated'|'esign' }} doc
+ *   customerId?: string, customerName?: string, dealId?: string, tags?: string[], summary?: string, refDoc?: string, refEsign?: string }} doc
  *   customerName: 거래처 id가 없을 때 이름으로 연결(정확 일치 먼저, 부분 일치는 하나일 때만 — 애매하면 연결하지 않는다)
- *   summary: 검색에 쓰는 본문(요약 1,900자·전문 10만 자로 자른다). 서명본은 category 'contract' + source 'esign' + tags ['signed']
+ *   summary: 검색에 쓰는 본문(요약 1,900자·전문 10만 자로 자른다).
+ *   출처는 서버가 정한다(분리 검수 LOW 6): refDoc(견적·계약 문서 id) → 'generated', refEsign(완료된 서명 id) → 'esign'(같은 서명본은 한 번만 — 두 번째는 code 'conflict').
+ *   서명본은 category 'contract' + refEsign + tags ['signed']
  */
 export async function saveDocument(space, doc) {
   const { saveGenerated } = await import('../files/api.js');
@@ -19,7 +21,7 @@ export async function saveDocument(space, doc) {
 /** 문서함에서 그 문서 미리보기 열기 */
 export const openDocument = (space, id) => navigate(`${baseOf(space)}/files?open=${encodeURIComponent(id)}`);
 
-/** 파일 글자 읽기(사업자등록증 OCR 등) — 서버 OCR(OFFICE_OCR_URL·OFFICE_VISION_API_KEY)이 없으면 브라우저에서 → { status, text } */
+/** 파일 글자 읽기(사업자등록증 OCR 등) — 서버 OCR(PaddleOCR 사이드카 OFFICE_OCR_URL)이 없거나 한도를 넘으면 브라우저에서 → { status, text } */
 export async function readText(space, file) {
   const { readTextInBrowser } = await import('./ocr-browser.js');
   const { configured } = await import('./supabase.js');

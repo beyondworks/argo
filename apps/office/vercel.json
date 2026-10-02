@@ -40,6 +40,15 @@
     "api/esign/[op].js": {
       "includeFiles": "public/fonts/Pretendard-*.ttf",
       "maxDuration": 30
+    },
+    "api/files/[op].js": {
+      "maxDuration": 300
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/files/sweep",
+      "schedule": "17 19 * * *"
+    }
+  ]
 }

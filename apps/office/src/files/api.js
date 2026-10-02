@@ -10,7 +10,8 @@ import { matches, uploadCheck, storagePath, segOf, classify, findCustomer, match
 import * as S from './sample.js';
 
 export const BUCKET = 'office-files';
-const ERR = { file_forbidden: 'permission', file_input: 'input', file_not_found: 'missing', file_missing: 'missing', file_conflict: 'conflict', file_limit: 'limit', file_folder_not_empty: 'notEmpty', task_signin: 'signin' };
+const ERR = { file_forbidden: 'permission', file_input: 'input', file_not_found: 'missing', file_missing: 'missing', file_conflict: 'conflict', file_limit: 'limit', file_quota: 'quota', file_folder_not_empty: 'notEmpty', task_signin: 'signin' };
+const why = (e) => (/^files\.err\.[a-zA-Z_]+$/.test(e?.message ?? '') ? e.message.slice(10) : 'request'); // write()가 던진 사전 키 → 올리기 실패 이유
 export const fileError = (e) => `files.err.${ERR[e?.code] ?? ERR[e?.message] ?? (String(e?.code) === '42501' ? 'permission' : 'request')}`;
 const orgKey = (space) => (configured ? orgOf(space) : space); // 예시 공간은 id가 없어 키를 쓴다
 
@@ -125,7 +126,7 @@ async function authHeader() {
   const jwt = (await sb?.auth.getSession())?.data.session?.access_token;
   return jwt ? { authorization: `Bearer ${jwt}` } : {};
 }
-/** 서버 OCR이 설정됐나(OFFICE_OCR_URL 또는 OFFICE_VISION_API_KEY) — 화면 메모리에 한 번 */
+/** 서버 OCR(PaddleOCR 사이드카)이 설정됐나 — 화면 메모리에 한 번 */
 export const serverOcr = () => (ocrConfig ??= (configured ? fetch(apiUrl('/api/files/config')).then((r) => r.json()).then((c) => !!c.ocr).catch(() => false) : Promise.resolve(false)));
 
 /** 파일 글자 읽기 → { status, text } — 문서(docx 등)는 브라우저에서 바로, PDF·그림은 서버 OCR(있으면) → 브라우저 OCR */
@@ -141,7 +142,7 @@ export async function readFileText(space, f, blob = null) {
       const r = await fetch(apiUrl('/api/files/ocr'), { method: 'POST', headers: { 'content-type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ org: orgOf(space), id: f.id }) });
       const d = await r.json().catch(() => ({}));
       if (r.ok) return { status: d.status, text: d.text ?? '', saved: true };
-      if (r.status !== 503) return { status: 'failed', text: '' };
+      if (r.status < 500 && r.status !== 429) return { status: 'failed', text: '' }; // 입력·권한 문제는 실패로. 설정 없음(503)·시간당 한도(429)·서버 시간 초과(5xx)는 브라우저에서 읽는다
     } catch { /* 서버에 닿지 않으면 브라우저에서 */ }
   }
   const { readTextInBrowser } = await import('../core/ocr-browser.js');
@@ -165,7 +166,7 @@ export async function ocrFile(space, f, { blob = null, auto = false } = {}) {
 
 /* ── 올리기 ── */
 /** 한 파일: 검사 → 자동 분류(이름) → 거래처 찾기(이름) → Storage에 올리기 → 등록 → (뒤에서) 글자 읽기. 실패하면 올린 객체를 지운다 */
-export async function uploadOne(space, file, { folderId = null, customerId = null, category = null, source = 'upload', title, summary, tags = [], dealId = null, ocr = true } = {}) {
+export async function uploadOne(space, file, { folderId = null, customerId = null, category = null, source = 'upload', title, summary, tags = [], dealId = null, ocr = true, refDoc = null, refEsign = null } = {}) {
   const bad = uploadCheck(file);
   if (bad) return { ok: false, reason: bad };
   const id = crypto.randomUUID(), name = file.name;
@@ -175,9 +176,12 @@ export async function uploadOne(space, file, { folderId = null, customerId = nul
   const cat = category ?? classify({ name: title || name, text: summary ?? '', mime: file.type });
   const text = summary ? clip(summary) : null;
   const row = { id, title: (title || name).slice(0, 300), filename: name.slice(0, 300), mime: (file.type || '').slice(0, 200), size: file.size, storage_path: path,
-    category: cat, customer_id: cust, folder_id: folderId, source, tags, deal_id: dealId, ...(text ? { ocr_status: 'done', ...text } : {}) };
+    category: cat, customer_id: cust, folder_id: folderId, source, tags, deal_id: dealId, ...(refDoc ? { ref_doc: refDoc } : {}), ...(refEsign ? { ref_esign: refEsign } : {}),
+    ...(text ? { ocr_status: 'done', ...text } : {}) };
   let sb = null;
   if (configured) {
+    // 올리기 자리 먼저(용량·Storage 정책 — 분리 검수 MEDIUM 1). 자리 없이는 Storage가 올리기를 받지 않는다
+    try { await write(space, 'file.reserve', { id, storage_path: path, size: file.size }, { refresh: false }); } catch (e) { return { ok: false, reason: why(e) }; }
     sb = await getClient();
     const { error } = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
     if (error) return { ok: false, reason: 'storage' };
@@ -185,7 +189,7 @@ export async function uploadOne(space, file, { folderId = null, customerId = nul
   try { await write(space, 'file.create', row, { refresh: false }); }
   catch (e) {
     if (sb) await sb.storage.from(BUCKET).remove([path]).catch(() => {}); // 기록 실패 → 올린 객체 정리(인트라넷 upload/route.ts:126-130)
-    return { ok: false, reason: e.code ?? 'request' };
+    return { ok: false, reason: why(e) };
   }
   const f = { ...row, kind: 'file' };
   if (ocr && !text && (ocrable(f) || kindOf(name, file.type) === 'doc')) queueOcr(space, f, file);
@@ -213,11 +217,12 @@ function queueOcr(space, f, blob) {
 }
 
 /* ── 다른 화면이 문서함에 넣기(견적·계약·서명본 — 트랙 A, src/core/doc-store.js가 부른다) ── */
-export async function saveGenerated(space, { file, filename, title, category = 'general', customerId = null, customerName = null, dealId = null, tags = [], summary = '', source = 'generated' }) {
+export async function saveGenerated(space, { file, filename, title, category = 'general', customerId = null, customerName = null, dealId = null, tags = [], summary = '', refDoc = null, refEsign = null }) {
   const cs = await loadCustomers(space).catch(() => []);
   const cust = customerId ?? matchCustomer(customerName, cs)?.id ?? null;
   const named = file instanceof File && file.name === filename ? file : new File([file], filename, { type: file.type || 'application/pdf' });
-  const r = await uploadOne(space, named, { title, category, customerId: cust, source, tags, summary: summary || title, dealId, ocr: false });
+  const source = refEsign ? 'esign' : refDoc ? 'generated' : 'upload'; // 예시 모드 표시용 — 로그인 모드에서는 서버가 ref로 다시 정한다
+  const r = await uploadOne(space, named, { title, category, customerId: cust, source, tags, summary: summary || title, dealId, ocr: false, refDoc, refEsign });
   if (!r.ok) throw Object.assign(new Error(`files.err.${r.reason}`), { code: r.reason });
   await refreshFiles();
   return { id: r.file.id, title: r.file.title, category: r.file.category, customer_id: r.file.customer_id };

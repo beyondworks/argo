@@ -27,7 +27,7 @@ const supa = () => env.VITE_SUPABASE_URL, anon = () => env.VITE_SUPABASE_ANON_KE
 async function rpc(jwt, fn, args) {
   const r = await fetch(`${supa()}/rest/v1/rpc/${fn}`, { method: 'POST', headers: { apikey: anon(), authorization: `Bearer ${jwt}`, 'content-type': 'application/json' }, body: JSON.stringify(args) });
   if (r.status === 401) throw fail(401, 'signed_out');
-  if (!r.ok) { const t = await r.text(); throw fail(/file_forbidden|42501/.test(t) ? 403 : /file_limit/.test(t) ? 409 : 502, /file_limit/.test(t) ? 'limit' : 'db'); }
+  if (!r.ok) { const t = await r.text(); throw fail(/file_forbidden|42501/.test(t) ? 403 : /file_quota/.test(t) ? 507 : /file_limit/.test(t) ? 409 : 502, /file_quota/.test(t) ? 'quota' : /file_limit/.test(t) ? 'limit' : 'db'); }
   const t = await r.text();
   return t ? JSON.parse(t) : null;
 }
@@ -139,6 +139,7 @@ const OPS = {
     if (bytes.length > MAX_BYTES) throw fail(413, 'too_big');
     const name = ex ? exportName(meta.name, ex.ext) : meta.name, mime = ex?.mime ?? meta.mimeType;
     const fid = randomUUID(), uid = await me(jwt), path = `${org ? `o-${org}` : `u-${uid}`}/${fid}/${safeName(name)}`;
+    await rpc(jwt, 'office_file_write', { p_org: org, p_action: 'file.reserve', p_data: { id: fid, storage_path: path, size: bytes.length } }); // 올리기 자리(용량·정책 — MEDIUM 1)
     const up = await fetch(`${supa()}/storage/v1/object/office-files/${path.split('/').map(encodeURIComponent).join('/')}`, {
       method: 'POST', headers: { apikey: anon(), authorization: `Bearer ${jwt}`, 'content-type': mime || 'application/octet-stream', 'x-upsert': 'false' }, body: bytes });
     if (!up.ok) throw fail(up.status === 403 || up.status === 400 ? 403 : 502, 'storage');

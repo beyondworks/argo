@@ -19,6 +19,7 @@ import { partyLabel, draftSigners, signedFilename, signedCount } from './esign-m
 import { DocEditor } from './DocEditor.jsx';
 import { EsignSetup } from './EsignSetup.jsx';
 import { fileToDocStore, hasDocStore } from './doc-store-bridge.js';
+import { fileSignedCopies } from './filing.js';
 import { mailAccounts, resendLink, sendCompletedNotice } from './esign-flow.js';
 import { DOC } from './doc-text.js';
 
@@ -92,14 +93,15 @@ export default function DocsPage({ space, params }) {
     if (!todo.length) return;
     (async () => {
       const be = await backend();
-      for (const e of todo) {
-        try {
-          const bytes = await be.esignPdf(space, e, 'final');
+      await fileSignedCopies(todo, {
+        pdf: (e) => be.esignPdf(space, e, 'final'),
+        entryOf: (e, bytes) => {
           const doc = data.docs.find((d) => d.id === e.doc_id);
-          await fileToDocStore(space, { file: new Blob([bytes], { type: 'application/pdf' }), filename: signedFilename(e.title), title: DOC.signedTitle(e.title), category: 'contract', customerId: doc?.customer_id ?? undefined, customerName: doc?.customer_name, dealId: e.order_id ?? undefined, tags: ['signed', DOC.signedTag, DOC.kind.contract], summary: DOC.signedSummary(e.title), source: 'esign' });
-          await be.markFiled(space, e.id);
-        } catch (err) { console.warn('[office docs] filing signed copy failed', err?.message); }
-      }
+          return { file: new Blob([bytes], { type: 'application/pdf' }), filename: signedFilename(e.title), title: DOC.signedTitle(e.title), category: 'contract', customerId: doc?.customer_id ?? undefined, customerName: doc?.customer_name, dealId: e.order_id ?? undefined, tags: ['signed', DOC.signedTag, DOC.kind.contract], summary: DOC.signedSummary(e.title), refEsign: e.id };
+        },
+        file: (entry) => fileToDocStore(space, entry),
+        mark: (id) => be.markFiled(space, id),
+      });
       docs.reload();
     })();
   }, [data, canWrite, space]); // eslint-disable-line react-hooks/exhaustive-deps

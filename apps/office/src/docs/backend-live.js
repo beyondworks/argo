@@ -16,6 +16,8 @@ const origin = () => (isDesktop() ? publicWebUrl('/') : location.origin);
 function mapError(error) {
   const m = /^docs_([a-z_]+)/.exec(error?.message ?? '');
   if (m) return fail(m[1]);
+  if (/^file_quota/.test(error?.message ?? '')) return fail('quota'); // 범위 저장 공간(문서함·문서 합) 가득 — 분리 검수 MEDIUM 1
+  if (/^file_(limit|conflict)/.test(error?.message ?? '')) return fail('upload', { cause: error });
   if (['PGRST202', 'PGRST205', '42883', '42P01'].includes(error?.code)) return fail('schema');
   if (['42501', 'PGRST301'].includes(String(error?.code))) return fail('permission');
   return fail('request', { cause: error });
@@ -50,7 +52,7 @@ export default {
   async saveDoc(space, d) {
     const id = d.id ?? uid();
     const path = `${seg(space)}/docs/${id}.pdf`;
-    if (d.pdf) await upload(path, d.pdf);
+    if (d.pdf) { await write(space, 'doc.reserve', { id, size: d.pdf.byteLength }); await upload(path, d.pdf); } // 자리(용량·정책) → 올리기
     try {
       return await write(space, 'doc.save', { id, kind: d.kind, title: d.title, customer_name: d.customer_name ?? '', customer_id: d.customer_id || null, order_id: d.order_id || null,
         input: d.input ?? {}, ...(d.pdf ? { pdf_path: path, pdf_size: d.pdf.byteLength, pdf_hash: d.pdf_hash ?? '' } : {}), filename: d.filename ?? '', supply: d.supply ?? 0, vat: d.vat ?? 0, total: d.total ?? 0 });
@@ -61,6 +63,7 @@ export default {
 
   async createEsign(space, { id = uid(), title, docId = null, orderId = null, pdf, docHash, fields = [], signers = [], pages = null }) {
     const orig = `${seg(space)}/esign/${id}/orig.pdf`;
+    await write(space, 'esign.reserve', { id, size: pdf.byteLength }); // 자리(용량·정책) → 올리기
     await upload(orig, pdf);
     try { return await write(space, 'esign.create', { id, title, doc_id: docId, order_id: orderId, orig_path: orig, doc_hash: docHash, fields, signers, pages }); }
     catch (e) { await remove([orig]); throw e; }

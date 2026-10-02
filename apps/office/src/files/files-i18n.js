@@ -78,7 +78,7 @@ export const FILES_DICT = {
   // 오류
   'files.err.permission': ['권한이 없습니다.', 'You don’t have permission.'], 'files.err.input': ['입력을 확인해 주세요.', 'Please check the input.'],
   'files.err.missing': ['파일을 찾을 수 없습니다.', 'File not found.'], 'files.err.conflict': ['같은 항목이 이미 있습니다.', 'That item already exists.'],
-  'files.err.limit': ['더 넣을 수 없습니다(한도).', 'Limit reached.'], 'files.err.notEmpty': ['폴더가 비어 있지 않습니다. 안의 파일을 먼저 옮기세요.', 'The folder isn’t empty. Move its files first.'],
+  'files.err.limit': ['더 넣을 수 없습니다(한도).', 'Limit reached.'], 'files.err.quota': ['저장 공간이 가득 찼습니다(조직 10GB·내 공간 1GB). 휴지통을 비우거나 파일을 정리해 주세요.', 'Storage is full (10 GB per organization, 1 GB personal). Empty the trash or remove files.'], 'files.err.notEmpty': ['폴더가 비어 있지 않습니다. 안의 파일을 먼저 옮기세요.', 'The folder isn’t empty. Move its files first.'],
   'files.err.signin': ['다시 로그인해 주세요.', 'Please sign in again.'], 'files.err.request': ['요청을 처리하지 못했습니다. 잠시 뒤 다시 해 주세요.', 'Something went wrong. Try again shortly.'],
   'files.err.storage': ['저장소에 올리지 못했습니다.', 'Could not save to storage.'], 'files.err.not_connected': ['드라이브가 연결되지 않았습니다.', 'Drive isn’t connected.'],
   'files.err.expired': ['드라이브 연결이 만료됐습니다.', 'Drive connection expired.'], 'files.err.scopes': ['드라이브 권한이 모자랍니다. 다시 연결해 주세요.', 'Missing Drive permission. Please reconnect.'],

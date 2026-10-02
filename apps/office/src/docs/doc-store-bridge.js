@@ -5,10 +5,14 @@ const load = mods['../core/doc-store.js'];
 
 export const hasDocStore = () => !!load;
 
-/** saveDocument(space, { file, filename, title, category, customerId, customerName, dealId, tags, summary, source }) — 트랙 B 계약 */
+/** saveDocument(space, { file, filename, title, category, customerId, customerName, dealId, tags, summary, refDoc, refEsign }) — 트랙 B 계약.
+ *  돌려주는 값: 넣은 파일 { id, … } · 같은 서명본이 이미 있음 { conflict: true }(서버가 한 번만 받는다) · 실패 null(부르는 쪽이 다음에 다시) */
 export async function fileToDocStore(space, entry) {
   if (!load) return null;
-  try { return await (await load()).saveDocument(space, entry); } catch (e) { console.warn('[office docs] document store save failed', e?.message); return null; }
+  try { return await (await load()).saveDocument(space, entry); } catch (e) {
+    if (e?.code === 'conflict' && entry?.refEsign) return { conflict: true };
+    console.warn('[office docs] document store save failed', e?.message); return null;
+  }
 }
 
 /** 문서함 미리보기로 이동(있을 때만) */
