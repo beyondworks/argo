@@ -2,7 +2,7 @@
 //    행동: 가짜 DOM·가짜 시계로 엔진을 그대로 돌린다(창이 가려져 애니메이션이 멈춰도 등장 끝·닫기가 타이머로 진행되는지 등).
 //    CSP: Tauri가 HTML의 <style>에 nonce를 붙이면 'unsafe-inline'이 무시돼 style 속성이 전부 막힌다(메신저 설치본에서 로고 폭 0).
 //    엔진은 style 속성을 만들지 않는다.
-// 2) 본체 부트 화면(public/index.html·boot.css) — 배·파도 모션. 색은 graphite(시스템 밝기를 따름)이고 globals.css 토큰과 같아야 한다.
+// 2) 본체 부트 화면(public/index.html·boot.css) — 배·파도 모션. 시스템 밝기와 상관없이 어두운 바탕이고, 색은 globals.css graphite 다크 토큰과 같아야 한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -177,18 +177,17 @@ test('색 — 엔진 GRAPHITE(메신저가 쓰는 정본)가 globals.css graphit
 const bootCss = () => read('public/boot.css').replace(/\/\*[\s\S]*?\*\//g, '');
 const bootHtml = () => read('public/index.html').replace(/<!--[\s\S]*?-->/g, '');
 
-test('부트 화면 색 — boot.css가 globals.css graphite 토큰과 같다(라이트·다크), 폐기된 금색 막대·#212121 바탕은 없다', () => {
-  const tok = graphiteTokens();
+test('부트 화면 색 — 시스템 밝기와 상관없이 늘 graphite 다크 값(globals.css 다크 토큰), 폐기된 금색 막대·#212121 바탕은 없다', () => {
+  const dark = graphiteTokens().dark;
   const boot = bootCss();
-  const [lightVars, darkVars] = [boot.slice(boot.indexOf(':root {')), boot.slice(boot.indexOf('@media (prefers-color-scheme: dark)'))];
-  const v = (block, name) => new RegExp(`--boot-${name}:\\s*(#[0-9a-f]{6})`, 'i').exec(block)?.[1].toLowerCase();
-  for (const [mode, block] of [['light', lightVars], ['dark', darkVars]]) {
-    assert.equal(v(block, 'bg'), tok[mode].bg, `${mode} --boot-bg`);
-    assert.equal(v(block, 'mark'), tok[mode].primary, `${mode} --boot-mark`);
-    assert.equal(v(block, 'fg'), tok[mode].fg, `${mode} --boot-fg`);
-    assert.equal(v(block, 'fg-3'), tok[mode]['fg-3'], `${mode} --boot-fg-3`);
-    assert.equal(v(block, 'danger'), tok[mode].danger, `${mode} --boot-danger`);
-  }
+  assert.doesNotMatch(boot, /prefers-color-scheme/, '밝기 분기가 없다 — 라이트에서도 같은 값');
+  assert.match(boot, /color-scheme:\s*dark/);
+  const v = (name) => new RegExp(`--boot-${name}:\\s*(#[0-9a-f]{6})`, 'i').exec(boot)?.[1].toLowerCase();
+  assert.equal(v('bg'), dark.bg, '--boot-bg');
+  assert.equal(v('mark'), dark.primary, '--boot-mark');
+  assert.equal(v('fg'), dark.fg, '--boot-fg');
+  assert.equal(v('fg-3'), dark['fg-3'], '--boot-fg-3');
+  assert.equal(v('danger'), dark.danger, '--boot-danger');
   assert.doesNotMatch(boot, /#d9b23a|#212121|#f2ecdd/i, '옛 금색 진행 막대·#212121 바탕·크림색 글자는 폐기');
   assert.match(boot, /\.fill\s*\{[^}]*background:\s*var\(--boot-mark\)/, '진행 막대는 graphite primary');
   assert.match(boot, /html, body\s*\{[^}]*background:\s*var\(--boot-bg\)/, '바탕은 graphite');
@@ -209,15 +208,13 @@ test('부트 화면 장면 — 배·파도 이미지가 있고 둘 다 움직인
   assert.match(css, /\.wave\s*\{[^}]*z-index:\s*2/, '파도가 배 앞(선체가 물에 잠겨 보인다)');
 });
 
-test('부트 화면 그림은 검은 바탕 그림이라 라이트에선 뒤집어 곱하기, 다크에선 그대로 screen — 어느 쪽이든 검정이 바탕에 녹는다', () => {
+test('부트 화면 그림은 라이트에서도 원본 그대로 — screen 블렌드만 쓰고 invert·hue-rotate·multiply·filter 분기가 없다', () => {
   const css = bootCss();
-  const light = css.slice(css.indexOf(':root {'), css.indexOf('@media (prefers-color-scheme: dark)'));
-  const dark = css.slice(css.indexOf('@media (prefers-color-scheme: dark)'), css.indexOf('html, body'));
-  assert.match(light, /--boot-art-filter:\s*invert\(1\)[^;]*;\s*--boot-art-blend:\s*multiply/);
-  assert.match(dark, /--boot-art-filter:\s*none;\s*--boot-art-blend:\s*screen/);
   for (const f of ['ship', 'wave']) {
-    assert.match(css, new RegExp(`\\.${f}\\s*\\{[^}]*filter:\\s*var\\(--boot-art-filter\\);\\s*mix-blend-mode:\\s*var\\(--boot-art-blend\\)`), `${f}가 변수를 쓴다`);
+    assert.match(css, new RegExp(`\\.${f}\\s*\\{[^}]*mix-blend-mode:\\s*screen`), `${f}는 screen(검정이 어두운 바탕에 녹는다)`);
   }
+  assert.doesNotMatch(css, /invert|hue-rotate|multiply|filter\s*:/i, '라이트 전용 보정이 다시 들어오면 실패');
+  assert.equal(bootHtml().match(/<meta name="color-scheme" content="([^"]+)"/)?.[1], 'dark', 'color-scheme 메타는 dark');
 });
 
 test('부트 화면 CSP — HTML에 <style>도 style 속성도 없고 인라인 스크립트가 없다(Tauri nonce)', () => {
@@ -225,7 +222,6 @@ test('부트 화면 CSP — HTML에 <style>도 style 속성도 없고 인라인 
   assert.doesNotMatch(html, /<style[\s>]/i);
   assert.doesNotMatch(html, /\sstyle\s*=/i);
   assert.doesNotMatch(html, /<script(?![^>]*\ssrc=)[^>]*>/i, '인라인 스크립트 금지(P0-4)');
-  assert.match(html, /<meta name="color-scheme" content="light dark"/, '시스템 밝기를 따른다(첫 페인트 전 바탕)');
   assert.ok(html.includes('<script src="/boot.js"></script>'));
   assert.doesNotMatch(html, /boot-splash|argo-splash/, '북극성은 본체 부트 화면에서 뺐다');
 });
