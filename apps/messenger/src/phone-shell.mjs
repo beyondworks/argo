@@ -112,10 +112,16 @@ export function sortRooms(list, { sort = 'recent', atOf = () => 0, unread = {}, 
 }
 
 /** 탭 안 검색 — fields(item)가 돌려준 글자들에서 대소문자 없이 찾는다. 빈 검색어는 전부 */
-export function tabSearch(items, query, fields) {
+export function tabSearch(items, query, fields, alsoHit = null) {
   const q = String(query ?? '').trim().toLowerCase();
   if (!q) return items;
-  return items.filter((x) => fields(x).some((v) => String(v ?? '').toLowerCase().includes(q)));
+  return items.filter((x) => alsoHit?.(x) || fields(x).some((v) => String(v ?? '').toLowerCase().includes(q)));
+}
+
+/** 채팅·채널 탭 검색의 서버 본문 검색어(기능 점검 D9) — 두 글자부터만 요청한다(한 글자는 거의 모든 방이 맞고 요청만 늘린다). */
+export function tabBodyQuery(query) {
+  const q = String(query ?? '').trim();
+  return q.length >= 2 ? q : null;
 }
 
 /** 기억 탭 폴더 — 조직 전체 기억(규칙·용어·프로젝트 순) / 채널별 기억(문서 먼저, 일지는 늘 최신이 위).
@@ -194,4 +200,29 @@ export function settingsOrgRows(orgs = []) {
 export function orgScreen(view, { orgs = [], orgId = null } = {}) {
   const org = orgs.find((o) => o.id === orgId) ?? null;
   return { org, multi: orgs.length > 1, locked: !!org && ADMIN_ONLY.has(view) && !isOrgAdmin(org) };
+}
+
+/** 에이전트 넣기 요청 카드 문구(기능 점검 D6) — 에이전트·방 이름을 알면 "'효일'을 '유건, 하나' 방에 넣어 달라는 요청", 모르면 종전 문구 */
+export function joinReqKey({ crew = null, room = null } = {}) {
+  if (crew && room) return ['phone.agents.joinReq.named', { crew, room }];
+  if (crew) return ['phone.agents.joinReq.crew', { crew }];
+  return ['phone.agents.joinReq', {}];
+}
+
+/** 목록 미리보기 가리기(기능 점검 D7) — 방 안과 같이: 차단한 사람의 글은 '차단한 사용자의 메시지'(masked 'blocked'), 숨긴 에이전트의 글은 빈칸. 목록 검색도 이 글자로 찾는다 */
+export function maskedPreview(row, { blocked = null, muted = null } = {}) {
+  if (row?.userId && blocked?.has(row.userId)) return { text: '', masked: 'blocked' };
+  if (row?.crewId && muted?.has(row.crewId)) return { text: '', masked: 'muted' };
+  return { text: row?.preview ?? '', masked: null };
+}
+
+/** 기능 점검 D13 — 개인 사람 1:1인데 글이 한 번도 없으면 빈 방(목록에서 뺀다). 그룹·에이전트 1:1·조직 방은 아니다.
+    lastMsg = 실시간·조회로 받은 마지막 글(있으면 첫 글이 막 온 것). */
+export function emptyPersonalDm(c, lastMsg) {
+  return !!c?._personal_other && !c._personal_group && !c._personal_crew && !c._personal_last_at && !lastMsg;
+}
+
+/** 그 친구와의 개인 사람 1:1(목록 행 중) — 없으면 null. 친구 줄을 누를 때 방을 만들지 않고 찾기만 한다(D13). */
+export function personalDmWith(rows, userId) {
+  return (rows ?? []).find((c) => c._personal_other === userId && !c._personal_group && !c._personal_crew) ?? null;
 }

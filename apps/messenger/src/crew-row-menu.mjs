@@ -2,13 +2,16 @@
 // 메뉴에도 두지 않는다. 눌러도 시트만 닫히고 아무것도 안 열리던 결함(검수 F, 2026-10-01).
 // 개인 공간에서 내 에이전트는 '빼기'(주인이 자기 에이전트를 이 방에서 빼는 서버 함수 msgr_crew_leave_channel)로만 뺀다 — 친구가 만든 그룹방에서
 // 채널 행을 직접 지우면 서버가 "채널 관리자나 조직 관리자만 바꿀 수 있습니다"로 거절했다(실측 2026-10-01, QA 스택).
-export function crewRowMenuKeys({ isPersonal, isDm, canKickCrew, ownedByMe }) {
+// 빼기는 주인만(유건 결정 2026-10-02, 기능 점검 D8 — 서버 20261002120000이 같은 규칙으로 막는다). 남에게는 '숨기기'(글 접힘, 스스로 가린다).
+// 회사 에이전트(company — 사람 주인 없음)는 방장이 종전대로 뺀다. canHide = 숨길 수 있음(내 에이전트가 아니고 아직 숨기지 않음).
+export function crewRowMenuKeys({ isPersonal, isDm, canKickCrew, ownedByMe, company = false, canHide = false }) {
   const viaLeave = ownedByMe && (isPersonal || !canKickCrew);
   return [
     !isPersonal && 'manage',
     !isDm && 'call',
-    canKickCrew && !viaLeave && 'remove',
+    canKickCrew && (ownedByMe || company) && !viaLeave && 'remove',
     viaLeave && 'leave',
+    !ownedByMe && canHide && 'hide',
   ].filter(Boolean);
 }
 

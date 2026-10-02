@@ -106,13 +106,14 @@ export function failedCrewsInFetch(rows, { afterId = null, preserve = false, now
 }
 
 /** 얼굴 상태 — 준비 중 > 결재 대기 > 놀람(멘션·수신 1초) > 오류(실패한 답 뒤 8초) > 완료(답 뒤 2초) > 오프라인 > 쉼 */
+import { seenWithin } from './presence-clock.mjs';
 export function crewFaceState({ crew, working = false, asking = false, surprisedAt = 0, erroredAt = 0, doneAt = 0, now = Date.now() }) {
   if (working) return 'work';
   if (asking) return 'ask';
   if (surprisedAt && now - surprisedAt < SURPRISE_MS) return 'surprise';
   if (erroredAt && now - erroredAt < ERROR_MS) return 'error';
   if (doneAt && now - doneAt < DONE_MS) return 'done';
-  if (crew && (!crew.last_seen_at || now - Date.parse(crew.last_seen_at) >= AWAY_MS)) return 'off';
+  if (crew && !seenWithin(crew, AWAY_MS, now)) return 'off'; // 받아 온 때 기준(presence-clock.mjs)
   return 'idle';
 }
 

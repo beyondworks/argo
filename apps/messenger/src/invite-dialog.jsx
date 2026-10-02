@@ -5,15 +5,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { I } from './icons.jsx';
+import { Seg } from './seg.mjs';
 import './invite-dialog.css';
 import { EXPIRY_DAYS, MAX_USES, GUEST_DAYS, invitePerms, channelPick, settingsSummary } from './invite-flow.mjs';
 
-// 선택지가 적은 설정은 한 번에 누르는 알약(네이티브 select는 클릭이 는다 — 총괄 결정)
-function Seg({ label, value, options, onPick }) {
-  return <span className="msgr-seg" role="radiogroup" aria-label={label}>{options.map(([v, text]) => <button key={String(v)} type="button" role="radio" aria-checked={value === v} className={value === v ? 'active' : ''} onClick={() => onPick(v)}>{text}</button>)}</span>;
-}
+// 선택지가 적은 설정은 한 번에 누르는 알약(네이티브 select는 클릭이 는다 — 총괄 결정). 앱 공통 세그먼트(seg.mjs)를 쓴다.
+const pairs = (options) => options.map(([v, text]) => ({ v, label: text }));
 
-export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initialChannelIds = [], initialRole, create, discard = null, shareText, linkOf, onClose, onManage, errorText, t, phone = false }) {
+export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initialChannelIds = [], initialRole, create, discard = null, loadCurrent = null, confirmReplace = null, shareText, linkOf, onClose, onManage, errorText, t, phone = false }) {
   const perm = invitePerms({ isAdmin, hostOf });
   const [s, setS] = useState(() => ({ role: initialRole ?? (perm.member ? 'member' : 'guest'), expiryDays: 7, maxUses: null, guestDays: 30 })); // 기본: 멤버 7일·제한 없음, 게스트 7일·1회·이용 30일(총괄 확정)
   const eligible = useMemo(() => channels.filter((c) => c.kind !== 'dm'), [channels]);
@@ -27,17 +26,25 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   // 이 창에서 만든 링크 — 복사하지 않은 채 새 링크로 바뀌거나 창을 닫으면 취소한다(쌓임 방지, 총괄 2026-09-18). 복사한 링크는 이미 건너갔을 수 있어 둔다.
   const cur = useRef(null); // { id, code, copied }
   const drop = (inv) => { if (inv && !inv.copied && discard) discard(inv.id).catch(() => {}); };
+  // 조직 멤버 링크는 하나(5차 피드백, 서버 20261002130000) — 쓸 수 있는 링크가 있으면 그 링크를 보여 주고 설정을 잠근다(base).
+  // '새 링크로 바꾸기'(확인)를 누르면 잠금을 풀고 새 링크를 만든다 — 서버가 같은 트랜잭션에서 이전 링크를 취소한다. 복사한 링크도 다시 잠근다
+  // (잠그지 않으면 설정을 바꾸는 순간 새 링크가 만들어져, 이미 보낸 링크가 말없이 취소된다). undefined = 아직 읽는 중.
+  const [base, setBase] = useState(() => (loadCurrent && perm.member ? undefined : null));
+  const [asking, setAsking] = useState(false);
+  const readBase = () => loadCurrent().then((l) => { if (seq.current >= 0) setBase(l ?? null); }).catch(() => { if (seq.current >= 0) setBase(null); });
+  useEffect(() => { if (base === undefined) readBase(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const locked = s.role === 'member' && !!base;
   useEffect(() => () => { seq.current = -1; drop(cur.current); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 선택·설정이 바뀌면 새 링크(짧게 모아서) — 늦게 온 옛 응답은 버린다.
   // 옛 링크는 그 순간 지운다: 옛 설정(예: 멤버)의 링크가 새 설정(게스트) 화면에 남아 복사되면 권한이 넘어간다(D32).
   const needChannel = s.role === 'guest' && picked.length === 0; // 서버가 거절(msgr_invite_guest_one_channel) — 만들지 않는다
   // 링크는 만든 설정(want)과 짝으로 둔다 — 설정이 바뀐 바로 그 렌더부터 옛 링크가 안 보인다(효과에서 지우면 한 프레임 남는다)
-  const want = [s.role, s.expiryDays, s.maxUses, s.guestDays, picked.join(',')].join('|');
-  const link = made?.key === want ? made.code : null;
+  const want = base === undefined || locked ? null : [s.role, s.expiryDays, s.maxUses, s.guestDays, picked.join(',')].join('|'); // 읽는 중·잠금 중엔 만들지 않는다
+  const link = locked ? base.code : made?.key === want ? made.code : null;
   useEffect(() => {
-    const my = ++seq.current; drop(cur.current); cur.current = null; setMade(null); setErr(null); setBusy(!needChannel); // 화면에서 지운 링크는 복사할 수 없다 — 안 건너갔으면 바로 정리
-    if (needChannel) return undefined;
+    const my = ++seq.current; drop(cur.current); cur.current = null; setMade(null); setErr(null); setBusy(!needChannel && want != null); // 화면에서 지운 링크는 복사할 수 없다 — 안 건너갔으면 바로 정리
+    if (needChannel || want == null) return undefined;
     const timer = setTimeout(async () => {
       try { const inv = await create({ role: s.role, channelIds: picked, expiryDays: s.expiryDays, maxUses: s.role === 'guest' ? 1 : s.maxUses, guestDays: s.guestDays });
         if (seq.current !== my) { drop(inv); return; } // 늦게 온 옛 응답·닫힌 창 — 보여 준 적 없는 링크
@@ -51,12 +58,12 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   useEffect(() => { if (!copied) return undefined; const id = setTimeout(() => setCopied(false), 1500); return () => clearTimeout(id); }, [copied]);
 
   const toggle = (c) => {
-    if (!channelPick(c, { isAdmin, hostOf }, s.role).ok) return;
+    if (locked || !channelPick(c, { isAdmin, hostOf }, s.role).ok) return;
     setPicked((cur) => s.role === 'guest' ? [c.id] : cur.includes(c.id) ? cur.filter((x) => x !== c.id) : [...cur, c.id]);
   };
   const setRole = (role) => { if (role === 'member' && !perm.member) return; setS((x) => ({ ...x, role }));
     setPicked((cur) => { const ok = cur.filter((id) => channelPick(eligible.find((c) => c.id === id), { isAdmin, hostOf }, role).ok); return role === 'guest' ? ok.slice(0, 1) : ok; }); };
-  const markCopied = () => { if (cur.current) cur.current.copied = true; };
+  const markCopied = () => { if (cur.current) { cur.current.copied = true; if (s.role === 'member' && loadCurrent) readBase(); } }; // 복사한 멤버 링크 = 조직 링크 — 다시 잠근다
   const copy = async () => { if (!link) return; markCopied(); try { await navigator.clipboard.writeText(shareText ? shareText(link, { channels: names, days: s.expiryDays }) : link); setCopied(true); } catch { setErr(t('inv.copy.fail')); } };
   const keydown = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
@@ -65,7 +72,9 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
     const first = items[0], last = items.at(-1);
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
   };
-  const names = picked.map((id) => eligible.find((c) => c.id === id)?.name).filter(Boolean);
+  const shownIds = locked ? (base.channel_ids ?? []) : picked;
+  const names = shownIds.map((id) => eligible.find((c) => c.id === id)?.name).filter(Boolean);
+  const replace = () => { const keep = (base.channel_ids ?? []).filter((id) => { const c = eligible.find((x) => x.id === id); return c && channelPick(c, { isAdmin, hostOf }, 'member').ok; }); setPicked(keep); setAsking(false); setBase(null); }; // 같은 채널로 새 링크 — 바꾸고 싶으면 그다음에 고른다
   // 부제 = 행선지 문장(칩과 겹치는 채널 나열 대신). 채널이 없으면 경고색 — 멤버는 복사를 막지 않고, 게스트는 채널을 고를 때까지 링크가 없다
   const sub = needChannel ? t('inv.sub.guestNone') : names.length === 0 ? t('inv.sub.none') : names.length === 1 ? t('inv.sub.one', { name: names[0] }) : t('inv.sub.more', { name: names[0], n: names.length - 1 });
   const lockTip = (why) => t(why === 'guestPrivate' ? 'inv.ch.guestPrivateTip' : 'inv.ch.lockedTip');
@@ -92,36 +101,35 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
         <div className="inv-sec">
           <div className="inv-label">{t(s.role === 'guest' ? 'inv.channel.guest' : 'inv.channels')}</div>
           <div className="inv-chips" role="group" aria-label={t('inv.channels')}>
-            {eligible.map((c) => { const p = channelPick(c, { isAdmin, hostOf }, s.role); const on = picked.includes(c.id);
+            {eligible.map((c) => { const p = channelPick(c, { isAdmin, hostOf }, s.role); const on = shownIds.includes(c.id);
               return <button key={c.id} type="button" role={s.role === 'guest' ? 'radio' : 'checkbox'} aria-checked={on} aria-disabled={!p.ok || undefined}
-                className={`inv-chip${on ? ' on' : ''}${p.ok ? '' : ' locked'}`} onClick={() => toggle(c)} title={p.ok ? undefined : lockTip(p.why)}>
+                className={`inv-chip${on ? ' on' : ''}${p.ok ? '' : ' locked'}${locked ? ' fixed' : ''}`} onClick={() => toggle(c)} title={p.ok ? undefined : lockTip(p.why)}>
                 <I name={c.kind === 'private' ? 'lock' : 'hash'} size={12} /><span>{c.name}</span>{on && <I name="check" size={12} />}
               </button>; })}
           </div>
           {s.role === 'guest' && <p className="inv-note">{t('inv.guest.one')}</p>}
+          {locked && <div className="inv-replace"><p className="inv-note">{t('inv.locked.note')}</p><button type="button" className="btn sm" onClick={() => setAsking(true)}>{t('inv.replace')}</button></div>}
         </div>
 
         <div className="inv-sec">
           <button type="button" className="inv-fold" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-            <span className="inv-label">{t('inv.settings')}</span><span className="inv-sum">{settingsSummary(s, t)}</span><I name="caret" size={13} className="caret" />
+            <span className="inv-label">{t('inv.settings')}</span><span className="inv-sum">{locked ? t('inv.role.member') : settingsSummary(s, t)}</span><I name="caret" size={13} className="caret" />
           </button>
           {open && <div className="inv-settings">
             <div className="inv-row"><span>{t('inv.role')}</span>
-              <span className="msgr-seg" role="radiogroup" aria-label={t('inv.role')}>
-                <button type="button" role="radio" aria-checked={s.role === 'member'} className={s.role === 'member' ? 'active' : ''} disabled={!perm.member} title={perm.member ? undefined : t('inv.role.memberLocked')} onClick={() => setRole('member')}>{t('inv.role.member')}</button>
-                <button type="button" role="radio" aria-checked={s.role === 'guest'} className={s.role === 'guest' ? 'active' : ''} disabled={!perm.guest} onClick={() => setRole('guest')}>{t('inv.role.guest')}</button>
-              </span></div>
+              <Seg label={t('inv.role')} value={s.role} onPick={setRole} options={[{ v: 'member', label: t('inv.role.member'), disabled: !perm.member, title: perm.member ? undefined : t('inv.role.memberLocked') }, { v: 'guest', label: t('inv.role.guest'), disabled: !perm.guest }]} /></div>
             {!perm.member && <p className="inv-note">{t('inv.role.memberLocked')}</p>}
-            <div className="inv-row"><span>{t('inv.expiry')}</span>
-              <Seg label={t('inv.expiry')} value={s.expiryDays} options={EXPIRY_DAYS.map((d) => [d, d == null ? t('inv.expiry.none') : t('inv.days', { n: d })])} onPick={(v) => setS((x) => ({ ...x, expiryDays: v }))} /></div>
+            {!locked && <><div className="inv-row"><span>{t('inv.expiry')}</span>
+              <Seg label={t('inv.expiry')} value={s.expiryDays} options={pairs(EXPIRY_DAYS.map((d) => [d, d == null ? t('inv.expiry.none') : t('inv.days', { n: d })]))} onPick={(v) => setS((x) => ({ ...x, expiryDays: v }))} /></div>
             {s.role === 'member'
               ? <div className="inv-row"><span>{t('inv.uses')}</span>
-                  <Seg label={t('inv.uses')} value={s.maxUses} options={MAX_USES.map((n) => [n, n == null ? t('inv.uses.unlimitedShort') : t('inv.uses.n', { n })])} onPick={(v) => setS((x) => ({ ...x, maxUses: v }))} /></div>
+                  <Seg label={t('inv.uses')} value={s.maxUses} options={pairs(MAX_USES.map((n) => [n, n == null ? t('inv.uses.unlimitedShort') : t('inv.uses.n', { n })]))} onPick={(v) => setS((x) => ({ ...x, maxUses: v }))} /></div>
               : <div className="inv-row"><span>{t('inv.guest.days')}</span>
-                  <Seg label={t('inv.guest.days')} value={s.guestDays} options={GUEST_DAYS.map((d) => [d, t('inv.days', { n: d })])} onPick={(v) => setS((x) => ({ ...x, guestDays: v }))} /></div>}
+                  <Seg label={t('inv.guest.days')} value={s.guestDays} options={pairs(GUEST_DAYS.map((d) => [d, t('inv.days', { n: d })]))} onPick={(v) => setS((x) => ({ ...x, guestDays: v }))} /></div>}</>}
           </div>}
         </div>
 
+        {asking && confirmReplace?.({ onConfirm: replace, onClose: () => setAsking(false) })}
         {onManage && <footer className="inv-foot"><button type="button" className="inv-manage" onClick={onManage}>{t('inv.manage')}</button></footer>}
         </div>
       </section>

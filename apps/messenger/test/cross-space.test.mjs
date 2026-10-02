@@ -106,7 +106,8 @@ test('독 배지: 보고 있는 공간은 채널별 안 읽음(음소거 제외)
 test('App.jsx 배선: 소속 조직 전부의 org: 토픽과 u:<나> 토픽을 구독하고, 알림은 readableForNotify를 거친다', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /supabase\.channel\(`u:\$\{uid\}`/, 'u:<나> 구독');
-  assert.match(app, /orgs\.filter\(\(o\) => o\.id !== orgId\)\.map\(\(o\) => supabase\.channel\(`org:\$\{o\.id\}`/, '보고 있지 않은 조직의 org: 구독');
+  assert.match(app, /for \(const o of orgs\) \{\s*const ch = supabase\.channel\(`org:\$\{o\.id\}`/, '소속 조직 전부의 org: 구독(보는 조직 포함 — 기능 점검 D3: 한 번 걸어 유지)');
+  assert.match(app, /\}, \[uid, orgIdsKey, session\.access_token, resumeEpoch, roomReset\]\);[^\n]*탭·고른 조직은 아니다/, '구독은 탭·고른 조직(orgId)이 바뀌어도 다시 걸지 않는다');
   // 알림 전 읽힘 확인 — 알릴 상황(shouldNotify)일 때만 조회. D55부터 건너뛴 이유를 진단에 남긴다(notifySkip → 'viewing'은 shouldNotify 거짓)
   assert.match(app, /const notifySkip = \(payload\) => \{[^\n]*return shouldNotify\(payload\.channel_id\) \? '' : 'viewing'; \};/);
   const body = app.slice(app.indexOf('const notifyReadable = (payload, space) => {'), app.indexOf('const notifyApproval'));

@@ -122,6 +122,45 @@ test('탭 안 검색 — 이름·본문에서 대소문자 없이 찾는다, 빈
   assert.deepEqual(tabSearch(items, '없음', fields), []);
 });
 
+import { tabBodyQuery } from '../src/phone-shell.mjs';
+// 기능 점검 D9(2026-10-02): 채팅 탭 검색이 마지막 글만 봐서 예전 대화를 못 찾았다 → 서버 본문 검색 결과(방 id)도 맞은 것으로 친다.
+test('탭 안 검색 — 서버 본문 검색에서 맞은 방도 결과에 넣는다(이름·미리보기에 없어도)', () => {
+  const items = [{ id: 'a', name: '서윤', text: '안녕' }, { id: 'b', name: '하나', text: '사진' }];
+  const fields = (x) => [x.name, x.text];
+  const hit = new Set(['b']);
+  assert.deepEqual(tabSearch(items, '견적서', fields, (x) => hit.has(x.id)).map((x) => x.id), ['b']);
+  assert.deepEqual(tabSearch(items, '서윤', fields, (x) => hit.has(x.id)).map((x) => x.id), ['a', 'b']);
+  assert.deepEqual(tabSearch(items, '', fields, (x) => hit.has(x.id)).map((x) => x.id), ['a', 'b'], '빈 검색어는 전부');
+});
+test('서버 본문 검색은 두 글자부터 — 한 글자·공백은 요청하지 않는다', () => {
+  assert.equal(tabBodyQuery(''), null);
+  assert.equal(tabBodyQuery(' 견 '), null);
+  assert.equal(tabBodyQuery(' 견적 '), '견적');
+  assert.equal(tabBodyQuery(null), null);
+});
+
+import { emptyPersonalDm, personalDmWith } from '../src/phone-shell.mjs';
+// 기능 점검 D13(2026-10-02): 친구 줄을 누르기만 해도 글 없는 1:1 방이 DB에 생겨 목록에 빈 줄로 남았다 → 있는 방만 찾고, 없으면 첫 글을 보낼 때 만든다. 빈 1:1은 목록에서 뺀다.
+test('빈 개인 1:1 — 글이 한 번도 없는 사람 1:1만 빈 방(그룹·에이전트 방·글이 있거나 방금 온 글이 있으면 아님)', () => {
+  const dm = { id: 'a', kind: 'dm', _personal_other: 'u2', _personal_group: false, _personal_crew: null, _personal_last_at: null };
+  assert.equal(emptyPersonalDm(dm, null), true);
+  assert.equal(emptyPersonalDm({ ...dm, _personal_last_at: '2026-10-02T01:00:00Z' }, null), false);
+  assert.equal(emptyPersonalDm(dm, { body: 'hi', at: 1 }), false, '실시간으로 첫 글이 오면 바로 보인다');
+  assert.equal(emptyPersonalDm({ ...dm, _personal_group: true }, null), false, '새로 만든 그룹은 비어 있어도 보인다');
+  assert.equal(emptyPersonalDm({ ...dm, _personal_crew: 'c1' }, null), false, '에이전트 1:1은 보인다');
+  assert.equal(emptyPersonalDm({ id: 'o', kind: 'dm', org_id: 'org' }, null), false, '조직 1:1은 대상 아님');
+});
+test('있는 1:1 찾기 — 그 친구와 나 둘만의 사람 1:1(그룹·그 친구 에이전트 방은 아님)', () => {
+  const rows = [
+    { id: 'g', _personal_other: 'u2', _personal_group: true, _personal_crew: null },
+    { id: 'c', _personal_other: 'u2', _personal_group: false, _personal_crew: 'c9' },
+    { id: 'd', _personal_other: 'u2', _personal_group: false, _personal_crew: null },
+  ];
+  assert.equal(personalDmWith(rows, 'u2')?.id, 'd');
+  assert.equal(personalDmWith(rows, 'u3'), null);
+  assert.equal(personalDmWith(null, 'u2'), null);
+});
+
 import { memoryGroups, memSnippet } from '../src/phone-shell.mjs';
 test('기억 폴더 — 조직 전체(규칙·용어·프로젝트) / 채널별(문서 먼저, 일지는 최신이 위), 기본 최근순', () => {
   const d = (id, path, ch = null, at = '2026-10-01T00:00:00Z', title = path, body = '') => ({ id, path, channel_id: ch, updated_at: at, title, body });
@@ -231,4 +270,22 @@ test('설정 조직 화면 — 처음엔 고른 조직, 하나뿐이면 고르�
   assert.deepEqual(orgScreen('memory', { orgs, orgId: 'o2' }), { org: orgs[1], multi: true, locked: false }, '기억은 멤버도 본다(바꾸기는 정책이 정한다)');
   assert.deepEqual(orgScreen('org', { orgs: [orgs[1]], orgId: 'o2' }), { org: orgs[1], multi: false, locked: false });
   assert.deepEqual(orgScreen('org', { orgs, orgId: 'gone' }), { org: null, multi: true, locked: false });
+});
+
+// 기능 점검 D6(2026-10-02) — 결재 카드에서 어떤 에이전트를 어느 방에 넣어 달라는지 구분되지 않던 것. 이름을 모르면 종전 문구로.
+test('넣기 요청 카드 문구 — 에이전트·방 이름이 있으면 둘 다, 에이전트만 있으면 에이전트만, 없으면 종전 문구', async () => {
+  const { joinReqKey } = await import('../src/phone-shell.mjs');
+  assert.deepEqual(joinReqKey({ crew: '효일', room: '유건, 하나' }), ['phone.agents.joinReq.named', { crew: '효일', room: '유건, 하나' }]);
+  assert.deepEqual(joinReqKey({ crew: '효일', room: null }), ['phone.agents.joinReq.crew', { crew: '효일' }]);
+  assert.deepEqual(joinReqKey({ crew: null, room: '유건, 하나' }), ['phone.agents.joinReq', {}]);
+});
+
+// 기능 점검 D7(2026-10-02) — 차단한 사람의 글이 채팅 목록 미리보기·목록 검색에 그대로 보이던 것. 방 안과 같이 가린다.
+test('미리보기 가리기 — 차단한 사람의 마지막 글은 "차단한 사용자의 메시지", 숨긴 에이전트의 글은 빈칸, 그 밖은 그대로', async () => {
+  const { maskedPreview } = await import('../src/phone-shell.mjs');
+  const blocked = new Set(['u-bad']); const muted = new Set(['c-hid']);
+  assert.deepEqual(maskedPreview({ preview: '욕설', userId: 'u-bad' }, { blocked, muted }), { text: '', masked: 'blocked' });
+  assert.deepEqual(maskedPreview({ preview: '비밀', crewId: 'c-hid' }, { blocked, muted }), { text: '', masked: 'muted' });
+  assert.deepEqual(maskedPreview({ preview: '안녕', userId: 'u-ok' }, { blocked, muted }), { text: '안녕', masked: null });
+  assert.deepEqual(maskedPreview({ preview: '안녕' }, {}), { text: '안녕', masked: null }, '작성자를 모르면 그대로');
 });
