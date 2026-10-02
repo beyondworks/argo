@@ -18,7 +18,7 @@
 // 코드 블록·인라인 코드 안은 손대지 않는다(예시 코드를 망가뜨리지 않게).
 import { open, realpath, stat } from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { paths, WS_ROOT } from '../workspace.mjs';
@@ -58,13 +58,16 @@ function localTarget(dest, vault) {
   let d = splitTitle(dest);
   if (d.startsWith('<') && d.endsWith('>')) d = d.slice(1, -1).trim();
   if (!d) return null;
-  if (/^file:/i.test(d)) { try { return fileURLToPath(d); } catch { return null; } }
+  if (/^file:/i.test(d)) { try { d = fileURLToPath(d); } catch { return null; } return /^\/[A-Za-z]:[\\/]/.test(d) ? d.slice(1) : d; } // 맥·리눅스는 file:///C:/…를 /C:/…로 준다
+  if (/^\/[A-Za-z]:[\\/]/.test(d)) d = d.slice(1);
   if (DRIVE.test(d)) return d; // 윈도우 드라이브 경로 — 어느 OS에서든 로컬 경로(MEDIUM-4). 윈도우가 아니면 judge가 풀지 않고 '밖'으로 본다
   if (/^[a-z][a-z0-9+.-]*:/i.test(d) || d.startsWith('#')) return null; // https:·mailto:·앵커
   d = safeDecode(d);
   if (d === '~' || d.startsWith('~/')) return join(homedir(), d.slice(1));
   if (isAbsolute(d)) return d;
-  const rel = d.replace(/^\.\//, '').replace(/^vault\//, ''); // 상대 경로는 기존 규칙(extractFileRefs) 그대로 — vault 기준 첨부 구역만
+  // 상대 경로는 기존 규칙(extractFileRefs) 그대로 — vault 기준 첨부 구역만. 역슬래시(윈도우 크루가 쓰는 projects\x\a.png 꼴)도 구분자로 본다 —
+  // 윈도우 CI에서 이 꼴이 후보로 잡히지 않아 첨부도 안내도 없이 본문에 남았다(PR #812 Windows CI). 어느 OS에서든 같은 판정.
+  const rel = d.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^vault\//, '');
   return ZONES.some((z) => rel.startsWith(`${z}/`)) ? join(vault, rel) : null;
 }
 
@@ -81,8 +84,11 @@ const LOCAL_FIRST = new Set(['Volumes', 'Users', 'home', 'mnt', 'opt', 'private'
 const ME = (() => { try { return FOLD(userInfo().username); } catch { return null; } })();
 const privatePath = (abs) => {
   if (DRIVE.test(abs)) return true;
-  const p = FOLD(resolve(abs));
-  const segs = p.split(sep).filter(Boolean);
+  // `/`로 시작하는 POSIX 모양은 어느 OS에서든 POSIX로 푼다 — 윈도우 resolve는 현재 드라이브를 붙여(D:\Volumes\…) 첫 칸이 'D:'가 되어
+  // 맥 경로(/Volumes/고객사A/…)가 웹 경로로 남았다(PR #812 Windows CI).
+  const posixShaped = abs.startsWith('/');
+  const p = FOLD(posixShaped ? posix.resolve(abs) : resolve(abs));
+  const segs = p.split(posixShaped ? '/' : sep).filter(Boolean);
   if (segs.length >= 2 && LOCAL_FIRST.has(segs[0])) return true;
   if (ME && segs.length >= 3 && segs[0] === 'media' && segs[1] === ME) return true;
   if (ME && segs.length >= 4 && segs[0] === 'run' && segs[1] === 'media' && segs[2] === ME) return true; // Fedora·Arch 기본 마운트 /run/media/<사용자>/… — 같은 규칙(최종 재검수 LOW-2)
@@ -137,7 +143,7 @@ const reasonText = (kind, lang, max = REPLY_FILES_MAX) => ({
     로컬 파일로 보고 본문에서 지우고 '작업 폴더 밖' 안내를 붙이던 것(분리 검수 L-2). 있는 구역 밖 파일은 그대로 '밖'으로 막는다. */
 async function judge(abs, roots, literals) {
   const foreignDrive = DRIVE.test(abs) && process.platform !== 'win32'; // 이 OS에서는 풀 수 없는 드라이브 문자 경로
-  const shown = (foreignDrive ? win32.basename(abs) : basename(abs)) || 'file'; // 안내에는 마지막 이름만(폴더 이름이 드러나지 않게)
+  const shown = (DRIVE.test(abs) ? win32.basename(abs) : basename(abs)) || 'file'; // 안내에는 마지막 이름만(폴더 이름이 드러나지 않게) — 드라이브 경로는 \·/ 둘 다 구분자
   // 경로 중간 조각은 realpath 기준 구역 상대 경로로 본다 — 실제 루트가 ~/.argo/workspaces라 절대 경로 전체의 숨김 조각을 보면 정상 파일까지 막힌다.
   // realpath는 파일 내용을 읽지 않는다(.env가 구역 안 다른 파일을 가리키는 심링크여도 아래 이름 판정으로 거부).
   let real = null; let gone = false;

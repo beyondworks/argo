@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, symlink, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { userInfo } from 'node:os';
@@ -438,12 +438,39 @@ test('F-3: 홈·작업 루트·임시 폴더 밖 절대 경로는 확장자가 �
   const r = await planReplyFiles(WS, web);
   assert.equal(r.body, web);
   assert.deepEqual(r.fails, []);
-  if (process.platform === 'darwin') {
-    const upper = join(homedir().toUpperCase(), 'Desktop', 'plan.pdf');
-    const h = await planReplyFiles(WS, `[계획](${upper})`);
-    assert.equal(h.body, '계획', '대문자로 쓴 홈 경로도 지운다');
+  // 플랫폼별 기대값 — 홈 판정은 대소문자를 무시하는 파일 시스템(macOS·윈도우)에서만 대소문자를 무시한다
+  const upper = join(homedir().toUpperCase(), 'Desktop', 'plan.pdf');
+  const h = await planReplyFiles(WS, `[계획](${upper})`);
+  if (process.platform === 'linux') {
+    assert.equal(h.body, `[계획](${upper})`, '리눅스: 대문자 홈은 다른 경로(대소문자 구분) — 홈·작업 루트 밖 웹 경로처럼 그대로');
+    assert.deepEqual(h.fails, []);
+  } else {
+    assert.equal(h.body, '계획', 'macOS·윈도우: 대문자로 쓴 홈 경로도 지운다');
     assert.match(h.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
   }
+});
+
+// PR #812 Windows CI: ① 역슬래시 상대 경로(projects\x\a.png — 윈도우 크루가 쓰는 꼴)가 후보로 잡히지 않아 첨부도 안내도 없이 본문에 남았다.
+// ② `/Volumes/…` 같은 POSIX 경로를 윈도우 resolve가 D:\Volumes\…로 풀어 첫 칸이 'D:'가 되어 로컬 위치로 보지 않았다.
+// 두 판정 모두 어느 OS에서든 같은 결과여야 한다 — 이 시험은 모든 플랫폼에서 같은 기대값으로 돈다.
+test('Windows 모양 경로: 역슬래시 상대 경로는 구역 판정·첨부·거부 안내가 슬래시와 같고, POSIX 로컬 경로는 어느 OS에서든 지운다', async () => {
+  const { planReplyFiles } = await import('../src/gateway/msgr-reply-files.mjs');
+  const back = (rel) => rel.split('/').join('\\');
+  const ok = await planReplyFiles(WS, `![a](${back('projects/20261002_페퍼-아바타/페퍼-아바타.png')}) [b](${back('vault/files/memo.md')}) [c](.\\${back('projects/20261002_페퍼-아바타/보고서.pdf')})`);
+  assert.deepEqual(ok.files.map((f) => f.name), ['페퍼-아바타.png', 'memo.md', '보고서.pdf']);
+  assert.equal(ok.body, 'b c', '그림은 첨부로 대신하고 링크는 글자만');
+  const bad = await planReplyFiles(WS, LEAKS.map((f) => `[x](${back(f.slice(p.vault.length + 1).split(sep).join('/'))})`).join('\n'));
+  assert.deepEqual(bad.files, []);
+  assert.equal(bad.fails.length, LEAKS.length, '역슬래시 경로도 거부를 알린다');
+  assert.doesNotMatch(bad.body, /credentials|_imported/);
+  const posixLocal = await planReplyFiles(WS, '[계약서](/Volumes/고객사A/계약/계약서.pdf) [h](/home/kim/고객/a.pdf)');
+  assert.equal(posixLocal.body, '계약서 h');
+  assert.equal(posixLocal.fails.length, 2);
+  // 다른 사람 컴퓨터의 윈도우 작업 폴더 경로(이 컴퓨터에 없는 C:\Users\…\.argo\…) — 어느 OS에서든 지우고 안내 하나, 안내에는 파일 이름만.
+  // (이 컴퓨터 작업 폴더의 윈도우 절대 경로 첨부는 위 M-1·실사례 시험이 OS 경로 그대로(윈도우면 D:\…) 넣어 확인한다)
+  const other = await planReplyFiles(WS, '[z](C:\\Users\\kim\\.argo\\workspaces\\other\\vault\\projects\\고객L\\x.png)');
+  assert.equal(other.body, 'z');
+  assert.deepEqual(other.fails.map((f) => f.name), ['x.png']);
 });
 
 // M-5: 같은 파일을 답마다 새 경로로 다시 올렸다(루틴 결과 글·대화 중 같은 시안 재언급). 같은 방에 이미 올린 같은 내용이면 기존 객체를 재사용한다.
