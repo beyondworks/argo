@@ -1,11 +1,13 @@
-// R2 실측(설계안 13장 '확인하지 못한 것'을 실제 버킷으로 닫는다) — argo-office 버킷의 _probe/<무작위>/ 아래만 쓰고, 끝나면 모두 지운 뒤 비었는지 LIST로 확인한다.
+// R2 실측(설계안 13장 '확인하지 못한 것'을 실제 버킷으로 닫는다) — 개발 버킷(argo-office-dev)의 _probe/<무작위>/ 아래만 쓰고, 끝나면 모두 지운 뒤 비었는지 LIST로 확인한다.
 // 실행(값은 출력하지 않는다): ( set -a; . <레포>/.env.local; set +a; node apps/office/scripts/r2-smoke.mjs )
-// 필요한 환경 변수: R2_ENDPOINT · R2_OFFICE_BUCKET · R2_OFFICE_ACCESS_KEY_ID · R2_OFFICE_SECRET_ACCESS_KEY
+// 필요한 환경 변수: R2_ENDPOINT · R2_OFFICE_DEV_BUCKET · R2_OFFICE_DEV_ACCESS_KEY_ID · R2_OFFICE_DEV_SECRET_ACCESS_KEY(운영 버킷 이름이면 거절 — scripts/r2-dev-env.mjs)
+// (2026-10-02 첫 실측은 개발 버킷이 생기기 전이라 운영 버킷 _probe/에서 했다 — 그 뒤로는 개발 버킷만)
 // 출력에는 상태 코드·오류 코드(<Code>)·헤더 이름만 — 서명 주소·키·응답 본문 원문은 남기지 않는다(SignatureDoesNotMatch 본문에는 접근 키 ID가 들어 있을 수 있다).
 import { randomUUID } from 'node:crypto';
 import { r2FromEnv, presignUrl } from '../server/r2.js';
+import { devR2Env } from './r2-dev-env.mjs';
 
-const env = process.env;
+const env = devR2Env(process.env);
 const r2 = r2FromEnv(env);
 const PREFIX = `_probe/${randomUUID()}/`;
 const results = [];

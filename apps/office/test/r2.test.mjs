@@ -86,3 +86,14 @@ test('여러 키를 n개씩: 실패한 키만 false', async () => {
   const out = await eachLimited(['a', 'b', 'c'], 2, async (k) => { if (k === 'b') throw new Error('x'); });
   assert.deepEqual([...out], [['a', true], ['b', false], ['c', true]]);
 });
+
+test('로컬 실측·한 바퀴는 개발 버킷만: R2_OFFICE_DEV_* 를 앱 이름으로 옮기고, 운영 버킷(argo-office)이면 거절', async () => {
+  const { devR2Env } = await import('../scripts/r2-dev-env.mjs');
+  const base = { R2_ENDPOINT: 'https://x.r2.cloudflarestorage.com', R2_OFFICE_DEV_ACCESS_KEY_ID: 'devid', R2_OFFICE_DEV_SECRET_ACCESS_KEY: 'devsecret', R2_OFFICE_BUCKET: 'argo-office', R2_OFFICE_ACCESS_KEY_ID: 'prodid', R2_OFFICE_SECRET_ACCESS_KEY: 'prodsecret' };
+  assert.deepEqual(devR2Env({ ...base, R2_OFFICE_DEV_BUCKET: 'argo-office-dev' }),
+    { R2_ENDPOINT: base.R2_ENDPOINT, R2_OFFICE_BUCKET: 'argo-office-dev', R2_OFFICE_ACCESS_KEY_ID: 'devid', R2_OFFICE_SECRET_ACCESS_KEY: 'devsecret' }, '운영 키는 쓰지 않는다');
+  assert.throws(() => devR2Env({ ...base, R2_OFFICE_DEV_BUCKET: 'argo-office' }), /운영 버킷/);
+  assert.throws(() => devR2Env({ ...base, R2_OFFICE_DEV_BUCKET: ' Argo-Office ' }), /운영 버킷/);
+  assert.throws(() => devR2Env({ ...base, R2_OFFICE_DEV_BUCKET: '' }), /R2_OFFICE_DEV_/, '개발 변수가 없으면 운영 변수로 넘어가지 않는다');
+  assert.throws(() => devR2Env({ ...base, R2_OFFICE_DEV_BUCKET: 'argo-office-dev', R2_OFFICE_DEV_ACCESS_KEY_ID: 'prodid' }), /운영 키/, '개발 이름에 운영 키를 넣어도 거절');
+});

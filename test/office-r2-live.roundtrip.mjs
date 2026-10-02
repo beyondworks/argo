@@ -1,4 +1,5 @@
-// 실제 R2 한 바퀴(로컬 PG 드릴 + 실제 argo-office 버킷) — 운영 Supabase는 쓰지 않는다. 키는 무작위 시험 조직(o-<새 uuid>/) 아래만 쓰고 끝에 지운 뒤 LIST로 비었는지 본다.
+// 실제 R2 한 바퀴(로컬 PG 드릴 + 개발 버킷 argo-office-dev) — 운영 Supabase·운영 버킷은 쓰지 않는다(R2_OFFICE_DEV_*, 운영 이름이면 거절).
+// 키는 무작위 시험 조직(o-<새 uuid>/) 아래만 쓰고 끝에 지운 뒤 LIST로 비었는지 본다.
 // 실행: ( set -a; . <레포>/.env.local; set +a; bash scripts/billing-pg-drill.sh test/office-r2-live.roundtrip.mjs )
 // 서버 함수(api/storage·server/sweep)의 Supabase 호출은 이 파일의 다리(http://sb → psql, 토큰으로 역할을 정한다)로 로컬 PG에 보낸다. R2 요청은 진짜.
 // 출력에는 상태 코드만 — 서명 주소·키 값은 남기지 않는다. 파일 이름이 .test.mjs·pg가 아니라서 npm test·전체 드릴에는 들어가지 않는다.
@@ -9,7 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { psqlSpawn } from './helpers/pg.mjs';
 
 const DB=process.env.ARGO_PG_TEST_URL;
-if(!DB||!process.env.R2_OFFICE_SECRET_ACCESS_KEY) throw new Error('ARGO_PG_TEST_URL·R2_* 가 필요하다(드릴 + .env.local)');
+if(!DB) throw new Error('ARGO_PG_TEST_URL이 필요하다(드릴)');
+const { devR2Env } = await import('../apps/office/scripts/r2-dev-env.mjs');
+Object.assign(process.env, devR2Env(process.env)); // 앱 이름(R2_OFFICE_*)을 개발 버킷 값으로 덮는다 — 운영 버킷이면 여기서 거절
 const { r2FromEnv } = await import('../apps/office/server/r2.js');
 const { POST } = await import('../apps/office/api/storage/[op].js');
 const { sweepStorage } = await import('../apps/office/server/sweep.js');
