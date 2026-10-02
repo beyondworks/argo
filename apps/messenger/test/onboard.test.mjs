@@ -33,8 +33,12 @@ test('배선 — 새 채널을 여는 입구(데스크톱 +·폰 채널 탭 + �
 });
 
 test('iOS는 "Argo 앱 받기" 버튼을 숨긴다(3.1.1/3.1.3 — 앱에는 가격·결제로 이어지는 링크를 두지 않는다), 다른 플랫폼은 그대로', async () => {
+  // 2026-10-02: 시작 단계의 앱 받기 버튼은 [실행기 연결]로 바뀌고, 앱 받기 링크는 실행기 시트 안에만 있다(runnerOptions가 iOS에서 download=false — test/runner-sheet.test.mjs)
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  assert.match(src, /const agentActs = <span key="c" className="acts">\{!isIos && <button[\s\S]{0,200}onClick=\{\(\) => openExternal\(LEGAL\.download\)\}/, 'download 버튼이 !isIos로 가려져야 한다');
+  assert.match(src, /runnerOptions\(\{ hasOrg, ios: isIos \}\)/, '시트가 iOS 여부로 선택지를 고른다');
+  assert.match(src, /\{o\.download && <button type="button" className="btn sm" onClick=\{\(\) => openExternal\(LEGAL\.download\)\}/, '앱 받기 버튼은 download일 때만');
+  assert.equal((src.match(/openExternal\(LEGAL\.download\)/g) ?? []).length, 1, '앱 받기 링크는 시트 한 곳뿐');
+  assert.match(src, /const agentActs = <span key="c" className="acts">\{openRunner && <button/, '시작 단계는 [실행기 연결]');
   assert.match(src, /download: 'https:\/\/argo\.ceo\/download'/, '가격·결제 버튼 없는 전용 다운로드 페이지를 가리켜야 한다(총괄 지시 2026-09-26)');
 });
