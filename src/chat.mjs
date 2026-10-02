@@ -982,7 +982,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       if (guest) return guestNo(lang === 'en' ? 'Starting a long task' : '장기 작업 시작');
       try {
         const { enqueueLongJob } = await import('./gateway.mjs'); // 동적 — gateway가 chat을 import하므로 순환 회피
-        const r = await enqueueLongJob(wsId, { slug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug) });
+        // 사장 직접 턴이 아닌 턴(위임·쪽지·세션 메시지)에서 건 작업, 또는 다른 크루에게 시킨 작업은 그 크루를 from으로 남긴다 — 작업 턴도 풀 오토가 아니다
+        const jobFrom = delegatedBy ?? (agentSlug && agentSlug !== fromSlug ? fromSlug : null);
+        const r = await enqueueLongJob(wsId, { slug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug), ...(jobFrom ? { from: jobFrom } : {}) });
         return text(`작업 "${title}"을 걸어뒀다(대기·진행 ${r.pending}건, 담당 ${agentSlug || fromSlug}). 끝나면 결과가 이 대화와 메신저로 온다. 지금은 걸어뒀다고만 알리고 턴을 마쳐라 — 결과를 기다리지 마라.`);
       } catch (e) {
         return text(`작업 적재 실패: ${String(e.message || e)}. 사장에게 알리거나 작업을 쪼개 지금 실행하라.`);
@@ -1251,7 +1253,9 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const mcpScope = parseScopeList(meta.mcp);
   const skills = await loadSkills(wsId, SKILL_INJECT_CAP, lang, skillScope);
   // 풀 오토 판정(위 설명 주석) — 스킬 주입 뒤에 계산한다: loadSkills 앞에는 출처(source) 분기를 두지 않는다(room-slash-commander 핀). 그 사이 쓰는 곳은 없다.
-  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx) && !(source === 'session' && from); // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳). 크루가 보낸 세션 메시지의 받는 턴·깨움 턴(from=보낸/답한 크루)은 주인 직접 턴이 아니다(0.1.94 분리 검수 MEDIUM-4) — 사장이 보낸 @B(from 없음)는 그대로
+  // 풀 오토는 사장이 직접 시킨 턴에만(유건 결정 2026-10-03 "위임도 막기") — from이 있는 턴(위임받은 동료 턴·쪽지 배달 턴·크루가 보낸 세션 메시지의 받는 턴·깨움 턴,
+  // 그런 턴에서 건 장시간 작업·올린 결재의 후속 턴)은 제외. 이 값은 커넥터 쓰기 게이트까지 그대로 넘어간다(callConnectorTool fullAuto).
+  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx) && !from; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -1765,7 +1769,13 @@ ${lang === 'en'
   // 첨부 — 이미지는 base64 블록으로, 문서·데이터 파일은 vault 경로로 안내(Read 열람)
   const imgAtt = attachments.filter((a) => a.isImage);
   const fileAtt = attachments.filter((a) => !a.isImage);
-  let promptText = `${crossCtx}${sharedBlock}${userMsg}`;
+  // 이어 가는 세션은 SDK가 첫 턴의 시스템 프롬프트를 그대로 쓴다(실측) — 첫 턴이 풀 오토였으면 이 턴이 풀 오토가 아니어도 그 문구가 남는다.
+  // 그래서 글 앞에 바로잡는 줄을 둔다(세션 메시지 턴은 글에 이미 있다). 실제 강제는 커넥터 쓰기 게이트(fullAuto 전달)다.
+  const faNote = resumeId && companyFullAuto === true && !fullAuto && source !== 'session'
+    ? (lang === 'en' ? '(Even if this company has full auto mode on, it does not apply to this turn — file request_approval before any action that leaves the company.)\n\n'
+      : '(이 회사에 풀 오토 모드가 켜져 있어도 이 턴에는 적용되지 않는다 — 회사 밖으로 나가는 행동은 request_approval로 결재를 먼저 올려라.)\n\n')
+    : '';
+  let promptText = `${faNote}${crossCtx}${sharedBlock}${userMsg}`;
   if (fileAtt.length) {
     promptText += lang === 'en'
       ? `\n\n(Files the captain attached — open them with the Read tool: ${fileAtt.map((a) => `vault/${a.rel}`).join(', ')})`

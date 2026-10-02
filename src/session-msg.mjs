@@ -280,7 +280,7 @@ async function runIncoming(rec, prompt, lang) {
   try {
     t = await runTurn(rec.ws, rec.to, prompt, sid, {
       source: 'session', from: rec.from === 'captain' ? null : rec.from,
-      hop: rec.hop + 1, chain: [...rec.chain, rec.room], abortTag: rec.turnId, sessionChain: chainOf(rec),
+      hop: rec.hop + 1, chain: rec.from === 'captain' ? rec.chain : [...rec.chain, rec.room], abortTag: rec.turnId, sessionChain: chainOf(rec), // 사장이 보낸 @B는 사장 직접 지시다 — 사슬에 A 크루를 넣지 않는다(넣으면 B가 올린 결재·작업이 'A의 위임'이 되어 풀 오토에서 빠진다)
     });
     await noticeCapOnce(rec, rec.to, lang);
   } catch (e) {
