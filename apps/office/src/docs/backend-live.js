@@ -34,8 +34,8 @@ async function download(path) {
 }
 async function remove(paths) { const list = paths.filter(Boolean); if (list.length) await (await sb()).storage.from(BUCKET).remove(list).catch(() => {}); }
 
-async function api(op, body) {
-  const r = await fetch(apiUrl(`/api/esign/${op}`), body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+async function api(op, body, jwt) {
+  const r = await fetch(apiUrl(`/api/esign/${op}`), { method: 'POST', headers: { 'content-type': 'application/json', ...(jwt ? { authorization: `Bearer ${jwt}` } : {}) }, body: JSON.stringify(body) }); // 토큰은 본문으로(주소·접근 기록에 남지 않게)
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw fail(data.error ?? 'request');
   return data;
@@ -44,7 +44,9 @@ const bytesOf = async (url) => { const r = await fetch(url); if (!r.ok) throw fa
 
 export default {
   mode: 'live',
-  load: (space) => rpc('office_docs_read', { p_org: orgOf(space) }),
+  load: (space) => rpc('office_docs_read', { p_org: orgOf(space) }), // 목록 — 입력값·칸 배치는 빠져 있다
+  getDoc: (space, id) => rpc('office_docs_get', { p_org: orgOf(space), p_kind: 'doc', p_id: id }),
+  getEsign: (space, id) => rpc('office_docs_get', { p_org: orgOf(space), p_kind: 'esign', p_id: id }),
   async saveDoc(space, d) {
     const id = d.id ?? uid();
     const path = `${seg(space)}/docs/${id}.pdf`;
@@ -79,6 +81,12 @@ export default {
     const r = await write(space, 'esign.delete', { id });
     await remove(r?.paths ?? []);
   },
+  /** 완료 다시 시도 — 서명본 합성은 서버(서비스 키)가, 권한·상태 확인은 내 로그인으로 DB가 */
+  async finishEsign(space, id) {
+    const { data } = await (await sb()).auth.getSession();
+    if (!data?.session?.access_token) throw fail('signIn');
+    return api('finish', { org: orgOf(space), id }, data.session.access_token);
+  },
   markFiled: (space, id) => write(space, 'esign.filed', { id }),
   markNotified: (space, id) => write(space, 'esign.notified', { id }),
   esignPdf: (space, e, which = 'orig') => download(which === 'final' ? e.final_path : e.orig_path),
@@ -86,7 +94,7 @@ export default {
   mails: async () => [], // 로그인 모드의 보낸 메일은 메일 계정(보낸편지함)에 있다
 
   /* 공개 서명 — 로그인 없이 서버 함수로 */
-  publicState: (token) => api(`state?token=${encodeURIComponent(token)}`),
+  publicState: (token) => api('state', { token }),
   async publicOpen(token, email) { const d = await api('open', { token, email }); return { ...d, pdf: await bytesOf(d.pdfUrl) }; },
   async publicSubmit(token, email, placements) { const d = await api('submit', { token, email, placements }); return d.finalUrl ? { ...d, final: await bytesOf(d.finalUrl) } : d; },
 };

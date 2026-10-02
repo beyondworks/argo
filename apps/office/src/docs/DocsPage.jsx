@@ -25,6 +25,8 @@ import { DOC } from './doc-text.js';
 const when = (v) => (v ? new Date(v).toLocaleString(getLang() === 'en' ? 'en-US' : 'ko-KR', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 const day = (v) => (v ? new Date(v).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '—');
 const STATUS_BADGE = { draft: '', sent: 'warn', completed: 'ok', cancelled: 'danger' };
+/** 보낸 뒤 전원이 서명했는데 아직 완료가 아니면 서명본 만들기가 중간에 끊긴 것 — 취소 대신 '완료 다시 시도' */
+const allSigned = (e) => e.status === 'sent' && e.signers.length > 0 && e.signers.every((s) => s.status === 'signed');
 
 /** 내려받기 — 브라우저가 저장 */
 export function download(bytes, name) {
@@ -73,6 +75,15 @@ export default function DocsPage({ space, params }) {
   const setupId = params.get('setup'), openId = params.get('open'), esignNew = params.get('esign') === 'new';
   const data = docs.data;
   const canWrite = !!data?.can_write;
+  // 이어 쓰기(?from=문서)는 그 문서의 입력값이 필요하다 — 목록에는 싣지 않으므로 한 건만 따로 읽는다
+  const fromId = newKind ? params.get('from') : null;
+  const [fromDoc, setFromDoc] = useState(null);
+  useEffect(() => {
+    if (!fromId) { setFromDoc(null); return; }
+    let live = true;
+    backend().then((be) => be.getDoc(space, fromId)).then((d) => { if (live) setFromDoc(d); }, () => { if (live) setFromDoc({ id: fromId, missing: true }); });
+    return () => { live = false; };
+  }, [space, fromId]);
 
   // 서명 완료를 처음 본 화면이 서명본을 문서함에 한 번 넣는다(트랙 B 문서함이 있을 때만 — markFiled로 한 번만)
   useEffect(() => {
@@ -95,14 +106,15 @@ export default function DocsPage({ space, params }) {
 
   const initial = useMemo(() => {
     if (!newKind) return null;
-    const orderId = params.get('order'), fromId = params.get('from');
+    const orderId = params.get('order');
     const bd = business.data;
     if (orderId && bd) {
       const order = bd.orders.find((o) => o.id === orderId);
       if (order) return fromDeal(newKind, { order, customer: bd.customers.find((c) => c.id === order.customer_id), lines: bd.lines });
     }
-    if (fromId && data) {
-      const src = data.docs.find((d) => d.id === fromId);
+    if (fromId) {
+      if (fromDoc?.id !== fromId) return undefined; // 문서를 읽는 중
+      const src = fromDoc;
       if (src?.input) {
         if (src.kind === newKind) return { ...emptyDoc(newKind), ...src.input, date: isoDay() };
         const c = quoteToContract(src.input);
@@ -114,7 +126,7 @@ export default function DocsPage({ space, params }) {
     if (customerId && bd) { const c = bd.customers.find((x) => x.id === customerId); if (c) return fromCustomer(newKind, c); }
     if ((orderId || customerId) && !bd) return undefined; // 업무 원장을 읽는 중
     return emptyDoc(newKind);
-  }, [newKind, params, business.data, data]);
+  }, [newKind, params, business.data, fromId, fromDoc]);
 
   const openDoc = async (row, mode = 'view') => {
     const be = await backend();
@@ -126,7 +138,7 @@ export default function DocsPage({ space, params }) {
     const be = await backend();
     const bytes = await be.docPdf(space, row);
     const { sha256Hex } = await import('./esign-model.js');
-    const input = row.input ?? {};
+    const input = (await be.getDoc(space, row.id)).input ?? {}; // 목록에는 입력값이 없다
     const signers = draftSigners({ clientCompany: input.party?.company || row.customer_name, clientEmail: input.party?.email, company, sealed: !!input.sealSupplier });
     const esign = await be.createEsign(space, { title: row.title.startsWith(DOC.kind.contract + DOC.titleSep) ? row.title.slice((DOC.kind.contract + DOC.titleSep).length) : row.title, docId: row.id, orderId: row.order_id, pdf: bytes, docHash: await sha256Hex(bytes), signers, autoFields: true });
     showToast(t(signers.length ? 'esign.draft.withSigners' : 'esign.draft.noSigners'));
@@ -148,7 +160,7 @@ export default function DocsPage({ space, params }) {
     { label: t('esign.act.view'), icon: 'eye', run: () => go({ tab: 'esign', open: row.id }) },
     row.final_path && { label: t('esign.act.downloadFinal'), icon: 'archive', run: async () => { const be = await backend(); download(await be.esignPdf(space, row, 'final'), signedFilename(row.title)); } },
     canWrite && { label: t('esign.act.rename'), icon: 'draft', run: () => setRename({ row, title: row.title }) },
-    canWrite && !['completed', 'cancelled'].includes(row.status) && { label: t('esign.act.cancel'), icon: 'x', run: () => setConfirm({ kind: 'cancel', row }) },
+    canWrite && !['completed', 'cancelled'].includes(row.status) && !allSigned(row) && { label: t('esign.act.cancel'), icon: 'x', run: () => setConfirm({ kind: 'cancel', row }) },
     canWrite && { sep: true },
     canWrite && { label: t('esign.act.delete'), icon: 'trash', danger: true, run: () => setConfirm({ kind: 'delete', row }) },
   ], { anchor: event.currentTarget });
@@ -284,7 +296,15 @@ function EsignPanel({ space, row, company, canWrite, onClose, reload, orderTitle
     } catch { showToast(t('esign.err.action')); }
   };
   const copy = (link) => navigator.clipboard?.writeText(link).then(() => showToast(t('esign.copied')), () => {});
+  const [finishing, setFinishing] = useState(false);
+  const finish = async () => {
+    setFinishing(true);
+    try { const be = await backend(); await be.finishEsign(space, row.id); showToast(t('esign.finished')); reload(); }
+    catch (e) { showToast(t(e?.code === 'tampered' ? 'esign.err.tampered' : 'esign.err.finish')); }
+    finally { setFinishing(false); }
+  };
   return <Panel title={row.title} onClose={onClose} footer={<>
+    {allSigned(row) && canWrite && <button type="button" className="btn primary" disabled={finishing} onClick={finish}>{t('esign.act.finish')}</button>}
     {row.final_path && <button type="button" className="btn primary" onClick={() => download(bytes, signedFilename(row.title))} disabled={!bytes}>{t('esign.act.downloadFinal')}</button>}
     {row.status === 'completed' && canWrite && getMode() !== 'sample' && !row.notified_at && <button type="button" className="btn" disabled={!accounts.length} title={accounts.length ? '' : t('esign.needMail')} onClick={() => sendCompletedNotice({ space, esign: row, account: accounts[0]?.id }).then(() => { showToast(t('esign.noticeSent')); reload(); }, () => showToast(t('esign.err.mail')))}>{t('esign.sendNotice')}</button>}
   </>}>
@@ -303,6 +323,7 @@ function EsignPanel({ space, row, company, canWrite, onClose, reload, orderTitle
         {links[s.id] && <button type="button" className="btn sm ghost" onClick={() => copy(links[s.id])}><Icon name="copy" size={12} />{t('esign.copyLink')}</button>}
       </li>)}</ul>
     </section>
+    {allSigned(row) && <p className="docs-warn small" role="status">{t('esign.stuck')}</p>}
     {row.final_path && <p className="dim small">{t('esign.finalShown')}</p>}
     <PdfFrame bytes={bytes} title={row.title} />
     {mails.length > 0 && <section className="docs-sub"><h3>{t('esign.mails')}</h3><p className="dim small">{t('esign.mailsHint')}</p>

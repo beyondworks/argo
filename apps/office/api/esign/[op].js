@@ -4,8 +4,8 @@
 // 서비스 키로 하는 일은 이 파일의 네 동작뿐이고, 무엇을 읽고 쓸지는 토큰 해시를 받은 DB 함수가 정한다(토큰 원문은 DB에 없다).
 // 서명본은 크롬 없이 pdf-lib로 합성한다(src/docs/pdf/compose.js — 예시 모드 브라우저 합성과 같은 함수).
 // 완료 메일은 서명 요청을 보낸 메일 계정(Gmail)으로 — 봉인된 토큰을 OFFICE_MAIL_KEY로 연다. 못 보내면 화면이 '완료 알림 보내기'를 보인다.
-// env: VITE_SUPABASE_URL · OFFICE_SUPABASE_SERVICE_KEY · OFFICE_MAIL_KEY · OFFICE_GOOGLE_CLIENT_ID · OFFICE_GOOGLE_CLIENT_SECRET · OFFICE_ORIGIN
-import { createHash } from 'node:crypto';
+// env: VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY(완료 다시 시도의 권한 확인) · OFFICE_SUPABASE_SERVICE_KEY · OFFICE_MAIL_KEY · OFFICE_GOOGLE_CLIENT_ID · OFFICE_GOOGLE_CLIENT_SECRET · OFFICE_ORIGIN
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { mailKey, unseal } from '../../server/seal.js';
 import { buildRaw } from '../../server/gmail.js';
@@ -18,7 +18,7 @@ const BUCKET = 'office-docs';
 const fail = (status, code) => Object.assign(new Error(code), { status, code });
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const sha = (s) => createHash('sha256').update(s).digest('hex');
-const ipOf = (req) => (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
+const ipOf = (req) => req.headers.get('x-vercel-forwarded-for') || req.headers.get('x-real-ip') || (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || 'unknown'; // Vercel이 채우는 헤더 먼저(위조 방지)
 const uaOf = (req) => (req.headers.get('user-agent') || 'unknown').slice(0, 300);
 
 function service() {
@@ -38,9 +38,13 @@ async function rpc(fn, args) {
   }
   return t ? JSON.parse(t) : null;
 }
-async function put(path, bytes, type) {
-  const r = await fetch(`${service().url}/storage/v1/object/${BUCKET}/${path}`, { method: 'POST', headers: headers({ 'content-type': type, 'x-upsert': 'false' }), body: bytes });
+async function put(path, bytes, type, upsert = false) {
+  const r = await fetch(`${service().url}/storage/v1/object/${BUCKET}/${path}`, { method: 'POST', headers: headers({ 'content-type': type, 'x-upsert': String(upsert) }), body: bytes });
   if (!r.ok) throw fail(502, 'storage');
+}
+async function removeFiles(paths) {
+  if (!paths.length) return;
+  await fetch(`${service().url}/storage/v1/object/${BUCKET}`, { method: 'DELETE', headers: headers({ 'content-type': 'application/json' }), body: JSON.stringify({ prefixes: paths }) }).catch(() => {});
 }
 async function get(path) {
   const r = await fetch(`${service().url}/storage/v1/object/${BUCKET}/${path}`, { headers: headers() });
@@ -89,6 +93,24 @@ async function sendCompletionMails(bundle, finalPdf) {
 
 const b64bytes = (s) => new Uint8Array(Buffer.from(s, 'base64'));
 
+/** 전원 서명 뒤 마무리 — 서명본 합성(크롬 없이 pdf-lib)·보관·완료(거래 '계약' 넘기기는 DB 함수가)·완료 메일.
+ *  다시 불러도 같은 결과: 이미 완료면 서명본 주소만, 서명본 파일은 덮어쓴다(중간에 끊긴 뒤 서명자 재제출·소유자 '완료 다시 시도'가 이어서 끝낸다). */
+async function complete(esignId) {
+  const bundle = await rpc('office_esign_public_bundle', { p_esign: esignId });
+  if (!bundle) throw fail(404, 'invalid');
+  if (bundle.status === 'completed') return { done: true, title: bundle.title, finalUrl: await signed(bundle.final_path) };
+  const origPdf = await get(bundle.orig_path);
+  if (sha(origPdf) !== bundle.doc_hash) throw fail(409, 'tampered'); // 서명자가 본 원본(만들 때의 해시)과 다르면 서명본을 만들지 않는다
+  const completedAt = new Date().toISOString();
+  const signers = await Promise.all(bundle.signers.map(async (s) => ({ ...s, placements: await Promise.all((s.placements ?? []).map(async (p) => (p.img_path ? { ...p, img: { type: p.img_path.endsWith('.jpg') ? 'jpg' : 'png', bytes: await get(p.img_path) } } : p))) })));
+  const final = await composeSignedPdf({ origPdf, signers, docHash: bundle.doc_hash, title: bundle.title, completedAt, ...(await fonts()) });
+  const finalPath = `${bundle.seg}/esign/${bundle.id}/final.pdf`;
+  await put(finalPath, final, 'application/pdf', true);
+  await rpc('office_esign_public_finalize', { p_esign: bundle.id, p_final_path: finalPath, p_final_hash: sha(final) });
+  try { if (await sendCompletionMails(bundle, final)) await rpc('office_esign_public_notified', { p_esign: bundle.id }); } catch (e) { console.error('[office esign] completion mail', e?.message); }
+  return { done: true, title: bundle.title, finalUrl: await signed(finalPath) };
+}
+
 const OPS = {
   async state(_req, { token }) {
     if (!tokenOk(token)) throw fail(404, 'invalid');
@@ -102,34 +124,49 @@ const OPS = {
   },
   async submit(req, { token, email, placements }) {
     if (!tokenOk(token)) throw fail(404, 'invalid');
-    const hash = sha(token);
-    const who = await rpc('office_esign_public_who', { p_hash: hash });
+    const hash = sha(token), mail = String(email ?? '').slice(0, 320);
+    const who = await rpc('office_esign_public_who', { p_hash: hash, p_email: mail }); // 본인 이메일 확인이 먼저 — 그 전에는 아무것도 올리지 않는다
     if (who.status !== 'sent') throw fail(403, who.status === 'completed' ? 'completed' : who.status === 'cancelled' ? 'cancelled' : 'invalid');
-    if (who.signer_status === 'signed') throw fail(409, 'already');
+    if (who.signer_status === 'signed') {
+      if (who.all_signed) return complete(who.esign_id); // 앞선 제출 뒤 마무리만 끊긴 경우 — 이어서 끝낸다
+      throw fail(409, 'already');
+    }
     const clean = normalizePlacements(placements, who.pages ?? Infinity);
     if (!clean.length) throw fail(400, 'empty');
-    // 그림은 저장소에, DB에는 경로만(서명 기록 표가 커지지 않게) — 같은 서명자가 다시 내면 DB 함수가 'already'로 막는다
-    const stored = [];
-    for (let i = 0; i < clean.length; i++) {
-      const p = clean[i];
-      if (p.kind !== 'signature') { stored.push(p); continue; }
-      const path = `${who.seg}/esign/${who.esign_id}/s-${who.signer_id}-${i}.${p.img.type}`;
-      await put(path, b64bytes(p.img.data), p.img.type === 'png' ? 'image/png' : 'image/jpeg');
-      const { img, ...rest } = p;
-      stored.push({ ...rest, img_path: path });
+    // 그림은 저장소에, DB에는 경로만(서명 기록 표가 커지지 않게). 시도마다 다른 이름 — 실패한 시도가 다음 제출을 막지 않게, 실패하면 지운다
+    const attempt = randomBytes(6).toString('hex');
+    const stored = [], uploaded = [];
+    let submitted = false;
+    try {
+      for (let i = 0; i < clean.length; i++) {
+        const p = clean[i];
+        if (p.kind !== 'signature') { stored.push(p); continue; }
+        const path = `${who.seg}/esign/${who.esign_id}/s-${who.signer_id}-${i}-${attempt}.${p.img.type}`;
+        await put(path, b64bytes(p.img.data), p.img.type === 'png' ? 'image/png' : 'image/jpeg');
+        uploaded.push(path);
+        const { img, ...rest } = p;
+        stored.push({ ...rest, img_path: path });
+      }
+      const r = await rpc('office_esign_public_submit', { p_hash: hash, p_email: mail, p_placements: stored, p_ip: ipOf(req), p_ua: uaOf(req) });
+      submitted = true;
+      if (!r.done) return { done: false };
+      return await complete(r.esign_id);
+    } finally {
+      // 제출이 DB에 남지 않았으면 올린 그림을 치운다(고아 파일 방지). 응답만 끊기고 DB에는 남았을 수 있어 한 번 확인한다 — 남았으면 서명본·삭제가 그 경로를 쓴다
+      if (!submitted && uploaded.length) {
+        const saved = await rpc('office_esign_public_who', { p_hash: hash, p_email: mail }).then((w) => w.signer_status === 'signed').catch(() => true);
+        if (!saved) await removeFiles(uploaded);
+      }
     }
-    const r = await rpc('office_esign_public_submit', { p_hash: hash, p_email: String(email ?? '').slice(0, 320), p_placements: stored, p_ip: ipOf(req), p_ua: uaOf(req) });
-    if (!r.done) return { done: false };
-    // 전원 서명 — 서명본 합성(크롬 없이 pdf-lib), 보관, 완료(거래 '계약' 넘기기는 DB 함수가), 완료 메일
-    const bundle = await rpc('office_esign_public_bundle', { p_esign: r.esign_id });
-    const completedAt = new Date().toISOString();
-    const signers = await Promise.all(bundle.signers.map(async (s) => ({ ...s, placements: await Promise.all((s.placements ?? []).map(async (p) => (p.img_path ? { ...p, img: { type: p.img_path.endsWith('.jpg') ? 'jpg' : 'png', bytes: await get(p.img_path) } } : p))) })));
-    const final = await composeSignedPdf({ origPdf: await get(bundle.orig_path), signers, docHash: bundle.doc_hash, title: bundle.title, completedAt, ...(await fonts()) });
-    const finalPath = `${bundle.seg}/esign/${bundle.id}/final.pdf`;
-    await put(finalPath, final, 'application/pdf');
-    await rpc('office_esign_public_finalize', { p_esign: bundle.id, p_final_path: finalPath, p_final_hash: sha(final) });
-    try { if (await sendCompletionMails(bundle, final)) await rpc('office_esign_public_notified', { p_esign: bundle.id }); } catch (e) { console.error('[office esign] 완료 메일', e?.message); }
-    return { done: true, title: bundle.title, finalUrl: await signed(finalPath) };
+  },
+  /** 완료 다시 시도(소유자·관리자) — 로그인 토큰으로 DB가 권한·상태(전원 서명, 미완료)를 확인한 뒤 서비스 키로 마무리 */
+  async finish(req, { org, id }) {
+    const jwt = /^Bearer (.+)$/.exec(req.headers.get('authorization') ?? '')?.[1];
+    if (!jwt || !env.VITE_SUPABASE_ANON_KEY) throw fail(401, 'signIn');
+    const r = await fetch(`${service().url}/rest/v1/rpc/office_docs_write`, { method: 'POST', headers: { apikey: env.VITE_SUPABASE_ANON_KEY, authorization: `Bearer ${jwt}`, 'content-type': 'application/json' }, body: JSON.stringify({ p_org: org ?? null, p_action: 'esign.finishable', p_data: { id } }) });
+    const t = await r.text();
+    if (!r.ok) { const code = /docs_([a-z_]+)/.exec(t)?.[1] ?? 'permission'; throw fail(code === 'state' ? 409 : code === 'not_found' ? 404 : 403, code); }
+    return complete(JSON.parse(t).id);
   },
 };
 
@@ -143,10 +180,10 @@ async function handle(req, op, args) {
   }
 }
 const opOf = (req) => new URL(req.url).pathname.split('/').pop();
-export async function GET(req) { const op = opOf(req); return op === 'state' ? handle(req, op, Object.fromEntries(new URL(req.url).searchParams)) : json({ error: 'method' }, 405); }
+export async function GET() { return json({ error: 'method' }, 405); } // 토큰이 주소(접근 기록)에 남지 않게 전부 POST
 export async function POST(req) {
   const op = opOf(req);
-  if (!['open', 'submit'].includes(op)) return json({ error: 'method' }, 405);
+  if (!Object.hasOwn(OPS, op)) return json({ error: 'op' }, 404);
   const body = await req.json().catch(() => ({}));
   return handle(req, op, body);
 }

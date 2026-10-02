@@ -68,6 +68,10 @@ test('권한: 멤버는 읽고 관리자만 쓴다, 손님·밖 사람은 못 �
   assert.equal(doc.scope, undefined); assert.equal(doc.created_by, U.admin);
   const read = call(U.member, 'office_docs_read', quote(ORG));
   assert.equal(read.docs.length, 1); assert.equal(read.can_write, false);
+  assert.equal(read.docs[0].input, undefined, '목록에는 입력값을 싣지 않는다(전송량)');
+  assert.deepEqual(call(U.member, 'office_docs_get', `${quote(ORG)},'doc',${quote(id)}`).input, { a: 1 }, '열 때 한 건만');
+  assert.match(fails(U.guest, 'office_docs_get', `${quote(ORG)},'doc',${quote(id)}`), /business_forbidden/);
+  assert.match(fails(U.member, 'office_docs_get', `${quote(ORG)},'doc',${quote(randomUUID())}`), /docs_not_found/);
   assert.equal(call(U.admin, 'office_docs_read', quote(ORG)).can_write, true);
   assert.match(writeFail(U.member, 'doc.save', { id: randomUUID(), kind: 'quote', title: 'x' }), /business_forbidden/);
   assert.match(fails(U.guest, 'office_docs_read', quote(ORG)), /business_forbidden/);
@@ -119,22 +123,28 @@ test('공개 서명: 가린 이메일 → 다른 이메일 거절 → 자기 칸
   assert.equal(o.fields.length, 2); assert.equal(o.signer.ord, 0); assert.equal(o.contract.sender, '비욘드웍스'); assert.equal(o.orig_path, `${SEG}/esign/${E}/orig.pdf`);
   svc('office_esign_public_open', `${quote(sha(TA))},'p@h.example','1.1.1.1','ua'`);
   assert.equal(sql(`select count(*) from office_esign_events where esign_id=${quote(E)} and action='opened'`), '1');
-  const who = svc('office_esign_public_who', quote(sha(TA)));
+  assert.match(svcFail('office_esign_public_who', `${quote(sha(TA))},'x@x.x'`), /docs_email/, '이메일 확인 전에는 그림 자리를 주지 않는다');
+  const who = svc('office_esign_public_who', `${quote(sha(TA))},'p@h.example'`);
+  assert.equal(who.all_signed, false);
   const bad = [{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${E}/s-${randomUUID()}-0.png` }];
   assert.match(svcFail('office_esign_public_submit', `${quote(sha(TA))},'p@h.example',${j(bad)},'1.1.1.1','ua'`), /docs_input/);
   const good = [{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${E}/s-${who.signer_id}-0.png`, xr: 0.1, yr: 0.1, wr: 0.2 }, { page: 0, kind: 'text', text: '2026-10-02' }];
   assert.equal(svc('office_esign_public_submit', `${quote(sha(TA))},'p@h.example',${j(good)},'1.1.1.1','ua'`).done, false);
   assert.match(svcFail('office_esign_public_submit', `${quote(sha(TA))},'p@h.example',${j(good)},'1.1.1.1','ua'`), /docs_already/);
   assert.match(writeFail(U.admin, 'esign.update', { id: E, fields: [] }), /docs_state/, '보낸 뒤에는 칸·서명자를 못 바꾼다');
-  const whoB = svc('office_esign_public_who', quote(sha(TB)));
+  const whoB = svc('office_esign_public_who', `${quote(sha(TB))},'me@b.example'`);
   assert.equal(svc('office_esign_public_submit', `${quote(sha(TB))},'me@b.example',${j([{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${E}/s-${whoB.signer_id}-0.png` }])},'2.2.2.2','ua'`).done, true);
+  assert.equal(svc('office_esign_public_who', `${quote(sha(TB))},'me@b.example'`).all_signed, true, '끊긴 마무리를 서버가 알아본다');
   const bundle = svc('office_esign_public_bundle', quote(E));
   assert.equal(bundle.signers.length, 2); assert.equal(bundle.signers[0].ip, '1.1.1.1'); assert.equal(bundle.seg, SEG);
 });
 
 test('완료: 서명본 경로·해시 검사 → 완료·링크 잠금, 연결 거래가 견적이면 보낸 사람 권한으로 계약(업무 원장 규칙 그대로), 두 번 불러도 한 번', { skip }, () => {
   assert.match(svcFail('office_esign_public_finalize', `${quote(E)},'x/final.pdf',${quote('f'.repeat(64))}`), /docs_input/);
-  const r = svc('office_esign_public_finalize', `${quote(E)},${quote(`${SEG}/esign/${E}/final.pdf`)},${quote('f'.repeat(64))}`);
+  // 원래 호출자의 클레임으로 되돌리는지 — 같은 트랜잭션 안에서 본다
+  const after = sql(`set local role service_role; set local request.jwt.claims = '{"role":"service_role"}'; select office_esign_public_finalize(${quote(E)},${quote(`${SEG}/esign/${E}/final.pdf`)},${quote('f'.repeat(64))}); select current_setting('request.jwt.claims')`);
+  assert.equal(last(after), '{"role":"service_role"}', '보낸 사람 흉내 뒤 service_role 클레임으로 되돌린다');
+  const r = { order_sync: sql(`select order_sync from office_esign where id=${quote(E)}`) };
   assert.equal(r.order_sync, 'confirmed');
   assert.equal(sql(`select status from office_business_orders where id=${quote(ORDER)}`), 'confirmed');
   assert.equal(sql(`select count(*) from office_business_activity where order_id=${quote(ORDER)} and kind='contract'`), '1');
@@ -151,15 +161,30 @@ test('거래가 이미 계약 이후면 넘기지 않고 사유를 남긴다, �
   const id = randomUUID(), t = 'C'.repeat(43);
   write(U.admin, 'esign.create', { id, title: '두 번째', order_id: ORDER, orig_path: `${SEG}/esign/${id}/orig.pdf`, doc_hash: 'b'.repeat(64) });
   write(U.admin, 'esign.send', { id, signers: [{ name: 'A', email: 'a@x.example', token_hash: sha(t) }] });
-  const who = svc('office_esign_public_who', quote(sha(t)));
-  svc('office_esign_public_submit', `${quote(sha(t))},'a@x.example',${j([{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${id}/s-${who.signer_id}-0.png` }])},'3.3.3.3','ua'`);
+  const okw = (u, name) => last(sql(as(u, `select office_docs_storage_ok(${quote(name)},true)`))) === 't';
+  assert.ok(okw(U.admin, `${SEG}/esign/${randomUUID()}/orig.pdf`), '기록을 만들기 전 원본 올리기는 된다');
+  assert.ok(!okw(U.admin, `${SEG}/esign/${id}/orig.pdf`), '서명 기록이 있는 동안 원본을 바꿔 끼울 수 없다');
+  assert.ok(!okw(U.admin, `${SEG}/esign/${id}/final.pdf`), '서명본 자리에 미리 올릴 수 없다');
+  assert.ok(okw(U.admin, `${SEG}/docs/${id}.pdf`), '문서 폴더는 그대로');
+  assert.equal(last(sql(as(U.member, `select office_docs_storage_ok(${quote(`${SEG}/esign/${id}/orig.pdf`)},false)`))), 't', '읽기는 그대로');
+  const who = svc('office_esign_public_who', `${quote(sha(t))},'a@x.example'`);
+  assert.match(writeFail(U.admin, 'esign.finishable', { id }), /docs_state/, '서명 전에는 다시 시도할 것이 없다');
+  svc('office_esign_public_submit', `${quote(sha(t))},'a@x.example',${j([{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${id}/s-${who.signer_id}-0-abc.png` }])},'3.3.3.3','ua'`);
+  assert.match(writeFail(U.admin, 'esign.cancel', { id }), /docs_signed/, '전원 서명 건은 취소하지 않는다(완료 다시 시도)');
+  assert.equal(write(U.admin, 'esign.finishable', { id }).id, id);
+  assert.match(writeFail(U.member, 'esign.finishable', { id }), /business_forbidden/);
   assert.equal(svc('office_esign_public_finalize', `${quote(id)},${quote(`${SEG}/esign/${id}/final.pdf`)},${quote('e'.repeat(64))}`).order_sync, 'skipped:confirmed');
   const del = write(U.admin, 'esign.delete', { id });
-  assert.deepEqual(del.paths.sort(), [`${SEG}/esign/${id}/final.pdf`, `${SEG}/esign/${id}/orig.pdf`, `${SEG}/esign/${id}/s-${who.signer_id}-0.png`].sort());
+  assert.deepEqual(del.paths.sort(), [`${SEG}/esign/${id}/final.pdf`, `${SEG}/esign/${id}/orig.pdf`, `${SEG}/esign/${id}/s-${who.signer_id}-0-abc.png`].sort());
+  assert.ok(okw(U.admin, `${SEG}/esign/${id}/orig.pdf`), '기록을 지운 뒤에는 파일을 지울 수 있다');
   assert.equal(sql(`select count(*) from office_esign_events where esign_id=${quote(id)}`), '0');
   const c = randomUUID(), tc = 'D'.repeat(43);
   write(U.admin, 'esign.create', { id: c, title: '취소할 것', orig_path: `${SEG}/esign/${c}/orig.pdf`, doc_hash: 'c'.repeat(64) });
   write(U.admin, 'esign.send', { id: c, signers: [{ name: 'A', email: 'a@x.example', token_hash: sha(tc) }] });
+  // 반복 기록(열람 등)이 500줄을 채워도 증빙 기록(취소)은 남는다
+  sql(`insert into office_esign_events(esign_id,actor,action) select ${quote(c)},'x','opened' from generate_series(1,600)`);
+  write(U.admin, 'esign.update', { id: c, title: '이름 바꿈' });
   write(U.admin, 'esign.cancel', { id: c });
+  assert.equal(sql(`select string_agg(action||':'||n, ',' order by action) from (select action, count(*) n from office_esign_events where esign_id=${quote(c)} and action in ('renamed','cancelled') group by action) q`), 'cancelled:1', '이름 바꿈은 상한에 걸리고 취소는 남는다');
   assert.match(svcFail('office_esign_public_state', quote(sha(tc))), /docs_invalid/);
 });

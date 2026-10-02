@@ -12,7 +12,7 @@ import { signedFilename } from './esign-model.js';
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const uid = () => Math.random().toString(36).slice(2, 9);
-const ERR = { invalid: 'sign.err.invalid', email: 'sign.err.email', completed: 'sign.err.completed', cancelled: 'sign.err.cancelled', already: 'sign.err.already', empty: 'sign.err.empty' };
+const ERR = { invalid: 'sign.err.invalid', email: 'sign.err.email', completed: 'sign.err.completed', cancelled: 'sign.err.cancelled', already: 'sign.err.already', empty: 'sign.err.empty', tampered: 'sign.err.tampered' };
 const errKey = (e) => ERR[e?.code] ?? 'sign.err.request';
 
 function Shell({ children, narrow }) {

@@ -5,7 +5,7 @@
 -- 공개 서명(로그인 없음)은 서버 함수(apps/office/api/esign, 서비스 키)만 부르는 office_esign_public_* 함수로 — 토큰 원문은 저장하지 않고 SHA-256만.
 --
 -- 부하(DB 위생): 사람이 버튼을 누를 때만 쓴다(만들기·보내기·서명 제출). 폴링·심박 없음. 서명 링크 열람 기록은 서명자마다 10분에 한 번,
--- 서명 한 건의 기록은 500줄 상한. 문서·서명 기록은 계약 증빙이라 보존한다(삭제는 사람이 할 때만, 그때 파일·기록이 함께 지워진다).
+-- 서명 한 건의 반복 기록(열람·이름 바꿈·다시 보냄·알림)은 500줄 상한(서명·완료·취소 같은 증빙 기록은 상한 없이 남긴다). 문서·서명 기록은 계약 증빙이라 보존한다(삭제는 사람이 할 때만, 그때 파일·기록이 함께 지워진다).
 -- 조직·사람이 지워지면 함께 지워진다(아래 on delete cascade 없음 — scope 문자열로 묶여 있어 조직 삭제 정리 작업이 scope로 지운다).
 
 create table public.office_docs (
@@ -78,16 +78,20 @@ create function public.office_docs_seg(sc text) returns text language sql immuta
 create function public.office_docs_event(p_esign uuid, p_actor text, p_action text, p_ip text default null, p_ua text default null) returns void
 language plpgsql security definer set search_path = public, pg_temp as $$
 begin
-  if (select count(*) from public.office_esign_events where esign_id = p_esign) >= 500 then return; end if; -- 한 건 500줄 상한(쌓임 방지)
+  if p_action in ('opened','renamed','resent','notified') and (select count(*) from public.office_esign_events where esign_id = p_esign) >= 500 then return; end if; -- 반복 기록만 500줄 상한(증빙 기록은 항상 남긴다)
   insert into public.office_esign_events(esign_id, actor, action, ip, ua) values (p_esign, left(p_actor, 320), p_action, left(p_ip, 100), left(p_ua, 300));
 end $$;
 
-/** 저장소 경로 권한 — 첫 칸이 내 공간(u-<나>)이거나, 내가 멤버(쓰기는 소유자·관리자)인 조직(o-<조직>)일 때만 */
+/** 저장소 경로 권한 — 첫 칸이 내 공간(u-<나>)이거나, 내가 멤버(쓰기는 소유자·관리자)인 조직(o-<조직>)일 때만.
+ *  서명 한 건의 폴더(<…>/esign/<서명>/)는 그 서명 기록이 있는 동안 아무도 올리거나 지울 수 없다 — 원본·서명 그림·서명본을 바꿔 끼우지 못하게.
+ *  (원본은 기록을 만들기 전에 올리고, 기록을 지운 뒤에 파일을 지운다. 서명 그림·서명본은 서비스 키 서버 함수가 쓴다.) */
 create function public.office_docs_storage_ok(p_name text, p_write boolean) returns boolean
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare seg text := split_part(p_name, '/', 1); who uuid := auth.uid(); org uuid; r text;
 begin
   if who is null or p_name like '%..%' then return false; end if;
+  if p_write and p_name ~ '^[^/]+/esign/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/'
+     and exists(select 1 from public.office_esign where id = split_part(p_name, '/', 3)::uuid) then return false; end if;
   if seg = 'u-' || who then return true; end if;
   if seg !~ '^o-[0-9a-f-]{36}$' then return false; end if;
   org := substr(seg, 3)::uuid;
@@ -123,9 +127,22 @@ declare sc text := public.office_business_scope(p_org, false); writable boolean;
 begin
   writable := p_org is null or exists(select 1 from public.msgr_org_members where org_id = p_org and user_id = auth.uid() and removed_at is null and role in ('owner','admin'));
   return jsonb_build_object(
-    'docs', (select coalesce(jsonb_agg(to_jsonb(d) - 'scope' order by d.created_at desc, d.id), '[]') from public.office_docs d where d.scope = sc),
-    'esign', (select coalesce(jsonb_agg(public.office_docs_esign_json(e) order by e.created_at desc, e.id), '[]') from public.office_esign e where e.scope = sc),
+    -- 목록에는 큰 칸(문서 입력값·서명 칸 배치)을 싣지 않는다 — 열 때 office_docs_get으로(전송량). ponytail: 최근 300건, 넘으면 페이지 나누기
+    'docs', (select coalesce(jsonb_agg(to_jsonb(d) - 'scope' - 'input' order by d.created_at desc, d.id), '[]') from (select * from public.office_docs where scope = sc order by created_at desc, id limit 300) d),
+    'esign', (select coalesce(jsonb_agg(public.office_docs_esign_json(e) - 'fields' order by e.created_at desc, e.id), '[]') from (select * from public.office_esign where scope = sc order by created_at desc, id limit 300) e),
     'can_write', writable);
+end $$;
+
+/** 한 건 전체(문서 입력값·서명 칸 배치 포함) — 다시 쓰기·이어 쓰기·서명 준비 화면이 열 때만 */
+create function public.office_docs_get(p_org uuid, p_kind text, p_id uuid) returns jsonb
+language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare sc text := public.office_business_scope(p_org, false); out jsonb;
+begin
+  if p_kind = 'doc' then select to_jsonb(d) - 'scope' into out from public.office_docs d where d.id = p_id and d.scope = sc;
+  elsif p_kind = 'esign' then select public.office_docs_esign_json(e) into out from public.office_esign e where e.id = p_id and e.scope = sc;
+  end if;
+  if out is null then raise exception 'docs_not_found'; end if;
+  return out;
 end $$;
 
 create function public.office_docs_events(p_org uuid, p_id uuid) returns jsonb
@@ -242,6 +259,8 @@ begin
     return jsonb_build_object('id', s.id, 'ord', s.ord, 'name', s.name, 'email', s.email);
   elsif p_action = 'esign.cancel' then
     if e.status = 'completed' then raise exception 'docs_completed'; end if;
+    -- 전원이 서명했는데 서명본 만들기만 실패한 건은 취소하지 않는다('완료 다시 시도'로 끝낸다)
+    if e.status = 'sent' and not exists(select 1 from public.office_esign_signers where esign_id = e.id and status <> 'signed') then raise exception 'docs_signed'; end if;
     if e.status <> 'cancelled' then
       update public.office_esign set status = 'cancelled', cancelled_at = clock_timestamp() where id = e.id;
       update public.office_esign_signers set token_hash = null where esign_id = e.id; -- 링크도 끊는다
@@ -253,6 +272,9 @@ begin
       union all select x->>'img_path' from public.office_esign_signers g, jsonb_array_elements(g.placements) x where g.esign_id = e.id and x ? 'img_path') q;
     delete from public.office_esign where id = e.id;
     return jsonb_build_object('paths', to_jsonb(coalesce(paths, '{}')));
+  elsif p_action = 'esign.finishable' then
+    -- '완료 다시 시도'(api/esign finish) — 쓰기 권한자가 부르고, 전원 서명했는데 아직 완료되지 않은 건만 통과
+    if e.status <> 'sent' or exists(select 1 from public.office_esign_signers where esign_id = e.id and status <> 'signed') then raise exception 'docs_state'; end if;
   elsif p_action = 'esign.filed' then
     update public.office_esign set filed_at = coalesce(filed_at, clock_timestamp()) where id = e.id and status = 'completed';
   elsif p_action = 'esign.notified' then
@@ -303,14 +325,16 @@ begin
     'orig_path', (r.esign).orig_path, 'pages', (r.esign).pages);
 end $$;
 
-/** 서버 함수가 그림을 저장할 자리를 정할 때 — 링크가 살아 있는지와 서명 한 건·서명자 id·저장소 첫 칸 */
-create function public.office_esign_public_who(p_hash text) returns jsonb
+/** 서버 함수가 그림을 저장하기 전에 — 링크·본인 이메일을 먼저 확인하고(남이 그림을 올리지 못하게) 서명 한 건·서명자 id·저장소 첫 칸·전원 서명 여부 */
+create function public.office_esign_public_who(p_hash text, p_email text) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare r record;
 begin
   select * into r from public.office_esign_public_find(p_hash);
   if not found then raise exception 'docs_invalid'; end if;
-  return jsonb_build_object('esign_id', (r.esign).id, 'signer_id', (r.signer).id, 'seg', public.office_docs_seg((r.esign).scope), 'pages', (r.esign).pages, 'status', (r.esign).status, 'signer_status', (r.signer).status);
+  if (r.esign).status = 'sent' and lower(trim(coalesce(p_email, ''))) <> lower(trim((r.signer).email)) then raise exception 'docs_email'; end if;
+  return jsonb_build_object('esign_id', (r.esign).id, 'signer_id', (r.signer).id, 'seg', public.office_docs_seg((r.esign).scope), 'pages', (r.esign).pages, 'status', (r.esign).status, 'signer_status', (r.signer).status,
+    'all_signed', not exists(select 1 from public.office_esign_signers where esign_id = (r.esign).id and status <> 'signed'));
 end $$;
 
 /** 서명 제출 — 서버 함수가 그림을 저장한 뒤 경로로 넘긴다(placements: [{ page, kind:'signature', xr, yr, wr, img_path } | { page, kind:'text', xr, yr, wr, text, sizeR }]) */
@@ -322,6 +346,7 @@ begin
   if not found then raise exception 'docs_invalid'; end if;
   perform 1 from public.office_esign where id = (r.esign).id for update; -- 동시에 낸 두 서명자가 둘 다 '완료 아님'으로 보지 않게
   select * into r from public.office_esign_public_find(p_hash);
+  if not found then raise exception 'docs_invalid'; end if; -- 잠그는 사이 취소돼 링크가 끊긴 경우
   if (r.esign).status = 'completed' then raise exception 'docs_completed'; elsif (r.esign).status = 'cancelled' then raise exception 'docs_cancelled'; elsif (r.esign).status <> 'sent' then raise exception 'docs_invalid'; end if;
   if lower(trim(coalesce(p_email, ''))) <> lower(trim((r.signer).email)) then raise exception 'docs_email'; end if;
   if (r.signer).status = 'signed' then raise exception 'docs_already'; end if;
@@ -337,7 +362,7 @@ end $$;
 /** 서명본 합성 자료(서버 함수가 PDF를 만들 때) */
 create function public.office_esign_public_bundle(p_esign uuid) returns jsonb
 language sql stable security definer set search_path = public, pg_temp as $$
-  select jsonb_build_object('id', e.id, 'title', e.title, 'doc_hash', e.doc_hash, 'orig_path', e.orig_path, 'seg', public.office_docs_seg(e.scope), 'status', e.status, 'mail_account', e.mail_account,
+  select jsonb_build_object('id', e.id, 'title', e.title, 'doc_hash', e.doc_hash, 'orig_path', e.orig_path, 'seg', public.office_docs_seg(e.scope), 'status', e.status, 'final_path', e.final_path, 'mail_account', e.mail_account,
     'signers', (select jsonb_agg(jsonb_build_object('id', s.id, 'ord', s.ord, 'name', s.name, 'email', s.email, 'status', s.status, 'signed_at', s.signed_at, 'ip', s.ip, 'placements', s.placements) order by s.ord) from public.office_esign_signers s where s.esign_id = e.id))
   from public.office_esign e where e.id = p_esign
 $$;
@@ -347,7 +372,7 @@ $$;
  *  넘기지 못해도(권한이 바뀜·재고 부족) 서명 완료는 그대로 — 사유를 order_sync에 남기고 화면이 알린다. */
 create function public.office_esign_public_finalize(p_esign uuid, p_final_path text, p_final_hash text) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare e public.office_esign%rowtype; ord_status text; sync text; org uuid;
+declare e public.office_esign%rowtype; ord_status text; sync text; org uuid; old_sub text := current_setting('request.jwt.claim.sub', true); old_claims text := current_setting('request.jwt.claims', true);
 begin
   select * into e from public.office_esign where id = p_esign for update;
   if not found then raise exception 'docs_not_found'; end if;
@@ -368,8 +393,8 @@ begin
         sync := 'confirmed';
       exception when others then sync := left('failed:' || sqlerrm, 300);
       end;
-      perform set_config('request.jwt.claim.sub', '', true);
-      perform set_config('request.jwt.claims', '', true);
+      perform set_config('request.jwt.claim.sub', coalesce(old_sub, ''), true); -- 원래 호출자(service_role) 클레임으로 되돌린다
+      perform set_config('request.jwt.claims', coalesce(old_claims, ''), true);
     end if;
   end if;
   update public.office_esign set status = 'completed', final_path = p_final_path, final_hash = p_final_hash, completed_at = clock_timestamp(), order_sync = sync where id = e.id;
@@ -386,11 +411,11 @@ begin
 end $$;
 
 revoke all on function public.office_docs_seg(text), public.office_docs_event(uuid, text, text, text, text), public.office_docs_storage_ok(text, boolean),
-  public.office_docs_signers_json(uuid), public.office_docs_esign_json(public.office_esign), public.office_docs_read(uuid), public.office_docs_events(uuid, uuid),
+  public.office_docs_signers_json(uuid), public.office_docs_esign_json(public.office_esign), public.office_docs_read(uuid), public.office_docs_get(uuid, text, uuid), public.office_docs_events(uuid, uuid),
   public.office_docs_clean_signers(jsonb), public.office_docs_write(uuid, text, jsonb),
-  public.office_esign_public_find(text), public.office_esign_public_who(text), public.office_esign_public_state(text), public.office_esign_public_open(text, text, text, text),
+  public.office_esign_public_find(text), public.office_esign_public_who(text, text), public.office_esign_public_state(text), public.office_esign_public_open(text, text, text, text),
   public.office_esign_public_submit(text, text, jsonb, text, text), public.office_esign_public_bundle(uuid), public.office_esign_public_finalize(uuid, text, text),
   public.office_esign_public_notified(uuid) from public, anon, authenticated;
-grant execute on function public.office_docs_read(uuid), public.office_docs_events(uuid, uuid), public.office_docs_write(uuid, text, jsonb), public.office_docs_storage_ok(text, boolean) to authenticated;
-grant execute on function public.office_esign_public_who(text), public.office_esign_public_state(text), public.office_esign_public_open(text, text, text, text), public.office_esign_public_submit(text, text, jsonb, text, text),
+grant execute on function public.office_docs_read(uuid), public.office_docs_get(uuid, text, uuid), public.office_docs_events(uuid, uuid), public.office_docs_write(uuid, text, jsonb), public.office_docs_storage_ok(text, boolean) to authenticated;
+grant execute on function public.office_esign_public_who(text, text), public.office_esign_public_state(text), public.office_esign_public_open(text, text, text, text), public.office_esign_public_submit(text, text, jsonb, text, text),
   public.office_esign_public_bundle(uuid), public.office_esign_public_finalize(uuid, text, text), public.office_esign_public_notified(uuid) to service_role;

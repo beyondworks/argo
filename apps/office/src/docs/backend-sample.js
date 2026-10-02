@@ -12,6 +12,7 @@ const fail = (code) => Object.assign(new Error(code), { code });
 
 /** 공개 서명자 보기(토큰·IP 등 내부 값 빼고) */
 const publicSigner = ({ token_hash, token_expires, ip, ua, placements, ...s }) => s;
+const allSigned = (st, esignId) => { const list = st.signers.filter((s) => s.esign_id === esignId); return list.length > 0 && list.every((s) => s.status === 'signed'); };
 const publicEsign = (e, signers) => ({ ...e, signers: signers.filter((s) => s.esign_id === e.id).sort((a, b) => a.ord - b.ord).map(publicSigner) });
 
 /** kv: { get(key) → Promise<값>, set(key, 값) → Promise, del(key) → Promise } · compose(bundle) → Uint8Array(서명본) · confirmOrder(space, orderId, at) · now() */
@@ -35,16 +36,45 @@ export function createSampleDocs({ kv, compose, confirmOrder = async () => 'skip
     return esign ? { signer, esign } : null;
   }
 
+  /** 전원 서명 → 서명본 합성·보관·완료(서버 경로에서는 api/esign이 한다). 다시 불러도 같은 결과 */
+  async function complete(esignId) {
+    const st = await read();
+    const e = st.esign.find((x) => x.id === esignId);
+    if (e.status === 'completed') return { done: true, final: await getBlob(e.final_path), signers: st.signers.filter((x) => x.esign_id === e.id).map(publicSigner), title: e.title, esignId: e.id };
+    if ((await sha256Hex(await getBlob(e.orig_path))) !== e.doc_hash) throw fail('tampered');
+    const signers = st.signers.filter((x) => x.esign_id === e.id).sort((a, b) => a.ord - b.ord);
+    const completedAt = now();
+    const final = await compose({
+      origPdf: await getBlob(e.orig_path), docHash: e.doc_hash, title: e.title, completedAt,
+      signers: signers.map((s) => ({ ...s, placements: s.placements.map((p) => (p.img ? { ...p, img: { type: p.img.type, bytes: Uint8Array.from(atob(p.img.data), (c) => c.charCodeAt(0)) } } : p)) })),
+    });
+    const finalPath = `${e.space}/esign/${e.id}/final.pdf`;
+    await putBlob(finalPath, final);
+    const finalHash = await sha256Hex(final);
+    const sync = e.order_id ? await confirmOrder(e.space, e.order_id, completedAt).catch((err) => `failed:${err?.code ?? err?.message ?? 'error'}`) : null;
+    await tx((s2) => {
+      const row = s2.esign.find((x) => x.id === e.id);
+      Object.assign(row, { status: 'completed', final_path: finalPath, final_hash: finalHash, completed_at: completedAt, order_sync: sync });
+      event(s2, row.id, 'system', 'completed');
+      const mail = signCompletedMail({ title: row.title, signers });
+      signers.forEach((sg) => s2.mails.push({ id: uid(), esign_id: row.id, at: completedAt, to: sg.email, subject: mail.subject, text: mail.text, attachment: signedFilename(row.title), kind: 'completed' })); // 가짜 발송 기록(서버 경로는 발신 계정으로 실제 발송)
+    });
+    return { done: true, final, signers: signers.map(publicSigner), title: e.title, esignId: e.id };
+  }
+
   return {
     mode: 'sample',
     async load(space) {
       const st = await read();
       return {
-        docs: st.docs.filter((d) => d.space === space).sort((a, b) => b.created_at.localeCompare(a.created_at)),
-        esign: st.esign.filter((e) => e.space === space).sort((a, b) => b.created_at.localeCompare(a.created_at)).map((e) => publicEsign(e, st.signers)),
+        // 실제 경로와 같은 모양 — 목록에는 입력값(input)·칸 배치(fields)를 싣지 않는다(열 때 getDoc·getEsign)
+        docs: st.docs.filter((d) => d.space === space).sort((a, b) => b.created_at.localeCompare(a.created_at)).map(({ input, ...d }) => d),
+        esign: st.esign.filter((e) => e.space === space).sort((a, b) => b.created_at.localeCompare(a.created_at)).map((e) => { const { fields, ...rest } = publicEsign(e, st.signers); return rest; }),
         can_write: true,
       };
     },
+    async getDoc(space, id) { const d = (await read()).docs.find((x) => x.id === id && x.space === space); if (!d) throw fail('not_found'); return d; },
+    async getEsign(space, id) { const st = await read(); return publicEsign(esignOf(st, space, id), st.signers); },
     async saveDoc(space, d) {
       const id = d.id ?? uid();
       const path = `${space}/docs/${id}.pdf`;
@@ -120,10 +150,18 @@ export function createSampleDocs({ kv, compose, confirmOrder = async () => 'skip
         return { ord: s.ord, name: s.name, email: s.email, link: signLink(origin(), token) };
       });
     },
-    cancelEsign: (space, id) => tx((st) => { const e = esignOf(st, space, id); if (e.status === 'completed') throw fail('completed'); if (e.status === 'cancelled') return publicEsign(e, st.signers); e.status = 'cancelled'; e.cancelled_at = now(); event(st, id, 'owner', 'cancelled'); return publicEsign(e, st.signers); }),
+    // 전원 서명 건은 취소하지 않는다(완료 다시 시도로 끝낸다)
+    cancelEsign: (space, id) => tx((st) => { const e = esignOf(st, space, id); if (e.status === 'completed') throw fail('completed'); if (e.status === 'sent' && allSigned(st, id)) throw fail('signed'); if (e.status === 'cancelled') return publicEsign(e, st.signers); e.status = 'cancelled'; e.cancelled_at = now(); event(st, id, 'owner', 'cancelled'); return publicEsign(e, st.signers); }),
     async deleteEsign(space, id) {
       const paths = await tx((st) => { const e = esignOf(st, space, id); st.esign = st.esign.filter((x) => x !== e); st.signers = st.signers.filter((s) => s.esign_id !== id); st.events = st.events.filter((x) => x.esign_id !== id); st.mails = st.mails.filter((m) => m.esign_id !== id); return [e.orig_path, e.final_path].filter(Boolean); });
       await Promise.all(paths.map((p) => kv.del(blobKey(p))));
+    },
+    /** 완료 다시 시도 — 전원 서명했는데 아직 완료가 아닌 건만 */
+    async finishEsign(space, id) {
+      const st = await read();
+      const e = esignOf(st, space, id);
+      if (e.status !== 'sent' || !allSigned(st, id)) throw fail('state');
+      return complete(id);
     },
     markFiled: (space, id) => tx((st) => { const e = esignOf(st, space, id); e.filed_at = now(); }),
     esignPdf: (space, e, which = 'orig') => getBlob(which === 'final' ? e.final_path : e.orig_path),
@@ -157,7 +195,7 @@ export function createSampleDocs({ kv, compose, confirmOrder = async () => 'skip
       if (!r) throw fail('invalid');
       if (r.esign.status !== 'sent') throw fail(r.esign.status === 'completed' ? 'completed' : r.esign.status === 'cancelled' ? 'cancelled' : 'invalid');
       if (normEmail(email) !== normEmail(r.signer.email)) throw fail('email');
-      if (r.signer.status === 'signed') throw fail('already');
+      if (r.signer.status === 'signed') { if (allSigned(await read(), r.esign.id)) return complete(r.esign.id); throw fail('already'); } // 마무리만 끊긴 경우 이어서
       const placements = normalizePlacements(rawPlacements, r.esign.pages ?? Infinity);
       if (!placements.length) throw fail('empty');
       const done = await tx((st) => {
@@ -167,27 +205,7 @@ export function createSampleDocs({ kv, compose, confirmOrder = async () => 'skip
         return st.signers.filter((x) => x.esign_id === r.esign.id).every((x) => x.status === 'signed');
       });
       if (!done) return { done: false };
-      // 전원 서명 → 서명본 합성·보관·완료(서버 경로에서는 api/esign이 한다)
-      const st = await read();
-      const e = st.esign.find((x) => x.id === r.esign.id);
-      const signers = st.signers.filter((x) => x.esign_id === e.id).sort((a, b) => a.ord - b.ord);
-      const completedAt = now();
-      const final = await compose({
-        origPdf: await getBlob(e.orig_path), docHash: e.doc_hash, title: e.title, completedAt,
-        signers: signers.map((s) => ({ ...s, placements: s.placements.map((p) => (p.img ? { ...p, img: { type: p.img.type, bytes: Uint8Array.from(atob(p.img.data), (c) => c.charCodeAt(0)) } } : p)) })),
-      });
-      const finalPath = `${e.space}/esign/${e.id}/final.pdf`;
-      await putBlob(finalPath, final);
-      const finalHash = await sha256Hex(final);
-      const sync = e.order_id ? await confirmOrder(e.space, e.order_id, completedAt).catch((err) => `failed:${err?.code ?? err?.message ?? 'error'}`) : null;
-      await tx((s2) => {
-        const row = s2.esign.find((x) => x.id === e.id);
-        Object.assign(row, { status: 'completed', final_path: finalPath, final_hash: finalHash, completed_at: completedAt, order_sync: sync });
-        event(s2, row.id, 'system', 'completed');
-        const mail = signCompletedMail({ title: row.title, signers });
-        signers.forEach((sg) => s2.mails.push({ id: uid(), esign_id: row.id, at: completedAt, to: sg.email, subject: mail.subject, text: mail.text, attachment: signedFilename(row.title), kind: 'completed' })); // 가짜 발송 기록(서버 경로는 발신 계정으로 실제 발송)
-      });
-      return { done: true, final, signers: signers.map(publicSigner), title: e.title, esignId: e.id };
+      return complete(r.esign.id);
     },
   };
 }

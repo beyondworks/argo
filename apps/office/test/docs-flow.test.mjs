@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { createSampleDocs } from '../src/docs/backend-sample.js';
 import { composeSignedPdf } from '../src/docs/pdf/compose.js';
+import { sha256Hex } from '../src/docs/esign-model.js';
 import { seedBusiness, applyBusiness, reportBusiness, createSampleBusinessClient } from '../src/business/sample-business.js';
 import { dealStage, dealAmounts } from '../src/business/deal-model.js';
 
@@ -20,10 +21,13 @@ function setup(now = '2026-10-02T03:00:00.000Z') {
   const kv = memKv();
   const confirmed = [];
   let clock = Date.parse(now);
+  const ctl = { composeFails: 0 };
   const be = createSampleDocs({ kv, origin: () => 'http://localhost:5411', now: () => new Date(clock += 1000).toISOString(),
-    compose: async (b) => composeSignedPdf({ ...b, ...FONTS }), confirmOrder: async (space, orderId, at) => { confirmed.push({ space, orderId, at }); return 'confirmed'; } });
-  return { kv, be, confirmed, tick: (ms) => { clock += ms; } };
+    compose: async (b) => { if (ctl.composeFails > 0) { ctl.composeFails--; throw new Error('compose timeout'); } return composeSignedPdf({ ...b, ...FONTS }); },
+    confirmOrder: async (space, orderId, at) => { confirmed.push({ space, orderId, at }); return 'confirmed'; } });
+  return { kv, be, confirmed, ctl, tick: (ms) => { clock += ms; } };
 }
+const hashOf = (b) => sha256Hex(b);
 
 test('문서 보관: 만들면 목록에, PDF를 다시 받을 수 있고, 지우면 파일도 지워진다', async () => {
   const { be, kv } = setup();
@@ -40,7 +44,7 @@ test('문서 보관: 만들면 목록에, PDF를 다시 받을 수 있고, 지�
 test('서명 흐름 전체: 초안 → 발송(토큰 해시만 저장) → 링크 확인(가린 이메일) → 다른 이메일 거절 → 열람 → 제출 → 전원 완료 시 서명본·완료 메일·거래 계약', async () => {
   const { be, kv, confirmed } = setup();
   const pdf = await blankPdf(3);
-  const e = await be.createEsign('beyondworks', { title: '용역 계약서', orderId: 'order-1', pdf, docHash: 'a'.repeat(64), signers: [{ name: '한빛', email: 'p@h.example' }], pages: 3 });
+  const e = await be.createEsign('beyondworks', { title: '용역 계약서', orderId: 'order-1', pdf, docHash: await hashOf(pdf), signers: [{ name: '한빛', email: 'p@h.example' }], pages: 3 });
   assert.equal(e.status, 'draft'); assert.equal(e.signers.length, 1); assert.equal(e.signers[0].token_hash, undefined, '내부 값은 밖으로 안 나간다');
   const fields = [{ kind: 'signature', page: 2, xr: 0.3, yr: 0.6, wr: 0.15, hr: 0.05, signer_ord: 0 }, { kind: 'date', page: 2, xr: 0.3, yr: 0.7, wr: 0.15, hr: 0.03, signer_ord: 0 }, { kind: 'signature', page: 2, xr: 0.7, yr: 0.6, wr: 0.15, hr: 0.05, signer_ord: 1 }];
   const { esign, links } = await be.sendEsign('beyondworks', e.id, { signers: [{ name: '한빛', email: 'p@h.example' }, { name: '비욘드', email: 'me@b.example' }], fields });
@@ -84,7 +88,7 @@ test('서명 흐름 전체: 초안 → 발송(토큰 해시만 저장) → 링�
 test('취소·새 링크·삭제: 취소하면 링크로 서명 못 하고, 새 링크를 보내면 옛 링크가 끊기고, 지우면 파일·기록이 모두 지워진다', async () => {
   const { be, kv } = setup();
   const pdf = await blankPdf(1);
-  const e = await be.createEsign('beyondworks', { title: '계약', pdf, docHash: 'b'.repeat(64), pages: 1 });
+  const e = await be.createEsign('beyondworks', { title: '계약', pdf, docHash: await hashOf(pdf), pages: 1 });
   const { links } = await be.sendEsign('beyondworks', e.id, { signers: [{ name: 'A', email: 'a@x.example' }], fields: [{ kind: 'signature', page: 0, signer_ord: 0 }] });
   const old = tokenOf(links[0].link);
   const signer = (await be.load('beyondworks')).esign[0].signers[0];
@@ -99,9 +103,56 @@ test('취소·새 링크·삭제: 취소하면 링크로 서명 못 하고, 새 
   assert.ok(![...kv.m.keys()].some((k) => k.includes(e.id)), '원본 PDF도 지운다');
 });
 
+// 이유(분리 검수 HIGH·MEDIUM, 10/2): 서명 뒤 원본을 바꿔 끼우면 서명자가 본 것과 다른 문서에 서명이 얹힌다. 마지막 서명 뒤 마무리가 끊기면 영원히 '보냄'에 갇힌다.
+test('원본 대조·마무리 재시도: 원본이 만들 때 해시와 다르면 서명본을 만들지 않고, 마무리가 끊기면 서명자 재제출·소유자 완료 다시 시도로 끝나며 그동안 취소는 막힌다', async () => {
+  const { be, kv, ctl, confirmed } = setup();
+  const pdf = await blankPdf(1);
+  const e = await be.createEsign('beyondworks', { title: '계약', orderId: 'order-9', pdf, docHash: await hashOf(pdf), pages: 1 });
+  const { links } = await be.sendEsign('beyondworks', e.id, { signers: [{ name: 'A', email: 'a@x.example' }], fields: [] });
+  const tok = tokenOf(links[0].link);
+  ctl.composeFails = 1;
+  await assert.rejects(be.publicSubmit(tok, 'a@x.example', [{ page: 0, kind: 'signature', imgDataUrl: PNG, xr: 0.1, yr: 0.1, wr: 0.2 }]), /compose timeout/);
+  const stuck = (await be.load('beyondworks')).esign[0];
+  assert.equal(stuck.status, 'sent'); assert.equal(stuck.signers[0].status, 'signed');
+  await assert.rejects(be.cancelEsign('beyondworks', e.id), { code: 'signed' }, '전원 서명 건은 취소하지 않는다');
+  const again = await be.publicSubmit(tok, 'a@x.example', []);
+  assert.equal(again.done, true, '서명자가 다시 내면 마무리만 이어서 한다');
+  assert.equal((await be.load('beyondworks')).esign[0].status, 'completed');
+  assert.deepEqual(confirmed.map((c) => c.orderId), ['order-9']);
+
+  // 소유자 완료 다시 시도 + 원본 바꿔치기 거부
+  const pdf2 = await blankPdf(2);
+  const e2 = await be.createEsign('beyondworks', { title: '계약2', pdf: pdf2, docHash: await hashOf(pdf2), pages: 2 });
+  const s2 = await be.sendEsign('beyondworks', e2.id, { signers: [{ name: 'B', email: 'b@x.example' }], fields: [] });
+  await assert.rejects(be.finishEsign('beyondworks', e2.id), { code: 'state' }, '아직 서명 전이면 다시 시도할 것이 없다');
+  ctl.composeFails = 1;
+  await assert.rejects(be.publicSubmit(tokenOf(s2.links[0].link), 'b@x.example', [{ page: 0, kind: 'text', text: 'B' }]));
+  await kv.set(`argo-office-docs-blob:beyondworks/esign/${e2.id}/orig.pdf`, await blankPdf(5)); // 바꿔 끼운 원본
+  await assert.rejects(be.finishEsign('beyondworks', e2.id), { code: 'tampered' });
+  assert.equal((await be.load('beyondworks')).esign.find((x) => x.id === e2.id).status, 'sent', '서명본을 만들지 않는다');
+  await kv.set(`argo-office-docs-blob:beyondworks/esign/${e2.id}/orig.pdf`, pdf2);
+  const fin = await be.finishEsign('beyondworks', e2.id);
+  assert.equal((await PDFDocument.load(fin.final)).getPageCount(), 3, '원본 2쪽 + 감사 증명');
+  assert.equal((await be.finishEsign('beyondworks', e2.id).catch((x) => x.code)), 'state', '완료 뒤에는 다시 할 것이 없다');
+});
+
+// 이유(분리 검수 MEDIUM, DB 전송량): 목록은 동작마다 다시 읽으므로 큰 칸(문서 입력값·칸 배치)은 열 때만 한 건씩 읽는다.
+test('목록에는 입력값·칸 배치를 싣지 않고, getDoc·getEsign이 한 건 전체를 준다', async () => {
+  const { be } = setup();
+  const pdf = await blankPdf(1);
+  const row = await be.saveDoc('beyondworks', { kind: 'quote', title: '견적', pdf, input: { party: { email: 'p@h.example' }, items: [{ name: 'x' }] } });
+  const e = await be.createEsign('beyondworks', { title: '계약', pdf, docHash: await hashOf(pdf), fields: [{ kind: 'signature', page: 0, xr: 0.1, yr: 0.1, wr: 0.1, hr: 0.05, signer_ord: 0 }], pages: 1 });
+  const list = await be.load('beyondworks');
+  assert.equal(list.docs[0].input, undefined); assert.equal(list.esign[0].fields, undefined);
+  assert.equal((await be.getDoc('beyondworks', row.id)).input.party.email, 'p@h.example');
+  assert.equal((await be.getEsign('beyondworks', e.id)).fields.length, 1);
+  await assert.rejects(be.getDoc('lean-studio', row.id), { code: 'not_found' }, '다른 공간 문서는 못 연다');
+});
+
 test('링크 기간: 30일이 지나면 열 수 없다', async () => {
   const { be, tick } = setup();
-  const e = await be.createEsign('me', { title: '계약', pdf: await blankPdf(1), docHash: 'c'.repeat(64) });
+  const pdf = await blankPdf(1);
+  const e = await be.createEsign('me', { title: '계약', pdf, docHash: await hashOf(pdf) });
   const { links } = await be.sendEsign('me', e.id, { signers: [{ name: 'A', email: 'a@x.example' }], fields: [] });
   tick(31 * 864e5);
   await assert.rejects(be.publicState(tokenOf(links[0].link)), { code: 'invalid' });

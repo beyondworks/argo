@@ -46,8 +46,7 @@ export function EsignSetup({ space, esignId, company, onBack, onSent }) {
     (async () => {
       try {
         const be = await backend();
-        const all = await be.load(space);
-        const e = all.esign.find((x) => x.id === esignId);
+        const e = await be.getEsign(space, esignId).catch((x) => { if (x?.code === 'not_found') return null; throw x; }); // 칸 배치까지 한 건만
         if (!e) { setErr(t('esign.err.missing')); return; }
         if (!live) return;
         setDraft(e); setTitle(e.title);
