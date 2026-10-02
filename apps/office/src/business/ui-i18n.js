@@ -1,4 +1,5 @@
 export const BUSINESS_UI_DICT = {
+  'bizui.makeQuote': ['견적서 만들기', 'Make quote'], 'bizui.makeContract': ['계약서 만들기', 'Make contract'],
   'bizui.title': ['업무', 'Business'],
   'bizui.modules': ['업무 기능 켜고 끄기', 'Turn features on or off'],
   'bizui.subtitle': ['서비스와 상품 거래를 한곳에서 관리합니다.', 'Manage service and product transactions together.'],
