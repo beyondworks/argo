@@ -12,13 +12,13 @@
 //
 // 본문: 첨부 대상 후보(로컬 파일을 가리키는 마크다운 이미지·링크)는 성공·실패와 무관하게 본문에서 경로를 지운다 — 방에는 손님도 있고
 // 절대 경로에는 OS 사용자 이름·폴더 구조가 들어 있다(D26과 같은 이유). 이미지는 첨부로 대신하고(실패면 대체 글자), 링크는 글자만 남긴다.
-// 구역 밖 절대 경로가 후보인지는 **파일이 있는지가 아니라 경로 모양**으로 정한다(2차 검수 N-5): 마지막 조각에 확장자가 있거나 홈·작업 루트·
-// 임시 폴더 아래면 후보(경로를 지우고 '밖이거나 없는 파일' 안내 하나), 아니면(`/login`·`/api/v1/users` 같은 웹 경로 링크) 손대지 않는다.
-// 있는 파일과 없는 파일이 같은 결과라 링크 하나로 남의 경로에 파일이 있는지 알아낼 수 없다.
+// 구역 밖 절대 경로가 후보인지는 **파일이 있는지가 아니라 경로 위치**로 정한다(2차 검수 N-5, 3차 F-3): 홈·작업 루트·임시 폴더 아래면
+// 후보(경로를 지우고 '밖이거나 없는 파일' 안내 하나 — 사용자 이름·폴더 구조가 드러나는 자리), 그 밖(`/login`·`/docs/guide.pdf`·`/etc/hosts`)은
+// 본문에 그대로 둔다(파일은 나가지 않는다). 있는 파일과 없는 파일이 같은 결과라 링크 하나로 남의 경로에 파일이 있는지 알아낼 수 없다.
 // 코드 블록·인라인 코드 안은 손대지 않는다(예시 코드를 망가뜨리지 않게).
 import { open, realpath, stat } from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { paths, WS_ROOT } from '../workspace.mjs';
@@ -68,11 +68,20 @@ function localTarget(dest, vault) {
   return ZONES.some((z) => rel.startsWith(`${z}/`)) ? join(vault, rel) : null;
 }
 
-// 구역 밖 절대 경로 중 첨부 후보로 보는 모양 — 마지막 조각에 확장자가 있거나, 홈·작업 루트·임시 폴더 아래(사용자 이름·폴더 구조가 드러나는 자리)
-const FILE_EXT = /\.[A-Za-z0-9]{1,10}$/;
-const PRIVATE_ROOTS = [...new Set([homedir(), WS_ROOT, tmpdir(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].filter(Boolean).map((r) => resolve(r)))];
-const underRoot = (p, root) => { const rel = relative(root, p); return rel === '' || (!!rel && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
-const fileShaped = (abs) => FILE_EXT.test(basename(abs)) || PRIVATE_ROOTS.some((r) => underRoot(resolve(abs), r));
+// 구역 밖 절대 경로 중 지우는 자리 — 홈·작업 루트·임시 폴더 아래(사용자 이름·폴더 구조가 드러나는 자리). macOS·윈도우는 대소문자를 무시한다(/users/X도 홈).
+const FOLD = process.platform === 'darwin' || process.platform === 'win32' ? (p) => p.toLowerCase() : (p) => p;
+const PRIVATE_ROOTS = [...new Set([homedir(), WS_ROOT, tmpdir(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].filter(Boolean).map((r) => FOLD(resolve(r))))];
+const within = (p, root) => { const rel = relative(root, p); return rel === '' || (!!rel && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
+const privatePath = (abs) => PRIVATE_ROOTS.some((r) => within(FOLD(resolve(abs)), r));
+
+/** 존재하는 가장 가까운 부모 폴더의 realpath가 첨부 구역(루트 포함) 안인가. */
+async function parentInZone(abs, roots) {
+  for (let d = dirname(abs); ; d = dirname(d)) {
+    const r = await realpath(d).catch(() => null);
+    if (r) return roots.some(({ root }) => within(r, root));
+    if (dirname(d) === d) return false;
+  }
+}
 
 async function zoneRoots(vault) { // [{ zone, root }] — 구역 이름은 _imported/unsorted 제외 판정용
   const roots = await Promise.all(ZONES.map(async (zone) => ({ zone, root: await realpath(join(vault, zone)).catch(() => null) })));
@@ -100,7 +109,8 @@ function inZone(real, roots) {
 const reasonText = (kind, lang, max = REPLY_FILES_MAX) => ({
   missing: pick('파일이 없습니다', 'file not found', lang),
   outside: pick('작업 폴더 밖이거나 없는 파일이라 첨부하지 않았습니다', 'outside the company work folder or not found — not attached', lang), // 밖·없음을 한 사유로(N-5)
-  secret: pick('설정·비밀 파일로 보여 첨부하지 않았습니다', 'looks like a settings or secret file — not attached', lang),
+  secret: pick('비밀 정보가 담긴 이름으로 보여 보내지 않았습니다(이름을 바꾸면 보낼 수 있습니다)', 'name looks like it holds secrets — not sent (rename it to send)', lang), // 낱말 오탐이면 이름만 바꿔 다시 보낸다(F-4)
+  hardlink: pick('하드 링크라서 보내지 않았습니다', 'hard link — not sent', lang),
   type: pick('첨부하지 않는 파일 형식입니다', 'file type not attached', lang),
   big: pick('25MB 초과', 'over 25MB', lang),
   many: pick(`한 답에 최대 ${max}개까지 첨부합니다`, `at most ${max} files per reply`, lang),
@@ -111,23 +121,25 @@ const reasonText = (kind, lang, max = REPLY_FILES_MAX) => ({
     로컬 파일로 보고 본문에서 지우고 '작업 폴더 밖' 안내를 붙이던 것(분리 검수 L-2). 있는 구역 밖 파일은 그대로 '밖'으로 막는다. */
 async function judge(abs, roots, literals) {
   const shown = basename(abs) || 'file';
-  // 쓴 이름이 숨김·비밀 파일 이름(.env·id_rsa·*.key 등 파일 꼴)이면 풀어 보기 전에 거부(.env가 구역 안 다른 파일을 가리키는 심링크여도).
-  // 낱말 규칙(auth·token 등)은 풀어 본 뒤에만 쓴다 — `/auth`·`/api/token` 같은 웹 경로 링크를 막지 않게(L-2).
-  // 경로 중간 조각은 아래 realpath 기준 구역 상대 경로로 본다 — 실제 루트가 ~/.argo/workspaces라 절대 경로 전체의 숨김 조각을 보면 정상 파일까지 막힌다.
-  if (shown.startsWith('.') || SECRET_NAME.test(shown)) return { ok: false, name: shown, kind: 'secret' };
+  // 경로 중간 조각은 realpath 기준 구역 상대 경로로 본다 — 실제 루트가 ~/.argo/workspaces라 절대 경로 전체의 숨김 조각을 보면 정상 파일까지 막힌다.
+  // realpath는 파일 내용을 읽지 않는다(.env가 구역 안 다른 파일을 가리키는 심링크여도 아래 이름 판정으로 거부).
   let real = null; let gone = false;
   try { real = await realpath(abs); } catch (e) { gone = e?.code === 'ENOENT' || e?.code === 'ENOTDIR'; }
   if (!real || !zoneRel(real, roots)) {
-    // 글자 그대로 구역 안인데 없는 파일만 '없음'(구역은 방에 보여도 되는 곳). 그 밖(없음·밖·권한 오류)은 존재와 무관하게 경로 모양으로만 가른다(N-5).
-    if (!real && gone && zoneRel(resolve(abs), [...literals, ...roots])) return { ok: false, name: shown, kind: 'missing' };
-    return fileShaped(abs) ? { ok: false, name: shown, kind: 'outside' } : { skip: true };
+    // 글자 그대로 구역 안인데 없는 파일은 '없음' — 단, 존재하는 가장 가까운 부모의 realpath도 구역 안일 때만(F-2: 구역 안 심링크 폴더를 거쳐
+    // 밖을 가리키면 있는 파일은 '밖', 없는 파일은 '없음'으로 갈려 존재 여부가 드러났다).
+    const lexical = zoneRel(resolve(abs), [...literals, ...roots]);
+    if (!real && gone && lexical && await parentInZone(resolve(abs), roots)) return { ok: false, name: shown, kind: 'missing' };
+    // 그 밖(없음·밖·권한 오류)은 존재와 무관하게 위치로만 가른다 — 구역 글자·홈·작업 루트·임시 폴더 아래면 지우고 안내 하나, 아니면 그대로(N-5·F-3)
+    if (!lexical && !privatePath(abs)) return { skip: true };
+    return { ok: false, name: shown, kind: secretName(shown) ? 'secret' : 'outside' }; // 이름 판정은 존재와 무관(쓴 이름만 본다)
   }
   if (secretName(shown) || secretName(basename(real))) return { ok: false, name: shown, kind: 'secret' };
   if (!inZone(real, roots)) return { ok: false, name: shown, kind: 'outside' }; // _imported/unsorted·비밀 이름 폴더
   if (!ATTACH_EXT.test(basename(real))) return { ok: false, name: basename(real), kind: 'type' }; // 실제 파일 이름 기준(심링크 이름을 .pdf로 붙여도 소용없다)
   const st = await stat(real).catch(() => null);
   if (!st?.isFile()) return { ok: false, name: shown, kind: 'missing' };
-  if (st.nlink > 1) return { ok: false, name: shown, kind: 'outside' }; // 하드 링크 — 구역 밖 파일과 같은 내용일 수 있다(realpath로 못 가른다, N-4)
+  if (st.nlink > 1) return { ok: false, name: shown, kind: 'hardlink' }; // 하드 링크 — 구역 밖 파일과 같은 내용일 수 있다(realpath로 못 가른다, N-4)
   if (st.size > ATTACH_MAX) return { ok: false, name: basename(real), kind: 'big' };
   return { ok: true, abs: real, name: basename(real), bytes: st.size };
 }
@@ -199,7 +211,8 @@ export async function readReplyFile(wsId, file, lang = 'ko', io = { open, realpa
     const st = await fh.stat();
     await resolveIn(); // 연 뒤 경로가 그대로인가
     const again = await io.stat(real).catch(() => null);
-    if (!st.isFile() || st.nlink > 1 || !again || again.ino !== st.ino || again.dev !== st.dev) throw fail('outside');
+    if (!st.isFile() || !again || again.ino !== st.ino || again.dev !== st.dev) throw fail('outside');
+    if (st.nlink > 1) throw fail('hardlink');
     if (st.size > ATTACH_MAX) throw fail('big');
     const buf = await fh.readFile();
     if (buf.length > ATTACH_MAX) throw fail('big');
