@@ -15,6 +15,23 @@ const lockKey = (wsId, slug) => `thread:${wsId}:${sanitizeFileSlug(slug)}`;
 // 앱 사이드카·argo CLI가 같은 폴더를 쓰면 프로세스 간 잠금도 필요하다(M-b) — 파일 단위(<chat>.json.lockd). 보관·휴지통 편집도 활성 스레드 잠금 하나로 직렬화한다.
 const lockThread = (wsId, slug, fn) => withLock(lockKey(wsId, slug), fn, { file: file(wsId, slug) });
 
+// 턴 기록(appendTurn)을 기다리는 쪽 — 세션 메시지가 크루의 직전 턴이 새 sessionId를 쓸 때까지 기다린다(session-msg.mjs idleSession).
+// globalThis: Next가 진입점마다 모듈을 따로 번들한다(turn-abort.mjs와 같은 이유). 같은 프로세스 안의 기록만 알린다.
+const writeWaiters = (globalThis.__argoThreadWrite ??= new Map()); // lockKey → Set<resolve>
+const notifyWrite = (wsId, slug) => {
+  const k = lockKey(wsId, slug); const set = writeWaiters.get(k);
+  if (set) { writeWaiters.delete(k); for (const wake of set) wake(); }
+};
+/** 이 스레드의 다음 턴 기록에 풀리는 약속. cancel()로 걸어 둔 것을 거둔다(쌓이지 않게). */
+export function nextThreadWrite(wsId, slug) {
+  const k = lockKey(wsId, slug);
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  const set = writeWaiters.get(k) ?? new Set();
+  set.add(resolve); writeWaiters.set(k, set);
+  return { promise, cancel: () => { const cur = writeWaiters.get(k); cur?.delete(resolve); if (cur && !cur.size) writeWaiters.delete(k); } };
+}
+
 /** 스레드 파일 mtime(ms) — 폴링 dedup용. 파일이 없으면 0. */
 export async function threadMtime(wsId, slug) {
   try { return (await stat(file(wsId, slug))).mtimeMs; } catch { return 0; }
@@ -95,7 +112,12 @@ export async function appendLine(wsId, slug, line) {
   });
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
+export async function appendTurn(wsId, slug, opts) {
+  const out = await appendTurnLocked(wsId, slug, opts);
+  notifyWrite(wsId, slug); // 기록이 끝난 뒤 — 기다리던 세션 메시지가 새 sessionId를 읽는다
+  return out;
+}
+async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
   return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();

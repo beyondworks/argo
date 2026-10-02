@@ -627,7 +627,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     } catch (err) {
       setInput(raw); // 보낸 글을 잃지 않게 입력창으로 되돌린다
       const code = err?.data?.code;
-      setError(['DUP', 'NOT_FOUND', 'TOO_LONG'].includes(code) ? t(`chat.session.err.${code}`, { name: target.toName }) : t('chat.session.err.generic', { msg: String(err.message) }));
+      setError(['DUP', 'NOT_FOUND', 'TOO_LONG', 'AMBIGUOUS', 'TREE_CAP'].includes(code) ? t(`chat.session.err.${code}`, { name: target.toName }) : t('chat.session.err.generic', { msg: String(err.message) }));
     }
   }
 
@@ -645,6 +645,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     // `@다른크루 내용` = 세션 메시지 — 이 크루의 턴은 만들지 않으므로 답변 중이어도 대기열을 거치지 않는다(첨부는 아직 싣지 않는다)
     const target = !attachments.length ? parseSessionTarget(message, crewList, slug) : null;
+    if (target?.ambiguous) { setError(t('chat.session.err.AMBIGUOUS', { name: target.name })); return; } // 이름이 겹친다 — 입력은 그대로 두고 slug로 고르게
     if (target) { setInput(''); await sendSessionMsg(target, message); return; }
     setInput(''); setAtt([]);
     if (!attachments.length && isStopCommand(message)) {

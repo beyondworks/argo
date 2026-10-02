@@ -110,7 +110,7 @@ export const handledByTool = (d, calls) => { const f = SAME_AS_TOOL[String(d?.ac
     실패도 줄로 남긴다: 조용한 실패는 크루의 거짓말이 된다.
     `results`는 호출측이 건네는 수집함이다(커넥터 도구에 실제로 닿은 호출만 담긴다) — 채워지면
     호출측이 runToolFollowUp으로 후속 턴 1회를 돌린다. `toolHop`은 그 후속 턴 카운터. */
-export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null, delegationRelaxed = false, delegationTree = null, counters = null } = {}) { // counters = 이 턴의 {delegate, mail} 횟수 — runChat이 SDK/CLI 도구와 같은 카운터를 끼워 넣기 구간·마지막 처리에 함께 넘긴다(블록 25개 = 쪽지 25건 구멍, 검수 2026-10-01 MEDIUM-4)
+export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null, delegationRelaxed = false, delegationTree = null, counters = null, fullAuto = true } = {}) { // fullAuto = 이 턴의 풀 오토 판정(chat.mjs) — 커넥터 게이트에 그대로 넘긴다 // counters = 이 턴의 {delegate, mail} 횟수 — runChat이 SDK/CLI 도구와 같은 카운터를 끼워 넣기 구간·마지막 처리에 함께 넘긴다(블록 25개 = 쪽지 25건 구멍, 검수 2026-10-01 MEDIUM-4)
   const en = lang === 'en';
   const lim = limitsFor(delegationRelaxed && !!delegationTree, mirrorCtx); // 위임 제한 표 — SDK 도구(chat.mjs)와 같은 값(러너 패리티). 메신저 맥락은 항상 켜짐. 합계 예산 객체 없는 풀림은 켜짐(fail-closed)
   const cnt = counters ?? { delegate: 0, mail: 0 };
@@ -220,7 +220,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
             ? `connector follow-up limit reached (${TOOL_FOLLOWUP_MAX} per turn) — answer with the results you already have`
             : `커넥터 후속 턴 상한(턴당 ${TOOL_FOLLOWUP_MAX}회)에 도달했다 — 이미 받은 결과로 답하라`);
         }
-        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug, mirrorCtx });
+        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug, mirrorCtx, fullAuto });
         const text = connectorContentText(r.content);
         if (r.error) {
           // 미연결·재인증 필요·전송 실패 — 도구에 닿지 못했다. 정직한 줄만 남기고 후속 턴 재료로 삼지

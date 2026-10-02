@@ -30,6 +30,7 @@ import { recordClaudeLimits } from './runner-limits.mjs'; // 구독 잔여 한�
 import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
+import { sessionHopCap } from './session-msg.mjs'; // 세션 메시지 사슬 단계 상한(위임 제한 스위치를 따른다) — 도구를 그 단계에서 싣지 않는다
 import { DELEGATION_LIMITS, limitsFor, isMessengerCtx, newTree, spendTree } from './delegation-limits.mjs'; // 위임 제한 표 — 켜짐(종전)·꺼짐(사용자가 푼 대화방)의 단일 원천
 import { addApproval } from './approvals.mjs';
 import { appendEvent, readEvents } from './events.mjs'; // readEvents — mcp 실패 연속 중복 억제의 디스크 사실(마지막 기록) 조회
@@ -531,20 +532,22 @@ async function turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim = DELE
   });
 }
 
-/** 세션 메시지 도구를 실을 턴인가 — 주인의 대화(1:1·위임·쪽지·세션 메시지처럼 공유 목적지가 없는 턴)에만. 메신저·손님·회의실·텔레그램 그룹·슬랙 채널·
-    공유 목적지 자동 턴(mirrorCtx가 있는 턴 전부)은 받는 크루의 **전역 세션**에 다른 사람이 보는 대화를 섞으므로 싣지 않는다. 경쟁·체험 턴도 제외.
-    relaxed = 이 턴이 잇는 사슬의 위임 제한 풀림 — 세션 메시지가 띄운 턴이면 사슬 값(opts.sessionRelaxed), 아니면 이 턴의 제한 표(lim.relaxed:
-    사장 직접 턴은 그 방 스위치, 위임·쪽지 턴은 시작 대화방에서 이어받은 값). 반환: { peers, relaxed } 또는 null(도구 없음). 상한·중복·회사 경계는 session-msg.mjs가 본다. */
-async function sessionPeersFor(wsId, agentSlug, mirrorCtx, source, relaxed = false) {
-  if (mirrorCtx || source === 'compete' || source === 'trial' || source === 'room') return null;
-  const peers = (await listAgents(wsId).catch(() => [])).filter((a) => a.slug !== agentSlug && String(a.runner ?? '').toLowerCase() !== 'http');
-  return peers.length ? { peers, relaxed: relaxed === true } : null;
+/** 세션 메시지 도구 문맥 — 주인의 대화(1:1·위임·쪽지·세션 메시지처럼 공유 목적지가 없는 턴)에만 도구를 싣는다. 메신저·손님·회의실·텔레그램 그룹·슬랙 채널·
+    공유 목적지 자동 턴(mirrorCtx가 있는 턴 전부)은 받는 크루의 **전역 세션**에 다른 사람이 보는 대화를 섞으므로 싣지 않는다. 경쟁·체험 턴, 막은 턴(CLI 한 번 실행·
+    회의실 위임 턴), 사슬 상한 단계의 턴(L1 — 실패할 호출로 안내가 쌓이지 않게)도 제외.
+    반환: { peers, chain, child } — peers가 비면 도구 없음. chain = 이 턴이 보낼 때 쓸 사슬 값, child = 이 턴이 위임한 동료 턴에 넘길 사슬 값
+    (회의실 턴의 위임은 막는다 — L8). 상한·중복·회사 경계·예산은 session-msg.mjs가 본다. */
+async function sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop) {
+  const child = mirrorCtx?.room || sessCtx.blocked ? { blocked: true } : sessCtx;
+  const off = sessCtx.blocked || mirrorCtx || source === 'compete' || source === 'trial' || source === 'room' || hop >= sessionHopCap(sessCtx.relaxed);
+  const peers = off ? [] : (await listAgents(wsId).catch(() => [])).filter((a) => a.slug !== agentSlug && String(a.runner ?? '').toLowerCase() !== 'http');
+  return { peers, chain: sessCtx, child };
 }
 
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
     connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
-export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false, limits = DELEGATION_LIMITS.on, tree = null, counters = null, session = null) { // session = 세션 메시지 도구 {peers} — 보낼 수 있는 턴에만 runChat이 넘긴다(sessionPeersFor) // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다), limits = 위임 제한 표(delegation-limits.mjs — 생략·메신저 맥락은 켜짐), tree = 풀림의 합계 예산 객체(사용자 메시지 하나에서 이어지는 크루 턴 총량 — 없으면 이 서버 단독 임시 예산), counters = 이 턴의 위임·쪽지 횟수 {delegate, mail}(CLI 지시 블록과 같은 카운터를 쓰려고 runChat이 만들어 넘긴다)
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false, limits = DELEGATION_LIMITS.on, tree = null, counters = null, session = null) { // session = 세션 메시지 문맥 {peers, chain, child} — runChat이 sessionToolFor로 만든다(peers가 비면 도구 없음) // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다), limits = 위임 제한 표(delegation-limits.mjs — 생략·메신저 맥락은 켜짐), tree = 풀림의 합계 예산 객체(사용자 메시지 하나에서 이어지는 크루 턴 총량 — 없으면 이 서버 단독 임시 예산), counters = 이 턴의 위임·쪽지 횟수 {delegate, mail}(CLI 지시 블록과 같은 카운터를 쓰려고 runChat이 만들어 넘긴다)
   const lim = isMessengerCtx(mirrorCtx) ? DELEGATION_LIMITS.on : limits; // 메신저 턴은 스위치 밖 — 호출부가 무엇을 넘겨도 종전 2회·2단계(방어)
   const budget = lim.relaxed ? (tree ?? newTree({ kind: 'turn' })) : null; // 풀림은 합계 예산 없이 돌지 않는다 — 못 받았으면 이 서버 단독의 임시 예산
   const cnt = counters ?? { delegate: 0, mail: 0 };
@@ -690,7 +693,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         // 위임받은 동료도 부른 턴의 범위로 돈다 — 텔레그램 그룹·슬랙 채널·자동 턴 목적지면 그 범위 기록만 붙이고 주인 대화(범위 없는 기록)는 붙이지 않는다
         // (CLI 러너는 세션이 없어도 최근 기록을 붙인다 — 부른 쪽이 공유 목적지면 위임 결과도 그곳에 미러된다)
         const childCtx = rulesCtx ?? (turnScope(mirrorCtx) ? { kind: 'scope', scope: turnScope(mirrorCtx) } : null);
-        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal, delegationRelaxed: lim.relaxed, delegationTree: budget, mirrorCtx: childCtx }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
+        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal, delegationRelaxed: lim.relaxed, delegationTree: budget, sessionChain: session?.child ?? null, mirrorCtx: childCtx }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
         // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
         const { appendTurn } = await import('./thread.mjs');
         await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate', artifacts: r.artifacts, ...(turnScope(childCtx) ? { contextScope: turnScope(childCtx) } : {}) })
@@ -761,13 +764,14 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       if ((cnt.session ?? 0) >= lim.mail) return text(lang === 'en' ? `Session message limit (${lim.mail} per turn) reached — wrap up this turn.` : `세션 메시지 한도(턴당 ${lim.mail}회)에 닿았다 — 이번 턴은 더 보내지 말고 마무리하라.`);
       try {
         const { sendSessionMessage } = await import('./session-msg.mjs');
-        const r = await sendSessionMessage(wsId, { room: fromSlug, sender: { slug: fromSlug }, to, message, hop, chain, relaxed: session.relaxed });
+        const r = await sendSessionMessage(wsId, { room: fromSlug, sender: { slug: fromSlug }, to, message, hop, chain, relaxed: session.chain.relaxed, tree: session.chain.tree });
         cnt.session = (cnt.session ?? 0) + 1;
         return text(lang === 'en'
           ? `Sent the session message (${r.id}). Do not wait for the answer: finish this turn now (tell the captain you asked and will continue when the answer comes). When the colleague answers, it arrives in your session and you continue then.`
           : `세션 메시지를 보냈다(${r.id}). 답을 기다리지 말고 지금 턴을 마무리하라(사장에게는 물어봤고 답이 오면 이어서 하겠다고 알려라). 동료가 답하면 네 세션에 들어오고, 그때 이어서 일하면 된다.`);
       } catch (e) {
         if (e?.code === 'CHAIN_CAP') return text(lang === 'en' ? 'The chain of session messages between crews reached its limit, so it was not sent (the captain sees a notice). Finish with what you know and report to the captain.' : '크루끼리 이어진 세션 메시지가 사슬 상한에 닿아 보내지 않았다(사장 화면에 안내가 남는다). 지금까지 알게 된 것으로 마무리하고 사장에게 보고하라.');
+        if (e?.code === 'TREE_CAP') return text(treeCapText()); // 합계 예산 — 위임·쪽지와 같은 안내(사장 화면에도 안내가 남는다)
         if (e?.code === 'DUP') return text(lang === 'en' ? 'You are already waiting for this colleague\'s answer — do not send again; finish this turn and continue when it arrives.' : '이미 이 동료의 답을 기다리는 중이다 — 다시 보내지 말고 지금 턴을 마무리하라. 답이 오면 이어서 하면 된다.');
         return text(`${lang === 'en' ? 'Session message failed' : '세션 메시지 전송 실패'}: ${String(e?.message || e)}`);
       }
@@ -981,7 +985,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       if (guest) return guestNo(lang === 'en' ? 'Starting a long task' : '장기 작업 시작');
       try {
         const { enqueueLongJob } = await import('./gateway.mjs'); // 동적 — gateway가 chat을 import하므로 순환 회피
-        const r = await enqueueLongJob(wsId, { slug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug) });
+        // 사장 직접 턴이 아닌 턴(위임·쪽지·세션 메시지)에서 건 작업, 또는 다른 크루에게 시킨 작업은 그 크루를 from으로 남긴다 — 작업 턴도 풀 오토가 아니다
+        const jobFrom = delegatedBy ?? (agentSlug && agentSlug !== fromSlug ? fromSlug : null);
+        const r = await enqueueLongJob(wsId, { slug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug), ...(jobFrom ? { from: jobFrom } : {}) });
         return text(`작업 "${title}"을 걸어뒀다(대기·진행 ${r.pending}건, 담당 ${agentSlug || fromSlug}). 끝나면 결과가 이 대화와 메신저로 온다. 지금은 걸어뒀다고만 알리고 턴을 마쳐라 — 결과를 기다리지 마라.`);
       } catch (e) {
         return text(`작업 적재 실패: ${String(e.message || e)}. 사장에게 알리거나 작업을 쪼개 지금 실행하라.`);
@@ -1077,7 +1083,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ server, tool: toolName, args }) => {
       // 결과·오류 문구는 코어가 이미 회사 언어로 정규화해 돌려준다(미연결·재연결 필요 포함).
       // 여기서 다시 쓰지 않는다 — 표면마다 문구가 갈리면 안내 품질 패리티가 깨진다.
-      const r = await callConnectorTool(wsId, server, toolName, args ?? {}, { lang, slug: fromSlug, mirrorCtx });
+      const r = await callConnectorTool(wsId, server, toolName, args ?? {}, { lang, slug: fromSlug, mirrorCtx, fullAuto }); // 이 턴의 풀 오토 판정을 게이트에 — 회사 스위치만 보면 주인 직접 턴이 아닌 턴도 결재 없이 나간다
       return { content: r.content ?? [], ...(r.isError ? { isError: true } : {}) };
     },
   );
@@ -1195,6 +1201,11 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  */
 /** CLI 끼워 넣기 이어 실행 프롬프트(순수) — 한 번 실행하고 끝나는 CLI에는 실행 중 입력 통로가 없어, 원 프롬프트에
     방금 답과 새 메시지를 붙여 같은 턴 안에서 한 번 더 실행한다. */
+/** 새 세션으로 이어 갈 때 이번 글의 머리 — 세션 메시지 턴(받는 턴·깨움 턴)은 사장의 직접 지시가 아니므로 출처를 따로 적는다(L3). 글 자체의 머리말이 보낸 사람을 말한다. */
+const newMsgHead = (source, lang) => (source === 'session'
+  ? (lang === 'en' ? '## Incoming session message (not a direct instruction from the captain — see its header)\n' : '## 새로 들어온 세션 메시지(사장의 직접 지시가 아니다 — 머리말의 출처를 보라)\n')
+  : (lang === 'en' ? "## Captain's new message\n" : '## 사장의 새 메시지\n'));
+
 export function cliSteerPrompt(prompt, reply, texts, lang = 'ko') {
   const body = texts.join('\n\n');
   return lang === 'en'
@@ -1209,7 +1220,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, opts = {}
     runChat(wsId, agentSlug, userMsg, sessionId, { ...opts, __turnControl: control }), { source: opts.source ?? (opts.from ? 'delegate' : 'chat'), tag: opts.abortTag ?? null });
 }
 
-async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionRelaxed = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
+async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionChain = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
   // 세 saveHandover 지점이 모두 이 한 함수를 거친다(한 지점만 빠지면 crew_memory=false 채널의 내용이 기억에 새는 무언 결함).
   const dmTurn = mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm';
@@ -1223,6 +1234,13 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const relaxedReq = delegationRelaxed === true && !isMessengerCtx(mirrorCtx);
   const tree = !relaxedReq ? null : delegationTree ?? (hop === 0 ? newTree(mirrorCtx?.room ? { kind: 'room' } : { kind: 'chat', slug: agentSlug }) : null);
   const lim = limitsFor(relaxedReq && !!tree, mirrorCtx);
+  // 세션 메시지 사슬 문맥 — 세션 메시지가 띄운 턴은 사슬 값(위임 제한 풀림·합계 예산 id)을 이어받고, 그 밖의 턴은 이 턴의 제한 표·위임 예산에서 시작한다.
+  // {blocked:true} = 이 턴은 세션 메시지를 보낼 수 없다(argo CLI 한 번 실행 — 턴 직후 프로세스가 끝나 답을 못 받는다, 회의실 위임 턴).
+  const sessCtx = sessionChain?.blocked ? { blocked: true }
+    : sessionChain ? { relaxed: sessionChain.relaxed === true, tree: sessionChain.tree ?? null }
+    // 사슬의 뿌리 턴 — 위임 예산(풀린 방)이 있으면 그것을, 없으면 이 턴 몫의 합계 예산을 하나 만든다. 보낼 때마다 만들면 한 턴의 여러 전송·위임한 동료의 전송이
+    // 각자 30턴을 갖는다(검수 재현: 82턴). 세션 메시지를 실을 수 없는 턴(mirrorCtx 있음)은 만들지 않는다 — 예산 표는 24시간 뒤 newTree가 치운다.
+    : { relaxed: lim.relaxed, tree: tree?.id ?? (mirrorCtx ? null : newTree({ kind: 'session' }).id) };
   const turnCounters = { delegate: 0, mail: 0 }; // 이 턴의 위임·쪽지 횟수 — SDK/CLI 도구와 CLI 지시 블록(끼워 넣기 구간·마지막 처리)이 **같은 카운터**를 쓴다
   // 메신저 문맥 턴의 셸 위험 분류 게이트(D28) — 카드 목적지. 문맥이 불완전해도(예외) 분류는 켠다(결재는 로컬 원장에 남는다).
   const gateMsgr = mirrorCtx?.kind === 'msgr' ? (() => { try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; } })() : null;
@@ -1253,7 +1271,6 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 풀 오토 모드(회사 단위 스위치, 유건 확정 2026-09-26) — 기본 꺼짐 + **주인이 직접 지시한 턴에만**(요구사항 2).
   // guest는 위에서 이미 isGuestCtx로 판정했다: 손님·조직 채널 타인·뿌리가 주인이 아닌 넘김은 전부 guest=true라
   // 여기서 자동으로 걸러진다 — 웹 채팅·주인의 메신저 DM·주인의 텔레그램은 guest=false다.
-  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx); // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
   // 풀린 대화방의 마지막 단계 — 더는 위임할 수 없는 자리임을 알려 준다(도구가 사라진 이유를 모르면 크루가 조용히 일을 덜 한다). 켜짐은 종전처럼 아무 말도 하지 않는다.
   const hopCapNote = lim.relaxed && hop >= lim.hop
     ? (lang === 'en'
@@ -1287,6 +1304,10 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const skillScope = parseScopeList(meta.skills);
   const mcpScope = parseScopeList(meta.mcp);
   const skills = await loadSkills(wsId, SKILL_INJECT_CAP, lang, skillScope);
+  // 풀 오토 판정(위 설명 주석) — 스킬 주입 뒤에 계산한다: loadSkills 앞에는 출처(source) 분기를 두지 않는다(room-slash-commander 핀). 그 사이 쓰는 곳은 없다.
+  // 풀 오토는 사장이 직접 시킨 턴에만(유건 결정 2026-10-03 "위임도 막기") — from이 있는 턴(위임받은 동료 턴·쪽지 배달 턴·크루가 보낸 세션 메시지의 받는 턴·깨움 턴,
+  // 그런 턴에서 건 장시간 작업·올린 결재의 후속 턴)은 제외. 이 값은 커넥터 쓰기 게이트까지 그대로 넘어간다(callConnectorTool fullAuto).
+  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx) && !from; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -1488,7 +1509,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliColleagues = bridgeable ? await turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim) : [];
       if (bridgeable) {
         const sink = [];
-        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionPeersFor(wsId, agentSlug, mirrorCtx, source, sessionRelaxed ?? lim.relaxed));
+        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop));
         // 자식 파일이 없는 산출물(셀프호스트 등)이면 크루 도구 없이 진행한다 — 도구 부재가 턴 사망이 되면 안 된다(분리 검수 LOW-7)
         crewBridge = await createCrewMcpBridge(crewToolSpecs(sink)).catch((e) => { console.warn(`[argo] 크루 도구 다리 생략(지시 블록으로 진행): ${e?.message ?? e}`); return null; });
       }
@@ -1503,7 +1524,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
 
 ${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
-${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
+${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n'))}${userMsg}${attNote}
 
 ${lang === 'en'
         ? '(You are the crew of the persona above. Always reply in English, even if the captain wrote to you in Korean.)'
@@ -1557,7 +1578,7 @@ ${lang === 'en'
         const texts = cliInbox.items.splice(0);
         const { parseDirectives, runDirectives } = await import('./cli-directives.mjs');
         const seg = parseDirectives(reply);
-        const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
+        const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, fullAuto, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
         doneText = [doneText, seg.directives.length || seg.bad.length ? [seg.clean, segNotes.join('\n')].filter(Boolean).join('\n\n') : reply].filter(Boolean).join('\n\n');
         try {
           reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: cliSteerPrompt(runPrompt, doneText, texts, lang), cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
@@ -1583,7 +1604,7 @@ ${lang === 'en'
         if (directives.length || bad.length) {
           const toolResults = [];
           __turnControl.check();
-          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain, toolHop, results: toolResults, mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }); // 도구로 이미 한 일은 블록으로 다시 하지 않는다(K94)
+          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain, toolHop, results: toolResults, mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, fullAuto, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }); // 도구로 이미 한 일은 블록으로 다시 하지 않는다(K94)
           reply = [clean, notes.join('\n')].filter(Boolean).join('\n\n');
           // 커넥터 결과 자동 후속 턴 1회 — 크루의 위 답변은 **결과를 보기 전에** 쓰인 것이라 그대로
           // 두면 반쪽이다(설계서 §2-2). 상한·증가는 runToolFollowUp/runDirectives가 toolHop으로 잠근다.
@@ -1592,7 +1613,7 @@ ${lang === 'en'
           __turnControl.check();
           const follow = await runToolFollowUp(chat, wsId, agentSlug, {
             results: toolResults, toolHop, lang, userMsg, sessionId,
-            chatOpts: { __turnControl, from, source, hop, chain, delegationRelaxed, delegationTree: tree, runnerOverride: runner, modelOverride, mirrorCtx, journal, workFolder },
+            chatOpts: { __turnControl, from, source, hop, chain, delegationRelaxed, delegationTree: tree, runnerOverride: runner, modelOverride, mirrorCtx, journal, workFolder, sessionChain },
           });
           if (follow) {
             let followText = follow.reply || follow.note;
@@ -1673,7 +1694,7 @@ ${lang === 'en'
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionRelaxed, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       // 도구 잠김(L2 자가치유, 2026-08-25) — 실행기 자체 고장(예: codex code-mode host)은 자격도 모델도
@@ -1684,7 +1705,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionRelaxed, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1).
@@ -1698,7 +1719,7 @@ ${lang === 'en'
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
             await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
-            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionRelaxed, __seedNotes: sharedNotes, __excludeRunners: tried });
+            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
@@ -1754,7 +1775,7 @@ ${lang === 'en'
   // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
   const nativeOn = nativeRunnerEnabled(runner);
   const crewSink = nativeOn ? [] : null;
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionPeersFor(wsId, agentSlug, mirrorCtx, source, sessionRelaxed ?? lim.relaxed));
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop));
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.
@@ -1793,15 +1814,21 @@ ${lang === 'en'
         .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       if (ctx) crossCtx = lang === 'en'
-        ? `## Recent conversation (continued from another device — a new session opens here)\n${ctx}\n\n## Captain's new message\n`
-        : `## 최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)\n${ctx}\n\n## 사장의 새 메시지\n`;
+        ? `## Recent conversation (continued from another device — a new session opens here)\n${ctx}\n\n${newMsgHead(source, 'en')}`
+        : `## 최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)\n${ctx}\n\n${newMsgHead(source, 'ko')}`;
     }
   }
 
   // 첨부 — 이미지는 base64 블록으로, 문서·데이터 파일은 vault 경로로 안내(Read 열람)
   const imgAtt = attachments.filter((a) => a.isImage);
   const fileAtt = attachments.filter((a) => !a.isImage);
-  let promptText = `${crossCtx}${sharedBlock}${userMsg}`;
+  // 이어 가는 세션은 SDK가 첫 턴의 시스템 프롬프트를 그대로 쓴다(실측) — 첫 턴이 풀 오토였으면 이 턴이 풀 오토가 아니어도 그 문구가 남는다.
+  // 그래서 글 앞에 바로잡는 줄을 둔다(세션 메시지 턴은 글에 이미 있다). 실제 강제는 커넥터 쓰기 게이트(fullAuto 전달)다.
+  const faNote = resumeId && companyFullAuto === true && !fullAuto && source !== 'session'
+    ? (lang === 'en' ? '(Even if this company has full auto mode on, it does not apply to this turn — file request_approval before any action that leaves the company.)\n\n'
+      : '(이 회사에 풀 오토 모드가 켜져 있어도 이 턴에는 적용되지 않는다 — 회사 밖으로 나가는 행동은 request_approval로 결재를 먼저 올려라.)\n\n')
+    : '';
+  let promptText = `${faNote}${crossCtx}${sharedBlock}${userMsg}`;
   if (fileAtt.length) {
     promptText += lang === 'en'
       ? `\n\n(Files the captain attached — open them with the Read tool: ${fileAtt.map((a) => `vault/${a.rel}`).join(', ')})`
@@ -2119,7 +2146,7 @@ ${lang === 'en'
       try {
         // 제외 목록은 받은 그대로 넘긴다(tried 아님) — 세션 부재는 러너 잘못이 아니라서 같은 러너로
         // 다시 시도해야 한다. 여기서 현재 러너를 제외하면 세션 문제로 벤더가 갈리는 오작동이 된다.
-        return await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionRelaxed, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
+        return await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
@@ -2131,7 +2158,7 @@ ${lang === 'en'
       const baseModel = effectiveModels(runner).find((m) => !m.gated)?.id ?? '';
       console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델(${baseModel})로 강등 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride: baseModel, workFolder, journal, sessionRelaxed, __freshRetry, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry, __downgradedFrom: effModel });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride: baseModel, workFolder, journal, sessionChain, __freshRetry, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry, __downgradedFrom: effModel });
       } catch (e2) { e = e2; retriedDown = true; if (e2?.aborted) aborted = true; }
     }
     // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), **죽은 러너를
@@ -2143,7 +2170,7 @@ ${lang === 'en'
     if (!aborted && !retriedDown && !__crashRetry && isProcessCrash(e?.message || e)) {
       console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionRelaxed, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
       } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
     }
     if (!aborted && !retriedDown && shouldSelfHeal(e, { lockup: false })) { // SDK 경로는 잠김 교체 없음(종전 계약) — 인증 문구·authExpired 필드만(HIGH-1)
@@ -2152,7 +2179,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
           await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
-          const healed = await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionRelaxed, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          const healed = await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
