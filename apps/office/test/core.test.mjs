@@ -74,7 +74,7 @@ test('window.confirm/alert/prompt 금지', () => {
 
 // 이유: 모든 화면 문자열은 ko/en 사전으로(프로젝트 규칙). 예시 데이터·사전 파일만 예외.
 test('사전 밖 한글 문자열 금지', () => {
-  for (const p of code.filter((x) => !/i18n\.js$|data\/(calendar-)?sample\.js$|data\/templates\.js$|calendar\/holidays-kr\.js$/.test(x))) { // holidays-kr.js는 공휴일 원본 표(화면에는 calendar-i18n.js의 holidayName으로 영어도 나간다). templates.js는 사전처럼 [ko, en] 쌍 — 아래 템플릿 테스트가 영어 쪽을 잠근다
+  for (const p of code.filter((x) => !/i18n\.js$|data\/(calendar-)?sample\.js$|data\/templates\.js$|calendar\/holidays-kr\.js$|files\/(sample|rules)\.js$/.test(x))) { // files/sample.js는 문서함 예시 데이터, files/rules.js는 문서 내용(한글 서류)과 맞춰 보는 분류 낱말 — 화면에 나가지 않는다. holidays-kr.js는 공휴일 원본 표(화면에는 calendar-i18n.js의 holidayName으로 영어도 나간다). templates.js는 사전처럼 [ko, en] 쌍 — 아래 템플릿 테스트가 영어 쪽을 잠근다
     assert.doesNotMatch(strip(readFileSync(p, 'utf8')), /[가-힣]/, p);
   }
 });

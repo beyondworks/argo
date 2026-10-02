@@ -50,6 +50,7 @@ const PATHS = {
   megaphone: '<path d="M2.5 6.5v3h2.2l5.3 3v-9l-5.3 3zM12 6.2a2.5 2.5 0 0 1 0 3.6M5 9.5l.8 3.5"/>',
   calendar: '<rect x="2.5" y="3.5" width="11" height="10" rx="1.8"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>',
   star: '<path d="m8 2.3 1.8 3.6 4 .6-2.9 2.8.7 4L8 11.4l-3.6 1.9.7-4L2.2 6.5l4-.6z"/>',
+  folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.7h4.7A1.5 1.5 0 0 1 14 6.2v5.8a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12z"/>',
   target: '<circle cx="8" cy="8" r="5.8"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r="0.6"/>',
 };
 
