@@ -9,6 +9,7 @@ import { t, ago } from '../core/i18n.js';
 import { useStore, toggleTodo, crewName, crewsIn, approvalsIn } from '../core/store.js';
 import { baseOf, mailMenu, pageMenu, fileMenu, recordMenu } from '../core/commands.js';
 import { SPACES, ME, useSession } from '../core/session.js';
+import { DEMO } from '../core/demo.js';
 import { useTasks } from '../core/tasks.js';
 import { kstDay, groupTasks } from '../core/task-model.js';
 import { fmtBytes } from '../core/files.js';
@@ -214,5 +215,8 @@ export const MODULES = OFFICE_MODULES.map((module) => ({ ...module, render: rend
 
 export const DEFAULTS = {
   me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'calendar', size: 'm' }, { id: 'work', size: 'm' }],
-  org: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'calendar', size: 'm' }, { id: 'todos', size: 'm' }],
+  org: DEMO
+    // 랜딩 체험판 첫 화면 — 유건 10/1 화면 구성: 현황 / 왼쪽 캘린더 · 오른쪽 할 일 + 결재 대기
+    ? [{ id: 'stats', size: 'full', x: 0, y: 0 }, { id: 'calendar', size: 's', span: 5, x: 0, y: 1, h: 520, cfg: { views: { view: 'month' } } }, { id: 'todos', size: 'm', span: 7, x: 5, y: 1 }, { id: 'approvals', size: 'm', span: 7, x: 5, y: 2 }]
+    : [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'calendar', size: 'm' }, { id: 'todos', size: 'm' }],
 };

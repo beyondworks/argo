@@ -3,7 +3,10 @@
 const now = Date.now();
 const ago = (min) => new Date(now - min * 60000).toISOString();
 
-export const ME = { id: 'u-me', name: '김유건', email: 'yoogeon@beyondworks.example' };
+import { DEMO } from '../core/demo.js';
+
+// 체험판(공개 랜딩)에는 실제 사람 이름 대신 가상 이름
+export const ME = DEMO ? { id: 'u-me', name: '김서연', email: 'seoyeon@beyondworks.example' } : { id: 'u-me', name: '김유건', email: 'yoogeon@beyondworks.example' };
 
 export const PEOPLE = [{ name: '최민지', email: 'minji@beyondworks.example', role: 'edit' }];
 
