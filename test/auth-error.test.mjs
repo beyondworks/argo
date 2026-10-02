@@ -38,14 +38,17 @@ test('응답 모양 — 연결 실패는 502 + 할 일 안내 + code, 거부는 
   const u = linkFailure(classifyAuthError(err('AuthRetryableFetchError', 0, { message: 'fetch failed' }), 'ECONNREFUSED'));
   assert.equal(u.status, 502);
   assert.equal(u.body.code, 'ECONNREFUSED');
+  assert.equal(u.body.kind, 'unreachable'); // 화면이 표시 언어로 문구를 고르는 열쇠 — error는 예전 클라이언트용 ko 문구로 남는다
   assert.match(u.body.error, /로그인 서버\(Supabase\)에 연결하지 못했습니다/);
   assert.match(u.body.error, /네트워크·VPN·프록시·보안 프로그램/);
   assert.equal('code' in linkFailure(classifyAuthError(err('AuthRetryableFetchError', 0))).body, false); // 코드 없으면 필드 없음
   const r = linkFailure(classifyAuthError(err('AuthApiError', 401)));
   assert.equal(r.status, 401);
+  assert.equal(r.body.kind, 'rejected');
   assert.equal(r.body.error, '유효하지 않은 세션입니다. 다시 로그인해 주세요.');
   const k = linkFailure(classifyAuthError(new Error('boom')));
   assert.equal(k.status, 502);
+  assert.equal(k.body.kind, 'unknown');
   assert.doesNotMatch(k.body.error, /유효하지 않은 세션/);
 });
 

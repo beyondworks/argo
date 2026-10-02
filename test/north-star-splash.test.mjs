@@ -336,7 +336,7 @@ test('로그인 화면: 열리자마자 스플래시를 닫는다', async () => 
   const n = await withSplash(async () => {
     globalThis.window = { location: { hostname: 'localhost', search: '' }, addEventListener() {}, removeEventListener() {} };
     const { default: Login } = await loadComponent(file('app/login/page.jsx'), {
-      real: [CORE],
+      real: [CORE, file('app/link-error.mjs')],
       define: { 'process.env.NEXT_PUBLIC_SUPABASE_URL': '"https://example.supabase.co"', 'process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY': '"anon"', 'process.env.NEXT_PUBLIC_ARGO_CONTACT': '""' },
       stubs: {
         'next/link': 'export default function Link() { return null; }',

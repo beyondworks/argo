@@ -38,7 +38,7 @@ export function classifyAuthError(error, netCode) {
 
 /** 판정 → 사용자에게 줄 응답 { status, body }. 연결 실패·알 수 없음 = 502, 거부 = 401. code는 있을 때만 싣는다. */
 export function linkFailure(f) {
-  const body = { error: MSG[f.kind] };
+  const body = { error: MSG[f.kind], kind: f.kind }; // error = 예전 클라이언트용 ko 문구, kind = 화면이 표시 언어 문구를 고르는 열쇠
   if (f.code) body.code = f.code;
   return { status: f.kind === 'rejected' ? 401 : 502, body };
 }

@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
 import { Logo, Spinner } from '../ui';
 import { useLang } from '../i18n';
+import { linkErrorView } from '../link-error.mjs';
 import { markSplashReady } from '../splash-continue-core.mjs';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
@@ -22,6 +23,7 @@ export default function Login() {
   const { t } = useLang();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [errorCode, setErrorCode] = useState(''); // 연결 실패 원인 코드(ECONNREFUSED 등) — 작은 글씨로 덧붙인다
   const [isApp, setIsApp] = useState(false);
   const [isLoopback, setIsLoopback] = useState(false); // 로컬 전용 시작은 이 컴퓨터(루프백)에서만
   const [waiting, setWaiting] = useState(false); // 앱: 브라우저 로그인 대기 중
@@ -46,7 +48,7 @@ export default function Login() {
   // 로컬 전용 시작 — 로그인 없이 이 컴퓨터에서만. 나중에 로그인하면 회사를 계정에 연결(클레임)할 수 있다.
   async function startGuest() {
     if (busy) return;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setErrorCode('');
     try {
       const res = await fetch('/api/device/guest', { method: 'POST' }).then((r) => r.json());
       if (res.error) throw new Error(res.error);
@@ -56,7 +58,7 @@ export default function Login() {
 
   // 웹: 그 자리에서 OAuth. 앱: 브라우저 핸드오프.
   async function oauth(provider) {
-    setError('');
+    setError(''); setErrorCode('');
     if (isApp) return oauthViaBrowser(provider);
     const { error: err } = await supabase.auth.signInWithOAuth({
       provider, options: { redirectTo: `${window.location.origin}/auth/callback` },
@@ -66,7 +68,7 @@ export default function Login() {
 
   // 앱: 진짜 브라우저를 열어 로그인 → pairing code로 세션 회수 → 앱 웹뷰에 세션 설정
   async function oauthViaBrowser(provider) {
-    setWaiting(true); setError('');
+    setWaiting(true); setError(''); setErrorCode('');
     try {
       // 서버가 code(브라우저용)+verifier(앱 전용 시크릿)를 생성 — 브라우저엔 code만 넘긴다
       const reg = await fetch('/api/auth/pair', { method: 'POST' }).then((r) => r.json()).catch(() => null);
@@ -94,7 +96,7 @@ export default function Login() {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ access_token: res.session.access_token, refresh_token: res.session.refresh_token }),
           }).then((r) => r.json());
-          if (link.error) { setError(String(link.error)); setWaiting(false); return; }
+          if (link.error) { const v = linkErrorView(link, t); setError(v.text); setErrorCode(v.code); setWaiting(false); return; }
           try { // 앱을 스스로 전면으로 — 브라우저에서 돌아올 필요 없이 이어진다
             const { getCurrentWindow } = await import('@tauri-apps/api/window');
             await getCurrentWindow().setFocus();
@@ -141,7 +143,7 @@ export default function Login() {
           </div>
         </>
       )}
-      {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0, minWidth: 0, overflowWrap: 'anywhere' }}>{error}</p>}
+      {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0, minWidth: 0, overflowWrap: 'anywhere' }}>{error}{errorCode && <small style={{ display: 'block', marginTop: 2, fontSize: 11, opacity: 0.75 }}>{errorCode}</small>}</p>}
       <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
         <Link href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</Link>
         {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent(t('legal.feedbackSubject'))}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
