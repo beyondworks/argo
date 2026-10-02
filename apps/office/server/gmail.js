@@ -77,13 +77,17 @@ const word = (s) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${Buffer.from(s).
 const wrap = (buf) => buf.toString('base64').replace(/.{76}(?=.)/g, '$&\r\n');
 
 /** RFC 5322 메시지(첨부 있으면 multipart/mixed) → Gmail API raw(base64url). attachments: [{ name, type, data(base64) }] */
-export function buildRaw({ from, to, cc, subject, text, inReplyTo, references, attachments = [] }, boundary = `argo-${Date.now().toString(36)}`) {
+export function buildRaw({ from, to, cc, subject, text, html, inReplyTo, references, attachments = [] }, boundary = `argo-${Date.now().toString(36)}`) {
   const head = [
     from && `From: ${clean(from)}`, `To: ${clean(to)}`, cc && `Cc: ${clean(cc)}`, `Subject: ${word(clean(subject))}`,
     inReplyTo && `In-Reply-To: ${clean(inReplyTo)}`, (references || inReplyTo) && `References: ${clean([references, inReplyTo].filter(Boolean).join(' '))}`,
     'MIME-Version: 1.0',
   ].filter(Boolean);
-  const textPart = ['Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', wrap(Buffer.from(String(text ?? ''), 'utf8'))];
+  const plain = ['Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', wrap(Buffer.from(String(text ?? ''), 'utf8'))];
+  // html이 있으면 글자 본문과 함께 multipart/alternative(글자만 보는 메일 앱도 내용을 본다) — 서명 요청 메일의 버튼(10/2 견적·계약)
+  const alt = `${boundary}-alt`;
+  const textPart = typeof html === 'string' && html ? [`Content-Type: multipart/alternative; boundary="${alt}"`, '', `--${alt}`, ...plain,
+    `--${alt}`, 'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', wrap(Buffer.from(html, 'utf8')), `--${alt}--`] : plain;
   const lines = !attachments.length ? [...head, ...textPart] : [
     ...head, `Content-Type: multipart/mixed; boundary="${boundary}"`, '',
     `--${boundary}`, ...textPart,
