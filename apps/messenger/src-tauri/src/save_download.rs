@@ -57,7 +57,47 @@ pub fn save_download<R: Runtime>(app: AppHandle<R>, request: Request<'_>) -> Res
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = unique_path(&dir, &name);
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    mark_from_internet(&path);
     Ok(path.display().to_string())
+}
+
+// 출처 표시(검수 2026-10-02) — 다른 사람이 보낸 파일이므로 브라우저 다운로드처럼 "인터넷에서 받은 파일" 표시를 붙여
+// 열 때 Gatekeeper(macOS)·SmartScreen/보호된 보기(Windows)가 확인하게 한다. 표시를 못 붙여도(외장 FAT 디스크 등) 저장은 성공으로 둔다.
+// macOS: Info.plist LSFileQuarantineEnabled 대신 저장한 파일 하나에만 붙인다 — 그 키는 앱이 만드는 모든 파일(업데이터가 받은 새 앱·설정·캐시)을 격리한다.
+fn mark_from_internet(path: &Path) {
+    #[cfg(target_os = "macos")]
+    if let Err(e) = quarantine_mac(path) { eprintln!("[save_download] quarantine: {e}"); }
+    #[cfg(windows)]
+    if let Err(e) = std::fs::write(zone_identifier_path(path), ZONE_INTERNET) { eprintln!("[save_download] Zone.Identifier: {e}"); }
+    let _ = path;
+}
+
+/// macOS 브라우저 다운로드와 같은 형식(실측: Chromium 계열 "0081;<16진 초>;<앱>;") — 0x0001 다운로드, 0x0040(사용자 승인) 없음.
+pub fn quarantine_value(now_secs: u64) -> String { format!("0081;{now_secs:08x};Argo Messenger;") }
+
+#[cfg(target_os = "macos")]
+fn quarantine_mac(path: &Path) -> std::io::Result<()> {
+    use std::ffi::{c_char, c_int, c_void, CString};
+    use std::os::unix::ffi::OsStrExt;
+    extern "C" { // libSystem(std가 이미 링크) — 새 크레이트 없이
+        fn setxattr(path: *const c_char, name: *const c_char, value: *const c_void, size: usize, position: u32, options: c_int) -> c_int;
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let value = quarantine_value(now);
+    let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let name = c"com.apple.quarantine";
+    let rc = unsafe { setxattr(c_path.as_ptr(), name.as_ptr(), value.as_ptr().cast(), value.len(), 0, 0) };
+    if rc == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+}
+
+/// Windows MOTW — `<파일>:Zone.Identifier` 대체 데이터 스트림, ZoneId=3(인터넷). 브라우저가 쓰는 것과 같은 형식.
+#[cfg_attr(not(windows), allow(dead_code))] // 테스트는 모든 OS에서 형식을 잠근다
+pub const ZONE_INTERNET: &str = "[ZoneTransfer]\r\nZoneId=3\r\n";
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn zone_identifier_path(path: &Path) -> PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(":Zone.Identifier");
+    PathBuf::from(s)
 }
 
 #[cfg(test)]
@@ -79,6 +119,27 @@ mod tests {
         assert_eq!(safe_file_name("..."), "file");
         assert_eq!(safe_file_name(" .hidden "), "hidden");
         assert_eq!(safe_file_name(&"가".repeat(300)).chars().count(), 120);
+    }
+
+    #[test]
+    fn origin_marks_match_browser_downloads() {
+        assert_eq!(quarantine_value(0x6a1b_2c3d), "0081;6a1b2c3d;Argo Messenger;");
+        assert_eq!(zone_identifier_path(Path::new(r"C:\Users\a\Downloads\x.pdf")).as_os_str(), r"C:\Users\a\Downloads\x.pdf:Zone.Identifier");
+        assert_eq!(ZONE_INTERNET, "[ZoneTransfer]\r\nZoneId=3\r\n");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn saved_file_gets_quarantine_on_macos() {
+        let dir = std::env::temp_dir().join(format!("argo-qtn-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("받은 파일.pdf");
+        std::fs::write(&f, b"x").unwrap();
+        mark_from_internet(&f);
+        let out = std::process::Command::new("/usr/bin/xattr").arg("-p").arg("com.apple.quarantine").arg(&f).output().unwrap();
+        let v = String::from_utf8_lossy(&out.stdout);
+        assert!(v.starts_with("0081;") && v.trim_end().ends_with(";Argo Messenger;"), "quarantine = {v:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

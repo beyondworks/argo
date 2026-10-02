@@ -1,7 +1,7 @@
 // 첨부 말풍선·링크 카드의 순수 판정(2026-10-02) — 화면 부품(media.jsx)과 입출력(media-io.js)에서 쓴다. 테스트: test/media-viewer.test.mjs
 // 이미지·파일 판정, 이름 말줄임은 본체 게이트웨이와 같은 규칙(src/media-kind.mjs), 링크 규칙은 엣지 함수와 같은 파일을 쓴다.
 import { isImage, fileKind, fileExt, middleEllipsis, formatBytes } from '../../../src/media-kind.mjs';
-import { firstUrl } from '../../../src/link-preview.mjs';
+import { firstUrl, canPreview } from '../../../src/link-preview.mjs';
 
 /**
  * 환경별로 보일 버튼 — 되지 않는 버튼은 숨긴다.
@@ -36,7 +36,7 @@ export function splitAttachments(atts, failed = new Set()) {
 }
 
 /** 보낸 글에 미리보기를 한 번 요청할지 — 글 번호가 있고 본문(코드 밖)에 http(s) 링크가 있을 때만. */
-export const shouldRequestPreview = ({ body, messageId }) => !!messageId && !!firstUrl(body);
+export const shouldRequestPreview = ({ body, messageId }) => !!messageId && canPreview(firstUrl(body)); // 일회용 링크(token·code·auth 쿼리)는 엣지 함수도 부르지 않는다
 
 const str = (v) => (typeof v === 'string' ? v : v == null ? '' : null);
 /** 저장된 카드(meta.link_preview)를 그릴 모양으로 — 본문에 그 링크가 남아 있고 모양이 맞을 때만. 글자는 화면에서 글자로만 그린다. */
