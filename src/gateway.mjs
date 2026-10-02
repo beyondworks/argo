@@ -18,6 +18,7 @@ import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 �
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel } from './sync.mjs';
 import { appendEvent } from './events.mjs';
+import { jobHead } from './inbound-marks.mjs'; // 장시간 작업 기록 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -68,7 +69,7 @@ function makeJobHandler(wsId, { runChat = chat, session } = {}) {
         ? await runMessengerContinuation(wsId, slug, job.msgr, prompt, null, { runChat, session })
         : await runChat(wsId, slug, prompt, null, { source: 'job', ...await briefingCtx(wsId, 'job', slug).then((c) => (c ? { mirrorCtx: c } : {})) }); // 결과가 공유 목적지로 나가면 그 범위 맥락만
       await appendTurn(wsId, slug, {
-        userMsg: pick(`(장시간 작업) ${title}`, `(Long task) ${title}`, lang),
+        userMsg: `${jobHead(lang)}${title}`,
         reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job', artifacts: t.artifacts, contextScope: t.contextScope,
       }).catch(() => {});
       await appendEvent(wsId, { type: 'job', slug, title, status: 'done' }).catch(() => {});

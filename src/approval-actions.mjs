@@ -2,6 +2,7 @@
 import { resolveApproval } from './approvals.mjs';
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn, turnScope, scopeKey, scopedSession } from './thread.mjs';
+import { APPROVAL_TAG } from './inbound-marks.mjs'; // 후속 턴 머리말 = 1:1 화면이 결재 결과 카드로 판정하는 표지(이 기록만 via가 없다)
 import { emitNotify } from './notify.mjs'; // 후속 턴 결과를 원 채널(메신저)로 — 카드 약속('이어서 보고합니다') 이행
 
 /** 상태 변경 + 후속 처리. kind:'tool'은 대기 중인 턴이 스스로 재개하므로 후속 턴이 없다.
@@ -99,20 +100,20 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
     } catch (e) {
       outcome = `적용 실패: ${String(e.message || e).slice(0, 160)}`;
     }
-    msg = `(사장 결재) "${item.action}" 이(가) 승인되었고 시스템이 처리했다 — ${outcome}\n결과를 사용자에게 한두 줄로 보고하라. 다시 실행하려 하지 마라(이미 처리됨).`;
+    msg = `${APPROVAL_TAG.owner} "${item.action}" 이(가) 승인되었고 시스템이 처리했다 — ${outcome}\n결과를 사용자에게 한두 줄로 보고하라. 다시 실행하려 하지 마라(이미 처리됨).`;
   } else if (item.kind === 'org_doc') {
     // G-4: 서버(msgr_apply_org_doc)가 승인자의 권한으로 이미 반영했다 — 크루는 다시 쓰지 않는다
     msg = approve
-      ? `(관리자 결재) 조직 문서 제안 "${item.action}" 이(가) 승인되어 서버가 문서에 반영했다. 사용자에게 한두 줄로 보고하라. 문서를 다시 쓰거나 제안하지 마라(이미 반영됨).`
-      : `(관리자 결재) 조직 문서 제안 "${item.action}" 이(가) 거절되었다. 반영되지 않았다 — 대안이 있으면 한두 줄로 정리하라.`;
+      ? `${APPROVAL_TAG.admin} 조직 문서 제안 "${item.action}" 이(가) 승인되어 서버가 문서에 반영했다. 사용자에게 한두 줄로 보고하라. 문서를 다시 쓰거나 제안하지 마라(이미 반영됨).`
+      : `${APPROVAL_TAG.admin} 조직 문서 제안 "${item.action}" 이(가) 거절되었다. 반영되지 않았다 — 대안이 있으면 한두 줄로 정리하라.`;
   } else {
     msg = item.kind === 'capability'
       ? (approve
-        ? `(사장 결재) "${item.action}" 이(가) 승인되어 능력이 켜졌다. 직전에 받은 요청을 이어서 실행하고 결과를 보고하라.`
-        : `(사장 결재) "${item.action}" 이(가) 거절되었다. 그 능력 없이 가능한 대안을 한두 줄로 정리하라.`)
+        ? `${APPROVAL_TAG.owner} "${item.action}" 이(가) 승인되어 능력이 켜졌다. 직전에 받은 요청을 이어서 실행하고 결과를 보고하라.`
+        : `${APPROVAL_TAG.owner} "${item.action}" 이(가) 거절되었다. 그 능력 없이 가능한 대안을 한두 줄로 정리하라.`)
       : approve
-      ? `(사장 결재) 요청한 "${item.action}" 이(가) 승인되었다. 이제 실행하고 결과를 보고하라.`
-      : `(사장 결재) 요청한 "${item.action}" 이(가) 거절되었다. 실행하지 말고, 대안이 있으면 한두 줄로 정리하라.`;
+      ? `${APPROVAL_TAG.owner} 요청한 "${item.action}" 이(가) 승인되었다. 이제 실행하고 결과를 보고하라.`
+      : `${APPROVAL_TAG.owner} 요청한 "${item.action}" 이(가) 거절되었다. 실행하지 말고, 대안이 있으면 한두 줄로 정리하라.`;
   }
   const t = await loadThread(wsId, item.slug);
   // 텔레그램 결재의 후속 답은 카드가 실린 방(item.tg.chatId)으로 나간다(gateway approval_followup). 그 방이 그룹이면 그 그룹 범위 세션을 잇는다 —

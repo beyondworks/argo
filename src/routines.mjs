@@ -9,6 +9,7 @@ import { emitNotify } from './notify.mjs';
 import { runOneShot } from './oneshot.mjs'; // 자연어 → 루틴 초안(러너 독립 — 어떤 러너든 연결만 되면 동작)
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+import { routineHead, loopHead } from './inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드와 같은 함수
 // 시각 판정(순수)은 routine-time.mjs가 원천 — 목록 화면(클라이언트)이 '만료' 표시에 같은 판정을
 // 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
 import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.mjs';
@@ -212,9 +213,9 @@ export async function checkVerify(wsId, verify, { lang = 'ko' } = {}) {
 export function verifyRetryPrompt(r, failures, attempt, lang) {
   const list = failures.map((f) => `- ${f}`).join('\n');
   if (lang === 'en') {
-    return `[Routine: ${r.title}] Completion check failed (attempt ${attempt}). The routine is NOT done until these are satisfied — do not relax or reinterpret the conditions; produce the deliverables:\n${list}\nOriginal instruction:\n${r.prompt}`;
+    return `${routineHead(r.title, 'en')} Completion check failed (attempt ${attempt}). The routine is NOT done until these are satisfied — do not relax or reinterpret the conditions; produce the deliverables:\n${list}\nOriginal instruction:\n${r.prompt}`;
   }
-  return `[루틴: ${r.title}] 완료 조건 미충족(${attempt}차 시도). 아래가 채워질 때까지 이 루틴은 완료가 아니다 — 조건을 완화하거나 재해석하지 말고 산출물을 완성하라:\n${list}\n원래 지시:\n${r.prompt}`;
+  return `${routineHead(r.title, 'ko')} 완료 조건 미충족(${attempt}차 시도). 아래가 채워질 때까지 이 루틴은 완료가 아니다 — 조건을 완화하거나 재해석하지 말고 산출물을 완성하라:\n${list}\n원래 지시:\n${r.prompt}`;
 }
 
 /** 루프 프로토콜 문단 — 회차·상한·지난 결과를 주고 마지막 줄 마커를 요구한다(러너 무관 — 텍스트 규약). */
@@ -223,9 +224,9 @@ function loopProtocol(r, lang) {
   const last = String(r.lastResult ?? '').trim();
   const budget = r.loop.maxUsd != null ? (lang === 'en' ? ` Loop budget: $${r.loop.spentUsd.toFixed(2)} of $${r.loop.maxUsd} used.` : ` 루프 예산: $${r.loop.maxUsd} 중 $${r.loop.spentUsd.toFixed(2)} 사용.`) : '';
   if (lang === 'en') {
-    return `\n\n---\n[Loop protocol] This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`LOOP: continue\` — more to do next run\n\`LOOP: done <one-line reason>\` — the goal is reached, stop the loop\n\`LOOP: blocked <the decision you need from the boss>\` — you cannot proceed without a human decision`;
+    return `${loopHead('en')} This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`LOOP: continue\` — more to do next run\n\`LOOP: done <one-line reason>\` — the goal is reached, stop the loop\n\`LOOP: blocked <the decision you need from the boss>\` — you cannot proceed without a human decision`;
   }
-  return `\n\n---\n[루프 프로토콜] 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`LOOP: continue\` — 다음 회차에 할 일이 남음\n\`LOOP: done <한 줄 이유>\` — 목표 달성, 루프 종료\n\`LOOP: blocked <사장에게 필요한 결정>\` — 사람 결정 없이는 진행 불가`;
+  return `${loopHead('ko')} 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`LOOP: continue\` — 다음 회차에 할 일이 남음\n\`LOOP: done <한 줄 이유>\` — 목표 달성, 루프 종료\n\`LOOP: blocked <사장에게 필요한 결정>\` — 사람 결정 없이는 진행 불가`;
 }
 
 /** 정지 사유 문장 — 알림(emitNotify)에 그대로 실린다. */
@@ -399,7 +400,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
         throw new Error(lang === 'en' ? `[${r0.title}] completion check config invalid: ${e.message}` : `[${r0.title}] 완료 조건 설정 오류: ${e.message}`);
       }
     }
-    const userMsg = `[루틴: ${r0.title}] ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
+    const userMsg = `${routineHead(r0.title, 'ko')} ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
     let t = await run(userMsg);
     // 대화 스레드에 남긴다 — 루틴만 이게 빠져 있어서, 실행 중엔 채팅창에 보이다가 끝나면 사라졌다
     // (신고 2026-07-28 "루틴 돌면서 채팅이 올라왔다가 실행되고 나니 유실"). 저장한 적이 없었던 것.
