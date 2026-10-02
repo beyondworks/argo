@@ -139,6 +139,28 @@ test('서버 본문 검색은 두 글자부터 — 한 글자·공백은 요청�
   assert.equal(tabBodyQuery(null), null);
 });
 
+import { emptyPersonalDm, personalDmWith } from '../src/phone-shell.mjs';
+// 기능 점검 D13(2026-10-02): 친구 줄을 누르기만 해도 글 없는 1:1 방이 DB에 생겨 목록에 빈 줄로 남았다 → 있는 방만 찾고, 없으면 첫 글을 보낼 때 만든다. 빈 1:1은 목록에서 뺀다.
+test('빈 개인 1:1 — 글이 한 번도 없는 사람 1:1만 빈 방(그룹·에이전트 방·글이 있거나 방금 온 글이 있으면 아님)', () => {
+  const dm = { id: 'a', kind: 'dm', _personal_other: 'u2', _personal_group: false, _personal_crew: null, _personal_last_at: null };
+  assert.equal(emptyPersonalDm(dm, null), true);
+  assert.equal(emptyPersonalDm({ ...dm, _personal_last_at: '2026-10-02T01:00:00Z' }, null), false);
+  assert.equal(emptyPersonalDm(dm, { body: 'hi', at: 1 }), false, '실시간으로 첫 글이 오면 바로 보인다');
+  assert.equal(emptyPersonalDm({ ...dm, _personal_group: true }, null), false, '새로 만든 그룹은 비어 있어도 보인다');
+  assert.equal(emptyPersonalDm({ ...dm, _personal_crew: 'c1' }, null), false, '에이전트 1:1은 보인다');
+  assert.equal(emptyPersonalDm({ id: 'o', kind: 'dm', org_id: 'org' }, null), false, '조직 1:1은 대상 아님');
+});
+test('있는 1:1 찾기 — 그 친구와 나 둘만의 사람 1:1(그룹·그 친구 에이전트 방은 아님)', () => {
+  const rows = [
+    { id: 'g', _personal_other: 'u2', _personal_group: true, _personal_crew: null },
+    { id: 'c', _personal_other: 'u2', _personal_group: false, _personal_crew: 'c9' },
+    { id: 'd', _personal_other: 'u2', _personal_group: false, _personal_crew: null },
+  ];
+  assert.equal(personalDmWith(rows, 'u2')?.id, 'd');
+  assert.equal(personalDmWith(rows, 'u3'), null);
+  assert.equal(personalDmWith(null, 'u2'), null);
+});
+
 import { memoryGroups, memSnippet } from '../src/phone-shell.mjs';
 test('기억 폴더 — 조직 전체(규칙·용어·프로젝트) / 채널별(문서 먼저, 일지는 최신이 위), 기본 최근순', () => {
   const d = (id, path, ch = null, at = '2026-10-01T00:00:00Z', title = path, body = '') => ({ id, path, channel_id: ch, updated_at: at, title, body });

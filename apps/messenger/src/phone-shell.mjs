@@ -215,3 +215,14 @@ export function maskedPreview(row, { blocked = null, muted = null } = {}) {
   if (row?.crewId && muted?.has(row.crewId)) return { text: '', masked: 'muted' };
   return { text: row?.preview ?? '', masked: null };
 }
+
+/** 기능 점검 D13 — 개인 사람 1:1인데 글이 한 번도 없으면 빈 방(목록에서 뺀다). 그룹·에이전트 1:1·조직 방은 아니다.
+    lastMsg = 실시간·조회로 받은 마지막 글(있으면 첫 글이 막 온 것). */
+export function emptyPersonalDm(c, lastMsg) {
+  return !!c?._personal_other && !c._personal_group && !c._personal_crew && !c._personal_last_at && !lastMsg;
+}
+
+/** 그 친구와의 개인 사람 1:1(목록 행 중) — 없으면 null. 친구 줄을 누를 때 방을 만들지 않고 찾기만 한다(D13). */
+export function personalDmWith(rows, userId) {
+  return (rows ?? []).find((c) => c._personal_other === userId && !c._personal_group && !c._personal_crew) ?? null;
+}

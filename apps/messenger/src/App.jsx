@@ -49,7 +49,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
-import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview, tabBodyQuery } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview, tabBodyQuery, emptyPersonalDm, personalDmWith } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
@@ -537,6 +537,26 @@ const readLastOrg = () => { try { return localStorage.getItem(LAST_ORG_KEY); } c
 const writeLastOrg = (org) => { try { if (localStorage.getItem(LAST_ORG_KEY) !== org) localStorage.setItem(LAST_ORG_KEY, org); } catch { /* 저장 못 해도 이번 세션은 그대로 */ } };
 const writeLastCh = (org, ch) => { try { const m = JSON.parse(localStorage.getItem(LAST_CH_KEY) || '{}'); if (m[org] !== ch) localStorage.setItem(LAST_CH_KEY, JSON.stringify({ ...m, [org]: ch })); } catch { /* 저장 못 해도 이번 세션은 그대로 */ } };
 
+// 아직 방이 없는 친구와의 1:1 초안(기능 점검 D13) — 머리·안내·입력창만. 첫 글을 보내면 onSend가 방을 만들고 그 방으로 바꾼다.
+// 첨부·멘션은 방이 생긴 뒤의 입력창이 맡는다(첫 글은 글자만).
+function DmDraft({ userId, name, initialText = '', onSend, onMenu }) {
+  const { t } = useT();
+  const [text, setText] = useState(initialText);
+  const [busy, setBusy] = useState(false);
+  const go = async () => { const body = text.trim(); if (!body || busy) return; setBusy(true); try { await onSend(body); } finally { setBusy(false); } };
+  const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey && !isMobilePlatform) { e.preventDefault(); go(); } };
+  return (<>
+    <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{name}</span></div>
+    <div className="msgr-thread msgr-dmdraft"><p className="msgr-hint">{t('dm.draft.hint', { name })}</p></div>
+    <div className="msgr-dock"><div>
+      <form className="msgr-composer" onSubmit={(e) => { e.preventDefault(); go(); }}>
+        <textarea rows={1} maxLength={20000} value={text} autoFocus aria-label={t('dm.draft.hint', { name })} onChange={(e) => setText(e.target.value)} {...imeGuardWith(onKey)} />
+        <div className="msgr-tools"><button className="send" disabled={busy || !text.trim()} aria-label={t('msg.send')} title={t('msg.send')}><I name="up" size={16} /></button></div>
+      </form>
+    </div></div>
+  </>);
+}
+
 function NavButton({ onMenu }) {
   const { t } = useT();
   const phone = useIsPhone();
@@ -940,6 +960,8 @@ function Shell({ session }) {
   const phoneSettingsPage = (tab) => (tab === 'crews' ? (orgId && orgId !== PERSONAL ? 'set-server' : 'settings') : ({ me: 'set-profile', friends: 'set-friends', reports: 'set-privacy', org: 'orgsettings', members: 'orgsettings' })[tab] ?? 'settings');
   useEffect(() => { if (!isPhone || page !== 'settings' || !settingsTab) return; const m = phoneSettingsPage(settingsTab); if (m === 'settings') return; if (m !== 'orgsettings') setSettingsTab(null); setPage(m); }, [isPhone, page, settingsTab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!isPhone || page !== 'settings' || !uid) return; let live = true; q(supabase.rpc('msgr_people_names', { ids: [uid] })).then((rows) => { if (live) setProfileName((rows ?? []).find((r) => r.user_id === uid)?.name || null); }).catch(() => {}); return () => { live = false; }; }, [isPhone, page === 'settings', uid, profileTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [dmDraft, setDmDraft] = useState(null); // { userId, text } — 아직 방이 없는 친구와의 1:1(기능 점검 D13). 첫 글을 보낼 때 방을 만든다
+  useEffect(() => { if (page !== 'chat' || orgId !== PERSONAL) setDmDraft(null); }, [page, orgId]); // 대화 화면을 떠나거나 공간을 바꾸면 초안을 닫는다
   const [jump, setJump] = useState(null); // 검색 결과에서 고른 메시지 { ch, mid } — 그 채널이 열리면 그 글까지 불러와 가운데로 스크롤·강조(D11)
   const [searchQ, setSearchQ] = useState(''); const [searchRes, setSearchRes] = useState(null); const [searchBusy, setSearchBusy] = useState(false); const searchSeq = useRef(0); const searchRef = useRef(null); // 앱 내 검색(유건 지시 2026-09-09): 메시지 본문·사람·에이전트, ⌘K
   const [online, setOnline] = useState(true); useEffect(() => watchOnline(setOnline), []); // 연결 끊김 막대 — 브라우저가 아는 연결 상태(online/offline 이벤트). 다시 연결되면 사라진다
@@ -1814,13 +1836,14 @@ function Shell({ session }) {
   // 에이전트와 1:1(D14) — 내 에이전트는 그 에이전트 DM, 남의 에이전트는 주인과의 1:1(openDm이 돌린다)에서 @에이전트로 위임.
   // body(방 밖 멘션으로 보냈던 본문)가 있으면 그 방 입력창에 옮겨 두고, 남의 에이전트인데 본문이 없으면 "@이름 "만 넣어 둔다. 보내기는 사람이 누른다.
   const dmWithCrew = async (crewId, body = '') => {
-    const c = crewOf(crewId); const cid = await openDm('crew', crewId);
+    const c = crewOf(crewId);
     const draft = body || (c && c.owner_user_id !== uid ? `@${c.display_name} ` : '');
+    const cid = await openDm('crew', crewId, draft); // 개인 공간에서 아직 방이 없으면 초안 화면이 이 글을 받는다(D13)
     if (cid && draft) getComposerSession(JSON.stringify([SB_URL, uid, orgId, cid]), composerTransport(supabase, { orgId, chId: cid, uid })).setText(draft);
   };
-  const openDm = async (kind, id) => {
-    if (isPersonal && kind === 'crew') return openPersonalCrewDm(id);
-    if (isPersonal && kind === 'user') return openPersonalDm(id); // 개인 공간에서 사람을 누르면(검색·새 채팅 시트) 개인 1:1 — 조직 DM 생성은 가상 org id로 400이었다
+  const openDm = async (kind, id, text = '') => {
+    if (isPersonal && kind === 'crew') return openPersonalCrewDm(id, text);
+    if (isPersonal && kind === 'user') return openPersonalDm(id, text); // 개인 공간에서 사람을 누르면(검색·새 채팅 시트) 개인 1:1 — 조직 DM 생성은 가상 org id로 400이었다
     if (kind === 'user') supabase.rpc('msgr_friend_request', { target: id }).then(({ error }) => { if (!error) loadFriends(); }).catch(() => {}); // 사람 1:1을 열면 친구 목록과 동기화(같은 조직이면 서버가 바로 accepted) — DM 열기를 막지 않는다, 실패는 무시
     try {
       const mine = await q(supabase.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', uid));
@@ -1848,9 +1871,9 @@ function Shell({ session }) {
     } catch (e) { setErr(e.message); return null; }
   };
   // ── 개인 공간 에이전트 1:1(2026-09-30): 내 개인 크루와 한 방. 남의 크루면 그 주인(친구)과의 1:1. AI 이용 동의 전이면 동의부터 받는다 ──
-  const openPersonalCrewDm = async (crewId) => {
+  const openPersonalCrewDm = async (crewId, text = '') => {
     const c = crewOf(crewId);
-    if (c && c.owner_user_id !== uid) return openPersonalDm(c.owner_user_id);
+    if (c && c.owner_user_id !== uid) return openPersonalDm(c.owner_user_id, text);
     if (needPersonalConsent(() => openPersonalCrewDm(crewId))) return null;
     try {
       const cid = await q(supabase.rpc('msgr_dm_personal_crew', { crew: crewId }));
@@ -1859,14 +1882,31 @@ function Shell({ session }) {
     } catch (e) { setErr(friendlyErr(e.message, t)); return null; }
   };
   // ── 개인 1:1 열기: 친구와 조직 밖 대화. 개인 공간으로 전환하고 그 방을 연다 ──
-  const openPersonalDm = async (targetUserId) => {
+  // 친구와의 1:1 — 있는 방만 찾고(만들지 않는다), 없으면 초안 화면을 연다. 방은 첫 글을 보낼 때 만든다(기능 점검 D13: 누르기만 해도 빈 방이 DB에 생겼다).
+  // 반환: 있는 방이면 그 id, 초안이면 null(text는 초안 입력창에 미리 넣는다 — 남의 에이전트를 부르려던 글).
+  const openPersonalDm = async (targetUserId, text = '') => {
     try {
-      const chId = await q(supabase.rpc('msgr_dm_personal', { target: targetUserId }));
       setOrgId(PERSONAL); // 개인 공간으로 전환
-      await loadPersonal();
+      const rows = await loadPersonal();
       if (activeOrg.current !== PERSONAL) return null;
-      setChId(chId); setPage('chat'); setRail(false); setSheet(null); return chId;
+      const hit = personalDmWith(rows, targetUserId);
+      setRail(false); setSheet(null);
+      if (hit) { setDmDraft(null); setChId(hit.id); setPage('chat'); return hit.id; }
+      setDmDraft({ userId: targetUserId, text }); setPage('chat'); return null; // 친구가 아니면 첫 글에서 서버가 msgr_not_friend로 막는다
     } catch (e) { setErr(/msgr_not_friend/.test(e.message) ? t('friends.err.closed') : e.message); return null; }
+  };
+  // 초안의 첫 글 — 방을 만들고(msgr_dm_personal: 있으면 그 방, 나갔던 사람은 다시 넣는다) 그 방 입력창과 같은 전송 세션으로 보낸 뒤 그 방을 연다.
+  // 보내기가 실패해도 방은 열린다 — 입력창의 실패 카드가 다시 보내기를 맡는다(같은 세션 키).
+  const sendFirstDm = async (targetUserId, body) => {
+    try {
+      const cid = await q(supabase.rpc('msgr_dm_personal', { target: targetUserId }));
+      const session = getComposerSession(JSON.stringify([SB_URL, uid, PERSONAL, cid]), composerTransport(supabase, { orgId: PERSONAL, chId: cid, uid }));
+      roomAsked.current.add(cid); // 내 첫 글의 방송이 '모르는 방'으로 목록을 또 읽어 아래 읽기를 낡은 요청으로 만들지 않게(실측: 그러면 chId가 목록에 없어 마지막 방이 열렸다)
+      session.setText(body); await session.send([]);
+      let rows = await loadPersonal(); if (activeOrg.current !== PERSONAL) return;
+      if (!rows?.some((c) => c.id === cid)) { rows = await loadPersonal(); if (activeOrg.current !== PERSONAL) return; } // 다른 읽기(복귀 등)에 밀렸으면 한 번 더
+      setDmDraft(null); setChId(cid); setPage('chat');
+    } catch (e) { setErr(/msgr_not_friend/.test(e.message) ? t('friends.err.closed') : friendlyErr(e.message, t)); }
   };
   // ── 폰 에이전트 탭: 내 에이전트(개인 공간 + 모든 조직) — 탭에 들어갈 때·앱 복귀 때만 읽는다(주기 호출 없음, 한 번에 2건) ──
   const loadMyAgents = useCallback(async () => {
@@ -2059,7 +2099,7 @@ function Shell({ session }) {
     return target ? [{ id: `target:${p.target_kind}:${p.target_id}`, kind: 'target', targetKind: p.target_kind, targetId: p.target_id, name: target.display_name || nameOfUser(p.target_id), pin_pos: p.pin_pos }] : [];
   });
   const favs = [...channels.filter((c) => pinned.has(c.id)), ...targetFavs].sort((a, b) => ((a.kind === 'target' ? a.pin_pos : pinPos.get(a.id)) ?? 1e9) - ((b.kind === 'target' ? b.pin_pos : pinPos.get(b.id)) ?? 1e9) || a.name.localeCompare(b.name));
-  const dms = channels.filter((c) => c.kind === 'dm' && !pinned.has(c.id));
+  const dms = channels.filter((c) => c.kind === 'dm' && !pinned.has(c.id) && !emptyPersonalDm(c, lastMsg[c.id])); // 글 없는 개인 1:1은 목록에서 뺀다(D13)
   const dmTab = isPhone && (page === 'dm' || swipeTo === 'dm'); // 스와이프로 DM에 돌아가는 중에도 DM 탭 모양(밑 화면이 전환 순간 다시 그려지지 않게) // 폰 DM 탭에서만: 고정(즐겨찾기) DM을 맨 위에 + 선택한 정렬
   const dmSorted = (list) => sortDms(list, { sort: dmSort, lastAt, unread, nameOf: dmName, sortPos: dmSortPos }); // 순수 함수(src/dm-sort.mjs) — 단위 테스트 대상
   const dmPinnedTop = dmTab ? channels.filter((c) => c.kind === 'dm' && pinned.has(c.id)).sort((a, b) => (pinPos.get(a.id) ?? 1e9) - (pinPos.get(b.id) ?? 1e9)) : [];
@@ -2366,7 +2406,7 @@ function Shell({ session }) {
   );
   const searchFoot = (found) => tabQText.trim() ? (<div className="ph-searchfoot">{!found && <p className="msgr-hint">{t('phone.search.none')}</p>}<button type="button" className="btn ph-searchall" onClick={searchAll}><I name="search" size={14} />{t('phone.search.all', { q: tabQText.trim() })}</button></div>) : null;
   // ── 채팅 탭(개인 공간) ──
-  const chatsAll = isPersonal && spaceReady ? channels.filter((c) => c.kind === 'dm') : [];
+  const chatsAll = isPersonal && spaceReady ? channels.filter((c) => c.kind === 'dm' && !emptyPersonalDm(c, lastMsg[c.id])) : []; // 글 없는 개인 1:1은 목록에서 뺀다(D13 — 첫 글이 오면 바로 보인다)
   const chatSorted = sortRooms(chatsAll, { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos });
   const chatFiltered = chatSorted.filter((c) => chatVisible(dmFilter, { ...rowOf(c), ...traitsOf(c) }));
   const chatShown = tabSearch(chatFiltered, tabQText, (c) => [dmBaseName(c), previewForSearch(c)], bodyHit);
@@ -2684,6 +2724,8 @@ function Shell({ session }) {
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' || page === 'orgsettings' || (isPhone && page.startsWith('set-')) ? (
           <Settings phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={openAgentCard} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={() => { avatarAsked.current.delete(uid); loadAvatars(); }} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+        ) : dmDraft && isPersonal && page === 'chat' ? (
+          <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
           <Channel key={chId} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (

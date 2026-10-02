@@ -1460,6 +1460,7 @@ export const DICT = {
   'dm.pinned': ['즐겨찾기', 'Favorites'],
   'dm.group.new': ['새 채팅', 'New chat'],
   'dm.new': ['새 채팅', 'New chat'],
+  'dm.draft.hint': ['{name}님에게 첫 메시지를 보내면 대화가 시작됩니다.', 'Send {name} a first message to start the conversation.'],
   'dm.widen': ['사람 더 부르기', 'Add people'],
   'dm.widen.desc': ['고른 사람까지 함께 있는 새 대화방이 열립니다', 'Opens a new conversation that includes them'],
   'dm.widen.note': ['지금 방에 끼워 넣지 않고 새 대화방을 엽니다. 지금까지 나눈 이야기는 따라가지 않습니다.', 'A new conversation opens instead of adding them here, so past messages stay private.'],
