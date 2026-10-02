@@ -1043,7 +1043,7 @@
 .msgr-phone .msgr-turncopy button { width: 44px; height: 44px; margin: -13px -14px; } /* 폰 누르는 영역 44px — 자리는 그대로 18px */
 @media (prefers-reduced-motion: reduce) { .msgr-turncopy button { transition: none; } }
 /* 데스크톱 도구 막대 — 올린 글의 오른쪽 위에 겹쳐 뜬다(답글·반응·더보기, 복사 없음). 절대 위치라 레이아웃이 밀리지 않고, 위쪽은 자기 행 안에서 시작해 윗글·구분선을 덮지 않는다 */
-.msgr-shell:not(.msgr-phone) .msgr-mine { position: relative; }
+.msgr-shell:not(.msgr-phone) :is(.msgr-row, .msgr-mine) { isolation: isolate; } .msgr-shell:not(.msgr-phone) .msgr-mine { position: relative; }
 .msgr-hovbar { position: absolute; top: 0; right: 0; z-index: 4; display: flex; gap: 2px; padding: 1px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: var(--shadow-float); visibility: hidden; }
 .msgr-hovbar button { display: grid; place-items: center; width: 26px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-3); cursor: pointer; }
 @media (hover: hover) { .msgr-hovbar button:hover { background: var(--card-2); color: var(--fg); } } .msgr-hovbar button:active { background: var(--card-2); color: var(--fg); }
@@ -1052,6 +1052,13 @@
 @media (hover: hover) { .msgr-shell:not(.msgr-phone) :is(.msgr-row, .msgr-mine):hover .msgr-hovbar { visibility: visible; } }
 .msgr-phone .msgr-hovbar { display: none; }
 .msgr-mine .bubble { position: relative; } .msgr-mine .bubble > .msgr-hovbar { top: 0; right: calc(100% + 6px); } /* 내 글: 말풍선 바깥 왼쪽, 윗선에 맞춤 — 말풍선 안 오른쪽 위는 짧은 글 본문을 통째로 가렸고, 위로 걸치면 윗글·복사 아이콘·'새 메시지' 줄을 덮었다(2026-10-02 1440 실측) */
+/* 올린 글 표시(유건 2026-10-02 — 막대가 글과 떨어져 떠 보였다): 데스크톱에서 마우스를 올리거나 포커스한 글을 옅은 바탕으로 묶어, 오른쪽 위 막대가 어느 글 것인지 보이게 한다(슬랙식).
+   상대 글은 아바타·척추 칸을 빼고(척추를 가리는 아바타 테두리와 겹치지 않게) 글 칸만, 내 글은 행 전체. 바탕은 ::before라 레이아웃이 밀리지 않는다 */
+.msgr-shell:not(.msgr-phone) .msgr-row::before, .msgr-shell:not(.msgr-phone) .msgr-mine::before { content: ''; position: absolute; inset: -4px -8px -4px 34px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 4.5%, transparent); opacity: 0; pointer-events: none; z-index: -1; }
+.msgr-shell:not(.msgr-phone) .msgr-mine { position: relative; } .msgr-shell:not(.msgr-phone) .msgr-mine::before { left: -8px; }
+.msgr-shell:not(.msgr-phone) :is(.msgr-row, .msgr-mine):not(:has(> .msgr-col > .msgr-sys)):is(:focus-visible, :has(:focus-visible), [data-acts='open'])::before { opacity: 1; }
+@media (hover: hover) { .msgr-shell:not(.msgr-phone) :is(.msgr-row, .msgr-mine):not(:has(> .msgr-col > .msgr-sys)):hover::before { opacity: 1; } } .msgr-shell:not(.msgr-phone) :is(.msgr-row, .msgr-mine):not(:has(> .msgr-col > .msgr-sys)):active::before { opacity: 1; }
+.msgr-row > .msgr-col > .msgr-hovbar { top: -2px; right: 0; }
 .msgr-acts button.danger { color: var(--danger, #d05a5a); }
 .msgr-editbox { display: grid; gap: 8px; max-width: 640px; min-width: 320px; }
 .msgr-editbox textarea.msgr-input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13.5px; resize: vertical; outline: 0; }
