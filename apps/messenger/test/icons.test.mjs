@@ -3,13 +3,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { weightFor, SMALL_MAX } from '../src/icon-weight.mjs';
 
 const dir = new URL('../src/', import.meta.url);
 const icons = readFileSync(new URL('icons.jsx', dir), 'utf8');
 const block = (name, open, close) => { const i = icons.indexOf(name); const a = icons.indexOf(open, i); return icons.slice(a, icons.indexOf(close, a) + 1); };
 const MATERIAL = Object.fromEntries([...block('export const MATERIAL', '{', '}').matchAll(/(\w+): '(\w+)'/g)].map((m) => [m[1], m[2]]));
 const FILLED = [...block('export const FILLED', '[', ']').matchAll(/'(\w+)'/g)].map((m) => m[1]);
-const MS = new Set([...block('const MS = {', '{', '}').matchAll(/^ {2}'?([\w-]+)'?: '/gm)].map((m) => m[1]));
+const keysOf = (b) => new Set([...b.matchAll(/^ {2}'?([\w-]+)'?: '/gm)].map((m) => m[1]));
+const MS = keysOf(block('const MS = {', '{', '}'));
+const MS5 = keysOf(block('const MS5 = {', '{', '}'));
 const BRAND = [...block('const BRAND', '{', '}').matchAll(/(\w+):/g)].map((m) => m[1]);
 const NAMES = new Set([...Object.keys(MATERIAL), ...BRAND]);
 
@@ -55,4 +58,15 @@ test('대응표의 Material 이름마다 path가 있고, 채운 모양이 필요
   for (const v of tabs.matchAll(/: '(\w+)'/g)) assert.ok(FILLED.includes(v[1]), `아래 탭 아이콘 ${v[1]}은 선택 시 채운 모양`);
   assert.ok(!/fonts\.googleapis|fonts\.gstatic/.test(icons), '런타임에 구글 글꼴을 불러오지 않는다');
   assert.match(icons, /^\/\*! Icons: Material Symbols .*Apache License 2\.0/, '번들에 남는 고지 주석');
+});
+
+// 유건 결정(2026-10-02): 화면에 18px 이하로 그려지는 아이콘은 굵기 500(작으면 400이 흐려 보였다), 19px 이상은 400.
+test('굵기 기준 — 18px 이하 500, 19px 이상 400(icon-weight.mjs 한 곳)', () => {
+  assert.equal(SMALL_MAX, 18);
+  assert.equal(weightFor(18), 500); assert.equal(weightFor(12), 500); assert.equal(weightFor(16), 500);
+  assert.equal(weightFor(20), 400); assert.equal(weightFor(19), 400); assert.equal(weightFor(22), 400);
+  assert.match(icons, /import \{ weightFor \} from '\.\/icon-weight\.mjs';/);
+  assert.match(icons, /const w = MATERIAL\[name\] && weightFor\(size\) === 500 \? '-w5' : '';/, '<I>가 size로 굵기를 고른다');
+  for (const n of MS) assert.ok(MS5.has(n), `굵기 500 path 없음: ${n}`);
+  assert.equal(MS5.size, MS.size, '두 굵기의 아이콘 목록이 같다');
 });
