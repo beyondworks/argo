@@ -1,4 +1,5 @@
 import './globals.css';
+import './family.css';
 import { LanguageProvider } from '@/lib/i18n';
 import SmoothScroll from '@/components/SmoothScroll';
 import LightboxProvider from '@/components/Lightbox';
