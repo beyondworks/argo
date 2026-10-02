@@ -192,6 +192,8 @@ export function mentionsIn(text, peers, selfId) {
 /** 넘긴 크루를 출처(notOwnerDirect)로 적을 이름 — 조직 크루 목록의 slug, 없으면 전달 표지의 이름, 그것도 없으면 id. 받는 방의 구성원이 아니어도
     UUID가 결재 카드에 그대로 보이지 않게(최종 재검수 LOW-1). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i; // 전달 표지의 크루 id 형식(위조 값으로 db를 조회하지 않는다)
+/** 전달 표지(msgr_dm_relay)를 인정하는 채널 — 트리거가 쓰는 조직 DM만. 개인 공간 친구 방(org_id null)의 meta는 표지로 보지 않는다(확인 검수 bed20860 LOW-1). */
+const relayChannel = (c) => c?.kind === 'dm' && c.org_id != null;
 export function handoffLabel(orgPeers, crewId, viaName = null) {
   const p = (orgPeers ?? []).find((x) => x.id === crewId);
   return p?.slug || p?.display_name || (typeof viaName === 'string' && viaName.trim() ? viaName.trim().slice(0, 40) : crewId);
@@ -711,7 +713,10 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   // 처리(적재·커서)는 아래에서 크루 순서대로. 받은 글 조회 실패는 그 크루 차례에 던진다(앞 크루는 종전처럼 처리된 뒤 drain 실패).
   const CREW_FETCH_LIMIT = 8; // 순간 동시 요청 상한 — 크루 수에 비례해 폭발하지 않게(검수 L2). 총량은 종전과 같다
   const pre = await mapLimited(crews, CREW_FETCH_LIMIT, async (crew) => {
-    const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
+    // DM 목록을 모르면 멘션 없는 1:1 글을 대상에서 빼고 커서만 지나간다 — 범위 조회 실패와 같게 이 크루를 이번 틱 보류(확인 검수 bed20860). 실패가 이어져도 크루당 틱마다 이 조회 1건뿐
+    const dmList = await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 이 크루는 이 틱에 답하지 않음(커서 보류):', e?.message ?? e); return null; }); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
+    if (!dmList) return { member: null };
+    const dm = new Set(dmList);
     const member = await db.crewScope(crew.id).catch((e) => { console.error('[argo] msgr 채널 범위 조회 실패 — 이 크루는 이 틱에 답하지 않음(범위를 모르면 답하지 않는다):', e?.message ?? e); return null; });
     if (!member) return { dm, member };
     try { return { dm, member, msgs: db.crewInbox ? await db.crewInbox(wsId, crew.id, crew.cursor_msg_id ?? 0) : await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0) }; } catch (inboxError) { return { dm, member, inboxError }; }
@@ -771,7 +776,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       // 조회 오류로 이 크루의 커서를 영영 멈추거나(마지막 확인 검수 MEDIUM-1) 위조 이름이 결재 카드에 나가지 않게.
       // DM 판정은 이 글의 채널 종류(ch — 봉투의 채널 또는 이 틱의 채널 조회)로 한다. 미리 받은 DM 목록(dm)은 조회 실패 때 빈 목록이 되어
       // 다른 주인 크루의 전달이 주인 지시로 둔갑했다(확인 검수 feb2e230 MEDIUM). 채널 조회가 실패하면 위 channelOf가 던져 커서가 보류된다.
-      const relayMeta = !fromCrew && ch?.kind === 'dm' && m.meta?.relay && typeof m.meta.relay === 'object' && !Array.isArray(m.meta.relay) ? m.meta.relay : null;
+      const relayMeta = !fromCrew && relayChannel(ch) && m.meta?.relay && typeof m.meta.relay === 'object' && !Array.isArray(m.meta.relay) ? m.meta.relay : null;
       const relayVia = relayMeta && typeof relayMeta.via_crew_id === 'string' && relayMeta.via_crew_id ? relayMeta.via_crew_id : null;
       const relayViaName = relayVia && typeof relayMeta.via_name === 'string' ? relayMeta.via_name.slice(0, 40) : null; // 넘긴 크루가 받는 쪽 조직 목록에 없을 때의 표시 이름(LOW-1)
       let hop = 0; let origin = m.author_user_id; let rootAuthor = null; let guestChain = false; let officeChain = isOfficeSource(m);
@@ -1033,7 +1038,7 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org.slug, channelName: ch.name ?? '', peers, handoffs: [], ...(work ? { work } : {}),
     ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}),
-    ...(origin.handoffFrom || source.author_kind === 'crew' || (ch.kind === 'dm' && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id) ? { handoffFrom: origin.handoffFrom ?? (source.author_kind === 'crew' ? source.crew_id : source.meta.relay.via_crew_id) } : {}) }; // 전달 표지는 DM에서만 // 손님 판정. handoffFrom = 크루가 넘긴 지시(DM 전달로 옮겨 적힌 것 포함)의 후속(풀 오토 아님) 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
+    ...(origin.handoffFrom || source.author_kind === 'crew' || (relayChannel(ch) && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id) ? { handoffFrom: origin.handoffFrom ?? (source.author_kind === 'crew' ? source.crew_id : source.meta.relay.via_crew_id) } : {}) }; // 전달 표지는 DM에서만 // 손님 판정. handoffFrom = 크루가 넘긴 지시(DM 전달로 옮겨 적힌 것 포함)의 후속(풀 오토 아님) 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
   const orgMemory = await crewMemoryCached(db, crew.id, ch.id); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널) — 없으면 chat이 미러 규칙으로 물러난다
   return { db, ctx, ch, source, envelope, orgPeers }; // orgPeers — 넘긴 크루의 표시 이름(handoffLabel)용. 문맥(ctx)에는 싣지 않는다
 }
@@ -1060,7 +1065,7 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
     try {
       // 호출자가 넘기는 전역 세션(_globalSessionId — 주인의 데스크톱 대화)은 쓰지 않는다: 후속 실행도 그 채널 세션만 잇는다
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, slug), ctx.channelId).sessionId;
-      const nod = notOwnerDirect ?? (ctx.handoffFrom ? handoffLabel(orgPeers ?? ctx.peers, ctx.handoffFrom, ch.kind === 'dm' ? source.meta?.relay?.via_name : null) : null);
+      const nod = notOwnerDirect ?? (ctx.handoffFrom ? handoffLabel(orgPeers ?? ctx.peers, ctx.handoffFrom, relayChannel(ch) ? source.meta?.relay?.via_name : null) : null);
       const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false), ...(nod ? { notOwnerDirect: nod } : {}) });
       return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang, loopTurn })), msgr: messengerOrigin(ctx) };
     } finally {
@@ -1114,8 +1119,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       const actor = envelope.actor ?? (source.author_kind === 'crew' ? await db.crewOwner(source.crew_id) : source.author_user_id);
       Object.assign(job, { text: source.body, replyTo: source.reply_to, threadRoot: envelope.root.id, workRunId: source.meta?.work_run_id ?? null,
         fromCrewId: source.author_kind === 'crew' ? source.crew_id : null, rootAuthor: envelope.root.author_user_id,
-        relayVia: envelope.channel?.kind === 'dm' && source.author_kind !== 'crew' && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id ? source.meta.relay.via_crew_id : null, // DM 전달로 옮겨 적힌 크루 넘김(HIGH-1) — DM에서만 인정
-        relayViaName: envelope.channel?.kind === 'dm' && typeof source.meta?.relay?.via_name === 'string' ? source.meta.relay.via_name.slice(0, 40) : null,
+        relayVia: relayChannel(envelope.channel) && source.author_kind !== 'crew' && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id ? source.meta.relay.via_crew_id : null, // DM 전달로 옮겨 적힌 크루 넘김(HIGH-1) — DM에서만 인정
+        relayViaName: relayChannel(envelope.channel) && typeof source.meta?.relay?.via_name === 'string' ? source.meta.relay.via_name.slice(0, 40) : null,
         authorId: actor, origin: actor });
     }
     if (job.msgrExecution?.replyRow) {
