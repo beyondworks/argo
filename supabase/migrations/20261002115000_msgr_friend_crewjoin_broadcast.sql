@@ -56,8 +56,12 @@ end $$;
 revoke all on function public.msgr_crew_join_broadcast() from public, anon, authenticated;
 drop trigger if exists msgr_channel_crew_requests_broadcast_ins on public.msgr_channel_crew_requests;
 drop trigger if exists msgr_channel_crew_requests_broadcast_ins_del on public.msgr_channel_crew_requests;
-create trigger msgr_channel_crew_requests_broadcast_ins_del after insert or delete on public.msgr_channel_crew_requests
+create trigger msgr_channel_crew_requests_broadcast_ins_del after insert on public.msgr_channel_crew_requests
   for each row execute function public.msgr_crew_join_broadcast();
+-- 지울 때는 대기 중이던 요청만 알린다(2차 검수 LOW) — 이미 결정된 행이 채널·에이전트·계정 삭제로 연쇄 삭제될 때는 받을 사람이 다시 읽을 일이 없다
+drop trigger if exists msgr_channel_crew_requests_broadcast_del on public.msgr_channel_crew_requests;
+create trigger msgr_channel_crew_requests_broadcast_del after delete on public.msgr_channel_crew_requests
+  for each row when (old.status = 'pending') execute function public.msgr_crew_join_broadcast();
 drop trigger if exists msgr_channel_crew_requests_broadcast_upd on public.msgr_channel_crew_requests;
 create trigger msgr_channel_crew_requests_broadcast_upd after update on public.msgr_channel_crew_requests
   for each row when (old.status is distinct from new.status) execute function public.msgr_crew_join_broadcast();
