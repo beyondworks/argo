@@ -91,6 +91,11 @@ export function splitForTelegram(text, max = 3900) {
   return chunks;
 }
 
+/** 크루 답에서 첨부로 보내는 결과물 확장자 — 한 곳(텔레그램 extractFileRefs·메신저 msgr-reply-files 마크다운 경로가 같이 쓴다).
+    설정·비밀이 사는 형식(json·yaml·key·kdbx·sqlite·db 등)은 일부러 없다(메신저 분리 검수 M-1, 2026-10-02). */
+export const ATTACH_EXT_LIST = 'png|jpe?g|webp|gif|pdf|docx?|xlsx?|pptx?|csv|md|zip';
+export const ATTACH_EXT = new RegExp(`\\.(?:${ATTACH_EXT_LIST})$`, 'i');
+
 /** 응답 본문에서 발송할 파일 경로 추출 — vault 상대 경로만, 최대 3개.
     (2026-07-30 확장 — 실사용 제보 "파일을 안 보내준다"의 1차 원인) 이전엔 `files/` 직속 평면
     파일명만 매칭했는데, 프롬프트는 산출물을 `vault/projects/<날짜_프로젝트명>/`에 모으라고
@@ -103,7 +108,7 @@ export function extractFileRefs(text, { max = 3 } = {}) { // max — 텔레그�
   // 한 덩어리로 흡수된다(신설 테스트가 잡음). 확장자 뒤 (?![\w.])는 부분 매칭 방지(a.pdfx).
   // 좌측 경계 — https://x.com/files/a.pdf 같은 외부 URL 조각을 로컬 경로로 오인하면, 비침묵
   // 정책이 '파일이 없습니다' 가짜 경보를 쏜다(검수 M-3 — main은 조용해서 무해했던 선재 오탐).
-  const re = /(?<![\w/.\-])(?:vault\/)?((?:files|projects|_imported)\/[\w\-.ㄱ-힝 ()/]+?\.(?:png|jpe?g|webp|gif|pdf|docx?|xlsx?|pptx?|csv|md|zip))(?![\w.])/gi;
+  const re = new RegExp(`(?<![\\w/.\\-])(?:vault\\/)?((?:files|projects|_imported)\\/[\\w\\-.ㄱ-힝 ()/]+?\\.(?:${ATTACH_EXT_LIST}))(?![\\w.])`, 'gi');
   const seen = new Set();
   for (const m of String(text ?? '').matchAll(re)) {
     if (m[1].split('/').some((seg) => seg === '..' || seg === '')) continue;

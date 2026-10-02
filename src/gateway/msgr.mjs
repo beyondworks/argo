@@ -36,7 +36,7 @@ import { loadApprovals, setApprovalMeta, approvalPlainText, approvalCommandLabel
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { attachFailureNote, isImagePath } from '../tg-format.mjs';
-import { ATTACH_MAX, planReplyFiles, readReplyFile } from './msgr-reply-files.mjs';
+import { ATTACH_MAX, ROUTINE_FILES_MAX, planReplyFiles, readReplyFile } from './msgr-reply-files.mjs';
 import { mimeOf } from '../media-kind.mjs';
 import { replyLinkPreview } from './link-preview-node.mjs';
 import { createHash } from 'node:crypto';
@@ -898,19 +898,36 @@ export const storageKey = (name, index = 0) => { // export: 앱 규칙과의 교
   const stem = (dot > 0 ? raw.slice(0, dot) : raw).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '').slice(0, 60) || 'file';
   return `${index}-${stem}${ext ? `.${ext}` : ''}`;
 };
+// 같은 방에 이미 올린 같은 내용(sha256) → 그 저장 경로. 루틴 결과 글·대화 중 같은 시안을 다시 말할 때마다 새 경로로 다시 올리던 것(분리 검수 M-5)을
+// 첨부 행만 새로 만들어 기존 객체를 가리키게 한다. 조직 방만 — 첨부 행 정책(msgr_attachments_insert)은 경로를 묻지 않고, 객체 읽기는 경로의 방(2번째 칸)으로
+// 판정하니 같은 방이면 같은 사람이 읽는다. 개인 방(p/)은 정책(msgr_personal_attachment_ok)이 그 글 자신의 경로만 받아 재사용할 수 없다.
+// 객체가 지워지는 경로는 방 영구 삭제(App deleteChannel)·조직 정리·계정 삭제뿐이고 모두 방·조직째라, 방이 남아 있으면 객체도 있다 → DB 조회 없이 기억만으로 판정.
+// 기억은 이 프로세스 안(재시작하면 한 번 다시 올린다). 상한 REUSE_MAX — 오래된 것부터 버린다.
+const uploadedOnce = new Map();
+export const _uploadedOnceForTest = uploadedOnce;
+const REUSE_MAX = 500;
+const rememberUpload = (key, path) => { uploadedOnce.delete(key); uploadedOnce.set(key, path); if (uploadedOnce.size > REUSE_MAX) uploadedOnce.delete(uploadedOnce.keys().next().value); };
 /** 크루 답에 계획한 파일(planReplyFiles)을 첨부 — Storage 업로드 + 첨부 행. 실패·경계 밖은 같은 스레드에 안내(침묵 금지, 로컬 경로 없음).
     저장 경로: 조직 방 <org>/<방>/<글>/<키>, 개인 방(org 없음) p/<방>/<글>/<키> — 20261002100000 정책이 개인 경로를 받는다(앱 업로드와 같은 규칙).
-    부하: 파일 하나당 업로드 1 + 첨부 행 1, 한 답 최대 REPLY_FILES_MAX개. 주기 호출 없음. */
+    부하: 파일 하나당 업로드 1 + 첨부 행 1(같은 방·같은 내용이면 업로드 0 + 첨부 행 1), 한 답 최대 REPLY_FILES_MAX개(루틴 ROUTINE_FILES_MAX). 재사용 판정에 DB 조회 없음. 주기 호출 없음. */
 async function deliverReplyFiles(wsId, db, { orgId, channelId, crewId, threadRoot, failKey }, row, plan, lang) {
   const fails = [...(plan?.fails ?? [])];
   for (const [i, f] of (plan?.files ?? []).entries()) {
     try {
       const buf = await readReplyFile(wsId, f, lang); // 경계 재판정 + 심링크 안 따라감
-      const path = `${orgId ?? 'p'}/${channelId}/${row.id}/${storageKey(f.name, i)}`;
       // mime은 확장자로 — 예전에는 png·jpg·webp·gif만 image/*를 붙이고 나머지는 빈 값이라 앱이 파일 종류를 몰랐다(운영 2026-10-02: 크루 첨부 21건 전부 빈 mime)
       const mime = mimeOf(f.name, '');
+      const att = { message_id: row.id, org_id: orgId ?? null, name: safeName(f.name), mime, bytes: buf.length };
+      const reuseKey = orgId ? `${orgId}/${channelId}/${createHash('sha256').update(buf).digest('hex')}` : null;
+      const prior = reuseKey && uploadedOnce.get(reuseKey);
+      if (prior) {
+        try { await db.insertAttachment({ ...att, storage_path: prior }); continue; }
+        catch (e) { uploadedOnce.delete(reuseKey); console.error(`[argo] msgr 첨부 재사용 실패 — 새로 올린다(${wsId}/${f.name}):`, e.message); }
+      }
+      const path = `${orgId ?? 'p'}/${channelId}/${row.id}/${storageKey(f.name, i)}`;
       await db.upload(path, buf, mime);
-      await db.insertAttachment({ message_id: row.id, org_id: orgId ?? null, storage_path: path, name: safeName(f.name), mime, bytes: buf.length });
+      await db.insertAttachment({ ...att, storage_path: path });
+      if (reuseKey) rememberUpload(reuseKey, path);
     } catch (e) { // 원문(절대 경로가 들어 있을 수 있음)은 방에 싣지 않는다(D26) — 주인 로컬 콘솔에만
       if (!e.roomSafe) console.error(`[argo] msgr 첨부 전달 실패(${wsId}/${f.name}):`, e.message);
       fails.push({ name: f.name, reason: roomAttachReason(e, lang) });
@@ -921,7 +938,7 @@ async function deliverReplyFiles(wsId, db, { orgId, channelId, crewId, threadRoo
     client_msg_id: failKey, body: attachFailureNote(fails, lang) }).catch((e) => console.error('[argo] msgr 첨부 실패 안내 실패:', e.message));
 }
 /** 게시 직전 본문 정리 + 첨부 계획. 계획이 실패하면 예전처럼 본문 그대로(첨부 없음) — 답 게시를 막지 않는다. */
-const planOrRaw = (wsId, text, lang) => planReplyFiles(wsId, text, { lang })
+const planOrRaw = (wsId, text, lang, max) => planReplyFiles(wsId, text, { lang, ...(max ? { max } : {}) })
   .catch((e) => { console.error(`[argo] msgr 첨부 계획 실패(${wsId}):`, e?.message ?? e); return { body: String(text ?? ''), files: [], fails: [] }; });
 
 async function messengerReply(ctx, text, { db = null, lang = 'ko' } = {}) {
@@ -1387,7 +1404,7 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const key = [event.wsId, event.routine.id, event.runAt ?? event.routine.lastRun, target.channelId, event.phase ?? (event.ok === false ? 'failed' : 'result')].join(':');
     const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
     // 루틴 답에도 모델이 넘김 표지를 붙인다 — 결과 글에는 판정이 없으니 본문에서만 뗀다(유건 2026-09-30 "말 끝마다 MSGR Done")
-    const plan = await planOrRaw(event.wsId, parseMessengerDisposition(event.reply ?? '').text, company.lang); // 답 속 로컬 파일 → 첨부(경로는 본문에서 지운다)
+    const plan = await planOrRaw(event.wsId, parseMessengerDisposition(event.reply ?? '').text, company.lang, ROUTINE_FILES_MAX); // 답 속 로컬 파일 → 첨부(경로는 본문에서 지운다). 일정마다 반복되는 글이라 상한 3
     const posted = await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
       reply_to: null, thread_root: null, client_msg_id: `rn:${crew.id}:${digest}`,
       body: pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${plan.body}`,
