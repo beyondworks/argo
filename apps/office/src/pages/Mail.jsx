@@ -19,6 +19,8 @@ import { imeGuardWith } from '../core/ime.js';
 import { MAIL_FOLDERS } from '../data/sample.js';
 import { ME, useSession } from '../core/session.js';
 import { crewName } from './modules.jsx';
+import { useSelection, selProps } from '../core/selection.js';
+import { Hide } from '../business/Redact.jsx';
 import {
   loadAccounts, pullMail, readMail, connectGoogle, finishConnect, disconnectAccount, mailConfig, adminNote,
   saveDraft, sendMail, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
@@ -27,6 +29,7 @@ import {
 registerDict(MAIL_DICT);
 
 const ok = (a) => a.status === 'ok';
+const mailItems = (list) => list.map((m) => ({ kind: 'mail', id: m.id, label: m.subject }));
 const domain = (addr) => String(addr ?? '').split('@')[1] ?? '';
 async function copyAdminNote() {
   await navigator.clipboard.writeText(adminNote(t, await mailConfig()));
@@ -35,12 +38,14 @@ async function copyAdminNote() {
 const reconnect = (a) => connectGoogle(a?.address).catch((e) => { if (e.code !== 'cancelled') showToast(t(`mailc.err.${['not_configured', 'access_denied', 'state'].includes(e.code) ? e.code : e.code === 'expired' ? 'state' : 'other'}`)); });
 const subscribeMailPending = (cb) => { window.addEventListener('office-mail-pending', cb); return () => window.removeEventListener('office-mail-pending', cb); };
 
-function MailRow({ m, active, tag }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: m.subject } });
+function MailRow({ m, active, tag, sel, group }) {
+  // 고른 메일 중 하나를 끌면 고른 것 전부가 크루에게 간다(11차, items)
+  const many = group.length > 1 && sel.has(m.id);
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: many ? t('sel.count', { n: group.length }) : m.subject, items: many ? group : undefined } });
   const { onTouchStart, ...mouse } = listeners ?? {};
   return (
     <button ref={setNodeRef} type="button" className={`mail-row${active ? ' active' : ''}${m.unread ? ' unread' : ''}${isDragging ? ' ghost' : ''}`}
-      {...attributes} {...mergeHandlers(mouse, menuProps(() => mailMenu(m)))} role="option" aria-selected={active}
+      {...attributes} {...selProps(sel, m.id)} {...mergeHandlers(mouse, menuProps(() => mailMenu(m)))} role="option" aria-selected={active}
       onClick={() => { navigate(`/me/mail/${m.id}`); if (m.unread) setMail(m.id, { unread: false }); }}>
       <span className="mail-from">{m.unread && <span className="dot mark" />}{m.from}</span>
       <span className="mail-time mono">{ago(m.at)}</span>
@@ -99,7 +104,7 @@ function Reader({ m, onBack }) {
       <header className="reader-head">
         <button type="button" className="icon-btn only-narrow" aria-label={t('mail.back')} onClick={onBack}><Icon name="back" /></button>
         <h2>{showTr && tr?.subject ? tr.subject : m.subject}</h2>
-        <div className="reader-meta"><b>{m.from}</b><span className="dim">&lt;{m.addr}&gt;</span><span className="dim mono">{ago(m.at)}</span></div>
+        <div className="reader-meta"><b>{m.from}</b><span className="dim">&lt;<Hide k={`mail:addr:${m.addr}`}>{m.addr}</Hide>&gt;</span><span className="dim mono">{ago(m.at)}</span></div>
         <div className="reader-actions">
           <button type="button" className="btn primary" onClick={() => setUi({ assign: { space: 'me', items: [{ kind: 'mail', id: m.id, label: m.subject }] } })}><Icon name="hand" size={14} />{t('crew.assign')}</button>
           <button type="button" className="btn" onClick={reply}><Icon name="reply" size={14} />{t('mail.reply')}</button>
@@ -248,7 +253,7 @@ function AccountList({ accounts, pick, setPick }) {
       {accounts.map((a) => (
         <div key={a.id} className={`mail-account${pick === a.id ? ' active' : ''}`} {...menuProps(() => menu(a))}>
           <button type="button" className="mail-account-name" onClick={() => setPick(accounts.length > 1 ? a.id : 'all')} title={a.address}>
-            <span className={`dot ${ok(a) ? 'ok' : 'ask'}`} /><span className="ellip">{a.address}</span>{a.hosted_domain && <small className="badge">{t('mailc.work')}</small>}
+            <span className={`dot ${ok(a) ? 'ok' : 'ask'}`} /><span className="ellip"><Hide k={`mail:acct:${a.address}`} focusable={false}>{a.address}</Hide></span>{a.hosted_domain && <small className="badge">{t('mailc.work')}</small>}
           </button>
           {!ok(a) && <button type="button" className="link-btn small" onClick={() => reconnect(a)}>{t('mailc.reconnect')}</button>}
           <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(a), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
@@ -304,6 +309,17 @@ export function Mail({ id }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [rows, id, cur]);
   const counts = useMemo(() => Object.fromEntries(MAIL_FOLDERS.map((f) => [f.id, mails.filter((m) => m.folder === f.id && m.unread && (pick === 'all' || m.account === pick)).length])), [mails, pick]);
+  // 여러 개 고르기(11차) — 메일 메뉴의 단일 동작(읽음·안 읽음·보관·맡기기)을 고른 메일 전부에. 보관은 토스트 '되돌리기' 한 번으로 전부
+  const [sel] = useSelection('mail', { keys: rows.map((m) => m.id), actions: (keys) => {
+    const list = rows.filter((m) => keys.includes(m.id)), done = (fn) => (_, clear) => { fn(); clear(); };
+    return [
+      list.some((m) => m.unread) && { label: t('mail.markRead'), icon: 'mail', run: done(() => list.forEach((m) => m.unread && setMail(m.id, { unread: false }))) },
+      list.every((m) => !m.unread) && { label: t('mail.markUnread'), icon: 'mail', run: done(() => list.forEach((m) => setMail(m.id, { unread: true }))) },
+      folder !== 'archive' && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = list.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: list.length }), { undo: () => undos.forEach((u) => u?.()) }); if (list.some((m) => m.id === id)) navigate('/me/mail'); }) },
+      { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
+    ];
+  } });
+  const group = mailItems(rows.filter((m) => sel.has(m.id)));
   const multi = accounts.length > 1;
   const noAccounts = real && ready && !accounts.length;
   const expired = accounts.filter((a) => !ok(a));
@@ -311,18 +327,18 @@ export function Mail({ id }) {
     <div className={`mail${cur ? ' has-reader' : ''}`} style={{ '--list-w': `${listW}px` }}>
       <aside className="mail-folders">
         <button type="button" className="btn primary block" disabled={real && !accounts.some(ok)} onClick={() => setUi({ compose: {} })}><Icon name="draft" size={14} />{t('mail.compose')}</button>
-        {real ? <AccountList accounts={accounts} pick={pick} setPick={setPick} /> : <div className="mail-account"><span className="dot ok" />{ME.email}</div>}
+        {real ? <AccountList accounts={accounts} pick={pick} setPick={setPick} /> : <div className="mail-account"><span className="dot ok" /><Hide k="mail:me">{ME.email}</Hide></div>}
         {MAIL_FOLDERS.map((f) => (
           <button key={f.id} type="button" className={`nav-item${folder === f.id ? ' active' : ''}`} onClick={() => { setFolder(f.id); navigate('/me/mail'); }}>
             <Icon name={{ inbox: 'inbox', drafts: 'draft', sent: 'send', archive: 'archive' }[f.id]} /><span className="nav-label">{t(f.name)}</span>{counts[f.id] > 0 && <span className="nav-count">{counts[f.id]}</span>}
           </button>
         ))}
       </aside>
-      <section className="mail-list" role="listbox" aria-label={t(`mail.${folder}`)}>
+      <section className="mail-list" role="listbox" aria-multiselectable="true" aria-label={t(`mail.${folder}`)} data-sel-scope="mail">
         {connecting && <div className="mail-banner" role="status">{t('desktop.mailWaiting')}<button className="btn sm" type="button" onClick={cancelDesktopMail}>{t('desktop.cancel')}</button></div>}
         {expired.length > 0 && <div className="mail-banner"><span className="dot ask" />{t('mailc.expired')}<button type="button" className="btn sm" onClick={() => reconnect(expired[0])}>{t('mailc.reconnect')}</button></div>}
         {noAccounts ? <ConnectPanel />
-          : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
+          : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} sel={sel} group={group} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
           : <div className="empty-state"><p>{t(loading || (real && !ready) ? 'mailc.loading' : 'mail.empty')}</p></div>}
       </section>
       <SplitHandle width={listW} onChange={setListW} label={t('mod.resize')} />

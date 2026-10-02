@@ -10,9 +10,10 @@ import { openMenu } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { fmtBytes, dragHasFiles, filesFromTransfer } from '../core/files.js';
 import { FILES_DICT } from './files-i18n.js';
-import { CATEGORIES, kindOf, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
+import { CATEGORIES, pageMenuIds, kindOf, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
 import { useFiles, uploadMany, trashFiles, restoreFiles, purgeFiles, purgeExpired, updateFile, downloadFile, createFolder, renameFolder, moveFolder, deleteFolder, loadCustomers, ocrPending, fileError } from './api.js';
 import { FIcon } from './FIcon.jsx';
+import { useSelection, selProps } from '../core/selection.js';
 import { CustomerFiles } from './CustomerFiles.jsx';
 import './files.css';
 
@@ -63,6 +64,7 @@ export default function FilesPage({ space, query }) {
   const path = folderPath(folders, folder);
   const subs = inFolder && !cat && !custFilter ? childFolders(folders, folder) : [];
   const selected = shown.filter((f) => sel.has(f.id));
+  const allSel = shown.length > 0 && shown.every((f) => sel.has(f.id));
 
   const upload = async (list, opts = {}) => {
     const arr = [...list];
@@ -92,7 +94,20 @@ export default function FilesPage({ space, query }) {
     { sep: true },
     { label: t('files.folderDelete'), icon: 'trash', danger: true, run: () => act(() => deleteFolder(space, fo.id)) },
   ]);
-  const pageMenu = (e) => openMenu(e, [{ label: t('files.refresh'), icon: 'refresh', run: () => import('./api.js').then((m) => m.refreshFiles()) }], { anchor: e.currentTarget });
+  // 머리 ⋯(유건 10/2 10차 "눌러도 반응 없음") — 새로고침은 끝나면 알리고, 탭마다 그 화면에서 할 수 있는 일을 둔다(홈·페이지 ⋯처럼)
+  const refresh = () => import('./api.js').then((m) => m.refreshFiles()).then(() => showToast(t('files.refreshed')), () => showToast(t('files.err.request')));
+  const trashRows = tab === 'trash' ? (data.files ?? []).filter((f) => data.manager || f.created_by === data.me) : [];
+  const PAGE_ITEMS = {
+    refresh: { label: t('files.refresh'), icon: 'refresh', run: refresh },
+    newFolder: { label: t('files.newFolder'), icon: 'folder', run: () => setDialog({ kind: 'newFolder', name: '' }) },
+    drive: { label: t('files.drive'), icon: 'link', run: () => go({ drive: 1 }) },
+    selAll: { label: t('files.selAll'), icon: 'check', run: () => setSel(new Set(shown.map((f) => f.id))) },
+    selNone: { label: t('files.selNone'), icon: 'x', run: () => setSel(new Set()) },
+    emptyTrash: { label: t('files.emptyTrash'), icon: 'trash', danger: true, run: () => setDialog({ kind: 'purge', files: trashRows }) },
+    'emptyTrash:off': { label: t('files.emptyTrash'), icon: 'trash', danger: true, disabled: true },
+    sep: { sep: true },
+  };
+  const pageMenu = (e) => openMenu(e, pageMenuIds(tab, { rows: shown.length, allSelected: allSel, purgeable: trashRows.length }).map((id) => PAGE_ITEMS[id]), { anchor: e.currentTarget });
 
   // 화면 어디에 놓아도 지금 폴더로(인트라넷 드롭존 + 드라이브 화면 전체 드롭)
   const dropProps = tab === 'trash' ? {} : {
@@ -100,13 +115,25 @@ export default function FilesPage({ space, query }) {
     onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(false); },
     onDrop: (e) => { if (!dragHasFiles(e.dataTransfer)) return; e.preventDefault(); setOver(false); upload(filesFromTransfer(e.dataTransfer), tab === 'customers' && cust ? { customerId: cust } : {}); },
   };
-  const allSel = shown.length > 0 && shown.every((f) => sel.has(f.id));
+  // 여러 개 고르기(11차) — 체크박스와 같은 선택을 끌어 감싸기·⇧/⌘ 클릭·⌘A로도. 선택 막대는 오피스 공용(분류·옮기기·다운로드·드라이브로·휴지통 — 원래 막대와 같은 동작)
+  useSelection(tab === 'all' ? 'files' : null, { value: sel, onChange: setSel, keys: shown.map((f) => f.id), actions: (keys) => {
+    const rows = shown.filter((f) => keys.includes(f.id)), real = rows.filter((f) => f.kind === 'file');
+    return [
+      { label: t('files.setCategory'), icon: 'tag', run: (_, __, e) => catMenu(e, rows) },
+      { label: t('files.move'), icon: 'folder', run: () => setDialog({ kind: 'move', files: rows }) },
+      { label: t('files.download'), icon: 'download', run: () => download(rows) },
+      real.length > 0 && { label: t('files.toDrive'), icon: 'link', run: () => go({ drive: 1, send: real.map((f) => f.id).join(',') }) },
+      { label: t('files.trash'), icon: 'trash', run: () => trash(rows) },
+    ];
+  } });
   const toggle = (id) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const tabs = <div className="tabs" role="tablist" aria-label={t('files.title')}>{['all', 'customers', 'trash'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`tab${tab === k ? ' on' : ''}`} onClick={() => go({ tab: k === 'all' ? null : k, folder: null, open: null, c: null })}>{t(`files.tab.${k}`)}</button>)}</div>;
 
   return <div className={`page-wrap wide files${over ? ' drop-over' : ''}`} {...dropProps}>
     <div className="page-title-row">
-      <div><h1 className="page-h1">{t('files.title')}</h1><p className="dim">{t('files.sub')}</p></div>
-      <div className="files-actions">
+      <div><h1 className="page-h1">{t('files.title')}</h1><p className="dim">{t('files.sub')}</p>
+        {mode === 'sample' && <p className="page-note"><Icon name="info" size={13} />{t('files.sampleNote')}</p>}</div>
+      <div className="row-actions files-actions">
         <button type="button" className="btn sm" onClick={() => go({ drive: 1 })}><FIcon name="drive" />{t('files.drive')}</button>
         {tab === 'all' && <button type="button" className="btn sm" onClick={() => setDialog({ kind: 'newFolder', name: '' })}><Icon name="folder" size={13} />{t('files.newFolder')}</button>}
         {tab !== 'trash' && <button type="button" className="btn sm primary" disabled={!!progress} onClick={() => input.current?.click()}><FIcon name="upload" />{progress ? t('files.uploading', progress) : t('files.upload')}</button>}
@@ -114,18 +141,14 @@ export default function FilesPage({ space, query }) {
         <input ref={input} type="file" multiple hidden onChange={(e) => { const l = [...e.target.files]; e.target.value = ''; upload(l, tab === 'customers' && cust ? { customerId: cust } : {}); }} />
       </div>
     </div>
-    {mode === 'sample' && <p className="dim small files-sample">{t('files.sampleNote')}</p>}
-
-    <div className="files-bar">
-      <div className="seg" role="tablist">{['all', 'customers', 'trash'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`seg-btn${tab === k ? ' on' : ''}`} onClick={() => go({ tab: k === 'all' ? null : k, folder: null, open: null, c: null })}>{t(`files.tab.${k}`)}</button>)}</div>
-      {tab === 'all' && <>
-        <label className="files-search"><Icon name="search" size={14} /><input className="input" type="search" value={qInput} placeholder={t('files.search')} onChange={(e) => setQ(e.target.value)} aria-label={t('files.search')} /></label>
-        <select className="input files-cust" value={custFilter} onChange={(e) => setCustFilter(e.target.value)} aria-label={t('files.col.customer')}>
-          <option value="">{t('files.anyCustomer')}</option>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-      </>}
-    </div>
+    {tab !== 'customers' && <div className="page-tabbar files-tabbar">{tabs}</div>}
 
     {tab === 'all' && <>
+      <div className="files-bar">
+        <label className="search-field files-search"><Icon name="search" size={14} /><input className="input" type="search" value={qInput} placeholder={t('files.search')} onChange={(e) => setQ(e.target.value)} aria-label={t('files.search')} /></label>
+        <select className="input files-cust" value={custFilter} onChange={(e) => setCustFilter(e.target.value)} aria-label={t('files.col.customer')}>
+          <option value="">{t('files.anyCustomer')}</option>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+      </div>
       <div className="chips files-cats" role="group" aria-label={t('files.col.category')}>
         <button type="button" className={`chip${!cat ? ' on' : ''}`} aria-pressed={!cat} onClick={() => setCat(null)}>{t('files.all')} <span className="dim">{files.length}</span></button>
         {CATEGORIES.filter((c) => counts[c] || c === cat).map((c) => <button key={c} type="button" className={`chip${cat === c ? ' on' : ''}`} aria-pressed={cat === c} onClick={() => setCat((v) => (v === c ? null : c))}>{catLabel(c)} <span className="dim">{counts[c] ?? 0}</span></button>)}
@@ -140,25 +163,16 @@ export default function FilesPage({ space, query }) {
       {subs.length > 0 && <div className="files-folders">{subs.map((fo) => <div key={fo.id} className="files-folder">
         <button type="button" className="files-folder-main" onClick={() => go({ folder: fo.id })} onContextMenu={(e) => folderMenu(e, fo)}><Icon name="folder" size={18} /><span>{fo.name}</span></button>
         <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => folderMenu(e, fo)}><Icon name="dots" size={14} /></button></div>)}</div>}
-      {selected.length > 0 && <div className="files-selbar" role="toolbar">
-        <strong>{t('files.sel', { n: selected.length })}</strong>
-        <button type="button" className="btn sm" onClick={(e) => catMenu(e, selected)}><Icon name="tag" size={13} />{t('files.setCategory')}</button>
-        <button type="button" className="btn sm" onClick={() => setDialog({ kind: 'move', files: selected })}><Icon name="folder" size={13} />{t('files.move')}</button>
-        <button type="button" className="btn sm" onClick={() => download(selected)}><FIcon name="download" />{t('files.download')}</button>
-        {selected.some((f) => f.kind === 'file') && <button type="button" className="btn sm" onClick={() => go({ drive: 1, send: selected.filter((f) => f.kind === 'file').map((f) => f.id).join(',') })}><FIcon name="drive" />{t('files.toDrive')}</button>}
-        <button type="button" className="btn sm" onClick={() => trash(selected)}><Icon name="trash" size={13} />{t('files.trash')}</button>
-        <span className="grow" /><button type="button" className="btn sm ghost" onClick={() => setSel(new Set())}>{t('files.selNone')}</button>
-      </div>}
       {data.error && <p className="bizui-error" role="alert">{t(data.error)}</p>}
       {!data.files && data.loading ? <p className="dim" role="status">{t('files.loading')}</p>
         : shown.length === 0 && subs.length === 0 ? <div className="empty-state"><Icon name="folder" size={20} /><p>{searching || cat || custFilter ? t('files.noResult') : folder ? t('files.emptyFolder') : t('files.empty')}</p></div>
-          : shown.length > 0 && <div className="table-wrap files-table-wrap"><table className="table files-table">
+          : shown.length > 0 && <div className="table-wrap files-table-wrap" data-sel-scope="files"><table className="table files-table">
             <thead><tr>
               <th className="files-check"><input type="checkbox" checked={allSel} aria-label={t('files.selAll')} onChange={() => setSel(allSel ? new Set() : new Set(shown.map((f) => f.id)))} /></th>
               <th>{t('files.col.name')}</th><th className="c-cat">{t('files.col.category')}</th><th className="c-cust">{t('files.col.customer')}</th><th className="c-kind">{t('files.col.kind')}</th>
               <th className="num c-size">{t('files.col.size')}</th><th className="c-ocr">{t('files.col.ocr')}</th><th className="c-tags">{t('files.col.tags')}</th><th className="c-date">{t('files.col.date')}</th><th className="files-act" />
             </tr></thead>
-            <tbody>{shown.map((f) => <tr key={f.id} className={sel.has(f.id) ? 'on' : ''} onContextMenu={(e) => rowMenu(e, f)}>
+            <tbody>{shown.map((f) => <tr key={f.id} className={sel.has(f.id) ? 'on' : ''} {...selProps(sel, f.id)} onContextMenu={(e) => rowMenu(e, f)}>
               <td className="files-check"><input type="checkbox" checked={sel.has(f.id)} aria-label={f.title} onChange={() => toggle(f.id)} /></td>
               <td><button type="button" className="files-name" onClick={() => go({ open: f.id })}><FIcon name={kindKey(f)} size={15} /><span className="files-title">{f.title}</span>
                 {f.source !== 'upload' && t(`files.src.${f.source}`) !== `files.src.${f.source}` && <span className="badge">{t(`files.src.${f.source}`)}</span>}</button></td>
@@ -175,7 +189,7 @@ export default function FilesPage({ space, query }) {
       {data.bytes > 0 && <p className="dim small files-used">{t('files.used', { size: fmtBytes(data.bytes) })}</p>}
     </>}
 
-    {tab === 'customers' && <CustomersView space={space} customers={customers} files={all.files ?? []} cust={cust} onUpload={(list, c, category) => upload(list, { customerId: c, category })} />}
+    {tab === 'customers' && <CustomersView space={space} tabs={tabs} customers={customers} files={all.files ?? []} cust={cust} onUpload={(list, c, category) => upload(list, { customerId: c, category })} />}
     {tab === 'trash' && <TrashView space={space} data={data} act={act} setDialog={setDialog} />}
 
     {over && tab !== 'trash' && <div className="files-overlay" aria-hidden="true"><FIcon name="upload" size={22} /><p>{t('files.dropHere')}</p></div>}
@@ -227,38 +241,51 @@ function FolderDialogs({ space, dialog, setDialog, folders, folder, act }) {
 function TrashView({ space, data, act, setDialog }) {
   const rows = data.files ?? [];
   const mine = (f) => data.manager || f.created_by === data.me;
+  // 여러 개 되살리기·영구 삭제(11차) — 행의 단일 동작과 같다. 영구 삭제는 원래 확인 창을 거친다
+  const [sel] = useSelection('files-trash', { keys: rows.map((f) => f.id), actions: (keys, clear) => {
+    const list = rows.filter((f) => keys.includes(f.id)), own = list.filter(mine);
+    return [{ label: t('files.restore'), icon: 'refresh', run: () => act(() => restoreFiles(space, keys), 'files.restored', { n: keys.length }).then(clear) },
+      own.length > 0 && { label: t('files.purge'), icon: 'trash', danger: true, run: () => setDialog({ kind: 'purge', files: own }) }];
+  } });
   return <>
-    <p className="dim small">{t('files.trashHint')}</p>
+    <p className="dim small files-trash-hint">{t('files.trashHint')}</p>
     {!data.files && data.loading ? <p className="dim">{t('files.loading')}</p> : rows.length === 0 ? <div className="empty-state"><Icon name="trash" size={20} /><p>{t('files.trashEmpty')}</p></div>
-      : <div className="table-wrap"><table className="table files-table"><thead><tr><th>{t('files.col.name')}</th><th className="c-cat">{t('files.col.category')}</th><th className="c-date">{t('files.col.deleted')}</th><th /><th className="files-act" /></tr></thead>
-        <tbody>{rows.map((f) => <tr key={f.id}>
+      : <div className="table-wrap" data-sel-scope="files-trash"><table className="table files-table files-trash-table"><thead><tr><th>{t('files.col.name')}</th><th className="c-cat">{t('files.col.category')}</th><th className="c-date">{t('files.col.deleted')}</th><th className="c-left" /><th className="files-act" /></tr></thead>
+        <tbody>{rows.map((f) => <tr key={f.id} {...selProps(sel, f.id)}>
           <td><span className="files-name static"><FIcon name={kindKey(f)} size={15} /><span className="files-title">{f.title}</span></span></td>
           <td className="c-cat"><span className="badge">{catLabel(f.category)}</span></td>
-          <td className="c-date dim">{day(f.deleted_at)}</td><td className="dim small">{t('files.daysLeft', { n: daysLeft(f) })}</td>
-          <td className="files-act files-trash-act"><button type="button" className="btn sm" onClick={() => act(() => restoreFiles(space, [f.id]), 'files.restored', { n: 1 })}>{t('files.restore')}</button>
-            {mine(f) && <button type="button" className="btn sm ghost" onClick={() => setDialog({ kind: 'purge', files: [f] })}>{t('files.purge')}</button>}</td>
+          <td className="c-date dim">{day(f.deleted_at)}</td><td className="dim small c-left">{t('files.daysLeft', { n: daysLeft(f) })}</td>
+          <td className="files-act"><div className="files-trash-act"><button type="button" className="btn sm" onClick={() => act(() => restoreFiles(space, [f.id]), 'files.restored', { n: 1 })}>{t('files.restore')}</button>
+            {mine(f) && <button type="button" className="btn sm ghost" onClick={() => setDialog({ kind: 'purge', files: [f] })}>{t('files.purge')}</button>}</div></td>
         </tr>)}</tbody></table></div>}
   </>;
 }
 
-function CustomersView({ space, customers, files, cust, onUpload }) {
+function CustomersView({ space, tabs, customers, files, cust, onUpload }) {
   const missing = useMemo(() => new Set(missingBizcert(customers, files).map((c) => c.id)), [customers, files]);
   const [onlyMissing, setOnlyMissing] = useState(false);
+  const [head, setHead] = useState(null); // 오른쪽 머리(거래처 이름·요약·붙이기)가 들어갈 자리 — 탭 줄과 같은 가로 줄
   const count = (id) => files.filter((f) => f.customer_id === id).length;
   const list = customers.filter((c) => !onlyMissing || missing.has(c.id));
-  const current = customers.find((c) => c.id === cust);
-  if (!customers.length) return <div className="empty-state"><Icon name="person" size={20} /><p>{t('files.cust.none')}</p></div>;
-  return <div className="files-cust-split">
-    <aside className="files-cust-list">
-      {missing.size > 0 && <button type="button" className={`chip files-missing${onlyMissing ? ' on' : ''}`} aria-pressed={onlyMissing} onClick={() => setOnlyMissing((v) => !v)}><span className="dot ask" />{t('files.cust.missingN', { n: missing.size })}</button>}
-      {list.map((c) => <button key={c.id} type="button" className={`list-row files-cust-row${c.id === cust ? ' on' : ''}`} onClick={() => go({ c: c.id })}>
-        <Icon name="person" size={14} className="dim" /><span className="grow">{c.name}</span>
-        {c.status === 'closed' ? <span className="badge">{t('files.cust.closed')}</span> : missing.has(c.id) && <span className="badge warn" title={t('files.cust.missing')}>{t('files.cust.missing')}</span>}
-        <small className="dim">{count(c.id)}</small></button>)}
-    </aside>
-    <section className="files-cust-main">
-      {current ? <CustomerFiles space={space} customer={current} onUpload={(l, category) => onUpload(l, current.id, category)} /> : <p className="dim files-cust-pick">{t('files.cust.pick')}</p>}
-    </section>
+  // 고른 거래처가 없으면 목록 첫 거래처(결재함이 '전체'를 고른 채 여는 것처럼 — 오른쪽이 빈 채로 열리지 않게)
+  const current = customers.find((c) => c.id === cust) ?? (cust ? null : list[0] ?? null);
+  // 결재함·일지와 같은 폴더 보기(.fold) — 왼쪽 목록 부품·행 높이·폭·고른 표시를 그대로 쓰고, 탭 줄이 같은 격자 첫 줄에 들어간다
+  return <div className="fold files-cust-split">
+    <div className="files-cust-tabs">{tabs}</div>
+    <div className="files-cust-head" ref={setHead} />
+    {!customers.length ? <div className="empty-state files-cust-none"><Icon name="person" size={20} /><p>{t('files.cust.none')}</p></div> : <>
+      <nav className="fold-nav files-cust-list" aria-label={t('files.tab.customers')}>
+        {missing.size > 0 && <button type="button" className={`fold-item${onlyMissing ? ' on' : ''}`} aria-pressed={onlyMissing} onClick={() => setOnlyMissing((v) => !v)}>
+          <span className="fold-ico"><span className="dot ask" /></span><span className="fold-name">{t('files.cust.missingOnly')}</span><span className="fold-n">{missing.size}</span></button>}
+        {list.map((c) => <button key={c.id} type="button" className={`fold-item${c.id === current?.id ? ' on' : ''}`} aria-current={c.id === current?.id ? 'true' : undefined} onClick={() => go({ c: c.id })}>
+          <span className="fold-ico"><Icon name="person" size={12} /></span><span className="fold-name">{c.name}</span>
+          {c.status === 'closed' ? <span className="badge">{t('files.cust.closed')}</span> : missing.has(c.id) && <span className="dot ask" title={t('files.cust.missing')} aria-label={t('files.cust.missing')} />}
+          <span className="fold-n">{count(c.id)}</span></button>)}
+      </nav>
+      <section className="fold-main files-cust-main">
+        {current ? <CustomerFiles space={space} customer={current} headTarget={head} onUpload={(l, category) => onUpload(l, current.id, category)} /> : <p className="dim fold-none">{t('files.cust.pick')}</p>}
+      </section>
+    </>}
   </div>;
 }
 

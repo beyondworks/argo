@@ -75,3 +75,14 @@ export function moveInCategory(items, id, dir) {
   [ids[i], ids[j]] = [ids[j], ids[i]];
   return ids;
 }
+
+/** '서식' 표(항목이 견적서·계약서의 어느 칸에 들어가는지) 메뉴(유건 10/2 10차 — 눌러도 반응이 없었다).
+ *  누구나 그 칸이 실제로 들어가는 견적서·계약서 작성 화면을 열어 볼 수 있고, 관리자는 어느 칸으로 갈지 바꾼다(항목 수정 창). 돌려주는 값은 화면이 메뉴로 바꾼다 */
+export function keyMenu(item, { manager = false } = {}) {
+  if (!item?.key || !KEY_CATEGORY[item.key]) return [];
+  const view = DOC_KEYS.includes(item.key) || IMAGE_KEYS.includes(item.key);
+  return [
+    ...(view ? [{ id: 'quote', to: 'contracts?new=quote' }, { id: 'contract', to: 'contracts?new=contract' }] : []),
+    ...(manager ? [{ id: 'change', edit: true }] : []),
+  ];
+}

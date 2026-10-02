@@ -39,6 +39,51 @@ export function drop(rows, id, target, minOf) {
   return tidy(next, minOf);
 }
 
+// ── 고른 모듈 여러 개 한꺼번에(11차, 유건 10/2 정정 — refs10/15~17 "배치도 그대로 따라가야 한다") ──
+// 고른 것들의 상대 배치(줄·열·열 폭 비율·위아래 순서)를 그대로 들고 간다(shapeOf). 두 가지 경우:
+//  - 여러 열 구조(나란히 있는 것이 하나라도): 원래 줄마다 한 줄씩, 줄 사이·맨 위·맨 아래 전체 폭 가로선에만 놓는다(insertShape — 열 안에 열을 넣는 구조는 없다).
+//  - 한 열 구조(전부 위아래 관계): 잡은 모듈(me)만 남긴 줄 목록(collapse) 위에서 9차 놓기를 그대로 쓰고, 놓은 뒤 me 자리에 원래 순서대로 위아래로 쌓는다(expand).
+
+/** 고른 모듈의 원래 순서 — 줄 → 열 → 위아래 */
+export const groupOrder = (rows, group) => flat(rows).filter((id) => group.has(id));
+/** me만 남기고 나머지 고른 모듈을 뺀다 — 빈 열·줄은 정리 규칙대로 사라진다 */
+export const collapse = (rows, me, group, minOf) => tidy(rows.map((row) => row.map((col) => ({ w: col.w, ids: col.ids.filter((id) => id === me || !group.has(id)) }))), minOf);
+/** me 자리에 list를 차례로 쌓는다 */
+export const expand = (rows, me, list, minOf) => tidy(rows.map((row) => row.map((col) => ({ w: col.w, ids: col.ids.flatMap((id) => (id === me ? list : [id])) }))), minOf);
+/** 쌓인 묶음의 최소 폭 = 그중 가장 넓은 최소 폭(새 열·4열 판정에 쓴다) */
+export const groupMin = (me, list, minOf) => (id) => (id === me ? Math.max(...list.map(minOf)) : minOf(id));
+/** 고른 모듈 list(me 포함)를 target에 한 열로 쌓은 줄 목록 — 놓을 수 없거나(고른 모듈 위) 그대로면 null */
+export function dropGroup(rows, me, list, target, minOf) {
+  const group = new Set(list);
+  if (target.anchor != null && group.has(target.anchor)) return null;
+  const at = drop(collapse(rows, me, group, minOf), me, target, groupMin(me, list, minOf));
+  const out = at && expand(at, me, list, minOf);
+  return out && !same(out, rows) ? out : null;
+}
+
+/** 고른 것들의 모양 — 원래 줄마다 그 줄의 고른 열만(열 안은 고른 모듈만, 위아래 순서 그대로). 폭은 원래 열 폭(정리할 때 고른 것끼리 합 24로 다시 나눈다) */
+export const shapeOf = (rows, group) => rows.map((row) => row.map((col) => ({ w: col.w, ids: col.ids.filter((id) => group.has(id)) })).filter((col) => col.ids.length)).filter((row) => row.length);
+/** 여러 열 구조 — 나란히 있는 것이 하나라도 있다 */
+export const isMulti = (shape) => shape.some((row) => row.length > 1);
+/** 고른 것을 모두 뺀 줄 목록(정리됨) */
+export const without = (rows, group, minOf) => tidy(rows.map((row) => row.map((col) => ({ w: col.w, ids: col.ids.filter((id) => !group.has(id)) }))), minOf);
+/** 여러 열 구조를 고른 것을 뺀 줄 목록의 slot번째 줄 앞(0 = 맨 위, 끝 = 맨 아래)에 원래 모양대로 넣는다 */
+export function insertShape(rows, list, slot, minOf) {
+  const group = new Set(list), base = without(rows, group, minOf), at = Math.max(0, Math.min(base.length, slot));
+  return tidy([...base.slice(0, at), ...shapeOf(rows, group), ...base.slice(at)], minOf);
+}
+/** 지금 자리 — 고른 것이 처음 나오는 줄 앞에 고르지 않은 줄이 몇 개인가(키보드 들기의 시작 자리) */
+export const shapeSlot = (rows, list, minOf) => { const group = new Set(list), r = rows.findIndex((row) => row.some((col) => col.ids.some((id) => group.has(id)))); return without(rows.slice(0, r), group, minOf).length; };
+/** 여러 개 놓기 — 여러 열 구조면 줄 사이 가로선(kind 'row', anchor는 고르지 않은 모듈)만, 한 열 구조면 9차 놓기 그대로 쌓기. 놓을 수 없거나 그대로면 null */
+export function dropMany(rows, me, list, target, minOf) {
+  const group = new Set(list);
+  if (!isMulti(shapeOf(rows, group))) return dropGroup(rows, me, list, target, minOf);
+  if (target.kind !== 'row' || (target.anchor != null && group.has(target.anchor))) return null;
+  const base = without(rows, group, minOf), slot = target.anchor == null ? (target.after ? base.length : 0) : find(base, target.anchor).r + (target.after ? 1 : 0);
+  const out = insertShape(rows, list, slot, minOf);
+  return same(out, rows) ? null : out;
+}
+
 /** 좁은 폭(한 줄에 하나) — 다른 모듈 사이 k번째(0 = 맨 위)에 놓는 자리. 같은 줄 두 모듈 사이면 앞 모듈의 열로, 아니면 새 줄 */
 export function flatTarget(rows, id, k) {
   const list = flat(rows).filter((x) => x !== id), prev = list[k - 1], next = list[k];

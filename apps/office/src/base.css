@@ -2,6 +2,9 @@
    + 메신저 톤(linen·graphite 토큰) + 공식적인 느낌(장식 최소·표·목록 중심·그림자 없음).
    색은 토큰만 쓴다. hover는 (hover: hover) 안에서만. transition: all 금지. */
 @font-face { font-family: 'Pretendard Variable'; font-weight: 45 920; font-style: normal; font-display: swap; src: url('/fonts/PretendardVariable.woff2') format('woff2-variations'); }
+/* 아이콘 글꼴 — Google Material Symbols Outlined(Apache 2.0, public/fonts/MaterialSymbols-LICENSE.txt)에서 쓰는 글자만 뽑음(scripts/icon-font.mjs).
+   이름에 해시가 붙는 번들 파일이라 서비스 워커 캐시에 옛 글꼴이 남지 않는다. block: 잠깐 비워 두지 대체 글자(□)를 그리지 않는다 */
+@font-face { font-family: 'Argo Symbols'; font-weight: 400; font-style: normal; font-display: block; src: url('./ui/symbols.woff2') format('woff2'); }
 
 :root {
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -22,6 +25,8 @@
   /* 둥글기(유건 10/1 "카드 모서리 통일") — 카드류(모듈·현황 카드·설정 카드·표 바탕·칸반 칸과 카드·목록 카드형 줄·패널·모달·메뉴 팝업)는 --rs 하나,
      --rc는 버튼·입력·배지·칩·탭·메뉴 항목 같은 작은 조작 요소만. 셸·커스텀이 값을 바꾼다 */
   --side-w: 15rem; --top-h: 3rem; --ctl: 32px; --rc: 8px; --rs: 12px;
+  /* 작은 조작 요소 높이(유건 10/2 10차) — 같은 줄에 놓이는 작은 버튼(.btn.sm)과 작은 입력·선택칸(.input.sm)은 이 값 하나를 쓴다 */
+  --ctl-sm: 26px;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --module-gap: 12px; /* 모듈 사이 간격 — 격자·현황 카드·업무 대시보드 공용 */
   /* 블록 고르기 색 — 노션과 같은 파랑(차콜 강조색은 회색으로 묻힌다). 고른 블록 바탕과 원자 블록 선택 링 */
@@ -88,7 +93,9 @@ kbd { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 0 
 .clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .clamp.two { -webkit-line-clamp: 2; } .clamp.three { -webkit-line-clamp: 3; }
 .ok { color: var(--ok); }
-.ico { flex: none; }
+.ico { flex: none; display: inline-block; width: 1em; height: 1em; overflow: hidden; /* overflow 때문에 기준선 = 아래 끝 — 옛 SVG와 같은 자리 */
+  font-family: 'Argo Symbols'; font-weight: 400; font-style: normal; line-height: 1; letter-spacing: 0; text-transform: none; text-align: center; white-space: nowrap; direction: ltr;
+  font-variation-settings: 'FILL' 0; -webkit-font-smoothing: antialiased; user-select: none; -webkit-user-select: none; }
 
 /* ── 버튼·입력 ── */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: var(--ctl); padding: 0 12px; border-radius: var(--rc);
@@ -97,7 +104,7 @@ kbd { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 0 
 .btn.primary { background: var(--primary); color: var(--primary-fg); box-shadow: none; }
 .btn.ghost { background: transparent; box-shadow: none; color: var(--fg-2); }
 .btn.on { background: var(--secondary); color: var(--fg); }
-.btn.sm { height: 26px; padding: 0 9px; font-size: 12.5px; }
+.btn.sm { height: var(--ctl-sm); padding: 0 9px; font-size: 12.5px; }
 .btn.block { width: 100%; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 .icon-btn { display: inline-grid; place-items: center; width: var(--ctl); height: var(--ctl); border-radius: var(--rc); color: var(--fg-2); flex-shrink: 0; transition: transform 140ms var(--ease-out); }
@@ -113,6 +120,21 @@ kbd { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 0 
 .input.area { height: auto; padding: 8px 10px; resize: vertical; width: 100%; margin-top: 8px; }
 .input:focus, .select:focus, .field input:focus, .compose-body:focus { border-color: var(--border); box-shadow: 0 0 0 3px var(--primary-soft); }
 .select { padding-right: 6px; }
+/* 검색칸(돋보기 + 입력) — 모듈 보관함 검색칸과 같은 값: 돋보기는 칸 왼쪽 11px, 글자는 32px에서(유건 10/2 10차) */
+.search-field { position: relative; display: flex; align-items: center; min-width: 0; }
+.search-field > .ico { position: absolute; left: 11px; z-index: 1; color: var(--fg-3); pointer-events: none; }
+.search-field > .input { flex: 1; width: 100%; min-width: 0; padding-left: 32px; }
+.input.sm, .select.sm { height: var(--ctl-sm); padding: 0 8px; font-size: 12.5px; }
+/* 체크박스(유건 10/2 10차 "안 색이 너무 쨍한 흰색") — 브라우저 기본(순백 칸) 대신 테마 면 색. 빈 칸은 --wash 면 + 옅은 테두리, 고르면 액션 색(--primary) 위에 체크 */
+input[type='checkbox']:not([role='switch']) { appearance: none; -webkit-appearance: none; display: inline-grid; place-content: center; flex: none; width: 15px; height: 15px; margin: 0; border-radius: 4px; vertical-align: middle;
+  background: var(--wash); box-shadow: inset 0 0 0 1px var(--border); cursor: pointer; transition: background-color 120ms ease, box-shadow 120ms ease; }
+input[type='checkbox']:not([role='switch'])::after { content: ''; width: 9px; height: 9px; background: var(--primary-fg); clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%); transform: scale(0); transition: transform 120ms var(--ease-out); }
+input[type='checkbox']:not([role='switch']):checked { background: var(--primary); box-shadow: none; }
+input[type='checkbox']:not([role='switch']):checked::after { transform: none; }
+input[type='checkbox']:not([role='switch']):disabled { opacity: 0.45; cursor: not-allowed; }
+/* 날짜칸 달력 단추 — 기본 검은 그림 대신 흐린 글자색 한 단계(다크는 color-scheme이 밝게 그린다), 올리면 진하게 */
+input[type='date']::-webkit-calendar-picker-indicator, input[type='time']::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; border-radius: 4px; padding: 2px; transition: opacity 120ms ease; }
+@media (hover: hover) { input[type='date']::-webkit-calendar-picker-indicator:hover, input[type='time']::-webkit-calendar-picker-indicator:hover { opacity: 0.9; background: var(--wash); } }
 .badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 6px; font-size: 11.5px; font-weight: 520; background: var(--secondary); color: var(--fg-2); white-space: nowrap; }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
@@ -173,9 +195,10 @@ html.nav-collapsed .side { visibility: hidden; }
 .tree-row:focus-within .tree-more { opacity: 1; }
 .crews, .crew-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; } /* minmax(0) — 칸이 긴 이름 폭만큼 늘어나 패널에 가로 스크롤이 생기던 원인 */
 .crew-group + .crew-group { margin-top: 6px; }
-.crew-group-head { display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: var(--rc); color: var(--side-fg-3); font-size: 11.5px; text-align: left; min-width: 0; }
-.crew-group-head span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.crew-group-head small { font-family: var(--mono); font-size: 11px; min-width: 26px; margin-right: 2px; text-align: center; } /* 숫자 가운데 = 위 머리 돋보기(.icon-btn.sm 26px, 머리 오른쪽 여백 9px = 7 + 2) 가운데(유건 10/1 밤 6차) */
+/* 묶음 머리(고정·내 에이전트) — 즐겨찾기 머리와 같은 규칙(유건 10/2 10차): 글자는 칸 제목과 같은 왼쪽 선(9px)에서, 접기 화살표는 글자 바로 뒤, 숫자는 오른쪽 끝 */
+.crew-group-head { display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px 0 9px; border-radius: var(--rc); color: var(--side-fg-3); font-size: 11.5px; text-align: left; min-width: 0; }
+.crew-group-head span { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crew-group-head small { font-family: var(--mono); font-size: 11px; min-width: 26px; margin: 0 2px 0 auto; text-align: center; } /* 숫자 가운데 = 위 머리 돋보기(.icon-btn.sm 26px, 머리 오른쪽 여백 9px = 7 + 2) 가운데(유건 10/1 밤 6차) */
 .crew-search { margin: 2px 2px 6px; height: 28px; padding: 0 9px; border-radius: var(--rs); border: 0; background: var(--side-hover); color: var(--side-fg); font: inherit; font-size: 12.5px; min-width: 0; }
 .crew-search::placeholder { color: var(--side-fg-3); }
 .crew-row { min-width: 0; touch-action: manipulation; user-select: none; -webkit-touch-callout: none; }
@@ -218,7 +241,16 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 .page-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .page-h1 { font-size: 22px; font-weight: 680; letter-spacing: -0.02em; line-height: 1.3; }
 .eyebrow { font-size: 12px; color: var(--fg-3); margin-bottom: 2px; }
+/* 뒤로 링크(작성·세팅 화면 머리, 유건 10/2 10차) — 제목 바로 위 한 줄. 견적·계약 작성과 서명 요청이 같은 자리(본문 위 28px는 페이드 자리라 비워 둔다) */
+.page-back { display: flex; width: fit-content; align-items: center; gap: 2px; height: 20px; margin: 0 0 4px -4px; padding: 0 6px 0 2px; border-radius: var(--rc); font-size: 12px; color: var(--fg-3); }
+@media (hover: hover) { .page-back:hover { background: var(--primary-soft); color: var(--fg); } }
 .row-actions { display: flex; gap: 6px; }
+/* 페이지 머리 안 보조 줄(예시 모드 안내 등) — 설명 바로 아래, 화면마다 같은 자리·글자(유건 10/2 10차) */
+.page-note { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--fg-3); }
+/* 페이지 탭 줄(업무 탭 줄과 같은 규칙 — 유건 10/2 10차) — 머리 아래 16px, 탭 줄 아래 첫 내용까지 16px. 셸이 밑줄을 지우면(themes.css) 면만 */
+.page-tabbar { display: flex; align-items: flex-end; gap: 12px; min-width: 0; border-bottom: 1px solid var(--border-soft); margin: -4px 0 16px; }
+.page-tabbar > .tabs { flex: none; min-width: 0; margin: 0; border-bottom: 0; }
+.page-tabbar .tab { display: inline-flex; align-items: center; gap: 5px; }
 .empty-state { display: grid; place-items: center; gap: 8px; padding: 56px 16px; color: var(--fg-3); text-align: center; }
 .list { display: grid; gap: 6px; }
 .list-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--rs); background: var(--surface); }
@@ -372,7 +404,7 @@ body.module-moving, body.module-moving * { cursor: grabbing !important; user-sel
 .ap-open { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 44px; padding: 8px 4px 8px 14px; text-align: left; color: inherit; border-radius: inherit; }
 .ap-quick { display: flex; gap: 6px; flex: none; }
 @media (max-width: 560px) { .ap-row { flex-wrap: wrap; padding: 0; } .ap-open { flex-basis: 100%; padding-right: 14px; } .ap-quick { margin-left: auto; padding: 0 10px 10px; } }
-.rec-row .face, .rec-row .badge, .rec-row > .icon, .rec-row > svg { flex: none; }
+.rec-row .face, .rec-row .badge, .rec-row > .icon, .rec-row > .ico { flex: none; }
 .rec-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .rec-who { flex: none; max-width: 30%; overflow: hidden; color: var(--fg-2); font-size: 12.5px; }
 .rec-when { flex: none; color: var(--fg-3); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -801,7 +833,7 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 .task-row.focus { background: var(--primary-soft); } /* 달력에서 누른 할 일 */
 @media (hover: hover) { .task-row .task-more { opacity: 0; } .task-row:hover .task-more, .task-row .task-more:focus-visible { opacity: 1; } }
 .task-done-toggle { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: var(--fg-3); background: none; border: 0; cursor: pointer; }
-.task-done-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.task-done-toggle[aria-expanded="false"] .ico { transform: rotate(-90deg); }
 .task-edit { display: grid; gap: 12px; }
 @container (max-width: 520px) {
   .task-add { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -828,7 +860,7 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 .fav-space { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--side-fg-3); }
 .fav-sec { margin-bottom: 14px; } /* 즐겨찾기 목록과 그 아래 메뉴를 갈라 보이게(유건 10/1 5차) */
 .fav-toggle[aria-pressed='true'] { color: var(--fg); }
-.fav-toggle[aria-pressed='true'] .ico path { fill: currentColor; }
+.fav-toggle[aria-pressed='true'] .ico { font-variation-settings: 'FILL' 1; }
 @media (hover: hover) { .sec-fold:hover { color: var(--side-fg-2); } }
 .nav-hidden { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 10px; color: var(--side-fg-3); font-size: 12px; border-radius: var(--rc); }
 @media (hover: hover) { .nav-hidden:hover { background: var(--side-hover); color: var(--side-fg-2); } }

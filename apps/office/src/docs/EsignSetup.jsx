@@ -143,9 +143,11 @@ export function EsignSetup({ space, esignId, company, onBack, onSent }) {
 
   const accounts = mailAccounts();
   const sample = getMode() === 'sample';
+  // 페이지 머리(유건 10/2 10차) — 견적서 작성 화면과 같은 자리: 뒤로 링크는 머리 위 여백에, 제목은 다른 페이지 제목과 같은 높이
+  const head = (title, sub) => <header className="page-title-row"><div><button type="button" className="page-back" onClick={onBack}><Icon name="back" size={12} />{t('docs.tab.esign')}</button>
+    <h1 className="page-h1">{title}</h1><p className="dim">{sub}</p></div></header>;
   if (sent) return <div className="esign-sent">
-    <h1 className="page-h1">{t('esign.sent.title')}</h1>
-    <p className="dim">{t(sample ? 'esign.sent.sample' : sent.links.every((l) => l.delivery === 'sent') ? 'esign.sent.mailed' : 'esign.sent.linkOnly')}</p>
+    {head(t('esign.sent.title'), t(sample ? 'esign.sent.sample' : sent.links.every((l) => l.delivery === 'sent') ? 'esign.sent.mailed' : 'esign.sent.linkOnly'))}
     <ul className="docs-signer-list">{sent.links.map((l) => <li key={l.email}><span className="badge">{PARTY[l.ord] ?? l.ord + 1}</span><span><strong>{l.name}</strong> <span className="dim small">{l.email}</span></span><span className="spacer" />
       <span className={`badge ${l.delivery === 'failed' ? 'danger' : l.delivery === 'skipped' ? 'warn' : 'ok'}`}>{t(`esign.delivery.${l.delivery}`)}</span>
       <button type="button" className="btn sm ghost" onClick={() => navigator.clipboard?.writeText(l.link).then(() => showToast(t('esign.copied')), () => {})}><Icon name="copy" size={12} />{t('esign.copyLink')}</button>
@@ -155,11 +157,8 @@ export function EsignSetup({ space, esignId, company, onBack, onSent }) {
   </div>;
 
   const hb = wrap.current?.getBoundingClientRect();
-  return <div className="esign-setup">
+  return <>{head(t(draft ? 'esign.setup.title' : 'esign.new'), t(draft ? 'esign.setup.help' : 'esign.new.help'))}<div className="esign-setup">
     <aside className="esign-side">
-      <button type="button" className="btn sm ghost docs-back" onClick={onBack}><Icon name="back" size={13} />{t('docs.tab.esign')}</button>
-      <h1 className="page-h1">{t(draft ? 'esign.setup.title' : 'esign.new')}</h1>
-      <p className="dim small">{t(draft ? 'esign.setup.help' : 'esign.new.help')}</p>
       <label className="field-block"><span className="label">{t('esign.f.title')}</span><input className="input" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder={t('esign.ph.title')} /></label>
       <div className="field-block"><span className="label">{t('esign.f.pdf')}</span>
         {esignId ? <span className="chip"><Icon name="file" size={12} />{bytes ? t('esign.pdfLoaded') : t('biz.loading')}</span>
@@ -189,23 +188,25 @@ export function EsignSetup({ space, esignId, company, onBack, onSent }) {
           : <p className="dim small">{t('esign.noMailAccount')}</p>}</div>}
       {err && <p className="bizui-error" role="alert">{err}</p>}
       <div className="esign-side-actions">
-        <button type="button" className="btn" disabled={busy || !bytes} onClick={saveDraft}>{t('esign.saveDraft')}</button>
+        <button type="button" className="btn" disabled={busy} onClick={saveDraft}>{t('esign.saveDraft')}</button>
         <button type="button" className="btn primary" disabled={busy} onClick={submit}><Icon name="send" size={13} />{busy ? t('esign.sending') : t(draft ? 'esign.sendSetup' : 'esign.send')}</button>
       </div>
     </aside>
     <div className="esign-doc">
-      {!bytes ? <div className="esign-drop">{esignId ? t('biz.loading') : t('esign.dropHint')}</div>
+      {!bytes ? (esignId ? <div className="esign-drop">{t('biz.loading')}</div>
+        : <label className="esign-drop pick"><Icon name="file" size={20} /><span>{t('esign.dropHint')}</span><span className="btn sm">{t('esign.pickPdf')}</span>
+          <input type="file" accept="application/pdf" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) pick(f); }} /></label>)
         : <div ref={wrap} className="esign-pages"><div ref={holder} />
           {hb && fields.map((it) => {
             const layer = layerOf(it.page); if (!layer) return null;
             const lr = layer.getBoundingClientRect();
             return <div key={it.id} className="esign-field" style={{ '--c': color(it.signer_ord), top: lr.top - hb.top + it.yr * lr.height, left: lr.left - hb.left + it.xr * lr.width, width: it.wr * lr.width, height: it.hr * lr.height }}>
               <div className="body" onPointerDown={(e) => start(e, it, 'move')}>{PARTY[it.signer_ord] ?? ''} {t(`esign.kind.${it.kind}`)}</div>
-              <button type="button" className="del" aria-label={t('docs.item.remove')} onClick={() => del(it.id)}>×</button>
+              <button type="button" className="del" aria-label={t('docs.item.remove')} onClick={() => del(it.id)}><Icon name="x" size={12} /></button>
               <div className="rz" onPointerDown={(e) => start(e, it, 'resize')} />
             </div>;
           })}
         </div>}
     </div>
-  </div>;
+  </div></>;
 }

@@ -16,12 +16,8 @@ const KEY = 'argo-office-panel';
 const load = () => { try { return readPref(localStorage.getItem(KEY), localStorage.getItem('argo-office-peek')); } catch { return readPref(null, null); } };
 const keep = (value) => { try { localStorage.setItem(KEY, JSON.stringify(value)); } catch { /* 사생활 창 등 — 기억만 못 한다 */ } };
 
-/** 펼치기(바깥 화살표)·되돌리기(안쪽 화살표) — 아이콘 격자·선 굵기는 Icon.jsx와 같다 */
-const FullIcon = ({ full }) => (
-  <svg className="ico" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d={full ? 'M6.5 2.5v4h-4M9.5 13.5v-4h4M2.5 2.5l4 4M13.5 13.5l-4-4' : 'M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4 4M2.5 13.5l4-4'} />
-  </svg>
-);
+/** 펼치기·되돌리기 — Material Symbols open_in_full·close_fullscreen(ui/icon-names.js) */
+const FullIcon = ({ full }) => <Icon name={full ? 'collapse' : 'expand'} />;
 
 export function Panel({ onClose, title, children, footer }) {
   const [pref, setPref] = useState(load);

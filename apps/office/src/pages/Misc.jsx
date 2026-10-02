@@ -13,7 +13,9 @@ import { baseOf, mod } from '../core/commands.js';
 import { SPACES, ME, getMode, signOut } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
 import { DocView } from '../ui/DocView.jsx';
+import { useSelection, selProps } from '../core/selection.js';
 import { SWATCH, COLOR_GROUPS } from './theme-picks.js';
+import { Hide } from '../business/Redact.jsx';
 
 /** 셸 견본 — 지금 고른 색으로 그린 작은 창. 모양만 셸마다 다르다 */
 function ShellMini({ shell }) {
@@ -93,11 +95,11 @@ export function Settings() {
       </section>
       {getMode() === 'signedIn' && <section className="set-card">
         <h2>{t('settings.account')}</h2>
-        <div className="person"><span className="avatar">{ME.name.slice(0, 1)}</span><span className="person-main"><b>{ME.name}</b><small>{ME.email}</small></span><button type="button" className="btn sm" onClick={() => signOut()}>{t('settings.signOut')}</button></div>
+        <div className="person"><span className="avatar">{ME.name.slice(0, 1)}</span><span className="person-main"><b>{ME.name}</b><small><Hide k="mail:me">{ME.email}</Hide></small></span><button type="button" className="btn sm" onClick={() => signOut()}>{t('settings.signOut')}</button></div>
       </section>}
       <section className="set-card">
         <h2>{t('settings.mail')}</h2>
-        <div className="person"><span className="dot ok" /><span className="person-main"><b>{ME.email}</b><small>IMAP · SMTP</small></span><button type="button" className="btn sm">{t('mail.connect')}</button></div>
+        <div className="person"><span className="dot ok" /><span className="person-main"><b><Hide k="mail:me">{ME.email}</Hide></b><small>IMAP · SMTP</small></span><button type="button" className="btn sm">{t('mail.connect')}</button></div>
       </section>
       <section className="set-card">
         <h2>{t('settings.shortcuts')}</h2>
@@ -112,11 +114,13 @@ export function Trash({ space }) {
   useLang();
   const trash = useStore((s) => s.trash);
   const rows = useMemo(() => trash.filter((p) => p.space === space && !trash.some((q) => q.id === p.parent)), [trash, space]);
+  // 여러 개 되살리기(11차) — 행의 되살리기와 같다
+  const [sel] = useSelection('trash', { keys: rows.map((p) => p.id), actions: (keys, clear) => [{ label: t('trash.restore'), icon: 'refresh', run: () => { keys.forEach((id) => restorePage(id)); clear(); } }] });
   return (
     <div className="page-wrap">
       <div className="page-title-row"><div><h1 className="page-h1">{t('trash.title')}</h1><p className="dim">{t('trash.note')}</p></div></div>
       {rows.length === 0 ? <div className="empty-state"><Icon name="trash" size={20} /><p>{t('trash.empty')}</p></div>
-        : <div className="list">{rows.map((p) => <div key={p.id} className="list-row"><Icon name="doc" size={14} className="dim" /><span className="grow">{p.title || t('page.untitled')}</span><small className="dim">{ago(p.trashedAt)}</small><button type="button" className="btn sm" onClick={() => restorePage(p.id)}>{t('trash.restore')}</button></div>)}</div>}
+        : <div className="list" data-sel-scope="trash">{rows.map((p) => <div key={p.id} className="list-row" {...selProps(sel, p.id)}><Icon name="doc" size={14} className="dim" /><span className="grow">{p.title || t('page.untitled')}</span><small className="dim">{ago(p.trashedAt)}</small><button type="button" className="btn sm" onClick={() => restorePage(p.id)}>{t('trash.restore')}</button></div>)}</div>}
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { openMenu } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { PERF_DICT } from './perf-i18n.js';
 import './perf.css';
+import { Hide } from '../business/Redact.jsx';
 
 registerDict(PERF_DICT);
 // 평가 레포트(트랙 C, 유건 10/2 — 인트라넷 인사고과 레포트)는 그 탭을 열 때만 받는다
@@ -103,8 +104,8 @@ function Briefing({ space }) {
 function Numbers({ totals: s }) {
   const onTime = rate(s.tasks_on_time, s.tasks_due), done = rate(s.tasks_done_due, s.tasks_due);
   const cards = [
-    { label: t('perf.n.contract'), num: money(s.contract), sub: t('perf.n.contractSub') },
-    { label: t('perf.n.paid'), num: money(s.paid), sub: t('perf.n.paidSub') },
+    { label: t('perf.n.contract'), num: <Hide k="perf:contract">{money(s.contract)}</Hide>, sub: t('perf.n.contractSub') },
+    { label: t('perf.n.paid'), num: <Hide k="perf:paid">{money(s.paid)}</Hide>, sub: t('perf.n.paidSub') },
     { label: t('perf.n.done'), num: s.tasks_done, sub: t('perf.n.doneSub') },
     { label: t('perf.n.onTime'), num: onTime == null ? '—' : `${onTime}%`, sub: onTime == null ? t('perf.n.noDue') : t('perf.n.onTimeSub', { a: s.tasks_on_time, b: s.tasks_due }) },
     { label: t('perf.n.achieve'), num: done == null ? '—' : `${done}%`, sub: done == null ? t('perf.n.noDue') : t('perf.n.achieveSub', { a: s.tasks_done_due, b: s.tasks_due }) },
@@ -199,7 +200,7 @@ function Log({ report, space, requests = [], goals = [], reload, day, canAdd, un
     </li>;
   };
   const dayItems = (d) => <ul>
-    {d.deals.map((x, i) => <li key={`d${i}`} className="perf-item"><span className={`badge k-${x.kind}`}>{t(`perf.k.${x.kind}`)}</span><span className="perf-item-main">{x.title}{x.co > 1 && <small className="dim"> · {t('perf.co', { n: x.co })}</small>}</span><strong className="mono">{money(x.amount)}</strong></li>)}
+    {d.deals.map((x, i) => <li key={`d${i}`} className="perf-item"><span className={`badge k-${x.kind}`}>{t(`perf.k.${x.kind}`)}</span><span className="perf-item-main">{x.title}{x.co > 1 && <small className="dim"> · {t('perf.co', { n: x.co })}</small>}</span><strong className="mono"><Hide k={`perf:deal:${i}:${x.title}`}>{money(x.amount)}</Hide></strong></li>)}
     {d.tasks.map((x) => <li key={x.id} className="perf-item"><span className="badge">{t('perf.taskDone')}</span><span className="perf-item-main">{x.title}</span><small className={x.due_on ? (x.on_time ? 'ok' : 'late') : 'dim'}>{x.due_on ? t(x.on_time ? 'perf.onTime' : 'perf.late') : t('perf.noDue')}</small></li>)}
     {d.approvals > 0 && <li className="perf-item"><span className="badge">{t('perf.approvals', { n: d.approvals })}</span></li>}
     {d.pages.length > 0 && <li className="perf-item"><span className="badge">{t('perf.pages')}</span><span className="perf-item-main">{d.pages.map((x) => x.title || '—').join(', ')}</span></li>}
@@ -220,7 +221,7 @@ function Log({ report, space, requests = [], goals = [], reload, day, canAdd, un
         <Icon name="chevron" size={12} className="perf-fold-chev" />
         <span className="perf-fold-label">{label}</span>
         <span className="perf-fold-chips">{s.chips.map((c) => `${t(`perf.s.${c.key}`)} ${c.n}`).join(' · ')}</span>
-        {s.amount != null && <strong className="mono perf-fold-amount">{money(s.amount)}</strong>}
+        {s.amount != null && <strong className="mono perf-fold-amount"><Hide k={`perf:fold:${key}`} focusable={false}>{money(s.amount)}</Hide></strong>}
       </button>
       <div id={id} className="perf-fold-body" hidden={!on}>{body}</div>
     </li>;

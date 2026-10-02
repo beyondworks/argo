@@ -3,7 +3,7 @@ export const FILES_DICT = {
   'files.title': ['문서함', 'Files'],
   'files.sub': ['파일을 올리면 글자를 읽어 분류하고 거래처와 이어 둡니다. 견적서·계약서·서명본도 여기에 쌓입니다.', 'Upload files and Office reads the text, sorts them and links customers. Quotes, contracts and signed copies land here too.'],
   'files.upload': ['파일 올리기', 'Upload'], 'files.uploading': ['{done}/{total} 올리는 중…', 'Uploading {done}/{total}…'],
-  'files.newFolder': ['새 폴더', 'New folder'], 'files.drive': ['구글 드라이브', 'Google Drive'], 'files.refresh': ['새로고침', 'Refresh'],
+  'files.newFolder': ['새 폴더', 'New folder'], 'files.drive': ['구글 드라이브', 'Google Drive'], 'files.refresh': ['새로고침', 'Refresh'], 'files.refreshed': ['새로 불러왔습니다', 'Refreshed'], 'files.emptyTrash': ['휴지통 비우기', 'Empty trash'],
   'files.tab.all': ['전체 파일', 'All files'], 'files.tab.customers': ['거래처별', 'By customer'], 'files.tab.trash': ['휴지통', 'Trash'],
   'files.search': ['이름·본문·태그 검색', 'Search names, text and tags'],
   'files.drop': ['파일을 끌어다 놓거나 눌러서 고르세요', 'Drag files here or click to choose'],
@@ -49,7 +49,7 @@ export const FILES_DICT = {
   'files.folderDelete': ['폴더 지우기', 'Delete folder'], 'files.folderMove': ['폴더 옮기기', 'Move folder'], 'files.moveTo': ['어디로 옮길까요?', 'Move where?'],
   'files.folderCreated': ['"{name}" 폴더를 만들었습니다', 'Created folder "{name}"'],
   // 거래처별
-  'files.cust.missing': ['사업자등록증 없음', 'No business registration'], 'files.cust.missingN': ['사업자등록증 없는 거래처 {n}곳', '{n} customers without business registration'],
+  'files.cust.missing': ['사업자등록증 없음', 'No business registration'], 'files.cust.missingN': ['사업자등록증 없는 거래처 {n}곳', '{n} customers without business registration'], 'files.cust.missingOnly': ['사업자등록증 없는 곳', 'Missing registration'],
   'files.cust.pick': ['왼쪽에서 거래처를 고르세요.', 'Pick a customer on the left.'], 'files.cust.none': ['거래처가 없습니다. 업무 › 거래처에서 먼저 추가하세요.', 'No customers yet. Add them in Business › Customers first.'],
   'files.cust.files': ['파일 {n}건', '{n} files'], 'files.cust.n': ['{n}건', '{n}'], 'files.cust.empty': ['이 거래처에 이어진 파일이 없습니다. 견적서·계약서를 만들면 저절로 이어집니다.', 'No files linked to this customer yet. Quotes and contracts link here automatically.'],
   'files.cust.type': ['종류', 'Type'], 'files.cust.add': ['파일 붙이기', 'Attach files'], 'files.cust.top': ['문서 {n}건 · {top}', '{n} files · {top}'], 'files.cust.closed': ['종료', 'Closed'],

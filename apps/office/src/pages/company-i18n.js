@@ -21,7 +21,7 @@ export const COMPANY_DICT = {
   'company.select': ['{name} 고르기', 'Select {name}'], 'company.selectAll': ['전체 고르기', 'Select all'], 'company.selectedN': ['{n}개 고름', '{n} selected'], 'company.deleteSel': ['고른 항목 지우기', 'Delete selected'],
   'company.docs': ['서식에 들어가는 값', 'What documents print'],
   'company.docsHint': ['견적서·계약서의 공급자 칸입니다. 빈 칸은 서식에도 비어서 나갑니다.', 'These fill the supplier section of quotes and contracts. Empty ones stay blank on documents.'],
-  'company.docShort': ['서식', 'Docs'], 'company.docsMissing': ['빈 칸 {n}개', '{n} empty'], 'company.docsReady': ['모두 채움', 'All filled'], 'company.fill': ['채우기', 'Fill in'],
+  'company.docShort': ['서식', 'Docs'], 'company.keyHead': ['견적서·계약서의 ‘{key}’ 칸에 들어갑니다', 'Fills the “{key}” field on quotes and contracts'], 'company.keyQuote': ['견적서에서 보기', 'See it on a quote'], 'company.keyContract': ['계약서에서 보기', 'See it on a contract'], 'company.keyChange': ['서식 칸 바꾸기', 'Change field'], 'company.docsMissing': ['빈 칸 {n}개', '{n} empty'], 'company.docsReady': ['모두 채움', 'All filled'], 'company.fill': ['채우기', 'Fill in'],
   'company.trash': ['최근 지운 항목', 'Recently deleted'], 'company.restore': ['되살리기', 'Restore'], 'company.restored': ['되살렸습니다', 'Restored'],
   'company.readOnly': ['보기 전용 — 고치기는 조직 관리자만 할 수 있습니다.', 'View only — only organization admins can edit.'],
   'company.fromNotion': ['노션에서 옮김', 'Moved from Notion'],

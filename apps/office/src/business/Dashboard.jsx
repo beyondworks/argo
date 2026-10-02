@@ -12,6 +12,7 @@ import { CHARTS, METRICS, chartSeries, periodOrders, configureWidget, defaultDas
 import { PRESETS, firstDay, resolveFilters } from './dashboard-period.js';
 import { ResponsiveChart } from './ResponsiveChart.jsx';
 import { timeSeriesGeometry, nearestIndex, shortMoney } from './chart-geometry.js';
+import { Hide } from './Redact.jsx';
 
 const money = (value) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(Number(value));
 const ChartContext = createContext(null);
@@ -29,15 +30,15 @@ function SourceBreakdown({ sources }) {
     <header className="module-head"><Icon name="target" size={15} /><h3>{t('biz.sources.title')}</h3></header>
     <div className="biz-source-body">
       {!rows.length ? <p className="biz-empty">{t('biz.noRows')}</p> : <ul>{rows.map((row) => { const share = total > 0 ? Math.round(Math.max(0, Number(row.sales)) / total * 100) : 0; return <li key={row.source}>
-        <span className="name">{t(`bizui.source.${row.source}`)}</span><span className="bar"><i style={{ width: `${share}%` }} /></span><span className="share">{share}%</span><strong>{money(row.sales)}</strong></li>; })}</ul>}
+        <span className="name">{t(`bizui.source.${row.source}`)}</span><span className="bar"><i style={{ width: `${share}%` }} /></span><span className="share">{share}%</span><strong><Hide k={`biz:source:${row.source}:sales`}>{money(row.sales)}</Hide></strong></li>; })}</ul>}
       {!known && rows.length > 0 && <p className="dim small">{t('biz.sources.hint')}</p>}
     </div>
   </section>;
 }
 
 export function BusinessChart({ widget, report, onOpenOrder, filters }) {
-  if (widget.type === 'kpi') return <div className="biz-kpi-wrap"><strong className="biz-kpi metric">{money(report.metrics[widget.metric])}</strong></div>;
-  if (widget.type === 'table') { const rows = periodOrders(report.orders); return rows.length ? <div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr><th>{t('biz.order')}</th>{METRICS.map((m) => <th key={m} className="num">{t(`biz.metric.${m}`)}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => onOpenOrder(row.id)}>{row.title}</button></td>{METRICS.map((m) => <td key={m} className="num">{money(row[m])}</td>)}</tr>)}</tbody></table></div> : <p className="biz-empty">{t('biz.noRows')}</p>; }
+  if (widget.type === 'kpi') return <div className="biz-kpi-wrap"><strong className="biz-kpi metric"><Hide k={`biz:kpi:${widget.metric}`}>{money(report.metrics[widget.metric])}</Hide></strong></div>;
+  if (widget.type === 'table') { const rows = periodOrders(report.orders); return rows.length ? <div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr><th>{t('biz.order')}</th>{METRICS.map((m) => <th key={m} className="num">{t(`biz.metric.${m}`)}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => onOpenOrder(row.id)}>{row.title}</button></td>{METRICS.map((m) => <td key={m} className="num"><Hide k={`order:${row.id}:${m}`}>{money(row[m])}</Hide></td>)}</tr>)}</tbody></table></div> : <p className="biz-empty">{t('biz.noRows')}</p>; }
   if (widget.type === 'donut') {
     const parts = report.mix.filter((row) => ['service', 'product'].includes(row.kind));
     if (parts.some((row) => Number(row.amount) < 0)) return <p className="biz-empty">{t('biz.donut.negative')}</p>;
@@ -47,11 +48,11 @@ export function BusinessChart({ widget, report, onOpenOrder, filters }) {
     return <div className="biz-chart-legend"><svg className="biz-donut" viewBox="0 0 160 160" role="img" aria-label={t('biz.chart.donut')}><title>{t('biz.chart.donut')}</title>{parts.map((row) => {
       const length = Number(row.amount) / total * 100, start = offset; offset += length;
       return <circle key={row.kind} className={`biz-donut-${row.kind}`} cx="80" cy="80" r="58" fill="none" strokeWidth="24" pathLength="100" strokeDasharray={`${length} ${100 - length}`} strokeDashoffset={-start} transform="rotate(-90 80 80)" />;
-    })}</svg><ul>{parts.map((row) => <li key={row.kind}><i style={{ background: row.kind === 'service' ? 'var(--fg)' : 'var(--fg-3)' }} />{t(`biz.kind.${row.kind}`)} <strong>{money(row.amount)}</strong> <span className="dim">{(Number(row.amount) / total * 100).toFixed(1)}%</span></li>)}</ul></div>;
+    })}</svg><ul>{parts.map((row) => <li key={row.kind}><i style={{ background: row.kind === 'service' ? 'var(--fg)' : 'var(--fg-3)' }} />{t(`biz.kind.${row.kind}`)} <strong><Hide k={`biz:kind:${row.kind}`}>{money(row.amount)}</Hide></strong> <span className="dim">{(Number(row.amount) / total * 100).toFixed(1)}%</span></li>)}</ul></div>;
   }
   const series = chartSeries(report.daily, widget.metric, filters);
   if (!series.length) return <p className="biz-empty">{t('biz.noRows')}</p>;
-  return <><TimeSeries series={series} type={widget.type} label={t(`biz.metric.${widget.metric}`)} /><details><summary>{t('biz.chart.data')}</summary><div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr><th>{t('biz.chart.date')}</th><th className="num">{t(`biz.metric.${widget.metric}`)}</th></tr></thead><tbody>{series.map((p) => <tr key={p.date}><td className="mono">{p.date}</td><td className="num">{money(p.value)}</td></tr>)}</tbody></table></div></details></>;
+  return <><TimeSeries series={series} type={widget.type} label={t(`biz.metric.${widget.metric}`)} /><details><summary>{t('biz.chart.data')}</summary><div className="table-wrap biz-table-wrap"><table className="table biz-table"><thead><tr><th>{t('biz.chart.date')}</th><th className="num">{t(`biz.metric.${widget.metric}`)}</th></tr></thead><tbody>{series.map((p) => <tr key={p.date}><td className="mono">{p.date}</td><td className="num"><Hide k={`biz:${widget.metric}:${p.date}`}>{money(p.value)}</Hide></td></tr>)}</tbody></table></div></details></>;
 }
 
 /** 선·막대 그래프 — 마우스를 올리면 가장 가까운 날짜에 세로선·점과 '날짜 · 값'(유건 9/30). 키보드·화면 읽기는 아래 '데이터 표'가 맡는다 */

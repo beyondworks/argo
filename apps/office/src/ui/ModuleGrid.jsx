@@ -6,6 +6,7 @@ import { t } from '../core/i18n.js';
 import { heightOf, minHeight, colMin, layoutRows, placeRows } from '../core/layout.js';
 import { flipPrepare } from '../core/motion.js';
 import { record, attach } from '../core/history.js';
+import { useSelection, selProps } from '../core/selection.js';
 
 // 옮기기·높이·열 경계선(9차, 노션식 블록) — 손잡이는 늘 그리고, 끄는 코드는 처음 다가갈 때 불러온다(첫 화면 150KB 상한)
 const once = (load) => { let p; return () => (p ??= load().catch((error) => { p = null; throw error; })); }; // 실패하면 다음에 다시 받는다(배포 뒤 옛 탭)
@@ -20,7 +21,7 @@ class ModuleBoundary extends Component {
   render() { return this.state.failed ? <p className="mod-empty" role="alert">{t('mod.failed')}</p> : this.props.children; }
 }
 
-function ModuleCard({ item, space, items, rows, place, canEdit, editable, commit, resolveModule, bodyClassName }) {
+function ModuleCard({ item, space, items, rows, place, canEdit, editable, commit, resolveModule, bodyClassName, sel }) {
   const mod = resolveModule(item), own = heightOf(item);
   const card = useRef(null);
   // 높이 손잡이가 알리는 값 = 지금 카드 높이(8px 눈금) — 정한 적 없는 모듈은 내용대로라 그릴 때 값이 없다. 크기가 바뀔 때마다(내용·끌기·좁은 폭) 다시 잰다
@@ -33,7 +34,8 @@ function ModuleCard({ item, space, items, rows, place, canEdit, editable, commit
   }, [editable]);
   const set = (patch, quiet) => commit(items.map((x) => (x.id === item.id ? { ...x, ...patch } : x)), quiet); // quiet = 되돌리기 기록에 쌓지 않는다(보기·필터 같은 모듈 설정)
   // 끄기·키보드·두 번 누르기는 module-resize.js(높이)·module-move.js(옮기기)가 맡는다 — 지금 자리(DOM)·줄 목록·항목을 넘긴다
-  const run = (load, kind, ...args) => load().then((m) => card.current && m[kind]?.({ el: card.current, items, rows, modOf: resolveModule, commit, canEdit, title: mod.title }, ...args), () => {});
+  // group = 고른 모듈(11차) — 고른 모듈의 손잡이를 잡으면 고른 것 전부가 같이 간다
+  const run = (load, kind, ...args) => load().then((m) => card.current && m[kind]?.({ el: card.current, items, rows, modOf: resolveModule, commit, canEdit, title: mod.title, group: sel.has(item.id) && sel.size > 1 ? [...sel] : null }, ...args), () => {});
   const edge = (kind, e) => run(resizer, kind, e);
   const menuOwn = useRef(null); // 카드 본문이 더하는 메뉴(예: 여러 보기의 보기 고르기)
   const [sub, setSub] = useState(''); // 카드 본문이 머리에 붙이는 작은 이름(예: 지금 보기 — "캘린더 · 월") — 같은 모듈을 여러 개 놓았을 때 구분(유건 10/1 5차)
@@ -45,7 +47,7 @@ function ModuleCard({ item, space, items, rows, place, canEdit, editable, commit
   ];
   const Body = mod.render;
   return (
-    <section ref={card} data-mod={item.id} className={`module size-${item.size}${own ? ' sized-h own-h' : mod.stack ? ' fixed-h' : ''}`}
+    <section ref={card} data-mod={item.id} {...selProps(sel, item.id)} className={`module size-${item.size}${own ? ' sized-h own-h' : mod.stack ? ' fixed-h' : ''}`}
       style={{ '--x': place.x, '--w': place.w, '--y': `${place.top}px`, '--o': place.o, ...(own ? { '--rh': `${own}px`, '--mh': `${own}px` } : {}) }} aria-label={sub ? `${mod.title} · ${sub}` : mod.title} {...menuProps(menu)}>
       <header className="module-head">
         {mod.icon && <Icon name={mod.icon} size={14} className="dim" />}
@@ -106,6 +108,10 @@ export function ModuleGrid({ id, items, canEdit, locked = false, onChange, resol
   apply.current = commit;
   useEffect(() => attach(id, { items: () => latest.current.items, apply: (next) => apply.current(next, true) }), [id]); // ⌘Z 대상(화면에 있는 동안)
   const visible = displayed.filter((item) => !item.hidden), ids = visible.map((item) => item.id).join();
+  // 여러 개 고르기(11차) — 끌어 감싸기·⇧/⌘ 클릭·⌘A로 고른 모듈. 선택 막대 = 숨기기(저장·되돌리기 한 번)
+  const [sel] = useSelection(`mod:${id}`, { keys: visible.map((item) => item.id), actions: (keys, clear) => [
+    canEdit && !pending && !locked && { label: t('mod.hide'), icon: 'eyeOff', run: () => { const pick = new Set(keys); commit(displayed.map((x) => (pick.has(x.id) ? { ...x, hidden: true } : x))); clear(); } },
+  ] });
   // 높이를 정하지 않은 모듈은 내용 높이라 화면에서 재서 쌓는다(그리기 전에 한 번, 내용·폭이 바뀌면 다시)
   const [seen, setSeen] = useState(null), last = useRef(null), hold = useRef(false);
   useLayoutEffect(() => {
@@ -135,8 +141,8 @@ export function ModuleGrid({ id, items, canEdit, locked = false, onChange, resol
   const live = canEdit && !pending && !locked;
   // 열 경계선 — 올리면 세로 선, 끌어 두 열 폭을 나눈다(합 유지, 1/24 눈금), 두 번 누르면 똑같이. 키보드 ←/→
   const cols = (r, k, kind, e) => resizer().then((m) => grid.current && m[kind]?.({ el: grid.current, items: displayed, rows, modOf: resolveModule, commit, canEdit: live, r, k }, e), () => {});
-  return <div className="grid" ref={grid} aria-busy={pending} style={{ '--gh': `${height}px` }}>
-    {visible.map((item) => <ModuleCard key={item.id} item={item} space={space} items={displayed} rows={rows} commit={commit} canEdit={live} editable={canEdit} resolveModule={resolveModule} bodyClassName={bodyClassName} place={{ ...pos.get(item.id), min: minHeight(resolveModule(item)) }} />)}
+  return <div className="grid" ref={grid} aria-busy={pending} data-sel-scope={`mod:${id}`} data-sel-units="" style={{ '--gh': `${height}px` }}>
+    {visible.map((item) => <ModuleCard key={item.id} item={item} space={space} items={displayed} rows={rows} commit={commit} canEdit={live} editable={canEdit} resolveModule={resolveModule} bodyClassName={bodyClassName} sel={sel} place={{ ...pos.get(item.id), min: minHeight(resolveModule(item)) }} />)}
     {canEdit && rows.flatMap((row, r) => row.slice(1).map((_, i) => {
       const k = i + 1, x = row.slice(0, k).reduce((s, col) => s + col.w, 0);
       return <span key={`${r}:${k}`} className="col-gap" role="separator" aria-orientation="vertical" aria-label={t('mod.resize.w')} tabIndex={0} aria-valuenow={Math.round((x / 24) * 100)} aria-valuemin={0} aria-valuemax={100} aria-disabled={!live || undefined}

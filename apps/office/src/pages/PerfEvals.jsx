@@ -15,6 +15,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { Markdown } from '../ui/Markdown.jsx';
 import { EVAL_DICT } from './eval-i18n.js';
 import './company.css';
+import { Hide } from '../business/Redact.jsx';
 
 registerDict(EVAL_DICT);
 const locale = () => (getLang() === 'en' ? 'en-US' : 'ko-KR');
@@ -94,7 +95,7 @@ function Basis({ b }) {
   if (!b?.totals) return <p className="dim small">{t('ev.basisNone')}</p>;
   const s = b.totals, on = rate(s.tasks_on_time, s.tasks_due);
   return <div className="ev-box"><span className="label">{t('ev.basis')} · {b.period}</span>
-    <div className="ev-basis"><span>{t('ev.b.contract')} <b>{money(s.contract)}</b></span><span>{t('ev.b.paid')} <b>{money(s.paid)}</b></span>
+    <div className="ev-basis"><span>{t('ev.b.contract')} <b><Hide k="eval:contract">{money(s.contract)}</Hide></b></span><span>{t('ev.b.paid')} <b><Hide k="eval:paid">{money(s.paid)}</Hide></b></span>
       <span>{t('ev.b.done')} <b>{s.tasks_done ?? 0}</b></span><span>{t('ev.b.onTime')} <b>{on == null ? '—' : `${on}%`}</b></span>
       <span>{t('ev.b.approvals')} <b>{s.approvals ?? 0}</b></span><span>{t('ev.b.pages')} <b>{s.pages ?? 0}</b></span></div></div>;
 }

@@ -25,6 +25,7 @@ import { flushNow } from './core/sync.js';
 import { Login } from './pages/Login.jsx';
 import { loadAccounts, pullMail } from './core/mail.js';
 import { reloadOnce } from './core/chunk-reload.js';
+import { SelectionHost } from './core/selection.js'; // 여러 개 고르기(11차) — 감지 코드만 첫 화면, 선택 상자·막대는 쓸 때 받는다
 
 const BusinessPage = lazy(() => import('./business/BusinessPage.jsx'));
 // ⌘K 창은 열 때만 받는다(첫 화면 150KB 상한 — 9/30 오른쪽 패널·결재 카드 버튼을 붙이며 옮김)
@@ -245,6 +246,7 @@ export default function App() {
       {ui.palette && <Lazy fallback={null} quiet><Palette open onClose={() => setUi({ palette: false })} space={r.space} /></Lazy>}
       <Lazy fallback={null} quiet><ShareDialog /><AssignSheet /><HistorySheet /></Lazy>
       <Lazy fallback={null} quiet><Compose /></Lazy>
+      <Lazy fallback={null} quiet reset={path}><SelectionHost /></Lazy>
       <MenuHost />
       <ToastHost />
     </DndContext>

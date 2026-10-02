@@ -166,7 +166,7 @@ function CrewSection({ space, crews, handle }) {
       {groups.map((g) => {
         const mode = g.key === 'pinned' ? 'pin' : 'sort', order = g.crews.map((c) => c.id), label = t(`crew.group.${g.key}`);
         return <div key={g.key} className="crew-group" role="group" aria-label={label}>
-          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><span>{label}</span><small>{g.crews.length}</small></button>
+          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><span>{label}</span><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><small>{g.crews.length}</small></button>
           {(!fold[g.key] || query) && <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
             {g.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}`} order={order} mode={mode} movable={g.movable} />)}
           </SortableContext>}

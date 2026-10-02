@@ -114,7 +114,7 @@ const chartModule={exports:{}};
 const responsiveModule={exports:{}};
 const responsiveSource=readFileSync(new URL('../src/business/ResponsiveChart.jsx',import.meta.url),'utf8').replace(/^import .*;$/gm,'');
 new Function('require','module','exports','useLayoutEffect','useRef','useState','horizontalBarGeometry',transformSync(responsiveSource,{loader:'jsx',jsx:'automatic',format:'cjs'}).code)(require,responsiveModule,responsiveModule.exports,useLayoutEffect,useRef,useState,horizontalBarGeometry);
-new Function('require','module','exports','getLang','t','METRICS','chartSeries','createContext','ResponsiveChart','timeSeriesGeometry','useState','useRef','nearestIndex','shortMoney',chartCompiled)(require,chartModule,chartModule.exports,()=> 'en',k=>k,model.METRICS,model.chartSeries,createContext,responsiveModule.exports.ResponsiveChart,timeSeriesGeometry,useState,useRef,nearestIndex,shortMoney);
+new Function('require','module','exports','getLang','t','METRICS','chartSeries','createContext','ResponsiveChart','timeSeriesGeometry','useState','useRef','nearestIndex','shortMoney','Hide',chartCompiled)(require,chartModule,chartModule.exports,()=> 'en',k=>k,model.METRICS,model.chartSeries,createContext,responsiveModule.exports.ResponsiveChart,timeSeriesGeometry,useState,useRef,nearestIndex,shortMoney,({children})=>children); // Hide = 가림(12차) — 그리기 시험에서는 값 그대로
 test('actual React chart renders negative bars, data table, and rejects misleading negative donut',()=>{
  const report={metrics:{sales:5},daily:[{date:'2026-09-01',sales:20},{date:'2026-09-02',sales:-15}],mix:[{kind:'product',amount:-15}],orders:[]};
  const render=type=>renderToStaticMarkup(createElement(chartModule.exports.BusinessChart,{widget:{type,metric:'sales'},report,onOpenOrder:()=>{}}));

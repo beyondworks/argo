@@ -30,3 +30,11 @@ export function personPayload(form) {
 
 /** 계정 멤버 중 아직 명부 행과 연결 안 된 사람(연결 고르기) — 지금 연결된 계정은 남긴다 */
 export const linkable = (people, current) => (people ?? []).filter((p) => p.user_id && (p.id === null || p.user_id === current));
+
+/** 명부에서 고를 수 있는 줄(12차 제보 — 회색 4·체크 3·막대 4가 달랐다): 화면의 모든 줄(계정만 있는 직원 포함)이 같은 키로 체크박스·회색·개수가 하나다.
+ *  ids = 지울 수 있는 명부 직원만(계정만 있는 직원은 계정이라 지우지 않는다) */
+export const rowKeyOf = (p) => p.id ?? `u:${p.user_id}`;
+export function selectable(list, sel) {
+  const keys = list.map(rowKeyOf), ids = list.filter((p) => p.id).map((p) => p.id);
+  return { keys, ids, picked: keys.filter((k) => sel.has(k)), deletable: ids.filter((id) => sel.has(id)), all: keys.length > 0 && keys.every((k) => sel.has(k)) };
+}

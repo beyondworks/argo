@@ -31,7 +31,7 @@ export default function Drive({ space, folderId, onClose }) {
   const folder = cur.path.at(-1)?.id ?? null;
   const load = useCallback(() => {
     setLoading(true); setError(null); setSel(new Set());
-    driveList({ view: cur.view, folder: folder ?? '', q: cur.q }).then((d) => setRows(d.files ?? [])).catch((e) => { setRows([]); setError(e); if (e.code === 'expired') setStatus((s) => ({ ...s, expired: true })); }).finally(() => setLoading(false));
+    return driveList({ view: cur.view, folder: folder ?? '', q: cur.q }).then((d) => { setRows(d.files ?? []); return true; }).catch((e) => { setRows([]); setError(e); if (e.code === 'expired') setStatus((s) => ({ ...s, expired: true })); return false; }).finally(() => setLoading(false));
   }, [cur.view, folder, cur.q]);
   useEffect(() => { if (status?.connected) load(); }, [status?.connected, load]);
 
@@ -79,12 +79,10 @@ export default function Drive({ space, folderId, onClose }) {
           </nav>
           <section className="drive-main">
             <div className="drive-tools">
-              <button type="button" className="icon-btn" aria-label="back" disabled={nav.at === 0} onClick={() => setNav((n) => ({ ...n, at: n.at - 1 }))}><Icon name="back" /></button>
-              <button type="button" className="icon-btn" aria-label="forward" disabled={nav.at >= nav.stack.length - 1} onClick={() => setNav((n) => ({ ...n, at: n.at + 1 }))}><Icon name="chevron" /></button>
-              <form className="files-search grow" onSubmit={(e) => { e.preventDefault(); push({ view: cur.view, path: cur.path, q: qInput.trim() }); }}>
+              <form className="search-field files-search grow" onSubmit={(e) => { e.preventDefault(); push({ view: cur.view, path: cur.path, q: qInput.trim() }); }}>
                 <Icon name="search" size={14} /><input className="input" type="search" value={qInput} placeholder={t('files.dv.search')} aria-label={t('files.dv.search')} onChange={(e) => setQ(e.target.value)} /></form>
-              <button type="button" className="icon-btn" aria-label={t('files.refresh')} onClick={load} disabled={loading}><Icon name="refresh" /></button>
-              <button type="button" className="btn sm" onClick={() => setMk('')}><Icon name="folder" size={13} />{t('files.newFolder')}</button>
+              <button type="button" className="icon-btn" aria-label={t('files.refresh')} onClick={() => load().then((ok) => ok && showToast(t('files.refreshed')))} disabled={loading}><Icon name="refresh" /></button>
+              <button type="button" className="btn" onClick={() => setMk('')}><Icon name="folder" size={13} />{t('files.newFolder')}</button>
             </div>
             {(status.expired || error?.code === 'expired' || error?.code === 'scopes') && <div className="mail-banner"><span className="dot ask" />{t('files.dv.expired')}<button type="button" className="btn sm" onClick={() => connect(status.write)}>{t('files.dv.reconnect')}</button></div>}
             {needWrite && <div className="mail-banner"><span className="dot ask" />{t('files.dv.needWrite')}<button type="button" className="btn sm" onClick={() => connect(true)}>{t('files.dv.grantWrite')}</button></div>}
@@ -100,14 +98,14 @@ export default function Drive({ space, folderId, onClose }) {
               {rows === null || (loading && !rows.length) ? <div className="skeleton-lines"><span /><span /><span /></div>
                 : !rows.length ? <p className="dim drive-empty">{t('files.dv.empty')}</p>
                   : rows.map((f) => { const fav = favs.some((x) => x.id === f.id); return <div key={f.id} role="listitem" className={`drive-row${sel.has(f.id) ? ' on' : ''}`}>
-                    {!send && <input type="checkbox" disabled={f.isFolder} checked={sel.has(f.id)} aria-label={f.name} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n; })} />}
+                    {send ? <span /> : <input type="checkbox" disabled={f.isFolder} checked={sel.has(f.id)} aria-label={f.name} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n; })} />}
                     {f.isFolder ? <Icon name="folder" size={16} /> : <FIcon name={kindIcon(f)} size={16} />}
                     <button type="button" className="drive-name" title={f.name} onClick={() => (f.isFolder ? openFolder(f) : f.webViewLink && window.open(f.webViewLink, '_blank', 'noopener'))}>{f.name}</button>
                     <span className="dim small c-owner">{f.owners ?? ''}</span>
                     <span className="dim small num c-size">{f.isFolder || f.size == null ? '' : fmtBytes(f.size)}</span>
                     <span className="dim small c-date">{f.modifiedTime ? day(f.modifiedTime) : ''}</span>
                     <button type="button" className={`drive-star${fav ? ' on' : ''}`} aria-pressed={fav} aria-label={t(fav ? 'files.dv.favRemove' : 'files.dv.favAdd')} title={t(fav ? 'files.dv.favRemove' : 'files.dv.favAdd')} onClick={() => setFavs(toggleFav(f))}><Icon name="star" size={14} /></button>
-                    {!f.isFolder && f.webViewLink && <a className="icon-btn" href={f.webViewLink} target="_blank" rel="noreferrer noopener" aria-label={t('files.openDrive')} title={t('files.openDrive')}><FIcon name="link" size={14} /></a>}
+                    {!f.isFolder && f.webViewLink ? <a className="icon-btn sm" href={f.webViewLink} target="_blank" rel="noreferrer noopener" aria-label={t('files.openDrive')} title={t('files.openDrive')}><FIcon name="link" size={14} /></a> : <span />}
                   </div>; })}
             </div>
           </section>

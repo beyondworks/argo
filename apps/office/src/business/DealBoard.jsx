@@ -7,7 +7,7 @@ import { navigate } from '../core/router.jsx';
 import { useStore } from '../core/store.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
-import { Redact } from './Redact.jsx';
+import { Redact, Hide } from './Redact.jsx';
 import { OwnerField } from './Owners.jsx';
 import { businessError } from './data.js';
 import { useMarketing, marketingError } from './marketing-data.js';
@@ -83,11 +83,11 @@ export function DealBoard({ data, blocked, run, openOrder, space, call }) {
           const drop = drag && (drag.next?.to === stage ? { ...drag.next, title: drag.title, min: drag.min } : drag.back?.to === stage ? { ...drag.back, revert: true, title: drag.title, min: drag.min } : null);
           const dropProps = drag ? { onDragOver: (event) => { if (drop) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }, onDrop: (event) => { event.preventDefault(); if (drop) setStep(drop); setDrag(null); } } : {};
           return <section className={`deal-lane${group === 'stage' ? ` stage-${stage}` : ''}${drag ? (drop ? ' drop-ok' : ' drop-no') : ''}`} key={stage} aria-label={laneName(stage)} {...dropProps}>
-          <header className="deal-lane-head"><h2>{laneName(stage)}</h2><span className="count">{lane.length}</span><span className="sum">{money(lane.reduce((n, d) => n + d.amounts.supply, 0))}</span></header>
+          <header className="deal-lane-head"><h2>{laneName(stage)}</h2><span className="count">{lane.length}</span><span className="sum"><Hide k={`lane:${group}:${stage}:sum`} focusable={false}>{money(lane.reduce((n, d) => n + d.amounts.supply, 0))}</Hide></span></header>
           {lane.length ? lane.map(card) : <p className="deal-empty">{label('laneEmpty')}</p>}
         </section>; })}</div>
       : cancelled.length ? <div className="table-wrap bizui-table-wrap"><table className="table bizui-table"><thead><tr><th>{label('titleField')}</th><th>{label('customer')}</th><th>{label('cancelledAt')}</th><th className="num">{label('total')}</th></tr></thead>
-          <tbody>{cancelled.map(({ order, amounts }) => <tr key={order.id}><td><button className="bizui-link" onClick={() => openOrder(order.id)}>{order.title}</button></td><td>{customer(order.customer_id)}</td><td className="mono">{day(order.cancelled_at)}</td><td className="num">{money(amounts.supply)}</td></tr>)}</tbody></table></div>
+          <tbody>{cancelled.map(({ order, amounts }) => <tr key={order.id}><td><button className="bizui-link" onClick={() => openOrder(order.id)}>{order.title}</button></td><td>{customer(order.customer_id)}</td><td className="mono">{day(order.cancelled_at)}</td><td className="num"><Redact {...orderRedact(order, 'amount', run, blocked)}>{money(amounts.supply)}</Redact></td></tr>)}</tbody></table></div>
         : <p className="empty-state">{label('noCancelled')}</p>}
     {step && <StepForm step={step} blocked={blocked} dismiss={() => setStep(null)} run={run} />}
   </>;
@@ -113,7 +113,7 @@ function StepForm({ step, blocked, dismiss, run }) {
       {step.action !== 'order.reopen' && <label className="field-block bizui-field"><span className="label">{label('stepDate')}</span><input className="input" type="date" required min={step.min} max={today()} value={at} onChange={(e) => setAt(e.target.value)} /></label>}
       {step.payload.amount != null && (partial
         ? <label className="field-block bizui-field"><span className="label">{label('amount')}</span><input className="input" type="number" min="1" max={step.payload.amount} step="1" required value={amount} onChange={(e) => setAmount(e.target.value)} /><span className="dim small">{label('limit')}: {money(step.payload.amount)}</span></label>
-        : <p>{label('amount')} <strong className="mono">{money(step.payload.amount)}</strong></p>)}
+        : <p>{label('amount')} <strong className="mono"><Hide k={`step:${step.payload.order_id ?? ''}:amount`}>{money(step.payload.amount)}</Hide></strong></p>)}
       {step.revert && <p className="dim small">{label(`backHelp.${step.payload.kind ?? 'reopen'}`)}</p>}
       {error && <p className="bizui-error" role="alert">{t(error)}</p>}
     </form>
@@ -189,7 +189,7 @@ export function DealDetail({ order, data, blocked, run, space, launch, refresh, 
       <button type="button" className="btn sm" onClick={() => navigate(`${baseOf(space)}/contracts?new=contract&order=${order.id}`)}><Icon name="sign" size={12} /> {label('makeContract')}</button>
     </div>}
     {lines.map((line) => <article className="bizui-line" key={line.id}><div className="bizui-line-head"><strong>{line.name}</strong><span className="badge">{label(`tax.${line.tax_type}`)}</span></div>
-      <p className="mono">{line.quantity} × {money(line.unit_price)} + {label('vat')} {money(line.vat)}</p>
+      <p className="mono">{line.quantity} × <Redact {...orderRedact(order, 'amount', run, blocked)}>{money(line.unit_price)}</Redact> + {label('vat')} <Redact {...orderRedact(order, 'amount', run, blocked)}>{money(line.vat)}</Redact></p>
       {line.kind === 'product' && <p>{label('fulfilled')} <span className="mono">{line.fulfilled}</span> · {label('returned')} <span className="mono">{line.returned}</span></p>}
       {order.status === 'confirmed' && <div className="bizui-actions"><button className="btn sm" disabled={blocked || line.fulfilled >= line.quantity} onClick={() => launch('fulfill', { id: line.id, quantity: line.quantity - line.fulfilled, max: line.quantity - line.fulfilled, kind: line.kind })}>{label(line.kind === 'service' ? 'deliver' : 'ship')}</button>{line.kind === 'product' && <button className="btn sm" disabled={blocked || line.fulfilled <= line.returned} onClick={() => launch('return', { id: line.id, quantity: 1, max: line.fulfilled - line.returned })}>{label('return')}</button>}</div>}
     </article>)}
@@ -206,7 +206,7 @@ export function DealDetail({ order, data, blocked, run, space, launch, refresh, 
       <textarea className="input area" maxLength={10000} placeholder={label('notePlaceholder')} value={note} disabled={blocked} onChange={(e) => setNote(e.target.value)} />
       <div className="bizui-actions">
         <button type="submit" className="btn sm" disabled={blocked || !note.trim()}>{label('addNote')}</button>
-        {linkable.length > 0 && <select className="input" disabled={blocked} value="" aria-label={label('linkPage')} onChange={(e) => { const p = pages.find((x) => x.id === e.target.value); if (p) run('link.add', { order_id: order.id, kind: 'page', ref: p.id, title: p.title || '' }).catch(() => {}); }}>
+        {linkable.length > 0 && <select className="input sm" disabled={blocked} value="" aria-label={label('linkPage')} onChange={(e) => { const p = pages.find((x) => x.id === e.target.value); if (p) run('link.add', { order_id: order.id, kind: 'page', ref: p.id, title: p.title || '' }).catch(() => {}); }}>
           <option value="">{label('linkPage')}</option>{linkable.map((p) => <option key={p.id} value={p.id}>{p.title || label('untitled')}</option>)}</select>}
       </div>
     </form>

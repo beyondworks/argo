@@ -148,3 +148,10 @@ export function uploadSummary(names, results) {
   if (!failed) return names.length === 1 ? { key: 'files.uploaded1', vars: { name: names[0] } } : { key: 'files.uploadedN', vars: { n: ok } };
   return { key: 'files.uploadedMixed', vars: { ok, failed } };
 }
+
+/** 문서함 머리 ⋯ 메뉴(유건 10/2 10차 — '새로고침' 하나라 눌러도 반응이 없어 보였다). 탭마다 그 화면에서 할 수 있는 일: 화면이 id를 메뉴 항목으로 바꾼다 */
+export function pageMenuIds(tab, { rows = 0, allSelected = false, purgeable = 0 } = {}) {
+  if (tab === 'trash') return ['refresh', 'sep', purgeable ? 'emptyTrash' : 'emptyTrash:off'];
+  if (tab === 'customers') return ['refresh', 'drive'];
+  return ['refresh', 'newFolder', 'drive', ...(rows ? [allSelected ? 'selNone' : 'selAll'] : [])];
+}

@@ -220,7 +220,7 @@ export default function SignPage({ token }) {
                   : <textarea id={`ta-${it.id}`} value={it.text} rows={1} placeholder={t('sign.slotText')} style={{ fontSize: (it.sizeR || 0.02) * lr.height }}
                     onChange={(ev) => { update(it.id, { text: ev.target.value }); ev.target.style.height = 'auto'; ev.target.style.height = `${ev.target.scrollHeight}px`; }} onFocus={() => setActiveIdx(idx)} onPointerDown={(e) => e.stopPropagation()} />}
               </div>
-              <button type="button" className="del" aria-label={t('docs.item.remove')} onClick={() => remove(it.id)}>×</button>
+              <button type="button" className="del" aria-label={t('docs.item.remove')} onClick={() => remove(it.id)}><Icon name="x" size={12} /></button>
               <div className="rz" onPointerDown={(e) => start(e, it, 'resize')} title={t('sign.resize')} />
             </div>;
           })}

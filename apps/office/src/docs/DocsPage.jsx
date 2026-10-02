@@ -22,6 +22,8 @@ import { fileToDocStore, hasDocStore } from './doc-store-bridge.js';
 import { fileSignedCopies } from './filing.js';
 import { mailAccounts, resendLink, sendCompletedNotice } from './esign-flow.js';
 import { DOC } from './doc-text.js';
+import { useSelection, selProps } from '../core/selection.js';
+import { Hide } from '../business/Redact.jsx';
 
 const when = (v) => (v ? new Date(v).toLocaleString(getLang() === 'en' ? 'en-US' : 'ko-KR', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 const day = (v) => (v ? new Date(v).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '—');
@@ -167,6 +169,15 @@ export default function DocsPage({ space, params }) {
     canWrite && { label: t('esign.act.delete'), icon: 'trash', danger: true, run: () => setConfirm({ kind: 'delete', row }) },
   ], { anchor: event.currentTarget });
 
+  // 여러 개 고르기(11차) — 문서는 한 번에 다운로드, 전자서명은 완료본 한 번에 받기(행 메뉴와 같은 동작). 지우기·취소는 한 건씩 확인 창으로
+  const [docSel] = useSelection(data && tab === 'docs' ? 'docs' : null, { keys: (data?.docs ?? []).map((d) => d.id), actions: (keys) => [
+    { label: t('docs.act.download'), icon: 'download', run: () => data.docs.filter((d) => keys.includes(d.id)).reduce((p, row) => p.then(() => openDoc(row, 'download')).catch(() => showToast(t('docs.err.file'))), Promise.resolve()) },
+  ] });
+  const [esSel] = useSelection(data && tab === 'esign' ? 'esign' : null, { keys: (data?.esign ?? []).map((e) => e.id), actions: (keys) => {
+    const done = data.esign.filter((e) => keys.includes(e.id) && e.final_path);
+    return [done.length > 0 && { label: t('esign.act.downloadFinal'), icon: 'download', run: async () => { const be = await backend(); for (const row of done) download(await be.esignPdf(space, row, 'final'), signedFilename(row.title)); } }];
+  } });
+
   const runConfirm = async () => {
     const { kind, row } = confirm;
     setConfirm(null);
@@ -189,7 +200,7 @@ export default function DocsPage({ space, params }) {
 
   // ── 작성 화면 ──
   if (newKind) return <section className="page-wrap wide docs-page">
-    <header className="page-title-row"><div><button type="button" className="btn sm ghost docs-back" onClick={() => go(null)}><Icon name="back" size={13} />{t('docs.title')}</button><h1 className="page-h1">{t(newKind === 'contract' ? 'docs.new.contract' : 'docs.new.quote')}</h1></div></header>
+    <header className="page-title-row"><div><button type="button" className="page-back" onClick={() => go(null)}><Icon name="back" size={12} />{t('docs.title')}</button><h1 className="page-h1">{t(newKind === 'contract' ? 'docs.new.contract' : 'docs.new.quote')}</h1></div></header>
     {initial ? <DocEditor key={`${newKind}:${params.get('order') ?? ''}:${params.get('from') ?? ''}:${params.get('customer') ?? ''}`} space={space} kind={newKind} initial={initial} business={business}
       onCancel={() => go(null)} onDone={(row, extra) => { setResult({ row, bytes: extra.bytes }); docs.reload(); business.refresh?.().catch?.(() => {}); go(null); }} /> : <p role="status">{t('biz.loading')}</p>}
   </section>;
@@ -204,14 +215,14 @@ export default function DocsPage({ space, params }) {
   const orders = business.data?.orders ?? [];
   const orderTitle = (id) => orders.find((o) => o.id === id)?.title;
   return <section className="page-wrap wide docs-page">
-    <header className="page-title-row"><div><h1 className="page-h1">{t('docs.title')}</h1><p className="dim">{t('docs.subtitle')}</p></div>
-      {canWrite && <div className="docs-head-actions">
-        <button type="button" className="btn" onClick={() => go({ new: 'quote' })}><Icon name="plus" size={13} />{t('docs.new.quote')}</button>
-        <button type="button" className="btn" onClick={() => go({ new: 'contract' })}><Icon name="plus" size={13} />{t('docs.new.contract')}</button>
-        <button type="button" className="btn primary" onClick={() => go({ esign: 'new' })}><Icon name="stamp" size={13} />{t('esign.new')}</button>
+    <header className="page-title-row"><div><h1 className="page-h1">{t('docs.title')}</h1><p className="dim">{t('docs.subtitle')}</p>
+      {getMode() === 'sample' && <p className="page-note"><Icon name="info" size={13} />{t('docs.sampleNote')}</p>}</div>
+      {canWrite && <div className="row-actions docs-head-actions">
+        <button type="button" className="btn sm" onClick={() => go({ new: 'quote' })}><Icon name="plus" size={13} />{t('docs.new.quote')}</button>
+        <button type="button" className="btn sm" onClick={() => go({ new: 'contract' })}><Icon name="plus" size={13} />{t('docs.new.contract')}</button>
+        <button type="button" className="btn sm primary" onClick={() => go({ esign: 'new' })}><Icon name="stamp" size={13} />{t('esign.new')}</button>
       </div>}
     </header>
-    {getMode() === 'sample' && <p className="docs-sample-note small"><Icon name="info" size={13} />{t('docs.sampleNote')}</p>}
     {result && <div className="docs-result" role="status">
       <Icon name="file" size={15} /><strong>{result.row.title}</strong><span className="dim small">{t('docs.result.saved')}</span><span className="spacer" />
       <button type="button" className="btn sm" onClick={() => go({ open: `doc:${result.row.id}` })}><Icon name="eye" size={13} />{t('docs.act.preview')}</button>
@@ -220,28 +231,27 @@ export default function DocsPage({ space, params }) {
       {result.row.kind === 'contract' && <button type="button" className="btn sm primary" onClick={() => startEsignFromDoc(result.row).catch(() => showToast(t('esign.err.create')))}><Icon name="stamp" size={13} />{t('docs.act.esign')}</button>}
       <button type="button" className="icon-btn" aria-label={t('close')} onClick={() => setResult(null)}><Icon name="x" size={14} /></button>
     </div>}
-    <div className="tabs" role="tablist">
-      <button type="button" role="tab" aria-selected={tab === 'docs'} className={`tab${tab === 'docs' ? ' on' : ''}`} onClick={() => go(null)}>{t('docs.tab.docs')}{data ? ` ${data.docs.length}` : ''}</button>
-      <button type="button" role="tab" aria-selected={tab === 'esign'} className={`tab${tab === 'esign' ? ' on' : ''}`} onClick={() => go({ tab: 'esign' })}>{t('docs.tab.esign')}{data ? ` ${data.esign.length}` : ''}</button>
-      <span className="spacer" /><button type="button" className="icon-btn" aria-label={t('docs.refresh')} title={t('docs.refresh')} onClick={() => { docs.reload(); business.refresh?.().catch?.(() => {}); }}><Icon name="refresh" size={14} /></button>
-    </div>
+    <div className="page-tabbar"><div className="tabs" role="tablist">
+      <button type="button" role="tab" aria-selected={tab === 'docs'} className={`tab${tab === 'docs' ? ' on' : ''}`} onClick={() => go(null)}>{t('docs.tab.docs')}{data ? <span className="dim">{data.docs.length}</span> : null}</button>
+      <button type="button" role="tab" aria-selected={tab === 'esign'} className={`tab${tab === 'esign' ? ' on' : ''}`} onClick={() => go({ tab: 'esign' })}>{t('docs.tab.esign')}{data ? <span className="dim">{data.esign.length}</span> : null}</button>
+    </div><span className="spacer" /><button type="button" className="icon-btn docs-refresh" aria-label={t('docs.refresh')} title={t('docs.refresh')} onClick={() => Promise.all([docs.reload(), business.refresh?.()]).then(() => showToast(t('docs.refreshed')), () => {})}><Icon name="refresh" size={14} /></button></div>
     {docs.error && <p className="bizui-error" role="alert">{t(docs.error)}</p>}
     {!data && !docs.error && <p role="status">{t('biz.loading')}</p>}
-    {data && tab === 'docs' && (data.docs.length ? <div className="table-wrap"><table className="table docs-table">
+    {data && tab === 'docs' && (data.docs.length ? <div className="table-wrap" data-sel-scope="docs"><table className="table docs-table">
       <thead><tr><th>{t('docs.col.kind')}</th><th>{t('docs.col.title')}</th><th className="hide-sm">{t('docs.col.customer')}</th><th className="hide-sm">{t('docs.col.deal')}</th><th className="num">{t('docs.col.total')}</th><th className="hide-sm">{t('docs.col.created')}</th><th className="act" /></tr></thead>
-      <tbody>{data.docs.map((d) => <tr key={d.id} className="row-open" onClick={(e) => { if (!e.target.closest('button')) go({ open: `doc:${d.id}` }); }}>
+      <tbody>{data.docs.map((d) => <tr key={d.id} className="row-open" {...selProps(docSel, d.id)} onClick={(e) => { if (!e.target.closest('button')) go({ open: `doc:${d.id}` }); }}>
         <td><span className="badge">{t(`docs.kind.${d.kind}`)}</span></td>
         <td className="docs-title-cell">{d.title}</td>
-        <td className="hide-sm">{d.customer_name || '—'}</td>
+        <td className="hide-sm">{d.customer_name ? <Hide k={`doc:${d.id}:customer`}>{d.customer_name}</Hide> : '—'}</td>
         <td className="hide-sm">{d.order_id ? <button type="button" className="bizui-link" onClick={() => navigate(`${baseOf(space)}/business/orders?open=${d.order_id}`)}>{orderTitle(d.order_id) ?? t('docs.deal')}</button> : <span className="dim">—</span>}</td>
-        <td className="num">{won(d.total)}</td>
+        <td className="num"><Hide k={`doc:${d.id}:total`}>{won(d.total)}</Hide></td>
         <td className="hide-sm mono">{day(d.created_at)}</td>
         <td className="act"><button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => docMenu(e, d)}><Icon name="dots" /></button></td>
       </tr>)}</tbody></table></div>
       : <div className="empty-state"><Icon name="doc" size={22} /><p>{t('docs.empty')}</p>{canWrite && <div className="docs-head-actions"><button type="button" className="btn" onClick={() => go({ new: 'quote' })}>{t('docs.new.quote')}</button><button type="button" className="btn" onClick={() => go({ new: 'contract' })}>{t('docs.new.contract')}</button></div>}</div>)}
-    {data && tab === 'esign' && (data.esign.length ? <div className="table-wrap"><table className="table docs-table">
+    {data && tab === 'esign' && (data.esign.length ? <div className="table-wrap" data-sel-scope="esign"><table className="table docs-table">
       <thead><tr><th>{t('esign.col.title')}</th><th className="hide-sm">{t('esign.col.signers')}</th><th>{t('esign.col.status')}</th><th className="hide-sm">{t('esign.col.created')}</th><th className="hide-sm">{t('esign.col.final')}</th><th className="act" /></tr></thead>
-      <tbody>{data.esign.map((e) => { const n = signedCount(e.signers); return <tr key={e.id} className="row-open" onClick={(ev) => { if (!ev.target.closest('button')) go({ tab: 'esign', open: e.id }); }}>
+      <tbody>{data.esign.map((e) => { const n = signedCount(e.signers); return <tr key={e.id} className="row-open" {...selProps(esSel, e.id)} onClick={(ev) => { if (!ev.target.closest('button')) go({ tab: 'esign', open: e.id }); }}>
         <td className="docs-title-cell">{e.title}{e.order_id && <span className="dim small"> · {orderTitle(e.order_id) ?? t('docs.deal')}</span>}</td>
         <td className="hide-sm"><span className="docs-signers">{e.signers.map((s) => <span key={s.id} className={s.status === 'signed' ? 'on' : ''} title={t(s.status === 'signed' ? 'esign.signer.signed' : 'esign.signer.pending')}><i />{s.name}</span>)}{!e.signers.length && <span className="dim">—</span>}</span></td>
         <td><span className={`badge ${STATUS_BADGE[e.status]}`}>{t(`esign.status.${e.status}`)}</span>{e.status === 'sent' && <span className="dim small mono"> {n.done}/{n.total}</span>}</td>
@@ -269,7 +279,7 @@ function DocPanel({ space, row, onClose, canWrite, onEsign, go }) {
     {canWrite && <button type="button" className="btn" onClick={() => go({ new: row.kind, from: row.id })}>{t('docs.act.again')}</button>}
     {canWrite && row.kind === 'contract' && <button type="button" className="btn primary" onClick={onEsign}><Icon name="stamp" size={13} />{t('docs.act.esign')}</button>}
   </>}>
-    <dl className="docs-meta"><div><dt>{t('docs.col.customer')}</dt><dd>{row.customer_name || '—'}</dd></div><div><dt>{t('docs.col.total')}</dt><dd className="mono">{won(row.total)}{t('docs.wonUnit')}</dd></div><div><dt>{t('docs.col.created')}</dt><dd>{when(row.created_at)}</dd></div></dl>
+    <dl className="docs-meta"><div><dt>{t('docs.col.customer')}</dt><dd>{row.customer_name ? <Hide k={`doc:${row.id}:customer`}>{row.customer_name}</Hide> : '—'}</dd></div><div><dt>{t('docs.col.total')}</dt><dd className="mono"><Hide k={`doc:${row.id}:total`}>{won(row.total)}{t('docs.wonUnit')}</Hide></dd></div><div><dt>{t('docs.col.created')}</dt><dd>{when(row.created_at)}</dd></div></dl>
     <PdfFrame bytes={bytes} title={row.title} />
   </Panel>;
 }

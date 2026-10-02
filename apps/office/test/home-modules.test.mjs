@@ -24,7 +24,7 @@ const source = readFileSync(new URL('../src/business/HomeModules.jsx', import.me
 const compiled = transformSync(source, { loader: 'jsx', jsx: 'automatic', format: 'cjs' }).code;
 const module = { exports: {} };
 let context;
-const dependencies = { require: createRequire(import.meta.url), module, exports: module.exports, createContext, useContext: () => context, t: (key) => key, getLang: () => 'en', baseOf: (space) => space === 'me' ? '/me' : `/o/${space}`, Link: ({ to, ...props }) => createElement('a', { href: to, ...props }), InfoTip: ({ text }) => createElement('span', { className: 'info-tip' }, text), linkedTotals, effectOf }; // 집계 기준은 (i) 안에 — 문구가 카드에 실제로 실리는지 본다
+const dependencies = { require: createRequire(import.meta.url), module, exports: module.exports, createContext, useContext: () => context, t: (key) => key, getLang: () => 'en', baseOf: (space) => space === 'me' ? '/me' : `/o/${space}`, Link: ({ to, ...props }) => createElement('a', { href: to, ...props }), InfoTip: ({ text }) => createElement('span', { className: 'info-tip' }, text), linkedTotals, effectOf, Hide: ({ children }) => children }; // Hide = 가림(12차, 그리기 시험에서는 값 그대로). 집계 기준은 (i) 안에 — 문구가 카드에 실제로 실리는지 본다
 new Function(...Object.keys(dependencies), compiled)(...Object.values(dependencies));
 const card = (tab) => renderToStaticMarkup(createElement(module.exports.BusinessHomeCard, { space: 'me', tab }));
 const data = { settings: { enabled: BUSINESS_MODULES.map((m) => m.businessTab) }, customers: [{ id: 'c1', name: 'Actual customer', email: 'test@example.invalid' }], items: [{ id: 'p1', kind: 'product', name: 'Actual product', price: 300, stock: 7, reserved: 2 }], orders: [{ id: 'o1', title: 'Actual order', status: 'confirmed' }] };

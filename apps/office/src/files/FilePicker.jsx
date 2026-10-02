@@ -22,8 +22,8 @@ export default function FilePicker({ space, onPick }) {
   };
   return <div className="file-pick">
     <div className="drive-tools">
-      <label className="files-search grow"><Icon name="search" size={14} /><input className="input" type="search" value={q} placeholder={t('files.search')} aria-label={t('files.search')} onChange={(e) => setQ(e.target.value)} /></label>
-      <button type="button" className="btn sm primary" disabled={busy} onClick={() => input.current?.click()}><FIcon name="upload" />{t('files.blockUpload')}</button>
+      <label className="search-field files-search grow"><Icon name="search" size={14} /><input className="input" type="search" value={q} placeholder={t('files.search')} aria-label={t('files.search')} onChange={(e) => setQ(e.target.value)} /></label>
+      <button type="button" className="btn primary" disabled={busy} onClick={() => input.current?.click()}><FIcon name="upload" />{t('files.blockUpload')}</button>
       <input ref={input} type="file" hidden onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; upload(f); }} />
     </div>
     {err && <p className="bizui-error" role="alert">{t(`files.reason.${err}`) !== `files.reason.${err}` ? t(`files.reason.${err}`) : t('files.err.request')}</p>}

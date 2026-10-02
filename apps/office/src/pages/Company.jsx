@@ -3,11 +3,15 @@
 import { useId, useMemo, useState } from 'react';
 import { t, registerDict, useLang } from '../core/i18n.js';
 import { useCompany, companyWrite } from '../core/company.js';
-import { CATEGORIES, COMPANY_KEYS, KEY_CATEGORY, DOC_KEYS, IMAGE_KEYS, isImage, guessKey, groupItems, itemPayload, moveInCategory } from '../core/company-model.js';
+import { CATEGORIES, COMPANY_KEYS, KEY_CATEGORY, DOC_KEYS, IMAGE_KEYS, isImage, guessKey, groupItems, itemPayload, moveInCategory, keyMenu } from '../core/company-model.js';
+import { navigate } from '../core/router.jsx';
+import { baseOf } from '../core/commands.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { openMenu } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { Redact } from '../business/Redact.jsx';
+import { redactState } from '../business/cell-pick.js';
+import { useSelection, selProps } from '../core/selection.js';
 import { COMPANY_DICT } from './company-i18n.js';
 import './perf.css';
 import './company.css';
@@ -57,6 +61,24 @@ export default function Company({ space }) {
   };
   const toggleSel = (id) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allIds = items.map((x) => x.id), all = allIds.length > 0 && allIds.every((id) => sel.has(id));
+  // 여러 개 고르기(11차) — 체크박스와 같은 선택. 고른 항목 한 번에 가리기·가림 해제(관리자는 저장, 멤버는 내 화면에서만 — 값 하나 가림과 같은 규칙)·삭제(확인 창)
+  const redactable = (x) => x.value && !(IMAGE_KEYS.includes(x.key) && isImage(x.value));
+  const redactMany = (ids, clear) => {
+    const list = items.filter((x) => ids.includes(x.id) && redactable(x)), st = redactState(list, hidden);
+    const apply = async (pairs) => { // [[항목, 가림]] — 관리자는 바뀌는 것만 저장하고 한 번 다시 읽는다
+      if (!manager) { setPeek((p) => ({ ...p, ...Object.fromEntries(pairs.map(([x, on]) => [x.id, on])) })); return true; }
+      try { for (const [x, on] of pairs) await companyWrite(space, 'item.save', { ...itemPayload(x), redacted: on }); return true; } catch (e) { fail(e); return false; } finally { await reload(); }
+    };
+    const go = (on) => async () => {
+      const pairs = list.filter((x) => hidden(x) !== on).map((x) => [x, on]);
+      if (!pairs.length || !(await apply(pairs))) return;
+      clear?.();
+      showToast(t(on ? 'sel.redacted' : 'sel.unredacted', { n: pairs.length }), { undo: () => apply(pairs.map(([x]) => [{ ...x, redacted: !on }, !on])) });
+    };
+    return [!st.all && list.length > 0 && { label: t('bizui.redact'), icon: 'eyeOff', run: go(true) }, st.any && { label: t('bizui.unredact'), icon: 'eye', run: go(false) }];
+  };
+  useSelection('company', { value: sel, onChange: setSel, keys: allIds, actions: (keys, clear) => [...redactMany(keys, clear), manager && { label: t('company.deleteSel'), icon: 'trash', danger: true, run: () => setConfirm({ ids: keys }) }] });
+  const rowMenu = (x) => (e) => { if (sel.size > 1 && sel.has(x.id)) { const acts = redactMany([...sel]).filter(Boolean); if (acts.length) openMenu(e, acts); } }; // 고른 항목 위 우클릭 = 고른 것 전체
 
   return <div className="page-wrap wide perf company">
     <Head right={manager && <button type="button" className="btn primary sm" onClick={() => openNew()}><Icon name="plus" size={13} />{t('company.add')}</button>} />
@@ -69,16 +91,20 @@ export default function Company({ space }) {
         {sel.size > 0 && <button type="button" className="btn ghost sm danger-text" onClick={() => setConfirm({ ids: [...sel] })}><Icon name="trash" size={13} />{t('company.deleteSel')}</button>}
       </div>}
       {!groups.length ? <div className="empty-state"><Icon name="building" size={20} /><p>{t('company.empty')}</p><p className="dim small">{t(manager ? 'company.emptyManager' : 'company.emptyMember')}</p></div>
-        : groups.map((g) => <section key={g.category} className={`module co-group cat-${g.category}`} aria-label={t(`company.cat.${g.category}`)}>
+        : <div className="co-groups" data-sel-scope="company">{groups.map((g) => <section key={g.category} className={`module co-group cat-${g.category}`} aria-label={t(`company.cat.${g.category}`)}>
           <header className="module-head"><span className={`co-cat cat-${g.category}`}>{t(`company.cat.${g.category}`)}</span><span className="dim small">{t('company.count', { n: g.items.length })}</span></header>
-          <ul className="co-rows">{g.items.map((x, i) => <li key={x.id} className="co-row">
+          <ul className="co-rows">{g.items.map((x, i) => <li key={x.id} className="co-row" {...selProps(sel, x.id)} onContextMenu={rowMenu(x)}>
             {manager && <input type="checkbox" className="co-row-check" checked={sel.has(x.id)} onChange={() => toggleSel(x.id)} aria-label={t('company.select', { name: x.label })} />}
             <div className="co-row-main">
               {manager ? <button type="button" className="co-label link-btn" onClick={() => openEdit(x)}>{x.label}</button> : <strong className="co-label">{x.label}</strong>}
-              {x.value && (IMAGE_KEYS.includes(x.key) && isImage(x.value) ? <img className="co-img" src={x.value} alt={x.label} /> : <Redact on={hidden(x)} onToggle={() => toggleRedact(x)}><span className="co-value">{x.value}</span></Redact>)}
+              {x.value && (IMAGE_KEYS.includes(x.key) && isImage(x.value) ? <img className="co-img" src={x.value} alt={x.label} /> : <Redact on={hidden(x)} defer={sel.size > 1 && sel.has(x.id)} onToggle={() => toggleRedact(x)}><span className="co-value">{x.value}</span></Redact>)}
               {x.notes && <small className="co-notes dim">{x.notes}</small>}
             </div>
-            {x.key && <span className="badge co-key" title={`${t('company.f.key')}: ${t(`company.key.${x.key}`)}`}><Icon name="file" size={11} />{t('company.docShort')}{x.label !== t(`company.key.${x.key}`) ? ` · ${t(`company.key.${x.key}`)}` : ''}</span>}
+            {x.key && <button type="button" className="badge co-key" aria-haspopup="menu" title={`${t('company.f.key')}: ${t(`company.key.${x.key}`)}`} onClick={(e) => openMenu(e, [
+              { heading: t('company.keyHead', { key: t(`company.key.${x.key}`) }) },
+              ...keyMenu(x, { manager }).map((m) => (m.edit ? { label: t('company.keyChange'), icon: 'draft', run: () => openEdit(x) }
+                : { label: t(m.id === 'quote' ? 'company.keyQuote' : 'company.keyContract'), icon: 'file', run: () => navigate(`${baseOf(space)}/${m.to}`) })),
+            ], { anchor: e.currentTarget })}><Icon name="file" size={11} />{t('company.docShort')}{x.label !== t(`company.key.${x.key}`) ? ` · ${t(`company.key.${x.key}`)}` : ''}</button>}
             {x.source === 'notion' && <span className="badge dim" title={t('company.fromNotion')}>N</span>}
             {manager && <button type="button" className="icon-btn co-more" aria-label={t('company.more')} onClick={(e) => openMenu(e, [
               { label: t('company.edit'), icon: 'draft', run: () => openEdit(x) },
@@ -87,7 +113,7 @@ export default function Company({ space }) {
               { sep: true }, { label: t('company.delete'), icon: 'trash', danger: true, run: () => setConfirm({ ids: [x.id], name: x.label }) },
             ], { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>}
           </li>)}</ul>
-        </section>)}
+        </section>)}</div>}
       {manager && data.deleted?.length > 0 && <section className="module co-trash" aria-label={t('company.trash')}>
         <header className="module-head"><Icon name="trash" size={15} /><h3>{t('company.trash')}</h3></header>
         <ul className="co-rows">{data.deleted.map((d) => <li key={d.history_id} className="co-row">

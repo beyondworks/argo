@@ -5,6 +5,7 @@
 .co-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .co-check input, .co-row-check { width: 15px; height: 15px; accent-color: var(--primary); margin: 0; flex: none; }
 .co-bulk { display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 0 4px; }
+.co-groups { display: flex; flex-direction: column; gap: var(--module-gap); } /* 선택 범위 감싸기가 .perf의 gap을 끊지 않게 같은 간격을 이어 준다 */
 .co-cat { font-size: 13px; font-weight: 600; }
 .co-group .module-head .dim { margin-left: 6px; }
 .co-rows { list-style: none; margin: 0; padding: 4px 8px 10px; display: grid; }
@@ -17,7 +18,8 @@ button.co-label { padding: 0; border: 0; background: none; font: inherit; font-w
 @media (hover: hover) { button.co-label:hover { text-decoration: underline; text-underline-offset: 3px; } }
 .co-value { font-size: 13.5px; color: var(--fg-2); overflow-wrap: anywhere; }
 .co-notes { flex-basis: 100%; font-size: 12.5px; }
-.co-key { flex: none; }
+.co-key { flex: none; cursor: pointer; border: 0; font: inherit; font-size: 11.5px; font-weight: 520; }
+@media (hover: hover) { .co-key:hover { background: var(--card-2); color: var(--fg); } }
 .co-more { flex: none; }
 @media (hover: hover) { .co-row .co-more { opacity: 0; } .co-row:hover .co-more, .co-row .co-more:focus-visible { opacity: 1; } }
 .co-docs-hint { margin: 0; padding: 0 16px; }
@@ -37,8 +39,9 @@ button.co-label { padding: 0; border: 0; background: none; font: inherit; font-w
 @media (max-width: 560px) { .co-form-row { grid-template-columns: 1fr; } .co-doc { grid-template-columns: 96px minmax(0, 1fr); } }
 
 /* 직원 명부 */
-.pp-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; }
-.pp-bar .input { width: min(280px, 100%); flex: 0 1 280px; }
+.pp-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: var(--module-gap); } /* 머리 → 줄 20, 줄 → 표 12(문서함·업무 필터 줄과 같다) */
+.pp-search { width: min(280px, 100%); flex: 0 1 280px; }
+.pp-bar .input { background: var(--lift); }
 .pp-table td { font-size: 13.5px; }
 .pp-table .pp-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pp-table .pp-name strong { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

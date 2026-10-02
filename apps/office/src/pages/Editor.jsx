@@ -21,7 +21,8 @@ import { DocView } from '../ui/DocView.jsx';
 import { PageModuleNode } from '../ui/PageModuleNode.jsx';
 import { FileRefNode, FilePickModal } from '../files/FileRef.jsx'; // '/파일' 블록 — 문서함 파일을 본문에(유건 10/2)
 import { getStorageScope } from '../core/save.js';
-import { RedactMark, BlockPick, pickKey, pickRange, blockRects, redactStatus, setRedact, menuRange, unpick } from './block-pick.js';
+import { RedactMark, BlockPick, pickKey, blockRects, redactStatus, setRedact, menuRange, unpick, blockKeys, keysRange } from './block-pick.js';
+import { useSelection } from '../core/selection.js';
 import { EDITOR_DICT } from './editor-i18n.js';
 import { PAGE_EDIT_DICT } from './page-i18n.js';
 import { BlockHover, HANDLE_POSITION, measureAnchor, setHover } from './block-handle.js';
@@ -84,17 +85,17 @@ const PrivateBlock = Node.create({
 
 // 검색은 영문 별칭(words) + 현재 언어의 블록 이름(t) 둘 다로 맞춘다.
 const BLOCKS = [
-  { id: 'text', face: 'T', key: 'block.text', words: 'text p', run: (c) => c.setParagraph() },
-  { id: 'h1', face: 'H1', key: 'block.h1', words: 'h1 heading', run: (c) => c.setHeading({ level: 1 }) },
-  { id: 'h2', face: 'H2', key: 'block.h2', words: 'h2 heading', run: (c) => c.setHeading({ level: 2 }) },
-  { id: 'h3', face: 'H3', key: 'block.h3', words: 'h3 heading', run: (c) => c.setHeading({ level: 3 }) },
-  { id: 'bullet', face: '•', key: 'block.bullet', words: 'bullet list', run: (c) => c.toggleBulletList() },
-  { id: 'ordered', face: '1.', key: 'block.ordered', words: 'ordered number', run: (c) => c.toggleOrderedList() },
-  { id: 'todo', face: '[ ]', key: 'block.todo', words: 'todo task', run: (c) => c.toggleTaskList() },
-  { id: 'quote', face: '"', key: 'block.quote', words: 'quote', run: (c) => c.toggleBlockquote() },
-  { id: 'code', face: '<>', key: 'block.code', words: 'code', run: (c) => c.toggleCodeBlock() },
-  { id: 'divider', face: '—', key: 'block.divider', words: 'divider hr', run: (c) => c.setHorizontalRule() },
-  { id: 'file', face: '⎘', key: 'files.block', words: 'file attach image upload pdf', pick: true }, // 고르는 창을 띄운 뒤 넣는다
+  { id: 'text', icon: 'text', key: 'block.text', words: 'text p', run: (c) => c.setParagraph() },
+  { id: 'h1', icon: 'h1', key: 'block.h1', words: 'h1 heading', run: (c) => c.setHeading({ level: 1 }) },
+  { id: 'h2', icon: 'h2', key: 'block.h2', words: 'h2 heading', run: (c) => c.setHeading({ level: 2 }) },
+  { id: 'h3', icon: 'h3', key: 'block.h3', words: 'h3 heading', run: (c) => c.setHeading({ level: 3 }) },
+  { id: 'bullet', icon: 'bullet', key: 'block.bullet', words: 'bullet list', run: (c) => c.toggleBulletList() },
+  { id: 'ordered', icon: 'ordered', key: 'block.ordered', words: 'ordered number', run: (c) => c.toggleOrderedList() },
+  { id: 'todo', icon: 'todo', key: 'block.todo', words: 'todo task', run: (c) => c.toggleTaskList() },
+  { id: 'quote', icon: 'quote', key: 'block.quote', words: 'quote', run: (c) => c.toggleBlockquote() },
+  { id: 'code', icon: 'code', key: 'block.code', words: 'code', run: (c) => c.toggleCodeBlock() },
+  { id: 'divider', icon: 'divider', key: 'block.divider', words: 'divider hr', run: (c) => c.setHorizontalRule() },
+  { id: 'file', icon: 'attach', key: 'files.block', words: 'file attach image upload pdf', pick: true }, // 고르는 창을 띄운 뒤 넣는다
 ];
 
 /** 커서 앞 문단 글자가 '/검색어' 꼴이면 메뉴를 연다 — 입력한 글자가 문서에 그대로 남아 IME(한글)와 충돌하지 않는다. */
@@ -214,8 +215,48 @@ export default function Editor({ page, canEdit = false }) {
     ].filter(Boolean), { anchor: e.currentTarget });
   };
   useEffect(() => () => savePending(), []);
+  // 블록 고르기(11차, 유건 10/2) — 끌어 감싸기는 오피스 공용 선택 상자가 맡는다(어디서든 시작, 본문 글자 위면 처음 블록 밖으로 나갈 때 블록 고르기, 자동 스크롤).
+  // 여기서는 그 묶음에 붙는다: 고른 블록 = pickKey 범위, 선택 막대 = 가리기·가림 해제·복사·삭제(우클릭 메뉴와 같은 동작). 여백 누름 규칙(글자 선택 막기·누르면 풀기)은 그대로.
+  const [range, setRange] = useState(null);
+  useEffect(() => {
+    if (!editor) return undefined;
+    const on = () => { const r = pickKey.getState(editor.state); setRange((p) => (p?.from === r?.from && p?.to === r?.to ? p : r)); };
+    editor.on('transaction', on);
+    return () => editor.off('transaction', on);
+  }, [editor]);
+  const live = !!editor && canEdit && !editor.isDestroyed;
+  const pickedKeys = useMemo(() => (live ? blockKeys(editor.state.doc, range) : new Set()), [live, range]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pickBlocks = (keys) => {
+    const view = editor?.view;
+    if (!view || view.isDestroyed) return;
+    const cur = pickKey.getState(view.state), next = keys.size ? keysRange(view.state.doc, keys) : null;
+    if (cur?.from === next?.from && cur?.to === next?.to) return;
+    view.dispatch(next ? view.state.tr.setMeta(pickKey, next) : unpick(view.state.tr, cur.to));
+  };
+  /** 끌기가 끝나면 고른 블록을 편집기 선택으로도 잡고 초점을 돌려준다 — 원자 블록 하나면 그 블록째(지우기·복사 키가 그 범위에 걸린다) */
+  const settlePick = () => {
+    const view = editor?.view, r = view && !view.isDestroyed && pickKey.getState(view.state);
+    if (!r) return;
+    const { doc } = view.state, only = doc.nodeAt(r.from);
+    const sel = only?.isAtom && r.from + only.nodeSize === r.to ? NodeSelection.create(doc, r.from) : TextSelection.between(doc.resolve(r.from), doc.resolve(r.to));
+    view.dispatch(view.state.tr.setSelection(sel).setMeta(pickKey, r));
+    view.focus();
+  };
+  const rangeActions = (r, done) => { // 고른 범위 → 가리기·가림 해제·복사·삭제(우클릭 메뉴와 선택 막대가 같은 동작)
+    const view = editor.view, status = redactStatus(view.state.doc, r.from, r.to);
+    const redact = (on) => { view.dispatch(unpick(setRedact(view.state.tr, r.from, r.to, on), r.to)); view.focus(); }; // 메뉴 동작이 끝나면 하이라이트를 남기지 않는다(유건 9/29). 초점을 돌려줘 ⌘Z 한 번에 통째로 되돌린다(선택 막대에서 눌렀을 때)
+    const copy = () => { const ok = copySlice(view, r.from, r.to); view.dispatch(unpick(view.state.tr, r.to)); ok.then((x) => showToast(t(x ? 'page.copied' : 'page.copyFailed'))); }; // 복사할 내용은 copySlice가 부르는 즉시 만든다
+    return [
+      !r.only && !status.all && { label: t('page.redact'), icon: 'eyeOff', run: () => { redact(true); done?.(); } },
+      status.any && { label: t('page.unredact'), icon: 'eye', run: () => { redact(false); done?.(); } },
+      !r.only && { label: t('page.copy'), icon: 'copy', run: copy },
+      !r.only && { label: t(r.picked ? 'block.delete' : 'page.delete'), icon: 'trash', danger: true, run: () => { view.dispatch(view.state.tr.delete(r.from, r.to)); view.focus(); } },
+    ];
+  };
+  useSelection(live ? `page:${page.id}` : null, { value: pickedKeys, onChange: pickBlocks, actions: () => (range ? rangeActions({ ...range, picked: true }) : []),
+    boxes: () => blockRects(editor.view).map((b) => ({ key: String(b.from), left: -Infinity, right: Infinity, top: b.rect.top, bottom: b.rect.bottom })), // 같은 높이면 고른다(여백만 훑어도 옆 블록이 골라진다)
+    onEnd: settlePick });
   const cleanup = useRef(null);
-  // 여백에서 끌어 사각형으로 블록 고르기(마우스만 — 터치 끌기는 스크롤). ponytail: 끄는 도중 화면이 스크롤되면 사각형이 따라가지 않는다 — 긴 문서에서 필요해지면 자동 스크롤을 붙인다.
   useEffect(() => {
     if (!editor || !canEdit) return;
     const view = editor.view;
@@ -228,33 +269,18 @@ export default function Editor({ page, canEdit = false }) {
     const onKey = (e) => { if (e.key === 'Escape') release(); }; // 초점이 편집기 밖으로 나간 뒤의 Esc(안에 있을 때는 handleKeyDown이 먼저 푼다)
     const onDown = (e) => {
       const target = e.target;
-      if (target instanceof Element && !view.dom.contains(target) && !target.closest('.menu')) release(); // 사이드바·머리줄·여백 어디를 눌러도 고르기를 푼다 — 메뉴 항목 누름만 예외(유건 9/29)
+      if (target instanceof Element && !view.dom.contains(target) && !target.closest('.menu, .sel-bar')) release(); // 사이드바·머리줄·여백 어디를 눌러도 고르기를 푼다 — 메뉴 항목·선택 막대 누름만 예외(유건 9/29)
       if (e.button !== 0 || e.ctrlKey || view.composing || !editor.isEditable || !(target instanceof Element) || !target.closest('.content') || view.dom.contains(target) || target.closest(NO_PICK)) return;
       if (target.clientWidth && e.offsetX > target.clientWidth) return; // 스크롤 막대
-      e.preventDefault(); // 여백 끌기가 글자 선택이 되지 않게(편집기 초점도 그대로)
+      e.preventDefault(); // 여백 끌기가 글자 선택이 되지 않게(편집기 초점도 그대로) — 사각형은 공용 선택 상자
       const start = { x: e.clientX, y: e.clientY };
-      let box = null, range = null;
-      const move = (ev) => {
-        if (!box && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 4) return;
-        if (!box) { box = document.createElement('div'); box.className = 'pick-box'; document.body.append(box); }
-        const r = { left: Math.min(start.x, ev.clientX), right: Math.max(start.x, ev.clientX), top: Math.min(start.y, ev.clientY), bottom: Math.max(start.y, ev.clientY) };
-        Object.assign(box.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.right - r.left}px`, height: `${r.bottom - r.top}px` });
-        const next = pickRange(blockRects(view), r);
-        if (next?.from !== range?.from || next?.to !== range?.to) { range = next; view.dispatch(view.state.tr.setMeta(pickKey, range)); } // 범위가 바뀔 때만
-      };
-      const up = () => {
+      const up = (ev) => { // 끌지 않고 여백만 눌렀으면 원래처럼 선택을 풀고 편집기에서 나간다
         stop();
-        if (view.isDestroyed) return;
-        if (!box) { getSelection()?.removeAllRanges(); view.dom.blur(); } // 끌지 않고 여백만 눌렀으면 원래처럼 선택을 풀고 편집기에서 나간다
-        if (!range) { if (pickKey.getState(view.state)) view.dispatch(view.state.tr.setMeta(pickKey, null)); return; }
-        const { doc } = view.state, only = doc.nodeAt(range.from); // 고른 블록을 편집기 선택으로도 잡는다 — 원자 블록 하나면 그 블록째
-        const sel = only?.isAtom && range.from + only.nodeSize === range.to ? NodeSelection.create(doc, range.from) : TextSelection.between(doc.resolve(range.from), doc.resolve(range.to));
-        view.dispatch(view.state.tr.setSelection(sel).setMeta(pickKey, range));
-        view.focus();
+        if (!view.isDestroyed && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 4) { getSelection()?.removeAllRanges(); view.dom.blur(); }
       };
-      const stop = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); box?.remove(); cleanup.current = null; };
-      cleanup.current = stop; // 끄는 도중 편집기가 사라지면 리스너·사각형을 치운다
-      addEventListener('mousemove', move); addEventListener('mouseup', up);
+      const stop = () => { removeEventListener('mouseup', up); cleanup.current = null; };
+      cleanup.current = stop;
+      addEventListener('mouseup', up);
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -264,27 +290,19 @@ export default function Editor({ page, canEdit = false }) {
   const rangeMenu = (e) => {
     if (!editor?.isEditable) return;
     const { state, view } = editor, pos = view.posAtCoords({ left: e.clientX, top: e.clientY })?.pos;
-    let range = menuRange(state, { focused: view.hasFocus(), pos }), only = false;
-    if (!range) {
-      range = pos == null ? null : getMarkRange(state.doc.resolve(pos), state.schema.marks.redact);
-      if (!range) return; // 일반 글자 위 — 브라우저 기본 메뉴
+    let at = menuRange(state, { focused: view.hasFocus(), pos }), only = false;
+    if (!at) {
+      at = pos == null ? null : getMarkRange(state.doc.resolve(pos), state.schema.marks.redact);
+      if (!at) return; // 일반 글자 위 — 브라우저 기본 메뉴
       only = true;
     }
-    const status = redactStatus(state.doc, range.from, range.to);
-    const redact = (on) => view.dispatch(unpick(setRedact(view.state.tr, range.from, range.to, on), range.to)); // 메뉴 동작이 끝나면 하이라이트를 남기지 않는다(유건 9/29)
-    const copy = () => { const done = copySlice(view, range.from, range.to); view.dispatch(unpick(view.state.tr, range.to)); done.then((ok) => showToast(t(ok ? 'page.copied' : 'page.copyFailed'))); }; // 복사할 내용은 copySlice가 부르는 즉시 만든다
-    openMenu(e, [
-      !only && !status.all && { label: t('page.redact'), icon: 'eyeOff', run: () => redact(true) },
-      status.any && { label: t('page.unredact'), icon: 'eye', run: () => redact(false) },
-      !only && { label: t('page.copy'), icon: 'copy', run: copy },
-      !only && { label: t(range.picked ? 'block.delete' : 'page.delete'), icon: 'trash', danger: true, run: () => view.dispatch(view.state.tr.delete(range.from, range.to)) },
-    ]);
+    openMenu(e, rangeActions({ ...at, only }));
   };
   // 오른쪽 버튼 누름이 고른 범위를 단어 선택으로 바꾸지 않게(맥 크롬) — 범위가 있을 때만
   const keepRange = (e) => { if (e.button === 2 && editor?.isEditable && menuRange(editor.state, { focused: editor.view.hasFocus(), pos: editor.view.posAtCoords({ left: e.clientX, top: e.clientY })?.pos })) e.preventDefault(); };
 
   return (
-    <div className="editor" onContextMenu={rangeMenu} onMouseDown={keepRange}>
+    <div className="editor" onContextMenu={rangeMenu} onMouseDown={keepRange} {...(live ? { 'data-sel-scope': `page:${page.id}`, 'data-sel-blocks': '', 'data-sel-units': '' } : {})}>
       {editor && canEdit && (
         <DragHandle editor={editor} className="block-handle" computePositionConfig={HANDLE_POSITION} getReferencedVirtualElement={handleAnchor}
           onNodeChange={(d) => { handle.current = d; setHover(editor.view, null); }} onElementDragStart={() => setHover(editor.view, null)}>
@@ -300,7 +318,7 @@ export default function Editor({ page, canEdit = false }) {
           {items.map((b, i) => (
             <button key={b.id} type="button" role="option" aria-selected={i === slash.idx} className={`menu-item${i === slash.idx ? ' on' : ''}`}
               onMouseDown={(e) => { e.preventDefault(); apply(editor, b); }} onPointerMove={() => setSlash({ ...slash, idx: i })}>
-              <span className="menu-ico block-ico" aria-hidden="true">{b.face}</span>
+              <span className="menu-ico block-ico" aria-hidden="true"><Icon name={b.icon} size={15} /></span>
               <span className="menu-label">{t(b.key)}</span>
             </button>
           ))}

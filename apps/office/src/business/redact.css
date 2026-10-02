@@ -1,23 +1,13 @@
 /* 부분 가림(Redact.jsx와 같이 다닌다 — 업무 화면·회사 정보·직원 명부가 같이 쓴다, 10/2 business.css에서 옮김) */
-/* 부분 가림 — 인트라넷 시머와 같은 먼지(노이즈 마스크 2겹이 서로 반대로 흐르며 명멸). 누르고 있으면 잠깐 보인다 */
+/* 부분 가림 — 참고 영상과 같은 입자(12차 추가 2, 텔레그램 스포일러 계열): 글자는 안 보이고 그 자리 줄 높이 띠에 또렷한 점이 떠다니며 깜빡인다(ui/dust.js 캔버스).
+   누르고 있으면 입자가 흩어지며 글자가 옅게 나타나 원래 색으로(약 0.28초, 투명도 전환). 인쇄해도 가린 채로(글자 투명도 0, 입자 캔버스는 그대로 찍힌다). */
 .redact { position: relative; }
 /* 표에서는 칸 전체가 가림 영역 — 칸의 안쪽 여백을 가림 영역이 대신 가져서 가장자리를 우클릭해도 메뉴가 뜬다(유건 9/29) */
 .table td:has(> .redact) { padding: 0; }
 .table td > .redact { display: block; padding: 10px 14px; }
-.table td > .redact.on::before, .table td > .redact.on::after { inset: 12px 14px; }
-.redact.on { color: transparent !important; user-select: none; cursor: pointer; display: inline-block; min-width: 3.5em; overflow: hidden; vertical-align: bottom;
-  mask-image: radial-gradient(100% 100% at 50% 50%, #000 30%, rgba(0,0,0,.5) 60%, transparent 88%); }
-.redact.on > [aria-hidden] { visibility: hidden; }
-.redact.on::before, .redact.on::after { content: ""; position: absolute; inset: 10% 0; pointer-events: none;
-  background: color-mix(in oklab, var(--fg) 72%, transparent);
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.25' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 13 -8.6'/%3E%3C/filter%3E%3Crect width='110' height='110' filter='url(%23n)'/%3E%3C/svg%3E");
-  mask-size: 110px 110px; animation: redact-a 5.3s linear infinite, redact-twinkle 1.7s ease-in-out infinite; }
-.redact.on::after { background: color-mix(in oklab, var(--fg) 48%, transparent);
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.5' numOctaves='2' seed='23' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 13 -8.6'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-  mask-size: 140px 140px; animation: redact-b 7.1s linear infinite, redact-twinkle 2.9s ease-in-out .9s infinite; }
+.redact > .redact-v { transition: opacity 280ms cubic-bezier(0.23, 1, 0.32, 1); }
+.redact.on { color: transparent !important; user-select: none; cursor: pointer; display: inline-block; min-width: 3.5em; vertical-align: bottom; }
+.redact.on > .redact-v { opacity: 0; }
+.redact > canvas.dust { position: absolute; pointer-events: none; }
 .redact .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-@keyframes redact-a { 0% { mask-position: 0 0; } 33% { mask-position: 38px 3px; } 66% { mask-position: 74px -3px; } 100% { mask-position: 110px 0; } }
-@keyframes redact-b { 0% { mask-position: 0 0; } 50% { mask-position: -68px 4px; } 100% { mask-position: -140px 0; } }
-@keyframes redact-twinkle { 0%, 100% { opacity: .2; } 50% { opacity: .9; } }
-@media (prefers-reduced-motion: reduce) { .redact.on::before, .redact.on::after { animation: none; opacity: .6; } }
-
+@media (prefers-reduced-motion: reduce) { .redact > .redact-v { transition: none; } }

@@ -16,7 +16,7 @@
 .biz-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: var(--ctl); margin-bottom: 12px; }
 .biz-bar > .spacer { flex: 1; }
 .biz-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.biz-filter .input { height: 30px; font-size: 12.5px; background: var(--lift); } /* 면 위에 바로 놓이는 입력 — 채운 입력이 바탕과 같은 색이라 경계를 준다 */
+.biz-filter .input { height: var(--ctl-sm); font-size: 12.5px; background: var(--lift); } /* 같은 줄 '조건 적용'(.btn.sm)과 같은 높이 토큰(유건 10/2 10차) */ /* 면 위에 바로 놓이는 입력 — 채운 입력이 바탕과 같은 색이라 경계를 준다 */
 .biz-filter .dash { color: var(--fg-3); }
 .biz-section { display: flex; align-items: center; gap: 6px; margin: 24px 0 10px; }
 .biz-section:first-child { margin-top: 0; }
@@ -68,7 +68,7 @@
 .bizui-balances { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; border-radius: var(--rs); background: var(--lift); margin: 0; }
 .bizui-balances dt { font-size: 12.5px; color: var(--fg-2); }
 .bizui-balances dd { margin: 4px 0 0; font-family: var(--mono); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.bizui-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bizui-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .bizui-line { display: grid; gap: 6px; padding: 12px 14px; border-radius: var(--rs); background: var(--lift); }
 .bizui-line-head { display: flex; align-items: baseline; gap: 8px; }
 .bizui-line-head strong { font-weight: 600; }

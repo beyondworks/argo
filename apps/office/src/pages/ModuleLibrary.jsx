@@ -58,7 +58,7 @@ export default function ModuleLibrary({ space, targetId }) {
   const groups = ['workspace', 'business', 'charts'];
   return <section className="page-wrap wide module-library-page">
     <header className="page-title-row"><div><h1 className="page-h1">{t('library.title')}</h1><p className="dim">{t('library.subtitle')}</p></div></header>
-    <label className="library-search"><Icon name="search" size={14} /><input type="search" className="input" placeholder={t('library.search')} aria-label={t('library.search')} value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+    <label className="search-field library-search"><Icon name="search" size={14} /><input type="search" className="input" placeholder={t('library.search')} aria-label={t('library.search')} value={query} onChange={(event) => setQuery(event.target.value)} /></label>
     {groups.map((group) => {
       const entries = modules.filter((module) => (module.chartType ? 'charts' : module.businessTab ? 'business' : 'workspace') === group);
       return !!entries.length && <section key={group} className="library-group" aria-label={t(`library.${group}`)}>

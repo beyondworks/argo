@@ -6,6 +6,9 @@ export const GRID_DICT = {
   'grid.edge': ['더 옮길 수 없습니다.', 'Cannot move further.'],
   'grid.drop': ['{name} 자리를 옮겼습니다.', 'Moved {name}.'],
   'grid.cancel': ['옮기기를 취소했습니다.', 'Move cancelled.'],
+  // 고른 모듈 한꺼번에 옮기기(11차)
+  'grid.pickN': ['모듈 {n}개를 들었습니다. 위아래 화살표로 위아래, 좌우 화살표로 옆 열로 옮기고 Enter로 놓으세요. Esc를 누르면 취소됩니다.', 'Picked up {n} modules. Use Up/Down to move up or down, Left/Right to move to a side column, Enter to drop, Esc to cancel.'],
+  'grid.dropN': ['모듈 {n}개를 옮겼습니다.', 'Moved {n} modules.'],
 };
 // 모듈 맞춤 알림(유건 10/1 밤 6차) — 맞춤 코드(module-fit.js)와 함께 지연 로드된다
 export const FIT_DICT = {

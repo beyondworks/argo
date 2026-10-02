@@ -3,7 +3,7 @@ export const DOCS_DICT = {
   'docs.title': ['견적·계약', 'Quotes & contracts'],
   'docs.subtitle': ['회사 서식으로 견적서·계약서 PDF를 만들고 전자서명까지 받습니다.', 'Make quote and contract PDFs in your company format and collect e-signatures.'],
   'docs.sampleNote': ['예시 데이터입니다. PDF·서명 기록은 이 브라우저에만 저장되고, 메일은 실제로 보내지 않고 기록만 남깁니다.', 'Sample data. PDFs and signatures stay in this browser, and mail is recorded instead of sent.'],
-  'docs.tab.docs': ['문서', 'Documents'], 'docs.tab.esign': ['전자서명', 'E-signatures'], 'docs.refresh': ['새로고침', 'Refresh'],
+  'docs.tab.docs': ['문서', 'Documents'], 'docs.tab.esign': ['전자서명', 'E-signatures'], 'docs.refresh': ['새로고침', 'Refresh'], 'docs.refreshed': ['새로 불러왔습니다', 'Refreshed'],
   'docs.new.quote': ['새 견적서', 'New quote'], 'docs.new.contract': ['새 계약서', 'New contract'],
   'docs.kind.quote': ['견적서', 'Quote'], 'docs.kind.contract': ['계약서', 'Contract'],
   'docs.col.kind': ['종류', 'Type'], 'docs.col.title': ['제목', 'Title'], 'docs.col.customer': ['거래처', 'Customer'], 'docs.col.deal': ['거래', 'Deal'], 'docs.col.total': ['합계', 'Total'], 'docs.col.created': ['만든 날', 'Created'],

@@ -4,7 +4,7 @@ import { t, getLang } from '../core/i18n.js';
 import { baseOf } from '../core/commands.js';
 import { navigate } from '../core/router.jsx';
 import { Icon } from '../ui/Icon.jsx';
-import { Redact } from './Redact.jsx';
+import { Redact, Hide } from './Redact.jsx';
 import { dealAmounts, dealStage } from './deal-model.js';
 
 const label = (key) => t(`bizui.${key}`);
@@ -18,7 +18,7 @@ function Deals({ orders, data, openOrder }) {
   return <ul className="card-deals">{orders.map((o) => {
     const a = dealAmounts(o, data.lines, data.entries), stage = dealStage(o, a);
     return <li key={o.id}><button type="button" className="bizui-link" onClick={() => openOrder(o.id)}>{o.title}</button>
-      <span className="badge">{stage === 'cancelled' ? label('view.cancelled') : label(`stage.${stage}`)}</span><strong className="mono">{money(a.total)}</strong></li>;
+      <span className="badge">{stage === 'cancelled' ? label('view.cancelled') : label(`stage.${stage}`)}</span><strong className="mono"><Hide k={`order:${o.id}:total`}>{money(a.total)}</Hide></strong></li>;
   })}</ul>;
 }
 
@@ -35,7 +35,7 @@ function CustomerDocs({ space, customer }) {
   const go = (q) => navigate(`${baseOf(space)}/contracts?${new URLSearchParams(q)}`);
   return <>
     <h3>{label('card.docs')} {docs && <span className="dim small">{docs.length}</span>}</h3>
-    {docs?.length ? <ul className="card-deals">{docs.map((d) => <li key={d.id}><button type="button" className="bizui-link" onClick={() => go({ open: `doc:${d.id}` })}>{d.title}</button><strong className="mono">{money(d.total)}</strong></li>)}</ul>
+    {docs?.length ? <ul className="card-deals">{docs.map((d) => <li key={d.id}><button type="button" className="bizui-link" onClick={() => go({ open: `doc:${d.id}` })}>{d.title}</button><strong className="mono"><Hide k={`doc:${d.id}:total`}>{money(d.total)}</Hide></strong></li>)}</ul>
       : docs && <p className="dim small card-empty">{label('card.noDocs')}</p>}
     <div className="bizui-actions"><button type="button" className="btn sm" onClick={() => go({ new: 'quote', customer: customer.id })}><Icon name="doc" size={12} /> {label('makeQuote')}</button><button type="button" className="btn sm" onClick={() => go({ new: 'contract', customer: customer.id })}><Icon name="sign" size={12} /> {label('makeContract')}</button></div>
   </>;
@@ -52,7 +52,7 @@ export function CustomerCard({ customer: c, data, blocked, run, launch, openOrde
     <div className="bizui-actions"><button type="button" className="btn sm" disabled={blocked} onClick={() => launch('customer', c)}><Icon name="draft" size={13} />{label('edit')}</button></div>
     <dl className="card-fields">{rows.map(([k, v]) => <div key={k}><dt>{label(k)}</dt><dd>{REDACTABLE.includes(k) ? <Redact {...hide(k)}>{v || '—'}</Redact> : v || '—'}</dd></div>)}</dl>
     {c.notes && <div className="card-notes"><h3>{label('notes')}</h3><p>{c.notes}</p></div>}
-    <h3>{label('card.deals')} <span className="dim small">{orders.length} · {money(total)}</span></h3>
+    <h3>{label('card.deals')} <span className="dim small">{orders.length} · <Hide k={`customer:${c.id}:dealsTotal`}>{money(total)}</Hide></span></h3>
     <Deals orders={orders} data={data} openOrder={openOrder} />
     {space && <CustomerDocs space={space} customer={c} />}
     {space && <Suspense fallback={null}><CustomerFiles space={space} customer={c} /></Suspense>}
@@ -62,7 +62,7 @@ export function CustomerCard({ customer: c, data, blocked, run, launch, openOrde
 export function ItemCard({ item: i, data, blocked, launch, openOrder }) {
   const orderIds = new Set(data.lines.filter((l) => l.item_id === i.id).map((l) => l.order_id));
   const orders = data.orders.filter((o) => orderIds.has(o.id));
-  const rows = [['kind', label(i.kind)], ['sku', i.sku], ['price', money(i.price)], ...(i.kind === 'product' ? [['stock', String(i.stock ?? 0)], ['reserved', String(i.reserved ?? 0)]] : [])];
+  const rows = [['kind', label(i.kind)], ['sku', i.sku], ['price', <Hide key="price" k={`item:${i.id}:price`}>{money(i.price)}</Hide>], ...(i.kind === 'product' ? [['stock', String(i.stock ?? 0)], ['reserved', String(i.reserved ?? 0)]] : [])];
   return <div className="bizui-detail">
     <div className="bizui-actions"><button type="button" className="btn sm" disabled={blocked} onClick={() => launch('item', i)}><Icon name="draft" size={13} />{label('edit')}</button></div>
     <dl className="card-fields">{rows.map(([k, v]) => <div key={k}><dt>{label(k)}</dt><dd>{v || '—'}</dd></div>)}</dl>

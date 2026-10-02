@@ -1,17 +1,17 @@
 /* 문서함 — 오피스 토큰만 쓴다(그래파이트: 색 없이 표면 단계로 위계, 액션은 primary 하나). 지연 로드된다. */
 .files { position: relative; }
-.files-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.files-sample { margin: -12px 0 12px; }
-.files-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.files-search { display: flex; align-items: center; gap: 6px; flex: 1 1 220px; min-width: 0; max-width: 380px; padding-left: 10px; border-radius: var(--rc); background: var(--surface); color: var(--fg-3); }
-.files-search .input { flex: 1; background: transparent; padding-left: 2px; }
-.files-cust { max-width: 200px; background: var(--surface); }
-.files-cats { margin-bottom: 12px; }
+/* 간격(유건 10/2 10차) — 업무·홈과 같은 값: 머리 → 탭 줄 16(.page-tabbar), 탭 줄 → 첫 내용 16, 내용 부품 사이는 모듈 간격(--module-gap 12) */
+.files-actions { align-items: center; flex-wrap: wrap; }
+.files-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: var(--module-gap); }
+.files-search { flex: 1 1 220px; max-width: 380px; }
+.files-cust { max-width: 200px; }
+.files-bar .input { background: var(--lift); } /* 면 위에 바로 놓이는 입력 — 업무 필터와 같은 방식 */
+.files-cats { margin-bottom: var(--module-gap); }
 .files-cats .chip { cursor: pointer; background: var(--surface); }
 .files-cats .chip.on, .chip.on { background: var(--primary); color: var(--primary-fg); }
 .files-cats .chip.on .dim { color: var(--primary-fg-dim); }
 
-.files-drop { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; padding: 18px 16px; margin-bottom: 14px; border: 1.5px dashed var(--border); border-radius: var(--rs); color: var(--fg-2); background: transparent; text-align: left; }
+.files-drop { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; padding: 18px 16px; margin-bottom: var(--module-gap); border: 1.5px dashed var(--border); border-radius: var(--rs); color: var(--fg-2); background: transparent; text-align: left; }
 .files-drop span { display: grid; gap: 2px; }
 .files-drop strong { font-weight: 560; font-size: 13.5px; }
 .files-drop.on { border-color: var(--fg-3); background: var(--surface); }
@@ -22,21 +22,22 @@
 
 .files-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 0 0 10px; font-size: 13px; color: var(--fg-2); }
 .files-crumbs > span { display: inline-flex; align-items: center; gap: 4px; }
-.files-folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.files-folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--module-gap); margin-bottom: var(--module-gap); }
 .files-folder { display: flex; align-items: center; border-radius: var(--rs); background: var(--surface); }
 .files-folder-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 11px 12px; text-align: left; font-weight: 520; }
 .files-folder-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files-folder .icon-btn { margin-right: 4px; }
 
-.files-selbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; margin-bottom: 10px; border-radius: var(--rs); background: var(--secondary); }
+.files-selbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; margin-bottom: var(--module-gap); border-radius: var(--rs); background: var(--secondary); }
 .files-selbar strong { font-size: 13px; margin-right: 6px; }
-.files-table-wrap { margin-bottom: 10px; }
+.files-table-wrap { margin-bottom: var(--module-gap); }
+.files-trash-hint { margin-bottom: var(--module-gap); } /* 휴지통 안내와 표 사이 — 다른 탭의 부품 간격과 같게 */
 .files-table { min-width: 760px; }
 .files-table tr.on td { background: var(--primary-soft); }
 .files-table td { padding-top: 8px; padding-bottom: 8px; }
 .files-check { width: 34px; padding-right: 0 !important; }
 .files-act { width: 40px; text-align: right; white-space: nowrap; }
-.files-trash-act { width: auto; display: flex; gap: 6px; justify-content: flex-end; }
+.files-trash-act { display: flex; gap: 6px; justify-content: flex-end; }
 .files-name { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; text-align: left; font-weight: 520; color: var(--fg); }
 .files-name.static { cursor: default; }
 .files-name .ico { flex: none; color: var(--fg-3); }
@@ -44,7 +45,7 @@
 @media (hover: hover) { button.files-name:hover .files-title, .drive-name:hover { text-decoration: underline; text-underline-offset: 3px; } .drive-nav-row:hover .drive-pin { opacity: 1; } }
 .files-cat { cursor: pointer; border: 0; }
 .files-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; }
-.files-table .c-date, .files-table .c-size { white-space: nowrap; }
+.files-table .c-date, .files-table .c-size, .files-table .c-left { white-space: nowrap; }
 .files-used { text-align: right; }
 .files .grow { flex: 1; }
 
@@ -54,8 +55,10 @@
   .files-table td:nth-child(2) { max-width: 0; width: 100%; }
   .files-table :is(.c-cust, .c-kind, .c-size, .c-ocr, .c-tags, .c-date) { display: none; }
   .files-table .files-name .badge { display: none; }
-  .files-cust-split { grid-template-columns: 1fr !important; }
-  .cust-files-table :is(.c-kind, .c-date) { display: none; }
+  .files-trash-table td:first-child { max-width: 0; width: 100%; } /* 휴지통 표는 이름이 첫 칸 — 남는 폭을 쓰고 넘치면 줄임표 */
+  .files-trash-table .c-cat { display: none; }
+  .files-trash-act { flex-direction: column; align-items: flex-end; gap: 4px; } /* 되살리기·영구 삭제를 위아래로 — 이름 칸 폭을 남긴다 */
+  .cust-file-row :is(.c-kind, .c-date) { display: none; }
 }
 
 /* 미리보기 */
@@ -76,25 +79,35 @@
 .files-edit-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .files-edit .input { width: 100%; background: var(--bg); }
 
-/* 거래처별 */
-.files-cust-split { display: grid; grid-template-columns: 260px 1fr; gap: 14px; align-items: start; }
-.files-cust-list { display: grid; gap: 4px; }
-.files-cust-row { width: 100%; text-align: left; }
-.files-cust-row.on { background: var(--secondary); }
-.files-missing { cursor: pointer; margin-bottom: 6px; background: var(--surface); }
-.files-cust-main { min-width: 0; }
-.files-cust-pick { padding: 40px 0; text-align: center; }
-.cust-files { display: grid; gap: 10px; }
-.cust-files-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.cust-files-head h3 { margin: 0 0 2px; font-size: 15px; }
-.cust-files-missing { margin-left: 8px; }
+/* 거래처별(유건 10/2 10차) — 결재함·일지의 폴더 보기(.fold: 왼쪽 224px 목록 · 틈 28px) 그대로. 첫 줄 = 탭 줄(왼쪽) + 거래처 이름·요약(오른쪽),
+   둘째 줄 = 거래처 목록 + 종류별 파일 — 표의 위 끝이 목록 맨 위 항목과 같은 높이. 탭 줄 자리·아래 간격은 다른 탭의 .page-tabbar와 같다(위 -4px, 아래 16px) */
+.files-cust-split { grid-template-columns: minmax(224px, max-content) minmax(0, 1fr); grid-template-areas: 'tabs head' 'nav main'; row-gap: 16px; margin-top: -4px; position: relative; }
+.files-cust-tabs { grid-area: tabs; align-self: end; }
+.files-cust-tabs > .tabs { margin: 0; border-bottom: 0; }
+.files-cust-head { grid-area: head; align-self: center; min-width: 0; }
+.files-cust-list { grid-area: nav; contain: inline-size; } /* 목록 이름 길이가 칸 폭을 늘리지 않게 — 폭은 224px(또는 탭 줄 폭) */
+.files-cust-main { grid-area: main; }
+.files-cust-none { grid-column: 1 / -1; }
+/* 밑줄 탭 셸(plain·float·panel)은 업무 탭 줄처럼 첫 줄 아래에 한 줄 — 알약 탭 셸은 themes.css가 지운다 */
+.files-cust-split::before { content: ''; grid-row: 1; grid-column: 1 / -1; align-self: end; border-bottom: 1px solid var(--border-soft); pointer-events: none; }
+.files-cust-list .fold-ico .dot { width: 6px; height: 6px; }
+.files-cust-list .fold-item > .dot { flex: none; }
+@media (max-width: 767px) { .files-cust-split { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'tabs' 'head' 'nav' 'main'; row-gap: 12px; } .files-cust-split::before { display: none; } }
+:root:is([data-shell='window'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid'], [data-shell='neu']) .files-cust-split::before { display: none; }
+.cust-files-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; min-width: 0; }
+.cust-files-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.cust-files-title h3 { margin: 0; font-size: 15px; font-weight: 640; }
+.cust-files-title .badge { align-self: center; }
 .cust-files-add { display: flex; gap: 6px; align-items: center; }
-.cust-files-add .input { height: 26px; font-size: 12.5px; background: var(--surface); }
-.cust-files-table td:first-child { max-width: 0; width: 100%; } /* 이름 칸이 남는 폭을 쓰고 넘치면 줄임표 */
-.cust-files-table td { padding-top: 9px; padding-bottom: 9px; white-space: nowrap; }
-.cust-files-group td { padding: 8px 14px; font-size: 11px; font-weight: 620; letter-spacing: 0.06em; color: var(--fg-3); background: var(--lift); border-bottom: 1px solid var(--border-soft); }
-.cust-files-empty { padding: 20px 0; }
-.bizui-detail .cust-files { margin-top: 18px; }
+.cust-files-add .input { background: var(--lift); }
+.cust-files-sec:last-child { margin-bottom: 0; }
+.cust-file-row { cursor: pointer; }
+.cust-file-row .files-name { flex: 1; min-width: 0; }
+.cust-file-row .c-kind { max-width: none; }
+.cust-file-row .c-size { font-size: 12px; min-width: 56px; text-align: right; }
+.cust-file-row .icon-btn { margin-right: -6px; }
+.cust-files-empty { padding: 8px 2px; }
+.bizui-detail .cust-files { margin-top: 18px; display: grid; gap: 12px; }
 .bizui-detail .cust-files-head h3 { font-size: 13px; }
 
 /* 구글 드라이브 창 */
@@ -109,12 +122,11 @@
 .drive-start, .drive-acct { margin: 8px 8px 0; }
 .drive-main { display: grid; align-content: start; gap: 10px; min-width: 0; }
 .drive-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.drive-tools .files-search { flex: 1 1 160px; min-width: 0; }
-.drive-tools .files-search { max-width: none; background: var(--bg); }
+.drive-tools .files-search { flex: 1 1 160px; min-width: 0; max-width: none; }
 .drive-favs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .drive-favs .chip { gap: 4px; }
 .drive-list { display: grid; max-height: 52vh; overflow: auto; border-radius: var(--rs); background: var(--bg); }
-.drive-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) 110px 70px 110px auto auto; align-items: center; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--border-soft); }
+.drive-row { display: grid; grid-template-columns: 15px 16px minmax(0, 1fr) 110px 70px 120px 24px 26px; /* 칸 수를 늘 같게 — 폴더(링크 없음)·보내기(체크 없음) 줄도 같은 세로 선 */ align-items: center; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--border-soft); }
 .drive-row:last-child { border-bottom: 0; }
 .drive-row.on { background: var(--primary-soft); }
 .drive-row > .ico { color: var(--fg-3); }
@@ -122,7 +134,7 @@
 .drive-row .c-owner, .drive-row .c-date { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drive-row .c-size { text-align: right; }
 .drive-star { color: var(--fg-3); display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; }
-.drive-star.on { color: var(--fg); } .drive-star.on .ico { fill: currentColor; }
+.drive-star.on { color: var(--fg); } .drive-star.on .ico { font-variation-settings: 'FILL' 1; }
 .drive-empty { padding: 28px; text-align: center; }
 .drive-connect h3 { margin: 4px 0 0; color: var(--fg); }
 .drive-connect p { max-width: 420px; }
@@ -130,9 +142,9 @@
   .drive { grid-template-columns: 1fr; }
   .drive-nav { grid-auto-flow: column; overflow-x: auto; }
   .drive-pin, .drive-start, .drive-acct { display: none; }
-  .drive-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
+  .drive-row { grid-template-columns: 15px 16px minmax(0, 1fr) 24px 26px; }
   .drive-row :is(.c-owner, .c-size, .c-date) { display: none; }
-  .drive-tools .btn.sm { padding: 0 7px; }
+  .drive-tools .btn { padding: 0 9px; }
 }
 
 /* 페이지 '/파일' 블록 */
@@ -148,4 +160,4 @@
 .drive-nav .nav-item.on { color: var(--fg); }
 @media (hover: hover) { .drive-nav .nav-item:hover { background: var(--lift); color: var(--fg); } }
 
-.sheet .cust-files-table :is(.c-kind, .c-date) { display: none; } /* 업무 카드(오른쪽 패널) 안에서는 이름·크기만 */
+.sheet .cust-file-row :is(.c-kind, .c-date) { display: none; } /* 업무 카드(오른쪽 패널) 안에서는 이름·크기만 */
