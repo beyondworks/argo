@@ -56,7 +56,7 @@ export default function People({ space }) {
       {!list.length ? <div className="empty-state"><Icon name="person" size={20} /><p>{t(people.length ? 'people.emptyFilter' : 'people.empty')}</p></div>
         : <div className="table-wrap"><table className="table pp-table"><thead><tr>
           {manager && <th className="pp-check"><input type="checkbox" className="co-row-check" checked={all} onChange={() => setSel(all ? new Set() : new Set(rowIds))} aria-label={t('people.selectAll')} /></th>}
-          <th>{t('people.col.name')}</th><th>{t('people.col.title')}</th><th className="pp-hide-narrow">{t('people.col.dept')}</th><th>{t('people.col.contact')}</th>
+          <th>{t('people.col.name')}</th><th>{t('people.col.title')}</th><th className="pp-hide-narrow">{t('people.col.dept')}</th><th className="pp-hide-phone">{t('people.col.contact')}</th>
           <th className="pp-hide-narrow">{t('people.col.agent')}</th><th className="pp-hide-narrow">{t('people.col.joined')}</th><th>{t('people.col.status')}</th></tr></thead>
           <tbody>{list.map((p) => <tr key={rowKey(p)} className={`row-link${p.status === 'left' ? ' left' : ''}`} onClick={(e) => { if (!e.target.closest('input, .redact')) open(p); }}>
             {manager && <td className="pp-check">{p.id && <input type="checkbox" className="co-row-check" checked={sel.has(p.id)} onChange={() => toggleSel(p.id)} aria-label={t('people.select', { name: p.name })} />}</td>}
@@ -65,7 +65,7 @@ export default function People({ space }) {
               {!p.id && <small className="dim">{t('people.accountOnly')}</small>}</td>
             <td>{p.title || <span className="dim">—</span>}</td>
             <td className="pp-hide-narrow">{p.department || <span className="dim">—</span>}</td>
-            <td><span className="pp-contact">{p.email && <span>{p.email}</span>}{p.phone && <span className="mono">{p.phone}</span>}{!p.email && !p.phone && <span className="dim">—</span>}</span></td>
+            <td className="pp-hide-phone"><span className="pp-contact">{p.email && <span>{p.email}</span>}{p.phone && <span className="mono">{p.phone}</span>}{!p.email && !p.phone && <span className="dim">—</span>}</span></td>
             <td className="pp-hide-narrow">{p.agent ? <span className="badge">{agentLabel(p.agent)}</span> : <span className="dim">—</span>}</td>
             <td className="pp-hide-narrow">{dayText(p.joined_on)}</td>
             <td><span className={`badge${p.status === 'left' ? ' late' : ''}`}>{t(`people.st.${p.status}`)}</span>{p.left_on && <small className="dim"> {dayText(p.left_on)}</small>}</td>

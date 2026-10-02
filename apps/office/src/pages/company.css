@@ -50,6 +50,8 @@ button.co-label { padding: 0; border: 0; background: none; font: inherit; font-w
 .pp-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 560px) { .pp-form-row { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .pp-table .pp-hide-narrow { display: none; } }
+@media (max-width: 560px) { .pp-table .pp-hide-phone { display: none; } } /* 폰 폭: 연락처는 눌러서 여는 창에서 */
+.pp-table .pp-contact span { overflow-wrap: anywhere; }
 
 /* 평가 레포트 */
 .perf-bar .push { margin-left: auto; }
