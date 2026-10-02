@@ -55,6 +55,13 @@ test('2차 피드백 — 친구 관리: 가로 탭(친구·차단·숨긴 에이
   assert.match(fm, /\['friends', 'blocked', 'hidden'\]\.map/);
   assert.match(fm, /className="ph-mmore"/);
   assert.match(fm, /hideUser && \{ icon: 'eyeoff', label: t\('fm\.hide'\)/, '⋯ 메뉴에 숨김(대화하기 / 숨김 / 차단 / 삭제)');
+  assert.match(fm, /run: \(\) => setConfirm\(\{ kind: 'hide', f: menu\.f \}\)/, '친구 숨김도 확인 창');
+  assert.match(fm, /title=\{t\('fm\.hide\.title', \{ name: nameOf\(confirm\.f\) \}\)\} description=\{t\('fm\.hide\.note'\)\}/, '친구 숨김 확인 창 안내 한 줄');
+  assert.match(fm, /<div className="ph-mhead">\{t\('fm\.hidden\.agents'\)\}<\/div><p className="ph-mnote">\{t\('fm\.hideAgent\.note'\)\}<\/p>/, "숨김 탭 '에이전트' 소제목 아래 안내");
+  assert.match(src, /confirmMute \? <ConfirmModal tone="primary" title=\{t\('fm\.hideAgent\.title'\)\} description=\{t\('fm\.hideAgent\.note'\)\}/, '에이전트 숨기기 확인 창 안내(폰)');
+  const dict = readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8');
+  assert.match(dict, /'fm\.hideAgent\.note': \['숨긴 에이전트의 글은 대화방에서 접혀 보이고, 알림과 검색에서 빠집니다\.', 'Posts from hidden agents are collapsed in chats and left out of notifications and search\.'\]/);
+  assert.match(dict, /'fm\.hide\.note': \['목록에서만 빠지고, 대화와 알림은 그대로입니다\.', "They're only removed from your list — chats and notifications stay\."\]/);
   assert.match(fm, /run: \(\) => setConfirm\(\{ kind: 'block', f: menu\.f \}\)/); assert.match(fm, /run: \(\) => setConfirm\(\{ kind: 'remove', f: menu\.f \}\)/);
   assert.match(fm, /<ConfirmModal /);
   assert.doesNotMatch(fm, /msgr-rows|className="empty"/, '카드 안 목록·점선 빈 상자 없음');

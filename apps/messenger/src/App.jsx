@@ -540,7 +540,7 @@ const writeLastCh = (org, ch) => { try { const m = JSON.parse(localStorage.getIt
 function NavButton({ onMenu }) {
   const { t } = useT();
   const phone = useIsPhone();
-  return <button type="button" className="msgr-menu" onClick={onMenu} aria-controls={phone ? undefined : 'msgr-navigation'} aria-label={t(phone ? 'phone.back' : 'ui.menu')}><I name={phone ? 'back' : 'menu'} /></button>;
+  return <button type="button" className="msgr-menu" onClick={onMenu} aria-controls={phone ? undefined : 'msgr-navigation'} aria-label={t(phone ? 'phone.back' : 'ui.menu')}><I name={phone ? 'back' : 'menu'} size={phone ? 20 : 16} /></button>;
 }
 
 /* ─── 폰 아래 탭 바(유건 확정 2026-10-01): 친구 / 채팅 / 채널 / 에이전트 / 기억. 폰 폭에서만 그린다(데스크톱 트리는 그대로).
@@ -2293,7 +2293,7 @@ function Shell({ session }) {
           {(() => { const label = me?.display_name || session.user.email; return !tabQText.trim() && (
             <button type="button" className="item ph-me" onClick={() => openSettings('me')}><Av name={label} size="kk" userId={uid} /><span className="ph-kbody"><span className="name">{label}</span><span className="snip">{t('phone.friends.meSub')}</span></span></button>); })()}
           {friendReqs.length > 0 && !tabQText.trim() && (<>
-            <button type="button" className="item ph-reqrow" aria-expanded={reqOpen} onClick={() => setReqOpen((v) => !v)}><span className="ph-reqic"><I name="personplus" size={18} /></span><span className="name">{t('phone.friends.requests', { n: friendReqs.length })}</span><I name="caret" size={14} className={`ph-chev${reqOpen ? ' open' : ''}`} /></button>
+            <button type="button" className="item ph-reqrow" aria-expanded={reqOpen} onClick={() => setReqOpen((v) => !v)}><span className="ph-reqic"><I name="personplus" size={18} /></span><span className="name">{t('phone.friends.requests', { n: friendReqs.length })}</span><I name="caret" size={20} className={`ph-chev${reqOpen ? ' open' : ''}`} /></button>
             {reqOpen && <div className="ph-reqs">{friendReqs.map((f) => (
               <div key={f.user_id} className="ph-req"><Av name={f.display_name || f.handle || '?'} size="lg" userId={f.user_id} /><span className="name">{f.display_name || f.handle || f.user_id.slice(0, 8)}</span>
                 <button type="button" className="btn btn-primary" onClick={() => decideFriend(f, true)}>{t('phone.friends.accept')}</button><button type="button" className="btn" onClick={() => decideFriend(f, false)}>{t('phone.friends.decline')}</button></div>))}</div>}
@@ -4113,19 +4113,22 @@ function PhoneFriendsManage({ uid, friends = [], onChanged, onPersonalDm, onNote
     {tab === 'hidden' && (muted === null ? <p className="ph-mempty" role="status">{t('ui.loading')}</p> : (<>
       {hid.friends.length > 0 && <div className="ph-mhead">{t('fm.hidden.friends')}</div>}
       {hid.friends.map((f) => person(f, <button type="button" className="btn" disabled={busy} onClick={() => act(() => unhideUser(f.user_id), 'fm.unhide.failed')}>{t('fm.unhide')}</button>))}
-      {hid.agents.length > 0 && <div className="ph-mhead">{t('fm.hidden.agents')}</div>}
+      {hid.agents.length > 0 && <><div className="ph-mhead">{t('fm.hidden.agents')}</div><p className="ph-mnote">{t('fm.hideAgent.note')}</p></>}
       {hid.agents.map((c) => person(c, <button type="button" className="btn" disabled={busy} onClick={() => act(async () => { await unmuteCrew(c.crew_id); await loadMuted(); }, 'fm.unhide.failed')}>{t('fm.unhide')}</button>))}
       {!hid.friends.length && !hid.agents.length && empty('fm.hidden.none')}
     </>))}
     {menu && <CtxMenu at={menu.at} onClose={() => setMenu(null)} items={[
       { icon: 'at', label: t('friends.dm'), run: () => onPersonalDm?.(menu.f.user_id) },
-      hideUser && { icon: 'eyeoff', label: t('fm.hide'), run: () => act(() => hideUser(menu.f.user_id), 'fm.hide.failed') },
+      hideUser && { icon: 'eyeoff', label: t('fm.hide'), run: () => setConfirm({ kind: 'hide', f: menu.f }) },
       { icon: 'block', label: t('friends.block'), danger: true, run: () => setConfirm({ kind: 'block', f: menu.f }) },
       { icon: 'trash', label: t('friends.remove'), danger: true, run: () => setConfirm({ kind: 'remove', f: menu.f }) },
     ]} />}
-    {confirm && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(confirm.kind === 'block' ? 'friends.block' : 'friends.remove')}>
-      <ConfirmModal title={t(confirm.kind === 'block' ? 'friends.block' : 'friends.remove')} description={t(confirm.kind === 'block' ? 'friends.block.confirm' : 'friends.remove.confirm', { name: nameOf(confirm.f) })} confirmLabel={t(confirm.kind === 'block' ? 'friends.block' : 'friends.remove')} busy={busy}
-        onConfirm={async () => { const c = confirm; const ok = await call('msgr_friend_remove', { other: c.f.user_id, block: c.kind === 'block' }, c.kind === 'block' ? 'friends.blocked' : 'friends.removed.friend'); if (ok) { setConfirm(null); if (c.kind === 'block') setBlocked(null); } }} onClose={() => { if (!busy) setConfirm(null); }} />
+    {confirm && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(confirm.kind === 'hide' ? 'fm.hide' : confirm.kind === 'block' ? 'friends.block' : 'friends.remove')}>
+      {confirm.kind === 'hide'
+        ? <ConfirmModal tone="primary" title={t('fm.hide.title', { name: nameOf(confirm.f) })} description={t('fm.hide.note')} confirmLabel={t('fm.hide')} busy={busy}
+            onConfirm={async () => { const c = confirm; await act(() => hideUser(c.f.user_id), 'fm.hide.failed'); setConfirm(null); }} onClose={() => { if (!busy) setConfirm(null); }} />
+        : <ConfirmModal title={t(confirm.kind === 'block' ? 'friends.block' : 'friends.remove')} description={t(confirm.kind === 'block' ? 'friends.block.confirm' : 'friends.remove.confirm', { name: nameOf(confirm.f) })} confirmLabel={t(confirm.kind === 'block' ? 'friends.block' : 'friends.remove')} busy={busy}
+            onConfirm={async () => { const c = confirm; const ok = await call('msgr_friend_remove', { other: c.f.user_id, block: c.kind === 'block' }, c.kind === 'block' ? 'friends.blocked' : 'friends.removed.friend'); if (ok) { setConfirm(null); if (c.kind === 'block') setBlocked(null); } }} onClose={() => { if (!busy) setConfirm(null); }} />}
     </div>, document.body)}
   </div>);
 }
@@ -5590,6 +5593,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   reacts = reacts.filter((r) => r.user_id === uid || !safety.blocked.has(r.user_id)); // 차단한 사람의 반응은 수·이름 모두 뺀다
   const [reporting, setReporting] = useState(false); const [reportReason, setReportReason] = useState(''); const [safetyBusy, setSafetyBusy] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
+  const [confirmMute, setConfirmMute] = useState(false); // 폰: 에이전트 숨기기 확인 창(숨기면 무엇이 바뀌는지 한 줄, 유건 2026-10-02). 데스크톱은 그대로 바로 숨긴다
   const tabStop = ctxAt && actsOpen ? undefined : -1; // 숨은 hover 동작은 탭 순서에서 뺀다 — 메시지마다 2~4칸이라 입력창까지 Tab 76번(검수 D11). 우클릭 메뉴로 열렸을 때만 탭으로 닿는다
   const openedAt = useRef(0); // 길게 눌러 연 시트는 손을 떼는 순간의 클릭이 바로 배경에 떨어져 닫혔다(에뮬레이션 실측 2026-09-29) — 열린 직후 잠깐은 배경 누름을 무시
   const hold = useLongPress(() => { if (!m.pending) { openedAt.current = Date.now(); setActsOpen(true); } });
@@ -5709,7 +5713,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
             <button type="button" onClick={() => { copy(); setActsOpen(false); }}><I name="copy" size={20} /><span>{copied ? t('ui.copied') : t('ui.copy')}</span></button>
             {canReport && <button type="button" onClick={() => { setActsOpen(false); setReporting(true); }}><I name="flag" size={20} /><span>{t('report.action')}</span></button>}
             {canBlock && <button type="button" onClick={() => { setActsOpen(false); setConfirmBlock(true); }}><I name="block" size={20} /><span>{t('report.block')}</span></button>}
-            {canMuteCrew && <button type="button" onClick={() => { setActsOpen(false); muteCrewAct(); }}><I name="block" size={20} /><span>{t('crew.mute')}</span></button>}
+            {canMuteCrew && <button type="button" onClick={() => { setActsOpen(false); setConfirmMute(true); }}><I name="block" size={20} /><span>{t('crew.mute')}</span></button>}
             {mine && m.kind === 'text' && <button type="button" onClick={() => { setDraft(m.body); setEditing(true); setActsOpen(false); }}><I name="gear" size={20} /><span>{t('ui.edit')}</span></button>}
           </div>
           {mine && (confirmDel
@@ -5724,7 +5728,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
       <button type="button" tabIndex={tabStop} onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
       {canReport && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); setReporting(true); }}><I name="flag" size={12} />{t('report.action')}</button>}
       {canBlock && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); setConfirmBlock(true); }}><I name="block" size={12} />{t('report.block')}</button>}
-      {canMuteCrew && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); muteCrewAct(); }}><I name="block" size={12} />{t('crew.mute')}</button>}
+      {canMuteCrew && <button type="button" tabIndex={tabStop} onClick={() => { setActsOpen(false); if (phone) setConfirmMute(true); else muteCrewAct(); }}><I name="block" size={12} />{t('crew.mute')}</button>}
       <button type="button" tabIndex={tabStop} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>
       {mine && m.kind === 'text' && <button type="button" tabIndex={tabStop} onClick={() => { setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
       {mine && (confirmDel ? <button type="button" tabIndex={tabStop} className="danger" onClick={() => { setConfirmDel(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" tabIndex={tabStop} onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
@@ -5738,10 +5742,11 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
       <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!draft.trim()}>{t('ui.save')}</button><button type="button" className="btn sm" onClick={() => setEditing(false)}>{t('ui.cancel')}</button></div>
     </form>
   );
-  const reportModal = (reporting || confirmBlock) && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(reporting ? 'report.title' : 'report.block')} onPointerDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>{/* 포털이어도 React 이벤트는 행으로 올라간다 — 입력칸 길게 누르기가 동작 시트를 열던 것(검수 M5) */}
+  const reportModal = (reporting || confirmBlock || confirmMute) && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t(reporting ? 'report.title' : confirmMute ? 'fm.hideAgent.title' : 'report.block')} onPointerDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>{/* 포털이어도 React 이벤트는 행으로 올라간다 — 입력칸 길게 누르기가 동작 시트를 열던 것(검수 M5) */}
     {reporting
       ? <ConfirmModal tone="primary" title={t('report.title')} confirmLabel={t('report.action')} busy={safetyBusy} onConfirm={report} onClose={() => { if (!safetyBusy) { setReporting(false); setReportReason(''); } }}
           description={<>{t(isPersonal ? 'report.desc.personal' : 'report.desc')}{/* 불러온 글은 org_id를 싣지 않는다(검수 N1) — 채널 문맥으로 가른다 */}<textarea className="msgr-input" rows={3} maxLength={500} value={reportReason} onChange={(e) => setReportReason(e.target.value)} placeholder={t('report.reason.ph')} aria-label={t('report.reason.ph')} style={{ display: 'block', width: '100%', marginTop: 10, boxSizing: 'border-box', padding: '8px 10px', font: 'inherit', fontSize: 16, resize: 'vertical' }} /></>} />
+      : confirmMute ? <ConfirmModal tone="primary" title={t('fm.hideAgent.title')} description={t('fm.hideAgent.note')} confirmLabel={t('fm.hide')} busy={safetyBusy} onConfirm={async () => { await muteCrewAct(); setConfirmMute(false); }} onClose={() => { if (!safetyBusy) setConfirmMute(false); }} />
       : <ConfirmModal title={t('report.block')} description={t('friends.block.confirm', { name: nameOfUser(m.author_user_id) })} confirmLabel={t('report.block')} busy={safetyBusy} onConfirm={block} onClose={() => { if (!safetyBusy) setConfirmBlock(false); }} />}
   </div>, document.body);
   if (!mine && m.author_kind === 'user' && safety.blocked.has(m.author_user_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.blockedUser')}</div>; // 차단한 사람의 글 — 본문·첨부·반응을 그리지 않는다

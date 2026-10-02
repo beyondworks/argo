@@ -2126,6 +2126,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-mmore:active { background: var(--card-2); }
   .msgr-phone .ph-mmore svg { fill: currentColor; }
   .msgr-phone .ph-mhead { padding: 10px 2px 2px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+  .msgr-phone .ph-mnote { margin: 0; padding: 2px 2px 4px; font-size: 12.5px; line-height: 1.45; color: var(--fg-2); } /* 숨김 탭 '에이전트' 소제목 아래 안내 한 줄 */
   .msgr-phone .ph-mempty { margin: 0; padding: 28px 0; text-align: center; font-size: 14px; color: var(--fg-2); }
   .msgr-phone .ph-mreq { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 66px; color: var(--fg); text-align: left; border-radius: 14px; border: 1px solid var(--border-soft) !important; padding-inline: 12px !important; background: var(--card-2) !important; }
   .msgr-phone .ph-mreq .name { text-align: left; }
