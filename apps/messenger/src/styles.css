@@ -2328,3 +2328,16 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-crop-zoom .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .msgr-crop .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
 .msgr-crop .acts .btn { justify-content: center; min-height: 44px; border-radius: 12px; }
+
+/* 탭과 토글을 서로 다른 모양으로(유건 2026-10-02 "상단 메뉴탭 모양이랑 토글 모양이 왜이래") — 둘 다 검은 알약이라 메뉴인지 고르기인지 구분이 안 됐다.
+   고르기(radiogroup) = 회색 트랙 위 흰 알약(다크는 한 단계 밝은 알약). 폰 화면 안 메뉴(tablist) = 밑줄 탭. 데스크톱 상단 탭 줄은 그대로 둔다 */
+.msgr-seg[role='radiogroup'] { padding: 3px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.msgr-seg[role='radiogroup'] > button { border-radius: 7px; }
+.msgr-seg[role='radiogroup'] > button.active { background: var(--card); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+@supports (color: light-dark(#000, #fff)) { .msgr-seg[role='radiogroup'] > button.active { background: light-dark(var(--card), color-mix(in srgb, var(--fg) 16%, var(--card))); } } /* 다크 테마는 모두 color-scheme: dark를 선언한다 */
+.msgr-phone .msgr-seg[role='radiogroup'] { padding: 5px 0; border-radius: 10px / 15px; } /* 누르는 영역용 위아래 투명 테두리 8px·안쪽 5px만큼 세로 반지름을 더해야 보이는 모서리가 10·7px로 맞는다 */
+.msgr-phone .msgr-seg[role='radiogroup'] > button { border-radius: 7px / 15px; }
+.msgr-phone .msgr-seg[role='radiogroup'] > button.active { box-shadow: none; } /* 그림자는 투명 테두리까지 포함한 44px 상자를 따라가 알약 밖으로 번진다 */
+.msgr-phone .msgr-seg[role='tablist'] { gap: 0; padding: 0; border: 0; border-bottom: 1px solid var(--border-soft); border-radius: 0; background: none; }
+.msgr-phone .msgr-seg[role='tablist'] > button { flex: 1 0 auto; justify-content: center; height: 44px; min-height: 44px; margin: 0; padding: 0 10px; border: 0; border-radius: 0; background: none; font-size: 14px; font-weight: 500; color: var(--fg-3); }
+.msgr-phone .msgr-seg[role='tablist'] > button.active { background: none; color: var(--fg); font-weight: 600; box-shadow: inset 0 -2px 0 var(--fg); }
