@@ -771,7 +771,7 @@ const DICT = {
   'settings.conn.enabling': ['가동 중 — 게이트웨이가 곧 연결됩니다', 'Enabled — gateway connecting shortly'],
   'settings.conn.stopped': ['중지됨', 'Stopped'],
   // 채널별 알림 선택 — 연결을 끊지 않고 종류별로 끈다(경위는 src/channel-events.mjs).
-  // 어휘는 chat.via.*와 맞춘다 — 채팅에서 '동료 쪽지'로 본 것을 설정에서 다른 이름으로 끄면 헷갈린다.
+  // 어휘는 chat.inbound.*(1:1 화면 바깥 글 카드의 출처 이름)와 맞춘다 — 채팅에서 '쪽지'로 본 것을 설정에서 다른 이름으로 끄면 헷갈린다.
   // 게이트웨이 선택 사항 안내 — 결재·브리핑은 직통 봇 폴백(#305·#307·#312 + H2 통일)으로도 배달되므로
   // 게이트웨이를 필수로 읽히게 하지 않는다(이전 경고 문구가 그렇게 읽혀 실사용 혼란 2026-08-28).
   // 문구는 실제 배달 규칙과 1:1이어야 한다(분리 검수 L2: "브리핑이 배달됩니다" 단정이 담당·기본 크루 봇
@@ -1279,13 +1279,7 @@ const DICT = {
   'chat.envelope.part': ['함께 보낸 {label}', 'Attached: {label}'],
   'chat.envelope.extra': ['함께 보낸 내용', 'Attached context'],
   'chat.resend': ['다시 보내기', 'Resend'],
-  // 배달 지시 출처표식 — 사장 말풍선과 구분(신고 2026-07-28 "내가 쓴 게 아니거든")
   'chat.showEarlier': ['이전 메시지 {n}개 더 보기 (숨김 {total}개)', 'Show {n} earlier messages ({total} hidden)'],
-  'chat.via.crewmail': ['동료 쪽지', 'Crew mail'],
-  'chat.via.delegate': ['동료 위임', 'Delegated'],
-  'chat.via.routine': ['루틴 실행', 'Routine run'],
-  'chat.via.job': ['장시간 작업', 'Long task'],
-  // 미지의 via 값 폴백 — 신 버전 기기의 스레드가 sync로 넘어온 경우(microlabel 대문자 키 노출 방지)
   'deck.crewExpand': ['{n}명 더 보기', 'Show {n} more'],
   'deck.crewFold': ['접기', 'Show less'],
   'billing.unavailable': ['결제 정보를 불러오지 못했습니다 — 잠시 후 다시 시도해 주세요', "Couldn't load billing info — please try again in a moment"],
@@ -1294,11 +1288,23 @@ const DICT = {
   'billing.grantedUntil': ['무료 제공 Pro — {date}까지. 미리 구독해 두면 끊김 없이 이어집니다.', 'Pro granted at no charge until {date}. Subscribe now to continue seamlessly.'],
   'settings.defaultRunner': ['기본 러너 — 크루에 러너 미지정 시 우선 사용', 'Default runner — used first when crew has no runner set'],
   'settings.defaultRunnerAuto': ['자동 (연결 순서)', 'Auto (connection order)'],
-  'chat.via.room': ['회의실 발언', 'Meeting room turn'],
-  'chat.via.generic': ['자동 배달', 'Auto-delivered'],
-  'chat.via.expand': ['눌러서 전체 보기', 'Click to show all'],
-  'chat.via.collapse': ['눌러서 접기', 'Click to collapse'],
   'chat.via.hint': ['사장이 쓴 글이 아니라 자동 배달된 지시입니다', 'Delivered automatically — not written by you'],
+  // 바깥 글 카드의 출처 줄(inbound-card.mjs sourceLine) — '메신저 · #마케팅 · 김OO', '루틴 · 아침 보고', '쪽지 · 페퍼에게서'
+  'chat.inbound.msgr': ['메신저', 'Messenger'],
+  'chat.inbound.msgrDm': ['메신저 DM', 'Messenger DM'],
+  'chat.inbound.routine': ['루틴', 'Routine'],
+  'chat.inbound.loop': ['루프', 'Loop'],
+  'chat.inbound.crewmail': ['쪽지', 'Crew mail'],
+  'chat.inbound.delegate': ['위임', 'Delegated'],
+  'chat.inbound.job': ['장시간 작업', 'Long task'],
+  'chat.inbound.room': ['회의실', 'Meeting room'],
+  'chat.inbound.approval': ['결재 결과', 'Approval result'],
+  'chat.inbound.generic': ['자동 배달', 'Auto-delivered'],
+  'chat.inbound.from': ['{name}에게서', 'from {name}'],
+  'chat.inbound.cc': ['참조', 'CC'],
+  'chat.inbound.captainShared': ['회의실 공유', 'Shared from meeting'],
+  'chat.inbound.expand': ['전체 보기', 'Show all'],
+  'chat.inbound.collapse': ['접기', 'Collapse'],
   'chat.newChatConfirm': ['새 대화를 시작할까요? 지금 대화는 보관함에 적재되고(삭제 아님), 회사 기억(vault)도 그대로 남습니다.', 'Start a new chat? The current thread is archived (not deleted), and company memory stays intact.'],
   'chat.cardTitle': ['크루 카드', 'Crew Card'],
   'chat.systemPromptEq': ['= System Prompt', '= System Prompt'],
