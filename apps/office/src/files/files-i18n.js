@@ -7,7 +7,7 @@ export const FILES_DICT = {
   'files.tab.all': ['전체 파일', 'All files'], 'files.tab.customers': ['거래처별', 'By customer'], 'files.tab.trash': ['휴지통', 'Trash'],
   'files.search': ['이름·본문·태그 검색', 'Search names, text and tags'],
   'files.drop': ['파일을 끌어다 놓거나 눌러서 고르세요', 'Drag files here or click to choose'],
-  'files.dropHint': ['PDF·그림·문서 · 최대 50MB · 여러 개 함께', 'PDF, images, documents · up to 50 MB · several at once'],
+  'files.dropHint': ['PDF·그림·문서 · 파일 하나 최대 25MB(Free) · 여러 개 함께', 'PDF, images, documents · up to 25 MB each on Free · several at once'],
   'files.dropHere': ['놓으면 지금 폴더로 올립니다', 'Drop to upload to this folder'],
   'files.all': ['전체', 'All'], 'files.root': ['문서함', 'Files'],
   'files.anyCustomer': ['모든 거래처', 'All customers'], 'files.noCustomer': ['거래처 없음', 'No customer'],
@@ -78,12 +78,12 @@ export const FILES_DICT = {
   // 오류
   'files.err.permission': ['권한이 없습니다.', 'You don’t have permission.'], 'files.err.input': ['입력을 확인해 주세요.', 'Please check the input.'],
   'files.err.missing': ['파일을 찾을 수 없습니다.', 'File not found.'], 'files.err.conflict': ['같은 항목이 이미 있습니다.', 'That item already exists.'],
-  'files.err.limit': ['더 넣을 수 없습니다(한도).', 'Limit reached.'], 'files.err.quota': ['저장 공간이 가득 찼습니다(조직 10GB·내 공간 1GB). 휴지통을 비우거나 파일을 정리해 주세요.', 'Storage is full (10 GB per organization, 1 GB personal). Empty the trash or remove files.'], 'files.err.notEmpty': ['폴더가 비어 있지 않습니다. 안의 파일을 먼저 옮기세요.', 'The folder isn’t empty. Move its files first.'],
+  'files.err.limit': ['더 넣을 수 없습니다(한도).', 'Limit reached.'], 'files.err.quota': ['저장 공간이 가득 찼습니다. 휴지통을 비우거나 파일을 정리해 주세요. 이미 올린 파일은 그대로 볼 수 있습니다.', 'Storage is full. Empty the trash or remove files. Files already uploaded stay available.'], 'files.err.notEmpty': ['폴더가 비어 있지 않습니다. 안의 파일을 먼저 옮기세요.', 'The folder isn’t empty. Move its files first.'],
   'files.err.signin': ['다시 로그인해 주세요.', 'Please sign in again.'], 'files.err.request': ['요청을 처리하지 못했습니다. 잠시 뒤 다시 해 주세요.', 'Something went wrong. Try again shortly.'],
   'files.err.storage': ['저장소에 올리지 못했습니다.', 'Could not save to storage.'], 'files.err.daily': ['오늘 올릴 수 있는 양을 다 썼습니다. 내일 다시 해 주세요.', 'You’ve reached today’s upload limit. Try again tomorrow.'],
   'files.err.paused': ['파일 올리기가 잠시 멈춰 있습니다. 잠시 뒤 다시 해 주세요.', 'Uploads are paused for now. Try again shortly.'], 'files.err.not_connected': ['드라이브가 연결되지 않았습니다.', 'Drive isn’t connected.'],
   'files.err.expired': ['드라이브 연결이 만료됐습니다.', 'Drive connection expired.'], 'files.err.scopes': ['드라이브 권한이 모자랍니다. 다시 연결해 주세요.', 'Missing Drive permission. Please reconnect.'],
-  'files.err.too_big': ['50MB가 넘습니다', 'Over 50 MB'], 'files.err.link_only': ['링크로만 붙일 수 있습니다', 'Can only be attached as a link'],
+  'files.err.too_big': ['파일 하나의 한도를 넘습니다(Free 25MB)', 'Over the per-file limit (25 MB on Free)'], 'files.err.link_only': ['링크로만 붙일 수 있습니다', 'Can only be attached as a link'],
   'files.err.state': ['연결을 마치지 못했습니다. 다시 해 주세요.', 'Could not finish connecting. Please try again.'], 'files.err.not_configured': ['구글 연결이 아직 설정되지 않았습니다.', 'Google connection isn’t set up yet.'],
   // 페이지 '/파일' 블록
   'files.block': ['파일', 'File'], 'files.blockPick': ['문서함에서 고르기', 'Choose from Files'], 'files.blockUpload': ['새 파일 올리기', 'Upload new file'],

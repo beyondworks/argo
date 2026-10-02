@@ -15,7 +15,7 @@ const fail = (status, code) => Object.assign(new Error(code), { status, code });
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const MAX_KEYS = 50;
 const codeOf = (t) => /file_[a-z_]+/.exec(t)?.[0];
-const STATUS = { file_forbidden: 403, file_input: 400, file_missing: 409, file_size_mismatch: 409, file_conflict: 409 };
+const STATUS = { file_forbidden: 403, file_input: 400, file_missing: 409, file_size_mismatch: 409, file_conflict: 409, file_quota: 507, file_too_big: 413, file_daily_limit: 429 };
 
 function supa() { if (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_ANON_KEY) throw fail(503, 'not_configured'); return env.VITE_SUPABASE_URL.replace(/\/+$/, ''); }
 /** 사용자 JWT로 RPC — 사람 권한 그대로(DB 함수가 판정) */

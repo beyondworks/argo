@@ -31,7 +31,7 @@ const supa = () => env.VITE_SUPABASE_URL, anon = () => env.VITE_SUPABASE_ANON_KE
 async function rpc(jwt, fn, args) {
   const r = await fetch(`${supa()}/rest/v1/rpc/${fn}`, { method: 'POST', headers: { apikey: anon(), authorization: `Bearer ${jwt}`, 'content-type': 'application/json' }, body: JSON.stringify(args) });
   if (r.status === 401) throw fail(401, 'signed_out');
-  if (!r.ok) { const t = await r.text(); throw fail(/file_forbidden|42501/.test(t) ? 403 : /file_quota/.test(t) ? 507 : /file_limit/.test(t) ? 409 : 502, /file_quota/.test(t) ? 'quota' : /file_limit/.test(t) ? 'limit' : 'db'); }
+  if (!r.ok) { const t = await r.text(); throw fail(/file_forbidden|42501/.test(t) ? 403 : /file_quota/.test(t) ? 507 : /file_too_big/.test(t) ? 413 : /file_limit/.test(t) ? 409 : 502, /file_quota/.test(t) ? 'quota' : /file_too_big/.test(t) ? 'too_big' : /file_limit/.test(t) ? 'limit' : 'db'); }
   const t = await r.text();
   return t ? JSON.parse(t) : null;
 }

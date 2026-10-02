@@ -217,7 +217,7 @@ test('MEDIUM 1 문서 저장소: 키는 서버가 정하고(PDF·20MB만), 문�
   const r1 = call(U.outsider, 'office_docs_write', `null,'doc.reserve',${j({ id, size: 100 })}`).path;
   assert.match(r1, new RegExp(`^u-${U.outsider}/docs/${id}/[0-9a-f-]{36}\\.pdf$`));
   assert.equal(JSON.parse(last(sql(as(U.outsider, `select r2_object_pending_mine(${quote(r1)})`)))).mime, 'application/pdf', '형식은 PDF로 고정 — 서명에 들어간다');
-  assert.match(fails(U.outsider, 'office_docs_write', `null,'doc.reserve',${j({ id: randomUUID(), size: 20971521 })}`), /file_input/, '20MB 상한(버킷 제한이 없으므로 자리에서 막는다)');
+  assert.match(fails(U.outsider, 'office_docs_write', `null,'doc.reserve',${j({ id: randomUUID(), size: 20971521 })}`), /file_too_big/, '20MB 상한(버킷 제한이 없으므로 자리에서 막는다)');
   commit(r1, 100);
   const v1 = call(U.outsider, 'office_docs_write', `null,'doc.save',${j({ id, kind: 'quote', title: '내 견적', pdf_path: r1, pdf_size: 1 })}`);
   assert.equal(v1.pdf_size, 100, '문서 크기도 실제 객체 크기');
@@ -264,4 +264,22 @@ test('서버 정리(문서): 저장이 실패해 기록이 가져가지 않은 P
   const keys = svc('office_storage_sweep', '500').keys;
   assert.ok(keys.includes(lost) && keys.includes(lostE));
   assert.ok(!keys.includes(`${SEG}/esign/${E}/orig.pdf`) && !keys.includes(`${SEG}/esign/${E}/final.pdf`), '완료된 서명의 원본·서명본은 남는다');
+});
+
+test('서명은 막지 않는다: 조직 풀이 한도를 넘어도 서명자의 그림 제출·서명본 저장·완료는 된다(사람의 새 올리기만 막힌다)', { skip }, () => {
+  const id = randomUUID(), t = 'F'.repeat(43);
+  write(U.admin, 'esign.create', { id, title: '가득 찬 조직', orig_path: origPdf(U.admin, id), doc_hash: 'f'.repeat(64) });
+  write(U.admin, 'esign.send', { id, signers: [{ name: 'A', email: 'a@x.example', token_hash: sha(t) }] });
+  const big = `${SEG}/files/${randomUUID()}.bin`;
+  sql(`insert into r2_objects(bucket,key,seg,bytes,state,ref_kind) values('argo-office',${quote(big)},${quote(SEG)},5368709120,'claimed','file')`);
+  assert.match(writeFail(U.admin, 'doc.reserve', { id: randomUUID(), size: 10 }), /file_quota/, '사람이 새로 올리는 것은 막힌다');
+  const who = svc('office_esign_public_who', `${quote(sha(t))},'a@x.example'`);
+  const img = `${SEG}/esign/${id}/s-${who.signer_id}-0-q.png`;
+  serverPut(img, 9, 'uploaded', id, 'image/png');
+  assert.equal(svc('office_esign_public_submit', `${quote(sha(t))},'a@x.example',${j([{ page: 0, kind: 'signature', img_path: img }])},'4.4.4.4','ua'`).done, true);
+  serverPut(`${SEG}/esign/${id}/final.pdf`, 30, 'claimed', id);
+  svc('office_esign_public_finalize', `${quote(id)},${quote(`${SEG}/esign/${id}/final.pdf`)},${quote('a'.repeat(64))}`);
+  assert.equal(sql(`select status from office_esign where id=${quote(id)}`), 'completed');
+  assert.equal(row(img).split('|')[0], 'claimed');
+  sql(`delete from r2_objects where key=${quote(big)}`);
 });

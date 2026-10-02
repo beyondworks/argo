@@ -277,7 +277,8 @@ test('쓰기 0(총괄 결정 6): 목록·한 건·열기 판정·자리 판정�
  assert.equal(sql(`select string_agg(proname||'='||provolatile,',' order by proname) from pg_proc where proname in ('r2_object_read_grant','r2_object_pending_mine','r2_object_deleting')`),
   'r2_object_deleting=s,r2_object_pending_mine=s,r2_object_read_grant=s','stable 함수는 쓰기 문장을 실행하지 못한다(측정을 몰래 켜면 오류로 드러난다)');
  assert.equal(sql(`select count(*) from pg_class where relname='office_storage_usage'`),'0','다운로드 측정 표는 만들지 않았다(설계 주석만)');
- assert.deepEqual(Object.values(JSON.parse(sql(`select office_storage_limits()`))),[null,null,null,null,null,null],'하루 상한·플랫폼 예산은 모두 미정(null)');
+ const lim=JSON.parse(sql(`select office_storage_limits()`));
+ assert.deepEqual(Object.entries(lim).filter(([k])=>/^(daily|platform)_/.test(k)).map(([,v])=>v),[null,null,null,null,null,null],'하루 상한·플랫폼 예산은 미정(null)');
 });
 
 test('MEDIUM 1 올리기 자리: 같은 키 남의 자리는 file_conflict, 같은 요청 다시는 그대로, 사람당 열린 자리 50개 상한, 표는 직접 못 읽는다', {skip}, ()=>{
@@ -286,7 +287,8 @@ test('MEDIUM 1 올리기 자리: 같은 키 남의 자리는 file_conflict, 같�
  assert.deepEqual(write(U.member,'file.reserve',{id,filename:'a.pdf',size:5}),a,'같은 요청 다시');
  assert.match(writeFail(U.admin,'file.reserve',{id,filename:'a.pdf',size:5}),/file_conflict/);
  assert.match(writeFail(U.member,'file.reserve',{id,filename:'a.pdf',size:6}),/file_conflict/,'크기가 다른 같은 키');
- assert.match(writeFail(U.member,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:52428801}),/file_input/,'50MB 상한');
+ assert.match(writeFail(U.member,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:26214401}),/file_too_big/,'Free 파일 하나 25MB 상한');
+ write(U.member,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:26214400});
  const u=U.admin;
  sql(`delete from r2_objects where created_by=${quote(u)} and state='pending'`);
  sql(userSql(u,`do $x$ begin for i in 1..50 loop perform office_file_write(null,'file.reserve',jsonb_build_object('id',gen_random_uuid(),'filename','a.pdf','size',1)); end loop; end $x$;`));
@@ -317,4 +319,48 @@ test('LOW 6 크기·출처는 서버가 정한다: 크기는 서버가 확인한
  assert.equal(sql(`select source from office_files where id=${quote(g.id)}`),'upload');
  const a=newFile(U.member,{title:'a.pdf',source:'agent'});
  assert.equal(sql(`select source from office_files where id=${quote(a.id)}`),'agent','크루가 올린 것은 agent');
+});
+
+test('플랜 숫자(총괄 결정 10/2): office_storage_limits 한 곳 — Free 풀 1GB·파일 25MB, Pro 좌석당 30GB·파일 50MB, Enterprise 좌석당 50GB, 판정 자리는 지금 모두 Free', {skip}, ()=>{
+ const L=p=>JSON.parse(sql(`select office_storage_limits(${quote(p)})`));
+ assert.deepEqual([L('free').pool_bytes,L('free').file_max_bytes],[1073741824,26214400]);
+ assert.deepEqual([L('pro').seat_bytes,L('pro').file_max_bytes,L('pro').pool_bytes],[32212254720,52428800,null]);
+ assert.deepEqual([L('enterprise').seat_bytes,L('enterprise').file_max_bytes],[53687091200,52428800]);
+ assert.equal(L('모름').plan,'free');
+ for(const g of [seg(ORG),`u-${U.member}`]){
+  assert.deepEqual(JSON.parse(sql(`select office_seat_plan(${quote(g)})`)),{plan:'free',seats:1},'결제(Paddle) 연결 전에는 Free');
+  assert.equal(sql(`select office_storage_quota(${quote(g)})`),'1073741824'); assert.equal(sql(`select office_storage_file_max(${quote(g)})`),'26214400');
+ }
+ assert.notEqual(raw(userSql(U.member,`select office_seat_plan(${quote(seg(ORG))})`)).status,0,'판정 함수는 내부용');
+});
+
+test('기존 초과분은 막지 않고 새로 올릴 때만 막는다: 한도를 넘은 조직도 보기·열기·휴지통·되살리기·영구 삭제는 그대로, 자리 받기만 file_quota', {skip}, ()=>{
+ const keep=newFile(U.member,{title:'예전 파일.pdf'});
+ const legacy=`${seg(ORG)}/files/${randomUUID()}.bin`;
+ sql(`insert into r2_objects(bucket,key,seg,created_by,bytes,mime,state,ref_kind) values('argo-office',${quote(legacy)},${quote(seg(ORG))},${quote(U.admin)},5368709120,'application/octet-stream','claimed','file')`); // 옛 상한(10GiB) 때 쌓인 5GiB
+ assert.ok(Number(sql(`select office_storage_used(${quote(seg(ORG))})`))>Number(sql(`select office_storage_quota(${quote(seg(ORG))})`)),'한도(Free 1GB)를 넘은 상태');
+ assert.ok(list(U.member).files.some(x=>x.id===keep.id));
+ assert.deepEqual(grant(U.member,[keep.path]),[keep.path],'열기 그대로');
+ write(U.member,'file.trash',{ids:[keep.id]}); write(U.member,'file.restore',{ids:[keep.id]});
+ write(U.member,'file.update',{id:keep.id,title:'예전 파일(이름 바꿈).pdf'});
+ assert.equal(row(legacy).state,'claimed','넘친 데이터를 지우지 않는다');
+ assert.match(writeFail(U.member,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:1}),/file_quota/,'새로 올리기만 막는다');
+ write(U.member,'file.trash',{ids:[keep.id]});
+ assert.deepEqual(write(U.member,'file.purge',{ids:[keep.id]}).keys,[keep.path],'정리(영구 삭제)도 그대로');
+ sql(`delete from r2_objects where key=${quote(legacy)}`);
+});
+
+test('귀속: 조직 공간 파일은 조직 풀 — 올린 직원이 나가도 조직 풀에 남고 그 사람 계정에는 안 잡힌다, 개인 공간·조직 밖 첨부는 올린 사람 계정', {skip}, ()=>{
+ const who=randomUUID(); sql(`insert into auth.users(id,email) values(${quote(who)},'leaver@example.test')`);
+ sql(`insert into msgr_org_members(org_id,user_id,role) values(${quote(ORG)},${quote(who)},'member')`);
+ const used=g=>Number(sql(`select office_storage_used(${quote(g)})`));
+ const org0=used(seg(ORG)), me0=used(`u-${who}`);
+ const r=reserve(who,{size:7000}); commit(r.key,7000); write(who,'file.create',{id:r.id,title:'떠날 사람.pdf',storage_path:r.key});
+ const p=reserve(who,{o:null,size:300}); commit(p.key,300);
+ sql(`insert into r2_objects(bucket,key,seg,created_by,bytes,state) values('argo-msgr',${quote(`c-${randomUUID()}/a.png`)},${quote(`c-${randomUUID()}`)},${quote(who)},40,'claimed')`); // 메신저 개인 대화 첨부(조직 밖)
+ assert.equal(used(seg(ORG))-org0,7000); assert.equal(used(`u-${who}`)-me0,340,'개인 공간 300 + 개인 대화 첨부 40, 조직 파일은 빠진다');
+ sql(`update msgr_org_members set removed_at=now() where org_id=${quote(ORG)} and user_id=${quote(who)}`);
+ assert.equal(used(seg(ORG))-org0,7000,'직원이 나가도 조직 풀에 남는다');
+ assert.ok(list(U.admin).files.some(x=>x.id===r.id),'조직 파일도 그대로 보인다');
+ assert.deepEqual(grant(U.admin,[r.key]),[r.key]);
 });

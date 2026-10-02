@@ -17,7 +17,7 @@ function mapError(error) {
   const m = /^docs_([a-z_]+)/.exec(error?.message ?? '');
   if (m) return fail(m[1]);
   if (/^file_quota/.test(error?.message ?? '')) return fail('quota'); // 범위 저장 공간(문서함·문서 합) 가득 — 분리 검수 MEDIUM 1
-  if (/^file_(limit|conflict|missing|daily_limit|input)/.test(error?.message ?? '')) return fail('upload', { cause: error });
+  if (/^file_(limit|conflict|missing|daily_limit|input|too_big)/.test(error?.message ?? '')) return fail('upload', { cause: error });
   if (['PGRST202', 'PGRST205', '42883', '42P01'].includes(error?.code)) return fail('schema');
   if (['42501', 'PGRST301'].includes(String(error?.code))) return fail('permission');
   return fail('request', { cause: error });

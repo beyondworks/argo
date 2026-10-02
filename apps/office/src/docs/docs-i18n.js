@@ -65,7 +65,7 @@ export const DOCS_DICT = {
   'docs.err.customer': ['고객사를 입력하세요', 'Enter the customer'], 'docs.err.customerA': ['고객사(갑)를 입력하세요', 'Enter the customer (party A)'],
   'docs.err.items': ['견적 항목을 입력하세요', 'Add at least one line item'], 'docs.err.contractItems': ['계약금액 항목을 입력하세요', 'Add at least one contract amount item'],
   'docs.err.amount': ['금액·수량을 확인하세요(0 이상, 합계 1조 원 이하)', 'Check amounts and quantities (0 or more, total under 1 trillion)'], 'docs.err.email': ['갑 이메일 형식을 확인하세요', 'Check party A’s email'],
-  'docs.err.make': ['PDF를 만들지 못했습니다. 다시 시도하세요.', 'Could not make the PDF. Try again.'], 'docs.err.quota': ['저장 공간이 가득 찼습니다(조직 10GB·내 공간 1GB). 문서함 휴지통을 비우거나 파일을 정리해 주세요.', 'Storage is full (10 GB per organization, 1 GB personal). Empty the file trash or remove files.'], 'docs.err.deal': ['문서는 저장했지만 거래 등록은 하지 못했습니다.', 'Saved the document but could not create the deal.'],
+  'docs.err.make': ['PDF를 만들지 못했습니다. 다시 시도하세요.', 'Could not make the PDF. Try again.'], 'docs.err.quota': ['저장 공간이 가득 찼습니다. 문서함 휴지통을 비우거나 파일을 정리해 주세요.', 'Storage is full. Empty the file trash or remove files.'], 'docs.err.deal': ['문서는 저장했지만 거래 등록은 하지 못했습니다.', 'Saved the document but could not create the deal.'],
   'docs.err.customerSave': ['거래처 정보를 저장하지 못했습니다.', 'Could not save the customer.'], 'docs.err.file': ['파일을 불러오지 못했습니다.', 'Could not load the file.'],
   'docs.err.load': ['목록을 불러오지 못했습니다.', 'Could not load the list.'], 'docs.err.schema': ['견적·계약 기능의 서버 설정이 아직 적용되지 않았습니다.', 'The quotes & contracts schema is not installed on this server yet.'],
 

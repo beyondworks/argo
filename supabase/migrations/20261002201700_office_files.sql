@@ -13,10 +13,14 @@
 --   또는 scripts/files-sweep.mjs, 서비스 키): office_storage_sweep이 ① 휴지통 30일 행 삭제 + deleting ② 만료된 올리기 자리(pending) ③ 1시간 넘게
 --   등록 안 된 객체(uploaded) ④ deleting 목록을 주고, 서버가 R2에서 지운 뒤 r2_object_forget으로 행을 지운다. R2 삭제가 실패한 행은 남아 다음 날 다시.
 --   OCR 글자는 행 안에만 둔다(따로 쌓이는 표 없음).
--- · 용량: 범위마다 오피스 R2 객체(문서함 + 문서 PDF·서명 파일) 크기 합 상한 — 숫자 자리 office_storage_quota(지금 값: 조직 10GiB, 내 공간 1GiB).
---   올리기 자리(pending)를 받을 때 (범위의 올라온 객체 합 + 열린 자리 + 이번 크기)가 상한을 넘으면 거절. 사람당 열린 자리 50개.
+-- · 용량(총괄 결정 10/2, 유건님 위임 — 시작값, 실측 뒤 올림): 숫자는 office_storage_limits 한 곳에만.
+--   Free 개인 1GB·조직 공간 1GB·파일 하나 25MB / Pro 좌석당 30GB(조직은 좌석 합산 풀)·파일 50MB / Enterprise 좌석당 50GB·파일 50MB.
+--   귀속: 조직 공간(seg 'o-…')에 올린 파일은 조직 풀(직원이 나가도 조직 풀에 남는다), 개인 공간(seg 'u-…')·메신저 개인 대화 첨부는 올린 사람 계정.
+--   플랜·좌석 판정 office_seat_plan(seg)은 자리만 — 지금은 모두 Free(결제 Paddle 연결 때 채운다).
+--   올리기 자리(pending)를 받을 때만 막는다: (풀의 올라온 객체 합 + 열린 자리 + 이번 크기)가 상한을 넘거나 파일이 플랜 상한보다 크면 거절.
+--   이미 한도를 넘은 데이터는 지우거나 막지 않는다(보기·받기·휴지통·삭제는 그대로). 사람당 열린 자리 50개.
 --   서버가 쓰는 객체(서명 그림·서명본)는 용량에 들어가지만 막지는 않는다(조직이 가득 차도 서명자의 서명이 실패하지 않게 — 총괄 결정 5).
---   하루 상한·플랫폼 예산 숫자 자리 office_storage_limits — 전부 미정(null). 귀속(올린 사람 vs 조직 풀)·3앱 범위도 미정 — seg·created_by·bucket 칸을 둘 다 둔다.
+--   하루 상한·플랫폼 예산은 미정(null).
 -- · 크기·출처(분리 검수 LOW 6): 크기는 서버가 R2 HEAD로 확인한 크기(r2_objects.bytes). 출처는 서버가 정한다 — 'esign'은 같은 범위의 완료된 서명(ref_esign,
 --   서명본과 같은 크기), 'generated'는 같은 범위의 견적·계약 문서(ref_doc)가 있을 때만. 클라이언트는 upload·mail·agent만 고를 수 있다.
 --   같은 서명본은 문서함에 한 번만(ref_id 유일 — 두 관리자가 동시에 넣어도, 분리 검수 LOW 4).
@@ -42,29 +46,54 @@ create table if not exists public.r2_objects (
   updated_at timestamptz not null default clock_timestamp(),
   primary key (bucket, key)
 );
-create index if not exists r2_objects_seg on public.r2_objects(bucket, seg, state);
+create index if not exists r2_objects_seg on public.r2_objects(seg, state); -- 풀 합산(3앱 공용 — bucket을 앞에 두지 않는다)
 create index if not exists r2_objects_user on public.r2_objects(created_by, state, expires_at);
 create index if not exists r2_objects_state on public.r2_objects(state, updated_at);
 alter table public.r2_objects enable row level security; -- 정책 없음: 함수로만
 revoke all on public.r2_objects from anon, authenticated;
 
-/** 범위 용량 상한(바이트) — 숫자 자리(지금 값 그대로: 조직 10GiB, 내 공간 1GiB — 분리 검수 MEDIUM 1). 요금제·귀속이 정해지면 여기와 office_storage_used만 바꾼다 */
+/** 숫자 자리 — 용량·파일 상한은 여기 한 곳에서만 고친다(총괄 결정 10/2 시작값, 실측 뒤 올림). 1GB = 1GiB(바이트로 2^30), 1MB = 2^20.
+ *  pool_bytes: 풀 하나(개인 또는 조직)의 고정 상한 · seat_bytes: 좌석당(조직은 좌석 합산, 개인은 1좌석) · file_max_bytes: 파일 하나.
+ *  daily_*·platform_*: 하루 상한·플랫폼 예산 — 미정(null = 제한 없음). daily_upload_*는 숫자가 정해지면 office_storage_reserve가
+ *  r2_objects(올린 사람·오늘 만든 행)로 센다(따로 쓰는 표 없음), daily_download_*·platform_*은 다운로드 측정을 켤 때 쓴다(지금은 꺼 둠). */
+create or replace function public.office_storage_limits(p_plan text default 'free') returns jsonb
+language sql immutable set search_path = public, pg_temp as $$
+  select (case p_plan
+      when 'enterprise' then jsonb_build_object('pool_bytes', null, 'seat_bytes', 53687091200, 'file_max_bytes', 52428800)   -- 좌석당 50GB, 파일 50MB(추가 용량 판매는 나중)
+      when 'pro'        then jsonb_build_object('pool_bytes', null, 'seat_bytes', 32212254720, 'file_max_bytes', 52428800)   -- 좌석당 30GB, 파일 50MB
+      else                   jsonb_build_object('pool_bytes', 1073741824, 'seat_bytes', null, 'file_max_bytes', 26214400)    -- Free: 개인·조직 공간 각 1GB, 파일 25MB
+    end) || jsonb_build_object('plan', case when p_plan in ('pro', 'enterprise') then p_plan else 'free' end,
+      'daily_upload_bytes_per_user', null, 'daily_upload_count_per_user', null, 'daily_download_grants_per_user', null,
+      'platform_monthly_upload_bytes', null, 'platform_stored_bytes', null, 'platform_monthly_read_grants', null)
+$$;
+/** 플랜·좌석 판정 자리 — 조직 공간은 조직의 Pro·Enterprise 좌석 수, 개인 공간은 그 사람의 플랜.
+ *  지금은 모두 Free(총괄 확인 10/2): 오피스 요금제의 플랜·좌석 기록이 아직 없다(msgr_org_entitlements의 'team'·is_pro_for는 다른 상품의 자격이라 쓰지 않는다).
+ *  결제(Paddle) 연결 때 이 함수만 채운다. 돌려주는 값 {plan: free|pro|enterprise, seats} */
+create or replace function public.office_seat_plan(p_seg text) returns jsonb
+language sql stable security definer set search_path = public, pg_temp as $$
+  select jsonb_build_object('plan', 'free', 'seats', 1)
+$$;
+/** 풀 상한(바이트) — 플랜 숫자 × 좌석(좌석 상한형) 또는 고정 상한(Free) */
 create or replace function public.office_storage_quota(p_seg text) returns bigint
-language sql immutable set search_path = public, pg_temp as $$
-  select case when p_seg like 'o-%' then 10737418240::bigint else 1073741824::bigint end
+language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce((l->>'pool_bytes')::bigint, (l->>'seat_bytes')::bigint * greatest(coalesce((sp->>'seats')::int, 1), 1))
+  from (select public.office_seat_plan(p_seg) sp) x, lateral (select public.office_storage_limits(x.sp->>'plan') l) y
 $$;
-/** 하루 상한·플랫폼 예산 — 숫자 자리, 전부 미정(null = 제한 없음, 총괄 10/2). 정해지면 여기만 바꾼다.
- *  daily_upload_*: office_storage_reserve가 r2_objects(올린 사람·오늘 만든 행)로 센다 — 따로 쓰는 표가 없어 쓰기 0.
- *  daily_download_grants_per_user·platform_*: 다운로드 측정을 켤 때 쓴다(지금은 꺼 둠 — 아래 '다운로드 측정' 설계 주석). */
-create or replace function public.office_storage_limits() returns jsonb
-language sql immutable set search_path = public, pg_temp as $$
-  select jsonb_build_object('daily_upload_bytes_per_user', null, 'daily_upload_count_per_user', null, 'daily_download_grants_per_user', null,
-    'platform_monthly_upload_bytes', null, 'platform_stored_bytes', null, 'platform_monthly_read_grants', null)
+/** 파일 하나 상한(바이트) — 플랜별(Free 25MB, Pro·Enterprise 50MB) */
+create or replace function public.office_storage_file_max(p_seg text) returns bigint
+language sql stable security definer set search_path = public, pg_temp as $$
+  select (public.office_storage_limits(public.office_seat_plan(p_seg)->>'plan')->>'file_max_bytes')::bigint
 $$;
-/** 범위가 쓰는 크기 — 그 범위의 올라온 객체(uploaded·claimed, 서버가 쓴 객체 포함) bytes 합. 귀속을 '올린 사람'으로 정하면 seg = 를 created_by = 로 바꾼다 */
+/** 풀이 쓰는 크기 — 올라온 객체(uploaded·claimed, 서버가 쓴 객체 포함) bytes 합.
+ *  조직 풀('o-…'): 그 조직 공간 객체 전부(누가 올렸든 — 직원이 나가도 남는다). 개인('u-<사람>'): 그 사람 공간 객체 + 그 사람이 올린 조직 밖 객체(메신저 개인 대화 첨부 등). */
 create or replace function public.office_storage_used(p_seg text) returns bigint
 language sql stable security definer set search_path = public, pg_temp as $$
-  select coalesce(sum(o.bytes), 0)::bigint from public.r2_objects o where o.bucket = 'argo-office' and o.seg = p_seg and o.state in ('uploaded', 'claimed')
+  select coalesce(sum(b), 0)::bigint from (
+    select o.bytes b from public.r2_objects o where o.seg = p_seg and o.state in ('uploaded', 'claimed')
+    union all
+    select o.bytes from public.r2_objects o where p_seg ~ '^u-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      and o.created_by = (case when p_seg ~ '^u-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then substr(p_seg, 3)::uuid end) and o.state in ('uploaded', 'claimed') and o.seg <> p_seg and o.seg !~ '^o-'
+  ) x
 $$;
 /** 열린 올리기 자리 크기 — p_except 키는 빼고(등록 때 다시 셀 때) */
 create or replace function public.office_storage_open(p_seg text, p_except text default null) returns bigint
@@ -81,10 +110,11 @@ $$;
  *  지난 자리는 여기서 지우지 않는다 — R2에 객체가 남아 있을 수 있어, 정리 크론이 R2를 지운 뒤에만 행을 지운다(지우면 남은 객체를 찾을 근거가 없어진다) */
 create or replace function public.office_storage_reserve(p_key text, p_seg text, p_bytes bigint, p_mime text, p_max bigint) returns void
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare who uuid := auth.uid(); o public.r2_objects%rowtype; lim jsonb := public.office_storage_limits(); day_bytes bigint; day_n bigint;
+declare who uuid := auth.uid(); o public.r2_objects%rowtype; lim jsonb := public.office_storage_limits(public.office_seat_plan(p_seg)->>'plan'); day_bytes bigint; day_n bigint;
 begin
   if who is null then raise exception 'file_forbidden' using errcode = '42501'; end if;
-  if p_bytes is null or p_bytes < 0 or p_bytes > p_max or split_part(coalesce(p_key, ''), '/', 1) <> p_seg or p_key like '%..%' or p_key like '%//%' or length(p_key) > 600 then raise exception 'file_input'; end if;
+  if p_bytes is null or p_bytes < 0 or split_part(coalesce(p_key, ''), '/', 1) <> p_seg or p_key like '%..%' or p_key like '%//%' or length(p_key) > 600 then raise exception 'file_input'; end if;
+  if p_bytes > least(p_max, (lim->>'file_max_bytes')::bigint) then raise exception 'file_too_big'; end if; -- 플랜별 파일 상한(Free 25MB) — 고정 상한 p_max(50MB·문서 20MB)보다 크지 않게
   perform pg_advisory_xact_lock(hashtextextended('office-storage:' || p_seg, 0));
   select * into o from public.r2_objects where bucket = 'argo-office' and key = p_key;
   if found then
@@ -138,7 +168,7 @@ begin
   r := public.msgr_role(org);
   return r is not null and r <> 'guest';
 end $$;
-revoke all on function public.office_storage_quota(text), public.office_storage_limits(), public.office_storage_used(text), public.office_storage_open(text, text),
+revoke all on function public.office_storage_quota(text), public.office_storage_limits(text), public.office_seat_plan(text), public.office_storage_file_max(text), public.office_storage_used(text), public.office_storage_open(text, text),
   public.office_storage_mime(text), public.office_storage_reserve(text, text, bigint, text, bigint), public.office_storage_fits(text, text),
   public.office_storage_claim(text, text, text, uuid), public.office_storage_tombstone(text[]), public.office_storage_seg_ok(text) from public, anon, authenticated; -- 내부용
 
