@@ -1412,6 +1412,7 @@ export const DICT = {
   'fm.hidden.agents': ['에이전트', 'Agents'],
   'fm.hide.title': ['{name} 숨기기', 'Hide {name}'],
   'fm.hide.note': ['목록에서만 빠지고, 대화와 알림은 그대로입니다.', "They're only removed from your list — chats and notifications stay."],
+  'err.crewRemoveOwnerOnly': ['에이전트는 그 주인만 방에서 뺄 수 있어요. 불편하면 숨기기로 가릴 수 있어요.', 'Only the agent’s owner can remove it from this room. You can hide it instead.'],
   'fm.hideAgent.title': ['에이전트 숨기기', 'Hide agent'],
   'fm.hideAgent.note': ['숨긴 에이전트의 글은 대화방에서 접혀 보이고, 알림과 검색에서 빠집니다.', 'Posts from hidden agents are collapsed in chats and left out of notifications and search.'],
   'fm.more': ['{name} 메뉴', '{name} menu'],

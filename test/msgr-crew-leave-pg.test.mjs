@@ -110,14 +110,16 @@ test('주인은 자기 에이전트를 한 채널에서만 뺄 수 있다 — �
   assert.equal(sql(`select meta->>'by' from public.msgr_audit_log where action = 'crew_removed_from_channel' and meta->>'channel_id' = '${a}'`), 'owner');
 });
 
-test('주인도 방장도 아니면 남의 에이전트를 뺄 수 없다 — 방장은 뺄 수 있다', { skip }, () => {
+test('남의 에이전트는 같은 방 멤버도 방장도 못 뺀다 — 주인만(유건 결정 2026-10-02, 기능 점검 D8 — 종전에는 방장이 뺄 수 있었다)', { skip }, () => {
   const ch = room('private', 'Guard');
   put(ch, 'user', U.mate); put(ch, 'user', U.other); put(ch, 'crew', MINE);
   const r = asUserRaw(U.other, `select public.msgr_crew_leave_channel('${ch}', '${MINE}')`);
-  assert.notEqual(r.status, 0, '같은 방 멤버라도 남의 에이전트는 못 뺀다'); assert.match(r.stderr, /msgr_forbidden/);
+  assert.notEqual(r.status, 0, '같은 방 멤버라도 남의 에이전트는 못 뺀다'); assert.match(r.stderr, /msgr_crew_remove_owner_only/);
+  const h = asUserRaw(U.host, `select public.msgr_crew_leave_channel('${ch}', '${MINE}')`);
+  assert.notEqual(h.status, 0, '방장도 남의 에이전트는 못 뺀다'); assert.match(h.stderr, /msgr_crew_remove_owner_only/);
   assert.equal(crewIn(ch, MINE), '1');
-  assert.equal(last(asUser(U.host, `select public.msgr_crew_leave_channel('${ch}', '${MINE}')`)), 'removed', '방장');
-  assert.equal(sql(`select meta->>'by' from public.msgr_audit_log where action = 'crew_removed_from_channel' and meta->>'channel_id' = '${ch}'`), 'host');
+  assert.equal(last(asUser(U.mate, `select public.msgr_crew_leave_channel('${ch}', '${MINE}')`)), 'removed', '주인');
+  assert.equal(sql(`select meta->>'by' from public.msgr_audit_log where action = 'crew_removed_from_channel' and meta->>'channel_id' = '${ch}'`), 'owner');
 });
 
 test('주인이 나가면 그 주인의 대기 요청도 닫힌다 — 방장이 나중에 승인해도 나간 사람이 다시 끌려오지 않는다', { skip }, () => {
