@@ -13,9 +13,9 @@
 ## Material Symbols (Argo 메신저 아이콘)
 
 - 파일: `apps/messenger/src/icons.jsx`의 `MS` 표(앱이 쓰는 아이콘의 SVG path만 복사, 무수정). 런타임에 글꼴·CSS를 내려받지 않는다.
-- 용도: 메신저 화면 아이콘(폰·데스크톱 공용). Outlined, 글자 무게 400, FILL 0(선택된 아래 탭만 FILL 1), GRAD 0, 광학 크기 24
+- 용도: 메신저 화면 아이콘(폰·데스크톱 공용). Outlined, 글자 무게 400(화면에 18px 이하로 그려지는 아이콘은 500), FILL 0(선택된 아래 탭만 FILL 1), GRAD 0, 광학 크기 24
 - 저작권: Copyright Google LLC
 - 라이선스: Apache License 2.0 — 전문은 메신저 배포본의 `icons/material-symbols-LICENSE.txt`(소스 `apps/messenger/public/icons/material-symbols-LICENSE.txt`)
-- 출처: https://github.com/google/material-design-icons · npm `@material-symbols/svg-400` 0.47.5 (`outlined`). 다시 뽑기: `node apps/messenger/scripts/extract-material-icons.mjs <압축 푼 package 폴더>`
+- 출처: https://github.com/google/material-design-icons · npm `@material-symbols/svg-400` 0.47.5 (`outlined`) · npm `@material-symbols/svg-500` 0.47.5 (`outlined`, 같은 Apache 2.0). 다시 뽑기: `node apps/messenger/scripts/extract-material-icons.mjs <svg-400 package 폴더> <svg-500 package 폴더>`
 
 Argo 자체 라이선스는 [LICENSE.md](LICENSE.md)를 본다.
