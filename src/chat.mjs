@@ -465,7 +465,12 @@ const connectorNames = (connectors, en) => connectors
     "아까 그 파일"로 이어가려면 답변 텍스트가 아니라 경로로 받아야 한다(분리 검수 LOW-2). export는 테스트용. */
 export function threadCtxLine(m, lang, name) {
   const en = lang === 'en';
-  const who = m.who === 'user' ? (m.via ? (en ? 'Auto-delivered' : '자동 배달') : (en ? 'Captain' : '사장')) : name;
+  // 세션 메시지 줄(session-msg.mjs) — 사장이 다른 크루에게 보낸 줄·그 크루가 돌려준 답·안내를 이 크루 자신의 말로 읽지 않게 화자를 따로 적는다
+  const s = m.src?.kind === 'session' ? m.src : null;
+  const who = s?.dir === 'out' ? `${en ? 'Captain' : '사장'} → ${s.toName ?? s.to}${en ? ' (session message)' : ' (세션 메시지)'}`
+    : s && m.who === 'crew' && s.dir === 'reply' ? `${s.fromName ?? s.from}${en ? ' (session message reply)' : ' (세션 메시지 답)'}`
+    : s && m.who === 'crew' && s.dir === 'notice' ? (en ? 'Notice' : '알림')
+    : m.who === 'user' ? (m.via ? (en ? 'Auto-delivered' : '자동 배달') : (en ? 'Captain' : '사장')) : name;
   const list = (xs, rel) => xs.map((x) => 'vault/' + rel(x)).join(', ');
   const att = m.attachments?.length ? (en ? ` (attached, open with Read: ${list(m.attachments, (a) => a.rel)})` : ` (첨부, Read로 열람: ${list(m.attachments, (a) => a.rel)})`) : '';
   const art = m.artifacts?.length ? (en ? ` (artifacts, open with Read: ${list(m.artifacts, (a) => a)})` : ` (산출물, Read로 열람: ${list(m.artifacts, (a) => a)})`) : '';
@@ -523,10 +528,19 @@ async function turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim = DELE
   });
 }
 
+/** 세션 메시지 도구를 실을 턴인가 — 주인의 대화(1:1·위임·쪽지·세션 메시지처럼 공유 목적지가 없는 턴)에만. 메신저·손님·회의실·텔레그램 그룹·슬랙 채널·
+    공유 목적지 자동 턴(mirrorCtx가 있는 턴 전부)은 받는 크루의 **전역 세션**에 다른 사람이 보는 대화를 섞으므로 싣지 않는다. 경쟁·체험 턴도 제외.
+    반환: { peers } 또는 null(도구 없음). 상한·중복·회사 경계는 session-msg.mjs가 본다. */
+async function sessionPeersFor(wsId, agentSlug, mirrorCtx, source) {
+  if (mirrorCtx || source === 'compete' || source === 'trial' || source === 'room') return null;
+  const peers = (await listAgents(wsId).catch(() => [])).filter((a) => a.slug !== agentSlug && String(a.runner ?? '').toLowerCase() !== 'http');
+  return peers.length ? { peers } : null;
+}
+
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
     connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
-export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false, limits = DELEGATION_LIMITS.on, tree = null, counters = null) { // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다), limits = 위임 제한 표(delegation-limits.mjs — 생략·메신저 맥락은 켜짐), tree = 풀림의 합계 예산 객체(사용자 메시지 하나에서 이어지는 크루 턴 총량 — 없으면 이 서버 단독 임시 예산), counters = 이 턴의 위임·쪽지 횟수 {delegate, mail}(CLI 지시 블록과 같은 카운터를 쓰려고 runChat이 만들어 넘긴다)
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false, limits = DELEGATION_LIMITS.on, tree = null, counters = null, session = null) { // session = 세션 메시지 도구 {peers} — 보낼 수 있는 턴에만 runChat이 넘긴다(sessionPeersFor) // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다), limits = 위임 제한 표(delegation-limits.mjs — 생략·메신저 맥락은 켜짐), tree = 풀림의 합계 예산 객체(사용자 메시지 하나에서 이어지는 크루 턴 총량 — 없으면 이 서버 단독 임시 예산), counters = 이 턴의 위임·쪽지 횟수 {delegate, mail}(CLI 지시 블록과 같은 카운터를 쓰려고 runChat이 만들어 넘긴다)
   const lim = isMessengerCtx(mirrorCtx) ? DELEGATION_LIMITS.on : limits; // 메신저 턴은 스위치 밖 — 호출부가 무엇을 넘겨도 종전 2회·2단계(방어)
   const budget = lim.relaxed ? (tree ?? newTree({ kind: 'turn' })) : null; // 풀림은 합계 예산 없이 돌지 않는다 — 못 받았으면 이 서버 단독의 임시 예산
   const cnt = counters ?? { delegate: 0, mail: 0 };
@@ -733,6 +747,28 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       }
     },
   );
+  // 세션 메시지(session-msg.mjs) — 동료가 이어 가던 세션에 넣고, 답이 오면 이 크루를 다시 깨운다(Claude Code SendMessage와 같은 개념).
+  // 쪽지와 달리 받는 쪽은 새 세션이 아니라 이어 가던 세션으로 답하고, 답은 보낸 크루에게 알림 턴으로 돌아온다. 상한·중복·회사 경계는 모듈이 한 곳에서 본다.
+  const sendSession = session?.peers?.length ? tool(
+    'send_session_message',
+    `동료 크루가 이어 가던 대화 세션에 메시지를 보낸다. 상대는 자기 맥락(그동안의 대화)에서 답하고, 답이 오면 알림으로 네 세션에 들어와 네가 다시 깨어난다 — 그러니 보낸 뒤 결과를 기다리지 말고 지금 턴을 마무리하라. 같은 상대의 답을 기다리는 동안에는 다시 보낼 수 없다. 즉시 결과가 필요한 하위 작업은 delegate를 써라. to=동료 slug 또는 이름(${session.peers.map((a) => `${a.slug}(${a.name})`).join(', ')}), message=상대가 단독으로 이해할 수 있는 내용.`,
+    { to: z.string(), message: z.string() },
+    async ({ to, message }) => {
+      if ((cnt.session ?? 0) >= lim.mail) return text(lang === 'en' ? `Session message limit (${lim.mail} per turn) reached — wrap up this turn.` : `세션 메시지 한도(턴당 ${lim.mail}회)에 닿았다 — 이번 턴은 더 보내지 말고 마무리하라.`);
+      try {
+        const { sendSessionMessage } = await import('./session-msg.mjs');
+        const r = await sendSessionMessage(wsId, { room: fromSlug, sender: { slug: fromSlug }, to, message, hop, chain });
+        cnt.session = (cnt.session ?? 0) + 1;
+        return text(lang === 'en'
+          ? `Sent the session message (${r.id}). Do not wait for the answer: finish this turn now (tell the captain you asked and will continue when the answer comes). When the colleague answers, it arrives in your session and you continue then.`
+          : `세션 메시지를 보냈다(${r.id}). 답을 기다리지 말고 지금 턴을 마무리하라(사장에게는 물어봤고 답이 오면 이어서 하겠다고 알려라). 동료가 답하면 네 세션에 들어오고, 그때 이어서 일하면 된다.`);
+      } catch (e) {
+        if (e?.code === 'CHAIN_CAP') return text(lang === 'en' ? 'The chain of session messages between crews reached its limit, so it was not sent (the captain sees a notice). Finish with what you know and report to the captain.' : '크루끼리 이어진 세션 메시지가 사슬 상한에 닿아 보내지 않았다(사장 화면에 안내가 남는다). 지금까지 알게 된 것으로 마무리하고 사장에게 보고하라.');
+        if (e?.code === 'DUP') return text(lang === 'en' ? 'You are already waiting for this colleague\'s answer — do not send again; finish this turn and continue when it arrives.' : '이미 이 동료의 답을 기다리는 중이다 — 다시 보내지 말고 지금 턴을 마무리하라. 답이 오면 이어서 하면 된다.');
+        return text(`${lang === 'en' ? 'Session message failed' : '세션 메시지 전송 실패'}: ${String(e?.message || e)}`);
+      }
+    },
+  ) : null;
   // 러너·모델 인자 검증 — 카탈로그 대조 + 회사/호스트 연결 확인. 문제면 사용자에게 물어볼 안내문을 돌려준다.
   const runnerCatalog = () => Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id))
     .map(([id, r]) => `${id}(${r.name}): ${effectiveModels(id).map((m) => m.id).join(', ')}`).join(' | '); // 오버레이 반영(MEDIUM-3)
@@ -999,6 +1035,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
     calendar, // 주인의 일정 — 항상 등재(세션 없음·손님은 처리기가 한 줄로 알린다)
     ...(handoffColleagues.length ? [delegate, sendToCrew] : []),
+    ...(sendSession ? [sendSession] : []),
     // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
     ...(connectors.length ? [useConnector] : []),
   ];
@@ -1397,7 +1434,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliColleagues = bridgeable ? await turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim) : [];
       if (bridgeable) {
         const sink = [];
-        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters);
+        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionPeersFor(wsId, agentSlug, mirrorCtx, source));
         // 자식 파일이 없는 산출물(셀프호스트 등)이면 크루 도구 없이 진행한다 — 도구 부재가 턴 사망이 되면 안 된다(분리 검수 LOW-7)
         crewBridge = await createCrewMcpBridge(crewToolSpecs(sink)).catch((e) => { console.warn(`[argo] 크루 도구 다리 생략(지시 블록으로 진행): ${e?.message ?? e}`); return null; });
       }
@@ -1663,7 +1700,7 @@ ${lang === 'en'
   // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
   const nativeOn = nativeRunnerEnabled(runner);
   const crewSink = nativeOn ? [] : null;
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters);
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionPeersFor(wsId, agentSlug, mirrorCtx, source));
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.

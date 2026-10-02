@@ -40,6 +40,8 @@ ensureSync(); // C-1 기기 간 동기화 — env(서비스 키) 있을 때만 �
 // 고아 턴 스위퍼 — 이전 프로세스가 턴 도중 죽었으면(재배포·크래시) awaiting 지시를 정직한 실패
 // 표시로 전환한다(무언 소멸 금지 — 실사고 2026-08-28). 몇 초 늦춰 부팅 경로를 막지 않는다.
 setTimeout(() => { import('./src/orphan-turns.mjs').then((m) => m.sweepOrphanTurns()).catch(() => {}); }, 5000);
+// 세션 메시지 대기 기록 정리 — 이전 프로세스가 답을 기다리다 죽었으면 기다리던 크루의 방에 안내를 남기고 기록을 지운다(src/session-msg.mjs).
+setTimeout(() => { import('./src/session-msg.mjs').then((m) => m.sweepSessionMessages()).catch(() => {}); }, 5000);
 
 // 러너 감지 예열 — 이건 CLI 4종을 **프로세스로 띄워** 버전을 묻는 작업이라 콜드가 2.7초다(실측
 // 2026-08-01). 화면은 페이지마다 러너 상태를 묻는데, 캐시가 비어 있으면 그 2.7초를 사용자가

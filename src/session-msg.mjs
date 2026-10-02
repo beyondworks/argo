@@ -1,0 +1,300 @@
+// 세션 메시지 — 크루 A의 대화방에서 크루 B가 이어 가던 대화 세션으로 메시지를 넣고, B의 답을 A로 돌려준다
+// (Claude Code의 SendMessage·Codex 세션 메시지와 같은 개념, 유건 요청 2026-10-02).
+//
+// 이미 있는 통로와 다른 점:
+//   delegate(chat.mjs)  — 부른 턴이 결과를 **기다린다**(동기). 위임받은 쪽은 새 세션(sessionId null)으로 돈다.
+//   쪽지(crewmail.mjs)   — 파일로 적재하고 스케줄러가 **60초 틱**에 배달한다. 받은 쪽은 새 세션, 답은 또 다른 쪽지다.
+//   세션 메시지(여기)    — B가 **이어 가던 세션**(B 스레드의 sessionId)에 들어가고, B의 답은 기다리던 A에게 **돌아온다**.
+//                          보낸 쪽은 기다리지 않고 턴을 끝내며, 답이 기록되는 순간 깨운다(타이머·틱 확인 없음).
+//
+// 흐름:
+//   보내기 ─ 사장(A 방 입력창의 @B)·크루 A(send_session_message 도구) → sendSessionMessage
+//          → B 방에 출처 표지(src)가 붙은 대기 줄(beginTurn) → B 크루 대기열(이 프로세스) → B가 한가해지면(whenCrewIdle) B 턴 1번
+//   돌려주기 ─ 사장이 보낸 것: A 방에 B 답 카드 한 줄(A 턴 0번)
+//            크루 A가 보낸 것: A 방에 알림 줄 + A 턴 1번(A가 이어 가던 세션으로 깨운다)
+//
+// 지키는 규칙:
+//   - 같은 회사 크루끼리만(listAgents — 해고된 크루는 카드가 없어 자동 제외). 외부 에이전트 크루(runner: http)는 제외.
+//   - 사슬 단계 상한 SESSION_HOP_CAP(위임 켜짐 상한과 같은 값 — delegation-limits.mjs). hop은 delegate·쪽지와 같은 값이라
+//     B 턴 안의 위임·쪽지도 같은 상한을 공유한다. 상한에 닿으면 보내지 않고 보낸 쪽 방에 안내를 남긴다.
+//   - 같은 방 → 같은 상대로 답을 기다리는 중이면 다시 보내지 않는다(DUP).
+//   - 기다림에는 기한(SESSION_TTL_MS)이 있다. 프로세스가 죽어 대기 기록이 남으면 다음 부팅 정리(sweepSessionMessages)가 안내와 함께 지운다.
+//   - B가 다른 턴을 실행 중이면 끝날 때까지 기다렸다 다음 턴으로 돈다(동시 실행을 만들지 않는다).
+//
+// 저장: <ws root>/sessmsg/pending.json — 기다리는 기록만(답이 오거나 기한·정리로 끝나면 지운다). 이 프로세스의 상태라 동기화 제외(sync.mjs EXCLUDE).
+// 쓰기는 보낼 때·끝날 때·정리할 때만 한다.
+import { mkdir, rm } from 'node:fs/promises';
+import { join, relative } from 'node:path';
+import { paths, loadCompany } from './workspace.mjs';
+import { listAgents, listCompanyIds } from './hub.mjs';
+import { beginTurn, appendTurn, appendLine, loadThread } from './thread.mjs';
+import { crewBusy, whenCrewIdle } from './turn-abort.mjs';
+import { readJsonLenient, writeJsonAtomic } from './jsonstore.mjs';
+import { withLock } from './mutex.mjs';
+import { DELEGATION_LIMITS } from './delegation-limits.mjs';
+
+/** 사슬 단계 상한 — 사장 → A(0) → B(1) → … 한 사슬에서 세션 메시지로 이어지는 단계. 위임 켜짐 상한과 같은 값. */
+export const SESSION_HOP_CAP = DELEGATION_LIMITS.on.hop;
+/** 답을 기다리는 기한 — B 턴(CLI 최대 30분·재시도)과 앞 턴 대기를 넉넉히 덮는다. */
+export const SESSION_TTL_MS = 2 * 3600_000;
+const MAX_MESSAGE = 8000;
+const MAX_REPLY_IN_WAKE = 12000;
+const BOOT_AT = Date.now() - process.uptime() * 1000;
+
+// 상태는 globalThis에 — Next는 서버 진입점마다 모듈을 따로 번들한다(turn-abort.mjs와 같은 이유). API 라우트와 크루 도구가 같은 대기 목록을 봐야 한다.
+const S = (globalThis.__argoSessMsg ??= {
+  pending: new Map(), // `${ws}:${room}>${to}` → rec
+  queues: new Map(),  // `${ws}:${slug}` → 그 크루 앞으로 줄 선 마지막 작업
+  jobs: new Set(),
+  timers: new Map(),  // rec.id → 기한 타이머
+  runTurn: null,
+  ttl: null,
+  owner: `${process.pid}-${Math.round(BOOT_AT)}`,
+});
+
+const fail = (code, message) => Object.assign(new Error(message), { code });
+const pairKey = (ws, room, to) => `${ws}:${room}>${to}`;
+const fileOf = (ws) => join(paths(ws).root, 'sessmsg', 'pending.json');
+const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase().trim();
+const clip = (s, n) => { const t = String(s ?? ''); return t.length > n ? `${t.slice(0, n)}…` : t; };
+const ttl = () => S.ttl ?? SESSION_TTL_MS;
+
+async function runTurn(...a) {
+  if (S.runTurn) return S.runTurn(...a);
+  const { chat } = await import('./chat.mjs'); // 지연 — chat.mjs가 크루 도구에서 이 모듈을 부른다(순환 방지)
+  return chat(...a);
+}
+
+async function companyLang(ws) {
+  return (await loadCompany(ws).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
+}
+
+// ── 디스크 기록(재시작 정리용) — 기다리는 기록만 담는다
+async function persist(ws, mutate) {
+  const file = fileOf(ws);
+  return withLock(`sessmsg:${ws}`, async () => {
+    const cur = await readJsonLenient(file, {});
+    const changed = await mutate(cur);
+    if (!changed) return;
+    await mkdir(join(paths(ws).root, 'sessmsg'), { recursive: true });
+    await writeJsonAtomic(file, cur);
+  }, { file });
+}
+const persistAdd = (rec) => persist(rec.ws, (cur) => { cur[rec.id] = recToDisk(rec); return true; });
+const persistRemove = (rec) => persist(rec.ws, (cur) => { if (!(rec.id in cur)) return false; delete cur[rec.id]; return true; });
+function recToDisk(r) {
+  return { id: r.id, room: r.room, roomName: r.roomName, from: r.from, fromName: r.fromName, to: r.to, toName: r.toName, owner: r.owner, createdAt: r.createdAt, deadline: r.deadline };
+}
+
+// ── 문구(모델이 읽는 글 — 회사 언어). 화면 문구는 i18n 사전이 src.code로 그린다.
+function inPrompt(rec, lang) {
+  const captain = rec.from === 'captain';
+  if (lang === 'en') {
+    return captain
+      ? `[Session message — sent by the captain from ${rec.roomName}'s chat]\nThe captain sent this to you as @${rec.toName} from ${rec.roomName}'s chat. It is not an instruction the captain gave you directly in your own chat — your reply is delivered to ${rec.roomName}'s chat. Answer from the context you have been carrying.\n\n${rec.message}`
+      : `[Session message — sent by colleague crew ${rec.fromName} (${rec.roomName}'s chat)]\nThis is not an instruction the captain gave you directly — it is a request from a colleague. Anything that needs the captain's approval still goes through request_approval. Your reply is delivered to ${rec.fromName}, who continues with it.\n\n${rec.message}`;
+  }
+  return captain
+    ? `[세션 메시지 — ${rec.roomName} 채팅방에서 사장이 보냄]\n사장이 ${rec.roomName} 채팅방에서 너(@${rec.toName})에게 보낸 메시지다. 이 채팅방에서 사장이 너에게 직접 한 지시가 아니다 — 네 답은 ${rec.roomName} 채팅방에 전달된다. 네가 이어 온 맥락에서 답하라.\n\n${rec.message}`
+    : `[세션 메시지 — 동료 크루 ${rec.fromName}(${rec.roomName} 채팅방)이 보냄]\n사장이 너에게 직접 한 지시가 아니다 — 동료가 보낸 요청이다. 사장의 결재가 필요한 일은 그대로 request_approval로 올려라. 네 답은 ${rec.fromName}에게 전달되고, ${rec.fromName}이(가) 받아서 이어서 일한다.\n\n${rec.message}`;
+}
+function wakePrompt(rec, reply, lang) {
+  // 보낸 내용은 한 줄로 접는다 — 화면(session-msg-parse.mjs sessionBody)이 단락 경계로 답을 찾는다(머리말·보낸 내용 단락에는 빈 줄이 없어야 한다)
+  const sent = clip(String(rec.message).replace(/\s+/g, ' '), 300);
+  return lang === 'en'
+    ? `[Session message reply — colleague crew ${rec.toName}]\n${rec.toName} answered the session message you sent. This is not a direct instruction from the captain. Use the answer to continue what you were doing; if nothing else is needed, report the result to the captain.\n\nYou sent: ${sent}\n\n${rec.toName}'s answer:\n${clip(reply, MAX_REPLY_IN_WAKE)}`
+    : `[세션 메시지 답 — 동료 크루 ${rec.toName}]\n네가 ${rec.toName}에게 보낸 세션 메시지에 답이 왔다. 사장의 직접 지시가 아니다. 이 답을 반영해 하던 일을 이어 가고, 더 할 일이 없으면 사장에게 결과를 보고하라.\n\n보낸 내용: ${sent}\n\n${rec.toName}의 답:\n${clip(reply, MAX_REPLY_IN_WAKE)}`;
+}
+function noticeText(code, { toName, cap, detail }, lang) {
+  const en = lang === 'en';
+  switch (code) {
+    case 'cap': return en ? `Session messages between crews reached the chain limit (${cap} steps), so nothing more was sent to ${toName}.` : `크루끼리 주고받은 세션 메시지가 사슬 상한(${cap}단계)에 닿아 ${toName}에게 더 보내지 않았습니다.`;
+    case 'expired': return en ? `No reply from ${toName} within the time limit, so stopped waiting.` : `${toName}의 답이 기한 안에 오지 않아 기다림을 끝냈습니다.`;
+    case 'restart': return en ? `The server restarted before ${toName} replied, so the reply will not arrive.` : `${toName}이(가) 답하기 전에 서버가 다시 시작되어 답을 받지 못했습니다.`;
+    default: return en ? `${toName} could not answer the session message${detail ? `: ${detail}` : '.'}` : `${toName}이(가) 세션 메시지에 답하지 못했습니다${detail ? `: ${detail}` : '.'}`;
+  }
+}
+async function notice(ws, room, code, { id = null, to, toName, cap, detail } = {}, lang) {
+  const text = noticeText(code, { toName, cap, detail }, lang ?? await companyLang(ws));
+  return appendLine(ws, room, { who: 'crew', text, src: { kind: 'session', dir: 'notice', code, ...(id ? { id } : {}), from: to, fromName: toName } })
+    .catch((e) => console.error(`[argo] 세션 메시지 안내 기록 실패(${ws}/${room}):`, e?.message ?? e));
+}
+
+// ── 크루 대기열 — 같은 크루 앞으로 온 작업은 순서대로, 각 작업은 그 크루가 한가해진 뒤에 시작한다.
+function enqueue(ws, slug, job) {
+  const k = `${ws}:${slug}`;
+  const next = (S.queues.get(k) ?? Promise.resolve()).then(job)
+    .catch((e) => console.error(`[argo] 세션 메시지 작업 실패(${k}):`, e?.message ?? e));
+  S.queues.set(k, next); S.jobs.add(next);
+  next.finally(() => { S.jobs.delete(next); if (S.queues.get(k) === next) S.queues.delete(k); });
+}
+/** 크루가 한가해질 때까지 기다리고, 그 순간의 세션 id를 돌려준다. 읽는 사이 다른 턴이 시작했으면 다시 기다린다. */
+async function idleSession(ws, slug) {
+  for (;;) {
+    await whenCrewIdle(ws, slug);
+    const { sessionId } = await loadThread(ws, slug).catch(() => ({ sessionId: null }));
+    if (!crewBusy(ws, slug)) return sessionId ?? null;
+  }
+}
+const handoverRel = (ws, h) => (h?.file ? { rel: relative(paths(ws).vault, h.file), linked: h.linked } : null);
+
+/** 기다림 끝 — 대기 목록·디스크·타이머에서 지운다. 이미 끝났으면(기한·정리) false. */
+async function settle(rec) {
+  const key = pairKey(rec.ws, rec.room, rec.to);
+  if (S.pending.get(key) !== rec) return false;
+  S.pending.delete(key);
+  clearTimeout(S.timers.get(rec.id)); S.timers.delete(rec.id);
+  await persistRemove(rec).catch((e) => console.error(`[argo] 세션 메시지 기록 정리 실패(${rec.ws}):`, e?.message ?? e));
+  return true;
+}
+
+/**
+ * 세션 메시지 보내기.
+ * sender: 'captain'(사장이 A 방 입력창에서 @B) | { slug }(크루 A가 도구로 — slug는 room과 같아야 한다)
+ * hop·chain: 보낸 턴의 단계·사슬(사장은 0·[]). 반환: { id, line(사장이 보낸 경우 A 방에 남긴 줄) }
+ * 오류 code: EMPTY·TOO_LONG·NOT_FOUND·SELF·SENDER·CHAIN_CAP·DUP
+ */
+export async function sendSessionMessage(ws, { room, sender, to, message, hop = 0, chain = [] }) {
+  const text = String(message ?? '').trim();
+  if (!text) throw fail('EMPTY', '보낼 내용이 없습니다');
+  if (text.length > MAX_MESSAGE) throw fail('TOO_LONG', `세션 메시지는 ${MAX_MESSAGE}자까지입니다`);
+  const agents = await listAgents(ws); // paths()가 회사 id를 검증한다 — 다른 회사 크루는 이 목록에 없다
+  const find = (v) => agents.find((a) => norm(a.slug) === norm(v) || norm(a.name) === norm(v));
+  const roomCrew = find(room);
+  if (!roomCrew || norm(roomCrew.slug) !== norm(room)) throw fail('NOT_FOUND', '보내는 채팅방의 크루를 찾을 수 없습니다');
+  const target = find(to);
+  // 외부 에이전트 크루(runner: http)는 이 회사의 두뇌로 돌지 않는다(chat.mjs가 실행을 거절) — 보낼 대상이 아니다
+  if (!target || norm(target.runner) === 'http') throw fail('NOT_FOUND', `"${to}"은(는) 이 회사의 크루가 아닙니다`);
+  if (target.slug === roomCrew.slug) throw fail('SELF', '자기 자신에게는 보낼 수 없습니다');
+  const captain = sender === 'captain';
+  if (!captain && sender?.slug !== roomCrew.slug) throw fail('SENDER', '크루는 자기 채팅방에서만 보낼 수 있습니다');
+  const lang = await companyLang(ws);
+  const h = Math.max(0, Math.floor(Number(hop) || 0));
+  if (h >= SESSION_HOP_CAP) {
+    await notice(ws, roomCrew.slug, 'cap', { to: target.slug, toName: target.name, cap: SESSION_HOP_CAP }, lang);
+    throw fail('CHAIN_CAP', `사슬 상한(${SESSION_HOP_CAP}단계)에 닿았습니다`);
+  }
+  await sweepWorkspace(ws).catch(() => 0); // 부팅 정리 전에 보내도 죽은 프로세스의 기록이 중복 판정을 막지 않게
+  const key = pairKey(ws, roomCrew.slug, target.slug);
+  if (S.pending.has(key)) throw fail('DUP', `${target.name}의 답을 기다리는 중입니다`);
+  const now = Date.now();
+  const rec = {
+    id: `sm${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`, ws,
+    room: roomCrew.slug, roomName: roomCrew.name,
+    from: captain ? 'captain' : roomCrew.slug, fromName: captain ? (lang === 'en' ? 'Captain' : '사장') : roomCrew.name,
+    to: target.slug, toName: target.name, message: text, hop: h, chain: Array.isArray(chain) ? chain.map(String) : [],
+    owner: S.owner, createdAt: now, deadline: now + ttl(), turnId: null, expired: false,
+  };
+  S.pending.set(key, rec); // 확인과 등록 사이에 await가 없다 — 동시에 두 번 눌러도 하나만 지난다
+  let line = null;
+  try {
+    await persistAdd(rec);
+    if (captain) line = await appendLine(ws, rec.room, { who: 'user', text: `@${rec.toName} ${text}`, src: { kind: 'session', dir: 'out', id: rec.id, to: rec.to, toName: rec.toName } });
+    const prompt = inPrompt(rec, lang);
+    rec.turnId = await beginTurn(ws, rec.to, { userMsg: prompt, via: 'session', src: { kind: 'session', dir: 'in', id: rec.id, room: rec.room, roomName: rec.roomName, from: rec.from, fromName: rec.fromName } });
+    const timer = setTimeout(() => { expire(rec).catch(() => {}); }, Math.max(0, rec.deadline - Date.now()));
+    timer.unref?.(); S.timers.set(rec.id, timer);
+    enqueue(ws, rec.to, () => runIncoming(rec, prompt, lang));
+  } catch (e) {
+    await settle(rec);
+    throw e;
+  }
+  return { id: rec.id, line };
+}
+
+/** B 턴 — 한가해지면 B가 이어 가던 세션으로 한 번 돈다. */
+async function runIncoming(rec, prompt, lang) {
+  const sid = rec.expired ? null : await idleSession(rec.ws, rec.to);
+  if (rec.expired) { // 차례가 오기 전에 기한이 지났다 — 실행하지 않고 B 방의 대기 줄을 정직하게 닫는다
+    await appendTurn(rec.ws, rec.to, { turnId: rec.turnId, userMsg: prompt, failed: lang === 'en' ? 'Not run — the wait expired before it was this crew\'s turn.' : '차례가 오기 전에 기한이 지나 실행하지 않았습니다.' }).catch(() => {});
+    return;
+  }
+  let t;
+  try {
+    t = await runTurn(rec.ws, rec.to, prompt, sid, {
+      source: 'session', from: rec.from === 'captain' ? null : rec.from,
+      hop: rec.hop + 1, chain: [...rec.chain, rec.room], abortTag: rec.turnId,
+    });
+  } catch (e) {
+    const failed = String(e?.message || e);
+    await appendTurn(rec.ws, rec.to, { turnId: rec.turnId, userMsg: prompt, failed, failedCode: e?.failCode ?? null, aborted: !!e?.aborted })
+      .catch((err) => console.error(`[argo] 세션 메시지 실패 턴 기록 실패(${rec.ws}/${rec.to}):`, err?.message ?? err));
+    if (await settle(rec)) await notice(rec.ws, rec.room, 'failed', { id: rec.id, to: rec.to, toName: rec.toName, detail: clip(failed, 160) }, lang);
+    return;
+  }
+  await appendTurn(rec.ws, rec.to, { turnId: rec.turnId, userMsg: prompt, reply: t.reply, handover: handoverRel(rec.ws, t.handover), sessionId: t.sessionId,
+    artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback, steerFailed: t.steerFailed })
+    .catch((e) => console.error(`[argo] 세션 메시지 답 기록 실패(${rec.ws}/${rec.to}):`, e?.message ?? e));
+  await deliverReply(rec, t.reply ?? '', lang);
+}
+
+/** B의 답을 A로 — 사장이 보냈으면 카드 한 줄, 크루가 보냈으면 A를 깨운다. 기한이 지난 뒤 온 답은 카드로만(깨우지 않는다 — 비용). */
+async function deliverReply(rec, reply, lang) {
+  const live = await settle(rec);
+  if (rec.from === 'captain' || !live) {
+    await appendLine(rec.ws, rec.room, { who: 'crew', text: reply, src: { kind: 'session', dir: 'reply', id: rec.id, from: rec.to, fromName: rec.toName, ...(live ? {} : { late: true }) } })
+      .catch((e) => console.error(`[argo] 세션 메시지 답 카드 기록 실패(${rec.ws}/${rec.room}):`, e?.message ?? e));
+    return;
+  }
+  // 보낸 크루가 그 사이 해고됐으면 깨우지 않는다(대화 기록은 남기지 않아도 된다 — 받을 사람이 없다)
+  if (!(await listAgents(rec.ws).catch(() => [])).some((a) => a.slug === rec.room)) return;
+  const prompt = wakePrompt(rec, reply, lang);
+  const turnId = await beginTurn(rec.ws, rec.room, { userMsg: prompt, via: 'session', src: { kind: 'session', dir: 'reply', id: rec.id, from: rec.to, fromName: rec.toName } });
+  enqueue(rec.ws, rec.room, async () => {
+    const sid = await idleSession(rec.ws, rec.room);
+    try {
+      const t = await runTurn(rec.ws, rec.room, prompt, sid, { source: 'session', from: rec.to, hop: rec.hop + 1, chain: [...rec.chain, rec.to], abortTag: turnId });
+      await appendTurn(rec.ws, rec.room, { turnId, userMsg: prompt, reply: t.reply, handover: handoverRel(rec.ws, t.handover), sessionId: t.sessionId,
+        artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback, steerFailed: t.steerFailed });
+    } catch (e) {
+      await appendTurn(rec.ws, rec.room, { turnId, userMsg: prompt, failed: String(e?.message || e), failedCode: e?.failCode ?? null, aborted: !!e?.aborted }).catch(() => {});
+    }
+  });
+}
+
+/** 기한 — 아직 기다리는 중이면 기다림을 끝내고 A 방에 안내. 차례 전이면 B 턴도 돌지 않는다(runIncoming). */
+async function expire(rec) {
+  rec.expired = true;
+  if (await settle(rec)) await notice(rec.ws, rec.room, 'expired', { id: rec.id, to: rec.to, toName: rec.toName });
+}
+
+/** 한 회사의 디스크 기록 정리 — 이 프로세스가 시작되기 전에 다른 프로세스가 남긴 기록(재시작)과 기한이 지난 기록. 바뀐 게 없으면 쓰지 않는다. */
+async function sweepWorkspace(ws, now = Date.now()) {
+  const dropped = [];
+  await persist(ws, (cur) => {
+    for (const [id, r] of Object.entries(cur)) {
+      if (r.owner === S.owner) {
+        // 이 프로세스의 기록 — 기다리는 중이면 그대로, 메모리에 없으면 끝난 것(settle이 디스크를 지우는 중)이라 안내 없이 지운다
+        if (![...S.pending.values()].some((x) => x.id === id)) { delete cur[id]; dropped.push(null); }
+        continue;
+      }
+      const orphan = (r.createdAt ?? 0) < BOOT_AT; // 부팅 뒤에 생긴 남의 기록은 같은 폴더를 쓰는 다른 살아 있는 프로세스의 것일 수 있다
+      const late = (r.deadline ?? 0) < now;
+      if (!orphan && !late) continue;
+      delete cur[id];
+      dropped.push({ ...r, code: orphan ? 'restart' : 'expired' });
+    }
+    return dropped.length > 0;
+  });
+  const told = dropped.filter(Boolean);
+  for (const r of told) await notice(ws, r.room, r.code, { id: r.id, to: r.to, toName: r.toName });
+  return told.length;
+}
+
+/** 부팅 정리 — 모든 회사(instrumentation-node.mjs가 부팅 몇 초 뒤 한 번). 반환: 정리한 기록 수. */
+export async function sweepSessionMessages({ now = Date.now() } = {}) {
+  let n = 0;
+  for (const ws of await listCompanyIds().catch(() => [])) n += await sweepWorkspace(ws, now).catch(() => 0);
+  return n;
+}
+
+// ── 테스트 전용
+export function _setRunTurnForTest(fn) { S.runTurn = fn; }
+export function _setTtlForTest(ms) { S.ttl = ms; }
+export async function _drainForTest() { while (S.jobs.size) await Promise.allSettled([...S.jobs]); }
+export async function _resetForTest() {
+  await _drainForTest();
+  for (const t of S.timers.values()) clearTimeout(t);
+  S.timers.clear(); S.pending.clear(); S.queues.clear(); S.ttl = null;
+  for (const ws of await listCompanyIds().catch(() => [])) await rm(join(paths(ws).root, 'sessmsg'), { recursive: true, force: true }).catch(() => {});
+}
