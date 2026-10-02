@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { psqlSpawn } from './helpers/pg.mjs';
 
-// 문서함·거래처 파일(유건 10/2, 트랙 B): 조직 파일은 손님을 뺀 멤버만, 내 공간 파일은 본인만. 올린 Storage 객체가 그 범위·그 id 자리에 있어야 등록된다.
-// 휴지통 30일 뒤 정리 — Storage 객체가 남아 있으면 행을 지우지 않는다(파일을 잃지 않게). 드라이브 토큰은 본인 것만.
+// 문서함·거래처 파일(유건 10/2, 트랙 B): 조직 파일은 손님을 뺀 멤버만, 내 공간 파일은 본인만. 파일 바이트는 R2(argo-office) — DB에는 객체 목록 r2_objects.
+// 올리기 = 자리(file.reserve, 키는 서버가 정함) → 서버가 R2 HEAD로 크기를 보고 r2_object_commit(service_role) → 등록(file.create가 객체를 가져간다).
+// 서명 주소는 DB 함수가 허락한 키만(r2_object_pending_mine·r2_object_read_grant — 둘 다 stable, 열기 쓰기 0). 삭제·휴지통 30일은 deleting → 서버가 R2에서 지운 뒤 행 삭제.
 const DB=process.env.ARGO_PG_TEST_URL;
 const skip=!DB && 'Run scripts/billing-pg-drill.sh test/office-files-pg.test.mjs';
 const U=Object.fromEntries(['owner','admin','member','guest','outsider'].map(k=>[k,randomUUID()]));
@@ -17,23 +18,27 @@ const org=o=>o?quote(o)+'::uuid':'null';
 const userSql=(u,q)=>`set role authenticated; select set_config('argo.uid',${quote(u)},false); ${q}`;
 const last=s=>s.split('\n').filter(Boolean).at(-1);
 const j=d=>`${quote(JSON.stringify(d))}::jsonb`;
+const arr=a=>`array[${a.map(quote).join(',')}]::text[]`;
 const call=(u,q)=>JSON.parse(last(sql(userSql(u,`select ${q}`))));
 const fails=(u,q)=>{const r=raw(userSql(u,`select ${q}`)); assert.notEqual(r.status,0,`should fail: ${q}`); return r.stderr;};
+const svc=q=>last(sql(`set role service_role; select ${q}`));
+const svcFail=q=>{const r=raw(`set role service_role; select ${q}`); assert.notEqual(r.status,0,`should fail: ${q}`); return r.stderr;};
 const write=(u,a,d,o=ORG)=>call(u,`office_file_write(${org(o)},${quote(a)},${j(d)})`);
 const writeFail=(u,a,d,o=ORG)=>fails(u,`office_file_write(${org(o)},${quote(a)},${j(d)})`);
 const list=(u,o=ORG,extra='')=>call(u,`office_file_list(${org(o)}${extra})`);
 const seg=o=>o?`o-${o}`:null;
-// 올리기 = 자리 받기(file.reserve) → 사용자 권한으로 Storage에 넣기(정책이 자리를 본다). metadata.size = 실제 크기(Supabase Storage가 채우는 값)
-const scopeOf=name=>{const s=name.split('/')[0]; return s.startsWith('o-')?s.slice(2):null;};
-const reserve=(u,name,size=1234)=>write(u,'file.reserve',{id:name.split('/')[1],storage_path:name,size},scopeOf(name));
-const put=(u,name,size=1234)=>sql(userSql(u,`insert into storage.objects(bucket_id,name,owner,metadata) values('office-files',${quote(name)},${quote(u)},${j({size})})`));
-const putFails=(u,name)=>assert.notEqual(raw(userSql(u,`insert into storage.objects(bucket_id,name,owner) values('office-files',${quote(name)},${quote(u)})`)).status,0,`insert should fail: ${name}`);
-const upload=(u,name,size=1234)=>{reserve(u,name,size); put(u,name,size);};
+const row=k=>{const r=sql(`select state||'|'||bytes||'|'||coalesce(created_by::text,'')||'|'||coalesce(ref_kind,'')||'|'||mime from r2_objects where key=${quote(k)}`); if(!r)return null; const [state,bytes,by,ref,mime]=r.split('|'); return {state,bytes:Number(bytes),by,ref,mime};};
+const grant=(u,keys)=>{const r=last(sql(userSql(u,`select array_to_json(r2_object_read_grant(${arr(keys)}))`))); return JSON.parse(r);};
+const pending=(u,k)=>{const r=last(sql(userSql(u,`select r2_object_pending_mine(${quote(k)})`))); return r?JSON.parse(r):null;};
+/** 자리 받기 → 키(서버가 정함) */
+const reserve=(u,{o=ORG,id=randomUUID(),filename='a.pdf',size=1234,mime='application/pdf'}={})=>({id,key:write(u,'file.reserve',{id,filename,size,mime},o).key});
+/** 서버가 R2 HEAD로 본 크기를 적는다(service_role) */
+const commit=(k,size=1234)=>JSON.parse(svc(`r2_object_commit(${quote(k)},${size},'etag')`));
+const upload=(u,opt={})=>{const r=reserve(u,opt); commit(r.key,opt.size??1234); return r;};
 const newFile=(u,{o=ORG,title='견적서.pdf',...rest}={})=>{
-  const id=randomUUID(), path=`${o?seg(o):`u-${u}`}/${id}/${title}`;
-  upload(u,path);
-  write(u,'file.create',{id,title,filename:title,mime:'application/pdf',size:1234,storage_path:path,...rest},o);
-  return {id,path};
+  const {id,key}=upload(u,{o,filename:title});
+  write(u,'file.create',{id,title,filename:title,mime:'application/pdf',size:1234,storage_path:key,...rest},o);
+  return {id,path:key};
 };
 
 before(()=>{
@@ -70,47 +75,82 @@ before(()=>{
  CUST2=call(U.outsider,`office_business_write(${quote(ORG2)},${quote(randomUUID())},'customer.save',${j({name:'남의 거래처',email:'',notes:''})})`).id;
 });
 
-test('올리기: 멤버가 올린 객체를 등록하면 목록에 보이고, 다른 조직·손님에게는 안 보인다', {skip}, ()=>{
- const {id}=newFile(U.member,{title:'한빛 견적서.pdf',category:'quote',customer_id:CUST,tags:['견적서','한빛']});
- const l=list(U.admin);
- const f=l.files.find(x=>x.id===id);
- assert.equal(f.category,'quote'); assert.equal(f.customer_id,CUST); assert.deepEqual(f.tags.sort(),['견적서','한빛'].sort());
- assert.equal(l.manager,true); assert.equal(list(U.member).manager,false);
+
+test('올리기: 키는 서버가 정하고(<범위>/files/<id>.<확장자>, 이름 없음), 확인·등록하면 목록에 보이고, 다른 조직·손님에게는 안 보인다', {skip}, ()=>{
+ const {id,key}=reserve(U.member,{filename:'한빛 견적서.PDF'});
+ assert.equal(key,`${seg(ORG)}/files/${id}.pdf`);
+ assert.deepEqual(row(key),{state:'pending',bytes:1234,by:U.member,ref:'',mime:'application/pdf'});
+ commit(key);
+ write(U.member,'file.create',{id,title:'한빛 견적서.pdf',storage_path:key,category:'quote',customer_id:CUST,tags:['견적서','한빛']});
+ assert.equal(row(key).state,'claimed'); assert.equal(row(key).ref,'file');
+ const f=list(U.admin).files.find(x=>x.id===id);
+ assert.equal(f.category,'quote'); assert.equal(f.customer_id,CUST); assert.equal(f.storage_path,key);
+ assert.equal(list(U.admin).manager,true); assert.equal(list(U.member).manager,false);
  assert.match(fails(U.guest,`office_file_list(${org(ORG)})`),/file_forbidden/);
  assert.match(fails(U.outsider,`office_file_list(${org(ORG)})`),/file_forbidden/);
- assert.equal(list(U.outsider,ORG2).files.length,0);
+ assert.equal(reserve(U.member,{filename:'noext'}).key.split('/').at(-1).includes('.'),false,'확장자 없는 이름은 키에도 없다');
+ assert.match(writeFail(U.guest,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:1}),/file_forbidden/);
+ assert.match(writeFail(U.outsider,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:1}),/file_forbidden/);
 });
 
-test('Storage 정책: 손님·남은 조직 경로에 못 올리고, 남의 조직 객체를 못 읽는다', {skip}, ()=>{
- const id=randomUUID();
- assert.notEqual(raw(userSql(U.guest,`insert into storage.objects(bucket_id,name,owner) values('office-files','${seg(ORG)}/${id}/a.pdf',${quote(U.guest)})`)).status,0);
- assert.notEqual(raw(userSql(U.outsider,`insert into storage.objects(bucket_id,name,owner) values('office-files','${seg(ORG)}/${id}/a.pdf',${quote(U.outsider)})`)).status,0);
- assert.notEqual(raw(userSql(U.member,`insert into storage.objects(bucket_id,name,owner) values('office-files','u-${U.owner}/${id}/a.pdf',${quote(U.member)})`)).status,0); // 남의 내 공간
- newFile(U.member,{title:'비밀.pdf'});
- assert.equal(sql(userSql(U.outsider,`select count(*) from storage.objects where bucket_id='office-files' and name like '${seg(ORG)}/%'`)).split('\n').at(-1),'0');
- assert.notEqual(sql(userSql(U.member,`select count(*) from storage.objects where bucket_id='office-files' and name like '${seg(ORG)}/%'`)).split('\n').at(-1),'0');
+test('서명 판정(pending_mine): 내가 받은 지나지 않은 자리만 — 키·크기·형식은 DB 값, 형식은 type/subtype만', {skip}, ()=>{
+ const {key}=reserve(U.member,{size:77,mime:'text/html\r\nx-evil: 1'});
+ assert.deepEqual(pending(U.member,key),{key,bytes:77,mime:'application/octet-stream',state:'pending'},'줄바꿈 섞인 형식은 서명에 넣지 않는다');
+ assert.equal(pending(U.admin,key),null,'남의 자리');
+ assert.equal(pending(U.member,`${seg(ORG)}/files/${randomUUID()}.pdf`),null,'없는 키');
+ sql(`update r2_objects set expires_at=now()-interval '1 second' where key=${quote(key)}`);
+ assert.equal(pending(U.member,key),null,'지난 자리');
+ const b=reserve(U.member,{mime:'IMAGE/PNG'}); assert.equal(pending(U.member,b.key).mime,'image/png');
+ commit(b.key); assert.equal(pending(U.member,b.key).state,'uploaded','확인된 뒤에는 uploaded(확인 다시 부르기용)');
 });
 
-test('등록 검사: 객체가 없거나, 다른 범위·다른 id 자리이거나, 남의 거래처면 거절', {skip}, ()=>{
- const id=randomUUID();
- assert.match(writeFail(U.member,'file.create',{id,title:'x.pdf',storage_path:`${seg(ORG)}/${id}/x.pdf`}),/file_missing/);
- const other=randomUUID(); upload(U.member,`${seg(ORG)}/${other}/y.pdf`);
- assert.match(writeFail(U.member,'file.create',{id,title:'y.pdf',storage_path:`${seg(ORG)}/${other}/y.pdf`}),/file_input/); // id 자리가 다르다
- const mine=randomUUID(); upload(U.member,`u-${U.member}/${mine}/z.pdf`);
- assert.match(writeFail(U.member,'file.create',{id:mine,title:'z.pdf',storage_path:`u-${U.member}/${mine}/z.pdf`}),/file_input/); // 조직 범위로 내 공간 객체 등록
- const id3=randomUUID(); upload(U.member,`${seg(ORG)}/${id3}/c.pdf`);
- assert.match(writeFail(U.member,'file.create',{id:id3,title:'c.pdf',storage_path:`${seg(ORG)}/${id3}/c.pdf`,customer_id:CUST2}),/file_input/); // 남의 조직 거래처
- const id4=randomUUID(); upload(U.admin,`${seg(ORG)}/${id4}/d.pdf`);
- assert.match(writeFail(U.member,'file.create',{id:id4,title:'d.pdf',storage_path:`${seg(ORG)}/${id4}/d.pdf`}),/file_forbidden/); // 남이 올린 객체
- // 같은 요청 다시 보내기는 그대로 통과(재시도)
+test('열기 판정(read_grant): 등록된 객체는 그 범위를 읽는 사람만, 등록 전은 올린 사람만, 지우기로 정한 것·자리는 안 준다, 50개 상한', {skip}, ()=>{
+ const a=newFile(U.member,{title:'공용.pdf'});
+ const mine=newFile(U.member,{o:null,title:'내 것.pdf'});
+ const up=upload(U.member); const pend=reserve(U.member);
+ assert.deepEqual(grant(U.admin,[a.path,mine.path,up.key,pend.key]),[a.path]);
+ assert.deepEqual(grant(U.member,[a.path,mine.path,up.key,pend.key]).sort(),[a.path,mine.path,up.key].sort());
+ assert.deepEqual(grant(U.guest,[a.path]),[]); assert.deepEqual(grant(U.outsider,[a.path,mine.path]),[]);
+ write(U.member,'file.trash',{ids:[a.id]});
+ assert.deepEqual(grant(U.admin,[a.path]),[a.path],'휴지통에서도 미리보기는 된다');
+ write(U.admin,'file.purge',{ids:[a.id]});
+ assert.deepEqual(grant(U.admin,[a.path]),[],'지우기로 정한 객체는 주지 않는다');
+ assert.match(fails(U.member,`r2_object_read_grant(array(select g::text from generate_series(1,51) g))`),/file_input/);
+ assert.notEqual(raw(`set role anon; select r2_object_read_grant(array['x'])`).status,0);
+});
+
+test('등록 검사: 확인 전(pending)·없는 객체·다른 id 키·내 공간 키를 조직에·남의 거래처·남이 올린 객체는 거절, 같은 요청 다시는 통과', {skip}, ()=>{
+ const p=reserve(U.member);
+ assert.match(writeFail(U.member,'file.create',{id:p.id,title:'x.pdf',storage_path:p.key}),/file_missing/,'서버 확인(commit) 전');
+ const id0=randomUUID();
+ assert.match(writeFail(U.member,'file.create',{id:id0,title:'x.pdf',storage_path:`${seg(ORG)}/files/${id0}.pdf`}),/file_missing/);
+ const other=upload(U.member);
+ assert.match(writeFail(U.member,'file.create',{id:randomUUID(),title:'y.pdf',storage_path:other.key}),/file_input/,'id와 키가 다르다');
+ const mine=upload(U.member,{o:null});
+ assert.match(writeFail(U.member,'file.create',{id:mine.id,title:'z.pdf',storage_path:mine.key}),/file_input/,'조직 범위로 내 공간 객체 등록');
+ const c=upload(U.member);
+ assert.match(writeFail(U.member,'file.create',{id:c.id,title:'c.pdf',storage_path:c.key,customer_id:CUST2}),/file_input/);
+ const d=upload(U.admin);
+ assert.match(writeFail(U.member,'file.create',{id:d.id,title:'d.pdf',storage_path:d.key}),/file_forbidden/,'남이 올린 객체');
  const ok=newFile(U.member,{title:'재시도.pdf'});
  assert.equal(write(U.member,'file.create',{id:ok.id,title:'재시도.pdf',storage_path:ok.path}).id,ok.id);
 });
 
-test('내 공간: 본인만 읽고 쓴다', {skip}, ()=>{
- const {id}=newFile(U.member,{o:null,title:'영수증.png'});
- assert.ok(list(U.member,null).files.some(x=>x.id===id));
- assert.ok(!list(U.owner,null).files.some(x=>x.id===id));
+test('확인(commit, service_role만): 크기가 다르면 file_size_mismatch, 다시 불러도 쓰지 않는다, 지난 자리는 file_missing, 실패 정리는 등록 전 행만', {skip}, ()=>{
+ const a=reserve(U.member,{size:100});
+ assert.match(svcFail(`r2_object_commit(${quote(a.key)},101,'e')`),/file_size_mismatch/);
+ commit(a.key,100);
+ const x1=sql(`select xmin from r2_objects where key=${quote(a.key)}`);
+ assert.equal(commit(a.key,100).state,'uploaded');
+ assert.equal(sql(`select xmin from r2_objects where key=${quote(a.key)}`),x1,'두 번째 확인은 쓰지 않는다');
+ const b=reserve(U.member); sql(`update r2_objects set expires_at=now()-interval '1 second' where key=${quote(b.key)}`);
+ assert.match(svcFail(`r2_object_commit(${quote(b.key)},1234,'e')`),/file_missing/);
+ const f=newFile(U.member,{title:'남길것.pdf'});
+ assert.equal(svc(`r2_object_fail(${arr([a.key,b.key,f.path])})`),'2','등록된 객체 행은 지우지 않는다');
+ assert.equal(row(f.path).state,'claimed');
+ for(const q of [`r2_object_commit(${quote(f.path)},1,'e')`,`r2_object_fail(${arr([f.path])})`,`r2_object_forget(${arr([f.path])})`,`r2_object_deleting(${arr([f.path])})`,
+   `r2_object_server_put(${quote(`${seg(ORG)}/x`)},${quote(seg(ORG))},1,'a/b','claimed')`,`office_storage_sweep(10)`])
+  assert.match(fails(U.owner,q),/permission denied/,q);
 });
 
 test('검색: 제목·파일명·추출 본문·태그로 찾는다(와일드카드 글자는 그대로)', {skip}, ()=>{
@@ -128,38 +168,6 @@ test('OCR 결과는 바뀔 때만 쓴다(같은 값 다시 보내면 행 그대�
  const x1=sql(`select xmin from office_files where id=${quote(id)}`);
  write(U.member,'file.ocr',{id,ocr_status:'done',summary:'a',full_text:'a'});
  assert.equal(sql(`select xmin from office_files where id=${quote(id)}`),x1);
-});
-
-test('휴지통 → 복원 → 영구 삭제: 객체가 남아 있으면 행을 지우지 않고, 멤버는 남의 파일을 영구 삭제 못 한다', {skip}, ()=>{
- const {id,path}=newFile(U.admin,{title:'지울것.pdf'});
- write(U.member,'file.trash',{ids:[id]});
- assert.ok(!list(U.member).files.some(x=>x.id===id));
- assert.ok(list(U.member,ORG,`,null,true`).files.some(x=>x.id===id));
- write(U.member,'file.restore',{ids:[id]});
- assert.ok(list(U.member).files.some(x=>x.id===id));
- write(U.member,'file.trash',{ids:[id]});
- assert.deepEqual(write(U.admin,'file.purge',{ids:[id]}).ids,[]); // 객체가 아직 있다
- assert.notEqual(raw(userSql(U.member,`delete from storage.objects where bucket_id='office-files' and name=${quote(path)} returning 1`)).stdout.trim().split('\n').at(-1),'1'); // 남이 올린 객체는 멤버가 못 지운다
- sql(userSql(U.admin,`delete from storage.objects where bucket_id='office-files' and name=${quote(path)}`));
- assert.deepEqual(write(U.member,'file.purge',{ids:[id]}).ids,[]); // 멤버는 남의 파일 영구 삭제 불가
- assert.deepEqual(write(U.admin,'file.purge',{ids:[id]}).ids,[id]);
- assert.equal(sql(`select count(*) from office_files where id=${quote(id)}`),'0');
-});
-
-test('정리 대상: 30일 지난 휴지통 파일과 하루 지난 행 없는 객체(관리자에게만)', {skip}, ()=>{
- const {id,path}=newFile(U.member,{title:'오래된.pdf'});
- write(U.member,'file.trash',{ids:[id]});
- sql(`update office_files set deleted_at=now()-interval '31 days' where id=${quote(id)}`);
- const orphan=`${seg(ORG)}/${randomUUID()}/orphan.pdf`; upload(U.member,orphan);
- sql(`update storage.objects set created_at=now()-interval '2 days' where name=${quote(orphan)}`);
- assert.ok(!call(U.admin,`office_file_expired(${org(ORG)})`).orphans.includes(orphan),'열린 올리기 자리가 있는 동안은 정리 대상이 아니다');
- sql(`update office_storage_slots set expires_at=now()-interval '1 minute' where path=${quote(orphan)}`);
- const ex=call(U.admin,`office_file_expired(${org(ORG)})`);
- assert.ok(ex.files.some(x=>x.id===id&&x.path===path));
- assert.ok(ex.orphans.includes(orphan));
- const exm=call(U.member,`office_file_expired(${org(ORG)})`);
- assert.ok(exm.files.some(x=>x.id===id)); // 올린 사람은 자기 것
- assert.deepEqual(exm.orphans,[]);
 });
 
 test('폴더: 만들기·이름 바꾸기·자기 아래로 옮기기 거절·빈 폴더만 지우기', {skip}, ()=>{
@@ -204,62 +212,6 @@ test('공개 페이지 본문에서 /파일 블록(fileRef)은 빠진다 — 조
  assert.deepEqual(out.content.map(n=>n.type),['paragraph']);
 });
 
-test('MEDIUM 1 올리기 자리: 자리 없이는 내 범위에도 못 올리고, 남의 자리·지난 자리로도 못 올린다, 등록하면 자리는 없어진다', {skip}, ()=>{
- const p=`${seg(ORG)}/${randomUUID()}/a.pdf`;
- putFails(U.member,p); // 경로만 맞는다고 올릴 수 없다
- reserve(U.admin,p); putFails(U.member,p); // 남의 자리
- const p2=`${seg(ORG)}/${randomUUID()}/b.pdf`; reserve(U.member,p2);
- sql(`update office_storage_slots set expires_at=now()-interval '1 second' where path=${quote(p2)}`); putFails(U.member,p2); // 지난 자리
- const p3=`u-${U.member}/${randomUUID()}/c.pdf`; putFails(U.member,p3); // 내 공간도 같다
- reserve(U.member,p3); put(U.member,p3);
- assert.match(writeFail(U.member,'file.reserve',{id:randomUUID(),storage_path:`${seg(ORG)}/${randomUUID()}/x.pdf`,size:1}),/file_input/); // id 자리가 다르다
- assert.match(writeFail(U.guest,'file.reserve',{id:randomUUID(),storage_path:`${seg(ORG)}/${randomUUID()}/x.pdf`,size:1}),/file_forbidden/);
- const id=p3.split('/')[1];
- write(U.member,'file.create',{id,title:'c.pdf',storage_path:p3,size:1},null);
- assert.equal(sql(`select count(*) from office_storage_slots where path=${quote(p3)}`),'0');
- assert.notEqual(raw(userSql(U.member,`select * from office_storage_slots`)).status,0,'자리 표는 직접 못 읽는다');
-});
-
-test('MEDIUM 1 사람당 열린 자리 50개 상한(행 없는 객체가 무한히 쌓이지 않게)', {skip}, ()=>{
- const u=U.admin;
- sql(`delete from office_storage_slots where created_by=${quote(u)}`); // 앞 테스트가 남긴 열린 자리
- sql(userSql(u,`do $x$ begin for i in 1..50 loop perform office_file_write(null,'file.reserve',jsonb_build_object('id',g,'storage_path','u-'||${quote(u)}||'/'||g||'/a.pdf','size',1)) from (select gen_random_uuid() g) s; end loop; end $x$;`));
- const id=randomUUID();
- assert.match(writeFail(u,'file.reserve',{id,storage_path:`u-${u}/${id}/a.pdf`,size:1},null),/file_limit/);
- sql(`delete from office_storage_slots where created_by=${quote(u)}`);
-});
-
-test('MEDIUM 1 용량: 범위(두 버킷) 실제 객체 크기 합 + 열린 자리 + 이번 크기가 상한(내 공간 1GiB)을 넘으면 거절', {skip}, ()=>{
- const u=U.owner, big=`u-${u}/${randomUUID()}/big.bin`, id=randomUUID(), path=`u-${u}/${id}/a.pdf`;
- sql(`insert into storage.objects(bucket_id,name,owner,metadata) values('office-files',${quote(big)},${quote(u)},'{"size":1073740000}')`);
- assert.match(writeFail(u,'file.reserve',{id,storage_path:path,size:5000},null),/file_quota/);
- sql(`delete from storage.objects where name=${quote(big)}`);
- sql(`insert into storage.objects(bucket_id,name,owner,metadata) values('office-docs',${quote(`u-${u}/docs/${randomUUID()}.pdf`)},${quote(u)},'{"size":1073740000}')`);
- assert.match(writeFail(u,'file.reserve',{id,storage_path:path,size:5000},null),/file_quota/,'문서 버킷도 같은 범위 합에 든다');
- sql(`delete from storage.objects where bucket_id='office-docs' and name like ${quote(`u-${u}/%`)}`);
- write(u,'file.reserve',{id,storage_path:path,size:5000},null);
- // 등록 때는 실제 크기로 다시 센다 — 자리를 받은 뒤 범위가 찼으면(다른 경로로 들어온 객체 포함) 등록을 거절한다
- put(u,path,5000);
- const filler=`u-${u}/docs/${randomUUID()}.pdf`;
- sql(`insert into storage.objects(bucket_id,name,owner,metadata) values('office-docs',${quote(filler)},${quote(u)},'{"size":1073740000}')`);
- assert.match(writeFail(u,'file.create',{id,title:'a.pdf',storage_path:path,size:5000},null),/file_quota/);
- sql(`delete from storage.objects where name in (${quote(path)},${quote(filler)})`);
- // 50MB를 넘는 실제 객체는 등록하지 않는다(버킷 상한과 같은 값)
- const id2=randomUUID(), p2=`u-${u}/${id2}/b.pdf`; reserve(u,p2,10); put(u,p2,52428801);
- assert.match(writeFail(u,'file.create',{id:id2,title:'b.pdf',storage_path:p2,size:10},null),/file_input/);
-});
-
-test('LOW 6 크기·출처는 서버가 정한다: 크기는 실제 객체 크기, esign·generated는 클라이언트가 붙일 수 없다', {skip}, ()=>{
- const id=randomUUID(), p=`${seg(ORG)}/${id}/real.pdf`;
- reserve(U.member,p,10); put(U.member,p,777);
- write(U.member,'file.create',{id,title:'real.pdf',storage_path:p,size:1,source:'esign'});
- assert.equal(sql(`select size||','||source from office_files where id=${quote(id)}`),'777,upload');
- const g=newFile(U.member,{title:'g.pdf',source:'generated'});
- assert.equal(sql(`select source from office_files where id=${quote(g.id)}`),'upload');
- const a=newFile(U.member,{title:'a.pdf',source:'agent'});
- assert.equal(sql(`select source from office_files where id=${quote(a.id)}`),'agent','크루가 올린 것은 agent');
-});
-
 test('HIGH 1 서버 OCR 한도: 사람마다 시간당 60회, 넘으면 false(행을 다시 쓰지 않는다), 다른 사람은 따로, 하루 지난 기록은 정리', {skip}, ()=>{
  const take=u=>last(sql(userSql(u,'select office_ocr_take()')));
  assert.equal(sql(userSql(U.member,`select count(*) from (select office_ocr_take() t from generate_series(1,60)) s where t`)).split('\n').at(-1),'60');
@@ -272,4 +224,97 @@ test('HIGH 1 서버 OCR 한도: 사람마다 시간당 60회, 넘으면 false(�
  assert.equal(sql(`select count(*) from office_ocr_usage where user_id=${quote(U.admin)}`),'1');
  assert.notEqual(raw(`set role anon; select office_ocr_take()`).status,0);
  assert.notEqual(raw(userSql(U.member,'select * from office_ocr_usage')).status,0);
+});
+
+test('휴지통 → 복원 → 영구 삭제: 기록을 지우며 객체를 deleting으로(한 트랜잭션), 멤버는 남의 파일을 영구 삭제 못 한다, R2에서 지운 뒤에만 행이 없어진다', {skip}, ()=>{
+ const {id,path}=newFile(U.admin,{title:'지울것.pdf'});
+ write(U.member,'file.trash',{ids:[id]});
+ assert.ok(!list(U.member).files.some(x=>x.id===id));
+ assert.ok(list(U.member,ORG,`,null,true`).files.some(x=>x.id===id));
+ write(U.member,'file.restore',{ids:[id]});
+ write(U.member,'file.trash',{ids:[id]});
+ assert.deepEqual(write(U.member,'file.purge',{ids:[id]}),{ids:[],keys:[]},'멤버는 남의 파일 영구 삭제 불가');
+ assert.equal(row(path).state,'claimed');
+ assert.deepEqual(write(U.admin,'file.purge',{ids:[id]}),{ids:[id],keys:[path]});
+ assert.equal(sql(`select count(*) from office_files where id=${quote(id)}`),'0');
+ assert.equal(row(path).state,'deleting','R2 삭제 전까지 행은 남는다(못 지우면 크론이 다시)');
+ assert.equal(svc(`array_to_json(r2_object_deleting(${arr([path,'nope'])}))`),JSON.stringify([path]),'flush는 deleting 키만');
+ assert.equal(svc(`r2_object_forget(${arr([path])})`),'1');
+ assert.equal(svc(`r2_object_forget(${arr([path])})`),'0','이중 삭제는 0건');
+ assert.equal(row(path),null);
+});
+
+test('서버 정리(service_role): 휴지통 30일 기록 삭제+deleting, 지난 자리·1시간 넘은 등록 전 객체·deleting 목록, 새 것·등록된 것은 남긴다, 할 일 없으면 쓰기 0', {skip}, ()=>{
+ const old=newFile(U.member,{title:'오래된.pdf'});
+ write(U.member,'file.trash',{ids:[old.id]});
+ sql(`update office_files set deleted_at=now()-interval '31 days' where id=${quote(old.id)}`);
+ const recent=newFile(U.member,{title:'최근휴지통.pdf'}); write(U.member,'file.trash',{ids:[recent.id]});
+ const live=newFile(U.member,{title:'산것.pdf'});
+ const expired=reserve(U.member); sql(`update r2_objects set expires_at=now()-interval '1 minute' where key=${quote(expired.key)}`);
+ const fresh=reserve(U.member);
+ const stale=upload(U.member); sql(`update r2_objects set updated_at=now()-interval '2 hours' where key=${quote(stale.key)}`);
+ const newUp=upload(U.member);
+ sql(`insert into office_ocr_usage(user_id,hour,n) values(${quote(U.admin)},now()-interval '3 days',1)`);
+ const keys=JSON.parse(svc(`office_storage_sweep(500)`)).keys;
+ for(const k of [old.path,expired.key,stale.key]) assert.ok(keys.includes(k),`정리 대상: ${k}`);
+ for(const k of [recent.path,live.path,fresh.key,newUp.key]) assert.ok(!keys.includes(k),`남길 것: ${k}`);
+ assert.equal(sql(`select count(*) from office_files where id=${quote(old.id)}`),'0','휴지통 30일 기록은 지운다(유건 승인 보존 기간)');
+ assert.equal(sql(`select count(*) from office_files where id=${quote(recent.id)}`),'1');
+ assert.equal(sql(`select count(*) from office_ocr_usage where hour < now()-interval '1 day'`),'0');
+ svc(`r2_object_forget(${arr(keys)})`);
+ const snap=()=>sql(`select string_agg(key||':'||xmin::text,',' order by key) from r2_objects`)+'|'+sql(`select string_agg(id||':'||xmin::text,',' order by id) from office_files`);
+ const before=snap();
+ assert.deepEqual(JSON.parse(svc(`office_storage_sweep(500)`)).keys,[]);
+ assert.equal(snap(),before,'할 일이 없으면 정리도 아무 행을 바꾸지 않는다');
+});
+
+test('쓰기 0(총괄 결정 6): 목록·한 건·열기 판정·자리 판정을 여러 번 불러도 어떤 행도 바뀌지 않는다, 두 판정 함수는 stable', {skip}, ()=>{
+ const f=newFile(U.member,{title:'열기.pdf'}); const p=reserve(U.member);
+ const snap=()=>sql(`select string_agg(key||':'||xmin::text,',' order by key) from r2_objects`)+'|'+sql(`select string_agg(id||':'||xmin::text,',' order by id) from office_files`)+'|'+sql(`select count(*) from office_ocr_usage`);
+ const before=snap();
+ for(let i=0;i<3;i++){ list(U.member); call(U.member,`office_file_get(${org(ORG)},${quote(f.id)})`); grant(U.member,[f.path]); grant(U.admin,[f.path,p.key]); pending(U.member,p.key); }
+ assert.equal(snap(),before);
+ assert.equal(sql(`select string_agg(proname||'='||provolatile,',' order by proname) from pg_proc where proname in ('r2_object_read_grant','r2_object_pending_mine','r2_object_deleting')`),
+  'r2_object_deleting=s,r2_object_pending_mine=s,r2_object_read_grant=s','stable 함수는 쓰기 문장을 실행하지 못한다(측정을 몰래 켜면 오류로 드러난다)');
+ assert.equal(sql(`select count(*) from pg_class where relname='office_storage_usage'`),'0','다운로드 측정 표는 만들지 않았다(설계 주석만)');
+ assert.deepEqual(Object.values(JSON.parse(sql(`select office_storage_limits()`))),[null,null,null,null,null,null],'하루 상한·플랫폼 예산은 모두 미정(null)');
+});
+
+test('MEDIUM 1 올리기 자리: 같은 키 남의 자리는 file_conflict, 같은 요청 다시는 그대로, 사람당 열린 자리 50개 상한, 표는 직접 못 읽는다', {skip}, ()=>{
+ const id=randomUUID();
+ const a=write(U.member,'file.reserve',{id,filename:'a.pdf',size:5});
+ assert.deepEqual(write(U.member,'file.reserve',{id,filename:'a.pdf',size:5}),a,'같은 요청 다시');
+ assert.match(writeFail(U.admin,'file.reserve',{id,filename:'a.pdf',size:5}),/file_conflict/);
+ assert.match(writeFail(U.member,'file.reserve',{id,filename:'a.pdf',size:6}),/file_conflict/,'크기가 다른 같은 키');
+ assert.match(writeFail(U.member,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:52428801}),/file_input/,'50MB 상한');
+ const u=U.admin;
+ sql(`delete from r2_objects where created_by=${quote(u)} and state='pending'`);
+ sql(userSql(u,`do $x$ begin for i in 1..50 loop perform office_file_write(null,'file.reserve',jsonb_build_object('id',gen_random_uuid(),'filename','a.pdf','size',1)); end loop; end $x$;`));
+ assert.match(writeFail(u,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:1},null),/file_limit/);
+ sql(`delete from r2_objects where created_by=${quote(u)} and state='pending'`);
+ assert.notEqual(raw(userSql(U.member,`select * from r2_objects`)).status,0,'객체 목록은 직접 못 읽는다');
+});
+
+test('MEDIUM 1 용량: 범위(문서함+문서·서명 객체) 올라온 합 + 열린 자리 + 이번 크기가 상한(내 공간 1GiB)을 넘으면 거절, deleting은 빠진다, 등록 때 다시 센다', {skip}, ()=>{
+ const u=U.owner, s=`u-${u}`, big=`${s}/docs/${randomUUID()}/${randomUUID()}.pdf`;
+ svc(`r2_object_server_put(${quote(big)},${quote(s)},1073740000,'application/pdf','claimed','doc',${quote(randomUUID())})`);
+ assert.match(writeFail(u,'file.reserve',{id:randomUUID(),filename:'a.pdf',size:5000},null),/file_quota/,'서버가 쓴 객체도 같은 범위 합에 든다');
+ sql(`update r2_objects set state='deleting' where key=${quote(big)}`);
+ const r=reserve(u,{o:null,size:5000}); commit(r.key,5000);
+ sql(`update r2_objects set state='claimed' where key=${quote(big)}`); // 자리를 받은 뒤 범위가 찼다
+ assert.match(writeFail(u,'file.create',{id:r.id,title:'a.pdf',storage_path:r.key},null),/file_quota/);
+ svc(`r2_object_server_put(${quote(`${s}/esign/${randomUUID()}/final.pdf`)},${quote(s)},5,'application/pdf','claimed','esign',${quote(randomUUID())})`); // 가득 차도 서버 쓰기는 막지 않는다(총괄 결정 5)
+ sql(`delete from r2_objects where seg=${quote(s)}`);
+ const b=upload(u,{o:null,size:10}); sql(`update r2_objects set bytes=52428801 where key=${quote(b.key)}`);
+ assert.match(writeFail(u,'file.create',{id:b.id,title:'b.pdf',storage_path:b.key},null),/file_input/,'50MB를 넘는 객체는 등록하지 않는다');
+});
+
+test('LOW 6 크기·출처는 서버가 정한다: 크기는 서버가 확인한 크기, esign·generated는 클라이언트가 붙일 수 없다', {skip}, ()=>{
+ const r=reserve(U.member,{size:777}); commit(r.key,777);
+ write(U.member,'file.create',{id:r.id,title:'real.pdf',storage_path:r.key,size:1,source:'esign'});
+ assert.equal(sql(`select size||','||source from office_files where id=${quote(r.id)}`),'777,upload');
+ const g=newFile(U.member,{title:'g.pdf',source:'generated'});
+ assert.equal(sql(`select source from office_files where id=${quote(g.id)}`),'upload');
+ const a=newFile(U.member,{title:'a.pdf',source:'agent'});
+ assert.equal(sql(`select source from office_files where id=${quote(a.id)}`),'agent','크루가 올린 것은 agent');
 });

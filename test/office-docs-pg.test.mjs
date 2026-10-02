@@ -4,7 +4,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { psqlSpawn } from './helpers/pg.mjs';
 
-// 견적·계약·전자서명(20261002201900_office_docs.sql, spec8 트랙 A) — 조직 권한(멤버 읽기·관리자 쓰기), 저장소 경로 권한,
+// 견적·계약·전자서명(20261002201900_office_docs.sql, spec8 트랙 A) — 조직 권한(멤버 읽기·관리자 쓰기), R2 객체 목록(r2_objects — 키는 DB가 정한다),
 // 토큰 해시만으로 여는 공개 서명 함수(service_role 전용), 서명 기록 보호, 완료 시 거래 '계약'(보낸 사람 권한으로 office_business_write).
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'Run scripts/billing-pg-drill.sh test/office-docs-pg.test.mjs';
@@ -26,10 +26,19 @@ const bwrite = (a, d) => call(U.owner, 'office_business_write', `${quote(ORG)},$
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const fwrite = (u, a, d, o = ORG) => call(u, 'office_file_write', `${o ? quote(o) + '::uuid' : 'null'},${quote(a)},${j(d)}`);
 const fwriteFail = (u, a, d, o = ORG) => fails(u, 'office_file_write', `${o ? quote(o) + '::uuid' : 'null'},${quote(a)},${j(d)}`);
-const putObj = (u, bucket, name, size) => sql(as(u, `insert into storage.objects(bucket_id,name,owner,metadata) values(${quote(bucket)},${quote(name)},${quote(u)},${j({ size })})`));
-const putObjFails = (u, bucket, name) => assert.notEqual(raw(as(u, `insert into storage.objects(bucket_id,name,owner) values(${quote(bucket)},${quote(name)},${quote(u)})`)).status, 0, `insert should fail: ${name}`);
-/** 문서함에 서명본·생성 문서 사본 넣기(자리 → 올리기 → 등록) */
-const fileCopy = (u, size, extra) => { const id = randomUUID(), path = `${SEG}/${id}/copy.pdf`; fwrite(u, 'file.reserve', { id, storage_path: path, size }); putObj(u, 'office-files', path, size); return { id, path, out: () => fwrite(u, 'file.create', { id, title: 'copy.pdf', storage_path: path, size, ...extra }), fail: () => fwriteFail(u, 'file.create', { id, title: 'copy.pdf', storage_path: path, size, ...extra }) }; };
+const arr = (a) => `array[${a.map(quote).join(',')}]::text[]`;
+/** 서버가 R2 HEAD로 본 크기를 적는다(service_role) */
+const commit = (key, size) => svc('r2_object_commit', `${quote(key)},${size},'etag'`);
+/** 서버가 직접 쓰는 객체(서명 그림·서명본) 등록 */
+const serverPut = (key, size, state, ref, mime = 'application/pdf') => sql(`set role service_role; select r2_object_server_put(${quote(key)},${quote(key.split('/')[0])},${size},${quote(mime)},${quote(state)},'esign',${ref ? quote(ref) : 'null'})`);
+const row = (k) => sql(`select state||'|'||bytes||'|'||coalesce(ref_kind,'')||'|'||mime from r2_objects where key=${quote(k)}`);
+const grant = (u, keys) => JSON.parse(last(sql(as(u, `select array_to_json(r2_object_read_grant(${arr(keys)}))`))));
+/** 문서 PDF 올리기(자리 → 서버 확인) → 키 */
+const docPdf = (u, id, size = 100, o = ORG) => { const key = call(u, 'office_docs_write', `${o ? quote(o) : 'null'},'doc.reserve',${j({ id, size })}`).path; commit(key, size); return key; };
+/** 서명 원본 올리기 → 키 */
+const origPdf = (u, id, size = 100) => { const key = write(u, 'esign.reserve', { id, size }).path; commit(key, size); return key; };
+/** 문서함에 서명본·생성 문서 사본 넣기(자리 → 서버 확인 → 등록) */
+const fileCopy = (u, size, extra) => { const id = randomUUID(); const path = fwrite(u, 'file.reserve', { id, filename: 'copy.pdf', size, mime: 'application/pdf' }).key; commit(path, size); return { id, path, out: () => fwrite(u, 'file.create', { id, title: 'copy.pdf', storage_path: path, size, ...extra }), fail: () => fwriteFail(u, 'file.create', { id, title: 'copy.pdf', storage_path: path, size, ...extra }) }; };
 let SEG, ORDER, CUSTOMER;
 
 before(() => {
@@ -70,7 +79,7 @@ before(() => {
 
 test('권한: 멤버는 읽고 관리자만 쓴다, 손님·밖 사람은 못 본다, 표를 직접 만지는 길은 없다', { skip }, () => {
   const id = randomUUID();
-  const doc = write(U.admin, 'doc.save', { id, kind: 'quote', title: '견적서 — 한빛', customer_name: '한빛', customer_id: CUSTOMER, order_id: ORDER, input: { a: 1 }, pdf_path: `${SEG}/docs/${id}.pdf`, pdf_size: 10, pdf_hash: 'h', filename: '한빛_견적서.pdf', supply: 1000, vat: 100, total: 1100 });
+  const doc = write(U.admin, 'doc.save', { id, kind: 'quote', title: '견적서 — 한빛', customer_name: '한빛', customer_id: CUSTOMER, order_id: ORDER, input: { a: 1 }, pdf_path: docPdf(U.admin, id), pdf_size: 10, pdf_hash: 'h', filename: '한빛_견적서.pdf', supply: 1000, vat: 100, total: 1100 });
   assert.equal(doc.scope, undefined); assert.equal(doc.created_by, U.admin);
   const read = call(U.member, 'office_docs_read', quote(ORG));
   assert.equal(read.docs.length, 1); assert.equal(read.can_write, false);
@@ -88,24 +97,28 @@ test('권한: 멤버는 읽고 관리자만 쓴다, 손님·밖 사람은 못 �
 
 test('경로·연결 검사: 저장소 경로는 이 공간·이 문서 자리만, 다른 공간의 거래처·거래는 이을 수 없다', { skip }, () => {
   const id = randomUUID();
-  assert.match(writeFail(U.admin, 'doc.save', { id, kind: 'quote', title: 'x', pdf_path: `u-${U.admin}/docs/${id}.pdf` }), /docs_path/);
+  assert.match(writeFail(U.admin, 'doc.save', { id, kind: 'quote', title: 'x', pdf_path: `u-${U.admin}/docs/${id}/${randomUUID()}.pdf` }), /docs_path/);
+  assert.match(writeFail(U.admin, 'doc.save', { id, kind: 'quote', title: 'x', pdf_path: `${SEG}/docs/${id}.pdf` }), /docs_path/, '판 없는 옛 모양');
+  assert.match(writeFail(U.admin, 'doc.save', { id, kind: 'quote', title: 'x', pdf_path: `${SEG}/docs/${id}/${randomUUID()}.pdf` }), /file_missing/, '올리지 않은 PDF');
   assert.match(writeFail(U.admin, 'doc.save', { id, kind: 'quote', title: 'x', customer_id: randomUUID() }), /docs_not_found/);
   assert.match(writeFail(U.admin, 'esign.create', { id, title: 'x', orig_path: `${SEG}/esign/${randomUUID()}/orig.pdf`, doc_hash: 'a'.repeat(64) }), /docs_input/);
 });
 
-test('저장소 정책 함수: 내 공간·내 조직(쓰기는 관리자)만, 경로 탈출 거절', { skip }, () => {
-  const ok = (u, name, w) => last(sql(as(u, `select office_docs_storage_ok(${quote(name)},${w})`))) === 't';
-  assert.ok(ok(U.member, `${SEG}/docs/a.pdf`, false)); assert.ok(!ok(U.member, `${SEG}/docs/a.pdf`, true));
-  assert.ok(ok(U.admin, `${SEG}/docs/a.pdf`, true)); assert.ok(!ok(U.guest, `${SEG}/docs/a.pdf`, false)); assert.ok(!ok(U.outsider, `${SEG}/docs/a.pdf`, false));
-  assert.ok(ok(U.outsider, `u-${U.outsider}/docs/a.pdf`, true)); assert.ok(!ok(U.outsider, `u-${U.admin}/docs/a.pdf`, false));
-  assert.ok(!ok(U.admin, `${SEG}/../x`, false));
-  assert.equal(sql(`select count(*) from pg_policies where tablename='objects' and policyname like 'office_docs_%'`), '3', '읽기·올리기·지우기 — 고쳐 쓰기 없음');
+test('열기 판정: 문서 PDF·서명 원본은 멤버가 읽고 손님·밖 사람은 못 읽는다, 내 공간은 본인만', { skip }, () => {
+  const id = randomUUID(), key = docPdf(U.admin, id);
+  write(U.admin, 'doc.save', { id, kind: 'quote', title: '읽기', pdf_path: key });
+  assert.deepEqual(grant(U.member, [key]), [key]); assert.deepEqual(grant(U.guest, [key]), []); assert.deepEqual(grant(U.outsider, [key]), []);
+  const mine = randomUUID(), mk = docPdf(U.outsider, mine, 50, null);
+  call(U.outsider, 'office_docs_write', `null,'doc.save',${j({ id: mine, kind: 'quote', title: '내 것', pdf_path: mk })}`);
+  assert.deepEqual(grant(U.outsider, [mk]), [mk]); assert.deepEqual(grant(U.admin, [mk]), []);
+  assert.equal(row(key), 'claimed|100|doc|application/pdf');
 });
 
 let E, TA, TB;
 test('서명 요청: 초안 → 발송(토큰 해시만, 30일 상한), 다시 보내기 거절, 서명자 검사', { skip }, () => {
   E = randomUUID();
-  const e = write(U.admin, 'esign.create', { id: E, title: '용역 계약서', order_id: ORDER, orig_path: `${SEG}/esign/${E}/orig.pdf`, doc_hash: 'a'.repeat(64), fields: [{ kind: 'signature', page: 0, signer_ord: 0 }, { kind: 'date', page: 0, signer_ord: 0 }, { kind: 'signature', page: 0, signer_ord: 1 }], signers: [{ name: '한빛', email: 'p@h.example' }, { name: '', email: 'x@x.x' }], pages: 1 });
+  assert.match(writeFail(U.admin, 'esign.create', { id: E, title: '용역 계약서', orig_path: `${SEG}/esign/${E}/orig.pdf`, doc_hash: 'a'.repeat(64) }), /file_missing/, '원본을 올리기 전에는 만들 수 없다');
+  const e = write(U.admin, 'esign.create', { id: E, title: '용역 계약서', order_id: ORDER, orig_path: origPdf(U.admin, E), doc_hash: 'a'.repeat(64), fields: [{ kind: 'signature', page: 0, signer_ord: 0 }, { kind: 'date', page: 0, signer_ord: 0 }, { kind: 'signature', page: 0, signer_ord: 1 }], signers: [{ name: '한빛', email: 'p@h.example' }, { name: '', email: 'x@x.x' }], pages: 1 });
   assert.equal(e.status, 'draft'); assert.equal(e.signers.length, 1, '이름 없는 서명자는 빠진다'); assert.equal(e.mail_account, undefined);
   TA = 'A'.repeat(43); TB = 'B'.repeat(43);
   assert.match(writeFail(U.admin, 'esign.send', { id: E, signers: [{ name: 'a', email: 'p@h.example', token_hash: 'nothex' }] }), /docs_input/);
@@ -135,10 +148,14 @@ test('공개 서명: 가린 이메일 → 다른 이메일 거절 → 자기 칸
   const bad = [{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${E}/s-${randomUUID()}-0.png` }];
   assert.match(svcFail('office_esign_public_submit', `${quote(sha(TA))},'p@h.example',${j(bad)},'1.1.1.1','ua'`), /docs_input/);
   const good = [{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${E}/s-${who.signer_id}-0.png`, xr: 0.1, yr: 0.1, wr: 0.2 }, { page: 0, kind: 'text', text: '2026-10-02' }];
+  assert.match(svcFail('office_esign_public_submit', `${quote(sha(TA))},'p@h.example',${j(good)},'1.1.1.1','ua'`), /docs_input/, '서버가 R2에 올려 등록하지 않은 그림은 받지 않는다');
+  serverPut(good[0].img_path, 10, 'uploaded', E, 'image/png');
   assert.equal(svc('office_esign_public_submit', `${quote(sha(TA))},'p@h.example',${j(good)},'1.1.1.1','ua'`).done, false);
   assert.match(svcFail('office_esign_public_submit', `${quote(sha(TA))},'p@h.example',${j(good)},'1.1.1.1','ua'`), /docs_already/);
   assert.match(writeFail(U.admin, 'esign.update', { id: E, fields: [] }), /docs_state/, '보낸 뒤에는 칸·서명자를 못 바꾼다');
   const whoB = svc('office_esign_public_who', `${quote(sha(TB))},'me@b.example'`);
+  assert.equal(row(good[0].img_path), 'claimed|10|esign|image/png', '제출이 그림을 가져간다(정리 대상에서 빠진다)');
+  serverPut(`${SEG}/esign/${E}/s-${whoB.signer_id}-0.png`, 10, 'uploaded', E, 'image/png');
   assert.equal(svc('office_esign_public_submit', `${quote(sha(TB))},'me@b.example',${j([{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${E}/s-${whoB.signer_id}-0.png` }])},'2.2.2.2','ua'`).done, true);
   assert.equal(svc('office_esign_public_who', `${quote(sha(TB))},'me@b.example'`).all_signed, true, '끊긴 마무리를 서버가 알아본다');
   const bundle = svc('office_esign_public_bundle', quote(E));
@@ -165,27 +182,27 @@ test('완료: 서명본 경로·해시 검사 → 완료·링크 잠금, 연결 
 
 test('거래가 이미 계약 이후면 넘기지 않고 사유를 남긴다, 취소하면 링크가 끊긴다, 지우면 파일 경로를 돌려주고 기록이 함께 지워진다', { skip }, () => {
   const id = randomUUID(), t = 'C'.repeat(43);
-  write(U.admin, 'esign.create', { id, title: '두 번째', order_id: ORDER, orig_path: `${SEG}/esign/${id}/orig.pdf`, doc_hash: 'b'.repeat(64) });
+  write(U.admin, 'esign.create', { id, title: '두 번째', order_id: ORDER, orig_path: origPdf(U.admin, id), doc_hash: 'b'.repeat(64) });
   write(U.admin, 'esign.send', { id, signers: [{ name: 'A', email: 'a@x.example', token_hash: sha(t) }] });
-  const okw = (u, name) => last(sql(as(u, `select office_docs_storage_ok(${quote(name)},true)`))) === 't';
-  assert.ok(okw(U.admin, `${SEG}/esign/${randomUUID()}/orig.pdf`), '기록을 만들기 전 원본 올리기는 된다');
-  assert.ok(!okw(U.admin, `${SEG}/esign/${id}/orig.pdf`), '서명 기록이 있는 동안 원본을 바꿔 끼울 수 없다');
-  assert.ok(!okw(U.admin, `${SEG}/esign/${id}/final.pdf`), '서명본 자리에 미리 올릴 수 없다');
-  assert.ok(okw(U.admin, `${SEG}/docs/${id}.pdf`), '문서 폴더는 그대로');
-  assert.equal(last(sql(as(U.member, `select office_docs_storage_ok(${quote(`${SEG}/esign/${id}/orig.pdf`)},false)`))), 't', '읽기는 그대로');
+  assert.match(writeFail(U.admin, 'esign.reserve', { id, size: 10 }), /docs_state/, '서명 기록이 있는 동안 원본 자리를 다시 받을 수 없다(바꿔 끼우기 불가)');
+  assert.deepEqual(grant(U.member, [`${SEG}/esign/${id}/orig.pdf`]), [`${SEG}/esign/${id}/orig.pdf`], '읽기는 멤버');
   const who = svc('office_esign_public_who', `${quote(sha(t))},'a@x.example'`);
   assert.match(writeFail(U.admin, 'esign.finishable', { id }), /docs_state/, '서명 전에는 다시 시도할 것이 없다');
+  serverPut(`${SEG}/esign/${id}/s-${who.signer_id}-0-abc.png`, 9, 'uploaded', id, 'image/png');
+  serverPut(`${SEG}/esign/${id}/s-${who.signer_id}-0-old.png`, 9, 'uploaded', id, 'image/png'); // 실패한 앞 시도의 그림
   svc('office_esign_public_submit', `${quote(sha(t))},'a@x.example',${j([{ page: 0, kind: 'signature', img_path: `${SEG}/esign/${id}/s-${who.signer_id}-0-abc.png` }])},'3.3.3.3','ua'`);
   assert.match(writeFail(U.admin, 'esign.cancel', { id }), /docs_signed/, '전원 서명 건은 취소하지 않는다(완료 다시 시도)');
   assert.equal(write(U.admin, 'esign.finishable', { id }).id, id);
   assert.match(writeFail(U.member, 'esign.finishable', { id }), /business_forbidden/);
+  serverPut(`${SEG}/esign/${id}/final.pdf`, 20, 'claimed', id);
   assert.equal(svc('office_esign_public_finalize', `${quote(id)},${quote(`${SEG}/esign/${id}/final.pdf`)},${quote('e'.repeat(64))}`).order_sync, 'skipped:confirmed');
   const del = write(U.admin, 'esign.delete', { id });
-  assert.deepEqual(del.paths.sort(), [`${SEG}/esign/${id}/final.pdf`, `${SEG}/esign/${id}/orig.pdf`, `${SEG}/esign/${id}/s-${who.signer_id}-0-abc.png`].sort());
-  assert.ok(okw(U.admin, `${SEG}/esign/${id}/orig.pdf`), '기록을 지운 뒤에는 파일을 지울 수 있다');
+  const all = [`${SEG}/esign/${id}/final.pdf`, `${SEG}/esign/${id}/orig.pdf`, `${SEG}/esign/${id}/s-${who.signer_id}-0-abc.png`, `${SEG}/esign/${id}/s-${who.signer_id}-0-old.png`].sort();
+  assert.deepEqual(del.keys, all, '서명 폴더 아래 전부 — 실패한 시도의 그림까지');
+  assert.ok(all.every((k) => row(k).startsWith('deleting|')), '기록과 같은 트랜잭션에서 지우기로 정해졌다');
   assert.equal(sql(`select count(*) from office_esign_events where esign_id=${quote(id)}`), '0');
   const c = randomUUID(), tc = 'D'.repeat(43);
-  write(U.admin, 'esign.create', { id: c, title: '취소할 것', orig_path: `${SEG}/esign/${c}/orig.pdf`, doc_hash: 'c'.repeat(64) });
+  write(U.admin, 'esign.create', { id: c, title: '취소할 것', orig_path: origPdf(U.admin, c), doc_hash: 'c'.repeat(64) });
   write(U.admin, 'esign.send', { id: c, signers: [{ name: 'A', email: 'a@x.example', token_hash: sha(tc) }] });
   // 반복 기록(열람 등)이 500줄을 채워도 증빙 기록(취소)은 남는다
   sql(`insert into office_esign_events(esign_id,actor,action) select ${quote(c)},'x','opened' from generate_series(1,600)`);
@@ -195,26 +212,33 @@ test('거래가 이미 계약 이후면 넘기지 않고 사유를 남긴다, �
   assert.match(svcFail('office_esign_public_state', quote(sha(tc))), /docs_invalid/);
 });
 
-test('MEDIUM 1 문서 저장소: 내 공간도 아무 경로에나 못 올리고, 받은 자리(문서 PDF·서명 원본 모양)로만', { skip }, () => {
-  putObjFails(U.outsider, 'office-docs', `u-${U.outsider}/anything/x.pdf`);
+test('MEDIUM 1 문서 저장소: 키는 서버가 정하고(PDF·20MB만), 문서 크기는 서버가 확인한 크기, 같은 문서를 PDF와 함께 다시 저장해도 겹치지 않는다(옛 PDF는 정리 대상)', { skip }, () => {
   const id = randomUUID();
-  putObjFails(U.outsider, 'office-docs', `u-${U.outsider}/docs/${id}.pdf`);
-  assert.equal(call(U.outsider, 'office_docs_write', `null,'doc.reserve',${j({ id, size: 100 })}`).path, `u-${U.outsider}/docs/${id}.pdf`);
-  putObj(U.outsider, 'office-docs', `u-${U.outsider}/docs/${id}.pdf`, 100);
-  call(U.outsider, 'office_docs_write', `null,'doc.save',${j({ id, kind: 'quote', title: '내 견적', pdf_path: `u-${U.outsider}/docs/${id}.pdf`, pdf_size: 1 })}`);
-  assert.equal(sql(`select count(*) from office_storage_slots where path=${quote(`u-${U.outsider}/docs/${id}.pdf`)}`), '0', '저장하면 자리는 없어진다');
-  assert.equal(sql(`select pdf_size from office_docs where id=${quote(id)}`), '100', '문서 크기도 실제 객체 크기');
+  const r1 = call(U.outsider, 'office_docs_write', `null,'doc.reserve',${j({ id, size: 100 })}`).path;
+  assert.match(r1, new RegExp(`^u-${U.outsider}/docs/${id}/[0-9a-f-]{36}\\.pdf$`));
+  assert.equal(JSON.parse(last(sql(as(U.outsider, `select r2_object_pending_mine(${quote(r1)})`)))).mime, 'application/pdf', '형식은 PDF로 고정 — 서명에 들어간다');
+  assert.match(fails(U.outsider, 'office_docs_write', `null,'doc.reserve',${j({ id: randomUUID(), size: 20971521 })}`), /file_input/, '20MB 상한(버킷 제한이 없으므로 자리에서 막는다)');
+  commit(r1, 100);
+  const v1 = call(U.outsider, 'office_docs_write', `null,'doc.save',${j({ id, kind: 'quote', title: '내 견적', pdf_path: r1, pdf_size: 1 })}`);
+  assert.equal(v1.pdf_size, 100, '문서 크기도 실제 객체 크기');
+  const r2 = call(U.outsider, 'office_docs_write', `null,'doc.reserve',${j({ id, size: 120 })}`).path; // 옛 구조에서는 여기서 file_conflict
+  assert.notEqual(r2, r1); commit(r2, 120);
+  const v2 = call(U.outsider, 'office_docs_write', `null,'doc.save',${j({ id, kind: 'quote', title: '내 견적 2', pdf_path: r2 })}`);
+  assert.deepEqual([v2.pdf_path, v2.pdf_size], [r2, 120]);
+  assert.equal(row(r1), 'deleting|100|doc|application/pdf', '바뀐 판의 옛 PDF는 정리 대상');
+  assert.equal(row(r2), 'claimed|120|doc|application/pdf');
+  const keep = call(U.outsider, 'office_docs_write', `null,'doc.save',${j({ id, kind: 'quote', title: 'PDF 없이 고치기' })}`);
+  assert.equal(keep.pdf_path, r2, 'PDF 없이 저장하면 판은 그대로');
+  assert.deepEqual(call(U.outsider, 'office_docs_write', `null,'doc.delete',${j({ id })}`).keys, [r2]);
+  assert.equal(row(r2).split('|')[0], 'deleting');
   const e = randomUUID();
   assert.equal(write(U.admin, 'esign.reserve', { id: e, size: 10 }).path, `${SEG}/esign/${e}/orig.pdf`);
   assert.match(writeFail(U.member, 'esign.reserve', { id: randomUUID(), size: 10 }), /business_forbidden/);
-  putObj(U.admin, 'office-docs', `${SEG}/esign/${e}/orig.pdf`, 10);
-  putObjFails(U.admin, 'office-docs', `${SEG}/esign/${e}/final.pdf`);
 });
 
 let FINAL_SIZE = 5000;
 test('LOW 4·6 서명본 → 문서함: 완료된 서명만 출처 esign, 같은 서명은 한 번만(두 관리자가 동시에 넣어도), 크기는 서명본과 같아야', { skip }, () => {
-  putObjFails(U.admin, 'office-docs', `${SEG}/esign/${E}/final.pdf`); // 서명본 자리는 사람이 못 올린다
-  sql(`insert into storage.objects(bucket_id,name,owner,metadata) values('office-docs',${quote(`${SEG}/esign/${E}/final.pdf`)},null,${j({ size: FINAL_SIZE })})`); // 서버(서비스 키)가 올린 서명본
+  serverPut(`${SEG}/esign/${E}/final.pdf`, FINAL_SIZE, 'claimed', E); // 서버(서비스 키)가 올린 서명본
   const first = fileCopy(U.admin, FINAL_SIZE, { ref_esign: E, source: 'esign' });
   first.out();
   assert.equal(sql(`select source||','||ref_id||','||size from office_files where id=${quote(first.id)}`), `esign,${E},${FINAL_SIZE}`);
@@ -223,12 +247,10 @@ test('LOW 4·6 서명본 → 문서함: 완료된 서명만 출처 esign, 같은
   const wrong = fileCopy(U.admin, FINAL_SIZE - 1, { ref_esign: E });
   assert.match(wrong.fail(), /file_input/, '서명본과 크기가 다르면 서명본이 아니다');
   const draft = randomUUID();
-  write(U.admin, 'esign.create', { id: draft, title: '초안', orig_path: `${SEG}/esign/${draft}/orig.pdf`, doc_hash: 'd'.repeat(64) });
+  write(U.admin, 'esign.create', { id: draft, title: '초안', orig_path: origPdf(U.admin, draft), doc_hash: 'd'.repeat(64) });
   assert.match(fileCopy(U.admin, 10, { ref_esign: draft }).fail(), /file_input/, '완료 안 된 서명은 서명본이 없다');
   const doc = randomUUID();
-  write(U.admin, 'doc.reserve', { id: doc, size: 300 });
-  putObj(U.admin, 'office-docs', `${SEG}/docs/${doc}.pdf`, 300);
-  write(U.admin, 'doc.save', { id: doc, kind: 'quote', title: '견적', pdf_path: `${SEG}/docs/${doc}.pdf`, pdf_size: 1 });
+  write(U.admin, 'doc.save', { id: doc, kind: 'quote', title: '견적', pdf_path: docPdf(U.admin, doc, 300), pdf_size: 1 });
   const gen = fileCopy(U.admin, 300, { ref_doc: doc, source: 'upload' });
   gen.out();
   assert.equal(sql(`select source from office_files where id=${quote(gen.id)}`), 'generated');
@@ -236,25 +258,10 @@ test('LOW 4·6 서명본 → 문서함: 완료된 서명만 출처 esign, 같은
   write(U.admin, 'esign.filed', { id: E });
 });
 
-test('MEDIUM 1 서버 정리(service_role만, 화면 없이): 휴지통 30일·행 없는 객체(두 버킷)·지난 자리·OCR 기록, 객체가 지워진 행만 지운다', { skip }, () => {
-  assert.match(fails(U.owner, 'office_storage_sweep', '100'), /permission denied/);
-  const orphanF = `${SEG}/${randomUUID()}/orphan.pdf`, orphanD = `${SEG}/docs/${randomUUID()}.pdf`, orphanE = `${SEG}/esign/${randomUUID()}/orig.pdf`, legacy = `u-${U.outsider}/old/x.pdf`;
-  for (const [b, n] of [['office-files', orphanF], ['office-docs', orphanD], ['office-docs', orphanE], ['office-docs', legacy]]) sql(`insert into storage.objects(bucket_id,name,owner,created_at) values(${quote(b)},${quote(n)},${quote(U.admin)},now()-interval '2 days')`);
-  const fresh = `${SEG}/docs/${randomUUID()}.pdf`; sql(`insert into storage.objects(bucket_id,name,owner) values('office-docs',${quote(fresh)},${quote(U.admin)})`);
-  const keepE = sql(`select final_path from office_esign where id=${quote(E)}`);
-  sql(`update storage.objects set created_at=now()-interval '2 days' where name=${quote(keepE)}`);
-  const t = fileCopy(U.admin, 10, {}); t.out();
-  fwrite(U.admin, 'file.trash', { ids: [t.id] });
-  sql(`update office_files set deleted_at=now()-interval '31 days' where id=${quote(t.id)}`);
-  sql(`insert into office_storage_slots(bucket,path,seg,bytes,created_by,expires_at) values('office-files','x/old','x',1,${quote(U.admin)},now()-interval '2 days')`);
-  sql(`insert into office_ocr_usage(user_id,hour,n) values(${quote(U.admin)},now()-interval '3 days',1)`);
-  const got = svc('office_storage_sweep', '500').objects.map((o) => `${o.bucket}:${o.name}`);
-  for (const x of [`office-files:${orphanF}`, `office-docs:${orphanD}`, `office-docs:${orphanE}`, `office-docs:${legacy}`, `office-files:${t.path}`]) assert.ok(got.includes(x), `정리 대상: ${x}`);
-  for (const x of [`office-docs:${fresh}`, `office-docs:${keepE}`]) assert.ok(!got.includes(x), `남길 것: ${x}`);
-  assert.equal(sql(`select count(*) from office_storage_slots where path='x/old'`), '0');
-  assert.equal(sql(`select count(*) from office_ocr_usage where hour < now()-interval '1 day'`), '0');
-  assert.equal(svc('office_storage_sweep_done', '').rows, 0, '객체가 남아 있으면 행을 지우지 않는다');
-  sql(`delete from storage.objects where name=${quote(t.path)}`);
-  assert.equal(svc('office_storage_sweep_done', '').rows, 1);
-  assert.equal(sql(`select count(*) from office_files where id=${quote(t.id)}`), '0');
+test('서버 정리(문서): 저장이 실패해 기록이 가져가지 않은 PDF·서명 원본은 1시간 뒤 정리 대상, 기록이 가진 객체는 남긴다', { skip }, () => {
+  const lost = docPdf(U.admin, randomUUID()), lostE = origPdf(U.admin, randomUUID());
+  sql(`update r2_objects set updated_at=now()-interval '2 hours' where key in (${quote(lost)},${quote(lostE)})`);
+  const keys = svc('office_storage_sweep', '500').keys;
+  assert.ok(keys.includes(lost) && keys.includes(lostE));
+  assert.ok(!keys.includes(`${SEG}/esign/${E}/orig.pdf`) && !keys.includes(`${SEG}/esign/${E}/final.pdf`), '완료된 서명의 원본·서명본은 남는다');
 });

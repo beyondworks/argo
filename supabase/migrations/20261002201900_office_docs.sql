@@ -1,15 +1,18 @@
 -- 오피스 견적·계약·전자서명(spec8 트랙 A, 10/2) — 인트라넷 lib/docgen(견적서·계약서)·lib/esign(SQLite 3표)·app/sign/[token] 이식.
 -- 권한: 업무 원장과 같은 기준(office_business_scope) — 읽기 = 조직 멤버(손님 제외), 쓰기 = 소유자·관리자, 내 공간 = 본인.
 -- 표는 RLS를 켜고 직접 권한을 모두 거둔다 — 아래 SECURITY DEFINER 함수로만 읽고 쓴다(업무 원장과 같은 방식).
--- 파일은 Storage 비공개 버킷 office-docs: <o-조직|u-사람>/docs/<문서>.pdf, <…>/esign/<서명>/orig.pdf·final.pdf·s-<서명자>-<n>.(png|jpg).
+-- 파일은 Cloudflare R2 버킷 argo-office(문서함과 같은 버킷·같은 객체 목록 r2_objects — 20261002201700): <o-조직|u-사람>/docs/<문서>/<판>.pdf,
+-- <…>/esign/<서명>/orig.pdf·final.pdf·s-<서명자>-<n>-<시도>.(png|jpg). 키는 DB 함수가 정하고, 서명 주소는 오피스 서버 함수가 DB가 허락한 키만 만든다.
+-- 문서 PDF 키에 판(<판> = 서버가 만든 uuid)을 넣는다 — 같은 문서를 PDF와 함께 다시 저장해도 키가 겹치지 않는다(옛 구조는 같은 경로라 두 번째 자리 받기가 file_conflict).
 -- 공개 서명(로그인 없음)은 서버 함수(apps/office/api/esign, 서비스 키)만 부르는 office_esign_public_* 함수로 — 토큰 원문은 저장하지 않고 SHA-256만.
 --
 -- 부하(DB 위생): 사람이 버튼을 누를 때만 쓴다(만들기·보내기·서명 제출). 폴링·심박 없음. 서명 링크 열람 기록은 서명자마다 10분에 한 번,
 -- 서명 한 건의 반복 기록(열람·이름 바꿈·다시 보냄·알림)은 500줄 상한(서명·완료·취소 같은 증빙 기록은 상한 없이 남긴다). 문서·서명 기록은 계약 증빙이라 보존한다(삭제는 사람이 할 때만, 그때 파일·기록이 함께 지워진다).
 -- 조직·사람이 지워지면 함께 지워진다(아래 on delete cascade 없음 — scope 문자열로 묶여 있어 조직 삭제 정리 작업이 scope로 지운다).
--- 용량·올리기(분리 검수 MEDIUM 1): 사람이 올리는 파일(문서 PDF <seg>/docs/<문서>.pdf, 서명 원본 <seg>/esign/<서명>/orig.pdf)은 doc.reserve·esign.reserve로
--- 자리를 받아야 올라간다(내 공간 포함 — 그 밖의 경로에는 못 올린다). 자리·용량 규칙은 문서함(20261002201700)의 office_storage_* 와 같다(범위당 두 버킷 합).
--- 행 없는 객체(하루 지난 것)와 문서함 휴지통 30일 파일은 서버 정리(office_storage_sweep — 이 파일 끝, service_role 전용)가 화면 없이 지운다.
+-- 용량·올리기(분리 검수 MEDIUM 1): 사람이 올리는 파일(문서 PDF, 서명 원본)은 doc.reserve·esign.reserve로 자리(r2_objects pending)를 받아야 서명 주소가 나온다
+-- (내 공간 포함 — 그 밖의 키에는 못 올린다, PDF·20MB만). 자리·용량 규칙은 문서함(20261002201700)의 office_storage_* 와 같다(범위당 한 합).
+-- 서명 그림·서명본은 서버(서비스 키)가 쓰고 r2_object_server_put으로 등록한다 — 용량에 들어가지만 막지 않는다. 지우기는 기록을 지우며 객체를 deleting으로(서버가 R2에서 지운다).
+-- 등록 안 된 객체·지우기로 정한 객체는 서버 정리(office_storage_sweep — 20261002201700, service_role 전용)가 화면 없이 지운다.
 
 create table public.office_docs (
   id uuid primary key, scope text not null,
@@ -85,36 +88,7 @@ begin
   insert into public.office_esign_events(esign_id, actor, action, ip, ua) values (p_esign, left(p_actor, 320), p_action, left(p_ip, 100), left(p_ua, 300));
 end $$;
 
-/** 저장소 경로 권한 — 첫 칸이 내 공간(u-<나>)이거나, 내가 멤버(쓰기는 소유자·관리자)인 조직(o-<조직>)일 때만.
- *  서명 한 건의 폴더(<…>/esign/<서명>/)는 그 서명 기록이 있는 동안 아무도 올리거나 지울 수 없다 — 원본·서명 그림·서명본을 바꿔 끼우지 못하게.
- *  (원본은 기록을 만들기 전에 올리고, 기록을 지운 뒤에 파일을 지운다. 서명 그림·서명본은 서비스 키 서버 함수가 쓴다.) */
-create function public.office_docs_storage_ok(p_name text, p_write boolean) returns boolean
-language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare seg text := split_part(p_name, '/', 1); who uuid := auth.uid(); org uuid; r text;
-begin
-  if who is null or p_name like '%..%' then return false; end if;
-  if p_write and p_name ~ '^[^/]+/esign/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/'
-     and exists(select 1 from public.office_esign where id = split_part(p_name, '/', 3)::uuid) then return false; end if;
-  if seg = 'u-' || who then return true; end if;
-  if seg !~ '^o-[0-9a-f-]{36}$' then return false; end if;
-  org := substr(seg, 3)::uuid;
-  select m.role into r from public.msgr_org_members m join public.msgr_orgs o on o.id = m.org_id
-    where m.org_id = org and m.user_id = who and m.removed_at is null and o.deleted_at is null;
-  return r is not null and r <> 'guest' and (not p_write or r in ('owner','admin'));
-end $$;
-
-insert into storage.buckets(id, name, public) values ('office-docs', 'office-docs', false) on conflict (id) do nothing;
--- 크기·형식 제한(지원되는 Storage 판에서만 열이 있다)
-do $$ begin
-  update storage.buckets set file_size_limit = 20971520, allowed_mime_types = array['application/pdf','image/png','image/jpeg'] where id = 'office-docs';
-exception when undefined_column then null; end $$;
-drop policy if exists office_docs_read on storage.objects;
-create policy office_docs_read on storage.objects for select to authenticated using (bucket_id = 'office-docs' and public.office_docs_storage_ok(name, false));
-drop policy if exists office_docs_insert on storage.objects;
-create policy office_docs_insert on storage.objects for insert to authenticated with check (bucket_id = 'office-docs' and public.office_docs_storage_ok(name, true) and public.office_storage_slot_ok('office-docs', name));
-drop policy if exists office_docs_delete on storage.objects;
-create policy office_docs_delete on storage.objects for delete to authenticated using (bucket_id = 'office-docs' and public.office_docs_storage_ok(name, true));
--- 고쳐 쓰기(update) 정책은 두지 않는다 — 발행한 PDF·서명본은 바꾸지 않는다(새로 만든다)
+-- 저장소 권한은 R2 판정 함수(20261002201700 r2_object_read_grant·office_storage_reserve)가 본다 — 서명 폴더는 키를 DB가 정하고 if-none-match로 덮어쓰기를 막아 바꿔 끼울 수 없다
 
 create function public.office_docs_signers_json(p_esign uuid) returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce(jsonb_agg(jsonb_build_object('id', s.id, 'ord', s.ord, 'name', s.name, 'email', s.email, 'status', s.status, 'signed_at', s.signed_at, 'opened_at', s.opened_at) order by s.ord), '[]')
@@ -177,49 +151,48 @@ language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   sc text := public.office_business_scope(p_org, true); who uuid := auth.uid(); seg text := public.office_docs_seg(sc);
   d public.office_docs%rowtype; e public.office_esign%rowtype; s public.office_esign_signers%rowtype;
-  rid uuid; signers jsonb; el jsonb; i int := 0; paths text[];
+  rid uuid; signers jsonb; el jsonb; i int := 0; paths text[]; old_path text; new_size bigint;
 begin
   if jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text) > 300000 then raise exception 'docs_input'; end if;
   rid := nullif(p_data->>'id', '')::uuid;
-  if p_action in ('doc.reserve', 'esign.reserve') then -- 올리기 자리(경로는 서버가 정한다 — 이 모양 밖에는 사람이 못 올린다)
+  if p_action in ('doc.reserve', 'esign.reserve') then -- 올리기 자리(키는 서버가 정한다 — 이 모양 밖에는 사람이 못 올린다. PDF만, 20MB까지)
     if rid is null then raise exception 'docs_input'; end if;
     if p_action = 'doc.reserve' then
       if exists(select 1 from public.office_docs where id = rid and scope <> sc) then raise exception 'docs_not_found'; end if;
-      paths := array[seg || '/docs/' || rid || '.pdf'];
+      paths := array[seg || '/docs/' || rid || '/' || gen_random_uuid() || '.pdf']; -- 판마다 새 키(같은 문서 다시 저장해도 겹치지 않는다)
     else
       if exists(select 1 from public.office_esign where id = rid) then raise exception 'docs_state'; end if;
       paths := array[seg || '/esign/' || rid || '/orig.pdf'];
     end if;
-    begin perform public.office_storage_reserve('office-docs', paths[1], seg, (p_data->>'size')::bigint);
+    begin perform public.office_storage_reserve(paths[1], seg, (p_data->>'size')::bigint, 'application/pdf', 20971520);
     exception when invalid_text_representation or numeric_value_out_of_range then raise exception 'docs_input'; end;
-    return jsonb_build_object('path', paths[1]);
+    return jsonb_build_object('path', paths[1], 'key', paths[1]);
   elsif p_action = 'doc.save' then
     if rid is null or coalesce(p_data->>'kind', '') not in ('quote','contract') or length(trim(coalesce(p_data->>'title', ''))) not between 1 and 300 then raise exception 'docs_input'; end if;
-    if p_data ? 'pdf_path' and (p_data->>'pdf_path') is distinct from seg || '/docs/' || rid || '.pdf' then raise exception 'docs_path'; end if;
+    if p_data ? 'pdf_path' and coalesce(p_data->>'pdf_path', '') !~ ('^' || seg || '/docs/' || rid || '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$') then raise exception 'docs_path'; end if;
     if nullif(p_data->>'customer_id', '') is not null and not exists(select 1 from public.office_business_customers where id = (p_data->>'customer_id')::uuid and scope = sc) then raise exception 'docs_not_found'; end if;
     if nullif(p_data->>'order_id', '') is not null and not exists(select 1 from public.office_business_orders where id = (p_data->>'order_id')::uuid and scope = sc) then raise exception 'docs_not_found'; end if;
     select * into d from public.office_docs where id = rid;
     if found and d.scope <> sc then raise exception 'docs_not_found'; end if;
+    old_path := case when found then nullif(d.pdf_path, '') end;
+    -- 새 PDF는 내가 올려 서버가 확인한 객체여야 한다(크기도 그 객체의 실제 크기 — 클라이언트 값을 믿지 않는다)
+    if p_data ? 'pdf_path' then new_size := public.office_storage_claim(p_data->>'pdf_path', seg, 'doc', rid); end if;
     insert into public.office_docs as t(id, scope, kind, title, customer_name, customer_id, order_id, input, pdf_path, pdf_size, pdf_hash, filename, supply, vat, total, created_by)
     values (rid, sc, p_data->>'kind', trim(p_data->>'title'), left(coalesce(p_data->>'customer_name', ''), 200), nullif(p_data->>'customer_id', '')::uuid, nullif(p_data->>'order_id', '')::uuid,
-      coalesce(p_data->'input', '{}'), coalesce(p_data->>'pdf_path', ''), coalesce((p_data->>'pdf_size')::int, 0), coalesce(p_data->>'pdf_hash', ''), left(coalesce(p_data->>'filename', ''), 200),
+      coalesce(p_data->'input', '{}'), coalesce(p_data->>'pdf_path', ''), coalesce(new_size, 0)::int, coalesce(p_data->>'pdf_hash', ''), left(coalesce(p_data->>'filename', ''), 200),
       coalesce((p_data->>'supply')::bigint, 0), coalesce((p_data->>'vat')::bigint, 0), coalesce((p_data->>'total')::bigint, 0), who)
     on conflict (id) do update set title = excluded.title, customer_name = excluded.customer_name, customer_id = excluded.customer_id, order_id = excluded.order_id, input = excluded.input,
       pdf_path = case when p_data ? 'pdf_path' then excluded.pdf_path else t.pdf_path end, pdf_size = case when p_data ? 'pdf_path' then excluded.pdf_size else t.pdf_size end,
       pdf_hash = case when p_data ? 'pdf_path' then excluded.pdf_hash else t.pdf_hash end, filename = excluded.filename, supply = excluded.supply, vat = excluded.vat, total = excluded.total, updated_at = clock_timestamp()
     returning * into d;
-    if p_data ? 'pdf_path' then -- 크기는 실제 객체 크기(있으면), 자리는 쓰였다
-      update public.office_docs x set pdf_size = (o.metadata->>'size')::int from storage.objects o
-        where x.id = d.id and o.bucket_id = 'office-docs' and o.name = d.pdf_path and (o.metadata->>'size') is not null and x.pdf_size is distinct from (o.metadata->>'size')::int
-        returning x.* into d;
-      select * into d from public.office_docs where id = rid;
-      delete from public.office_storage_slots where bucket = 'office-docs' and path = d.pdf_path;
-    end if;
+    if old_path is not null and old_path is distinct from d.pdf_path then perform public.office_storage_tombstone(array[old_path]); end if; -- 바뀐 판의 옛 PDF는 정리 대상
     return to_jsonb(d) - 'scope';
   elsif p_action = 'doc.delete' then
     delete from public.office_docs where id = rid and scope = sc returning * into d;
     if not found then raise exception 'docs_not_found'; end if;
-    return jsonb_build_object('paths', to_jsonb(array_remove(array[nullif(d.pdf_path, '')], null)));
+    paths := array_remove(array[nullif(d.pdf_path, '')], null);
+    perform public.office_storage_tombstone(paths); -- 기록과 같은 트랜잭션에서 지우기로 정한다(R2 삭제는 flush·정리 크론)
+    return jsonb_build_object('keys', to_jsonb(paths));
   elsif p_action = 'esign.create' then
     if rid is null or length(trim(coalesce(p_data->>'title', ''))) not between 1 and 200 or coalesce(p_data->>'doc_hash', '') !~ '^[0-9a-f]{64}$'
        or (p_data->>'orig_path') is distinct from seg || '/esign/' || rid || '/orig.pdf' or jsonb_typeof(coalesce(p_data->'fields', '[]')) <> 'array' or jsonb_array_length(coalesce(p_data->'fields', '[]')) > 200 then raise exception 'docs_input'; end if;
@@ -231,8 +204,8 @@ begin
     for el in select value from jsonb_array_elements(public.office_docs_clean_signers(p_data->'signers')) loop
       insert into public.office_esign_signers(esign_id, ord, name, email) values (e.id, i, el->>'name', el->>'email'); i := i + 1;
     end loop;
+    perform public.office_storage_claim(e.orig_path, seg, 'esign', e.id); -- 원본은 내가 올려 서버가 확인한 객체여야 한다
     perform public.office_docs_event(e.id, 'owner', 'created');
-    delete from public.office_storage_slots where bucket = 'office-docs' and path = e.orig_path; -- 자리는 쓰였다
     return public.office_docs_esign_json(e);
   end if;
 
@@ -289,12 +262,13 @@ begin
       update public.office_esign_signers set token_hash = null where esign_id = e.id; -- 링크도 끊는다
       perform public.office_docs_event(e.id, 'owner', 'cancelled');
     end if;
-  elsif p_action = 'esign.delete' then
-    select array_agg(p) into paths from (
-      select e.orig_path p union all select e.final_path where e.final_path is not null
-      union all select x->>'img_path' from public.office_esign_signers g, jsonb_array_elements(g.placements) x where g.esign_id = e.id and x ? 'img_path') q;
+  elsif p_action = 'esign.delete' then -- 그 서명 폴더 아래 객체 전부(원본·서명본·실패한 시도의 그림까지)를 지우기로
+    old_path := seg || '/esign/' || e.id || '/'; -- (plpgsql 변수 seg가 표의 seg 칸과 겹치지 않게 접두를 먼저 만든다)
+    select coalesce(array_agg(o.key order by o.key), '{}') into paths from public.r2_objects o
+      where o.bucket = 'argo-office' and o.seg = split_part(old_path, '/', 1) and o.key like old_path || '%';
     delete from public.office_esign where id = e.id;
-    return jsonb_build_object('paths', to_jsonb(coalesce(paths, '{}')));
+    perform public.office_storage_tombstone(paths);
+    return jsonb_build_object('keys', to_jsonb(paths));
   elsif p_action = 'esign.finishable' then
     -- '완료 다시 시도'(api/esign finish) — 쓰기 권한자가 부르고, 전원 서명했는데 아직 완료되지 않은 건만 통과
     if e.status <> 'sent' or exists(select 1 from public.office_esign_signers where esign_id = e.id and status <> 'signed') then raise exception 'docs_state'; end if;
@@ -363,7 +337,7 @@ end $$;
 /** 서명 제출 — 서버 함수가 그림을 저장한 뒤 경로로 넘긴다(placements: [{ page, kind:'signature', xr, yr, wr, img_path } | { page, kind:'text', xr, yr, wr, text, sizeR }]) */
 create function public.office_esign_public_submit(p_hash text, p_email text, p_placements jsonb, p_ip text, p_ua text) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare r record; done boolean; prefix text;
+declare r record; done boolean; prefix text; imgs text[]; n integer;
 begin
   select * into r from public.office_esign_public_find(p_hash);
   if not found then raise exception 'docs_invalid'; end if;
@@ -376,6 +350,12 @@ begin
   prefix := public.office_docs_seg((r.esign).scope) || '/esign/' || (r.esign).id || '/s-' || (r.signer).id || '-';
   if jsonb_typeof(p_placements) <> 'array' or jsonb_array_length(p_placements) not between 1 and 100 or octet_length(p_placements::text) > 200000
      or exists(select 1 from jsonb_array_elements(p_placements) x where x->>'kind' not in ('signature','text') or (x->>'kind' = 'signature' and (x->>'img_path') not like prefix || '%')) then raise exception 'docs_input'; end if;
+  -- 서명 그림은 서버가 R2에 올려 등록한(uploaded) 객체여야 하고, 이 제출이 가져간다(claimed — 정리 대상에서 빠진다)
+  select coalesce(array_agg(distinct x->>'img_path'), '{}') into imgs from jsonb_array_elements(p_placements) x where x->>'kind' = 'signature';
+  update public.r2_objects set state = 'claimed', ref_kind = 'esign', ref_id = (r.esign).id, expires_at = null, updated_at = clock_timestamp()
+    where bucket = 'argo-office' and key = any(imgs) and state = 'uploaded';
+  get diagnostics n = row_count;
+  if n <> cardinality(imgs) then raise exception 'docs_input'; end if;
   update public.office_esign_signers set status = 'signed', signed_at = now(), ip = left(p_ip, 100), ua = left(p_ua, 300), placements = p_placements where id = (r.signer).id;
   perform public.office_docs_event((r.esign).id, (r.signer).email, 'signed', p_ip, p_ua);
   select bool_and(status = 'signed') into done from public.office_esign_signers where esign_id = (r.esign).id;
@@ -433,54 +413,13 @@ begin
   if found then perform public.office_docs_event(p_esign, 'system', 'notified'); end if;
 end $$;
 
-/* ── 서버 정리(분리 검수 MEDIUM 1) — 화면을 아무도 열지 않아도 쌓이지 않게. service_role(서버 정리 함수·스크립트)만 부른다 ──
-   Storage 객체는 SQL로 지우지 않는다(Supabase는 Storage API로만) — 이 함수는 지울 목록을 주고, 서버가 지운 뒤 office_storage_sweep_done이 행을 지운다.
-   대상: ① 문서함 휴지통 30일 지난 파일의 객체 ② 하루 지난 행 없는 객체(문서함: 기록·열린 자리 없음 / 문서: 문서 PDF·서명 폴더의 기록 없음, 정해진 모양 밖 경로)
-   함께: 하루 지난 올리기 자리·OCR 한도 줄은 여기서 지운다(쌓이는 운영 데이터). 실행 주기: 하루 1회(Vercel 크론 apps/office/vercel.json) — 한 번에 p_limit개. */
-create or replace function public.office_storage_sweep(p_limit integer default 500) returns jsonb
-language plpgsql security definer set search_path = public, pg_temp as $$
-declare lim integer := least(greatest(coalesce(p_limit, 500), 1), 1000);
-begin
-  delete from public.office_storage_slots where expires_at < now() - interval '1 day';
-  delete from public.office_ocr_usage where hour < now() - interval '1 day';
-  return jsonb_build_object('objects', coalesce((select jsonb_agg(jsonb_build_object('bucket', x.b, 'name', x.n)) from (
-    (select 'office-files' b, f.storage_path n from public.office_files f where f.deleted_at < now() - interval '30 days' and f.storage_path is not null
-       and exists (select 1 from storage.objects o where o.bucket_id = 'office-files' and o.name = f.storage_path) order by f.deleted_at limit lim)
-    union all
-    (select o.bucket_id, o.name from storage.objects o where o.bucket_id = 'office-files' and o.created_at < now() - interval '1 day'
-       and not exists (select 1 from public.office_files f where f.storage_path = o.name)
-       and not exists (select 1 from public.office_storage_slots s where s.bucket = 'office-files' and s.path = o.name and s.expires_at > now())
-     order by o.created_at limit lim)
-    union all
-    (select o.bucket_id, o.name from storage.objects o where o.bucket_id = 'office-docs' and o.created_at < now() - interval '1 day'
-       and not exists (select 1 from public.office_storage_slots s where s.bucket = 'office-docs' and s.path = o.name and s.expires_at > now())
-       and not (case
-         when o.name ~ '^[ou]-[0-9a-f-]{36}/docs/[0-9a-f-]{36}\.pdf$' then exists (select 1 from public.office_docs d where d.pdf_path = o.name)
-         when o.name ~ '^[ou]-[0-9a-f-]{36}/esign/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/' then exists (select 1 from public.office_esign e
-           where e.id = split_part(o.name, '/', 3)::uuid and public.office_docs_seg(e.scope) = split_part(o.name, '/', 1))
-         else false end)
-     order by o.created_at limit lim)
-    limit lim) x), '[]'::jsonb));
-end $$;
-/** 서버가 객체를 지운 뒤 — 휴지통 30일 지난 문서함 행 중 객체가 없어진 것(링크 포함)만 지운다. 객체가 남으면 행을 남긴다 */
-create or replace function public.office_storage_sweep_done() returns jsonb
-language plpgsql security definer set search_path = public, pg_temp as $$
-declare n integer;
-begin
-  with d as (delete from public.office_files x where x.deleted_at < now() - interval '30 days'
-      and (x.storage_path is null or not exists (select 1 from storage.objects o where o.bucket_id = 'office-files' and o.name = x.storage_path)) returning 1)
-  select count(*) into n from d;
-  return jsonb_build_object('rows', n);
-end $$;
-revoke all on function public.office_storage_sweep(integer), public.office_storage_sweep_done() from public, anon, authenticated;
-grant execute on function public.office_storage_sweep(integer), public.office_storage_sweep_done() to service_role;
 
-revoke all on function public.office_docs_seg(text), public.office_docs_event(uuid, text, text, text, text), public.office_docs_storage_ok(text, boolean),
+revoke all on function public.office_docs_seg(text), public.office_docs_event(uuid, text, text, text, text),
   public.office_docs_signers_json(uuid), public.office_docs_esign_json(public.office_esign), public.office_docs_read(uuid), public.office_docs_get(uuid, text, uuid), public.office_docs_events(uuid, uuid),
   public.office_docs_clean_signers(jsonb), public.office_docs_write(uuid, text, jsonb),
   public.office_esign_public_find(text), public.office_esign_public_who(text, text), public.office_esign_public_state(text), public.office_esign_public_open(text, text, text, text),
   public.office_esign_public_submit(text, text, jsonb, text, text), public.office_esign_public_bundle(uuid), public.office_esign_public_finalize(uuid, text, text),
   public.office_esign_public_notified(uuid) from public, anon, authenticated;
-grant execute on function public.office_docs_read(uuid), public.office_docs_get(uuid, text, uuid), public.office_docs_events(uuid, uuid), public.office_docs_write(uuid, text, jsonb), public.office_docs_storage_ok(text, boolean) to authenticated;
+grant execute on function public.office_docs_read(uuid), public.office_docs_get(uuid, text, uuid), public.office_docs_events(uuid, uuid), public.office_docs_write(uuid, text, jsonb) to authenticated;
 grant execute on function public.office_esign_public_who(text, text), public.office_esign_public_state(text), public.office_esign_public_open(text, text, text, text), public.office_esign_public_submit(text, text, jsonb, text, text),
   public.office_esign_public_bundle(uuid), public.office_esign_public_finalize(uuid, text, text), public.office_esign_public_notified(uuid) to service_role;
