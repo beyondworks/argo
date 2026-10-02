@@ -12,7 +12,7 @@ import { normalizeModelId } from './runners/catalog-remote.mjs'; // 모델 저�
 import { CLAUDE_EFFORTS, normalizeCrewEffort } from './model-effort.mjs';
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
-import { isReservedSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
+import { isReservedSlug, isTakenSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
 
 // 카드 = 시스템 프롬프트. lang='en'이면 이름·직함·본문을 영어로 생성하되, 세 섹션 헤더(## 전문성/일하는 방식/톤)는
 // 한국어 고정 토큰으로 유지한다 — 백엔드·프론트 여러 파서(persona.mjs:appendAgentRule, hub.mjs, crew page)가 이
@@ -230,7 +230,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   // slug — 지정값→이름 슬러그화→crew. 동명 크루 중복 영입 시 기존 카드를 덮어쓰지 않는다(-n).
   const base = slugify(meta.slug || looseField(md, 'slug') || nameFinal) || 'crew';
   let slug = base;
-  for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) slug = `${base}-${n}`;
+  for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)) || isTakenSlug(slug); n++) slug = `${base}-${n}`; // captain 같은 이름 표지는 -n으로(slug.mjs TAKEN_SLUGS)
 
   // frontmatter는 항상 정규 형식으로 재조립 — AI 출력 편차에 강건. 본문(전문성·톤 등)은 그대로 보존.
   const fm = ['---', `name: ${nameFinal}`, `slug: ${slug}`, `role: ${roleFinal}`];
@@ -263,7 +263,7 @@ export async function createAgentCard(wsId, { name, role = '', prompt, runner = 
   const base = slugify(nameFinal) || 'crew';
   if (isReservedSlug(base)) throw reservedSlugError(nameFinal, base, 'ko');
   let slug = base;
-  for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) slug = `${base}-${n}`;
+  for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)) || isTakenSlug(slug); n++) slug = `${base}-${n}`; // captain 같은 이름 표지는 -n으로(slug.mjs TAKEN_SLUGS)
   if (!SLUG_RE.test(slug)) throw new Error(`크루 slug를 만들지 못했습니다: ${slug}`);
   const fm = ['---', `name: ${nameFinal}`, `slug: ${slug}`, `role: ${line(role)}`];
   if (line(runner)) fm.push(`runner: ${line(runner)}`);

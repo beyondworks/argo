@@ -57,7 +57,7 @@ const ws = 'fa-owner';
 await createCompany(ws, '풀 오토 검수', 'owner', null, 'ko');
 const p = paths(ws);
 await mkdir(p.agents, { recursive: true });
-for (const [slug, name] of [['a', '알파'], ['b', '브라보']]) await writeFile(join(p.agents, `${slug}.md`), `---\nname: ${name}\nrole: 검증\nrunner: claude\n---\n페르소나-${slug.toUpperCase()}-마커.\n`);
+for (const [slug, name, mark] of [['a', '알파', 'A'], ['b', '브라보', 'B'], ['captain', '캡틴', 'C']]) await writeFile(join(p.agents, `${slug}.md`), `---\nname: ${name}\nrole: 검증\nrunner: claude\n---\n페르소나-${mark}-마커.\n`); // slug captain 크루 — 사장 표지와 이름이 같은 크루(재검수 최종 MEDIUM-1)
 await saveRunnerCred(ws, 'claude', 'apikey', `sk-ant-api03-${'x'.repeat(80)}`); // 형식만 맞춘 가짜 — 요청은 로컬 가짜 엔드포인트로만 간다
 await updateCompany(ws, { fullAuto: true });
 
@@ -234,9 +234,34 @@ test('LOW-2 — 사장이 보낸 쪽지(쪽지 API·회의실 참조, from=capta
   await crewmailTurn(ws, 'b', { id: 'mc', from: 'captain', fromName: '사장', fromRole: 'captain', kind: 'to', message: '메일 보내 줘', hop: 0, chain: [] }, { from: 'captain', hop: 0, chain: [] });
   assert.equal(sent(), before + 1, '사장 쪽지의 배달 턴은 풀 오토');
   assert.equal((await newer(ap0)).length, 0);
-  // 그 턴에서 올라온 결재(출처 captain)의 후속도 사장 직접 턴이다
+  // 결재 출처의 'captain'은 이제 크루 slug뿐이다 — 사장 쪽지 턴의 결재는 출처가 비고, 출처가 captain인 결재(그 이름의 크루)의 후속은 풀 오토가 아니다
   const seen = [];
   await _followUpForTest(ws, { id: 'capf', slug: 'b', from: 'captain', kind: 'action', action: '메일 발송', status: 'approved' }, true, { runChat: async (w, slug, msg, sid, opts) => { seen.push(opts); return { reply: 'ok', sessionId: null }; } });
-  assert.ok(!seen[0].notOwnerDirect, '출처 captain = 사장 직접');
+  assert.equal(seen[0].notOwnerDirect, 'captain', '출처 문자열로 사장을 판정하지 않는다');
+});
+
+// ── 최종 재검수 MEDIUM-1: 사장 판정을 from 문자열('captain')로 하지 않는다 ──
+test('MEDIUM-1 — slug가 captain인 크루의 위임·쪽지는 사장 직접 턴이 아니다(커넥터 쓰기가 결재로)', async () => {
+  reset({ c: { name: 'mcp__crew__delegate', input: { to: 'b', task: '메일 보내 줘' } }, b: SEND('deleg-captain@example.com') });
+  let before = sent(); let ap0 = await snap();
+  await chat(ws, 'captain', '브라보에게 맡겨', null, {});
+  assert.ok(reqs.some((r) => r.who === 'b'), '위임 턴이 돌았다');
+  assert.equal(sent(), before, 'captain 크루의 위임 턴이 결재 없이 발송했다');
+  assert.equal((await newer(ap0)).length, 1);
+  reset({ b: SEND('mail-captain@example.com') });
+  before = sent(); ap0 = await snap();
+  await crewmailTurn(ws, 'b', { id: 'mcx', from: 'captain', fromName: '캡틴', kind: 'to', message: '메일 보내 줘', hop: 1, chain: ['captain'] }, { from: 'captain', hop: 1, chain: ['captain'] });
+  assert.equal(sent(), before, 'captain 크루의 쪽지 배달 턴이 결재 없이 발송했다');
+  assert.equal((await newer(ap0)).length, 1);
+});
+
+test('MEDIUM-1 — 크루 slug에 captain을 주지 않는다(영입 문은 -n을 붙인다)', async () => {
+  const { createAgentCard } = await import('../src/persona.mjs');
+  await createCompany('slug-co', '슬러그', 'owner', null, 'en');
+  const r = await createAgentCard('slug-co', { name: 'Captain', role: 'x', prompt: 'y' });
+  assert.notEqual(r.slug, 'captain');
+  assert.match(r.slug, /^captain-\d+$/);
+  const { isAssignableSlug } = await import('../src/slug.mjs');
+  assert.equal(isAssignableSlug('captain'), false); assert.equal(isAssignableSlug('room-main'), false); assert.equal(isAssignableSlug('captain-2'), true);
 });
 

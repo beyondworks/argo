@@ -40,7 +40,7 @@ before(async () => {
     await mkdir(paths(ws).root, { recursive: true });
     await writeFile(paths(ws).company, JSON.stringify({ id: ws, name: ws, lang: 'ko' }));
   }
-  await seedCrew(WS, 'a', '알파'); await seedCrew(WS, 'b', '브라보'); await seedCrew(WS, 'c', '찰리'); await seedCrew(WS, 'd', '델타');
+  await seedCrew(WS, 'a', '알파'); await seedCrew(WS, 'b', '브라보'); await seedCrew(WS, 'c', '찰리'); await seedCrew(WS, 'd', '델타'); await seedCrew(WS, 'captain', '캡틴');
   await seedCrew(WS, 'ext', '외부봇', 'runner: http\n');
   await seedCrew(WS2, 'z', '줄루');
   mod._setRunTurnForTest(fakeTurn);
@@ -69,7 +69,7 @@ test('사용자 @B — B가 이어 가던 세션에 출처가 붙어 들어가�
   assert.match(c.prompt, /이번 주 일정 정리해 줘/);
   const b = await msgs(WS, 'b');
   assert.equal(b.length, 2);
-  assert.equal(b[0].via, 'session'); assert.equal(b[0].src.kind, 'session'); assert.equal(b[0].src.room, 'a'); assert.equal(b[0].src.from, 'captain');
+  assert.equal(b[0].via, 'session'); assert.equal(b[0].src.kind, 'session'); assert.equal(b[0].src.room, 'a'); assert.equal(b[0].src.captain, true, '사장 표지는 별도 칸');
   assert.ok(!b[0].awaiting, '답을 받은 줄은 대기 표시가 풀린다');
   assert.equal(b[1].who, 'crew'); assert.equal(b[1].text, 'b의 답 #1');
   assert.equal((await thread.loadThread(WS, 'b')).sessionId, 'sess-b-1', 'B의 세션이 이어진다(다음 턴도 같은 맥락)');
@@ -408,5 +408,18 @@ test('LOW-4 — 예산이 모자란 안내도 사슬마다 한 번만', async ()
   const tree = newTree({ kind: 'session' }); spendTree(tree, tree.left);
   for (let i = 0; i < 2; i += 1) await assert.rejects(mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: i ? 'c' : 'b', message: 'x', hop: 1, chain: ['d'], tree: tree.id }), (e) => e.code === 'TREE_CAP');
   assert.equal((await msgs(WS, 'a')).filter((m) => m.src?.code === 'budget').length, 1);
+});
+
+// ── 최종 재검수 MEDIUM-2: 세션 메시지의 사장 판정은 별도 칸 ──
+test('MEDIUM-2 — slug가 captain인 크루가 보낸 세션 메시지는 동료 크루가 보낸 것으로 처리된다', async () => {
+  await seedThread(WS, 'captain', 'sess-captain-0');
+  await mod.sendSessionMessage(WS, { room: 'captain', sender: { slug: 'captain' }, to: 'b', message: '메일 보내', hop: 0, chain: [] });
+  await mod._drainForTest();
+  const bt = calls.find((c) => c.slug === 'b');
+  assert.match(bt.prompt, /동료 크루 캡틴/, '사장이 보냄으로 쓰지 않는다');
+  assert.equal(bt.opts.from, 'captain'); assert.deepEqual(bt.opts.chain, ['captain']);
+  const line = (await msgs(WS, 'b'))[0];
+  assert.ok(!line.src.captain, '받은 줄에 사장 표지 없음');
+  assert.equal(calls.filter((c) => c.slug === 'captain').length, 1, '보낸 크루가 답을 받고 깨어난다');
 });
 

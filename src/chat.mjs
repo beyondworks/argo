@@ -1315,10 +1315,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   //   from이 있는 턴 — 위임받은 동료 턴·쪽지 배달 턴·크루가 보낸 세션 메시지의 받는 턴·깨움 턴
   //   notOwnerDirect가 있는 턴 — 그런 턴에서 시작된 장시간 작업·루틴·결재 후속, 메신저에서 크루가 넘긴 턴. from과 달리 출처(turnSource)·프롬프트·공유 노트를
   //   바꾸지 않고 풀 오토만 끄는 표지다(통합본 재검수 LOW-5). 이 값은 커넥터 쓰기 게이트까지 그대로 넘어간다(callConnectorTool fullAuto).
-  // from === 'captain' — 사장이 보낸 쪽지(쪽지 API·회의실 참조)의 배달 턴은 사장 직접 턴이다(풀 오토 판정에서만 — 출처·프롬프트는 그대로, 재검수 3차 LOW-2).
-  // 세션 메시지가 사장이 보낸 @B를 from 없이 돌리는 것과 같은 판정이다.
-  const crewFrom = from && from !== 'captain' ? from : null;
-  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx) && !crewFrom && !notOwnerDirect; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
+  // 사장이 보낸 쪽지의 배달 턴은 scheduler가 from 없이 돌린다(fromRole 표지) — 사장 판정을 from 문자열로 하지 않는다(최종 재검수 MEDIUM-1)
+  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx) && !from && !notOwnerDirect; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -1411,7 +1409,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 참조(cc)로 공유된 맥락 — 이번 턴 프롬프트에 1회 주입(맥락 공유는 기본, 실행은 지시받은 크루만)
   // 재시도(__seedNotes)면 아우터 시도가 이미 소비한 공유 노트를 이어받는다 — 재시도에서 cc 맥락 소실 방지
   // 범위 턴(메신저 DM·채널·텔레그램 그룹·슬랙 채널)과 손님 턴은 싣지도 소비하지도 않는다 — 노트는 사장의 1:1 지시라 그 방에 새면 안 되고, 다음 1:1 턴이 받는다(검수 K46)
-  const sharedNotes = (contextScope || guest) ? [] : (__seedNotes ?? (from ? [] : await takeSharedNotes(wsId, agentSlug).catch(() => [])));
+  const sharedNotes = (contextScope || guest) ? [] : (__seedNotes ?? (from || source === 'crewmail' ? [] : await takeSharedNotes(wsId, agentSlug).catch(() => []))); // 쪽지 배달 턴은 사장 쪽지(from 없음)여도 1:1 공유 노트를 가져가지 않는다(종전 동작)
   const sharedBlock = sharedNotes.length
     ? (lang === 'en'
         ? `## Context shared via cc — what the captain instructed a colleague and the results (shared for your awareness)\n${sharedNotes.join('\n\n---\n\n')}\n\n## Captain's new instruction\n`
@@ -1835,7 +1833,7 @@ ${lang === 'en'
   const fileAtt = attachments.filter((a) => !a.isImage);
   // 이어 가는 세션은 SDK가 첫 턴의 시스템 프롬프트를 그대로 쓴다(실측) — 첫 턴이 풀 오토였으면 이 턴이 풀 오토가 아니어도 그 문구가 남는다.
   // 그래서 글 앞에 바로잡는 줄을 둔다(세션 메시지 턴은 글에 이미 있다). 실제 강제는 커넥터 쓰기 게이트(fullAuto 전달)다.
-  const faNote = resumeId && companyFullAuto === true && (crewFrom || notOwnerDirect) && source !== 'session' // 표지가 켜진 턴에만 — 메신저 손님·오피스 턴의 글은 바꾸지 않는다(LOW-6)
+  const faNote = resumeId && companyFullAuto === true && (from || notOwnerDirect) && source !== 'session' // 표지가 켜진 턴에만 — 메신저 손님·오피스 턴의 글은 바꾸지 않는다(LOW-6)
     ? (lang === 'en' ? '(Even if this company has full auto mode on, it does not apply to this turn — file request_approval before any action that leaves the company.)\n\n'
       : '(이 회사에 풀 오토 모드가 켜져 있어도 이 턴에는 적용되지 않는다 — 회사 밖으로 나가는 행동은 request_approval로 결재를 먼저 올려라.)\n\n')
     : '';

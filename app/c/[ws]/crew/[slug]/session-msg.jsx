@@ -3,7 +3,7 @@
 // 채팅 화면(page.jsx)에는 연결만 둔다(바깥에서 들어온 글 카드 작업과 합칠 때 충돌을 줄이려고 파일을 나눴다).
 //
 // 출처 표지(m.src) — 서버 src/session-msg.mjs가 붙인다:
-//   { kind: 'session', dir: 'out'|'in'|'reply'|'notice', id, room, roomName, from, fromName, to, toName, code?, late? }
+//   { kind: 'session', dir: 'out'|'in'|'reply'|'notice', id, room, roomName, from, fromName, to, toName, captain?, code?, late? } — captain = 사장이 보낸 것(from 문자열로 판정하지 않는다)
 //   out    = A 방, 사장이 보낸 줄(사장 말풍선 그대로 — 이 파일은 그리지 않는다)
 //   in     = B 방, 받은 메시지(via:'session' 사용자 줄)
 //   reply  = A 방, B의 답(사장이 보낸 경우 crew 줄 = 답 카드, 크루가 보낸 경우 via:'session' 사용자 줄 = 깨움 알림)
@@ -62,7 +62,7 @@ export const isSessionCard = (m) => m?.src?.kind === 'session' && m.src.dir !== 
 /** 출처 줄 문구 */
 function sourceLine(m, t) {
   const s = m.src;
-  if (s.dir === 'in') return s.from === 'captain' ? t('chat.session.in.captain', { room: s.roomName ?? s.room }) : t('chat.session.in.crew', { name: s.fromName ?? s.from });
+  if (s.dir === 'in') return s.captain === true ? t('chat.session.in.captain', { room: s.roomName ?? s.room }) : t('chat.session.in.crew', { name: s.fromName ?? s.from });
   if (s.dir === 'reply') return m.who === 'user' ? t('chat.session.wake', { name: s.fromName ?? s.from }) : t(s.late ? 'chat.session.replyLate' : 'chat.session.reply', { name: s.fromName ?? s.from });
   return null;
 }
